@@ -83,6 +83,7 @@ open "dist/oh-my-dsh-1.8.0-arm64.dmg"
 | `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.0-rc.6` | 传给 `npm install` 的包说明，如 `@deepseek-ai/dsh@latest` |
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh 用） |
+| `DSH_ARCH` | `uname -m` | 目标架构：`arm64` / `x86_64` / `universal`（CI 矩阵用） |
 
 构建缓存：Node tarball、npm 缓存和已构建的运行时存放在 `.cache/`（持久，不随 `.build/` 清除）；
 相同 `(Node 版本, dsh 版本)` 组合会直接复用，重建只需几十秒。网络不可用时，会用缓存的 Node tarball 推导版本继续构建。

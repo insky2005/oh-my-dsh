@@ -1,0 +1,30 @@
+name: Nightly
+
+on:
+  schedule:
+    # 02:00 Asia/Shanghai (18:00 UTC previous day) — daily
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  # Nightly smoke: rebuild from scratch with a clean .cache (no restore) to
+  # catch drift in Node LTS / dsh RC resolution, plus run the full test suite.
+  smoke:
+    name: nightly smoke (arm64)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node + core tests
+        run: node --test "core/tests/*.test.js"
+      - name: Wiki panel tests
+        run: tests/wiki-panel/run.sh
+      - name: Clean build (no cache restore — validates fresh downloads)
+        run: ./build-app.sh
+      - name: Verify bundle
+        run: |
+          test -x dist/oh-my-dsh.app/Contents/MacOS/oh-my-dsh
+          du -sh dist/oh-my-dsh.app
