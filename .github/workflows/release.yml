@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  # Build all three artifacts on macOS (arm64 / x86_64 / universal).
+  build:
+    name: build ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+          - arch: x86_64
+            runner: macos-13
+          - arch: universal
+            runner: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # version.sh reads tags
+      - name: Cache runtime + node tarballs (.cache/)
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: release-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('build-app.sh', 'scripts/version.sh') }}
+          restore-keys: |
+            release-${{ runner.os }}-${{ matrix.arch }}-
+      - name: Build app
+        env:
+          DSH_ARCH: ${{ matrix.arch }}
+        run: ./build-app.sh
+      - name: Package .pkg + .dmg
+        env:
+          DSH_ARCH: ${{ matrix.arch }}
+        run: ./make-pkg.sh
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.arch }}
+          path: |
+            dist/oh-my-dsh-*.pkg
+            dist/oh-my-dsh-*.dmg
+          if-no-files-found: error
+
+  # Aggregate everything, checksum, and publish the GitHub Release.
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+          merge-multiple: true
+      - name: Collect release assets
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          cp dist-artifacts/*.pkg dist-artifacts/*.dmg dist/ 2>/dev/null || true
+          ls -la dist/
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Write SHA-256SUMS + release notes
+        id: checksums
+        run: |
+          chmod +x scripts/release-checksums.sh
+          scripts/release-checksums.sh "$VERSION" | tee /tmp/release-body.txt
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: oh-my-dsh ${{ env.VERSION }}
+          body_path: /tmp/release-body.txt
+          prerelease: true   # 先 pre-release 验证；正式发布在人工确认后改为 false
+          files: |
+            dist/*.pkg
+            dist/*.dmg
+            dist/SHA-256SUMS
+          fail_on_unmatched_files: true

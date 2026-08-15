@@ -1,0 +1,17 @@
+{
+  "name": "@oh-my-dsh/core",
+  "version": "0.1.0",
+  "description": "oh-my-dsh shared core: ANSI terminal emulator, service management (port probe/spawn/cleanup), dsh upgrade, session RPC. Platform-independent Node module.",
+  "type": "commonjs",
+  "main": "index.js",
+  "bin": {
+    "ohmy-core": "bin/ohmy-core.js"
+  },
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

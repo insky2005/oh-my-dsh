@@ -40,6 +40,17 @@ BUNDLE_ID="com.ohmydsh.app"
 VERSION="$(scripts/version.sh | head -1)"
 BUILD="$(scripts/version.sh | tail -1)"
 
+# 目标架构：arm64 / x86_64 / universal（默认本机架构）。CI 用矩阵传参。
+#   DSH_ARCH=arm64|x86_64|universal ./build-app.sh
+HOST_ARCH="$(uname -m)"
+ARCH="${DSH_ARCH:-$HOST_ARCH}"
+case "$ARCH" in
+  arm64|aarch64)   ARCH="arm64" ;;
+  x86_64|amd64)    ARCH="x86_64" ;;
+  universal)       ;;
+  *) echo "ERROR: unsupported DSH_ARCH '$ARCH' (arm64 | x86_64 | universal)" >&2; exit 1 ;;
+esac
+
 SRC="src"
 BUILD_DIR=".build"
 CACHE_DIR=".cache"
@@ -96,27 +107,38 @@ print(max(lts, key=key)["version"])
   NODE_VERSION="$v"
 }
 
+# node_tarball <arch> -> darwin tarball name (arm64 -> darwin-arm64, x86_64 -> darwin-x64)
+node_tarball() {
+  local a="$1"
+  [ "$a" = "x86_64" ] && a="x64"
+  echo "node-v${NODE_VERSION#v}-darwin-$a.tar.gz"
+}
+
 download_node() {
   local ver="${NODE_VERSION#v}"
-  local tarball="node-v${ver}-darwin-arm64.tar.gz"
-  local base url
-  if [ ! -f "$CACHE_DIR/node/$tarball" ]; then
+  local archs="$ARCH"
+  [ "$ARCH" = "universal" ] && archs="arm64 x86_64"
+  local a tarball base url
+  for a in $archs; do
+    tarball="$(node_tarball "$a")"
+    if [ ! -f "$CACHE_DIR/node/$tarball" ]; then
+      for base in "$NODE_MIRROR" "$NODE_MIRROR_OFFICIAL"; do
+        url="$base/v${ver}/$tarball"
+        echo "    downloading $url …"
+        if curl -fL --max-time 600 -o "$CACHE_DIR/node/$tarball" "$url"; then break; fi
+        echo "    mirror failed, trying next…"
+      done
+      [ -f "$CACHE_DIR/node/$tarball" ] || { echo "ERROR: Node download failed for $a" >&2; exit 1; }
+    fi
+    echo "    verifying SHA-256 ($tarball) …"
+    local ok=0
     for base in "$NODE_MIRROR" "$NODE_MIRROR_OFFICIAL"; do
-      url="$base/v${ver}/$tarball"
-      echo "    downloading $url …"
-      if curl -fL --max-time 600 -o "$CACHE_DIR/node/$tarball" "$url"; then break; fi
-      echo "    mirror failed, trying next…"
+      if ( cd "$CACHE_DIR/node" \
+           && curl -fsSL --max-time 30 "$base/v${ver}/SHASUMS256.txt" \
+              | grep " $tarball\$" | shasum -a 256 -c - ); then ok=1; break; fi
     done
-    [ -f "$CACHE_DIR/node/$tarball" ] || { echo "ERROR: Node download failed" >&2; exit 1; }
-  fi
-  echo "    verifying SHA-256 …"
-  for base in "$NODE_MIRROR" "$NODE_MIRROR_OFFICIAL"; do
-    if ( cd "$CACHE_DIR/node" \
-         && curl -fsSL --max-time 30 "$base/v${ver}/SHASUMS256.txt" \
-            | grep " $tarball\$" | shasum -a 256 -c - ); then return 0; fi
+    [ "$ok" = 1 ] || { echo "ERROR: SHA-256 verification failed for $tarball" >&2; exit 1; }
   done
-  echo "ERROR: SHA-256 verification failed for $tarball" >&2
-  exit 1
 }
 
 # install_dsh <target-dir>: npm install dsh into target; registry fallback
@@ -136,8 +158,8 @@ build_runtime() {
   local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.0-rc.6}"
   local stage="$CACHE_DIR/runtime"
   local info="$stage/.runtime-info"
-  if [ -f "$info" ] && grep -qx "$NODE_VERSION|$spec" "$info" 2>/dev/null; then
-    echo "    reusing previously built runtime ($NODE_VERSION + $spec)"
+  if [ -f "$info" ] && grep -qx "$NODE_VERSION|$spec|$ARCH" "$info" 2>/dev/null; then
+    echo "    reusing previously built runtime ($NODE_VERSION + $spec, $ARCH)"
     return 0
   fi
   rm -rf "$stage"
@@ -147,18 +169,35 @@ build_runtime() {
   local node_stage="$BUILD_DIR/node-stage"
   rm -rf "$node_stage"
   mkdir -p "$node_stage"
-  tar -xzf "$CACHE_DIR/node/node-v${ver}-darwin-arm64.tar.gz" -C "$node_stage"
-  local dist="$node_stage/node-v${ver}-darwin-arm64"
-  ditto "$dist/bin/node" "$stage/node"
-  ditto "$dist/lib/node_modules/npm" "$stage/npm"
-  echo "    node: $NODE_VERSION (bin + npm) -> $stage"
-  export PATH="$dist/bin:$PATH"
-  export npm_config_cache="$CACHE_DIR/npm-cache"
-  export npm_config_audit=false npm_config_fund=false npm_config_update_notifier=false
+
+  # Embed one node binary per target arch; universal embeds both (the Swift
+  # resolver picks by uname -m: runtime/node-arm64 or runtime/node-x86_64).
+  local archs="$ARCH"
+  [ "$ARCH" = "universal" ] && archs="arm64 x86_64"
+  local a node_arch dist
+  for a in $archs; do
+    node_arch="$( [ "$a" = "x86_64" ] && echo x64 || echo "$a" )"
+    tar -xzf "$CACHE_DIR/node/node-v${ver}-darwin-$node_arch.tar.gz" -C "$node_stage"
+    dist="$node_stage/node-v${ver}-darwin-$node_arch"
+    ditto "$dist/bin/node" "$stage/node-$a"
+    if [ "$a" = "$HOST_ARCH" ]; then
+      # The host-arch binary also exists as plain `node` (keeps old layouts /
+      # prefetch semantics working without a resolver change).
+      ditto "$dist/bin/node" "$stage/node"
+    fi
+    echo "    node($a): $NODE_VERSION -> $stage/node-$a"
+    if [ -z "${NPM_COPIED:-}" ]; then
+      ditto "$dist/lib/node_modules/npm" "$stage/npm"
+      export PATH="$dist/bin:$PATH"
+      export npm_config_cache="$CACHE_DIR/npm-cache"
+      export npm_config_audit=false npm_config_fund=false npm_config_update_notifier=false
+      NPM_COPIED=1
+    fi
+  done
   install_dsh "$stage/dsh"
   rm -rf "$node_stage"
-  echo "$NODE_VERSION|$spec" > "$info"
-  echo "    runtime built: $stage ($NODE_VERSION + $spec)"
+  echo "$NODE_VERSION|$spec|$ARCH" > "$info"
+  echo "    runtime built: $stage ($NODE_VERSION + $spec, $ARCH)"
 }
 
 # ---------------------------------------------------------------------------
@@ -191,12 +230,20 @@ iconutil -c icns "$BUILD_DIR/AppIcon.iconset" -o "$BUILD_DIR/AppIcon.icns"
 cp "$BUILD_DIR/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 echo "==> [3/6] compiling app binary"
-swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" \
+# -arch flags: single arch for arm64/x86_64; both for universal (fat binary).
+SWIFT_ARCH=()
+case "$ARCH" in
+  arm64)   SWIFT_ARCH=(-arch arm64) ;;
+  x86_64)  SWIFT_ARCH=(-arch x86_64) ;;
+  universal) SWIFT_ARCH=(-arch arm64 -arch x86_64) ;;
+esac
+swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" "${SWIFT_ARCH[@]}" \
   -framework AppKit \
   -framework WebKit \
   -framework PDFKit \
   -o "$APP/Contents/MacOS/$APP_NAME" \
   "$SRC/main.swift" "$SRC/PreviewPanel.swift" "$SRC/TerminalPanel.swift" "$SRC/WikiPanel.swift"
+echo "    app binary: $ARCH ($(lipo -info "$APP/Contents/MacOS/$APP_NAME" 2>/dev/null | sed 's/^Architectures in the fat file.*are: //' || file -b "$APP/Contents/MacOS/$APP_NAME" | cut -d, -f1))"
 
 echo "==> [4/6] building self-contained runtime (download node + npm install dsh)"
 build_runtime

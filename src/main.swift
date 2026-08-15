@@ -458,9 +458,23 @@ final class ServerManager {
     }
 
     /// Bundled self-contained node binary (Contents/Resources/runtime/node).
+    /// Universal builds embed runtime/node-arm64 + runtime/node-x86_64 and a
+    /// plain `node` (host arch) for compatibility; pick by uname -m.
     private func bundledNode() -> String? {
         guard let res = Bundle.main.resourceURL else { return nil }
-        return res.appendingPathComponent("runtime/node").path
+        let runtime = res.appendingPathComponent("runtime")
+        var machine = utsname()
+        if uname(&machine) == 0 {
+            let arch = withUnsafeBytes(of: &machine.machine) { raw -> String in
+                let bytes = raw.bindMemory(to: CChar.self)
+                let len = bytes.firstIndex(of: 0) ?? raw.count
+                return String(decoding: UnsafeBufferPointer(start: bytes.baseAddress, count: len), as: UTF8.self)
+            }
+            let perArch = runtime.appendingPathComponent("node-\(arch)").path
+            if FileManager.default.isExecutableFile(atPath: perArch) { return perArch }
+        }
+        let plain = runtime.appendingPathComponent("node").path
+        return FileManager.default.isExecutableFile(atPath: plain) ? plain : nil
     }
 
     /// Bundled self-contained dsh entry (Contents/Resources/runtime/dsh/…).

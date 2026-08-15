@@ -21,7 +21,11 @@ BUILD_DIR=".build"
 
 [ -d "$APP" ] || { echo "ERROR: $APP not found — run ./build-app.sh first" >&2; exit 1; }
 
-ARCH="$(uname -m)"
+ARCH="${DSH_ARCH:-$(uname -m)}"
+case "$ARCH" in
+  aarch64) ARCH="arm64" ;;
+  amd64)   ARCH="x86_64" ;;
+esac
 VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")"
 BUNDLE_ID="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Contents/Info.plist")"
 PKG="$DIST/${APP_NAME}-${VERSION}-${ARCH}.pkg"

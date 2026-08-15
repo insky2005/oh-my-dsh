@@ -1,0 +1,23 @@
+'use strict';
+
+/**
+ * @oh-my-dsh/core — oh-my-dsh shared core (platform-independent Node module).
+ *
+ * Extracted from the macOS shell (src/*.swift) so Windows/Linux shells reuse
+ * the exact same logic: ANSI terminal emulator, port/service management,
+ * dsh upgrade and session RPC.
+ *
+ *   const { TerminalEmulator } = require('@oh-my-dsh/core');
+ *   const { isDSHServing } = require('@oh-my-dsh/core');
+ */
+
+module.exports = {
+  // ANSI terminal emulator (ported from TerminalPanel.swift)
+  TerminalEmulator: require('./lib/ansi').TerminalEmulator,
+  // Port probe / free port / service readiness (ported from main.swift ServerManager)
+  ...require('./lib/ports'),
+  // Version compare / registry / upgrade helpers (ported from VersionKit/RegistryConfig/DSHUpdater)
+  ...require('./lib/upgrade'),
+  // dsh web session RPC (ported from DSHSessionRPC)
+  ...require('./lib/session'),
+};

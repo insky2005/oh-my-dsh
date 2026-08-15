@@ -1,0 +1,15 @@
+{
+  "labels": [
+    { "name": "kind/bug", "color": "d73a4a", "description": "Bug report (see bug_report.yml)" },
+    { "name": "kind/feature", "color": "0e8a16", "description": "Feature request (see feature_request.yml)" },
+    { "name": "kind/regression", "color": "b60205", "description": "Behavior that worked before and broke" },
+    { "name": "platform/macos", "color": "1d76db", "description": "macOS-specific issue" },
+    { "name": "platform/windows", "color": "1d76db", "description": "Windows-specific (P2)" },
+    { "name": "platform/linux", "color": "1d76db", "description": "Linux-specific (P3)" },
+    { "name": "priority/high", "color": "e99695", "description": "High priority" },
+    { "name": "priority/medium", "color": "fbca04", "description": "Medium priority" },
+    { "name": "priority/low", "color": "c5def5", "description": "Low priority" },
+    { "name": "good first issue", "color": "7057ff", "description": "Good for newcomers" },
+    { "name": "dependencies", "color": "0366d6", "description": "Dependency updates (Dependabot)" }
+  ]
+}
