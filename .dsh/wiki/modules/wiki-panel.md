@@ -1,7 +1,7 @@
 ---
 title: 模块：WikiPanel.swift（Repo Wiki 面板）
 tags: [module, wiki, knowledge-base, rpc, skill]
-updated: 2026-08-15T14:22:31Z
+updated: 2026-08-15T15:31:24Z
 sources: [src/WikiPanel.swift, docs/repo-wiki-design.md, .dsh/skills/repo-wiki/SKILL.md]
 manual: false
 ---

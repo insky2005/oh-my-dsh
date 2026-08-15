@@ -1,7 +1,7 @@
 ---
 title: 工程约定
 tags: [conventions, l10n, build, qa-hooks, versioning]
-updated: 2026-08-15T12:19:42Z
+updated: 2026-08-15T15:31:24Z
 sources: [README.md, build-app.sh, src/main.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .gitignore]
 manual: false
 ---

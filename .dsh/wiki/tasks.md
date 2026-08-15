@@ -1,7 +1,7 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-08-15T12:19:42Z
+updated: 2026-08-15T15:31:24Z
 sources: [README.md, build-app.sh, make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md]
 manual: false
 ---
