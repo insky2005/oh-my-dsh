@@ -219,6 +219,8 @@ fi
 echo "==> [1/6] preparing build dirs"
 rm -rf "$BUILD_DIR" "$APP"
 mkdir -p "$BUILD_DIR" "$DIST" "$APP/Contents/MacOS" "$APP/Contents/Resources"
+# TMPDIR 在脚本开头已指向 $BUILD_DIR/tmp，rm 后必须重建（swiftc 依赖它）。
+mkdir -p "$BUILD_DIR/tmp"
 
 # swiftc needs writable caches; keep them inside the workspace (some sandboxes
 # block the default clang module cache under /var/folders).
@@ -232,20 +234,33 @@ iconutil -c icns "$BUILD_DIR/AppIcon.iconset" -o "$BUILD_DIR/AppIcon.icns"
 cp "$BUILD_DIR/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 echo "==> [3/6] compiling app binary"
-# -arch flags: single arch for arm64/x86_64; both for universal (fat binary).
-SWIFT_ARCH=()
+# 交叉编译：-target 指定 arch+最低系统版本（swiftc 6 不再接受裸 -arch）。
+# universal = 编译两个 arch 再 lipo 合成 fat binary。
+SWIFT_SOURCES=("$SRC/main.swift" "$SRC/PreviewPanel.swift" "$SRC/TerminalPanel.swift" "$SRC/WikiPanel.swift")
+APP_BIN="$APP/Contents/MacOS/$APP_NAME"
 case "$ARCH" in
-  arm64)   SWIFT_ARCH=(-arch arm64) ;;
-  x86_64)  SWIFT_ARCH=(-arch x86_64) ;;
-  universal) SWIFT_ARCH=(-arch arm64 -arch x86_64) ;;
+  arm64)
+    swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" -target arm64-apple-macos13 \
+      -framework AppKit -framework WebKit -framework PDFKit \
+      -o "$APP_BIN" "${SWIFT_SOURCES[@]}"
+    ;;
+  x86_64)
+    swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" -target x86_64-apple-macos13 \
+      -framework AppKit -framework WebKit -framework PDFKit \
+      -o "$APP_BIN" "${SWIFT_SOURCES[@]}"
+    ;;
+  universal)
+    swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" -target arm64-apple-macos13 \
+      -framework AppKit -framework WebKit -framework PDFKit \
+      -o "$BUILD_DIR/oh-my-dsh-arm64" "${SWIFT_SOURCES[@]}"
+    swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" -target x86_64-apple-macos13 \
+      -framework AppKit -framework WebKit -framework PDFKit \
+      -o "$BUILD_DIR/oh-my-dsh-x86_64" "${SWIFT_SOURCES[@]}"
+    lipo -create -output "$APP_BIN" "$BUILD_DIR/oh-my-dsh-arm64" "$BUILD_DIR/oh-my-dsh-x86_64"
+    rm -f "$BUILD_DIR/oh-my-dsh-arm64" "$BUILD_DIR/oh-my-dsh-x86_64"
+    ;;
 esac
-swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" "${SWIFT_ARCH[@]}" \
-  -framework AppKit \
-  -framework WebKit \
-  -framework PDFKit \
-  -o "$APP/Contents/MacOS/$APP_NAME" \
-  "$SRC/main.swift" "$SRC/PreviewPanel.swift" "$SRC/TerminalPanel.swift" "$SRC/WikiPanel.swift"
-echo "    app binary: $ARCH ($(lipo -info "$APP/Contents/MacOS/$APP_NAME" 2>/dev/null | sed 's/^Architectures in the fat file.*are: //' || file -b "$APP/Contents/MacOS/$APP_NAME" | cut -d, -f1))"
+echo "    app binary: $ARCH ($(lipo -info "$APP_BIN" 2>/dev/null | sed 's/^Architectures in the fat file.*are: //' || file -b "$APP_BIN" | cut -d, -f1))"
 
 echo "==> [4/6] building self-contained runtime (download node + npm install dsh)"
 build_runtime
@@ -324,6 +339,6 @@ echo "==> [6/6] ad-hoc code signing"
 codesign --force --deep --sign - "$APP"
 
 echo ""
-echo "Built: $(pwd)/$APP"
+echo "Built: $APP"
 du -sh "$APP" | sed 's/^/Size: /'
-echo "Run with:  open \"$(pwd)/$APP\""
+echo "Run with:  open \"$APP\""

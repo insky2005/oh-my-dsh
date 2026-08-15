@@ -81,5 +81,5 @@ echo "Built:"
 du -sh "$PKG" "$DMG" | sed 's/^/  /'
 echo ""
 echo "Install with:"
-echo "  open \"$(pwd)/$PKG\"        (installer → /Applications)"
-echo "  open \"$(pwd)/$DMG\"        (drag oh-my-dsh.app to Applications)"
+echo "  open \"$PKG\"        (installer → /Applications)"
+echo "  open \"$DMG\"        (drag oh-my-dsh.app to Applications)"
