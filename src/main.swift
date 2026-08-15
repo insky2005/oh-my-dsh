@@ -466,9 +466,10 @@ final class ServerManager {
         var machine = utsname()
         if uname(&machine) == 0 {
             let arch = withUnsafeBytes(of: &machine.machine) { raw -> String in
-                let bytes = raw.bindMemory(to: CChar.self)
-                let len = bytes.firstIndex(of: 0) ?? raw.count
-                return String(decoding: UnsafeBufferPointer(start: bytes.baseAddress, count: len), as: UTF8.self)
+                let bytes = raw.bindMemory(to: UInt8.self)
+                var s = ""
+                for b in bytes where b != 0 { s.append(Character(UnicodeScalar(b))) }
+                return s
             }
             let perArch = runtime.appendingPathComponent("node-\(arch)").path
             if FileManager.default.isExecutableFile(atPath: perArch) { return perArch }
