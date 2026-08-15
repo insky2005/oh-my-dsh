@@ -1631,7 +1631,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     // MARK: dsh upgrade & registry
 
-    private func autoUpgradeEnabled() -> Bool {
+    func autoUpgradeEnabled() -> Bool {
         if ProcessInfo.processInfo.environment["DSH_AUTO_UPGRADE"] == "0" { return false }
         return UserDefaults.standard.object(forKey: "autoUpgradeDsh") as? Bool ?? true
     }
@@ -1708,7 +1708,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    @objc private func upgradeDSH() {
+    @objc func upgradeDSH() {
         guard let node = server.resolveNode(), let bin = server.resolveDSHBin(),
               let updater = DSHUpdater(nodePath: node, dshBin: bin) else {
             let alert = NSAlert()
@@ -1758,11 +1758,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    @objc private func toggleAutoUpgrade(_ sender: NSMenuItem) {
-        let enabled = sender.state == .off
+    /// Shared auto-upgrade toggle used by the Settings menu and the Settings
+    /// window; keeps the menu checkbox in sync.
+    func setAutoUpgradeEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: "autoUpgradeDsh")
-        sender.state = enabled ? .on : .off
+        autoUpgradeMenuItem?.state = enabled ? .on : .off
         AppLog.shared.log("auto-upgrade \(enabled ? "enabled" : "disabled")")
+    }
+
+    @objc private func toggleAutoUpgrade(_ sender: NSMenuItem) {
+        setAutoUpgradeEnabled(sender.state == .off)
     }
 
     @objc private func setRegistry() {
@@ -2116,10 +2121,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     @objc private func setLanguage(_ sender: NSMenuItem) {
         switch sender.tag {
-        case 0: L10n.set(nil)              // follow system
-        case 1: L10n.set("zh")
-        default: L10n.set("en")
+        case 0: applyLanguage(nil)              // follow system
+        case 1: applyLanguage("zh")
+        default: applyLanguage("en")
         }
+    }
+
+    /// Apply a shell language and refresh everything that displays it — the
+    /// menu and the dsh web page (the rebuilt WebView injects a
+    /// navigator.language override, so the page language follows immediately).
+    /// Shared by the Language menu and the Settings window.
+    func applyLanguage(_ lang: String?) {
+        L10n.set(lang)
         UserDefaults.standard.set([L10n.isZh ? "zh-CN" : "en-US"], forKey: "AppleLanguages")
         AppLog.shared.log("language set: lang=\(L10n.lang) followSystem=\(!L10n.hasExplicitChoice) AppleLanguages=\(UserDefaults.standard.array(forKey: "AppleLanguages") ?? [])")
         buildMenu() // rebuild the whole menu in the new language
@@ -2136,6 +2149,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     /// Custom, wider About window (the stock About panel wraps long lines).
     private var aboutWindow: NSWindow?
+
+    /// Settings window (⌘,) — one instance, kept alive like the About window.
+    private var settingsWindowController: SettingsWindowController?
+    /// In-memory guard so the onboarding sheet can never appear twice in one
+    /// session, even if the UserDefaults flag write is delayed.
+    private var didShowOnboarding = false
+
+    @objc private func openSettingsWindow(_ sender: Any?) {
+        if settingsWindowController == nil {
+            settingsWindowController = SettingsWindowController(appDelegate: self)
+        }
+        settingsWindowController?.show()
+    }
+
+    /// dsh runtime version for the Settings window (facts refreshed so the
+    /// value is current after an upgrade).
+    func settingsDSHVersion() -> String {
+        server.refreshFacts()
+        return server.dshVersion
+    }
+
+    /// First-run welcome sheet (once, ever). Shown shortly after launch once
+    /// the main window is on screen; dismissed with "Get Started" or
+    /// "Learn More" (which opens the repo README in the browser).
+    private func showOnboardingIfNeeded() {
+        guard !didShowOnboarding, !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") else { return }
+        didShowOnboarding = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self = self, let window = self.window else { return }
+            let alert = NSAlert()
+            alert.messageText = L10n.tr("onboarding.title")
+            alert.informativeText = L10n.tr("onboarding.points")
+            alert.addButton(withTitle: L10n.tr("onboarding.getStarted"))
+            alert.addButton(withTitle: L10n.tr("onboarding.learnMore"))
+            alert.beginSheetModal(for: window) { response in
+                UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
+                if response == .alertSecondButtonReturn,
+                   let url = URL(string: "https://github.com/insky2005/oh-my-dsh") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            AppLog.shared.log("onboarding sheet shown")
+        }
+    }
 
     @objc private func showAbout() {
         if let w = aboutWindow {
@@ -2298,6 +2355,300 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let dir = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/oh-my-dsh")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         NSWorkspace.shared.open(dir)
+    }
+}
+
+// MARK: - Settings window
+
+/// The app's Settings window: language / registry / upgrade / theme /
+/// shortcuts. One instance per app, owned strongly by AppDelegate (same
+/// pattern as the About window). The existing Settings menu items stay as a
+/// fast path; this window is the richer surface.
+final class SettingsWindowController {
+
+    weak var appDelegate: AppDelegate?
+    private var window: NSWindow!
+    private var registryField: NSTextField!
+    private var registryHint: NSTextField!
+    private var autoUpgradeCheckbox: NSButton!
+    private var versionLabel: NSTextField!
+    private var languageButtons: [NSButton] = []
+    private var themeButtons: [NSButton] = []
+
+    /// (label key, key equivalent) pairs for the read-only Shortcuts list.
+    private let shortcutRows: [(key: String, shortcut: String)] = [
+        ("menu.checkUpgrade", "⌘U"),
+        ("menu.openLogs", "⌘L"),
+        ("menu.togglePreview", "⌥⌘P"),
+        ("menu.toggleTerminal", "⌥⌘T"),
+        ("menu.toggleWiki", "⌥⌘W"),
+        ("settings.openMenu", "⌘,"),
+    ]
+
+    init(appDelegate: AppDelegate) {
+        self.appDelegate = appDelegate
+    }
+
+    func show() {
+        if window == nil { buildWindow() }
+        syncVersion()
+        autoUpgradeCheckbox?.state = (appDelegate?.autoUpgradeEnabled() ?? true) ? .on : .off
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        AppLog.shared.log("settings window shown")
+    }
+
+    // MARK: Construction
+
+    private func buildWindow() {
+        let w = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 560),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        w.isReleasedWhenClosed = false
+        w.minSize = NSSize(width: 480, height: 460)
+        window = w
+        buildContent()
+        w.center()
+    }
+
+    /// (Re)build the window content. Called on first show and again after a
+    /// language change so every label is localized in the new language.
+    private func buildContent() {
+        guard let window = window else { return }
+        window.title = L10n.tr("settings.title")
+
+        let languageSection = buildLanguageSection()
+        let registrySection = buildRegistrySection()
+        let upgradeSection = buildUpgradeSection()
+        let themeSection = buildThemeSection()
+        let shortcutsSection = buildShortcutsSection()
+
+        let sep1 = makeSeparator(), sep2 = makeSeparator(), sep3 = makeSeparator(), sep4 = makeSeparator()
+        let sections = [languageSection, sep1, registrySection, sep2,
+                        upgradeSection, sep3, themeSection, sep4, shortcutsSection]
+
+        let mainStack = NSStackView(views: sections)
+        mainStack.orientation = .vertical
+        mainStack.alignment = .leading
+        mainStack.spacing = 16
+        mainStack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.documentView = mainStack
+        NSLayoutConstraint.activate([
+            mainStack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            mainStack.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
+            mainStack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            mainStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+        ])
+        window.contentView = scroll
+
+        // Stretch every section/separator across the content width (the stack
+        // otherwise hugs its content) and let the registry field fill its row.
+        for view in sections {
+            view.widthAnchor.constraint(equalTo: mainStack.widthAnchor, constant: -40).isActive = true
+        }
+        registryField.widthAnchor.constraint(equalTo: registrySection.widthAnchor).isActive = true
+    }
+
+    /// A vertical section: bold header + arranged controls, leading-aligned.
+    private func makeSection(headerKey: String, views: [NSView]) -> NSStackView {
+        let stack = NSStackView(views: [sectionHeader(headerKey)] + views)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
+    }
+
+    private func sectionHeader(_ key: String) -> NSTextField {
+        let label = NSTextField(labelWithString: L10n.tr(key))
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }
+
+    private func makeSeparator() -> NSBox {
+        let box = NSBox()
+        box.boxType = .separator
+        box.translatesAutoresizingMaskIntoConstraints = false
+        return box
+    }
+
+    private func makeRadio(title: String, tag: Int, action: Selector) -> NSButton {
+        let b = NSButton(radioButtonWithTitle: title, target: self, action: action)
+        b.tag = tag
+        b.translatesAutoresizingMaskIntoConstraints = false
+        return b
+    }
+
+    // MARK: Sections
+
+    private func buildLanguageSection() -> NSStackView {
+        let follow = makeRadio(title: L10n.tr("settings.followSystem"), tag: 0, action: #selector(languageChanged(_:)))
+        let zh = makeRadio(title: "中文", tag: 1, action: #selector(languageChanged(_:)))
+        let en = makeRadio(title: "English", tag: 2, action: #selector(languageChanged(_:)))
+        languageButtons = [follow, zh, en]
+        if L10n.hasExplicitChoice {
+            (L10n.isZh ? zh : en).state = .on
+        } else {
+            follow.state = .on
+        }
+        let row = NSStackView(views: languageButtons)
+        row.orientation = .horizontal
+        row.spacing = 18
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return makeSection(headerKey: "settings.language", views: [row])
+    }
+
+    private func buildRegistrySection() -> NSStackView {
+        registryField = NSTextField(string: RegistryConfig.current)
+        registryField.translatesAutoresizingMaskIntoConstraints = false
+
+        let save = NSButton(title: L10n.tr("btn.save"), target: self, action: #selector(saveRegistry(_:)))
+        save.translatesAutoresizingMaskIntoConstraints = false
+        let reset = NSButton(title: L10n.tr("menu.resetRegistry"), target: self, action: #selector(resetRegistry(_:)))
+        reset.translatesAutoresizingMaskIntoConstraints = false
+        let buttons = NSStackView(views: [save, reset])
+        buttons.orientation = .horizontal
+        buttons.spacing = 8
+        buttons.translatesAutoresizingMaskIntoConstraints = false
+
+        registryHint = NSTextField(wrappingLabelWithString: registryHintText())
+        registryHint.font = .systemFont(ofSize: 11)
+        registryHint.textColor = .secondaryLabelColor
+        registryHint.translatesAutoresizingMaskIntoConstraints = false
+
+        let section = makeSection(headerKey: "settings.registry", views: [registryField, buttons, registryHint])
+        buttons.trailingAnchor.constraint(equalTo: section.trailingAnchor).isActive = true
+        registryHint.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        return section
+    }
+
+    private func buildUpgradeSection() -> NSStackView {
+        autoUpgradeCheckbox = NSButton(checkboxWithTitle: L10n.tr("menu.autoUpgrade"),
+                                       target: self, action: #selector(autoUpgradeToggled(_:)))
+        autoUpgradeCheckbox.state = (appDelegate?.autoUpgradeEnabled() ?? true) ? .on : .off
+        autoUpgradeCheckbox.translatesAutoresizingMaskIntoConstraints = false
+
+        versionLabel = NSTextField(labelWithString: L10n.tr("settings.dshVersion",
+                                                            appDelegate?.settingsDSHVersion() ?? L10n.tr("fact.unknown")))
+        versionLabel.font = .systemFont(ofSize: 11)
+        versionLabel.textColor = .secondaryLabelColor
+        versionLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let check = NSButton(title: L10n.tr("menu.checkUpgrade"), target: self, action: #selector(checkUpgradeTapped(_:)))
+        check.translatesAutoresizingMaskIntoConstraints = false
+
+        return makeSection(headerKey: "settings.upgrade", views: [autoUpgradeCheckbox, versionLabel, check])
+    }
+
+    private func buildThemeSection() -> NSStackView {
+        let system = makeRadio(title: L10n.tr("settings.followSystem"), tag: 0, action: #selector(themeChanged(_:)))
+        let light = makeRadio(title: L10n.tr("settings.appearanceLight"), tag: 1, action: #selector(themeChanged(_:)))
+        let dark = makeRadio(title: L10n.tr("settings.appearanceDark"), tag: 2, action: #selector(themeChanged(_:)))
+        themeButtons = [system, light, dark]
+        switch AppTheme.current {
+        case "light": light.state = .on
+        case "dark": dark.state = .on
+        default: system.state = .on
+        }
+        let row = NSStackView(views: themeButtons)
+        row.orientation = .horizontal
+        row.spacing = 18
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return makeSection(headerKey: "settings.appearance", views: [row])
+    }
+
+    private func buildShortcutsSection() -> NSStackView {
+        var cells: [[NSView]] = []
+        for row in shortcutRows {
+            let label = NSTextField(labelWithString: L10n.tr(row.key))
+            label.translatesAutoresizingMaskIntoConstraints = false
+            let key = NSTextField(labelWithString: row.shortcut)
+            key.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+            key.textColor = .secondaryLabelColor
+            key.alignment = .right
+            key.translatesAutoresizingMaskIntoConstraints = false
+            cells.append([label, key])
+        }
+        let grid = NSGridView(views: cells)
+        grid.rowSpacing = 6
+        grid.columnSpacing = 24
+        grid.column(at: 0).xPlacement = .leading
+        grid.column(at: 1).xPlacement = .fill
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        let section = makeSection(headerKey: "settings.shortcuts", views: [grid])
+        grid.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        return section
+    }
+
+    // MARK: Actions
+
+    @objc private func languageChanged(_ sender: NSButton) {
+        for b in languageButtons { b.state = (b === sender) ? .on : .off }
+        let lang: String? = sender.tag == 0 ? nil : (sender.tag == 1 ? "zh" : "en")
+        appDelegate?.applyLanguage(lang)
+        // Every label in this window is localized — rebuild it in the new language.
+        buildContent()
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func themeChanged(_ sender: NSButton) {
+        for b in themeButtons { b.state = (b === sender) ? .on : .off }
+        switch sender.tag {
+        case 1: AppTheme.set("light")
+        case 2: AppTheme.set("dark")
+        default: AppTheme.set("system")
+        }
+        // NSApp.appearance drives every window (incl. the WKWebView), which
+        // re-renders with the new appearance automatically — no reload needed.
+        AppLog.shared.log("appearance set to \(AppTheme.current)")
+    }
+
+    @objc private func saveRegistry(_ sender: Any?) {
+        let url = registryField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if url.isEmpty { RegistryConfig.reset() } else { RegistryConfig.set(url) }
+        AppLog.shared.log("registry set to \(RegistryConfig.current)")
+        registryHint.stringValue = registryHintText()
+    }
+
+    @objc private func resetRegistry(_ sender: Any?) {
+        RegistryConfig.reset()
+        registryField.stringValue = RegistryConfig.current
+        registryHint.stringValue = registryHintText()
+        AppLog.shared.log("registry reset to \(RegistryConfig.current)")
+    }
+
+    @objc private func autoUpgradeToggled(_ sender: NSButton) {
+        appDelegate?.setAutoUpgradeEnabled(sender.state == .on)
+    }
+
+    @objc private func checkUpgradeTapped(_ sender: Any?) {
+        appDelegate?.upgradeDSH()
+    }
+
+    // MARK: Sync helpers
+
+    private func syncVersion() {
+        guard let delegate = appDelegate else { return }
+        versionLabel?.stringValue = L10n.tr("settings.dshVersion", delegate.settingsDSHVersion())
+    }
+
+    private func registryHintText() -> String {
+        let env = ProcessInfo.processInfo.environment["DSH_REGISTRY"] ?? ""
+        if !env.isEmpty {
+            return L10n.tr("settings.registryEnvOverride", RegistryConfig.current)
+        }
+        return L10n.tr("settings.registryHint", RegistryConfig.current)
     }
 }
 
