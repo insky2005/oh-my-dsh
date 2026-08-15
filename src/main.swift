@@ -2069,8 +2069,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             w.makeKeyAndOrderFront(nil)
             return
         }
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.7.1"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "63"
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.8.0"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "64"
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 330),

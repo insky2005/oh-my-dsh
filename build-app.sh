@@ -34,8 +34,8 @@ cd "$(dirname "$0")"
 
 APP_NAME="oh-my-dsh"
 BUNDLE_ID="com.ohmydsh.app"
-VERSION="1.7.1"
-BUILD="63"
+VERSION="1.8.0"
+BUILD="64"
 
 SRC="src"
 BUILD_DIR=".build"
