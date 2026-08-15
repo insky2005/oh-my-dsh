@@ -30,11 +30,12 @@
 ## 测试
 
 ```bash
-tests/terminal-emulator/run.sh   # ANSI 模拟器单测（P1 起迁入 core/tests/）
-tests/wiki-panel/run.sh          # Wiki 面板模型层单测
+node --test core/tests/        # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC）
+tests/wiki-panel/run.sh        # Wiki 面板模型层单测
+tests/terminal-emulator/run.sh # 模拟器测试（已迁 core/tests/ansi.test.js 的薄封装）
 ```
 
-提交前保持全绿；CI 会在 push/PR 自动跑（macOS arm64/x64/Universal）。
+提交前保持全绿；CI 会在 push/PR 自动跑（macOS arm64/x64/Universal + core 单测）。
 
 ## 提交规范
 
