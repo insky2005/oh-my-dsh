@@ -31,14 +31,16 @@
 #
 set -euo pipefail
 cd "$(dirname "$0")"
+# 仓库根：脚本位于 platforms/macos/，构建缓存/产物统一放仓库根（CI 缓存、.gitignore 一致）。
+ROOT="$(cd ../.. && pwd)"
 
 APP_NAME="oh-my-dsh"
 BUNDLE_ID="com.ohmydsh.app"
 
 # 版本单一来源：VERSION 取自最近 semver git tag（vX.Y.Z），BUILD 取自 CI 运行号；
 # 本地/无 tag 时由 scripts/version.sh 回退默认值。改版本 = 打 tag，勿在此硬编码。
-VERSION="$(scripts/version.sh | head -1)"
-BUILD="$(scripts/version.sh | tail -1)"
+VERSION="$("$ROOT/scripts/version.sh" | head -1)"
+BUILD="$("$ROOT/scripts/version.sh" | tail -1)"
 
 # 目标架构：arm64 / x86_64 / universal（默认本机架构）。CI 用矩阵传参。
 #   DSH_ARCH=arm64|x86_64|universal ./build-app.sh
@@ -52,9 +54,9 @@ case "$ARCH" in
 esac
 
 SRC="src"
-BUILD_DIR=".build"
-CACHE_DIR=".cache"
-DIST="dist"
+BUILD_DIR="$ROOT/.build"
+CACHE_DIR="$ROOT/.cache"
+DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
 
 # China domestic mirrors by default (override via env)

@@ -23,7 +23,7 @@ jobs:
       - name: Wiki panel tests
         run: tests/wiki-panel/run.sh
       - name: Clean build (no cache restore — validates fresh downloads)
-        run: ./build-app.sh
+        run: ./platforms/macos/build-app.sh
       - name: Verify bundle
         run: |
           test -x dist/oh-my-dsh.app/Contents/MacOS/oh-my-dsh

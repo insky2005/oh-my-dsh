@@ -2,7 +2,7 @@
 title: 模块：main.swift（壳层核心）
 tags: [module, main, server, appdelegate, menu]
 updated: 2026-08-15T15:31:24Z
-sources: [src/main.swift]
+sources: [platforms/macos/src/main.swift]
 manual: false
 ---
 

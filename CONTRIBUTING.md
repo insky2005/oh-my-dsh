@@ -28,9 +28,9 @@ oh-my-dsh/
 - `curl`、`python3`，以及网络（构建期下载 Node + 从 registry 安装 dsh）
 
 ```bash
-./build-app.sh --prefetch   # 可选：预下载 Node + 预装 dsh 到 .cache/
-./build-app.sh              # 全量构建 → dist/oh-my-dsh.app
-./make-pkg.sh               # 生成 .pkg / .dmg
+./platforms/macos/build-app.sh --prefetch  # 可选：预下载 Node + 预装 dsh 到 .cache/
+./platforms/macos/build-app.sh             # 全量构建 → dist/oh-my-dsh.app
+./platforms/macos/make-pkg.sh             # 生成 .pkg / .dmg
 ```
 
 ## 运行测试

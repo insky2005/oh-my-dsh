@@ -51,7 +51,7 @@ open "dist/oh-my-dsh-1.8.0-arm64.dmg"
 **构建安装包**（基于已构建的 `dist/oh-my-dsh.app`）：
 
 ```bash
-./make-pkg.sh     # 生成 arm64 的 .pkg 与 .dmg
+./platforms/macos/make-pkg.sh   # 生成 arm64 的 .pkg 与 .dmg
 ```
 
 ## 环境要求
@@ -62,8 +62,8 @@ open "dist/oh-my-dsh-1.8.0-arm64.dmg"
 ## 构建
 
 ```bash
-./build-app.sh --prefetch   # （可选）先预下载 Node + 预装 dsh 到 .cache/，不产出 App
-./build-app.sh              # 全量构建 → dist/oh-my-dsh.app（复用 .cache/，无需再联网）
+./platforms/macos/build-app.sh --prefetch  # （可选）先预下载 Node + 预装 dsh 到 .cache/，不产出 App
+./platforms/macos/build-app.sh             # 全量构建 → dist/oh-my-dsh.app（复用 .cache/，无需再联网）
 ```
 
 内置运行时是**构建时现做**的，不复制本机的任何 node/dsh 文件：
@@ -109,7 +109,7 @@ open "dist/oh-my-dsh.app"
 - **自动**：设置菜单 →「自动升级 dsh」开关（默认开），每次启动自动检查（24 小时内最多一次），发现新版本在启动服务前先升级；
 - 升级只作用于**内置运行时**（`Contents/Resources/runtime/dsh`），绝不碰系统安装的 dsh；
 - 升级日志见 `~/Library/Logs/oh-my-dsh/app.log`（`auto-upgrade: …` 行）；
-- 注意：升级会改写 App 包内文件，ad-hoc 签名因此失效，但本地运行不受影响；重新 `./build-app.sh` 可还原干净包。
+- 注意：升级会改写 App 包内文件，ad-hoc 签名因此失效，但本地运行不受影响；重新 `./platforms/macos/build-app.sh` 可还原干净包。
 
 ## 退出行为说明
 
@@ -146,10 +146,10 @@ open "dist/oh-my-dsh.app"
 ## 目录
 
 ```
-src/main.swift       原生壳（WKWebView 窗口 + 服务管理 + 菜单 + 信号处理 + dsh 升级/registry + 关于面板）
-src/MakeIcon.swift   App 图标生成器（渲染 → iconset → icns）
-build-app.sh         一键构建脚本（编译、打包、国内镜像下载 Node、npm 装 dsh、预下载模式、签名）
-make-pkg.sh          安装包脚本（pkgbuild 生成 .pkg 安装器 + hdiutil 生成 .dmg 镜像）
+platforms/macos/src/main.swift      原生壳（WKWebView 窗口 + 服务管理 + 菜单 + 信号处理 + dsh 升级/registry + 关于面板）
+platforms/macos/src/MakeIcon.swift  App 图标生成器（渲染 → iconset → icns）
+platforms/macos/build-app.sh        一键构建脚本（编译、打包、国内镜像下载 Node、npm 装 dsh、预下载模式、签名）
+platforms/macos/make-pkg.sh         安装包脚本（pkgbuild 生成 .pkg 安装器 + hdiutil 生成 .dmg 镜像）
 core/                共享核心（Node 模块：ANSI 模拟器 / 服务管理 / 升级 / 会话 RPC，跨平台复用）
 platforms/           各平台壳（macos/ 现有壳，windows/ linux/ 规划中）
 scripts/             跨平台工具（版本读取 / CHANGELOG 生成 / 校验和）

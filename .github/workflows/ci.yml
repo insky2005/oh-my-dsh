@@ -48,7 +48,7 @@ jobs:
           swiftc -O -swift-version 5 -module-cache-path .build/module-cache \
             -framework AppKit -framework WebKit -framework PDFKit \
             -o /tmp/oh-my-dsh-check \
-            src/main.swift src/PreviewPanel.swift src/TerminalPanel.swift src/WikiPanel.swift
+            platforms/macos/src/main.swift platforms/macos/src/PreviewPanel.swift platforms/macos/src/TerminalPanel.swift platforms/macos/src/WikiPanel.swift
           file /tmp/oh-my-dsh-check
 
   # --- Full app build matrix: arm64 / x86_64 / universal --------------------
@@ -71,13 +71,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache
-          key: cache-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('build-app.sh', 'scripts/version.sh') }}
+          key: cache-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('platforms/macos/build-app.sh', 'scripts/version.sh') }}
           restore-keys: |
             cache-${{ runner.os }}-${{ matrix.arch }}-
       - name: Build app
         env:
           DSH_ARCH: ${{ matrix.arch }}
-        run: ./build-app.sh
+        run: ./platforms/macos/build-app.sh
       - name: Verify bundle
         run: |
           test -x dist/oh-my-dsh.app/Contents/MacOS/oh-my-dsh

@@ -2,7 +2,7 @@
 title: 架构
 tags: [architecture, layers, dataflow, deployment]
 updated: 2026-08-15T14:22:31Z
-sources: [src/main.swift, src/PreviewPanel.swift, src/TerminalPanel.swift, src/WikiPanel.swift, docs/repo-wiki-design.md]
+sources: [platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, docs/repo-wiki-design.md]
 manual: false
 ---
 
@@ -41,7 +41,7 @@ manual: false
 - 所有 L10n 文案集中在 `main.swift` 的 `L10n.table`；
 - 面板通过 `serverPortProvider` 闭包取当前端口，`serverReady(port:)` 在服务就绪后获得门控通知；
 - **共享项目目录**：`ProjectDirectory`（main.swift）保存当前活动项目目录，三处消费——预览树、终端新会话 cwd、wiki 根解析（`resolveProjectDirectory` 优先返回它，其次实时查询并缓存）；
-- 构建依赖：`build-app.sh` 显式列出编译源文件，新增文件必须登记（v1.7.0 加入了 `WikiPanel.swift`）。
+- 构建依赖：`platforms/macos/build-app.sh` 显式列出编译源文件，新增文件必须登记（v1.7.0 加入了 `WikiPanel.swift`）。
 
 ## 关键数据流
 
@@ -55,7 +55,7 @@ manual: false
 ## 部署形态
 
 - 单 `.app`（ad-hoc 签名，`codesign --force --deep --sign -`），自包含运行时在 `Contents/Resources/runtime/`（`node` + `npm/` + `dsh/` 依赖树）；
-- 发布物：`.pkg`（preinstall 先删旧版再装到 /Applications）+ `.dmg`（拖拽安装），由 `make-pkg.sh` 生成；
+- 发布物：`.pkg`（preinstall 先删旧版再装到 /Applications）+ `.dmg`（拖拽安装），由 `platforms/macos/make-pkg.sh` 生成；
 - About 面板展示运行时事实：dsh 版本、Node 版本、运行时来源（内置/系统）、registry；
 - dsh 升级只作用于内置运行时（`DSHUpdater.init` 要求路径含 `/Contents/Resources/runtime/`），绝不碰系统安装；升级会改写包内文件使 ad-hoc 签名失效（README 明示，本地运行不受影响）。
 

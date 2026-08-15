@@ -30,17 +30,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache
-          key: release-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('build-app.sh', 'scripts/version.sh') }}
+          key: release-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('platforms/macos/build-app.sh', 'scripts/version.sh') }}
           restore-keys: |
             release-${{ runner.os }}-${{ matrix.arch }}-
       - name: Build app
         env:
           DSH_ARCH: ${{ matrix.arch }}
-        run: ./build-app.sh
+        run: ./platforms/macos/build-app.sh
       - name: Package .pkg + .dmg
         env:
           DSH_ARCH: ${{ matrix.arch }}
-        run: ./make-pkg.sh
+        run: ./platforms/macos/make-pkg.sh
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

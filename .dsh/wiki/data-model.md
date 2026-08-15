@@ -2,7 +2,7 @@
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
 updated: 2026-08-15T14:22:31Z
-sources: [src/main.swift, src/WikiPanel.swift, src/TerminalPanel.swift, docs/repo-wiki-design.md]
+sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, docs/repo-wiki-design.md]
 manual: false
 ---
 
@@ -63,7 +63,7 @@ title: <标题>
 tags: [a, b]
 updated: 2026-08-15T07:19:55Z   # ISO8601 UTC，代理最近触碰时间
 sources:                        # 依据的相对路径，供陈旧检测
-  - src/main.swift
+  - platforms/macos/src/main.swift
 manual: false                   # true = 用户手改，代理永不覆盖
 ---
 ```

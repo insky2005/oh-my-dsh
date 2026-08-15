@@ -2,7 +2,7 @@
 title: 工程约定
 tags: [conventions, l10n, build, qa-hooks, versioning]
 updated: 2026-08-15T15:31:24Z
-sources: [README.md, build-app.sh, src/main.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .gitignore]
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/src/main.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .gitignore]
 manual: false
 ---
 
@@ -23,10 +23,10 @@ manual: false
 
 ## 构建与代码组织
 
-- 编译：`swiftc -O -swift-version 5`，frameworks 为 AppKit/WebKit/PDFKit；**编译源文件清单显式写在 `build-app.sh`**，新增 `.swift` 文件必须登记；
+- 编译：`swiftc -O -swift-version 5`，frameworks 为 AppKit/WebKit/PDFKit；**编译源文件清单显式写在 `platforms/macos/build-app.sh`**，新增 `.swift` 文件必须登记；
 - `module-cache-path` 固定在 `.build/module-cache`（沙箱/环境问题规避）；
 - 图标：`MakeIcon.swift` 程序化渲染（16…1024px 全尺寸）→ `iconutil -c icns`，不提交二进制图；
-- 版本号：`build-app.sh` 顶部 `VERSION` / `BUILD` 递增；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；
+- 版本号：`platforms/macos/build-app.sh` 顶部 `VERSION` / `BUILD` 递增；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`platforms/macos/make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；
 - `git status` 应只出现源码/文档变更：`.build/` `.cache/` `dist/` `pic/` `.DS_Store` 均在 `.gitignore`。
 
 ## 面板 UI 约定

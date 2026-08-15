@@ -2,7 +2,7 @@
 title: 仓库概览
 tags: [overview, tech-stack, build, run, test]
 updated: 2026-08-15T15:31:24Z
-sources: [README.md, build-app.sh, make-pkg.sh, src/main.swift, src/PreviewPanel.swift, src/TerminalPanel.swift, src/WikiPanel.swift, src/MakeIcon.swift, docs/productization.md]
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/MakeIcon.swift, docs/productization.md]
 manual: false
 ---
 
@@ -20,22 +20,22 @@ oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deeps
 | Web 容器 | WebKit `WKWebView`（渲染 `http://127.0.0.1:<port>`） |
 | PDF 预览 | PDFKit |
 | 内置运行时 | Node（darwin-arm64 tarball）+ npm + `@deepseek-ai/dsh` 依赖树（构建期下载，嵌入 `Contents/Resources/runtime/`） |
-| 构建 | bash（`build-app.sh`）、`swiftc`、`codesign`、`iconutil`、`curl`、`python3` |
-| 打包 | `pkgbuild` + `hdiutil`（`make-pkg.sh` → .pkg / .dmg） |
+| 构建 | bash（`platforms/macos/build-app.sh`）、`swiftc`、`codesign`、`iconutil`、`curl`、`python3` |
+| 打包 | `pkgbuild` + `hdiutil`（`platforms/macos/make-pkg.sh` → .pkg / .dmg） |
 | 目标平台 | macOS 13+（Apple Silicon / arm64；Info.plist `LSMinimumSystemVersion` = 13.0） |
 
-当前工作区版本：`build-app.sh` 顶部 `VERSION="1.7.1"`、`BUILD="63"`；Bundle ID `com.ohmydsh.app`（main.swift About 面板回退值同为 1.7.1 / 63）。最近 git 提交：`ae9d919`（"chore(wiki): 知识库增量更新（同步 v1.7.1 修复与产品化文档）"）；v1.7.1 (build 63) 自 `80dedfa` 提交，与工作区源码一致。
+当前工作区版本：`platforms/macos/build-app.sh` 顶部 `VERSION="1.7.1"`、`BUILD="63"`；Bundle ID `com.ohmydsh.app`（main.swift About 面板回退值同为 1.7.1 / 63）。最近 git 提交：`ae9d919`（"chore(wiki): 知识库增量更新（同步 v1.7.1 修复与产品化文档）"）；v1.7.1 (build 63) 自 `80dedfa` 提交，与工作区源码一致。
 
 ## 目录布局
 
 ```
-src/main.swift       壳层核心（日志/L10n/服务管理/升级/窗口/菜单/右栏插槽）约 2236 行
-src/PreviewPanel.swift  预览面板（文件/文件夹预览 + 项目目录树 + 共享 UI 组件）约 1445 行
-src/TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）约 1875 行
-src/WikiPanel.swift      Repo Wiki 面板（知识库生成/维护/浏览）约 1928 行
-src/MakeIcon.swift       App 图标生成器（渲染 → iconset → icns）104 行
-build-app.sh         一键构建脚本（6 步：目录/图标/编译/运行时/Info.plist/签名）
-make-pkg.sh          .pkg 安装包 + .dmg 镜像脚本
+platforms/macos/src/main.swift       壳层核心（日志/L10n/服务管理/升级/窗口/菜单/右栏插槽）约 2236 行
+platforms/macos/src/PreviewPanel.swift  预览面板（文件/文件夹预览 + 项目目录树 + 共享 UI 组件）约 1445 行
+platforms/macos/src/TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）约 1875 行
+platforms/macos/src/WikiPanel.swift      Repo Wiki 面板（知识库生成/维护/浏览）约 1928 行
+platforms/macos/src/MakeIcon.swift       App 图标生成器（渲染 → iconset → icns）104 行
+platforms/macos/build-app.sh         一键构建脚本（6 步：目录/图标/编译/运行时/Info.plist/签名）
+platforms/macos/make-pkg.sh          .pkg 安装包 + .dmg 镜像脚本
 docs/                设计与排查文档（repo-wiki-design.md、productization.md、milestones/、terminal-header-fix.md、terminal-input-fix.md、raw/）
 tests/               无头单元测试（terminal-emulator/、wiki-panel/，各含 run.sh）
 .cache/              构建缓存（node tarball、npm-cache、已构建 runtime）— git 忽略

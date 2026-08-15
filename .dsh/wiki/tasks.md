@@ -2,7 +2,7 @@
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
 updated: 2026-08-15T15:31:24Z
-sources: [README.md, build-app.sh, make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md]
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md]
 manual: false
 ---
 
@@ -17,7 +17,7 @@ manual: false
 
 - 产物：`dist/oh-my-dsh.app`（arm64、ad-hoc 签名、含内置运行时）；
 - 常见失败：网络不可达 → 有缓存 tarball 会自动推导版本继续；`swiftc` 报错 → 检查新增文件是否登记进编译清单（第 3 步）；
-- 重新构建会清掉旧包（`rm -rf "$BUILD_DIR" "$APP"`），`make-pkg.sh` 依赖已构建的 `.app`。
+- 重新构建会清掉旧包（`rm -rf "$BUILD_DIR" "$APP"`），`platforms/macos/make-pkg.sh` 依赖已构建的 `.app`。
 
 ## 打包安装包（.pkg / .dmg）
 
@@ -47,8 +47,8 @@ tests/wiki-panel/run.sh          # Repo Wiki 模型层
 ## 加一个新右栏面板（参照 v1.7.0 Wiki 面板）
 
 1. 新建 `src/<Panel>.swift`，实现 `PanelController`（复用 `HoverButton`/`DynamicFillView`/`CustomIconButton`）；
-2. `src/main.swift`：`RightPanel` 枚举加 case；`buildSplitView` 里创建 controller（`onRequestHide` + `serverPortProvider`）；活动栏加 `ActivityBarButton`；`activePanelView`/`setRightPanel` 分发；「视图」菜单加切换项（如 `⌥⌘X`）；`rightPanelKind` 持久化映射；
-3. `build-app.sh`：编译清单加入新文件；`VERSION`/`BUILD` 递增；
+2. `platforms/macos/src/main.swift`：`RightPanel` 枚举加 case；`buildSplitView` 里创建 controller（`onRequestHide` + `serverPortProvider`）；活动栏加 `ActivityBarButton`；`activePanelView`/`setRightPanel` 分发；「视图」菜单加切换项（如 `⌥⌘X`）；`rightPanelKind` 持久化映射；
+3. `platforms/macos/build-app.sh`：编译清单加入新文件；`VERSION`/`BUILD` 递增；
 4. `L10n.table` 加中英文案键；README 特性说明；
 5. 配套无头单测（仿 `tests/wiki-panel/`：`stubs.swift` + `run.sh`）。
 
@@ -80,7 +80,7 @@ tests/wiki-panel/run.sh          # Repo Wiki 模型层
 
 ## 发布清单（简版）
 
-1. `build-app.sh` 版本号确认（VERSION/BUILD）；
+1. `platforms/macos/build-app.sh` 版本号确认（VERSION/BUILD）；
 2. `./build-app.sh` 全量构建 → `open dist/oh-my-dsh.app` 手工 QA（README 特性逐项过）；
 3. `tests/*/run.sh` 全绿；
 4. `./make-pkg.sh` 出 .pkg/.dmg；

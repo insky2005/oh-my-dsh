@@ -13,13 +13,14 @@
 #
 set -euo pipefail
 cd "$(dirname "$0")"
+ROOT="$(cd ../.. && pwd)"
 
 APP_NAME="oh-my-dsh"
-APP="dist/$APP_NAME.app"
-DIST="dist"
-BUILD_DIR=".build"
+APP="$ROOT/dist/$APP_NAME.app"
+DIST="$ROOT/dist"
+BUILD_DIR="$ROOT/.build"
 
-[ -d "$APP" ] || { echo "ERROR: $APP not found — run ./build-app.sh first" >&2; exit 1; }
+[ -d "$APP" ] || { echo "ERROR: $APP not found — run ./platforms/macos/build-app.sh first" >&2; exit 1; }
 
 ARCH="${DSH_ARCH:-$(uname -m)}"
 case "$ARCH" in

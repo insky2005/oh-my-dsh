@@ -23,22 +23,24 @@ git mv build-app.sh platforms/macos/build-app.sh
 git mv make-pkg.sh platforms/macos/make-pkg.sh
 
 echo "==> [2/4] 修正脚本内部相对路径"
-# build-app.sh：脚本内 cd "$(dirname "$0")" 后位于 platforms/macos/，
-# 需要回到仓库根取 scripts/version.sh，并把 .build/.cache/dist 放到仓库根。
+# 脚本位于 platforms/macos/：回仓库根取 scripts/version.sh，并把
+# .build/.cache/dist 锚定到仓库根（CI 缓存、.gitignore 一致）。
 python3 - <<'EOF'
 import re
-p = 'platforms/macos/build-app.sh'
-s = open(p).read()
-# 版本脚本在仓库根 scripts/ 下
-s = s.replace('VERSION="$(scripts/version.sh | head -1)"',
-              'VERSION="$(../../scripts/version.sh | head -1)"')
-s = s.replace('BUILD="$(scripts/version.sh | tail -1)"',
-              'BUILD="$(../../scripts/version.sh | tail -1)"')
-open(p, 'w').write(s)
-
-p = 'platforms/macos/make-pkg.sh'
-s = open(p).read()
-open(p, 'w').write(s)
+for p in ('platforms/macos/build-app.sh', 'platforms/macos/make-pkg.sh'):
+    s = open(p).read()
+    if 'ROOT="$(cd ../.. && pwd)"' not in s:
+        s = s.replace('cd "$(dirname "$0")"\n',
+                      'cd "$(dirname "$0")"\n# 仓库根：脚本位于 platforms/macos/，构建缓存/产物统一放仓库根。\nROOT="$(cd ../.. && pwd)"\n')
+        s = s.replace('VERSION="$(scripts/version.sh | head -1)"', 'VERSION="$("$ROOT/scripts/version.sh" | head -1)"')
+        s = s.replace('BUILD="$(scripts/version.sh | tail -1)"', 'BUILD="$("$ROOT/scripts/version.sh" | tail -1)"')
+        s = s.replace('VERSION="$(../../scripts/version.sh | head -1)"', 'VERSION="$("$ROOT/scripts/version.sh" | head -1)"')
+        s = s.replace('BUILD="$(../../scripts/version.sh | tail -1)"', 'BUILD="$("$ROOT/scripts/version.sh" | tail -1)"')
+        s = re.sub(r'^BUILD_DIR="\.build"$', 'BUILD_DIR="$ROOT/.build"', s, flags=re.M)
+        s = re.sub(r'^CACHE_DIR="\.cache"$', 'CACHE_DIR="$ROOT/.cache"', s, flags=re.M)
+        s = re.sub(r'^DIST="dist"$', 'DIST="$ROOT/dist"', s, flags=re.M)
+        s = re.sub(r'^APP="dist/', 'APP="$ROOT/dist/', s, flags=re.M)
+        open(p, 'w').write(s)
 EOF
 
 echo "==> [3/4] 修正 tests 引用（../../src → ../../platforms/macos/src）"
