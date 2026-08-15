@@ -24,12 +24,12 @@ oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deeps
 | 打包 | `pkgbuild` + `hdiutil`（`platforms/macos/make-pkg.sh` → .pkg / .dmg） |
 | 目标平台 | macOS 13+（Apple Silicon / arm64；Info.plist `LSMinimumSystemVersion` = 13.0） |
 
-当前工作区版本：`platforms/macos/build-app.sh` 顶部 `VERSION="1.7.1"`、`BUILD="63"`；Bundle ID `com.ohmydsh.app`（main.swift About 面板回退值同为 1.7.1 / 63）。最近 git 提交：`ae9d919`（"chore(wiki): 知识库增量更新（同步 v1.7.1 修复与产品化文档）"）；v1.7.1 (build 63) 自 `80dedfa` 提交，与工作区源码一致。
+当前工作区版本：`1.8.0`（BUILD 64）；版本由 git tag 驱动（`scripts/version.sh`：HEAD 命中 vX.Y.Z → 取 tag，否则回退 1.8.0；BUILD 取 CI 运行号）。最近 git 提交：`216878a`（"feat(core-bridge): macOS 壳改调 core"）。
 
 ## 目录布局
 
 ```
-platforms/macos/src/main.swift       壳层核心（日志/L10n/服务管理/升级/窗口/菜单/右栏插槽）约 2236 行
+platforms/macos/src/main.swift       壳层核心（日志/L10n/服务管理/升级/窗口/菜单/设置窗口/onboarding/CoreBridge）约 2700 行
 platforms/macos/src/PreviewPanel.swift  预览面板（文件/文件夹预览 + 项目目录树 + 共享 UI 组件）约 1445 行
 platforms/macos/src/TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）约 1875 行
 platforms/macos/src/WikiPanel.swift      Repo Wiki 面板（知识库生成/维护/浏览）约 1928 行

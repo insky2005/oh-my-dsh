@@ -30,8 +30,8 @@ manual: false
 
 - 页面数：11（含本页；模块页 5 个）
 - 主要源码：`src/`（5 个 Swift 文件，约 7.6k 行）
-- 最近一次提交：`ae9d919`（"chore(wiki): 知识库增量更新（同步 v1.7.1 修复与产品化文档）"）
-- 工作区版本号（platforms/macos/build-app.sh）：`1.7.1`（BUILD 63），自 `80dedfa` 起与提交一致（build 43→63 共 16 轮修复已提交，见 [overview](overview.md)）
+- 最近一次提交：`216878a`（"feat(core-bridge): macOS 壳改调 core — 运行时嵌入 core/"）
+- 工作区版本号：`1.8.0`（BUILD 64），版本单一来源（git tag vX.Y.Z → scripts/version.sh；见 [overview](overview.md)）
 - 仓库新增文档：`docs/productization.md`（产品化方案：P0 已达成 → P1 开源/CI → P2 Windows → P3 Linux → P4 生态 → F Apple 生态暂缓，见 [overview](overview.md)）；`docs/milestones/`（M1 产品化基础 … M5 Apple 生态 5 份里程碑目标文档，README「目录」收录）
 
 ## 维护约定

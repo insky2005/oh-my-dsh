@@ -8,7 +8,7 @@ manual: false
 
 # 模块：main.swift（壳层核心）
 
-约 2236 行，程序入口（`NSApplication.shared` + `AppDelegate` + `app.run()`）。职责：日志、L10n、服务管理、dsh 升级、窗口/菜单、右栏插槽、WebView 注入。
+约 2700 行，程序入口（`NSApplication.shared` + `AppDelegate` + `app.run()`）。职责：日志、L10n、服务管理、dsh 升级、窗口/菜单、设置窗口（⌘,）、首次引导 onboarding、右栏插槽、WebView 注入、CoreBridge（调 core CLI）。
 
 ## 组成（按文件内顺序）
 

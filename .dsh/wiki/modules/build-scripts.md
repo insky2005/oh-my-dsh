@@ -8,9 +8,9 @@ manual: false
 
 # 模块：构建与打包脚本
 
-## platforms/macos/build-app.sh（一键构建，277 行）
+## platforms/macos/build-app.sh（一键构建，约 350 行）
 
-`set -euo pipefail`，用法：`./build-app.sh [--prefetch]`。顶部常量：`APP_NAME=oh-my-dsh`、`BUNDLE_ID=com.ohmydsh.app`、`VERSION=1.7.1`、`BUILD=63`；国内镜像默认值（`NPM_REGISTRY`/`NODE_MIRROR`，可用 `DSH_*` 环境变量覆盖）。
+`set -euo pipefail`，用法：`./build-app.sh [--prefetch]`（自 platforms/macos/ 执行）。版本单一来源：VERSION/BUILD 来自 `scripts/version.sh`（git tag / CI 运行号驱动）；`DSH_ARCH=arm64|x86_64|universal` 交叉构建（swiftc `-target` + universal lipo）；国内镜像默认值（`NPM_REGISTRY`/`NODE_MIRROR`，可用 `DSH_*` 环境变量覆盖）；共享核心 `core/` 一并嵌入 `Contents/Resources/runtime/core`。
 
 - `resolve_node_version`：`DSH_NODE_VERSION` 未设时查镜像 `index.json` 用 python3 选最新 LTS；网络不可用则从 `.cache/node` 缓存 tarball 推导；
 - `download_node`：下载 darwin-arm64 tarball（镜像失败换官方），用 `SHASUMS256.txt` + `shasum -a 256 -c` 校验；
