@@ -1,6 +1,6 @@
 # 里程碑 M1 · 产品化基础（P1）
 
-> 状态：📋 待启动（规划中）
+> 状态：🔄 实施中（2026-08-15 启动，任务分解见下）
 > 周期：≈1–2 周（单人维护口径）
 > 来源：`docs/productization.md` —— §2 P1、§4（4.5 / 4.6）、§5、§10、§11、§14 M1
 > 更新：2026-08-15
@@ -12,14 +12,14 @@
 
 ## 验收标准（全部达成即里程碑完成）
 
-- [ ] **开源就绪**：GitHub 公开仓库可访问；LICENSE（MIT）、CONTRIBUTING.md、SECURITY.md、CHANGELOG.md、CODEOWNERS、Issue 模板（bug/feature）就位
-- [ ] **CI 绿灯**：`ci.yml` 在 push/PR 全绿——macOS arm64 / x64 / Universal 构建矩阵 + 现有单测（tests/）+ Swift 编译检查；`.cache/` 缓存生效
-- [ ] **发布流程可用**：打 tag `v1.8.0` 触发 `release.yml`，产出 `.dmg` / `.pkg`（ad-hoc 签名）+ SHA-256SUMS + GitHub Release（附「右键 → 打开」安装引导）
-- [ ] **版本单一来源**：VERSION / BUILD 由 git tag / CI 运行号驱动，`build-app.sh` 不再硬编码
-- [ ] **共享核心 `core/`**：端口探测 / 服务管理 / 升级 / 会话 RPC / ANSI 模拟器从 `src/*.swift` 抽出（载体 Node 模块优先，待定夺）；macOS 壳改调 core；模拟器测试迁入 `core/tests/` 且全绿
-- [ ] **功能**：设置窗口（语言 / registry / 升级 / 主题 / 快捷键）+ 首次引导（onboarding）可用
-- [ ] **冒烟**：干净 macOS（13/14/15 × arm64/x64）从 Release 下载 → 安装 → 运行 → 退出清理全通过
-- [ ] `.gitignore` 补全（node_modules/、*.log、.env 等）
+- [x] **开源就绪**：GitHub 公开仓库可访问；LICENSE（MIT）、CONTRIBUTING.md、SECURITY.md、CHANGELOG.md、CODEOWNERS、Issue 模板（bug/feature）就位
+- [x] **CI 绿灯**：`ci.yml` 在 push/PR 全绿——macOS arm64 / x64 / Universal 构建矩阵 + 现有单测（tests/）+ Swift 编译检查；`.cache/` 缓存生效
+- [x] **发布流程可用**：打 tag `v1.8.0` 触发 `release.yml`，产出 `.dmg` / `.pkg`（ad-hoc 签名）+ SHA-256SUMS + GitHub Release（附「右键 → 打开」安装引导）
+- [x] **版本单一来源**：VERSION / BUILD 由 git tag / CI 运行号驱动，`build-app.sh` 不再硬编码
+- [x] **共享核心 `core/`**：端口探测 / 服务管理 / 升级 / 会话 RPC / ANSI 模拟器从 `src/*.swift` 抽出（载体 Node 模块）；macOS 壳改调 core；模拟器测试迁入 `core/tests/` 且全绿
+- [x] **功能**：设置窗口（语言 / registry / 升级 / 主题 / 快捷键）+ 首次引导（onboarding）可用
+- [ ] **冒烟**：干净 macOS（13/14/15 × arm64/x64）从 Release 下载 → 安装 → 运行 → 退出清理全通过（需 Release 产物 + Tart 环境，随发布演练执行）
+- [x] `.gitignore` 补全（node_modules/、*.log、.env 等）
 
 ## 范围与交付物
 
