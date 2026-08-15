@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+
+# build artifacts
+.build/
+.cache/
+dist/
+
+# debug screenshots (local QA only)
+pic/

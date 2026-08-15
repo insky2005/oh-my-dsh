@@ -1,0 +1,1933 @@
+//
+//  oh-my-dsh — Native macOS Shell for DeepSeek Harness
+//
+//  A pure wrapper around the `dsh web` browser UI. It does NOT modify any
+//  DeepSeek Harness source code: it locates the installed `dsh` CLI, starts
+//  the web server when needed, and renders the UI inside a native WKWebView
+//  window. If a `dsh web` server is already running on the default port it is
+//  reused instead of spawning a second one.
+//
+//  Build: see build-app.sh in the repository root.
+//
+
+import AppKit
+import WebKit
+import Foundation
+
+// MARK: - Logging
+
+final class AppLog {
+    static let shared = AppLog()
+    private let handle: FileHandle?
+    private let queue = DispatchQueue(label: "dsh.app.log")
+
+    private init() {
+        let dir = NSHomeDirectory() + "/Library/Logs/oh-my-dsh"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let path = dir + "/app.log"
+        FileManager.default.createFile(atPath: path, contents: nil)
+        handle = FileHandle(forWritingAtPath: path)
+        handle?.seekToEndOfFile()
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        timestamp = fmt
+    }
+
+    private let timestamp: ISO8601DateFormatter
+
+    func log(_ msg: String) {
+        queue.async { [handle] in
+            let line = "\(self.timestamp.string(from: Date())) \(msg)\n"
+            if let data = line.data(using: .utf8) { handle?.write(data) }
+        }
+    }
+}
+
+// MARK: - Localization (zh / en; follows the system by default)
+
+enum L10n {
+    /// The real system language, captured once at launch (memory-cached, so
+    /// switching back to "System" is instant and always lands on the actual
+    /// system language — never a hard-coded fallback).
+    private static var capturedSystem: String?
+
+    /// True when the user picked "Follow System" (or never chose) — i.e. no
+    /// explicit shell-language choice exists.
+    static var hasExplicitChoice: Bool {
+        if let env = ProcessInfo.processInfo.environment["DSH_LANG"], !env.isEmpty { return true }
+        if let saved = UserDefaults.standard.string(forKey: "appLanguage"), !saved.isEmpty { return true }
+        return false
+    }
+
+    /// "zh" or "en". Priority: DSH_LANG env > UserDefaults "appLanguage" >
+    /// captured system language.
+    static var lang: String {
+        let env = ProcessInfo.processInfo.environment["DSH_LANG"] ?? ""
+        if !env.isEmpty { return env.hasPrefix("zh") ? "zh" : "en" }
+        if let saved = UserDefaults.standard.string(forKey: "appLanguage") {
+            if saved.hasPrefix("zh") { return "zh" }
+            if saved.hasPrefix("en") { return "en" }
+        }
+        return capturedSystem ?? "en"
+    }
+
+    /// Set an explicit choice; pass nil to follow the system again. The
+    /// captured system language stays cached, so "follow system" is instant.
+    static func set(_ l: String?) {
+        if let l = l {
+            UserDefaults.standard.set(l.hasPrefix("en") ? "en" : "zh", forKey: "appLanguage")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "appLanguage")
+        }
+    }
+    static var isZh: Bool { lang == "zh" }
+
+    /// Snapshot the real system language at launch. Must run before we
+    /// override AppleLanguages (that override would otherwise mask the system
+    /// value). Temporarily peels our own app-domain AppleLanguages override so
+    /// `Locale.preferredLanguages` reports the true system language.
+    static func captureSystemLang() {
+        guard capturedSystem == nil else { return }
+        let saved = UserDefaults.standard.array(forKey: "AppleLanguages")
+        if saved != nil { UserDefaults.standard.removeObject(forKey: "AppleLanguages") }
+        let first = Locale.preferredLanguages.first ?? ""
+        if saved != nil { UserDefaults.standard.set(saved!, forKey: "AppleLanguages") }
+        capturedSystem = first.lowercased().hasPrefix("zh") ? "zh" : "en"
+    }
+
+    private static let table: [String: (zh: String, en: String)] = [
+        // menu
+        "menu.about": ("关于", "About"),
+        "menu.hide": ("隐藏", "Hide"),
+        "menu.quit": ("退出", "Quit"),
+        "menu.settings": ("设置", "Settings"),
+        "menu.dshSettings": ("dsh 设置", "dsh Settings"),
+        "menu.edit": ("编辑", "Edit"),
+        "menu.view": ("视图", "View"),
+        "menu.togglePreview": ("显示/隐藏 预览面板", "Toggle Preview Panel"),
+        // activity bar
+        "bar.preview": ("预览面板", "Preview Panel"),
+        "bar.terminal": ("终端", "Terminal"),
+        "edit.undo": ("撤销", "Undo"),
+        "edit.redo": ("重做", "Redo"),
+        "edit.cut": ("剪切", "Cut"),
+        "edit.copy": ("复制", "Copy"),
+        "edit.paste": ("粘贴", "Paste"),
+        "edit.selectAll": ("全选", "Select All"),
+        "menu.language": ("语言", "Language"),
+        "menu.followSystem": ("系统", "System"),
+        "menu.checkUpgrade": ("检查并升级 dsh…", "Check & Upgrade dsh…"),
+        "menu.autoUpgrade": ("自动升级 dsh", "Auto-upgrade dsh"),
+        "menu.setRegistry": ("设置 dsh registry…", "Set dsh Registry…"),
+        "menu.resetRegistry": ("恢复默认 registry", "Reset Registry"),
+        "menu.openLogs": ("打开日志文件夹", "Open Logs Folder"),
+        // status
+        "status.starting": ("正在启动 oh-my-dsh 服务…", "Starting oh-my-dsh service…"),
+        "status.startFailed": ("无法启动 oh-my-dsh\n\n%@", "Failed to start oh-my-dsh\n\n%@"),
+        "status.checking": ("正在检查 dsh 更新…", "Checking for dsh updates…"),
+        "status.upgrading": ("正在升级 dsh（%@ → %@）…", "Upgrading dsh (%@ → %@)…"),
+        "status.pageLoadFailed": ("页面加载失败：%@", "Page load failed: %@"),
+        // buttons
+        "btn.retry": ("重试", "Retry"),
+        "btn.ok": ("好", "OK"),
+        "btn.save": ("保存", "Save"),
+        "btn.cancel": ("取消", "Cancel"),
+        // preview panel
+        "preview.openInDefaultApp": ("在默认应用中打开", "Open in Default App"),
+        "preview.openInDefaultAppHint": ("用系统默认应用打开当前文件", "Open the current file with its default app"),
+        "preview.revealInFinder": ("在 Finder 中显示", "Show in Finder"),
+        "preview.revealInFinderHint": ("在 Finder 中显示当前文件", "Reveal the current file in Finder"),
+        "preview.closePanel": ("关闭", "Close"),
+        "preview.closeTab": ("关闭页签", "Close Tab"),
+        "preview.empty": ("点击对话中的文件链接，在此预览文件或文件夹", "Click a file link in the conversation to preview it here"),
+        "preview.missing": ("文件不存在或无法访问：\n%@", "File not found or inaccessible:\n%@"),
+        "preview.unreadable": ("无法读取文件：%@", "Cannot read file: %@"),
+        "preview.tooLarge": ("文件过大，仅预览前 %d MiB，完整内容请用默认应用打开", "File too large; previewing the first %d MiB. Open with the default app for the full content."),
+        "preview.name": ("名称", "Name"),
+        "preview.size": ("大小", "Size"),
+        "preview.modified": ("修改时间", "Modified"),
+        "preview.kind": ("类型", "Kind"),
+        "preview.kindUnknown": ("未知类型", "Unknown Type"),
+        "preview.created": ("创建时间", "Created"),
+        "preview.path": ("路径", "Path"),
+        "preview.parent": ("上一级", "Parent"),
+        "preview.binary": ("二进制文件，无法预览文本内容", "Binary file — text preview unavailable"),
+        "preview.openProject": ("项目目录", "Project Folder"),
+        "preview.openProjectHint": ("在面板中打开当前项目目录", "Open the current project folder in the panel"),
+        "preview.pickFolderMessage": ("无法自动定位项目目录，请选择要浏览的文件夹", "Could not locate the project folder automatically — choose a folder to browse"),
+        "preview.pickFolderOpen": ("打开", "Open"),
+        // terminal panel
+        "menu.toggleTerminal": ("显示/隐藏 终端面板", "Toggle Terminal Panel"),
+        "terminal.title": ("终端", "Terminal"),
+        "terminal.new": ("新建终端", "New Terminal"),
+        "terminal.newHint": ("新建一个终端会话", "Start a new terminal session"),
+        "terminal.closeTab": ("关闭终端", "Close Terminal"),
+        "terminal.empty": ("点击 + 新建一个终端", "Click + to start a new terminal"),
+        "terminal.sessionEnded": ("会话已结束（exit %d）", "Session ended (exit %d)"),
+        "terminal.restart": ("重启", "Restart"),
+        // alerts
+        "alert.cannotUpgrade": ("无法升级", "Cannot Upgrade"),
+        "alert.noRuntime": ("未找到内置 dsh 运行时（runtime/dsh + runtime/npm）。",
+                            "Bundled dsh runtime not found (runtime/dsh + runtime/npm)."),
+        "alert.dshUpgrade": ("dsh 升级", "dsh Upgrade"),
+        "alert.upgradeFailed": ("升级失败", "Upgrade Failed"),
+        "alert.upToDate": ("dsh 已是最新版本：%@", "dsh is up to date: %@"),
+        "alert.upgraded": ("dsh 已升级：%@ → %@", "dsh upgraded: %@ → %@"),
+        "alert.noVersionInfo": ("无法获取 dsh 版本信息（registry：%@）",
+                                "Cannot fetch dsh version info (registry: %@)"),
+        "alert.setRegistryTitle": ("设置 dsh registry", "Set dsh Registry"),
+        "alert.setRegistryInfo": ("用于检查与升级 dsh 的 npm registry。\n当前：%@",
+                                  "npm registry used to check & upgrade dsh.\nCurrent: %@"),
+        // about
+        "about.version": ("版本 %@（%@）", "Version %@ (%@)"),
+        "about.credits": ("原生壳封装 dsh web，不改动任何 DeepSeek Harness 源码。\n\n"
+                          + "dsh 版本：%@（%@）\nNode 版本：%@\ndsh registry：%@",
+                          "A native shell around dsh web; no DeepSeek Harness source is modified.\n\n"
+                          + "dsh: %@ (%@)\nNode: %@\ndsh registry: %@"),
+        // runtime facts (About)
+        "fact.bundled": ("内置（Contents/Resources/runtime）", "bundled (Contents/Resources/runtime)"),
+        "fact.system": ("系统安装", "system"),
+        "fact.unknown": ("未知", "unknown"),
+        // server errors (shown in the status overlay / error alert)
+        "err.noNode": ("找不到 node（可设置 DSH_NODE 环境变量指向 node 可执行文件）",
+                       "Node not found (set DSH_NODE to the node executable)"),
+        "err.noDSH": ("找不到 dsh CLI（可设置 DSH_CLI 环境变量指向 @deepseek-ai/dsh 的 lib/bin.js）",
+                      "dsh CLI not found (set DSH_CLI to @deepseek-ai/dsh's lib/bin.js)"),
+        "err.spawnFailed": ("启动 dsh web 失败：%@", "Failed to start dsh web: %@"),
+        "err.exited": ("dsh web 进程意外退出。日志末尾：\n%@", "dsh web exited unexpectedly. Log tail:\n%@"),
+        "err.timeout": ("等待 dsh web 启动超时（90 秒）。日志：%@",
+                        "Timed out waiting for dsh web (90s). Log: %@"),
+        "err.upgradeFailed": ("dsh 升级失败（exit %d）：\n%@", "dsh upgrade failed (exit %d):\n%@"),
+        "err.noVersionAfterUpgrade": ("升级后无法读取 dsh 版本", "Cannot read dsh version after upgrade"),
+    ]
+
+    /// Localize a key, optionally filling %@ / %d placeholders.
+    static func tr(_ key: String, _ args: CVarArg...) -> String {
+        let entry = table[key] ?? (key, key)
+        let t = isZh ? entry.zh : entry.en
+        return String(format: t, arguments: args)
+    }
+}
+
+// MARK: - HTTP / version / registry helpers
+
+enum HTTP {
+    static func get(_ urlString: String, timeout: TimeInterval = 10) -> Data? {
+        guard let url = URL(string: urlString) else { return nil }
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Data?
+        var request = URLRequest(url: url, timeoutInterval: timeout)
+        request.httpMethod = "GET"
+        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
+            result = data
+            semaphore.signal()
+        }
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + timeout + 1)
+        task.cancel()
+        return result
+    }
+}
+
+enum VersionKit {
+    /// -1 if a < b, 0 if equal, 1 if a > b. Handles "x.y.z" and "x.y.z-rc.N".
+    static func compare(_ a: String, _ b: String) -> Int {
+        func numeric(_ s: String) -> [Int] {
+            let core = s.split(separator: "-").first.map(String.init) ?? s
+            return core.split(separator: ".").compactMap { Int($0) }
+        }
+        let pa = numeric(a), pb = numeric(b)
+        for i in 0..<max(pa.count, pb.count) {
+            let x = i < pa.count ? pa[i] : 0
+            let y = i < pb.count ? pb[i] : 0
+            if x != y { return x < y ? -1 : 1 }
+        }
+        let preA = a.contains("-"), preB = b.contains("-")
+        if preA != preB { return preA ? -1 : 1 }
+        if preA {
+            let ra = a.split(separator: "-")[1], rb = b.split(separator: "-")[1]
+            let na = Int(ra) ?? 0, nb = Int(rb) ?? 0
+            if na != nb { return na < nb ? -1 : 1 }
+            if ra != rb { return ra < rb ? -1 : 1 }
+        }
+        return 0
+    }
+}
+
+/// npm registry used to check & upgrade the bundled dsh.
+/// Priority: DSH_REGISTRY env > saved UserDefaults "dshRegistry" > China mirror.
+enum RegistryConfig {
+    static var current: String {
+        let env = ProcessInfo.processInfo.environment["DSH_REGISTRY"] ?? ""
+        if !env.isEmpty { return normalize(env) }
+        if let saved = UserDefaults.standard.string(forKey: "dshRegistry"), !saved.isEmpty {
+            return normalize(saved)
+        }
+        return "https://registry.npmmirror.com"
+    }
+    static func set(_ url: String) { UserDefaults.standard.set(url, forKey: "dshRegistry") }
+    static func reset() { UserDefaults.standard.removeObject(forKey: "dshRegistry") }
+    private static func normalize(_ s: String) -> String {
+        var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        while t.hasSuffix("/") { t.removeLast() }
+        return t
+    }
+}
+
+/// Upgrades the bundled dsh tree with the bundled node + npm.
+final class DSHUpdater {
+    let nodePath: String
+    let dshDir: String
+    let npmCli: String
+
+    init?(nodePath: String, dshBin: String) {
+        // Upgrades only apply to the bundled, self-contained runtime —
+        // never touch a system-installed dsh.
+        guard let range = dshBin.range(of: "/Contents/Resources/runtime/") else { return nil }
+        self.nodePath = nodePath
+        let runtime = String(dshBin[..<range.lowerBound]) + "/Contents/Resources/runtime"
+        self.dshDir = runtime + "/dsh"
+        self.npmCli = runtime + "/npm/bin/npm-cli.js"
+        guard FileManager.default.isExecutableFile(atPath: nodePath),
+              FileManager.default.fileExists(atPath: npmCli) else { return nil }
+    }
+
+    var currentVersion: String? {
+        let pkg = dshDir + "/node_modules/@deepseek-ai/dsh/package.json"
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: pkg)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let v = json["version"] as? String else { return nil }
+        return v
+    }
+
+    func latestVersion(registry: String) -> String? {
+        guard let data = HTTP.get(registry + "/@deepseek-ai/dsh", timeout: 15),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tags = json["dist-tags"] as? [String: Any],
+              let latest = tags["latest"] as? String else { return nil }
+        return latest
+    }
+
+    /// Runs `node npm-cli.js install <target>` inside the bundled dsh dir.
+    /// Returns the newly installed version.
+    @discardableResult
+    func upgrade(registry: String, spec: String? = nil) throws -> String {
+        let target = spec ?? "@deepseek-ai/dsh@latest"
+        let cacheDir = NSHomeDirectory() + "/Library/Caches/oh-my-dsh/npm-cache"
+        try? FileManager.default.createDirectory(atPath: cacheDir, withIntermediateDirectories: true)
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: nodePath)
+        proc.arguments = [npmCli, "install", "--loglevel=error",
+                          "--no-audit", "--no-fund", "--registry", registry, target]
+        var env = ProcessInfo.processInfo.environment
+        let runtime = (dshDir as NSString).deletingLastPathComponent
+        env["PATH"] = runtime + ":" + (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
+        env["npm_config_cache"] = cacheDir
+        env["npm_config_update_notifier"] = "false"
+        proc.environment = env
+        proc.currentDirectoryURL = URL(fileURLWithPath: dshDir)
+
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        try proc.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        guard proc.terminationStatus == 0 else {
+            let out = String(data: data, encoding: .utf8) ?? ""
+            throw NSError(domain: "DSHUpgrade", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: L10n.tr("err.upgradeFailed", proc.terminationStatus, String(out.suffix(1500))),
+            ])
+        }
+        guard let v = currentVersion else {
+            throw NSError(domain: "DSHUpgrade", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.noVersionAfterUpgrade")])
+        }
+        return v
+    }
+}
+
+// MARK: - dsh web server management
+
+final class ServerManager {
+
+    private(set) var port = 3080
+    private(set) var spawned = false
+    private(set) var process: Process?
+
+    /// Resolved runtime facts, surfaced in the About panel.
+    private(set) var dshVersion = L10n.tr("fact.unknown")
+    private(set) var nodeVersion = L10n.tr("fact.unknown")
+    private(set) var runtimeSource = L10n.tr("fact.unknown")
+
+    /// The web UI root page always injects `window.__DSH_BOOT__`.
+    func isDSHServing(port: Int, timeout: TimeInterval = 2) -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/"),
+              let data = httpGet(url, timeout: timeout),
+              let body = String(data: data, encoding: .utf8) else { return false }
+        return body.contains("__DSH_BOOT__")
+    }
+
+    private func httpGet(_ url: URL, timeout: TimeInterval) -> Data? {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Data?
+        var request = URLRequest(url: url, timeoutInterval: timeout)
+        request.httpMethod = "GET"
+        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
+            result = data
+            semaphore.signal()
+        }
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + timeout + 1)
+        task.cancel()
+        return result
+    }
+
+    private func isPortFree(_ port: Int) -> Bool {
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = CFSwapInt16HostToBig(UInt16(port))
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        let rc = withUnsafePointer(to: &addr) { p in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return rc != 0
+    }
+
+    private func freePort() -> Int {
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return 3080 }
+        defer { close(fd) }
+        _ = withUnsafePointer(to: &addr) { p in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        var bound = sockaddr_in()
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &bound) { p in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(fd, $0, &len)
+            }
+        }
+        return Int(CFSwapInt16BigToHost(bound.sin_port))
+    }
+
+    private func mtime(_ path: String) -> Date {
+        (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? .distantPast
+    }
+
+    /// Bundled self-contained node binary (Contents/Resources/runtime/node).
+    private func bundledNode() -> String? {
+        guard let res = Bundle.main.resourceURL else { return nil }
+        return res.appendingPathComponent("runtime/node").path
+    }
+
+    /// Bundled self-contained dsh entry (Contents/Resources/runtime/dsh/…).
+    private func bundledDSHBin() -> String? {
+        guard let res = Bundle.main.resourceURL else { return nil }
+        return res.appendingPathComponent("runtime/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js").path
+    }
+
+    /// Locate a usable `node` binary. The bundled runtime wins; otherwise
+    /// GUI-launched processes have a minimal PATH, so we search known
+    /// locations explicitly.
+    func resolveNode() -> String? {
+        let fm = FileManager.default
+        let env = ProcessInfo.processInfo.environment
+        if let p = env["DSH_NODE"], fm.isExecutableFile(atPath: p) { return p }
+        if let p = bundledNode(), fm.isExecutableFile(atPath: p) { return p }
+        if let path = env["PATH"] {
+            for dir in path.split(separator: ":") where !dir.isEmpty {
+                let cand = String(dir) + "/node"
+                if fm.isExecutableFile(atPath: cand) { return cand }
+            }
+        }
+        let home = NSHomeDirectory()
+        let nvmRoot = home + "/.nvm/versions/node"
+        if let versions = try? fm.contentsOfDirectory(atPath: nvmRoot) {
+            for v in versions.sorted(by: { mtime(nvmRoot + "/" + $0) > mtime(nvmRoot + "/" + $1) }) {
+                let cand = nvmRoot + "/" + v + "/bin/node"
+                if fm.isExecutableFile(atPath: cand) { return cand }
+            }
+        }
+        for p in ["/opt/homebrew/bin/node", "/usr/local/bin/node"] where fm.isExecutableFile(atPath: p) { return p }
+        return nil
+    }
+
+    /// Locate `dsh`'s entry script (lib/bin.js): bundled runtime first, then
+    /// npx cache, global installs, or PATH — newest wins.
+    func resolveDSHBin() -> String? {
+        let fm = FileManager.default
+        let env = ProcessInfo.processInfo.environment
+        if let p = env["DSH_CLI"], fm.fileExists(atPath: p) { return p }
+        if let p = bundledDSHBin(), fm.fileExists(atPath: p) { return p }
+        let home = NSHomeDirectory()
+        var candidates: [String] = []
+
+        let npxRoot = home + "/.npm/_npx"
+        if let hashes = try? fm.contentsOfDirectory(atPath: npxRoot) {
+            for h in hashes {
+                let p = npxRoot + "/" + h + "/node_modules/@deepseek-ai/dsh/lib/bin.js"
+                if fm.fileExists(atPath: p) { candidates.append(p) }
+            }
+        }
+        let nvmRoot = home + "/.nvm/versions/node"
+        if let versions = try? fm.contentsOfDirectory(atPath: nvmRoot) {
+            for v in versions {
+                let p = nvmRoot + "/" + v + "/lib/node_modules/@deepseek-ai/dsh/lib/bin.js"
+                if fm.fileExists(atPath: p) { candidates.append(p) }
+            }
+        }
+        if let path = env["PATH"] {
+            for dir in path.split(separator: ":") where !dir.isEmpty {
+                let shim = String(dir) + "/dsh"
+                if fm.isExecutableFile(atPath: shim) {
+                    let target = (try? fm.destinationOfSymbolicLink(atPath: shim)) ?? shim
+                    let full = target.hasPrefix("/") ? target : (String(dir) + "/" + target)
+                    let std = URL(fileURLWithPath: full).standardizedFileURL.path
+                    if fm.fileExists(atPath: std) { candidates.append(std) }
+                }
+            }
+        }
+        return candidates.sorted(by: { mtime($0) > mtime($1) }).first
+    }
+
+    /// Re-read the resolved runtime facts (used by the About panel; call
+    /// again after an upgrade).
+    func refreshFacts() {
+        if let node = resolveNode(), let bin = resolveDSHBin() {
+            runtimeSource = (bin == bundledDSHBin()) ? L10n.tr("fact.bundled") : L10n.tr("fact.system")
+            dshVersion = readPackageVersion(bin: bin) ?? L10n.tr("fact.unknown")
+            nodeVersion = nodeVersionString(nodePath: node) ?? L10n.tr("fact.unknown")
+            AppLog.shared.log("runtime facts: source=\(runtimeSource) dsh=\(dshVersion) node=\(nodeVersion)")
+        } else {
+            runtimeSource = L10n.tr("fact.unknown")
+            dshVersion = L10n.tr("fact.unknown")
+            nodeVersion = L10n.tr("fact.unknown")
+        }
+    }
+
+    /// Read the `version` field from the package.json next to a bin.js.
+    private func readPackageVersion(bin: String) -> String? {
+        let pkg = URL(fileURLWithPath: bin)
+            .deletingLastPathComponent() // lib
+            .deletingLastPathComponent() // <package root>
+            .appendingPathComponent("package.json").path
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: pkg)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let v = json["version"] as? String else { return nil }
+        return v
+    }
+
+    /// Run `<node> --version` and return its output (e.g. "v22.23.2").
+    private func nodeVersionString(nodePath: String) -> String? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: nodePath)
+        proc.arguments = ["--version"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        do { try proc.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Ensure a DSH web server is reachable. Reuses an existing one on the
+    /// default port, otherwise spawns `dsh web` and waits for it.
+    func start() throws -> URL {
+        let env = ProcessInfo.processInfo.environment
+
+        // Resolve runtime facts first — the About panel shows them even when
+        // the app reuses an already-running server instead of spawning one.
+        refreshFacts()
+
+        // 1. Reuse an already-running dsh web (e.g. started by the harness CLI).
+        //    DSH_NATIVE_FORCE_SPAWN=1 skips reuse (testing / dedicated instance).
+        if env["DSH_NATIVE_FORCE_SPAWN"] != "1" && isDSHServing(port: 3080) {
+            spawned = false
+            AppLog.shared.log("reusing existing dsh web on 127.0.0.1:3080")
+            return URL(string: "http://127.0.0.1:3080")!
+        }
+
+        // 2. Pick the port (env override for testing, otherwise 3080, else a free port).
+        var port = 3080
+        if let p = env["DSH_NATIVE_PORT"], let n = Int(p) { port = n }
+        if !isPortFree(port) { port = freePort() }
+        self.port = port
+
+        // 3. Resolve node + dsh entry.
+        guard let node = resolveNode() else {
+            throw NSError(domain: "DSHShell", code: 1, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.noNode")])
+        }
+        guard let bin = resolveDSHBin() else {
+            throw NSError(domain: "DSHShell", code: 2, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.noDSH")])
+        }
+        AppLog.shared.log("using node=\(node) dsh=\(bin) port=\(port) bundled=\(bundledNode() != nil)")
+
+        // 4. Spawn `node <bin> web --port <port>`.
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: node)
+        proc.arguments = [bin, "web", "--port", String(port)]
+
+        var penv = env
+        let nodeDir = (node as NSString).deletingLastPathComponent
+        let existingPath = penv["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        penv["PATH"] = nodeDir + ":" + existingPath
+        if penv["DSH_HOME"] == nil { penv["DSH_HOME"] = NSHomeDirectory() + "/.dsh" }
+        proc.environment = penv
+        proc.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
+
+        let logPath = NSHomeDirectory() + "/Library/Logs/oh-my-dsh/server.log"
+        FileManager.default.createFile(atPath: logPath, contents: nil)
+        if let fh = FileHandle(forWritingAtPath: logPath) {
+            fh.seekToEndOfFile()
+            proc.standardOutput = fh
+            proc.standardError = fh
+        }
+
+        do { try proc.run() } catch {
+            throw NSError(domain: "DSHShell", code: 3, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.spawnFailed", error.localizedDescription)])
+        }
+        process = proc
+        spawned = true
+
+        // 5. Poll until the UI is served.
+        let deadline = Date().addingTimeInterval(90)
+        while Date() < deadline {
+            if isDSHServing(port: port, timeout: 1) {
+                AppLog.shared.log("dsh web is up on 127.0.0.1:\(port)")
+                return URL(string: "http://127.0.0.1:\(port)")!
+            }
+            if !proc.isRunning {
+                let tail = (try? String(contentsOfFile: logPath, encoding: .utf8)) ?? ""
+                let last = tail.split(separator: "\n").suffix(5).joined(separator: "\n")
+                proc.terminate()
+                spawned = false
+                throw NSError(domain: "DSHShell", code: 4, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.exited", last)])
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        proc.terminate()
+        spawned = false
+        throw NSError(domain: "DSHShell", code: 5, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.timeout", logPath)])
+    }
+
+    /// Stop the server we spawned. Never touches a server we did not spawn.
+    /// Waits briefly for a graceful exit, then escalates to SIGKILL.
+    func stop() {
+        guard spawned, let proc = process else { return }
+        AppLog.shared.log("stopping spawned dsh web (pid \(proc.processIdentifier))")
+        proc.terminate()
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline && proc.isRunning {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        if proc.isRunning {
+            kill(proc.processIdentifier, SIGKILL)
+            AppLog.shared.log("dsh web did not exit in time; SIGKILL sent")
+        } else {
+            AppLog.shared.log("dsh web exited cleanly")
+        }
+        spawned = false
+    }
+}
+
+// MARK: - Shared host RPC (project directory)
+
+/// Resolve the active dsh session's working directory via the host RPC
+/// (same protocol the web client uses: HTTP POST /api/session.list with a
+/// `client-request` envelope). Used by the preview panel's project tree and
+/// the terminal panel's session start directory.
+enum DSHSessionRPC {
+
+    /// Query `session.list` and pick the most relevant session's working
+    /// directory — running sessions first, then the most recently updated
+    /// non-blank one. Blocks on a background caller; nil when unresolved.
+    static func fetchActiveSessionCwd(port: Int, timeout: TimeInterval = 6) -> String? {
+        let url = URL(string: "http://127.0.0.1:\(port)/api/session.list")!
+        var request = URLRequest(url: url, timeoutInterval: timeout)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        let rpcId = UUID().uuidString
+        let body: [String: Any] = [
+            "type": "client-request",
+            "rpcId": rpcId,
+            "method": "session.list",
+            "payload": [String: Any](),
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: String?
+        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
+            defer { semaphore.signal() }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (json["rpcId"] as? String) == rpcId,
+                  let res = json["result"] as? [String: Any],
+                  (res["ok"] as? Bool) == true,
+                  let value = res["value"] as? [String: Any],
+                  let items = value["items"] as? [[String: Any]] else { return }
+            let candidates = items.filter { session in
+                (session["blank"] as? Bool) != true && (session["cwd"] as? String) != nil
+            }
+            let running = candidates.filter { ($0["running"] as? Bool) == true }
+            let pool = running.isEmpty ? candidates : running
+            result = pool
+                .sorted { ($0["updatedAt"] as? Double ?? 0) > ($1["updatedAt"] as? Double ?? 0) }
+                .first?["cwd"] as? String
+        }
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + timeout + 1)
+        task.cancel()
+        return result
+    }
+
+    /// Resolve on a background queue, then call the completion on the main
+    /// queue (nil when unresolved).
+    static func resolveProjectDirectory(port: Int, timeout: TimeInterval = 6,
+                                        completion: @escaping (String?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let cwd = fetchActiveSessionCwd(port: port, timeout: timeout)
+            DispatchQueue.main.async { completion(cwd) }
+        }
+    }
+}
+
+// MARK: - App delegate
+
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate,
+                         WKScriptMessageHandler, NSSplitViewDelegate {
+
+    private let server = ServerManager()
+    private var didSpawnServer = false
+    private var autoUpgradeMenuItem: NSMenuItem!
+    private var previewToggleMenuItem: NSMenuItem?
+    private var terminalToggleMenuItem: NSMenuItem?
+    /// Activity-bar entries (leftmost icon strip).
+    private var previewBarButton: ActivityBarButton!
+    private var terminalBarButton: ActivityBarButton!
+
+    private var window: NSWindow!
+    private var webView: WKWebView!
+    private var splitView: NSSplitView!
+    private var previewPanel: PreviewPanelController!
+    private var terminalPanel: TerminalPanelController!
+
+    /// Which panel occupies the right-side slot (none = hidden). The preview
+    /// and terminal panels share one slot; the activity bar toggles between
+    /// them, and the two are mutually exclusive.
+    enum RightPanel { case none, preview, terminal }
+    private var rightPanel: RightPanel = .none
+    /// Re-entrancy guard for window widening (see ensureWebViewWidth).
+    private var isWideningWindow = false
+    /// Minimum web-view width. dsh web auto-collapses its left sidebar below
+    /// its LG breakpoint (1024pt); keeping the web view at 1100pt leaves a
+    /// comfortable margin so the sidebar never folds away.
+    private let minWebViewWidth: CGFloat = 1100
+    /// Smallest allowed width of the right panel slot (max of both panels').
+    private static let rightPanelMinWidth: CGFloat =
+        max(PreviewPanelController.minWidth, TerminalPanelController.minWidth)
+    /// Fixed default panel width. Deliberately NOT window-relative: a
+    /// "half the window" default made the width chase the window as it was
+    /// widened, flip-flopping on every toggle.
+    private static let rightPanelDefaultWidth: CGFloat = 560
+    /// Width of the activity bar (leftmost/rightmost icon strip).
+    private let activityBarWidth: CGFloat = 48
+
+    // Status overlay (shown while the server boots / on errors)
+    private var statusView: NSView!
+    private var statusLabel: NSTextField!
+    private var statusSpinner: NSProgressIndicator!
+    private var retryButton: NSButton!
+
+    // MARK: Lifecycle
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        AppLog.shared.log("launch: didFinishLaunching begin")
+        NSApp.setActivationPolicy(.regular)
+        // Snapshot the real system language BEFORE overriding AppleLanguages.
+        L10n.captureSystemLang()
+        // Make the WebView's navigator.language follow the shell language so
+        // the dsh web page UI matches (dsh web defaults to browser language).
+        UserDefaults.standard.set([L10n.isZh ? "zh-CN" : "en-US"], forKey: "AppleLanguages")
+        installSignalHandlers()
+        buildMenu()
+        AppLog.shared.log("launch: menu built")
+        buildWindow()
+        AppLog.shared.log("launch: window built")
+        AppLog.shared.log("app did finish launching (lang=\(L10n.lang) followSystem=\(!L10n.hasExplicitChoice) AppleLanguages=\(UserDefaults.standard.array(forKey: "AppleLanguages") ?? []))")
+        startServer()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Route SIGTERM/SIGINT/SIGHUP (kill, logout, system shutdown) through the
+    /// normal quit path so the spawned server is always cleaned up.
+    private func installSignalHandlers() {
+        signal(SIGTERM) { _ in DispatchQueue.main.async { NSApp.terminate(nil) } }
+        signal(SIGINT) { _ in DispatchQueue.main.async { NSApp.terminate(nil) } }
+        signal(SIGHUP) { _ in DispatchQueue.main.async { NSApp.terminate(nil) } }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        terminalPanel?.shutdownAll()
+        if didSpawnServer { server.stop() }
+    }
+
+    // MARK: Window
+
+    private func buildWindow() {
+        AppLog.shared.log("launch: buildWindow begin")
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
+
+        window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "oh-my-dsh (DeepSeek Harness)"
+        window.contentView = content
+        // Minimum window width keeps the web view ≥ minWebViewWidth even with
+        // the panel hidden (activity bar takes activityBarWidth), so shrinking
+        // the window can never fold dsh's sidebar away.
+        window.minSize = NSSize(width: minWebViewWidth + activityBarWidth, height: 480)
+        window.center()
+        window.setFrameAutosaveName("oh-my-dshMainWindow")
+        window.makeKeyAndOrderFront(nil)
+
+        buildStatusOverlay()
+        buildSplitView()
+        // Self-test hook (debugging / QA only): opens one or more paths
+        // (comma-separated) in the preview panel at launch when
+        // DSH_PREVIEW_TEST_PATH is set.
+        if let testPath = ProcessInfo.processInfo.environment["DSH_PREVIEW_TEST_PATH"], !testPath.isEmpty {
+            for p in testPath.split(separator: ",") where !p.isEmpty {
+                previewPanel.open(path: String(p))
+            }
+            setRightPanel(.preview)
+            AppLog.shared.log("preview self-test path: \(testPath)")
+        }
+        // Terminal self-test hook (debugging / QA only): opens the terminal
+        // panel at launch when DSH_TERMINAL_TEST=1 is set.
+        if ProcessInfo.processInfo.environment["DSH_TERMINAL_TEST"] == "1" {
+            setRightPanel(.terminal)
+            AppLog.shared.log("terminal self-test enabled")
+        }
+    }
+
+    /// Build the activity bar (leftmost icon strip) + the main split view:
+    /// WKWebView (middle) + preview panel (right). The preview panel starts
+    /// hidden; it expands when a file link is clicked or the bar/menu toggles.
+    private func buildSplitView() {
+        AppLog.shared.log("launch: buildSplitView begin")
+        guard let content = window.contentView else { return }
+
+        previewPanel = PreviewPanelController()
+        AppLog.shared.log("launch: previewPanel created")
+        previewPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        previewPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
+
+        terminalPanel = TerminalPanelController()
+        AppLog.shared.log("launch: terminalPanel created")
+        terminalPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        terminalPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
+
+        // --- leftmost activity bar (icon entries; extensible) ---
+        // DynamicFillView keeps the strip's background following light/dark
+        // (a fixed CGColor layer background would not).
+        let activityBar = DynamicFillView()
+        activityBar.kind = .control
+        activityBar.translatesAutoresizingMaskIntoConstraints = false
+
+        previewBarButton = makeActivityButton(symbol: "sidebar.right",
+                                              tooltip: L10n.tr("bar.preview"),
+                                              action: #selector(togglePreviewPanel(_:)))
+        terminalBarButton = makeActivityButton(symbol: "terminal",
+                                               tooltip: L10n.tr("bar.terminal"),
+                                               action: #selector(terminalEntryTapped(_:)))
+        let barStack = NSStackView(views: [previewBarButton, terminalBarButton])
+        barStack.orientation = .vertical
+        barStack.alignment = .centerX
+        barStack.spacing = 6
+        barStack.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
+        barStack.translatesAutoresizingMaskIntoConstraints = false
+        activityBar.addSubview(barStack)
+        NSLayoutConstraint.activate([
+            barStack.topAnchor.constraint(equalTo: activityBar.topAnchor),
+            barStack.leadingAnchor.constraint(equalTo: activityBar.leadingAnchor),
+            barStack.trailingAnchor.constraint(equalTo: activityBar.trailingAnchor),
+        ])
+
+        content.addSubview(activityBar, positioned: .below, relativeTo: statusView)
+
+        splitView = NSSplitView(frame: content.bounds)
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        splitView.delegate = self
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+
+        content.addSubview(splitView, positioned: .below, relativeTo: statusView)
+        NSLayoutConstraint.activate([
+            // Activity bar on the right edge (next to the preview panel).
+            activityBar.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            activityBar.topAnchor.constraint(equalTo: content.topAnchor),
+            activityBar.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            activityBar.widthAnchor.constraint(equalToConstant: 48),
+            splitView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            splitView.trailingAnchor.constraint(equalTo: activityBar.leadingAnchor),
+            splitView.topAnchor.constraint(equalTo: content.topAnchor),
+            splitView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
+
+        AppLog.shared.log("launch: activity bar + split view ready")
+        rebuildWebView() // creates the WKWebView and adds it as the left pane
+        AppLog.shared.log("launch: webview ready")
+
+        // The right slot is the ACTIVE panel's view mounted DIRECTLY as the
+        // split view's second pane (the arrangement that rendered reliably
+        // for the original preview panel). Swapping = replace subviews[1];
+        // hiding = setPosition collapses the pane to zero width. No container,
+        // no isHidden, no stacking — each of those visibility tricks failed to
+        // re-composite panel content in this layer-backed window.
+        AppLog.shared.log("launch: split ready (active panel mounted by setRightPanel)")
+
+        // Restore the last state: "previewPanelState" marks the panel visible
+        // (not the legacy "previewPanelVisible" key, which older builds may
+        // have left set to true), "rightPanelKind" picks which panel — so a
+        // fresh install starts with the panel closed, and only explicit user
+        // actions mark it open.
+        let visible = UserDefaults.standard.bool(forKey: "previewPanelState")
+        let kind = UserDefaults.standard.string(forKey: "rightPanelKind") == "terminal"
+            ? RightPanel.terminal : .preview
+        setRightPanel(visible ? kind : .none)
+    }
+
+    /// A borderless toggle button for the activity bar (hover highlight,
+    /// pointing-hand cursor, accent highlight while active). The icon color is
+    /// baked into the image (ActivityBarButton) so it stays visible in dark
+    /// mode regardless of tint resolution.
+    private func makeActivityButton(symbol: String, tooltip: String, action: Selector) -> ActivityBarButton {
+        ActivityBarButton(symbol: symbol, tooltip: tooltip, action: action)
+    }
+
+    /// Show/hide the preview panel. The panel width is remembered across
+    /// sessions (persisted when the divider is dragged / the panel resized).
+    /// When called before the window has laid out (bounds width 0) the request
+    /// is retried on the next runloop — a setPosition at width 0 is a no-op and
+    /// leaves NSSplitView to equal-split the panes ("half-and-half" on launch).
+    /// Show/hide the right-side panel slot and pick which panel occupies it
+    /// (.preview or .terminal; both hidden when .none). The panel width is
+    /// remembered across sessions (persisted when the divider is dragged /
+    /// the panel resized). When called before the window has laid out (bounds
+    /// width 0) the request is retried on the next runloop — a setPosition at
+    /// width 0 is a no-op and leaves NSSplitView to equal-split the panes.
+    private func setRightPanel(_ panel: RightPanel) {
+        guard let split = splitView else { return }
+        if ProcessInfo.processInfo.environment["DSH_PREVIEW_DEBUG"] == "1" {
+            AppLog.shared.log("setRightPanel enter: panel=\(panel) win=\(window.frame) split=\(split.bounds) content=\(window.contentView?.bounds ?? .zero) pwSaved=\(UserDefaults.standard.object(forKey: "previewPanelWidth") ?? "nil" as Any)")
+        }
+        // Wait until Auto Layout has actually laid the split out: its bounds
+        // width must be windowWidth - activityBar. Using the pre-layout frame
+        // (which equals the window width, or a stale default while the window
+        // restores its saved frame) computes a divider position against the
+        // wrong total and leaves the panel huge / the web view tiny.
+        guard split.bounds.width > 0, window.frame.width > 0 else {
+            DispatchQueue.main.async { [weak self] in self?.setRightPanel(panel) }
+            return
+        }
+        window.contentView?.layoutSubtreeIfNeeded()
+        let expectedSplitW = window.frame.width - activityBarWidth
+        guard abs(split.bounds.width - expectedSplitW) < 2 else {
+            DispatchQueue.main.async { [weak self] in self?.setRightPanel(panel) }
+            return
+        }
+        rightPanel = panel
+        let visible = panel != .none
+        AppLog.shared.log("setRightPanel apply panel=\(panel) splitW=\(split.bounds.width) winW=\(window.frame.width)")
+        previewToggleMenuItem?.state = (panel == .preview) ? .on : .off
+        terminalToggleMenuItem?.state = (panel == .terminal) ? .on : .off
+        previewBarButton?.setActive(panel == .preview)
+        terminalBarButton?.setActive(panel == .terminal)
+        // Mount the ACTIVE panel's view directly as the split view's right
+        // pane (subviews[1]) — the arrangement that rendered reliably for the
+        // original preview panel. Swapping replaces subviews[1]; hiding just
+        // collapses its width via the divider below.
+        if panel != .none {
+            let activeView: NSView = panel == .preview ? previewPanel.view : terminalPanel.view
+            if split.subviews.count > 1, split.subviews[1] !== activeView {
+                split.subviews[1].removeFromSuperview()
+            }
+            if !split.subviews.contains(activeView) {
+                split.addSubview(activeView)
+                split.setHoldingPriority(NSLayoutConstraint.Priority(rawValue: 260), forSubviewAt: 1)
+            }
+            activeView.needsLayout = true
+            activeView.needsDisplay = true
+        }
+        if visible {
+            applyRightPanelLayout()
+            if panel == .preview {
+                // Show the project tree by default whenever the panel opens.
+                previewPanel.ensureTreeLoaded()
+                if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
+                    self.dumpPanelDebugInfo(panelView: previewPanel.view, label: "preview")
+                }
+            } else {
+                // Lazily spawn the first terminal session, then focus it.
+                terminalPanel.ensureSession()
+                DispatchQueue.main.async { [weak self] in self?.terminalPanel.focusActiveTerminal() }
+                if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
+                    self.dumpPanelDebugInfo(panelView: terminalPanel.view, label: "terminal")
+                }
+            }
+        } else {
+            split.setPosition(split.bounds.width, ofDividerAt: 0)
+            split.adjustSubviews()
+        }
+        split.adjustSubviews()
+        // Force a synchronous layout + display of the newly mounted panel so
+        // its content actually draws (defends against stale/empty layer
+        // contents after a swap).
+        if panel != .none {
+            let activeView: NSView = panel == .preview ? previewPanel.view : terminalPanel.view
+            window.contentView?.layoutSubtreeIfNeeded()
+            activeView.layoutSubtreeIfNeeded()
+            activeView.display()
+            if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
+                let content = activeView.subviews.last
+                AppLog.shared.log("ui debug: \(panel) after-layout pane=\(activeView.bounds.width)pt header=\(activeView.subviews.first?.frame.width ?? -1)pt content=\(content?.frame.width ?? -1)pt")
+                // Re-dump AFTER the forced layout so frames reflect what is
+                // actually on screen (the pre-layout dump shows stale widths).
+                dumpHierarchy(activeView, label: "\(panel)-post", maxDepth: 4)
+            }
+        }
+        UserDefaults.standard.set(visible, forKey: "previewPanelState")
+        UserDefaults.standard.set(panel == .terminal ? "terminal" : "preview", forKey: "rightPanelKind")
+        // Note: the panel width is persisted only while the user drags the
+        // divider (splitViewDidResizeSubviews) — never overwrite the user's
+        // setting here with a clamped value.
+        AppLog.shared.log("right panel \(visible ? "shown(\(panel))" : "hidden") webView≈\(split.bounds.width - (split.subviews.count > 1 ? split.subviews[1].frame.width : 0) - split.dividerThickness)pt panelW≈\(split.subviews.count > 1 ? split.subviews[1].frame.width : 0)pt")
+        // Layout may not be settled yet at startup; once the window has laid
+        // out, make sure the web view never dips below dsh's sidebar
+        // auto-collapse breakpoint (also widens too-narrow windows while the
+        // panel is hidden).
+        DispatchQueue.main.async { [weak self] in self?.ensureWebViewWidth() }
+    }
+
+    /// Diagnostics for the dark-mode / blank-panel reports (DSH_UI_DEBUG=1):
+    /// logs the panel's window/layer/appearance state and writes a snapshot
+    /// of what the VIEW hierarchy renders to the logs folder.
+    private func dumpPanelDebugInfo(panelView: NSView, label: String) {
+        AppLog.shared.log("ui debug: \(label) panel inWindow=\(panelView.window != nil) layer=\(panelView.layer != nil) isHidden=\(panelView.isHidden) layerHidden=\(panelView.layer?.isHidden ?? false) frame=\(panelView.frame) windowAppearance=\(String(describing: window.appearance)) effective=\(String(describing: panelView.effectiveAppearance.name)) splitSubviews=\(splitView?.subviews.map { $0 === previewPanel?.view ? "preview" : ($0 === terminalPanel?.view ? "terminal" : "web/other") } ?? [])")
+        // Recursive view-hierarchy + frame dump of the panel's top levels, so
+        // a "header renders blank" report can be pinned to frames/hierarchy.
+        dumpHierarchy(panelView, label: label, maxDepth: 4)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self = self, panelView.window != nil, panelView.bounds.width > 10 else { return }
+            guard let rep = panelView.bitmapImageRepForCachingDisplay(in: panelView.bounds) else { return }
+            panelView.cacheDisplay(in: panelView.bounds, to: rep)
+            let dir = NSHomeDirectory() + "/Library/Logs/oh-my-dsh"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            if let png = rep.representation(using: .png, properties: [:]) {
+                let url = URL(fileURLWithPath: dir + "/panel-\(label)-debug.png")
+                try? png.write(to: url)
+                AppLog.shared.log("ui debug: \(label) panel snapshot -> \(url.path) size=\(rep.pixelsWide)x\(rep.pixelsHigh)")
+            }
+            // Also snapshot the preview panel for comparison.
+            if let pv = self.previewPanel?.view, pv.window != nil, pv.bounds.width > 10,
+               let rep2 = pv.bitmapImageRepForCachingDisplay(in: pv.bounds) {
+                pv.cacheDisplay(in: pv.bounds, to: rep2)
+                if let png2 = rep2.representation(using: .png, properties: [:]) {
+                    let url2 = URL(fileURLWithPath: dir + "/panel-preview-debug.png")
+                    try? png2.write(to: url2)
+                    AppLog.shared.log("ui debug: preview panel snapshot -> \(url2.path)")
+                }
+            }
+        }
+    }
+
+    /// Recursive frame/hierarchy dump used to pin down blank-header reports.
+    /// Includes per-view color info (layer background, and the resolved
+    /// icon/label color for the custom-drawn header views) so the preview and
+    /// terminal panels can be compared side by side.
+    private func dumpHierarchy(_ view: NSView, label: String, indent: String = "", maxDepth: Int) {
+        guard maxDepth > 0 else { return }
+        var extra = ""
+        if let layer = view.layer {
+            extra += " layerBg=\(String(describing: layer.backgroundColor))"
+        }
+        let dark = view.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        if view is HeaderLabel {
+            extra += " labelColor=\(dark ? "light(0.78)" : "dark(0.38)")"
+        }
+        if let cb = view as? CustomIconButton {
+            extra += " iconColor=\(dark ? "light(0.9)" : "dark(0.25)") enabled=\(cb.isEnabled)"
+        }
+        AppLog.shared.log("hier[\(label)]: \(indent)\(type(of: view)) frame=\(view.frame) hidden=\(view.isHidden) alpha=\(view.alphaValue) appearance=\(dark ? "dark" : "light")\(extra)")
+        for sub in view.subviews {
+            dumpHierarchy(sub, label: label, indent: indent + "  ", maxDepth: maxDepth - 1)
+        }
+    }
+
+    /// The target panel width: the user's dragged width when saved, else the
+    /// fixed default (never window-relative).
+    private func targetPanelWidth() -> CGFloat {
+        if let saved = UserDefaults.standard.object(forKey: "previewPanelWidth") as? NSNumber,
+           saved.doubleValue >= Self.rightPanelMinWidth {
+            return CGFloat(saved.doubleValue)
+        }
+        return Self.rightPanelDefaultWidth
+    }
+
+    /// THE single place that lays out the right panel: widen the window when
+    /// needed (keeping the panel + min web view on screen), then set the
+    /// divider so the panel is exactly `targetPanelWidth` wide and the web
+    /// view takes the rest. Idempotent — calling it repeatedly yields the
+    /// same divider, so toggling panels never changes the widths.
+    private func applyRightPanelLayout() {
+        guard let split = splitView, rightPanel != .none else { return }
+        let divider = split.dividerThickness
+        let pw = targetPanelWidth()
+        let neededW = activityBarWidth + pw + minWebViewWidth + divider
+        if window.frame.width < neededW {
+            isWideningWindow = true
+            widenWindow(to: neededW)
+            isWideningWindow = false
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+        let maxPw = split.bounds.width - minWebViewWidth - divider
+        let target = min(pw, max(maxPw, Self.rightPanelMinWidth))
+        split.setPosition(split.bounds.width - target - divider, ofDividerAt: 0)
+        split.adjustSubviews()
+        window.contentView?.layoutSubtreeIfNeeded()
+        AppLog.shared.log("layout: panel=\(split.subviews.count > 1 ? split.subviews[1].frame.width : 0)pt webView=\(split.bounds.width - (split.subviews.count > 1 ? split.subviews[1].frame.width : 0) - divider)pt")
+    }
+
+    // MARK: NSSplitViewDelegate
+
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        // When visible, the right pane keeps a minimum width; when hidden the
+        // divider may slide all the way to the edge.
+        rightPanel != .none ? splitView.bounds.width - Self.rightPanelMinWidth : splitView.bounds.width
+    }
+
+    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        // Keep the web view at least minWebViewWidth wide (dsh collapses its
+        // sidebar below 1024pt); on narrow windows the right pane keeps its
+        // own minimum instead.
+        min(minWebViewWidth, splitView.bounds.width - Self.rightPanelMinWidth - splitView.dividerThickness)
+    }
+
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard splitView.subviews.count > 1 else { return }
+        guard rightPanel != .none else { return }
+        let pw = splitView.subviews[1].frame.width
+        if pw >= Self.rightPanelMinWidth {
+            UserDefaults.standard.set(pw, forKey: "previewPanelWidth")
+        }
+        // Auto-hide ONLY when the window is genuinely too narrow for even the
+        // minimum panel + web view (user shrank the window) — NOT during
+        // transient programmatic states like the launch half-split, which are
+        // corrected by applyRightPanelLayout moments later.
+        let webW = splitView.bounds.width - pw - splitView.dividerThickness
+        let windowTooNarrow = window.frame.width < minWebViewWidth + activityBarWidth + Self.rightPanelMinWidth
+        if webW < minWebViewWidth && windowTooNarrow {
+            AppLog.shared.log("window too narrow; auto-hiding right panel (webView \(Int(webW))pt < \(Int(minWebViewWidth))pt)")
+            setRightPanel(.none)
+        }
+    }
+
+    /// Ensure the web view stays at least minWebViewWidth wide. When the
+    /// panel is visible this re-runs the single layout routine (widening the
+    /// window AND re-applying the divider — the divider would otherwise stay
+    /// stale and the panel would grow with the window). Called after every
+    /// setRightPanel and on layout settle, so the launch "half and half" is
+    /// corrected automatically without any toggle.
+    private func ensureWebViewWidth() {
+        guard let split = splitView,
+              split.subviews.count > 1, let win = window else { return }
+        if rightPanel != .none {
+            applyRightPanelLayout()
+        } else if win.frame.width < minWebViewWidth + activityBarWidth {
+            isWideningWindow = true
+            widenWindow(to: minWebViewWidth + activityBarWidth)
+            isWideningWindow = false
+            AppLog.shared.log("window widened to keep web view ≥ \(Int(minWebViewWidth))pt")
+        }
+    }
+
+    /// Grow the window to the given width, clamping width AND position to the
+    /// screen's visible frame so the right edge (activity bar) never ends up
+    /// off-screen.
+    private func widenWindow(to width: CGFloat) {
+        guard let win = window else { return }
+        let vf = win.screen?.visibleFrame ?? win.frame
+        var f = win.frame
+        f.size.width = min(width, vf.width)
+        // Keep the right edge inside the screen (the activity bar lives there).
+        if f.maxX > vf.maxX { f.origin.x = vf.maxX - f.width }
+        if f.minX < vf.minX { f.origin.x = vf.minX }
+        win.setFrame(f, display: true)
+    }
+
+    /// Create a fresh WKWebView pinned to the window content (below the status
+    /// overlay). A user script injected at document start overrides
+    /// `navigator.language`/`navigator.languages` to follow the shell language —
+    /// dsh web reads the browser language to pick its UI locale, and WebKit's
+    /// own language is fixed at process start (can't be changed at runtime).
+    /// The website data store stays shared, so localStorage/cookies/sessions
+    /// are preserved across rebuilds.
+    ///
+    /// A second user script intercepts clicks on dsh web's file links (tool
+    /// outputs rendered as `<button class="…fileMention…" title="<path>">`
+    /// and the produced-files row `<button title="<path>">` inside
+    /// `[data-produced-files-row]`). It blocks the click from reaching the
+    /// page's `host.openPath` RPC (which would open the file with the system
+    /// default app) and posts the path to the native preview panel instead.
+    private func rebuildWebView() {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .default()
+
+        let langTag = L10n.isZh ? "zh-CN" : "en-US"
+        let langScript = """
+        Object.defineProperty(Navigator.prototype, 'language', { get: () => '\(langTag)', configurable: true });
+        Object.defineProperty(Navigator.prototype, 'languages', { get: () => ['\(langTag)'], configurable: true });
+        """
+        config.userContentController.addUserScript(
+            WKUserScript(source: langScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+
+        config.userContentController.addUserScript(
+            WKUserScript(source: Self.previewInterceptorScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        config.userContentController.add(self, name: "dshPreview")
+
+        webView?.removeFromSuperview()
+        webView = WKWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+        webView.allowsBackForwardNavigationGestures = true
+        // The split view manages the pane frames; plain autoresizing is enough.
+        webView.translatesAutoresizingMaskIntoConstraints = true
+        webView.autoresizingMask = [.width, .height]
+
+        guard let split = splitView else { return }
+        if split.subviews.first is WKWebView {
+            split.subviews[0].removeFromSuperview()
+        }
+        // Keep the web view as the left pane (insert below the existing pane).
+        split.addSubview(webView, positioned: .below, relativeTo: split.subviews.first)
+    }
+
+    /// Interceptor for dsh web's file-open requests. dsh web opens files by
+    /// calling the host RPC `host.openPath`, which the client sends as an
+    /// HTTP POST to `/api/host.openPath` with body
+    /// `{type:"client-request", rpcId, method:"host.openPath", payload:{path}}`
+    /// (see @deepseek-ai/dsh-client-connection: callUnary → postJson → doFetch
+    /// → globalThis.fetch). Patching `window.fetch` catches EVERY file-open
+    /// attempt regardless of which UI element triggered it (produced-file
+    /// chips, inline mentions, "show in folder", future surfaces) and yields
+    /// the exact absolute path. The request is swallowed and replaced with a
+    /// fake successful `server-response`, so the page never opens the system
+    /// default app and the client promise resolves cleanly. All other API
+    /// calls pass through untouched. Diagnostic flags (DSH_PREVIEW_DEBUG=1)
+    /// record install + hits.
+    private static let previewInterceptorScript = """
+    (function () {
+      window.__dshPreviewInstalled = true;
+      var origFetch = window.fetch;
+      window.fetch = function (input, init) {
+        var url = typeof input === 'string' ? input : (input && (input.href || input.url)) || '';
+        if (url.indexOf('/api/host.openPath') !== -1) {
+          var body = null;
+          try { body = JSON.parse((init && init.body) || '{}'); } catch (e) {}
+          var path = body && body.payload && typeof body.payload.path === 'string' ? body.payload.path : null;
+          if (path && path.charAt(0) === '/') {
+            window.__dshPreviewHit = path;
+            try {
+              window.webkit.messageHandlers.dshPreview.postMessage({ path: path });
+            } catch (err) {}
+            return Promise.resolve(new Response(JSON.stringify({
+              type: 'server-response',
+              rpcId: body.rpcId,
+              result: { ok: true, value: { opened: true } }
+            }), { status: 200, headers: { 'content-type': 'application/json' } }));
+          }
+        }
+        return origFetch.apply(this, arguments);
+      };
+    })();
+    """
+
+    private func buildStatusOverlay() {
+        guard let content = window.contentView else { return }
+        statusView = NSView(frame: content.bounds)
+        statusView.autoresizingMask = [.width, .height]
+        statusView.wantsLayer = true
+        statusView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+
+        statusSpinner = NSProgressIndicator()
+        statusSpinner.style = .spinning
+        statusSpinner.controlSize = .large
+        statusSpinner.translatesAutoresizingMaskIntoConstraints = false
+
+        statusLabel = NSTextField(labelWithString: L10n.tr("status.starting"))
+        statusLabel.font = .systemFont(ofSize: 15)
+        statusLabel.alignment = .center
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        retryButton = NSButton(title: L10n.tr("btn.retry"), target: self, action: #selector(retryTapped))
+        retryButton.isHidden = true
+        retryButton.translatesAutoresizingMaskIntoConstraints = false
+
+        statusView.addSubview(statusSpinner)
+        statusView.addSubview(statusLabel)
+        statusView.addSubview(retryButton)
+        NSLayoutConstraint.activate([
+            statusSpinner.centerXAnchor.constraint(equalTo: statusView.centerXAnchor),
+            statusSpinner.centerYAnchor.constraint(equalTo: statusView.centerYAnchor, constant: -24),
+            statusLabel.topAnchor.constraint(equalTo: statusSpinner.bottomAnchor, constant: 16),
+            statusLabel.centerXAnchor.constraint(equalTo: statusView.centerXAnchor),
+            statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: statusView.leadingAnchor, constant: 40),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: statusView.trailingAnchor, constant: -40),
+            retryButton.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 16),
+            retryButton.centerXAnchor.constraint(equalTo: statusView.centerXAnchor),
+        ])
+        content.addSubview(statusView, positioned: .above, relativeTo: nil)
+    }
+
+    private func showStatus(_ text: String, spinner: Bool, retry: Bool) {
+        statusLabel.stringValue = text
+        statusSpinner.isHidden = !spinner
+        if spinner { statusSpinner.startAnimation(nil) } else { statusSpinner.stopAnimation(nil) }
+        retryButton.isHidden = !retry
+        statusView.isHidden = false
+    }
+
+    private func hideStatus() {
+        statusSpinner.stopAnimation(nil)
+        statusView.isHidden = true
+    }
+
+    // MARK: Server boot
+
+    private func startServer() {
+        showStatus(L10n.tr("status.starting"), spinner: true, retry: false)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            // Auto-upgrade the bundled dsh (at most once per 24h) before the
+            // server starts, so the new version is used immediately.
+            if self.autoUpgradeEnabled() {
+                self.runAutoUpgradeIfNeeded()
+            }
+            do {
+                let url = try self.server.start()
+                let didSpawn = self.server.spawned
+                AppLog.shared.log("server ready: \(url.absoluteString) spawned=\(didSpawn)")
+                DispatchQueue.main.async {
+                    self.didSpawnServer = didSpawn
+                    self.webView.load(URLRequest(url: url))
+                    // Tell the terminal panel the server is reachable so any
+                    // spawn deferred during server boot starts in the
+                    // project directory (not ~).
+                    self.terminalPanel?.serverReady(port: self.server.port)
+                }
+            } catch {
+                AppLog.shared.log("server start failed: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self.showStatus(L10n.tr("status.startFailed", error.localizedDescription), spinner: false, retry: true)
+                }
+            }
+        }
+    }
+
+    @objc private func retryTapped() {
+        startServer()
+    }
+
+    // MARK: dsh upgrade & registry
+
+    private func autoUpgradeEnabled() -> Bool {
+        if ProcessInfo.processInfo.environment["DSH_AUTO_UPGRADE"] == "0" { return false }
+        return UserDefaults.standard.object(forKey: "autoUpgradeDsh") as? Bool ?? true
+    }
+
+    /// Silent background check: once per 24h, upgrade the bundled dsh to the
+    /// registry's latest. Never throws — failures are logged only.
+    private func runAutoUpgradeIfNeeded() {
+        let lastKey = "lastAutoUpgradeCheck"
+        let now = Date().timeIntervalSince1970
+        if now - UserDefaults.standard.double(forKey: lastKey) < 86_400 { return }
+        UserDefaults.standard.set(now, forKey: lastKey)
+
+        guard let node = server.resolveNode(), let bin = server.resolveDSHBin(),
+              let updater = DSHUpdater(nodePath: node, dshBin: bin) else { return }
+        guard let current = updater.currentVersion else { return }
+        guard let latest = updater.latestVersion(registry: RegistryConfig.current) else {
+            AppLog.shared.log("auto-upgrade: version check failed (offline? registry=\(RegistryConfig.current))")
+            return
+        }
+        if VersionKit.compare(latest, current) <= 0 {
+            AppLog.shared.log("auto-upgrade: already latest (\(current))")
+            return
+        }
+        AppLog.shared.log("auto-upgrade: \(current) -> \(latest) via \(RegistryConfig.current)")
+        DispatchQueue.main.async {
+            self.showStatus(L10n.tr("status.upgrading", current, latest), spinner: true, retry: false)
+        }
+        do {
+            let new = try updater.upgrade(registry: RegistryConfig.current)
+            server.refreshFacts()
+            AppLog.shared.log("auto-upgrade: done, now \(new)")
+        } catch {
+            AppLog.shared.log("auto-upgrade: failed: \(error.localizedDescription)")
+        }
+        DispatchQueue.main.async {
+            self.hideStatus()
+        }
+    }
+
+    /// Opens dsh web's Settings view, same as clicking its "Settings" entry.
+    /// Located via the stable `data-slot="sidebar.settings"` slot attribute
+    /// (works whether the sidebar is expanded or collapsed to an icon rail),
+    /// with a localized-label match as fallback.
+    private static let openDSHSettingsJS = """
+    (function () {
+      // 1) stable slot: the sidebar settings entry
+      var slot = document.querySelector('[data-slot="sidebar.settings"]');
+      if (slot) {
+        var b = slot.querySelector('button');
+        if (b) { b.click(); return true; }
+      }
+      // 2) fallback: match by localized label
+      var btns = document.querySelectorAll('button');
+      for (var i = 0; i < btns.length; i++) {
+        var t = (btns[i].textContent || '').trim();
+        var a = (btns[i].getAttribute('aria-label') || '').toLowerCase();
+        if (t === 'Settings' || t === '设置' || a.indexOf('settings') !== -1) {
+          btns[i].click();
+          return true;
+        }
+      }
+      return false;
+    })()
+    """
+
+    @objc private func openDSHSettings(_ sender: Any?) {
+        guard let webView = webView else { return }
+        webView.evaluateJavaScript(Self.openDSHSettingsJS) { result, error in
+            if let ok = result as? Bool, ok {
+                AppLog.shared.log("dsh settings opened")
+            } else {
+                AppLog.shared.log("dsh settings open failed: \(String(describing: error))")
+            }
+        }
+    }
+
+    @objc private func upgradeDSH() {
+        guard let node = server.resolveNode(), let bin = server.resolveDSHBin(),
+              let updater = DSHUpdater(nodePath: node, dshBin: bin) else {
+            let alert = NSAlert()
+            alert.messageText = L10n.tr("alert.cannotUpgrade")
+            alert.informativeText = L10n.tr("alert.noRuntime")
+            alert.addButton(withTitle: L10n.tr("btn.ok"))
+            alert.runModal()
+            return
+        }
+        showStatus(L10n.tr("status.checking"), spinner: true, retry: false)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var ok = true
+            var message = ""
+            if let current = updater.currentVersion,
+               let latest = updater.latestVersion(registry: RegistryConfig.current) {
+                if VersionKit.compare(latest, current) <= 0 {
+                    message = L10n.tr("alert.upToDate", current)
+                    AppLog.shared.log("manual upgrade: already latest (\(current))")
+                } else {
+                    DispatchQueue.main.async {
+                        self.showStatus(L10n.tr("status.upgrading", current, latest), spinner: true, retry: false)
+                    }
+                    do {
+                        let new = try updater.upgrade(registry: RegistryConfig.current)
+                        self.server.refreshFacts()
+                        message = L10n.tr("alert.upgraded", current, new)
+                        AppLog.shared.log("manual upgrade: \(current) -> \(new)")
+                    } catch {
+                        ok = false
+                        message = error.localizedDescription
+                        AppLog.shared.log("manual upgrade failed: \(error.localizedDescription)")
+                    }
+                }
+            } else {
+                ok = false
+                message = L10n.tr("alert.noVersionInfo", RegistryConfig.current)
+            }
+            DispatchQueue.main.async {
+                self.hideStatus()
+                let alert = NSAlert()
+                alert.messageText = ok ? L10n.tr("alert.dshUpgrade") : L10n.tr("alert.upgradeFailed")
+                alert.informativeText = message
+                alert.addButton(withTitle: L10n.tr("btn.ok"))
+                alert.runModal()
+            }
+        }
+    }
+
+    @objc private func toggleAutoUpgrade(_ sender: NSMenuItem) {
+        let enabled = sender.state == .off
+        UserDefaults.standard.set(enabled, forKey: "autoUpgradeDsh")
+        sender.state = enabled ? .on : .off
+        AppLog.shared.log("auto-upgrade \(enabled ? "enabled" : "disabled")")
+    }
+
+    @objc private func setRegistry() {
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("alert.setRegistryTitle")
+        alert.informativeText = L10n.tr("alert.setRegistryInfo", RegistryConfig.current)
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
+        field.stringValue = RegistryConfig.current
+        alert.accessoryView = field
+        alert.addButton(withTitle: L10n.tr("btn.save"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        if alert.runModal() == .alertFirstButtonReturn {
+            let url = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if url.isEmpty { RegistryConfig.reset() } else { RegistryConfig.set(url) }
+            AppLog.shared.log("registry set to \(RegistryConfig.current)")
+        }
+    }
+
+    @objc private func resetRegistry() {
+        RegistryConfig.reset()
+        AppLog.shared.log("registry reset to \(RegistryConfig.current)")
+    }
+
+    // MARK: WKNavigationDelegate
+
+    private func isLocal(_ url: URL) -> Bool {
+        guard let host = url.host else { return true } // about:, blob:, data:, file:
+        return host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "[::1]"
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.cancel)
+            return
+        }
+        if isLocal(url) {
+            decisionHandler(.allow)
+        } else {
+            // External links open in the default browser, never inside the shell.
+            AppLog.shared.log("opening externally: \(url.absoluteString)")
+            NSWorkspace.shared.open(url)
+            decisionHandler(.cancel)
+        }
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        if navigationResponse.canShowMIMEType {
+            decisionHandler(.allow)
+        } else {
+            decisionHandler(.download)
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        AppLog.shared.log("page did finish loading: \(webView.url?.absoluteString ?? "?")")
+        // Report the page's actual browser language (follows AppleLanguages).
+        webView.evaluateJavaScript("navigator.language") { result, _ in
+            if let lang = result as? String {
+                AppLog.shared.log("webview navigator.language=\(lang)")
+            }
+        }
+        // Debug probe (DSH_PREVIEW_DEBUG=1): fires a host.openPath request the
+        // way the page would and reports whether the interceptor captured it,
+        // swallowed it (fake success), and left the UI untouched.
+        if ProcessInfo.processInfo.environment["DSH_PREVIEW_DEBUG"] == "1" {
+            webView.evaluateJavaScript(Self.previewDebugProbeJS) { result, error in
+                if let r = result {
+                    AppLog.shared.log("preview debug probe: \(r)")
+                } else {
+                    AppLog.shared.log("preview debug probe failed: \(String(describing: error))")
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    webView.evaluateJavaScript("JSON.stringify(window.__dshProbeAsync)") { r2, _ in
+                        AppLog.shared.log("preview debug probe async: \(r2 ?? "none")")
+                    }
+                }
+            }
+            // Report dsh web's actual viewport and sidebar state inside the
+            // real WKWebView (debugging the "sidebar collapsed" reports).
+            webView.evaluateJavaScript("""
+            JSON.stringify({
+              innerWidth: window.innerWidth,
+              innerHeight: window.innerHeight,
+              sidebarCollapsed: (document.querySelector('[data-sidebar-collapsed]') || {}).getAttribute
+                ? (document.querySelector('[data-sidebar-collapsed]').getAttribute('data-sidebar-collapsed') || false)
+                : null
+            })
+            """) { result, _ in
+                AppLog.shared.log("dsh viewport/sidebar: \(result ?? "?")")
+            }
+        }
+        hideStatus()
+    }
+
+    /// Probe evaluated in the page when DSH_PREVIEW_DEBUG=1: checks the
+    /// interceptor installed state, then fires a `host.openPath` request the
+    /// exact way dsh web's client does (HTTP POST to /api/host.openPath) and
+    /// verifies the interceptor captured the path synchronously (the hit flag
+    /// is set before the promise resolves) and returned a fake success (read
+    /// back on a second pass via __dshProbeAsync).
+    private static let previewDebugProbeJS = """
+    (function () {
+      var out = { installed: !!window.__dshPreviewInstalled, hit: window.__dshPreviewHit || null };
+      var chips = document.querySelectorAll('[data-produced-files-row] button[title]');
+      out.chips = chips.length;
+      out.mentions = document.querySelectorAll('button[class*="fileMention"]').length;
+      window.__dshProbeAsync = null;
+      var testPath = '/tmp/dsh-preview-fetch-test.txt';
+      var fakeBody = JSON.stringify({
+        type: 'client-request',
+        rpcId: 'debug-probe-rpc',
+        method: 'host.openPath',
+        payload: { path: testPath }
+      });
+      fetch('/api/host.openPath', { method: 'POST', body: fakeBody }).then(function (r) {
+        return r.json();
+      }).then(function (json) {
+        window.__dshProbeAsync = { fakeResponse: json, hitAfter: window.__dshPreviewHit || null };
+        return true;
+      }).catch(function (e) {
+        window.__dshProbeAsync = { error: String(e) };
+        return true;
+      });
+      out.hitSync = window.__dshPreviewHit || null;
+      return JSON.stringify(out);
+    })()
+    """
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        let ns = error as NSError
+        if ns.code == NSURLErrorCancelled { return }
+        AppLog.shared.log("provisional navigation failed: \(error.localizedDescription)")
+        showStatus(L10n.tr("status.pageLoadFailed", error.localizedDescription), spinner: false, retry: true)
+    }
+
+    // MARK: WKUIDelegate
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = navigationAction.request.url, !isLocal(url) {
+            NSWorkspace.shared.open(url)
+        }
+        return nil
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.runModal()
+        completionHandler()
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: L10n.tr("btn.ok"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        completionHandler(alert.runModal() == .alertFirstButtonReturn)
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = prompt
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = defaultText ?? ""
+        alert.accessoryView = field
+        alert.addButton(withTitle: L10n.tr("btn.ok"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        if alert.runModal() == .alertFirstButtonReturn {
+            completionHandler(field.stringValue)
+        } else {
+            completionHandler(nil)
+        }
+    }
+
+    // MARK: WKDownloadDelegate
+
+    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedFilename
+        panel.begin { resp in
+            completionHandler(resp == .OK ? panel.url : nil)
+        }
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        AppLog.shared.log("download finished")
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        AppLog.shared.log("download failed: \(error.localizedDescription)")
+    }
+
+    // MARK: WKScriptMessageHandler (file preview bridge)
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "dshPreview" else { return }
+        guard let body = message.body as? [String: Any], let path = body["path"] as? String else { return }
+        AppLog.shared.log("preview request: \(path)")
+        if rightPanel != .preview { setRightPanel(.preview) }
+        previewPanel.open(path: path)
+    }
+
+    // MARK: Menu
+
+    private func buildMenu() {
+        let mainMenu = NSMenu()
+
+        // App menu (shown under the app name) — items carry no app-name text.
+        let appItem = NSMenuItem()
+        mainMenu.addItem(appItem)
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: L10n.tr("menu.about"), action: #selector(showAbout), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: L10n.tr("menu.hide"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: L10n.tr("menu.quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+
+        // Edit menu: routes Cmd+C/V/X/A/Z etc. to the first responder
+        // (WKWebView). Without it, copy/paste shortcuts stop working.
+        let editItem = NSMenuItem()
+        mainMenu.addItem(editItem)
+        let editMenu = NSMenu(title: L10n.tr("menu.edit"))
+        editMenu.addItem(withTitle: L10n.tr("edit.undo"), action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: L10n.tr("edit.redo"), action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: L10n.tr("edit.cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: L10n.tr("edit.copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: L10n.tr("edit.paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: L10n.tr("edit.selectAll"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+
+        // View menu: preview/terminal panel toggles (checked while visible).
+        let viewItem = NSMenuItem()
+        mainMenu.addItem(viewItem)
+        let viewMenu = NSMenu(title: L10n.tr("menu.view"))
+        let togglePreview = viewMenu.addItem(withTitle: L10n.tr("menu.togglePreview"), action: #selector(togglePreviewPanel(_:)), keyEquivalent: "p")
+        togglePreview.keyEquivalentModifierMask = [.command, .option]
+        togglePreview.target = self
+        togglePreview.state = (rightPanel == .preview) ? .on : .off
+        previewToggleMenuItem = togglePreview
+        let toggleTerminal = viewMenu.addItem(withTitle: L10n.tr("menu.toggleTerminal"), action: #selector(terminalEntryTapped(_:)), keyEquivalent: "t")
+        toggleTerminal.keyEquivalentModifierMask = [.command, .option]
+        toggleTerminal.target = self
+        toggleTerminal.state = (rightPanel == .terminal) ? .on : .off
+        terminalToggleMenuItem = toggleTerminal
+        viewItem.submenu = viewMenu
+
+        // Settings menu: dsh settings/upgrade/registry + logs + language.
+        let settingsItem = NSMenuItem()
+        mainMenu.addItem(settingsItem)
+        let settingsMenu = NSMenu(title: L10n.tr("menu.settings"))
+        let dshSettings = settingsMenu.addItem(withTitle: L10n.tr("menu.dshSettings"), action: #selector(openDSHSettings(_:)), keyEquivalent: "")
+        dshSettings.target = self
+        settingsMenu.addItem(.separator())
+        let upgrade = settingsMenu.addItem(withTitle: L10n.tr("menu.checkUpgrade"), action: #selector(upgradeDSH), keyEquivalent: "u")
+        upgrade.target = self
+        let auto = settingsMenu.addItem(withTitle: L10n.tr("menu.autoUpgrade"), action: #selector(toggleAutoUpgrade(_:)), keyEquivalent: "")
+        auto.target = self
+        auto.state = autoUpgradeEnabled() ? .on : .off
+        autoUpgradeMenuItem = auto
+        settingsMenu.addItem(.separator())
+        let setReg = settingsMenu.addItem(withTitle: L10n.tr("menu.setRegistry"), action: #selector(setRegistry), keyEquivalent: "")
+        setReg.target = self
+        let resetReg = settingsMenu.addItem(withTitle: L10n.tr("menu.resetRegistry"), action: #selector(resetRegistry), keyEquivalent: "")
+        resetReg.target = self
+        settingsMenu.addItem(.separator())
+        let logs = settingsMenu.addItem(withTitle: L10n.tr("menu.openLogs"), action: #selector(openLogs), keyEquivalent: "l")
+        logs.target = self
+        settingsMenu.addItem(.separator())
+        let langItem = NSMenuItem(title: L10n.tr("menu.language"), action: nil, keyEquivalent: "")
+        settingsMenu.addItem(langItem)
+        let langMenu = NSMenu(title: L10n.tr("menu.language"))
+        let followSystem = langMenu.addItem(withTitle: L10n.tr("menu.followSystem"), action: #selector(setLanguage(_:)), keyEquivalent: "")
+        followSystem.target = self
+        followSystem.tag = 0
+        followSystem.state = L10n.hasExplicitChoice ? .off : .on
+        let zh = langMenu.addItem(withTitle: "中文", action: #selector(setLanguage(_:)), keyEquivalent: "")
+        zh.target = self
+        zh.tag = 1
+        zh.state = (L10n.hasExplicitChoice && L10n.isZh) ? .on : .off
+        let en = langMenu.addItem(withTitle: "English", action: #selector(setLanguage(_:)), keyEquivalent: "")
+        en.target = self
+        en.tag = 2
+        en.state = (L10n.hasExplicitChoice && !L10n.isZh) ? .on : .off
+        langItem.submenu = langMenu
+        settingsItem.submenu = settingsMenu
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func setLanguage(_ sender: NSMenuItem) {
+        switch sender.tag {
+        case 0: L10n.set(nil)              // follow system
+        case 1: L10n.set("zh")
+        default: L10n.set("en")
+        }
+        UserDefaults.standard.set([L10n.isZh ? "zh-CN" : "en-US"], forKey: "AppleLanguages")
+        AppLog.shared.log("language set: lang=\(L10n.lang) followSystem=\(!L10n.hasExplicitChoice) AppleLanguages=\(UserDefaults.standard.array(forKey: "AppleLanguages") ?? [])")
+        buildMenu() // rebuild the whole menu in the new language
+        // Reload the dsh web page: the rebuilt WebView injects a navigator.language
+        // override, so the page language follows immediately (no restart needed).
+        let currentURL = webView.url
+        rebuildWebView()
+        webView.load(URLRequest(url: currentURL ?? URL(string: "http://127.0.0.1:\(server.port)")!))
+        // rebuildWebView replaced the WebView pane, which resets the split
+        // divider position — re-apply the panel's state and width so the web
+        // view stays ≥ minWebViewWidth (and dsh's sidebar doesn't collapse).
+        setRightPanel(rightPanel)
+    }
+
+    /// Custom, wider About window (the stock About panel wraps long lines).
+    private var aboutWindow: NSWindow?
+
+    @objc private func showAbout() {
+        if let w = aboutWindow {
+            w.makeKeyAndOrderFront(nil)
+            return
+        }
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.6.28"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "43"
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 330),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = L10n.tr("menu.about")
+        window.isReleasedWhenClosed = false
+
+        let content = NSView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+
+        let icon = NSImageView()
+        icon.image = NSApp.applicationIconImage
+        icon.translatesAutoresizingMaskIntoConstraints = false
+
+        let name = NSTextField(labelWithString: "oh-my-dsh")
+        name.font = .systemFont(ofSize: 22, weight: .bold)
+        name.translatesAutoresizingMaskIntoConstraints = false
+
+        let ver = NSTextField(labelWithString: L10n.tr("about.version", version, build))
+        ver.textColor = .secondaryLabelColor
+        ver.translatesAutoresizingMaskIntoConstraints = false
+
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+
+        let info = NSTextField(wrappingLabelWithString:
+            L10n.tr("about.credits", server.dshVersion, server.runtimeSource, server.nodeVersion, RegistryConfig.current))
+        info.font = .systemFont(ofSize: 12)
+        info.preferredMaxLayoutWidth = 500
+        info.translatesAutoresizingMaskIntoConstraints = false
+
+        let ok = NSButton(title: L10n.tr("btn.ok"), target: window, action: #selector(NSWindow.performClose(_:)))
+        ok.keyEquivalent = "\r"
+        ok.translatesAutoresizingMaskIntoConstraints = false
+
+        content.addSubview(icon)
+        content.addSubview(name)
+        content.addSubview(ver)
+        content.addSubview(separator)
+        content.addSubview(info)
+        content.addSubview(ok)
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
+            icon.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
+            icon.widthAnchor.constraint(equalToConstant: 64),
+            icon.heightAnchor.constraint(equalToConstant: 64),
+            name.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 16),
+            name.topAnchor.constraint(equalTo: content.topAnchor, constant: 28),
+            ver.leadingAnchor.constraint(equalTo: name.leadingAnchor),
+            ver.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 4),
+            separator.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: 20),
+            separator.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
+            separator.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
+            info.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 16),
+            info.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
+            info.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
+            info.bottomAnchor.constraint(lessThanOrEqualTo: ok.topAnchor, constant: -12),
+            ok.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
+            ok.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
+            ok.widthAnchor.constraint(equalToConstant: 88),
+        ])
+
+        window.contentView = content
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        aboutWindow = window
+        AppLog.shared.log("about window shown (size \(window.frame.size.width)x\(window.frame.size.height))")
+    }
+
+    @objc private func togglePreviewPanel(_ sender: Any?) {
+        setRightPanel(rightPanel == .preview ? .none : .preview)
+    }
+
+    /// Toggle the integrated terminal panel (activity bar entry / ⌥⌘T).
+    @objc private func terminalEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .terminal ? .none : .terminal)
+    }
+
+    @objc private func reloadPage() {
+        webView.reload()
+    }
+
+    @objc private func goBack() {
+        webView.goBack()
+    }
+
+    @objc private func goForward() {
+        webView.goForward()
+    }
+
+    @objc private func openInBrowser() {
+        if let url = webView.url {
+            NSWorkspace.shared.open(url)
+        } else if let url = URL(string: "http://127.0.0.1:\(server.port)") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func openLogs() {
+        let dir = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/oh-my-dsh")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(dir)
+    }
+}
+
+// MARK: - Entry point
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()
