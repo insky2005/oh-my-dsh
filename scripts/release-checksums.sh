@@ -34,12 +34,12 @@ done
 echo "Wrote $SUMS:"
 cat "$SUMS"
 
-cat <<EOF
+cat <<'EOF'
 
 ## 安装引导（首次运行）
 
 - 下载对应架构的安装包（`.pkg` 安装到 /Applications，或 `.dmg` 拖入 Applications）；
 - 本地构建、未公证：macOS 可能提示「无法验证开发者」→ **右键 → 打开**，或在
   「系统设置 → 隐私与安全性」中允许；
-- 校验完整性：\`shasum -a 256 -c SHA-256SUMS\`（在下载目录执行）。
+- 校验完整性：`shasum -a 256 -c SHA-256SUMS`（在下载目录执行）。
 EOF
