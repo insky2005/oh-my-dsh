@@ -150,4 +150,6 @@ make-pkg.sh          安装包脚本（pkgbuild 生成 .pkg 安装器 + hdiutil 
 .cache/              构建缓存（node tarball、npm 缓存、已构建运行时）
 dist/                构建产物（.app / .pkg / .dmg）
 docs/                设计/排查文档（含 docs/repo-wiki-design.md —— Repo Wiki 功能设计）
+docs/productization.md  产品化方案（路线图/分发/升级/多平台/开源治理 —— 见 [产品化方案](docs/productization.md)）
+docs/milestones/        各里程碑目标文档（M1 产品化基础 … M5 Apple 生态，后续开发任务来源）
 ```
