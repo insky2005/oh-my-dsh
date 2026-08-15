@@ -26,7 +26,7 @@ jobs:
       - name: npm install (core)
         run: npm ci || npm install --prefix core
       - name: core unit tests
-        run: node --test core/tests/
+        run: node --test "core/tests/*.test.js"
 
   # --- macOS shell: unit tests + swiftc compile check (fast, no build) ------
   swift:
