@@ -1,8 +1,8 @@
 ---
 title: 仓库概览
 tags: [overview, tech-stack, build, run, test]
-updated: 2026-08-15T12:19:42Z
-sources: [README.md, build-app.sh, make-pkg.sh, src/main.swift, src/PreviewPanel.swift, src/TerminalPanel.swift, src/WikiPanel.swift, src/MakeIcon.swift]
+updated: 2026-08-15T14:22:31Z
+sources: [README.md, build-app.sh, make-pkg.sh, src/main.swift, src/PreviewPanel.swift, src/TerminalPanel.swift, src/WikiPanel.swift, src/MakeIcon.swift, docs/productization.md]
 manual: false
 ---
 
@@ -24,7 +24,7 @@ oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deeps
 | 打包 | `pkgbuild` + `hdiutil`（`make-pkg.sh` → .pkg / .dmg） |
 | 目标平台 | macOS 13+（Apple Silicon / arm64；Info.plist `LSMinimumSystemVersion` = 13.0） |
 
-当前工作区版本：`build-app.sh` 顶部 `VERSION="1.7.1"`、`BUILD="61"`；Bundle ID `com.ohmydsh.app`（main.swift About 面板回退值同为 1.7.1 / 61）。最近 git 提交信息为 1.6.28（工作区含未提交的 v1.7.x 改动，见 `git status`）。
+当前工作区版本：`build-app.sh` 顶部 `VERSION="1.7.1"`、`BUILD="63"`；Bundle ID `com.ohmydsh.app`（main.swift About 面板回退值同为 1.7.1 / 63）。最近 git 提交：`80dedfa`（"feat(wiki): Repo Wiki 知识库面板 — 生成/维护/浏览 + 多工作区跟随 (v1.7.1, build 63)"），工作区与提交一致。
 
 ## 目录布局
 
@@ -32,11 +32,11 @@ oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deeps
 src/main.swift       壳层核心（日志/L10n/服务管理/升级/窗口/菜单/右栏插槽）约 2236 行
 src/PreviewPanel.swift  预览面板（文件/文件夹预览 + 项目目录树 + 共享 UI 组件）约 1445 行
 src/TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）约 1875 行
-src/WikiPanel.swift      Repo Wiki 面板（知识库生成/维护/浏览）约 1968 行
+src/WikiPanel.swift      Repo Wiki 面板（知识库生成/维护/浏览）约 1928 行
 src/MakeIcon.swift       App 图标生成器（渲染 → iconset → icns）104 行
 build-app.sh         一键构建脚本（6 步：目录/图标/编译/运行时/Info.plist/签名）
 make-pkg.sh          .pkg 安装包 + .dmg 镜像脚本
-docs/                设计与排查文档（repo-wiki-design.md、terminal-header-fix.md、terminal-input-fix.md、raw/）
+docs/                设计与排查文档（repo-wiki-design.md、productization.md、terminal-header-fix.md、terminal-input-fix.md、raw/）
 tests/               无头单元测试（terminal-emulator/、wiki-panel/，各含 run.sh）
 .cache/              构建缓存（node tarball、npm-cache、已构建 runtime）— git 忽略
 .build/              构建中间产物 — git 忽略
@@ -78,7 +78,8 @@ tests/wiki-panel/run.sh          # Repo Wiki 模型层无头单测
 ```
 
 - 两者同模式：`stubs.swift` + 复制源码 + 测试文件改名 `main.swift` → `swiftc` 编译成可执行文件运行（无窗口/无 PTY 依赖）；
-- 设计文档（`docs/repo-wiki-design.md` §14）记录 v1.7.0 验证：全量编译零错误、wiki 单测 41/41（实测 `tests/wiki-panel/run.sh` 41 passed）、终端模拟器 53 项全过（实测 `tests/terminal-emulator/run.sh`）；并记录 14 轮修复（build 43→61，其中修复 10–14：生成中提示改叠加浮层、定位状态条合成溢出根因、生成状态按工作区关联、终端新会话目录跟随当前工作区等，详见 [wiki-panel](modules/wiki-panel.md)）。
+- 设计文档（`docs/repo-wiki-design.md` §14）记录 v1.7.0 验证：全量编译零错误、wiki 单测 41/41（实测 `tests/wiki-panel/run.sh` 41 passed）、终端模拟器 53 项全过（实测 `tests/terminal-emulator/run.sh`）；并记录 16 轮修复（build 43→63，其中修复 10–14：生成中提示改叠加浮层、定位状态条合成溢出根因、生成状态按工作区关联、终端新会话目录跟随当前工作区等，详见 [wiki-panel](modules/wiki-panel.md)；修复 15 移除失效的 `attachOrphans`、16 repo-wiki SKILL 优化）；
+- 产品化方案（`docs/productization.md`，2026-08-15，状态已批准执行）：P0 现状基线（v1.7.x，已达成）→ P1 开源基础（GitHub 公开 + MIT、CI、共享核心抽取，约 1–2 周）→ P2 Windows 版（≈2–3 个月）→ P3 Linux 版（≈1–2 个月）→ P4 生态增长；Apple 生态（Developer ID 签名/公证/Sparkle 升级/Homebrew Cask）依赖开发者账号，统一暂缓至最后阶段 F。
 
 ## 已知限制（README 明示）
 

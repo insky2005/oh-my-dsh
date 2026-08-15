@@ -1,7 +1,7 @@
 ---
 title: 模块：构建与打包脚本
 tags: [module, build, packaging, icon]
-updated: 2026-08-15T12:19:42Z
+updated: 2026-08-15T14:22:31Z
 sources: [build-app.sh, make-pkg.sh, src/MakeIcon.swift]
 manual: false
 ---
@@ -10,7 +10,7 @@ manual: false
 
 ## build-app.sh（一键构建，277 行）
 
-`set -euo pipefail`，用法：`./build-app.sh [--prefetch]`。顶部常量：`APP_NAME=oh-my-dsh`、`BUNDLE_ID=com.ohmydsh.app`、`VERSION=1.7.1`、`BUILD=61`；国内镜像默认值（`NPM_REGISTRY`/`NODE_MIRROR`，可用 `DSH_*` 环境变量覆盖）。
+`set -euo pipefail`，用法：`./build-app.sh [--prefetch]`。顶部常量：`APP_NAME=oh-my-dsh`、`BUNDLE_ID=com.ohmydsh.app`、`VERSION=1.7.1`、`BUILD=63`；国内镜像默认值（`NPM_REGISTRY`/`NODE_MIRROR`，可用 `DSH_*` 环境变量覆盖）。
 
 - `resolve_node_version`：`DSH_NODE_VERSION` 未设时查镜像 `index.json` 用 python3 选最新 LTS；网络不可用则从 `.cache/node` 缓存 tarball 推导；
 - `download_node`：下载 darwin-arm64 tarball（镜像失败换官方），用 `SHASUMS256.txt` + `shasum -a 256 -c` 校验；

@@ -1,7 +1,7 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-08-15T12:19:42Z
+updated: 2026-08-15T14:22:31Z
 sources: [src/main.swift, src/WikiPanel.swift, src/TerminalPanel.swift, docs/repo-wiki-design.md]
 manual: false
 ---
@@ -49,7 +49,7 @@ POST /api/session.list
 → { "result": { "ok": true, "value": { "items": [ { "id": "...", "cwd": "...", "running": true, "updatedAt": 0, "blank": false } ] } } }
 ```
 
-已用到的 method：`session.list`（cwd 解析、wiki 轮询 running）、`session.create`（payload 可含 `workspaceId` 或 `cwd` 创建会话）、`session.prompt`（payload: sessionId + mode "queue" + content）、`session.cancel`（payload.sessionId 取消生成会话，`WikiRPC.cancel`）、`workspace.list`（`WikiRPC.resolveWorkspaceId` 按规范化路径匹配工作区）、`workspace.insertSessionBefore`（`WikiRPC.attachOrphans` 把未分组会话归入工作区）、`host.openPath`（被 JS 拦截，不走原生打开）。
+已用到的 method：`session.list`（cwd 解析、wiki 轮询 running）、`session.create`（payload 可含 `workspaceId` 或 `cwd` 创建会话）、`session.prompt`（payload: sessionId + mode "queue" + content）、`session.cancel`（payload.sessionId 取消生成会话，`WikiRPC.cancel`）、`workspace.list`（`WikiRPC.resolveWorkspaceId` 按规范化路径匹配工作区）、`host.openPath`（被 JS 拦截，不走原生打开）。曾用 `workspace.insertSessionBefore` 的 `WikiRPC.attachOrphans`（把未分组会话归入工作区）已移除（修复 15，build 61→62）：RPC 无 attach 接口，`insertSessionBefore` 只能移动**已入账**会话。
 
 **会话跟随**：`rebuildWebView` 注入 `sessionTrackerScript`，监听 web 客户端 RPC 请求体中的 `payload.sessionId`（`session.history/prompt/rename/selectModel`）与 `payload.parentSessionId`（`subagent.list`），id 变化时经 `dshSession` message handler 上报；壳层 `DSHSessionRPC.fetchSessionCwd(port:sessionId:)` 按 id 查 `session.list` 取 cwd 更新 `ProjectDirectory`。
 
