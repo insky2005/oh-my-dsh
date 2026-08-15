@@ -245,10 +245,12 @@
 **当前结构**（git 实际跟踪，2026-08-15 核实）：
 
 ```
-README.md  TERMINAL_PLAN.md  build-app.sh  make-pkg.sh  .gitignore
-src/            5 个 Swift 文件（macOS 壳 + 面板 + 图标生成器）
-tests/          terminal-emulator/ + wiki-panel/（各含 run.sh + swift 单测）
-docs/           设计文档 + raw/；.dsh/  wiki + skills（随仓库提交）
+README.md  LICENSE  CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  AGENTS.md  .gitignore
+core/         共享核心（Node 模块：ANSI 模拟器 / 端口 / 升级 / 会话 RPC）
+platforms/    macos/（src/ + build-app.sh + make-pkg.sh）
+scripts/      版本读取 / CHANGELOG 生成 / 校验和 / 迁移工具
+tests/        terminal-emulator（模拟器测试已迁 core/tests）+ wiki-panel
+docs/         设计文档 + plans/（历史计划归档）+ milestones/
 （不入库：.cache/ .build/ dist/ pic/）
 ```
 
@@ -553,7 +555,7 @@ WebKit（macOS/Linux）与 Chromium（WebView2）对 dsh web 的渲染差异、P
 | 单元 | 终端模拟器（已有 `emulator-tests.swift`）、wiki 面板（已有）、共享核心逻辑 | `tests/`，CI 跑 `run.sh` |
 | 集成 | 壳 ↔ dsh web 交互（RPC、端口复用/拉起/清理） | P1 新增，CI |
 | 冒烟 | 干净环境「安装 → 启动 → 升级 → 卸载」 | P1 起：macOS 用 Tart 虚拟机；P2/P3 用 Windows/Linux runner |
-| 手工 QA | 面板交互、双语、升级、退出清理（沿用 TERMINAL_PLAN.md 的 QA 清单模式） | 发布前 checklist |
+| 手工 QA | 面板交互、双语、升级、退出清理（沿用 docs/plans/TERMINAL_PLAN-terminal-panel.md 的 QA 清单模式） | 发布前 checklist |
 
 ### 11.2 发布验收清单（Release Checklist）
 
@@ -649,7 +651,7 @@ WebKit（macOS/Linux）与 Chromium（WebView2）对 dsh web 的渲染差异、P
 | 已知限制 | 终端无 IME 直输 / DECSTBM 未实现 / 会话不持久；Wiki 仅标题搜索；预览无音视频/Office | README |
 | git | 本地 main，2 commits，无 remote/tag；无 LICENSE | git 实测 |
 | 测试 | `tests/terminal-emulator`、`tests/wiki-panel`（run.sh + swift 单测） | `tests/` |
-| 文档 | README、TERMINAL_PLAN、`docs/`（repo-wiki-design 等）、`.dsh/wiki/`（代理维护） | 目录实测 |
+| 文档 | README、docs/plans/TERMINAL_PLAN-terminal-panel.md、`docs/`（repo-wiki-design 等）、`.dsh/wiki/`（代理维护） | 目录实测 |
 | 工程约定 | 不改 dsh 源码、conventional commits、L10n 中英、registry 默认国内镜像 | README / `.dsh/wiki/` |
 | Apple 开发者账号 | 未持有（决策：相关事项暂缓 → F 阶段） | 2026-08-15 产品决策 |
 | 历史发布 | 本地构建产物 1.5.7 / 1.6.23 / 1.6.28 等（`dist/`，无 git tag、无 Release） | `dist/` 实测 |

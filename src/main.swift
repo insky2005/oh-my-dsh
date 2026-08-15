@@ -214,6 +214,33 @@ enum L10n {
                           + "dsh 版本：%@（%@）\nNode 版本：%@\ndsh registry：%@",
                           "A native shell around dsh web; no DeepSeek Harness source is modified.\n\n"
                           + "dsh: %@ (%@)\nNode: %@\ndsh registry: %@"),
+        // settings window
+        "settings.openMenu": ("设置…", "Settings…"),
+        "settings.title": ("设置", "Settings"),
+        "settings.language": ("语言", "Language"),
+        "settings.followSystem": ("跟随系统", "Follow System"),
+        "settings.registry": ("Registry", "Registry"),
+        "settings.registryHint": ("当前生效：%@", "Effective: %@"),
+        "settings.registryEnvOverride": ("检测到 DSH_REGISTRY 环境变量，当前生效：%@（此处保存的值仍会被保留）",
+                                         "DSH_REGISTRY env detected — effective: %@ (a saved value below is kept)"),
+        "settings.upgrade": ("升级", "Upgrade"),
+        "settings.dshVersion": ("dsh 版本：%@", "dsh version: %@"),
+        "settings.appearance": ("主题", "Appearance"),
+        "settings.appearanceLight": ("浅色", "Light"),
+        "settings.appearanceDark": ("深色", "Dark"),
+        "settings.shortcuts": ("快捷键", "Shortcuts"),
+        // first-run onboarding
+        "onboarding.title": ("欢迎使用 oh-my-dsh", "Welcome to oh-my-dsh"),
+        "onboarding.points": ("• 内置 Node 与 dsh 运行时，开箱即用，无需安装\n"
+                              + "• 首次启动自动复用或拉起 dsh web（127.0.0.1:3080）\n"
+                              + "• 右侧活动栏：预览 / 终端 / 知识库面板\n"
+                              + "• 设置菜单可切换语言、registry、升级策略与主题",
+                              "• Bundled Node + dsh runtime — nothing to install\n"
+                              + "• On launch, reuses or starts dsh web (127.0.0.1:3080)\n"
+                              + "• Right activity bar: Preview / Terminal / Wiki panels\n"
+                              + "• Settings menu switches language, registry, upgrade policy and theme"),
+        "onboarding.getStarted": ("开始使用", "Get Started"),
+        "onboarding.learnMore": ("了解更多", "Learn More"),
         // runtime facts (About)
         "fact.bundled": ("内置（Contents/Resources/runtime）", "bundled (Contents/Resources/runtime)"),
         "fact.system": ("系统安装", "system"),
@@ -301,6 +328,28 @@ enum RegistryConfig {
         var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         while t.hasSuffix("/") { t.removeLast() }
         return t
+    }
+}
+
+/// App-wide appearance (theme). Follows the system by default; persisted in
+/// UserDefaults "appTheme" ("system" | "light" | "dark"). Applied at launch
+/// and immediately when changed (NSApp.appearance drives every window and the
+/// WKWebView re-renders with the new appearance automatically).
+enum AppTheme {
+    static var current: String {
+        UserDefaults.standard.string(forKey: "appTheme") ?? "system"
+    }
+    static func set(_ mode: String) {
+        UserDefaults.standard.set(mode, forKey: "appTheme")
+        apply()
+    }
+    static func apply() {
+        switch current {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        default: NSApp.appearance = nil
+        }
+        AppLog.shared.log("appearance applied: \(current)")
     }
 }
 
@@ -871,6 +920,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Make the WebView's navigator.language follow the shell language so
         // the dsh web page UI matches (dsh web defaults to browser language).
         UserDefaults.standard.set([L10n.isZh ? "zh-CN" : "en-US"], forKey: "AppleLanguages")
+        // Apply the persisted appearance before any window is created, so the
+        // first frame already uses the right theme (no flash of the default).
+        AppTheme.apply()
         installSignalHandlers()
         buildMenu()
         AppLog.shared.log("launch: menu built")
@@ -878,6 +930,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("launch: window built")
         AppLog.shared.log("app did finish launching (lang=\(L10n.lang) followSystem=\(!L10n.hasExplicitChoice) AppleLanguages=\(UserDefaults.standard.array(forKey: "AppleLanguages") ?? []))")
         startServer()
+        showOnboardingIfNeeded()
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -1997,6 +2050,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let settingsItem = NSMenuItem()
         mainMenu.addItem(settingsItem)
         let settingsMenu = NSMenu(title: L10n.tr("menu.settings"))
+        // Settings window (⌘,) — the richer surface; the items below stay as
+        // a fast path.
+        let settingsWindowItem = settingsMenu.addItem(withTitle: L10n.tr("settings.openMenu"), action: #selector(openSettingsWindow(_:)), keyEquivalent: ",")
+        settingsWindowItem.target = self
+        settingsMenu.addItem(.separator())
         let dshSettings = settingsMenu.addItem(withTitle: L10n.tr("menu.dshSettings"), action: #selector(openDSHSettings(_:)), keyEquivalent: "")
         dshSettings.target = self
         settingsMenu.addItem(.separator())
