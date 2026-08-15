@@ -427,6 +427,49 @@ final class DSHUpdater {
     }
 }
 
+/// Bridge to the shared core (`core/bin/ohmy-core.js`, embedded in the app
+/// runtime at Contents/Resources/runtime/core). The macOS shell calls core
+/// for logic that must stay identical across platforms (version compare,
+/// upgrade checks, port probing, session RPC) instead of reimplementing it
+/// in Swift. Keeps DSH_NODE / DSH_CLI overrides (resolveNode already honors
+/// them); falls back silently when core is unavailable.
+enum CoreBridge {
+    /// Path to the bundled core CLI, or nil.
+    static var coreCLIPath: String? {
+        guard let res = Bundle.main.resourceURL else { return nil }
+        let p = res.appendingPathComponent("runtime/core/bin/ohmy-core.js").path
+        return FileManager.default.fileExists(atPath: p) ? p : nil
+    }
+
+    /// Run `<node> <core-cli> args…`, returning trimmed stdout or nil.
+    static func run(_ args: [String], timeout: TimeInterval = 15) -> String? {
+        guard let cli = coreCLIPath else { return nil }
+        guard let node = ServerManager().resolveNode() else { return nil }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: node)
+        proc.arguments = [cli] + args
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        do { try proc.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        guard proc.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Version compare via core: 1 if a > b, 0 equal, -1 a < b (or nil).
+    static func compareVersions(_ a: String, _ b: String) -> Int? {
+        guard let out = run(["upgrade", "compare", a, b]), let n = Int(out) else { return nil }
+        return n
+    }
+
+    /// Latest dsh version from the registry via core (or nil).
+    static func latestVersion(registry: String) -> String? {
+        run(["upgrade", "latest", registry])
+    }
+}
+
 // MARK: - dsh web server management
 
 final class ServerManager {
@@ -1647,11 +1690,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard let node = server.resolveNode(), let bin = server.resolveDSHBin(),
               let updater = DSHUpdater(nodePath: node, dshBin: bin) else { return }
         guard let current = updater.currentVersion else { return }
-        guard let latest = updater.latestVersion(registry: RegistryConfig.current) else {
+        // Version check via the shared core (identical logic across platforms);
+        // falls back to the in-Swift implementation if core is unavailable.
+        let latest = CoreBridge.latestVersion(registry: RegistryConfig.current)
+            ?? updater.latestVersion(registry: RegistryConfig.current)
+        guard let latest = latest else {
             AppLog.shared.log("auto-upgrade: version check failed (offline? registry=\(RegistryConfig.current))")
             return
         }
-        if VersionKit.compare(latest, current) <= 0 {
+        let cmp = CoreBridge.compareVersions(latest, current) ?? VersionKit.compare(latest, current)
+        if cmp <= 0 {
             AppLog.shared.log("auto-upgrade: already latest (\(current))")
             return
         }

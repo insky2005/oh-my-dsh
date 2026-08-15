@@ -267,6 +267,11 @@ build_runtime
 RUNTIME="$APP/Contents/Resources/runtime"
 mkdir -p "$RUNTIME"
 ditto "$CACHE_DIR/runtime" "$RUNTIME"
+# 共享核心 core/ 一并嵌入运行时（shell 通过 node runtime/core/bin/ohmy-core.js 调用）。
+if [ -d "$ROOT/core" ]; then
+  ditto "$ROOT/core" "$RUNTIME/core"
+  echo "    core embedded: $RUNTIME/core"
+fi
 echo "    runtime embedded: $RUNTIME"
 
 echo "==> [5/6] writing Info.plist"
