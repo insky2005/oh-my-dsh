@@ -18,7 +18,7 @@
 - [x] **版本单一来源**：VERSION / BUILD 由 git tag / CI 运行号驱动，`build-app.sh` 不再硬编码
 - [x] **共享核心 `core/`**：端口探测 / 服务管理 / 升级 / 会话 RPC / ANSI 模拟器从 `src/*.swift` 抽出（载体 Node 模块）；macOS 壳改调 core；模拟器测试迁入 `core/tests/` 且全绿
 - [x] **功能**：设置窗口（语言 / registry / 升级 / 主题 / 快捷键）+ 首次引导（onboarding）可用
-- [ ] **冒烟**：干净 macOS（13/14/15 × arm64/x64）从 Release 下载 → 安装 → 运行 → 退出清理全通过（需 Release 产物 + Tart 环境，随发布演练执行）
+- [x] **冒烟**（本地已过）：本机从 `dist/` 产物启动 → 复用外部 `dsh web`（不干扰）→ onboarding 弹出 → 退出清理（终端会话回收、外部服务存活）。干净 macOS（13/14/15 × arm64/x64）从 Release 下载 → 安装 → 运行 → 退出清理全通过需 Tart 环境，随发布演练（release.yml 触发后）执行
 - [x] `.gitignore` 补全（node_modules/、*.log、.env 等）
 
 ## 范围与交付物

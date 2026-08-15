@@ -7,20 +7,28 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
-- 产品化基础（M1）：开源基础设施、CI/CD、共享核心抽取、设置窗口、首次引导（进行中）。
+- 暂无（v1.8.0 已发布；下一个版本待定）。
 
 ## [1.8.0] - 2026-08-15
 
 ### Added
 
 - 里程碑 M1（产品化基础，P1）全部交付（详见本里程碑文档 `docs/milestones/M1-productization-foundation.md`）：
-  - 开源就绪：MIT LICENSE、CONTRIBUTING.md、SECURITY.md、CHANGELOG.md、CODEOWNERS、Issue 模板（bug/feature）；
-  - CI：`.github/workflows/ci.yml`（macOS arm64/x64/Universal 矩阵 + 单测 + swiftc 编译检查 + `.cache/` 缓存）；
+  - 开源就绪：MIT LICENSE、CONTRIBUTING.md、SECURITY.md、CHANGELOG.md、CODEOWNERS、AGENTS.md、Issue 模板（bug/feature）；
+  - CI：`.github/workflows/ci.yml`（macOS arm64/x64/Universal 矩阵 + 单测 + swiftc 编译检查 + `.cache/` 缓存）、`nightly.yml`、dependabot；
   - 发布：`.github/workflows/release.yml`（tag 触发 → 构建 → `.dmg`/`.pkg` + SHA-256SUMS → GitHub Release）；
-  - 版本单一来源：`build-app.sh` 的 VERSION/BUILD 由 git tag / CI 运行号驱动；
-  - 共享核心 `core/`（Node 模块）：ANSI 模拟器 / 服务管理 / 升级 / 会话 RPC 从 Swift 抽出；
-  - 设置窗口（语言 / registry / 升级 / 主题 / 快捷键）与首次引导（onboarding）；
-  - 平台骨架 `platforms/macos/` 迁移。
+  - 版本单一来源：`build-app.sh` 的 VERSION/BUILD 由 git tag / CI 运行号驱动（`scripts/version.sh`）；
+  - 共享核心 `core/`（Node 模块）：ANSI 模拟器（42 用例全绿）/ 端口与服务管理 / 升级 / 会话 RPC 从 Swift 抽出，`core/bin/ohmy-core.js` CLI；
+  - 设置窗口（语言 / registry / 升级 / 主题 / 快捷键，⌘, 打开）与首次引导（onboarding）；
+  - 平台骨架 `platforms/macos/` 迁移（src/ + build-app.sh + make-pkg.sh，git mv 保留历史）。
+
+### Changed
+
+- `build-app.sh` 支持 `DSH_ARCH=arm64|x86_64|universal` 交叉构建（swiftc `-target` + universal lipo）。
+
+### Fixed
+
+- 构建脚本 `TMPDIR` 在清理 `.build` 后未重建导致 swiftc 失败的隐患。
 
 ## [1.7.1] - 2026-08-15
 
