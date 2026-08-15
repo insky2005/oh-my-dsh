@@ -1,0 +1,86 @@
+---
+title: 仓库概览
+tags: [overview, tech-stack, build, run, test]
+updated: 2026-08-15T12:19:42Z
+sources: [README.md, build-app.sh, make-pkg.sh, src/main.swift, src/PreviewPanel.swift, src/TerminalPanel.swift, src/WikiPanel.swift, src/MakeIcon.swift]
+manual: false
+---
+
+# 仓库概览
+
+## 一句话定位
+
+oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deepseek-ai/dsh` 的浏览器界面）封装成可双击运行的 `.app`。**不改动任何 DeepSeek Harness 源码**，只做端口探测、服务拉起/复用、WKWebView 呈现，并附三个右栏面板（预览/终端/Repo Wiki）。
+
+## 技术栈
+
+| 层 | 技术 |
+|---|---|
+| 界面 | Swift 5 + AppKit（自绘控件，无第三方 UI 依赖） |
+| Web 容器 | WebKit `WKWebView`（渲染 `http://127.0.0.1:<port>`） |
+| PDF 预览 | PDFKit |
+| 内置运行时 | Node（darwin-arm64 tarball）+ npm + `@deepseek-ai/dsh` 依赖树（构建期下载，嵌入 `Contents/Resources/runtime/`） |
+| 构建 | bash（`build-app.sh`）、`swiftc`、`codesign`、`iconutil`、`curl`、`python3` |
+| 打包 | `pkgbuild` + `hdiutil`（`make-pkg.sh` → .pkg / .dmg） |
+| 目标平台 | macOS 13+（Apple Silicon / arm64；Info.plist `LSMinimumSystemVersion` = 13.0） |
+
+当前工作区版本：`build-app.sh` 顶部 `VERSION="1.7.1"`、`BUILD="61"`；Bundle ID `com.ohmydsh.app`（main.swift About 面板回退值同为 1.7.1 / 61）。最近 git 提交信息为 1.6.28（工作区含未提交的 v1.7.x 改动，见 `git status`）。
+
+## 目录布局
+
+```
+src/main.swift       壳层核心（日志/L10n/服务管理/升级/窗口/菜单/右栏插槽）约 2236 行
+src/PreviewPanel.swift  预览面板（文件/文件夹预览 + 项目目录树 + 共享 UI 组件）约 1445 行
+src/TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）约 1875 行
+src/WikiPanel.swift      Repo Wiki 面板（知识库生成/维护/浏览）约 1968 行
+src/MakeIcon.swift       App 图标生成器（渲染 → iconset → icns）104 行
+build-app.sh         一键构建脚本（6 步：目录/图标/编译/运行时/Info.plist/签名）
+make-pkg.sh          .pkg 安装包 + .dmg 镜像脚本
+docs/                设计与排查文档（repo-wiki-design.md、terminal-header-fix.md、terminal-input-fix.md、raw/）
+tests/               无头单元测试（terminal-emulator/、wiki-panel/，各含 run.sh）
+.cache/              构建缓存（node tarball、npm-cache、已构建 runtime）— git 忽略
+.build/              构建中间产物 — git 忽略
+dist/                产物（.app / .pkg / .dmg）— git 忽略
+pic/                 QA 调试截图 — git 忽略
+.dsh/skills/         repo-wiki skill（SKILL.md）
+.dsh/wiki/           本知识库
+```
+
+## 构建
+
+```bash
+./build-app.sh --prefetch   # 可选：预下载 Node + 预装 dsh 到 .cache/，不产出 App
+./build-app.sh              # 全量构建 → dist/oh-my-dsh.app
+```
+
+- 编译命令：`swiftc -O -swift-version 5 -framework AppKit -framework WebKit -framework PDFKit`，源文件清单显式列出（`main/PreviewPanel/TerminalPanel/WikiPanel`）；
+- 内置运行时构建期现做：下载 Node tarball（默认国内镜像 `npmmirror.com/mirrors/node`，校验 SHA-256），用其自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.1.0-rc.6`（默认 `DSH_PACKAGE_SPEC`，国内源失败自动回退 npmjs.org）；
+- 缓存：`(Node 版本, dsh 版本)` 相同则复用 `.cache/runtime`，重建只需几十秒；网络不可用时用缓存 tarball 推导版本继续。
+
+构建变量（均可用环境变量覆盖）：`DSH_NODE_VERSION`、`DSH_PACKAGE_SPEC`、`DSH_NODE_MIRROR`、`DSH_NPM_REGISTRY`（详见 README「构建」与 [build-scripts](modules/build-scripts.md)）。
+
+## 运行
+
+```bash
+open "dist/oh-my-dsh.app"     # 或双击
+```
+
+- 运行时**无需**本机安装 Node 或 dsh（自包含）；
+- 启动先探测 `127.0.0.1:3080` 是否已有 `dsh web`（页面含 `window.__DSH_BOOT__` 判定）→ 复用；否则用内置 node 拉起 `dsh web --port <n>`（3080 被占自动换空闲端口），90 秒超时；
+- **项目目录跟随当前会话**：壳层注入 `sessionTrackerScript` 监听 dsh web 的会话 RPC（`session.history/prompt/rename/selectModel`、`subagent.list`），用户切换会话/工作区时经 `dshSession` 消息把新的项目目录同步给预览树、终端新会话与 wiki 根（共享 `ProjectDirectory`，见 [architecture](architecture.md)）；
+- 日志：`~/Library/Logs/oh-my-dsh/app.log`（壳层）、`server.log`（自拉起服务输出）。
+
+## 测试
+
+```bash
+tests/terminal-emulator/run.sh   # 终端模拟器无头单测（无 PTY，纯模拟器）
+tests/wiki-panel/run.sh          # Repo Wiki 模型层无头单测
+```
+
+- 两者同模式：`stubs.swift` + 复制源码 + 测试文件改名 `main.swift` → `swiftc` 编译成可执行文件运行（无窗口/无 PTY 依赖）；
+- 设计文档（`docs/repo-wiki-design.md` §14）记录 v1.7.0 验证：全量编译零错误、wiki 单测 41/41（实测 `tests/wiki-panel/run.sh` 41 passed）、终端模拟器 53 项全过（实测 `tests/terminal-emulator/run.sh`）；并记录 14 轮修复（build 43→61，其中修复 10–14：生成中提示改叠加浮层、定位状态条合成溢出根因、生成状态按工作区关联、终端新会话目录跟随当前工作区等，详见 [wiki-panel](modules/wiki-panel.md)）。
+
+## 已知限制（README 明示）
+
+- 终端 v1 不支持输入法直接打字（中文等经 ⌘V 粘贴输入）、DECSTBM 滚动区未实现、会话不跨 App 重启保留；
+- Wiki 面板 v1 搜索为标题过滤（无正文/语义检索）。

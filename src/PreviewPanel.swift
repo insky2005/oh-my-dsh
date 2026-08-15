@@ -781,6 +781,15 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         }
     }
 
+    /// Re-root the project directory tree when the active dsh session's
+    /// workspace changes (called by the shell's dshSession handler). Only the
+    /// tree is re-pointed; open preview tabs stay untouched.
+    func setProjectDirectory(_ path: String) {
+        AppLog.shared.log("preview project dir updated: \(path)")
+        treeTriedLoad = false
+        setTreeRoot(path)
+    }
+
     /// Load the project directory tree once the panel comes into use. Called
     /// from open(path:) and by the shell whenever the panel is shown; retries
     /// are allowed until the server is reachable.
@@ -928,9 +937,9 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
     private func applyInitialTreeWidthIfNeeded() {
         guard !treeWidthInitialized, contentSplit.bounds.width > 0 else { return }
         treeWidthInitialized = true
-        contentSplit.setPosition(150, ofDividerAt: 0)
+        contentSplit.setPosition(160, ofDividerAt: 0)
         contentSplit.adjustSubviews()
-        AppLog.shared.log("preview tree width initialized: 150pt")
+        AppLog.shared.log("preview tree width initialized: 160pt")
     }
 
     /// Read a directory's immediate children (directories first, then name).
@@ -1024,7 +1033,7 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
 
     /// Keep the tree narrow but usable when dragging the divider.
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        100
+        160
     }
 
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {

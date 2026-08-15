@@ -165,6 +165,36 @@ enum L10n {
         "terminal.empty": ("点击 + 新建一个终端", "Click + to start a new terminal"),
         "terminal.sessionEnded": ("会话已结束（exit %d）", "Session ended (exit %d)"),
         "terminal.restart": ("重启", "Restart"),
+        // wiki panel (Repo Wiki)
+        "menu.toggleWiki": ("显示/隐藏 知识库面板", "Toggle Wiki Panel"),
+        "bar.wiki": ("知识库", "Wiki"),
+        "wiki.title": ("知识库", "Wiki"),
+        "wiki.generateHint": ("生成或更新知识库", "Generate or update the wiki"),
+        "wiki.empty": ("仓库尚无知识库\n点击右上角 + 生成", "No wiki yet\nClick + to generate"),
+        "wiki.generating": ("正在生成知识库…", "Generating wiki…"),
+        "wiki.generatingElapsed": ("生成中… %d 秒", "Generating… %ds"),
+        "wiki.generatingOther": ("正在为「%@」生成知识库…", "Generating wiki for %@…"),
+        "wiki.failed": ("生成失败（详见日志）", "Generation failed (see log)"),
+        "wiki.needServer": ("服务未就绪", "Service not ready"),
+        "wiki.info": ("%d 页 · 过期 %d · 手动 %d", "%d pages · %d stale · %d manual"),
+        "wiki.searchPlaceholder": ("搜索页面标题…", "Search page titles…"),
+        "wiki.backlinks": ("反向链接", "Backlinks"),
+        "wiki.settingsAuto": ("自动更新知识库", "Auto-update Wiki"),
+        "wiki.settingsRegister": ("写入 AGENTS.md 注册块", "Register in AGENTS.md"),
+        "wiki.settingsRoot": ("知识库根目录", "Wiki Root"),
+        "wiki.settingsRootInRepo": ("仓库内 .dsh/wiki", "In-repo .dsh/wiki"),
+        "wiki.settingsRootHome": ("DSH_HOME 私有", "DSH_HOME private"),
+        // wiki auto-update prompts
+        "wiki.autoPromptTitle": ("开启自动更新知识库？", "Enable auto-updating the wiki?"),
+        "wiki.autoPromptInfo": ("代码变更后（≥3 页可能过期且 index 超过 1 小时）会自动增量更新知识库，每小时最多一次，消耗少量 token。也可随时在「设置」菜单中调整。",
+                                "After code changes (≥3 possibly stale pages and an index older than 1h) the wiki updates itself incrementally, at most hourly, at a small token cost. Adjust anytime in the Settings menu."),
+        "wiki.autoPromptEnable": ("开启", "Enable"),
+        "wiki.autoPromptLater": ("暂不", "Not now"),
+        "wiki.updatePromptTitle": ("更新知识库？", "Update the wiki?"),
+        "wiki.updatePromptInfo": ("检测到 %d 个页面可能过期。是否现在增量更新知识库？",
+                                  "Detected %d possibly stale pages. Update the wiki now?"),
+        "wiki.updateNow": ("更新", "Update"),
+        "wiki.updateLater": ("稍后", "Later"),
         // alerts
         "alert.cannotUpgrade": ("无法升级", "Cannot Upgrade"),
         "alert.noRuntime": ("未找到内置 dsh 运行时（runtime/dsh + runtime/npm）。",
@@ -646,10 +676,25 @@ final class ServerManager {
 
 // MARK: - Shared host RPC (project directory)
 
+/// The shell's shared notion of the active project directory. It follows the
+/// session the user is currently viewing in dsh web (see the dshSession
+/// message handler): switching to a session under another workspace re-roots
+/// the preview tree, the terminal's start directory and the wiki root.
+enum ProjectDirectory {
+    static var current: String?
+    static func set(_ path: String) {
+        let std = (path as NSString).standardizingPath
+        if current != std {
+            current = std
+            AppLog.shared.log("project directory set: \(std)")
+        }
+    }
+}
+
 /// Resolve the active dsh session's working directory via the host RPC
 /// (same protocol the web client uses: HTTP POST /api/session.list with a
-/// `client-request` envelope). Used by the preview panel's project tree and
-/// the terminal panel's session start directory.
+/// `client-request` envelope). Used by the preview panel's project tree, the
+/// terminal panel's session start directory and the wiki root.
 enum DSHSessionRPC {
 
     /// Query `session.list` and pick the most relevant session's working
@@ -695,13 +740,58 @@ enum DSHSessionRPC {
         return result
     }
 
+    /// The working directory of one specific session (session.list lookup by
+    /// id) — used to follow the session the user just opened in dsh web.
+    static func fetchSessionCwd(port: Int, sessionId: String, timeout: TimeInterval = 6) -> String? {
+        let url = URL(string: "http://127.0.0.1:\(port)/api/session.list")!
+        var request = URLRequest(url: url, timeoutInterval: timeout)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        let rpcId = UUID().uuidString
+        let body: [String: Any] = [
+            "type": "client-request",
+            "rpcId": rpcId,
+            "method": "session.list",
+            "payload": [String: Any](),
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: String?
+        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
+            defer { semaphore.signal() }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (json["rpcId"] as? String) == rpcId,
+                  let res = json["result"] as? [String: Any],
+                  (res["ok"] as? Bool) == true,
+                  let value = res["value"] as? [String: Any],
+                  let items = value["items"] as? [[String: Any]] else { return }
+            result = items.first { ($0["sessionId"] as? String) == sessionId }?["cwd"] as? String
+        }
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + timeout + 1)
+        task.cancel()
+        return result
+    }
+
     /// Resolve on a background queue, then call the completion on the main
-    /// queue (nil when unresolved).
+    /// queue (nil when unresolved). Prefers the shared `ProjectDirectory`
+    /// (kept in sync with the session the user is viewing); falls back to a
+    /// live `session.list` query and caches its result.
     static func resolveProjectDirectory(port: Int, timeout: TimeInterval = 6,
                                         completion: @escaping (String?) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
+            if let current = ProjectDirectory.current,
+               FileManager.default.fileExists(atPath: current) {
+                DispatchQueue.main.async { completion(current) }
+                return
+            }
             let cwd = fetchActiveSessionCwd(port: port, timeout: timeout)
-            DispatchQueue.main.async { completion(cwd) }
+            DispatchQueue.main.async {
+                if let cwd = cwd { ProjectDirectory.set(cwd) }
+                completion(cwd)
+            }
         }
     }
 }
@@ -716,20 +806,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var autoUpgradeMenuItem: NSMenuItem!
     private var previewToggleMenuItem: NSMenuItem?
     private var terminalToggleMenuItem: NSMenuItem?
+    private var wikiToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip).
     private var previewBarButton: ActivityBarButton!
     private var terminalBarButton: ActivityBarButton!
+    private var wikiBarButton: ActivityBarButton!
 
     private var window: NSWindow!
     private var webView: WKWebView!
     private var splitView: NSSplitView!
     private var previewPanel: PreviewPanelController!
     private var terminalPanel: TerminalPanelController!
+    private var wikiPanel: WikiPanelController!
 
-    /// Which panel occupies the right-side slot (none = hidden). The preview
-    /// and terminal panels share one slot; the activity bar toggles between
-    /// them, and the two are mutually exclusive.
-    enum RightPanel { case none, preview, terminal }
+    /// Which panel occupies the right-side slot (none = hidden). The preview,
+    /// terminal and wiki panels share one slot; the activity bar toggles
+    /// between them, and they are mutually exclusive.
+    enum RightPanel { case none, preview, terminal, wiki }
     private var rightPanel: RightPanel = .none
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
@@ -739,7 +832,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let minWebViewWidth: CGFloat = 1100
     /// Smallest allowed width of the right panel slot (max of both panels').
     private static let rightPanelMinWidth: CGFloat =
-        max(PreviewPanelController.minWidth, TerminalPanelController.minWidth)
+        max(PreviewPanelController.minWidth, max(TerminalPanelController.minWidth, WikiPanelController.minWidth))
     /// Fixed default panel width. Deliberately NOT window-relative: a
     /// "half the window" default made the width chase the window as it was
     /// widened, flip-flopping on every toggle.
@@ -830,6 +923,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.terminal)
             AppLog.shared.log("terminal self-test enabled")
         }
+        // Wiki self-test hook (debugging / QA only): opens the wiki panel at
+        // launch when DSH_WIKI_TEST=1 is set. Optionally point the panel at a
+        // fixture wiki root with DSH_WIKI_TEST_PATH=<dir> instead of resolving
+        // the active session's project directory.
+        if ProcessInfo.processInfo.environment["DSH_WIKI_TEST"] == "1" {
+            setRightPanel(.wiki)
+            AppLog.shared.log("wiki self-test enabled")
+        }
     }
 
     /// Build the activity bar (leftmost icon strip) + the main split view:
@@ -849,6 +950,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         terminalPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
         terminalPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
 
+        wikiPanel = WikiPanelController()
+        AppLog.shared.log("launch: wikiPanel created")
+        wikiPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        wikiPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
+        // The panel can flip the auto-update setting via its first-generation
+        // prompt; rebuild the menu so the checkbox stays in sync.
+        wikiPanel.onAutoUpdateSettingChanged = { [weak self] in self?.buildMenu() }
+
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
@@ -862,7 +971,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         terminalBarButton = makeActivityButton(symbol: "terminal",
                                                tooltip: L10n.tr("bar.terminal"),
                                                action: #selector(terminalEntryTapped(_:)))
-        let barStack = NSStackView(views: [previewBarButton, terminalBarButton])
+        wikiBarButton = makeActivityButton(symbol: "book.closed",
+                                           tooltip: L10n.tr("bar.wiki"),
+                                           action: #selector(wikiEntryTapped(_:)))
+        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, wikiBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -914,9 +1026,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // fresh install starts with the panel closed, and only explicit user
         // actions mark it open.
         let visible = UserDefaults.standard.bool(forKey: "previewPanelState")
-        let kind = UserDefaults.standard.string(forKey: "rightPanelKind") == "terminal"
-            ? RightPanel.terminal : .preview
+        let kind: RightPanel
+        switch UserDefaults.standard.string(forKey: "rightPanelKind") {
+        case "terminal": kind = .terminal
+        case "wiki": kind = .wiki
+        default: kind = .preview
+        }
         setRightPanel(visible ? kind : .none)
+    }
+
+    /// The active panel's root view (preview / terminal / wiki).
+    private func activePanelView(_ panel: RightPanel) -> NSView {
+        switch panel {
+        case .preview: return previewPanel.view
+        case .terminal: return terminalPanel.view
+        case .wiki: return wikiPanel.view
+        case .none: return NSView()
+        }
     }
 
     /// A borderless toggle button for the activity bar (hover highlight,
@@ -963,14 +1089,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("setRightPanel apply panel=\(panel) splitW=\(split.bounds.width) winW=\(window.frame.width)")
         previewToggleMenuItem?.state = (panel == .preview) ? .on : .off
         terminalToggleMenuItem?.state = (panel == .terminal) ? .on : .off
+        wikiToggleMenuItem?.state = (panel == .wiki) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
+        wikiBarButton?.setActive(panel == .wiki)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
         // collapses its width via the divider below.
         if panel != .none {
-            let activeView: NSView = panel == .preview ? previewPanel.view : terminalPanel.view
+            let activeView: NSView = activePanelView(panel)
             if split.subviews.count > 1, split.subviews[1] !== activeView {
                 split.subviews[1].removeFromSuperview()
             }
@@ -983,19 +1111,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         if visible {
             applyRightPanelLayout()
-            if panel == .preview {
+            switch panel {
+            case .preview:
                 // Show the project tree by default whenever the panel opens.
                 previewPanel.ensureTreeLoaded()
                 if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
                     self.dumpPanelDebugInfo(panelView: previewPanel.view, label: "preview")
                 }
-            } else {
+            case .terminal:
                 // Lazily spawn the first terminal session, then focus it.
                 terminalPanel.ensureSession()
                 DispatchQueue.main.async { [weak self] in self?.terminalPanel.focusActiveTerminal() }
                 if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
                     self.dumpPanelDebugInfo(panelView: terminalPanel.view, label: "terminal")
                 }
+            case .wiki:
+                wikiPanel.ensureWikiLoaded()
+                if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
+                    self.dumpPanelDebugInfo(panelView: wikiPanel.view, label: "wiki")
+                }
+            case .none:
+                break
             }
         } else {
             split.setPosition(split.bounds.width, ofDividerAt: 0)
@@ -1006,7 +1142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // its content actually draws (defends against stale/empty layer
         // contents after a swap).
         if panel != .none {
-            let activeView: NSView = panel == .preview ? previewPanel.view : terminalPanel.view
+            let activeView: NSView = activePanelView(panel)
             window.contentView?.layoutSubtreeIfNeeded()
             activeView.layoutSubtreeIfNeeded()
             activeView.display()
@@ -1019,7 +1155,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
         }
         UserDefaults.standard.set(visible, forKey: "previewPanelState")
-        UserDefaults.standard.set(panel == .terminal ? "terminal" : "preview", forKey: "rightPanelKind")
+        let kind: String
+        switch panel {
+        case .terminal: kind = "terminal"
+        case .wiki: kind = "wiki"
+        default: kind = "preview"
+        }
+        UserDefaults.standard.set(kind, forKey: "rightPanelKind")
         // Note: the panel width is persisted only while the user drags the
         // divider (splitViewDidResizeSubviews) — never overwrite the user's
         // setting here with a clamped value.
@@ -1217,6 +1359,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             WKUserScript(source: Self.previewInterceptorScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController.add(self, name: "dshPreview")
 
+        // Reports the session the user is viewing/interacting with in dsh web
+        // (see sessionTrackerScript), so the project directory follows
+        // workspace switches.
+        config.userContentController.addUserScript(
+            WKUserScript(source: Self.sessionTrackerScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        config.userContentController.add(self, name: "dshSession")
+
         webView?.removeFromSuperview()
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
@@ -1233,6 +1382,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Keep the web view as the left pane (insert below the existing pane).
         split.addSubview(webView, positioned: .below, relativeTo: split.subviews.first)
     }
+
+    /// Tracks which dsh session the user is currently viewing / interacting
+    /// with. Opening a session or sending a message makes the dsh web client
+    /// POST RPCs (callUnary → postJson → window.fetch, same path the preview
+    /// interceptor hooks). We parse the request body and post the sessionId
+    /// to the shell via the `dshSession` message handler, so the project
+    /// directory (preview tree / terminal cwd / wiki root) can follow
+    /// workspace switches in dsh web.
+    ///
+    /// session.history alone is NOT enough: the client's session open() is
+    /// idempotent, so revisiting an already-loaded session does not refetch
+    /// history. Every session switch DOES run followCurrent →
+    /// refreshSubagents(current) → subagent.list { parentSessionId }, which
+    /// is non-idempotent — so subagent.list is the reliable per-switch
+    /// signal (history/prompt/rename/selectModel are bonus signals).
+    /// Only posts when the id changes, to avoid noise.
+    private static let sessionTrackerScript = """
+    (function () {
+      if (window.__dshSessionTracked) return;
+      window.__dshSessionTracked = true;
+      var origFetch = window.fetch;
+      var tracked = {
+        'session.history': 1, 'session.prompt': 1, 'session.rename': 1,
+        'session.selectModel': 1, 'subagent.list': 1, 'subagents.list': 1
+      };
+      window.fetch = function (input, init) {
+        var url = typeof input === 'string' ? input : (input && (input.href || input.url)) || '';
+        if (url.indexOf('/api/') !== -1 && init && init.body) {
+          try {
+            var body = typeof init.body === 'string' ? JSON.parse(init.body) : null;
+            if (body && body.type === 'client-request' && tracked[body.method]
+                && body.payload) {
+              var sid = body.payload.sessionId || body.payload.parentSessionId;
+              if (!window.__dshSessionSeen) window.__dshSessionSeen = [];
+              if (window.__dshSessionSeen.length < 100) {
+                window.__dshSessionSeen.push(body.method + ':' + (sid || ''));
+              }
+              if (sid && window.__dshLastTrackedSession !== sid) {
+                window.__dshLastTrackedSession = sid;
+                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.dshSession) {
+                  window.webkit.messageHandlers.dshSession.postMessage({ sessionId: sid });
+                }
+              }
+            }
+          } catch (e) {}
+        }
+        return origFetch.apply(this, arguments);
+      };
+    })()
+    """
 
     /// Interceptor for dsh web's file-open requests. dsh web opens files by
     /// calling the host RPC `host.openPath`, which the client sends as an
@@ -1346,6 +1545,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     // spawn deferred during server boot starts in the
                     // project directory (not ~).
                     self.terminalPanel?.serverReady(port: self.server.port)
+                    // Tell the wiki panel too: deferred root loads resolve now.
+                    self.wikiPanel?.serverReady(port: self.server.port)
                 }
             } catch {
                 AppLog.shared.log("server start failed: \(error.localizedDescription)")
@@ -1585,6 +1786,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 AppLog.shared.log("dsh viewport/sidebar: \(result ?? "?")")
             }
         }
+        // Session-tracking diagnostics (DSH_SESSION_DEBUG=1): dump the
+        // session.* / subagent.list requests the tracker has observed so far.
+        if ProcessInfo.processInfo.environment["DSH_SESSION_DEBUG"] == "1" {
+            webView.evaluateJavaScript("JSON.stringify(window.__dshSessionSeen || [])") { result, _ in
+                AppLog.shared.log("session tracker seen: \(result ?? "[]")")
+            }
+            webView.evaluateJavaScript("JSON.stringify({ tracked: !!window.__dshSessionTracked, last: window.__dshLastTrackedSession || null })") { result, _ in
+                AppLog.shared.log("session tracker state: \(result ?? "?")")
+            }
+        }
         hideStatus()
     }
 
@@ -1689,11 +1900,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // MARK: WKScriptMessageHandler (file preview bridge)
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == "dshPreview" else { return }
-        guard let body = message.body as? [String: Any], let path = body["path"] as? String else { return }
-        AppLog.shared.log("preview request: \(path)")
-        if rightPanel != .preview { setRightPanel(.preview) }
-        previewPanel.open(path: path)
+        if message.name == "dshPreview" {
+            guard let body = message.body as? [String: Any], let path = body["path"] as? String else { return }
+            AppLog.shared.log("preview request: \(path)")
+            if rightPanel != .preview { setRightPanel(.preview) }
+            previewPanel.open(path: path)
+            return
+        }
+        // The user switched to a different session in dsh web: resolve its
+        // working directory and re-point every project-dir consumer.
+        guard message.name == "dshSession" else { return }
+        guard let body = message.body as? [String: Any], let sid = body["sessionId"] as? String else { return }
+        AppLog.shared.log("active session changed: \(sid)")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let cwd = DSHSessionRPC.fetchSessionCwd(port: self.server.port, sessionId: sid)
+            DispatchQueue.main.async {
+                guard let cwd = cwd else { return }
+                if let current = ProjectDirectory.current, current == cwd { return }
+                ProjectDirectory.set(cwd)
+                self.previewPanel?.setProjectDirectory(cwd)
+                self.wikiPanel?.reloadRoot()
+                AppLog.shared.log("project directory followed session \(sid): \(cwd)")
+            }
+        }
     }
 
     // MARK: Menu
@@ -1741,6 +1971,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleTerminal.target = self
         toggleTerminal.state = (rightPanel == .terminal) ? .on : .off
         terminalToggleMenuItem = toggleTerminal
+        let toggleWiki = viewMenu.addItem(withTitle: L10n.tr("menu.toggleWiki"), action: #selector(wikiEntryTapped(_:)), keyEquivalent: "w")
+        toggleWiki.keyEquivalentModifierMask = [.command, .option]
+        toggleWiki.target = self
+        toggleWiki.state = (rightPanel == .wiki) ? .on : .off
+        wikiToggleMenuItem = toggleWiki
         viewItem.submenu = viewMenu
 
         // Settings menu: dsh settings/upgrade/registry + logs + language.
@@ -1761,6 +1996,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setReg.target = self
         let resetReg = settingsMenu.addItem(withTitle: L10n.tr("menu.resetRegistry"), action: #selector(resetRegistry), keyEquivalent: "")
         resetReg.target = self
+        settingsMenu.addItem(.separator())
+        // Wiki (Repo Wiki) settings — toggles persist in UserDefaults.
+        let wikiAuto = settingsMenu.addItem(withTitle: L10n.tr("wiki.settingsAuto"), action: #selector(toggleWikiAutoRegenerate(_:)), keyEquivalent: "")
+        wikiAuto.target = self
+        wikiAuto.state = wikiAutoRegenerateEnabled() ? .on : .off
+        let wikiRegister = settingsMenu.addItem(withTitle: L10n.tr("wiki.settingsRegister"), action: #selector(toggleWikiRegisterAgentsMD(_:)), keyEquivalent: "")
+        wikiRegister.target = self
+        wikiRegister.state = wikiRegisterAgentsMdEnabled() ? .on : .off
+        let rootItem = NSMenuItem(title: L10n.tr("wiki.settingsRoot"), action: nil, keyEquivalent: "")
+        settingsMenu.addItem(rootItem)
+        let rootMenu = NSMenu(title: L10n.tr("wiki.settingsRoot"))
+        let inRepo = rootMenu.addItem(withTitle: L10n.tr("wiki.settingsRootInRepo"), action: #selector(setWikiRootMode(_:)), keyEquivalent: "")
+        inRepo.target = self
+        inRepo.tag = 0
+        inRepo.state = WikiPaths.rootMode == "in-repo" ? .on : .off
+        let dshHome = rootMenu.addItem(withTitle: L10n.tr("wiki.settingsRootHome"), action: #selector(setWikiRootMode(_:)), keyEquivalent: "")
+        dshHome.target = self
+        dshHome.tag = 1
+        dshHome.state = WikiPaths.rootMode == "dsh-home" ? .on : .off
+        rootItem.submenu = rootMenu
         settingsMenu.addItem(.separator())
         let logs = settingsMenu.addItem(withTitle: L10n.tr("menu.openLogs"), action: #selector(openLogs), keyEquivalent: "l")
         logs.target = self
@@ -1814,8 +2069,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             w.makeKeyAndOrderFront(nil)
             return
         }
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.6.28"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "43"
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.7.1"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "63"
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 330),
@@ -1896,6 +2151,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Toggle the integrated terminal panel (activity bar entry / ⌥⌘T).
     @objc private func terminalEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .terminal ? .none : .terminal)
+    }
+
+    /// Toggle the Repo Wiki panel (activity bar entry / ⌥⌘W).
+    @objc private func wikiEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .wiki ? .none : .wiki)
+    }
+
+    // MARK: Wiki settings (UserDefaults-backed menu toggles)
+
+    private func wikiAutoRegenerateEnabled() -> Bool {
+        UserDefaults.standard.object(forKey: WikiPaths.autoRegenerateKey) as? Bool ?? false
+    }
+
+    private func wikiRegisterAgentsMdEnabled() -> Bool {
+        UserDefaults.standard.object(forKey: WikiPaths.registerAgentsMdKey) as? Bool ?? false
+    }
+
+    @objc private func toggleWikiAutoRegenerate(_ sender: NSMenuItem) {
+        let enabled = sender.state == .off
+        UserDefaults.standard.set(enabled, forKey: WikiPaths.autoRegenerateKey)
+        sender.state = enabled ? .on : .off
+        AppLog.shared.log("wiki auto-regenerate \(enabled ? "enabled" : "disabled")")
+    }
+
+    /// Enabling writes the registration block on the next generation
+    /// completion (the panel does that); disabling removes it immediately for
+    /// the current project when one is resolved.
+    @objc private func toggleWikiRegisterAgentsMD(_ sender: NSMenuItem) {
+        let enabled = sender.state == .off
+        UserDefaults.standard.set(enabled, forKey: WikiPaths.registerAgentsMdKey)
+        sender.state = enabled ? .on : .off
+        AppLog.shared.log("wiki AGENTS.md register \(enabled ? "enabled" : "disabled")")
+        if let repo = wikiPanel?.currentRepoRoot {
+            if enabled {
+                _ = WikiAgentsMD.register(repoRoot: repo)
+            } else {
+                _ = WikiAgentsMD.unregister(repoRoot: repo)
+            }
+        }
+    }
+
+    @objc private func setWikiRootMode(_ sender: NSMenuItem) {
+        let mode = sender.tag == 1 ? "dsh-home" : "in-repo"
+        UserDefaults.standard.set(mode, forKey: WikiPaths.rootModeKey)
+        AppLog.shared.log("wiki root mode set to \(mode)")
+        wikiPanel?.reloadRoot()
+        // Rebuild the menu so the radio state updates.
+        buildMenu()
     }
 
     @objc private func reloadPage() {

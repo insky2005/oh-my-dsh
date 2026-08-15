@@ -1616,14 +1616,12 @@ final class TerminalPanelController: NSObject {
             armSpawnFallbackTimer()
             return
         }
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            // Resolve the project directory; fall back to home when there is
-            // no usable dsh session yet.
-            let cwd = DSHSessionRPC.fetchActiveSessionCwd(port: port, timeout: 5)
-                ?? NSHomeDirectory()
-            DispatchQueue.main.async {
-                self?.spawnTab(cwd: cwd)
-            }
+        // Resolve the project directory through the SHARED resolver (it
+        // prefers ProjectDirectory.current — the workspace the user is
+        // currently viewing in dsh web — and falls back to a live session
+        // query). Completion arrives on the main queue; home is the fallback.
+        DSHSessionRPC.resolveProjectDirectory(port: port, timeout: 5) { [weak self] cwd in
+            self?.spawnTab(cwd: cwd ?? NSHomeDirectory())
         }
     }
 
@@ -1648,12 +1646,8 @@ final class TerminalPanelController: NSObject {
     }
 
     private func spawnWithCwd(port: Int) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let cwd = DSHSessionRPC.fetchActiveSessionCwd(port: port, timeout: 5)
-                ?? NSHomeDirectory()
-            DispatchQueue.main.async {
-                self?.spawnTab(cwd: cwd)
-            }
+        DSHSessionRPC.resolveProjectDirectory(port: port, timeout: 5) { [weak self] cwd in
+            self?.spawnTab(cwd: cwd ?? NSHomeDirectory())
         }
     }
 

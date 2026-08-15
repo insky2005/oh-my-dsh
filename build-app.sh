@@ -34,8 +34,8 @@ cd "$(dirname "$0")"
 
 APP_NAME="oh-my-dsh"
 BUNDLE_ID="com.ohmydsh.app"
-VERSION="1.6.28"
-BUILD="43"
+VERSION="1.7.1"
+BUILD="63"
 
 SRC="src"
 BUILD_DIR=".build"
@@ -193,7 +193,7 @@ swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" \
   -framework WebKit \
   -framework PDFKit \
   -o "$APP/Contents/MacOS/$APP_NAME" \
-  "$SRC/main.swift" "$SRC/PreviewPanel.swift" "$SRC/TerminalPanel.swift"
+  "$SRC/main.swift" "$SRC/PreviewPanel.swift" "$SRC/TerminalPanel.swift" "$SRC/WikiPanel.swift"
 
 echo "==> [4/6] building self-contained runtime (download node + npm install dsh)"
 build_runtime
