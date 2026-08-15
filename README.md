@@ -22,16 +22,18 @@
 
 ```
 dist/oh-my-dsh.app                    编译好的原生 App（arm64，ad-hoc 签名，约 670 MB，含内置运行时）
-dist/oh-my-dsh-1.6.3-arm64.pkg        安装包（装到 /Applications，约 181 MB）
-dist/oh-my-dsh-1.6.3-arm64.dmg        拖拽安装镜像（把 App 拖进 Applications，约 309 MB）
+dist/oh-my-dsh-<version>-arm64.pkg    安装包（装到 /Applications，版本号随 git tag）
+dist/oh-my-dsh-<version>-arm64.dmg    拖拽安装镜像（把 App 拖进 Applications）
 ```
+
+> 版本号由 git tag 驱动（见「构建」）；发布产物（含 SHA-256SUMS）见 GitHub Releases。
 
 ## 安装到 Applications
 
 **方式一：安装包（推荐）**
 
 ```bash
-open "dist/oh-my-dsh-1.6.3-arm64.pkg"
+open "dist/oh-my-dsh-1.8.0-arm64.pkg"
 ```
 
 跟随安装器向导即可（会要求输入管理员密码）。安装器带 preinstall 脚本，重装前自动移除旧版本。
@@ -41,7 +43,7 @@ open "dist/oh-my-dsh-1.6.3-arm64.pkg"
 **方式二：拖拽镜像**
 
 ```bash
-open "dist/oh-my-dsh-1.6.3-arm64.dmg"
+open "dist/oh-my-dsh-1.8.0-arm64.dmg"
 ```
 
 把 `oh-my-dsh.app` 拖进 `Applications` 文件夹。
@@ -147,9 +149,23 @@ src/main.swift       原生壳（WKWebView 窗口 + 服务管理 + 菜单 + 信�
 src/MakeIcon.swift   App 图标生成器（渲染 → iconset → icns）
 build-app.sh         一键构建脚本（编译、打包、国内镜像下载 Node、npm 装 dsh、预下载模式、签名）
 make-pkg.sh          安装包脚本（pkgbuild 生成 .pkg 安装器 + hdiutil 生成 .dmg 镜像）
+core/                共享核心（Node 模块：ANSI 模拟器 / 服务管理 / 升级 / 会话 RPC，跨平台复用）
+platforms/           各平台壳（macos/ 现有壳，windows/ linux/ 规划中）
+scripts/             跨平台工具（版本读取 / CHANGELOG 生成 / 校验和）
 .cache/              构建缓存（node tarball、npm 缓存、已构建运行时）
 dist/                构建产物（.app / .pkg / .dmg）
 docs/                设计/排查文档（含 docs/repo-wiki-design.md —— Repo Wiki 功能设计）
 docs/productization.md  产品化方案（路线图/分发/升级/多平台/开源治理 —— 见 [产品化方案](docs/productization.md)）
 docs/milestones/        各里程碑目标文档（M1 产品化基础 … M5 Apple 生态，后续开发任务来源）
 ```
+
+## 如何贡献
+
+欢迎提交 PR、Issue 与建议！请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)（构建/测试/提交规范/PR 流程）
+与 [SECURITY.md](SECURITY.md)（安全报告渠道）。
+
+- **Bug / 功能请求**：使用仓库的 Issue 模板（bug / feature）提交；
+- **本地测试**：`tests/terminal-emulator/run.sh`（模拟器单测）、`tests/wiki-panel/run.sh`（Wiki 面板单测）；
+- **CI**：push/PR 自动跑 macOS arm64/x64/Universal 构建矩阵 + 单测（`.github/workflows/ci.yml`）。
+
+本项目遵循 [MIT License](LICENSE)，代码只封装、绝不修改 DeepSeek Harness 上游源码。

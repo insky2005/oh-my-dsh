@@ -1,10 +1,53 @@
 # macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+._*
 
-# build artifacts
+# build artifacts (repo root + platforms/macos)
 .build/
 .cache/
 dist/
+platforms/macos/.build/
+platforms/macos/.cache/
+platforms/macos/dist/
 
-# debug screenshots (local QA only)
+# Node (shared core + embedded runtime)
+node_modules/
+platforms/*/node_modules/
+core/node_modules/
+*.node
+
+# logs
+*.log
+logs/
+*.pid
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# debug screenshots / QA artifacts (local only)
 pic/
+
+# Xcode / Swift
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.swiftmodule
+*.swiftdoc
+.build/module-cache/
+
+# packaging leftovers
+*.dmg
+*.pkg
+*.pkg.dist
+*.app.dSYM
+
+# editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db

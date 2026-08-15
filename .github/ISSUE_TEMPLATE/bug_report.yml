@@ -1,0 +1,87 @@
+name: Bug Report
+description: 报告一个 bug / Report a bug
+title: "[bug]: "
+labels: ["kind/bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢报告！请尽量补全以下信息，帮助我们更快定位问题。
+        Thanks for reporting! Please fill in as much as you can.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台 / Platform
+      description: 你运行在哪个系统上？
+      options:
+        - macOS 15 (Sequoia)
+        - macOS 14 (Sonoma)
+        - macOS 13 (Ventura)
+        - macOS 其他 / Other
+        - Windows（P2 规划中 / planned）
+        - Linux（P3 规划中 / planned）
+      default: 0
+    validations:
+      required: true
+  - type: input
+    id: arch
+    attributes:
+      label: 架构 / Architecture
+      description: arm64 / x64 / Universal（Intel）——「关于 oh-my-dsh」可查看
+      placeholder: "例如 arm64"
+  - type: input
+    id: app-version
+    attributes:
+      label: App 版本 / App version
+      description: 例如 v1.8.0；从「关于 oh-my-dsh」或菜单获取
+      placeholder: "v1.8.0"
+    validations:
+      required: true
+  - type: input
+    id: dsh-version
+    attributes:
+      label: dsh 版本 / dsh version
+      description: 例如 0.1.0-rc.6；「关于 oh-my-dsh」可查看
+      placeholder: "0.1.0-rc.6"
+  - type: input
+    id: node-version
+    attributes:
+      label: Node 版本 / Node version
+      description: 例如 v22.23.2；「关于 oh-my-dsh」可查看
+      placeholder: "v22.23.2"
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      description: 尽量给出最小复现步骤
+      placeholder: |
+        1. 打开 App
+        2. 点击 ...
+        3. 看到 ...
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为 / Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为 / Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / Logs
+      description: 日志位于 `~/Library/Logs/oh-my-dsh/app.log` 与 `server.log`（敏感信息请脱敏）
+      placeholder: "粘贴相关日志片段（可附文件路径）"
+      render: shell
+  - type: textarea
+    id: notes
+    attributes:
+      label: 备注 / Notes
+      description: 其他上下文、截图等

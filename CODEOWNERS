@@ -1,0 +1,18 @@
+# CODEOWNERS
+
+# 默认 owner：维护者
+* @insky2005
+
+# 共享核心（跨平台逻辑，CI 独立测试）
+/core/ @insky2005
+
+# macOS 平台壳
+/platforms/macos/ @insky2005
+/src/ @insky2005
+
+# 跨平台脚本与 CI
+/scripts/ @insky2005
+/.github/workflows/ @insky2005
+
+# 文档与里程碑
+/docs/ @insky2005
