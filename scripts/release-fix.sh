@@ -42,6 +42,13 @@ MAJOR_MINOR="${PATCH_VER%.*}"            # 1.9.1 → 1.9
 BRANCH="${3:-release/$MAJOR_MINOR}"      # release/1.9
 PATCH_TAG="v$PATCH_VER"
 
+# 检测推送用 remote：优先 github，origin 兜底（避免硬编码）。
+REMOTE="$(scripts/git-remote.sh)" || REMOTE=""
+[ -n "$REMOTE" ] || {
+  echo "ERROR: 未找到 git remote（git remote -v 为空）" >&2; exit 1
+}
+echo "    推送 remote：$REMOTE"
+
 echo "==> 1/4 从 $BASE_TAG 切维护分支 $BRANCH（不含未发布功能）"
 git checkout -b "$BRANCH" "$BASE_TAG" 2>/dev/null || {
   # 分支已存在（如上次修复遗留）→ 检出并确认基于 base tag
@@ -51,19 +58,21 @@ git checkout -b "$BRANCH" "$BASE_TAG" 2>/dev/null || {
 
 echo "==> 2/4 请在该分支上完成修复并提交（如 git commit -m \"fix(…): …\"）"
 echo "    完成后手动执行："
-echo "      git push -u origin $BRANCH"
+echo "      git push -u $REMOTE $BRANCH"
 echo ""
 
 echo "==> 3/4 打 patch tag $PATCH_TAG 并推送（触发 release.yml 发布）"
 git tag -a "$PATCH_TAG" -m "oh-my-dsh $PATCH_VER (patch fix)"
-git push origin "$BRANCH"
-git push origin "$PATCH_TAG"
-echo "    已推送：$BRANCH + $PATCH_TAG —— release.yml 将自动构建发布 $PATCH_VER"
+git push "$REMOTE" "$BRANCH"
+git push "$REMOTE" "$PATCH_TAG"
+echo "    已推送：$BRANCH + $PATCH_TAG（remote=$REMOTE）—— release.yml 将自动构建发布 $PATCH_VER"
 
 echo ""
-echo "==> 4/4 修复同步回 main（cherry-pick）——请手动执行："
+echo "==> 4/4 修复同步回 main（走 PR，不直接 push）——请手动执行："
 echo "    FIX_COMMIT=\$(git log -1 --format=%H)   # 或你的修复 commit"
 echo "    git checkout main && git pull"
-echo "    git cherry-pick \$FIX_COMMIT && git push origin main"
+echo "    git checkout -b fix/sync-$PATCH_VER main"
+echo "    git cherry-pick \$FIX_COMMIT && git push -u $REMOTE fix/sync-$PATCH_VER"
+echo "    开 PR：fix/sync-$PATCH_VER → main（CI 绿 + review 后合并）"
 echo ""
 echo "规范见 docs/git-workflow.md"

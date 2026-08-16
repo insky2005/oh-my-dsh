@@ -58,10 +58,14 @@ git checkout -b release/1.9.x v1.9.0
 git commit -m "fix(…): …"
 git tag -a v1.9.1 -m "oh-my-dsh v1.9.1"
 git push origin release/1.9.x v1.9.1      # release.yml 自动发布 v1.9.1
-# 4. 修复同步回主干（cherry-pick，避免主干漏掉）
+# 4. 修复同步回主干 —— 走 PR（不直接 push main）：
+#    a. 把修复 commit 带到 main 上的一个新 fix 分支（或从 main 切分支再 cherry-pick）
 git checkout main && git pull
+git checkout -b fix/sync-1.9.1 main
 git cherry-pick <修复commit>
-git push origin main
+git push -u origin fix/sync-1.9.1
+#    b. 开 PR：fix/sync-1.9.1 → main，CI 绿 + review 后合并
+#    （保证 main 的每次前进都经过 PR 审查，不绕过 review 直接 push）
 ```
 
 ### 4. 版本号规则
@@ -70,13 +74,20 @@ git push origin main
 - `scripts/version.sh` 的 `FALLBACK_VERSION` 始终指向「下一个主版本」（发布后立即推进）；
 - 支持策略：维护最近 2 个大版本（如 1.9.x / 1.10.x），更旧的支持线在次新主版本稳定后清理。
 
+## 合并规则（强制）
+
+- **feature / fix 分支回 main，一律走 PR**：推送分支 → 开 PR → CI 全绿 + review → 合并；禁止直接 `git push origin main`；
+- **已发布版本的修复同步回 main**：也走 PR（见场景 B 第 4 步），不直接 push main；
+- 面板（IssueRunner）处理 issue 后自动开 PR（`createPR`：head=分支，base=main），与上述规则一致；
+- 唯一允许直接操作 main 的场景：维护者推进 fallback 版本号、紧急文档修正、发布打 tag（tag 打 main 本身）。
+
 ## 判断速查
 
 | 情况 | 走哪条路 |
 |---|---|
-| 新功能 / 重构 | `feature/<slug>` → 合并 main → 随主版本发 |
-| main 上发现 bug（未发布） | `fix/<slug>` → 合并 main → 随主版本发 |
-| 已发布版本（1.9.0）有 bug | `release/1.9.x` → 打 `v1.9.1` 发布 → cherry-pick 回 main |
+| 新功能 / 重构 | `feature/<slug>` → PR 合并 main → 随主版本发 |
+| main 上发现 bug（未发布） | `fix/<slug>` → PR 合并 main → 随主版本发 |
+| 已发布版本（1.9.0）有 bug | `release/1.9.x` → 打 `v1.9.1` 发布 → **PR** 把修复合并回 main |
 | 发布主版本 | main 上打 `vX.Y.0` tag |
 | 发布修复版本 | release 分支上打 `vX.Y.Z` tag |
 
