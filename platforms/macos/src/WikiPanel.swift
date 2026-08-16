@@ -1545,6 +1545,15 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
                    UserDefaults.standard.object(forKey: WikiPaths.autoRegenerateKey) == nil {
                     promptEnableAutoUpdate()
                 }
+                // Auto-commit the changed wiki docs (add + commit, NO push).
+                // Runs off the main thread; a successful commit refreshes the
+                // tree so stale-detection reflects the new file mtimes.
+                DispatchQueue.global(qos: .utility).async {
+                    WikiAutoCommit.commitWikiChanges(repoRoot: gen.repo)
+                    DispatchQueue.main.async { [weak self] in
+                        self?.refresh()
+                    }
+                }
             } else {
                 setStatus(L10n.tr("wiki.failed"), spin: false)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
@@ -1924,5 +1933,55 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
 
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
         360
+    }
+}
+
+// MARK: - Wiki auto-commit (git add + commit, no push)
+
+/// After a wiki generation/update settles, auto-commit the changed wiki docs
+/// under `<repoRoot>/.dsh/wiki/` — but NEVER push. Committing keeps the wiki
+/// history reviewable and shareable; pushing is left to the user (or the
+/// IssueRunner task panel's explicit flows).
+enum WikiAutoCommit {
+
+    /// True when `repoRoot` is inside a git work tree.
+    static func isGitRepo(_ repoRoot: String) -> Bool {
+        runGit(["rev-parse", "--is-inside-work-tree"], repoRoot) == "true"
+    }
+
+    /// Run a git command in repoRoot; returns trimmed stdout or nil on failure.
+    @discardableResult
+    static func runGit(_ args: [String], _ repoRoot: String) -> String? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        proc.arguments = ["-C", repoRoot] + args
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        do { try proc.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        guard proc.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Add + commit the wiki docs if there are any changes. Never pushes.
+    /// Failures are logged only (never block or alert the user).
+    static func commitWikiChanges(repoRoot: String) {
+        guard isGitRepo(repoRoot) else { return }
+        // Nothing changed under .dsh/wiki → nothing to commit.
+        let status = runGit(["status", "--porcelain", "--", ".dsh/wiki"], repoRoot)
+        guard let status = status, !status.isEmpty else { return }
+
+        guard runGit(["add", "--", ".dsh/wiki"], repoRoot) != nil else {
+            AppLog.shared.log("wiki auto-commit: git add failed")
+            return
+        }
+        let message = "docs(wiki): 知识库增量更新（自动提交，未推送）"
+        guard runGit(["commit", "-m", message], repoRoot) != nil else {
+            AppLog.shared.log("wiki auto-commit: git commit failed (no identity? nothing staged?)")
+            return
+        }
+        AppLog.shared.log("wiki auto-commit: committed .dsh/wiki changes (not pushed)")
     }
 }
