@@ -256,6 +256,31 @@ enum L10n {
                         "Timed out waiting for dsh web (90s). Log: %@"),
         "err.upgradeFailed": ("dsh 升级失败（exit %d）：\n%@", "dsh upgrade failed (exit %d):\n%@"),
         "err.noVersionAfterUpgrade": ("升级后无法读取 dsh 版本", "Cannot read dsh version after upgrade"),
+        // IssueRunner task panel
+        "bar.tasks": ("任务", "Tasks"),
+        "menu.toggleTasks": ("显示/隐藏 任务面板", "Toggle Tasks Panel"),
+        "tasks.title": ("任务", "Tasks"),
+        "tasks.configHint": ("配置 GitHub Token", "Configure GitHub Token"),
+        "tasks.refreshHint": ("刷新 Issues", "Refresh Issues"),
+        "tasks.runAllHint": ("全部处理（串行）", "Process All (serial)"),
+        "tasks.noRepo": ("当前工作区不是 GitHub 仓库", "Current workspace is not a GitHub repo"),
+        "tasks.loading": ("加载 Issues…", "Loading issues…"),
+        "tasks.loadFailed": ("加载 Issues 失败（网络/限流/Token？）", "Failed to load issues (network/rate-limit/token?)"),
+        "tasks.running": ("正在处理 #%d…", "Processing #%d…"),
+        "tasks.creatingPr": ("正在创建 #%d 的 PR…", "Creating PR for #%d…"),
+        "tasks.sessionLabel": ("任务会话", "task session"),
+        "tasks.errBranch": ("切换/创建分支失败（分支已存在或被占用？）", "Failed to create/checkout branch (exists or busy?)"),
+        "tasks.errSession": ("创建 dsh 会话失败", "Failed to create dsh session"),
+        "tasks.errPrompt": ("向会话发送任务失败", "Failed to prompt the session"),
+        "tasks.errTimeout": ("任务超时（30 分钟）", "Task timed out (30 minutes)"),
+        "tasks.errNoPush": ("分支未推送到远端（代理未 push？）", "Branch was not pushed (agent didn't push?)"),
+        "tasks.errPR": ("创建 PR 失败", "Failed to create PR"),
+        "tasks.failTitle": ("任务失败", "Task Failed"),
+        "tasks.prTitle": ("fix(#%d)", "fix(#%d)"),
+        "tasks.prBody": ("自动修复 GitHub issue #%d（由 oh-my-dsh 任务面板处理）", "Automated fix for GitHub issue #%d (processed by oh-my-dsh task panel)"),
+        "tasks.configTitle": ("GitHub Token", "GitHub Token"),
+        "tasks.configInfo": ("私有仓库需要 GitHub token（存于 Keychain，仅用于拉取 issues 与创建 PR；公开仓库可留空）。", "Private repos need a GitHub token (stored in Keychain, used only to fetch issues & create PRs; leave empty for public repos)."),
+        "tasks.tokenPlaceholder": ("ghp_xxx（可选）", "ghp_xxx (optional)"),
     ]
 
     /// Localize a key, optionally filling %@ / %d placeholders.
@@ -914,10 +939,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var previewToggleMenuItem: NSMenuItem?
     private var terminalToggleMenuItem: NSMenuItem?
     private var wikiToggleMenuItem: NSMenuItem?
+    private var tasksToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip).
     private var previewBarButton: ActivityBarButton!
     private var terminalBarButton: ActivityBarButton!
     private var wikiBarButton: ActivityBarButton!
+    private var tasksBarButton: ActivityBarButton!
 
     private var window: NSWindow!
     private var webView: WKWebView!
@@ -925,11 +952,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var previewPanel: PreviewPanelController!
     private var terminalPanel: TerminalPanelController!
     private var wikiPanel: WikiPanelController!
+    private var tasksPanel: IssueRunnerPanelController!
 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
-    /// terminal and wiki panels share one slot; the activity bar toggles
+    /// terminal, wiki and tasks panels share one slot; the activity bar toggles
     /// between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki }
+    enum RightPanel { case none, preview, terminal, wiki, tasks }
     private var rightPanel: RightPanel = .none
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
@@ -939,7 +967,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let minWebViewWidth: CGFloat = 1100
     /// Smallest allowed width of the right panel slot (max of both panels').
     private static let rightPanelMinWidth: CGFloat =
-        max(PreviewPanelController.minWidth, max(TerminalPanelController.minWidth, WikiPanelController.minWidth))
+        max(PreviewPanelController.minWidth,
+            max(TerminalPanelController.minWidth,
+                max(WikiPanelController.minWidth, IssueRunnerPanelController.minWidth)))
     /// Fixed default panel width. Deliberately NOT window-relative: a
     /// "half the window" default made the width chase the window as it was
     /// widened, flip-flopping on every toggle.
@@ -1069,6 +1099,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // prompt; rebuild the menu so the checkbox stays in sync.
         wikiPanel.onAutoUpdateSettingChanged = { [weak self] in self?.buildMenu() }
 
+        tasksPanel = IssueRunnerPanelController()
+        AppLog.shared.log("launch: tasksPanel created")
+        tasksPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        tasksPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
+        tasksPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
+
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
@@ -1085,7 +1121,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         wikiBarButton = makeActivityButton(symbol: "book.closed",
                                            tooltip: L10n.tr("bar.wiki"),
                                            action: #selector(wikiEntryTapped(_:)))
-        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, wikiBarButton])
+        tasksBarButton = makeActivityButton(symbol: "checkmark.circle",
+                                            tooltip: L10n.tr("bar.tasks"),
+                                            action: #selector(tasksEntryTapped(_:)))
+        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, wikiBarButton, tasksBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -1141,6 +1180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         switch UserDefaults.standard.string(forKey: "rightPanelKind") {
         case "terminal": kind = .terminal
         case "wiki": kind = .wiki
+        case "tasks": kind = .tasks
         default: kind = .preview
         }
         setRightPanel(visible ? kind : .none)
@@ -1152,6 +1192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .preview: return previewPanel.view
         case .terminal: return terminalPanel.view
         case .wiki: return wikiPanel.view
+        case .tasks: return tasksPanel.view
         case .none: return NSView()
         }
     }
@@ -1201,9 +1242,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         previewToggleMenuItem?.state = (panel == .preview) ? .on : .off
         terminalToggleMenuItem?.state = (panel == .terminal) ? .on : .off
         wikiToggleMenuItem?.state = (panel == .wiki) ? .on : .off
+        tasksToggleMenuItem?.state = (panel == .tasks) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
+        tasksBarButton?.setActive(panel == .tasks)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
@@ -1241,6 +1284,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
                     self.dumpPanelDebugInfo(panelView: wikiPanel.view, label: "wiki")
                 }
+            case .tasks:
+                tasksPanel.ensureLoaded()
+                if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
+                    self.dumpPanelDebugInfo(panelView: tasksPanel.view, label: "tasks")
+                }
             case .none:
                 break
             }
@@ -1270,6 +1318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         switch panel {
         case .terminal: kind = "terminal"
         case .wiki: kind = "wiki"
+        case .tasks: kind = "tasks"
         default: kind = "preview"
         }
         UserDefaults.standard.set(kind, forKey: "rightPanelKind")
@@ -1658,6 +1707,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     self.terminalPanel?.serverReady(port: self.server.port)
                     // Tell the wiki panel too: deferred root loads resolve now.
                     self.wikiPanel?.serverReady(port: self.server.port)
+                    // Tell the tasks panel: repo detection + issue load resolve now.
+                    self.tasksPanel?.serverReady(port: self.server.port)
                 }
             } catch {
                 AppLog.shared.log("server start failed: \(error.localizedDescription)")
@@ -2097,6 +2148,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleWiki.target = self
         toggleWiki.state = (rightPanel == .wiki) ? .on : .off
         wikiToggleMenuItem = toggleWiki
+        let toggleTasks = viewMenu.addItem(withTitle: L10n.tr("menu.toggleTasks"), action: #selector(tasksEntryTapped(_:)), keyEquivalent: "j")
+        toggleTasks.keyEquivalentModifierMask = [.command, .option]
+        toggleTasks.target = self
+        toggleTasks.state = (rightPanel == .tasks) ? .on : .off
+        tasksToggleMenuItem = toggleTasks
         viewItem.submenu = viewMenu
 
         // Settings menu: dsh settings/upgrade/registry + logs + language.
@@ -2334,6 +2390,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Toggle the Repo Wiki panel (activity bar entry / ⌥⌘W).
     @objc private func wikiEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .wiki ? .none : .wiki)
+    }
+
+    /// Toggle the IssueRunner task panel (activity bar entry / ⌥⌘J).
+    @objc private func tasksEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .tasks ? .none : .tasks)
+    }
+
+    /// The workspace directory the task panel should operate on: the shell's
+    /// shared active project directory (follows the session the user is
+    /// viewing), falling back to the workspace root of the main repo.
+    private func activeWorkspacePath() -> String? {
+        if let current = ProjectDirectory.current,
+           FileManager.default.fileExists(atPath: current) {
+            return current
+        }
+        return ProjectDirectory.current
     }
 
     // MARK: Wiki settings (UserDefaults-backed menu toggles)

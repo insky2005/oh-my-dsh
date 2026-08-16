@@ -299,7 +299,7 @@ final class HeaderLabel: NSView {
 /// terminal text, both confirmed to render). Handles hover highlight, click
 /// and tooltip natively.
 final class CustomIconButton: NSView {
-    enum Glyph { case plus, close, folder, openInApp, reveal }
+    enum Glyph { case plus, close, folder, openInApp, reveal, refresh, play, stop }
     var onAction: (() -> Void)?
     var isEnabled = true {
         didSet { needsDisplay = true }
@@ -382,6 +382,23 @@ final class CustomIconButton: NSView {
             path.appendOval(in: NSRect(x: inset.minX + 1, y: inset.minY + 1,
                                        width: inset.width - 2, height: inset.height - 2))
             path.appendOval(in: NSRect(x: bounds.midX - 1.5, y: bounds.midY - 1.5, width: 3, height: 3))
+        case .refresh:
+            // Circular arrow: two arcs + a small head tick (simplified).
+            path.appendArc(withCenter: NSPoint(x: bounds.midX, y: bounds.midY),
+                           radius: (inset.width / 2) - 1,
+                           startAngle: 40, endAngle: 300, clockwise: true)
+            path.move(to: NSPoint(x: inset.maxX - 1, y: bounds.midY - 2))
+            path.line(to: NSPoint(x: inset.maxX + 3, y: bounds.midY + 2))
+            path.line(to: NSPoint(x: inset.maxX - 3, y: bounds.midY + 4))
+        case .play:
+            let midY = bounds.midY
+            path.move(to: NSPoint(x: inset.minX + 2, y: inset.minY))
+            path.line(to: NSPoint(x: inset.maxX - 1, y: midY))
+            path.line(to: NSPoint(x: inset.minX + 2, y: inset.maxY))
+            path.close()
+        case .stop:
+            path.appendRect(NSRect(x: inset.minX + 1, y: inset.minY + 1,
+                                   width: inset.width - 2, height: inset.height - 2))
         }
         path.stroke()
     }

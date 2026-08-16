@@ -236,7 +236,7 @@ cp "$BUILD_DIR/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 echo "==> [3/6] compiling app binary"
 # 交叉编译：-target 指定 arch+最低系统版本（swiftc 6 不再接受裸 -arch）。
 # universal = 编译两个 arch 再 lipo 合成 fat binary。
-SWIFT_SOURCES=("$SRC/main.swift" "$SRC/PreviewPanel.swift" "$SRC/TerminalPanel.swift" "$SRC/WikiPanel.swift")
+SWIFT_SOURCES=("$SRC/main.swift" "$SRC/PreviewPanel.swift" "$SRC/TerminalPanel.swift" "$SRC/WikiPanel.swift" "$SRC/IssueRunnerPanel.swift")
 APP_BIN="$APP/Contents/MacOS/$APP_NAME"
 case "$ARCH" in
   arm64)
