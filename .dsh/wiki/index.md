@@ -1,7 +1,7 @@
 ---
 title: oh-my-dsh 仓库知识库
 tags: [wiki, index, oh-my-dsh]
-updated: 2026-08-16T13:10:06Z
+updated: 2026-08-16T14:07:58Z
 sources: [README.md, .dsh/skills/repo-wiki/SKILL.md, platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/tests/issues.test.js]
 manual: false
 ---
@@ -31,11 +31,11 @@ manual: false
 
 - 页面数：12（含本页；模块页 6 个）
 - 主要源码：`platforms/macos/src/`（6 个 Swift 文件）+ 共享核心 `core/`（Node 模块，含 issues/jobqueue/tasks 后 77 用例单测）
-- 最近一次提交：`63525e3`（"feat(tasks): 完成后的 issue 支持「评论并关闭」…"）
+- 最近一次提交：`713a176`（"docs(skill): repo-wiki 规则 8 — 更新完成后代理自行 git add+commit（不 push）…"）
 - 工作区版本号：`1.8.0`（BUILD 64），版本单一来源（git tag vX.Y.Z → scripts/version.sh；见 [overview](overview.md)）
 - 仓库新增文档：`docs/productization.md`（产品化方案：P0 已达成 → P1 开源/CI → P2 Windows → P3 Linux → P4 生态 → F Apple 生态暂缓，见 [overview](overview.md)）；`docs/milestones/`（M1 产品化基础 … M5 Apple 生态 5 份里程碑目标文档，README「目录」收录）；`docs/issue-runner-design.md`（任务面板设计 + 远程驱动预留 + 关联索引章节）
 - 任务关联索引：`.dsh/tasks/index.json`（issue→branch→PR→state，随仓库提交）+ `local.json`（sessionId，gitignore），实现 `core/lib/tasks.js`（Node）+ `IssueRunnerPanel.swift` 的 `TaskIndex`（Swift），见 [data-model](data-model.md) 与 [issue-runner-panel](modules/issue-runner-panel.md)
-- Wiki 提交：更新完成后由代理（repo-wiki skill）`git add` + commit（不 push，message 概括实际变更）；`WikiAutoCommit` 兜底（代理未提交时），见 [wiki-panel](modules/wiki-panel.md)
+- Wiki 提交：更新完成后由代理 `git add .dsh/wiki` + commit（不 push，message 概括实际变更）——提交约定来自更新请求与面板 `WikiPrompts.fallbackInstructions`（repo-wiki SKILL.md 已移除内置提交规则，规则 8 现为汇报）；`WikiAutoCommit` 兜底（代理未提交时），见 [wiki-panel](modules/wiki-panel.md)
 
 ## 维护约定
 
@@ -43,4 +43,4 @@ manual: false
 - 增量更新只重写 `sources` 命中变更的页面；`manual: true` 页面绝不改写；
 - 内容只写可证实事实；`.env*`/密钥/口令一律不收录。
 
-最后生成时间：2026-08-16T13:10:06Z
+最后生成时间：2026-08-16T14:07:58Z
