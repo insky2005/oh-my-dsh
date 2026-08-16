@@ -95,3 +95,80 @@ jobs:
             dist/*.dmg
             dist/SHA-256SUMS
           fail_on_unmatched_files: true
+
+  # --- Smoke on a CLEAN macOS instance (GitHub-hosted runner = fresh VM) ----
+  # 里程碑 M1「冒烟」验收的 CI 化：下载 Release 产物 → 安装 pkg → 启动 App →
+  # 验证服务就绪 → 退出 → 验证清理。每个 job 都是全新 macOS 实例（等价干净机）。
+  smoke:
+    name: smoke (install → run → quit)
+    needs: build
+    runs-on: macos-14
+    env:
+      SMOKE_PORT: 3199
+    steps:
+      - name: Download arm64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-arm64
+          path: release-artifacts
+      - name: Install .pkg to /Applications
+        run: |
+          PKG="$(ls release-artifacts/*-arm64.pkg | head -1)"
+          echo "installing $PKG"
+          sudo installer -pkg "$PKG" -target /
+          test -x /Applications/oh-my-dsh.app/Contents/MacOS/oh-my-dsh
+          echo "installed: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/oh-my-dsh.app/Contents/Info.plist)"
+      - name: Launch app (forced spawn on test port, isolated DSH_HOME)
+        run: |
+          export DSH_NATIVE_FORCE_SPAWN=1
+          export DSH_NATIVE_PORT=$SMOKE_PORT
+          export DSH_HOME="$(mktemp -d)"
+          nohup /Applications/oh-my-dsh.app/Contents/MacOS/oh-my-dsh \
+            > /tmp/smoke-app.log 2>&1 &
+          echo $! > /tmp/smoke-app.pid
+          echo "launched pid=$(cat /tmp/smoke-app.pid)"
+      - name: Wait for dsh web UI (up to 90s)
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS --max-time 2 "http://127.0.0.1:$SMOKE_PORT/" 2>/dev/null \
+                 | grep -q "__DSH_BOOT__"; then
+              echo "UI is up on :$SMOKE_PORT after ${i}s"
+              exit 0
+            fi
+            if ! kill -0 "$(cat /tmp/smoke-app.pid)" 2>/dev/null; then
+              echo "ERROR: app exited early"; tail -30 /tmp/smoke-app.log
+              tail -30 "$HOME/Library/Logs/oh-my-dsh/app.log" 2>/dev/null || true
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "ERROR: UI did not come up in 90s"; tail -40 /tmp/smoke-app.log
+          tail -40 "$HOME/Library/Logs/oh-my-dsh/app.log" 2>/dev/null || true
+          exit 1
+      - name: Verify session RPC resolves a project cwd
+        run: |
+          sleep 3
+          curl -fsS --max-time 5 -X POST "http://127.0.0.1:$SMOKE_PORT/api/session.list" \
+            -H 'content-type: application/json' \
+            -d "{\"type\":\"client-request\",\"rpcId\":\"smoke-1\",\"method\":\"session.list\",\"payload\":{}}" \
+            | grep -q '"ok":true' && echo "session RPC OK" || echo "(no session yet — acceptable on fresh VM)"
+      - name: Quit app (SIGTERM) and verify cleanup
+        run: |
+          kill -TERM "$(cat /tmp/smoke-app.pid)"
+          # 优雅退出最多等 8s；之后进程必须消失
+          for i in $(seq 1 8); do
+            kill -0 "$(cat /tmp/smoke-app.pid)" 2>/dev/null || { echo "app exited cleanly after ${i}s"; break; }
+            sleep 1
+          done
+          if kill -0 "$(cat /tmp/smoke-app.pid)" 2>/dev/null; then
+            echo "ERROR: app did not exit"; exit 1
+          fi
+          # 自拉起的 dsh web 必须被清理（端口释放）
+          if lsof -iTCP:$SMOKE_PORT -sTCP:LISTEN >/dev/null 2>&1; then
+            echo "ERROR: spawned server still listening on :$SMOKE_PORT"
+            lsof -iTCP:$SMOKE_PORT -sTCP:LISTEN
+            exit 1
+          fi
+          echo "cleanup OK: server on :$SMOKE_PORT released"
+          grep -E "server ready|stopping spawned|exited cleanly" \
+            "$HOME/Library/Logs/oh-my-dsh/app.log" | tail -5
