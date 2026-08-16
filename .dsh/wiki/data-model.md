@@ -1,7 +1,7 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-08-16T16:02:38Z
+updated: 2026-08-16T16:34:44Z
 sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/git-workflow.md]
 manual: false
 ---
@@ -28,7 +28,7 @@ manual: false
 | `wikiAutoRegenerate` | wiki 自动更新开关（默认关） | `WikiPaths` |
 | `wikiRegisterAgentsMd` | 写入 AGENTS.md 注册块开关（默认关） | `WikiPaths` |
 
-> 凭据不走 UserDefaults：GitHub token 按仓库作用域存储，解析优先级为 Keychain 专属（`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）→ 文件专属 `~/.dsh/tokens/<owner>-<repo>` → Keychain 通用（`oh-my-dsh.issuerunner.github-token`）→ 文件通用 `~/.dsh/gh-token`；面板保存时 Keychain 与文件**双写**（文件 chmod 600，App 与外部工具/代理共用），见 [issue-runner-panel](modules/issue-runner-panel.md)。
+> 凭据不走 UserDefaults：GitHub token 按仓库作用域存储，**读取优先文件**（免 Keychain 每次弹密码）、Keychain 兜底——解析顺序为 文件专属 `~/.dsh/tokens/<owner>-<repo>` → 文件通用 `~/.dsh/gh-token` → Keychain 专属（`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）→ Keychain 通用（`oh-my-dsh.issuerunner.github-token`）；面板保存时 Keychain 与文件**双写**（Keychain 条目设 `kSecAttrAccessibleAfterFirstUnlock`，文件 chmod 600，App 与外部工具/代理共用），见 [issue-runner-panel](modules/issue-runner-panel.md)。
 
 ## 领域模型（代码内）
 
