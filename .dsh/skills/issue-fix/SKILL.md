@@ -7,11 +7,11 @@ userInvocable: false
 
 # issue-fix — 按 GitHub issue 完成修复并提交推送
 
-面板（IssueRunner）为某个 issue 创建独立会话并加载本 skill 时使用。会话 cwd 是**主项目工作区**，当前 git 分支应为 `fix/issue-<N>`（由面板提前切好）。
+面板（IssueRunner）为某个 issue 创建独立会话并加载本 skill 时使用。会话 cwd 是**主项目工作区**，当前 git 分支由面板提前切好：feature 类 issue 为 `feature/issue-<N>`，bug/其他为 `fix/issue-<N>`（按统一分支规范 `docs/git-workflow.md`）。
 
 ## 执行方式（强制）
 - **在当前会话内直接执行，绝不新建顶层会话**（不得 session.create / fork）；确需并行探索时可使用 subagent（子会话，不影响顶层会话归属）；
-- **仓库根**：当前会话工作目录（`pwd`）；当前分支必须是 `fix/issue-<N>`——若不是，先 `git status` 确认，异常则停下汇报；
+- **仓库根**：当前会话工作目录（`pwd`）；当前分支必须是 `feature/issue-<N>` 或 `fix/issue-<N>`（以面板会话提示为准）——若不是，先 `git status` 确认，异常则停下汇报；
 - 只改当前分支上的代码，**绝不触碰 main/其他分支**，不 `git checkout` 别的分支。
 
 ## 输入
@@ -25,7 +25,7 @@ userInvocable: false
    - macOS 壳：`tests/*/run.sh`（swiftc 可用时）；
    - 无法跑的（如缺工具链）明确说明，不假装通过；
 4. **提交**：`git add` 相关文件 → `git commit -m "fix(#<N>): <标题简短>"`；一个 issue 一个 commit（或逻辑相关的少量 commit）。若修复关联 PR，commit 正文可附加 `Closes #<N>`（GitHub 在 PR 合并时自动关闭对应 issue），但**不要**在 commit 里写无关内容；
-5. **推送**：`git push -u origin fix/issue-<N>`（远端名以 `git remote` 为准，优先 `github` 或 `origin`）；
+5. **推送**：`git push -u origin <当前分支名>`（远端名以 `git remote` 为准，优先 `github` 或 `origin`）；
 6. **汇报**：简短列出改动文件、测试结果、commit 号；PR 由面板创建，你**不负责开 PR**。
 
 ## 规则（强制）

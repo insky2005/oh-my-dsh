@@ -438,6 +438,20 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         }
     }
 
+    /// Branch name for an issue, following the unified branch convention
+    /// (docs/git-workflow.md): feature-class issues → `feature/issue-N`,
+    /// everything else (bug / unclassified) → `fix/issue-N`.
+    /// Classification is by label: any label containing "feature",
+    /// "enhancement" or "kind/feature" counts as a feature.
+    private func branchForIssue(number: Int) -> String {
+        guard let idx = tasks.firstIndex(where: { $0.number == number }) else {
+            return "fix/issue-\(number)"
+        }
+        let labels = tasks[idx].labels.map { $0.lowercased() }
+        let isFeature = labels.contains { $0.contains("feature") || $0.contains("enhancement") }
+        return isFeature ? "feature/issue-\(number)" : "fix/issue-\(number)"
+    }
+
     func startTask(number: Int) {
         guard runningNumber == nil else { return }   // strict serial
         guard let idx = tasks.firstIndex(where: { $0.number == number }),
@@ -445,22 +459,22 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         guard let repo = repo else { return }
         guard let path = repoRootPath ?? workspacePath?() else { return }
 
+        let branch = branchForIssue(number: number)   // feature/issue-N or fix/issue-N
         tasks[idx].state = .running
         tasks[idx].startedAt = Date()
-        tasks[idx].branch = "fix/issue-\(number)"
+        tasks[idx].branch = branch
         runningNumber = number
         tableView.reloadData()
         setStatus(L10n.tr("tasks.running", number), spin: true)
 
         // Persist the association (issue → branch) in the committed index.
         TaskIndex.mergeTask(path, issue: number, update: [
-            "branch": "fix/issue-\(number)",
+            "branch": branch,
             "state": "running",
             "title": tasks[idx].title,
             "startedAt": ISO8601DateFormatter().string(from: Date()),
         ])
 
-        let branch = "fix/issue-\(number)"
         let token = loadToken()
         let port = serverPortProvider?() ?? 3080
         let workspaceId = Self.resolveMainWorkspaceId(port: port, path: path)
@@ -490,7 +504,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             _ = Self.renameSession(port: port, sessionId: sessionId, title: "fix(#\(number)): \(L10n.tr("tasks.sessionLabel"))")
             // 4. prompt the agent with the issue-fix skill + issue content
             let issue = self?.tasks.first { $0.number == number }
-            let prompt = Self.issueFixPrompt(number: number, title: issue?.title ?? "")
+            let prompt = Self.issueFixPrompt(number: number, title: issue?.title ?? "", branch: branch)
             guard Self.promptSession(port: port, sessionId: sessionId, text: prompt) else {
                 DispatchQueue.main.async { self?.taskFailed(number: number, error: L10n.tr("tasks.errPrompt")) }
                 return
@@ -517,7 +531,8 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             self.pollTimer?.invalidate()
             self.pollTimer = nil
             // Session ended: verify the branch was pushed, then open the PR.
-            if Self.gitBranchPushed(path: path, branch: "fix/issue-\(number)") {
+            let branch = self.branchForIssue(number: number)
+            if Self.gitBranchPushed(path: path, branch: branch) {
                 self.openPR(number: number, token: token)
             } else {
                 self.taskFailed(number: number, error: L10n.tr("tasks.errNoPush"))
@@ -530,7 +545,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     private func openPR(number: Int, token: String?) {
         guard let repo = repo else { return }
         guard let idx = tasks.firstIndex(where: { $0.number == number }) else { return }
-        let branch = "fix/issue-\(number)"
+        let branch = tasks[idx].branch ?? branchForIssue(number: number)
         setStatus(L10n.tr("tasks.creatingPr", number), spin: true)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let pr = Self.createPR(owner: repo.owner, repo: repo.repo,
@@ -1243,7 +1258,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
 
     // MARK: - issue-fix prompt
 
-    static func issueFixPrompt(number: Int, title: String) -> String {
+    static func issueFixPrompt(number: Int, title: String, branch: String) -> String {
         return """
         请加载 issue-fix skill 并完成以下 GitHub issue 的修复：
 
@@ -1252,7 +1267,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
 
         要求：
         1. 加载 `.dsh/skills/issue-fix/SKILL.md` 并严格按其流程执行（读 issue → 改代码 → 跑测试 → commit → push）；
-        2. 当前分支应为 fix/issue-\(number)，只在此分支上工作；
+        2. 当前分支应为 \(branch)，只在此分支上工作；
         3. 完成后简短汇报改动与测试结果。
         """
     }
