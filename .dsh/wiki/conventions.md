@@ -1,7 +1,7 @@
 ---
 title: 工程约定
 tags: [conventions, l10n, build, qa-hooks, versioning]
-updated: 2026-08-16T06:09:01Z
+updated: 2026-08-16T10:45:00Z
 sources: [README.md, platforms/macos/build-app.sh, platforms/macos/src/main.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .gitignore, .github/workflows/ci.yml]
 manual: false
 ---
@@ -31,7 +31,7 @@ manual: false
 
 ## 面板 UI 约定
 
-- 右栏三个面板共享 `PreviewPanel.swift` 的 UI 基件（`HoverButton`/`DynamicFillView`/`CustomIconButton`/`HeaderLabel` 等），视觉与交互保持一致：40pt 头部 + 内容区、统一背景条、图标深浅色均可见；
+- 右栏四个面板共享 `PreviewPanel.swift` 的 UI 基件（`HoverButton`/`DynamicFillView`/`CustomIconButton`/`HeaderLabel` 等），视觉与交互保持一致：40pt 头部 + 内容区、统一背景条、图标深浅色均可见；
 - **layer-backed 窗口合成陷阱**（`docs/terminal-header-fix.md`，wiki 面板同源，见 `docs/repo-wiki-design.md` §14 修复 12）：`isOpaque = true` 且无独立 layer 的视图，绘制会溢出到父 layer 覆盖同级视图；隔离绘制用**父容器的** `wantsLayer = true` + `masksToBounds = true`（不是子视图的 wantsLayer）；根视图用 `isOpaque = false` 的自绘背景视图（`TerminalRootView`/`WikiRootView` 模式）；**经验推广**：任何「平时隐藏、生成/状态变化时才显示」的 opaque 无 layer 视图（如 wiki 面板底部状态条）都可能触发同类合成溢出——显示前先给视图自身 `wantsLayer = true` + `masksToBounds = true`；
 - markdown 预览：预览面板把 markdown 当**纯文本**显示（软换行保真是有意取舍）；wiki 面板则需真正渲染（`WikiMarkdownRenderer`，同样保留软换行）。
 
@@ -53,7 +53,7 @@ manual: false
 
 ## 测试约定
 
-- 共享核心单测走 Node：`node --test core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC，55 用例）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
+- 共享核心单测走 Node：`node --test core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue，68 用例）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
 - CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + 全源码 `swiftc` 编译检查（先 `mkdir -p .build/module-cache`）；构建矩阵为 arm64 + universal（lipo 覆盖 x86_64 编译验证），**不再使用退役中的 macos-13/x86_64 runner**；
 - 面板/壳层 Swift 无头单测模式（`tests/*/run.sh`）：`stubs.swift` + 把被测源码复制进临时目录 + 测试文件改名 `main.swift`（顶层代码需要）→ `swiftc` 编译运行，无窗口/无 PTY 依赖；
 - 终端模拟器测试不触 PTY（沙箱可能禁 `/dev/ptmx`），已迁 `core/tests/ansi.test.js`（42 项），`tests/terminal-emulator/run.sh` 为薄封装；

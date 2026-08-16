@@ -1,8 +1,8 @@
 ---
 title: 仓库概览
 tags: [overview, tech-stack, build, run, test]
-updated: 2026-08-16T08:59:49Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/MakeIcon.swift, docs/productization.md, .github/workflows/, tests/wiki-panel/run.sh]
+updated: 2026-08-16T10:45:00Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/MakeIcon.swift, core/lib/issues.js, core/lib/jobqueue.js, docs/productization.md, .github/workflows/, tests/wiki-panel/run.sh]
 manual: false
 ---
 
@@ -10,7 +10,7 @@ manual: false
 
 ## 一句话定位
 
-oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deepseek-ai/dsh` 的浏览器界面）封装成可双击运行的 `.app`。**不改动任何 DeepSeek Harness 源码**，只做端口探测、服务拉起/复用、WKWebView 呈现，并附三个右栏面板（预览/终端/Repo Wiki）。
+oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deepseek-ai/dsh` 的浏览器界面）封装成可双击运行的 `.app`。**不改动任何 DeepSeek Harness 源码**，只做端口探测、服务拉起/复用、WKWebView 呈现，并附四个右栏面板（预览/终端/Repo Wiki/任务）。
 
 ## 技术栈
 
@@ -24,7 +24,7 @@ oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deeps
 | 打包 | `pkgbuild` + `hdiutil`（`platforms/macos/make-pkg.sh` → .pkg / .dmg） |
 | 目标平台 | macOS 13+（Apple Silicon / arm64；Info.plist `LSMinimumSystemVersion` = 13.0） |
 
-当前工作区版本：`1.8.0`（BUILD 64）；版本由 git tag 驱动（`scripts/version.sh`：HEAD 命中 vX.Y.Z → 取 tag，否则回退 1.8.0；BUILD 取 CI 运行号）。最近 git 提交：`68fc925`（"ci(release): publish 幂等加固 — 先删旧 release+tag 再用 gh release create --target 重建；Collect 步骤清空 dist 避免混入历史产物"）。
+当前工作区版本：`1.8.0`（BUILD 64）；版本由 git tag 驱动（`scripts/version.sh`：HEAD 命中 vX.Y.Z → 取 tag，否则回退 1.8.0；BUILD 取 CI 运行号）。最近 git 提交：`db2d83a`（"feat(tasks): IssueRunner 任务面板 — GitHub issues 串行处理"；其后 HEAD 为 wiki 刷新提交 `6ae52a2`）。
 
 ## 目录布局
 
@@ -33,10 +33,11 @@ core/                共享核心（Node 模块：ANSI 模拟器 / 端口探测 
 platforms/           各平台壳（macos/ 现有壳，windows/ linux/ 规划中）
 scripts/             跨平台工具（version.sh 版本单一来源 / changelog.sh / release-checksums.sh / 迁移脚本）
 .github/             CI 工作流（core 单测走 ubuntu；壳层单测/编译检查 + arm64/universal 构建走 macos-14；x86_64 由 universal lipo / 交叉编译覆盖，不再用退役中的 macos-13 runner）；release.yml 发布幂等（先删旧 release+tag 再 --target 重建，见 [tasks](tasks.md)）
-platforms/macos/src/main.swift       壳层核心（日志/L10n/服务管理/升级/窗口/菜单/设置窗口/onboarding/CoreBridge）约 2700 行
-platforms/macos/src/PreviewPanel.swift  预览面板（文件/文件夹预览 + 项目目录树 + 共享 UI 组件）约 1445 行
+platforms/macos/src/main.swift       壳层核心（日志/L10n/服务管理/升级/窗口/菜单/设置窗口/onboarding/CoreBridge）约 2780 行
+platforms/macos/src/PreviewPanel.swift  预览面板（文件/文件夹预览 + 项目目录树 + 共享 UI 组件）约 1460 行
 platforms/macos/src/TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）约 1875 行
-platforms/macos/src/WikiPanel.swift      Repo Wiki 面板（知识库生成/维护/浏览）约 1928 行
+platforms/macos/src/WikiPanel.swift      Repo Wiki 面板（知识库生成/维护/浏览）约 1930 行
+platforms/macos/src/IssueRunnerPanel.swift 任务面板（GitHub issues 串行处理 → 分支/修复/推送/PR）约 815 行
 platforms/macos/src/MakeIcon.swift       App 图标生成器（渲染 → iconset → icns）104 行
 platforms/macos/build-app.sh         一键构建脚本（6 步：目录/图标/编译/运行时/Info.plist/签名）
 platforms/macos/make-pkg.sh          .pkg 安装包 + .dmg 镜像脚本
@@ -57,7 +58,7 @@ pic/                 QA 调试截图 — git 忽略
 ./platforms/macos/build-app.sh              # 全量构建 → dist/oh-my-dsh.app
 ```
 
-- 编译命令：`swiftc -O -swift-version 5 -framework AppKit -framework WebKit -framework PDFKit`，源文件清单显式列出（`main/PreviewPanel/TerminalPanel/WikiPanel`）；
+- 编译命令：`swiftc -O -swift-version 5 -framework AppKit -framework WebKit -framework PDFKit`，源文件清单显式列出（`main/PreviewPanel/TerminalPanel/WikiPanel/IssueRunnerPanel`）；
 - 内置运行时构建期现做：下载 Node tarball（默认国内镜像 `npmmirror.com/mirrors/node`，校验 SHA-256），用其自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.1.0-rc.6`（默认 `DSH_PACKAGE_SPEC`，国内源失败自动回退 npmjs.org）；
 - 缓存：`(Node 版本, dsh 版本)` 相同则复用 `.cache/runtime`，重建只需几十秒；网络不可用时用缓存 tarball 推导版本继续。
 
@@ -77,12 +78,12 @@ open "dist/oh-my-dsh.app"     # 或双击
 ## 测试
 
 ```bash
-node --test core/tests/*.test.js     # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC，55 用例；不带引号由 bash 展开 glob，Node 20 兼容）
+node --test core/tests/*.test.js     # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue，68 用例；不带引号由 bash 展开 glob，Node 20 兼容）
 tests/terminal-emulator/run.sh       # 模拟器测试（已迁 core/tests/ansi.test.js 的薄封装）
 tests/wiki-panel/run.sh              # Repo Wiki 模型层无头单测（实测 41 passed）
 ```
 
-- core 单测为 Node 测试（`core/tests/*.test.js`：ansi 42 / ports 5 / session 4 / upgrade 4）；`tests/terminal-emulator/run.sh` 现为 `core/tests/ansi.test.js` 的薄封装；
+- core 单测为 Node 测试（`core/tests/*.test.js`：ansi 42 / ports 5 / session 4 / upgrade 4 / issues 6 / jobqueue 7 = 68）；`tests/terminal-emulator/run.sh` 现为 `core/tests/ansi.test.js` 的薄封装；
 - Swift 无头单测模式（`tests/wiki-panel/`）：`stubs.swift` + 复制源码 + 测试文件改名 `main.swift` → `swiftc` 编译成可执行文件运行（无窗口/无 PTY 依赖）；
 - 设计文档（`docs/repo-wiki-design.md` §14）记录 v1.7.0 验证：全量编译零错误、wiki 单测 41/41（实测 `tests/wiki-panel/run.sh` 41 passed）、终端模拟器 46 项回归全过（Swift 实现，后迁 core/tests/ansi.test.js 42 项）；并记录 16 轮修复（build 43→63，其中修复 10–14：生成中提示改叠加浮层、定位状态条合成溢出根因、生成状态按工作区关联、终端新会话目录跟随当前工作区等，详见 [wiki-panel](modules/wiki-panel.md)；修复 15 移除失效的 `attachOrphans`、16 repo-wiki SKILL 优化）；
 - 产品化方案（`docs/productization.md`，2026-08-15，状态已批准执行）：P0 现状基线（v1.7.x，已达成）→ P1 开源基础（GitHub 公开 + MIT、CI、共享核心抽取，约 1–2 周）→ P2 Windows 版（≈2–3 个月）→ P3 Linux 版（≈1–2 个月）→ P4 生态增长；Apple 生态（Developer ID 签名/公证/Sparkle 升级/Homebrew Cask）依赖开发者账号，统一暂缓至最后阶段 F；配套 `docs/milestones/`（M1 产品化基础 … M5 Apple 生态 5 份里程碑目标文档，后续开发任务来源，见 README「目录」）。

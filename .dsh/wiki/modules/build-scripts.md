@@ -1,7 +1,7 @@
 ---
 title: 模块：构建与打包脚本
 tags: [module, build, packaging, icon]
-updated: 2026-08-16T00:09:27Z
+updated: 2026-08-16T10:45:00Z
 sources: [platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, platforms/macos/src/MakeIcon.swift]
 manual: false
 ---
@@ -16,7 +16,7 @@ manual: false
 - `download_node`：下载 darwin-arm64 tarball（镜像失败换官方），用 `SHASUMS256.txt` + `shasum -a 256 -c` 校验；
 - `install_dsh` / `build_runtime`：用下载的 Node 自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.1.0-rc.6`（默认 `DSH_PACKAGE_SPEC`），主 registry 失败自动重试官方源；`(Node版本|spec)` 写入 `.runtime-info`，相同组合直接复用 `.cache/runtime`；
 - **`--prefetch`**：只建 runtime 到 `.cache/runtime`，不产出 App（供离线全量构建）；
-- **6 步构建**：① 准备目录（`rm -rf .build dist/oh-my-dsh.app`）② `MakeIcon.swift` 编译渲染 iconset → `iconutil -c icns` → 拷入 Resources ③ `swiftc -O -swift-version 5 -framework AppKit/WebKit/PDFKit` 编译 `main/PreviewPanel/TerminalPanel/WikiPanel`（**清单在此，新增文件必须登记**）④ `build_runtime` + `ditto` 嵌入 `Contents/Resources/runtime/` ⑤ 写 `Info.plist`（`LSMinimumSystemVersion` 13.0、`CFBundleLocalizations` zh/en、ATS 允许 127.0.0.1/localhost 明文、`NSHighResolutionCapable`）⑥ `codesign --force --deep --sign -`（ad-hoc）。
+- **6 步构建**：① 准备目录（`rm -rf .build dist/oh-my-dsh.app`）② `MakeIcon.swift` 编译渲染 iconset → `iconutil -c icns` → 拷入 Resources ③ `swiftc -O -swift-version 5 -framework AppKit/WebKit/PDFKit` 编译 `main/PreviewPanel/TerminalPanel/WikiPanel/IssueRunnerPanel`（**清单在此，新增文件必须登记**）④ `build_runtime` + `ditto` 嵌入 `Contents/Resources/runtime/` ⑤ 写 `Info.plist`（`LSMinimumSystemVersion` 13.0、`CFBundleLocalizations` zh/en、ATS 允许 127.0.0.1/localhost 明文、`NSHighResolutionCapable`）⑥ `codesign --force --deep --sign -`（ad-hoc）。
 
 ## platforms/macos/make-pkg.sh（安装包 + 镜像，85 行）
 

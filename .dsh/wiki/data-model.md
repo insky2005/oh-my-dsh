@@ -1,8 +1,8 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-08-16T00:09:27Z
-sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, docs/repo-wiki-design.md]
+updated: 2026-08-16T10:45:00Z
+sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, docs/repo-wiki-design.md, docs/issue-runner-design.md]
 manual: false
 ---
 
@@ -22,15 +22,17 @@ manual: false
 | `autoUpgradeDsh` | 自动升级开关（默认开） | AppDelegate |
 | `lastAutoUpgradeCheck` | 自动升级 24h 节流时间戳 | `runAutoUpgradeIfNeeded` |
 | `previewPanelState` | 右栏可见性（true = 打开） | `setRightPanel` |
-| `rightPanelKind` | 右栏当前面板（"preview"/"terminal"/"wiki"） | `setRightPanel` |
+| `rightPanelKind` | 右栏当前面板（"preview"/"terminal"/"wiki"/"tasks"） | `setRightPanel` |
 | `previewPanelWidth` | 用户拖拽的面板宽度 | `splitViewDidResizeSubviews` |
 | `wikiRootMode` | wiki 根模式（"in-repo" / "dsh-home"） | `WikiPaths` |
 | `wikiAutoRegenerate` | wiki 自动更新开关（默认关） | `WikiPaths` |
 | `wikiRegisterAgentsMd` | 写入 AGENTS.md 注册块开关（默认关） | `WikiPaths` |
 
+> 凭据不走 UserDefaults：GitHub token 存 Keychain（service `oh-my-dsh.issuerunner.github-token`，见 [issue-runner-panel](modules/issue-runner-panel.md)）。
+
 ## 领域模型（代码内）
 
-- **`RightPanel` 枚举**（main.swift）：`none / preview / terminal / wiki`——右栏插槽互斥状态；
+- **`RightPanel` 枚举**（main.swift）：`none / preview / terminal / wiki / tasks`——右栏插槽互斥状态；
 - **`ProjectDirectory`**（main.swift）：壳层共享的"活动项目目录"（`static var current`），跟随 dsh web 当前会话（见 `sessionTrackerScript` 数据流），`resolveProjectDirectory` 优先返回它；
 - **`L10n.table`**：`[String: (zh: String, en: String)]` 文案表，`L10n.tr(key)` 按 `lang` 取文案并填充 `%@/%d`；
 - **`WikiPage`**（WikiPanel.swift）：`path / title / tags / updated / sources / manual`，由 frontmatter 解析而来；
@@ -39,7 +41,8 @@ manual: false
 - **`TerminalEmulator.Cell`**：`ch / fg / bg / bold / italic / underline / inverse / continuation`；`ParserState`（ground/escape/csi/osc/dcs 等）驱动 ANSI 解析；
 - **`TerminalSession.State`**：`running / exited(code) / terminated`；
 - **`WikiPanelController.generations`**（内存态，build 59→60）：`[canonicalRepo: Generation]`——生成状态按仓库根（`WikiRPC.canonical` 规范化路径）关联，多仓库可并发各一个生成；`syncGenerationUI()` 据此让 UI 只反映当前仓库；
-- **`TreeNode`**（PreviewPanel.swift）：`name / path / isDir / children?`（懒加载）。
+- **`TreeNode`**（PreviewPanel.swift）：`name / path / isDir / children?`（懒加载）；
+- **`JobQueue`**（core/lib/jobqueue.js）：串行任务队列状态机 `createQueue()`——任务含 `source`（远程驱动预留）/`state`（pending/running/done/failed/cancelled）等字段，`enqueue`/`peek`/`markRunning`/`complete`/`fail`/`cancel`/`retry`/`snapshot`/`removeFinished` 操作（IssueRunner 面板用它串行执行「切分支→会话→推送→PR」流水线，见 [issue-runner-panel](modules/issue-runner-panel.md)）。
 
 ## RPC 信封（与 dsh web 通信）
 

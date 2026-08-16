@@ -1,7 +1,7 @@
 ---
 title: oh-my-dsh 仓库知识库
 tags: [wiki, index, oh-my-dsh]
-updated: 2026-08-16T10:00:00Z
+updated: 2026-08-16T10:45:00Z
 sources: [README.md, .dsh/skills/repo-wiki/SKILL.md, platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/jobqueue.js]
 manual: false
 ---
@@ -41,4 +41,4 @@ manual: false
 - 增量更新只重写 `sources` 命中变更的页面；`manual: true` 页面绝不改写；
 - 内容只写可证实事实；`.env*`/密钥/口令一律不收录。
 
-最后生成时间：2026-08-16T10:00:00Z
+最后生成时间：2026-08-16T10:45:00Z
