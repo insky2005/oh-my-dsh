@@ -79,7 +79,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     // MARK: - Init & UI
 
     override init() {
-        configButton = CustomIconButton(glyph: .folder, tooltip: "")
+        configButton = CustomIconButton(glyph: .symbol("gearshape"), tooltip: "")
         refreshButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: "")
         runAllButton = CustomIconButton(glyph: .play, tooltip: "")
         hideButton = CustomIconButton(glyph: .close, tooltip: "")
