@@ -1977,7 +1977,9 @@ enum WikiAutoCommit {
             AppLog.shared.log("wiki auto-commit: git add failed")
             return
         }
-        let message = commitMessage(status: status)
+        // Line counts (+added/-deleted) per file, from the staged diff.
+        let numstat = runGit(["diff", "--cached", "--numstat", "--", ".dsh/wiki"], repoRoot)
+        let message = commitMessage(status: status, numstat: numstat)
         guard runGit(["commit", "-m", message], repoRoot) != nil else {
             AppLog.shared.log("wiki auto-commit: git commit failed (no identity? nothing staged?)")
             return
@@ -1985,13 +1987,37 @@ enum WikiAutoCommit {
         AppLog.shared.log("wiki auto-commit: committed .dsh/wiki changes (not pushed): \(message)")
     }
 
-    /// Build a commit message that reflects WHAT changed, instead of a fixed
-    /// string: names up to 3 changed pages, then a total count. The porcelain
-    /// status lines look like:
+    /// Build a detailed commit message: groups changes by 新增/更新/删除, shows
+    /// each page's path (relative to the repo root, without the .dsh/wiki/
+    /// prefix) and its line delta from `git diff --cached --numstat`
+    /// (e.g. `modules/issue-runner-panel.md(+12/-3)`). The porcelain status
+    /// lines look like:
     ///   M  .dsh/wiki/index.md
     ///   ?? .dsh/wiki/modules/issue-runner-panel.md
     ///   D  .dsh/wiki/old.md
-    static func commitMessage(status: String) -> String {
+    /// and numstat lines like:
+    ///   12  3  .dsh/wiki/modules/issue-runner-panel.md
+    static func commitMessage(status: String, numstat: String? = nil) -> String {
+        // path → (added, deleted) from numstat.
+        var deltas: [String: (Int, Int)] = [:]
+        if let numstat = numstat {
+            for line in numstat.split(separator: "\n") {
+                let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).filter { !$0.isEmpty }
+                guard parts.count >= 3,
+                      let add = Int(parts[0]), let del = Int(parts[1]) else { continue }
+                deltas[String(parts[2])] = (add, del)
+            }
+        }
+        // Path relative to repo root, with the .dsh/wiki/ prefix stripped.
+        func relPath(_ p: String) -> String {
+            String(p.replacingOccurrences(of: ".dsh/wiki/", with: ""))
+        }
+        func annotated(_ p: String) -> String {
+            let rel = relPath(p)
+            guard let (add, del) = deltas[p] else { return rel }
+            return "\(rel)(+\(add)/-\(del))"
+        }
+
         var added: [String] = []
         var modified: [String] = []
         var deleted: [String] = []
@@ -2000,11 +2026,9 @@ enum WikiAutoCommit {
             guard parts.count >= 2 else { continue }
             let flag = String(parts[0])
             let path = String(parts[1])
-            let page = (path as NSString).lastPathComponent
-                .replacingOccurrences(of: ".md", with: "")
-            if flag.contains("D") { deleted.append(page) }
-            else if flag.contains("?") || flag.contains("A") { added.append(page) }
-            else { modified.append(page) }
+            if flag.contains("D") { deleted.append(annotated(path)) }
+            else if flag.contains("?") || flag.contains("A") { added.append(annotated(path)) }
+            else { modified.append(annotated(path)) }
         }
         var summary: [String] = []
         if !added.isEmpty { summary.append("新增 \(added.joined(separator: "、"))") }
@@ -2013,6 +2037,6 @@ enum WikiAutoCommit {
         let detail = summary.isEmpty
             ? "知识库增量更新"
             : summary.joined(separator: "；")
-        return "docs(wiki): \(detail)（自动提交，未推送）"
+        return "docs(wiki): \(detail)"
     }
 }
