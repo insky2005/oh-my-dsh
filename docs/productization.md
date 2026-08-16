@@ -300,6 +300,7 @@ oh-my-dsh/
 #### 4.6.1 版本体系
 
 - **统一版本号**：一次 tag 产出全平台产物（macOS/Windows/Linux 同一 `vX.Y.Z`），避免平台间版本混乱；VERSION 取自 git tag，BUILD 取 CI 运行号（写入 `CFBundleVersion`）
+- **fallback 推进规则（发布后立即更新）**：`scripts/version.sh` 的 `FALLBACK_VERSION` 表示「当前开发线版本」。**每次发布打 tag 后，立即把 fallback 推进到下一个 minor**（如发布 `v1.8.0` → fallback `1.9.0`）。这样开发期间的构建永远显示「下一个未发布版本」，与已发布版本不混淆；CI 打 tag 的 job 始终用 tag 版本（HEAD 命中 `vX.Y.Z` 时优先），fallback 只影响本地/开发构建。
 - **分层版本模型**（App / 运行时 / dsh 三层独立，互不绑定）：
 
 | 层 | 版本来源 | 更新方式 |
