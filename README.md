@@ -131,6 +131,8 @@ open "dist/oh-my-dsh.app"
 | `DSH_AUTO_UPGRADE=0` | 本次运行关闭自动升级 |
 | `DSH_LANG=zh\|en` | 强制界面语言（优先于「设置」→「语言」的选择；默认跟随系统） |
 
+> **GitHub token（Tasks 面板）**：可在面板「配置 GitHub Token」填入（存 Keychain），或写 `~/.dsh/gh-token`（App 与外部工具/代理共用，`chmod 600`）。公开仓库无需 token；私有仓库拉取/开 PR/评论关闭 issue 需要。
+
 > 构建期变量 `DSH_NODE_VERSION`、`DSH_PACKAGE_SPEC`、`DSH_NODE_MIRROR`、`DSH_NPM_REGISTRY` 见上文「构建」。
 
 ## 日志
