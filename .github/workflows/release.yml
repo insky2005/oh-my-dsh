@@ -83,27 +83,17 @@ jobs:
         run: |
           chmod +x scripts/release-checksums.sh
           scripts/release-checksums.sh "$VERSION" | tee /tmp/release-body.txt
-      - name: Delete existing release for this tag (idempotent re-runs)
+      - name: Publish GitHub Release (gh release create --clobber)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 同一 tag 重复触发（如重打 tag）时，旧 Release 仍存在会导致
-          # action-gh-release 报 already_exists —— 先删除再重建。
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release delete "$GITHUB_REF_NAME" --yes --cleanup-tag
-            echo "deleted existing release for $GITHUB_REF_NAME"
-          else
-            echo "no existing release for $GITHUB_REF_NAME"
-          fi
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: oh-my-dsh ${{ env.VERSION }}
-          body_path: /tmp/release-body.txt
-          prerelease: true   # 先 pre-release 验证；正式发布在人工确认后改为 false
-          files: |
-            dist/*.pkg
-            dist/*.dmg
-            dist/SHA-256SUMS
-          fail_on_unmatched_files: true
+          # 用 gh 直接发布：--clobber 覆盖同名 Release 与资产（幂等、不删 tag），
+          # 避免 softprops action 在「Release 已存在/重复触发」时 already_exists。
+          gh release create "$GITHUB_REF_NAME" \
+            --title "oh-my-dsh $VERSION" \
+            --notes-file /tmp/release-body.txt \
+            --prerelease \
+            --clobber \
+            dist/*.pkg dist/*.dmg dist/SHA-256SUMS
+          gh release view "$GITHUB_REF_NAME" --json name,isPrerelease,assets --jq \
+            '{name, isPrerelease, assets: [.assets[].name]}'
