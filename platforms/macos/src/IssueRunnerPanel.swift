@@ -857,18 +857,22 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     }
 
     /// Resolve the token for the CURRENT repo, with per-repo scoping so that
-    /// multiple workspaces/projects each use their own token:
-    ///   1. Keychain  <owner>/<repo>  (set via the config dialog)
-    ///   2. File      ~/.dsh/tokens/<owner>-<repo>
-    ///   3. Keychain  generic (legacy single-token)
-    ///   4. File      ~/.dsh/gh-token (generic, shared with agents)
+    /// multiple workspaces/projects each use their own token.
+    /// File paths are read FIRST (no Keychain password prompt), Keychain is a
+    /// fallback for entries created by older builds or the command line:
+    ///   1. File      ~/.dsh/tokens/<owner>-<repo>
+    ///   2. File      ~/.dsh/gh-token (generic, shared with agents)
+    ///   3. Keychain  <owner>/<repo>
+    ///   4. Keychain  generic (legacy single-token)
     private func loadToken(for repo: (owner: String, repo: String)? = nil) -> String? {
         if let repo = repo {
-            if let t = readKeychain(service: Self.tokenService(for: repo)) { return t }
             if let t = readTokenFile(Self.tokenFilePath(for: repo)) { return t }
         }
-        if let t = readKeychain(service: Self.genericTokenService) { return t }
-        return readTokenFile(Self.genericTokenFilePath)
+        if let t = readTokenFile(Self.genericTokenFilePath) { return t }
+        if let repo = repo {
+            if let t = readKeychain(service: Self.tokenService(for: repo)) { return t }
+        }
+        return readKeychain(service: Self.genericTokenService)
     }
 
     /// Save a token scoped to the current repo. Writes BOTH the Keychain entry
@@ -890,6 +894,10 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         }
         var attrs = query
         attrs[kSecValueData as String] = token.data(using: .utf8) ?? Data()
+        // Accessible after first unlock + no per-app ACL prompt: a token is a
+        // low-sensitivity credential; prompting on every read is unacceptable
+        // for a background shell. (File fallback is chmod 600.)
+        attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         SecItemAdd(attrs as CFDictionary, nil)
         // Mirror to the file so agents / external tools share the same token.
         if let repo = repo {
