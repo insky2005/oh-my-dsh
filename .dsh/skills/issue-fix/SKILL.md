@@ -25,7 +25,7 @@ userInvocable: false
    - macOS 壳：`tests/*/run.sh`（swiftc 可用时）；
    - 无法跑的（如缺工具链）明确说明，不假装通过；
 4. **提交**：`git add` 相关文件 → `git commit -m "fix(#<N>): <标题简短>"`；一个 issue 一个 commit（或逻辑相关的少量 commit）。若修复关联 PR，commit 正文可附加 `Closes #<N>`（GitHub 在 PR 合并时自动关闭对应 issue），但**不要**在 commit 里写无关内容；
-5. **推送**：`git push -u origin <当前分支名>`（远端名以 `git remote` 为准，优先 `github` 或 `origin`）；
+5. **推送**：先检测远端名（`git remote`；优先名为 `github`，其次 `origin`，否则第一个 remote），再 `git push -u <远端名> <当前分支名>`；
 6. **汇报**：简短列出改动文件、测试结果、commit 号；PR 由面板创建，你**不负责开 PR**。
 
 ## 规则（强制）
