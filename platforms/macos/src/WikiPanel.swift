@@ -698,14 +698,16 @@ enum WikiPrompts {
             目标：在 \(WikiPaths.wikiRoot(for: "/")) 位置 生成/维护知识库（页面结构见下）。
             - 页面：index.md / overview.md / architecture.md / data-model.md / conventions.md / tasks.md / modules/<模块>.md，≤ 20 页，单页 ≤ 200 行；
             - 每页带 frontmatter（title/tags/updated/sources/manual: false）；
-            - 只写可证实的事实，禁止编造；脱敏（跳过 .env*/密钥/口令）；增量更新只重写受影响的页面，manual: true 不碰；最后更新 index.md。
+            - 只写可证实的事实，禁止编造；脱敏（跳过 .env*/密钥/口令）；增量更新只重写受影响的页面，manual: true 不碰；最后更新 index.md；
+            - 完成后若仓库是 git：执行 `git add .dsh/wiki` 并 `git commit`（**不 push**），commit message 由你概括本次实际变更（如「docs(wiki): 同步 v1.8.0 发布流程与 IssueRunner 面板文档」），无变更则跳过。
             """
         }
         return """
         Generate/maintain the wiki at <repoRoot>/.dsh/wiki/:
         - Pages: index.md, overview.md, architecture.md, data-model.md, conventions.md, tasks.md, modules/<name>.md (≤ 20 pages, ≤ 200 lines each);
         - Every page carries frontmatter (title/tags/updated/sources/manual: false);
-        - Only write verifiable facts, never fabricate; redact secrets (.env*, credentials); incremental updates rewrite only affected pages and never touch manual: true pages; refresh index.md at the end.
+        - Only write verifiable facts, never fabricate; redact secrets (.env*, credentials); incremental updates rewrite only affected pages and never touch manual: true pages; refresh index.md at the end;
+        - When done, if the repo is a git repo: run `git add .dsh/wiki` and `git commit` (do NOT push), writing a commit message that summarizes the actual changes (e.g. "docs(wiki): sync v1.8.0 release flow and IssueRunner panel docs"); skip if there are no changes.
         """
     }
 }
@@ -1965,8 +1967,11 @@ enum WikiAutoCommit {
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Add + commit the wiki docs if there are any changes. Never pushes.
-    /// Failures are logged only (never block or alert the user).
+    /// Fallback commit: the repo-wiki skill instructs the AGENT to commit
+    /// (with its own summarized message) after an update. This only fires when
+    /// the agent did NOT commit (e.g. git unusable in its session, or it chose
+    /// to skip) — i.e. there are still uncommitted .dsh/wiki changes here.
+    /// Never pushes. Failures are logged only (never block or alert the user).
     static func commitWikiChanges(repoRoot: String) {
         guard isGitRepo(repoRoot) else { return }
         // Nothing changed under .dsh/wiki → nothing to commit.
@@ -1977,35 +1982,59 @@ enum WikiAutoCommit {
             AppLog.shared.log("wiki auto-commit: git add failed")
             return
         }
-        // Line counts (+added/-deleted) per file, from the staged diff.
-        let numstat = runGit(["diff", "--cached", "--numstat", "--", ".dsh/wiki"], repoRoot)
-        let message = commitMessage(status: status, numstat: numstat)
+        // Fallback message summarizes the actual changed content.
+        let diff = runGit(["diff", "--cached", "--", ".dsh/wiki"], repoRoot)
+        let message = commitMessage(status: status, diff: diff)
         guard runGit(["commit", "-m", message], repoRoot) != nil else {
             AppLog.shared.log("wiki auto-commit: git commit failed (no identity? nothing staged?)")
             return
         }
-        AppLog.shared.log("wiki auto-commit: committed .dsh/wiki changes (not pushed): \(message)")
+        AppLog.shared.log("wiki auto-commit (fallback): committed .dsh/wiki changes (not pushed): \(message)")
     }
 
-    /// Build a detailed commit message: groups changes by 新增/更新/删除, shows
-    /// each page's path (relative to the repo root, without the .dsh/wiki/
-    /// prefix) and its line delta from `git diff --cached --numstat`
-    /// (e.g. `modules/issue-runner-panel.md(+12/-3)`). The porcelain status
-    /// lines look like:
-    ///   M  .dsh/wiki/index.md
-    ///   ?? .dsh/wiki/modules/issue-runner-panel.md
-    ///   D  .dsh/wiki/old.md
-    /// and numstat lines like:
-    ///   12  3  .dsh/wiki/modules/issue-runner-panel.md
-    static func commitMessage(status: String, numstat: String? = nil) -> String {
-        // path → (added, deleted) from numstat.
-        var deltas: [String: (Int, Int)] = [:]
-        if let numstat = numstat {
-            for line in numstat.split(separator: "\n") {
-                let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).filter { !$0.isEmpty }
-                guard parts.count >= 3,
-                      let add = Int(parts[0]), let del = Int(parts[1]) else { continue }
-                deltas[String(parts[2])] = (add, del)
+    /// Build a commit message that reflects the ACTUAL content changed:
+    /// groups by 新增/更新/删除 and, for each page, quotes the first
+    /// meaningful added line (frontmatter noise like the always-changing
+    /// `updated:` timestamp, separators and diff headers are filtered out).
+    ///
+    ///   diff --git a/.dsh/wiki/overview.md b/.dsh/wiki/overview.md
+    ///   @@ -95,0 +96 @@ …
+    ///   +# 新增的真实内容
+    ///
+    /// → "docs(wiki): 更新 overview：新增的真实内容"
+    static func commitMessage(status: String, diff: String? = nil) -> String {
+        // per-file summaries: path → first meaningful added line (trimmed).
+        var content: [String: String] = [:]
+        if let diff = diff {
+            var currentFile: String?
+            for line in diff.split(separator: "\n") {
+                let s = String(line)
+                if s.hasPrefix("diff --git ") {
+                    // diff --git a/.dsh/wiki/X b/.dsh/wiki/X
+                    let parts = s.split(separator: " ")
+                    if parts.count >= 4 {
+                        currentFile = String(parts[3]).replacingOccurrences(of: "b/", with: "")
+                    } else {
+                        currentFile = nil
+                    }
+                    continue
+                }
+                guard let file = currentFile, file.hasPrefix(".dsh/wiki/") else { continue }
+                guard s.hasPrefix("+"), !s.hasPrefix("+++") else { continue }
+                let trimmed = s.dropFirst().trimmingCharacters(in: .whitespaces)
+                // Filter frontmatter / structural noise.
+                guard !trimmed.isEmpty,
+                      trimmed != "---",
+                      !trimmed.hasPrefix("updated:"),
+                      !trimmed.hasPrefix("title:"),
+                      !trimmed.hasPrefix("tags:"),
+                      !trimmed.hasPrefix("sources:"),
+                      !trimmed.hasPrefix("#"),
+                      !trimmed.hasPrefix("-"),
+                      !trimmed.hasPrefix("*"),
+                      content[file] == nil else { continue }
+                let snippet = trimmed.count > 30 ? String(trimmed.prefix(30)) + "…" : trimmed
+                content[file] = snippet
             }
         }
         // Path relative to repo root, with the .dsh/wiki/ prefix stripped.
@@ -2014,8 +2043,8 @@ enum WikiAutoCommit {
         }
         func annotated(_ p: String) -> String {
             let rel = relPath(p)
-            guard let (add, del) = deltas[p] else { return rel }
-            return "\(rel)(+\(add)/-\(del))"
+            guard let snippet = content[p] else { return rel }
+            return "\(rel)：\(snippet)"
         }
 
         var added: [String] = []
@@ -2026,7 +2055,7 @@ enum WikiAutoCommit {
             guard parts.count >= 2 else { continue }
             let flag = String(parts[0])
             let path = String(parts[1])
-            if flag.contains("D") { deleted.append(annotated(path)) }
+            if flag.contains("D") { deleted.append(relPath(path)) }
             else if flag.contains("?") || flag.contains("A") { added.append(annotated(path)) }
             else { modified.append(annotated(path)) }
         }
