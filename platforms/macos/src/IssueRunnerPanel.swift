@@ -70,6 +70,8 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     private var repo: (owner: String, repo: String)?
     private var repoRootPath: String?
     private var token: String?   // from Keychain; nil for public repos
+    /// The issue currently expanded inline (shows detail + action buttons).
+    private var expandedIssue: Int?
     private var pollTimer: Timer?
     private var runningNumber: Int?
 
@@ -869,118 +871,191 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < tasks.count else { return nil }
         let task = tasks[row]
-        let id = NSUserInterfaceItemIdentifier("taskCell")
+        let expanded = (task.number == expandedIssue)
+        let id = NSUserInterfaceItemIdentifier(expanded ? "taskCellExpanded" : "taskCell")
         let cell: NSTableCellView
         if let reused = tableView.makeView(withIdentifier: id, owner: nil) as? NSTableCellView {
             cell = reused
         } else {
             cell = NSTableCellView()
             cell.identifier = id
-            let text = NSTextField(labelWithString: "")
-            text.translatesAutoresizingMaskIntoConstraints = false
-            text.lineBreakMode = .byTruncatingTail
-            cell.addSubview(text)
-            cell.textField = text
-            NSLayoutConstraint.activate([
-                text.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-                text.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
-                text.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            ])
+            buildCellContent(cell, expanded: expanded)
         }
-        let badge = task.state.badge
-        var prefix = "#\(task.number) \(badge)"
-        if task.state == .running, let sid = task.sessionId, !sid.isEmpty {
-            prefix += " ⟳"
-        }
-        cell.textField?.stringValue = "\(prefix) \(task.title)"
-        cell.textField?.textColor = task.state == .failed ? .systemRed : .labelColor
+        populateCell(cell, task: task, expanded: expanded)
         return cell
     }
 
-    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { 22 }
+    /// Build the cell's subviews once (collapsed: single line; expanded: title
+    /// line + detail block + action buttons). Buttons get tags so the action
+    /// closure can read which issue they belong to.
+    private func buildCellContent(_ cell: NSTableCellView, expanded: Bool) {
+        let title = NSTextField(labelWithString: "")
+        title.translatesAutoresizingMaskIntoConstraints = false
+        title.lineBreakMode = .byTruncatingTail
+        title.tag = 100
+        cell.addSubview(title)
+        if cell.textField == nil { cell.textField = title }
+
+        if expanded {
+            let detail = NSTextField(wrappingLabelWithString: "")
+            detail.translatesAutoresizingMaskIntoConstraints = false
+            detail.font = .systemFont(ofSize: 11)
+            detail.textColor = .secondaryLabelColor
+            detail.tag = 101
+            cell.addSubview(detail)
+
+            let process = NSButton(title: "", target: self, action: #selector(cellButtonTapped(_:)))
+            process.tag = 200
+            process.controlSize = .small
+            process.bezelStyle = .rounded
+            process.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(process)
+
+            let secondary = NSButton(title: "", target: self, action: #selector(cellButtonTapped(_:)))
+            secondary.tag = 201
+            secondary.controlSize = .small
+            secondary.bezelStyle = .rounded
+            secondary.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(secondary)
+
+            NSLayoutConstraint.activate([
+                title.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+                title.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+                title.topAnchor.constraint(equalTo: cell.topAnchor, constant: 4),
+
+                detail.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+                detail.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+                detail.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
+
+                process.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+                process.topAnchor.constraint(equalTo: detail.bottomAnchor, constant: 6),
+                process.heightAnchor.constraint(equalToConstant: 22),
+
+                secondary.leadingAnchor.constraint(equalTo: process.trailingAnchor, constant: 8),
+                secondary.centerYAnchor.constraint(equalTo: process.centerYAnchor),
+                secondary.heightAnchor.constraint(equalToConstant: 22),
+            ])
+            // Wire the buttons through the cell's represented object.
+            cell.objectValue = nil // set per-row in populateCell via tags
+        } else {
+            NSLayoutConstraint.activate([
+                title.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+                title.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+                title.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+        }
+    }
+
+    private func populateCell(_ cell: NSTableCellView, task: IssueRunnerTask, expanded: Bool) {
+        cell.objectValue = task.number   // buttons read this to know the issue
+        let badge = task.state.badge
+        var prefix = "#\(task.number) \(badge)"
+        if task.state == .running, task.sessionId != nil { prefix += " ⟳" }
+        if let title = cell.viewWithTag(100) as? NSTextField {
+            title.stringValue = "\(prefix) \(task.title)"
+            title.textColor = task.state == .failed ? .systemRed : .labelColor
+        }
+        if expanded {
+            if let detail = cell.viewWithTag(101) as? NSTextField {
+                detail.stringValue = Self.taskDetailText(task)
+            }
+            if let primary = cell.viewWithTag(200) as? NSButton {
+                primary.title = primaryActionTitle(for: task)
+                primary.isEnabled = primaryActionEnabled(for: task)
+            }
+            if let secondary = cell.viewWithTag(201) as? NSButton {
+                secondary.title = secondaryActionTitle(for: task)
+                secondary.isEnabled = secondaryActionEnabled(for: task)
+            }
+        }
+    }
+
+    private func primaryActionTitle(for task: IssueRunnerTask) -> String {
+        switch task.state {
+        case .pending: return L10n.tr("tasks.detailProcess")
+        case .running: return L10n.tr("tasks.detailCancelTask")
+        case .done: return L10n.tr("tasks.detailOpenPR")
+        case .failed, .cancelled: return L10n.tr("tasks.detailRetry")
+        }
+    }
+
+    private func primaryActionEnabled(for task: IssueRunnerTask) -> Bool {
+        switch task.state {
+        case .pending: return runningNumber == nil   // serial: disabled while another runs
+        case .running: return true
+        case .done: return task.prUrl != nil
+        case .failed, .cancelled: return runningNumber == nil
+        }
+    }
+
+    private func secondaryActionTitle(for task: IssueRunnerTask) -> String {
+        L10n.tr("tasks.detailClose")
+    }
+
+    private func secondaryActionEnabled(for task: IssueRunnerTask) -> Bool { true }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        guard row < tasks.count else { return 22 }
+        return tasks[row].number == expandedIssue ? 128 : 22
+    }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         let row = tableView.selectedRow
         guard row >= 0, row < tasks.count else { return }
         let number = tasks[row].number
         tableView.deselectAll(nil)
-        // Clicking a row opens the DETAIL dialog — processing only starts when
-        // the user presses the explicit "Process" button inside it.
-        showTaskDetail(number: number)
+        // Clicking a row toggles the inline detail (expand / collapse).
+        if expandedIssue == number {
+            expandedIssue = nil
+        } else {
+            expandedIssue = number
+        }
+        tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<tasks.count))
+        tableView.reloadData()
     }
 
-    /// Detail dialog for one task. Clicking the row shows this; actions
-    /// (Process / Retry / Open PR / Cancel) are explicit buttons, never an
-    /// implicit side effect of selecting the row.
-    private func showTaskDetail(number: Int) {
-        guard let idx = tasks.firstIndex(where: { $0.number == number }) else { return }
+    /// Row button handler. The primary (tag 200) and secondary (tag 201)
+    /// Row button handler. The primary (tag 200) and secondary (tag 201)
+    /// buttons live inside an expanded cell; the cell's objectValue carries
+    /// the issue number. Actions are explicit — never implicit row clicks.
+    @objc private func cellButtonTapped(_ sender: NSButton) {
+        guard let cell = sender.superview as? NSTableCellView,
+              let number = cell.objectValue as? Int,
+              let idx = tasks.firstIndex(where: { $0.number == number }) else { return }
         let task = tasks[idx]
-
-        let alert = NSAlert()
-        alert.messageText = L10n.tr("tasks.detailTitle", number)
-        alert.informativeText = Self.taskDetailText(task)
-        alert.alertStyle = .informational
-
-        // Primary action depends on state; the last button is always Close.
+        if sender.tag == 201 {   // secondary = close / collapse
+            expandedIssue = nil
+            tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<tasks.count))
+            tableView.reloadData()
+            return
+        }
+        // Primary action depends on state.
         switch task.state {
         case .pending:
-            let process = alert.addButton(withTitle: L10n.tr("tasks.detailProcess"))
-            process.keyEquivalent = "\r"   // Enter = process
-            alert.addButton(withTitle: L10n.tr("tasks.detailClose"))
-            let resp = alert.runModal()
-            if resp == .alertFirstButtonReturn {
-                startTask(number: number)
-            }
+            if runningNumber == nil { startTask(number: number) }
         case .running:
-            let cancel = alert.addButton(withTitle: L10n.tr("tasks.detailCancelTask"))
-            cancel.keyEquivalent = "\r"
-            alert.addButton(withTitle: L10n.tr("tasks.detailClose"))
-            let resp = alert.runModal()
-            if resp == .alertFirstButtonReturn {
-                cancelRunningTask()
-            }
+            cancelRunningTask()
         case .done:
-            if let url = task.prUrl {
-                let open = alert.addButton(withTitle: L10n.tr("tasks.detailOpenPR"))
-                open.keyEquivalent = "\r"
-            }
-            alert.addButton(withTitle: L10n.tr("tasks.detailClose"))
-            let resp = alert.runModal()
-            if resp == .alertFirstButtonReturn, let url = task.prUrl, let u = URL(string: url) {
-                NSWorkspace.shared.open(u)
-            }
+            if let url = task.prUrl, let u = URL(string: url) { NSWorkspace.shared.open(u) }
         case .failed:
-            let retry = alert.addButton(withTitle: L10n.tr("tasks.detailRetry"))
-            retry.keyEquivalent = "\r"
-            alert.addButton(withTitle: L10n.tr("tasks.detailClose"))
-            let resp = alert.runModal()
-            if resp == .alertFirstButtonReturn {
-                // Reset failed → pending, then process again.
-                if let i = tasks.firstIndex(where: { $0.number == number }) {
-                    tasks[i].state = .pending
-                    tasks[i].error = nil
-                    if let path = repoRootPath {
-                        TaskIndex.mergeTask(path, issue: number, update: ["state": "pending", "error": NSNull()])
-                    }
-                    tableView.reloadData()
+            if let i = tasks.firstIndex(where: { $0.number == number }) {
+                tasks[i].state = .pending
+                tasks[i].error = nil
+                if let path = repoRootPath {
+                    TaskIndex.mergeTask(path, issue: number, update: ["state": "pending", "error": NSNull()])
                 }
-                startTask(number: number)
+                tableView.reloadData()
             }
+            startTask(number: number)
         case .cancelled:
-            let retry = alert.addButton(withTitle: L10n.tr("tasks.detailRetry"))
-            retry.keyEquivalent = "\r"
-            alert.addButton(withTitle: L10n.tr("tasks.detailClose"))
-            let resp = alert.runModal()
-            if resp == .alertFirstButtonReturn {
-                if let i = tasks.firstIndex(where: { $0.number == number }) {
-                    tasks[i].state = .pending
-                    if let path = repoRootPath {
-                        TaskIndex.mergeTask(path, issue: number, update: ["state": "pending"])
-                    }
-                    tableView.reloadData()
+            if let i = tasks.firstIndex(where: { $0.number == number }) {
+                tasks[i].state = .pending
+                if let path = repoRootPath {
+                    TaskIndex.mergeTask(path, issue: number, update: ["state": "pending"])
                 }
-                startTask(number: number)
+                tableView.reloadData()
             }
+            startTask(number: number)
         }
     }
 
