@@ -68,6 +68,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     // State
     private var tasks: [IssueRunnerTask] = []
     private var repo: (owner: String, repo: String)?
+    private var repoRootPath: String?
     private var token: String?   // from Keychain; nil for public repos
     private var pollTimer: Timer?
     private var runningNumber: Int?
@@ -79,7 +80,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
 
     override init() {
         configButton = CustomIconButton(glyph: .folder, tooltip: "")
-        refreshButton = CustomIconButton(glyph: .refresh, tooltip: "")
+        refreshButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: "")
         runAllButton = CustomIconButton(glyph: .play, tooltip: "")
         hideButton = CustomIconButton(glyph: .close, tooltip: "")
         super.init()
@@ -271,16 +272,46 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
 
     // MARK: - Repo detection & issue loading
 
+    /// Number of deferred retries while waiting for the dsh workspace list to
+    /// be ready right after server startup.
+    private var repoResolveRetries = 0
+
     private func resolveRepoAndReload() {
-        guard let path = workspacePath?() else {
+        repoResolveRetries = 0
+        resolveRepoOnce()
+    }
+
+    private func resolveRepoOnce() {
+        // Preferred: the shell's active project directory (follows the session
+        // the user is viewing). Fallback: resolve from the dsh workspace list.
+        if let path = workspacePath?(), !path.isEmpty {
+            applyRepo(path: path)
+            return
+        }
+        let port = serverPortProvider?() ?? 3080
+        let workspaces = Self.listWorkspacePaths(port: port)
+        // Pick the first workspace that is a GitHub repo.
+        for ws in workspaces {
+            if Self.detectGitHubRemote(ws) != nil {
+                applyRepo(path: ws)
+                return
+            }
+        }
+        // Server may not have the workspace list ready yet — retry briefly.
+        if repoResolveRetries < 10 {
+            repoResolveRetries += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.resolveRepoOnce()
+            }
+        } else {
             repo = nil
             tasks = []
             tableView.reloadData()
             updateLabels()
-            return
         }
-        // Detect via git remote (core's detectGitHubRemote equivalent, done
-        // natively with git so the shell doesn't depend on node for this).
+    }
+
+    private func applyRepo(path: String) {
         guard let detected = Self.detectGitHubRemote(path) else {
             repo = nil
             tasks = []
@@ -289,6 +320,8 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             return
         }
         repo = (detected.owner, detected.repo)
+        repoRootPath = path
+        AppLog.shared.log("tasks repo resolved: \(detected.owner)/\(detected.repo) at \(path)")
         updateLabels()
         // Restore any previously recorded task associations (issue → branch/PR/session).
         restoreFromIndex(repoRoot: path)
@@ -298,7 +331,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     /// Parse `git remote -v` output for a github.com remote (prefers the
     /// remote literally named "github", else any github.com remote).
     static func detectGitHubRemote(_ path: String) -> (owner: String, repo: String)? {
-        guard let out = Self.runProcess("git", ["-C", path, "remote", "-v"]) else { return nil }
+        guard let out = Self.runProcess("/usr/bin/git", ["-C", path, "remote", "-v"]) else { return nil }
         var remotes: [String: String] = [:]
         for line in out.split(separator: "\n") {
             let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
@@ -395,7 +428,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         guard let idx = tasks.firstIndex(where: { $0.number == number }),
               tasks[idx].state == .pending else { return }
         guard let repo = repo else { return }
-        guard let path = workspacePath?() else { return }
+        guard let path = repoRootPath ?? workspacePath?() else { return }
 
         tasks[idx].state = .running
         tasks[idx].startedAt = Date()
@@ -587,6 +620,18 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     }
 
     // MARK: - dsh session helpers
+
+    /// All registered dsh workspace paths (for repo detection fallback).
+    static func listWorkspacePaths(port: Int) -> [String] {
+        let body = #"{"type":"client-request","rpcId":"ir-wslist","method":"workspace.list","payload":{}}"#
+        guard let data = Self.rpcPost(port: port, path: "/api/workspace.list", body: body),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = json["result"] as? [String: Any],
+              (result["ok"] as? Bool) == true,
+              let value = result["value"] as? [String: Any],
+              let items = value["items"] as? [[String: Any]] else { return [] }
+        return items.compactMap { $0["path"] as? String }
+    }
 
     static func resolveMainWorkspaceId(port: Int, path: String) -> String? {
         let std = (path as NSString).standardizingPath

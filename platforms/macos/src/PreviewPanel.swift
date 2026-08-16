@@ -299,7 +299,7 @@ final class HeaderLabel: NSView {
 /// terminal text, both confirmed to render). Handles hover highlight, click
 /// and tooltip natively.
 final class CustomIconButton: NSView {
-    enum Glyph { case plus, close, folder, openInApp, reveal, refresh, play, stop }
+    enum Glyph { case plus, close, folder, openInApp, reveal, symbol(String), play, stop }
     var onAction: (() -> Void)?
     var isEnabled = true {
         didSet { needsDisplay = true }
@@ -347,6 +347,22 @@ final class CustomIconButton: NSView {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let base: NSColor = dark ? NSColor(white: 0.9, alpha: 1) : NSColor(white: 0.25, alpha: 1)
         let color = isEnabled ? base : base.withAlphaComponent(0.35)
+
+        // SF Symbol glyphs render via a tinted system image (crisp, obvious).
+        if case .symbol(let name) = glyph {
+            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+            if let img = NSImage(systemSymbolName: name, accessibilityDescription: toolTip)?
+                .withSymbolConfiguration(config) {
+                let size = NSSize(width: 15, height: 15)
+                let rect = NSRect(x: (bounds.width - size.width) / 2,
+                                  y: (bounds.height - size.height) / 2,
+                                  width: size.width, height: size.height)
+                img.draw(in: rect)
+            }
+            return
+        }
+
         color.setStroke()
         let inset = bounds.insetBy(dx: 6, dy: 6)
         let path = NSBezierPath()
@@ -382,14 +398,8 @@ final class CustomIconButton: NSView {
             path.appendOval(in: NSRect(x: inset.minX + 1, y: inset.minY + 1,
                                        width: inset.width - 2, height: inset.height - 2))
             path.appendOval(in: NSRect(x: bounds.midX - 1.5, y: bounds.midY - 1.5, width: 3, height: 3))
-        case .refresh:
-            // Circular arrow: two arcs + a small head tick (simplified).
-            path.appendArc(withCenter: NSPoint(x: bounds.midX, y: bounds.midY),
-                           radius: (inset.width / 2) - 1,
-                           startAngle: 40, endAngle: 300, clockwise: true)
-            path.move(to: NSPoint(x: inset.maxX - 1, y: bounds.midY - 2))
-            path.line(to: NSPoint(x: inset.maxX + 3, y: bounds.midY + 2))
-            path.line(to: NSPoint(x: inset.maxX - 3, y: bounds.midY + 4))
+        case .symbol:
+            break   // handled above via the SF Symbol path
         case .play:
             let midY = bounds.midY
             path.move(to: NSPoint(x: inset.minX + 2, y: inset.minY))
