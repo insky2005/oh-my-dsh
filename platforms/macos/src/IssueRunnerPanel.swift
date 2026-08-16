@@ -38,6 +38,7 @@ struct IssueRunnerTask {
     var branch: String?          // fix/issue-N
     var sessionId: String?       // dsh session created for this task
     var startedAt: Date?
+    var body: String?            // issue description (markdown)
 }
 
 final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
@@ -378,10 +379,13 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
                     if let idx = self.tasks.firstIndex(where: { $0.number == issue.number }) {
                         self.tasks[idx].title = issue.title
                         self.tasks[idx].labels = issue.labels
+                        self.tasks[idx].body = issue.body
                     } else {
-                        self.tasks.append(IssueRunnerTask(number: issue.number,
-                                                          title: issue.title,
-                                                          labels: issue.labels))
+                        var newTask = IssueRunnerTask(number: issue.number,
+                                                      title: issue.title,
+                                                      labels: issue.labels)
+                        newTask.body = issue.body
+                        self.tasks.append(newTask)
                     }
                 }
                 self.tasks.sort { $0.number < $1.number }
@@ -391,7 +395,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     }
 
     /// Fetch open issues via GitHub REST. Returns nil on network/auth error.
-    static func fetchIssues(owner: String, repo: String, token: String?) -> [(number: Int, title: String, labels: [String])]? {
+    static func fetchIssues(owner: String, repo: String, token: String?) -> [(number: Int, title: String, body: String?, labels: [String])]? {
         var request = URLRequest(url: URL(string: "https://api.github.com/repos/\(owner)/\(repo)/issues?state=open&per_page=50")!)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "accept")
         request.setValue("oh-my-dsh", forHTTPHeaderField: "user-agent")
@@ -399,20 +403,21 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             request.setValue("Bearer \(token)", forHTTPHeaderField: "authorization")
         }
         let semaphore = DispatchSemaphore(value: 0)
-        var result: [(number: Int, title: String, labels: [String])]?
+        var result: [(number: Int, title: String, body: String?, labels: [String])]?
         let task = URLSession.shared.dataTask(with: request) { data, response, _ in
             defer { semaphore.signal() }
             guard let data = data,
                   let http = response as? HTTPURLResponse, http.statusCode == 200,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
-            var out: [(number: Int, title: String, labels: [String])] = []
+            var out: [(number: Int, title: String, body: String?, labels: [String])] = []
             for item in json {
                 // The issues API includes pull requests — filter them out.
                 if item["pull_request"] != nil { continue }
                 guard let number = item["number"] as? Int, let title = item["title"] as? String else { continue }
                 let labels: [String] = (item["labels"] as? [[String: Any]])?
                     .compactMap { $0["name"] as? String } ?? []
-                out.append((number, title, labels))
+                let body = item["body"] as? String
+                out.append((number, title, body, labels))
             }
             result = out
         }
@@ -996,7 +1001,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         guard row < tasks.count else { return 22 }
-        return tasks[row].number == expandedIssue ? 128 : 22
+        return tasks[row].number == expandedIssue ? 168 : 22
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
@@ -1059,7 +1064,9 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         }
     }
 
-    /// Multi-line detail text for the alert's informative area.
+    /// Multi-line detail text shown in the expanded row: metadata first, then
+    /// the issue's description (body). Body is truncated so the row stays a
+    /// sane height.
     private static func taskDetailText(_ task: IssueRunnerTask) -> String {
         let stateName: String
         switch task.state {
@@ -1076,8 +1083,15 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         if let b = task.branch { lines.append(L10n.tr("tasks.detailBranch", b)) }
         if let pr = task.prUrl { lines.append(L10n.tr("tasks.detailPR", pr)) }
         if let err = task.error { lines.append(err) }
-        lines.append("")
-        lines.append(task.title)
+        if let body = task.body, !body.isEmpty {
+            let clean = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clean.isEmpty {
+                lines.append("")
+                // Keep the row compact: ~260 chars of the description.
+                let truncated = clean.count > 260 ? String(clean.prefix(260)) + "…" : clean
+                lines.append(truncated)
+            }
+        }
         return lines.joined(separator: "\n")
     }
 

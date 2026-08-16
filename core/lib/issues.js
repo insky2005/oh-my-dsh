@@ -88,6 +88,7 @@ function parseIssues(json) {
     .map((item) => ({
       number: item.number,
       title: item.title || '',
+      body: item.body || '',
       state: item.state || 'open',
       labels: (item.labels || []).map((l) => (typeof l === 'string' ? l : l.name)).filter(Boolean),
       htmlUrl: item.html_url || `https://github.com/issues/${item.number}`,

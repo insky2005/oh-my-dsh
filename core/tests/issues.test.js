@@ -25,6 +25,15 @@ test('parseIssues: maps labels and defaults', () => {
   assert.ok(issues[0].updatedAt === null || typeof issues[0].updatedAt === 'string');
 });
 
+test('parseIssues: captures issue body (description)', () => {
+  const issues = parseIssues([
+    { number: 9, title: 't', body: '第一行\n第二行', labels: [], html_url: 'u' },
+    { number: 10, title: 'no body', labels: [], html_url: 'u' },
+  ]);
+  assert.equal(issues[0].body, '第一行\n第二行');
+  assert.equal(issues[1].body, '');
+});
+
 test('parseIssues: handles non-array input', () => {
   assert.deepEqual(parseIssues(null), []);
   assert.deepEqual(parseIssues({}), []);
