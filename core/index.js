@@ -24,4 +24,6 @@ module.exports = {
   ...require('./lib/issues'),
   // Serial job queue state machine (IssueRunner + future remote drivers)
   ...require('./lib/jobqueue'),
+  // Issue-task association index (.dsh/tasks/ persistence)
+  ...require('./lib/tasks'),
 };

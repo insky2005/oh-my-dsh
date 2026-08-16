@@ -53,6 +53,20 @@ core/lib/issues.js  —— GitHub REST 封装（Node，可单测）
   prUrl?, branch?, sessionId?, error?, log? }
 ```
 
+## 关联索引（issue ↔ branch ↔ session ↔ PR）
+
+任务关联持久化在 `<repoRoot>/.dsh/tasks/`（随仓库提交，跨机器共享）：
+
+- **`index.json`**（提交）：仓库级关联 `issue → branch → prUrl → state → startedAt/finishedAt/error`；
+- **`local.json`**（gitignore）：本机级覆盖 `issue → sessionId`（dsh 会话 id 是本机实例特有的，不入共享索引）。
+
+定位规则：
+- **issue → branch**：`fix/issue-N`（或读 index.json）；
+- **issue → session**：运行中读内存 `task.sessionId`；重启后读 `local.json`；
+- **issue → PR**：读 index.json `prUrl`；
+- **恢复**：App 重启后面板按 index.json + local.json 重建任务列表与关联（`restoreFromIndex`），再以 open issues 刷新标题；
+- **实现**：`core/lib/tasks.js`（Node，可单测）+ `IssueRunnerPanel.swift` 的 `TaskIndex`（Swift，结构一致）。
+
 ## 远程驱动预留（钉钉/微信，本里程碑不实现）
 
 - `source` 字段即任务来源标识；`core/lib/jobqueue.js` 是任务队列的统一后端；

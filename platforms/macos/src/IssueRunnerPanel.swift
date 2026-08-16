@@ -237,6 +237,38 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         resolveRepoAndReload()
     }
 
+    /// Restore task state from the `.dsh/tasks/` index (after an app restart):
+    /// committed index gives issue → branch/PR/state; local overlay gives the
+    /// session id on this machine. Merges into the in-memory list; the open
+    /// issues fetch then fills in titles for anything still missing.
+    func restoreFromIndex(repoRoot: String) {
+        let indexTasks = TaskIndex.loadIndex(repoRoot)
+        for entry in indexTasks {
+            guard let issue = entry["issue"] as? Int else { continue }
+            var task = IssueRunnerTask(number: issue,
+                                       title: (entry["title"] as? String) ?? "issue #\(issue)",
+                                       labels: [])
+            task.branch = entry["branch"] as? String
+            task.prUrl = entry["prUrl"] as? String
+            task.error = entry["error"] as? String
+            switch entry["state"] as? String {
+            case "done": task.state = .done
+            case "failed": task.state = .failed
+            case "cancelled": task.state = .cancelled
+            case "running": task.state = .running
+            default: task.state = .pending
+            }
+            // Local overlay: re-attach the session id recorded on this machine.
+            task.sessionId = TaskIndex.sessionForIssue(repoRoot, issue: issue)
+            // Do not clobber a task already in memory with the same issue.
+            if !tasks.contains(where: { $0.number == issue }) {
+                tasks.append(task)
+            }
+        }
+        tasks.sort { $0.number < $1.number }
+        tableView.reloadData()
+    }
+
     // MARK: - Repo detection & issue loading
 
     private func resolveRepoAndReload() {
@@ -258,6 +290,8 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         }
         repo = (detected.owner, detected.repo)
         updateLabels()
+        // Restore any previously recorded task associations (issue → branch/PR/session).
+        restoreFromIndex(repoRoot: path)
         reloadIssues()
     }
 
@@ -370,6 +404,13 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         tableView.reloadData()
         setStatus(L10n.tr("tasks.running", number), spin: true)
 
+        // Persist the association (issue → branch) in the committed index.
+        TaskIndex.mergeTask(path, issue: number, update: [
+            "branch": "fix/issue-\(number)",
+            "state": "running",
+            "startedAt": ISO8601DateFormatter().string(from: Date()),
+        ])
+
         let branch = "fix/issue-\(number)"
         let token = loadToken()
         let port = serverPortProvider?() ?? 3080
@@ -393,6 +434,9 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
                     self.tableView.reloadData()
                 }
             }
+            // Record the session in the LOCAL (machine-scoped) overlay so a
+            // restart can re-attach issue → session on this machine.
+            TaskIndex.rememberSession(path, issue: number, sessionId: sessionId)
             // 3. rename session for traceability
             _ = Self.renameSession(port: port, sessionId: sessionId, title: "fix(#\(number)): \(L10n.tr("tasks.sessionLabel"))")
             // 4. prompt the agent with the issue-fix skill + issue content
@@ -459,6 +503,14 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         guard let idx = tasks.firstIndex(where: { $0.number == number }) else { return }
         tasks[idx].state = .done
         tasks[idx].prUrl = prUrl
+        // Persist done + PR association.
+        if let path = workspacePath?() {
+            TaskIndex.mergeTask(path, issue: number, update: [
+                "state": "done",
+                "prUrl": prUrl,
+                "finishedAt": ISO8601DateFormatter().string(from: Date()),
+            ])
+        }
         finishCurrentTask(number: number)
     }
 
@@ -466,6 +518,13 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         guard let idx = tasks.firstIndex(where: { $0.number == number }) else { return }
         tasks[idx].state = .failed
         tasks[idx].error = error
+        if let path = workspacePath?() {
+            TaskIndex.mergeTask(path, issue: number, update: [
+                "state": "failed",
+                "error": error,
+                "finishedAt": ISO8601DateFormatter().string(from: Date()),
+            ])
+        }
         AppLog.shared.log("issue task \(number) failed: \(error)")
         finishCurrentTask(number: number)
     }
@@ -810,5 +869,81 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         2. 当前分支应为 fix/issue-\(number)，只在此分支上工作；
         3. 完成后简短汇报改动与测试结果。
         """
+    }
+}
+
+// MARK: - Task association index (.dsh/tasks/)
+
+/// Persists the issue ↔ branch ↔ PR ↔ session association under
+/// `<repoRoot>/.dsh/tasks/`:
+///   - index.json: repo-scoped, committed (issue → branch → prUrl → state)
+///   - local.json: machine-scoped, gitignored (adds sessionId for THIS machine)
+/// Mirrors core/lib/tasks.js so the shell and any future platform agree.
+enum TaskIndex {
+
+    static let indexFile = "index.json"
+    static let localFile = "local.json"
+
+    private static func tasksDir(_ repoRoot: String) -> String {
+        let dir = (repoRoot as NSString).appendingPathComponent(".dsh/tasks")
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static func readJSON(_ path: String) -> [String: Any] {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return [:]
+        }
+        return obj
+    }
+
+    private static func writeJSON(_ path: String, _ obj: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]) else { return }
+        try? data.write(to: URL(fileURLWithPath: path))
+    }
+
+    /// Load the committed index (fresh when missing).
+    static func loadIndex(_ repoRoot: String) -> [[String: Any]] {
+        let obj = readJSON(tasksDir(repoRoot) + "/" + indexFile)
+        return obj["tasks"] as? [[String: Any]] ?? []
+    }
+
+    /// Merge an update for one issue into the committed index (upsert).
+    static func mergeTask(_ repoRoot: String, issue: Int, update: [String: Any]) {
+        var tasks = loadIndex(repoRoot)
+        var merged: [String: Any] = ["issue": issue]
+        if let idx = tasks.firstIndex(where: { ($0["issue"] as? Int) == issue }) {
+            merged = tasks[idx]
+            merged["issue"] = issue
+            tasks.remove(at: idx)
+        }
+        for (k, v) in update { merged[k] = v }
+        tasks.append(merged)
+        tasks.sort { (($0["issue"] as? Int) ?? 0) < (($1["issue"] as? Int) ?? 0) }
+        writeJSON(tasksDir(repoRoot) + "/" + indexFile, ["version": 1, "tasks": tasks])
+    }
+
+    /// Find a committed task entry for an issue.
+    static func findTask(_ repoRoot: String, issue: Int) -> [String: Any]? {
+        loadIndex(repoRoot).first { ($0["issue"] as? Int) == issue }
+    }
+
+    /// Record the dsh session id for an issue in the LOCAL (gitignored) overlay.
+    static func rememberSession(_ repoRoot: String, issue: Int, sessionId: String) {
+        let file = tasksDir(repoRoot) + "/" + localFile
+        var local = readJSON(file)
+        var sessions = local["sessions"] as? [String: Any] ?? [:]
+        sessions[String(issue)] = ["sessionId": sessionId, "updatedAt": ISO8601DateFormatter().string(from: Date())]
+        local["sessions"] = sessions
+        writeJSON(file, local)
+    }
+
+    /// The session id recorded for an issue on THIS machine.
+    static func sessionForIssue(_ repoRoot: String, issue: Int) -> String? {
+        let local = readJSON(tasksDir(repoRoot) + "/" + localFile)
+        let sessions = local["sessions"] as? [String: Any] ?? [:]
+        guard let entry = sessions[String(issue)] as? [String: Any] else { return nil }
+        return entry["sessionId"] as? String
     }
 }
