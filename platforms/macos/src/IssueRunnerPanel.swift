@@ -614,8 +614,21 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         return runProcess("/usr/bin/git", ["-C", path, "checkout", "-b", branch], cwd: path) != nil
     }
 
+    /// The remote name used to push branches / check for pushes. Prefers the
+    /// remote literally named "github", else "origin", else the first remote
+    /// (mirrors detectGitHubRemote's preference).
+    static func pushRemoteName(path: String) -> String? {
+        guard let out = runProcess("/usr/bin/git", ["-C", path, "remote"], cwd: path) else { return nil }
+        let names = out.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" }).map(String.init)
+        if names.contains("github") { return "github" }
+        if names.contains("origin") { return "origin" }
+        return names.first
+    }
+
+    /// True when the branch exists on the push remote (ls-remote heads).
     static func gitBranchPushed(path: String, branch: String) -> Bool {
-        let out = runProcess("/usr/bin/git", ["-C", path, "ls-remote", "--heads", "origin", branch], cwd: path)
+        guard let remote = pushRemoteName(path: path) else { return false }
+        let out = runProcess("/usr/bin/git", ["-C", path, "ls-remote", "--heads", remote, branch], cwd: path)
         return out?.contains(branch) == true
     }
 
@@ -880,24 +893,108 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     func tableViewSelectionDidChange(_ notification: Notification) {
         let row = tableView.selectedRow
         guard row >= 0, row < tasks.count else { return }
-        let task = tasks[row]
-        // Row actions: double-click = start (pending) / open PR (done).
+        let number = tasks[row].number
+        tableView.deselectAll(nil)
+        // Clicking a row opens the DETAIL dialog — processing only starts when
+        // the user presses the explicit "Process" button inside it.
+        showTaskDetail(number: number)
+    }
+
+    /// Detail dialog for one task. Clicking the row shows this; actions
+    /// (Process / Retry / Open PR / Cancel) are explicit buttons, never an
+    /// implicit side effect of selecting the row.
+    private func showTaskDetail(number: Int) {
+        guard let idx = tasks.firstIndex(where: { $0.number == number }) else { return }
+        let task = tasks[idx]
+
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("tasks.detailTitle", number)
+        alert.informativeText = Self.taskDetailText(task)
+        alert.alertStyle = .informational
+
+        // Primary action depends on state; the last button is always Close.
         switch task.state {
         case .pending:
-            if runningNumber == nil { startTask(number: task.number) }
-        case .done:
-            if let url = task.prUrl, let u = URL(string: url) { NSWorkspace.shared.open(u) }
-        case .failed:
-            if let err = task.error {
-                let alert = NSAlert()
-                alert.messageText = L10n.tr("tasks.failTitle")
-                alert.informativeText = err
-                alert.addButton(withTitle: L10n.tr("btn.ok"))
-                alert.runModal()
+            let process = alert.addButton(withTitle: L10n.tr("tasks.detailProcess"))
+            process.keyEquivalent = "\r"   // Enter = process
+            alert.addButton(withTitle: L10n.tr("tasks.detailClose"))
+            let resp = alert.runModal()
+            if resp == .alertFirstButtonReturn {
+                startTask(number: number)
             }
-        default: break
+        case .running:
+            let cancel = alert.addButton(withTitle: L10n.tr("tasks.detailCancelTask"))
+            cancel.keyEquivalent = "\r"
+            alert.addButton(withTitle: L10n.tr("tasks.detailClose"))
+            let resp = alert.runModal()
+            if resp == .alertFirstButtonReturn {
+                cancelRunningTask()
+            }
+        case .done:
+            if let url = task.prUrl {
+                let open = alert.addButton(withTitle: L10n.tr("tasks.detailOpenPR"))
+                open.keyEquivalent = "\r"
+            }
+            alert.addButton(withTitle: L10n.tr("tasks.detailClose"))
+            let resp = alert.runModal()
+            if resp == .alertFirstButtonReturn, let url = task.prUrl, let u = URL(string: url) {
+                NSWorkspace.shared.open(u)
+            }
+        case .failed:
+            let retry = alert.addButton(withTitle: L10n.tr("tasks.detailRetry"))
+            retry.keyEquivalent = "\r"
+            alert.addButton(withTitle: L10n.tr("tasks.detailClose"))
+            let resp = alert.runModal()
+            if resp == .alertFirstButtonReturn {
+                // Reset failed → pending, then process again.
+                if let i = tasks.firstIndex(where: { $0.number == number }) {
+                    tasks[i].state = .pending
+                    tasks[i].error = nil
+                    if let path = repoRootPath {
+                        TaskIndex.mergeTask(path, issue: number, update: ["state": "pending", "error": NSNull()])
+                    }
+                    tableView.reloadData()
+                }
+                startTask(number: number)
+            }
+        case .cancelled:
+            let retry = alert.addButton(withTitle: L10n.tr("tasks.detailRetry"))
+            retry.keyEquivalent = "\r"
+            alert.addButton(withTitle: L10n.tr("tasks.detailClose"))
+            let resp = alert.runModal()
+            if resp == .alertFirstButtonReturn {
+                if let i = tasks.firstIndex(where: { $0.number == number }) {
+                    tasks[i].state = .pending
+                    if let path = repoRootPath {
+                        TaskIndex.mergeTask(path, issue: number, update: ["state": "pending"])
+                    }
+                    tableView.reloadData()
+                }
+                startTask(number: number)
+            }
         }
-        tableView.deselectAll(nil)
+    }
+
+    /// Multi-line detail text for the alert's informative area.
+    private static func taskDetailText(_ task: IssueRunnerTask) -> String {
+        let stateName: String
+        switch task.state {
+        case .pending: stateName = L10n.tr("tasks.state.pending")
+        case .running: stateName = L10n.tr("tasks.state.running")
+        case .done: stateName = L10n.tr("tasks.state.done")
+        case .failed: stateName = L10n.tr("tasks.state.failed")
+        case .cancelled: stateName = L10n.tr("tasks.state.cancelled")
+        }
+        var lines = [L10n.tr("tasks.detailState", stateName)]
+        if !task.labels.isEmpty {
+            lines.append(L10n.tr("tasks.detailLabels", task.labels.joined(separator: ", ")))
+        }
+        if let b = task.branch { lines.append(L10n.tr("tasks.detailBranch", b)) }
+        if let pr = task.prUrl { lines.append(L10n.tr("tasks.detailPR", pr)) }
+        if let err = task.error { lines.append(err) }
+        lines.append("")
+        lines.append(task.title)
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - issue-fix prompt

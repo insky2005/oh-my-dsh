@@ -281,6 +281,21 @@ enum L10n {
         "tasks.configTitle": ("GitHub Token", "GitHub Token"),
         "tasks.configInfo": ("私有仓库需要 GitHub token（存于 Keychain，仅用于拉取 issues 与创建 PR；公开仓库可留空）。", "Private repos need a GitHub token (stored in Keychain, used only to fetch issues & create PRs; leave empty for public repos)."),
         "tasks.tokenPlaceholder": ("ghp_xxx（可选）", "ghp_xxx (optional)"),
+        "tasks.detailTitle": ("Issue #%d", "Issue #%d"),
+        "tasks.detailLabels": ("标签：%@", "Labels: %@"),
+        "tasks.detailBranch": ("分支：%@", "Branch: %@"),
+        "tasks.detailPR": ("PR：%@", "PR: %@"),
+        "tasks.detailState": ("状态：%@", "State: %@"),
+        "tasks.state.pending": ("待处理", "Pending"),
+        "tasks.state.running": ("处理中", "Running"),
+        "tasks.state.done": ("已完成", "Done"),
+        "tasks.state.failed": ("失败", "Failed"),
+        "tasks.state.cancelled": ("已取消", "Cancelled"),
+        "tasks.detailProcess": ("处理", "Process"),
+        "tasks.detailOpenPR": ("打开 PR", "Open PR"),
+        "tasks.detailRetry": ("重试", "Retry"),
+        "tasks.detailCancelTask": ("取消任务", "Cancel Task"),
+        "tasks.detailClose": ("关闭", "Close"),
     ]
 
     /// Localize a key, optionally filling %@ / %d placeholders.
