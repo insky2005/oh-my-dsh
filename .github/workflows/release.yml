@@ -96,7 +96,7 @@ jobs:
             echo "no existing release for $GITHUB_REF_NAME"
           fi
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: oh-my-dsh ${{ env.VERSION }}
