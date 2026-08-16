@@ -7,7 +7,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
-- 暂无（v1.9.0 已发布；下一个版本待定）。
+- 暂无（v1.9.0 已发布；开发线已推进到 1.10.0）。
 
 ## [1.9.0] - 2026-08-16
 
