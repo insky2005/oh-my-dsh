@@ -74,7 +74,7 @@ jobs:
       - name: Collect release assets
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          mkdir -p dist
+          rm -rf dist && mkdir -p dist
           cp dist-artifacts/*.pkg dist-artifacts/*.dmg dist/ 2>/dev/null || true
           ls -la dist/
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
@@ -83,17 +83,19 @@ jobs:
         run: |
           chmod +x scripts/release-checksums.sh
           scripts/release-checksums.sh "$VERSION" | tee /tmp/release-body.txt
-      - name: Publish GitHub Release (gh release create --clobber)
+      - name: Publish GitHub Release (gh release create)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 用 gh 直接发布：--clobber 覆盖同名 Release 与资产（幂等、不删 tag），
-          # 避免 softprops action 在「Release 已存在/重复触发」时 already_exists。
+          # 幂等发布：先删同名旧 Release（连同 tag，--cleanup-tag），再用
+          # --target 从当前 commit 重建 tag + Release + 资产。避免 softprops
+          # action / --clobber 在「tag 已存在」时的 already_exists 与竞态。
+          gh release delete "$GITHUB_REF_NAME" --yes --cleanup-tag 2>/dev/null || true
           gh release create "$GITHUB_REF_NAME" \
+            --target "$GITHUB_SHA" \
             --title "oh-my-dsh $VERSION" \
             --notes-file /tmp/release-body.txt \
             --prerelease \
-            --clobber \
             dist/*.pkg dist/*.dmg dist/SHA-256SUMS
           gh release view "$GITHUB_REF_NAME" --json name,isPrerelease,assets --jq \
             '{name, isPrerelease, assets: [.assets[].name]}'
