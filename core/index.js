@@ -20,4 +20,8 @@ module.exports = {
   ...require('./lib/upgrade'),
   // dsh web session RPC (ported from DSHSessionRPC)
   ...require('./lib/session'),
+  // GitHub issues & PR integration (IssueRunner panel)
+  ...require('./lib/issues'),
+  // Serial job queue state machine (IssueRunner + future remote drivers)
+  ...require('./lib/jobqueue'),
 };
