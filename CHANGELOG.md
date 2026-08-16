@@ -7,7 +7,29 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
-- 暂无（v1.8.0 已发布；下一个版本待定）。
+- 暂无（v1.9.0 已发布；下一个版本待定）。
+
+## [1.9.0] - 2026-08-16
+
+### Added
+
+- **IssueRunner 任务面板**（活动栏「任务 / Tasks」、⌥⌘J）：GitHub issue 驱动的串行任务流水线——
+  - 仓库自动识别（git remote）+ open issues 拉取（REST，过滤 PR；私有仓库 Keychain token）；
+  - 处理流程：切分支 `fix/issue-N` → 新建 dsh 会话（归主工作区）→ 会话改名可追溯 → issue-fix skill 修复 → 推送 → 开 PR；
+  - 串行队列、行内展开详情（状态/标签/分支/PR/正文，滚动区 + 底部按钮）、取消/重试/打开 PR；
+  - 完成后的 issue 支持「评论并关闭」（用户触发，POST comment + PATCH close）；
+  - 任务关联索引落地 `.dsh/tasks/`（index.json 随仓库提交，local.json 本机 session 映射），重启可恢复；
+  - 共享核心：`core/lib/issues.js`（issues/PR/comment-close/remote 检测）、`core/lib/jobqueue.js`（串行队列）、`core/lib/tasks.js`（关联索引）；
+  - skill：`.dsh/skills/issue-fix/SKILL.md`。
+- **Wiki 自动提交**：更新完成后由代理（repo-wiki skill 规则 8）`git add .dsh/wiki` + commit（不 push，message 概括实际变更）；面板 `WikiAutoCommit` 兜底。
+
+### Changed
+
+- 版本单一来源：`scripts/version.sh` fallback 推进到 1.9.0（发布后立即推进开发线版本，避免与已发布版本混淆）。
+
+### Fixed
+
+- IssueRunner：仓库识别兜底（workspace.list 解析）、gitBranchPushed 按 remote 名解析、恢复任务标题/正文显示、行内详情滚动与按钮固定。
 
 ## [1.8.0] - 2026-08-15
 
