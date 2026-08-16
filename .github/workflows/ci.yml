@@ -50,7 +50,7 @@ jobs:
           swiftc -O -swift-version 5 -module-cache-path .build/module-cache \
             -framework AppKit -framework WebKit -framework PDFKit \
             -o /tmp/oh-my-dsh-check \
-            platforms/macos/src/main.swift platforms/macos/src/PreviewPanel.swift platforms/macos/src/TerminalPanel.swift platforms/macos/src/WikiPanel.swift
+            platforms/macos/src/main.swift platforms/macos/src/PreviewPanel.swift platforms/macos/src/TerminalPanel.swift platforms/macos/src/WikiPanel.swift platforms/macos/src/IssueRunnerPanel.swift
           file /tmp/oh-my-dsh-check
 
   # --- Full app build matrix: arm64 / universal -----------------------------
