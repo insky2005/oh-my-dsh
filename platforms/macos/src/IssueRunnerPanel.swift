@@ -902,12 +902,29 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         if cell.textField == nil { cell.textField = title }
 
         if expanded {
-            let detail = NSTextField(wrappingLabelWithString: "")
-            detail.translatesAutoresizingMaskIntoConstraints = false
+            // Detail area is a scrollable NSTextView inside an NSScrollView so
+            // long issue bodies scroll instead of pushing the buttons away.
+            let detail = NSTextView()
+            detail.isEditable = false
+            detail.isSelectable = true
+            detail.drawsBackground = false
             detail.font = .systemFont(ofSize: 11)
             detail.textColor = .secondaryLabelColor
-            detail.tag = 101
-            cell.addSubview(detail)
+            detail.textContainerInset = NSSize(width: 0, height: 2)
+            detail.isVerticallyResizable = true
+            detail.isHorizontallyResizable = false
+            detail.autoresizingMask = [.width]
+            detail.textContainer?.widthTracksTextView = true
+            detail.identifier = NSUserInterfaceItemIdentifier("taskDetail")
+
+            let scroll = NSScrollView()
+            scroll.translatesAutoresizingMaskIntoConstraints = false
+            scroll.hasVerticalScroller = true
+            scroll.autohidesScrollers = true
+            scroll.drawsBackground = false
+            scroll.borderType = .noBorder
+            scroll.documentView = detail
+            cell.addSubview(scroll)
 
             let process = NSButton(title: "", target: self, action: #selector(cellButtonTapped(_:)))
             process.tag = 200
@@ -927,21 +944,23 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
                 title.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
                 title.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
                 title.topAnchor.constraint(equalTo: cell.topAnchor, constant: 4),
+                title.heightAnchor.constraint(equalToConstant: 16),
 
-                detail.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                detail.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
-                detail.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
+                // Scroll view: fills the middle (title → buttons).
+                scroll.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+                scroll.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+                scroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
+                scroll.bottomAnchor.constraint(equalTo: process.topAnchor, constant: -6),
 
+                // Buttons pinned to the BOTTOM (never pushed out by content).
                 process.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                process.topAnchor.constraint(equalTo: detail.bottomAnchor, constant: 6),
+                process.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -6),
                 process.heightAnchor.constraint(equalToConstant: 22),
 
                 secondary.leadingAnchor.constraint(equalTo: process.trailingAnchor, constant: 8),
                 secondary.centerYAnchor.constraint(equalTo: process.centerYAnchor),
                 secondary.heightAnchor.constraint(equalToConstant: 22),
             ])
-            // Wire the buttons through the cell's represented object.
-            cell.objectValue = nil // set per-row in populateCell via tags
         } else {
             NSLayoutConstraint.activate([
                 title.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
@@ -961,8 +980,10 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             title.textColor = task.state == .failed ? .systemRed : .labelColor
         }
         if expanded {
-            if let detail = cell.viewWithTag(101) as? NSTextField {
-                detail.stringValue = Self.taskDetailText(task)
+            // The detail NSTextView lives inside the cell's NSScrollView.
+            if let scroll = cell.subviews.lazy.compactMap({ $0 as? NSScrollView }).first,
+               let detail = scroll.documentView as? NSTextView {
+                detail.string = Self.taskDetailText(task)
             }
             if let primary = cell.viewWithTag(200) as? NSButton {
                 primary.title = primaryActionTitle(for: task)
@@ -1064,9 +1085,9 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         }
     }
 
-    /// Multi-line detail text shown in the expanded row: metadata first, then
-    /// the issue's description (body). Body is truncated so the row stays a
-    /// sane height.
+    /// Multi-line detail text shown in the expanded row's scrollable area:
+    /// metadata first, then the issue's description (body). The scroll view
+    /// handles long bodies, so no truncation is needed here.
     private static func taskDetailText(_ task: IssueRunnerTask) -> String {
         let stateName: String
         switch task.state {
@@ -1087,9 +1108,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             let clean = body.trimmingCharacters(in: .whitespacesAndNewlines)
             if !clean.isEmpty {
                 lines.append("")
-                // Keep the row compact: ~260 chars of the description.
-                let truncated = clean.count > 260 ? String(clean.prefix(260)) + "…" : clean
-                lines.append(truncated)
+                lines.append(clean)
             }
         }
         return lines.joined(separator: "\n")
