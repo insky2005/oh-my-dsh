@@ -1,7 +1,7 @@
 ---
 title: 工程约定
 tags: [conventions, l10n, build, qa-hooks, versioning]
-updated: 2026-08-16T14:07:58Z
+updated: 2026-08-16T14:10:06Z
 sources: [README.md, platforms/macos/build-app.sh, platforms/macos/src/main.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-wiki/SKILL.md]
 manual: false
 ---
@@ -68,5 +68,5 @@ manual: false
 - 只写可从代码/文档证实的事实，不确定标注「待确认」，禁止编造；
 - 脱敏：跳过 `.env*`/密钥/口令/个人数据，示例一律占位符；
 - 增量更新用 `git status` + mtime 定位变更面，只重写 `sources` 命中变更的页面，未变页面**字节不变**（便于 git diff 审查）；
-- 生成/更新完成后由**代理**执行 `git add .dsh/wiki` + commit（**不 push**），commit message 由代理概括实际变更（提交约定来自更新请求与面板 `WikiPrompts.fallbackInstructions`，repo-wiki SKILL.md 不再内置提交规则）；若代理未提交，面板 `WikiAutoCommit` **兜底**提交（同样不 push），提交失败仅记日志不打扰用户；
+- 生成/更新完成后由**代理**（repo-wiki skill 规则 8）执行 `git add .dsh/wiki` + commit（**不 push**），commit message 由代理概括实际变更；若代理未提交，面板 `WikiAutoCommit` **兜底**提交（同样不 push），提交失败仅记日志不打扰用户；
 - 完成后刷新 `index.md` 统计与最后生成时间。

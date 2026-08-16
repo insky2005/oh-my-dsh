@@ -1,7 +1,7 @@
 ---
 title: 模块：WikiPanel.swift（Repo Wiki 面板）
 tags: [module, wiki, knowledge-base, rpc, skill]
-updated: 2026-08-16T14:07:58Z
+updated: 2026-08-16T14:10:06Z
 sources: [platforms/macos/src/WikiPanel.swift, docs/repo-wiki-design.md, .dsh/skills/repo-wiki/SKILL.md]
 manual: false
 ---
@@ -23,7 +23,7 @@ manual: false
 | `WikiPrompts` | 生成/更新/重建 index 的触发文案（中英），含 skill 缺失时的 `fallbackInstructions` |
 | `WikiRPC` | `resolveWorkspaceId`（`workspace.list` 按规范化路径匹配工作区）、`createSession(port:cwd:workspaceId:)`（有匹配工作区传 `workspaceId`，否则回退 `cwd`）、`prompt(port:sessionId:text:)`（mode: queue）、`sessionRunning(port:sessionId:)`、`cancel(port:sessionId:)`（`session.cancel`），均走 `client-request` 信封 POST `/api/session.*` / `/api/workspace.*`；曾有的 `attachOrphans` 已移除（修复 15，见下） |
 | `WikiAgentsMD` | AGENTS.md 注册块**幂等**写入/移除（`<!-- repo-wiki:managed --> … <!-- /repo-wiki:managed -->`） |
-| `WikiAutoCommit` | **兜底提交**（代理未提交时）：`commitWikiChanges(repoRoot:)` 检测 git 工作树 → `git status --porcelain -- .dsh/wiki` 有变更才提交 → `git add` + commit；**主提交路径是代理**（更新工作流约定——`WikiPrompts.fallbackInstructions` 要求代理自行 add+commit 并概括 message；repo-wiki SKILL.md 不再内置提交规则），此兜底仅在代理漏提交时生效，message 由 `commitMessage(status:diff:)` 从实际变更内容提取（如「docs(wiki): 更新 overview：工作区版本 1.8.0…」）；**绝不 push**，失败仅记 AppLog，幂等（无变更不提交）；后台执行，提交成功后主线程 `refresh()` 刷新树 |
+| `WikiAutoCommit` | **兜底提交**（代理未提交时）：`commitWikiChanges(repoRoot:)` 检测 git 工作树 → `git status --porcelain -- .dsh/wiki` 有变更才提交 → `git add` + commit；**主提交路径是代理**（repo-wiki skill 规则 8：代理自行 add+commit 并概括 message），此兜底仅在代理漏提交时生效，message 由 `commitMessage(status:diff:)` 从实际变更内容提取（如「docs(wiki): 更新 overview：工作区版本 1.8.0…」）；**绝不 push**，失败仅记 AppLog，幂等（无变更不提交）；后台执行，提交成功后主线程 `refresh()` 刷新树 |
 | `WikiRootView` | 面板根视图（`isOpaque = false` 自绘背景，镜像 `TerminalRootView`） |
 | `WikiPanelController` | 面板 UI 与生成链路（见下） |
 
@@ -33,7 +33,7 @@ manual: false
 - **加载**：`ensureWikiLoaded` → `resolveAndLoad`（经 `DSHSessionRPC` 解析 repoRoot → `WikiPaths.wikiRoot`）；`serverReady(port:)` 门控（服务未就绪时延后加载/禁用生成）；`reloadRoot()` 供 `wikiRootMode` 切换；
 - **变更监听**：2s 轮询 `WikiScanner.signature` 比对（`refreshIfChanged`）；`maybeAutoRegenerate`：≥3 页过期且距上次生成 > 1h 才自动触发（每小时最多一次，默认关）；
 - **自动更新询问**（build 49→50）：首次生成成功且用户从未显式选过自动更新时，弹窗「开启自动更新知识库？」（开启/暂不），选择经 `onAutoUpdateSettingChanged` 同步设置菜单勾选；`serverReady` 时即使面板未打开也后台解析仓库根 → 2s 监控常驻——检测到「需要更新」时：设置**开** → 静默自动增量更新；设置**关** → 弹窗询问「检测到 %d 个页面可能过期，是否现在增量更新？」（同样每小时至多一次）；
-- **生成链路**：`generateTapped` → `startGeneration(.generate/.update/.rebuildIndex)` → 确认 `WikiSkill` 已装 → `WikiRPC.resolveWorkspaceId`（把生成会话归入当前工作区，见上）→ `createSession(cwd:workspaceId:)` → `prompt(mode: "queue")` → `startPolling`（轮询 `session.list` 该会话 `running` 标志）→ 完成时刷新 + 可选 `WikiAgentsMD.register`（若设置开启）+ **提交**：主路径由代理执行（更新工作流约定：自行 add+commit，message 概括实际变更，不 push；repo-wiki SKILL.md 已移除提交规则，规则 8 现为汇报）；`WikiAutoCommit` 兜底（代理未提交且仍有变更时，message 从 diff 提取实际内容），提交后 `refresh()` 刷新树让陈旧检测反映新 mtime；代理按 SKILL 强制规则在生成会话内直接执行、绝不另建顶层会话（修复 16）；**按仓库并发**（build 59→60）：在途生成存 `generations: [canonicalRepo: Generation]`，单个共享轮询定时器遍历结算（AGENTS.md 注册/首生成询问/失败提示只作用于被结算且当前可见的仓库），`syncGenerationUI()` 每次扫描/切换/生成事件调用——当前仓库在生成 → 遮罩 + 「+」禁用；别处在生成 → 无遮罩、状态条显示「正在为「仓库名」生成知识库…」、「+」可用；全部结束 → 隐藏状态条；
+- **生成链路**：`generateTapped` → `startGeneration(.generate/.update/.rebuildIndex)` → 确认 `WikiSkill` 已装 → `WikiRPC.resolveWorkspaceId`（把生成会话归入当前工作区，见上）→ `createSession(cwd:workspaceId:)` → `prompt(mode: "queue")` → `startPolling`（轮询 `session.list` 该会话 `running` 标志）→ 完成时刷新 + 可选 `WikiAgentsMD.register`（若设置开启）+ **提交**：主路径由代理执行（repo-wiki skill 规则 8：自行 add+commit，message 概括实际变更，不 push）；`WikiAutoCommit` 兜底（代理未提交且仍有变更时，message 从 diff 提取实际内容），提交后 `refresh()` 刷新树让陈旧检测反映新 mtime；代理按 SKILL 强制规则在生成会话内直接执行、绝不另建顶层会话（修复 16）；**按仓库并发**（build 59→60）：在途生成存 `generations: [canonicalRepo: Generation]`，单个共享轮询定时器遍历结算（AGENTS.md 注册/首生成询问/失败提示只作用于被结算且当前可见的仓库），`syncGenerationUI()` 每次扫描/切换/生成事件调用——当前仓库在生成 → 遮罩 + 「+」禁用；别处在生成 → 无遮罩、状态条显示「正在为「仓库名」生成知识库…」、「+」可用；全部结束 → 隐藏状态条；
 - **生成中浮层**（build 56→61 收敛）：历次实现（spinner 栈 / Core Graphics 自绘 `WikiCenteredLabel` / NSTextField 栈）要么渲染失败、要么清空阅读区后提示失败导致整片空白；最终方案——`showGenerating()` **不清空任何内容**，在阅读区上叠加半透明浮层（`WikiOverlayView`，随明暗 0.82 透明度背景、非 opaque、背景绘制失败自动退化透明）+ 居中 `NSTextField`「Generating…」（空态同款已验证渲染）；底部状态条每秒刷新已耗时（`wiki.generatingElapsed`）；生成期间 2s 轮询**不再跳过**——代理每写出一页，左侧树即实时出现该页；完成/失败/取消后 `scanAndReload` 清空子视图时浮层自动移除；「取消」走 `WikiRPC.cancel`（`session.cancel`）并显示「已取消」3 秒；失败/取消后都 `refresh()` 恢复内容区；
 - **陈旧/手动标记**：树节点与页头显示「可能过期」（⚠）/「手动维护」（✎）；`manual: true` 页代理永不覆盖；
 - **渲染与导航**：`showPage` 渲染 frontmatter 摘要条 + markdown 正文 + backlinks 区；`textView(_:clickedOnLink:)`：`dshwiki://` 页内跳转，其余交默认浏览器。
