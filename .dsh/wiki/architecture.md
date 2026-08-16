@@ -1,8 +1,8 @@
 ---
 title: 架构
 tags: [architecture, layers, dataflow, deployment]
-updated: 2026-08-16T10:45:00Z
-sources: [platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, docs/repo-wiki-design.md, docs/issue-runner-design.md]
+updated: 2026-08-16T11:46:00Z
+sources: [platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md]
 manual: false
 ---
 
@@ -42,7 +42,8 @@ manual: false
 - 四个面板复用 `PreviewPanel.swift` 中定义的共享 UI 组件：`HoverButton`、`DynamicFillView`、`ActivityBarButton`、`PanelIconButton`、`HeaderLabel`、`CustomIconButton`、`BakedIconView`；
 - 所有 L10n 文案集中在 `main.swift` 的 `L10n.table`；
 - 面板通过 `serverPortProvider` 闭包取当前端口，`serverReady(port:)` 在服务就绪后获得门控通知；
-- **共享项目目录**：`ProjectDirectory`（main.swift）保存当前活动项目目录，四处消费——预览树、终端新会话 cwd、wiki 根解析（`resolveProjectDirectory` 优先返回它，其次实时查询并缓存）、任务面板工作区识别（`tasksPanel.workspacePath` → `activeWorkspacePath` 优先返回 `ProjectDirectory.current`）；
+- **共享项目目录**：`ProjectDirectory`（main.swift）保存当前活动项目目录，四处消费——预览树、终端新会话 cwd、wiki 根解析（`resolveProjectDirectory` 优先返回它，其次实时查询并缓存）、任务面板工作区识别（`tasksPanel.workspacePath` → `activeWorkspacePath` 优先返回 `ProjectDirectory.current`；为空时任务面板回退从 `workspace.list` 解析并重试，见数据流 4b）；
+- 任务面板把 issue→branch→PR→state 关联持久化到 `.dsh/tasks/`：`core/lib/tasks.js`（Node）+ `IssueRunnerPanel.swift` 的 `TaskIndex`（Swift，结构一致）双实现；index.json 随仓库提交、local.json 本机覆盖（gitignore）；
 - 构建依赖：`platforms/macos/build-app.sh` 显式列出编译源文件，新增文件必须登记（v1.7.0 加入了 `WikiPanel.swift`，v1.8.0 加入 `IssueRunnerPanel.swift`）。
 
 ## 关键数据流
@@ -51,7 +52,7 @@ manual: false
 2. **文件预览拦截**：`rebuildWebView` 注入两段用户脚本——① 覆写 `navigator.language/languages` 跟随壳语言；② `previewInterceptorScript` 覆写 `window.fetch`，拦截 `/api/host.openPath` RPC，把路径经 `window.webkit.messageHandlers.dshPreview.postMessage` 发给原生层，并回一个假的 `server-response` 成功（页面不会打开系统默认应用）。AppDelegate `userContentController` 收到后切换/打开预览面板 `previewPanel.open(path:)`。
 3. **项目目录解析**：`DSHSessionRPC.fetchActiveSessionCwd(port:)` POST `/api/session.list`（`client-request` 信封：`{type, rpcId, method, payload}` → `{result:{ok, value}}`），取 running 会话优先、按 `updatedAt` 最新的非 blank 会话 cwd。预览树、终端新会话、wiki 根解析都基于它。
 4. **Wiki 生成**：面板「+」→ `WikiRPC.createSession(cwd: repoRoot)` + `promptSession(mode: queue)` 触发代理执行 `repo-wiki` skill → 代理写 `.dsh/wiki/**`；面板轮询 `session.list` 的 running 标志显示「生成中」——内容区**叠加半透明浮层**（`WikiOverlayView`，0.82 透明度背景 + 居中「Generating…」NSTextField），页面与树全程可见、布局不消失（build 57→58）；底部状态条每秒刷新已耗时（`wiki.generatingElapsed`）；**生成状态按仓库根关联**（`generations: [canonicalRepo: Generation]`，build 59→60，可多仓库并发各一个生成，`syncGenerationUI` 只让 UI 反映当前仓库）；文件监听（2s 轮询 + 签名比对）驱动刷新与陈旧标记（生成期间代理每写出一页，左侧树即实时出现该页）；完成/失败/取消后都 `refresh()` 恢复内容区；取消走 `WikiRPC.cancel`（`session.cancel {sessionId}`）。**工作区归组**（build 48→49）：`WikiRPC.resolveWorkspaceId` 用 `workspace.list` 按规范化路径匹配当前仓库工作区，`createSession` 优先传 `workspaceId`（否则回退 `cwd`）——新会话直接归入工作区；曾有的 `attachOrphans`（把既有未分组会话经 `workspace.insertSessionBefore` 挂入工作区，幂等 + 30s 节流）因 RPC 无 attach 接口、对未分组会话必然失败（`workspace-move-invalid: not accounted`），已于 build 61→62（修复 15）**移除**——已存在的未分组会话无法经 API 移动，UI 的 Ungrouped 仅为浏览器本地聚合。
-4b. **任务流水线（IssueRunner，v1.8.0）**：`IssueRunnerPanelController` 经 `git remote -v` 识别 GitHub 远端 → 拉 open issues → 用户「处理/全部处理」→ 串行队列（`core/lib/jobqueue.js`）：`git checkout main → pull → checkout -b fix/issue-N` → `session.create`（当前工作区）+ `session.rename` + `session.prompt`（issue-fix skill，mode queue）→ 轮询 running → 校验 `git ls-remote` 分支已推送 → `POST /pulls` 开 PR；失败/超时/取消各有状态，分支与会话保留可续跑；GitHub token 存 Keychain（`oh-my-dsh.issuerunner.github-token`），不落 UserDefaults（详见 [issue-runner-panel](modules/issue-runner-panel.md)）。
+4b. **任务流水线（IssueRunner，v1.8.0）**：`IssueRunnerPanelController` 经 `git remote -v` 识别 GitHub 远端（优先 `workspacePath` 提供的活动目录；为空时回退 `listWorkspacePaths` 从 `workspace.list` 取第一个 GitHub 仓库并 1s 间隔重试 ≤10 次，修复启动早期误报 not a GitHub repo）→ 拉 open issues → 用户点行弹**详情对话框**（状态/标签/分支/PR/错误，动作按钮 Process/Retry/Open PR/Cancel 明确点击才执行，杜绝误触）→ 串行队列（`core/lib/jobqueue.js`）：`git checkout main → pull → checkout -b fix/issue-N` → `session.create`（当前工作区）+ `session.rename` + `session.prompt`（issue-fix skill，mode queue）→ 轮询 running → 校验 `git ls-remote` 分支已推送（remote 名按 github>origin>首个 remote 解析，`pushRemoteName`）→ `POST /pulls` 开 PR；失败/超时/取消各有状态，分支与会话保留可续跑；**关联索引**：任务开始时 `TaskIndex.mergeTask` 写 index.json（branch/state/startedAt），会话创建后 `TaskIndex.rememberSession` 写 local.json（sessionId），done/failed 时更新 prUrl/error/finishedAt；重启后 `restoreFromIndex` 按 index.json + local.json 重建任务列表与会话关联；GitHub token 存 Keychain（`oh-my-dsh.issuerunner.github-token`），不落 UserDefaults（详见 [issue-runner-panel](modules/issue-runner-panel.md)）。
 5. **会话切换跟随（build 50→53）**：`rebuildWebView` 注入 `sessionTrackerScript`——监听 dsh web 的会话 RPC 请求体（`session.history/prompt/rename/selectModel` 的 `payload.sessionId`；`session.open()` 幂等不可靠，改以 `subagent.list {parentSessionId}` 作为每次切换的可靠信号），会话 id 变化时经 `dshSession` message handler 上报。壳层收到后 `DSHSessionRPC.fetchSessionCwd(port:sessionId:)` 查 cwd → 更新 `ProjectDirectory` → `previewPanel.setProjectDirectory(cwd)`（只重设树根，不动已开页签）+ `wikiPanel.reloadRoot()`（重解析 + 重扫）；终端新标签页启动目录自动取新目录（build 60→61：`newSession()`/`spawnWithCwd()` 改用 `DSHSessionRPC.resolveProjectDirectory`——优先共享 `ProjectDirectory.current`=当前查看的工作区，未设置时回退实时查询并缓存，home 兜底保留）。
 6. **退出**：SIGTERM/SIGINT/SIGHUP → `NSApp.terminate`；`applicationWillTerminate` → `terminalPanel.shutdownAll()`（终止全部 PTY 会话进程组）→ `server.stop()`（**只停自拉起的**服务：`terminate()` 后等 3 秒，未退出则 SIGKILL；复用的外部服务绝不动）。
 

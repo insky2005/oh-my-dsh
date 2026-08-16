@@ -1,14 +1,14 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-08-16T10:45:00Z
-sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, docs/repo-wiki-design.md, docs/issue-runner-design.md]
+updated: 2026-08-16T11:46:00Z
+sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md]
 manual: false
 ---
 
 # 数据模型
 
-本仓库无数据库：状态以 **UserDefaults** 持久化，进程间/代理间通信走 **HTTP RPC 信封**，磁盘上唯一的"数据文件"是 wiki markdown 页（含 frontmatter）与日志。
+本仓库无数据库：状态以 **UserDefaults** 持久化，进程间/代理间通信走 **HTTP RPC 信封**，磁盘上的"数据文件"是 wiki markdown 页（含 frontmatter）、任务关联索引（`.dsh/tasks/`）与日志。
 
 ## UserDefaults 键（壳层持久化状态）
 
@@ -42,7 +42,9 @@ manual: false
 - **`TerminalSession.State`**：`running / exited(code) / terminated`；
 - **`WikiPanelController.generations`**（内存态，build 59→60）：`[canonicalRepo: Generation]`——生成状态按仓库根（`WikiRPC.canonical` 规范化路径）关联，多仓库可并发各一个生成；`syncGenerationUI()` 据此让 UI 只反映当前仓库；
 - **`TreeNode`**（PreviewPanel.swift）：`name / path / isDir / children?`（懒加载）；
-- **`JobQueue`**（core/lib/jobqueue.js）：串行任务队列状态机 `createQueue()`——任务含 `source`（远程驱动预留）/`state`（pending/running/done/failed/cancelled）等字段，`enqueue`/`peek`/`markRunning`/`complete`/`fail`/`cancel`/`retry`/`snapshot`/`removeFinished` 操作（IssueRunner 面板用它串行执行「切分支→会话→推送→PR」流水线，见 [issue-runner-panel](modules/issue-runner-panel.md)）。
+- **`JobQueue`**（core/lib/jobqueue.js）：串行任务队列状态机 `createQueue()`——任务含 `source`（远程驱动预留）/`state`（pending/running/done/failed/cancelled）等字段，`enqueue`/`peek`/`markRunning`/`complete`/`fail`/`cancel`/`retry`/`snapshot`/`removeFinished` 操作（IssueRunner 面板用它串行执行「切分支→会话→推送→PR」流水线，见 [issue-runner-panel](modules/issue-runner-panel.md)）；
+- **`TaskIndex`**（IssueRunnerPanel.swift，与 core/lib/tasks.js 结构一致）：`.dsh/tasks/` 关联索引读写——`loadIndex`/`mergeTask`/`findTask`/`rememberSession`/`sessionForIssue`；index.json 写 `{"version": 1, "tasks": [...]}`，local.json 写 `{"sessions": {issue: {sessionId, updatedAt}}}`；
+- **任务状态机（IssueRunnerTask.State）**：`pending / running / done / failed / cancelled`，与 JobQueue 的 state 字段一致；`showTaskDetail` 按状态给不同动作按钮（pending→Process、running→Cancel、done→Open PR、failed/cancelled→Retry，均带 Close）。
 
 ## RPC 信封（与 dsh web 通信）
 
@@ -75,6 +77,15 @@ manual: false                   # true = 用户手改，代理永不覆盖
 
 - 目录规范：`index.md / overview.md / architecture.md / modules/<name>.md / data-model.md / conventions.md / tasks.md`（+ `_meta/backlinks.json` 与 `_meta/lock`，设计稿；lock 未实现，v1.7.0 以面板内 generating 标志防重入）；
 - 上限：初始生成 ≤ 20 页、单页 ≤ 200 行 / 20 KB、wiki 总量 ≤ 2 MB（超出标「已截断」）。
+
+## 任务关联索引（`.dsh/tasks/`）
+
+任务面板把 issue ↔ branch ↔ PR ↔ state 关联持久化到仓库根 `.dsh/tasks/`（`docs/issue-runner-design.md`「关联索引」章节），两文件分工：
+
+- **`index.json`**（随仓库提交）：仓库级共享关联，`{"version": 1, "tasks": [{ "issue", "branch", "prUrl"?, "state", "startedAt"?, "finishedAt"?, "error"? }]}`（按 issue 号升序，upsert 合并）；
+- **`local.json`**（`.gitignore` 忽略）：本机级覆盖，`{"sessions": { "<issue>": { "sessionId", "updatedAt" } }}`——dsh 会话 id 是本机实例特有的，不入共享索引。
+
+定位规则：issue→branch 读 index.json（或约定 `fix/issue-N`）；issue→session 运行中读内存、重启后读 local.json；issue→PR 读 index.json `prUrl`。App 重启后面板 `restoreFromIndex` 先按两文件重建任务列表与关联，再以 open issues 刷新标题。
 
 ## 日志与配置文件
 
