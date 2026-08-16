@@ -20,9 +20,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
+          # 注意：不带引号的 glob 由 bash 展开成文件列表，避免 Node 20 不支持
+          # node --test 的引号 glob（Node 21+ 才支持）。
           node-version: 20
       - name: core unit tests
-        run: node --test "core/tests/*.test.js"
+        run: node --test core/tests/*.test.js
 
   # --- macOS shell: unit tests + swiftc compile check (fast, no build) ------
   # macos-13 (x86_64) 退役中、runner 容量极低且排队严重；x86_64 的编译正确性

@@ -5,6 +5,8 @@
 # Usage: tests/wiki-panel/run.sh
 set -euo pipefail
 cd "$(dirname "$0")"
+# swiftc 需要 module-cache；CI 干净环境没有 .build/，先建好再 cd。
+mkdir -p ../../.build/module-cache
 CACHE="$(cd ../../.build/module-cache && pwd)"
 TMP="$(mktemp -d)"
 cp ../terminal-emulator/stubs.swift "$TMP/stubs.swift"
