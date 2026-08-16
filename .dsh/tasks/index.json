@@ -1,13 +1,4 @@
 {
-  "tasks" : [
-    {
-      "branch" : "fix\/issue-6",
-      "error" : "Branch was not pushed (agent didn't push?)",
-      "finishedAt" : "2026-08-16T11:38:05Z",
-      "issue" : 6,
-      "startedAt" : "2026-08-16T11:37:44Z",
-      "state" : "failed"
-    }
-  ],
-  "version" : 1
+  "version" : 1,
+  "tasks" : []
 }
