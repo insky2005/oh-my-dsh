@@ -7,6 +7,11 @@ on:
 permissions:
   contents: write
 
+# 同一 tag 重复触发时取消旧 run；不同 tag 的发布排队，避免互相挤占 macOS runner。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Build all three artifacts on macOS (arm64 / x86_64 / universal).
   build:
