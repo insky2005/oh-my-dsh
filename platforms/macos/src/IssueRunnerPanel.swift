@@ -76,13 +76,10 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     private var pollTimer: Timer?
     private var runningNumber: Int?
 
-    // GitHub token keychain service (per-repo scoped later if needed).
-    private static let tokenService = "oh-my-dsh.issuerunner.github-token"
-
     // MARK: - Init & UI
 
     override init() {
-        configButton = CustomIconButton(glyph: .folder, tooltip: "")
+        configButton = CustomIconButton(glyph: .symbol("gearshape"), tooltip: "")
         refreshButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: "")
         runAllButton = CustomIconButton(glyph: .play, tooltip: "")
         hideButton = CustomIconButton(glyph: .close, tooltip: "")
@@ -359,7 +356,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     private func reloadIssues() {
         guard let repo = repo else { return }
         setStatus(L10n.tr("tasks.loading"), spin: true)
-        let token = loadToken()
+        let token = loadToken(for: repo)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let issues = Self.fetchIssues(owner: repo.owner, repo: repo.repo, token: token)
             DispatchQueue.main.async {
@@ -475,7 +472,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             "startedAt": ISO8601DateFormatter().string(from: Date()),
         ])
 
-        let token = loadToken()
+        let token = loadToken(for: repo)
         let port = serverPortProvider?() ?? 3080
         let workspaceId = Self.resolveMainWorkspaceId(port: port, path: path)
 
@@ -818,12 +815,30 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         return prUrl
     }
 
-    // MARK: - Keychain token (never in UserDefaults/plaintext)
+    // MARK: - GitHub token (per-repo scoped, Keychain primary + file fallback)
 
-    private func loadToken() -> String? {
+    /// Generic Keychain service (repo-agnostic fallback).
+    private static let genericTokenService = "oh-my-dsh.issuerunner.github-token"
+    /// Shared generic token file: the single place a user can drop a token for
+    /// BOTH the app shell and external tools/agents (`~/.dsh/gh-token`).
+    private static let genericTokenFilePath = NSHomeDirectory() + "/.dsh/gh-token"
+    /// Per-repo token dir for file-based tokens: `~/.dsh/tokens/<owner>-<repo>`.
+    private static let tokenDir = NSHomeDirectory() + "/.dsh/tokens"
+
+    /// Keychain service for a specific repo (owner/repo scoped).
+    private static func tokenService(for repo: (owner: String, repo: String)) -> String {
+        "oh-my-dsh.issuerunner.github-token.\(repo.owner)/\(repo.repo)"
+    }
+
+    /// Per-repo token file path: ~/.dsh/tokens/<owner>-<repo>.
+    private static func tokenFilePath(for repo: (owner: String, repo: String)) -> String {
+        tokenDir + "/" + repo.owner + "-" + repo.repo
+    }
+
+    private func readKeychain(service: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.tokenService,
+            kSecAttrService as String: service,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
@@ -834,15 +849,64 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         return token
     }
 
-    private func saveToken(_ token: String) {
+    private func readTokenFile(_ path: String) -> String? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let token = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else { return nil }
+        return token
+    }
+
+    /// Resolve the token for the CURRENT repo, with per-repo scoping so that
+    /// multiple workspaces/projects each use their own token.
+    /// File paths are read FIRST (no Keychain password prompt), Keychain is a
+    /// fallback for entries created by older builds or the command line:
+    ///   1. File      ~/.dsh/tokens/<owner>-<repo>
+    ///   2. File      ~/.dsh/gh-token (generic, shared with agents)
+    ///   3. Keychain  <owner>/<repo>
+    ///   4. Keychain  generic (legacy single-token)
+    private func loadToken(for repo: (owner: String, repo: String)? = nil) -> String? {
+        if let repo = repo {
+            if let t = readTokenFile(Self.tokenFilePath(for: repo)) { return t }
+        }
+        if let t = readTokenFile(Self.genericTokenFilePath) { return t }
+        if let repo = repo {
+            if let t = readKeychain(service: Self.tokenService(for: repo)) { return t }
+        }
+        return readKeychain(service: Self.genericTokenService)
+    }
+
+    /// Save a token scoped to the current repo. Writes BOTH the Keychain entry
+    /// (primary, secure) AND the per-repo file (~/.dsh/tokens/<owner>-<repo>)
+    /// so external tools/agents using the file see the same token. Clearing
+    /// (empty token) removes both.
+    private func saveToken(_ token: String, for repo: (owner: String, repo: String)? = nil) {
+        let service = repo.map(Self.tokenService(for:)) ?? Self.genericTokenService
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.tokenService,
+            kSecAttrService as String: service,
         ]
         SecItemDelete(query as CFDictionary)
+        if token.isEmpty {
+            // Clear the matching file too (per-repo or generic).
+            let file = repo.map(Self.tokenFilePath(for:)) ?? Self.genericTokenFilePath
+            try? FileManager.default.removeItem(atPath: file)
+            return
+        }
         var attrs = query
         attrs[kSecValueData as String] = token.data(using: .utf8) ?? Data()
+        // Accessible after first unlock + no per-app ACL prompt: a token is a
+        // low-sensitivity credential; prompting on every read is unacceptable
+        // for a background shell. (File fallback is chmod 600.)
+        attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         SecItemAdd(attrs as CFDictionary, nil)
+        // Mirror to the file so agents / external tools share the same token.
+        if let repo = repo {
+            let dir = Self.tokenDir
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            let file = Self.tokenFilePath(for: repo)
+            try? token.data(using: .utf8)?.write(to: URL(fileURLWithPath: file), options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file)
+        }
     }
 
     // MARK: - Config
@@ -855,17 +919,13 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         alert.addButton(withTitle: L10n.tr("btn.cancel"))
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
         field.placeholderString = L10n.tr("tasks.tokenPlaceholder")
-        field.stringValue = loadToken() ?? ""
+        field.stringValue = loadToken(for: repo) ?? ""
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
         if alert.runModal() == .alertFirstButtonReturn {
             let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if value.isEmpty {
-                SecItemDelete([kSecClass as String: kSecClassGenericPassword,
-                               kSecAttrService as String: Self.tokenService] as CFDictionary)
-            } else {
-                saveToken(value)
-            }
+            // Empty → clear both Keychain and file; otherwise save both.
+            saveToken(value, for: repo)
             reloadIssues()
         }
     }
@@ -1155,7 +1215,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         let comment = field.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !comment.isEmpty else { return }
 
-        guard let token = loadToken() else {
+        guard let token = loadToken(for: repo) else {
             setStatus(L10n.tr("tasks.commentCloseFailed"), spin: false)
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.hideStatus() }
             return

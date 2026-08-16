@@ -279,7 +279,7 @@ enum L10n {
         "tasks.prTitle": ("fix(#%d)", "fix(#%d)"),
         "tasks.prBody": ("自动修复 GitHub issue #%d（由 oh-my-dsh 任务面板处理）", "Automated fix for GitHub issue #%d (processed by oh-my-dsh task panel)"),
         "tasks.configTitle": ("GitHub Token", "GitHub Token"),
-        "tasks.configInfo": ("私有仓库需要 GitHub token（存于 Keychain，仅用于拉取 issues 与创建 PR；公开仓库可留空）。", "Private repos need a GitHub token (stored in Keychain, used only to fetch issues & create PRs; leave empty for public repos)."),
+        "tasks.configInfo": ("GitHub token（按当前仓库保存：Keychain + ~/.dsh/tokens/<owner>-<repo> 文件双写，App 与外部工具共用）。仅用于拉取 issues、创建 PR、评论关闭 issue；公开仓库可留空。", "GitHub token (saved per repo: written to both Keychain and ~/.dsh/tokens/<owner>-<repo>, shared with external tools). Used only to fetch issues, create PRs, comment & close issues; public repos may leave empty."),
         "tasks.tokenPlaceholder": ("ghp_xxx（可选）", "ghp_xxx (optional)"),
         "tasks.detailTitle": ("Issue #%d", "Issue #%d"),
         "tasks.detailLabels": ("标签：%@", "Labels: %@"),
