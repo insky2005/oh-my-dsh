@@ -1,7 +1,7 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-08-15T14:22:31Z
+updated: 2026-08-16T00:09:27Z
 sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, docs/repo-wiki-design.md]
 manual: false
 ---
@@ -15,6 +15,8 @@ manual: false
 | 键 | 含义 | 出处 |
 |---|---|---|
 | `appLanguage` | 显式语言选择（"zh"/"en"；删除 = 跟随系统） | `L10n` |
+| `appTheme` | 主题（"system"/"light"/"dark"，设置窗口切换） | `AppTheme` |
+| `hasCompletedOnboarding` | 首次引导 onboarding 已完成（一次性） | `showOnboardingIfNeeded` |
 | `AppleLanguages` | 覆写 WebView 的 `navigator.language`（"zh-CN"/"en-US"） | AppDelegate |
 | `dshRegistry` | 运行期 npm registry（删除 = 默认国内源） | `RegistryConfig` |
 | `autoUpgradeDsh` | 自动升级开关（默认开） | AppDelegate |

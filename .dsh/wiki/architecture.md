@@ -1,7 +1,7 @@
 ---
 title: 架构
 tags: [architecture, layers, dataflow, deployment]
-updated: 2026-08-15T14:22:31Z
+updated: 2026-08-16T00:09:27Z
 sources: [platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, docs/repo-wiki-design.md]
 manual: false
 ---
@@ -14,7 +14,8 @@ manual: false
 ┌────────────────────────────── oh-my-dsh.app（壳层，Swift）──────────────────────────────┐
 │ AppDelegate（main.swift）                                                                │
 │   ├─ ServerManager   服务探测/拉起/复用/停止；resolveNode/resolveDSHBin                   │
-│   ├─ DSHUpdater      内置 dsh 检查与升级（node + npm-cli.js install）                     │
+│   ├─ DSHUpdater      内置 dsh 检查与升级（node + npm-cli.js install）；版本检查经 CoreBridge 调共享核心│
+│   ├─ CoreBridge      调共享核心 CLI（core/bin/ohmy-core.js，嵌入 runtime/core）；版本比较/最新版本查询   │
 │   ├─ RegistryConfig  运行期 npm registry（默认国内源）                                    │
 │   ├─ L10n            中/英文案表（跟随系统，DSH_LANG 可覆盖）                             │
 │   ├─ DSHSessionRPC   经 HTTP RPC 解析会话 cwd（client-request 信封）                      │
@@ -54,7 +55,7 @@ manual: false
 
 ## 部署形态
 
-- 单 `.app`（ad-hoc 签名，`codesign --force --deep --sign -`），自包含运行时在 `Contents/Resources/runtime/`（`node` + `npm/` + `dsh/` 依赖树）；
+- 单 `.app`（ad-hoc 签名，`codesign --force --deep --sign -`），自包含运行时在 `Contents/Resources/runtime/`（`node` + `npm/` + `dsh/` 依赖树 + `core/` 共享核心）；
 - 发布物：`.pkg`（preinstall 先删旧版再装到 /Applications）+ `.dmg`（拖拽安装），由 `platforms/macos/make-pkg.sh` 生成；
 - About 面板展示运行时事实：dsh 版本、Node 版本、运行时来源（内置/系统）、registry；
 - dsh 升级只作用于内置运行时（`DSHUpdater.init` 要求路径含 `/Contents/Resources/runtime/`），绝不碰系统安装；升级会改写包内文件使 ad-hoc 签名失效（README 明示，本地运行不受影响）。

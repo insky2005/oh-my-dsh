@@ -1,8 +1,8 @@
 ---
 title: 工程约定
 tags: [conventions, l10n, build, qa-hooks, versioning]
-updated: 2026-08-15T15:31:24Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/src/main.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .gitignore]
+updated: 2026-08-16T06:09:01Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/src/main.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .gitignore, .github/workflows/ci.yml]
 manual: false
 ---
 
@@ -26,7 +26,7 @@ manual: false
 - 编译：`swiftc -O -swift-version 5`，frameworks 为 AppKit/WebKit/PDFKit；**编译源文件清单显式写在 `platforms/macos/build-app.sh`**，新增 `.swift` 文件必须登记；
 - `module-cache-path` 固定在 `.build/module-cache`（沙箱/环境问题规避）；
 - 图标：`MakeIcon.swift` 程序化渲染（16…1024px 全尺寸）→ `iconutil -c icns`，不提交二进制图；
-- 版本号：`platforms/macos/build-app.sh` 顶部 `VERSION` / `BUILD` 递增；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`platforms/macos/make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；
+- 版本号单一来源：`scripts/version.sh`（HEAD 命中 git tag vX.Y.Z → VERSION 取 tag，否则回退 1.8.0；BUILD 取 CI 运行号，本地回退 64）；`platforms/macos/build-app.sh` 运行期读取，**勿在脚本硬编码版本**；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`platforms/macos/make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；
 - `git status` 应只出现源码/文档变更：`.build/` `.cache/` `dist/` `pic/` `.DS_Store` 均在 `.gitignore`。
 
 ## 面板 UI 约定
@@ -53,8 +53,10 @@ manual: false
 
 ## 测试约定
 
-- 无头单测模式（`tests/*/run.sh`）：`stubs.swift` + 把被测源码复制进临时目录 + 测试文件改名 `main.swift`（顶层代码需要）→ `swiftc` 编译运行，无窗口/无 PTY 依赖；
-- 终端模拟器测试不触 PTY（沙箱可能禁 `/dev/ptmx`），只测 `TerminalEmulator` 状态机；
+- 共享核心单测走 Node：`node --test core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC，55 用例）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
+- CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + 全源码 `swiftc` 编译检查（先 `mkdir -p .build/module-cache`）；构建矩阵为 arm64 + universal（lipo 覆盖 x86_64 编译验证），**不再使用退役中的 macos-13/x86_64 runner**；
+- 面板/壳层 Swift 无头单测模式（`tests/*/run.sh`）：`stubs.swift` + 把被测源码复制进临时目录 + 测试文件改名 `main.swift`（顶层代码需要）→ `swiftc` 编译运行，无窗口/无 PTY 依赖；
+- 终端模拟器测试不触 PTY（沙箱可能禁 `/dev/ptmx`），已迁 `core/tests/ansi.test.js`（42 项），`tests/terminal-emulator/run.sh` 为薄封装；
 - 新增面板需配套模型层单测（如 `tests/wiki-panel/`）。
 
 ## 日志约定

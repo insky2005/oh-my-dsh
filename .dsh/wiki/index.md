@@ -1,7 +1,7 @@
 ---
 title: oh-my-dsh 仓库知识库
 tags: [wiki, index, oh-my-dsh]
-updated: 2026-08-15T15:31:24Z
+updated: 2026-08-16T08:59:49Z
 sources: [README.md, .dsh/skills/repo-wiki/SKILL.md]
 manual: false
 ---
@@ -29,8 +29,8 @@ manual: false
 ## 统计
 
 - 页面数：11（含本页；模块页 5 个）
-- 主要源码：`src/`（5 个 Swift 文件，约 7.6k 行）
-- 最近一次提交：`216878a`（"feat(core-bridge): macOS 壳改调 core — 运行时嵌入 core/"）
+- 主要源码：`platforms/macos/src/`（5 个 Swift 文件，约 8.1k 行）+ 共享核心 `core/`（Node 模块，55 用例单测）
+- 最近一次提交：`68fc925`（"ci(release): publish 幂等加固 — 先删旧 release+tag 再用 gh release create --target 重建；Collect 步骤清空 dist 避免混入历史产物"）
 - 工作区版本号：`1.8.0`（BUILD 64），版本单一来源（git tag vX.Y.Z → scripts/version.sh；见 [overview](overview.md)）
 - 仓库新增文档：`docs/productization.md`（产品化方案：P0 已达成 → P1 开源/CI → P2 Windows → P3 Linux → P4 生态 → F Apple 生态暂缓，见 [overview](overview.md)）；`docs/milestones/`（M1 产品化基础 … M5 Apple 生态 5 份里程碑目标文档，README「目录」收录）
 
@@ -40,4 +40,4 @@ manual: false
 - 增量更新只重写 `sources` 命中变更的页面；`manual: true` 页面绝不改写；
 - 内容只写可证实事实；`.env*`/密钥/口令一律不收录。
 
-最后生成时间：2026-08-15T15:31:24Z
+最后生成时间：2026-08-16T08:59:49Z

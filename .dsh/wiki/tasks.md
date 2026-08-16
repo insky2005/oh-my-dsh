@@ -1,8 +1,8 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-08-15T15:31:24Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md]
+updated: 2026-08-16T08:59:49Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .github/workflows/]
 manual: false
 ---
 
@@ -11,20 +11,20 @@ manual: false
 ## 构建 App
 
 ```bash
-./build-app.sh --prefetch   # 首次或换版本时先预下载 Node + 预装 dsh 到 .cache/（可离线复用）
-./build-app.sh              # 全量构建 → dist/oh-my-dsh.app（复用 .cache 则无需网络）
+./platforms/macos/build-app.sh --prefetch   # 首次或换版本时先预下载 Node + 预装 dsh 到 .cache/（可离线复用）
+./platforms/macos/build-app.sh              # 全量构建 → dist/oh-my-dsh.app（复用 .cache 则无需网络）
 ```
 
-- 产物：`dist/oh-my-dsh.app`（arm64、ad-hoc 签名、含内置运行时）；
+- 产物：`dist/oh-my-dsh.app`（arm64、ad-hoc 签名、含内置运行时 + `runtime/core` 共享核心）；
 - 常见失败：网络不可达 → 有缓存 tarball 会自动推导版本继续；`swiftc` 报错 → 检查新增文件是否登记进编译清单（第 3 步）；
 - 重新构建会清掉旧包（`rm -rf "$BUILD_DIR" "$APP"`），`platforms/macos/make-pkg.sh` 依赖已构建的 `.app`。
 
 ## 打包安装包（.pkg / .dmg）
 
 ```bash
-./make-pkg.sh   # 需先 ./build-app.sh
-# 产物：dist/oh-my-dsh-<version>-arm64.pkg 与 .dmg（版本从 Info.plist 读取）
-# 安装：open "dist/oh-my-dsh-<version>-arm64.pkg"（装到 /Applications，preinstall 自动删旧版）
+./platforms/macos/make-pkg.sh   # 需先 ./platforms/macos/build-app.sh
+# 产物：dist/oh-my-dsh-<version>-<arch>.pkg 与 .dmg（版本从 Info.plist 读取）
+# 安装：open "dist/oh-my-dsh-<version>-<arch>.pkg"（装到 /Applications，preinstall 自动删旧版）
 ```
 
 ## 运行与验证
@@ -38,17 +38,19 @@ open "dist/oh-my-dsh.app"
 ## 跑单元测试
 
 ```bash
-tests/terminal-emulator/run.sh   # 终端模拟器（无 PTY）
-tests/wiki-panel/run.sh          # Repo Wiki 模型层
+node --test core/tests/*.test.js  # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC，55 用例；不带引号由 bash 展开 glob，Node 20 兼容）
+tests/terminal-emulator/run.sh      # 模拟器测试（core/tests/ansi.test.js 的薄封装）
+tests/wiki-panel/run.sh             # Repo Wiki 模型层
 ```
 
-- 均无窗口依赖，可在纯命令行环境运行；失败即非零退出（`set -euo pipefail`）。
+- 均无窗口依赖，可在纯命令行环境运行；失败即非零退出（`set -euo pipefail`）；
+- `tests/wiki-panel/run.sh` 会先 `mkdir -p .build/module-cache` 再编译（干净环境/CI 无 `.build/` 时必需，见 `c2d626b`）。
 
 ## 加一个新右栏面板（参照 v1.7.0 Wiki 面板）
 
-1. 新建 `src/<Panel>.swift`，实现 `PanelController`（复用 `HoverButton`/`DynamicFillView`/`CustomIconButton`）；
+1. 新建 `platforms/macos/src/<Panel>.swift`，实现 `PanelController`（复用 `HoverButton`/`DynamicFillView`/`CustomIconButton`）；
 2. `platforms/macos/src/main.swift`：`RightPanel` 枚举加 case；`buildSplitView` 里创建 controller（`onRequestHide` + `serverPortProvider`）；活动栏加 `ActivityBarButton`；`activePanelView`/`setRightPanel` 分发；「视图」菜单加切换项（如 `⌥⌘X`）；`rightPanelKind` 持久化映射；
-3. `platforms/macos/build-app.sh`：编译清单加入新文件；`VERSION`/`BUILD` 递增；
+3. `platforms/macos/build-app.sh`：编译清单加入新文件（版本走 git tag + `scripts/version.sh`，勿手改）；
 4. `L10n.table` 加中英文案键；README 特性说明；
 5. 配套无头单测（仿 `tests/wiki-panel/`：`stubs.swift` + `run.sh`）。
 
@@ -61,7 +63,7 @@ tests/wiki-panel/run.sh          # Repo Wiki 模型层
 
 - 手动：设置菜单 →「检查并升级 dsh…」(⌘U)；自动：设置菜单 →「自动升级 dsh」（默认开，24h 节流）；
 - 只作用于内置运行时（路径含 `/Contents/Resources/runtime/`），不碰系统 dsh；
-- 注意：升级会改写 App 包内文件导致 ad-hoc 签名失效（本地运行不受影响）；重新 `./build-app.sh` 还原干净包。
+- 注意：升级会改写 App 包内文件导致 ad-hoc 签名失效（本地运行不受影响）；重新 `./platforms/macos/build-app.sh` 还原干净包。
 
 ## 重新生成/更新仓库知识库（Repo Wiki）
 
@@ -80,8 +82,11 @@ tests/wiki-panel/run.sh          # Repo Wiki 模型层
 
 ## 发布清单（简版）
 
-1. `platforms/macos/build-app.sh` 版本号确认（VERSION/BUILD）；
-2. `./build-app.sh` 全量构建 → `open dist/oh-my-dsh.app` 手工 QA（README 特性逐项过）；
+1. 版本确认：HEAD 打/命中 git tag vX.Y.Z（`scripts/version.sh` 输出 VERSION/BUILD）；
+2. `./platforms/macos/build-app.sh` 全量构建 → `open dist/oh-my-dsh.app` 手工 QA（README 特性逐项过）；
 3. `tests/*/run.sh` 全绿；
-4. `./make-pkg.sh` 出 .pkg/.dmg；
+4. `./platforms/macos/make-pkg.sh` 出 .pkg/.dmg；
 5. 提交时检查 `git status`：只含源码/文档/wiki 变更（.build/.cache/dist/pic 已忽略）。
+
+CI 侧（`release.yml`）：push `v*` tag 自动在 macos-14 构建 arm64 / x86_64（-target 交叉编译）/ universal 三份产物（.pkg/.dmg），汇总后出 SHA-256SUMS 并以 **pre-release** 发布 GitHub Release（人工确认后改正式）；同一 tag 重复触发会取消旧 run（concurrency）；
+- **发布幂等**（`68fc925` 起）：Collect 步骤先 `rm -rf dist` 再拷贝产物（避免混入历史产物）；publish 先 `gh release delete <tag> --cleanup-tag`（失败忽略）再用 `gh release create --target $GITHUB_SHA` 重建 tag + Release + 资产，同 tag 重复发布不再 already_exists（此前尝试过 smoke job / softprops action / --clobber，均已回退或替换）。

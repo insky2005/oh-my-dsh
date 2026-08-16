@@ -1,7 +1,7 @@
 ---
 title: 模块：构建与打包脚本
 tags: [module, build, packaging, icon]
-updated: 2026-08-15T14:22:31Z
+updated: 2026-08-16T00:09:27Z
 sources: [platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, platforms/macos/src/MakeIcon.swift]
 manual: false
 ---
@@ -18,10 +18,10 @@ manual: false
 - **`--prefetch`**：只建 runtime 到 `.cache/runtime`，不产出 App（供离线全量构建）；
 - **6 步构建**：① 准备目录（`rm -rf .build dist/oh-my-dsh.app`）② `MakeIcon.swift` 编译渲染 iconset → `iconutil -c icns` → 拷入 Resources ③ `swiftc -O -swift-version 5 -framework AppKit/WebKit/PDFKit` 编译 `main/PreviewPanel/TerminalPanel/WikiPanel`（**清单在此，新增文件必须登记**）④ `build_runtime` + `ditto` 嵌入 `Contents/Resources/runtime/` ⑤ 写 `Info.plist`（`LSMinimumSystemVersion` 13.0、`CFBundleLocalizations` zh/en、ATS 允许 127.0.0.1/localhost 明文、`NSHighResolutionCapable`）⑥ `codesign --force --deep --sign -`（ad-hoc）。
 
-## platforms/macos/make-pkg.sh（安装包 + 镜像，80 行）
+## platforms/macos/make-pkg.sh（安装包 + 镜像，85 行）
 
 - 前置：`dist/oh-my-dsh.app` 必须已由 platforms/macos/build-app.sh 产出；
-- 版本/ID 从 App 的 Info.plist 读取（`PlistBuddy`），产物 `dist/oh-my-dsh-<version>-<arch>.pkg` / `.dmg`（`ARCH=$(uname -m)`，即 arm64）；
+- 版本/ID 从 App 的 Info.plist 读取（`PlistBuddy`），产物 `dist/oh-my-dsh-<version>-<arch>.pkg` / `.dmg`（`ARCH="${DSH_ARCH:-$(uname -m)}"`，aarch64→arm64、amd64→x86_64 映射，即可交叉产出）；
 - preinstall 脚本：先 `rm -rf /Applications/oh-my-dsh.app`（重装不留旧文件）→ `pkgbuild --component` 装到 `/Applications`（工具链接受 `--sign -` 则 ad-hoc 签名，否则不签名）；
 - DMG：`ditto` 拷贝 App + `ln -s /Applications`，`hdiutil create -format UDZO`（拖拽安装）。
 
