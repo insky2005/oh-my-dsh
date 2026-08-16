@@ -222,9 +222,9 @@
 
 ### 4.2 分支与发布模型
 
-- 主干开发（trunk-based）+ `release/*` 分支发布；hotfix 上主干并 cherry-pick 到当前 release
-- 每个发布打 tag：`v<major>.<minor>.<patch>`（如 `v1.8.0`），tag 驱动 CI 发布（→ §5.3）
-- 提交规范：沿用 conventional commits（`feat(wiki): …`）；CHANGELOG 由发布脚本按 tag 区间生成（或手动维护 + 发布前校验）
+- **统一分支规范**（自 2026-08-16 生效）：main 只接受合并、只打主版本 `vX.Y.0`；功能走 `feature/<slug>`、bug 修复走 `fix/<slug>`（未发布）或 `release/X.Y`（已发布版本，打 patch tag 发布后 cherry-pick 回 main）。完整流程与命令见 **`docs/git-workflow.md`**；
+- 每个发布打 tag：`v<major>.<minor>.<patch>`，tag 驱动 CI 发布（→ §5.3）；
+- 提交规范：沿用 conventional commits（`feat(wiki): …`）；CHANGELOG 由发布脚本按 tag 区间生成（或手动维护 + 发布前校验）。
 
 ### 4.3 版本与兼容性策略
 

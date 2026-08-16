@@ -65,11 +65,13 @@ test(core): migrate emulator tests into core/      # 测试
 
 ## PR 流程
 
-1. Fork 本仓库（或直接开分支，`trunk-based` 开发）；
-2. 从 `main` 拉分支：`git checkout -b feat/your-change`；
-3. 提交并推送，开 PR 到 `main`；
-4. CI 全绿 + 至少 1 位 CODEOWNER 审查后合并；
-5. 合并后由维护者打 tag（`vX.Y.Z`）触发发布流程（`.github/workflows/release.yml`）。
+统一分支规范见 [docs/git-workflow.md](docs/git-workflow.md)（main 只合并、只打主版本）：
+
+1. **功能开发**：从 `main` 拉 `feature/<slug>` 分支 → 开发 → PR 到 `main` → 合并后随主版本发布；
+2. **bug 修复（未发布）**：从 `main` 拉 `fix/<slug>` 分支 → 修复 → PR 到 `main` → 随主版本发布；
+3. **bug 修复（已发布版本）**：从对应 tag 切 `release/X.Y` 分支 → 修复 → 打 patch tag 自行发布 → cherry-pick 回 `main`；
+4. 任意分支 PR 都跑 CI；合并回 `main` 前 **CI 必须全绿** + 至少 1 位 CODEOWNER 审查；
+5. 发布由维护者打 tag 触发（`.github/workflows/release.yml`）：主版本 `vX.Y.0` 打 `main`，patch `vX.Y.Z` 打 release 分支。
 
 ## 行为准则
 
