@@ -818,9 +818,14 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         return prUrl
     }
 
-    // MARK: - Keychain token (never in UserDefaults/plaintext)
+    // MARK: - GitHub token (Keychain primary, ~/.dsh/gh-token fallback)
+
+    /// Shared token file: the single place a user can drop a token for BOTH
+    /// the app shell and external tools/agents (`~/.dsh/gh-token`, chmod 600).
+    private static let tokenFilePath = NSHomeDirectory() + "/.dsh/gh-token"
 
     private func loadToken() -> String? {
+        // 1) Keychain (set via the panel's config dialog)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.tokenService,
@@ -828,10 +833,18 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let token = String(data: data, encoding: .utf8), !token.isEmpty else { return nil }
-        return token
+        if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+           let data = item as? Data,
+           let token = String(data: data, encoding: .utf8), !token.isEmpty {
+            return token
+        }
+        // 2) Unified file fallback: ~/.dsh/gh-token (used by agents too)
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: Self.tokenFilePath)),
+           let token = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty {
+            return token
+        }
+        return nil
     }
 
     private func saveToken(_ token: String) {
