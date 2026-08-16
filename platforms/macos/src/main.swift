@@ -296,6 +296,12 @@ enum L10n {
         "tasks.detailRetry": ("重试", "Retry"),
         "tasks.detailCancelTask": ("取消任务", "Cancel Task"),
         "tasks.detailClose": ("关闭", "Close"),
+        "tasks.detailCommentClose": ("评论并关闭 Issue", "Comment & Close Issue"),
+        "tasks.commentCloseTitle": ("评论并关闭 Issue #%d", "Comment & Close Issue #%d"),
+        "tasks.commentCloseInfo": ("将发布一条评论并关闭该 issue（需 GitHub token）。可编辑下方评论内容：", "Posts a comment and closes the issue (needs a GitHub token). You can edit the comment below:"),
+        "tasks.commentCloseDone": ("已评论并关闭 issue #%d", "Commented & closed issue #%d"),
+        "tasks.commentCloseFailed": ("评论/关闭失败（检查 token 与网络）", "Comment/close failed (check token & network)"),
+        "tasks.commentTemplate": ("已由 oh-my-dsh 任务面板处理完成，对应 PR：#%@", "Processed by the oh-my-dsh task panel; PR: %@"),
     ]
 
     /// Localize a key, optionally filling %@ / %d placeholders.

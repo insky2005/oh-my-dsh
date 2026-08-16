@@ -940,6 +940,13 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             secondary.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(secondary)
 
+            let commentClose = NSButton(title: "", target: self, action: #selector(cellButtonTapped(_:)))
+            commentClose.tag = 202
+            commentClose.controlSize = .small
+            commentClose.bezelStyle = .rounded
+            commentClose.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(commentClose)
+
             NSLayoutConstraint.activate([
                 title.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
                 title.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
@@ -960,6 +967,10 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
                 secondary.leadingAnchor.constraint(equalTo: process.trailingAnchor, constant: 8),
                 secondary.centerYAnchor.constraint(equalTo: process.centerYAnchor),
                 secondary.heightAnchor.constraint(equalToConstant: 22),
+
+                commentClose.leadingAnchor.constraint(equalTo: secondary.trailingAnchor, constant: 8),
+                commentClose.centerYAnchor.constraint(equalTo: process.centerYAnchor),
+                commentClose.heightAnchor.constraint(equalToConstant: 22),
             ])
         } else {
             NSLayoutConstraint.activate([
@@ -992,6 +1003,15 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             if let secondary = cell.viewWithTag(201) as? NSButton {
                 secondary.title = secondaryActionTitle(for: task)
                 secondary.isEnabled = secondaryActionEnabled(for: task)
+            }
+            if let commentClose = cell.viewWithTag(202) as? NSButton {
+                // Only show "comment & close" for finished tasks with a PR.
+                let visible = (task.state == .done && task.prUrl != nil)
+                commentClose.isHidden = !visible
+                if visible {
+                    commentClose.title = L10n.tr("tasks.detailCommentClose")
+                    commentClose.isEnabled = true
+                }
             }
         }
     }
@@ -1040,10 +1060,10 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         tableView.reloadData()
     }
 
-    /// Row button handler. The primary (tag 200) and secondary (tag 201)
-    /// Row button handler. The primary (tag 200) and secondary (tag 201)
-    /// buttons live inside an expanded cell; the cell's objectValue carries
-    /// the issue number. Actions are explicit — never implicit row clicks.
+    /// Row button handler. The primary (tag 200), secondary (tag 201) and
+    /// comment/close (tag 202) buttons live inside an expanded cell; the
+    /// cell's objectValue carries the issue number. Actions are explicit —
+    /// never implicit row clicks.
     @objc private func cellButtonTapped(_ sender: NSButton) {
         guard let cell = sender.superview as? NSTableCellView,
               let number = cell.objectValue as? Int,
@@ -1053,6 +1073,10 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             expandedIssue = nil
             tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<tasks.count))
             tableView.reloadData()
+            return
+        }
+        if sender.tag == 202 {   // comment & close (user-initiated)
+            commentAndCloseTapped(number: number)
             return
         }
         // Primary action depends on state.
@@ -1083,6 +1107,109 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             }
             startTask(number: number)
         }
+    }
+
+    /// User pressed "Comment & Close Issue": show a confirmation dialog with an
+    /// editable comment (pre-filled with the PR reference), then act on GitHub.
+    /// Explicitly user-initiated — never automatic.
+    private func commentAndCloseTapped(number: Int) {
+        guard let idx = tasks.firstIndex(where: { $0.number == number }),
+              let repo = repo,
+              tasks[idx].state == .done else { return }
+        let prRef = tasks[idx].prUrl ?? ""
+
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("tasks.commentCloseTitle", number)
+        alert.informativeText = L10n.tr("tasks.commentCloseInfo")
+        alert.addButton(withTitle: L10n.tr("btn.ok"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        let field = NSTextView(frame: NSRect(x: 0, y: 0, width: 420, height: 120))
+        field.isEditable = true
+        field.isSelectable = true
+        field.string = L10n.tr("tasks.commentTemplate", prRef)
+        let scroll = NSScrollView(frame: field.bounds)
+        scroll.documentView = field
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .bezelBorder
+        scroll.frame = NSRect(x: 0, y: 0, width: 420, height: 120)
+        alert.accessoryView = scroll
+        alert.window.initialFirstResponder = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let comment = field.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !comment.isEmpty else { return }
+
+        guard let token = loadToken() else {
+            setStatus(L10n.tr("tasks.commentCloseFailed"), spin: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.hideStatus() }
+            return
+        }
+        setStatus(L10n.tr("tasks.commentCloseTitle", number), spin: true)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let ok = Self.commentAndCloseIssue(owner: repo.owner, repoName: repo.repo,
+                                               number: number, comment: comment, token: token)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.hideStatus()
+                if ok {
+                    AppLog.shared.log("issue \(number) commented & closed")
+                    // Refresh issues so the closed one disappears from the list.
+                    self.reloadIssues()
+                } else {
+                    self.setStatus(L10n.tr("tasks.commentCloseFailed"), spin: false)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.hideStatus() }
+                }
+            }
+        }
+    }
+
+    /// POST a comment on the issue, then PATCH state=closed. Returns success.
+    static func commentAndCloseIssue(owner: String, repoName: String, number: Int,
+                                     comment: String, token: String?) -> Bool {
+        // 1) POST /repos/{o}/{r}/issues/{n}/comments
+        let commentURL = URL(string: "https://api.github.com/repos/\(owner)/\(repoName)/issues/\(number)/comments")!
+        var req = URLRequest(url: commentURL)
+        req.httpMethod = "POST"
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "accept")
+        req.setValue("oh-my-dsh", forHTTPHeaderField: "user-agent")
+        if let token = token, !token.isEmpty {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "authorization")
+        }
+        req.setValue("application/json", forHTTPHeaderField: "content-type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["body": comment])
+        let sem = DispatchSemaphore(value: 0)
+        var commentOK = false
+        let t1 = URLSession.shared.dataTask(with: req) { _, resp, _ in
+            defer { sem.signal() }
+            if let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) { commentOK = true }
+        }
+        t1.resume()
+        _ = sem.wait(timeout: .now() + 20)
+        t1.cancel()
+        guard commentOK else { return false }
+
+        // 2) PATCH /repos/{o}/{r}/issues/{n}  { state: "closed" }
+        let closeURL = URL(string: "https://api.github.com/repos/\(owner)/\(repoName)/issues/\(number)")!
+        var req2 = URLRequest(url: closeURL)
+        req2.httpMethod = "PATCH"
+        req2.setValue("application/vnd.github+json", forHTTPHeaderField: "accept")
+        req2.setValue("oh-my-dsh", forHTTPHeaderField: "user-agent")
+        if let token = token, !token.isEmpty {
+            req2.setValue("Bearer \(token)", forHTTPHeaderField: "authorization")
+        }
+        req2.setValue("application/json", forHTTPHeaderField: "content-type")
+        req2.httpBody = try? JSONSerialization.data(withJSONObject: ["state": "closed"])
+        let sem2 = DispatchSemaphore(value: 0)
+        var closeOK = false
+        let t2 = URLSession.shared.dataTask(with: req2) { _, resp, _ in
+            defer { sem2.signal() }
+            if let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) { closeOK = true }
+        }
+        t2.resume()
+        _ = sem2.wait(timeout: .now() + 20)
+        t2.cancel()
+        return closeOK
     }
 
     /// Multi-line detail text shown in the expanded row's scrollable area:

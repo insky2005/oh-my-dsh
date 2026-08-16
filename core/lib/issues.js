@@ -127,6 +127,61 @@ async function createPullRequest(owner, repo, opts, token = null, timeoutMs = 20
 }
 
 /**
+ * PATCH a GitHub REST endpoint with a JSON body.
+ */
+function ghPatch(path, body, token = null, timeoutMs = 20_000) {
+  return new Promise((resolve) => {
+    const payload = JSON.stringify(body);
+    const headers = {
+      accept: 'application/vnd.github+json',
+      'user-agent': 'oh-my-dsh',
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(payload),
+    };
+    if (token) headers.authorization = `Bearer ${token}`;
+    const req = https.request(
+      API_BASE + path,
+      { method: 'PATCH', headers, timeout: timeoutMs },
+      (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (c) => { body += c; });
+        res.on('end', () => {
+          try {
+            resolve({ status: res.statusCode, body: JSON.parse(body) });
+          } catch {
+            resolve({ status: res.statusCode, body: null });
+          }
+        });
+      }
+    );
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0, body: null }); });
+    req.on('error', () => resolve({ status: 0, body: null }));
+    req.end(payload);
+  });
+}
+
+/**
+ * Post a comment on an issue and (optionally) close it. User-initiated —
+ * never automatic. Returns { ok, status, error? }.
+ */
+async function commentAndCloseIssue(owner, repo, issueNumber, { comment, close = true }, token = null, timeoutMs = 20_000) {
+  const commentPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}/comments`;
+  const commentRes = await ghPost(commentPath, { body: comment }, token, timeoutMs);
+  if (commentRes.status < 200 || commentRes.status >= 300) {
+    return { ok: false, status: commentRes.status, error: commentRes.body, step: 'comment' };
+  }
+  if (!close) return { ok: true, status: commentRes.status, step: 'comment-only' };
+
+  const closePath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}`;
+  const closeRes = await ghPatch(closePath, { state: 'closed' }, token, timeoutMs);
+  if (closeRes.status < 200 || closeRes.status >= 300) {
+    return { ok: false, status: closeRes.status, error: closeRes.body, step: 'close' };
+  }
+  return { ok: true, status: closeRes.status, step: 'comment+close' };
+}
+
+/**
  * Detect whether a directory is a git repo with a GitHub remote, and extract
  * owner/repo. Returns null when not a GitHub remote.
  *
@@ -166,7 +221,9 @@ module.exports = {
   parseIssues,
   fetchIssues,
   createPullRequest,
+  commentAndCloseIssue,
   detectGitHubRemote,
   ghGet,
   ghPost,
+  ghPatch,
 };
