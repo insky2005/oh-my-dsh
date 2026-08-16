@@ -871,7 +871,10 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         return readTokenFile(Self.genericTokenFilePath)
     }
 
-    /// Save a token scoped to the current repo (Keychain, per-repo service).
+    /// Save a token scoped to the current repo. Writes BOTH the Keychain entry
+    /// (primary, secure) AND the per-repo file (~/.dsh/tokens/<owner>-<repo>)
+    /// so external tools/agents using the file see the same token. Clearing
+    /// (empty token) removes both.
     private func saveToken(_ token: String, for repo: (owner: String, repo: String)? = nil) {
         let service = repo.map(Self.tokenService(for:)) ?? Self.genericTokenService
         let query: [String: Any] = [
@@ -879,9 +882,23 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             kSecAttrService as String: service,
         ]
         SecItemDelete(query as CFDictionary)
+        if token.isEmpty {
+            // Clear the matching file too (per-repo or generic).
+            let file = repo.map(Self.tokenFilePath(for:)) ?? Self.genericTokenFilePath
+            try? FileManager.default.removeItem(atPath: file)
+            return
+        }
         var attrs = query
         attrs[kSecValueData as String] = token.data(using: .utf8) ?? Data()
         SecItemAdd(attrs as CFDictionary, nil)
+        // Mirror to the file so agents / external tools share the same token.
+        if let repo = repo {
+            let dir = Self.tokenDir
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            let file = Self.tokenFilePath(for: repo)
+            try? token.data(using: .utf8)?.write(to: URL(fileURLWithPath: file), options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file)
+        }
     }
 
     // MARK: - Config
@@ -899,13 +916,8 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         alert.window.initialFirstResponder = field
         if alert.runModal() == .alertFirstButtonReturn {
             let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if value.isEmpty {
-                let service = repo.map(Self.tokenService(for:)) ?? Self.genericTokenService
-                SecItemDelete([kSecClass as String: kSecClassGenericPassword,
-                               kSecAttrService as String: service] as CFDictionary)
-            } else {
-                saveToken(value, for: repo)
-            }
+            // Empty → clear both Keychain and file; otherwise save both.
+            saveToken(value, for: repo)
             reloadIssues()
         }
     }

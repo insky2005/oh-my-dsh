@@ -131,11 +131,11 @@ open "dist/oh-my-dsh.app"
 | `DSH_AUTO_UPGRADE=0` | 本次运行关闭自动升级 |
 | `DSH_LANG=zh\|en` | 强制界面语言（优先于「设置」→「语言」的选择；默认跟随系统） |
 
-> **GitHub token（Tasks 面板，按仓库作用域）**：每个工作区（仓库）可用各自的 token，解析优先级：
-> 1. Keychain 专属（面板配置时按当前仓库保存：`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）；
+> **GitHub token（Tasks 面板，按仓库作用域）**：面板「配置 GitHub Token」保存时**同时写入** Keychain 专属（`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）和文件专属（`~/.dsh/tokens/<owner>-<repo>`，chmod 600）——App 与外部工具/代理共享同一份。解析优先级：
+> 1. Keychain 专属；
 > 2. 文件专属 `~/.dsh/tokens/<owner>-<repo>`；
 > 3. Keychain 通用（旧版单 token）；
-> 4. 文件通用 `~/.dsh/gh-token`（App 与外部工具/代理共用，`chmod 600`）。
+> 4. 文件通用 `~/.dsh/gh-token`。
 > 公开仓库无需 token；私有仓库拉取/开 PR/评论关闭 issue 需要。
 
 > 构建期变量 `DSH_NODE_VERSION`、`DSH_PACKAGE_SPEC`、`DSH_NODE_MIRROR`、`DSH_NPM_REGISTRY` 见上文「构建」。
