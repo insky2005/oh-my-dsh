@@ -1977,11 +1977,42 @@ enum WikiAutoCommit {
             AppLog.shared.log("wiki auto-commit: git add failed")
             return
         }
-        let message = "docs(wiki): 知识库增量更新（自动提交，未推送）"
+        let message = commitMessage(status: status)
         guard runGit(["commit", "-m", message], repoRoot) != nil else {
             AppLog.shared.log("wiki auto-commit: git commit failed (no identity? nothing staged?)")
             return
         }
-        AppLog.shared.log("wiki auto-commit: committed .dsh/wiki changes (not pushed)")
+        AppLog.shared.log("wiki auto-commit: committed .dsh/wiki changes (not pushed): \(message)")
+    }
+
+    /// Build a commit message that reflects WHAT changed, instead of a fixed
+    /// string: names up to 3 changed pages, then a total count. The porcelain
+    /// status lines look like:
+    ///   M  .dsh/wiki/index.md
+    ///   ?? .dsh/wiki/modules/issue-runner-panel.md
+    ///   D  .dsh/wiki/old.md
+    static func commitMessage(status: String) -> String {
+        var added: [String] = []
+        var modified: [String] = []
+        var deleted: [String] = []
+        for line in status.split(separator: "\n") {
+            let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).filter { !$0.isEmpty }
+            guard parts.count >= 2 else { continue }
+            let flag = String(parts[0])
+            let path = String(parts[1])
+            let page = (path as NSString).lastPathComponent
+                .replacingOccurrences(of: ".md", with: "")
+            if flag.contains("D") { deleted.append(page) }
+            else if flag.contains("?") || flag.contains("A") { added.append(page) }
+            else { modified.append(page) }
+        }
+        var summary: [String] = []
+        if !added.isEmpty { summary.append("新增 \(added.joined(separator: "、"))") }
+        if !modified.isEmpty { summary.append("更新 \(modified.joined(separator: "、"))") }
+        if !deleted.isEmpty { summary.append("删除 \(deleted.joined(separator: "、"))") }
+        let detail = summary.isEmpty
+            ? "知识库增量更新"
+            : summary.joined(separator: "；")
+        return "docs(wiki): \(detail)（自动提交，未推送）"
     }
 }
