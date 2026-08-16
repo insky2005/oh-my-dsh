@@ -367,12 +367,20 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.hideStatus() }
                     return
                 }
-                // Keep any task that already has progress; merge new issues.
-                let existingNumbers = Set(self.tasks.map { $0.number })
-                for issue in issues where !existingNumbers.contains(issue.number) {
-                    self.tasks.append(IssueRunnerTask(number: issue.number,
-                                                      title: issue.title,
-                                                      labels: issue.labels))
+                // Merge issues into the task list:
+                //  - new issues: append as pending tasks
+                //  - existing tasks (e.g. restored from the index): refresh
+                //    title/labels so the real issue title is always shown
+                //    (restored tasks start with a placeholder title).
+                for issue in issues {
+                    if let idx = self.tasks.firstIndex(where: { $0.number == issue.number }) {
+                        self.tasks[idx].title = issue.title
+                        self.tasks[idx].labels = issue.labels
+                    } else {
+                        self.tasks.append(IssueRunnerTask(number: issue.number,
+                                                          title: issue.title,
+                                                          labels: issue.labels))
+                    }
                 }
                 self.tasks.sort { $0.number < $1.number }
                 self.tableView.reloadData()
@@ -441,6 +449,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         TaskIndex.mergeTask(path, issue: number, update: [
             "branch": "fix/issue-\(number)",
             "state": "running",
+            "title": tasks[idx].title,
             "startedAt": ISO8601DateFormatter().string(from: Date()),
         ])
 
