@@ -1,8 +1,8 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-08-16T12:48:37Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .github/workflows/, core/tests/]
+updated: 2026-08-16T16:02:38Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, .github/workflows/, core/tests/]
 manual: false
 ---
 
@@ -80,13 +80,25 @@ tests/wiki-panel/run.sh             # Repo Wiki 模型层
 5. 预览面板不响应文件点击：`DSH_PREVIEW_DEBUG=1` 看探针（`__dshPreviewInstalled` / `__dshPreviewHit` / 伪造 `host.openPath` 的返回）；
 6. 端口被占：默认 3080，`DSH_NATIVE_PORT` 指定端口；`DSH_NATIVE_FORCE_SPAWN=1` 强制自拉起（绕过复用检查）。
 
-## 发布清单（简版）
+## 发布清单（简版，分支规范见 docs/git-workflow.md）
 
-1. 版本确认：HEAD 打/命中 git tag vX.Y.Z（`scripts/version.sh` 输出 VERSION/BUILD）；
+**主版本（vX.Y.0）**：
+
+1. 版本确认：main 上 HEAD 打 git tag vX.Y.0（`scripts/version.sh` 输出 VERSION/BUILD）；
 2. `./platforms/macos/build-app.sh` 全量构建 → `open dist/oh-my-dsh.app` 手工 QA（README 特性逐项过）；
 3. `tests/*/run.sh` 全绿；
 4. `./platforms/macos/make-pkg.sh` 出 .pkg/.dmg；
-5. 提交时检查 `git status`：只含源码/文档/wiki 变更（.build/.cache/dist/pic 已忽略）。
+5. 提交时检查 `git status`：只含源码/文档/wiki 变更（.build/.cache/dist/pic 已忽略）；
+6. 发布后**立即**把 `scripts/version.sh` 的 `FALLBACK_VERSION` 推进到下一个 minor（发布 v1.9.0 → 1.10.0）。
 
-CI 侧（`release.yml`）：push `v*` tag 自动在 macos-14 构建 arm64 / x86_64（-target 交叉编译）/ universal 三份产物（.pkg/.dmg），汇总后出 SHA-256SUMS 并以 **pre-release** 发布 GitHub Release（人工确认后改正式）；同一 tag 重复触发会取消旧 run（concurrency）；
+**已发布版本的 patch 修复（vX.Y.Z）**：用 `scripts/release-fix.sh <base-tag> <patch-version> [branch]`（如 `scripts/release-fix.sh v1.9.0 1.9.1`）——从 base tag 切 `release/1.9` 维护分支 → 提交修复 → 打 patch tag 推送（触发 release.yml 发布）→ 手动 cherry-pick 到 `fix/sync-1.9.1` 分支并 **PR 回 main**（不直接 push main）；push 远端名由 `scripts/git-remote.sh` 检测（github > origin > 首个 remote）。
+
+**分支铁律**：feature/fix 分支回 main 一律走 PR；main 只合并、只打主版本 tag；面板（IssueRunner）处理 issue 时按 label 切 `feature/issue-N` 或 `fix/issue-N` 并自动开 PR。
+
+## 配置 GitHub token（任务面板）
+
+- 面板「配置 GitHub Token」→ 确认后**双写** Keychain 专属（`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）与文件专属（`~/.dsh/tokens/<owner>-<repo>`，chmod 600）；清空则双清；
+- 也可手动写 `~/.dsh/gh-token`（通用，App 与外部工具/代理共用同一份）；解析优先级见 [issue-runner-panel](modules/issue-runner-panel.md)；公开仓库无需 token。
+
+CI 侧（`release.yml`）：push `v*` tag（主版本或 patch 均触发）自动在 macos-14 构建 arm64 / x86_64（-target 交叉编译）/ universal 三份产物（.pkg/.dmg），汇总后出 SHA-256SUMS 并以 **pre-release** 发布 GitHub Release（人工确认后改正式）；同一 tag 重复触发会取消旧 run（concurrency）；
 - **发布幂等**（`68fc925` 起）：Collect 步骤先 `rm -rf dist` 再拷贝产物（避免混入历史产物）；publish 先 `gh release delete <tag> --cleanup-tag`（失败忽略）再用 `gh release create --target $GITHUB_SHA` 重建 tag + Release + 资产，同 tag 重复发布不再 already_exists（此前尝试过 smoke job / softprops action / --clobber，均已回退或替换）。

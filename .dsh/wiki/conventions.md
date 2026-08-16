@@ -1,8 +1,8 @@
 ---
 title: 工程约定
 tags: [conventions, l10n, build, qa-hooks, versioning]
-updated: 2026-08-16T14:10:06Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/src/main.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-wiki/SKILL.md]
+updated: 2026-08-16T16:02:38Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/src/main.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-wiki/SKILL.md]
 manual: false
 ---
 
@@ -26,8 +26,17 @@ manual: false
 - 编译：`swiftc -O -swift-version 5`，frameworks 为 AppKit/WebKit/PDFKit；**编译源文件清单显式写在 `platforms/macos/build-app.sh`**，新增 `.swift` 文件必须登记；
 - `module-cache-path` 固定在 `.build/module-cache`（沙箱/环境问题规避）；
 - 图标：`MakeIcon.swift` 程序化渲染（16…1024px 全尺寸）→ `iconutil -c icns`，不提交二进制图；
-- 版本号单一来源：`scripts/version.sh`（HEAD 命中 git tag vX.Y.Z → VERSION 取 tag，否则回退 1.8.0；BUILD 取 CI 运行号，本地回退 64）；`platforms/macos/build-app.sh` 运行期读取，**勿在脚本硬编码版本**；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`platforms/macos/make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；
+- 版本号单一来源：`scripts/version.sh`（HEAD 命中 git tag vX.Y.Z → VERSION 取 tag，否则回退 1.10.0；BUILD 取 CI 运行号，本地回退 66）；`platforms/macos/build-app.sh` 运行期读取，**勿在脚本硬编码版本**；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`platforms/macos/make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；
+- **fallback 推进规则**（`docs/productization.md`）：每次发布打 tag 后立即把 `FALLBACK_VERSION` 推进到**下一个 minor**（发布 v1.9.0 → fallback 1.10.0），开发期构建永远显示「下一个未发布版本」；CI 打 tag 的 job 用 tag 版本（HEAD 命中时优先）；
 - `git status` 应只出现源码/文档变更：`.build/` `.cache/` `dist/` `pic/` `.DS_Store` 均在 `.gitignore`；`.dsh/tasks/local.json`（本机会话覆盖）也忽略——**`index.json` 随仓库提交**（任务关联共享，见 [data-model](data-model.md)）。
+
+## 分支与发布约定（`docs/git-workflow.md`，2026-08-16 起生效）
+
+- **main 只合并、只打主版本**：main 是唯一稳定主干，只接受合并；只打主版本 tag `vX.Y.0`；禁止在 main 上直接提交功能/修复代码（维护者例外：fallback 推进、文档）与 patch tag；
+- **功能走 `feature/<slug>`、未发布 bug 走 `fix/<slug>`**：从 main 切 → 开发 → **PR 合并回 main**（禁止直接 `git push origin main`）→ 随下一个主版本发布；
+- **已发布版本的 bug 走 `release/X.Y`**：从已发布 tag 切维护分支 → 修复 → 打 patch tag `vX.Y.Z`（如 v1.9.1）发布 → **PR**（`fix/sync-X.Y.Z` 分支 cherry-pick）把修复同步回 main；辅助脚本 `scripts/release-fix.sh <base-tag> <patch-version> [branch]`（校验 tag/版本号格式 → 切分支 → 打 patch tag → 推送触发 release.yml → 提示 PR 回 main）；
+- **push 远端名检测统一用 `scripts/git-remote.sh`**：优先名为 `github`，其次 `origin`，否则第一个 remote（release-fix.sh 与 issue-fix skill 共用，不再硬编码 origin）；IssueRunner 面板的 `pushRemoteName` 同规则；
+- **版本支持策略**：维护最近 2 个大版本（如 1.9.x / 1.10.x），更旧支持线在次新主版本稳定后清理。
 
 ## 面板 UI 约定
 
@@ -54,7 +63,7 @@ manual: false
 ## 测试约定
 
 - 共享核心单测走 Node：`node --test core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks，77 用例）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
-- CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + 全源码 `swiftc` 编译检查（先 `mkdir -p .build/module-cache`）；构建矩阵为 arm64 + universal（lipo 覆盖 x86_64 编译验证），**不再使用退役中的 macos-13/x86_64 runner**；
+- CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + 全源码 `swiftc` 编译检查（先 `mkdir -p .build/module-cache`）；编译检查清单含 `IssueRunnerPanel.swift`（f4ed4ff 起——曾漏文件导致 main.swift 引用编译失败，CI 失败根因）；构建矩阵为 arm64 + universal（lipo 覆盖 x86_64 编译验证），**不再使用退役中的 macos-13/x86_64 runner**；
 - 面板/壳层 Swift 无头单测模式（`tests/*/run.sh`）：`stubs.swift` + 把被测源码复制进临时目录 + 测试文件改名 `main.swift`（顶层代码需要）→ `swiftc` 编译运行，无窗口/无 PTY 依赖；
 - 终端模拟器测试不触 PTY（沙箱可能禁 `/dev/ptmx`），已迁 `core/tests/ansi.test.js`（42 项），`tests/terminal-emulator/run.sh` 为薄封装；
 - 新增面板需配套模型层单测（如 `tests/wiki-panel/`）。

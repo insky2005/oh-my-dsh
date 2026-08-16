@@ -1,8 +1,8 @@
 ---
 title: 仓库概览
 tags: [overview, tech-stack, build, run, test]
-updated: 2026-08-16T13:10:06Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/MakeIcon.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/tests/issues.test.js, docs/productization.md, .github/workflows/, tests/wiki-panel/run.sh]
+updated: 2026-08-16T16:02:38Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/MakeIcon.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/tests/issues.test.js, docs/productization.md, docs/git-workflow.md, scripts/version.sh, .github/workflows/, tests/wiki-panel/run.sh]
 manual: false
 ---
 
@@ -24,24 +24,24 @@ oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deeps
 | 打包 | `pkgbuild` + `hdiutil`（`platforms/macos/make-pkg.sh` → .pkg / .dmg） |
 | 目标平台 | macOS 13+（Apple Silicon / arm64；Info.plist `LSMinimumSystemVersion` = 13.0） |
 
-当前工作区版本：`1.8.0`（BUILD 64）；版本由 git tag 驱动（`scripts/version.sh`：HEAD 命中 vX.Y.Z → 取 tag，否则回退 1.8.0；BUILD 取 CI 运行号）。最近 git 提交：`86abc82`（"feat(wiki): 自动提交 commit message 与内容相关…"）。
+当前工作区版本：`1.10.0`（fallback，BUILD 66；最新发布 `v1.9.0`）；版本由 git tag 驱动（`scripts/version.sh`：HEAD 命中 vX.Y.Z → 取 tag，否则回退 1.10.0；BUILD 取 CI 运行号）。最近 git 提交：`8ab6bf4`（"feat(tasks): 面板保存 GitHub token 双写 — Keychain 专属 + ~/.dsh/tokens/<owner>-<repo> 文件…"）。
 
 ## 目录布局
 
 ```
 core/                共享核心（Node 模块：ANSI 模拟器 / 端口探测 / 升级 / 会话 RPC / issues / jobqueue / tasks 关联索引，跨平台复用；随构建嵌入 runtime/core）
 platforms/           各平台壳（macos/ 现有壳，windows/ linux/ 规划中）
-scripts/             跨平台工具（version.sh 版本单一来源 / changelog.sh / release-checksums.sh / 迁移脚本）
+scripts/             跨平台工具（version.sh 版本单一来源 / changelog.sh / release-checksums.sh / git-remote.sh 远端检测 / release-fix.sh patch 发布 / 迁移脚本）
 .github/             CI 工作流（core 单测走 ubuntu；壳层单测/编译检查 + arm64/universal 构建走 macos-14；x86_64 由 universal lipo / 交叉编译覆盖，不再用退役中的 macos-13 runner）；release.yml 发布幂等（先删旧 release+tag 再 --target 重建，见 [tasks](tasks.md)）
 platforms/macos/src/main.swift       壳层核心（日志/L10n/服务管理/升级/窗口/菜单/设置窗口/onboarding/CoreBridge）约 2801 行
 platforms/macos/src/PreviewPanel.swift  预览面板（文件/文件夹预览 + 项目目录树 + 共享 UI 组件）约 1470 行
 platforms/macos/src/TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）约 1875 行
 platforms/macos/src/WikiPanel.swift      Repo Wiki 面板（知识库生成/维护/浏览 + 自动 git 提交）约 2018 行
-platforms/macos/src/IssueRunnerPanel.swift 任务面板（GitHub issues 串行处理 → 分支/修复/推送/PR + 关联索引 + 评论并关闭）约 1335 行
+platforms/macos/src/IssueRunnerPanel.swift 任务面板（GitHub issues 串行处理 → 分支/修复/推送/PR + 关联索引 + 评论并关闭 + 按仓库作用域 token）约 1400 行
 platforms/macos/src/MakeIcon.swift       App 图标生成器（渲染 → iconset → icns）104 行
 platforms/macos/build-app.sh         一键构建脚本（6 步：目录/图标/编译/运行时/Info.plist/签名）
 platforms/macos/make-pkg.sh          .pkg 安装包 + .dmg 镜像脚本
-docs/                设计与排查文档（repo-wiki-design.md、productization.md、milestones/、plans/、terminal-header-fix.md、terminal-input-fix.md、raw/）
+docs/                设计与排查文档（repo-wiki-design.md、productization.md、git-workflow.md、milestones/、plans/、terminal-header-fix.md、terminal-input-fix.md、raw/）
 tests/               无头单元测试（terminal-emulator/、wiki-panel/，各含 run.sh；模拟器测试已迁 core/tests/ansi.test.js 的薄封装）
 .cache/              构建缓存（node tarball、npm-cache、已构建 runtime）— git 忽略
 .build/              构建中间产物 — git 忽略

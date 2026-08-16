@@ -1,8 +1,8 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-08-16T13:10:06Z
-sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md]
+updated: 2026-08-16T16:02:38Z
+sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/git-workflow.md]
 manual: false
 ---
 
@@ -28,7 +28,7 @@ manual: false
 | `wikiAutoRegenerate` | wiki 自动更新开关（默认关） | `WikiPaths` |
 | `wikiRegisterAgentsMd` | 写入 AGENTS.md 注册块开关（默认关） | `WikiPaths` |
 
-> 凭据不走 UserDefaults：GitHub token 存 Keychain（service `oh-my-dsh.issuerunner.github-token`，见 [issue-runner-panel](modules/issue-runner-panel.md)）。
+> 凭据不走 UserDefaults：GitHub token 按仓库作用域存储，解析优先级为 Keychain 专属（`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）→ 文件专属 `~/.dsh/tokens/<owner>-<repo>` → Keychain 通用（`oh-my-dsh.issuerunner.github-token`）→ 文件通用 `~/.dsh/gh-token`；面板保存时 Keychain 与文件**双写**（文件 chmod 600，App 与外部工具/代理共用），见 [issue-runner-panel](modules/issue-runner-panel.md)。
 
 ## 领域模型（代码内）
 
@@ -85,11 +85,11 @@ manual: false                   # true = 用户手改，代理永不覆盖
 - **`index.json`**（随仓库提交）：仓库级共享关联，`{"version": 1, "tasks": [{ "issue", "branch", "title"?, "prUrl"?, "state", "startedAt"?, "finishedAt"?, "error"? }]}`（按 issue 号升序，upsert 合并）；
 - **`local.json`**（`.gitignore` 忽略）：本机级覆盖，`{"sessions": { "<issue>": { "sessionId", "updatedAt" } }}`——dsh 会话 id 是本机实例特有的，不入共享索引。
 
-定位规则：issue→branch 读 index.json（或约定 `fix/issue-N`）；issue→session 运行中读内存、重启后读 local.json；issue→PR 读 index.json `prUrl`。App 重启后面板 `restoreFromIndex` 先按两文件重建任务列表与关联，再以 open issues 刷新标题。
+定位规则：issue→branch 读 index.json（或按 label 约定 `feature/issue-N` / `fix/issue-N`，见 `docs/git-workflow.md`）；issue→session 运行中读内存、重启后读 local.json；issue→PR 读 index.json `prUrl`。App 重启后面板 `restoreFromIndex` 先按两文件重建任务列表与关联，再以 open issues 刷新标题。
 
 ## 日志与配置文件
 
 - `~/Library/Logs/oh-my-dsh/app.log` — 壳层行为（`AppLog`，串行队列写盘，ISO8601 时间戳）；
 - `~/Library/Logs/oh-my-dsh/server.log` — 自拉起的 `dsh web` 进程 stdout/stderr；
-- `$HOME/.dsh`（默认 `DSH_HOME`）— 传给 `dsh web`，首次使用自动初始化 web profile；
+- `$HOME/.dsh`（默认 `DSH_HOME`）— 传给 `dsh web`，首次使用自动初始化 web profile；其下另有 `~/.dsh/gh-token`（通用 token 文件）与 `~/.dsh/tokens/<owner>-<repo>`（按仓库作用域的 token 文件，chmod 600）——均**不**在仓库内，不入 git；
 - 调试面板截图：`~/Library/Logs/oh-my-dsh/panel-<label>-debug.png`（`DSH_UI_DEBUG=1` 时产出）。
