@@ -1,8 +1,8 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-08-16T11:46:00Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .github/workflows/]
+updated: 2026-08-16T12:48:37Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .github/workflows/, core/tests/]
 manual: false
 ---
 
@@ -38,7 +38,7 @@ open "dist/oh-my-dsh.app"
 ## 跑单元测试
 
 ```bash
-node --test core/tests/*.test.js  # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks，75 用例；不带引号由 bash 展开 glob，Node 20 兼容）
+node --test core/tests/*.test.js  # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks，77 用例；不带引号由 bash 展开 glob，Node 20 兼容）
 tests/terminal-emulator/run.sh      # 模拟器测试（core/tests/ansi.test.js 的薄封装）
 tests/wiki-panel/run.sh             # Repo Wiki 模型层
 ```

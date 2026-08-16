@@ -1,7 +1,7 @@
 ---
 title: 模块：PreviewPanel.swift（预览面板）
 tags: [module, preview, file-tree, tabs]
-updated: 2026-08-16T11:46:00Z
+updated: 2026-08-16T12:48:37Z
 sources: [platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift]
 manual: false
 ---

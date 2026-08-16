@@ -1,8 +1,8 @@
 ---
 title: 工程约定
 tags: [conventions, l10n, build, qa-hooks, versioning]
-updated: 2026-08-16T11:46:00Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/src/main.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .gitignore, .github/workflows/ci.yml]
+updated: 2026-08-16T12:48:37Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/src/main.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, .gitignore, .github/workflows/ci.yml, core/tests/]
 manual: false
 ---
 
@@ -53,7 +53,7 @@ manual: false
 
 ## 测试约定
 
-- 共享核心单测走 Node：`node --test core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks，75 用例）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
+- 共享核心单测走 Node：`node --test core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks，77 用例）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
 - CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + 全源码 `swiftc` 编译检查（先 `mkdir -p .build/module-cache`）；构建矩阵为 arm64 + universal（lipo 覆盖 x86_64 编译验证），**不再使用退役中的 macos-13/x86_64 runner**；
 - 面板/壳层 Swift 无头单测模式（`tests/*/run.sh`）：`stubs.swift` + 把被测源码复制进临时目录 + 测试文件改名 `main.swift`（顶层代码需要）→ `swiftc` 编译运行，无窗口/无 PTY 依赖；
 - 终端模拟器测试不触 PTY（沙箱可能禁 `/dev/ptmx`），已迁 `core/tests/ansi.test.js`（42 项），`tests/terminal-emulator/run.sh` 为薄封装；
@@ -68,4 +68,5 @@ manual: false
 - 只写可从代码/文档证实的事实，不确定标注「待确认」，禁止编造；
 - 脱敏：跳过 `.env*`/密钥/口令/个人数据，示例一律占位符；
 - 增量更新用 `git status` + mtime 定位变更面，只重写 `sources` 命中变更的页面，未变页面**字节不变**（便于 git diff 审查）；
+- 生成/更新完成后由面板**自动 git 提交**（`WikiAutoCommit`，ee48f4a：`git add .dsh/wiki` + commit `docs(wiki): …`，**不 push**），提交失败仅记日志不打扰用户；
 - 完成后刷新 `index.md` 统计与最后生成时间。
