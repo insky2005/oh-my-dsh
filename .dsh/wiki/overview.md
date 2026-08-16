@@ -1,7 +1,7 @@
 ---
 title: 仓库概览
 tags: [overview, tech-stack, build, run, test]
-updated: 2026-08-16T12:48:37Z
+updated: 2026-08-16T13:10:06Z
 sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/MakeIcon.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/tests/issues.test.js, docs/productization.md, .github/workflows/, tests/wiki-panel/run.sh]
 manual: false
 ---
@@ -24,7 +24,7 @@ oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deeps
 | 打包 | `pkgbuild` + `hdiutil`（`platforms/macos/make-pkg.sh` → .pkg / .dmg） |
 | 目标平台 | macOS 13+（Apple Silicon / arm64；Info.plist `LSMinimumSystemVersion` = 13.0） |
 
-当前工作区版本：`1.8.0`（BUILD 64）；版本由 git tag 驱动（`scripts/version.sh`：HEAD 命中 vX.Y.Z → 取 tag，否则回退 1.8.0；BUILD 取 CI 运行号）。最近 git 提交：`63525e3`（"feat(tasks): 完成后的 issue 支持「评论并关闭」…"）。
+当前工作区版本：`1.8.0`（BUILD 64）；版本由 git tag 驱动（`scripts/version.sh`：HEAD 命中 vX.Y.Z → 取 tag，否则回退 1.8.0；BUILD 取 CI 运行号）。最近 git 提交：`86abc82`（"feat(wiki): 自动提交 commit message 与内容相关…"）。
 
 ## 目录布局
 
@@ -36,7 +36,7 @@ scripts/             跨平台工具（version.sh 版本单一来源 / changelog
 platforms/macos/src/main.swift       壳层核心（日志/L10n/服务管理/升级/窗口/菜单/设置窗口/onboarding/CoreBridge）约 2801 行
 platforms/macos/src/PreviewPanel.swift  预览面板（文件/文件夹预览 + 项目目录树 + 共享 UI 组件）约 1470 行
 platforms/macos/src/TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）约 1875 行
-platforms/macos/src/WikiPanel.swift      Repo Wiki 面板（知识库生成/维护/浏览 + 自动 git 提交）约 1987 行
+platforms/macos/src/WikiPanel.swift      Repo Wiki 面板（知识库生成/维护/浏览 + 自动 git 提交）约 2018 行
 platforms/macos/src/IssueRunnerPanel.swift 任务面板（GitHub issues 串行处理 → 分支/修复/推送/PR + 关联索引 + 评论并关闭）约 1335 行
 platforms/macos/src/MakeIcon.swift       App 图标生成器（渲染 → iconset → icns）104 行
 platforms/macos/build-app.sh         一键构建脚本（6 步：目录/图标/编译/运行时/Info.plist/签名）

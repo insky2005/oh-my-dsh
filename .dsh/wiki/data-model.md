@@ -1,7 +1,7 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-08-16T12:48:37Z
+updated: 2026-08-16T13:10:06Z
 sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md]
 manual: false
 ---
