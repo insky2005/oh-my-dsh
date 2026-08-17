@@ -1,14 +1,14 @@
 ---
 title: 模块：main.swift（壳层核心）
 tags: [module, main, server, appdelegate, menu]
-updated: 2026-08-17T12:17:48Z
+updated: 2026-08-17T14:01:34Z
 sources: [platforms/macos/src/main.swift]
 manual: false
 ---
 
 # 模块：main.swift（壳层核心）
 
-约 2850 行，程序入口（`NSApplication.shared` + `AppDelegate` + `app.run()`）。职责：日志、L10n、服务管理、dsh 升级、窗口/菜单、设置窗口（⌘,）、首次引导 onboarding、右栏插槽、WebView 注入、CoreBridge（调 core CLI）。
+约 2980 行，程序入口（`NSApplication.shared` + `AppDelegate` + `app.run()`）。职责：日志、L10n、服务管理、dsh 升级、窗口/菜单、设置窗口（⌘,）、首次引导 onboarding、右栏插槽、WebView 注入、CoreBridge（调 core CLI）。
 
 ## 组成（按文件内顺序）
 
@@ -20,7 +20,7 @@ manual: false
 | `VersionKit` | 语义化版本比较（支持 `x.y.z-rc.N`，rc 版本小于正式版） |
 | `RegistryConfig` | 运行期 registry：`DSH_REGISTRY` > `dshRegistry` > 默认 `https://registry.npmmirror.com` |
 | `DSHUpdater` | 内置 dsh 升级：`init` 要求 dshBin 路径含 `/Contents/Resources/runtime/`（只升内置）；`currentVersion`（读 package.json）、`latestVersion`（查 registry dist-tags）、`upgrade`（node npm-cli.js install） |
-| `ServerManager` | 服务生命周期：`resolveNode`（`DSH_NODE` 显式覆盖 > 系统 node：PATH→nvm→Homebrew 首个可用 > 内置 node 兜底）、`resolveDSHBin`（`DSH_CLI` > 内置 > npx 缓存/nvm/PATH/homebrew，最新 mtime 胜出）、`start`（复用 3080 → 或自拉起 + 90s 轮询就绪；系统 node 启动失败回退内置 node 重试一次，`DSH_NODE` 显式指定不回退）、`stop`（SIGTERM → 3s → SIGKILL，只停自拉起的） |
+| `ServerManager` | 服务生命周期：`resolveNode`（`DSH_NODE` 显式覆盖 > 系统 node：PATH→nvm current→nvm default→nvm 最新→Homebrew 首个**通过版本门槛**者 > 内置 node 兜底）、`loginShellPath`（`/bin/zsh -ilc` 读一次登录 shell PATH，8s 超时兜底、结果缓存，失败保留继承值，赋给 dsh web 子进程）、`resolveDSHBin`（`DSH_CLI` > 内置 > npx 缓存/nvm/PATH/homebrew，最新 mtime 胜出）、`start`（复用 3080 → 或自拉起 + 90s 轮询就绪，含 1s 沉降校验防引导页假就绪；系统 node 启动失败回退内置 node 重试一次，`DSH_NODE` 显式指定不回退）、`stop`（SIGTERM → 3s → SIGKILL，只停自拉起的） |
 | `ProjectDirectory` | 共享"活动项目目录"（`static var current`，standardized 路径去重）；由 `dshSession` 消息维护，供预览树/终端 cwd/wiki 根/任务面板工作区消费 |
 | `DSHSessionRPC` | `fetchActiveSessionCwd`（POST /api/session.list，client-request 信封）+ `fetchSessionCwd(port:sessionId:)`（按会话 id 查 cwd）+ `resolveProjectDirectory`（优先返回 `ProjectDirectory.current`，否则后台实时查询并缓存） |
 | `AppDelegate` | 生命周期/窗口/分割视图/活动栏/右栏插槽/菜单/升级/导航委托/下载/脚本消息 |
