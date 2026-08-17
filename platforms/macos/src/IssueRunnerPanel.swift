@@ -282,15 +282,26 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     }
 
     private func resolveRepoOnce() {
-        // Preferred: the shell's active project directory (follows the session
-        // the user is viewing). Fallback: resolve from the dsh workspace list.
+        // The shell's active project directory (follows the session the user
+        // is viewing) is authoritative: if it IS a GitHub repo, show its
+        // issues; if it is NOT (e.g. an Ungrouped / non-git session's cwd),
+        // show the honest "not a GitHub repo" empty state — do NOT substitute
+        // some other registered workspace.
         if let path = workspacePath?(), !path.isEmpty {
-            applyRepo(path: path)
+            if Self.detectGitHubRemote(path) != nil {
+                applyRepo(path: path)
+            } else {
+                repo = nil
+                tasks = []
+                tableView.reloadData()
+                updateLabels()
+            }
             return
         }
+        // ProjectDirectory not resolved yet (early launch): fall back to
+        // scanning registered workspaces for the first GitHub repo.
         let port = serverPortProvider?() ?? 3080
         let workspaces = Self.listWorkspacePaths(port: port)
-        // Pick the first workspace that is a GitHub repo.
         for ws in workspaces {
             if Self.detectGitHubRemote(ws) != nil {
                 applyRepo(path: ws)
@@ -318,6 +329,11 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             tableView.reloadData()
             updateLabels()
             return
+        }
+        // Workspace switched to a DIFFERENT repo → drop the previous repo's
+        // task list (issue numbers are per-repo).
+        if repo?.owner != detected.owner || repo?.repo != detected.repo {
+            tasks = []
         }
         repo = (detected.owner, detected.repo)
         repoRootPath = path

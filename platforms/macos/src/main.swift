@@ -2109,12 +2109,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             guard let self = self else { return }
             let cwd = DSHSessionRPC.fetchSessionCwd(port: self.server.port, sessionId: sid)
             DispatchQueue.main.async {
-                guard let cwd = cwd else { return }
-                if let current = ProjectDirectory.current, current == cwd { return }
-                ProjectDirectory.set(cwd)
-                self.previewPanel?.setProjectDirectory(cwd)
-                self.wikiPanel?.reloadRoot()
-                AppLog.shared.log("project directory followed session \(sid): \(cwd)")
+                // Update ProjectDirectory FIRST so the tasks panel (and any
+                // consumer) reads the NEW workspace path, then re-point it.
+                // If fetch failed (cwd nil), still re-trigger — the panel's
+                // resolver falls back to scanning registered workspaces.
+                if let cwd = cwd {
+                    if ProjectDirectory.current != cwd {
+                        ProjectDirectory.set(cwd)
+                        self.previewPanel?.setProjectDirectory(cwd)
+                        self.wikiPanel?.reloadRoot()
+                        AppLog.shared.log("project directory followed session \(sid): \(cwd)")
+                    }
+                }
+                self.tasksPanel?.workspaceChanged()
             }
         }
     }
