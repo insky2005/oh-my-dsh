@@ -627,16 +627,29 @@ final class ServerManager {
     /// default → nvm newest → Homebrew). GUI-launched processes have a minimal
     /// PATH, so we search known locations explicitly. The nvm branch prefers
     /// `~/.nvm/current` (set by the last `nvm use`, including the automatic
-    /// `nvm use default` a fresh shell runs) over `~/.nvm/alias/default`. No
-    /// version gate: the bundled runtime is the fallback when an OS node is
-    /// missing or fails to boot dsh web.
+    /// `nvm use default` a fresh shell runs) over `~/.nvm/alias/default`.
+    /// OS nodes below the version floor (dsh needs Node ≥ 22) are skipped —
+    /// the bundled runtime is the fallback for missing or too-old nodes.
     func resolveSystemNode() -> String? {
         let fm = FileManager.default
         let env = ProcessInfo.processInfo.environment
+        /// Executable + version gate: dsh rc.6 needs Node ≥ 22 (ESM exports
+        /// zstd in node:zlib, Promise.withResolvers, stripTypeScriptTypes in
+        /// node:module — all present in 22, missing in 20). Too-old OS nodes
+        /// are skipped so the bundled runtime is used instead of letting dsh
+        /// web half-boot and crash. DSH_NODE_MIN overrides the floor.
+        func usable(_ cand: String) -> String? {
+            guard fm.isExecutableFile(atPath: cand) else { return nil }
+            if let v = nodeVersionString(nodePath: cand)?.replacingOccurrences(of: "v", with: "", options: [.anchored]),
+               compareNodeVersions(v, minSystemNodeVersion) < 0 {
+                AppLog.shared.log("skipping too-old system node \(cand) (\(v) < \(minSystemNodeVersion))")
+                return nil
+            }
+            return cand
+        }
         if let path = env["PATH"] {
             for dir in path.split(separator: ":") where !dir.isEmpty {
-                let cand = String(dir) + "/node"
-                if fm.isExecutableFile(atPath: cand) { return cand }
+                if let hit = usable(String(dir) + "/node") { return hit }
             }
         }
         let home = NSHomeDirectory()
@@ -649,8 +662,7 @@ final class ServerManager {
             //    activated version — the closest to the user's actual choice.
             if let curRaw = try? fm.destinationOfSymbolicLink(atPath: home + "/.nvm/current"), !curRaw.isEmpty {
                 let cur = curRaw.hasPrefix("/") ? curRaw : (home + "/.nvm/" + curRaw)
-                let cand = cur + "/bin/node"
-                if fm.isExecutableFile(atPath: cand) { return cand }
+                if let hit = usable(cur + "/bin/node") { return hit }
             }
 
             // 2. nvm default alias (~/.nvm/alias/default), e.g. "20" or
@@ -660,25 +672,54 @@ final class ServerManager {
                 if !v.isEmpty {
                     // Exact full-version hit (v20.19.6 / 20.19.6).
                     let exact = nvmRoot + "/" + (v.hasPrefix("v") ? v : "v" + v) + "/bin/node"
-                    if fm.isExecutableFile(atPath: exact) { return exact }
+                    if let hit = usable(exact) { return hit }
                     // Major-only alias ("20") → newest installed within that major.
                     let prefix = v.hasPrefix("v") ? v : "v" + v
                     for c in versions.filter({ $0.hasPrefix(prefix) })
                         .sorted(by: { mtime(nvmRoot + "/" + $0) > mtime(nvmRoot + "/" + $1) }) {
-                        let cand = nvmRoot + "/" + c + "/bin/node"
-                        if fm.isExecutableFile(atPath: cand) { return cand }
+                        if let hit = usable(nvmRoot + "/" + c + "/bin/node") { return hit }
                     }
                 }
             }
 
             // 3. Most recently installed version (previous behavior).
             for v in versions.sorted(by: { mtime(nvmRoot + "/" + $0) > mtime(nvmRoot + "/" + $1) }) {
-                let cand = nvmRoot + "/" + v + "/bin/node"
-                if fm.isExecutableFile(atPath: cand) { return cand }
+                if let hit = usable(nvmRoot + "/" + v + "/bin/node") { return hit }
             }
         }
-        for p in ["/opt/homebrew/bin/node", "/usr/local/bin/node"] where fm.isExecutableFile(atPath: p) { return p }
+        for p in ["/opt/homebrew/bin/node", "/usr/local/bin/node"] {
+            if let hit = usable(p) { return hit }
+        }
         return nil
+    }
+
+    /// Minimum OS node version accepted for dsh web: DSH_NODE_MIN env override,
+    /// else 22.0.0 — empirically what dsh rc.6 needs (zstd ESM exports in
+    /// node:zlib, Promise.withResolvers, node:module.stripTypeScriptTypes; all
+    /// present in Node ≥ 22, missing in 20). The bundled runtime (v24 LTS) is
+    /// the fallback below this.
+    private var minSystemNodeVersion: String {
+        let env = ProcessInfo.processInfo.environment
+        if let m = env["DSH_NODE_MIN"], !m.isEmpty {
+            return m.replacingOccurrences(of: "v", with: "", options: [.anchored])
+        }
+        return "22.0.0"
+    }
+
+    /// Lightweight x.y.z compare (-1/0/1). Deliberately NOT routed through
+    /// CoreBridge (which calls resolveNode — would recurse).
+    private func compareNodeVersions(_ a: String, _ b: String) -> Int {
+        func nums(_ s: String) -> [Int] {
+            let core = s.replacingOccurrences(of: "v", with: "", options: [.anchored]).split(separator: "-")[0]
+            return core.split(separator: ".").map { Int($0) ?? 0 }
+        }
+        let pa = nums(a), pb = nums(b)
+        for i in 0..<max(pa.count, pb.count) {
+            let x = i < pa.count ? pa[i] : 0
+            let y = i < pb.count ? pb[i] : 0
+            if x != y { return x < y ? -1 : 1 }
+        }
+        return 0
     }
 
     /// Preferred `node`: explicit DSH_NODE override, else the first OS-installed
@@ -892,9 +933,18 @@ final class ServerManager {
             let deadline = Date().addingTimeInterval(90)
             while Date() < deadline {
                 if isDSHServing(port: port, timeout: 1) {
-                    refreshFacts(node: node)
-                    AppLog.shared.log("dsh web is up on 127.0.0.1:\(port) (node=\(node))")
-                    return URL(string: "http://127.0.0.1:\(port)")!
+                    // Settle: a too-old node can briefly serve the boot shell
+                    // (which carries __DSH_BOOT__) and then crash while loading
+                    // the plugin tree. Require the server AND process to still
+                    // be alive a moment later before declaring it up.
+                    Thread.sleep(forTimeInterval: 1.0)
+                    if proc.isRunning && isDSHServing(port: port, timeout: 1) {
+                        refreshFacts(node: node)
+                        AppLog.shared.log("dsh web is up on 127.0.0.1:\(port) (node=\(node))")
+                        return URL(string: "http://127.0.0.1:\(port)")!
+                    }
+                    failed = true
+                    break
                 }
                 if !proc.isRunning {
                     failed = true

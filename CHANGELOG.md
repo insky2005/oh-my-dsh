@@ -9,7 +9,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Changed
 
-- **Node 选择策略反转（系统优先、内置兜底）**：`dsh web` 启动优先使用操作系统安装的 node（PATH → nvm → Homebrew 首个可用）；仅当系统 node 缺失、或用它启动 dsh web 失败（提前退出 / 超时未服务）时才回退内置 node——内置 node 只保证 dsh web 能启动；`DSH_NODE` 显式覆盖仍无条件优先（无回退）；
+- **Node 选择策略反转（系统优先、内置兜底，含版本门槛）**：`dsh web` 启动优先使用操作系统安装的 node（PATH → nvm current → nvm default → nvm 最新 → Homebrew），但**低于版本门槛（默认 22.0.0，`DSH_NODE_MIN` 可覆盖）的系统 node 会被跳过**——dsh rc.6 实际需要 Node ≥ 22（`node:zlib` 的 zstd ESM 导出、`Promise.withResolvers`、`node:module.stripTypeScriptTypes`，Node 20 全部缺失，实测 v20 启动 dsh web 会崩在插件树加载）；仅当系统 node 缺失/过旧、或用它启动 dsh web 失败时才回退内置 node；`DSH_NODE` 显式覆盖仍无条件优先（无回退）；启动轮询增加 1s 沉降校验，避免"引导页含 `__DSH_BOOT__` 但随后崩溃"的假就绪；
 - **dsh web 环境不做 PATH 注入，但合并登录 shell PATH**：移除启动与升级路径的内置目录 PATH 置顶；App 启动时经 `/bin/zsh -ilc` 读取一次登录 shell PATH（8s 超时兜底、失败保留继承值）赋给 dsh web，使其 bash 会话能使用用户全局工具（nvm bin、`~/.local/bin` 等，如 `agent-browser`）；About 面板的 Node 版本显示实际运行 dsh web 的 node。
 
 ## [1.9.0] - 2026-08-16
