@@ -70,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Cache runtime + node tarballs (.cache/)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .cache
           key: cache-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('platforms/macos/build-app.sh', 'scripts/version.sh') }}
