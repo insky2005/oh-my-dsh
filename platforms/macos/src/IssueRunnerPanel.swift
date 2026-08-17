@@ -1344,7 +1344,8 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         要求：
         1. 加载 `.dsh/skills/issue-fix/SKILL.md` 并严格按其流程执行（读 issue → 改代码 → 跑测试 → commit → push）；
         2. 当前分支应为 \(branch)，只在此分支上工作；
-        3. 完成后简短汇报改动与测试结果。
+        3. 推送私有仓库/需要认证的 GitHub 调用时，token 在 `~/.dsh/tokens/<owner>-<repo>` 或 `~/.dsh/gh-token`（`cat` 读取即可，**绝不在对话/汇报中回显**）；
+        4. 完成后简短汇报改动与测试结果。
         """
     }
 }
