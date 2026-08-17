@@ -1,7 +1,7 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-08-16T16:34:44Z
+updated: 2026-08-17T03:52:05Z
 sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/git-workflow.md]
 manual: false
 ---
@@ -44,7 +44,7 @@ manual: false
 - **`TreeNode`**（PreviewPanel.swift）：`name / path / isDir / children?`（懒加载）；
 - **`JobQueue`**（core/lib/jobqueue.js）：串行任务队列状态机 `createQueue()`——任务含 `source`（远程驱动预留）/`state`（pending/running/done/failed/cancelled）等字段，`enqueue`/`peek`/`markRunning`/`complete`/`fail`/`cancel`/`retry`/`snapshot`/`removeFinished` 操作（IssueRunner 面板用它串行执行「切分支→会话→推送→PR」流水线，见 [issue-runner-panel](modules/issue-runner-panel.md)）；
 - **`TaskIndex`**（IssueRunnerPanel.swift，与 core/lib/tasks.js 结构一致）：`.dsh/tasks/` 关联索引读写——`loadIndex`/`mergeTask`/`findTask`/`rememberSession`/`sessionForIssue`；index.json 写 `{"version": 1, "tasks": [...]}`（任务条目可含 `title`，startTask 起写入），local.json 写 `{"sessions": {issue: {sessionId, updatedAt}}}`；
-- **任务状态机（IssueRunnerTask.State）**：`pending / running / done / failed / cancelled`，与 JobQueue 的 state 字段一致；`IssueRunnerTask` 另含 `body`（issue 正文 markdown，cb13c97 起由 `parseIssues`/`fetchIssues` 取）；交互为**行内展开详情**（`expandedIssue` 手风琴，c852894 起替代 NSAlert 弹窗）——展开行 168pt 高、详情区可滚动（4576dd2），单元格按钮按状态给动作（pending→Process、running→Cancel Task、done→Open PR、failed/cancelled→Retry，均带 Close；done 且有 PR 额外「评论并关闭 Issue」）。
+- **任务状态机（IssueRunnerTask.State）**：`pending / running / done / failed / cancelled`，与 JobQueue 的 state 字段一致；`IssueRunnerTask` 另含 `body`（issue 正文 markdown，cb13c97 起由 `parseIssues`/`fetchIssues` 取）；交互为**行内展开详情**（`expandedIssue` 手风琴，c852894 起替代 NSAlert 弹窗）——展开行 168pt 高、详情区可滚动（4576dd2），单元格按钮按状态给动作（pending→Process、running→Cancel Task、done→Open PR、failed/cancelled→Retry，均带 Close；done 且有 PR 额外「评论并关闭 Issue」）；工作区切换到**不同仓库**（owner/repo 变化）时 `applyRepo` 先清空任务列表——issue 号按仓库归属。
 
 ## RPC 信封（与 dsh web 通信）
 
@@ -58,7 +58,7 @@ POST /api/session.list
 
 已用到的 method：`session.list`（cwd 解析、wiki 轮询 running）、`session.create`（payload 可含 `workspaceId` 或 `cwd` 创建会话）、`session.prompt`（payload: sessionId + mode "queue" + content）、`session.cancel`（payload.sessionId 取消生成会话，`WikiRPC.cancel`）、`workspace.list`（`WikiRPC.resolveWorkspaceId` 按规范化路径匹配工作区）、`host.openPath`（被 JS 拦截，不走原生打开）。曾用 `workspace.insertSessionBefore` 的 `WikiRPC.attachOrphans`（把未分组会话归入工作区）已移除（修复 15，build 61→62）：RPC 无 attach 接口，`insertSessionBefore` 只能移动**已入账**会话。
 
-**会话跟随**：`rebuildWebView` 注入 `sessionTrackerScript`，监听 web 客户端 RPC 请求体中的 `payload.sessionId`（`session.history/prompt/rename/selectModel`）与 `payload.parentSessionId`（`subagent.list`），id 变化时经 `dshSession` message handler 上报；壳层 `DSHSessionRPC.fetchSessionCwd(port:sessionId:)` 按 id 查 `session.list` 取 cwd 更新 `ProjectDirectory`。
+**会话跟随**：`rebuildWebView` 注入 `sessionTrackerScript`，监听 web 客户端 RPC 请求体中的 `payload.sessionId`（`session.history/prompt/rename/selectModel`）与 `payload.parentSessionId`（`subagent.list`），id 变化时经 `dshSession` message handler 上报；壳层 `DSHSessionRPC.fetchSessionCwd(port:sessionId:)` 按 id 查 `session.list` 取 cwd 更新 `ProjectDirectory`，随后**无条件**触发 `tasksPanel.workspaceChanged()`（即使 fetch 失败 cwd 为 nil 也触发——面板解析器回退扫描 `workspace.list`）。
 
 ## Wiki 页面数据格式（frontmatter）
 

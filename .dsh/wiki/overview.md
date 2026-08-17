@@ -1,7 +1,7 @@
 ---
 title: 仓库概览
 tags: [overview, tech-stack, build, run, test]
-updated: 2026-08-16T16:34:44Z
+updated: 2026-08-17T03:52:05Z
 sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/MakeIcon.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/tests/issues.test.js, docs/productization.md, docs/git-workflow.md, scripts/version.sh, .github/workflows/, tests/wiki-panel/run.sh]
 manual: false
 ---
@@ -24,7 +24,7 @@ oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deeps
 | 打包 | `pkgbuild` + `hdiutil`（`platforms/macos/make-pkg.sh` → .pkg / .dmg） |
 | 目标平台 | macOS 13+（Apple Silicon / arm64；Info.plist `LSMinimumSystemVersion` = 13.0） |
 
-当前工作区版本：`1.10.0`（fallback，BUILD 66；最新发布 `v1.9.0`）；版本由 git tag 驱动（`scripts/version.sh`：HEAD 命中 vX.Y.Z → 取 tag，否则回退 1.10.0；BUILD 取 CI 运行号）。最近 git 提交：`9f59e92`（"Merge pull request #8 from insky2005/feature/unified-gh-token"）——其中 88f0255 将任务面板 token 读取改为文件优先、Keychain 兜底（免每次弹密码），628c30a 配置按钮改齿轮图标、配置文案改按仓库双写说明。
+当前工作区版本：`1.10.0`（fallback，BUILD 66；最新发布 `v1.9.0`）；版本由 git tag 驱动（`scripts/version.sh`：HEAD 命中 vX.Y.Z → 取 tag，否则回退 1.10.0；BUILD 取 CI 运行号）。最近 git 提交：`3bdc6b9`（"Merge pull request #9 from insky2005/feature/unified-gh-token"）——任务面板工作区识别改**权威判断**（workspacePath 非 GitHub 仓库时诚实显示空态、不再替换为其他工作区，13bf9e3；切换到不同仓库先清空旧任务列表，197189e）、会话切换**无条件**触发任务面板刷新（4a7de43/40288d1）；此前 88f0255 将 token 读取改为文件优先、Keychain 兜底（免每次弹密码），628c30a 配置按钮改齿轮图标、配置文案改按仓库双写说明。
 
 ## 目录布局
 
@@ -73,7 +73,7 @@ open "dist/oh-my-dsh.app"     # 或双击
 
 - 运行时**无需**本机安装 Node 或 dsh（自包含）；
 - 启动先探测 `127.0.0.1:3080` 是否已有 `dsh web`（页面含 `window.__DSH_BOOT__` 判定）→ 复用；否则用内置 node 拉起 `dsh web --port <n>`（3080 被占自动换空闲端口），90 秒超时；
-- **项目目录跟随当前会话**：壳层注入 `sessionTrackerScript` 监听 dsh web 的会话 RPC（`session.history/prompt/rename/selectModel`、`subagent.list`），用户切换会话/工作区时经 `dshSession` 消息把新的项目目录同步给预览树、终端新会话与 wiki 根（共享 `ProjectDirectory`，见 [architecture](architecture.md)）；
+- **项目目录跟随当前会话**：壳层注入 `sessionTrackerScript` 监听 dsh web 的会话 RPC（`session.history/prompt/rename/selectModel`、`subagent.list`），用户切换会话/工作区时经 `dshSession` 消息把新的项目目录同步给预览树、终端新会话、wiki 根与任务面板（共享 `ProjectDirectory`；任务面板跟随会话**无条件**刷新——workspacePath 权威、非 GitHub 仓库诚实显示空态，见 [architecture](architecture.md)）；
 - 日志：`~/Library/Logs/oh-my-dsh/app.log`（壳层）、`server.log`（自拉起服务输出）。
 
 ## 测试

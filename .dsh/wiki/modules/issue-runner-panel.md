@@ -1,7 +1,7 @@
 ---
 title: 模块：任务面板（IssueRunner）
 tags: [module, tasks, github, issue, queue, index]
-updated: 2026-08-16T16:34:44Z
+updated: 2026-08-17T03:52:05Z
 sources: [platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/tests/issues.test.js, .dsh/skills/issue-fix/SKILL.md, docs/issue-runner-design.md, docs/git-workflow.md]
 manual: false
 ---
@@ -25,7 +25,7 @@ manual: false
   - UI：header（标题 + 刷新/全部处理/配置/关闭按钮——配置按钮为 SF Symbol `gearshape`，628c30a 起由 folder 字形改为齿轮；刷新按钮 `arrow.clockwise`）+ toolbar（仓库名）+ 任务 NSTableView + 底部状态条（compositing trap 同 wiki/terminal 面板：opaque 底条需 wantsLayer+masksToBounds）；
   - **交互（c852894 起，替代 bafa12e 的 NSAlert 弹窗）**：单击行 = **行内展开/收起详情**（`expandedIssue` 记录展开的 issue；`heightOfRow` 展开行 168pt / 普通行 22pt），展开区是 **NSScrollView 内可滚动 NSTextView**（4576dd2：正文不再截断、滚动查看全部，按钮固定底部不被长正文挤出）+ 单元格内明确按钮——primary（pending→Process / running→Cancel Task / done→Open PR / failed、cancelled→Retry）+ Close + 「评论并关闭 Issue」；按钮带 tag（200/201/202），`cell.objectValue` 携带 issue 号；串行约束：另一任务运行时 Process/Retry 禁用（`runningNumber != nil`）；杜绝误触发（选中即 `deselectAll`，动作只在按钮点击）；
   - **评论并关闭（63525e3，用户触发非自动）**：done 且有 PR 的任务展开区显示「评论并关闭 Issue」→ NSAlert 内嵌可编辑 NSTextView（预填 `tasks.commentTemplate`，含 PR 引用）→ 确认后 `commentAndCloseIssue`（POST `/issues/{n}/comments` + PATCH `/issues/{n}` state=closed，需 token）→ 成功记日志并 `reloadIssues`（关闭的 issue 从列表消失），失败状态条提示（3s 后消失）；
-  - **仓库识别（b7c5407 兜底）**：优先 `workspacePath`（活动项目目录）；为空时 `listWorkspacePaths(port:)` 从 dsh `workspace.list` 取路径，逐个 `detectGitHubRemote`，都不是则 1s 后重试（≤10 次，`repoResolveRetries`），修复启动早期误报 not a GitHub repo；成功后 `repoRootPath` 缓存，供索引写入与流水线使用；
+  - **仓库识别（13bf9e3 起工作区权威）**：`workspacePath`（活动项目目录，跟随用户当前查看的会话）**权威**——非空时若是 GitHub 仓库 → 显示其 issues；若不是（如 Ungrouped/非 git 会话 cwd）→ 诚实显示「当前工作区不是 GitHub 仓库」空态（`repo = nil` + 清空任务），**不再替换为其他已注册工作区**；仅当启动早期 `ProjectDirectory` 未解析（`workspacePath` 为空）才 `listWorkspacePaths(port:)` 从 dsh `workspace.list` 扫描第一个 GitHub 仓库，仍无则 1s 后重试（≤10 次，`repoResolveRetries`）；`applyRepo` 检测到工作区切换到**不同仓库**（owner/repo 变化）时先清空旧任务列表（issue 号按仓库归属），再恢复关联索引 + 重载 issues；成功后 `repoRootPath` 缓存，供索引写入与流水线使用；
   - issue 拉取：GitHub REST `/repos/{o}/{r}/issues?state=open`，**过滤 pull_request 条目**；cb13c97 起取 `body` 字段（issue 正文 markdown）供行内详情显示；公开仓库匿名，私有需 token（按仓库作用域解析，见下「GitHub token」）；
   - 任务流水线：`git checkout main → pull → checkout -b <分支>`（`branchForIssue`：按 label 判定——含 feature/enhancement 类 → `feature/issue-N`，否则 bug/其他 → `fix/issue-N`，统一分支规范 `docs/git-workflow.md`）→ `session.create(workspaceId)` → `session.rename` → `session.prompt`(issue-fix, queue) → 轮询 `session.list` running → 校验 `git ls-remote` 分支已推送 → `POST /pulls` 创建 PR（head=分支、base=main，与 git-workflow「feature/fix 回 main 一律走 PR」一致）→ 状态 done(PR url) → 切回 main → 队列下一项；分支推送检查用 `pushRemoteName`——按 **github > origin > 首个 remote** 解析远程名（修复硬编码 origin，与 `scripts/git-remote.sh` 同一规则）；
   - **关联索引**：`TaskIndex`（Swift）把 issue→branch/state/title/startedAt 写入 `.dsh/tasks/index.json`（`mergeTask`，随仓库提交；startTask 起记录 title，6d265a5），会话创建后 `rememberSession` 把 sessionId 写入 `local.json`（本机、gitignore），done/failed 时更新 prUrl/error/finishedAt；App 重启后 `restoreFromIndex(repoRoot:)` 按两文件重建任务列表与 session 关联（不覆盖内存中已存在的同 issue），再以 open issues 刷新——`reloadIssues` 对已存在任务**更新 title/labels/body**（不再跳过，恢复的任务标题不再显示占位符，6d265a5）；
@@ -46,7 +46,7 @@ manual: false
 
 - `RightPanel` 增加 `case tasks`；活动栏第 4 按钮（symbol `checkmark.circle`，tooltip 「任务/Tasks」）；
 - 「视图」菜单「显示/隐藏 任务面板」`⌥⌘J`；`rightPanelKind` 持久化 `"tasks"`；
-- `tasksPanel.workspacePath` 由 AppDelegate 提供（跟随 `ProjectDirectory.current`，即用户当前查看的会话目录；为空时面板自回退 workspace.list，见上）；
+- `tasksPanel.workspacePath` 由 AppDelegate 提供（跟随 `ProjectDirectory.current`，即用户当前查看的会话目录）；会话切换时壳层**无条件**调用 `tasksPanel.workspaceChanged()`（fetch cwd 失败也触发）→ 面板按「workspacePath 权威 / 启动早期回退 workspace.list」重新解析（见上）；
 - `serverReady(port:)` 时通知面板做仓库识别 + issue 加载；
 - 编译清单：`build-app.sh` 的 `SWIFT_SOURCES` 登记 `IssueRunnerPanel.swift`；
 - L10n：`bar.tasks` / `menu.toggleTasks` / `tasks.*` 一组双语键；详情文本键 `tasks.detailTitle`/`detailLabels`/`detailBranch`/`detailPR`/`detailState`、`tasks.state.{pending,running,done,failed,cancelled}` 沿用；按钮键 `tasks.detailProcess`/`detailOpenPR`/`detailRetry`/`detailCancelTask`/`detailClose`；63525e3 新增评论并关闭一组：`tasks.detailCommentClose`/`commentCloseTitle`/`commentCloseInfo`/`commentCloseDone`/`commentCloseFailed`/`commentTemplate`；配置框键 `tasks.configTitle`/`configInfo`（628c30a 文案改为「按当前仓库保存：Keychain + `~/.dsh/tokens/<owner>-<repo>` 文件双写，App 与外部工具共用」）。
@@ -55,7 +55,8 @@ manual: false
 
 | 场景 | 行为 |
 |---|---|
-| 工作区非 GitHub 仓库 | 空态「当前工作区不是 GitHub 仓库」；启动早期 workspace 未就绪 → 自动重试（≤10 次 × 1s） |
+| 工作区非 GitHub 仓库 | 空态「当前工作区不是 GitHub 仓库」（workspacePath 权威，不再替换为其他已注册工作区）；仅启动早期 ProjectDirectory 未解析 → 回退扫描 workspace.list，未就绪则自动重试（≤10 次 × 1s） |
+| 工作区/会话切换到不同仓库 | `applyRepo` 检测 owner/repo 变化 → 清空旧仓库任务列表（issue 号按仓库归属）→ 恢复关联索引 + 重载 issues |
 | 公开仓库 | 匿名读（限流 60/h）；私有需 token（按仓库作用域解析：文件专属 → 文件通用 → Keychain 专属 → Keychain 通用） |
 | 分支已存在 | 提示「分支已存在」，可续跑 |
 | 会话失败/超时（30min） | 标记 failed（index.json 写 state= failed + error），分支+会话保留，详情内可 Retry |

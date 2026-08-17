@@ -1,7 +1,7 @@
 ---
 title: oh-my-dsh 仓库知识库
 tags: [wiki, index, oh-my-dsh]
-updated: 2026-08-16T16:34:44Z
+updated: 2026-08-17T03:52:05Z
 sources: [README.md, .dsh/skills/repo-wiki/SKILL.md, platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/tests/issues.test.js, docs/git-workflow.md]
 manual: false
 ---
@@ -31,12 +31,13 @@ manual: false
 
 - 页面数：12（含本页；模块页 6 个）
 - 主要源码：`platforms/macos/src/`（6 个 Swift 文件）+ 共享核心 `core/`（Node 模块，含 issues/jobqueue/tasks 后 77 用例单测）
-- 最近一次提交：`9f59e92`（"Merge pull request #8 from insky2005/feature/unified-gh-token"）——任务面板 token 读取改**文件优先**、Keychain 兜底（88f0255，免每次弹密码），配置按钮改齿轮图标、配置文案改按仓库双写说明（628c30a）
+- 最近一次提交：`3bdc6b9`（"Merge pull request #9 from insky2005/feature/unified-gh-token"）——任务面板工作区识别改**权威判断**（workspacePath 非 GitHub 仓库时诚实显示空态、不再替换为其他工作区，13bf9e3；切换到不同仓库先清空旧任务列表，197189e）、会话切换**无条件**触发任务面板刷新（4a7de43/40288d1）；此前 token 读取改**文件优先**、Keychain 兜底（88f0255，免每次弹密码），配置按钮改齿轮图标、配置文案改按仓库双写说明（628c30a）
 - 工作区版本号：`1.10.0`（fallback，BUILD 66；最新发布 `v1.9.0`；发布后 fallback 立即推进到下一 minor，见 [conventions](conventions.md)）
 - 仓库新增文档：`docs/productization.md`（产品化方案：P0 已达成 → P1 开源/CI → P2 Windows → P3 Linux → P4 生态 → F Apple 生态暂缓，见 [overview](overview.md)）；`docs/git-workflow.md`（统一分支与发布规范：main 只合并/只打主版本，feature/fix 走 PR，已发布 bug 走 release/X.Y + patch tag + cherry-pick 回 main，见 [conventions](conventions.md) 与 [tasks](tasks.md)）；`docs/milestones/`（M1 产品化基础 … M5 Apple 生态 5 份里程碑目标文档，README「目录」收录）；`docs/issue-runner-design.md`（任务面板设计 + 远程驱动预留 + 关联索引章节）
 - 任务关联索引：`.dsh/tasks/index.json`（issue→branch→PR→state，随仓库提交）+ `local.json`（sessionId，gitignore），实现 `core/lib/tasks.js`（Node）+ `IssueRunnerPanel.swift` 的 `TaskIndex`（Swift），见 [data-model](data-model.md) 与 [issue-runner-panel](modules/issue-runner-panel.md)
 - GitHub token：按仓库作用域——Keychain 专属 + 文件 `~/.dsh/tokens/<owner>-<repo>` 双写（chmod 600），回退 Keychain 通用 + `~/.dsh/gh-token`（外部工具/代理共用）；读取**优先文件**、Keychain 兜底（免 Keychain 弹密码，88f0255），见 [issue-runner-panel](modules/issue-runner-panel.md)
-- Wiki 提交：更新完成后由代理（repo-wiki skill）执行 `git add .dsh/wiki` + commit（不 push，message 概括实际变更）；`WikiAutoCommit` 兜底（代理未提交时），见 [wiki-panel](modules/wiki-panel.md)
+- 任务面板工作区跟随：会话/工作区切换时壳层**先更新 `ProjectDirectory`** 再**无条件**调用 `tasksPanel.workspaceChanged()`（fetch cwd 失败也触发）——面板以 workspacePath 为**权威**（GitHub 仓库 → 显示 issues；非 GitHub → 诚实空态、不替换其他工作区；仅启动早期回退 workspace.list 扫描，≤10 次重试），见 [issue-runner-panel](modules/issue-runner-panel.md) 与 [architecture](architecture.md)
+- Wiki 提交：更新完成后由维护代理按指令执行 `git add .dsh/wiki` + commit（不 push，message 概括实际变更；repo-wiki skill 现行规则已不含提交步骤）；`WikiAutoCommit` 兜底（代理未提交时），见 [wiki-panel](modules/wiki-panel.md)
 
 ## 维护约定
 
@@ -44,4 +45,4 @@ manual: false
 - 增量更新只重写 `sources` 命中变更的页面；`manual: true` 页面绝不改写；
 - 内容只写可证实事实；`.env*`/密钥/口令一律不收录。
 
-最后生成时间：2026-08-16T16:34:44Z
+最后生成时间：2026-08-17T03:52:05Z
