@@ -34,7 +34,7 @@ jobs:
         with:
           fetch-depth: 0   # version.sh reads tags
       - name: Cache runtime + node tarballs (.cache/)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .cache
           key: release-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('platforms/macos/build-app.sh', 'scripts/version.sh') }}
