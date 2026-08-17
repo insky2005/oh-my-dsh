@@ -446,8 +446,8 @@ final class DSHUpdater {
         proc.arguments = [npmCli, "install", "--loglevel=error",
                           "--no-audit", "--no-fund", "--registry", registry, target]
         var env = ProcessInfo.processInfo.environment
-        let runtime = (dshDir as NSString).deletingLastPathComponent
-        env["PATH"] = runtime + ":" + (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
+        // OS environment passed through untouched (no PATH rewrite) — npm runs
+        // via npm-cli.js's absolute path and finds its toolchain on the OS PATH.
         env["npm_config_cache"] = cacheDir
         env["npm_config_update_notifier"] = "false"
         proc.environment = env
@@ -622,14 +622,13 @@ final class ServerManager {
         return res.appendingPathComponent("runtime/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js").path
     }
 
-    /// Locate a usable `node` binary. The bundled runtime wins; otherwise
+    /// First usable `node` installed on the OS (PATH → nvm → Homebrew).
     /// GUI-launched processes have a minimal PATH, so we search known
-    /// locations explicitly.
-    func resolveNode() -> String? {
+    /// locations explicitly. No version gate: the bundled runtime is the
+    /// fallback when an OS node is missing or fails to boot dsh web.
+    func resolveSystemNode() -> String? {
         let fm = FileManager.default
         let env = ProcessInfo.processInfo.environment
-        if let p = env["DSH_NODE"], fm.isExecutableFile(atPath: p) { return p }
-        if let p = bundledNode(), fm.isExecutableFile(atPath: p) { return p }
         if let path = env["PATH"] {
             for dir in path.split(separator: ":") where !dir.isEmpty {
                 let cand = String(dir) + "/node"
@@ -646,6 +645,18 @@ final class ServerManager {
         }
         for p in ["/opt/homebrew/bin/node", "/usr/local/bin/node"] where fm.isExecutableFile(atPath: p) { return p }
         return nil
+    }
+
+    /// Preferred `node`: explicit DSH_NODE override, else the first OS-installed
+    /// node, else the bundled runtime. ServerManager.start() retries with the
+    /// bundled runtime when an OS node fails to boot dsh web — the bundled
+    /// node only guarantees that dsh web starts.
+    func resolveNode() -> String? {
+        let fm = FileManager.default
+        let env = ProcessInfo.processInfo.environment
+        if let p = env["DSH_NODE"], fm.isExecutableFile(atPath: p) { return p }
+        if let p = resolveSystemNode() { return p }
+        return bundledNode()
     }
 
     /// Locate `dsh`'s entry script (lib/bin.js): bundled runtime first, then
@@ -687,9 +698,10 @@ final class ServerManager {
     }
 
     /// Re-read the resolved runtime facts (used by the About panel; call
-    /// again after an upgrade).
-    func refreshFacts() {
-        if let node = resolveNode(), let bin = resolveDSHBin() {
+    /// again after an upgrade, or after the server settles on a node so the
+    /// panel reflects the node dsh web actually runs on).
+    func refreshFacts(node actual: String? = nil) {
+        if let node = actual ?? resolveNode(), let bin = resolveDSHBin() {
             runtimeSource = (bin == bundledDSHBin()) ? L10n.tr("fact.bundled") : L10n.tr("fact.system")
             dshVersion = readPackageVersion(bin: bin) ?? L10n.tr("fact.unknown")
             nodeVersion = nodeVersionString(nodePath: node) ?? L10n.tr("fact.unknown")
@@ -750,61 +762,88 @@ final class ServerManager {
         if !isPortFree(port) { port = freePort() }
         self.port = port
 
-        // 3. Resolve node + dsh entry.
-        guard let node = resolveNode() else {
-            throw NSError(domain: "DSHShell", code: 1, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.noNode")])
-        }
+        // 3. Resolve the dsh entry and the preferred node. The bundled runtime
+        //    is only a safety net: any OS-installed node is tried first, and
+        //    DSH_NODE (explicit override) always wins.
         guard let bin = resolveDSHBin() else {
             throw NSError(domain: "DSHShell", code: 2, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.noDSH")])
         }
-        AppLog.shared.log("using node=\(node) dsh=\(bin) port=\(port) bundled=\(bundledNode() != nil)")
+        let explicitNode = env["DSH_NODE"].flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil }
+        let bundled = bundledNode()
+        let system = resolveSystemNode()
+        let firstNode = explicitNode ?? system ?? bundled
+        guard let firstNode else {
+            throw NSError(domain: "DSHShell", code: 1, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.noNode")])
+        }
+        AppLog.shared.log("using node=\(firstNode) dsh=\(bin) port=\(port) system=\(system ?? "-") bundled=\(bundled ?? "-")")
 
-        // 4. Spawn `node <bin> web --port <port>`.
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: node)
-        proc.arguments = [bin, "web", "--port", String(port)]
-
-        var penv = env
-        let nodeDir = (node as NSString).deletingLastPathComponent
-        let existingPath = penv["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        penv["PATH"] = nodeDir + ":" + existingPath
-        if penv["DSH_HOME"] == nil { penv["DSH_HOME"] = NSHomeDirectory() + "/.dsh" }
-        proc.environment = penv
-        proc.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
-
+        // 4. Spawn `node <bin> web --port <port>`. If the chosen OS node fails
+        //    to boot dsh web (exits early or never serves in time), retry once
+        //    with the bundled runtime. DSH_NODE is explicit — no fallback.
         let logPath = NSHomeDirectory() + "/Library/Logs/oh-my-dsh/server.log"
-        FileManager.default.createFile(atPath: logPath, contents: nil)
-        if let fh = FileHandle(forWritingAtPath: logPath) {
-            fh.seekToEndOfFile()
-            proc.standardOutput = fh
-            proc.standardError = fh
-        }
+        var attempt: String? = firstNode
+        while let node = attempt {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: node)
+            proc.arguments = [bin, "web", "--port", String(port)]
 
-        do { try proc.run() } catch {
-            throw NSError(domain: "DSHShell", code: 3, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.spawnFailed", error.localizedDescription)])
-        }
-        process = proc
-        spawned = true
+            var penv = env
+            // The OS environment is passed through untouched — no PATH rewrite,
+            // so dsh web sees exactly what the user would on their own shell.
+            if penv["DSH_HOME"] == nil { penv["DSH_HOME"] = NSHomeDirectory() + "/.dsh" }
+            proc.environment = penv
+            proc.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
 
-        // 5. Poll until the UI is served.
-        let deadline = Date().addingTimeInterval(90)
-        while Date() < deadline {
-            if isDSHServing(port: port, timeout: 1) {
-                AppLog.shared.log("dsh web is up on 127.0.0.1:\(port)")
-                return URL(string: "http://127.0.0.1:\(port)")!
+            FileManager.default.createFile(atPath: logPath, contents: nil)
+            if let fh = FileHandle(forWritingAtPath: logPath) {
+                fh.seekToEndOfFile()
+                proc.standardOutput = fh
+                proc.standardError = fh
             }
-            if !proc.isRunning {
+
+            do { try proc.run() } catch {
+                throw NSError(domain: "DSHShell", code: 3, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.spawnFailed", error.localizedDescription)])
+            }
+            process = proc
+            spawned = true
+
+            // 5. Poll until the UI is served.
+            var failed = false
+            let deadline = Date().addingTimeInterval(90)
+            while Date() < deadline {
+                if isDSHServing(port: port, timeout: 1) {
+                    refreshFacts(node: node)
+                    AppLog.shared.log("dsh web is up on 127.0.0.1:\(port) (node=\(node))")
+                    return URL(string: "http://127.0.0.1:\(port)")!
+                }
+                if !proc.isRunning {
+                    failed = true
+                    break
+                }
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+            if !failed && !isDSHServing(port: port, timeout: 1) { failed = true }
+
+            if failed, node != explicitNode, let bundled, node != bundled {
+                // OS node failed to boot dsh web; the bundled runtime is the
+                // guarantee that the app starts.
+                proc.terminate()
+                AppLog.shared.log("node \(node) failed to start dsh web; retrying with bundled \(bundled)")
+                attempt = bundled
+                continue
+            }
+
+            proc.terminate()
+            spawned = false
+            process = nil
+            if failed {
                 let tail = (try? String(contentsOfFile: logPath, encoding: .utf8)) ?? ""
                 let last = tail.split(separator: "\n").suffix(5).joined(separator: "\n")
-                proc.terminate()
-                spawned = false
                 throw NSError(domain: "DSHShell", code: 4, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.exited", last)])
             }
-            Thread.sleep(forTimeInterval: 0.5)
+            throw NSError(domain: "DSHShell", code: 5, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.timeout", logPath)])
         }
-        proc.terminate()
-        spawned = false
-        throw NSError(domain: "DSHShell", code: 5, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.timeout", logPath)])
+        throw NSError(domain: "DSHShell", code: 1, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.noNode")])
     }
 
     /// Stop the server we spawned. Never touches a server we did not spawn.

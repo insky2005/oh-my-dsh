@@ -7,7 +7,10 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
-- 暂无（v1.9.0 已发布；开发线已推进到 1.10.0）。
+### Changed
+
+- **Node 选择策略反转（系统优先、内置兜底）**：`dsh web` 启动优先使用操作系统安装的 node（PATH → nvm → Homebrew 首个可用）；仅当系统 node 缺失、或用它启动 dsh web 失败（提前退出 / 超时未服务）时才回退内置 node——内置 node 只保证 dsh web 能启动；`DSH_NODE` 显式覆盖仍无条件优先（无回退）；
+- **dsh web 环境不再改写 PATH**：移除启动与升级路径的 PATH 置顶，dsh web 原样继承操作系统环境（仅补充 `DSH_HOME` 默认值）；About 面板的 Node 版本显示实际运行 dsh web 的 node。
 
 ## [1.9.0] - 2026-08-16
 
