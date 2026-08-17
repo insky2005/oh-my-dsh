@@ -211,9 +211,9 @@ enum L10n {
         // about
         "about.version": ("版本 %@（%@）", "Version %@ (%@)"),
         "about.credits": ("原生壳封装 dsh web，不改动任何 DeepSeek Harness 源码。\n\n"
-                          + "dsh 版本：%@（%@）\nNode 版本：%@\ndsh registry：%@",
+                          + "dsh 版本：%@（%@）\nNode 版本：%@\nNode 路径：%@\ndsh registry：%@",
                           "A native shell around dsh web; no DeepSeek Harness source is modified.\n\n"
-                          + "dsh: %@ (%@)\nNode: %@\ndsh registry: %@"),
+                          + "dsh: %@ (%@)\nNode: %@\nNode path: %@\ndsh registry: %@"),
         // settings window
         "settings.openMenu": ("设置…", "Settings…"),
         "settings.title": ("设置", "Settings"),
@@ -527,6 +527,7 @@ final class ServerManager {
     /// Resolved runtime facts, surfaced in the About panel.
     private(set) var dshVersion = L10n.tr("fact.unknown")
     private(set) var nodeVersion = L10n.tr("fact.unknown")
+    private(set) var nodePath = L10n.tr("fact.unknown")
     private(set) var runtimeSource = L10n.tr("fact.unknown")
 
     /// The web UI root page always injects `window.__DSH_BOOT__`.
@@ -705,11 +706,13 @@ final class ServerManager {
             runtimeSource = (bin == bundledDSHBin()) ? L10n.tr("fact.bundled") : L10n.tr("fact.system")
             dshVersion = readPackageVersion(bin: bin) ?? L10n.tr("fact.unknown")
             nodeVersion = nodeVersionString(nodePath: node) ?? L10n.tr("fact.unknown")
-            AppLog.shared.log("runtime facts: source=\(runtimeSource) dsh=\(dshVersion) node=\(nodeVersion)")
+            nodePath = node
+            AppLog.shared.log("runtime facts: source=\(runtimeSource) dsh=\(dshVersion) node=\(nodeVersion) path=\(node)")
         } else {
             runtimeSource = L10n.tr("fact.unknown")
             dshVersion = L10n.tr("fact.unknown")
             nodeVersion = L10n.tr("fact.unknown")
+            nodePath = L10n.tr("fact.unknown")
         }
     }
 
@@ -2402,7 +2405,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         separator.translatesAutoresizingMaskIntoConstraints = false
 
         let info = NSTextField(wrappingLabelWithString:
-            L10n.tr("about.credits", server.dshVersion, server.runtimeSource, server.nodeVersion, RegistryConfig.current))
+            L10n.tr("about.credits", server.dshVersion, server.runtimeSource, server.nodeVersion, server.nodePath, RegistryConfig.current))
         info.font = .systemFont(ofSize: 12)
         info.preferredMaxLayoutWidth = 500
         info.translatesAutoresizingMaskIntoConstraints = false
