@@ -42,7 +42,7 @@
 
 - **按仓库**：`~/.dsh/tokens/<owner>-<repo>`（如 `~/.dsh/tokens/insky2005-oh-my-dsh`）；
 - **通用兜底**：`~/.dsh/gh-token`；
-- 需要 GitHub 写操作（创建 PR、发评论、关闭 issue、推私有仓库）时读取对应文件（`cat` 即可），**不要打印/回显 token 内容**；
+- 需要 GitHub 写操作（创建 PR、发评论、关闭 issue、推私有仓库）时读取对应文件（`cat` 即可），**绝不打印/回显 token 内容，绝不在对话、汇报、日志、commit message 中泄露 token**；
 - 公开仓库的拉取（issues 列表等）无需 token；
 - 面板保存 token 时会同时写入 Keychain 与该文件，App 与外部工具/代理共用。
 
