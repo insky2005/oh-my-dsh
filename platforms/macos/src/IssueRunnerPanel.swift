@@ -319,6 +319,11 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             updateLabels()
             return
         }
+        // Workspace switched to a DIFFERENT repo → drop the previous repo's
+        // task list (issue numbers are per-repo).
+        if repo?.owner != detected.owner || repo?.repo != detected.repo {
+            tasks = []
+        }
         repo = (detected.owner, detected.repo)
         repoRootPath = path
         AppLog.shared.log("tasks repo resolved: \(detected.owner)/\(detected.repo) at \(path)")

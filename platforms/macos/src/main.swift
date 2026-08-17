@@ -2114,6 +2114,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 ProjectDirectory.set(cwd)
                 self.previewPanel?.setProjectDirectory(cwd)
                 self.wikiPanel?.reloadRoot()
+                // Tasks panel: re-detect the GitHub repo for the new workspace
+                // and reload its issue list.
+                self.tasksPanel?.workspaceChanged()
                 AppLog.shared.log("project directory followed session \(sid): \(cwd)")
             }
         }
