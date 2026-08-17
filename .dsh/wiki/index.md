@@ -1,7 +1,7 @@
 ---
 title: oh-my-dsh 仓库知识库
 tags: [wiki, index, oh-my-dsh]
-updated: 2026-08-17T03:52:05Z
+updated: 2026-08-17T12:17:48Z
 sources: [README.md, .dsh/skills/repo-wiki/SKILL.md, platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/tests/issues.test.js, docs/git-workflow.md]
 manual: false
 ---
@@ -31,7 +31,7 @@ manual: false
 
 - 页面数：12（含本页；模块页 6 个）
 - 主要源码：`platforms/macos/src/`（6 个 Swift 文件）+ 共享核心 `core/`（Node 模块，含 issues/jobqueue/tasks 后 77 用例单测）
-- 最近一次提交：`3bdc6b9`（"Merge pull request #9 from insky2005/feature/unified-gh-token"）——任务面板工作区识别改**权威判断**（workspacePath 非 GitHub 仓库时诚实显示空态、不再替换为其他工作区，13bf9e3；切换到不同仓库先清空旧任务列表，197189e）、会话切换**无条件**触发任务面板刷新（4a7de43/40288d1）；此前 token 读取改**文件优先**、Keychain 兜底（88f0255，免每次弹密码），配置按钮改齿轮图标、配置文案改按仓库双写说明（628c30a）
+- 最近一次提交：`e9d6bb2`（"feat(about): merge node version and path into one line"）——Node 选择策略改**系统优先、内置兜底**（ac4312c：`resolveNode` 为 `DSH_NODE` > 系统 node（PATH→nvm→Homebrew 首个可用）> 内置 node；系统 node 启动 dsh web 失败回退内置重试一次，`DSH_NODE` 显式指定不回退；dsh web 与升级进程不再改写 PATH，原样继承操作系统环境），About 面板显示实际运行 dsh web 的 node 路径（8fcd6cc）并把 Node 版本+路径合并为一行（e9d6bb2，如 `Node: v22.23.2 (/path)`）；此前任务面板工作区识别改**权威判断**（workspacePath 非 GitHub 仓库时诚实显示空态、不再替换为其他工作区，13bf9e3；切换到不同仓库先清空旧任务列表，197189e）、会话切换**无条件**触发任务面板刷新（4a7de43/40288d1）；更早 token 读取改**文件优先**、Keychain 兜底（88f0255，免每次弹密码），配置按钮改齿轮图标、配置文案改按仓库双写说明（628c30a）
 - 工作区版本号：`1.10.0`（fallback，BUILD 66；最新发布 `v1.9.0`；发布后 fallback 立即推进到下一 minor，见 [conventions](conventions.md)）
 - 仓库新增文档：`docs/productization.md`（产品化方案：P0 已达成 → P1 开源/CI → P2 Windows → P3 Linux → P4 生态 → F Apple 生态暂缓，见 [overview](overview.md)）；`docs/git-workflow.md`（统一分支与发布规范：main 只合并/只打主版本，feature/fix 走 PR，已发布 bug 走 release/X.Y + patch tag + cherry-pick 回 main，见 [conventions](conventions.md) 与 [tasks](tasks.md)）；`docs/milestones/`（M1 产品化基础 … M5 Apple 生态 5 份里程碑目标文档，README「目录」收录）；`docs/issue-runner-design.md`（任务面板设计 + 远程驱动预留 + 关联索引章节）
 - 任务关联索引：`.dsh/tasks/index.json`（issue→branch→PR→state，随仓库提交）+ `local.json`（sessionId，gitignore），实现 `core/lib/tasks.js`（Node）+ `IssueRunnerPanel.swift` 的 `TaskIndex`（Swift），见 [data-model](data-model.md) 与 [issue-runner-panel](modules/issue-runner-panel.md)
@@ -45,4 +45,4 @@ manual: false
 - 增量更新只重写 `sources` 命中变更的页面；`manual: true` 页面绝不改写；
 - 内容只写可证实事实；`.env*`/密钥/口令一律不收录。
 
-最后生成时间：2026-08-17T03:52:05Z
+最后生成时间：2026-08-17T12:17:48Z

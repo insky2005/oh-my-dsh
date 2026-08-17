@@ -1,7 +1,7 @@
 ---
 title: 架构
 tags: [architecture, layers, dataflow, deployment]
-updated: 2026-08-17T03:52:05Z
+updated: 2026-08-17T12:17:48Z
 sources: [platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/git-workflow.md, .dsh/skills/repo-wiki/SKILL.md]
 manual: false
 ---
@@ -61,7 +61,7 @@ manual: false
 
 - 单 `.app`（ad-hoc 签名，`codesign --force --deep --sign -`），自包含运行时在 `Contents/Resources/runtime/`（`node` + `npm/` + `dsh/` 依赖树 + `core/` 共享核心）；
 - 发布物：`.pkg`（preinstall 先删旧版再装到 /Applications）+ `.dmg`（拖拽安装），由 `platforms/macos/make-pkg.sh` 生成；
-- About 面板展示运行时事实：dsh 版本、Node 版本、Node 路径、运行时来源（内置/系统）、registry；
+- About 面板展示运行时事实：dsh 版本、Node 版本+路径（合并为一行）、运行时来源（内置/系统）、registry；
 - dsh 升级只作用于内置运行时（`DSHUpdater.init` 要求路径含 `/Contents/Resources/runtime/`），绝不碰系统安装；升级会改写包内文件使 ad-hoc 签名失效（README 明示，本地运行不受影响）。
 
 ## 布局约束（窗口）
