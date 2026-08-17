@@ -283,10 +283,15 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
 
     private func resolveRepoOnce() {
         // Preferred: the shell's active project directory (follows the session
-        // the user is viewing). Fallback: resolve from the dsh workspace list.
+        // the user is viewing). If it isn't a GitHub repo (e.g. an Ungrouped
+        // session's cwd), fall back to scanning registered workspaces for one
+        // that IS a GitHub repo (helloharness is always registered there).
         if let path = workspacePath?(), !path.isEmpty {
-            applyRepo(path: path)
-            return
+            if Self.detectGitHubRemote(path) != nil {
+                applyRepo(path: path)
+                return
+            }
+            // workspacePath is not a GitHub repo → fall through to workspace list.
         }
         let port = serverPortProvider?() ?? 3080
         let workspaces = Self.listWorkspacePaths(port: port)
