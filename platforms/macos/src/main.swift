@@ -211,9 +211,9 @@ enum L10n {
         // about
         "about.version": ("版本 %@（%@）", "Version %@ (%@)"),
         "about.credits": ("原生壳封装 dsh web，不改动任何 DeepSeek Harness 源码。\n\n"
-                          + "dsh 版本：%@（%@）\nNode 版本：%@\nNode 路径：%@\ndsh registry：%@",
+                          + "dsh 版本：%@（%@）\nNode: %@ (%@)\ndsh registry：%@",
                           "A native shell around dsh web; no DeepSeek Harness source is modified.\n\n"
-                          + "dsh: %@ (%@)\nNode: %@\nNode path: %@\ndsh registry: %@"),
+                          + "dsh: %@ (%@)\nNode: %@ (%@)\ndsh registry: %@"),
         // settings window
         "settings.openMenu": ("设置…", "Settings…"),
         "settings.title": ("设置", "Settings"),
