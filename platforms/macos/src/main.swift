@@ -623,10 +623,13 @@ final class ServerManager {
         return res.appendingPathComponent("runtime/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js").path
     }
 
-    /// First usable `node` installed on the OS (PATH → nvm → Homebrew).
-    /// GUI-launched processes have a minimal PATH, so we search known
-    /// locations explicitly. No version gate: the bundled runtime is the
-    /// fallback when an OS node is missing or fails to boot dsh web.
+    /// First usable `node` installed on the OS (PATH → nvm default → nvm
+    /// current → nvm newest → Homebrew). GUI-launched processes have a minimal
+    /// PATH, so we search known locations explicitly. The nvm branch honors
+    /// `~/.nvm/alias/default` (what the user considers "their node") before
+    /// falling back to the most recently installed version. No version gate:
+    /// the bundled runtime is the fallback when an OS node is missing or fails
+    /// to boot dsh web.
     func resolveSystemNode() -> String? {
         let fm = FileManager.default
         let env = ProcessInfo.processInfo.environment
@@ -638,7 +641,34 @@ final class ServerManager {
         }
         let home = NSHomeDirectory()
         let nvmRoot = home + "/.nvm/versions/node"
-        if let versions = try? fm.contentsOfDirectory(atPath: nvmRoot) {
+        if let versions = try? fm.contentsOfDirectory(atPath: nvmRoot), !versions.isEmpty {
+
+            // 1. nvm default alias (~/.nvm/alias/default), e.g. "20" or "v20.19.6".
+            if let alias = try? String(contentsOfFile: home + "/.nvm/alias/default", encoding: .utf8) {
+                let v = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !v.isEmpty {
+                    // Exact full-version hit (v20.19.6 / 20.19.6).
+                    let exact = nvmRoot + "/" + (v.hasPrefix("v") ? v : "v" + v) + "/bin/node"
+                    if fm.isExecutableFile(atPath: exact) { return exact }
+                    // Major-only alias ("20") → newest installed within that major.
+                    let prefix = v.hasPrefix("v") ? v : "v" + v
+                    for c in versions.filter({ $0.hasPrefix(prefix) })
+                        .sorted(by: { mtime(nvmRoot + "/" + $0) > mtime(nvmRoot + "/" + $1) }) {
+                        let cand = nvmRoot + "/" + c + "/bin/node"
+                        if fm.isExecutableFile(atPath: cand) { return cand }
+                    }
+                }
+            }
+
+            // 2. nvm current symlink (~/.nvm/current → versions/node/<v>), set by
+            //    `nvm use`; absent in GUI-launched contexts.
+            if let curRaw = try? fm.destinationOfSymbolicLink(atPath: home + "/.nvm/current"), !curRaw.isEmpty {
+                let cur = curRaw.hasPrefix("/") ? curRaw : (home + "/.nvm/" + curRaw)
+                let cand = cur + "/bin/node"
+                if fm.isExecutableFile(atPath: cand) { return cand }
+            }
+
+            // 3. Most recently installed version (previous behavior).
             for v in versions.sorted(by: { mtime(nvmRoot + "/" + $0) > mtime(nvmRoot + "/" + $1) }) {
                 let cand = nvmRoot + "/" + v + "/bin/node"
                 if fm.isExecutableFile(atPath: cand) { return cand }
