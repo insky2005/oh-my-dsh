@@ -693,6 +693,47 @@ final class ServerManager {
         return bundledNode()
     }
 
+    /// Best-effort PATH from a login shell, so dsh web's bash sees the user's
+    /// tools (nvm bins, ~/.local/bin, …). Finder-launched apps inherit a
+    /// minimal PATH from launchd; a login shell reproduces what the user would
+    /// get in a terminal. Read once and cached; nil on failure/timeout (the
+    /// caller then keeps the inherited PATH). Nothing bundled is injected.
+    private static var cachedLoginShellPath: String?
+    private func loginShellPath() -> String? {
+        if let cached = ServerManager.cachedLoginShellPath { return cached }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        proc.arguments = ["-ilc", "print -r -- \"$PATH\""]
+        let out = Pipe()
+        proc.standardOutput = out
+        proc.standardError = Pipe()
+        var result: String?
+        do {
+            try proc.run()
+            let sem = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async {
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                result = String(data: data, encoding: .utf8)?
+                    .split(separator: "\n").last.map(String.init)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                sem.signal()
+            }
+            if sem.wait(timeout: .now() + 8) == .timedOut {
+                proc.terminate()
+                proc.waitUntilExit()
+                AppLog.shared.log("login shell PATH read timed out; keeping inherited PATH")
+                return nil
+            }
+            proc.waitUntilExit()
+        } catch {
+            return nil
+        }
+        guard let result, !result.isEmpty else { return nil }
+        ServerManager.cachedLoginShellPath = result
+        AppLog.shared.log("dsh web PATH from login shell: \(result.count) chars")
+        return result
+    }
+
     /// Locate `dsh`'s entry script (lib/bin.js): bundled runtime first, then
     /// npx cache, global installs, or PATH — newest wins.
     func resolveDSHBin() -> String? {
@@ -824,8 +865,11 @@ final class ServerManager {
             proc.arguments = [bin, "web", "--port", String(port)]
 
             var penv = env
-            // The OS environment is passed through untouched — no PATH rewrite,
-            // so dsh web sees exactly what the user would on their own shell.
+            // Merge the login-shell PATH (read once) so dsh web's bash sees
+            // the user's tools — nvm bins, ~/.local/bin, etc. Finder-launched
+            // apps inherit a minimal launchd PATH. Nothing bundled is injected
+            // here, and on failure the inherited PATH is kept unchanged.
+            if let login = loginShellPath(), !login.isEmpty { penv["PATH"] = login }
             if penv["DSH_HOME"] == nil { penv["DSH_HOME"] = NSHomeDirectory() + "/.dsh" }
             proc.environment = penv
             proc.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())

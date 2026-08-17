@@ -44,7 +44,7 @@ manual: false
 - 面板通过 `serverPortProvider` 闭包取当前端口，`serverReady(port:)` 在服务就绪后获得门控通知；
 - **共享项目目录**：`ProjectDirectory`（main.swift）保存当前活动项目目录，四处消费——预览树、终端新会话 cwd、wiki 根解析（`resolveProjectDirectory` 优先返回它，其次实时查询并缓存）、任务面板工作区识别（`tasksPanel.workspacePath` 优先返回 `ProjectDirectory.current` 且**权威**：非 GitHub 仓库 → 诚实空态、不替换其他工作区；仅启动早期未解析时才回退 `workspace.list` 解析并重试，见数据流 4b）；
 - 任务面板把 issue→branch→PR→state 关联持久化到 `.dsh/tasks/`：`core/lib/tasks.js`（Node）+ `IssueRunnerPanel.swift` 的 `TaskIndex`（Swift，结构一致）双实现；index.json 随仓库提交、local.json 本机覆盖（gitignore）；
-- **Node 选择策略（系统优先、内置兜底）**：`resolveSystemNode()`（PATH→nvm→Homebrew 首个可用）优先，`DSH_NODE` 显式覆盖无条件优先；仅当系统 node 缺失、或用它启动 dsh web 失败（提前退出 / 90s 未服务）时才回退内置 node（`start()` 内 try/fallback）；dsh web 与升级进程环境**不做 PATH 改写**，原样继承操作系统环境；About 面板经 `refreshFacts(node:)` 显示实际运行 dsh web 的 node；
+- **Node 选择策略（系统优先、内置兜底）**：`resolveSystemNode()`（PATH→nvm current→nvm default→Homebrew 首个可用）优先，`DSH_NODE` 显式覆盖无条件优先；仅当系统 node 缺失、或用它启动 dsh web 失败（提前退出 / 90s 未服务）时才回退内置 node（`start()` 内 try/fallback）；dsh web 环境**不做内置目录 PATH 注入**，但经 `loginShellPath()`（`/bin/zsh -ilc` 读一次、8s 超时兜底、缓存）合并登录 shell PATH，使 dsh web 的 bash 可用用户全局工具；About 面板经 `refreshFacts(node:)` 显示实际运行 dsh web 的 node；
 - 构建依赖：`platforms/macos/build-app.sh` 显式列出编译源文件，新增文件必须登记（v1.7.0 加入了 `WikiPanel.swift`，v1.8.0 加入 `IssueRunnerPanel.swift`）。
 
 ## 关键数据流
