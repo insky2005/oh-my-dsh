@@ -86,7 +86,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/oh-my-dsh.app/Contents/Info.plist
           du -sh dist/oh-my-dsh.app
       - name: Upload app bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: oh-my-dsh-${{ matrix.arch }}
           path: dist/oh-my-dsh.app
