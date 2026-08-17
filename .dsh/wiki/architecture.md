@@ -1,7 +1,7 @@
 ---
 title: 架构
 tags: [architecture, layers, dataflow, deployment]
-updated: 2026-08-17T03:52:05Z
+updated: 2026-08-17T14:01:34Z
 sources: [platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/git-workflow.md, .dsh/skills/repo-wiki/SKILL.md]
 manual: false
 ---
@@ -44,11 +44,12 @@ manual: false
 - 面板通过 `serverPortProvider` 闭包取当前端口，`serverReady(port:)` 在服务就绪后获得门控通知；
 - **共享项目目录**：`ProjectDirectory`（main.swift）保存当前活动项目目录，四处消费——预览树、终端新会话 cwd、wiki 根解析（`resolveProjectDirectory` 优先返回它，其次实时查询并缓存）、任务面板工作区识别（`tasksPanel.workspacePath` 优先返回 `ProjectDirectory.current` 且**权威**：非 GitHub 仓库 → 诚实空态、不替换其他工作区；仅启动早期未解析时才回退 `workspace.list` 解析并重试，见数据流 4b）；
 - 任务面板把 issue→branch→PR→state 关联持久化到 `.dsh/tasks/`：`core/lib/tasks.js`（Node）+ `IssueRunnerPanel.swift` 的 `TaskIndex`（Swift，结构一致）双实现；index.json 随仓库提交、local.json 本机覆盖（gitignore）；
+- **Node 选择策略（系统优先、内置兜底，含版本门槛）**：`resolveSystemNode()`（PATH→nvm current→nvm default→nvm 最新→Homebrew 首个**通过版本门槛**者，低于 22.0.0 跳过，`DSH_NODE_MIN` 可覆盖）优先，`DSH_NODE` 显式覆盖无条件优先；仅当系统 node 缺失/过旧、或用它启动 dsh web 失败（提前退出 / 90s 未服务）时才回退内置 node（`start()` 内 try/fallback，轮询含 1s 沉降校验防引导页假就绪）；dsh web 环境**不做内置目录 PATH 注入**，但经 `loginShellPath()`（`/bin/zsh -ilc` 读一次、8s 超时兜底、缓存）合并登录 shell PATH，使 dsh web 的 bash 可用用户全局工具；About 面板经 `refreshFacts(node:)` 显示实际运行 dsh web 的 node；
 - 构建依赖：`platforms/macos/build-app.sh` 显式列出编译源文件，新增文件必须登记（v1.7.0 加入了 `WikiPanel.swift`，v1.8.0 加入 `IssueRunnerPanel.swift`）。
 
 ## 关键数据流
 
-1. **启动**：`applicationDidFinishLaunching` → `L10n.captureSystemLang()`（在改写 AppleLanguages 前快照系统语言）→ `installSignalHandlers` → `buildMenu` → `buildWindow` → `startServer`。`ServerManager.start()`：先查 3080 是否已是 dsh web（`isDSHServing`，页面含 `__DSH_BOOT__`）→ 复用；否则解析 node/dsh 入口、`node <bin> web --port <n>` 自拉起，轮询直到就绪（90s 超时，进程提前退出则抛错）。就绪后 `webView.load`，并通知终端/面板 `serverReady(port:)`。
+1. **启动**：`applicationDidFinishLaunching` → `L10n.captureSystemLang()`（在改写 AppleLanguages 前快照系统语言）→ `installSignalHandlers` → `buildMenu` → `buildWindow` → `startServer`。`ServerManager.start()`：先查 3080 是否已是 dsh web（`isDSHServing`，页面含 `__DSH_BOOT__`）→ 复用；否则解析 node/dsh 入口、`node <bin> web --port <n>` 自拉起，轮询直到就绪（90s 超时，含 1s 沉降校验——进程存活且再次可服务才判 up，防引导页假就绪；进程提前退出则抛错）。就绪后 `webView.load`，并通知终端/面板 `serverReady(port:)`。
 2. **文件预览拦截**：`rebuildWebView` 注入两段用户脚本——① 覆写 `navigator.language/languages` 跟随壳语言；② `previewInterceptorScript` 覆写 `window.fetch`，拦截 `/api/host.openPath` RPC，把路径经 `window.webkit.messageHandlers.dshPreview.postMessage` 发给原生层，并回一个假的 `server-response` 成功（页面不会打开系统默认应用）。AppDelegate `userContentController` 收到后切换/打开预览面板 `previewPanel.open(path:)`。
 3. **项目目录解析**：`DSHSessionRPC.fetchActiveSessionCwd(port:)` POST `/api/session.list`（`client-request` 信封：`{type, rpcId, method, payload}` → `{result:{ok, value}}`），取 running 会话优先、按 `updatedAt` 最新的非 blank 会话 cwd。预览树、终端新会话、wiki 根解析都基于它。
 4. **Wiki 生成**：面板「+」→ `WikiRPC.createSession(cwd: repoRoot)` + `promptSession(mode: queue)` 触发代理执行 `repo-wiki` skill → 代理写 `.dsh/wiki/**`；面板轮询 `session.list` 的 running 标志显示「生成中」——内容区**叠加半透明浮层**（`WikiOverlayView`，0.82 透明度背景 + 居中「Generating…」NSTextField），页面与树全程可见、布局不消失（build 57→58）；底部状态条每秒刷新已耗时（`wiki.generatingElapsed`）；**生成状态按仓库根关联**（`generations: [canonicalRepo: Generation]`，build 59→60，可多仓库并发各一个生成，`syncGenerationUI` 只让 UI 反映当前仓库）；文件监听（2s 轮询 + 签名比对）驱动刷新与陈旧标记（生成期间代理每写出一页，左侧树即实时出现该页）；完成/失败/取消后都 `refresh()` 恢复内容区；取消走 `WikiRPC.cancel`（`session.cancel {sessionId}`）。**提交**：主路径由维护代理按指令执行（`git add .dsh/wiki` + commit，message 概括实际变更，**不 push**；repo-wiki skill 现行规则已不含提交步骤，末条为汇报）；面板 `WikiAutoCommit` 仅**兜底**（代理未提交且仍有变更时，`commitMessage(status:diff:)` 从 diff 提取实际内容生成 message），提交后 `refresh()` 刷新树（mtime 更新、陈旧标记消除）。**工作区归组**（build 48→49）：`WikiRPC.resolveWorkspaceId` 用 `workspace.list` 按规范化路径匹配当前仓库工作区，`createSession` 优先传 `workspaceId`（否则回退 `cwd`）——新会话直接归入工作区；曾有的 `attachOrphans`（把既有未分组会话经 `workspace.insertSessionBefore` 挂入工作区，幂等 + 30s 节流）因 RPC 无 attach 接口、对未分组会话必然失败（`workspace-move-invalid: not accounted`），已于 build 61→62（修复 15）**移除**——已存在的未分组会话无法经 API 移动，UI 的 Ungrouped 仅为浏览器本地聚合。
@@ -60,7 +61,7 @@ manual: false
 
 - 单 `.app`（ad-hoc 签名，`codesign --force --deep --sign -`），自包含运行时在 `Contents/Resources/runtime/`（`node` + `npm/` + `dsh/` 依赖树 + `core/` 共享核心）；
 - 发布物：`.pkg`（preinstall 先删旧版再装到 /Applications）+ `.dmg`（拖拽安装），由 `platforms/macos/make-pkg.sh` 生成；
-- About 面板展示运行时事实：dsh 版本、Node 版本、运行时来源（内置/系统）、registry；
+- About 面板展示运行时事实：dsh 版本、Node 版本+路径（合并为一行）、运行时来源（内置/系统）、registry；
 - dsh 升级只作用于内置运行时（`DSHUpdater.init` 要求路径含 `/Contents/Resources/runtime/`），绝不碰系统安装；升级会改写包内文件使 ad-hoc 签名失效（README 明示，本地运行不受影响）。
 
 ## 布局约束（窗口）
