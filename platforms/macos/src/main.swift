@@ -2109,14 +2109,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             guard let self = self else { return }
             let cwd = DSHSessionRPC.fetchSessionCwd(port: self.server.port, sessionId: sid)
             DispatchQueue.main.async {
+                // Always re-point the tasks panel on session switch: its repo
+                // detection is idempotent (no-op when the repo didn't change),
+                // and it must NOT depend on ProjectDirectory having changed
+                // (fetchSessionCwd can return nil for orphaned sessions, yet
+                // the panel should still re-scan the registered workspaces).
+                self.tasksPanel?.workspaceChanged()
                 guard let cwd = cwd else { return }
                 if let current = ProjectDirectory.current, current == cwd { return }
                 ProjectDirectory.set(cwd)
                 self.previewPanel?.setProjectDirectory(cwd)
                 self.wikiPanel?.reloadRoot()
-                // Tasks panel: re-detect the GitHub repo for the new workspace
-                // and reload its issue list.
-                self.tasksPanel?.workspaceChanged()
                 AppLog.shared.log("project directory followed session \(sid): \(cwd)")
             }
         }
