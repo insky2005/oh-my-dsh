@@ -27,6 +27,17 @@
 5. 新增 Swift 文件必须登记进 `build-app.sh` 编译清单；
 6. 面板 UI 遵循 `PreviewPanel.swift` 基件约定；layer-backed 合成陷阱见 `docs/terminal-header-fix.md`。
 
+## 分支与提交（强制，见 docs/git-workflow.md）
+
+- **开发前必须先切分支**，禁止直接在 `main` 上改代码：
+  - 新功能/重构 → `feature/<slug>`（如 `feature/issue-runner`）；
+  - bug 修复（未发布）→ `fix/<slug>`；
+  - bug 修复（已发布版本）→ `release/X.Y`（打 patch tag 发布后 PR 回 main）；
+- **`main` 只接受合并（PR），只打主版本 tag** `vX.Y.0`；不直接 `git push origin main`；
+- 分支推送后开 PR 合并（CI 全绿 + review）；已发布版本的修复同步回 main 也走 PR；
+- 提交用 conventional commits（`feat(…): …` / `fix(…): …` / `docs(…): …`）；
+- 提交前 `git status` 确认只含本次改动，**不顺手提交无关文件**（其他会话/代理的在途改动不要碰）。
+
 ## 测试
 
 ```bash
@@ -36,7 +47,3 @@ tests/terminal-emulator/run.sh # 模拟器测试（已迁 core/tests/ansi.test.j
 ```
 
 提交前保持全绿；CI 会在 push/PR 自动跑（macOS arm64/x64/Universal + core 单测）。
-
-## 提交规范
-
-conventional commits（`feat(term): …` / `fix(upgrade): …` / `chore(version): …`），见 CONTRIBUTING.md。
