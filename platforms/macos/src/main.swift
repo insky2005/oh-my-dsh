@@ -107,7 +107,7 @@ enum L10n {
         "menu.appearance": ("外观", "Appearance"),
         "menu.togglePreview": ("显示/隐藏 预览面板", "Toggle Preview Panel"),
         // activity bar
-        "bar.preview": ("预览面板", "Preview Panel"),
+        "bar.preview": ("文件", "Files"),
         "bar.terminal": ("终端", "Terminal"),
         "edit.undo": ("撤销", "Undo"),
         "edit.redo": ("重做", "Redo"),
@@ -1399,22 +1399,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityBar.kind = .control
         activityBar.translatesAutoresizingMaskIntoConstraints = false
 
-        // 活动栏图标：tooltip 固定英文（不随系统语言切换）；顺序 =
-        // 文件、终端、浏览器、Wiki、任务。
+        // 活动栏图标：tooltip 跟随系统语言（L10n 中英切换）；
+        // 顺序 = 文件、终端、浏览器、Wiki、任务。
         previewBarButton = makeActivityButton(symbol: "doc.on.doc",
-                                              tooltip: "Files",
+                                              tooltip: L10n.tr("bar.preview"),
                                               action: #selector(togglePreviewPanel(_:)))
         terminalBarButton = makeActivityButton(symbol: "terminal",
-                                               tooltip: "Terminal",
+                                               tooltip: L10n.tr("bar.terminal"),
                                                action: #selector(terminalEntryTapped(_:)))
         browserBarButton = makeActivityButton(symbol: "globe",
-                                              tooltip: "Browser",
+                                              tooltip: L10n.tr("bar.browser"),
                                               action: #selector(browserEntryTapped(_:)))
         wikiBarButton = makeActivityButton(symbol: "book.closed",
-                                           tooltip: "Wiki",
+                                           tooltip: L10n.tr("bar.wiki"),
                                            action: #selector(wikiEntryTapped(_:)))
         tasksBarButton = makeActivityButton(symbol: "checkmark.circle",
-                                            tooltip: "Tasks",
+                                            tooltip: L10n.tr("bar.tasks"),
                                             action: #selector(tasksEntryTapped(_:)))
         let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton])
         barStack.orientation = .vertical
