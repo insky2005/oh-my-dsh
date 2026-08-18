@@ -1241,7 +1241,12 @@ final class BrowserPanelController: NSObject {
     /// 在当前页签内部展开 DevTools 子窗口（页签 = 主窗口 + DevTools）。
     private func showDevToolsInTab(_ ws: String, port: Int) {
         guard let tab = activeTab else { return }
-        guard let encoded = ws.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return }
+        // ws 参数用「主机:端口/路径」（去掉 ws:// scheme）——Chromium 的
+        // inspector.html 前端会自己拼 ws://；传完整 ws:// 会拼出
+        // ws://ws://… 双重 scheme，WebSocket 无法连接。
+        let wsPath = ws.replacingOccurrences(of: "ws://", with: "")
+                        .replacingOccurrences(of: "wss://", with: "")
+        guard let encoded = wsPath.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return }
         let url = "http://127.0.0.1:\(port)/devtools/inspector.html?ws=\(encoded)"
         AppLog.shared.log("devtools: embedding in tab \(tab.id) \(url.prefix(70))")
         tab.container.showDevToolsArea()

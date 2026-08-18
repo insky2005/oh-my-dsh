@@ -83,6 +83,10 @@ class AppShim : public CefApp, public CefBrowserProcessHandler {
     command_line->AppendSwitch("use-mock-keychain");
     command_line->AppendSwitch("enable-unsafe-swiftshader");
     command_line->AppendSwitch("ignore-gpu-blocklist");
+    // DevTools 前端（inspector.html 页面）发起的 WebSocket 连接带
+    // Origin: http://127.0.0.1:9333；CEF 默认拒绝带 Origin 的 DevTools
+    // ws → 页面报 "WebSocket 无法连接"。放行所有 Origin（本地调试端口）。
+    command_line->AppendSwitchWithValue("remote-allow-origins", "*");
     // （GPU 路径已恢复默认）
   }
 
