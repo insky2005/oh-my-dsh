@@ -9,10 +9,11 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
-- **浏览器面板**（活动栏 globe / `⌥⌘B`）：多标签 WKWebView 浏览器（每标签独立 webview、cookie 与 dsh web 隔离；`+`/`✕`/`⌘1-9` 同终端交互，上限 8 tab）；地址栏导航（无 scheme 自动补 `https://`）、后退/前进/刷新·停止；控制台抽屉（注入捕获 console/window.onerror/unhandledrejection 与 main-frame fetch/XHR 网络日志 + JS 求值 + 清空）；`isInspectable` 开启 Safari Web Inspector 完整调试。
+- **浏览器面板（Chromium/CEF 内核）**（活动栏 globe / `⌥⌘B`）：多标签浏览器，每标签一个 Chromium 渲染进程（五 helper app：base/Alerts/GPU/Plugin/Renderer，名字承重）；地址栏导航（无 scheme 自动补 `https://`）、后退/前进/刷新·停止；控制台抽屉（CDP 捕获 console/异常/全部网络请求 + JS 求值 + 清空）；DevTools 按钮在系统浏览器打开完整 Chromium DevTools；`use-mock-keychain` 不弹钥匙串密码框；profile 收在 `~/.dsh/browser/`。
 - **浏览器 REST API**（`127.0.0.1:3081`，`DSH_BROWSER_PORT` 覆盖，端口文件 `~/.dsh/browser-api.port`）：`status`/`open`/`tabs`/`back`/`forward`/`reload`/`stop`/`eval`/`console`/`console/clear`/`screenshot`/`hide`，CORS 放行；Agent 驱动自动展开面板；配套技能 `.dsh/skills/shell-browser/SKILL.md`（modelInvocable）。
+- **CEF 构建管线**（`platforms/macos/build-cef.sh`）：版本固定 + sha1 校验 + `.cache` 缓存；wrapper/shim/helper 编译；五 helper 组装与由内向外签名；`build-app.sh`/CI 接入。
 - 测试：`tests/browser-panel/`（日志缓冲/URL 规范化/HTTP 解析/REST 路由，56 断言）；CI 编译清单与浏览器测试步骤登记。
-- 设计文档：`docs/plans/BROWSER_PLAN-browser-panel.md`（含 CEF 嵌入式 Chromium spike 结论：macOS 26 + ad-hoc 签名下 renderer 子进程无法启动，参考 cefsimple 同样复现，回退 WKWebView；复活条件 = 真签名或上游修复）。
+- 设计文档：`docs/plans/BROWSER_PLAN-browser-panel.md`（含根因修正：CEF 148+ 需五 helper，缺 `(Renderer)` 导致 renderer 静默失败——曾误判为签名问题）。
 
 ## [1.10.0] - 2026-08-18
 

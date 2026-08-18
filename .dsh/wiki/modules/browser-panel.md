@@ -6,22 +6,23 @@ sources: [platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI
 manual: false
 ---
 
-# 模块：浏览器面板（BrowserPanel.swift + BrowserAPI.swift）
+# 模块：浏览器面板（BrowserPanel.swift + BrowserAPI.swift + BrowserCDP.swift + CEF）
 
-右栏浏览器面板：多标签 WKWebView 浏览器，面向「开发调试 web 页面」与「Agent 排查网页问题」两个目标。Agent 经 localhost REST API（curl 即用）驱动，配套技能 `.dsh/skills/shell-browser/SKILL.md`。
+右栏浏览器面板：多标签 **CEF 嵌入式 Chromium** 浏览器，面向「开发调试 web 页面」与「Agent 排查网页问题」两个目标。Agent 经 localhost REST API（curl 即用）驱动，配套技能 `.dsh/skills/shell-browser/SKILL.md`。
 
-## 背景：为什么是 WKWebView 而不是 Chromium
+## 背景：Chromium 内核 + 根因修正
 
-CEF（嵌入式 Chromium）方案 spike 集成全部打通（框架加载/CefInitialize/CDP/多浏览器同窗口），但 **renderer 子进程在本机无法启动**——官方未改动的 cefsimple 参考应用同样复现，CEF 144/150/151 全部复现，沙箱内外均复现；用户 Developer ID 签名的 Chrome 148 正常。根因指向 **macOS 26.5 + ad-hoc 签名**：实测 ad-hoc 进程 `csops(CS_OPS_VALIDATION_CATEGORY)` 返回 `NONE`，新 Chromium 的 `base/mac/process_requirement` 校验对 NONE 分类有硬性路径。故按计划回退 WKWebView；CEF 集成路径（已验证）记录于 `docs/plans/BROWSER_PLAN-browser-panel.md` §二，复活条件 = 真签名（Developer ID/Apple Development）或上游修复。WKWebView 方案**不访问钥匙串、无子进程/签名校验问题**。
+用户要求 Chromium 内核（对标 Qoder Quest）。spike 曾误判「renderer 起不来 = ad-hoc 签名问题」并回退 WKWebView；后经 [CefSwift](https://github.com/Rajaniraiyn/CefSwift) 打包文档提示定位**真实根因：CEF 148+ 在 macOS 要求五个 helper app**（base/Alerts/GPU/Plugin/Renderer，同一份二进制、名字承重，见发行包 `CEF_HELPER_APP_SUFFIXES`）——只打 base helper 时 renderer 静默失败，GPU/网络走 base 正常。补上 `(Renderer)` 后 CEF 144/150/151 全部正常渲染，**ad-hoc 签名无影响**（-67030 仅为无害告警）。完整记录见 `docs/plans/BROWSER_PLAN-browser-panel.md` §二。
 
-## BrowserPanel.swift 职责
+## BrowserPanel.swift 职责（CEF 内核）
 
-- **多标签**：每 tab 一个 WKWebView（独立 `WKWebsiteDataStore`（macOS 14+ 用 forIdentifier 固定 UUID 隔离，13 回退 nonPersistent），cookie 与 dsh web 隔离）；`+`/`✕`/`⌘1-9` 同终端面板交互；上限 8 tab（每 tab 一 webview，内存随页数增长）；
-- **工具栏**：后退/前进/刷新·停止 + 地址栏（`BrowserURL.normalize`：无 scheme 补 `https://`，about:blank/file:/data: 原样，非法返回 nil）+ 前往；
-- **控制台抽屉**（可折叠）：注入脚本（`browserInjectionScript`，forMainFrameOnly:false）包装 console 方法、window.onerror、unhandledrejection，并包装 fetch/XMLHttpRequest（level "network" 行，含状态码/耗时）→ `messageHandlers.browserConsole`；日志环形缓冲 `BrowserLogBuffer`（per-tab，2000 条）；JS 求值 `evalScript`（表达式 JSON 序列化后交给 `eval()`，支持语句；结果 JSON.stringify 回传）；**限制：仅捕获 main-frame JS 发起的调用**（图片/CSS/子框架看不到，完整网络面板用 Safari Web Inspector）；
-- **调试**：`webView.isInspectable = true`（macOS 13.3+，#available 守卫）——Safari → 开发 → oh-my-dsh → 浏览器面板；
-- **生命周期**：KVO 同步 url/title/isLoading/canGoBack/canGoForward；WKNavigationDelegate 把加载失败写进 console 缓冲；`ensureLoaded()` 懒建首 tab（恢复 `browserLastURL`，默认 about:blank）；`shutdownAll()` 退出清理（移除 message handler）；
-- 根视图 `BrowserRootView`（isOpaque=false 自绘背景，防 layer 合成陷阱，同 WikiRootView 模式）。
+- **多标签**：每 tab 一个 `BrowserCEFTab` = 容器 NSView + CEF 浏览器（shim `CEFShim.createBrowser(in:url:delegate:)`，`CefWindowInfo::SetAsChild` 原生托管，Alloy 风格）+ `BrowserCDPClient`（直连页面 ws）；`+`/`✕`/`⌘1-9` 同终端面板交互；上限 8 tab（每 tab 一个渲染进程）；
+- **工具栏**：后退/前进/刷新·停止（走 shim `CEFShim.goBack/goForward/reload/stop`）+ 地址栏（`BrowserURL.normalize`）+ 前往；
+- **控制台抽屉**（可折叠）：CDP 事件（`Runtime.consoleAPICalled`/`exceptionThrown`、`Network.requestWillBeSent`/`responseReceived`/`loadingFailed`（requestId 关联状态码）、`Log.entryAdded`）→ per-tab `BrowserLogBuffer`（2000 条）；JS 求值走 CDP `Runtime.evaluate`（`result.result.value` 两层取值，spike 踩过）；
+- **DevTools**：头部按钮在系统浏览器打开 `http://127.0.0.1:<cdpPort>/devtools/inspector.html?ws=<pageWs>`（完整 Chromium DevTools）；
+- **CDP 发现**：`BrowserCDP.findUnclaimedTarget` 后台拉取 `/json`（**绝不在主线程同步拉**——与 CEF 消息泵死锁），按创建顺序认领未占用 page target 后直连其 ws；
+- **生命周期**：`ensureLoaded()` 懒建首 tab（恢复 `browserLastURL`，默认 about:blank）；`shutdownAll()` 关闭浏览器 + 断开 CDP；CEF 消息泵由 main.swift 的 8ms 定时器驱动（`external_message_pump`）；钥匙串：`use-mock-keychain`（不弹密码框）；单例锁：启动清理陈旧锁 + 显式 `root_cache_path=~/.dsh/browser`（防污染与 exit 21）；
+- 根视图 `BrowserRootView`（isOpaque=false 自绘背景，同 WikiRootView 模式）。
 
 ## BrowserAPI.swift 职责
 

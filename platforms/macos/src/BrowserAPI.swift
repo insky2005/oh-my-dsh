@@ -273,10 +273,10 @@ final class BrowserAPIBridge: BrowserAPIDelegate {
                 return
             }
             switch action {
-            case "back": tab.webView.goBack()
-            case "forward": tab.webView.goForward()
-            case "reload": tab.webView.reload()
-            case "stop": tab.webView.stopLoading()
+            case "back": CEFShim.goBack(tab.browserId)
+            case "forward": CEFShim.goForward(tab.browserId)
+            case "reload": CEFShim.reload(tab.browserId)
+            case "stop": CEFShim.stop(tab.browserId)
             default:
                 result = ["ok": false, "error": "unknown action: \(action)"]
                 return

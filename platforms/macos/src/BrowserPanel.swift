@@ -1,15 +1,17 @@
-// BrowserPanel.swift — 浏览器面板（右栏槽位）。
+// BrowserPanel.swift — 浏览器面板（右栏槽位，Chromium/CEF 内核）。
 //
-// WKWebView 多标签浏览器：地址栏/前进后退/刷新停止、控制台抽屉（注入捕获
-// console + fetch/XHR 网络日志 + JS 求值）、`isInspectable` 开启 Safari
-// Web Inspector 完整调试；页面状态经壳层 REST API（BrowserAPI.swift）供
-// Agent/用户 curl 驱动。
+// 多标签浏览器：地址栏/前进后退/刷新停止、控制台抽屉（CDP 捕获 console +
+// 网络请求 + JS 求值）、DevTools 入口；页面状态经壳层 REST API
+// （BrowserAPI.swift）供 Agent/用户 curl 驱动。渲染内核为 CEF
+// （Chromium Embedded Framework），console/网络/求值/截图走 CDP
+// （BrowserCDP.swift）。
 //
-// 注：CEF（嵌入式 Chromium）方案 spike 因环境阻塞回退为 WKWebView，见
-// docs/plans/BROWSER_PLAN-browser-panel.md §二。
+// 背景：CEF 148+ 在 macOS 要求五个 helper app（base/Alerts/GPU/Plugin/
+// Renderer，名字承重）——缺 Helper (Renderer).app 会导致 renderer 静默失败
+// （曾误判为签名问题），见 docs/plans/BROWSER_PLAN-browser-panel.md §二。
 
 import AppKit
-import WebKit
+import Foundation
 
 // MARK: - 日志模型（纯模型，可单测）
 
@@ -73,69 +75,6 @@ enum BrowserURL {
     }
 }
 
-// MARK: - 注入脚本（console + 网络捕获）
-
-/// 注入到每个页面（所有 frame）：包装 console 方法、window.onerror、
-/// unhandledrejection、fetch 与 XMLHttpRequest，把事件发给
-/// messageHandlers.browserConsole。仅捕获 main-frame JS 发起的调用
-/// （图片/CSS/子框架请求捕获不到，属文档化限制；完整调试用 Safari
-/// Web Inspector）。
-private let browserInjectionScript = """
-(function(){
-  if (window.__ohMyDshBrowserInstalled) { return; }
-  window.__ohMyDshBrowserInstalled = true;
-  var send = function(level, args){
-    try {
-      var text = Array.prototype.map.call(args, function(a){
-        try { return (typeof a === 'string') ? a : JSON.stringify(a); } catch(e){ return String(a); }
-      }).join(' ');
-      window.webkit.messageHandlers.browserConsole.postMessage({level: level, text: text});
-    } catch(e){}
-  };
-  ['log','info','warn','error','debug'].forEach(function(m){
-    var orig = console[m];
-    console[m] = function(){ send(m, arguments); orig.apply(console, arguments); };
-  });
-  window.addEventListener('error', function(e){
-    send('error', [e.message + ' @ ' + (e.filename || '') + ':' + (e.lineno || '')]);
-  });
-  window.addEventListener('unhandledrejection', function(e){
-    send('error', ['Unhandled rejection: ' + String(e.reason)]);
-  });
-  var origFetch = window.fetch;
-  window.fetch = function(input, init){
-    var url = (typeof input === 'string') ? input : ((input && input.url) || String(input));
-    var start = Date.now();
-    return origFetch.apply(this, arguments).then(function(r){
-      try { send('network', [(r.status >= 400 ? 'FAIL ' : 'OK ') + r.status + ' ' + url + ' (' + (Date.now() - start) + 'ms)']); } catch(e){}
-      return r;
-    }, function(err){
-      try { send('network', ['ERR ' + url + ' ' + String(err)]); } catch(e){}
-      throw err;
-    });
-  };
-  var origOpen = XMLHttpRequest.prototype.open;
-  var origSend = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.open = function(method, url){
-    this.__ohMyDshXhr = { method: method, url: String(url), start: 0 };
-    return origOpen.apply(this, arguments);
-  };
-  XMLHttpRequest.prototype.send = function(){
-    var self = this;
-    if (this.__ohMyDshXhr) {
-      this.__ohMyDshXhr.start = Date.now();
-      this.addEventListener('loadend', function(){
-        try {
-          var x = self.__ohMyDshXhr;
-          send('network', [self.status + ' ' + x.method + ' ' + x.url + ' (' + (Date.now() - x.start) + 'ms)']);
-        } catch(e){}
-      });
-    }
-    return origSend.apply(this, arguments);
-  };
-})();
-"""
-
 // MARK: - 面板根视图（防 layer 合成陷阱，同 WikiRootView 模式）
 
 final class BrowserRootView: NSView {
@@ -163,72 +102,68 @@ final class BrowserRootView: NSView {
     }
 }
 
-// MARK: - 单个标签页
+// MARK: - 单个标签页（CEF 渲染 + CDP 通道）
 
-final class BrowserTab: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+final class BrowserCEFTab: NSObject, CEFBrowserDelegate, BrowserCDPDelegate {
     let id: Int64
+    /// shim 侧浏览器 id（由 CEFShim.createBrowser 分配，导航用它；init 后赋值）。
+    var browserId: Int64 = 0
     let container: NSView
-    let webView: WKWebView
     let logBuffer = BrowserLogBuffer()
+    let cdp = BrowserCDPClient()
     weak var owner: BrowserPanelController?
 
     private(set) var title: String = ""
-    private(set) var url: String = ""
+    private(set) var url: String
     private(set) var isLoading = false
     private(set) var canGoBack = false
     private(set) var canGoForward = false
 
-    init(id: Int64, owner: BrowserPanelController) {
+    private var cdpRetries = 0
+
+    init(id: Int64, owner: BrowserPanelController, url: String) {
         self.id = id
         self.owner = owner
-
-        let config = WKWebViewConfiguration()
-        let userController = WKUserContentController()
-        userController.addUserScript(
-            WKUserScript(source: browserInjectionScript,
-                         injectionTime: .atDocumentStart,
-                         forMainFrameOnly: false))
-        config.userContentController = userController
-        // 浏览器面板独立 dataStore：cookie/localStorage 与 dsh web 视图隔离。
-        // （forIdentifier 需 macOS 14+；13 上回退非持久化 store。）
-        if #available(macOS 14.0, *),
-           let storeID = UUID(uuidString: "6F8B2A3C-D5E1-4C9A-9B2F-1A2B3C4D5E6F") {
-            config.websiteDataStore = WKWebsiteDataStore(forIdentifier: storeID)
-        } else {
-            config.websiteDataStore = .nonPersistent()
-        }
-
-        let web = WKWebView(frame: .zero, configuration: config)
-        web.autoresizingMask = [.width, .height]
-        web.allowsMagnification = true
-        if #available(macOS 13.3, *) {
-            web.isInspectable = true  // Safari → 开发 → oh-my-dsh → 此面板
-        }
-        self.webView = web
+        self.url = url
 
         container = NSView(frame: .zero)
         container.wantsLayer = true
         container.layer?.masksToBounds = true
         container.autoresizingMask = [.width, .height]
-        web.frame = container.bounds
-        container.addSubview(web)
 
         super.init()
 
-        web.navigationDelegate = self
-        userController.add(self, name: "browserConsole")
-
-        // KVO 同步状态（url/title/isLoading/canGoBack/canGoForward）。
-        for key in [#keyPath(WKWebView.url), #keyPath(WKWebView.title),
-                    #keyPath(WKWebView.isLoading), #keyPath(WKWebView.canGoBack),
-                    #keyPath(WKWebView.canGoForward)] {
-            web.addObserver(self, forKeyPath: key, options: [.initial, .new], context: nil)
-        }
+        cdp.delegate = self
+        browserId = CEFShim.createBrowser(in: container, url: url, delegate: self)
+        startCDPTargetPolling()
     }
 
     deinit {
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: "browserConsole")
+        cdp.disconnect()
     }
+
+    /// 轮询 /json 找到本标签页对应的 CDP target 并连接（renderer 启动约 1s）。
+    /// /json 拉取在后台队列进行，绝不阻塞主线程（否则与 CEF 消息泵死锁）。
+    private func startCDPTargetPolling() {
+        guard cdpRetries < 40 else { return }  // ~12s 上限
+        cdpRetries += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self, let owner = self.owner else { return }
+            BrowserCDP.findUnclaimedTarget(claimed: owner.claimedTargetIds) { [weak self, weak owner] target in
+                guard let self = self, let owner = owner else { return }
+                if let target = target,
+                   let id = target["id"] as? String,
+                   let ws = target["webSocketDebuggerUrl"] as? String {
+                    owner.claimedTargetIds.insert(id)
+                    self.cdp.connect(webSocketURL: ws)
+                    return
+                }
+                self.startCDPTargetPolling()
+            }
+        }
+    }
+
+    // MARK: 导航
 
     func load(url: String) {
         guard let target = BrowserURL.normalize(url) else {
@@ -237,59 +172,35 @@ final class BrowserTab: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
             return
         }
         self.url = target
-        if target == "about:blank" {
-            webView.loadHTMLString("", baseURL: nil)
-        } else if let u = URL(string: target) {
-            webView.load(URLRequest(url: u))
-        }
+        CEFShim.navigateBrowser(browserId, url: target)
     }
 
-    // MARK: KVO
+    // MARK: CEFBrowserDelegate（主线程回调）
 
-    override func observeValue(forKeyPath keyPath: String?, of object: Any?,
-                               change: [NSKeyValueChangeKey: Any]?, context: UnsafeMutableRawPointer?) {
-        guard object as? WKWebView === webView else { return }
-        switch keyPath {
-        case #keyPath(WKWebView.url):
-            if let u = webView.url?.absoluteString { url = u }
-        case #keyPath(WKWebView.title):
-            title = webView.title ?? ""
-        case #keyPath(WKWebView.isLoading):
-            isLoading = webView.isLoading
-        case #keyPath(WKWebView.canGoBack):
-            canGoBack = webView.canGoBack
-        case #keyPath(WKWebView.canGoForward):
-            canGoForward = webView.canGoForward
-        default:
-            break
-        }
+    func cefTitleChanged(_ title: String, forBrowser id: Int64) {
+        self.title = title
         owner?.tabStateChanged(self)
     }
 
-    // MARK: WKNavigationDelegate
+    func cefLoadingStateChanged(_ isLoading: Bool, canGoBack: Bool, canGoForward: Bool, forBrowser id: Int64) {
+        self.isLoading = isLoading
+        self.canGoBack = canGoBack
+        self.canGoForward = canGoForward
+        owner?.tabStateChanged(self)
+    }
 
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        let nsError = error as NSError
-        if nsError.code == NSURLErrorCancelled { return }
-        logBuffer.append(level: "error", text: "加载失败: \(nsError.localizedDescription) (\(webView.url?.absoluteString ?? ""))")
+    func cefLoadError(_ errorText: String, failedURL: String, forBrowser id: Int64) {
+        logBuffer.append(level: "error", text: "加载失败: \(errorText) (\(failedURL))")
         owner?.consoleUpdated()
     }
 
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        let nsError = error as NSError
-        if nsError.code == NSURLErrorCancelled { return }
-        logBuffer.append(level: "error", text: "加载中断: \(nsError.localizedDescription)")
-        owner?.consoleUpdated()
+    func cefBrowserClosed(_ id: Int64) {
+        owner?.tabClosedByCEF(self)
     }
 
-    // MARK: WKScriptMessageHandler
+    // MARK: BrowserCDPDelegate（主队列派发）
 
-    func userContentController(_ userContentController: WKUserContentController,
-                               didReceive message: WKScriptMessage) {
-        guard message.name == "browserConsole",
-              let body = message.body as? [String: Any],
-              let level = body["level"] as? String,
-              let text = body["text"] as? String else { return }
+    func cdpEvent(level: String, text: String) {
         logBuffer.append(level: level, text: text)
         owner?.consoleUpdated()
     }
@@ -304,8 +215,7 @@ final class BrowserPanelController: NSObject {
     var onRequestHide: (() -> Void)?
 
     static let minWidth: CGFloat = 300
-
-    /// 标签页上限（每 tab 一个 WKWebView，内存随页数增长）。
+    /// 标签页上限（每 tab 一个 CEF 浏览器 + 渲染进程）。
     static let maxTabs = 8
 
     // MARK: 子视图
@@ -313,6 +223,7 @@ final class BrowserPanelController: NSObject {
     private let headerTitle = HeaderLabel()
     private var openInBrowserButton: CustomIconButton!
     private var copyURLButton: CustomIconButton!
+    private var devToolsButton: CustomIconButton!
     private var consoleToggleButton: CustomIconButton!
     private var hideButton: CustomIconButton!
     private var backButton: CustomIconButton!
@@ -335,9 +246,11 @@ final class BrowserPanelController: NSObject {
 
     // MARK: 状态
 
-    private var tabs: [BrowserTab] = []
+    private var tabs: [BrowserCEFTab] = []
     /// 当前活动标签页（内部供 BrowserAPIBridge 读取）。
-    var activeTab: BrowserTab?
+    var activeTab: BrowserCEFTab?
+    /// 已被标签页认领的 CDP target id（避免同 URL 标签页误配对）。
+    var claimedTargetIds: Set<String> = []
     private var tabButtons: [Int64: HoverButton] = [:]
     private var nextTabId: Int64 = 1
     private var isDrawerOpen = false
@@ -360,12 +273,14 @@ final class BrowserPanelController: NSObject {
         openInBrowserButton.onAction = { [weak self] in self?.openInSystemBrowser() }
         copyURLButton = CustomIconButton(glyph: .symbol("link"), tooltip: L10n.tr("browser.copyURL"))
         copyURLButton.onAction = { [weak self] in self?.copyActiveURL() }
+        devToolsButton = CustomIconButton(glyph: .symbol("chevron.left.forwardslash.chevron.right"), tooltip: L10n.tr("browser.devTools"))
+        devToolsButton.onAction = { [weak self] in self?.openDevTools() }
         consoleToggleButton = CustomIconButton(glyph: .symbol("chevron.up.chevron.down"), tooltip: L10n.tr("browser.console"))
         consoleToggleButton.onAction = { [weak self] in self?.toggleDrawer() }
         hideButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("preview.closePanel"))
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
 
-        let headerActions = NSStackView(views: [openInBrowserButton, copyURLButton, consoleToggleButton, hideButton])
+        let headerActions = NSStackView(views: [openInBrowserButton, copyURLButton, devToolsButton, consoleToggleButton, hideButton])
         headerActions.orientation = .horizontal
         headerActions.spacing = 6
         headerActions.translatesAutoresizingMaskIntoConstraints = false
@@ -386,13 +301,17 @@ final class BrowserPanelController: NSObject {
 
         // 工具栏：后退/前进/刷新·停止 + 地址栏 + 前往
         backButton = CustomIconButton(glyph: .symbol("chevron.left"), tooltip: L10n.tr("browser.back"))
-        backButton.onAction = { [weak self] in self?.activeTab?.webView.goBack() }
+        backButton.onAction = { [weak self] in
+            if let tab = self?.activeTab { CEFShim.goBack(tab.browserId) }
+        }
         forwardButton = CustomIconButton(glyph: .symbol("chevron.right"), tooltip: L10n.tr("browser.forward"))
-        forwardButton.onAction = { [weak self] in self?.activeTab?.webView.goForward() }
+        forwardButton.onAction = { [weak self] in
+            if let tab = self?.activeTab { CEFShim.goForward(tab.browserId) }
+        }
         reloadButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: L10n.tr("browser.reload"))
         reloadButton.onAction = { [weak self] in
             guard let tab = self?.activeTab else { return }
-            if tab.isLoading { tab.webView.stopLoading() } else { tab.webView.reload() }
+            if tab.isLoading { CEFShim.stop(tab.browserId) } else { CEFShim.reload(tab.browserId) }
         }
         addressField = NSTextField()
         addressField.placeholderString = L10n.tr("browser.addressPlaceholder")
@@ -555,29 +474,26 @@ final class BrowserPanelController: NSObject {
     }
 
     @discardableResult
-    func newTab(url: String?) -> BrowserTab {
+    func newTab(url: String?) -> BrowserCEFTab {
         if tabs.count >= Self.maxTabs { return activeTab ?? tabs.last! }
-        let tab = BrowserTab(id: nextTabId, owner: self)
+        let targetURL = BrowserURL.normalize(url ?? "about:blank") ?? "about:blank"
+        let tab = BrowserCEFTab(id: nextTabId, owner: self, url: targetURL)
         nextTabId += 1
+        UserDefaults.standard.set(targetURL, forKey: "browserLastURL")
         tab.container.frame = contentContainer.bounds
-        tab.container.autoresizingMask = [.width, .height]
         contentContainer.addSubview(tab.container)
         tabs.append(tab)
         addTabButton(for: tab)
-        if let url = url {
-            tab.load(url: url)
-        } else {
-            tab.load(url: "about:blank")
-        }
         select(tab)
         emptyLabel.isHidden = true
         return tab
     }
 
-    func closeTab(_ tab: BrowserTab) {
+    /// 关闭标签页（幂等：CEF 关闭回调与用户操作都会经过这里）。
+    func closeTab(_ tab: BrowserCEFTab) {
         guard let idx = tabs.firstIndex(where: { $0 === tab }) else { return }
-        tab.webView.stopLoading()
-        tab.webView.navigationDelegate = nil
+        CEFShim.closeBrowser(tab.browserId)
+        tab.cdp.disconnect()
         tab.container.removeFromSuperview()
         tabButtons.removeValue(forKey: tab.id)
         rebuildTabBar()
@@ -592,7 +508,12 @@ final class BrowserPanelController: NSObject {
         }
     }
 
-    private func select(_ tab: BrowserTab) {
+    /// CEF 侧关闭（OnBeforeClose）回调。
+    func tabClosedByCEF(_ tab: BrowserCEFTab) {
+        closeTab(tab)
+    }
+
+    private func select(_ tab: BrowserCEFTab) {
         activeTab = tab
         for t in tabs {
             t.container.isHidden = (t !== tab)
@@ -600,16 +521,6 @@ final class BrowserPanelController: NSObject {
         updateToolbar()
         refreshLogView()
         updateTabButtons()
-    }
-
-    /// 按 id 取标签页（API 用）。
-    func tab(withId id: Int64) -> BrowserTab? {
-        tabs.first { $0.id == id }
-    }
-
-    /// 激活指定标签页（API 用）。
-    func selectTab(_ tab: BrowserTab) {
-        select(tab)
     }
 
     private func showEmptyState() {
@@ -622,9 +533,19 @@ final class BrowserPanelController: NSObject {
         refreshLogView()
     }
 
+    /// 按 id 取标签页（API 用）。
+    func tab(withId id: Int64) -> BrowserCEFTab? {
+        tabs.first { $0.id == id }
+    }
+
+    /// 激活指定标签页（API 用）。
+    func selectTab(_ tab: BrowserCEFTab) {
+        select(tab)
+    }
+
     // MARK: 标签栏
 
-    private func addTabButton(for tab: BrowserTab) {
+    private func addTabButton(for tab: BrowserCEFTab) {
         let button = HoverButton()
         button.title = displayTitle(tab)
         button.font = .systemFont(ofSize: 11)
@@ -636,7 +557,7 @@ final class BrowserPanelController: NSObject {
         rebuildTabBar()
     }
 
-    private func displayTitle(_ tab: BrowserTab) -> String {
+    private func displayTitle(_ tab: BrowserCEFTab) -> String {
         if !tab.title.isEmpty { return tab.title }
         if let u = URL(string: tab.url), let host = u.host, !host.isEmpty { return host }
         return "\(tab.id)"
@@ -697,11 +618,12 @@ final class BrowserPanelController: NSObject {
         guard let tab = activeTab else { return }
         let raw = addressField.stringValue
         guard let target = BrowserURL.normalize(raw) else {
-            logBuffer(of: tab).append(level: "error", text: "无法识别的地址: \(raw)")
+            tab.logBuffer.append(level: "error", text: "无法识别的地址: \(raw)")
             consoleUpdated()
             return
         }
         tab.load(url: target)
+        UserDefaults.standard.set(target, forKey: "browserLastURL")
     }
 
     // MARK: 头部操作
@@ -719,16 +641,23 @@ final class BrowserPanelController: NSObject {
         NSPasteboard.general.setString(tab.url.isEmpty ? "about:blank" : tab.url, forType: .string)
     }
 
+    /// 在系统浏览器打开该标签页的 Chromium DevTools 前端。
+    private func openDevTools() {
+        guard let tab = activeTab else { return }
+        guard let ws = tab.cdp.webSocketURL,
+              let encoded = ws.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return }
+        let port = BrowserCDP.port
+        if let url = URL(string: "http://127.0.0.1:\(port)/devtools/inspector.html?ws=\(encoded)") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     // MARK: 控制台抽屉
 
     private func toggleDrawer() {
         isDrawerOpen.toggle()
         drawer.isHidden = !isDrawerOpen
         if isDrawerOpen { refreshLogView() }
-    }
-
-    private func logBuffer(of tab: BrowserTab?) -> BrowserLogBuffer {
-        tab?.logBuffer ?? BrowserLogBuffer()
     }
 
     /// 收到新的 console/网络事件（主线程回调）。
@@ -763,36 +692,41 @@ final class BrowserPanelController: NSObject {
         runEval()
     }
 
-    /// 把用户表达式包成可求值的脚本：表达式先 JSON 序列化为 JS 字符串字面量，
-    /// 再交给 eval() 执行（支持表达式与语句），结果 JSON.stringify 回传。
-    private static func evalScript(for expression: String) -> String {
-        let literal = (try? JSONSerialization.data(withJSONObject: [expression])).map { String(data: $0, encoding: .utf8) ?? "\"\"" } ?? "\"\""
-        let quoted = String(literal.dropFirst().dropLast())
-        return "JSON.stringify(eval(" + quoted + "))"
-    }
-
     private func runEval() {
         guard let tab = activeTab else { return }
         let expression = evalField.stringValue
         guard !expression.isEmpty else { return }
-        logBuffer(of: tab).append(level: "log", text: "> \(expression)")
-        let script = Self.evalScript(for: expression)
-        tab.webView.evaluateJavaScript(script) { [weak self, weak tab] result, error in
-            guard let self = self, let tab = tab else { return }
-            if let error = error {
-                tab.logBuffer.append(level: "error", text: "求值错误: \((error as NSError).localizedDescription)")
-            } else if let s = result as? String {
-                tab.logBuffer.append(level: "info", text: s)
-            } else {
-                tab.logBuffer.append(level: "info", text: String(describing: result ?? "undefined"))
+        tab.logBuffer.append(level: "log", text: "> \(expression)")
+        refreshLogView()
+        DispatchQueue.global().async { [weak tab, weak self] in
+            let result = tab?.cdp.evaluate(expression: expression)
+            DispatchQueue.main.async { [weak tab, weak self] in
+                guard let tab = tab, let self = self else { return }
+                switch result {
+                case .success(let value):
+                    let text: String
+                    if let s = value as? String {
+                        text = s
+                    } else if let data = try? JSONSerialization.data(withJSONObject: value),
+                              let s = String(data: data, encoding: .utf8) {
+                        text = s
+                    } else {
+                        text = String(describing: value)
+                    }
+                    tab.logBuffer.append(level: "info", text: text)
+                case .failure(let e):
+                    tab.logBuffer.append(level: "error", text: "求值错误: \(e.localizedDescription)")
+                case .none:
+                    break
+                }
+                self.refreshLogView()
             }
-            self.consoleUpdated()
         }
     }
 
-    // MARK: 状态同步（tab KVO → 面板 UI）
+    // MARK: 状态同步（tab 回调 → 面板 UI）
 
-    func tabStateChanged(_ tab: BrowserTab) {
+    func tabStateChanged(_ tab: BrowserCEFTab) {
         guard tab === activeTab else { return }
         updateToolbar()
         updateTabButtons()
@@ -832,45 +766,40 @@ final class BrowserPanelController: NSObject {
         return newTab(url: target).id
     }
 
-    /// 执行 JS 求值；completion 在主线程回调。
+    /// 执行 JS 求值；completion 在主线程回调（后台执行 CDP 命令）。
     func evaluate(expression: String, completion: @escaping (Result<Any?, Error>) -> Void) {
         guard let tab = activeTab else {
             completion(.failure(NSError(domain: "Browser", code: 1, userInfo: [NSLocalizedDescriptionKey: "no active tab"])))
             return
         }
-        tab.webView.evaluateJavaScript(Self.evalScript(for: expression)) { result, error in
-            if let error = error {
-                completion(.failure(error))
-            } else {
-                completion(.success(result))
+        DispatchQueue.global().async { [weak tab] in
+            let result = tab?.cdp.evaluate(expression: expression) ?? .failure(NSError(domain: "Browser", code: 1, userInfo: [NSLocalizedDescriptionKey: "no active tab"]))
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let value): completion(.success(value))
+                case .failure(let error): completion(.failure(error))
+                }
             }
         }
     }
 
-    /// 截图（PNG Data）；面板不可见时自动展开（由壳层 setRightPanel 处理）。
+    /// 截图（PNG Data；CDP 离屏渲染，面板隐藏也可截）。
     func screenshot(completion: @escaping (Data?) -> Void) {
         guard let tab = activeTab else {
             completion(nil)
             return
         }
-        tab.webView.takeSnapshot(with: nil) { image, _ in
-            guard let image = image,
-                  let tiff = image.tiffRepresentation,
-                  let rep = NSBitmapImageRep(data: tiff),
-                  let png = rep.representation(using: .png, properties: [:]) else {
-                completion(nil)
-                return
-            }
-            completion(png)
+        DispatchQueue.global().async { [weak tab] in
+            let data = try? tab?.cdp.screenshot().get()
+            DispatchQueue.main.async { completion(data) }
         }
     }
 
     /// 退出清理。
     func shutdownAll() {
         for tab in tabs {
-            tab.webView.stopLoading()
-            tab.webView.navigationDelegate = nil
-            tab.webView.configuration.userContentController.removeScriptMessageHandler(forName: "browserConsole")
+            CEFShim.closeBrowser(tab.browserId)
+            tab.cdp.disconnect()
             tab.container.removeFromSuperview()
         }
         tabs.removeAll()

@@ -265,6 +265,7 @@ enum L10n {
         "bar.browser": ("浏览器", "Browser"),
         "browser.title": ("浏览器", "Browser"),
         "browser.openInSystem": ("在系统浏览器中打开", "Open in System Browser"),
+        "browser.devTools": ("在浏览器中打开 DevTools", "Open DevTools in Browser"),
         "browser.copyURL": ("复制 URL", "Copy URL"),
         "browser.console": ("控制台", "Console"),
         "browser.back": ("后退", "Back"),
@@ -1176,6 +1177,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Browser panel localhost REST API (Agent / user curl). Runs from launch.
     private var browserAPIServer: BrowserAPIServer!
     private var browserAPIBridge: BrowserAPIBridge!
+    /// CEF 消息泵定时器（external_message_pump 模式需要周期性驱动）。
+    private var cefPumpTimer: Timer?
 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
     /// terminal, wiki, tasks and browser panels share one slot; the activity
@@ -1227,6 +1230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("launch: window built")
         AppLog.shared.log("app did finish launching (lang=\(L10n.lang) followSystem=\(!L10n.hasExplicitChoice) AppleLanguages=\(UserDefaults.standard.array(forKey: "AppleLanguages") ?? []))")
         startServer()
+        startCEF()
         startBrowserAPIServer()
         showOnboardingIfNeeded()
         NSApp.activate(ignoringOtherApps: true)
@@ -1248,6 +1252,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         terminalPanel?.shutdownAll()
         browserPanel?.shutdownAll()
         browserAPIServer?.stop()
+        cefPumpTimer?.invalidate()
+        CEFShim.shutdown()
         if didSpawnServer { server.stop() }
     }
 
@@ -2705,6 +2711,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Toggle the Browser panel (activity bar entry / ⌥⌘B).
     @objc private func browserEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .browser ? .none : .browser)
+    }
+
+    /// 初始化 CEF（浏览器面板渲染内核）并启动消息泵定时器。
+    /// CDP 端口：DSH_CDP_PORT 覆盖，默认 9333（与 BrowserCDP.port 一致）。
+    private func startCEF() {
+        let dshHome = ProcessInfo.processInfo.environment["DSH_HOME"] ?? (NSHomeDirectory() + "/.dsh")
+        // Chromium 数据全部收进 ~/.dsh/browser/ 专用子树：
+        //   root_cache_path = ~/.dsh/browser（单例锁/组件缓存）
+        //   cache_path      = ~/.dsh/browser/profile（profile 数据）
+        // 绝不把 root 指向 ~/.dsh 本身（会把 Chromium 文件洒进 dsh 主目录，
+        // 曾因 cachePath=~/.dsh/browser-profile 导致 root=~/.dsh 污染）。
+        // 调试钩子：--browser-cache-dir=<dir> 指定全新 profile。
+        let browserRoot = dshHome + "/browser"
+        var cachePath = browserRoot + "/profile"
+        if let idx = CommandLine.arguments.firstIndex(of: "--browser-cache-dir"),
+           CommandLine.arguments.count > idx + 1 {
+            cachePath = CommandLine.arguments[idx + 1]
+        }
+        try? FileManager.default.createDirectory(atPath: cachePath, withIntermediateDirectories: true)
+        cleanStaleCEFSingleton(in: browserRoot)
+        cleanStaleCEFSingleton(in: cachePath)
+        let logPath = NSHomeDirectory() + "/Library/Logs/oh-my-dsh/cef.log"
+        do {
+            try CEFShim.initialize(withCachePath: cachePath,
+                                   remoteDebuggingPort: Int32(BrowserCDP.port),
+                                   logPath: logPath)
+        } catch {
+            AppLog.shared.log("CEF init failed: \(error.localizedDescription)")
+            return
+        }
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.008, repeats: true) { _ in
+            CEFShim.runMessageLoopWork()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        cefPumpTimer = timer
+        AppLog.shared.log("CEF initialized (cdp port \(BrowserCDP.port), cache \(cachePath))")
+    }
+
+    /// 清理上次异常退出（kill -9 等）残留的 Chromium 进程单例锁。
+    /// 只清理"连接被拒绝"的陈旧 socket（还有活实例时不动，避免双实例
+    /// 共用 profile 导致损坏）。
+    private func cleanStaleCEFSingleton(in dir: String) {
+        let socketPath = dir + "/SingletonSocket"
+        guard FileManager.default.fileExists(atPath: socketPath) else { return }
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(socketPath.utf8)
+        withUnsafeMutableBytes(of: &addr.sun_path) { buf in
+            let n = min(pathBytes.count, buf.count - 1)
+            pathBytes[0..<n].withUnsafeBytes { src in
+                buf.copyMemory(from: src)
+            }
+        }
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return }
+        let connected = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        close(fd)
+        if connected != 0 {
+            for name in ["SingletonLock", "SingletonSocket", "SingletonCookie"] {
+                try? FileManager.default.removeItem(atPath: dir + "/" + name)
+            }
+            AppLog.shared.log("cleaned stale CEF singleton in \(dir)")
+        }
     }
 
     /// Start the browser panel's localhost REST API (Agent / user curl).

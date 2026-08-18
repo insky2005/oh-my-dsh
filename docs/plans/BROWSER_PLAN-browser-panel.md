@@ -1,34 +1,32 @@
 # 实现 oh-my-dsh 右侧活动栏「浏览器」面板（Browser Panel）
 
-> 状态：⚠️ **CEF 方案 spike 受阻，按计划回退 WKWebView 方案**（见 §二）· 实现中 · 2026-08
+> 状态：✅ **Chromium/CEF 方案已打通并落地**（根因见 §二 修正）· 全链路实测通过 · 2026-08
 
 ## 一、目标与验收标准
 
 在 oh-my-dsh 壳层右侧面板槽位新增**浏览器面板**，两个目标：
 
-1. **方便开发调试 web 页面**：多标签页浏览器（同终端面板交互），地址栏/前进后退/刷新停止、可开关的**控制台抽屉**（console 日志 + 网络请求日志 + JS 求值）、页面可被 **Safari Web Inspector** 完整调试（`isInspectable`）；
+1. **方便开发调试 web 页面**：多标签页浏览器（**CEF 嵌入式 Chromium 内核**，同终端面板交互），地址栏/前进后退/刷新停止、可开关的**控制台抽屉**（CDP 捕获 console 日志 + 网络请求 + JS 求值）、**Chromium DevTools**（DevTools 按钮在系统浏览器打开前端，或经 CDP 端口直接调试）；
 2. **方便 Agent 排查网页问题**：壳层提供 **localhost REST API**（curl 即用），Agent（或用户终端）可：开页面、查状态、读 console/network 日志、执行 JS、截图 PNG 到工作区；配套 `.dsh/skills/shell-browser` 技能开箱即用；Agent 驱动时面板自动展开。
 
-**验收清单（手动 QA，见 §九）**：多标签增删/切换、地址栏导航、控制台与网络日志、JS 求值、Safari 检查器可附加、Agent curl 全流程、面板持久化与互斥、L10n 中英齐全、CI/单测全绿。
+**验收清单（手动 QA，见 §九）**：多标签增删/切换、地址栏导航、控制台与网络日志、JS 求值、DevTools 打开、Agent curl 全流程、面板持久化与互斥、L10n 中英齐全、CI/单测全绿。
 
-## 二、CEF（嵌入式 Chromium）spike 结论 —— 为什么回退（2026-08 实测）
+## 二、CEF 集成：根因修正（重要）
 
-按用户指示（对标 Qoder Quest 的 Chromium 集成）先做了 CEF 嵌入式方案 spike，**集成层面全部打通，但渲染进程在本机无法启动，判定为环境阻塞，按计划回退 WKWebView**。
+**最终根因（2026-08-18 实测定位）**：CEF 148+ 的 macOS 分发要求**五个 helper app**（`<App> Helper.app` + `(Alerts)` + `(GPU)` + `(Plugin)` + `(Renderer)`，**同一份二进制**，名字承重，各自带 bundle-id 后缀 `.helper[.alerts|.gpu|.plugin|.renderer]`，见发行包 `cmake/cef_variables.cmake` 的 `CEF_HELPER_APP_SUFFIXES`）。Chromium 按 `<main exe> Helper (Suffix)` 约定定位各进程类型的 helper——**只打 base helper 时，renderer 进程静默失败**（页面空白、CDP target 存在但无响应），GPU/网络/存储走 base 所以看起来正常。
 
-**已验证可用的部分（保留在本文档，未来可复活）**
-- 下载管线：`https://cef-builds.spotifycdn.com/cef_binary_<version>_macosarm64.tar.bz2`（`index.json` 含 sha1/size；150 为 272MB，151 为 284MB；`minimal` 类型不含测试）；CEF 151 框架二进制 `LC_BUILD_VERSION minos = 13.0`，与 App 部署目标兼容；
-- 纯 swiftc 集成路径全部走通：`libcef_dll` wrapper 编译（`-DWRAPPING_CEF_SHARED`，.cc+.mm 都要）、ObjC++ shim（`swiftc -import-objc-header`）、helper 子进程（`process_helper_mac.cc` + `helper-Info.plist`）、框架经 `CefScopedLibraryLoader` 运行期 dlopen（**无需链接框架**，主程序/helper 用 `-Wl,-undefined,dynamic_lookup`）、`external_message_pump + CefDoMessageLoopWork` 融入 AppKit 主循环、`CefWindowInfo::SetAsChild` 原生 NSView 托管（自动 Alloy 风格）、多浏览器同窗口（每 tab 一个 parent NSView）、CDP 端口可用（`/json` 返回 target、`Browser.getVersion`/`Target.attachToTarget` 可用）、helper 命名必须与主可执行名一致（`<exe> Helper.app`，CEF 按 `libcef/common/util_mac.mm` 约定查找）；
-- 构建产物体积：app +~300MB/架构。
+**此前误判（已更正）**：曾把 renderer 起不来归因于「ad-hoc 签名 + Chromium 校验机制」（`errSecCSInfoPlistFailed -67030`、`CS_VALIDATION_CATEGORY_NONE` 等），并据此回退 WKWebView。实际证据链修正：
+- 官方 cefsimple 同样失败的原因 = **手工按旧教程搭的单 helper 布局**，而非官方 CMake 的五 helper 构建（发行包 CMake 明确循环创建五个）；
+- 补上 `(Renderer)` helper 后，CEF 144/150/151 全部正常渲染（`title=Example Domain`、`readyState=complete`、CDP eval/截图全通），**ad-hoc 签名无影响**（-67030 仅为无害告警，正常工作时仍出现）。
 
-**阻塞点（环境级，非集成 bug）**
-- **renderer 子进程从不启动**（浏览器侧静默失败，helper 无 renderer exec），gpu/network/storage 子进程正常；
-- 该问题在**未修改的参考 cefsimple 上同样复现**（排除集成问题）；在 **CEF 144 / 150 / 151 三个版本全部复现**（排除版本回归）；在沙箱内外（直接运行 vs `open` 经 launchd）均复现；
-- 用户已安装、**Developer ID 签名的 Chrome 148 在本机正常渲染**（pgrep 可见其 renderer 进程）——强烈指向**签名校验**：本机 macOS 26.5 上 ad-hoc 签名的进程 `csops(CS_OPS_VALIDATION_CATEGORY)` 返回 `NONE`（实测），而 Chromium 150+ 新增的 `base/mac/process_requirement` 机制对 `NONE` 分类有 `CHECK_NE(category, None)`（`RequirementStringForValidationCategory`）等硬性路径；Chromium 侧另有 `errSecCSInfoPlistFailed (-67030)` 报错；
-- 本开发沙箱无可用签名身份（`security find-identity` = 0，`security create-keychain` 被拒），无法验证「真实签名可修复」假设，也无法在本机绕过。
+**其他踩坑记录（本次实现）**：
+- 五 helper 需要**由内向外签名**（framework → helpers → app），`codesign --deep` 不够稳；
+- `CefSettings.root_cache_path` 必须显式设置（不设落到默认 `~/Library/Application Support/CEF`，与其他 CEF 应用/异常残留互相干扰 → "Failed to create a ProcessSingleton" exit 21）；异常退出（kill -9）残留的 `SingletonLock/SingletonSocket/SingletonCookie` 需在启动时清理（仅清理连接被拒的陈旧锁，避免双实例损坏 profile）；
+- **CDP /json 拉取绝不能在主线程同步执行**（CDP 响应依赖主线程驱动 CEF 消息泵 `CefDoMessageLoopWork`，同步等待互相死锁 → API/UI 全挂）——后台队列 + 3s 超时；
+- **钥匙串密码弹窗**：Chromium 默认访问登录钥匙串存网页密码 → 系统弹密码框。修复：`OnBeforeCommandLineProcessing` 追加 `use-mock-keychain`（模拟钥匙串，本 App 不存网页密码），日志中 `Encryption is not available` 随之消失；
+- **~/.dsh 污染**：`root_cache_path` 不能指向 `~/.dsh` 本身（Chromium 组件缓存/单例锁会洒进 dsh 主目录）。profile 收进 `~/.dsh/browser/profile`（root=`~/.dsh/browser`），含单例锁清理；
+- 调试钩子 `--browser-cache-dir=<dir>` 可指定全新 profile（排查 profile 问题）。
 
-**回退决策（预决定，§十 原计划）**：改用 **WKWebView 多标签面板**。WKWebView 使用系统 WebKit：不访问钥匙串（不再触发密码弹窗）、无子进程/签名校验问题、`isInspectable = true` 提供 Safari 完整 DevTools。REST API 路由面保持不变，仅 `/cdp` 路由不提供（WKWebView 无 CDP）。
-
-**CEF 复活条件（记录，未来 M1 分发引入 Developer ID 签名或 CEF/Chromium 修复后可重试）**：app 以真实开发者证书签名后重跑 spike（预期 renderer 可启动）；届时复用本文档 §二 的已验证集成路径。
 
 ## 三、总体架构（WKWebView 方案）
 
