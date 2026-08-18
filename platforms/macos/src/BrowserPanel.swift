@@ -1196,55 +1196,46 @@ final class BrowserPanelController: NSObject {
         }
         let targetURL = tab.url
         let port = BrowserCDP.port
-        // 优先：从 CDP 连接地址提取 targetId 构造 ws（CDP eval 可用说明该
-        // target 有效；多 CDP 客户端共存已验证）。避免 URL 匹配失败。
-        var ws: String?
-        if let cdpWS = tab.cdp.webSocketURL,
-           let tid = cdpWS.components(separatedBy: "/devtools/page/").last,
-           !tid.isEmpty {
-            ws = "ws://127.0.0.1:\(port)/devtools/page/\(tid)"
-            AppLog.shared.log("devtools: ws from cdp targetId \(tid)")
-        }
-        if ws == nil {
-            // 兜底：后台队列实时拉 /json 按 URL 匹配
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                guard let self = self else { return }
-                guard let url = URL(string: "http://127.0.0.1:\(port)/json"),
-                      let data = try? Data(contentsOf: url),
-                      let list = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
-                    AppLog.shared.log("devtools: /json fetch failed")
-                    return
-                }
+        // ws 获取：实时 /json 按 URL 匹配当前页签的 target（最可靠，
+        // 处理重定向）；tab.cdp.webSocketURL 的 targetId 可能陈旧/认领错
+        // 页签（导航或 CDP 轮询误配）导致 DevTools 连不上，仅作兜底。
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var ws: String?
+            if let data = try? Data(contentsOf: URL(string: "http://127.0.0.1:\(port)/json")!),
+               let list = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] {
                 let norm = { (u: String) -> String in
                     u.replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "http://", with: "")
                      .replacingOccurrences(of: "www.", with: "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 }
                 let targetN = norm(targetURL)
-                var w: String?
                 for t in list {
                     guard let u = t["url"] as? String, let v = t["webSocketDebuggerUrl"] as? String else { continue }
                     let n = norm(u)
                     if targetN == n || (targetN.count > 5 && (targetN.contains(n) || n.contains(targetN))) {
-                        w = v
+                        ws = v
                         break
                     }
                 }
-                if w == nil {
-                    w = list.first(where: { ($0["type"] as? String) == "page" })?["webSocketDebuggerUrl"] as? String
+                // 兜底 1：CDP 连接记录的 targetId（可能陈旧）
+                if ws == nil, let cdpWS = tab.cdp.webSocketURL,
+                   let tid = cdpWS.components(separatedBy: "/devtools/page/").last, !tid.isEmpty {
+                    ws = "ws://127.0.0.1:\(port)/devtools/page/\(tid)"
                 }
-                guard let v = w, !v.isEmpty else {
-                    AppLog.shared.log("devtools: no ws matched (targets=\(list.count))")
-                    return
-                }
-                AppLog.shared.log("devtools: ws from /json \(v)")
-                DispatchQueue.main.async {
-                    self.showDevToolsInTab(v, port: port)
+                // 兜底 2：第一个 page target（当前页签通常是活动 target）
+                if ws == nil {
+                    ws = list.first(where: { ($0["type"] as? String) == "page" })?["webSocketDebuggerUrl"] as? String
                 }
             }
-            return
+            guard let w = ws, !w.isEmpty else {
+                AppLog.shared.log("devtools: no ws (target=\(targetURL.prefix(50)))")
+                return
+            }
+            AppLog.shared.log("devtools: ws \(w.prefix(70))")
+            DispatchQueue.main.async {
+                self.showDevToolsInTab(w, port: port)
+            }
         }
-        guard let w = ws, !w.isEmpty else { return }
-        showDevToolsInTab(w, port: port)
     }
 
     /// 在当前页签内部展开 DevTools 子窗口（页签 = 主窗口 + DevTools）。
