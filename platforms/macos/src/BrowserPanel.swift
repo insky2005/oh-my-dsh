@@ -124,6 +124,8 @@ final class BrowserRootView: NSView {
 final class DevToolsBarView: NSView {
     /// 回调目标高度（拖动起点 + 位移，pt）。
     var onDrag: ((CGFloat) -> Void)?
+    /// 拖动结束（松手）：容器统一通知 CEF resize，避免拖动中每帧重排。
+    var onDragEnd: (() -> Void)?
     /// 关闭按钮点击。
     var onClose: (() -> Void)?
     /// 当前高度（由容器写入，拖动起点用）。
@@ -168,6 +170,10 @@ final class DevToolsBarView: NSView {
     override func mouseDragged(with event: NSEvent) {
         let dy = event.locationInWindow.y - dragStartY
         onDrag?(dragStartH + dy)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        onDragEnd?()
     }
 
     /// 工具条悬停时显示上下拖拽光标。
@@ -215,13 +221,24 @@ final class BrowserOSRView: NSView {
         devtoolsArea.layer?.masksToBounds = true
         devtoolsArea.isHidden = true
         devtoolsBar.translatesAutoresizingMaskIntoConstraints = false
-        // 拖动工具条调整 DevTools 区高度（150-700pt，主窗口联动压缩）
+        // 拖动工具条调整 DevTools 区高度（150-700pt，主窗口联动压缩）。
+        // 拖动中只改布局（视图框架实时跟随），CEF resize 在松手时统一做，
+        // 避免拖动中每帧 WasResized 导致页面顶部反复重排/跳动。
         devtoolsBar.onDrag = { [weak self] targetH in
             guard let self = self, let h = self.devtoolsHeight300 else { return }
             h.constant = min(700, max(150, targetH))
             self.devtoolsBar.currentHeight = h.constant
             self.layoutSubtreeIfNeeded()
+        }
+        devtoolsBar.onDragEnd = { [weak self] in
+            guard let self = self else { return }
             self.notifyResize()
+            // DevTools 子浏览器视口跟随（devtoolsContent 尺寸已定）
+            let did = self.devtoolsBrowserId
+            if did > 0, self.devtoolsContent.bounds.width > 1, self.devtoolsContent.bounds.height > 1 {
+                CEFShim.resizeBrowser(did, width: Float(self.devtoolsContent.bounds.width),
+                                      height: Float(self.devtoolsContent.bounds.height))
+            }
         }
         devtoolsBar.onClose = { [weak self] in self?.onCloseDevTools?() }
         devtoolsContent.translatesAutoresizingMaskIntoConstraints = false
