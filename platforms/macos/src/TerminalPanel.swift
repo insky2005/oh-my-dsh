@@ -1474,7 +1474,7 @@ final class TerminalPanelController: NSObject {
         // Icon buttons with tooltips (hover shows what each does).
         let newButton = CustomIconButton(glyph: .plus, tooltip: L10n.tr("terminal.new"))
         newButton.onAction = { [weak self] in self?.newSessionTapped(nil) }
-        let closeButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("terminal.closePanel"))
+        let closeButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("preview.closePanel"))
         closeButton.onAction = { [weak self] in
             // 关闭面板 = 同步终止所有会话（释放 PTY 资源），不置终态（重开可新建）
             self?.closeAllSessions()
@@ -1783,7 +1783,7 @@ final class TerminalPanelController: NSObject {
     /// 语言切换后刷新头部按钮 tooltip。
     func refreshTooltips() {
         newButton?.toolTip = L10n.tr("terminal.new")
-        closeButton?.toolTip = L10n.tr("terminal.closePanel")
+        closeButton?.toolTip = L10n.tr("preview.closePanel")
     }
 
     private func currentGridSize() -> (rows: Int, cols: Int) {
