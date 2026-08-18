@@ -543,7 +543,13 @@ final class BrowserCEFTab: NSObject, CEFBrowserDelegate, BrowserCDPDelegate {
         let did = container.devtoolsBrowserId
         container.devtoolsBrowserId = 0
         container.hideDevToolsArea()
-        if did > 0 { CEFShim.closeBrowser(did) }
+        if did > 0 {
+            // CEF 窗口化模式关浏览器会关宿主主窗口 → 必须设标记拦截误退出
+            //（同 closeTab；否则 app 直接退出 = 用户看到的"闪退"）。
+            g_cefClosingWindow = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { g_cefClosingWindow = false }
+            DispatchQueue.main.async { CEFShim.closeBrowser(did) }
+        }
     }
 
     // MARK: BrowserCDPDelegate（主队列派发）
@@ -579,17 +585,18 @@ final class BrowserTabItemView: NSView {
     private var trackingArea: NSTrackingArea?
 
     /// 动态背景色（亮/暗外观切换自动变化，不写死）。
+    /// 暗色：深灰系（活动最深）；浅色：浅灰系（活动略深但仍浅）。
     private let activeBg = NSColor(name: nil) { app in
         let dark = app.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return dark ? NSColor(white: 0.10, alpha: 1) : NSColor(white: 0.28, alpha: 1)
+        return dark ? NSColor(white: 0.10, alpha: 1) : NSColor(white: 0.74, alpha: 1)
     }
     private let hoverBg = NSColor(name: nil) { app in
         let dark = app.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return dark ? NSColor(white: 0.22, alpha: 1) : NSColor(white: 0.42, alpha: 1)
+        return dark ? NSColor(white: 0.22, alpha: 1) : NSColor(white: 0.64, alpha: 1)
     }
     private let normalBg = NSColor(name: nil) { app in
         let dark = app.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return dark ? NSColor(white: 0.17, alpha: 1) : NSColor(white: 0.38, alpha: 1)
+        return dark ? NSColor(white: 0.17, alpha: 1) : NSColor(white: 0.55, alpha: 1)
     }
 
     init(title: String, tabId: Int64) {
