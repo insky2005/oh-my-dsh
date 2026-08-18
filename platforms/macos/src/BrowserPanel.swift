@@ -169,6 +169,12 @@ final class DevToolsBarView: NSView {
         let dy = event.locationInWindow.y - dragStartY
         onDrag?(dragStartH + dy)
     }
+
+    /// 工具条悬停时显示上下拖拽光标。
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .resizeUpDown)
+    }
 }
 
 final class BrowserOSRView: NSView {
