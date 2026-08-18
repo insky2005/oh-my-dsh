@@ -448,6 +448,7 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
     // MARK: - Subviews
 
     private let pathLabel = HeaderLabel()
+    private var projectButton: CustomIconButton!
     private var openButton: CustomIconButton!
     private var revealButton: CustomIconButton!
     private var hideButton: CustomIconButton!
@@ -545,7 +546,7 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         pathLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         // Icon buttons with tooltips (hover shows what each does).
-        let projectButton = CustomIconButton(glyph: .folder, tooltip: L10n.tr("preview.openProjectHint"))
+        projectButton = CustomIconButton(glyph: .folder, tooltip: L10n.tr("preview.openProjectHint"))
         projectButton.onAction = { [weak self] in self?.openProjectDirectory(nil) }
         let openButton = CustomIconButton(glyph: .openInApp, tooltip: L10n.tr("preview.openInDefaultAppHint"))
         openButton.onAction = { [weak self] in self?.openInDefaultApp(nil) }
@@ -821,6 +822,14 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         openButton.isEnabled = false
         revealButton.isEnabled = false
         showEmptyState()
+    }
+
+    /// 语言切换后刷新头部按钮 tooltip（构建时一次性设置，需手动跟随）。
+    func refreshTooltips() {
+        projectButton?.toolTip = L10n.tr("preview.openProjectHint")
+        openButton?.toolTip = L10n.tr("preview.openInDefaultAppHint")
+        revealButton?.toolTip = L10n.tr("preview.revealInFinderHint")
+        hideButton?.toolTip = L10n.tr("preview.closePanel")
     }
 
     /// Open the current project folder as the directory tree root (and as a

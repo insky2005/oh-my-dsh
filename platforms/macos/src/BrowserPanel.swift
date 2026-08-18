@@ -1030,6 +1030,18 @@ final class BrowserPanelController: NSObject {
         }
     }
 
+    /// 语言切换后刷新头部/工具栏按钮 tooltip。
+    func refreshTooltips() {
+        newTabButton?.toolTip = L10n.tr("browser.newTabHint")
+        openInBrowserButton?.toolTip = L10n.tr("browser.openInSystem")
+        copyURLButton?.toolTip = L10n.tr("browser.copyURL")
+        closePanelButton?.toolTip = L10n.tr("preview.closePanel")
+        backButton?.toolTip = L10n.tr("browser.back")
+        forwardButton?.toolTip = L10n.tr("browser.forward")
+        reloadButton?.toolTip = L10n.tr("browser.reload")
+        devToolsButton?.toolTip = L10n.tr("browser.devTools")
+    }
+
     /// CEF 侧关闭（OnBeforeClose）回调。
     func tabClosedByCEF(_ tab: BrowserCEFTab) {
         closeTab(tab)

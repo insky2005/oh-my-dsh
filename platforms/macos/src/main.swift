@@ -2706,6 +2706,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         browserBarButton?.toolTip = L10n.tr("bar.browser")
         wikiBarButton?.toolTip = L10n.tr("bar.wiki")
         tasksBarButton?.toolTip = L10n.tr("bar.tasks")
+        // 各面板头部操作按钮 tooltip 同样跟随语言
+        previewPanel?.refreshTooltips()
+        terminalPanel?.refreshTooltips()
+        wikiPanel?.refreshTooltips()
+        tasksPanel?.refreshTooltips()
+        browserPanel?.refreshTooltips()
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url

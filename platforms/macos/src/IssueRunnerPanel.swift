@@ -106,6 +106,11 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         repoLabel.text = repo.map { "\($0.owner)/\($0.repo)" } ?? L10n.tr("tasks.noRepo")
     }
 
+    /// 语言切换后刷新头部按钮 tooltip（复用 updateLabels）。
+    func refreshTooltips() {
+        updateLabels()
+    }
+
     private func buildUI() {
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)

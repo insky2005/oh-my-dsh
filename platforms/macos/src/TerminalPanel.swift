@@ -1756,8 +1756,7 @@ final class TerminalPanelController: NSObject {
     }
 
     /// 终止所有会话并清空（关闭面板时释放 PTY 资源；不置终态，重开可新建）。
-    func closeAllSessions() {
-        spawnFallbackTimer?.invalidate()
+    func closeAllSessions() {        spawnFallbackTimer?.invalidate()
         spawnFallbackTimer = nil
         if let m = clickMonitor {
             NSEvent.removeMonitor(m)
@@ -1779,6 +1778,12 @@ final class TerminalPanelController: NSObject {
     func focusActiveTerminal() {
         guard let tab = tabs.first(where: { $0.id == selectedId }), view.window != nil else { return }
         view.window?.makeFirstResponder(tab.termView)
+    }
+
+    /// 语言切换后刷新头部按钮 tooltip。
+    func refreshTooltips() {
+        newButton?.toolTip = L10n.tr("terminal.new")
+        closeButton?.toolTip = L10n.tr("terminal.closePanel")
     }
 
     private func currentGridSize() -> (rows: Int, cols: Int) {

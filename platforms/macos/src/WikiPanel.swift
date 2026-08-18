@@ -1231,6 +1231,14 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
         }
     }
 
+    /// 语言切换后刷新头部按钮 tooltip。
+    func refreshTooltips() {
+        generateButton?.toolTip = L10n.tr("wiki.generateHint")
+        revealButton?.toolTip = L10n.tr("preview.revealInFinderHint")
+        openButton?.toolTip = L10n.tr("preview.openInDefaultAppHint")
+        hideButton?.toolTip = L10n.tr("preview.closePanel")
+    }
+
     /// Re-resolve the root (e.g. wikiRootMode changed) and reload.
     func reloadRoot() {
         repoRoot = nil
