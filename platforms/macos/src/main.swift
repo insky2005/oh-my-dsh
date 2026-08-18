@@ -1399,22 +1399,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityBar.kind = .control
         activityBar.translatesAutoresizingMaskIntoConstraints = false
 
-        previewBarButton = makeActivityButton(symbol: "sidebar.right",
-                                              tooltip: L10n.tr("bar.preview"),
+        // 活动栏图标：tooltip 固定英文（不随系统语言切换）；顺序 =
+        // 文件、终端、浏览器、Wiki、任务。
+        previewBarButton = makeActivityButton(symbol: "doc.on.doc",
+                                              tooltip: "Files",
                                               action: #selector(togglePreviewPanel(_:)))
         terminalBarButton = makeActivityButton(symbol: "terminal",
-                                               tooltip: L10n.tr("bar.terminal"),
+                                               tooltip: "Terminal",
                                                action: #selector(terminalEntryTapped(_:)))
+        browserBarButton = makeActivityButton(symbol: "globe",
+                                              tooltip: "Browser",
+                                              action: #selector(browserEntryTapped(_:)))
         wikiBarButton = makeActivityButton(symbol: "book.closed",
-                                           tooltip: L10n.tr("bar.wiki"),
+                                           tooltip: "Wiki",
                                            action: #selector(wikiEntryTapped(_:)))
         tasksBarButton = makeActivityButton(symbol: "checkmark.circle",
-                                            tooltip: L10n.tr("bar.tasks"),
+                                            tooltip: "Tasks",
                                             action: #selector(tasksEntryTapped(_:)))
-        browserBarButton = makeActivityButton(symbol: "globe",
-                                              tooltip: L10n.tr("bar.browser"),
-                                              action: #selector(browserEntryTapped(_:)))
-        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, wikiBarButton, tasksBarButton, browserBarButton])
+        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
