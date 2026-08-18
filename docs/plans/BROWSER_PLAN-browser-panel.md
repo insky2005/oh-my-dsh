@@ -217,3 +217,26 @@ POSIX socket 极简 HTTP/1.1 服务（127.0.0.1，默认 **3081**，`DSH_BROWSER
 - **CEF 复活**：见 §二「CEF 复活条件」（Developer ID 签名落地或 CEF 修复后，复用已验证集成路径；届时 REST 路由面不变，可平滑替换渲染内核）；
 - **注入捕获局限**：main-frame JS 网络调用之外（图片/CSS/子框架）不捕获——文档明示，排查深度场景用 Safari Web Inspector；
 - **多标签内存**：每 tab 一个 WKWebView，上限 8；极端页面仍可能高内存（与 Chrome 多标签同量级）。
+
+## 十一、实际实现变更记录（2026-08 落地，与上文 WKWebView 方案不同）
+
+本文早期按 WKWebView 编写；实际实现已切换为 **CEF 嵌入式 Chromium（OSR→窗口化）**，核心决策与踩坑记录：
+
+1. **渲染模式**：OSR（离屏帧自绘）曾为主要路径，最终切 **窗口化模式**（`CefWindowInfo::SetAsChild`，Chromium 原生绘制、零拷贝）。切换开关：`defaults write com.ohmydsh.app browserRenderMode -string windowed`（默认 windowed，OSR 可回退）。窗口化下 CEF 会把宿主 NSWindow 当"浏览器窗口"管理，关闭页签会误关主窗口 → `g_cefClosingWindow` 标记 + `windowShouldClose`/`applicationShouldTerminate` 拦截（用户主动关窗口照常退出）。
+2. **退出不调 CefShutdown**：CEF 150 + external_message_pump 下 CefShutdown 稳定 SIGTRAP；进程退出由 OS 回收子进程，残留单例锁启动时清理。
+3. **页签 = 主窗口 + DevTools 子窗口**（Chrome docked 模型）：每个 `BrowserOSRView` 内含 `pageView`（主 CEF）+ `devtoolsArea`（工具条 + DevTools CEF，默认收起，双高度约束 0/300 切换）；切页签整个容器 `isHidden`，DevTools 随页签整体隐藏/恢复，无全局归属逻辑。
+4. **DevTools 打开**：`inspector.html?ws=<urlencode>` 作为页签内子浏览器加载（多 CDP 客户端共存已验证）；ws 优先从 `tab.cdp.webSocketURL` 提取 targetId 构造，兜底后台 `/json` 按 URL 匹配。CEF 原生 `ShowDevTools` 在 external_message_pump 下崩溃，弃用。
+5. **关键修复清单**：
+   - header（opaque 无 layer）绘制溢出盖住内容区 → header `wantsLayer+masksToBounds`（terminal-header-fix 同源）；
+   - 内容区 z 序与终端面板一致（内容区在最上层）；
+   - 新页签 CEF 视口 800×600 兜底（pageView 未布局）→ `createBrowser` 前 `layoutSubtreeIfNeeded` + `layout()` 钩子同步 CEF 视图 frame/WasResized；
+   - about:blank 透明背景 → pageView 动态背景（暗=黑/亮=白）；
+   - 关闭页签崩溃（CloseBrowser 同步 OnBeforeClose 重入）→ `isClosing` 幂等；CloseBrowser 异步化防 watchdog；
+   - 地址栏不更新（后退/导航）→ CEF `OnAddressChange` 回调更新 `tab.url`；切页签强制刷新地址栏；
+   - 像素红蓝互换 → OnPaint buffer 为 BGRA，bitmapInfo 用 `premultipliedFirst|byteOrder32Little`；
+   - 右键菜单错位 → CEF `OnBeforeContextMenu` 转模型，宿主按屏幕坐标弹 NSMenu，命令按菜单 id 驱动 CEF；
+   - DevTools 打开崩溃（API 并发线程操作 AutoLayout）→ `openDevTools` 主线程保护；
+   - 面板关闭释放资源：终端关会话清页签栏、浏览器关全部页签、wiki 停轮询清内容、预览关全部页签；
+   - 终端重开自动建会话（ensureSession 改为 tabs 空则 newSession）；
+   - 浏览器重开 about:blank（不再恢复 browserLastURL）。
+6. **调试入口**：`POST /api/browser/hierarchy`（全窗口层级 + 命中测试 + 截图）、`debug` 端点支持 `{"click":[x,y]}` / `{"devtools":true}`；`POST /api/browser/eval` 对任意页签 CDP 求值。

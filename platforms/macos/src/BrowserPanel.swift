@@ -1,10 +1,15 @@
 // BrowserPanel.swift — 浏览器面板（右栏槽位，Chromium/CEF 内核）。
 //
-// 多标签浏览器：地址栏/前进后退/刷新停止、控制台抽屉（CDP 捕获 console +
-// 网络请求 + JS 求值）、DevTools 入口；页面状态经壳层 REST API
-// （BrowserAPI.swift）供 Agent/用户 curl 驱动。渲染内核为 CEF
-// （Chromium Embedded Framework），console/网络/求值/截图走 CDP
-// （BrowserCDP.swift）。
+// 多标签浏览器：地址栏（位于页签下方，Chrome 式）/前进后退/刷新停止；
+// 「DevTools」按钮在面板内新开标签页打开 Chromium 自带的完整 DevTools
+// （Console/Network/Elements/Sources，经 CDP 前端）；页面状态经壳层
+// REST API（BrowserAPI.swift）供 Agent/用户 curl 驱动（console/网络日志
+// 由 CDP 事件持续写入缓冲，供 API 读取）。
+//
+// UI 结构遵循 TerminalPanel/WikiPanel 的成熟模式（头部 40pt + 标签栏 33pt
+// + 地址栏 36pt + 内容区钉底）；第二行及内容区均做 layer 隔离
+// （wantsLayer + masksToBounds），避免 opaque 视图合成溢出盖住头部按钮
+// （docs/terminal-header-fix.md 同源问题）。
 //
 // 背景：CEF 148+ 在 macOS 要求五个 helper app（base/Alerts/GPU/Plugin/
 // Renderer，名字承重）——缺 Helper (Renderer).app 会导致 renderer 静默失败
@@ -22,7 +27,7 @@ struct BrowserConsoleEntry {
     let text: String
 }
 
-/// 环形日志缓冲（per-tab）。
+/// 环形日志缓冲（per-tab；供 REST API console 端点读取）。
 final class BrowserLogBuffer {
     private(set) var entries: [BrowserConsoleEntry] = []
     let maxEntries: Int
@@ -64,6 +69,7 @@ enum BrowserURL {
         if trimmed == "about:blank" { return trimmed }
         if trimmed.hasPrefix("file://") { return trimmed }
         if trimmed.hasPrefix("data:") { return trimmed }
+        if trimmed.hasPrefix("devtools://") { return trimmed }
         if let url = URL(string: trimmed), url.scheme != nil, url.host != nil {
             return trimmed
         }
@@ -78,37 +84,346 @@ enum BrowserURL {
 // MARK: - 面板根视图（防 layer 合成陷阱，同 WikiRootView 模式）
 
 final class BrowserRootView: NSView {
-    var kind: DynamicFillView.Kind = .window {
-        didSet { needsDisplay = true }
-    }
     override var isOpaque: Bool { false }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // 根视图 layer-backed：让子视图的 layer（含 OSR 帧层）正确合成
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        needsLayout = true  // 同 TerminalRootView/WikiRootView：根尺寸变化时重新布局约束子视图
+    }
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         needsDisplay = true
     }
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let color: NSColor
-        switch kind {
-        case .window:
-            color = dark ? NSColor(calibratedWhite: 0.28, alpha: 1) : NSColor(calibratedWhite: 0.94, alpha: 1)
-        case .control:
-            color = dark ? NSColor(calibratedWhite: 0.20, alpha: 1) : NSColor(calibratedWhite: 0.86, alpha: 1)
-        case .custom(let c):
-            color = c
-        }
+        let color: NSColor = dark
+            ? NSColor(calibratedWhite: 0.28, alpha: 1)
+            : NSColor(calibratedWhite: 0.94, alpha: 1)
         color.setFill()
         dirtyRect.fill()
     }
 }
 
-// MARK: - 单个标签页（CEF 渲染 + CDP 通道）
+// MARK: - OSR 内容视图（自绘 CEF 帧 + 输入转发）
+
+final class BrowserOSRView: NSView {
+    weak var tab: BrowserCEFTab?
+
+    override var acceptsFirstResponder: Bool { true }
+    override var isOpaque: Bool { false }
+
+    // MARK: 页签内容（页签 = 主窗口 + DevTools 子窗口，上下分）
+    /// 主窗口 CEF 容器。
+    let pageView = NSView()
+    /// DevTools 区（默认收起）。
+    let devtoolsArea = NSView()
+    /// DevTools CEF 容器（工具条下方）。
+    let devtoolsContent = NSView()
+    /// DevTools 浏览器 id（0 = 未打开）。
+    var devtoolsBrowserId: Int64 = 0
+    /// 关闭 DevTools 回调（工具条 ✕）。
+    var onCloseDevTools: (() -> Void)?
+    /// DevTools 高度约束：隐藏=0 / 显示=300（双约束切换，hidden 也占布局）。
+    private var devtoolsHeight0: NSLayoutConstraint?
+    private var devtoolsHeight300: NSLayoutConstraint?
+    private let devtoolsBar = DynamicFillView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // 必须在入窗/加父视图之前就 layer-backed：入窗后再 wantsLayer 可能
+        // 生成一个未挂进显示树的 detached layer（有 contents 却不合成上屏）。
+        wantsLayer = true
+
+        // 主窗口区
+        pageView.translatesAutoresizingMaskIntoConstraints = false
+        pageView.wantsLayer = true
+        pageView.layer?.masksToBounds = true
+        // DevTools 区：工具条 + 内容
+        devtoolsArea.translatesAutoresizingMaskIntoConstraints = false
+        devtoolsArea.wantsLayer = true
+        devtoolsArea.layer?.masksToBounds = true
+        devtoolsArea.isHidden = true
+        devtoolsBar.kind = .control
+        devtoolsBar.translatesAutoresizingMaskIntoConstraints = false
+        devtoolsBar.wantsLayer = true
+        devtoolsBar.layer?.masksToBounds = true
+        let label = HeaderLabel()
+        label.text = "DevTools"
+        label.translatesAutoresizingMaskIntoConstraints = false
+        let closeBtn = CustomIconButton(glyph: .close, tooltip: L10n.tr("browser.closeTab"), size: 16)
+        closeBtn.onAction = { [weak self] in self?.onCloseDevTools?() }
+        devtoolsBar.addSubview(label)
+        devtoolsBar.addSubview(closeBtn)
+        devtoolsContent.translatesAutoresizingMaskIntoConstraints = false
+        devtoolsContent.wantsLayer = true
+        devtoolsContent.layer?.masksToBounds = true
+        devtoolsArea.addSubview(devtoolsBar)
+        devtoolsArea.addSubview(devtoolsContent)
+        // 高度约束：默认隐藏（0 高），显示时切到 300——hidden 视图的约束
+        // 仍参与布局，必须有确定高度否则 pageView 被挤成 0。
+        devtoolsHeight0 = devtoolsArea.heightAnchor.constraint(equalToConstant: 0)
+        devtoolsHeight0!.isActive = true
+        devtoolsHeight300 = devtoolsArea.heightAnchor.constraint(equalToConstant: 300)
+
+        addSubview(pageView)
+        addSubview(devtoolsArea)
+        NSLayoutConstraint.activate([
+            pageView.topAnchor.constraint(equalTo: topAnchor),
+            pageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            pageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            pageView.bottomAnchor.constraint(equalTo: devtoolsArea.topAnchor),
+            devtoolsArea.leadingAnchor.constraint(equalTo: leadingAnchor),
+            devtoolsArea.trailingAnchor.constraint(equalTo: trailingAnchor),
+            devtoolsArea.bottomAnchor.constraint(equalTo: bottomAnchor),
+            devtoolsBar.leadingAnchor.constraint(equalTo: devtoolsArea.leadingAnchor),
+            devtoolsBar.trailingAnchor.constraint(equalTo: devtoolsArea.trailingAnchor),
+            devtoolsBar.topAnchor.constraint(equalTo: devtoolsArea.topAnchor),
+            devtoolsBar.heightAnchor.constraint(equalToConstant: 28),
+            label.leadingAnchor.constraint(equalTo: devtoolsBar.leadingAnchor, constant: 10),
+            label.centerYAnchor.constraint(equalTo: devtoolsBar.centerYAnchor),
+            closeBtn.trailingAnchor.constraint(equalTo: devtoolsBar.trailingAnchor, constant: -8),
+            closeBtn.centerYAnchor.constraint(equalTo: devtoolsBar.centerYAnchor),
+            devtoolsContent.topAnchor.constraint(equalTo: devtoolsBar.bottomAnchor),
+            devtoolsContent.leadingAnchor.constraint(equalTo: devtoolsArea.leadingAnchor),
+            devtoolsContent.trailingAnchor.constraint(equalTo: devtoolsArea.trailingAnchor),
+            devtoolsContent.bottomAnchor.constraint(equalTo: devtoolsArea.bottomAnchor),
+        ])
+        updatePageBackground()
+    }
+
+    /// 主窗口区背景：暗色=黑 / 亮色=白（about:blank 等透明页面时）
+    private func updatePageBackground() {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        pageView.layer?.backgroundColor = (dark ? NSColor.black : NSColor.white).cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updatePageBackground()
+    }
+
+    /// 展开 DevTools 子窗口（压缩主窗口）。
+    func showDevToolsArea() {
+        devtoolsHeight0?.isActive = false
+        devtoolsHeight300?.isActive = true
+        devtoolsArea.isHidden = false
+        layoutSubtreeIfNeeded()
+        notifyResize()
+    }
+
+    /// 收起 DevTools 子窗口（主窗口恢复全高）。
+    func hideDevToolsArea() {
+        devtoolsHeight300?.isActive = false
+        devtoolsHeight0?.isActive = true
+        devtoolsArea.isHidden = true
+        layoutSubtreeIfNeeded()
+        notifyResize()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        layer?.contentsScale = window?.backingScaleFactor ?? 2
+        // mouseMoved 默认不送达；tracking area 让 hover 事件进 CEF。
+        if window != nil, trackingArea == nil {
+            trackingArea = NSTrackingArea(rect: .zero,
+                                          options: [.activeInKeyWindow, .inVisibleRect, .mouseMoved, .mouseEnteredAndExited],
+                                          owner: self, userInfo: nil)
+            addTrackingArea(trackingArea!)
+        }
+        notifyResize()
+    }
+
+    private var trackingArea: NSTrackingArea?
+
+    /// 尺寸变化通知 CEF（WasResized）：OSR 渲染视口必须跟随容器。
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        layer?.contentsScale = window?.backingScaleFactor ?? 2
+        notifyResize()
+    }
+
+    private func notifyResize() {
+        guard let tab = tab, tab.browserId > 0,
+              pageView.bounds.width > 1, pageView.bounds.height > 1 else { return }
+        CEFShim.resizeBrowser(tab.browserId, width: Float(pageView.bounds.width),
+                              height: Float(pageView.bounds.height))
+    }
+
+    /// 布局后同步：pageView 尺寸变化（首次布局/DevTools 展开收起）时
+    /// 强制 CEF 视图跟随 + 通知视口 resize（否则新页签停在 800×600 兜底，
+    /// 只渲染左下角，其余灰色）。
+    private var lastNotifiedSize: NSSize = .zero
+    override func layout() {
+        super.layout()
+        let s = pageView.bounds.size
+        if s.width > 1, s.height > 1, s != lastNotifiedSize {
+            lastNotifiedSize = s
+            for v in pageView.subviews {
+                v.frame = pageView.bounds
+            }
+            notifyResize()
+        }
+    }
+
+    // MARK: 输入转发（CEF OSR 坐标：左上原点；相对主窗口区）
+
+    private func cefPoint(_ event: NSEvent) -> (x: Float, y: Float) {
+        let p = pageView.convert(event.locationInWindow, from: nil)
+        return (Float(p.x), Float(pageView.bounds.height - p.y))
+    }
+
+    private func modifiers(_ event: NSEvent) -> Int {
+        var m = 0
+        if event.modifierFlags.contains(.shift) { m |= 1 << 0 }      // EVENTFLAG_SHIFT_DOWN
+        if event.modifierFlags.contains(.control) { m |= 1 << 1 }     // EVENTFLAG_CONTROL_DOWN
+        if event.modifierFlags.contains(.option) { m |= 1 << 2 }      // EVENTFLAG_ALT_DOWN
+        if event.modifierFlags.contains(.command) { m |= 1 << 3 }     // EVENTFLAG_COMMAND_DOWN
+        return m
+    }
+
+    /// CEF OSR 交互前提：浏览器必须先获得焦点（SetFocus），否则点击/键盘
+    /// 事件不会交给页面处理。点击/键入前确保 focus + firstResponder。
+    func ensureFocus() {
+        guard let tab = tab, tab.browserId > 0 else { return }
+        if window?.firstResponder !== self {
+            window?.makeFirstResponder(self)
+        }
+        CEFShim.setFocus(tab.browserId, focused: true)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        ensureFocus()
+        let p = cefPoint(event)
+        CEFShim.sendMouseClick(tab?.browserId ?? 0, x: p.x, y: p.y, button: 0, count: 1, modifiers: Int32(modifiers(event)))
+    }
+    override func mouseUp(with event: NSEvent) {
+        let p = cefPoint(event)
+        CEFShim.sendMouseClick(tab?.browserId ?? 0, x: p.x, y: p.y, button: 0, count: 2, modifiers: Int32(modifiers(event)))
+    }
+    override func mouseDragged(with event: NSEvent) {
+        let p = cefPoint(event)
+        CEFShim.sendMouseClick(tab?.browserId ?? 0, x: p.x, y: p.y, button: 0, count: 3, modifiers: Int32(modifiers(event)))
+    }
+    override func rightMouseDown(with event: NSEvent) {
+        ensureFocus()
+        let p = cefPoint(event)
+        CEFShim.sendMouseClick(tab?.browserId ?? 0, x: p.x, y: p.y, button: 1, count: 1, modifiers: Int32(modifiers(event)))
+    }
+    override func rightMouseUp(with event: NSEvent) {
+        let p = cefPoint(event)
+        CEFShim.sendMouseClick(tab?.browserId ?? 0, x: p.x, y: p.y, button: 1, count: 2, modifiers: Int32(modifiers(event)))
+    }
+    override func mouseMoved(with event: NSEvent) {
+        let p = cefPoint(event)
+        CEFShim.sendMouseMove(tab?.browserId ?? 0, x: p.x, y: p.y, modifiers: Int32(modifiers(event)))
+    }
+    override func scrollWheel(with event: NSEvent) {
+        let p = cefPoint(event)
+        CEFShim.sendMouseWheel(tab?.browserId ?? 0, x: p.x, y: p.y,
+                               deltaX: Float(event.scrollingDeltaX), deltaY: Float(event.scrollingDeltaY),
+                               modifiers: Int32(modifiers(event)))
+    }
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            super.keyDown(with: event)  // ⌘ 组合走响应链（编辑菜单等）
+            return
+        }
+        CEFShim.sendKeyEvent(tab?.browserId ?? 0, keyCode: event.keyCode,
+                             charCode: event.characters?.utf16.first ?? 0,
+                             keyDown: true, modifiers: Int32(modifiers(event)))
+    }
+    override func keyUp(with event: NSEvent) {
+        CEFShim.sendKeyEvent(tab?.browserId ?? 0, keyCode: event.keyCode,
+                             charCode: 0, keyDown: false, modifiers: Int32(modifiers(event)))
+    }
+
+    /// QA：把当前帧存成 PNG 供排查（透明/黑屏/内容缺失）。
+    private func writeFrameProbe(_ buffer: UnsafeRawPointer, width: Int, height: Int) {
+        let bytes = buffer.assumingMemoryBound(to: UInt8.self)
+        var alphaSum = 0.0, lumSum = 0.0, n = 0.0
+        let step = 16
+        var y = 0
+        while y < height {
+            var x = 0
+            while x < width {
+                let i = (y * width + x) * 4
+                let b = Double(bytes[i]), g = Double(bytes[i+1]), r = Double(bytes[i+2]), a = Double(bytes[i+3])
+                alphaSum += a; lumSum += (0.299*r + 0.587*g + 0.114*b) * (a / 255.0); n += 1
+                x += step
+            }
+            y += step
+        }
+        let avgAlpha = alphaSum / max(n, 1)
+        let avgLum = lumSum / max(n, 1)
+        lastAvgAlpha = avgAlpha
+        lastAvgLum = avgLum
+        let cfData = CFDataCreate(kCFAllocatorDefault, bytes, width * height * 4)!
+        let provider = CGDataProvider(data: cfData)!
+        let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue), // BGRA（CEF OnPaint 字节序）
+                            provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
+        let rep = NSBitmapImageRep(cgImage: image)
+        if let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: "/tmp/osr-frame-\(frameCount).png"))
+        }
+        print("osr frame#\(frameCount) \(width)x\(height) avgAlpha=\(String(format: "%.0f", avgAlpha)) avgLum=\(String(format: "%.1f", avgLum)) -> /tmp/osr-frame-\(frameCount).png")
+    }
+
+    /// 收到的帧计数（QA 用）。
+    private(set) var frameCount = 0
+    /// 最近一帧的平均透明度/亮度（QA 用）。
+    private(set) var lastAvgAlpha: Double = 0
+    private(set) var lastAvgLum: Double = 0
+    /// 最近一帧尺寸（QA 用）。
+    private(set) var lastFrameSize = (width: 0, height: 0)
+
+    /// 显示一帧 BGRA 像素。
+    func presentFrame(_ buffer: UnsafeRawPointer, width: Int, height: Int) {
+        frameCount += 1
+        lastFrameSize = (width, height)
+        writeFrameProbe(buffer, width: width, height: height)
+        guard let layer = layer else { return }
+        let bytesPerRow = width * 4
+        let cfData = CFDataCreate(kCFAllocatorDefault, buffer.assumingMemoryBound(to: UInt8.self), bytesPerRow * height)
+        guard let data = cfData,
+              let provider = CGDataProvider(data: data),
+              let image = CGImage(width: width, height: height,
+                                  bitsPerComponent: 8, bitsPerPixel: 32,
+                                  bytesPerRow: bytesPerRow,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue), // BGRA（CEF OnPaint 字节序）
+                                  provider: provider, decode: nil,
+                                  shouldInterpolate: true, intent: .defaultIntent) else { return }
+        layer.contents = image
+        layer.contentsScale = window?.backingScaleFactor ?? 2
+        needsDisplay = true
+    }
+}
+
+// MARK: - 单个标签页（CEF OSR 渲染 + CDP 通道）
 
 final class BrowserCEFTab: NSObject, CEFBrowserDelegate, BrowserCDPDelegate {
     let id: Int64
     /// shim 侧浏览器 id（由 CEFShim.createBrowser 分配，导航用它；init 后赋值）。
     var browserId: Int64 = 0
-    let container: NSView
+    let container: BrowserOSRView
     let logBuffer = BrowserLogBuffer()
     let cdp = BrowserCDPClient()
     weak var owner: BrowserPanelController?
@@ -118,6 +433,9 @@ final class BrowserCEFTab: NSObject, CEFBrowserDelegate, BrowserCDPDelegate {
     private(set) var isLoading = false
     private(set) var canGoBack = false
     private(set) var canGoForward = false
+    /// 关闭中标记：防 closeTab 重入（CEF CloseBrowser 同步触发 OnBeforeClose
+    /// → tabClosedByCEF → 递归 closeTab → 二次 remove(at:) 越界崩溃）。
+    var isClosing = false
 
     private var cdpRetries = 0
 
@@ -126,16 +444,23 @@ final class BrowserCEFTab: NSObject, CEFBrowserDelegate, BrowserCDPDelegate {
         self.owner = owner
         self.url = url
 
-        container = NSView(frame: .zero)
-        container.wantsLayer = true
-        container.layer?.masksToBounds = true
+        container = BrowserOSRView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         container.autoresizingMask = [.width, .height]
 
         super.init()
 
+        container.tab = self
+        container.onCloseDevTools = { [weak self] in self?.closeDevTools() }
         cdp.delegate = self
-        browserId = CEFShim.createBrowser(in: container, url: url, delegate: self)
         startCDPTargetPolling()
+    }
+
+    /// 创建 CEF 浏览器（必须在容器已加入窗口后再调用；容器未入窗时
+    /// CEF 可能不创建/附加视图，导致页面渲染不出）。
+    func createBrowser(url: String) {
+        guard browserId == 0 else { return }
+        // 主窗口 CEF 挂 pageView（DevTools 展开时主窗口区压缩，CEF 视口跟随）
+        browserId = CEFShim.createBrowser(in: container.pageView, url: url, delegate: self)
     }
 
     deinit {
@@ -168,7 +493,6 @@ final class BrowserCEFTab: NSObject, CEFBrowserDelegate, BrowserCDPDelegate {
     func load(url: String) {
         guard let target = BrowserURL.normalize(url) else {
             logBuffer.append(level: "error", text: "无法识别的地址: \(url)")
-            owner?.consoleUpdated()
             return
         }
         self.url = target
@@ -178,11 +502,21 @@ final class BrowserCEFTab: NSObject, CEFBrowserDelegate, BrowserCDPDelegate {
     // MARK: CEFBrowserDelegate（主线程回调）
 
     func cefTitleChanged(_ title: String, forBrowser id: Int64) {
+        guard id == browserId else { return }  // DevTools 子浏览器回调忽略
         self.title = title
         owner?.tabStateChanged(self)
     }
 
+    func cefAddressChanged(_ url: String, forBrowser id: Int64) {
+        // 后退/前进/重定向后地址变化（窗口化模式 OnAddressChange）
+        guard id == browserId else { return }
+        guard url.hasPrefix("http") || url.hasPrefix("about:") || url.hasPrefix("file:") else { return }
+        self.url = url
+        owner?.tabStateChanged(self)
+    }
+
     func cefLoadingStateChanged(_ isLoading: Bool, canGoBack: Bool, canGoForward: Bool, forBrowser id: Int64) {
+        guard id == browserId else { return }
         self.isLoading = isLoading
         self.canGoBack = canGoBack
         self.canGoForward = canGoForward
@@ -190,29 +524,157 @@ final class BrowserCEFTab: NSObject, CEFBrowserDelegate, BrowserCDPDelegate {
     }
 
     func cefLoadError(_ errorText: String, failedURL: String, forBrowser id: Int64) {
+        guard id == browserId else { return }
         logBuffer.append(level: "error", text: "加载失败: \(errorText) (\(failedURL))")
-        owner?.consoleUpdated()
     }
 
     func cefBrowserClosed(_ id: Int64) {
-        owner?.tabClosedByCEF(self)
+        if id == browserId {
+            owner?.tabClosedByCEF(self)
+        } else if id == container.devtoolsBrowserId {
+            // DevTools 子浏览器关闭：重置状态并收起
+            container.devtoolsBrowserId = 0
+            container.hideDevToolsArea()
+        }
+    }
+
+    /// 关闭本页签的 DevTools 子窗口（工具条 ✕）。
+    func closeDevTools() {
+        let did = container.devtoolsBrowserId
+        container.devtoolsBrowserId = 0
+        container.hideDevToolsArea()
+        if did > 0 { CEFShim.closeBrowser(did) }
     }
 
     // MARK: BrowserCDPDelegate（主队列派发）
 
     func cdpEvent(level: String, text: String) {
         logBuffer.append(level: level, text: text)
-        owner?.consoleUpdated()
     }
 }
 
 // MARK: - 面板控制器
+
+// MARK: - 页签项（Chrome 式：标题 + 关闭按钮一体，背景圆角胶囊）
+
+/// 单个页签：圆角背景 + 标题 + 关闭按钮（关闭按钮活动/hover 时显示）。
+final class BrowserTabItemView: NSView {
+    var onSelect: (() -> Void)?
+    var onClose: (() -> Void)?
+    var isActive = false {
+        didSet { updateStyle() }
+    }
+
+    /// 更新标题（导航后）。
+    func setTitle(_ title: String) {
+        titleButton.title = title
+    }
+
+    /// 宽度约束（页签均分/最大宽度由面板动态调整）。
+    lazy var widthConstraint: NSLayoutConstraint = widthAnchor.constraint(equalToConstant: 160)
+
+    private let titleButton = NSButton()
+    private let closeButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("browser.closeTab"), size: 16)
+    private var isHovered = false { didSet { updateStyle() } }
+    private var trackingArea: NSTrackingArea?
+
+    /// 动态背景色（亮/暗外观切换自动变化，不写死）。
+    private let activeBg = NSColor(name: nil) { app in
+        let dark = app.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark ? NSColor(white: 0.10, alpha: 1) : NSColor(white: 0.28, alpha: 1)
+    }
+    private let hoverBg = NSColor(name: nil) { app in
+        let dark = app.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark ? NSColor(white: 0.22, alpha: 1) : NSColor(white: 0.42, alpha: 1)
+    }
+    private let normalBg = NSColor(name: nil) { app in
+        let dark = app.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark ? NSColor(white: 0.17, alpha: 1) : NSColor(white: 0.38, alpha: 1)
+    }
+
+    init(title: String, tabId: Int64) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        translatesAutoresizingMaskIntoConstraints = false
+        widthConstraint.isActive = true
+
+        titleButton.title = title
+        titleButton.bezelStyle = .inline
+        titleButton.setButtonType(.momentaryChange)
+        titleButton.isBordered = false
+        titleButton.font = .systemFont(ofSize: 12)
+        titleButton.lineBreakMode = .byTruncatingTail
+        titleButton.cell?.truncatesLastVisibleLine = true
+        titleButton.target = self
+        titleButton.action = #selector(titleClicked(_:))
+        titleButton.translatesAutoresizingMaskIntoConstraints = false
+        titleButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        closeButton.onAction = { [weak self] in self?.onClose?() }
+        closeButton.isHidden = true
+        // 关闭按钮 hover 红色高亮（Chrome 式，明显）
+        closeButton.hoverColor = NSColor.systemRed
+
+        addSubview(titleButton)
+        addSubview(closeButton)
+        NSLayoutConstraint.activate([
+            titleButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            titleButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            titleButton.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: 26),
+        ])
+        updateStyle()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let ta = trackingArea { removeTrackingArea(ta) }
+        let ta = NSTrackingArea(rect: .zero,
+                                options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                owner: self, userInfo: nil)
+        addTrackingArea(ta)
+        trackingArea = ta
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
+
+    /// 整个页签区域可点击切换（不仅标题文字；关闭按钮由子视图自己处理）。
+    override func mouseDown(with event: NSEvent) {
+        onSelect?()
+    }
+
+    @objc private func titleClicked(_ sender: NSButton) { onSelect?() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // 外观切换（亮/暗）：重新解析动态色的 cgColor 并刷新 layer。
+        updateStyle()
+    }
+
+    private func updateStyle() {
+        closeButton.isHidden = !(isActive || isHovered)
+        // 背景：动态色（活动最深，hover 居中，非活动最浅仍可见分隔）
+        let bg = isActive ? activeBg : (isHovered ? hoverBg : normalBg)
+        layer?.backgroundColor = bg.cgColor
+        // 活动页签标题加粗
+        titleButton.font = .systemFont(ofSize: 12, weight: isActive ? .semibold : .regular)
+    }
+}
 
 final class BrowserPanelController: NSObject {
     /// 根视图：直接挂为右栏 split view 的第二个 pane。
     let view = BrowserRootView()
     /// 用户点击「关闭」时收起面板。
     var onRequestHide: (() -> Void)?
+    /// 内容容器（QA：命中测试 / 遮挡诊断用）。
+    var contentContainerView: NSView { contentContainer }
 
     static let minWidth: CGFloat = 300
     /// 标签页上限（每 tab 一个 CEF 浏览器 + 渲染进程）。
@@ -221,27 +683,17 @@ final class BrowserPanelController: NSObject {
     // MARK: 子视图
 
     private let headerTitle = HeaderLabel()
+    private var newTabButton: CustomIconButton!
     private var openInBrowserButton: CustomIconButton!
     private var copyURLButton: CustomIconButton!
     private var devToolsButton: CustomIconButton!
-    private var consoleToggleButton: CustomIconButton!
-    private var hideButton: CustomIconButton!
+    private var closePanelButton: CustomIconButton!
     private var backButton: CustomIconButton!
     private var forwardButton: CustomIconButton!
     private var reloadButton: CustomIconButton!
     private var addressField: NSTextField!
-    private var goButton: CustomIconButton!
-    private let tabBar = DynamicFillView()
-    private var tabBarStack: NSStackView!
-    private var newTabButton: CustomIconButton!
+    private let tabStack = NSStackView()
     private let contentContainer = NSView()
-    private let drawer = DynamicFillView()
-    private let drawerTitle = HeaderLabel()
-    private var clearLogButton: CustomIconButton!
-    private var drawerCloseButton: CustomIconButton!
-    private let logView = NSTextView()
-    private var evalField: NSTextField!
-    private var evalButton: CustomIconButton!
     private let emptyLabel = HeaderLabel()
 
     // MARK: 状态
@@ -251,36 +703,97 @@ final class BrowserPanelController: NSObject {
     var activeTab: BrowserCEFTab?
     /// 已被标签页认领的 CDP target id（避免同 URL 标签页误配对）。
     var claimedTargetIds: Set<String> = []
-    private var tabButtons: [Int64: HoverButton] = [:]
+    private var tabButtons: [Int64: BrowserTabItemView] = [:]
     private var nextTabId: Int64 = 1
-    private var isDrawerOpen = false
 
     override init() {
         super.init()
         buildUI()
         showEmptyState()
+        // 注册 OSR 帧回调：按 browserId 派发给对应标签页自绘。
+        CEFShim.setPaintHandler { [weak self] browserId, buffer, width, height in
+            guard let self = self,
+                  let tab = self.tab(withId: browserId) else { return }
+            tab.container.presentFrame(buffer, width: Int(width), height: Int(height))
+        }
+        // 光标变化回调：OSR hover 跟随页面（链接 → 手型）。
+        CEFShim.setCursorHandler { [weak self] browserId, cursorPtr in
+            guard let self = self else { return }
+            guard let tab = self.tab(withId: browserId), tab === self.activeTab else { return }
+            let cursor = Unmanaged<NSCursor>.fromOpaque(cursorPtr).takeUnretainedValue()
+            cursor.set()
+        }
+        // 上下文菜单：OSR 下 CEF 不知道宿主窗口位置，默认菜单会弹错位；
+        // 由宿主在正确屏幕坐标弹 NSMenu，命令经菜单 id 驱动 CEF 动作。
+        CEFShim.setMenuRequestHandler { [weak self] browserId, x, y, items in
+            guard let self = self,
+                  let tab = self.tab(withId: browserId),
+                  tab === self.activeTab,
+                  let window = tab.container.window else { return }
+            let viewPoint = tab.container.convert(
+                NSPoint(x: CGFloat(x), y: tab.container.bounds.height - CGFloat(y)), to: nil)
+            let screenPoint = window.convertPoint(toScreen: viewPoint)
+            self.popupContextMenu(at: screenPoint, items: items, tab: tab)
+        }
+    }
+
+    // MARK: 上下文菜单（OSR）
+
+    /// 在正确屏幕坐标弹出 CEF 上下文菜单；命令经菜单 id 驱动 CEF 动作。
+    private func popupContextMenu(at screenPoint: NSPoint, items: [[AnyHashable: Any]], tab: BrowserCEFTab) {
+        let menu = NSMenu(title: "")
+        menu.autoenablesItems = false
+        for item in items {
+            guard let type = (item["type"] as? NSNumber)?.intValue else { continue }
+            if type == 1 { // CEFMenuItemSeparator
+                menu.addItem(.separator())
+                continue
+            }
+            guard let cmdId = (item["id"] as? NSNumber)?.intValue else { continue }
+            let label = (item["label"] as? String) ?? "?"
+            let mi = NSMenuItem(title: label, action: #selector(contextMenuItemClicked(_:)),
+                                keyEquivalent: "")
+            mi.target = self
+            mi.representedObject = [NSNumber(value: cmdId), NSNumber(value: tab.id)]
+            mi.isEnabled = true
+            menu.addItem(mi)
+        }
+        guard menu.items.count > 0 else { return }
+        menu.popUp(positioning: nil, at: screenPoint, in: nil)
+        CEFShim.cancelContextMenu(tab.browserId)
+    }
+
+    @objc private func contextMenuItemClicked(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [NSNumber], payload.count == 2 else { return }
+        CEFShim.executeContextMenuCommand(payload[1].int64Value, commandId: payload[0].int32Value)
     }
 
     // MARK: UI
 
     private func buildUI() {
-        view.kind = .window
         headerTitle.text = L10n.tr("browser.title")
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
+        newTabButton = CustomIconButton(glyph: .plus, tooltip: L10n.tr("browser.newTabHint"), size: 18)
+        newTabButton.showsBackground = true  // 页签样式统一：带背景、hover 高亮
+        // .fill 分布下固定宽度（不被拉伸）
+        newTabButton.setContentHuggingPriority(.required, for: .horizontal)
+        newTabButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        newTabButton.onAction = { [weak self] in self?.newTab(url: nil) }
         openInBrowserButton = CustomIconButton(glyph: .symbol("safari"), tooltip: L10n.tr("browser.openInSystem"))
         openInBrowserButton.onAction = { [weak self] in self?.openInSystemBrowser() }
         copyURLButton = CustomIconButton(glyph: .symbol("link"), tooltip: L10n.tr("browser.copyURL"))
         copyURLButton.onAction = { [weak self] in self?.copyActiveURL() }
-        devToolsButton = CustomIconButton(glyph: .symbol("chevron.left.forwardslash.chevron.right"), tooltip: L10n.tr("browser.devTools"))
-        devToolsButton.onAction = { [weak self] in self?.openDevTools() }
-        consoleToggleButton = CustomIconButton(glyph: .symbol("chevron.up.chevron.down"), tooltip: L10n.tr("browser.console"))
-        consoleToggleButton.onAction = { [weak self] in self?.toggleDrawer() }
-        hideButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("preview.closePanel"))
-        hideButton.onAction = { [weak self] in self?.onRequestHide?() }
+        closePanelButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("preview.closePanel"))
+        closePanelButton.onAction = { [weak self] in
+            // 右上角 ✕ = 彻底关闭浏览器：关掉所有页签/浏览器 + 收起面板。
+            self?.closeAllTabs()
+            self?.onRequestHide?()
+        }
 
-        let headerActions = NSStackView(views: [openInBrowserButton, copyURLButton, devToolsButton, consoleToggleButton, hideButton])
+        let headerActions = NSStackView(views: [openInBrowserButton, copyURLButton,
+                                                closePanelButton])
         headerActions.orientation = .horizontal
         headerActions.spacing = 6
         headerActions.translatesAutoresizingMaskIntoConstraints = false
@@ -288,18 +801,31 @@ final class BrowserPanelController: NSObject {
         let header = DynamicFillView()
         header.kind = .window
         header.translatesAutoresizingMaskIntoConstraints = false
+        // layer 隔离（docs/terminal-header-fix.md）：opaque 无独立 layer 的
+        // 视图绘制会溢出盖住垫底的内容区（实测 header 移除后内容区即恢复）。
+        // 与 toolbar 同款修复：wantsLayer + masksToBounds 收住合成。
+        header.wantsLayer = true
+        header.layer?.masksToBounds = true
         header.addSubview(headerTitle)
         header.addSubview(headerActions)
-        NSLayoutConstraint.activate([
-            headerTitle.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
-            headerTitle.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            headerTitle.trailingAnchor.constraint(lessThanOrEqualTo: headerActions.leadingAnchor, constant: -8),
-            headerActions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
-            headerActions.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            header.heightAnchor.constraint(equalToConstant: 40),
-        ])
 
-        // 工具栏：后退/前进/刷新·停止 + 地址栏 + 前往
+        // 标签栏（Chrome 式：页签固定最大宽度，数量多时均分缩小；
+        // + 号作为栈内最后一项紧跟页签）
+        tabStack.orientation = .horizontal
+        tabStack.spacing = 6
+        tabStack.alignment = .centerY
+        tabStack.distribution = .fill
+        tabStack.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
+        tabStack.translatesAutoresizingMaskIntoConstraints = false
+        tabStack.addArrangedSubview(newTabButton)  // 初始仅 + 号；rebuild 时移到末尾
+        let tabBarRow = NSView()
+        tabBarRow.translatesAutoresizingMaskIntoConstraints = false
+        tabBarRow.addSubview(tabStack)
+        let tabBarUnderline = NSBox()
+        tabBarUnderline.boxType = .separator
+        tabBarUnderline.translatesAutoresizingMaskIntoConstraints = false
+
+        // 地址栏（位于页签下方，Chrome 式）：后退/前进/刷新·停止 + 地址 + 前往
         backButton = CustomIconButton(glyph: .symbol("chevron.left"), tooltip: L10n.tr("browser.back"))
         backButton.onAction = { [weak self] in
             if let tab = self?.activeTab { CEFShim.goBack(tab.browserId) }
@@ -318,147 +844,92 @@ final class BrowserPanelController: NSObject {
         addressField.font = .systemFont(ofSize: 12)
         addressField.translatesAutoresizingMaskIntoConstraints = false
         addressField.target = self
-        addressField.action = #selector(addressSubmitted(_:))
+        addressField.action = #selector(addressSubmitted(_:))  // 回车触发访问
         addressField.isBezeled = true
-        goButton = CustomIconButton(glyph: .symbol("arrow.right.circle"), tooltip: L10n.tr("browser.go"))
-        goButton.onAction = { [weak self] in self?.submitAddress() }
+        // DevTools 按钮（扳手）：地址栏右侧；回车即可访问，无需 Go 按钮
+        devToolsButton = CustomIconButton(glyph: .symbol("wrench"), tooltip: L10n.tr("browser.devTools"))
+        devToolsButton.onAction = { [weak self] in self?.openDevTools() }
 
         let toolbar = DynamicFillView()
         toolbar.kind = .control
         toolbar.translatesAutoresizingMaskIntoConstraints = false
-        let toolbarStack = NSStackView(views: [backButton, forwardButton, reloadButton, addressField, goButton])
+        // layer 隔离：opaque 无 layer 视图的绘制会溢出盖住上方头部按钮
+        // （docs/terminal-header-fix.md 同源问题；wiki 面板工具行同款处理）。
+        toolbar.wantsLayer = true
+        toolbar.layer?.masksToBounds = true
+        let toolbarStack = NSStackView(views: [backButton, forwardButton, reloadButton, addressField, devToolsButton])
         toolbarStack.orientation = .horizontal
         toolbarStack.spacing = 6
         toolbarStack.translatesAutoresizingMaskIntoConstraints = false
         toolbarStack.edgeInsets = NSEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
         toolbar.addSubview(toolbarStack)
-        NSLayoutConstraint.activate([
-            toolbarStack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
-            toolbarStack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
-            toolbarStack.topAnchor.constraint(equalTo: toolbar.topAnchor),
-            toolbarStack.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor),
-            toolbar.heightAnchor.constraint(equalToConstant: 36),
-            addressField.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
-        ])
 
-        // 标签栏
-        tabBar.kind = .control
-        tabBar.translatesAutoresizingMaskIntoConstraints = false
-        newTabButton = CustomIconButton(glyph: .plus, tooltip: L10n.tr("browser.newTabHint"))
-        newTabButton.onAction = { [weak self] in self?.newTab(url: nil) }
-        tabBarStack = NSStackView(views: [newTabButton])
-        tabBarStack.orientation = .horizontal
-        tabBarStack.spacing = 2
-        tabBarStack.translatesAutoresizingMaskIntoConstraints = false
-        tabBarStack.edgeInsets = NSEdgeInsets(top: 3, left: 6, bottom: 3, right: 6)
-        tabBar.addSubview(tabBarStack)
-        NSLayoutConstraint.activate([
-            tabBarStack.leadingAnchor.constraint(equalTo: tabBar.leadingAnchor),
-            tabBarStack.trailingAnchor.constraint(equalTo: tabBar.trailingAnchor),
-            tabBarStack.topAnchor.constraint(equalTo: tabBar.topAnchor),
-            tabBarStack.bottomAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            tabBar.heightAnchor.constraint(equalToConstant: 33),
-        ])
-
-        // 内容区（标签容器显隐切换）
+        // 内容区：页签容器（每页签内部自带「主窗口 + DevTools 子窗口」，
+        // 见 BrowserOSRView；切页签时整个容器一起隐藏/显示）。
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.wantsLayer = true
+        // 合成隔离（docs/terminal-header-fix.md）：必须 masksToBounds，
+        // 否则 OSR 帧 layer 内容可溢出容器沿合成树盖住上方头部/工具栏。
         contentContainer.layer?.masksToBounds = true
 
-        // 控制台抽屉
-        drawer.kind = .window
-        drawer.translatesAutoresizingMaskIntoConstraints = false
-        drawer.wantsLayer = true
-        drawer.layer?.masksToBounds = true
-        drawer.isHidden = true
-
-        drawerTitle.text = L10n.tr("browser.console")
-        drawerTitle.translatesAutoresizingMaskIntoConstraints = false
-        clearLogButton = CustomIconButton(glyph: .symbol("trash"), tooltip: L10n.tr("browser.clear"))
-        clearLogButton.onAction = { [weak self] in
-            self?.activeTab?.logBuffer.clear()
-            self?.refreshLogView()
-        }
-        drawerCloseButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("browser.consoleClose"))
-        drawerCloseButton.onAction = { [weak self] in self?.toggleDrawer() }
-
-        let drawerHeader = NSStackView(views: [drawerTitle, clearLogButton, drawerCloseButton])
-        drawerHeader.orientation = .horizontal
-        drawerHeader.spacing = 6
-        drawerHeader.translatesAutoresizingMaskIntoConstraints = false
-
-        logView.isEditable = false
-        logView.isRichText = false
-        logView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        logView.backgroundColor = .textBackgroundColor
-        logView.textContainerInset = NSSize(width: 4, height: 4)
-        logView.isVerticallyResizable = true
-        logView.autoresizingMask = [.width, .height]
-        let logScroll = NSScrollView()
-        logScroll.documentView = logView
-        logScroll.hasVerticalScroller = true
-        logScroll.translatesAutoresizingMaskIntoConstraints = false
-        logView.frame = logScroll.bounds
-
-        evalField = NSTextField()
-        evalField.placeholderString = L10n.tr("browser.evalPlaceholder")
-        evalField.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        evalField.translatesAutoresizingMaskIntoConstraints = false
-        evalField.target = self
-        evalField.action = #selector(evalSubmitted(_:))
-        evalButton = CustomIconButton(glyph: .symbol("play.fill"), tooltip: L10n.tr("browser.eval"))
-        evalButton.onAction = { [weak self] in self?.runEval() }
-
-        let evalRow = NSStackView(views: [evalField, evalButton])
-        evalRow.orientation = .horizontal
-        evalRow.spacing = 6
-        evalRow.translatesAutoresizingMaskIntoConstraints = false
-
-        drawer.addSubview(drawerHeader)
-        drawer.addSubview(logScroll)
-        drawer.addSubview(evalRow)
-        NSLayoutConstraint.activate([
-            drawerHeader.leadingAnchor.constraint(equalTo: drawer.leadingAnchor, constant: 8),
-            drawerHeader.topAnchor.constraint(equalTo: drawer.topAnchor, constant: 6),
-            drawerHeader.trailingAnchor.constraint(equalTo: drawer.trailingAnchor, constant: -8),
-            logScroll.leadingAnchor.constraint(equalTo: drawer.leadingAnchor, constant: 8),
-            logScroll.trailingAnchor.constraint(equalTo: drawer.trailingAnchor, constant: -8),
-            logScroll.topAnchor.constraint(equalTo: drawerHeader.bottomAnchor, constant: 6),
-            evalRow.leadingAnchor.constraint(equalTo: drawer.leadingAnchor, constant: 8),
-            evalRow.trailingAnchor.constraint(equalTo: drawer.trailingAnchor, constant: -8),
-            evalRow.topAnchor.constraint(equalTo: logScroll.bottomAnchor, constant: 6),
-            evalRow.bottomAnchor.constraint(equalTo: drawer.bottomAnchor, constant: -8),
-            drawer.heightAnchor.constraint(equalToConstant: 190),
-        ])
-
-        // 空态
         emptyLabel.text = L10n.tr("browser.empty")
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         emptyLabel.isHidden = true
 
+        // 子视图顺序 = z 序：与终端面板一致（header/tabs/toolbar 先加，
+        // 内容区最后添加在最上层）。各控件自带 layer 隔离（wantsLayer +
+        // masksToBounds）收住绘制，内容区无需垫底也不会被盖住。
         view.addSubview(header)
+        view.addSubview(tabBarRow)
+        view.addSubview(tabBarUnderline)
         view.addSubview(toolbar)
-        view.addSubview(tabBar)
         view.addSubview(contentContainer)
-        view.addSubview(drawer)
         view.addSubview(emptyLabel)
+
         NSLayoutConstraint.activate([
+            // header
+            header.topAnchor.constraint(equalTo: view.topAnchor),
             header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            header.topAnchor.constraint(equalTo: view.topAnchor),
+            header.heightAnchor.constraint(equalToConstant: 40),
+            headerTitle.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
+            headerTitle.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            headerTitle.trailingAnchor.constraint(lessThanOrEqualTo: headerActions.leadingAnchor, constant: -8),
+            headerActions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
+            headerActions.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+
+            // 标签栏行（33pt）。tabStack 宽度按内容自适应（不撑满行）：
+            // 页签固定宽 +「+」按钮紧跟最后一个页签；页签多时 rebuild 缩小。
+            tabBarRow.topAnchor.constraint(equalTo: header.bottomAnchor),
+            tabBarRow.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tabBarRow.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tabBarRow.heightAnchor.constraint(equalToConstant: 33),
+            tabStack.leadingAnchor.constraint(equalTo: tabBarRow.leadingAnchor),
+            tabStack.topAnchor.constraint(equalTo: tabBarRow.topAnchor, constant: 3),
+            tabStack.bottomAnchor.constraint(equalTo: tabBarRow.bottomAnchor, constant: -3),
+            tabStack.trailingAnchor.constraint(lessThanOrEqualTo: tabBarRow.trailingAnchor),
+
+            tabBarUnderline.topAnchor.constraint(equalTo: tabBarRow.bottomAnchor),
+            tabBarUnderline.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tabBarUnderline.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+
+            // 地址栏（页签下方）
+            toolbar.topAnchor.constraint(equalTo: tabBarUnderline.bottomAnchor),
             toolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            toolbar.topAnchor.constraint(equalTo: header.bottomAnchor),
-            tabBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tabBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tabBar.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            toolbar.heightAnchor.constraint(equalToConstant: 36),
+            toolbarStack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
+            toolbarStack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
+            toolbarStack.topAnchor.constraint(equalTo: toolbar.topAnchor),
+            toolbarStack.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            addressField.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
+
+            // 内容区钉底
+            contentContainer.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             contentContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             contentContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            contentContainer.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            drawer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            drawer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            drawer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            contentContainer.bottomAnchor.constraint(equalTo: drawer.topAnchor),
+            contentContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -20),
         ])
@@ -468,8 +939,8 @@ final class BrowserPanelController: NSObject {
 
     func ensureLoaded() {
         if tabs.isEmpty {
-            let lastURL = UserDefaults.standard.string(forKey: "browserLastURL") ?? "about:blank"
-            _ = newTab(url: lastURL)
+            // 重开面板 = 干净的空页签（不再恢复上次浏览地址）
+            _ = newTab(url: "about:blank")
         }
     }
 
@@ -480,31 +951,75 @@ final class BrowserPanelController: NSObject {
         let tab = BrowserCEFTab(id: nextTabId, owner: self, url: targetURL)
         nextTabId += 1
         UserDefaults.standard.set(targetURL, forKey: "browserLastURL")
-        tab.container.frame = contentContainer.bounds
-        contentContainer.addSubview(tab.container)
+        if contentContainer.bounds.width > 10 {
+            tab.container.frame = contentContainer.bounds
+        }
+        contentContainer.addSubview(tab.container)   // 先入窗
+        // 先布局（pageView 约束解出真实尺寸），再建 CEF 浏览器——
+        // 否则 CEF 视口用 800×600 兜底，只渲染左下角其余灰色。
+        tab.container.layoutSubtreeIfNeeded()
+        tab.createBrowser(url: targetURL)            // 再建 CEF 浏览器
         tabs.append(tab)
         addTabButton(for: tab)
         select(tab)
         emptyLabel.isHidden = true
+        // 新建空白页签（+ 按钮）：聚焦地址栏并全选，直接输入即覆盖（Chrome 式）。
+        // API 带 URL 新建（tab:"new"）不抢焦点。
+        if targetURL == "about:blank" {
+            addressField.selectText(nil)
+        }
         return tab
     }
 
     /// 关闭标签页（幂等：CEF 关闭回调与用户操作都会经过这里）。
     func closeTab(_ tab: BrowserCEFTab) {
+        AppLog.shared.log("browser closeTab id=\(tab.id) closing=\(tab.isClosing)")
+        // 幂等：CEF CloseBrowser 可能同步回调 OnBeforeClose → tabClosedByCEF
+        // → 本函数重入。重入时直接返回，由最外层完成移除（见 isClosing）。
+        guard !tab.isClosing else { return }
+        tab.isClosing = true
         guard let idx = tabs.firstIndex(where: { $0 === tab }) else { return }
-        CEFShim.closeBrowser(tab.browserId)
         tab.cdp.disconnect()
         tab.container.removeFromSuperview()
+        // 兜底：清理 contentContainer 里不属于任何存活 tab 的残留视图
+        // （历史版本 CEF 视图直接挂在内容容器下，关闭页签时残留）。
+        if tabs.count <= 1 {
+            let alive = Set(tabs.filter { $0 !== tab }.map { ObjectIdentifier($0.container) })
+            for v in contentContainer.subviews where !alive.contains(ObjectIdentifier(v)) {
+                v.removeFromSuperview()
+            }
+        }
         tabButtons.removeValue(forKey: tab.id)
         rebuildTabBar()
         tabs.remove(at: idx)
+        // 先摘视图/更新 UI，CEF 销毁放异步：窗口化模式下 CloseBrowser 可能
+        // 等待 renderer 响应（页面加载中点击 ✕ 会阻塞主线程 → watchdog 杀），
+        // 且 CEF 会关闭宿主主窗口触发误退出（见 g_cefClosingWindow 拦截）。
+        let bid = tab.browserId
+        if bid > 0 {
+            g_cefClosingWindow = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { g_cefClosingWindow = false }
+            DispatchQueue.main.async { CEFShim.closeBrowser(bid) }
+        }
+        // DevTools 子浏览器一并关闭（随页签移除）
+        let did = tab.container.devtoolsBrowserId
+        if did > 0 {
+            tab.container.devtoolsBrowserId = 0
+            DispatchQueue.main.async { CEFShim.closeBrowser(did) }
+        }
         if activeTab === tab {
             activeTab = tabs.isEmpty ? nil : tabs[max(0, idx - 1)]
-            if let active = activeTab {
-                select(active)
+            if let active = activeTab {                select(active)
             } else {
                 showEmptyState()
             }
+        }
+    }
+
+    /// 关闭全部标签页（右上角 ✕：彻底关闭浏览器）。
+    func closeAllTabs() {
+        for tab in tabs {
+            closeTab(tab)
         }
     }
 
@@ -516,10 +1031,12 @@ final class BrowserPanelController: NSObject {
     private func select(_ tab: BrowserCEFTab) {
         activeTab = tab
         for t in tabs {
+            // 整个页签容器（主窗口 + DevTools 子窗口）一起隐藏/显示
             t.container.isHidden = (t !== tab)
         }
-        updateToolbar()
-        refreshLogView()
+        // 强制刷新地址栏：切页签时即使焦点在地址栏（正在编辑）也要跟随
+        // 新页签 URL（Chrome 同款行为）。
+        updateToolbar(forceURL: true)
         updateTabButtons()
     }
 
@@ -528,9 +1045,6 @@ final class BrowserPanelController: NSObject {
         for t in tabs { t.container.isHidden = true }
         updateToolbar()
         emptyLabel.isHidden = tabs.isEmpty ? false : true
-        drawer.isHidden = true
-        isDrawerOpen = false
-        refreshLogView()
     }
 
     /// 按 id 取标签页（API 用）。
@@ -543,57 +1057,65 @@ final class BrowserPanelController: NSObject {
         select(tab)
     }
 
-    // MARK: 标签栏
+    // MARK: 标签栏（终端同款：标题按钮 + ✕ 关闭）
 
     private func addTabButton(for tab: BrowserCEFTab) {
-        let button = HoverButton()
-        button.title = displayTitle(tab)
-        button.font = .systemFont(ofSize: 11)
-        button.bezelStyle = .rounded
-        button.target = self
-        button.action = #selector(tabButtonClicked(_:))
-        button.tag = Int(tab.id)
-        tabButtons[tab.id] = button
+        let item = BrowserTabItemView(title: displayTitle(tab), tabId: tab.id)
+        item.onSelect = { [weak self] in self?.select(tab) }
+        item.onClose = { [weak self] in self?.closeTab(tab) }
+        tabButtons[tab.id] = item
         rebuildTabBar()
     }
 
     private func displayTitle(_ tab: BrowserCEFTab) -> String {
+        if tab.url == "about:blank" { return "about:blank" }
         if !tab.title.isEmpty { return tab.title }
         if let u = URL(string: tab.url), let host = u.host, !host.isEmpty { return host }
         return "\(tab.id)"
     }
 
-    @objc private func tabButtonClicked(_ sender: NSButton) {
-        guard let tab = tabs.first(where: { $0.id == Int64(sender.tag) }) else { return }
-        select(tab)
-    }
+    // MARK: 标签栏（Chrome 式：BrowserTabItemView，标题+关闭一体）
 
     private func rebuildTabBar() {
-        var views: [NSView] = [newTabButton]
-        for tab in tabs {
-            if let button = tabButtons[tab.id] { views.append(button) }
-        }
-        for sub in tabBarStack.arrangedSubviews {
-            tabBarStack.removeArrangedSubview(sub)
+        // 保留 + 按钮，移除所有页签项
+        for sub in tabStack.arrangedSubviews where sub !== newTabButton {
+            tabStack.removeArrangedSubview(sub)
             sub.removeFromSuperview()
         }
-        for v in views { tabBarStack.addArrangedSubview(v) }
+        for tab in tabs {
+            if let item = tabButtons[tab.id] {
+                tabStack.addArrangedSubview(item)
+            }
+        }
+        // + 号始终在页签之后（紧跟最后一个页签）
+        if tabStack.arrangedSubviews.last !== newTabButton {
+            tabStack.removeArrangedSubview(newTabButton)
+            tabStack.addArrangedSubview(newTabButton)
+        }
+        // 页签宽度：最大 200pt，页签多时按可用宽度均分缩小
+        // （stack 内容自适应：总宽 = 页签 + 间距 +「+」按钮 + 内边距）
+        let n = max(tabs.count, 1)
+        let avail = max(view.bounds.width - 12 - 18 - 6 * CGFloat(n + 1), 60)
+        let per = min(CGFloat(200), avail / CGFloat(n))
+        for item in tabButtons.values {
+            item.widthConstraint.constant = per
+        }
         updateTabButtons()
     }
 
     private func updateTabButtons() {
-        for (id, button) in tabButtons {
+        for (id, item) in tabButtons {
             let isActive = tabs.first(where: { $0.id == id }) === activeTab
-            button.state = isActive ? .on : .off
+            item.isActive = isActive
             if let tab = tabs.first(where: { $0.id == id }) {
-                button.title = displayTitle(tab)
+                item.setTitle(displayTitle(tab))
             }
         }
     }
 
-    // MARK: 工具栏
+    // MARK: 地址栏
 
-    private func updateToolbar() {
+    private func updateToolbar(forceURL: Bool = false) {
         guard let tab = activeTab else {
             backButton.isEnabled = false
             forwardButton.isEnabled = false
@@ -605,7 +1127,9 @@ final class BrowserPanelController: NSObject {
         forwardButton.isEnabled = tab.canGoForward
         reloadButton.isEnabled = true
         let display = tab.url.isEmpty ? "about:blank" : tab.url
-        if addressField.currentEditor() == nil, addressField.stringValue != display {
+        // forceURL（切页签/关闭页签）：忽略编辑态强制更新；
+        // 否则编辑中不打断用户输入（导航导致的 URL 变化除外）。
+        if forceURL || (addressField.currentEditor() == nil && addressField.stringValue != display) {
             addressField.stringValue = display
         }
     }
@@ -619,7 +1143,6 @@ final class BrowserPanelController: NSObject {
         let raw = addressField.stringValue
         guard let target = BrowserURL.normalize(raw) else {
             tab.logBuffer.append(level: "error", text: "无法识别的地址: \(raw)")
-            consoleUpdated()
             return
         }
         tab.load(url: target)
@@ -641,92 +1164,97 @@ final class BrowserPanelController: NSObject {
         NSPasteboard.general.setString(tab.url.isEmpty ? "about:blank" : tab.url, forType: .string)
     }
 
-    /// 在系统浏览器打开该标签页的 Chromium DevTools 前端。
-    private func openDevTools() {
+    /// 在面板内新开标签页打开 Chromium 自带的完整 DevTools 前端
+    /// （http://127.0.0.1:<cdpPort>/devtools/inspector.html?ws=<pageWs>）。
+    func openDevTools() {
         guard let tab = activeTab else { return }
-        guard let ws = tab.cdp.webSocketURL,
-              let encoded = ws.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return }
-        let port = BrowserCDP.port
-        if let url = URL(string: "http://127.0.0.1:\(port)/devtools/inspector.html?ws=\(encoded)") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    // MARK: 控制台抽屉
-
-    private func toggleDrawer() {
-        isDrawerOpen.toggle()
-        drawer.isHidden = !isDrawerOpen
-        if isDrawerOpen { refreshLogView() }
-    }
-
-    /// 收到新的 console/网络事件（主线程回调）。
-    func consoleUpdated() {
-        if isDrawerOpen { refreshLogView() }
-    }
-
-    private func refreshLogView() {
-        guard isDrawerOpen, let tab = activeTab else {
-            logView.string = ""
+        // 必须主线程：内部做约束切换（devtoolsArea 高度）与 CEF 调用，
+        // API 路由可能在并发队列线程执行。
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in self?.openDevTools() }
             return
         }
-        let attr = NSMutableAttributedString()
-        let colors: [String: NSColor] = [
-            "error": .systemRed,
-            "warn": .systemOrange,
-            "network": .systemTeal,
-            "info": .secondaryLabelColor,
-            "debug": .secondaryLabelColor,
-            "log": .labelColor,
-        ]
-        for entry in tab.logBuffer.entries() {
-            let color = colors[entry.level] ?? .labelColor
-            let line = "[\(entry.level)] \(entry.text)\n"
-            attr.append(NSAttributedString(string: line, attributes: [.foregroundColor: color]))
+        let targetURL = tab.url
+        let port = BrowserCDP.port
+        // 优先：从 CDP 连接地址提取 targetId 构造 ws（CDP eval 可用说明该
+        // target 有效；多 CDP 客户端共存已验证）。避免 URL 匹配失败。
+        var ws: String?
+        if let cdpWS = tab.cdp.webSocketURL,
+           let tid = cdpWS.components(separatedBy: "/devtools/page/").last,
+           !tid.isEmpty {
+            ws = "ws://127.0.0.1:\(port)/devtools/page/\(tid)"
+            AppLog.shared.log("devtools: ws from cdp targetId \(tid)")
         }
-        logView.textStorage?.setAttributedString(attr)
-        logView.scrollToEndOfDocument(nil)
-    }
-
-    @objc private func evalSubmitted(_ sender: Any?) {
-        runEval()
-    }
-
-    private func runEval() {
-        guard let tab = activeTab else { return }
-        let expression = evalField.stringValue
-        guard !expression.isEmpty else { return }
-        tab.logBuffer.append(level: "log", text: "> \(expression)")
-        refreshLogView()
-        DispatchQueue.global().async { [weak tab, weak self] in
-            let result = tab?.cdp.evaluate(expression: expression)
-            DispatchQueue.main.async { [weak tab, weak self] in
-                guard let tab = tab, let self = self else { return }
-                switch result {
-                case .success(let value):
-                    let text: String
-                    if let s = value as? String {
-                        text = s
-                    } else if let data = try? JSONSerialization.data(withJSONObject: value),
-                              let s = String(data: data, encoding: .utf8) {
-                        text = s
-                    } else {
-                        text = String(describing: value)
-                    }
-                    tab.logBuffer.append(level: "info", text: text)
-                case .failure(let e):
-                    tab.logBuffer.append(level: "error", text: "求值错误: \(e.localizedDescription)")
-                case .none:
-                    break
+        if ws == nil {
+            // 兜底：后台队列实时拉 /json 按 URL 匹配
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self = self else { return }
+                guard let url = URL(string: "http://127.0.0.1:\(port)/json"),
+                      let data = try? Data(contentsOf: url),
+                      let list = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
+                    AppLog.shared.log("devtools: /json fetch failed")
+                    return
                 }
-                self.refreshLogView()
+                let norm = { (u: String) -> String in
+                    u.replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "http://", with: "")
+                     .replacingOccurrences(of: "www.", with: "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                }
+                let targetN = norm(targetURL)
+                var w: String?
+                for t in list {
+                    guard let u = t["url"] as? String, let v = t["webSocketDebuggerUrl"] as? String else { continue }
+                    let n = norm(u)
+                    if targetN == n || (targetN.count > 5 && (targetN.contains(n) || n.contains(targetN))) {
+                        w = v
+                        break
+                    }
+                }
+                if w == nil {
+                    w = list.first(where: { ($0["type"] as? String) == "page" })?["webSocketDebuggerUrl"] as? String
+                }
+                guard let v = w, !v.isEmpty else {
+                    AppLog.shared.log("devtools: no ws matched (targets=\(list.count))")
+                    return
+                }
+                AppLog.shared.log("devtools: ws from /json \(v)")
+                DispatchQueue.main.async {
+                    self.showDevToolsInTab(v, port: port)
+                }
             }
+            return
+        }
+        guard let w = ws, !w.isEmpty else { return }
+        showDevToolsInTab(w, port: port)
+    }
+
+    /// 在当前页签内部展开 DevTools 子窗口（页签 = 主窗口 + DevTools）。
+    private func showDevToolsInTab(_ ws: String, port: Int) {
+        guard let tab = activeTab else { return }
+        guard let encoded = ws.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return }
+        let url = "http://127.0.0.1:\(port)/devtools/inspector.html?ws=\(encoded)"
+        AppLog.shared.log("devtools: embedding in tab \(tab.id) \(url.prefix(70))")
+        tab.container.showDevToolsArea()
+        if tab.container.devtoolsBrowserId == 0 {
+            // 展开布局后再创建 DevTools 浏览器（容器尺寸已定）
+            tab.container.layoutSubtreeIfNeeded()
+            tab.container.devtoolsBrowserId = CEFShim.createBrowser(
+                in: tab.container.devtoolsContent, url: url, delegate: tab)
+        } else {
+            CEFShim.navigateBrowser(tab.container.devtoolsBrowserId, url: url)
         }
     }
 
     // MARK: 状态同步（tab 回调 → 面板 UI）
 
     func tabStateChanged(_ tab: BrowserCEFTab) {
+        if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" || CommandLine.arguments.contains("--ui-debug") {
+            let subs = tab.container.subviews.map { "\(type(of: $0)) \(NSStringFromRect($0.frame))" }
+            print("browser tab\(tab.id) title=\(tab.title) containerSubviews=\(subs)")
+        }
+        // 联动：更新页签按钮标题（导航后标题变化）
+        if let item = tabButtons[tab.id] {
+            item.setTitle(displayTitle(tab))
+        }
         guard tab === activeTab else { return }
         updateToolbar()
         updateTabButtons()
@@ -795,8 +1323,42 @@ final class BrowserPanelController: NSObject {
         }
     }
 
+    /// QA：返回活动标签页 CEF 视图的渲染状态（经 API debug 端点查看）。
+    func debugState() -> [String: Any] {
+        var state: [String: Any] = [
+            "panelInWindow": view.window != nil,
+            "panelVisible": !view.isHidden,
+            "devtoolsOpen": (activeTab?.container.devtoolsBrowserId ?? 0) > 0,
+            "devtoolsAreaHidden": activeTab?.container.devtoolsArea.isHidden ?? true,
+        ]
+        if let tab = activeTab {
+            state["containerInWindow"] = tab.container.window != nil
+            state["osrLayerContents"] = tab.container.layer?.contents != nil
+            state["osrLayerScale"] = tab.container.layer?.contentsScale ?? 0
+            state["osrBounds"] = NSStringFromRect(tab.container.bounds)
+            state["frameCount"] = tab.container.frameCount
+            state["lastFrameSize"] = "\(tab.container.lastFrameSize.width)x\(tab.container.lastFrameSize.height)"
+            state["avgAlpha"] = tab.container.lastAvgAlpha
+            state["avgLum"] = tab.container.lastAvgLum
+        }
+        return state
+    }
+
+    /// QA：模拟一次点击（down+up，含 focus），验证 OSR 点击链路。
+    func simulateClick(x: Float, y: Float) {
+        guard let tab = activeTab else { return }
+        DispatchQueue.main.async {
+            tab.container.ensureFocus()
+            CEFShim.sendMouseClick(tab.browserId, x: x, y: y, button: 0, count: 1, modifiers: 0)
+            CEFShim.sendMouseClick(tab.browserId, x: x, y: y, button: 0, count: 2, modifiers: 0)
+        }
+    }
+
     /// 退出清理。
     func shutdownAll() {
+        // 先统一标记 isClosing：CloseBrowser 同步 OnBeforeClose 会重入
+        // closeTab（remove 中枚举 tabs），标记后重入直接返回。
+        for tab in tabs { tab.isClosing = true }
         for tab in tabs {
             CEFShim.closeBrowser(tab.browserId)
             tab.cdp.disconnect()

@@ -174,6 +174,33 @@ enum BrowserAPIRouter {
             delegate.apiHidePanel()
             return .json(200, ["ok": true])
 
+        case ("POST", "/api/browser/debug"):
+            // QA：触发视图层级 dump（AppLog + panel-browser-debug.png），
+            // 并返回 CEF 视图渲染状态。可选 body：
+            //   {"click":[x,y]} 模拟点击；{"devtools":true} 打开 DevTools。
+            if let d = delegate as? BrowserAPIBridge {
+                if (request.jsonBody()?["devtools"] as? Bool) == true,
+                   let panel = d.panel {
+                    panel.openDevTools()
+                }
+                if let click = (request.jsonBody()?["click"] as? [NSNumber]),
+                   click.count == 2,
+                   let panel = d.panel {
+                    panel.simulateClick(x: click[0].floatValue, y: click[1].floatValue)
+                }
+                d.debugDump()
+                return .json(200, d.debugState())
+            }
+            return .json(200, ["ok": true, "error": "no bridge"])
+
+        case ("POST", "/api/browser/hierarchy"):
+            // QA：全窗口视图层级 + 命中测试 + 窗口/面板截图（写 /tmp）。
+            // 用来定位「内容区被盖住 / 事件被截」的遮挡视图。
+            if let d = delegate as? BrowserAPIBridge {
+                return .json(200, d.debugHierarchy())
+            }
+            return .json(200, ["ok": true, "error": "no bridge"])
+
         default:
             return .json(404, ["ok": false, "error": "not found"])
         }
@@ -202,6 +229,12 @@ final class BrowserAPIBridge: BrowserAPIDelegate {
     var showPanel: () -> Void = {}
     var hidePanel: () -> Void = {}
     var isPanelVisible: () -> Bool = { false }
+    /// 触发面板视图层级 dump（QA：经 curl 在真实环境触发 dumpPanelDebugInfo）。
+    var debugDump: () -> Void = {}
+    /// 面板渲染状态快照（QA）。
+    var debugState: () -> [String: Any] = { [:] }
+    /// 全窗口视图层级 + 命中测试 + 截图（QA，诊断遮挡）。
+    var debugHierarchy: () -> [String: Any] = { [:] }
 
     var apiPanelVisible: Bool { isPanelVisible() }
 

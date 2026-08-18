@@ -14,10 +14,10 @@ set -euo pipefail
 
 # ---- 配置 ----
 # CEF 版本单一来源（与 scripts/version.sh 同理）：DSH_CEF_VERSION 覆盖。
-CEF_VERSION="${DSH_CEF_VERSION:-151.3.18+gbeff58d+chromium-151.0.7922.138}"
+CEF_VERSION="${DSH_CEF_VERSION:-150.0.18+gdb11278+chromium-150.0.7871.213}"
 # 各平台 tarball 的 sha1（从 cef-builds.spotifycdn.com/index.json 核对）。
-CEF_SHA1_arm64="b02a884311a41a2025b8fb28d14ac20deedf30c7"
-CEF_SHA1_x86_64="25272bd42c650d570ee52b47b6cd7d49d94921f8"
+CEF_SHA1_arm64="fd046811e325086daddb4539462cd6b8c2af16df"
+CEF_SHA1_x86_64="111b3356c9c4a31fbc783fbd572cbed78d0fe134"
 CDN="https://cef-builds.spotifycdn.com"
 
 ARCH="${1:?usage: build-cef.sh <arm64|x86_64>}"

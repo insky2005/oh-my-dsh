@@ -1030,7 +1030,17 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
         openButton = CustomIconButton(glyph: .openInApp, tooltip: L10n.tr("preview.openInDefaultAppHint"))
         openButton.onAction = { [weak self] in self?.openInDefaultApp() }
         hideButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("preview.closePanel"))
-        hideButton.onAction = { [weak self] in self?.onRequestHide?() }
+        hideButton.onAction = { [weak self] in
+            // 关闭面板 = 停掉轮询/计时器 + 清空打开的页面与树（释放资源；
+            // 重开时重新扫描加载）
+            self?.stopPolling()
+            self?.stopElapsedTimer()
+            self?.contentContainer.subviews.forEach { $0.removeFromSuperview() }
+            self?.selectedPath = nil
+            self?.sections = []
+            self?.treeOutline.reloadData()
+            self?.onRequestHide?()
+        }
 
         let actions = NSStackView(views: [generateButton, openButton, revealButton, hideButton])
         actions.orientation = .horizontal

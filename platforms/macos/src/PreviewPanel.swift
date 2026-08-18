@@ -304,17 +304,32 @@ final class CustomIconButton: NSView {
     var isEnabled = true {
         didSet { needsDisplay = true }
     }
+    /// 常显圆角背景（页签「+」等需要与页签样式统一的按钮）。
+    var showsBackground = false {
+        didSet { needsDisplay = true }
+    }
+    /// hover 高亮色（默认 accent；页签关闭按钮用红色更明显）。
+    var hoverColor: NSColor? = nil {
+        didSet { needsDisplay = true }
+    }
     private let glyph: Glyph
+    private let size: CGFloat
     private var isHovered = false
     private var trackingArea: NSTrackingArea?
 
-    init(glyph: Glyph, tooltip: String) {
+    init(glyph: Glyph, tooltip: String, size: CGFloat = 26) {
         self.glyph = glyph
+        self.size = size
         super.init(frame: .zero)
         toolTip = tooltip
         translatesAutoresizingMaskIntoConstraints = false
-        widthAnchor.constraint(equalToConstant: 26).isActive = true
-        heightAnchor.constraint(equalToConstant: 26).isActive = true
+        widthAnchor.constraint(equalToConstant: size).isActive = true
+        heightAnchor.constraint(equalToConstant: size).isActive = true
+    }
+
+    /// 固有尺寸：让 NSStackView（.fill 分布）尊重固定宽度，不拉伸按钮。
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: size, height: size)
     }
 
     required init?(coder: NSCoder) {
@@ -340,8 +355,9 @@ final class CustomIconButton: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        if isHovered && isEnabled {
-            NSColor.controlAccentColor.withAlphaComponent(0.3).setFill()
+        if (isHovered || showsBackground) && isEnabled {
+            let c = hoverColor ?? NSColor.controlAccentColor
+            c.withAlphaComponent(isHovered ? 0.35 : 0.15).setFill()
             NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 5, yRadius: 5).fill()
         }
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -787,7 +803,24 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
     }
 
     @objc private func hidePanel(_ sender: Any?) {
+        // 关闭面板 = 关闭所有预览页签（释放渲染内容），再收起面板
+        closeAllTabs()
         onRequestHide?()
+    }
+
+    /// 关闭所有预览页签并清空内容区（面板关闭时释放资源）。
+    private func closeAllTabs() {
+        for tab in tabs {
+            tabStack.removeArrangedSubview(tab.container)
+            tab.container.removeFromSuperview()
+        }
+        tabs.removeAll()
+        selectedId = nil
+        contentContainer.subviews.forEach { $0.removeFromSuperview() }
+        pathLabel.text = ""
+        openButton.isEnabled = false
+        revealButton.isEnabled = false
+        showEmptyState()
     }
 
     /// Open the current project folder as the directory tree root (and as a

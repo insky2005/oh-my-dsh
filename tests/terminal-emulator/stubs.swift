@@ -59,7 +59,16 @@ final class CustomIconButton: NSView {
     enum Glyph { case plus, close, folder, openInApp, reveal, symbol(String), play, stop }
     var onAction: (() -> Void)?
     var isEnabled = true
-    init(glyph: Glyph, tooltip: String) { super.init(frame: .zero) }
+    var showsBackground = false
+    var hoverColor: NSColor?
+    var size: CGFloat = 26
+    init(glyph: Glyph, tooltip: String, size: CGFloat = 26) {
+        self.size = size
+        super.init(frame: .zero)
+        widthAnchor.constraint(equalToConstant: size).isActive = true
+        heightAnchor.constraint(equalToConstant: size).isActive = true
+    }
+    override var intrinsicContentSize: NSSize { NSSize(width: size, height: size) }
     required init?(coder: NSCoder) { fatalError() }
 }
 
@@ -72,6 +81,9 @@ final class CustomIconButton: NSView {
     func cefBrowserClosed(_ id: Int64)
 }
 
+/// 全局标记（main.swift 定义；测试环境提供默认值）
+var g_cefClosingWindow = false
+
 @objc class CEFShim: NSObject {
     @objc class var isInitialized: Bool { false }
     @objc class func initialize(withCachePath: String, remoteDebuggingPort: Int32, logPath: String) throws {}
@@ -83,5 +95,19 @@ final class CustomIconButton: NSView {
     @objc class func goForward(_ id: Int64) {}
     @objc class func reload(_ id: Int64) {}
     @objc class func stop(_ id: Int64) {}
+    @objc class func resizeBrowser(_ id: Int64, width: Float, height: Float) {}
+    @objc class func setMenuRequestHandler(_ handler: ((Int64, Float, Float, [[AnyHashable: Any]]) -> Void)?) {}
+    @objc class func setCursorHandler(_ handler: ((Int64, UnsafeMutableRawPointer) -> Void)?) {}
+    @objc class func setPaintHandler(_ handler: ((Int64, UnsafeRawPointer, Int32, Int32) -> Void)?) {}
+    @objc class func sendMouseClick(_ id: Int64, x: Float, y: Float, button: Int32, count: Int32, modifiers: Int32) {}
+    @objc class func sendMouseMove(_ id: Int64, x: Float, y: Float, modifiers: Int32) {}
+    @objc class func sendMouseWheel(_ id: Int64, x: Float, y: Float, deltaX: Float, deltaY: Float, modifiers: Int32) {}
+    @objc class func sendKeyEvent(_ id: Int64, keyCode: UInt16, charCode: UInt16, keyDown: Bool, modifiers: Int32) {}
+    @objc class func setFocus(_ id: Int64, focused: Bool) {}
+    @objc class func setWindowedMode(_ on: Bool) {}
+    @objc class func isWindowedMode() -> Bool { false }
+    @objc class func executeContextMenuCommand(_ id: Int64, commandId: Int32) {}
+    @objc class func cancelContextMenu(_ id: Int64) {}
+    @objc class func showDevTools(_ id: Int64) {}
     @objc class func shutdown() {}
 }

@@ -1475,7 +1475,11 @@ final class TerminalPanelController: NSObject {
         let newButton = CustomIconButton(glyph: .plus, tooltip: L10n.tr("terminal.new"))
         newButton.onAction = { [weak self] in self?.newSessionTapped(nil) }
         let closeButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("terminal.closePanel"))
-        closeButton.onAction = { [weak self] in self?.hidePanel(nil) }
+        closeButton.onAction = { [weak self] in
+            // 关闭面板 = 同步终止所有会话（释放 PTY 资源），不置终态（重开可新建）
+            self?.closeAllSessions()
+            self?.hidePanel(nil)
+        }
         self.newButton = newButton
         self.closeButton = closeButton
 
@@ -1571,9 +1575,13 @@ final class TerminalPanelController: NSObject {
     /// Spawn the first session lazily the first time the panel is shown.
     func ensureSession() {
         installClickMonitor()
-        guard !startedOnce, !shuttingDown else { return }
+        // 面板打开：若没有任何会话则自动开启一个新终端
+        // （首次打开、或关闭面板清空会话后重开都适用）。
+        guard !shuttingDown else { return }
         startedOnce = true
-        newSession()
+        if tabs.isEmpty {
+            newSession()
+        }
     }
 
     /// Clicking ANYWHERE in the panel chrome (header/tab bar/content) focuses
@@ -1744,6 +1752,11 @@ final class TerminalPanelController: NSObject {
     /// Terminate every session (app quit).
     func shutdownAll() {
         shuttingDown = true
+        closeAllSessions()
+    }
+
+    /// 终止所有会话并清空（关闭面板时释放 PTY 资源；不置终态，重开可新建）。
+    func closeAllSessions() {
         spawnFallbackTimer?.invalidate()
         spawnFallbackTimer = nil
         if let m = clickMonitor {
@@ -1755,6 +1768,12 @@ final class TerminalPanelController: NSObject {
         }
         tabs.removeAll()
         selectedId = nil
+        // 清空页签栏 UI（否则页签残留且无法再操作）
+        for sub in tabStack.arrangedSubviews {
+            tabStack.removeArrangedSubview(sub)
+            sub.removeFromSuperview()
+        }
+        showEmptyState()
     }
 
     func focusActiveTerminal() {
