@@ -7,7 +7,12 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
-- 暂无（v1.10.0 已发布；开发线已推进到 1.11.0）。
+### Added
+
+- **浏览器面板**（活动栏 globe / `⌥⌘B`）：多标签 WKWebView 浏览器（每标签独立 webview、cookie 与 dsh web 隔离；`+`/`✕`/`⌘1-9` 同终端交互，上限 8 tab）；地址栏导航（无 scheme 自动补 `https://`）、后退/前进/刷新·停止；控制台抽屉（注入捕获 console/window.onerror/unhandledrejection 与 main-frame fetch/XHR 网络日志 + JS 求值 + 清空）；`isInspectable` 开启 Safari Web Inspector 完整调试。
+- **浏览器 REST API**（`127.0.0.1:3081`，`DSH_BROWSER_PORT` 覆盖，端口文件 `~/.dsh/browser-api.port`）：`status`/`open`/`tabs`/`back`/`forward`/`reload`/`stop`/`eval`/`console`/`console/clear`/`screenshot`/`hide`，CORS 放行；Agent 驱动自动展开面板；配套技能 `.dsh/skills/shell-browser/SKILL.md`（modelInvocable）。
+- 测试：`tests/browser-panel/`（日志缓冲/URL 规范化/HTTP 解析/REST 路由，56 断言）；CI 编译清单与浏览器测试步骤登记。
+- 设计文档：`docs/plans/BROWSER_PLAN-browser-panel.md`（含 CEF 嵌入式 Chromium spike 结论：macOS 26 + ad-hoc 签名下 renderer 子进程无法启动，参考 cefsimple 同样复现，回退 WKWebView；复活条件 = 真签名或上游修复）。
 
 ## [1.10.0] - 2026-08-18
 

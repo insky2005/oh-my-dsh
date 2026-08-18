@@ -16,6 +16,13 @@
   - **浏览**：左侧页面树（分组、过期/手动徽标）+ 右侧渲染后的 markdown（标题/粗斜体/代码/列表/链接，软换行保真）+ 反向链接区 + 页面间点击跳转（dshwiki:// 内部链接）；标题过滤搜索；
   - **维护**：陈旧检测（页面 `sources` 指向的文件比 `updated` 新 → 标 ⚠）；`manual: true` 页面代理绝不覆盖（标 ✎）；生成完成后可选幂等写入项目根 `AGENTS.md` 注册块（「设置」→「写入 AGENTS.md 注册块」，默认关，让新会话自动知道先读 wiki）；「自动更新知识库」（默认关，≥3 页过期且 index 超过 1 小时才触发，每小时最多一次）；wiki 根目录可选「仓库内 .dsh/wiki」或「DSH_HOME 私有」；
   - 设计文档：`docs/repo-wiki-design.md`（含 QMD 检索增强候选，暂不整合）。**已知限制**：v1 的搜索为标题过滤（无正文/语义检索）；知识由代理生成，质量取决于 dsh 代理能力。
+- **浏览器面板**：活动栏「浏览器」图标（或「视图」→「显示/隐藏 浏览器面板」/ `⌥⌘B`）打开**多标签浏览器**（系统 WebKit 内核，每标签独立 WKWebView，cookie 与 dsh web 隔离）——方便开发调试 web 页面与 Agent 排查网页问题：
+  - **多标签**：`+` 新建 / `✕` 关闭 / `⌘1-9` 切换（同终端面板交互），上限 8 个；地址栏导航（无 scheme 自动补 `https://`）、后退/前进/刷新·停止、标签标题随页面更新；
+  - **控制台抽屉**：注入捕获页面 `console.log/warn/error`、`window.onerror`、`unhandledrejection` 与 main-frame 的 `fetch`/XHR 网络请求（状态码、耗时），支持 JS 求值（表达式/语句）与清空；加载失败/证书错误也会入列；
+  - **Safari 完整调试**：面板 WebView 已开启 `isInspectable`——Safari →「开发」→ oh-my-dsh → 浏览器面板，即可用完整 Web Inspector（Elements/Network/Console）；
+  - **Agent 驱动（curl 即用）**：壳层常驻 localhost REST API（默认 `127.0.0.1:3081`，端口文件 `~/.dsh/browser-api.port`）——`status` / `open` / `tabs` / `back` / `forward` / `reload` / `stop` / `eval` / `console` / `console/clear` / `screenshot`(PNG) / `hide`；Agent 驱动时面板自动展开，截图可存工作区供读图/分享；配套技能 `.dsh/skills/shell-browser/SKILL.md`（`modelInvocable`）开箱即用；
+  - **已知限制**：console/网络捕获仅覆盖 main-frame JS 发起的调用（图片/CSS/子框架请求看不到，完整网络面板请用 Safari Web Inspector）；**CEF（嵌入式 Chromium）方案因 macOS 26 + ad-hoc 签名下 renderer 子进程无法启动而回退 WKWebView**，调研与复活条件见 `docs/plans/BROWSER_PLAN-browser-panel.md` §二；
+  - 设计文档：`docs/plans/BROWSER_PLAN-browser-panel.md`。
 - **关于面板**（App 菜单 →「关于 oh-my-dsh」）显示：App 版本、依赖的 dsh 版本、Node 版本、运行时来源、dsh registry。
 
 ## 产物
@@ -130,6 +137,8 @@ open "dist/oh-my-dsh.app"
 | `DSH_REGISTRY` | 运行期 dsh 检查/升级用的 npm registry（优先于「设置 dsh registry…」与默认国内源） |
 | `DSH_AUTO_UPGRADE=0` | 本次运行关闭自动升级 |
 | `DSH_LANG=zh\|en` | 强制界面语言（优先于「设置」→「语言」的选择；默认跟随系统） |
+| `DSH_BROWSER_PORT` | 浏览器面板 REST API 端口（默认 3081，占用自动递增；生效端口写 `~/.dsh/browser-api.port`） |
+| `DSH_BROWSER_TEST=1` | 启动即打开浏览器面板（QA/调试钩子） |
 
 > **GitHub token（Tasks 面板，按仓库作用域）**：面板「配置 GitHub Token」保存时**同时写入** Keychain 专属（`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）和文件专属（`~/.dsh/tokens/<owner>-<repo>`，chmod 600）——App 与外部工具/代理共享同一份。解析优先级：
 > 1. Keychain 专属；

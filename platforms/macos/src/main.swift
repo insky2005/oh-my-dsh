@@ -168,8 +168,7 @@ enum L10n {
         "terminal.restart": ("重启", "Restart"),
         // wiki panel (Repo Wiki)
         "menu.toggleWiki": ("显示/隐藏 知识库面板", "Toggle Wiki Panel"),
-        "bar.wiki": ("知识库", "Wiki"),
-        "wiki.title": ("知识库", "Wiki"),
+        "bar.wiki": ("知识库", "Wiki"),        "wiki.title": ("知识库", "Wiki"),
         "wiki.generateHint": ("生成或更新知识库", "Generate or update the wiki"),
         "wiki.empty": ("仓库尚无知识库\n点击右上角 + 生成", "No wiki yet\nClick + to generate"),
         "wiki.generating": ("正在生成知识库…", "Generating wiki…"),
@@ -261,6 +260,24 @@ enum L10n {
         // IssueRunner task panel
         "bar.tasks": ("任务", "Tasks"),
         "menu.toggleTasks": ("显示/隐藏 任务面板", "Toggle Tasks Panel"),
+        // browser panel
+        "menu.toggleBrowser": ("显示/隐藏 浏览器面板", "Toggle Browser Panel"),
+        "bar.browser": ("浏览器", "Browser"),
+        "browser.title": ("浏览器", "Browser"),
+        "browser.openInSystem": ("在系统浏览器中打开", "Open in System Browser"),
+        "browser.copyURL": ("复制 URL", "Copy URL"),
+        "browser.console": ("控制台", "Console"),
+        "browser.back": ("后退", "Back"),
+        "browser.forward": ("前进", "Forward"),
+        "browser.reload": ("刷新", "Reload"),
+        "browser.addressPlaceholder": ("输入网址…", "Enter URL…"),
+        "browser.go": ("前往", "Go"),
+        "browser.newTabHint": ("新建标签页", "New Tab"),
+        "browser.empty": ("点击 + 新建标签页", "Click + to start a new tab"),
+        "browser.clear": ("清空日志", "Clear Log"),
+        "browser.consoleClose": ("关闭控制台", "Close Console"),
+        "browser.evalPlaceholder": ("输入 JavaScript 表达式…", "Enter JS expression…"),
+        "browser.eval": ("运行", "Run"),
         "tasks.title": ("任务", "Tasks"),
         "tasks.configHint": ("配置 GitHub Token", "Configure GitHub Token"),
         "tasks.refreshHint": ("刷新 Issues", "Refresh Issues"),
@@ -1140,11 +1157,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// The three View → Appearance menu items (system/light/dark), so their
     /// checkmarks stay in sync with AppTheme.current.
     private var appearanceMenuItems: [NSMenuItem] = []
+    private var browserToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip).
     private var previewBarButton: ActivityBarButton!
     private var terminalBarButton: ActivityBarButton!
     private var wikiBarButton: ActivityBarButton!
     private var tasksBarButton: ActivityBarButton!
+    private var browserBarButton: ActivityBarButton!
 
     private var window: NSWindow!
     private var webView: WKWebView!
@@ -1153,11 +1172,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var terminalPanel: TerminalPanelController!
     private var wikiPanel: WikiPanelController!
     private var tasksPanel: IssueRunnerPanelController!
+    private var browserPanel: BrowserPanelController!
+    /// Browser panel localhost REST API (Agent / user curl). Runs from launch.
+    private var browserAPIServer: BrowserAPIServer!
+    private var browserAPIBridge: BrowserAPIBridge!
 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
-    /// terminal, wiki and tasks panels share one slot; the activity bar toggles
-    /// between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki, tasks }
+    /// terminal, wiki, tasks and browser panels share one slot; the activity
+    /// bar toggles between them, and they are mutually exclusive.
+    enum RightPanel { case none, preview, terminal, wiki, tasks, browser }
     private var rightPanel: RightPanel = .none
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
@@ -1169,7 +1192,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private static let rightPanelMinWidth: CGFloat =
         max(PreviewPanelController.minWidth,
             max(TerminalPanelController.minWidth,
-                max(WikiPanelController.minWidth, IssueRunnerPanelController.minWidth)))
+                max(WikiPanelController.minWidth,
+                    max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth))))
     /// Fixed default panel width. Deliberately NOT window-relative: a
     /// "half the window" default made the width chase the window as it was
     /// widened, flip-flopping on every toggle.
@@ -1203,6 +1227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("launch: window built")
         AppLog.shared.log("app did finish launching (lang=\(L10n.lang) followSystem=\(!L10n.hasExplicitChoice) AppleLanguages=\(UserDefaults.standard.array(forKey: "AppleLanguages") ?? []))")
         startServer()
+        startBrowserAPIServer()
         showOnboardingIfNeeded()
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -1221,6 +1246,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func applicationWillTerminate(_ notification: Notification) {
         terminalPanel?.shutdownAll()
+        browserPanel?.shutdownAll()
+        browserAPIServer?.stop()
         if didSpawnServer { server.stop() }
     }
 
@@ -1272,6 +1299,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.wiki)
             AppLog.shared.log("wiki self-test enabled")
         }
+        // Browser self-test hook (debugging / QA only): opens the browser
+        // panel at launch when DSH_BROWSER_TEST=1 is set.
+        if ProcessInfo.processInfo.environment["DSH_BROWSER_TEST"] == "1" {
+            setRightPanel(.browser)
+            AppLog.shared.log("browser self-test enabled")
+        }
     }
 
     /// Build the activity bar (leftmost icon strip) + the main split view:
@@ -1305,6 +1338,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tasksPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
         tasksPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
 
+        browserPanel = BrowserPanelController()
+        AppLog.shared.log("launch: browserPanel created")
+        browserPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
@@ -1324,7 +1361,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tasksBarButton = makeActivityButton(symbol: "checkmark.circle",
                                             tooltip: L10n.tr("bar.tasks"),
                                             action: #selector(tasksEntryTapped(_:)))
-        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, wikiBarButton, tasksBarButton])
+        browserBarButton = makeActivityButton(symbol: "globe",
+                                              tooltip: L10n.tr("bar.browser"),
+                                              action: #selector(browserEntryTapped(_:)))
+        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, wikiBarButton, tasksBarButton, browserBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -1381,6 +1421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "terminal": kind = .terminal
         case "wiki": kind = .wiki
         case "tasks": kind = .tasks
+        case "browser": kind = .browser
         default: kind = .preview
         }
         setRightPanel(visible ? kind : .none)
@@ -1393,6 +1434,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .terminal: return terminalPanel.view
         case .wiki: return wikiPanel.view
         case .tasks: return tasksPanel.view
+        case .browser: return browserPanel.view
         case .none: return NSView()
         }
     }
@@ -1443,10 +1485,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         terminalToggleMenuItem?.state = (panel == .terminal) ? .on : .off
         wikiToggleMenuItem?.state = (panel == .wiki) ? .on : .off
         tasksToggleMenuItem?.state = (panel == .tasks) ? .on : .off
+        browserToggleMenuItem?.state = (panel == .browser) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
         tasksBarButton?.setActive(panel == .tasks)
+        browserBarButton?.setActive(panel == .browser)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
@@ -1489,6 +1533,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
                     self.dumpPanelDebugInfo(panelView: tasksPanel.view, label: "tasks")
                 }
+            case .browser:
+                browserPanel.ensureLoaded()
+                if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
+                    self.dumpPanelDebugInfo(panelView: browserPanel.view, label: "browser")
+                }
             case .none:
                 break
             }
@@ -1519,6 +1568,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .terminal: kind = "terminal"
         case .wiki: kind = "wiki"
         case .tasks: kind = "tasks"
+        case .browser: kind = "browser"
         default: kind = "preview"
         }
         UserDefaults.standard.set(kind, forKey: "rightPanelKind")
@@ -2360,6 +2410,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleTasks.target = self
         toggleTasks.state = (rightPanel == .tasks) ? .on : .off
         tasksToggleMenuItem = toggleTasks
+        let toggleBrowser = viewMenu.addItem(withTitle: L10n.tr("menu.toggleBrowser"), action: #selector(browserEntryTapped(_:)), keyEquivalent: "b")
+        toggleBrowser.keyEquivalentModifierMask = [.command, .option]
+        toggleBrowser.target = self
+        toggleBrowser.state = (rightPanel == .browser) ? .on : .off
+        browserToggleMenuItem = toggleBrowser
         viewItem.submenu = viewMenu
 
         // Settings menu: dsh settings/upgrade/registry + logs + language.
@@ -2647,6 +2702,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setRightPanel(rightPanel == .tasks ? .none : .tasks)
     }
 
+    /// Toggle the Browser panel (activity bar entry / ⌥⌘B).
+    @objc private func browserEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .browser ? .none : .browser)
+    }
+
+    /// Start the browser panel's localhost REST API (Agent / user curl).
+    /// 端口：DSH_BROWSER_PORT 覆盖，默认 3081；被占用自动递增；生效端口写
+    /// $DSH_HOME/browser-api.port 供 shell-browser 技能发现。
+    private func startBrowserAPIServer() {
+        let bridge = BrowserAPIBridge()
+        bridge.panel = browserPanel
+        bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
+        bridge.hidePanel = { [weak self] in
+            if self?.rightPanel == .browser { self?.setRightPanel(.none) }
+        }
+        bridge.isPanelVisible = { [weak self] in self?.rightPanel == .browser }
+        browserAPIBridge = bridge
+
+        let server = BrowserAPIServer()
+        browserAPIServer = server
+        let envPort = ProcessInfo.processInfo.environment["DSH_BROWSER_PORT"].flatMap { Int($0) }
+        let preferred = envPort ?? 3081
+        let dshHome = ProcessInfo.processInfo.environment["DSH_HOME"] ?? (NSHomeDirectory() + "/.dsh")
+        let portFile = dshHome + "/browser-api.port"
+        let port = server.start(preferredPort: preferred, delegate: bridge, portFile: portFile)
+        AppLog.shared.log(port > 0
+            ? "browser api server listening on 127.0.0.1:\(port) (port file \(portFile))"
+            : "browser api server failed to start (preferred \(preferred))")
+    }
+
     /// The workspace directory the task panel should operate on: the shell's
     /// shared active project directory (follows the session the user is
     /// viewing), falling back to the workspace root of the main repo.
@@ -2752,6 +2837,7 @@ final class SettingsWindowController {
         ("menu.togglePreview", "⌥⌘P"),
         ("menu.toggleTerminal", "⌥⌘T"),
         ("menu.toggleWiki", "⌥⌘W"),
+        ("menu.toggleBrowser", "⌥⌘B"),
         ("settings.openMenu", "⌘,"),
     ]
 

@@ -45,13 +45,15 @@ jobs:
         run: node --test core/tests/ansi.test.js
       - name: Wiki panel tests
         run: tests/wiki-panel/run.sh
+      - name: Browser panel tests
+        run: tests/browser-panel/run.sh
       - name: swiftc compile check (all sources)
         run: |
           mkdir -p .build/module-cache
           swiftc -O -swift-version 5 -module-cache-path .build/module-cache \
             -framework AppKit -framework WebKit -framework PDFKit \
             -o /tmp/oh-my-dsh-check \
-            platforms/macos/src/main.swift platforms/macos/src/PreviewPanel.swift platforms/macos/src/TerminalPanel.swift platforms/macos/src/WikiPanel.swift platforms/macos/src/IssueRunnerPanel.swift
+            platforms/macos/src/main.swift platforms/macos/src/PreviewPanel.swift platforms/macos/src/TerminalPanel.swift platforms/macos/src/WikiPanel.swift platforms/macos/src/IssueRunnerPanel.swift platforms/macos/src/BrowserPanel.swift platforms/macos/src/BrowserAPI.swift
           file /tmp/oh-my-dsh-check
 
   # --- Full app build matrix: arm64 (x86_64 由 release.yml 交叉构建校验) -----
