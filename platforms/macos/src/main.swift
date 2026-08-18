@@ -2700,6 +2700,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         UserDefaults.standard.set([L10n.isZh ? "zh-CN" : "en-US"], forKey: "AppleLanguages")
         AppLog.shared.log("language set: lang=\(L10n.lang) followSystem=\(!L10n.hasExplicitChoice) AppleLanguages=\(UserDefaults.standard.array(forKey: "AppleLanguages") ?? [])")
         buildMenu() // rebuild the whole menu in the new language
+        // 活动栏 tooltip 跟随语言（构建时一次性设置，切换后需手动刷新）
+        previewBarButton?.toolTip = L10n.tr("bar.preview")
+        terminalBarButton?.toolTip = L10n.tr("bar.terminal")
+        browserBarButton?.toolTip = L10n.tr("bar.browser")
+        wikiBarButton?.toolTip = L10n.tr("bar.wiki")
+        tasksBarButton?.toolTip = L10n.tr("bar.tasks")
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url
