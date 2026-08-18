@@ -117,6 +117,60 @@ final class BrowserRootView: NSView {
 
 // MARK: - OSR 内容视图（自绘 CEF 帧 + 输入转发）
 
+// MARK: - DevTools 工具条（可上下拖动调整 DevTools 区高度）
+
+/// DevTools 工具条：背景 + 标题 + 关闭按钮；按住空白处上下拖动
+/// 调整 DevTools 区高度（回调目标高度 pt）。
+final class DevToolsBarView: NSView {
+    /// 回调目标高度（拖动起点 + 位移，pt）。
+    var onDrag: ((CGFloat) -> Void)?
+    /// 关闭按钮点击。
+    var onClose: (() -> Void)?
+    /// 当前高度（由容器写入，拖动起点用）。
+    var currentHeight: CGFloat = 300
+    private let closeButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("browser.closeTab"), size: 16)
+    private var dragStartH: CGFloat = 0
+    private var dragStartY: CGFloat = 0
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        let bg = DynamicFillView()
+        bg.kind = .control
+        bg.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(bg)
+        let label = HeaderLabel()
+        label.text = "DevTools"
+        label.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.onAction = { [weak self] in self?.onClose?() }
+        addSubview(label)
+        addSubview(closeButton)
+        NSLayoutConstraint.activate([
+            bg.leadingAnchor.constraint(equalTo: leadingAnchor),
+            bg.trailingAnchor.constraint(equalTo: trailingAnchor),
+            bg.topAnchor.constraint(equalTo: topAnchor),
+            bg.bottomAnchor.constraint(equalTo: bottomAnchor),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func mouseDown(with event: NSEvent) {
+        dragStartH = currentHeight
+        dragStartY = event.locationInWindow.y
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let dy = event.locationInWindow.y - dragStartY
+        onDrag?(dragStartH + dy)
+    }
+}
+
 final class BrowserOSRView: NSView {
     weak var tab: BrowserCEFTab?
 
@@ -137,7 +191,7 @@ final class BrowserOSRView: NSView {
     /// DevTools 高度约束：隐藏=0 / 显示=300（双约束切换，hidden 也占布局）。
     private var devtoolsHeight0: NSLayoutConstraint?
     private var devtoolsHeight300: NSLayoutConstraint?
-    private let devtoolsBar = DynamicFillView()
+    private let devtoolsBar = DevToolsBarView()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -154,17 +208,16 @@ final class BrowserOSRView: NSView {
         devtoolsArea.wantsLayer = true
         devtoolsArea.layer?.masksToBounds = true
         devtoolsArea.isHidden = true
-        devtoolsBar.kind = .control
         devtoolsBar.translatesAutoresizingMaskIntoConstraints = false
-        devtoolsBar.wantsLayer = true
-        devtoolsBar.layer?.masksToBounds = true
-        let label = HeaderLabel()
-        label.text = "DevTools"
-        label.translatesAutoresizingMaskIntoConstraints = false
-        let closeBtn = CustomIconButton(glyph: .close, tooltip: L10n.tr("browser.closeTab"), size: 16)
-        closeBtn.onAction = { [weak self] in self?.onCloseDevTools?() }
-        devtoolsBar.addSubview(label)
-        devtoolsBar.addSubview(closeBtn)
+        // 拖动工具条调整 DevTools 区高度（150-700pt，主窗口联动压缩）
+        devtoolsBar.onDrag = { [weak self] targetH in
+            guard let self = self, let h = self.devtoolsHeight300 else { return }
+            h.constant = min(700, max(150, targetH))
+            self.devtoolsBar.currentHeight = h.constant
+            self.layoutSubtreeIfNeeded()
+            self.notifyResize()
+        }
+        devtoolsBar.onClose = { [weak self] in self?.onCloseDevTools?() }
         devtoolsContent.translatesAutoresizingMaskIntoConstraints = false
         devtoolsContent.wantsLayer = true
         devtoolsContent.layer?.masksToBounds = true
@@ -190,10 +243,6 @@ final class BrowserOSRView: NSView {
             devtoolsBar.trailingAnchor.constraint(equalTo: devtoolsArea.trailingAnchor),
             devtoolsBar.topAnchor.constraint(equalTo: devtoolsArea.topAnchor),
             devtoolsBar.heightAnchor.constraint(equalToConstant: 28),
-            label.leadingAnchor.constraint(equalTo: devtoolsBar.leadingAnchor, constant: 10),
-            label.centerYAnchor.constraint(equalTo: devtoolsBar.centerYAnchor),
-            closeBtn.trailingAnchor.constraint(equalTo: devtoolsBar.trailingAnchor, constant: -8),
-            closeBtn.centerYAnchor.constraint(equalTo: devtoolsBar.centerYAnchor),
             devtoolsContent.topAnchor.constraint(equalTo: devtoolsBar.bottomAnchor),
             devtoolsContent.leadingAnchor.constraint(equalTo: devtoolsArea.leadingAnchor),
             devtoolsContent.trailingAnchor.constraint(equalTo: devtoolsArea.trailingAnchor),
@@ -218,6 +267,7 @@ final class BrowserOSRView: NSView {
         devtoolsHeight0?.isActive = false
         devtoolsHeight300?.isActive = true
         devtoolsArea.isHidden = false
+        devtoolsBar.currentHeight = devtoolsHeight300?.constant ?? 300
         layoutSubtreeIfNeeded()
         notifyResize()
     }
