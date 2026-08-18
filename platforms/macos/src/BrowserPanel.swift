@@ -1030,8 +1030,9 @@ final class BrowserPanelController: NSObject {
         }
     }
 
-    /// 语言切换后刷新头部/工具栏按钮 tooltip。
+    /// 语言切换后刷新头部/工具栏按钮 tooltip 与面板标题。
     func refreshTooltips() {
+        headerTitle.text = L10n.tr("browser.title")
         newTabButton?.toolTip = L10n.tr("browser.newTabHint")
         openInBrowserButton?.toolTip = L10n.tr("browser.openInSystem")
         copyURLButton?.toolTip = L10n.tr("browser.copyURL")

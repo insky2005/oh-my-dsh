@@ -163,6 +163,7 @@ enum L10n {
         "terminal.new": ("新建终端", "New Terminal"),
         "terminal.newHint": ("新建一个终端会话", "Start a new terminal session"),
         "terminal.closeTab": ("关闭终端", "Close Terminal"),
+        "terminal.closePanel": ("关闭面板", "Close Panel"),
         "terminal.empty": ("点击 + 新建一个终端", "Click + to start a new terminal"),
         "terminal.sessionEnded": ("会话已结束（exit %d）", "Session ended (exit %d)"),
         "terminal.restart": ("重启", "Restart"),
