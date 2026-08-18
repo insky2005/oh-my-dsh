@@ -1,8 +1,8 @@
 ---
 title: 架构
 tags: [architecture, layers, dataflow, deployment]
-updated: 2026-08-17T14:01:34Z
-sources: [platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/git-workflow.md, .dsh/skills/repo-wiki/SKILL.md]
+updated: 2026-08-18T15:30:00Z
+sources: [platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/cef/CEFShim.h, platforms/macos/cef/CEFShim.mm, core/lib/issues.js, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/git-workflow.md, .dsh/skills/repo-wiki/SKILL.md]
 manual: false
 ---
 
@@ -20,11 +20,13 @@ manual: false
 │   ├─ L10n            中/英文案表（跟随系统，DSH_LANG 可覆盖）                             │
 │   ├─ DSHSessionRPC   经 HTTP RPC 解析会话 cwd（client-request 信封）                      │
 │   ├─ ProjectDirectory 共享"活动项目目录"（跟随 dsh web 当前会话，见数据流 6）             │
-│   └─ 右栏插槽 RightPanel { none, preview, terminal, wiki, tasks }（四面板互斥）                  │
+│   └─ 右栏插槽 RightPanel { none, preview, terminal, wiki, tasks, browser }（五面板互斥）            │
 │        ├─ PreviewPanelController（PreviewPanel.swift）                                           │
 │        ├─ TerminalPanelController（TerminalPanel.swift）                                         │
 │        ├─ WikiPanelController（WikiPanel.swift）                                                 │
-│        └─ IssueRunnerPanelController（IssueRunnerPanel.swift）                                   │
+│        ├─ IssueRunnerPanelController（IssueRunnerPanel.swift）                                   │
+│        └─ BrowserPanelController（BrowserPanel.swift + BrowserCDP.swift，CEF 内核经 CEFShim）     │
+│           └─ BrowserAPIServer（BrowserAPI.swift，127.0.0.1:3081 REST，Agent 驱动 + QA 端点）      │
 │ WKWebView ← 加载 http://127.0.0.1:<port>（dsh web 界面）                                 │
 └──────────────────────────────┬───────────────────────────────────────────────────────────┘
                                │ 复用或自拉起
@@ -38,7 +40,7 @@ manual: false
 
 ## 模块依赖
 
-- `main.swift` 持有四个面板 controller（`previewPanel`/`terminalPanel`/`wikiPanel`/`tasksPanel`），通过 `setRightPanel` 把活动面板根视图挂为 NSSplitView 右 pane（`subviews[1]`），隐藏时把 divider 推到最右；
+- `main.swift` 持有五个面板 controller（`previewPanel`/`terminalPanel`/`wikiPanel`/`tasksPanel`/`browserPanel`），通过 `setRightPanel` 把活动面板根视图挂为 NSSplitView 右 pane（`subviews[1]`），隐藏时把 divider 推到最右；浏览器面板的 REST API（`BrowserAPIServer`）随 App 启动/停止，`BrowserAPIBridge` 闭包把 `setRightPanel` 与 QA 诊断（debugDump/debugState/debugHierarchy）接给 AppDelegate；
 - 四个面板复用 `PreviewPanel.swift` 中定义的共享 UI 组件：`HoverButton`、`DynamicFillView`、`ActivityBarButton`、`PanelIconButton`、`HeaderLabel`、`CustomIconButton`、`BakedIconView`；
 - 所有 L10n 文案集中在 `main.swift` 的 `L10n.table`；
 - 面板通过 `serverPortProvider` 闭包取当前端口，`serverReady(port:)` 在服务就绪后获得门控通知；
@@ -55,7 +57,8 @@ manual: false
 4. **Wiki 生成**：面板「+」→ `WikiRPC.createSession(cwd: repoRoot)` + `promptSession(mode: queue)` 触发代理执行 `repo-wiki` skill → 代理写 `.dsh/wiki/**`；面板轮询 `session.list` 的 running 标志显示「生成中」——内容区**叠加半透明浮层**（`WikiOverlayView`，0.82 透明度背景 + 居中「Generating…」NSTextField），页面与树全程可见、布局不消失（build 57→58）；底部状态条每秒刷新已耗时（`wiki.generatingElapsed`）；**生成状态按仓库根关联**（`generations: [canonicalRepo: Generation]`，build 59→60，可多仓库并发各一个生成，`syncGenerationUI` 只让 UI 反映当前仓库）；文件监听（2s 轮询 + 签名比对）驱动刷新与陈旧标记（生成期间代理每写出一页，左侧树即实时出现该页）；完成/失败/取消后都 `refresh()` 恢复内容区；取消走 `WikiRPC.cancel`（`session.cancel {sessionId}`）。**提交**：主路径由维护代理按指令执行（`git add .dsh/wiki` + commit，message 概括实际变更，**不 push**；repo-wiki skill 现行规则已不含提交步骤，末条为汇报）；面板 `WikiAutoCommit` 仅**兜底**（代理未提交且仍有变更时，`commitMessage(status:diff:)` 从 diff 提取实际内容生成 message），提交后 `refresh()` 刷新树（mtime 更新、陈旧标记消除）。**工作区归组**（build 48→49）：`WikiRPC.resolveWorkspaceId` 用 `workspace.list` 按规范化路径匹配当前仓库工作区，`createSession` 优先传 `workspaceId`（否则回退 `cwd`）——新会话直接归入工作区；曾有的 `attachOrphans`（把既有未分组会话经 `workspace.insertSessionBefore` 挂入工作区，幂等 + 30s 节流）因 RPC 无 attach 接口、对未分组会话必然失败（`workspace-move-invalid: not accounted`），已于 build 61→62（修复 15）**移除**——已存在的未分组会话无法经 API 移动，UI 的 Ungrouped 仅为浏览器本地聚合。
 4b. **任务流水线（IssueRunner，v1.8.0）**：`IssueRunnerPanelController` 经 `git remote -v` 识别 GitHub 远端（`workspacePath` 提供的活动目录**权威**：是 GitHub 仓库 → 显示其 issues；非 GitHub（Ungrouped/非 git 会话 cwd）→ 诚实空态、**不替换其他已注册工作区**；仅启动早期 `ProjectDirectory` 未解析时才回退 `listWorkspacePaths` 从 `workspace.list` 取第一个 GitHub 仓库并 1s 间隔重试 ≤10 次；`applyRepo` 检测到切换到不同仓库先清空旧任务列表——issue 号按仓库归属）→ 拉 open issues（含 body；私有仓库按仓库作用域解析 token：**文件优先**——文件专属 `~/.dsh/tokens/<owner>-<repo>` → 文件通用 `~/.dsh/gh-token` → Keychain 专属 → Keychain 通用（免 Keychain 弹密码），保存双写 Keychain + 文件）→ 用户单击行**行内展开详情**（`expandedIssue` 手风琴，替代 NSAlert 弹窗：状态/标签/分支/PR/错误 + 正文滚动区，动作按钮 Process/Retry/Open PR/Cancel/Close 明确点击才执行，done 且有 PR 额外「评论并关闭 Issue」→ POST comment + PATCH close，杜绝误触）→ 串行队列（`core/lib/jobqueue.js`）：`git checkout main → pull → checkout -b <branchForIssue>`（label 含 feature/enhancement → `feature/issue-N`，否则 `fix/issue-N`，`docs/git-workflow.md` 统一分支规范）→ `session.create`（当前工作区）+ `session.rename` + `session.prompt`（issue-fix skill，mode queue）→ 轮询 running → 校验 `git ls-remote` 分支已推送（remote 名按 github>origin>首个 remote 解析，`pushRemoteName`）→ `POST /pulls` 开 PR（head=分支、base=main，feature/fix 回 main 一律走 PR）；失败/超时/取消各有状态，分支与会话保留可续跑；**关联索引**：任务开始时 `TaskIndex.mergeTask` 写 index.json（branch/state/title/startedAt），会话创建后 `TaskIndex.rememberSession` 写 local.json（sessionId），done/failed 时更新 prUrl/error/finishedAt；重启后 `restoreFromIndex` 按 index.json + local.json 重建任务列表与会话关联（`reloadIssues` 对已存在任务刷新 title/labels/body，6d265a5）；GitHub token 按仓库作用域存储（Keychain 专属 + 文件双写，不落 UserDefaults，详见 [issue-runner-panel](modules/issue-runner-panel.md)）。
 5. **会话切换跟随（build 50→53）**：`rebuildWebView` 注入 `sessionTrackerScript`——监听 dsh web 的会话 RPC 请求体（`session.history/prompt/rename/selectModel` 的 `payload.sessionId`；`session.open()` 幂等不可靠，改以 `subagent.list {parentSessionId}` 作为每次切换的可靠信号），会话 id 变化时经 `dshSession` message handler 上报。壳层收到后 `DSHSessionRPC.fetchSessionCwd(port:sessionId:)` 查 cwd → **先**更新 `ProjectDirectory`（cwd 与当前不同才 set，保证任务面板等消费者读到新路径）→ `previewPanel.setProjectDirectory(cwd)`（只重设树根，不动已开页签）+ `wikiPanel.reloadRoot()`（重解析 + 重扫），随后**无条件**调用 `tasksPanel.workspaceChanged()`（4a7de43/40288d1：fetch 失败 cwd 为 nil 也触发——面板解析器回退扫描 `workspace.list`，修复切回 helloharness 面板不刷新的问题）；终端新标签页启动目录自动取新目录（build 60→61：`newSession()`/`spawnWithCwd()` 改用 `DSHSessionRPC.resolveProjectDirectory`——优先共享 `ProjectDirectory.current`=当前查看的工作区，未设置时回退实时查询并缓存，home 兜底保留）。
-6. **退出**：SIGTERM/SIGINT/SIGHUP → `NSApp.terminate`；`applicationWillTerminate` → `terminalPanel.shutdownAll()`（终止全部 PTY 会话进程组）→ `server.stop()`（**只停自拉起的**服务：`terminate()` 后等 3 秒，未退出则 SIGKILL；复用的外部服务绝不动）。
+5b. **浏览器面板（CEF/Chromium，Agent 驱动）**：右栏 `browserPanel.ensureLoaded()` 懒建首 tab（恢复 `browserLastURL`）；每 tab = `BrowserCEFTab`（`BrowserOSRView` 容器 + CEF 浏览器（shim `CEFShim`，默认 OSR 离屏渲染帧回调自绘；`browserRenderMode` 可切窗口化）+ `BrowserCDPClient`（CDP 端口 9333，`DSH_CDP_PORT` 覆盖））；页面状态/console/网络日志由 CDP 事件写入 per-tab `BrowserLogBuffer`，Agent 经 `BrowserAPIServer`（127.0.0.1:3081，`DSH_BROWSER_PORT` 覆盖，生效端口写 `$DSH_HOME/browser-api.port`）curl 驱动：`open` 自动展开面板、`eval`/`screenshot` 取证、`debug`/`hierarchy` 拉 QA 诊断；CEF 消息泵由 main.swift 8ms 定时器驱动（`external_message_pump`），CDP target 拉取必须在后台线程（与消息泵互斥死锁）；关闭页签异步 `closeBrowser` + `g_cefClosingWindow` 守卫防 CEF 误关主窗口触发退出；退出 `applicationWillTerminate` → `browserPanel.shutdownAll()` + `browserAPIServer.stop()` + `CEFShim.shutdown()`（不调 `CefShutdown`，见 [browser-panel](modules/browser-panel.md)）。
+6. **退出**：SIGTERM/SIGINT/SIGHUP → `NSApp.terminate`；`applicationWillTerminate` → `terminalPanel.shutdownAll()`（终止全部 PTY 会话进程组）+ `browserPanel.shutdownAll()`（关浏览器 + 断开 CDP）+ `browserAPIServer.stop()` + 停 CEF 消息泵 + `CEFShim.shutdown()`（泵 20 轮收尾，不调 `CefShutdown`）→ `server.stop()`（**只停自拉起的**服务：`terminate()` 后等 3 秒，未退出则 SIGKILL；复用的外部服务绝不动）；`applicationShouldTerminate` 拦截 CEF 引发的误退出（`g_cefClosingWindow` 置位期间取消并恢复主窗口）。
 
 ## 部署形态
 

@@ -1,8 +1,8 @@
 ---
 title: 工程约定
 tags: [conventions, l10n, build, qa-hooks, versioning]
-updated: 2026-08-17T03:52:05Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/src/main.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-wiki/SKILL.md]
+updated: 2026-08-18T15:30:00Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-wiki/SKILL.md]
 manual: false
 ---
 
@@ -26,7 +26,7 @@ manual: false
 - 编译：`swiftc -O -swift-version 5`，frameworks 为 AppKit/WebKit/PDFKit；**编译源文件清单显式写在 `platforms/macos/build-app.sh`**，新增 `.swift` 文件必须登记；
 - `module-cache-path` 固定在 `.build/module-cache`（沙箱/环境问题规避）；
 - 图标：`MakeIcon.swift` 程序化渲染（16…1024px 全尺寸）→ `iconutil -c icns`，不提交二进制图；
-- 版本号单一来源：`scripts/version.sh`（HEAD 命中 git tag vX.Y.Z → VERSION 取 tag，否则回退 1.10.0；BUILD 取 CI 运行号，本地回退 66）；`platforms/macos/build-app.sh` 运行期读取，**勿在脚本硬编码版本**；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`platforms/macos/make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；
+- 版本号单一来源：`scripts/version.sh`（HEAD 命中 git tag vX.Y.Z → VERSION 取 tag，否则回退 1.11.0；BUILD 取 CI 运行号，本地回退 67）；`platforms/macos/build-app.sh` 运行期读取，**勿在脚本硬编码版本**；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`platforms/macos/make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；
 - **fallback 推进规则**（`docs/productization.md`）：每次发布打 tag 后立即把 `FALLBACK_VERSION` 推进到**下一个 minor**（发布 v1.9.0 → fallback 1.10.0），开发期构建永远显示「下一个未发布版本」；CI 打 tag 的 job 用 tag 版本（HEAD 命中时优先）；
 - `git status` 应只出现源码/文档变更：`.build/` `.cache/` `dist/` `pic/` `.DS_Store` 均在 `.gitignore`；`.dsh/tasks/local.json`（本机会话覆盖）也忽略——**`index.json` 随仓库提交**（任务关联共享，见 [data-model](data-model.md)）。
 
@@ -40,7 +40,7 @@ manual: false
 
 ## 面板 UI 约定
 
-- 右栏四个面板共享 `PreviewPanel.swift` 的 UI 基件（`HoverButton`/`DynamicFillView`/`CustomIconButton`/`HeaderLabel` 等），视觉与交互保持一致：40pt 头部 + 内容区、统一背景条、图标深浅色均可见；
+- 右栏五个面板共享 `PreviewPanel.swift` 的 UI 基件（`HoverButton`/`DynamicFillView`/`CustomIconButton`/`HeaderLabel` 等），视觉与交互保持一致：40pt 头部 + 内容区、统一背景条、图标深浅色均可见；浏览器面板在其上扩展 `CustomIconButton`（`size`/`showsBackground`/`hoverColor`，见 [preview-panel](modules/preview-panel.md)）做 Chrome 式页签与关闭按钮；
 - **layer-backed 窗口合成陷阱**（`docs/terminal-header-fix.md`，wiki 面板同源，见 `docs/repo-wiki-design.md` §14 修复 12）：`isOpaque = true` 且无独立 layer 的视图，绘制会溢出到父 layer 覆盖同级视图；隔离绘制用**父容器的** `wantsLayer = true` + `masksToBounds = true`（不是子视图的 wantsLayer）；根视图用 `isOpaque = false` 的自绘背景视图（`TerminalRootView`/`WikiRootView` 模式）；**经验推广**：任何「平时隐藏、生成/状态变化时才显示」的 opaque 无 layer 视图（如 wiki 面板底部状态条）都可能触发同类合成溢出——显示前先给视图自身 `wantsLayer = true` + `masksToBounds = true`；
 - markdown 预览：预览面板把 markdown 当**纯文本**显示（软换行保真是有意取舍）；wiki 面板则需真正渲染（`WikiMarkdownRenderer`，同样保留软换行）。
 
@@ -54,7 +54,8 @@ manual: false
 
 - `DSH_PREVIEW_TEST_PATH=<path>`：启动即用指定路径打开预览面板；
 - `DSH_TERMINAL_TEST=1`：启动即开终端面板；`DSH_WIKI_TEST=1`（可加 `DSH_WIKI_TEST_PATH=<dir>` 指定 fixture wiki 根）；`DSH_BROWSER_TEST=1`：启动即开浏览器面板；
-- `DSH_UI_DEBUG=1`：面板视图层级 dump + 截图（写 `~/Library/Logs/oh-my-dsh/panel-*-debug.png`）；
+- `DSH_UI_DEBUG=1` 或 `--ui-debug`（统一 `uiDebug` 开关，`open --args` 场景可用）：打开浏览器面板 + 面板视图层级 dump + 截图（写 `~/Library/Logs/oh-my-dsh/panel-*-debug.png`）；浏览器面板另经 `POST /api/browser/debug`、`/api/browser/hierarchy` 拉 QA 诊断（层级/命中测试/截图，见 [browser-panel](modules/browser-panel.md)）；
+- 浏览器渲染模式：`defaults write com.ohmydsh.app browserRenderMode -string windowed` 切 CEF 窗口化（Chromium 原生绘制），默认 OSR 离屏（帧回调自绘）；
 - `DSH_PREVIEW_DEBUG=1`：预览拦截器探针（`__dshPreviewInstalled`/hit、伪造 `host.openPath` 请求验证）；`DSH_TERMINAL_DEBUG=1`：终端 I/O 字节级日志；
 - `DSH_SESSION_DEBUG=1`：会话跟踪器诊断——日志 dump `window.__dshSessionSeen`（观察到的 session.*/subagent.list 请求序列）与跟踪器状态（`__dshSessionTracked`/`__dshLastTrackedSession`）；
 - `DSH_NATIVE_FORCE_SPAWN=1`：跳过复用检查强制自拉起（测试/专用实例）；
