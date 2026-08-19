@@ -258,6 +258,8 @@ final class BrowserOSRView: NSView {
                     CEFShim.resizeBrowser(did, width: Float(self.devtoolsContent.bounds.width),
                                           height: Float(self.devtoolsContent.bounds.height))
                 }
+                // QA：记录拖动时的几何（定位"上移"：pageView 顶部应恒为 0）
+                AppLog.shared.log("devtools drag: pageView=\(NSStringFromRect(self.pageView.bounds)) mainFrame=\(self.pageView.subviews.first.map { NSStringFromRect($0.frame) } ?? "nil") devContent=\(NSStringFromRect(self.devtoolsContent.bounds))")
             }
         }
         devtoolsBar.onDragEnd = { [weak self] in
