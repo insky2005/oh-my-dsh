@@ -226,12 +226,14 @@ final class BrowserOSRView: NSView {
         // 避免拖动中每帧 WasResized 导致页面顶部反复重排/跳动。
         devtoolsBar.onDrag = { [weak self] targetH in
             guard let self = self, let h = self.devtoolsHeight300 else { return }
+            self.isDraggingDevTools = true
             h.constant = min(700, max(150, targetH))
             self.devtoolsBar.currentHeight = h.constant
             self.layoutSubtreeIfNeeded()
         }
         devtoolsBar.onDragEnd = { [weak self] in
             guard let self = self else { return }
+            self.isDraggingDevTools = false
             self.notifyResize()
             // DevTools 子浏览器视口跟随（devtoolsContent 尺寸已定）
             let did = self.devtoolsBrowserId
@@ -340,8 +342,10 @@ final class BrowserOSRView: NSView {
 
     /// 布局后同步：pageView 尺寸变化（首次布局/DevTools 展开收起）时
     /// 强制 CEF 视图跟随 + 通知视口 resize（否则新页签停在 800×600 兜底，
-    /// 只渲染左下角，其余灰色）。
+    /// 只渲染左下角，其余灰色）。拖动 DevTools 期间只跟随 frame、
+    /// 不 notifyResize（松手统一刷新，避免每帧 WasResized 页面跳动）。
     private var lastNotifiedSize: NSSize = .zero
+    private var isDraggingDevTools = false
     override func layout() {
         super.layout()
         let s = pageView.bounds.size
@@ -350,7 +354,9 @@ final class BrowserOSRView: NSView {
             for v in pageView.subviews {
                 v.frame = pageView.bounds
             }
-            notifyResize()
+            if !isDraggingDevTools {
+                notifyResize()
+            }
         }
     }
 
