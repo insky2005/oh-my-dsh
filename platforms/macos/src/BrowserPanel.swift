@@ -227,21 +227,25 @@ final class BrowserOSRView: NSView {
         devtoolsBar.onDrag = { [weak self] targetH in
             guard let self = self, let h = self.devtoolsHeight300 else { return }
             self.isDraggingDevTools = true
-            // 拖动中：禁用两个 CEF 容器（主窗口 / DevTools）的
-            // autoresizesSubviews——CEF 视图 frame 保持不变（页面静止、
-            // DevTools 顶部不错位），只外框（pageView/devtoolsArea）随
-            // 高度变化，松手（onDragEnd）统一刷新视口。
-            self.pageView.autoresizesSubviews = false
-            self.devtoolsContent.autoresizesSubviews = false
+            self.pageView.autoresizesSubviews = true
+            self.devtoolsContent.autoresizesSubviews = true
             h.constant = min(700, max(150, targetH))
             self.devtoolsBar.currentHeight = h.constant
             self.layoutSubtreeIfNeeded()
+            // 实时同步：两个 CEF 视图 frame 精确 = 各自容器（比 autoresizing
+            // 可靠，无累积误差），视口同步 resize —— 高度与外框保持一致。
+            for v in self.pageView.subviews { v.frame = self.pageView.bounds }
+            for v in self.devtoolsContent.subviews { v.frame = self.devtoolsContent.bounds }
+            self.notifyResize()
+            let did = self.devtoolsBrowserId
+            if did > 0, self.devtoolsContent.bounds.height > 1 {
+                CEFShim.resizeBrowser(did, width: Float(self.devtoolsContent.bounds.width),
+                                      height: Float(self.devtoolsContent.bounds.height))
+            }
         }
         devtoolsBar.onDragEnd = { [weak self] in
             guard let self = self else { return }
             self.isDraggingDevTools = false
-            self.pageView.autoresizesSubviews = true
-            self.devtoolsContent.autoresizesSubviews = true
             self.notifyResize()
             // DevTools 子浏览器视口跟随（devtoolsContent 尺寸已定）
             let did = self.devtoolsBrowserId
