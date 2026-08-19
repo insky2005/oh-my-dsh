@@ -234,8 +234,8 @@ final class BrowserOSRView: NSView {
             self.layoutSubtreeIfNeeded()
             // 实时同步：两个 CEF 视图 frame 精确 = 各自容器（比 autoresizing
             // 可靠，无累积误差），视口同步 resize —— 高度与外框保持一致。
-            for v in self.pageView.subviews { v.frame = self.pageView.bounds }
-            for v in self.devtoolsContent.subviews { v.frame = self.devtoolsContent.bounds }
+            for v in self.pageView.subviews { v.frame = NSRect(origin: .zero, size: self.pageView.bounds.size) }
+            for v in self.devtoolsContent.subviews { v.frame = NSRect(origin: .zero, size: self.devtoolsContent.bounds.size) }
             self.notifyResize()
             let did = self.devtoolsBrowserId
             if did > 0, self.devtoolsContent.bounds.height > 1 {
@@ -366,7 +366,7 @@ final class BrowserOSRView: NSView {
         if s.width > 1, s.height > 1, s != lastNotifiedSize {
             lastNotifiedSize = s
             for v in pageView.subviews {
-                v.frame = pageView.bounds
+                v.frame = NSRect(origin: .zero, size: pageView.bounds.size)
             }
             notifyResize()
         }
