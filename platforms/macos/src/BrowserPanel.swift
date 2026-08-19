@@ -203,6 +203,9 @@ final class BrowserOSRView: NSView {
     /// DevTools 高度约束：隐藏=0 / 显示=300（双约束切换，hidden 也占布局）。
     private var devtoolsHeight0: NSLayoutConstraint?
     private var devtoolsHeight300: NSLayoutConstraint?
+    /// 主窗口底部约束：占据（DevTools 占空间）vs 覆盖（拖动中页面全高）。
+    private var pageViewBottomToArea: NSLayoutConstraint?
+    private var pageViewBottomToSelf: NSLayoutConstraint?
     private let devtoolsBar = DevToolsBarView()
 
     override init(frame frameRect: NSRect) {
@@ -235,9 +238,12 @@ final class BrowserOSRView: NSView {
         devtoolsBar.onDrag = { [weak self] targetH in
             guard let self = self, let h = self.devtoolsHeight300 else { return }
             if !self.isDraggingDevTools {
-                // 拖动开始：记录主窗口页面当前滚动位置（resize 后恢复）
+                // 拖动开始：记录主窗口页面当前滚动位置（resize 后恢复），
+                // 并切到覆盖模式（pageView 全高，页面视口完全不动）
                 self.isDraggingDevTools = true
                 self.savedScrollTop = -1
+                self.pageViewBottomToArea?.isActive = false
+                self.pageViewBottomToSelf?.isActive = true
                 if let tab = self.tab {
                     DispatchQueue.global().async { [weak tab, weak self] in
                         let r = tab?.cdp.evaluate(expression: "window.scrollY")
@@ -247,10 +253,8 @@ final class BrowserOSRView: NSView {
                     }
                 }
             }
-            // 拖动中：只改外框高度（pageView/devtoolsArea 实时预览），
-            // 两个 CEF 视图 frame/视口完全不动 —— 实验证明窗口化模式下
-            // frame 变化会让 Chromium 自动视口 resize → 页面重排上移。
-            // 完全静止 → 内容不动；松手（onDragEnd）统一对齐。
+            // 拖动中：只改 DevTools 区高度（覆盖模式，浮动盖在页面底部）；
+            // 页面视口/CEF 完全不动 → 内容绝对静止。
             h.constant = min(700, max(150, targetH))
             self.devtoolsBar.currentHeight = h.constant
             self.layoutSubtreeIfNeeded()
@@ -265,7 +269,10 @@ final class BrowserOSRView: NSView {
         devtoolsBar.onDragEnd = { [weak self] in
             guard let self = self else { return }
             self.isDraggingDevTools = false
-            // 松手：layout() 同步 CEF frame + 视口一次到位（主 + DevTools）
+            // 松手：切回占据模式（pageView 压缩到 DevTools 上方）→
+            // layout() 同步 CEF frame + 视口一次到位（页面重排，滚动恢复）
+            self.pageViewBottomToSelf?.isActive = false
+            self.pageViewBottomToArea?.isActive = true
             self.layoutSubtreeIfNeeded()
             self.notifyResize()
             // DevTools 子浏览器视口跟随（devtoolsContent 尺寸已定）
@@ -299,13 +306,22 @@ final class BrowserOSRView: NSView {
         devtoolsHeight0!.isActive = true
         devtoolsHeight300 = devtoolsArea.heightAnchor.constraint(equalToConstant: 300)
 
+        // 主窗口底部两种模式（互斥切换）：
+        // - 占据（默认）：pageView.bottom = devtoolsArea.top（DevTools 占空间，
+        //   页面视口压缩）
+        // - 覆盖（拖动中）：pageView.bottom = self.bottom（页面全高视口不动，
+        //   DevTools 区浮动盖在底部）——Chromium 窗口化下任何视口/frame 变化
+        //   都会自动重排导致页面移动，拖动中必须保持页面视口完全不变。
+        pageViewBottomToArea = pageView.bottomAnchor.constraint(equalTo: devtoolsArea.topAnchor)
+        pageViewBottomToSelf = pageView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        pageViewBottomToArea?.isActive = true
+
         addSubview(pageView)
-        addSubview(devtoolsArea)
+        addSubview(devtoolsArea)  // devtoolsArea 在 pageView 之后 → 覆盖模式 z 序在上
         NSLayoutConstraint.activate([
             pageView.topAnchor.constraint(equalTo: topAnchor),
             pageView.leadingAnchor.constraint(equalTo: leadingAnchor),
             pageView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            pageView.bottomAnchor.constraint(equalTo: devtoolsArea.topAnchor),
             devtoolsArea.leadingAnchor.constraint(equalTo: leadingAnchor),
             devtoolsArea.trailingAnchor.constraint(equalTo: trailingAnchor),
             devtoolsArea.bottomAnchor.constraint(equalTo: bottomAnchor),
