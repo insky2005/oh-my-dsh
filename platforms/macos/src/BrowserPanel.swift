@@ -227,6 +227,11 @@ final class BrowserOSRView: NSView {
         devtoolsBar.onDrag = { [weak self] targetH in
             guard let self = self, let h = self.devtoolsHeight300 else { return }
             self.isDraggingDevTools = true
+            // 拖动中：禁用 pageView 的 autoresizesSubviews —— 主 CEF 视图
+            // 的 autoresizing 会在 pageView 压缩时自动跟随（frame 每帧变 →
+            // chromium 自动 resize → 页面滚动）。禁用后 CEF 视图保持旧
+            // frame，页面静止，松手统一刷新。
+            self.pageView.autoresizesSubviews = false
             h.constant = min(700, max(150, targetH))
             self.devtoolsBar.currentHeight = h.constant
             self.layoutSubtreeIfNeeded()
@@ -234,6 +239,7 @@ final class BrowserOSRView: NSView {
         devtoolsBar.onDragEnd = { [weak self] in
             guard let self = self else { return }
             self.isDraggingDevTools = false
+            self.pageView.autoresizesSubviews = true
             self.notifyResize()
             // DevTools 子浏览器视口跟随（devtoolsContent 尺寸已定）
             let did = self.devtoolsBrowserId
