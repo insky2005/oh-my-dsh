@@ -10,6 +10,11 @@
 # （base / (Alerts) / (GPU) / (Plugin) / (Renderer)，同一份二进制，名字承重，
 # 见 docs/plans/BROWSER_PLAN-browser-panel.md §二）。只打 base helper 会导致
 # renderer 进程静默失败（页面空白）——这正是此前 spike 卡住的根因（非签名）。
+#
+# 编译产物缓存：libcef_dll_wrapper.a + CEFShim.o + helper-bin 是可复用的（按
+# CEF 版本 + 本脚本/源码 hash 判定），缓存到 .cache/cef-built-<arch>/，命中则
+# 跳过编译——CI 每 run 不再重编 ~300 个 .cc 文件（Chromium 本体是 tarball 里的
+# 预编译 framework，只复制不编译）。
 set -euo pipefail
 
 # ---- 配置 ----
@@ -67,32 +72,49 @@ tar -xjf "$CACHED" -C "$DIST" --strip-components=1
 INC="$DIST"
 LDL="$DIST/libcef_dll"
 
-# ---- 3. 编译 libcef_dll wrapper（.cc + .mm 都要） ----
-echo "==> cef: building libcef_dll_wrapper ($ARCH)"
-CXXFLAGS="-std=c++20 -fno-exceptions -fno-rtti -fno-threadsafe-statics -fobjc-call-cxx-cdtors -fvisibility=hidden -fvisibility-inlines-hidden -fno-strict-aliasing -O2 -mmacosx-version-min=$MIN $TARGET_ARCH_FLAG -I$INC -DWRAPPING_CEF_SHARED"
-OBJDIR="$CEF_DIR/wrapper-$ARCH"
-rm -rf "$OBJDIR"
-mkdir -p "$OBJDIR"
-PIDS=()
-for f in $(find "$LDL" \( -name "*.cc" -o -name "*.mm" \) | sort); do
-  o="$OBJDIR/$(echo "$f" | sed "s|$LDL/||; s|/|_|g; s|\.cc$|.o|; s|\.mm$|.o|")"
-  "$CXX" $CXXFLAGS -c "$f" -o "$o" &
-  PIDS+=($!)
-done
-for p in "${PIDS[@]}"; do wait "$p"; done
-ar rcs "$CEF_DIR/libcef_dll_wrapper-$ARCH.a" "$OBJDIR"/*.o
+# ---- 3-5. 编译 libcef_dll wrapper + CEFShim + helper（产物缓存复用） ----
+ARTIFACT_CACHE="$CACHE/cef-built-$ARCH"
+# 缓存键：CEF 版本 + 本脚本/CEF 源码 hash。任一变化即失效重编。
+ARTIFACT_KEY="$CEF_VERSION|$(shasum "$0" "$ROOT/platforms/macos/cef/CEFShim.mm" "$ROOT/platforms/macos/cef/process_helper_mac.cc" "$ROOT/platforms/macos/cef/CEFShim.h" 2>/dev/null | shasum | awk '{print $1}')"
+REUSE=0
+if [ -f "$ARTIFACT_CACHE/libcef_dll_wrapper-$ARCH.a" ] \
+   && [ -f "$ARTIFACT_CACHE/CEFShim-$ARCH.o" ] \
+   && [ -f "$ARTIFACT_CACHE/helper-bin-$ARCH" ] \
+   && [ "$(cat "$ARTIFACT_CACHE/.key" 2>/dev/null)" = "$ARTIFACT_KEY" ]; then
+  REUSE=1
+fi
+if [ "$REUSE" = "1" ]; then
+  echo "==> cef: reusing cached build artifacts ($ARCH)"
+  cp "$ARTIFACT_CACHE/libcef_dll_wrapper-$ARCH.a" "$ARTIFACT_CACHE/CEFShim-$ARCH.o" "$ARTIFACT_CACHE/helper-bin-$ARCH" "$CEF_DIR/"
+else
+  echo "==> cef: building libcef_dll_wrapper ($ARCH)"
+  CXXFLAGS="-std=c++20 -fno-exceptions -fno-rtti -fno-threadsafe-statics -fobjc-call-cxx-cdtors -fvisibility=hidden -fvisibility-inlines-hidden -fno-strict-aliasing -O2 -mmacosx-version-min=$MIN $TARGET_ARCH_FLAG -I$INC -DWRAPPING_CEF_SHARED"
+  OBJDIR="$CEF_DIR/wrapper-$ARCH"
+  rm -rf "$OBJDIR"
+  mkdir -p "$OBJDIR"
+  PIDS=()
+  for f in $(find "$LDL" \( -name "*.cc" -o -name "*.mm" \) | sort); do
+    o="$OBJDIR/$(echo "$f" | sed "s|$LDL/||; s|/|_|g; s|\\.cc$|.o|; s|\\.mm$|.o|")"
+    "$CXX" $CXXFLAGS -c "$f" -o "$o" &
+    PIDS+=($!)
+  done
+  for p in "${PIDS[@]}"; do wait "$p"; done
+  ar rcs "$CEF_DIR/libcef_dll_wrapper-$ARCH.a" "$OBJDIR"/*.o
 
-# ---- 4. 编译 CEFShim（ObjC++） ----
-echo "==> cef: building CEFShim ($ARCH)"
-"$CXX" $CXXFLAGS -fobjc-arc -c "$ROOT/platforms/macos/cef/CEFShim.mm" -o "$CEF_DIR/CEFShim-$ARCH.o"
+  echo "==> cef: building CEFShim ($ARCH)"
+  "$CXX" $CXXFLAGS -fobjc-arc -c "$ROOT/platforms/macos/cef/CEFShim.mm" -o "$CEF_DIR/CEFShim-$ARCH.o"
 
-# ---- 5. 编译 helper 可执行（五个 helper 共用一份） ----
-echo "==> cef: building helper binary ($ARCH)"
-"$CXX" $CXXFLAGS -fobjc-arc "$ROOT/platforms/macos/cef/process_helper_mac.cc" \
-  "$CEF_DIR/libcef_dll_wrapper-$ARCH.a" \
-  -Wl,-undefined,dynamic_lookup \
-  -lpthread -framework AppKit -framework Cocoa -framework IOSurface \
-  -o "$CEF_DIR/helper-bin-$ARCH"
+  echo "==> cef: building helper binary ($ARCH)"
+  "$CXX" $CXXFLAGS -fobjc-arc "$ROOT/platforms/macos/cef/process_helper_mac.cc" \
+    "$CEF_DIR/libcef_dll_wrapper-$ARCH.a" \
+    -Wl,-undefined,dynamic_lookup \
+    -lpthread -framework AppKit -framework Cocoa -framework IOSurface \
+    -o "$CEF_DIR/helper-bin-$ARCH"
+
+  mkdir -p "$ARTIFACT_CACHE"
+  cp "$CEF_DIR/libcef_dll_wrapper-$ARCH.a" "$CEF_DIR/CEFShim-$ARCH.o" "$CEF_DIR/helper-bin-$ARCH" "$ARTIFACT_CACHE/"
+  echo "$ARTIFACT_KEY" > "$ARTIFACT_CACHE/.key"
+fi
 
 # ---- 6. 放置 framework（由 build-app.sh 嵌入 app 并签名） ----
 rm -rf "$CEF_DIR/Chromium Embedded Framework-$ARCH.framework"
