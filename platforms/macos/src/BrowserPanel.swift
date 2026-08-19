@@ -247,31 +247,26 @@ final class BrowserOSRView: NSView {
                     }
                 }
             }
-            // CEF 子视图 frame 由 layout() 统一同步（唯一来源）；autoresizing
-            // 全程禁用（onDrag 不打开），避免与手动 frame 竞争产生逐帧偏移。
+            // 拖动中：只改外框高度（pageView/devtoolsArea 实时预览），
+            // 两个 CEF 视图 frame/视口完全不动 —— 实验证明窗口化模式下
+            // frame 变化会让 Chromium 自动视口 resize → 页面重排上移。
+            // 完全静止 → 内容不动；松手（onDragEnd）统一对齐。
             h.constant = min(700, max(150, targetH))
             self.devtoolsBar.currentHeight = h.constant
-            // 布局：pageView/devtoolsArea frame 由约束解算；layout() 内同步
-            // CEF 子视图 frame + contentsScale，并节流视口 resize。
             self.layoutSubtreeIfNeeded()
+            // QA：记录拖动时的几何（主窗口 CEF frame 应保持静止）
             let now = ProcessInfo.processInfo.systemUptime
-            if now - self.lastDragResizeTime > 0.08 {
+            if now - self.lastDragResizeTime > 2.0 {
                 self.lastDragResizeTime = now
-                self.notifyResize()
-                let did = self.devtoolsBrowserId
-                if did > 0, self.devtoolsContent.bounds.height > 1 {
-                    CEFShim.resizeBrowser(did, width: Float(self.devtoolsContent.bounds.width),
-                                          height: Float(self.devtoolsContent.bounds.height))
-                }
-                // QA：记录拖动时的几何（定位"上移"：pageView.bounds.origin
-                // 应恒为 (0,0)、pageView.frame 顶部恒定、CEF frame 顶部为 0）
                 let cefFrame = self.pageView.subviews.first.map { NSStringFromRect($0.frame) } ?? "nil"
-                AppLog.shared.log("devtools drag: pageView.frame=\(NSStringFromRect(self.pageView.frame)) pageView.bounds=\(NSStringFromRect(self.pageView.bounds)) devtoolsArea.frame=\(NSStringFromRect(self.devtoolsArea.frame)) cefFrame=\(cefFrame)")
+                AppLog.shared.log("devtools drag: pageView.frame=\(NSStringFromRect(self.pageView.frame)) devtoolsArea.frame=\(NSStringFromRect(self.devtoolsArea.frame)) cefFrame=\(cefFrame)")
             }
         }
         devtoolsBar.onDragEnd = { [weak self] in
             guard let self = self else { return }
             self.isDraggingDevTools = false
+            // 松手：layout() 同步 CEF frame + 视口一次到位（主 + DevTools）
+            self.layoutSubtreeIfNeeded()
             self.notifyResize()
             // DevTools 子浏览器视口跟随（devtoolsContent 尺寸已定）
             let did = self.devtoolsBrowserId
@@ -409,8 +404,10 @@ final class BrowserOSRView: NSView {
         if pageView.layer?.contentsScale != scale { pageView.layer?.contentsScale = scale }
         if devtoolsContent.layer?.contentsScale != scale { devtoolsContent.layer?.contentsScale = scale }
         if devtoolsArea.layer?.contentsScale != scale { devtoolsArea.layer?.contentsScale = scale }
-        // 统一同步 CEF 子视图 frame（唯一来源，避免与 autoresizing 竞争；
-        // 拖动中同步 frame 但不 notifyResize，由 onDrag 节流统一刷新）。
+        // 统一同步 CEF 子视图 frame（唯一来源，避免与 autoresizing 竞争）。
+        // 拖动中完全跳过（frame 保持 → 内容静止；Chromium 窗口化下 frame
+        // 变化会自动视口 resize 导致重排上移），松手（onDragEnd）统一同步。
+        if isDraggingDevTools { return }
         let s = pageView.bounds.size
         if s.width > 1, s.height > 1, s != lastNotifiedSize {
             lastNotifiedSize = s
@@ -420,9 +417,7 @@ final class BrowserOSRView: NSView {
             for v in devtoolsContent.subviews {
                 v.frame = NSRect(origin: .zero, size: devtoolsContent.bounds.size)
             }
-            if !isDraggingDevTools {
-                notifyResize()
-            }
+            notifyResize()
         }
     }
 
