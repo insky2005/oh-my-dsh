@@ -91,6 +91,9 @@ jobs:
           key: cache-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('platforms/macos/build-app.sh', 'scripts/version.sh') }}
           restore-keys: |
             cache-${{ runner.os }}-${{ matrix.arch }}-
+            # universal 复用 arm64 的 .cache/（含 arm64 CEF tarball + node tarball
+            # + npm 缓存），避免冷缓存重下 arm64 的 ~285M CEF + ~116M node。
+            cache-${{ runner.os }}-arm64-
       - name: Build app
         env:
           DSH_ARCH: ${{ matrix.arch }}
