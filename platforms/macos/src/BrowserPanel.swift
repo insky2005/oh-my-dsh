@@ -342,21 +342,21 @@ final class BrowserOSRView: NSView {
 
     /// 布局后同步：pageView 尺寸变化（首次布局/DevTools 展开收起）时
     /// 强制 CEF 视图跟随 + 通知视口 resize（否则新页签停在 800×600 兜底，
-    /// 只渲染左下角，其余灰色）。拖动 DevTools 期间只跟随 frame、
-    /// 不 notifyResize（松手统一刷新，避免每帧 WasResized 页面跳动）。
+    /// 只渲染左下角，其余灰色）。拖动 DevTools 期间完全跳过——改动 CEF
+    /// 视图 frame 会让 chromium 自动检测视口变化并每帧重排（页面滚动），
+    /// 松手（onDragEnd）统一刷新。
     private var lastNotifiedSize: NSSize = .zero
     private var isDraggingDevTools = false
     override func layout() {
         super.layout()
+        if isDraggingDevTools { return }
         let s = pageView.bounds.size
         if s.width > 1, s.height > 1, s != lastNotifiedSize {
             lastNotifiedSize = s
             for v in pageView.subviews {
                 v.frame = pageView.bounds
             }
-            if !isDraggingDevTools {
-                notifyResize()
-            }
+            notifyResize()
         }
     }
 
