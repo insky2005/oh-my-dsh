@@ -244,15 +244,20 @@ final class BrowserOSRView: NSView {
             h.constant = min(700, max(150, targetH))
             self.devtoolsBar.currentHeight = h.constant
             self.layoutSubtreeIfNeeded()
-            // 实时同步：两个 CEF 视图 frame 精确 = 各自容器（比 autoresizing
-            // 可靠，无累积误差），视口同步 resize —— 高度与外框保持一致。
-            for v in self.pageView.subviews { v.frame = NSRect(origin: .zero, size: self.pageView.bounds.size) }
-            for v in self.devtoolsContent.subviews { v.frame = NSRect(origin: .zero, size: self.devtoolsContent.bounds.size) }
-            self.notifyResize()
-            let did = self.devtoolsBrowserId
-            if did > 0, self.devtoolsContent.bounds.height > 1 {
-                CEFShim.resizeBrowser(did, width: Float(self.devtoolsContent.bounds.width),
-                                      height: Float(self.devtoolsContent.bounds.height))
+            // 实时同步：两个 CEF 视图 frame 精确 = 各自容器，视口同步 resize。
+            // 节流（~80ms）：拖动中每帧 resize 会让页面持续重排（"缓慢上移"
+            // 感）；80ms 粒度足够跟随外框，又不至于每帧抖动。
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - self.lastDragResizeTime > 0.08 {
+                self.lastDragResizeTime = now
+                for v in self.pageView.subviews { v.frame = NSRect(origin: .zero, size: self.pageView.bounds.size) }
+                for v in self.devtoolsContent.subviews { v.frame = NSRect(origin: .zero, size: self.devtoolsContent.bounds.size) }
+                self.notifyResize()
+                let did = self.devtoolsBrowserId
+                if did > 0, self.devtoolsContent.bounds.height > 1 {
+                    CEFShim.resizeBrowser(did, width: Float(self.devtoolsContent.bounds.width),
+                                          height: Float(self.devtoolsContent.bounds.height))
+                }
             }
         }
         devtoolsBar.onDragEnd = { [weak self] in
@@ -384,6 +389,8 @@ final class BrowserOSRView: NSView {
     private var isDraggingDevTools = false
     /// 拖动开始时主窗口页面的滚动位置（resize 后恢复，-1=未记录）。
     private var savedScrollTop: Double = -1
+    /// 拖动中 CEF resize 节流（~80ms 一次，减少每帧重排抖动）。
+    private var lastDragResizeTime: TimeInterval = 0
     override func layout() {
         super.layout()
         if isDraggingDevTools { return }
