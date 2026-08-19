@@ -243,11 +243,10 @@ final class BrowserOSRView: NSView {
             self.devtoolsContent.autoresizesSubviews = true
             h.constant = min(700, max(150, targetH))
             self.devtoolsBar.currentHeight = h.constant
+            // CEF 子视图 frame 由 layout() 统一同步（避免手动设置与
+            // autoresizing/Auto Layout 竞争导致每帧微小偏移累积）；
+            // 这里只布局，layout() 内同步 frame + 节流视口 resize。
             self.layoutSubtreeIfNeeded()
-            // frame 每帧实时同步（高度与外框一致，避免底部空白）；
-            // 视口 resize（WasResized）节流 ~80ms，降低页面重排频率。
-            for v in self.pageView.subviews { v.frame = NSRect(origin: .zero, size: self.pageView.bounds.size) }
-            for v in self.devtoolsContent.subviews { v.frame = NSRect(origin: .zero, size: self.devtoolsContent.bounds.size) }
             let now = ProcessInfo.processInfo.systemUptime
             if now - self.lastDragResizeTime > 0.08 {
                 self.lastDragResizeTime = now
@@ -395,14 +394,26 @@ final class BrowserOSRView: NSView {
     private var lastDragResizeTime: TimeInterval = 0
     override func layout() {
         super.layout()
-        if isDraggingDevTools { return }
+        // Retina 合成坐标系：pageView/devtoolsContent 的 layer scale 必须
+        // 与窗口一致（默认 1.0 会让 CEF 内容在裁剪区内合成偏移）。
+        let scale = window?.backingScaleFactor ?? 2
+        if pageView.layer?.contentsScale != scale { pageView.layer?.contentsScale = scale }
+        if devtoolsContent.layer?.contentsScale != scale { devtoolsContent.layer?.contentsScale = scale }
+        if devtoolsArea.layer?.contentsScale != scale { devtoolsArea.layer?.contentsScale = scale }
+        // 统一同步 CEF 子视图 frame（唯一来源，避免与 autoresizing 竞争；
+        // 拖动中同步 frame 但不 notifyResize，由 onDrag 节流统一刷新）。
         let s = pageView.bounds.size
         if s.width > 1, s.height > 1, s != lastNotifiedSize {
             lastNotifiedSize = s
             for v in pageView.subviews {
                 v.frame = NSRect(origin: .zero, size: pageView.bounds.size)
             }
-            notifyResize()
+            for v in devtoolsContent.subviews {
+                v.frame = NSRect(origin: .zero, size: devtoolsContent.bounds.size)
+            }
+            if !isDraggingDevTools {
+                notifyResize()
+            }
         }
     }
 
