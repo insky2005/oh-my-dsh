@@ -244,14 +244,13 @@ final class BrowserOSRView: NSView {
             h.constant = min(700, max(150, targetH))
             self.devtoolsBar.currentHeight = h.constant
             self.layoutSubtreeIfNeeded()
-            // 实时同步：两个 CEF 视图 frame 精确 = 各自容器，视口同步 resize。
-            // 节流（~80ms）：拖动中每帧 resize 会让页面持续重排（"缓慢上移"
-            // 感）；80ms 粒度足够跟随外框，又不至于每帧抖动。
+            // frame 每帧实时同步（高度与外框一致，避免底部空白）；
+            // 视口 resize（WasResized）节流 ~80ms，降低页面重排频率。
+            for v in self.pageView.subviews { v.frame = NSRect(origin: .zero, size: self.pageView.bounds.size) }
+            for v in self.devtoolsContent.subviews { v.frame = NSRect(origin: .zero, size: self.devtoolsContent.bounds.size) }
             let now = ProcessInfo.processInfo.systemUptime
             if now - self.lastDragResizeTime > 0.08 {
                 self.lastDragResizeTime = now
-                for v in self.pageView.subviews { v.frame = NSRect(origin: .zero, size: self.pageView.bounds.size) }
-                for v in self.devtoolsContent.subviews { v.frame = NSRect(origin: .zero, size: self.devtoolsContent.bounds.size) }
                 self.notifyResize()
                 let did = self.devtoolsBrowserId
                 if did > 0, self.devtoolsContent.bounds.height > 1 {
