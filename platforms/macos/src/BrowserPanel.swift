@@ -210,11 +210,19 @@ final class BrowserOSRView: NSView {
         // 必须在入窗/加父视图之前就 layer-backed：入窗后再 wantsLayer 可能
         // 生成一个未挂进显示树的 detached layer（有 contents 却不合成上屏）。
         wantsLayer = true
+        // 关键：禁用 BrowserOSRView 对子视图（pageView/devtoolsArea）的
+        // autoresizing——它们的布局完全交给 Auto Layout 约束 + layout()
+        // 手动 frame 同步。默认 autoresizesSubviews=true 会在 layout 时按
+        // autoresizingMask 微调子视图 frame，与约束/手动设置竞争产生
+        // 逐帧偏移（DevTools 拖动时页面"慢慢上移"的根因）。
+        autoresizesSubviews = false
 
         // 主窗口区
         pageView.translatesAutoresizingMaskIntoConstraints = false
         pageView.wantsLayer = true
         pageView.layer?.masksToBounds = true
+        // CEF 子视图 frame 由 layout() 手动同步（唯一来源），不用 autoresizing
+        pageView.autoresizesSubviews = false
         // DevTools 区：工具条 + 内容
         devtoolsArea.translatesAutoresizingMaskIntoConstraints = false
         devtoolsArea.wantsLayer = true
@@ -239,13 +247,12 @@ final class BrowserOSRView: NSView {
                     }
                 }
             }
-            self.pageView.autoresizesSubviews = true
-            self.devtoolsContent.autoresizesSubviews = true
+            // CEF 子视图 frame 由 layout() 统一同步（唯一来源）；autoresizing
+            // 全程禁用（onDrag 不打开），避免与手动 frame 竞争产生逐帧偏移。
             h.constant = min(700, max(150, targetH))
             self.devtoolsBar.currentHeight = h.constant
-            // CEF 子视图 frame 由 layout() 统一同步（避免手动设置与
-            // autoresizing/Auto Layout 竞争导致每帧微小偏移累积）；
-            // 这里只布局，layout() 内同步 frame + 节流视口 resize。
+            // 布局：pageView/devtoolsArea frame 由约束解算；layout() 内同步
+            // CEF 子视图 frame + contentsScale，并节流视口 resize。
             self.layoutSubtreeIfNeeded()
             let now = ProcessInfo.processInfo.systemUptime
             if now - self.lastDragResizeTime > 0.08 {
@@ -256,9 +263,10 @@ final class BrowserOSRView: NSView {
                     CEFShim.resizeBrowser(did, width: Float(self.devtoolsContent.bounds.width),
                                           height: Float(self.devtoolsContent.bounds.height))
                 }
-                // QA：记录拖动时的几何（定位"上移"：pageView 顶部应恒等于
-                // 容器顶部，不随拖动移动；devtoolsArea 底部应恒为 0）
-                AppLog.shared.log("devtools drag: pageView.frame=\(NSStringFromRect(self.pageView.frame)) devtoolsArea.frame=\(NSStringFromRect(self.devtoolsArea.frame)) mainFrame=\(self.pageView.subviews.first.map { NSStringFromRect($0.frame) } ?? "nil")")
+                // QA：记录拖动时的几何（定位"上移"：pageView.bounds.origin
+                // 应恒为 (0,0)、pageView.frame 顶部恒定、CEF frame 顶部为 0）
+                let cefFrame = self.pageView.subviews.first.map { NSStringFromRect($0.frame) } ?? "nil"
+                AppLog.shared.log("devtools drag: pageView.frame=\(NSStringFromRect(self.pageView.frame)) pageView.bounds=\(NSStringFromRect(self.pageView.bounds)) devtoolsArea.frame=\(NSStringFromRect(self.devtoolsArea.frame)) cefFrame=\(cefFrame)")
             }
         }
         devtoolsBar.onDragEnd = { [weak self] in
@@ -287,6 +295,7 @@ final class BrowserOSRView: NSView {
         devtoolsContent.translatesAutoresizingMaskIntoConstraints = false
         devtoolsContent.wantsLayer = true
         devtoolsContent.layer?.masksToBounds = true
+        devtoolsContent.autoresizesSubviews = false  // CEF frame 由 layout() 同步
         devtoolsArea.addSubview(devtoolsBar)
         devtoolsArea.addSubview(devtoolsContent)
         // 高度约束：默认隐藏（0 高），显示时切到 300——hidden 视图的约束
