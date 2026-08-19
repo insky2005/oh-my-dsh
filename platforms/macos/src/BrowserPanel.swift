@@ -203,9 +203,8 @@ final class BrowserOSRView: NSView {
     /// DevTools 高度约束：隐藏=0 / 显示=300（双约束切换，hidden 也占布局）。
     private var devtoolsHeight0: NSLayoutConstraint?
     private var devtoolsHeight300: NSLayoutConstraint?
-    /// 主窗口底部约束：占据（DevTools 占空间）vs 覆盖（拖动中页面全高）。
+    /// 主窗口底部约束：pageView.bottom = devtoolsArea.top（占据，DevTools 占空间）。
     private var pageViewBottomToArea: NSLayoutConstraint?
-    private var pageViewBottomToSelf: NSLayoutConstraint?
     private let devtoolsBar = DevToolsBarView()
 
     override init(frame frameRect: NSRect) {
@@ -238,20 +237,10 @@ final class BrowserOSRView: NSView {
         devtoolsBar.onDrag = { [weak self] targetH in
             guard let self = self, let h = self.devtoolsHeight300 else { return }
             if !self.isDraggingDevTools {
-                // 拖动开始：记录主窗口页面当前滚动位置（resize 后恢复），
-                // 并切到覆盖模式（pageView 全高，页面视口完全不动）。
-                // 切换后立即把主 CEF 视图钉回顶部全高（Chromium 在 pageView
-                // 变高时会把它底部对齐 → 顶部空白），视口一次 resize
-                // （切换瞬间重排；之后拖动中 pageView 不变 → 完全静止）。
+                // 拖动开始：保持占据模式（pageView 随 devtoolsArea 高度联动），
+                // 记录主窗口页面当前滚动位置（松手 resize 后恢复）。
                 self.isDraggingDevTools = true
                 self.savedScrollTop = -1
-                self.pageViewBottomToArea?.isActive = false
-                self.pageViewBottomToSelf?.isActive = true
-                self.layoutSubtreeIfNeeded()
-                for v in self.pageView.subviews {
-                    v.frame = NSRect(origin: .zero, size: self.pageView.bounds.size)
-                }
-                self.notifyResize()
                 if let tab = self.tab {
                     DispatchQueue.global().async { [weak tab, weak self] in
                         let r = tab?.cdp.evaluate(expression: "window.scrollY")
@@ -261,13 +250,22 @@ final class BrowserOSRView: NSView {
                     }
                 }
             }
-            // 拖动中：只改外框高度（pageView/devtoolsArea 实时预览），
-            // 两个 CEF 视图 frame/视口完全不动 —— 实验证明窗口化模式下
-            // frame 变化会让 Chromium 自动视口 resize → 页面重排上移。
-            // 完全静止 → 内容不动；松手（onDragEnd）统一对齐。
+            // 拖动中：只改 devtoolsArea 高度，pageView 由约束联动（占据模式，
+            // 不切覆盖 → 主窗口高度平滑跟随 devtoolsArea，不再跳变全高）。
+            // 两个 CEF 视图 frame/视口完全不动 —— 窗口化模式下 frame 变化会
+            // 让 Chromium 自动视口 resize → 页面重排上移。pageView 的
+            // masksToBounds 把静止的 CEF 视图裁剪到当前裁剪区，无重排无抖动。
+            // 松手（onDragEnd）统一对齐。
             h.constant = min(700, max(150, targetH))
             self.devtoolsBar.currentHeight = h.constant
             self.layoutSubtreeIfNeeded()
+            // 主浏览器固定顶部（与 DevTools 固定底部对称）：拖动中 CEF 尺寸
+            // 静止、视口不改（无重排无抖动），只把 CEF 顶边对齐 pageView 顶边。
+            // 否则向下拖（pageView 变矮）时 CEF 底部锚定，顶部被 masksToBounds
+            // 裁掉，显示的是页面底部；对齐顶部后始终显示页面顶部。
+            if let cef = self.pageView.subviews.first {
+                cef.frame.origin.y = self.pageView.bounds.height - cef.frame.height
+            }
             // QA：记录拖动时的几何（主窗口 CEF frame 应保持静止）
             let now = ProcessInfo.processInfo.systemUptime
             if now - self.lastDragResizeTime > 2.0 {
@@ -279,17 +277,32 @@ final class BrowserOSRView: NSView {
         devtoolsBar.onDragEnd = { [weak self] in
             guard let self = self else { return }
             self.isDraggingDevTools = false
-            // 松手：切回占据模式（pageView 压缩到 DevTools 上方）→
-            // layout() 同步 CEF frame + 视口一次到位（页面重排，滚动恢复）
-            self.pageViewBottomToSelf?.isActive = false
-            self.pageViewBottomToArea?.isActive = true
+            // 松手：显式同步 CEF 子视图 frame + 视口一次到位。
+            // 不能只依赖 layout() 的同步分支：拖动最后一帧已 layout 过，
+            // 此时 needsLayout 可能为 false → layout() 不触发 → CEF frame
+            // 停在旧尺寸，而 WasResized 却按新尺寸通知 → frame 与视口尺寸
+            // 不匹配，CEF 不重绘（页面冻结）。这里显式设置 frame 并更新
+            // lastNotifiedSize，保证 frame 与新视口尺寸一致。
+            let ps = self.pageView.bounds.size
+            if ps.width > 1, ps.height > 1 {
+                self.lastNotifiedSize = ps
+                for v in self.pageView.subviews {
+                    v.frame = NSRect(origin: .zero, size: ps)
+                }
+            }
+            let ds = self.devtoolsContent.bounds.size
+            if ds.width > 1, ds.height > 1 {
+                for v in self.devtoolsContent.subviews {
+                    v.frame = NSRect(origin: .zero, size: ds)
+                }
+            }
             self.layoutSubtreeIfNeeded()
             self.notifyResize()
             // DevTools 子浏览器视口跟随（devtoolsContent 尺寸已定）
             let did = self.devtoolsBrowserId
-            if did > 0, self.devtoolsContent.bounds.width > 1, self.devtoolsContent.bounds.height > 1 {
-                CEFShim.resizeBrowser(did, width: Float(self.devtoolsContent.bounds.width),
-                                      height: Float(self.devtoolsContent.bounds.height))
+            if did > 0, ds.width > 1, ds.height > 1 {
+                CEFShim.resizeBrowser(did, width: Float(ds.width),
+                                      height: Float(ds.height))
             }
             // 恢复主窗口页面滚动位置（resize 重排后 scrollTop 可能偏移）
             if self.savedScrollTop >= 0 {
@@ -316,17 +329,14 @@ final class BrowserOSRView: NSView {
         devtoolsHeight0!.isActive = true
         devtoolsHeight300 = devtoolsArea.heightAnchor.constraint(equalToConstant: 300)
 
-        // 主窗口底部两种模式（互斥切换）：
-        // - 占据（默认）：pageView.bottom = devtoolsArea.top（DevTools 占空间）
-        // - 覆盖（拖动中）：pageView.bottom = self.bottom（页面全高视口不动，
-        //   DevTools 浮动盖底）——Chromium 窗口化下 pageView 压缩会触发自动
-        //   视口 resize（页面移动），拖动中必须保持页面视口完全不变。
+        // 主窗口底部固定为占据：pageView.bottom = devtoolsArea.top
+        // （DevTools 占空间，pageView 随 devtoolsArea 高度联动压缩/伸展）。
+        // 拖动中 CEF 视图 frame 保持静止、不调 WasResized，靠 pageView 的
+        // masksToBounds 裁剪到当前裁剪区（见 docs/devtools-drag-fix.md）。
         pageViewBottomToArea = pageView.bottomAnchor.constraint(equalTo: devtoolsArea.topAnchor)
-        pageViewBottomToSelf = pageView.bottomAnchor.constraint(equalTo: bottomAnchor)
-        pageViewBottomToSelf?.isActive = false  // 默认占据
 
         addSubview(pageView)
-        addSubview(devtoolsArea)  // devtoolsArea 在后 → 覆盖模式 z 序在上
+        addSubview(devtoolsArea)  // devtoolsArea 在后 → 拖动中盖住 CEF 溢出
         NSLayoutConstraint.activate([
             pageView.topAnchor.constraint(equalTo: topAnchor),
             pageView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -347,10 +357,15 @@ final class BrowserOSRView: NSView {
         updatePageBackground()
     }
 
-    /// 主窗口区背景：暗色=黑 / 亮色=白（about:blank 等透明页面时）
+    /// 主窗口区背景：暗色=黑 / 亮色=白（about:blank 等透明页面时）。
+    /// devtoolsContent 也垫不透明背景：拖动中 CEF 视图保持静止、pageView
+    /// 裁剪区变化，若 devtoolsContent 无背景，DevTools 区下方会透出主页面
+    /// 内容（串窗口）。见 docs/devtools-drag-fix.md「唯一注意点」。
     private func updatePageBackground() {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        pageView.layer?.backgroundColor = (dark ? NSColor.black : NSColor.white).cgColor
+        let bg = (dark ? NSColor.black : NSColor.white).cgColor
+        pageView.layer?.backgroundColor = bg
+        devtoolsContent.layer?.backgroundColor = bg
     }
 
     override func viewDidChangeEffectiveAppearance() {
