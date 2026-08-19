@@ -578,7 +578,9 @@ bool CreateBrowserInternal(NSView* view, const std::string& url,
     if (it != g_browsers.end()) it->second->GetHost()->CloseBrowser(true);
   }
   for (int i = 0; i < 20; i++) {
-    CefDoMessageLoopWork();
+    if (g_loader) {  // CEF 未初始化（initialize 失败/未调用）时不能泵，否则空指针
+      CefDoMessageLoopWork();
+    }
     usleep(10000);
   }
   // 不调用 CefShutdown()：CEF 150 + external_message_pump 下 CefShutdown
