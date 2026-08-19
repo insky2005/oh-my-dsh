@@ -226,7 +226,19 @@ final class BrowserOSRView: NSView {
         // 避免拖动中每帧 WasResized 导致页面顶部反复重排/跳动。
         devtoolsBar.onDrag = { [weak self] targetH in
             guard let self = self, let h = self.devtoolsHeight300 else { return }
-            self.isDraggingDevTools = true
+            if !self.isDraggingDevTools {
+                // 拖动开始：记录主窗口页面当前滚动位置（resize 后恢复）
+                self.isDraggingDevTools = true
+                self.savedScrollTop = -1
+                if let tab = self.tab {
+                    DispatchQueue.global().async { [weak tab, weak self] in
+                        let r = tab?.cdp.evaluate(expression: "window.scrollY")
+                        if case .success(let v)? = r, let n = v as? NSNumber {
+                            DispatchQueue.main.async { self?.savedScrollTop = n.doubleValue }
+                        }
+                    }
+                }
+            }
             self.pageView.autoresizesSubviews = true
             self.devtoolsContent.autoresizesSubviews = true
             h.constant = min(700, max(150, targetH))
@@ -252,6 +264,17 @@ final class BrowserOSRView: NSView {
             if did > 0, self.devtoolsContent.bounds.width > 1, self.devtoolsContent.bounds.height > 1 {
                 CEFShim.resizeBrowser(did, width: Float(self.devtoolsContent.bounds.width),
                                       height: Float(self.devtoolsContent.bounds.height))
+            }
+            // 恢复主窗口页面滚动位置（resize 重排后 scrollTop 可能偏移）
+            if self.savedScrollTop >= 0 {
+                let y = self.savedScrollTop
+                self.savedScrollTop = -1
+                let tab = self.tab
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    DispatchQueue.global().async { [weak tab] in
+                        _ = tab?.cdp.evaluate(expression: "window.scrollTo(0, \(y))")
+                    }
+                }
             }
         }
         devtoolsBar.onClose = { [weak self] in self?.onCloseDevTools?() }
@@ -359,6 +382,8 @@ final class BrowserOSRView: NSView {
     /// 松手（onDragEnd）统一刷新。
     private var lastNotifiedSize: NSSize = .zero
     private var isDraggingDevTools = false
+    /// 拖动开始时主窗口页面的滚动位置（resize 后恢复，-1=未记录）。
+    private var savedScrollTop: Double = -1
     override func layout() {
         super.layout()
         if isDraggingDevTools { return }
