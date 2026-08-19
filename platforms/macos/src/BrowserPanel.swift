@@ -239,11 +239,19 @@ final class BrowserOSRView: NSView {
             guard let self = self, let h = self.devtoolsHeight300 else { return }
             if !self.isDraggingDevTools {
                 // 拖动开始：记录主窗口页面当前滚动位置（resize 后恢复），
-                // 并切到覆盖模式（pageView 全高，页面视口完全不动）
+                // 并切到覆盖模式（pageView 全高，页面视口完全不动）。
+                // 切换后立即把主 CEF 视图钉回顶部全高（Chromium 在 pageView
+                // 变高时会把它底部对齐 → 顶部空白），视口一次 resize
+                // （切换瞬间重排；之后拖动中 pageView 不变 → 完全静止）。
                 self.isDraggingDevTools = true
                 self.savedScrollTop = -1
                 self.pageViewBottomToArea?.isActive = false
                 self.pageViewBottomToSelf?.isActive = true
+                self.layoutSubtreeIfNeeded()
+                for v in self.pageView.subviews {
+                    v.frame = NSRect(origin: .zero, size: self.pageView.bounds.size)
+                }
+                self.notifyResize()
                 if let tab = self.tab {
                     DispatchQueue.global().async { [weak tab, weak self] in
                         let r = tab?.cdp.evaluate(expression: "window.scrollY")
