@@ -77,6 +77,10 @@ git push -u origin fix/sync-1.9.1
 ## 合并规则（强制）
 
 - **feature / fix 分支回 main，一律走 PR**：推送分支 → 开 PR → CI 全绿 + review → 合并；禁止直接 `git push origin main`；
+- **PR 合并一律用 --no-ff（merge commit）**：
+  - 保留分支上每个原始提交与合并拓扑，便于追溯「这个改动来自哪个分支、拆成哪些提交」；
+  - 对比 squash 合并（压成单条、丢失原始提交与分支拓扑）：squash 只适合「单提交、自包含、无需追溯」的场景，默认不用；
+  - GitHub 网页合并选 **Create a merge commit**（不要选 Squash and merge）；命令行 `git merge --no-ff <branch>`；
 - **已发布版本的修复同步回 main**：也走 PR（见场景 B 第 4 步），不直接 push main；
 - 面板（IssueRunner）处理 issue 后自动开 PR（`createPR`：head=分支，base=main），与上述规则一致；
 - 唯一允许直接操作 main 的场景：维护者推进 fallback 版本号、紧急文档修正、发布打 tag（tag 打 main 本身）。
