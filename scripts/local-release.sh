@@ -65,13 +65,30 @@ done
 
 echo "==> [RELEASE] v$VER archs=($ARCHS) prerelease=${IS_PRERELEASE:-1}"
 
-# 版本一致性（仅提示，不阻断本地临时构建）
+# 版本一致性：VERSION 单一来源是 git tag —— build-app.sh 从 version.sh 解析
+# （HEAD 恰在 vX.Y.Z tag 上取该 tag，否则 fallback），make-pkg.sh 再取自
+# Info.plist。传参 VER 只用于发布命名/校验，不参与构建，不一致会导致
+# Release 按 v$VER 创建但产物实为其他版本。
 cur="$(scripts/version.sh | head -1)"
-if [ "$cur" = "$VER" ]; then
-  echo "    version v$VER matches tag at HEAD ✓"
+HEAD_TAG="$(git tag --points-at HEAD | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || true)"
+if [ "$MODE" = "release" ]; then
+  # 发布模式：必须 HEAD 恰在 vVER tag 上（fallback 巧合匹配合格也不行，
+  # 否则 publish 删同名旧 tag 重建会落在错误 commit 上）。
+  if [ -z "$HEAD_TAG" ] || [ "${HEAD_TAG#v}" != "$VER" ]; then
+    echo "ERROR: 发布要求 HEAD 恰好在 v$VER tag 上（当前 HEAD_TAG=${HEAD_TAG:-无}，解析版本 $cur）。" >&2
+    echo "      VERSION 单一来源是 git tag：请先 git tag v$VER 并让 HEAD 落在其上，" >&2
+    echo "      再重跑本脚本；否则产物版本与 Release 版本不一致（或同名 tag 被重建）。" >&2
+    exit 1
+  fi
+  echo "    version v$VER = HEAD tag ✓（产物版本一致）"
 else
-  echo "WARN: HEAD 不在 v$VER tag 上（当前解析版本 $cur）。" >&2
-  echo "     请先 'git tag v$VER' 并让 HEAD 落在其上，否则产物版本可能与 tag 不符。" >&2
+  # pack 模式：不发布，仅提示（产物命名始终以实际解析版本为准）
+  if [ "$cur" != "$VER" ]; then
+    echo "WARN: pack 传参 VER=$VER ≠ HEAD 解析版本 $cur。" >&2
+    echo "      pkg/dmg 文件名将使用实际解析版本 $cur，如需指定请打对应 tag。" >&2
+  else
+    echo "    version v$VER matches version.sh at HEAD ✓"
+  fi
 fi
 
 # ---------- 阶段1 prepare：预下载 node + 预取 runtime（命中 .cache/） ----------
@@ -98,7 +115,7 @@ if [ "$MODE" = "pack" ]; then
   echo "==> [3/3] pack 模式：跳过 SHA-256SUMS 与 GitHub 发布"
   echo "==> [PACK] done（未发布）: dist/oh-my-dsh-*.pkg / .dmg"
   echo "     发布请去掉 pack 重跑本脚本，或手动执行:"
-  echo "       scripts/release-checksums.sh $VER && scripts/github-publish.sh $VER"
+  echo "       scripts/release-checksums.sh $cur && scripts/github-publish.sh $cur"
   exit 0
 fi
 echo "==> [3/3 release] write SHA-256SUMS + release notes"
