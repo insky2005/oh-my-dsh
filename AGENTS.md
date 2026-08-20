@@ -16,6 +16,7 @@
 - `.dsh/wiki/index.md` 与 `.dsh/wiki/conventions.md` —— 工程约定（L10n / 构建 / 测试 / 日志）；
 - `docs/productization.md` —— 产品化总纲（路线图 / 分发 / 升级 / 多平台 / 开源治理）；
 - `docs/milestones/` —— 各里程碑目标（M1 产品化基础 … M5 Apple 生态）；
+- `docs/release-process.md` —— **发布流程**（CHANGELOG → tag → local-release → 版本推进）；
 - `README.md` —— 安装 / 构建 / 环境变量。
 
 ## 关键约束
@@ -37,6 +38,17 @@
 - 分支推送后开 PR 合并（CI 全绿 + review）；已发布版本的修复同步回 main 也走 PR；
 - 提交用 conventional commits（`feat(…): …` / `fix(…): …` / `docs(…): …`）；
 - 提交前 `git status` 确认只含本次改动，**不顺手提交无关文件**（其他会话/代理的在途改动不要碰）。
+
+## 发布流程（见 docs/release-process.md）
+
+主版本发布四步（v1.11.0 实战校准）：
+
+1. **更新 CHANGELOG.md**（必须用 `scripts/changelog.sh <上个tag>` 生成清单，curate 进顶部 `[Unreleased]` 段）→ commit；
+2. **打 tag + push**：`git tag -a vX.Y.Z` 后 `git push github main && git push github vX.Y.Z`（先改 changelog 再打 tag）；
+3. **构建发布**：`GH_TOKEN=… IS_PRERELEASE=1 scripts/local-release.sh arm64 x86_64`；⚠️ DMG 的 `hdiutil` 需访问 `/dev`，必须在 `danger-full-access` 沙箱下运行；
+4. **推进版本号**：`scripts/version.sh` 的 `FALLBACK_VERSION`/`FALLBACK_BUILD` +1，并更新 CHANGELOG 顶部 `[Unreleased]` 占位，单 commit（形如 `86eba72`）提交推送。
+
+> `main` 受分支保护**禁 force-push**；已推送历史不可改写。
 
 ## GitHub token（位置与用法）
 
