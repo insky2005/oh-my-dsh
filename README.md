@@ -72,7 +72,7 @@ open "dist/oh-my-dsh-1.8.0-arm64.dmg"
    （自动选最新 LTS，如 v24.19.0；失败自动回退 nodejs.org），用官方 `SHASUMS256.txt` 校验 SHA-256 后，
    把 `bin/node` 和 `lib/node_modules/npm`（升级功能要用）嵌入 `Contents/Resources/runtime/`；
 2. **安装 dsh**：用刚下载的 Node 自带 npm，在 `Contents/Resources/runtime/dsh` 里执行
-   `npm install @deepseek-ai/dsh@0.1.0-rc.6`（默认版本，含其全部依赖闭包），默认走国内 npm 源
+   `npm install @deepseek-ai/dsh@0.1.0-rc.7`（默认版本，含其全部依赖闭包），默认走国内 npm 源
    `registry.npmmirror.com`（失败自动回退 npmjs.org）。
 
 构建变量：
@@ -80,7 +80,7 @@ open "dist/oh-my-dsh-1.8.0-arm64.dmg"
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `DSH_NODE_VERSION` | 自动检测最新 LTS | 指定下载的 Node 版本，如 `v22.23.2` |
-| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.0-rc.6` | 传给 `npm install` 的包说明，如 `@deepseek-ai/dsh@latest` |
+| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.0-rc.7` | 传给 `npm install` 的包说明，如 `@deepseek-ai/dsh@latest` |
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh 用） |
 | `DSH_ARCH` | `uname -m` | 目标架构：`arm64` / `x86_64` / `universal`（CI 矩阵用） |

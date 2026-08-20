@@ -15,7 +15,7 @@
 #   2. runs `npm install <dsh>` (via that downloaded Node) in
 #      Contents/Resources/runtime/dsh, pulling @deepseek-ai/dsh and its whole
 #      dependency closure from the npm registry (default spec:
-#      @deepseek-ai/dsh@0.1.0-rc.6; override with DSH_PACKAGE_SPEC).
+#      @deepseek-ai/dsh@0.1.0-rc.7; override with DSH_PACKAGE_SPEC).
 #
 # China mirrors are used by default for speed (override with DSH_NODE_MIRROR /
 # DSH_NPM_REGISTRY). Downloads and the built runtime are cached in .cache/ so
@@ -146,7 +146,7 @@ download_node() {
 # install_dsh <target-dir>: npm install dsh into target; registry fallback
 install_dsh() {
   local target="$1"
-  local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.0-rc.6}"
+  local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.0-rc.7}"
   mkdir -p "$target"
   ( cd "$target" \
     && npm init -y >/dev/null 2>&1 \
@@ -157,7 +157,7 @@ install_dsh() {
 
 # build_runtime: node bin + npm + dsh tree into $CACHE_DIR/runtime (cached)
 build_runtime() {
-  local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.0-rc.6}"
+  local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.0-rc.7}"
   local stage="$CACHE_DIR/runtime"
   local info="$stage/.runtime-info"
   if [ -f "$info" ] && grep -qx "$NODE_VERSION|$spec|$ARCH" "$info" 2>/dev/null; then
@@ -211,7 +211,7 @@ if [ "$MODE" = "prefetch" ]; then
   build_runtime
   echo ""
   echo "Prefetched runtime ready: $CACHE_DIR/runtime"
-  echo "Node: $NODE_VERSION | dsh: ${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.0-rc.6}"
+  echo "Node: $NODE_VERSION | dsh: ${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.0-rc.7}"
   echo "A later './build-app.sh' will reuse it without network."
   exit 0
 fi
