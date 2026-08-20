@@ -78,22 +78,22 @@ done
 # vX.Y.Z tag 上 → 取该 tag；否则 → 开发线 fallback。
 VER="$(scripts/version.sh | head -1)"
 
-# 发布模式：必须 HEAD 恰好在 v$VER tag 上（version.sh 在 HEAD 无 tag 时输出
+# 发布模式：必须 HEAD 恰好在 v${VER} tag 上（version.sh 在 HEAD 无 tag 时输出
 # fallback，此时发布会按错误的 commit/版本建 Release——阻断）。
 if [ "$MODE" = "release" ]; then
   HEAD_TAG="$(git tag --points-at HEAD | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || true)"
-  if [ -z "$HEAD_TAG" ] || [ "${HEAD_TAG#v}" != "$VER" ]; then
-    echo "ERROR: 发布要求 HEAD 恰好在 v$VER tag 上（当前 HEAD_TAG=${HEAD_TAG:-无}）。" >&2
-    echo "      VERSION 单一来源是 git tag：请先 git tag v$VER 并让 HEAD 落在其上，" >&2
+  if [ -z "$HEAD_TAG" ] || [ "${HEAD_TAG#v}" != "${VER}" ]; then
+    echo "ERROR: 发布要求 HEAD 恰好在 v${VER} tag 上（当前 HEAD_TAG=${HEAD_TAG:-无}）。" >&2
+    echo "      VERSION 单一来源是 git tag：请先 git tag v${VER} 并让 HEAD 落在其上，" >&2
     echo "      再重跑本脚本。pack 模式（临时打包）不受此限。" >&2
     exit 1
   fi
-  echo "    version v$VER = HEAD tag ✓（产物版本一致）"
+  echo "    version v${VER} = HEAD tag ✓（产物版本一致）"
 else
-  echo "    version $VER（pack 模式，来自 version.sh：$(git tag --points-at HEAD >/dev/null 2>&1 && [ -n "$(git tag --points-at HEAD | head -1)" ] && echo 'HEAD tag' || echo '开发线 fallback')）"
+  echo "    version ${VER}（pack 模式，来自 version.sh：$(git tag --points-at HEAD >/dev/null 2>&1 && [ -n "$(git tag --points-at HEAD | head -1)" ] && echo 'HEAD tag' || echo '开发线 fallback')）"
 fi
 
-echo "==> [RELEASE] v$VER archs=($ARCHS) prerelease=${IS_PRERELEASE:-1}"
+echo "==> [RELEASE] v${VER} archs=($ARCHS) prerelease=${IS_PRERELEASE:-1}"
 
 # ---------- 阶段1 prepare：预下载 node + 预取 runtime（命中 .cache/） ----------
 # 按目标架构逐个 prefetch：runtime 缓存按架构分目录（.cache/runtime/<arch>），
@@ -119,16 +119,16 @@ if [ "$MODE" = "pack" ]; then
   echo "==> [3/3] pack 模式：跳过 SHA-256SUMS 与 GitHub 发布"
   echo "==> [PACK] done（未发布）: dist/oh-my-dsh-*.pkg / .dmg"
   echo "     发布请去掉 pack 重跑本脚本，或手动执行:"
-  echo "       scripts/release-checksums.sh $VER && scripts/github-publish.sh $VER"
+  echo "       scripts/release-checksums.sh ${VER} && scripts/github-publish.sh ${VER}"
   exit 0
 fi
 echo "==> [3/3 release] write SHA-256SUMS + release notes"
-scripts/release-checksums.sh "$VER"
+scripts/release-checksums.sh "${VER}"
 
 echo "==> [3/3 release] publish GitHub Release"
 if [ -z "${GH_TOKEN:-}" ] && ! command -v gh >/dev/null 2>&1; then
   echo "ERROR: need GH_TOKEN (repo write) or a logged-in 'gh' CLI to publish." >&2
   exit 1
 fi
-scripts/github-publish.sh "$VER"
-echo "==> [RELEASE] done: https://github.com/${GITHUB_REPOSITORY:-insky2005/oh-my-dsh}/releases/tag/v$VER"
+scripts/github-publish.sh "${VER}"
+echo "==> [RELEASE] done: https://github.com/${GITHUB_REPOSITORY:-insky2005/oh-my-dsh}/releases/tag/v${VER}"
