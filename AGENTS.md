@@ -54,4 +54,4 @@ tests/wiki-panel/run.sh        # Wiki 面板模型层单测
 tests/terminal-emulator/run.sh # 模拟器测试（已迁 core/tests/ansi.test.js 的薄封装）
 ```
 
-提交前保持全绿；CI 会在 push/PR 自动跑（macOS arm64/x64/Universal + core 单测）。
+提交前保持全绿；CI 会在 push/PR 自动跑（macOS arm64 构建 + core 单测；x86_64 交叉编译由 release.yml 打 tag 时构建，不再出 universal）。

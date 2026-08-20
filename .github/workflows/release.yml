@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Build all three artifacts on macOS (arm64 / x86_64 / universal).
+  # Build both artifacts on macOS (arm64 / x86_64; no universal).
   build:
     name: build ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
@@ -23,11 +23,10 @@ jobs:
         include:
           # x86_64 在 macos-14 (arm64) 上交叉编译（build-app.sh 用 -target 交叉构建），
           # 不再依赖退役中的 macos-13 runner（容量极低、排队严重）。
+          # 产品只出 arm64 / x86_64，不再出 universal。
           - arch: arm64
             runner: macos-14
           - arch: x86_64
-            runner: macos-14
-          - arch: universal
             runner: macos-14
     steps:
       - uses: actions/checkout@v4

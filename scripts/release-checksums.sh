@@ -14,8 +14,9 @@ cd "$(dirname "$0")/.."
 VERSION="${1:-}"
 [ -n "$VERSION" ] || { echo "usage: release-checksums.sh <version>" >&2; exit 1; }
 
+# 产品只出 arm64 / x86_64，不再出 universal。
 ARTIFACTS=()
-for arch in arm64 x86_64 universal; do
+for arch in arm64 x86_64; do
   for ext in pkg dmg; do
     f="dist/oh-my-dsh-${VERSION}-${arch}.${ext}"
     [ -f "$f" ] && ARTIFACTS+=("$f")
