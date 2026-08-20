@@ -13,6 +13,7 @@
 #   scripts/local-release.sh <ver>               # 两架构全发（对齐 GitHub：arm64+x86_64）
 #   scripts/local-release.sh <ver> <arch...>     # 只发指定架构，可多个（arm64 / x86_64）
 #   scripts/local-release.sh <ver> arm64         # 只发 arm64 一个
+#   scripts/local-release.sh pack <ver> [arch...]  # 只打包（pkg/dmg），不发布 GitHub
 #
 #   <ver> 版本号不带前导 v（如 1.11.0）
 #   [pre] 通过环境变量 IS_PRERELEASE 控制（默认 1=预发布；0=正式）
@@ -32,6 +33,14 @@ cd "$(dirname "$0")/.."   # 仓库根
 VER="${1:-}"
 ALL_ARCHS="arm64 x86_64"
 ARCHS="${@:2}"
+
+# pack 模式：只打包不发布（prepare + build，跳过 checksums/publish）
+MODE="release"
+if [ "$VER" = "pack" ]; then
+  MODE="pack"
+  VER="${2:-}"
+  ARCHS="${@:3}"
+fi
 
 # ===== 脚本实现见下方（勿改帮助文案） =====
 usage() {
@@ -84,6 +93,14 @@ echo "==> [2/3 build] artifacts:"
 ls -lh dist/oh-my-dsh-*.pkg dist/oh-my-dsh-*.dmg 2>/dev/null || true
 
 # ---------- 阶段3 release：校验和 + gh release create ----------
+# pack 模式：只打包不发布——跳过 checksums 与 GitHub 发布
+if [ "$MODE" = "pack" ]; then
+  echo "==> [3/3] pack 模式：跳过 SHA-256SUMS 与 GitHub 发布"
+  echo "==> [PACK] done（未发布）: dist/oh-my-dsh-*.pkg / .dmg"
+  echo "     发布请去掉 pack 重跑本脚本，或手动执行:"
+  echo "       scripts/release-checksums.sh $VER && scripts/github-publish.sh $VER"
+  exit 0
+fi
 echo "==> [3/3 release] write SHA-256SUMS + release notes"
 scripts/release-checksums.sh "$VER"
 
