@@ -21,7 +21,7 @@
 ## 产物
 
 ```
-dist/oh-my-dsh.app                    编译好的原生 App（arm64，ad-hoc 签名，约 670 MB，含内置运行时）
+dist/oh-my-dsh.app                    编译好的原生 App（arm64，ad-hoc 签名，约 400 MB，含内置运行时）
 dist/oh-my-dsh-<version>-arm64.pkg    安装包（装到 /Applications，版本号随 git tag）
 dist/oh-my-dsh-<version>-arm64.dmg    拖拽安装镜像（把 App 拖进 Applications）
 ```

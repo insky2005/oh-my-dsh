@@ -216,7 +216,7 @@ if [ "$MODE" = "prefetch" ]; then
   exit 0
 fi
 
-echo "==> [1/6] preparing build dirs"
+echo "==> [1/7] preparing build dirs"
 rm -rf "$BUILD_DIR" "$APP"
 mkdir -p "$BUILD_DIR" "$DIST" "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # TMPDIR 在脚本开头已指向 $BUILD_DIR/tmp，rm 后必须重建（swiftc 依赖它）。
@@ -227,13 +227,13 @@ mkdir -p "$BUILD_DIR/tmp"
 mkdir -p "$BUILD_DIR/module-cache"
 SWIFTC_CACHE=(-module-cache-path "$BUILD_DIR/module-cache")
 
-echo "==> [2/6] rendering app icon"
+echo "==> [2/7] rendering app icon"
 swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" -o "$BUILD_DIR/makeicon" "$SRC/MakeIcon.swift"
 "$BUILD_DIR/makeicon" "$BUILD_DIR/AppIcon.iconset"
 iconutil -c icns "$BUILD_DIR/AppIcon.iconset" -o "$BUILD_DIR/AppIcon.icns"
 cp "$BUILD_DIR/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
-echo "==> [3/6] compiling app binary"
+echo "==> [3/7] compiling app binary"
 # 交叉编译：-target 指定 arch+最低系统版本（swiftc 6 不再接受裸 -arch）。
 # universal = 编译两个 arch 再 lipo 合成 fat binary。
 SWIFT_SOURCES=("$SRC/main.swift" "$SRC/PreviewPanel.swift" "$SRC/TerminalPanel.swift" "$SRC/WikiPanel.swift" "$SRC/IssueRunnerPanel.swift")
@@ -262,7 +262,7 @@ case "$ARCH" in
 esac
 echo "    app binary: $ARCH ($(lipo -info "$APP_BIN" 2>/dev/null | sed 's/^Architectures in the fat file.*are: //' || file -b "$APP_BIN" | cut -d, -f1))"
 
-echo "==> [4/6] building self-contained runtime (download node + npm install dsh)"
+echo "==> [4/7] building self-contained runtime (download node + npm install dsh)"
 build_runtime
 RUNTIME="$APP/Contents/Resources/runtime"
 mkdir -p "$RUNTIME"
@@ -274,7 +274,7 @@ if [ -d "$ROOT/core" ]; then
 fi
 echo "    runtime embedded: $RUNTIME"
 
-echo "==> [5/6] writing Info.plist"
+echo "==> [5/7] writing Info.plist"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -340,7 +340,23 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-echo "==> [6/6] ad-hoc code signing"
+echo "==> [6/7] slimming app bundle (见 docs/plans/APP_SLIM-app-size.md)"
+RUNTIME="$APP/Contents/Resources/runtime"
+# 1. 删除重复的纯 node（node-arm64/node-x86_64 已有，纯 node 仅是旧布局兜底；
+#    bundledNode() 优先取 node-<arch>，缺失才回退纯 node）。单架构与 universal 均省 ~116M。
+if [ -f "$RUNTIME/node" ] && { [ -f "$RUNTIME/node-arm64" ] || [ -f "$RUNTIME/node-x86_64" ]; }; then
+  rm -f "$RUNTIME/node"
+  echo "    removed duplicate node (~116M)"
+fi
+# 2. 删除 node-pty 的 win32 预编译（macOS 永用不到，实测 ~23M）
+PYY="$RUNTIME/dsh/node_modules/node-pty/prebuilds"
+if [ -d "$PYY" ]; then
+  rm -rf "$PYY"/win32-*
+  echo "    removed node-pty win32 prebuilds"
+fi
+echo "    slimmed size: $(du -sh "$APP" | cut -f1)"
+
+echo "==> [7/7] ad-hoc code signing"
 codesign --force --deep --sign - "$APP"
 
 echo ""
