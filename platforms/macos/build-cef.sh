@@ -75,7 +75,10 @@ LDL="$DIST/libcef_dll"
 # ---- 3-5. 编译 libcef_dll wrapper + CEFShim + helper（产物缓存复用） ----
 ARTIFACT_CACHE="$CACHE/cef-built-$ARCH"
 # 缓存键：CEF 版本 + 本脚本/CEF 源码 hash。任一变化即失效重编。
-ARTIFACT_KEY="$CEF_VERSION|$(shasum "$0" "$ROOT/platforms/macos/cef/CEFShim.mm" "$ROOT/platforms/macos/cef/process_helper_mac.cc" "$ROOT/platforms/macos/cef/CEFShim.h" 2>/dev/null | shasum | awk '{print $1}')"
+# 注意：shasum 文件列表时输出带文件名，二次 shasum 会把名字混进 key，
+# 所以这里必须统一用 $ROOT 绝对路径（$0 会因调用方用相对/绝对路径而不同，
+# 导致 local-ci.sh 与 build-app.sh 算出的 key 不一致、缓存永不命中、CEF 重复编译）。
+ARTIFACT_KEY="$CEF_VERSION|$(shasum "$ROOT/platforms/macos/build-cef.sh" "$ROOT/platforms/macos/cef/CEFShim.mm" "$ROOT/platforms/macos/cef/process_helper_mac.cc" "$ROOT/platforms/macos/cef/CEFShim.h" 2>/dev/null | shasum | awk '{print $1}')"
 REUSE=0
 if [ -f "$ARTIFACT_CACHE/libcef_dll_wrapper-$ARCH.a" ] \
    && [ -f "$ARTIFACT_CACHE/CEFShim-$ARCH.o" ] \
