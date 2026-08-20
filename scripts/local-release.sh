@@ -21,6 +21,7 @@
 #   GH_TOKEN            GitHub token（repo 写权限）；或已登录 gh CLI 可省略
 #   GITHUB_REPOSITORY   覆盖目标仓库（默认 insky2005/oh-my-dsh）
 #   IS_PRERELEASE       1=预发布（默认）| 0=正式发布
+#   DSH_NPM_REGISTRY    npm registry（默认 npmmirror；GitHub 构建显式走官方 npmjs）
 #
 # 发布规范（docs/git-workflow.md）：版本单一来源是 git tag。
 #   发布前请先 'git tag v<ver>' 且让 HEAD 落在其上；否则会用回退版本并警告。

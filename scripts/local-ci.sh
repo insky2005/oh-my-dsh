@@ -21,6 +21,8 @@
 #   - GitHub 每次是干净工作区靠 actions/cache 缓存；本地复用 .cache/（等价缓存命中）。
 #   - CI 只做 arm64 构建校验（x86_64 交叉编译由 release.yml 打 tag 时校验），
 #     不打包 pkg/dmg —— 打包属 release。
+#   - GitHub 构建显式走官方 npm registry / Node 镜像（DSH_NPM_REGISTRY /
+#     DSH_NODE_MIRROR）；本地默认 npmmirror（国内更快）。
 set -euo pipefail
 cd "$(dirname "$0")/.."   # 仓库根
 

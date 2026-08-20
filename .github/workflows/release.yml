@@ -42,6 +42,10 @@ jobs:
       - name: Build app
         env:
           DSH_ARCH: ${{ matrix.arch }}
+          # GitHub runner 在美国：显式走官方 npm registry / Node 镜像（权威、
+          # 无镜像同步滞后）；本地脚本默认保持 npmmirror（国内更快）。
+          DSH_NPM_REGISTRY: https://registry.npmjs.org
+          DSH_NODE_MIRROR: https://nodejs.org/dist
         run: ./platforms/macos/build-app.sh
       - name: Package .pkg + .dmg
         env:
