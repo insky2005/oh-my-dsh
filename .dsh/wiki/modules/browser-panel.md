@@ -1,8 +1,8 @@
 ---
 title: 模块：BrowserPanel.swift / BrowserAPI.swift（浏览器面板，CEF/Chromium 内核）
 tags: [module, browser, cef, chromium, osr, rest-api, agent]
-updated: 2026-08-18T15:30:00Z
-sources: [platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/BrowserCDP.swift, platforms/macos/cef/CEFShim.h, platforms/macos/cef/CEFShim.mm, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, docs/plans/BROWSER_PLAN-browser-panel.md, docs/terminal-header-fix.md]
+updated: 2026-08-20T16:06:00Z
+sources: [platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/BrowserCDP.swift, platforms/macos/cef/CEFShim.h, platforms/macos/cef/CEFShim.mm, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, docs/plans/BROWSER_PLAN-browser-panel.md, docs/terminal-header-fix.md, docs/devtools-drag-fix.md]
 manual: false
 ---
 
@@ -51,6 +51,8 @@ OSR 下 CEF 不知道宿主窗口位置，默认菜单弹错位：`OnBeforeConte
 ## DevTools
 
 「DevTools」按钮 → `CEFShim.showDevTools`：CEF 原生 ShowDevTools（Chromium 自带完整调试器），CEF 150 mac 无 `SetAsPopup` → 自建独立 NSWindow（960×640，`g_devtoolsWindow` 强引用防释放）`SetAsChild` 挂载。此前用 `inspector.html?ws=…` 在系统浏览器打开，CDP WebSocket 连接不稳且挤占面板页签，已废弃。
+
+**DevTools 拖动修复**（`docs/devtools-drag-fix.md`）：拖动 DevTools 标题条调两个窗口高度时，`onDrag` 每 80ms 触发 `notifyResize()`→`WasResized()` 会让 Chromium 重新布局页面、渲染像素内容发生不可控上移（frame 正确但视觉在动）。修复思路：**拖动期间不动 CEF 视图**——首次拖动设 `pageView.autoresizesSubviews = false`、只改 devtoolsArea 高度约束 + `layoutSubtreeIfNeeded()`，不调 `notifyResize()`/`WasResized()`，devtoolsArea z-order 更高盖住 CEF 溢出；拖动结束恢复 autoresize、一次性更新 CEF 视图 frame 并只调一次 `WasResized()`。另：覆盖式切换后把主 CEF 视图钉回顶部全高（Chromium 会把 CEF 底部对齐致顶部空白）+ 视口一次 resize；覆盖式约束用 `activate` 数组激活（init 里 `isActive=true` 曾致启动卡 buildWindow/Starting）。
 
 ## 控制台/网络日志（供 REST API 读取）
 

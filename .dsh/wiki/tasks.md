@@ -1,8 +1,8 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-08-16T16:02:38Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, .github/workflows/, core/tests/]
+updated: 2026-08-20T16:05:00Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, Jenkinsfile, .github/workflows/, core/tests/]
 manual: false
 ---
 
@@ -84,10 +84,12 @@ tests/wiki-panel/run.sh             # Repo Wiki 模型层
 
 **主版本（vX.Y.0）**：
 
-1. 版本确认：main 上 HEAD 打 git tag vX.Y.0（`scripts/version.sh` 输出 VERSION/BUILD）；
+1. 版本确认：main 上 HEAD 打 git tag vX.Y.0（`scripts/version.sh` 输出 VERSION/BUILD；`local-release.sh`/CI 均要求 HEAD 恰在 tag 上，版本单一来源 git tag）；
 2. `./platforms/macos/build-app.sh` 全量构建 → `open dist/oh-my-dsh.app` 手工 QA（README 特性逐项过）；
 3. `tests/*/run.sh` 全绿；
-4. `./platforms/macos/make-pkg.sh` 出 .pkg/.dmg；
+4. 打包 + 发布（二选一）：
+   - 本机：`scripts/local-release.sh`（两架构）或 `scripts/local-release.sh pack`（只打包不发布）；自动读 version.sh、做 SHA-256SUMS、发布 GitHub Release；
+   - 或 CI：push `v*` tag 触发 release.yml（见下）；
 5. 提交时检查 `git status`：只含源码/文档/wiki 变更（.build/.cache/dist/pic 已忽略）；
 6. 发布后**立即**把 `scripts/version.sh` 的 `FALLBACK_VERSION` 推进到下一个 minor（发布 v1.9.0 → 1.10.0）。
 
@@ -101,4 +103,6 @@ tests/wiki-panel/run.sh             # Repo Wiki 模型层
 - 也可手动写 `~/.dsh/gh-token`（通用，App 与外部工具/代理共用同一份）；解析优先级见 [issue-runner-panel](modules/issue-runner-panel.md)；公开仓库无需 token。
 
 CI 侧（`release.yml`）：push `v*` tag（主版本或 patch 均触发）自动在 macos-14 构建 arm64 / x86_64（-target 交叉编译）两份产物（.pkg/.dmg，不再出 universal），汇总后出 SHA-256SUMS 并以 **pre-release** 发布 GitHub Release（人工确认后改正式）；同一 tag 重复触发会取消旧 run（concurrency）；
-- **发布幂等**（`68fc925` 起）：Collect 步骤先 `rm -rf dist` 再拷贝产物（避免混入历史产物）；publish 先 `gh release delete <tag> --cleanup-tag`（失败忽略）再用 `gh release create --target $GITHUB_SHA` 重建 tag + Release + 资产，同 tag 重复发布不再 already_exists（此前尝试过 smoke job / softprops action / --clobber，均已回退或替换）。
+- **prepare 前置 job**（`ab1f0b0`/38f4605 起）：release 三个 build job 经 `needs: prepare` 依赖前置 job——它预编译双架构 CEF + 预下载 node/prefetch runtime，统一缓存到 `.cache/`；build 矩阵（arm64/x86_64 均跑 macos-14，x86_64 交叉编译）restore-key 回退到 arm64/prepare 的 `.cache/` 复用，避免各 job 冷启动重下/重编 CEF（build-cef.sh 产物缓存 `.cache/cef-built-<arch>`）；x86_64 不再依赖退役中的 macos-13 runner；
+- **发布幂等**（`68fc925` 起）：Collect 步骤先 `rm -rf dist` 再拷贝产物（避免混入历史产物）；publish 先 `gh release delete <tag> --cleanup-tag`（失败忽略）再用 `gh release create --target $GITHUB_SHA` 重建 tag + Release + 资产，同 tag 重复发布不再 already_exists（此前尝试过 smoke job / softprops action / --clobber，均已回退或替换）；
+- 另可用 **Jenkins**（`Jenkinsfile`）在 macOS agent 上打包 + 发布（gh CLI / curl API 兜底），见 [build-scripts](modules/build-scripts.md)。

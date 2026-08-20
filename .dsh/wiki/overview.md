@@ -1,8 +1,8 @@
 ---
 title: 仓库概览
 tags: [overview, tech-stack, build, run, test]
-updated: 2026-08-18T15:30:00Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/build-cef.sh, platforms/macos/make-pkg.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/MakeIcon.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/tests/issues.test.js, docs/productization.md, docs/git-workflow.md, scripts/version.sh, .github/workflows/, tests/wiki-panel/run.sh]
+updated: 2026-08-20T16:07:00Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/build-cef.sh, platforms/macos/make-pkg.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/MakeIcon.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/tests/issues.test.js, docs/productization.md, docs/git-workflow.md, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, Jenkinsfile, .github/workflows/, tests/wiki-panel/run.sh]
 manual: false
 ---
 
@@ -25,15 +25,16 @@ oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deeps
 | 打包 | `pkgbuild` + `hdiutil`（`platforms/macos/make-pkg.sh` → .pkg / .dmg） |
 | 目标平台 | macOS 13+（Apple Silicon / arm64；Info.plist `LSMinimumSystemVersion` = 13.0） |
 
-当前工作区版本：`1.11.0`（fallback，BUILD 67；最新发布 `v1.10.0`）；版本由 git tag 驱动（`scripts/version.sh`：HEAD 命中 vX.Y.Z → 取 tag，否则回退 1.11.0；BUILD 取 CI 运行号）。最近 git 提交：`5910a4a`（"feat(browser): 浏览器面板改用 CEF（Chromium）内核 — 五 helper 根因修复 + CDP 控制台/求值/截图 + 构建管线"）——浏览器面板内核定为 CEF/Chromium（root cause：CEF 148+ 需五 helper app，缺 `(Renderer)` 致 renderer 静默失败，见 [browser-panel](modules/browser-panel.md)）；工作区还有**未提交**的浏览器面板演进（OSR 离屏渲染、Chromium 原生 DevTools 窗口、控制台抽屉移除、QA 端点 debug/hierarchy）。历史：Node 选择策略定型为**系统优先、内置兜底、带版本门槛**（ac4312c 系统优先：resolveNode = DSH_NODE > 系统 node（PATH→nvm current→nvm default→nvm 最新→Homebrew，90d9176/ceefc0c 定序）> 内置 node；6428249 加版本门槛：候选低于 22.0.0 跳过（`DSH_NODE_MIN` 可覆盖），全过旧则内置兜底，版本比较内联 Swift 不经 CoreBridge 避免递归；启动轮询加 1s 沉降校验防引导页假就绪；f4cfa33：dsh web 环境经 `loginShellPath()`（`/bin/zsh -ilc` 读一次登录 shell PATH，8s 超时兜底、结果缓存）合并用户 PATH，不注入内置目录）；About 面板显示实际 node 路径（8fcd6cc）并将 Node 版本+路径合并为一行（e9d6bb2）；此前任务面板工作区识别改**权威判断**（workspacePath 非 GitHub 仓库时诚实显示空态、不再替换为其他工作区，13bf9e3；切换到不同仓库先清空旧任务列表，197189e）、会话切换**无条件**触发任务面板刷新（4a7de43/40288d1）、token 读取改文件优先、Keychain 兜底（88f0255）。
+当前工作区版本：`1.11.0`（fallback，BUILD 67；最新发布 `v1.10.0`）；版本由 git tag 驱动（`scripts/version.sh`：HEAD 命中 vX.Y.Z → 取 tag，否则回退 1.11.0；BUILD 取 CI 运行号）。最近 git 提交：`8f51161`（合并 PR #14 feature/browser-panel）——浏览器面板内核定为 CEF/Chromium（root cause：CEF 148+ 需五 helper app，缺 `(Renderer)` 致 renderer 静默失败，见 [browser-panel](modules/browser-panel.md)）；浏览器面板演进已合并进 main（OSR 离屏渲染默认、Chromium 原生 DevTools 窗口、控制台抽屉移除、QA 端点 debug/hierarchy、DevTools 拖动修复）。发布/CI 侧近期演进：`local-release.sh`（含 `pack` 只打包不发布子命令）、`github-publish.sh`/`release-checksums.sh` 发布脚本、`Jenkinsfile`、runtime/CEF 缓存按架构分目录（`.cache/runtime/<arch>`、`.cache/cef-built-<arch>`）、release.yml 新增 prepare 前置 job，见 [build-scripts](modules/build-scripts.md) 与 [tasks](tasks.md)。历史：Node 选择策略定型为**系统优先、内置兜底、带版本门槛**（ac4312c 系统优先：resolveNode = DSH_NODE > 系统 node（PATH→nvm current→nvm default→nvm 最新→Homebrew，90d9176/ceefc0c 定序）> 内置 node；6428249 加版本门槛：候选低于 22.0.0 跳过（`DSH_NODE_MIN` 可覆盖），全过旧则内置兜底，版本比较内联 Swift 不经 CoreBridge 避免递归；启动轮询加 1s 沉降校验防引导页假就绪；f4cfa33：dsh web 环境经 `loginShellPath()`（`/bin/zsh -ilc` 读一次登录 shell PATH，8s 超时兜底、结果缓存）合并用户 PATH，不注入内置目录）；About 面板显示实际 node 路径（8fcd6cc）并将 Node 版本+路径合并为一行（e9d6bb2）；此前任务面板工作区识别改**权威判断**（workspacePath 非 GitHub 仓库时诚实显示空态、不再替换为其他工作区，13bf9e3；切换到不同仓库先清空旧任务列表，197189e）、会话切换**无条件**触发任务面板刷新（4a7de43/40288d1）、token 读取改文件优先、Keychain 兜底（88f0255）。
 
 ## 目录布局
 
 ```
 core/                共享核心（Node 模块：ANSI 模拟器 / 端口探测 / 升级 / 会话 RPC / issues / jobqueue / tasks 关联索引，跨平台复用；随构建嵌入 runtime/core）
 platforms/           各平台壳（macos/ 现有壳，windows/ linux/ 规划中）
-scripts/             跨平台工具（version.sh 版本单一来源 / changelog.sh / release-checksums.sh / git-remote.sh 远端检测 / release-fix.sh patch 发布 / 迁移脚本）
-.github/             CI 工作流（core 单测走 ubuntu；壳层单测/编译检查 + arm64 构建走 macos-14；x86_64 交叉编译由 release.yml 打 tag 时构建，不再出 universal，也不再依赖退役中的 macos-13 runner）；release.yml 发布幂等（先删旧 release+tag 再 --target 重建，见 [tasks](tasks.md)）
+scripts/             跨平台工具（version.sh 版本单一来源 / changelog.sh / release-checksums.sh 校验和 / github-publish.sh 发布 / local-release.sh 本机 Release / git-remote.sh 远端检测 / release-fix.sh patch 发布 / 迁移脚本）
+.github/             CI 工作流（core 单测走 ubuntu；壳层单测/编译检查 + arm64 构建走 macos-14；x86_64 交叉编译由 release.yml 打 tag 时构建，不再出 universal，也不再依赖退役中的 macos-13 runner）；release.yml 发布幂等（先删旧 release+tag 再 --target 重建）+ prepare 前置 job 预编译双架构 CEF 统一缓存，见 [tasks](tasks.md)
+Jenkinsfile          Jenkins 打包 + GitHub Release 发布（macOS agent 上 build-app.sh + make-pkg.sh；gh CLI / curl API 兜底），见 [build-scripts](modules/build-scripts.md)
 platforms/macos/src/main.swift       壳层核心（日志/L10n/服务管理/升级/窗口/菜单/设置窗口/onboarding/CoreBridge）约 3300 行
 platforms/macos/src/PreviewPanel.swift  预览面板（文件/文件夹预览 + 项目目录树 + 共享 UI 组件）约 1481 行
 platforms/macos/src/TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）约 1875 行
@@ -66,7 +67,7 @@ pic/                 QA 调试截图 — git 忽略
 ```
 
 - 编译命令：`swiftc -O -swift-version 5 -framework AppKit -framework WebKit -framework PDFKit`，源文件清单显式列出（`main/PreviewPanel/TerminalPanel/WikiPanel/IssueRunnerPanel/BrowserPanel/BrowserAPI/BrowserCDP`）+ CEF 产物（`build-cef.sh` 产出 wrapper/shim/五 helper，由内向外签名）；
-- 内置运行时构建期现做：下载 Node tarball（默认国内镜像 `npmmirror.com/mirrors/node`，校验 SHA-256），用其自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.1.0-rc.6`（默认 `DSH_PACKAGE_SPEC`，国内源失败自动回退 npmjs.org）；
+- 内置运行时构建期现做：下载 Node tarball（默认国内镜像 `npmmirror.com/mirrors/node`，校验 SHA-256），用其自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.1.0-rc.7`（默认 `DSH_PACKAGE_SPEC`，国内源失败自动回退 npmjs.org）；
 - 缓存：`(Node 版本, dsh 版本)` 相同则复用 `.cache/runtime`，重建只需几十秒；网络不可用时用缓存 tarball 推导版本继续。
 
 构建变量（均可用环境变量覆盖）：`DSH_NODE_VERSION`、`DSH_PACKAGE_SPEC`、`DSH_NODE_MIRROR`、`DSH_NPM_REGISTRY`、`DSH_ARCH`（详见 README「构建」与 [build-scripts](modules/build-scripts.md)）。
