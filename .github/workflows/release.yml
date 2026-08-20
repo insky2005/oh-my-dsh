@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Build all three artifacts on macOS (arm64 / x86_64 / universal).
+  # Build both artifacts on macOS (arm64 / x86_64; no universal).
   build:
     name: build ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
@@ -23,11 +23,10 @@ jobs:
         include:
           # x86_64 在 macos-14 (arm64) 上交叉编译（build-app.sh 用 -target 交叉构建），
           # 不再依赖退役中的 macos-13 runner（容量极低、排队严重）。
+          # 产品只出 arm64 / x86_64，不再出 universal。
           - arch: arm64
             runner: macos-14
           - arch: x86_64
-            runner: macos-14
-          - arch: universal
             runner: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +42,10 @@ jobs:
       - name: Build app
         env:
           DSH_ARCH: ${{ matrix.arch }}
+          # GitHub runner 在美国：显式走官方 npm registry / Node 镜像（权威、
+          # 无镜像同步滞后）；本地脚本默认保持 npmmirror（国内更快）。
+          DSH_NPM_REGISTRY: https://registry.npmjs.org
+          DSH_NODE_MIRROR: https://nodejs.org/dist
         run: ./platforms/macos/build-app.sh
       - name: Package .pkg + .dmg
         env:

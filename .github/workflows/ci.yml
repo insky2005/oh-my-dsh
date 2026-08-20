@@ -27,8 +27,9 @@ jobs:
         run: node --test core/tests/*.test.js
 
   # --- macOS shell: unit tests + swiftc compile check (fast, no build) ------
-  # macos-13 (x86_64) 退役中、runner 容量极低且排队严重；x86_64 的编译正确性
-  # 已由 build(universal) 的 lipo 双架构构建覆盖，故 CI 只在 arm64 上跑单测。
+  # macos-13 (x86_64) 退役中、runner 容量极低且排队严重；产品已不再出
+  # universal，x86_64 交叉编译正确性由 release.yml 打 tag 发布时校验，
+  # 故 CI 只在 arm64 上跑单测与构建。
   swift:
     name: swift tests (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
@@ -53,9 +54,9 @@ jobs:
             platforms/macos/src/main.swift platforms/macos/src/PreviewPanel.swift platforms/macos/src/TerminalPanel.swift platforms/macos/src/WikiPanel.swift platforms/macos/src/IssueRunnerPanel.swift
           file /tmp/oh-my-dsh-check
 
-  # --- Full app build matrix: arm64 / universal -----------------------------
-  # universal 构建（arm64 + x86_64 lipo）即覆盖 x86_64 编译验证，无需再单独
-  # 排队 macos-13 runner（退役中、容量极低）。
+  # --- Full app build matrix: arm64 (x86_64 由 release.yml 交叉构建校验) -----
+  # 产品只出 arm64 / x86_64（不再出 universal），CI 仅构建 arm64 快速反馈；
+  # x86_64 交叉编译正确性由 release.yml 打 tag 发布时校验。
   build:
     name: build (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
@@ -64,8 +65,6 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: macos-14
-          - arch: universal
             runner: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -79,6 +78,10 @@ jobs:
       - name: Build app
         env:
           DSH_ARCH: ${{ matrix.arch }}
+          # GitHub runner 在美国：显式走官方 npm registry / Node 镜像（权威、
+          # 无镜像同步滞后）；本地脚本默认保持 npmmirror（国内更快）。
+          DSH_NPM_REGISTRY: https://registry.npmjs.org
+          DSH_NODE_MIRROR: https://nodejs.org/dist
         run: ./platforms/macos/build-app.sh
       - name: Verify bundle
         run: |

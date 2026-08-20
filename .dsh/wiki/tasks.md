@@ -100,5 +100,5 @@ tests/wiki-panel/run.sh             # Repo Wiki 模型层
 - 面板「配置 GitHub Token」→ 确认后**双写** Keychain 专属（`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）与文件专属（`~/.dsh/tokens/<owner>-<repo>`，chmod 600）；清空则双清；
 - 也可手动写 `~/.dsh/gh-token`（通用，App 与外部工具/代理共用同一份）；解析优先级见 [issue-runner-panel](modules/issue-runner-panel.md)；公开仓库无需 token。
 
-CI 侧（`release.yml`）：push `v*` tag（主版本或 patch 均触发）自动在 macos-14 构建 arm64 / x86_64（-target 交叉编译）/ universal 三份产物（.pkg/.dmg），汇总后出 SHA-256SUMS 并以 **pre-release** 发布 GitHub Release（人工确认后改正式）；同一 tag 重复触发会取消旧 run（concurrency）；
+CI 侧（`release.yml`）：push `v*` tag（主版本或 patch 均触发）自动在 macos-14 构建 arm64 / x86_64（-target 交叉编译）两份产物（.pkg/.dmg，不再出 universal），汇总后出 SHA-256SUMS 并以 **pre-release** 发布 GitHub Release（人工确认后改正式）；同一 tag 重复触发会取消旧 run（concurrency）；
 - **发布幂等**（`68fc925` 起）：Collect 步骤先 `rm -rf dist` 再拷贝产物（避免混入历史产物）；publish 先 `gh release delete <tag> --cleanup-tag`（失败忽略）再用 `gh release create --target $GITHUB_SHA` 重建 tag + Release + 资产，同 tag 重复发布不再 already_exists（此前尝试过 smoke job / softprops action / --clobber，均已回退或替换）。

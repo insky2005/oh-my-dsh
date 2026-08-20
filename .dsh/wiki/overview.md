@@ -32,7 +32,7 @@ oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deeps
 core/                共享核心（Node 模块：ANSI 模拟器 / 端口探测 / 升级 / 会话 RPC / issues / jobqueue / tasks 关联索引，跨平台复用；随构建嵌入 runtime/core）
 platforms/           各平台壳（macos/ 现有壳，windows/ linux/ 规划中）
 scripts/             跨平台工具（version.sh 版本单一来源 / changelog.sh / release-checksums.sh / git-remote.sh 远端检测 / release-fix.sh patch 发布 / 迁移脚本）
-.github/             CI 工作流（core 单测走 ubuntu；壳层单测/编译检查 + arm64/universal 构建走 macos-14；x86_64 由 universal lipo / 交叉编译覆盖，不再用退役中的 macos-13 runner）；release.yml 发布幂等（先删旧 release+tag 再 --target 重建，见 [tasks](tasks.md)）
+.github/             CI 工作流（core 单测走 ubuntu；壳层单测/编译检查 + arm64 构建走 macos-14；x86_64 交叉编译由 release.yml 打 tag 时构建，不再出 universal，也不再依赖退役中的 macos-13 runner）；release.yml 发布幂等（先删旧 release+tag 再 --target 重建，见 [tasks](tasks.md)）
 platforms/macos/src/main.swift       壳层核心（日志/L10n/服务管理/升级/窗口/菜单/设置窗口/onboarding/CoreBridge）约 2980 行
 platforms/macos/src/PreviewPanel.swift  预览面板（文件/文件夹预览 + 项目目录树 + 共享 UI 组件）约 1472 行
 platforms/macos/src/TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）约 1875 行
