@@ -11,9 +11,32 @@ All notable changes to this project are documented in this file. Format follows
 
 - **浏览器面板（Chromium/CEF 内核）**（活动栏 globe / `⌥⌘B`）：多标签浏览器，每标签一个 Chromium 渲染进程（五 helper app：base/Alerts/GPU/Plugin/Renderer，名字承重）；地址栏导航（无 scheme 自动补 `https://`）、后退/前进/刷新·停止；控制台抽屉（CDP 捕获 console/异常/全部网络请求 + JS 求值 + 清空）；DevTools 按钮在系统浏览器打开完整 Chromium DevTools；`use-mock-keychain` 不弹钥匙串密码框；profile 收在 `~/.dsh/browser/`。
 - **浏览器 REST API**（`127.0.0.1:3081`，`DSH_BROWSER_PORT` 覆盖，端口文件 `~/.dsh/browser-api.port`）：`status`/`open`/`tabs`/`back`/`forward`/`reload`/`stop`/`eval`/`console`/`console/clear`/`screenshot`/`hide`，CORS 放行；Agent 驱动自动展开面板；配套技能 `.dsh/skills/shell-browser/SKILL.md`（modelInvocable）。
+- **DevTools 工具条可拖动调高**（150–700pt，主窗口联动压缩）：拖动条悬停显示上下拖拽光标；拖动中主页面/DevTools 两 CEF 视图完全静止（frame/视口不动）、全程禁用 autoresizing、跳过 layout 钩子、抑制逐帧 notifyResize，松手统一对齐并恢复页面滚动位置（CDP 记录 scrollY、松手 scrollTo）；80ms resize 节流消除逐帧重排导致的页面抖动上移（详见 `docs/devtools-drag-fix.md`）。
+- **视图菜单「外观」切换**（`feat(#6)`）：浅色/深色/系统三态，与设置窗口外观双向同步。
+- **App 体积精简**（约减 ~138M）：slim app bundle（移除重复 node ~116M、node-pty win32 prebuilds），见 `docs/plans/APP_SLIM-app-size.md`。
+- **活动栏图标顺序与文案调整**：Files(重叠文件图标)/Terminal/Browser/Wiki/Tasks，tooltip 固定英文。
 - **CEF 构建管线**（`platforms/macos/build-cef.sh`）：版本固定 + sha1 校验 + `.cache` 缓存；wrapper/shim/helper 编译；五 helper 组装与由内向外签名；`build-app.sh`/CI 接入。
+- **本地发布/CI 工具链**：`local-release.sh` 支持 `pack` 子命令（只打包不发布）；发布模式强制版本一致性（版本单一来源 git tag，不一致即阻断）；runtime 缓存按架构分目录、双架构 release 不再互相覆盖重建；CEF 缓存 key 改用稳定绝对路径。
 - 测试：`tests/browser-panel/`（日志缓冲/URL 规范化/HTTP 解析/REST 路由，56 断言）；CI 编译清单与浏览器测试步骤登记。
 - 设计文档：`docs/plans/BROWSER_PLAN-browser-panel.md`（含根因修正：CEF 148+ 需五 helper，缺 `(Renderer)` 导致 renderer 静默失败——曾误判为签名问题）。
+
+### Fixed
+
+- **DevTools 拖动条导致 CEF 视图上移/底部空白**：根治为 contentsScale 同步 + CEF 视图 frame 统一由 layout() 同步（去手动/AutoLayout 竞争）、frame origin 强制为零；拖动中禁用 pageView/devtoolsContent 的 autoresizesSubviews、完全跳过 layout 钩子、抑制 notifyResize（此前每帧 WasResized 致页面缓慢上移），松手统一刷新——消除页面顶部反复重排跳动与累积上移。
+- **CEF 覆盖式启动卡死**：覆盖式约束改用 activate 数组激活（init 里 `isActive=true` 曾致启动卡 buildWindow/Starting）；回退覆盖式约束并修 `CEFShim.shutdown` 未初始化时泵循环空指针；覆盖式切换后把主 CEF 视图钉回顶部全高（Chromium 会把 CEF 底部对齐致顶部空白）+ 视口一次 resize。
+- **DevTools WebSocket 连不上**：CEF 默认拒绝带 Origin 的连接，加 `--remote-allow-origins=*` 放行；ws 获取改实时 `/json` 按 URL 匹配当前页签（CDP targetId 陈旧/误配导致 WebSocket 连不上）。
+- **浏览器面板**：浅色外观页签背景调浅；DevTools 关闭闪退（窗口关闭拦截缺失）。
+- **i18n**：语言切换后刷新各面板头部操作按钮与活动栏 tooltip（此前只重建菜单，tooltip 停留旧语言）；补 `terminal.closePanel` 文案、浏览器面板标题跟随语言切换；活动栏 tooltip 恢复系统语言切换（bar.preview 文案改为 文件/Files）。
+- **IssueRunner 面板**：issue 关闭后标记实际状态 closed 并适配操作按钮。
+- **dsh web 自拉起**：加 `--no-open`，避免默认浏览器被自动打开。
+- **发布/CI**：`$VER` 统一加花括号 `${VER}` 修复 UTF-8 locale 下 unbound variable；local-ci.sh swift 阶段补齐 browser 面板测试与 CEF 编译。
+
+### Docs
+
+- `docs/devtools-drag-fix.md`：DevTools 拖动条导致 CEF 视图上移问题分析与修复方案。
+- `docs/plans/BROWSER_PLAN-browser-panel.md`：浏览器面板设计（含 CEF 五 helper 根因修正）。
+- wiki 同步：浏览器面板 OSR/Chromium 演进、五面板结构、发布/CI 工具链、per-arch 缓存。
+- 合并规范：PR 合并一律用 `--no-ff`（merge commit）。
 
 ## [1.10.0] - 2026-08-18
 
