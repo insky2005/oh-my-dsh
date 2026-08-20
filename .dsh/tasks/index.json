@@ -1,10 +1,14 @@
 {
   "tasks" : [
     {
+      "body" : "### 功能描述 \/ Feature\n\n外观切换，支持 浅色、深色、系统 三种模式\n\n### 动机 \/ Motivation\n\n外观切换，是 Native  APP 的基本能力\n\n### 验收想法 \/ Acceptance ideas\n\n_No response_\n\n### 备选方案 \/ Alternatives\n\n_No response_\n\n### 备注 \/ Notes\n\n_No response_",
       "branch" : "fix\/issue-6",
       "closedAt" : "2026-08-20T15:26:43Z",
       "finishedAt" : "2026-08-20T14:58:06Z",
       "issue" : 6,
+      "labels" : [
+
+      ],
       "prUrl" : "https:\/\/github.com\/insky2005\/oh-my-dsh\/pull\/20",
       "startedAt" : "2026-08-20T14:53:20Z",
       "state" : "closed",
