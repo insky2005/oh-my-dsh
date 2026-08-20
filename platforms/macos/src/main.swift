@@ -104,6 +104,7 @@ enum L10n {
         "menu.dshSettings": ("dsh 设置", "dsh Settings"),
         "menu.edit": ("编辑", "Edit"),
         "menu.view": ("视图", "View"),
+        "menu.appearance": ("外观", "Appearance"),
         "menu.togglePreview": ("显示/隐藏 预览面板", "Toggle Preview Panel"),
         // activity bar
         "bar.preview": ("预览面板", "Preview Panel"),
@@ -228,6 +229,7 @@ enum L10n {
         "settings.appearance": ("主题", "Appearance"),
         "settings.appearanceLight": ("浅色", "Light"),
         "settings.appearanceDark": ("深色", "Dark"),
+        "settings.appearanceSystem": ("系统", "System"),
         "settings.shortcuts": ("快捷键", "Shortcuts"),
         // first-run onboarding
         "onboarding.title": ("欢迎使用 oh-my-dsh", "Welcome to oh-my-dsh"),
@@ -1133,6 +1135,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var terminalToggleMenuItem: NSMenuItem?
     private var wikiToggleMenuItem: NSMenuItem?
     private var tasksToggleMenuItem: NSMenuItem?
+    /// The three View → Appearance menu items (system/light/dark), so their
+    /// checkmarks stay in sync with AppTheme.current.
+    private var appearanceMenuItems: [NSMenuItem] = []
     /// Activity-bar entries (leftmost icon strip).
     private var previewBarButton: ActivityBarButton!
     private var terminalBarButton: ActivityBarButton!
@@ -2418,9 +2423,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         en.tag = 2
         en.state = (L10n.hasExplicitChoice && !L10n.isZh) ? .on : .off
         langItem.submenu = langMenu
+        settingsMenu.addItem(.separator())
+        // Appearance submenu (System / Light / Dark) — kept in sync with the
+        // Settings window radio group.
+        let appearanceItem = NSMenuItem(title: L10n.tr("menu.appearance"), action: nil, keyEquivalent: "")
+        settingsMenu.addItem(appearanceItem)
+        let appearanceMenu = NSMenu(title: L10n.tr("menu.appearance"))
+        let systemItem = appearanceMenu.addItem(withTitle: L10n.tr("settings.appearanceSystem"), action: #selector(appearanceMenuItemTapped(_:)), keyEquivalent: "")
+        systemItem.target = self
+        systemItem.tag = 0
+        let lightItem = appearanceMenu.addItem(withTitle: L10n.tr("settings.appearanceLight"), action: #selector(appearanceMenuItemTapped(_:)), keyEquivalent: "")
+        lightItem.target = self
+        lightItem.tag = 1
+        let darkItem = appearanceMenu.addItem(withTitle: L10n.tr("settings.appearanceDark"), action: #selector(appearanceMenuItemTapped(_:)), keyEquivalent: "")
+        darkItem.target = self
+        darkItem.tag = 2
+        appearanceMenuItems = [systemItem, lightItem, darkItem]
+        refreshAppearanceMenuState()
+        appearanceItem.submenu = appearanceMenu
         settingsItem.submenu = settingsMenu
 
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func appearanceMenuItemTapped(_ sender: NSMenuItem) {
+        switch sender.tag {
+        case 1: AppTheme.set("light")
+        case 2: AppTheme.set("dark")
+        default: AppTheme.set("system")
+        }
+        themeDidChange()
+    }
+
+    /// Keep every theme UI in sync after AppTheme changes — the View menu
+    /// checkmark and (if open) the Settings window radio group.
+    func themeDidChange() {
+        refreshAppearanceMenuState()
+        settingsWindowController?.syncThemeRadios()
+    }
+
+    private func refreshAppearanceMenuState() {
+        let mode = AppTheme.current
+        for item in appearanceMenuItems {
+            item.state = ((item.tag == 0 && mode == "system")
+                || (item.tag == 1 && mode == "light")
+                || (item.tag == 2 && mode == "dark")) ? .on : .off
+        }
     }
 
     @objc private func setLanguage(_ sender: NSMenuItem) {
@@ -2872,7 +2920,7 @@ final class SettingsWindowController {
     }
 
     private func buildThemeSection() -> NSStackView {
-        let system = makeRadio(title: L10n.tr("settings.followSystem"), tag: 0, action: #selector(themeChanged(_:)))
+        let system = makeRadio(title: L10n.tr("settings.appearanceSystem"), tag: 0, action: #selector(themeChanged(_:)))
         let light = makeRadio(title: L10n.tr("settings.appearanceLight"), tag: 1, action: #selector(themeChanged(_:)))
         let dark = makeRadio(title: L10n.tr("settings.appearanceDark"), tag: 2, action: #selector(themeChanged(_:)))
         themeButtons = [system, light, dark]
@@ -2931,7 +2979,20 @@ final class SettingsWindowController {
         }
         // NSApp.appearance drives every window (incl. the WKWebView), which
         // re-renders with the new appearance automatically — no reload needed.
-        AppLog.shared.log("appearance set to \(AppTheme.current)")
+        // Keep the View menu checkmark in sync too.
+        appDelegate?.themeDidChange()
+    }
+
+    /// Sync the theme radio group from AppTheme.current — used when the theme
+    /// was changed from the View menu while the settings window is open.
+    func syncThemeRadios() {
+        guard themeButtons.count == 3 else { return }
+        let mode = AppTheme.current
+        for b in themeButtons {
+            b.state = ((b.tag == 0 && mode == "system")
+                || (b.tag == 1 && mode == "light")
+                || (b.tag == 2 && mode == "dark")) ? .on : .off
+        }
     }
 
     @objc private func saveRegistry(_ sender: Any?) {
