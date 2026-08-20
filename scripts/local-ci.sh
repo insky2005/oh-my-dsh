@@ -55,12 +55,20 @@ stage_swift() {
   node --test core/tests/ansi.test.js
   echo "--- wiki panel tests ---"
   tests/wiki-panel/run.sh
+  echo "--- browser panel tests ---"
+  tests/browser-panel/run.sh
+  echo "--- build CEF integration artifacts (arm64) ---"
+  mkdir -p .build/module-cache
+  platforms/macos/build-cef.sh arm64
   echo "--- swiftc compile check (all sources) ---"
   mkdir -p .build/module-cache
   swiftc -O -swift-version 5 -module-cache-path .build/module-cache \
     -framework AppKit -framework WebKit -framework PDFKit \
+    -Xlinker -undefined -Xlinker dynamic_lookup \
+    -import-objc-header platforms/macos/cef/CEFShim.h \
+    .build/cef/CEFShim-arm64.o .build/cef/libcef_dll_wrapper-arm64.a \
     -o /tmp/oh-my-dsh-check \
-    platforms/macos/src/main.swift platforms/macos/src/PreviewPanel.swift platforms/macos/src/TerminalPanel.swift platforms/macos/src/WikiPanel.swift platforms/macos/src/IssueRunnerPanel.swift
+    platforms/macos/src/main.swift platforms/macos/src/PreviewPanel.swift platforms/macos/src/TerminalPanel.swift platforms/macos/src/WikiPanel.swift platforms/macos/src/IssueRunnerPanel.swift platforms/macos/src/BrowserPanel.swift platforms/macos/src/BrowserAPI.swift platforms/macos/src/BrowserCDP.swift
   file /tmp/oh-my-dsh-check
 }
 
