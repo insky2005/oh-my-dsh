@@ -1,8 +1,8 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-08-17T03:52:05Z
-sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/git-workflow.md]
+updated: 2026-08-18T15:30:00Z
+sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, core/lib/issues.js, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/git-workflow.md]
 manual: false
 ---
 
@@ -22,8 +22,10 @@ manual: false
 | `autoUpgradeDsh` | 自动升级开关（默认开） | AppDelegate |
 | `lastAutoUpgradeCheck` | 自动升级 24h 节流时间戳 | `runAutoUpgradeIfNeeded` |
 | `previewPanelState` | 右栏可见性（true = 打开） | `setRightPanel` |
-| `rightPanelKind` | 右栏当前面板（"preview"/"terminal"/"wiki"/"tasks"） | `setRightPanel` |
+| `rightPanelKind` | 右栏当前面板（"preview"/"terminal"/"wiki"/"tasks"/"browser"） | `setRightPanel` |
 | `previewPanelWidth` | 用户拖拽的面板宽度 | `splitViewDidResizeSubviews` |
+| `browserLastURL` | 浏览器面板启动恢复的地址（默认 about:blank） | `BrowserPanelController` |
+| `browserRenderMode` | 浏览器面板 CEF 渲染模式（"windowed" = 窗口化；删除/缺省 = OSR 离屏默认） | `startBrowserAPI`（`CEFShim.setWindowedMode`） |
 | `wikiRootMode` | wiki 根模式（"in-repo" / "dsh-home"） | `WikiPaths` |
 | `wikiAutoRegenerate` | wiki 自动更新开关（默认关） | `WikiPaths` |
 | `wikiRegisterAgentsMd` | 写入 AGENTS.md 注册块开关（默认关） | `WikiPaths` |
@@ -32,7 +34,7 @@ manual: false
 
 ## 领域模型（代码内）
 
-- **`RightPanel` 枚举**（main.swift）：`none / preview / terminal / wiki / tasks`——右栏插槽互斥状态；
+- **`RightPanel` 枚举**（main.swift）：`none / preview / terminal / wiki / tasks / browser`——右栏插槽互斥状态；
 - **`ProjectDirectory`**（main.swift）：壳层共享的"活动项目目录"（`static var current`），跟随 dsh web 当前会话（见 `sessionTrackerScript` 数据流），`resolveProjectDirectory` 优先返回它；
 - **`L10n.table`**：`[String: (zh: String, en: String)]` 文案表，`L10n.tr(key)` 按 `lang` 取文案并填充 `%@/%d`；
 - **`WikiPage`**（WikiPanel.swift）：`path / title / tags / updated / sources / manual`，由 frontmatter 解析而来；

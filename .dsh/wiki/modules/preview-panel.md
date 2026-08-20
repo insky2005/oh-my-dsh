@@ -1,14 +1,14 @@
 ---
 title: 模块：PreviewPanel.swift（预览面板）
 tags: [module, preview, file-tree, tabs]
-updated: 2026-08-16T12:48:37Z
+updated: 2026-08-18T15:30:00Z
 sources: [platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift]
 manual: false
 ---
 
 # 模块：PreviewPanel.swift（预览面板）
 
-约 1470 行。右栏预览面板：点击 dsh web 对话中的文件链接（工具产物）不再弹系统默认应用，而是在面板内预览；左侧为项目目录树。同时是**共享 UI 组件库**。
+约 1480 行。右栏预览面板：点击 dsh web 对话中的文件链接（工具产物）不再弹系统默认应用，而是在面板内预览；左侧为项目目录树。同时是**共享 UI 组件库**。
 
 ## 共享 UI 组件（其他面板复用）
 
@@ -19,7 +19,7 @@ manual: false
 | `ActivityBarButton` | 活动栏图标按钮，图标颜色烘烤进图片（`BakedIconView`）保证深色可见 |
 | `PanelIconButton` | 面板头部图标按钮（按深浅色刷新 tint） |
 | `HeaderLabel` | 自绘文本标签（深浅色自适应颜色） |
-| `CustomIconButton` | 自绘图标按钮（`onAction` 闭包、hover、enabled 态；`Glyph` 枚举：plus/close/folder/openInApp/reveal/play/stop + `symbol(String)`——b7c5407 起支持 SF Symbol 字形（tinted 系统图片，15pt 居中绘制，如任务面板刷新按钮 `arrow.clockwise`），refresh 手绘圆形箭头随之移除） |
+| `CustomIconButton` | 自绘图标按钮（`onAction` 闭包、hover、enabled 态；`Glyph` 枚举：plus/close/folder/openInApp/reveal/play/stop + `symbol(String)`——b7c5407 起支持 SF Symbol 字形（tinted 系统图片，15pt 居中绘制，如任务面板刷新按钮 `arrow.clockwise`），refresh 手绘圆形箭头随之移除）；可配 `size`（默认 26）、`showsBackground`（常显圆角背景，页签「+」等与页签样式统一）、`hoverColor`（hover 高亮色，默认 accent；页签关闭按钮用 `systemRed` 更明显） |
 
 ## PreviewPanelController 职责
 

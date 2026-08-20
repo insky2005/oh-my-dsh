@@ -71,7 +71,7 @@ case "${1:-}" in
   --help|-h)
     echo "usage: ./build-app.sh [--prefetch]"
     echo "  (default)  full build -> dist/$APP_NAME.app"
-    echo "  --prefetch pre-download Node + npm-install dsh into $CACHE_DIR/runtime (no .app)"
+    echo "  --prefetch pre-download Node + npm-install dsh into $CACHE_DIR/runtime/<arch> (no .app)"
     exit 0 ;;
 esac
 
@@ -98,10 +98,12 @@ print(max(lts, key=key)["version"])
     done
   fi
   if [ -z "$v" ]; then
-    local cached
-    cached=$(ls "$CACHE_DIR/node"/node-v*-darwin-arm64.tar.gz 2>/dev/null | head -1 || true)
+    # 离线回退按目标架构找对应 tarball（x86_64 -> darwin-x64），避免固定 arm64
+    local cached node_arch
+    node_arch="$( [ "$ARCH" = "x86_64" ] && echo x64 || echo "$ARCH" )"
+    cached=$(ls "$CACHE_DIR/node"/node-v*-darwin-$node_arch.tar.gz 2>/dev/null | head -1 || true)
     if [ -n "$cached" ]; then
-      v="v$(basename "$cached" | sed -E 's/^node-v([0-9.]+)-darwin-arm64\.tar\.gz$/\1/')"
+      v="v$(basename "$cached" | sed -E "s/^node-v([0-9.]+)-darwin-$node_arch\.tar\.gz$/\1/")"
       echo "    network unavailable; reusing cached Node $v"
     fi
   fi
@@ -158,7 +160,10 @@ install_dsh() {
 # build_runtime: node bin + npm + dsh tree into $CACHE_DIR/runtime (cached)
 build_runtime() {
   local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.0-rc.7}"
-  local stage="$CACHE_DIR/runtime"
+  # runtime 按架构分目录（$CACHE_DIR/runtime/<arch>）：双架构 release 的
+  # arm64/x86_64 各自 node+dsh 树互不覆盖，缓存跨轮生效；旧单目录会让
+  # 每轮 release 的每个架构都 rm -rf 重建（缓存形同虚设）。
+  local stage="$CACHE_DIR/runtime/$ARCH"
   local info="$stage/.runtime-info"
   if [ -f "$info" ] && grep -qx "$NODE_VERSION|$spec|$ARCH" "$info" 2>/dev/null; then
     echo "    reusing previously built runtime ($NODE_VERSION + $spec, $ARCH)"
@@ -210,7 +215,7 @@ if [ "$MODE" = "prefetch" ]; then
   echo "==> [prefetch] downloading Node + npm-installing dsh …"
   build_runtime
   echo ""
-  echo "Prefetched runtime ready: $CACHE_DIR/runtime"
+  echo "Prefetched runtime ready: $CACHE_DIR/runtime/$ARCH"
   echo "Node: $NODE_VERSION | dsh: ${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.0-rc.7}"
   echo "A later './build-app.sh' will reuse it without network."
   exit 0
@@ -236,26 +241,34 @@ cp "$BUILD_DIR/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 echo "==> [3/7] compiling app binary"
 # 交叉编译：-target 指定 arch+最低系统版本（swiftc 6 不再接受裸 -arch）。
 # universal = 编译两个 arch 再 lipo 合成 fat binary。
-SWIFT_SOURCES=("$SRC/main.swift" "$SRC/PreviewPanel.swift" "$SRC/TerminalPanel.swift" "$SRC/WikiPanel.swift" "$SRC/IssueRunnerPanel.swift")
+# CEF：build-cef.sh 产出 wrapper 静态库 + CEFShim.o + helper 二进制；CEF 的
+# C API 符号经 libcef_dll_dylib 的 trampoline 在运行期 dlopen 框架解析，
+# 因此链接需要 -Wl,-undefined,dynamic_lookup（无需直接链接框架）。
+SWIFT_SOURCES=("$SRC/main.swift" "$SRC/PreviewPanel.swift" "$SRC/TerminalPanel.swift" "$SRC/WikiPanel.swift" "$SRC/IssueRunnerPanel.swift" "$SRC/BrowserPanel.swift" "$SRC/BrowserAPI.swift" "$SRC/BrowserCDP.swift")
 APP_BIN="$APP/Contents/MacOS/$APP_NAME"
+CEF_FLAGS=(-Xlinker -undefined -Xlinker dynamic_lookup)
+
+build_cef_and_link() {
+  local arch="$1" target="$2" out="$3"
+  "$ROOT/platforms/macos/build-cef.sh" "$arch"
+  swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" -target "$target" \
+    -framework AppKit -framework WebKit -framework PDFKit \
+    -import-objc-header "$ROOT/platforms/macos/cef/CEFShim.h" \
+    "${CEF_FLAGS[@]}" \
+    "$BUILD_DIR/cef/CEFShim-$arch.o" "$BUILD_DIR/cef/libcef_dll_wrapper-$arch.a" \
+    -o "$out" "${SWIFT_SOURCES[@]}"
+}
+
 case "$ARCH" in
   arm64)
-    swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" -target arm64-apple-macos13 \
-      -framework AppKit -framework WebKit -framework PDFKit \
-      -o "$APP_BIN" "${SWIFT_SOURCES[@]}"
+    build_cef_and_link arm64 arm64-apple-macos13 "$APP_BIN"
     ;;
   x86_64)
-    swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" -target x86_64-apple-macos13 \
-      -framework AppKit -framework WebKit -framework PDFKit \
-      -o "$APP_BIN" "${SWIFT_SOURCES[@]}"
+    build_cef_and_link x86_64 x86_64-apple-macos13 "$APP_BIN"
     ;;
   universal)
-    swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" -target arm64-apple-macos13 \
-      -framework AppKit -framework WebKit -framework PDFKit \
-      -o "$BUILD_DIR/oh-my-dsh-arm64" "${SWIFT_SOURCES[@]}"
-    swiftc -O -swift-version 5 "${SWIFTC_CACHE[@]}" -target x86_64-apple-macos13 \
-      -framework AppKit -framework WebKit -framework PDFKit \
-      -o "$BUILD_DIR/oh-my-dsh-x86_64" "${SWIFT_SOURCES[@]}"
+    build_cef_and_link arm64 arm64-apple-macos13 "$BUILD_DIR/oh-my-dsh-arm64"
+    build_cef_and_link x86_64 x86_64-apple-macos13 "$BUILD_DIR/oh-my-dsh-x86_64"
     lipo -create -output "$APP_BIN" "$BUILD_DIR/oh-my-dsh-arm64" "$BUILD_DIR/oh-my-dsh-x86_64"
     rm -f "$BUILD_DIR/oh-my-dsh-arm64" "$BUILD_DIR/oh-my-dsh-x86_64"
     ;;
@@ -266,7 +279,7 @@ echo "==> [4/7] building self-contained runtime (download node + npm install dsh
 build_runtime
 RUNTIME="$APP/Contents/Resources/runtime"
 mkdir -p "$RUNTIME"
-ditto "$CACHE_DIR/runtime" "$RUNTIME"
+ditto "$CACHE_DIR/runtime/$ARCH" "$RUNTIME"
 # 共享核心 core/ 一并嵌入运行时（shell 通过 node runtime/core/bin/ohmy-core.js 调用）。
 if [ -d "$ROOT/core" ]; then
   ditto "$ROOT/core" "$RUNTIME/core"
@@ -313,6 +326,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Native shell wrapper around dsh web. DeepSeek Harness is MIT licensed.</string>
+	<key>LSEnvironment</key>
+	<dict>
+		<key>MallocNanoZone</key>
+		<string>0</string>
+	</dict>
+	<key>NSPrincipalClass</key>
+	<string>DSHApplication</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -340,6 +360,49 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+echo "==> [5b/7] embedding CEF framework + five helper apps"
+# 现代 CEF（148+）在 macOS 要求五个 helper app（名字承重，同一份二进制）：
+# base / (Alerts) / (GPU) / (Plugin) / (Renderer)。缺失 (Renderer) 会导致
+# renderer 子进程静默失败（页面空白）——曾误判为签名问题，见
+# docs/plans/BROWSER_PLAN-browser-panel.md §二。
+FW="$APP/Contents/Frameworks"
+mkdir -p "$FW"
+
+if [ "$ARCH" = "universal" ]; then
+  # lipo 两个架构的框架二进制与 helper 二进制
+  mkdir -p "$BUILD_DIR/cef/fw-universal"
+  cp -R "$BUILD_DIR/cef/Chromium Embedded Framework-arm64.framework" "$BUILD_DIR/cef/fw-universal/Chromium Embedded Framework.framework"
+  lipo -create \
+    "$BUILD_DIR/cef/Chromium Embedded Framework-arm64.framework/Chromium Embedded Framework" \
+    "$BUILD_DIR/cef/Chromium Embedded Framework-x86_64.framework/Chromium Embedded Framework" \
+    -output "$BUILD_DIR/cef/fw-universal/Chromium Embedded Framework.framework/Chromium Embedded Framework"
+  FRAMEWORK_SRC="$BUILD_DIR/cef/fw-universal/Chromium Embedded Framework.framework"
+  HELPER_BIN_ARM="$BUILD_DIR/cef/helper-bin-arm64"
+  HELPER_BIN_X64="$BUILD_DIR/cef/helper-bin-x86_64"
+else
+  FRAMEWORK_SRC="$BUILD_DIR/cef/Chromium Embedded Framework-$ARCH.framework"
+fi
+
+# 复制框架并保证目标名固定为 "Chromium Embedded Framework.framework"
+# （CEF loader 按硬编码路径查找，build-cef.sh 产物带 -ARCH 后缀）。
+cp -R "$FRAMEWORK_SRC" "$FW/Chromium Embedded Framework.framework"
+
+HELPERS=( "$APP_NAME Helper:.helper" "$APP_NAME Helper (Alerts):.helper.alerts" "$APP_NAME Helper (GPU):.helper.gpu" "$APP_NAME Helper (Plugin):.helper.plugin" "$APP_NAME Helper (Renderer):.helper.renderer" )
+for entry in "${HELPERS[@]}"; do
+  name="${entry%%:*}"; suffix="${entry##*:}"
+  dir="$FW/$name.app/Contents"
+  mkdir -p "$dir/MacOS"
+  if [ "$ARCH" = "universal" ]; then
+    lipo -create "$HELPER_BIN_ARM" "$HELPER_BIN_X64" -output "$dir/MacOS/$name"
+  else
+    cp "$BUILD_DIR/cef/helper-bin-$ARCH" "$dir/MacOS/$name"
+  fi
+  sed -e "s|\${HELPER_NAME}|$name|g" -e "s|\${BUNDLE_ID_SUFFIX}|$suffix|g" \
+    "$ROOT/platforms/macos/cef/helper-Info.plist.in" > "$dir/Info.plist"
+  printf 'APPL????' > "$dir/PkgInfo"
+done
+echo "    embedded: framework ($(du -sh "$FW/Chromium Embedded Framework.framework" | cut -f1)) + ${#HELPERS[@]} helper apps"
+
 echo "==> [6/7] slimming app bundle (见 docs/plans/APP_SLIM-app-size.md)"
 RUNTIME="$APP/Contents/Resources/runtime"
 # 1. 删除重复的纯 node（node-arm64/node-x86_64 已有，纯 node 仅是旧布局兜底；
@@ -356,8 +419,12 @@ if [ -d "$PYY" ]; then
 fi
 echo "    slimmed size: $(du -sh "$APP" | cut -f1)"
 
-echo "==> [7/7] ad-hoc code signing"
-codesign --force --deep --sign - "$APP"
+echo "==> [7/7] ad-hoc code signing (inside-out: framework → helpers → app)"
+codesign --force --sign - "$FW/Chromium Embedded Framework.framework"
+for entry in "${HELPERS[@]}"; do
+  codesign --force --sign - "$FW/${entry%%:*}.app"
+done
+codesign --force --sign - "$APP"
 
 echo ""
 echo "Built: $APP"

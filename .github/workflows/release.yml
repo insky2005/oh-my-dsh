@@ -13,9 +13,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 前置准备：预编译双架构 CEF 产物 + 预下载 node + 预取 runtime，统一缓存。
+  # 随后的三架构 build 矩阵通过 needs 依赖它，直接命中缓存，避免各 job 并行
+  # 冷启动下载/重编 CEF。
+  prepare:
+    name: prepare (CEF + node caches)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache CEF + node + built artifacts (.cache/)
+        uses: actions/cache@v6
+        with:
+          path: .cache
+          key: release-${{ runner.os }}-prepare-${{ hashFiles('platforms/macos/build-app.sh', 'platforms/macos/build-cef.sh', 'scripts/version.sh') }}
+      - name: Pre-build CEF artifacts (arm64 + x86_64) + prefetch node/runtime
+        run: |
+          mkdir -p .build/module-cache
+          platforms/macos/build-cef.sh arm64
+          platforms/macos/build-cef.sh x86_64
+          ./platforms/macos/build-app.sh --prefetch
+
   # Build both artifacts on macOS (arm64 / x86_64; no universal).
   build:
     name: build ${{ matrix.arch }}
+    needs: prepare
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -39,6 +60,8 @@ jobs:
           key: release-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('platforms/macos/build-app.sh', 'scripts/version.sh') }}
           restore-keys: |
             release-${{ runner.os }}-${{ matrix.arch }}-
+            # 复用前置 prepare 的 .cache/（双架构 CEF tarball + 编译产物 + node + runtime）
+            release-${{ runner.os }}-prepare-
       - name: Build app
         env:
           DSH_ARCH: ${{ matrix.arch }}

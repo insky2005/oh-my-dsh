@@ -26,12 +26,33 @@ jobs:
       - name: core unit tests
         run: node --test core/tests/*.test.js
 
+  # --- 前置准备：预编译双架构 CEF 产物 + 预下载 node + 预取 runtime，统一缓存。
+  # 随后的 build 矩阵与 swift 测试通过 needs 依赖它，直接命中缓存，避免各 job
+  # 并行各自冷启动下载/重编 CEF（CI 慢的根因）。
+  prepare:
+    name: prepare (CEF + node caches)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache CEF + node + built artifacts (.cache/)
+        uses: actions/cache@v6
+        with:
+          path: .cache
+          key: cache-${{ runner.os }}-prepare-${{ hashFiles('platforms/macos/build-app.sh', 'platforms/macos/build-cef.sh', 'scripts/version.sh') }}
+      - name: Pre-build CEF artifacts (arm64 + x86_64) + prefetch node/runtime
+        run: |
+          mkdir -p .build/module-cache
+          platforms/macos/build-cef.sh arm64
+          platforms/macos/build-cef.sh x86_64
+          ./platforms/macos/build-app.sh --prefetch
+
   # --- macOS shell: unit tests + swiftc compile check (fast, no build) ------
   # macos-13 (x86_64) 退役中、runner 容量极低且排队严重；产品已不再出
   # universal，x86_64 交叉编译正确性由 release.yml 打 tag 发布时校验，
   # 故 CI 只在 arm64 上跑单测与构建。
   swift:
     name: swift tests (${{ matrix.arch }})
+    needs: prepare
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -41,17 +62,34 @@ jobs:
             runner: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Cache CEF tarball (.cache/)
+        uses: actions/cache@v6
+        with:
+          path: .cache
+          key: cache-cef-${{ runner.os }}-arm64-${{ hashFiles('platforms/macos/build-cef.sh') }}
+          restore-keys: |
+            cache-cef-${{ runner.os }}-arm64-
+            cache-${{ runner.os }}-prepare-
       - name: Terminal emulator tests (migrated to core)
         run: node --test core/tests/ansi.test.js
       - name: Wiki panel tests
         run: tests/wiki-panel/run.sh
+      - name: Browser panel tests
+        run: tests/browser-panel/run.sh
+      - name: Build CEF integration artifacts (arm64)
+        run: |
+          mkdir -p .build/module-cache
+          platforms/macos/build-cef.sh arm64
       - name: swiftc compile check (all sources)
         run: |
           mkdir -p .build/module-cache
           swiftc -O -swift-version 5 -module-cache-path .build/module-cache \
             -framework AppKit -framework WebKit -framework PDFKit \
+            -Xlinker -undefined -Xlinker dynamic_lookup \
+            -import-objc-header platforms/macos/cef/CEFShim.h \
+            .build/cef/CEFShim-arm64.o .build/cef/libcef_dll_wrapper-arm64.a \
             -o /tmp/oh-my-dsh-check \
-            platforms/macos/src/main.swift platforms/macos/src/PreviewPanel.swift platforms/macos/src/TerminalPanel.swift platforms/macos/src/WikiPanel.swift platforms/macos/src/IssueRunnerPanel.swift
+            platforms/macos/src/main.swift platforms/macos/src/PreviewPanel.swift platforms/macos/src/TerminalPanel.swift platforms/macos/src/WikiPanel.swift platforms/macos/src/IssueRunnerPanel.swift platforms/macos/src/BrowserPanel.swift platforms/macos/src/BrowserAPI.swift platforms/macos/src/BrowserCDP.swift
           file /tmp/oh-my-dsh-check
 
   # --- Full app build matrix: arm64 (x86_64 由 release.yml 交叉构建校验) -----
@@ -59,6 +97,7 @@ jobs:
   # x86_64 交叉编译正确性由 release.yml 打 tag 发布时校验。
   build:
     name: build (${{ matrix.arch }})
+    needs: prepare
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -75,6 +114,10 @@ jobs:
           key: cache-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('platforms/macos/build-app.sh', 'scripts/version.sh') }}
           restore-keys: |
             cache-${{ runner.os }}-${{ matrix.arch }}-
+            # 优先复用前置 prepare 的 .cache/（含双架构 CEF tarball + 编译产物 +
+            # node + runtime），避免冷缓存重下/重编 CEF；其次回退到 arm64 缓存。
+            cache-${{ runner.os }}-prepare-
+            cache-${{ runner.os }}-arm64-
       - name: Build app
         env:
           DSH_ARCH: ${{ matrix.arch }}

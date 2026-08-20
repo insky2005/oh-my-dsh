@@ -107,7 +107,7 @@ enum L10n {
         "menu.appearance": ("外观", "Appearance"),
         "menu.togglePreview": ("显示/隐藏 预览面板", "Toggle Preview Panel"),
         // activity bar
-        "bar.preview": ("预览面板", "Preview Panel"),
+        "bar.preview": ("文件", "Files"),
         "bar.terminal": ("终端", "Terminal"),
         "edit.undo": ("撤销", "Undo"),
         "edit.redo": ("重做", "Redo"),
@@ -168,8 +168,7 @@ enum L10n {
         "terminal.restart": ("重启", "Restart"),
         // wiki panel (Repo Wiki)
         "menu.toggleWiki": ("显示/隐藏 知识库面板", "Toggle Wiki Panel"),
-        "bar.wiki": ("知识库", "Wiki"),
-        "wiki.title": ("知识库", "Wiki"),
+        "bar.wiki": ("知识库", "Wiki"),        "wiki.title": ("知识库", "Wiki"),
         "wiki.generateHint": ("生成或更新知识库", "Generate or update the wiki"),
         "wiki.empty": ("仓库尚无知识库\n点击右上角 + 生成", "No wiki yet\nClick + to generate"),
         "wiki.generating": ("正在生成知识库…", "Generating wiki…"),
@@ -261,7 +260,22 @@ enum L10n {
         // IssueRunner task panel
         "bar.tasks": ("任务", "Tasks"),
         "menu.toggleTasks": ("显示/隐藏 任务面板", "Toggle Tasks Panel"),
-        "tasks.title": ("任务", "Tasks"),
+        // browser panel
+        "menu.toggleBrowser": ("显示/隐藏 浏览器面板", "Toggle Browser Panel"),
+        "bar.browser": ("浏览器", "Browser"),
+        "browser.title": ("浏览器", "Browser"),
+        "browser.openInSystem": ("在系统浏览器中打开", "Open in System Browser"),
+        "browser.devTools": ("在浏览器中打开 DevTools", "Open DevTools in Browser"),
+        "browser.copyURL": ("复制 URL", "Copy URL"),
+                "browser.back": ("后退", "Back"),
+        "browser.forward": ("前进", "Forward"),
+        "browser.reload": ("刷新", "Reload"),
+        "browser.addressPlaceholder": ("输入网址…", "Enter URL…"),
+        "browser.go": ("前往", "Go"),
+        "browser.newTabHint": ("新建标签页", "New Tab"),
+        "browser.closeTab": ("关闭标签页", "Close Tab"),
+        "browser.empty": ("点击 + 新建标签页", "Click + to start a new tab"),
+                                        "tasks.title": ("任务", "Tasks"),
         "tasks.configHint": ("配置 GitHub Token", "Configure GitHub Token"),
         "tasks.refreshHint": ("刷新 Issues", "Refresh Issues"),
         "tasks.runAllHint": ("全部处理（串行）", "Process All (serial)"),
@@ -1127,8 +1141,13 @@ enum DSHSessionRPC {
 
 // MARK: - App delegate
 
+/// 关闭页签时 CEF（窗口化模式）会关闭宿主主窗口 → AppKit 误判
+/// "last window closed" 而退出。此标记在 CEF 关闭浏览器期间有效，
+/// applicationShouldTerminate 据此取消退出并恢复主窗口。
+var g_cefClosingWindow = false
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate,
-                         WKScriptMessageHandler, NSSplitViewDelegate {
+                         WKScriptMessageHandler, NSSplitViewDelegate, NSWindowDelegate {
 
     private let server = ServerManager()
     private var didSpawnServer = false
@@ -1140,11 +1159,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// The three View → Appearance menu items (system/light/dark), so their
     /// checkmarks stay in sync with AppTheme.current.
     private var appearanceMenuItems: [NSMenuItem] = []
+    private var browserToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip).
     private var previewBarButton: ActivityBarButton!
     private var terminalBarButton: ActivityBarButton!
     private var wikiBarButton: ActivityBarButton!
     private var tasksBarButton: ActivityBarButton!
+    private var browserBarButton: ActivityBarButton!
 
     private var window: NSWindow!
     private var webView: WKWebView!
@@ -1153,11 +1174,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var terminalPanel: TerminalPanelController!
     private var wikiPanel: WikiPanelController!
     private var tasksPanel: IssueRunnerPanelController!
+    private var browserPanel: BrowserPanelController!
+    /// Browser panel localhost REST API (Agent / user curl). Runs from launch.
+    private var browserAPIServer: BrowserAPIServer!
+    private var browserAPIBridge: BrowserAPIBridge!
+    /// CEF 消息泵定时器（external_message_pump 模式需要周期性驱动）。
+    private var cefPumpTimer: Timer?
 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
-    /// terminal, wiki and tasks panels share one slot; the activity bar toggles
-    /// between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki, tasks }
+    /// terminal, wiki, tasks and browser panels share one slot; the activity
+    /// bar toggles between them, and they are mutually exclusive.
+    enum RightPanel { case none, preview, terminal, wiki, tasks, browser }
     private var rightPanel: RightPanel = .none
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
@@ -1169,7 +1196,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private static let rightPanelMinWidth: CGFloat =
         max(PreviewPanelController.minWidth,
             max(TerminalPanelController.minWidth,
-                max(WikiPanelController.minWidth, IssueRunnerPanelController.minWidth)))
+                max(WikiPanelController.minWidth,
+                    max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth))))
     /// Fixed default panel width. Deliberately NOT window-relative: a
     /// "half the window" default made the width chase the window as it was
     /// widened, flip-flopping on every toggle.
@@ -1185,8 +1213,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     // MARK: Lifecycle
 
+    /// QA 调试开关：--ui-debug 参数（open --args 场景）或 DSH_UI_DEBUG 环境变量。
+    /// 启用后打开浏览器面板并在面板渲染后 dump 视图层级 + 截图。
+    private var uiDebug: Bool {
+        ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" ||
+        CommandLine.arguments.contains("--ui-debug")
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        AppLog.shared.log("launch: didFinishLaunching begin")
+        AppLog.shared.log("launch: didFinishLaunching begin (NSApp=\(NSStringFromClass(type(of: NSApp))))")
         NSApp.setActivationPolicy(.regular)
         // Snapshot the real system language BEFORE overriding AppleLanguages.
         L10n.captureSystemLang()
@@ -1203,6 +1238,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("launch: window built")
         AppLog.shared.log("app did finish launching (lang=\(L10n.lang) followSystem=\(!L10n.hasExplicitChoice) AppleLanguages=\(UserDefaults.standard.array(forKey: "AppleLanguages") ?? []))")
         startServer()
+        startCEF()
+        startBrowserAPIServer()
         showOnboardingIfNeeded()
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -1219,9 +1256,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         true
     }
 
+    /// 关闭页签时 CEF（窗口化模式）会关闭宿主主窗口 → AppKit 触发
+    /// "last window closed" 检查 → 误退出。用标记区分：CEF 引发的退出
+    /// 取消并恢复主窗口；用户主动关闭窗口照常退出。
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if g_cefClosingWindow {
+            AppLog.shared.log("terminate: cancelled (CEF closing window)")
+            if let w = window, !w.isVisible {
+                // 延迟恢复：CEF 关闭流程可能异步二次关窗，等它收尾再恢复。
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    if !w.isVisible { w.makeKeyAndOrderFront(nil) }
+                }
+            }
+            return .terminateCancel
+        }
+        AppLog.shared.log("terminate: applicationShouldTerminate (user-initiated)\n" + Thread.callStackSymbols.prefix(10).joined(separator: "\n"))
+        return .terminateNow
+    }
+
+    /// 拦截 CEF 误关主窗口（若走 performClose 路径；[window close] 直接关则
+    /// 由 applicationShouldTerminate 的恢复兜底）。
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if g_cefClosingWindow, sender === window {
+            AppLog.shared.log("terminate: windowShouldClose blocked (CEF)")
+            return false
+        }
+        return true
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        let w = notification.object as? NSWindow
+        AppLog.shared.log("terminate: windowWillClose title=\(w?.title ?? "?") visible=\(w?.isVisible ?? false)")
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        AppLog.shared.log("terminate: begin")
         terminalPanel?.shutdownAll()
+        browserPanel?.shutdownAll()
+        browserAPIServer?.stop()
+        cefPumpTimer?.invalidate()
+        CEFShim.shutdown()
         if didSpawnServer { server.stop() }
+        AppLog.shared.log("terminate: done")
     }
 
     // MARK: Window
@@ -1238,6 +1314,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         )
         window.title = "oh-my-dsh (DeepSeek Harness)"
         window.contentView = content
+        window.delegate = self  // NSWindowDelegate（windowWillClose 诊断 / CEF 误关拦截）
         // Minimum window width keeps the web view ≥ minWebViewWidth even with
         // the panel hidden (activity bar takes activityBarWidth), so shrinking
         // the window can never fold dsh's sidebar away.
@@ -1272,6 +1349,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.wiki)
             AppLog.shared.log("wiki self-test enabled")
         }
+        // Browser self-test hook (debugging / QA only): opens the browser
+        // panel at launch when DSH_BROWSER_TEST=1 is set.
+        if uiDebug || ProcessInfo.processInfo.environment["DSH_BROWSER_TEST"] == "1" {
+            setRightPanel(.browser)
+            AppLog.shared.log("browser self-test enabled")
+        }
     }
 
     /// Build the activity bar (leftmost icon strip) + the main split view:
@@ -1305,6 +1388,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tasksPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
         tasksPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
 
+        browserPanel = BrowserPanelController()
+        AppLog.shared.log("launch: browserPanel created")
+        browserPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
@@ -1312,19 +1399,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityBar.kind = .control
         activityBar.translatesAutoresizingMaskIntoConstraints = false
 
-        previewBarButton = makeActivityButton(symbol: "sidebar.right",
+        // 活动栏图标：tooltip 跟随系统语言（L10n 中英切换）；
+        // 顺序 = 文件、终端、浏览器、Wiki、任务。
+        previewBarButton = makeActivityButton(symbol: "doc.on.doc",
                                               tooltip: L10n.tr("bar.preview"),
                                               action: #selector(togglePreviewPanel(_:)))
         terminalBarButton = makeActivityButton(symbol: "terminal",
                                                tooltip: L10n.tr("bar.terminal"),
                                                action: #selector(terminalEntryTapped(_:)))
+        browserBarButton = makeActivityButton(symbol: "globe",
+                                              tooltip: L10n.tr("bar.browser"),
+                                              action: #selector(browserEntryTapped(_:)))
         wikiBarButton = makeActivityButton(symbol: "book.closed",
                                            tooltip: L10n.tr("bar.wiki"),
                                            action: #selector(wikiEntryTapped(_:)))
         tasksBarButton = makeActivityButton(symbol: "checkmark.circle",
                                             tooltip: L10n.tr("bar.tasks"),
                                             action: #selector(tasksEntryTapped(_:)))
-        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, wikiBarButton, tasksBarButton])
+        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -1381,6 +1473,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "terminal": kind = .terminal
         case "wiki": kind = .wiki
         case "tasks": kind = .tasks
+        case "browser": kind = .browser
         default: kind = .preview
         }
         setRightPanel(visible ? kind : .none)
@@ -1393,6 +1486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .terminal: return terminalPanel.view
         case .wiki: return wikiPanel.view
         case .tasks: return tasksPanel.view
+        case .browser: return browserPanel.view
         case .none: return NSView()
         }
     }
@@ -1443,10 +1537,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         terminalToggleMenuItem?.state = (panel == .terminal) ? .on : .off
         wikiToggleMenuItem?.state = (panel == .wiki) ? .on : .off
         tasksToggleMenuItem?.state = (panel == .tasks) ? .on : .off
+        browserToggleMenuItem?.state = (panel == .browser) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
         tasksBarButton?.setActive(panel == .tasks)
+        browserBarButton?.setActive(panel == .browser)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
@@ -1469,25 +1565,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             case .preview:
                 // Show the project tree by default whenever the panel opens.
                 previewPanel.ensureTreeLoaded()
-                if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
+                if uiDebug {
                     self.dumpPanelDebugInfo(panelView: previewPanel.view, label: "preview")
                 }
             case .terminal:
                 // Lazily spawn the first terminal session, then focus it.
                 terminalPanel.ensureSession()
                 DispatchQueue.main.async { [weak self] in self?.terminalPanel.focusActiveTerminal() }
-                if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
+                if uiDebug {
                     self.dumpPanelDebugInfo(panelView: terminalPanel.view, label: "terminal")
                 }
             case .wiki:
                 wikiPanel.ensureWikiLoaded()
-                if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
+                if uiDebug {
                     self.dumpPanelDebugInfo(panelView: wikiPanel.view, label: "wiki")
                 }
             case .tasks:
                 tasksPanel.ensureLoaded()
-                if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
+                if uiDebug {
                     self.dumpPanelDebugInfo(panelView: tasksPanel.view, label: "tasks")
+                }
+            case .browser:
+                browserPanel.ensureLoaded()
+                if uiDebug {
+                    self.dumpPanelDebugInfo(panelView: browserPanel.view, label: "browser")
                 }
             case .none:
                 break
@@ -1505,7 +1606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             window.contentView?.layoutSubtreeIfNeeded()
             activeView.layoutSubtreeIfNeeded()
             activeView.display()
-            if ProcessInfo.processInfo.environment["DSH_UI_DEBUG"] == "1" {
+            if uiDebug {
                 let content = activeView.subviews.last
                 AppLog.shared.log("ui debug: \(panel) after-layout pane=\(activeView.bounds.width)pt header=\(activeView.subviews.first?.frame.width ?? -1)pt content=\(content?.frame.width ?? -1)pt")
                 // Re-dump AFTER the forced layout so frames reflect what is
@@ -1519,6 +1620,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .terminal: kind = "terminal"
         case .wiki: kind = "wiki"
         case .tasks: kind = "tasks"
+        case .browser: kind = "browser"
         default: kind = "preview"
         }
         UserDefaults.standard.set(kind, forKey: "rightPanelKind")
@@ -1537,10 +1639,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// logs the panel's window/layer/appearance state and writes a snapshot
     /// of what the VIEW hierarchy renders to the logs folder.
     private func dumpPanelDebugInfo(panelView: NSView, label: String) {
-        AppLog.shared.log("ui debug: \(label) panel inWindow=\(panelView.window != nil) layer=\(panelView.layer != nil) isHidden=\(panelView.isHidden) layerHidden=\(panelView.layer?.isHidden ?? false) frame=\(panelView.frame) windowAppearance=\(String(describing: window.appearance)) effective=\(String(describing: panelView.effectiveAppearance.name)) splitSubviews=\(splitView?.subviews.map { $0 === previewPanel?.view ? "preview" : ($0 === terminalPanel?.view ? "terminal" : "web/other") } ?? [])")
+        dlog("ui debug: \(label) panel inWindow=\(panelView.window != nil) layer=\(panelView.layer != nil) isHidden=\(panelView.isHidden) layerHidden=\(panelView.layer?.isHidden ?? false) frame=\(panelView.frame) windowAppearance=\(String(describing: window.appearance)) effective=\(String(describing: panelView.effectiveAppearance.name)) splitSubviews=\(splitView?.subviews.map { $0 === previewPanel?.view ? "preview" : ($0 === terminalPanel?.view ? "terminal" : "web/other") } ?? [])")
         // Recursive view-hierarchy + frame dump of the panel's top levels, so
         // a "header renders blank" report can be pinned to frames/hierarchy.
-        dumpHierarchy(panelView, label: label, maxDepth: 4)
+        dumpHierarchy(panelView, label: label, maxDepth: label == "browser" ? 8 : 4)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self = self, panelView.window != nil, panelView.bounds.width > 10 else { return }
             guard let rep = panelView.bitmapImageRepForCachingDisplay(in: panelView.bounds) else { return }
@@ -1583,8 +1685,111 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             extra += " iconColor=\(dark ? "light(0.9)" : "dark(0.25)") enabled=\(cb.isEnabled)"
         }
         AppLog.shared.log("hier[\(label)]: \(indent)\(type(of: view)) frame=\(view.frame) hidden=\(view.isHidden) alpha=\(view.alphaValue) appearance=\(dark ? "dark" : "light")\(extra)")
+        dlog("hier[\(label)]: \(indent)\(type(of: view)) frame=\(view.frame) hidden=\(view.isHidden) alpha=\(view.alphaValue) appearance=\(dark ? "dark" : "light")\(extra)")
         for sub in view.subviews {
             dumpHierarchy(sub, label: label, indent: indent + "  ", maxDepth: maxDepth - 1)
+        }
+    }
+
+    /// 调试日志：同时写 AppLog 与 stdout（直接运行二进制时可从终端捕获）。
+    private func dlog(_ msg: String) {
+        AppLog.shared.log(msg)
+        print(msg)
+    }
+
+    // MARK: 遮挡诊断（QA）
+
+    /// 全窗口层级 JSON + 命中测试 + 窗口/面板截图。
+    /// 返回数据由 POST /api/browser/hierarchy 拉取，截图写 /tmp。
+    private func dumpBrowserHierarchyJSON() -> [String: Any] {
+        var info: [String: Any] = [:]
+        DispatchQueue.main.sync {
+            guard let window = self.window, let content = window.contentView else { return }
+            info["windowFrame"] = NSStringFromRect(window.frame)
+            info["contentFrame"] = NSStringFromRect(content.frame)
+            // 全窗口清单（排查 CEF 辅助窗口/DevTools 混入导致的误退出）。
+            info["allWindows"] = NSApp.windows.map { w -> String in
+                "\(type(of: w)) title=\(w.title) visible=\(w.isVisible) frame=\(NSStringFromRect(w.frame))"
+            }
+            let splits = self.splitView?.subviews.map { sub -> String in
+                let wf = sub.window != nil ? NSStringFromRect(sub.convert(sub.bounds, to: nil)) : "no-window"
+                return "\(type(of: sub)) \(wf) hidden=\(sub.isHidden)"
+            } ?? []
+            info["splitPanes"] = splits
+            if let panel = self.browserPanel?.view {
+                let wf = panel.window != nil ? NSStringFromRect(panel.convert(panel.bounds, to: nil)) : "no-window"
+                info["panelFrameInWindow"] = wf
+                info["panelHierarchy"] = self.hierarchyJSON(panel, maxDepth: 8)
+                if panel.window != nil {
+                    let center = NSPoint(x: panel.bounds.midX, y: panel.bounds.midY)
+                    let winPt = panel.convert(center, to: nil)
+                    let hit = window.contentView?.hitTest(winPt)
+                    info["hitAtPanelCenter"] = hit.map { view -> String in
+                        let vf = view.window != nil ? NSStringFromRect(view.convert(view.bounds, to: nil)) : "no-window"
+                        return "\(type(of: view)) inWindowFrame=\(vf) hidden=\(view.isHidden)"
+                    } ?? "nil"
+                    info["hitAtPanelCenterPoint"] = NSStringFromPoint(winPt)
+                    // 内容区中心（内容容器中央）命中测试
+                    if let container = self.browserPanel?.contentContainerView {
+                        let c = NSPoint(x: container.bounds.midX, y: container.bounds.midY)
+                        let cWin = container.convert(c, to: nil)
+                        let cHit = window.contentView?.hitTest(cWin)
+                        info["hitAtContentCenter"] = cHit.map { "\(type(of: $0))" } ?? "nil"
+                        info["hitAtContentCenterPoint"] = NSStringFromPoint(cWin)
+                    }
+                }
+                self.writeScreenshot(panel, to: "/tmp/panel-browser-shot.png")
+            }
+            self.writeScreenshot(content, to: "/tmp/window-shot.png")
+        }
+        return info
+    }
+
+    /// 递归视图层级（含 layer 关键属性），JSON 可序列化。
+    private func hierarchyJSON(_ view: NSView, maxDepth: Int) -> [String: Any] {
+        var d: [String: Any] = [
+            "class": String(describing: type(of: view)),
+            "frame": NSStringFromRect(view.frame),
+            "hidden": view.isHidden,
+            "alpha": view.alphaValue,
+            "opaque": view.isOpaque,
+            "wantsLayer": view.wantsLayer,
+        ]
+        if let layer = view.layer {
+            d["layerFrame"] = NSStringFromRect(layer.frame)
+            d["layerZ"] = layer.zPosition
+            d["layerHidden"] = layer.isHidden
+            d["layerOpacity"] = layer.opacity
+            d["layerMasks"] = layer.masksToBounds
+            d["layerContents"] = layer.contents != nil
+            d["layerBg"] = layer.backgroundColor.map { String(describing: $0) } ?? "nil"
+            // 显示树挂接诊断：layer 是否真的挂进窗口 layer 树（superlayer 链）。
+            var chain: [String] = []
+            var sl = layer.superlayer
+            var hop = 0
+            while let s = sl, hop < 6 {
+                chain.append("\(type(of: s)):\(NSStringFromRect(s.frame))")
+                sl = s.superlayer
+                hop += 1
+            }
+            d["layerSuperChain"] = chain
+        }
+        if maxDepth > 1 {
+            d["subviews"] = view.subviews.map { self.hierarchyJSON($0, maxDepth: maxDepth - 1) }
+        } else if !view.subviews.isEmpty {
+            d["subviews"] = "…(\(view.subviews.count))"
+        }
+        return d
+    }
+
+    /// 把视图当前合成结果存 PNG（等价于屏幕上看到的内容）。
+    private func writeScreenshot(_ view: NSView, to path: String) {
+        guard view.bounds.width > 10, view.bounds.height > 10,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        if let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
+            dlog("snapshot \(type(of: view)) \(rep.pixelsWide)x\(rep.pixelsHigh) -> \(path)")
         }
     }
 
@@ -2360,6 +2565,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleTasks.target = self
         toggleTasks.state = (rightPanel == .tasks) ? .on : .off
         tasksToggleMenuItem = toggleTasks
+        let toggleBrowser = viewMenu.addItem(withTitle: L10n.tr("menu.toggleBrowser"), action: #selector(browserEntryTapped(_:)), keyEquivalent: "b")
+        toggleBrowser.keyEquivalentModifierMask = [.command, .option]
+        toggleBrowser.target = self
+        toggleBrowser.state = (rightPanel == .browser) ? .on : .off
+        browserToggleMenuItem = toggleBrowser
         viewItem.submenu = viewMenu
 
         // Settings menu: dsh settings/upgrade/registry + logs + language.
@@ -2490,6 +2700,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         UserDefaults.standard.set([L10n.isZh ? "zh-CN" : "en-US"], forKey: "AppleLanguages")
         AppLog.shared.log("language set: lang=\(L10n.lang) followSystem=\(!L10n.hasExplicitChoice) AppleLanguages=\(UserDefaults.standard.array(forKey: "AppleLanguages") ?? [])")
         buildMenu() // rebuild the whole menu in the new language
+        // 活动栏 tooltip 跟随语言（构建时一次性设置，切换后需手动刷新）
+        previewBarButton?.toolTip = L10n.tr("bar.preview")
+        terminalBarButton?.toolTip = L10n.tr("bar.terminal")
+        browserBarButton?.toolTip = L10n.tr("bar.browser")
+        wikiBarButton?.toolTip = L10n.tr("bar.wiki")
+        tasksBarButton?.toolTip = L10n.tr("bar.tasks")
+        // 各面板头部操作按钮 tooltip 同样跟随语言
+        previewPanel?.refreshTooltips()
+        terminalPanel?.refreshTooltips()
+        wikiPanel?.refreshTooltips()
+        tasksPanel?.refreshTooltips()
+        browserPanel?.refreshTooltips()
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url
@@ -2647,6 +2869,118 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setRightPanel(rightPanel == .tasks ? .none : .tasks)
     }
 
+    /// Toggle the Browser panel (activity bar entry / ⌥⌘B).
+    @objc private func browserEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .browser ? .none : .browser)
+    }
+
+    /// 初始化 CEF（浏览器面板渲染内核）并启动消息泵定时器。
+    /// CDP 端口：DSH_CDP_PORT 覆盖，默认 9333（与 BrowserCDP.port 一致）。
+    private func startCEF() {
+        let dshHome = ProcessInfo.processInfo.environment["DSH_HOME"] ?? (NSHomeDirectory() + "/.dsh")
+        // Chromium 数据全部收进 ~/.dsh/browser/ 专用子树：
+        //   root_cache_path = ~/.dsh/browser（单例锁/组件缓存）
+        //   cache_path      = ~/.dsh/browser/profile（profile 数据）
+        // 绝不把 root 指向 ~/.dsh 本身（会把 Chromium 文件洒进 dsh 主目录，
+        // 曾因 cachePath=~/.dsh/browser-profile 导致 root=~/.dsh 污染）。
+        // 调试钩子：--browser-cache-dir=<dir> 指定全新 profile。
+        let browserRoot = dshHome + "/browser"
+        var cachePath = browserRoot + "/profile"
+        if let idx = CommandLine.arguments.firstIndex(of: "--browser-cache-dir"),
+           CommandLine.arguments.count > idx + 1 {
+            cachePath = CommandLine.arguments[idx + 1]
+        }
+        try? FileManager.default.createDirectory(atPath: cachePath, withIntermediateDirectories: true)
+        cleanStaleCEFSingleton(in: browserRoot)
+        cleanStaleCEFSingleton(in: cachePath)
+        let logPath = NSHomeDirectory() + "/Library/Logs/oh-my-dsh/cef.log"
+        do {
+            // 渲染模式：defaults write com.ohmydsh.app browserRenderMode -string windowed
+            // 切换窗口化（Chromium 原生绘制）vs OSR（默认，帧回调自绘）。
+            let windowed = UserDefaults.standard.string(forKey: "browserRenderMode") == "windowed"
+            CEFShim.setWindowedMode(windowed)
+            AppLog.shared.log("CEF render mode: \(windowed ? "windowed" : "osr")")
+            try CEFShim.initialize(withCachePath: cachePath,
+                                   remoteDebuggingPort: Int32(BrowserCDP.port),
+                                   logPath: logPath)
+        } catch {
+            AppLog.shared.log("CEF init failed: \(error.localizedDescription)")
+            return
+        }
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.008, repeats: true) { _ in
+            CEFShim.runMessageLoopWork()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        cefPumpTimer = timer
+        AppLog.shared.log("CEF initialized (cdp port \(BrowserCDP.port), cache \(cachePath))")
+    }
+
+    /// 清理上次异常退出（kill -9 等）残留的 Chromium 进程单例锁。
+    /// 只清理"连接被拒绝"的陈旧 socket（还有活实例时不动，避免双实例
+    /// 共用 profile 导致损坏）。
+    private func cleanStaleCEFSingleton(in dir: String) {
+        let socketPath = dir + "/SingletonSocket"
+        guard FileManager.default.fileExists(atPath: socketPath) else { return }
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(socketPath.utf8)
+        withUnsafeMutableBytes(of: &addr.sun_path) { buf in
+            let n = min(pathBytes.count, buf.count - 1)
+            pathBytes[0..<n].withUnsafeBytes { src in
+                buf.copyMemory(from: src)
+            }
+        }
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return }
+        let connected = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        close(fd)
+        if connected != 0 {
+            for name in ["SingletonLock", "SingletonSocket", "SingletonCookie"] {
+                try? FileManager.default.removeItem(atPath: dir + "/" + name)
+            }
+            AppLog.shared.log("cleaned stale CEF singleton in \(dir)")
+        }
+    }
+
+    /// Start the browser panel's localhost REST API (Agent / user curl).
+    /// 端口：DSH_BROWSER_PORT 覆盖，默认 3081；被占用自动递增；生效端口写
+    /// $DSH_HOME/browser-api.port 供 shell-browser 技能发现。
+    private func startBrowserAPIServer() {
+        let bridge = BrowserAPIBridge()
+        bridge.panel = browserPanel
+        bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
+        bridge.hidePanel = { [weak self] in
+            if self?.rightPanel == .browser { self?.setRightPanel(.none) }
+        }
+        bridge.isPanelVisible = { [weak self] in self?.rightPanel == .browser }
+        bridge.debugDump = { [weak self] in
+            guard let self = self, let panelView = self.browserPanel?.view else { return }
+            self.dumpPanelDebugInfo(panelView: panelView, label: "browser")
+        }
+        bridge.debugState = { [weak self] in
+            self?.browserPanel?.debugState() ?? [:]
+        }
+        bridge.debugHierarchy = { [weak self] in
+            self?.dumpBrowserHierarchyJSON() ?? [:]
+        }
+        browserAPIBridge = bridge
+
+        let server = BrowserAPIServer()
+        browserAPIServer = server
+        let envPort = ProcessInfo.processInfo.environment["DSH_BROWSER_PORT"].flatMap { Int($0) }
+        let preferred = envPort ?? 3081
+        let dshHome = ProcessInfo.processInfo.environment["DSH_HOME"] ?? (NSHomeDirectory() + "/.dsh")
+        let portFile = dshHome + "/browser-api.port"
+        let port = server.start(preferredPort: preferred, delegate: bridge, portFile: portFile)
+        AppLog.shared.log(port > 0
+            ? "browser api server listening on 127.0.0.1:\(port) (port file \(portFile))"
+            : "browser api server failed to start (preferred \(preferred))")
+    }
+
     /// The workspace directory the task panel should operate on: the shell's
     /// shared active project directory (follows the session the user is
     /// viewing), falling back to the workspace root of the main repo.
@@ -2752,6 +3086,7 @@ final class SettingsWindowController {
         ("menu.togglePreview", "⌥⌘P"),
         ("menu.toggleTerminal", "⌥⌘T"),
         ("menu.toggleWiki", "⌥⌘W"),
+        ("menu.toggleBrowser", "⌥⌘B"),
         ("settings.openMenu", "⌘,"),
     ]
 
