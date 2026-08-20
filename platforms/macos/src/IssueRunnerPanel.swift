@@ -18,7 +18,7 @@ final class IssueRunnerRootView: NSView {
 /// One issue/task row shown in the list.
 struct IssueRunnerTask {
     enum State: String {
-        case pending, running, done, failed, cancelled
+        case pending, running, done, failed, cancelled, closed
         var badge: String {
             switch self {
             case .pending: return "·"
@@ -26,6 +26,7 @@ struct IssueRunnerTask {
             case .done: return "✓"
             case .failed: return "✗"
             case .cancelled: return "−"
+            case .closed: return "☑"
             }
         }
     }
@@ -252,11 +253,14 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             task.branch = entry["branch"] as? String
             task.prUrl = entry["prUrl"] as? String
             task.error = entry["error"] as? String
+            task.body = entry["body"] as? String
+            task.labels = entry["labels"] as? [String] ?? []
             switch entry["state"] as? String {
             case "done": task.state = .done
             case "failed": task.state = .failed
             case "cancelled": task.state = .cancelled
             case "running": task.state = .running
+            case "closed": task.state = .closed
             default: task.state = .pending
             }
             // Local overlay: re-attach the session id recorded on this machine.
@@ -390,9 +394,30 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
                 //    (restored tasks start with a placeholder title).
                 for issue in issues {
                     if let idx = self.tasks.firstIndex(where: { $0.number == issue.number }) {
+                        // Issue reopened: a previously-closed task becomes
+                        // actionable again (persisted so a restart agrees).
+                        if self.tasks[idx].state == .closed {
+                            self.tasks[idx].state = .pending
+                            if let path = self.repoRootPath ?? self.workspacePath?() {
+                                TaskIndex.mergeTask(path, issue: issue.number, update: ["state": "pending"])
+                            }
+                        }
                         self.tasks[idx].title = issue.title
                         self.tasks[idx].labels = issue.labels
                         self.tasks[idx].body = issue.body
+                        // Persist title/body/labels so the content survives a
+                        // restart even after the issue closes (closed issues
+                        // are no longer returned by the open-issues fetch).
+                        if let path = self.repoRootPath ?? self.workspacePath?() {
+                            let entry = TaskIndex.findTask(path, issue: issue.number)
+                            var update: [String: Any] = [:]
+                            if (entry?["title"] as? String) != issue.title { update["title"] = issue.title }
+                            if (entry?["labels"] as? [String]) != issue.labels { update["labels"] = issue.labels }
+                            if (entry?["body"] as? String) != issue.body { update["body"] = issue.body ?? NSNull() }
+                            if !update.isEmpty {
+                                TaskIndex.mergeTask(path, issue: issue.number, update: update)
+                            }
+                        }
                     } else {
                         var newTask = IssueRunnerTask(number: issue.number,
                                                       title: issue.title,
@@ -401,10 +426,101 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
                         self.tasks.append(newTask)
                     }
                 }
+                // Tasks whose issue is no longer open (closed via "Comment &
+                // Close Issue", merged, or closed externally) are marked with
+                // their actual state and kept in the list; their buttons adapt
+                // (Comment & Close hidden, primary becomes "Open Issue").
+                // In-flight (.running) tasks are left untouched.
+                let openNumbers = Set(issues.map { $0.number })
+                for i in self.tasks.indices where !openNumbers.contains(self.tasks[i].number) && self.tasks[i].state != .running {
+                    if self.tasks[i].state != .closed {
+                        self.tasks[i].state = .closed
+                        if let path = self.repoRootPath ?? self.workspacePath?(),
+                           TaskIndex.findTask(path, issue: self.tasks[i].number)?["state"] as? String != "closed" {
+                            TaskIndex.mergeTask(path, issue: self.tasks[i].number, update: [
+                                "state": "closed",
+                                "closedAt": ISO8601DateFormatter().string(from: Date()),
+                            ])
+                        }
+                    }
+                }
                 self.tasks.sort { $0.number < $1.number }
                 self.tableView.reloadData()
+
+                // Closed issues never come back in the open-issues fetch, so a
+                // task with no stored body (e.g. restored from the index after
+                // a restart) would show no content. Recover title/body/labels
+                // from the single-issue endpoint (works for closed issues too)
+                // and persist them so this is a one-time cost per task.
+                // Skip tasks we already tried to recover and found empty
+                // (index has a "body" key, even if null): only fetch once.
+                let missing = self.tasks.filter { task in
+                    guard !openNumbers.contains(task.number), task.body == nil else { return false }
+                    if let path = self.repoRootPath ?? self.workspacePath?(),
+                       let entry = TaskIndex.findTask(path, issue: task.number),
+                       entry["body"] != nil { return false }
+                    return true
+                }
+                if !missing.isEmpty {
+                    let owner = repo.owner
+                    let repoName = repo.repo
+                    let token = token
+                    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                        guard let self = self else { return }
+                        var recovered: [Int: (title: String, body: String?, labels: [String])] = [:]
+                        for task in missing {
+                            if let d = Self.fetchIssueDetail(owner: owner, repo: repoName, number: task.number, token: token) {
+                                recovered[task.number] = d
+                            }
+                        }
+                        guard !recovered.isEmpty else { return }
+                        DispatchQueue.main.async {
+                            for (number, d) in recovered {
+                                if let idx = self.tasks.firstIndex(where: { $0.number == number }) {
+                                    self.tasks[idx].title = d.title
+                                    self.tasks[idx].body = d.body
+                                    self.tasks[idx].labels = d.labels
+                                    if let path = self.repoRootPath ?? self.workspacePath?() {
+                                        TaskIndex.mergeTask(path, issue: number, update: [
+                                            "title": d.title,
+                                            "body": d.body ?? NSNull(),
+                                            "labels": d.labels,
+                                        ])
+                                    }
+                                }
+                            }
+                            self.tableView.reloadData()
+                        }
+                    }
+                }
             }
         }
+    }
+
+    /// Fetch a single issue (open OR closed) via GitHub REST. Returns
+    /// title/body/labels; nil on network/auth error.
+    static func fetchIssueDetail(owner: String, repo: String, number: Int, token: String?) -> (title: String, body: String?, labels: [String])? {
+        var request = URLRequest(url: URL(string: "https://api.github.com/repos/\(owner)/\(repo)/issues/\(number)")!)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "accept")
+        request.setValue("oh-my-dsh", forHTTPHeaderField: "user-agent")
+        if let token = token, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "authorization")
+        }
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: (title: String, body: String?, labels: [String])?
+        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
+            defer { semaphore.signal() }
+            guard let data = data,
+                  let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let title = json["title"] as? String else { return }
+            let labels = (json["labels"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []
+            result = (title, json["body"] as? String, labels)
+        }
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + 20)
+        task.cancel()
+        return result
     }
 
     /// Fetch open issues via GitHub REST. Returns nil on network/auth error.
@@ -1081,7 +1197,11 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         if task.state == .running, task.sessionId != nil { prefix += " ⟳" }
         if let title = cell.viewWithTag(100) as? NSTextField {
             title.stringValue = "\(prefix) \(task.title)"
-            title.textColor = task.state == .failed ? .systemRed : .labelColor
+            switch task.state {
+            case .failed: title.textColor = .systemRed
+            case .closed: title.textColor = .secondaryLabelColor
+            default: title.textColor = .labelColor
+            }
         }
         if expanded {
             // The detail NSTextView lives inside the cell's NSScrollView.
@@ -1115,6 +1235,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         case .running: return L10n.tr("tasks.detailCancelTask")
         case .done: return L10n.tr("tasks.detailOpenPR")
         case .failed, .cancelled: return L10n.tr("tasks.detailRetry")
+        case .closed: return L10n.tr("tasks.detailOpenIssue")
         }
     }
 
@@ -1124,6 +1245,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         case .running: return true
         case .done: return task.prUrl != nil
         case .failed, .cancelled: return runningNumber == nil
+        case .closed: return true
         }
     }
 
@@ -1180,6 +1302,11 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             cancelRunningTask()
         case .done:
             if let url = task.prUrl, let u = URL(string: url) { NSWorkspace.shared.open(u) }
+        case .closed:
+            if let repo = repo,
+               let u = URL(string: "https://github.com/\(repo.owner)/\(repo.repo)/issues/\(number)") {
+                NSWorkspace.shared.open(u)
+            }
         case .failed:
             if let i = tasks.firstIndex(where: { $0.number == number }) {
                 tasks[i].state = .pending
@@ -1247,7 +1374,19 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
                 self.hideStatus()
                 if ok {
                     AppLog.shared.log("issue \(number) commented & closed")
-                    // Refresh issues so the closed one disappears from the list.
+                    // Mark the task with its actual state (issue now closed).
+                    // The row stays in the list; its buttons adapt.
+                    if let idx = self.tasks.firstIndex(where: { $0.number == number }) {
+                        self.tasks[idx].state = .closed
+                        if let path = self.repoRootPath ?? self.workspacePath?() {
+                            TaskIndex.mergeTask(path, issue: number, update: [
+                                "state": "closed",
+                                "closedAt": ISO8601DateFormatter().string(from: Date()),
+                            ])
+                        }
+                    }
+                    self.tableView.reloadData()
+                    // Refresh issues so new/updated ones appear.
                     self.reloadIssues()
                 } else {
                     self.setStatus(L10n.tr("tasks.commentCloseFailed"), spin: false)
@@ -1316,6 +1455,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         case .done: stateName = L10n.tr("tasks.state.done")
         case .failed: stateName = L10n.tr("tasks.state.failed")
         case .cancelled: stateName = L10n.tr("tasks.state.cancelled")
+        case .closed: stateName = L10n.tr("tasks.state.closed")
         }
         var lines = [L10n.tr("tasks.detailState", stateName)]
         if !task.labels.isEmpty {
