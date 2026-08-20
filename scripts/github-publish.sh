@@ -7,12 +7,23 @@
 #   GITHUB_REPOSITORY  owner/repo（默认 insky2005/oh-my-dsh）
 #   IS_PRERELEASE      1 = 预发布（默认 1）
 #
-# 用法：scripts/github-publish.sh <version>    # version 不带前导 v
+# 用法：scripts/github-publish.sh [version]   # version 不带前导 v；不传则自动读 version.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${1:-}"
-[ -n "$VERSION" ] || { echo "usage: github-publish.sh <version>" >&2; exit 1; }
+if [ -z "$VERSION" ]; then
+  VERSION="$(scripts/version.sh | head -1)"
+  echo "    publish: version auto ($VERSION)" >&2
+fi
+# 发布安全校验：VERSION 单一来源是 git tag —— HEAD 必须恰好在 vVERSION tag 上，
+# 否则可能把 fallback/错误版本发布到错误 commit（创建/重建同名 tag）。
+HEAD_TAG="$(git tag --points-at HEAD | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || true)"
+if [ -z "$HEAD_TAG" ] || [ "${HEAD_TAG#v}" != "$VERSION" ]; then
+  echo "ERROR: 发布要求 HEAD 恰好在 v$VERSION tag 上（当前 HEAD_TAG=${HEAD_TAG:-无}）。" >&2
+  echo "      VERSION 单一来源是 git tag：请先 git tag v$VERSION 并让 HEAD 落在其上。" >&2
+  exit 1
+fi
 GH_TOKEN="${GH_TOKEN:?GH_TOKEN required}"
 REPO="${GITHUB_REPOSITORY:-insky2005/oh-my-dsh}"
 PRERELEASE="${IS_PRERELEASE:-1}"

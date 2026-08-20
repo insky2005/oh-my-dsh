@@ -5,14 +5,18 @@
 # body for the GitHub Release (right-click → open install guidance).
 #
 # Usage:
-#   scripts/release-checksums.sh <version>
+#   scripts/release-checksums.sh [version]
 #     → writes dist/SHA-256SUMS and prints the release notes to stdout.
+#   版本可不传：缺省自动读 scripts/version.sh（版本单一来源 git tag）。
 #
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${1:-}"
-[ -n "$VERSION" ] || { echo "usage: release-checksums.sh <version>" >&2; exit 1; }
+if [ -z "$VERSION" ]; then
+  VERSION="$(scripts/version.sh | head -1)"
+  echo "    checksums: version auto ($VERSION)" >&2
+fi
 
 # 产品只出 arm64 / x86_64，不再出 universal。
 ARTIFACTS=()
