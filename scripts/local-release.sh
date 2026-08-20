@@ -66,8 +66,13 @@ else
 fi
 
 # ---------- 阶段1 prepare：预下载 node + 预取 runtime（命中 .cache/） ----------
-echo "==> [1/3 prepare] prefetch node + runtime"
-./platforms/macos/build-app.sh --prefetch
+# 按目标架构逐个 prefetch：runtime 缓存按架构分目录（.cache/runtime/<arch>），
+# 各架构互不覆盖、跨轮命中；只 prefetch 宿主架构会让 x86_64 的下载/安装
+# 堆到 build 阶段首次发生（网络阻塞在构建时）。
+for a in $ARCHS; do
+  echo "==> [1/3 prepare] prefetch node + runtime (arch=$a)"
+  DSH_ARCH="$a" ./platforms/macos/build-app.sh --prefetch
+done
 
 # ---------- 阶段2 build：逐架构 build-app.sh + make-pkg.sh ----------
 for a in $ARCHS; do

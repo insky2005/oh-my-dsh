@@ -71,7 +71,7 @@ case "${1:-}" in
   --help|-h)
     echo "usage: ./build-app.sh [--prefetch]"
     echo "  (default)  full build -> dist/$APP_NAME.app"
-    echo "  --prefetch pre-download Node + npm-install dsh into $CACHE_DIR/runtime (no .app)"
+    echo "  --prefetch pre-download Node + npm-install dsh into $CACHE_DIR/runtime/<arch> (no .app)"
     exit 0 ;;
 esac
 
@@ -98,10 +98,12 @@ print(max(lts, key=key)["version"])
     done
   fi
   if [ -z "$v" ]; then
-    local cached
-    cached=$(ls "$CACHE_DIR/node"/node-v*-darwin-arm64.tar.gz 2>/dev/null | head -1 || true)
+    # 离线回退按目标架构找对应 tarball（x86_64 -> darwin-x64），避免固定 arm64
+    local cached node_arch
+    node_arch="$( [ "$ARCH" = "x86_64" ] && echo x64 || echo "$ARCH" )"
+    cached=$(ls "$CACHE_DIR/node"/node-v*-darwin-$node_arch.tar.gz 2>/dev/null | head -1 || true)
     if [ -n "$cached" ]; then
-      v="v$(basename "$cached" | sed -E 's/^node-v([0-9.]+)-darwin-arm64\.tar\.gz$/\1/')"
+      v="v$(basename "$cached" | sed -E "s/^node-v([0-9.]+)-darwin-$node_arch\.tar\.gz$/\1/")"
       echo "    network unavailable; reusing cached Node $v"
     fi
   fi
@@ -158,7 +160,10 @@ install_dsh() {
 # build_runtime: node bin + npm + dsh tree into $CACHE_DIR/runtime (cached)
 build_runtime() {
   local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.0-rc.7}"
-  local stage="$CACHE_DIR/runtime"
+  # runtime 按架构分目录（$CACHE_DIR/runtime/<arch>）：双架构 release 的
+  # arm64/x86_64 各自 node+dsh 树互不覆盖，缓存跨轮生效；旧单目录会让
+  # 每轮 release 的每个架构都 rm -rf 重建（缓存形同虚设）。
+  local stage="$CACHE_DIR/runtime/$ARCH"
   local info="$stage/.runtime-info"
   if [ -f "$info" ] && grep -qx "$NODE_VERSION|$spec|$ARCH" "$info" 2>/dev/null; then
     echo "    reusing previously built runtime ($NODE_VERSION + $spec, $ARCH)"
@@ -210,7 +215,7 @@ if [ "$MODE" = "prefetch" ]; then
   echo "==> [prefetch] downloading Node + npm-installing dsh …"
   build_runtime
   echo ""
-  echo "Prefetched runtime ready: $CACHE_DIR/runtime"
+  echo "Prefetched runtime ready: $CACHE_DIR/runtime/$ARCH"
   echo "Node: $NODE_VERSION | dsh: ${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.0-rc.7}"
   echo "A later './build-app.sh' will reuse it without network."
   exit 0
@@ -274,7 +279,7 @@ echo "==> [4/7] building self-contained runtime (download node + npm install dsh
 build_runtime
 RUNTIME="$APP/Contents/Resources/runtime"
 mkdir -p "$RUNTIME"
-ditto "$CACHE_DIR/runtime" "$RUNTIME"
+ditto "$CACHE_DIR/runtime/$ARCH" "$RUNTIME"
 # 共享核心 core/ 一并嵌入运行时（shell 通过 node runtime/core/bin/ohmy-core.js 调用）。
 if [ -d "$ROOT/core" ]; then
   ditto "$ROOT/core" "$RUNTIME/core"
