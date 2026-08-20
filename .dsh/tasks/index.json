@@ -1,4 +1,15 @@
 {
-  "version" : 1,
-  "tasks" : []
+  "tasks" : [
+    {
+      "branch" : "fix\/issue-6",
+      "closedAt" : "2026-08-20T15:26:43Z",
+      "finishedAt" : "2026-08-20T14:58:06Z",
+      "issue" : 6,
+      "prUrl" : "https:\/\/github.com\/insky2005\/oh-my-dsh\/pull\/20",
+      "startedAt" : "2026-08-20T14:53:20Z",
+      "state" : "closed",
+      "title" : "[feature]: 希望增加 外观切换，支持 浅色、深色、系统 三种模式"
+    }
+  ],
+  "version" : 1
 }
