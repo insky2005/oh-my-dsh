@@ -895,15 +895,18 @@ final class ServerManager {
         }
         AppLog.shared.log("using node=\(firstNode) dsh=\(bin) port=\(port) system=\(system ?? "-") bundled=\(bundled ?? "-")")
 
-        // 4. Spawn `node <bin> web --port <port>`. If the chosen OS node fails
-        //    to boot dsh web (exits early or never serves in time), retry once
-        //    with the bundled runtime. DSH_NODE is explicit — no fallback.
+        // 4. Spawn `node <bin> web --no-open --port <port>`. The shell renders
+        //    the UI in its own window, so dsh web must not also hand the URL to
+        //    the default browser (dsh web opens it unless --no-open is passed).
+        //    If the chosen OS node fails to boot dsh web (exits early or never
+        //    serves in time), retry once with the bundled runtime. DSH_NODE is
+        //    explicit — no fallback.
         let logPath = NSHomeDirectory() + "/Library/Logs/oh-my-dsh/server.log"
         var attempt: String? = firstNode
         while let node = attempt {
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: node)
-            proc.arguments = [bin, "web", "--port", String(port)]
+            proc.arguments = [bin, "web", "--no-open", "--port", String(port)]
 
             var penv = env
             // Merge the login-shell PATH (read once) so dsh web's bash sees
