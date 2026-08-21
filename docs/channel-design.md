@@ -243,6 +243,7 @@
 - **Swift 无头单测** + build-app.sh 编译清单登记。
 - **跨平台复用验证**：channel 核心逻辑单测在纯 Node 环境运行（`node --test core/tests/*.test.js`，与现有 issues/jobqueue/tasks 单测同规），保证 Windows/Linux 壳层无需改核心即通过——这与 M2/M3「复用共享核心」验收一致。
 - **端到端验证（2026-08-21）**：core/tests/e2e-channel.test.js 在**真实 dsh web**（127.0.0.1:3080）上跑通全链路——mock ClawBot transport → ChannelManager → Router（conversation 绑定）→ SessionDriver（create/rename/prompt/轮询/取回复）→ 回复经 adapter.send 回传；session run CLI 为纯会话链路调试命令（不涉微信）。共 99 用例全绿。
+- **真实微信双向收发验证（2026-08-21）**：channel login 扫码登录拿 bot_token → getupdates 收到用户入站消息（含 context_token）→ sendmessage 回传 context_token 回复，用户确认收到——官方 iLink 协议收/发/登录全链路在真实微信上跑通；印证主动发送须带 context_token（无 token 的主动发不被投递）。
 - **手动 QA**：面板增删 channel、扫码登录、项目引用路由、消息→会话→回复闭环、断线/鉴权失效恢复。
 
 ## 12. 边界与失败处理
