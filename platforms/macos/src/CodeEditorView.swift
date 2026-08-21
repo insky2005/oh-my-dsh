@@ -54,11 +54,14 @@ final class LineNumberGutterView: NSView {
         // never skipping a line because an empty fragment has no glyph.
         let gutterHeight = bounds.height
         let glyphRange = NSRange(location: glyphIndex, length: lm.numberOfGlyphs - glyphIndex)
-        lm.enumerateLineFragments(forGlyphRange: glyphRange) { rect, _, _, _, stop in
+        lm.enumerateLineFragments(forGlyphRange: glyphRange) { rect, usedRect, _, _, stop in
             if line > totalLines { stop.pointee = true; return }
-            let gutterY = rect.minY + tv.textContainerInset.height - visible.minY
-            if gutterY > gutterHeight { stop.pointee = true; return }
-            LineNumberGutterView.drawNumber(line: line, at: gutterY, height: rect.height, rightX: rightX, attrs: attrs)
+            let fragTop = rect.minY + tv.textContainerInset.height - visible.minY
+            if fragTop > gutterHeight { stop.pointee = true; return }
+            // Center the number on the line's USED (glyph) vertical center, so a
+            // line made taller by an emoji still aligns with its actual text.
+            let usedCenter = usedRect.midY + tv.textContainerInset.height - visible.minY
+            LineNumberGutterView.drawNumberCentered(line: line, centerY: usedCenter, rightX: rightX, attrs: attrs)
             lastBottom = rect.minY + rect.height
             lastHeight = rect.height
             line += 1
@@ -72,6 +75,15 @@ final class LineNumberGutterView: NSView {
                 Self.drawNumber(line: line, at: gutterY, height: lastHeight, rightX: rightX, attrs: attrs)
             }
         }
+    }
+
+    /// Draw one line number right-aligned, vertically centered on the given point.
+    private static func drawNumberCentered(line: Int, centerY: CGFloat, rightX: CGFloat,
+                                           attrs: [NSAttributedString.Key: Any]) {
+        let label = "\(line)" as NSString
+        let size = label.size(withAttributes: attrs)
+        label.draw(at: NSPoint(x: rightX - size.width, y: centerY - size.height / 2),
+                   withAttributes: attrs)
     }
 
     /// Draw one line number right-aligned at the given y (centered in its line height).
