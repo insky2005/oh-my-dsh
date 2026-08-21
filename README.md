@@ -2,7 +2,7 @@
 
 把 DeepSeek Harness 的 Web 界面（`dsh web`）封装成一个可以在 macOS 上**直接双击运行**的原生 App。
 **不改动任何 DeepSeek Harness 源码**——它只是一个壳：内置运行时自拉起/复用 `dsh web`，用原生 `WKWebView`
-呈现界面，并在窗口右侧提供五个原生面板（预览 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务）。
+呈现界面，并在窗口右侧提供五个原生面板（文件 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务）。
 
 ## 特性一览
 
@@ -20,11 +20,11 @@
 窗口**最右侧是活动栏**（图标入口，五个面板互斥切换），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
 「视图」菜单提供五面板的显示/隐藏快捷键。
 
-### 预览面板（`⌥⌘P` / 活动栏「文件」图标）
+### 文件面板（`⌥⌘P` / 活动栏「文件」图标）
 
 点击 dsh web 对话中的文件链接（工具产出文件）不再弹系统默认应用，而是在面板内预览。
 
-- 预览区**左侧是项目目录树**：自动定位当前项目目录，目录可展开、点文件即预览，树宽可拖拽；
+- 面板**左侧是项目目录树**：自动定位当前项目目录，目录可展开、点文件即预览，树宽可拖拽；
 - **无后缀 / 点文件也能查看**（如 `LICENSE`、`Makefile`、`.gitignore`、`.env`）：内容可被 UTF-8 解码且非二进制即按文本预览；
 - **代码 / 文本支持编辑**：UTF-8 且 ≤2MB 的文件可在面板内直接编辑，左侧**行号栏**随滚动严格对齐，头部「保存」按钮 + `File ▸ 保存`（⌘S）原子写回；未保存时页签文件名后显示 `*`，保存后消失；
 - **语法高亮**：内置 highlight.js（经 vendored Highlightr，MIT），180+ 语言，明暗自适应；图片 / PDF / 文件夹列表 / 未知类型（图标 + 元数据）按类型预览；
@@ -32,7 +32,7 @@
 - 面板宽度可拖拽并记住，且**自动保证 WebView 宽度 ≥1050pt**（dsh web 低于 1024pt 会自动收起左侧会话栏）；
 - 纯 WebView 侧注入实现，不改任何 DeepSeek Harness 源码。
 
-![preview](./docs/screenshots/preview.png)
+![files](./docs/screenshots/files.png)
 
 ### 终端面板（`⌥⌘T` / 活动栏「终端」图标）
 
@@ -220,14 +220,16 @@ open "dist/oh-my-dsh.app"
 壳二进制只做三件事：探测端口 → 用内置 `node` 执行内置 `<dsh>/lib/bin.js web --port <n>` 拉起/复用 → `WKWebView` 加载 `http://127.0.0.1:<n>`。
 `dsh` 本体、`~/.dsh` 配置、会话数据全部原样，无任何补丁或注入。内置运行时装在 `Contents/Resources/runtime/`
 （`node` + `npm` + `dsh/` 依赖树），App 优先使用它，找不到时才回退到本机安装。
-右侧五个面板是壳层原生 UI，其中预览通过 WebView 注入拦截文件打开、任务/知识库/浏览器通过 dsh 既有能力（RPC / 会话 / 独立浏览器内核）驱动。
+右侧五个面板是壳层原生 UI，其中文件面板通过 WebView 注入拦截文件打开、任务/知识库/浏览器通过 dsh 既有能力（RPC / 会话 / 独立浏览器内核）驱动。
 
 ## 目录
 
 ```
 platforms/macos/src/                  原生壳（Swift）
   main.swift        壳层核心：日志/L10n/服务管理/升级/窗口/菜单/设置窗口/onboarding/右栏插槽/WebView 注入
-  PreviewPanel.swift  预览面板 + 共享 UI 组件库
+  PreviewPanel.swift  文件面板回滚基线 + 共享 UI 组件库
+  FilePanel.swift    文件面板（预览+编辑：无后缀/点文件、行号栏、保存 ⌘S、语法高亮）
+  CodeEditorView.swift 文件面板编辑视图（行号栏 + vendored Highlightr 高亮）
   TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）
   WikiPanel.swift      Repo Wiki 知识库面板（生成/维护/浏览 + 自动 git 提交）
   IssueRunnerPanel.swift 任务面板（GitHub issues 串行流水线 + 关联索引 + 评论并关闭）
