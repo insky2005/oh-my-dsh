@@ -169,24 +169,24 @@ final class ChannelPanelController: NSObject {
             header.heightAnchor.constraint(equalToConstant: 40),
         ])
 
-        // separator line under the header
-        let separator = NSBox()
-        separator.boxType = .separator
-        separator.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(separator)
-        NSLayoutConstraint.activate([
-            separator.leadingAnchor.constraint(equalTo: header.leadingAnchor),
-            separator.trailingAnchor.constraint(equalTo: header.trailingAnchor),
-            separator.bottomAnchor.constraint(equalTo: header.bottomAnchor),
-        ])
 
-        // toolbar (28pt) — empty placeholder so the panel matches the other
-        // panels two-row height; no text, no underline.
+
+        // toolbar (28pt) — empty placeholder, with a separator below it so the
+        // toolbar is visually separated from the content area.
         let toolbar = DynamicFillView()
         toolbar.kind = .window
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true
+        let toolbarSeparator = NSBox()
+        toolbarSeparator.boxType = .separator
+        toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.addSubview(toolbarSeparator)
+        NSLayoutConstraint.activate([
+            toolbarSeparator.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
+            toolbarSeparator.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
+            toolbarSeparator.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor),
+        ])
 
         contentContainer.kind = .control
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
