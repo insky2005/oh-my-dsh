@@ -266,6 +266,18 @@ enum L10n {
         "menu.toggleTasks": ("显示/隐藏 任务面板", "Toggle Tasks Panel"),
         // browser panel
         "menu.toggleBrowser": ("显示/隐藏 浏览器面板", "Toggle Browser Panel"),
+        "bar.channel": ("通道", "Channel"),
+        "menu.toggleChannel": ("显示/隐藏 通道面板", "Toggle Channel Panel"),
+        "channel.title": ("通道", "Channel"),
+        "channel.add": ("新增通道", "Add Channel"),
+        "channel.refresh": ("刷新", "Refresh"),
+        "channel.global": ("全局通道", "Global Channels"),
+        "channel.refs": ("本项目引用", "Project Refs"),
+        "channel.workspace": ("工作区:", "Workspace:"),
+        "channel.noWorkspace": ("当前工作区未知（未绑定项目）", "Current workspace unknown"),
+        "channel.addTitle": ("新增通道", "Add Channel"),
+        "channel.addInfo": ("命名并选择平台。连接参数（登录态/凭据）在接入时配置。", "Name the channel and pick a platform. Connection parameters (login/credentials) are configured on connect."),
+        "channel.namePlaceholder": ("通道名称", "Channel name"),
         "bar.browser": ("浏览器", "Browser"),
         "browser.title": ("浏览器", "Browser"),
         "browser.openInSystem": ("在系统浏览器中打开", "Open in System Browser"),
@@ -1164,6 +1176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// checkmarks stay in sync with AppTheme.current.
     private var appearanceMenuItems: [NSMenuItem] = []
     private var browserToggleMenuItem: NSMenuItem?
+    private var channelToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip).
     private var previewBarButton: ActivityBarButton!
     private var closeTabMenuItem: NSMenuItem?
@@ -1171,6 +1184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var wikiBarButton: ActivityBarButton!
     private var tasksBarButton: ActivityBarButton!
     private var browserBarButton: ActivityBarButton!
+    private var channelBarButton: ActivityBarButton!
 
     private var window: NSWindow!
     private var webView: WKWebView!
@@ -1180,6 +1194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var wikiPanel: WikiPanelController!
     private var tasksPanel: IssueRunnerPanelController!
     private var browserPanel: BrowserPanelController!
+    private var channelPanel: ChannelPanelController!
     /// Browser panel localhost REST API (Agent / user curl). Runs from launch.
     private var browserAPIServer: BrowserAPIServer!
     private var browserAPIBridge: BrowserAPIBridge!
@@ -1189,7 +1204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
     /// terminal, wiki, tasks and browser panels share one slot; the activity
     /// bar toggles between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki, tasks, browser }
+    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel }
     private var rightPanel: RightPanel = .none
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
@@ -1202,7 +1217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         max(FilePanelController.minWidth,
             max(TerminalPanelController.minWidth,
                 max(WikiPanelController.minWidth,
-                    max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth))))
+                    max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth, ChannelPanelController.minWidth))))
     /// Fixed default panel width. Deliberately NOT window-relative: a
     /// "half the window" default made the width chase the window as it was
     /// widened, flip-flopping on every toggle.
@@ -1397,6 +1412,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         browserPanel = BrowserPanelController()
         AppLog.shared.log("launch: browserPanel created")
         browserPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        channelPanel = ChannelPanelController()
+        AppLog.shared.log("launch: channelPanel created")
+        channelPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        channelPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
 
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
@@ -1422,7 +1441,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tasksBarButton = makeActivityButton(symbol: "checkmark.circle",
                                             tooltip: L10n.tr("bar.tasks"),
                                             action: #selector(tasksEntryTapped(_:)))
-        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton])
+        channelBarButton = makeActivityButton(symbol: "dot.radiowaves.left.and.right",
+                                              tooltip: L10n.tr("bar.channel"),
+                                              action: #selector(channelEntryTapped(_:)))
+        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -1480,6 +1502,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "wiki": kind = .wiki
         case "tasks": kind = .tasks
         case "browser": kind = .browser
+        case "channel": kind = .channel
         default: kind = .preview
         }
         setRightPanel(visible ? kind : .none)
@@ -1493,6 +1516,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .wiki: return wikiPanel.view
         case .tasks: return tasksPanel.view
         case .browser: return browserPanel.view
+        case .channel: return channelPanel.view
         case .none: return NSView()
         }
     }
@@ -1544,11 +1568,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         wikiToggleMenuItem?.state = (panel == .wiki) ? .on : .off
         tasksToggleMenuItem?.state = (panel == .tasks) ? .on : .off
         browserToggleMenuItem?.state = (panel == .browser) ? .on : .off
+        channelToggleMenuItem?.state = (panel == .channel) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
         tasksBarButton?.setActive(panel == .tasks)
         browserBarButton?.setActive(panel == .browser)
+        channelBarButton?.setActive(panel == .channel)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
@@ -1598,6 +1624,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 }
             case .none:
                 break
+            case .channel:
+                channelPanel.ensureLoaded()
+                if uiDebug {
+                    self.dumpPanelDebugInfo(panelView: channelPanel.view, label: "channel")
+                }
             }
         } else {
             split.setPosition(split.bounds.width, ofDividerAt: 0)
@@ -1627,6 +1658,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .wiki: kind = "wiki"
         case .tasks: kind = "tasks"
         case .browser: kind = "browser"
+        case .channel: kind = "channel"
         default: kind = "preview"
         }
         UserDefaults.standard.set(kind, forKey: "rightPanelKind")
@@ -2120,6 +2152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     self.wikiPanel?.serverReady(port: self.server.port)
                     // Tell the tasks panel: repo detection + issue load resolve now.
                     self.tasksPanel?.serverReady(port: self.server.port)
+                    self.channelPanel?.ensureLoaded()
                 }
             } catch {
                 AppLog.shared.log("server start failed: \(error.localizedDescription)")
@@ -2512,6 +2545,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     }
                 }
                 self.tasksPanel?.workspaceChanged()
+                self.channelPanel?.workspaceChanged()
             }
         }
     }
@@ -2589,6 +2623,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleBrowser.target = self
         toggleBrowser.state = (rightPanel == .browser) ? .on : .off
         browserToggleMenuItem = toggleBrowser
+        let toggleChannel = viewMenu.addItem(withTitle: L10n.tr("menu.toggleChannel"), action: #selector(channelEntryTapped(_:)), keyEquivalent: "h")
+        toggleChannel.keyEquivalentModifierMask = [.command, .option]
+        toggleChannel.target = self
+        toggleChannel.state = (rightPanel == .channel) ? .on : .off
+        channelToggleMenuItem = toggleChannel
         viewItem.submenu = viewMenu
 
         // Settings menu: dsh settings/upgrade/registry + logs + language.
@@ -2723,6 +2762,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         previewBarButton?.toolTip = L10n.tr("bar.preview")
         terminalBarButton?.toolTip = L10n.tr("bar.terminal")
         browserBarButton?.toolTip = L10n.tr("bar.browser")
+        channelBarButton?.toolTip = L10n.tr("bar.channel")
         wikiBarButton?.toolTip = L10n.tr("bar.wiki")
         tasksBarButton?.toolTip = L10n.tr("bar.tasks")
         // 各面板头部操作按钮 tooltip 同样跟随语言
@@ -2731,6 +2771,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         wikiPanel?.refreshTooltips()
         tasksPanel?.refreshTooltips()
         browserPanel?.refreshTooltips()
+        channelPanel?.refreshTooltips()
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url
@@ -2906,6 +2947,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Toggle the Browser panel (activity bar entry / ⌥⌘B).
     @objc private func browserEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .browser ? .none : .browser)
+    }
+    @objc private func channelEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .channel ? .none : .channel)
     }
 
     /// 初始化 CEF（浏览器面板渲染内核）并启动消息泵定时器。
@@ -3121,6 +3165,7 @@ final class SettingsWindowController {
         ("menu.toggleTerminal", "⌥⌘T"),
         ("menu.toggleWiki", "⌥⌘W"),
         ("menu.toggleBrowser", "⌥⌘B"),
+        ("menu.toggleChannel", "⌥⌘H"),
         ("settings.openMenu", "⌘,"),
     ]
 
