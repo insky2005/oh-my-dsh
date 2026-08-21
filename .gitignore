@@ -54,3 +54,7 @@ xcuserdata/
 *.swp
 *~
 Thumbs.db
+
+# channel message/session files (user content, not committed; config .dsh/channels.json IS committed)
+.dsh/channels/*.messages.json
+.dsh/channels/*.sessions.json
