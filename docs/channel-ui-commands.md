@@ -118,6 +118,24 @@
 - 用途：面板「Channel ▸ Session」消息分组展示、重启保留会话上下文；
 - 与仓库内 .dsh/channels.json（引用配置）不同：消息文件含用户消息内容，不入 git（参照 .dsh/tasks/local.json 的 gitignore 惯例，.gitignore 忽略 **/.dsh/channels/）。
 
+### 3.9 workspace 代号 + #tag 路由（消息路由到项目）
+
+**目标**：让用户用简短的代号或 workspace 名，把消息路由到某个项目（workspace）。
+
+- **代号分配**：/workspaces（或别名 /wks）列出所有 dsh workspace，按 path 排序，分配代号 w1、w2…（不区分大小写）：
+  w1 指向 path/a、w2 指向 path/b…；
+- **#tag 路由**：消息内容中含 #w1（代号）或 #<workspace名>（workspace 的 path/name 片段）→ 消息路由到该项目：
+  - 解析优先级：#wN 代号精确匹配 > #<name> 匹配 workspace path/name；
+  - 多个 tag 取第一个有效；无有效 tag 则回退（见下）；
+  - tag 仅作路由指示，#w1 本身从发往会话的文本中剥离。
+- **回退规则**（未指定 #tag 时）：
+  1. 沿用「最近一次提到的 workspace」（按 conversationId 记录最近路由目标）；
+  2. 若无最近记录则选第一个 workspace（/workspaces 列表第 1 个）。
+
+**/new #w1，开始和我对话**：在 w1 项目下创建新会话并继续对话；/new 后未指定 #tag 则按上述回退规则选项目。
+
+**实现**：core/lib/channel-workspaces.js（workspace 列表 + 代号分配 + #tag 解析，平台无关可单测），接进 runner（会话映射的 projectRoot 据此解析）。
+
 ## 4. 指令体系（客户端内斜杠指令）
 
 ### 3.1 判定规则
@@ -136,6 +154,7 @@
 | `/switch <名称/编号>` | 切换当前会话 | 会话名或编号 | 已切换到：xxx |
 | `/status` | 查连接/项目/会话状态 | — | 连接状态/项目/当前会话 |
 | `/ping` | 连通性测试 | — | pong（耗时 Nms） |
+| `/workspaces` (`/wks`) | 列出 workspace 并分配代号 w1/w2… | — | w1 → path/a |
 
 ### 3.3 第二优先级（后续）
 

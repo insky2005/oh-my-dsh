@@ -27,6 +27,7 @@ const { createSessionDriver } = require('./session-driver');
 const { createChannelManager, normalizeEvent } = require('./channel');
 const { createCommandRunner, parseCommand } = require('./channel-commands');
 const { createChannelSessions } = require('./channel-sessions');
+const { assignCodes, resolveWorkspaceTag } = require('./channel-workspaces');
 const { loadChannelAccount } = require('./channel-store');
 const { createQueue } = require('./jobqueue');
 
@@ -57,6 +58,22 @@ function buildWeixinAdapters({ refs, dshHome, transportOpts, intervalMs }) {
   }
   const refsByChannel = (channelId) => byChannel.get(channelId) || [];
   return { adapters, refsByChannel };
+}
+
+/**
+ * Load dsh workspaces (via workspace.list) and assign codes.
+ * Returns [{ id, path, name, code }], empty on failure.
+ */
+async function loadWorkspaces(port, host, timeoutMs) {
+  try {
+    const { rpc } = require('./session-driver');
+    const json = await rpc(port, 'workspace.list', {}, host || '127.0.0.1', timeoutMs || 8000);
+    const v = json && json.result && json.result.value;
+    if (!v || !Array.isArray(v.items)) return [];
+    return assignCodes(v.items);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -100,13 +117,23 @@ async function runWeixinChannel(opts = {}) {
   const projectRoot = opts.projectRoot || (opts.refs && opts.refs[0] && opts.refs[0].workspaceRoot) || process.cwd();
   const store = opts.sessions || createChannelSessions({ projectRoot, channelId });
 
+  // Workspace routing (docs §3.9): codes w1/w2… + #tag.
+  const port = opts.port || 3080;
+  const wsHost = opts.host || '127.0.0.1';
+  const getCodedWorkspaces = async () => loadWorkspaces(port, wsHost, opts.timeoutMs);
+
   // Command runner wired to the session store + session driver.
   const commandRunner = opts.commands || createCommandRunner({
     getSessions: () => store.listSessions(),
+    getWorkspaces: () => getCodedWorkspaces(),
     createSession: async (name) => {
-      const sid = await sessionDriver.createSession(opts.port || 3080, { cwd: projectRoot });
-      const rec = store.setSession('_active', { sessionId: sid, name: name || null, projectRoot });
-      return { id: sid, name: name || null };
+      // /new [#w1] — route to the tagged/first workspace.
+      const ws = await getCodedWorkspaces();
+      const resolved = resolveWorkspaceTag(name || '', { workspaces: ws, preferFirst: true });
+      const targetRoot = resolved.workspace ? resolved.workspace.path : projectRoot;
+      const sid = await sessionDriver.createSession(port, { cwd: targetRoot });
+      const rec = store.setSession('_active', { sessionId: sid, name: name || null, projectRoot: targetRoot });
+      return { id: sid, name: name || null, workspace: resolved.workspace };
     },
     switchSession: async (selector) => {
       const list = store.listSessions();
@@ -138,16 +165,30 @@ async function runWeixinChannel(opts = {}) {
         if (opts.onEvent) opts.onEvent(event, { command: parsed.name || parsed.kind, reply });
         return;
       }
-      // 2) ordinary message: ensure a session mapping then route via manager.
-      let rec = store.getSession(event.conversationId);
-      if (!rec) {
-        const sid = await sessionDriver.createSession(opts.port || 3080, { cwd: projectRoot });
-        rec = store.setSession(event.conversationId, { sessionId: sid, projectRoot });
+      // 2) ordinary message: resolve target workspace (#tag / last / first),
+      // then ensure a session mapping and route via manager.
+      const ws = await getCodedWorkspaces();
+      const resolved = resolveWorkspaceTag(event.text, {
+        workspaces: ws,
+        lastCode: store.getSession('lastWorkspace') ? store.getSession('lastWorkspace').sessionId : null,
+        preferFirst: true,
+      });
+      const targetRoot = resolved.workspace ? resolved.workspace.path : projectRoot;
+      if (resolved.workspace) {
+        store.setSession('lastWorkspace', { sessionId: resolved.workspace.code, name: 'lastWorkspace', projectRoot: targetRoot });
       }
-      // Ensure the event routes to the project whose session we resolved.
+      // strip the #tag so it isn't sent to the session as literal text
+      const sessionText = resolved.cleanText || event.text;
+      let rec = store.getSession(event.conversationId);
+      if (!rec || (resolved.source === 'tag' && rec.projectRoot !== targetRoot)) {
+        const sid = await sessionDriver.createSession(port, { cwd: targetRoot });
+        rec = store.setSession(event.conversationId, { sessionId: sid, projectRoot: targetRoot });
+      }
       event.sessionId = rec.sessionId;
-      store.appendMessage({ conversationId: event.conversationId, sessionId: rec.sessionId, dir: 'in', text: event.text });
-      const result = await manager.enqueue(event);
+      event.workspace = targetRoot;
+      store.appendMessage({ conversationId: event.conversationId, sessionId: rec.sessionId, dir: 'in', text: sessionText });
+      const eventForSession = { ...event, text: sessionText };
+      const result = await manager.enqueue(eventForSession);
       const replyText = result && result.reply && result.reply.text;
       if (replyText) {
         store.appendMessage({ conversationId: event.conversationId, sessionId: rec.sessionId, dir: 'out', text: replyText });

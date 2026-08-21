@@ -39,6 +39,7 @@ module.exports = {
   // Channel slash commands (docs/channel-ui-commands.md §4)
   ...require('./lib/channel-commands'),
   // Channel session mapping + message log (project .dsh, decision E)
+  ...require('./lib/channel-workspaces'),
   ...require('./lib/channel-sessions'),
   // Channel end-to-end runner (token->adapter->manager->session->reply)
   ...require('./lib/channel-runner'),

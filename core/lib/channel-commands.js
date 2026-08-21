@@ -24,6 +24,8 @@ const KNOWN = {
   switch: { arg: 'name', title: '/switch <名称/编号>', desc: '切换当前会话' },
   status: { arg: 0, title: '/status', desc: '查看连接/项目/会话状态' },
   ping: { arg: 0, title: '/ping', desc: '连通性测试' },
+  workspaces: { arg: 0, title: '/workspaces', desc: '列出 workspace 并分配代号 w1/w2…（别名 /wks）' },
+  wks: { arg: 0, title: '/wks', desc: '列出 workspace 并分配代号 w1/w2…' },
 };
 
 /**
@@ -71,6 +73,7 @@ function createCommandRunner(deps = {}) {
   const createSession = deps.createSession || (async () => ({ id: 'n/a' }));
   const switchSession = deps.switchSession || (async () => ({ id: 'n/a' }));
   const getStatus = deps.getStatus || (async () => ({}));
+  const getWorkspaces = deps.getWorkspaces || (async () => []);
 
   async function run(text) {
     const parsed = parseCommand(text);
@@ -120,6 +123,13 @@ function createCommandRunner(deps = {}) {
           '通道：' + (st.channel || 'n/a'),
         ];
         return { kind: 'reply', text: lines.join('\n') };
+      }
+      case 'workspaces':
+      case 'wks': {
+        const ws = await getWorkspaces();
+        if (!ws || ws.length === 0) return { kind: 'reply', text: '没有可用的 workspace' };
+        const lines = ws.map((w, i) => 'w' + (i + 1) + ' → ' + (w.path || w.name || w.id));
+        return { kind: 'reply', text: 'workspace 列表：\n' + lines.join('\n') };
       }
       default:
         return { kind: 'reply', text: '未知指令 /' + name + '（/help 查看）' };
