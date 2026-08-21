@@ -55,6 +55,14 @@ struct ChannelCard {
     let descKey: String
 }
 
+/// A vertical NSStackView that is flipped (y=0 at the top). Used as the
+/// scroll documentView so short content stays anchored to the TOP of the
+/// content area (a non-flipped, shorter-than-viewport documentView gets
+/// dropped to the bottom by NSScrollView on hidden→shown flips).
+final class FlippedStackView: NSStackView {
+    override var isFlipped: Bool { true }
+}
+
 final class ChannelPanelController: NSObject {
 
     var onRequestHide: (() -> Void)?
@@ -94,7 +102,7 @@ final class ChannelPanelController: NSObject {
 
     // project view — rows of channel + toggle + expandable sessions
     private let projectScroll = NSScrollView()
-    private let projectList = NSStackView()
+    private let projectList = FlippedStackView()
     private var projectRows: [ProjectRowView] = []
 
     // state
