@@ -160,10 +160,12 @@ async function runWeixinChannel(opts = {}) {
   const onEventUnsub = adapter.onEvent(async (event) => {
     if (!running) return;
     try {
+      console.log('[runner:' + channelId + '] onEvent received id=' + (event.messageId || '?') + ' text=' + JSON.stringify(event.text) + ' @' + Date.now());
       // 1) commands take precedence; ordinary text routes to the project.
       const parsed = parseCommand(event.text);
       if (parsed.kind === 'command' || parsed.kind === 'unknown') {
         const reply = await commandRunner.run(event.text);
+        console.log('[runner:' + channelId + '] command ' + (parsed.name || parsed.kind) + ' -> reply=' + JSON.stringify(reply && reply.text));
         const payload = { conversationId: event.conversationId, text: reply.text, contextToken: event.contextToken };
         await adapter.send(event.conversationId, payload);
         store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
