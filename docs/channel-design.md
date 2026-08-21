@@ -2,7 +2,7 @@
 
 > 状态：📝 设计稿（尚未实现）
 > 更新：2026-08-21
-> 关联：docs/issue-runner-design.md（「远程驱动预留」章节）、.dsh/wiki/data-model.md、.dsh/wiki/modules/main.md
+> 关联：docs/issue-runner-design.md（「远程驱动预留」章节）、.dsh/wiki/data-model.md、.dsh/wiki/modules/main.md、docs/milestones/M2-windows.md、docs/milestones/M3-linux.md、core/（共享核心）
 
 ## 1. 目标与范围
 
@@ -78,6 +78,24 @@
     }
 
 新平台接入 = 实现该接口 + 声明其「连接/登录」表单字段，上游配置/路由/面板零改动。
+
+### 3.4 跨平台复用分层约束（与 M2/M3 对齐）
+
+本项目为「平台壳层 + 共享核心」双层架构（macOS 现为 Swift/WebKit；Windows（M2，WinUI 3 + WebView2）与 Linux（M3，GTK4 + WebKitGTK）复用 `core/` 共享核心）。Channel 逻辑须遵循同样分层，保证三平台复用、不重复实现：
+
+**可跨平台复用（放入 `core/`，Node，平台无关）：**
+- 规范化事件模型 ChannelEvent / ChannelReply / 生命周期状态机（纯逻辑，无 UI）；
+- ChannelAdapter 抽象接口 + **各平台适配器本体**（微信/钉钉/飞书 SDK 均为 Node，与 OS 无关）；
+- 消息分发 Router（路由匹配、项目引用解析——纯逻辑）；
+- dsh 会话驱动（session.create/prompt/cancel 走 HTTP RPC，本就跨平台）；
+- 串行队列 jobqueue（已在 `core/lib/jobqueue.js`）。
+
+**平台相关、各平台壳层实现（仅薄适配，不重写核心）：**
+- Channel 配置面板 UI（Swift AppKit / C# WinUI / Rust GTK 各自实现，但只渲染平台无关列表 + 委托适配器渲染连接表单）；
+- 凭据读取：macOS 用 Keychain + 文件；Windows/Linux 无 Keychain，直接用文件（chmod 600）——文档的「文件优先」方案天然跨平台；
+- 扫码登录的二维码渲染（各平台图形库）。
+
+**硬约束：** 新增平台只移植壳层薄层，禁止把核心逻辑（事件/状态机/适配器/路由/会话驱动）写进平台壳层导致三份重复。核心逻辑变更须在 `core/` 内一处修改、三平台同步生效。这与终端面板「模拟器共享 + PTY 适配层隔离」、M2/M3「复用共享核心」的既定模式一致。
 
 ## 4. 配置模型（全局 + 项目引用）
 
@@ -212,16 +230,18 @@
 ## 10. 分阶段实施
 
 - **M0**：本文档（设计稿）。
-- **M1**：统一抽象层（ChannelEvent/Reply/状态机 + ChannelAdapter 接口）+ 配置面板（全局 + 项目引用）+ 全局配置模型与凭据存储。
-- **M2**：微信 ClawBot 适配器（首个实现，验证抽象）。
-- **M3**：消息分发路由（项目引用匹配 + 会话驱动 + 回复回传）。
+- **M1**：统一抽象层（ChannelEvent/Reply/状态机 + ChannelAdapter 接口）+ 消息分发 Router 骨架，**全部落入 `core/`（Node，平台无关）** + 配置面板（全局 + 项目引用）+ 全局配置模型与凭据存储。
+- **M2**：微信 ClawBot 适配器（`core/` 内首个实现，验证抽象）。
+- **M3**：消息分发路由（项目引用匹配 + 会话驱动 + 回复回传，`core/`）。
 - **M4**：钉钉/飞书适配器（复用统一抽象，验证一致性与扩展性）。
+- **跨平台**：Windows（M2 里程碑）/ Linux（M3 里程碑）壳层仅实现配置面板 UI + 凭据文件层，直接复用 `core/` 全部 channel 核心（见 §3.4）。
 
 ## 11. 测试与验收
 
 - **模型层单测**（参照 tests/wiki-panel/ 无头模式）：路由匹配、状态机、配置模型读写（UserDefaults/Keychain 文件）。
 - **适配器一致性回归用例**：用一个「假平台适配器」（mock 平台驱动同一 ChannelAdapter 接口）跑统一回归，保证每个新平台通过同一套用例——这是设计一致性的硬约束。
 - **Swift 无头单测** + build-app.sh 编译清单登记。
+- **跨平台复用验证**：channel 核心逻辑单测在纯 Node 环境运行（`node --test core/tests/*.test.js`，与现有 issues/jobqueue/tasks 单测同规），保证 Windows/Linux 壳层无需改核心即通过——这与 M2/M3「复用共享核心」验收一致。
 - **手动 QA**：面板增删 channel、扫码登录、项目引用路由、消息→会话→回复闭环、断线/鉴权失效恢复。
 
 ## 12. 边界与失败处理
