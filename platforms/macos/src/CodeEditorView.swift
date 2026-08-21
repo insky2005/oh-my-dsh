@@ -67,13 +67,14 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
 
     private let codeScroll = NSScrollView()
     private let gutterScroll = NSScrollView()
-    private let codeTextView = NSTextView()
-    private let gutterTextView = NSTextView()
+    private var codeTextView: NSTextView!
+    private var gutterTextView: NSTextView!
 
     // MARK: - State
 
     let path: String
     private let language: String?
+    private let dark: Bool
     private var usesHighlighting = false
     private var suppressDirty = false
     private var lastGutterLineCount = -1
@@ -88,60 +89,34 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
     init(path: String, text: String, language: String?, dark: Bool) {
         self.path = path
         self.language = language
+        self.dark = dark
         super.init(frame: .zero)
-        buildUI()
-        loadContent(text: text, dark: dark)
+        setup(text: text)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    // MARK: - UI construction
+    // MARK: - Construction
 
-    private func buildUI() {
-        // Code editor
-        codeTextView.isRichText = false
-        codeTextView.isEditable = true
-        codeTextView.isSelectable = true
-        codeTextView.allowsUndo = true
-        codeTextView.isAutomaticQuoteSubstitutionEnabled = false
-        codeTextView.isAutomaticDashSubstitutionEnabled = false
-        codeTextView.isAutomaticSpellingCorrectionEnabled = false
-        codeTextView.font = Self.codeFont
-        codeTextView.textContainerInset = NSSize(width: 8, height: 8)
-        codeTextView.drawsBackground = true
-        codeTextView.backgroundColor = .textBackgroundColor
-        codeTextView.textColor = .textColor
-        codeTextView.isVerticallyResizable = true
-        codeTextView.isHorizontallyResizable = true
-        codeTextView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        codeTextView.textContainer?.widthTracksTextView = false
-        codeTextView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        codeTextView.autoresizingMask = [.width]
-        codeTextView.delegate = self
+    private func setup(text: String) {
+        // Build the code editor around the highlighting storage when available.
+        var storage: NSTextStorage?
+        if let lang = language, Self.highlightingAvailable(),
+           let cas = Self.makeHighlightingStorage(language: lang, dark: dark) {
+            storage = cas
+            usesHighlighting = true
+        }
+        codeTextView = makeCodeTextView(storage: storage)
+        gutterTextView = makeGutterTextView()
 
         codeScroll.documentView = codeTextView
         codeScroll.hasVerticalScroller = true
         codeScroll.hasHorizontalScroller = true
         codeScroll.autohidesScrollers = true
         codeScroll.drawsBackground = false
-
-        // Line-number gutter
-        gutterTextView.isEditable = false
-        gutterTextView.isSelectable = false
-        gutterTextView.isRichText = false
-        gutterTextView.font = Self.codeFont
-        gutterTextView.alignment = .right
-        gutterTextView.textColor = .secondaryLabelColor
-        gutterTextView.backgroundColor = .controlBackgroundColor
-        gutterTextView.drawsBackground = true
-        gutterTextView.textContainerInset = NSSize(width: 8, height: 8)
-        gutterTextView.isVerticallyResizable = true
-        gutterTextView.isHorizontallyResizable = false
-        gutterTextView.textContainer?.widthTracksTextView = false
-        gutterTextView.textContainer?.containerSize = NSSize(width: 100, height: CGFloat.greatestFiniteMagnitude)
-        gutterTextView.autoresizingMask = []
+        codeScroll.verticalScrollElasticity = .automatic
 
         gutterScroll.documentView = gutterTextView
         gutterScroll.hasVerticalScroller = false
@@ -166,40 +141,87 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
             codeScroll.topAnchor.constraint(equalTo: topAnchor),
             codeScroll.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-    }
 
-    /// Set the initial content and, when possible, attach a highlighting storage.
-    private func loadContent(text: String, dark: Bool) {
-        var storage: NSTextStorage?
-        if let lang = language, Self.highlightingAvailable(),
-           let cas = Self.makeHighlightingStorage(language: lang, dark: dark) {
-            storage = cas
-            usesHighlighting = true
-        }
-        if let storage = storage {
-            // Re-point the existing text view onto the highlighting storage.
-            // The text view was created with its own layout manager; replace it
-            // via a fresh layout manager so the storage owns the layout.
-            codeTextView.layoutManager?.textStorage = storage
-        }
-
+        // Load content.
         suppressDirty = true
         codeTextView.string = text
         suppressDirty = false
-
         if let cas = storage as? CodeAttributedString {
             cas.language = language   // triggers a full highlight on a background thread
         }
-
         refreshGutterLineCount()
-        // Sync the gutter to any initial vertical position (usually 0).
         gutterScroll.contentView.scroll(to: NSPoint(x: 0, y: codeScroll.contentView.bounds.origin.y))
+    }
+
+    /// A horizontally-scrolling, vertically-growing editable code text view,
+    /// optionally backed by a custom (highlighting) text storage.
+    private func makeCodeTextView(storage: NSTextStorage?) -> NSTextView {
+        let tv: NSTextView
+        if let storage = storage {
+            let lm = NSLayoutManager()
+            storage.addLayoutManager(lm)
+            let tc = NSTextContainer(containerSize: NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                                           height: CGFloat.greatestFiniteMagnitude))
+            lm.addTextContainer(tc)
+            tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 300), textContainer: tc)
+        } else {
+            tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
+        }
+        tv.isRichText = false
+        tv.isEditable = true
+        tv.isSelectable = true
+        tv.allowsUndo = true
+        tv.isAutomaticQuoteSubstitutionEnabled = false
+        tv.isAutomaticDashSubstitutionEnabled = false
+        tv.isAutomaticSpellingCorrectionEnabled = false
+        tv.font = Self.codeFont
+        tv.textColor = .textColor
+        tv.drawsBackground = true
+        tv.backgroundColor = .textBackgroundColor
+        tv.textContainerInset = NSSize(width: 8, height: 8)
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = true
+        tv.autoresizingMask = [.width]
+        tv.minSize = NSSize(width: 0, height: 0)
+        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        tv.textContainer?.widthTracksTextView = false
+        tv.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                                 height: CGFloat.greatestFiniteMagnitude)
+        tv.textContainer?.lineFragmentPadding = 4
+        tv.delegate = self
+        return tv
+    }
+
+    /// A read-only right-aligned line-number gutter.
+    private func makeGutterTextView() -> NSTextView {
+        let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 40, height: 300))
+        tv.isEditable = false
+        tv.isSelectable = false
+        tv.isRichText = false
+        tv.font = Self.codeFont
+        tv.alignment = .right
+        tv.textColor = .secondaryLabelColor
+        tv.drawsBackground = true
+        tv.backgroundColor = .controlBackgroundColor
+        tv.textContainerInset = NSSize(width: 8, height: 8)
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
+        tv.autoresizingMask = []
+        tv.minSize = NSSize(width: 0, height: 0)
+        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        tv.textContainer?.widthTracksTextView = false
+        tv.textContainer?.containerSize = NSSize(width: 100, height: CGFloat.greatestFiniteMagnitude)
+        return tv
     }
 
     /// True when all Highlightr assets are embedded in the main bundle root.
     private static func highlightingAvailable() -> Bool {
-        for name in ["highlight.min.js", "pojoaque.min.css", "xcode.min.css", "atom-one-dark.min.css"] {
-            if Bundle.main.url(forResource: name, withExtension: nil) == nil { return false }
+        let required: [(String, String)] = [
+            ("highlight.min", "js"), ("pojoaque.min", "css"),
+            ("xcode.min", "css"), ("atom-one-dark.min", "css"),
+        ]
+        for (name, ext) in required where Bundle.main.path(forResource: name, ofType: ext) == nil {
+            return false
         }
         return true
     }
@@ -251,9 +273,9 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
         super.viewDidChangeEffectiveAppearance()
         // Follow light/dark by swapping the highlight.js theme (setTheme
         // triggers a re-highlight through the storage's themeChanged hook).
-        if let cas = codeTextView.layoutManager?.textStorage as? CodeAttributedString {
-            let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            cas.highlightr.setTheme(to: dark ? "atom-one-dark" : "xcode")
+        if let cas = codeTextView.textStorage as? CodeAttributedString {
+            let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            cas.highlightr.setTheme(to: isDark ? "atom-one-dark" : "xcode")
         }
     }
 
