@@ -69,6 +69,9 @@ final class ChannelPanelController: NSObject {
     private let configButton: CustomIconButton
     private let hideButton: CustomIconButton
 
+    // toolbar (28pt, consistent with other panels' second row)
+    private let toolbarLabel = HeaderLabel()
+
     // content container
     private let contentContainer = DynamicFillView()
     private let onboardingView = NSView()
@@ -136,6 +139,7 @@ final class ChannelPanelController: NSObject {
         headerTitle.text = L10n.tr("channel.title")
         configButton.toolTip = L10n.tr("channel.globalConfig")
         hideButton.toolTip = L10n.tr("preview.closePanel")
+        toolbarLabel.text = L10n.tr("channel.globalConfig")
         onboardingTitle.stringValue = L10n.tr("channel.onboardingTitle")
         onboardingHint.stringValue = L10n.tr("channel.onboardingHint")
     }
@@ -178,6 +182,30 @@ final class ChannelPanelController: NSObject {
             separator.bottomAnchor.constraint(equalTo: header.bottomAnchor),
         ])
 
+        // toolbar (28pt) — consistent with other panels second row
+        toolbarLabel.translatesAutoresizingMaskIntoConstraints = false
+        let toolbar = DynamicFillView()
+        toolbar.kind = .window
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.wantsLayer = true
+        toolbar.layer?.masksToBounds = true
+        toolbar.addSubview(toolbarLabel)
+        NSLayoutConstraint.activate([
+            toolbarLabel.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 10),
+            toolbarLabel.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            toolbarLabel.trailingAnchor.constraint(lessThanOrEqualTo: toolbar.trailingAnchor, constant: -8),
+            toolbar.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        let toolbarUnderline = NSBox()
+        toolbarUnderline.boxType = .separator
+        toolbarUnderline.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.addSubview(toolbarUnderline)
+        NSLayoutConstraint.activate([
+            toolbarUnderline.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
+            toolbarUnderline.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
+            toolbarUnderline.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor),
+        ])
+
         contentContainer.kind = .control
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.wantsLayer = true
@@ -195,13 +223,18 @@ final class ChannelPanelController: NSObject {
         pin(wizardView, to: contentContainer)
 
         view.addSubview(header)
+        view.addSubview(toolbar)
         view.addSubview(contentContainer)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: view.topAnchor),
             header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             header.heightAnchor.constraint(equalToConstant: 40),
-            contentContainer.topAnchor.constraint(equalTo: header.bottomAnchor),
+            toolbar.topAnchor.constraint(equalTo: header.bottomAnchor),
+            toolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            toolbar.heightAnchor.constraint(equalToConstant: 28),
+            contentContainer.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             contentContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             contentContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             contentContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -222,9 +255,11 @@ final class ChannelPanelController: NSObject {
     private func buildOnboarding() {
         onboardingTitle.translatesAutoresizingMaskIntoConstraints = false
         onboardingTitle.font = .systemFont(ofSize: 15, weight: .semibold)
+        onboardingTitle.alignment = .left
         onboardingHint.translatesAutoresizingMaskIntoConstraints = false
         onboardingHint.font = .systemFont(ofSize: 12)
         onboardingHint.textColor = .secondaryLabelColor
+        onboardingHint.alignment = .left
 
         // title + hint: left-aligned (not stretched)
         let textStack = NSStackView(views: [onboardingTitle, onboardingHint])
