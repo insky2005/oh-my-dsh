@@ -5,15 +5,76 @@
 //  Used by FilePanelController.showText() when a UTF-8 file fits under the
 //  preview cap. Owns the dirty state and atomic write-back to disk.
 //
-//  Line numbers are rendered by a small read-only NSTextView placed left of the
-//  code editor inside a dedicated vertical-only scroll; both scroll views are
-//  locked in step so the numbers track the code vertically while the code scrolls
-//  horizontally on its own. Both use the same monospaced font and text insets so
-//  lines stay aligned (the code editor never wraps, so one logical line = one row).
+//  The line-number gutter is a fixed-width, custom-drawn view to the LEFT of a
+//  single code NSScrollView. It derives the visible lines directly from the code
+//  text view's live layout (visibleRect + layoutManager), so numbers always stay
+//  aligned with the code regardless of scrolling — there is no second scroll view
+//  to desync.
 //
 
 import AppKit
 import Foundation
+
+/// Line-number gutter drawn from the code text view's live layout. Flipped so its
+/// y-origin is top-left (matching NSTextView). Rendered with Core Graphics text
+/// (the same reliable pipeline the panel headers use).
+final class LineNumberGutterView: NSView {
+    override var isFlipped: Bool { true }
+
+    weak var codeTextView: NSTextView?
+    var gutterFont: NSFont = CodeEditorView.codeFont
+    var numberColor: NSColor = .secondaryLabelColor
+    var fillColor: NSColor = .controlBackgroundColor
+
+    override var isOpaque: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        fillColor.setFill()
+        dirtyRect.fill()
+
+        guard let tv = codeTextView, let lm = tv.layoutManager, let tc = tv.textContainer else { return }
+        let visible = tv.visibleRect
+        guard visible.height > 0 else { return }
+
+        // glyphIndex(for:in:) uses the text CONTAINER coordinate system, which
+        // is offset from the view by textContainerInset; convert before querying.
+        let pointY = visible.minY - tv.textContainerInset.height
+        let topGlyph = lm.glyphIndex(for: NSPoint(x: 0, y: pointY), in: tc)
+        guard topGlyph < lm.numberOfGlyphs else { return }
+        let topChar = lm.characterIndexForGlyph(at: topGlyph)
+        var effective = NSRange()
+        let fragment = lm.lineFragmentRect(forGlyphAt: topGlyph, effectiveRange: &effective)
+        let lineHeight = fragment.height
+        guard lineHeight > 0 else { return }
+
+        // topFragment.minY is in text-container coords; add the inset to get
+        // text-view coords. The gutter's top edge (y=0) is the clip's top, i.e.
+        // visible.minY, so the first visible line starts at their difference.
+        let startY = fragment.minY + tv.textContainerInset.height - visible.minY
+
+        let attrs: [NSAttributedString.Key: Any] = [.font: gutterFont, .foregroundColor: numberColor]
+        let rightX = bounds.width - 6
+        var line = Self.lineNumber(ofCharacter: topChar, in: tv.string)
+        var y = startY
+        while y < bounds.height {
+            let label = "\(line)" as NSString
+            let size = label.size(withAttributes: attrs)
+            label.draw(at: NSPoint(x: rightX - size.width, y: y + (lineHeight - size.height) / 2),
+                       withAttributes: attrs)
+            line += 1
+            y += lineHeight
+        }
+    }
+
+    /// 1-based line number of the character at the given index (1 if before any newline).
+    private static func lineNumber(ofCharacter index: Int, in string: String) -> Int {
+        let ns = string as NSString
+        let end = min(max(index, 0), ns.length)
+        var line = 1
+        for i in 0..<end where ns.character(at: i) == 10 { line += 1 }
+        return line
+    }
+}
 
 /// Editable code/text view with a line-number gutter and optional syntax
 /// highlighting. Embeds as an NSView (fills the panel's content area).
@@ -66,9 +127,8 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
     // MARK: - Subviews
 
     private let codeScroll = NSScrollView()
-    private let gutterScroll = NSScrollView()
+    private let gutterView = LineNumberGutterView()
     private var codeTextView: NSTextView!
-    private var gutterTextView: NSTextView!
 
     // MARK: - State
 
@@ -77,7 +137,6 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
     private let dark: Bool
     private var usesHighlighting = false
     private var suppressDirty = false
-    private var lastGutterLineCount = -1
     private(set) var isDirty = false
     private var gutterWidthConstraint: NSLayoutConstraint!
 
@@ -109,7 +168,6 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
             usesHighlighting = true
         }
         codeTextView = makeCodeTextView(storage: storage)
-        gutterTextView = makeGutterTextView()
 
         codeScroll.documentView = codeTextView
         codeScroll.hasVerticalScroller = true
@@ -118,25 +176,18 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
         codeScroll.drawsBackground = false
         codeScroll.verticalScrollElasticity = .automatic
 
-        gutterScroll.documentView = gutterTextView
-        gutterScroll.hasVerticalScroller = false
-        gutterScroll.hasHorizontalScroller = false
-        gutterScroll.autohidesScrollers = true
-        gutterScroll.scrollerStyle = .overlay
-        gutterScroll.drawsBackground = false
-        gutterScroll.verticalScrollElasticity = .none
-
-        for v in [gutterScroll, codeScroll] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(v)
-        }
-        gutterWidthConstraint = gutterScroll.widthAnchor.constraint(equalToConstant: 40)
+        gutterView.codeTextView = codeTextView
+        gutterView.translatesAutoresizingMaskIntoConstraints = false
+        codeScroll.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(gutterView)
+        addSubview(codeScroll)
+        gutterWidthConstraint = gutterView.widthAnchor.constraint(equalToConstant: 40)
         NSLayoutConstraint.activate([
-            gutterScroll.leadingAnchor.constraint(equalTo: leadingAnchor),
-            gutterScroll.topAnchor.constraint(equalTo: topAnchor),
-            gutterScroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            gutterView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            gutterView.topAnchor.constraint(equalTo: topAnchor),
+            gutterView.bottomAnchor.constraint(equalTo: bottomAnchor),
             gutterWidthConstraint,
-            codeScroll.leadingAnchor.constraint(equalTo: gutterScroll.trailingAnchor),
+            codeScroll.leadingAnchor.constraint(equalTo: gutterView.trailingAnchor),
             codeScroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             codeScroll.topAnchor.constraint(equalTo: topAnchor),
             codeScroll.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -149,8 +200,7 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
         if let cas = storage as? CodeAttributedString {
             cas.language = language   // triggers a full highlight on a background thread
         }
-        refreshGutterLineCount()
-        gutterScroll.contentView.scroll(to: NSPoint(x: 0, y: codeScroll.contentView.bounds.origin.y))
+        updateGutterWidthAndRedraw()
     }
 
     /// A horizontally-scrolling, vertically-growing editable code text view,
@@ -192,28 +242,6 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
         return tv
     }
 
-    /// A read-only right-aligned line-number gutter.
-    private func makeGutterTextView() -> NSTextView {
-        let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 40, height: 300))
-        tv.isEditable = false
-        tv.isSelectable = false
-        tv.isRichText = false
-        tv.font = Self.codeFont
-        tv.alignment = .right
-        tv.textColor = .secondaryLabelColor
-        tv.drawsBackground = true
-        tv.backgroundColor = .controlBackgroundColor
-        tv.textContainerInset = NSSize(width: 8, height: 8)
-        tv.isVerticallyResizable = true
-        tv.isHorizontallyResizable = false
-        tv.autoresizingMask = []
-        tv.minSize = NSSize(width: 0, height: 0)
-        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        tv.textContainer?.widthTracksTextView = false
-        tv.textContainer?.containerSize = NSSize(width: 100, height: CGFloat.greatestFiniteMagnitude)
-        return tv
-    }
-
     /// True when all Highlightr assets are embedded in the main bundle root.
     private static func highlightingAvailable() -> Bool {
         let required: [(String, String)] = [
@@ -236,32 +264,31 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
         return cas
     }
 
-    // MARK: - Gutter
+    // MARK: - Gutter sizing / redraw
 
-    private func refreshGutterLineCount() {
+    private func updateGutterWidthAndRedraw() {
         let count = codeTextView.string.components(separatedBy: "\n").count
-        guard count != lastGutterLineCount else { return }
-        lastGutterLineCount = count
-        gutterTextView.string = (1...count).map(String.init).joined(separator: "\n")
         let digits = String(count).count
         gutterWidthConstraint.constant = max(36, CGFloat(digits) * 8 + 22)
+        gutterView.needsDisplay = true
     }
 
     // MARK: - NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {
-        refreshGutterLineCount()
+        updateGutterWidthAndRedraw()
         if !suppressDirty && !isDirty {
             isDirty = true
             onDirtyChange?(true)
         }
     }
 
-    // MARK: - Scroll lock (gutter follows code vertically)
+    // MARK: - Scroll: redraw the gutter whenever the code scrolls
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
+            codeScroll.contentView.postsBoundsChangedNotifications = true
             NotificationCenter.default.addObserver(self,
                 selector: #selector(codeScrollChanged),
                 name: NSView.boundsDidChangeNotification,
@@ -284,8 +311,9 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
     }
 
     @objc private func codeScrollChanged() {
-        let origin = codeScroll.contentView.bounds.origin
-        gutterScroll.contentView.scroll(to: NSPoint(x: 0, y: origin.y))
+        // The gutter has no scroll view of its own; it just needs a redraw so it
+        // can recompute which lines are visible from the code's live layout.
+        gutterView.needsDisplay = true
     }
 
     // MARK: - Save
