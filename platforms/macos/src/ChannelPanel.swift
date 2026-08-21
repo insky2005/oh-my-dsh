@@ -186,29 +186,25 @@ final class ChannelPanelController: NSObject, NSTableViewDataSource, NSTableView
             statusLabel.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -8),
         ])
 
-        let root = DynamicFillView()
-        root.kind = .control
-        root.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(header)
-        root.addSubview(content)
+        // Compositing fix (docs/terminal-header-fix.md): the panel root
+        // ChannelRootView is isOpaque=false so header/content composite
+        // correctly. The content area gets its own backing layer with
+        // masksToBounds so its opaque drawing cannot spill over and cover the
+        // header buttons (the classic layer-backed opaque-view trap).
+        content.wantsLayer = true
+        content.layer?.masksToBounds = true
+
+        view.addSubview(header)
+        view.addSubview(content)
         NSLayoutConstraint.activate([
-            header.topAnchor.constraint(equalTo: root.topAnchor),
-            header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            header.topAnchor.constraint(equalTo: view.topAnchor),
+            header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             header.heightAnchor.constraint(equalToConstant: 40),
             content.topAnchor.constraint(equalTo: header.bottomAnchor),
-            content.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            content.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-        ])
-
-        view.addSubview(root)
-        root.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            root.topAnchor.constraint(equalTo: view.topAnchor),
-            root.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            root.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            root.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            content.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
     }
 
