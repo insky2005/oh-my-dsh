@@ -95,6 +95,12 @@
 - 元数据（id/platform/name/enabled/state）存 UserDefaults（键形如 channel.global.<id>）。
 - **连接凭据不落 UserDefaults 明文**：沿用 GitHub token 模式——Keychain 专属 + 文件（~/.dsh/channels/<channelId>，chmod 600）双写，App 与外部工具/代理共用；读取优先文件、Keychain 兜底。
 
+**凭据读写决策（2026-08-21 记录，沿用既有 GitHub token 实现）：**
+- **读取硬性约束：绝不因读取弹密码/授权框。** 运行时一律**文件优先**（`~/.dsh/channels/<channelId>`），仅在文件缺失时兜底读 Keychain。正常路径全程零弹窗。
+- **写入双写**（Keychain + 文件 chmod 600）。Keychain 条目用 `kSecAttrAccessibleAfterFirstUnlock` **且不设 per-app ACL**（对应 `IssueRunnerPanel.swift` 既有 `saveToken` 注释：token 为低敏感凭据，每次读取弹 ACL 提示对后台 shell 不可接受）——因此写入不弹「App 想要访问钥匙串」授权框。
+- **为何保留 Keychain（而非纯文件）**：① 兼容存量（老版本/命令行 `security` / 外部代理写入的条目）；② 文件被删/损坏时的恢复备份；③ 系统托管、防文件篡改。文件仍是唯一读取权威，Keychain 仅为兜底备份，不影响零弹窗体验。
+- **简化候选（后续可按需采纳）**：若弹窗问题复现，可改为**纯文件方案**（仅 `~/.dsh/channels/<channelId>`，chmod 600，完全不碰 Keychain），读取=写读同一份，零双写；代价是失去系统级备份。
+
 ### 4.2 项目引用（.dsh/channels.json）
 
 项目目录下（跟随仓库提交）的 .dsh/channels.json，引用全局 Channel + 该项目专属路由/会话约定：
