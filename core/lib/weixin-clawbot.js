@@ -69,29 +69,42 @@ function createWeixinClawBotAdapter(opts = {}) {
   }
 
   function startPolling() {
+    // Strictly serial long-poll loop (mirrors official monitor's while-loop):
+    // each getUpdates call blocks until new messages or the long-poll timeout,
+    // then loops immediately. No setInterval — this keeps the long-poll
+    // connection continuous, which the server relies on to advance the
+    // get_updates_buf cursor (otherwise the same message is redelivered).
     if (pollTimer || running) return;
     running = true;
-    const tick = async () => {
-      if (!running) return;
-      try {
-        const raw = await (transport.fetchUpdates || (async () => [])).call(transport);
-        for (const r of raw || []) {
-          try { const ev = normalizeEvent({ ...r, channelId, platform }); if (r && r.contextToken) ev.contextToken = r.contextToken; emit(ev); } catch { /* drop malformed */ }
+    const loop = async () => {
+      while (running) {
+        try {
+          const raw = await (transport.fetchUpdates || (async () => [])).call(transport);
+          if (raw && raw.length) {
+            console.log('[clawbot:' + channelId + '] fetchUpdates got ' + raw.length + ' msg(s) @' + Date.now() + ' ' + JSON.stringify(raw.map((m) => ({ id: m.messageId, t: m.text }))));
+          }
+          for (const r of raw || []) {
+            try { const ev = normalizeEvent({ ...r, channelId, platform }); if (r && r.contextToken) ev.contextToken = r.contextToken; console.log('[clawbot:' + channelId + '] EMIT ' + ev.conversationId + ' text=' + JSON.stringify(ev.text)); emit(ev); } catch { /* drop malformed */ }
+          }
+          // yield so a mock/immediate-return transport does not busy-loop
+          await sleep(0);
+        } catch (err) {
+          lastError = err;
+          state.reconnecting();
+          if (transport.onError) transport.onError(err);
+          await sleep(intervalMs);
         }
-      } catch (err) {
-        lastError = err;
-        state.reconnecting();
-        if (transport.onError) transport.onError(err);
       }
     };
-    pollTimer = setInterval(tick, intervalMs);
-    if (pollTimer.unref) pollTimer.unref();
+    pollTimer = loop(); // hold the promise so the loop keeps the process alive
   }
 
   function stopPolling() {
     running = false;
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    pollTimer = null;
   }
+
+  function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
   async function send(conversationId, reply) {
     const rep = typeof reply === 'string' ? buildReply(reply) : reply || {};

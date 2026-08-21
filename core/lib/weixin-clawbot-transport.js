@@ -244,6 +244,11 @@ function createWeixinClawBotTransport(opts = {}) {
       throw e;
     }
     if (resp.get_updates_buf != null && resp.get_updates_buf !== '') {
+      if (resp.get_updates_buf !== getUpdatesBuf) {
+        console.log('[transport] buf advanced len ' + getUpdatesBuf.length + '->' + resp.get_updates_buf.length + ' tail=' + resp.get_updates_buf.slice(-8) + ' (was ' + getUpdatesBuf.slice(-8) + ')');
+      } else {
+        console.log('[transport] buf UNCHANGED (' + getUpdatesBuf.length + ') ret=' + resp.ret + ' msgs=' + (resp.msgs || []).length);
+      }
       getUpdatesBuf = resp.get_updates_buf;
     }
     if (resp.ret !== undefined && resp.ret !== 0) {
