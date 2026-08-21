@@ -535,6 +535,8 @@ final class ChannelPanelController: NSObject {
            let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
             channels = arr.compactMap { dict in
                 guard let id = dict["id"] as? String, let platform = dict["platform"] as? String else { return nil }
+                // skip stale bug records whose id is the literal interpolation text
+                if id.contains("(") || id.contains(")") { return nil }
                 return GlobalChannel(
                     id: id,
                     platform: platform,
