@@ -102,8 +102,56 @@ function printJson(v) {
         const sm = core.createStateMachine(rest[0]);
         const next = rest[1];
         printJson({ from: sm.get(), to: next, ok: sm.set(next) });
+      } else if (sub === 'login') {
+        let savePath = null;
+        for (let i = 0; i < rest.length; i++) { if (rest[i] === '--save') savePath = rest[i + 1] || null; }
+        const qr = require('../vendor/qrcode-terminal/lib/main.js');
+        const transport = core.createWeixinClawBotTransport({});
+        const started = await transport.startLogin();
+        process.stdout.write('\n请用手机微信扫描下方二维码以连接（如二维码无法显示，可访问链接：');
+        process.stdout.write(started.qrcodeUrl);
+        process.stdout.write('）\n\n');
+        qr.generate(started.qrcodeUrl, { small: true });
+        const result = await transport.waitForLogin({ qrcode: started.qrcode, timeoutMs: 480000 });
+        if (result.connected) {
+          const out = { botToken: result.botToken, accountId: result.accountId, userId: result.userId, baseUrl: result.baseUrl };
+          if (savePath) { fs.writeFileSync(savePath, JSON.stringify(out, null, 2), 'utf8'); }
+          printJson({ connected: true, ...out, savedTo: savePath });
+        } else {
+          printJson(result);
+        }
+      } else if (sub === 'listen') {
+        const token = rest[0] || '';
+        const once = rest.includes('--once');
+        if (!token) fail('usage: channel listen <token> [--once]');
+        const transport = core.createWeixinClawBotTransport({ token });
+        await transport.connect();
+        if (once) {
+          const updates = await transport.fetchUpdates();
+          printJson(updates);
+          process.exit(0);
+        }
+        process.stdout.write('listening (Ctrl+C to stop)\n');
+        while (true) {
+          try {
+            const updates = await transport.fetchUpdates();
+            for (const u of updates) { printJson(u); }
+          } catch (e) {
+            process.stderr.write('listen error: ' + (e && e.message || String(e)) + '\n');
+            if (e && e.code === -14) { process.stderr.write('token expired (-14), re-login needed\n'); process.exit(2); }
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+        }
+      } else if (sub === 'reply') {
+        const token = rest[0] || '';
+        const to = rest[1] || '';
+        const text = rest.slice(2).join(' ') || '';
+        if (!token || !to) fail('usage: channel reply <token> <to> <text>');
+        const transport = core.createWeixinClawBotTransport({ token });
+        const res = await transport.sendMessage({ conversationId: to, text });
+        printJson({ sent: true, to, messageId: res.messageId });
       } else {
-        fail('usage: channel route <refsJson> <conversationId> <text> | normalize <eventJson> | state <current> <next>');
+        fail('usage: channel route <refsJson> <conversationId> <text> | normalize <eventJson> | state <current> <next> | login [--save <file>] | listen <token> [--once] | reply <token> <to> <text>');
       }
       break;
     default:
