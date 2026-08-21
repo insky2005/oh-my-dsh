@@ -430,6 +430,15 @@ final class ChannelPanelController: NSObject {
         projectList.edgeInsets = NSEdgeInsets(top: 12, left: 10, bottom: 12, right: 10)
         projectList.translatesAutoresizingMaskIntoConstraints = false
 
+        // Pin the stack to the clip view so rows fill the full content width
+        // (otherwise the stack collapses to its intrinsic size in the corner).
+        NSLayoutConstraint.activate([
+            projectList.leadingAnchor.constraint(equalTo: projectScroll.contentView.leadingAnchor),
+            projectList.trailingAnchor.constraint(equalTo: projectScroll.contentView.trailingAnchor),
+            projectList.topAnchor.constraint(equalTo: projectScroll.contentView.topAnchor),
+            projectList.widthAnchor.constraint(equalTo: projectScroll.contentView.widthAnchor),
+        ])
+
         projectView.addSubview(projectScroll)
         NSLayoutConstraint.activate([
             projectScroll.topAnchor.constraint(equalTo: projectView.topAnchor),
@@ -688,9 +697,11 @@ final class ProjectRowView: NSView {
         }
         sessionsStack.isHidden = !expanded
 
-        // clicking the title row (not the switch) toggles expand/collapse
+        // Clicking the channel name (which fills the whole line up to the
+        // switch) toggles expand/collapse. Kept off the switch so the switch
+        // keeps its own toggle action (a row-wide gesture would swallow it).
         let click = NSClickGestureRecognizer(target: self, action: #selector(expandTapped(_:)))
-        addGestureRecognizer(click)
+        titleLabel.addGestureRecognizer(click)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -698,9 +709,6 @@ final class ProjectRowView: NSView {
     @objc private func toggleTapped(_ sender: Any) { onToggle?() }
 
     @objc private func expandTapped(_ gesture: NSClickGestureRecognizer) {
-        // ignore clicks that land on the switch itself (it has its own action)
-        let p = gesture.location(in: self)
-        if switchControl.frame.contains(p) { return }
         onExpand?()
     }
 }
