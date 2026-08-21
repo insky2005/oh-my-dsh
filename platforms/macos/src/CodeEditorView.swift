@@ -54,9 +54,13 @@ final class LineNumberGutterView: NSView {
 
         let attrs: [NSAttributedString.Key: Any] = [.font: gutterFont, .foregroundColor: numberColor]
         let rightX = bounds.width - 6
+        // Only number the lines that actually exist in the file — never keep
+        // filling the gutter past the last line (a short file must not show a
+        // full screen of numbers).
+        let totalLines = Self.lineCount(of: tv.string)
         var line = Self.lineNumber(ofCharacter: topChar, in: tv.string)
         var y = startY
-        while y < bounds.height {
+        while y < bounds.height && line <= totalLines {
             let label = "\(line)" as NSString
             let size = label.size(withAttributes: attrs)
             label.draw(at: NSPoint(x: rightX - size.width, y: y + (lineHeight - size.height) / 2),
@@ -64,6 +68,13 @@ final class LineNumberGutterView: NSView {
             line += 1
             y += lineHeight
         }
+    }
+
+    /// Number of lines in the string (a trailing newline counts an empty last line).
+    private static func lineCount(of string: String) -> Int {
+        var count = 1
+        for ch in string.unicodeScalars where ch == "\n" { count += 1 }
+        return count
     }
 
     /// 1-based line number of the character at the given index (1 if before any newline).
