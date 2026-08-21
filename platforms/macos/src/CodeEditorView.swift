@@ -39,34 +39,31 @@ final class LineNumberGutterView: NSView {
         // glyphIndex(for:in:) uses the text CONTAINER coordinate system, which
         // is offset from the view by textContainerInset; convert before querying.
         let pointY = visible.minY - tv.textContainerInset.height
-        let topGlyph = lm.glyphIndex(for: NSPoint(x: 0, y: pointY), in: tc)
-        guard topGlyph < lm.numberOfGlyphs else { return }
-        let topChar = lm.characterIndexForGlyph(at: topGlyph)
-        var effective = NSRange()
-        let fragment = lm.lineFragmentRect(forGlyphAt: topGlyph, effectiveRange: &effective)
-        let lineHeight = fragment.height
-        guard lineHeight > 0 else { return }
-
-        // topFragment.minY is in text-container coords; add the inset to get
-        // text-view coords. The gutter's top edge (y=0) is the clip's top, i.e.
-        // visible.minY, so the first visible line starts at their difference.
-        let startY = fragment.minY + tv.textContainerInset.height - visible.minY
+        var glyphIndex = lm.glyphIndex(for: NSPoint(x: 0, y: pointY), in: tc)
+        guard glyphIndex < lm.numberOfGlyphs else { return }
 
         let attrs: [NSAttributedString.Key: Any] = [.font: gutterFont, .foregroundColor: numberColor]
         let rightX = bounds.width - 6
-        // Only number the lines that actually exist in the file — never keep
-        // filling the gutter past the last line (a short file must not show a
-        // full screen of numbers).
         let totalLines = Self.lineCount(of: tv.string)
-        var line = Self.lineNumber(ofCharacter: topChar, in: tv.string)
-        var y = startY
-        while y < bounds.height && line <= totalLines {
+        var line = Self.lineNumber(ofCharacter: lm.characterIndexForGlyph(at: glyphIndex), in: tv.string)
+
+        // Walk the layout manager line fragment by line fragment, drawing each
+        // number at that line's EXACT y. This never drifts, even when lines have
+        // slightly different heights (bold/italic highlight variants).
+        while glyphIndex < lm.numberOfGlyphs && line <= totalLines {
+            var effective = NSRange()
+            let frag = lm.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &effective)
+            let gutterY = frag.minY + tv.textContainerInset.height - visible.minY
+            if gutterY > bounds.height { break }
             let label = "\(line)" as NSString
             let size = label.size(withAttributes: attrs)
-            label.draw(at: NSPoint(x: rightX - size.width, y: y + (lineHeight - size.height) / 2),
+            label.draw(at: NSPoint(x: rightX - size.width,
+                                   y: gutterY + (frag.height - size.height) / 2),
                        withAttributes: attrs)
             line += 1
-            y += lineHeight
+            let next = NSMaxRange(effective)
+            guard next > glyphIndex else { break }   // safety: avoid an infinite loop
+            glyphIndex = next
         }
     }
 
