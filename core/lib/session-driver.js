@@ -81,16 +81,34 @@ async function sessionRunning(port, sessionId, host, timeoutMs) {
 }
 
 /**
- * Fetch the last assistant message text for a session via session.search
- * (fallback: session.history). Both return a list of messages; we take the
- * last message whose role is assistant/user with a text payload.
+ * Fetch the last assistant reply text for a session via session.history.
+ * dsh returns { result: { value: { events: [ { event: { type,
+ * data: { message: { role, content: [ { type:"text", text } ] } } } } ] } } }.
+ * We scan all events for the final assistant/message (content[].text).
+ * session.search is a fallback when history is unavailable.
  */
 async function lastMessage(port, sessionId, host, timeoutMs) {
-  for (const method of ['session.search', 'session.history']) {
-    const payload = method === 'session.search' ? { query: '', sessionId } : { sessionId };
-    const json = await rpc(port, method, payload, host, timeoutMs);
-    const v = value(json);
-    const msgs = extractMessages(v);
+  // Preferred: session.history
+  const hist = await rpc(port, 'session.history', { sessionId }, host, timeoutMs);
+  const v = value(hist);
+  if (v) {
+    const events = (Array.isArray(v.events) ? v.events : []).concat(Array.isArray(v.items) ? v.items : []);
+    let lastText = null;
+    for (const e of events) {
+      const ev = e && typeof e === 'object' && e.event ? e.event : e;
+      const type = ev && ev.type;
+      if (type !== 'assistant/message' && type !== 'message') continue;
+      const msg = ev.data && ev.data.message;
+      const t = extractText(msg);
+      if (t) lastText = t;
+    }
+    if (lastText) return lastText;
+  }
+  // Fallback: session.search
+  for (const q of ['', '\u6700\u65b0']) {  // '' then a broad query
+    const json = await rpc(port, 'session.search', { query: q, sessionId }, host, timeoutMs);
+    const sv = value(json);
+    const msgs = extractMessages(sv);
     if (msgs.length) {
       const m = msgs[msgs.length - 1];
       const text = extractText(m);
@@ -106,6 +124,9 @@ function extractMessages(v) {
   if (Array.isArray(v.items)) return v.items;
   if (Array.isArray(v.messages)) return v.messages;
   if (Array.isArray(v.results)) return v.results;
+  if (Array.isArray(v.events)) {
+    return v.events.map((e) => { const ev = e && e.event ? e.event : e; return ev && ev.data ? ev.data.message : null; }).filter(Boolean);
+  }
   return [];
 }
 

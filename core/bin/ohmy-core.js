@@ -17,8 +17,9 @@
  *   node core/bin/ohmy-core.js channel route <refsJson> <conversationId> <text>
  *   node core/bin/ohmy-core.js channel normalize <eventJson>
  *   node core/bin/ohmy-core.js channel state <current> <next>
+ *   node core/bin/ohmy-core.js session run <port> <conversationId> <text> <workspaceRoot>
+ *       -- drives a dsh session directly (debug only; no WeChat involved)
  */
-
 const core = require('../index');
 
 const [cmd, sub, ...rest] = process.argv.slice(2);
@@ -68,8 +69,24 @@ function printJson(v) {
         printJson(await core.fetchActiveSessionCwd(parseInt(rest[0], 10)));
       } else if (sub === 'cwd-by-id') {
         printJson(await core.fetchSessionCwd(parseInt(rest[0], 10), rest[1]));
+      } else if (sub === 'run') {
+        // run <port> <conversationId> <text> <workspaceRoot> — DEBUG ONLY.
+        // Drives a dsh session directly from a synthetic event; does NOT touch
+        // WeChat. Use to validate the session pipeline in isolation.
+        const port = parseInt(rest[0], 10);
+        const conversationId = rest[1] || '';
+        const text = rest[2] || '';
+        const workspaceRoot = rest[3];
+        if (!Number.isInteger(port) || !conversationId || !workspaceRoot) {
+          fail('usage: session run <port> <conversationId> <text> <workspaceRoot>');
+        }
+        const driver = core.createSessionDriver({ port });
+        const ref = { channelId: 'cli', workspaceRoot, routing: { conversations: [conversationId] } };
+        const event = core.normalizeEvent({ channelId: 'cli', conversationId, text, platform: 'cli' });
+        const reply = await driver.run(event, ref);
+        printJson(reply);
       } else {
-        fail('usage: session cwd <port> | cwd-by-id <port> <sessionId>');
+        fail('usage: session cwd <port> | cwd-by-id <port> <sessionId> | run <port> <conversationId> <text> <workspaceRoot>');
       }
       break;
     case 'channel':

@@ -229,11 +229,11 @@
 
 ## 10. 分阶段实施
 
-- **M0**：本文档（设计稿）。
+- **M0**：本文档（设计稿）。✅
 - **M1**：统一抽象层（ChannelEvent/Reply/状态机 + ChannelAdapter 接口）+ 消息分发 Router 骨架，**全部落入 `core/`（Node，平台无关）** + 配置面板（全局 + 项目引用）+ 全局配置模型与凭据存储。
-- **M2**：微信 ClawBot 适配器（`core/` 内首个实现，验证抽象）。
-- **M3**：消息分发路由（项目引用匹配 + 会话驱动 + 回复回传，`core/`）。
-- **M4**：钉钉/飞书适配器（复用统一抽象，验证一致性与扩展性）。
+- **M2**：微信 ClawBot 适配器（`core/` 内首个实现，验证抽象）。✅——适配器 weixin-clawbot.js + 真实 transport weixin-clawbot-transport.js（OpenClaw HTTP：login/getUpdates/sendmessage，可注入 fetch / SDK 双模式）。
+- **M3**：消息分发路由（项目引用匹配 + 会话驱动 + 回复回传，`core/`）。✅——Router + SessionDriver 已在**真实 dsh web** 上端到端验证（见 §11）。
+- **M4**：钉钉/飞书适配器（复用统一抽象，验证一致性与扩展性）。📋 待实现。
 - **跨平台**：Windows（M2 里程碑）/ Linux（M3 里程碑）壳层仅实现配置面板 UI + 凭据文件层，直接复用 `core/` 全部 channel 核心（见 §3.4）。
 
 ## 11. 测试与验收
@@ -242,6 +242,7 @@
 - **适配器一致性回归用例**：用一个「假平台适配器」（mock 平台驱动同一 ChannelAdapter 接口）跑统一回归，保证每个新平台通过同一套用例——这是设计一致性的硬约束。
 - **Swift 无头单测** + build-app.sh 编译清单登记。
 - **跨平台复用验证**：channel 核心逻辑单测在纯 Node 环境运行（`node --test core/tests/*.test.js`，与现有 issues/jobqueue/tasks 单测同规），保证 Windows/Linux 壳层无需改核心即通过——这与 M2/M3「复用共享核心」验收一致。
+- **端到端验证（2026-08-21）**：core/tests/e2e-channel.test.js 在**真实 dsh web**（127.0.0.1:3080）上跑通全链路——mock ClawBot transport → ChannelManager → Router（conversation 绑定）→ SessionDriver（create/rename/prompt/轮询/取回复）→ 回复经 adapter.send 回传；session run CLI 为纯会话链路调试命令（不涉微信）。共 99 用例全绿。
 - **手动 QA**：面板增删 channel、扫码登录、项目引用路由、消息→会话→回复闭环、断线/鉴权失效恢复。
 
 ## 12. 边界与失败处理

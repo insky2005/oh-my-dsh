@@ -32,4 +32,6 @@ module.exports = {
   ...require('./lib/session-driver'),
   // WeChat ClawBot channel adapter (first ChannelAdapter implementation)
   ...require('./lib/weixin-clawbot'),
+  // WeChat ClawBot transport (SDK or OpenClaw HTTP backing)
+  ...require('./lib/weixin-clawbot-transport'),
 };
