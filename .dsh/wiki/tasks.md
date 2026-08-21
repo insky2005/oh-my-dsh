@@ -33,7 +33,7 @@ manual: false
 open "dist/oh-my-dsh.app"
 ```
 
-- 验证点：窗口标题 `oh-my-dsh (DeepSeek Harness)`；活动栏四图标互斥切换（预览/终端/知识库/任务）；⌥⌘P / ⌥⌘T / ⌥⌘W / ⌥⌘J 快捷键；About 面板显示 dsh/Node 版本与 registry。
+- 验证点：窗口标题 `oh-my-dsh (DeepSeek Harness)`；活动栏图标互斥切换（预览/终端/知识库/任务/浏览器）；⌥⌘P / ⌥⌘T / ⌥⌘W / ⌥⌘J 快捷键；About 面板显示 dsh/Node 版本与 registry；文件面板编辑文本后 ⌘S 保存、页签标题出现 `*` 未保存标记（见 [file-panel](modules/file-panel.md)）。
 
 ## 跑单元测试
 

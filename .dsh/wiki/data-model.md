@@ -43,7 +43,7 @@ manual: false
 - **`TerminalEmulator.Cell`**：`ch / fg / bg / bold / italic / underline / inverse / continuation`；`ParserState`（ground/escape/csi/osc/dcs 等）驱动 ANSI 解析；
 - **`TerminalSession.State`**：`running / exited(code) / terminated`；
 - **`WikiPanelController.generations`**（内存态，build 59→60）：`[canonicalRepo: Generation]`——生成状态按仓库根（`WikiRPC.canonical` 规范化路径）关联，多仓库可并发各一个生成；`syncGenerationUI()` 据此让 UI 只反映当前仓库；
-- **`TreeNode`**（PreviewPanel.swift）：`name / path / isDir / children?`（懒加载）；
+- **`TreeNode`**（PreviewPanel.swift）：`name / path / isDir / children?`（懒加载）；FilePanel 内另有 file-private 同名 `TreeNode`/`DirRow`（[file-panel](modules/file-panel.md)）；
 - **`JobQueue`**（core/lib/jobqueue.js）：串行任务队列状态机 `createQueue()`——任务含 `source`（远程驱动预留）/`state`（pending/running/done/failed/cancelled）等字段，`enqueue`/`peek`/`markRunning`/`complete`/`fail`/`cancel`/`retry`/`snapshot`/`removeFinished` 操作（IssueRunner 面板用它串行执行「切分支→会话→推送→PR」流水线，见 [issue-runner-panel](modules/issue-runner-panel.md)）；
 - **`TaskIndex`**（IssueRunnerPanel.swift，与 core/lib/tasks.js 结构一致）：`.dsh/tasks/` 关联索引读写——`loadIndex`/`mergeTask`/`findTask`/`rememberSession`/`sessionForIssue`；index.json 写 `{"version": 1, "tasks": [...]}`（任务条目可含 `title`，startTask 起写入），local.json 写 `{"sessions": {issue: {sessionId, updatedAt}}}`；
 - **任务状态机（IssueRunnerTask.State）**：`pending / running / done / failed / cancelled`，与 JobQueue 的 state 字段一致；`IssueRunnerTask` 另含 `body`（issue 正文 markdown，cb13c97 起由 `parseIssues`/`fetchIssues` 取）；交互为**行内展开详情**（`expandedIssue` 手风琴，c852894 起替代 NSAlert 弹窗）——展开行 168pt 高、详情区可滚动（4576dd2），单元格按钮按状态给动作（pending→Process、running→Cancel Task、done→Open PR、failed/cancelled→Retry，均带 Close；done 且有 PR 额外「评论并关闭 Issue」）；工作区切换到**不同仓库**（owner/repo 变化）时 `applyRepo` 先清空任务列表——issue 号按仓库归属。

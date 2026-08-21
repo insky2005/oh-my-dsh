@@ -1,8 +1,8 @@
 ---
 title: 工程约定
 tags: [conventions, l10n, build, qa-hooks, versioning]
-updated: 2026-08-18T15:30:00Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-wiki/SKILL.md]
+updated: 2026-08-21T14:35:00Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-wiki/SKILL.md]
 manual: false
 ---
 
@@ -23,7 +23,7 @@ manual: false
 
 ## 构建与代码组织
 
-- 编译：`swiftc -O -swift-version 5`，frameworks 为 AppKit/WebKit/PDFKit；**编译源文件清单显式写在 `platforms/macos/build-app.sh`**，新增 `.swift` 文件必须登记；
+- 编译：`swiftc -O -swift-version 5`，frameworks 为 AppKit/WebKit/PDFKit；**编译源文件清单显式写在 `platforms/macos/build-app.sh`**，新增 `.swift` 文件必须登记（`feature/file-panel` 追加 `FilePanel.swift`、`CodeEditorView.swift` 与 `vendor/Highlightr/*.swift`）；
 - `module-cache-path` 固定在 `.build/module-cache`（沙箱/环境问题规避）；
 - 图标：`MakeIcon.swift` 程序化渲染（16…1024px 全尺寸）→ `iconutil -c icns`，不提交二进制图；
 - 版本号单一来源：`scripts/version.sh`（HEAD 命中 git tag vX.Y.Z → VERSION 取 tag，否则回退 1.11.0；BUILD 取 CI 运行号，本地回退 67）；`platforms/macos/build-app.sh` 运行期读取，**勿在脚本硬编码版本**；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`platforms/macos/make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；

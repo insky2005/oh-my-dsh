@@ -1,8 +1,8 @@
 ---
 title: 架构
 tags: [architecture, layers, dataflow, deployment]
-updated: 2026-08-18T15:30:00Z
-sources: [platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/cef/CEFShim.h, platforms/macos/cef/CEFShim.mm, core/lib/issues.js, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/git-workflow.md, .dsh/skills/repo-wiki/SKILL.md]
+updated: 2026-08-21T14:37:00Z
+sources: [platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/cef/CEFShim.h, platforms/macos/cef/CEFShim.mm, core/lib/issues.js, core/lib/tasks.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/git-workflow.md, docs/plans/PREVIEW_PLAN-file-panel.md, .dsh/skills/repo-wiki/SKILL.md]
 manual: false
 ---
 
@@ -21,7 +21,7 @@ manual: false
 │   ├─ DSHSessionRPC   经 HTTP RPC 解析会话 cwd（client-request 信封）                      │
 │   ├─ ProjectDirectory 共享"活动项目目录"（跟随 dsh web 当前会话，见数据流 6）             │
 │   └─ 右栏插槽 RightPanel { none, preview, terminal, wiki, tasks, browser }（五面板互斥）            │
-│        ├─ PreviewPanelController（PreviewPanel.swift）                                           │
+│        ├─ FilePanelController（FilePanel.swift，预览/文件面板；PreviewPanel.swift 保留为回滚基线+共享组件）│
 │        ├─ TerminalPanelController（TerminalPanel.swift）                                         │
 │        ├─ WikiPanelController（WikiPanel.swift）                                                 │
 │        ├─ IssueRunnerPanelController（IssueRunnerPanel.swift）                                   │
@@ -40,8 +40,8 @@ manual: false
 
 ## 模块依赖
 
-- `main.swift` 持有五个面板 controller（`previewPanel`/`terminalPanel`/`wikiPanel`/`tasksPanel`/`browserPanel`），通过 `setRightPanel` 把活动面板根视图挂为 NSSplitView 右 pane（`subviews[1]`），隐藏时把 divider 推到最右；浏览器面板的 REST API（`BrowserAPIServer`）随 App 启动/停止，`BrowserAPIBridge` 闭包把 `setRightPanel` 与 QA 诊断（debugDump/debugState/debugHierarchy）接给 AppDelegate；
-- 四个面板复用 `PreviewPanel.swift` 中定义的共享 UI 组件：`HoverButton`、`DynamicFillView`、`ActivityBarButton`、`PanelIconButton`、`HeaderLabel`、`CustomIconButton`、`BakedIconView`；
+- `main.swift` 持有五个面板 controller（`previewPanel`（`FilePanelController`）/`terminalPanel`/`wikiPanel`/`tasksPanel`/`browserPanel`），通过 `setRightPanel` 把活动面板根视图挂为 NSSplitView 右 pane（`subviews[1]`），隐藏时把 divider 推到最右；浏览器面板的 REST API（`BrowserAPIServer`）随 App 启动/停止，`BrowserAPIBridge` 闭包把 `setRightPanel` 与 QA 诊断（debugDump/debugState/debugHierarchy）接给 AppDelegate；
+- 各面板复用 `PreviewPanel.swift` 中定义的共享 UI 组件：`HoverButton`、`DynamicFillView`、`ActivityBarButton`、`PanelIconButton`、`HeaderLabel`、`CustomIconButton`、`BakedIconView`；FilePanel 复用这些类型、只自带 file-private `TreeNode`/`DirRow`（避免符号重定义），见 [file-panel](modules/file-panel.md)；
 - 所有 L10n 文案集中在 `main.swift` 的 `L10n.table`；
 - 面板通过 `serverPortProvider` 闭包取当前端口，`serverReady(port:)` 在服务就绪后获得门控通知；
 - **共享项目目录**：`ProjectDirectory`（main.swift）保存当前活动项目目录，四处消费——预览树、终端新会话 cwd、wiki 根解析（`resolveProjectDirectory` 优先返回它，其次实时查询并缓存）、任务面板工作区识别（`tasksPanel.workspacePath` 优先返回 `ProjectDirectory.current` 且**权威**：非 GitHub 仓库 → 诚实空态、不替换其他工作区；仅启动早期未解析时才回退 `workspace.list` 解析并重试，见数据流 4b）；
