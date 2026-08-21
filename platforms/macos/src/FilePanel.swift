@@ -160,7 +160,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         revealButton.onAction = { [weak self] in self?.revealInFinder(nil) }
         let hideButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("preview.closePanel"))
         hideButton.onAction = { [weak self] in self?.hidePanel(nil) }
-        let saveButton = CustomIconButton(glyph: .symbol("square.and.arrow.down"), tooltip: L10n.tr("preview.saveHint"))
+        let saveButton = CustomIconButton(glyph: .symbol("externaldrive"), tooltip: L10n.tr("preview.saveHint"))
         saveButton.onAction = { [weak self] in self?.saveActiveTab() }
         saveButton.isEnabled = false
         self.openButton = openButton

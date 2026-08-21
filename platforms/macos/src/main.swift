@@ -2530,6 +2530,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         appMenu.addItem(withTitle: L10n.tr("menu.quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
 
+        // File menu: save the active preview-editor buffer (⌘S).
+        let fileItem = NSMenuItem()
+        mainMenu.addItem(fileItem)
+        let fileMenu = NSMenu(title: L10n.tr("menu.file"))
+        let saveItem = fileMenu.addItem(withTitle: L10n.tr("menu.save"), action: #selector(saveActiveFile(_:)), keyEquivalent: "s")
+        saveItem.target = self
+        fileItem.submenu = fileMenu
+
         // Edit menu: routes Cmd+C/V/X/A/Z etc. to the first responder
         // (WKWebView). Without it, copy/paste shortcuts stop working.
         let editItem = NSMenuItem()
@@ -2544,14 +2552,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         editMenu.addItem(.separator())
         editMenu.addItem(withTitle: L10n.tr("edit.selectAll"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
-
-        // File menu: save the active preview-editor buffer (⌘S).
-        let fileItem = NSMenuItem()
-        mainMenu.addItem(fileItem)
-        let fileMenu = NSMenu(title: L10n.tr("menu.file"))
-        let saveItem = fileMenu.addItem(withTitle: L10n.tr("menu.save"), action: #selector(saveActiveFile(_:)), keyEquivalent: "s")
-        saveItem.target = self
-        fileItem.submenu = fileMenu
 
         // View menu: preview/terminal panel toggles (checked while visible).
         let viewItem = NSMenuItem()
