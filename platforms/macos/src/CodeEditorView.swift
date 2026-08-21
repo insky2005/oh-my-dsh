@@ -291,7 +291,15 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
         }
     }
 
-    // MARK: - Scroll: redraw the gutter whenever the code scrolls
+    // MARK: - Scroll/layout: redraw the gutter whenever the code scrolls or
+    // (re)lays out. Laying out again is essential: on the very first open the
+    // view isn't laid out yet (visibleRect is zero/stale), so the gutter would
+    // draw wrong numbers until a scroll/edit/re-select redraws it.
+
+    override func layout() {
+        super.layout()
+        updateGutterWidthAndRedraw()
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -301,6 +309,7 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
                 selector: #selector(codeScrollChanged),
                 name: NSView.boundsDidChangeNotification,
                 object: codeScroll.contentView)
+            updateGutterWidthAndRedraw()
         }
     }
 
