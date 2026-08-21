@@ -278,6 +278,11 @@ enum L10n {
         "channel.addTitle": ("新增通道", "Add Channel"),
         "channel.addInfo": ("命名并选择平台。连接参数（登录态/凭据）在接入时配置。", "Name the channel and pick a platform. Connection parameters (login/credentials) are configured on connect."),
         "channel.namePlaceholder": ("通道名称", "Channel name"),
+        "channel.login": ("扫码登录", "Scan to Login"),
+        "channel.loggingIn": ("正在登录通道：", "Logging in channel: "),
+        "channel.loginDone": ("登录成功（token 已保存）", "Logged in (token saved)"),
+        "channel.loginFailed": ("登录失败或已取消", "Login failed or cancelled"),
+        "channel.noLoginRunner": ("无法启动登录（核心不可用）", "Cannot start login (core unavailable)"),
         "bar.browser": ("浏览器", "Browser"),
         "browser.title": ("浏览器", "Browser"),
         "browser.openInSystem": ("在系统浏览器中打开", "Open in System Browser"),
@@ -1416,6 +1421,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("launch: channelPanel created")
         channelPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
         channelPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
+        channelPanel.channelLoginRunner = { [weak self] channelId, completion in
+            self?.runChannelLogin(channelId: channelId, completion: completion)
+        }
 
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
@@ -2950,6 +2958,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     @objc private func channelEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .channel ? .none : .channel)
+    }
+    /// Run QR login for a channel via the core CLI, open the QR URL in the
+    /// browser, and save the token to ~/.dsh/channels/<channelId>.json.
+    /// completion(true) when login confirmed.
+    private func runChannelLogin(channelId: String, completion: @escaping (Bool) -> Void) {
+        guard let cli = CoreBridge.coreCLIPath, let node = ServerManager().resolveNode() else {
+            completion(false)
+            return
+        }
+        let dshHome = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh")
+        let savePath = ((dshHome as NSString).appendingPathComponent("channels") as NSString).appendingPathComponent(channelId + ".json")
+        try? FileManager.default.createDirectory(atPath: (dshHome as NSString).appendingPathComponent("channels"), withIntermediateDirectories: true)
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: node)
+        proc.arguments = [cli, "channel", "login", "--save", savePath]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        let outHandle = pipe.fileHandleForReading
+        var outputData = Data()
+        outHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty { return }
+            outputData.append(data)
+            if let str = String(data: data, encoding: .utf8),
+               let url = str.range(of: "https://liteapp.weixin.qq.com") {
+                let sub = str[url.lowerBound...]
+                let end = sub.firstIndex(where: { $0 == "）" || $0 == "\n" }) ?? sub.endIndex
+                let link = String(sub[..<end])
+                DispatchQueue.main.async { NSWorkspace.shared.open(URL(string: link)!) }
+            }
+        }
+        proc.terminationHandler = { [weak self] _ in
+            let out = String(data: outputData, encoding: .utf8) ?? ""
+            let ok = out.contains("\"connected\":true") || FileManager.default.fileExists(atPath: savePath)
+            DispatchQueue.main.async { completion(ok) }
+        }
+        try? proc.run()
     }
 
     /// 初始化 CEF（浏览器面板渲染内核）并启动消息泵定时器。

@@ -59,6 +59,9 @@ final class ChannelPanelController: NSObject, NSTableViewDataSource, NSTableView
     var onRequestHide: (() -> Void)?
     /// The active workspace directory (set by AppDelegate) — where .dsh/channels.json lives.
     var workspacePath: (() -> String?)?
+    /// Run QR login for a channel via the core CLI (set by AppDelegate).
+    /// completion(true) on success, false on failure/cancel.
+    var channelLoginRunner: ((String, @escaping (Bool) -> Void) -> Void)?
 
     static let minWidth: CGFloat = 300
 
@@ -68,6 +71,7 @@ final class ChannelPanelController: NSObject, NSTableViewDataSource, NSTableView
     private let headerTitle = HeaderLabel()
     private let addButton: CustomIconButton
     private let refreshButton: CustomIconButton
+    private let loginButton: CustomIconButton
     private let hideButton: CustomIconButton
     private let globalLabel = HeaderLabel()
     private let globalTable = NSTableView()
@@ -87,11 +91,13 @@ final class ChannelPanelController: NSObject, NSTableViewDataSource, NSTableView
     override init() {
         addButton = CustomIconButton(glyph: .plus, tooltip: "")
         refreshButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: "")
+        loginButton = CustomIconButton(glyph: .symbol("qrcode"), tooltip: "")
         hideButton = CustomIconButton(glyph: .close, tooltip: "")
         super.init()
         buildUI()
         addButton.onAction = { [weak self] in self?.addChannelTapped() }
         refreshButton.onAction = { [weak self] in self?.reloadAll() }
+        loginButton.onAction = { [weak self] in self?.loginTapped() }
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
         loadGlobalChannels()
         updateLabels()
@@ -103,6 +109,7 @@ final class ChannelPanelController: NSObject, NSTableViewDataSource, NSTableView
         headerTitle.text = L10n.tr("channel.title")
         addButton.toolTip = L10n.tr("channel.add")
         refreshButton.toolTip = L10n.tr("channel.refresh")
+        loginButton.toolTip = L10n.tr("channel.login")
         hideButton.toolTip = L10n.tr("preview.closePanel")
         globalLabel.text = L10n.tr("channel.global")
         refsLabel.text = L10n.tr("channel.refs")
@@ -117,7 +124,7 @@ final class ChannelPanelController: NSObject, NSTableViewDataSource, NSTableView
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let actions = NSStackView(views: [refreshButton, addButton, hideButton])
+        let actions = NSStackView(views: [refreshButton, addButton, loginButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -319,7 +326,35 @@ final class ChannelPanelController: NSObject, NSTableViewDataSource, NSTableView
         globalTable.reloadData()
     }
 
+    private func loginTapped() {
+        guard let channel = channels.first(where: { $0.platform == "weixin-clawbot" }) ?? channels.first else {
+            NSSound.beep()
+            return
+        }
+        guard let runner = channelLoginRunner else {
+            statusLabel.stringValue = L10n.tr("channel.noLoginRunner")
+            return
+        }
+        statusLabel.stringValue = L10n.tr("channel.loggingIn") + " " + channel.name
+        runner(channel.id) { [weak self] ok in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if ok {
+                    if let idx = self.channels.firstIndex(where: { $0.id == channel.id }) {
+                        self.channels[idx].state = .connected
+                        self.saveGlobalChannels()
+                    }
+                    self.statusLabel.stringValue = L10n.tr("channel.loginDone")
+                } else {
+                    self.statusLabel.stringValue = L10n.tr("channel.loginFailed")
+                }
+                self.globalTable.reloadData()
+            }
+        }
+    }
+
     /// Toggle a global channel's enabled flag via double-click on its row.
+
     func tableViewSelectionDidChange(_ notification: Notification) {
         if notification.object as? NSTableView === refsTable {
             // selecting a ref row does nothing for now (routing edit is future)
