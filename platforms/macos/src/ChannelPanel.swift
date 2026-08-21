@@ -1,10 +1,9 @@
 import AppKit
+import CoreImage
+import CoreImage.CIFilterBuiltins
 
 // MARK: - Channel panel v2 (onboarding cards + wizard + project view)
 
-/// Root view. Mirrors IssueRunnerRootView's compositing fix
-/// (docs/terminal-header-fix.md): isOpaque=false so header/content composite
-/// correctly in the layer-backed window.
 final class ChannelRootView: NSView {
     override var isOpaque: Bool { false }
     override func draw(_ dirtyRect: NSRect) {
@@ -15,7 +14,6 @@ final class ChannelRootView: NSView {
     }
 }
 
-/// One global channel (docs/channel-design.md §4.1). Persisted in UserDefaults.
 struct GlobalChannel {
     enum State: String {
         case disconnected, connecting, connected, reconnecting, authExpired
@@ -37,8 +35,6 @@ struct GlobalChannel {
     var connection: [String: String] = [:]
 }
 
-/// A project ref: a global channel enabled for one workspace + routing
-/// (docs/channel-design.md §4.2).
 struct ProjectChannelRef: Codable {
     var channelId: String
     var workspaceRoot: String
@@ -47,13 +43,11 @@ struct ProjectChannelRef: Codable {
     var routingDefault: Bool = false
 }
 
-/// Persisted model for .dsh/channels.json (docs §4.2).
 struct ProjectRefsFile: Codable {
     var version: Int = 1
     var refs: [ProjectChannelRef] = []
 }
 
-/// A built-in platform card shown on the onboarding screen.
 struct ChannelCard {
     let platform: String
     let symbol: String
@@ -64,55 +58,51 @@ struct ChannelCard {
 final class ChannelPanelController: NSObject {
 
     var onRequestHide: (() -> Void)?
-    /// The active workspace directory (set by AppDelegate) — where .dsh/channels.json lives.
     var workspacePath: (() -> String?)?
-    /// Run QR login for a channel via the core CLI (set by AppDelegate).
-    /// completion(true) on success, false on failure/cancel.
-    var channelLoginRunner: ((String, @escaping (Bool) -> Void) -> Void)?
+    var channelLoginRunner: ((String, @escaping (String?) -> Void, @escaping (Bool) -> Void) -> Void)?
 
     static let minWidth: CGFloat = 300
     let view = ChannelRootView()
 
-    // ---- header ----
+    // header
     private let headerTitle = HeaderLabel()
     private let configButton: CustomIconButton
     private let hideButton: CustomIconButton
 
-    // ---- content container (swaps per mode) ----
+    // content container
     private let contentContainer = DynamicFillView()
     private let onboardingView = NSView()
     private let projectView = NSView()
 
-    // ---- onboarding UI ----
+    // onboarding
     private let onboardingTitle = NSTextField(labelWithString: "")
     private let onboardingHint = NSTextField(wrappingLabelWithString: "")
     private var cardViews: [NSView] = []
 
-    // ---- wizard UI ----
+    // wizard
     private let wizardView = NSView()
     private let wizardTitle = NSTextField(labelWithString: "")
     private let wizardInfo = NSTextField(wrappingLabelWithString: "")
+    private let wizardQRView = NSImageView()
     private let wizardStatus = NSTextField(labelWithString: "")
     private let wizardPrimary: NSButton
     private let wizardSecondary: NSButton
     private var wizardPlatform: String = ""
-    private var wizardStep = 0 // 0 prompt, 1 scanning, 2 done
+    private var wizardStep = 0
 
-    // ---- project view UI ----
-    private let projectLabel = HeaderLabel()
+    // project view — rows of channel + toggle + expandable sessions
     private let projectScroll = NSScrollView()
-    private let projectTable = NSTableView()
-    private let sessionsLabel = HeaderLabel()
-    private let sessionsLabel2 = HeaderLabel()
+    private let projectList = NSStackView()
+    private var projectRows: [ProjectRowView] = []
 
-    // ---- state ----
+    // state
     private var channels: [GlobalChannel] = []
     private var refs: [ProjectChannelRef] = []
     private var currentRoot: String?
 
-    /// Current top-level mode.
     private enum Mode { case onboarding, project }
     private var mode: Mode = .onboarding
+    private var expandedChannelId: String?
 
     private static let builtins: [ChannelCard] = [
         ChannelCard(platform: "weixin-clawbot", symbol: "message", titleKey: "channel.card.weixin", descKey: "channel.card.weixinDesc"),
@@ -148,14 +138,9 @@ final class ChannelPanelController: NSObject {
         hideButton.toolTip = L10n.tr("preview.closePanel")
         onboardingTitle.stringValue = L10n.tr("channel.onboardingTitle")
         onboardingHint.stringValue = L10n.tr("channel.onboardingHint")
-        projectLabel.text = L10n.tr("channel.projectAvailable")
-        sessionsLabel.text = L10n.tr("channel.sessions")
-        wizardSecondary.title = L10n.tr("channel.wizard.back")
     }
 
-    func refreshTooltips() {
-        updateLabels()
-    }
+    func refreshTooltips() { updateLabels() }
 
     // MARK: - Build
 
@@ -182,7 +167,6 @@ final class ChannelPanelController: NSObject {
             header.heightAnchor.constraint(equalToConstant: 40),
         ])
 
-        // content container (compositing fix)
         contentContainer.kind = .control
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.wantsLayer = true
@@ -223,7 +207,7 @@ final class ChannelPanelController: NSObject {
         ])
     }
 
-    // ---- onboarding (cards) ----
+    // ---- onboarding: full-width uniform cards ----
     private func buildOnboarding() {
         onboardingTitle.translatesAutoresizingMaskIntoConstraints = false
         onboardingTitle.font = .systemFont(ofSize: 15, weight: .semibold)
@@ -231,7 +215,6 @@ final class ChannelPanelController: NSObject {
         onboardingHint.font = .systemFont(ofSize: 12)
         onboardingHint.textColor = .secondaryLabelColor
 
-        // cards in a vertical stack
         var stackViews: [NSView] = [onboardingTitle, onboardingHint]
         for card in ChannelPanelController.builtins {
             let cardView = makeCard(card)
@@ -240,7 +223,7 @@ final class ChannelPanelController: NSObject {
         }
         let stack = NSStackView(views: stackViews)
         stack.orientation = .vertical
-        stack.alignment = .leading
+        stack.alignment = .width        // stretch cards to full width
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -250,7 +233,6 @@ final class ChannelPanelController: NSObject {
             stack.topAnchor.constraint(equalTo: onboardingView.topAnchor),
             stack.leadingAnchor.constraint(equalTo: onboardingView.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: onboardingView.trailingAnchor),
-            stack.widthAnchor.constraint(equalTo: onboardingView.widthAnchor),
         ])
     }
 
@@ -292,7 +274,8 @@ final class ChannelPanelController: NSObject {
             row.topAnchor.constraint(equalTo: button.topAnchor, constant: 12),
             row.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -12),
         ])
-        button.heightAnchor.constraint(greaterThanOrEqualToConstant: 64).isActive = true
+        // uniform height for every card
+        button.heightAnchor.constraint(equalToConstant: 64).isActive = true
         return button
     }
 
@@ -300,17 +283,13 @@ final class ChannelPanelController: NSObject {
         let cards = ChannelPanelController.builtins
         guard cards.indices.contains(sender.tag) else { return }
         let card = cards[sender.tag]
-        // Only weixin-clawbot is wired to a login runner today.
-        if card.platform != "weixin-clawbot" {
-            NSSound.beep()
-            return
-        }
+        if card.platform != "weixin-clawbot" { NSSound.beep(); return }
         wizardPlatform = card.platform
         wizardStep = 0
         renderWizard()
     }
 
-    // ---- wizard ----
+    // ---- wizard (prompt → QR scan → done) ----
     private func buildWizard() {
         wizardTitle.translatesAutoresizingMaskIntoConstraints = false
         wizardTitle.font = .systemFont(ofSize: 15, weight: .semibold)
@@ -321,6 +300,11 @@ final class ChannelPanelController: NSObject {
         wizardStatus.font = .systemFont(ofSize: 12)
         wizardStatus.textColor = .labelColor
 
+        wizardQRView.translatesAutoresizingMaskIntoConstraints = false
+        wizardQRView.imageScaling = .scaleProportionallyUpOrDown
+        wizardQRView.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        wizardQRView.heightAnchor.constraint(equalToConstant: 180).isActive = true
+
         wizardPrimary.translatesAutoresizingMaskIntoConstraints = false
         wizardSecondary.translatesAutoresizingMaskIntoConstraints = false
 
@@ -328,11 +312,11 @@ final class ChannelPanelController: NSObject {
         buttons.orientation = .horizontal
         buttons.spacing = 8
 
-        let stack = NSStackView(views: [wizardTitle, wizardInfo, wizardStatus, buttons])
+        let stack = NSStackView(views: [wizardTitle, wizardInfo, wizardQRView, wizardStatus, buttons])
         stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        stack.alignment = .centerX
+        stack.spacing = 12
+        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         stack.translatesAutoresizingMaskIntoConstraints = false
         wizardView.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -345,14 +329,10 @@ final class ChannelPanelController: NSObject {
 
     @objc private func wizardPrimaryTapped(_ sender: Any) {
         if wizardStep == 0 {
-            // prompt -> scanning: run QR login
             wizardStep = 1
             renderWizard()
             startLogin()
-        } else if wizardStep == 1 {
-            // during scan, no-op (or cancel later)
         } else if wizardStep == 2 {
-            // done -> close wizard, refresh mode
             finishWizard()
         }
     }
@@ -371,12 +351,14 @@ final class ChannelPanelController: NSObject {
             wizardTitle.stringValue = platformName
             wizardInfo.stringValue = L10n.tr("channel.wizard.promptInfo")
             wizardStatus.stringValue = L10n.tr("channel.wizard.promptTitle")
+            wizardQRView.image = nil
             wizardPrimary.title = L10n.tr("channel.wizard.continue")
+            wizardPrimary.isEnabled = true
             wizardSecondary.title = L10n.tr("channel.wizard.back")
         } else if wizardStep == 1 {
             wizardTitle.stringValue = platformName
-            wizardInfo.stringValue = L10n.tr("channel.wizard.promptInfo")
-            wizardStatus.stringValue = L10n.tr("channel.wizard.scanning")
+            wizardInfo.stringValue = L10n.tr("channel.wizard.scanning")
+            wizardStatus.stringValue = L10n.tr("channel.wizard.promptTitle")
             wizardPrimary.title = L10n.tr("btn.ok")
             wizardPrimary.isEnabled = false
             wizardSecondary.title = L10n.tr("channel.wizard.back")
@@ -384,6 +366,7 @@ final class ChannelPanelController: NSObject {
             wizardTitle.stringValue = platformName
             wizardInfo.stringValue = L10n.tr("channel.wizard.done")
             wizardStatus.stringValue = ""
+            wizardQRView.image = nil
             wizardPrimary.title = L10n.tr("channel.done")
             wizardPrimary.isEnabled = true
             wizardSecondary.title = L10n.tr("channel.wizard.back")
@@ -391,14 +374,13 @@ final class ChannelPanelController: NSObject {
     }
 
     private func startLogin() {
-        // create (or reuse) a channel for the wizard platform, then login
         let platform = wizardPlatform
         let existing = channels.first(where: { $0.platform == platform })
         let channelId: String
         if let existing = existing {
             channelId = existing.id
         } else {
-            let id = "(platform)-(UUID().uuidString.prefix(8))"
+            let id = "\(platform)-\(UUID().uuidString.prefix(8))"
             channels.append(GlobalChannel(id: id, platform: platform, name: id))
             saveGlobalChannels()
             channelId = id
@@ -407,7 +389,13 @@ final class ChannelPanelController: NSObject {
             wizardStatus.stringValue = L10n.tr("channel.noLoginRunner")
             return
         }
-        runner(channelId) { [weak self] ok in
+        // onQRUrl: render the QR in-panel (no browser).
+        runner(channelId, { [weak self] url in
+            DispatchQueue.main.async {
+                guard let self = self, let url = url else { return }
+                self.wizardQRView.image = ChannelPanelController.qrImage(from: url, size: 180)
+            }
+        }) { [weak self] ok in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.wizardPrimary.isEnabled = true
@@ -431,69 +419,74 @@ final class ChannelPanelController: NSObject {
         refreshMode()
     }
 
-    // ---- project view ----
+    // ---- project view: channel rows + toggle + expandable sessions ----
     private func buildProject() {
-        configureTable(projectTable)
-        projectScroll.documentView = projectTable
-        projectScroll.hasVerticalScroller = true
         projectScroll.translatesAutoresizingMaskIntoConstraints = false
-        projectLabel.translatesAutoresizingMaskIntoConstraints = false
-        sessionsLabel.translatesAutoresizingMaskIntoConstraints = false
-        sessionsLabel2.translatesAutoresizingMaskIntoConstraints = false
+        projectScroll.hasVerticalScroller = true
+        projectScroll.documentView = projectList
 
-        projectView.addSubview(projectLabel)
+        projectList.orientation = .vertical
+        projectList.alignment = .width
+        projectList.spacing = 6
+        projectList.edgeInsets = NSEdgeInsets(top: 12, left: 10, bottom: 12, right: 10)
+        projectList.translatesAutoresizingMaskIntoConstraints = false
+
         projectView.addSubview(projectScroll)
-        projectView.addSubview(sessionsLabel)
-        projectView.addSubview(sessionsLabel2)
         NSLayoutConstraint.activate([
-            projectLabel.topAnchor.constraint(equalTo: projectView.topAnchor, constant: 12),
-            projectLabel.leadingAnchor.constraint(equalTo: projectView.leadingAnchor, constant: 12),
-            projectScroll.topAnchor.constraint(equalTo: projectLabel.bottomAnchor, constant: 6),
-            projectScroll.leadingAnchor.constraint(equalTo: projectView.leadingAnchor, constant: 8),
-            projectScroll.trailingAnchor.constraint(equalTo: projectView.trailingAnchor, constant: -8),
-            projectScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 140),
-            sessionsLabel.topAnchor.constraint(equalTo: projectScroll.bottomAnchor, constant: 12),
-            sessionsLabel.leadingAnchor.constraint(equalTo: projectView.leadingAnchor, constant: 12),
-            sessionsLabel2.topAnchor.constraint(equalTo: sessionsLabel.bottomAnchor, constant: 6),
-            sessionsLabel2.leadingAnchor.constraint(equalTo: projectView.leadingAnchor, constant: 12),
+            projectScroll.topAnchor.constraint(equalTo: projectView.topAnchor),
+            projectScroll.leadingAnchor.constraint(equalTo: projectView.leadingAnchor),
+            projectScroll.trailingAnchor.constraint(equalTo: projectView.trailingAnchor),
+            projectScroll.bottomAnchor.constraint(equalTo: projectView.bottomAnchor),
         ])
         projectView.isHidden = true
     }
 
-    private func configureTable(_ table: NSTableView) {
-        table.dataSource = self
-        table.delegate = self
-        table.headerView = nil
-        table.rowHeight = 26
-        table.usesAlternatingRowBackgroundColors = true
-        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
-        let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("main"))
-        col.resizingMask = .autoresizingMask
-        table.addTableColumn(col)
+    private func rebuildProjectRows() {
+        for row in projectRows { row.removeFromSuperview() }
+        projectRows = []
+        for ch in channels {
+            let enabled = refs.contains { $0.channelId == ch.id }
+            let expanded = (expandedChannelId == ch.id)
+            let row = ProjectRowView(channel: ch, enabled: enabled, expanded: expanded)
+            row.onToggle = { [weak self] in self?.toggleProjectChannel(ch.id) }
+            row.onExpand = { [weak self] in self?.toggleExpand(ch.id) }
+            projectList.addArrangedSubview(row)
+            projectRows.append(row)
+        }
+    }
+
+    private func toggleProjectChannel(_ channelId: String) {
+        if let idx = refs.firstIndex(where: { $0.channelId == channelId }) {
+            refs.remove(at: idx)
+        } else if let root = currentRoot {
+            refs.append(ProjectChannelRef(channelId: channelId, workspaceRoot: root))
+        }
+        saveRefs()
+        rebuildProjectRows()
+    }
+
+    private func toggleExpand(_ channelId: String) {
+        expandedChannelId = (expandedChannelId == channelId) ? nil : channelId
+        rebuildProjectRows()
     }
 
     // MARK: - Mode switching
 
     private func refreshMode() {
-        // onboarding = no global channels configured yet
         let hasConfig = !channels.isEmpty
         mode = hasConfig ? .project : .onboarding
         onboardingView.isHidden = (mode == .project)
         projectView.isHidden = (mode == .onboarding)
         wizardView.isHidden = true
         if mode == .project {
-            projectTable.reloadData()
-            sessionsLabel2.text = L10n.tr("channel.noSessions")
+            rebuildProjectRows()
         } else {
             rebuildCards()
         }
     }
 
     private func configButtonTapped() {
-        // Global config button: reopen the onboarding/config view.
-        if wizardView.isHidden == false {
-            finishWizard()
-        }
+        if wizardView.isHidden == false { finishWizard() }
         mode = .onboarding
         onboardingView.isHidden = false
         projectView.isHidden = true
@@ -502,10 +495,8 @@ final class ChannelPanelController: NSObject {
     }
 
     private func rebuildCards() {
-        // refresh card labels (localization) — cards are static but re-applying labels is cheap
         let cards = ChannelPanelController.builtins
         for (i, cardView) in cardViews.enumerated() where i < cards.count {
-            // find title/desc labels in the card button's stack
             if let button = cardView as? NSButton,
                let row = button.subviews.first as? NSStackView,
                row.arrangedSubviews.count == 2,
@@ -515,6 +506,23 @@ final class ChannelPanelController: NSObject {
                 (textStack.arrangedSubviews[1] as? NSTextField)?.stringValue = L10n.tr(cards[i].descKey)
             }
         }
+    }
+
+    // MARK: - QR image (in-panel, no browser)
+
+    /// Generate an NSImage QR code for a URL using the system CIQRCodeGenerator.
+    static func qrImage(from string: String, size: CGFloat) -> NSImage? {
+        let data = Data(string.utf8)
+        guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(data, forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        guard let output = filter.outputImage else { return nil }
+        let scale = size / output.extent.width
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let rep = NSCIImageRep(ciImage: scaled)
+        let img = NSImage(size: rep.size)
+        img.addRepresentation(rep)
+        return img
     }
 
     // MARK: - Persistence
@@ -576,50 +584,77 @@ final class ChannelPanelController: NSObject {
 
     func workspaceChanged() {
         loadRefs(for: workspacePath?())
-        if mode == .project { projectTable.reloadData() }
-    }
-
-    // MARK: - Table (project available channels)
-
-    func numberOfRows(in tableView: NSTableView) -> Int {
-        // available channels = global channels (configured) for this project
-        return channels.count
-    }
-
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard row < channels.count else { return nil }
-        let c = channels[row]
-        let enabledInProject = refs.contains { $0.channelId == c.id }
-        let id = NSUserInterfaceItemIdentifier("cell")
-        let cell = tableView.makeView(withIdentifier: id, owner: self) as? NSTableCellView ?? NSTableCellView()
-        cell.identifier = id
-        let label = NSTextField(labelWithString: "\(c.state.badge)  \(c.name)  ·  \(L10n.tr(enabledInProject ? "channel.enabled" : "channel.disabled"))")
-        label.lineBreakMode = .byTruncatingTail
-        label.translatesAutoresizingMaskIntoConstraints = false
-        cell.textField?.removeFromSuperview()
-        cell.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -6),
-            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-        ])
-        cell.textField = label
-        return cell
-    }
-
-    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        guard row < channels.count else { return true }
-        // toggle this channel's project enable/disable
-        let c = channels[row]
-        if let idx = refs.firstIndex(where: { $0.channelId == c.id }) {
-            refs.remove(at: idx)
-        } else if let root = currentRoot {
-            refs.append(ProjectChannelRef(channelId: c.id, workspaceRoot: root))
-        }
-        saveRefs()
-        projectTable.reloadData()
-        return false
+        if mode == .project { rebuildProjectRows() }
     }
 }
 
-extension ChannelPanelController: NSTableViewDataSource, NSTableViewDelegate {}
+/// A project-view row: channel name + toggle button + expandable sessions.
+final class ProjectRowView: NSView {
+    var onToggle: (() -> Void)?
+    var onExpand: (() -> Void)?
+
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let toggleButton: NSButton
+    private let sessionsLabel = NSTextField(labelWithString: "")
+
+    init(channel: GlobalChannel, enabled: Bool, expanded: Bool) {
+        toggleButton = NSButton()
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
+
+        titleLabel.stringValue = channel.name
+        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+
+        toggleButton.bezelStyle = .inline
+        toggleButton.title = ""
+        toggleButton.target = self
+        toggleButton.action = #selector(toggleTapped(_:))
+        toggleButton.translatesAutoresizingMaskIntoConstraints = false
+        toggleButton.widthAnchor.constraint(equalToConstant: 46).isActive = true
+        setToggle(enabled)
+
+        sessionsLabel.stringValue = L10n.tr("channel.sessions") + " (0)"
+        sessionsLabel.font = .systemFont(ofSize: 11)
+        sessionsLabel.textColor = .secondaryLabelColor
+
+        let topRow = NSStackView(views: [titleLabel, NSView(), toggleButton])
+        topRow.orientation = .horizontal
+        topRow.alignment = .centerY
+        topRow.spacing = 8
+        topRow.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(topRow)
+        NSLayoutConstraint.activate([
+            topRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            topRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            topRow.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            topRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+        ])
+
+        if expanded {
+            addSubview(sessionsLabel)
+            NSLayoutConstraint.activate([
+                sessionsLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+                sessionsLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+                sessionsLabel.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 4),
+                sessionsLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            ])
+        }
+
+        let click = NSClickGestureRecognizer(target: self, action: #selector(expandTapped(_:)))
+        addGestureRecognizer(click)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func setToggle(_ on: Bool) {
+        toggleButton.state = on ? .on : .off
+        toggleButton.contentTintColor = on ? .systemGreen : .systemGray
+    }
+
+    @objc private func toggleTapped(_ sender: Any) { onToggle?() }
+    @objc private func expandTapped(_ sender: Any) { onExpand?() }
+}

@@ -1444,8 +1444,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("launch: channelPanel created")
         channelPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
         channelPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
-        channelPanel.channelLoginRunner = { [weak self] channelId, completion in
-            self?.runChannelLogin(channelId: channelId, completion: completion)
+        channelPanel.channelLoginRunner = { [weak self] channelId, onQRUrl, completion in
+            self?.runChannelLogin(channelId: channelId, onQRUrl: onQRUrl, completion: completion)
         }
 
         // --- leftmost activity bar (icon entries; extensible) ---
@@ -2985,7 +2985,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Run QR login for a channel via the core CLI, open the QR URL in the
     /// browser, and save the token to ~/.dsh/channels/<channelId>.json.
     /// completion(true) when login confirmed.
-    private func runChannelLogin(channelId: String, completion: @escaping (Bool) -> Void) {
+    private func runChannelLogin(channelId: String, onQRUrl: @escaping (String?) -> Void, completion: @escaping (Bool) -> Void) {
         guard let cli = CoreBridge.coreCLIPath, let node = ServerManager().resolveNode() else {
             completion(false)
             return
@@ -3011,7 +3011,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 let sub = str[url.lowerBound...]
                 let end = sub.firstIndex(where: { $0 == "）" || $0 == "\n" }) ?? sub.endIndex
                 let link = String(sub[..<end])
-                DispatchQueue.main.async { NSWorkspace.shared.open(URL(string: link)!) }
+                DispatchQueue.main.async { onQRUrl(link) }
             }
         }
         proc.terminationHandler = { [weak self] _ in
