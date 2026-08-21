@@ -290,11 +290,16 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
         return true
     }
 
-    /// Build a CodeAttributedString wired to our themes/font. Uses the default
-    /// Highlightr() (which requires highlight.min.js + pojoaque.min.css in the
-    /// bundle root), then switches theme/font.
+    /// Build a CodeAttributedString wired to our themes/font. We construct
+    /// Highlightr() EXPLICITLY and bail out (return nil -> plain editor) if it
+    /// fails, because CodeAttributedString() force-unwraps Highlightr()! and
+    /// would crash the app if the JS runtime can't be initialized.
     private static func makeHighlightingStorage(language: String, dark: Bool) -> CodeAttributedString? {
-        let cas = CodeAttributedString()          // default theme "pojoaque"
+        guard let highlightr = Highlightr() else {
+            AppLog.shared.log("highlightr init failed — syntax highlighting disabled for \(language)")
+            return nil
+        }
+        let cas = CodeAttributedString(highlightr: highlightr)
         cas.highlightr.setTheme(to: dark ? "atom-one-dark" : "xcode")
         cas.highlightr.theme.setCodeFont(NSFont.monospacedSystemFont(ofSize: 13, weight: .regular))
         return cas
