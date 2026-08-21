@@ -1288,6 +1288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         startServer()
         startCEF()
         startBrowserAPIServer()
+        startConfiguredChannelRunners()
         showOnboardingIfNeeded()
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -1342,6 +1343,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         terminalPanel?.shutdownAll()
         browserPanel?.shutdownAll()
         browserAPIServer?.stop()
+        stopChannelRunners()
         cefPumpTimer?.invalidate()
         CEFShim.shutdown()
         if didSpawnServer { server.stop() }
@@ -3017,9 +3019,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         proc.terminationHandler = { [weak self] _ in
             let out = String(data: outputData, encoding: .utf8) ?? ""
             let ok = out.contains("\"connected\":true") || FileManager.default.fileExists(atPath: savePath)
-            DispatchQueue.main.async { completion(ok) }
+            DispatchQueue.main.async {
+                if ok { self?.startChannelRunner(channelId: channelId) }
+                completion(ok)
+            }
         }
         try? proc.run()
+    }
+
+    /// Start the live channel listener (channel run) in the background so
+    /// inbound WeChat messages — including slash commands like /help — are
+    /// received and answered. Uses the saved token + the active workspace's
+    /// refs. Kept strongly by the delegate so it survives after login returns.
+    private var channelRunnerProcs: [Process] = []
+    private func startChannelRunner(channelId: String) {
+        guard let cli = CoreBridge.coreCLIPath, let node = ServerManager().resolveNode() else { return }
+        let port = server.port
+        // refs: the active workspace's .dsh/channels.json (may be empty)
+        var refs: [[String: Any]] = []
+        if let root = activeWorkspacePath() {
+            let path = (root as NSString).appendingPathComponent(".dsh/channels.json")
+            if let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let arr = json["refs"] as? [[String: Any]] {
+                refs = arr
+            }
+            // ensure this channel is referenced for the active workspace
+            if !refs.contains(where: { ($0["channelId"] as? String) == channelId }) {
+                refs.append(["channelId": channelId, "workspaceRoot": root])
+            }
+        }
+        let refsJson = String(data: (try? JSONSerialization.data(withJSONObject: refs)) ?? Data(), encoding: .utf8) ?? "[]"
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: node)
+        proc.arguments = [cli, "channel", "run", channelId, String(port), refsJson]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        // drain output so the pipe doesn't fill and block the child
+        pipe.fileHandleForReading.readabilityHandler = { h in _ = h.availableData }
+        do {
+            try proc.run()
+            channelRunnerProcs.append(proc)
+            AppLog.shared.log("channel runner started for \(channelId) on port \(port)")
+        } catch {
+            AppLog.shared.log("channel runner failed to start: \(error.localizedDescription)")
+        }
+    }
+
+    /// Start channel listeners for every configured global channel at launch.
+    private func startConfiguredChannelRunners() {
+        guard let data = UserDefaults.standard.data(forKey: "channel.global.list"),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            AppLog.shared.log("channel runners: no configured channels")
+            return
+        }
+        for dict in arr {
+            if let id = dict["id"] as? String, (dict["enabled"] as? Bool) ?? true {
+                startChannelRunner(channelId: id)
+            }
+        }
+    }
+
+    /// Stop all channel listener processes on quit.
+    private func stopChannelRunners() {
+        for proc in channelRunnerProcs { proc.terminate() }
+        channelRunnerProcs.removeAll()
+        AppLog.shared.log("channel runners stopped")
     }
 
     /// 初始化 CEF（浏览器面板渲染内核）并启动消息泵定时器。
