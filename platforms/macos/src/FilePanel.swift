@@ -44,6 +44,13 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// working directory via the host RPC when opening the project folder).
     var serverPortProvider: (() -> Int)?
 
+    /// Called whenever the set of open tabs changes (open/close/clear), so the
+    /// host can enable/disable the Cmd+W close-tab menu item.
+    var onTabsChanged: (() -> Void)?
+
+    /// Whether any preview tab is currently open.
+    var hasOpenTabs: Bool { !tabs.isEmpty }
+
     // MARK: - Subviews
 
     private let pathLabel = HeaderLabel()
@@ -308,6 +315,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
                         titleButton: item.titleButton,
                         closeButton: item.closeButton,
                         container: item.view))
+        onTabsChanged?()
         select(id)
         return true
     }
@@ -367,6 +375,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         tabs[idx].container.removeFromSuperview()
         tabs.remove(at: idx)
+        onTabsChanged?()
         guard selectedId == id else { return }
         selectedId = nil
         if let next = tabs.indices.contains(idx) ? tabs[idx] : tabs.last {
@@ -429,6 +438,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         }
         tabs.removeAll()
         selectedId = nil
+        onTabsChanged?()
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
         pathLabel.text = ""
         openButton.isEnabled = false

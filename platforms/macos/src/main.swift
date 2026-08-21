@@ -1166,6 +1166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var browserToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip).
     private var previewBarButton: ActivityBarButton!
+    private var closeTabMenuItem: NSMenuItem?
     private var terminalBarButton: ActivityBarButton!
     private var wikiBarButton: ActivityBarButton!
     private var tasksBarButton: ActivityBarButton!
@@ -1372,6 +1373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("launch: previewPanel created")
         previewPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
         previewPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
+        previewPanel.onTabsChanged = { [weak self] in self?.updateCloseTabMenuState() }
 
         terminalPanel = TerminalPanelController()
         AppLog.shared.log("launch: terminalPanel created")
@@ -2537,8 +2539,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let saveItem = fileMenu.addItem(withTitle: L10n.tr("menu.save"), action: #selector(saveActiveFile(_:)), keyEquivalent: "s")
         saveItem.target = self
         let closeTabItem = fileMenu.addItem(withTitle: L10n.tr("preview.closeTab"), action: #selector(closeActiveFileTab(_:)), keyEquivalent: "w")
-        closeTabItem.keyEquivalentModifierMask = [.control]
+        closeTabItem.keyEquivalentModifierMask = [.command]
+        closeTabItem.isEnabled = false
         closeTabItem.target = self
+        closeTabMenuItem = closeTabItem
         fileItem.submenu = fileMenu
 
         // Edit menu: routes Cmd+C/V/X/A/Z etc. to the first responder
@@ -2870,9 +2874,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         previewPanel.saveActiveTab()
     }
 
-    /// Close the active preview tab (File ▸ 关闭页签 / Ctrl+W).
+    /// Close the active preview tab (File ▸ 关闭页签 / ⌘W). When no tab is open
+    /// the item is disabled so ⌘W falls through to closing the window.
     @objc private func closeActiveFileTab(_ sender: Any?) {
         previewPanel.closeActiveTab()
+    }
+
+    private func updateCloseTabMenuState() {
+        closeTabMenuItem?.isEnabled = previewPanel?.hasOpenTabs ?? false
     }
 
     @objc private func togglePreviewPanel(_ sender: Any?) {
