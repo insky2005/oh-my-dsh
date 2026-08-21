@@ -26,4 +26,10 @@ module.exports = {
   ...require('./lib/jobqueue'),
   // Issue-task association index (.dsh/tasks/ persistence)
   ...require('./lib/tasks'),
+  // Channel capability: unified abstraction (event/reply/state/router/config)
+  ...require('./lib/channel'),
+  // Channel session driver (create/prompt/cancel/poll a dsh session from a message)
+  ...require('./lib/session-driver'),
+  // WeChat ClawBot channel adapter (first ChannelAdapter implementation)
+  ...require('./lib/weixin-clawbot'),
 };

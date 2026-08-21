@@ -14,6 +14,9 @@
  *   node core/bin/ohmy-core.js upgrade latest <registry>
  *   node core/bin/ohmy-core.js session cwd <port>
  *   node core/bin/ohmy-core.js session cwd-by-id <port> <sessionId>
+ *   node core/bin/ohmy-core.js channel route <refsJson> <conversationId> <text>
+ *   node core/bin/ohmy-core.js channel normalize <eventJson>
+ *   node core/bin/ohmy-core.js channel state <current> <next>
  */
 
 const core = require('../index');
@@ -69,7 +72,24 @@ function printJson(v) {
         fail('usage: session cwd <port> | cwd-by-id <port> <sessionId>');
       }
       break;
+    case 'channel':
+      if (sub === 'route') {
+        // route <refsJson> <conversationId> <text>
+        const refs = JSON.parse(rest[0] || '[]');
+        const event = core.normalizeEvent({ conversationId: rest[1] || '', text: rest[2] || '' });
+        const router = core.createRouter();
+        printJson(router.match({ event, refs }));
+      } else if (sub === 'normalize') {
+        printJson(core.normalizeEvent(JSON.parse(rest[0] || '{}')));
+      } else if (sub === 'state') {
+        const sm = core.createStateMachine(rest[0]);
+        const next = rest[1];
+        printJson({ from: sm.get(), to: next, ok: sm.set(next) });
+      } else {
+        fail('usage: channel route <refsJson> <conversationId> <text> | normalize <eventJson> | state <current> <next>');
+      }
+      break;
     default:
-      fail('usage: ohmy-core { ports | serving | upgrade | session } …');
+      fail('usage: ohmy-core { ports | serving | upgrade | session | channel } …');
   }
 })().catch((e) => { console.error(e); process.exit(1); });
