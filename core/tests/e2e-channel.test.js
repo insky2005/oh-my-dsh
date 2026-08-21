@@ -33,8 +33,11 @@ test('e2e: ClawBot adapter -> manager -> router -> LIVE dsh session -> send', { 
   const up = await liveDSH();
   if (!up) { t.skip('no live dsh web on 3080'); return; }
 
-  // A throwaway project dir for the session.
+  // A throwaway project dir for the session. Always remove it afterwards so
+  // `chan-e2e-*` temp dirs (and their live 3080 sessions) don't leak — a
+  // leaked session is what the macOS app's terminal picks up as its startup dir.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-e2e-'));
+  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
 
   // Mock transport: queues one inbound message, records sends.
   const sent = [];

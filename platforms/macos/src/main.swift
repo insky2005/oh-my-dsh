@@ -1115,8 +1115,18 @@ enum DSHSessionRPC {
             let candidates = items.filter { session in
                 (session["blank"] as? Bool) != true && (session["cwd"] as? String) != nil
             }
-            let running = candidates.filter { ($0["running"] as? Bool) == true }
-            let pool = running.isEmpty ? candidates : running
+            // Ignore throwaway sessions whose working dir lives under the system
+            // temp folder (e.g. leftover `chan-e2e-*` dirs from channel E2E tests)
+            // so the terminal never defaults into them. If every candidate is
+            // temp-only, return nothing and let the caller fall back to home.
+            let tmpPrefix = FileManager.default.temporaryDirectory.standardizedFileURL.path
+            let real = candidates.filter { session in
+                guard let cwd = session["cwd"] as? String else { return false }
+                return !(cwd as NSString).standardizingPath.hasPrefix(tmpPrefix)
+            }
+            guard !real.isEmpty else { return }
+            let running = real.filter { ($0["running"] as? Bool) == true }
+            let pool = running.isEmpty ? real : running
             result = pool
                 .sorted { ($0["updatedAt"] as? Double ?? 0) > ($1["updatedAt"] as? Double ?? 0) }
                 .first?["cwd"] as? String
