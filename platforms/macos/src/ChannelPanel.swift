@@ -69,8 +69,7 @@ final class ChannelPanelController: NSObject {
     private let configButton: CustomIconButton
     private let hideButton: CustomIconButton
 
-    // toolbar (28pt, consistent with other panels' second row)
-    private let toolbarLabel = HeaderLabel()
+    // (28pt toolbar placeholder is created locally in buildUI)
 
     // content container
     private let contentContainer = DynamicFillView()
@@ -139,7 +138,6 @@ final class ChannelPanelController: NSObject {
         headerTitle.text = L10n.tr("channel.title")
         configButton.toolTip = L10n.tr("channel.globalConfig")
         hideButton.toolTip = L10n.tr("preview.closePanel")
-        toolbarLabel.text = L10n.tr("channel.globalConfig")
         onboardingTitle.stringValue = L10n.tr("channel.onboardingTitle")
         onboardingHint.stringValue = L10n.tr("channel.onboardingHint")
     }
@@ -182,29 +180,13 @@ final class ChannelPanelController: NSObject {
             separator.bottomAnchor.constraint(equalTo: header.bottomAnchor),
         ])
 
-        // toolbar (28pt) — consistent with other panels second row
-        toolbarLabel.translatesAutoresizingMaskIntoConstraints = false
+        // toolbar (28pt) — empty placeholder so the panel matches the other
+        // panels two-row height; no text, no underline.
         let toolbar = DynamicFillView()
         toolbar.kind = .window
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true
-        toolbar.addSubview(toolbarLabel)
-        NSLayoutConstraint.activate([
-            toolbarLabel.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 10),
-            toolbarLabel.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-            toolbarLabel.trailingAnchor.constraint(lessThanOrEqualTo: toolbar.trailingAnchor, constant: -8),
-            toolbar.heightAnchor.constraint(equalToConstant: 28),
-        ])
-        let toolbarUnderline = NSBox()
-        toolbarUnderline.boxType = .separator
-        toolbarUnderline.translatesAutoresizingMaskIntoConstraints = false
-        toolbar.addSubview(toolbarUnderline)
-        NSLayoutConstraint.activate([
-            toolbarUnderline.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
-            toolbarUnderline.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
-            toolbarUnderline.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor),
-        ])
 
         contentContainer.kind = .control
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -261,38 +243,28 @@ final class ChannelPanelController: NSObject {
         onboardingHint.textColor = .secondaryLabelColor
         onboardingHint.alignment = .left
 
-        // title + hint: left-aligned (not stretched)
-        let textStack = NSStackView(views: [onboardingTitle, onboardingHint])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 4
-        textStack.translatesAutoresizingMaskIntoConstraints = false
+        onboardingView.addSubview(onboardingTitle)
+        onboardingView.addSubview(onboardingHint)
 
-        // cards: full-width
-        var cardStackViews: [NSView] = []
+        // cards: full-width (pure Auto Layout)
+        var prev: NSView? = onboardingHint
         for card in ChannelPanelController.builtins {
             let cardView = makeCard(card)
             cardViews.append(cardView)
-            cardStackViews.append(cardView)
+            onboardingView.addSubview(cardView)
+            NSLayoutConstraint.activate([
+                cardView.leadingAnchor.constraint(equalTo: onboardingView.leadingAnchor, constant: 16),
+                cardView.trailingAnchor.constraint(equalTo: onboardingView.trailingAnchor, constant: -16),
+                cardView.topAnchor.constraint(equalTo: prev!.bottomAnchor, constant: 12),
+            ])
+            prev = cardView
         }
-        let cardStack = NSStackView(views: cardStackViews)
-        cardStack.orientation = .vertical
-        cardStack.alignment = .width        // stretch cards to full width
-        cardStack.spacing = 10
-        cardStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let stack = NSStackView(views: [textStack, cardStack])
-        stack.orientation = .vertical
-        stack.alignment = .width
-        stack.spacing = 16
-        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        onboardingView.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: onboardingView.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: onboardingView.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: onboardingView.trailingAnchor),
+            onboardingTitle.leadingAnchor.constraint(equalTo: onboardingView.leadingAnchor, constant: 16),
+            onboardingTitle.topAnchor.constraint(equalTo: onboardingView.topAnchor, constant: 16),
+            onboardingHint.leadingAnchor.constraint(equalTo: onboardingView.leadingAnchor, constant: 16),
+            onboardingHint.topAnchor.constraint(equalTo: onboardingTitle.bottomAnchor, constant: 4),
+            onboardingHint.trailingAnchor.constraint(lessThanOrEqualTo: onboardingView.trailingAnchor, constant: -16),
         ])
     }
 
