@@ -458,6 +458,13 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         _ = editor.writeBack()   // on failure, editor reports via onSaveError
     }
 
+    /// Close the active (selected) tab, if any — used by the File ▸ 关闭页签
+    /// menu item (Ctrl+W). No-op when no tab is open.
+    func closeActiveTab() {
+        guard let id = selectedId else { return }
+        close(id)
+    }
+
     /// Enable/disable the header Save button from the active tab's state.
     private func refreshSaveState() {
         let active = tabs.first(where: { $0.id == selectedId })

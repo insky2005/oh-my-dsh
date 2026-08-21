@@ -2536,6 +2536,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let fileMenu = NSMenu(title: L10n.tr("menu.file"))
         let saveItem = fileMenu.addItem(withTitle: L10n.tr("menu.save"), action: #selector(saveActiveFile(_:)), keyEquivalent: "s")
         saveItem.target = self
+        let closeTabItem = fileMenu.addItem(withTitle: L10n.tr("preview.closeTab"), action: #selector(closeActiveFileTab(_:)), keyEquivalent: "w")
+        closeTabItem.keyEquivalentModifierMask = [.control]
+        closeTabItem.target = self
         fileItem.submenu = fileMenu
 
         // Edit menu: routes Cmd+C/V/X/A/Z etc. to the first responder
@@ -2865,6 +2868,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Save the active preview-editor tab (File ▸ Save / ⌘S).
     @objc private func saveActiveFile(_ sender: Any?) {
         previewPanel.saveActiveTab()
+    }
+
+    /// Close the active preview tab (File ▸ 关闭页签 / Ctrl+W).
+    @objc private func closeActiveFileTab(_ sender: Any?) {
+        previewPanel.closeActiveTab()
     }
 
     @objc private func togglePreviewPanel(_ sender: Any?) {
