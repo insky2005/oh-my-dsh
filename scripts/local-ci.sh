@@ -68,7 +68,7 @@ stage_swift() {
     -import-objc-header platforms/macos/cef/CEFShim.h \
     .build/cef/CEFShim-arm64.o .build/cef/libcef_dll_wrapper-arm64.a \
     -o /tmp/oh-my-dsh-check \
-    platforms/macos/src/main.swift platforms/macos/src/PreviewPanel.swift platforms/macos/src/FilePanel.swift platforms/macos/src/CodeEditorView.swift platforms/macos/src/TerminalPanel.swift platforms/macos/src/WikiPanel.swift platforms/macos/src/IssueRunnerPanel.swift platforms/macos/src/BrowserPanel.swift platforms/macos/src/BrowserAPI.swift platforms/macos/src/BrowserCDP.swift platforms/macos/src/vendor/Highlightr/CodeAttributedString.swift platforms/macos/src/vendor/Highlightr/Highlightr.swift platforms/macos/src/vendor/Highlightr/Theme.swift platforms/macos/src/vendor/Highlightr/HTMLUtils.swift platforms/macos/src/vendor/Highlightr/Shims.swift
+    platforms/macos/src/main.swift platforms/macos/src/PreviewPanel.swift platforms/macos/src/FilePanel.swift platforms/macos/src/CodeEditorView.swift platforms/macos/src/TerminalPanel.swift platforms/macos/src/WikiPanel.swift platforms/macos/src/IssueRunnerPanel.swift platforms/macos/src/BrowserPanel.swift platforms/macos/src/BrowserAPI.swift platforms/macos/src/BrowserCDP.swift platforms/macos/src/ChannelPanel.swift platforms/macos/src/vendor/Highlightr/CodeAttributedString.swift platforms/macos/src/vendor/Highlightr/Highlightr.swift platforms/macos/src/vendor/Highlightr/Theme.swift platforms/macos/src/vendor/Highlightr/HTMLUtils.swift platforms/macos/src/vendor/Highlightr/Shims.swift
   file /tmp/oh-my-dsh-check
 }
 
