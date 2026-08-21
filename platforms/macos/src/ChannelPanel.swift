@@ -65,7 +65,7 @@ final class ChannelPanelController: NSObject {
     let view = ChannelRootView()
 
     // header
-    private let headerTitle = HeaderLabel()
+    private let headerTitle = NSTextField(labelWithString: "")
     private let configButton: CustomIconButton
     private let hideButton: CustomIconButton
 
@@ -133,7 +133,7 @@ final class ChannelPanelController: NSObject {
     deinit {}
 
     private func updateLabels() {
-        headerTitle.text = L10n.tr("channel.title")
+        headerTitle.stringValue = L10n.tr("channel.title")
         configButton.toolTip = L10n.tr("channel.globalConfig")
         hideButton.toolTip = L10n.tr("preview.closePanel")
         onboardingTitle.stringValue = L10n.tr("channel.onboardingTitle")
@@ -147,6 +147,7 @@ final class ChannelPanelController: NSObject {
     private func buildUI() {
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        headerTitle.font = .systemFont(ofSize: 16, weight: .semibold)
 
         let actions = NSStackView(views: [configButton, hideButton])
         actions.orientation = .horizontal
@@ -159,12 +160,22 @@ final class ChannelPanelController: NSObject {
         header.addSubview(headerTitle)
         header.addSubview(actions)
         NSLayoutConstraint.activate([
-            headerTitle.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
-            headerTitle.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            headerTitle.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor, constant: -8),
-            actions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
-            actions.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            header.heightAnchor.constraint(equalToConstant: 40),
+            headerTitle.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 14),
+            headerTitle.topAnchor.constraint(equalTo: header.topAnchor, constant: 24),
+            actions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -12),
+            actions.topAnchor.constraint(equalTo: header.topAnchor, constant: 22),
+            header.heightAnchor.constraint(equalToConstant: 72),
+        ])
+
+        // separator line under the header
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(separator)
+        NSLayoutConstraint.activate([
+            separator.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            separator.bottomAnchor.constraint(equalTo: header.bottomAnchor),
         ])
 
         contentContainer.kind = .control
@@ -237,52 +248,15 @@ final class ChannelPanelController: NSObject {
     }
 
     private func makeCard(_ card: ChannelCard) -> NSView {
-        let button = NSButton()
-        button.title = ""
-        button.isBordered = false
-        button.wantsLayer = true
-        button.layer?.cornerRadius = 8
-        button.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.6).cgColor
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.tag = ChannelPanelController.builtins.firstIndex { $0.platform == card.platform } ?? 0
-        button.target = self
-        button.action = #selector(cardTapped(_:))
-
-        let icon = NSTextField(labelWithString: "●")
-        icon.font = .systemFont(ofSize: 22)
-        let title = NSTextField(labelWithString: L10n.tr(card.titleKey))
-        title.font = .systemFont(ofSize: 14, weight: .semibold)
-        let desc = NSTextField(wrappingLabelWithString: L10n.tr(card.descKey))
-        desc.font = .systemFont(ofSize: 11)
-        desc.textColor = .secondaryLabelColor
-
-        let textStack = NSStackView(views: [title, desc])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 2
-
-        let row = NSStackView(views: [icon, textStack])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 10
-        row.translatesAutoresizingMaskIntoConstraints = false
-
-        button.addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 14),
-            row.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -14),
-            row.topAnchor.constraint(equalTo: button.topAnchor, constant: 12),
-            row.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -12),
-        ])
-        // uniform height for every card
-        button.heightAnchor.constraint(equalToConstant: 64).isActive = true
-        return button
+        let cardView = ChannelCardView(card: card)
+        cardView.platform = card.platform
+        cardView.onTap = { [weak self] in self?.cardTapped(platform: card.platform) }
+        cardView.heightAnchor.constraint(equalToConstant: 64).isActive = true
+        return cardView
     }
 
-    @objc private func cardTapped(_ sender: NSButton) {
-        let cards = ChannelPanelController.builtins
-        guard cards.indices.contains(sender.tag) else { return }
-        let card = cards[sender.tag]
+    private func cardTapped(platform: String) {
+        guard let card = ChannelPanelController.builtins.first(where: { $0.platform == platform }) else { return }
         if card.platform != "weixin-clawbot" { NSSound.beep(); return }
         wizardPlatform = card.platform
         wizardStep = 0
@@ -486,25 +460,29 @@ final class ChannelPanelController: NSObject {
     }
 
     private func configButtonTapped() {
+        // Toggle between project view and global-config (onboarding) view.
         if wizardView.isHidden == false { finishWizard() }
-        mode = .onboarding
-        onboardingView.isHidden = false
-        projectView.isHidden = true
-        wizardView.isHidden = true
-        rebuildCards()
+        if mode == .onboarding {
+            // already showing config → return to project view (if any config)
+            refreshMode()
+        } else {
+            // show the global-config (onboarding) view
+            mode = .onboarding
+            onboardingView.isHidden = false
+            projectView.isHidden = true
+            wizardView.isHidden = true
+            rebuildCards()
+        }
     }
 
     private func rebuildCards() {
         let cards = ChannelPanelController.builtins
         for (i, cardView) in cardViews.enumerated() where i < cards.count {
-            if let button = cardView as? NSButton,
-               let row = button.subviews.first as? NSStackView,
-               row.arrangedSubviews.count == 2,
-               let textStack = row.arrangedSubviews[1] as? NSStackView,
-               textStack.arrangedSubviews.count == 2 {
-                (textStack.arrangedSubviews[0] as? NSTextField)?.stringValue = L10n.tr(cards[i].titleKey)
-                (textStack.arrangedSubviews[1] as? NSTextField)?.stringValue = L10n.tr(cards[i].descKey)
-            }
+            guard let cv = cardView as? ChannelCardView else { continue }
+            cv.title = L10n.tr(cards[i].titleKey)
+            cv.desc = L10n.tr(cards[i].descKey)
+            let configured = channels.contains { $0.platform == cards[i].platform }
+            cv.setStatus(configured: configured)
         }
     }
 
@@ -657,4 +635,101 @@ final class ProjectRowView: NSView {
 
     @objc private func toggleTapped(_ sender: Any) { onToggle?() }
     @objc private func expandTapped(_ sender: Any) { onExpand?() }
+}
+
+/// A full-width channel card: SF Symbol icon + title/desc on the left,
+/// configuration status dot on the right (gray = unconfigured, green = configured).
+/// Background follows the appearance (light in light mode, dark in dark mode).
+final class ChannelCardView: NSView {
+    var platform: String = ""
+    var title: String { get { titleLabel.stringValue } set { titleLabel.stringValue = newValue } }
+    var desc: String { get { descLabel.stringValue } set { descLabel.stringValue = newValue } }
+    var onTap: (() -> Void)?
+    private let iconView = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let descLabel = NSTextField(wrappingLabelWithString: "")
+    private let statusDot = NSView()
+
+    init(card: ChannelCard) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        translatesAutoresizingMaskIntoConstraints = false
+
+        if let img = NSImage(systemSymbolName: card.symbol, accessibilityDescription: nil) {
+            iconView.image = img
+            iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .regular)
+        }
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        iconView.heightAnchor.constraint(equalToConstant: 28).isActive = true
+
+        titleLabel.stringValue = L10n.tr(card.titleKey)
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        descLabel.stringValue = L10n.tr(card.descKey)
+        descLabel.font = .systemFont(ofSize: 11)
+        descLabel.textColor = .secondaryLabelColor
+        descLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let textStack = NSStackView(views: [titleLabel, descLabel])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 2
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+
+        statusDot.translatesAutoresizingMaskIntoConstraints = false
+        statusDot.wantsLayer = true
+        statusDot.layer?.cornerRadius = 5
+        statusDot.widthAnchor.constraint(equalToConstant: 10).isActive = true
+        statusDot.heightAnchor.constraint(equalToConstant: 10).isActive = true
+
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+
+        let row = NSStackView(views: [iconView, textStack, spacer, statusDot])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+        ])
+
+        let click = NSClickGestureRecognizer(target: self, action: #selector(tapped(_:)))
+        addGestureRecognizer(click)
+        setStatus(configured: false)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// gray = unconfigured, green = configured
+    func setStatus(configured: Bool) {
+        statusDot.layer?.backgroundColor = (configured ? NSColor.systemGreen : NSColor.systemGray).cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // appearance-aware card background (light in light, dark in dark)
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let bg = dark ? NSColor(calibratedWhite: 0.22, alpha: 1) : NSColor(calibratedWhite: 0.95, alpha: 1)
+        bg.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+        // subtle border so the card reads on the panel background
+        let border = dark ? NSColor(calibratedWhite: 0.35, alpha: 0.6) : NSColor(calibratedWhite: 0.8, alpha: 0.8)
+        border.setStroke()
+        let b = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        b.lineWidth = 1
+        b.stroke()
+    }
+
+    @objc private func tapped(_ sender: Any) { onTap?() }
 }
