@@ -177,7 +177,9 @@ function println(s) {
           } catch (e) { /* isolate */ }
         });
         await handle.start();
-        const stop = () => { handle.stop().then(() => process.exit(0)); };
+        // Exit promptly on signal; best-effort disconnect (don't wait on the
+        // network notifyStop which can hang and leave a zombie runner).
+        const stop = () => { handle.stop().catch(() => {}); process.exit(0); };
         process.on('SIGINT', stop); process.on('SIGTERM', stop);
         setInterval(() => {}, 1 << 30);
       } else {
