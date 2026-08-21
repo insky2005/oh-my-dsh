@@ -104,7 +104,7 @@ final class ChannelPanelController: NSObject {
 
     private enum Mode { case onboarding, project }
     private var mode: Mode = .onboarding
-    private var expandedChannelId: String?
+    private var collapsedChannelIds: Set<String> = []
 
     private static let builtins: [ChannelCard] = [
         ChannelCard(platform: "weixin-clawbot", symbol: "message", titleKey: "channel.card.weixin", descKey: "channel.card.weixinDesc"),
@@ -445,8 +445,10 @@ final class ChannelPanelController: NSObject {
         projectRows = []
         for ch in channels {
             let enabled = refs.contains { $0.channelId == ch.id }
-            let expanded = (expandedChannelId == ch.id)
-            let row = ProjectRowView(channel: ch, enabled: enabled, expanded: expanded)
+            // default: expanded; only collapse when explicitly toggled off
+            let expanded = !collapsedChannelIds.contains(ch.id)
+            let sessionNames = loadSessionNames(for: ch.id)
+            let row = ProjectRowView(channel: ch, enabled: enabled, expanded: expanded, sessionNames: sessionNames)
             row.onToggle = { [weak self] in self?.toggleProjectChannel(ch.id) }
             row.onExpand = { [weak self] in self?.toggleExpand(ch.id) }
             projectList.addArrangedSubview(row)
@@ -465,8 +467,23 @@ final class ChannelPanelController: NSObject {
     }
 
     private func toggleExpand(_ channelId: String) {
-        expandedChannelId = (expandedChannelId == channelId) ? nil : channelId
+        if collapsedChannelIds.contains(channelId) {
+            collapsedChannelIds.remove(channelId)
+        } else {
+            collapsedChannelIds.insert(channelId)
+        }
         rebuildProjectRows()
+    }
+
+    /// Session display names for a channel, read from the project's
+    /// `.dsh/channels/<channelId>.sessions.json` (same store the runner uses).
+    private func loadSessionNames(for channelId: String) -> [String] {
+        guard let root = currentRoot else { return [] }
+        let path = (root as NSString).appendingPathComponent(".dsh/channels/\(channelId).sessions.json")
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = obj["sessions"] as? [[String: Any]] else { return [] }
+        return arr.compactMap { ($0["name"] as? String) ?? ($0["conversationId"] as? String) }
     }
 
     // MARK: - Mode switching
@@ -593,38 +610,37 @@ final class ChannelPanelController: NSObject {
     }
 }
 
-/// A project-view row: channel name + toggle button + expandable sessions.
+/// A project-view row: full-width channel name (left) + on/off switch (right,
+/// green when on, gray when off) + an expandable sessions list. Sessions are
+/// shown by default and collapse when the title row is clicked again.
 final class ProjectRowView: NSView {
     var onToggle: (() -> Void)?
     var onExpand: (() -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "")
-    private let toggleButton: NSButton
-    private let sessionsLabel = NSTextField(labelWithString: "")
+    private let switchControl = NSSwitch()
+    private let sessionsStack = NSStackView()
 
-    init(channel: GlobalChannel, enabled: Bool, expanded: Bool) {
-        toggleButton = NSButton()
+    init(channel: GlobalChannel, enabled: Bool, expanded: Bool, sessionNames: [String]) {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 6
         layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
 
+        // left: channel name on a full-width line (truncates to fit)
         titleLabel.stringValue = channel.name
         titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        toggleButton.bezelStyle = .inline
-        toggleButton.title = ""
-        toggleButton.target = self
-        toggleButton.action = #selector(toggleTapped(_:))
-        toggleButton.translatesAutoresizingMaskIntoConstraints = false
-        toggleButton.widthAnchor.constraint(equalToConstant: 46).isActive = true
-        setToggle(enabled)
+        // right: real on/off switch — system green when on, gray when off
+        switchControl.controlSize = .small
+        switchControl.target = self
+        switchControl.action = #selector(toggleTapped(_:))
+        switchControl.state = enabled ? .on : .off
 
-        sessionsLabel.stringValue = L10n.tr("channel.sessions") + " (0)"
-        sessionsLabel.font = .systemFont(ofSize: 11)
-        sessionsLabel.textColor = .secondaryLabelColor
-
-        let topRow = NSStackView(views: [titleLabel, NSView(), toggleButton])
+        let topRow = NSStackView(views: [titleLabel, NSView(), switchControl])
         topRow.orientation = .horizontal
         topRow.alignment = .centerY
         topRow.spacing = 8
@@ -634,34 +650,59 @@ final class ProjectRowView: NSView {
         NSLayoutConstraint.activate([
             topRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             topRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            topRow.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            topRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-            heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            topRow.topAnchor.constraint(equalTo: topAnchor, constant: 8),
         ])
 
-        if expanded {
-            addSubview(sessionsLabel)
-            NSLayoutConstraint.activate([
-                sessionsLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-                sessionsLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-                sessionsLabel.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 4),
-                sessionsLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
-            ])
-        }
+        // sessions area: header "会话 (N)" + a session row per entry
+        sessionsStack.orientation = .vertical
+        sessionsStack.alignment = .leading
+        sessionsStack.spacing = 4
+        sessionsStack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 10, right: 12)
+        sessionsStack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(sessionsStack)
+        NSLayoutConstraint.activate([
+            sessionsStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            sessionsStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            sessionsStack.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 2),
+            sessionsStack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
 
+        let header = NSTextField(labelWithString: L10n.tr("channel.sessions") + " (\(sessionNames.count))")
+        header.font = .systemFont(ofSize: 11, weight: .semibold)
+        header.textColor = .secondaryLabelColor
+        sessionsStack.addArrangedSubview(header)
+
+        if sessionNames.isEmpty {
+            let empty = NSTextField(labelWithString: L10n.tr("channel.noSessions"))
+            empty.font = .systemFont(ofSize: 11)
+            empty.textColor = .tertiaryLabelColor
+            sessionsStack.addArrangedSubview(empty)
+        } else {
+            for name in sessionNames {
+                let item = NSTextField(labelWithString: "•  " + name)
+                item.font = .systemFont(ofSize: 11)
+                item.textColor = .secondaryLabelColor
+                item.lineBreakMode = .byTruncatingMiddle
+                sessionsStack.addArrangedSubview(item)
+            }
+        }
+        sessionsStack.isHidden = !expanded
+
+        // clicking the title row (not the switch) toggles expand/collapse
         let click = NSClickGestureRecognizer(target: self, action: #selector(expandTapped(_:)))
         addGestureRecognizer(click)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private func setToggle(_ on: Bool) {
-        toggleButton.state = on ? .on : .off
-        toggleButton.contentTintColor = on ? .systemGreen : .systemGray
-    }
-
     @objc private func toggleTapped(_ sender: Any) { onToggle?() }
-    @objc private func expandTapped(_ sender: Any) { onExpand?() }
+
+    @objc private func expandTapped(_ gesture: NSClickGestureRecognizer) {
+        // ignore clicks that land on the switch itself (it has its own action)
+        let p = gesture.location(in: self)
+        if switchControl.frame.contains(p) { return }
+        onExpand?()
+    }
 }
 
 /// A full-width channel card: SF Symbol icon + title/desc on the left,
