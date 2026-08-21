@@ -65,7 +65,7 @@ final class ChannelPanelController: NSObject {
     let view = ChannelRootView()
 
     // header
-    private let headerTitle = NSTextField(labelWithString: "")
+    private let headerTitle = HeaderLabel()
     private let configButton: CustomIconButton
     private let hideButton: CustomIconButton
 
@@ -133,7 +133,7 @@ final class ChannelPanelController: NSObject {
     deinit {}
 
     private func updateLabels() {
-        headerTitle.stringValue = L10n.tr("channel.title")
+        headerTitle.text = L10n.tr("channel.title")
         configButton.toolTip = L10n.tr("channel.globalConfig")
         hideButton.toolTip = L10n.tr("preview.closePanel")
         onboardingTitle.stringValue = L10n.tr("channel.onboardingTitle")
@@ -147,7 +147,6 @@ final class ChannelPanelController: NSObject {
     private func buildUI() {
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        headerTitle.font = .systemFont(ofSize: 16, weight: .semibold)
 
         let actions = NSStackView(views: [configButton, hideButton])
         actions.orientation = .horizontal
@@ -160,11 +159,12 @@ final class ChannelPanelController: NSObject {
         header.addSubview(headerTitle)
         header.addSubview(actions)
         NSLayoutConstraint.activate([
-            headerTitle.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 14),
-            headerTitle.topAnchor.constraint(equalTo: header.topAnchor, constant: 24),
-            actions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -12),
-            actions.topAnchor.constraint(equalTo: header.topAnchor, constant: 22),
-            header.heightAnchor.constraint(equalToConstant: 72),
+            headerTitle.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
+            headerTitle.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            headerTitle.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor, constant: -8),
+            actions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
+            actions.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            header.heightAnchor.constraint(equalToConstant: 40),
         ])
 
         // separator line under the header
@@ -226,16 +226,30 @@ final class ChannelPanelController: NSObject {
         onboardingHint.font = .systemFont(ofSize: 12)
         onboardingHint.textColor = .secondaryLabelColor
 
-        var stackViews: [NSView] = [onboardingTitle, onboardingHint]
+        // title + hint: left-aligned (not stretched)
+        let textStack = NSStackView(views: [onboardingTitle, onboardingHint])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 4
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+
+        // cards: full-width
+        var cardStackViews: [NSView] = []
         for card in ChannelPanelController.builtins {
             let cardView = makeCard(card)
             cardViews.append(cardView)
-            stackViews.append(cardView)
+            cardStackViews.append(cardView)
         }
-        let stack = NSStackView(views: stackViews)
+        let cardStack = NSStackView(views: cardStackViews)
+        cardStack.orientation = .vertical
+        cardStack.alignment = .width        // stretch cards to full width
+        cardStack.spacing = 10
+        cardStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [textStack, cardStack])
         stack.orientation = .vertical
-        stack.alignment = .width        // stretch cards to full width
-        stack.spacing = 10
+        stack.alignment = .width
+        stack.spacing = 16
         stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -389,8 +403,12 @@ final class ChannelPanelController: NSObject {
     }
 
     private func finishWizard() {
+        // return to the global-config (onboarding) view, not the project view
         wizardView.isHidden = true
-        refreshMode()
+        mode = .onboarding
+        onboardingView.isHidden = false
+        projectView.isHidden = true
+        rebuildCards()
     }
 
     // ---- project view: channel rows + toggle + expandable sessions ----
