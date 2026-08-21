@@ -1,6 +1,13 @@
 # 文件预览强化 — 以新 FilePanel 落地（可回滚）
 
-> 状态：📄 设计文档已落地 · 代码阶段（阶段二）待用户确认后执行 · 2026-08
+> 状态：✅ 阶段二已实现并编译通过（分支 `feature/file-panel`）· 待手动 QA · 2026-08
+
+## 实现记录（阶段二实际落地，与设计的两处偏差）
+
+1. **Highlightr 资源嵌入位置改为 Resources ROOT，而非子目录 `highlightr`**：Highlightr 的 `Highlightr()` 默认初始化硬编码 `setTheme(to: "pojoaque")` 且用 `Bundle(for: Highlightr.self)`（即主 bundle 根）加载 js/css（`bundle.path(forResource:)` 不支持子目录）。因此 `build-app.sh` 把 4 个资源文件（`highlight.min.js`、`pojoaque.min.css`、`xcode.min.css`、`atom-one-dark.min.css`）复制到 `$APP/Contents/Resources/` 根；`CodeEditorView.highlightingAvailable()` 先校验这 4 个文件存在，缺失则退化为纯文本（不崩溃）。
+2. **主题不止 2 个**：`pojoaque.min.css` 是 Highlightr 默认 init 所必需（否则 `Highlightr()` 返回 nil，`CodeAttributedString()` 会 force-unwrap 崩溃），故一并 vendored（共 4 个资源）。
+
+其余均按设计实现：`FilePanel.swift`（`FilePanelController`，复用共享类型、仅自带 private `TreeNode`/`DirRow`）、`CodeEditorView.swift`（行号栏 + 可编辑 + Highlightr 高亮 + 明暗跟随 + 保存）、`main.swift` 仅两行接线（属性类型/初始化 → `FilePanelController`）+ File 菜单「保存」⌘S + L10n；`PreviewPanel.swift` 零改动。swiftc 类型检查与 `-O` 链接均通过；`core/tests` 全绿。
 
 ## 背景与目标
 

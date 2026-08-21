@@ -102,6 +102,8 @@ enum L10n {
         "menu.quit": ("退出", "Quit"),
         "menu.settings": ("设置", "Settings"),
         "menu.dshSettings": ("dsh 设置", "dsh Settings"),
+        "menu.file": ("文件", "File"),
+        "menu.save": ("保存", "Save"),
         "menu.edit": ("编辑", "Edit"),
         "menu.view": ("视图", "View"),
         "menu.appearance": ("外观", "Appearance"),
@@ -157,6 +159,8 @@ enum L10n {
         "preview.openProjectHint": ("在面板中打开当前项目目录", "Open the current project folder in the panel"),
         "preview.pickFolderMessage": ("无法自动定位项目目录，请选择要浏览的文件夹", "Could not locate the project folder automatically — choose a folder to browse"),
         "preview.pickFolderOpen": ("打开", "Open"),
+        "preview.saveHint": ("保存当前文件", "Save the current file"),
+        "preview.saveFailed": ("保存失败：%@", "Save failed: %@"),
         // terminal panel
         "menu.toggleTerminal": ("显示/隐藏 终端面板", "Toggle Terminal Panel"),
         "terminal.title": ("终端", "Terminal"),
@@ -1170,7 +1174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var window: NSWindow!
     private var webView: WKWebView!
     private var splitView: NSSplitView!
-    private var previewPanel: PreviewPanelController!
+    private var previewPanel: FilePanelController!
     private var terminalPanel: TerminalPanelController!
     private var wikiPanel: WikiPanelController!
     private var tasksPanel: IssueRunnerPanelController!
@@ -1194,7 +1198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let minWebViewWidth: CGFloat = 1100
     /// Smallest allowed width of the right panel slot (max of both panels').
     private static let rightPanelMinWidth: CGFloat =
-        max(PreviewPanelController.minWidth,
+        max(FilePanelController.minWidth,
             max(TerminalPanelController.minWidth,
                 max(WikiPanelController.minWidth,
                     max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth))))
@@ -1364,7 +1368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("launch: buildSplitView begin")
         guard let content = window.contentView else { return }
 
-        previewPanel = PreviewPanelController()
+        previewPanel = FilePanelController()
         AppLog.shared.log("launch: previewPanel created")
         previewPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
         previewPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
@@ -2541,6 +2545,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         editMenu.addItem(withTitle: L10n.tr("edit.selectAll"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
 
+        // File menu: save the active preview-editor buffer (⌘S).
+        let fileItem = NSMenuItem()
+        mainMenu.addItem(fileItem)
+        let fileMenu = NSMenu(title: L10n.tr("menu.file"))
+        let saveItem = fileMenu.addItem(withTitle: L10n.tr("menu.save"), action: #selector(saveActiveFile(_:)), keyEquivalent: "s")
+        saveItem.target = self
+        fileItem.submenu = fileMenu
+
         // View menu: preview/terminal panel toggles (checked while visible).
         let viewItem = NSMenuItem()
         mainMenu.addItem(viewItem)
@@ -2848,6 +2860,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         window.makeKeyAndOrderFront(nil)
         aboutWindow = window
         AppLog.shared.log("about window shown (size \(window.frame.size.width)x\(window.frame.size.height))")
+    }
+
+    /// Save the active preview-editor tab (File ▸ Save / ⌘S).
+    @objc private func saveActiveFile(_ sender: Any?) {
+        previewPanel.saveActiveTab()
     }
 
     @objc private func togglePreviewPanel(_ sender: Any?) {
