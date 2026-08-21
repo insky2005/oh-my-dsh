@@ -2,7 +2,7 @@
 
 把 DeepSeek Harness 的 Web 界面（`dsh web`）封装成一个可以在 macOS 上**直接双击运行**的原生 App。
 **不改动任何 DeepSeek Harness 源码**——它只是一个壳：内置运行时自拉起/复用 `dsh web`，用原生 `WKWebView`
-呈现界面，并在窗口右侧提供五个原生面板（预览 / 终端 / Repo Wiki 知识库 / 任务 / 浏览器）。
+呈现界面，并在窗口右侧提供五个原生面板（预览 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务）。
 
 ## 特性一览
 
@@ -30,6 +30,8 @@
 - 面板宽度可拖拽并记住，且**自动保证 WebView 宽度 ≥1050pt**（dsh web 低于 1024pt 会自动收起左侧会话栏）；
 - 纯 WebView 侧注入实现，不改任何 DeepSeek Harness 源码。
 
+![preview](./docs/screenshots/preview.png)
+
 ### 终端面板（`⌥⌘T` / 活动栏「终端」图标）
 
 右侧打开一个**真实交互的 shell**（原生 PTY，默认 `$SHELL -l`，如 `/bin/zsh`；`TERM=xterm-256color`）。
@@ -40,6 +42,21 @@
 - 输入 `exit`（或 `⌃D`）正常退出并自动关闭标签页（最后一个标签退出则收起面板）；异常退出保留「会话已结束 + 重启」以便查看错误；
 - 新会话默认在**当前 dsh 会话的项目目录**启动（服务就绪后解析，失败回退用户主目录）；退出 App 自动终止所有会话；
 - **已知限制**：v1 不支持输入法直接打字（中文等经 `⌘V` 粘贴输入）、DECSTBM 滚动区未实现（个别全屏程序可能显示异常）、组合表情/零宽连接符按近似宽度渲染、会话不跨 App 重启保留。
+
+![terminal](./docs/screenshots/terminal.png)
+
+### 浏览器面板（`⌥⌘B` / 活动栏「浏览器」图标）
+
+**多标签嵌入式 Chromium 浏览器**（CEF/Chromium 内核，每标签一个渲染进程），面向开发调试 web 页面与 Agent 排查网页问题。
+
+- **多标签**：`+` 新建 / `✕` 关闭 / `⌘1-9` 切换，上限 8 个；地址栏导航（无 scheme 自动补 `https://`）、后退/前进/刷新·停止、标签标题随页面更新；启动恢复上次 URL；
+- **渲染**：默认 **OSR 离屏渲染**（每帧像素自绘，支持鼠标/键盘/滚轮/光标跟随/上下文菜单）；可切窗口化——`defaults write com.ohmydsh.app browserRenderMode -string windowed`；
+- **Chromium 原生 DevTools**：头部「DevTools」按钮弹出独立窗口的完整调试器（Elements/Network/Console/Sources）；
+- **控制台/网络日志**：经 CDP 捕获页面 console、异常与网络请求，供 REST API 读取（`eval`/`screenshot` 也走 CDP；CDP 端口默认 `9333`，`DSH_CDP_PORT` 覆盖）；
+- **Agent 驱动（curl 即用）**：壳层常驻 localhost REST API（默认 `127.0.0.1:3081`，端口文件 `~/.dsh/browser-api.port`）——`status` / `open` / `tabs` / `back` / `forward` / `reload` / `stop` / `eval` / `console` / `console/clear` / `screenshot`(PNG) / `hide`，外加 QA 端点 `debug` / `hierarchy`；Agent 驱动时面板自动展开，截图可存工作区供读图/分享；配套技能 `.dsh/skills/shell-browser/SKILL.md`（`modelInvocable`）开箱即用；
+- **说明**：CEF 构建体积约 +320MB/架构；Chromium 使用模拟钥匙串（`use-mock-keychain`，不弹密码框、不存网页密码）；profile 数据收在 `~/.dsh/browser/`；随包分发 5 个 helper app（base/Alerts/GPU/Plugin/Renderer）；集成细节见 `docs/plans/BROWSER_PLAN-browser-panel.md`。
+
+![browser](./docs/screenshots/browser.png)
 
 ### Repo Wiki 知识库面板（`⌥⌘W` / 活动栏「知识库」图标）
 
@@ -61,17 +78,6 @@
 - **失败处理**：会话失败/超时（30min）/分支未推送/PR 失败各有明确状态与错误提示，可 Retry；取消走 `session.cancel`；
 - **GitHub token（按仓库作用域）**：面板「配置 GitHub Token」**同时写** Keychain 专属与文件专属 `~/.dsh/tokens/<owner>-<repo>`（chmod 600，App 与外部工具/代理共用）；解析优先级：文件专属 → 文件通用 `~/.dsh/gh-token` → Keychain 专属 → Keychain 通用；公开仓库无需 token，私有仓库拉取/开 PR/评论关闭需要；
 - 工作区非 GitHub 仓库时诚实显示空态（不替换为其他已注册工作区）；切换到不同仓库先清空旧列表再重载。
-
-### 浏览器面板（`⌥⌘B` / 活动栏「浏览器」图标）
-
-**多标签嵌入式 Chromium 浏览器**（CEF/Chromium 内核，每标签一个渲染进程），面向开发调试 web 页面与 Agent 排查网页问题。
-
-- **多标签**：`+` 新建 / `✕` 关闭 / `⌘1-9` 切换，上限 8 个；地址栏导航（无 scheme 自动补 `https://`）、后退/前进/刷新·停止、标签标题随页面更新；启动恢复上次 URL；
-- **渲染**：默认 **OSR 离屏渲染**（每帧像素自绘，支持鼠标/键盘/滚轮/光标跟随/上下文菜单）；可切窗口化——`defaults write com.ohmydsh.app browserRenderMode -string windowed`；
-- **Chromium 原生 DevTools**：头部「DevTools」按钮弹出独立窗口的完整调试器（Elements/Network/Console/Sources）；
-- **控制台/网络日志**：经 CDP 捕获页面 console、异常与网络请求，供 REST API 读取（`eval`/`screenshot` 也走 CDP；CDP 端口默认 `9333`，`DSH_CDP_PORT` 覆盖）；
-- **Agent 驱动（curl 即用）**：壳层常驻 localhost REST API（默认 `127.0.0.1:3081`，端口文件 `~/.dsh/browser-api.port`）——`status` / `open` / `tabs` / `back` / `forward` / `reload` / `stop` / `eval` / `console` / `console/clear` / `screenshot`(PNG) / `hide`，外加 QA 端点 `debug` / `hierarchy`；Agent 驱动时面板自动展开，截图可存工作区供读图/分享；配套技能 `.dsh/skills/shell-browser/SKILL.md`（`modelInvocable`）开箱即用；
-- **说明**：CEF 构建体积约 +320MB/架构；Chromium 使用模拟钥匙串（`use-mock-keychain`，不弹密码框、不存网页密码）；profile 数据收在 `~/.dsh/browser/`；随包分发 5 个 helper app（base/Alerts/GPU/Plugin/Renderer）；集成细节见 `docs/plans/BROWSER_PLAN-browser-panel.md`。
 
 ## 产物
 
