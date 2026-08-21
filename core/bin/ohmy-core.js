@@ -14,12 +14,17 @@
  *   node core/bin/ohmy-core.js upgrade latest <registry>
  *   node core/bin/ohmy-core.js session cwd <port>
  *   node core/bin/ohmy-core.js session cwd-by-id <port> <sessionId>
+ *   node core/bin/ohmy-core.js session run <port> <conversationId> <text> <workspaceRoot>
+ *       -- drives a dsh session directly (debug only; no WeChat involved)
  *   node core/bin/ohmy-core.js channel route <refsJson> <conversationId> <text>
  *   node core/bin/ohmy-core.js channel normalize <eventJson>
  *   node core/bin/ohmy-core.js channel state <current> <next>
- *   node core/bin/ohmy-core.js session run <port> <conversationId> <text> <workspaceRoot>
- *       -- drives a dsh session directly (debug only; no WeChat involved)
+ *   node core/bin/ohmy-core.js channel login [--save <file>]
+ *   node core/bin/ohmy-core.js channel listen <token> [--once]
+ *   node core/bin/ohmy-core.js channel reply <token> <to> <text>
+ *   node core/bin/ohmy-core.js channel run <channelId> <port> <refsJson> [--dsh-home <dir>]
  */
+
 const core = require('../index');
 
 const [cmd, sub, ...rest] = process.argv.slice(2);
@@ -31,6 +36,10 @@ function fail(msg) {
 
 function printJson(v) {
   process.stdout.write(JSON.stringify(v) + '\n');
+}
+
+function println(s) {
+  process.stdout.write(s + '\n');
 }
 
 (async () => {
@@ -103,24 +112,24 @@ function printJson(v) {
         const next = rest[1];
         printJson({ from: sm.get(), to: next, ok: sm.set(next) });
       } else if (sub === 'login') {
+        // login [--save <file>] — QR login, render QR, poll until confirmed
         let savePath = null;
         for (let i = 0; i < rest.length; i++) { if (rest[i] === '--save') savePath = rest[i + 1] || null; }
         const qr = require('../vendor/qrcode-terminal/lib/main.js');
         const transport = core.createWeixinClawBotTransport({});
         const started = await transport.startLogin();
-        process.stdout.write('\n请用手机微信扫描下方二维码以连接（如二维码无法显示，可访问链接：');
-        process.stdout.write(started.qrcodeUrl);
-        process.stdout.write('）\n\n');
+        println('请用手机微信扫描下方二维码以连接（如二维码无法显示，可访问链接：' + started.qrcodeUrl + '）');
         qr.generate(started.qrcodeUrl, { small: true });
         const result = await transport.waitForLogin({ qrcode: started.qrcode, timeoutMs: 480000 });
         if (result.connected) {
           const out = { botToken: result.botToken, accountId: result.accountId, userId: result.userId, baseUrl: result.baseUrl };
-          if (savePath) { fs.writeFileSync(savePath, JSON.stringify(out, null, 2), 'utf8'); }
+          if (savePath) { require('fs').writeFileSync(savePath, JSON.stringify(out, null, 2), 'utf8'); }
           printJson({ connected: true, ...out, savedTo: savePath });
         } else {
           printJson(result);
         }
       } else if (sub === 'listen') {
+        // listen <token> [--once]
         const token = rest[0] || '';
         const once = rest.includes('--once');
         if (!token) fail('usage: channel listen <token> [--once]');
@@ -131,7 +140,7 @@ function printJson(v) {
           printJson(updates);
           process.exit(0);
         }
-        process.stdout.write('listening (Ctrl+C to stop)\n');
+        println('listening (Ctrl+C to stop)');
         while (true) {
           try {
             const updates = await transport.fetchUpdates();
@@ -143,6 +152,7 @@ function printJson(v) {
           }
         }
       } else if (sub === 'reply') {
+        // reply <token> <to> <text>
         const token = rest[0] || '';
         const to = rest[1] || '';
         const text = rest.slice(2).join(' ') || '';
@@ -150,8 +160,28 @@ function printJson(v) {
         const transport = core.createWeixinClawBotTransport({ token });
         const res = await transport.sendMessage({ conversationId: to, text });
         printJson({ sent: true, to, messageId: res.messageId });
+      } else if (sub === 'run') {
+        // run <channelId> <port> <refsJson> [--dsh-home <dir>] — live end-to-end loop
+        const channelId = rest[0] || '';
+        const port = parseInt(rest[1], 10);
+        const refs = JSON.parse(rest[2] || '[]');
+        const dshIdx = rest.indexOf('--dsh-home');
+        const dshHome = dshIdx >= 0 ? rest[dshIdx + 1] : undefined;
+        if (!channelId || !Number.isInteger(port)) fail('usage: channel run <channelId> <port> <refsJson> [--dsh-home <dir>]');
+        const handle = await core.runWeixinChannel({ channelId, port, refs, dshHome });
+        println('channel ' + channelId + ' running (Ctrl+C to stop)');
+        handle.adapter.onEvent(async (event) => {
+          try {
+            const r = await handle.manager.enqueue(event);
+            println('handled: ' + JSON.stringify({ conversationId: event.conversationId, text: event.text, reply: r && r.reply && r.reply.text }));
+          } catch (e) { /* isolate */ }
+        });
+        await handle.start();
+        const stop = () => { handle.stop().then(() => process.exit(0)); };
+        process.on('SIGINT', stop); process.on('SIGTERM', stop);
+        setInterval(() => {}, 1 << 30);
       } else {
-        fail('usage: channel route <refsJson> <conversationId> <text> | normalize <eventJson> | state <current> <next> | login [--save <file>] | listen <token> [--once] | reply <token> <to> <text>');
+        fail('usage: channel route <refsJson> <conversationId> <text> | normalize <eventJson> | state <current> <next> | login [--save <file>] | listen <token> [--once] | reply <token> <to> <text> | run <channelId> <port> <refsJson> [--dsh-home <dir>]');
       }
       break;
     default:

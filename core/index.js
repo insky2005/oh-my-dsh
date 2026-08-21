@@ -34,4 +34,8 @@ module.exports = {
   ...require('./lib/weixin-clawbot'),
   // WeChat ClawBot transport (SDK or OpenClaw HTTP backing)
   ...require('./lib/weixin-clawbot-transport'),
+  // Channel account/token persistence (~/.dsh/channels/<id>.json, file-first)
+  ...require('./lib/channel-store'),
+  // Channel end-to-end runner (token->adapter->manager->session->reply)
+  ...require('./lib/channel-runner'),
 };
