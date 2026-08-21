@@ -46,25 +46,41 @@ final class LineNumberGutterView: NSView {
         let rightX = bounds.width - 6
         let totalLines = Self.lineCount(of: tv.string)
         var line = Self.lineNumber(ofCharacter: lm.characterIndexForGlyph(at: glyphIndex), in: tv.string)
+        var lastBottom: CGFloat = 0
+        var lastHeight: CGFloat = 0
 
         // Walk the layout manager line fragment by line fragment, drawing each
-        // number at that line's EXACT y. This never drifts, even when lines have
-        // slightly different heights (bold/italic highlight variants).
-        while glyphIndex < lm.numberOfGlyphs && line <= totalLines {
-            var effective = NSRange()
-            let frag = lm.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &effective)
-            let gutterY = frag.minY + tv.textContainerInset.height - visible.minY
-            if gutterY > bounds.height { break }
-            let label = "\(line)" as NSString
-            let size = label.size(withAttributes: attrs)
-            label.draw(at: NSPoint(x: rightX - size.width,
-                                   y: gutterY + (frag.height - size.height) / 2),
-                       withAttributes: attrs)
+        // number at that line's EXACT y (no drift with mixed-height lines) and
+        // never skipping a line because an empty fragment has no glyph.
+        let gutterHeight = bounds.height
+        let glyphRange = NSRange(location: glyphIndex, length: lm.numberOfGlyphs - glyphIndex)
+        lm.enumerateLineFragments(forGlyphRange: glyphRange) { rect, _, _, _, stop in
+            if line > totalLines { stop.pointee = true; return }
+            let gutterY = rect.minY + tv.textContainerInset.height - visible.minY
+            if gutterY > gutterHeight { stop.pointee = true; return }
+            LineNumberGutterView.drawNumber(line: line, at: gutterY, height: rect.height, rightX: rightX, attrs: attrs)
+            lastBottom = rect.minY + rect.height
+            lastHeight = rect.height
             line += 1
-            let next = NSMaxRange(effective)
-            guard next > glyphIndex else { break }   // safety: avoid an infinite loop
-            glyphIndex = next
         }
+
+        // A trailing empty line (file ends with a newline) may not be emitted as a
+        // line fragment; draw its number too so the very last line is never missing.
+        if line <= totalLines {
+            let gutterY = lastBottom + tv.textContainerInset.height - visible.minY
+            if gutterY <= gutterHeight {
+                Self.drawNumber(line: line, at: gutterY, height: lastHeight, rightX: rightX, attrs: attrs)
+            }
+        }
+    }
+
+    /// Draw one line number right-aligned at the given y (centered in its line height).
+    private static func drawNumber(line: Int, at y: CGFloat, height: CGFloat, rightX: CGFloat,
+                                   attrs: [NSAttributedString.Key: Any]) {
+        let label = "\(line)" as NSString
+        let size = label.size(withAttributes: attrs)
+        label.draw(at: NSPoint(x: rightX - size.width, y: y + (height - size.height) / 2),
+                   withAttributes: attrs)
     }
 
     /// Number of lines in the string (a trailing newline counts an empty last line).
