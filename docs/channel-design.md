@@ -231,7 +231,7 @@
 
 - **M0**：本文档（设计稿）。✅
 - **M1**：统一抽象层（ChannelEvent/Reply/状态机 + ChannelAdapter 接口）+ 消息分发 Router 骨架，**全部落入 `core/`（Node，平台无关）** + 配置面板（全局 + 项目引用）+ 全局配置模型与凭据存储。
-- **M2**：微信 ClawBot 适配器（`core/` 内首个实现，验证抽象）。✅——适配器 weixin-clawbot.js + 真实 transport weixin-clawbot-transport.js（OpenClaw HTTP：login/getUpdates/sendmessage，可注入 fetch / SDK 双模式）。
+- **M2**：微信 ClawBot 适配器（`core/` 内首个实现，验证抽象）。✅——适配器 weixin-clawbot.js + transport weixin-clawbot-transport.js，**纯官方 iLink Bot 协议**（@tencent-weixin/openclaw-weixin 2.4.6 官方源码直接推导：ilinkai.weixin.qq.com、登录/收/发/媒体/通知全部按官方实现，不参考任何非官方逆向）。
 - **M3**：消息分发路由（项目引用匹配 + 会话驱动 + 回复回传，`core/`）。✅——Router + SessionDriver 已在**真实 dsh web** 上端到端验证（见 §11）。
 - **M4**：钉钉/飞书适配器（复用统一抽象，验证一致性与扩展性）。📋 待实现。
 - **跨平台**：Windows（M2 里程碑）/ Linux（M3 里程碑）壳层仅实现配置面板 UI + 凭据文件层，直接复用 `core/` 全部 channel 核心（见 §3.4）。

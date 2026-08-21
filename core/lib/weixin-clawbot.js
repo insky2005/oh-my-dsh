@@ -76,7 +76,7 @@ function createWeixinClawBotAdapter(opts = {}) {
       try {
         const raw = await (transport.fetchUpdates || (async () => [])).call(transport);
         for (const r of raw || []) {
-          try { emit(normalizeEvent({ ...r, channelId, platform })); } catch { /* drop malformed */ }
+          try { const ev = normalizeEvent({ ...r, channelId, platform }); if (r && r.contextToken) ev.contextToken = r.contextToken; emit(ev); } catch { /* drop malformed */ }
         }
       } catch (err) {
         lastError = err;
@@ -99,6 +99,7 @@ function createWeixinClawBotAdapter(opts = {}) {
       conversationId,
       text: toPlainText(rep.text || ''),
       media: rep.media || null,
+      contextToken: rep.contextToken || (reply && reply.contextToken) || null,
     };
     await (transport.sendMessage || (async () => {})).call(transport, payload);
   }

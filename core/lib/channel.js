@@ -227,6 +227,7 @@ function createChannelManager({ adapters, refsByChannel, sessionDriver, jobQueue
     } else {
       reply = buildReply(`(no session driver) routed to ${routed.ref.workspaceRoot || routed.ref.channelId}`);
     }
+    if (event.contextToken) reply.contextToken = event.contextToken;
     await adapter.send(event.conversationId, reply);
     return { routed: true, ref: routed.ref, reply };
   }
