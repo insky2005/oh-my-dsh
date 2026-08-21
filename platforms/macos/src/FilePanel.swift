@@ -386,8 +386,8 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         guard let idx = tabs.firstIndex(where: { $0.id == tabId }) else { return }
         let path = (newPath as NSString).standardizingPath
         tabs[idx].path = path
-        tabs[idx].titleButton.title = (path as NSString).lastPathComponent
         tabs[idx].titleButton.toolTip = path
+        refreshTabTitle(at: idx)
         updateHeader(for: path)
         render(path)
     }
@@ -464,6 +464,15 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         saveButton?.isEnabled = (active?.isEditable ?? false) && (active?.isDirty ?? false)
     }
 
+    /// Set a tab's title to its filename, appending "*" when it has unsaved
+    /// edits (the classic dirty marker). Cleared on save or when re-rendered.
+    private func refreshTabTitle(at idx: Int) {
+        guard tabs.indices.contains(idx) else { return }
+        let tab = tabs[idx]
+        let base = (tab.path as NSString).lastPathComponent
+        tab.titleButton.title = tab.isDirty ? base + " *" : base
+    }
+
     /// Record the active tab's editable/dirty state and its live editor.
     private func applyEditState(editable: Bool, dirty: Bool, editor: CodeEditorView?, atTab id: Int) {
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
@@ -471,6 +480,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         tabs[idx].isDirty = dirty
         tabs[idx].editor = editor
         refreshSaveState()
+        refreshTabTitle(at: idx)
     }
 
     /// Show a non-blocking save-error alert (sheets over the panel window).
@@ -778,6 +788,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
             tabs[idx].isEditable = false
             tabs[idx].isDirty = false
             tabs[idx].editor = nil
+            refreshTabTitle(at: idx)
         }
         var isDir: ObjCBool = false
         let fm = FileManager.default
