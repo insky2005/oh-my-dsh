@@ -425,7 +425,7 @@ final class ChannelPanelController: NSObject {
         projectScroll.documentView = projectList
 
         projectList.orientation = .vertical
-        projectList.alignment = .width
+        projectList.alignment = .leading
         projectList.spacing = 6
         projectList.edgeInsets = NSEdgeInsets(top: 12, left: 10, bottom: 12, right: 10)
         projectList.translatesAutoresizingMaskIntoConstraints = false
@@ -461,6 +461,11 @@ final class ChannelPanelController: NSObject {
             row.onToggle = { [weak self] in self?.toggleProjectChannel(ch.id) }
             row.onExpand = { [weak self] in self?.toggleExpand(ch.id) }
             projectList.addArrangedSubview(row)
+            // Stretch every row to the full content width (stack `.width`
+            // alignment only stretches the widest row — shorter ones would
+            // stay at their fitting width, right-aligned). -20 = left+right
+            // edgeInsets (10 each).
+            row.widthAnchor.constraint(equalTo: projectList.widthAnchor, constant: -20).isActive = true
             projectRows.append(row)
         }
     }
