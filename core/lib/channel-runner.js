@@ -36,7 +36,7 @@ const { createQueue } = require('./jobqueue');
  * refs gets a ClawBot adapter backed by its saved account token (if any).
  * Returns { adapters: Map, refsByChannel(channelId) }.
  */
-function buildWeixinAdapters({ refs, dshHome, transportOpts, intervalMs }) {
+function buildWeixinAdapters({ refs, dshHome, transportOpts, intervalMs, ensureChannelId }) {
   const adapters = new Map();
   const byChannel = new Map();
   for (const ref of refs || []) {
@@ -44,6 +44,11 @@ function buildWeixinAdapters({ refs, dshHome, transportOpts, intervalMs }) {
     const list = byChannel.get(ref.channelId) || [];
     list.push(ref);
     byChannel.set(ref.channelId, list);
+  }
+  // Always build an adapter for the explicitly requested channel, even when
+  // no refs reference it yet (e.g. startup before project binding).
+  if (ensureChannelId && !byChannel.has(ensureChannelId)) {
+    byChannel.set(ensureChannelId, []);
   }
   for (const [channelId, channelRefs] of byChannel) {
     const account = loadChannelAccount(channelId, dshHome);
@@ -100,6 +105,7 @@ async function runWeixinChannel(opts = {}) {
     dshHome: opts.dshHome,
     transportOpts: opts.transportOpts,
     intervalMs: opts.intervalMs,
+    ensureChannelId: channelId,
   });
   const adapter = adapters.get(channelId);
   if (!adapter) throw new Error('channel-runner: no adapter for ' + channelId);

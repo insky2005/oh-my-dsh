@@ -166,7 +166,7 @@ function println(s) {
         const port = parseInt(rest[1], 10);
         const refs = JSON.parse(rest[2] || '[]');
         const dshIdx = rest.indexOf('--dsh-home');
-        const dshHome = dshIdx >= 0 ? rest[dshIdx + 1] : undefined;
+        const dshHome = dshIdx >= 0 ? rest[dshIdx + 1] : (require('node:os').homedir() + '/.dsh');
         if (!channelId || !Number.isInteger(port)) fail('usage: channel run <channelId> <port> <refsJson> [--dsh-home <dir>]');
         const handle = await core.runWeixinChannel({ channelId, port, refs, dshHome });
         println('channel ' + channelId + ' running (Ctrl+C to stop)');

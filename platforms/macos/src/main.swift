@@ -3032,7 +3032,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// received and answered. Uses the saved token + the active workspace's
     /// refs. Kept strongly by the delegate so it survives after login returns.
     private var channelRunnerProcs: [Process] = []
+    private var channelRunnerIds: [String] = []
     private func startChannelRunner(channelId: String) {
+        // dedup: never run two listeners for the same channel (each would
+        // long-poll the same token and re-handle every message -> duplicates)
+        if channelRunnerIds.contains(channelId) {
+            AppLog.shared.log("channel runner already running for \(channelId)")
+            return
+        }
         guard let cli = CoreBridge.coreCLIPath, let node = ServerManager().resolveNode() else { return }
         let port = server.port
         // refs: the active workspace's .dsh/channels.json (may be empty)
@@ -3062,6 +3069,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         do {
             try proc.run()
             channelRunnerProcs.append(proc)
+            channelRunnerIds.append(channelId)
             AppLog.shared.log("channel runner started for \(channelId) on port \(port)")
         } catch {
             AppLog.shared.log("channel runner failed to start: \(error.localizedDescription)")
@@ -3086,6 +3094,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func stopChannelRunners() {
         for proc in channelRunnerProcs { proc.terminate() }
         channelRunnerProcs.removeAll()
+        channelRunnerIds.removeAll()
         AppLog.shared.log("channel runners stopped")
     }
 
