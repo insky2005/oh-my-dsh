@@ -111,6 +111,12 @@
 | token 失效(-14) | 归一到 auth-expired，提示重新扫码 |
 | 并发消息 | 同 conversation 串行（jobqueue），跨 conversation 可并发 |
 
+### 3.9 长轮询游标（重要：轮询必须是严格串行 while 循环）
+
+- **教训（2026-08-21）**：getupdates 长轮询**不能用 setInterval 每 N ms 触发**——那样会破坏服务端 get_updates_buf 游标推进，导致**同一条消息被反复返回、重复回复**（实测同一 /help 被处理 6 次）。
+- **修复**：改为官方 monitor 的**严格串行 while 循环**——每次 fetchUpdates 阻塞到新消息或长轮询超时，然后立即循环；只在出错时短暂 sleep。
+- 效果：游标正确推进，消息只处理一次（实测 /help 仅 1 条回复）。
+
 ### 3.8 消息持久化（决策 E：落盘项目 .dsh）
 
 - 路径：<projectRoot>/.dsh/channels/<channelId>.messages.json（{ version, messages: [{ channelId, conversationId, sessionId, dir: "in"|"out", text, ts }] }）；
