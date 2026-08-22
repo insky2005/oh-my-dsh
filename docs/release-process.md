@@ -101,6 +101,26 @@ scripts/local-release.sh arm64 x86_64                          # 两架构 pkg+d
    git push github main
    ```
 
+## 已知坑与规避（v1.12.0 实战校准）
+
+- **tag 推送会触发 CI release.yml，而 CI 的 CEF prepare 当前是坏的**：`prepare` job 从
+  `cef-builds.spotifycdn.com` 下载 CEF 在 GitHub runner 上超时失败（v1.11.0 / v1.12.0
+  连续两代 Release run 都挂在「Pre-build CEF artifacts」），`publish release` job 被跳过。
+  → 发布以**本地 local-release 为准**；CI 那次失败 run 直接忽略。若将来 CI 修好，注意与
+  本地发布并存（github-publish.sh 已幂等，重复发布安全）。
+- **上传约 1.1GB 资产在慢网下耗时 1–2h+，且脚本静默无进度**：资产按 pkg→dmg→
+  SHA-256SUMS 顺序逐个上传。中途可用 API 观察进度（资产逐个出现）：
+  `curl -s https://api.github.com/repos/insky2005/oh-my-dsh/releases/tags/vX.Y.Z`，
+  看 `assets` 数组长度与每个资产的 `state`（uploaded = 完成）。
+- **上传中断可安全重跑**：`github-publish.sh` 已幂等化——release 已存在则复用并只补传
+  缺失资产（curl 兜底路径同样适用），无需手动删除半成品 release。
+- **本机缺 gh CLI 时走 curl 兜底**：建议 `brew install gh && gh auth login`；gh 路径
+  delete+create 更简单且 `gh release upload` 有进度条。
+- **DMG 构建必须 danger-full-access 沙箱**（见步骤 3）：hdiutil 需访问 `/dev`，
+  workspace-write 下必失败（`Directory not empty` / `Operation not permitted`）。
+- **CHANGELOG curate 需对照 `scripts/changelog.sh <上个tag>` 清单逐项打勾**：勿漏实质
+  改动（v1.12.0 核对时曾主动跳过一条 minor 诊断日志条目——可接受，但需有意识）。
+
 ## 发布完成自检清单
 
 - [ ] `github/main` 与本地一致；工作区干净
