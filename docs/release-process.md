@@ -15,13 +15,13 @@
 ## 4 步总览
 
 ```
-1. 更新发布文档：CHANGELOG.md（必须用 scripts/changelog.sh）+ 主版本时 SECURITY.md ## Supported Versions → commit
+1. 更新发布文档：CHANGELOG.md（必须用 scripts/changelog.sh）+ 检查 README/CONTRIBUTING 覆盖本次内容 + 主版本时 SECURITY.md ## Supported Versions → commit
 2. 打 tag vX.Y.Z + git push
 3. scripts/local-release.sh arm64 x86_64 构建并发布 GitHub Release
 4. 推进版本号（version.sh FALLBACK + CHANGELOG [Unreleased] 占位）→ commit + push
 ```
 
-### 步骤 1：更新发布文档（CHANGELOG + 主版本时 SECURITY）
+### 步骤 1：更新发布文档（CHANGELOG + README/CONTRIBUTING 检查 + 主版本时 SECURITY）
 
 1. 用 `scripts/changelog.sh <上个tag>` 生成「未发布改动」原始清单（按 conventional commit 类型分组）：
    ```bash
@@ -31,13 +31,17 @@
    - 分组：`### Added` / `### Changed` / `### Fixed` / `### Docs`；
    - 每条用 **加粗主题词** + 详细描述（参考 `[1.10.0]`/`[1.11.0]` 段写法），**不要照抄提交标题**；
    - 覆盖该版本全部实质改动（用 changelog.sh 清单交叉核对，勿漏）。
-3. **主版本（vX.Y.0）同步更新 `SECURITY.md` ## Supported Versions**（patch 版本 `vX.Y.Z` 支持表不变，跳过）：
+3. **检查 `README.md` / `CONTRIBUTING.md` 是否覆盖本次发布内容**（防止遗漏；主版本必做，patch 按改动范围判断）：
+   - README：新增面板/特性 → 「右栏面板」小节 + 「特性一览」；新增构建变量/环境变量 → 对应章节；配图同步 `docs/screenshots/`；
+   - CONTRIBUTING：新增模块/测试 → 「项目结构」+「运行测试」；新增 Swift 文件/面板 → 编译清单与测试套件说明；
+   - 原则：**对外可见的发布内容必须有文档**；缺失则补写，随 changelog 一并提交。
+4. **主版本（vX.Y.0）同步更新 `SECURITY.md` ## Supported Versions**（patch 版本 `vX.Y.Z` 支持表不变，跳过）：
    - 策略：维护**最近 2 个大版本**——新版本进表（`X.Y.x` ✅ Supported），最老一条出表，EOL 边界上移；
    - 示例：发布 v1.12.0 → 表为 `1.12.x` / `1.11.x`，`< 1.11` → End of life；
    - 版本号以 `git tag` 最新发布为准（开发线 `FALLBACK_VERSION` 未发布，不进表）。
-4. commit（changelog + security 同一次提交，保证 tag 指向完整发布文档）：
+5. commit（changelog + 文档检查补写 + security 同一次提交，保证 tag 指向完整发布文档）：
    ```bash
-   git add CHANGELOG.md SECURITY.md
+   git add CHANGELOG.md README.md CONTRIBUTING.md SECURITY.md
    git commit -m "docs(changelog): 发布 vX.Y.Z，[Unreleased] 转正"
    ```
 
@@ -101,6 +105,7 @@ scripts/local-release.sh arm64 x86_64                          # 两架构 pkg+d
 
 - [ ] `github/main` 与本地一致；工作区干净
 - [ ] 远端 tag `vX.Y.Z` 指向含 changelog/SECURITY 的提交
+- [ ] `README.md` / `CONTRIBUTING.md` 已覆盖本次发布内容（新面板/特性/测试清单无遗漏）
 - [ ] `SECURITY.md` ## Supported Versions 已更新（主版本发布；patch 版本跳过）
 - [ ] GitHub Release `vX.Y.Z` 有 5 个资产：arm64/x86_64 的 `.pkg` + `.dmg` + `SHA-256SUMS`
 - [ ] `scripts/version.sh` 输出下一个版本号 / 下一个 build
