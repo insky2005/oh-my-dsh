@@ -107,8 +107,10 @@ workspace 列表：
 
 用于快速设置「当前项目 / 当前会话」；纯代号不当作提问发进会话。
 
-| `#w1` | 设置当前工作区 | `已切换到工作区 #wN (名称), ~/路径\n当前会话：n/a\n最近会话（5）：…#sN (sessionId), 标题`；代号不存在 `未找到代号 #wN（/wks 查看）` | 见下方示例 | `channel-runner.js` quick 分支 |
-| `#s1` | 设置当前会话 | `已切换到会话 #sN (sessionId), 会话标题`；不存在 `未找到会话 #sN（/sessions 查看）` | `已切换到会话 #s1 (sess-xxx), 会话甲` | 同上 |
+| 指令 | 功能 | 响应内容格式 | 示例 | 实现 |
+|---|---|---|---|---|
+| `#w1` | 设置当前工作区 | `已切换到工作区 #wN (名称), ~/路径\n当前会话：n/a\n最近会话（5）：…#sN (sessionId), 标题`；不存在 `未找到工作区 #wN （/wks 或 /workspaces 查看）` | 见下方示例 | `channel-runner.js` quick 分支 |
+| `#s1` | 设置当前会话 | `已切换到会话 #sN (sessionId), 会话标题`；不存在 `未找到会话 #sN （/ses 或 /sessions 查看）` | `已切换到会话 #s1 (sess-xxx), 会话甲` | 同上 |
 
 > 判定：消息 trim 后匹配 `/^#([ws])(\d+)\s*$/i`。`#wN` 更新「最近 workspace」（lastWorkspace）并**把当前会话置为 n/a**（须再显式切会话），同时返回该工作区最近 5 条会话便于选择；`#sN` 把该会话设为当前会话（写 `sessions[conversationId]` + `activeSessionId`）。
 

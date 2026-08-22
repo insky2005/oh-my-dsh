@@ -254,7 +254,7 @@ async function runWeixinChannel(opts = {}) {
           const ws = await getCodedWorkspaces();
           const w = ws[n - 1];
           if (!w) {
-            replyText = '未找到代号 #w' + n + '（/wks 查看）';
+            replyText = '未找到工作区 #w' + n + ' （/wks 或 /workspaces 查看）';
           } else {
             setLastWorkspace(w);
             // A workspace switch resets the current session to n/a — the user
@@ -273,7 +273,7 @@ async function runWeixinChannel(opts = {}) {
         } else {
           const list = await currentSessions();
           const s = list[n - 1];
-          if (!s) replyText = '未找到会话 #s' + n + '（/sessions 查看）';
+          if (!s) replyText = '未找到会话 #s' + n + ' （/ses 或 /sessions 查看）';
           else {
             runtime.setSession(event.conversationId, { sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
             runtime.setActiveSession({ sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
