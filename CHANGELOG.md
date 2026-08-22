@@ -5,9 +5,35 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
-## [Unreleased]
+## [1.12.0] - 2026-08-22
 
-- 暂无（v1.11.0 已发布；开发线已推进到 1.12.0）。
+### Added
+
+- **通道面板（微信远程驱动 dsh）**（活动栏通道图标 + 菜单）：绑定微信个人号（官方 iLink 协议），在微信里发消息/斜杠指令远程驱动 dsh 干活——消息路由到项目会话、结果回复回微信；已跑通「扫码登录 → 长轮询收消息 → 指令/路由 → dsh 会话 → 回复回微信」**全链路**（真实微信 + 真实 dsh web 端到端验证）。
+  - **配置面板**：全局配置视图 + 项目引用开关（写 `.dsh/channels.json`）；内置平台卡片（微信 ClawBot / 钉钉 / 飞书，带**实时连接状态徽标**）；微信扫码登录**在面板内渲染二维码**（CIQRCodeGenerator，不弹浏览器），登录态落 `~/.dsh/channels/<id>.json`（文件优先，chmod 600）；统一 40pt HeaderLabel 样式，顶部「全局配置」随时重开；
+  - **项目视图**：Channel 行默认展开 Sessions + 原生 NSSwitch（灰绿）开关 + 展开区显示真实会话；行占满整宽、从内容区顶部渲染；
+  - **微信内斜杠指令**：`/help`（分组排序）、`/ping`、`/status`（新格式）、`/workspaces`(`/wks`，代号+标题+`~`路径)、`/new`（无内容只创建标记 pending 等待首条消息激活、有内容创建并立即 prompt，落 workspaceId）、`/sessions`(`/ses`，工作区头+最近 5 条)、`/switch`；快捷指令 `#w1`/`#s1...`（切项目/会话，未找到有明确提示）与 #tag 路由（如 `#w1 帮我看看`）；
+  - **会话驱动**：conversationId → dsh 会话映射（多轮续接，`/new` 另起），经 `session.create` + `session.prompt`（queue）驱动，回复回传微信；通道级全局状态（lastWorkspace / 会话映射 / activeSession）持久化 `~/.dsh/channels/<id>.state.json`（重启可恢复，写失败尽力不抛错）；
+  - **生命周期**：启动自动拉起已配置 channel runner、退出关闭；绑定成功后自动启动 listener；SIGTERM 立即退出不留僵尸进程；runner 去重（同 channelId 不重复启动）。
+- **通道核心入 `core/`（跨平台复用）**：统一抽象层（ChannelEvent / ChannelReply / 状态机 / Router / 管理编排）+ 微信 ClawBot 适配器（transport **重写为纯官方 iLink 协议**，由 `@tencent-weixin/openclaw-weixin` 2.4.6 官方源码推导）+ CLI（`channel login` / `listen` / `reply` / `run`，vendor qrcode-terminal）+ 单测（指令 / 路由 / 会话 / 传输层，全绿）。
+- **文件面板升级为预览 + 编辑器**（`⌥⌘P` / 活动栏「文件」图标）：UTF-8 且 ≤2MB 的代码/文本文件面板内直接编辑，**行号栏随滚动严格对齐**（gutter 逐行按实际字形基线绘制）、**语法高亮**（vendored Highlightr，180+ 语言，明暗自适应）；未保存页签显示 `*`；`File ▸ 保存`（⌘S）原子写回，`File ▸ 关闭页签`（⌘W / Ctrl+W）；保存图标 + File 菜单置于 Edit 前；设计文档 `docs/plans/PREVIEW_PLAN-file-panel.md`（rollback-first）。
+- **CI / 测试补齐**：local-ci 与 GitHub swiftc 编译清单登记 FilePanel / CodeEditorView / Highlightr / ChannelPanel；channel 单测并入 `node --test core/tests/`；clawbot 测试 mock 只返回一次消息、移除依赖真实 dsh web 的 e2e（避免残留临时会话/目录）。
+
+### Fixed
+
+- **通道消息重复回复**：轮询改**严格串行 while 长轮询**（对齐官方 monitor）——setInterval 破坏 `get_updates_buf` 游标推进导致同一消息被反复处理/重复回复（根因与验证见 `docs/channel-issues.md`）。
+- **通道路由/状态**：通道级状态写入加内存缓存，避免 onState 与 setActiveSession 并发写 state 文件互相覆盖；`/new` 创建后立即用 /new 文本 prompt（会话非 blank、dsh web 可见）；快捷指令未找到提示更新（`#wN` → 未找到工作区、`#sN` → 未找到会话）；`/wks` 显示 workspace title + `~` 缩短路径不泄露用户目录；加载全局通道过滤历史坏 id；`channel run` 默认 dshHome=~/.dsh 使 CLI 可用。
+- **面板 v2 UI**：分隔线位置修正（去掉标题/工具条之间、保留工具条/内容区之间）；工具条清空（无文字无线）+ 引导标题/卡片改纯 Auto Layout 左对齐；项目视图从内容区顶部渲染（FlippedStackView）、行占满整宽、展开手势移回 Channel 名（不再吞开关点击）。
+- **代码编辑器**：Highlightr() init 崩溃防护；行号栏滚动去同步/末行缺失/越界/首布局漂移——按每行实际字形基线绘制、布局稳定后重绘。
+- **终端启动目录**：解析忽略系统临时目录会话（`chan-e2e-*` 测试残留），终端不再默认落在测试临时目录。
+- **CI 编译清单**：补齐 ChannelPanel.swift（修复 ChannelPanelController 未定义）与 FilePanel/CodeEditorView/Highlightr。
+
+### Docs
+
+- **通道文档**：`docs/channel-design.md`（能力设计：统一抽象 + 微信/钉钉/飞书多平台扩展 + ClawBot 可行性）、`docs/channel-commands.md`（指令清单）、`docs/channel-status.md`（完成状态总览）、`docs/channel-storage.md`（存储全局化设计）、`docs/channel-issues.md`（重复回复根因排查）。
+- **文件面板**：`docs/plans/PREVIEW_PLAN-file-panel.md` 设计文档（预览增强，rollback-first）；README「预览面板」小节改为「文件面板」（预览 + 编辑 + 高亮）。
+- **发布流程固化**：`docs/release-process.md`（四步发布：CHANGELOG → tag → local-release → 版本推进）；AGENTS.md 增补发布指引与 GitHub token 位置；SECURITY.md Supported Versions 同步步骤。
+- **README / CONTRIBUTING 覆盖本次发布内容**：新增 Channel 面板介绍（右栏面板 + 特性一览 + 截图）；项目结构/测试清单补 channel 模块与文件面板组件；wiki 同步（channel-panel / file-panel 模块页、架构/数据模型/任务/构建脚本刷新）；README 增加 app 截图。
 
 ## [1.11.0] - 2026-08-21
 
