@@ -9,9 +9,9 @@ const { saveChannelAccount } = require('../lib/channel-store');
 const { runWeixinChannel } = require('../lib/channel-runner');
 const { resolveRefBinding } = require('../lib/channel');
 
-// Drive a sequence of ORDINARY (non-command) messages through runWeixinChannel and
+// Drive a sequence of messages (commands + ordinary) through runWeixinChannel and
 // record what the mock dsh web session driver did: session.create payloads and
-// prompt targets. Verifies A (session reuse) + C (workspaceId creation).
+// prompt targets. Verifies A (session reuse, incl. after /new) + C (workspaceId).
 async function runOrdinarySequence(texts, { projectRoot = '/Users/loie/repo/alpha', workspaceId = 'w-1', refs = [] } = {}) {
   const http = require('node:http');
   let seq = 0;
@@ -58,6 +58,20 @@ test('A: ordinary messages reuse one session per conversation', async () => {
   assert.equal(creates.length, 1, 'one session.create for a multi-turn conversation');
   assert.equal(prompts.length, 3, 'every turn prompts the (same) session');
   assert.equal(new Set(prompts).size, 1, 'all prompts target the same sessionId');
+});
+
+test('A: /new binds the session to the conversation so the next message reuses it (no duplicate session)', async () => {
+  const { creates, prompts } = await runOrdinarySequence(['/new Hello', '你是谁']);
+  assert.equal(creates.length, 1, 'only ONE session created across /new + the following message');
+  assert.equal(prompts.length, 2, '/new prompt + next message both prompt');
+  assert.equal(new Set(prompts).size, 1, 'both /new and the next message target the same session');
+});
+
+test('A: /new (no content) + two following messages reuse one session', async () => {
+  const { creates, prompts } = await runOrdinarySequence(['/new', '第一问', '第二问']);
+  assert.equal(creates.length, 1, 'one session for /new + two follow-ups');
+  assert.equal(new Set(prompts).size, 1, 'all messages target the same session');
+  assert.equal(prompts.length, 2, '/new no-content prompts nothing; the two follow-ups prompt the same session');
 });
 
 test('C: session.create uses workspaceId so the session belongs to the workspace', async () => {

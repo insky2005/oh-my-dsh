@@ -110,4 +110,6 @@
 | B 路由统一 | 新增 resolveRefBinding（conversation/keyword 显式绑定），runner 先 refs 绑定后 workspace-tag 兜底；handleEvent 对已绑定事件合成 ref | core/lib/channel.js、channel-runner.js | channel-association.test.js「B」 |
 | D 存储单一来源 | createChannelSessions 改按 channel 作用域全局存储（sessions/workspaces/分桶消息）；runner 会话映射与消息都走同一 store；忽略历史迁移（按需求） | core/lib/channel-sessions.js、channel-runner.js | channel-sessions.test.js（重写） |
 
-> 验证：`node --test core/tests/` **152 全绿**（基线 148 + A/B/C/D 相关新增）。
+> 验证：`node --test core/tests/` **154 全绿**（基线 148 + A/B/C/D + /new 会话绑定回归）。
+
+> **修复记录（2026-08-22）**：/new 创建的会话此前未绑定到发起 conversation，导致 /new Hello 后下一条普通消息又新建会话。已修复——/new（含/不含内容）后把新建会话写入 conversation→session 映射；pending 激活路径同步写入映射。回归用例见 channel-association.test.js「/new binds …」。

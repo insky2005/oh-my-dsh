@@ -236,6 +236,14 @@ async function runWeixinChannel(opts = {}) {
       if (parsed.kind === 'command' || parsed.kind === 'unknown') {
         const reply = await commandRunner.run(event.text);
         console.log('[runner:' + channelId + '] command ' + (parsed.name || parsed.kind) + ' -> reply=' + JSON.stringify(reply && reply.text));
+        // /new binds the freshly-created session to THIS conversation so the next
+        // ordinary message continues in it (instead of spawning a new session).
+        if (parsed.kind === 'command' && parsed.name === 'new') {
+          const act = runtime.getActiveSession();
+          if (act && act.sessionId) {
+            store.setSession(event.conversationId, { sessionId: act.sessionId, projectRoot: act.projectRoot, name: act.name });
+          }
+        }
         const payload = { conversationId: event.conversationId, text: reply.text, contextToken: event.contextToken };
         await adapter.send(event.conversationId, payload);
         store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
@@ -317,6 +325,7 @@ async function runWeixinChannel(opts = {}) {
       if (active && active.pendingPrompt && sessionText && active.projectRoot === targetRoot) {
         await sessionDriver.promptSession(port, active.sessionId, sessionText, wsHost, opts.timeoutMs);
         runtime.setActiveSession({ sessionId: active.sessionId, projectRoot: targetRoot, name: sessionText, pendingPrompt: false });
+        store.setSession(event.conversationId, { sessionId: active.sessionId, projectRoot: targetRoot, name: sessionText });
         const code = await sessionCode(active.sessionId);
         const ackText = '处理中，会话 #' + code + ' (' + active.sessionId + '), ' + sessionText;
         const ackPayload = { conversationId: event.conversationId, text: ackText, contextToken: event.contextToken };
