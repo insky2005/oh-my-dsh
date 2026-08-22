@@ -127,6 +127,57 @@ async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceI
   return sent;
 }
 
+// Drive a SEQUENCE of messages through runWeixinChannel against a mock dsh web
+// (workspace.list / session.list / session.create / session.rename / session.prompt).
+// Returns the reply texts in order. Waits for each reply before sending the next
+// (mirrors real usage: the user waits for a reply before the next message).
+async function runChannelSequence(texts, { projectRoot = '/Users/loie/repo/alpha' } = {}) {
+  const http = require('node:http');
+  let sessions = {}; let seq = 0;
+  const wsSrv = await new Promise((resolve) => {
+    const srv = http.createServer((req, res) => {
+      let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+        let rpcId = ''; try { rpcId = JSON.parse(body).rpcId || ''; } catch { /* ignore */ }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        const url = String(req.url || '');
+        if (url.includes('workspace.list')) { const sids = Object.keys(sessions); res.end(JSON.stringify({ rpcId, result: { ok: true, value: { items: [{ workspaceId: 'w-1', path: projectRoot, title: 'Alpha', sessionIds: sids }], archivedSessionIds: [] } } })); }
+        else if (url.includes('session.list')) { const items = Object.values(sessions).map((x) => ({ sessionId: x.id, updatedAt: x.ts, running: x.prompted === 1, blank: !x.prompted, cwd: x.cwd, projections: { values: { title: x.title } } })); res.end(JSON.stringify({ rpcId, result: { ok: true, value: { items } } })); }
+        else if (url.includes('session.create')) { const p = JSON.parse(body).payload; const sid = 'sess-' + (++seq); sessions[sid] = { id: sid, cwd: p.workspaceId ? projectRoot : (p.cwd || projectRoot), title: null, prompted: 0, ts: Date.now() }; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { sessionId: sid } } })); }
+        else if (url.includes('session.rename')) { const p = JSON.parse(body).payload; if (sessions[p.sessionId]) sessions[p.sessionId].title = p.title; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { title: p.title } } })); }
+        else if (url.includes('session.prompt')) { const p = JSON.parse(body).payload; if (sessions[p.sessionId]) sessions[p.sessionId].prompted = 1; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { accepted: true } } })); }
+        else res.end(JSON.stringify({ rpcId, result: { ok: true, value: null } }));
+      });
+    });
+    srv.listen(0, '127.0.0.1', () => resolve({ srv, port: srv.address().port }));
+  });
+  const dshHome = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-seq-'));
+  saveChannelAccount('wx-s', { botToken: 'bt', baseUrl: 'https://x' }, dshHome);
+  let sent = []; let first = true; let queued = [];
+  const fetchImpl = async (url, opts) => {
+    const u = String(url); const ok = (o) => ({ ok: true, text: async () => JSON.stringify(o) });
+    if (u.includes('getupdates')) { const b = JSON.parse(opts.body); if (first) { first = false; return ok({ ret: 0, get_updates_buf: b.get_updates_buf + 'a', msgs: [] }); } if (queued.length) { const t = queued.shift(); return ok({ ret: 0, get_updates_buf: b.get_updates_buf + 'x', msgs: [{ from_user_id: 'u1', context_token: 't', item_list: [{ type: 1, text_item: { text: t } }], create_time_ms: Date.now(), message_id: 'm' + Date.now() }] }); } return ok({ ret: 0, get_updates_buf: b.get_updates_buf, msgs: [] }); }
+    if (u.includes('sendmessage')) { const b = JSON.parse(opts.body); sent.push(b.msg.item_list && b.msg.item_list[0] && b.msg.item_list[0].text_item.text); return ok({ ret: 0 }); } return ok({ ret: 0 });
+  };
+  const handle = await runWeixinChannel({ channelId: 'wx-s', port: wsSrv.port, refs: [], dshHome, homeDir: '/Users/loie', projectRoot, transportOpts: { fetch: fetchImpl, baseUrl: 'https://x' }, intervalMs: 40 });
+  await handle.start();
+  const sendSeq = async (t) => { const before = sent.length; queued.push(t); const dl = Date.now() + 4000; while (sent.length <= before && Date.now() < dl) await new Promise((r) => setTimeout(r, 40)); };
+  for (const t of texts) await sendSeq(t);
+  await handle.stop(); wsSrv.srv.close();
+  return sent;
+}
+
+test('channel-runner: /new 无内容只创建、后续消息激活、有内容立即处理', async () => {
+  const replies = await runChannelSequence(['/new', '帮我看看项目', '/new 打开百度']);
+  // 1) /new 无内容 → 只创建，无标题，请继续发送消息
+  assert.match(replies[0], /创建 会话 #s1 \(sess-1\), 无标题/);
+  assert.match(replies[0], /请继续发送消息，与我对话/);
+  // 2) 后续普通消息 → 激活该会话，处理中 + 标题=消息内容
+  assert.match(replies[1], /处理中，会话 #s1 \(sess-1\), 帮我看看项目/);
+  // 3) /new 带内容 → 处理中 + 标题=内容
+  assert.match(replies[2], /处理中，会话 #s1 \(sess-2\), 打开百度/);
+});
+
+
 test('channel-runner: #w1 quick command sets current project', async () => {
   const sent = await runQuickCommand({ text: '#w1' });
   assert.ok(sent, 'expected a reply');

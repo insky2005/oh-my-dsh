@@ -181,7 +181,9 @@ function createChannelRuntimeStore({ channelId, dshHome }) {
     if (!sid) return null;
     const all = load().sessions || {};
     const s = all[sid];
-    return s ? { sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name, updatedAt: s.updatedAt } : { sessionId: sid };
+    return s
+      ? { sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name, pendingPrompt: s.pendingPrompt === true, updatedAt: s.updatedAt }
+      : { sessionId: sid };
   }
 
   /** Persist the live connection state (read by the panel on demand). */
@@ -197,9 +199,9 @@ function createChannelRuntimeStore({ channelId, dshHome }) {
     const sessions = Object.assign({}, cur.sessions || {});
     const sid = rec.sessionId;
     const ex = sessions[sid] || {};
-    sessions[sid] = { sessionId: sid, projectRoot: rec.projectRoot || ex.projectRoot || '', name: rec.name || ex.name || null, conversationId: ex.conversationId || null, createdAt: ex.createdAt || Date.now(), updatedAt: Date.now() };
+    sessions[sid] = { sessionId: sid, projectRoot: rec.projectRoot || ex.projectRoot || '', name: rec.name || ex.name || null, conversationId: ex.conversationId || null, pendingPrompt: rec.pendingPrompt === true, createdAt: ex.createdAt || Date.now(), updatedAt: Date.now() };
     save({ sessions, activeSessionId: sid });
-    return { sessionId: sid, projectRoot: sessions[sid].projectRoot, name: sessions[sid].name, updatedAt: sessions[sid].updatedAt };
+    return { sessionId: sid, projectRoot: sessions[sid].projectRoot, name: sessions[sid].name, pendingPrompt: sessions[sid].pendingPrompt === true, updatedAt: sessions[sid].updatedAt };
   }
   return { load, getLastWorkspace, setLastWorkspace, getSession, setSession, addSession, listSessions, getActiveSession, setActiveSession, setConnectionState };
 }

@@ -153,6 +153,12 @@ async function runWeixinChannel(opts = {}) {
   // Sessions of the current project, sourced from dsh web (the real session list,
   // so channel-created AND existing workspace sessions both appear).
   const currentSessions = () => listWorkspaceSessions(port, wsHost, currentWorkspaceRoot(), opts.timeoutMs);
+  // #sN code for a session within the current project's session list.
+  const sessionCode = async (sessionId) => {
+    const list = await currentSessions();
+    const idx = list.findIndex((s) => s.sessionId === sessionId);
+    return idx >= 0 ? 's' + (idx + 1) : '';
+  };
 
   // Command runner wired to the session store + session driver.
   const commandRunner = opts.commands || createCommandRunner({
@@ -175,14 +181,23 @@ async function runWeixinChannel(opts = {}) {
       const sid = target && target.id
         ? await sessionDriver.createSession(port, { workspaceId: target.id })
         : await sessionDriver.createSession(port, { cwd: targetRoot });
-      // give the created session the requested title in dsh web
-      if (name) await sessionDriver.renameSession(port, sid, name, wsHost, opts.timeoutMs);
-      // Dispatch an initial prompt with the /new text so the session is non-blank
-      // (dsh web's workspace view only shows sessions that have content — this
-      // matches how the Wiki/IssueRunner panels create + prompt sessions).
-      if (name) await sessionDriver.promptSession(port, sid, name, wsHost, opts.timeoutMs);
-      const rec = runtime.setActiveSession({ sessionId: sid, name: name || null, projectRoot: targetRoot });
-      return { id: sid, name: name || null, workspace: target };
+      let reply;
+      if (name) {
+        // /new <content>: create + rename + start the dsh session (dispatch prompt),
+        // reply 处理中 with the actual title (= content).
+        await sessionDriver.renameSession(port, sid, name, wsHost, opts.timeoutMs);
+        await sessionDriver.promptSession(port, sid, name, wsHost, opts.timeoutMs);
+        runtime.setActiveSession({ sessionId: sid, name, projectRoot: targetRoot, pendingPrompt: false });
+        const code = await sessionCode(sid);
+        reply = '处理中，会话 #' + code + ' (' + sid + '), ' + name;
+      } else {
+        // /new with NO content: create only (no dsh run), mark pending — the next
+        // ordinary message activates it. Reply "创建 ... 无标题".
+        runtime.setActiveSession({ sessionId: sid, name: null, projectRoot: targetRoot, pendingPrompt: true });
+        const code = await sessionCode(sid);
+        reply = '创建 会话 #' + code + ' (' + sid + '), 无标题\n请继续发送消息，与我对话';
+      }
+      return { id: sid, name: name || null, workspace: target, reply };
     },
     switchSession: async (selector) => {
       const list = await currentSessions();
@@ -286,6 +301,22 @@ async function runWeixinChannel(opts = {}) {
       }
       // strip the #tag so it isn't sent to the session as literal text
       const sessionText = resolved.cleanText || event.text;
+      // If the active session is a pending /new session (created with no content),
+      // activate it with this first message: prompt it, set its title (= the
+      // message content), and ack 处理中 immediately (don't wait for the answer).
+      const active = runtime.getActiveSession();
+      if (active && active.pendingPrompt && sessionText && active.projectRoot === targetRoot) {
+        await sessionDriver.promptSession(port, active.sessionId, sessionText, wsHost, opts.timeoutMs);
+        runtime.setActiveSession({ sessionId: active.sessionId, projectRoot: targetRoot, name: sessionText, pendingPrompt: false });
+        const code = await sessionCode(active.sessionId);
+        const ackText = '处理中，会话 #' + code + ' (' + active.sessionId + '), ' + sessionText;
+        const ackPayload = { conversationId: event.conversationId, text: ackText, contextToken: event.contextToken };
+        await adapter.send(event.conversationId, ackPayload);
+        store.appendMessage({ conversationId: event.conversationId, sessionId: active.sessionId, dir: 'in', text: sessionText });
+        store.appendMessage({ conversationId: event.conversationId, sessionId: active.sessionId, dir: 'out', text: ackText });
+        if (opts.onEvent) opts.onEvent(event, { command: 'activate-session', reply: { text: ackText } });
+        return;
+      }
       let rec = runtime.getSession(event.conversationId);
       if (!rec || (resolved.source === 'tag' && rec.projectRoot !== targetRoot)) {
         const sid = await sessionDriver.createSession(port, { cwd: targetRoot });

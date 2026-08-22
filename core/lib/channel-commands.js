@@ -150,7 +150,7 @@ function createCommandRunner(deps = {}) {
       case 'new': {
         const name = args[0] || '';
         const created = await createSession(name);
-        return { kind: 'reply', text: '已新建会话：' + (created.name || created.id || 'unnamed') };
+        return { kind: 'reply', text: created.reply || ('已新建会话：' + (created.name || created.id || 'unnamed')) };
       }
       case 'switch': {
         const selector = args.join(' ').trim();
