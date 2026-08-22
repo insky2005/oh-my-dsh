@@ -266,6 +266,46 @@ enum L10n {
         "menu.toggleTasks": ("显示/隐藏 任务面板", "Toggle Tasks Panel"),
         // browser panel
         "menu.toggleBrowser": ("显示/隐藏 浏览器面板", "Toggle Browser Panel"),
+        "bar.channel": ("通道", "Channel"),
+        "menu.toggleChannel": ("显示/隐藏 通道面板", "Toggle Channel Panel"),
+        "channel.title": ("通道", "Channel"),
+        "channel.add": ("新增通道", "Add Channel"),
+        "channel.refresh": ("刷新", "Refresh"),
+        "channel.global": ("全局通道", "Global Channels"),
+        "channel.refs": ("本项目引用", "Project Refs"),
+        "channel.workspace": ("工作区:", "Workspace:"),
+        "channel.noWorkspace": ("当前工作区未知（未绑定项目）", "Current workspace unknown"),
+        "channel.addTitle": ("新增通道", "Add Channel"),
+        "channel.addInfo": ("命名并选择平台。连接参数（登录态/凭据）在接入时配置。", "Name the channel and pick a platform. Connection parameters (login/credentials) are configured on connect."),
+        "channel.namePlaceholder": ("通道名称", "Channel name"),
+        "channel.login": ("扫码登录", "Scan to Login"),
+        "channel.loggingIn": ("正在登录通道：", "Logging in channel: "),
+        "channel.loginDone": ("登录成功（token 已保存）", "Logged in (token saved)"),
+        "channel.loginFailed": ("登录失败或已取消", "Login failed or cancelled"),
+        "channel.noLoginRunner": ("无法启动登录（核心不可用）", "Cannot start login (core unavailable)"),
+        "channel.onboardingTitle": ("接入一个通道", "Connect a Channel"),
+        "channel.onboardingHint": ("选择一个平台开始配置。未配置时，来自客户端的消息无法路由。", "Pick a platform to start. Until configured, incoming messages cannot be routed."),
+        "channel.card.weixin": ("微信 ClawBot", "WeChat ClawBot"),
+        "channel.card.weixinDesc": ("通过微信个人号收发消息（官方 iLink 协议）", "Send & receive via WeChat (official iLink)"),
+        "channel.card.dingtalk": ("钉钉", "DingTalk"),
+        "channel.card.dingtalkDesc": ("钉钉机器人事件订阅（待实现）", "DingTalk bot events (planned)"),
+        "channel.card.feishu": ("飞书", "Feishu"),
+        "channel.card.feishuDesc": ("飞书机器人事件订阅（待实现）", "Feishu bot events (planned)"),
+        "channel.card.open": ("开始配置", "Configure"),
+        "channel.wizard.promptTitle": ("打开微信，准备扫码", "Open WeChat, ready to scan"),
+        "channel.wizard.promptInfo": ("下一步将打开登录二维码。请用手机微信扫码并确认，以绑定此通道。", "Next opens the login QR. Scan it with WeChat to bind this channel."),
+        "channel.wizard.continue": ("继续", "Continue"),
+        "channel.wizard.scanning": ("等待扫码…（二维码已在新标签页打开）", "Waiting for scan… (QR opened in a new tab)"),
+        "channel.wizard.done": ("绑定成功 ✅", "Bound successfully ✅"),
+        "channel.wizard.back": ("返回", "Back"),
+        "channel.globalConfig": ("全局配置", "Global Config"),
+        "channel.projectAvailable": ("当前项目可用通道", "Available Channels"),
+        "channel.noAvailable": ("暂无可用通道（先完成全局配置）", "No available channels (configure globally first)"),
+        "channel.enabled": ("已开启", "On"),
+        "channel.disabled": ("已关闭", "Off"),
+        "channel.sessions": ("会话", "Sessions"),
+        "channel.noSessions": ("暂无会话", "No sessions yet"),
+        "channel.done": ("完成", "Done"),
         "bar.browser": ("浏览器", "Browser"),
         "browser.title": ("浏览器", "Browser"),
         "browser.openInSystem": ("在系统浏览器中打开", "Open in System Browser"),
@@ -1075,8 +1115,18 @@ enum DSHSessionRPC {
             let candidates = items.filter { session in
                 (session["blank"] as? Bool) != true && (session["cwd"] as? String) != nil
             }
-            let running = candidates.filter { ($0["running"] as? Bool) == true }
-            let pool = running.isEmpty ? candidates : running
+            // Ignore throwaway sessions whose working dir lives under the system
+            // temp folder (e.g. leftover `chan-e2e-*` dirs from channel E2E tests)
+            // so the terminal never defaults into them. If every candidate is
+            // temp-only, return nothing and let the caller fall back to home.
+            let tmpPrefix = FileManager.default.temporaryDirectory.standardizedFileURL.path
+            let real = candidates.filter { session in
+                guard let cwd = session["cwd"] as? String else { return false }
+                return !(cwd as NSString).standardizingPath.hasPrefix(tmpPrefix)
+            }
+            guard !real.isEmpty else { return }
+            let running = real.filter { ($0["running"] as? Bool) == true }
+            let pool = running.isEmpty ? real : running
             result = pool
                 .sorted { ($0["updatedAt"] as? Double ?? 0) > ($1["updatedAt"] as? Double ?? 0) }
                 .first?["cwd"] as? String
@@ -1164,6 +1214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// checkmarks stay in sync with AppTheme.current.
     private var appearanceMenuItems: [NSMenuItem] = []
     private var browserToggleMenuItem: NSMenuItem?
+    private var channelToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip).
     private var previewBarButton: ActivityBarButton!
     private var closeTabMenuItem: NSMenuItem?
@@ -1171,6 +1222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var wikiBarButton: ActivityBarButton!
     private var tasksBarButton: ActivityBarButton!
     private var browserBarButton: ActivityBarButton!
+    private var channelBarButton: ActivityBarButton!
 
     private var window: NSWindow!
     private var webView: WKWebView!
@@ -1180,6 +1232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var wikiPanel: WikiPanelController!
     private var tasksPanel: IssueRunnerPanelController!
     private var browserPanel: BrowserPanelController!
+    private var channelPanel: ChannelPanelController!
     /// Browser panel localhost REST API (Agent / user curl). Runs from launch.
     private var browserAPIServer: BrowserAPIServer!
     private var browserAPIBridge: BrowserAPIBridge!
@@ -1189,7 +1242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
     /// terminal, wiki, tasks and browser panels share one slot; the activity
     /// bar toggles between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki, tasks, browser }
+    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel }
     private var rightPanel: RightPanel = .none
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
@@ -1202,7 +1255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         max(FilePanelController.minWidth,
             max(TerminalPanelController.minWidth,
                 max(WikiPanelController.minWidth,
-                    max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth))))
+                    max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth, ChannelPanelController.minWidth))))
     /// Fixed default panel width. Deliberately NOT window-relative: a
     /// "half the window" default made the width chase the window as it was
     /// widened, flip-flopping on every toggle.
@@ -1245,6 +1298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         startServer()
         startCEF()
         startBrowserAPIServer()
+        startConfiguredChannelRunners()
         showOnboardingIfNeeded()
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -1299,6 +1353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         terminalPanel?.shutdownAll()
         browserPanel?.shutdownAll()
         browserAPIServer?.stop()
+        stopChannelRunners()
         cefPumpTimer?.invalidate()
         CEFShim.shutdown()
         if didSpawnServer { server.stop() }
@@ -1397,6 +1452,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         browserPanel = BrowserPanelController()
         AppLog.shared.log("launch: browserPanel created")
         browserPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        channelPanel = ChannelPanelController()
+        AppLog.shared.log("launch: channelPanel created")
+        channelPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        channelPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
+        channelPanel.channelLoginRunner = { [weak self] channelId, onQRUrl, completion in
+            self?.runChannelLogin(channelId: channelId, onQRUrl: onQRUrl, completion: completion)
+        }
 
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
@@ -1422,7 +1484,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tasksBarButton = makeActivityButton(symbol: "checkmark.circle",
                                             tooltip: L10n.tr("bar.tasks"),
                                             action: #selector(tasksEntryTapped(_:)))
-        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton])
+        channelBarButton = makeActivityButton(symbol: "dot.radiowaves.left.and.right",
+                                              tooltip: L10n.tr("bar.channel"),
+                                              action: #selector(channelEntryTapped(_:)))
+        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -1480,6 +1545,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "wiki": kind = .wiki
         case "tasks": kind = .tasks
         case "browser": kind = .browser
+        case "channel": kind = .channel
         default: kind = .preview
         }
         setRightPanel(visible ? kind : .none)
@@ -1493,6 +1559,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .wiki: return wikiPanel.view
         case .tasks: return tasksPanel.view
         case .browser: return browserPanel.view
+        case .channel: return channelPanel.view
         case .none: return NSView()
         }
     }
@@ -1544,11 +1611,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         wikiToggleMenuItem?.state = (panel == .wiki) ? .on : .off
         tasksToggleMenuItem?.state = (panel == .tasks) ? .on : .off
         browserToggleMenuItem?.state = (panel == .browser) ? .on : .off
+        channelToggleMenuItem?.state = (panel == .channel) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
         tasksBarButton?.setActive(panel == .tasks)
         browserBarButton?.setActive(panel == .browser)
+        channelBarButton?.setActive(panel == .channel)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
@@ -1598,6 +1667,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 }
             case .none:
                 break
+            case .channel:
+                channelPanel.ensureLoaded()
+                if uiDebug {
+                    self.dumpPanelDebugInfo(panelView: channelPanel.view, label: "channel")
+                }
             }
         } else {
             split.setPosition(split.bounds.width, ofDividerAt: 0)
@@ -1627,6 +1701,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .wiki: kind = "wiki"
         case .tasks: kind = "tasks"
         case .browser: kind = "browser"
+        case .channel: kind = "channel"
         default: kind = "preview"
         }
         UserDefaults.standard.set(kind, forKey: "rightPanelKind")
@@ -2120,6 +2195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     self.wikiPanel?.serverReady(port: self.server.port)
                     // Tell the tasks panel: repo detection + issue load resolve now.
                     self.tasksPanel?.serverReady(port: self.server.port)
+                    self.channelPanel?.ensureLoaded()
                 }
             } catch {
                 AppLog.shared.log("server start failed: \(error.localizedDescription)")
@@ -2512,6 +2588,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     }
                 }
                 self.tasksPanel?.workspaceChanged()
+                self.channelPanel?.workspaceChanged()
             }
         }
     }
@@ -2589,6 +2666,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleBrowser.target = self
         toggleBrowser.state = (rightPanel == .browser) ? .on : .off
         browserToggleMenuItem = toggleBrowser
+        let toggleChannel = viewMenu.addItem(withTitle: L10n.tr("menu.toggleChannel"), action: #selector(channelEntryTapped(_:)), keyEquivalent: "h")
+        toggleChannel.keyEquivalentModifierMask = [.command, .option]
+        toggleChannel.target = self
+        toggleChannel.state = (rightPanel == .channel) ? .on : .off
+        channelToggleMenuItem = toggleChannel
         viewItem.submenu = viewMenu
 
         // Settings menu: dsh settings/upgrade/registry + logs + language.
@@ -2723,6 +2805,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         previewBarButton?.toolTip = L10n.tr("bar.preview")
         terminalBarButton?.toolTip = L10n.tr("bar.terminal")
         browserBarButton?.toolTip = L10n.tr("bar.browser")
+        channelBarButton?.toolTip = L10n.tr("bar.channel")
         wikiBarButton?.toolTip = L10n.tr("bar.wiki")
         tasksBarButton?.toolTip = L10n.tr("bar.tasks")
         // 各面板头部操作按钮 tooltip 同样跟随语言
@@ -2731,6 +2814,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         wikiPanel?.refreshTooltips()
         tasksPanel?.refreshTooltips()
         browserPanel?.refreshTooltips()
+        channelPanel?.refreshTooltips()
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url
@@ -2906,6 +2990,122 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Toggle the Browser panel (activity bar entry / ⌥⌘B).
     @objc private func browserEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .browser ? .none : .browser)
+    }
+    @objc private func channelEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .channel ? .none : .channel)
+    }
+    /// Run QR login for a channel via the core CLI, open the QR URL in the
+    /// browser, and save the token to ~/.dsh/channels/<channelId>.json.
+    /// completion(true) when login confirmed.
+    private func runChannelLogin(channelId: String, onQRUrl: @escaping (String?) -> Void, completion: @escaping (Bool) -> Void) {
+        guard let cli = CoreBridge.coreCLIPath, let node = ServerManager().resolveNode() else {
+            completion(false)
+            return
+        }
+        let dshHome = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh")
+        let savePath = ((dshHome as NSString).appendingPathComponent("channels") as NSString).appendingPathComponent(channelId + ".json")
+        try? FileManager.default.createDirectory(atPath: (dshHome as NSString).appendingPathComponent("channels"), withIntermediateDirectories: true)
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: node)
+        proc.arguments = [cli, "channel", "login", "--save", savePath]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        let outHandle = pipe.fileHandleForReading
+        var outputData = Data()
+        outHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty { return }
+            outputData.append(data)
+            if let str = String(data: data, encoding: .utf8),
+               let url = str.range(of: "https://liteapp.weixin.qq.com") {
+                let sub = str[url.lowerBound...]
+                let end = sub.firstIndex(where: { $0 == "）" || $0 == "\n" }) ?? sub.endIndex
+                let link = String(sub[..<end])
+                DispatchQueue.main.async { onQRUrl(link) }
+            }
+        }
+        proc.terminationHandler = { [weak self] _ in
+            let out = String(data: outputData, encoding: .utf8) ?? ""
+            let ok = out.contains("\"connected\":true") || FileManager.default.fileExists(atPath: savePath)
+            DispatchQueue.main.async {
+                if ok { self?.startChannelRunner(channelId: channelId) }
+                completion(ok)
+            }
+        }
+        try? proc.run()
+    }
+
+    /// Start the live channel listener (channel run) in the background so
+    /// inbound WeChat messages — including slash commands like /help — are
+    /// received and answered. Uses the saved token + the active workspace's
+    /// refs. Kept strongly by the delegate so it survives after login returns.
+    private var channelRunnerProcs: [Process] = []
+    private var channelRunnerIds: [String] = []
+    private func startChannelRunner(channelId: String) {
+        // dedup: never run two listeners for the same channel (each would
+        // long-poll the same token and re-handle every message -> duplicates)
+        if channelRunnerIds.contains(channelId) {
+            AppLog.shared.log("channel runner already running for \(channelId)")
+            return
+        }
+        guard let cli = CoreBridge.coreCLIPath, let node = ServerManager().resolveNode() else { return }
+        let port = server.port
+        // refs: the active workspace's .dsh/channels.json (may be empty)
+        var refs: [[String: Any]] = []
+        if let root = activeWorkspacePath() {
+            let path = (root as NSString).appendingPathComponent(".dsh/channels.json")
+            if let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let arr = json["refs"] as? [[String: Any]] {
+                refs = arr
+            }
+            // ensure this channel is referenced for the active workspace
+            if !refs.contains(where: { ($0["channelId"] as? String) == channelId }) {
+                refs.append(["channelId": channelId, "workspaceRoot": root])
+            }
+        }
+        let refsJson = String(data: (try? JSONSerialization.data(withJSONObject: refs)) ?? Data(), encoding: .utf8) ?? "[]"
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: node)
+        proc.arguments = [cli, "channel", "run", channelId, String(port), refsJson]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        // drain output so the pipe doesn't fill and block the child
+        pipe.fileHandleForReading.readabilityHandler = { h in _ = h.availableData }
+        do {
+            try proc.run()
+            channelRunnerProcs.append(proc)
+            channelRunnerIds.append(channelId)
+            AppLog.shared.log("channel runner started for \(channelId) on port \(port)")
+        } catch {
+            AppLog.shared.log("channel runner failed to start: \(error.localizedDescription)")
+        }
+    }
+
+    /// Start channel listeners for every configured global channel at launch.
+    private func startConfiguredChannelRunners() {
+        guard let data = UserDefaults.standard.data(forKey: "channel.global.list"),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            AppLog.shared.log("channel runners: no configured channels")
+            return
+        }
+        for dict in arr {
+            if let id = dict["id"] as? String, (dict["enabled"] as? Bool) ?? true {
+                startChannelRunner(channelId: id)
+            }
+        }
+    }
+
+    /// Stop all channel listener processes on quit.
+    private func stopChannelRunners() {
+        for proc in channelRunnerProcs { proc.terminate() }
+        channelRunnerProcs.removeAll()
+        channelRunnerIds.removeAll()
+        AppLog.shared.log("channel runners stopped")
     }
 
     /// 初始化 CEF（浏览器面板渲染内核）并启动消息泵定时器。
@@ -3121,6 +3321,7 @@ final class SettingsWindowController {
         ("menu.toggleTerminal", "⌥⌘T"),
         ("menu.toggleWiki", "⌥⌘W"),
         ("menu.toggleBrowser", "⌥⌘B"),
+        ("menu.toggleChannel", "⌥⌘H"),
         ("settings.openMenu", "⌘,"),
     ]
 
