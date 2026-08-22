@@ -89,9 +89,9 @@ function helpText() {
       lines.push('  ' + c.title + ' — ' + c.desc);
     }
   }
-  lines.push('快速切换：');
-  lines.push('  #w1、#w2… — 把消息路由到对应 workspace（见 /wks）');
-  lines.push('  #s1、#s2… — 切换会话（见 /sessions，/switch #sN）');
+  lines.push('快捷指令（# 开头，设置当前项目 / 会话）：');
+  lines.push('  #w1、#w2… — 设置当前项目（workspace，见 /wks）');
+  lines.push('  #s1、#s2… — 设置当前会话（见 /sessions，/switch #sN）');
   return lines.join('\n');
 }
 

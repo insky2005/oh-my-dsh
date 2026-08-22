@@ -27,7 +27,7 @@ const { createSessionDriver } = require('./session-driver');
 const { createChannelManager, normalizeEvent } = require('./channel');
 const { createCommandRunner, parseCommand } = require('./channel-commands');
 const { createChannelSessions } = require('./channel-sessions');
-const { assignCodes, resolveWorkspaceTag } = require('./channel-workspaces');
+const { assignCodes, resolveWorkspaceTag, toHomePath } = require('./channel-workspaces');
 const { loadChannelAccount } = require('./channel-store');
 const { createQueue } = require('./jobqueue');
 
@@ -126,6 +126,7 @@ async function runWeixinChannel(opts = {}) {
   // Workspace routing (docs §3.9): codes w1/w2… + #tag.
   const port = opts.port || 3080;
   const wsHost = opts.host || '127.0.0.1';
+  const homeDir = opts.homeDir || require('node:os').homedir();
   const getCodedWorkspaces = async () => loadWorkspaces(port, wsHost, opts.timeoutMs);
 
   // Command runner wired to the session store + session driver.
@@ -173,7 +174,38 @@ async function runWeixinChannel(opts = {}) {
         if (opts.onEvent) opts.onEvent(event, { command: parsed.name || parsed.kind, reply });
         return;
       }
-      // 2) ordinary message: resolve target workspace (#tag / last / first),
+      // 2) Quick commands: a bare #wN / #sN sets the current project / session
+      // (no question text — never route the bare tag into a dsh session).
+      const quick = /^#([ws])(\d+)\s*$/i.exec(String(event.text || '').trim());
+      if (quick) {
+        const kind = quick[1].toLowerCase();
+        const n = parseInt(quick[2], 10);
+        let replyText;
+        if (kind === 'w') {
+          const ws = await getCodedWorkspaces();
+          const w = ws[n - 1];
+          if (!w) replyText = '未找到代号 #w' + n + '（/wks 查看）';
+          else {
+            store.setSession('lastWorkspace', { sessionId: w.code, name: 'lastWorkspace', projectRoot: w.path });
+            replyText = '已切换到项目 #' + w.code + ' (' + (w.name || '') + '): ' + toHomePath(w.path, homeDir);
+          }
+        } else {
+          const list = store.listSessions();
+          const s = list[n - 1];
+          if (!s) replyText = '未找到会话 #s' + n + '（/sessions 查看）';
+          else {
+            store.setSession(event.conversationId, { sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
+            replyText = '已切换会话 #s' + n + ' (' + (s.name || s.sessionId) + ')';
+          }
+        }
+        const payload = { conversationId: event.conversationId, text: replyText, contextToken: event.contextToken };
+        await adapter.send(event.conversationId, payload);
+        store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
+        store.appendMessage({ conversationId: event.conversationId, dir: 'out', text: replyText });
+        if (opts.onEvent) opts.onEvent(event, { command: 'quick-' + kind, reply: { text: replyText } });
+        return;
+      }
+      // 3) ordinary message: resolve target workspace (#tag / last / first),
       // then ensure a session mapping and route via manager.
       const ws = await getCodedWorkspaces();
       const resolved = resolveWorkspaceTag(event.text, {

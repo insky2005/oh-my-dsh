@@ -119,7 +119,7 @@ test('/help lists global, then project, then quick-switch groups in order', asyn
   const pos = (s) => lines.findIndex((l) => l.includes(s));
   const g = pos('全局指令');
   const p = pos('项目指令');
-  const q = pos('快速切换');
+  const q = pos('快捷指令');
   assert.ok(g >= 0 && p > g && q > p, 'groups must be in order: global < project < quick');
 
   // global order: help, ping, status, workspaces, wks
