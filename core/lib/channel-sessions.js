@@ -55,9 +55,14 @@ function createChannelSessions({ projectRoot, channelId }) {
     const data = readJson(sessionsFile, { version: 1, sessions: [] });
     return Array.isArray(data.sessions) ? data.sessions : [];
   }
+  // Best-effort persistence: a write failure must never throw — the caller
+  // (command/quick handlers) relies on setSession returning without crashing so
+  // a reply still goes out even if the project dir is unwritable.
   function saveSessions(sessions) {
-    ensureDir();
-    fs.writeFileSync(sessionsFile, JSON.stringify({ version: 1, sessions }, null, 2), 'utf8');
+    try {
+      ensureDir();
+      fs.writeFileSync(sessionsFile, JSON.stringify({ version: 1, sessions }, null, 2), 'utf8');
+    } catch { /* non-fatal: keep serving */ }
   }
 
   /** Get the active session record for a conversation (or null). */
@@ -86,8 +91,10 @@ function createChannelSessions({ projectRoot, channelId }) {
     return Array.isArray(data.messages) ? data.messages : [];
   }
   function saveMessages(messages) {
-    ensureDir();
-    fs.writeFileSync(messagesFile, JSON.stringify({ version: 1, messages }, null, 2), 'utf8');
+    try {
+      ensureDir();
+      fs.writeFileSync(messagesFile, JSON.stringify({ version: 1, messages }, null, 2), 'utf8');
+    } catch { /* non-fatal: keep serving */ }
   }
 
   /**

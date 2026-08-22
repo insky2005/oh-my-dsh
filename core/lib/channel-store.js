@@ -67,11 +67,136 @@ function saveChannelAccount(channelId, account, dshHome) {
   try { fs.chmodSync(p, 0o600); } catch { /* best effort */ }
   return p;
 }
-
 /** Remove a channel's saved account file. */
 function clearChannelAccount(channelId, dshHome) {
   const p = channelAccountPath(channelId, dshHome);
   try { if (fs.existsSync(p)) fs.unlinkSync(p); return true; } catch { return false; }
 }
 
-module.exports = { channelsDir, channelAccountPath, loadChannelAccount, saveChannelAccount, clearChannelAccount };
+// ---------------------------------------------------------------------------
+// Channel-global runtime state (always under ~/.dsh/channels/<id>.state.json —
+// writable, channel-addressed, survives runner restarts). Holds per-channel
+// state like `lastWorkspace` (the project this channel most recently used),
+// which must NOT live under a project's .dsh (unknown/unwritable before a
+// project is bound, and unreachable on restart).
+// ---------------------------------------------------------------------------
+function channelStatePath(channelId, dshHome) {
+  return path.join(channelsDir(dshHome), channelId + '.state.json');
+}
+
+/** Load channel-global runtime state ({} when absent/unreadable). */
+function loadChannelState(channelId, dshHome) {
+  if (!channelId) return {};
+  const p = channelStatePath(channelId, dshHome);
+  try {
+    if (!fs.existsSync(p)) return {};
+    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return data && typeof data === 'object' ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Save channel-global runtime state (best-effort; never throws). */
+function saveChannelState(channelId, state, dshHome) {
+  if (!channelId || !state) return false;
+  const p = channelStatePath(channelId, dshHome);
+  try {
+    fs.mkdirSync(channelsDir(dshHome), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify({ version: 1, ...state, updatedAt: Date.now() }, null, 2), { mode: 0o600 });
+    try { fs.chmodSync(p, 0o600); } catch { /* best effort */ }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+
+/**
+ * Channel-global runtime store: lastWorkspace + known sessions + active session.
+ * All persisted in ~/.dsh/channels/<channelId>.state.json. Channel-scoped (NOT
+ * per-project) so it is always writable and survives runner restarts — no-tag
+ * routing, the session list and the active session are restored on startup.
+ *
+ * sessions:  { [sessionId]: { sessionId, projectRoot, name, conversationId?, createdAt, updatedAt } }
+ *            keyed by sessionId (unique); conversationId marks which chat owns it.
+ * activeSessionId: which session is currently active (for /status).
+ */
+function createChannelRuntimeStore({ channelId, dshHome }) {
+  function load() { return loadChannelState(channelId, dshHome) || {}; }
+  function save(patch) { saveChannelState(channelId, { ...load(), ...patch }, dshHome); }
+
+  function getLastWorkspace() { return load().lastWorkspace || null; }
+  function setLastWorkspace(ws) {
+    const v = ws ? { code: ws.code, name: ws.name || '', projectRoot: ws.projectRoot || ws.path || '' } : null;
+    save({ lastWorkspace: v });
+    return v;
+  }
+
+  /** Get the session currently owned by a conversation (or null). */
+  function getSession(conversationId) {
+    if (!conversationId) return null;
+    const all = load().sessions || {};
+    const hit = Object.values(all).find((s) => s.conversationId === conversationId);
+    return hit || null;
+  }
+  /** Bind a conversation to a session (upsert; un-binds its previous owner). */
+  function setSession(conversationId, rec) {
+    if (!conversationId || !rec || !rec.sessionId) return null;
+    const cur = load();
+    const sessions = Object.assign({}, cur.sessions || {});
+    for (const k of Object.keys(sessions)) if (sessions[k].conversationId === conversationId) sessions[k].conversationId = null;
+    const sid = rec.sessionId;
+    const ex = sessions[sid] || {};
+    sessions[sid] = { sessionId: sid, projectRoot: rec.projectRoot || ex.projectRoot || '', name: rec.name || ex.name || null, conversationId, createdAt: ex.createdAt || Date.now(), updatedAt: Date.now() };
+    save({ sessions });
+    return sessions[sid];
+  }
+  /** Ensure a session is known (used by /new and /switch so it shows in /sessions). */
+  function addSession(rec) {
+    if (!rec || !rec.sessionId) return null;
+    const cur = load();
+    const sessions = Object.assign({}, cur.sessions || {});
+    const sid = rec.sessionId;
+    const ex = sessions[sid] || {};
+    sessions[sid] = { sessionId: sid, projectRoot: rec.projectRoot || ex.projectRoot || '', name: rec.name || ex.name || null, conversationId: ex.conversationId || null, createdAt: ex.createdAt || Date.now(), updatedAt: Date.now() };
+    save({ sessions });
+    return sessions[sid];
+  }
+  function listSessions() {
+    const all = load().sessions || {};
+    return Object.values(all).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  }
+
+  function getActiveSession() {
+    const sid = load().activeSessionId;
+    if (!sid) return null;
+    const all = load().sessions || {};
+    const s = all[sid];
+    return s ? { sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name, updatedAt: s.updatedAt } : { sessionId: sid };
+  }
+
+  /** Persist the live connection state (read by the panel on demand). */
+  function setConnectionState(stateStr) {
+    const s = stateStr === 'auth-expired' ? 'authExpired' : stateStr || 'disconnected';
+    save({ state: s, connected: s === 'connected' });
+    return s;
+  }
+  /** Set the active session (also ensures it is a known session). */
+  function setActiveSession(rec) {
+    if (!rec || !rec.sessionId) { save({ activeSessionId: null }); return null; }
+    const cur = load();
+    const sessions = Object.assign({}, cur.sessions || {});
+    const sid = rec.sessionId;
+    const ex = sessions[sid] || {};
+    sessions[sid] = { sessionId: sid, projectRoot: rec.projectRoot || ex.projectRoot || '', name: rec.name || ex.name || null, conversationId: ex.conversationId || null, createdAt: ex.createdAt || Date.now(), updatedAt: Date.now() };
+    save({ sessions, activeSessionId: sid });
+    return { sessionId: sid, projectRoot: sessions[sid].projectRoot, name: sessions[sid].name, updatedAt: sessions[sid].updatedAt };
+  }
+  return { load, getLastWorkspace, setLastWorkspace, getSession, setSession, addSession, listSessions, getActiveSession, setActiveSession, setConnectionState };
+}
+
+module.exports = { channelsDir, channelAccountPath, loadChannelAccount, saveChannelAccount, clearChannelAccount, channelStatePath, loadChannelState, saveChannelState, createChannelRuntimeStore };
+
+
+

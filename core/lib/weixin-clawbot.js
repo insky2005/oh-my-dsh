@@ -48,6 +48,8 @@ function createWeixinClawBotAdapter(opts = {}) {
 
   function onEvent(cb) { handlers.push(cb); return () => { handlers = handlers.filter((h) => h !== cb); }; }
   function emit(event) { for (const h of handlers) { try { h(event); } catch (e) { /* isolate */ } } }
+  /** Subscribe to connection-state changes (fires on every actual transition). */
+  function onState(cb) { return state.onChange(cb); }
 
   async function connect() {
     state.connecting();
@@ -122,7 +124,7 @@ function createWeixinClawBotAdapter(opts = {}) {
   function dispose() { stopPolling(); handlers = []; }
 
   return {
-    platform, channelId, connect, disconnect, onEvent, send, getState, getLastError, dispose,
+    platform, channelId, connect, disconnect, onEvent, onState, send, getState, getLastError, dispose,
   };
 }
 
