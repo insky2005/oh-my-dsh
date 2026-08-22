@@ -123,8 +123,16 @@ function saveChannelState(channelId, state, dshHome) {
  * activeSessionId: which session is currently active (for /status).
  */
 function createChannelRuntimeStore({ channelId, dshHome }) {
-  function load() { return loadChannelState(channelId, dshHome) || {}; }
-  function save(patch) { saveChannelState(channelId, { ...load(), ...patch }, dshHome); }
+  // In-memory cache of the state. Every mutation updates `cache` SYNCHRONOUSLY
+  // (then persists), so two async handlers (e.g. /new setActiveSession and the
+  // connection-state onState) can never read a stale snapshot and overwrite each
+  // other's changes — the classic read-modify-write race on the state file.
+  let cache = loadChannelState(channelId, dshHome) || {};
+  function load() { return cache; }
+  function save(patch) {
+    cache = { ...cache, ...patch };
+    saveChannelState(channelId, { ...cache }, dshHome);
+  }
 
   function getLastWorkspace() { return load().lastWorkspace || null; }
   function setLastWorkspace(ws) {
