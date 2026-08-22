@@ -167,11 +167,17 @@ function createCommandRunner(deps = {}) {
       }
       case 'status': {
         const st = await getStatus();
+        const ws = st.workspace
+          ? '#' + st.workspace.code + ' (' + (st.workspace.name || '') + '), ' + toHomePath(st.workspace.path, homeDir)
+          : 'n/a';
+        const sess = st.session
+          ? '#' + (st.session.code || '?') + ' (' + (st.session.sessionId || '') + '), ' + (st.session.name || '')
+          : 'n/a';
         const lines = [
-          '连接：' + (st.connected === undefined ? 'n/a' : (st.connected ? '已连接' : '未连接')),
-          '项目：' + (st.project || 'n/a'),
-          '当前会话：' + (st.session || 'n/a'),
           '通道：' + (st.channel || 'n/a'),
+          '连接：' + (st.connected === undefined ? 'n/a' : (st.connected ? '已连接' : '未连接')),
+          '当前工作区：' + ws,
+          '当前会话：' + sess,
         ];
         return { kind: 'reply', text: lines.join('\n') };
       }

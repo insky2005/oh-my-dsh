@@ -77,14 +77,32 @@ test('runner: /switch without arg -> usage', async () => {
   assert.match(res.text, /用法/);
 });
 
-test('runner: /status shows fields', async () => {
+test('runner: /status shows channel-state format', async () => {
   const runner = createCommandRunner({
-    getStatus: async () => ({ connected: true, project: '/proj', session: 's-9', channel: 'wx' }),
+    homeDir: '/Users/loie',
+    getStatus: async () => ({
+      channel: 'wx',
+      connected: true,
+      workspace: { code: 'w1', name: 'helloharness', path: '/Users/loie/code/helloharness' },
+      session: { code: 's1', sessionId: 'sess-9', name: '会话甲' },
+    }),
   });
   const res = await runner.run('/status');
-  assert.match(res.text, /已连接/);
-  assert.match(res.text, /\/proj/);
-  assert.match(res.text, /s-9/);
+  const text = res.text;
+  assert.match(text, /通道：wx/);
+  assert.match(text, /连接：已连接/);
+  assert.match(text, /当前工作区：#w1 \(helloharness\), ~\/code\/helloharness/);
+  assert.match(text, /当前会话：#s1 \(sess-9\), 会话甲/);
+});
+
+test('runner: /status falls back to n/a when no workspace/session', async () => {
+  const runner = createCommandRunner({
+    getStatus: async () => ({ channel: 'wx', connected: false, workspace: null, session: null }),
+  });
+  const res = await runner.run('/status');
+  assert.match(res.text, /连接：未连接/);
+  assert.match(res.text, /当前工作区：n\/a/);
+  assert.match(res.text, /当前会话：n\/a/);
 });
 
 test('runner: unknown command replied with hint', async () => {
