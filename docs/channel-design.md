@@ -2,7 +2,9 @@
 
 > 状态：📝 设计稿（尚未实现）
 > 更新：2026-08-21
-> 关联：docs/issue-runner-design.md（「远程驱动预留」章节）、.dsh/wiki/data-model.md、.dsh/wiki/modules/main.md、docs/milestones/M2-windows.md、docs/milestones/M3-linux.md、core/（共享核心）
+> 关联：docs/issue-runner-design.md（「远程驱动预留」章节）、.dsh/wiki/data-model.md、.dsh/wiki/modules/main.md、docs/milestones/M2-windows.md、docs/milestones/M3-linux.md、core/（共享核心）、docs/channel-storage.md（消息/会话存储全局化设计）
+>
+> 注：消息/会话持久化布局以 docs/channel-storage.md 为准（全局化改造，2026-08-22 定稿）。
 
 ## 1. 目标与范围
 
@@ -119,9 +121,9 @@
 - **为何保留 Keychain（而非纯文件）**：① 兼容存量（老版本/命令行 `security` / 外部代理写入的条目）；② 文件被删/损坏时的恢复备份；③ 系统托管、防文件篡改。文件仍是唯一读取权威，Keychain 仅为兜底备份，不影响零弹窗体验。
 - **简化候选（后续可按需采纳）**：若弹窗问题复现，可改为**纯文件方案**（仅 `~/.dsh/channels/<channelId>`，chmod 600，完全不碰 Keychain），读取=写读同一份，零双写；代价是失去系统级备份。
 
-### 4.2 项目引用（.dsh/channels.json）
+### 4.2 项目引用（.dsh/channels/channels.json）
 
-项目目录下（跟随仓库提交）的 .dsh/channels.json，引用全局 Channel + 该项目专属路由/会话约定：
+项目目录下（跟随仓库提交）的 .dsh/channels/channels.json（原 .dsh/channels.json，全局化改造后移入 .dsh/channels/，见 docs/channel-storage.md），引用全局 Channel + 该项目专属路由/会话约定：
 
     {
       "version": 1,
