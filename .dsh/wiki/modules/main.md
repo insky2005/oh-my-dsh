@@ -1,14 +1,14 @@
 ---
 title: 模块：main.swift（壳层核心）
 tags: [module, main, server, appdelegate, menu]
-updated: 2026-08-21T14:33:00Z
-sources: [platforms/macos/src/main.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift]
+updated: 2026-08-22T05:54:00Z
+sources: [platforms/macos/src/main.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, docs/channel-status.md]
 manual: false
 ---
 
 # 模块：main.swift（壳层核心）
 
-约 3300 行，程序入口（`NSApplication.shared` + `AppDelegate` + `app.run()`）。职责：日志、L10n、服务管理、dsh 升级、窗口/菜单、设置窗口（⌘,）、首次引导 onboarding、右栏插槽、WebView 注入、CoreBridge（调 core CLI）。另实现 `NSApplicationDelegate` + `NSWindowDelegate`（CEF 误关主窗口守卫、退出诊断）。
+约 3600 行，程序入口（`NSApplication.shared` + `AppDelegate` + `app.run()`）。职责：日志、L10n、服务管理、dsh 升级、窗口/菜单、设置窗口（⌘,）、首次引导 onboarding、右栏插槽、WebView 注入、CoreBridge（调 core CLI）、channel runner 生命周期（`startConfiguredChannelRunners` / `runChannelLogin`）。另实现 `NSApplicationDelegate` + `NSWindowDelegate`（CEF 误关主窗口守卫、退出诊断）。
 
 ## 组成（按文件内顺序）
 
@@ -29,10 +29,11 @@ manual: false
 
 - **启动序列**：`captureSystemLang` → 覆写 `AppleLanguages`（让 WebView 语言跟随壳）→ `installSignalHandlers`（SIGTERM/SIGINT/SIGHUP → `NSApp.terminate`）→ `buildMenu` → `buildWindow` → `startServer`；
 - **WebView 注入**（`rebuildWebView`）：① `navigator.language/languages` 覆写脚本；② `previewInterceptorScript`——覆写 `window.fetch` 拦截 `/api/host.openPath`，把 `payload.path` 经 `messageHandlers.dshPreview.postMessage` 发给原生，并返回伪造 `server-response {ok:true}`，其余请求原样放行；③ `sessionTrackerScript`——覆写 `window.fetch` 解析会话 RPC 请求体（`session.history/prompt/rename/selectModel` 的 `payload.sessionId`、`subagent.list` 的 `payload.parentSessionId`），id 变化时经 `messageHandlers.dshSession.postMessage({sessionId})` 上报（`session.open()` 幂等不可靠，`subagent.list` 是每次切换必走的可靠信号）；注册 message handler `dshPreview`（收到后 `setRightPanel(.preview)` + `previewPanel.open(path:)`）与 `dshSession`（收到后 `fetchSessionCwd` → **先** `ProjectDirectory.set`（cwd 与当前不同才设）→ `previewPanel.setProjectDirectory` + `wikiPanel.reloadRoot`，随后**无条件**调用 `tasksPanel.workspaceChanged()`——fetch 失败 cwd 为 nil 也触发，面板回退扫描 `workspace.list`）；
-- **右栏插槽**：`RightPanel` 枚举 + `setRightPanel`（活动面板根视图直接挂为 NSSplitView 右 pane `subviews[1]`；隐藏 = divider 推到最右；状态持久化 `previewPanelState`/`rightPanelKind`；宽度持久化 `previewPanelWidth`）；`applyRightPanelLayout` 是唯一布局例程（加宽窗口 + 重设 divider）；`minWebViewWidth = 1100` 防 dsh 侧栏折叠（1024pt 断点）；
+- **右栏插槽**：`RightPanel` 枚举（`none/preview/terminal/wiki/tasks/browser/channel`，六面板）+ `setRightPanel`（活动面板根视图直接挂为 NSSplitView 右 pane `subviews[1]`；隐藏 = divider 推到最右；状态持久化 `previewPanelState`/`rightPanelKind`——新增 `"channel"` 映射；宽度持久化 `previewPanelWidth`）；`applyRightPanelLayout` 是唯一布局例程（加宽窗口 + 重设 divider）；`minWebViewWidth = 1100` 防 dsh 侧栏折叠（1024pt 断点）；
 - **菜单**：App 菜单、**文件菜单（`menu.file`/`menu.save`）**——「保存 Save」⌘S（`saveActiveFile` → `previewPanel.saveActiveTab()`，保存当前可编辑页签）与「关闭页签」⌘W（`closeActiveFileTab`，无页签时禁用、⌘W 落到关窗，由 `onTabsChanged`→`updateCloseTabMenuState` 驱动）、编辑菜单（让 ⌘C/V/X/A/Z 路由到 WKWebView 首响应者）、视图菜单（⌥⌘P / ⌥⌘T / ⌥⌘W / ⌥⌘J / ⌥⌘B 五面板切换）、设置菜单（dsh 设置/升级/registry/自动升级/wiki 设置组/日志/语言子菜单）；语言切换重建菜单 + 重建 WebView + 重载页面；
 - **About 面板**：自定义窗口显示版本、build、dsh 版本、运行时来源、Node 版本+路径（合并为一行，如 `Node: v22.23.2 (/usr/local/bin/node)`）、registry；
 - **导航策略**：非 localhost 链接一律交默认浏览器（`NSWorkspace.open`）；不可显示 MIME 走 `WKDownload`（原生另存为对话框）；JS alert/confirm/prompt 桥接为 NSAlert；
+- **通道（Channel）集成**：`applicationDidFinishLaunching` 末尾 `startConfiguredChannelRunners()`——按已启用全局 channel（读 `~/.dsh/channels/*.json` 账号 + 项目引用）逐个拉起 runner 子进程（同 channelId 去重）；`runChannelLogin(channelId:onQRUrl:completion:)` 把扫码登录桥到 core CLI（`channel login --save`），面板内 `CIQRCodeGenerator` 渲染二维码后自动拉起 runner；退出 `applicationWillTerminate` 关闭 channel runner（runner SIGTERM 立即退出，208e618）；终端启动目录解析忽略系统临时目录会话（如 `chan-e2e-*` 测试残留，261cdd9），避免默认落在测试临时目录；
 - **调试钩子**：`DSH_PREVIEW_TEST_PATH` / `DSH_TERMINAL_TEST` / `DSH_WIKI_TEST` / `DSH_BROWSER_TEST`（启动即开对应面板）；`DSH_UI_DEBUG=1` 或 `--ui-debug`（统一 `uiDebug`：打开浏览器面板 + 面板层级 dump（浏览器 maxDepth=8）+ 截图 `panel-*-debug.png`）/ `DSH_PREVIEW_DEBUG`（fetch 拦截探针 + 视口/侧栏状态上报）/ `DSH_SESSION_DEBUG`（会话跟踪器 dump `__dshSessionSeen`）；
 - **浏览器 QA 遮挡诊断**：`dumpBrowserHierarchyJSON()`（`POST /api/browser/hierarchy` 拉取）——`NSApp.windows` 全清单 + split panes + 面板层级 JSON（class/frame/layer 属性 + superlayer 链）+ 面板/内容区中心 `hitTest` + `writeScreenshot`（`cacheDisplay` → `/tmp/window-shot.png`、`/tmp/panel-browser-shot.png`）；`hierarchyJSON` 递归 ≤8 层；`dlog` 同写 AppLog 与 stdout；
 - **CEF 初始化**：`startBrowserAPI` 附近——渲染模式按 UserDefaults `browserRenderMode`（`defaults write com.ohmydsh.app browserRenderMode -string windowed` 切窗口化，默认 OSR 离屏）；`use-mock-keychain` + 软件渲染兜底开关；`cleanStaleCEFSingleton` 清陈旧单例锁；退出 `applicationWillTerminate` → 面板 `shutdownAll()` + `browserAPIServer.stop()` + 停消息泵 + `CEFShim.shutdown()`（不调 `CefShutdown`，见 [browser-panel](browser-panel.md)）；
@@ -40,6 +41,6 @@ manual: false
 
 ## 与其他模块的关系
 
-- 持有 `FilePanelController`（预览/文件面板，`feature/file-panel` 起 `previewPanel` 属性类型与初始化由 `PreviewPanelController` 改为 `FilePanelController`，见 [file-panel](file-panel.md)）/ `TerminalPanelController` / `WikiPanelController` / `IssueRunnerPanelController` / `BrowserPanelController` 实例；面板只通过 `onRequestHide`/`serverPortProvider`/`serverReady(port:)` 与壳通信（wiki 面板另有 `onAutoUpdateSettingChanged` 回调 → 重建菜单，让「设置」勾选状态与面板首生成弹窗的选择同步；任务面板另有 `workspacePath` 闭包取当前工作区路径；浏览器面板另由 `BrowserAPIBridge` 桥接——`showPanel`/`hidePanel`/`isPanelVisible` 闭包接 `setRightPanel`，`debugDump`/`debugState`/`debugHierarchy` 闭包接 QA 诊断（`dumpPanelDebugInfo`/`browserPanel.debugState()`/`dumpBrowserHierarchyJSON`），REST API 服务 `BrowserAPIServer` 在 `applicationDidFinishLaunching` 启动、`applicationWillTerminate` 停止）；
+- 持有 `FilePanelController`（预览/文件面板，`feature/file-panel` 起 `previewPanel` 属性类型与初始化由 `PreviewPanelController` 改为 `FilePanelController`，见 [file-panel](file-panel.md)）/ `TerminalPanelController` / `WikiPanelController` / `IssueRunnerPanelController` / `BrowserPanelController` / `ChannelPanelController` 实例；面板只通过 `onRequestHide`/`serverPortProvider`/`serverReady(port:)` 与壳通信（wiki 面板另有 `onAutoUpdateSettingChanged` 回调 → 重建菜单，让「设置」勾选状态与面板首生成弹窗的选择同步；任务面板另有 `workspacePath` 闭包取当前工作区路径；浏览器面板另由 `BrowserAPIBridge` 桥接——`showPanel`/`hidePanel`/`isPanelVisible` 闭包接 `setRightPanel`，`debugDump`/`debugState`/`debugHierarchy` 闭包接 QA 诊断（`dumpPanelDebugInfo`/`browserPanel.debugState()`/`dumpBrowserHierarchyJSON`），REST API 服务 `BrowserAPIServer` 在 `applicationDidFinishLaunching` 启动、`applicationWillTerminate` 停止）；
 - 提供共享 UI 组件文件是 `PreviewPanel.swift`（非 main.swift）；
 - wiki 设置（`toggleWikiAutoRegenerate`/`toggleWikiRegisterAgentsMD`/`setWikiRootMode`）操作 `WikiPaths`/`WikiAgentsMD` 并转发 `wikiPanel.reloadRoot()`。

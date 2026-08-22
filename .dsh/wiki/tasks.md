@@ -1,8 +1,8 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-08-20T16:05:00Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, Jenkinsfile, .github/workflows/, core/tests/]
+updated: 2026-08-22T05:54:00Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
 manual: false
 ---
 
@@ -33,12 +33,12 @@ manual: false
 open "dist/oh-my-dsh.app"
 ```
 
-- 验证点：窗口标题 `oh-my-dsh (DeepSeek Harness)`；活动栏图标互斥切换（预览/终端/知识库/任务/浏览器）；⌥⌘P / ⌥⌘T / ⌥⌘W / ⌥⌘J 快捷键；About 面板显示 dsh/Node 版本与 registry；文件面板编辑文本后 ⌘S 保存、页签标题出现 `*` 未保存标记（见 [file-panel](modules/file-panel.md)）。
+- 验证点：窗口标题 `oh-my-dsh (DeepSeek Harness)`；活动栏图标互斥切换（预览/终端/知识库/任务/浏览器/通道）；⌥⌘P / ⌥⌘T / ⌥⌘W / ⌥⌘J 快捷键；About 面板显示 dsh/Node 版本与 registry；文件面板编辑文本后 ⌘S 保存、页签标题出现 `*` 未保存标记（见 [file-panel](modules/file-panel.md)）。
 
 ## 跑单元测试
 
 ```bash
-node --test core/tests/*.test.js  # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks，77 用例；不带引号由 bash 展开 glob，Node 20 兼容）
+node --test core/tests/*.test.js  # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，148 用例；不带引号由 bash 展开 glob，Node 20 兼容）
 tests/terminal-emulator/run.sh      # 模拟器测试（core/tests/ansi.test.js 的薄封装）
 tests/wiki-panel/run.sh             # Repo Wiki 模型层
 ```
@@ -96,6 +96,26 @@ tests/wiki-panel/run.sh             # Repo Wiki 模型层
 **已发布版本的 patch 修复（vX.Y.Z）**：用 `scripts/release-fix.sh <base-tag> <patch-version> [branch]`（如 `scripts/release-fix.sh v1.9.0 1.9.1`）——从 base tag 切 `release/1.9` 维护分支 → 提交修复 → 打 patch tag 推送（触发 release.yml 发布）→ 手动 cherry-pick 到 `fix/sync-1.9.1` 分支并 **PR 回 main**（不直接 push main）；push 远端名由 `scripts/git-remote.sh` 检测（github > origin > 首个 remote）。
 
 **分支铁律**：feature/fix 分支回 main 一律走 PR；main 只合并、只打主版本 tag；面板（IssueRunner）处理 issue 时按 label 切 `feature/issue-N` 或 `fix/issue-N` 并自动开 PR。
+
+## Channel 通道（微信远程驱动 dsh）
+
+面板：活动栏「通道」→ 无全局配置时引导页（微信 ClawBot 卡片）→ 点卡片进**扫码登录向导**（面板内渲染二维码，扫码后 token 落 `~/.dsh/channels/<id>.json`，自动拉起 runner）；有全局配置后进**项目视图**（Channel 行 + NSSwitch 开关写项目 `.dsh/channels.json` 引用，展开看真实会话；顶部「全局配置」可切回）。App 启动自动拉起已启用 channel 的 runner，退出时关闭。
+
+CLI（`core/bin/ohmy-core.js`，与面板共用 core 层）：
+
+```bash
+node core/bin/ohmy-core.js channel login --save ~/.dsh/channels/<id>.json   # 扫码登录拿 token
+node core/bin/ohmy-core.js channel listen <token> --once                    # 长轮询收一条消息
+node core/bin/ohmy-core.js channel reply <token> <to> <text>                # 回复（须带入站消息的 context_token）
+node core/bin/ohmy-core.js channel run <channelId> <port> <refsJson> [--dsh-home <dir>]  # 端到端循环（真实微信+真实 dsh）
+node core/bin/ohmy-core.js channel route <refsJson> <conversationId> <text> # 路由匹配（纯逻辑）
+```
+
+客户端内指令（微信里发）：`/help` `/ping` `/status` `/workspaces`(`/wks`) `/new [名称]` `/sessions`(`/ses`) `/switch <名称|编号|#sN>`；纯代号 `#wN`/`#sN` 快捷切换当前项目/会话；消息含 `#w1` 或 `#<workspace名>` 按 #tag 路由到对应项目（清单见 docs/channel-commands.md，改动须同步维护该文档）。
+
+验证：`node --test core/tests/` 148 全绿（含 channel 相关 71 项）；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
+
+> ⚠️ 待办：消息/会话存储**全局化改造**（docs/channel-storage.md）未落地——当前消息落项目目录 `<root>/.dsh/channels/`（gitignore）；改造后迁全局 `~/.dsh/channels/` 分桶 + `channel migrate` CLI + 引用配置落位 `.dsh/channels/channels.json` 并提交。
 
 ## 配置 GitHub token（任务面板）
 
