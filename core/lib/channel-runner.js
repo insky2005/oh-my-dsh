@@ -177,6 +177,10 @@ async function runWeixinChannel(opts = {}) {
         : await sessionDriver.createSession(port, { cwd: targetRoot });
       // give the created session the requested title in dsh web
       if (name) await sessionDriver.renameSession(port, sid, name, wsHost, opts.timeoutMs);
+      // Dispatch an initial prompt with the /new text so the session is non-blank
+      // (dsh web's workspace view only shows sessions that have content — this
+      // matches how the Wiki/IssueRunner panels create + prompt sessions).
+      if (name) await sessionDriver.promptSession(port, sid, name, wsHost, opts.timeoutMs);
       const rec = runtime.setActiveSession({ sessionId: sid, name: name || null, projectRoot: targetRoot });
       return { id: sid, name: name || null, workspace: target };
     },
