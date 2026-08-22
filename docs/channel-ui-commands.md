@@ -1,8 +1,9 @@
 # Channel 面板 UI 交互 + 指令体系设计
 
-> 状态：✅ 指令解析 v1 已实现（core）+ 会话/消息持久化已实现；📝 面板 v2 UI 待实现；📝 存储全局化改造设计已定稿（见 docs/channel-storage.md，待实现）
+> 状态：✅ 指令解析 v1 已实现（core）+ 会话/消息持久化已实现 + **面板 v2 UI 已实现**（引导卡片/扫码向导/项目视图，见 ChannelPanel.swift）；⏳ 存储全局化改造设计已定稿（见 docs/channel-storage.md，待实现）
+> 完成状态总览：**docs/channel-status.md**
 > 更新：2026-08-22
-> 关联：docs/channel-design.md（M2/M3 已实现）、docs/channel-storage.md（消息/会话存储全局化设计）、**docs/channel-commands.md（已实现指令清单，新增/改动指令时维护）**、platforms/macos/src/ChannelPanel.swift、core/lib/channel-runner.js
+> 关联：docs/channel-design.md（M2/M3 已实现）、docs/channel-storage.md（消息/会话存储全局化设计）、**docs/channel-commands.md（已实现指令清单，新增/改动指令时维护）**、**docs/channel-status.md（完成状态总览）**、platforms/macos/src/ChannelPanel.swift、core/lib/channel-runner.js
 
 ## 1. 目标
 
@@ -218,12 +219,12 @@ createCommandRunner({ getSessions, createSession, switchSession, getStatus })
 2. **core：channel-commands.js** + 单测（✅ 本轮）。
 3. **core：channel-runner 接入指令**（✅ 本轮，含指令优先路由）。
 4. **core：channel-sessions.js**（会话映射 + 消息持久化，落项目 .dsh，决策 E）（✅ 本轮）。
-5. **macOS 面板 v2 状态机**（引导卡片 + 项目视图 + 全局配置重开）——后续里程碑。
+5. **macOS 面板 v2 状态机**（引导卡片 + 项目视图 + 全局配置重开）——✅ 已实现（751a933 起，见 docs/channel-status.md §3.2）。
 6. 即时「收到」应答、会话消息分组 UI 展示——后续。
 
 ## 7. 明确不在本轮
 
 - **已实现（本轮）**：指令解析与执行（/help /new /sessions /switch /status /ping）、channel-runner 指令优先路由、会话映射 + 消息持久化（落项目 .dsh）。
-- 面板 v2 UI（卡片/引导/项目视图）——设计已定，代码未实现（后续里程碑）。
+- ~~面板 v2 UI（卡片/引导/项目视图）~~——✅ 已实现（本轮）；仍待做：会话消息分组 UI 展示、即时「收到」应答。
 - 第二/三优先级指令（/commit /test /issue /repo /clear /route /pwd）——后续。
 - 即时「收到」应答——后续（低优先）。
