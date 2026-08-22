@@ -2,7 +2,7 @@
 
 > 状态：✅ 指令解析 v1 已实现（core）+ 会话/消息持久化已实现；📝 面板 v2 UI 待实现；📝 存储全局化改造设计已定稿（见 docs/channel-storage.md，待实现）
 > 更新：2026-08-22
-> 关联：docs/channel-design.md（M2/M3 已实现）、docs/channel-storage.md（消息/会话存储全局化设计）、platforms/macos/src/ChannelPanel.swift、core/lib/channel-runner.js
+> 关联：docs/channel-design.md（M2/M3 已实现）、docs/channel-storage.md（消息/会话存储全局化设计）、**docs/channel-commands.md（已实现指令清单，新增/改动指令时维护）**、platforms/macos/src/ChannelPanel.swift、core/lib/channel-runner.js
 
 ## 1. 目标
 
@@ -28,6 +28,7 @@
 ### 2.2 ① 引导页（无全局配置时）
 
 - **卡片列表**：内置平台卡片（微信 ClawBot / 钉钉 / 飞书），每张卡：图标 + 名称 + 一句话说明 + 状态徽标。
+- **状态徽标（打开视图时读取，不轮询）**：卡片右侧圆点反映该通道的实时连接状态——绿色=已连接、蓝色=连接中、橙色=重连中、红色=token失效、灰色=未配置/未连接；状态来自 channel runner 写入的 `~/.dsh/channels/<channelId>.state.json`，打开「全局配置」视图时读取一次。
 - **点微信卡片 → 配置向导（分步）**：
   1. **提示页**：「打开微信，准备扫码」+「继续」按钮；
   2. **扫码页**：显示二维码 + 状态「等待扫码…」；

@@ -545,9 +545,22 @@ final class ChannelPanelController: NSObject {
             guard let cv = cardView as? ChannelCardView else { continue }
             cv.title = L10n.tr(cards[i].titleKey)
             cv.desc = L10n.tr(cards[i].descKey)
-            let configured = channels.contains { $0.platform == cards[i].platform }
-            cv.setStatus(configured: configured)
+            let channel = channels.first { $0.platform == cards[i].platform }
+            let st = channel.map { liveState(for: $0.id) } ?? .disconnected
+            cv.setState(st, configured: channel != nil)
         }
+    }
+
+    /// Read the channel runner's live connection state from
+    /// ~/.dsh/channels/<channelId>.state.json. Called when the global-config view
+    /// is opened (no polling).
+    private func liveState(for channelId: String) -> GlobalChannel.State {
+        let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/channels")
+        let p = (dir as NSString).appendingPathComponent(channelId + ".state.json")
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: p)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let s = json["state"] as? String else { return .disconnected }
+        return GlobalChannel.State(rawValue: s) ?? .disconnected
     }
 
     // MARK: - QR image (in-panel, no browser)
@@ -791,14 +804,28 @@ final class ChannelCardView: NSView {
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(tapped(_:)))
         addGestureRecognizer(click)
-        setStatus(configured: false)
+        setState(.disconnected, configured: false)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// gray = unconfigured, green = configured
-    func setStatus(configured: Bool) {
-        statusDot.layer?.backgroundColor = (configured ? NSColor.systemGreen : NSColor.systemGray).cgColor
+    /// State-colored status dot: gray = unconfigured/disconnected, green = connected,
+    /// orange = reconnecting, red = auth-expired, blue = connecting. Read on open
+    /// (no polling).
+    func setState(_ state: GlobalChannel.State, configured: Bool) {
+        let color: NSColor
+        if !configured {
+            color = .systemGray
+        } else {
+            switch state {
+            case .connected: color = .systemGreen
+            case .reconnecting: color = .systemOrange
+            case .authExpired: color = .systemRed
+            case .connecting: color = .systemBlue
+            case .disconnected: color = .systemGray
+            }
+        }
+        statusDot.layer?.backgroundColor = color.cgColor
     }
 
     override func viewDidChangeEffectiveAppearance() {
