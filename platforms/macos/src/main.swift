@@ -1280,6 +1280,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLog.shared.log("launch: didFinishLaunching begin (NSApp=\(NSStringFromClass(type(of: NSApp))))")
+        // 单实例约束：两个 App 副本共用同一 CEF 用户数据目录（~/.dsh/browser），
+        // 同时启动会让 Chromium 争抢同一 profile、互相异常终止（表现为
+        // "Chromium didn't shut down correctly."）。若已有其他实例在跑，聚焦它并
+        // 立即退出本实例（本检查在最前，此时尚未拉起 dsh web / CEF / channel，
+        // 直接 exit 无副作用、也不会碰共享 profile）。
+        if let bundleId = Bundle.main.bundleIdentifier,
+           let existing = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
+               .first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
+            AppLog.shared.log("single-instance: another instance running (pid \(existing.processIdentifier)); activating & exiting")
+            existing.activate(options: [.activateAllWindows])
+            exit(0)
+        }
         NSApp.setActivationPolicy(.regular)
         // Snapshot the real system language BEFORE overriding AppleLanguages.
         L10n.captureSystemLang()
