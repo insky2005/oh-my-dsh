@@ -43,7 +43,7 @@
 
 主版本发布四步（v1.11.0 实战校准）：
 
-1. **更新 CHANGELOG.md**（必须用 `scripts/changelog.sh <上个tag>` 生成清单，curate 进顶部 `[Unreleased]` 段）→ commit；
+1. **更新发布文档**：CHANGELOG.md（必须用 `scripts/changelog.sh <上个tag>` 生成清单，curate 进顶部 `[Unreleased]` 段）；**主版本（vX.Y.0）同步更新 SECURITY.md ## Supported Versions**（新版本进表、最老出表，patch 跳过）→ 同 commit；
 2. **打 tag + push**：`git tag -a vX.Y.Z` 后 `git push github main && git push github vX.Y.Z`（先改 changelog 再打 tag）；
 3. **构建发布**：`GH_TOKEN=… IS_PRERELEASE=1 scripts/local-release.sh arm64 x86_64`；⚠️ DMG 的 `hdiutil` 需访问 `/dev`，必须在 `danger-full-access` 沙箱下运行；
 4. **推进版本号**：`scripts/version.sh` 的 `FALLBACK_VERSION`/`FALLBACK_BUILD` +1，并更新 CHANGELOG 顶部 `[Unreleased]` 占位，单 commit（形如 `86eba72`）提交推送。

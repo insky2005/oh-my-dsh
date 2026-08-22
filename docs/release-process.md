@@ -15,13 +15,13 @@
 ## 4 步总览
 
 ```
-1. 更新 CHANGELOG.md（必须用 scripts/changelog.sh）→ commit
+1. 更新发布文档：CHANGELOG.md（必须用 scripts/changelog.sh）+ 主版本时 SECURITY.md ## Supported Versions → commit
 2. 打 tag vX.Y.Z + git push
 3. scripts/local-release.sh arm64 x86_64 构建并发布 GitHub Release
 4. 推进版本号（version.sh FALLBACK + CHANGELOG [Unreleased] 占位）→ commit + push
 ```
 
-### 步骤 1：更新 CHANGELOG.md（必须用 changelog.sh）
+### 步骤 1：更新发布文档（CHANGELOG + 主版本时 SECURITY）
 
 1. 用 `scripts/changelog.sh <上个tag>` 生成「未发布改动」原始清单（按 conventional commit 类型分组）：
    ```bash
@@ -31,9 +31,13 @@
    - 分组：`### Added` / `### Changed` / `### Fixed` / `### Docs`；
    - 每条用 **加粗主题词** + 详细描述（参考 `[1.10.0]`/`[1.11.0]` 段写法），**不要照抄提交标题**；
    - 覆盖该版本全部实质改动（用 changelog.sh 清单交叉核对，勿漏）。
-3. commit：
+3. **主版本（vX.Y.0）同步更新 `SECURITY.md` ## Supported Versions**（patch 版本 `vX.Y.Z` 支持表不变，跳过）：
+   - 策略：维护**最近 2 个大版本**——新版本进表（`X.Y.x` ✅ Supported），最老一条出表，EOL 边界上移；
+   - 示例：发布 v1.12.0 → 表为 `1.12.x` / `1.11.x`，`< 1.11` → End of life；
+   - 版本号以 `git tag` 最新发布为准（开发线 `FALLBACK_VERSION` 未发布，不进表）。
+4. commit（changelog + security 同一次提交，保证 tag 指向完整发布文档）：
    ```bash
-   git add CHANGELOG.md
+   git add CHANGELOG.md SECURITY.md
    git commit -m "docs(changelog): 发布 vX.Y.Z，[Unreleased] 转正"
    ```
 
@@ -43,7 +47,7 @@
    ```bash
    git tag -a vX.Y.Z -m "oh-my-dsh vX.Y.Z"
    ```
-   ⚠️ tag 必须指向「包含 changelog 的提交」——先改 changelog 再打 tag，不要先打 tag 再补文档。
+   ⚠️ tag 必须指向「包含 changelog/SECURITY 等发布文档的提交」——先改文档再打 tag，不要先打 tag 再补文档。
 2. 推送：
    ```bash
    git push github main
@@ -96,7 +100,8 @@ scripts/local-release.sh arm64 x86_64                          # 两架构 pkg+d
 ## 发布完成自检清单
 
 - [ ] `github/main` 与本地一致；工作区干净
-- [ ] 远端 tag `vX.Y.Z` 指向含 changelog 的提交
+- [ ] 远端 tag `vX.Y.Z` 指向含 changelog/SECURITY 的提交
+- [ ] `SECURITY.md` ## Supported Versions 已更新（主版本发布；patch 版本跳过）
 - [ ] GitHub Release `vX.Y.Z` 有 5 个资产：arm64/x86_64 的 `.pkg` + `.dmg` + `SHA-256SUMS`
 - [ ] `scripts/version.sh` 输出下一个版本号 / 下一个 build
 - [ ] CHANGELOG 顶部 `[Unreleased]` 占位已更新
