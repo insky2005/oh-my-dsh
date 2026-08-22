@@ -48,11 +48,12 @@ test('runner: /new calls createSession', async () => {
 
 test('runner: /sessions lists sessions', async () => {
   const runner = createCommandRunner({
-    getSessions: async () => [{ name: 'a', projectRoot: '/p1' }, { name: 'b', projectRoot: '/p2' }],
+    getSessions: async () => [{ sessionId: 's-1', name: 'a' }, { sessionId: 's-2', name: 'b' }],
   });
   const res = await runner.run('/sessions');
-  assert.match(res.text, /a/);
-  assert.match(res.text, /b/);
+  assert.match(res.text, /#s1 \(s-1\), a/);
+  assert.match(res.text, /#s2 \(s-2\), b/);
+  assert.match(res.text, /会话列表：/);
 });
 
 test('runner: /sessions empty -> hint', async () => {
@@ -184,14 +185,26 @@ test('runner: /wks shortens home paths to ~ and uses title as name', async () =>
   assert.ok(!res.text.includes('/Users/alice'), 'must not leak the home path');
 });
 
-test('runner: /sessions and /ses show code #sN and name', async () => {
-  const sessions = [{ sessionId: 's-1', name: '会话甲', projectRoot: '/p1' }, { sessionId: 's-2', name: '会话乙', projectRoot: '/p2' }];
-  const deps = { getSessions: async () => sessions };
+test('runner: /sessions and /ses show workspace header + recent 5, format #sN (id), title', async () => {
+  const sessions = [
+    { sessionId: 's-1', name: '会话甲' }, { sessionId: 's-2', name: '会话乙' },
+    { sessionId: 's-3', name: '会话丙' }, { sessionId: 's-4', name: '会话丁' },
+    { sessionId: 's-5', name: '会话戊' }, { sessionId: 's-6', name: '会话己' },
+  ];
+  const deps = {
+    getSessions: async () => sessions,
+    getStatus: async () => ({ workspace: { code: 'w1', name: 'Alpha', path: '/Users/loie/repo/alpha' } }),
+    homeDir: '/Users/loie',
+  };
   const r1 = await createCommandRunner(deps).run('/sessions');
-  assert.match(r1.text, /#s1\s+会话甲\s+\/p1/);
-  assert.match(r1.text, /#s2\s+会话乙\s+\/p2/);
+  assert.match(r1.text, /工作区 #w1 \(Alpha\), ~\/repo\/alpha/);
+  assert.match(r1.text, /会话列表：/);
+  assert.match(r1.text, /#s1 \(s-1\), 会话甲/);
+  // limited to recent 5 of 6
+  assert.match(r1.text, /#s5 \(s-5\), 会话戊/);
+  assert.ok(!r1.text.includes('s-6'), 'must be limited to 5 sessions');
   const r2 = await createCommandRunner(deps).run('/ses');
-  assert.match(r2.text, /#s1\s+会话甲/);
+  assert.match(r2.text, /#s1 \(s-1\), 会话甲/);
 });
 
 test('runner: /switch #sN resolves to that session', async () => {

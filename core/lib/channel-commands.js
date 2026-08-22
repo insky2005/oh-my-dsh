@@ -138,8 +138,14 @@ function createCommandRunner(deps = {}) {
       case 'ses': {
         const list = await getSessions();
         if (!list || list.length === 0) return { kind: 'reply', text: '当前项目还没有会话（/new 新建）' };
-        const lines = list.map((s, i) => '#s' + (i + 1) + '  ' + (s.name || s.sessionId || s.id || 'unnamed') + '  ' + toHomePath(s.projectRoot, homeDir));
-        return { kind: 'reply', text: '会话列表：\n' + lines.join('\n') };
+        const st = await getStatus();
+        const wsLine = st.workspace
+          ? '工作区 #' + st.workspace.code + ' (' + (st.workspace.name || '') + '), ' + toHomePath(st.workspace.path, homeDir)
+          : '工作区 n/a';
+        // most recent 5 sessions
+        const recent = list.slice(0, 5);
+        const lines = recent.map((s, i) => '#s' + (i + 1) + ' (' + (s.sessionId || s.id || '') + '), ' + (s.name || ''));
+        return { kind: 'reply', text: wsLine + '\n会话列表：\n' + lines.join('\n') };
       }
       case 'new': {
         const name = args[0] || '';

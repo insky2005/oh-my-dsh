@@ -72,17 +72,21 @@ workspace 列表：
 | 指令 | 参数 | 响应内容格式 | 示例 | 实现 |
 |---|---|---|---|---|
 | `/new [名称]` | 可选会话名 | `已新建会话：<名称>`；名称缺省 `已新建会话：unnamed` | `已新建会话：我的项目` | `case 'new'` + `createSession()` |
-| `/sessions` | — | `会话列表：\n#sN  名称  ~/路径\n…`；空时 `当前项目还没有会话（/new 新建）` | 见下方示例 | `case 'sessions'/'ses'` |
+| `/sessions` | — | `工作区 #wN (名), ~/路径\n会话列表：\n#sN (sessionId), 标题\n…`（最近 5 条）；空时 `当前项目还没有会话（/new 新建）` | 见下方示例 | `case 'sessions'/'ses'` |
 | `/ses` | — | 同 `/sessions`（别名） | 同上 | 同上 |
 | `/switch <名称/编号/#sN>` | 会话名 / 编号 / 代号 | 成功 `已切换到：<名称>`；缺参 `用法：/switch <会话名或编号，或 #sN>`；代号越界 `找不到会话 #sN`；失败 `切换失败：<原因>` | `已切换到：我的会话` | `case 'switch'` + `switchSession()` |
 
 ### /sessions 输出示例
 ```
+工作区 #w1 (helloharness), ~/c/work.ai/deepseek-harness/helloharness
 会话列表：
-#s1  会话甲  ~/c/work.ai/deepseek-harness/helloharness
-#s2  会话乙  ~/c/work.ai/deepseek-harness/helloharness
+#s1 (s-1), 会话甲
+#s2 (s-2), 会话乙
+#s3 (s-3), 会话丙
+#s4 (s-4), 会话丁
+#s5 (s-5), 会话戊
 ```
-> 代号 `#sN` 按会话列表顺序（更新时间倒序）分配；名称优先会话 name，其次 sessionId/id；路径 `~` 开头。
+> 首行 = 当前工作区（通道级 lastWorkspace）；会话来自 dsh web 当前项目真实会话，按更新时间倒序取最近 5 条，格式 `#sN (sessionId), 标题`。
 
 ### /new 说明
 - 新建独立 dsh 会话并更新当前会话映射。
