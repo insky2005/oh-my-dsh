@@ -1,6 +1,7 @@
 #!/bin/bash
 # scripts/github-publish.sh — 创建/更新 GitHub Release 并上传 dist/ 产物。
-# 供 Jenkins（以及本地/其他 CI）调用；优先用 gh CLI，无 gh 则用 curl API 兜底。
+# 供 Jenkins（以及本地/其他 CI）调用；发布统一走 curl API 路径（暂不使用 gh CLI，
+# gh 分支保留为自动检测兜底）。
 #
 # 环境变量：
 #   GH_TOKEN           GitHub token（必填）
@@ -53,24 +54,45 @@ else
   GH_TOKEN="${GH_TOKEN:?GH_TOKEN required}"
   BODY_JSON="$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' <<<"$BODY")"
   PRERELEASE_JSON="$( [ "$PRERELEASE" = "1" ] && echo true || echo false )"
-  REL="$(curl -s -X POST -H "Authorization: token $GH_TOKEN" \
-    -H "Accept: application/vnd.github+json" \
-    "https://api.github.com/repos/$REPO/releases" \
-    -d "{\"tag_name\":\"$TAG\",\"target_commitish\":\"$HEAD\",\"name\":\"oh-my-dsh $VERSION\",\"body\":$BODY_JSON,\"prerelease\":$PRERELEASE_JSON}")"
-  REL_ID="$(python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' <<<"$REL")"
-  [ -n "$REL_ID" ] || { echo "release create failed: $REL" >&2; exit 1; }
+  API="https://api.github.com/repos/$REPO"
+  # 幂等：release 已存在（上次上传中断残留 / CI 已建）则复用，只补传缺失资产，
+  # 失败后可直接重跑本脚本，无需手动删除半成品 release。
+  EXISTING="$(curl -s -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API/releases/tags/$TAG")"
+  REL_ID="$(python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' <<<"$EXISTING" 2>/dev/null || true)"
+  if [ -n "$REL_ID" ]; then
+    echo "==> release $TAG 已存在（id=$REL_ID），复用并更新 title/notes"
+    curl -s -X PATCH -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+      "$API/releases/$REL_ID" \
+      -d "{\"name\":\"oh-my-dsh $VERSION\",\"body\":$BODY_JSON,\"prerelease\":$PRERELEASE_JSON}" >/dev/null
+    UPLOADED_NAMES="$(python3 -c 'import sys,json; print("\n".join(a["name"] for a in json.load(sys.stdin).get("assets",[])))' <<<"$EXISTING" 2>/dev/null || true)"
+  else
+    REL="$(curl -s -X POST -H "Authorization: token $GH_TOKEN" \
+      -H "Accept: application/vnd.github+json" \
+      "$API/releases" \
+      -d "{\"tag_name\":\"$TAG\",\"target_commitish\":\"$HEAD\",\"name\":\"oh-my-dsh $VERSION\",\"body\":$BODY_JSON,\"prerelease\":$PRERELEASE_JSON}")"
+    REL_ID="$(python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' <<<"$REL")"
+    [ -n "$REL_ID" ] || { echo "release create failed: $REL" >&2; exit 1; }
+    UPLOADED_NAMES=""
+  fi
   for f in "${ARTIFACTS[@]}"; do
     [ -f "$f" ] || continue
     name="$(basename "$f")"
+    if [ -n "$UPLOADED_NAMES" ] && grep -qxF "$name" <<<"$UPLOADED_NAMES"; then
+      echo "    $name 已存在，跳过"
+      continue
+    fi
     case "$name" in
       *.dmg) CT="application/x-apple-diskimage" ;;
       *.pkg) CT="application/octet-stream" ;;
       *)     CT="application/octet-stream" ;;
     esac
+    size="$(du -sh "$f" | awk '{print $1}')"
+    echo "==> uploading $name ($size) ..."
     curl -s -X POST -H "Authorization: token $GH_TOKEN" \
       -H "Content-Type: $CT" \
       "https://uploads.github.com/repos/$REPO/releases/$REL_ID/assets?name=$name" \
       --data-binary "@$f" >/dev/null
+    echo "    $name 完成"
   done
 fi
 echo "Published: $TAG -> https://github.com/$REPO/releases/tag/$TAG"
