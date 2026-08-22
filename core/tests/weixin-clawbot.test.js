@@ -9,10 +9,13 @@ test('clawbot: connect transitions to connected and polls updates', async () => 
   const updates = [{ conversationId: 'wx-1', text: 'hello', sender: 'alice' }];
   const sent = [];
   let connected = false;
+  let fetched = false;
   const transport = {
     async connect() { connected = true; },
     async disconnect() { connected = false; },
-    async fetchUpdates() { return updates; },
+    // return the message ONCE, then empty — otherwise the strictly-serial poll
+    // loop re-emits + re-logs the same message for the whole test (noise only).
+    async fetchUpdates() { if (fetched) return []; fetched = true; return updates; },
     async sendMessage(payload) { sent.push(payload); },
   };
   const adapter = createWeixinClawBotAdapter({ channelId: 'ch-1', transport, intervalMs: 10 });
