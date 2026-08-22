@@ -89,8 +89,10 @@ workspace 列表：
 > 首行 = 当前工作区（通道级 lastWorkspace）；会话来自 dsh web 当前项目真实会话，按更新时间倒序取最近 5 条，格式 `#sN (sessionId), 标题`。
 
 ### /new 说明
-- 新建独立 dsh 会话并更新当前会话映射。
-- 参数可带 `#wN` / `#<workspace名>` 指定在哪个项目下新建；未指定按「最近一次 / 第一个 workspace」回退。
+- 新建独立 dsh 会话并更新当前会话（activeSession）。
+- 目标工作区：参数可带 `#wN` / `#<workspace名>` 指定；未指定按「当前工作区（lastWorkspace）→ 第一个 workspace」回退。
+- 创建方式对齐 dsh web 客户端 / Wiki / IssueRunner 面板：解析出目标 workspace 后传 `session.create { workspaceId }`（会话归到该工作区，而非 Ungrouped）。
+- 创建后先 `rename` 为传入名称，再**用 `/new` 的文本立即 prompt**（会话从 blank 变 non-blank）——dsh web 工作区视图只显示有内容的会话，所以这样才会出现；标题之后由 dsh web 自动生成/动态调整。
 - 回复 `已新建会话：<名称>`（名称即传入参数，缺省 unnamed）。
 
 ---

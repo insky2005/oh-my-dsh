@@ -165,7 +165,7 @@
 | `/ping` | 连通性测试 | — | pong（耗时 Nms） |
 | `/status` | 查连接/项目/会话状态 | — | 连接状态/项目/当前会话 |
 | `/workspaces` (`/wks`) | 列出 workspace 并分配代号 #w1/#w2…（名称取 dsh web 的 title） | — | #w1 (Name): ~/path |
-| `/new [名称]` | 新建独立会话 | 可选会话名 | 已新建会话：xxx |
+| `/new [名称]` | 新建独立会话（workspaceId 归当前工作区，并用 /new 文本 prompt 使会话非 blank、dsh web 可见） | 可选会话名 | 已新建会话：xxx |
 | `/sessions` (`/ses`) | 列出当前项目所有会话，带代号 #s1… | — | #s1  会话名  /path |
 | `/switch <名称/编号/#sN>` | 切换当前会话 | 会话名/编号/#sN | 已切换到：xxx |
 | `#w1` / `#s1` 等 | 快速切换（路由 workspace / 切换会话） | — | — |
