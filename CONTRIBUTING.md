@@ -9,7 +9,7 @@
 oh-my-dsh/
 ├── LICENSE  README.md  CHANGELOG.md  CONTRIBUTING.md  SECURITY.md
 ├── .github/             # workflows / ISSUE_TEMPLATE / CODEOWNERS
-├── core/                # 共享核心（Node 模块）：端口探测 / 服务管理 / 升级 / 会话 RPC / ANSI 模拟器
+├── core/                # 共享核心（Node 模块）：端口探测 / 服务管理 / 升级 / 会话 RPC / ANSI 模拟器 / channel（统一抽象 / 路由 / 指令 / 微信适配器）
 ├── platforms/
 │   └── macos/           # macOS 壳：src/ + build-app.sh + make-pkg.sh
 ├── scripts/             # 跨平台工具（版本读取 / CHANGELOG 生成 / 校验和）
@@ -41,6 +41,9 @@ tests/terminal-emulator/run.sh          # P1 起迁入 core/tests/
 
 # Wiki 面板模型层单测
 tests/wiki-panel/run.sh
+
+# Channel 面板模型层单测（core/tests/channel*.test.js，随 core 全量跑）
+node --test core/tests/channel.test.js core/tests/channel-commands.test.js core/tests/channel-runner.test.js core/tests/channel-workspaces.test.js core/tests/channel-sessions.test.js core/tests/weixin-clawbot.test.js core/tests/e2e-channel.test.js
 ```
 
 CI（`.github/workflows/ci.yml`）会在 push/PR 时跑完整测试矩阵（macOS arm64 / x64 / Universal），
@@ -61,7 +64,7 @@ test(core): migrate emulator tests into core/      # 测试
 - 一个 PR 一个主题，保持小而可审查；
 - 新增面向用户的文案必须中英双语成对（见 `.dsh/wiki/conventions.md` 的 L10n 约定）；
 - 新增 Swift 文件必须在 `build-app.sh` 的编译清单里登记；
-- 新增面板需配套模型层单测（`tests/<name>/run.sh` 模式）。
+- 新增面板需配套模型层单测（`tests/<name>/run.sh` 模式；平台无关逻辑放 `core/tests/*.test.js`，随 `node --test core/tests/` 跑）。
 
 ## PR 流程
 
