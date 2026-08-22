@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { assignCodes, parseTag, resolveWorkspaceTag } = require('../lib/channel-workspaces');
+const { assignCodes, parseTag, resolveWorkspaceTag, normalizeWorkspace, toHomePath } = require('../lib/channel-workspaces');
 
 const ws = [
   { workspaceId: 'a', path: '/Users/loie/repo/bravo' },
@@ -59,4 +59,20 @@ test('workspaces: no workspaces -> source none', () => {
 test('workspaces: case-insensitive #W1', () => {
   const r = resolveWorkspaceTag('处理 #W2', { workspaces: ws });
   assert.equal(r.code, 'w2');
+});
+
+test('workspaces: normalizeWorkspace uses title (dsh web name), not the path', () => {
+  assert.equal(normalizeWorkspace({ workspaceId: 'a', path: '/Users/loie/repo/alpha', title: 'Alpha' }).name, 'Alpha');
+  // no title -> basename, never the full /Users/... path
+  assert.equal(normalizeWorkspace({ workspaceId: 'b', path: '/Users/loie/repo/bravo' }).name, 'bravo');
+});
+
+test('workspaces: toHomePath shortens home paths to ~', () => {
+  const home = '/Users/loie';
+  assert.equal(toHomePath(home + '/repo/alpha', home), '~/repo/alpha');
+  assert.equal(toHomePath(home, home), '~');
+  // outside home or unknown home stays unchanged
+  assert.equal(toHomePath('/etc/hosts', home), '/etc/hosts');
+  assert.equal(toHomePath('/Users/loie/repo/alpha'), '/Users/loie/repo/alpha');
+  assert.equal(toHomePath('', home), '');
 });

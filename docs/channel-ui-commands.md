@@ -129,7 +129,7 @@
 **目标**：让用户用简短的代号或 workspace 名，把消息路由到某个项目（workspace）。
 
 - **代号分配**：/workspaces（或别名 /wks）列出所有 dsh workspace，按 path 排序，分配代号 w1、w2…（不区分大小写）：
-  w1 指向 path/a、w2 指向 path/b…；每行显示 #wN  Name  path；
+  w1 指向 path/a、w2 指向 path/b…；每行显示 `#wN (名称): ~/path`（名称 = dsh web 的 workspace title，路径以 ~ 开头、不暴露本机用户目录）；
 - **会话代号**：/sessions（或别名 /ses）列出当前项目会话，按更新时间倒序分配代号 #s1、#s2…；/switch 支持 #sN 直接切到对应会话；
 - **#tag 路由**：消息内容中含 #w1（代号）或 #<workspace名>（workspace 的 path/name 片段）→ 消息路由到该项目：
   - 解析优先级：#wN 代号精确匹配 > #<name> 匹配 workspace path/name；
@@ -160,7 +160,7 @@
 | `/help` | 列出指令（分组排序） | — | 指令清单 |
 | `/ping` | 连通性测试 | — | pong（耗时 Nms） |
 | `/status` | 查连接/项目/会话状态 | — | 连接状态/项目/当前会话 |
-| `/workspaces` (`/wks`) | 列出 workspace 并分配代号 #w1/#w2… | — | #w1  Name  path |
+| `/workspaces` (`/wks`) | 列出 workspace 并分配代号 #w1/#w2…（名称取 dsh web 的 title） | — | #w1 (Name): ~/path |
 | `/new [名称]` | 新建独立会话 | 可选会话名 | 已新建会话：xxx |
 | `/sessions` (`/ses`) | 列出当前项目所有会话，带代号 #s1… | — | #s1  会话名  /path |
 | `/switch <名称/编号/#sN>` | 切换当前会话 | 会话名/编号/#sN | 已切换到：xxx |

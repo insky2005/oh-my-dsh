@@ -18,14 +18,33 @@
  */
 
 /**
+ * Shorten an absolute path to a ~-relative form for display, so it never
+ * leaks the OS user's home directory (e.g. /Users/alice/a/b -> ~/a/b).
+ * Returns the input unchanged when homeDir is unknown or the path isn't under
+ * it. Pure & testable; pass the home dir explicitly.
+ */
+function toHomePath(p, homeDir) {
+  if (typeof p !== 'string' || !p) return p || '';
+  const h = typeof homeDir === 'string' && homeDir ? homeDir : '';
+  if (!h) return p;
+  if (p === h) return '~';
+  if (p.startsWith(h + '/')) return '~' + p.slice(h.length);
+  return p;
+}
+
+/**
  * Normalize a workspace entry to { id, path, name }.
+ * The display name is the workspace.title (what dsh web shows); falls back to
+ * the path basename so we never leak a full /Users/... path as a name.
  */
 function normalizeWorkspace(w) {
-  return {
-    id: w.workspaceId || w.id || '',
-    path: w.path || '',
-    name: w.name || w.path || w.workspaceId || '',
-  };
+  const path = w.path || '';
+  let name = w.title || w.name || '';
+  if (!name) {
+    const base = path.split(/[\\/]/).filter(Boolean).pop() || path;
+    name = base;
+  }
+  return { id: w.workspaceId || w.id || '', path, name };
 }
 
 /**
@@ -115,4 +134,4 @@ function stripTag(text, rawTag) {
   return out.replace(/\s{2,}/g, ' ').trim();
 }
 
-module.exports = { assignCodes, parseTag, resolveWorkspaceTag, normalizeWorkspace };
+module.exports = { assignCodes, parseTag, resolveWorkspaceTag, normalizeWorkspace, toHomePath };

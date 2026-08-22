@@ -26,6 +26,8 @@
  *   const { parseCommand, createCommandRunner } = require('@oh-my-dsh/core');
  */
 
+const { toHomePath } = require('./channel-workspaces');
+
 /** Command groups, in /help display order. */
 const GROUP_ORDER = ['global', 'project'];
 
@@ -111,6 +113,8 @@ function createCommandRunner(deps = {}) {
   const switchSession = deps.switchSession || (async () => ({ id: 'n/a' }));
   const getStatus = deps.getStatus || (async () => ({}));
   const getWorkspaces = deps.getWorkspaces || (async () => []);
+  // Home dir for ~-shortening display paths (injectable for tests).
+  const homeDir = deps.homeDir || require('node:os').homedir();
 
   async function run(text) {
     const parsed = parseCommand(text);
@@ -134,7 +138,7 @@ function createCommandRunner(deps = {}) {
       case 'ses': {
         const list = await getSessions();
         if (!list || list.length === 0) return { kind: 'reply', text: '当前项目还没有会话（/new 新建）' };
-        const lines = list.map((s, i) => '#s' + (i + 1) + '  ' + (s.name || s.sessionId || s.id || 'unnamed') + '  ' + (s.projectRoot || ''));
+        const lines = list.map((s, i) => '#s' + (i + 1) + '  ' + (s.name || s.sessionId || s.id || 'unnamed') + '  ' + toHomePath(s.projectRoot, homeDir));
         return { kind: 'reply', text: '会话列表：\n' + lines.join('\n') };
       }
       case 'new': {
@@ -175,7 +179,13 @@ function createCommandRunner(deps = {}) {
       case 'wks': {
         const ws = await getWorkspaces();
         if (!ws || ws.length === 0) return { kind: 'reply', text: '没有可用的 workspace' };
-        const lines = ws.map((w, i) => '#' + (w.code || 'w' + (i + 1)) + '  ' + (w.name || '') + '  ' + (w.path || ''));
+        const lines = ws.map((w, i) => {
+          const code = '#' + (w.code || 'w' + (i + 1));
+          // name = title (dsh web) or path basename — never the full /Users/... path
+          const base = (w.path || '').split(/[\\/]/).filter(Boolean).pop() || '';
+          const name = w.name || base || w.id || 'unnamed';
+          return code + ' (' + name + '): ' + toHomePath(w.path, homeDir);
+        });
         return { kind: 'reply', text: 'workspace 列表：\n' + lines.join('\n') };
       }
       default:

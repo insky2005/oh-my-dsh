@@ -133,13 +133,13 @@ test('/help lists global, then project, then quick-switch groups in order', asyn
   assert.match(text, /#s1/);
 });
 
-test('runner: /wks shows code #wN, name and path', async () => {
+test('runner: /wks shows code #wN, name (title) and path', async () => {
   const runner = createCommandRunner({
     getWorkspaces: async () => [{ code: 'w1', name: 'Alpha', path: '/a' }, { code: 'w2', name: 'Beta', path: '/b' }],
   });
   const res = await runner.run('/wks');
-  assert.match(res.text, /#w1\s+Alpha\s+\/a/);
-  assert.match(res.text, /#w2\s+Beta\s+\/b/);
+  assert.match(res.text, /#w1 \(Alpha\): \/a/);
+  assert.match(res.text, /#w2 \(Beta\): \/b/);
 });
 
 test('runner: /workspaces alias lists codes too', async () => {
@@ -147,7 +147,23 @@ test('runner: /workspaces alias lists codes too', async () => {
     getWorkspaces: async () => [{ code: 'w1', name: 'Alpha', path: '/a' }],
   });
   const res = await runner.run('/workspaces');
-  assert.match(res.text, /#w1\s+Alpha\s+\/a/);
+  assert.match(res.text, /#w1 \(Alpha\): \/a/);
+});
+
+test('runner: /wks shortens home paths to ~ and uses title as name', async () => {
+  const home = '/Users/alice';
+  const runner = createCommandRunner({
+    homeDir: home,
+    getWorkspaces: async () => [
+      { code: 'w1', name: 'repowikitest', path: home + '/code/repowikitest' },
+      // no title -> falls back to basename, still ~-shortened
+      { code: 'w2', path: home + '/code/helloharness' },
+    ],
+  });
+  const res = await runner.run('/wks');
+  assert.match(res.text, /#w1 \(repowikitest\): ~\/code\/repowikitest/);
+  assert.match(res.text, /#w2 \(helloharness\): ~\/code\/helloharness/);
+  assert.ok(!res.text.includes('/Users/alice'), 'must not leak the home path');
 });
 
 test('runner: /sessions and /ses show code #sN and name', async () => {
