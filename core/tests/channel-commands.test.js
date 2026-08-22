@@ -104,3 +104,78 @@ test('KNOWN table has the six first-priority commands', () => {
     assert.ok(KNOWN[name], 'missing ' + name);
   }
 });
+
+test('parseCommand: aliases /ses and /wks are recognized', () => {
+  assert.deepEqual(parseCommand('/ses'), { kind: 'command', name: 'ses', args: [] });
+  assert.deepEqual(parseCommand('/wks'), { kind: 'command', name: 'wks', args: [] });
+});
+
+test('/help lists global, then project, then quick-switch groups in order', async () => {
+  const runner = createCommandRunner({});
+  const res = await runner.run('/help');
+  assert.equal(res.kind, 'reply');
+  const text = res.text;
+  const lines = text.split('\n');
+  const pos = (s) => lines.findIndex((l) => l.includes(s));
+  const g = pos('全局指令');
+  const p = pos('项目指令');
+  const q = pos('快速切换');
+  assert.ok(g >= 0 && p > g && q > p, 'groups must be in order: global < project < quick');
+
+  // global order: help, ping, status, workspaces, wks
+  const gi = ['/help —', '/ping —', '/status —', '/workspaces —', '/wks —'].map(pos);
+  for (let i = 1; i < gi.length; i++) assert.ok(gi[i] > gi[i - 1], 'global command order broken at index ' + i);
+  // project order: new, sessions, ses, switch
+  const pi = ['/new ', '/sessions —', '/ses —', '/switch '].map(pos);
+  for (let i = 1; i < pi.length; i++) assert.ok(pi[i] > pi[i - 1], 'project command order broken at index ' + i);
+  // quick switch hint mentions #w1 and #s1
+  assert.match(text, /#w1/);
+  assert.match(text, /#s1/);
+});
+
+test('runner: /wks shows code #wN, name and path', async () => {
+  const runner = createCommandRunner({
+    getWorkspaces: async () => [{ code: 'w1', name: 'Alpha', path: '/a' }, { code: 'w2', name: 'Beta', path: '/b' }],
+  });
+  const res = await runner.run('/wks');
+  assert.match(res.text, /#w1\s+Alpha\s+\/a/);
+  assert.match(res.text, /#w2\s+Beta\s+\/b/);
+});
+
+test('runner: /workspaces alias lists codes too', async () => {
+  const runner = createCommandRunner({
+    getWorkspaces: async () => [{ code: 'w1', name: 'Alpha', path: '/a' }],
+  });
+  const res = await runner.run('/workspaces');
+  assert.match(res.text, /#w1\s+Alpha\s+\/a/);
+});
+
+test('runner: /sessions and /ses show code #sN and name', async () => {
+  const sessions = [{ sessionId: 's-1', name: '会话甲', projectRoot: '/p1' }, { sessionId: 's-2', name: '会话乙', projectRoot: '/p2' }];
+  const deps = { getSessions: async () => sessions };
+  const r1 = await createCommandRunner(deps).run('/sessions');
+  assert.match(r1.text, /#s1\s+会话甲\s+\/p1/);
+  assert.match(r1.text, /#s2\s+会话乙\s+\/p2/);
+  const r2 = await createCommandRunner(deps).run('/ses');
+  assert.match(r2.text, /#s1\s+会话甲/);
+});
+
+test('runner: /switch #sN resolves to that session', async () => {
+  let target = null;
+  const runner = createCommandRunner({
+    getSessions: async () => [{ sessionId: 's-1', name: '会话甲' }, { sessionId: 's-2', name: '会话乙' }],
+    switchSession: async (sel) => { target = sel; return { id: sel, name: '会话乙' }; },
+  });
+  const res = await runner.run('/switch #s2');
+  assert.equal(target, 's-2');
+  assert.match(res.text, /会话乙/);
+});
+
+test('runner: /switch #sN out of range -> not found', async () => {
+  const runner = createCommandRunner({
+    getSessions: async () => [{ sessionId: 's-1', name: '会话甲' }],
+    switchSession: async (sel) => ({ id: sel, name: sel }),
+  });
+  const res = await runner.run('/switch #s9');
+  assert.match(res.text, /找不到会话/);
+});

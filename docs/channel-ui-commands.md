@@ -129,7 +129,8 @@
 **目标**：让用户用简短的代号或 workspace 名，把消息路由到某个项目（workspace）。
 
 - **代号分配**：/workspaces（或别名 /wks）列出所有 dsh workspace，按 path 排序，分配代号 w1、w2…（不区分大小写）：
-  w1 指向 path/a、w2 指向 path/b…；
+  w1 指向 path/a、w2 指向 path/b…；每行显示 #wN  Name  path；
+- **会话代号**：/sessions（或别名 /ses）列出当前项目会话，按更新时间倒序分配代号 #s1、#s2…；/switch 支持 #sN 直接切到对应会话；
 - **#tag 路由**：消息内容中含 #w1（代号）或 #<workspace名>（workspace 的 path/name 片段）→ 消息路由到该项目：
   - 解析优先级：#wN 代号精确匹配 > #<name> 匹配 workspace path/name；
   - 多个 tag 取第一个有效；无有效 tag 则回退（见下）；
@@ -152,15 +153,18 @@
 
 ### 3.2 第一优先级（MVP，本轮实现）
 
+指令按**分组 + 顺序**展示在 `/help`：全局指令（无需绑定项目）→ 项目指令（需绑定 workspace / 先切好 workspace 上下文）→ 快速切换。
+
 | 指令 | 作用 | 参数 | 回复示例 |
 |---|---|---|---|
-| `/help` | 列出指令 | — | 指令清单 |
-| `/new [名称]` | 新建独立会话 | 可选会话名 | 已新建会话：xxx |
-| `/sessions` | 列出当前项目所有会话 | — | 会话列表（id/名称/时间） |
-| `/switch <名称/编号>` | 切换当前会话 | 会话名或编号 | 已切换到：xxx |
-| `/status` | 查连接/项目/会话状态 | — | 连接状态/项目/当前会话 |
+| `/help` | 列出指令（分组排序） | — | 指令清单 |
 | `/ping` | 连通性测试 | — | pong（耗时 Nms） |
-| `/workspaces` (`/wks`) | 列出 workspace 并分配代号 w1/w2… | — | w1 → path/a |
+| `/status` | 查连接/项目/会话状态 | — | 连接状态/项目/当前会话 |
+| `/workspaces` (`/wks`) | 列出 workspace 并分配代号 #w1/#w2… | — | #w1  Name  path |
+| `/new [名称]` | 新建独立会话 | 可选会话名 | 已新建会话：xxx |
+| `/sessions` (`/ses`) | 列出当前项目所有会话，带代号 #s1… | — | #s1  会话名  /path |
+| `/switch <名称/编号/#sN>` | 切换当前会话 | 会话名/编号/#sN | 已切换到：xxx |
+| `#w1` / `#s1` 等 | 快速切换（路由 workspace / 切换会话） | — | — |
 
 ### 3.3 第二优先级（后续）
 

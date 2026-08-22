@@ -168,14 +168,20 @@ function println(s) {
         const dshIdx = rest.indexOf('--dsh-home');
         const dshHome = dshIdx >= 0 ? rest[dshIdx + 1] : (require('node:os').homedir() + '/.dsh');
         if (!channelId || !Number.isInteger(port)) fail('usage: channel run <channelId> <port> <refsJson> [--dsh-home <dir>]');
-        const handle = await core.runWeixinChannel({ channelId, port, refs, dshHome });
-        println('channel ' + channelId + ' running (Ctrl+C to stop)');
-        handle.adapter.onEvent(async (event) => {
-          try {
-            const r = await handle.manager.enqueue(event);
-            println('handled: ' + JSON.stringify({ conversationId: event.conversationId, text: event.text, reply: r && r.reply && r.reply.text }));
-          } catch (e) { /* isolate */ }
+        // NOTE: runWeixinChannel already wires its own onEvent handler that
+        // parses slash commands FIRST and routes only ordinary text to the
+        // manager. Registering an extra handler here that calls manager.enqueue
+        // on every event would re-route commands into the project router and
+        // emit the "该会话未绑定任何项目" hint for global commands. We only attach
+        // a logging callback via opts.onEvent (receiver for both paths).
+        const handle = await core.runWeixinChannel({
+          channelId, port, refs, dshHome,
+          onEvent: (event, result) => {
+            const replyText = result && result.reply && result.reply.text;
+            println('handled: ' + JSON.stringify({ conversationId: event.conversationId, text: event.text, reply: replyText }));
+          },
         });
+        println('channel ' + channelId + ' running (Ctrl+C to stop)');
         await handle.start();
         // Exit promptly on signal; best-effort disconnect (don't wait on the
         // network notifyStop which can hang and leave a zombie runner).
