@@ -23,13 +23,15 @@
 
 const { createWeixinClawBotTransport } = require('./weixin-clawbot-transport');
 const { createWeixinClawBotAdapter } = require('./weixin-clawbot');
-const { createSessionDriver } = require('./session-driver');
+const { createSessionDriver, listWorkspaceSessions } = require('./session-driver');
 const { createChannelManager, normalizeEvent } = require('./channel');
 const { createCommandRunner, parseCommand } = require('./channel-commands');
 const { createChannelSessions } = require('./channel-sessions');
 const { assignCodes, resolveWorkspaceTag, toHomePath } = require('./channel-workspaces');
-const { loadChannelAccount } = require('./channel-store');
+const { loadChannelAccount, createChannelRuntimeStore } = require('./channel-store');
 const { createQueue } = require('./jobqueue');
+const os = require('node:os');
+const path = require('node:path');
 
 /**
  * Build the adapters map for a set of project refs. Each distinct channelId in
@@ -118,9 +120,15 @@ async function runWeixinChannel(opts = {}) {
     jobQueue: createQueue(),
   });
 
-  // Session store per the first routed project (decision E). If refs exist,
-  // use the first project root; caller can override via opts.projectRoot.
-  const projectRoot = opts.projectRoot || (opts.refs && opts.refs[0] && opts.refs[0].workspaceRoot) || process.cwd();
+  // Session store per the first routed project (decision E): message log only.
+  // If refs exist, use the first project root; caller can override via
+  // opts.projectRoot. When no project is bound (e.g. the app spawns the runner
+  // before a workspace is active), fall back to a WRITABLE neutral root under
+  // DSH_HOME instead of process.cwd() (a GUI-spawned child's cwd is often
+  // unwritable). Writes are best-effort so they never swallow a reply.
+  const projectRoot = opts.projectRoot
+    || (opts.refs && opts.refs[0] && opts.refs[0].workspaceRoot)
+    || path.join(os.homedir(), '.dsh', 'channel-runtime', channelId);
   const store = opts.sessions || createChannelSessions({ projectRoot, channelId });
 
   // Workspace routing (docs §3.9): codes w1/w2… + #tag.
@@ -129,32 +137,74 @@ async function runWeixinChannel(opts = {}) {
   const homeDir = opts.homeDir || require('node:os').homedir();
   const getCodedWorkspaces = async () => loadWorkspaces(port, wsHost, opts.timeoutMs);
 
+  // Channel-global runtime store: lastWorkspace + per-conversation session
+  // mapping + active session, persisted under ~/.dsh/channels/<channelId>.state.json.
+  // Channel-scoped (NOT per-project) so it is always writable and survives runner
+  // restarts — on startup we restore lastWorkspace and the active session without
+  // the user having to re-issue #wN / #sN.
+  const runtime = opts.runtime || createChannelRuntimeStore({ channelId, dshHome: opts.dshHome });
+  const getLastWorkspace = () => runtime.getLastWorkspace();
+  const setLastWorkspace = (ws) => runtime.setLastWorkspace(ws);
+  // Current workspace root = channel-level lastWorkspace (or the bound root).
+  const currentWorkspaceRoot = () => {
+    const lw = runtime.getLastWorkspace();
+    return (lw && lw.projectRoot) || projectRoot;
+  };
+  // Sessions of the current project, sourced from dsh web (the real session list,
+  // so channel-created AND existing workspace sessions both appear).
+  const currentSessions = () => listWorkspaceSessions(port, wsHost, currentWorkspaceRoot(), opts.timeoutMs);
+
   // Command runner wired to the session store + session driver.
   const commandRunner = opts.commands || createCommandRunner({
-    getSessions: () => store.listSessions(),
+    getSessions: () => currentSessions(),
     getWorkspaces: () => getCodedWorkspaces(),
     createSession: async (name) => {
-      // /new [#w1] — route to the tagged/first workspace.
+      // /new [#w1] — route to the tagged workspace, else the current one (lastCode),
+      // else the first workspace.
       const ws = await getCodedWorkspaces();
-      const resolved = resolveWorkspaceTag(name || '', { workspaces: ws, preferFirst: true });
-      const targetRoot = resolved.workspace ? resolved.workspace.path : projectRoot;
-      const sid = await sessionDriver.createSession(port, { cwd: targetRoot });
-      const rec = store.setSession('_active', { sessionId: sid, name: name || null, projectRoot: targetRoot });
-      return { id: sid, name: name || null, workspace: resolved.workspace };
+      const resolved = resolveWorkspaceTag(name || '', {
+        workspaces: ws,
+        lastCode: getLastWorkspace() ? getLastWorkspace().code : null,
+        preferFirst: true,
+      });
+      const target = resolved.workspace || null;
+      const targetRoot = target ? target.path : projectRoot;
+      // Create with the workspaceId so dsh associates the session with the
+      // workspace and it shows up in the dsh web workspace view (a bare cwd
+      // creates a workspaceId:null session that is NOT listed in the workspace).
+      const sid = target && target.id
+        ? await sessionDriver.createSession(port, { workspaceId: target.id })
+        : await sessionDriver.createSession(port, { cwd: targetRoot });
+      // give the created session the requested title in dsh web
+      if (name) await sessionDriver.renameSession(port, sid, name, wsHost, opts.timeoutMs);
+      const rec = runtime.setActiveSession({ sessionId: sid, name: name || null, projectRoot: targetRoot });
+      return { id: sid, name: name || null, workspace: target };
     },
     switchSession: async (selector) => {
-      const list = store.listSessions();
+      const list = await currentSessions();
       const hit = list.find((s) => s.name === selector || s.sessionId === selector)
                || list[parseInt(selector, 10) - 1];
       if (!hit) throw new Error('找不到会话：' + selector);
+      // persist the switch so /status reflects it after restart
+      runtime.setActiveSession({ sessionId: hit.sessionId, projectRoot: hit.projectRoot, name: hit.name });
       return { id: hit.sessionId, name: hit.name };
     },
-    getStatus: async () => ({
-      connected: adapter.getState() === 'connected',
-      project: projectRoot,
-      session: store.getSession('_active') ? store.getSession('_active').sessionId : null,
-      channel: channelId,
-    }),
+    getStatus: async () => {
+      const lw = runtime.getLastWorkspace();
+      const active = runtime.getActiveSession();
+      const sessions = await currentSessions();
+      const activeIdx = active ? sessions.findIndex((s) => s.sessionId === active.sessionId) : -1;
+      return {
+        channel: channelId,
+        connected: adapter.getState() === 'connected',
+        // current workspace = channel-level lastWorkspace (code/name/~path)
+        workspace: lw ? { code: lw.code, name: lw.name || '', path: lw.projectRoot || '' } : null,
+        // current session = active session + its #sN code (by list order)
+        session: active
+          ? { code: activeIdx >= 0 ? 's' + (activeIdx + 1) : '', sessionId: active.sessionId, name: active.name || '' }
+          : null,
+      };
+    },
   });
 
   let running = false;
@@ -184,18 +234,31 @@ async function runWeixinChannel(opts = {}) {
         if (kind === 'w') {
           const ws = await getCodedWorkspaces();
           const w = ws[n - 1];
-          if (!w) replyText = '未找到代号 #w' + n + '（/wks 查看）';
-          else {
-            store.setSession('lastWorkspace', { sessionId: w.code, name: 'lastWorkspace', projectRoot: w.path });
-            replyText = '已切换到项目 #' + w.code + ' (' + (w.name || '') + '): ' + toHomePath(w.path, homeDir);
+          if (!w) {
+            replyText = '未找到代号 #w' + n + '（/wks 查看）';
+          } else {
+            setLastWorkspace(w);
+            // A workspace switch resets the current session to n/a — the user
+            // must explicitly pick a session afterwards (via #sN).
+            runtime.setActiveSession(null);
+            const lines = ['已切换到工作区 #' + w.code + ' (' + (w.name || '') + '), ' + toHomePath(w.path, homeDir), '当前会话：n/a'];
+            const recent = (await currentSessions()).slice(0, 5);
+            if (recent.length) {
+              lines.push('最近会话（' + recent.length + '）：');
+              recent.forEach((s, i) => { lines.push('  #s' + (i + 1) + ' (' + s.sessionId + '), ' + (s.name || '')); });
+            } else {
+              lines.push('最近会话：暂无（/new 新建）');
+            }
+            replyText = lines.join('\n');
           }
         } else {
-          const list = store.listSessions();
+          const list = await currentSessions();
           const s = list[n - 1];
           if (!s) replyText = '未找到会话 #s' + n + '（/sessions 查看）';
           else {
-            store.setSession(event.conversationId, { sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
-            replyText = '已切换会话 #s' + n + ' (' + (s.name || s.sessionId) + ')';
+            runtime.setSession(event.conversationId, { sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
+            runtime.setActiveSession({ sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
+            replyText = '已切换到会话 #s' + n + ' (' + s.sessionId + '), ' + (s.name || '');
           }
         }
         const payload = { conversationId: event.conversationId, text: replyText, contextToken: event.contextToken };
@@ -210,19 +273,19 @@ async function runWeixinChannel(opts = {}) {
       const ws = await getCodedWorkspaces();
       const resolved = resolveWorkspaceTag(event.text, {
         workspaces: ws,
-        lastCode: store.getSession('lastWorkspace') ? store.getSession('lastWorkspace').sessionId : null,
+        lastCode: getLastWorkspace() ? getLastWorkspace().code : null,
         preferFirst: true,
       });
       const targetRoot = resolved.workspace ? resolved.workspace.path : projectRoot;
       if (resolved.workspace) {
-        store.setSession('lastWorkspace', { sessionId: resolved.workspace.code, name: 'lastWorkspace', projectRoot: targetRoot });
+        setLastWorkspace({ code: resolved.workspace.code, name: resolved.workspace.name, projectRoot: targetRoot });
       }
       // strip the #tag so it isn't sent to the session as literal text
       const sessionText = resolved.cleanText || event.text;
-      let rec = store.getSession(event.conversationId);
+      let rec = runtime.getSession(event.conversationId);
       if (!rec || (resolved.source === 'tag' && rec.projectRoot !== targetRoot)) {
         const sid = await sessionDriver.createSession(port, { cwd: targetRoot });
-        rec = store.setSession(event.conversationId, { sessionId: sid, projectRoot: targetRoot });
+        rec = runtime.setSession(event.conversationId, { sessionId: sid, projectRoot: targetRoot });
       }
       event.sessionId = rec.sessionId;
       event.workspace = targetRoot;
@@ -239,19 +302,27 @@ async function runWeixinChannel(opts = {}) {
     }
   });
 
+  // Persist the live connection state to ~/.dsh/channels/<channelId>.state.json
+  // on every transition, so the panel's global-config view can read it on demand.
+  const onStateUnsub = adapter.onState((s) => { try { runtime.setConnectionState(s); } catch { /* non-fatal */ } });
+  runtime.setConnectionState(adapter.getState());
+
   return {
     channelId,
     adapter,
     manager,
     store,
+    runtime,
     commandRunner,
     async start() {
       running = true;
       await adapter.connect();
+      try { runtime.setConnectionState(adapter.getState()); } catch { /* non-fatal */ }
     },
     async stop() {
       running = false;
       onEventUnsub();
+      if (typeof onStateUnsub === 'function') onStateUnsub();
       await adapter.disconnect();
     },
     state: () => adapter.getState(),

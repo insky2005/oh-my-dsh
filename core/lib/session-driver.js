@@ -179,4 +179,31 @@ function createSessionDriver(opts = {}) {
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
-module.exports = { createSessionDriver, rpc, createSession, renameSession, promptSession, cancelSession, sessionRunning, lastMessage };
+
+/**
+ * List the dsh sessions that live in a given workspace (by cwd and/or the
+ * workspace's sessionIds). Returns [{ sessionId, name, projectRoot, updatedAt, running }].
+ * The display name comes from session.list projections.values.title.
+ */
+async function listWorkspaceSessions(port, host, projectRoot, timeoutMs) {
+  const wjson = await rpc(port, 'workspace.list', {}, host, timeoutMs);
+  const wv = value(wjson);
+  const ws = ((wv && wv.items) || []).find((w) => w.path === projectRoot);
+  const wsIds = new Set(ws ? ws.sessionIds || [] : []);
+
+  const sjson = await rpc(port, 'session.list', {}, host, timeoutMs);
+  const sv = value(sjson);
+  const items = ((sv && sv.items) || [])
+    .filter((s) => s.cwd === projectRoot || wsIds.has(s.sessionId))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  return items.map((s) => ({
+    sessionId: s.sessionId,
+    name: (s.projections && s.projections.values && s.projections.values.title) || '',
+    projectRoot,
+    updatedAt: s.updatedAt,
+    running: s.running === true,
+  }));
+}
+
+module.exports = { createSessionDriver, rpc, createSession, renameSession, promptSession, cancelSession, sessionRunning, lastMessage, listWorkspaceSessions };
+

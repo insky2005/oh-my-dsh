@@ -50,9 +50,10 @@ test('channel-runner: router no-match sends unbounded hint', async () => {
 // Drive one inbound message through runWeixinChannel against a mock transport
 // (dsh web workspace.list) and a temp store. Returns the reply text the adapter
 // sent, or null if nothing was sent within the wait window.
-async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceId: 'a', path: '/Users/loie/repo/alpha', title: 'Alpha' }], homeDir = '/Users/loie' }) {
+async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceId: 'a', path: '/Users/loie/repo/alpha', title: 'Alpha' }], homeDir = '/Users/loie', storeProjectRoot, dshHome: dshHomeOpt }) {
   const http = require('node:http');
 
+  // Mock dsh web: workspace.list (with per-workspace sessionIds) + session.list.
   const wsSrv = await new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
       let body = '';
@@ -61,8 +62,24 @@ async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceI
         let rpcId = '';
         try { rpcId = JSON.parse(body).rpcId || ''; } catch { /* ignore */ }
         res.writeHead(200, { 'content-type': 'application/json' });
-        if (String(req.url || '').includes('/api/workspace.list')) {
-          res.end(JSON.stringify({ rpcId, result: { ok: true, value: { items: workspaces, archivedSessionIds: [] } } }));
+        const url = String(req.url || '');
+        if (url.includes('/api/workspace.list')) {
+          const items = workspaces.map((w) => ({
+            workspaceId: w.workspaceId || w.id || w.path,
+            path: w.path,
+            title: w.title || w.name || w.path,
+            sessionIds: sessions.filter((s) => (s.projectRoot || s.path) === w.path).map((s) => s.sessionId || s.id),
+          }));
+          res.end(JSON.stringify({ rpcId, result: { ok: true, value: { items, archivedSessionIds: [] } } }));
+        } else if (url.includes('/api/session.list')) {
+          const items = sessions.map((s) => ({
+            sessionId: s.sessionId || s.id,
+            updatedAt: s.updatedAt || 0,
+            running: false,
+            cwd: s.projectRoot || s.path,
+            projections: { values: { title: s.name || null } },
+          }));
+          res.end(JSON.stringify({ rpcId, result: { ok: true, value: { items } } }));
         } else {
           res.end(JSON.stringify({ rpcId, result: { ok: true, value: null } }));
         }
@@ -71,14 +88,9 @@ async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceI
     srv.listen(0, '127.0.0.1', () => resolve({ srv, port: srv.address().port }));
   });
 
-  const dshHome = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-run-'));
+  const dshHome = dshHomeOpt || fs.mkdtempSync(path.join(os.tmpdir(), 'chan-run-'));
   saveChannelAccount('wx-q', { botToken: 'bt', baseUrl: 'https://x' }, dshHome);
-  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-pr-'));
-  if (sessions.length) {
-    const dir = path.join(projectRoot, '.dsh', 'channels');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'wx-q.sessions.json'), JSON.stringify({ version: 1, sessions }, null, 2));
-  }
+  const projectRoot = storeProjectRoot || fs.mkdtempSync(path.join(os.tmpdir(), 'chan-pr-'));
 
   let sent = null;
   let first = true;
@@ -118,16 +130,71 @@ async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceI
 test('channel-runner: #w1 quick command sets current project', async () => {
   const sent = await runQuickCommand({ text: '#w1' });
   assert.ok(sent, 'expected a reply');
-  assert.match(sent, /已切换到项目/);
-  assert.match(sent, /#w1 \(Alpha\): ~\/repo\/alpha/);
+  assert.match(sent, /已切换到工作区/);
+  assert.match(sent, /#w1 \(Alpha\), ~\/repo\/alpha/);
 });
 
 test('channel-runner: #s1 quick command sets current session', async () => {
+  // projectRoot must equal the seeded session's workspace so currentSessions()
+  // (sourced from dsh web session.list) finds it.
   const sent = await runQuickCommand({
     text: '#s1',
+    storeProjectRoot: '/Users/loie/repo/alpha',
     sessions: [{ conversationId: 'u-9', sessionId: 'sess-1', projectRoot: '/Users/loie/repo/alpha', name: '会话甲', createdAt: 1, updatedAt: 1 }],
   });
   assert.ok(sent, 'expected a reply');
-  assert.match(sent, /已切换会话/);
-  assert.match(sent, /#s1 \(会话甲\)/);
+  assert.match(sent, /已切换到会话/);
+  assert.match(sent, /#s1 \(sess-1\), 会话甲/);
+});
+
+test('channel-runner: quick command still replies when the store projectRoot is unwritable (best-effort persistence)', async () => {
+  // Reproduces the app-hosted runner where no project is bound yet and
+  // projectRoot fell back to an unwritable cwd — a write failure must not
+  // swallow the #w1 reply.
+  const sent = await runQuickCommand({ text: '#w1', storeProjectRoot: '/root' });
+  assert.ok(sent, 'expected a reply even with an unwritable store root');
+  assert.match(sent, /已切换到工作区/);
+  assert.match(sent, /#w1 \(Alpha\), ~\/repo\/alpha/);
+});
+
+test('channel-runner: #w1 persists lastWorkspace to channel-global state (restored on restart)', async () => {
+  const { channelStatePath, loadChannelState } = require('../lib/channel-store');
+  const dshHome = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-st-'));
+  const s1 = await runQuickCommand({ text: '#w1', dshHome });
+  assert.ok(s1 && /已切换到工作区/.test(s1), 'expected #w1 to reply');
+  // lastWorkspace was written to the channel-global state file, not a project .dsh
+  assert.ok(fs.existsSync(channelStatePath('wx-q', dshHome)), 'global state file must exist');
+  const state = loadChannelState('wx-q', dshHome);
+  assert.ok(state.lastWorkspace, 'state must hold lastWorkspace');
+  assert.equal(state.lastWorkspace.code, 'w1');
+  assert.equal(state.lastWorkspace.projectRoot, '/Users/loie/repo/alpha');
+});
+
+test('channel-runner: connection state is persisted to channel-global state', async () => {
+  const { loadChannelState } = require('../lib/channel-store');
+  const dshHome = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-st2-'));
+  // after start() the adapter connects and onState persists connected to the state file
+  const sent = await runQuickCommand({ text: '#w1', dshHome });
+  assert.ok(sent, 'expected a reply');
+  const st = loadChannelState('wx-q', dshHome);
+  assert.equal(st.state, 'connected');
+  assert.equal(st.connected, true);
+});
+
+test('channel-store: runtime store restores lastWorkspace + active session + conversation mapping on restart', () => {
+  const { createChannelRuntimeStore } = require('../lib/channel-store');
+  const dshHome = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-rs-'));
+  // "first run": set all channel-scoped state
+  const a = createChannelRuntimeStore({ channelId: 'wx-rs', dshHome });
+  a.setLastWorkspace({ code: 'w2', name: 'Beta', projectRoot: '/p/beta' });
+  a.setSession('conv-9', { sessionId: 'sess-9', projectRoot: '/p/beta', name: '会话九' });
+  a.setActiveSession({ sessionId: 'sess-9', projectRoot: '/p/beta', name: '会话九' });
+  // "restart": a fresh store on the same channel reads the same channel state
+  const b = createChannelRuntimeStore({ channelId: 'wx-rs', dshHome });
+  assert.equal(b.getLastWorkspace().code, 'w2');
+  assert.equal(b.getLastWorkspace().projectRoot, '/p/beta');
+  assert.equal(b.getSession('conv-9').sessionId, 'sess-9');
+  assert.equal(b.getSession('conv-9').name, '会话九');
+  assert.equal(b.getActiveSession().sessionId, 'sess-9');
+  assert.equal(b.listSessions().length, 1);
 });
