@@ -1,8 +1,7 @@
 ---
 name: issue-resolve
 description: 在当前会话中修复一个 GitHub issue（读 issue → 改代码 → 跑测试 → 提交推送 → 汇报）。Fix a GitHub issue in the current session (read issue → change code → run tests → commit & push → report).
-modelInvocable: true
-userInvocable: false
+user-invocable: false
 ---
 
 # issue-resolve — 按 GitHub issue 完成修复并提交推送

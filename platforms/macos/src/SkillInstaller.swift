@@ -12,7 +12,7 @@
 import Foundation
 
 /// The three built-in skills shipped by oh-my-dsh.
-enum BuiltinSkill: CaseIterable, Equatable {
+enum BuiltinSkill: CaseIterable {
 
     case webDevTools
     case repoKnowledge
@@ -47,7 +47,6 @@ enum BuiltinSkill: CaseIterable, Equatable {
     ---
     name: web-dev-tools
     description: 驱动 oh-my-dsh 壳层的「浏览器」面板排查网页问题（打开页面、读 console/网络日志、执行 JS、截图）。Drive the oh-my-dsh shell's Browser panel to troubleshoot web pages (open pages, read console/network logs, run JS, take screenshots).
-    modelInvocable: true
     ---
     
     # web-dev-tools — 用 oh-my-dsh 浏览器面板排查网页问题
@@ -121,8 +120,7 @@ enum BuiltinSkill: CaseIterable, Equatable {
     ---
     name: repo-knowledge
     description: 为当前仓库生成/维护 .dsh/wiki/ 知识库（初始生成、增量更新、重建 index、陈旧标记）。Generate / maintain the .dsh/wiki/ knowledge base for the current repository (initial generation, incremental update, index rebuild, staleness marking).
-    modelInvocable: true
-    userInvocable: false
+    user-invocable: false
     ---
     
     # repo-knowledge — 仓库知识库生成/维护
@@ -170,8 +168,7 @@ enum BuiltinSkill: CaseIterable, Equatable {
     ---
     name: issue-resolve
     description: 在当前会话中修复一个 GitHub issue（读 issue → 改代码 → 跑测试 → 提交推送 → 汇报）。Fix a GitHub issue in the current session (read issue → change code → run tests → commit & push → report).
-    modelInvocable: true
-    userInvocable: false
+    user-invocable: false
     ---
     
     # issue-resolve — 按 GitHub issue 完成修复并提交推送
@@ -261,8 +258,7 @@ enum SkillInstaller {
                 try fm.createDirectory(atPath: skillsDir, withIntermediateDirectories: true)
                 try fm.moveItem(atPath: oldDir, toPath: newDir)
                 AppLog.shared.log("skill migrate: " + legacy + " -> " + skill.dirName)
-                // Take ownership of the migrated copy: mark it app-managed, then let
-                // ensure() refresh it to the current content if it differs.
+                // Take ownership of the migrated copy: mark app-managed so ensure() refreshes it.
                 writeManagedMarker((newDir as NSString).appendingPathComponent(managedMarker))
                 _ = ensure(skill: skill, home: home)   // refresh content + marker
             } catch {

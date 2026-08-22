@@ -1,8 +1,7 @@
 ---
 name: repo-knowledge
 description: 为当前仓库生成/维护 .dsh/wiki/ 知识库（初始生成、增量更新、重建 index、陈旧标记）。Generate / maintain the .dsh/wiki/ knowledge base for the current repository (initial generation, incremental update, index rebuild, staleness marking).
-modelInvocable: true
-userInvocable: false
+user-invocable: false
 ---
 
 # repo-knowledge — 仓库知识库生成/维护

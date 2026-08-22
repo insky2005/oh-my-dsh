@@ -152,7 +152,7 @@ POSIX socket 极简 HTTP/1.1 服务（127.0.0.1，默认 **3081**，`DSH_BROWSER
 
 ### 子系统 5：Agent 技能（`web-dev-tools`，App 启动时安装到全局 `$DSH_HOME/skills/web-dev-tools/SKILL.md`）
 
-仿 `issue-resolve` 技能格式（frontmatter: name/description/modelInvocable）：端口发现（读 `~/.dsh/browser-api.port` 或默认 3081）；标准排查工作流：`open` 页面 → 轮询 `status` 直到 `!loading`（带超时）→ 读 `console`/`network`（failedOnly 过滤）→ `eval` 取 DOM/JS 状态 → `screenshot` 存工作区 → 视觉读图 → 汇报；明确可用性前提与安全边界（仅本机、eval 可读页面）。
+仿 `issue-resolve` 技能格式（frontmatter: name/description；model 默认可调用，web-dev-tools 同时 user 可调用）：端口发现（读 `~/.dsh/browser-api.port` 或默认 3081）；标准排查工作流：`open` 页面 → 轮询 `status` 直到 `!loading`（带超时）→ 读 `console`/`network`（failedOnly 过滤）→ `eval` 取 DOM/JS 状态 → `screenshot` 存工作区 → 视觉读图 → 汇报；明确可用性前提与安全边界（仅本机、eval 可读页面）。
 
 ### 子系统 6：测试（新增 `tests/browser-panel/`，仿 wiki-panel 无头模式）
 

@@ -234,8 +234,7 @@ manual: false                       # true = 用户手改，代理永不覆盖�
 ---
 name: repo-knowledge
 description: 为当前仓库生成/增量维护 .dsh/wiki/ 知识库（初始生成、增量更新、重建 index）
-modelInvocable: true
-userInvocable: false
+user-invocable: false
 ---
 （正文：生成流程、页面规范、frontmatter 规则、脱敏规则、覆盖规则、字数/页数上限）
 ```

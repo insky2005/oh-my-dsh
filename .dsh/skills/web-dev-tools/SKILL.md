@@ -1,7 +1,6 @@
 ---
 name: web-dev-tools
 description: 驱动 oh-my-dsh 壳层的「浏览器」面板排查网页问题（打开页面、读 console/网络日志、执行 JS、截图）。Drive the oh-my-dsh shell's Browser panel to troubleshoot web pages (open pages, read console/network logs, run JS, take screenshots).
-modelInvocable: true
 ---
 
 # web-dev-tools — 用 oh-my-dsh 浏览器面板排查网页问题

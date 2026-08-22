@@ -9,6 +9,7 @@ All notable changes to this project are documented in this file. Format follows
 
 - **macOS 源码清单单一事实来源**：新增 `platforms/macos/swift-sources.sh`（glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，排除独立工具 `MakeIcon.swift`）；`build-app.sh` / `scripts/local-ci.sh` / `ci.yml` 三方共用，新增 Swift 文件不再需要逐个登记，彻底消除「新增文件遗漏 local-ci.sh」的问题。
 - **内置 Skill 全局化 + 重命名**：三个面板配套 Skill 改为 **App 启动时安装到全局 `$DSH_HOME/skills/`**（缺失即装、App 托管下内容不一致自动覆盖更新、用户改过不覆盖），并重命名为 `web-dev-tools`（浏览器面板）/ `repo-knowledge`（Repo Wiki 面板）/ `issue-resolve`（IssueRunner 面板）；启动时自动把旧名 `shell-browser`/`repo-wiki`/`issue-fix` 迁移到新名；移除面板「按仓库安装」逻辑；新增 `tests/skills/` 无头单测（含内嵌 SKILL.md 与仓库副本字节一致断言）。
+  - **frontmatter 用合法键**：`modelInvocable`/`userInvocable`（驼峰）是 dsh 弃用键会导致 skill 被忽略，已改为省略（默认 model 可调用）+ `user-invocable: false`（kebab）表达「仅 model 可调用」；`web-dev-tools` 为 model+user 双可调用。
 - **单实例约束（修复双实例争抢 CEF profile）**：App 启动时按 bundle id 检测是否已有其他实例在跑，若有则聚焦已有实例并立即退出，避免两个副本共用 `~/.dsh/browser` 导致 Chromium 异常退出（`Chromium didn't shut down correctly.`）。
 - **开发版构建支持**：构建时 `DSH_DEV_BUILD=1` 打包开发版（Info.plist 写入 `DSHDevBuild=1`），或直接 `./scripts/local-ci.sh dev`（等价 full，但 build 用 `DSH_DEV_BUILD=1`）；开发版运行时自动使用独立 CEF profile（`~/.dsh/browser-dev`）并跳过单实例退出，可与已安装正式版并存测试；未来如需隔离端口/channel 等资源，在 `main.swift` 的 `isDevBuild` 覆盖处快速追加。
 
