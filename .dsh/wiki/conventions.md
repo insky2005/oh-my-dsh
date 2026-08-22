@@ -1,8 +1,8 @@
 ---
 title: 工程约定
 tags: [conventions, l10n, build, qa-hooks, versioning]
-updated: 2026-08-22T05:54:00Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/channel-issues.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-ci.sh, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-wiki/SKILL.md]
+updated: 2026-08-22T15:04:38Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/channel-issues.md, docs/builtin-skills-design.md, docs/release-process.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-ci.sh, scripts/github-publish.sh, tests/skills/, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-knowledge/SKILL.md]
 manual: false
 ---
 
@@ -23,10 +23,10 @@ manual: false
 
 ## 构建与代码组织
 
-- 编译：`swiftc -O -swift-version 5`，frameworks 为 AppKit/WebKit/PDFKit；**编译源文件清单显式写在 `platforms/macos/build-app.sh`**（`scripts/local-ci.sh` 的 swiftc 编译检查清单需同步），新增 `.swift` 文件必须登记（`feature/file-panel` 追加 `FilePanel.swift`、`CodeEditorView.swift` 与 `vendor/Highlightr/*.swift`；`feature/channel` 追加 `ChannelPanel.swift`——3e69783 曾修复 local-ci 漏登导致的 `ChannelPanelController 未定义`）；
+- 编译：`swiftc -O -swift-version 5`，frameworks 为 AppKit/WebKit/PDFKit；**macOS 编译源文件清单单一事实来源 `platforms/macos/swift-sources.sh`**（glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，排除独立工具 `MakeIcon.swift`），`platforms/macos/build-app.sh` / `scripts/local-ci.sh` / `.github/workflows/ci.yml` 三方共用——新增 `.swift` 文件**不再需要逐个登记**（根治了此前 `feature/channel` 追加 `ChannelPanel.swift` 曾漏登 local-ci 导致的 `ChannelPanelController 未定义`、3e69783 修复的历史问题）；
 - `module-cache-path` 固定在 `.build/module-cache`（沙箱/环境问题规避）；
 - 图标：`MakeIcon.swift` 程序化渲染（16…1024px 全尺寸）→ `iconutil -c icns`，不提交二进制图；
-- 版本号单一来源：`scripts/version.sh`（HEAD 命中 git tag vX.Y.Z → VERSION 取 tag，否则回退 1.11.0；BUILD 取 CI 运行号，本地回退 67）；`platforms/macos/build-app.sh` 运行期读取，**勿在脚本硬编码版本**；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`platforms/macos/make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；
+- 版本号单一来源：`scripts/version.sh`（HEAD 命中 git tag vX.Y.Z → VERSION 取 tag，否则回退 1.13.0；BUILD 取 CI 运行号，本地回退 69）；`platforms/macos/build-app.sh` 运行期读取，**勿在脚本硬编码版本**；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`platforms/macos/make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；
 - **fallback 推进规则**（`docs/productization.md`）：每次发布打 tag 后立即把 `FALLBACK_VERSION` 推进到**下一个 minor**（发布 v1.9.0 → fallback 1.10.0），开发期构建永远显示「下一个未发布版本」；CI 打 tag 的 job 用 tag 版本（HEAD 命中时优先）；
 - `git status` 应只出现源码/文档变更：`.build/` `.cache/` `dist/` `pic/` `.DS_Store` 均在 `.gitignore`；`.dsh/tasks/local.json`（本机会话覆盖）也忽略——**`index.json` 随仓库提交**（任务关联共享，见 [data-model](data-model.md)）；channel 消息/会话文件（`**/.dsh/channels/*.messages.json`、`*.sessions.json`，含用户聊天内容）gitignore——引用配置 `.dsh/channels.json` 按 docs/channel-storage.md 应随仓库提交（当前旧路径文件仍未跟踪，迁移待办）。
 
@@ -35,8 +35,8 @@ manual: false
 - **main 只合并、只打主版本**：main 是唯一稳定主干，只接受合并；只打主版本 tag `vX.Y.0`；禁止在 main 上直接提交功能/修复代码（维护者例外：fallback 推进、文档）与 patch tag；
 - **功能走 `feature/<slug>`、未发布 bug 走 `fix/<slug>`**：从 main 切 → 开发 → **PR 合并回 main**（禁止直接 `git push origin main`）→ 随下一个主版本发布；
 - **已发布版本的 bug 走 `release/X.Y`**：从已发布 tag 切维护分支 → 修复 → 打 patch tag `vX.Y.Z`（如 v1.9.1）发布 → **PR**（`fix/sync-X.Y.Z` 分支 cherry-pick）把修复同步回 main；辅助脚本 `scripts/release-fix.sh <base-tag> <patch-version> [branch]`（校验 tag/版本号格式 → 切分支 → 打 patch tag → 推送触发 release.yml → 提示 PR 回 main）；
-- **push 远端名检测统一用 `scripts/git-remote.sh`**：优先名为 `github`，其次 `origin`，否则第一个 remote（release-fix.sh 与 issue-fix skill 共用，不再硬编码 origin）；IssueRunner 面板的 `pushRemoteName` 同规则；
-- **版本支持策略**：维护最近 2 个大版本（如 1.9.x / 1.10.x），更旧支持线在次新主版本稳定后清理。
+- **push 远端名检测统一用 `scripts/git-remote.sh`**：优先名为 `github`，其次 `origin`，否则第一个 remote（release-fix.sh 与 issue-resolve skill 共用，不再硬编码 origin）；IssueRunner 面板的 `pushRemoteName` 同规则；
+- **版本支持策略**：维护最近 2 个大版本；主版本（vX.Y.0）发布时同步更新 `SECURITY.md` ## Supported Versions（新版本进表、最老出表、EOL 边界上移；patch 版本表不变跳过），见 [tasks](tasks.md)。
 
 ## 面板 UI 约定
 
@@ -64,10 +64,18 @@ manual: false
 ## 测试约定
 
 - 共享核心单测走 Node：`node --test core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，148 用例，2026-08-22 实测全绿）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
-- CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + `tests/browser-panel/run.sh` + 全源码 `swiftc` 编译检查（先 `mkdir -p .build/module-cache`）；编译检查清单含 `IssueRunnerPanel.swift`（f4ed4ff 起——曾漏文件导致 main.swift 引用编译失败，CI 失败根因）与 `BrowserPanel.swift`/`BrowserAPI.swift`；构建矩阵为 arm64（x86_64 交叉编译由 release.yml 打 tag 时构建，产品不再出 universal），**不再使用退役中的 macos-13/x86_64 runner**；
+- CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + `tests/browser-panel/run.sh` + `tests/skills/run.sh`（内置 skill 安装器）+ 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh` 单一来源，先 `mkdir -p .build/module-cache`）；编译检查清单含 `IssueRunnerPanel.swift`（f4ed4ff 起——曾漏文件导致 main.swift 引用编译失败，CI 失败根因）与 `BrowserPanel.swift`/`BrowserAPI.swift`；构建矩阵为 arm64（x86_64 交叉编译由 release.yml 打 tag 时构建，产品不再出 universal），**不再使用退役中的 macos-13/x86_64 runner**；
 - 面板/壳层 Swift 无头单测模式（`tests/*/run.sh`）：`stubs.swift` + 把被测源码复制进临时目录 + 测试文件改名 `main.swift`（顶层代码需要）→ `swiftc` 编译运行，无窗口/无 PTY 依赖；
 - 终端模拟器测试不触 PTY（沙箱可能禁 `/dev/ptmx`），已迁 `core/tests/ansi.test.js`（42 项），`tests/terminal-emulator/run.sh` 为薄封装；
 - 新增面板需配套模型层单测（如 `tests/wiki-panel/`）。
+
+## 内置 Skill 与启动约束（v1.13.0）
+
+- **内置 Skill 全局化**（`SkillInstaller.swift`，设计 `docs/builtin-skills-design.md`）：三个面板配套 skill 改由 **App 启动时安装到全局 `$DSH_HOME/skills/`**（dsh user-dsh 根，rank 400），任何 workspace 可发现；缺失即装、受管（`.ohmy-dsh-managed` 标记）下内容不一致自动覆盖、用户改过不覆盖、旧名自动迁移；面板「按仓库安装」逻辑已移除（`WikiSkill.ensureInstalled` / `ensureIssueFixSkillInstalled` 删除），唯一事实来源是 `SkillInstaller.swift` 内嵌常量 + 仓库 `.dsh/skills/{web-dev-tools,repo-knowledge,issue-resolve}/SKILL.md`（字节一致，有测试断言）；
+- **skill frontmatter 用合法键**：省略弃用的驼峰键（`modelInvocable`/`userInvocable` 会导致 dsh 忽略该 skill），用 kebab 键 `user-invocable: false` 表「仅 model 可调用」；
+- **skill 命名**：统一「领域词-能力词」双段 kebab（如 `web-dev-tools`/`repo-knowledge`/`issue-resolve`），符合 dsh 命名约束；
+- **单实例约束**：App 启动按 bundle id 检测已有实例，有则聚焦并退出——两个副本共用 CEF profile（`~/.dsh/browser`）会互相异常终止（「Chromium didn't shut down correctly.」）；
+- **开发版构建**：`DSH_DEV_BUILD=1`（或 `scripts/local-ci.sh dev`）打包 Info.plist 写 `DSHDevBuild=1`——运行时 `isDevBuild` 用独立 CEF profile（`~/.dsh/browser-dev`）并跳过单实例退出，可与已安装正式版并存测试；未来隔离端口/channel 等资源也在 `main.swift` 的 `isDevBuild` 覆盖处快速追加。
 
 ## 日志约定
 
@@ -78,5 +86,5 @@ manual: false
 - 只写可从代码/文档证实的事实，不确定标注「待确认」，禁止编造；
 - 脱敏：跳过 `.env*`/密钥/口令/个人数据，示例一律占位符；
 - 增量更新用 `git status` + mtime 定位变更面，只重写 `sources` 命中变更的页面，未变页面**字节不变**（便于 git diff 审查）；
-- 生成/更新完成后由维护代理执行 `git add .dsh/wiki` + commit（**不 push**），commit message 由代理概括实际变更——提交步骤按用户指令/维护约定执行（repo-wiki skill 现行规则已不含提交步骤，末条为汇报）；若代理未提交，面板 `WikiAutoCommit` **兜底**提交（同样不 push），提交失败仅记日志不打扰用户；
+- 生成/更新完成后由维护代理执行 `git add .dsh/wiki` + commit（**不 push**），commit message 由代理概括实际变更——提交步骤按用户指令/维护约定执行（repo-knowledge skill 现行规则已不含提交步骤，末条为汇报）；若代理未提交，面板 `WikiAutoCommit` **兜底**提交（同样不 push），提交失败仅记日志不打扰用户；
 - 完成后刷新 `index.md` 统计与最后生成时间。

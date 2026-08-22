@@ -65,7 +65,7 @@ POST /api/session.list
 
 ## Wiki 页面数据格式（frontmatter）
 
-每页 YAML frontmatter（`docs/repo-wiki-design.md` §4.3 规范 + `.dsh/skills/repo-wiki/SKILL.md`）：
+每页 YAML frontmatter（`docs/repo-wiki-design.md` §4.3 规范 + `.dsh/skills/repo-knowledge/SKILL.md`）：
 
 ```yaml
 ---

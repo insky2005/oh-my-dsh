@@ -1,8 +1,8 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-08-22T05:54:00Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
+updated: 2026-08-22T15:04:38Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
 manual: false
 ---
 
@@ -18,6 +18,18 @@ manual: false
 - 产物：`dist/oh-my-dsh.app`（arm64、ad-hoc 签名、含内置运行时 + `runtime/core` 共享核心）；
 - 常见失败：网络不可达 → 有缓存 tarball 会自动推导版本继续；`swiftc` 报错 → 检查新增文件是否登记进编译清单（第 3 步）；
 - 重新构建会清掉旧包（`rm -rf "$BUILD_DIR" "$APP"`），`platforms/macos/make-pkg.sh` 依赖已构建的 `.app`。
+
+
+## 构建开发版（与正式版并存测试）
+
+```bash
+DSH_DEV_BUILD=1 ./platforms/macos/build-app.sh     # Info.plist 写 DSHDevBuild=1
+./scripts/local-ci.sh dev                          # 等价 full，但 build 用 DSH_DEV_BUILD=1
+```
+
+- 开发版运行时（`isDevBuild`）：CEF 用**独立 profile** `~/.dsh/browser-dev`（与正式版 `~/.dsh/browser` 隔离，不争抢）、**跳过单实例退出**——可与已安装正式版并存；
+- 未来需隔离端口 / channel runner 等资源时，在 `main.swift` 的 `isDevBuild` 覆盖处快速追加；
+- 单实例约束：正式版启动时若已有同 bundle id 实例在跑 → 聚焦它并立即退出（防双实例争抢 CEF profile 致 Chromium 异常退出「Chromium didn't shut down correctly.」）。
 
 ## 打包安装包（.pkg / .dmg）
 
@@ -41,6 +53,7 @@ open "dist/oh-my-dsh.app"
 node --test core/tests/*.test.js  # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，148 用例；不带引号由 bash 展开 glob，Node 20 兼容）
 tests/terminal-emulator/run.sh      # 模拟器测试（core/tests/ansi.test.js 的薄封装）
 tests/wiki-panel/run.sh             # Repo Wiki 模型层
+tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
 ```
 
 - 均无窗口依赖，可在纯命令行环境运行；失败即非零退出（`set -euo pipefail`）；
@@ -50,7 +63,7 @@ tests/wiki-panel/run.sh             # Repo Wiki 模型层
 
 1. 新建 `platforms/macos/src/<Panel>.swift`，实现 `PanelController`（复用 `HoverButton`/`DynamicFillView`/`CustomIconButton`）；
 2. `platforms/macos/src/main.swift`：`RightPanel` 枚举加 case；`buildSplitView` 里创建 controller（`onRequestHide` + `serverPortProvider`）；活动栏加 `ActivityBarButton`；`activePanelView`/`setRightPanel` 分发；「视图」菜单加切换项（如 `⌥⌘X`）；`rightPanelKind` 持久化映射；
-3. `platforms/macos/build-app.sh`：编译清单加入新文件（版本走 git tag + `scripts/version.sh`，勿手改）；
+3. 新增 `.swift` 文件**无需登记**（`platforms/macos/swift-sources.sh` 单一事实来源，glob 自动收录；版本走 git tag + `scripts/version.sh`，勿手改）；
 4. `L10n.table` 加中英文案键；README 特性说明；
 5. 配套无头单测（仿 `tests/wiki-panel/`：`stubs.swift` + `run.sh`）。
 
@@ -84,6 +97,7 @@ tests/wiki-panel/run.sh             # Repo Wiki 模型层
 
 **主版本（vX.Y.0）**：
 
+0. **更新发布文档**：`CHANGELOG.md`（必须用 `scripts/changelog.sh <上个tag>` 生成清单并 curate 进 `[Unreleased]`）+ **检查 `README.md`/`CONTRIBUTING.md` 覆盖本次发布内容**（新面板/特性/测试清单不遗漏）+ **主版本同步 `SECURITY.md` ## Supported Versions**（维护最近 2 个大版本：新版本进表、最老出表、EOL 边界上移；patch 版本支持表不变跳过）→ 同 commit（保证 tag 指向完整发布文档）；
 1. 版本确认：main 上 HEAD 打 git tag vX.Y.0（`scripts/version.sh` 输出 VERSION/BUILD；`local-release.sh`/CI 均要求 HEAD 恰在 tag 上，版本单一来源 git tag）；
 2. `./platforms/macos/build-app.sh` 全量构建 → `open dist/oh-my-dsh.app` 手工 QA（README 特性逐项过）；
 3. `tests/*/run.sh` 全绿；
@@ -91,7 +105,9 @@ tests/wiki-panel/run.sh             # Repo Wiki 模型层
    - 本机：`scripts/local-release.sh`（两架构）或 `scripts/local-release.sh pack`（只打包不发布）；自动读 version.sh、做 SHA-256SUMS、发布 GitHub Release；
    - 或 CI：push `v*` tag 触发 release.yml（见下）；
 5. 提交时检查 `git status`：只含源码/文档/wiki 变更（.build/.cache/dist/pic 已忽略）；
-6. 发布后**立即**把 `scripts/version.sh` 的 `FALLBACK_VERSION` 推进到下一个 minor（发布 v1.9.0 → 1.10.0）。
+6. 发布后**立即**把 `scripts/version.sh` 的 `FALLBACK_VERSION`/`FALLBACK_BUILD` 推进到下一个 minor（发布 v1.12.0 → fallback `1.13.0`/69），并更新 CHANGELOG 顶部 `[Unreleased]` 占位，单 commit。
+
+**发布已知坑（v1.12.0 实战校准，见 `docs/release-process.md`）**：tag 推送会触发 CI release.yml，而 CI 的 **CEF prepare 前置 job 当前是坏的**（GitHub runner 上从 cef-builds.spotifycdn.com 下载超时，连续两代 Release run 挂死、publish job 被跳过）——**发布以本地 `local-release.sh` 为准**，CI 失败 run 直接忽略（暂不修复）；上传约 1.1GB 资产慢网耗时 1–2h+，`github-publish.sh` 已幂等化（release 已存在则复用只补传缺失资产 + 逐资产进度输出），中断可直接重跑；**发布统一走 curl API、暂不使用 gh CLI**（gh 分支保留为自动检测兜底）；DMG 构建必须 `danger-full-access` 沙箱（hdiutil 需访问 /dev）。
 
 **已发布版本的 patch 修复（vX.Y.Z）**：用 `scripts/release-fix.sh <base-tag> <patch-version> [branch]`（如 `scripts/release-fix.sh v1.9.0 1.9.1`）——从 base tag 切 `release/1.9` 维护分支 → 提交修复 → 打 patch tag 推送（触发 release.yml 发布）→ 手动 cherry-pick 到 `fix/sync-1.9.1` 分支并 **PR 回 main**（不直接 push main）；push 远端名由 `scripts/git-remote.sh` 检测（github > origin > 首个 remote）。
 

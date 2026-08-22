@@ -1,8 +1,8 @@
 ---
 title: 模块：任务面板（IssueRunner）
 tags: [module, tasks, github, issue, queue, index]
-updated: 2026-08-17T03:52:05Z
-sources: [platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/tests/issues.test.js, .dsh/skills/issue-fix/SKILL.md, docs/issue-runner-design.md, docs/git-workflow.md]
+updated: 2026-08-22T15:04:38Z
+sources: [platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/tests/issues.test.js, .dsh/skills/issue-resolve/SKILL.md, docs/issue-runner-design.md, docs/git-workflow.md]
 manual: false
 ---
 
@@ -10,7 +10,7 @@ manual: false
 
 ## 一句话
 
-由 GitHub issue 驱动的工作面板：识别当前工作区仓库 → 列出 open issues → 单击行**行内展开详情**（手风琴：状态/标签/分支/PR/错误 + issue 正文，滚动区 + 固定底部按钮），点明确按钮「处理」（或「全部处理」串行）→ 自动「切分支 → dsh 会话 → issue-fix skill 修复 → 推送 → 开 PR」，全程串行、可追溯、重启可恢复。
+由 GitHub issue 驱动的工作面板：识别当前工作区仓库 → 列出 open issues → 单击行**行内展开详情**（手风琴：状态/标签/分支/PR/错误 + issue 正文，滚动区 + 固定底部按钮），点明确按钮「处理」（或「全部处理」串行）→ 自动「切分支 → dsh 会话 → issue-resolve skill 修复 → 推送 → 开 PR」，全程串行、可追溯、重启可恢复。
 
 ## 方案要点（方案 E：branch-based 串行队列）
 
@@ -27,14 +27,14 @@ manual: false
   - **评论并关闭（63525e3，用户触发非自动）**：done 且有 PR 的任务展开区显示「评论并关闭 Issue」→ NSAlert 内嵌可编辑 NSTextView（预填 `tasks.commentTemplate`，含 PR 引用）→ 确认后 `commentAndCloseIssue`（POST `/issues/{n}/comments` + PATCH `/issues/{n}` state=closed，需 token）→ 成功记日志并 `reloadIssues`（关闭的 issue 从列表消失），失败状态条提示（3s 后消失）；
   - **仓库识别（13bf9e3 起工作区权威）**：`workspacePath`（活动项目目录，跟随用户当前查看的会话）**权威**——非空时若是 GitHub 仓库 → 显示其 issues；若不是（如 Ungrouped/非 git 会话 cwd）→ 诚实显示「当前工作区不是 GitHub 仓库」空态（`repo = nil` + 清空任务），**不再替换为其他已注册工作区**；仅当启动早期 `ProjectDirectory` 未解析（`workspacePath` 为空）才 `listWorkspacePaths(port:)` 从 dsh `workspace.list` 扫描第一个 GitHub 仓库，仍无则 1s 后重试（≤10 次，`repoResolveRetries`）；`applyRepo` 检测到工作区切换到**不同仓库**（owner/repo 变化）时先清空旧任务列表（issue 号按仓库归属），再恢复关联索引 + 重载 issues；成功后 `repoRootPath` 缓存，供索引写入与流水线使用；
   - issue 拉取：GitHub REST `/repos/{o}/{r}/issues?state=open`，**过滤 pull_request 条目**；cb13c97 起取 `body` 字段（issue 正文 markdown）供行内详情显示；公开仓库匿名，私有需 token（按仓库作用域解析，见下「GitHub token」）；
-  - 任务流水线：`git checkout main → pull → checkout -b <分支>`（`branchForIssue`：按 label 判定——含 feature/enhancement 类 → `feature/issue-N`，否则 bug/其他 → `fix/issue-N`，统一分支规范 `docs/git-workflow.md`）→ `session.create(workspaceId)` → `session.rename` → `session.prompt`(issue-fix, queue) → 轮询 `session.list` running → 校验 `git ls-remote` 分支已推送 → `POST /pulls` 创建 PR（head=分支、base=main，与 git-workflow「feature/fix 回 main 一律走 PR」一致）→ 状态 done(PR url) → 切回 main → 队列下一项；分支推送检查用 `pushRemoteName`——按 **github > origin > 首个 remote** 解析远程名（修复硬编码 origin，与 `scripts/git-remote.sh` 同一规则）；
+  - 任务流水线：`git checkout main → pull → checkout -b <分支>`（`branchForIssue`：按 label 判定——含 feature/enhancement 类 → `feature/issue-N`，否则 bug/其他 → `fix/issue-N`，统一分支规范 `docs/git-workflow.md`）→ `session.create(workspaceId)` → `session.rename` → `session.prompt`(issue-resolve, queue) → 轮询 `session.list` running → 校验 `git ls-remote` 分支已推送 → `POST /pulls` 创建 PR（head=分支、base=main，与 git-workflow「feature/fix 回 main 一律走 PR」一致）→ 状态 done(PR url) → 切回 main → 队列下一项；分支推送检查用 `pushRemoteName`——按 **github > origin > 首个 remote** 解析远程名（修复硬编码 origin，与 `scripts/git-remote.sh` 同一规则）；
   - **关联索引**：`TaskIndex`（Swift）把 issue→branch/state/title/startedAt 写入 `.dsh/tasks/index.json`（`mergeTask`，随仓库提交；startTask 起记录 title，6d265a5），会话创建后 `rememberSession` 把 sessionId 写入 `local.json`（本机、gitignore），done/failed 时更新 prUrl/error/finishedAt；App 重启后 `restoreFromIndex(repoRoot:)` 按两文件重建任务列表与 session 关联（不覆盖内存中已存在的同 issue），再以 open issues 刷新——`reloadIssues` 对已存在任务**更新 title/labels/body**（不再跳过，恢复的任务标题不再显示占位符，6d265a5）；
   - 串行：`runningNumber` 非空时其他「处理」禁用；「全部处理」依次入队；完成自动启动下一个 pending；
   - 失败/取消：会话失败/超时（30min）/未推送/PR 失败各有明确状态与错误提示；取消调 `session.cancel`；
 - `core/lib/issues.js`（Node）：`parseIssues`（过滤 PR、取 body）/`fetchIssues`/`createPullRequest`/`commentAndCloseIssue`（POST comments → 可选 PATCH close，分步报错 step: comment/close/comment-only）/`ghPatch`/`detectGitHubRemote`（git remote → owner/repo），零依赖（内置 https/child_process）；
 - `core/lib/jobqueue.js`（Node）：串行队列状态机 `createQueue()`（enqueue/peek/markRunning/complete/fail/cancel/retry/snapshot/removeFinished），`source` 字段即远程驱动预留；
 - `core/lib/tasks.js`（Node，37d27e8 新增，7 单测）：`.dsh/tasks/` 索引的纯 JSON I/O——`tasksDir`/`loadIndex`/`saveIndex`/`mergeTask`/`findTask`/`rememberSession`/`sessionForIssue`/`allLocalSessions`，与 Swift `TaskIndex` 结构一致（双实现，供未来平台复用）；
-- `.dsh/skills/issue-fix/SKILL.md`：代理任务会话加载的指令（读 issue → 改代码 → 跑测试 → commit `fix(#N): …` → push → 汇报；禁止新开顶层会话/改其他分支）；当前分支须为面板切好的 `feature/issue-N` 或 `fix/issue-N`（统一分支规范 `docs/git-workflow.md`），push 前先检测远端名（github > origin > 首个 remote）；commit 正文可附 `Closes #<N>`（PR 合并时自动关闭对应 issue，仅当修复关联 PR，63525e3 补充）。
+- **issue-resolve skill**（`SkillInstaller` 启动时全局安装到 `$DSH_HOME/skills/issue-resolve/`，仓库提交副本 `.dsh/skills/issue-resolve/SKILL.md`；原按仓库安装的 `ensureIssueFixSkillInstalled` 已移除）：代理任务会话加载的指令（读 issue → 改代码 → 跑测试 → commit `fix(#N): …` → push → 汇报；禁止新开顶层会话/改其他分支）；当前分支须为面板切好的 `feature/issue-N` 或 `fix/issue-N`（统一分支规范 `docs/git-workflow.md`），push 前先检测远端名（github > origin > 首个 remote）；commit 正文可附 `Closes #<N>`（PR 合并时自动关闭对应 issue，仅当修复关联 PR，63525e3 补充）。
 
 ## GitHub token（按仓库作用域）
 

@@ -12,7 +12,7 @@ manual: false
 
 把外部消息平台（当前实现：微信 ClawBot / 官方 iLink 协议）接入壳层：微信**扫码登录 → 长轮询收消息 → 斜杠指令 / #tag 路由 → 驱动 dsh 会话 → 回复回微信**。设计遵循「统一协议 + 平台适配器」（docs/channel-design.md）：平台差异收敛到适配器层，路由/状态机/会话驱动一律平台无关、放 `core/`（Node），macOS 面板只做配置 UI 与状态展示，为后续钉钉/飞书适配器（M4）预留。
 
-2026-08-22 已随 **PR #23（feature/channel）合并进 main**（HEAD 9829f65）；README 未收录，设计/指令/完成状态/存储/问题排查见 `docs/channel-*.md`。
+2026-08-22 已随 **PR #23（feature/channel）合并进 main**（其后 main 已演进，当前 HEAD `e0fd1f8` = PR #27）；README 未收录，设计/指令/完成状态/存储/问题排查见 `docs/channel-*.md`。
 
 ## core 层（平台无关，Node）
 

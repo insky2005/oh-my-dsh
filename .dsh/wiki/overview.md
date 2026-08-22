@@ -1,8 +1,8 @@
 ---
 title: 仓库概览
 tags: [overview, tech-stack, build, run, test]
-updated: 2026-08-22T05:54:00Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/build-cef.sh, platforms/macos/make-pkg.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/MakeIcon.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-runner.js, core/tests/issues.test.js, core/tests/channel-runner.test.js, docs/productization.md, docs/git-workflow.md, docs/channel-design.md, docs/channel-status.md, docs/plans/PREVIEW_PLAN-file-panel.md, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, Jenkinsfile, .github/workflows/, tests/wiki-panel/run.sh]
+updated: 2026-08-22T15:04:38Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/src/SkillInstaller.swift, docs/builtin-skills-design.md, platforms/macos/build-cef.sh, platforms/macos/make-pkg.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/MakeIcon.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-runner.js, core/tests/issues.test.js, core/tests/channel-runner.test.js, docs/productization.md, docs/git-workflow.md, docs/channel-design.md, docs/channel-status.md, docs/plans/PREVIEW_PLAN-file-panel.md, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, Jenkinsfile, .github/workflows/, tests/wiki-panel/run.sh]
 manual: false
 ---
 
@@ -27,7 +27,7 @@ oh-my-dsh 是 DeepSeek Harness 的 **macOS 原生壳**：把 `dsh web`（`@deeps
 | 打包 | `pkgbuild` + `hdiutil`（`platforms/macos/make-pkg.sh` → .pkg / .dmg） |
 | 目标平台 | macOS 13+（Apple Silicon / arm64；Info.plist `LSMinimumSystemVersion` = 13.0） |
 
-当前工作区版本：`1.11.0`（fallback，BUILD 67；最新发布 `v1.10.0`）；版本由 git tag 驱动（`scripts/version.sh`：HEAD 命中 vX.Y.Z → 取 tag，否则回退 1.11.0；BUILD 取 CI 运行号）。当前分支：**`main`**（HEAD `9829f65`，合并 PR #23 `feature/channel`）——**通道能力合入 main**：微信 ClawBot（官方 iLink 协议）扫码登录 → 长轮询收消息 → 斜杠指令 / #tag 路由 → 驱动 dsh 会话 → 回复回微信，全链路真实微信端到端验证；macOS 面板 v2（引导卡片 + 扫码向导 + 项目视图 + 状态徽标）已实现并登记编译清单，见 [channel-panel](modules/channel-panel.md)。此前的文件面板强化已合入（`feature/file-panel` HEAD `6b5aab4`：预览面板改由 [FilePanel](modules/file-panel.md)（`FilePanelController`）实现，新增无后缀/点文件按文本预览、文件内编辑 + 行号栏、Highlightr 语法高亮，及「文件」菜单（保存 ⌘S / 关闭页签 ⌘W））。此前最近合并进 main 的提交：`8f51161`（合并 PR #14 feature/browser-panel）——浏览器面板内核定为 CEF/Chromium（root cause：CEF 148+ 需五 helper app，缺 `(Renderer)` 致 renderer 静默失败，见 [browser-panel](modules/browser-panel.md)）；浏览器面板演进已合并进 main（OSR 离屏渲染默认、Chromium 原生 DevTools 窗口、控制台抽屉移除、QA 端点 debug/hierarchy、DevTools 拖动修复）。发布/CI 侧近期演进：`local-release.sh`（含 `pack` 只打包不发布子命令）、`github-publish.sh`/`release-checksums.sh` 发布脚本、`Jenkinsfile`、runtime/CEF 缓存按架构分目录（`.cache/runtime/<arch>`、`.cache/cef-built-<arch>`）、release.yml 新增 prepare 前置 job，见 [build-scripts](modules/build-scripts.md) 与 [tasks](tasks.md)。历史：Node 选择策略定型为**系统优先、内置兜底、带版本门槛**（ac4312c 系统优先：resolveNode = DSH_NODE > 系统 node（PATH→nvm current→nvm default→nvm 最新→Homebrew，90d9176/ceefc0c 定序）> 内置 node；6428249 加版本门槛：候选低于 22.0.0 跳过（`DSH_NODE_MIN` 可覆盖），全过旧则内置兜底，版本比较内联 Swift 不经 CoreBridge 避免递归；启动轮询加 1s 沉降校验防引导页假就绪；f4cfa33：dsh web 环境经 `loginShellPath()`（`/bin/zsh -ilc` 读一次登录 shell PATH，8s 超时兜底、结果缓存）合并用户 PATH，不注入内置目录）；About 面板显示实际 node 路径（8fcd6cc）并将 Node 版本+路径合并为一行（e9d6bb2）；此前任务面板工作区识别改**权威判断**（workspacePath 非 GitHub 仓库时诚实显示空态、不再替换为其他工作区，13bf9e3；切换到不同仓库先清空旧任务列表，197189e）、会话切换**无条件**触发任务面板刷新（4a7de43/40288d1）、token 读取改文件优先、Keychain 兜底（88f0255）。
+当前工作区版本：`1.13.0`（fallback，BUILD 69；最新发布 `v1.12.0`）；版本由 git tag 驱动（`scripts/version.sh`：HEAD 命中 vX.Y.Z → 取 tag，否则回退 1.13.0；BUILD 取 CI 运行号）。当前分支：**`main`**（HEAD `e0fd1f8`，合并 PR #27 `feature/builtin-skills-global`）——**通道能力合入 main**：微信 ClawBot（官方 iLink 协议）扫码登录 → 长轮询收消息 → 斜杠指令 / #tag 路由 → 驱动 dsh 会话 → 回复回微信，全链路真实微信端到端验证；macOS 面板 v2（引导卡片 + 扫码向导 + 项目视图 + 状态徽标）已实现并登记编译清单，见 [channel-panel](modules/channel-panel.md)。此前的文件面板强化已合入（`feature/file-panel` HEAD `6b5aab4`：预览面板改由 [FilePanel](modules/file-panel.md)（`FilePanelController`）实现，新增无后缀/点文件按文本预览、文件内编辑 + 行号栏、Highlightr 语法高亮，及「文件」菜单（保存 ⌘S / 关闭页签 ⌘W））。此前最近合并进 main 的提交：`8f51161`（合并 PR #14 feature/browser-panel）——浏览器面板内核定为 CEF/Chromium（root cause：CEF 148+ 需五 helper app，缺 `(Renderer)` 致 renderer 静默失败，见 [browser-panel](modules/browser-panel.md)）；浏览器面板演进已合并进 main（OSR 离屏渲染默认、Chromium 原生 DevTools 窗口、控制台抽屉移除、QA 端点 debug/hierarchy、DevTools 拖动修复）。发布/CI 侧近期演进：`local-release.sh`（含 `pack` 只打包不发布子命令）、`github-publish.sh`/`release-checksums.sh` 发布脚本、`Jenkinsfile`、runtime/CEF 缓存按架构分目录（`.cache/runtime/<arch>`、`.cache/cef-built-<arch>`）、release.yml 新增 prepare 前置 job，见 [build-scripts](modules/build-scripts.md) 与 [tasks](tasks.md)。历史：Node 选择策略定型为**系统优先、内置兜底、带版本门槛**（ac4312c 系统优先：resolveNode = DSH_NODE > 系统 node（PATH→nvm current→nvm default→nvm 最新→Homebrew，90d9176/ceefc0c 定序）> 内置 node；6428249 加版本门槛：候选低于 22.0.0 跳过（`DSH_NODE_MIN` 可覆盖），全过旧则内置兜底，版本比较内联 Swift 不经 CoreBridge 避免递归；启动轮询加 1s 沉降校验防引导页假就绪；f4cfa33：dsh web 环境经 `loginShellPath()`（`/bin/zsh -ilc` 读一次登录 shell PATH，8s 超时兜底、结果缓存）合并用户 PATH，不注入内置目录）；About 面板显示实际 node 路径（8fcd6cc）并将 Node 版本+路径合并为一行（e9d6bb2）；此前任务面板工作区识别改**权威判断**（workspacePath 非 GitHub 仓库时诚实显示空态、不再替换为其他工作区，13bf9e3；切换到不同仓库先清空旧任务列表，197189e）、会话切换**无条件**触发任务面板刷新（4a7de43/40288d1）、token 读取改文件优先、Keychain 兜底（88f0255）。
 
 ## 目录布局
 
@@ -46,6 +46,7 @@ platforms/macos/src/TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模�
 platforms/macos/src/WikiPanel.swift      Repo Wiki 面板（知识库生成/维护/浏览 + 自动 git 提交）约 2072 行
 platforms/macos/src/IssueRunnerPanel.swift 任务面板（GitHub issues 串行处理 → 分支/修复/推送/PR + 关联索引 + 评论并关闭 + 按仓库作用域 token）约 1498 行
 platforms/macos/src/ChannelPanel.swift    通道面板（全局 channel 卡片 + 扫码登录向导 + 项目视图开关 + 连接状态徽标 + runner 生命周期）850 行
+platforms/macos/src/SkillInstaller.swift   内置 Skill 全局安装器（App 启动装到 $DSH_HOME/skills/ + 缺失即装/受管更新/旧名迁移，Foundation-only）约 307 行
 platforms/macos/src/BrowserPanel.swift 浏览器面板（多标签 CEF/Chromium，OSR 渲染 + REST API 驱动）约 1123 行
 platforms/macos/src/BrowserAPI.swift   浏览器面板 REST API（127.0.0.1:3081，Agent 驱动 + QA 端点）530 行
 platforms/macos/src/BrowserCDP.swift   CDP 客户端（WebSocket：console/网络/求值/截图）303 行
@@ -55,12 +56,12 @@ platforms/macos/build-cef.sh         CEF 构建脚本（版本 pin + sha1 校验
 platforms/macos/cef/                 CEFShim.h/.mm（ObjC++ 桥，OSR 渲染/输入转发/DevTools）、process_helper_mac.cc、helper-Info.plist.in
 platforms/macos/make-pkg.sh          .pkg 安装包 + .dmg 镜像脚本
 docs/                设计与排查文档（repo-wiki-design.md、productization.md、git-workflow.md、milestones/、plans/、terminal-header-fix.md、terminal-input-fix.md、channel-design.md、channel-commands.md、channel-status.md、channel-storage.md、channel-ui-commands.md、channel-issues.md、raw/）
-tests/               无头单元测试（terminal-emulator/、wiki-panel/，各含 run.sh；模拟器测试已迁 core/tests/ansi.test.js 的薄封装）
+tests/               无头单元测试（terminal-emulator/、wiki-panel/、browser-panel/、skills/，各含 run.sh；模拟器测试已迁 core/tests/ansi.test.js 的薄封装）
 .cache/              构建缓存（node tarball、npm-cache、已构建 runtime）— git 忽略
 .build/              构建中间产物 — git 忽略
 dist/                产物（.app / .pkg / .dmg）— git 忽略
 pic/                 QA 调试截图 — git 忽略
-.dsh/skills/         repo-wiki skill（SKILL.md）
+.dsh/skills/         内置 skill 提交副本（web-dev-tools / repo-knowledge / issue-resolve，App 启动经 SkillInstaller 安装到全局 $DSH_HOME/skills/）
 .dsh/wiki/           本知识库
 .dsh/tasks/          任务关联索引（index.json 提交 + local.json 本机覆盖，gitignore）
 ```
@@ -76,7 +77,7 @@ pic/                 QA 调试截图 — git 忽略
 - 内置运行时构建期现做：下载 Node tarball（默认国内镜像 `npmmirror.com/mirrors/node`，校验 SHA-256），用其自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.1.0-rc.7`（默认 `DSH_PACKAGE_SPEC`，国内源失败自动回退 npmjs.org）；
 - 缓存：`(Node 版本, dsh 版本)` 相同则复用 `.cache/runtime`，重建只需几十秒；网络不可用时用缓存 tarball 推导版本继续。
 
-构建变量（均可用环境变量覆盖）：`DSH_NODE_VERSION`、`DSH_PACKAGE_SPEC`、`DSH_NODE_MIRROR`、`DSH_NPM_REGISTRY`、`DSH_ARCH`（详见 README「构建」与 [build-scripts](modules/build-scripts.md)）。
+构建变量（均可用环境变量覆盖）：`DSH_NODE_VERSION`、`DSH_PACKAGE_SPEC`、`DSH_NODE_MIRROR`、`DSH_NPM_REGISTRY`、`DSH_ARCH`、`DSH_DEV_BUILD`（=1 打开发版：Info.plist 写 `DSHDevBuild=1`、独立 CEF profile、跳过单实例退出，可与正式版并存测试，详见 [build-scripts](modules/build-scripts.md) 与 [main](modules/main.md)）。
 
 ## 运行
 
@@ -95,6 +96,7 @@ open "dist/oh-my-dsh.app"     # 或双击
 node --test core/tests/*.test.js     # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，148 用例；不带引号由 bash 展开 glob，Node 20 兼容）
 tests/terminal-emulator/run.sh       # 模拟器测试（已迁 core/tests/ansi.test.js 的薄封装）
 tests/wiki-panel/run.sh              # Repo Wiki 模型层无头单测（实测 41 passed）
+tests/skills/run.sh                  # 内置 skill 安装器无头单测（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
 ```
 
 - core 单测为 Node 测试（`core/tests/*.test.js`：ansi 42 / ports 5 / session 4 / upgrade 4 / issues 8 / jobqueue 7 / tasks 7 = 77 + channel 相关 71 = **148 全绿**，2026-08-22 实测；channel 覆盖 channel/commands/runner/sessions/workspaces/weixin-clawbot/e2e-channel）；`tests/terminal-emulator/run.sh` 现为 `core/tests/ansi.test.js` 的薄封装；

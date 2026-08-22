@@ -1,14 +1,14 @@
 ---
 title: 模块：BrowserPanel.swift / BrowserAPI.swift（浏览器面板，CEF/Chromium 内核）
 tags: [module, browser, cef, chromium, osr, rest-api, agent]
-updated: 2026-08-20T16:06:00Z
+updated: 2026-08-22T15:04:38Z
 sources: [platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/BrowserCDP.swift, platforms/macos/cef/CEFShim.h, platforms/macos/cef/CEFShim.mm, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, docs/plans/BROWSER_PLAN-browser-panel.md, docs/terminal-header-fix.md, docs/devtools-drag-fix.md]
 manual: false
 ---
 
 # 模块：浏览器面板（BrowserPanel.swift + BrowserAPI.swift + BrowserCDP.swift + CEFShim）
 
-右栏浏览器面板：多标签 **CEF 嵌入式 Chromium** 浏览器，面向「开发调试 web 页面」与「Agent 排查网页问题」两个目标。Agent 经 localhost REST API（curl 即用）驱动，配套技能 `.dsh/skills/shell-browser/SKILL.md`。
+右栏浏览器面板：多标签 **CEF 嵌入式 Chromium** 浏览器，面向「开发调试 web 页面」与「Agent 排查网页问题」两个目标。Agent 经 localhost REST API（curl 即用）驱动，配套技能 `.dsh/skills/web-dev-tools/SKILL.md`（v1.13.0 由 `shell-browser` 更名，经 SkillInstaller 全局安装到 `$DSH_HOME/skills/web-dev-tools/`）。
 
 ## 背景：Chromium 内核 + 根因修正 + 版本 pin
 
