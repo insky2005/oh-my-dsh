@@ -1,6 +1,7 @@
 #!/bin/bash
 # scripts/github-publish.sh — 创建/更新 GitHub Release 并上传 dist/ 产物。
-# 供 Jenkins（以及本地/其他 CI）调用；优先用 gh CLI，无 gh 则用 curl API 兜底。
+# 供 Jenkins（以及本地/其他 CI）调用；发布统一走 curl API 路径（暂不使用 gh CLI，
+# gh 分支保留为自动检测兜底）。
 #
 # 环境变量：
 #   GH_TOKEN           GitHub token（必填）
