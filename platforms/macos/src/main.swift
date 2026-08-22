@@ -1284,8 +1284,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // 同时启动会让 Chromium 争抢同一 profile、互相异常终止（表现为
         // "Chromium didn't shut down correctly."）。若已有其他实例在跑，聚焦它并
         // 立即退出本实例（本检查在最前，此时尚未拉起 dsh web / CEF / channel，
-        // 直接 exit 无副作用、也不会碰共享 profile）。
-        if let bundleId = Bundle.main.bundleIdentifier,
+        // 直接 exit 无副作用、也不会碰共享 profile）。开发版（isDevBuild）已用独立
+        // CEF profile，可与正式版并存，故跳过单实例退出。
+        if !isDevBuild,
+           let bundleId = Bundle.main.bundleIdentifier,
            let existing = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
                .first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
             AppLog.shared.log("single-instance: another instance running (pid \(existing.processIdentifier)); activating & exiting")
@@ -3120,6 +3122,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("channel runners stopped")
     }
 
+    /// 开发版构建（DSH_DEV_BUILD=1 打包，Info.plist 写入 DSHDevBuild=1）。开发版用于与
+    /// 已安装正式版并存测试：CEF 用独立 profile，且跳过单实例退出。未来如需隔离其他
+    /// 资源（端口 / channel runner 等），都以 isDevBuild 为入口在此处快速追加覆盖项。
+    private var isDevBuild: Bool {
+        (Bundle.main.object(forInfoDictionaryKey: "DSHDevBuild") as? String) == "1"
+    }
+
     /// 初始化 CEF（浏览器面板渲染内核）并启动消息泵定时器。
     /// CDP 端口：DSH_CDP_PORT 覆盖，默认 9333（与 BrowserCDP.port 一致）。
     private func startCEF() {
@@ -3130,7 +3139,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // 绝不把 root 指向 ~/.dsh 本身（会把 Chromium 文件洒进 dsh 主目录，
         // 曾因 cachePath=~/.dsh/browser-profile 导致 root=~/.dsh 污染）。
         // 调试钩子：--browser-cache-dir=<dir> 指定全新 profile。
-        let browserRoot = dshHome + "/browser"
+        // 开发版用独立 profile（~/.dsh/browser-dev），与正式版 ~/.dsh/browser 隔离，
+        // 可与正式版并存而不争抢（等价于追加 --browser-cache-dir=<dev profile>）。
+        let browserRoot = dshHome + (isDevBuild ? "/browser-dev" : "/browser")
         var cachePath = browserRoot + "/profile"
         if let idx = CommandLine.arguments.firstIndex(of: "--browser-cache-dir"),
            CommandLine.arguments.count > idx + 1 {

@@ -53,6 +53,11 @@ case "$ARCH" in
   *) echo "ERROR: unsupported DSH_ARCH '$ARCH' (arm64 | x86_64 | universal)" >&2; exit 1 ;;
 esac
 
+# 开发版构建：DSH_DEV_BUILD=1 时打一个"开发版"（Info.plist 写入 DSHDevBuild=1）。
+# App 运行时会据此应用 dev 覆盖项（隔离 CEF profile 等，见 main.swift 的 isDevBuild /
+# devBuildOverrides），用于与已安装版并存测试；未来再遇资源冲突可在同一处快速追加。
+DEV_BUILD="${DSH_DEV_BUILD:-0}"
+
 SRC="src"
 BUILD_DIR="$ROOT/.build"
 CACHE_DIR="$ROOT/.cache"
@@ -326,6 +331,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<string>$VERSION</string>
 	<key>CFBundleVersion</key>
 	<string>$BUILD</string>
+	<key>DSHDevBuild</key>
+	<string>$DEV_BUILD</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>LSMinimumSystemVersion</key>
