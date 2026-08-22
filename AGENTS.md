@@ -1,7 +1,7 @@
 # AGENTS.md — Agent 工作指引
 
 > 本文件供 AI 代理（如 DeepSeek Harness 会话）在进入本仓库时快速了解上下文。
-> 维护方式：与 `.dsh/wiki/` 同步更新（可用 repo-wiki skill 做增量刷新）。
+> 维护方式：与 `.dsh/wiki/` 同步更新（可用 repo-knowledge skill 做增量刷新）。
 
 ## 项目是什么
 

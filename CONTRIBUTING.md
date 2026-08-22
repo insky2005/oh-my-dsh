@@ -17,7 +17,7 @@ oh-my-dsh/
 │                        #   github-publish.sh / release-checksums.sh / release-fix.sh / git-remote.sh / migrate-platforms-macos.sh
 ├── tests/               # 面板模型层单测套件（wiki-panel / browser-panel / terminal-emulator，均 headless run.sh）
 ├── docs/                # 设计/排查文档（productization.md、milestones/、channel-*.md、issue-runner-design.md 等）
-└── .dsh/                # wiki / skills（repo-wiki / shell-browser / issue-fix，随仓库提交）
+└── .dsh/                # wiki / skills（web-dev-tools / repo-knowledge / issue-resolve，随仓库提交）
 ```
 
 ## 环境要求（构建）

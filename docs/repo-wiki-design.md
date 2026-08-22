@@ -112,7 +112,7 @@
                │ HTTP POST /api/session.create + session.prompt (mode: queue)
                ▼
 ┌─────────────────────────── dsh web (服务端，源码不动) ──────────────────────┐
-│  新会话（标题「Wiki 生成」）→ 代理加载 repo-wiki skill → 用工具探索/读写      │
+│  新会话（标题「Wiki 生成」）→ 代理加载 repo-knowledge skill → 用工具探索/读写      │
 │  ├─ 读: README / 包清单 / 目录 / git status / 关键源码 / session.search       │
 │  └─ 写: <repo>/.dsh/wiki/** (index.md + 分节页面, frontmatter)              │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -124,7 +124,7 @@
 
 | 组件 | 归属 | 职责 |
 |---|---|---|
-| `repo-wiki` skill | dsh 侧（`SKILL.md`，见 5.1） | 定义生成/更新的完整提示词与页面规范——**单一事实来源** |
+| `repo-knowledge` skill | dsh 侧（`SKILL.md`，见 5.1） | 定义生成/更新的完整提示词与页面规范——**单一事实来源** |
 | 生成提示词（薄壳） | 壳层内嵌副本 | skill 缺失时回退；平时只是「调用 skill 执行 X」的薄指针 |
 | `WikiPanelController` | 壳层新文件 | 面板 UI：树/渲染/搜索/状态/操作 |
 | `WikiMarkdownRenderer` | 壳层新文件 | 轻量 Swift markdown → NSAttributedString（见 7.3） |
@@ -149,7 +149,7 @@ POST http://127.0.0.1:<port>/api/session.prompt
 ```
 
 - `mode: "queue"`：不抢占用户当前对话、不阻塞 UI（对应 `sessionPromptRequestSchema` 的 `queue|steer`，见 `dsh-host-apiproxy/lib/types/api/sessions.schema.js`）；
-- 触发文案（薄壳，中英随壳语言）：「请加载 `repo-wiki` skill 并执行【初始生成 / 增量更新 / 重建 index】。仓库根：<repoRoot>。若 skill 不存在，按内置说明执行。」；
+- 触发文案（薄壳，中英随壳语言）：「请加载 `repo-knowledge` skill 并执行【初始生成 / 增量更新 / 重建 index】。仓库根：<repoRoot>。若 skill 不存在，按内置说明执行。」；
 - 状态轮询：`session.list` 里该 `sessionId` 的 `running` 标志 → 面板「生成中…」；完成后由 WikiWatcher 刷新；
 - 该生成会话在 dsh web 左侧会话列表可见、可点击查看全过程、可中途取消——**透明度保证**。
 
@@ -220,19 +220,19 @@ manual: false                       # true = 用户手改，代理永不覆盖�
 
 ## 5. 生成工作流
 
-### 5.1 `repo-wiki` skill（单一事实来源）
+### 5.1 `repo-knowledge` skill（单一事实来源）
 
 安装位置（按 dsh skill 发现顺序，见 `dsh-skill-filesystem` README）：
 
-- 项目级：`<repoRoot>/.dsh/skills/repo-wiki/SKILL.md`（随仓库分发，**推荐**）；
-- 用户级：`$DSH_HOME/skills/repo-wiki/SKILL.md`（跨仓库生效）；
+- 全局（**推荐，App 启动时安装到 `$DSH_HOME/skills/`**）：`$DSH_HOME/skills/repo-knowledge/SKILL.md`（跨仓库生效）；
+- 项目级：`<repoRoot>/.dsh/skills/repo-knowledge/SKILL.md`（仓库自带副本，可覆盖全局）；
 - 壳层内嵌一份同内容副本作回退（见 3.2）。
 
 `SKILL.md` 内容要点（frontmatter + 正文，正文即代理指令）：
 
 ```
 ---
-name: repo-wiki
+name: repo-knowledge
 description: 为当前仓库生成/增量维护 .dsh/wiki/ 知识库（初始生成、增量更新、重建 index）
 modelInvocable: true
 userInvocable: false
@@ -298,7 +298,7 @@ userInvocable: false
 
 ### 6.4 代理侧可达性
 
-- 代理随时可读 `.dsh/wiki/**`（普通 fs 工具即可）；skill 注册后代理也能通过 `dsh-tool-skill` 发现并加载 `repo-wiki` 维护流程——「读」与「维护」两条路径都无需改源码；
+- 代理随时可读 `.dsh/wiki/**`（普通 fs 工具即可）；skill 注册后代理也能通过 `dsh-tool-skill` 发现并加载 `repo-knowledge` 维护流程——「读」与「维护」两条路径都无需改源码；
 - **QMD 整合暂不实施**（见第 13 节）：v1 代理的「按需读取」= 读 index.md 跟链接 + `session.search`（FTS5）；若后续启用，代理可经 `mcp__qmd__structured_search` / `mcp__qmd__get` 对 wiki 做语义检索。
 
 ---
@@ -415,7 +415,7 @@ userInvocable: false
 |---|---|---|
 | **M0** | 本文档评审通过 | 设计决策闭环、无开放问题 |
 | **M1 查看器** | `WikiPanel.swift`：面板 + 树 + `WikiMarkdownRenderer` + 搜索 + backlinks + 陈旧徽标 + 空态；`RightPanel.wiki`、菜单、L10n、QA 钩子 | 能浏览**任意现有 markdown 目录**（fixture 即可），10.1 编译 + 渲染器单测通过 |
-| **M2 生成链路** | `repo-wiki` skill（SKILL.md 完整指令）+ 壳层 `WikiRPC`（create/prompt/轮询）+ 生成状态 UI + 脱敏/上限/锁 | headless 生成产出合规页面；面板一键生成端到端跑通；10.2 的 1-3、9、10 通过 |
+| **M2 生成链路** | `repo-knowledge` skill（SKILL.md 完整指令）+ 壳层 `WikiRPC`（create/prompt/轮询）+ 生成状态 UI + 脱敏/上限/锁 | headless 生成产出合规页面；面板一键生成端到端跑通；10.2 的 1-3、9、10 通过 |
 | **M3 维护与设置** | 增量更新、`manual` 保护、AGENTS.md 注册块（开关）、自动触发（关闭默认）、`wikiRootMode`、陈旧提示增强 | 10.2 全部通过；`build-app.sh` 产出新版本（如 1.7.0） |
 
 > 注：QMD 整合（第 13 节）**暂不排期**——v1 里程碑止于 M3；其 P1/P2/P3 候选方案保留在 13.2，待 13.4 触发条件满足后再另行立项。
@@ -437,7 +437,7 @@ userInvocable: false
 
 ## 13. 与 QMD 的整合分析（暂不整合，检索增强候选）
 
-> 结论：QMD（Query Markdown Documents）负责「本地 markdown 集合的索引与检索」，Repo Wiki 负责「内容生成 + 面板浏览 + 上下文注入」——两者互补、无重叠、无冲突，QMD 不替代 `repo-wiki` skill 的生成职责，技术上**可以整合**。**但当前决策：暂不整合**——本节仅保留分析结论与候选接入方案，作为后续「检索能力增强」的备用设计（何时启用见 13.4 触发条件）。v1 的检索能力以 4.5 的标题过滤 + `session.search`（FTS5）为准。
+> 结论：QMD（Query Markdown Documents）负责「本地 markdown 集合的索引与检索」，Repo Wiki 负责「内容生成 + 面板浏览 + 上下文注入」——两者互补、无重叠、无冲突，QMD 不替代 `repo-knowledge` skill 的生成职责，技术上**可以整合**。**但当前决策：暂不整合**——本节仅保留分析结论与候选接入方案，作为后续「检索能力增强」的备用设计（何时启用见 13.4 触发条件）。v1 的检索能力以 4.5 的标题过滤 + `session.search`（FTS5）为准。
 
 ### 13.1 QMD 是什么（已核实事实）
 
@@ -462,7 +462,7 @@ userInvocable: false
 - 接入方式：在**用户 patch 层** `$DSH_HOME/cordis.patch.yml`（已核实：dsh 配置叠加层之一，当前文件尚不存在，按需创建）追加一个 `mcp-qmd` 插件实例（`transport: stdio`、`command: qmd`、`args: ['mcp']`）——**纯配置，不改任何 dsh 源码**；
   - 幂等写入由壳层「设置 → 启用 QMD 整合」开关负责（追加/移除均可一键完成，与 6.2 注册块的开关模式一致）；生效需重启 dsh web——App 已具备服务拉起/重启能力，可在面板提示或自动重启；
 - 效果：
-  - **生成时**：代理可先语义检索 wiki 与既有文档，避免重复内容、衔接已有知识（与 `repo-wiki` skill 协同）；
+  - **生成时**：代理可先语义检索 wiki 与既有文档，避免重复内容、衔接已有知识（与 `repo-knowledge` skill 协同）；
   - **日常**：代理获得 `mcp__qmd__structured_search`/`get`，「按需读取」从「读 index.md 跟链接逐页翻」升级为「概念级提问」——与 6.2 的 AGENTS.md 注册块**正交互补**（注册块告诉代理「先查 wiki」，QMD 给代理「怎么查得更准」）；
   - 同一 MCP server 可挂多个 collection：wiki、仓库 docs/、以及导出的 dsh 会话（P3）；
 - 回退链：qmd 缺失/模型不可用 → 代理退化为读 index.md + `session.search`（FTS5）——**现有能力不受影响**。
@@ -500,7 +500,7 @@ userInvocable: false
 ## 14. 实施记录（2026-08，v1.7.0）
 
 **M1–M3 已实现**（对应第 11 节里程碑，全部落地）：
-- 新增 `src/WikiPanel.swift`：模型层（frontmatter/扫描/陈旧/backlinks）、`WikiMarkdownRenderer`（软换行保真）、`WikiRPC`（`session.create`/`session.prompt` queue/轮询）、`repo-wiki` skill（内嵌 + 安装到 `<repo>/.dsh/skills/repo-wiki/SKILL.md`）、`WikiAgentsMD`（幂等注册块）、`WikiPanelController`（头部/搜索工具行/分组树/阅读区/状态条/2s 变更监听/自动更新）。
+- 新增 `src/WikiPanel.swift`：模型层（frontmatter/扫描/陈旧/backlinks）、`WikiMarkdownRenderer`（软换行保真）、`WikiRPC`（`session.create`/`session.prompt` queue/轮询）、`repo-knowledge` skill（内嵌 + App 启动时安装到全局 `$DSH_HOME/skills/repo-knowledge/SKILL.md`）、`WikiAgentsMD`（幂等注册块）、`WikiPanelController`（头部/搜索工具行/分组树/阅读区/状态条/2s 变更监听/自动更新）。
 - `src/main.swift`：`RightPanel.wiki`、活动栏书图标、`⌥⌘W`、设置菜单 wiki 组（自动更新 / AGENTS.md 注册块 / 根目录单选）、`wiki.*` L10n（中/英）、`serverReady` 门控、`DSH_WIKI_TEST=1` / `DSH_WIKI_TEST_PATH` QA 钩子。
 - `build-app.sh`：编译清单 + VERSION 1.7.0 / BUILD 45；`README.md` 特性说明；`tests/wiki-panel/`（39 项无头单测）。
 

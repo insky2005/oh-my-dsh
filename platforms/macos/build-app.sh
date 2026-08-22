@@ -249,7 +249,7 @@ echo "==> [3/7] compiling app binary"
 # CEF：build-cef.sh 产出 wrapper 静态库 + CEFShim.o + helper 二进制；CEF 的
 # C API 符号经 libcef_dll_dylib 的 trampoline 在运行期 dlopen 框架解析，
 # 因此链接需要 -Wl,-undefined,dynamic_lookup（无需直接链接框架）。
-SWIFT_SOURCES=("$SRC/main.swift" "$SRC/PreviewPanel.swift" "$SRC/FilePanel.swift" "$SRC/CodeEditorView.swift" "$SRC/TerminalPanel.swift" "$SRC/WikiPanel.swift" "$SRC/IssueRunnerPanel.swift" "$SRC/BrowserPanel.swift" "$SRC/BrowserAPI.swift" "$SRC/BrowserCDP.swift" "$SRC/ChannelPanel.swift" "$SRC/vendor/Highlightr/CodeAttributedString.swift" "$SRC/vendor/Highlightr/Highlightr.swift" "$SRC/vendor/Highlightr/Theme.swift" "$SRC/vendor/Highlightr/HTMLUtils.swift" "$SRC/vendor/Highlightr/Shims.swift")
+SWIFT_SOURCES=("$SRC/main.swift" "$SRC/PreviewPanel.swift" "$SRC/FilePanel.swift" "$SRC/CodeEditorView.swift" "$SRC/TerminalPanel.swift" "$SRC/WikiPanel.swift" "$SRC/IssueRunnerPanel.swift" "$SRC/BrowserPanel.swift" "$SRC/BrowserAPI.swift" "$SRC/BrowserCDP.swift" "$SRC/SkillInstaller.swift" "$SRC/ChannelPanel.swift" "$SRC/vendor/Highlightr/CodeAttributedString.swift" "$SRC/vendor/Highlightr/Highlightr.swift" "$SRC/vendor/Highlightr/Theme.swift" "$SRC/vendor/Highlightr/HTMLUtils.swift" "$SRC/vendor/Highlightr/Shims.swift")
 APP_BIN="$APP/Contents/MacOS/$APP_NAME"
 CEF_FLAGS=(-Xlinker -undefined -Xlinker dynamic_lookup)
 

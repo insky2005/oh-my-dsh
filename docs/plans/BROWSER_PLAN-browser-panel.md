@@ -7,7 +7,7 @@
 在 oh-my-dsh 壳层右侧面板槽位新增**浏览器面板**，两个目标：
 
 1. **方便开发调试 web 页面**：多标签页浏览器（**CEF 嵌入式 Chromium 内核**，同终端面板交互），地址栏/前进后退/刷新停止、可开关的**控制台抽屉**（CDP 捕获 console 日志 + 网络请求 + JS 求值）、**Chromium DevTools**（DevTools 按钮在系统浏览器打开前端，或经 CDP 端口直接调试）；
-2. **方便 Agent 排查网页问题**：壳层提供 **localhost REST API**（curl 即用），Agent（或用户终端）可：开页面、查状态、读 console/network 日志、执行 JS、截图 PNG 到工作区；配套 `.dsh/skills/shell-browser` 技能开箱即用；Agent 驱动时面板自动展开。
+2. **方便 Agent 排查网页问题**：壳层提供 **localhost REST API**（curl 即用），Agent（或用户终端）可：开页面、查状态、读 console/network 日志、执行 JS、截图 PNG 到工作区；配套 `web-dev-tools` 技能开箱即用（App 启动时安装到全局 `$DSH_HOME/skills/web-dev-tools/`）；Agent 驱动时面板自动展开。
 
 **验收清单（手动 QA，见 §九）**：多标签增删/切换、地址栏导航、控制台与网络日志、JS 求值、DevTools 打开、Agent curl 全流程、面板持久化与互斥、L10n 中英齐全、CI/单测全绿。
 
@@ -150,9 +150,9 @@ POSIX socket 极简 HTTP/1.1 服务（127.0.0.1，默认 **3081**，`DSH_BROWSER
 - `build-app.sh`：SWIFT_SOURCES += `BrowserPanel.swift` `BrowserAPI.swift`；
 - `.github/workflows/ci.yml`：swiftc 编译检查清单 += 两个新文件；新增 `tests/browser-panel/run.sh` 步骤。
 
-### 子系统 5：Agent 技能（新增 `.dsh/skills/shell-browser/SKILL.md`）
+### 子系统 5：Agent 技能（`web-dev-tools`，App 启动时安装到全局 `$DSH_HOME/skills/web-dev-tools/SKILL.md`）
 
-仿 `issue-fix` 技能格式（frontmatter: name/description/modelInvocable）：端口发现（读 `~/.dsh/browser-api.port` 或默认 3081）；标准排查工作流：`open` 页面 → 轮询 `status` 直到 `!loading`（带超时）→ 读 `console`/`network`（failedOnly 过滤）→ `eval` 取 DOM/JS 状态 → `screenshot` 存工作区 → 视觉读图 → 汇报；明确可用性前提与安全边界（仅本机、eval 可读页面）。
+仿 `issue-resolve` 技能格式（frontmatter: name/description/modelInvocable）：端口发现（读 `~/.dsh/browser-api.port` 或默认 3081）；标准排查工作流：`open` 页面 → 轮询 `status` 直到 `!loading`（带超时）→ 读 `console`/`network`（failedOnly 过滤）→ `eval` 取 DOM/JS 状态 → `screenshot` 存工作区 → 视觉读图 → 汇报；明确可用性前提与安全边界（仅本机、eval 可读页面）。
 
 ### 子系统 6：测试（新增 `tests/browser-panel/`，仿 wiki-panel 无头模式）
 

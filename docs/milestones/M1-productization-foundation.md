@@ -59,7 +59,7 @@
 8. **模拟器测试迁移**（0.5 天）：tests/terminal-emulator → core/tests/，run.sh 适配
 9. **设置窗口**（2–3 天）：语言 / registry / 升级策略 / 主题 / 快捷键迁移到独立窗口（现有菜单逻辑迁入）
 10. **首次引导**（1–2 天）：首次运行检查（运行时播种 / 端口 / 语言）、简短教程
-11. **平台骨架**（0.5–1 天，建议做）：src/ + build-app.sh + make-pkg.sh 迁入 platforms/macos/（git mv）；跑一次 repo-wiki 增量更新修复 sources
+11. **平台骨架**（0.5–1 天，建议做）：src/ + build-app.sh + make-pkg.sh 迁入 platforms/macos/（git mv）；跑一次 repo-knowledge 增量更新修复 sources
 12. **端到端演练**（1 天）：打 v1.8.0-rc.1 → Release pre-release → 干净机下载安装冒烟 → 转正式
 
 合计 ≈10–14 人日。
@@ -76,7 +76,7 @@
 |---|---|
 | core 抽取引入回归 | 先抽模拟器（有现成单测兜底）；每步 CI 全绿再继续 |
 | build-app.sh 改造破坏本地构建 | 保持 --prefetch / 缓存语义；无 tag 时回退本地版本 |
-| 目录迁移后 wiki sources 失效 | 迁移后立即跑 repo-wiki 增量更新 |
+| 目录迁移后 wiki sources 失效 | 迁移后立即跑 repo-knowledge 增量更新 |
 | 单人负载过载 | 步骤按天拆解；nightly 冒烟后置到 M1 后 |
 
 ## 测试与验收

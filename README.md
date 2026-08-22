@@ -56,7 +56,7 @@
 - **渲染**：默认 **OSR 离屏渲染**（每帧像素自绘，支持鼠标/键盘/滚轮/光标跟随/上下文菜单）；可切窗口化——`defaults write com.ohmydsh.app browserRenderMode -string windowed`；
 - **Chromium 原生 DevTools**：头部「DevTools」按钮弹出独立窗口的完整调试器（Elements/Network/Console/Sources）；
 - **控制台/网络日志**：经 CDP 捕获页面 console、异常与网络请求，供 REST API 读取（`eval`/`screenshot` 也走 CDP；CDP 端口默认 `9333`，`DSH_CDP_PORT` 覆盖）；
-- **Agent 驱动（curl 即用）**：壳层常驻 localhost REST API（默认 `127.0.0.1:3081`，端口文件 `~/.dsh/browser-api.port`）——`status` / `open` / `tabs` / `back` / `forward` / `reload` / `stop` / `eval` / `console` / `console/clear` / `screenshot`(PNG) / `hide`，外加 QA 端点 `debug` / `hierarchy`；Agent 驱动时面板自动展开，截图可存工作区供读图/分享；配套技能 `.dsh/skills/shell-browser/SKILL.md`（`modelInvocable`）开箱即用；
+- **Agent 驱动（curl 即用）**：壳层常驻 localhost REST API（默认 `127.0.0.1:3081`，端口文件 `~/.dsh/browser-api.port`）——`status` / `open` / `tabs` / `back` / `forward` / `reload` / `stop` / `eval` / `console` / `console/clear` / `screenshot`(PNG) / `hide`，外加 QA 端点 `debug` / `hierarchy`；Agent 驱动时面板自动展开，截图可存工作区供读图/分享；配套技能 `web-dev-tools`（`modelInvocable`，App 启动时安装到全局 `$DSH_HOME/skills/web-dev-tools/SKILL.md`）开箱即用；
 - **说明**：CEF 构建体积约 +320MB/架构；Chromium 使用模拟钥匙串（`use-mock-keychain`，不弹密码框、不存网页密码）；profile 数据收在 `~/.dsh/browser/`；随包分发 5 个 helper app（base/Alerts/GPU/Plugin/Renderer）；集成细节见 `docs/plans/BROWSER_PLAN-browser-panel.md`。
 
 ![browser](./docs/screenshots/browser.png)
@@ -65,7 +65,7 @@
 
 让 dsh 代理维护一份**随代码演进的结构化 markdown 知识库**（`.dsh/wiki/`，可随仓库提交/共享），新会话不再盲目重新探索代码库。
 
-- **生成/更新**：右上「+」一键让 dsh 代理执行 `repo-wiki` skill（自动安装到 `<repo>/.dsh/skills/repo-wiki/SKILL.md`）——初始生成（index/overview/architecture/modules/data-model/conventions/tasks）或增量更新（只重写受影响页面）；经 `session.create` + `session.prompt`（queue 模式）触发，不阻塞对话，生成会话在 dsh web 左侧可见、可取消；状态条显示进度；
+- **生成/更新**：右上「+」一键让 dsh 代理执行 `repo-knowledge` skill（App 启动时安装到全局 `$DSH_HOME/skills/repo-knowledge/SKILL.md`）——初始生成（index/overview/architecture/modules/data-model/conventions/tasks）或增量更新（只重写受影响页面）；经 `session.create` + `session.prompt`（queue 模式）触发，不阻塞对话，生成会话在 dsh web 左侧可见、可取消；状态条显示进度；
 - **浏览**：左侧页面树（分组、过期/手动徽标）+ 右侧渲染后的 markdown（标题/粗斜体/代码/列表/链接，软换行保真）+ 反向链接区 + `dshwiki://` 页内跳转；标题过滤搜索；
 - **维护**：陈旧检测（页面 `sources` 比 `updated` 新 → 标 ⚠）；`manual: true` 页面代理绝不覆盖（标 ✎）；可选写入项目根 `AGENTS.md` 注册块（设置开关，默认关）；「自动更新知识库」（默认关，≥3 页过期且 index 超 1 小时才触发，每小时最多一次）；wiki 根目录可选「仓库内 `.dsh/wiki`」或「`DSH_HOME` 私有」；
 - **提交**：生成更新完成后自动 `git add .dsh/wiki` + commit（不 push；维护代理主提交，`WikiAutoCommit` 兜底）；
@@ -76,7 +76,7 @@
 由 **GitHub issue 驱动**的串行任务流水线：识别当前工作区仓库 → 列出 open issues → 点「处理」自动走完整闭环。
 
 - **行内详情**：单击 issue 行展开（状态/标签/分支/PR/错误 + 正文，可滚动，底部固定操作按钮）；按仓库/标签自动切分支（feature → `feature/issue-N`，bug → `fix/issue-N`）；
-- **一键流水线**：`checkout main → pull → checkout -b <分支> → dsh 会话 → issue-fix skill 修复 → 推送 → 开 PR`，全程**串行**（「全部处理」依次入队）、可追溯（会话/分支/PR 全保留）、**重启可恢复**（关联索引 `.dsh/tasks/index.json` + 本机 `local.json`）；
+- **一键流水线**：`checkout main → pull → checkout -b <分支> → dsh 会话 → issue-resolve skill 修复 → 推送 → 开 PR`，全程**串行**（「全部处理」依次入队）、可追溯（会话/分支/PR 全保留）、**重启可恢复**（关联索引 `.dsh/tasks/index.json` + 本机 `local.json`）；
 - **评论并关闭 Issue**：任务完成后在展开区手动触发，预填 PR 引用，确认后 POST 评论 + 关闭 issue；
 - **失败处理**：会话失败/超时（30min）/分支未推送/PR 失败各有明确状态与错误提示，可 Retry；取消走 `session.cancel`；
 - **GitHub token（按仓库作用域）**：面板「配置 GitHub Token」**同时写** Keychain 专属与文件专属 `~/.dsh/tokens/<owner>-<repo>`（chmod 600，App 与外部工具/代理共用）；解析优先级：文件专属 → 文件通用 `~/.dsh/gh-token` → Keychain 专属 → Keychain 通用；公开仓库无需 token，私有仓库拉取/开 PR/评论关闭需要；
@@ -261,7 +261,7 @@ core/                共享核心（Node 模块：ANSI 模拟器 / 服务管理 
 platforms/           各平台壳（macos/ 现有壳，windows/ linux/ 规划中）
 scripts/             跨平台工具（version.sh 版本单一来源 / changelog.sh / release-checksums.sh / github-publish.sh / local-release.sh / git-remote.sh）
 .github/             CI 工作流（core 单测、壳层单测/编译检查 + arm64 构建；release.yml 打 tag 时构建 x86_64 + 发布）
-.dsh/skills/         repo-wiki / shell-browser / issue-fix 等面板配套 skill
+.dsh/skills/         web-dev-tools / repo-knowledge / issue-resolve 等面板配套 skill（App 启动时同步安装到全局 $DSH_HOME/skills/）
 .cache/              构建缓存（node tarball、npm 缓存、已构建运行时/CEF，按架构分目录）
 dist/                构建产物（.app / .pkg / .dmg）
 docs/                设计/排查文档（productization.md、git-workflow.md、repo-wiki-design.md、issue-runner-design.md、milestones/、plans/ 等）
