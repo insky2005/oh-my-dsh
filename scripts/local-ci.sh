@@ -15,6 +15,7 @@
 #   scripts/local-ci.sh test           # 只跑阶段1(core)+阶段2(swift) 的测试
 #   scripts/local-ci.sh swift          # 只跑阶段2(swift)：测试 + swiftc 编译检查
 #   scripts/local-ci.sh build [arch]   # 只跑阶段3(build)：build-app.sh + 校验（不打包）
+#   scripts/local-ci.sh dev             # 同 full，但 build 用 DSH_DEV_BUILD=1 打开发版（独立 CEF profile，可与正式版并存测试）
 #
 # 与 GitHub CI 的差异（本地环境的合理简化）：
 #   - GitHub 在 ubuntu 上跑 core、在 macos-14 上跑其余；本地只有一台 macOS，顺序执行。
@@ -75,12 +76,13 @@ stage_swift() {
 # ---------- 阶段3 build：build-app.sh + 产物校验（ci.yml build job，不打包） ----------
 stage_build() {
   local a="$1"
+  local dev="${2:-0}"
   case "$a" in
     arm64) ;;
     *) echo "ERROR: build 阶段仅支持 arm64（与 ci.yml 矩阵一致；x86_64 由 release.yml 打 tag 时交叉编译校验）" >&2; exit 1 ;;
   esac
-  echo "==> [3/3 build] build-app.sh + verify bundle (build job, arch=$a)"
-  DSH_ARCH="$a" ./platforms/macos/build-app.sh
+  echo "==> [3/3 build] build-app.sh + verify bundle (build job, arch=$a, dev=$dev)"
+  DSH_ARCH="$a" DSH_DEV_BUILD="$dev" ./platforms/macos/build-app.sh
   echo "--- verify bundle ---"
   test -x dist/oh-my-dsh.app/Contents/MacOS/oh-my-dsh
   /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/oh-my-dsh.app/Contents/Info.plist
@@ -97,6 +99,11 @@ case "$CMD" in
     stage_core
     stage_swift
     stage_build "$CMD"
+    ;;
+  dev)
+    stage_core
+    stage_swift
+    stage_build arm64 1
     ;;
   ""|full)
     stage_core

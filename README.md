@@ -166,6 +166,7 @@ open "dist/oh-my-dsh-<version>-arm64.dmg"
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh 用） |
 | `DSH_ARCH` | `uname -m` | 目标架构：`arm64` / `x86_64`（CI 构建 arm64，release 构建 arm64 + x86_64；不再出 universal） |
+| `DSH_DEV_BUILD` | `0` | `1` 打包**开发版**（Info.plist 写 `DSHDevBuild=1`）：运行时自动用独立 CEF profile `~/.dsh/browser-dev` 并跳过单实例退出，可与已安装正式版并存测试 |
 | `DSH_CEF_VERSION` | build-cef.sh pin 的版本 | 浏览器面板的 CEF/Chromium 版本（如 `150.0.18+gdb11278+chromium-150.0.7871.213`） |
 
 构建缓存：Node tarball、npm 缓存、已构建的运行时与 CEF 产物存放在 `.cache/`（按架构分目录，不随 `.build/` 清除）；
