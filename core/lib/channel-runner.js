@@ -24,7 +24,7 @@
 const { createWeixinClawBotTransport } = require('./weixin-clawbot-transport');
 const { createWeixinClawBotAdapter } = require('./weixin-clawbot');
 const { createSessionDriver, listWorkspaceSessions } = require('./session-driver');
-const { createChannelManager, normalizeEvent } = require('./channel');
+const { createChannelManager, normalizeEvent, resolveRefBinding } = require('./channel');
 const { createCommandRunner, parseCommand } = require('./channel-commands');
 const { createChannelSessions } = require('./channel-sessions');
 const { assignCodes, resolveWorkspaceTag, toHomePath } = require('./channel-workspaces');
@@ -129,7 +129,7 @@ async function runWeixinChannel(opts = {}) {
   const projectRoot = opts.projectRoot
     || (opts.refs && opts.refs[0] && opts.refs[0].workspaceRoot)
     || path.join(os.homedir(), '.dsh', 'channel-runtime', channelId);
-  const store = opts.sessions || createChannelSessions({ projectRoot, channelId });
+  const store = opts.sessions || createChannelSessions({ channelId, dshHome: opts.dshHome, defaultProjectRoot: projectRoot });
 
   // Workspace routing (docs §3.9): codes w1/w2… + #tag.
   const port = opts.port || 3080;
@@ -275,7 +275,7 @@ async function runWeixinChannel(opts = {}) {
           const s = list[n - 1];
           if (!s) replyText = '未找到会话 #s' + n + ' （/ses 或 /sessions 查看）';
           else {
-            runtime.setSession(event.conversationId, { sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
+            store.setSession(event.conversationId, { sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
             runtime.setActiveSession({ sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
             replyText = '已切换到会话 #s' + n + ' (' + s.sessionId + '), ' + (s.name || '');
           }
@@ -287,15 +287,24 @@ async function runWeixinChannel(opts = {}) {
         if (opts.onEvent) opts.onEvent(event, { command: 'quick-' + kind, reply: { text: replyText } });
         return;
       }
-      // 3) ordinary message: resolve target workspace (#tag / last / first),
-      // then ensure a session mapping and route via manager.
+      // 3) ordinary message: resolve target workspace. docs/channel-association-model.md §B —
+      // refs explicit binding (conversation/keyword) first, else workspace-tag
+      // (#tag / last / first, "current workspace" authoritative for unbound).
       const ws = await getCodedWorkspaces();
-      const resolved = resolveWorkspaceTag(event.text, {
-        workspaces: ws,
-        lastCode: getLastWorkspace() ? getLastWorkspace().code : null,
-        preferFirst: true,
-      });
+      const refRoute = resolveRefBinding(opts.refs, event);
+      let resolved;
+      if (refRoute) {
+        const w = ws.find((x) => x.path === refRoute.workspaceRoot);
+        resolved = { workspace: w || null, code: w && w.code, cleanText: String(event.text || ''), source: 'ref' };
+      } else {
+        resolved = resolveWorkspaceTag(event.text, {
+          workspaces: ws,
+          lastCode: getLastWorkspace() ? getLastWorkspace().code : null,
+          preferFirst: true,
+        });
+      }
       const targetRoot = resolved.workspace ? resolved.workspace.path : projectRoot;
+      const targetWsId = resolved.workspace ? resolved.workspace.id : null;
       if (resolved.workspace) {
         setLastWorkspace({ code: resolved.workspace.code, name: resolved.workspace.name, projectRoot: targetRoot });
       }
@@ -317,13 +326,20 @@ async function runWeixinChannel(opts = {}) {
         if (opts.onEvent) opts.onEvent(event, { command: 'activate-session', reply: { text: ackText } });
         return;
       }
-      let rec = runtime.getSession(event.conversationId);
-      if (!rec || (resolved.source === 'tag' && rec.projectRoot !== targetRoot)) {
-        const sid = await sessionDriver.createSession(port, { cwd: targetRoot });
-        rec = runtime.setSession(event.conversationId, { sessionId: sid, projectRoot: targetRoot });
+      // A (reuse) + C (workspace association): reuse the mapped session when it
+      // still targets this workspace; else create with workspaceId (so the session
+      // belongs to the workspace, not Ungrouped) and persist the mapping.
+      let rec = store.getSession(event.conversationId);
+      if (!rec || rec.projectRoot !== targetRoot) {
+        const sid = targetWsId
+          ? await sessionDriver.createSession(port, { workspaceId: targetWsId })
+          : await sessionDriver.createSession(port, { cwd: targetRoot });
+        rec = store.setSession(event.conversationId, { sessionId: sid, projectRoot: targetRoot });
       }
       event.sessionId = rec.sessionId;
+      event.workspaceId = targetWsId;
       event.workspace = targetRoot;
+      event.projectRoot = targetRoot;
       store.appendMessage({ conversationId: event.conversationId, sessionId: rec.sessionId, dir: 'in', text: sessionText });
       const eventForSession = { ...event, text: sessionText };
       const result = await manager.enqueue(eventForSession);

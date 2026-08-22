@@ -31,8 +31,8 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 | workspace 代号 + #tag 路由 | ✅ | core/lib/channel-workspaces.js | /wks 分配 #wN、#tag 路由（代号精确 > workspace 名）、回退规则（最近 → 第一个） |
 | 指令解析与执行 v1 | ✅ | core/lib/channel-commands.js | /help /ping /status /workspaces(/wks) /new /sessions(/ses) /switch，清单见 channel-commands.md |
 | 快捷指令 #wN / #sN | ✅ | core/lib/channel-runner.js | 纯代号快捷切换；通道级状态持久化 `~/.dsh/channels/<id>.state.json`（lastWorkspace / 会话映射 / activeSession，重启可恢复） |
-| 会话映射 + 消息持久化（v1，决策 E） | ✅ | core/lib/channel-sessions.js | 落项目 `<root>/.dsh/channels/<id>.sessions.json|messages.json`，MAX_MESSAGES=1000 滚动；消息文件 gitignore |
-| **存储全局化改造**（channel-storage.md） | ⏳ | 设计定稿（2026-08-22），**未实现** | 消息/会话迁至全局 `~/.dsh/channels/` 按 `channelId.workspaceKey.sessionId` 分桶；含惰性迁移 + `channel migrate` CLI；createChannelSessions 改按 channel 作用域 |
+| 会话映射 + 消息持久化（决策 E，channel 作用域） | ✅ | core/lib/channel-sessions.js | **已全局化**：`~/.dsh/channels/<id>.sessions.json` + `<id>.workspaces.json` + `<id>.<workspaceKey>.<sessionId>.messages.json` 分桶（无会话入 system 桶）；项目目录不再产生消息/会话文件；MAX_MESSAGES=1000 滚动 |
+| 会话复用（A）+ 工作区归属（C）+ 路由统一（B） | ✅ | session-driver.js、channel-runner.js、channel.js | sessionDriver.run 复用 event.sessionId；普通消息以 workspaceId 归属工作区；resolveRefBinding 先 refs 绑定后 workspace-tag 兜底（见 channel-association-model.md §7） |
 | 第二优先级指令（/commit /test /issue /repo /clear /route /pwd） | 📋 | — | 后续（channel-ui-commands.md §3.3） |
 
 ### 3.2 macOS 面板（ChannelPanel.swift + main.swift）

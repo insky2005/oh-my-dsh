@@ -5,37 +5,42 @@ const assert = require('node:assert/strict');
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
-const { createChannelSessions } = require('../lib/channel-sessions');
+const { createChannelSessions, workspaceKey, channelsDir } = require('../lib/channel-sessions');
 
-test('sessions: set/get/list persists to project .dsh', () => {
-  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
-  const store = createChannelSessions({ projectRoot: proj, channelId: 'wx-1' });
-  store.setSession('conv-a', { sessionId: 's-1', projectRoot: proj, name: '对话A' });
-  store.setSession('conv-b', { sessionId: 's-2', projectRoot: proj, name: '对话B' });
-  assert.ok(fs.existsSync(store.sessionsFile), 'sessions file written');
-  assert.match(store.sessionsFile, /proj-.*\/\.dsh\/channels\/wx-1\.sessions\.json/);
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'sess-home-'));
+
+test('sessions: set/get/list persists to global channel sessions.json', () => {
+  const store = createChannelSessions({ channelId: 'wx-1', dshHome: HOME });
+  store.setSession('conv-a', { sessionId: 's-1', projectRoot: '/p/a', name: '对话A' });
+  store.setSession('conv-b', { sessionId: 's-2', projectRoot: '/p/a', name: '对话B' });
+  assert.ok(fs.existsSync(store.sessionsFile), 'global sessions file written');
+  assert.match(store.sessionsFile, /wx-1\.sessions\.json$/);
   assert.equal(store.getSession('conv-a').sessionId, 's-1');
   assert.equal(store.listSessions().length, 2);
-  const store2 = createChannelSessions({ projectRoot: proj, channelId: 'wx-1' });
+  const store2 = createChannelSessions({ channelId: 'wx-1', dshHome: HOME });
   assert.equal(store2.getSession('conv-b').sessionId, 's-2');
 });
 
 test('sessions: upsert same conversation updates without duplicate', () => {
-  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
-  const store = createChannelSessions({ projectRoot: proj, channelId: 'wx-1' });
+  const store = createChannelSessions({ channelId: 'wx-upsert', dshHome: HOME });
   store.setSession('conv-a', { sessionId: 's-1' });
   store.setSession('conv-a', { sessionId: 's-2' });
   assert.equal(store.listSessions().length, 1);
   assert.equal(store.getSession('conv-a').sessionId, 's-2');
 });
 
-test('sessions: appendMessage persists and groups by conversation', () => {
-  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
-  const store = createChannelSessions({ projectRoot: proj, channelId: 'wx-1' });
-  store.appendMessage({ conversationId: 'conv-a', sessionId: 's-1', dir: 'in', text: 'hi' });
-  store.appendMessage({ conversationId: 'conv-a', sessionId: 's-1', dir: 'out', text: 'hello' });
-  store.appendMessage({ conversationId: 'conv-b', sessionId: 's-2', dir: 'in', text: 'other' });
-  assert.ok(fs.existsSync(store.messagesFile), 'messages file written');
+test('sessions: appendMessage writes per-session buckets under global channels dir', () => {
+  const store = createChannelSessions({ channelId: 'wx-2', dshHome: HOME });
+  store.appendMessage({ conversationId: 'conv-a', sessionId: 's-1', dir: 'in', text: 'hi', projectRoot: '/Users/loie/repo/alpha' });
+  store.appendMessage({ conversationId: 'conv-a', sessionId: 's-1', dir: 'out', text: 'hello', projectRoot: '/Users/loie/repo/alpha' });
+  store.appendMessage({ conversationId: 'conv-b', sessionId: 's-2', dir: 'in', text: 'other', projectRoot: '/Users/loie/repo/alpha' });
+  store.appendMessage({ conversationId: 'conv-c', sessionId: null, dir: 'in', text: '/help', projectRoot: '/Users/loie/repo/alpha' });
+  // no project dir pollution
+  assert.ok(!fs.existsSync('/Users/loie/repo/alpha/.dsh/channels/wx-2.sessions.json'));
+  // buckets under global channels dir
+  assert.ok(fs.existsSync(path.join(store.dir, 'wx-2.alpha.s-1.messages.json')), 'session bucket written');
+  assert.ok(fs.existsSync(path.join(store.dir, 'wx-2.alpha.s-2.messages.json')), 'second session bucket written');
+  assert.ok(fs.existsSync(path.join(store.dir, 'wx-2.alpha.system.messages.json')), 'system bucket written');
   const a = store.listMessages('conv-a');
   assert.equal(a.length, 2);
   assert.equal(a[0].text, 'hi');
@@ -43,12 +48,33 @@ test('sessions: appendMessage persists and groups by conversation', () => {
   const b = store.listMessages('conv-b');
   assert.equal(b.length, 1);
   assert.equal(b[0].text, 'other');
-  const store2 = createChannelSessions({ projectRoot: proj, channelId: 'wx-1' });
+  const c = store.listMessages('conv-c');
+  assert.equal(c.length, 1);
+  assert.equal(c[0].sessionId, null);
+  // reload from a fresh store on the same channel
+  const store2 = createChannelSessions({ channelId: 'wx-2', dshHome: HOME });
   assert.equal(store2.listMessages('conv-a').length, 2);
 });
 
-test('sessions: files live under project .dsh/channels', () => {
-  const store = createChannelSessions({ projectRoot: '/tmp/fake-proj', channelId: 'wx-9' });
-  assert.equal(store.sessionsFile, '/tmp/fake-proj/.dsh/channels/wx-9.sessions.json');
-  assert.equal(store.messagesFile, '/tmp/fake-proj/.dsh/channels/wx-9.messages.json');
+test('sessions: appendMessage without projectRoot falls back to mapping/default', () => {
+  const store = createChannelSessions({ channelId: 'wx-3', dshHome: HOME, defaultProjectRoot: '/Users/loie/repo/beta' });
+  store.setSession('conv-x', { sessionId: 's-9', projectRoot: '/Users/loie/repo/beta' });
+  // mapping fallback
+  store.appendMessage({ conversationId: 'conv-x', sessionId: 's-9', dir: 'in', text: 'mapped' });
+  // default fallback (no mapping)
+  store.appendMessage({ conversationId: 'orphan', sessionId: null, dir: 'in', text: 'default' });
+  assert.equal(store.listMessages('conv-x').length, 1);
+  assert.equal(store.listMessages('orphan').length, 1);
+});
+
+test('sessions: workspace key cleaning + duplicate disambiguation', () => {
+  assert.equal(workspaceKey('/Users/loie/repo/alpha'), 'alpha');
+  assert.equal(workspaceKey('/a b/c+d e'), 'c-d-e'); // basename, non-word -> '-'
+  const store = createChannelSessions({ channelId: 'wx-4', dshHome: HOME });
+  const k1 = store.registerProjectRoot('/Users/loie/repo/alpha');
+  const k2 = store.registerProjectRoot('/Other/alpha');
+  assert.equal(k1, 'alpha');
+  assert.match(k2, /^alpha-[0-9a-f]{6}$/);
+  // same root re-registers to its original key
+  assert.equal(store.registerProjectRoot('/Users/loie/repo/alpha'), 'alpha');
 });

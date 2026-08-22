@@ -1,6 +1,6 @@
 # Channel – Message – Session 关联模型（核查与调整方案）
 
-> 状态：📝 核查文档（2026-08-22 定稿）
+> 状态：✅ 核查+实施（A/B/C/D 已于 2026-08-22 在 core 落地，见 §7 实施记录）
 > 更新：2026-08-22
 > 关联：docs/channel-design.md（统一抽象/配置模型）、docs/channel-storage.md（存储全局化）、docs/channel-status.md（完成状态）、docs/channel-commands.md（指令）、.dsh/wiki/modules/channel-panel.md、core/lib/channel-runner.js、core/lib/channel.js、core/lib/session-driver.js、core/lib/channel-sessions.js、core/lib/channel-store.js、core/lib/channel-workspaces.js、platforms/macos/src/ChannelPanel.swift
 > 说明：基于需求「Channel（通道）↔ Message ↔ Session（含 Workspace）关联模型」对现有设计逐项核查，列出需要做的调整。**本文档只做核查与方案，不实现代码**；调整项见 §5 落地优先级，供后续单独 feature/fix 分支实施。
@@ -38,10 +38,10 @@
 
 | # | 需求意图 | 现状 | 结论 | 出处 |
 |---|---|---|---|---|
-| G1 | 消息转发到「当前/关联会话」、**多轮复用同一会话** | runner 记录了会话映射，但 `manager.enqueue → sessionDriver.run(event, ref)` **每次都 `session.create` 新建会话，忽略已设置的 `event.sessionId`** | **不满足** | channel-runner.js:320-329；channel.js:226；session-driver.js:158 |
-| G2 | 按「当前工作区+当前会话」路由 | 普通消息走 workspace-tag（全部 workspace 的 #tag/last/first）；项目引用 `.dsh/channels.json` 的 Router（conversations/keywords/default）**在普通消息路径基本未生效** | **双轨** | channel-runner.js:292 vs channel.js:123 |
-| G3 | session 归属 workspace | 普通消息路径 `session.create({ cwd: targetRoot })` → `workspaceId:null` 未分组；仅 /new 用 `workspaceId`；driver 用 `ref.workspaceId`（refs 无此字段）会回退 cwd | **不满足** | channel-runner.js:322,181；session-driver.js:50 |
-| G4 | 关联存储单一事实来源 | **双份会话映射**：项目 `.dsh/channels/<id>.sessions.json` 的 `store.setSession/listSessions` **从未被 runner 调用**（死代码，仅 `appendMessage` 被用）；真正路由用 `runtime.setSession`（state.json）；消息落项目目录 | **不满足** | channel-sessions.js vs channel-runner.js |
+| G1 | 消息转发到「当前/关联会话」、**多轮复用同一会话** | **已修复（A）**：sessionDriver.run 尊重 `event.sessionId`，有则复用、无则 create；runner 先按 store 映射/复用再 enqueue | ✅ | session-driver.js run()；channel-runner.js |
+| G2 | 按「当前工作区+当前会话」路由 | **已修复（B）**：refs 显式绑定（conversation/keyword）优先，否则 workspace-tag（#tag>last>first）兜底；handleEvent 对已绑定事件的合成 ref 兜底 | ✅ | channel.js resolveRefBinding；channel-runner.js |
+| G3 | session 归属 workspace | **已修复（C）**：普通消息路由到 workspace 后以 `workspaceId` 创建/复用会话（无 workspace 才回退 cwd） | ✅ | channel-runner.js；session-driver.js createSession |
+| G4 | 关联存储单一事实来源 | **已修复（D）**：createChannelSessions 改按 channel 作用域（全局 `~/.dsh/channels/`：sessions.json + workspaces.json + `channelId.workspaceKey.sessionId.messages.json` 分桶）；runner 会话映射与消息归档都走同一全局 store；项目目录不再产生消息/会话文件 | ✅ | channel-sessions.js；channel-runner.js |
 | G5 | 面板项目视图展示 Channel▸Session(+Message) 关联 | 项目视图 `loadSessionNames` 读项目 `.dsh/channels/<id>.sessions.json`（G4 的死文件 → 恒空），不读消息、不读 state.json 映射 | **不满足** | ChannelPanel.swift:502 |
 
 ## 3. 需要做的调整（对应 §2.2）
@@ -98,6 +98,16 @@
 
 ## 6. 明确不在本文档范围
 
-- 本文档不实现任何代码（Swift/Node 均不写）；
 - 钉钉/飞书适配器（M4）不在本文；
-- A–F 调整为后续独立 feature/fix 分支实施（需另行批准）。
+- **E（面板项目视图数据源 + 消息列表）为后续实施**：D 已把消息/会话迁到全局 `~/.dsh/channels/`，macOS 面板 ChannelPanel.swift 的 `loadSessionNames` 仍读项目 `.dsh/channels/<id>.sessions.json`，需改从全局 store 读取（见 §5 优先级 P2）。
+
+## 7. 实施记录（A/B/C/D 已于 2026-08-22 落地，core）
+
+| 项 | 改动 | 文件 | 测试 |
+|---|---|---|---|
+| A 会话复用 | sessionDriver.run 复用 event.sessionId（存在则不再 create/rename），返回 sessionId | core/lib/session-driver.js | channel-association.test.js「A」 |
+| C 工作区归属 | 普通消息以 workspaceId 创建/复用会话，无 workspace 才回退 cwd | core/lib/channel-runner.js、session-driver.js | channel-association.test.js「C」 |
+| B 路由统一 | 新增 resolveRefBinding（conversation/keyword 显式绑定），runner 先 refs 绑定后 workspace-tag 兜底；handleEvent 对已绑定事件合成 ref | core/lib/channel.js、channel-runner.js | channel-association.test.js「B」 |
+| D 存储单一来源 | createChannelSessions 改按 channel 作用域全局存储（sessions/workspaces/分桶消息）；runner 会话映射与消息都走同一 store；忽略历史迁移（按需求） | core/lib/channel-sessions.js、channel-runner.js | channel-sessions.test.js（重写） |
+
+> 验证：`node --test core/tests/` **152 全绿**（基线 148 + A/B/C/D 相关新增）。
