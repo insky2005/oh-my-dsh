@@ -2,7 +2,7 @@
 
 把 DeepSeek Harness 的 Web 界面（`dsh web`）封装成一个可以在 macOS 上**直接双击运行**的原生 App。
 **不改动任何 DeepSeek Harness 源码**——它只是一个壳：内置运行时自拉起/复用 `dsh web`，用原生 `WKWebView`
-呈现界面，并在窗口右侧提供五个原生面板（文件 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务）。
+呈现界面，并在窗口右侧提供六个原生面板（文件 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务 / 通道）。
 
 ## 特性一览
 
@@ -14,11 +14,12 @@
 - **registry 可配置，默认国内源**：检查/升级走 npm registry，默认 `https://registry.npmmirror.com`，可在「设置 dsh registry…」里改（运行期），构建期用 `DSH_NPM_REGISTRY` 覆盖；
 - **首次引导 onboarding**：首次启动展示欢迎说明（内置运行时/自包含原理/上手提示）；
 - **关于面板**：App 菜单 →「关于 oh-my-dsh」显示 App 版本、build、依赖的 dsh 版本与运行时来源、Node 版本+路径、dsh registry。
+- **通道面板（远程驱动）**：绑定微信个人号（官方 iLink 协议），在微信里发消息 / 斜杠指令远程驱动 dsh 干活——消息路由到项目会话、结果回复回微信；扫码登录、项目开关、会话列表均在面板内完成。
 
 ## 右栏面板
 
-窗口**最右侧是活动栏**（图标入口，五个面板互斥切换），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
-「视图」菜单提供五面板的显示/隐藏快捷键。
+窗口**最右侧是活动栏**（图标入口，六个面板互斥切换），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
+「视图」菜单提供六面板的显示/隐藏快捷键。
 
 ### 文件面板（`⌥⌘P` / 活动栏「文件」图标）
 
@@ -80,6 +81,21 @@
 - **失败处理**：会话失败/超时（30min）/分支未推送/PR 失败各有明确状态与错误提示，可 Retry；取消走 `session.cancel`；
 - **GitHub token（按仓库作用域）**：面板「配置 GitHub Token」**同时写** Keychain 专属与文件专属 `~/.dsh/tokens/<owner>-<repo>`（chmod 600，App 与外部工具/代理共用）；解析优先级：文件专属 → 文件通用 `~/.dsh/gh-token` → Keychain 专属 → Keychain 通用；公开仓库无需 token，私有仓库拉取/开 PR/评论关闭需要；
 - 工作区非 GitHub 仓库时诚实显示空态（不替换为其他已注册工作区）；切换到不同仓库先清空旧列表再重载。
+
+### 通道面板（`⌥⌘H` / 活动栏「通道」图标）
+
+把微信个人号接入 dsh，**在微信里远程驱动 dsh 干活**：发消息 → 路由到项目会话 → 结果回复回微信。
+
+- **接入向导**：内置平台卡片（微信 ClawBot / 钉钉 / 飞书，带实时连接状态徽标）；微信扫码登录**在面板内渲染二维码**（不弹浏览器），登录态落 `~/.dsh/channels/<id>.json`（文件优先，chmod 600）；
+- **项目视图**：当前项目可用通道开关（写 `.dsh/channels.json` 引用）+ 可展开会话列表；顶部「全局配置」随时重开；
+- **微信内斜杠指令**：`/help` `/ping` `/status` `/workspaces`(`/wks`) `/new` `/sessions`(`/ses`) `/switch`；快捷指令 `#w1`/`#s1…`（切项目/会话）与 #tag 路由（如 `#w1 帮我看看`）；
+- **消息分发**：路由优先级（显式会话绑定 > 关键词 > 默认兜底），未绑定项目回复提示不静默；同会话串行、跨会话可并发（jobqueue）；
+- **会话驱动**：conversationId → dsh 会话映射（多轮对话续接，`/new` 另起），经 `session.create` + `session.prompt`（queue）驱动，回复回传微信；
+- **可靠性**：官方 iLink 协议**严格串行长轮询**（修复重复回复）；断线/鉴权失效（-14）归一到统一状态机，受控重连/重新扫码；启动自动拉起 listener、退出清理、同通道去重；
+- **当前限制**：钉钉/飞书仅展示卡片（适配器待实现）；消息/会话存储仍落项目 `.dsh`（全局化改造设计中，见 `docs/channel-storage.md`）；
+- 设计与指令清单：`docs/channel-design.md`、`docs/channel-commands.md`、`docs/channel-status.md`。
+
+![channel](./docs/screenshots/channel.png)
 
 ## 产物
 
@@ -165,7 +181,7 @@ open "dist/oh-my-dsh.app"
 
 - 界面用系统 WebKit 渲染，与 Safari 同引擎；窗口标题固定为 `oh-my-dsh (DeepSeek Harness)`；
 - 外部链接、`target=_blank` 会交给默认浏览器打开，不会在壳内跳走；文件下载走原生「另存为」对话框（`WKDownload`）；
-- **菜单**：App 菜单（关于/隐藏/退出）、编辑菜单（`⌘C/V/X/A/Z` 路由到 WebView 首响应者）、视图菜单（五面板切换）、设置菜单（`⌘,` 设置窗口 / `⌘U` 检查并升级 dsh / `⌘L` 打开日志文件夹 / dsh 设置 / registry / 自动升级 / wiki 设置组 / 语言子菜单 / 外观子菜单）；
+- **菜单**：App 菜单（关于/隐藏/退出）、编辑菜单（`⌘C/V/X/A/Z` 路由到 WebView 首响应者）、视图菜单（六面板切换）、设置菜单（`⌘,` 设置窗口 / `⌘U` 检查并升级 dsh / `⌘L` 打开日志文件夹 / dsh 设置 / registry / 自动升级 / wiki 设置组 / 语言子菜单 / 外观子菜单）；
 - 首次启动若被 Gatekeeper 拦（"无法验证开发者"），右键 App →「打开」即可（本地构建，无公证）。
 
 ## dsh 升级
@@ -220,7 +236,7 @@ open "dist/oh-my-dsh.app"
 壳二进制只做三件事：探测端口 → 用内置 `node` 执行内置 `<dsh>/lib/bin.js web --port <n>` 拉起/复用 → `WKWebView` 加载 `http://127.0.0.1:<n>`。
 `dsh` 本体、`~/.dsh` 配置、会话数据全部原样，无任何补丁或注入。内置运行时装在 `Contents/Resources/runtime/`
 （`node` + `npm` + `dsh/` 依赖树），App 优先使用它，找不到时才回退到本机安装。
-右侧五个面板是壳层原生 UI，其中文件面板通过 WebView 注入拦截文件打开、任务/知识库/浏览器通过 dsh 既有能力（RPC / 会话 / 独立浏览器内核）驱动。
+右侧六个面板是壳层原生 UI，其中文件面板通过 WebView 注入拦截文件打开、任务/知识库/浏览器/通道通过 dsh 既有能力（RPC / 会话 / 独立浏览器内核）驱动。
 
 ## 目录
 
@@ -233,13 +249,14 @@ platforms/macos/src/                  原生壳（Swift）
   TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）
   WikiPanel.swift      Repo Wiki 知识库面板（生成/维护/浏览 + 自动 git 提交）
   IssueRunnerPanel.swift 任务面板（GitHub issues 串行流水线 + 关联索引 + 评论并关闭）
+  ChannelPanel.swift     通道面板（微信接入：引导卡片/扫码向导/项目视图 + 启动自动拉起 listener）
   BrowserPanel.swift / BrowserAPI.swift / BrowserCDP.swift  浏览器面板（CEF 渲染 + REST API + CDP）
   MakeIcon.swift     App 图标生成器（渲染 → iconset → icns）
 platforms/macos/cef/                   CEFShim.h/.mm（ObjC++ 桥：OSR 渲染/输入转发/DevTools）+ helper
 platforms/macos/build-app.sh           一键构建脚本（编译、打包、镜像下载 Node、npm 装 dsh、预下载模式、签名）
 platforms/macos/build-cef.sh           CEF 构建脚本（版本 pin + sha1 校验 + 缓存 + shim/helper 编译）
 platforms/macos/make-pkg.sh            安装包脚本（pkgbuild 生成 .pkg + hdiutil 生成 .dmg）
-core/                共享核心（Node 模块：ANSI 模拟器 / 服务管理 / 升级 / 会话 RPC / issues / jobqueue / tasks 关联索引，跨平台复用）
+core/                共享核心（Node 模块：ANSI 模拟器 / 服务管理 / 升级 / 会话 RPC / issues / jobqueue / tasks 关联索引 / channel（统一抽象·路由·指令·微信适配器），跨平台复用）
 platforms/           各平台壳（macos/ 现有壳，windows/ linux/ 规划中）
 scripts/             跨平台工具（version.sh 版本单一来源 / changelog.sh / release-checksums.sh / github-publish.sh / local-release.sh / git-remote.sh）
 .github/             CI 工作流（core 单测、壳层单测/编译检查 + arm64 构建；release.yml 打 tag 时构建 x86_64 + 发布）
@@ -255,7 +272,7 @@ docs/                设计/排查文档（productization.md、git-workflow.md�
 与 [SECURITY.md](SECURITY.md)（安全报告渠道）。
 
 - **Bug / 功能请求**：使用仓库的 Issue 模板（bug / feature）提交；
-- **本地测试**：`node --test core/tests/`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引）、
+- **本地测试**：`node --test core/tests/`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层）、
   `tests/wiki-panel/run.sh`（Wiki 面板单测）、`tests/terminal-emulator/run.sh`（模拟器测试）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）；
 - **CI**：push/PR 自动跑 core 单测 + 壳层编译检查 + macOS arm64 构建（`.github/workflows/ci.yml`）；发布由 release 流程构建双架构。
 
