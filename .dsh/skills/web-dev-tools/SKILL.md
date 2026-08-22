@@ -1,10 +1,9 @@
 ---
-name: shell-browser
+name: web-dev-tools
 description: 驱动 oh-my-dsh 壳层的「浏览器」面板排查网页问题（打开页面、读 console/网络日志、执行 JS、截图）。Drive the oh-my-dsh shell's Browser panel to troubleshoot web pages (open pages, read console/network logs, run JS, take screenshots).
-modelInvocable: true
 ---
 
-# shell-browser — 用 oh-my-dsh 浏览器面板排查网页问题
+# web-dev-tools — 用 oh-my-dsh 浏览器面板排查网页问题
 
 oh-my-dsh 壳层内置一个**浏览器面板**（CEF 嵌入式 Chromium 内核），通过 **localhost REST API** 驱动，无需额外浏览器/驱动。面板与 dsh web 共用同一 App，Agent 驱动时面板会自动展开，用户实时可见。
 

@@ -1306,6 +1306,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         installSignalHandlers()
         buildMenu()
         AppLog.shared.log("launch: menu built")
+        // Provision built-in skills into the global dsh home before dsh web starts,
+        // so the agent can discover them in any workspace. Best-effort; never blocks.
+        SkillInstaller.installBuiltinSkills()
         buildWindow()
         AppLog.shared.log("launch: window built")
         AppLog.shared.log("app did finish launching (lang=\(L10n.lang) followSystem=\(!L10n.hasExplicitChoice) AppleLanguages=\(UserDefaults.standard.array(forKey: "AppleLanguages") ?? []))")
@@ -3205,7 +3208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     /// Start the browser panel's localhost REST API (Agent / user curl).
     /// 端口：DSH_BROWSER_PORT 覆盖，默认 3081；被占用自动递增；生效端口写
-    /// $DSH_HOME/browser-api.port 供 shell-browser 技能发现。
+    /// $DSH_HOME/browser-api.port 供 web-dev-tools 技能发现。
     private func startBrowserAPIServer() {
         let bridge = BrowserAPIBridge()
         bridge.panel = browserPanel

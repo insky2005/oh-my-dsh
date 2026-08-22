@@ -287,7 +287,7 @@ oh-my-dsh/
 - 模拟器测试随代码进 `core/tests/`
 
 **迁移注意点**：
-- `.dsh/wiki` 的 frontmatter `sources` 引用了 `src/`、`README.md` 等路径——移动后用 repo-wiki 做一次**增量更新**修复陈旧标记
+- `.dsh/wiki` 的 frontmatter `sources` 引用了 `src/`、`README.md` 等路径——移动后用 repo-knowledge 做一次**增量更新**修复陈旧标记
 - 用 `git mv` 保留历史；`build-app.sh` 内部路径常量同步修改
 - `dist/`、`.cache/`、`pic/` 继续不入库（产物走 GitHub Releases 附件）
 

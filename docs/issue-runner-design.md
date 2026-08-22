@@ -27,12 +27,12 @@ IssueRunnerPanelController (macOS, Swift)
   ├── 仓库识别：git remote → owner/repo（自动，工作区切换时）
   ├── GitHub REST：拉 issues（过滤 PR）/ 创建 PR（token 走 Keychain）
   ├── git 流水线（Process）：checkout main → pull → checkout -b fix/issue-N → 校验推送
-  ├── dsh 会话：create(workspaceId) → rename("fix(#N): …") → prompt(issue-fix) → 轮询 → cancel
+  ├── dsh 会话：create(workspaceId) → rename("fix(#N): …") → prompt(issue-resolve) → 轮询 → cancel
   └── 串行队列：一次一个 running，完成自动启动下一个 pending
 
 core/lib/jobqueue.js —— 跨平台串行队列状态机（Node，纯逻辑，可单测）
 core/lib/issues.js  —— GitHub REST 封装（Node，可单测）
-.dsh/skills/issue-fix/SKILL.md —— 代理在任务会话中加载的执行指令
+$DSH_HOME/skills/issue-resolve/SKILL.md —— 代理在任务会话中加载的执行指令（App 启动时安装到全局）
 ```
 
 ## 数据流（处理 issue #N）
@@ -40,7 +40,7 @@ core/lib/issues.js  —— GitHub REST 封装（Node，可单测）
 1. 用户点「处理」（或「全部处理」）
 2. `git checkout main` → `git pull --ff-only` → `git checkout -b fix/issue-N`
 3. `session.create(workspaceId=主项目)` → `session.rename("fix(#N): 标题")`
-4. `session.prompt`（queue 模式）注入 issue-fix skill + issue 内容
+4. `session.prompt`（queue 模式）注入 issue-resolve skill + issue 内容
 5. 轮询 `session.list` 中该会话 `running` → 结束后
 6. `git ls-remote` 校验分支已推送 → `POST /pulls` 创建 PR（base=main, head=fix/issue-N）
 7. 状态 → done(PR url)；`git checkout main`；队列自动下一项
