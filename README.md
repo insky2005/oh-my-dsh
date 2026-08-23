@@ -87,12 +87,13 @@
 把微信个人号接入 dsh，**在微信里远程驱动 dsh 干活**：发消息 → 路由到项目会话 → 结果回复回微信。
 
 - **接入向导**：内置平台卡片（微信 ClawBot / 钉钉 / 飞书，带实时连接状态徽标）；微信扫码登录**在面板内渲染二维码**（不弹浏览器），登录态落 `~/.dsh/channels/<id>.json`（文件优先，chmod 600）；
-- **项目视图**：当前项目可用通道开关（写 `.dsh/channels.json` 引用）+ 可展开会话列表；顶部「全局配置」随时重开；
+- **项目视图**：当前项目可用通道开关（写 `.dsh/channels.json` 引用）+ 会话列表；通道标题行展示「图标 + 平台名 (channelId) + 会话数」、启用开关靠右，整行独立背景；每条会话独立区块，标题可点开/收起，消息按对话气泡展示（提问靠右、回复靠左）；顶部「全局配置」随时重开；
 - **微信内斜杠指令**：`/help` `/ping` `/status` `/workspaces`(`/wks`) `/new` `/sessions`(`/ses`) `/switch`；快捷指令 `#w1`/`#s1…`（切项目/会话）与 #tag 路由（如 `#w1 帮我看看`）；
 - **消息分发**：路由优先级（显式会话绑定 > 关键词 > 默认兜底），未绑定项目回复提示不静默；同会话串行、跨会话可并发（jobqueue）；
-- **会话驱动**：conversationId → dsh 会话映射（多轮对话续接，`/new` 另起），经 `session.create` + `session.prompt`（queue）驱动，回复回传微信；
+- **会话驱动**：conversationId → dsh 会话映射（多轮对话续接，`/new` 另起），`/new` 后绑定会话到 conversation、下一条普通消息复用而非新建；经 `session.create` + `session.prompt`（queue）驱动，回复回传微信；
 - **可靠性**：官方 iLink 协议**严格串行长轮询**（修复重复回复）；断线/鉴权失效（-14）归一到统一状态机，受控重连/重新扫码；启动自动拉起 listener、退出清理、同通道去重；
-- **当前限制**：钉钉/飞书仅展示卡片（适配器待实现）；消息/会话存储仍落项目 `.dsh`（全局化改造设计中，见 `docs/channel-storage.md`）；
+- **全局存储**：会话映射与消息日志归档到全局 `~/.dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶），项目内只保留引用配置 `.dsh/channels.json`（见 `docs/channel-storage.md`）；
+- **当前限制**：钉钉/飞书仅展示卡片（适配器待实现）；
 - 设计与指令清单：`docs/channel-design.md`、`docs/channel-commands.md`、`docs/channel-status.md`。
 
 ![channel](./docs/screenshots/channel.png)
@@ -257,7 +258,7 @@ platforms/macos/cef/                   CEFShim.h/.mm（ObjC++ 桥：OSR 渲染/�
 platforms/macos/build-app.sh           一键构建脚本（编译、打包、镜像下载 Node、npm 装 dsh、预下载模式、签名）
 platforms/macos/build-cef.sh           CEF 构建脚本（版本 pin + sha1 校验 + 缓存 + shim/helper 编译）
 platforms/macos/make-pkg.sh            安装包脚本（pkgbuild 生成 .pkg + hdiutil 生成 .dmg）
-core/                共享核心（Node 模块：ANSI 模拟器 / 服务管理 / 升级 / 会话 RPC / issues / jobqueue / tasks 关联索引 / channel（统一抽象·路由·指令·微信适配器），跨平台复用）
+core/                共享核心（Node 模块：ANSI 模拟器 / 服务管理 / 升级 / 会话 RPC / issues / jobqueue / tasks 关联索引 / channel（统一抽象·路由·指令·会话关联·全局存储·微信适配器），跨平台复用）
 platforms/           各平台壳（macos/ 现有壳，windows/ linux/ 规划中）
 scripts/             跨平台工具（version.sh 版本单一来源 / changelog.sh / release-checksums.sh / github-publish.sh / local-release.sh / git-remote.sh）
 .github/             CI 工作流（core 单测、壳层单测/编译检查 + arm64 构建；release.yml 打 tag 时构建 x86_64 + 发布）
@@ -274,7 +275,7 @@ docs/                设计/排查文档（productization.md、git-workflow.md�
 
 - **Bug / 功能请求**：使用仓库的 Issue 模板（bug / feature）提交；
 - **本地测试**：`node --test core/tests/`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层）、
-  `tests/wiki-panel/run.sh`（Wiki 面板单测）、`tests/terminal-emulator/run.sh`（模拟器测试）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）；
+  `tests/wiki-panel/run.sh`（Wiki 面板单测）、`tests/terminal-emulator/run.sh`（模拟器测试）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）；
 - **CI**：push/PR 自动跑 core 单测 + 壳层编译检查 + macOS arm64 构建（`.github/workflows/ci.yml`）；发布由 release 流程构建双架构。
 
 本项目遵循 [MIT License](LICENSE)，代码只封装、绝不修改 DeepSeek Harness 上游源码。
