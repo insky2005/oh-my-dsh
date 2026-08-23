@@ -167,17 +167,15 @@ async function runChannelSequence(texts, { projectRoot = '/Users/loie/repo/alpha
   return sent;
 }
 
-test('channel-runner: /new 无内容只创建、后续消息激活、有内容立即处理', async () => {
+test('channel-runner: /new 无内容只创建、后续消息激活、有内容生成（typing 替代处理中 ack）', async () => {
   const replies = await runChannelSequence(['/new', '帮我看看项目', '/new 打开百度']);
   const joined = JSON.stringify(replies);
   // 1) /new 无内容 → 只创建，无标题，请继续发送消息
   assert.ok(replies.some((r) => /创建 会话 #s1 \(sess-1\), 无标题/.test(r)), joined);
   assert.ok(replies.some((r) => /请继续发送消息，与我对话/.test(r)), joined);
-  // 2) 后续普通消息 → 激活该会话，处理中 + 标题=消息内容；后台生成完成后回推答案
-  assert.ok(replies.some((r) => /处理中，会话 #s1 \(sess-1\), 帮我看看项目/.test(r)), joined);
+  // 2) 后续普通消息 → 激活该会话，后台生成完成后回推答案（无 "处理中" 文字，typing 替代）
   assert.ok(replies.some((r) => /回答-sess-1/.test(r)), 'answer pushed for sess-1: ' + joined);
-  // 3) /new 带内容 → 处理中 + 标题=内容；后台回推答案
-  assert.ok(replies.some((r) => /处理中，会话 #s\d+ \(sess-2\), 打开百度/.test(r)), joined);
+  // 3) /new 带内容 → 后台生成 + 回推答案
   assert.ok(replies.some((r) => /回答-sess-2/.test(r)), 'answer pushed for sess-2: ' + joined);
 });
 

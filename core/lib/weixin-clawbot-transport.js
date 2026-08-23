@@ -79,6 +79,8 @@ function createWeixinClawBotTransport(opts = {}) {
   const channelId = opts.channelId || 'weixin-clawbot';
 
   let token = opts.token || null;
+  let userId = opts.userId || null;
+  let typingTicket = null;
   let errHandler = null;
   let getUpdatesBuf = '';
 
@@ -198,6 +200,7 @@ function createWeixinClawBotTransport(opts = {}) {
           baseUrl: statusResponse.baseurl || baseUrl,
         };
         token = result.botToken;
+        userId = result.userId;
         return result;
       }
       if (status === 'binded_redirect') {
@@ -314,6 +317,31 @@ function createWeixinClawBotTransport(opts = {}) {
     return { messageId: clientId };
   }
 
+  // ---------------------------------------------------- typing indicator
+  /**
+   * Fetch bot config (includes typing_ticket) for the account user.
+   * POST ilink/bot/getconfig { ilink_user_id, context_token?, base_info }.
+   * Response: { ret, typing_ticket }.
+   */
+  async function getConfig(contextToken) {
+    const resp = await apiPost('ilink/bot/getconfig',
+      { ilink_user_id: userId, context_token: contextToken, base_info: baseInfo() },
+      DEFAULT_CONFIG_TIMEOUT_MS, 'getConfig');
+    if (resp && resp.typing_ticket) typingTicket = resp.typing_ticket;
+    return resp;
+  }
+  /**
+   * Send or cancel the typing status indicator.
+   * POST ilink/bot/sendtyping { ilink_user_id, typing_ticket, status, base_info }.
+   * status: 1 = typing, 2 = cancel typing. typing_ticket comes from getConfig.
+   */
+  async function sendTyping({ status = 1, contextToken } = {}) {
+    if (!typingTicket) { try { await getConfig(contextToken); } catch { /* best-effort */ } }
+    await apiPost('ilink/bot/sendtyping',
+      { ilink_user_id: userId, typing_ticket: typingTicket || undefined, status, base_info: baseInfo() },
+      DEFAULT_CONFIG_TIMEOUT_MS, 'sendTyping');
+  }
+
   // -------------------------------------------------------- notifications
   async function notifyStart() {
     return apiPost('ilink/bot/msg/notifystart', { base_info: baseInfo() }, DEFAULT_CONFIG_TIMEOUT_MS, 'notifyStart');
@@ -329,7 +357,7 @@ function createWeixinClawBotTransport(opts = {}) {
     channelId, baseUrl, DEFAULT_BASE_URL,
     connect, disconnect, fetchUpdates, sendMessage, onError,
     startLogin, waitForLogin, notifyStart, notifyStop,
-    getToken, setToken, STALE_TOKEN_ERRCODE,
+    getToken, setToken, getConfig, sendTyping, STALE_TOKEN_ERRCODE,
     _setGetUpdatesBuf: (b) => { getUpdatesBuf = b; },
     _getGetUpdatesBuf: () => getUpdatesBuf,
   };

@@ -108,6 +108,11 @@ function createWeixinClawBotAdapter(opts = {}) {
 
   function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
+  /** Send/cancel the typing indicator (status 1=typing, 2=cancel). Best-effort. */
+  async function sendTyping(conversationId, status, contextToken) {
+    await ((transport.sendTyping) || (async () => {})).call(transport, { status, contextToken: contextToken || undefined });
+  }
+
   async function send(conversationId, reply) {
     const rep = typeof reply === 'string' ? buildReply(reply) : reply || {};
     const payload = {
@@ -124,7 +129,7 @@ function createWeixinClawBotAdapter(opts = {}) {
   function dispose() { stopPolling(); handlers = []; }
 
   return {
-    platform, channelId, connect, disconnect, onEvent, onState, send, getState, getLastError, dispose,
+    platform, channelId, connect, disconnect, onEvent, onState, send, sendTyping, getState, getLastError, dispose,
   };
 }
 

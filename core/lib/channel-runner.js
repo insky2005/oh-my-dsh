@@ -58,6 +58,7 @@ function buildWeixinAdapters({ refs, dshHome, transportOpts, intervalMs, ensureC
       channelId,
       token: account ? account.botToken : null,
       baseUrl: account ? account.baseUrl : undefined,
+      userId: account ? account.userId : undefined,
       ...(transportOpts || {}),
     });
     const adapter = createWeixinClawBotAdapter({ channelId, transport, intervalMs: intervalMs || 1000 });
@@ -240,6 +241,8 @@ async function runWeixinChannel(opts = {}) {
     busy.add(conversationId);
     (async () => {
       try {
+        // typing indicator ("正在输入…") replaces the old "处理中" text ack
+        await adapter.sendTyping(conversationId, 1, contextToken);
         const event = { channelId, platform: 'weixin-clawbot', conversationId, sessionId, workspace, workspaceId, text, contextToken };
         const reply = await sessionDriver.run(event, { workspaceRoot: workspace, workspaceId });
         const outText = reply && reply.text;
@@ -251,6 +254,7 @@ async function runWeixinChannel(opts = {}) {
       } catch (e) {
         try { await adapter.send(conversationId, { text: '生成失败：' + (e && e.message || String(e)), contextToken }); } catch { /* ignore */ }
       } finally {
+        try { await adapter.sendTyping(conversationId, 2, contextToken); } catch { /* ignore */ }
         busy.delete(conversationId);
       }
     })();
@@ -276,9 +280,10 @@ async function runWeixinChannel(opts = {}) {
           const act = runtime.getActiveSession();
           if (act && act.sessionId) {
             store.setSession(event.conversationId, { sessionId: act.sessionId, projectRoot: act.projectRoot, name: act.name });
-            // /new <content>: ack 处理中 via reply, then run the generation in the
-            // background and push the answer back (no more lost answers).
+            // /new <content>: typing indicator (dispatchGeneration) replaces the
+            // "处理中" text ack; run generation in background + push the answer.
             if (parsed.args && parsed.args[0]) {
+              store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
               dispatchGeneration({
                 conversationId: event.conversationId,
                 sessionId: act.sessionId,
@@ -287,6 +292,7 @@ async function runWeixinChannel(opts = {}) {
                 text: parsed.args.join(' '),
                 contextToken: event.contextToken,
               });
+              return;
             }
           }
         }
@@ -344,6 +350,15 @@ async function runWeixinChannel(opts = {}) {
       // 3) ordinary message: resolve target workspace. docs/channel-association-model.md §B —
       // refs explicit binding (conversation/keyword) first, else workspace-tag
       // (#tag / last / first, "current workspace" authoritative for unbound).
+      // busy gate: reserve the conversation slot SYNCHRONOUSLY (before any await) so a
+      // rapid follow-up message sees it and gets 请等待 instead of spawning a 2nd job.
+      if (isBusy(event.conversationId)) {
+        await adapter.send(event.conversationId, { text: '请等待，前一条消息还在处理中', contextToken: event.contextToken });
+        store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
+        if (opts.onEvent) opts.onEvent(event, { busy: true });
+        return;
+      }
+      busy.add(event.conversationId);
       const ws = await getCodedWorkspaces();
       const refRoute = resolveRefBinding(opts.refs, event);
       let resolved;
@@ -369,27 +384,11 @@ async function runWeixinChannel(opts = {}) {
       // message content), and ack 处理中 immediately (don't wait for the answer).
       const active = runtime.getActiveSession();
       if (active && active.pendingPrompt && sessionText && active.projectRoot === targetRoot) {
-        if (isBusy(event.conversationId)) {
-          await adapter.send(event.conversationId, { text: '请等待，前一条消息还在处理中', contextToken: event.contextToken });
-          store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
-          return;
-        }
         runtime.setActiveSession({ sessionId: active.sessionId, projectRoot: targetRoot, name: sessionText, pendingPrompt: false });
         store.setSession(event.conversationId, { sessionId: active.sessionId, projectRoot: targetRoot, name: sessionText });
-        const code = await sessionCode(active.sessionId);
-        const ackText = '处理中，会话 #' + code + ' (' + active.sessionId + '), ' + sessionText;
-        await adapter.send(event.conversationId, { text: ackText, contextToken: event.contextToken });
         store.appendMessage({ conversationId: event.conversationId, sessionId: active.sessionId, dir: 'in', text: sessionText });
-        store.appendMessage({ conversationId: event.conversationId, sessionId: active.sessionId, dir: 'out', text: ackText });
-        if (opts.onEvent) opts.onEvent(event, { command: 'activate-session', reply: { text: ackText } });
+        if (opts.onEvent) opts.onEvent(event, { command: 'activate-session' });
         dispatchGeneration({ conversationId: event.conversationId, sessionId: active.sessionId, workspace: targetRoot, workspaceId: targetWsId, text: sessionText, contextToken: event.contextToken });
-        return;
-      }
-      // busy gate: one in-flight generation per conversation — later messages wait
-      if (isBusy(event.conversationId)) {
-        await adapter.send(event.conversationId, { text: '请等待，前一条消息还在处理中', contextToken: event.contextToken });
-        store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
-        if (opts.onEvent) opts.onEvent(event, { busy: true });
         return;
       }
       // A (reuse) + C (workspace association): reuse the mapped session when it
@@ -407,12 +406,7 @@ async function runWeixinChannel(opts = {}) {
       event.workspace = targetRoot;
       event.projectRoot = targetRoot;
       store.appendMessage({ conversationId: event.conversationId, sessionId: rec.sessionId, dir: 'in', text: sessionText });
-      // ack 处理中 immediately, then run the generation in the background + push answer
-      const code = await sessionCode(rec.sessionId);
-      const ackText = '处理中，会话 #' + code + ' (' + rec.sessionId + '), ' + sessionText;
-      await adapter.send(event.conversationId, { text: ackText, contextToken: event.contextToken });
-      store.appendMessage({ conversationId: event.conversationId, sessionId: rec.sessionId, dir: 'out', text: ackText });
-      if (opts.onEvent) opts.onEvent(event, { ack: ackText });
+      // typing indicator (inside dispatchGeneration) replaces the old 处理中 text ack
       dispatchGeneration({ conversationId: event.conversationId, sessionId: rec.sessionId, workspace: targetRoot, workspaceId: targetWsId, text: sessionText, contextToken: event.contextToken });
     } catch (e) {
       // isolation: a failed message must not kill the poll loop

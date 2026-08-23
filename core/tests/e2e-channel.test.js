@@ -87,3 +87,33 @@ test('e2e: transport QR login flow (startLogin + waitForLogin confirmed)', async
   assert.equal(res.botToken, 'BT');
   assert.equal(transport.getToken(), 'BT');
 });
+
+test('e2e: getConfig returns typing_ticket; sendTyping sends status + ticket + user id', async () => {
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url: String(url), body: JSON.parse(opts.body) });
+    const u = String(url);
+    if (u.includes('getconfig')) return { ok: true, text: async () => JSON.stringify({ ret: 0, typing_ticket: 'TICKET-ABC' }) };
+    if (u.includes('sendtyping')) return { ok: true, text: async () => JSON.stringify({ ret: 0 }) };
+    return { ok: true, text: async () => '{}' };
+  };
+  const transport = createWeixinClawBotTransport({ baseUrl: 'https://ilinkai.weixin.qq.com', token: 'bt', userId: 'U-9', fetch: fetchImpl });
+
+  // typing without a cached ticket -> getConfig first, then sendTyping
+  await transport.sendTyping({ status: 1, contextToken: 'ctx-1' });
+  assert.equal(calls[0].url.includes('ilink/bot/getconfig'), true, 'getConfig called first: ' + calls[0].url);
+  assert.equal(calls[0].body.ilink_user_id, 'U-9');
+  assert.equal(calls[0].body.context_token, 'ctx-1');
+  assert.ok(calls[0].body.base_info, 'getConfig carries base_info');
+  assert.equal(calls[1].url.includes('ilink/bot/sendtyping'), true, 'sendtyping called: ' + calls[1].url);
+  assert.equal(calls[1].body.ilink_user_id, 'U-9');
+  assert.equal(calls[1].body.typing_ticket, 'TICKET-ABC');
+  assert.equal(calls[1].body.status, 1);
+  assert.ok(calls[1].body.base_info, 'sendTyping carries base_info');
+
+  // cancel typing: ticket is now cached, so no second getConfig
+  await transport.sendTyping({ status: 2 });
+  assert.equal(calls[2].url.includes('ilink/bot/sendtyping'), true);
+  assert.equal(calls[2].body.status, 2);
+  assert.equal(calls.length, 3, 'cached ticket -> no extra getConfig call');
+});

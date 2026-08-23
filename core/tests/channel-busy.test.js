@@ -51,16 +51,17 @@ test('busy gate: in-flight generation blocks next message (请等待), answer pu
   const push = async (t) => { queued.push(t); };
   const waitFor = async (pred) => { const dl = Date.now() + 5000; while (Date.now() < dl) { if (pred()) return true; await new Promise((r) => setTimeout(r, 30)); } return false; };
 
-  // msg1 -> ack 处理中, generation starts (blocks on the gate)
+  // msg1 starts a generation (typing indicator is a no-op in the mock transport,
+  // so there is no "处理中" text any more). The generation blocks on the gate.
   await push('第一问');
-  assert.ok(await waitFor(() => sent.some((s) => /处理中/.test(s))), 'msg1 ack: ' + JSON.stringify(sent));
-  // while still in-flight, msg2 -> 请等待 (not queued)
+  // while still in-flight, msg2 -> 请等待 (proves msg1 is busy, not queued)
   await push('第二问');
   assert.ok(await waitFor(() => sent.some((s) => /请等待/.test(s))), 'msg2 gets 请等待: ' + JSON.stringify(sent));
+  assert.equal(creates.length, 1, 'msg2 was not queued (only one session.create)');
   // release the gate -> msg1 answer pushed
   release();
   assert.ok(await waitFor(() => sent.some((s) => /答案-sess-1/.test(s))), 'msg1 answer pushed: ' + JSON.stringify(sent));
-  assert.equal(creates.length, 1, 'msg2 was not queued (only one session.create)');
+  assert.equal(creates.length, 1);
 
   await handle.stop(); srv.srv.close();
 });

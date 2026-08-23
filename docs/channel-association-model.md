@@ -114,18 +114,18 @@
 
 > **修复记录（2026-08-22）**：/new 创建的会话此前未绑定到发起 conversation，导致 /new Hello 后下一条普通消息又新建会话。已修复——/new（含/不含内容）后把新建会话写入 conversation→session 映射；pending 激活路径同步写入映射。回归用例见 channel-association.test.js「/new binds …」。
 > **修复记录（会话历史，2026-08-22）**：面板项目视图此前只显示一个会话——sessions.json 按 conversationId upsert，/new 重新绑定到新会话时覆盖了旧会话记录。已修复——store.setSession 改为按 sessionId 保留全部会话（旧会话保留、仅 conversation 绑定切换），面板据此列出项目全部会话。回归用例见 channel-sessions.test.js「re-binding a conversation keeps BOTH sessions」。
-## 8. 消息应答模型（async ack + 忙门，2026-08-22 实施）
+## 8. 消息应答模型（async ack + 忙门 + sendTyping，2026-08-22 实施）
 
-为消除「长任务同步等待」「/new 后拿不到答案」两个问题，所有路由到会话的消息统一采用**先应答 + 后台生成 + 结果回推**：
+为消除「长任务同步等待」「/new 后拿不到答案」两个问题，所有路由到会话的消息统一采用**typing 指示 + 后台生成 + 结果回推**：
 
 1. 解析工作区/会话、记录 in 消息；
-2. **立即 ack**「处理中，会话 #sN (sessionId)」——onEvent 循环不阻塞；
+2. **立即 sendTyping(status=1)**（微信原生「对方正在输入…」）——onEvent 循环不阻塞；
 3. **后台**跑 sessionDriver.run 生成（dispatchGeneration，fire-and-forget）；
-4. 生成完成**回推答案**（adapter.send，best-effort）。
+4. 生成完成**回推答案**（adapter.send，best-effort）+ sendTyping(status=2) 取消 typing。
 
-**忙门（per-conversation busy gate）**：同一 conversation 同时**至多一条生成**在途。
-- 空闲时来消息 → 处理中 + 后台生成；
+**忙门（per-conversation busy gate）**：同一 conversation 同时**至多一条生成**在途（槽位在进入普通消息分支时同步预留）。
+- 空闲时来消息 → sendTyping + 后台生成；
 - 在途时再来消息（含 /new 带内容）→ 回「请等待，前一条消息还在处理中」，**不入队**（不积压）；
 - 生成完成/失败 → 回推结果或错误，并释放忙门。
 
-权衡：回推依赖入站 context_token（有时效）；长生成超期推送失败时兜底提示可用 #sN / /status 查看。跨 conversation 并发（忙门按 conversation 独立）。
+sendTyping 实现（照官方 openclaw-weixin）：getConfig（`ilink/bot/getconfig`，拿 typing_ticket）→ sendTyping（`ilink/bot/sendtyping`，`{ilink_user_id, typing_ticket, status}`）。权衡：回推依赖入站 context_token（有时效）；长生成超期推送失败时兜底提示可用 #sN / /status 查看。跨 conversation 并发（忙门按 conversation 独立）。
