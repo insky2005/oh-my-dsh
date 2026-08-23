@@ -28,7 +28,7 @@ manual: false
 - 图标：`MakeIcon.swift` 程序化渲染（16…1024px 全尺寸）→ `iconutil -c icns`，不提交二进制图；
 - 版本号单一来源：`scripts/version.sh`（HEAD 命中 git tag vX.Y.Z → VERSION 取 tag，否则回退 1.13.0；BUILD 取 CI 运行号，本地回退 69）；`platforms/macos/build-app.sh` 运行期读取，**勿在脚本硬编码版本**；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`platforms/macos/make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；
 - **fallback 推进规则**（`docs/productization.md`）：每次发布打 tag 后立即把 `FALLBACK_VERSION` 推进到**下一个 minor**（发布 v1.9.0 → fallback 1.10.0），开发期构建永远显示「下一个未发布版本」；CI 打 tag 的 job 用 tag 版本（HEAD 命中时优先）；
-- `git status` 应只出现源码/文档变更：`.build/` `.cache/` `dist/` `pic/` `.DS_Store` 均在 `.gitignore`；`.dsh/tasks/local.json`（本机会话覆盖）也忽略——**`index.json` 随仓库提交**（任务关联共享，见 [data-model](data-model.md)）；channel 消息/会话文件（`**/.dsh/channels/*.messages.json`、`*.sessions.json`，含用户聊天内容）gitignore——引用配置 `.dsh/channels.json` 按 docs/channel-storage.md 应随仓库提交（当前旧路径文件仍未跟踪，迁移待办）。
+- `git status` 应只出现源码/文档变更：`.build/` `.cache/` `dist/` `pic/` `.DS_Store` 均在 `.gitignore`；`.dsh/tasks/local.json`（本机会话覆盖）也忽略——**`index.json` 随仓库提交**（任务关联共享，见 [data-model](data-model.md)）；channel 消息/会话已**全局化**到 `~/.dsh/channels/`（仓库之外，天然不入 git，含用户聊天内容）；项目内仅剩引用配置 `.dsh/channels.json`，按 docs/channel-storage.md 应随仓库提交（当前旧路径文件仍未跟踪，迁移到 `.dsh/channels/channels.json` 并提交是待办）。
 
 ## 分支与发布约定（`docs/git-workflow.md`，2026-08-16 起生效）
 
@@ -63,8 +63,8 @@ manual: false
 
 ## 测试约定
 
-- 共享核心单测走 Node：`node --test core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，148 用例，2026-08-22 实测全绿）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
-- CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + `tests/browser-panel/run.sh` + `tests/skills/run.sh`（内置 skill 安装器）+ 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh` 单一来源，先 `mkdir -p .build/module-cache`）；编译检查清单含 `IssueRunnerPanel.swift`（f4ed4ff 起——曾漏文件导致 main.swift 引用编译失败，CI 失败根因）与 `BrowserPanel.swift`/`BrowserAPI.swift`；构建矩阵为 arm64（x86_64 交叉编译由 release.yml 打 tag 时构建，产品不再出 universal），**不再使用退役中的 macos-13/x86_64 runner**；
+- 共享核心单测走 Node：`node --test core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，157 用例，2026-08-23 实测全绿）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
+- CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + `tests/browser-panel/run.sh` + `tests/skills/run.sh`（内置 skill 安装器）+ `tests/channel-panel/run.sh`（通道项目视图数据模型）+ 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh` 单一来源，先 `mkdir -p .build/module-cache`）；编译检查清单含 `IssueRunnerPanel.swift`（f4ed4ff 起——曾漏文件导致 main.swift 引用编译失败，CI 失败根因）与 `BrowserPanel.swift`/`BrowserAPI.swift`；构建矩阵为 arm64（x86_64 交叉编译由 release.yml 打 tag 时构建，产品不再出 universal），**不再使用退役中的 macos-13/x86_64 runner**；
 - 面板/壳层 Swift 无头单测模式（`tests/*/run.sh`）：`stubs.swift` + 把被测源码复制进临时目录 + 测试文件改名 `main.swift`（顶层代码需要）→ `swiftc` 编译运行，无窗口/无 PTY 依赖；
 - 终端模拟器测试不触 PTY（沙箱可能禁 `/dev/ptmx`），已迁 `core/tests/ansi.test.js`（42 项），`tests/terminal-emulator/run.sh` 为薄封装；
 - 新增面板需配套模型层单测（如 `tests/wiki-panel/`）。

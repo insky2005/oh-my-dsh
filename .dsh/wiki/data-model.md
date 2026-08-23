@@ -1,8 +1,8 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-08-22T05:54:00Z
-sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/git-workflow.md]
+updated: 2026-08-23T00:00:00Z
+sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/git-workflow.md]
 manual: false
 ---
 
@@ -92,17 +92,24 @@ manual: false                   # true = 用户手改，代理永不覆盖
 
 ## Channel 数据与文件布局（通道 / 消息平台）
 
-通道凭据、通道级状态与项目引用（docs/channel-design.md §4、docs/channel-storage.md）：
+通道凭据、通道级状态、会话/消息归档与项目引用（docs/channel-design.md §4、docs/channel-storage.md、docs/channel-association-model.md）：
 
 | 数据 | 路径 | 写入方 | 说明 |
 |---|---|---|---|
 | 凭据/账号 | `~/.dsh/channels/<channelId>.json`（chmod 600） | `channel-store.js`（saveChannelAccount） | 文件优先读、Keychain 兜底（零弹窗）；含 botToken/accountId/userId/baseUrl |
 | 通道级状态 | `~/.dsh/channels/<channelId>.state.json` | `channel-runner.js` | lastWorkspace / 会话映射 / activeSession，重启可恢复；面板读它显示连接徽标（不轮询） |
-| 会话映射（v1） | `<项目根>/.dsh/channels/<channelId>.sessions.json` | `channel-sessions.js` | 落项目目录（存储全局化改造后迁 `~/.dsh/channels/`） |
-| 消息日志（v1） | `<项目根>/.dsh/channels/<channelId>.messages.json` | `channel-sessions.js`（appendMessage） | 记录 `{channelId, conversationId, sessionId, dir: in\|out, text, ts}`，MAX_MESSAGES=1000 滚动；gitignore 忽略 |
-| 项目引用/路由 | `<项目根>/.dsh/channels.json` | ChannelPanel 开关 / main.swift | `{"version":1,"refs":[{channelId, workspaceRoot, routing…}]}`；当前旧路径文件**未跟踪**（迁移到 `.dsh/channels/channels.json` 并提交是 channel-storage.md 的待办） |
+| 会话映射（全局） | `~/.dsh/channels/<channelId>.sessions.json` | `channel-sessions.js`（setSession） | **channel 作用域全局**（2026-08-22 起）；按 sessionId 保留全部会话，`/new` 重绑定 conversation 不删历史；记录含 conversationId/sessionId/projectRoot/workspaceKey/name/updatedAt |
+| 会话消息归档（全局） | `~/.dsh/channels/<channelId>.<workspaceKey>.<sessionId>.messages.json`（sessionId 缺省入 `system` 桶） | `channel-sessions.js`（appendMessage） | 分桶记录 `{channelId, conversationId, sessionId, dir: in\|out, text, ts, projectRoot}`，MAX_MESSAGES=1000 滚动；`<channelId>.workspaces.json` 登记 workspaceKey ↔ projectRoot（同名加 6 位路径哈希消歧）；**项目目录不再产生消息/会话文件** |
+| 项目引用/路由 | `<项目根>/.dsh/channels.json` | ChannelPanel 开关 / main.swift | `{"version":1,"refs":[{channelId, workspaceRoot, routing…}]}`；旧路径文件仍未跟踪（迁移到 `.dsh/channels/channels.json` 并提交是 docs/channel-storage.md 的待办） |
 
-> 存储全局化改造（docs/channel-storage.md，2026-08-22 定稿、未实现）：消息/会话迁至全局 `~/.dsh/channels/`，按 `channelId.workspaceKey.sessionId.messages.json` 分桶（无会话消息入 `system` 桶），`channelId.workspaces.json` 登记 workspaceKey ↔ projectRoot 消歧；含惰性迁移 + `ohmy-core.js channel migrate` CLI。
+## Channel 关联模型（channel ↔ message ↔ session，2026-08-22 落地）
+
+- **Channel(1) ──(N)── Conversation**：一个微信账号对应一个 channel（channelId 全局唯一），一个通道下多个会话/群；
+- **(Channel, Conversation) ──(1)── Session**：会话映射绑定到唯一 dsh 会话（`runtime.setSession(conversationId, {sessionId, projectRoot})`），多轮对话复用；`/new`/`/switch` 重绑定；
+- **Session ──(N)── Message**：会话内往返消息（dir: in/out）；
+- **Session ──(1)── Workspace**：会话归属某工作区（workspaceId / cwd / workspaceKey）；
+- **三粒度状态**：通道级当前工作区（lastWorkspace，channel 作用域）、每 conversation 会话绑定（(channelId,conversationId)→sessionId，路由权威）、通道级 active 会话（activeSessionId，服务 /status、/new 激活、#sN）；
+- **路由语义（B）**：resolveRefBinding（conversation/keyword 显式绑定）优先，否则 workspace-tag（#tag>last>first）兜底；普通消息解析出 workspace 后以 **workspaceId** 创建/复用会话（C）。
 
 ## 日志与配置文件
 

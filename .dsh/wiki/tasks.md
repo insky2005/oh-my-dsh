@@ -50,7 +50,7 @@ open "dist/oh-my-dsh.app"
 ## 跑单元测试
 
 ```bash
-node --test core/tests/*.test.js  # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，148 用例；不带引号由 bash 展开 glob，Node 20 兼容）
+node --test core/tests/*.test.js  # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，157 用例；不带引号由 bash 展开 glob，Node 20 兼容）
 tests/terminal-emulator/run.sh      # 模拟器测试（core/tests/ansi.test.js 的薄封装）
 tests/wiki-panel/run.sh             # Repo Wiki 模型层
 tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
@@ -115,7 +115,7 @@ tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：�
 
 ## Channel 通道（微信远程驱动 dsh）
 
-面板：活动栏「通道」→ 无全局配置时引导页（微信 ClawBot 卡片）→ 点卡片进**扫码登录向导**（面板内渲染二维码，扫码后 token 落 `~/.dsh/channels/<id>.json`，自动拉起 runner）；有全局配置后进**项目视图**（Channel 行 + NSSwitch 开关写项目 `.dsh/channels.json` 引用，展开看真实会话；顶部「全局配置」可切回）。App 启动自动拉起已启用 channel 的 runner，退出时关闭。
+面板：活动栏「通道」→ 无全局配置时引导页（微信 ClawBot 卡片）→ 点卡片进**扫码登录向导**（面板内渲染二维码，扫码后 token 落 `~/.dsh/channels/<id>.json`，自动拉起 runner）；有全局配置后进**项目视图**（Channel 标题行：图标 + 平台名 (channelId) + 会话数、NSSwitch 开关写项目 `.dsh/channels.json` 引用；展开区经 ChannelStoreReader 读**全局 store** 展示会话 + 消息气泡，可点开/收起；顶部「全局配置」可切回）。App 启动自动拉起已启用 channel 的 runner，退出时关闭。
 
 CLI（`core/bin/ohmy-core.js`，与面板共用 core 层）：
 
@@ -129,9 +129,9 @@ node core/bin/ohmy-core.js channel route <refsJson> <conversationId> <text> # �
 
 客户端内指令（微信里发）：`/help` `/ping` `/status` `/workspaces`(`/wks`) `/new [名称]` `/sessions`(`/ses`) `/switch <名称|编号|#sN>`；纯代号 `#wN`/`#sN` 快捷切换当前项目/会话；消息含 `#w1` 或 `#<workspace名>` 按 #tag 路由到对应项目（清单见 docs/channel-commands.md，改动须同步维护该文档）。
 
-验证：`node --test core/tests/` 148 全绿（含 channel 相关 71 项）；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
+验证：`node --test core/tests/` **157 全绿**（含 channel 相关 80 项：association/busy/重写后的 sessions 等）；`tests/channel-panel/run.sh`（ChannelStoreReader）无头单测；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
 
-> ⚠️ 待办：消息/会话存储**全局化改造**（docs/channel-storage.md）未落地——当前消息落项目目录 `<root>/.dsh/channels/`（gitignore）；改造后迁全局 `~/.dsh/channels/` 分桶 + `channel migrate` CLI + 引用配置落位 `.dsh/channels/channels.json` 并提交。
+> ✅ 消息/会话存储**已全局化**（2026-08-22 落地）：会话映射与消息归档到全局 `~/.dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶，无会话入 system 桶），项目内仅剩引用配置 `.dsh/channels.json`；旧项目格式经 `channel migrate` CLI / 惰性迁移（见 [channel-panel](modules/channel-panel.md)）。仍待办：引用配置落位 `.dsh/channels/channels.json` 并提交。
 
 ## 配置 GitHub token（任务面板）
 
