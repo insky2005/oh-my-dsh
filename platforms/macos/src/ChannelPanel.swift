@@ -627,7 +627,10 @@ final class ChannelPanelController: NSObject {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let file = try? JSONDecoder().decode(ProjectRefsFile.self, from: data) else { return }
         for ref in file.refs where ref.workspaceRoot == root {
-            if !isChannelEnabled(ref.channelId) {
+            // One-time seed: only migrate when the channel has no global association
+            // file yet. After the first write the global file is authoritative, so a
+            // user turning the switch OFF stays off (migration must not re-enable).
+            if !FileManager.default.fileExists(atPath: channelWorkspacesPath(ref.channelId)) {
                 setChannelEnabled(ref.channelId, true)
             }
         }
