@@ -132,6 +132,15 @@ async function runWeixinChannel(opts = {}) {
     || path.join(os.homedir(), '.dsh', 'channel-runtime', channelId);
   const store = opts.sessions || createChannelSessions({ channelId, dshHome: opts.dshHome, defaultProjectRoot: projectRoot });
 
+  // "本项目" = the active workspace root the app bound this runner to. The project
+  // switch (docs/channel-project-switch.md): a channel is enabled for a project iff
+  // that project root appears in ~/.dsh/channels/<channelId>.workspaces.json.
+  const activeProjectRoot = opts.projectRoot || '';
+  const isEnabledForActiveProject = () => {
+    if (!activeProjectRoot) return false;
+    try { return store.isWorkspaceEnabled ? store.isWorkspaceEnabled(activeProjectRoot) : true; } catch { return false; }
+  };
+
   // Workspace routing (docs §3.9): codes w1/w2… + #tag.
   const port = opts.port || 3080;
   const wsHost = opts.host || '127.0.0.1';
@@ -265,6 +274,16 @@ async function runWeixinChannel(opts = {}) {
       console.log('[runner:' + channelId + '] onEvent received id=' + (event.messageId || '?') + ' text=' + JSON.stringify(event.text) + ' @' + Date.now());
       // 1) commands take precedence; ordinary text routes to the project.
       const parsed = parseCommand(event.text);
+      // Project-enable gate (docs/channel-project-switch.md §3.2): when the channel
+      // is not enabled for the active project, only informational commands
+      // (/help /ping /status /workspaces) are answered; anything else that would
+      // drive this project's sessions gets a clear hint instead.
+      const isInfoCommand = parsed.kind === 'command' && ['help', 'ping', 'status', 'workspaces', 'wks'].includes(parsed.name);
+      if (!isInfoCommand && !(await isEnabledForActiveProject())) {
+        await adapter.send(event.conversationId, { text: '该项目未启用该通道，请在面板「通道」项目视图开启后使用', contextToken: event.contextToken });
+        if (opts.onEvent) opts.onEvent(event, { projectNotEnabled: true });
+        return;
+      }
       if (parsed.kind === 'command' || parsed.kind === 'unknown') {
         // busy gate: /new with content starts a generation — gate it like ordinary text
         if (parsed.kind === 'command' && parsed.name === 'new' && parsed.args && parsed.args[0] && isBusy(event.conversationId)) {

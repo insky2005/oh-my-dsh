@@ -161,13 +161,15 @@ function println(s) {
         const res = await transport.sendMessage({ conversationId: to, text });
         printJson({ sent: true, to, messageId: res.messageId });
       } else if (sub === 'run') {
-        // run <channelId> <port> <refsJson> [--dsh-home <dir>] — live end-to-end loop
+        // run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>] — live end-to-end loop
         const channelId = rest[0] || '';
         const port = parseInt(rest[1], 10);
         const refs = JSON.parse(rest[2] || '[]');
         const dshIdx = rest.indexOf('--dsh-home');
         const dshHome = dshIdx >= 0 ? rest[dshIdx + 1] : (require('node:os').homedir() + '/.dsh');
-        if (!channelId || !Number.isInteger(port)) fail('usage: channel run <channelId> <port> <refsJson> [--dsh-home <dir>]');
+        const prIdx = rest.indexOf('--project-root');
+        const projectRoot = prIdx >= 0 ? rest[prIdx + 1] : '';
+        if (!channelId || !Number.isInteger(port)) fail('usage: channel run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>]');
         // NOTE: runWeixinChannel already wires its own onEvent handler that
         // parses slash commands FIRST and routes only ordinary text to the
         // manager. Registering an extra handler here that calls manager.enqueue
@@ -175,7 +177,7 @@ function println(s) {
         // emit the "该会话未绑定任何项目" hint for global commands. We only attach
         // a logging callback via opts.onEvent (receiver for both paths).
         const handle = await core.runWeixinChannel({
-          channelId, port, refs, dshHome,
+          channelId, port, refs, projectRoot, dshHome,
           onEvent: (event, result) => {
             const replyText = result && result.reply && result.reply.text;
             println('handled: ' + JSON.stringify({ conversationId: event.conversationId, text: event.text, reply: replyText }));
