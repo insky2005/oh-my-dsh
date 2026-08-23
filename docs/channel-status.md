@@ -43,10 +43,10 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 | v2 状态机（引导页 ↔ 全局配置 ↔ 项目视图，顶部「全局配置」重开） | ✅ | ChannelPanelController |
 | 引导卡片（微信 ClawBot / 钉钉 / 飞书 + 状态徽标） | ✅ | ChannelCardView（全宽卡片、SF 图标、外观自适应背景）；徽标打开视图时读 `~/.dsh/channels/<id>.state.json`，不轮询 |
 | 扫码登录向导（提示 → 二维码 → 绑定成功） | ✅ | CIQRCodeGenerator **面板内渲染二维码**（不弹浏览器）；调 core `channel login --save`；成功后自动拉起 runner |
-| 项目视图（Channel 行 + NSSwitch 开关 + 可展开会话列表） | ✅ | ProjectRowView；开关写 `.dsh/channels.json` 引用；会话名读项目 sessions.json |
+| 项目视图（Channel 行 + NSSwitch 开关 + 可展开会话 + 消息列表） | ✅ | ProjectRowView + ChannelSessionRow；开关写 `.dsh/channels.json` 引用；会话/消息读全局 store（ChannelStoreReader，D） |
 | 启动自动拉起 / 退出关闭 runner | ✅ | applicationDidFinishLaunching → startConfiguredChannelRunners()（已启用全局 channel 逐个拉起）；退出 terminate 清理；同 channelId 去重 |
 | 钉钉 / 飞书卡片点击 | 🚧 | 卡片已渲染（说明标注「待实现」），点击仅 NSSound.beep，未接适配器 |
-| 会话/消息分组 UI 展示（按 Channel ▸ Session 的消息列表） | 📋 | 目前仅展示会话名列表，实时消息列表未做 |
+| 会话/消息分组 UI 展示（按 Channel ▸ Session 的消息列表） | ✅ | ChannelSessionRow 展开显示该会话消息（读全局分桶 messages） |
 | 即时「收到」应答 | 📋 | 低优先 TODO |
 
 ### 3.3 测试与验证

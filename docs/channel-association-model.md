@@ -99,9 +99,8 @@
 ## 6. 明确不在本文档范围
 
 - 钉钉/飞书适配器（M4）不在本文；
-- **E（面板项目视图数据源 + 消息列表）为后续实施**：D 已把消息/会话迁到全局 `~/.dsh/channels/`，macOS 面板 ChannelPanel.swift 的 `loadSessionNames` 仍读项目 `.dsh/channels/<id>.sessions.json`，需改从全局 store 读取（见 §5 优先级 P2）。
 
-## 7. 实施记录（A/B/C/D 已于 2026-08-22 落地，core）
+## 7. 实施记录（A/B/C/D/E 已于 2026-08-22 落地）
 
 | 项 | 改动 | 文件 | 测试 |
 |---|---|---|---|
@@ -109,7 +108,8 @@
 | C 工作区归属 | 普通消息以 workspaceId 创建/复用会话，无 workspace 才回退 cwd | core/lib/channel-runner.js、session-driver.js | channel-association.test.js「C」 |
 | B 路由统一 | 新增 resolveRefBinding（conversation/keyword 显式绑定），runner 先 refs 绑定后 workspace-tag 兜底；handleEvent 对已绑定事件合成 ref | core/lib/channel.js、channel-runner.js | channel-association.test.js「B」 |
 | D 存储单一来源 | createChannelSessions 改按 channel 作用域全局存储（sessions/workspaces/分桶消息）；runner 会话映射与消息都走同一 store；忽略历史迁移（按需求） | core/lib/channel-sessions.js、channel-runner.js | channel-sessions.test.js（重写） |
+| E 面板项目视图数据源 + 消息列表 | 新增 ChannelStoreReader.swift（纯 Foundation 读全局 sessions/分桶消息）；ChannelPanel 项目视图改读全局 store，会话行展开显示消息列表 | platforms/macos/src/ChannelStoreReader.swift、ChannelPanel.swift | tests/channel-panel/run.sh（无头单测） |
 
-> 验证：`node --test core/tests/` **154 全绿**（基线 148 + A/B/C/D + /new 会话绑定回归）。
+> 验证：`node --test core/tests/` **154 全绿**（基线 148 + A/B/C/D + /new 会话绑定回归）；`tests/channel-panel/run.sh` 无头单测通过；`scripts/local-ci.sh swift` 全量 swiftc 编译检查通过。
 
 > **修复记录（2026-08-22）**：/new 创建的会话此前未绑定到发起 conversation，导致 /new Hello 后下一条普通消息又新建会话。已修复——/new（含/不含内容）后把新建会话写入 conversation→session 映射；pending 激活路径同步写入映射。回归用例见 channel-association.test.js「/new binds …」。
