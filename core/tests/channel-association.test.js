@@ -47,7 +47,7 @@ async function runOrdinarySequence(texts, { projectRoot = '/Users/loie/repo/alph
   };
   const handle = await runWeixinChannel({ channelId: 'wx-o', port: wsSrv.port, refs, dshHome, homeDir: '/Users/loie', projectRoot, transportOpts: { fetch: fetchImpl, baseUrl: 'https://x' }, intervalMs: 40 });
   await handle.start();
-  const sendSeq = async (t) => { const before = sent.length; queued.push(t); const dl = Date.now() + 5000; while (sent.length <= before && Date.now() < dl) await new Promise((r) => setTimeout(r, 40)); };
+  const sendSeq = async (t) => { queued.push(t); const dl = Date.now() + 8000; let lastLen = -1, lastChange = Date.now(); while (Date.now() < dl) { if (sent.length !== lastLen) { lastLen = sent.length; lastChange = Date.now(); } if (Date.now() - lastChange > 200) break; await new Promise((r) => setTimeout(r, 30)); } };
   for (const t of texts) await sendSeq(t);
   await handle.stop(); wsSrv.srv.close();
   return { sent, creates, prompts };

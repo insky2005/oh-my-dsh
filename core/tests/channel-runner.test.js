@@ -141,10 +141,11 @@ async function runChannelSequence(texts, { projectRoot = '/Users/loie/repo/alpha
         res.writeHead(200, { 'content-type': 'application/json' });
         const url = String(req.url || '');
         if (url.includes('workspace.list')) { const sids = Object.keys(sessions); res.end(JSON.stringify({ rpcId, result: { ok: true, value: { items: [{ workspaceId: 'w-1', path: projectRoot, title: 'Alpha', sessionIds: sids }], archivedSessionIds: [] } } })); }
-        else if (url.includes('session.list')) { const items = Object.values(sessions).map((x) => ({ sessionId: x.id, updatedAt: x.ts, running: x.prompted === 1, blank: !x.prompted, cwd: x.cwd, projections: { values: { title: x.title } } })); res.end(JSON.stringify({ rpcId, result: { ok: true, value: { items } } })); }
+        else if (url.includes('session.list')) { const items = Object.values(sessions).map((x) => ({ sessionId: x.id, updatedAt: x.ts, running: false, blank: !x.prompted, cwd: x.cwd, projections: { values: { title: x.title } } })); res.end(JSON.stringify({ rpcId, result: { ok: true, value: { items } } })); }
         else if (url.includes('session.create')) { const p = JSON.parse(body).payload; const sid = 'sess-' + (++seq); sessions[sid] = { id: sid, cwd: p.workspaceId ? projectRoot : (p.cwd || projectRoot), title: null, prompted: 0, ts: Date.now() }; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { sessionId: sid } } })); }
         else if (url.includes('session.rename')) { const p = JSON.parse(body).payload; if (sessions[p.sessionId]) sessions[p.sessionId].title = p.title; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { title: p.title } } })); }
         else if (url.includes('session.prompt')) { const p = JSON.parse(body).payload; if (sessions[p.sessionId]) sessions[p.sessionId].prompted = 1; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { accepted: true } } })); }
+        else if (url.includes('session.history')) { const p = JSON.parse(body).payload; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { events: [{ event: { type: 'assistant/message', data: { message: { role: 'assistant', content: [{ type: 'text', text: '回答-' + (p.sessionId || '') }] } } } }] } } })); }
         else res.end(JSON.stringify({ rpcId, result: { ok: true, value: null } }));
       });
     });
@@ -160,7 +161,7 @@ async function runChannelSequence(texts, { projectRoot = '/Users/loie/repo/alpha
   };
   const handle = await runWeixinChannel({ channelId: 'wx-s', port: wsSrv.port, refs: [], dshHome, homeDir: '/Users/loie', projectRoot, transportOpts: { fetch: fetchImpl, baseUrl: 'https://x' }, intervalMs: 40 });
   await handle.start();
-  const sendSeq = async (t) => { const before = sent.length; queued.push(t); const dl = Date.now() + 4000; while (sent.length <= before && Date.now() < dl) await new Promise((r) => setTimeout(r, 40)); };
+  const sendSeq = async (t) => { queued.push(t); const dl = Date.now() + 8000; let lastLen = -1, lastChange = Date.now(); while (Date.now() < dl) { if (sent.length !== lastLen) { lastLen = sent.length; lastChange = Date.now(); } if (Date.now() - lastChange > 200) break; await new Promise((r) => setTimeout(r, 30)); } };
   for (const t of texts) await sendSeq(t);
   await handle.stop(); wsSrv.srv.close();
   return sent;
@@ -168,13 +169,16 @@ async function runChannelSequence(texts, { projectRoot = '/Users/loie/repo/alpha
 
 test('channel-runner: /new 无内容只创建、后续消息激活、有内容立即处理', async () => {
   const replies = await runChannelSequence(['/new', '帮我看看项目', '/new 打开百度']);
+  const joined = JSON.stringify(replies);
   // 1) /new 无内容 → 只创建，无标题，请继续发送消息
-  assert.match(replies[0], /创建 会话 #s1 \(sess-1\), 无标题/);
-  assert.match(replies[0], /请继续发送消息，与我对话/);
-  // 2) 后续普通消息 → 激活该会话，处理中 + 标题=消息内容
-  assert.match(replies[1], /处理中，会话 #s1 \(sess-1\), 帮我看看项目/);
-  // 3) /new 带内容 → 处理中 + 标题=内容
-  assert.match(replies[2], /处理中，会话 #s1 \(sess-2\), 打开百度/);
+  assert.ok(replies.some((r) => /创建 会话 #s1 \(sess-1\), 无标题/.test(r)), joined);
+  assert.ok(replies.some((r) => /请继续发送消息，与我对话/.test(r)), joined);
+  // 2) 后续普通消息 → 激活该会话，处理中 + 标题=消息内容；后台生成完成后回推答案
+  assert.ok(replies.some((r) => /处理中，会话 #s1 \(sess-1\), 帮我看看项目/.test(r)), joined);
+  assert.ok(replies.some((r) => /回答-sess-1/.test(r)), 'answer pushed for sess-1: ' + joined);
+  // 3) /new 带内容 → 处理中 + 标题=内容；后台回推答案
+  assert.ok(replies.some((r) => /处理中，会话 #s\d+ \(sess-2\), 打开百度/.test(r)), joined);
+  assert.ok(replies.some((r) => /回答-sess-2/.test(r)), 'answer pushed for sess-2: ' + joined);
 });
 
 
