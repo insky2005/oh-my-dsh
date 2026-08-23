@@ -80,6 +80,7 @@ function createWeixinClawBotTransport(opts = {}) {
 
   let token = opts.token || null;
   let userId = opts.userId || null;
+  const log = opts.log || ((msg) => console.log('[weixin-clawbot] ' + msg));
   let typingTicket = null;
   let errHandler = null;
   let getUpdatesBuf = '';
@@ -327,7 +328,14 @@ function createWeixinClawBotTransport(opts = {}) {
     const resp = await apiPost('ilink/bot/getconfig',
       { ilink_user_id: userId, context_token: contextToken, base_info: baseInfo() },
       DEFAULT_CONFIG_TIMEOUT_MS, 'getConfig');
-    if (resp && resp.typing_ticket) typingTicket = resp.typing_ticket;
+    const ret = resp && resp.ret;
+    const hasTicket = !!(resp && resp.typing_ticket);
+    if (hasTicket) typingTicket = resp.typing_ticket;
+    if (ret && ret !== 0) {
+      log('getConfig ret=' + ret + ' errmsg=' + ((resp && resp.errmsg) || '') + ' (no typing_ticket' + (hasTicket ? '' : '') + ')');
+    } else {
+      log('getConfig ok ret=' + ret + ' typing_ticket=' + (hasTicket ? 'yes' : 'NO'));
+    }
     return resp;
   }
   /**
@@ -336,10 +344,16 @@ function createWeixinClawBotTransport(opts = {}) {
    * status: 1 = typing, 2 = cancel typing. typing_ticket comes from getConfig.
    */
   async function sendTyping({ status = 1, contextToken } = {}) {
-    if (!typingTicket) { try { await getConfig(contextToken); } catch { /* best-effort */ } }
-    await apiPost('ilink/bot/sendtyping',
-      { ilink_user_id: userId, typing_ticket: typingTicket || undefined, status, base_info: baseInfo() },
-      DEFAULT_CONFIG_TIMEOUT_MS, 'sendTyping');
+    if (!typingTicket) { try { await getConfig(contextToken); } catch (e) { log('sendTyping getConfig error: ' + (e && e.message || String(e))); } }
+    try {
+      const resp = await apiPost('ilink/bot/sendtyping',
+        { ilink_user_id: userId, typing_ticket: typingTicket || undefined, status, base_info: baseInfo() },
+        DEFAULT_CONFIG_TIMEOUT_MS, 'sendTyping');
+      const ret = resp && resp.ret;
+      log('sendTyping status=' + status + ' ret=' + ret + ' user=' + userId + ' ticket=' + (typingTicket ? 'yes' : 'NO'));
+    } catch (e) {
+      log('sendTyping error: ' + (e && e.message || String(e)));
+    }
   }
 
   // -------------------------------------------------------- notifications
