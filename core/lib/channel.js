@@ -163,6 +163,28 @@ function createRouter() {
 }
 
 /**
+ * Resolve an explicit ref binding for an event WITHOUT the default fallback
+ * (docs/channel-association-model.md §B): a ref that declares this
+ * conversationId in routing.conversations, or whose routing.keywords match the
+ * text. Returns the first matching ref, or null. Callers fall back to
+ * workspace-tag routing when this returns null (so "current workspace" stays
+ * authoritative for unbound messages).
+ */
+function resolveRefBinding(refs, event) {
+  if (!Array.isArray(refs) || !event) return null;
+  const text = event.text || '';
+  for (const ref of refs) {
+    const convs = (ref.routing && ref.routing.conversations) || [];
+    if (convs.includes(event.conversationId)) return ref;
+  }
+  for (const ref of refs) {
+    const kws = ((ref.routing && ref.routing.keywords) || []).filter((k) => typeof k === 'string' && k);
+    if (kws.length && kws.some((k) => text.includes(k))) return ref;
+  }
+  return null;
+}
+
+/**
  * Normalize a global Channel config (docs §4.1). `connection` is adapter
  * specific and passed through untouched.
  */
@@ -211,10 +233,23 @@ function createChannelManager({ adapters, refsByChannel, sessionDriver, jobQueue
     const chId = event.channelId;
     const adapter = adapterMap.get(chId);
     const refs = getRefs(chId);
-    const routed = router.match({ event, refs });
+    let routed = router.match({ event, refs });
 
     if (!adapter) {
       throw new Error(`channel: no adapter for channel ${chId}`);
+    }
+    if (!routed) {
+      // docs/channel-association-model.md §B: the caller (runner) already
+      // resolved a workspace/session for this event via workspace-tag routing.
+      // Synthesize a ref so the session driver runs against that project
+      // instead of emitting the "未绑定" hint.
+      if (event.sessionId || event.workspace) {
+        routed = {
+          ref: { workspaceRoot: (typeof event.workspace === 'string' ? event.workspace : '') || '', workspaceId: event.workspaceId },
+          priority: 0,
+          reason: 'event',
+        };
+      }
     }
     if (!routed) {
       await adapter.send(event.conversationId, buildReply('该会话未绑定任何项目（未匹配路由）。'));
@@ -227,6 +262,7 @@ function createChannelManager({ adapters, refsByChannel, sessionDriver, jobQueue
     } else {
       reply = buildReply(`(no session driver) routed to ${routed.ref.workspaceRoot || routed.ref.channelId}`);
     }
+    if (reply && reply.sessionId) event.sessionId = reply.sessionId;
     if (event.contextToken) reply.contextToken = event.contextToken;
     await adapter.send(event.conversationId, reply);
     return { routed: true, ref: routed.ref, reply };
@@ -260,6 +296,7 @@ module.exports = {
   toPlainText,
   createStateMachine,
   createRouter,
+  resolveRefBinding,
   normalizeChannel,
   parseProjectRefs,
   createChannelManager,

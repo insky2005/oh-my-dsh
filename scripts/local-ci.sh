@@ -60,6 +60,8 @@ stage_swift() {
   tests/browser-panel/run.sh
   echo "--- built-in skills tests ---"
   tests/skills/run.sh
+  echo "--- channel panel tests ---"
+  tests/channel-panel/run.sh
   echo "--- build CEF integration artifacts (arm64) ---"
   mkdir -p .build/module-cache
   platforms/macos/build-cef.sh arm64

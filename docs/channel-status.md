@@ -30,9 +30,10 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 | 消息分发 Router + 会话驱动（M3） | ✅ | core/lib/channel.js（router）+ core/lib/session-driver.js + core/lib/channel-runner.js | 已在真实 dsh web 端到端验证 |
 | workspace 代号 + #tag 路由 | ✅ | core/lib/channel-workspaces.js | /wks 分配 #wN、#tag 路由（代号精确 > workspace 名）、回退规则（最近 → 第一个） |
 | 指令解析与执行 v1 | ✅ | core/lib/channel-commands.js | /help /ping /status /workspaces(/wks) /new /sessions(/ses) /switch，清单见 channel-commands.md |
+| 异步应答 + 忙门 + sendTyping | ✅ | core/lib/channel-runner.js、weixin-clawbot-transport.js | sendTyping 替代「处理中」文字（微信原生「正在输入…」）+ 后台生成 + 结果回推；同 conversation 在途时后续消息回「请等待」不入队（见 channel-association-model.md §8） |
 | 快捷指令 #wN / #sN | ✅ | core/lib/channel-runner.js | 纯代号快捷切换；通道级状态持久化 `~/.dsh/channels/<id>.state.json`（lastWorkspace / 会话映射 / activeSession，重启可恢复） |
-| 会话映射 + 消息持久化（v1，决策 E） | ✅ | core/lib/channel-sessions.js | 落项目 `<root>/.dsh/channels/<id>.sessions.json|messages.json`，MAX_MESSAGES=1000 滚动；消息文件 gitignore |
-| **存储全局化改造**（channel-storage.md） | ⏳ | 设计定稿（2026-08-22），**未实现** | 消息/会话迁至全局 `~/.dsh/channels/` 按 `channelId.workspaceKey.sessionId` 分桶；含惰性迁移 + `channel migrate` CLI；createChannelSessions 改按 channel 作用域 |
+| 会话映射 + 消息持久化（决策 E，channel 作用域） | ✅ | core/lib/channel-sessions.js | **已全局化**：`~/.dsh/channels/<id>.sessions.json` + `<id>.workspaces.json` + `<id>.<workspaceKey>.<sessionId>.messages.json` 分桶（无会话入 system 桶）；项目目录不再产生消息/会话文件；MAX_MESSAGES=1000 滚动 |
+| 会话复用（A）+ 工作区归属（C）+ 路由统一（B） | ✅ | session-driver.js、channel-runner.js、channel.js | sessionDriver.run 复用 event.sessionId；普通消息以 workspaceId 归属工作区；resolveRefBinding 先 refs 绑定后 workspace-tag 兜底（见 channel-association-model.md §7） |
 | 第二优先级指令（/commit /test /issue /repo /clear /route /pwd） | 📋 | — | 后续（channel-ui-commands.md §3.3） |
 
 ### 3.2 macOS 面板（ChannelPanel.swift + main.swift）
@@ -43,10 +44,10 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 | v2 状态机（引导页 ↔ 全局配置 ↔ 项目视图，顶部「全局配置」重开） | ✅ | ChannelPanelController |
 | 引导卡片（微信 ClawBot / 钉钉 / 飞书 + 状态徽标） | ✅ | ChannelCardView（全宽卡片、SF 图标、外观自适应背景）；徽标打开视图时读 `~/.dsh/channels/<id>.state.json`，不轮询 |
 | 扫码登录向导（提示 → 二维码 → 绑定成功） | ✅ | CIQRCodeGenerator **面板内渲染二维码**（不弹浏览器）；调 core `channel login --save`；成功后自动拉起 runner |
-| 项目视图（Channel 行 + NSSwitch 开关 + 可展开会话列表） | ✅ | ProjectRowView；开关写 `.dsh/channels.json` 引用；会话名读项目 sessions.json |
+| 项目视图（Channel 行 + NSSwitch 开关 + 可展开会话 + 消息列表） | ✅ | ProjectRowView + ChannelSessionRow；开关写 `.dsh/channels.json` 引用；会话/消息读全局 store（ChannelStoreReader，D） |
 | 启动自动拉起 / 退出关闭 runner | ✅ | applicationDidFinishLaunching → startConfiguredChannelRunners()（已启用全局 channel 逐个拉起）；退出 terminate 清理；同 channelId 去重 |
 | 钉钉 / 飞书卡片点击 | 🚧 | 卡片已渲染（说明标注「待实现」），点击仅 NSSound.beep，未接适配器 |
-| 会话/消息分组 UI 展示（按 Channel ▸ Session 的消息列表） | 📋 | 目前仅展示会话名列表，实时消息列表未做 |
+| 会话/消息分组 UI 展示（按 Channel ▸ Session 的消息列表） | ✅ | ChannelSessionRow 展开显示该会话消息（读全局分桶 messages） |
 | 即时「收到」应答 | 📋 | 低优先 TODO |
 
 ### 3.3 测试与验证

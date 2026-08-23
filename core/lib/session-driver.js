@@ -80,6 +80,15 @@ async function sessionRunning(port, sessionId, host, timeoutMs) {
   return !!(hit && hit.running === true);
 }
 
+/** True if a session with this id exists in dsh (session.list). */
+async function sessionExists(port, sessionId, host, timeoutMs) {
+  if (!sessionId) return false;
+  const json = await rpc(port, 'session.list', {}, host, timeoutMs);
+  const v = value(json);
+  if (!v || !Array.isArray(v.items)) return false;
+  return v.items.some((s) => s.sessionId === sessionId);
+}
+
 /**
  * Fetch the last assistant reply text for a session via session.history.
  * dsh returns { result: { value: { events: [ { event: { type,
@@ -155,11 +164,30 @@ function createSessionDriver(opts = {}) {
   const pollIntervalMs = opts.pollIntervalMs || 1000;
   const maxPolls = opts.maxPolls || 900; // ~15min at 1s
 
+  /**
+   * Run one channel event through a dsh session (A: multi-turn reuse).
+   *
+   * - If the caller already bound a session (`event.sessionId`) and it still
+   *   exists in dsh, REUSE it (no create/rename) so a conversation keeps one
+   *   session across turns until /new or /switch.
+   * - Otherwise CREATE a new session. Prefer `workspaceId` (so the session
+   *   belongs to a workspace, C) from `ref.workspaceId` or `event.workspaceId`;
+   *   fall back to `cwd` from `ref.workspaceRoot` / `event.workspace`.
+   *
+   * Returns `{ text, media, sessionId }` so the caller can persist the mapping.
+   */
   async function run(event, ref) {
-    const title = `remote(${event.platform}): ${(event.text || '').slice(0, 40) || event.conversationId}`;
-    const sid = await createSession(port, { workspaceId: ref.workspaceId, cwd: ref.workspaceRoot }, host, timeoutMs);
-    if (!sid) throw new Error('session-driver: session.create failed');
-    await renameSession(port, sid, title, host, timeoutMs);
+    let sid = event && event.sessionId;
+    if (sid && (await sessionExists(port, sid, host, timeoutMs))) {
+      // reuse — keep the existing session/title
+    } else {
+      const wsId = (ref && ref.workspaceId) || (event && (event.workspaceId || (event.workspace && event.workspace.id)));
+      const cwd = (ref && ref.workspaceRoot) || (event && (event.workspaceRoot || (typeof event.workspace === 'string' ? event.workspace : null)));
+      sid = await createSession(port, { workspaceId: wsId, cwd }, host, timeoutMs);
+      if (!sid) throw new Error('session-driver: session.create failed');
+      const title = `remote(${event.platform}): ${(event.text || '').slice(0, 40) || event.conversationId}`;
+      await renameSession(port, sid, title, host, timeoutMs);
+    }
     const text = event.media && event.media.filePath
       ? `${event.text ? event.text + '\n' : ''}[附件: ${event.media.fileName || event.media.filePath}]`
       : event.text || '';
@@ -171,10 +199,10 @@ function createSessionDriver(opts = {}) {
       await sleep(pollIntervalMs);
     }
     const replyText = (await lastMessage(port, sid, host, timeoutMs)) || '(会话未产生可读取的回复文本)';
-    return { text: replyText, media: null };
+    return { text: replyText, media: null, sessionId: sid };
   }
 
-  return { run, createSession, renameSession, promptSession, cancelSession, sessionRunning, lastMessage, rpc };
+  return { run, createSession, renameSession, promptSession, cancelSession, sessionRunning, sessionExists, lastMessage, rpc };
 }
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
@@ -205,5 +233,4 @@ async function listWorkspaceSessions(port, host, projectRoot, timeoutMs) {
   }));
 }
 
-module.exports = { createSessionDriver, rpc, createSession, renameSession, promptSession, cancelSession, sessionRunning, lastMessage, listWorkspaceSessions };
-
+module.exports = { createSessionDriver, rpc, createSession, renameSession, promptSession, cancelSession, sessionRunning, sessionExists, lastMessage, listWorkspaceSessions };

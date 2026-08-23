@@ -1,33 +1,51 @@
 'use strict';
 
 /**
- * core/lib/channel-sessions.js — per-channel session mapping + message log.
+ * core/lib/channel-sessions.js — channel-scoped session mapping + message log.
  *
- * Docs: docs/channel-ui-commands.md §3.4/§3.8 (decision E).
+ * Docs: docs/channel-storage.md (globalization, 2026-08-22), docs/channel-ui-commands.md §3.4/§3.8.
  *
- * Persisted under the PROJECT .dsh directory so it travels with the repo
- * (but message content is NOT committed — see .gitignore):
- *   <projectRoot>/.dsh/channels/<channelId>.sessions.json
- *   <projectRoot>/.dsh/channels/<channelId>.messages.json
+ * Persisted under the GLOBAL channel dir (survives runner restarts, does NOT
+ * pollute a project checkout — message content is not committed anywhere):
+ *   ~/.dsh/channels/<channelId>.sessions.json                     — session mapping
+ *   ~/.dsh/channels/<channelId>.workspaces.json                   — workspaceKey <-> projectRoot registry
+ *   ~/.dsh/channels/<channelId>.<workspaceKey>.<sessionId>.messages.json  — per-session message archive
+ *   ~/.dsh/channels/<channelId>.<workspaceKey>.system.messages.json       — sessionId=null (command/system) bucket
  *
- * Sessions: map a (channelId, conversationId) to the active dsh session id,
- * so multi-turn chats keep one session until /new or /switch.
- * Messages: append-only log of in/out messages, grouped by Channel/Session.
+ * Sessions map a (channelId, conversationId) to the active dsh session id, so
+ * multi-turn chats keep one session until /new or /switch. Messages are an
+ * append-only in/out log bucketed by (workspace, session).
  *
  *   const { createChannelSessions } = require('@oh-my-dsh/core');
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
+const crypto = require('node:crypto');
 
-/** Max messages kept per channel file (decision E). */
+/** Max messages kept per bucket file (decision E). */
 const MAX_MESSAGES = 1000;
 
-function sessionsFilePath(projectRoot, channelId) {
-  return path.join(projectRoot, '.dsh', 'channels', channelId + '.sessions.json');
+function channelsDir(dshHome) {
+  return path.join(dshHome || process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'channels');
 }
-function messagesFilePath(projectRoot, channelId) {
-  return path.join(projectRoot, '.dsh', 'channels', channelId + '.messages.json');
+
+/** Workspace key from a project root basename: keep A-Za-z0-9._- + CJK, else '-' (channel-storage.md §4). */
+function workspaceKey(projectRoot) {
+  if (!projectRoot) return '';
+  const base = String(projectRoot).split(/[\\/]/).filter(Boolean).pop() || 'ws';
+  let key = String(base).replace(/[^\w\u4e00-\u9fa5.-]/g, '-');
+  if (!key) key = 'ws';
+  if (key.length > 48) key = key.slice(0, 48);
+  return key;
+}
+
+/** Suffix a key with a path hash when it is taken by a different projectRoot. */
+function disambiguate(key, projectRoot, registry) {
+  if (!registry[key] || registry[key] === projectRoot) return key;
+  const h = crypto.createHash('sha1').update(projectRoot).digest('hex').slice(0, 6);
+  return key + '-' + h;
 }
 
 function readJson(file, fallback) {
@@ -40,14 +58,34 @@ function readJson(file, fallback) {
 }
 
 /**
- * Create a session store bound to one (projectRoot, channelId).
+ * Create a channel-scoped session + message store.
+ * opts: { channelId, dshHome, defaultProjectRoot }.
  */
-function createChannelSessions({ projectRoot, channelId }) {
-  const sessionsFile = sessionsFilePath(projectRoot, channelId);
-  const messagesFile = messagesFilePath(projectRoot, channelId);
+function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
+  if (!channelId) throw new Error('channel-sessions: channelId required');
+  const dir = channelsDir(dshHome);
+  const sessionsFile = path.join(dir, channelId + '.sessions.json');
+  const workspacesFile = path.join(dir, channelId + '.workspaces.json');
 
-  function ensureDir() {
-    fs.mkdirSync(path.dirname(sessionsFile), { recursive: true });
+  function ensureDir() { fs.mkdirSync(dir, { recursive: true }); }
+
+  // ----- workspaceKey registry -----
+  function loadWorkspaces() { return readJson(workspacesFile, {}) || {}; }
+  function saveWorkspaces(reg) { try { ensureDir(); fs.writeFileSync(workspacesFile, JSON.stringify(reg, null, 2), 'utf8'); } catch { /* non-fatal */ } }
+  /** Resolve (and register) the workspace key for a project root. */
+  function registerProjectRoot(projectRoot) {
+    if (!projectRoot) return '';
+    const reg = loadWorkspaces();
+    let key = workspaceKey(projectRoot);
+    for (const [k, root] of Object.entries(reg)) { if (root === projectRoot) { key = k; break; } }
+    key = disambiguate(key, projectRoot, reg);
+    if (reg[key] !== projectRoot) { reg[key] = projectRoot; saveWorkspaces(reg); }
+    return key;
+  }
+
+  function bucketFile(projectRoot, sessionId) {
+    const key = registerProjectRoot(projectRoot);
+    return path.join(dir, channelId + '.' + key + '.' + (sessionId || 'system') + '.messages.json');
   }
 
   // ----- sessions -----
@@ -55,70 +93,86 @@ function createChannelSessions({ projectRoot, channelId }) {
     const data = readJson(sessionsFile, { version: 1, sessions: [] });
     return Array.isArray(data.sessions) ? data.sessions : [];
   }
-  // Best-effort persistence: a write failure must never throw — the caller
-  // (command/quick handlers) relies on setSession returning without crashing so
-  // a reply still goes out even if the project dir is unwritable.
   function saveSessions(sessions) {
-    try {
-      ensureDir();
-      fs.writeFileSync(sessionsFile, JSON.stringify({ version: 1, sessions }, null, 2), 'utf8');
-    } catch { /* non-fatal: keep serving */ }
+    try { ensureDir(); fs.writeFileSync(sessionsFile, JSON.stringify({ version: 1, sessions }, null, 2), 'utf8'); } catch { /* non-fatal */ }
   }
-
-  /** Get the active session record for a conversation (or null). */
   function getSession(conversationId) {
     return loadSessions().find((s) => s.conversationId === conversationId) || null;
   }
-
-  /** Set (upsert) the session record for a conversation. */
+  // Set/refresh the ACTIVE session for a conversation. Sessions are recorded
+  // once per sessionId (history is preserved: /new does NOT erase the previous
+  // session, it just re-binds the conversation to the new one), so a project's
+  // full session list is always visible in the panel.
   function setSession(conversationId, rec) {
     const sessions = loadSessions();
-    const idx = sessions.findIndex((s) => s.conversationId === conversationId);
-    const entry = { conversationId, sessionId: rec.sessionId, projectRoot: rec.projectRoot || projectRoot, name: rec.name || null, createdAt: rec.createdAt || Date.now(), updatedAt: Date.now() };
-    if (idx >= 0) sessions[idx] = entry; else sessions.push(entry);
+    // un-bind the previous owner of this conversation
+    for (const s of sessions) if (s.conversationId === conversationId) s.conversationId = null;
+    // upsert by sessionId (keep all sessions)
+    let entry = sessions.find((s) => s.sessionId === rec.sessionId);
+    if (!entry) {
+      entry = { sessionId: rec.sessionId, createdAt: rec.createdAt || Date.now() };
+      sessions.push(entry);
+    }
+    entry.conversationId = conversationId;
+    if (rec.projectRoot) { entry.projectRoot = rec.projectRoot; entry.workspaceKey = rec.workspaceKey || registerProjectRoot(rec.projectRoot); }
+    else { entry.projectRoot = entry.projectRoot || null; entry.workspaceKey = entry.workspaceKey || null; }
+    if (rec.name != null) entry.name = rec.name;
+    entry.updatedAt = Date.now();
     saveSessions(sessions);
     return entry;
   }
-
-  /** List all sessions (ordered by updatedAt desc). */
   function listSessions() {
     return loadSessions().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   }
 
-  // ----- messages (decision E: persisted to project .dsh) -----
-  function loadMessages() {
-    const data = readJson(messagesFile, { version: 1, messages: [] });
+  // ----- messages (bucketed) -----
+  function readBucket(file) {
+    const data = readJson(file, { version: 1, messages: [] });
     return Array.isArray(data.messages) ? data.messages : [];
   }
-  function saveMessages(messages) {
+  function bucketFiles(prefix) {
     try {
-      ensureDir();
-      fs.writeFileSync(messagesFile, JSON.stringify({ version: 1, messages }, null, 2), 'utf8');
-    } catch { /* non-fatal: keep serving */ }
+      return fs.readdirSync(dir)
+        .filter((f) => f.startsWith(prefix) && f.endsWith('.messages.json'))
+        .map((f) => path.join(dir, f));
+    } catch { return []; }
   }
-
-  /**
-   * Append a message record. dir = "in" (received) | "out" (reply).
-   * Rolls to the most recent MAX_MESSAGES.
-   */
-  function appendMessage({ conversationId, sessionId, dir, text, ts }) {
-    const messages = loadMessages();
-    messages.push({ channelId, conversationId, sessionId: sessionId || null, dir, text: String(text || ''), ts: ts || Date.now() });
+  /** All messages across every bucket of this channel. */
+  function loadMessages() {
+    let out = [];
+    for (const f of bucketFiles(channelId + '.')) out = out.concat(readBucket(f));
+    return out;
+  }
+  /** Messages for one workspace key (incl. its system bucket). */
+  function loadMessagesFor(workspaceKey) {
+    let out = [];
+    for (const f of bucketFiles(channelId + '.' + (workspaceKey || '') + '.')) out = out.concat(readBucket(f));
+    return out;
+  }
+  /** Append a message record. dir = "in" | "out". Bucket = (projectRoot, sessionId??system). */
+  function appendMessage({ conversationId, sessionId, dir, text, ts, projectRoot }) {
+    let root = projectRoot;
+    if (!root) { const rec = getSession(conversationId); root = (rec && rec.projectRoot) || null; }
+    if (!root) root = defaultProjectRoot || null;
+    if (!root) return; // nowhere to archive — best effort, never throw
+    const file = bucketFile(root, sessionId);
+    const messages = readBucket(file);
+    messages.push({ channelId, conversationId, sessionId: sessionId || null, dir, text: String(text || ''), ts: ts || Date.now(), projectRoot: root });
     if (messages.length > MAX_MESSAGES) messages.splice(0, messages.length - MAX_MESSAGES);
-    saveMessages(messages);
+    try { ensureDir(); fs.writeFileSync(file, JSON.stringify({ version: 1, messages }, null, 2), 'utf8'); } catch { /* non-fatal */ }
   }
-
-  /** List messages for a conversation (oldest first). */
+  /** List messages for a conversation across all buckets (oldest first). */
   function listMessages(conversationId, limit) {
-    const msgs = loadMessages().filter((m) => m.conversationId === conversationId);
+    const msgs = loadMessages().filter((m) => m.conversationId === conversationId).sort((a, b) => (a.ts || 0) - (b.ts || 0));
     return limit ? msgs.slice(-limit) : msgs;
   }
 
   return {
-    sessionsFile, messagesFile,
+    sessionsFile, workspacesFile, dir,
     getSession, setSession, listSessions,
-    appendMessage, listMessages, loadMessages,
+    appendMessage, listMessages, loadMessages, loadMessagesFor,
+    registerProjectRoot, workspaceKey,
   };
 }
 
-module.exports = { createChannelSessions, sessionsFilePath, messagesFilePath, MAX_MESSAGES };
+module.exports = { createChannelSessions, workspaceKey, channelsDir, MAX_MESSAGES };

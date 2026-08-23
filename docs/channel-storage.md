@@ -1,6 +1,6 @@
 # Channel 消息存储设计（全局化改造）
 
-> 状态：📝 设计稿（2026-08-22 定稿，待实现）
+> 状态：✅ 已实现（2026-08-22：全局 channel 作用域 store 落地于 core/lib/channel-sessions.js；按需求忽略历史数据迁移）
 > 更新：2026-08-22
 > 关联：docs/channel-design.md（§4 配置模型）、docs/channel-ui-commands.md（§2.4 决策 E / §3.8）、core/lib/channel-sessions.js、core/lib/channel-store.js、core/lib/channel-runner.js、platforms/macos/src/ChannelPanel.swift、platforms/macos/src/main.swift
 

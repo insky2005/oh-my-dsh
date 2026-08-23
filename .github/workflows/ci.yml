@@ -78,6 +78,8 @@ jobs:
         run: tests/browser-panel/run.sh
       - name: Built-in skills tests
         run: tests/skills/run.sh
+      - name: Channel panel tests
+        run: tests/channel-panel/run.sh
       - name: Build CEF integration artifacts (arm64)
         run: |
           mkdir -p .build/module-cache

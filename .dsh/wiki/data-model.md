@@ -108,5 +108,6 @@ manual: false                   # true = 用户手改，代理永不覆盖
 
 - `~/Library/Logs/oh-my-dsh/app.log` — 壳层行为（`AppLog`，串行队列写盘，ISO8601 时间戳）；
 - `~/Library/Logs/oh-my-dsh/server.log` — 自拉起的 `dsh web` 进程 stdout/stderr；
+- `~/Library/Logs/oh-my-dsh/channel-runner-<channelId>.log` — channel runner（core/Node，`channel run`）的 stdout/stderr（含 `[weixin-clawbot]` getConfig/sendTyping 等日志；main.swift startChannelRunner 路由到文件而非丢弃）；
 - `$HOME/.dsh`（默认 `DSH_HOME`）— 传给 `dsh web`，首次使用自动初始化 web profile；其下另有 `~/.dsh/gh-token`（通用 token 文件）与 `~/.dsh/tokens/<owner>-<repo>`（按仓库作用域的 token 文件，chmod 600）——均**不**在仓库内，不入 git；
 - 调试面板截图：`~/Library/Logs/oh-my-dsh/panel-<label>-debug.png`（`DSH_UI_DEBUG=1` 时产出）。
