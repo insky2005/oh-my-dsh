@@ -110,6 +110,7 @@
 | D 存储单一来源 | createChannelSessions 改按 channel 作用域全局存储（sessions/workspaces/分桶消息）；runner 会话映射与消息都走同一 store；忽略历史迁移（按需求） | core/lib/channel-sessions.js、channel-runner.js | channel-sessions.test.js（重写） |
 | E 面板项目视图数据源 + 消息列表 | 新增 ChannelStoreReader.swift（纯 Foundation 读全局 sessions/分桶消息）；ChannelPanel 项目视图改读全局 store，会话行展开显示消息列表 | platforms/macos/src/ChannelStoreReader.swift、ChannelPanel.swift | tests/channel-panel/run.sh（无头单测） |
 
-> 验证：`node --test core/tests/` **154 全绿**（基线 148 + A/B/C/D + /new 会话绑定回归）；`tests/channel-panel/run.sh` 无头单测通过；`scripts/local-ci.sh swift` 全量 swiftc 编译检查通过。
+> 验证：`node --test core/tests/` **155 全绿**（基线 148 + A/B/C/D + /new 会话绑定 + 会话历史）；`tests/channel-panel/run.sh` 无头单测通过；`scripts/local-ci.sh swift` 全量 swiftc 编译检查通过。
 
 > **修复记录（2026-08-22）**：/new 创建的会话此前未绑定到发起 conversation，导致 /new Hello 后下一条普通消息又新建会话。已修复——/new（含/不含内容）后把新建会话写入 conversation→session 映射；pending 激活路径同步写入映射。回归用例见 channel-association.test.js「/new binds …」。
+> **修复记录（会话历史，2026-08-22）**：面板项目视图此前只显示一个会话——sessions.json 按 conversationId upsert，/new 重新绑定到新会话时覆盖了旧会话记录。已修复——store.setSession 改为按 sessionId 保留全部会话（旧会话保留、仅 conversation 绑定切换），面板据此列出项目全部会话。回归用例见 channel-sessions.test.js「re-binding a conversation keeps BOTH sessions」。

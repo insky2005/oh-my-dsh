@@ -21,12 +21,25 @@ test('sessions: set/get/list persists to global channel sessions.json', () => {
   assert.equal(store2.getSession('conv-b').sessionId, 's-2');
 });
 
-test('sessions: upsert same conversation updates without duplicate', () => {
+test('sessions: re-binding a conversation keeps BOTH sessions in history (panel lists all)', () => {
   const store = createChannelSessions({ channelId: 'wx-upsert', dshHome: HOME });
   store.setSession('conv-a', { sessionId: 's-1' });
   store.setSession('conv-a', { sessionId: 's-2' });
-  assert.equal(store.listSessions().length, 1);
+  // history preserved — both sessions remain listable (e.g. after /new)
+  assert.equal(store.listSessions().length, 2);
+  // the conversation points to the latest session
   assert.equal(store.getSession('conv-a').sessionId, 's-2');
+  // the previous session is no longer bound to the conversation but still exists
+  assert.equal(store.listSessions().find((s) => s.sessionId === 's-1').conversationId, null);
+});
+
+test('sessions: distinct conversations have their own active sessions, all listed', () => {
+  const store = createChannelSessions({ channelId: 'wx-multi', dshHome: HOME });
+  store.setSession('conv-a', { sessionId: 's-1', projectRoot: '/p' });
+  store.setSession('conv-b', { sessionId: 's-2', projectRoot: '/p' });
+  assert.equal(store.getSession('conv-a').sessionId, 's-1');
+  assert.equal(store.getSession('conv-b').sessionId, 's-2');
+  assert.equal(store.listSessions().length, 2);
 });
 
 test('sessions: appendMessage writes per-session buckets under global channels dir', () => {

@@ -99,19 +99,25 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
   function getSession(conversationId) {
     return loadSessions().find((s) => s.conversationId === conversationId) || null;
   }
+  // Set/refresh the ACTIVE session for a conversation. Sessions are recorded
+  // once per sessionId (history is preserved: /new does NOT erase the previous
+  // session, it just re-binds the conversation to the new one), so a project's
+  // full session list is always visible in the panel.
   function setSession(conversationId, rec) {
     const sessions = loadSessions();
-    const idx = sessions.findIndex((s) => s.conversationId === conversationId);
-    const entry = {
-      conversationId,
-      sessionId: rec.sessionId,
-      projectRoot: rec.projectRoot || null,
-      workspaceKey: rec.workspaceKey || (rec.projectRoot ? registerProjectRoot(rec.projectRoot) : null),
-      name: rec.name || null,
-      createdAt: rec.createdAt || Date.now(),
-      updatedAt: Date.now(),
-    };
-    if (idx >= 0) sessions[idx] = entry; else sessions.push(entry);
+    // un-bind the previous owner of this conversation
+    for (const s of sessions) if (s.conversationId === conversationId) s.conversationId = null;
+    // upsert by sessionId (keep all sessions)
+    let entry = sessions.find((s) => s.sessionId === rec.sessionId);
+    if (!entry) {
+      entry = { sessionId: rec.sessionId, createdAt: rec.createdAt || Date.now() };
+      sessions.push(entry);
+    }
+    entry.conversationId = conversationId;
+    if (rec.projectRoot) { entry.projectRoot = rec.projectRoot; entry.workspaceKey = rec.workspaceKey || registerProjectRoot(rec.projectRoot); }
+    else { entry.projectRoot = entry.projectRoot || null; entry.workspaceKey = entry.workspaceKey || null; }
+    if (rec.name != null) entry.name = rec.name;
+    entry.updatedAt = Date.now();
     saveSessions(sessions);
     return entry;
   }
