@@ -3092,8 +3092,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = pipe
-        // drain output so the pipe doesn't fill and block the child
-        pipe.fileHandleForReading.readabilityHandler = { h in _ = h.availableData }
+        // Route the runner's stdout/stderr to a per-channel log under
+        // ~/Library/Logs/oh-my-dsh/ (so channel/core logs like [weixin-clawbot]
+        // are inspectable), and drain it so the pipe doesn't fill and block the child.
+        let runnerLogPath = NSHomeDirectory() + "/Library/Logs/oh-my-dsh/channel-runner-" + channelId + ".log"
+        let runnerLogDir = (runnerLogPath as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: runnerLogDir, withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: runnerLogPath) {
+            FileManager.default.createFile(atPath: runnerLogPath, contents: nil)
+        }
+        let runnerLog = FileHandle(forWritingAtPath: runnerLogPath)
+        try? runnerLog?.seekToEnd()
+        pipe.fileHandleForReading.readabilityHandler = { h in
+            let data = h.availableData
+            if !data.isEmpty, let runnerLog {
+                try? runnerLog.write(contentsOf: data)
+            }
+        }
         do {
             try proc.run()
             channelRunnerProcs.append(proc)
