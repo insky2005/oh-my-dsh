@@ -113,6 +113,7 @@ final class ChannelPanelController: NSObject {
     private enum Mode { case onboarding, project }
     private var mode: Mode = .onboarding
     private var collapsedChannelIds: Set<String> = []
+    private var collapsedSessionIds: Set<String> = []
 
     private static let builtins: [ChannelCard] = [
         ChannelCard(platform: "weixin-clawbot", symbol: "message", titleKey: "channel.card.weixin", descKey: "channel.card.weixinDesc"),
@@ -464,10 +465,11 @@ final class ChannelPanelController: NSObject {
             let enabled = refs.contains { $0.channelId == ch.id }
             // default: expanded; only collapse when explicitly toggled off
             let expanded = !collapsedChannelIds.contains(ch.id)
-            let sessionNames = loadSessionNames(for: ch.id)
-            let row = ProjectRowView(channel: ch, enabled: enabled, expanded: expanded, sessionNames: sessionNames)
+            let sessions = loadSessions(for: ch.id)
+            let row = ProjectRowView(channel: ch, enabled: enabled, expanded: expanded, sessions: sessions, collapsedSessionIds: collapsedSessionIds)
             row.onToggle = { [weak self] in self?.toggleProjectChannel(ch.id) }
             row.onExpand = { [weak self] in self?.toggleExpand(ch.id) }
+            row.onToggleSession = { [weak self] sessionId in self?.toggleSession(sessionId) }
             projectList.addArrangedSubview(row)
             // Stretch every row to the full content width (stack `.width`
             // alignment only stretches the widest row — shorter ones would
@@ -497,15 +499,20 @@ final class ChannelPanelController: NSObject {
         rebuildProjectRows()
     }
 
-    /// Session display names for a channel, read from the project's
-    /// `.dsh/channels/<channelId>.sessions.json` (same store the runner uses).
-    private func loadSessionNames(for channelId: String) -> [String] {
+    /// Sessions for a channel that belong to the CURRENT project, each with its
+    /// message history — read from the GLOBAL channel-scoped store (docs/channel-storage.md, D).
+    private func loadSessions(for channelId: String) -> [ChannelSessionVM] {
         guard let root = currentRoot else { return [] }
-        let path = (root as NSString).appendingPathComponent(".dsh/channels/\(channelId).sessions.json")
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let arr = obj["sessions"] as? [[String: Any]] else { return [] }
-        return arr.compactMap { ($0["name"] as? String) ?? ($0["conversationId"] as? String) }
+        return ChannelStoreReader.loadSessions(channelId: channelId, projectRoot: root)
+    }
+
+    private func toggleSession(_ sessionId: String) {
+        if collapsedSessionIds.contains(sessionId) {
+            collapsedSessionIds.remove(sessionId)
+        } else {
+            collapsedSessionIds.insert(sessionId)
+        }
+        rebuildProjectRows()
     }
 
     // MARK: - Mode switching
@@ -651,12 +658,13 @@ final class ChannelPanelController: NSObject {
 final class ProjectRowView: NSView {
     var onToggle: (() -> Void)?
     var onExpand: (() -> Void)?
+    var onToggleSession: ((String) -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let switchControl = NSSwitch()
     private let sessionsStack = NSStackView()
 
-    init(channel: GlobalChannel, enabled: Bool, expanded: Bool, sessionNames: [String]) {
+    init(channel: GlobalChannel, enabled: Bool, expanded: Bool, sessions: [ChannelSessionVM], collapsedSessionIds: Set<String>) {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 6
@@ -688,7 +696,7 @@ final class ProjectRowView: NSView {
             topRow.topAnchor.constraint(equalTo: topAnchor, constant: 8),
         ])
 
-        // sessions area: header "会话 (N)" + a session row per entry
+        // sessions area: header "会话 (N)" + expandable session rows (with messages)
         sessionsStack.orientation = .vertical
         sessionsStack.alignment = .leading
         sessionsStack.spacing = 4
@@ -702,30 +710,27 @@ final class ProjectRowView: NSView {
             sessionsStack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        let header = NSTextField(labelWithString: L10n.tr("channel.sessions") + " (\(sessionNames.count))")
+        let header = NSTextField(labelWithString: L10n.tr("channel.sessions") + " (\(sessions.count))")
         header.font = .systemFont(ofSize: 11, weight: .semibold)
         header.textColor = .secondaryLabelColor
         sessionsStack.addArrangedSubview(header)
 
-        if sessionNames.isEmpty {
+        if sessions.isEmpty {
             let empty = NSTextField(labelWithString: L10n.tr("channel.noSessions"))
             empty.font = .systemFont(ofSize: 11)
             empty.textColor = .tertiaryLabelColor
             sessionsStack.addArrangedSubview(empty)
         } else {
-            for name in sessionNames {
-                let item = NSTextField(labelWithString: "•  " + name)
-                item.font = .systemFont(ofSize: 11)
-                item.textColor = .secondaryLabelColor
-                item.lineBreakMode = .byTruncatingMiddle
-                sessionsStack.addArrangedSubview(item)
+            for session in sessions {
+                let showMessages = !collapsedSessionIds.contains(session.sessionId)
+                let row = ChannelSessionRow(session: session, showMessages: showMessages)
+                row.onTap = { [weak self] in self?.onToggleSession?(session.sessionId) }
+                sessionsStack.addArrangedSubview(row)
             }
         }
         sessionsStack.isHidden = !expanded
 
-        // Clicking the channel name (which fills the whole line up to the
-        // switch) toggles expand/collapse. Kept off the switch so the switch
-        // keeps its own toggle action (a row-wide gesture would swallow it).
+        // Clicking the channel name toggles expand/collapse of the whole session list.
         let click = NSClickGestureRecognizer(target: self, action: #selector(expandTapped(_:)))
         titleLabel.addGestureRecognizer(click)
     }
@@ -739,6 +744,60 @@ final class ProjectRowView: NSView {
     }
 }
 
+/// One expandable session row inside a channel: title + (when expanded) its messages.
+final class ChannelSessionRow: NSView {
+    var onTap: (() -> Void)?
+
+    init(session: ChannelSessionVM, showMessages: Bool) {
+        super.init(frame: .zero)
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        stack.edgeInsets = NSEdgeInsets(top: 2, left: 6, bottom: 2, right: 6)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let title = NSTextField(labelWithString: (showMessages ? "▾  " : "▸  ") + (session.name.isEmpty ? session.sessionId : session.name))
+        title.font = .systemFont(ofSize: 11, weight: .medium)
+        title.textColor = .secondaryLabelColor
+        title.lineBreakMode = .byTruncatingMiddle
+        stack.addArrangedSubview(title)
+
+        if showMessages {
+            if session.messages.isEmpty {
+                let empty = NSTextField(labelWithString: L10n.tr("channel.noMessages"))
+                empty.font = .systemFont(ofSize: 10)
+                empty.textColor = .tertiaryLabelColor
+                stack.addArrangedSubview(empty)
+            } else {
+                for m in session.messages {
+                    let prefix = m.dir == "in" ? "▸ " : "↩ "
+                    let line = NSTextField(wrappingLabelWithString: prefix + m.text)
+                    line.font = .systemFont(ofSize: 10)
+                    line.textColor = m.dir == "in" ? .secondaryLabelColor : .tertiaryLabelColor
+                    line.maximumNumberOfLines = 3
+                    line.lineBreakMode = .byTruncatingTail
+                    stack.addArrangedSubview(line)
+                }
+            }
+        }
+
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        let click = NSClickGestureRecognizer(target: self, action: #selector(tapped(_:)))
+        addGestureRecognizer(click)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @objc private func tapped(_ gesture: NSClickGestureRecognizer) { onTap?() }
+}
 /// A full-width channel card: SF Symbol icon + title/desc on the left,
 /// configuration status dot on the right (gray = unconfigured, green = configured).
 /// Background follows the appearance (light in light mode, dark in dark mode).
