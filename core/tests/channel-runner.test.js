@@ -100,7 +100,14 @@ async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceI
   const dshHome = dshHomeOpt || fs.mkdtempSync(path.join(os.tmpdir(), 'chan-run-'));
   saveChannelAccount('wx-q', { botToken: 'bt', baseUrl: 'https://x' }, dshHome);
   const projectRoot = storeProjectRoot || fs.mkdtempSync(path.join(os.tmpdir(), 'chan-pr-'));
-  enableForProject(dshHome, 'wx-q', projectRoot);
+  {
+    const dir = path.join(dshHome, 'channels');
+    fs.mkdirSync(dir, { recursive: true });
+    const roots = [projectRoot, ...workspaces.map((w) => w.path)].filter(Boolean);
+    const reg = {};
+    roots.forEach((root, i) => { reg['ws' + (i + 1)] = root; });
+    fs.writeFileSync(path.join(dir, 'wx-q.workspaces.json'), JSON.stringify(reg), 'utf8');
+  }
 
   let sent = null;
   let first = true;
@@ -308,12 +315,11 @@ test('project switch OFF: ordinary message replies 未启用该通道 and create
   assert.equal(r.creates, 0, 'no session.create when the project has the channel off');
 });
 
-test('project switch: #w1 workspace navigation is NOT gated (only routing is)', async () => {
-  // Navigation must still work even when the channel isn't enabled for the project;
-  // only actual message routing to a non-enabled workspace is gated.
+test('project switch: #w1 to a non-enabled workspace IS gated (returns prompt, no switch)', async () => {
+  // #wN must be blocked when the target workspace doesn't have the channel enabled.
   const r = await runProjectGate({ enabled: false, text: '#w1' });
-  assert.match(r.sent || '', /已切换到工作区/);
-  assert.equal(r.creates, 0, 'navigation creates no session');
+  assert.match(r.sent || '', /未启用该通道/);
+  assert.equal(r.creates, 0, 'gated #w1 creates no session');
 });
 
 test('project switch ON: ordinary message routes and creates a session', async () => {

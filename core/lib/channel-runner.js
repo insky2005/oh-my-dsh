@@ -134,9 +134,10 @@ async function runWeixinChannel(opts = {}) {
 
   // Project switch (docs/channel-project-switch.md §3.2): a channel is enabled for a
   // workspace iff that project root appears in ~/.dsh/channels/<channelId>.workspaces.json.
-  // The gate applies where a message would CREATE/RUN a session (ordinary text, /new);
-  // navigation (#wN/#sN) and informational commands are always allowed. The enabled
-  // set is cached briefly so bursts don't re-read the file on every message.
+  // The gate applies where a message would CREATE/RUN a session (ordinary text, /new) AND
+  // when #wN targets a workspace (workspace switch requires the target to be enabled);
+  // #sN and informational commands are allowed. The enabled set is cached briefly so
+  // bursts don't re-read the file on every message.
   let enabledCache = { roots: null, at: 0 };
   const isEnabledForRoot = (root) => {
     if (!root) return false;
@@ -338,6 +339,9 @@ async function runWeixinChannel(opts = {}) {
           const w = ws[n - 1];
           if (!w) {
             replyText = '未找到工作区 #w' + n + ' （/wks 或 /workspaces 查看）';
+          } else if (!isEnabledForRoot(w.path)) {
+            // #wN is gated too: the target workspace must have this channel enabled.
+            replyText = '该项目未启用该通道，请在面板「通道」项目视图开启后使用';
           } else {
             setLastWorkspace(w);
             // A workspace switch resets the current session to n/a — the user
