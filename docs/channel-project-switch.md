@@ -33,10 +33,11 @@ Channel 面板项目视图里每个通道有一个「项目开关」，但目前
 - **普通文本消息**：解析出目标 workspace 后，若该 workspace 未启用该通道 → 提示；不创建/不 prompt 会话；
 - **`/new`**：目标 workspace 未启用 → 提示，不新建会话。
 
-**放行（不做门控）**：
-- 导航 / 只读命令：`#sN`（切换会话）、`/sessions`(`/ses`)、`/switch`；
-- 信息命令：`/help`、`/ping`、`/status`、`/workspaces`(`/wks`)。
-> **`#wN`（切换工作区）同样门控**：目标 workspace 未启用该 channel 时禁止切换并回「该项目未启用该通道…」（更新决策 2026-08-23）。`#sN` 是会话内导航，放行。
+**门控范围（更新决策 2026-08-23）**——所有工作区级导航/信息命令都判断 workspace 是否启用该 channel：
+- `#wN`：目标 workspace 未启用 → 禁止切换并回「该项目未启用该通道…」；
+- `#sN` / `/sessions`(`/ses`) / `/switch`：当前 workspace 未启用 → 回「该项目未启用该通道…」；
+- `/workspaces`(`/wks`)：**只列出已启用该 channel 的 workspace**（未启用项不再返回）。
+**始终放行**：`/help`、`/ping`、`/status`。
 
 - **即时生效**：门控每次读取该通道全局 workspaces.json（启用集合缓存约 1s，避免突发消息重复读文件）；开关切换后下一条消息即反映（无需重启 App / runner）。
 - 启用后行为与现状一致（按目标 workspace 路由）。

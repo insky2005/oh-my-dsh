@@ -182,7 +182,10 @@ async function runWeixinChannel(opts = {}) {
   // Command runner wired to the session store + session driver.
   const commandRunner = opts.commands || createCommandRunner({
     getSessions: () => currentSessions(),
-    getWorkspaces: () => getCodedWorkspaces(),
+    getWorkspaces: async () => {
+      const ws = await getCodedWorkspaces();
+      return ws.filter((w) => isEnabledForRoot(w.path)); // /workspaces only lists enabled
+    },
     createSession: async (name) => {
       // /new [#w1] — route to the tagged workspace, else the current one (lastCode),
       // else the first workspace.
@@ -296,6 +299,15 @@ async function runWeixinChannel(opts = {}) {
           store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
           return;
         }
+        // Project switch: workspace-scoped commands (/sessions /ses /switch) require the
+        // CURRENT workspace to have the channel enabled.
+        if (parsed.kind === 'command'
+            && (parsed.name === 'sessions' || parsed.name === 'ses' || parsed.name === 'switch')
+            && !isEnabledForRoot(currentWorkspaceRoot())) {
+          await adapter.send(event.conversationId, { text: '该项目未启用该通道，请在面板「通道」项目视图开启后使用', contextToken: event.contextToken });
+          store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
+          return;
+        }
         const reply = await commandRunner.run(event.text);
         console.log('[runner:' + channelId + '] command ' + (parsed.name || parsed.kind) + ' -> reply=' + JSON.stringify(reply && reply.text));
         // /new binds the freshly-created session to THIS conversation so the next
@@ -358,13 +370,17 @@ async function runWeixinChannel(opts = {}) {
             replyText = lines.join('\n');
           }
         } else {
-          const list = await currentSessions();
-          const s = list[n - 1];
-          if (!s) replyText = '未找到会话 #s' + n + ' （/ses 或 /sessions 查看）';
-          else {
-            store.setSession(event.conversationId, { sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
-            runtime.setActiveSession({ sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
-            replyText = '已切换到会话 #s' + n + ' (' + s.sessionId + '), ' + (s.name || '');
+          if (!isEnabledForRoot(currentWorkspaceRoot())) {
+            replyText = '该项目未启用该通道，请在面板「通道」项目视图开启后使用';
+          } else {
+            const list = await currentSessions();
+            const s = list[n - 1];
+            if (!s) replyText = '未找到会话 #s' + n + ' （/ses 或 /sessions 查看）';
+            else {
+              store.setSession(event.conversationId, { sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
+              runtime.setActiveSession({ sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
+              replyText = '已切换到会话 #s' + n + ' (' + s.sessionId + '), ' + (s.name || '');
+            }
           }
         }
         const payload = { conversationId: event.conversationId, text: replyText, contextToken: event.contextToken };

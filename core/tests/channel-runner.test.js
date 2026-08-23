@@ -326,3 +326,28 @@ test('project switch ON: ordinary message routes and creates a session', async (
   const r = await runProjectGate({ enabled: true, text: '你好' });
   assert.ok(r.creates >= 1, 'session created when enabled; got creates=' + r.creates);
 });
+
+test('project switch: #sN is gated when the current workspace has the channel off', async () => {
+  const r = await runProjectGate({ enabled: false, text: '#s1' });
+  assert.match(r.sent || '', /未启用该通道/);
+});
+
+test('project switch: /sessions is gated when the current workspace has the channel off', async () => {
+  const r = await runProjectGate({ enabled: false, text: '/sessions' });
+  assert.match(r.sent || '', /未启用该通道/);
+});
+
+test('project switch: /switch is gated when the current workspace has the channel off', async () => {
+  const r = await runProjectGate({ enabled: false, text: '/switch 会话甲' });
+  assert.match(r.sent || '', /未启用该通道/);
+});
+
+test('project switch: /workspaces only lists enabled workspaces (none enabled -> empty)', async () => {
+  const r = await runProjectGate({ enabled: false, text: '/workspaces' });
+  assert.match(r.sent || '', /没有可用的 workspace|未启用/);
+});
+
+test('project switch: /workspaces lists a workspace only when it is enabled', async () => {
+  const r = await runProjectGate({ enabled: true, text: '/workspaces' });
+  assert.match(r.sent || '', /Alpha/);
+});
