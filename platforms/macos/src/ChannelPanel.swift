@@ -115,7 +115,7 @@ final class ChannelPanelController: NSObject {
     private var collapsedChannelIds: Set<String> = []
     private var collapsedSessionIds: Set<String> = []
 
-    private static let builtins: [ChannelCard] = [
+    static let builtins: [ChannelCard] = [
         ChannelCard(platform: "weixin-clawbot", symbol: "message", titleKey: "channel.card.weixin", descKey: "channel.card.weixinDesc"),
         ChannelCard(platform: "dingtalk", symbol: "person.2", titleKey: "channel.card.dingtalk", descKey: "channel.card.dingtalkDesc"),
         ChannelCard(platform: "feishu", symbol: "paperplane", titleKey: "channel.card.feishu", descKey: "channel.card.feishuDesc"),
@@ -652,73 +652,36 @@ final class ChannelPanelController: NSObject {
     }
 }
 
-/// A project-view row: full-width channel name (left) + on/off switch (right,
-/// green when on, gray when off) + an expandable sessions list. Sessions are
-/// shown by default and collapse when the title row is clicked again.
+/// A project-view row: a full-width channel header block (platform name + id +
+/// icon, a sessions-count description, and an on/off switch) plus an expandable
+/// list of session blocks. Sessions are shown by default and collapse when the
+/// header or a session title is clicked again.
 final class ProjectRowView: NSView {
     var onToggle: (() -> Void)?
     var onExpand: (() -> Void)?
     var onToggleSession: ((String) -> Void)?
 
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let switchControl = NSSwitch()
-    private let sessionsStack = NSStackView()
-
     init(channel: GlobalChannel, enabled: Bool, expanded: Bool, sessions: [ChannelSessionVM], collapsedSessionIds: Set<String>) {
         super.init(frame: .zero)
-        wantsLayer = true
-        layer?.cornerRadius = 6
-        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
 
-        // left: channel name on a full-width line (truncates to fit)
-        titleLabel.stringValue = channel.name
-        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // ---- channel header block (one full-width unit with its own bg) ----
+        let header = ChannelHeaderBlock(channel: channel, enabled: enabled, sessionCount: sessions.count)
+        header.onToggle = { [weak self] in self?.onToggle?() }
+        header.onExpand = { [weak self] in self?.onExpand?() }
+        header.translatesAutoresizingMaskIntoConstraints = false
 
-        // right: real on/off switch — system green when on, gray when off
-        switchControl.controlSize = .small
-        switchControl.target = self
-        switchControl.action = #selector(toggleTapped(_:))
-        switchControl.state = enabled ? .on : .off
-
-        let topRow = NSStackView(views: [titleLabel, NSView(), switchControl])
-        topRow.orientation = .horizontal
-        topRow.alignment = .centerY
-        topRow.spacing = 8
-        topRow.translatesAutoresizingMaskIntoConstraints = false
-
-        addSubview(topRow)
-        NSLayoutConstraint.activate([
-            topRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            topRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            topRow.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-        ])
-
-        // sessions area: header "会话 (N)" + expandable session rows (with messages)
+        // ---- session blocks (each in its own bg) ----
+        let sessionsStack = NSStackView()
         sessionsStack.orientation = .vertical
         sessionsStack.alignment = .leading
-        sessionsStack.spacing = 4
-        sessionsStack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 10, right: 12)
+        sessionsStack.spacing = 6
         sessionsStack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(sessionsStack)
-        NSLayoutConstraint.activate([
-            sessionsStack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            sessionsStack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            sessionsStack.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 2),
-            sessionsStack.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-
-        let header = NSTextField(labelWithString: L10n.tr("channel.sessions") + " (\(sessions.count))")
-        header.font = .systemFont(ofSize: 11, weight: .semibold)
-        header.textColor = .secondaryLabelColor
-        sessionsStack.addArrangedSubview(header)
 
         if sessions.isEmpty {
             let empty = NSTextField(labelWithString: L10n.tr("channel.noSessions"))
             empty.font = .systemFont(ofSize: 11)
-            empty.textColor = .tertiaryLabelColor
+            empty.textColor = .secondaryLabelColor
+            empty.translatesAutoresizingMaskIntoConstraints = false
             sessionsStack.addArrangedSubview(empty)
         } else {
             for session in sessions {
@@ -726,11 +689,106 @@ final class ProjectRowView: NSView {
                 let row = ChannelSessionRow(session: session, showMessages: showMessages)
                 row.onTap = { [weak self] in self?.onToggleSession?(session.sessionId) }
                 sessionsStack.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: sessionsStack.widthAnchor).isActive = true
             }
         }
         sessionsStack.isHidden = !expanded
 
-        // Clicking the channel name toggles expand/collapse of the whole session list.
+        // ---- outer vertical stack: header on top, sessions below ----
+        let outer = NSStackView(views: [header, sessionsStack])
+        outer.orientation = .vertical
+        outer.alignment = .leading
+        outer.spacing = 6
+        outer.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(outer)
+        NSLayoutConstraint.activate([
+            outer.topAnchor.constraint(equalTo: topAnchor),
+            outer.leadingAnchor.constraint(equalTo: leadingAnchor),
+            outer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            outer.bottomAnchor.constraint(equalTo: bottomAnchor),
+            header.widthAnchor.constraint(equalTo: outer.widthAnchor),
+            sessionsStack.widthAnchor.constraint(equalTo: outer.widthAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
+/// The channel header: one full-width block containing two lines — a platform
+/// icon + "平台名 (channelId)" (bigger, clickable to expand) and a
+/// "会话 (N)" description, with the on/off switch on the right.
+final class ChannelHeaderBlock: RoundedBlockView {
+    var onToggle: (() -> Void)?
+    var onExpand: (() -> Void)?
+
+    init(channel: GlobalChannel, enabled: Bool, sessionCount: Int) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        radius = 8
+        lightFill = NSColor(calibratedRed: 0.88, green: 0.92, blue: 1.0, alpha: 1)
+        darkFill = NSColor(calibratedRed: 0.17, green: 0.21, blue: 0.30, alpha: 1)
+        lightBorder = NSColor(calibratedWhite: 0.7, alpha: 0.6)
+        darkBorder = NSColor(calibratedWhite: 0.42, alpha: 0.5)
+
+        // platform icon (SF Symbol)
+        let card = ChannelPanelController.builtins.first { $0.platform == channel.platform }
+        let iconView = NSImageView()
+        if let img = NSImage(systemSymbolName: card?.symbol ?? "bubble.left.and.bubble.right", accessibilityDescription: nil) {
+            iconView.image = img
+            iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+        }
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.widthAnchor.constraint(equalToConstant: 22).isActive = true
+        iconView.heightAnchor.constraint(equalToConstant: 22).isActive = true
+
+        // line 1: "平台名 (channelId)" — bigger font, clickable to expand
+        let platformName = card.map { L10n.tr($0.titleKey) } ?? channel.platform
+        let titleLabel = NSTextField(labelWithString: "\(platformName) (\(channel.id))")
+        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        // right: on/off switch
+        let switchControl = NSSwitch()
+        switchControl.controlSize = .small
+        switchControl.state = enabled ? .on : .off
+        switchControl.target = self
+        switchControl.action = #selector(toggleTapped(_:))
+        switchControl.translatesAutoresizingMaskIntoConstraints = false
+
+        // flexible spacer pushes the switch to the far right
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let topRow = NSStackView(views: [iconView, titleLabel, spacer, switchControl])
+        topRow.orientation = .horizontal
+        topRow.alignment = .centerY
+        topRow.spacing = 8
+        topRow.translatesAutoresizingMaskIntoConstraints = false
+
+        // line 2: sessions-count description
+        let infoLabel = NSTextField(labelWithString: L10n.tr("channel.sessions") + " (\(sessionCount))")
+        infoLabel.font = .systemFont(ofSize: 11)
+        infoLabel.textColor = .secondaryLabelColor
+        infoLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(topRow)
+        addSubview(infoLabel)
+        NSLayoutConstraint.activate([
+            topRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            topRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            topRow.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            infoLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            infoLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            infoLabel.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 3),
+            infoLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+        ])
+
+        // clicking the platform name toggles the whole session list
         let click = NSClickGestureRecognizer(target: self, action: #selector(expandTapped(_:)))
         titleLabel.addGestureRecognizer(click)
     }
@@ -738,56 +796,151 @@ final class ProjectRowView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     @objc private func toggleTapped(_ sender: Any) { onToggle?() }
-
-    @objc private func expandTapped(_ gesture: NSClickGestureRecognizer) {
-        onExpand?()
-    }
+    @objc private func expandTapped(_ gesture: NSClickGestureRecognizer) { onExpand?() }
 }
 
-/// One expandable session row inside a channel: title + (when expanded) its messages.
-final class ChannelSessionRow: NSView {
+/// One expandable session block: a darker title bar (bigger title + bigger
+/// expand/collapse arrow, click to collapse/expand) above the message content,
+/// which is rendered as chat bubbles — incoming (in) on the RIGHT, agent
+/// replies (out) on the LEFT.
+final class ChannelSessionRow: RoundedBlockView {
     var onTap: (() -> Void)?
 
     init(session: ChannelSessionVM, showMessages: Bool) {
         super.init(frame: .zero)
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
-        stack.edgeInsets = NSEdgeInsets(top: 2, left: 6, bottom: 2, right: 6)
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        translatesAutoresizingMaskIntoConstraints = false
+        radius = 8
+        lightFill = NSColor(calibratedWhite: 0.97, alpha: 1)
+        darkFill = NSColor(calibratedWhite: 0.235, alpha: 1)
+        lightBorder = NSColor(calibratedWhite: 0.78, alpha: 0.7)
+        darkBorder = NSColor(calibratedWhite: 0.38, alpha: 0.5)
 
-        let title = NSTextField(labelWithString: (showMessages ? "▾  " : "▸  ") + (session.name.isEmpty ? session.sessionId : session.name))
-        title.font = .systemFont(ofSize: 11, weight: .medium)
-        title.textColor = .secondaryLabelColor
-        title.lineBreakMode = .byTruncatingMiddle
-        stack.addArrangedSubview(title)
+        let name = session.name.isEmpty ? session.sessionId : session.name
+
+        // darker, clickable title bar (bigger font + bigger arrow)
+        let titleBar = SessionTitleBar(title: name, expanded: showMessages)
+        titleBar.onTap = { [weak self] in self?.onTap?() }
+        titleBar.translatesAutoresizingMaskIntoConstraints = false
+
+        // message content below the title bar
+        let contentStack = NSStackView()
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 6
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
 
         if showMessages {
             if session.messages.isEmpty {
                 let empty = NSTextField(labelWithString: L10n.tr("channel.noMessages"))
-                empty.font = .systemFont(ofSize: 10)
+                empty.font = .systemFont(ofSize: 11)
                 empty.textColor = .tertiaryLabelColor
-                stack.addArrangedSubview(empty)
+                empty.translatesAutoresizingMaskIntoConstraints = false
+                contentStack.addArrangedSubview(empty)
             } else {
                 for m in session.messages {
-                    let prefix = m.dir == "in" ? "▸ " : "↩ "
-                    let line = NSTextField(wrappingLabelWithString: prefix + m.text)
-                    line.font = .systemFont(ofSize: 10)
-                    line.textColor = m.dir == "in" ? .secondaryLabelColor : .tertiaryLabelColor
-                    line.maximumNumberOfLines = 3
-                    line.lineBreakMode = .byTruncatingTail
-                    stack.addArrangedSubview(line)
+                    let bubbleRow = makeBubbleRow(text: m.text, isIn: m.dir == "in")
+                    contentStack.addArrangedSubview(bubbleRow)
+                    bubbleRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
                 }
             }
         }
+        contentStack.isHidden = !showMessages
 
-        addSubview(stack)
+        addSubview(titleBar)
+        addSubview(contentStack)
+
+        if showMessages {
+            // expanded: title bar on top (only top corners rounded), content below
+            NSLayoutConstraint.activate([
+                titleBar.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+                titleBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
+                titleBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -1),
+                contentStack.topAnchor.constraint(equalTo: titleBar.bottomAnchor, constant: 8),
+                contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+                contentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+                contentStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            ])
+        } else {
+            // collapsed: the title bar fills the whole block (all corners rounded)
+            NSLayoutConstraint.activate([
+                titleBar.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+                titleBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
+                titleBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -1),
+                titleBar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+            ])
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func makeBubbleRow(text: String, isIn: Bool) -> NSView {
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        let bubble = MessageBubble(text: text, isIn: isIn)
+        bubble.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(bubble)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            bubble.topAnchor.constraint(equalTo: row.topAnchor),
+            bubble.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+        ])
+        let maxFraction: CGFloat = isIn ? 0.5 : 0.9
+        if isIn {
+            // user question → right-aligned, up to 50% of the content width
+            bubble.trailingAnchor.constraint(equalTo: row.trailingAnchor).isActive = true
+            bubble.leadingAnchor.constraint(greaterThanOrEqualTo: row.leadingAnchor).isActive = true
+        } else {
+            // agent reply → left-aligned, up to 90% of the content width
+            bubble.leadingAnchor.constraint(equalTo: row.leadingAnchor).isActive = true
+            bubble.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor).isActive = true
+        }
+        bubble.widthAnchor.constraint(lessThanOrEqualTo: row.widthAnchor, multiplier: maxFraction).isActive = true
+        return row
+    }
+}
+
+/// The clickable title row of a session: a darker background band holding a
+/// bigger title and a bigger expand/collapse chevron. When the session is
+/// collapsed the band fills the whole block (all corners rounded); when
+/// expanded only the top corners are rounded and the band sits above the
+/// message content.
+final class SessionTitleBar: NSView {
+    var onTap: (() -> Void)?
+    private let expanded: Bool
+
+    init(title: String, expanded: Bool) {
+        self.expanded = expanded
+        super.init(frame: .zero)
+
+        // bigger chevron arrow
+        let arrow = NSImageView()
+        let symbolName = expanded ? "chevron.down" : "chevron.right"
+        if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
+            arrow.image = img
+            arrow.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+        }
+        arrow.translatesAutoresizingMaskIntoConstraints = false
+        arrow.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        arrow.heightAnchor.constraint(equalToConstant: 16).isActive = true
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.textColor = .labelColor
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let row = NSStackView(views: [arrow, titleLabel])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 6
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
         ])
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(tapped(_:)))
@@ -797,6 +950,131 @@ final class ChannelSessionRow: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     @objc private func tapped(_ gesture: NSClickGestureRecognizer) { onTap?() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let band = dark ? NSColor(calibratedWhite: 0.32, alpha: 1) : NSColor(calibratedWhite: 0.86, alpha: 1)
+        band.setFill()
+        roundedCornersPath(bounds, radius: 8, roundTop: true, roundBottom: !expanded).fill()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+}
+
+/// A bezier path for a rectangle with rounded top corners, bottom corners, or
+/// both — used to draw the session title band.
+private func roundedCornersPath(_ rect: NSRect, radius: CGFloat, roundTop: Bool, roundBottom: Bool) -> NSBezierPath {
+    let p = NSBezierPath()
+    let minX = rect.minX, maxX = rect.maxX
+    let minY = rect.minY, maxY = rect.maxY
+    let r = radius
+    let tl: CGFloat = roundTop ? r : 0
+    let tr: CGFloat = roundTop ? r : 0
+    let bl: CGFloat = roundBottom ? r : 0
+    let br: CGFloat = roundBottom ? r : 0
+
+    p.move(to: NSPoint(x: minX + bl, y: minY))
+    p.line(to: NSPoint(x: maxX - br, y: minY))
+    if br > 0 {
+        p.appendArc(withCenter: NSPoint(x: maxX - br, y: minY + br), radius: br, startAngle: 270, endAngle: 360, clockwise: false)
+    }
+    p.line(to: NSPoint(x: maxX, y: maxY - tr))
+    if tr > 0 {
+        p.appendArc(withCenter: NSPoint(x: maxX - tr, y: maxY - tr), radius: tr, startAngle: 0, endAngle: 90, clockwise: false)
+    }
+    p.line(to: NSPoint(x: minX + tl, y: maxY))
+    if tl > 0 {
+        p.appendArc(withCenter: NSPoint(x: minX + tl, y: maxY - tl), radius: tl, startAngle: 90, endAngle: 180, clockwise: false)
+    }
+    p.line(to: NSPoint(x: minX, y: minY + bl))
+    if bl > 0 {
+        p.appendArc(withCenter: NSPoint(x: minX + bl, y: minY + bl), radius: bl, startAngle: 180, endAngle: 270, clockwise: false)
+    }
+    p.close()
+    return p
+}
+
+/// A rounded, appearance-aware background block used for the channel header
+/// and session containers.
+class RoundedBlockView: NSView {
+    var lightFill: NSColor = .white
+    var darkFill: NSColor = .black
+    var lightBorder: NSColor = .clear
+    var darkBorder: NSColor = .clear
+    var radius: CGFloat = 8
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        (dark ? darkFill : lightFill).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
+        let border = dark ? darkBorder : lightBorder
+        if border.alphaComponent > 0 {
+            border.setStroke()
+            let b = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
+            b.lineWidth = 1
+            b.stroke()
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+}
+
+/// A single chat bubble. Incoming (in) messages use a blue accent bubble shown
+/// on the right; agent replies (out) use a neutral bubble shown on the left.
+final class MessageBubble: NSView {
+    private let label: NSTextField
+    private let isIn: Bool
+
+    init(text: String, isIn: Bool) {
+        self.isIn = isIn
+        label = NSTextField(wrappingLabelWithString: text)
+        super.init(frame: .zero)
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .labelColor
+        label.maximumNumberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
+        ])
+        label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        label.preferredMaxLayoutWidth = label.frame.width
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let bg: NSColor
+        if isIn {
+            bg = dark ? NSColor(calibratedRed: 0.16, green: 0.30, blue: 0.55, alpha: 1)
+                      : NSColor(calibratedRed: 0.84, green: 0.91, blue: 1.0, alpha: 1)
+        } else {
+            bg = dark ? NSColor(calibratedWhite: 0.32, alpha: 1)
+                      : NSColor(calibratedWhite: 0.93, alpha: 1)
+        }
+        bg.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10).fill()
+    }
 }
 /// A full-width channel card: SF Symbol icon + title/desc on the left,
 /// configuration status dot on the right (gray = unconfigured, green = configured).
