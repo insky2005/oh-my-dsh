@@ -308,10 +308,12 @@ test('project switch OFF: ordinary message replies 未启用该通道 and create
   assert.equal(r.creates, 0, 'no session.create when the project has the channel off');
 });
 
-test('project switch OFF: #w1 workspace switch replies 未启用该通道', async () => {
+test('project switch: #w1 workspace navigation is NOT gated (only routing is)', async () => {
+  // Navigation must still work even when the channel isn't enabled for the project;
+  // only actual message routing to a non-enabled workspace is gated.
   const r = await runProjectGate({ enabled: false, text: '#w1' });
-  assert.match(r.sent || '', /未启用该通道/);
-  assert.equal(r.creates, 0, 'no session.create for a gated workspace switch');
+  assert.match(r.sent || '', /已切换到工作区/);
+  assert.equal(r.creates, 0, 'navigation creates no session');
 });
 
 test('project switch ON: ordinary message routes and creates a session', async () => {

@@ -29,18 +29,22 @@ Channel 面板项目视图里每个通道有一个「项目开关」，但目前
 
 ### 3.2 门控：未启用时直接提示（Q2）
 
-- 通道未在本项目（= 当前活动 workspace）启用时，以下消息**直接回复「该项目未启用该通道…」**，不路由、不新建/不运行本项目 dsh 会话：
-  - 普通文本消息；
-  - 切换工作区 / 会话：`#wN`、`#sN`；
-  - `/new`、`/sessions`(`/ses`)、`/switch`。
-- **信息命令放行**（只读、通道级）：`/help`、`/ping`、`/status`、`/workspaces`(`/wks`)。
-- **即时生效**：门控每次事件重读全局 workspaces.json；开关切换后下一条消息即反映（无需重启 App / runner）。
-- 启用后行为与现状一致（按当前活动 workspace 路由）。
+门控作用于**实际要路由/驱动会话**的消息：当消息要路由到的目标 workspace 未启用该通道时，直接回复「该项目未启用该通道…」，不路由、不新建/不运行会话。触发点：
+- **普通文本消息**：解析出目标 workspace 后，若该 workspace 未启用该通道 → 提示；不创建/不 prompt 会话；
+- **`/new`**：目标 workspace 未启用 → 提示，不新建会话。
+
+**放行（不做门控）**：
+- 导航 / 只读命令：`#wN`（切换工作区）、`#sN`（切换会话）、`/sessions`(`/ses`)、`/switch`；
+- 信息命令：`/help`、`/ping`、`/status`、`/workspaces`(`/wks`)。
+> 注：`#wN`/`#sN` 是通道级工作区/会话导航，即使当前项目未启用也允许切换；但消息路由到未启用的 workspace 时仍会被拦截。
+
+- **即时生效**：门控每次读取该通道全局 workspaces.json（启用集合缓存约 1s，避免突发消息重复读文件）；开关切换后下一条消息即反映（无需重启 App / runner）。
+- 启用后行为与现状一致（按目标 workspace 路由）。
 
 ## 4. 改动范围（按子系统，供实现参考）
 
 1. **core/lib/channel-sessions.js**：在现有 store 上加 enable 语义——`setWorkspaceEnabled(projectRoot, enabled)`、`isWorkspaceEnabled(projectRoot)`、`listEnabledWorkspaces()`（读写现有 workspaces.json，缺失视为空）；`registerProjectRoot` 保留作消息桶 key 推导，不作为 enable 来源。
-2. **core/lib/channel-runner.js**：「本项目」= `opts.projectRoot`（app 经 `--project-root` 传入的活动 workspace 根）；新增 `isEnabledForActiveProject()`（每次事件重读该通道 workspaces.json）；`onEvent` 对上述消息做门控并回提示；移除对 per-project refs 的路由依赖（adapter 由 `ensureChannelId` 保证，通道保持连接、重开无需重登）。
+2. **core/lib/channel-runner.js**：新增 `isEnabledForRoot(root)`（读该通道全局 workspaces.json，启用集合缓存约 1s）；在**普通文本路由点**与 **`/new`** 处对目标 workspace 做门控并回提示；导航（`#wN`/`#sN`）、`/sessions`/`/switch` 与信息命令放行；移除对 per-project refs 的路由依赖（adapter 由 `ensureChannelId` 保证，通道保持连接、重开无需重登）。
 3. **core/bin/ohmy-core.js**：`channel run` 支持 `--project-root <root>`，透传 `projectRoot`。
 4. **platforms/macos/src/main.swift**：`startChannelRunner` 删除读/写项目 refs 与「强制补 ref」逻辑，追加 `--project-root`；新增 L10n `channel.notEnabledInProject`。
 5. **platforms/macos/src/ChannelPanel.swift**：移除 `loadRefs`/`saveRefs`/`ProjectRefsFile`/`ProjectChannelRef`；新增读/写 `~/.dsh/channels/<id>.workspaces.json` 的助手（enable 判断 = 任一 value == currentRoot；key 用 `ChannelStoreReader.workspaceKey(for:)` 派生）；`rebuildProjectRows` 中 `sessions = enabled ? loadSessions(...) : []`、未启用时折叠 + 标题行显示「未在项目启用」。
@@ -54,5 +58,5 @@ Channel 面板项目视图里每个通道有一个「项目开关」，但目前
 ## 6. 测试 / 验收
 
 - runner 测试助手在临时 dshHome 写 `<channelId>.workspaces.json` 含 projectRoot（启用），保证现有路由语义不变；
-- 新增：workspaces 不含项目根 → 普通消息回「未启用该通道」且不触发 session.create/prompt；含项目根 → 正常路由；不含 → `#wN` 回「未启用」；channel-sessions 单测 set/isWorkspaceEnabled。
+- 新增：workspaces 不含项目根 → 普通消息回「未启用该通道」且不触发 session.create/prompt；含项目根 → 正常路由；`#wN` 导航放行（不门控）；channel-sessions 单测 set/isWorkspaceEnabled。
 - 验收：`node --test core/tests/`、`swiftc -typecheck`、`tests/channel-panel/run.sh`。

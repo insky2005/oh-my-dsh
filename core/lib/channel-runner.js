@@ -132,14 +132,22 @@ async function runWeixinChannel(opts = {}) {
     || path.join(os.homedir(), '.dsh', 'channel-runtime', channelId);
   const store = opts.sessions || createChannelSessions({ channelId, dshHome: opts.dshHome, defaultProjectRoot: projectRoot });
 
-  // "本项目" = the active workspace root the app bound this runner to. The project
-  // switch (docs/channel-project-switch.md): a channel is enabled for a project iff
-  // that project root appears in ~/.dsh/channels/<channelId>.workspaces.json.
-  const activeProjectRoot = opts.projectRoot || '';
-  const isEnabledForActiveProject = () => {
-    if (!activeProjectRoot) return false;
-    try { return store.isWorkspaceEnabled ? store.isWorkspaceEnabled(activeProjectRoot) : true; } catch { return false; }
+  // Project switch (docs/channel-project-switch.md §3.2): a channel is enabled for a
+  // workspace iff that project root appears in ~/.dsh/channels/<channelId>.workspaces.json.
+  // The gate applies where a message would CREATE/RUN a session (ordinary text, /new);
+  // navigation (#wN/#sN) and informational commands are always allowed. The enabled
+  // set is cached briefly so bursts don't re-read the file on every message.
+  let enabledCache = { roots: null, at: 0 };
+  const isEnabledForRoot = (root) => {
+    if (!root) return false;
+    const now = Date.now();
+    if (!enabledCache.roots || now - enabledCache.at > 1000) {
+      try { enabledCache.roots = store.listEnabledWorkspaces ? store.listEnabledWorkspaces() : []; } catch { enabledCache.roots = []; }
+      enabledCache.at = now;
+    }
+    return enabledCache.roots.includes(root);
   };
+  const sendNotEnabled = (event) => adapter.send(event.conversationId, { text: '该项目未启用该通道，请在面板「通道」项目视图开启后使用', contextToken: event.contextToken });
 
   // Workspace routing (docs §3.9): codes w1/w2… + #tag.
   const port = opts.port || 3080;
@@ -185,6 +193,12 @@ async function runWeixinChannel(opts = {}) {
       });
       const target = resolved.workspace || null;
       const targetRoot = target ? target.path : projectRoot;
+      // Project switch: don't create/run a session in a workspace that hasn't enabled
+      // this channel. Clear the active session so the caller's /new bind/dispatch is skipped.
+      if (!isEnabledForRoot(targetRoot)) {
+        runtime.setActiveSession(null);
+        throw new Error('该项目未启用该通道，请在面板「通道」项目视图开启后使用');
+      }
       // Create with the workspaceId so dsh associates the session with the
       // workspace and it shows up in the dsh web workspace view (a bare cwd
       // creates a workspaceId:null session that is NOT listed in the workspace).
@@ -274,16 +288,6 @@ async function runWeixinChannel(opts = {}) {
       console.log('[runner:' + channelId + '] onEvent received id=' + (event.messageId || '?') + ' text=' + JSON.stringify(event.text) + ' @' + Date.now());
       // 1) commands take precedence; ordinary text routes to the project.
       const parsed = parseCommand(event.text);
-      // Project-enable gate (docs/channel-project-switch.md §3.2): when the channel
-      // is not enabled for the active project, only informational commands
-      // (/help /ping /status /workspaces) are answered; anything else that would
-      // drive this project's sessions gets a clear hint instead.
-      const isInfoCommand = parsed.kind === 'command' && ['help', 'ping', 'status', 'workspaces', 'wks'].includes(parsed.name);
-      if (!isInfoCommand && !(await isEnabledForActiveProject())) {
-        await adapter.send(event.conversationId, { text: '该项目未启用该通道，请在面板「通道」项目视图开启后使用', contextToken: event.contextToken });
-        if (opts.onEvent) opts.onEvent(event, { projectNotEnabled: true });
-        return;
-      }
       if (parsed.kind === 'command' || parsed.kind === 'unknown') {
         // busy gate: /new with content starts a generation — gate it like ordinary text
         if (parsed.kind === 'command' && parsed.name === 'new' && parsed.args && parsed.args[0] && isBusy(event.conversationId)) {
@@ -393,6 +397,14 @@ async function runWeixinChannel(opts = {}) {
       }
       const targetRoot = resolved.workspace ? resolved.workspace.path : projectRoot;
       const targetWsId = resolved.workspace ? resolved.workspace.id : null;
+      // Project switch (docs/channel-project-switch.md §3.2): only route/drive
+      // sessions in workspaces that have this channel enabled.
+      if (!isEnabledForRoot(targetRoot)) {
+        await sendNotEnabled(event);
+        if (opts.onEvent) opts.onEvent(event, { projectNotEnabled: true });
+        busy.delete(event.conversationId);
+        return;
+      }
       if (resolved.workspace) {
         setLastWorkspace({ code: resolved.workspace.code, name: resolved.workspace.name, projectRoot: targetRoot });
       }
