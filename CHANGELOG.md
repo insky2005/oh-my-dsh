@@ -5,15 +5,35 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
-## [Unreleased]
+## [1.13.0] - 2026-08-24
 
-- **文件面板打开文件实时刷新**：已打开的页签在磁盘内容变化后自动刷新——代理（或其他进程）改写打开的文件时，可编辑页签经 CodeEditorView.reloadFromDisk() 保留滚动位置、且不覆盖未保存的本地编辑（dirty 页签跳过），只读文本/图片/PDF/元数据页签直接重渲染；与 Wiki 面板已有的 2s 轮询刷新保持一致，打开即所见最新内容。
-- **macOS 源码清单单一事实来源**：新增 `platforms/macos/swift-sources.sh`（glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，排除独立工具 `MakeIcon.swift`）；`build-app.sh` / `scripts/local-ci.sh` / `ci.yml` 三方共用，新增 Swift 文件不再需要逐个登记，彻底消除「新增文件遗漏 local-ci.sh」的问题。
+### Added
+
+- **Channel 面板 ↔ dsh web 会话双向联动**：点击面板项目视图会话行（单一手势）同时展开/收起其消息并定位到 dsh web 对应会话（经注入的 `sessionOpenerScript` 驱动）；反过来 dsh web 切换会话时面板自动展开对应会话、其余行收起（无对应则会话列表仍显示、仅行收起）。**以 sessionId 对应，不用 name**。设计见 `docs/channel-web-session-link.md`。
+- **Channel 指令体系 v2**：`/workspaces`(`/wks`) 与 `/sessions`(`/ses`) 支持**带内容切换**（无内容只列出、有内容即切到对应项，等同 `#wN`/`#sN`）、`/new` **统一回复**（无内容建占位 `New Session` 等首条消息激活、有内容 prompt=内容并回推答案）、移除 `/switch`；`/new` 无内容不再固定 dsh 会话标题（交由 dsh web 自动命名）。
+- **Channel 项目开关落地（门控路由）**：全局 workspace 关联存 `~/.dsh/channels/<channelId>.workspaces.json`（project=workspace），开关**真正门控**——普通消息/`/new` 路由到未启用该通道的 workspace 回「该项目未启用该通道」、不建会话；`/workspaces` 只列已启用项；`#wN`/`#sN` 按目标/当前 workspace 是否启用门控（导航放行、仅拦截实际路由）。
+- **Channel 异步应答 + 官方 sendTyping**：先 ack「处理中」、后台生成、结果回推；在途时后续消息回「请等待」不入队；用官方 `sendTyping`（getConfig 拿 typing_ticket）替换「处理中」文字 ack，生成时回微信原生「正在输入…」。
+- **Channel 项目视图对话回复后实时刷新**：轻量重读全局 store，仅当内容签名变化时全量重建（保留折叠/展开状态），不随轮询抖动。
+- **Channel 项目视图读全局 store 展示会话消息**（E 里程碑）：落地 Channel-Message-Session 关联 A/B/C/D（会话复用/工作区归属/路由统一/全局存储）；store 保留会话历史、面板显示全部会话（`/new` 不再覆盖旧会话）；`/new` 后绑定会话到 conversation、下一条普通消息复用而非新建；优化项目视图布局（通道标题栏/会话区块/对话气泡与宽度比例）。
+- **Channel runner 日志**：runner stdout/stderr 路由到 `~/Library/Logs/oh-my-dsh/channel-runner-<id>.log`，暴露 core 调试日志。
 - **内置 Skill 全局化 + 重命名**：三个面板配套 Skill 改为 **App 启动时安装到全局 `$DSH_HOME/skills/`**（缺失即装、App 托管下内容不一致自动覆盖更新、用户改过不覆盖），并重命名为 `web-dev-tools`（浏览器面板）/ `repo-knowledge`（Repo Wiki 面板）/ `issue-resolve`（IssueRunner 面板）；启动时自动把旧名 `shell-browser`/`repo-wiki`/`issue-fix` 迁移到新名；移除面板「按仓库安装」逻辑；新增 `tests/skills/` 无头单测（含内嵌 SKILL.md 与仓库副本字节一致断言）。
   - **frontmatter 用合法键**：`modelInvocable`/`userInvocable`（驼峰）是 dsh 弃用键会导致 skill 被忽略，已改为省略（默认 model 可调用）+ `user-invocable: false`（kebab）表达「仅 model 可调用」；`web-dev-tools` 为 model+user 双可调用。
-- **单实例约束（修复双实例争抢 CEF profile）**：App 启动时按 bundle id 检测是否已有其他实例在跑，若有则聚焦已有实例并立即退出，避免两个副本共用 `~/.dsh/browser` 导致 Chromium 异常退出（`Chromium didn't shut down correctly.`）。
-- **Channel 面板 ↔ dsh web 会话双向联动**：点击面板项目视图会话行（单一手势）同时展开/收起其消息并定位到 dsh web 对应会话（经注入的 `sessionOpenerScript` 驱动）；反过来 dsh web 切换会话时面板自动展开对应会话、其余行收起（无对应则会话列表仍显示、仅行收起）。**以 sessionId 对应，不用 name**。设计见 `docs/channel-web-session-link.md`。
+- **macOS 源码清单单一事实来源**：新增 `platforms/macos/swift-sources.sh`（glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，排除独立工具 `MakeIcon.swift`）；`build-app.sh` / `scripts/local-ci.sh` / `ci.yml` 三方共用，新增 Swift 文件不再需要逐个登记，彻底消除「新增文件遗漏 local-ci.sh」的问题。
 - **开发版构建支持**：构建时 `DSH_DEV_BUILD=1` 打包开发版（Info.plist 写入 `DSHDevBuild=1`），或直接 `./scripts/local-ci.sh dev`（等价 full，但 build 用 `DSH_DEV_BUILD=1`）；开发版运行时自动使用独立 CEF profile（`~/.dsh/browser-dev`）并跳过单实例退出，可与已安装正式版并存测试；未来如需隔离端口/channel 等资源，在 `main.swift` 的 `isDevBuild` 覆盖处快速追加。
+
+### Fixed
+
+- **文件面板打开文件实时刷新**：已打开的页签在磁盘内容变化后自动刷新——代理（或其他进程）改写打开的文件时，可编辑页签经 CodeEditorView.reloadFromDisk() 保留滚动位置、且不覆盖未保存的本地编辑（dirty 页签跳过），只读文本/图片/PDF/元数据页签直接重渲染；与 Wiki 面板已有的 2s 轮询刷新保持一致，打开即所见最新内容。
+- **单实例约束（修复双实例争抢 CEF profile）**：App 启动时按 bundle id 检测是否已有其他实例在跑，若有则聚焦已有实例并立即退出，避免两个副本共用 `~/.dsh/browser` 导致 Chromium 异常退出（`Chromium didn't shut down correctly.`）。
+- **Channel 双向联动交互**：点击会话行单一手势展开/收起并定位 dsh web、统一「手动切换 vs web 跟随」展开状态（不再互斥冲突）、会话未匹配时保持会话列表可见（仅行收起）。
+- **Channel 项目开关门控修正**：开关关闭后刷新不再被重新开启（迁移只播种一次）；门控改为「按目标 workspace」——`#wN`/`#sN` 导航放行，仅拦截实际路由。
+- **release 发布幂等化**：`github-publish.sh` curl 路径幂等化（中断可重跑，release 已存在则复用并只补传缺失资产）+ 逐资产进度输出。
+
+### Docs
+
+- **README**：Channel 面板章节补充「项目开关门控语义 + sendTyping 异步应答」与「dsh web 会话双向联动」；文件面板补「打开文件实时刷新」；AGENTS.md 增补「README 更新直接在当前分支提交，不切分支/不开 PR」。
+- **Wiki 同步**：Channel 项目开关 / Channel-Message-Session 关联模型 / v1.13.0 内置 Skill 全局化与 swift-sources 单一来源等页面刷新。
+- **发布决策固化**：`docs/release-process.md` 增补「CI CEF prepare 暂不修复」「暂不使用 gh CLI（发布统一走 curl API）」与已知坑；`docs/channel-*` 设计/实施记录更新（E 里程碑完成、Channel-Message-Session 关联模型核查）。
 
 ## [1.12.0] - 2026-08-22
 

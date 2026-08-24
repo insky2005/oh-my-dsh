@@ -2,13 +2,13 @@
 
 ## Supported Versions
 
-本项目维护最近 2 个大版本。安全修复会以 patch 形式合入 `main` 并随下一个发布 tag 分发（当前最新发布为 v1.12.0）。
+本项目维护最近 2 个大版本。安全修复会以 patch 形式合入 `main` 并随下一个发布 tag 分发（当前最新发布为 v1.13.0）。
 
 | Version | Supported          |
 | ------- | ------------------ |
+| 1.13.x  | ✅ Supported       |
 | 1.12.x  | ✅ Supported       |
-| 1.11.x  | ✅ Supported       |
-| < 1.11  | ❌ End of life     |
+| < 1.12  | ❌ End of life     |
 
 ## Reporting a Vulnerability
 

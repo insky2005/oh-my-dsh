@@ -15,7 +15,7 @@ oh-my-dsh/
 │   └── macos/           # macOS 壳：src/（Swift：main + 各面板）+ cef/（CEFShim + helper）+ build-app.sh + build-cef.sh + make-pkg.sh
 ├── scripts/             # 跨平台工具：version.sh（版本单一来源）/ changelog.sh / local-ci.sh（本机 CI）/ local-release.sh /
 │                        #   github-publish.sh / release-checksums.sh / release-fix.sh / git-remote.sh / migrate-platforms-macos.sh
-├── tests/               # 面板模型层单测套件（wiki-panel / browser-panel / terminal-emulator，均 headless run.sh）
+├── tests/               # 面板模型层单测套件（wiki-panel / browser-panel / terminal-emulator / channel-panel / skills，均 headless run.sh）
 ├── docs/                # 设计/排查文档（productization.md、milestones/、channel-*.md、issue-runner-design.md 等）
 └── .dsh/                # wiki / skills（web-dev-tools / repo-knowledge / issue-resolve，随仓库提交）
 ```
@@ -44,6 +44,8 @@ node --test core/tests/
 tests/wiki-panel/run.sh
 tests/browser-panel/run.sh              # 浏览器面板模型层（REST 路由 / 日志缓冲）
 tests/terminal-emulator/run.sh          # 模拟器测试（core/tests/ansi.test.js 的薄封装）
+tests/channel-panel/run.sh              # 通道面板项目视图数据模型
+tests/skills/run.sh                     # 内置 skill 安装/覆盖/迁移与 SKILL.md 字节一致
 
 # 本机 CI：与 .github/workflows/ci.yml 三阶段对齐（core → swift 编译检查 → arm64 构建，不打包）
 scripts/local-ci.sh                     # 默认 full；可选 test / swift / build [arch]
