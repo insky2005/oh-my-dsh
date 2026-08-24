@@ -70,6 +70,8 @@ final class ChannelPanelController: NSObject {
     var onRequestHide: (() -> Void)?
     var workspacePath: (() -> String?)?
     var channelLoginRunner: ((String, @escaping (String?) -> Void, @escaping (Bool) -> Void) -> Void)?
+    /// Open the given dsh session in dsh web (panel → web session link).
+    var onOpenSession: ((String) -> Void)?
 
     static let minWidth: CGFloat = 300
     let view = ChannelRootView()
@@ -115,6 +117,10 @@ final class ChannelPanelController: NSObject {
     private var mode: Mode = .onboarding
     private var collapsedChannelIds: Set<String> = []
     private var collapsedSessionIds: Set<String> = []
+    /// The dsh session the user is currently viewing in dsh web (web → panel
+    /// session link). When set, the matching session row is auto-expanded and
+    /// all others collapsed; when the id matches no session, all rows collapse.
+    private var activeSessionId: String?
     // live refresh (docs/channel-status.md §3.x): a lightweight repeating timer
     // re-reads the global channel store while in project mode and rebuilds the
     // project view only when the current project's data actually changed.
@@ -469,13 +475,20 @@ final class ChannelPanelController: NSObject {
         projectRows = []
         for ch in channels {
             let enabled = isChannelEnabled(ch.id)
-            // default: expanded; only collapse when explicitly toggled off or disabled
-            let expanded = enabled && !collapsedChannelIds.contains(ch.id)
             let sessions = enabled ? loadSessions(for: ch.id) : []
-            let row = ProjectRowView(channel: ch, enabled: enabled, expanded: expanded, sessions: sessions, collapsedSessionIds: collapsedSessionIds)
+            // Web → panel session link: when a dsh session is active, follow it
+            // (expand only the channel + session that hold it, collapse all
+            // others; if it matches nothing, every row collapses). Otherwise
+            // fall back to the user's manual toggle state.
+            let autoFollow = activeSessionId != nil
+            let holdsActive = sessions.contains { $0.sessionId == activeSessionId }
+            let expanded = autoFollow ? (enabled && holdsActive) : (enabled && !collapsedChannelIds.contains(ch.id))
+            let row = ProjectRowView(channel: ch, enabled: enabled, expanded: expanded, sessions: sessions,
+                                     collapsedSessionIds: collapsedSessionIds, activeSessionId: autoFollow ? activeSessionId : nil)
             row.onToggle = { [weak self] in self?.toggleProjectChannel(ch.id) }
             row.onExpand = { [weak self] in self?.toggleExpand(ch.id) }
             row.onToggleSession = { [weak self] sessionId in self?.toggleSession(sessionId) }
+            row.onOpenSession = { [weak self] sessionId in self?.onOpenSession?(sessionId) }
             projectList.addArrangedSubview(row)
             // Stretch every row to the full content width (stack `.width`
             // alignment only stretches the widest row — shorter ones would
@@ -692,6 +705,14 @@ final class ChannelPanelController: NSObject {
         if mode == .project { rebuildProjectRows() }
     }
 
+    /// Web → panel session link: follow the session the user is viewing in dsh
+    /// web. Sets the active session (auto-expanding its row, collapsing the
+    /// rest) or clears it (collapsing everything) when it matches nothing.
+    func setActiveSession(_ sessionId: String?) {
+        activeSessionId = sessionId
+        if mode == .project { rebuildProjectRows() }
+    }
+
     // MARK: - Live refresh
 
     /// Start the lightweight periodic refresh (approach A: content signature +
@@ -746,8 +767,9 @@ final class ProjectRowView: NSView {
     var onToggle: (() -> Void)?
     var onExpand: (() -> Void)?
     var onToggleSession: ((String) -> Void)?
+    var onOpenSession: ((String) -> Void)?
 
-    init(channel: GlobalChannel, enabled: Bool, expanded: Bool, sessions: [ChannelSessionVM], collapsedSessionIds: Set<String>) {
+    init(channel: GlobalChannel, enabled: Bool, expanded: Bool, sessions: [ChannelSessionVM], collapsedSessionIds: Set<String>, activeSessionId: String?) {
         super.init(frame: .zero)
 
         // ---- channel header block (one full-width unit with its own bg) ----
@@ -771,9 +793,18 @@ final class ProjectRowView: NSView {
             sessionsStack.addArrangedSubview(empty)
         } else {
             for session in sessions {
-                let showMessages = !collapsedSessionIds.contains(session.sessionId)
+                // Web → panel link: while following an active dsh session, only
+                // that session stays expanded; others collapse. Otherwise use the
+                // user's manual toggle state.
+                let showMessages: Bool
+                if let active = activeSessionId {
+                    showMessages = (session.sessionId == active)
+                } else {
+                    showMessages = !collapsedSessionIds.contains(session.sessionId)
+                }
                 let row = ChannelSessionRow(session: session, showMessages: showMessages)
                 row.onTap = { [weak self] in self?.onToggleSession?(session.sessionId) }
+                row.onOpen = { [weak self] in self?.onOpenSession?(session.sessionId) }
                 sessionsStack.addArrangedSubview(row)
                 row.widthAnchor.constraint(equalTo: sessionsStack.widthAnchor).isActive = true
             }
@@ -891,6 +922,8 @@ final class ChannelHeaderBlock: RoundedBlockView {
 /// replies (out) on the LEFT.
 final class ChannelSessionRow: RoundedBlockView {
     var onTap: (() -> Void)?
+    /// Panel → web session link: open this session in dsh web.
+    var onOpen: (() -> Void)?
 
     init(session: ChannelSessionVM, showMessages: Bool) {
         super.init(frame: .zero)
@@ -906,6 +939,7 @@ final class ChannelSessionRow: RoundedBlockView {
         // darker, clickable title bar (bigger font + bigger arrow)
         let titleBar = SessionTitleBar(title: name, expanded: showMessages)
         titleBar.onTap = { [weak self] in self?.onTap?() }
+        titleBar.onOpen = { [weak self] in self?.onOpen?() }
         titleBar.translatesAutoresizingMaskIntoConstraints = false
 
         // message content below the title bar
@@ -991,6 +1025,8 @@ final class ChannelSessionRow: RoundedBlockView {
 /// message content.
 final class SessionTitleBar: NSView {
     var onTap: (() -> Void)?
+    /// Panel → web session link: open this session in dsh web.
+    var onOpen: (() -> Void)?
     private let expanded: Bool
 
     init(title: String, expanded: Bool) {
@@ -1016,7 +1052,12 @@ final class SessionTitleBar: NSView {
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let row = NSStackView(views: [arrow, titleLabel])
+        // Panel → web: a small external-link button on the right of the title
+        // opens this session in dsh web. Distinct from the expand/collapse tap
+        // on the rest of the band.
+        let openButton = CustomIconButton(glyph: .symbol("arrow.up.right.square"), tooltip: L10n.tr("channel.openInDsh"), size: 22)
+
+        let row = NSStackView(views: [arrow, titleLabel, openButton])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 6
@@ -1028,6 +1069,10 @@ final class SessionTitleBar: NSView {
             row.topAnchor.constraint(equalTo: topAnchor, constant: 7),
             row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
         ])
+        openButton.setContentHuggingPriority(.required, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        openButton.onAction = { [weak self] in self?.onOpen?() }
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(tapped(_:)))
         addGestureRecognizer(click)
