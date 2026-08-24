@@ -29,7 +29,7 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 | 微信 ClawBot 适配器（M2） | ✅ | core/lib/weixin-clawbot.js + weixin-clawbot-transport.js | 纯官方 iLink 协议（@tencent-weixin/openclaw-weixin 2.4.6 官方源码推导）；**严格串行长轮询**（修复 setInterval 破坏游标导致重复回复，见 channel-issues.md） |
 | 消息分发 Router + 会话驱动（M3） | ✅ | core/lib/channel.js（router）+ core/lib/session-driver.js + core/lib/channel-runner.js | 已在真实 dsh web 端到端验证 |
 | workspace 代号 + #tag 路由 | ✅ | core/lib/channel-workspaces.js | /wks 分配 #wN、#tag 路由（代号精确 > workspace 名）、回退规则（最近 → 第一个） |
-| 指令解析与执行 v1 | ✅ | core/lib/channel-commands.js | /help /ping /status /workspaces(/wks) /new /sessions(/ses) /switch，清单见 channel-commands.md |
+| 指令解析与执行 v2 | ✅ | core/lib/channel-commands.js + core/lib/channel-runner.js | /help /ping /status /workspaces(/wks) /sessions(/ses) /new，快捷 #wN/#sN；清单见 channel-commands.md |
 | 异步应答 + 忙门 + sendTyping | ✅ | core/lib/channel-runner.js、weixin-clawbot-transport.js | sendTyping 替代「处理中」文字（微信原生「正在输入…」）+ 后台生成 + 结果回推；同 conversation 在途时后续消息回「请等待」不入队（见 channel-association-model.md §8） |
 | 快捷指令 #wN / #sN | ✅ | core/lib/channel-runner.js | 纯代号快捷切换；通道级状态持久化 `~/.dsh/channels/<id>.state.json`（lastWorkspace / 会话映射 / activeSession，重启可恢复） |
 | 会话映射 + 消息持久化（决策 E，channel 作用域） | ✅ | core/lib/channel-sessions.js | **已全局化**：`~/.dsh/channels/<id>.sessions.json` + `<id>.workspaces.json` + `<id>.<workspaceKey>.<sessionId>.messages.json` 分桶（无会话入 system 桶）；项目目录不再产生消息/会话文件；MAX_MESSAGES=1000 滚动 |

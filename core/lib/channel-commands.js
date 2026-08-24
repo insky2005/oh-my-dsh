@@ -9,19 +9,22 @@
  * Commands are grouped so that /help stays readable and so the runner can treat
  * them differently:
  *
- *   - global  — session/project-independent (/help /ping /status /workspaces
- *               /wks). These must work with NO bound project and must never
- *               produce the "该会话未绑定任何项目" hint.
- *   - project — need a workspace / switched workspace context (/new /sessions
- *               /ses /switch).
- *   - quick   — #wN / #sN codes shown for reference in /help.
+ *   - global   — session/project-independent (/help /ping /status). These must
+ *                work with NO bound project and must never produce the
+ *                "该会话未绑定任何项目" hint.
+ *   - workspace — need a workspace / switched workspace context (/workspaces
+ *                /wks /sessions /ses /new).
+ *   - quick    — #wN / #sN codes shown for reference in /help.
  *
  * Two layers:
  *   1. parseCommand(text)  — decide command vs ordinary message (never misjudge
  *      a path like /Users/foo as a command).
  *   2. createCommandRunner  — execute a parsed command, given injected session
- *      operations (getSessions/createSession/switchSession/getStatus). Returns
- *      the reply text to send back to the client.
+ *      operations (getSessions/createSession/switchSession/switchWorkspace/
+ *      bindSession/getStatus). Returns the reply text to send back to the client.
+ *
+ * run(text, ctx) — ctx is optional ({ conversationId }) so a session switch
+ *   (via /sessions /ses with an argument) can bind the conversation mapping.
  *
  *   const { parseCommand, createCommandRunner } = require('@oh-my-dsh/core');
  */
@@ -29,17 +32,17 @@
 const { toHomePath } = require('./channel-workspaces');
 
 /** Command groups, in /help display order. */
-const GROUP_ORDER = ['global', 'project'];
+const GROUP_ORDER = ['global', 'workspace'];
 
 /** Display headings per group. */
 const GROUP_LABELS = {
   global: '全局指令（无需绑定项目）',
-  project: '项目指令（需绑定 workspace / 先切好 workspace 上下文）',
+  workspace: '工作区指令（需绑定 workspace / 先切好 workspace 上下文）',
 };
 
-/** Per-group display order (primary command names). */
-const GLOBAL_ORDER = ['help', 'ping', 'status', 'workspaces', 'wks'];
-const PROJECT_ORDER = ['new', 'sessions', 'ses', 'switch'];
+/** Per-group display order (primary command names; aliases are folded in). */
+const GLOBAL_ORDER = ['help', 'ping', 'status'];
+const WORKSPACE_ORDER = ['workspaces', 'sessions', 'new'];
 
 /** Known commands (group drives /help layout; aliases are extra recognisable names). */
 const KNOWN = {
@@ -47,13 +50,12 @@ const KNOWN = {
   help: { group: 'global', arg: 0, title: '/help', desc: '列出所有指令' },
   ping: { group: 'global', arg: 0, title: '/ping', desc: '连通性测试' },
   status: { group: 'global', arg: 0, title: '/status', desc: '查看连接/项目/会话状态' },
-  workspaces: { group: 'global', arg: 0, title: '/workspaces', desc: '列出 workspace 并分配代号 #w1/#w2…（别名 /wks）', aliases: ['wks'] },
-  wks: { group: 'global', arg: 0, title: '/wks', desc: '列出 workspace 并分配代号 #w1/#w2…' },
-  // --- project ---
-  new: { group: 'project', arg: 'name?', title: '/new [名称]', desc: '新建一个独立会话' },
-  sessions: { group: 'project', arg: 0, title: '/sessions', desc: '列出当前项目的所有会话（别名 /ses）', aliases: ['ses'] },
-  ses: { group: 'project', arg: 0, title: '/ses', desc: '列出当前项目的所有会话' },
-  switch: { group: 'project', arg: 'name', title: '/switch <名称/编号/#sN>', desc: '切换当前会话' },
+  // --- workspace ---
+  workspaces: { group: 'workspace', arg: 'name?', title: '/workspaces、/wks [名称或代号]', desc: '列出或切换工作区', aliases: ['wks'] },
+  wks: { group: 'workspace', arg: 'name?', title: '/wks [名称或代号]', desc: '列出或切换工作区' },
+  sessions: { group: 'workspace', arg: 'name?', title: '/sessions、/ses [会话id或代号]', desc: '列出或切换会话（最近 5 条）', aliases: ['ses'] },
+  ses: { group: 'workspace', arg: 'name?', title: '/ses [会话id或代号]', desc: '列出或切换会话（最近 5 条）' },
+  new: { group: 'workspace', arg: 'content?', title: '/new [内容]', desc: '创建新会话' },
 };
 
 /**
@@ -77,21 +79,21 @@ function parseCommand(text) {
 }
 
 /**
- * Build the /help reply text: grouped + ordered (global, project, quick).
+ * Build the /help reply text: grouped + ordered (global, workspace, quick).
  */
 function helpText() {
   const lines = [];
   for (const gid of GROUP_ORDER) {
     lines.push(GROUP_LABELS[gid] + '：');
-    const order = gid === 'global' ? GLOBAL_ORDER : PROJECT_ORDER;
+    const order = gid === 'global' ? GLOBAL_ORDER : WORKSPACE_ORDER;
     for (const name of order) {
       const c = KNOWN[name];
       lines.push('  ' + c.title + ' — ' + c.desc);
     }
   }
-  lines.push('快捷指令（# 开头，设置当前项目 / 会话）：');
-  lines.push('  #w1、#w2… — 设置当前项目（workspace，见 /wks）');
-  lines.push('  #s1、#s2… — 设置当前会话（见 /sessions，/switch #sN）');
+  lines.push('快捷指令（# 开头，设置当前工作区 / 会话）：');
+  lines.push('  #w1、#w2… — 切换工作区（见 /workspaces）');
+  lines.push('  #s1、#s2… — 切换会话（见 /sessions）');
   return lines.join('\n');
 }
 
@@ -100,23 +102,27 @@ function helpText() {
  *
  * deps (all injectable, may be async):
  *   getSessions(): Promise<Array<{ id, sessionId?, name?, projectRoot?, createdAt?, updatedAt? }>>
- *   createSession(name?): Promise<{ id, name? }>   // also updates the active mapping
- *   switchSession(selector): Promise<{ id, name? }> // selector = name / index-ish / sessionId
+ *   createSession(content?): Promise<{ id, name?, reply }>  // also updates the active mapping
+ *   switchSession(selector): Promise<{ id, name?, projectRoot? }> // selector = name / id / index / #sN
+ *   switchWorkspace(selector): Promise<{ code, name?, path?, recent? }> // selector = #wN / wN / name / path
+ *   bindSession(conversationId, rec): Promise<void>          // bind a conversation to a session
  *   getStatus(): Promise<{ channel?, project?, session?, connected? }>
  *   getWorkspaces(): Promise<Array<{ id, name?, path? }>>  // coded already or raw
  *
- * Returns run(text) -> Promise<string> reply.
+ * Returns run(text, ctx?) -> Promise<{ kind, text?, parsed? }> reply.
  */
 function createCommandRunner(deps = {}) {
   const getSessions = deps.getSessions || (async () => []);
-  const createSession = deps.createSession || (async () => ({ id: 'n/a' }));
+  const createSession = deps.createSession || (async () => ({ id: 'n/a', reply: '创建新会话' }));
   const switchSession = deps.switchSession || (async () => ({ id: 'n/a' }));
+  const switchWorkspace = deps.switchWorkspace || (async () => { throw new Error('未找到工作区'); });
+  const bindSession = deps.bindSession || null;
   const getStatus = deps.getStatus || (async () => ({}));
   const getWorkspaces = deps.getWorkspaces || (async () => []);
   // Home dir for ~-shortening display paths (injectable for tests).
   const homeDir = deps.homeDir || require('node:os').homedir();
 
-  async function run(text) {
+  async function run(text, ctx) {
     const parsed = parseCommand(text);
     if (parsed.kind === 'unknown') {
       // Unknown /cmd — reply with a hint, don't route as a message.
@@ -127,6 +133,7 @@ function createCommandRunner(deps = {}) {
       return { kind: 'text', parsed };
     }
     const { name, args } = parsed;
+    const conversationId = ctx && ctx.conversationId;
     switch (name) {
       case 'help':
         return { kind: 'reply', text: '可用指令：\n' + helpText() };
@@ -136,6 +143,22 @@ function createCommandRunner(deps = {}) {
       }
       case 'sessions':
       case 'ses': {
+        // With an argument -> switch session (same effect as #sN).
+        if (args && args.length) {
+          const selector = args.join(' ').trim();
+          try {
+            const s = await switchSession(selector); // throws 找不到会话 when unresolved
+            const list = await getSessions();
+            const idx = list.findIndex((x) => x.sessionId === s.id || x.id === s.id);
+            const code = idx >= 0 ? 's' + (idx + 1) : '';
+            if (bindSession && conversationId && s.id) {
+              await bindSession(conversationId, { sessionId: s.id, projectRoot: s.projectRoot, name: s.name });
+            }
+            return { kind: 'reply', text: '已切换到会话 #' + code + ' (' + (s.id || '') + '), ' + (s.name || '') };
+          } catch (e) {
+            return { kind: 'reply', text: '找不到会话：' + selector };
+          }
+        }
         const list = await getSessions();
         if (!list || list.length === 0) return { kind: 'reply', text: '当前项目还没有会话（/new 新建）' };
         const st = await getStatus();
@@ -148,32 +171,47 @@ function createCommandRunner(deps = {}) {
         return { kind: 'reply', text: wsLine + '\n会话列表：\n' + lines.join('\n') };
       }
       case 'new': {
-        const name = args[0] || '';
+        const content = args[0] || '';
         try {
-          const created = await createSession(name);
-          return { kind: 'reply', text: created.reply || ('已新建会话：' + (created.name || created.id || 'unnamed')) };
+          const created = await createSession(content);
+          return { kind: 'reply', text: created.reply || ('创建新会话：' + (created.name || created.id || 'unnamed')) };
         } catch (e) {
           return { kind: 'reply', text: (e && e.message) || String(e) };
         }
       }
-      case 'switch': {
-        const selector = args.join(' ').trim();
-        if (!selector) return { kind: 'reply', text: '用法：/switch <会话名或编号，或 #sN>' };
-        let target = selector;
-        // Resolve a #sN code (as shown by /sessions) to the session id/name.
-        if (/^#s\d+$/i.test(selector)) {
-          const list = await getSessions();
-          const idx = parseInt(selector.slice(2), 10) - 1;
-          const hit = list[idx];
-          if (!hit) return { kind: 'reply', text: '找不到会话 ' + selector };
-          target = hit.sessionId || hit.id || hit.name;
+      case 'workspaces':
+      case 'wks': {
+        // With an argument -> switch workspace (same effect as #wN).
+        if (args && args.length) {
+          const selector = args.join(' ').trim();
+          try {
+            const t = await switchWorkspace(selector); // throws when not found / not enabled
+            const lines = [
+              '已切换到工作区 #' + t.code + ' (' + (t.name || '') + '), ' + toHomePath(t.path, homeDir),
+              '当前会话：n/a',
+            ];
+            const recent = t.recent || [];
+            if (recent.length) {
+              lines.push('最近会话（' + recent.length + '）：');
+              recent.forEach((s, i) => { lines.push('  #s' + (i + 1) + ' (' + (s.sessionId || '') + '), ' + (s.name || '')); });
+            } else {
+              lines.push('最近会话：暂无（/new 新建）');
+            }
+            return { kind: 'reply', text: lines.join('\n') };
+          } catch (e) {
+            return { kind: 'reply', text: (e && e.message) || String(e) };
+          }
         }
-        try {
-          const s = await switchSession(target);
-          return { kind: 'reply', text: '已切换到：' + (s.name || s.id || target) };
-        } catch (e) {
-          return { kind: 'reply', text: '切换失败：' + (e && e.message || String(e)) };
-        }
+        const ws = await getWorkspaces();
+        if (!ws || ws.length === 0) return { kind: 'reply', text: '没有可用的 workspace' };
+        const lines = ws.map((w, i) => {
+          const code = '#' + (w.code || 'w' + (i + 1));
+          // name = title (dsh web) or path basename — never the full /Users/... path
+          const base = (w.path || '').split(/[\\/]/).filter(Boolean).pop() || '';
+          const name = w.name || base || w.id || 'unnamed';
+          return code + ' (' + name + '): ' + toHomePath(w.path, homeDir);
+        });
+        return { kind: 'reply', text: 'workspace 列表：\n' + lines.join('\n') };
       }
       case 'status': {
         const st = await getStatus();
@@ -191,19 +229,6 @@ function createCommandRunner(deps = {}) {
         ];
         return { kind: 'reply', text: lines.join('\n') };
       }
-      case 'workspaces':
-      case 'wks': {
-        const ws = await getWorkspaces();
-        if (!ws || ws.length === 0) return { kind: 'reply', text: '没有可用的 workspace' };
-        const lines = ws.map((w, i) => {
-          const code = '#' + (w.code || 'w' + (i + 1));
-          // name = title (dsh web) or path basename — never the full /Users/... path
-          const base = (w.path || '').split(/[\\/]/).filter(Boolean).pop() || '';
-          const name = w.name || base || w.id || 'unnamed';
-          return code + ' (' + name + '): ' + toHomePath(w.path, homeDir);
-        });
-        return { kind: 'reply', text: 'workspace 列表：\n' + lines.join('\n') };
-      }
       default:
         return { kind: 'reply', text: '未知指令 /' + name + '（/help 查看）' };
     }
@@ -212,4 +237,4 @@ function createCommandRunner(deps = {}) {
   return { run, helpText, parseCommand };
 }
 
-module.exports = { parseCommand, createCommandRunner, KNOWN, helpText, GROUP_ORDER, GROUP_LABELS, GLOBAL_ORDER, PROJECT_ORDER };
+module.exports = { parseCommand, createCommandRunner, KNOWN, helpText, GROUP_ORDER, GROUP_LABELS, GLOBAL_ORDER, WORKSPACE_ORDER };
