@@ -476,13 +476,14 @@ final class ChannelPanelController: NSObject {
         for ch in channels {
             let enabled = isChannelEnabled(ch.id)
             let sessions = enabled ? loadSessions(for: ch.id) : []
-            // Web → panel session link: when a dsh session is active, follow it
-            // (expand only the channel + session that hold it, collapse all
-            // others; if it matches nothing, every row collapses). Otherwise
-            // fall back to the user's manual toggle state.
+            // Web → panel session link: the active dsh session controls which
+            // SESSION row is expanded (its messages shown). The channel list stays
+            // expanded whenever the channel is enabled, so sessions remain visible
+            // even when the active session matches nothing here — those rows just
+            // stay collapsed. Without an active session, fall back to the user's
+            // manual toggle state.
             let autoFollow = activeSessionId != nil
-            let holdsActive = sessions.contains { $0.sessionId == activeSessionId }
-            let expanded = autoFollow ? (enabled && holdsActive) : (enabled && !collapsedChannelIds.contains(ch.id))
+            let expanded = enabled && !collapsedChannelIds.contains(ch.id)
             let row = ProjectRowView(channel: ch, enabled: enabled, expanded: expanded, sessions: sessions,
                                      collapsedSessionIds: collapsedSessionIds, activeSessionId: autoFollow ? activeSessionId : nil)
             row.onToggle = { [weak self] in self?.toggleProjectChannel(ch.id) }

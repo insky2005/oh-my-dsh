@@ -8,7 +8,7 @@
 让 Channel 面板的「项目视图」会话列表与 dsh web 的当前会话**双向联动**：
 
 - **面板 → dsh web**：在项目视图中点某会话的「在 dsh 中打开」，dsh web 切换到该会话；
-- **dsh web → 面板**：在 dsh web 切换会话时，面板自动展开对应的会话（无对应则全部收起）。
+- **dsh web → 面板**：在 dsh web 切换会话时，面板自动展开对应的会话（无对应则保持会话列表可见、仅全部收起消息）。
 
 ## 2. 关键认知：用 sessionId 对应，不用 name
 
@@ -33,8 +33,8 @@
 
 - 既有 `dshSession` message handler（sessionTrackerScript 上报当前 sessionId）在 resolve cwd 后追加 `channelPanel?.setActiveSession(sid)`；
 - `ChannelPanelController.activeSessionId` 驱动 `rebuildProjectRows`：
-  - 有 activeSessionId 且命中某 channel 的会话 → 只展开该 channel + 该会话，其余全收起；
-  - 无命中（如会话属于其他 workspace）→ 全部收起；
+  - 有 activeSessionId 且命中某会话 → 只展开该会话（消息可见）、其余会话行收起；**channel 列表始终按 enabled 展开**（即使未命中，会话列表仍可见、仅行收起）；
+  - 无命中（如会话属于其他 workspace）→ 所有会话行收起，但 channel/会话列表仍显示；
   - 无 activeSessionId（未在 web 操作）→ 回落用户手动折叠/展开状态。
 
 ## 4. 改动文件

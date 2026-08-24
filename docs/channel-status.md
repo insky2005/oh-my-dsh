@@ -49,7 +49,7 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 | 钉钉 / 飞书卡片点击 | 🚧 | 卡片已渲染（说明标注「待实现」），点击仅 NSSound.beep，未接适配器 |
 | 会话/消息分组 UI 展示（按 Channel ▸ Session 的消息列表） | ✅ | ChannelSessionRow 展开显示该会话消息（读全局分桶 messages） |
 | 项目视图实时刷新（对话回复后自动更新） | ✅ | ChannelPanelController live-refresh：project 模式 ~1.5s 轻量重读全局 store，**内容签名变化才全量重建**（保留折叠/展开状态），视图不随轮询抖动 |
-| **与 dsh web 会话双向联动**（面板↔web） | ✅ | 面板会话行「在 dsh 中打开」经 `sessionOpenerScript` 驱动 web 切换；web 切会话经 `setActiveSession` 自动展开对应行、其余收起（**以 sessionId 对应，不用 name**）。详见 docs/channel-web-session-link.md |
+| **与 dsh web 会话双向联动**（面板↔web） | ✅ | 面板会话行「在 dsh 中打开」经 `sessionOpenerScript` 驱动 web 切换；web 切会话经 `setActiveSession` 自动展开对应行、其余收起（channel 列表仍显示；**以 sessionId 对应，不用 name**）。详见 docs/channel-web-session-link.md |
 | 即时「收到」应答 | 📋 | 低优先 TODO |
 
 ### 3.3 测试与验证
