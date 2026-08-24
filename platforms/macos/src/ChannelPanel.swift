@@ -70,6 +70,8 @@ final class ChannelPanelController: NSObject {
     var onRequestHide: (() -> Void)?
     var workspacePath: (() -> String?)?
     var channelLoginRunner: ((String, @escaping (String?) -> Void, @escaping (Bool) -> Void) -> Void)?
+    /// Open the given dsh session in dsh web (panel → web session link).
+    var onOpenSession: ((String) -> Void)?
 
     static let minWidth: CGFloat = 300
     let view = ChannelRootView()
@@ -469,13 +471,18 @@ final class ChannelPanelController: NSObject {
         projectRows = []
         for ch in channels {
             let enabled = isChannelEnabled(ch.id)
-            // default: expanded; only collapse when explicitly toggled off or disabled
-            let expanded = enabled && !collapsedChannelIds.contains(ch.id)
             let sessions = enabled ? loadSessions(for: ch.id) : []
-            let row = ProjectRowView(channel: ch, enabled: enabled, expanded: expanded, sessions: sessions, collapsedSessionIds: collapsedSessionIds)
+            // collapsedSessionIds is the SINGLE expansion state: web follows write
+            // into it (setActiveSession) and manual toggles read/write it, so the
+            // two never fight. Channels stay expanded when enabled so sessions
+            // remain visible even when every row is collapsed.
+            let expanded = enabled && !collapsedChannelIds.contains(ch.id)
+            let row = ProjectRowView(channel: ch, enabled: enabled, expanded: expanded, sessions: sessions,
+                                     collapsedSessionIds: collapsedSessionIds)
             row.onToggle = { [weak self] in self?.toggleProjectChannel(ch.id) }
             row.onExpand = { [weak self] in self?.toggleExpand(ch.id) }
             row.onToggleSession = { [weak self] sessionId in self?.toggleSession(sessionId) }
+            row.onOpenSession = { [weak self] sessionId in self?.onOpenSession?(sessionId) }
             projectList.addArrangedSubview(row)
             // Stretch every row to the full content width (stack `.width`
             // alignment only stretches the widest row — shorter ones would
@@ -508,11 +515,11 @@ final class ChannelPanelController: NSObject {
     }
 
     private func toggleSession(_ sessionId: String) {
-        if collapsedSessionIds.contains(sessionId) {
-            collapsedSessionIds.remove(sessionId)
-        } else {
-            collapsedSessionIds.insert(sessionId)
-        }
+        // Clicking a session row: collapse every other session, expand this one
+        // (exclusive expansion), then locate it in dsh web via onOpen. Doing the
+        // collapse here (not relying on the web follow) gives a deterministic
+        // "one expanded at a time" view.
+        collapsedSessionIds = allSessionIds().subtracting([sessionId])
         rebuildProjectRows()
     }
 
@@ -692,6 +699,32 @@ final class ChannelPanelController: NSObject {
         if mode == .project { rebuildProjectRows() }
     }
 
+    /// Every session id across the current project's enabled channels — used to
+    /// "expand one, collapse the rest" for both manual clicks and web follows.
+    private func allSessionIds() -> Set<String> {
+        var all: Set<String> = []
+        for ch in channels {
+            for s in loadSessions(for: ch.id) { all.insert(s.sessionId) }
+        }
+        return all
+    }
+
+    /// Web → panel session link: follow the session the user is viewing in dsh
+    /// web. Writes the follow target directly into collapsedSessionIds so the
+    /// panel uses ONE expansion state (collapsedSessionIds) — the active session
+    /// expands, everything else collapses; a session that matches nothing (or
+    /// nil) collapses every row. This keeps manual toggles and web follows from
+    /// fighting each other.
+    func setActiveSession(_ sessionId: String?) {
+        let all = allSessionIds()
+        if let sid = sessionId, all.contains(sid) {
+            collapsedSessionIds = all.subtracting([sid])
+        } else {
+            collapsedSessionIds = all
+        }
+        if mode == .project { rebuildProjectRows() }
+    }
+
     // MARK: - Live refresh
 
     /// Start the lightweight periodic refresh (approach A: content signature +
@@ -746,6 +779,7 @@ final class ProjectRowView: NSView {
     var onToggle: (() -> Void)?
     var onExpand: (() -> Void)?
     var onToggleSession: ((String) -> Void)?
+    var onOpenSession: ((String) -> Void)?
 
     init(channel: GlobalChannel, enabled: Bool, expanded: Bool, sessions: [ChannelSessionVM], collapsedSessionIds: Set<String>) {
         super.init(frame: .zero)
@@ -771,9 +805,12 @@ final class ProjectRowView: NSView {
             sessionsStack.addArrangedSubview(empty)
         } else {
             for session in sessions {
+                // collapsedSessionIds is the single expansion state: a session
+                // expands unless it is in the collapsed set.
                 let showMessages = !collapsedSessionIds.contains(session.sessionId)
                 let row = ChannelSessionRow(session: session, showMessages: showMessages)
                 row.onTap = { [weak self] in self?.onToggleSession?(session.sessionId) }
+                row.onOpen = { [weak self] in self?.onOpenSession?(session.sessionId) }
                 sessionsStack.addArrangedSubview(row)
                 row.widthAnchor.constraint(equalTo: sessionsStack.widthAnchor).isActive = true
             }
@@ -891,6 +928,10 @@ final class ChannelHeaderBlock: RoundedBlockView {
 /// replies (out) on the LEFT.
 final class ChannelSessionRow: RoundedBlockView {
     var onTap: (() -> Void)?
+    /// Panel → web session link: open this session in dsh web. Fired together
+    /// with onTap so a single click both expands/collapses and locates the
+    /// session in dsh web.
+    var onOpen: (() -> Void)?
 
     init(session: ChannelSessionVM, showMessages: Bool) {
         super.init(frame: .zero)
@@ -905,7 +946,11 @@ final class ChannelSessionRow: RoundedBlockView {
 
         // darker, clickable title bar (bigger font + bigger arrow)
         let titleBar = SessionTitleBar(title: name, expanded: showMessages)
-        titleBar.onTap = { [weak self] in self?.onTap?() }
+        // One click on the session row: expand/collapse AND locate in dsh web.
+        titleBar.onTap = { [weak self] in
+            self?.onTap?()
+            self?.onOpen?()
+        }
         titleBar.translatesAutoresizingMaskIntoConstraints = false
 
         // message content below the title bar

@@ -306,7 +306,7 @@ enum L10n {
         "channel.sessions": ("会话", "Sessions"),
         "channel.noSessions": ("暂无会话", "No sessions yet"),
         "channel.noMessages": ("暂无消息", "No messages yet"),
-        "channel.notEnabledInProject": ("未在项目启用", "Not enabled in this project"),
+        "channel.notEnabledInProject": ("当前项目已禁用", "Disabled in this project"),
         "channel.done": ("完成", "Done"),
         "bar.browser": ("浏览器", "Browser"),
         "browser.title": ("浏览器", "Browser"),
@@ -1478,6 +1478,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelPanel.channelLoginRunner = { [weak self] channelId, onQRUrl, completion in
             self?.runChannelLogin(channelId: channelId, onQRUrl: onQRUrl, completion: completion)
         }
+        // Panel → web session link: clicking a session's "open in dsh" drives the
+        // web view to switch to that session.
+        channelPanel.onOpenSession = { [weak self] sessionId in
+            self?.openDSHSession(sessionId)
+        }
 
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
@@ -2031,6 +2036,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             WKUserScript(source: Self.sessionTrackerScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController.add(self, name: "dshSession")
 
+        // Panel → web session link: exposes window.__dshOpenSession(sessionId)
+        // so the Channel panel can switch dsh web to a specific session.
+        config.userContentController.addUserScript(
+            WKUserScript(source: Self.sessionOpenerScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+
         webView?.removeFromSuperview()
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
@@ -2094,6 +2104,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           } catch (e) {}
         }
         return origFetch.apply(this, arguments);
+      };
+    })()
+    """
+
+    /// Panel → web session link bridge. Exposes window.__dshOpenSession(id)
+    /// which switches dsh web to the given session. dsh web does not expose
+    /// its session store globally, so we locate the matching sidebar row by
+    /// title (resolved via a session.list RPC we fire on demand) and click
+    /// it — the same gesture the user performs to switch sessions.
+    private static let sessionOpenerScript = """
+    (function () {
+      if (window.__dshSessionOpener) return;
+      window.__dshSessionOpener = true;
+      function expandGroups() {
+        var groups = Array.prototype.slice.call(document.querySelectorAll('[role="treeitem"]'));
+        for (var g = 0; g < groups.length; g++) {
+          var r = groups[g];
+          if (r.getAttribute("aria-expanded") === "false") r.click();
+        }
+      }
+      function findAndClick(title) {
+        var rows = Array.prototype.slice.call(document.querySelectorAll('[role="treeitem"]'));
+        for (var i = 0; i < rows.length; i++) {
+          if (rows[i].className.indexOf("sessionRow") === -1) continue;
+          var lines = (rows[i].innerText || "").split(String.fromCharCode(10)).map(function (s) { return s.trim(); });
+          if (lines.indexOf(title) !== -1) { rows[i].click(); return true; }
+        }
+        return false;
+      }
+      function openById(sessionId, title, attempt) {
+        if (findAndClick(title)) return { ok: true };
+        if (attempt < 8) {
+          expandGroups();
+          return new Promise(function (resolve) {
+            setTimeout(function () { resolve(openById(sessionId, title, attempt + 1)); }, 120);
+          });
+        }
+        console.log("[dsh-opener] row-not-found", sessionId, title);
+        return { ok: false, reason: "row-not-found" };
+      }
+      window.__dshOpenSession = function (sessionId) {
+        if (!sessionId) return { ok: false, reason: "no-id" };
+        return fetch("/api/session.list", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ type: "client-request", rpcId: "dsh-open-" + Date.now(), method: "session.list", payload: {} })
+        }).then(function (res) { return res.json(); }).then(function (json) {
+          var items = (json && json.result && json.result.ok && json.result.value && json.result.value.items) || [];
+          var target = null;
+          for (var i = 0; i < items.length; i++) { if (items[i].sessionId === sessionId) { target = items[i]; break; } }
+          if (!target) { console.log("[dsh-opener] no-session", sessionId); return { ok: false, reason: "no-session" }; }
+          var title = (target.projections && target.projections.values && target.projections.values.title) || target.sessionId;
+          return openById(sessionId, title, 0);
+        }).catch(function (err) { console.log("[dsh-opener] error", String(err)); return { ok: false, reason: String(err) }; });
       };
     })()
     """
@@ -2309,6 +2373,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 AppLog.shared.log("dsh settings opened")
             } else {
                 AppLog.shared.log("dsh settings open failed: \(String(describing: error))")
+            }
+        }
+    }
+
+    /// Panel → web session link: switch dsh web to the given session. Driven by
+    /// the sessionOpenerScript bridge injected into the web view.
+    private func openDSHSession(_ sessionId: String) {
+        guard let webView = webView else { return }
+        // sessionId is an opaque token (uuid) — quote it for JS safely.
+        let escaped = sessionId.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let js = "window.__dshOpenSession ? window.__dshOpenSession(\"\(escaped)\") : Promise.resolve({ok:false,reason:\"bridge-unavailable\"})"
+        webView.evaluateJavaScript(js) { result, error in
+            if let err = error {
+                AppLog.shared.log("openDSHSession JS error: \(err.localizedDescription)")
+                return
+            }
+            if let dict = result as? [String: Any], let ok = dict["ok"] as? Bool, !ok {
+                AppLog.shared.log("openDSHSession \(sessionId): \(dict["reason"] ?? "?" )")
             }
         }
     }
@@ -2608,6 +2691,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 }
                 self.tasksPanel?.workspaceChanged()
                 self.channelPanel?.workspaceChanged()
+                // Web → panel session link: follow the session the user is
+                // viewing — the panel auto-expands its row (or collapses all
+                // when no session matches, e.g. a different workspace).
+                self.channelPanel?.setActiveSession(sid)
             }
         }
     }
