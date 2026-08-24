@@ -923,7 +923,9 @@ final class ChannelHeaderBlock: RoundedBlockView {
 /// replies (out) on the LEFT.
 final class ChannelSessionRow: RoundedBlockView {
     var onTap: (() -> Void)?
-    /// Panel → web session link: open this session in dsh web.
+    /// Panel → web session link: open this session in dsh web. Fired together
+    /// with onTap so a single click both expands/collapses and locates the
+    /// session in dsh web.
     var onOpen: (() -> Void)?
 
     init(session: ChannelSessionVM, showMessages: Bool) {
@@ -939,8 +941,11 @@ final class ChannelSessionRow: RoundedBlockView {
 
         // darker, clickable title bar (bigger font + bigger arrow)
         let titleBar = SessionTitleBar(title: name, expanded: showMessages)
-        titleBar.onTap = { [weak self] in self?.onTap?() }
-        titleBar.onOpen = { [weak self] in self?.onOpen?() }
+        // One click on the session row: expand/collapse AND locate in dsh web.
+        titleBar.onTap = { [weak self] in
+            self?.onTap?()
+            self?.onOpen?()
+        }
         titleBar.translatesAutoresizingMaskIntoConstraints = false
 
         // message content below the title bar
@@ -1026,8 +1031,6 @@ final class ChannelSessionRow: RoundedBlockView {
 /// message content.
 final class SessionTitleBar: NSView {
     var onTap: (() -> Void)?
-    /// Panel → web session link: open this session in dsh web.
-    var onOpen: (() -> Void)?
     private let expanded: Bool
 
     init(title: String, expanded: Bool) {
@@ -1053,12 +1056,7 @@ final class SessionTitleBar: NSView {
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        // Panel → web: a small external-link button on the right of the title
-        // opens this session in dsh web. Distinct from the expand/collapse tap
-        // on the rest of the band.
-        let openButton = CustomIconButton(glyph: .symbol("arrow.up.right.square"), tooltip: L10n.tr("channel.openInDsh"), size: 22)
-
-        let row = NSStackView(views: [arrow, titleLabel, openButton])
+        let row = NSStackView(views: [arrow, titleLabel])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 6
@@ -1070,10 +1068,6 @@ final class SessionTitleBar: NSView {
             row.topAnchor.constraint(equalTo: topAnchor, constant: 7),
             row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
         ])
-        openButton.setContentHuggingPriority(.required, for: .horizontal)
-        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        openButton.onAction = { [weak self] in self?.onOpen?() }
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(tapped(_:)))
         addGestureRecognizer(click)

@@ -7,7 +7,7 @@
 
 让 Channel 面板的「项目视图」会话列表与 dsh web 的当前会话**双向联动**：
 
-- **面板 → dsh web**：在项目视图中点某会话的「在 dsh 中打开」，dsh web 切换到该会话；
+- **面板 → dsh web**：在项目视图中**点击某会话行**（= 展开/收起其消息），同时 dsh web 切换到该会话；
 - **dsh web → 面板**：在 dsh web 切换会话时，面板自动展开对应的会话（无对应则保持会话列表可见、仅全部收起消息）。
 
 ## 2. 关键认知：用 sessionId 对应，不用 name
@@ -22,7 +22,7 @@
 
 ### 3.1 面板 → dsh web（onOpenSession）
 
-- `ChannelSessionRow`/`SessionTitleBar` 新增「在 dsh 中打开」按钮（`arrow.up.right.square`，L10n `channel.openInDsh`），点击触发 `ChannelPanelController.onOpenSession(sessionId)`；
+- 点击会话行（`SessionTitleBar.onTap`）同时触发：展开/收起其消息 + `onOpenSession(sessionId)` 定位到 dsh web（单一手势，无独立按钮）；
 - main.swift 注入 `sessionOpenerScript`（documentStart user script），暴露 `window.__dshOpenSession(sessionId)`：
   - 发起 `session.list` RPC 用 sessionId 解析目标会话标题；
   - 先展开所有折叠的 workspace/会话组（React 渲染是异步的，故带 ≤8 次、每次 120ms 的重试）；
@@ -41,11 +41,11 @@
 
 | 文件 | 改动 |
 |---|---|
-| platforms/macos/src/ChannelPanel.swift | `onOpenSession` 回调；`activeSessionId` 状态 + `setActiveSession`；`rebuildProjectRows` 按 sessionId 自动展开；`ProjectRowView`/`ChannelSessionRow`/`SessionTitleBar` 透传 active 与 open 回调；「在 dsh 中打开」按钮 |
-| platforms/macos/src/main.swift | 注入 `sessionOpenerScript`；`channelPanel.onOpenSession` → `openDSHSession`；`dshSession` handler 追加 `setActiveSession`；L10n `channel.openInDsh` |
+| platforms/macos/src/ChannelPanel.swift | `onOpenSession` 回调；`activeSessionId` 状态 + `setActiveSession`；`rebuildProjectRows` 按 sessionId 自动展开；`ProjectRowView`/`ChannelSessionRow`/`SessionTitleBar` 透传 active 与 open 回调；点击会话行 = 展开/收起 + 定位 dsh web |
+| platforms/macos/src/main.swift | 注入 `sessionOpenerScript`；`channelPanel.onOpenSession` → `openDSHSession`；`dshSession` handler 追加 `setActiveSession` |
 
 ## 5. 测试 / 验收
 
 - `swiftc` 全量编译检查通过（local-ci 阶段2 等价命令）；
 - `node --test core/tests/` 172 全绿；`tests/channel-panel/run.sh` 全绿；
-- 手动 QA：面板点「在 dsh 中打开」→ dsh web 切到该会话；dsh web 切会话 → 面板展开对应行、其余收起。
+- 手动 QA：面板点会话行 → 展开/收起 + dsh web 切到该会话；dsh web 切会话 → 面板展开对应行、其余收起。
