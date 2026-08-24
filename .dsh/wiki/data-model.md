@@ -1,8 +1,8 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-08-23T00:00:00Z
-sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/git-workflow.md]
+updated: 2026-08-24T00:00:00Z
+sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/git-workflow.md]
 manual: false
 ---
 
@@ -100,7 +100,7 @@ manual: false                   # true = 用户手改，代理永不覆盖
 | 通道级状态 | `~/.dsh/channels/<channelId>.state.json` | `channel-runner.js` | lastWorkspace / 会话映射 / activeSession，重启可恢复；面板读它显示连接徽标（不轮询） |
 | 会话映射（全局） | `~/.dsh/channels/<channelId>.sessions.json` | `channel-sessions.js`（setSession） | **channel 作用域全局**（2026-08-22 起）；按 sessionId 保留全部会话，`/new` 重绑定 conversation 不删历史；记录含 conversationId/sessionId/projectRoot/workspaceKey/name/updatedAt |
 | 会话消息归档（全局） | `~/.dsh/channels/<channelId>.<workspaceKey>.<sessionId>.messages.json`（sessionId 缺省入 `system` 桶） | `channel-sessions.js`（appendMessage） | 分桶记录 `{channelId, conversationId, sessionId, dir: in\|out, text, ts, projectRoot}`，MAX_MESSAGES=1000 滚动；`<channelId>.workspaces.json` 登记 workspaceKey ↔ projectRoot（同名加 6 位路径哈希消歧）；**项目目录不再产生消息/会话文件** |
-| 项目引用/路由 | `<项目根>/.dsh/channels.json` | ChannelPanel 开关 / main.swift | `{"version":1,"refs":[{channelId, workspaceRoot, routing…}]}`；旧路径文件仍未跟踪（迁移到 `.dsh/channels/channels.json` 并提交是 docs/channel-storage.md 的待办） |
+| 项目开关/启用关联 | `~/.dsh/channels/<channelId>.workspaces.json` | ChannelPanel `setChannelEnabled` / channel-sessions `setWorkspaceEnabled` | **全局**（2026-08-23 随 PR #30 落地，docs/channel-project-switch.md）：`{"<workspaceKey>":"<projectRoot>"}`（chmod 600，key 用 `ChannelStoreReader.workspaceKey(for:)` 派生）；某 projectRoot 出现 = 该工作区启用了该通道（「项目开关」ON）；旧 `<项目>/.dsh/channels.json` refs 不再作为启用来源（仅 ChannelPanel 一次性惰性迁移播种）；`registerProjectRoot` 只作消息桶 key 推导 |
 
 ## Channel 关联模型（channel ↔ message ↔ session，2026-08-22 落地）
 

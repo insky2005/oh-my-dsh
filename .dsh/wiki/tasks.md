@@ -2,7 +2,7 @@
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
 updated: 2026-08-22T15:04:38Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
 manual: false
 ---
 
@@ -50,7 +50,7 @@ open "dist/oh-my-dsh.app"
 ## 跑单元测试
 
 ```bash
-node --test core/tests/*.test.js  # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，157 用例；不带引号由 bash 展开 glob，Node 20 兼容）
+node --test core/tests/*.test.js  # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，166 用例；不带引号由 bash 展开 glob，Node 20 兼容）
 tests/terminal-emulator/run.sh      # 模拟器测试（core/tests/ansi.test.js 的薄封装）
 tests/wiki-panel/run.sh             # Repo Wiki 模型层
 tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
@@ -115,7 +115,7 @@ tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：�
 
 ## Channel 通道（微信远程驱动 dsh）
 
-面板：活动栏「通道」→ 无全局配置时引导页（微信 ClawBot 卡片）→ 点卡片进**扫码登录向导**（面板内渲染二维码，扫码后 token 落 `~/.dsh/channels/<id>.json`，自动拉起 runner）；有全局配置后进**项目视图**（Channel 标题行：图标 + 平台名 (channelId) + 会话数、NSSwitch 开关写项目 `.dsh/channels.json` 引用；展开区经 ChannelStoreReader 读**全局 store** 展示会话 + 消息气泡，可点开/收起；顶部「全局配置」可切回）。App 启动自动拉起已启用 channel 的 runner，退出时关闭。
+面板：活动栏「通道」→ 无全局配置时引导页（微信 ClawBot 卡片）→ 点卡片进**扫码登录向导**（面板内渲染二维码，扫码后 token 落 `~/.dsh/channels/<id>.json`，自动拉起 runner）；有全局配置后进**项目视图**（Channel 标题行：图标 + 平台名 (channelId) + 会话数、NSSwitch 开关经 `setChannelEnabled` 写**全局** `~/.dsh/channels/<channelId>.workspaces.json`（project=workspace，「项目开关」真正门控路由；未启用时该行显示「未在项目启用」）；展开区经 ChannelStoreReader 读**全局 store** 展示会话 + 消息气泡，可点开/收起；顶部「全局配置」可切回）。App 启动自动拉起已启用 channel 的 runner，退出时关闭。
 
 CLI（`core/bin/ohmy-core.js`，与面板共用 core 层）：
 
@@ -123,15 +123,15 @@ CLI（`core/bin/ohmy-core.js`，与面板共用 core 层）：
 node core/bin/ohmy-core.js channel login --save ~/.dsh/channels/<id>.json   # 扫码登录拿 token
 node core/bin/ohmy-core.js channel listen <token> --once                    # 长轮询收一条消息
 node core/bin/ohmy-core.js channel reply <token> <to> <text>                # 回复（须带入站消息的 context_token）
-node core/bin/ohmy-core.js channel run <channelId> <port> <refsJson> [--dsh-home <dir>]  # 端到端循环（真实微信+真实 dsh）
+node core/bin/ohmy-core.js channel run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>]  # 端到端循环（真实微信+真实 dsh；--project-root 供「项目开关」门控）
 node core/bin/ohmy-core.js channel route <refsJson> <conversationId> <text> # 路由匹配（纯逻辑）
 ```
 
 客户端内指令（微信里发）：`/help` `/ping` `/status` `/workspaces`(`/wks`) `/new [名称]` `/sessions`(`/ses`) `/switch <名称|编号|#sN>`；纯代号 `#wN`/`#sN` 快捷切换当前项目/会话；消息含 `#w1` 或 `#<workspace名>` 按 #tag 路由到对应项目（清单见 docs/channel-commands.md，改动须同步维护该文档）。
 
-验证：`node --test core/tests/` **157 全绿**（含 channel 相关 80 项：association/busy/重写后的 sessions 等）；`tests/channel-panel/run.sh`（ChannelStoreReader）无头单测；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
+验证：`node --test core/tests/` **166 全绿**（较上次 157 新增 project-switch 门控/workspaces 启用用例；含 channel 相关 89 项：association/busy/重写后的 sessions/project-switch 等）；`tests/channel-panel/run.sh`（ChannelStoreReader）无头单测；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
 
-> ✅ 消息/会话存储**已全局化**（2026-08-22 落地）：会话映射与消息归档到全局 `~/.dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶，无会话入 system 桶），项目内仅剩引用配置 `.dsh/channels.json`；旧项目格式经 `channel migrate` CLI / 惰性迁移（见 [channel-panel](modules/channel-panel.md)）。仍待办：引用配置落位 `.dsh/channels/channels.json` 并提交。
+> ✅ 消息/会话存储**已全局化**（2026-08-22 落地）：会话映射与消息归档到全局 `~/.dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶，无会话入 system 桶），项目内仅剩引用配置 `.dsh/channels.json`；旧项目格式经 `channel migrate` CLI / 惰性迁移（见 [channel-panel](modules/channel-panel.md)）。**「项目开关」关联（PR #30，2026-08-23）**：通道↔项目启用关系存**全局** `~/.dsh/channels/<channelId>.workspaces.json`（project=workspace，出现即启用，见 [channel-panel](modules/channel-panel.md)「项目开关」与 docs/channel-project-switch.md），项目内 refs 文件不再作为启用来源。仍待办：引用配置落位 `.dsh/channels/channels.json` 并提交。
 
 ## 配置 GitHub token（任务面板）
 
