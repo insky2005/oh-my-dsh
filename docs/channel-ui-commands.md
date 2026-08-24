@@ -78,7 +78,7 @@
 
 - 每个（channelId, conversationId）在路由到的项目里维护一个「当前 dsh 会话」；
 - 映射持久化：`~/.dsh/channels/<id>.sessions.json`（`{ version, sessions: [{ conversationId, channelId, sessionId, projectRoot, name, createdAt, updatedAt }] }`），重启可恢复，跨平台；
-- `/new` → 新建会话并**更新映射**（该 conversationId 改指向新会话）；`/switch` → 切换当前会话（改映射）；
+- `/new` → 新建会话并**更新映射**（该 conversationId 改指向新会话）；`/sessions <内容>` / `/ses <内容>`（等同 `#sN`）→ 切换当前会话（改映射）；
 - 无映射 → 首次消息自动建会话并记映射。
 
 ### 3.5 消息处理流程（含指令）
@@ -134,7 +134,7 @@
 
 - **代号分配**：/workspaces（或别名 /wks）列出所有 dsh workspace，按 path 排序，分配代号 w1、w2…（不区分大小写）：
   w1 指向 path/a、w2 指向 path/b…；每行显示 `#wN (名称): ~/path`（名称 = dsh web 的 workspace title，路径以 ~ 开头、不暴露本机用户目录）；
-- **会话代号**：/sessions（或别名 /ses）列出当前项目会话，按更新时间倒序分配代号 #s1、#s2…；/switch 支持 #sN 直接切到对应会话；
+- **会话代号**：/sessions（或别名 /ses）列出当前项目会话，按更新时间倒序分配代号 #s1、#s2…；/sessions <#sN/名称/id/序号>（或 /ses，等同 #sN）直接切到对应会话；
 - **#tag 路由**：消息内容中含 #w1（代号）或 #<workspace名>（workspace 的 path/name 片段）→ 消息路由到该项目：
 - **# 快捷指令**：`#` 开头的纯代号消息 = 快捷指令，用于快速设置当前项目 / 会话：`#wN` 设置当前项目（回复 `已切换到项目 #wN (名称): ~/path`）、`#sN` 设置当前会话（回复 `已切换会话 #sN (名称)`）；不再把裸代号当提问发进会话；
   - 解析优先级：#wN 代号精确匹配 > #<name> 匹配 workspace path/name；
@@ -165,10 +165,9 @@
 | `/help` | 列出指令（分组排序） | — | 指令清单 |
 | `/ping` | 连通性测试 | — | pong（耗时 Nms） |
 | `/status` | 查连接/项目/会话状态 | — | 连接状态/项目/当前会话 |
-| `/workspaces` (`/wks`) | 列出 workspace 并分配代号 #w1/#w2…（名称取 dsh web 的 title） | — | #w1 (Name): ~/path |
-| `/new [名称]` | 新建独立会话（workspaceId 归当前工作区，并用 /new 文本 prompt 使会话非 blank、dsh web 可见） | 可选会话名 | 已新建会话：xxx |
-| `/sessions` (`/ses`) | 列出当前项目所有会话，带代号 #s1… | — | #s1  会话名  /path |
-| `/switch <名称/编号/#sN>` | 切换当前会话 | 会话名/编号/#sN | 已切换到：xxx |
+| `/workspaces` (`/wks`) | 列出或切换工作区：无内容列 workspace 并分配代号 #w1/#w2…（名称取 dsh web 的 title）；有内容（#wN/名/路径）切工作区（等同 #wN） | 可选 名称或代号 | #w1 (Name): ~/path；已切换到工作区 #wN (Name), ~/path |
+| `/sessions` (`/ses`) | 列出或切换会话：无内容列当前工作区会话（最近 5 条）；有内容（#sN/id/名/序号）切会话（等同 #sN） | 可选 会话id或代号 | #s1 会话名 /path；已切换到会话 #s1 (id), 名称 |
+| `/new [内容]` | 创建新会话：无内容建「New Session」等首条消息激活；有内容建会话并 prompt=内容；两模式统一回 `创建新会话 #sN (sessionId)` | 可选 内容 | 创建新会话 #s1 (sess-x) |
 | `#w1` / `#s1` 等 | 快速切换（路由 workspace / 切换会话） | — | — |
 
 ### 3.3 第二优先级（后续）
@@ -192,19 +191,21 @@ parseCommand(text): { kind: "command", name, args } | { kind: "text", text }
 ```
 
 - 拆词：第一个空白分隔的词是命令名，其余是参数。
-- 只识别已知命令表（`help/new/sessions/switch/status/ping`）；未知 `/xxx` 回「未知指令，/help 查看」。
+- 只识别已知命令表（`help/ping/status/workspaces/wks/sessions/ses/new`）；未知 `/xxx` 回「未知指令，/help 查看」。
 - 非 `/` 开头 → 普通消息。
 
 ### 4.2 命令处理器（依赖注入）
 
 ```ts
-createCommandRunner({ getSessions, createSession, switchSession, getStatus })
-  -> (text) => Promise<string>  // 返回要回复的文本
+createCommandRunner({ getSessions, createSession, switchSession, switchWorkspace, bindSession, getStatus })
+  -> run(text, ctx?) => Promise<string>  // 返回要回复的文本；ctx={conversationId}
 ```
 
 - `getSessions`：列当前项目会话（来自会话索引）
 - `createSession`：`/new` 时建 dsh 会话并记 conversationId→sessionId
-- `switchSession`：`/switch` 切换当前会话
+- `switchSession`：`/sessions`/`/ses` 带内容时切换当前会话（等同 `#sN`）
+- `switchWorkspace`：`/workspaces`/`/wks` 带内容时切换工作区（等同 `#wN`）
+- `bindSession`：切换会话后把 conversationId→sessionId 映射写入 store
 - `getStatus`：`/status` 返回连接/项目/会话
 
 ### 4.3 接入 channel-runner
@@ -224,7 +225,7 @@ createCommandRunner({ getSessions, createSession, switchSession, getStatus })
 
 ## 7. 明确不在本轮
 
-- **已实现（本轮）**：指令解析与执行（/help /new /sessions /switch /status /ping）、channel-runner 指令优先路由、会话映射 + 消息持久化（落项目 .dsh）。
+- **已实现（本轮）**：指令解析与执行（/help /ping /status /workspaces(/wks) /sessions(/ses) /new）、channel-runner 指令优先路由、会话映射 + 消息持久化（落项目 .dsh）。
 - ~~面板 v2 UI（卡片/引导/项目视图）~~——✅ 已实现（本轮）；仍待做：会话消息分组 UI 展示、即时「收到」应答。
 - 第二/三优先级指令（/commit /test /issue /repo /clear /route /pwd）——后续。
 - 即时「收到」应答——后续（低优先）。

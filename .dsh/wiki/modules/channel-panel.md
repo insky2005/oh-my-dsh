@@ -34,7 +34,7 @@ manual: false
 - run(event, projectRef)：**复用会话（A）**——sessionDriver.run 尊重 event.sessionId：已有会话映射则**直接复用该会话 prompt**（多轮对话续接），无则 create 后写映射；createSession 支持按 workspaceId 归属工作区（C，无 workspace 才回退 cwd）→ rename → prompt（mode: queue）→ 轮询 running → 取最后一条 assistant 消息 → ChannelReply；RPC 信封（client-request）与 IssueRunner 面板一致。
 
 ### 指令 / 路由 / 状态（channel-commands / channel-workspaces / channel-runner / channel-sessions）
-- **斜杠指令 v1**（channel-commands.js）：/help（分组清单）/ /ping / /status（通道/连接/当前工作区/当前会话）/ /workspaces(/wks) / /new [名称] / /sessions(/ses) / /switch <名称|编号|#sN>；未知 /xxx 回「未知指令」；响应发送前经 toPlainText 去 markdown 符号，路径以 ~ 开头不泄露用户目录；
+- **斜杠指令 v2**（channel-commands.js）：全局 /help（分组清单）/ /ping / /status（通道/连接/当前工作区/当前会话）；工作区指令 /workspaces(/wks)、/sessions(/ses)（无内容列出 / 有内容切换，等同 #wN/#sN）、/new [内容]（统一回 创建新会话 #sN (sessionId)，无内容建 New Session 等首条消息激活、有内容 prompt=内容并回推答案）；未知 /xxx 回「未知指令」；响应发送前经 toPlainText 去 markdown 符号，路径以 ~ 开头不泄露用户目录；
 - **快捷指令**（channel-runner.js）：纯代号 #wN（设置当前工作区，会话置 n/a 并附最近 5 条会话）/ #sN（设置当前会话）；消息含 #w1 或 #<workspace名> 时按 **#tag 路由**到对应项目（代号从发给会话的文本剥离）；回退规则：最近提到的 workspace → 第一个 workspace；
 - **workspace 代号**（channel-workspaces.js）：/wks 按 path 排序分配 #wN（名称取 dsh web workspace title）；#tag 路由（代号精确 > workspace 名）；toHomePath 用 ~ 缩短路径；
 - **会话映射 + 消息持久化（全局化 D，channel-sessions.js）**：2026-08-22 起按 **channel 作用域全局存储**于 ~/.dsh/channels/——<channelId>.sessions.json（会话映射，按 sessionId 保留全部会话，/new 重绑定 conversation 不删历史）、<channelId>.workspaces.json（workspaceKey ↔ projectRoot 注册表，同名项目加 6 位路径哈希后缀消歧；**同时承担「项目开关」启用语义**：某 projectRoot 出现在该通道的 workspaces.json = 该工作区启用了该通道，见 docs/channel-project-switch.md——新增 `listEnabledWorkspaces` / `isWorkspaceEnabled` / `setWorkspaceEnabled`，`registerProjectRoot` 保留作消息桶 key 推导、不再作为启用来源）、<channelId>.<workspaceKey>.<sessionId>.messages.json 分桶（sessionId 缺省入 system 桶）；消息记录 {channelId, conversationId, sessionId, dir: in|out, text, ts, projectRoot}，MAX_MESSAGES=1000 滚动；**项目目录不再产生消息/会话文件**（旧格式惰性迁移，含 channel migrate CLI，见 docs/channel-storage.md）；
@@ -47,11 +47,11 @@ manual: false
 
 「项目」即 dsh 的 workspace（项目根目录对应工作区），不引入独立项目概念。**通道↔workspace 的启用关联存全局** `~/.dsh/channels/<channelId>.workspaces.json`（chmod 600；某 projectRoot 出现在该通道的 workspaces.json = 该工作区启用了该通道；不再写项目内 `.dsh/channels.json`）。
 
-- **门控（channel-runner.js）**：新增 `isEnabledForRoot(root)`（读该通道全局 workspaces.json，启用集合缓存约 1s，开关切换后下一条消息即生效、无需重启 runner）。门控作用于**实际要路由/驱动会话**的消息：**普通文本消息**与 **/new** 解析出目标 workspace 后，若未启用该通道 → 回「该项目未启用该通道，请在面板「通道」项目视图开启后使用」、不创建/不运行会话；**#wN** 目标 workspace 未启用 → 禁止切换并回提示；**#sN / /sessions(/ses) / /switch** 当前 workspace 未启用 → 回提示；**/workspaces(/wks)** **只列已启用**该通道的 workspace；**始终放行**：/help /ping /status；
+- **门控（channel-runner.js）**：新增 `isEnabledForRoot(root)`（读该通道全局 workspaces.json，启用集合缓存约 1s，开关切换后下一条消息即生效、无需重启 runner）。门控作用于**实际要路由/驱动会话**的消息：**普通文本消息**与 **/new** 解析出目标 workspace 后，若未启用该通道 → 回「该项目未启用该通道，请在面板「通道」项目视图开启后使用」、不创建/不运行会话；**#wN** 目标 workspace 未启用 → 禁止切换并回提示；**#sN / /sessions(/ses)**（含带内容切换）当前 workspace 未启用 → 回提示；**/workspaces(/wks)** 无内容**只列已启用**该通道的 workspace、带内容切到未启用 workspace → 回提示；**始终放行**：/help /ping /status；
 - **core 存储（channel-sessions.js）**：新增 `setWorkspaceEnabled(projectRoot, enabled)` / `isWorkspaceEnabled(projectRoot)` / `listEnabledWorkspaces()`（读写现有全局 workspaces.json，缺失视为空）；`registerProjectRoot` 保留作消息桶 key 推导，不作为 enable 来源；
 - **面板（ChannelPanel.swift）**：移除 `loadRefs`/`saveRefs`/`refs`/`ProjectRefsFile` 作启用来源；新增 `channelWorkspacesPath`/`enabledRoots(for:)`/`isChannelEnabled`/`setChannelEnabled`（读/写全局 workspaces.json，key 用 `ChannelStoreReader.workspaceKey(for:)` 派生）；`rebuildProjectRows` 中 `sessions = enabled ? loadSessions(...) : []`、未启用时折叠且标题行显示 L10n `channel.notEnabledInProject`（「未在项目启用」）；`ProjectChannelRef` 保留仅作**一次性惰性迁移**（`migrateLegacyRefsIfNeeded`：若旧 `<项目>/.dsh/channels.json` 有该项目 refs 且该通道尚无全局 workspaces.json，播种启用——迁移只播种一次，此后全局文件为权威，用户关掉不会又被重开）；
 - **main.swift**：`startChannelRunner` **删除**读/写项目 refs 与「强制补 ref」逻辑，追加 `--project-root` 传活动 workspace 根；新增 L10n `channel.notEnabledInProject`；
-- **测试**：channel-runner.test.js 新增 project-switch 用例（OFF 普通消息回「未启用」且不建会话 / ON 正常路由 / #w1 门控 / #sN 门控 / /sessions、/switch 门控 / /workspaces 只列已启用）；channel-sessions.test.js 新增 set/isWorkspaceEnabled 持久化断言。
+- **测试**：channel-runner.test.js 新增 project-switch 用例（OFF 普通消息回「未启用」且不建会话 / ON 正常路由 / #w1 门控 / #sN 门控 / /sessions 门控 / /workspaces 只列已启用）；channel-sessions.test.js 新增 set/isWorkspaceEnabled 持久化断言。
 
 ### CLI core/bin/ohmy-core.js
 channel 子命令：route <refsJson> <conversationId> <text>（路由匹配）、normalize <eventJson>、state <current> <next>（状态机迁移）、login [--save <file>]（扫码登录）、listen <token> [--once]（长轮询收消息）、reply <token> <to> <text>（回复）、run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>]（端到端循环；--project-root 指定项目=workspace 根，供「项目开关」门控）、migrate [projectRoot] [--dsh-home <dir>]（旧项目格式惰性迁移）。CLI 二维码渲染用 vendored core/vendor/qrcode-terminal/。
@@ -71,10 +71,10 @@ channel 子命令：route <refsJson> <conversationId> <text>（路由匹配）�
 
 ## 测试与验证
 
-- node --test core/tests/ **166 全绿**（2026-08-24 实测，较上次 157 新增 project-switch 门控/workspaces 启用相关用例；channel 相关含 channel/commands/runner/sessions/workspaces/weixin-clawbot/e2e-channel/channel-association/channel-busy 等）；
+- node --test core/tests/ **171 全绿**（2026-08-24 实测，指令体系 v2 后较 166 新增 /workspaces、/sessions 带内容切换与 /new 统一回复用例；channel 相关含 channel/commands/runner/sessions/workspaces/weixin-clawbot/e2e-channel/channel-association/channel-busy 等）；
 - e2e-channel.test.js：mock HTTP 覆盖传输层（getupdates 映射 / -14 过期 / 无 token / sendmessage 报文 / QR 登录），不依赖真实 dsh web、不做会话创建；
 - channel-association.test.js：断言 A（同一 conversation 复用同一 sessionId、跨 conversation 独立）、B（refs 显式绑定）、C（会话归属 workspaceId）、/new 绑定 conversation 后下一条普通消息复用而非新建；
-- channel-sessions.test.js（重写）：全局分桶存储、按 sessionId 保留全部会话（re-binding 保留旧会话）、set/isWorkspaceEnabled 项目开关持久化；channel-busy.test.js：忙门/异步应答；channel-runner.test.js：含「项目开关」门控用例（普通消息/#wN/#sN//sessions//switch 未启用回「未启用该通道」，/workspaces 只列已启用）；
+- channel-sessions.test.js（重写）：全局分桶存储、按 sessionId 保留全部会话（re-binding 保留旧会话）、set/isWorkspaceEnabled 项目开关持久化；channel-busy.test.js：忙门/异步应答；channel-runner.test.js：含「项目开关」门控用例（普通消息/#wN/#sN//sessions 未启用回「未启用该通道」，/workspaces 只列已启用）+ /sessions、/workspaces 带内容切换用例；
 - tests/channel-panel/run.sh（channel-tests.swift）：ChannelStoreReader 无头单测（读全局 sessions/分桶消息过滤 projectRoot）；
 - 真实微信端到端已验证：扫码登录拿 bot_token → getupdates 收入站（含 context_token）→ sendmessage 回传，用户确认收到；
 - Swift 编译清单：ChannelPanel.swift / ChannelStoreReader.swift 由 swift-sources.sh 单一来源自动收录（不再逐个登记）。

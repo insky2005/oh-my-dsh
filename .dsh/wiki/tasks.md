@@ -127,9 +127,9 @@ node core/bin/ohmy-core.js channel run <channelId> <port> <refsJson> [--dsh-home
 node core/bin/ohmy-core.js channel route <refsJson> <conversationId> <text> # 路由匹配（纯逻辑）
 ```
 
-客户端内指令（微信里发）：`/help` `/ping` `/status` `/workspaces`(`/wks`) `/new [名称]` `/sessions`(`/ses`) `/switch <名称|编号|#sN>`；纯代号 `#wN`/`#sN` 快捷切换当前项目/会话；消息含 `#w1` 或 `#<workspace名>` 按 #tag 路由到对应项目（清单见 docs/channel-commands.md，改动须同步维护该文档）。
+客户端内指令（微信里发）：全局 `/help` `/ping` `/status`；工作区指令 `/workspaces`(`/wks`)、`/sessions`(`/ses`)（无内容列出 / 有内容切换，等同 `#wN`/`#sN`）、`/new [内容]`（统一回 `创建新会话 #sN (sessionId)`，无内容建 `New Session` 等首条消息激活、有内容 prompt=内容并回推答案）；纯代号 `#wN`/`#sN` 快捷切换当前工作区/会话；消息含 `#w1` 或 `#<workspace名>` 按 #tag 路由到对应项目（清单见 docs/channel-commands.md，改动须同步维护该文档）。
 
-验证：`node --test core/tests/` **166 全绿**（较上次 157 新增 project-switch 门控/workspaces 启用用例；含 channel 相关 89 项：association/busy/重写后的 sessions/project-switch 等）；`tests/channel-panel/run.sh`（ChannelStoreReader）无头单测；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
+验证：`node --test core/tests/` **171 全绿**（指令体系 v2 后较 166 新增 /workspaces、/sessions 带内容切换与 /new 统一回复用例；含 channel 相关 89+ 项：association/busy/重写后的 sessions/project-switch 等）；`tests/channel-panel/run.sh`（ChannelStoreReader）无头单测；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
 
 > ✅ 消息/会话存储**已全局化**（2026-08-22 落地）：会话映射与消息归档到全局 `~/.dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶，无会话入 system 桶），项目内仅剩引用配置 `.dsh/channels.json`；旧项目格式经 `channel migrate` CLI / 惰性迁移（见 [channel-panel](modules/channel-panel.md)）。**「项目开关」关联（PR #30，2026-08-23）**：通道↔项目启用关系存**全局** `~/.dsh/channels/<channelId>.workspaces.json`（project=workspace，出现即启用，见 [channel-panel](modules/channel-panel.md)「项目开关」与 docs/channel-project-switch.md），项目内 refs 文件不再作为启用来源。仍待办：引用配置落位 `.dsh/channels/channels.json` 并提交。
 

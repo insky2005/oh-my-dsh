@@ -185,15 +185,16 @@ async function runChannelSequence(texts, { projectRoot = '/Users/loie/repo/alpha
   return sent;
 }
 
-test('channel-runner: /new 无内容只创建、后续消息激活、有内容生成（typing 替代处理中 ack）', async () => {
+test('channel-runner: /new 统一回复、无内容建 New Session 等待、有内容生成回推', async () => {
   const replies = await runChannelSequence(['/new', '帮我看看项目', '/new 打开百度']);
   const joined = JSON.stringify(replies);
-  // 1) /new 无内容 → 只创建，无标题，请继续发送消息
-  assert.ok(replies.some((r) => /创建 会话 #s1 \(sess-1\), 无标题/.test(r)), joined);
-  assert.ok(replies.some((r) => /请继续发送消息，与我对话/.test(r)), joined);
-  // 2) 后续普通消息 → 激活该会话，后台生成完成后回推答案（无 "处理中" 文字，typing 替代）
+  // 1) /new 无内容 → 统一回复 创建新会话 #s1 (sess-1) + 请继续与我对话，我正在听
+  assert.ok(replies.some((r) => /创建新会话 #s1 \(sess-1\)/.test(r)), joined);
+  assert.ok(replies.some((r) => /请继续与我对话，我正在听/.test(r)), joined);
+  // 2) 后续普通消息 → 激活该会话，后台生成完成后回推答案
   assert.ok(replies.some((r) => /回答-sess-1/.test(r)), 'answer pushed for sess-1: ' + joined);
-  // 3) /new 带内容 → 后台生成 + 回推答案
+  // 3) /new 带内容 → 统一回复 创建新会话 #s1 (sess-2) + 后台生成回推答案
+  assert.ok(replies.some((r) => /创建新会话 #s1 \(sess-2\)/.test(r)), joined);
   assert.ok(replies.some((r) => /回答-sess-2/.test(r)), 'answer pushed for sess-2: ' + joined);
 });
 
@@ -216,6 +217,29 @@ test('channel-runner: #s1 quick command sets current session', async () => {
   assert.ok(sent, 'expected a reply');
   assert.match(sent, /已切换到会话/);
   assert.match(sent, /#s1 \(sess-1\), 会话甲/);
+});
+
+test('channel-runner: /sessions <内容> switches session (same as #sN)', async () => {
+  const sent = await runQuickCommand({
+    text: '/sessions #s1',
+    storeProjectRoot: '/Users/loie/repo/alpha',
+    sessions: [{ sessionId: 'sess-1', projectRoot: '/Users/loie/repo/alpha', name: '会话甲', updatedAt: 1 }],
+  });
+  assert.ok(sent, 'expected a reply');
+  assert.match(sent, /已切换到会话 #s1 \(sess-1\), 会话甲/);
+});
+
+test('channel-runner: /workspaces <名称> switches workspace (same as #wN)', async () => {
+  const sent = await runQuickCommand({ text: '/workspaces Alpha' });
+  assert.ok(sent, 'expected a reply');
+  assert.match(sent, /已切换到工作区 #w1 \(Alpha\), ~\/repo\/alpha/);
+  assert.match(sent, /当前会话：n\/a/);
+});
+
+test('channel-runner: /workspaces #wN switches workspace', async () => {
+  const sent = await runQuickCommand({ text: '/workspaces #w1' });
+  assert.ok(sent, 'expected a reply');
+  assert.match(sent, /已切换到工作区 #w1 \(Alpha\)/);
 });
 
 test('channel-runner: quick command still replies when the store projectRoot is unwritable (best-effort persistence)', async () => {
@@ -337,9 +361,15 @@ test('project switch: /sessions is gated when the current workspace has the chan
   assert.match(r.sent || '', /未启用该通道/);
 });
 
-test('project switch: /switch is gated when the current workspace has the channel off', async () => {
-  const r = await runProjectGate({ enabled: false, text: '/switch 会话甲' });
+test('project switch: /sessions <内容> is gated when the current workspace has the channel off', async () => {
+  const r = await runProjectGate({ enabled: false, text: '/sessions 会话甲' });
   assert.match(r.sent || '', /未启用该通道/);
+});
+
+test('project switch: /workspaces <内容> to a non-enabled workspace is gated', async () => {
+  const r = await runProjectGate({ enabled: false, text: '/workspaces #w1' });
+  assert.match(r.sent || '', /未启用该通道/);
+  assert.equal(r.creates, 0, 'gated /workspaces switch creates no session');
 });
 
 test('project switch: /workspaces only lists enabled workspaces (none enabled -> empty)', async () => {
