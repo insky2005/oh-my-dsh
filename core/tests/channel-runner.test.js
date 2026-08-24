@@ -150,7 +150,7 @@ async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceI
 // (mirrors real usage: the user waits for a reply before the next message).
 async function runChannelSequence(texts, { projectRoot = '/Users/loie/repo/alpha' } = {}) {
   const http = require('node:http');
-  let sessions = {}; let seq = 0;
+  let sessions = {}; let seq = 0; const renames = [];
   const wsSrv = await new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
       let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
@@ -160,7 +160,7 @@ async function runChannelSequence(texts, { projectRoot = '/Users/loie/repo/alpha
         if (url.includes('workspace.list')) { const sids = Object.keys(sessions); res.end(JSON.stringify({ rpcId, result: { ok: true, value: { items: [{ workspaceId: 'w-1', path: projectRoot, title: 'Alpha', sessionIds: sids }], archivedSessionIds: [] } } })); }
         else if (url.includes('session.list')) { const items = Object.values(sessions).map((x) => ({ sessionId: x.id, updatedAt: x.ts, running: false, blank: !x.prompted, cwd: x.cwd, projections: { values: { title: x.title } } })); res.end(JSON.stringify({ rpcId, result: { ok: true, value: { items } } })); }
         else if (url.includes('session.create')) { const p = JSON.parse(body).payload; const sid = 'sess-' + (++seq); sessions[sid] = { id: sid, cwd: p.workspaceId ? projectRoot : (p.cwd || projectRoot), title: null, prompted: 0, ts: Date.now() }; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { sessionId: sid } } })); }
-        else if (url.includes('session.rename')) { const p = JSON.parse(body).payload; if (sessions[p.sessionId]) sessions[p.sessionId].title = p.title; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { title: p.title } } })); }
+        else if (url.includes('session.rename')) { const p = JSON.parse(body).payload; renames.push(p.title); if (sessions[p.sessionId]) sessions[p.sessionId].title = p.title; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { title: p.title } } })); }
         else if (url.includes('session.prompt')) { const p = JSON.parse(body).payload; if (sessions[p.sessionId]) sessions[p.sessionId].prompted = 1; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { accepted: true } } })); }
         else if (url.includes('session.history')) { const p = JSON.parse(body).payload; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { events: [{ event: { type: 'assistant/message', data: { message: { role: 'assistant', content: [{ type: 'text', text: '回答-' + (p.sessionId || '') }] } } } }] } } })); }
         else res.end(JSON.stringify({ rpcId, result: { ok: true, value: null } }));
@@ -182,20 +182,31 @@ async function runChannelSequence(texts, { projectRoot = '/Users/loie/repo/alpha
   const sendSeq = async (t) => { queued.push(t); const dl = Date.now() + 8000; let lastLen = -1, lastChange = Date.now(); while (Date.now() < dl) { if (sent.length !== lastLen) { lastLen = sent.length; lastChange = Date.now(); } if (Date.now() - lastChange > 200) break; await new Promise((r) => setTimeout(r, 30)); } };
   for (const t of texts) await sendSeq(t);
   await handle.stop(); wsSrv.srv.close();
-  return sent;
+  return { sent, renames };
 }
 
 test('channel-runner: /new 统一回复、无内容建 New Session 等待、有内容生成回推', async () => {
-  const replies = await runChannelSequence(['/new', '帮我看看项目', '/new 打开百度']);
-  const joined = JSON.stringify(replies);
+  const { sent } = await runChannelSequence(['/new', '帮我看看项目', '/new 打开百度']);
+  const joined = JSON.stringify(sent);
   // 1) /new 无内容 → 统一回复 创建新会话 #s1 (sess-1) + 请继续与我对话，我正在听
-  assert.ok(replies.some((r) => /创建新会话 #s1 \(sess-1\)/.test(r)), joined);
-  assert.ok(replies.some((r) => /请继续与我对话，我正在听/.test(r)), joined);
+  assert.ok(sent.some((r) => /创建新会话 #s1 \(sess-1\)/.test(r)), joined);
+  assert.ok(sent.some((r) => /请继续与我对话，我正在听/.test(r)), joined);
   // 2) 后续普通消息 → 激活该会话，后台生成完成后回推答案
-  assert.ok(replies.some((r) => /回答-sess-1/.test(r)), 'answer pushed for sess-1: ' + joined);
+  assert.ok(sent.some((r) => /回答-sess-1/.test(r)), 'answer pushed for sess-1: ' + joined);
   // 3) /new 带内容 → 统一回复 创建新会话 #s1 (sess-2) + 后台生成回推答案
-  assert.ok(replies.some((r) => /创建新会话 #s1 \(sess-2\)/.test(r)), joined);
-  assert.ok(replies.some((r) => /回答-sess-2/.test(r)), 'answer pushed for sess-2: ' + joined);
+  assert.ok(sent.some((r) => /创建新会话 #s1 \(sess-2\)/.test(r)), joined);
+  assert.ok(sent.some((r) => /回答-sess-2/.test(r)), 'answer pushed for sess-2: ' + joined);
+});
+
+test('channel-runner: /new 无内容不把 dsh 会话标题固定为 New Session（留给 dsh web 自动命名）', async () => {
+  const { sent, renames } = await runChannelSequence(['/new', '帮我看看项目']);
+  const joined = JSON.stringify(sent);
+  assert.ok(sent.some((r) => /创建新会话 #s1 \(sess-1\)/.test(r)), joined);
+  // 创建后没有对 sess-1 发过 session.rename（标题留空，由 dsh web 按首条消息命名）
+  assert.ok(!renames.includes('New Session'), 'must not rename dsh session to a fixed New Session: ' + JSON.stringify(renames));
+  // /new 带内容仍会 rename（内容即标题）
+  const { renames: r2 } = await runChannelSequence(['/new 打开百度']);
+  assert.ok(r2.includes('打开百度'), 'content /new renames to the content: ' + JSON.stringify(r2));
 });
 
 

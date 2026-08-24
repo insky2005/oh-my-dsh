@@ -110,7 +110,7 @@ workspace 列表：
 | 有内容 | 会话内容 | `创建新会话 #sN (sessionId)`，随后 `sendTyping` 显示输入状态、后台生成并回推答案 | `/new 帮我看看项目` | 同上 + `dispatchGeneration` |
 
 > **两模式行为一致**：统一先回复 `创建新会话 #sN (sessionId)`（N = 该会话在会话列表中的序号），并更新 activeSession、绑定到当前 conversation。
-> - **无内容**：创建会话 + `rename` 为 `New Session`、标记 pending；回复后**等待用户下一条消息**——第一条普通消息激活该会话（以该消息内容 prompt + 设为标题）。
+> - **无内容**：创建会话、标记 pending；「New Session」**仅作占位标题**（面板/状态里的临时名），**不写入 dsh 会话标题**——正式标题由 dsh web 在发起对话时按首条消息自动命名。回复后**等待用户下一条消息**——第一条普通消息激活该会话并 prompt。
 > - **有内容**：创建会话 + `rename` 为内容、发起会话（prompt = 指令后的内容）；回复后立即 `sendTyping(status=1)`（微信原生「正在输入…」），后台生成完成回推答案并 `sendTyping(status=2)`。
 > - 目标工作区：内容可带 `#wN` / `#<workspace名>` 指定；未指定按「当前工作区（lastWorkspace）→ 第一个 workspace」回退。目标工作区未启用该通道 → 回「该项目未启用该通道…」、不建会话。忙门：同 conversation 在途生成时再来 `/new <内容>` → 回「请等待，前一条消息还在处理中」。
 > - 创建方式对齐 dsh web 客户端 / Wiki / IssueRunner 面板：解析出目标 workspace 后传 `session.create { workspaceId }`（会话归到该工作区，而非 Ungrouped）。
