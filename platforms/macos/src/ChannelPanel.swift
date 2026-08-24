@@ -115,6 +115,11 @@ final class ChannelPanelController: NSObject {
     private var mode: Mode = .onboarding
     private var collapsedChannelIds: Set<String> = []
     private var collapsedSessionIds: Set<String> = []
+    // live refresh (docs/channel-status.md §3.x): a lightweight repeating timer
+    // re-reads the global channel store while in project mode and rebuilds the
+    // project view only when the current project's data actually changed.
+    private var refreshTimer: Timer?
+    private var projectViewSignature = ""
 
     static let builtins: [ChannelCard] = [
         ChannelCard(platform: "weixin-clawbot", symbol: "message", titleKey: "channel.card.weixin", descKey: "channel.card.weixinDesc"),
@@ -142,7 +147,7 @@ final class ChannelPanelController: NSObject {
         refreshMode()
     }
 
-    deinit {}
+    deinit { stopLiveRefresh() }
 
     private func updateLabels() {
         headerTitle.text = L10n.tr("channel.title")
@@ -679,11 +684,57 @@ final class ChannelPanelController: NSObject {
         loadGlobalChannels()
         loadProjectBindings(for: workspacePath?())
         refreshMode()
+        startLiveRefresh()
     }
 
     func workspaceChanged() {
         loadProjectBindings(for: workspacePath?())
         if mode == .project { rebuildProjectRows() }
+    }
+
+    // MARK: - Live refresh
+
+    /// Start the lightweight periodic refresh (approach A: content signature +
+    /// rebuild on change). Started when the panel loads; invalidated on deinit.
+    private func startLiveRefresh() {
+        guard refreshTimer == nil else { return }
+        let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
+            self?.refreshProjectIfChanged()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        refreshTimer = timer
+    }
+
+    private func stopLiveRefresh() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+    }
+
+    /// Re-read the current project's channel data and rebuild the project view only
+    /// when something actually changed (a new reply / new session / rename), so the
+    /// view stays live after conversation replies without rebuilding on every tick.
+    private func refreshProjectIfChanged() {
+        guard mode == .project, currentRoot != nil else { return }
+        let sig = computeProjectSignature()
+        guard sig != projectViewSignature else { return }
+        projectViewSignature = sig
+        rebuildProjectRows()
+    }
+
+    /// A cheap content signature over exactly what the project view displays, so a
+    /// rebuild fires only when the current project's sessions/messages change.
+    private func computeProjectSignature() -> String {
+        guard let root = currentRoot else { return "" }
+        var parts: [String] = []
+        for ch in channels where isChannelEnabled(ch.id) {
+            for s in ChannelStoreReader.loadSessions(channelId: ch.id, projectRoot: root) {
+                parts.append("\(ch.id)|\(s.sessionId)|\(Int(s.updatedAt))|\(s.name)|\(s.conversationId)|\(s.messages.count)")
+                if let last = s.messages.last {
+                    parts.append("\(Int(last.ts))|\(last.dir)|\(last.text)")
+                }
+            }
+        }
+        return parts.joined(separator: "\n")
     }
 }
 
