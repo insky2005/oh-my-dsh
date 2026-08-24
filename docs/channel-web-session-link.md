@@ -32,16 +32,13 @@
 ### 3.2 dsh web → 面板（setActiveSession）
 
 - 既有 `dshSession` message handler（sessionTrackerScript 上报当前 sessionId）在 resolve cwd 后追加 `channelPanel?.setActiveSession(sid)`；
-- `ChannelPanelController.activeSessionId` 驱动 `rebuildProjectRows`：
-  - 有 activeSessionId 且命中某会话 → 只展开该会话（消息可见）、其余会话行收起；**channel 列表始终按 enabled 展开**（即使未命中，会话列表仍可见、仅行收起）；
-  - 无命中（如会话属于其他 workspace）→ 所有会话行收起，但 channel/会话列表仍显示；
-  - 无 activeSessionId（未在 web 操作）→ 回落用户手动折叠/展开状态。
+- **单一展开状态**：面板只用 `collapsedSessionIds` 一个集合控制展开/收起。`setActiveSession` 把 follow 目标直接写入该集合——命中某会话则只展开它、其余收起；未命中（或 nil）则全部收起。手动点击会话行也读写同一集合，故手动展开/收起与 web follow **永不打架**。
 
 ## 4. 改动文件
 
 | 文件 | 改动 |
 |---|---|
-| platforms/macos/src/ChannelPanel.swift | `onOpenSession` 回调；`activeSessionId` 状态 + `setActiveSession`；`rebuildProjectRows` 按 sessionId 自动展开；`ProjectRowView`/`ChannelSessionRow`/`SessionTitleBar` 透传 active 与 open 回调；点击会话行 = 展开/收起 + 定位 dsh web |
+| platforms/macos/src/ChannelPanel.swift | `onOpenSession` 回调；`setActiveSession` 写 `collapsedSessionIds`（单一展开状态）；点击会话行 = 展开 + 定位 dsh web；`ProjectRowView`/`ChannelSessionRow`/`SessionTitleBar` 透传 open 回调 |
 | platforms/macos/src/main.swift | 注入 `sessionOpenerScript`；`channelPanel.onOpenSession` → `openDSHSession`；`dshSession` handler 追加 `setActiveSession` |
 
 ## 5. 测试 / 验收

@@ -117,10 +117,6 @@ final class ChannelPanelController: NSObject {
     private var mode: Mode = .onboarding
     private var collapsedChannelIds: Set<String> = []
     private var collapsedSessionIds: Set<String> = []
-    /// The dsh session the user is currently viewing in dsh web (web → panel
-    /// session link). When set, the matching session row is auto-expanded and
-    /// all others collapsed; when the id matches no session, all rows collapse.
-    private var activeSessionId: String?
     // live refresh (docs/channel-status.md §3.x): a lightweight repeating timer
     // re-reads the global channel store while in project mode and rebuilds the
     // project view only when the current project's data actually changed.
@@ -476,16 +472,13 @@ final class ChannelPanelController: NSObject {
         for ch in channels {
             let enabled = isChannelEnabled(ch.id)
             let sessions = enabled ? loadSessions(for: ch.id) : []
-            // Web → panel session link: the active dsh session controls which
-            // SESSION row is expanded (its messages shown). The channel list stays
-            // expanded whenever the channel is enabled, so sessions remain visible
-            // even when the active session matches nothing here — those rows just
-            // stay collapsed. Without an active session, fall back to the user's
-            // manual toggle state.
-            let autoFollow = activeSessionId != nil
+            // collapsedSessionIds is the SINGLE expansion state: web follows write
+            // into it (setActiveSession) and manual toggles read/write it, so the
+            // two never fight. Channels stay expanded when enabled so sessions
+            // remain visible even when every row is collapsed.
             let expanded = enabled && !collapsedChannelIds.contains(ch.id)
             let row = ProjectRowView(channel: ch, enabled: enabled, expanded: expanded, sessions: sessions,
-                                     collapsedSessionIds: collapsedSessionIds, activeSessionId: autoFollow ? activeSessionId : nil)
+                                     collapsedSessionIds: collapsedSessionIds)
             row.onToggle = { [weak self] in self?.toggleProjectChannel(ch.id) }
             row.onExpand = { [weak self] in self?.toggleExpand(ch.id) }
             row.onToggleSession = { [weak self] sessionId in self?.toggleSession(sessionId) }
@@ -522,14 +515,11 @@ final class ChannelPanelController: NSObject {
     }
 
     private func toggleSession(_ sessionId: String) {
-        // A manual click on a session row exits the web→panel follow mode so the
-        // auto-expand of activeSessionId no longer overrides the user's toggle.
-        activeSessionId = nil
-        if collapsedSessionIds.contains(sessionId) {
-            collapsedSessionIds.remove(sessionId)
-        } else {
-            collapsedSessionIds.insert(sessionId)
-        }
+        // Clicking a session row expands it and (via onOpen) locates it in dsh
+        // web; the web→panel follow then collapses the others through
+        // setActiveSession, keeping collapsedSessionIds the single expansion
+        // state. Expanding (not toggling) here avoids fighting the follow.
+        collapsedSessionIds.remove(sessionId)
         rebuildProjectRows()
     }
 
@@ -710,10 +700,23 @@ final class ChannelPanelController: NSObject {
     }
 
     /// Web → panel session link: follow the session the user is viewing in dsh
-    /// web. Sets the active session (auto-expanding its row, collapsing the
-    /// rest) or clears it (collapsing everything) when it matches nothing.
+    /// web. Writes the follow target directly into collapsedSessionIds so the
+    /// panel uses ONE expansion state (collapsedSessionIds) — the active session
+    /// expands, everything else collapses; a session that matches nothing (or
+    /// nil) collapses every row. This keeps manual toggles and web follows from
+    /// fighting each other.
     func setActiveSession(_ sessionId: String?) {
-        activeSessionId = sessionId
+        // Collect every session id in the current project (across enabled
+        // channels) so a follow can expand exactly one row and collapse the rest.
+        var all: Set<String> = []
+        for ch in channels {
+            for s in loadSessions(for: ch.id) { all.insert(s.sessionId) }
+        }
+        if let sid = sessionId, all.contains(sid) {
+            collapsedSessionIds = all.subtracting([sid])
+        } else {
+            collapsedSessionIds = all
+        }
         if mode == .project { rebuildProjectRows() }
     }
 
@@ -773,7 +776,7 @@ final class ProjectRowView: NSView {
     var onToggleSession: ((String) -> Void)?
     var onOpenSession: ((String) -> Void)?
 
-    init(channel: GlobalChannel, enabled: Bool, expanded: Bool, sessions: [ChannelSessionVM], collapsedSessionIds: Set<String>, activeSessionId: String?) {
+    init(channel: GlobalChannel, enabled: Bool, expanded: Bool, sessions: [ChannelSessionVM], collapsedSessionIds: Set<String>) {
         super.init(frame: .zero)
 
         // ---- channel header block (one full-width unit with its own bg) ----
@@ -797,15 +800,9 @@ final class ProjectRowView: NSView {
             sessionsStack.addArrangedSubview(empty)
         } else {
             for session in sessions {
-                // Web → panel link: while following an active dsh session, only
-                // that session stays expanded; others collapse. Otherwise use the
-                // user's manual toggle state.
-                let showMessages: Bool
-                if let active = activeSessionId {
-                    showMessages = (session.sessionId == active)
-                } else {
-                    showMessages = !collapsedSessionIds.contains(session.sessionId)
-                }
+                // collapsedSessionIds is the single expansion state: a session
+                // expands unless it is in the collapsed set.
+                let showMessages = !collapsedSessionIds.contains(session.sessionId)
                 let row = ChannelSessionRow(session: session, showMessages: showMessages)
                 row.onTap = { [weak self] in self?.onToggleSession?(session.sessionId) }
                 row.onOpen = { [weak self] in self?.onOpenSession?(session.sessionId) }
