@@ -149,8 +149,12 @@ function createCommandRunner(deps = {}) {
       }
       case 'new': {
         const name = args[0] || '';
-        const created = await createSession(name);
-        return { kind: 'reply', text: created.reply || ('已新建会话：' + (created.name || created.id || 'unnamed')) };
+        try {
+          const created = await createSession(name);
+          return { kind: 'reply', text: created.reply || ('已新建会话：' + (created.name || created.id || 'unnamed')) };
+        } catch (e) {
+          return { kind: 'reply', text: (e && e.message) || String(e) };
+        }
       }
       case 'switch': {
         const selector = args.join(' ').trim();

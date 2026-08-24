@@ -132,6 +132,24 @@ async function runWeixinChannel(opts = {}) {
     || path.join(os.homedir(), '.dsh', 'channel-runtime', channelId);
   const store = opts.sessions || createChannelSessions({ channelId, dshHome: opts.dshHome, defaultProjectRoot: projectRoot });
 
+  // Project switch (docs/channel-project-switch.md §3.2): a channel is enabled for a
+  // workspace iff that project root appears in ~/.dsh/channels/<channelId>.workspaces.json.
+  // The gate applies where a message would CREATE/RUN a session (ordinary text, /new) AND
+  // when #wN targets a workspace (workspace switch requires the target to be enabled);
+  // #sN and informational commands are allowed. The enabled set is cached briefly so
+  // bursts don't re-read the file on every message.
+  let enabledCache = { roots: null, at: 0 };
+  const isEnabledForRoot = (root) => {
+    if (!root) return false;
+    const now = Date.now();
+    if (!enabledCache.roots || now - enabledCache.at > 1000) {
+      try { enabledCache.roots = store.listEnabledWorkspaces ? store.listEnabledWorkspaces() : []; } catch { enabledCache.roots = []; }
+      enabledCache.at = now;
+    }
+    return enabledCache.roots.includes(root);
+  };
+  const sendNotEnabled = (event) => adapter.send(event.conversationId, { text: '该项目未启用该通道，请在面板「通道」项目视图开启后使用', contextToken: event.contextToken });
+
   // Workspace routing (docs §3.9): codes w1/w2… + #tag.
   const port = opts.port || 3080;
   const wsHost = opts.host || '127.0.0.1';
@@ -164,7 +182,10 @@ async function runWeixinChannel(opts = {}) {
   // Command runner wired to the session store + session driver.
   const commandRunner = opts.commands || createCommandRunner({
     getSessions: () => currentSessions(),
-    getWorkspaces: () => getCodedWorkspaces(),
+    getWorkspaces: async () => {
+      const ws = await getCodedWorkspaces();
+      return ws.filter((w) => isEnabledForRoot(w.path)); // /workspaces only lists enabled
+    },
     createSession: async (name) => {
       // /new [#w1] — route to the tagged workspace, else the current one (lastCode),
       // else the first workspace.
@@ -176,6 +197,12 @@ async function runWeixinChannel(opts = {}) {
       });
       const target = resolved.workspace || null;
       const targetRoot = target ? target.path : projectRoot;
+      // Project switch: don't create/run a session in a workspace that hasn't enabled
+      // this channel. Clear the active session so the caller's /new bind/dispatch is skipped.
+      if (!isEnabledForRoot(targetRoot)) {
+        runtime.setActiveSession(null);
+        throw new Error('该项目未启用该通道，请在面板「通道」项目视图开启后使用');
+      }
       // Create with the workspaceId so dsh associates the session with the
       // workspace and it shows up in the dsh web workspace view (a bare cwd
       // creates a workspaceId:null session that is NOT listed in the workspace).
@@ -272,6 +299,15 @@ async function runWeixinChannel(opts = {}) {
           store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
           return;
         }
+        // Project switch: workspace-scoped commands (/sessions /ses /switch) require the
+        // CURRENT workspace to have the channel enabled.
+        if (parsed.kind === 'command'
+            && (parsed.name === 'sessions' || parsed.name === 'ses' || parsed.name === 'switch')
+            && !isEnabledForRoot(currentWorkspaceRoot())) {
+          await adapter.send(event.conversationId, { text: '该项目未启用该通道，请在面板「通道」项目视图开启后使用', contextToken: event.contextToken });
+          store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
+          return;
+        }
         const reply = await commandRunner.run(event.text);
         console.log('[runner:' + channelId + '] command ' + (parsed.name || parsed.kind) + ' -> reply=' + JSON.stringify(reply && reply.text));
         // /new binds the freshly-created session to THIS conversation so the next
@@ -315,6 +351,9 @@ async function runWeixinChannel(opts = {}) {
           const w = ws[n - 1];
           if (!w) {
             replyText = '未找到工作区 #w' + n + ' （/wks 或 /workspaces 查看）';
+          } else if (!isEnabledForRoot(w.path)) {
+            // #wN is gated too: the target workspace must have this channel enabled.
+            replyText = '该项目未启用该通道，请在面板「通道」项目视图开启后使用';
           } else {
             setLastWorkspace(w);
             // A workspace switch resets the current session to n/a — the user
@@ -331,13 +370,17 @@ async function runWeixinChannel(opts = {}) {
             replyText = lines.join('\n');
           }
         } else {
-          const list = await currentSessions();
-          const s = list[n - 1];
-          if (!s) replyText = '未找到会话 #s' + n + ' （/ses 或 /sessions 查看）';
-          else {
-            store.setSession(event.conversationId, { sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
-            runtime.setActiveSession({ sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
-            replyText = '已切换到会话 #s' + n + ' (' + s.sessionId + '), ' + (s.name || '');
+          if (!isEnabledForRoot(currentWorkspaceRoot())) {
+            replyText = '该项目未启用该通道，请在面板「通道」项目视图开启后使用';
+          } else {
+            const list = await currentSessions();
+            const s = list[n - 1];
+            if (!s) replyText = '未找到会话 #s' + n + ' （/ses 或 /sessions 查看）';
+            else {
+              store.setSession(event.conversationId, { sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
+              runtime.setActiveSession({ sessionId: s.sessionId, projectRoot: s.projectRoot, name: s.name });
+              replyText = '已切换到会话 #s' + n + ' (' + s.sessionId + '), ' + (s.name || '');
+            }
           }
         }
         const payload = { conversationId: event.conversationId, text: replyText, contextToken: event.contextToken };
@@ -374,6 +417,14 @@ async function runWeixinChannel(opts = {}) {
       }
       const targetRoot = resolved.workspace ? resolved.workspace.path : projectRoot;
       const targetWsId = resolved.workspace ? resolved.workspace.id : null;
+      // Project switch (docs/channel-project-switch.md §3.2): only route/drive
+      // sessions in workspaces that have this channel enabled.
+      if (!isEnabledForRoot(targetRoot)) {
+        await sendNotEnabled(event);
+        if (opts.onEvent) opts.onEvent(event, { projectNotEnabled: true });
+        busy.delete(event.conversationId);
+        return;
+      }
       if (resolved.workspace) {
         setLastWorkspace({ code: resolved.workspace.code, name: resolved.workspace.name, projectRoot: targetRoot });
       }

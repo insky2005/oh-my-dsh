@@ -306,6 +306,7 @@ enum L10n {
         "channel.sessions": ("会话", "Sessions"),
         "channel.noSessions": ("暂无会话", "No sessions yet"),
         "channel.noMessages": ("暂无消息", "No messages yet"),
+        "channel.notEnabledInProject": ("未在项目启用", "Not enabled in this project"),
         "channel.done": ("完成", "Done"),
         "bar.browser": ("浏览器", "Browser"),
         "browser.title": ("浏览器", "Browser"),
@@ -3070,25 +3071,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         guard let cli = CoreBridge.coreCLIPath, let node = ServerManager().resolveNode() else { return }
         let port = server.port
-        // refs: the active workspace's .dsh/channels.json (may be empty)
-        var refs: [[String: Any]] = []
-        if let root = activeWorkspacePath() {
-            let path = (root as NSString).appendingPathComponent(".dsh/channels.json")
-            if let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let arr = json["refs"] as? [[String: Any]] {
-                refs = arr
-            }
-            // ensure this channel is referenced for the active workspace
-            if !refs.contains(where: { ($0["channelId"] as? String) == channelId }) {
-                refs.append(["channelId": channelId, "workspaceRoot": root])
-            }
-        }
-        let refsJson = String(data: (try? JSONSerialization.data(withJSONObject: refs)) ?? Data(), encoding: .utf8) ?? "[]"
+        // The runner's "project" = the active workspace root; it re-reads the
+        // channel's global workspaces.json to decide whether this project has the
+        // channel enabled (docs/channel-project-switch.md). Per-project refs are no
+        // longer read/force-added here.
+        let activeRoot = activeWorkspacePath() ?? ""
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: node)
-        proc.arguments = [cli, "channel", "run", channelId, String(port), refsJson]
+        proc.arguments = [cli, "channel", "run", channelId, String(port), "[]", "--project-root", activeRoot]
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = pipe

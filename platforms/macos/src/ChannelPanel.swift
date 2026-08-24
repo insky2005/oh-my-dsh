@@ -35,6 +35,8 @@ struct GlobalChannel {
     var connection: [String: String] = [:]
 }
 
+// Legacy project-refs file — kept only to read it for one-time migration to the
+// global workspaces.json association (docs/channel-project-switch.md §5).
 struct ProjectChannelRef: Codable {
     var channelId: String
     var workspaceRoot: String
@@ -107,7 +109,6 @@ final class ChannelPanelController: NSObject {
 
     // state
     private var channels: [GlobalChannel] = []
-    private var refs: [ProjectChannelRef] = []
     private var currentRoot: String?
 
     private enum Mode { case onboarding, project }
@@ -462,10 +463,10 @@ final class ChannelPanelController: NSObject {
         for row in projectRows { row.removeFromSuperview() }
         projectRows = []
         for ch in channels {
-            let enabled = refs.contains { $0.channelId == ch.id }
-            // default: expanded; only collapse when explicitly toggled off
-            let expanded = !collapsedChannelIds.contains(ch.id)
-            let sessions = loadSessions(for: ch.id)
+            let enabled = isChannelEnabled(ch.id)
+            // default: expanded; only collapse when explicitly toggled off or disabled
+            let expanded = enabled && !collapsedChannelIds.contains(ch.id)
+            let sessions = enabled ? loadSessions(for: ch.id) : []
             let row = ProjectRowView(channel: ch, enabled: enabled, expanded: expanded, sessions: sessions, collapsedSessionIds: collapsedSessionIds)
             row.onToggle = { [weak self] in self?.toggleProjectChannel(ch.id) }
             row.onExpand = { [weak self] in self?.toggleExpand(ch.id) }
@@ -481,12 +482,7 @@ final class ChannelPanelController: NSObject {
     }
 
     private func toggleProjectChannel(_ channelId: String) {
-        if let idx = refs.firstIndex(where: { $0.channelId == channelId }) {
-            refs.remove(at: idx)
-        } else if let root = currentRoot {
-            refs.append(ProjectChannelRef(channelId: channelId, workspaceRoot: root))
-        }
-        saveRefs()
+        setChannelEnabled(channelId, !isChannelEnabled(channelId))
         rebuildProjectRows()
     }
 
@@ -617,37 +613,76 @@ final class ChannelPanelController: NSObject {
         }
     }
 
-    private func loadRefs(for root: String?) {
+    private func loadProjectBindings(for root: String?) {
         currentRoot = root
-        refs = []
+        migrateLegacyRefsIfNeeded(root)
+    }
+
+    /// One-time migration from the legacy per-project .dsh/channels.json refs:
+    /// seed the global workspaces.json association for each referenced channel so
+    /// existing switches aren't lost (docs/channel-project-switch.md §5).
+    private func migrateLegacyRefsIfNeeded(_ root: String?) {
         guard let root = root else { return }
         let path = (root as NSString).appendingPathComponent(".dsh/channels.json")
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              let file = try? JSONDecoder().decode(ProjectRefsFile.self, from: data) else {
-            return
+              let file = try? JSONDecoder().decode(ProjectRefsFile.self, from: data) else { return }
+        for ref in file.refs where ref.workspaceRoot == root {
+            // One-time seed: only migrate when the channel has no global association
+            // file yet. After the first write the global file is authoritative, so a
+            // user turning the switch OFF stays off (migration must not re-enable).
+            if !FileManager.default.fileExists(atPath: channelWorkspacesPath(ref.channelId)) {
+                setChannelEnabled(ref.channelId, true)
+            }
         }
-        refs = file.refs
     }
 
-    private func saveRefs() {
+    // MARK: - Global project association (the "project switch") — stored in
+    // ~/.dsh/channels/<channelId>.workspaces.json; a project root present there
+    // = that workspace has this channel enabled (docs/channel-project-switch.md).
+
+    private func channelWorkspacesPath(_ channelId: String) -> String {
+        let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/channels")
+        return (dir as NSString).appendingPathComponent(channelId + ".workspaces.json")
+    }
+
+    /// Project roots that currently have this channel enabled (global store).
+    private func enabledRoots(for channelId: String) -> [String] {
+        let p = channelWorkspacesPath(channelId)
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: p)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        return json.values.compactMap { $0 as? String }
+    }
+
+    /// Whether the CURRENT project has this channel enabled.
+    private func isChannelEnabled(_ channelId: String) -> Bool {
+        guard let root = currentRoot else { return false }
+        return enabledRoots(for: channelId).contains(root)
+    }
+
+    /// Enable/disable this channel for the CURRENT project (project switch).
+    private func setChannelEnabled(_ channelId: String, _ enabled: Bool) {
         guard let root = currentRoot else { return }
-        let dir = (root as NSString).appendingPathComponent(".dsh")
+        var roots = Set(enabledRoots(for: channelId))
+        if enabled { roots.insert(root) } else { roots.remove(root) }
+        let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/channels")
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        let path = (root as NSString).appendingPathComponent(".dsh/channels.json")
-        let file = ProjectRefsFile(version: 1, refs: refs)
-        if let data = try? JSONEncoder().encode(file) {
-            try? data.write(to: URL(fileURLWithPath: path))
+        var dict: [String: Any] = [:]
+        for r in roots {
+            dict[ChannelStoreReader.workspaceKey(for: r)] = r
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: dict) {
+            try? data.write(to: URL(fileURLWithPath: channelWorkspacesPath(channelId)))
         }
     }
 
     func ensureLoaded() {
         loadGlobalChannels()
-        loadRefs(for: workspacePath?())
+        loadProjectBindings(for: workspacePath?())
         refreshMode()
     }
 
     func workspaceChanged() {
-        loadRefs(for: workspacePath?())
+        loadProjectBindings(for: workspacePath?())
         if mode == .project { rebuildProjectRows() }
     }
 }
@@ -771,7 +806,7 @@ final class ChannelHeaderBlock: RoundedBlockView {
         topRow.translatesAutoresizingMaskIntoConstraints = false
 
         // line 2: sessions-count description
-        let infoLabel = NSTextField(labelWithString: L10n.tr("channel.sessions") + " (\(sessionCount))")
+        let infoLabel = NSTextField(labelWithString: enabled ? L10n.tr("channel.sessions") + " (\(sessionCount))" : L10n.tr("channel.notEnabledInProject"))
         infoLabel.font = .systemFont(ofSize: 11)
         infoLabel.textColor = .secondaryLabelColor
         infoLabel.translatesAutoresizingMaskIntoConstraints = false

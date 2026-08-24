@@ -9,6 +9,15 @@ const { saveChannelAccount, loadChannelAccount, clearChannelAccount, channelAcco
 const { createChannelManager, normalizeEvent } = require('../lib/channel');
 const { runWeixinChannel } = require('../lib/channel-runner');
 
+// Enable a channel for a project in the (temp) global store, as the panel's
+// "project switch" does (docs/channel-project-switch.md). Presence of the root
+// in <channelId>.workspaces.json = enabled for that workspace.
+function enableForProject(dshHome, channelId, projectRoot) {
+  const dir = path.join(dshHome, 'channels');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, channelId + '.workspaces.json'), JSON.stringify({ ws: projectRoot }), 'utf8');
+}
+
 test('channel-store: save/load/clear account file (file-first)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-store-'));
   const p = saveChannelAccount('wx-test', { botToken: 'bt', accountId: 'acc', userId: 'user', baseUrl: 'https://ilinkai.weixin.qq.com' }, dir);
@@ -91,6 +100,14 @@ async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceI
   const dshHome = dshHomeOpt || fs.mkdtempSync(path.join(os.tmpdir(), 'chan-run-'));
   saveChannelAccount('wx-q', { botToken: 'bt', baseUrl: 'https://x' }, dshHome);
   const projectRoot = storeProjectRoot || fs.mkdtempSync(path.join(os.tmpdir(), 'chan-pr-'));
+  {
+    const dir = path.join(dshHome, 'channels');
+    fs.mkdirSync(dir, { recursive: true });
+    const roots = [projectRoot, ...workspaces.map((w) => w.path)].filter(Boolean);
+    const reg = {};
+    roots.forEach((root, i) => { reg['ws' + (i + 1)] = root; });
+    fs.writeFileSync(path.join(dir, 'wx-q.workspaces.json'), JSON.stringify(reg), 'utf8');
+  }
 
   let sent = null;
   let first = true;
@@ -153,6 +170,7 @@ async function runChannelSequence(texts, { projectRoot = '/Users/loie/repo/alpha
   });
   const dshHome = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-seq-'));
   saveChannelAccount('wx-s', { botToken: 'bt', baseUrl: 'https://x' }, dshHome);
+  enableForProject(dshHome, 'wx-s', projectRoot);
   let sent = []; let first = true; let queued = [];
   const fetchImpl = async (url, opts) => {
     const u = String(url); const ok = (o) => ({ ok: true, text: async () => JSON.stringify(o) });
@@ -250,4 +268,86 @@ test('channel-store: runtime store restores lastWorkspace + active session + con
   assert.equal(b.getSession('conv-9').name, '会话九');
   assert.equal(b.getActiveSession().sessionId, 'sess-9');
   assert.equal(b.listSessions().length, 1);
+});
+
+// ---- project switch (docs/channel-project-switch.md §3.2) ----
+// Run one message through the runner with the project switch ON or OFF and
+// return what the adapter sent + how many session.create happened.
+async function runProjectGate({ projectRoot = '/Users/loie/repo/alpha', channelId = 'wx-g', enabled = true, text }) {
+  const http = require('node:http');
+  let seq = 0; const creates = [];
+  const wsSrv = await new Promise((resolve) => {
+    const srv = http.createServer((req, res) => {
+      let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+        let rpcId = ''; try { rpcId = JSON.parse(body).rpcId || ''; } catch { /* ignore */ }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        const url = String(req.url || '');
+        if (url.includes('workspace.list')) { res.end(JSON.stringify({ rpcId, result: { ok: true, value: { items: [{ workspaceId: 'w-1', path: projectRoot, title: 'Alpha', sessionIds: [] }], archivedSessionIds: [] } } })); }
+        else if (url.includes('session.create')) { creates.push(JSON.parse(body).payload); const sid = 'sess-' + (++seq); res.end(JSON.stringify({ rpcId, result: { ok: true, value: { sessionId: sid } } })); }
+        else if (url.includes('session.prompt')) { res.end(JSON.stringify({ rpcId, result: { ok: true, value: { accepted: true } } })); }
+        else if (url.includes('session.history')) { const p = JSON.parse(body).payload || {}; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { events: [{ event: { type: 'assistant/message', data: { message: { role: 'assistant', content: [{ type: 'text', text: '答-' + (p.sessionId || '') }] } } } }] } } })); }
+        else { res.end(JSON.stringify({ rpcId, result: { ok: true, value: null } })); }
+      });
+    });
+    srv.listen(0, '127.0.0.1', () => resolve({ srv, port: srv.address().port }));
+  });
+  const dshHome = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-gate-'));
+  saveChannelAccount(channelId, { botToken: 'bt', baseUrl: 'https://x' }, dshHome);
+  if (enabled) enableForProject(dshHome, channelId, projectRoot);
+  let sent = null; let first = true; let queued = [];
+  const fetchImpl = async (url, opts) => {
+    const u = String(url); const ok = (o) => ({ ok: true, text: async () => JSON.stringify(o) });
+    if (u.includes('getupdates')) { const b = JSON.parse(opts.body); if (first) { first = false; return ok({ ret: 0, get_updates_buf: b.get_updates_buf + 'a', msgs: [] }); } if (queued.length) { const t = queued.shift(); return ok({ ret: 0, get_updates_buf: b.get_updates_buf + 'x', msgs: [{ from_user_id: 'u1', context_token: 't', item_list: [{ type: 1, text_item: { text: t } }], create_time_ms: Date.now(), message_id: 'm' + Date.now() }] }); } return ok({ ret: 0, get_updates_buf: b.get_updates_buf, msgs: [] }); }
+    if (u.includes('sendmessage')) { const b = JSON.parse(opts.body); sent = b.msg && b.msg.item_list && b.msg.item_list[0] && b.msg.item_list[0].text_item.text; return ok({ ret: 0 }); } return ok({ ret: 0 });
+  };
+  const handle = await runWeixinChannel({ channelId, port: wsSrv.port, refs: [], dshHome, homeDir: '/Users/loie', projectRoot, transportOpts: { fetch: fetchImpl, baseUrl: 'https://x' }, intervalMs: 40 });
+  await handle.start();
+  queued.push(text);
+  const dl = Date.now() + 6000;
+  while (sent === null && Date.now() < dl) await new Promise((r) => setTimeout(r, 40));
+  await handle.stop(); wsSrv.srv.close();
+  return { sent, creates: creates.length };
+}
+
+test('project switch OFF: ordinary message replies 未启用该通道 and creates no session', async () => {
+  const r = await runProjectGate({ enabled: false, text: '你好' });
+  assert.match(r.sent || '', /未启用该通道/);
+  assert.equal(r.creates, 0, 'no session.create when the project has the channel off');
+});
+
+test('project switch: #w1 to a non-enabled workspace IS gated (returns prompt, no switch)', async () => {
+  // #wN must be blocked when the target workspace doesn't have the channel enabled.
+  const r = await runProjectGate({ enabled: false, text: '#w1' });
+  assert.match(r.sent || '', /未启用该通道/);
+  assert.equal(r.creates, 0, 'gated #w1 creates no session');
+});
+
+test('project switch ON: ordinary message routes and creates a session', async () => {
+  const r = await runProjectGate({ enabled: true, text: '你好' });
+  assert.ok(r.creates >= 1, 'session created when enabled; got creates=' + r.creates);
+});
+
+test('project switch: #sN is gated when the current workspace has the channel off', async () => {
+  const r = await runProjectGate({ enabled: false, text: '#s1' });
+  assert.match(r.sent || '', /未启用该通道/);
+});
+
+test('project switch: /sessions is gated when the current workspace has the channel off', async () => {
+  const r = await runProjectGate({ enabled: false, text: '/sessions' });
+  assert.match(r.sent || '', /未启用该通道/);
+});
+
+test('project switch: /switch is gated when the current workspace has the channel off', async () => {
+  const r = await runProjectGate({ enabled: false, text: '/switch 会话甲' });
+  assert.match(r.sent || '', /未启用该通道/);
+});
+
+test('project switch: /workspaces only lists enabled workspaces (none enabled -> empty)', async () => {
+  const r = await runProjectGate({ enabled: false, text: '/workspaces' });
+  assert.match(r.sent || '', /没有可用的 workspace|未启用/);
+});
+
+test('project switch: /workspaces lists a workspace only when it is enabled', async () => {
+  const r = await runProjectGate({ enabled: true, text: '/workspaces' });
+  assert.match(r.sent || '', /Alpha/);
 });

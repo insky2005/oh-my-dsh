@@ -83,6 +83,29 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
     return key;
   }
 
+  // ----- project enable (the "project switch"; docs/channel-project-switch.md) -----
+  // A project root present in this channel's workspaces.json = that workspace has
+  // the channel enabled. Membership is by VALUE (projectRoot), not by key.
+  function listEnabledWorkspaces() {
+    return Object.values(loadWorkspaces()).filter(Boolean);
+  }
+  function isWorkspaceEnabled(projectRoot) {
+    if (!projectRoot) return false;
+    return listEnabledWorkspaces().includes(projectRoot);
+  }
+  function setWorkspaceEnabled(projectRoot, enabled) {
+    if (!projectRoot) return false;
+    if (enabled) {
+      if (!isWorkspaceEnabled(projectRoot)) registerProjectRoot(projectRoot); // derives key + registers + saves
+    } else {
+      const reg = loadWorkspaces();
+      let changed = false;
+      for (const k of Object.keys(reg)) if (reg[k] === projectRoot) { delete reg[k]; changed = true; }
+      if (changed) saveWorkspaces(reg);
+    }
+    return true;
+  }
+
   function bucketFile(projectRoot, sessionId) {
     const key = registerProjectRoot(projectRoot);
     return path.join(dir, channelId + '.' + key + '.' + (sessionId || 'system') + '.messages.json');
@@ -172,6 +195,7 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
     getSession, setSession, listSessions,
     appendMessage, listMessages, loadMessages, loadMessagesFor,
     registerProjectRoot, workspaceKey,
+    listEnabledWorkspaces, isWorkspaceEnabled, setWorkspaceEnabled,
   };
 }
 

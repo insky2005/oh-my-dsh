@@ -91,3 +91,19 @@ test('sessions: workspace key cleaning + duplicate disambiguation', () => {
   // same root re-registers to its original key
   assert.equal(store.registerProjectRoot('/Users/loie/repo/alpha'), 'alpha');
 });
+
+test('sessions: project switch enable/disable persists to global workspaces.json', () => {
+  const store = createChannelSessions({ channelId: 'wx-en', dshHome: HOME });
+  const p = '/Users/loie/repo/alpha';
+  assert.equal(store.isWorkspaceEnabled(p), false, 'not enabled initially');
+  store.setWorkspaceEnabled(p, true);
+  assert.equal(store.isWorkspaceEnabled(p), true, 'enabled after toggle-on');
+  assert.ok(store.listEnabledWorkspaces().includes(p));
+  // reload from a fresh store reads the same global file
+  const store2 = createChannelSessions({ channelId: 'wx-en', dshHome: HOME });
+  assert.equal(store2.isWorkspaceEnabled(p), true, 'persisted across stores');
+  // disable removes it
+  store2.setWorkspaceEnabled(p, false);
+  assert.equal(store.isWorkspaceEnabled(p), false, 'disabled after toggle-off');
+  assert.ok(!store.listEnabledWorkspaces().includes(p));
+});

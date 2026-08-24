@@ -40,6 +40,10 @@ test('busy gate: in-flight generation blocks next message (请等待), answer pu
 
   const dshHome = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-busy-'));
   saveChannelAccount('wx-b', { botToken: 'bt', baseUrl: 'https://x' }, dshHome);
+  // project switch ON for /Users/loie/repo/alpha
+  const cw = path.join(dshHome, 'channels');
+  fs.mkdirSync(cw, { recursive: true });
+  fs.writeFileSync(path.join(cw, 'wx-b.workspaces.json'), JSON.stringify({ ws: '/Users/loie/repo/alpha' }), 'utf8');
   const sent = []; let first = true; const queued = [];
   const fetchImpl = async (url, opts) => {
     const u = String(url); const ok = (o) => ({ ok: true, text: async () => JSON.stringify(o) });
