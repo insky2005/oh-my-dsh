@@ -2117,37 +2117,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     (function () {
       if (window.__dshSessionOpener) return;
       window.__dshSessionOpener = true;
-      function dbg() {
-        try { console.log.apply(console, ["[dsh-opener]"].concat(Array.prototype.slice.call(arguments))); } catch (e) {}
-      }
-      dbg("injected at", new Date().toISOString());
       function expandGroups() {
-        var changed = false;
         var groups = Array.prototype.slice.call(document.querySelectorAll('[role="treeitem"]'));
         for (var g = 0; g < groups.length; g++) {
           var r = groups[g];
-          if (r.getAttribute("aria-expanded") === "false") { r.click(); changed = true; }
+          if (r.getAttribute("aria-expanded") === "false") r.click();
         }
-        dbg("expandGroups treeitems=", groups.length, "changed=", changed);
-        return changed;
       }
       function findAndClick(title) {
         var rows = Array.prototype.slice.call(document.querySelectorAll('[role="treeitem"]'));
-        dbg("findAndClick title=", JSON.stringify(title), "rows=", rows.length);
         for (var i = 0; i < rows.length; i++) {
           if (rows[i].className.indexOf("sessionRow") === -1) continue;
           var lines = (rows[i].innerText || "").split(String.fromCharCode(10)).map(function (s) { return s.trim(); });
-          if (lines.indexOf(title) !== -1) {
-            dbg("findAndClick HIT row i=", i, "text=", JSON.stringify(rows[i].innerText.slice(0,60)));
-            rows[i].click();
-            return true;
-          }
+          if (lines.indexOf(title) !== -1) { rows[i].click(); return true; }
         }
-        dbg("findAndClick MISS title=", JSON.stringify(title));
         return false;
       }
       function openById(sessionId, title, attempt) {
-        dbg("openById attempt=", attempt, "sessionId=", sessionId, "title=", JSON.stringify(title));
         if (findAndClick(title)) return { ok: true };
         if (attempt < 8) {
           expandGroups();
@@ -2155,29 +2141,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setTimeout(function () { resolve(openById(sessionId, title, attempt + 1)); }, 120);
           });
         }
-        dbg("openById FAILED row-not-found");
+        console.log("[dsh-opener] row-not-found", sessionId, title);
         return { ok: false, reason: "row-not-found" };
       }
       window.__dshOpenSession = function (sessionId) {
-        dbg("__dshOpenSession CALLED sessionId=", sessionId);
         if (!sessionId) return { ok: false, reason: "no-id" };
         return fetch("/api/session.list", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ type: "client-request", rpcId: "dsh-open-" + Date.now(), method: "session.list", payload: {} })
         }).then(function (res) { return res.json(); }).then(function (json) {
-          dbg("session.list ok=", !!(json && json.result && json.result.ok));
           var items = (json && json.result && json.result.ok && json.result.value && json.result.value.items) || [];
-          dbg("session.list items=", items.length, "looking for", sessionId);
           var target = null;
           for (var i = 0; i < items.length; i++) { if (items[i].sessionId === sessionId) { target = items[i]; break; } }
-          if (!target) { dbg("target NOT FOUND in session.list"); return { ok: false, reason: "no-session" }; }
+          if (!target) { console.log("[dsh-opener] no-session", sessionId); return { ok: false, reason: "no-session" }; }
           var title = (target.projections && target.projections.values && target.projections.values.title) || target.sessionId;
-          dbg("target found title=", JSON.stringify(title));
           return openById(sessionId, title, 0);
-        }).catch(function (err) { dbg("session.list ERROR", String(err)); return { ok: false, reason: String(err) }; });
+        }).catch(function (err) { console.log("[dsh-opener] error", String(err)); return { ok: false, reason: String(err) }; });
       };
-      dbg("__dshOpenSession defined");
     })()
     """
 
@@ -2399,23 +2380,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Panel → web session link: switch dsh web to the given session. Driven by
     /// the sessionOpenerScript bridge injected into the web view.
     private func openDSHSession(_ sessionId: String) {
-        guard let webView = webView else {
-            AppLog.shared.log("openDSHSession: no webView")
-            return
-        }
-        AppLog.shared.log("openDSHSession called sessionId=\(sessionId)")
+        guard let webView = webView else { return }
         // sessionId is an opaque token (uuid) — quote it for JS safely.
         let escaped = sessionId.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        let js = "console.log(\"[dsh-opener] bridge call\", \"\(escaped)\"); window.__dshOpenSession ? window.__dshOpenSession(\"\(escaped)\") : Promise.resolve({ok:false,reason:\"bridge-unavailable\"})"
+        let js = "window.__dshOpenSession ? window.__dshOpenSession(\"\(escaped)\") : Promise.resolve({ok:false,reason:\"bridge-unavailable\"})"
         webView.evaluateJavaScript(js) { result, error in
             if let err = error {
                 AppLog.shared.log("openDSHSession JS error: \(err.localizedDescription)")
                 return
             }
-            AppLog.shared.log("openDSHSession result: \(String(describing: result))")
-            if let dict = result as? [String: Any], let ok = dict["ok"] as? Bool {
-                AppLog.shared.log("openDSHSession \(sessionId): ok=\(ok) reason=\(dict["reason"] ?? "?" )")
+            if let dict = result as? [String: Any], let ok = dict["ok"] as? Bool, !ok {
+                AppLog.shared.log("openDSHSession \(sessionId): \(dict["reason"] ?? "?" )")
             }
         }
     }

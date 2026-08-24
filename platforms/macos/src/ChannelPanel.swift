@@ -515,11 +515,11 @@ final class ChannelPanelController: NSObject {
     }
 
     private func toggleSession(_ sessionId: String) {
-        // Clicking a session row expands it and (via onOpen) locates it in dsh
-        // web; the web→panel follow then collapses the others through
-        // setActiveSession, keeping collapsedSessionIds the single expansion
-        // state. Expanding (not toggling) here avoids fighting the follow.
-        collapsedSessionIds.remove(sessionId)
+        // Clicking a session row: collapse every other session, expand this one
+        // (exclusive expansion), then locate it in dsh web via onOpen. Doing the
+        // collapse here (not relying on the web follow) gives a deterministic
+        // "one expanded at a time" view.
+        collapsedSessionIds = allSessionIds().subtracting([sessionId])
         rebuildProjectRows()
     }
 
@@ -699,6 +699,16 @@ final class ChannelPanelController: NSObject {
         if mode == .project { rebuildProjectRows() }
     }
 
+    /// Every session id across the current project's enabled channels — used to
+    /// "expand one, collapse the rest" for both manual clicks and web follows.
+    private func allSessionIds() -> Set<String> {
+        var all: Set<String> = []
+        for ch in channels {
+            for s in loadSessions(for: ch.id) { all.insert(s.sessionId) }
+        }
+        return all
+    }
+
     /// Web → panel session link: follow the session the user is viewing in dsh
     /// web. Writes the follow target directly into collapsedSessionIds so the
     /// panel uses ONE expansion state (collapsedSessionIds) — the active session
@@ -706,12 +716,7 @@ final class ChannelPanelController: NSObject {
     /// nil) collapses every row. This keeps manual toggles and web follows from
     /// fighting each other.
     func setActiveSession(_ sessionId: String?) {
-        // Collect every session id in the current project (across enabled
-        // channels) so a follow can expand exactly one row and collapse the rest.
-        var all: Set<String> = []
-        for ch in channels {
-            for s in loadSessions(for: ch.id) { all.insert(s.sessionId) }
-        }
+        let all = allSessionIds()
         if let sid = sessionId, all.contains(sid) {
             collapsedSessionIds = all.subtracting([sid])
         } else {
