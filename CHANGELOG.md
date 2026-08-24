@@ -7,6 +7,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
+- **文件面板打开文件实时刷新**：已打开的页签在磁盘内容变化后自动刷新——代理（或其他进程）改写打开的文件时，可编辑页签经 CodeEditorView.reloadFromDisk() 保留滚动位置、且不覆盖未保存的本地编辑（dirty 页签跳过），只读文本/图片/PDF/元数据页签直接重渲染；与 Wiki 面板已有的 2s 轮询刷新保持一致，打开即所见最新内容。
 - **macOS 源码清单单一事实来源**：新增 `platforms/macos/swift-sources.sh`（glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，排除独立工具 `MakeIcon.swift`）；`build-app.sh` / `scripts/local-ci.sh` / `ci.yml` 三方共用，新增 Swift 文件不再需要逐个登记，彻底消除「新增文件遗漏 local-ci.sh」的问题。
 - **内置 Skill 全局化 + 重命名**：三个面板配套 Skill 改为 **App 启动时安装到全局 `$DSH_HOME/skills/`**（缺失即装、App 托管下内容不一致自动覆盖更新、用户改过不覆盖），并重命名为 `web-dev-tools`（浏览器面板）/ `repo-knowledge`（Repo Wiki 面板）/ `issue-resolve`（IssueRunner 面板）；启动时自动把旧名 `shell-browser`/`repo-wiki`/`issue-fix` 迁移到新名；移除面板「按仓库安装」逻辑；新增 `tests/skills/` 无头单测（含内嵌 SKILL.md 与仓库副本字节一致断言）。
   - **frontmatter 用合法键**：`modelInvocable`/`userInvocable`（驼峰）是 dsh 弃用键会导致 skill 被忽略，已改为省略（默认 model 可调用）+ `user-invocable: false`（kebab）表达「仅 model 可调用」；`web-dev-tools` 为 model+user 双可调用。

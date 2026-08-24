@@ -82,6 +82,9 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         var isDirty: Bool = false
         /// The active editor view when the tab is an editable text file.
         var editor: CodeEditorView?
+        /// File mtime captured the last time this tab's content was loaded from
+        /// disk (used to detect on-disk changes and refresh open tabs).
+        var fileMtime: Date?
     }
 
     private struct DirRow {
@@ -637,6 +640,32 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
             AppLog.shared.log("preview tree refresh (filesystem changed)")
             refreshTree()
         }
+        // Keep already-open tabs in sync with the filesystem too: when the
+        // agent (or anything else) rewrites a file that's open, refresh the
+        // tab's content — unless it has unsaved local edits.
+        refreshOpenTabsIfChanged()
+    }
+
+    /// Reload the content of every open tab whose file changed on disk.
+    /// Editable tabs reuse their live editor (so unsaved edits survive) and are
+    /// skipped while dirty; read-only tabs are re-rendered when visible.
+    private func refreshOpenTabsIfChanged() {
+        for (idx, tab) in tabs.enumerated() {
+            let m = Self.mtime(of: tab.path)
+            guard let m = m, let prev = tab.fileMtime, m != prev else { continue }
+            tabs[idx].fileMtime = m   // absorb the change so we don't redo it
+            if let editor = tab.editor {
+                if tab.isDirty {
+                    AppLog.shared.log("preview tab changed on disk; kept unsaved edits: (tab.path)")
+                    continue
+                }
+                AppLog.shared.log("preview reload editor (disk changed): (tab.path)")
+                editor.reloadFromDisk()
+            } else if tab.id == selectedId {
+                AppLog.shared.log("preview reload tab (disk changed): (tab.path)")
+                render(tab.path)
+            }
+        }
     }
 
     /// Reload the tree: re-read every visible directory's children, keep the
@@ -792,6 +821,11 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     private func render(_ path: String) {
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
+        // Record the file's current mtime so the watcher can tell this render
+        // apart from a later on-disk modification (refresh of open tabs).
+        if let id = selectedId, let idx = tabs.firstIndex(where: { $0.id == id }) {
+            tabs[idx].fileMtime = Self.mtime(of: path)
+        }
         // Re-selecting an already-open editable tab reuses its live editor so
         // in-memory unsaved edits survive tab switches (same path only).
         if let id = selectedId, let idx = tabs.firstIndex(where: { $0.id == id }),
