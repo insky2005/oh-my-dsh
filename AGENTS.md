@@ -37,7 +37,8 @@
 - **`main` 只接受合并（PR），只打主版本 tag** `vX.Y.0`；不直接 `git push origin main`；
 - 分支推送后开 PR 合并（CI 全绿 + review）；已发布版本的修复同步回 main 也走 PR；
 - 提交用 conventional commits（`feat(…): …` / `fix(…): …` / `docs(…): …`）；
-- 提交前 `git status` 确认只含本次改动，**不顺手提交无关文件**（其他会话/代理的在途改动不要碰）。
+- 提交前 `git status` 确认只含本次改动，**不顺手提交无关文件**（其他会话/代理的在途改动不要碰）；
+- **更新 README 时，直接在「当前分支」修改并提交，不切分支、不开 PR**——README 为仓库说明文档，随当前工作一起落地（特例：仅当 README 需配合独立发布时，可随该发布分支）。
 
 ## 发布流程（见 docs/release-process.md）
 
