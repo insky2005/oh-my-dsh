@@ -306,7 +306,7 @@ enum L10n {
         "channel.sessions": ("会话", "Sessions"),
         "channel.noSessions": ("暂无会话", "No sessions yet"),
         "channel.noMessages": ("暂无消息", "No messages yet"),
-        "channel.notEnabledInProject": ("未在项目启用", "Not enabled in this project"),
+        "channel.notEnabledInProject": ("当前项目已禁用", "Disabled"),
         "channel.done": ("完成", "Done"),
         "bar.browser": ("浏览器", "Browser"),
         "browser.title": ("浏览器", "Browser"),
