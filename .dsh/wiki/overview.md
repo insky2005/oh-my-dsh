@@ -74,7 +74,7 @@ pic/                 QA 调试截图 — git 忽略
 ```
 
 - 编译命令：`swiftc -O -swift-version 5 -framework AppKit -framework WebKit -framework PDFKit`，源文件清单显式列出（`main/PreviewPanel/TerminalPanel/WikiPanel/IssueRunnerPanel/BrowserPanel/BrowserAPI/BrowserCDP`）+ CEF 产物（`build-cef.sh` 产出 wrapper/shim/五 helper，由内向外签名）；
-- 内置运行时构建期现做：下载 Node tarball（默认国内镜像 `npmmirror.com/mirrors/node`，校验 SHA-256），用其自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.1.0-rc.7`（默认 `DSH_PACKAGE_SPEC`，国内源失败自动回退 npmjs.org）；
+- 内置运行时构建期现做：下载 Node tarball（默认国内镜像 `npmmirror.com/mirrors/node`，校验 SHA-256），用其自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.1.1-rc.2`（默认 `DSH_PACKAGE_SPEC`，国内源失败自动回退 npmjs.org）；
 - 缓存：`(Node 版本, dsh 版本)` 相同则复用 `.cache/runtime`，重建只需几十秒；网络不可用时用缓存 tarball 推导版本继续。
 
 构建变量（均可用环境变量覆盖）：`DSH_NODE_VERSION`、`DSH_PACKAGE_SPEC`、`DSH_NODE_MIRROR`、`DSH_NPM_REGISTRY`、`DSH_ARCH`、`DSH_DEV_BUILD`（=1 打开发版：Info.plist 写 `DSHDevBuild=1`、独立 CEF profile、跳过单实例退出，可与正式版并存测试，详见 [build-scripts](modules/build-scripts.md) 与 [main](modules/main.md)）。
