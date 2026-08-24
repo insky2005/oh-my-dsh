@@ -366,6 +366,34 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
         gutterView.needsDisplay = true
     }
 
+    // MARK: - Reload
+
+    /// Reload the buffer from disk, replacing the current content. The caller
+    /// guarantees the tab has no unsaved edits (otherwise the in-memory edits
+    /// would be silently discarded). Scroll position is preserved when the new
+    /// content is still tall enough to reach it, otherwise it clamps to top.
+    /// Keeps the buffer non-dirty: the replace happens with dirty-tracking
+    /// suppressed, matching the initial load.
+    func reloadFromDisk() {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let newText = String(data: data, encoding: .utf8) else { return }
+        let offset = codeScroll.contentView.bounds.origin
+        suppressDirty = true
+        codeTextView.string = newText
+        suppressDirty = false
+        if let cas = codeTextView.textStorage as? CodeAttributedString {
+            cas.language = language   // re-highlight on a background thread
+        }
+        updateGutterWidthAndRedraw()
+        if let doc = codeScroll.documentView, doc.frame.height > offset.y {
+            codeScroll.contentView.scroll(to: offset)
+            codeScroll.reflectScrolledClipView(codeScroll.contentView)
+        } else {
+            codeScroll.contentView.scroll(to: NSPoint(x: 0, y: 0))
+            codeScroll.reflectScrolledClipView(codeScroll.contentView)
+        }
+    }
+
     // MARK: - Save
 
     /// Write the current buffer back to the file atomically. Returns false and
