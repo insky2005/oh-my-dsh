@@ -2129,8 +2129,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       function findAndClick(title) {
         var rows = Array.prototype.slice.call(document.querySelectorAll('[role="treeitem"]'));
         for (var i = 0; i < rows.length; i++) {
-          var firstLine = (rows[i].innerText || "").split("\n")[0].trim();
-          if (rows[i].className.indexOf("sessionRow") !== -1 && firstLine === title) {
+          if (rows[i].className.indexOf("sessionRow") === -1) continue;
+          // The row text is "状态\ntitle\n相对时间", so match the title as one
+          // of its lines rather than requiring it on the first line.
+          var lines = (rows[i].innerText || "").split("\n").map(function (s) { return s.trim(); });
+          if (lines.indexOf(title) !== -1) {
             rows[i].click();
             return true;
           }

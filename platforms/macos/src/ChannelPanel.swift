@@ -522,6 +522,9 @@ final class ChannelPanelController: NSObject {
     }
 
     private func toggleSession(_ sessionId: String) {
+        // A manual click on a session row exits the web→panel follow mode so the
+        // auto-expand of activeSessionId no longer overrides the user's toggle.
+        activeSessionId = nil
         if collapsedSessionIds.contains(sessionId) {
             collapsedSessionIds.remove(sessionId)
         } else {
