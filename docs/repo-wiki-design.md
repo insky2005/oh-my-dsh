@@ -55,7 +55,7 @@
 
 ### 1.4 与 oh-my-dsh / dsh 的契合点（已核实）
 
-**dsh 运行时（`@deepseek-ai/dsh@0.1.0-rc.7`）侧已具备的能力：**
+**dsh 运行时（`@deepseek-ai/dsh@0.1.1-rc.2`）侧已具备的能力：**
 
 | 能力 | 出处（dsh 包） | 用途 |
 |---|---|---|
@@ -600,7 +600,7 @@ user-invocable: false
 ---
 
 ## 附：相关资源
-- dsh 包（`@deepseek-ai/dsh@0.1.0-rc.7` 依赖树内）：`dsh-agent-instructions`（AGENTS.md 加载）、`dsh-skill` / `dsh-skill-filesystem`（skill 注册与 5 级根）、`dsh-host-apiproxy`（`sessions.schema.js`：session.create/prompt/list 请求/响应 schema）、`dsh-session-query-sqlite`（FTS5 会话检索）、`dsh-workspace`、`dsh-settings-file`
+- dsh 包（`@deepseek-ai/dsh@0.1.1-rc.2` 依赖树内）：`dsh-agent-instructions`（AGENTS.md 加载）、`dsh-skill` / `dsh-skill-filesystem`（skill 注册与 5 级根）、`dsh-host-apiproxy`（`sessions.schema.js`：session.create/prompt/list 请求/响应 schema）、`dsh-session-query-sqlite`（FTS5 会话检索）、`dsh-workspace`、`dsh-settings-file`
 - 壳层：`src/main.swift`（`RightPanel` 732 行、`DSHSessionRPC` 653-707 行）、`src/PreviewPanel.swift`（`TreeNode` 18-33 行、树 952-1030 行、markdown 纯文本说明 1266-1272 行）、`src/TerminalPanel.swift`（`serverReady` 门控）、`build-app.sh`（编译清单约 196 行）
 - 行业参考：[Cursor @Docs](https://cursor.com/help/customization/context.md) / [Cursor Docs 中文](https://cursor.zone/docs/context/docs.html)、[Roo/Claude Memory Bank](https://killer-skills.com/fr/skills/Wellux/claude-code-deprecated/memory-bank)、[skill-memory-bank](https://www.awesomeskills.dev/zh-CN/skill/fockus-skill-memory-bank)、[LangChain OpenWiki Brains](https://www.langchain.com/blog/introducing-openwiki-brains-general-purpose-wiki-memory-for-agents)、[codealmanac](https://www.npmjs.com/package/codealmanac)、[codebase-memory](https://www.npmjs.com/package/codebase-memory)、[memwiki](https://www.npmjs.com/package/memwiki)、[跨工具上下文讨论](https://forum.cursor.com/t/how-are-people-handling-context-across-different-ai-coding-tools/159891/5)
 - QMD：[@tobilu/qmd（npm）](https://www.npmjs.com/package/@tobilu/qmd)、[Model Context Protocol](https://modelcontextprotocol.io/)、本机 skill `qmd`（`/Users/loie/.agents/skills/qmd`，含检索工作流与 `references/mcp-setup.md`）

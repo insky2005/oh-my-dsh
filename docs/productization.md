@@ -229,7 +229,7 @@
 ### 4.3 版本与兼容性策略
 
 - **App 版本（semver）与 dsh 版本解耦**；`build-app.sh` 的 `VERSION/BUILD` 改为单一来源（建议读 git tag，待实施定夺）
-- **dsh 依赖锁定**：`DSH_PACKAGE_SPEC` 固定 RC 版本（当前 `@deepseek-ai/dsh@0.1.0-rc.7`），升级走显式发布流程（→ §8.3），不做 daily 追新
+- **dsh 依赖锁定**：`DSH_PACKAGE_SPEC` 固定 RC 版本（当前 `@deepseek-ai/dsh@0.1.1-rc.2`），升级走显式发布流程（→ §8.3），不做 daily 追新
 - **支持策略**：维护最近 2 个大版本；维护「App 版本 × dsh 版本」兼容矩阵（→ §11.3）
 
 ### 4.4 开源治理
@@ -307,7 +307,7 @@ oh-my-dsh/
 |---|---|---|
 | App（壳层） | git tag `vX.Y.Z`（semver） | 整包发布；F 阶段起 Sparkle 自动升级 |
 | 运行时（Node） | 构建期锁定（`DSH_NODE_VERSION`） | 随 App 发布 |
-| dsh 上游 | `DSH_PACKAGE_SPEC` 固定（当前 `0.1.0-rc.7`） | npm 原地升级（现有机制，独立于 App） |
+| dsh 上游 | `DSH_PACKAGE_SPEC` 固定（当前 `0.1.1-rc.2`） | npm 原地升级（现有机制，独立于 App） |
 
 - **semver 语义**：MAJOR = 破坏性变更/跨平台里程碑（如 v2.0.0）；MINOR = 新功能；PATCH = 缺陷修复
 
@@ -606,7 +606,7 @@ WebKit（macOS/Linux）与 Chromium（WebView2）对 dsh web 的渲染差异、P
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
-| 上游 dsh 仍为 RC（`0.1.0-rc.7`） | API/行为可能变化 | 版本锁定 + 兼容矩阵 + nightly 冒烟；紧跟上游 Release |
+| 上游 dsh 仍为 RC（`0.1.1-rc.2`） | API/行为可能变化 | 版本锁定 + 兼容矩阵 + nightly 冒烟；紧跟上游 Release |
 | npm registry 可用性 | 安装/升级失败 | 国内镜像 + 官方回退（已具备）；缓存 |
 | Apple 生态成本与流程（F 阶段） | $99/年 + 公证摩擦 | 暂缓期无此风险；进入 F 阶段时评估并 CI 自动化 |
 | 三平台原生维护成本 | 人力翻倍 | 共享核心（§9.5）最大化复用；P2→P3 错峰 |
@@ -642,7 +642,7 @@ WebKit（macOS/Linux）与 Chromium（WebView2）对 dsh web 的渲染差异、P
 |---|---|---|
 | App 版本 | 1.7.1 / build 63 | `build-app.sh` VERSION/BUILD |
 | 源码规模 | `src/` 5 个 Swift 文件约 7.6k 行（main 2236 / TerminalPanel 1875 / WikiPanel 1928 / PreviewPanel 1445 / MakeIcon 104） | `wc -l` |
-| 内嵌运行时 | Node v24.19.0 + npm + dsh 0.1.0-rc.7 | 运行时实测 |
+| 内嵌运行时 | Node v24.19.0 + npm + dsh 0.1.1-rc.2 | 运行时实测 |
 | 上游 | deepseek-ai/deepseek-harness，MIT，npm 发布，RC 阶段 | `@deepseek-ai/dsh` package.json |
 | 构建 | `build-app.sh`：下载 Node（SHA-256 校验）+ npm install dsh，国内镜像默认，`.cache/` 缓存 | `build-app.sh` |
 | 打包 | `make-pkg.sh`：pkgbuild `.pkg` + hdiutil `.dmg`，preinstall 清旧版 | `make-pkg.sh` |

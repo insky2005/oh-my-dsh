@@ -18,7 +18,7 @@ manual: false
 
 - `resolve_node_version`：`DSH_NODE_VERSION` 未设时查镜像 `index.json` 用 python3 选最新 LTS；网络不可用则从 `.cache/node` 缓存 tarball 推导；
 - `download_node`：下载 darwin-arm64 tarball（镜像失败换官方），用 `SHASUMS256.txt` + `shasum -a 256 -c` 校验；
-- `install_dsh` / `build_runtime`：用下载的 Node 自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.1.0-rc.7`（默认 `DSH_PACKAGE_SPEC`），主 registry 失败自动重试官方源；`(Node版本|spec|arch)` 写入 `.runtime-info`，相同组合直接复用 `.cache/runtime/<arch>`；
+- `install_dsh` / `build_runtime`：用下载的 Node 自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.1.1-rc.2`（默认 `DSH_PACKAGE_SPEC`），主 registry 失败自动重试官方源；`(Node版本|spec|arch)` 写入 `.runtime-info`，相同组合直接复用 `.cache/runtime/<arch>`；
 - **`--prefetch`**：只建 runtime 到 `.cache/runtime`，不产出 App（供离线全量构建）；
 - **6 步构建**：① 准备目录（`rm -rf .build dist/oh-my-dsh.app`）② `MakeIcon.swift` 编译渲染 iconset → `iconutil -c icns` → 拷入 Resources ③ `swiftc -O -swift-version 5 -framework AppKit/WebKit/PDFKit` 编译源清单经 `swift_sources`（`platforms/macos/swift-sources.sh` **单一事实来源**：glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，排除独立工具 `MakeIcon.swift`），`build-app.sh` / `scripts/local-ci.sh` / `ci.yml` 三方共用、**新增文件无需登记**（根治此前 `feature/channel` 追加 `ChannelPanel.swift` 后曾漏登 local-ci 导致编译检查失败、3e69783 修复的问题）④ `build_runtime` + `ditto` 嵌入 `Contents/Resources/runtime/` ④.5 **Highlightr 资源嵌入**：`cp` 4 个 highlight.js 资源文件（`highlight.min.js`/`pojoaque.min.css`/`xcode.min.css`/`atom-one-dark.min.css`）到 `$APP/Contents/Resources/` **根**（Highlightr 用 `Bundle.main` 无子目录加载，见 [file-panel](file-panel.md)；缺失给 WARNING 不影响构建）⑤ 写 `Info.plist`（`LSMinimumSystemVersion` 13.0、`CFBundleLocalizations` zh/en、ATS 允许 127.0.0.1/localhost 明文、`NSHighResolutionCapable`）⑥ `codesign --force --deep --sign -`（ad-hoc）。
 
@@ -39,7 +39,7 @@ manual: false
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `DSH_NODE_VERSION` | 自动检测最新 LTS | 指定 Node 版本（如 v22.23.2） |
-| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.0-rc.7` | npm install 的包说明 |
+| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.1-rc.2` | npm install 的包说明 |
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh） |
 | `DSH_DEV_BUILD` | `0` | =1 打开发版：Info.plist 写 `DSHDevBuild=1`（运行时 `isDevBuild`：独立 CEF profile `~/.dsh/browser-dev` + 跳过单实例退出） |
