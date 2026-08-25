@@ -511,7 +511,17 @@ final class DSHUpdater {
                           "--no-audit", "--no-fund", "--registry", registry, target]
         var env = ProcessInfo.processInfo.environment
         // OS environment passed through untouched (no PATH rewrite) — npm runs
-        // via npm-cli.js's absolute path and finds its toolchain on the OS PATH.
+        // via npm-cli.js's absolute path. But npm lifecycle scripts (e.g. the
+        // @deepseek-ai/dsh-subprocess-local postinstall that runs `node ensure-spawn-helper.mjs`)
+        // are spawned through the shell and look up `node` on PATH, which a
+        // Finder/GUI-launched app may not have. Prepend the bundled node's dir so
+        // those scripts find the very node running npm.
+        let nodeBinDir = (nodePath as NSString).deletingLastPathComponent
+        if let existing = env["PATH"], !existing.isEmpty {
+            env["PATH"] = nodeBinDir + ":" + existing
+        } else {
+            env["PATH"] = nodeBinDir
+        }
         env["npm_config_cache"] = cacheDir
         env["npm_config_update_notifier"] = "false"
         proc.environment = env
