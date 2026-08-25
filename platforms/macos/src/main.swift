@@ -2300,19 +2300,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     /// After a successful dsh upgrade the running dsh web still serves the old
-    /// code loaded into memory, so restart the server we spawned and reload the
-    /// WebView for the newly installed dsh to take effect. A reused external
-    /// server (spawned == false) can't be restarted — the new dsh applies on
-    /// next app launch, so we only refresh the view as a best effort.
+    /// code loaded into memory, so stop the server we spawned and bring dsh web
+    /// up again for the newly installed dsh to take effect. A reused external
+    /// server can't be restarted — the new dsh applies on next app launch. Also
+    /// covers the case where startup previously failed (nothing serving): we
+    /// then just start the server with the new code.
     private func restartServerAfterUpgrade() {
-        guard server.spawned else {
-            DispatchQueue.main.async { self.webView?.reload() }
-            return
+        // Stop a server this app spawned — it still runs the pre-upgrade code
+        // in memory. If startup previously failed (nothing serving) or the
+        // server was reused from outside, there is nothing of ours to stop.
+        if server.spawned {
+            server.stop()
         }
-        server.stop()
-        // Reuse startServer(): it re-resolves runtime facts, spawns a fresh
-        // dsh web and reloads the WebView on the main thread (re-running the
-        // panel server-ready wiring too).
+        // startServer() either reuses an already-serving external server (which
+        // we cannot restart — the new dsh applies on next app launch) or spawns
+        // a fresh dsh web with the newly installed code, then reloads the
+        // WebView on the main thread (re-running the panel server-ready wiring).
         DispatchQueue.main.async {
             self.startServer()
         }
