@@ -1,7 +1,7 @@
 ---
 title: 模块：main.swift（壳层核心）
 tags: [module, main, server, appdelegate, menu]
-updated: 2026-08-24T00:00:00Z
+updated: 2026-08-25T08:22:22Z
 sources: [platforms/macos/src/main.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, docs/builtin-skills-design.md, docs/channel-status.md, docs/channel-project-switch.md]
 manual: false
 ---
@@ -20,7 +20,7 @@ manual: false
 | `VersionKit` | 语义化版本比较（支持 `x.y.z-rc.N`，rc 版本小于正式版） |
 | `RegistryConfig` | 运行期 registry：`DSH_REGISTRY` > `dshRegistry` > 默认 `https://registry.npmmirror.com` |
 | `SkillInstaller` | 内置 Skill 全局安装（见 [skill-installer](skill-installer.md)）：`installBuiltinSkills()` 启动时把三内置 skill 装到 `$DSH_HOME/skills/` + 旧名迁移 + 受管更新；Foundation-only |
-| `DSHUpdater` | 内置 dsh 升级：`init` 要求 dshBin 路径含 `/Contents/Resources/runtime/`（只升内置）；`currentVersion`（读 package.json）、`latestVersion`（查 registry dist-tags）、`upgrade`（node npm-cli.js install） |
+| `DSHUpdater` | 内置 dsh 升级：`init` 要求 dshBin 路径含 `/Contents/Resources/runtime/`（只升内置）；`currentVersion`（读 package.json）、`latestVersion`（查 registry dist-tags）、`upgrade`（node npm-cli.js install；PR #36 起给升级子进程前置注入内置 node 目录到 `PATH`——npm 依赖 lifecycle 脚本（如 `@deepseek-ai/dsh-subprocess-local` 的 postinstall `node ensure-spawn-helper.mjs`）经 shell 按 `PATH` 找 `node`，GUI 启动的 App 继承 launchd 精简 PATH 通常无 node，此前报 `sh: node: command not found` 升级中断） |
 | `ServerManager` | 服务生命周期：`resolveNode`（`DSH_NODE` 显式覆盖 > 系统 node：PATH→nvm current→nvm default→nvm 最新→Homebrew 首个**通过版本门槛**者 > 内置 node 兜底）、`loginShellPath`（`/bin/zsh -ilc` 读一次登录 shell PATH，8s 超时兜底、结果缓存，失败保留继承值，赋给 dsh web 子进程）、`resolveDSHBin`（`DSH_CLI` > 内置 > npx 缓存/nvm/PATH/homebrew，最新 mtime 胜出）、`start`（复用 3080 → 或自拉起 + 90s 轮询就绪，含 1s 沉降校验防引导页假就绪；系统 node 启动失败回退内置 node 重试一次，`DSH_NODE` 显式指定不回退）、`stop`（SIGTERM → 3s → SIGKILL，只停自拉起的） |
 | `ProjectDirectory` | 共享"活动项目目录"（`static var current`，standardized 路径去重）；由 `dshSession` 消息维护，供预览树/终端 cwd/wiki 根/任务面板工作区消费 |
 | `DSHSessionRPC` | `fetchActiveSessionCwd`（POST /api/session.list，client-request 信封）+ `fetchSessionCwd(port:sessionId:)`（按会话 id 查 cwd）+ `resolveProjectDirectory`（优先返回 `ProjectDirectory.current`，否则后台实时查询并缓存） |
@@ -38,7 +38,7 @@ manual: false
 - **调试钩子**：`DSH_PREVIEW_TEST_PATH` / `DSH_TERMINAL_TEST` / `DSH_WIKI_TEST` / `DSH_BROWSER_TEST`（启动即开对应面板）；`DSH_UI_DEBUG=1` 或 `--ui-debug`（统一 `uiDebug`：打开浏览器面板 + 面板层级 dump（浏览器 maxDepth=8）+ 截图 `panel-*-debug.png`）/ `DSH_PREVIEW_DEBUG`（fetch 拦截探针 + 视口/侧栏状态上报）/ `DSH_SESSION_DEBUG`（会话跟踪器 dump `__dshSessionSeen`）；
 - **浏览器 QA 遮挡诊断**：`dumpBrowserHierarchyJSON()`（`POST /api/browser/hierarchy` 拉取）——`NSApp.windows` 全清单 + split panes + 面板层级 JSON（class/frame/layer 属性 + superlayer 链）+ 面板/内容区中心 `hitTest` + `writeScreenshot`（`cacheDisplay` → `/tmp/window-shot.png`、`/tmp/panel-browser-shot.png`）；`hierarchyJSON` 递归 ≤8 层；`dlog` 同写 AppLog 与 stdout；
 - **CEF 初始化**：`startBrowserAPI` 附近——渲染模式按 UserDefaults `browserRenderMode`（`defaults write com.ohmydsh.app browserRenderMode -string windowed` 切窗口化，默认 OSR 离屏）；CEF profile 根 `dshHome + "/browser"`（开发版 `isDevBuild` 用独立 `~/.dsh/browser-dev`，可与正式版并存不争抢）；`use-mock-keychain` + 软件渲染兜底开关；`cleanStaleCEFSingleton` 清陈旧单例锁；退出 `applicationWillTerminate` → 面板 `shutdownAll()` + `browserAPIServer.stop()` + 停消息泵 + `CEFShim.shutdown()`（不调 `CefShutdown`，见 [browser-panel](browser-panel.md)）；
-- **升级触发**：`runAutoUpgradeIfNeeded`（24h 节流、静默失败）与手动 `upgradeDSH`（NSAlert 展示结果）。
+- **升级触发**：`runAutoUpgradeIfNeeded`（24h 节流、静默失败）与手动 `upgradeDSH`（NSAlert 展示结果）；自动/手动升级成功后（PR #36）调用 `restartServerAfterUpgrade()`——若服务是 App 自拉起的先 `server.stop()`（运行中的旧代码还在内存），再 `startServer()` 重拉新代码并重载 WebView；复用的外部 3080 服务无法重启（新 dsh 下次启动生效）；覆盖首次启动失败（无服务在跑）场景——直接以新代码拉起。
 
 ## 与其他模块的关系
 
