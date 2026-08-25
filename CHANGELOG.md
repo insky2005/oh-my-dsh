@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
+## [1.13.1] - 2026-08-25
+
+### Fixed
+
+- **自动升级 dsh 失败（exit 127）**：App 内自动升级用打包 node 的绝对路径启动 npm，但 npm 执行依赖包 lifecycle 脚本（如 `@deepseek-ai/dsh-subprocess-local` 的 postinstall `node ensure-spawn-helper.mjs`）时通过 shell 按 `PATH` 找 `node`；GUI 启动的 App 继承 launchd 的精简 PATH，通常没有 `node`，报 `sh: node: command not found`、升级中断。修复为给升级子进程前置注入打包 node 所在目录到 `PATH`（与 `build-app.sh` 的 `export PATH=\"$dist/bin:$PATH\"` 一致），lifecycle 脚本即可解析到同一个 node。
+
 ## [1.13.0] - 2026-08-24
 
 ### Added
