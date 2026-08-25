@@ -2299,6 +2299,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    /// After a successful dsh upgrade the running dsh web still serves the old
+    /// code loaded into memory, so restart the server we spawned and reload the
+    /// WebView for the newly installed dsh to take effect. A reused external
+    /// server (spawned == false) can't be restarted — the new dsh applies on
+    /// next app launch, so we only refresh the view as a best effort.
+    private func restartServerAfterUpgrade() {
+        guard server.spawned else {
+            DispatchQueue.main.async { self.webView?.reload() }
+            return
+        }
+        server.stop()
+        // Reuse startServer(): it re-resolves runtime facts, spawns a fresh
+        // dsh web and reloads the WebView on the main thread (re-running the
+        // panel server-ready wiring too).
+        DispatchQueue.main.async {
+            self.startServer()
+        }
+    }
+
     @objc private func retryTapped() {
         startServer()
     }
@@ -2342,6 +2361,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let new = try updater.upgrade(registry: RegistryConfig.current)
             server.refreshFacts()
             AppLog.shared.log("auto-upgrade: done, now \(new)")
+            // Restart the running server + reload the WebView so the upgraded
+            // dsh actually takes effect (otherwise the old code stays in memory).
+            restartServerAfterUpgrade()
         } catch {
             AppLog.shared.log("auto-upgrade: failed: \(error.localizedDescription)")
         }
@@ -2435,6 +2457,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                         self.server.refreshFacts()
                         message = L10n.tr("alert.upgraded", current, new)
                         AppLog.shared.log("manual upgrade: \(current) -> \(new)")
+                        // Restart the running server + reload the WebView so the
+                        // upgraded dsh takes effect.
+                        self.restartServerAfterUpgrade()
                     } catch {
                         ok = false
                         message = error.localizedDescription
