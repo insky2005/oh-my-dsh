@@ -854,49 +854,52 @@ final class ProjectPanelController: NSObject {
         appendLog(L10n.tr("project.logBegin", tpl.name, target))
 
         let folderName = (target as NSString).lastPathComponent
+        // 主线程捕获，避免后台队列访问 UI 控件（data race）
+        let variables = collectedVariables()
+        let shouldRegister = registerWorkspaceCheckbox.state == .on
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            var warnings: [String] = []
-            _ = warnings
+            var tailLogs: [String] = []
             let result = TemplateExecutor.execute(
                 plan: plan, template: tpl, targetDir: target,
-                variables: self.collectedVariables(),
+                variables: variables,
                 cancelled: { self.cancelledFlag.get() },
                 logLine: { [weak self] line in
                     DispatchQueue.main.async { self?.appendLog(line) }
                 })
-            // 尾动作：工作区注册（用户勾选 + 未取消时）
-            let shouldRegister = self.registerWorkspaceCheckbox.state == .on && !result.cancelled
+            // 尾动作：工作区注册（用户勾选 + 未取消时）；只收集日志，不在此线程改 UI
             var sessionId: String?
-            if shouldRegister {
-                self.appendLog(L10n.tr("project.logWorkspace"))
-                sessionId = self.workspaceTailRegister(path: target)
+            if shouldRegister && !result.cancelled {
+                sessionId = self.workspaceTailRegister(path: target, logs: &tailLogs)
             }
             DispatchQueue.main.async {
+                for line in tailLogs { self.appendLog(line) }
                 self.endExecution(result: result, sessionId: sessionId, folderName: folderName)
             }
         }
     }
 
-    /// 工作区尾动作（同步 RPC）：workspace.create({path}) → session.create({workspaceId})。
-    private func workspaceTailRegister(path: String) -> String? {
+    /// 工作区尾动作（同步 RPC，后台队列调用）：workspace.create({path}) → session.create({workspaceId})。
+    /// 只做 RPC 与日志收集（logs 追加），不在此线程访问 UI。
+    private func workspaceTailRegister(path: String, logs: inout [String]) -> String? {
+        logs.append(L10n.tr("project.logWorkspace"))
         guard let port = serverPortProvider?() else {
-            appendLog(L10n.tr("project.logNoPort"))
+            logs.append(L10n.tr("project.logNoPort"))
             return nil
         }
         guard let ws = ProjectPanelHTTP.rpc(port: port, method: "workspace.create", payload: ["path": path]),
               let workspace = ws["workspace"] as? [String: Any],
               let workspaceId = workspace["workspaceId"] as? String else {
-            appendLog(L10n.tr("project.logWorkspaceFail"))
+            logs.append(L10n.tr("project.logWorkspaceFail"))
             return nil
         }
-        appendLog(L10n.tr("project.logWorkspaceOk", workspaceId))
+        logs.append(L10n.tr("project.logWorkspaceOk", workspaceId))
         guard let session = ProjectPanelHTTP.rpc(port: port, method: "session.create", payload: ["workspaceId": workspaceId]),
               let sessionId = session["sessionId"] as? String else {
-            appendLog(L10n.tr("project.logSessionFail"))
+            logs.append(L10n.tr("project.logSessionFail"))
             return nil
         }
-        appendLog(L10n.tr("project.logSessionOk", sessionId))
+        logs.append(L10n.tr("project.logSessionOk", sessionId))
         return sessionId
     }
 
