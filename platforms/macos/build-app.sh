@@ -307,7 +307,7 @@ else
 fi
 # Project-panel built-in templates: platforms/macos/project-templates/ →
 # $APP/Contents/Resources/project-templates/ (scanned at runtime by ProjectPanel).
-PTEMPLATES="$SRC/project-templates"
+PTEMPLATES="$PWD/project-templates"
 if [ -d "$PTEMPLATES" ]; then
   mkdir -p "$APP/Contents/Resources/project-templates"
   ditto "$PTEMPLATES" "$APP/Contents/Resources/project-templates"
