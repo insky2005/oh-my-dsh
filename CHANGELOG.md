@@ -7,7 +7,10 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
-- 暂无（v1.13.0 已发布；开发线已推进到 1.14.0）。
+### Fixed
+
+- **自动升级 dsh 失败（exit 127）**：App 内自动升级用打包 node 的绝对路径启动 npm，但 npm 执行依赖包 lifecycle 脚本（如 `@deepseek-ai/dsh-subprocess-local` 的 postinstall `node ensure-spawn-helper.mjs`）时通过 shell 按 `PATH` 找 `node`；GUI 启动的 App 继承 launchd 的精简 PATH 通常没有 `node`，报 `sh: node: command not found`、升级中断。修复为给升级子进程前置注入打包 node 所在目录到 `PATH`。
+- **升级后未重启服务 / WebView 未重载**：自动/手动升级跑完后运行中的 dsh web 仍在内存里跑旧代码（只刷新版本事实、没重启服务），新版本要等下次启动才生效。修复为升级成功后停止 App 自己拉起的服务并重新拉起 + 重载 WebView（含首次启动失败的场景）。
 
 ## [1.13.0] - 2026-08-24
 
