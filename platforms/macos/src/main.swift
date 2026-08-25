@@ -310,6 +310,62 @@ enum L10n {
         "channel.done": ("完成", "Done"),
         "bar.browser": ("浏览器", "Browser"),
         "browser.title": ("浏览器", "Browser"),
+        // project panel
+        "bar.project": ("项目", "Project"),
+        "project.title": ("项目", "Project"),
+        "menu.toggleProject": ("项目面板", "Project Panel"),
+        "project.homeTitle": ("项目初始化", "Project Setup"),
+        "project.homeNew": ("新建项目", "New Project"),
+        "project.homeNewHint": ("选模板，创建新项目并初始化 git/AGENTS.md 等", "Pick a template to scaffold a new project"),
+        "project.homeExisting": ("应用到已有目录", "Apply to Existing Folder"),
+        "project.homeExistingHint": ("给已有代码库补齐骨架文件", "Fill missing scaffold files into an existing codebase"),
+        "project.homeCurrent": ("应用到当前项目", "Apply to Current Project"),
+        "project.homeCurrentHint": ("对 dsh 当前项目目录直接执行，无需选目录", "Apply directly to the current dsh project (no picker)"),
+        "project.homeCurrentPath": ("当前：%@", "Current: %@"),
+        "project.templateStats": ("内置模板 %d · 用户模板 %d", "Built-in %d · User %d"),
+        "project.rescan": ("重新扫描", "Rescan"),
+        "project.stepIndicator": ("第 %d/%d 步 · %@", "Step %d/%d · %@"),
+        "project.stepTemplate": ("选模板", "Choose Template"),
+        "project.stepTarget": ("选目标", "Choose Target"),
+        "project.stepVariables": ("变量与步骤", "Variables & Steps"),
+        "project.stepSummary": ("摘要与执行", "Summary & Run"),
+        "project.next": ("下一步 →", "Next →"),
+        "project.back": ("← 上一步", "← Back"),
+        "project.start": ("开始初始化", "Start"),
+        "project.use": ("使用", "Use"),
+        "project.more": ("更多…", "More…"),
+        "project.duplicate": ("复制为新模板…", "Duplicate as New Template…"),
+        "project.reveal": ("在 Finder 中显示", "Show in Finder"),
+        "project.searchPlaceholder": ("搜索模板…", "Search templates…"),
+        "project.emptyTemplates": ("没有可用模板（可复制内置模板创建）", "No templates available (duplicate a built-in to create one)"),
+        "project.badgeBuiltin": ("内置", "Built-in"),
+        "project.badgeUser": ("用户", "User"),
+        "project.chooseDir": ("选择", "Choose"),
+        "project.targetTitle": ("项目目录", "Project Folder"),
+        "project.targetNone": ("（未选择）", "(not selected)"),
+        "project.modeNew": ("● 新建模式：空目录/新目录，将生成完整骨架", "● New: empty/new folder — full scaffold"),
+        "project.modeExisting": ("● 既有项目模式：只补缺失文件，不覆盖现有内容", "● Existing: fill missing files only, never overwrite"),
+        "project.variablesTitle": ("变量", "Variables"),
+        "project.stepsTitle": ("初始化步骤", "Init Steps"),
+        "project.summaryTarget": ("模板：%@ · 目标：%@", "Template: %@ · Target: %@"),
+        "project.summaryFiles": ("将创建 %d 个文件 · 跳过 %d · 覆盖 %d", "Will create %d files · skip %d · overwrite %d"),
+        "project.registerWorkspace": ("注册 dsh 工作区并新建会话", "Register dsh workspace & create session"),
+        "project.logBegin": ("初始化 %@ → %@", "Initializing %@ → %@"),
+        "project.logNoPort": ("无法获取 dsh 端口，跳过工作区注册", "Cannot get dsh port; skipped workspace registration"),
+        "project.logWorkspace": ("注册 dsh 工作区…", "Registering dsh workspace…"),
+        "project.logWorkspaceOk": ("工作区已注册：%@", "Workspace registered: %@"),
+        "project.logWorkspaceFail": ("工作区注册失败（不阻塞）", "Workspace registration failed (non-blocking)"),
+        "project.logSessionOk": ("新会话已创建：%@", "Session created: %@"),
+        "project.logSessionFail": ("会话创建失败（不阻塞）", "Session creation failed (non-blocking)"),
+        "project.logCancelled": ("已取消", "Cancelled"),
+        "project.doneTitle": ("项目初始化完成 · %@", "Project initialized · %@"),
+        "project.doneDetail": ("工作区已注册，会话 %@ 已在 dsh 中打开", "Workspace registered; session %@ opened in dsh"),
+        "project.doneDetailNoSession": ("初始化完成（未注册工作区）", "Initialized (workspace not registered)"),
+        "project.openInDsh": ("在 dsh 中打开", "Open in dsh"),
+        "project.openTerminal": ("在终端打开", "Open in Terminal"),
+        "project.openFilePanel": ("在文件面板打开", "Open in Files"),
+        "project.openFinder": ("在 Finder 显示", "Show in Finder"),
+        "project.another": ("再建一个项目", "Create Another"),
         "browser.openInSystem": ("在系统浏览器中打开", "Open in System Browser"),
         "browser.devTools": ("在浏览器中打开 DevTools", "Open DevTools in Browser"),
         "browser.copyURL": ("复制 URL", "Copy URL"),
@@ -1227,7 +1283,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var appearanceMenuItems: [NSMenuItem] = []
     private var browserToggleMenuItem: NSMenuItem?
     private var channelToggleMenuItem: NSMenuItem?
+    private var projectToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip).
+    private var projectBarButton: ActivityBarButton!
     private var previewBarButton: ActivityBarButton!
     private var closeTabMenuItem: NSMenuItem?
     private var terminalBarButton: ActivityBarButton!
@@ -1239,6 +1297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var window: NSWindow!
     private var webView: WKWebView!
     private var splitView: NSSplitView!
+    private var projectPanel: ProjectPanelController!
     private var previewPanel: FilePanelController!
     private var terminalPanel: TerminalPanelController!
     private var wikiPanel: WikiPanelController!
@@ -1254,7 +1313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
     /// terminal, wiki, tasks and browser panels share one slot; the activity
     /// bar toggles between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel }
+    enum RightPanel { case none, project, preview, terminal, wiki, tasks, browser, channel }
     private var rightPanel: RightPanel = .none
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
@@ -1264,10 +1323,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let minWebViewWidth: CGFloat = 1100
     /// Smallest allowed width of the right panel slot (max of both panels').
     private static let rightPanelMinWidth: CGFloat =
-        max(FilePanelController.minWidth,
-            max(TerminalPanelController.minWidth,
-                max(WikiPanelController.minWidth,
-                    max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth, ChannelPanelController.minWidth))))
+        max(ProjectPanelController.minWidth,
+            max(FilePanelController.minWidth,
+                max(TerminalPanelController.minWidth,
+                    max(WikiPanelController.minWidth,
+                        max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth, ChannelPanelController.minWidth)))))
     /// Fixed default panel width. Deliberately NOT window-relative: a
     /// "half the window" default made the width chase the window as it was
     /// widened, flip-flopping on every toggle.
@@ -1444,6 +1504,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.browser)
             AppLog.shared.log("browser self-test enabled")
         }
+        // Project panel self-test hook (debugging / QA only): opens the project
+        // panel at launch when DSH_PROJECT_TEST=1 is set.
+        if ProcessInfo.processInfo.environment["DSH_PROJECT_TEST"] == "1" {
+            setRightPanel(.project)
+            AppLog.shared.log("project self-test enabled")
+        }
     }
 
     /// Build the activity bar (leftmost icon strip) + the main split view:
@@ -1452,6 +1518,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func buildSplitView() {
         AppLog.shared.log("launch: buildSplitView begin")
         guard let content = window.contentView else { return }
+
+        projectPanel = ProjectPanelController()
+        AppLog.shared.log("launch: projectPanel created")
+        projectPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        projectPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
+        projectPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
+        projectPanel.onProjectReady = { [weak self] path, sessionId in
+            guard let self = self else { return }
+            ProjectDirectory.current = path
+            self.previewPanel.setProjectDirectory(path)
+            if let sessionId = sessionId {
+                self.openDSHSession(sessionId)
+            }
+            AppLog.shared.log("project panel: project ready at \(path) session=\(sessionId ?? "none")")
+        }
+        projectPanel.onOpenTerminal = { [weak self] path in
+            guard let self = self else { return }
+            ProjectDirectory.current = path
+            self.terminalPanel.newSession()
+            self.setRightPanel(.terminal)
+        }
+        projectPanel.onOpenInFilePanel = { [weak self] path in
+            guard let self = self else { return }
+            self.previewPanel.setProjectDirectory(path)
+            self.setRightPanel(.preview)
+        }
 
         previewPanel = FilePanelController()
         AppLog.shared.log("launch: previewPanel created")
@@ -1502,7 +1594,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityBar.translatesAutoresizingMaskIntoConstraints = false
 
         // 活动栏图标：tooltip 跟随系统语言（L10n 中英切换）；
-        // 顺序 = 文件、终端、浏览器、Wiki、任务。
+        // 顺序 = 项目、文件、终端、浏览器、Wiki、任务。
+        projectBarButton = makeActivityButton(symbol: "square.and.pencil",
+                                              tooltip: L10n.tr("bar.project"),
+                                              action: #selector(projectEntryTapped(_:)))
         previewBarButton = makeActivityButton(symbol: "doc.on.doc",
                                               tooltip: L10n.tr("bar.preview"),
                                               action: #selector(togglePreviewPanel(_:)))
@@ -1521,7 +1616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelBarButton = makeActivityButton(symbol: "dot.radiowaves.left.and.right",
                                               tooltip: L10n.tr("bar.channel"),
                                               action: #selector(channelEntryTapped(_:)))
-        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton])
+        let barStack = NSStackView(views: [projectBarButton, previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -1575,6 +1670,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let visible = UserDefaults.standard.bool(forKey: "previewPanelState")
         let kind: RightPanel
         switch UserDefaults.standard.string(forKey: "rightPanelKind") {
+        case "project": kind = .project
         case "terminal": kind = .terminal
         case "wiki": kind = .wiki
         case "tasks": kind = .tasks
@@ -1588,6 +1684,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// The active panel's root view (preview / terminal / wiki).
     private func activePanelView(_ panel: RightPanel) -> NSView {
         switch panel {
+        case .project: return projectPanel.view
         case .preview: return previewPanel.view
         case .terminal: return terminalPanel.view
         case .wiki: return wikiPanel.view
@@ -1646,6 +1743,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tasksToggleMenuItem?.state = (panel == .tasks) ? .on : .off
         browserToggleMenuItem?.state = (panel == .browser) ? .on : .off
         channelToggleMenuItem?.state = (panel == .channel) ? .on : .off
+        projectToggleMenuItem?.state = (panel == .project) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
@@ -1671,6 +1769,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if visible {
             applyRightPanelLayout()
             switch panel {
+            case .project:
+                if uiDebug {
+                    self.dumpPanelDebugInfo(panelView: projectPanel.view, label: "project")
+                }
             case .preview:
                 // Show the project tree by default whenever the panel opens.
                 previewPanel.ensureTreeLoaded()
@@ -1731,6 +1833,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         UserDefaults.standard.set(visible, forKey: "previewPanelState")
         let kind: String
         switch panel {
+        case .project: kind = "project"
         case .terminal: kind = "terminal"
         case .wiki: kind = "wiki"
         case .tasks: kind = "tasks"
@@ -2815,6 +2918,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleChannel.target = self
         toggleChannel.state = (rightPanel == .channel) ? .on : .off
         channelToggleMenuItem = toggleChannel
+        let toggleProject = viewMenu.addItem(withTitle: L10n.tr("menu.toggleProject"), action: #selector(projectEntryTapped(_:)), keyEquivalent: "n")
+        toggleProject.keyEquivalentModifierMask = [.command, .option]
+        toggleProject.target = self
+        toggleProject.state = (rightPanel == .project) ? .on : .off
+        projectToggleMenuItem = toggleProject
         viewItem.submenu = viewMenu
 
         // Settings menu: dsh settings/upgrade/registry + logs + language.
@@ -2946,6 +3054,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("language set: lang=\(L10n.lang) followSystem=\(!L10n.hasExplicitChoice) AppleLanguages=\(UserDefaults.standard.array(forKey: "AppleLanguages") ?? [])")
         buildMenu() // rebuild the whole menu in the new language
         // 活动栏 tooltip 跟随语言（构建时一次性设置，切换后需手动刷新）
+        projectBarButton?.toolTip = L10n.tr("bar.project")
         previewBarButton?.toolTip = L10n.tr("bar.preview")
         terminalBarButton?.toolTip = L10n.tr("bar.terminal")
         browserBarButton?.toolTip = L10n.tr("bar.browser")
@@ -2953,6 +3062,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         wikiBarButton?.toolTip = L10n.tr("bar.wiki")
         tasksBarButton?.toolTip = L10n.tr("bar.tasks")
         // 各面板头部操作按钮 tooltip 同样跟随语言
+        projectPanel?.refreshTooltips()
         previewPanel?.refreshTooltips()
         terminalPanel?.refreshTooltips()
         wikiPanel?.refreshTooltips()
@@ -3137,6 +3247,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     @objc private func channelEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .channel ? .none : .channel)
+    }
+
+    /// Toggle the Project panel (activity bar entry / ⌥⌘N).
+    @objc private func projectEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .project ? .none : .project)
     }
     /// Run QR login for a channel via the core CLI, open the QR URL in the
     /// browser, and save the token to ~/.dsh/channels/<channelId>.json.

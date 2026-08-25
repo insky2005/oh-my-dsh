@@ -1,0 +1,32 @@
+{
+  "id": "minimal-git",
+  "name": "最小 git 项目",
+  "description": ".gitignore + README，初始化 main 分支（不含初始提交）",
+  "variables": [
+    {
+      "key": "projectName",
+      "label": "项目名称",
+      "default": "{{folderName}}",
+      "required": true
+    },
+    {
+      "key": "description",
+      "label": "项目描述",
+      "default": "",
+      "required": false
+    }
+  ],
+  "steps": [
+    {
+      "type": "files",
+      "source": "core",
+      "label": "骨架文件（.gitignore + README）",
+      "overwrite": false
+    },
+    {
+      "type": "git",
+      "branch": "main",
+      "initialCommit": false
+    }
+  ]
+}

@@ -305,6 +305,14 @@ if [ -d "$HLJS" ]; then
 else
   echo "WARNING: Highlightr assets missing ($HLJS); syntax highlighting disabled" >&2
 fi
+# Project-panel built-in templates: platforms/macos/project-templates/ →
+# $APP/Contents/Resources/project-templates/ (scanned at runtime by ProjectPanel).
+PTEMPLATES="$SRC/project-templates"
+if [ -d "$PTEMPLATES" ]; then
+  mkdir -p "$APP/Contents/Resources/project-templates"
+  ditto "$PTEMPLATES" "$APP/Contents/Resources/project-templates"
+  echo "    project templates embedded (Resources/project-templates)"
+fi
 
 echo "==> [5/7] writing Info.plist"
 cat > "$APP/Contents/Info.plist" <<PLIST

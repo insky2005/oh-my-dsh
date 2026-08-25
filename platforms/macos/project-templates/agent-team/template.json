@@ -1,0 +1,50 @@
+{
+  "id": "agent-team",
+  "name": "通用代理工程",
+  "description": "git + AGENTS.md 代理工作指引 + README/.gitignore/LICENSE/.editorconfig",
+  "variables": [
+    {
+      "key": "projectName",
+      "label": "项目名称",
+      "default": "{{folderName}}",
+      "required": true
+    },
+    {
+      "key": "description",
+      "label": "项目描述",
+      "default": "",
+      "required": false
+    },
+    {
+      "key": "team",
+      "label": "团队",
+      "default": "",
+      "required": false
+    },
+    {
+      "key": "license",
+      "label": "许可证",
+      "default": "MIT",
+      "required": false
+    }
+  ],
+  "steps": [
+    {
+      "type": "files",
+      "source": "core",
+      "label": "核心骨架文件（README/LICENSE/.gitignore/.editorconfig）",
+      "overwrite": false
+    },
+    {
+      "type": "files",
+      "source": "agents",
+      "label": "AGENTS.md（代理工作指引）",
+      "overwrite": false
+    },
+    {
+      "type": "git",
+      "branch": "main",
+      "initialCommit": true
+    }
+  ]
+}
