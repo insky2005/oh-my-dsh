@@ -511,7 +511,17 @@ final class DSHUpdater {
                           "--no-audit", "--no-fund", "--registry", registry, target]
         var env = ProcessInfo.processInfo.environment
         // OS environment passed through untouched (no PATH rewrite) — npm runs
-        // via npm-cli.js's absolute path and finds its toolchain on the OS PATH.
+        // via npm-cli.js's absolute path. But npm lifecycle scripts (e.g. the
+        // @deepseek-ai/dsh-subprocess-local postinstall that runs `node ensure-spawn-helper.mjs`)
+        // are spawned through the shell and look up `node` on PATH, which a
+        // Finder/GUI-launched app may not have. Prepend the bundled node's dir so
+        // those scripts find the very node running npm.
+        let nodeBinDir = (nodePath as NSString).deletingLastPathComponent
+        if let existing = env["PATH"], !existing.isEmpty {
+            env["PATH"] = nodeBinDir + ":" + existing
+        } else {
+            env["PATH"] = nodeBinDir
+        }
         env["npm_config_cache"] = cacheDir
         env["npm_config_update_notifier"] = "false"
         proc.environment = env
@@ -2289,6 +2299,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    /// After a successful dsh upgrade the running dsh web still serves the old
+    /// code loaded into memory, so stop the server we spawned and bring dsh web
+    /// up again for the newly installed dsh to take effect. A reused external
+    /// server can't be restarted — the new dsh applies on next app launch. Also
+    /// covers the case where startup previously failed (nothing serving): we
+    /// then just start the server with the new code.
+    private func restartServerAfterUpgrade() {
+        // Stop a server this app spawned — it still runs the pre-upgrade code
+        // in memory. If startup previously failed (nothing serving) or the
+        // server was reused from outside, there is nothing of ours to stop.
+        if server.spawned {
+            server.stop()
+        }
+        // startServer() either reuses an already-serving external server (which
+        // we cannot restart — the new dsh applies on next app launch) or spawns
+        // a fresh dsh web with the newly installed code, then reloads the
+        // WebView on the main thread (re-running the panel server-ready wiring).
+        DispatchQueue.main.async {
+            self.startServer()
+        }
+    }
+
     @objc private func retryTapped() {
         startServer()
     }
@@ -2332,6 +2364,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let new = try updater.upgrade(registry: RegistryConfig.current)
             server.refreshFacts()
             AppLog.shared.log("auto-upgrade: done, now \(new)")
+            // Restart the running server + reload the WebView so the upgraded
+            // dsh actually takes effect (otherwise the old code stays in memory).
+            restartServerAfterUpgrade()
         } catch {
             AppLog.shared.log("auto-upgrade: failed: \(error.localizedDescription)")
         }
@@ -2425,6 +2460,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                         self.server.refreshFacts()
                         message = L10n.tr("alert.upgraded", current, new)
                         AppLog.shared.log("manual upgrade: \(current) -> \(new)")
+                        // Restart the running server + reload the WebView so the
+                        // upgraded dsh takes effect.
+                        self.restartServerAfterUpgrade()
                     } catch {
                         ok = false
                         message = error.localizedDescription
