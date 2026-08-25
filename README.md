@@ -2,7 +2,7 @@
 
 把 DeepSeek Harness 的 Web 界面（`dsh web`）封装成一个可以在 macOS 上**直接双击运行**的原生 App。
 **不改动任何 DeepSeek Harness 源码**——它只是一个壳：内置运行时自拉起/复用 `dsh web`，用原生 `WKWebView`
-呈现界面，并在窗口右侧提供六个原生面板（文件 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务 / 通道）。
+呈现界面，并在窗口右侧提供七个原生面板（项目 / 文件 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务 / 通道）。
 
 ## 特性一览
 
@@ -18,8 +18,8 @@
 
 ## 右栏面板
 
-窗口**最右侧是活动栏**（图标入口，六个面板互斥切换），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
-「视图」菜单提供六面板的显示/隐藏快捷键。
+窗口**最右侧是活动栏**（图标入口，七个面板互斥切换），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
+「视图」菜单提供七面板的显示/隐藏快捷键。
 
 ### 文件面板（`⌥⌘P` / 活动栏「文件」图标）
 
@@ -100,6 +100,19 @@
 - 设计与指令清单：`docs/channel-design.md`、`docs/channel-commands.md`、`docs/channel-status.md`、`docs/channel-project-switch.md`。
 
 ![channel](./docs/screenshots/channel.png)
+
+### 项目面板（`⌥⌘N` / 活动栏「项目」图标）
+
+面向企业开发团队的项目初始化：模板向导式创建新项目，或把模板应用到**已有代码库**，一次完成 git init / AGENTS.md / README 等初始化。
+
+- **三个入口**：新建项目（选模板 + 建目录）/ 应用到已有目录 / 应用到当前项目（对 dsh 当前项目目录直接执行，无需选目录）；
+- **模板 = 可勾选步骤**：`files`（骨架文件，UTF-8 做 `{{变量}}` 占位符替换）/ `git`（`git init -b main` + 可选初始提交）/ `command`（团队自定义命令，整行展示可取消勾选）；
+- **内置模板**：`agent-team`（通用代理工程：git + AGENTS.md 代理工作指引 + README/LICENSE/.gitignore/.editorconfig）、`minimal-git`（最小 git 项目）；
+- **按需扩展**：模板卡片右键「复制为新模板…」→ 复制到 `~/.dsh/project-templates/`（`DSH_PROJECT_TEMPLATES` 可覆盖）→ 改 `template.json` + `files/` 即可，重新扫描即生效；内置与用户模板同名时用户覆盖内置，无注册表；
+- **既有项目模式**：只补缺失文件，绝不覆盖现有内容（除非模板步骤显式声明覆盖）；
+- **工作区联动**：初始化完成后默认自动注册 dsh web 工作区并新建会话、切到该会话（可勾选关闭 = 纯文件落地）；尾动作复用 dsh 既有 `workspace.create` / `session.create` RPC（幂等）；
+- **dry-run 摘要**：执行前先列出将创建/跳过/覆盖的文件、git 动作与命令，确认后再执行，后台逐行日志、可取消；
+- 设计见 `docs/plans/PROJECT_PLAN-project-panel.md`；模型层无头单测 `tests/project-panel/run.sh`。
 
 ## 产物
 
@@ -222,7 +235,7 @@ open "dist/oh-my-dsh.app"
 | `DSH_BROWSER_TEST=1` | 启动即打开浏览器面板（QA/调试钩子） |
 
 > 其他 QA/调试钩子（环境变量或 `--ui-debug`）：`DSH_UI_DEBUG=1` 统一开关（打开浏览器面板 + 面板层级 dump + 截图）、
-> `DSH_PREVIEW_TEST_PATH` / `DSH_TERMINAL_TEST` / `DSH_WIKI_TEST`（启动即开对应面板）、`DSH_PREVIEW_DEBUG`（fetch 拦截探针）、`DSH_SESSION_DEBUG`（会话跟踪 dump）。
+> `DSH_PREVIEW_TEST_PATH` / `DSH_TERMINAL_TEST` / `DSH_WIKI_TEST` / `DSH_PROJECT_TEST`（启动即开对应面板）、`DSH_PREVIEW_DEBUG`（fetch 拦截探针）、`DSH_SESSION_DEBUG`（会话跟踪 dump）。
 
 > **GitHub token（任务面板，按仓库作用域）**：面板「配置 GitHub Token」保存时**同时写入** Keychain 专属
 > （`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）和文件专属（`~/.dsh/tokens/<owner>-<repo>`，chmod 600）——

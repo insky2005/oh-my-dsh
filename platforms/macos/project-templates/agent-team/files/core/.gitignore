@@ -1,0 +1,17 @@
+# 依赖
+node_modules/
+.pnp/
+*.local
+
+# 构建产物
+dist/
+build/
+*.tsbuildinfo
+
+# 环境
+.env
+.env.*
+!.env.example
+
+# 系统
+.DS_Store
