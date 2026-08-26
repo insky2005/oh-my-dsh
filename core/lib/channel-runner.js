@@ -25,6 +25,7 @@ const { createWeixinClawBotTransport } = require('./weixin-clawbot-transport');
 const { createWeixinClawBotAdapter } = require('./weixin-clawbot');
 const { createDingTalkTransport, createDingTalkStreamClient } = require('./dingtalk-stream-transport');
 const { createDingTalkAdapter } = require('./dingtalk');
+const { createDingTalkAuth } = require('./dingtalk-access');
 const { createSessionDriver, listWorkspaceSessions } = require('./session-driver');
 const { createChannelManager, normalizeEvent, resolveRefBinding } = require('./channel');
 const { createCommandRunner, parseCommand } = require('./channel-commands');
@@ -308,6 +309,19 @@ async function runChannel(opts = {}) {
 
   const onEventUnsub = adapter.onEvent(async (event) => {
     if (!running) return;
+    // Optional access gate (dingtalk owner-binding): consume /bind, reject unauthorized.
+    if (opts.auth) {
+      const a = await opts.auth.check(event);
+      if (a.handled || !a.allowed) {
+        store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
+        if (a.reply) {
+          store.appendMessage({ conversationId: event.conversationId, dir: 'out', text: a.reply });
+          try { await adapter.send(event.conversationId, { text: a.reply, contextToken: event.contextToken }); } catch { /* ignore */ }
+        }
+        if (opts.onEvent) opts.onEvent(event, { auth: { handled: a.handled, allowed: a.allowed, reply: a.reply } });
+        return;
+      }
+    }
     try {
       const parsed = parseCommand(event.text);
       if (parsed.kind === 'command' || parsed.kind === 'unknown') {
@@ -495,7 +509,12 @@ async function runWeixinChannel(opts = {}) {
  * Run a live DingTalk channel end-to-end (Stream push transport).
  */
 async function runDingTalkChannel(opts = {}) {
-  return runChannel({ ...opts, platform: 'dingtalk', buildAdapters: buildDingTalkAdapters });
+  const channelId = opts.channelId;
+  const log = opts.log || ((m) => console.log(m));
+  const auth = createDingTalkAuth({ channelId, dshHome: opts.dshHome, log });
+  log('[dingtalk:' + channelId + '] 管理员绑定口令：' + auth.getBindCode()
+    + (auth.isBound() ? '（已绑定）' : '（未绑定：发送 /bind <口令> 完成绑定）'));
+  return runChannel({ ...opts, platform: 'dingtalk', buildAdapters: buildDingTalkAdapters, auth });
 }
 
 module.exports = { runWeixinChannel, runDingTalkChannel, buildWeixinAdapters, buildDingTalkAdapters };

@@ -38,6 +38,8 @@ module.exports = {
   ...require('./lib/dingtalk-stream-transport'),
   // DingTalk device-code app registration (QR auto-create)
   ...require('./lib/dingtalk-device'),
+  // DingTalk owner-binding access control (/bind)
+  ...require('./lib/dingtalk-access'),
   // WeChat ClawBot transport (SDK or OpenClaw HTTP backing)
   ...require('./lib/weixin-clawbot-transport'),
   // Channel account/token persistence (~/.dsh/channels/<id>.json, file-first)
