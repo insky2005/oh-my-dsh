@@ -247,6 +247,9 @@ async function runChannel(opts = {}) {
       const m = /^#?w(\d+)$/i.exec(sel);
       if (m) {
         target = coded[parseInt(m[1], 10) - 1] || null;
+      } else if (/^\d+$/.test(sel)) {
+        // Bare numeric index (mirror /ses <N> behavior): /wks 1 == /wks w1
+        target = coded[parseInt(sel, 10) - 1] || null;
       } else {
         const low = sel.toLowerCase();
         target = coded.find((w) => {

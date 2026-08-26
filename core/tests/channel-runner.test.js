@@ -253,6 +253,12 @@ test('channel-runner: /workspaces #wN switches workspace', async () => {
   assert.match(sent, /已切换到工作区 #w1 \(Alpha\)/);
 });
 
+test('channel-runner: /wks <bare number> switches workspace by index (mirror /ses <N>)', async () => {
+  const sent = await runQuickCommand({ text: '/wks 1' });
+  assert.ok(sent, 'expected a reply');
+  assert.match(sent, /已切换到工作区 #w1 \(Alpha\), ~\/repo\/alpha/);
+});
+
 test('channel-runner: quick command still replies when the store projectRoot is unwritable (best-effort persistence)', async () => {
   // Reproduces the app-hosted runner where no project is bound yet and
   // projectRoot fell back to an unwritable cwd — a write failure must not
