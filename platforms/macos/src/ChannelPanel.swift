@@ -435,7 +435,18 @@ final class ChannelPanelController: NSObject {
             wizardQRView.image = nil
             wizardQRView.isHidden = true
             wizardLinkButton.isHidden = true
-            wizardBindRow.isHidden = true
+            // If this dingtalk channel is configured but not yet owner-bound, surface the
+            // persisted bind code so it can be recovered without re-scanning.
+            if wizardPlatform == "dingtalk",
+               let ch = channels.first(where: { $0.platform == wizardPlatform }),
+               let binding = ChannelStoreReader.loadDingTalkBinding(channelId: ch.id),
+               !binding.bound, !binding.bindCode.isEmpty {
+                currentBindCode = binding.bindCode
+                wizardBindLabel.stringValue = "/bind " + binding.bindCode
+                wizardBindRow.isHidden = false
+            } else {
+                wizardBindRow.isHidden = true
+            }
             wizardLink = ""
             wizardHint.isHidden = wizardPlatform != "dingtalk"
             wizardHint.stringValue = L10n.tr("channel.wizard.robotNameHint")
