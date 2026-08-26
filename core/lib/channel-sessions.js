@@ -72,16 +72,22 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
   // ----- workspaceKey registry -----
   function loadWorkspaces() { return readJson(workspacesFile, {}) || {}; }
   function saveWorkspaces(reg) { try { ensureDir(); fs.writeFileSync(workspacesFile, JSON.stringify(reg, null, 2), 'utf8'); } catch { /* non-fatal */ } }
-  /** Resolve (and register) the workspace key for a project root. */
-  function registerProjectRoot(projectRoot) {
+  /** Resolve the workspace key for a project root; persist=true writes it to the
+   *  workspaces.json registry (only the project-view toggle / explicit registration). */
+  function resolveKey(projectRoot, persist) {
     if (!projectRoot) return '';
     const reg = loadWorkspaces();
     let key = workspaceKey(projectRoot);
     for (const [k, root] of Object.entries(reg)) { if (root === projectRoot) { key = k; break; } }
     key = disambiguate(key, projectRoot, reg);
-    if (reg[key] !== projectRoot) { reg[key] = projectRoot; saveWorkspaces(reg); }
+    if (persist && reg[key] !== projectRoot) { reg[key] = projectRoot; saveWorkspaces(reg); }
     return key;
   }
+  /** Resolve AND persist the key (explicit enable / registration). */
+  function registerProjectRoot(projectRoot) { return resolveKey(projectRoot, true); }
+  /** Resolve the key WITHOUT persisting. Archiving must NOT auto-enable a project
+   *  (enable is controlled only by the project-view toggle, docs/channel-project-switch.md). */
+  function resolveWorkspaceKey(projectRoot) { return resolveKey(projectRoot, false); }
 
   // ----- project enable (the "project switch"; docs/channel-project-switch.md) -----
   // A project root present in this channel's workspaces.json = that workspace has
@@ -107,7 +113,8 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
   }
 
   function bucketFile(projectRoot, sessionId) {
-    const key = registerProjectRoot(projectRoot);
+    // derive the key WITHOUT registering — archiving a message must not auto-enable the project.
+    const key = resolveWorkspaceKey(projectRoot);
     return path.join(dir, channelId + '.' + key + '.' + (sessionId || 'system') + '.messages.json');
   }
 
@@ -137,7 +144,7 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
       sessions.push(entry);
     }
     entry.conversationId = conversationId;
-    if (rec.projectRoot) { entry.projectRoot = rec.projectRoot; entry.workspaceKey = rec.workspaceKey || registerProjectRoot(rec.projectRoot); }
+    if (rec.projectRoot) { entry.projectRoot = rec.projectRoot; entry.workspaceKey = rec.workspaceKey || resolveWorkspaceKey(rec.projectRoot); }
     else { entry.projectRoot = entry.projectRoot || null; entry.workspaceKey = entry.workspaceKey || null; }
     if (rec.name != null) entry.name = rec.name;
     entry.updatedAt = Date.now();
@@ -194,7 +201,7 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
     sessionsFile, workspacesFile, dir,
     getSession, setSession, listSessions,
     appendMessage, listMessages, loadMessages, loadMessagesFor,
-    registerProjectRoot, workspaceKey,
+    registerProjectRoot, resolveWorkspaceKey, workspaceKey,
     listEnabledWorkspaces, isWorkspaceEnabled, setWorkspaceEnabled,
   };
 }

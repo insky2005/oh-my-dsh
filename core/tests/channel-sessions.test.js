@@ -107,3 +107,12 @@ test('sessions: project switch enable/disable persists to global workspaces.json
   assert.equal(store.isWorkspaceEnabled(p), false, 'disabled after toggle-off');
   assert.ok(!store.listEnabledWorkspaces().includes(p));
 });
+
+test('sessions: appendMessage must NOT auto-enable a workspace (enable only via toggle)', () => {
+  const store = createChannelSessions({ channelId: 'wx-noen', dshHome: HOME });
+  const p = '/Users/loie/repo/noenable';
+  store.appendMessage({ conversationId: 'c', dir: 'in', text: 'hi', projectRoot: p });
+  assert.equal(store.isWorkspaceEnabled(p), false, 'archiving a message must not enable the project');
+  assert.ok(!store.listEnabledWorkspaces().includes(p), 'workspaces.json must stay empty');
+  assert.ok(!fs.existsSync(path.join(store.dir, 'wx-noen.workspaces.json')), 'workspaces.json not created by archiving');
+});
