@@ -1365,5 +1365,13 @@ final class ChannelCardView: NSView {
         b.stroke()
     }
 
-    @objc private func tapped(_ sender: Any) { onTap?() }
+    @objc private func tapped(_ sender: Any) {
+        // Clicking the unbind button must not also trigger the card tap (which would
+        // open the bind wizard). The unbind button handles its own click.
+        if let gesture = sender as? NSClickGestureRecognizer, !unbindButton.isHidden {
+            let p = gesture.location(in: self)
+            if unbindButton.frame.contains(p) { return }
+        }
+        onTap?()
+    }
 }
