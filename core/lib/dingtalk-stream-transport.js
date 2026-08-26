@@ -79,6 +79,7 @@ function createDingTalkStreamClient(opts = {}) {
       body: JSON.stringify({
         clientId,
         clientSecret,
+        ua: '',
         subscriptions: [{ type: 'EVENT', topic: '*' }, { type: 'CALLBACK', topic: TOPIC_ROBOT }],
       }),
     });
@@ -130,9 +131,11 @@ function createDingTalkStreamClient(opts = {}) {
       const cb = topicCallbacks.get(topic);
       try { cb({ data: msg.data, headers }); } catch (err) { log('topic callback error: ' + (err && err.message)); }
     } else if (msg.type === 'SYSTEM') {
+      log('dingtalk-stream SYSTEM topic=' + topic);
       if (topic === 'CONNECTED') {
         /* opening */
       } else if (topic === 'REGISTERED') {
+        log('dingtalk-stream REGISTERED — bot subscribed');
         reconnectAttempts = 0;
         setStatus(CONNECTED);
       } else if (topic === 'disconnect') {
@@ -166,9 +169,16 @@ function createDingTalkStreamClient(opts = {}) {
           setStatus(CONNECTING);
           const ep = await getEndpoint();
           if (userDisconnect) { setStatus(STOPPED); return; }
-          const sock = new WS(ep.endpoint + '?ticket=' + encodeURIComponent(ep.ticket));
+          // Raw ticket (official SDK appends it verbatim: endpoint + '?ticket=' + ticket).
+          const sock = new WS(ep.endpoint + '?ticket=' + ep.ticket);
           let settled = false;
-          sock.onopen = () => { if (socket === sock) log('dingtalk-stream ws open'); };
+          sock.onopen = () => {
+            if (socket !== sock) return;
+            log('dingtalk-stream ws open — marking connected (SDK semantics: connected = socket open)');
+            // SDK sets connected on socket open; REGISTERED (onDownStream) is a separate
+            // registration confirmation and also sets CONNECTED if it arrives.
+            setStatus(CONNECTED);
+          };
           sock.onmessage = (ev) => onDownStream(String(ev.data));
           sock.onclose = () => {
             if (socket !== sock) return;
@@ -179,8 +189,9 @@ function createDingTalkStreamClient(opts = {}) {
           };
           sock.onerror = () => { /* close handler handles reconnect */ };
           socket = sock;
-          const off = onStatus((s) => { if (s === CONNECTED && !settled) { settled = true; off(); resolve(); } });
-          setTimeout(() => { if (!settled) { settled = true; off(); resolve(); } }, 8000);
+          let connectTimeout;
+          const off = onStatus((s) => { if (s === CONNECTED && !settled) { settled = true; clearTimeout(connectTimeout); off(); log('dingtalk-stream connected via status ' + s); resolve(); } });
+          connectTimeout = setTimeout(() => { if (!settled) { settled = true; clearTimeout(connectTimeout); off(); log('dingtalk-stream connect() resolved by timeout; status=' + status); resolve(); } }, 8000);
         } catch (err) {
           if (!userDisconnect) scheduleReconnect();
           reject(err);
