@@ -97,7 +97,12 @@ function createDingTalkAuth(opts = {}) {
       }
       saveBinding(channelId, { ownerStaffId: sender, bindCode: cur.bindCode }, dshHome);
       log('[dingtalk:' + channelId + '] owner bound: ' + sender);
-      return { handled: true, allowed: true, reply: '绑定成功，你已被设为该通道管理员。' };
+      return {
+        handled: true,
+        allowed: true,
+        reply: '绑定成功，你已被设为该通道管理员。\n'
+          + '可用指令：/help 帮助 · /status 状态 · /new [内容] 新建会话 · /sessions(/ses) 切换会话 · /workspaces(/wks) 切换工作区 · #wN/#sN 快捷切换',
+      };
     }
     const cur = loadBinding(channelId, dshHome);
     if (cur.ownerStaffId == null) {
