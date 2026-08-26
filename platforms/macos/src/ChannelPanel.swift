@@ -1301,6 +1301,22 @@ final class ChannelCardView: NSView {
             }
         }
         statusDot.layer?.backgroundColor = color.cgColor
+        // Hover tooltip so the status is not conveyed by color alone.
+        statusDot.toolTip = statusTooltip(state, configured: configured)
+    }
+
+    /// Localized hover text for the status dot (color is not the only signal).
+    private func statusTooltip(_ state: GlobalChannel.State, configured: Bool) -> String {
+        if !configured { return L10n.tr("channel.state.unconfigured") }
+        let key: String
+        switch state {
+        case .connected: key = "channel.state.connected"
+        case .connecting: key = "channel.state.connecting"
+        case .reconnecting: key = "channel.state.reconnecting"
+        case .authExpired: key = "channel.state.authExpired"
+        case .disconnected: key = "channel.state.disconnected"
+        }
+        return L10n.tr(key)
     }
 
     override func viewDidChangeEffectiveAppearance() {
