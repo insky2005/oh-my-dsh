@@ -61,6 +61,12 @@ function createDingTalkAdapter(opts = {}) {
     state.connecting();
     try {
       await (transport.connect || (async () => {})).call(transport);
+      // transport.connect() establishes the Stream. Reflect connected explicitly so a
+      // missed onStatus transition (or the panel's live state read) cannot leave the
+      // state machine stuck on 'connecting' (mirrors the weixin adapter).
+      if (transport.getState && transport.getState() === 'connected') {
+        state.connected();
+      }
     } catch (err) {
       state.authExpired();
       throw err;

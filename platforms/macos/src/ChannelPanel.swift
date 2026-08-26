@@ -354,6 +354,12 @@ final class ChannelPanelController: NSObject {
         finishWizard()
     }
 
+    /// Platform-specific wizard string: dingtalk uses "….<base>.dingtalk" variants;
+    /// other platforms share the base string (which mentions WeChat).
+    private func wizardL10n(_ base: String) -> String {
+        return wizardPlatform == "dingtalk" ? base + ".dingtalk" : base
+    }
+
     private func renderWizard() {
         wizardView.isHidden = false
         onboardingView.isHidden = true
@@ -362,8 +368,8 @@ final class ChannelPanelController: NSObject {
         let platformName = card.map { L10n.tr($0.titleKey) } ?? wizardPlatform
         if wizardStep == 0 {
             wizardTitle.stringValue = platformName
-            wizardInfo.stringValue = L10n.tr("channel.wizard.promptInfo")
-            wizardStatus.stringValue = L10n.tr("channel.wizard.promptTitle")
+            wizardInfo.stringValue = L10n.tr(wizardL10n("channel.wizard.promptInfo"))
+            wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
             wizardQRView.image = nil
             wizardPrimary.title = L10n.tr("channel.wizard.continue")
             wizardPrimary.isEnabled = true
@@ -371,7 +377,7 @@ final class ChannelPanelController: NSObject {
         } else if wizardStep == 1 {
             wizardTitle.stringValue = platformName
             wizardInfo.stringValue = L10n.tr("channel.wizard.scanning")
-            wizardStatus.stringValue = L10n.tr("channel.wizard.promptTitle")
+            wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
             wizardPrimary.title = L10n.tr("btn.ok")
             wizardPrimary.isEnabled = false
             wizardSecondary.title = L10n.tr("channel.wizard.back")

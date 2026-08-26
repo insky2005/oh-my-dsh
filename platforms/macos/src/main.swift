@@ -297,6 +297,8 @@ enum L10n {
         "channel.wizard.continue": ("继续", "Continue"),
         "channel.wizard.scanning": ("等待扫码…（二维码已在新标签页打开）", "Waiting for scan… (QR opened in a new tab)"),
         "channel.wizard.done": ("绑定成功 ✅", "Bound successfully ✅"),
+        "channel.wizard.promptTitle.dingtalk": ("打开钉钉，准备扫码", "Open DingTalk, ready to scan"),
+        "channel.wizard.promptInfo.dingtalk": ("下一步将打开登录二维码。请用手机钉钉扫码，以创建钉钉应用并绑定此通道。", "Next opens the login QR. Scan it with DingTalk to create the app and bind this channel."),
         "channel.wizard.back": ("返回", "Back"),
         "channel.globalConfig": ("全局配置", "Global Config"),
         "channel.projectAvailable": ("当前项目可用通道", "Available Channels"),

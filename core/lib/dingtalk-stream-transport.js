@@ -148,7 +148,7 @@ function createDingTalkStreamClient(opts = {}) {
   }
 
   function scheduleReconnect() {
-    if (userDisconnect || reconnectTimer) return;
+    if (userDisconnect || reconnectTimer) return; // already disconnecting or a reconnect is pending
     const delay = Math.min(1000 * Math.pow(2, reconnectAttempts) + Math.random() * 500, 60_000);
     reconnectAttempts += 1;
     setStatus(RECONNECTING);
