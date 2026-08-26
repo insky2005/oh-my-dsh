@@ -31,7 +31,10 @@ test('dingtalk-access: unbound rejects non-bind; /bind with code binds owner', a
   const r3 = await auth.check({ sender: 'u1', text: '/bind ' + code });
   assert.equal(r3.handled, true);
   assert.equal(r3.allowed, true);
-  assert.match(r3.reply, /绑定成功/);
+  assert.ok(Array.isArray(r3.reply), 'bind success sends multiple messages');
+  assert.match(r3.reply[0], /绑定成功/);
+  assert.match(r3.reply[1], /可用指令：/);
+  assert.match(r3.reply[1], /\/help/);
   assert.equal(auth.isBound(), true);
   assert.equal(auth.ownerStaffId(), 'u1');
 });

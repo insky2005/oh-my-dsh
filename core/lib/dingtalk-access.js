@@ -19,6 +19,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { helpText } = require('./channel-commands');
 
 function channelsDir(dshHome) {
   return path.join(dshHome || process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'channels');
@@ -100,8 +101,11 @@ function createDingTalkAuth(opts = {}) {
       return {
         handled: true,
         allowed: true,
-        reply: '绑定成功，你已被设为该通道管理员。\n'
-          + '可用指令：/help 帮助 · /status 状态 · /new [内容] 新建会话 · /sessions(/ses) 切换会话 · /workspaces(/wks) 切换工作区 · #wN/#sN 快捷切换',
+        // Two messages: confirmation + the exact /help output (same source, so it always matches).
+        reply: [
+          '绑定成功，你已被设为该通道管理员。',
+          '可用指令：\n' + helpText(),
+        ],
       };
     }
     const cur = loadBinding(channelId, dshHome);

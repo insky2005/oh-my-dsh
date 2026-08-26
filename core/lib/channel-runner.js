@@ -315,8 +315,11 @@ async function runChannel(opts = {}) {
       if (a.handled || !a.allowed) {
         store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
         if (a.reply) {
-          store.appendMessage({ conversationId: event.conversationId, dir: 'out', text: a.reply });
-          try { await adapter.send(event.conversationId, { text: a.reply, contextToken: event.contextToken }); } catch { /* ignore */ }
+          const replies = Array.isArray(a.reply) ? a.reply : [a.reply];
+          for (const r of replies) {
+            store.appendMessage({ conversationId: event.conversationId, dir: 'out', text: r });
+            try { await adapter.send(event.conversationId, { text: r, contextToken: event.contextToken }); } catch { /* ignore */ }
+          }
         }
         if (opts.onEvent) opts.onEvent(event, { auth: { handled: a.handled, allowed: a.allowed, reply: a.reply } });
         return;
