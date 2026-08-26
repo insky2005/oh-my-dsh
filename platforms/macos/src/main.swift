@@ -1511,6 +1511,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelPanel.channelUnbind = { [weak self] channelId in
             self?.unbindChannel(channelId: channelId)
         }
+        channelPanel.channelLoginCancel = { [weak self] channelId in
+            self?.cancelChannelLogin(channelId: channelId)
+        }
         // Panel → web session link: clicking a session's "open in dsh" drives the
         // web view to switch to that session.
         channelPanel.onOpenSession = { [weak self] sessionId in
@@ -3197,6 +3200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
         }
         proc.terminationHandler = { [weak self] _ in
+            self?.loginProcs.removeValue(forKey: channelId)
             let out = String(data: outputData, encoding: .utf8) ?? ""
             let ok = out.contains("\"connected\":true") || FileManager.default.fileExists(atPath: savePath)
             DispatchQueue.main.async {
@@ -3204,7 +3208,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 completion(ok)
             }
         }
+        loginProcs[channelId] = proc
         try? proc.run()
+    }
+
+    /// Cancel an in-flight login (user left the wizard on step 1/2).
+    private func cancelChannelLogin(channelId: String) {
+        guard let proc = loginProcs.removeValue(forKey: channelId) else { return }
+        proc.terminate()
+        AppLog.shared.log("channel login cancelled for \(channelId)")
     }
 
     /// Start the live channel listener (channel run) in the background so
@@ -3213,6 +3225,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// refs. Kept strongly by the delegate so it survives after login returns.
     private var channelRunnerProcs: [Process] = []
     private var channelRunnerIds: [String] = []
+    // In-flight QR / device-code login processes (channel login / login-dingtalk),
+    // keyed by channelId, so leaving the wizard can cancel them.
+    private var loginProcs: [String: Process] = [:]
     private func startChannelRunner(channelId: String) {
         // dedup: never run two listeners for the same channel (each would
         // long-poll the same token and re-handle every message -> duplicates)

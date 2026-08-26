@@ -72,6 +72,8 @@ final class ChannelPanelController: NSObject {
     var channelLoginRunner: ((String, @escaping (String?) -> Void, @escaping (Bool) -> Void) -> Void)?
     /// Unbind a channel: stop its runner and clear its local config (wired to main.swift).
     var channelUnbind: ((String) -> Void)?
+    /// Cancel an in-flight login when leaving the wizard (wired to main.swift).
+    var channelLoginCancel: ((String) -> Void)?
     /// Open the given dsh session in dsh web (panel → web session link).
     var onOpenSession: ((String) -> Void)?
 
@@ -410,7 +412,16 @@ final class ChannelPanelController: NSObject {
     }
 
     @objc private func wizardSecondaryTapped(_ sender: Any) {
+        // Leaving mid-scan (step 1) or after done (step 2): cancel any still-running
+        // login subprocess so it cannot create an app / linger in the background.
+        if wizardStep == 1 || wizardStep == 2 { cancelLogin() }
         finishWizard()
+    }
+
+    /// Cancel the in-flight login subprocess for the current channel (if any).
+    private func cancelLogin() {
+        guard let ch = channels.first(where: { $0.platform == wizardPlatform }) else { return }
+        channelLoginCancel?(ch.id)
     }
 
     /// Open the registration/QR link in the system browser (DingTalk device-code URL).
