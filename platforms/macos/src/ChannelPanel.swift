@@ -398,6 +398,9 @@ final class ChannelPanelController: NSObject {
 
     @objc private func wizardPrimaryTapped(_ sender: Any) {
         if wizardStep == 0 {
+            // A configured DingTalk channel whose app was already created must NOT
+            // re-scan (that would create a duplicate app) — just close.
+            if dingtalkWizardLocked() { finishWizard(); return }
             wizardStep = 1
             renderWizard()
             startLogin()
@@ -430,27 +433,38 @@ final class ChannelPanelController: NSObject {
         let platformName = card.map { L10n.tr($0.titleKey) } ?? wizardPlatform
         if wizardStep == 0 {
             wizardTitle.stringValue = platformName
-            wizardInfo.stringValue = L10n.tr(wizardL10n("channel.wizard.promptInfo"))
-            wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
             wizardQRView.image = nil
             wizardQRView.isHidden = true
             wizardLinkButton.isHidden = true
-            // If this dingtalk channel is configured but not yet owner-bound, surface the
-            // persisted bind code so it can be recovered without re-scanning.
+            wizardLink = ""
+            // DingTalk: if the channel is already configured, surface its bind state —
+            // either the recoverable /bind code (not bound) or "owner bound".
             if wizardPlatform == "dingtalk",
                let ch = channels.first(where: { $0.platform == wizardPlatform }),
-               let binding = ChannelStoreReader.loadDingTalkBinding(channelId: ch.id),
-               !binding.bound, !binding.bindCode.isEmpty {
-                currentBindCode = binding.bindCode
-                wizardBindLabel.stringValue = "/bind " + binding.bindCode
-                wizardBindRow.isHidden = false
+               let binding = ChannelStoreReader.loadDingTalkBinding(channelId: ch.id) {
+                if binding.bound {
+                    wizardInfo.stringValue = L10n.tr("channel.wizard.done")
+                    wizardBindRow.isHidden = true
+                    wizardStatus.stringValue = L10n.tr("channel.bind.bound")
+                } else if !binding.bindCode.isEmpty {
+                    wizardInfo.stringValue = L10n.tr("channel.wizard.recoverInfo")
+                    currentBindCode = binding.bindCode
+                    wizardBindLabel.stringValue = "/bind " + binding.bindCode
+                    wizardBindRow.isHidden = false
+                    wizardStatus.stringValue = L10n.tr("channel.wizard.bindCodePrompt")
+                } else {
+                    wizardInfo.stringValue = L10n.tr(wizardL10n("channel.wizard.promptInfo"))
+                    wizardBindRow.isHidden = true
+                    wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
+                }
             } else {
+                wizardInfo.stringValue = L10n.tr(wizardL10n("channel.wizard.promptInfo"))
                 wizardBindRow.isHidden = true
+                wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
             }
-            wizardLink = ""
             wizardHint.isHidden = wizardPlatform != "dingtalk"
             wizardHint.stringValue = L10n.tr("channel.wizard.robotNameHint")
-            wizardPrimary.title = L10n.tr("channel.wizard.continue")
+            wizardPrimary.title = L10n.tr(dingtalkWizardLocked() ? "channel.done" : "channel.wizard.continue")
             wizardPrimary.isEnabled = true
             wizardSecondary.title = L10n.tr("channel.wizard.back")
         } else if wizardStep == 1 {
@@ -509,10 +523,30 @@ final class ChannelPanelController: NSObject {
         pb.setString("/bind " + currentBindCode, forType: .string)
     }
 
-    /// Refresh the done step so the /bind code appears once the runner writes the binding file.
-    private func refreshWizardDoneIfBindingChanged() {
-        guard wizardStep == 2, !wizardView.isHidden, wizardPlatform == "dingtalk" else { return }
-        renderBindCode()
+    /// True when a DingTalk channel is configured AND its app was already created
+    /// (binding file exists) — the wizard must not re-scan (would duplicate the app).
+    private func dingtalkWizardLocked() -> Bool {
+        guard wizardPlatform == "dingtalk",
+              let ch = channels.first(where: { $0.platform == wizardPlatform }) else { return false }
+        return ChannelStoreReader.loadDingTalkBinding(channelId: ch.id) != nil
+    }
+
+    private var wizardBindSig = ""
+
+    /// Re-render the wizard when the DingTalk bind state changes (recover->bound on step 0,
+    /// or the /bind code appears/owner binds on the done step).
+    private func refreshWizardBindState() {
+        guard wizardPlatform == "dingtalk", !wizardView.isHidden,
+              wizardStep == 0 || wizardStep == 2 else { return }
+        let sig = dingtalkBindSignature()
+        guard sig != wizardBindSig else { return }
+        wizardBindSig = sig
+        renderWizard()
+    }
+    private func dingtalkBindSignature() -> String {
+        guard let ch = channels.first(where: { $0.platform == wizardPlatform }),
+              let b = ChannelStoreReader.loadDingTalkBinding(channelId: ch.id) else { return "none" }
+        return (b.bound ? "b" : "u") + ":" + b.bindCode
     }
 
     private func startLogin() {
@@ -876,7 +910,7 @@ final class ChannelPanelController: NSObject {
         let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
             self?.refreshProjectIfChanged()
             self?.refreshCardsIfBindingChanged()
-            self?.refreshWizardDoneIfBindingChanged()
+            self?.refreshWizardBindState()
         }
         RunLoop.main.add(timer, forMode: .common)
         refreshTimer = timer

@@ -316,6 +316,7 @@ enum L10n {
         "channel.wizard.bindCodePending": ("绑定口令稍后显示在通道卡片", "The bind code will appear on the channel card"),
         "channel.wizard.bindCodePrompt": ("在钉钉私聊发送此口令，完成管理员绑定", "Send this in a DingTalk direct message to bind the owner"),
         "channel.wizard.copyBind": ("复制", "Copy"),
+        "channel.wizard.recoverInfo": ("该通道应用已创建，请在钉钉发送下方口令完成管理员绑定", "This channel's app is created; send the code below in DingTalk to bind the owner"),
         "channel.wizard.back": ("返回", "Back"),
         "channel.globalConfig": ("全局配置", "Global Config"),
         "channel.projectAvailable": ("当前项目可用通道", "Available Channels"),
