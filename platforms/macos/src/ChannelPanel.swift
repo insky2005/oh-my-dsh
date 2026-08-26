@@ -435,6 +435,7 @@ final class ChannelPanelController: NSObject {
             wizardQRView.image = nil
             wizardQRView.isHidden = true
             wizardLinkButton.isHidden = true
+            wizardBindRow.isHidden = true
             wizardLink = ""
             wizardHint.isHidden = wizardPlatform != "dingtalk"
             wizardHint.stringValue = L10n.tr("channel.wizard.robotNameHint")
@@ -446,6 +447,7 @@ final class ChannelPanelController: NSObject {
             wizardHint.isHidden = wizardPlatform != "dingtalk"
             wizardHint.stringValue = L10n.tr("channel.wizard.robotNameHint")
             wizardQRView.isHidden = false
+            wizardBindRow.isHidden = true
             wizardInfo.stringValue = L10n.tr("channel.wizard.scanning")
             wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
             wizardPrimary.title = L10n.tr("btn.ok")
