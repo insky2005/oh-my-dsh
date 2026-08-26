@@ -468,6 +468,13 @@ final class ChannelPanelController: NSObject {
                     wizardBindRow.isHidden = true
                     wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
                 }
+            } else if wizardPlatform == "weixin-clawbot",
+                      channels.contains(where: { $0.platform == wizardPlatform }) {
+                // Already-configured WeChat: avoid an accidental re-login that would
+                // replace the token; offer an explicit Re-login action instead.
+                wizardInfo.stringValue = L10n.tr("channel.wizard.weixinConfigured")
+                wizardBindRow.isHidden = true
+                wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
             } else {
                 wizardInfo.stringValue = L10n.tr(wizardL10n("channel.wizard.promptInfo"))
                 wizardBindRow.isHidden = true
@@ -475,7 +482,9 @@ final class ChannelPanelController: NSObject {
             }
             wizardHint.isHidden = wizardPlatform != "dingtalk"
             wizardHint.stringValue = L10n.tr("channel.wizard.robotNameHint")
-            wizardPrimary.title = L10n.tr(dingtalkWizardLocked() ? "channel.done" : "channel.wizard.continue")
+            wizardPrimary.title = L10n.tr(dingtalkWizardLocked()
+                ? "channel.done"
+                : (wizardPlatform == "weixin-clawbot" && channels.contains(where: { $0.platform == wizardPlatform }) ? "channel.wizard.relogin" : "channel.wizard.continue"))
             wizardPrimary.isEnabled = true
             wizardSecondary.title = L10n.tr("channel.wizard.back")
         } else if wizardStep == 1 {
