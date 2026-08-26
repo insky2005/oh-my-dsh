@@ -308,6 +308,8 @@ enum L10n {
         "channel.unbind": ("解绑", "Unbind"),
         "channel.unbind.confirmTitle": ("解绑该通道？", "Unbind this channel?"),
         "channel.unbind.confirmBody": ("将清空该通道的连接配置与本地数据，且停止其运行中的监听进程。", "This will clear the channel's connection config and local data, and stop its running listener."),
+        "channel.bind.bound": ("已绑定管理员", "Owner bound"),
+        "channel.bind.hint": ("绑定口令：%@（请在钉钉发送 /bind %@）", "Bind code: %@ (send /bind %@ in DingTalk)"),
         "channel.wizard.back": ("返回", "Back"),
         "channel.globalConfig": ("全局配置", "Global Config"),
         "channel.projectAvailable": ("当前项目可用通道", "Available Channels"),
