@@ -358,12 +358,12 @@ final class ChannelPanelController: NSObject {
         buttons.orientation = .horizontal
         buttons.spacing = 8
 
-        wizardHint.font = .systemFont(ofSize: 10)
-        wizardHint.textColor = .tertiaryLabelColor
+        wizardHint.font = .systemFont(ofSize: 12)
+        wizardHint.textColor = .secondaryLabelColor
         wizardHint.alignment = .center
         wizardHint.isHidden = true
 
-        let stack = NSStackView(views: [wizardTitle, wizardInfo, wizardHint, wizardQRView, wizardLinkButton, wizardStatus, buttons])
+        let stack = NSStackView(views: [wizardTitle, wizardInfo, wizardQRView, wizardLinkButton, wizardStatus, buttons, wizardHint])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 12
