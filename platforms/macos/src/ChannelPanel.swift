@@ -101,6 +101,8 @@ final class ChannelPanelController: NSObject {
     private let wizardInfo = NSTextField(wrappingLabelWithString: "")
     private let wizardQRView = NSImageView()
     private let wizardStatus = NSTextField(labelWithString: "")
+    private let wizardLinkButton = NSButton()
+    private var wizardLink = ""
     private let wizardPrimary: NSButton
     private let wizardSecondary: NSButton
     private var wizardPlatform: String = ""
@@ -341,11 +343,21 @@ final class ChannelPanelController: NSObject {
         wizardPrimary.translatesAutoresizingMaskIntoConstraints = false
         wizardSecondary.translatesAutoresizingMaskIntoConstraints = false
 
+        // Optional open-in-browser link under the QR (DingTalk device-code URL).
+        wizardLinkButton.title = L10n.tr("channel.wizard.openLink")
+        wizardLinkButton.isBordered = false
+        wizardLinkButton.font = .systemFont(ofSize: 11)
+        wizardLinkButton.contentTintColor = .linkColor
+        wizardLinkButton.target = self
+        wizardLinkButton.action = #selector(openWizardLink(_:))
+        wizardLinkButton.translatesAutoresizingMaskIntoConstraints = false
+        wizardLinkButton.isHidden = true
+
         let buttons = NSStackView(views: [wizardPrimary, wizardSecondary])
         buttons.orientation = .horizontal
         buttons.spacing = 8
 
-        let stack = NSStackView(views: [wizardTitle, wizardInfo, wizardQRView, wizardStatus, buttons])
+        let stack = NSStackView(views: [wizardTitle, wizardInfo, wizardQRView, wizardLinkButton, wizardStatus, buttons])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 12
@@ -374,6 +386,12 @@ final class ChannelPanelController: NSObject {
         finishWizard()
     }
 
+    /// Open the registration/QR link in the system browser (DingTalk device-code URL).
+    @objc private func openWizardLink(_ sender: Any) {
+        guard !wizardLink.isEmpty, let url = URL(string: wizardLink) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     /// Platform-specific wizard string: dingtalk uses "….<base>.dingtalk" variants;
     /// other platforms share the base string (which mentions WeChat).
     private func wizardL10n(_ base: String) -> String {
@@ -391,6 +409,8 @@ final class ChannelPanelController: NSObject {
             wizardInfo.stringValue = L10n.tr(wizardL10n("channel.wizard.promptInfo"))
             wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
             wizardQRView.image = nil
+            wizardLinkButton.isHidden = true
+            wizardLink = ""
             wizardPrimary.title = L10n.tr("channel.wizard.continue")
             wizardPrimary.isEnabled = true
             wizardSecondary.title = L10n.tr("channel.wizard.back")
@@ -433,6 +453,9 @@ final class ChannelPanelController: NSObject {
             DispatchQueue.main.async {
                 guard let self = self, let url = url else { return }
                 self.wizardQRView.image = ChannelPanelController.qrImage(from: url, size: 180)
+                self.wizardLink = url
+                // Open-in-browser is useful for DingTalk (device-code URL); WeChat's QR needs scanning.
+                self.wizardLinkButton.isHidden = self.wizardPlatform != "dingtalk"
             }
         }) { [weak self] ok in
             DispatchQueue.main.async {
