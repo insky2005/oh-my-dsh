@@ -424,7 +424,8 @@ final class ChannelPanelController: NSObject {
             wizardSecondary.title = L10n.tr("channel.wizard.back")
         } else if wizardStep == 1 {
             wizardTitle.stringValue = platformName
-            wizardHint.isHidden = true
+            wizardHint.isHidden = wizardPlatform != "dingtalk"
+            wizardHint.stringValue = L10n.tr("channel.wizard.robotNameHint")
             wizardInfo.stringValue = L10n.tr("channel.wizard.scanning")
             wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
             wizardPrimary.title = L10n.tr("btn.ok")
@@ -433,13 +434,36 @@ final class ChannelPanelController: NSObject {
         } else {
             wizardTitle.stringValue = platformName
             wizardHint.isHidden = true
+            wizardLinkButton.isHidden = true
             wizardInfo.stringValue = L10n.tr("channel.wizard.done")
-            wizardStatus.stringValue = ""
+            renderBindCode()
             wizardQRView.image = nil
             wizardPrimary.title = L10n.tr("channel.done")
             wizardPrimary.isEnabled = true
             wizardSecondary.title = L10n.tr("channel.wizard.back")
         }
+    }
+
+    /// Show the owner-bind code on the done step (read from the runner's binding file).
+    private func renderBindCode() {
+        guard let ch = channels.first(where: { $0.platform == wizardPlatform }),
+              let binding = ChannelStoreReader.loadDingTalkBinding(channelId: ch.id) else {
+            wizardStatus.stringValue = L10n.tr("channel.wizard.bindCodePending")
+            return
+        }
+        if binding.bound {
+            wizardStatus.stringValue = L10n.tr("channel.bind.bound")
+        } else if !binding.bindCode.isEmpty {
+            wizardStatus.stringValue = String(format: L10n.tr("channel.wizard.bindCode"), binding.bindCode)
+        } else {
+            wizardStatus.stringValue = L10n.tr("channel.wizard.bindCodePending")
+        }
+    }
+
+    /// Refresh the done step so the /bind code appears once the runner writes the binding file.
+    private func refreshWizardDoneIfBindingChanged() {
+        guard wizardStep == 2, !wizardView.isHidden, wizardPlatform == "dingtalk" else { return }
+        renderBindCode()
     }
 
     private func startLogin() {
@@ -803,6 +827,7 @@ final class ChannelPanelController: NSObject {
         let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
             self?.refreshProjectIfChanged()
             self?.refreshCardsIfBindingChanged()
+            self?.refreshWizardDoneIfBindingChanged()
         }
         RunLoop.main.add(timer, forMode: .common)
         refreshTimer = timer
