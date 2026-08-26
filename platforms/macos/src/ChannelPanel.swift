@@ -70,6 +70,8 @@ final class ChannelPanelController: NSObject {
     var onRequestHide: (() -> Void)?
     var workspacePath: (() -> String?)?
     var channelLoginRunner: ((String, @escaping (String?) -> Void, @escaping (Bool) -> Void) -> Void)?
+    /// Unbind a channel: stop its runner and clear its local config (wired to main.swift).
+    var channelUnbind: ((String) -> Void)?
     /// Open the given dsh session in dsh web (panel → web session link).
     var onOpenSession: ((String) -> Void)?
 
@@ -289,8 +291,26 @@ final class ChannelPanelController: NSObject {
         let cardView = ChannelCardView(card: card)
         cardView.platform = card.platform
         cardView.onTap = { [weak self] in self?.cardTapped(platform: card.platform) }
+        cardView.onUnbind = { [weak self] in self?.unbindChannel(platform: card.platform) }
         cardView.heightAnchor.constraint(equalToConstant: 64).isActive = true
         return cardView
+    }
+
+    /// Unbind a channel after confirmation: clear UserDefaults entry, stop the
+    /// runner and remove its local channel files (via main.swift).
+    private func unbindChannel(platform: String) {
+        guard let ch = channels.first(where: { $0.platform == platform }) else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("channel.unbind.confirmTitle")
+        alert.informativeText = L10n.tr("channel.unbind.confirmBody")
+        alert.addButton(withTitle: L10n.tr("btn.ok"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        if alert.runModal() == .alertFirstButtonReturn {
+            channels.removeAll { $0.id == ch.id }
+            saveGlobalChannels()
+            channelUnbind?(ch.id)
+            rebuildCards()
+        }
     }
 
     private func cardTapped(platform: String) {
@@ -1222,10 +1242,12 @@ final class ChannelCardView: NSView {
     var title: String { get { titleLabel.stringValue } set { titleLabel.stringValue = newValue } }
     var desc: String { get { descLabel.stringValue } set { descLabel.stringValue = newValue } }
     var onTap: (() -> Void)?
+    var onUnbind: (() -> Void)?
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let descLabel = NSTextField(wrappingLabelWithString: "")
     private let statusDot = NSView()
+    private let unbindButton = CustomIconButton(glyph: .symbol("xmark.circle"), tooltip: "")
 
     init(card: ChannelCard) {
         super.init(frame: .zero)
@@ -1264,7 +1286,11 @@ final class ChannelCardView: NSView {
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
 
-        let row = NSStackView(views: [iconView, textStack, spacer, statusDot])
+        unbindButton.toolTip = L10n.tr("channel.unbind")
+        unbindButton.isHidden = true
+        unbindButton.onAction = { [weak self] in self?.onUnbind?() }
+
+        let row = NSStackView(views: [iconView, textStack, spacer, unbindButton, statusDot])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 10
@@ -1303,6 +1329,7 @@ final class ChannelCardView: NSView {
         statusDot.layer?.backgroundColor = color.cgColor
         // Hover tooltip so the status is not conveyed by color alone.
         statusDot.toolTip = statusTooltip(state, configured: configured)
+        unbindButton.isHidden = !configured
     }
 
     /// Localized hover text for the status dot (color is not the only signal).

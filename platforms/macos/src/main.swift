@@ -305,6 +305,9 @@ enum L10n {
         "channel.state.reconnecting": ("重连中", "Reconnecting"),
         "channel.state.authExpired": ("鉴权失效，请重新登录", "Auth expired, re-login required"),
         "channel.state.disconnected": ("未连接", "Disconnected"),
+        "channel.unbind": ("解绑", "Unbind"),
+        "channel.unbind.confirmTitle": ("解绑该通道？", "Unbind this channel?"),
+        "channel.unbind.confirmBody": ("将清空该通道的连接配置与本地数据，且停止其运行中的监听进程。", "This will clear the channel's connection config and local data, and stop its running listener."),
         "channel.wizard.back": ("返回", "Back"),
         "channel.globalConfig": ("全局配置", "Global Config"),
         "channel.projectAvailable": ("当前项目可用通道", "Available Channels"),
@@ -1495,6 +1498,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
         channelPanel.channelLoginRunner = { [weak self] channelId, onQRUrl, completion in
             self?.runChannelLogin(channelId: channelId, onQRUrl: onQRUrl, completion: completion)
+        }
+        channelPanel.channelUnbind = { [weak self] channelId in
+            self?.unbindChannel(channelId: channelId)
         }
         // Panel → web session link: clicking a session's "open in dsh" drives the
         // web view to switch to that session.
@@ -3266,6 +3272,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelRunnerProcs.removeAll()
         channelRunnerIds.removeAll()
         AppLog.shared.log("channel runners stopped")
+    }
+
+    /// Stop a single channel's runner (dedup-safe).
+    private func stopChannelRunner(channelId: String) {
+        if let idx = channelRunnerIds.firstIndex(of: channelId) {
+            channelRunnerProcs[idx].terminate()
+            channelRunnerProcs.remove(at: idx)
+            channelRunnerIds.remove(at: idx)
+            AppLog.shared.log("channel runner stopped for \(channelId)")
+        }
+    }
+
+    /// Unbind a channel: stop its runner and remove its local channel files.
+    private func unbindChannel(channelId: String) {
+        stopChannelRunner(channelId: channelId)
+        let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/channels")
+        let fm = FileManager.default
+        if let files = try? fm.contentsOfDirectory(atPath: dir) {
+            for f in files where f.hasPrefix(channelId) {
+                try? fm.removeItem(atPath: (dir as NSString).appendingPathComponent(f))
+            }
+        }
+        AppLog.shared.log("channel unbound: \(channelId)")
     }
 
     /// 开发版构建（DSH_DEV_BUILD=1 打包，Info.plist 写入 DSHDevBuild=1）。开发版用于与
