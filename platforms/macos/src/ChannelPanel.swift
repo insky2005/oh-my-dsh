@@ -104,6 +104,10 @@ final class ChannelPanelController: NSObject {
     private let wizardHint = NSTextField(wrappingLabelWithString: "")
     private let wizardLinkButton = NSButton()
     private var wizardLink = ""
+    private let wizardBindRow = NSStackView()
+    private let wizardBindLabel = NSTextField(labelWithString: "")
+    private let wizardCopyButton = CustomIconButton(glyph: .symbol("doc.on.doc"), tooltip: "")
+    private var currentBindCode = ""
     private let wizardPrimary: NSButton
     private let wizardSecondary: NSButton
     private var wizardPlatform: String = ""
@@ -363,7 +367,20 @@ final class ChannelPanelController: NSObject {
         wizardHint.alignment = .center
         wizardHint.isHidden = true
 
-        let stack = NSStackView(views: [wizardTitle, wizardInfo, wizardQRView, wizardLinkButton, wizardStatus, buttons, wizardHint])
+        // bind-code row: /bind <code> + copy button (done step)
+        wizardBindLabel.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .semibold)
+        wizardBindLabel.alignment = .center
+        wizardCopyButton.toolTip = L10n.tr("channel.wizard.copyBind")
+        wizardCopyButton.onAction = { [weak self] in self?.copyBindCode() }
+        wizardBindRow.orientation = .horizontal
+        wizardBindRow.alignment = .centerY
+        wizardBindRow.spacing = 6
+        wizardBindRow.addArrangedSubview(wizardBindLabel)
+        wizardBindRow.addArrangedSubview(wizardCopyButton)
+        wizardBindRow.translatesAutoresizingMaskIntoConstraints = false
+        wizardBindRow.isHidden = true
+
+        let stack = NSStackView(views: [wizardTitle, wizardInfo, wizardQRView, wizardBindRow, wizardLinkButton, wizardStatus, buttons, wizardHint])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 12
@@ -444,20 +461,35 @@ final class ChannelPanelController: NSObject {
         }
     }
 
-    /// Show the owner-bind code on the done step (read from the runner's binding file).
+    /// Show the owner-bind code on the done step (read from the runner's binding file),
+    /// as a copyable "/bind <code>" row + copy button.
     private func renderBindCode() {
         guard let ch = channels.first(where: { $0.platform == wizardPlatform }),
               let binding = ChannelStoreReader.loadDingTalkBinding(channelId: ch.id) else {
+            wizardBindRow.isHidden = true
             wizardStatus.stringValue = L10n.tr("channel.wizard.bindCodePending")
             return
         }
         if binding.bound {
+            wizardBindRow.isHidden = true
             wizardStatus.stringValue = L10n.tr("channel.bind.bound")
         } else if !binding.bindCode.isEmpty {
-            wizardStatus.stringValue = String(format: L10n.tr("channel.wizard.bindCode"), binding.bindCode)
+            currentBindCode = binding.bindCode
+            wizardBindLabel.stringValue = "/bind " + binding.bindCode
+            wizardBindRow.isHidden = false
+            wizardStatus.stringValue = L10n.tr("channel.wizard.bindCodePrompt")
         } else {
+            wizardBindRow.isHidden = true
             wizardStatus.stringValue = L10n.tr("channel.wizard.bindCodePending")
         }
+    }
+
+    /// Copy "/bind <code>" to the clipboard.
+    @objc private func copyBindCode() {
+        guard !currentBindCode.isEmpty else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString("/bind " + currentBindCode, forType: .string)
     }
 
     /// Refresh the done step so the /bind code appears once the runner writes the binding file.

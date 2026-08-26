@@ -314,6 +314,8 @@ enum L10n {
         "channel.wizard.robotNameHint": ("扫码或打开链接，创建 DeepSeek Harness 钉钉机器人", "Scan the QR or open the link to create the DeepSeek Harness DingTalk robot"),
         "channel.wizard.bindCode": ("请在钉钉发送 /bind %@ 完成管理员绑定", "Send /bind %@ in DingTalk to bind the owner"),
         "channel.wizard.bindCodePending": ("绑定口令稍后显示在通道卡片", "The bind code will appear on the channel card"),
+        "channel.wizard.bindCodePrompt": ("在钉钉私聊发送此口令，完成管理员绑定", "Send this in a DingTalk direct message to bind the owner"),
+        "channel.wizard.copyBind": ("复制", "Copy"),
         "channel.wizard.back": ("返回", "Back"),
         "channel.globalConfig": ("全局配置", "Global Config"),
         "channel.projectAvailable": ("当前项目可用通道", "Available Channels"),
