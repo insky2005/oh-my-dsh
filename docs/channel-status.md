@@ -46,11 +46,12 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 | 扫码登录向导（提示 → 二维码 → 绑定成功） | ✅ | CIQRCodeGenerator **面板内渲染二维码**（不弹浏览器）；调 core `channel login --save`；成功后自动拉起 runner |
 | 项目视图（Channel 行 + NSSwitch 开关 + 可展开会话 + 消息列表） | ✅ | ProjectRowView + ChannelSessionRow；开关写 `.dsh/channels.json` 引用；会话/消息读全局 store（ChannelStoreReader，D） |
 | 启动自动拉起 / 退出关闭 runner | ✅ | applicationDidFinishLaunching → startConfiguredChannelRunners()（已启用全局 channel 逐个拉起）；退出 terminate 清理；同 channelId 去重 |
-| 钉钉 / 飞书卡片点击 | 🚧 | 卡片已渲染（说明标注「待实现」），点击仅 NSSound.beep，未接适配器 |
+| 钉钉 / 飞书卡片点击 | 🚧 | 卡片已渲染；钉钉拟接官方插件（插件托管通道，见 docs/channel-dingtalk-plugin.md），飞书仍待实现；当前点击仅 NSSound.beep |
 | 会话/消息分组 UI 展示（按 Channel ▸ Session 的消息列表） | ✅ | ChannelSessionRow 展开显示该会话消息（读全局分桶 messages） |
 | 项目视图实时刷新（对话回复后自动更新） | ✅ | ChannelPanelController live-refresh：project 模式 ~1.5s 轻量重读全局 store，**内容签名变化才全量重建**（保留折叠/展开状态），视图不随轮询抖动 |
 | **与 dsh web 会话双向联动**（面板↔web） | ✅ | 面板会话行「在 dsh 中打开」经 `sessionOpenerScript` 驱动 web 切换；web 切会话经 `setActiveSession` 自动展开对应行、其余收起（channel 列表仍显示；**以 sessionId 对应，不用 name**）。详见 docs/channel-web-session-link.md |
 | 即时「收到」应答 | 📋 | 低优先 TODO |
+| 插件托管通道（钉钉）状态来源 | 📋 | 待实现：读 `~/.dsh-dingtalk/**/runtime.json` 的 `stream.status` + `owner.json`，映射到统一状态机（见 docs/channel-dingtalk-plugin.md §6.2/§7） |
 
 ### 3.3 测试与验证
 
@@ -70,7 +71,7 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 | M1 | 统一抽象层 + Router 骨架 + 配置面板（全局 + 项目引用）+ 全局配置模型与凭据存储 | ✅ |
 | M2 | 微信 ClawBot 适配器（core 内首个实现） | ✅ |
 | M3 | 消息分发路由（项目引用匹配 + 会话驱动 + 回复回传） | ✅ |
-| M4 | 钉钉 / 飞书适配器（复用统一抽象） | 📋 待实现 |
+| M4 | 钉钉（官方插件托管通道）/ 飞书（core 适配器） | 📋 待实现 |
 | 跨平台 | Windows（M2 里程碑）/ Linux（M3 里程碑）壳层复用 core | 📋 随各自里程碑 |
 
 ## 5. 待办清单（按优先级）

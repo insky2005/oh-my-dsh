@@ -172,13 +172,13 @@
 
 | 维度 | 微信 ClawBot | 钉钉 | 飞书 |
 |---|---|---|---|
-| 连接形态 | 个人账号**长轮询** getUpdates（无需公网） | 官方开放平台 + 机器人 **webhook/事件订阅** | 开放平台 + **事件订阅**（长连接/回调） |
+| 连接形态 | 个人账号**长轮询** getUpdates（无需公网） | **Stream 长连接**（WebSocket 出站，无需公网） | 开放平台 + **事件订阅**（长连接/回调） |
 | 会话标识 | 微信会话 conversationId | 群/单聊（群 key / openId） | chat_id / open_id |
 | 鉴权失效 | -14 token 失效 | access_token 过期 | 推送鉴权 / token 过期 |
 | 归一化 | 统一为 ChannelEvent + 状态机 auth-expired | 同左 | 同左 |
-| SDK | weixin-agent-sdk（Node） | 官方开放接口（HTTP） | 官方开放接口（HTTP/长连接） |
+| SDK | weixin-agent-sdk（Node） | 官方插件 @dingtalk-real-ai/dsh-dingtalk（DSH Cordis 插件，dingtalk-stream） | 官方开放接口（HTTP/长连接） |
 
-结论：三者形态不同，但都能无损映射到统一抽象；钉钉/飞书作为后续适配器，可用本设计的一致性回归用例验证。
+结论：三者形态不同；微信为 core/ 适配器形态，**钉钉采用官方插件托管**（面板编排/观测，详见 docs/channel-dingtalk-plugin.md），飞书仍为后续适配器。
 
 ## 8. 微信 ClawBot 接入可行性分析（重点）
 
@@ -239,7 +239,9 @@
 - **M1**：统一抽象层（ChannelEvent/Reply/状态机 + ChannelAdapter 接口）+ 消息分发 Router 骨架，**全部落入 `core/`（Node，平台无关）** + 配置面板（全局 + 项目引用）+ 全局配置模型与凭据存储。
 - **M2**：微信 ClawBot 适配器（`core/` 内首个实现，验证抽象）。✅——适配器 weixin-clawbot.js + transport weixin-clawbot-transport.js，**纯官方 iLink Bot 协议**（@tencent-weixin/openclaw-weixin 2.4.6 官方源码直接推导：ilinkai.weixin.qq.com、登录/收/发/媒体/通知全部按官方实现，不参考任何非官方逆向）。 面板「扫码登录」按钮调 core channel login，token 落 ~/.dsh/channels/<id>.json（ChannelPanel + AppDelegate.runChannelLogin）。
 - **M3**：消息分发路由（项目引用匹配 + 会话驱动 + 回复回传，`core/`）。✅——Router + SessionDriver 已在**真实 dsh web** 上端到端验证（见 §11）。channel-runner 编排 token→adapter→manager→Router→dsh 会话→context_token 回复，已在**真实微信+真实 dsh** 跑通。
-- **M4**：钉钉/飞书适配器（复用统一抽象，验证一致性与扩展性）。📋 待实现。
+- **M4**：钉钉/飞书通道。📋 待实现。
+  - **钉钉 = 官方插件托管通道**（非 core/ 适配器）：经 `@dingtalk-real-ai/dsh-dingtalk`（DSH Cordis 插件，`dsh plugin --profile web add` 装入 web profile）走 Stream 长连接（免公网），面板只做编排/观测（安装、扫码创建应用、状态读取、会话罗列）。凭据存 `$DSH_HOME/.credentials.yaml`，状态读 `~/.dsh-dingtalk/**/runtime.json`。设计详见 **docs/channel-dingtalk-plugin.md**。
+  - **飞书**仍为 core/ 适配器，复用统一抽象验证一致性。
 - **跨平台**：Windows（M2 里程碑）/ Linux（M3 里程碑）壳层仅实现配置面板 UI + 凭据文件层，直接复用 `core/` 全部 channel 核心（见 §3.4）。
 
 ## 11. 测试与验收
