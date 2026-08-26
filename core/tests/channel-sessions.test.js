@@ -116,3 +116,11 @@ test('sessions: appendMessage must NOT auto-enable a workspace (enable only via 
   assert.ok(!store.listEnabledWorkspaces().includes(p), 'workspaces.json must stay empty');
   assert.ok(!fs.existsSync(path.join(store.dir, 'wx-noen.workspaces.json')), 'workspaces.json not created by archiving');
 });
+
+test('sessions: system message with no project context goes to channel-global bucket, not a workspace', () => {
+  const store = createChannelSessions({ channelId: 'wx-sys', dshHome: HOME, defaultProjectRoot: '/Users/loie/repo/workspace-x' });
+  store.appendMessage({ conversationId: 'orphan', sessionId: null, dir: 'in', text: '/status' });
+  assert.ok(fs.existsSync(path.join(store.dir, 'wx-sys.system.messages.json')), 'channel-global system bucket written');
+  assert.ok(!fs.existsSync(path.join(store.dir, 'wx-sys.workspace-x.system.messages.json')), 'no workspace-scoped system bucket for a context-less system message');
+  assert.equal(store.listMessages('orphan').length, 1);
+});

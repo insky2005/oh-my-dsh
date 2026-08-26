@@ -66,6 +66,9 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
   const dir = channelsDir(dshHome);
   const sessionsFile = path.join(dir, channelId + '.sessions.json');
   const workspacesFile = path.join(dir, channelId + '.workspaces.json');
+  // Channel-global system bucket for command/system messages that have NO project
+  // context — they must NOT be scoped under a workspace key.
+  const channelSystemFile = path.join(dir, channelId + '.system.messages.json');
 
   function ensureDir() { fs.mkdirSync(dir, { recursive: true }); }
 
@@ -179,13 +182,24 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
     for (const f of bucketFiles(channelId + '.' + (workspaceKey || '') + '.')) out = out.concat(readBucket(f));
     return out;
   }
-  /** Append a message record. dir = "in" | "out". Bucket = (projectRoot, sessionId??system). */
+  /** Append a message record. dir = "in" | "out".
+   *  Bucket = project-scoped (projectRoot, sessionId??system) when there is a
+   *  project context; otherwise (command/system message with no project context)
+   *  a channel-GLOBAL system bucket — never scoped under a workspace key. */
   function appendMessage({ conversationId, sessionId, dir, text, ts, projectRoot }) {
     let root = projectRoot;
     if (!root) { const rec = getSession(conversationId); root = (rec && rec.projectRoot) || null; }
-    if (!root) root = defaultProjectRoot || null;
-    if (!root) return; // nowhere to archive — best effort, never throw
-    const file = bucketFile(root, sessionId);
+    let file;
+    if (root) {
+      file = bucketFile(root, sessionId);
+    } else if (!sessionId) {
+      // channel-level system message (no project context)
+      file = channelSystemFile;
+    } else {
+      root = defaultProjectRoot || null;
+      if (!root) return; // nowhere to archive — best effort, never throw
+      file = bucketFile(root, sessionId);
+    }
     const messages = readBucket(file);
     messages.push({ channelId, conversationId, sessionId: sessionId || null, dir, text: String(text || ''), ts: ts || Date.now(), projectRoot: root });
     if (messages.length > MAX_MESSAGES) messages.splice(0, messages.length - MAX_MESSAGES);
