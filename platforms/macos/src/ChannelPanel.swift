@@ -101,6 +101,7 @@ final class ChannelPanelController: NSObject {
     private let wizardInfo = NSTextField(wrappingLabelWithString: "")
     private let wizardQRView = NSImageView()
     private let wizardStatus = NSTextField(labelWithString: "")
+    private let wizardHint = NSTextField(wrappingLabelWithString: "")
     private let wizardLinkButton = NSButton()
     private var wizardLink = ""
     private let wizardPrimary: NSButton
@@ -357,7 +358,12 @@ final class ChannelPanelController: NSObject {
         buttons.orientation = .horizontal
         buttons.spacing = 8
 
-        let stack = NSStackView(views: [wizardTitle, wizardInfo, wizardQRView, wizardLinkButton, wizardStatus, buttons])
+        wizardHint.font = .systemFont(ofSize: 10)
+        wizardHint.textColor = .tertiaryLabelColor
+        wizardHint.alignment = .center
+        wizardHint.isHidden = true
+
+        let stack = NSStackView(views: [wizardTitle, wizardInfo, wizardHint, wizardQRView, wizardLinkButton, wizardStatus, buttons])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 12
@@ -411,11 +417,14 @@ final class ChannelPanelController: NSObject {
             wizardQRView.image = nil
             wizardLinkButton.isHidden = true
             wizardLink = ""
+            wizardHint.isHidden = wizardPlatform != "dingtalk"
+            wizardHint.stringValue = L10n.tr("channel.wizard.robotNameHint")
             wizardPrimary.title = L10n.tr("channel.wizard.continue")
             wizardPrimary.isEnabled = true
             wizardSecondary.title = L10n.tr("channel.wizard.back")
         } else if wizardStep == 1 {
             wizardTitle.stringValue = platformName
+            wizardHint.isHidden = true
             wizardInfo.stringValue = L10n.tr("channel.wizard.scanning")
             wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
             wizardPrimary.title = L10n.tr("btn.ok")
@@ -423,6 +432,7 @@ final class ChannelPanelController: NSObject {
             wizardSecondary.title = L10n.tr("channel.wizard.back")
         } else {
             wizardTitle.stringValue = platformName
+            wizardHint.isHidden = true
             wizardInfo.stringValue = L10n.tr("channel.wizard.done")
             wizardStatus.stringValue = ""
             wizardQRView.image = nil

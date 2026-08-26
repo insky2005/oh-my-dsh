@@ -311,6 +311,7 @@ enum L10n {
         "channel.bind.bound": ("已绑定管理员", "Owner bound"),
         "channel.bind.hint": ("绑定口令：%@（请在钉钉发送 /bind %@）", "Bind code: %@ (send /bind %@ in DingTalk)"),
         "channel.wizard.openLink": ("在浏览器中打开（无需扫码）", "Open in browser (no scan needed)"),
+        "channel.wizard.robotNameHint": ("将创建机器人「DeepSeek 助手」，可在钉钉开发者后台重命名。", "A robot will be auto-created and can be renamed in the DingTalk developer console."),
         "channel.wizard.back": ("返回", "Back"),
         "channel.globalConfig": ("全局配置", "Global Config"),
         "channel.projectAvailable": ("当前项目可用通道", "Available Channels"),
