@@ -32,6 +32,12 @@ module.exports = {
   ...require('./lib/session-driver'),
   // WeChat ClawBot channel adapter (first ChannelAdapter implementation)
   ...require('./lib/weixin-clawbot'),
+  // DingTalk channel adapter (Stream push transport)
+  ...require('./lib/dingtalk'),
+  // DingTalk Stream transport (built-in WebSocket/fetch)
+  ...require('./lib/dingtalk-stream-transport'),
+  // DingTalk device-code app registration (QR auto-create)
+  ...require('./lib/dingtalk-device'),
   // WeChat ClawBot transport (SDK or OpenClaw HTTP backing)
   ...require('./lib/weixin-clawbot-transport'),
   // Channel account/token persistence (~/.dsh/channels/<id>.json, file-first)

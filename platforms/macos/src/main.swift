@@ -288,7 +288,7 @@ enum L10n {
         "channel.card.weixin": ("微信 ClawBot", "WeChat ClawBot"),
         "channel.card.weixinDesc": ("通过微信个人号收发消息（官方 iLink 协议）", "Send & receive via WeChat (official iLink)"),
         "channel.card.dingtalk": ("钉钉", "DingTalk"),
-        "channel.card.dingtalkDesc": ("钉钉机器人事件订阅（待实现）", "DingTalk bot events (planned)"),
+        "channel.card.dingtalkDesc": ("钉钉机器人 Stream 连接（扫码创建应用）", "DingTalk bot via Stream (QR app registration)"),
         "channel.card.feishu": ("飞书", "Feishu"),
         "channel.card.feishuDesc": ("飞书机器人事件订阅（待实现）", "Feishu bot events (planned)"),
         "channel.card.open": ("开始配置", "Configure"),
@@ -3150,9 +3150,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let savePath = ((dshHome as NSString).appendingPathComponent("channels") as NSString).appendingPathComponent(channelId + ".json")
         try? FileManager.default.createDirectory(atPath: (dshHome as NSString).appendingPathComponent("channels"), withIntermediateDirectories: true)
 
+        // DingTalk uses the device-code app-registration flow (channel login-dingtalk);
+        // WeChat uses the ClawBot QR login (channel login). Dispatch by channel id prefix.
+        let isDingTalk = channelId.hasPrefix("dingtalk")
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: node)
-        proc.arguments = [cli, "channel", "login", "--save", savePath]
+        proc.arguments = [cli, "channel", isDingTalk ? "login-dingtalk" : "login", "--save", savePath]
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = pipe
@@ -3163,7 +3166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             if data.isEmpty { return }
             outputData.append(data)
             if let str = String(data: data, encoding: .utf8),
-               let url = str.range(of: "https://liteapp.weixin.qq.com") {
+               let url = str.range(of: isDingTalk ? "https://open-dev.dingtalk.com" : "https://liteapp.weixin.qq.com") {
                 let sub = str[url.lowerBound...]
                 let end = sub.firstIndex(where: { $0 == "）" || $0 == "\n" }) ?? sub.endIndex
                 let link = String(sub[..<end])

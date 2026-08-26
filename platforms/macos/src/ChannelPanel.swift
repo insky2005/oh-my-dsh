@@ -295,7 +295,8 @@ final class ChannelPanelController: NSObject {
 
     private func cardTapped(platform: String) {
         guard let card = ChannelPanelController.builtins.first(where: { $0.platform == platform }) else { return }
-        if card.platform != "weixin-clawbot" { NSSound.beep(); return }
+        // weixin + dingtalk use the in-panel QR wizard; feishu is still planned.
+        if card.platform != "weixin-clawbot" && card.platform != "dingtalk" { NSSound.beep(); return }
         wizardPlatform = card.platform
         wizardStep = 0
         renderWizard()
