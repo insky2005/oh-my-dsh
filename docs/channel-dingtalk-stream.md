@@ -1,11 +1,11 @@
 # DingTalk 通道接入设计（dingtalk-stream 原生适配器）
 
-> 状态：📝 设计稿（尚未实现）
+> 状态：✅ 已实现（v1 核心 + 面板；见 §12 开发状态）
 > 更新：2026-08-26
 > 关联：docs/channel-design.md（Channel 统一抽象）、docs/channel-dingtalk-plugin.md（对照：官方插件托管方案）、core/lib/channel.js、core/lib/channel-runner.js、platforms/macos/src/ChannelPanel.swift
 > 依据：钉钉官方 Stream SDK open-dingtalk/dingtalk-stream-sdk-nodejs（npm dingtalk-stream，v2.1.x）源码 + 钉钉开放平台 device-code 应用注册接口
 >
-> 本文档描述**独立于官方 dsh-dingtalk 插件**的实现方案：直接用 dingtalk-stream SDK 在 core/ 内实现钉钉适配器，走与微信（weixin-clawbot）**完全同构**的「core 适配器 + channel-runner 子进程 + channel store」路线。**只描述设计，不包含实现代码。**
+> 本文档描述**独立于官方 dsh-dingtalk 插件**的实现方案：直接用 dingtalk-stream SDK 在 core/ 内实现钉钉适配器，走与微信（weixin-clawbot）**完全同构**的「core 适配器 + channel-runner 子进程 + channel store」路线。方案已落地实现（见 §12 开发状态）。
 
 ## 1. 目标与背景
 
@@ -168,7 +168,7 @@ ChannelPanel.swift 项目视图（ChannelStoreReader，与微信完全一致）
 
 **取舍**：原生适配器换取**面板一致性与微信能力全对齐**（含每会话路由、项目视图零改造），代价是**不直接用插件的富交互特性**（v1 以文本/Markdown 回复为主，AI Card/互动审批卡/图片/DWS 视需要后续补齐或并行用插件）。
 
-## 8. 决策项（待确认）
+## 8. 决策项（已定并落地）
 
 | 决策 | 问题 | 推荐默认 |
 |---|---|---|
@@ -203,3 +203,17 @@ ChannelPanel.swift 项目视图（ChannelStoreReader，与微信完全一致）
 - 不实现 AI Card 流式 / 互动审批卡 / 图片 / DWS（留作后续增强，或并行采用官方插件）。
 - 不 fork 官方插件、不依赖 @dingtalk-real-ai/dsh-dingtalk。
 - feishu 通道维持现状（待实现）。
+
+## 12. 开发状态（已实现）
+
+核心适配器 + 面板已完成，core 单测全绿（187 项）：
+
+- **core**：`dingtalk-stream-transport.js`（Stream 客户端）、`dingtalk.js`（适配器）、`dingtalk-device.js`（device-code 注册）、`dingtalk-access.js`（/bind 管理员绑定安全门 + 串行锁）、`channel-runner.js` 的 `runDingTalkChannel`；`channel-sessions.js`（命令消息落通道级系统桶、启用仅由项目开关）；`channel-store.js`（clientId/clientSecret）；CLI（`channel login-dingtalk`、`channel run` 按平台分发、`/wks` 裸数字）。
+- **面板**：钉钉扫码向导（二维码 + 在浏览器打开 + 绑定口令复制/恢复 + 绑定状态显示）、状态点悬浮 tooltip、解绑动作（清配置 + 停 runner）、微信绑定页已配置态 + 显式「重新登录」、返回任意步骤取消登录子进程。
+- **测试**：`core/tests/dingtalk.test.js`、`dingtalk-stream-transport.test.js`、`dingtalk-access.test.js` 等，全量 187 全绿。
+
+## 13. 后续迭代（未实现）
+
+- **allowlist（访问白名单）**：允许指定 sender staffId / 指定群使用机器人（其余仍仅管理员）。当前为「仅管理员」安全默认：群内其他人 @ 机器人会被拒绝（回「无权限」），防止任何群成员驱动本机 agent。
+- **群内拒绝消息限流 / 静默**：非 owner 的 @ 会在群内刷「无权限」，建议按小时限流或静默。
+- **富交互增强**：AI Card 流式 / 互动审批卡 / 图片 / DWS（可并行采用官方插件）。
