@@ -183,20 +183,21 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
     return out;
   }
   /** Append a message record. dir = "in" | "out".
-   *  Bucket = project-scoped (projectRoot, sessionId??system) when there is a
-   *  project context; otherwise (command/system message with no project context)
-   *  a channel-GLOBAL system bucket — never scoped under a workspace key. */
+   *  Classification rule:
+   *   - sessionId == null  → command/system message (no dsh session): goes to the
+   *     channel-GLOBAL system bucket, ALWAYS — never scoped under a workspace key.
+   *   - sessionId != null  → a dsh-session-bound conversation message: project-scoped
+   *     bucket (explicit projectRoot, else session mapping, else defaultProjectRoot). */
   function appendMessage({ conversationId, sessionId, dir, text, ts, projectRoot }) {
-    let root = projectRoot;
-    if (!root) { const rec = getSession(conversationId); root = (rec && rec.projectRoot) || null; }
+    let root = null;
     let file;
-    if (root) {
-      file = bucketFile(root, sessionId);
-    } else if (!sessionId) {
-      // channel-level system message (no project context)
+    if (!sessionId) {
+      // command/system message: channel-global system bucket
       file = channelSystemFile;
     } else {
-      root = defaultProjectRoot || null;
+      root = projectRoot || null;
+      if (!root) { const rec = getSession(conversationId); root = (rec && rec.projectRoot) || null; }
+      if (!root) root = defaultProjectRoot || null;
       if (!root) return; // nowhere to archive — best effort, never throw
       file = bucketFile(root, sessionId);
     }

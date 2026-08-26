@@ -53,7 +53,8 @@ test('sessions: appendMessage writes per-session buckets under global channels d
   // buckets under global channels dir
   assert.ok(fs.existsSync(path.join(store.dir, 'wx-2.alpha.s-1.messages.json')), 'session bucket written');
   assert.ok(fs.existsSync(path.join(store.dir, 'wx-2.alpha.s-2.messages.json')), 'second session bucket written');
-  assert.ok(fs.existsSync(path.join(store.dir, 'wx-2.alpha.system.messages.json')), 'system bucket written');
+  assert.ok(fs.existsSync(path.join(store.dir, 'wx-2.system.messages.json')), 'system message goes to channel-global system bucket');
+  assert.ok(!fs.existsSync(path.join(store.dir, 'wx-2.alpha.system.messages.json')), 'system message NOT project-scoped');
   const a = store.listMessages('conv-a');
   assert.equal(a.length, 2);
   assert.equal(a[0].text, 'hi');
@@ -117,10 +118,13 @@ test('sessions: appendMessage must NOT auto-enable a workspace (enable only via 
   assert.ok(!fs.existsSync(path.join(store.dir, 'wx-noen.workspaces.json')), 'workspaces.json not created by archiving');
 });
 
-test('sessions: system message with no project context goes to channel-global bucket, not a workspace', () => {
+test('sessions: command/system message ALWAYS goes to channel-global bucket, never a workspace', () => {
   const store = createChannelSessions({ channelId: 'wx-sys', dshHome: HOME, defaultProjectRoot: '/Users/loie/repo/workspace-x' });
-  store.appendMessage({ conversationId: 'orphan', sessionId: null, dir: 'in', text: '/status' });
+  // no sessionId (a command), even with an explicit projectRoot + a session mapping:
+  store.appendMessage({ conversationId: 'orphan', sessionId: null, dir: 'in', text: '/status', projectRoot: '/Users/loie/repo/workspace-x' });
+  store.setSession('orphan', { sessionId: 's-9', projectRoot: '/Users/loie/repo/workspace-x' });
+  store.appendMessage({ conversationId: 'orphan', sessionId: null, dir: 'in', text: '/status-2' });
   assert.ok(fs.existsSync(path.join(store.dir, 'wx-sys.system.messages.json')), 'channel-global system bucket written');
-  assert.ok(!fs.existsSync(path.join(store.dir, 'wx-sys.workspace-x.system.messages.json')), 'no workspace-scoped system bucket for a context-less system message');
-  assert.equal(store.listMessages('orphan').length, 1);
+  assert.ok(!fs.existsSync(path.join(store.dir, 'wx-sys.workspace-x.system.messages.json')), 'system messages never project-scoped');
+  assert.equal(store.listMessages('orphan').length, 2);
 });
