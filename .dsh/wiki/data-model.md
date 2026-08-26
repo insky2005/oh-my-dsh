@@ -1,8 +1,8 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-08-24T00:00:00Z
-sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/git-workflow.md]
+updated: 2026-08-26T14:29:30Z
+sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md]
 manual: false
 ---
 
@@ -101,6 +101,8 @@ manual: false                   # true = 用户手改，代理永不覆盖
 | 会话映射（全局） | `~/.dsh/channels/<channelId>.sessions.json` | `channel-sessions.js`（setSession） | **channel 作用域全局**（2026-08-22 起）；按 sessionId 保留全部会话，`/new` 重绑定 conversation 不删历史；记录含 conversationId/sessionId/projectRoot/workspaceKey/name/updatedAt |
 | 会话消息归档（全局） | `~/.dsh/channels/<channelId>.<workspaceKey>.<sessionId>.messages.json`（sessionId 缺省入 `system` 桶） | `channel-sessions.js`（appendMessage） | 分桶记录 `{channelId, conversationId, sessionId, dir: in\|out, text, ts, projectRoot}`，MAX_MESSAGES=1000 滚动；`<channelId>.workspaces.json` 登记 workspaceKey ↔ projectRoot（同名加 6 位路径哈希消歧）；**项目目录不再产生消息/会话文件** |
 | 项目开关/启用关联 | `~/.dsh/channels/<channelId>.workspaces.json` | ChannelPanel `setChannelEnabled` / channel-sessions `setWorkspaceEnabled` | **全局**（2026-08-23 随 PR #30 落地，docs/channel-project-switch.md）：`{"<workspaceKey>":"<projectRoot>"}`（chmod 600，key 用 `ChannelStoreReader.workspaceKey(for:)` 派生）；某 projectRoot 出现 = 该工作区启用了该通道（「项目开关」ON）；旧 `<项目>/.dsh/channels.json` refs 不再作为启用来源（仅 ChannelPanel 一次性惰性迁移播种）；`registerProjectRoot` 只作消息桶 key 推导 |
+| 钉钉管理员绑定 | `~/.dsh/channels/<channelId>.binding.json`（chmod 600） | `dingtalk-access.js`（runChannel 的 owner-binding 安全门） | 存 /bind 绑定状态：未绑定管理员前**拒绝所有**消息，仅绑定管理员可驱动本机 dsh；见 docs/channel-dingtalk-stream.md |
+| 钉钉应用凭据 | `~/.dsh/channels/<channelId>.json`（chmod 600，含 AppKey/AppSecret） | `dingtalk-device.js`（device-code 扫码注册）/ 手动填写 | 与微信共用 channel-store.js 凭据文件；扫码创建应用走 `channel login-dingtalk`（init/begin → poll 得 AppKey/AppSecret） |
 
 ## Channel 关联模型（channel ↔ message ↔ session，2026-08-22 落地）
 
@@ -115,6 +117,6 @@ manual: false                   # true = 用户手改，代理永不覆盖
 
 - `~/Library/Logs/oh-my-dsh/app.log` — 壳层行为（`AppLog`，串行队列写盘，ISO8601 时间戳）；
 - `~/Library/Logs/oh-my-dsh/server.log` — 自拉起的 `dsh web` 进程 stdout/stderr；
-- `~/Library/Logs/oh-my-dsh/channel-runner-<channelId>.log` — channel runner（core/Node，`channel run`）的 stdout/stderr（含 `[weixin-clawbot]` getConfig/sendTyping 等日志；main.swift startChannelRunner 路由到文件而非丢弃）；
+- `~/Library/Logs/oh-my-dsh/channel-runner-<channelId>.log` — channel runner（core/Node，`channel run`）的 stdout/stderr（含 `[weixin-clawbot]` getConfig/sendTyping、`[dingtalk]` 等日志；main.swift startChannelRunner 路由到文件而非丢弃）；
 - `$HOME/.dsh`（默认 `DSH_HOME`）— 传给 `dsh web`，首次使用自动初始化 web profile；其下另有 `~/.dsh/gh-token`（通用 token 文件）与 `~/.dsh/tokens/<owner>-<repo>`（按仓库作用域的 token 文件，chmod 600）——均**不**在仓库内，不入 git；
 - 调试面板截图：`~/Library/Logs/oh-my-dsh/panel-<label>-debug.png`（`DSH_UI_DEBUG=1` 时产出）。

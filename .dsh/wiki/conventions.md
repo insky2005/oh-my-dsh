@@ -1,8 +1,8 @@
 ---
 title: 工程约定
 tags: [conventions, l10n, build, qa-hooks, versioning]
-updated: 2026-08-22T15:04:38Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/channel-issues.md, docs/channel-project-switch.md, docs/builtin-skills-design.md, docs/release-process.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-ci.sh, scripts/github-publish.sh, tests/skills/, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-knowledge/SKILL.md]
+updated: 2026-08-26T14:29:30Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/channel-issues.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/builtin-skills-design.md, docs/release-process.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-ci.sh, scripts/github-publish.sh, tests/skills/, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-knowledge/SKILL.md]
 manual: false
 ---
 
@@ -63,7 +63,7 @@ manual: false
 
 ## 测试约定
 
-- 共享核心单测走 Node：`node --test core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，166 用例，2026-08-24 实测全绿）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
+- 共享核心单测走 Node：`node --test core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，186 用例，2026-08-26 实测全绿）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
 - CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + `tests/browser-panel/run.sh` + `tests/skills/run.sh`（内置 skill 安装器）+ `tests/channel-panel/run.sh`（通道项目视图数据模型）+ 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh` 单一来源，先 `mkdir -p .build/module-cache`）；编译检查清单含 `IssueRunnerPanel.swift`（f4ed4ff 起——曾漏文件导致 main.swift 引用编译失败，CI 失败根因）与 `BrowserPanel.swift`/`BrowserAPI.swift`；构建矩阵为 arm64（x86_64 交叉编译由 release.yml 打 tag 时构建，产品不再出 universal），**不再使用退役中的 macos-13/x86_64 runner**；
 - 面板/壳层 Swift 无头单测模式（`tests/*/run.sh`）：`stubs.swift` + 把被测源码复制进临时目录 + 测试文件改名 `main.swift`（顶层代码需要）→ `swiftc` 编译运行，无窗口/无 PTY 依赖；
 - 终端模拟器测试不触 PTY（沙箱可能禁 `/dev/ptmx`），已迁 `core/tests/ansi.test.js`（42 项），`tests/terminal-emulator/run.sh` 为薄封装；
