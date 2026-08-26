@@ -412,9 +412,9 @@ final class ChannelPanelController: NSObject {
     }
 
     @objc private func wizardSecondaryTapped(_ sender: Any) {
-        // Leaving mid-scan (step 1) or after done (step 2): cancel any still-running
-        // login subprocess so it cannot create an app / linger in the background.
-        if wizardStep == 1 || wizardStep == 2 { cancelLogin() }
+        // Leaving the wizard on ANY step: cancel any (possibly lingering) login
+        // subprocess so it cannot create an app or stay in the background. Idempotent.
+        cancelLogin()
         finishWizard()
     }
 
