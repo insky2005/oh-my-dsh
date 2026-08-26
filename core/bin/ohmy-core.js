@@ -20,6 +20,7 @@
  *   node core/bin/ohmy-core.js channel normalize <eventJson>
  *   node core/bin/ohmy-core.js channel state <current> <next>
  *   node core/bin/ohmy-core.js channel login [--save <file>]
+ *   node core/bin/ohmy-core.js channel login-dingtalk [--save <file>]
  *   node core/bin/ohmy-core.js channel listen <token> [--once]
  *   node core/bin/ohmy-core.js channel reply <token> <to> <text>
  *   node core/bin/ohmy-core.js channel run <channelId> <port> <refsJson> [--dsh-home <dir>]
@@ -160,6 +161,19 @@ function println(s) {
         const transport = core.createWeixinClawBotTransport({ token });
         const res = await transport.sendMessage({ conversationId: to, text });
         printJson({ sent: true, to, messageId: res.messageId });
+      } else if (sub === 'login-dingtalk') {
+        // login-dingtalk [--save <file>] — DingTalk device-code app registration (QR auto-create).
+        let savePath = null;
+        for (let i = 0; i < rest.length; i++) { if (rest[i] === '--save') savePath = rest[i + 1] || null; }
+        const qr = require('../vendor/qrcode-terminal/lib/main.js');
+        const dev = require('../lib/dingtalk-device');
+        const begin = await dev.beginRegistration();
+        println('请用手机钉钉扫码创建应用（如二维码无法显示，可访问链接：' + begin.verificationUriComplete + '）');
+        qr.generate(begin.verificationUriComplete, { small: true });
+        const creds = await dev.waitForCredentials(begin);
+        const out = { clientId: creds.clientId, clientSecret: creds.clientSecret };
+        if (savePath) { require('fs').writeFileSync(savePath, JSON.stringify(out, null, 2), 'utf8'); }
+        printJson({ connected: true, ...out, savedTo: savePath });
       } else if (sub === 'run') {
         // run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>] — live end-to-end loop
         const channelId = rest[0] || '';
@@ -176,7 +190,8 @@ function println(s) {
         // on every event would re-route commands into the project router and
         // emit the "该会话未绑定任何项目" hint for global commands. We only attach
         // a logging callback via opts.onEvent (receiver for both paths).
-        const handle = await core.runWeixinChannel({
+        const runner = channelId.startsWith('dingtalk') ? core.runDingTalkChannel : core.runWeixinChannel;
+        const handle = await runner({
           channelId, port, refs, projectRoot, dshHome,
           onEvent: (event, result) => {
             const replyText = result && result.reply && result.reply.text;
@@ -191,7 +206,7 @@ function println(s) {
         process.on('SIGINT', stop); process.on('SIGTERM', stop);
         setInterval(() => {}, 1 << 30);
       } else {
-        fail('usage: channel route <refsJson> <conversationId> <text> | normalize <eventJson> | state <current> <next> | login [--save <file>] | listen <token> [--once] | reply <token> <to> <text> | run <channelId> <port> <refsJson> [--dsh-home <dir>]');
+        fail('usage: channel route <refsJson> <conversationId> <text> | normalize <eventJson> | state <current> <next> | login [--save <file>] | login-dingtalk [--save <file>] | listen <token> [--once] | reply <token> <to> <text> | run <channelId> <port> <refsJson> [--dsh-home <dir>]');
       }
       break;
     default:

@@ -66,22 +66,31 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
   const dir = channelsDir(dshHome);
   const sessionsFile = path.join(dir, channelId + '.sessions.json');
   const workspacesFile = path.join(dir, channelId + '.workspaces.json');
+  // Channel-global system bucket for command/system messages that have NO project
+  // context — they must NOT be scoped under a workspace key.
+  const channelSystemFile = path.join(dir, channelId + '.system.messages.json');
 
   function ensureDir() { fs.mkdirSync(dir, { recursive: true }); }
 
   // ----- workspaceKey registry -----
   function loadWorkspaces() { return readJson(workspacesFile, {}) || {}; }
   function saveWorkspaces(reg) { try { ensureDir(); fs.writeFileSync(workspacesFile, JSON.stringify(reg, null, 2), 'utf8'); } catch { /* non-fatal */ } }
-  /** Resolve (and register) the workspace key for a project root. */
-  function registerProjectRoot(projectRoot) {
+  /** Resolve the workspace key for a project root; persist=true writes it to the
+   *  workspaces.json registry (only the project-view toggle / explicit registration). */
+  function resolveKey(projectRoot, persist) {
     if (!projectRoot) return '';
     const reg = loadWorkspaces();
     let key = workspaceKey(projectRoot);
     for (const [k, root] of Object.entries(reg)) { if (root === projectRoot) { key = k; break; } }
     key = disambiguate(key, projectRoot, reg);
-    if (reg[key] !== projectRoot) { reg[key] = projectRoot; saveWorkspaces(reg); }
+    if (persist && reg[key] !== projectRoot) { reg[key] = projectRoot; saveWorkspaces(reg); }
     return key;
   }
+  /** Resolve AND persist the key (explicit enable / registration). */
+  function registerProjectRoot(projectRoot) { return resolveKey(projectRoot, true); }
+  /** Resolve the key WITHOUT persisting. Archiving must NOT auto-enable a project
+   *  (enable is controlled only by the project-view toggle, docs/channel-project-switch.md). */
+  function resolveWorkspaceKey(projectRoot) { return resolveKey(projectRoot, false); }
 
   // ----- project enable (the "project switch"; docs/channel-project-switch.md) -----
   // A project root present in this channel's workspaces.json = that workspace has
@@ -107,7 +116,8 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
   }
 
   function bucketFile(projectRoot, sessionId) {
-    const key = registerProjectRoot(projectRoot);
+    // derive the key WITHOUT registering — archiving a message must not auto-enable the project.
+    const key = resolveWorkspaceKey(projectRoot);
     return path.join(dir, channelId + '.' + key + '.' + (sessionId || 'system') + '.messages.json');
   }
 
@@ -137,7 +147,7 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
       sessions.push(entry);
     }
     entry.conversationId = conversationId;
-    if (rec.projectRoot) { entry.projectRoot = rec.projectRoot; entry.workspaceKey = rec.workspaceKey || registerProjectRoot(rec.projectRoot); }
+    if (rec.projectRoot) { entry.projectRoot = rec.projectRoot; entry.workspaceKey = rec.workspaceKey || resolveWorkspaceKey(rec.projectRoot); }
     else { entry.projectRoot = entry.projectRoot || null; entry.workspaceKey = entry.workspaceKey || null; }
     if (rec.name != null) entry.name = rec.name;
     entry.updatedAt = Date.now();
@@ -172,13 +182,25 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
     for (const f of bucketFiles(channelId + '.' + (workspaceKey || '') + '.')) out = out.concat(readBucket(f));
     return out;
   }
-  /** Append a message record. dir = "in" | "out". Bucket = (projectRoot, sessionId??system). */
+  /** Append a message record. dir = "in" | "out".
+   *  Classification rule:
+   *   - sessionId == null  → command/system message (no dsh session): goes to the
+   *     channel-GLOBAL system bucket, ALWAYS — never scoped under a workspace key.
+   *   - sessionId != null  → a dsh-session-bound conversation message: project-scoped
+   *     bucket (explicit projectRoot, else session mapping, else defaultProjectRoot). */
   function appendMessage({ conversationId, sessionId, dir, text, ts, projectRoot }) {
-    let root = projectRoot;
-    if (!root) { const rec = getSession(conversationId); root = (rec && rec.projectRoot) || null; }
-    if (!root) root = defaultProjectRoot || null;
-    if (!root) return; // nowhere to archive — best effort, never throw
-    const file = bucketFile(root, sessionId);
+    let root = null;
+    let file;
+    if (!sessionId) {
+      // command/system message: channel-global system bucket
+      file = channelSystemFile;
+    } else {
+      root = projectRoot || null;
+      if (!root) { const rec = getSession(conversationId); root = (rec && rec.projectRoot) || null; }
+      if (!root) root = defaultProjectRoot || null;
+      if (!root) return; // nowhere to archive — best effort, never throw
+      file = bucketFile(root, sessionId);
+    }
     const messages = readBucket(file);
     messages.push({ channelId, conversationId, sessionId: sessionId || null, dir, text: String(text || ''), ts: ts || Date.now(), projectRoot: root });
     if (messages.length > MAX_MESSAGES) messages.splice(0, messages.length - MAX_MESSAGES);
@@ -194,7 +216,7 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
     sessionsFile, workspacesFile, dir,
     getSession, setSession, listSessions,
     appendMessage, listMessages, loadMessages, loadMessagesFor,
-    registerProjectRoot, workspaceKey,
+    registerProjectRoot, resolveWorkspaceKey, workspaceKey,
     listEnabledWorkspaces, isWorkspaceEnabled, setWorkspaceEnabled,
   };
 }

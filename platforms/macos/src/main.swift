@@ -288,7 +288,7 @@ enum L10n {
         "channel.card.weixin": ("微信 ClawBot", "WeChat ClawBot"),
         "channel.card.weixinDesc": ("通过微信个人号收发消息（官方 iLink 协议）", "Send & receive via WeChat (official iLink)"),
         "channel.card.dingtalk": ("钉钉", "DingTalk"),
-        "channel.card.dingtalkDesc": ("钉钉机器人事件订阅（待实现）", "DingTalk bot events (planned)"),
+        "channel.card.dingtalkDesc": ("钉钉机器人 Stream 连接（扫码创建应用）", "DingTalk bot via Stream (QR app registration)"),
         "channel.card.feishu": ("飞书", "Feishu"),
         "channel.card.feishuDesc": ("飞书机器人事件订阅（待实现）", "Feishu bot events (planned)"),
         "channel.card.open": ("开始配置", "Configure"),
@@ -297,6 +297,28 @@ enum L10n {
         "channel.wizard.continue": ("继续", "Continue"),
         "channel.wizard.scanning": ("等待扫码…（二维码已在新标签页打开）", "Waiting for scan… (QR opened in a new tab)"),
         "channel.wizard.done": ("绑定成功 ✅", "Bound successfully ✅"),
+        "channel.wizard.promptTitle.dingtalk": ("打开钉钉，准备扫码", "Open DingTalk, ready to scan"),
+        "channel.wizard.promptInfo.dingtalk": ("下一步将打开登录二维码。请用手机钉钉扫码，以创建钉钉应用并绑定此通道。", "Next opens the login QR. Scan it with DingTalk to create the app and bind this channel."),
+        "channel.state.unconfigured": ("未配置", "Not configured"),
+        "channel.state.connected": ("已连接", "Connected"),
+        "channel.state.connecting": ("连接中", "Connecting"),
+        "channel.state.reconnecting": ("重连中", "Reconnecting"),
+        "channel.state.authExpired": ("鉴权失效，请重新登录", "Auth expired, re-login required"),
+        "channel.state.disconnected": ("未连接", "Disconnected"),
+        "channel.unbind": ("解绑", "Unbind"),
+        "channel.unbind.confirmTitle": ("解绑该通道？", "Unbind this channel?"),
+        "channel.unbind.confirmBody": ("将清空该通道的连接配置与本地数据，且停止其运行中的监听进程。", "This will clear the channel's connection config and local data, and stop its running listener."),
+        "channel.bind.bound": ("已绑定管理员", "Owner bound"),
+        "channel.bind.hint": ("绑定口令：%@（请在钉钉发送 /bind %@）", "Bind code: %@ (send /bind %@ in DingTalk)"),
+        "channel.wizard.openLink": ("在浏览器中打开（无需扫码）", "Open in browser (no scan needed)"),
+        "channel.wizard.robotNameHint": ("扫码或打开链接，创建 DeepSeek Harness 钉钉机器人", "Scan the QR or open the link to create the DeepSeek Harness DingTalk robot"),
+        "channel.wizard.bindCode": ("请在钉钉发送 /bind %@ 完成管理员绑定", "Send /bind %@ in DingTalk to bind the owner"),
+        "channel.wizard.bindCodePending": ("绑定口令稍后显示在通道卡片", "The bind code will appear on the channel card"),
+        "channel.wizard.bindCodePrompt": ("在钉钉私聊发送此口令，完成管理员绑定", "Send this in a DingTalk direct message to bind the owner"),
+        "channel.wizard.copyBind": ("复制", "Copy"),
+        "channel.wizard.recoverInfo": ("该通道应用已创建，请在钉钉发送下方口令完成管理员绑定", "This channel's app is created; send the code below in DingTalk to bind the owner"),
+        "channel.wizard.relogin": ("重新登录", "Re-login"),
+        "channel.wizard.weixinConfigured": ("该通道已配置，可重新扫码登录以刷新凭据。", "This channel is configured; re-scan to refresh credentials."),
         "channel.wizard.back": ("返回", "Back"),
         "channel.globalConfig": ("全局配置", "Global Config"),
         "channel.projectAvailable": ("当前项目可用通道", "Available Channels"),
@@ -1487,6 +1509,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
         channelPanel.channelLoginRunner = { [weak self] channelId, onQRUrl, completion in
             self?.runChannelLogin(channelId: channelId, onQRUrl: onQRUrl, completion: completion)
+        }
+        channelPanel.channelUnbind = { [weak self] channelId in
+            self?.unbindChannel(channelId: channelId)
+        }
+        channelPanel.channelLoginCancel = { [weak self] channelId in
+            self?.cancelChannelLogin(channelId: channelId)
         }
         // Panel → web session link: clicking a session's "open in dsh" drives the
         // web view to switch to that session.
@@ -3150,9 +3178,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let savePath = ((dshHome as NSString).appendingPathComponent("channels") as NSString).appendingPathComponent(channelId + ".json")
         try? FileManager.default.createDirectory(atPath: (dshHome as NSString).appendingPathComponent("channels"), withIntermediateDirectories: true)
 
+        // DingTalk uses the device-code app-registration flow (channel login-dingtalk);
+        // WeChat uses the ClawBot QR login (channel login). Dispatch by channel id prefix.
+        let isDingTalk = channelId.hasPrefix("dingtalk")
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: node)
-        proc.arguments = [cli, "channel", "login", "--save", savePath]
+        proc.arguments = [cli, "channel", isDingTalk ? "login-dingtalk" : "login", "--save", savePath]
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = pipe
@@ -3163,7 +3194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             if data.isEmpty { return }
             outputData.append(data)
             if let str = String(data: data, encoding: .utf8),
-               let url = str.range(of: "https://liteapp.weixin.qq.com") {
+               let url = str.range(of: isDingTalk ? "https://open-dev.dingtalk.com" : "https://liteapp.weixin.qq.com") {
                 let sub = str[url.lowerBound...]
                 let end = sub.firstIndex(where: { $0 == "）" || $0 == "\n" }) ?? sub.endIndex
                 let link = String(sub[..<end])
@@ -3171,6 +3202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
         }
         proc.terminationHandler = { [weak self] _ in
+            self?.loginProcs.removeValue(forKey: channelId)
             let out = String(data: outputData, encoding: .utf8) ?? ""
             let ok = out.contains("\"connected\":true") || FileManager.default.fileExists(atPath: savePath)
             DispatchQueue.main.async {
@@ -3178,7 +3210,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 completion(ok)
             }
         }
+        loginProcs[channelId] = proc
         try? proc.run()
+    }
+
+    /// Cancel an in-flight login (user left the wizard on step 1/2).
+    private func cancelChannelLogin(channelId: String) {
+        guard let proc = loginProcs.removeValue(forKey: channelId) else { return }
+        proc.terminate()
+        AppLog.shared.log("channel login cancelled for \(channelId)")
     }
 
     /// Start the live channel listener (channel run) in the background so
@@ -3187,6 +3227,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// refs. Kept strongly by the delegate so it survives after login returns.
     private var channelRunnerProcs: [Process] = []
     private var channelRunnerIds: [String] = []
+    // In-flight QR / device-code login processes (channel login / login-dingtalk),
+    // keyed by channelId, so leaving the wizard can cancel them.
+    private var loginProcs: [String: Process] = [:]
     private func startChannelRunner(channelId: String) {
         // dedup: never run two listeners for the same channel (each would
         // long-poll the same token and re-handle every message -> duplicates)
@@ -3255,6 +3298,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelRunnerProcs.removeAll()
         channelRunnerIds.removeAll()
         AppLog.shared.log("channel runners stopped")
+    }
+
+    /// Stop a single channel's runner (dedup-safe).
+    private func stopChannelRunner(channelId: String) {
+        if let idx = channelRunnerIds.firstIndex(of: channelId) {
+            channelRunnerProcs[idx].terminate()
+            channelRunnerProcs.remove(at: idx)
+            channelRunnerIds.remove(at: idx)
+            AppLog.shared.log("channel runner stopped for \(channelId)")
+        }
+    }
+
+    /// Unbind a channel: stop its runner and remove its local channel files.
+    private func unbindChannel(channelId: String) {
+        stopChannelRunner(channelId: channelId)
+        let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/channels")
+        let fm = FileManager.default
+        if let files = try? fm.contentsOfDirectory(atPath: dir) {
+            for f in files where f.hasPrefix(channelId) {
+                try? fm.removeItem(atPath: (dir as NSString).appendingPathComponent(f))
+            }
+        }
+        AppLog.shared.log("channel unbound: \(channelId)")
     }
 
     /// 开发版构建（DSH_DEV_BUILD=1 打包，Info.plist 写入 DSHDevBuild=1）。开发版用于与

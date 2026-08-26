@@ -70,6 +70,10 @@ final class ChannelPanelController: NSObject {
     var onRequestHide: (() -> Void)?
     var workspacePath: (() -> String?)?
     var channelLoginRunner: ((String, @escaping (String?) -> Void, @escaping (Bool) -> Void) -> Void)?
+    /// Unbind a channel: stop its runner and clear its local config (wired to main.swift).
+    var channelUnbind: ((String) -> Void)?
+    /// Cancel an in-flight login when leaving the wizard (wired to main.swift).
+    var channelLoginCancel: ((String) -> Void)?
     /// Open the given dsh session in dsh web (panel → web session link).
     var onOpenSession: ((String) -> Void)?
 
@@ -99,6 +103,13 @@ final class ChannelPanelController: NSObject {
     private let wizardInfo = NSTextField(wrappingLabelWithString: "")
     private let wizardQRView = NSImageView()
     private let wizardStatus = NSTextField(labelWithString: "")
+    private let wizardHint = NSTextField(wrappingLabelWithString: "")
+    private let wizardLinkButton = NSButton()
+    private var wizardLink = ""
+    private let wizardBindRow = NSStackView()
+    private let wizardBindLabel = NSTextField(labelWithString: "")
+    private let wizardCopyButton = CustomIconButton(glyph: .symbol("doc.on.doc"), tooltip: "")
+    private var currentBindCode = ""
     private let wizardPrimary: NSButton
     private let wizardSecondary: NSButton
     private var wizardPlatform: String = ""
@@ -289,13 +300,32 @@ final class ChannelPanelController: NSObject {
         let cardView = ChannelCardView(card: card)
         cardView.platform = card.platform
         cardView.onTap = { [weak self] in self?.cardTapped(platform: card.platform) }
+        cardView.onUnbind = { [weak self] in self?.unbindChannel(platform: card.platform) }
         cardView.heightAnchor.constraint(equalToConstant: 64).isActive = true
         return cardView
     }
 
+    /// Unbind a channel after confirmation: clear UserDefaults entry, stop the
+    /// runner and remove its local channel files (via main.swift).
+    private func unbindChannel(platform: String) {
+        guard let ch = channels.first(where: { $0.platform == platform }) else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("channel.unbind.confirmTitle")
+        alert.informativeText = L10n.tr("channel.unbind.confirmBody")
+        alert.addButton(withTitle: L10n.tr("btn.ok"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        if alert.runModal() == .alertFirstButtonReturn {
+            channels.removeAll { $0.id == ch.id }
+            saveGlobalChannels()
+            channelUnbind?(ch.id)
+            rebuildCards()
+        }
+    }
+
     private func cardTapped(platform: String) {
         guard let card = ChannelPanelController.builtins.first(where: { $0.platform == platform }) else { return }
-        if card.platform != "weixin-clawbot" { NSSound.beep(); return }
+        // weixin + dingtalk use the in-panel QR wizard; feishu is still planned.
+        if card.platform != "weixin-clawbot" && card.platform != "dingtalk" { NSSound.beep(); return }
         wizardPlatform = card.platform
         wizardStep = 0
         renderWizard()
@@ -320,11 +350,40 @@ final class ChannelPanelController: NSObject {
         wizardPrimary.translatesAutoresizingMaskIntoConstraints = false
         wizardSecondary.translatesAutoresizingMaskIntoConstraints = false
 
+        // Optional open-in-browser link under the QR (DingTalk device-code URL).
+        wizardLinkButton.title = L10n.tr("channel.wizard.openLink")
+        wizardLinkButton.isBordered = false
+        wizardLinkButton.font = .systemFont(ofSize: 11)
+        wizardLinkButton.contentTintColor = .linkColor
+        wizardLinkButton.target = self
+        wizardLinkButton.action = #selector(openWizardLink(_:))
+        wizardLinkButton.translatesAutoresizingMaskIntoConstraints = false
+        wizardLinkButton.isHidden = true
+
         let buttons = NSStackView(views: [wizardPrimary, wizardSecondary])
         buttons.orientation = .horizontal
         buttons.spacing = 8
 
-        let stack = NSStackView(views: [wizardTitle, wizardInfo, wizardQRView, wizardStatus, buttons])
+        wizardHint.font = .systemFont(ofSize: 12)
+        wizardHint.textColor = .secondaryLabelColor
+        wizardHint.alignment = .center
+        wizardHint.isHidden = true
+
+        // bind-code row: /bind <code> + copy button (done step)
+        // Prominent bind-code display in the QR slot on the done step (large + bold).
+        wizardBindLabel.font = NSFont.monospacedSystemFont(ofSize: 22, weight: .bold)
+        wizardBindLabel.alignment = .center
+        wizardCopyButton.toolTip = L10n.tr("channel.wizard.copyBind")
+        wizardCopyButton.onAction = { [weak self] in self?.copyBindCode() }
+        wizardBindRow.orientation = .horizontal
+        wizardBindRow.alignment = .centerY
+        wizardBindRow.spacing = 6
+        wizardBindRow.addArrangedSubview(wizardBindLabel)
+        wizardBindRow.addArrangedSubview(wizardCopyButton)
+        wizardBindRow.translatesAutoresizingMaskIntoConstraints = false
+        wizardBindRow.isHidden = true
+
+        let stack = NSStackView(views: [wizardTitle, wizardInfo, wizardQRView, wizardBindRow, wizardLinkButton, wizardStatus, buttons, wizardHint])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 12
@@ -341,6 +400,9 @@ final class ChannelPanelController: NSObject {
 
     @objc private func wizardPrimaryTapped(_ sender: Any) {
         if wizardStep == 0 {
+            // A configured DingTalk channel whose app was already created must NOT
+            // re-scan (that would create a duplicate app) — just close.
+            if dingtalkWizardLocked() { finishWizard(); return }
             wizardStep = 1
             renderWizard()
             startLogin()
@@ -350,7 +412,28 @@ final class ChannelPanelController: NSObject {
     }
 
     @objc private func wizardSecondaryTapped(_ sender: Any) {
+        // Leaving the wizard on ANY step: cancel any (possibly lingering) login
+        // subprocess so it cannot create an app or stay in the background. Idempotent.
+        cancelLogin()
         finishWizard()
+    }
+
+    /// Cancel the in-flight login subprocess for the current channel (if any).
+    private func cancelLogin() {
+        guard let ch = channels.first(where: { $0.platform == wizardPlatform }) else { return }
+        channelLoginCancel?(ch.id)
+    }
+
+    /// Open the registration/QR link in the system browser (DingTalk device-code URL).
+    @objc private func openWizardLink(_ sender: Any) {
+        guard !wizardLink.isEmpty, let url = URL(string: wizardLink) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Platform-specific wizard string: dingtalk uses "….<base>.dingtalk" variants;
+    /// other platforms share the base string (which mentions WeChat).
+    private func wizardL10n(_ base: String) -> String {
+        return wizardPlatform == "dingtalk" ? base + ".dingtalk" : base
     }
 
     private func renderWizard() {
@@ -361,28 +444,129 @@ final class ChannelPanelController: NSObject {
         let platformName = card.map { L10n.tr($0.titleKey) } ?? wizardPlatform
         if wizardStep == 0 {
             wizardTitle.stringValue = platformName
-            wizardInfo.stringValue = L10n.tr("channel.wizard.promptInfo")
-            wizardStatus.stringValue = L10n.tr("channel.wizard.promptTitle")
             wizardQRView.image = nil
-            wizardPrimary.title = L10n.tr("channel.wizard.continue")
+            wizardQRView.isHidden = true
+            wizardLinkButton.isHidden = true
+            wizardLink = ""
+            // DingTalk: if the channel is already configured, surface its bind state —
+            // either the recoverable /bind code (not bound) or "owner bound".
+            if wizardPlatform == "dingtalk",
+               let ch = channels.first(where: { $0.platform == wizardPlatform }),
+               let binding = ChannelStoreReader.loadDingTalkBinding(channelId: ch.id) {
+                if binding.bound {
+                    wizardInfo.stringValue = L10n.tr("channel.wizard.done")
+                    wizardBindRow.isHidden = true
+                    wizardStatus.stringValue = L10n.tr("channel.bind.bound")
+                } else if !binding.bindCode.isEmpty {
+                    wizardInfo.stringValue = L10n.tr("channel.wizard.recoverInfo")
+                    currentBindCode = binding.bindCode
+                    wizardBindLabel.stringValue = "/bind " + binding.bindCode
+                    wizardBindRow.isHidden = false
+                    wizardStatus.stringValue = L10n.tr("channel.wizard.bindCodePrompt")
+                } else {
+                    wizardInfo.stringValue = L10n.tr(wizardL10n("channel.wizard.promptInfo"))
+                    wizardBindRow.isHidden = true
+                    wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
+                }
+            } else if wizardPlatform == "weixin-clawbot",
+                      channels.contains(where: { $0.platform == wizardPlatform }) {
+                // Already-configured WeChat: avoid an accidental re-login that would
+                // replace the token; offer an explicit Re-login action instead.
+                wizardInfo.stringValue = L10n.tr("channel.wizard.weixinConfigured")
+                wizardBindRow.isHidden = true
+                wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
+            } else {
+                wizardInfo.stringValue = L10n.tr(wizardL10n("channel.wizard.promptInfo"))
+                wizardBindRow.isHidden = true
+                wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
+            }
+            wizardHint.isHidden = wizardPlatform != "dingtalk"
+            wizardHint.stringValue = L10n.tr("channel.wizard.robotNameHint")
+            wizardPrimary.title = L10n.tr(dingtalkWizardLocked()
+                ? "channel.done"
+                : (wizardPlatform == "weixin-clawbot" && channels.contains(where: { $0.platform == wizardPlatform }) ? "channel.wizard.relogin" : "channel.wizard.continue"))
             wizardPrimary.isEnabled = true
             wizardSecondary.title = L10n.tr("channel.wizard.back")
         } else if wizardStep == 1 {
             wizardTitle.stringValue = platformName
+            wizardHint.isHidden = wizardPlatform != "dingtalk"
+            wizardHint.stringValue = L10n.tr("channel.wizard.robotNameHint")
+            wizardQRView.isHidden = false
+            wizardBindRow.isHidden = true
             wizardInfo.stringValue = L10n.tr("channel.wizard.scanning")
-            wizardStatus.stringValue = L10n.tr("channel.wizard.promptTitle")
+            wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
             wizardPrimary.title = L10n.tr("btn.ok")
             wizardPrimary.isEnabled = false
             wizardSecondary.title = L10n.tr("channel.wizard.back")
         } else {
             wizardTitle.stringValue = platformName
+            wizardHint.isHidden = true
+            wizardLinkButton.isHidden = true
             wizardInfo.stringValue = L10n.tr("channel.wizard.done")
-            wizardStatus.stringValue = ""
+            renderBindCode()
             wizardQRView.image = nil
+            wizardQRView.isHidden = true
             wizardPrimary.title = L10n.tr("channel.done")
             wizardPrimary.isEnabled = true
             wizardSecondary.title = L10n.tr("channel.wizard.back")
         }
+    }
+
+    /// Show the owner-bind code on the done step (read from the runner's binding file),
+    /// as a copyable "/bind <code>" row + copy button.
+    private func renderBindCode() {
+        guard let ch = channels.first(where: { $0.platform == wizardPlatform }),
+              let binding = ChannelStoreReader.loadDingTalkBinding(channelId: ch.id) else {
+            wizardBindRow.isHidden = true
+            wizardStatus.stringValue = L10n.tr("channel.wizard.bindCodePending")
+            return
+        }
+        if binding.bound {
+            wizardBindRow.isHidden = true
+            wizardStatus.stringValue = L10n.tr("channel.bind.bound")
+        } else if !binding.bindCode.isEmpty {
+            currentBindCode = binding.bindCode
+            wizardBindLabel.stringValue = "/bind " + binding.bindCode
+            wizardBindRow.isHidden = false
+            wizardStatus.stringValue = L10n.tr("channel.wizard.bindCodePrompt")
+        } else {
+            wizardBindRow.isHidden = true
+            wizardStatus.stringValue = L10n.tr("channel.wizard.bindCodePending")
+        }
+    }
+
+    /// Copy "/bind <code>" to the clipboard.
+    @objc private func copyBindCode() {
+        guard !currentBindCode.isEmpty else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString("/bind " + currentBindCode, forType: .string)
+    }
+
+    /// True when a DingTalk channel is configured AND its app was already created
+    /// (binding file exists) — the wizard must not re-scan (would duplicate the app).
+    private func dingtalkWizardLocked() -> Bool {
+        guard wizardPlatform == "dingtalk",
+              let ch = channels.first(where: { $0.platform == wizardPlatform }) else { return false }
+        return ChannelStoreReader.loadDingTalkBinding(channelId: ch.id) != nil
+    }
+
+    private var wizardBindSig = ""
+
+    /// Re-render the wizard when the DingTalk bind state changes (recover->bound on step 0,
+    /// or the /bind code appears/owner binds on the done step).
+    private func refreshWizardBindState() {
+        guard wizardPlatform == "dingtalk", !wizardView.isHidden,
+              wizardStep == 0 || wizardStep == 2 else { return }
+        let sig = dingtalkBindSignature()
+        guard sig != wizardBindSig else { return }
+        wizardBindSig = sig
+        renderWizard()
+    }
+    private func dingtalkBindSignature() -> String {
+        guard let ch = channels.first(where: { $0.platform == wizardPlatform }),
+              let b = ChannelStoreReader.loadDingTalkBinding(channelId: ch.id) else { return "none" }
+        return (b.bound ? "b" : "u") + ":" + b.bindCode
     }
 
     private func startLogin() {
@@ -406,6 +590,9 @@ final class ChannelPanelController: NSObject {
             DispatchQueue.main.async {
                 guard let self = self, let url = url else { return }
                 self.wizardQRView.image = ChannelPanelController.qrImage(from: url, size: 180)
+                self.wizardLink = url
+                // Open-in-browser is useful for DingTalk (device-code URL); WeChat's QR needs scanning.
+                self.wizardLinkButton.isHidden = self.wizardPlatform != "dingtalk"
             }
         }) { [weak self] ok in
             DispatchQueue.main.async {
@@ -563,6 +750,15 @@ final class ChannelPanelController: NSObject {
             let channel = channels.first { $0.platform == cards[i].platform }
             let st = channel.map { liveState(for: $0.id) } ?? .disconnected
             cv.setState(st, configured: channel != nil)
+            // DingTalk: surface the owner-bind code so the user can send /bind <code>.
+            if cards[i].platform == "dingtalk", let ch = channel,
+               let binding = ChannelStoreReader.loadDingTalkBinding(channelId: ch.id) {
+                if binding.bound {
+                    cv.desc = L10n.tr("channel.bind.bound")
+                } else if !binding.bindCode.isEmpty {
+                    cv.desc = String(format: L10n.tr("channel.bind.hint"), binding.bindCode, binding.bindCode)
+                }
+            }
         }
     }
 
@@ -733,6 +929,8 @@ final class ChannelPanelController: NSObject {
         guard refreshTimer == nil else { return }
         let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
             self?.refreshProjectIfChanged()
+            self?.refreshCardsIfBindingChanged()
+            self?.refreshWizardBindState()
         }
         RunLoop.main.add(timer, forMode: .common)
         refreshTimer = timer
@@ -752,6 +950,24 @@ final class ChannelPanelController: NSObject {
         guard sig != projectViewSignature else { return }
         projectViewSignature = sig
         rebuildProjectRows()
+    }
+
+    private var cardBindingSignature = ""
+
+    /// Refresh the global-config cards when a DingTalk binding file appears/changes
+    /// (the bind code is generated by the runner after start), so the user sees the
+    /// /bind code without reopening the view.
+    private func refreshCardsIfBindingChanged() {
+        guard mode == .onboarding else { return }
+        var sig = ""
+        for ch in channels where ch.platform == "dingtalk" {
+            if let b = ChannelStoreReader.loadDingTalkBinding(channelId: ch.id) {
+                sig += "\(ch.id):\(b.ownerStaffId):\(b.bindCode);"
+            }
+        }
+        guard sig != cardBindingSignature else { return }
+        cardBindingSignature = sig
+        rebuildCards()
     }
 
     /// A cheap content signature over exactly what the project view displays, so a
@@ -1215,10 +1431,12 @@ final class ChannelCardView: NSView {
     var title: String { get { titleLabel.stringValue } set { titleLabel.stringValue = newValue } }
     var desc: String { get { descLabel.stringValue } set { descLabel.stringValue = newValue } }
     var onTap: (() -> Void)?
+    var onUnbind: (() -> Void)?
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let descLabel = NSTextField(wrappingLabelWithString: "")
     private let statusDot = NSView()
+    private let unbindButton = CustomIconButton(glyph: .symbol("xmark.circle"), tooltip: "")
 
     init(card: ChannelCard) {
         super.init(frame: .zero)
@@ -1257,7 +1475,11 @@ final class ChannelCardView: NSView {
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
 
-        let row = NSStackView(views: [iconView, textStack, spacer, statusDot])
+        unbindButton.toolTip = L10n.tr("channel.unbind")
+        unbindButton.isHidden = true
+        unbindButton.onAction = { [weak self] in self?.onUnbind?() }
+
+        let row = NSStackView(views: [iconView, textStack, spacer, unbindButton, statusDot])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 10
@@ -1271,6 +1493,7 @@ final class ChannelCardView: NSView {
         ])
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(tapped(_:)))
+        click.delegate = self
         addGestureRecognizer(click)
         setState(.disconnected, configured: false)
     }
@@ -1294,6 +1517,23 @@ final class ChannelCardView: NSView {
             }
         }
         statusDot.layer?.backgroundColor = color.cgColor
+        // Hover tooltip so the status is not conveyed by color alone.
+        statusDot.toolTip = statusTooltip(state, configured: configured)
+        unbindButton.isHidden = !configured
+    }
+
+    /// Localized hover text for the status dot (color is not the only signal).
+    private func statusTooltip(_ state: GlobalChannel.State, configured: Bool) -> String {
+        if !configured { return L10n.tr("channel.state.unconfigured") }
+        let key: String
+        switch state {
+        case .connected: key = "channel.state.connected"
+        case .connecting: key = "channel.state.connecting"
+        case .reconnecting: key = "channel.state.reconnecting"
+        case .authExpired: key = "channel.state.authExpired"
+        case .disconnected: key = "channel.state.disconnected"
+        }
+        return L10n.tr(key)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -1315,5 +1555,26 @@ final class ChannelCardView: NSView {
         b.stroke()
     }
 
-    @objc private func tapped(_ sender: Any) { onTap?() }
+    @objc private func tapped(_ sender: Any) {
+        // Secondary guard: clicking the unbind button must not also trigger the card
+        // tap (which would open the bind wizard). The primary guard is the gesture
+        // delegate (shouldAttemptToRecognizeWith) — this is a belt-and-suspenders.
+        if let gesture = sender as? NSClickGestureRecognizer, !unbindButton.isHidden {
+            let p = gesture.location(in: self)
+            if unbindButton.convert(unbindButton.bounds, to: self).contains(p) { return }
+        }
+        onTap?()
+    }
+}
+
+extension ChannelCardView: NSGestureRecognizerDelegate {
+    /// Don't let the card's click gesture recognize clicks on the unbind button, so
+    /// the button handles its own click (unbind) and the wizard is NOT opened.
+    func gestureRecognizer(_ gestureRecognizer: NSGestureRecognizer, shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        if !unbindButton.isHidden {
+            let p = convert(event.locationInWindow, from: nil)
+            if unbindButton.convert(unbindButton.bounds, to: self).contains(p) { return false }
+        }
+        return true
+    }
 }

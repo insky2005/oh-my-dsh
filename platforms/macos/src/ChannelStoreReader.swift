@@ -94,4 +94,21 @@ enum ChannelStoreReader {
                                     projectRoot: m["projectRoot"] as? String ?? "")
         }.sorted { $0.ts < $1.ts }
     }
+
+    /// DingTalk owner-binding record read from ~/.dsh/channels/<channelId>.binding.json.
+    struct DingTalkBindingVM {
+        var bindCode: String = ""
+        var ownerStaffId: String = ""
+        var bound: Bool { !ownerStaffId.isEmpty }
+    }
+
+    /// Read the DingTalk owner-binding file (bind code + owner staffId). Nil when absent.
+    static func loadDingTalkBinding(channelId: String, dshHome: String? = nil) -> DingTalkBindingVM? {
+        let dir = channelsDir(dshHome: dshHome)
+        let file = (dir as NSString).appendingPathComponent(channelId + ".binding.json")
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: file)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return DingTalkBindingVM(bindCode: json["bindCode"] as? String ?? "",
+                                 ownerStaffId: json["ownerStaffId"] as? String ?? "")
+    }
 }

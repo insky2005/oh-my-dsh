@@ -40,6 +40,11 @@ function loadChannelAccount(channelId, dshHome) {
       accountId: data.accountId || null,
       userId: data.userId || null,
       baseUrl: data.baseUrl || null,
+      // DingTalk app credentials (AppKey/AppSecret)
+      clientId: data.clientId || data.appKey || null,
+      clientSecret: data.clientSecret || data.appSecret || null,
+      appKey: data.appKey || data.clientId || null,
+      appSecret: data.appSecret || data.clientSecret || null,
     };
   } catch {
     return null;
@@ -61,6 +66,8 @@ function saveChannelAccount(channelId, account, dshHome) {
     accountId: account.accountId || null,
     userId: account.userId || null,
     baseUrl: account.baseUrl || null,
+    clientId: account.clientId || account.appKey || null,
+    clientSecret: account.clientSecret || account.appSecret || null,
     updatedAt: Date.now(),
   }, null, 2);
   fs.writeFileSync(p, data, { mode: 0o600 });

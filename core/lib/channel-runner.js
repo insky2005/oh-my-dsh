@@ -1,12 +1,12 @@
 'use strict';
 
 /**
- * core/lib/channel-runner.js — run a live WeChat channel end-to-end.
+ * core/lib/channel-runner.js — run a live channel end-to-end.
  *
- * Wires the already-verified pieces into one loop (docs §6/§9):
- *   token(disk) -> ClawBot transport -> adapter (long-poll getupdates)
+ * Shared orchestration for channel platforms (WeChat ClawBot, DingTalk, ...):
+ *   credential(disk) -> transport -> adapter (long-poll or push/Stream)
  *     -> ChannelManager (Router + SessionDriver against live dsh web)
- *     -> context_token reply via adapter.send
+ *     -> reply via adapter.send
  *
  * Inbound messages are first checked against the slash-command table
  * (docs/channel-ui-commands.md §4): commands are handled by
@@ -14,7 +14,7 @@
  * project via Router -> dsh session, with a persistent conversationId ->
  * sessionId mapping (createChannelSessions, decision E).
  *
- *   const { runWeixinChannel } = require('@oh-my-dsh/core');
+ *   const { runWeixinChannel, runDingTalkChannel } = require('@oh-my-dsh/core');
  *   const handle = runWeixinChannel({ channelId, port, refs, dshHome });
  *   await handle.start();
  *   ...
@@ -23,6 +23,9 @@
 
 const { createWeixinClawBotTransport } = require('./weixin-clawbot-transport');
 const { createWeixinClawBotAdapter } = require('./weixin-clawbot');
+const { createDingTalkTransport, createDingTalkStreamClient } = require('./dingtalk-stream-transport');
+const { createDingTalkAdapter } = require('./dingtalk');
+const { createDingTalkAuth } = require('./dingtalk-access');
 const { createSessionDriver, listWorkspaceSessions } = require('./session-driver');
 const { createChannelManager, normalizeEvent, resolveRefBinding } = require('./channel');
 const { createCommandRunner, parseCommand } = require('./channel-commands');
@@ -34,8 +37,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 /**
- * Build the adapters map for a set of project refs. Each distinct channelId in
- * refs gets a ClawBot adapter backed by its saved account token (if any).
+ * Build the WeChat ClawBot adapters map for a set of project refs. Each
+ * distinct channelId gets a ClawBot adapter backed by its saved account token.
  * Returns { adapters: Map, refsByChannel(channelId) }.
  */
 function buildWeixinAdapters({ refs, dshHome, transportOpts, intervalMs, ensureChannelId }) {
@@ -47,8 +50,6 @@ function buildWeixinAdapters({ refs, dshHome, transportOpts, intervalMs, ensureC
     list.push(ref);
     byChannel.set(ref.channelId, list);
   }
-  // Always build an adapter for the explicitly requested channel, even when
-  // no refs reference it yet (e.g. startup before project binding).
   if (ensureChannelId && !byChannel.has(ensureChannelId)) {
     byChannel.set(ensureChannelId, []);
   }
@@ -62,6 +63,41 @@ function buildWeixinAdapters({ refs, dshHome, transportOpts, intervalMs, ensureC
       ...(transportOpts || {}),
     });
     const adapter = createWeixinClawBotAdapter({ channelId, transport, intervalMs: intervalMs || 1000 });
+    adapters.set(channelId, adapter);
+  }
+  const refsByChannel = (channelId) => byChannel.get(channelId) || [];
+  return { adapters, refsByChannel };
+}
+
+/**
+ * Build the DingTalk adapters map. Each distinct channelId gets a DingTalk
+ * Stream adapter backed by its saved clientId/clientSecret (AppKey/AppSecret).
+ * Returns { adapters: Map, refsByChannel(channelId) }.
+ */
+function buildDingTalkAdapters({ refs, dshHome, transportOpts, ensureChannelId }) {
+  const adapters = new Map();
+  const byChannel = new Map();
+  for (const ref of refs || []) {
+    if (!ref.channelId) continue;
+    const list = byChannel.get(ref.channelId) || [];
+    list.push(ref);
+    byChannel.set(ref.channelId, list);
+  }
+  if (ensureChannelId && !byChannel.has(ensureChannelId)) {
+    byChannel.set(ensureChannelId, []);
+  }
+  for (const [channelId] of byChannel) {
+    const account = loadChannelAccount(channelId, dshHome);
+    const client = transportOpts && transportOpts.clientFactory
+      ? transportOpts.clientFactory(channelId, account, transportOpts)
+      : createDingTalkStreamClient({
+          channelId,
+          clientId: account ? account.clientId || account.appKey : null,
+          clientSecret: account ? account.clientSecret || account.appSecret : null,
+          ...(transportOpts || {}),
+        });
+    const transport = createDingTalkTransport({ channelId, client, fetch: transportOpts && transportOpts.fetch, log: transportOpts && transportOpts.log });
+    const adapter = createDingTalkAdapter({ channelId, transport });
     adapters.set(channelId, adapter);
   }
   const refsByChannel = (channelId) => byChannel.get(channelId) || [];
@@ -85,25 +121,26 @@ async function loadWorkspaces(port, host, timeoutMs) {
 }
 
 /**
- * Run a live WeChat channel end-to-end.
+ * Shared live-channel orchestration. Called by runWeixinChannel / runDingTalkChannel
+ * with the platform-appropriate adapter builder.
  *
- * opts:
- *   channelId   - the global channel id whose saved token to use
+ * opts (in addition to platform/buildAdapters):
+ *   channelId   - the global channel id whose saved credential to use
  *   port        - dsh web port (default 3080)
  *   refs        - project refs for this channel (from .dsh/channels.json)
- *   dshHome     - DSH_HOME for token lookup (default ~/.dsh)
+ *   dshHome     - DSH_HOME for credential lookup (default ~/.dsh)
  *   sessionOpts - overrides for createSessionDriver (poll interval etc.)
- *   transportOpts - overrides for createWeixinClawBotTransport (fetch, baseUrl)
- *   intervalMs  - adapter long-poll interval
+ *   transportOpts - overrides for the platform transport
+ *   intervalMs  - weixin adapter long-poll interval (ignored for push transports)
  *   onEvent     - optional callback(event, result) after handling each message
- *   onState     - optional callback(channelId, state) on adapter state changes
- *   commands    - optional pre-built command runner deps; defaults to a runner
- *                 wired to the session store + session driver
+ *   commands    - optional pre-built command runner deps
  */
-async function runWeixinChannel(opts = {}) {
+async function runChannel(opts = {}) {
+  const platform = opts.platform;
   const channelId = opts.channelId;
   if (!channelId) throw new Error('channel-runner: channelId required');
-  const { adapters, refsByChannel } = buildWeixinAdapters({
+  if (!opts.buildAdapters) throw new Error('channel-runner: buildAdapters required');
+  const { adapters, refsByChannel } = opts.buildAdapters({
     refs: opts.refs || [],
     dshHome: opts.dshHome,
     transportOpts: opts.transportOpts,
@@ -121,23 +158,11 @@ async function runWeixinChannel(opts = {}) {
     jobQueue: createQueue(),
   });
 
-  // Session store per the first routed project (decision E): message log only.
-  // If refs exist, use the first project root; caller can override via
-  // opts.projectRoot. When no project is bound (e.g. the app spawns the runner
-  // before a workspace is active), fall back to a WRITABLE neutral root under
-  // DSH_HOME instead of process.cwd() (a GUI-spawned child's cwd is often
-  // unwritable). Writes are best-effort so they never swallow a reply.
   const projectRoot = opts.projectRoot
     || (opts.refs && opts.refs[0] && opts.refs[0].workspaceRoot)
     || path.join(os.homedir(), '.dsh', 'channel-runtime', channelId);
   const store = opts.sessions || createChannelSessions({ channelId, dshHome: opts.dshHome, defaultProjectRoot: projectRoot });
 
-  // Project switch (docs/channel-project-switch.md §3.2): a channel is enabled for a
-  // workspace iff that project root appears in ~/.dsh/channels/<channelId>.workspaces.json.
-  // The gate applies where a message would CREATE/RUN a session (ordinary text, /new) AND
-  // when #wN targets a workspace (workspace switch requires the target to be enabled);
-  // #sN and informational commands are allowed. The enabled set is cached briefly so
-  // bursts don't re-read the file on every message.
   let enabledCache = { roots: null, at: 0 };
   const isEnabledForRoot = (root) => {
     if (!root) return false;
@@ -148,47 +173,34 @@ async function runWeixinChannel(opts = {}) {
     }
     return enabledCache.roots.includes(root);
   };
-  const sendNotEnabled = (event) => adapter.send(event.conversationId, { text: '该项目未启用该通道，请在面板「通道」项目视图开启后使用', contextToken: event.contextToken });
+  const sendNotEnabled = (event) => adapter.send(event.conversationId, { text: '该项目未启用该通道，请在面板「通道」项目视图开启后使用' });
 
-  // Workspace routing (docs §3.9): codes w1/w2… + #tag.
   const port = opts.port || 3080;
   const wsHost = opts.host || '127.0.0.1';
   const homeDir = opts.homeDir || require('node:os').homedir();
   const getCodedWorkspaces = async () => loadWorkspaces(port, wsHost, opts.timeoutMs);
 
-  // Channel-global runtime store: lastWorkspace + per-conversation session
-  // mapping + active session, persisted under ~/.dsh/channels/<channelId>.state.json.
-  // Channel-scoped (NOT per-project) so it is always writable and survives runner
-  // restarts — on startup we restore lastWorkspace and the active session without
-  // the user having to re-issue #wN / #sN.
   const runtime = opts.runtime || createChannelRuntimeStore({ channelId, dshHome: opts.dshHome });
   const getLastWorkspace = () => runtime.getLastWorkspace();
   const setLastWorkspace = (ws) => runtime.setLastWorkspace(ws);
-  // Current workspace root = channel-level lastWorkspace (or the bound root).
   const currentWorkspaceRoot = () => {
     const lw = runtime.getLastWorkspace();
     return (lw && lw.projectRoot) || projectRoot;
   };
-  // Sessions of the current project, sourced from dsh web (the real session list,
-  // so channel-created AND existing workspace sessions both appear).
   const currentSessions = () => listWorkspaceSessions(port, wsHost, currentWorkspaceRoot(), opts.timeoutMs);
-  // #sN code for a session within the current project's session list.
   const sessionCode = async (sessionId) => {
     const list = await currentSessions();
     const idx = list.findIndex((s) => s.sessionId === sessionId);
     return idx >= 0 ? 's' + (idx + 1) : '';
   };
 
-  // Command runner wired to the session store + session driver.
   const commandRunner = opts.commands || createCommandRunner({
     getSessions: () => currentSessions(),
     getWorkspaces: async () => {
       const ws = await getCodedWorkspaces();
-      return ws.filter((w) => isEnabledForRoot(w.path)); // /workspaces only lists enabled
+      return ws.filter((w) => isEnabledForRoot(w.path));
     },
     createSession: async (content) => {
-      // /new [#w1] — route to the tagged workspace, else the current one (lastCode),
-      // else the first workspace.
       const ws = await getCodedWorkspaces();
       const resolved = resolveWorkspaceTag(content || '', {
         workspaces: ws,
@@ -197,32 +209,20 @@ async function runWeixinChannel(opts = {}) {
       });
       const target = resolved.workspace || null;
       const targetRoot = target ? target.path : projectRoot;
-      // Project switch: don't create/run a session in a workspace that hasn't enabled
-      // this channel. Clear the active session so the caller's /new bind/dispatch is skipped.
       if (!isEnabledForRoot(targetRoot)) {
         runtime.setActiveSession(null);
         throw new Error('该项目未启用该通道，请在面板「通道」项目视图开启后使用');
       }
-      // Create with the workspaceId so dsh associates the session with the
-      // workspace and it shows up in the dsh web workspace view (a bare cwd
-      // creates a workspaceId:null session that is NOT listed in the workspace).
       const sid = target && target.id
         ? await sessionDriver.createSession(port, { workspaceId: target.id })
         : await sessionDriver.createSession(port, { cwd: targetRoot });
       let reply;
       if (content) {
-        // /new <content>: create + rename, ack 创建新会话 #sN (sessionId); the actual
-        // generation runs in the background (dispatchGeneration in the command path)
-        // so the answer is pushed after a typing indicator.
         await sessionDriver.renameSession(port, sid, content, wsHost, opts.timeoutMs);
         runtime.setActiveSession({ sessionId: sid, name: content, projectRoot: targetRoot, pendingPrompt: false });
         const code = await sessionCode(sid);
         reply = '创建新会话 #' + code + ' (' + sid + ')';
       } else {
-        // /new with NO content: create only (no dsh run) and mark pending — the next
-        // ordinary message activates it. Do NOT rename the dsh session to a fixed title:
-        // "New Session" is only the in-panel/runtime placeholder label (name); the real
-        // dsh web title is auto-generated by dsh web from the first real prompt.
         runtime.setActiveSession({ sessionId: sid, name: 'New Session', projectRoot: targetRoot, pendingPrompt: true });
         const code = await sessionCode(sid);
         reply = '创建新会话 #' + code + ' (' + sid + ')\n请继续与我对话，我正在听...';
@@ -237,11 +237,9 @@ async function runWeixinChannel(opts = {}) {
       if (m) hit = list[parseInt(m[1], 10) - 1];
       else hit = list.find((s) => s.name === sel || s.sessionId === sel) || list[parseInt(sel, 10) - 1];
       if (!hit) throw new Error('找不到会话：' + sel);
-      // persist the switch so /status reflects it after restart
       runtime.setActiveSession({ sessionId: hit.sessionId, projectRoot: hit.projectRoot, name: hit.name });
       return { id: hit.sessionId, name: hit.name, projectRoot: hit.projectRoot };
     },
-    // /workspaces|/wks <名称|代号> — switch workspace (same effect as #wN).
     switchWorkspace: async (selector) => {
       const sel = String(selector || '').trim();
       const coded = await getCodedWorkspaces();
@@ -249,6 +247,9 @@ async function runWeixinChannel(opts = {}) {
       const m = /^#?w(\d+)$/i.exec(sel);
       if (m) {
         target = coded[parseInt(m[1], 10) - 1] || null;
+      } else if (/^\d+$/.test(sel)) {
+        // Bare numeric index (mirror /ses <N> behavior): /wks 1 == /wks w1
+        target = coded[parseInt(sel, 10) - 1] || null;
       } else {
         const low = sel.toLowerCase();
         target = coded.find((w) => {
@@ -258,19 +259,14 @@ async function runWeixinChannel(opts = {}) {
         }) || null;
       }
       if (!target) throw new Error('未找到工作区：' + sel + '（/wks 或 /workspaces 查看）');
-      // Same gate as #wN: the target workspace must have this channel enabled.
       if (!isEnabledForRoot(target.path)) {
         throw new Error('该项目未启用该通道，请在面板「通道」项目视图开启后使用');
       }
       setLastWorkspace(target);
-      // A workspace switch resets the current session to n/a — the user must
-      // explicitly pick a session afterwards (via #sN / /sessions).
       runtime.setActiveSession(null);
       const recent = (await currentSessions()).slice(0, 5);
       return { code: target.code, name: target.name || '', path: target.path, recent };
     },
-    // Bind a conversation to a session (used by /sessions <内容> so the next
-    // ordinary message continues in the switched session).
     bindSession: (conversationId, rec) => store.setSession(conversationId, rec),
     getStatus: async () => {
       const lw = runtime.getLastWorkspace();
@@ -280,9 +276,7 @@ async function runWeixinChannel(opts = {}) {
       return {
         channel: channelId,
         connected: adapter.getState() === 'connected',
-        // current workspace = channel-level lastWorkspace (code/name/~path)
         workspace: lw ? { code: lw.code, name: lw.name || '', path: lw.projectRoot || '' } : null,
-        // current session = active session + its #sN code (by list order)
         session: active
           ? { code: activeIdx >= 0 ? 's' + (activeIdx + 1) : '', sessionId: active.sessionId, name: active.name || '' }
           : null,
@@ -291,23 +285,15 @@ async function runWeixinChannel(opts = {}) {
   });
 
   let running = false;
-
-  // ---- async ack model + per-conversation busy gate (docs/channel-association-model.md) ----
-  // At most ONE generation runs per conversation: the first message acks 处理中 and
-  // runs in the background; while it is in-flight, further messages from the same
-  // conversation are answered 请等待 (not queued) so a backlog never builds up.
   const busy = new Set();
   const isBusy = (conversationId) => busy.has(conversationId);
 
-  // Start a background dsh session generation; on completion push the answer back
-  // via adapter.send (best-effort), then release the conversation's busy slot.
   function dispatchGeneration({ conversationId, sessionId, workspace, workspaceId, text, contextToken }) {
     busy.add(conversationId);
     (async () => {
       try {
-        // typing indicator ("正在输入…") replaces the old "处理中" text ack
-        await adapter.sendTyping(conversationId, 1, contextToken);
-        const event = { channelId, platform: 'weixin-clawbot', conversationId, sessionId, workspace, workspaceId, text, contextToken };
+        if (adapter.sendTyping) { try { await adapter.sendTyping(conversationId, 1, contextToken); } catch { /* best-effort */ } }
+        const event = { channelId, platform, conversationId, sessionId, workspace, workspaceId, text, contextToken };
         const reply = await sessionDriver.run(event, { workspaceRoot: workspace, workspaceId });
         const outText = reply && reply.text;
         if (outText) {
@@ -318,26 +304,38 @@ async function runWeixinChannel(opts = {}) {
       } catch (e) {
         try { await adapter.send(conversationId, { text: '生成失败：' + (e && e.message || String(e)), contextToken }); } catch { /* ignore */ }
       } finally {
-        try { await adapter.sendTyping(conversationId, 2, contextToken); } catch { /* ignore */ }
+        if (adapter.sendTyping) { try { await adapter.sendTyping(conversationId, 2, contextToken); } catch { /* best-effort */ } }
         busy.delete(conversationId);
       }
     })();
   }
+
   const onEventUnsub = adapter.onEvent(async (event) => {
     if (!running) return;
+    // Optional access gate (dingtalk owner-binding): consume /bind, reject unauthorized.
+    if (opts.auth) {
+      const a = await opts.auth.check(event);
+      if (a.handled || !a.allowed) {
+        store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
+        if (a.reply) {
+          const replies = Array.isArray(a.reply) ? a.reply : [a.reply];
+          for (const r of replies) {
+            store.appendMessage({ conversationId: event.conversationId, dir: 'out', text: r });
+            try { await adapter.send(event.conversationId, { text: r, contextToken: event.contextToken }); } catch { /* ignore */ }
+          }
+        }
+        if (opts.onEvent) opts.onEvent(event, { auth: { handled: a.handled, allowed: a.allowed, reply: a.reply } });
+        return;
+      }
+    }
     try {
-      console.log('[runner:' + channelId + '] onEvent received id=' + (event.messageId || '?') + ' text=' + JSON.stringify(event.text) + ' @' + Date.now());
-      // 1) commands take precedence; ordinary text routes to the project.
       const parsed = parseCommand(event.text);
       if (parsed.kind === 'command' || parsed.kind === 'unknown') {
-        // busy gate: /new with content starts a generation — gate it like ordinary text
         if (parsed.kind === 'command' && parsed.name === 'new' && parsed.args && parsed.args[0] && isBusy(event.conversationId)) {
           await adapter.send(event.conversationId, { text: '请等待，前一条消息还在处理中', contextToken: event.contextToken });
           store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
           return;
         }
-        // Project switch: workspace-scoped commands (/sessions /ses) require the
-        // CURRENT workspace to have the channel enabled.
         if (parsed.kind === 'command'
             && (parsed.name === 'sessions' || parsed.name === 'ses')
             && !isEnabledForRoot(currentWorkspaceRoot())) {
@@ -346,20 +344,14 @@ async function runWeixinChannel(opts = {}) {
           return;
         }
         const reply = await commandRunner.run(event.text, { conversationId: event.conversationId });
-        console.log('[runner:' + channelId + '] command ' + (parsed.name || parsed.kind) + ' -> reply=' + JSON.stringify(reply && reply.text));
-        // /new binds the freshly-created session to THIS conversation so the next
-        // ordinary message continues in it (instead of spawning a new session).
         if (parsed.kind === 'command' && parsed.name === 'new') {
           const act = runtime.getActiveSession();
           if (act && act.sessionId) {
             store.setSession(event.conversationId, { sessionId: act.sessionId, projectRoot: act.projectRoot, name: act.name });
-            // Both modes ack with the unified "创建新会话 #sN (sessionId)" reply first.
             const payload = { conversationId: event.conversationId, text: reply.text, contextToken: event.contextToken };
             await adapter.send(event.conversationId, payload);
             store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
             store.appendMessage({ conversationId: event.conversationId, dir: 'out', text: reply.text });
-            // /new <content>: after the ack, a typing indicator (sendTyping inside
-            // dispatchGeneration) + background generation pushes the answer.
             if (parsed.args && parsed.args[0]) {
               dispatchGeneration({
                 conversationId: event.conversationId,
@@ -381,8 +373,6 @@ async function runWeixinChannel(opts = {}) {
         if (opts.onEvent) opts.onEvent(event, { command: parsed.name || parsed.kind, reply });
         return;
       }
-      // 2) Quick commands: a bare #wN / #sN sets the current project / session
-      // (no question text — never route the bare tag into a dsh session).
       const quick = /^#([ws])(\d+)\s*$/i.exec(String(event.text || '').trim());
       if (quick) {
         const kind = quick[1].toLowerCase();
@@ -394,12 +384,9 @@ async function runWeixinChannel(opts = {}) {
           if (!w) {
             replyText = '未找到工作区 #w' + n + ' （/wks 或 /workspaces 查看）';
           } else if (!isEnabledForRoot(w.path)) {
-            // #wN is gated too: the target workspace must have this channel enabled.
             replyText = '该项目未启用该通道，请在面板「通道」项目视图开启后使用';
           } else {
             setLastWorkspace(w);
-            // A workspace switch resets the current session to n/a — the user
-            // must explicitly pick a session afterwards (via #sN).
             runtime.setActiveSession(null);
             const lines = ['已切换到工作区 #' + w.code + ' (' + (w.name || '') + '), ' + toHomePath(w.path, homeDir), '当前会话：n/a'];
             const recent = (await currentSessions()).slice(0, 5);
@@ -432,11 +419,6 @@ async function runWeixinChannel(opts = {}) {
         if (opts.onEvent) opts.onEvent(event, { command: 'quick-' + kind, reply: { text: replyText } });
         return;
       }
-      // 3) ordinary message: resolve target workspace. docs/channel-association-model.md §B —
-      // refs explicit binding (conversation/keyword) first, else workspace-tag
-      // (#tag / last / first, "current workspace" authoritative for unbound).
-      // busy gate: reserve the conversation slot SYNCHRONOUSLY (before any await) so a
-      // rapid follow-up message sees it and gets 请等待 instead of spawning a 2nd job.
       if (isBusy(event.conversationId)) {
         await adapter.send(event.conversationId, { text: '请等待，前一条消息还在处理中', contextToken: event.contextToken });
         store.appendMessage({ conversationId: event.conversationId, dir: 'in', text: event.text });
@@ -459,8 +441,6 @@ async function runWeixinChannel(opts = {}) {
       }
       const targetRoot = resolved.workspace ? resolved.workspace.path : projectRoot;
       const targetWsId = resolved.workspace ? resolved.workspace.id : null;
-      // Project switch (docs/channel-project-switch.md §3.2): only route/drive
-      // sessions in workspaces that have this channel enabled.
       if (!isEnabledForRoot(targetRoot)) {
         await sendNotEnabled(event);
         if (opts.onEvent) opts.onEvent(event, { projectNotEnabled: true });
@@ -470,11 +450,7 @@ async function runWeixinChannel(opts = {}) {
       if (resolved.workspace) {
         setLastWorkspace({ code: resolved.workspace.code, name: resolved.workspace.name, projectRoot: targetRoot });
       }
-      // strip the #tag so it isn't sent to the session as literal text
       const sessionText = resolved.cleanText || event.text;
-      // If the active session is a pending /new session (created with no content),
-      // activate it with this first message: prompt it, set its title (= the
-      // message content), and ack 处理中 immediately (don't wait for the answer).
       const active = runtime.getActiveSession();
       if (active && active.pendingPrompt && sessionText && active.projectRoot === targetRoot) {
         runtime.setActiveSession({ sessionId: active.sessionId, projectRoot: targetRoot, name: sessionText, pendingPrompt: false });
@@ -484,9 +460,6 @@ async function runWeixinChannel(opts = {}) {
         dispatchGeneration({ conversationId: event.conversationId, sessionId: active.sessionId, workspace: targetRoot, workspaceId: targetWsId, text: sessionText, contextToken: event.contextToken });
         return;
       }
-      // A (reuse) + C (workspace association): reuse the mapped session when it
-      // still targets this workspace; else create with workspaceId (so the session
-      // belongs to the workspace, not Ungrouped) and persist the mapping.
       let rec = store.getSession(event.conversationId);
       if (!rec || rec.projectRoot !== targetRoot) {
         const sid = targetWsId
@@ -499,17 +472,14 @@ async function runWeixinChannel(opts = {}) {
       event.workspace = targetRoot;
       event.projectRoot = targetRoot;
       store.appendMessage({ conversationId: event.conversationId, sessionId: rec.sessionId, dir: 'in', text: sessionText });
-      // typing indicator (inside dispatchGeneration) replaces the old 处理中 text ack
       dispatchGeneration({ conversationId: event.conversationId, sessionId: rec.sessionId, workspace: targetRoot, workspaceId: targetWsId, text: sessionText, contextToken: event.contextToken });
     } catch (e) {
-      // isolation: a failed message must not kill the poll loop
+      /* isolation: a failed message must not kill the loop */
     }
   });
 
-  // Persist the live connection state to ~/.dsh/channels/<channelId>.state.json
-  // on every transition, so the panel's global-config view can read it on demand.
-  const onStateUnsub = adapter.onState((s) => { try { runtime.setConnectionState(s); } catch { /* non-fatal */ } });
-  runtime.setConnectionState(adapter.getState());
+  const onStateUnsub = adapter.onState ? adapter.onState((s) => { try { runtime.setConnectionState(s); } catch { /* non-fatal */ } }) : null;
+  if (onStateUnsub) runtime.setConnectionState(adapter.getState());
 
   return {
     channelId,
@@ -534,4 +504,23 @@ async function runWeixinChannel(opts = {}) {
   };
 }
 
-module.exports = { runWeixinChannel, buildWeixinAdapters };
+/**
+ * Run a live WeChat ClawBot channel end-to-end (long-poll transport).
+ */
+async function runWeixinChannel(opts = {}) {
+  return runChannel({ ...opts, platform: 'weixin-clawbot', buildAdapters: buildWeixinAdapters });
+}
+
+/**
+ * Run a live DingTalk channel end-to-end (Stream push transport).
+ */
+async function runDingTalkChannel(opts = {}) {
+  const channelId = opts.channelId;
+  const log = opts.log || ((m) => console.log(m));
+  const auth = createDingTalkAuth({ channelId, dshHome: opts.dshHome, log });
+  log('[dingtalk:' + channelId + '] 管理员绑定口令：' + auth.getBindCode()
+    + (auth.isBound() ? '（已绑定）' : '（未绑定：发送 /bind <口令> 完成绑定）'));
+  return runChannel({ ...opts, platform: 'dingtalk', buildAdapters: buildDingTalkAdapters, auth });
+}
+
+module.exports = { runWeixinChannel, runDingTalkChannel, buildWeixinAdapters, buildDingTalkAdapters };
