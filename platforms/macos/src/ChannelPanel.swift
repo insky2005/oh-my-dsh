@@ -368,7 +368,8 @@ final class ChannelPanelController: NSObject {
         wizardHint.isHidden = true
 
         // bind-code row: /bind <code> + copy button (done step)
-        wizardBindLabel.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .semibold)
+        // Prominent bind-code display in the QR slot on the done step (large + bold).
+        wizardBindLabel.font = NSFont.monospacedSystemFont(ofSize: 22, weight: .bold)
         wizardBindLabel.alignment = .center
         wizardCopyButton.toolTip = L10n.tr("channel.wizard.copyBind")
         wizardCopyButton.onAction = { [weak self] in self?.copyBindCode() }
@@ -432,6 +433,7 @@ final class ChannelPanelController: NSObject {
             wizardInfo.stringValue = L10n.tr(wizardL10n("channel.wizard.promptInfo"))
             wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
             wizardQRView.image = nil
+            wizardQRView.isHidden = true
             wizardLinkButton.isHidden = true
             wizardLink = ""
             wizardHint.isHidden = wizardPlatform != "dingtalk"
@@ -443,6 +445,7 @@ final class ChannelPanelController: NSObject {
             wizardTitle.stringValue = platformName
             wizardHint.isHidden = wizardPlatform != "dingtalk"
             wizardHint.stringValue = L10n.tr("channel.wizard.robotNameHint")
+            wizardQRView.isHidden = false
             wizardInfo.stringValue = L10n.tr("channel.wizard.scanning")
             wizardStatus.stringValue = L10n.tr(wizardL10n("channel.wizard.promptTitle"))
             wizardPrimary.title = L10n.tr("btn.ok")
@@ -455,6 +458,7 @@ final class ChannelPanelController: NSObject {
             wizardInfo.stringValue = L10n.tr("channel.wizard.done")
             renderBindCode()
             wizardQRView.image = nil
+            wizardQRView.isHidden = true
             wizardPrimary.title = L10n.tr("channel.done")
             wizardPrimary.isEnabled = true
             wizardSecondary.title = L10n.tr("channel.wizard.back")
