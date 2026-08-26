@@ -71,6 +71,38 @@ function createDingTalkAuth(opts = {}) {
   function ownerStaffId() { return loadBinding(channelId, dshHome).ownerStaffId; }
   function getBindCode() { return loadBinding(channelId, dshHome).bindCode; }
 
+  // Serialize /bind attempts so only the FIRST sender with the correct code binds;
+  // a concurrent duplicate cannot read a stale "not bound" and overwrite the owner.
+  let bindLock = Promise.resolve();
+  function withBindLock(fn) {
+    const run = bindLock.then(() => fn());
+    bindLock = run.catch(() => {}); // keep the chain always-resolved
+    return run;
+  }
+  async function bindCommand(sender, bindMatch) {
+    const cur = loadBinding(channelId, dshHome);
+    if (cur.ownerStaffId != null) {
+      if (sender === cur.ownerStaffId) {
+        return { handled: true, allowed: true, reply: '你已是本通道管理员。' };
+      }
+      return { handled: true, allowed: false, reply: '该通道已绑定管理员，无权重新绑定。' };
+    }
+    const code = bindMatch[1] || '';
+    if (!code) {
+      return { handled: true, allowed: true, reply: '请发送：/bind <口令>（口令在本机生成，见面板或运行日志）' };
+    }
+    if (code.toUpperCase() !== cur.bindCode) {
+      return { handled: true, allowed: false, reply: '绑定口令错误。' };
+    }
+    saveBinding(channelId, { ownerStaffId: sender, bindCode: cur.bindCode }, dshHome);
+    log('[dingtalk:' + channelId + '] owner bound: ' + sender);
+    return {
+      handled: true,
+      allowed: true,
+      reply: ['绑定成功，你已被设为该通道管理员。', '可用指令：\n' + helpText()],
+    };
+  }
+
   /**
    * Check an inbound event. Returns { handled, allowed, reply? }.
    *  - handled=true:  a /bind command was consumed (reply is the response).
@@ -82,31 +114,7 @@ function createDingTalkAuth(opts = {}) {
     const text = String(event && event.text || '').trim();
     const bindMatch = /^\/bind(?:\s+([A-Za-z0-9]+))?/i.exec(text);
     if (bindMatch) {
-      const cur = loadBinding(channelId, dshHome);
-      if (cur.ownerStaffId != null) {
-        if (sender === cur.ownerStaffId) {
-          return { handled: true, allowed: true, reply: '你已是本通道管理员。' };
-        }
-        return { handled: true, allowed: false, reply: '该通道已绑定管理员，无权重新绑定。' };
-      }
-      const code = bindMatch[1] || '';
-      if (!code) {
-        return { handled: true, allowed: true, reply: '请发送：/bind <口令>（口令在本机生成，见面板或运行日志）' };
-      }
-      if (code.toUpperCase() !== cur.bindCode) {
-        return { handled: true, allowed: false, reply: '绑定口令错误。' };
-      }
-      saveBinding(channelId, { ownerStaffId: sender, bindCode: cur.bindCode }, dshHome);
-      log('[dingtalk:' + channelId + '] owner bound: ' + sender);
-      return {
-        handled: true,
-        allowed: true,
-        // Two messages: confirmation + the exact /help output (same source, so it always matches).
-        reply: [
-          '绑定成功，你已被设为该通道管理员。',
-          '可用指令：\n' + helpText(),
-        ],
-      };
+      return withBindLock(() => bindCommand(sender, bindMatch));
     }
     const cur = loadBinding(channelId, dshHome);
     if (cur.ownerStaffId == null) {

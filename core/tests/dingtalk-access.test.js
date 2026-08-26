@@ -60,14 +60,29 @@ test('dingtalk-access: after bind, owner allowed, others rejected', async () => 
   assert.match(again.reply, /已是本通道管理员/);
 });
 
-test('dingtalk-access: binding persists across auth instances (same channel)', () => {
+test('dingtalk-access: binding persists across auth instances (same channel)', async () => {
   const home = tmp();
   const a1 = createDingTalkAuth({ channelId: 'dt-c', dshHome: home });
   const code = a1.getBindCode();
-  a1.check({ sender: 'owner', text: '/bind ' + code });
+  await a1.check({ sender: 'owner', text: '/bind ' + code });
   // fresh instance reads the same binding file
   const a2 = createDingTalkAuth({ channelId: 'dt-c', dshHome: home });
   assert.equal(a2.isBound(), true);
   assert.equal(a2.ownerStaffId(), 'owner');
   assert.equal(a2.getBindCode(), code, 'bind code stable');
+});
+
+test('dingtalk-access: concurrent /bind from different senders — only the first binds (lock)', async () => {
+  const home = tmp();
+  const auth = createDingTalkAuth({ channelId: 'dt-race', dshHome: home });
+  const code = auth.getBindCode();
+  const [r1, r2] = await Promise.all([
+    auth.check({ sender: 'alice', text: '/bind ' + code }),
+    auth.check({ sender: 'bob', text: '/bind ' + code }),
+  ]);
+  const succeeded = [r1, r2].filter((r) => r.allowed && Array.isArray(r.reply) && /绑定成功/.test(r.reply[0]));
+  const rejected = [r1, r2].filter((r) => r.allowed === false);
+  assert.equal(succeeded.length, 1, 'exactly one concurrent bind succeeds');
+  assert.equal(rejected.length, 1, 'the other concurrent bind is rejected');
+  assert.ok(auth.ownerStaffId() === 'alice' || auth.ownerStaffId() === 'bob');
 });
