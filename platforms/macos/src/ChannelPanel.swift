@@ -1304,6 +1304,7 @@ final class ChannelCardView: NSView {
         ])
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(tapped(_:)))
+        click.delegate = self
         addGestureRecognizer(click)
         setState(.disconnected, configured: false)
     }
@@ -1366,12 +1367,25 @@ final class ChannelCardView: NSView {
     }
 
     @objc private func tapped(_ sender: Any) {
-        // Clicking the unbind button must not also trigger the card tap (which would
-        // open the bind wizard). The unbind button handles its own click.
+        // Secondary guard: clicking the unbind button must not also trigger the card
+        // tap (which would open the bind wizard). The primary guard is the gesture
+        // delegate (shouldAttemptToRecognizeWith) — this is a belt-and-suspenders.
         if let gesture = sender as? NSClickGestureRecognizer, !unbindButton.isHidden {
             let p = gesture.location(in: self)
-            if unbindButton.frame.contains(p) { return }
+            if unbindButton.convert(unbindButton.bounds, to: self).contains(p) { return }
         }
         onTap?()
+    }
+}
+
+extension ChannelCardView: NSGestureRecognizerDelegate {
+    /// Don't let the card's click gesture recognize clicks on the unbind button, so
+    /// the button handles its own click (unbind) and the wizard is NOT opened.
+    func gestureRecognizer(_ gestureRecognizer: NSGestureRecognizer, shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        if !unbindButton.isHidden {
+            let p = convert(event.locationInWindow, from: nil)
+            if unbindButton.convert(unbindButton.bounds, to: self).contains(p) { return false }
+        }
+        return true
     }
 }
