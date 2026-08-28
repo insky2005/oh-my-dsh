@@ -219,7 +219,7 @@ projectSlug 生成规则: 项目名（可中文）→ ASCII slug（去重音/空
 ## 项目是什么（一句话，来自参数 techSummary）
 ## 目录结构（随所选环节生成，如 backend/ frontend/ docs/ deploy/）
 ## 常用命令（引用 Makefile：make dev / build / test / lint；未选 makefile 环节则省略）
-## 工程规范（提交规范、代码风格、DoD——对应 conventions 环节所选内容）
+## 工程规范（提交/分支规范、代码风格、DoD——对应 git-conventions / conventions 环节所选内容；未选则不写）
 ## 禁区（密钥不入仓库、不越过所选环节边界等）
 ## 与 dsh 协作（若含 dsh-wiki-prep 环节：先读 .dsh/wiki/index.md；按需读取，见 6.2）
 ```
@@ -291,7 +291,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 |---|---|
 | `src/ScaffoldPanel.swift`（新增） | `StageCatalogLoader` / `ScaffoldTemplateRenderer` / `ScaffoldPlan` / `ScaffoldApplier` / `ScaffoldDeepenRPC`(M3) / `ScaffoldPanelController`（头部/目标区/环节列表/参数表单/预览/状态条） |
 | `src/main.swift` | `RightPanel` 增加 `.scaffold`；活动栏图标按钮（SF Symbol `puzzlepiece.extension`）；`setRightPanel` 各调用点与 `rightPanelKind` 持久化扩展；「视图」菜单 `⌃⌥S`；`DSH_SCAFFOLD_TEST=1` / `DSH_SCAFFOLD_TEST_DIR` / `DSH_SCAFFOLD_STAGES` QA 钩子；`serverReady` 门控接线；L10n 新增 `scaffold.*` 键（中/英，见 7.3） |
-| `platforms/macos/scaffold-stages/`（新增） | v1 环节库（第 13 节）：`git-init` / `agents-md` / `docs-standards` / `conventions` / `makefile` / `ci-cd` / `docker` / `dsh-wiki-prep` / `backend-java` / `frontend-react`，每个 `<id>/stage.yaml` + `templates/` |
+| `platforms/macos/scaffold-stages/`（新增） | v1 环节库（第 13 节）：`git-init` / `git-conventions` / `agents-md` / `docs-standards` / `conventions` / `makefile` / `ci-cd` / `docker` / `dsh-wiki-prep` / `backend-java` / `frontend-react`，每个 `<id>/stage.yaml` + `templates/` |
 | `build-app.sh` | 复制 `scaffold-stages` 到 `Contents/Resources/scaffold-stages`（参照 303 行 highlight.js 资源先例）；版本号递增（M3 收尾如 1.14.0） |
 | `README.md` | 「特性」新增「工程搭建台」小节；「目录」补充本文档 |
 | `tests/scaffold-panel/`（新增） | 无头单测：`run.sh` + `scaffold-tests.swift`（范式同 `tests/wiki-panel/`，见 10.1） |
@@ -320,6 +320,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 | 9.14 | 多环节写同一路径 | 预览冲突清单（后写覆盖 + 标红 + 列出来源环节）；用户可调整顺序或取消某环节 |
 | 9.15 | L10n 缺失键 | 回退英文（与既有面板同一兜底策略） |
 | 9.16 | Jenkins 凭据引用 | 模板只生成 `withCredentials(credentialsId: '<占位>')` 引用 ID，**绝不内联密钥**；凭据 ID 与 agent label 均参数化，并注释说明在 Jenkins Credentials/Node 里如何配置（与仓库自用 `Jenkinsfile` 惯例一致）；浅克隆无 tag 的坑由 `Checkout` 阶段的 `git fetch --tags` 吸收 |
+| 9.17 | Git hook / `.gitmessage` 与目标已有文件冲突 | 安装脚本**非破坏**：目标已存在 `commit-msg` hook 或 `.gitmessage` 时先备份（`.scaffold-backup/`）再写入，或跳过并提示手动合并；**绝不覆盖用户已有 git 配置** |
 
 ---
 
@@ -334,7 +335,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
   - 渲染器（`{{var}}` 替换、`{{#if}}` 真假分支、文件名渲染、`{{{{` 转义、缺失变量报错）；
   - 规划（多环节文件清单合并、同路径冲突标记、顺序语义）；
   - 落盘（fixture 目标目录：文件内容字节级断言、冲突备份 `.scaffold-backup/`、state.json 内容）；
-- **端到端 fixture 组合**：内置环节库 + 「纯后端 API」预设参数 → 断言产物树（AGENTS.md 含项目名与 make 命令、`backend/pom.xml` 含 groupId、Makefile 含用户命令、docs 骨架齐）；「前后端兼备」预设 → 断言 `frontend/` 产物与 Makefile 双目标；`platform=jenkins` 组合 → 断言根目录 `Jenkinsfile` 含 lint→test→build 阶段、`withCredentials` 凭据占位且无内联密钥、`post.always` 归档。**渲染器/规划器/落盘器不依赖面板与网络**，可在 CI 无头跑。
+- **端到端 fixture 组合**：内置环节库 + 「纯后端 API」预设参数 → 断言产物树（AGENTS.md 含项目名与 make 命令、`backend/pom.xml` 含 groupId、Makefile 含用户命令、docs 骨架齐）；「前后端兼备」预设 → 断言 `frontend/` 产物与 Makefile 双目标；`platform=jenkins` 组合 → 断言根目录 `Jenkinsfile` 含 lint→test→build 阶段、`withCredentials` 凭据占位且无内联密钥、`post.always` 归档；`git-conventions`（enforce=true）组合 → 断言 `docs/conventions/git.md` 含 Conventional Commits type 枚举与分支前缀、`.gitmessage` 存在、`scripts/install-git-hooks.sh` 为纯 shell 校验（无 node 依赖）。**渲染器/规划器/落盘器不依赖面板与网络**，可在 CI 无头跑。
 
 ### 10.2 手动 QA 清单（用户运行 App 验收）
 
@@ -347,7 +348,9 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 7. 中文项目名 → slug 正确、目录可建；非法包名 → 行内错误；
 8. 中断/重跑幂等；state.json 记录正确；
 9. 与既有面板互斥切换、宽度记忆、重启恢复（`rightPanelKind`）；
-10. 中英文界面文案齐全；退出 App 无残留。
+10. 中英文界面文案齐全；退出 App 无残留；
+11. 选 `git-conventions`（enforce=true）生成到临时目录 → 运行 `scripts/install-git-hooks.sh` → 提交一条违规消息被拦截、合法消息通过；已有同名 hook 时先备份不覆盖（9.17）；
+12. 选 `ci-cd`（platform=jenkins）→ 生成根目录 `Jenkinsfile` → 内容含 lint/test/build 阶段、凭据占位（无真实密钥）、`post.always` 归档；发布动作默认门控不触发。
 
 ---
 
@@ -356,7 +359,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 | 里程碑 | 内容 | 验收 |
 |---|---|---|
 | **M0** | 本文档评审通过 | 设计决策闭环、无开放问题 |
-| **M1** | `StageCatalogLoader` + `ScaffoldTemplateRenderer` + `ScaffoldPlan` + `ScaffoldApplier` + `ScaffoldPanelController`；`RightPanel.scaffold`、菜单 `⌃⌥S`、L10n、QA 钩子；**工程基础 8 环节**（git-init / agents-md / docs-standards / conventions / makefile / ci-cd / docker / dsh-wiki-prep）；预设 3 组；10.1 编译 + 引擎单测通过 | 能组合生成**栈无关骨架**端到端；10.2 的 1-2、5-10 通过 |
+| **M1** | `StageCatalogLoader` + `ScaffoldTemplateRenderer` + `ScaffoldPlan` + `ScaffoldApplier` + `ScaffoldPanelController`；`RightPanel.scaffold`、菜单 `⌃⌥S`、L10n、QA 钩子；**工程基础 9 环节**（git-init / git-conventions / agents-md / docs-standards / conventions / makefile / ci-cd / docker / dsh-wiki-prep）；预设 3 组；10.1 编译 + 引擎单测通过 | 能组合生成**栈无关骨架**端到端；10.2 的 1-2、5-10 通过 |
 | **M2** | **示例栈环节** backend-java（Spring Boot 3 + Maven 最小骨架 + 健康检查单测）与 frontend-react（Vite + TS 最小骨架 + 示例 API 调用 + 单测）；6.1 的 AGENTS.md 与所选环节自洽性完整覆盖 | 「纯后端 API」「前后端兼备」两种典型组合全链路生成；10.2 的 3-4 通过；`build-app.sh` 产出新版本（如 1.13.0 → 1.14.0） |
 | **M3** | **Agent 深化链路**：`ScaffoldDeepenRPC`（createSession/prompt queue/轮询/打开会话，归入工作区）+ 深化文案模板（中英）+ 深化按钮态（`serverReady` 门控）；**用户扩展环节库**（`$DSH_HOME/scaffold-stages/` 扫描与坏清单隔离，9.11）；`state.json` 审计增强；README 特性说明 | 生成后一键深化端到端跑通（dsh web 可见会话、可继续对话）；用户放置自定义环节 → 面板出现并可组合；10.2 全过 |
 
@@ -369,7 +372,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 1. 面板沿用右侧活动栏槽位；切换/宽度记忆/持久化沿用既有机制；
 2. 骨架确定性部分**由壳层 Swift 引擎本地渲染**（快、可复现、无 token）；「深化」由 dsh 代理执行（M3）——两者互补，不互相替代；
 3. 不修改任何 DeepSeek Harness 源码；**不碰**用户已有项目文件（仅写入用户确认的目标目录，冲突走备份）；
-4. v1 环节库 = 内置 10 个环节（第 13 节），环节 = `stage.yaml` + 模板文件，随 App 版本化分发；模板语法为 `{{var}}` + `{{#if}}`（v1 刻意最小）；
+4. v1 环节库 = 内置 11 个环节（第 13 节），环节 = `stage.yaml` + 模板文件，随 App 版本化分发；模板语法为 `{{var}}` + `{{#if}}`（v1 刻意最小）；
 5. `session.create` / `session.prompt`（`mode: queue`）复用 WikiRPC 已验证链路；若 dsh 接口变化，按新 schema 适配；
 6. 环节库内置路径 `Contents/Resources/scaffold-stages`（构建期复制）；开发期用 `DSH_SCAFFOLD_STAGES` 追加；
 7. v1 不做跨环节自动联动（9.7 只提示）；「预设」只是快捷勾选，不限制自由组合；
@@ -386,7 +389,8 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 | `git-init` | 仓库初始化 / Git Init | `license`（none/MIT/Apache-2.0）、`gitIgnorePreset`（通用/java/node） | `.gitignore`、`README.md` 骨架（项目名/一句话/快速开始占位）、`LICENSE`（按参数）；命令 `git init -b main` |
 | `agents-md` | Agent 协作层 / AGENTS.md | `techSummary`（一句话项目说明）、`primaryLang`（主语言） | `AGENTS.md`（项目是什么/目录结构/常用命令/规范引用/禁区/与 dsh 协作说明），内容随所选环节自洽（6.1） |
 | `docs-standards` | 文档规范骨架 / Docs Standards | `docsLang`（zh/en/双语） | `docs/architecture.md`（模板）、`docs/adr/ADR-0001-template.md`、`docs/conventions.md` 骨架、`docs/ops/runbook.md` 模板 |
-| `conventions` | 开发规范落地 / Conventions | `vcs`（github/gitlab）、`docsLang` | `.editorconfig`、`CONTRIBUTING.md`（提交规范/PR 规范/DoD 检查清单，按 vcs 微调） |
+| `conventions` | 开发规范落地 / Conventions | `vcs`（github/gitlab）、`docsLang` | `.editorconfig`、`CONTRIBUTING.md`（PR 规范/DoD 检查清单；提交/分支规范**简版内置**，完整版引用 `docs/conventions/git.md`——未选 git-conventions 环节时简版即兜底） |
+| `git-conventions` | Git 提交与分支规范 / Git Conventions | `enforce`（bool：附带 commit-msg 校验脚本）、`trunk`（main/master，默认 main） | `docs/conventions/git.md`（**提交规范**：Conventional Commits——type 枚举 feat/fix/docs/refactor/perf/test/chore/build/ci/revert、scope、示例、Why（自动 changelog/可追溯）；**分支规范**：feature/\<slug\> 新功能、fix/\<slug\> 修复、release/X.Y 已发布修复、主干受保护/禁 force-push/PR 合入规则——模板内容参照本仓库 `docs/git-workflow.md` 既定约定）、`.gitmessage`（git commit 模板）、`scripts/install-git-hooks.sh`（enforce=true：纯 shell commit-msg 校验，**无 node 依赖**；已有 hook 备份不覆盖，见 9.17） |
 | `makefile` | 统一命令入口 / Makefile | `backendBuild`、`backendTest`、`frontendInstall`、`frontendBuild`、`testCmd`、`lintCmd`（均可空，空则生成注释占位） | `Makefile`（dev/build/test/lint/clean 目标，按参数展开；未选对应栈则注释说明） |
 | `ci-cd` | CI/CD 模板 / CI & CD | `platform`（github-actions/gitlab-ci/**jenkins**）、`hasBackend`、`hasFrontend` | `.github/workflows/ci.yml`+`cd.yml`（或 `.gitlab-ci.yml`、或根目录 `Jenkinsfile`）：lint→test→build 门禁 + 镜像/部署占位 |
 | `docker` | 容器化 / Docker | `runtime`（java/node/static）、`exposePort`、`healthzPath` | `Dockerfile`（多阶段、按 runtime 分支）、`.dockerignore`、`compose.yaml`（本地起服务 + 占位依赖） |
