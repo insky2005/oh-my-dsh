@@ -319,6 +319,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 | 9.13 | 环节库随 App 升级 | 内置环节整体随版本替换；`.scaffold/state.json` 记录版本，重跑时兼容提示 |
 | 9.14 | 多环节写同一路径 | 预览冲突清单（后写覆盖 + 标红 + 列出来源环节）；用户可调整顺序或取消某环节 |
 | 9.15 | L10n 缺失键 | 回退英文（与既有面板同一兜底策略） |
+| 9.16 | Jenkins 凭据引用 | 模板只生成 `withCredentials(credentialsId: '<占位>')` 引用 ID，**绝不内联密钥**；凭据 ID 与 agent label 均参数化，并注释说明在 Jenkins Credentials/Node 里如何配置（与仓库自用 `Jenkinsfile` 惯例一致）；浅克隆无 tag 的坑由 `Checkout` 阶段的 `git fetch --tags` 吸收 |
 
 ---
 
@@ -333,7 +334,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
   - 渲染器（`{{var}}` 替换、`{{#if}}` 真假分支、文件名渲染、`{{{{` 转义、缺失变量报错）；
   - 规划（多环节文件清单合并、同路径冲突标记、顺序语义）；
   - 落盘（fixture 目标目录：文件内容字节级断言、冲突备份 `.scaffold-backup/`、state.json 内容）；
-- **端到端 fixture 组合**：内置环节库 + 「纯后端 API」预设参数 → 断言产物树（AGENTS.md 含项目名与 make 命令、`backend/pom.xml` 含 groupId、Makefile 含用户命令、docs 骨架齐）；「前后端兼备」预设 → 断言 `frontend/` 产物与 Makefile 双目标。**渲染器/规划器/落盘器不依赖面板与网络**，可在 CI 无头跑。
+- **端到端 fixture 组合**：内置环节库 + 「纯后端 API」预设参数 → 断言产物树（AGENTS.md 含项目名与 make 命令、`backend/pom.xml` 含 groupId、Makefile 含用户命令、docs 骨架齐）；「前后端兼备」预设 → 断言 `frontend/` 产物与 Makefile 双目标；`platform=jenkins` 组合 → 断言根目录 `Jenkinsfile` 含 lint→test→build 阶段、`withCredentials` 凭据占位且无内联密钥、`post.always` 归档。**渲染器/规划器/落盘器不依赖面板与网络**，可在 CI 无头跑。
 
 ### 10.2 手动 QA 清单（用户运行 App 验收）
 
@@ -387,9 +388,14 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 | `docs-standards` | 文档规范骨架 / Docs Standards | `docsLang`（zh/en/双语） | `docs/architecture.md`（模板）、`docs/adr/ADR-0001-template.md`、`docs/conventions.md` 骨架、`docs/ops/runbook.md` 模板 |
 | `conventions` | 开发规范落地 / Conventions | `vcs`（github/gitlab）、`docsLang` | `.editorconfig`、`CONTRIBUTING.md`（提交规范/PR 规范/DoD 检查清单，按 vcs 微调） |
 | `makefile` | 统一命令入口 / Makefile | `backendBuild`、`backendTest`、`frontendInstall`、`frontendBuild`、`testCmd`、`lintCmd`（均可空，空则生成注释占位） | `Makefile`（dev/build/test/lint/clean 目标，按参数展开；未选对应栈则注释说明） |
-| `ci-cd` | CI/CD 模板 / CI & CD | `platform`（github-actions/gitlab-ci）、`hasBackend`、`hasFrontend` | `.github/workflows/ci.yml`+`cd.yml`（或 `.gitlab-ci.yml`）：lint→test→build 门禁 + 镜像/部署占位 |
+| `ci-cd` | CI/CD 模板 / CI & CD | `platform`（github-actions/gitlab-ci/**jenkins**）、`hasBackend`、`hasFrontend` | `.github/workflows/ci.yml`+`cd.yml`（或 `.gitlab-ci.yml`、或根目录 `Jenkinsfile`）：lint→test→build 门禁 + 镜像/部署占位 |
 | `docker` | 容器化 / Docker | `runtime`（java/node/static）、`exposePort`、`healthzPath` | `Dockerfile`（多阶段、按 runtime 分支）、`.dockerignore`、`compose.yaml`（本地起服务 + 占位依赖） |
 | `dsh-wiki-prep` | 知识库准备 / Wiki Prep | 无 | `.dsh/wiki/README.md` 占位（引导用 repo-knowledge 生成），不与生成代理（保持确定性） |
+
+> **Jenkins 模板说明**（`platform=jenkins`）：产出根目录 `Jenkinsfile`，**声明式 pipeline**——形态与工程惯例对齐本仓库自用 `Jenkinsfile`（见仓库根的活样本，含标签/凭据/归档等企业约定）：
+> - `agent { label '<占位>' }` 参数化，头部注释说明 agent 需安装的工具链；`options` 含 `timestamps()` / `disableConcurrentBuilds()` / `timeout`；
+> - 阶段划分：`Checkout`（含 `git fetch --tags --force || true` 教训——Jenkins 浅克隆可能无 tag）→ `Lint` → `Test` → `Build` → `Package / Publish`（发布/部署用 `when { expression { params.<X> } }` 参数门控，**默认不触发**外部动作）；
+> - 凭据一律 `withCredentials([… credentialsId: '<占位>', variable: '<X>'])` 引用 ID，**绝不内联密钥**（9.16）；镜像推送/部署步骤输出为注释占位 + TODO 标记；`post.always` 归档产物（`archiveArtifacts`）。
 
 ### 13.2 示例栈（category: examples）
 
