@@ -410,6 +410,11 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 > - **安全基线**：脚本 `set -euo pipefail`；密钥只引用不内联（SSH key 路径 / KUBECONFIG / Rancher token 均为参数或环境变量占位）；默认交互确认 + `--yes` 跳过；`--dry-run` 只打印将执行命令；
 > - **可回滚**：docker 健康检查失败 → 切回上一镜像 tag 重启；k8s 用 `kubectl rollout undo`；Rancher 同 k8s（UI 回滚点为补充说明）；
 > - **与 `docker` 环节分工**：`docker` = 镜像构建 + 本地开发编排（Dockerfile / compose.yaml）；`deploy` = 生产部署脚本与生产编排 / manifests（`deploy/` 目录）——互不写同一路径。
+>
+> **各脚本执行流程**：
+> - **`deploy/deploy-docker.sh`**：前置检查（docker 可用 / `remoteHost` 探活 / `.env` 存在）→ `--dry-run` 打印将执行命令 → 本机 `docker compose -f deploy/docker-compose.prod.yml up -d --pull`（远程：先 `rsync` 同步 `deploy/` 到远端，再 `ssh` 远程执行）→ 健康检查轮询（curl `healthzPath`，N 次 × 间隔）→ 失败自动切回**上一镜像 tag** 重启 → 成功输出访问地址；
+> - **`deploy/deploy-k8s.sh`**：前置检查（`kubectl config current-context` 校验 `KUBE_CONTEXT`；namespace 不存在则 `create`）→ `--dry-run`（`kubectl apply --dry-run=client`）→ `kubectl apply -f deploy/k8s/`（顺序 configmap → deployment → service）→ `kubectl set image deployment/<app> app=$IMAGE_REPO:$IMAGE_TAG`（镜像覆盖，**免改 yaml**）→ `kubectl rollout status deployment/<app> -n $NS` 等待就绪 → 失败 `kubectl rollout undo` + pod 事件/日志指引 → 成功输出服务暴露地址；
+> - **`deploy/deploy-rancher.sh`**：`RANCHER_SERVER` / kubeconfig 前置校验（缺失则打印从 Rancher 获取 kubeconfig 的指引）→ **复用 `deploy/k8s/` manifests 执行与 deploy-k8s.sh 相同流程** → Rancher 项目 / 命名空间映射与 UI 回滚点说明见 `deploy/rancher/README.md`。
 
 ### 13.2 示例栈（category: examples）
 
