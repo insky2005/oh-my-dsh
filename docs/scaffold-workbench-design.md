@@ -1,7 +1,7 @@
-# 功能设计：oh-my-dsh「工程搭建台」（Scaffold Workbench）
+# 功能设计：oh-my-dsh「工程脚手架」（Scaffold Workbench）
 
 > 状态：📋 设计稿（M0）· 待评审 · 2026-08
-> 范围：基于 oh-my-dsh（DeepSeek Harness 的 macOS 原生壳）新增「工程搭建台」功能——把**项目开发拆解为相对独立的「环节」（stage）**，开发者按工作目的**任意组合**、搭建项目的基础架构，并在此基础上**顺畅地与 Agent 协作**。
+> 范围：基于 oh-my-dsh（DeepSeek Harness 的 macOS 原生壳）新增「工程脚手架」功能——把**项目开发拆解为相对独立的「环节」（stage）**，开发者按工作目的**任意组合**、搭建项目的基础架构，并在此基础上**顺畅地与 Agent 协作**。
 > 原则：与壳层既有约定一致——**不改动任何 DeepSeek Harness 源码**，一切通过壳层面板 + dsh 既有能力（session RPC / skill / AGENTS.md 指令加载 / 本地命令执行）实现。
 
 ---
@@ -10,9 +10,9 @@
 
 ### 1.1 功能是什么
 
-「工程搭建台」把「从零起一个新项目」这件事拆成一节节**相互独立、可任意组合**的「环节」。每个环节是**一份清单（manifest）+ 一组文件模板**，描述它要把哪些文件、按什么参数、生成到目标目录的什么位置。开发者按工作目的（纯后端 API / 前后端兼备 / 内部工具…）勾选环节、填参数，搭建台在本地确定性地渲染出项目骨架；骨架内自带 `AGENTS.md`、命令入口、文档与规范文件，**Agent 一进来就知道规则、命令和边界**——这就是「顺畅协作」的工程基础。骨架生成后还可选一键让 dsh 代理「深化」骨架（补实现、补测试、跑通构建）。
+「工程脚手架」把「从零起一个新项目」这件事拆成一节节**相互独立、可任意组合**的「环节」。每个环节是**一份清单（manifest）+ 一组文件模板**，描述它要把哪些文件、按什么参数、生成到目标目录的什么位置。开发者按工作目的（纯后端 API / 前后端兼备 / 内部工具…）勾选环节、填参数，脚手架在本地确定性地渲染出项目骨架；骨架内自带 `AGENTS.md`、命令入口、文档与规范文件，**Agent 一进来就知道规则、命令和边界**——这就是「顺畅协作」的工程基础。骨架生成后还可选一键让 dsh 代理「深化」骨架（补实现、补测试、跑通构建）。
 
-它和我们上一轮聊的「企业子系统蓝图」（仓库布局 / 文档规范 / 脚手架 / 开发规范 / CI/CD / 发布部署）是**同一件事的两种形态**：蓝图是文本，搭建台把它变成可执行、可组合、可复用的环节库。
+它和我们上一轮聊的「企业子系统蓝图」（仓库布局 / 文档规范 / 脚手架 / 开发规范 / CI/CD / 发布部署）是**同一件事的两种形态**：蓝图是文本，脚手架把它变成可执行、可组合、可复用的环节库。
 
 ### 1.2 行业现状
 
@@ -105,7 +105,7 @@
 └────────────────────────────────────────────┘   └───────────────────────────────────────┘
 ```
 
-**关键决策**：骨架的**确定性部分**（规范文件、目录结构、最小骨架代码）由壳层本地渲染——快、可复现、零 token；**创造性部分**（业务实现、深化）交给 dsh 代理——能力随 dsh 演进自动受益。这与 Repo Wiki「壳层触发 + 代理生成」的分工互补：wiki 是「内容全代理」，搭建台是「确定性壳层 + 深化代理」。
+**关键决策**：骨架的**确定性部分**（规范文件、目录结构、最小骨架代码）由壳层本地渲染——快、可复现、零 token；**创造性部分**（业务实现、深化）交给 dsh 代理——能力随 dsh 演进自动受益。这与 Repo Wiki「壳层触发 + 代理生成」的分工互补：wiki 是「内容全代理」，脚手架是「确定性壳层 + 深化代理」。
 
 ### 3.2 组件职责与归属
 
@@ -254,14 +254,14 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 
 ### 7.1 入口与面板容器
 
-- 活动栏新增图标（SF Symbol `puzzlepiece.extension`，文案「搭建台 / Scaffold」），`RightPanel` 增加 `.scaffold` 分支；切换/宽度记忆/持久化沿用既有 `setRightPanel` 机制；
-- 菜单「视图」→「工程搭建台」`⌃⌥S`（选中态跟随）；QA 钩子 `DSH_SCAFFOLD_TEST=1` 启动即开面板、`DSH_SCAFFOLD_TEST_DIR=<dir>` 预填目标目录、`DSH_SCAFFOLD_STAGES=<dir>` 追加环节目录；
+- 活动栏新增图标（SF Symbol `puzzlepiece.extension`，文案「脚手架 / Scaffold」），`RightPanel` 增加 `.scaffold` 分支；切换/宽度记忆/持久化沿用既有 `setRightPanel` 机制；
+- 菜单「视图」→「工程脚手架」`⌃⌥S`（选中态跟随）；QA 钩子 `DSH_SCAFFOLD_TEST=1` 启动即开面板、`DSH_SCAFFOLD_TEST_DIR=<dir>` 预填目标目录、`DSH_SCAFFOLD_STAGES=<dir>` 追加环节目录；
 - 面板根容器镜像 `WikiPanelController` 结构：40pt 头部 + 内容区 + 状态条，复用 `DynamicFillView`/`HoverButton`/`PanelIconButton`；**沿用已知的 layer 合成规避约定**（opaque 视图独立 layer，见 `docs/terminal-header-fix.md` 与 Wiki 面板修复记录）。
 
 ### 7.2 布局
 
 ```
-┌─ 头部 40pt: [搭建台] 状态徽标 …… [在 Finder 中显示] [生成 ▾(二次确认)] [✕]
+┌─ 头部 40pt: [脚手架] 状态徽标 …… [在 Finder 中显示] [生成 ▾(二次确认)] [✕]
 ├─ 目标区: 项目名 [输入框]  →  位置 [目录选择…]（NSOpenPanel 选父目录, 显示解析出的目标根）
 ├─ 环节库: 分组列表（工程基础 / 示例栈 / 协作层）
 │    每项: [checkbox] 环节名 + 一句话描述 + [参数]（选中后展开参数表单）
@@ -277,7 +277,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 
 | 键 | 默认 | 含义 |
 |---|---|---|
-| `scaffoldEnabled` | true | 活动栏是否显示搭建台入口 |
+| `scaffoldEnabled` | true | 活动栏是否显示脚手架入口 |
 | `scaffoldLastDir` | 无 | 上次选择的父目录（下次打开预填） |
 | `scaffoldBackupConflicts` | true | 覆盖冲突文件前是否写入 `.scaffold-backup/` |
 
@@ -293,10 +293,10 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 | `src/main.swift` | `RightPanel` 增加 `.scaffold`；活动栏图标按钮（SF Symbol `puzzlepiece.extension`）；`setRightPanel` 各调用点与 `rightPanelKind` 持久化扩展；「视图」菜单 `⌃⌥S`；`DSH_SCAFFOLD_TEST=1` / `DSH_SCAFFOLD_TEST_DIR` / `DSH_SCAFFOLD_STAGES` QA 钩子；`serverReady` 门控接线；L10n 新增 `scaffold.*` 键（中/英，见 7.3） |
 | `platforms/macos/scaffold-stages/`（新增） | v1 环节库（第 13 节）：`git-init` / `git-conventions` / `agents-md` / `docs-standards` / `conventions` / `makefile` / `ci-cd` / `docker` / `deploy` / `repo-knowledge` / `java-backend` / `vue3-frontend`，每个 `<id>/stage.yaml` + `templates/` |
 | `build-app.sh` | 复制 `scaffold-stages` 到 `Contents/Resources/scaffold-stages`（参照 303 行 highlight.js 资源先例）；版本号递增（M3 收尾如 1.14.0） |
-| `README.md` | 「特性」新增「工程搭建台」小节；「目录」补充本文档 |
+| `README.md` | 「特性」新增「工程脚手架」小节；「目录」补充本文档 |
 | `tests/scaffold-panel/`（新增） | 无头单测：`run.sh` + `scaffold-tests.swift`（范式同 `tests/wiki-panel/`，见 10.1） |
 
-**L10n 新键草案（中/英）**：`scaffold.title`（搭建台 / Scaffold）、`scaffold.presetBackend`（纯后端 API / Backend API only）、`scaffold.presetFullstack`（前后端兼备 / Full-stack）、`scaffold.presetFoundation`（文档+规范 / Docs & conventions）、`scaffold.projectName`、`scaffold.parentDir`（位置 / Location）、`scaffold.pickDir`（选择… / Choose…）、`scaffold.stageCategory.foundation|examples|collaboration`、`scaffold.previewCount`、`scaffold.conflict`（冲突 / Conflict）、`scaffold.generate`（生成 / Generate）、`scaffold.generating`（生成中… / Generating…）、`scaffold.done`、`scaffold.failed`、`scaffold.openDir`（打开目录 / Open Folder）、`scaffold.viewInFinder`、`scaffold.deepen`（Agent 深化 / Deepen with Agent）、`scaffold.emptyTarget`（选择环节后将显示生成清单 / Select stages to preview）等。
+**L10n 新键草案（中/英）**：`scaffold.title`（脚手架 / Scaffold）、`scaffold.presetBackend`（纯后端 API / Backend API only）、`scaffold.presetFullstack`（前后端兼备 / Full-stack）、`scaffold.presetFoundation`（文档+规范 / Docs & conventions）、`scaffold.projectName`、`scaffold.parentDir`（位置 / Location）、`scaffold.pickDir`（选择… / Choose…）、`scaffold.stageCategory.foundation|examples|collaboration`、`scaffold.previewCount`、`scaffold.conflict`（冲突 / Conflict）、`scaffold.generate`（生成 / Generate）、`scaffold.generating`（生成中… / Generating…）、`scaffold.done`、`scaffold.failed`、`scaffold.openDir`（打开目录 / Open Folder）、`scaffold.viewInFinder`、`scaffold.deepen`（Agent 深化 / Deepen with Agent）、`scaffold.emptyTarget`（选择环节后将显示生成清单 / Select stages to preview）等。
 
 ---
 
@@ -340,7 +340,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 
 ### 10.2 手动 QA 清单（用户运行 App 验收）
 
-1. `DSH_SCAFFOLD_TEST=1` 启动直开搭建台，`DSH_SCAFFOLD_TEST_DIR` 指向临时目录；
+1. `DSH_SCAFFOLD_TEST=1` 启动直开脚手架面板，`DSH_SCAFFOLD_TEST_DIR` 指向临时目录；
 2. 空态 → 勾选「文档+规范」预设 → 预览出现文件清单 → 生成 → 目录结构与内容正确；
 3. 「纯后端 API」预设（含 java-backend）→ 填 groupId/artifactId → 生成 → `mvn -q test` 可跑（若本机有 JDK；
 4. 「前后端兼备」预设 → 生成 → `make build` 目标在 Makefile 中正确展开；
