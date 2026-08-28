@@ -80,7 +80,7 @@
 - 不做「对既有项目补环节」的增量合并模式（非空目录仅确认 + 覆盖备份，9.1）；增量补环节为 v2；
 - 不做模板渲染的完整模板语言（`{{var}}` + `{{#if}}` 足够，`{{#each}}` 为 v2）；
 - 壳层不解析代码、不做代码生成器——Java/React 示例环节只产出**最小可运行骨架**，业务实现交给「Agent 深化」（G4）与开发者；
-- 不内置任何具体部署平台（k8s/云厂商）模板——`ci-cd`/`docker` 环节产出通用模板，参数占位。
+- 不内置**云厂商专有**（AWS EKS / GCP GKE / 阿里 ACK 等）模板——`deploy` 环节的 k8s 模板为**云无关通用 manifests**；`docker` 环节只负责镜像构建与本地编排，生产部署归 `deploy` 环节。
 
 ---
 
@@ -291,7 +291,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 |---|---|
 | `src/ScaffoldPanel.swift`（新增） | `StageCatalogLoader` / `ScaffoldTemplateRenderer` / `ScaffoldPlan` / `ScaffoldApplier` / `ScaffoldDeepenRPC`(M3) / `ScaffoldPanelController`（头部/目标区/环节列表/参数表单/预览/状态条） |
 | `src/main.swift` | `RightPanel` 增加 `.scaffold`；活动栏图标按钮（SF Symbol `puzzlepiece.extension`）；`setRightPanel` 各调用点与 `rightPanelKind` 持久化扩展；「视图」菜单 `⌃⌥S`；`DSH_SCAFFOLD_TEST=1` / `DSH_SCAFFOLD_TEST_DIR` / `DSH_SCAFFOLD_STAGES` QA 钩子；`serverReady` 门控接线；L10n 新增 `scaffold.*` 键（中/英，见 7.3） |
-| `platforms/macos/scaffold-stages/`（新增） | v1 环节库（第 13 节）：`git-init` / `git-conventions` / `agents-md` / `docs-standards` / `conventions` / `makefile` / `ci-cd` / `docker` / `dsh-wiki-prep` / `backend-java` / `frontend-react`，每个 `<id>/stage.yaml` + `templates/` |
+| `platforms/macos/scaffold-stages/`（新增） | v1 环节库（第 13 节）：`git-init` / `git-conventions` / `agents-md` / `docs-standards` / `conventions` / `makefile` / `ci-cd` / `docker` / `deploy` / `dsh-wiki-prep` / `backend-java` / `frontend-react`，每个 `<id>/stage.yaml` + `templates/` |
 | `build-app.sh` | 复制 `scaffold-stages` 到 `Contents/Resources/scaffold-stages`（参照 303 行 highlight.js 资源先例）；版本号递增（M3 收尾如 1.14.0） |
 | `README.md` | 「特性」新增「工程搭建台」小节；「目录」补充本文档 |
 | `tests/scaffold-panel/`（新增） | 无头单测：`run.sh` + `scaffold-tests.swift`（范式同 `tests/wiki-panel/`，见 10.1） |
@@ -321,6 +321,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 | 9.15 | L10n 缺失键 | 回退英文（与既有面板同一兜底策略） |
 | 9.16 | Jenkins 凭据引用 | 模板只生成 `withCredentials(credentialsId: '<占位>')` 引用 ID，**绝不内联密钥**；凭据 ID 与 agent label 均参数化，并注释说明在 Jenkins Credentials/Node 里如何配置（与仓库自用 `Jenkinsfile` 惯例一致）；浅克隆无 tag 的坑由 `Checkout` 阶段的 `git fetch --tags` 吸收 |
 | 9.17 | Git hook / `.gitmessage` 与目标已有文件冲突 | 安装脚本**非破坏**：目标已存在 `commit-msg` hook 或 `.gitmessage` 时先备份（`.scaffold-backup/`）再写入，或跳过并提示手动合并；**绝不覆盖用户已有 git 配置** |
+| 9.18 | 远程部署失败（SSH 不可达 / 密钥未配 / kubeconfig 缺失） | 脚本**前置检查**给明确错误与修复指引（`ssh -o BatchMode=yes` 探活、`kubectl config current-context` 校验）；执行前先校验（docker：远端 `docker compose config` dry-run；k8s：`kubectl apply --dry-run=client`）避免半部署态；失败输出错误码与日志位置，可按 `state.json` 重跑 |
 
 ---
 
@@ -335,7 +336,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
   - 渲染器（`{{var}}` 替换、`{{#if}}` 真假分支、文件名渲染、`{{{{` 转义、缺失变量报错）；
   - 规划（多环节文件清单合并、同路径冲突标记、顺序语义）；
   - 落盘（fixture 目标目录：文件内容字节级断言、冲突备份 `.scaffold-backup/`、state.json 内容）；
-- **端到端 fixture 组合**：内置环节库 + 「纯后端 API」预设参数 → 断言产物树（AGENTS.md 含项目名与 make 命令、`backend/pom.xml` 含 groupId、Makefile 含用户命令、docs 骨架齐）；「前后端兼备」预设 → 断言 `frontend/` 产物与 Makefile 双目标；`platform=jenkins` 组合 → 断言根目录 `Jenkinsfile` 含 lint→test→build 阶段、`withCredentials` 凭据占位且无内联密钥、`post.always` 归档；`git-conventions`（enforce=true）组合 → 断言 `docs/conventions/git.md` 含 Conventional Commits type 枚举与分支前缀、`.gitmessage` 存在、`scripts/install-git-hooks.sh` 为纯 shell 校验（无 node 依赖）。**渲染器/规划器/落盘器不依赖面板与网络**，可在 CI 无头跑。
+- **端到端 fixture 组合**：内置环节库 + 「纯后端 API」预设参数 → 断言产物树（AGENTS.md 含项目名与 make 命令、`backend/pom.xml` 含 groupId、Makefile 含用户命令、docs 骨架齐）；「前后端兼备」预设 → 断言 `frontend/` 产物与 Makefile 双目标；`platform=jenkins` 组合 → 断言根目录 `Jenkinsfile` 含 lint→test→build 阶段、`withCredentials` 凭据占位且无内联密钥、`post.always` 归档；`git-conventions`（enforce=true）组合 → 断言 `docs/conventions/git.md` 含 Conventional Commits type 枚举与分支前缀、`.gitmessage` 存在、`scripts/install-git-hooks.sh` 为纯 shell 校验（无 node 依赖）；`deploy`（deployDocker+deployK8s+deployRancher 全选、`remoteHost` 非空）组合 → 断言 `deploy/deploy-docker.sh` 含 rsync/ssh 远程分支与健康检查回滚、`deploy/deploy-k8s.sh` 含 `KUBE_CONTEXT` 参数与 `rollout undo`、`deploy/deploy-rancher.sh` 存在且复用 k8s manifests、三脚本均含 `--dry-run` 且无内联密钥。**渲染器/规划器/落盘器不依赖面板与网络**，可在 CI 无头跑。
 
 ### 10.2 手动 QA 清单（用户运行 App 验收）
 
@@ -351,6 +352,8 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 10. 中英文界面文案齐全；退出 App 无残留；
 11. 选 `git-conventions`（enforce=true）生成到临时目录 → 运行 `scripts/install-git-hooks.sh` → 提交一条违规消息被拦截、合法消息通过；已有同名 hook 时先备份不覆盖（9.17）；
 12. 选 `ci-cd`（platform=jenkins）→ 生成根目录 `Jenkinsfile` → 内容含 lint/test/build 阶段、凭据占位（无真实密钥）、`post.always` 归档；发布动作默认门控不触发。
+13. 选 `deploy`（deployDocker+deployK8s）→ `--dry-run` 只打印预期命令且不实际部署；`bash -n` 语法校验通过；docker 脚本本机部署到临时 compose：健康检查失败路径触发回滚提示；
+14. 远程部署（有可用 SSH 环境）：`deploy-docker.sh` 指定 `remoteHost` 后能把 `deploy/` rsync 到远程并远程执行；k8s 脚本对测试集群 `--context` 走通 apply → rollout → undo 全路径（CI/手动各一次）。
 
 ---
 
@@ -359,7 +362,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 | 里程碑 | 内容 | 验收 |
 |---|---|---|
 | **M0** | 本文档评审通过 | 设计决策闭环、无开放问题 |
-| **M1** | `StageCatalogLoader` + `ScaffoldTemplateRenderer` + `ScaffoldPlan` + `ScaffoldApplier` + `ScaffoldPanelController`；`RightPanel.scaffold`、菜单 `⌃⌥S`、L10n、QA 钩子；**工程基础 9 环节**（git-init / git-conventions / agents-md / docs-standards / conventions / makefile / ci-cd / docker / dsh-wiki-prep）；预设 3 组；10.1 编译 + 引擎单测通过 | 能组合生成**栈无关骨架**端到端；10.2 的 1-2、5-10 通过 |
+| **M1** | `StageCatalogLoader` + `ScaffoldTemplateRenderer` + `ScaffoldPlan` + `ScaffoldApplier` + `ScaffoldPanelController`；`RightPanel.scaffold`、菜单 `⌃⌥S`、L10n、QA 钩子；**工程基础 10 环节**（git-init / git-conventions / agents-md / docs-standards / conventions / makefile / ci-cd / docker / deploy / dsh-wiki-prep）；预设 3 组；10.1 编译 + 引擎单测通过 | 能组合生成**栈无关骨架**端到端；10.2 的 1-2、5-10 通过 |
 | **M2** | **示例栈环节** backend-java（Spring Boot 3 + Maven 最小骨架 + 健康检查单测）与 frontend-react（Vite + TS 最小骨架 + 示例 API 调用 + 单测）；6.1 的 AGENTS.md 与所选环节自洽性完整覆盖 | 「纯后端 API」「前后端兼备」两种典型组合全链路生成；10.2 的 3-4 通过；`build-app.sh` 产出新版本（如 1.13.0 → 1.14.0） |
 | **M3** | **Agent 深化链路**：`ScaffoldDeepenRPC`（createSession/prompt queue/轮询/打开会话，归入工作区）+ 深化文案模板（中英）+ 深化按钮态（`serverReady` 门控）；**用户扩展环节库**（`$DSH_HOME/scaffold-stages/` 扫描与坏清单隔离，9.11）；`state.json` 审计增强；README 特性说明 | 生成后一键深化端到端跑通（dsh web 可见会话、可继续对话）；用户放置自定义环节 → 面板出现并可组合；10.2 全过 |
 
@@ -372,7 +375,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 1. 面板沿用右侧活动栏槽位；切换/宽度记忆/持久化沿用既有机制；
 2. 骨架确定性部分**由壳层 Swift 引擎本地渲染**（快、可复现、无 token）；「深化」由 dsh 代理执行（M3）——两者互补，不互相替代；
 3. 不修改任何 DeepSeek Harness 源码；**不碰**用户已有项目文件（仅写入用户确认的目标目录，冲突走备份）；
-4. v1 环节库 = 内置 11 个环节（第 13 节），环节 = `stage.yaml` + 模板文件，随 App 版本化分发；模板语法为 `{{var}}` + `{{#if}}`（v1 刻意最小）；
+4. v1 环节库 = 内置 12 个环节（第 13 节），环节 = `stage.yaml` + 模板文件，随 App 版本化分发；模板语法为 `{{var}}` + `{{#if}}`（v1 刻意最小）；
 5. `session.create` / `session.prompt`（`mode: queue`）复用 WikiRPC 已验证链路；若 dsh 接口变化，按新 schema 适配；
 6. 环节库内置路径 `Contents/Resources/scaffold-stages`（构建期复制）；开发期用 `DSH_SCAFFOLD_STAGES` 追加；
 7. v1 不做跨环节自动联动（9.7 只提示）；「预设」只是快捷勾选，不限制自由组合；
@@ -394,12 +397,19 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 | `makefile` | 统一命令入口 / Makefile | `backendBuild`、`backendTest`、`frontendInstall`、`frontendBuild`、`testCmd`、`lintCmd`（均可空，空则生成注释占位） | `Makefile`（dev/build/test/lint/clean 目标，按参数展开；未选对应栈则注释说明） |
 | `ci-cd` | CI/CD 模板 / CI & CD | `platform`（github-actions/gitlab-ci/**jenkins**）、`hasBackend`、`hasFrontend` | `.github/workflows/ci.yml`+`cd.yml`（或 `.gitlab-ci.yml`、或根目录 `Jenkinsfile`）：lint→test→build 门禁 + 镜像/部署占位 |
 | `docker` | 容器化 / Docker | `runtime`（java/node/static）、`exposePort`、`healthzPath` | `Dockerfile`（多阶段、按 runtime 分支）、`.dockerignore`、`compose.yaml`（本地起服务 + 占位依赖） |
+| `deploy` | 部署规范 / Deploy | `deployDocker` / `deployK8s` / `deployRancher`（bool，可多选）、`imageRepo`、`imageTag`、`remoteHost`（空=本机）、`sshUser`、`namespace`（k8s，默认 production）、`kubeContext`（空=当前 context）、`rancherServer`（空=仅内网说明）、`servicePort`、`healthzPath` | **可执行部署脚本**（非文档）：`deploy/deploy-docker.sh` + `docker-compose.prod.yml` + `.env.example`；`deploy/deploy-k8s.sh` + `deploy/k8s/{deployment,service,configmap}.yaml`；`deploy/deploy-rancher.sh`（复用 k8s manifests + `deploy/rancher/README.md`）。脚本支持**本机 / 远程**部署、`--dry-run`、默认交互确认、失败自动回滚（设计要点见下） |
 | `dsh-wiki-prep` | 知识库准备 / Wiki Prep | 无 | `.dsh/wiki/README.md` 占位（引导用 repo-knowledge 生成），不与生成代理（保持确定性） |
 
 > **Jenkins 模板说明**（`platform=jenkins`）：产出根目录 `Jenkinsfile`，**声明式 pipeline**——形态与工程惯例对齐本仓库自用 `Jenkinsfile`（见仓库根的活样本，含标签/凭据/归档等企业约定）：
 > - `agent { label '<占位>' }` 参数化，头部注释说明 agent 需安装的工具链；`options` 含 `timestamps()` / `disableConcurrentBuilds()` / `timeout`；
 > - 阶段划分：`Checkout`（含 `git fetch --tags --force || true` 教训——Jenkins 浅克隆可能无 tag）→ `Lint` → `Test` → `Build` → `Package / Publish`（发布/部署用 `when { expression { params.<X> } }` 参数门控，**默认不触发**外部动作）；
 > - 凭据一律 `withCredentials([… credentialsId: '<占位>', variable: '<X>'])` 引用 ID，**绝不内联密钥**（9.16）；镜像推送/部署步骤输出为注释占位 + TODO 标记；`post.always` 归档产物（`archiveArtifacts`）。
+
+> **部署脚本设计要点**（`deploy` 环节，产出**可执行脚本**而非仅文档）：
+> - **本机 / 远程双模式**：`remoteHost` 为空 → 本机直接执行；非空 → docker 部署经 `rsync` 把 `deploy/` 同步到远程 + `ssh` 远程执行 compose（健康检查也在远程 curl）；k8s / Rancher 天然支持远程（kubectl 以 `--context` / KUBECONFIG 指向远程集群，`rancherServer` 用于登录/取 kubeconfig 指引）；
+> - **安全基线**：脚本 `set -euo pipefail`；密钥只引用不内联（SSH key 路径 / KUBECONFIG / Rancher token 均为参数或环境变量占位）；默认交互确认 + `--yes` 跳过；`--dry-run` 只打印将执行命令；
+> - **可回滚**：docker 健康检查失败 → 切回上一镜像 tag 重启；k8s 用 `kubectl rollout undo`；Rancher 同 k8s（UI 回滚点为补充说明）；
+> - **与 `docker` 环节分工**：`docker` = 镜像构建 + 本地开发编排（Dockerfile / compose.yaml）；`deploy` = 生产部署脚本与生产编排 / manifests（`deploy/` 目录）——互不写同一路径。
 
 ### 13.2 示例栈（category: examples）
 
