@@ -221,13 +221,13 @@ projectSlug 生成规则: 项目名（可中文）→ ASCII slug（去重音/空
 ## 常用命令（引用 Makefile：make dev / build / test / lint；未选 makefile 环节则省略）
 ## 工程规范（提交/分支规范、代码风格、DoD——对应 git-conventions / conventions 环节所选内容；未选则不写）
 ## 禁区（密钥不入仓库、不越过所选环节边界等）
-## 与 dsh 协作（若含 dsh-wiki-prep 环节：先读 .dsh/wiki/index.md；按需读取，见 6.2）
+## 与 dsh 协作（若含 repo-knowledge 环节：先读 .dsh/wiki/index.md；按需读取，见 6.2）
 ```
 
 - 内容由**所选环节组合决定**：选了 `makefile` → 命令段写实际目标；选了 `conventions` → 规范段引用实际文件；没选就不写——**AGENTS.md 与骨架永远自洽**（G3 的核心机制）；
 - 该文件会被 `dsh-agent-instructions` 自动加载，**每个新会话自动可见**（已核实的 dsh 机制）。
 
-### 6.2 `dsh-wiki-prep` 环节（知识库准备）
+### 6.2 `repo-knowledge` 环节（知识库准备，与 Repo Wiki 的 `repo-knowledge` skill 同名对齐）
 
 - 产出 `.dsh/wiki/` 占位（`README.md` 说明：「用 repo-knowledge skill 生成知识库」）；不调用代理生成（保持确定性）——生成留给用户/后续会话一键触发（复用算法与文案见 `docs/repo-wiki-design.md`）。
 
@@ -291,7 +291,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 |---|---|
 | `src/ScaffoldPanel.swift`（新增） | `StageCatalogLoader` / `ScaffoldTemplateRenderer` / `ScaffoldPlan` / `ScaffoldApplier` / `ScaffoldDeepenRPC`(M3) / `ScaffoldPanelController`（头部/目标区/环节列表/参数表单/预览/状态条） |
 | `src/main.swift` | `RightPanel` 增加 `.scaffold`；活动栏图标按钮（SF Symbol `puzzlepiece.extension`）；`setRightPanel` 各调用点与 `rightPanelKind` 持久化扩展；「视图」菜单 `⌃⌥S`；`DSH_SCAFFOLD_TEST=1` / `DSH_SCAFFOLD_TEST_DIR` / `DSH_SCAFFOLD_STAGES` QA 钩子；`serverReady` 门控接线；L10n 新增 `scaffold.*` 键（中/英，见 7.3） |
-| `platforms/macos/scaffold-stages/`（新增） | v1 环节库（第 13 节）：`git-init` / `git-conventions` / `agents-md` / `docs-standards` / `conventions` / `makefile` / `ci-cd` / `docker` / `deploy` / `dsh-wiki-prep` / `java-backend` / `vue3-frontend`，每个 `<id>/stage.yaml` + `templates/` |
+| `platforms/macos/scaffold-stages/`（新增） | v1 环节库（第 13 节）：`git-init` / `git-conventions` / `agents-md` / `docs-standards` / `conventions` / `makefile` / `ci-cd` / `docker` / `deploy` / `repo-knowledge` / `java-backend` / `vue3-frontend`，每个 `<id>/stage.yaml` + `templates/` |
 | `build-app.sh` | 复制 `scaffold-stages` 到 `Contents/Resources/scaffold-stages`（参照 303 行 highlight.js 资源先例）；版本号递增（M3 收尾如 1.14.0） |
 | `README.md` | 「特性」新增「工程搭建台」小节；「目录」补充本文档 |
 | `tests/scaffold-panel/`（新增） | 无头单测：`run.sh` + `scaffold-tests.swift`（范式同 `tests/wiki-panel/`，见 10.1） |
@@ -362,7 +362,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 | 里程碑 | 内容 | 验收 |
 |---|---|---|
 | **M0** | 本文档评审通过 | 设计决策闭环、无开放问题 |
-| **M1** | `StageCatalogLoader` + `ScaffoldTemplateRenderer` + `ScaffoldPlan` + `ScaffoldApplier` + `ScaffoldPanelController`；`RightPanel.scaffold`、菜单 `⌃⌥S`、L10n、QA 钩子；**工程基础 10 环节**（git-init / git-conventions / agents-md / docs-standards / conventions / makefile / ci-cd / docker / deploy / dsh-wiki-prep）；预设 3 组；10.1 编译 + 引擎单测通过 | 能组合生成**栈无关骨架**端到端；10.2 的 1-2、5-10 通过 |
+| **M1** | `StageCatalogLoader` + `ScaffoldTemplateRenderer` + `ScaffoldPlan` + `ScaffoldApplier` + `ScaffoldPanelController`；`RightPanel.scaffold`、菜单 `⌃⌥S`、L10n、QA 钩子；**工程基础 10 环节**（git-init / git-conventions / agents-md / docs-standards / conventions / makefile / ci-cd / docker / deploy / repo-knowledge）；预设 3 组；10.1 编译 + 引擎单测通过 | 能组合生成**栈无关骨架**端到端；10.2 的 1-2、5-10 通过 |
 | **M2** | **示例栈环节** java-backend（Spring Boot 3 + Maven 最小骨架 + 健康检查单测）与 vue3-frontend（Vue 3 + Vite + TS 最小骨架 + 示例 API 调用 + 单测）；6.1 的 AGENTS.md 与所选环节自洽性完整覆盖 | 「纯后端 API」「前后端兼备」两种典型组合全链路生成；10.2 的 3-4 通过；`build-app.sh` 产出新版本（如 1.13.0 → 1.14.0） |
 | **M3** | **Agent 深化链路**：`ScaffoldDeepenRPC`（createSession/prompt queue/轮询/打开会话，归入工作区）+ 深化文案模板（中英）+ 深化按钮态（`serverReady` 门控）；**用户扩展环节库**（`$DSH_HOME/scaffold-stages/` 扫描与坏清单隔离，9.11）；`state.json` 审计增强；README 特性说明 | 生成后一键深化端到端跑通（dsh web 可见会话、可继续对话）；用户放置自定义环节 → 面板出现并可组合；10.2 全过 |
 
@@ -398,7 +398,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 | `ci-cd` | CI/CD 模板 / CI & CD | `platform`（github-actions/gitlab-ci/**jenkins**）、`hasBackend`、`hasFrontend` | `.github/workflows/ci.yml`+`cd.yml`（或 `.gitlab-ci.yml`、或根目录 `Jenkinsfile`）：lint→test→build 门禁 + 镜像/部署占位 |
 | `docker` | 容器化 / Docker | `runtime`（java/node/static）、`exposePort`、`healthzPath` | `Dockerfile`（多阶段、按 runtime 分支）、`.dockerignore`、`compose.yaml`（本地起服务 + 占位依赖） |
 | `deploy` | 部署规范 / Deploy | `deployDocker` / `deployK8s` / `deployRancher`（bool，可多选）、`imageRepo`、`imageTag`、`remoteHost`（空=本机）、`sshUser`、`namespace`（k8s，默认 production）、`kubeContext`（空=当前 context）、`rancherServer`（空=仅内网说明）、`servicePort`、`healthzPath` | **可执行部署脚本**（非文档）：`deploy/deploy-docker.sh` + `docker-compose.prod.yml` + `.env.example`；`deploy/deploy-k8s.sh` + `deploy/k8s/{deployment,service,configmap}.yaml`；`deploy/deploy-rancher.sh`（复用 k8s manifests + `deploy/rancher/README.md`）。脚本支持**本机 / 远程**部署、`--dry-run`、默认交互确认、失败自动回滚（设计要点见下） |
-| `dsh-wiki-prep` | 知识库准备 / Wiki Prep | 无 | `.dsh/wiki/README.md` 占位（引导用 repo-knowledge 生成），不与生成代理（保持确定性） |
+| `repo-knowledge` | 知识库准备 / Wiki Prep | 无 | `.dsh/wiki/README.md` 占位（引导用 repo-knowledge skill 生成知识库），不与生成代理（保持确定性） |
 
 > **Jenkins 模板说明**（`platform=jenkins`）：产出根目录 `Jenkinsfile`，**声明式 pipeline**——形态与工程惯例对齐本仓库自用 `Jenkinsfile`（见仓库根的活样本，含标签/凭据/归档等企业约定）：
 > - `agent { label '<占位>' }` 参数化，头部注释说明 agent 需安装的工具链；`options` 含 `timestamps()` / `disableConcurrentBuilds()` / `timeout`；
