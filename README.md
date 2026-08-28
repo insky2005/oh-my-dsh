@@ -2,7 +2,7 @@
 
 把 DeepSeek Harness 的 Web 界面（`dsh web`）封装成一个可以在 macOS 上**直接双击运行**的原生 App。
 **不改动任何 DeepSeek Harness 源码**——它只是一个壳：内置运行时自拉起 `dsh web`，用原生 `WKWebView`
-呈现界面，并在窗口右侧提供八个原生面板（文件 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务 / 通道 / 审计 / 技能）。
+呈现界面，并在窗口右侧提供九个原生面板（文件 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务 / 通道 / 审计 / 技能 / 工程脚手架）。
 
 ## 特性一览
 
@@ -21,11 +21,11 @@
 
 ## 右栏面板
 
-窗口**最右侧是活动栏**（图标入口，八个面板互斥切换），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
+窗口**最右侧是活动栏**（图标入口，九个面板互斥切换），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
 
 所有原生面板**共用一套灰阶配色**（面板底色一档 + 控件常态/高亮两档，全部取自 dsh web 的 `neutral bluish` 设计令牌），深浅两套主题一一对应；**单一事实来源为 `PanelSurface.swift`——改色只改这一个文件**，方案见 [`docs/ui-color-scheme.md`](./docs/ui-color-scheme.md)。
 
-「视图」菜单提供八面板的显示/隐藏快捷键。
+「视图」菜单提供九面板的显示/隐藏快捷键。
 
 ### 文件面板（`⌥⌘P` / 活动栏「文件」图标）
 
@@ -153,6 +153,19 @@
 - **只读边界**：日志里没有的东西不会显示——`bash` 直改、以及日志**尚未落盘**的部分只标注「需人工核对」（落盘后会自动读到，见上）；
 - 设计与覆盖矩阵：`docs/review-panel-design.md`。
 
+### 工程脚手架面板（`⌃⌥S` / 活动栏「脚手架」图标）
+
+把「从零起一个新项目」拆成**相互独立、可任意组合的「环节」**（stage），本地**确定性渲染**出项目骨架（零 token、可复现），骨架自带 `AGENTS.md`、Makefile 与文档规范——Agent 一进来就知道规则、命令和边界。
+
+- **环节库（10 个工程基础环节）**：`git-init`（.gitignore/README/LICENSE + `git init -b main`）、`agents-md`（AGENTS.md 随所选环节自洽）、`docs-standards`、`conventions`（.editorconfig/CONTRIBUTING.md）、`git-conventions`（git.md/commit 模板/可选纯 shell commit-msg 校验钩子，已有 hook 先备份不覆盖）、`makefile`、`ci-cd`（GitHub Actions / GitLab CI / Jenkins 三选一，Jenkins 凭据只引用不内联）、`docker`（多阶段 Dockerfile/compose.yaml）、`deploy`（可执行部署脚本：docker/k8s/rancher，`--dry-run` + 失败自动回滚）、`repo-knowledge`（.dsh/wiki 占位）；随 App 分发（`Contents/Resources/scaffold-stages/`），`DSH_SCAFFOLD_STAGES=<dir>` 追加开发目录；
+- **组合搭建**：勾选环节、填参数（string/select/bool），预览**将生成文件清单**（同路径多环节标红 + 覆盖来源），校验器（nonEmpty/slug/safePath/javaPackage）行内报错；3 个预设（纯后端 API / 前后端兼备 / 文档+规范）只是快捷勾选，可再改选；
+- **确定性渲染**：模板语法 v1 刻意最小（`{{var}}` + `{{#if}}`，`{{{{}}` 转义字面量），文件名同样参与渲染；渲染失败的环节整环节跳过并报告，其余照常；
+- **落盘**：冲突文件先备份到 `.scaffold-backup/`（设置可关）再写；环节命令（git init 等）失败不阻断其余；生成记录写 `.scaffold/state.json`（环节+参数+时间），重跑幂等；
+- **边界**：目标目录非空 → 确认弹窗（覆盖+备份）；项目名中文 → ASCII slug（保底 project）；路径穿越/绝对路径被 `safePath` 拒绝；坏清单隔离不拖垮内置环节；
+- **QA 钩子**：`DSH_SCAFFOLD_TEST=1` 启动直开面板、`DSH_SCAFFOLD_TEST_DIR=<dir>` 预填目标目录；
+- 设计文档：`docs/scaffold-workbench-design.md`。里程碑 M1（工程基础 10 环节 + 引擎单测）已落地；示例栈（java-backend/vue3-frontend）与 Agent 深化（M3）为后续里程碑。
+
+![scaffold](./docs/screenshots/scaffold.png)
 ## 产物
 
 ```
@@ -300,7 +313,7 @@ open "dist/oh-my-dsh.app"
 壳二进制只做三件事：探测空闲端口 → 用内置 `node` 执行内置 `<dsh>/lib/bin.js web --port <n>` 拉起（并回收自己上次残留的实例）→ `WKWebView` 加载 `http://127.0.0.1:<n>/?token=…`。
 `dsh` 本体、`~/.dsh` 配置、会话数据全部原样，无任何补丁或注入。内置运行时装在 `Contents/Resources/runtime/`
 （`node` + `npm` + `dsh/` 依赖树），App 优先使用它，找不到时才回退到本机安装。
-右侧八个面板是壳层原生 UI，其中文件面板通过 WebView 注入拦截文件打开，任务 / 知识库 / 浏览器 / 通道 / 审查 / 技能通过 dsh 既有能力（RPC / 会话 / 独立浏览器内核 / 会话日志 / SKILL.md 发现）驱动。
+右侧九个面板是壳层原生 UI，其中文件面板通过 WebView 注入拦截文件打开，任务 / 知识库 / 浏览器 / 通道 / 审查 / 技能通过 dsh 既有能力（RPC / 会话 / 独立浏览器内核 / 会话日志 / SKILL.md 发现）驱动，工程脚手架由壳层本地确定性渲染。
 
 ## 目录
 
@@ -324,6 +337,8 @@ platforms/macos/src/                  原生壳（Swift）
   ReviewPanel.swift      审计面板（只读：会话日志变更/嵌套调用/shell 可疑命令）
   ReviewLogModel.swift   审计面板数据模型（核心 JSON 解码 + 文件分组/diff 折叠 + 日志新鲜度打戳，纯 Foundation 可无头测试）
   PanelSurface.swift    面板配色单一事实来源（面板底色 + 控件常态/高亮两档，见 docs/ui-color-scheme.md）
+  ScaffoldPanel.swift    工程脚手架面板（stage.yaml 解析/模板渲染/规划/落盘 + 面板 UI）
+platforms/macos/scaffold-stages/         内置环节库（10 个工程基础环节：stage.yaml + templates/，构建时复制进 Resources）
   BrowserPanel.swift / BrowserAPI.swift / BrowserCDP.swift  浏览器面板（CEF 渲染 + REST API + CDP）
   DshWebRPC.swift      壳层原生 dsh RPC（0.1.2 斜杠端点 + launch token 换 cookie，wiki/任务/会话共用）
   DshWebCookieJanitor.swift 启动/退出清理非本次 authority 的 dsh-auth-* cookie + 回收上次残留实例
@@ -350,7 +365,7 @@ docs/                设计/排查文档（productization.md、dsh-version-impac
 
 - **Bug / 功能请求**：使用仓库的 Issue 模板（bug / feature）提交；
 - **本地测试**：`node --test --test-timeout=60000 core/tests/*.test.js`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层 / review-log 变更审计；`--test-timeout` 保证任何泄漏定时器的用例快速失败而不是挂死）、
-  `tests/wiki-panel/run.sh`（Wiki 面板）、`tests/terminal-emulator/run.sh`（模拟器）、`tests/terminal-panel/run.sh`（终端面板头部）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/file-panel/run.sh`（文件面板：工作区页签记忆 / 未保存提示 / 切换语义）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/dsh-auth-cookies/run.sh`（dsh-auth cookie 清理与 NODE_OPTIONS）、`tests/shell-config/run.sh`（壳层设置与旧 UserDefaults 迁移）、`tests/l10n/run.sh`（L10n 键名 lint）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/skills-panel/run.sh`（技能面板：frontmatter 字节保真 / 四根级别与遮蔽 / 内置与共享级写操作拒绝 / 安装·移除 / registry 清单与搜索 + 面板控制器无头冒烟 + 离屏绘制回归）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠 + 控制器无头回归「日志变了必须重审、没变不许重审」）；`scripts/local-ci.sh` 一次跑全部；
+  `tests/wiki-panel/run.sh`（Wiki 面板）、`tests/terminal-emulator/run.sh`（模拟器）、`tests/terminal-panel/run.sh`（终端面板头部）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/scaffold-panel/run.sh`（脚手架引擎单测：stage.yaml 解析/校验器/渲染器/规划/落盘 + 端到端组合）、`tests/file-panel/run.sh`（文件面板：工作区页签记忆 / 未保存提示 / 切换语义）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/dsh-auth-cookies/run.sh`（dsh-auth cookie 清理与 NODE_OPTIONS）、`tests/shell-config/run.sh`（壳层设置与旧 UserDefaults 迁移）、`tests/l10n/run.sh`（L10n 键名 lint）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/skills-panel/run.sh`（技能面板：frontmatter 字节保真 / 四根级别与遮蔽 / 内置与共享级写操作拒绝 / 安装·移除 / registry 清单与搜索 + 面板控制器无头冒烟 + 离屏绘制回归）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠 + 控制器无头回归「日志变了必须重审、没变不许重审」）；`scripts/local-ci.sh` 一次跑全部；
 - **CI**：push/PR 自动跑 core 单测 + 壳层编译检查 + macOS arm64 构建（`.github/workflows/ci.yml`）；发布由 release 流程构建双架构。
 
 本项目遵循 [MIT License](LICENSE)，代码只封装、绝不修改 DeepSeek Harness 上游源码。

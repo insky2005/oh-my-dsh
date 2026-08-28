@@ -1,0 +1,38 @@
+id: makefile
+name: { zh: 统一命令入口, en: Makefile }
+category: foundation
+description:
+  zh: Makefile：dev/build/test/lint/clean 统一命令入口
+  en: 'Makefile: unified dev/build/test/lint/clean entry point'
+params:
+  - key: devCmd
+    label: { zh: dev 命令, en: dev command }
+    type: string
+    default: ""
+  - key: backendBuild
+    label: { zh: 后端构建命令, en: backend build command }
+    type: string
+    default: ""
+  - key: backendTest
+    label: { zh: 后端测试命令, en: backend test command }
+    type: string
+    default: ""
+  - key: frontendInstall
+    label: { zh: 前端安装命令, en: frontend install command }
+    type: string
+    default: ""
+  - key: frontendBuild
+    label: { zh: 前端构建命令, en: frontend build command }
+    type: string
+    default: ""
+  - key: testCmd
+    label: { zh: 测试命令, en: test command }
+    type: string
+    default: ""
+  - key: lintCmd
+    label: { zh: lint 命令, en: lint command }
+    type: string
+    default: ""
+files:
+  - path: Makefile
+    template: templates/Makefile.tmpl

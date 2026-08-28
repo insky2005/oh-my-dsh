@@ -1,0 +1,30 @@
+# {{projectName}} — 统一命令入口 / unified command entry
+# 未配置的命令以注释占位 / Unconfigured commands appear as comments.
+
+.PHONY: dev build test lint clean backend-build frontend-build frontend-install
+
+dev: ## 本地开发 / local dev
+{{#if devCmd}}	{{devCmd}}
+{{/if}}{{#if devCmdEmpty}}	@echo "dev: 未配置命令 / no dev command configured"
+{{/if}}build: backend-build frontend-build ## 构建 / build
+
+backend-build: ## 后端构建 / backend build
+{{#if backendBuild}}	{{backendBuild}}
+{{/if}}{{#if backendBuildEmpty}}	@echo "backend-build: 未配置后端构建命令 / no backend build command"
+{{/if}}backend-test: ## 后端测试 / backend test
+{{#if backendTest}}	{{backendTest}}
+{{/if}}{{#if backendTestEmpty}}	@echo "backend-test: 未配置后端测试命令 / no backend test command"
+{{/if}}frontend-install: ## 前端依赖安装 / frontend install
+{{#if frontendInstall}}	{{frontendInstall}}
+{{/if}}{{#if frontendInstallEmpty}}	@echo "frontend-install: 未配置安装命令 / no frontend install command"
+{{/if}}frontend-build: ## 前端构建 / frontend build
+{{#if frontendBuild}}	{{frontendBuild}}
+{{/if}}{{#if frontendBuildEmpty}}	@echo "frontend-build: 未配置前端构建命令 / no frontend build command"
+{{/if}}test: backend-test ## 测试 / test
+{{#if testCmd}}	{{testCmd}}
+{{/if}}{{#if testCmdEmpty}}	@echo "test: 未配置测试命令 / no test command configured"
+{{/if}}lint: ## 代码检查 / lint
+{{#if lintCmd}}	{{lintCmd}}
+{{/if}}{{#if lintCmdEmpty}}	@echo "lint: 未配置 lint 命令 / no lint command configured"
+{{/if}}clean: ## 清理 / clean
+	@echo "clean: 请按需补充清理命令 / add clean commands as needed"

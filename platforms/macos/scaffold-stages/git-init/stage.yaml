@@ -1,0 +1,30 @@
+id: git-init
+name: { zh: 仓库初始化, en: Git Init }
+category: foundation
+description:
+  zh: 初始化 Git 仓库：.gitignore、README 骨架与 LICENSE
+  en: 'Initialize the Git repo: .gitignore, README skeleton and LICENSE'
+params:
+  - key: license
+    label: { zh: 许可证, en: License }
+    type: select
+    options: [none, MIT, Apache-2.0]
+    default: MIT
+  - key: gitIgnorePreset
+    label: { zh: .gitignore 预设, en: .gitignore preset }
+    type: select
+    options: [generic, java, node]
+    default: generic
+files:
+  - path: .gitignore
+    template: templates/.gitignore.tmpl
+  - path: README.md
+    template: templates/README.md.tmpl
+  - path: LICENSE
+    template: templates/LICENSE-MIT.tmpl
+    if: license=MIT
+  - path: LICENSE
+    template: templates/LICENSE-Apache-2.0.tmpl
+    if: license=Apache-2.0
+commands:
+  - "git init -b main"

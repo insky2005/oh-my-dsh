@@ -1,0 +1,5 @@
+# Rancher 部署 / Rancher Deployment
+
+- 项目/命名空间映射：Rancher 项目对应 K8s 命名空间（默认 `{{namespace}}`）；
+- 获取 kubeconfig：Cluster Management → 集群 → kubeconfig file → `export KUBECONFIG=...`；
+- 回滚：CLI `kubectl rollout undo`（`deploy-rancher.sh` 失败时自动执行）；UI 在 Workloads → Rollout 历史。

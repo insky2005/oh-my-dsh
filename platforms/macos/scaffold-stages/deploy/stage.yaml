@@ -1,0 +1,89 @@
+id: deploy
+name: { zh: 部署规范, en: Deploy }
+category: foundation
+description:
+  zh: 可执行部署脚本：docker / k8s / rancher，支持 --dry-run 与回滚
+  en: 'Executable deploy scripts: docker / k8s / rancher, --dry-run + rollback'
+params:
+  - key: deployDocker
+    label: { zh: Docker 部署脚本, en: Docker deploy script }
+    type: bool
+    default: "true"
+  - key: deployK8s
+    label: { zh: Kubernetes 部署脚本, en: Kubernetes deploy script }
+    type: bool
+    default: "false"
+  - key: deployRancher
+    label: { zh: Rancher 部署脚本, en: Rancher deploy script }
+    type: bool
+    default: "false"
+  - key: imageRepo
+    label: { zh: 镜像仓库, en: Image registry }
+    type: string
+    default: ""
+    validate: safePath
+  - key: imageTag
+    label: { zh: 镜像 tag, en: Image tag }
+    type: string
+    default: latest
+  - key: remoteHost
+    label: { zh: 远程主机（空=本机）, en: Remote host (empty = local) }
+    type: string
+    default: ""
+    validate: safePath
+  - key: sshUser
+    label: { zh: SSH 用户, en: SSH user }
+    type: string
+    default: root
+    validate: slug
+  - key: namespace
+    label: { zh: K8s 命名空间, en: K8s namespace }
+    type: string
+    default: production
+    validate: slug
+  - key: kubeContext
+    label: { zh: kubectl context（空=当前）, en: kubectl context (empty = current) }
+    type: string
+    default: ""
+  - key: rancherServer
+    label: { zh: Rancher Server（空=仅内网说明）, en: Rancher Server (empty = intranet note) }
+    type: string
+    default: ""
+  - key: servicePort
+    label: { zh: 服务端口, en: Service port }
+    type: string
+    default: "8080"
+    validate: nonEmpty
+  - key: healthzPath
+    label: { zh: 健康检查路径, en: Health check path }
+    type: string
+    default: /healthz
+    validate: nonEmpty
+files:
+  - path: deploy/deploy-docker.sh
+    template: templates/deploy-docker.sh.tmpl
+    if: deployDocker
+  - path: deploy/docker-compose.prod.yml
+    template: templates/docker-compose.prod.yml.tmpl
+    if: deployDocker
+  - path: deploy/.env.example
+    template: templates/.env.example.tmpl
+    if: deployDocker
+  - path: deploy/deploy-k8s.sh
+    template: templates/deploy-k8s.sh.tmpl
+    if: deployK8s
+  - path: deploy/k8s/deployment.yaml
+    template: templates/deployment.yaml.tmpl
+    if: deployK8s
+  - path: deploy/k8s/service.yaml
+    template: templates/service.yaml.tmpl
+    if: deployK8s
+  - path: deploy/k8s/configmap.yaml
+    template: templates/configmap.yaml.tmpl
+    if: deployK8s
+  - path: deploy/deploy-rancher.sh
+    template: templates/deploy-rancher.sh.tmpl
+    if: deployRancher
+  - path: deploy/rancher/README.md
+    template: templates/rancher-README.md.tmpl
+    if: deployRancher

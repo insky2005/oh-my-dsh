@@ -80,6 +80,8 @@ stage_swift() {
   tests/dsh-rpc/run.sh
   echo "--- dsh auth-cookie janitor tests ---"
   tests/dsh-auth-cookies/run.sh
+  echo "--- scaffold panel tests ---"
+  tests/scaffold-panel/run.sh
   echo "--- build CEF integration artifacts (arm64) ---"
   mkdir -p .build/module-cache
   platforms/macos/build-cef.sh arm64

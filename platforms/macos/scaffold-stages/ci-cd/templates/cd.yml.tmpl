@@ -1,0 +1,23 @@
+name: CD
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: {{ciBuild}}
+      # 镜像推送 / 部署为占位：填入真实 registry 与凭据（secrets 引用，绝不内联）
+      # - name: Push image
+      #   run: docker push {{imageRepo}}/{{projectSlug}}:{{imageTag}}
+      #   env:
+      #     DOCKER_USERNAME: ${{{{ secrets.DOCKER_USERNAME }}}}}
+      #     DOCKER_PASSWORD: ${{{{ secrets.DOCKER_PASSWORD }}}}}
+      # - name: Deploy
+      #   run: ./deploy/deploy-k8s.sh --yes
+      #   env:
+      #     KUBECONFIG: ${{{{ secrets.KUBECONFIG }}}}}

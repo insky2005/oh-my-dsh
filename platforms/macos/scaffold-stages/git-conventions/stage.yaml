@@ -1,0 +1,24 @@
+id: git-conventions
+name: { zh: Git 提交与分支规范, en: Git Conventions }
+category: foundation
+description:
+  zh: docs/conventions/git.md、commit 模板与可选的 commit-msg 校验脚本
+  en: docs/conventions/git.md, commit template and optional commit-msg hook
+params:
+  - key: enforce
+    label: { zh: 安装 commit-msg 校验脚本, en: Install commit-msg validation hook }
+    type: bool
+    default: "false"
+  - key: trunk
+    label: { zh: 主干分支名, en: Trunk branch }
+    type: select
+    options: [main, master]
+    default: main
+files:
+  - path: docs/conventions/git.md
+    template: templates/git.md.tmpl
+  - path: .gitmessage
+    template: templates/.gitmessage.tmpl
+  - path: scripts/install-git-hooks.sh
+    template: templates/install-git-hooks.sh.tmpl
+    if: enforce

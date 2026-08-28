@@ -1,0 +1,21 @@
+id: docs-standards
+name: { zh: 文档规范骨架, en: Docs Standards }
+category: foundation
+description:
+  zh: docs/ 文档骨架：架构、ADR、开发约定与运维手册
+  en: 'docs/ skeleton: architecture, ADR, conventions and runbook'
+params:
+  - key: docsLang
+    label: { zh: 文档语言, en: Docs language }
+    type: select
+    options: [zh, en, bilingual]
+    default: zh
+files:
+  - path: docs/architecture.md
+    template: templates/architecture.md.tmpl
+  - path: docs/adr/ADR-0001-template.md
+    template: templates/ADR-0001-template.md.tmpl
+  - path: docs/conventions.md
+    template: templates/conventions.md.tmpl
+  - path: docs/ops/runbook.md
+    template: templates/runbook.md.tmpl

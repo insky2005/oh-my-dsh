@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: ["{{trunk}}"]
+  pull_request:
+
+jobs:
+  lint-test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+{{#if hasBackend}}      - name: Backend lint & test
+        run: {{ciTest}}
+{{/if}}{{#if hasFrontend}}      - name: Frontend install & build
+        run: |
+          {{ciFrontend}}
+{{/if}}      - name: Lint
+        run: {{ciLint}}
+      - name: Build
+        run: {{ciBuild}}

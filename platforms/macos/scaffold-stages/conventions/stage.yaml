@@ -1,0 +1,22 @@
+id: conventions
+name: { zh: 开发规范落地, en: Conventions }
+category: foundation
+description:
+  zh: .editorconfig 与 CONTRIBUTING.md（PR 规范与 DoD 检查清单）
+  en: .editorconfig and CONTRIBUTING.md (PR rules and DoD checklist)
+params:
+  - key: vcs
+    label: { zh: 代码托管平台, en: Code hosting }
+    type: select
+    options: [github, gitlab]
+    default: github
+  - key: docsLang
+    label: { zh: 文档语言, en: Docs language }
+    type: select
+    options: [zh, en, bilingual]
+    default: zh
+files:
+  - path: .editorconfig
+    template: templates/.editorconfig.tmpl
+  - path: CONTRIBUTING.md
+    template: templates/CONTRIBUTING.md.tmpl

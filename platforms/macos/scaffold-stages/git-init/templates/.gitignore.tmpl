@@ -1,0 +1,46 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs & temp
+*.log
+tmp/
+temp/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+out/
+{{#if gitIgnorePreset.java}}
+# Java / Maven
+target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+{{/if}}
+{{#if gitIgnorePreset.node}}
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+coverage/
+{{/if}}
+{{#if gitIgnorePreset.generic}}
+# Generic build output
+*.o
+*.a
+*.exe
+{{/if}}

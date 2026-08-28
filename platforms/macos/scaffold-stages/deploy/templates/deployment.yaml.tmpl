@@ -1,0 +1,30 @@
+# {{projectName}} deployment（镜像在脚本中通过 set image 覆盖 / image overridden via set image）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{projectSlug}}
+  labels:
+    app: {{projectSlug}}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: {{projectSlug}}
+  template:
+    metadata:
+      labels:
+        app: {{projectSlug}}
+    spec:
+      containers:
+        - name: app
+          image: {{imageRepo}}/{{projectSlug}}:{{imageTag}}
+          ports:
+            - containerPort: {{servicePort}}
+          livenessProbe:
+            httpGet:
+              path: {{healthzPath}}
+              port: {{servicePort}}
+          readinessProbe:
+            httpGet:
+              path: {{healthzPath}}
+              port: {{servicePort}}
