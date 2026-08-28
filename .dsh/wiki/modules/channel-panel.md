@@ -1,7 +1,7 @@
 ---
 title: 模块：通道（Channel）—— 消息平台接入 + 远程驱动 dsh
 tags: [module, channel, weixin, clawbot, dingtalk, stream, adapter, router, session-driver, qrcode, commands, association]
-updated: 2026-08-26T14:29:30Z
+updated: 2026-08-28T11:15:48Z
 sources: [platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, platforms/macos/src/main.swift, core/lib/channel.js, core/lib/channel-runner.js, core/lib/channel-commands.js, core/lib/channel-store.js, core/lib/channel-sessions.js, core/lib/channel-workspaces.js, core/lib/weixin-clawbot.js, core/lib/weixin-clawbot-transport.js, core/lib/session-driver.js, core/lib/dingtalk.js, core/lib/dingtalk-stream-transport.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/tests/dingtalk.test.js, core/tests/dingtalk-stream-transport.test.js, core/tests/dingtalk-access.test.js, core/bin/ohmy-core.js, core/vendor/qrcode-terminal/, docs/channel-design.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-association-model.md, docs/channel-issues.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md]
 manual: false
 ---
@@ -33,7 +33,7 @@ manual: false
 ### 钉钉适配器（M4 提前落地，2026-08-26，PR #39 feature/channel-dingtalk-stream）
 - **dingtalk-stream 原生适配器**（核心架构决策：钉钉 = core/ 适配器，非官方插件托管，见 docs/channel-dingtalk-stream.md）：`core/lib/dingtalk-stream-transport.js`（DWClient 封装：connect/收/回/去重/access-token 缓存刷新，TOPIC_ROBOT 回调归一化 `{conversationId, sender, text, msgId, sessionWebhook, ts, msgtype}`，非 text 降级文本提示，回执 `socketCallBackResponse(msgId)` + msgId seen 去重防服务端 60s 重推）+ `core/lib/dingtalk.js`（ChannelAdapter，platform=dingtalk，仿 weixin-clawbot.js）+ `core/lib/dingtalk-access.js`（管理员绑定口令 auth）+ `core/lib/dingtalk-device.js`（device-code 扫码注册）；
 - **扫码创建应用（device-code）**：`core/bin/ohmy-core.js` 新增 `channel login-dingtalk`（init/begin 得二维码 → 面板内渲染 → 手机钉钉扫码自动创建企业内部应用+机器人 → 本地轮询 poll 得 AppKey/AppSecret 写 channel store，chmod 600）；已配置通道不重复扫码、重开向导自动恢复 /bind 口令；备选手动填 AppKey/AppSecret；
-- **owner-binding 安全门**：/bind <口令>（口令本机生成、见面板或运行日志）——未绑定管理员前**拒绝所有人**，仅绑定管理员可驱动本机 dsh；绑定成功回两条消息（确认 + 完整 /help 输出）；绑定状态存 `~/.dsh/channels/<channelId>.binding.json`（chmod 600）；钉钉无「正在输入」，以文字 ack 代替 sendTyping；
+- **owner-binding 安全门**：/bind <口令>（口令本机生成、见面板或运行日志）——未绑定管理员前**拒绝所有人**，仅绑定管理员可驱动本机 dsh；绑定成功回两条消息（确认 + 完整 /help 输出）；绑定状态存 `~/.dsh/channels/<channelId>.binding.json`（chmod 600）；**/bind 串行锁（PR #40 fix/dingtalk-bind-lock，2026-08-28）**：`withBindLock` Promise 链串行化——并发 /bind 仅**首个**持正确口令的 sender 绑定成功，后到者（含正确口令）被拒，防 last-writer-wins 竞态覆盖 owner；钉钉无「正在输入」，以文字 ack 代替 sendTyping；
 - **runDingTalkChannel**（channel-runner.js）：镜像 runWeixinChannel 的编排（buildDingTalkAdapters + createChannelManager/SessionDriver/ChannelSessions/CommandRunner/Queue 复用），写入**同一 channel store**，面板项目视图零改动复用；runChannel 新增可选 access gate（dingtalk owner-binding：消费 /bind、拒绝未授权）；
 - 工作区语义与微信完全一致：runner 自身做**每会话跨项目路由**，不依赖插件单工作区。
 
@@ -80,7 +80,7 @@ channel 子命令：route <refsJson> <conversationId> <text>（路由匹配）�
 
 ## 测试与验证
 
-- node --test core/tests/ **186 全绿**（2026-08-26 实测；指令体系 v2 171 后新增 dingtalk 适配器/transport/access 用例；channel 相关含 channel/commands/runner/sessions/workspaces/weixin-clawbot/dingtalk/e2e-channel/channel-association/channel-busy/project-switch 等）；
+- node --test core/tests/ **187 全绿**（2026-08-28 实测；186 后新增 PR #40 并发 /bind 串行锁用例；指令体系 v2 171 后新增 dingtalk 适配器/transport/access 用例；channel 相关含 channel/commands/runner/sessions/workspaces/weixin-clawbot/dingtalk/e2e-channel/channel-association/channel-busy/project-switch 等）；
 - e2e-channel.test.js：mock HTTP 覆盖传输层（getupdates 映射 / -14 过期 / 无 token / sendmessage 报文 / QR 登录），不依赖真实 dsh web、不做会话创建；
 - channel-association.test.js：断言 A（同一 conversation 复用同一 sessionId、跨 conversation 独立）、B（refs 显式绑定）、C（会话归属 workspaceId）、/new 绑定 conversation 后下一条普通消息复用而非新建；
 - channel-sessions.test.js（重写）：全局分桶存储、按 sessionId 保留全部会话（re-binding 保留旧会话）、set/isWorkspaceEnabled 项目开关持久化；channel-busy.test.js：忙门/异步应答；channel-runner.test.js：含「项目开关」门控用例（普通消息/#wN/#sN//sessions 未启用回「未启用该通道」，/workspaces 只列已启用）+ /sessions、/workspaces 带内容切换用例；

@@ -1,7 +1,7 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-08-26T14:29:30Z
+updated: 2026-08-28T11:15:48Z
 sources: [platforms/macos/src/main.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md]
 manual: false
 ---
@@ -101,7 +101,7 @@ manual: false                   # true = 用户手改，代理永不覆盖
 | 会话映射（全局） | `~/.dsh/channels/<channelId>.sessions.json` | `channel-sessions.js`（setSession） | **channel 作用域全局**（2026-08-22 起）；按 sessionId 保留全部会话，`/new` 重绑定 conversation 不删历史；记录含 conversationId/sessionId/projectRoot/workspaceKey/name/updatedAt |
 | 会话消息归档（全局） | `~/.dsh/channels/<channelId>.<workspaceKey>.<sessionId>.messages.json`（sessionId 缺省入 `system` 桶） | `channel-sessions.js`（appendMessage） | 分桶记录 `{channelId, conversationId, sessionId, dir: in\|out, text, ts, projectRoot}`，MAX_MESSAGES=1000 滚动；`<channelId>.workspaces.json` 登记 workspaceKey ↔ projectRoot（同名加 6 位路径哈希消歧）；**项目目录不再产生消息/会话文件** |
 | 项目开关/启用关联 | `~/.dsh/channels/<channelId>.workspaces.json` | ChannelPanel `setChannelEnabled` / channel-sessions `setWorkspaceEnabled` | **全局**（2026-08-23 随 PR #30 落地，docs/channel-project-switch.md）：`{"<workspaceKey>":"<projectRoot>"}`（chmod 600，key 用 `ChannelStoreReader.workspaceKey(for:)` 派生）；某 projectRoot 出现 = 该工作区启用了该通道（「项目开关」ON）；旧 `<项目>/.dsh/channels.json` refs 不再作为启用来源（仅 ChannelPanel 一次性惰性迁移播种）；`registerProjectRoot` 只作消息桶 key 推导 |
-| 钉钉管理员绑定 | `~/.dsh/channels/<channelId>.binding.json`（chmod 600） | `dingtalk-access.js`（runChannel 的 owner-binding 安全门） | 存 /bind 绑定状态：未绑定管理员前**拒绝所有**消息，仅绑定管理员可驱动本机 dsh；见 docs/channel-dingtalk-stream.md |
+| 钉钉管理员绑定 | `~/.dsh/channels/<channelId>.binding.json`（chmod 600） | `dingtalk-access.js`（runChannel 的 owner-binding 安全门） | 存 /bind 绑定状态：未绑定管理员前**拒绝所有**消息，仅绑定管理员可驱动本机 dsh；并发 /bind 经 `withBindLock` 串行锁（PR #40）——仅首个持正确口令者绑定成功，防 last-writer-wins 覆盖 owner；见 docs/channel-dingtalk-stream.md |
 | 钉钉应用凭据 | `~/.dsh/channels/<channelId>.json`（chmod 600，含 AppKey/AppSecret） | `dingtalk-device.js`（device-code 扫码注册）/ 手动填写 | 与微信共用 channel-store.js 凭据文件；扫码创建应用走 `channel login-dingtalk`（init/begin → poll 得 AppKey/AppSecret） |
 
 ## Channel 关联模型（channel ↔ message ↔ session，2026-08-22 落地）
