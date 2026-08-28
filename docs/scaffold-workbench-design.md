@@ -76,10 +76,10 @@
 ### 2.2 非目标（v1 明确不做）
 
 - 不做「环节市场/社区分享」；
-- 不做跨环节**自动联动/依赖解析**（选了 backend-java 不自动改 docker 参数）——只做基于参数的冲突提示（9.7）；
+- 不做跨环节**自动联动/依赖解析**（选了 java-backend 不自动改 docker 参数）——只做基于参数的冲突提示（9.7）；
 - 不做「对既有项目补环节」的增量合并模式（非空目录仅确认 + 覆盖备份，9.1）；增量补环节为 v2；
 - 不做模板渲染的完整模板语言（`{{var}}` + `{{#if}}` 足够，`{{#each}}` 为 v2）；
-- 壳层不解析代码、不做代码生成器——Java/React 示例环节只产出**最小可运行骨架**，业务实现交给「Agent 深化」（G4）与开发者；
+- 壳层不解析代码、不做代码生成器——Java/Vue 3 示例环节只产出**最小可运行骨架**，业务实现交给「Agent 深化」（G4）与开发者；React 示例环节（`react-frontend`）**暂缓**（见 13.2 注）；
 - 不内置**云厂商专有**（AWS EKS / GCP GKE / 阿里 ACK 等）模板——`deploy` 环节的 k8s 模板为**云无关通用 manifests**；`docker` 环节只负责镜像构建与本地编排，生产部署归 `deploy` 环节。
 
 ---
@@ -128,7 +128,7 @@
 ### 4.1 环节清单 `stage.yaml`
 
 ```yaml
-id: backend-java                 # 全局唯一（内置 ns: builtin.<id>）
+id: java-backend                # 全局唯一（内置 ns: builtin.<id>）
 name: { zh: Java 后端脚手架, en: Java Backend Scaffold }
 category: examples               # foundation | examples | collaboration
 description:
@@ -244,7 +244,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 轮询 session.list running → 完成 → 提示 [在浏览器中查看]（会话可见可继续）
 ```
 
-- 深化文案（薄壳，中英随壳语言）：「请按所选环节与参数完善 <目标根> 的骨架：栈=backend-java({{params}}), frontend-react({{params}})。要求：补全可运行的最小实现与单测、前后端示例联调；确保 <make dev/build/test> 可跑；遵守项目根 AGENTS.md。完成标准：构建与测试本地通过。」；
+- 深化文案（薄壳，中英随壳语言）：「请按所选环节与参数完善 <目标根> 的骨架：栈=java-backend({{params}}), vue3-frontend({{params}})。要求：补全可运行的最小实现与单测、前后端示例联调；确保 <make dev/build/test> 可跑；遵守项目根 AGENTS.md。完成标准：构建与测试本地通过。」；
 - `mode: "queue"` 不抢占用户当前对话、不阻塞 UI；深化会话在 dsh web 左侧会话列表可见、可点击查看全过程、可中途取消——**透明度保证**（与 wiki 生成同款）；
 - 服务未就绪时按钮置灰（`serverReady` 门控）。
 
@@ -291,7 +291,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 |---|---|
 | `src/ScaffoldPanel.swift`（新增） | `StageCatalogLoader` / `ScaffoldTemplateRenderer` / `ScaffoldPlan` / `ScaffoldApplier` / `ScaffoldDeepenRPC`(M3) / `ScaffoldPanelController`（头部/目标区/环节列表/参数表单/预览/状态条） |
 | `src/main.swift` | `RightPanel` 增加 `.scaffold`；活动栏图标按钮（SF Symbol `puzzlepiece.extension`）；`setRightPanel` 各调用点与 `rightPanelKind` 持久化扩展；「视图」菜单 `⌃⌥S`；`DSH_SCAFFOLD_TEST=1` / `DSH_SCAFFOLD_TEST_DIR` / `DSH_SCAFFOLD_STAGES` QA 钩子；`serverReady` 门控接线；L10n 新增 `scaffold.*` 键（中/英，见 7.3） |
-| `platforms/macos/scaffold-stages/`（新增） | v1 环节库（第 13 节）：`git-init` / `git-conventions` / `agents-md` / `docs-standards` / `conventions` / `makefile` / `ci-cd` / `docker` / `deploy` / `dsh-wiki-prep` / `backend-java` / `frontend-react`，每个 `<id>/stage.yaml` + `templates/` |
+| `platforms/macos/scaffold-stages/`（新增） | v1 环节库（第 13 节）：`git-init` / `git-conventions` / `agents-md` / `docs-standards` / `conventions` / `makefile` / `ci-cd` / `docker` / `deploy` / `dsh-wiki-prep` / `java-backend` / `vue3-frontend`，每个 `<id>/stage.yaml` + `templates/` |
 | `build-app.sh` | 复制 `scaffold-stages` 到 `Contents/Resources/scaffold-stages`（参照 303 行 highlight.js 资源先例）；版本号递增（M3 收尾如 1.14.0） |
 | `README.md` | 「特性」新增「工程搭建台」小节；「目录」补充本文档 |
 | `tests/scaffold-panel/`（新增） | 无头单测：`run.sh` + `scaffold-tests.swift`（范式同 `tests/wiki-panel/`，见 10.1） |
@@ -310,7 +310,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 | 9.4 | 模板渲染失败（参数缺失/非法/模板损坏） | 该环节跳过不落盘，预览/状态条报「环节 X 渲染失败：原因」；其余环节照常；可修复后重跑（幂等覆盖，9.10） |
 | 9.5 | `git` 不可用 / `git init` 失败 | 命令失败仅记日志 + 状态条提示「未初始化 git」；不阻断文件生成 |
 | 9.6 | 服务未就绪（深化按钮） | `serverReady` 门控：置灰 + 提示（与 wiki 生成按钮同款） |
-| 9.7 | 参数自洽性（选 docker 但 runtime=java 而没选 backend-java） | 仅提示不强制（v1 无自动联动）；提示文案固定「该组合可能需要 X，请确认」 |
+| 9.7 | 参数自洽性（选 docker 但 runtime=java 而没选 java-backend） | 仅提示不强制（v1 无自动联动）；提示文案固定「该组合可能需要 X，请确认」 |
 | 9.8 | 路径穿越（`{{artifactId}}` 含 `../` / 绝对路径） | `safePath` 校验器拒绝 + 环节报错 |
 | 9.9 | 目标位置无写权限 | 错误态 + 建议换目录；不残留半成品（落盘前先整体校验可写） |
 | 9.10 | 生成中断 / 重复生成 | 幂等：按 state.json 重跑全量覆盖（备份在先）；中断后重跑不产生 `.scaffold-backup` 重复堆积（同名备份覆盖） |
@@ -342,7 +342,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 
 1. `DSH_SCAFFOLD_TEST=1` 启动直开搭建台，`DSH_SCAFFOLD_TEST_DIR` 指向临时目录；
 2. 空态 → 勾选「文档+规范」预设 → 预览出现文件清单 → 生成 → 目录结构与内容正确；
-3. 「纯后端 API」预设（含 backend-java）→ 填 groupId/artifactId → 生成 → `mvn -q test` 可跑（若本机有 JDK；
+3. 「纯后端 API」预设（含 java-backend）→ 填 groupId/artifactId → 生成 → `mvn -q test` 可跑（若本机有 JDK；
 4. 「前后端兼备」预设 → 生成 → `make build` 目标在 Makefile 中正确展开；
 5. 冲突：同路径两环节（如两个都写 README）→ 预览标红 + 覆盖提示；
 6. 非空目录 → 确认弹窗 + `.scaffold-backup/` 出现；
@@ -363,7 +363,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 |---|---|---|
 | **M0** | 本文档评审通过 | 设计决策闭环、无开放问题 |
 | **M1** | `StageCatalogLoader` + `ScaffoldTemplateRenderer` + `ScaffoldPlan` + `ScaffoldApplier` + `ScaffoldPanelController`；`RightPanel.scaffold`、菜单 `⌃⌥S`、L10n、QA 钩子；**工程基础 10 环节**（git-init / git-conventions / agents-md / docs-standards / conventions / makefile / ci-cd / docker / deploy / dsh-wiki-prep）；预设 3 组；10.1 编译 + 引擎单测通过 | 能组合生成**栈无关骨架**端到端；10.2 的 1-2、5-10 通过 |
-| **M2** | **示例栈环节** backend-java（Spring Boot 3 + Maven 最小骨架 + 健康检查单测）与 frontend-react（Vite + TS 最小骨架 + 示例 API 调用 + 单测）；6.1 的 AGENTS.md 与所选环节自洽性完整覆盖 | 「纯后端 API」「前后端兼备」两种典型组合全链路生成；10.2 的 3-4 通过；`build-app.sh` 产出新版本（如 1.13.0 → 1.14.0） |
+| **M2** | **示例栈环节** java-backend（Spring Boot 3 + Maven 最小骨架 + 健康检查单测）与 vue3-frontend（Vue 3 + Vite + TS 最小骨架 + 示例 API 调用 + 单测）；6.1 的 AGENTS.md 与所选环节自洽性完整覆盖 | 「纯后端 API」「前后端兼备」两种典型组合全链路生成；10.2 的 3-4 通过；`build-app.sh` 产出新版本（如 1.13.0 → 1.14.0） |
 | **M3** | **Agent 深化链路**：`ScaffoldDeepenRPC`（createSession/prompt queue/轮询/打开会话，归入工作区）+ 深化文案模板（中英）+ 深化按钮态（`serverReady` 门控）；**用户扩展环节库**（`$DSH_HOME/scaffold-stages/` 扫描与坏清单隔离，9.11）；`state.json` 审计增强；README 特性说明 | 生成后一键深化端到端跑通（dsh web 可见会话、可继续对话）；用户放置自定义环节 → 面板出现并可组合；10.2 全过 |
 
 > 注：`docs-standards` 中的 QMD/语义检索之类增强不涉及本功能；「增量补环节」（v2）与「环节市场」（非目标）不在 M1-M3 内。
@@ -415,8 +415,8 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 
 | id | 名称 | 参数 | 产出 |
 |---|---|---|---|
-| `backend-java` | Java 后端脚手架（Spring Boot 3 + Maven） | `groupId`、`artifactId`、`packageName`（可推导）、`javaVersion`（17/21）、`springBootVersion`（默认锁定） | `{{artifactId}}/pom.xml`、`src/main/java/<pkg>/Application.java`、`HealthController.java`（`/healthz`）、`src/main/resources/application.yml`、`src/test/java/<pkg>/HealthControllerTest.java`（示例单测）——**最小可运行**，业务留待 Agent 深化 |
-| `frontend-react` | React 前端脚手架（Vite + TypeScript） | `packageName` | `package.json`、`vite.config.ts`、`tsconfig.json`、`index.html`、`src/main.tsx` / `App.tsx`、`src/api/client.ts`（示例 fetch 封装）、`src/App.test.tsx`（vitest 示例）、`.gitignore` 片段（node）——**最小可运行**，页面联调留待 Agent 深化 |
+| `java-backend` | Java 后端脚手架（Spring Boot 3 + Maven） | `groupId`、`artifactId`、`packageName`（可推导）、`javaVersion`（17/21）、`springBootVersion`（默认锁定） | `{{artifactId}}/pom.xml`、`src/main/java/<pkg>/Application.java`、`HealthController.java`（`/healthz`）、`src/main/resources/application.yml`、`src/test/java/<pkg>/HealthControllerTest.java`（示例单测）——**最小可运行**，业务留待 Agent 深化 |
+| `vue3-frontend` | Vue 3 前端脚手架（Vite + TypeScript） | `packageName` | `package.json`、`vite.config.ts`、`tsconfig.json`、`index.html`、`src/main.ts` / `App.vue`、`src/api/client.ts`（示例 fetch 封装）、`src/App.spec.ts`（vitest 示例）、`.gitignore` 片段（node）——**最小可运行**，页面联调留待 Agent 深化 |
 
 ### 13.3 协作层（category: collaboration）
 
@@ -424,7 +424,9 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 |---|---|---|---|
 | `deepen-session`（M3） | 骨架深化 / Deepen with Agent | 无（读取用户所选全部环节与参数生成深化文案） | 不产出文件；生成完成后出现在「Agent 深化 ▾」动作中，触发 dsh 会话 |
 
-> 原则：示例栈环节**不隐式依赖**工程基础环节（可单独选），参数自洽性只做提示（9.7）；`git-init` 的 `.gitignore` 与 `frontend-react` 的 `.gitignore` 片段在预览中标记冲突（9.14），由用户取舍。
+> 原则：示例栈环节**不隐式依赖**工程基础环节（可单独选），参数自洽性只做提示（9.7）；`git-init` 的 `.gitignore` 与 `vue3-frontend` 的 `.gitignore` 片段在预览中标记冲突（9.14），由用户取舍。
+>
+> 注：`react-frontend`（Vite + React + TS）示例环节**暂缓**——命名模式与 `vue3-frontend` 同构（`<技术>-frontend`），后续按需补入即可（环节库可扩展，9.11/用户扩展目录）。
 
 ---
 
