@@ -1,0 +1,47 @@
+// {{projectName}} — Jenkinsfile（声明式 pipeline）
+// agent label 需在 Jenkins 配置对应节点并安装所需工具链（JDK / Node 等）。
+pipeline {
+    agent { label '{{jenkinsAgentLabel}}' }
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+    parameters {
+        booleanParam(name: 'PUBLISH', defaultValue: false, description: '发布/部署（默认不触发）')
+        string(name: 'IMAGE_TAG', defaultValue: '{{imageTag}}', description: '镜像 tag')
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                // Jenkins 浅克隆可能无 tag：显式拉取，避免版本信息缺失（教训）
+                sh 'git fetch --tags --force || true'
+            }
+        }
+        stage('Lint') {
+            steps { sh '{{ciLint}}' }
+        }
+        stage('Test') {
+            steps { sh '{{ciTest}}' }
+        }
+        stage('Build') {
+            steps { sh '{{ciBuild}}' }
+        }
+        stage('Package / Publish') {
+            when { expression { params.PUBLISH } }
+            steps {
+                // 镜像推送/部署占位：凭据一律 withCredentials 引用 ID，绝不内联密钥（9.16）
+                // withCredentials([usernamePassword(credentialsId: '<占位>', usernameVariable: 'REG_USER', passwordVariable: 'REG_PASS')]) {
+                //     sh 'docker push {{imageRepo}}/{{projectSlug}}:${params.IMAGE_TAG}'
+                // }
+                echo 'TODO: publish image / deploy (gated by params.PUBLISH)'
+            }
+        }
+    }
+    post {
+        always {
+            archiveArtifacts artifacts: 'dist/**', allowEmptyArchive: true
+        }
+    }
+}

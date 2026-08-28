@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# {{projectName}} — Kubernetes 部署脚本 / K8s deploy script
+# 用法 / Usage: ./deploy/deploy-k8s.sh [--dry-run] [--yes]
+# 环境变量 / Env: KUBE_CONTEXT, IMAGE_REPO, IMAGE_TAG, NAMESPACE
+set -euo pipefail
+
+DRY_RUN=0
+ASSUME_YES=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --yes|-y) ASSUME_YES=1 ;;
+    *) echo "unknown argument: $arg" >&2; exit 1 ;;
+  esac
+done
+
+KUBE_CONTEXT="${KUBE_CONTEXT:-{{kubeContext}}}"
+IMAGE_REPO="${IMAGE_REPO:-{{imageRepo}}}"
+IMAGE_TAG="${IMAGE_TAG:-{{imageTag}}}"
+NAMESPACE="${NAMESPACE:-{{namespace}}}"
+APP="{{projectSlug}}"
+IMAGE="$IMAGE_REPO/$APP:$IMAGE_TAG"
+
+command -v kubectl >/dev/null || { echo "error: kubectl not found" >&2; exit 1; }
+
+# 前置检查 / prechecks
+if [ -n "$KUBE_CONTEXT" ]; then
+  cur="$(kubectl config current-context 2>/dev/null || true)"
+  [ "$cur" = "$KUBE_CONTEXT" ] || { echo "error: current context '$cur' != '$KUBE_CONTEXT' (kubectl config use-context $KUBE_CONTEXT)" >&2; exit 1; }
+fi
+kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
+
+run() {
+  if [ "$DRY_RUN" = 1 ]; then echo "dry-run: $*"; else eval "$*"; fi
+}
+
+confirm() {
+  if [ "$ASSUME_YES" = 1 ]; then return 0; fi
+  read -r -p "Deploy $IMAGE to k8s ns=$NAMESPACE? [y/N] " ans
+  case "$ans" in y|Y|yes) return 0 ;; *) echo "aborted"; exit 1 ;; esac
+}
+
+confirm
+if [ "$DRY_RUN" = 1 ]; then
+  kubectl apply --dry-run=client -f deploy/k8s/ -n "$NAMESPACE"
+  exit 0
+fi
+
+# 顺序：configmap → deployment → service
+kubectl apply -f deploy/k8s/configmap.yaml -n "$NAMESPACE"
+kubectl apply -f deploy/k8s/deployment.yaml -n "$NAMESPACE"
+kubectl apply -f deploy/k8s/service.yaml -n "$NAMESPACE"
+# 镜像覆盖，免改 yaml / image override, no yaml edit
+kubectl set image "deployment/$APP" "app=$IMAGE" -n "$NAMESPACE"
+
+if ! kubectl rollout status "deployment/$APP" -n "$NAMESPACE" --timeout=180s; then
+  echo "rollout failed — rolling back" >&2
+  kubectl rollout undo "deployment/$APP" -n "$NAMESPACE"
+  echo "rollout undone; check pod events: kubectl describe pods -n $NAMESPACE -l app=$APP" >&2
+  exit 1
+fi
+
+echo "done: kubectl get svc $APP -n $NAMESPACE"

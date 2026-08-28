@@ -80,6 +80,8 @@ jobs:
         run: tests/skills/run.sh
       - name: Channel panel tests
         run: tests/channel-panel/run.sh
+      - name: Scaffold panel tests
+        run: tests/scaffold-panel/run.sh
       - name: Build CEF integration artifacts (arm64)
         run: |
           mkdir -p .build/module-cache

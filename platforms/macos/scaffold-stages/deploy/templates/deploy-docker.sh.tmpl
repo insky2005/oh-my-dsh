@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# {{projectName}} — Docker 部署脚本 / Docker deploy script
+# 用法 / Usage: ./deploy/deploy-docker.sh [--dry-run] [--yes]
+# 环境变量 / Env: REMOTE_HOST, SSH_USER, IMAGE_REPO, IMAGE_TAG, DEPLOY_SSH_KEY
+# 密钥只引用不内联 / secrets are referenced, never inlined.
+set -euo pipefail
+
+DRY_RUN=0
+ASSUME_YES=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --yes|-y) ASSUME_YES=1 ;;
+    *) echo "unknown argument: $arg" >&2; exit 1 ;;
+  esac
+done
+
+REMOTE_HOST="${REMOTE_HOST:-{{remoteHost}}}"
+SSH_USER="${SSH_USER:-{{sshUser}}}"
+IMAGE_REPO="${IMAGE_REPO:-{{imageRepo}}}"
+IMAGE_TAG="${IMAGE_TAG:-{{imageTag}}}"
+IMAGE="$IMAGE_REPO/{{projectSlug}}:$IMAGE_TAG"
+PREV_TAG="${PREV_TAG:-}"   # 回滚用上一镜像 tag / previous tag for rollback
+HEALTHZ="{{healthzPath}}"
+SERVICE_PORT="{{servicePort}}"
+
+say() { printf '\n==> %s\n' "$*"; }
+
+# 前置检查 / prechecks
+command -v docker >/dev/null || { echo "error: docker not found" >&2; exit 1; }
+[ -f deploy/docker-compose.prod.yml ] || { echo "error: deploy/docker-compose.prod.yml missing" >&2; exit 1; }
+if [ -n "$REMOTE_HOST" ]; then
+  ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_USER}@${REMOTE_HOST}" true \
+    || { echo "error: cannot reach $REMOTE_HOST (configure SSH key / DEPLOY_SSH_KEY)" >&2; exit 1; }
+  command -v rsync >/dev/null || { echo "error: rsync not found (needed for remote deploy)" >&2; exit 1; }
+fi
+[ -f deploy/.env ] || echo "note: deploy/.env missing (copy deploy/.env.example)"
+
+run() {
+  if [ "$DRY_RUN" = 1 ]; then echo "dry-run: $*"; else eval "$*"; fi
+}
+
+confirm() {
+  if [ "$ASSUME_YES" = 1 ]; then return 0; fi
+  read -r -p "Deploy $IMAGE to ${REMOTE_HOST:-local}? [y/N] " ans
+  case "$ans" in y|Y|yes) return 0 ;; *) echo "aborted"; exit 1 ;; esac
+}
+
+up() {
+  local compose="docker compose -f deploy/docker-compose.prod.yml up -d --pull"
+  if [ -z "$REMOTE_HOST" ]; then
+    run "cd \"$(pwd)\" && $compose"
+  else
+    run "rsync -az --delete -e ssh deploy/ ${SSH_USER}@${REMOTE_HOST}:~/{{projectSlug}}-deploy/"
+    run "ssh ${SSH_USER}@${REMOTE_HOST} 'cd ~/{{projectSlug}}-deploy && $compose'"
+  fi
+}
+
+wait_healthy() {
+  local n=0 tries=30
+  local base="http://localhost:$SERVICE_PORT$HEALTHZ"
+  if [ -n "$REMOTE_HOST" ]; then
+    while [ "$n" -lt "$tries" ]; do
+      if ssh "${SSH_USER}@${REMOTE_HOST}" "curl -fsS '$base'" >/dev/null 2>&1; then return 0; fi
+      n=$((n+1)); sleep 5
+    done
+  else
+    while [ "$n" -lt "$tries" ]; do
+      if curl -fsS "$base" >/dev/null 2>&1; then return 0; fi
+      n=$((n+1)); sleep 5
+    done
+  fi
+  return 1
+}
+
+rollback() {
+  if [ -z "$PREV_TAG" ]; then
+    echo "no previous tag; manual rollback required (see deploy/rancher/README.md)" >&2
+    return 1
+  fi
+  echo "health check failed — rolling back to $IMAGE_REPO/{{projectSlug}}:$PREV_TAG"
+  IMAGE_TAG="$PREV_TAG" up || true
+}
+
+confirm
+say "deploying $IMAGE"
+up
+say "waiting for health ($SERVICE_PORT$HEALTHZ)"
+if ! wait_healthy; then
+  say "deploy failed — rolling back"
+  rollback
+  exit 1
+fi
+say "done: http://${REMOTE_HOST:-localhost}:$SERVICE_PORT$HEALTHZ"

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{projectSlug}}
+  labels:
+    app: {{projectSlug}}
+spec:
+  selector:
+    app: {{projectSlug}}
+  ports:
+    - port: {{servicePort}}
+      targetPort: {{servicePort}}

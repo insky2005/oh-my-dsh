@@ -1,0 +1,54 @@
+# Git 提交与分支规范 / Git Commit & Branch Conventions
+
+> 目标：统一「功能开发 / bug 修复 / 版本发布」的分支与提交规范，
+> 让提交历史可追溯、可自动生成 changelog。
+
+## 提交规范 / Commit messages — Conventional Commits
+
+格式 / Format:
+
+```
+<type>(<scope>): <subject>
+```
+
+类型枚举 / Allowed types:
+
+| type | 含义 / Meaning |
+|---|---|
+| feat | 新功能 / New feature |
+| fix | bug 修复 / Bug fix |
+| docs | 文档 / Documentation |
+| refactor | 重构（不改行为）/ Refactor (no behavior change) |
+| perf | 性能优化 / Performance |
+| test | 测试 / Tests |
+| chore | 杂务 / Chores |
+| build | 构建系统 / Build system |
+| ci | CI 配置 / CI config |
+| revert | 回滚 / Revert |
+
+示例 / Examples:
+
+- `feat(api): add health check endpoint`
+- `fix(terminal): restore focus after hide`
+- `docs: explain branch policy`
+
+为什么 / Why：自动 changelog、按 type 过滤、提交可追溯。
+
+## 分支规范 / Branch policy
+
+- 主干 `{{trunk}}`：只接受合并（PR/MR），只打主版本 tag `vX.Y.0`，永远可发布；
+- 新功能 / 重构 → `feature/<slug>`：从 `{{trunk}}` 切 → 开发 → PR 合并；
+- bug 修复（未发布）→ `fix/<slug>`；
+- 已发布版本修复 → `release/X.Y`（打 patch tag `vX.Y.Z`，修复同步回主干走 PR）；
+- 禁止 force-push 已推送历史；`{{trunk}}` 受分支保护。
+
+## 合并规则 / Merge rules
+
+- feature/fix 分支回主干一律走 PR/MR，CI 全绿 + review 后合并；
+- PR 合并默认用 merge commit（--no-ff），保留分支拓扑。
+
+## 校验 / Validation
+
+{{#if enforce}}提交信息由 `scripts/install-git-hooks.sh` 安装的 commit-msg 钩子校验
+（纯 shell，无 node 依赖；已有同名钩子先备份到 `.scaffold-backup/` 再写入）。
+{{/if}}

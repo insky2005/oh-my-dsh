@@ -1,0 +1,19 @@
+id: agents-md
+name: { zh: Agent 协作层, en: AGENTS.md }
+category: foundation
+description:
+  zh: 生成 AGENTS.md——Agent 一进来就知道规则、命令与边界
+  en: Generate AGENTS.md so agents know the rules, commands and boundaries
+params:
+  - key: techSummary
+    label: { zh: 项目简介（一句话）, en: Project summary (one line) }
+    type: string
+    default: ""
+    validate: nonEmpty
+  - key: primaryLang
+    label: { zh: 主语言, en: Primary language }
+    type: string
+    default: ""
+files:
+  - path: AGENTS.md
+    template: templates/AGENTS.md.tmpl

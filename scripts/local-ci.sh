@@ -62,6 +62,8 @@ stage_swift() {
   tests/skills/run.sh
   echo "--- channel panel tests ---"
   tests/channel-panel/run.sh
+  echo "--- scaffold panel tests ---"
+  tests/scaffold-panel/run.sh
   echo "--- build CEF integration artifacts (arm64) ---"
   mkdir -p .build/module-cache
   platforms/macos/build-cef.sh arm64

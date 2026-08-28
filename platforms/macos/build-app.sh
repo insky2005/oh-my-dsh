@@ -306,6 +306,18 @@ else
   echo "WARNING: Highlightr assets missing ($HLJS); syntax highlighting disabled" >&2
 fi
 
+# Scaffold Workbench built-in stage library (scaffold-stages/): copied into
+# Contents/Resources so ScaffoldPanel.swift can load it via Bundle.main
+# (same pattern as the Highlightr assets above). Dev/QA override via
+# DSH_SCAFFOLD_STAGES (appended, does not replace).
+SCAFFOLD_STAGES="$ROOT/platforms/macos/scaffold-stages"
+if [ -d "$SCAFFOLD_STAGES" ]; then
+  ditto "$SCAFFOLD_STAGES" "$APP/Contents/Resources/scaffold-stages"
+  echo "    scaffold-stages embedded: $APP/Contents/Resources/scaffold-stages"
+else
+  echo "WARNING: scaffold-stages missing ($SCAFFOLD_STAGES); scaffold panel will have no stages" >&2
+fi
+
 echo "==> [5/7] writing Info.plist"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{projectSlug}}-config
+  labels:
+    app: {{projectSlug}}
+data:
+  # 键值由 deploy-k8s.sh 应用前按需修改 / edit keys before applying
+  APP_PORT: "{{servicePort}}"
+  HEALTHZ_PATH: "{{healthzPath}}"

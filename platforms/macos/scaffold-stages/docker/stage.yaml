@@ -1,0 +1,29 @@
+id: docker
+name: { zh: 容器化, en: Docker }
+category: foundation
+description:
+  zh: 多阶段 Dockerfile、.dockerignore 与本地 compose.yaml
+  en: Multi-stage Dockerfile, .dockerignore and local compose.yaml
+params:
+  - key: runtime
+    label: { zh: 运行时, en: Runtime }
+    type: select
+    options: [java, node, static]
+    default: node
+  - key: exposePort
+    label: { zh: 对外端口, en: Exposed port }
+    type: string
+    default: "8080"
+    validate: nonEmpty
+  - key: healthzPath
+    label: { zh: 健康检查路径, en: Health check path }
+    type: string
+    default: /healthz
+    validate: nonEmpty
+files:
+  - path: Dockerfile
+    template: templates/Dockerfile.tmpl
+  - path: .dockerignore
+    template: templates/.dockerignore.tmpl
+  - path: compose.yaml
+    template: templates/compose.yaml.tmpl

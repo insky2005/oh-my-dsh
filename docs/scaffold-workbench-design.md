@@ -438,3 +438,23 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 ## 14. 实施记录
 
 > 本节点仅在 M1-M3 实施后追加（对齐 `docs/repo-wiki-design.md` 第 14 节的写法：每里程碑记录实现、验证、修复经验）。
+
+### M1（2026-08，feature/scaffold-workbench）
+
+**实现**：
+
+- 新增 `platforms/macos/src/ScaffoldPanel.swift`：`MiniYAML`（stage.yaml 子集解析器）、`StageCatalogLoader`（搜索链：内置 Resources → `DSH_SCAFFOLD_STAGES` 追加，同名先到先得不覆盖；坏清单隔离）、`ScaffoldTemplateRenderer`（`{{var}}`/`{{#if}}`/`{{{{ }}}}` 转义、文件名渲染、缺失变量报错、嵌套 if）、`ScaffoldValidators`（nonEmpty/slug/safePath/javaPackage）、`ScaffoldPlan`（默认值+用户参数合并、派生标志 has* / select 选项标志 / 空值 Empty 标志、CI 派生命令、冲突检测、渲染失败整环节跳过、参数自洽提示）、`ScaffoldApplier`（写文件/备份 .scaffold-backup/ /环节命令/state.json，幂等）、`ScaffoldPreset`（3 组预设）、`ScaffoldPanelController`（头部 40pt + 目标区 + 环节分组列表 + 参数表单 + 预览 + 状态条，复用 DynamicFillView/HeaderLabel/CustomIconButton 基件）；
+- `main.swift`：`RightPanel.scaffold`、活动栏 `puzzlepiece.extension`（`scaffoldEnabled` 可隐藏）、视图菜单 `⌃⌥S`、`rightPanelKind` 持久化、`DSH_SCAFFOLD_TEST=1`/`DSH_SCAFFOLD_TEST_DIR` QA 钩子、`serverReady` 门控接线（M3 深化预留）、设置菜单「覆盖冲突前备份」开关、L10n `scaffold.*` 键（中英）；
+- 工程基础 10 环节：`platforms/macos/scaffold-stages/`（git-init / git-conventions / agents-md / docs-standards / conventions / makefile / ci-cd / docker / deploy / repo-knowledge），每环节 `stage.yaml` + `templates/`；文件条目支持 `if: <key>` / `if: <key>=<value>` 条件产出（LICENSE 按 license、Jenkinsfile 按 platform、hook 脚本按 enforce、deploy 脚本按 deployDocker/K8s/Rancher）；
+- `build-app.sh` 把 `scaffold-stages` 复制进 `Contents/Resources/scaffold-stages`（参照 highlight.js 资源先例）；
+- `tests/scaffold-panel/`（run.sh + scaffold-tests.swift）：147 例引擎单测 + 端到端组合（纯后端 API 预设 / platform=jenkins / git-conventions(enforce=true) / deploy 全选+remoteHost）；
+- `scripts/local-ci.sh` 阶段 2 接入 `tests/scaffold-panel/run.sh`；README 特性与目录更新。
+
+**验证**：`scripts/local-ci.sh swift` 全绿（各面板单测 + swiftc 全量编译检查，仅既有 WebKit Sendable/Highlightr 警告）；`tests/scaffold-panel/run.sh` 147 passed / 0 failed。
+
+**修复经验**：
+
+- `ScaffoldApplier` 备份逻辑：先 `removeItem` 再 `copyItem` 在**首次备份**时因备份文件不存在而抛错，导致整文件写入被跳过——改为 `fileExists` 判断后删除再复制；
+- 校验器对**可选空参数**（如 `deploy.remoteHost` 空 = 本机）放行：仅 `nonEmpty` 视为缺失，slug/safePath/javaPackage 对空串返回通过；
+- 模板与 GitHub Actions `${{ }}` 语法冲突：模板内用 `${{{{ X }}}}` 转义（渲染为 `${{ X }}`），引擎单测覆盖 round-trip；
+- YAML 子集解析器对「未闭合内联 list」等坏清单的报错路径，由测试 fixture 固化（`files: [unclosed` → 隔离报错）。

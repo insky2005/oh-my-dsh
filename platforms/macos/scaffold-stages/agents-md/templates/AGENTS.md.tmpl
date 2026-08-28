@@ -1,0 +1,44 @@
+# AGENTS.md — {{projectName}}
+
+## 项目是什么 / What this is
+
+{{techSummary}}
+
+- 主语言 / Primary language: {{primaryLang}}
+
+## 目录结构 / Directory layout
+
+{{#if hasMakefile}}- `Makefile`：统一命令入口（dev/build/test/lint）
+{{/if}}{{#if hasDocker}}- `Dockerfile` / `compose.yaml`：容器化与本地编排
+{{/if}}{{#if hasCI}}- `.github/workflows/`（或 `.gitlab-ci.yml` / `Jenkinsfile`）：CI/CD 门禁
+{{/if}}{{#if hasDocs}}- `docs/`：架构、ADR、开发约定与运维手册
+{{/if}}{{#if hasConventions}}- `.editorconfig` / `CONTRIBUTING.md`：开发规范与贡献指南
+{{/if}}{{#if hasGitConventions}}- `docs/conventions/git.md`：Git 提交与分支规范
+{{/if}}{{#if hasDeploy}}- `deploy/`：生产部署脚本与 manifests
+{{/if}}
+
+## 常用命令 / Common commands
+
+{{#if hasMakefile}}- `make dev`：本地开发 / local dev
+- `make build`：构建 / build
+- `make test`：测试 / test
+- `make lint`：代码检查 / lint
+{{/if}}{{#if hasDocker}}- `docker compose up`：本地启动服务
+{{/if}}
+
+## 工程规范 / Engineering conventions
+
+{{#if hasConventions}}- 开发规范见 `CONTRIBUTING.md`（PR 流程、DoD 检查清单）。
+{{/if}}{{#if hasGitConventions}}- Git 提交与分支规范见 `docs/conventions/git.md`（Conventional Commits、分支前缀、主干保护、PR 合并规则）。
+{{/if}}
+
+## 禁区 / Forbidden
+
+- 密钥与凭据**绝不**提交进仓库（.env / 证书 / token）。
+- 不越过本骨架所选环节的边界（未选的栈与工具不臆造）。
+- 不在仓库根散落未约定的脚本与文件。
+
+## 与 dsh 协作 / Working with dsh
+
+{{#if hasRepoKnowledge}}- 知识库：先读 `.dsh/wiki/index.md`；用 `repo-knowledge` skill 生成/更新。
+{{/if}}- 新会话会自动加载本文件（dsh 逐目录指令加载），请先读完再动手。

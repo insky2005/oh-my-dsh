@@ -1,0 +1,33 @@
+id: ci-cd
+name: { zh: CI/CD 模板, en: CI & CD }
+category: foundation
+description:
+  zh: 生成 GitHub Actions / GitLab CI / Jenkins 的 lint→test→build 门禁
+  en: GitHub Actions / GitLab CI / Jenkins lint→test→build gates
+params:
+  - key: platform
+    label: { zh: CI 平台, en: CI platform }
+    type: select
+    options: [github-actions, gitlab-ci, jenkins]
+    default: github-actions
+  - key: hasBackend
+    label: { zh: 含后端, en: Has backend }
+    type: bool
+    default: "true"
+  - key: hasFrontend
+    label: { zh: 含前端, en: Has frontend }
+    type: bool
+    default: "false"
+files:
+  - path: .github/workflows/ci.yml
+    template: templates/ci.yml.tmpl
+    if: platform=github-actions
+  - path: .github/workflows/cd.yml
+    template: templates/cd.yml.tmpl
+    if: platform=github-actions
+  - path: .gitlab-ci.yml
+    template: templates/gitlab-ci.yml.tmpl
+    if: platform=gitlab-ci
+  - path: Jenkinsfile
+    template: templates/Jenkinsfile.tmpl
+    if: platform=jenkins

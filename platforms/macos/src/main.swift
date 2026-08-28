@@ -388,6 +388,42 @@ enum L10n {
         "tasks.commentCloseDone": ("已评论并关闭 issue #%d", "Commented & closed issue #%d"),
         "tasks.commentCloseFailed": ("评论/关闭失败（检查 token 与网络）", "Comment/close failed (check token & network)"),
         "tasks.commentTemplate": ("已由 oh-my-dsh 任务面板处理完成，对应 PR：#%@", "Processed by the oh-my-dsh task panel; PR: %@"),
+        // scaffold panel (工程脚手架)
+        "menu.toggleScaffold": ("显示/隐藏 工程脚手架面板", "Toggle Scaffold Panel"),
+        "bar.scaffold": ("脚手架", "Scaffold"),
+        "scaffold.title": ("脚手架", "Scaffold"),
+        "scaffold.presetBackend": ("纯后端 API", "Backend API only"),
+        "scaffold.presetFullstack": ("前后端兼备", "Full-stack"),
+        "scaffold.presetFoundation": ("文档+规范", "Docs & conventions"),
+        "scaffold.projectName": ("项目名", "Project name"),
+        "scaffold.projectNamePlaceholder": ("例如 my-api", "e.g. my-api"),
+        "scaffold.parentDir": ("位置", "Location"),
+        "scaffold.pickDir": ("选择…", "Choose…"),
+        "scaffold.pickDirMessage": ("选择项目父目录", "Choose the project parent folder"),
+        "scaffold.targetRoot": ("目标目录", "Target folder"),
+        "scaffold.stageCategory.foundation": ("工程基础", "Foundation"),
+        "scaffold.stageCategory.examples": ("示例栈", "Example stacks"),
+        "scaffold.stageCategory.collaboration": ("协作层", "Collaboration"),
+        "scaffold.previewCount": ("将生成 %d 个文件", "%d files will be generated"),
+        "scaffold.previewEmpty": ("选择环节后将显示生成清单", "Select stages to preview"),
+        "scaffold.conflictDetail": ("冲突，后写覆盖（来源：%@）", "Conflict; later write wins (sources: %@)"),
+        "scaffold.generate": ("生成", "Generate"),
+        "scaffold.generateHint": ("生成项目骨架", "Generate the project skeleton"),
+        "scaffold.generating": ("生成中…", "Generating…"),
+        "scaffold.done": ("完成", "Done"),
+        "scaffold.failed": ("生成失败：%@", "Generation failed: %@"),
+        "scaffold.invalidParams": ("存在参数或渲染错误，请修正", "Fix param/render errors first"),
+        "scaffold.openDir": ("打开目录", "Open Folder"),
+        "scaffold.openDirHint": ("打开生成的项目目录", "Open the generated project folder"),
+        "scaffold.viewInFinder": ("在 Finder 中显示", "Show in Finder"),
+        "scaffold.viewInFinderHint": ("在 Finder 中显示项目目录", "Reveal the project folder in Finder"),
+        "scaffold.notGitInit": ("未初始化 git（命令失败：%@）", "git not initialized (command failed: %@)"),
+        "scaffold.confirmOverwriteTitle": ("目标目录非空", "Target folder not empty"),
+        "scaffold.confirmOverwriteMessage": ("目标目录已存在且非空。继续将覆盖同名文件（冲突文件备份到 .scaffold-backup/）。", "Target folder exists and is not empty. Continue will overwrite same-named files (conflicts are backed up to .scaffold-backup/)."),
+        "scaffold.confirmOverwriteOK": ("覆盖并继续", "Overwrite & continue"),
+        "scaffold.catalogEmpty": ("未找到环节库（内置或 DSH_SCAFFOLD_STAGES）", "No stage library found (built-in or DSH_SCAFFOLD_STAGES)"),
+        "scaffold.catalogErrors": ("环节库加载警告：%@", "Stage library warnings: %@"),
+        "scaffold.settingsBackup": ("脚手架：覆盖冲突前备份", "Scaffold: back up conflicts before overwrite"),
     ]
 
     /// Localize a key, optionally filling %@ / %d placeholders.
@@ -1249,6 +1285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var appearanceMenuItems: [NSMenuItem] = []
     private var browserToggleMenuItem: NSMenuItem?
     private var channelToggleMenuItem: NSMenuItem?
+    private var scaffoldToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip).
     private var previewBarButton: ActivityBarButton!
     private var closeTabMenuItem: NSMenuItem?
@@ -1257,6 +1294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var tasksBarButton: ActivityBarButton!
     private var browserBarButton: ActivityBarButton!
     private var channelBarButton: ActivityBarButton!
+    private var scaffoldBarButton: ActivityBarButton!
 
     private var window: NSWindow!
     private var webView: WKWebView!
@@ -1267,6 +1305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var tasksPanel: IssueRunnerPanelController!
     private var browserPanel: BrowserPanelController!
     private var channelPanel: ChannelPanelController!
+    private var scaffoldPanel: ScaffoldPanelController!
     /// Browser panel localhost REST API (Agent / user curl). Runs from launch.
     private var browserAPIServer: BrowserAPIServer!
     private var browserAPIBridge: BrowserAPIBridge!
@@ -1276,7 +1315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
     /// terminal, wiki, tasks and browser panels share one slot; the activity
     /// bar toggles between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel }
+    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, scaffold }
     private var rightPanel: RightPanel = .none
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
@@ -1289,7 +1328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         max(FilePanelController.minWidth,
             max(TerminalPanelController.minWidth,
                 max(WikiPanelController.minWidth,
-                    max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth, ChannelPanelController.minWidth))))
+                    max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth, ChannelPanelController.minWidth, ScaffoldPanelController.minWidth))))
     /// Fixed default panel width. Deliberately NOT window-relative: a
     /// "half the window" default made the width chase the window as it was
     /// widened, flip-flopping on every toggle.
@@ -1466,6 +1505,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.browser)
             AppLog.shared.log("browser self-test enabled")
         }
+        // Scaffold self-test hook (debugging / QA only): opens the scaffold
+        // panel at launch when DSH_SCAFFOLD_TEST=1 is set. DSH_SCAFFOLD_TEST_DIR
+        // prefills the target parent directory; DSH_SCAFFOLD_STAGES appends a
+        // stage library directory (追加语义，开发/测试用).
+        if ProcessInfo.processInfo.environment["DSH_SCAFFOLD_TEST"] == "1" {
+            setRightPanel(.scaffold)
+            AppLog.shared.log("scaffold self-test enabled")
+        }
     }
 
     /// Build the activity bar (leftmost icon strip) + the main split view:
@@ -1522,6 +1569,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self?.openDSHSession(sessionId)
         }
 
+        scaffoldPanel = ScaffoldPanelController()
+        AppLog.shared.log("launch: scaffoldPanel created")
+        scaffoldPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        scaffoldPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
+
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
@@ -1549,7 +1601,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelBarButton = makeActivityButton(symbol: "dot.radiowaves.left.and.right",
                                               tooltip: L10n.tr("bar.channel"),
                                               action: #selector(channelEntryTapped(_:)))
-        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton])
+        scaffoldBarButton = makeActivityButton(symbol: "puzzlepiece.extension",
+                                               tooltip: L10n.tr("bar.scaffold"),
+                                               action: #selector(scaffoldEntryTapped(_:)))
+        // 7.3 scaffoldEnabled：默认显示，可在设置中关闭（UserDefaults 键见 ScaffoldPanelController）。
+        scaffoldBarButton.isHidden = !ScaffoldPanelController.scaffoldEnabledDefault()
+        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton, scaffoldBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -1608,6 +1665,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "tasks": kind = .tasks
         case "browser": kind = .browser
         case "channel": kind = .channel
+        case "scaffold": kind = .scaffold
         default: kind = .preview
         }
         setRightPanel(visible ? kind : .none)
@@ -1622,6 +1680,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .tasks: return tasksPanel.view
         case .browser: return browserPanel.view
         case .channel: return channelPanel.view
+        case .scaffold: return scaffoldPanel.view
         case .none: return NSView()
         }
     }
@@ -1674,12 +1733,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tasksToggleMenuItem?.state = (panel == .tasks) ? .on : .off
         browserToggleMenuItem?.state = (panel == .browser) ? .on : .off
         channelToggleMenuItem?.state = (panel == .channel) ? .on : .off
+        scaffoldToggleMenuItem?.state = (panel == .scaffold) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
         tasksBarButton?.setActive(panel == .tasks)
         browserBarButton?.setActive(panel == .browser)
         channelBarButton?.setActive(panel == .channel)
+        scaffoldBarButton?.setActive(panel == .scaffold)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
@@ -1733,6 +1794,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 channelPanel.ensureLoaded()
                 if uiDebug {
                     self.dumpPanelDebugInfo(panelView: channelPanel.view, label: "channel")
+                }
+            case .scaffold:
+                scaffoldPanel.ensureLoaded()
+                if uiDebug {
+                    self.dumpPanelDebugInfo(panelView: scaffoldPanel.view, label: "scaffold")
                 }
             }
         } else {
@@ -2317,6 +2383,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     // Tell the tasks panel: repo detection + issue load resolve now.
                     self.tasksPanel?.serverReady(port: self.server.port)
                     self.channelPanel?.ensureLoaded()
+                    // Tell the scaffold panel: dsh web ready (M3 深化门控预留).
+                    self.scaffoldPanel?.serverReady(port: self.server.port)
                 }
             } catch {
                 AppLog.shared.log("server start failed: \(error.localizedDescription)")
@@ -2843,6 +2911,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleChannel.target = self
         toggleChannel.state = (rightPanel == .channel) ? .on : .off
         channelToggleMenuItem = toggleChannel
+        let toggleScaffold = viewMenu.addItem(withTitle: L10n.tr("menu.toggleScaffold"), action: #selector(scaffoldEntryTapped(_:)), keyEquivalent: "s")
+        toggleScaffold.keyEquivalentModifierMask = [.control, .option]
+        toggleScaffold.target = self
+        toggleScaffold.state = (rightPanel == .scaffold) ? .on : .off
+        scaffoldToggleMenuItem = toggleScaffold
         viewItem.submenu = viewMenu
 
         // Settings menu: dsh settings/upgrade/registry + logs + language.
@@ -2876,6 +2949,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let wikiRegister = settingsMenu.addItem(withTitle: L10n.tr("wiki.settingsRegister"), action: #selector(toggleWikiRegisterAgentsMD(_:)), keyEquivalent: "")
         wikiRegister.target = self
         wikiRegister.state = wikiRegisterAgentsMdEnabled() ? .on : .off
+        let scaffoldBackup = settingsMenu.addItem(withTitle: L10n.tr("scaffold.settingsBackup"), action: #selector(toggleScaffoldBackup(_:)), keyEquivalent: "")
+        scaffoldBackup.target = self
+        scaffoldBackup.state = ScaffoldPanelController.backupConflicts() ? .on : .off
         let rootItem = NSMenuItem(title: L10n.tr("wiki.settingsRoot"), action: nil, keyEquivalent: "")
         settingsMenu.addItem(rootItem)
         let rootMenu = NSMenu(title: L10n.tr("wiki.settingsRoot"))
@@ -2980,6 +3056,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelBarButton?.toolTip = L10n.tr("bar.channel")
         wikiBarButton?.toolTip = L10n.tr("bar.wiki")
         tasksBarButton?.toolTip = L10n.tr("bar.tasks")
+        scaffoldBarButton?.toolTip = L10n.tr("bar.scaffold")
         // 各面板头部操作按钮 tooltip 同样跟随语言
         previewPanel?.refreshTooltips()
         terminalPanel?.refreshTooltips()
@@ -2987,6 +3064,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tasksPanel?.refreshTooltips()
         browserPanel?.refreshTooltips()
         channelPanel?.refreshTooltips()
+        scaffoldPanel?.refreshTooltips()
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url
@@ -3165,6 +3243,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     @objc private func channelEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .channel ? .none : .channel)
+    }
+    /// Toggle the Scaffold Workbench panel (activity bar entry / ⌃⌥S).
+    @objc private func scaffoldEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .scaffold ? .none : .scaffold)
+    }
+
+    /// Toggle the scaffold backup-before-overwrite setting (Settings menu).
+    @objc private func toggleScaffoldBackup(_ sender: NSMenuItem) {
+        let current = ScaffoldPanelController.backupConflicts()
+        UserDefaults.standard.set(!current, forKey: ScaffoldPanelController.backupConflictsKey)
+        sender.state = !current ? .on : .off
     }
     /// Run QR login for a channel via the core CLI, open the QR URL in the
     /// browser, and save the token to ~/.dsh/channels/<channelId>.json.

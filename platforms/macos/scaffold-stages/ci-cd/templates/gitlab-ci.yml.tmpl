@@ -1,0 +1,24 @@
+# {{projectName}} — GitLab CI
+stages: [lint, test, build]
+
+variables:
+  IMAGE_TAG: "{{imageTag}}"
+
+lint:
+  stage: lint
+  script:
+    - {{ciLint}}
+
+test:
+  stage: test
+  script:
+    - {{ciTest}}
+
+build:
+  stage: build
+  script:
+    - {{ciBuild}}
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 week

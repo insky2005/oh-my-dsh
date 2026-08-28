@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# {{projectName}} — Rancher 部署脚本 / Rancher deploy script
+# 复用 deploy/k8s/ manifests，流程与 deploy-k8s.sh 一致 / reuses deploy/k8s/ manifests.
+# 用法 / Usage: ./deploy/deploy-rancher.sh [--dry-run] [--yes]
+# 环境变量 / Env: RANCHER_SERVER, KUBECONFIG, IMAGE_REPO, IMAGE_TAG, NAMESPACE
+set -euo pipefail
+
+DRY_RUN=0
+ASSUME_YES=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --yes|-y) ASSUME_YES=1 ;;
+    *) echo "unknown argument: $arg" >&2; exit 1 ;;
+  esac
+done
+
+RANCHER_SERVER="${RANCHER_SERVER:-{{rancherServer}}}"
+IMAGE_REPO="${IMAGE_REPO:-{{imageRepo}}}"
+IMAGE_TAG="${IMAGE_TAG:-{{imageTag}}}"
+NAMESPACE="${NAMESPACE:-{{namespace}}}"
+APP="{{projectSlug}}"
+IMAGE="$IMAGE_REPO/$APP:$IMAGE_TAG"
+
+command -v kubectl >/dev/null || { echo "error: kubectl not found" >&2; exit 1; }
+
+# 前置检查：Rancher Server 与 kubeconfig / prechecks
+if [ -n "$RANCHER_SERVER" ]; then
+  echo "note: fetch a kubeconfig from $RANCHER_SERVER (Cluster Management → kubeconfig file) and export KUBECONFIG=..."
+else
+  echo "note: RANCHER_SERVER empty — intranet-only deployment (see deploy/rancher/README.md)"
+fi
+[ -n "${KUBECONFIG:-}" ] && echo "using KUBECONFIG=$KUBECONFIG"
+kubectl config current-context >/dev/null 2>&1 || { echo "error: no current kube context (set KUBECONFIG)" >&2; exit 1; }
+
+run() {
+  if [ "$DRY_RUN" = 1 ]; then echo "dry-run: $*"; else eval "$*"; fi
+}
+
+confirm() {
+  if [ "$ASSUME_YES" = 1 ]; then return 0; fi
+  read -r -p "Deploy $IMAGE via Rancher ns=$NAMESPACE? [y/N] " ans
+  case "$ans" in y|Y|yes) return 0 ;; *) echo "aborted"; exit 1 ;; esac
+}
+
+confirm
+if [ "$DRY_RUN" = 1 ]; then
+  kubectl apply --dry-run=client -f deploy/k8s/ -n "$NAMESPACE"
+  exit 0
+fi
+
+kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
+kubectl apply -f deploy/k8s/configmap.yaml -n "$NAMESPACE"
+kubectl apply -f deploy/k8s/deployment.yaml -n "$NAMESPACE"
+kubectl apply -f deploy/k8s/service.yaml -n "$NAMESPACE"
+kubectl set image "deployment/$APP" "app=$IMAGE" -n "$NAMESPACE"
+
+if ! kubectl rollout status "deployment/$APP" -n "$NAMESPACE" --timeout=180s; then
+  echo "rollout failed — rolling back (Rancher UI: Workloads → rollout undo)" >&2
+  kubectl rollout undo "deployment/$APP" -n "$NAMESPACE"
+  exit 1
+fi
+echo "done: Rancher UI 中查看 Workloads → $APP（回滚点：Workloads → Rollout undo）"

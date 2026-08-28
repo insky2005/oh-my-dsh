@@ -1,0 +1,15 @@
+# {{projectName}} — 生产编排 / production compose
+# 复制为 deploy/.env 并填写 / copy to deploy/.env and fill in
+services:
+  app:
+    image: {{imageRepo}}/{{projectSlug}}:{{imageTag}}
+    ports:
+      - "{{servicePort}}:{{servicePort}}"
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:{{servicePort}}{{healthzPath}}"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped

@@ -1,0 +1,25 @@
+# 贡献指南 / Contributing
+
+感谢你愿意参与 {{projectName}} 的开发！
+
+## 提交 / Submitting changes
+
+{{#if hasGitConventions}}Git 提交与分支规范见 `docs/conventions/git.md`（Conventional Commits、分支前缀、主干保护、PR 合并规则）。
+{{/if}}### 提交信息 / Commit messages
+{{#if hasGitConventions}}遵循 Conventional Commits（`feat:` / `fix:` / `docs:` / `refactor:` / `perf:` / `test:` / `chore:` / `build:` / `ci:` / `revert:`）。
+{{/if}}### 分支 / Branches
+
+- 新功能 / 重构：`feature/<slug>`
+- bug 修复（未发布）：`fix/<slug>`
+- 已发布版本修复：`release/X.Y`
+- 主干受保护：禁 force-push，一律 PR/MR 合并
+
+{{#if vcs.github}}PR 走 GitHub：`feature/<slug>` 分支 → PR → CI 绿 → review → merge（--no-ff）。
+{{/if}}{{#if vcs.gitlab}}MR 走 GitLab：`feature/<slug>` 分支 → MR → CI 绿 → review → merge。
+{{/if}}## 完成定义（DoD）/ Definition of Done
+
+- [ ] 代码通过 lint
+- [ ] 单测通过
+- [ ] 构建通过
+- [ ] 文档已更新（如需）
+- [ ] 无密钥/凭据入库
