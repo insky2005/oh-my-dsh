@@ -270,7 +270,7 @@ platforms/macos/src/                  原生壳（Swift）
   IssueRunnerPanel.swift 任务面板（GitHub issues 串行流水线 + 关联索引 + 评论并关闭）
   ChannelPanel.swift     通道面板（微信/钉钉接入：引导卡片/扫码向导/项目视图 + 启动自动拉起 listener）
   ScaffoldPanel.swift    工程脚手架面板（stage.yaml 解析/模板渲染/规划/落盘 + 面板 UI）
-platforms/macos/scaffold-stages/         内置环节库（10 个工程基础环节：stage.yaml + templates/，构建时复制进 Resources）
+scaffold-stages/                         内置环节库（10 个工程基础环节：stage.yaml + templates/，跨平台共享，构建时复制进 Resources）
   BrowserPanel.swift / BrowserAPI.swift / BrowserCDP.swift  浏览器面板（CEF 渲染 + REST API + CDP）
   MakeIcon.swift     App 图标生成器（渲染 → iconset → icns）
 platforms/macos/cef/                   CEFShim.h/.mm（ObjC++ 桥：OSR 渲染/输入转发/DevTools）+ helper

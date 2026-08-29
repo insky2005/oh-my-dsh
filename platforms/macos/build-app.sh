@@ -310,7 +310,7 @@ fi
 # Contents/Resources so ScaffoldPanel.swift can load it via Bundle.main
 # (same pattern as the Highlightr assets above). Dev/QA override via
 # DSH_SCAFFOLD_STAGES (appended, does not replace).
-SCAFFOLD_STAGES="$ROOT/platforms/macos/scaffold-stages"
+SCAFFOLD_STAGES="$ROOT/scaffold-stages"
 if [ -d "$SCAFFOLD_STAGES" ]; then
   ditto "$SCAFFOLD_STAGES" "$APP/Contents/Resources/scaffold-stages"
   echo "    scaffold-stages embedded: $APP/Contents/Resources/scaffold-stages"
