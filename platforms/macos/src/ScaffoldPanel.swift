@@ -1481,6 +1481,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         rail.layer?.masksToBounds = true
         rail.addSubview(railStack)
         NSLayoutConstraint.activate([
+            rail.widthAnchor.constraint(equalToConstant: 160),
             railStack.topAnchor.constraint(equalTo: rail.topAnchor, constant: 14),
             railStack.leadingAnchor.constraint(equalTo: rail.leadingAnchor, constant: 6),
             railStack.trailingAnchor.constraint(equalTo: rail.trailingAnchor, constant: -6),
@@ -1579,6 +1580,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         buildStagesStep()
         buildParamsStep()
         buildPreviewStep()
+        rebuildStepRail()
         setStep(.target)
     }
 
@@ -1663,6 +1665,12 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         ])
         targetStepView = v
         contentContainer.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            v.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+        ])
     }
 
     private func buildStagesStep() {
@@ -1678,6 +1686,11 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         stageScroll.autohidesScrollers = true
         stageScroll.drawsBackground = false
         stageScroll.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            stageStack.leadingAnchor.constraint(equalTo: stageScroll.contentView.leadingAnchor),
+            stageStack.trailingAnchor.constraint(equalTo: stageScroll.contentView.trailingAnchor),
+            stageStack.topAnchor.constraint(equalTo: stageScroll.contentView.topAnchor),
+        ])
 
         let v = NSView()
         v.translatesAutoresizingMaskIntoConstraints = false
@@ -1694,6 +1707,12 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         ])
         stagesStepView = v
         contentContainer.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            v.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+        ])
     }
 
     private func buildParamsStep() {
@@ -1709,6 +1728,11 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         paramsScroll.autohidesScrollers = true
         paramsScroll.drawsBackground = false
         paramsScroll.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            paramsStack.leadingAnchor.constraint(equalTo: paramsScroll.contentView.leadingAnchor),
+            paramsStack.trailingAnchor.constraint(equalTo: paramsScroll.contentView.trailingAnchor),
+            paramsStack.topAnchor.constraint(equalTo: paramsScroll.contentView.topAnchor),
+        ])
 
         let v = NSView()
         v.translatesAutoresizingMaskIntoConstraints = false
@@ -1725,6 +1749,12 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         ])
         paramsStepView = v
         contentContainer.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            v.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+        ])
     }
 
     private func buildPreviewStep() {
@@ -1741,6 +1771,11 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         messageScroll.drawsBackground = false
         messageScroll.translatesAutoresizingMaskIntoConstraints = false
         messageScroll.heightAnchor.constraint(equalToConstant: 64).isActive = true
+        NSLayoutConstraint.activate([
+            messageStack.leadingAnchor.constraint(equalTo: messageScroll.contentView.leadingAnchor),
+            messageStack.trailingAnchor.constraint(equalTo: messageScroll.contentView.trailingAnchor),
+            messageStack.topAnchor.constraint(equalTo: messageScroll.contentView.topAnchor),
+        ])
 
         fileOutline.headerView = nil
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("file"))
@@ -1776,6 +1811,12 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         ])
         previewStepView = v
         contentContainer.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            v.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+        ])
     }
 
     private func presetTitle(_ id: String) -> String {
