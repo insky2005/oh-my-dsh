@@ -1399,8 +1399,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     /// 环节在工程中的先后顺序（展示与参数步骤共用；未列出的按目录序排后）。
     private static let stageOrder: [String] = [
-        "git-init", "git-conventions", "conventions", "docs-standards", "makefile",
-        "agents-md", "ci-cd", "docker", "deploy", "repo-knowledge",
+        "git-init", "agents-md", "repo-knowledge", "git-conventions", "docs-standards",
+        "conventions", "docker", "makefile", "ci-cd", "deploy",
     ]
     private func stageIndex(_ id: String) -> Int {
         Self.stageOrder.firstIndex(of: id) ?? Int.max
