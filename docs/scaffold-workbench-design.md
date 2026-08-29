@@ -291,7 +291,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 |---|---|
 | `src/ScaffoldPanel.swift`（新增） | `StageCatalogLoader` / `ScaffoldTemplateRenderer` / `ScaffoldPlan` / `ScaffoldApplier` / `ScaffoldDeepenRPC`(M3) / `ScaffoldPanelController`（头部/目标区/环节列表/参数表单/预览/状态条） |
 | `src/main.swift` | `RightPanel` 增加 `.scaffold`；活动栏图标按钮（SF Symbol `puzzlepiece.extension`）；`setRightPanel` 各调用点与 `rightPanelKind` 持久化扩展；「视图」菜单 `⌃⌥S`；`DSH_SCAFFOLD_TEST=1` / `DSH_SCAFFOLD_TEST_DIR` / `DSH_SCAFFOLD_STAGES` QA 钩子；`serverReady` 门控接线；L10n 新增 `scaffold.*` 键（中/英，见 7.3） |
-| `platforms/macos/scaffold-stages/`（新增） | v1 环节库（第 13 节）：`git-init` / `git-conventions` / `agents-md` / `docs-standards` / `conventions` / `makefile` / `ci-cd` / `docker` / `deploy` / `repo-knowledge` / `java-backend` / `vue3-frontend`，每个 `<id>/stage.yaml` + `templates/` |
+| `scaffold-stages/`（新增，仓库根、跨平台共享） | v1 环节库（第 13 节）：`git-init` / `git-conventions` / `agents-md` / `docs-standards` / `conventions` / `makefile` / `ci-cd` / `docker` / `deploy` / `repo-knowledge` / `java-backend` / `vue3-frontend`，每个 `<id>/stage.yaml` + `templates/` |
 | `build-app.sh` | 复制 `scaffold-stages` 到 `Contents/Resources/scaffold-stages`（参照 303 行 highlight.js 资源先例）；版本号递增（M3 收尾如 1.14.0） |
 | `README.md` | 「特性」新增「工程脚手架」小节；「目录」补充本文档 |
 | `tests/scaffold-panel/`（新增） | 无头单测：`run.sh` + `scaffold-tests.swift`（范式同 `tests/wiki-panel/`，见 10.1） |
@@ -445,7 +445,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 
 - 新增 `platforms/macos/src/ScaffoldPanel.swift`：`MiniYAML`（stage.yaml 子集解析器）、`StageCatalogLoader`（搜索链：内置 Resources → `DSH_SCAFFOLD_STAGES` 追加，同名先到先得不覆盖；坏清单隔离）、`ScaffoldTemplateRenderer`（`{{var}}`/`{{#if}}`/`{{{{ }}}}` 转义、文件名渲染、缺失变量报错、嵌套 if）、`ScaffoldValidators`（nonEmpty/slug/safePath/javaPackage）、`ScaffoldPlan`（默认值+用户参数合并、派生标志 has* / select 选项标志 / 空值 Empty 标志、CI 派生命令、冲突检测、渲染失败整环节跳过、参数自洽提示）、`ScaffoldApplier`（写文件/备份 .scaffold-backup/ /环节命令/state.json，幂等）、`ScaffoldPreset`（3 组预设）、`ScaffoldPanelController`（头部 40pt + 目标区 + 环节分组列表 + 参数表单 + 预览 + 状态条，复用 DynamicFillView/HeaderLabel/CustomIconButton 基件）；
 - `main.swift`：`RightPanel.scaffold`、活动栏 `puzzlepiece.extension`（`scaffoldEnabled` 可隐藏）、视图菜单 `⌃⌥S`、`rightPanelKind` 持久化、`DSH_SCAFFOLD_TEST=1`/`DSH_SCAFFOLD_TEST_DIR` QA 钩子、`serverReady` 门控接线（M3 深化预留）、设置菜单「覆盖冲突前备份」开关、L10n `scaffold.*` 键（中英）；
-- 工程基础 10 环节：`platforms/macos/scaffold-stages/`（git-init / git-conventions / agents-md / docs-standards / conventions / makefile / ci-cd / docker / deploy / repo-knowledge），每环节 `stage.yaml` + `templates/`；文件条目支持 `if: <key>` / `if: <key>=<value>` 条件产出（LICENSE 按 license、Jenkinsfile 按 platform、hook 脚本按 enforce、deploy 脚本按 deployDocker/K8s/Rancher）；
+- 工程基础 10 环节：`scaffold-stages/`（仓库根，跨平台复用）（git-init / git-conventions / agents-md / docs-standards / conventions / makefile / ci-cd / docker / deploy / repo-knowledge），每环节 `stage.yaml` + `templates/`；文件条目支持 `if: <key>` / `if: <key>=<value>` 条件产出（LICENSE 按 license、Jenkinsfile 按 platform、hook 脚本按 enforce、deploy 脚本按 deployDocker/K8s/Rancher）；
 - `build-app.sh` 把 `scaffold-stages` 复制进 `Contents/Resources/scaffold-stages`（参照 highlight.js 资源先例）；
 - `tests/scaffold-panel/`（run.sh + scaffold-tests.swift）：147 例引擎单测 + 端到端组合（纯后端 API 预设 / platform=jenkins / git-conventions(enforce=true) / deploy 全选+remoteHost）；
 - `scripts/local-ci.sh` 阶段 2 接入 `tests/scaffold-panel/run.sh`；README 特性与目录更新。

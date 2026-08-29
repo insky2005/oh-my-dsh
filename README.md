@@ -338,7 +338,7 @@ platforms/macos/src/                  原生壳（Swift）
   ReviewLogModel.swift   审计面板数据模型（核心 JSON 解码 + 文件分组/diff 折叠 + 日志新鲜度打戳，纯 Foundation 可无头测试）
   PanelSurface.swift    面板配色单一事实来源（面板底色 + 控件常态/高亮两档，见 docs/ui-color-scheme.md）
   ScaffoldPanel.swift    工程脚手架面板（stage.yaml 解析/模板渲染/规划/落盘 + 面板 UI）
-platforms/macos/scaffold-stages/         内置环节库（10 个工程基础环节：stage.yaml + templates/，构建时复制进 Resources）
+scaffold-stages/                         内置环节库（10 个工程基础环节：stage.yaml + templates/，跨平台共享，构建时复制进 Resources）
   BrowserPanel.swift / BrowserAPI.swift / BrowserCDP.swift  浏览器面板（CEF 渲染 + REST API + CDP）
   DshWebRPC.swift      壳层原生 dsh RPC（0.1.2 斜杠端点 + launch token 换 cookie，wiki/任务/会话共用）
   DshWebCookieJanitor.swift 启动/退出清理非本次 authority 的 dsh-auth-* cookie + 回收上次残留实例

@@ -14,7 +14,7 @@ TMP="$(mktemp -d)"
 cp ../terminal-emulator/stubs.swift "$TMP/stubs.swift"
 cp ../../platforms/macos/src/ScaffoldPanel.swift "$TMP/ScaffoldPanel.swift"
 # 内置环节库（10 环节）拷入临时目录，DSH_SCAFFOLD_STAGES 指向它（追加语义，测试即唯一来源）。
-cp -R ../../platforms/macos/scaffold-stages "$TMP/stages"
+cp -R ../../scaffold-stages "$TMP/stages"
 cp scaffold-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 DSH_SCAFFOLD_STAGES="$TMP/stages" swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
   -o "$TMP/scaffold-tests" "$TMP/stubs.swift" "$TMP/ScaffoldPanel.swift" "$TMP/main.swift"
