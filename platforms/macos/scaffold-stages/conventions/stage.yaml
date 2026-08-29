@@ -1,5 +1,5 @@
 id: conventions
-name: { zh: 开发规范落地, en: Conventions }
+name: { zh: 开发规范落地, en: Coding Conventions }
 category: foundation
 description:
   zh: .editorconfig 与 CONTRIBUTING.md（PR 规范与 DoD 检查清单）

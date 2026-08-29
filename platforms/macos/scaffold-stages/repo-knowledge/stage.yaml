@@ -1,5 +1,5 @@
 id: repo-knowledge
-name: { zh: 知识库准备, en: Wiki Prep }
+name: { zh: 知识库准备, en: Repo Knowledge }
 category: foundation
 description:
   zh: 生成 .dsh/wiki 占位，引导用 repo-knowledge skill 生成知识库

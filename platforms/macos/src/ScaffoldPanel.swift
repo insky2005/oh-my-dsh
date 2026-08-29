@@ -1203,6 +1203,8 @@ private final class StageEditor {
     var selectControls: [String: NSPopUpButton] = [:]
     var boolControls: [String: NSButton] = [:]
     var radioGroups: [String: [NSButton]] = [:]
+    /// 必填参数（带校验器）的标签引用：值为空时红色，有值恢复次级色。
+    var requiredLabels: [String: NSTextField] = [:]
 
     init(stage: ScaffoldStage, onToggle: @escaping () -> Void) {
         self.stage = stage
@@ -1210,12 +1212,15 @@ private final class StageEditor {
         card.onToggle = onToggle
 
         for param in stage.params {
+            // 项目简介（techSummary）移到步骤 1 填写，步骤 3 不再重复显示
+            if stage.id == "agents-md" && param.key == "techSummary" { continue }
             let isRequired = !param.validate.isEmpty
             let label = NSTextField(labelWithString: isRequired ? param.label + " *" : param.label)
             label.font = .systemFont(ofSize: 12)
             label.textColor = isRequired ? .systemRed : .secondaryLabelColor
             label.translatesAutoresizingMaskIntoConstraints = false
             label.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+            if isRequired { requiredLabels[param.key] = label }
             let controlRow = NSStackView(views: [label])
             controlRow.orientation = .horizontal
             controlRow.spacing = 10
@@ -1233,9 +1238,9 @@ private final class StageEditor {
                 controlRow.addArrangedSubview(cb)
             } else if param.type == "select" {
                 if param.options.count < 5 {
-                    // 选项少于 5 个 → radio 组（比下拉更直观）
+                    // 选项少于 5 个 → radio 组（比下拉更直观；显示本地化标签，值按索引取原始）
                     let radios = param.options.enumerated().map { idx, opt -> NSButton in
-                        let b = NSButton(radioButtonWithTitle: opt, target: nil, action: nil)
+                        let b = NSButton(radioButtonWithTitle: ScaffoldPanelController.optionLabel(opt), target: nil, action: nil)
                         b.identifier = NSUserInterfaceItemIdentifier("\(stage.id).\(param.key)")
                         b.tag = idx
                         b.font = .systemFont(ofSize: 12)
@@ -1261,7 +1266,7 @@ private final class StageEditor {
                     controlRow.addArrangedSubview(row)
                 } else {
                     let pop = NSPopUpButton(frame: .zero, pullsDown: false)
-                    pop.addItems(withTitles: param.options)
+                    pop.addItems(withTitles: param.options.map { ScaffoldPanelController.optionLabel($0) })
                     if let idx = param.options.firstIndex(of: currentValue) {
                         pop.selectItem(at: idx)
                     }
@@ -1296,7 +1301,7 @@ private final class StageEditor {
         }
     }
 
-    /// 必填参数高亮：以输入框当前值为准——值为空 → 红框（label 已带红色 *）。
+    /// 必填参数高亮：以输入框当前值为准——值为空 → 标签红 + 红框；有值 → 恢复正常色。
     /// 注意不能读 params 字典（只含用户改过的项），否则非空默认值会被误判为空。
     func updateRequiredHighlights() {
         for param in stage.params where !param.validate.isEmpty {
@@ -1304,6 +1309,9 @@ private final class StageEditor {
             let empty = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             if let field = stringControls[param.key] {
                 field.layer?.borderColor = empty ? NSColor.systemRed.cgColor : NSColor.clear.cgColor
+            }
+            if let label = requiredLabels[param.key] {
+                label.textColor = empty ? .systemRed : .secondaryLabelColor
             }
         }
     }
@@ -1324,12 +1332,13 @@ private final class StageEditor {
             cb.state = ScaffoldTemplateRenderer.isTruthy(val) ? .on : .off
         }
         for (key, radios) in radioGroups {
-            let val = values[key] ?? stage.params.first(where: { $0.key == key })?.defaultValue ?? ""
-            var matched = false
-            for b in radios {
-                if b.title == val { b.state = .on; matched = true } else { b.state = .off }
+            let param = stage.params.first(where: { $0.key == key })
+            let val = values[key] ?? param?.defaultValue ?? ""
+            if let idx = param?.options.firstIndex(of: val), idx >= 0, idx < radios.count {
+                for (i, b) in radios.enumerated() { b.state = (i == idx) ? .on : .off }
+            } else {
+                radios.first?.state = .on
             }
-            if !matched { radios.first?.state = .on }
         }
         // 同步字段值（预设/重置时）后再刷新必填高亮
         updateRequiredHighlights()
@@ -1368,6 +1377,25 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     static let minWidth: CGFloat = 400
 
     // MARK: 步骤
+
+    /// select 选项的展示文案（值保持原始，仅展示层本地化，避免 bilingual 等看不懂）。
+    static func optionLabel(_ value: String) -> String {
+        switch value {
+        case "zh": return L10n.isZh ? "中文" : "Chinese"
+        case "en": return L10n.isZh ? "英文" : "English"
+        case "bilingual": return L10n.isZh ? "中英双语" : "Bilingual"
+        case "github": return "GitHub"
+        case "gitlab": return "GitLab"
+        case "github-actions": return "GitHub Actions"
+        case "gitlab-ci": return "GitLab CI"
+        case "jenkins": return "Jenkins"
+        case "java": return "Java"
+        case "node": return "Node.js"
+        case "static": return L10n.isZh ? "静态站点" : "Static site"
+        case "generic": return L10n.isZh ? "通用" : "Generic"
+        default: return value
+        }
+    }
 
     /// 环节在工程中的先后顺序（展示与参数步骤共用；未列出的按目录序排后）。
     private static let stageOrder: [String] = [
@@ -1409,6 +1437,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     // 步骤 1：目标与位置
     private let projectNameField = NSTextField()
+    private let projectSummaryField = NSTextField()
+    private var projectSummaryLabel: NSTextField!
     private let dirButton = NSButton()
     private let targetRootLabel = NSTextField(labelWithString: "")
     private var presetButtons: [NSButton] = []
@@ -1457,6 +1487,9 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     /// 进入滚动步骤后的置顶时间窗：窗口内每次布局都强制滚回顶部，
     /// 避免 NSScrollView 在布局时把文档重置到错误位置（内容贴底）。
     private var scrollTopDeadline: Date = .distantPast
+
+    /// agents-md 的项目简介参数键（步骤 1 填写后带入）。
+    static let techSummaryKey = "techSummary"
 
     /// 设置键（壳层 UserDefaults，默认值见文档 7.3）。
     static let enabledKey = "scaffoldEnabled"
@@ -1660,15 +1693,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         subtitle.maximumNumberOfLines = 2
         subtitle.lineBreakMode = .byWordWrapping
 
-        let projectLabel = NSTextField(labelWithString: L10n.tr("scaffold.projectName"))
-        projectLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        projectNameField.placeholderString = L10n.tr("scaffold.projectNamePlaceholder")
-        projectNameField.font = .systemFont(ofSize: 14)
-        projectNameField.controlSize = .large
-        projectNameField.target = self
-        projectNameField.action = #selector(projectNameChanged(_:))
-        projectNameField.translatesAutoresizingMaskIntoConstraints = false
-
+        // 位置（Location）在最上
         let dirLabel = NSTextField(labelWithString: L10n.tr("scaffold.parentDir"))
         dirLabel.font = .systemFont(ofSize: 13, weight: .medium)
         dirButton.title = L10n.tr("scaffold.pickDir")
@@ -1678,21 +1703,59 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         dirButton.target = self
         dirButton.action = #selector(pickDirTapped(_:))
         dirButton.translatesAutoresizingMaskIntoConstraints = false
+        dirButton.widthAnchor.constraint(equalToConstant: 160).isActive = true
+
+        let dirRow = NSStackView(views: [dirLabel, dirButton])
+        dirRow.orientation = .horizontal
+        dirRow.spacing = 10
+        dirRow.alignment = .centerY
+        dirRow.translatesAutoresizingMaskIntoConstraints = false
+
+        // 项目名（= 目录名 说明已由「将创建目录」预览承担，标签不再赘述）
+        let projectLabel = NSTextField(labelWithString: L10n.tr("scaffold.projectName"))
+        projectLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        projectNameField.placeholderString = L10n.tr("scaffold.projectNamePlaceholder")
+        projectNameField.font = .systemFont(ofSize: 14)
+        projectNameField.controlSize = .large
+        projectNameField.target = self
+        projectNameField.action = #selector(projectNameChanged(_:))
+        projectNameField.translatesAutoresizingMaskIntoConstraints = false
+        projectNameField.widthAnchor.constraint(equalToConstant: 200).isActive = true
+
+        let nameRow = NSStackView(views: [projectLabel, projectNameField])
+        nameRow.orientation = .horizontal
+        nameRow.spacing = 10
+        nameRow.alignment = .centerY
+        nameRow.translatesAutoresizingMaskIntoConstraints = false
+
+        // 项目简介（必填，带入 AGENTS.md 的 techSummary）
+        projectSummaryLabel = NSTextField(labelWithString: L10n.tr("scaffold.projectSummary") + " *")
+        projectSummaryLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        projectSummaryLabel.textColor = .systemRed
+        projectSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
+        projectSummaryField.placeholderString = L10n.tr("scaffold.projectSummaryPlaceholder")
+        projectSummaryField.font = .systemFont(ofSize: 13)
+        projectSummaryField.controlSize = .regular
+        projectSummaryField.target = self
+        projectSummaryField.action = #selector(summaryChanged(_:))
+        projectSummaryField.translatesAutoresizingMaskIntoConstraints = false
+        projectSummaryField.wantsLayer = true
+        projectSummaryField.layer?.cornerRadius = 4
+        projectSummaryField.layer?.borderWidth = 1
+        projectSummaryField.widthAnchor.constraint(equalToConstant: 340).isActive = true
+
+        let summaryRow = NSStackView(views: [projectSummaryLabel, projectSummaryField])
+        summaryRow.orientation = .horizontal
+        summaryRow.spacing = 10
+        summaryRow.alignment = .centerY
+        summaryRow.translatesAutoresizingMaskIntoConstraints = false
 
         targetRootLabel.font = .systemFont(ofSize: 12)
         targetRootLabel.textColor = .secondaryLabelColor
         targetRootLabel.lineBreakMode = .byTruncatingTail
         targetRootLabel.maximumNumberOfLines = 1
 
-        let fieldRow = NSStackView(views: [projectLabel, projectNameField, dirLabel, dirButton])
-        fieldRow.orientation = .horizontal
-        fieldRow.spacing = 10
-        fieldRow.alignment = .centerY
-        fieldRow.translatesAutoresizingMaskIntoConstraints = false
-        projectNameField.widthAnchor.constraint(equalToConstant: 150).isActive = true
-        dirButton.widthAnchor.constraint(equalToConstant: 96).isActive = true
-
-        let stack = NSStackView(views: [title, subtitle, fieldRow, targetRootLabel])
+        let stack = NSStackView(views: [title, subtitle, dirRow, nameRow, summaryRow, targetRootLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -1706,7 +1769,9 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             stack.topAnchor.constraint(equalTo: v.topAnchor),
             stack.leadingAnchor.constraint(equalTo: v.leadingAnchor),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -8),
-            fieldRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
+            dirRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
+            nameRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
+            summaryRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
             targetRootLabel.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
         ])
         targetStepView = v
@@ -2107,6 +2172,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         }
         for id in orderedSelection {
             guard let editor = editors[id] else { continue }
+            // 无参数的环节（如 repo-knowledge）步骤 3 不显示参数区
+            if editor.paramRows.isEmpty { continue }
             let title = NSTextField(labelWithString: editor.stage.name)
             title.font = .systemFont(ofSize: 14, weight: .semibold)
             title.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -2185,6 +2252,11 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         refreshPlan()
     }
 
+    @objc private func summaryChanged(_ sender: Any?) {
+        params["agents-md", default: [:]][Self.techSummaryKey] = projectSummaryField.stringValue
+        refreshPlan()
+    }
+
     @objc private func pickDirTapped(_ sender: Any?) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -2219,8 +2291,13 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     @objc private func paramSelectChanged(_ sender: NSPopUpButton) {
         guard let id = sender.identifier?.rawValue else { return }
         let parts = id.split(separator: ".", maxSplits: 1).map(String.init)
-        guard parts.count == 2, let value = sender.selectedItem?.title else { return }
-        params[parts[0], default: [:]][parts[1]] = value
+        guard parts.count == 2,
+              let stage = editors[parts[0]]?.stage,
+              let param = stage.params.first(where: { $0.key == parts[1] }) else { return }
+        let idx = sender.indexOfSelectedItem
+        if idx >= 0, idx < param.options.count {
+            params[parts[0], default: [:]][parts[1]] = param.options[idx]
+        }
         refreshPlan()
     }
 
@@ -2235,9 +2312,12 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     @objc private func paramRadioChanged(_ sender: NSButton) {
         guard let id = sender.identifier?.rawValue else { return }
         let parts = id.split(separator: ".", maxSplits: 1).map(String.init)
-        guard parts.count == 2, let group = radioGroups[id] else { return }
-        if let selected = group.first(where: { $0.state == .on }) {
-            params[parts[0], default: [:]][parts[1]] = selected.title
+        guard parts.count == 2, let group = radioGroups[id],
+              let stage = editors[parts[0]]?.stage,
+              let param = stage.params.first(where: { $0.key == parts[1] }) else { return }
+        // 选项展示为本地化标签，值按索引取原始选项
+        if let selected = group.first(where: { $0.state == .on }), selected.tag >= 0, selected.tag < param.options.count {
+            params[parts[0], default: [:]][parts[1]] = param.options[selected.tag]
         }
         refreshPlan()
     }
@@ -2266,10 +2346,16 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     private func refreshPlan() {
         projectName = projectNameField.stringValue
+        // 项目简介在步骤 1 填写，直接带入 agents-md 的 techSummary 参数
+        params["agents-md", default: [:]][Self.techSummaryKey] = projectSummaryField.stringValue
         let p = ScaffoldPlan.build(catalog: catalog, selection: selection, params: params,
                                    projectName: projectName, parentDir: parentDir)
         plan = p
         updateTargetRootLabel(p)
+        // 步骤 1 项目简介（必填）动态高亮
+        let summaryEmpty = projectSummaryField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        projectSummaryField.layer?.borderColor = summaryEmpty ? NSColor.systemRed.cgColor : NSColor.clear.cgColor
+        projectSummaryLabel?.textColor = summaryEmpty ? .systemRed : .secondaryLabelColor
         updateStagesHeader()
         updateParamsHeader()
         rebuildParamsStep()
