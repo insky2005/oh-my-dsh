@@ -1351,8 +1351,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     private let fileOutline = NSOutlineView()
     private var fileTree: FileTreeNode?
 
-    // 底部导航
-    private let footerBar = DynamicFillView()
+    // 底部导航（位于头部）
     private let prevButton = NSButton()
     private let nextButton = NSButton()
 
@@ -1450,7 +1449,23 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         hideButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("preview.closePanel"))
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
 
-        let actions = NSStackView(views: [openButton, finderButton, hideButton])
+        prevButton.title = L10n.tr("scaffold.prev")
+        prevButton.bezelStyle = .rounded
+        prevButton.controlSize = .small
+        prevButton.font = .systemFont(ofSize: 12)
+        prevButton.target = self
+        prevButton.action = #selector(prevTapped(_:))
+        prevButton.translatesAutoresizingMaskIntoConstraints = false
+        nextButton.title = L10n.tr("scaffold.next")
+        nextButton.bezelStyle = .rounded
+        nextButton.controlSize = .small
+        nextButton.font = .systemFont(ofSize: 12)
+        nextButton.target = self
+        nextButton.action = #selector(nextTapped(_:))
+        nextButton.translatesAutoresizingMaskIntoConstraints = false
+        nextButton.widthAnchor.constraint(equalToConstant: 88).isActive = true
+
+        let actions = NSStackView(views: [prevButton, nextButton, openButton, finderButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -1493,36 +1508,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         contentContainer.wantsLayer = true
         contentContainer.layer?.masksToBounds = true
 
-        // 底部导航
-        footerBar.kind = .window
-        footerBar.translatesAutoresizingMaskIntoConstraints = false
-        footerBar.wantsLayer = true
-        footerBar.layer?.masksToBounds = true
-        prevButton.title = L10n.tr("scaffold.prev")
-        prevButton.bezelStyle = .rounded
-        prevButton.controlSize = .regular
-        prevButton.font = .systemFont(ofSize: 12)
-        prevButton.target = self
-        prevButton.action = #selector(prevTapped(_:))
-        prevButton.translatesAutoresizingMaskIntoConstraints = false
-        nextButton.title = L10n.tr("scaffold.next")
-        nextButton.bezelStyle = .rounded
-        nextButton.controlSize = .regular
-        nextButton.font = .systemFont(ofSize: 12)
-        nextButton.target = self
-        nextButton.action = #selector(nextTapped(_:))
-        nextButton.translatesAutoresizingMaskIntoConstraints = false
-        footerBar.addSubview(prevButton)
-        footerBar.addSubview(nextButton)
-        NSLayoutConstraint.activate([
-            prevButton.leadingAnchor.constraint(equalTo: footerBar.leadingAnchor, constant: 12),
-            prevButton.centerYAnchor.constraint(equalTo: footerBar.centerYAnchor),
-            nextButton.trailingAnchor.constraint(equalTo: footerBar.trailingAnchor, constant: -12),
-            nextButton.centerYAnchor.constraint(equalTo: footerBar.centerYAnchor),
-            nextButton.widthAnchor.constraint(equalToConstant: 96),
-            footerBar.heightAnchor.constraint(equalToConstant: 44),
-        ])
-
         // 状态条
         statusBar.kind = .control
         statusBar.translatesAutoresizingMaskIntoConstraints = false
@@ -1550,7 +1535,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         view.addSubview(header)
         view.addSubview(rail)
         view.addSubview(contentContainer)
-        view.addSubview(footerBar)
         view.addSubview(statusBar)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: view.topAnchor),
@@ -1559,20 +1543,16 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
             rail.topAnchor.constraint(equalTo: header.bottomAnchor),
             rail.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            rail.bottomAnchor.constraint(equalTo: footerBar.topAnchor),
+            rail.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
 
             contentContainer.topAnchor.constraint(equalTo: header.bottomAnchor),
             contentContainer.leadingAnchor.constraint(equalTo: rail.trailingAnchor),
             contentContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            contentContainer.bottomAnchor.constraint(equalTo: footerBar.topAnchor),
-
-            footerBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            footerBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            footerBar.topAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            contentContainer.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
 
             statusBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             statusBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            statusBar.topAnchor.constraint(equalTo: footerBar.bottomAnchor),
+            statusBar.topAnchor.constraint(equalTo: contentContainer.bottomAnchor),
             statusBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
@@ -1627,26 +1607,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         projectNameField.widthAnchor.constraint(equalToConstant: 150).isActive = true
         dirButton.widthAnchor.constraint(equalToConstant: 96).isActive = true
 
-        // 预设（卡片式按钮）
-        let presetLabel = NSTextField(labelWithString: L10n.tr("scaffold.presetTitle"))
-        presetLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        let presetRow = NSStackView()
-        presetRow.orientation = .horizontal
-        presetRow.spacing = 8
-        presetRow.translatesAutoresizingMaskIntoConstraints = false
-        let presets = ScaffoldPreset.all
-        for (idx, preset) in presets.enumerated() {
-            let b = NSButton(title: presetTitle(preset.id), target: self, action: #selector(presetTapped(_:)))
-            b.tag = idx
-            b.bezelStyle = .rounded
-            b.controlSize = .regular
-            b.font = .systemFont(ofSize: 12)
-            b.translatesAutoresizingMaskIntoConstraints = false
-            presetRow.addArrangedSubview(b)
-            presetButtons.append(b)
-        }
-
-        let stack = NSStackView(views: [title, subtitle, fieldRow, targetRootLabel, presetLabel, presetRow])
+        let stack = NSStackView(views: [title, subtitle, fieldRow, targetRootLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -1677,6 +1638,27 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         stagesHeader.font = .systemFont(ofSize: 13, weight: .medium)
         stagesHeader.translatesAutoresizingMaskIntoConstraints = false
 
+        // 按目的预设（快捷勾选，不影响自由组合）
+        let presetLabel = NSTextField(labelWithString: L10n.tr("scaffold.presetTitle"))
+        presetLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        presetLabel.textColor = .secondaryLabelColor
+        presetLabel.translatesAutoresizingMaskIntoConstraints = false
+        let presetRow = NSStackView()
+        presetRow.orientation = .horizontal
+        presetRow.spacing = 8
+        presetRow.translatesAutoresizingMaskIntoConstraints = false
+        let presets = ScaffoldPreset.all
+        for (idx, preset) in presets.enumerated() {
+            let b = NSButton(title: presetTitle(preset.id), target: self, action: #selector(presetTapped(_:)))
+            b.tag = idx
+            b.bezelStyle = .rounded
+            b.controlSize = .regular
+            b.font = .systemFont(ofSize: 12)
+            b.translatesAutoresizingMaskIntoConstraints = false
+            presetRow.addArrangedSubview(b)
+            presetButtons.append(b)
+        }
+
         stageStack.orientation = .vertical
         stageStack.alignment = .width
         stageStack.spacing = 10
@@ -1695,12 +1677,20 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         let v = NSView()
         v.translatesAutoresizingMaskIntoConstraints = false
         v.addSubview(stagesHeader)
+        v.addSubview(presetLabel)
+        v.addSubview(presetRow)
         v.addSubview(stageScroll)
         NSLayoutConstraint.activate([
             stagesHeader.topAnchor.constraint(equalTo: v.topAnchor, constant: 14),
             stagesHeader.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 16),
             stagesHeader.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -16),
-            stageScroll.topAnchor.constraint(equalTo: stagesHeader.bottomAnchor, constant: 8),
+            presetLabel.topAnchor.constraint(equalTo: stagesHeader.bottomAnchor, constant: 10),
+            presetLabel.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 16),
+            presetLabel.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -16),
+            presetRow.topAnchor.constraint(equalTo: presetLabel.bottomAnchor, constant: 6),
+            presetRow.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 16),
+            presetRow.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -16),
+            stageScroll.topAnchor.constraint(equalTo: presetRow.bottomAnchor, constant: 10),
             stageScroll.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 12),
             stageScroll.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -12),
             stageScroll.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -8),
@@ -1880,6 +1870,9 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         stagesStepView?.isHidden = step != .stages
         paramsStepView?.isHidden = step != .params
         previewStepView?.isHidden = step != .preview
+        // 进入滚动步骤时回到顶部（布局完成后滚动，避免停留在底部）
+        if step == .stages { scrollToTop(stageScroll) }
+        if step == .params { scrollToTop(paramsScroll) }
         updateStepRail()
         updateFooter()
     }
@@ -1938,7 +1931,11 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             let titleLabel = NSTextField(labelWithString: L10n.tr("scaffold.stageCategory.\(cat)"))
             titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
             titleLabel.textColor = .secondaryLabelColor
+            titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            titleLabel.translatesAutoresizingMaskIntoConstraints = false
+            // 先加入 stack 再激活宽度约束（约束需共同祖先）
             stageStack.addArrangedSubview(titleLabel)
+            titleLabel.widthAnchor.constraint(equalTo: stageStack.widthAnchor).isActive = true
             for stage in stages {
                 let editor = StageEditor(stage: stage) { [weak self] in
                     self?.toggleStage(stage.id)
@@ -1960,6 +1957,15 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             err.font = .systemFont(ofSize: 12)
             err.textColor = .systemOrange
             stageStack.addArrangedSubview(err)
+        }
+        scrollToTop(stageScroll)
+    }
+
+    /// 布局完成后把滚动容器滚到文档顶部（文档 frame 原点可能为负，需按 minY 滚动）。
+    private func scrollToTop(_ scroll: NSScrollView) {
+        DispatchQueue.main.async {
+            guard let doc = scroll.documentView else { return }
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: doc.frame.minY))
         }
     }
 
@@ -2007,6 +2013,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.message = L10n.tr("scaffold.pickDirMessage")
         if let last = UserDefaults.standard.string(forKey: Self.lastDirKey), FileManager.default.fileExists(atPath: last) {
@@ -2081,9 +2088,13 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     private func updateTargetRootLabel(_ p: ScaffoldPlan.Result) {
         if p.targetRoot.isEmpty {
-            targetRootLabel.stringValue = L10n.tr("scaffold.targetRoot")
+            if parentDir.isEmpty {
+                targetRootLabel.stringValue = L10n.tr("scaffold.willCreateDir") + ": " + L10n.tr("scaffold.willCreateDirHint")
+            } else {
+                targetRootLabel.stringValue = L10n.tr("scaffold.willCreateDir") + ": " + parentDir + "/<" + L10n.tr("scaffold.projectName") + ">"
+            }
         } else {
-            targetRootLabel.stringValue = L10n.tr("scaffold.targetRoot") + ": " + p.targetRoot
+            targetRootLabel.stringValue = L10n.tr("scaffold.willCreateDir") + ": " + p.targetRoot
         }
     }
 
