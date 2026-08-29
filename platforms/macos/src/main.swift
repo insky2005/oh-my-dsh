@@ -424,6 +424,19 @@ enum L10n {
         "scaffold.catalogEmpty": ("未找到环节库（内置或 DSH_SCAFFOLD_STAGES）", "No stage library found (built-in or DSH_SCAFFOLD_STAGES)"),
         "scaffold.catalogErrors": ("环节库加载警告：%@", "Stage library warnings: %@"),
         "scaffold.settingsBackup": ("脚手架：覆盖冲突前备份", "Scaffold: back up conflicts before overwrite"),
+        // scaffold 向导 UI
+        "scaffold.step.target": ("目标与位置", "Target & location"),
+        "scaffold.step.stages": ("选择环节", "Choose stages"),
+        "scaffold.step.params": ("参数配置", "Parameters"),
+        "scaffold.step.preview": ("预览与生成", "Preview & generate"),
+        "scaffold.prev": ("上一步", "Back"),
+        "scaffold.next": ("下一步", "Next"),
+        "scaffold.targetHint": ("给项目起名并选择存放位置，可一键套用预设组合。", "Name the project, pick a location — or apply a preset."),
+        "scaffold.presetTitle": ("按目的预设 / Presets", "按目的预设 / Presets"),
+        "scaffold.stagesHeader": ("环节（可多选）", "Stages (multi-select)"),
+        "scaffold.stagesSelected": ("已选 %d 个", "%d selected"),
+        "scaffold.paramsHeader": ("所选环节的参数 / Stage parameters", "所选环节的参数 / Stage parameters"),
+        "scaffold.paramsEmpty": ("尚未选择环节——先到「选择环节」勾选卡片", "No stages selected — pick some cards in “Choose stages”"),
     ]
 
     /// Localize a key, optionally filling %@ / %d placeholders.

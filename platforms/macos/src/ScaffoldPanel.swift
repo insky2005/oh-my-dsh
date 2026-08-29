@@ -1006,11 +1006,10 @@ struct ScaffoldPreset {
     static let all: [ScaffoldPreset] = [backend, fullstack, foundation]
 }
 
-// MARK: - Scaffold 面板
+// MARK: - Scaffold 面板（M1.1 UI 优化：向导式时间线 + 卡片环节 + tree 预览）
 
 /// 面板根视图。镜像 WikiRootView/TerminalRootView 的 layer 合成规避约定
-/// （docs/terminal-header-fix.md）：isOpaque=false 强制每个子视图独立合成，
-/// 避免不透明内容视图的背景漏到头部按钮上。
+/// （docs/terminal-header-fix.md）：isOpaque=false 强制每个子视图独立合成。
 final class ScaffoldRootView: NSView {
     override var isOpaque: Bool { false }
     override func setFrameSize(_ newSize: NSSize) {
@@ -1029,64 +1028,335 @@ final class ScaffoldRootView: NSView {
     }
 }
 
-/// 环节列表中的一行：checkbox + 名称 + 描述 + （勾选后展开的）参数表单。
-private final class ScaffoldStageRow {
+/// 步骤时间线条目（数字徽标 + 标题，可点击）。
+private final class ScaffoldStepItem: NSView {
+    enum State { case idle, current, done, error }
+    var state: State = .idle { didSet { needsDisplay = true } }
+    let number: Int
+    let title: String
+    var onAction: (() -> Void)?
+
+    init(number: Int, title: String) {
+        self.number = number
+        self.title = title
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        heightAnchor.constraint(equalToConstant: 40).isActive = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var acceptsFirstResponder: Bool { false }
+
+    override func mouseDown(with event: NSEvent) {
+        onAction?()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        // 当前步骤高亮胶囊背景
+        if state == .current {
+            let bg = dark ? NSColor.controlAccentColor.withAlphaComponent(0.30)
+                          : NSColor.controlAccentColor.withAlphaComponent(0.15)
+            bg.setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 8, yRadius: 8).fill()
+        }
+        // 徽标：数字 / ✓ / ⚠
+        let badgeRect = NSRect(x: 12, y: (bounds.height - 22) / 2, width: 22, height: 22)
+        let badgeColor: NSColor
+        switch state {
+        case .idle: badgeColor = dark ? NSColor(white: 0.42, alpha: 1) : NSColor(white: 0.62, alpha: 1)
+        case .current: badgeColor = NSColor.controlAccentColor
+        case .done: badgeColor = NSColor.systemGreen
+        case .error: badgeColor = NSColor.systemRed
+        }
+        badgeColor.setFill()
+        NSBezierPath(ovalIn: badgeRect).fill()
+        let textColor = NSColor.white
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12, weight: .bold), .foregroundColor: textColor]
+        var glyph: NSString
+        switch state {
+        case .done: glyph = "✓"
+        case .error: glyph = "!"
+        default: glyph = "\(number)" as NSString
+        }
+        let size = glyph.size(withAttributes: attrs)
+        glyph.draw(at: NSPoint(x: badgeRect.midX - size.width / 2, y: badgeRect.midY - size.height / 2), withAttributes: attrs)
+
+        // 标题
+        let titleColor: NSColor
+        switch state {
+        case .idle: titleColor = dark ? NSColor(white: 0.72, alpha: 1) : NSColor(white: 0.45, alpha: 1)
+        case .current: titleColor = dark ? NSColor(white: 0.95, alpha: 1) : NSColor(white: 0.12, alpha: 1)
+        case .done: titleColor = dark ? NSColor(white: 0.8, alpha: 1) : NSColor(white: 0.3, alpha: 1)
+        case .error: titleColor = NSColor.systemRed
+        }
+        let tAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: titleColor]
+        let tSize = (title as NSString).size(withAttributes: tAttrs)
+        (title as NSString).draw(at: NSPoint(x: 46, y: (bounds.height - tSize.height) / 2), withAttributes: tAttrs)
+    }
+}
+
+/// 卡片勾选徽标（○ / ✓）。
+private final class ScaffoldBadge: NSView {
+    var isChecked = false { didSet { needsDisplay = true } }
+    override var isOpaque: Bool { false }
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let rect = bounds.insetBy(dx: 2, dy: 2)
+        let color: NSColor = isChecked ? NSColor.controlAccentColor
+                                       : (dark ? NSColor(white: 0.55, alpha: 1) : NSColor(white: 0.65, alpha: 1))
+        color.setStroke()
+        let circle = NSBezierPath(ovalIn: rect)
+        circle.lineWidth = 1.5
+        circle.stroke()
+        if isChecked {
+            color.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            let check = NSBezierPath()
+            check.move(to: NSPoint(x: rect.minX + 4.5, y: rect.midY))
+            check.line(to: NSPoint(x: rect.midX - 1, y: rect.maxY - 4))
+            check.line(to: NSPoint(x: rect.maxX - 3, y: rect.minY + 4))
+            check.lineWidth = 2
+            NSColor.white.setStroke()
+            check.stroke()
+        }
+    }
+}
+
+/// 环节卡片：点击整卡切换选中，右侧勾选徽标 + 名称 + 描述。
+private final class ScaffoldStageCard: NSView {
     let stage: ScaffoldStage
-    let checkbox: NSButton
-    let nameLabel: HeaderLabel
-    let descLabel: HeaderLabel
+    var onToggle: (() -> Void)?
+    var isSelected = false {
+        didSet {
+            needsDisplay = true
+            badge.isChecked = isSelected
+        }
+    }
+    private let badge = ScaffoldBadge()
+    private let nameLabel: NSTextField
+    private let descLabel: NSTextField
+
+    init(stage: ScaffoldStage) {
+        self.stage = stage
+        nameLabel = NSTextField(labelWithString: stage.name)
+        nameLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        descLabel = NSTextField(labelWithString: stage.desc)
+        descLabel.font = .systemFont(ofSize: 12)
+        descLabel.textColor = .secondaryLabelColor
+        descLabel.lineBreakMode = .byTruncatingTail
+        descLabel.maximumNumberOfLines = 2
+        descLabel.translatesAutoresizingMaskIntoConstraints = false
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(badge)
+        addSubview(nameLabel)
+        addSubview(descLabel)
+        NSLayoutConstraint.activate([
+            badge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            badge.centerYAnchor.constraint(equalTo: centerYAnchor),
+            badge.widthAnchor.constraint(equalToConstant: 22),
+            badge.heightAnchor.constraint(equalToConstant: 22),
+            nameLabel.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 12),
+            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -14),
+            descLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            descLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
+            descLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -14),
+            descLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -12),
+        ])
+        heightAnchor.constraint(greaterThanOrEqualToConstant: 62).isActive = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var acceptsFirstResponder: Bool { false }
+    override func mouseDown(with event: NSEvent) { onToggle?() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let bg: NSColor = isSelected
+            ? (dark ? NSColor.controlAccentColor.withAlphaComponent(0.30) : NSColor.controlAccentColor.withAlphaComponent(0.14))
+            : (dark ? NSColor(white: 0.22, alpha: 1) : NSColor(white: 0.97, alpha: 1))
+        bg.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10).fill()
+        let border: NSColor = isSelected ? NSColor.controlAccentColor : NSColor.separatorColor
+        border.setStroke()
+        let p = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
+        p.lineWidth = isSelected ? 1.5 : 1
+        p.stroke()
+    }
+}
+
+/// 环节编辑单元：卡片（步骤 2）+ 参数控件栈（步骤 3）。
+private final class StageEditor {
+    let stage: ScaffoldStage
+    let card: ScaffoldStageCard
     let paramsStack: NSStackView
-    /// 控件：string → NSTextField / select → NSPopUpButton / bool → NSButton
     var stringControls: [String: NSTextField] = [:]
     var selectControls: [String: NSPopUpButton] = [:]
     var boolControls: [String: NSButton] = [:]
 
-    init(stage: ScaffoldStage) {
+    init(stage: ScaffoldStage, onToggle: @escaping () -> Void) {
         self.stage = stage
-        checkbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
-        checkbox.identifier = NSUserInterfaceItemIdentifier(stage.id)
-        checkbox.toolTip = stage.name
-        nameLabel = HeaderLabel()
-        nameLabel.text = stage.name
-        descLabel = HeaderLabel()
-        descLabel.text = stage.desc
+        card = ScaffoldStageCard(stage: stage)
+        card.onToggle = onToggle
         paramsStack = NSStackView()
         paramsStack.orientation = .vertical
         paramsStack.alignment = .leading
-        paramsStack.spacing = 4
-        paramsStack.edgeInsets = NSEdgeInsets(top: 2, left: 24, bottom: 4, right: 4)
-        paramsStack.isHidden = true
+        paramsStack.spacing = 10
+        paramsStack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+
+        for param in stage.params {
+            let label = NSTextField(labelWithString: param.label)
+            label.font = .systemFont(ofSize: 12)
+            label.textColor = .secondaryLabelColor
+            let controlRow = NSStackView(views: [label])
+            controlRow.orientation = .horizontal
+            controlRow.spacing = 10
+            controlRow.alignment = .centerY
+
+            let currentValue = param.defaultValue
+            if param.type == "bool" {
+                let cb = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+                cb.identifier = NSUserInterfaceItemIdentifier("\(stage.id).\(param.key)")
+                cb.state = ScaffoldTemplateRenderer.isTruthy(currentValue) ? .on : .off
+                boolControls[param.key] = cb
+                controlRow.addArrangedSubview(cb)
+            } else if param.type == "select" {
+                let pop = NSPopUpButton(frame: .zero, pullsDown: false)
+                pop.addItems(withTitles: param.options)
+                if let idx = param.options.firstIndex(of: currentValue) {
+                    pop.selectItem(at: idx)
+                }
+                pop.controlSize = .regular
+                pop.font = .systemFont(ofSize: 12)
+                pop.identifier = NSUserInterfaceItemIdentifier("\(stage.id).\(param.key)")
+                selectControls[param.key] = pop
+                controlRow.addArrangedSubview(pop)
+            } else {
+                let field = NSTextField(string: currentValue)
+                field.font = .systemFont(ofSize: 13)
+                field.controlSize = .regular
+                field.identifier = NSUserInterfaceItemIdentifier("\(stage.id).\(param.key)")
+                field.translatesAutoresizingMaskIntoConstraints = false
+                field.widthAnchor.constraint(equalToConstant: 220).isActive = true
+                stringControls[param.key] = field
+                controlRow.addArrangedSubview(field)
+            }
+            paramsStack.addArrangedSubview(controlRow)
+        }
+    }
+
+    /// 用给定值同步控件显示（预设 / 重置时）。
+    func syncControls(values: [String: String]) {
+        for (key, field) in stringControls {
+            field.stringValue = values[key] ?? stage.params.first(where: { $0.key == key })?.defaultValue ?? ""
+        }
+        for (key, pop) in selectControls {
+            let val = values[key] ?? stage.params.first(where: { $0.key == key })?.defaultValue ?? ""
+            if let idx = stage.params.first(where: { $0.key == key })?.options.firstIndex(of: val) {
+                pop.selectItem(at: idx)
+            }
+        }
+        for (key, cb) in boolControls {
+            let val = values[key] ?? stage.params.first(where: { $0.key == key })?.defaultValue ?? ""
+            cb.state = ScaffoldTemplateRenderer.isTruthy(val) ? .on : .off
+        }
+    }
+
+    /// 从控件读出当前值（供 params 字典）。
+    func collectValues() -> [String: String] {
+        var out: [String: String] = [:]
+        for (k, v) in stringControls { out[k] = v.stringValue }
+        for (k, v) in selectControls { out[k] = v.selectedItem?.title ?? "" }
+        for (k, v) in boolControls { out[k] = (v.state == .on) ? "true" : "false" }
+        return out
     }
 }
 
-final class ScaffoldPanelController: NSObject {
+/// 文件清单树节点。
+private final class FileTreeNode {
+    let name: String
+    let fullPath: String
+    var isDirectory: Bool
+    var children: [FileTreeNode] = []
+    var conflictStages: [String] = []
+    init(name: String, fullPath: String, isDirectory: Bool) {
+        self.name = name
+        self.fullPath = fullPath
+        self.isDirectory = isDirectory
+    }
+}
+
+final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
     /// 根视图，由 setRightPanel 直接挂载为右侧面板。
     let view = ScaffoldRootView()
     var onRequestHide: (() -> Void)?
     /// 提供 dsh web 端口（M3 深化门控预留）。
     var serverPortProvider: (() -> Int)?
-    static let minWidth: CGFloat = 320
+    static let minWidth: CGFloat = 400
+
+    // MARK: 步骤
+
+    private enum Step: Int, CaseIterable {
+        case target = 1, stages = 2, params = 3, preview = 4
+        var titleKey: String {
+            switch self {
+            case .target: return "scaffold.step.target"
+            case .stages: return "scaffold.step.stages"
+            case .params: return "scaffold.step.params"
+            case .preview: return "scaffold.step.preview"
+            }
+        }
+    }
+    private var currentStep: Step = .target
 
     // MARK: 子视图
 
-    private let headerTitle = HeaderLabel()
+    private let headerTitle = NSTextField(labelWithString: "")
     private var openButton: CustomIconButton!
     private var finderButton: CustomIconButton!
-    private var generateButton: NSButton!
     private var hideButton: CustomIconButton!
 
+    private let railStack = NSStackView()
+    private var stepItems: [ScaffoldStepItem] = []
+
+    private let contentContainer = NSView()
+    private var targetStepView: NSView!
+    private var stagesStepView: NSView!
+    private var paramsStepView: NSView!
+    private var previewStepView: NSView!
+
+    // 步骤 1：目标与位置
     private let projectNameField = NSTextField()
     private let dirButton = NSButton()
-    private let targetRootLabel = HeaderLabel()
+    private let targetRootLabel = NSTextField(labelWithString: "")
     private var presetButtons: [NSButton] = []
 
+    // 步骤 2：选择环节（卡片）
+    private let stagesHeader = NSTextField(labelWithString: "")
     private let stageScroll = NSScrollView()
     private let stageStack = NSStackView()
 
-    private let previewScroll = NSScrollView()
-    private let previewStack = NSStackView()
-    private let previewHeaderLabel = HeaderLabel()
+    // 步骤 3：参数配置
+    private let paramsHeader = NSTextField(labelWithString: "")
+    private let paramsScroll = NSScrollView()
+    private let paramsStack = NSStackView()
 
+    // 步骤 4：预览与生成（tree）
+    private let previewHeaderLabel = NSTextField(labelWithString: "")
+    private let messageScroll = NSScrollView()
+    private let messageStack = NSStackView()
+    private let fileScroll = NSScrollView()
+    private let fileOutline = NSOutlineView()
+    private var fileTree: FileTreeNode?
+
+    // 底部导航
+    private let footerBar = DynamicFillView()
+    private let prevButton = NSButton()
+    private let nextButton = NSButton()
+
+    // 状态条
     private let statusBar = DynamicFillView()
     private let statusLabel = HeaderLabel()
     private let statusSpinner = NSProgressIndicator()
@@ -1095,7 +1365,7 @@ final class ScaffoldPanelController: NSObject {
 
     private var catalog: [ScaffoldStage] = []
     private var catalogErrors: [String] = []
-    private var stageRows: [String: ScaffoldStageRow] = [:]
+    private var editors: [String: StageEditor] = [:]
     private var selection: [String] = []
     private var params: [String: [String: String]] = [:]
     private var projectName = ""
@@ -1146,10 +1416,11 @@ final class ScaffoldPanelController: NSObject {
         openButton?.toolTip = L10n.tr("scaffold.openDirHint")
         finderButton?.toolTip = L10n.tr("scaffold.viewInFinderHint")
         hideButton?.toolTip = L10n.tr("preview.closePanel")
-        generateButton?.title = L10n.tr("scaffold.generate")
-        headerTitle.text = L10n.tr("scaffold.title")
+        headerTitle.stringValue = L10n.tr("scaffold.title")
         rebuildPresetButtons()
+        rebuildStepRail()
         rebuildStageList()
+        rebuildParamsStep()
         refreshPlan()
     }
 
@@ -1166,7 +1437,9 @@ final class ScaffoldPanelController: NSObject {
     // MARK: UI 构建
 
     private func buildUI() {
-        headerTitle.text = L10n.tr("scaffold.title")
+        // 头部
+        headerTitle.stringValue = L10n.tr("scaffold.title")
+        headerTitle.font = .systemFont(ofSize: 14, weight: .semibold)
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
@@ -1177,14 +1450,7 @@ final class ScaffoldPanelController: NSObject {
         hideButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("preview.closePanel"))
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
 
-        generateButton = NSButton(title: L10n.tr("scaffold.generate"), target: self, action: #selector(generateTapped(_:)))
-        generateButton.bezelStyle = .rounded
-        generateButton.controlSize = .small
-        generateButton.font = .systemFont(ofSize: 11)
-        generateButton.translatesAutoresizingMaskIntoConstraints = false
-        generateButton.widthAnchor.constraint(equalToConstant: 72).isActive = true
-
-        let actions = NSStackView(views: [openButton, finderButton, generateButton, hideButton])
+        let actions = NSStackView(views: [openButton, finderButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -1195,122 +1461,65 @@ final class ScaffoldPanelController: NSObject {
         header.addSubview(headerTitle)
         header.addSubview(actions)
         NSLayoutConstraint.activate([
-            headerTitle.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
+            headerTitle.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 14),
             headerTitle.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             headerTitle.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor, constant: -8),
-            actions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
+            actions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -10),
             actions.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            header.heightAnchor.constraint(equalToConstant: 40),
+            header.heightAnchor.constraint(equalToConstant: 44),
         ])
 
-        // 目标区：项目名 / 位置 / 解析出的目标根 / 预设
-        let targetArea = DynamicFillView()
-        targetArea.kind = .window
-        targetArea.translatesAutoresizingMaskIntoConstraints = false
-        targetArea.wantsLayer = true
-        targetArea.layer?.masksToBounds = true
-
-        let projectLabel = HeaderLabel()
-        projectLabel.text = L10n.tr("scaffold.projectName")
-        projectNameField.placeholderString = L10n.tr("scaffold.projectNamePlaceholder")
-        projectNameField.font = .systemFont(ofSize: 11)
-        projectNameField.controlSize = .small
-        projectNameField.target = self
-        projectNameField.action = #selector(projectNameChanged(_:))
-        projectNameField.translatesAutoresizingMaskIntoConstraints = false
-
-        let dirLabel = HeaderLabel()
-        dirLabel.text = L10n.tr("scaffold.parentDir")
-        dirButton.title = L10n.tr("scaffold.pickDir")
-        dirButton.bezelStyle = .rounded
-        dirButton.controlSize = .small
-        dirButton.font = .systemFont(ofSize: 11)
-        dirButton.target = self
-        dirButton.action = #selector(pickDirTapped(_:))
-        dirButton.translatesAutoresizingMaskIntoConstraints = false
-
-        let row1 = NSStackView(views: [projectLabel, projectNameField, dirLabel, dirButton])
-        row1.orientation = .horizontal
-        row1.spacing = 6
-        row1.alignment = .centerY
-        row1.translatesAutoresizingMaskIntoConstraints = false
-        projectNameField.widthAnchor.constraint(equalToConstant: 140).isActive = true
-        dirButton.widthAnchor.constraint(equalToConstant: 90).isActive = true
-
-        targetRootLabel.translatesAutoresizingMaskIntoConstraints = false
-        targetRootLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let presetRow = NSStackView()
-        presetRow.orientation = .horizontal
-        presetRow.spacing = 6
-        presetRow.translatesAutoresizingMaskIntoConstraints = false
-        let presets = ScaffoldPreset.all
-        for (idx, preset) in presets.enumerated() {
-            let b = NSButton(title: presetTitle(preset.id), target: self, action: #selector(presetTapped(_:)))
-            b.tag = idx
-            b.bezelStyle = .rounded
-            b.controlSize = .small
-            b.font = .systemFont(ofSize: 11)
-            b.translatesAutoresizingMaskIntoConstraints = false
-            presetRow.addArrangedSubview(b)
-            presetButtons.append(b)
-        }
-
-        targetArea.addSubview(row1)
-        targetArea.addSubview(targetRootLabel)
-        targetArea.addSubview(presetRow)
+        // 步骤时间线（左栏）
+        railStack.orientation = .vertical
+        railStack.alignment = .leading
+        railStack.spacing = 6
+        railStack.translatesAutoresizingMaskIntoConstraints = false
+        let rail = DynamicFillView()
+        rail.kind = .control
+        rail.translatesAutoresizingMaskIntoConstraints = false
+        rail.wantsLayer = true
+        rail.layer?.masksToBounds = true
+        rail.addSubview(railStack)
         NSLayoutConstraint.activate([
-            row1.topAnchor.constraint(equalTo: targetArea.topAnchor, constant: 6),
-            row1.leadingAnchor.constraint(equalTo: targetArea.leadingAnchor, constant: 10),
-            row1.trailingAnchor.constraint(lessThanOrEqualTo: targetArea.trailingAnchor, constant: -10),
-            targetRootLabel.topAnchor.constraint(equalTo: row1.bottomAnchor, constant: 4),
-            targetRootLabel.leadingAnchor.constraint(equalTo: targetArea.leadingAnchor, constant: 10),
-            targetRootLabel.trailingAnchor.constraint(lessThanOrEqualTo: targetArea.trailingAnchor, constant: -10),
-            presetRow.topAnchor.constraint(equalTo: targetRootLabel.bottomAnchor, constant: 4),
-            presetRow.leadingAnchor.constraint(equalTo: targetArea.leadingAnchor, constant: 10),
-            presetRow.trailingAnchor.constraint(lessThanOrEqualTo: targetArea.trailingAnchor, constant: -10),
-            presetRow.bottomAnchor.constraint(equalTo: targetArea.bottomAnchor, constant: -6),
+            railStack.topAnchor.constraint(equalTo: rail.topAnchor, constant: 14),
+            railStack.leadingAnchor.constraint(equalTo: rail.leadingAnchor, constant: 6),
+            railStack.trailingAnchor.constraint(equalTo: rail.trailingAnchor, constant: -6),
+            railStack.widthAnchor.constraint(equalToConstant: 148),
         ])
 
-        // 环节列表（分组滚动）
-        stageStack.orientation = .vertical
-        stageStack.alignment = .leading
-        stageStack.spacing = 2
-        stageStack.translatesAutoresizingMaskIntoConstraints = false
-        stageScroll.documentView = stageStack
-        stageScroll.hasVerticalScroller = true
-        stageScroll.autohidesScrollers = true
-        stageScroll.drawsBackground = false
-        stageScroll.translatesAutoresizingMaskIntoConstraints = false
+        // 内容区
+        contentContainer.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.wantsLayer = true
+        contentContainer.layer?.masksToBounds = true
 
-        // 预览区
-        previewStack.orientation = .vertical
-        previewStack.alignment = .leading
-        previewStack.spacing = 1
-        previewStack.translatesAutoresizingMaskIntoConstraints = false
-        previewScroll.documentView = previewStack
-        previewScroll.hasVerticalScroller = true
-        previewScroll.autohidesScrollers = true
-        previewScroll.drawsBackground = false
-        previewScroll.translatesAutoresizingMaskIntoConstraints = false
-
-        previewHeaderLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let previewBox = DynamicFillView()
-        previewBox.kind = .window
-        previewBox.translatesAutoresizingMaskIntoConstraints = false
-        previewBox.wantsLayer = true
-        previewBox.layer?.masksToBounds = true
-        previewBox.addSubview(previewHeaderLabel)
-        previewBox.addSubview(previewScroll)
+        // 底部导航
+        footerBar.kind = .window
+        footerBar.translatesAutoresizingMaskIntoConstraints = false
+        footerBar.wantsLayer = true
+        footerBar.layer?.masksToBounds = true
+        prevButton.title = L10n.tr("scaffold.prev")
+        prevButton.bezelStyle = .rounded
+        prevButton.controlSize = .regular
+        prevButton.font = .systemFont(ofSize: 12)
+        prevButton.target = self
+        prevButton.action = #selector(prevTapped(_:))
+        prevButton.translatesAutoresizingMaskIntoConstraints = false
+        nextButton.title = L10n.tr("scaffold.next")
+        nextButton.bezelStyle = .rounded
+        nextButton.controlSize = .regular
+        nextButton.font = .systemFont(ofSize: 12)
+        nextButton.target = self
+        nextButton.action = #selector(nextTapped(_:))
+        nextButton.translatesAutoresizingMaskIntoConstraints = false
+        footerBar.addSubview(prevButton)
+        footerBar.addSubview(nextButton)
         NSLayoutConstraint.activate([
-            previewHeaderLabel.topAnchor.constraint(equalTo: previewBox.topAnchor, constant: 4),
-            previewHeaderLabel.leadingAnchor.constraint(equalTo: previewBox.leadingAnchor, constant: 10),
-            previewHeaderLabel.trailingAnchor.constraint(lessThanOrEqualTo: previewBox.trailingAnchor, constant: -10),
-            previewScroll.topAnchor.constraint(equalTo: previewHeaderLabel.bottomAnchor, constant: 2),
-            previewScroll.leadingAnchor.constraint(equalTo: previewBox.leadingAnchor, constant: 6),
-            previewScroll.trailingAnchor.constraint(equalTo: previewBox.trailingAnchor, constant: -6),
-            previewScroll.bottomAnchor.constraint(equalTo: previewBox.bottomAnchor, constant: -4),
+            prevButton.leadingAnchor.constraint(equalTo: footerBar.leadingAnchor, constant: 12),
+            prevButton.centerYAnchor.constraint(equalTo: footerBar.centerYAnchor),
+            nextButton.trailingAnchor.constraint(equalTo: footerBar.trailingAnchor, constant: -12),
+            nextButton.centerYAnchor.constraint(equalTo: footerBar.centerYAnchor),
+            nextButton.widthAnchor.constraint(equalToConstant: 96),
+            footerBar.heightAnchor.constraint(equalToConstant: 44),
         ])
 
         // 状态条
@@ -1337,51 +1546,236 @@ final class ScaffoldPanelController: NSObject {
         ])
         statusBar.isHidden = true
 
-        let sep1 = NSBox()
-        sep1.boxType = .separator
-        sep1.translatesAutoresizingMaskIntoConstraints = false
-        let sep2 = NSBox()
-        sep2.boxType = .separator
-        sep2.translatesAutoresizingMaskIntoConstraints = false
-
         view.addSubview(header)
-        view.addSubview(targetArea)
-        view.addSubview(sep1)
-        view.addSubview(stageScroll)
-        view.addSubview(sep2)
-        view.addSubview(previewBox)
+        view.addSubview(rail)
+        view.addSubview(contentContainer)
+        view.addSubview(footerBar)
         view.addSubview(statusBar)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: view.topAnchor),
             header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
-            targetArea.topAnchor.constraint(equalTo: header.bottomAnchor),
-            targetArea.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            targetArea.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            rail.topAnchor.constraint(equalTo: header.bottomAnchor),
+            rail.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            rail.bottomAnchor.constraint(equalTo: footerBar.topAnchor),
 
-            sep1.topAnchor.constraint(equalTo: targetArea.bottomAnchor),
-            sep1.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            sep1.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            contentContainer.topAnchor.constraint(equalTo: header.bottomAnchor),
+            contentContainer.leadingAnchor.constraint(equalTo: rail.trailingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            contentContainer.bottomAnchor.constraint(equalTo: footerBar.topAnchor),
 
-            stageScroll.topAnchor.constraint(equalTo: sep1.bottomAnchor),
-            stageScroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            stageScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-
-            sep2.topAnchor.constraint(equalTo: stageScroll.bottomAnchor),
-            sep2.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            sep2.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-
-            previewBox.topAnchor.constraint(equalTo: sep2.bottomAnchor),
-            previewBox.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            previewBox.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            previewBox.heightAnchor.constraint(equalToConstant: 150),
+            footerBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            footerBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            footerBar.topAnchor.constraint(equalTo: contentContainer.bottomAnchor),
 
             statusBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             statusBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            statusBar.topAnchor.constraint(equalTo: previewBox.bottomAnchor),
+            statusBar.topAnchor.constraint(equalTo: footerBar.bottomAnchor),
             statusBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+
+        buildTargetStep()
+        buildStagesStep()
+        buildParamsStep()
+        buildPreviewStep()
+        setStep(.target)
+    }
+
+    // MARK: 步骤视图
+
+    private func buildTargetStep() {
+        let title = NSTextField(labelWithString: L10n.tr("scaffold.step.target"))
+        title.font = .systemFont(ofSize: 15, weight: .semibold)
+        let subtitle = NSTextField(labelWithString: L10n.tr("scaffold.targetHint"))
+        subtitle.font = .systemFont(ofSize: 12)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.maximumNumberOfLines = 2
+        subtitle.lineBreakMode = .byWordWrapping
+
+        let projectLabel = NSTextField(labelWithString: L10n.tr("scaffold.projectName"))
+        projectLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        projectNameField.placeholderString = L10n.tr("scaffold.projectNamePlaceholder")
+        projectNameField.font = .systemFont(ofSize: 14)
+        projectNameField.controlSize = .large
+        projectNameField.target = self
+        projectNameField.action = #selector(projectNameChanged(_:))
+        projectNameField.translatesAutoresizingMaskIntoConstraints = false
+
+        let dirLabel = NSTextField(labelWithString: L10n.tr("scaffold.parentDir"))
+        dirLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        dirButton.title = L10n.tr("scaffold.pickDir")
+        dirButton.bezelStyle = .rounded
+        dirButton.controlSize = .regular
+        dirButton.font = .systemFont(ofSize: 12)
+        dirButton.target = self
+        dirButton.action = #selector(pickDirTapped(_:))
+        dirButton.translatesAutoresizingMaskIntoConstraints = false
+
+        targetRootLabel.font = .systemFont(ofSize: 12)
+        targetRootLabel.textColor = .secondaryLabelColor
+        targetRootLabel.lineBreakMode = .byTruncatingTail
+        targetRootLabel.maximumNumberOfLines = 1
+
+        let fieldRow = NSStackView(views: [projectLabel, projectNameField, dirLabel, dirButton])
+        fieldRow.orientation = .horizontal
+        fieldRow.spacing = 10
+        fieldRow.alignment = .centerY
+        fieldRow.translatesAutoresizingMaskIntoConstraints = false
+        projectNameField.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        dirButton.widthAnchor.constraint(equalToConstant: 96).isActive = true
+
+        // 预设（卡片式按钮）
+        let presetLabel = NSTextField(labelWithString: L10n.tr("scaffold.presetTitle"))
+        presetLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        let presetRow = NSStackView()
+        presetRow.orientation = .horizontal
+        presetRow.spacing = 8
+        presetRow.translatesAutoresizingMaskIntoConstraints = false
+        let presets = ScaffoldPreset.all
+        for (idx, preset) in presets.enumerated() {
+            let b = NSButton(title: presetTitle(preset.id), target: self, action: #selector(presetTapped(_:)))
+            b.tag = idx
+            b.bezelStyle = .rounded
+            b.controlSize = .regular
+            b.font = .systemFont(ofSize: 12)
+            b.translatesAutoresizingMaskIntoConstraints = false
+            presetRow.addArrangedSubview(b)
+            presetButtons.append(b)
+        }
+
+        let stack = NSStackView(views: [title, subtitle, fieldRow, targetRootLabel, presetLabel, presetRow])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let v = NSView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: v.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: v.leadingAnchor),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -8),
+            fieldRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
+            targetRootLabel.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32),
+        ])
+        targetStepView = v
+        contentContainer.addSubview(v)
+    }
+
+    private func buildStagesStep() {
+        stagesHeader.font = .systemFont(ofSize: 13, weight: .medium)
+        stagesHeader.translatesAutoresizingMaskIntoConstraints = false
+
+        stageStack.orientation = .vertical
+        stageStack.alignment = .width
+        stageStack.spacing = 10
+        stageStack.translatesAutoresizingMaskIntoConstraints = false
+        stageScroll.documentView = stageStack
+        stageScroll.hasVerticalScroller = true
+        stageScroll.autohidesScrollers = true
+        stageScroll.drawsBackground = false
+        stageScroll.translatesAutoresizingMaskIntoConstraints = false
+
+        let v = NSView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.addSubview(stagesHeader)
+        v.addSubview(stageScroll)
+        NSLayoutConstraint.activate([
+            stagesHeader.topAnchor.constraint(equalTo: v.topAnchor, constant: 14),
+            stagesHeader.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 16),
+            stagesHeader.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -16),
+            stageScroll.topAnchor.constraint(equalTo: stagesHeader.bottomAnchor, constant: 8),
+            stageScroll.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 12),
+            stageScroll.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -12),
+            stageScroll.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -8),
+        ])
+        stagesStepView = v
+        contentContainer.addSubview(v)
+    }
+
+    private func buildParamsStep() {
+        paramsHeader.font = .systemFont(ofSize: 13, weight: .medium)
+        paramsHeader.translatesAutoresizingMaskIntoConstraints = false
+
+        paramsStack.orientation = .vertical
+        paramsStack.alignment = .width
+        paramsStack.spacing = 10
+        paramsStack.translatesAutoresizingMaskIntoConstraints = false
+        paramsScroll.documentView = paramsStack
+        paramsScroll.hasVerticalScroller = true
+        paramsScroll.autohidesScrollers = true
+        paramsScroll.drawsBackground = false
+        paramsScroll.translatesAutoresizingMaskIntoConstraints = false
+
+        let v = NSView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.addSubview(paramsHeader)
+        v.addSubview(paramsScroll)
+        NSLayoutConstraint.activate([
+            paramsHeader.topAnchor.constraint(equalTo: v.topAnchor, constant: 14),
+            paramsHeader.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 16),
+            paramsHeader.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -16),
+            paramsScroll.topAnchor.constraint(equalTo: paramsHeader.bottomAnchor, constant: 8),
+            paramsScroll.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 12),
+            paramsScroll.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -12),
+            paramsScroll.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -8),
+        ])
+        paramsStepView = v
+        contentContainer.addSubview(v)
+    }
+
+    private func buildPreviewStep() {
+        previewHeaderLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        previewHeaderLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        messageStack.orientation = .vertical
+        messageStack.alignment = .leading
+        messageStack.spacing = 3
+        messageStack.translatesAutoresizingMaskIntoConstraints = false
+        messageScroll.documentView = messageStack
+        messageScroll.hasVerticalScroller = true
+        messageScroll.autohidesScrollers = true
+        messageScroll.drawsBackground = false
+        messageScroll.translatesAutoresizingMaskIntoConstraints = false
+        messageScroll.heightAnchor.constraint(equalToConstant: 64).isActive = true
+
+        fileOutline.headerView = nil
+        let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("file"))
+        fileOutline.addTableColumn(col)
+        fileOutline.outlineTableColumn = col
+        fileOutline.dataSource = self
+        fileOutline.delegate = self
+        fileOutline.rowSizeStyle = .medium
+        fileOutline.autoresizesOutlineColumn = true
+        fileOutline.allowsMultipleSelection = false
+        fileScroll.documentView = fileOutline
+        fileScroll.hasVerticalScroller = true
+        fileScroll.autohidesScrollers = true
+        fileScroll.drawsBackground = false
+        fileScroll.translatesAutoresizingMaskIntoConstraints = false
+
+        let v = NSView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.addSubview(previewHeaderLabel)
+        v.addSubview(messageScroll)
+        v.addSubview(fileScroll)
+        NSLayoutConstraint.activate([
+            previewHeaderLabel.topAnchor.constraint(equalTo: v.topAnchor, constant: 14),
+            previewHeaderLabel.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 16),
+            previewHeaderLabel.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -16),
+            messageScroll.topAnchor.constraint(equalTo: previewHeaderLabel.bottomAnchor, constant: 6),
+            messageScroll.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 12),
+            messageScroll.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -12),
+            fileScroll.topAnchor.constraint(equalTo: messageScroll.bottomAnchor, constant: 4),
+            fileScroll.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 12),
+            fileScroll.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -12),
+            fileScroll.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -8),
+        ])
+        previewStepView = v
+        contentContainer.addSubview(v)
     }
 
     private func presetTitle(_ id: String) -> String {
@@ -1391,6 +1785,85 @@ final class ScaffoldPanelController: NSObject {
         case "foundation": return L10n.tr("scaffold.presetFoundation")
         default: return id
         }
+    }
+
+    // MARK: 步骤导航
+
+    private func rebuildStepRail() {
+        for sub in railStack.arrangedSubviews {
+            railStack.removeArrangedSubview(sub)
+            sub.removeFromSuperview()
+        }
+        stepItems.removeAll()
+        let steps = Step.allCases.sorted { $0.rawValue < $1.rawValue }
+        for step in steps {
+            let item = ScaffoldStepItem(number: step.rawValue, title: L10n.tr(step.titleKey))
+            item.onAction = { [weak self] in self?.setStep(step) }
+            railStack.addArrangedSubview(item)
+            stepItems.append(item)
+        }
+        updateStepRail()
+    }
+
+    private func updateStepRail() {
+        let targetDone = !projectName.isEmpty && !parentDir.isEmpty
+        let stagesDone = !selection.isEmpty
+        let paramsDone = (plan?.validationErrors.isEmpty ?? true)
+        let previewError = !(plan?.stageErrors.isEmpty ?? true)
+        for item in stepItems {
+            guard let step = Step(rawValue: item.number) else { continue }
+            switch step {
+            case .target:
+                item.state = (step == currentStep) ? .current : (targetDone ? .done : .idle)
+            case .stages:
+                item.state = (step == currentStep) ? .current : (stagesDone ? .done : .idle)
+            case .params:
+                if step == currentStep {
+                    item.state = paramsDone ? .current : .error
+                } else {
+                    item.state = stagesDone ? (paramsDone ? .done : .error) : .idle
+                }
+            case .preview:
+                if step == currentStep {
+                    item.state = previewError ? .error : .current
+                } else {
+                    item.state = stagesDone ? (previewError ? .error : .done) : .idle
+                }
+            }
+        }
+    }
+
+    private func setStep(_ step: Step) {
+        currentStep = step
+        targetStepView?.isHidden = step != .target
+        stagesStepView?.isHidden = step != .stages
+        paramsStepView?.isHidden = step != .params
+        previewStepView?.isHidden = step != .preview
+        updateStepRail()
+        updateFooter()
+    }
+
+    private func updateFooter() {
+        prevButton.isEnabled = currentStep != .target
+        if currentStep == .preview {
+            nextButton.title = L10n.tr("scaffold.generate")
+            nextButton.action = #selector(generateTapped(_:))
+            if let p = plan { updateGenerateEnabled(p) }
+        } else {
+            nextButton.title = L10n.tr("scaffold.next")
+            nextButton.action = #selector(nextTapped(_:))
+            nextButton.isEnabled = true
+        }
+    }
+
+    @objc private func prevTapped(_ sender: Any?) {
+        guard let prev = Step(rawValue: currentStep.rawValue - 1) else { return }
+        setStep(prev)
+    }
+
+    @objc private func nextTapped(_ sender: Any?) {
+        guard let next = Step(rawValue: currentStep.rawValue + 1) else { return }
+        setStep(next)
     }
 
     // MARK: 环节库加载与列表
@@ -1409,108 +1882,80 @@ final class ScaffoldPanelController: NSObject {
         }
     }
 
-    /// 重建环节分组列表（勾选状态保留）。
+    /// 重建环节卡片列表（按 category 分组，勾选状态保留）。
     private func rebuildStageList() {
         for sub in stageStack.arrangedSubviews {
             stageStack.removeArrangedSubview(sub)
             sub.removeFromSuperview()
         }
-        stageRows.removeAll()
+        editors.removeAll()
 
         let categories = ["foundation", "examples", "collaboration"]
         for cat in categories {
             let stages = catalog.filter { $0.category == cat }
             guard !stages.isEmpty else { continue }
-            let titleLabel = HeaderLabel()
-            titleLabel.text = L10n.tr("scaffold.stageCategory.\(cat)")
+            let titleLabel = NSTextField(labelWithString: L10n.tr("scaffold.stageCategory.\(cat)"))
+            titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+            titleLabel.textColor = .secondaryLabelColor
             stageStack.addArrangedSubview(titleLabel)
             for stage in stages {
-                let row = makeStageRow(stage)
-                stageRows[stage.id] = row
-                stageStack.addArrangedSubview(row.paramsStack)
+                let editor = StageEditor(stage: stage) { [weak self] in
+                    self?.toggleStage(stage.id)
+                }
+                editor.card.isSelected = selection.contains(stage.id)
+                editors[stage.id] = editor
+                stageStack.addArrangedSubview(editor.card)
             }
         }
-        // 无环节时提示
         if catalog.isEmpty {
-            let empty = HeaderLabel()
-            empty.text = catalogErrors.isEmpty
+            let empty = NSTextField(labelWithString: catalogErrors.isEmpty
                 ? L10n.tr("scaffold.catalogEmpty")
-                : L10n.tr("scaffold.catalogErrors", catalogErrors.joined(separator: "；"))
+                : L10n.tr("scaffold.catalogErrors", catalogErrors.joined(separator: "；")))
+            empty.font = .systemFont(ofSize: 12)
+            empty.textColor = .secondaryLabelColor
             stageStack.addArrangedSubview(empty)
         } else if !catalogErrors.isEmpty {
-            let err = HeaderLabel()
-            err.text = L10n.tr("scaffold.catalogErrors", catalogErrors.joined(separator: "；"))
+            let err = NSTextField(labelWithString: L10n.tr("scaffold.catalogErrors", catalogErrors.joined(separator: "；")))
+            err.font = .systemFont(ofSize: 12)
+            err.textColor = .systemOrange
             stageStack.addArrangedSubview(err)
         }
     }
 
-    private func makeStageRow(_ stage: ScaffoldStage) -> ScaffoldStageRow {
-        let row = ScaffoldStageRow(stage: stage)
-        row.checkbox.target = self
-        row.checkbox.action = #selector(stageChecked(_:))
-        row.checkbox.state = selection.contains(stage.id) ? .on : .off
-
-        let nameDesc = NSStackView(views: [row.nameLabel, row.descLabel])
-        nameDesc.orientation = .vertical
-        nameDesc.alignment = .leading
-        nameDesc.spacing = 0
-
-        let line = NSStackView(views: [row.checkbox, nameDesc])
-        line.orientation = .horizontal
-        line.alignment = .centerY
-        line.spacing = 4
-        line.edgeInsets = NSEdgeInsets(top: 1, left: 6, bottom: 1, right: 4)
-
-        // 参数表单
-        for param in stage.params {
-            let label = HeaderLabel()
-            label.text = param.label
-            let controlRow = NSStackView(views: [label])
-            controlRow.orientation = .horizontal
-            controlRow.spacing = 4
-            controlRow.alignment = .centerY
-
-            let currentValue = params[stage.id]?[param.key] ?? param.defaultValue
-            if param.type == "bool" {
-                let cb = NSButton(checkboxWithTitle: "", target: self, action: #selector(paramBoolChanged(_:)))
-                cb.identifier = NSUserInterfaceItemIdentifier("\(stage.id).\(param.key)")
-                cb.state = ScaffoldTemplateRenderer.isTruthy(currentValue) ? .on : .off
-                row.boolControls[param.key] = cb
-                controlRow.addArrangedSubview(cb)
-            } else if param.type == "select" {
-                let pop = NSPopUpButton(frame: .zero, pullsDown: false)
-                pop.addItems(withTitles: param.options)
-                if let idx = param.options.firstIndex(of: currentValue) {
-                    pop.selectItem(at: idx)
-                }
-                pop.controlSize = .small
-                pop.font = .systemFont(ofSize: 11)
-                pop.target = self
-                pop.action = #selector(paramSelectChanged(_:))
-                pop.identifier = NSUserInterfaceItemIdentifier("\(stage.id).\(param.key)")
-                row.selectControls[param.key] = pop
-                controlRow.addArrangedSubview(pop)
-            } else {
-                let field = NSTextField(string: currentValue)
-                field.font = .systemFont(ofSize: 11)
-                field.controlSize = .small
-                field.target = self
-                field.action = #selector(paramStringChanged(_:))
-                field.identifier = NSUserInterfaceItemIdentifier("\(stage.id).\(param.key)")
-                field.translatesAutoresizingMaskIntoConstraints = false
-                field.widthAnchor.constraint(equalToConstant: 200).isActive = true
-                row.stringControls[param.key] = field
-                controlRow.addArrangedSubview(field)
-            }
-            row.paramsStack.addArrangedSubview(controlRow)
+    /// 重建参数步骤（按选中顺序列出各环节参数卡片）。
+    private func rebuildParamsStep() {
+        for sub in paramsStack.arrangedSubviews {
+            paramsStack.removeArrangedSubview(sub)
+            sub.removeFromSuperview()
         }
-        row.paramsStack.isHidden = !(row.checkbox.state == .on)
-
-        stageStack.addArrangedSubview(line)
-        return row
+        if selection.isEmpty {
+            let empty = NSTextField(labelWithString: L10n.tr("scaffold.paramsEmpty"))
+            empty.font = .systemFont(ofSize: 12)
+            empty.textColor = .secondaryLabelColor
+            paramsStack.addArrangedSubview(empty)
+            return
+        }
+        for id in selection {
+            guard let editor = editors[id] else { continue }
+            let title = NSTextField(labelWithString: editor.stage.name)
+            title.font = .systemFont(ofSize: 14, weight: .semibold)
+            paramsStack.addArrangedSubview(title)
+            paramsStack.addArrangedSubview(editor.paramsStack)
+            paramsStack.setCustomSpacing(14, after: editor.paramsStack)
+        }
     }
 
     // MARK: 交互
+
+    private func toggleStage(_ id: String) {
+        if selection.contains(id) {
+            selection.removeAll { $0 == id }
+        } else {
+            selection.append(id)
+        }
+        editors[id]?.card.isSelected = selection.contains(id)
+        refreshPlan()
+    }
 
     @objc private func projectNameChanged(_ sender: Any?) {
         projectName = projectNameField.stringValue
@@ -1532,17 +1977,6 @@ final class ScaffoldPanelController: NSObject {
                 self?.setParentDir(url.path)
             }
         }
-    }
-
-    @objc private func stageChecked(_ sender: NSButton) {
-        guard let id = sender.identifier?.rawValue else { return }
-        if sender.state == .on {
-            if !selection.contains(id) { selection.append(id) }
-        } else {
-            selection.removeAll { $0 == id }
-        }
-        stageRows[id]?.paramsStack.isHidden = sender.state != .on
-        refreshPlan()
     }
 
     @objc private func paramStringChanged(_ sender: NSTextField) {
@@ -1582,24 +2016,9 @@ final class ScaffoldPanelController: NSObject {
                 params[sid, default: [:]][k] = v
             }
         }
-        // 同步 UI：勾选 + 参数控件
-        for (id, row) in stageRows {
-            let on = selection.contains(id)
-            row.checkbox.state = on ? .on : .off
-            row.paramsStack.isHidden = !on
-            for (key, field) in row.stringControls {
-                field.stringValue = params[id]?[key] ?? row.stage.params.first(where: { $0.key == key })?.defaultValue ?? ""
-            }
-            for (key, pop) in row.selectControls {
-                let val = params[id]?[key] ?? row.stage.params.first(where: { $0.key == key })?.defaultValue ?? ""
-                if let idx = row.stage.params.first(where: { $0.key == key })?.options.firstIndex(of: val) {
-                    pop.selectItem(at: idx)
-                }
-            }
-            for (key, cb) in row.boolControls {
-                let val = params[id]?[key] ?? row.stage.params.first(where: { $0.key == key })?.defaultValue ?? ""
-                cb.state = ScaffoldTemplateRenderer.isTruthy(val) ? .on : .off
-            }
+        for (id, editor) in editors {
+            editor.card.isSelected = selection.contains(id)
+            editor.syncControls(values: params[id] ?? [:])
         }
         refreshPlan()
     }
@@ -1612,66 +2031,165 @@ final class ScaffoldPanelController: NSObject {
                                    projectName: projectName, parentDir: parentDir)
         plan = p
         updateTargetRootLabel(p)
+        updateStagesHeader()
+        updateParamsHeader()
         rebuildPreview(p)
         updateGenerateEnabled(p)
+        updateStepRail()
     }
 
     private func updateTargetRootLabel(_ p: ScaffoldPlan.Result) {
         if p.targetRoot.isEmpty {
-            targetRootLabel.text = L10n.tr("scaffold.targetRoot")
+            targetRootLabel.stringValue = L10n.tr("scaffold.targetRoot")
         } else {
-            targetRootLabel.text = L10n.tr("scaffold.targetRoot") + ": " + p.targetRoot
+            targetRootLabel.stringValue = L10n.tr("scaffold.targetRoot") + ": " + p.targetRoot
         }
+    }
+
+    private func updateStagesHeader() {
+        stagesHeader.stringValue = selection.isEmpty
+            ? L10n.tr("scaffold.stagesHeader")
+            : L10n.tr("scaffold.stagesHeader") + "  ·  " + L10n.tr("scaffold.stagesSelected", selection.count)
+    }
+
+    private func updateParamsHeader() {
+        paramsHeader.stringValue = L10n.tr("scaffold.paramsHeader")
     }
 
     private func updateGenerateEnabled(_ p: ScaffoldPlan.Result) {
         let ready = !projectName.isEmpty && !parentDir.isEmpty && p.isValid && !isGenerating
-        generateButton?.isEnabled = ready
+        // 只有第 4 步的按钮是「生成」，才需要门控；1-3 步的「下一步」始终可点。
+        nextButton.isEnabled = (currentStep == .preview) ? ready : true
     }
 
     private func rebuildPreview(_ p: ScaffoldPlan.Result) {
-        for sub in previewStack.arrangedSubviews {
-            previewStack.removeArrangedSubview(sub)
+        // 消息区：校验错误 / 渲染错误 / 提示
+        for sub in messageStack.arrangedSubviews {
+            messageStack.removeArrangedSubview(sub)
             sub.removeFromSuperview()
         }
-
-        // 校验错误 / 渲染错误 / 提示（行内展示）
         for err in p.validationErrors {
-            let l = HeaderLabel()
-            l.text = "⚠ " + err
-            previewStack.addArrangedSubview(l)
+            let l = NSTextField(labelWithString: "⚠ " + err)
+            l.font = .systemFont(ofSize: 11)
+            l.textColor = .systemOrange
+            l.lineBreakMode = .byTruncatingTail
+            l.maximumNumberOfLines = 1
+            messageStack.addArrangedSubview(l)
         }
         for err in p.stageErrors {
-            let l = HeaderLabel()
-            l.text = "⛔ " + err
-            previewStack.addArrangedSubview(l)
+            let l = NSTextField(labelWithString: "⛔ " + err)
+            l.font = .systemFont(ofSize: 11)
+            l.textColor = .systemRed
+            l.lineBreakMode = .byTruncatingTail
+            l.maximumNumberOfLines = 1
+            messageStack.addArrangedSubview(l)
         }
         for hint in p.hints {
-            let l = HeaderLabel()
-            l.text = "💡 " + hint
-            previewStack.addArrangedSubview(l)
+            let l = NSTextField(labelWithString: "💡 " + hint)
+            l.font = .systemFont(ofSize: 11)
+            l.textColor = .secondaryLabelColor
+            l.lineBreakMode = .byTruncatingTail
+            l.maximumNumberOfLines = 1
+            messageStack.addArrangedSubview(l)
         }
+        messageScroll.isHidden = p.validationErrors.isEmpty && p.stageErrors.isEmpty && p.hints.isEmpty
 
+        // 文件树
+        fileTree = buildFileTree(p)
+        fileOutline.reloadData()
+        if let tree = fileTree, tree.children.count > 0 {
+            fileOutline.expandItem(tree)
+        }
         if selection.isEmpty {
-            previewHeaderLabel.text = L10n.tr("scaffold.previewEmpty")
-            return
+            previewHeaderLabel.stringValue = L10n.tr("scaffold.previewEmpty")
+            fileScroll.isHidden = true
+        } else {
+            previewHeaderLabel.stringValue = L10n.tr("scaffold.previewCount", p.entries.count)
+            fileScroll.isHidden = false
         }
-        guard !p.validationErrors.isEmpty || !p.stageErrors.isEmpty || !p.entries.isEmpty else {
-            previewHeaderLabel.text = L10n.tr("scaffold.previewEmpty")
-            return
-        }
+    }
 
-        previewHeaderLabel.text = L10n.tr("scaffold.previewCount", p.entries.count)
-        let conflictPaths = Set(p.conflicts.map { $0.path })
-        for entry in p.entries {
-            let l = HeaderLabel()
-            if conflictPaths.contains(entry.path), let conflict = p.conflicts.first(where: { $0.path == entry.path }) {
-                l.text = "🔶 " + entry.path + "  " + L10n.tr("scaffold.conflictDetail", conflict.stageIds.joined(separator: "→"))
-            } else {
-                l.text = "• " + entry.path
+    private func buildFileTree(_ p: ScaffoldPlan.Result) -> FileTreeNode? {
+        guard !p.entries.isEmpty else { return nil }
+        let root = FileTreeNode(name: p.projectSlug, fullPath: "", isDirectory: true)
+        var conflictByPath: [String: [String]] = [:]
+        for c in p.conflicts { conflictByPath[c.path] = c.stageIds }
+        for e in p.entries {
+            let comps = e.path.split(separator: "/").map(String.init)
+            var node = root
+            var path = ""
+            for (i, comp) in comps.enumerated() {
+                path = path.isEmpty ? comp : path + "/" + comp
+                let isDir = i < comps.count - 1
+                if let existing = node.children.first(where: { $0.name == comp }) {
+                    node = existing
+                } else {
+                    let child = FileTreeNode(name: comp, fullPath: path, isDirectory: isDir)
+                    node.children.append(child)
+                    node = child
+                }
             }
-            previewStack.addArrangedSubview(l)
+            node.isDirectory = false
+            if let stages = conflictByPath[e.path] {
+                node.conflictStages = stages
+            }
         }
+        func sort(_ n: FileTreeNode) {
+            n.children.sort { a, b in
+                if a.isDirectory != b.isDirectory { return a.isDirectory && !b.isDirectory }
+                return a.name < b.name
+            }
+            for c in n.children { sort(c) }
+        }
+        sort(root)
+        return root
+    }
+
+    // MARK: NSOutlineView
+
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        if let node = item as? FileTreeNode { return node.children.count }
+        return fileTree == nil ? 0 : 1
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        if let node = item as? FileTreeNode { return node.children[index] }
+        return fileTree!
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        (item as? FileTreeNode)?.isDirectory ?? false
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+        guard let node = item as? FileTreeNode else { return nil }
+        let cellID = NSUserInterfaceItemIdentifier("fileCell")
+        let cell = outlineView.makeView(withIdentifier: cellID, owner: self) as? NSTableCellView ?? NSTableCellView()
+        cell.identifier = cellID
+        let label: NSTextField
+        if let tf = cell.textField {
+            label = tf
+        } else {
+            label = NSTextField(labelWithString: "")
+            label.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
+                label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+            cell.textField = label
+        }
+        label.font = .systemFont(ofSize: 12)
+        let icon = node.isDirectory ? "📁 " : "📄 "
+        if node.conflictStages.isEmpty {
+            label.stringValue = icon + node.name
+            label.textColor = .labelColor
+        } else {
+            label.stringValue = icon + node.name + "  🔶 " + L10n.tr("scaffold.conflictDetail", node.conflictStages.joined(separator: "→"))
+            label.textColor = .systemOrange
+        }
+        return cell
     }
 
     // MARK: 生成
