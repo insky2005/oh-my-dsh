@@ -1197,29 +1197,30 @@ private final class ScaffoldStageCard: NSView {
 private final class StageEditor {
     let stage: ScaffoldStage
     let card: ScaffoldStageCard
-    let paramsStack: NSStackView
+    /// 参数控件行（扁平，直接挂到参数步骤的文档 stack，避免嵌套 stack 塌陷）。
+    var paramRows: [NSView] = []
     var stringControls: [String: NSTextField] = [:]
     var selectControls: [String: NSPopUpButton] = [:]
     var boolControls: [String: NSButton] = [:]
+    var radioGroups: [String: [NSButton]] = [:]
 
     init(stage: ScaffoldStage, onToggle: @escaping () -> Void) {
         self.stage = stage
         card = ScaffoldStageCard(stage: stage)
         card.onToggle = onToggle
-        paramsStack = NSStackView()
-        paramsStack.orientation = .vertical
-        paramsStack.alignment = .leading
-        paramsStack.spacing = 10
-        paramsStack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
 
         for param in stage.params {
-            let label = NSTextField(labelWithString: param.label)
+            let isRequired = !param.validate.isEmpty
+            let label = NSTextField(labelWithString: isRequired ? param.label + " *" : param.label)
             label.font = .systemFont(ofSize: 12)
-            label.textColor = .secondaryLabelColor
+            label.textColor = isRequired ? .systemRed : .secondaryLabelColor
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
             let controlRow = NSStackView(views: [label])
             controlRow.orientation = .horizontal
             controlRow.spacing = 10
             controlRow.alignment = .centerY
+            controlRow.translatesAutoresizingMaskIntoConstraints = false
 
             let currentValue = param.defaultValue
             if param.type == "bool" {
@@ -1229,16 +1230,36 @@ private final class StageEditor {
                 boolControls[param.key] = cb
                 controlRow.addArrangedSubview(cb)
             } else if param.type == "select" {
-                let pop = NSPopUpButton(frame: .zero, pullsDown: false)
-                pop.addItems(withTitles: param.options)
-                if let idx = param.options.firstIndex(of: currentValue) {
-                    pop.selectItem(at: idx)
+                if param.options.count < 5 {
+                    // 选项少于 5 个 → radio 组（比下拉更直观）
+                    let radios = param.options.enumerated().map { idx, opt -> NSButton in
+                        let b = NSButton(radioButtonWithTitle: opt, target: nil, action: nil)
+                        b.identifier = NSUserInterfaceItemIdentifier("\(stage.id).\(param.key)")
+                        b.tag = idx
+                        b.font = .systemFont(ofSize: 12)
+                        return b
+                    }
+                    if let idx = param.options.firstIndex(of: currentValue) {
+                        radios[idx].state = .on
+                    }
+                    radioGroups["\(stage.id).\(param.key)"] = radios
+                    let row = NSStackView(views: radios)
+                    row.orientation = .horizontal
+                    row.spacing = 12
+                    row.translatesAutoresizingMaskIntoConstraints = false
+                    controlRow.addArrangedSubview(row)
+                } else {
+                    let pop = NSPopUpButton(frame: .zero, pullsDown: false)
+                    pop.addItems(withTitles: param.options)
+                    if let idx = param.options.firstIndex(of: currentValue) {
+                        pop.selectItem(at: idx)
+                    }
+                    pop.controlSize = .regular
+                    pop.font = .systemFont(ofSize: 12)
+                    pop.identifier = NSUserInterfaceItemIdentifier("\(stage.id).\(param.key)")
+                    selectControls[param.key] = pop
+                    controlRow.addArrangedSubview(pop)
                 }
-                pop.controlSize = .regular
-                pop.font = .systemFont(ofSize: 12)
-                pop.identifier = NSUserInterfaceItemIdentifier("\(stage.id).\(param.key)")
-                selectControls[param.key] = pop
-                controlRow.addArrangedSubview(pop)
             } else {
                 let field = NSTextField(string: currentValue)
                 field.font = .systemFont(ofSize: 13)
@@ -1247,9 +1268,26 @@ private final class StageEditor {
                 field.translatesAutoresizingMaskIntoConstraints = false
                 field.widthAnchor.constraint(equalToConstant: 220).isActive = true
                 stringControls[param.key] = field
+                // 必填：空值时红框高亮（由 updateRequiredHighlights 维护）
+                if isRequired {
+                    field.wantsLayer = true
+                    field.layer?.cornerRadius = 4
+                    field.layer?.borderWidth = 1
+                }
                 controlRow.addArrangedSubview(field)
             }
-            paramsStack.addArrangedSubview(controlRow)
+            paramRows.append(controlRow)
+        }
+    }
+
+    /// 必填参数高亮：值为空 → 红框（label 已带红色 *）。
+    func updateRequiredHighlights(values: [String: String]) {
+        for param in stage.params where !param.validate.isEmpty {
+            let value = values[param.key] ?? ""
+            let empty = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if let field = stringControls[param.key] {
+                field.layer?.borderColor = empty ? NSColor.systemRed.cgColor : NSColor.clear.cgColor
+            }
         }
     }
 
@@ -1268,6 +1306,13 @@ private final class StageEditor {
             let val = values[key] ?? stage.params.first(where: { $0.key == key })?.defaultValue ?? ""
             cb.state = ScaffoldTemplateRenderer.isTruthy(val) ? .on : .off
         }
+        for (key, radios) in radioGroups {
+            let val = values[key] ?? stage.params.first(where: { $0.key == key })?.defaultValue ?? ""
+            for b in radios {
+                b.state = (b.title == val) ? .on : .off
+            }
+        }
+        updateRequiredHighlights(values: values)
     }
 
     /// 从控件读出当前值（供 params 字典）。
@@ -1371,6 +1416,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     private var catalog: [ScaffoldStage] = []
     private var catalogErrors: [String] = []
     private var editors: [String: StageEditor] = [:]
+    private var radioGroups: [String: [NSButton]] = [:]
     private var selection: [String] = []
     private var params: [String: [String: String]] = [:]
     private var projectName = ""
@@ -1720,6 +1766,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         paramsHeader.translatesAutoresizingMaskIntoConstraints = false
 
         paramsStack.orientation = .vertical
+        // 必须 .width：文档宽度锚定 contentView（配合 leading/trailing 约束），
+        // 若用 .leading 则文档宽度由子视图决定，与标题的 width==doc.width 形成循环约束崩塌。
         paramsStack.alignment = .width
         paramsStack.spacing = 10
         paramsStack.translatesAutoresizingMaskIntoConstraints = false
@@ -1885,6 +1933,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             scrollTopDeadline = Date().addingTimeInterval(1.0)
             handleRootLayout()
         }
+        // 参数步骤在隐藏期间布局会塌陷（嵌套行零尺寸），进入时强制重建一次
+        if step == .params { rebuildParamsStep() }
         updateStepRail()
         updateFooter()
     }
@@ -1954,6 +2004,14 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
                 }
                 editor.card.isSelected = selection.contains(stage.id)
                 editors[stage.id] = editor
+                // 接线 radio 按钮（radio 组按 stage.param 标识）
+                for (key, buttons) in editor.radioGroups {
+                    radioGroups[key] = buttons
+                    for b in buttons {
+                        b.target = self
+                        b.action = #selector(paramRadioChanged(_:))
+                    }
+                }
                 stageStack.addArrangedSubview(editor.card)
             }
         }
@@ -2008,7 +2066,19 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
                 errorsByStage[sid, default: []].append(err)
             }
         }
-        for id in selection {
+        // 与步骤 2 的展示顺序保持一致（按 category 分组 + catalog 顺序）
+        var displayOrder: [String: Int] = [:]
+        var orderIdx = 0
+        for cat in ["foundation", "examples", "collaboration"] {
+            for stage in catalog where stage.category == cat {
+                displayOrder[stage.id] = orderIdx
+                orderIdx += 1
+            }
+        }
+        let orderedSelection = selection.sorted {
+            (displayOrder[$0] ?? Int.max) < (displayOrder[$1] ?? Int.max)
+        }
+        for id in orderedSelection {
             guard let editor = editors[id] else { continue }
             let title = NSTextField(labelWithString: editor.stage.name)
             title.font = .systemFont(ofSize: 14, weight: .semibold)
@@ -2016,11 +2086,14 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             title.translatesAutoresizingMaskIntoConstraints = false
             paramsStack.addArrangedSubview(title)
             title.widthAnchor.constraint(equalTo: paramsStack.widthAnchor).isActive = true
-            paramsStack.addArrangedSubview(editor.paramsStack)
-            // 该环节的校验错误 → 红色行内提示（让步骤栏红色 ⚠ 有具体原因）
+            // 参数行扁平加入（避免嵌套 stack 塌陷）
+            for row in editor.paramRows {
+                paramsStack.addArrangedSubview(row)
+            }
+            // 该环节的校验错误 → 红色行内提示（可读文案，非 stageId.paramKey）
             if let errs = errorsByStage[id] {
                 for e in errs {
-                    let l = NSTextField(labelWithString: "⚠ " + e)
+                    let l = NSTextField(labelWithString: "⚠ " + friendlyError(e))
                     l.font = .systemFont(ofSize: 11)
                     l.textColor = .systemRed
                     l.lineBreakMode = .byWordWrapping
@@ -2031,8 +2104,34 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
                     l.widthAnchor.constraint(equalTo: paramsStack.widthAnchor).isActive = true
                 }
             }
-            paramsStack.setCustomSpacing(14, after: editor.paramsStack)
+            // 必填参数空值 → 红框高亮（值变化时也会被 rebuildParamsStep 刷新）
+            editor.updateRequiredHighlights(values: params[id] ?? [:])
+            // 环节分区间距
+            if let lastRow = editor.paramRows.last {
+                paramsStack.setCustomSpacing(14, after: lastRow)
+            }
         }
+        // 嵌套行在文档滚动视图里首轮布局会塌陷（帧陈旧），重建后强制一次额外布局
+        paramsStack.invalidateIntrinsicContentSize()
+        if currentStep == .params {
+            DispatchQueue.main.async { [weak self] in
+                self?.view.layoutSubtreeIfNeeded()
+            }
+        }
+    }
+
+    /// 把引擎错误（"stageId.paramKey: message"）转成可读文案（"环节名 · 参数标签：message"）。
+    private func friendlyError(_ raw: String) -> String {
+        guard let colon = raw.firstIndex(of: ":") else { return raw }
+        let head = String(raw[..<colon])
+        let message = String(raw[raw.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+        let parts = head.split(separator: ".").map(String.init)
+        if parts.count == 2,
+           let editor = editors[parts[0]],
+           let param = editor.stage.params.first(where: { $0.key == parts[1] }) {
+            return "\(editor.stage.name) · \(param.label)：\(message)"
+        }
+        return raw
     }
 
     // MARK: 交互
@@ -2096,6 +2195,16 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         let parts = id.split(separator: ".", maxSplits: 1).map(String.init)
         guard parts.count == 2 else { return }
         params[parts[0], default: [:]][parts[1]] = (sender.state == .on) ? "true" : "false"
+        refreshPlan()
+    }
+
+    @objc private func paramRadioChanged(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        let parts = id.split(separator: ".", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let group = radioGroups[id] else { return }
+        if let selected = group.first(where: { $0.state == .on }) {
+            params[parts[0], default: [:]][parts[1]] = selected.title
+        }
         refreshPlan()
     }
 
@@ -2170,7 +2279,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             sub.removeFromSuperview()
         }
         for err in p.validationErrors {
-            let l = NSTextField(labelWithString: "⚠ " + err)
+            let l = NSTextField(labelWithString: "⚠ " + friendlyError(err))
             l.font = .systemFont(ofSize: 11)
             l.textColor = .systemOrange
             l.lineBreakMode = .byTruncatingTail
