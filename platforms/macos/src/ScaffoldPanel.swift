@@ -1011,10 +1011,16 @@ struct ScaffoldPreset {
 /// 面板根视图。镜像 WikiRootView/TerminalRootView 的 layer 合成规避约定
 /// （docs/terminal-header-fix.md）：isOpaque=false 强制每个子视图独立合成。
 final class ScaffoldRootView: NSView {
+    /// 每次 layout 后回调（用于在布局落定后修正滚动位置）。
+    var onLayout: (() -> Void)?
     override var isOpaque: Bool { false }
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         needsLayout = true
+    }
+    override func layout() {
+        super.layout()
+        onLayout?()
     }
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -1373,6 +1379,9 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     private var lastApply: ScaffoldApplier.Result?
     private var serverReadyPort: Int?
     private var isGenerating = false
+    /// 进入滚动步骤后的置顶时间窗：窗口内每次布局都强制滚回顶部，
+    /// 避免 NSScrollView 在布局时把文档重置到错误位置（内容贴底）。
+    private var scrollTopDeadline: Date = .distantPast
 
     /// 设置键（壳层 UserDefaults，默认值见文档 7.3）。
     static let enabledKey = "scaffoldEnabled"
@@ -1388,6 +1397,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     override init() {
         super.init()
+        view.onLayout = { [weak self] in self?.handleRootLayout() }
         buildUI()
         loadCatalog()
         if let dir = ProcessInfo.processInfo.environment["DSH_SCAFFOLD_TEST_DIR"], !dir.isEmpty {
@@ -1870,9 +1880,11 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         stagesStepView?.isHidden = step != .stages
         paramsStepView?.isHidden = step != .params
         previewStepView?.isHidden = step != .preview
-        // 进入滚动步骤时回到顶部（布局完成后滚动，避免停留在底部）
-        if step == .stages { scrollToTop(stageScroll) }
-        if step == .params { scrollToTop(paramsScroll) }
+        // 进入滚动步骤：开启置顶时间窗（布局落定后由 handleRootLayout 执行）
+        if step == .stages || step == .params {
+            scrollTopDeadline = Date().addingTimeInterval(1.0)
+            handleRootLayout()
+        }
         updateStepRail()
         updateFooter()
     }
@@ -1961,12 +1973,18 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         scrollToTop(stageScroll)
     }
 
-    /// 布局完成后把滚动容器滚到文档顶部（文档 frame 原点可能为负，需按 minY 滚动）。
+    /// 根视图每次布局后的回调：时间窗内把当前滚动步骤滚回顶部。
+    private func handleRootLayout() {
+        guard Date() < scrollTopDeadline else { return }
+        if currentStep == .stages { scrollToTop(stageScroll) }
+        if currentStep == .params { scrollToTop(paramsScroll) }
+    }
+
+    /// 把滚动容器滚到文档顶部（clip bounds 原点置零）。
     private func scrollToTop(_ scroll: NSScrollView) {
-        DispatchQueue.main.async {
-            guard let doc = scroll.documentView else { return }
-            scroll.contentView.scroll(to: NSPoint(x: 0, y: doc.frame.minY))
-        }
+        let clip = scroll.contentView
+        clip.scroll(to: .zero)
+        scroll.reflectScrolledClipView(clip)
     }
 
     /// 重建参数步骤（按选中顺序列出各环节参数卡片）。
@@ -1982,12 +2000,37 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             paramsStack.addArrangedSubview(empty)
             return
         }
+        // 按环节聚合校验错误（格式 "stageId.paramKey: message"）
+        var errorsByStage: [String: [String]] = [:]
+        for err in plan?.validationErrors ?? [] {
+            if let dot = err.firstIndex(of: ".") {
+                let sid = String(err[..<dot])
+                errorsByStage[sid, default: []].append(err)
+            }
+        }
         for id in selection {
             guard let editor = editors[id] else { continue }
             let title = NSTextField(labelWithString: editor.stage.name)
             title.font = .systemFont(ofSize: 14, weight: .semibold)
+            title.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            title.translatesAutoresizingMaskIntoConstraints = false
             paramsStack.addArrangedSubview(title)
+            title.widthAnchor.constraint(equalTo: paramsStack.widthAnchor).isActive = true
             paramsStack.addArrangedSubview(editor.paramsStack)
+            // 该环节的校验错误 → 红色行内提示（让步骤栏红色 ⚠ 有具体原因）
+            if let errs = errorsByStage[id] {
+                for e in errs {
+                    let l = NSTextField(labelWithString: "⚠ " + e)
+                    l.font = .systemFont(ofSize: 11)
+                    l.textColor = .systemRed
+                    l.lineBreakMode = .byWordWrapping
+                    l.maximumNumberOfLines = 2
+                    l.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                    l.translatesAutoresizingMaskIntoConstraints = false
+                    paramsStack.addArrangedSubview(l)
+                    l.widthAnchor.constraint(equalTo: paramsStack.widthAnchor).isActive = true
+                }
+            }
             paramsStack.setCustomSpacing(14, after: editor.paramsStack)
         }
     }
@@ -2022,7 +2065,12 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         if let win = view.window {
             panel.beginSheetModal(for: win) { [weak self] response in
                 guard response == .OK, let url = panel.url else { return }
-                self?.setParentDir(url.path)
+                guard let self = self else { return }
+                // 直接选择目标目录：父目录 = 所选目录的上一级，项目名默认取所选目录
+                // 的最后一级（用户仍可修改，修改后目标目录会相应变化）。
+                self.setParentDir(url.deletingLastPathComponent().path)
+                self.projectNameField.stringValue = url.lastPathComponent
+                self.refreshPlan()
             }
         }
     }
@@ -2081,6 +2129,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         updateTargetRootLabel(p)
         updateStagesHeader()
         updateParamsHeader()
+        rebuildParamsStep()
         rebuildPreview(p)
         updateGenerateEnabled(p)
         updateStepRail()
