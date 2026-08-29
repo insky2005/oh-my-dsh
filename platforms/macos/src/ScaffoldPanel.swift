@@ -1221,6 +1221,8 @@ private final class StageEditor {
             controlRow.spacing = 10
             controlRow.alignment = .centerY
             controlRow.translatesAutoresizingMaskIntoConstraints = false
+            // 整行贴合内容宽度：文档 stack 的拉伸在此让位，参数控件靠左簇拥
+            controlRow.setContentHuggingPriority(.required, for: .horizontal)
 
             let currentValue = param.defaultValue
             if param.type == "bool" {
@@ -1241,12 +1243,21 @@ private final class StageEditor {
                     }
                     if let idx = param.options.firstIndex(of: currentValue) {
                         radios[idx].state = .on
+                    } else if let first = radios.first {
+                        first.state = .on   // 兜底：默认值不在选项中时选中第一个
                     }
                     radioGroups["\(stage.id).\(param.key)"] = radios
                     let row = NSStackView(views: radios)
                     row.orientation = .horizontal
                     row.spacing = 12
                     row.translatesAutoresizingMaskIntoConstraints = false
+                    row.setContentHuggingPriority(.required, for: .horizontal)
+                    row.setContentCompressionResistancePriority(.required, for: .horizontal)
+                    // 钉死 radio 组宽度 = fitting 尺寸，打破「行宽依赖组宽、组宽又被撑满」的循环
+                    let fitW = row.fittingSize.width
+                    if fitW > 0 {
+                        row.widthAnchor.constraint(equalToConstant: fitW).isActive = true
+                    }
                     controlRow.addArrangedSubview(row)
                 } else {
                     let pop = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -1276,14 +1287,20 @@ private final class StageEditor {
                 }
                 controlRow.addArrangedSubview(field)
             }
+            // 钉死行宽 = 内容 fitting 宽度（行内有 field/radio 时避免被文档拉伸）
+            let rowFit = controlRow.fittingSize.width
+            if rowFit > 0 {
+                controlRow.widthAnchor.constraint(equalToConstant: rowFit).isActive = true
+            }
             paramRows.append(controlRow)
         }
     }
 
-    /// 必填参数高亮：值为空 → 红框（label 已带红色 *）。
-    func updateRequiredHighlights(values: [String: String]) {
+    /// 必填参数高亮：以输入框当前值为准——值为空 → 红框（label 已带红色 *）。
+    /// 注意不能读 params 字典（只含用户改过的项），否则非空默认值会被误判为空。
+    func updateRequiredHighlights() {
         for param in stage.params where !param.validate.isEmpty {
-            let value = values[param.key] ?? ""
+            let value = stringControls[param.key]?.stringValue ?? ""
             let empty = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             if let field = stringControls[param.key] {
                 field.layer?.borderColor = empty ? NSColor.systemRed.cgColor : NSColor.clear.cgColor
@@ -1308,11 +1325,14 @@ private final class StageEditor {
         }
         for (key, radios) in radioGroups {
             let val = values[key] ?? stage.params.first(where: { $0.key == key })?.defaultValue ?? ""
+            var matched = false
             for b in radios {
-                b.state = (b.title == val) ? .on : .off
+                if b.title == val { b.state = .on; matched = true } else { b.state = .off }
             }
+            if !matched { radios.first?.state = .on }
         }
-        updateRequiredHighlights(values: values)
+        // 同步字段值（预设/重置时）后再刷新必填高亮
+        updateRequiredHighlights()
     }
 
     /// 从控件读出当前值（供 params 字典）。
@@ -1348,6 +1368,15 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     static let minWidth: CGFloat = 400
 
     // MARK: 步骤
+
+    /// 环节在工程中的先后顺序（展示与参数步骤共用；未列出的按目录序排后）。
+    private static let stageOrder: [String] = [
+        "git-init", "git-conventions", "conventions", "docs-standards", "makefile",
+        "agents-md", "ci-cd", "docker", "deploy", "repo-knowledge",
+    ]
+    private func stageIndex(_ id: String) -> Int {
+        Self.stageOrder.firstIndex(of: id) ?? Int.max
+    }
 
     private enum Step: Int, CaseIterable {
         case target = 1, stages = 2, params = 3, preview = 4
@@ -1766,9 +1795,9 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         paramsHeader.translatesAutoresizingMaskIntoConstraints = false
 
         paramsStack.orientation = .vertical
-        // 必须 .width：文档宽度锚定 contentView（配合 leading/trailing 约束），
-        // 若用 .leading 则文档宽度由子视图决定，与标题的 width==doc.width 形成循环约束崩塌。
-        paramsStack.alignment = .width
+        // .leading：行贴合内容簇拥左侧（标题/错误行有显式 width==doc 约束铺满）。
+        // 文档宽度由 leading/trailing 约束锚定 contentView，不会形成循环。
+        paramsStack.alignment = .leading
         paramsStack.spacing = 10
         paramsStack.translatesAutoresizingMaskIntoConstraints = false
         paramsScroll.documentView = paramsStack
@@ -1988,7 +2017,9 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
         let categories = ["foundation", "examples", "collaboration"]
         for cat in categories {
+            // 按工程先后顺序排列（未在 stageOrder 中的按目录序排后）
             let stages = catalog.filter { $0.category == cat }
+                .sorted { stageIndex($0.id) < stageIndex($1.id) }
             guard !stages.isEmpty else { continue }
             let titleLabel = NSTextField(labelWithString: L10n.tr("scaffold.stageCategory.\(cat)"))
             titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
@@ -2066,17 +2097,13 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
                 errorsByStage[sid, default: []].append(err)
             }
         }
-        // 与步骤 2 的展示顺序保持一致（按 category 分组 + catalog 顺序）
-        var displayOrder: [String: Int] = [:]
-        var orderIdx = 0
-        for cat in ["foundation", "examples", "collaboration"] {
-            for stage in catalog where stage.category == cat {
-                displayOrder[stage.id] = orderIdx
-                orderIdx += 1
-            }
-        }
-        let orderedSelection = selection.sorted {
-            (displayOrder[$0] ?? Int.max) < (displayOrder[$1] ?? Int.max)
+        // 与步骤 2 的展示顺序保持一致（工程先后顺序；未列出的按 catalog 顺序）
+        let orderedSelection = selection.sorted { lhs, rhs in
+            let a = stageIndex(lhs), b = stageIndex(rhs)
+            if a != b { return a < b }
+            let ia = catalog.firstIndex { $0.id == lhs } ?? 0
+            let ib = catalog.firstIndex { $0.id == rhs } ?? 0
+            return ia < ib
         }
         for id in orderedSelection {
             guard let editor = editors[id] else { continue }
@@ -2104,18 +2131,25 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
                     l.widthAnchor.constraint(equalTo: paramsStack.widthAnchor).isActive = true
                 }
             }
-            // 必填参数空值 → 红框高亮（值变化时也会被 rebuildParamsStep 刷新）
-            editor.updateRequiredHighlights(values: params[id] ?? [:])
+            // 必填参数空值 → 红框高亮（以输入框当前值为准，值变化时刷新）
+            editor.updateRequiredHighlights()
             // 环节分区间距
             if let lastRow = editor.paramRows.last {
                 paramsStack.setCustomSpacing(14, after: lastRow)
             }
         }
-        // 嵌套行在文档滚动视图里首轮布局会塌陷（帧陈旧），重建后强制一次额外布局
+        // 嵌套行在文档滚动视图里首轮布局会塌陷（帧陈旧）：重建后强制把文档帧
+        // 设为其 fitting 尺寸并再做一次布局——行按内容宽度簇拥左侧、高度正确。
         paramsStack.invalidateIntrinsicContentSize()
         if currentStep == .params {
             DispatchQueue.main.async { [weak self] in
-                self?.view.layoutSubtreeIfNeeded()
+                guard let self = self else { return }
+                let fitting = self.paramsStack.fittingSize
+                if fitting.height > 0 {
+                    let w = max(fitting.width, self.paramsScroll.contentView.bounds.width)
+                    self.paramsStack.setFrameSize(NSSize(width: w, height: fitting.height))
+                }
+                self.view.layoutSubtreeIfNeeded()
             }
         }
     }
