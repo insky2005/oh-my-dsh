@@ -13,8 +13,8 @@ params:
   - key: docsLang
     label: { zh: 文档语言, en: Docs language }
     type: select
-    options: [zh, en, bilingual]
-    default: zh
+    options: [bilingual, zh, en]
+    default: bilingual
 files:
   - path: .editorconfig
     template: templates/.editorconfig.tmpl

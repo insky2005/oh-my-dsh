@@ -12,19 +12,19 @@ params:
   - key: backendBuild
     label: { zh: 后端构建命令, en: backend build command }
     type: string
-    default: ""
+    default: "mvn -q package"
   - key: backendTest
     label: { zh: 后端测试命令, en: backend test command }
     type: string
-    default: ""
+    default: "mvn -q test"
   - key: frontendInstall
     label: { zh: 前端安装命令, en: frontend install command }
     type: string
-    default: ""
+    default: "npm ci"
   - key: frontendBuild
     label: { zh: 前端构建命令, en: frontend build command }
     type: string
-    default: ""
+    default: "npm run build"
   - key: testCmd
     label: { zh: 测试命令, en: test command }
     type: string
@@ -32,7 +32,7 @@ params:
   - key: lintCmd
     label: { zh: lint 命令, en: lint command }
     type: string
-    default: ""
+    default: "npm run lint"
 files:
   - path: Makefile
     template: templates/Makefile.tmpl
