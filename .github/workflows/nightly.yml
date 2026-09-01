@@ -17,7 +17,7 @@ jobs:
     name: nightly smoke (arm64)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Node + core tests
         # 不带引号：bash 展开 glob，兼容 Node 20（引号 glob 需 Node 21+）
         run: node --test core/tests/*.test.js
