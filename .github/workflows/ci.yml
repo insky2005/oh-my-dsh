@@ -17,7 +17,7 @@ jobs:
     name: core (Node)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           # 注意：不带引号的 glob 由 bash 展开成文件列表，避免 Node 20 不支持
@@ -33,7 +33,7 @@ jobs:
     name: prepare (CEF + node caches)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Cache CEF + node + built artifacts (.cache/)
         uses: actions/cache@v6
         with:
@@ -61,7 +61,7 @@ jobs:
           - arch: arm64
             runner: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Cache CEF tarball (.cache/)
         uses: actions/cache@v6
         with:
@@ -112,7 +112,7 @@ jobs:
           - arch: arm64
             runner: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Cache runtime + node tarballs (.cache/)
         uses: actions/cache@v6
         with:
