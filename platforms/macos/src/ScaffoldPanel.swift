@@ -1223,6 +1223,13 @@ struct ScaffoldPreset {
 /// 设置列表行内的小按钮（闭包回调，避免 @objc selector 爆破）。
 private final class ActionButton: NSButton {
     var onAction: (() -> Void)?
+    /// 工厂：AppKit 中编程创建的 NSButton 默认 translatesAutoresizingMaskIntoConstraints=true，
+    /// 必须显式关闭，否则显式约束与 autoresizing 掩码约束冲突（按钮帧错位/重叠）。
+    static func make(title: String) -> ActionButton {
+        let b = ActionButton(title: title, target: nil, action: nil)
+        b.translatesAutoresizingMaskIntoConstraints = false
+        return b
+    }
     override func mouseDown(with event: NSEvent) {
         if isEnabled { onAction?() }
     }
@@ -1305,33 +1312,33 @@ private final class StageSettingsRow: NSView {
         addSubview(nameLabel)
         addSubview(detailLabel)
 
-        let up = ActionButton(title: "↑", target: nil, action: nil)
+        let up = ActionButton.make(title: "↑")
         up.controlSize = .small
         up.bezelStyle = .rounded
         up.toolTip = L10n.tr("scaffold.moveUp")
         up.isEnabled = !isFirst
         up.onAction = { [weak self] in self?.onMoveUp?() }
 
-        let down = ActionButton(title: "↓", target: nil, action: nil)
+        let down = ActionButton.make(title: "↓")
         down.controlSize = .small
         down.bezelStyle = .rounded
         down.toolTip = L10n.tr("scaffold.moveDown")
         down.isEnabled = !isLast
         down.onAction = { [weak self] in self?.onMoveDown?() }
 
-        let restoreBtn = ActionButton(title: L10n.tr("scaffold.restoreStage"), target: nil, action: nil)
+        let restoreBtn = ActionButton.make(title: L10n.tr("scaffold.restoreStage"))
         restoreBtn.controlSize = .small
         restoreBtn.bezelStyle = .rounded
         restoreBtn.isHidden = !(stage.isCustom && isModifiedBuiltin)
         restoreBtn.onAction = { [weak self] in self?.onRestore?() }
 
-        let deleteBtn = ActionButton(title: L10n.tr("scaffold.deleteStage"), target: nil, action: nil)
+        let deleteBtn = ActionButton.make(title: L10n.tr("scaffold.deleteStage"))
         deleteBtn.controlSize = .small
         deleteBtn.bezelStyle = .rounded
         deleteBtn.isHidden = !(stage.isCustom && !isModifiedBuiltin)
         deleteBtn.onAction = { [weak self] in self?.onDelete?() }
 
-        let editBtn = ActionButton(title: L10n.tr("scaffold.editStage"), target: nil, action: nil)
+        let editBtn = ActionButton.make(title: L10n.tr("scaffold.editStage"))
         editBtn.controlSize = .small
         editBtn.bezelStyle = .rounded
         editBtn.onAction = { [weak self] in self?.onEdit?() }
@@ -1965,6 +1972,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     private let settingsTitleLabel = NSTextField(labelWithString: "")
     private let settingsScroll = NSScrollView()
     private let settingsStack = NSStackView()
+    /// 设置列表滚动 doc（重建列表后用 fittingSize 驱动文档高度，否则内容溢出区不可点击）。
+    private var settingsDoc: FlippedWorkspaceView!
     private let settingsFooterLabel = NSTextField(labelWithString: "")
     // 编辑器（YAML 文本）
     private let editorView = NSView()
@@ -3709,12 +3718,14 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         settingsHeader.kind = .window
         settingsHeader.translatesAutoresizingMaskIntoConstraints = false
         settingsTitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        settingsTitleLabel.lineBreakMode = .byTruncatingTail
+        settingsTitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         settingsTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        let backBtn = ActionButton(title: "‹ " + L10n.tr("scaffold.back"), target: nil, action: nil)
+        let backBtn = ActionButton.make(title: "‹ " + L10n.tr("scaffold.back"))
         backBtn.bezelStyle = .rounded
         backBtn.controlSize = .small
         backBtn.onAction = { [weak self] in self?.toggleSettings() }
-        let newBtn = ActionButton(title: L10n.tr("scaffold.newStage"), target: nil, action: nil)
+        let newBtn = ActionButton.make(title: L10n.tr("scaffold.newStage"))
         newBtn.bezelStyle = .rounded
         newBtn.controlSize = .small
         newBtn.onAction = { [weak self] in self?.beginNewStage() }
@@ -3726,6 +3737,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             backBtn.centerYAnchor.constraint(equalTo: settingsHeader.centerYAnchor),
             settingsTitleLabel.leadingAnchor.constraint(equalTo: backBtn.trailingAnchor, constant: 10),
             settingsTitleLabel.centerYAnchor.constraint(equalTo: settingsHeader.centerYAnchor),
+            settingsTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: newBtn.leadingAnchor, constant: -8),
             newBtn.trailingAnchor.constraint(equalTo: settingsHeader.trailingAnchor, constant: -10),
             newBtn.centerYAnchor.constraint(equalTo: settingsHeader.centerYAnchor),
             settingsHeader.heightAnchor.constraint(equalToConstant: 36),
@@ -3736,15 +3748,15 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         settingsStack.spacing = 8
         settingsStack.edgeInsets = NSEdgeInsets(top: 12, left: 10, bottom: 12, right: 10)
         settingsStack.translatesAutoresizingMaskIntoConstraints = false
-        let doc = FlippedWorkspaceView()
-        doc.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(settingsStack)
+        settingsDoc = FlippedWorkspaceView()
+        settingsDoc.translatesAutoresizingMaskIntoConstraints = false
+        settingsDoc.addSubview(settingsStack)
         NSLayoutConstraint.activate([
-            settingsStack.topAnchor.constraint(equalTo: doc.topAnchor),
-            settingsStack.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
-            settingsStack.widthAnchor.constraint(equalTo: doc.widthAnchor),
+            settingsStack.topAnchor.constraint(equalTo: settingsDoc.topAnchor),
+            settingsStack.leadingAnchor.constraint(equalTo: settingsDoc.leadingAnchor),
+            settingsStack.widthAnchor.constraint(equalTo: settingsDoc.widthAnchor),
         ])
-        settingsScroll.documentView = doc
+        settingsScroll.documentView = settingsDoc
         settingsScroll.hasVerticalScroller = true
         settingsScroll.autohidesScrollers = true
         settingsScroll.drawsBackground = false
@@ -3783,12 +3795,13 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         editorHeader.translatesAutoresizingMaskIntoConstraints = false
         editorTitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         editorTitleLabel.lineBreakMode = .byTruncatingTail
+        editorTitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         editorTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        let editorBack = ActionButton(title: "‹ " + L10n.tr("scaffold.back"), target: nil, action: nil)
+        let editorBack = ActionButton.make(title: "‹ " + L10n.tr("scaffold.back"))
         editorBack.bezelStyle = .rounded
         editorBack.controlSize = .small
         editorBack.onAction = { [weak self] in self?.closeEditor() }
-        let saveBtn = ActionButton(title: L10n.tr("scaffold.save"), target: nil, action: nil)
+        let saveBtn = ActionButton.make(title: L10n.tr("scaffold.save"))
         saveBtn.bezelStyle = .rounded
         saveBtn.controlSize = .small
         saveBtn.onAction = { [weak self] in self?.saveStageEditor() }
@@ -3952,7 +3965,19 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             settingsStack.addArrangedSubview(empty)
         }
         settingsFooterLabel.stringValue = L10n.tr("scaffold.settingsFooter", StageCatalogLoader.userStagesDir())
+        // 文档帧 = stack 的 fitting 尺寸：否则首轮布局后文档高度陈旧（clip 高度/0），
+        // 列表渲染出来但超出文档 bounds 的区域 hitTest 失败 → 行内按钮不可点击。
         settingsStack.invalidateIntrinsicContentSize()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let fitting = self.settingsStack.fittingSize
+            if fitting.height > 0 {
+                let w = max(fitting.width, self.settingsScroll.contentView.bounds.width)
+                self.settingsStack.setFrameSize(NSSize(width: w, height: fitting.height))
+                self.settingsDoc.setFrameSize(NSSize(width: w, height: fitting.height))
+            }
+            self.view.layoutSubtreeIfNeeded()
+        }
     }
 
     /// 调整环节排序并持久化。
