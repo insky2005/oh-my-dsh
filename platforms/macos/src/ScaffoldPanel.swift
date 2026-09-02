@@ -3851,11 +3851,17 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         editorHintLabel.maximumNumberOfLines = 3
         editorHintLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        let editorFinderBtn = ActionButton.make(title: L10n.tr("scaffold.openInFinder"))
+        editorFinderBtn.bezelStyle = .rounded
+        editorFinderBtn.controlSize = .small
+        editorFinderBtn.onAction = { [weak self] in self?.revealUserStages() }
+
         editorView.addSubview(editorHeader)
         editorView.addSubview(editorIDLabel)
         editorView.addSubview(editorScroll)
         editorView.addSubview(editorErrorLabel)
         editorView.addSubview(editorHintLabel)
+        editorView.addSubview(editorFinderBtn)
         NSLayoutConstraint.activate([
             editorHeader.topAnchor.constraint(equalTo: editorView.topAnchor),
             editorHeader.leadingAnchor.constraint(equalTo: editorView.leadingAnchor),
@@ -3872,7 +3878,9 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             editorHintLabel.topAnchor.constraint(equalTo: editorErrorLabel.bottomAnchor, constant: 2),
             editorHintLabel.leadingAnchor.constraint(equalTo: editorView.leadingAnchor, constant: 12),
             editorHintLabel.trailingAnchor.constraint(equalTo: editorView.trailingAnchor, constant: -12),
-            editorHintLabel.bottomAnchor.constraint(equalTo: editorView.bottomAnchor, constant: -10),
+            editorFinderBtn.topAnchor.constraint(equalTo: editorHintLabel.bottomAnchor, constant: 8),
+            editorFinderBtn.leadingAnchor.constraint(equalTo: editorView.leadingAnchor, constant: 12),
+            editorFinderBtn.bottomAnchor.constraint(equalTo: editorView.bottomAnchor, constant: -10),
         ])
 
         contentContainer.addSubview(settingsView)
@@ -4047,6 +4055,24 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         editorView.isHidden = true
         settingsView?.isHidden = false
         rebuildSettingsList()
+    }
+
+    /// 在 Finder 中打开用户环节库（模板文件 templates/ 由此添加/修改）。
+    /// 已保存的环节打开其自身目录；新建未保存时打开环节库根目录。
+    private func revealUserStages() {
+        let root = StageCatalogLoader.userStagesDir()
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: root) {
+            try? fm.createDirectory(atPath: root, withIntermediateDirectories: true)
+        }
+        guard fm.fileExists(atPath: root) else { return }
+        var target = root
+        if !editorStageID.isEmpty {
+            let stageDir = StageCatalogLoader.userStageDir(id: editorStageID)
+            if fm.fileExists(atPath: stageDir) { target = stageDir }
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: target)])
+        updateStatus(L10n.tr("scaffold.settingsFooter", target))
     }
 
     /// 保存编辑器内容（校验 YAML + id 规则）。
