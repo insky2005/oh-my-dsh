@@ -1368,6 +1368,43 @@ private final class StageSettingsRow: NSView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
+/// 环节编辑器中的单个文件（stage.yaml 或 templates/ 下某模板）。
+/// 对齐 Files 面板的编辑模式：每个文件一个标签页 + CodeEditorView 实例，
+/// 切换标签时复用 live editor（内存未保存编辑不丢失）。
+private final class StageEditorFile {
+    /// 相对环节目录的路径："stage.yaml" / "templates/xxx.tmpl"。
+    let relativePath: String
+    /// 标签标题（文件名）。
+    let displayName: String
+    /// 读取来源（内置目录或用户库）；"" = 新建（内存缓冲）。
+    var loadPath: String
+    /// 写入目标（用户库路径）。
+    var savePath: String
+    /// live editor（切换标签时保留）。
+    var editor: CodeEditorView?
+    var isDirty = false
+    /// 尚未落盘的新文件（新建环节骨架 / 新建模板）。
+    var isNewFile = false
+    /// 新文件的初始内容（骨架 YAML 等；loadPath 为空时编辑器以此为种子）。
+    var initialText = ""
+    let tabButton: ActionButton
+
+    init(relativePath: String, displayName: String, loadPath: String, savePath: String) {
+        self.relativePath = relativePath
+        self.displayName = displayName
+        self.loadPath = loadPath
+        self.savePath = savePath
+        tabButton = ActionButton.make(title: displayName)
+        tabButton.bezelStyle = .texturedRounded
+        tabButton.setButtonType(.pushOnPushOff)
+        tabButton.state = .off
+        tabButton.cell?.lineBreakMode = .byTruncatingTail
+        tabButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tabButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        tabButton.widthAnchor.constraint(lessThanOrEqualToConstant: 180).isActive = true
+    }
+}
+
 // MARK: - Scaffold 面板（M1.1 UI 优化：向导式时间线 + 卡片环节 + tree 预览）
 
 /// 面板根视图。镜像 WikiRootView/TerminalRootView 的 layer 合成规避约定
@@ -1975,13 +2012,18 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     /// 设置列表滚动 doc（重建列表后用 fittingSize 驱动文档高度，否则内容溢出区不可点击）。
     private var settingsDoc: FlippedWorkspaceView!
     private let settingsFooterLabel = NSTextField(labelWithString: "")
-    // 编辑器（YAML 文本）
+    // 编辑器（Files 风格：文件标签页 + CodeEditorView）
     private let editorView = NSView()
     private let editorTitleLabel = NSTextField(labelWithString: "")
-    private let editorIDLabel = NSTextField(labelWithString: "")
-    private let editorTextView = NSTextView()
     private let editorErrorLabel = NSTextField(labelWithString: "")
     private let editorHintLabel = NSTextField(labelWithString: "")
+    /// 文件标签页模型（stage.yaml + templates/ 下每个文件一个）。
+    private var editorFiles: [StageEditorFile] = []
+    private var editorSelectedTab = 0
+    private let editorFileBar = NSScrollView()
+    private let editorFileStack = NSStackView()
+    private let editorContent = NSView()
+    private var editorSaveBtn: ActionButton!
 
     // MARK: 状态
 
@@ -3790,6 +3832,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         editorView.wantsLayer = true
         editorView.layer?.masksToBounds = true
 
+        // —— 单文件编辑器（Files 风格）：头部 + 文件标签页 + CodeEditorView ——
         let editorHeader = DynamicFillView()
         editorHeader.kind = .window
         editorHeader.translatesAutoresizingMaskIntoConstraints = false
@@ -3801,43 +3844,54 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         editorBack.bezelStyle = .rounded
         editorBack.controlSize = .small
         editorBack.onAction = { [weak self] in self?.closeEditor() }
+        let newTemplateBtn = ActionButton.make(title: L10n.tr("scaffold.newTemplate"))
+        newTemplateBtn.bezelStyle = .rounded
+        newTemplateBtn.controlSize = .small
+        newTemplateBtn.onAction = { [weak self] in self?.newTemplateFile() }
         let saveBtn = ActionButton.make(title: L10n.tr("scaffold.save"))
         saveBtn.bezelStyle = .rounded
         saveBtn.controlSize = .small
         saveBtn.onAction = { [weak self] in self?.saveStageEditor() }
+        saveBtn.isEnabled = false
+        editorSaveBtn = saveBtn
         editorHeader.addSubview(editorBack)
         editorHeader.addSubview(editorTitleLabel)
+        editorHeader.addSubview(newTemplateBtn)
         editorHeader.addSubview(saveBtn)
         NSLayoutConstraint.activate([
             editorBack.leadingAnchor.constraint(equalTo: editorHeader.leadingAnchor, constant: 10),
             editorBack.centerYAnchor.constraint(equalTo: editorHeader.centerYAnchor),
             editorTitleLabel.leadingAnchor.constraint(equalTo: editorBack.trailingAnchor, constant: 10),
             editorTitleLabel.centerYAnchor.constraint(equalTo: editorHeader.centerYAnchor),
-            editorTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: saveBtn.leadingAnchor, constant: -8),
+            editorTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: newTemplateBtn.leadingAnchor, constant: -8),
+            newTemplateBtn.trailingAnchor.constraint(equalTo: saveBtn.leadingAnchor, constant: -6),
+            newTemplateBtn.centerYAnchor.constraint(equalTo: editorHeader.centerYAnchor),
             saveBtn.trailingAnchor.constraint(equalTo: editorHeader.trailingAnchor, constant: -10),
             saveBtn.centerYAnchor.constraint(equalTo: editorHeader.centerYAnchor),
             editorHeader.heightAnchor.constraint(equalToConstant: 36),
         ])
 
-        editorIDLabel.font = .systemFont(ofSize: 12)
-        editorIDLabel.textColor = .secondaryLabelColor
-        editorIDLabel.translatesAutoresizingMaskIntoConstraints = false
+        // 文件标签页栏（横向滚动，镜像 Files 面板 tab bar：fileStack 即 documentView）
+        editorFileStack.orientation = .horizontal
+        editorFileStack.spacing = 6
+        editorFileStack.alignment = .centerY
+        editorFileStack.distribution = .gravityAreas
+        editorFileStack.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
+        editorFileStack.translatesAutoresizingMaskIntoConstraints = false
+        editorFileBar.documentView = editorFileStack
+        editorFileBar.hasHorizontalScroller = true
+        editorFileBar.hasVerticalScroller = false
+        editorFileBar.drawsBackground = false
+        editorFileBar.scrollerStyle = .overlay
+        editorFileBar.autohidesScrollers = true
+        editorFileBar.translatesAutoresizingMaskIntoConstraints = false
 
-        let editorScroll = NSScrollView()
-        editorTextView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        editorTextView.isRichText = false
-        editorTextView.isVerticallyResizable = true
-        editorTextView.isHorizontallyResizable = false
-        editorTextView.autoresizingMask = [.width]
-        editorTextView.minSize = NSSize(width: 0, height: 0)
-        editorTextView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        editorTextView.textContainer?.widthTracksTextView = true
-        editorTextView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        editorScroll.documentView = editorTextView
-        editorScroll.hasVerticalScroller = true
-        editorScroll.autohidesScrollers = true
-        editorScroll.borderType = .bezelBorder
-        editorScroll.translatesAutoresizingMaskIntoConstraints = false
+        let fileBarUnderline = NSBox()
+        fileBarUnderline.boxType = .separator
+        fileBarUnderline.translatesAutoresizingMaskIntoConstraints = false
+
+        // 内容区：CodeEditorView 嵌入（行号槽 + 语法高亮 + 撤销）
+        editorContent.translatesAutoresizingMaskIntoConstraints = false
 
         editorErrorLabel.font = .systemFont(ofSize: 11)
         editorErrorLabel.textColor = .systemRed
@@ -3857,8 +3911,9 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         editorFinderBtn.onAction = { [weak self] in self?.revealUserStages() }
 
         editorView.addSubview(editorHeader)
-        editorView.addSubview(editorIDLabel)
-        editorView.addSubview(editorScroll)
+        editorView.addSubview(editorFileBar)
+        editorView.addSubview(fileBarUnderline)
+        editorView.addSubview(editorContent)
         editorView.addSubview(editorErrorLabel)
         editorView.addSubview(editorHintLabel)
         editorView.addSubview(editorFinderBtn)
@@ -3866,13 +3921,21 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             editorHeader.topAnchor.constraint(equalTo: editorView.topAnchor),
             editorHeader.leadingAnchor.constraint(equalTo: editorView.leadingAnchor),
             editorHeader.trailingAnchor.constraint(equalTo: editorView.trailingAnchor),
-            editorIDLabel.topAnchor.constraint(equalTo: editorHeader.bottomAnchor, constant: 10),
-            editorIDLabel.leadingAnchor.constraint(equalTo: editorView.leadingAnchor, constant: 12),
-            editorIDLabel.trailingAnchor.constraint(equalTo: editorView.trailingAnchor, constant: -12),
-            editorScroll.topAnchor.constraint(equalTo: editorIDLabel.bottomAnchor, constant: 8),
-            editorScroll.leadingAnchor.constraint(equalTo: editorView.leadingAnchor, constant: 12),
-            editorScroll.trailingAnchor.constraint(equalTo: editorView.trailingAnchor, constant: -12),
-            editorErrorLabel.topAnchor.constraint(equalTo: editorScroll.bottomAnchor, constant: 6),
+            editorFileBar.topAnchor.constraint(equalTo: editorHeader.bottomAnchor),
+            editorFileBar.leadingAnchor.constraint(equalTo: editorView.leadingAnchor),
+            editorFileBar.trailingAnchor.constraint(equalTo: editorView.trailingAnchor),
+            editorFileBar.heightAnchor.constraint(equalToConstant: 28),
+            editorFileStack.leadingAnchor.constraint(equalTo: editorFileBar.contentView.leadingAnchor),
+            editorFileStack.topAnchor.constraint(equalTo: editorFileBar.contentView.topAnchor),
+            editorFileStack.bottomAnchor.constraint(equalTo: editorFileBar.contentView.bottomAnchor),
+            editorFileStack.widthAnchor.constraint(greaterThanOrEqualTo: editorFileBar.contentView.widthAnchor),
+            fileBarUnderline.topAnchor.constraint(equalTo: editorFileBar.bottomAnchor),
+            fileBarUnderline.leadingAnchor.constraint(equalTo: editorView.leadingAnchor),
+            fileBarUnderline.trailingAnchor.constraint(equalTo: editorView.trailingAnchor),
+            editorContent.topAnchor.constraint(equalTo: fileBarUnderline.bottomAnchor, constant: 8),
+            editorContent.leadingAnchor.constraint(equalTo: editorView.leadingAnchor, constant: 12),
+            editorContent.trailingAnchor.constraint(equalTo: editorView.trailingAnchor, constant: -12),
+            editorErrorLabel.topAnchor.constraint(equalTo: editorContent.bottomAnchor, constant: 6),
             editorErrorLabel.leadingAnchor.constraint(equalTo: editorView.leadingAnchor, constant: 12),
             editorErrorLabel.trailingAnchor.constraint(equalTo: editorView.trailingAnchor, constant: -12),
             editorHintLabel.topAnchor.constraint(equalTo: editorErrorLabel.bottomAnchor, constant: 2),
@@ -4006,7 +4069,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     // MARK: 环节编辑（YAML）
 
-    /// 新建环节：预填骨架 YAML，打开编辑器。
+    /// 新建环节：预填骨架 YAML（一个文件标签），打开编辑器。
     private func beginNewStage() {
         editorStageID = ""
         editorIsNew = true
@@ -4021,39 +4084,179 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
           zh: 新环节描述（可修改）
           en: New stage description (editable)
         """
-        openEditor(id: "", isNew: true, yaml: skeleton)
+        let yamlFile = StageEditorFile(relativePath: "stage.yaml", displayName: "stage.yaml",
+                                       loadPath: "", savePath: "")
+        yamlFile.isNewFile = true
+        yamlFile.initialText = skeleton
+        editorFiles = [yamlFile]
+        openEditor()
     }
 
-    /// 编辑已有环节：内置环节保存后即转为自定义（templates 复制跟随）。
+    /// 编辑已有环节：文件标签页 = stage.yaml + templates/ 下所有文件。
     private func beginEditStage(_ id: String) {
         guard let stage = catalog.first(where: { $0.id == id }) else { return }
         editorStageID = id
         editorIsNew = false
         // 内置环节：保存时把 templates/ 复制到用户库；自定义环节已在用户库，无需复制
         editorTemplatesFrom = stage.isCustom ? nil : stage.directory
-        let yamlPath = (stage.directory as NSString).appendingPathComponent("stage.yaml")
-        let yaml = (try? String(contentsOfFile: yamlPath, encoding: .utf8)) ?? "# 读取失败 / read failed"
-        openEditor(id: id, isNew: false, yaml: yaml)
+        let userDir = StageCatalogLoader.userStageDir(id: id)
+        var files: [StageEditorFile] = []
+        // stage.yaml
+        let yamlLoad = (stage.directory as NSString).appendingPathComponent("stage.yaml")
+        let yamlSave = (userDir as NSString).appendingPathComponent("stage.yaml")
+        files.append(StageEditorFile(relativePath: "stage.yaml", displayName: "stage.yaml",
+                                     loadPath: yamlLoad, savePath: yamlSave))
+        // templates/ 下文件（立即目录；子目录暂不展开）
+        let tplDir = (stage.directory as NSString).appendingPathComponent("templates")
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: tplDir)) ?? []
+        for name in names.sorted() {
+            let load = (tplDir as NSString).appendingPathComponent(name)
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: load, isDirectory: &isDir), !isDir.boolValue else { continue }
+            files.append(StageEditorFile(relativePath: "templates/" + name, displayName: name,
+                                         loadPath: load,
+                                         savePath: (userDir as NSString).appendingPathComponent("templates/" + name)))
+        }
+        editorFiles = files
+        openEditor()
     }
 
-    private func openEditor(id: String, isNew: Bool, yaml: String) {
-        editorTitleLabel.stringValue = isNew
+    /// 打开编辑器：重建文件标签栏 + 选中第一个文件（stage.yaml）。
+    private func openEditor() {
+        editorTitleLabel.stringValue = editorIsNew
             ? L10n.tr("scaffold.editorTitleNew")
-            : L10n.tr("scaffold.editorTitleEdit", id)
-        editorIDLabel.stringValue = isNew
-            ? L10n.tr("scaffold.editorIDHint")
-            : L10n.tr("scaffold.editorID", id)
-        editorTextView.string = yaml
+            : L10n.tr("scaffold.editorTitleEdit", editorStageID)
         editorErrorLabel.stringValue = ""
         editorHintLabel.stringValue = L10n.tr("scaffold.editorHint")
+        rebuildEditorTabs()
         settingsView?.isHidden = true
         editorView.isHidden = false
-        editorTextView.window?.makeFirstResponder(editorTextView)
+        editorSelectedTab = 0
+        selectEditorFile(index: 0)
+    }
+
+    /// 重建文件标签栏（清空并追加全部文件的 tab 按钮）。
+    private func rebuildEditorTabs() {
+        for sub in editorFileStack.arrangedSubviews {
+            editorFileStack.removeArrangedSubview(sub)
+            sub.removeFromSuperview()
+        }
+        for (i, file) in editorFiles.enumerated() {
+            file.tabButton.title = file.isDirty ? file.displayName + " *" : file.displayName
+            file.tabButton.state = .off
+            file.tabButton.onAction = { [weak self] in self?.selectEditorFile(index: i) }
+            editorFileStack.addArrangedSubview(file.tabButton)
+        }
+    }
+
+    /// 切换文件标签：live editor 复用（未保存编辑不丢失），否则新建 CodeEditorView。
+    private func selectEditorFile(index: Int) {
+        guard editorFiles.indices.contains(index) else { return }
+        editorSelectedTab = index
+        for (i, file) in editorFiles.enumerated() {
+            file.tabButton.state = (i == index) ? .on : .off
+        }
+        let file = editorFiles[index]
+        // 卸载当前 editor（如有）
+        editorContent.subviews.forEach { $0.removeFromSuperview() }
+        if let editor = file.editor {
+            // tab 与文件固定绑定：live editor 创建后永远复用（内存未保存编辑不丢失）
+            embedEditor(editor)
+        } else {
+            let text = file.isNewFile ? file.initialText : loadFileText(file)
+            let ext = (file.relativePath as NSString).pathExtension.lowercased()
+            let names: [NSAppearance.Name] = [.darkAqua, .aqua]
+            let dark = view.effectiveAppearance.bestMatch(from: names) == .darkAqua
+            let editor = CodeEditorView(path: file.savePath, text: text,
+                                        language: CodeEditorView.language(forExtension: ext), dark: dark)
+            editor.onDirtyChange = { [weak self] (dirty: Bool) in
+                file.isDirty = dirty
+                self?.refreshTabTitle(file)
+                self?.refreshEditorSaveState()
+            }
+            editor.onSaveError = { [weak self] message in
+                self?.editorErrorLabel.stringValue = L10n.tr("scaffold.stageYAMLError", message)
+            }
+            file.editor = editor
+            embedEditor(editor)
+        }
+        editorErrorLabel.stringValue = ""
+        refreshEditorSaveState()
+    }
+
+    private func embedEditor(_ editor: CodeEditorView) {
+        editor.translatesAutoresizingMaskIntoConstraints = false
+        editorContent.addSubview(editor)
+        NSLayoutConstraint.activate([
+            editor.leadingAnchor.constraint(equalTo: editorContent.leadingAnchor),
+            editor.trailingAnchor.constraint(equalTo: editorContent.trailingAnchor),
+            editor.topAnchor.constraint(equalTo: editorContent.topAnchor),
+            editor.bottomAnchor.constraint(equalTo: editorContent.bottomAnchor),
+        ])
+    }
+
+    /// 读取文件内容（新建文件返回空串；读取失败返回注释占位）。
+    private func loadFileText(_ file: StageEditorFile) -> String {
+        guard !file.loadPath.isEmpty else { return "" }
+        return (try? String(contentsOfFile: file.loadPath, encoding: .utf8)) ?? "# 读取失败 / read failed"
+    }
+
+    /// 刷新标签标题（dirty 标记 *）。
+    private func refreshTabTitle(_ file: StageEditorFile) {
+        file.tabButton.title = file.isDirty ? file.displayName + " *" : file.displayName
+    }
+
+    /// 保存按钮可用性：当前文件有未保存修改时可保存。
+    private func refreshEditorSaveState() {
+        guard editorFiles.indices.contains(editorSelectedTab) else {
+            editorSaveBtn?.isEnabled = false
+            return
+        }
+        editorSaveBtn?.isEnabled = editorFiles[editorSelectedTab].isDirty
+    }
+
+    /// 新建模板文件：输入文件名 → 加标签并打开（未落盘，保存时写入用户库）。
+    private func newTemplateFile() {
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("scaffold.newTemplate")
+        alert.informativeText = L10n.tr("scaffold.templateNamePrompt")
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        input.placeholderString = "README.tmpl"
+        alert.accessoryView = input
+        alert.addButton(withTitle: L10n.tr("btn.ok"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        guard let win = view.window else { return }
+        alert.beginSheetModal(for: win) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self = self else { return }
+            let name = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !name.contains("/"), !name.contains("..") else {
+                self.editorErrorLabel.stringValue = L10n.tr("scaffold.templateNameInvalid")
+                return
+            }
+            guard !self.editorFiles.contains(where: { $0.displayName == name }) else {
+                self.editorErrorLabel.stringValue = L10n.tr("scaffold.templateNameTaken")
+                return
+            }
+            let userDir = StageCatalogLoader.userStageDir(id: self.editorStageID)
+            let file = StageEditorFile(relativePath: "templates/" + name, displayName: name,
+                                       loadPath: "",
+                                       savePath: (userDir as NSString).appendingPathComponent("templates/" + name))
+            file.isNewFile = true
+            self.editorFiles.append(file)
+            self.rebuildEditorTabs()
+            self.selectEditorFile(index: self.editorFiles.count - 1)
+        }
     }
 
     private func closeEditor() {
         editorView.isHidden = true
         settingsView?.isHidden = false
+        editorFiles = []
+        editorFileStack.arrangedSubviews.forEach { sub in
+            editorFileStack.removeArrangedSubview(sub)
+            sub.removeFromSuperview()
+        }
+        editorContent.subviews.forEach { $0.removeFromSuperview() }
         rebuildSettingsList()
     }
 
@@ -4076,8 +4279,21 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     }
 
     /// 保存编辑器内容（校验 YAML + id 规则）。
+    /// 保存当前文件标签页（Files 风格：保存后留在编辑器，不关闭）。
     private func saveStageEditor() {
-        let yaml = editorTextView.string
+        guard editorFiles.indices.contains(editorSelectedTab) else { return }
+        let file = editorFiles[editorSelectedTab]
+
+        if file.relativePath == "stage.yaml" {
+            saveYamlFile(file)
+        } else {
+            saveTemplateFile(file)
+        }
+    }
+
+    /// 保存 stage.yaml：校验 id → 写用户库（内置时 templates 复制跟随）→ 刷新路径与目录。
+    private func saveYamlFile(_ file: StageEditorFile) {
+        let yaml = file.editor?.text ?? loadFileText(file)
         let parsedID: String
         do {
             parsedID = try StageCatalogLoader.parseStageID(from: yaml)
@@ -4109,9 +4325,76 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             editorErrorLabel.stringValue = L10n.tr("scaffold.stageYAMLError", error.localizedDescription)
             return
         }
+        // 保存后环节转为自定义：id 确定、路径指向用户库、无需再复制内置模板
+        let idChanged = (editorStageID != parsedID)
+        let becameReal = editorIsNew
+        editorStageID = parsedID
+        editorIsNew = false
+        editorTemplatesFrom = nil
+        if idChanged { refreshEditorFilePaths() }
+        if becameReal {
+            // 新建环节首次保存：标题改为「编辑环节：id」
+            editorTitleLabel.stringValue = L10n.tr("scaffold.editorTitleEdit", parsedID)
+        }
+        file.isDirty = false
+        file.editor?.markClean()
+        refreshTabTitle(file)
         reloadCatalog()
         updateStatus(L10n.tr("scaffold.stageSaveOK", parsedID))
-        closeEditor()
+        refreshEditorSaveState()
+    }
+
+    /// 保存模板文件：先确保环节已物化到用户库（内置/新建时），再写回用户库路径。
+    private func saveTemplateFile(_ file: StageEditorFile) {
+        if editorIsNew {
+            // 新建环节尚未确定 id：必须先保存 stage.yaml
+            editorErrorLabel.stringValue = L10n.tr("scaffold.saveYamlFirst")
+            return
+        }
+        guard !editorStageID.isEmpty else {
+            editorErrorLabel.stringValue = L10n.tr("scaffold.saveYamlFirst")
+            return
+        }
+        // 内置环节（未物化）：先写 stage.yaml 基线 + 复制内置模板到用户库
+        let userStageDir = StageCatalogLoader.userStageDir(id: editorStageID)
+        if !FileManager.default.fileExists(atPath: userStageDir) {
+            guard let yamlFile = editorFiles.first(where: { $0.relativePath == "stage.yaml" }) else { return }
+            let yaml = yamlFile.editor?.text ?? loadFileText(yamlFile)
+            do {
+                try StageCatalogLoader.saveUserStage(id: editorStageID, yaml: yaml,
+                                                     templatesFrom: editorTemplatesFrom)
+            } catch {
+                editorErrorLabel.stringValue = L10n.tr("scaffold.stageYAMLError", error.localizedDescription)
+                return
+            }
+            editorTemplatesFrom = nil
+            // 物化后所有文件路径对准用户库（内置来源路径 → 用户库路径）
+            refreshEditorFilePaths()
+        }
+        // 写模板文件（确保 templates/ 目录存在）
+        let targetDir = (file.savePath as NSString).deletingLastPathComponent
+        do {
+            try FileManager.default.createDirectory(atPath: targetDir, withIntermediateDirectories: true)
+            let content = file.editor?.text ?? ""
+            try content.write(toFile: file.savePath, atomically: true, encoding: .utf8)
+        } catch {
+            editorErrorLabel.stringValue = L10n.tr("scaffold.stageYAMLError", error.localizedDescription)
+            return
+        }
+        file.isDirty = false
+        file.editor?.markClean()
+        refreshTabTitle(file)
+        reloadCatalog()
+        updateStatus(L10n.tr("scaffold.stageSaveOK", editorStageID + "/" + file.relativePath))
+        refreshEditorSaveState()
+    }
+
+    /// 环节 id 变化（新建保存）后，把所有文件的写入目标改到新 id 的用户库目录。
+    private func refreshEditorFilePaths() {
+        let userDir = StageCatalogLoader.userStageDir(id: editorStageID)
+        for f in editorFiles {
+            f.savePath = (userDir as NSString).appendingPathComponent(f.relativePath)
+        }
     }
 
     // MARK: 恢复 / 删除
