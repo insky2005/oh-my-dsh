@@ -719,11 +719,14 @@ struct ScaffoldPlan {
     }
 
     static func build(catalog: [ScaffoldStage], selection: [String], params: [String: [String: String]],
-                      projectName: String, parentDir: String) -> Result {
+                      projectName: String, parentDir: String, existingTargetRoot: String = "") -> Result {
         var r = Result()
         r.projectName = projectName
         r.projectSlug = slugify(projectName)
-        if !parentDir.isEmpty {
+        if !existingTargetRoot.isEmpty {
+            // 初始化/更新已有目录：直接把目标根指向该目录（不走 parentDir/slug 拼目录）
+            r.targetRoot = existingTargetRoot
+        } else if !parentDir.isEmpty {
             r.targetRoot = (parentDir as NSString).appendingPathComponent(r.projectSlug)
         }
 
@@ -768,6 +771,9 @@ struct ScaffoldPlan {
             "imageRepo": "your-registry",
             "imageTag": "latest",
             "jenkinsAgentLabel": "linux",
+            // 项目简介兜底（git-init 的 README 引用；未选 agents-md 时给占位）
+            "techSummary": "",
+            "techSummaryEmpty": "true",
         ]
         for stage in selected {
             context["has\(capitalize(stage.id))"] = "true"
@@ -783,6 +789,14 @@ struct ScaffoldPlan {
                     for opt in param.options {
                         context["\(param.key).\(opt)"] = (opt == value ? "true" : "false")
                     }
+                } else if param.type == "multiselect" {
+                    let selected = Set(value.split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init))
+                    context[param.key] = value
+                    for opt in param.options {
+                        context["\(param.key).\(opt)"] = selected.contains(opt) ? "true" : "false"
+                    }
+                    context["\(param.key)Empty"] = selected.isEmpty ? "true" : "false"
+                    context["\(param.key)Any"] = selected.isEmpty ? "false" : "true"
                 } else {
                     context["\(param.key)Empty"] = value.isEmpty ? "true" : "false"
                 }
@@ -798,9 +812,55 @@ struct ScaffoldPlan {
             let frontendBuild = mk["frontendBuild"] ?? ""
             let frontendInstall = mk["frontendInstall"] ?? ""
             let lintCmd = mk["lintCmd"] ?? ""
-            context["ciLint"] = lintCmd.isEmpty ? "echo 'no lint command configured'" : lintCmd
-            context["ciTest"] = !testCmd.isEmpty ? testCmd : (!backendTest.isEmpty ? backendTest : "echo 'no test command configured'")
-            context["ciBuild"] = !backendBuild.isEmpty ? backendBuild : (!frontendBuild.isEmpty ? frontendBuild : "echo 'no build command configured'")
+            // makefile 语言预设（lang，可多选）提供的默认命令，镜像 Makefile.tmpl。
+            // 多语言时以第一个选中的语言为准（ci 的 build/test/lint 用单一命令）。
+            let firstLang = (mk["lang"] ?? "").split(whereSeparator: { $0 == " " || $0 == "," }).first.map(String.init) ?? ""
+            func langDefault(_ kind: String) -> String {
+                switch firstLang {
+                case "java":
+                    switch kind {
+                    case "build": return "mvn -q package"
+                    case "test": return "mvn -q test"
+                    case "lint": return "mvn -q spotless:check"
+                    default: return ""
+                    }
+                case "node":
+                    switch kind {
+                    case "build": return "npm run build"
+                    case "test": return "npm test"
+                    case "lint": return "npm run lint"
+                    default: return ""
+                    }
+                case "go":
+                    switch kind {
+                    case "build": return "go build -o bin/app ."
+                    case "test": return "go test ./..."
+                    case "lint": return "golangci-lint run"
+                    default: return ""
+                    }
+                case "python":
+                    switch kind {
+                    case "build": return "echo 'no compile step for Python'"
+                    case "test": return "pytest"
+                    case "lint": return "ruff check ."
+                    default: return ""
+                    }
+                default: return ""
+                }
+            }
+            let lang = mk["lang"] ?? ""
+            let buildCmd = mk["buildCmd"] ?? ""
+            // 语言预设模式（lang 非空）：以通用 buildCmd/testCmd 或 lang 默认命令为准；
+            // 多端模式（lang 未选）才回退到 backend/frontend 命令。
+            if lang.trimmingCharacters(in: .whitespaces).isEmpty {
+                context["ciLint"] = !lintCmd.isEmpty ? lintCmd : "echo 'no lint command configured'"
+                context["ciTest"] = !testCmd.isEmpty ? testCmd : (!backendTest.isEmpty ? backendTest : "echo 'no test command configured'")
+                context["ciBuild"] = !backendBuild.isEmpty ? backendBuild : (!frontendBuild.isEmpty ? frontendBuild : "echo 'no build command configured'")
+            } else {
+                context["ciLint"] = !lintCmd.isEmpty ? lintCmd : langDefault("lint")
+                context["ciTest"] = !testCmd.isEmpty ? testCmd : langDefault("test")
+                context["ciBuild"] = !buildCmd.isEmpty ? buildCmd : langDefault("build")
+            }
             let front = [frontendInstall, frontendBuild].filter { !$0.isEmpty }.joined(separator: "\n")
             context["ciFrontend"] = front.isEmpty ? "echo 'no frontend commands configured'" : front
         }
@@ -878,6 +938,7 @@ struct ScaffoldApplier {
     struct Result {
         var written: [String] = []
         var backups: [String] = []
+        var removed: [String] = []
         var commandResults: [CommandResult] = []
         var statePath = ""
     }
@@ -927,6 +988,25 @@ struct ScaffoldApplier {
             r.commandResults.append(res)
         }
 
+        // 清理孤儿文件：上一次生成由脚手架管理的、本次不再生成的（如 license 从 MIT 改 none 后移除 LICENSE）
+        do {
+            let statePath = (root as NSString).appendingPathComponent(".scaffold/state.json")
+            let newPaths = Set(plan.entries.map { $0.path })
+            if let oldData = try? Data(contentsOf: URL(fileURLWithPath: statePath)),
+               let oldJSON = try? JSONSerialization.jsonObject(with: oldData) as? [String: Any],
+               let oldFiles = oldJSON["files"] as? [String] {
+                for path in oldFiles where !newPaths.contains(path) {
+                    guard !path.contains(".."), !path.hasPrefix("/"), !path.hasPrefix("~") else { continue }
+                    let full = (root as NSString).appendingPathComponent(path)
+                    var isDir: ObjCBool = false
+                    guard fm.fileExists(atPath: full, isDirectory: &isDir), !isDir.boolValue else { continue }
+                    if (try? fm.removeItem(atPath: full)) != nil {
+                        r.removed.append(path)
+                    }
+                }
+            }
+        }
+
         // state.json
         do {
             let statePath = (root as NSString).appendingPathComponent(".scaffold/state.json")
@@ -946,6 +1026,7 @@ struct ScaffoldApplier {
                 "projectSlug": plan.projectSlug,
                 "targetRoot": root,
                 "stages": stagesJSON,
+                "files": plan.entries.map { $0.path }.sorted(),
             ]
             let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
             try data.write(to: URL(fileURLWithPath: statePath))
@@ -1035,6 +1116,11 @@ final class ScaffoldRootView: NSView {
 }
 
 /// 步骤时间线条目（数字徽标 + 标题，可点击）。
+/// 翻转容器：作为滚动 documentView，内容比视口短时贴顶显示（避免贴底）。
+private final class FlippedWorkspaceView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 private final class ScaffoldStepItem: NSView {
     enum State { case idle, current, done, error }
     var state: State = .idle { didSet { needsDisplay = true } }
@@ -1054,6 +1140,11 @@ private final class ScaffoldStepItem: NSView {
 
     override func mouseDown(with event: NSEvent) {
         onAction?()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -1105,6 +1196,10 @@ private final class ScaffoldStepItem: NSView {
 private final class ScaffoldBadge: NSView {
     var isChecked = false { didSet { needsDisplay = true } }
     override var isOpaque: Bool { false }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let rect = bounds.insetBy(dx: 2, dy: 2)
@@ -1178,6 +1273,11 @@ private final class ScaffoldStageCard: NSView {
     override var acceptsFirstResponder: Bool { false }
     override func mouseDown(with event: NSEvent) { onToggle?() }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let bg: NSColor = isSelected
@@ -1193,6 +1293,28 @@ private final class ScaffoldStageCard: NSView {
     }
 }
 
+/// 当前项目首页里展示环节/参数的配置卡片：背景与描边在 draw() 里按 effectiveAppearance
+/// 显式取色，并覆写 viewDidChangeEffectiveAppearance，跟随系统深浅色切换。
+/// （layer 上烘焙的 CGColor 是创建时的快照，不会随外观变化重取。）
+private final class WorkspaceStageCardView: NSView {
+    override var isOpaque: Bool { false }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let bg: NSColor = dark ? NSColor(white: 0.22, alpha: 1) : NSColor(white: 0.97, alpha: 1)
+        bg.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+        let border: NSColor = dark ? NSColor(white: 0.35, alpha: 1) : NSColor(white: 0.7, alpha: 1)
+        border.setStroke()
+        let p = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
+        p.lineWidth = 1
+        p.stroke()
+    }
+}
+
 /// 环节编辑单元：卡片（步骤 2）+ 参数控件栈（步骤 3）。
 private final class StageEditor {
     let stage: ScaffoldStage
@@ -1203,6 +1325,7 @@ private final class StageEditor {
     var selectControls: [String: NSPopUpButton] = [:]
     var boolControls: [String: NSButton] = [:]
     var radioGroups: [String: [NSButton]] = [:]
+    var multiControls: [String: [NSButton]] = [:]
     /// 必填参数（带校验器）的标签引用：值为空时红色，有值恢复次级色。
     var requiredLabels: [String: NSTextField] = [:]
 
@@ -1212,8 +1335,6 @@ private final class StageEditor {
         card.onToggle = onToggle
 
         for param in stage.params {
-            // 项目简介（techSummary）移到步骤 1 填写，步骤 3 不再重复显示
-            if stage.id == "agents-md" && param.key == "techSummary" { continue }
             let isRequired = !param.validate.isEmpty
             let label = NSTextField(labelWithString: isRequired ? param.label + " *" : param.label)
             label.font = .systemFont(ofSize: 12)
@@ -1276,6 +1397,28 @@ private final class StageEditor {
                     selectControls[param.key] = pop
                     controlRow.addArrangedSubview(pop)
                 }
+            } else if param.type == "multiselect" {
+                // 多选（如 AGENTS.md 主语言）：每个选项一个 checkbox，纵向堆叠。
+                let boxes = param.options.enumerated().map { idx, opt -> NSButton in
+                    let b = NSButton(checkboxWithTitle: ScaffoldPanelController.optionLabel(opt), target: nil, action: nil)
+                    b.identifier = NSUserInterfaceItemIdentifier("\(stage.id).\(param.key)")
+                    b.tag = idx
+                    b.font = .systemFont(ofSize: 12)
+                    return b
+                }
+                let selected = currentValue.split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init)
+                for (i, opt) in param.options.enumerated() where selected.contains(opt) {
+                    boxes[i].state = .on
+                }
+                multiControls["\(stage.id).\(param.key)"] = boxes
+                let col = NSStackView(views: boxes)
+                col.orientation = .vertical
+                col.alignment = .leading
+                col.spacing = 4
+                col.translatesAutoresizingMaskIntoConstraints = false
+                col.setContentHuggingPriority(.required, for: .horizontal)
+                col.setContentCompressionResistancePriority(.required, for: .horizontal)
+                controlRow.addArrangedSubview(col)
             } else {
                 let field = NSTextField(string: currentValue)
                 field.font = .systemFont(ofSize: 13)
@@ -1340,6 +1483,14 @@ private final class StageEditor {
                 radios.first?.state = .on
             }
         }
+        for (key, boxes) in multiControls {
+            let param = stage.params.first(where: { $0.key == key })
+            let val = values[key] ?? param?.defaultValue ?? ""
+            let selected = Set(val.split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init))
+            for (i, opt) in (param?.options ?? []).enumerated() where i < boxes.count {
+                boxes[i].state = selected.contains(opt) ? .on : .off
+            }
+        }
         // 同步字段值（预设/重置时）后再刷新必填高亮
         updateRequiredHighlights()
     }
@@ -1350,6 +1501,14 @@ private final class StageEditor {
         for (k, v) in stringControls { out[k] = v.stringValue }
         for (k, v) in selectControls { out[k] = v.selectedItem?.title ?? "" }
         for (k, v) in boolControls { out[k] = (v.state == .on) ? "true" : "false" }
+        for (key, boxes) in multiControls {
+            let param = stage.params.first(where: { $0.key == key })
+            let opts = param?.options ?? []
+            let chosen = boxes.enumerated().compactMap { idx, b -> String? in
+                (b.state == .on && idx < opts.count) ? opts[idx] : nil
+            }
+            out[key] = chosen.joined(separator: " ")
+        }
         return out
     }
 }
@@ -1392,6 +1551,18 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         case "java": return "Java"
         case "node": return "Node.js"
         case "static": return L10n.isZh ? "静态站点" : "Static site"
+        case "typescript": return "TypeScript"
+        case "javascript": return "JavaScript"
+        case "python": return "Python"
+        case "go": return "Go"
+        case "rust": return "Rust"
+        case "csharp": return "C#"
+        case "swift": return "Swift"
+        case "kotlin": return "Kotlin"
+        case "php": return "PHP"
+        case "ruby": return "Ruby"
+        case "shell": return L10n.isZh ? "Shell 脚本" : "Shell"
+        case "other": return L10n.isZh ? "其他" : "Other"
         case "generic": return L10n.isZh ? "通用" : "Generic"
         default: return value
         }
@@ -1399,7 +1570,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     /// 环节在工程中的先后顺序（展示与参数步骤共用；未列出的按目录序排后）。
     private static let stageOrder: [String] = [
-        "git-init", "agents-md", "repo-knowledge", "git-conventions", "docs-standards",
+        "git-init", "repo-knowledge", "agents-md", "git-conventions", "docs-standards",
         "conventions", "docker", "makefile", "ci-cd", "deploy",
     ]
     private func stageIndex(_ id: String) -> Int {
@@ -1407,9 +1578,10 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     }
 
     private enum Step: Int, CaseIterable {
-        case target = 1, stages = 2, params = 3, preview = 4
+        case workspace = 1, target = 2, stages = 3, params = 4, preview = 5
         var titleKey: String {
             switch self {
+            case .workspace: return "scaffold.step.workspace"
             case .target: return "scaffold.step.target"
             case .stages: return "scaffold.step.stages"
             case .params: return "scaffold.step.params"
@@ -1418,18 +1590,25 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         }
     }
     private var currentStep: Step = .target
+    /// 是否进入过向导（新建/初始化/更新配置）且未取消。Back 返回「当前项目」首页
+    /// 视为取消（hasEnteredWizard 复位），时间线折叠回仅显示 workspace 一项。
+    private var hasEnteredWizard = false
 
     // MARK: 子视图
 
     private let headerTitle = NSTextField(labelWithString: "")
     private var openButton: CustomIconButton!
     private var finderButton: CustomIconButton!
+    private var newProjectButton: NSButton!
+    private var initProjectButton: NSButton!
+    private var updateConfigButton: NSButton!
     private var hideButton: CustomIconButton!
 
     private let railStack = NSStackView()
     private var stepItems: [ScaffoldStepItem] = []
 
     private let contentContainer = NSView()
+    private var workspaceStepView: NSView!
     private var targetStepView: NSView!
     private var stagesStepView: NSView!
     private var paramsStepView: NSView!
@@ -1441,6 +1620,13 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     private var projectSummaryLabel: NSTextField!
     private let dirButton = NSButton()
     private let targetRootLabel = NSTextField(labelWithString: "")
+    // 步骤 1 静态标签（语言切换时重建文案）
+    private let targetTitleLabel = NSTextField(labelWithString: "")
+    private let targetSubtitleLabel = NSTextField(labelWithString: "")
+    private let parentDirLabel = NSTextField(labelWithString: "")
+    private let projectNameLabel = NSTextField(labelWithString: "")
+    // 步骤 2「按目的预设」标题（语言切换时重建）
+    private let presetTitleLabel = NSTextField(labelWithString: "")
     private var presetButtons: [NSButton] = []
 
     // 步骤 2：选择环节（卡片）
@@ -1484,6 +1670,26 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     private var lastApply: ScaffoldApplier.Result?
     private var serverReadyPort: Int?
     private var isGenerating = false
+    /// 当前工作区（项目目录）：由壳层注入，跟随用户查看的会话。
+    var workspacePath: (() -> String?)?
+    /// 非空表示向导目标是已存在的目录（初始化此目录 / 更新配置），而非新建子目录。
+    private var initTarget: String?
+    /// 步骤 3 中 AGENTS.md 的 techSummary 是否被用户独立改过（改过后不再被步骤 1 覆盖）。
+    private var techSummaryLocked = false
+    /// 当前工作区目录（workspace 步骤检测到的项目目录）。
+    private var currentWorkspaceDir: String?
+    private let workspaceScroll = NSScrollView()
+    private let workspaceDoc = FlippedWorkspaceView()
+    private let workspaceStack = NSStackView()
+
+    /// 解析出的项目脚手架配置（来自 .scaffold/state.json）。
+    private struct WorkspaceConfig {
+        var projectName = ""
+        var targetRoot = ""
+        var stages: [String] = []
+        var params: [String: [String: String]] = [:]
+        var files: [String] = []
+    }
     /// 进入滚动步骤后的置顶时间窗：窗口内每次布局都强制滚回顶部，
     /// 避免 NSScrollView 在布局时把文档重置到错误位置（内容贴底）。
     private var scrollTopDeadline: Date = .distantPast
@@ -1510,6 +1716,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         loadCatalog()
         if let dir = ProcessInfo.processInfo.environment["DSH_SCAFFOLD_TEST_DIR"], !dir.isEmpty {
             setParentDir(dir)
+            hasEnteredWizard = true
+            setStep(.target)   // QA 钩子：直达新建向导（跳过 workspace 首页）
         }
         refreshPlan()
         updateStatus("")
@@ -1521,6 +1729,41 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     func ensureLoaded() {
         if catalog.isEmpty { loadCatalog() }
         refreshPlan()
+        updateToolbarState()
+        if currentStep == .workspace { rebuildWorkspaceStep() }
+    }
+
+    /// 当前工作区（项目目录）变化时：真正切换了工作区则回到「当前项目」首页并隐藏向导步骤；
+    /// 仅会话变化（同目录）时只刷新工具栏态。
+    func workspaceChanged() {
+        let newDir = resolveCurrentWorkspace()
+        if newDir != currentWorkspaceDir {
+            hasEnteredWizard = false
+            selection = []
+            params = [:]
+            projectName = ""
+            parentDir = ""
+            techSummaryLocked = false
+            initTarget = nil
+            projectNameField.stringValue = ""
+            projectSummaryField.stringValue = ""
+            setStep(.workspace)
+        } else {
+            updateToolbarState()
+            if currentStep == .workspace { rebuildWorkspaceStep() }
+        }
+    }
+
+    /// 工具栏操作按钮的可用态：New project 恒可用；Init / Update config 视当前工作区而定。
+    private func updateToolbarState() {
+        newProjectButton?.isEnabled = true
+        if let dir = currentWorkspaceDir {
+            initProjectButton?.isEnabled = directoryIsEmpty(dir)
+            updateConfigButton?.isEnabled = (loadWorkspaceConfig(dir) != nil)
+        } else {
+            initProjectButton?.isEnabled = false
+            updateConfigButton?.isEnabled = false
+        }
     }
 
     /// dsh web 就绪（M3 深化按钮门控预留）。
@@ -1532,12 +1775,18 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     func refreshTooltips() {
         openButton?.toolTip = L10n.tr("scaffold.openDirHint")
         finderButton?.toolTip = L10n.tr("scaffold.viewInFinderHint")
+        newProjectButton?.title = L10n.tr("scaffold.newProject")
+        initProjectButton?.title = L10n.tr("scaffold.initThisDir")
+        updateConfigButton?.title = L10n.tr("scaffold.updateConfig")
         hideButton?.toolTip = L10n.tr("preview.closePanel")
         headerTitle.stringValue = L10n.tr("scaffold.title")
         rebuildPresetButtons()
+        rebuildTargetStep()
         rebuildStepRail()
         rebuildStageList()
         rebuildParamsStep()
+        updateFooter()
+        if currentStep == .workspace { rebuildWorkspaceStep() }
         refreshPlan()
     }
 
@@ -1556,7 +1805,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     private func buildUI() {
         // 头部
         headerTitle.stringValue = L10n.tr("scaffold.title")
-        headerTitle.font = .systemFont(ofSize: 14, weight: .semibold)
+        headerTitle.font = .systemFont(ofSize: 14)
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
@@ -1583,7 +1832,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         nextButton.translatesAutoresizingMaskIntoConstraints = false
         nextButton.widthAnchor.constraint(equalToConstant: 88).isActive = true
 
-        let actions = NSStackView(views: [prevButton, nextButton, openButton, finderButton, hideButton])
+        let actions = NSStackView(views: [openButton, finderButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -1599,8 +1848,55 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             headerTitle.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor, constant: -8),
             actions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -10),
             actions.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            header.heightAnchor.constraint(equalToConstant: 44),
+            header.heightAnchor.constraint(equalToConstant: 40),
         ])
+
+        // 工具栏：Back / Next、分隔符、New project / Init project / Update config。
+        let toolbar = DynamicFillView()
+        toolbar.kind = .window
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.wantsLayer = true
+        toolbar.layer?.masksToBounds = true
+
+        newProjectButton = NSButton(title: L10n.tr("scaffold.newProject"), target: self, action: #selector(newProjectTapped(_:)))
+        newProjectButton.bezelStyle = .rounded
+        newProjectButton.controlSize = .small
+        newProjectButton.font = .systemFont(ofSize: 12)
+        newProjectButton.translatesAutoresizingMaskIntoConstraints = false
+
+        initProjectButton = NSButton(title: L10n.tr("scaffold.initThisDir"), target: self, action: #selector(initCurrentTapped(_:)))
+        initProjectButton.bezelStyle = .rounded
+        initProjectButton.controlSize = .small
+        initProjectButton.font = .systemFont(ofSize: 12)
+        initProjectButton.translatesAutoresizingMaskIntoConstraints = false
+
+        updateConfigButton = NSButton(title: L10n.tr("scaffold.updateConfig"), target: self, action: #selector(updateConfigTapped(_:)))
+        updateConfigButton.bezelStyle = .rounded
+        updateConfigButton.controlSize = .small
+        updateConfigButton.font = .systemFont(ofSize: 12)
+        updateConfigButton.translatesAutoresizingMaskIntoConstraints = false
+
+        let toolbarSeparator = NSBox()
+        toolbarSeparator.boxType = .separator
+        toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
+        toolbarSeparator.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        toolbarSeparator.heightAnchor.constraint(equalToConstant: 18).isActive = true
+
+        let toolbarStack = NSStackView(views: [prevButton, nextButton, toolbarSeparator, newProjectButton, initProjectButton, updateConfigButton])
+        toolbarStack.orientation = .horizontal
+        toolbarStack.spacing = 6
+        toolbarStack.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.addSubview(toolbarStack)
+        NSLayoutConstraint.activate([
+            toolbarStack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 14),
+            toolbarStack.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            toolbar.heightAnchor.constraint(equalToConstant: 32),
+        ])
+
+        // toolbar 与内容区之间的分隔线（与其他面板一致的视觉）
+        let toolbarUnderline = NSBox()
+        toolbarUnderline.boxType = .separator
+        toolbarUnderline.translatesAutoresizingMaskIntoConstraints = false
 
         // 步骤时间线（左栏）
         railStack.orientation = .vertical
@@ -1651,6 +1947,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         statusBar.isHidden = true
 
         view.addSubview(header)
+        view.addSubview(toolbar)
+        view.addSubview(toolbarUnderline)
         view.addSubview(rail)
         view.addSubview(contentContainer)
         view.addSubview(statusBar)
@@ -1659,11 +1957,19 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
-            rail.topAnchor.constraint(equalTo: header.bottomAnchor),
+            toolbar.topAnchor.constraint(equalTo: header.bottomAnchor),
+            toolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+
+            toolbarUnderline.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            toolbarUnderline.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            toolbarUnderline.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+
+            rail.topAnchor.constraint(equalTo: toolbarUnderline.bottomAnchor),
             rail.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             rail.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
 
-            contentContainer.topAnchor.constraint(equalTo: header.bottomAnchor),
+            contentContainer.topAnchor.constraint(equalTo: toolbarUnderline.bottomAnchor),
             contentContainer.leadingAnchor.constraint(equalTo: rail.trailingAnchor),
             contentContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             contentContainer.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
@@ -1674,28 +1980,308 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             statusBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
+        buildWorkspaceStep()
         buildTargetStep()
         buildStagesStep()
         buildParamsStep()
         buildPreviewStep()
         rebuildStepRail()
-        setStep(.target)
+        setStep(.workspace)
+    }
+
+
+    private func buildWorkspaceStep() {
+        let v = NSView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.wantsLayer = true
+        v.layer?.masksToBounds = true
+
+        // 可滚动：用「翻转容器」作 documentView，内容短时贴顶而非贴底。
+        workspaceStack.orientation = .vertical
+        workspaceStack.alignment = .leading
+        workspaceStack.spacing = 10
+        workspaceStack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        workspaceStack.translatesAutoresizingMaskIntoConstraints = false
+        workspaceDoc.translatesAutoresizingMaskIntoConstraints = false
+        workspaceDoc.addSubview(workspaceStack)
+        NSLayoutConstraint.activate([
+            workspaceStack.topAnchor.constraint(equalTo: workspaceDoc.topAnchor),
+            workspaceStack.leadingAnchor.constraint(equalTo: workspaceDoc.leadingAnchor),
+            workspaceStack.widthAnchor.constraint(equalTo: workspaceDoc.widthAnchor),
+        ])
+        workspaceScroll.documentView = workspaceDoc
+        workspaceScroll.hasVerticalScroller = true
+        workspaceScroll.autohidesScrollers = true
+        workspaceScroll.drawsBackground = false
+        workspaceScroll.translatesAutoresizingMaskIntoConstraints = false
+        v.addSubview(workspaceScroll)
+        NSLayoutConstraint.activate([
+            workspaceScroll.topAnchor.constraint(equalTo: v.topAnchor),
+            workspaceScroll.leadingAnchor.constraint(equalTo: v.leadingAnchor),
+            workspaceScroll.trailingAnchor.constraint(equalTo: v.trailingAnchor),
+            workspaceScroll.bottomAnchor.constraint(equalTo: v.bottomAnchor),
+        ])
+        workspaceStepView = v
+        contentContainer.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            v.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+        ])
+        rebuildWorkspaceStep()
+    }
+
+    private func rebuildWorkspaceStep() {
+        for sub in workspaceStack.arrangedSubviews {
+            workspaceStack.removeArrangedSubview(sub)
+            sub.removeFromSuperview()
+        }
+        let dir = resolveCurrentWorkspace()
+        currentWorkspaceDir = dir
+        updateToolbarState()
+
+        let title = NSTextField(labelWithString: L10n.tr("scaffold.workspaceTitle"))
+        title.font = .systemFont(ofSize: 15, weight: .semibold)
+        workspaceStack.addArrangedSubview(title)
+
+        if let dir = dir {
+            let path = NSTextField(labelWithString: dir)
+            path.font = .systemFont(ofSize: 12)
+            path.textColor = .secondaryLabelColor
+            path.lineBreakMode = .byTruncatingTail
+            path.maximumNumberOfLines = 1
+            workspaceStack.addArrangedSubview(path)
+            path.widthAnchor.constraint(equalTo: workspaceStack.widthAnchor, constant: -32).isActive = true
+            // 打开目录 / 在 Finder 中显示：放在目录路径下方
+            appendRowButtons(dir: dir)
+        }
+
+        if let dir = dir, let cfg = loadWorkspaceConfig(dir) {
+            renderGenerated(cfg, dir: dir)
+        } else {
+            renderInitPrompt(dir: dir)
+        }
+        // 让滚动视图的内容高度跟随 stack 的 fitting 尺寸（否则超长内容无法滚动）
+        workspaceStack.invalidateIntrinsicContentSize()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let fitting = self.workspaceStack.fittingSize
+            if fitting.height > 0 {
+                let w = max(fitting.width, self.workspaceScroll.contentView.bounds.width)
+                self.workspaceStack.setFrameSize(NSSize(width: w, height: fitting.height))
+                self.workspaceDoc.setFrameSize(NSSize(width: w, height: fitting.height))
+            }
+            self.view.layoutSubtreeIfNeeded()
+        }
+    }
+
+    private func resolveCurrentWorkspace() -> String? {
+        guard let p = workspacePath?(), !p.isEmpty,
+              FileManager.default.fileExists(atPath: p) else { return nil }
+        return p
+    }
+
+    private func loadWorkspaceConfig(_ dir: String) -> WorkspaceConfig? {
+        let p = (dir as NSString).appendingPathComponent(".scaffold/state.json")
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: p)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let stagesArr = json["stages"] as? [[String: Any]] else { return nil }
+        var cfg = WorkspaceConfig()
+        cfg.projectName = json["projectName"] as? String ?? ""
+        cfg.targetRoot = json["targetRoot"] as? String ?? dir
+        cfg.files = json["files"] as? [String] ?? []
+        for s in stagesArr {
+            guard let id = s["id"] as? String else { continue }
+            cfg.stages.append(id)
+            var p: [String: String] = [:]
+            if let dict = s["params"] as? [String: Any] {
+                for (k, v) in dict { p[k] = String(describing: v) }
+            }
+            cfg.params[id] = p
+        }
+        return cfg
+    }
+
+    private func stageName(_ id: String) -> String {
+        catalog.first(where: { $0.id == id })?.name ?? id
+    }
+
+    private func renderGenerated(_ cfg: WorkspaceConfig, dir: String) {
+        let badge = NSTextField(labelWithString: L10n.tr("scaffold.workspaceGenerated"))
+        badge.font = .systemFont(ofSize: 13, weight: .semibold)
+        badge.textColor = .systemGreen
+        workspaceStack.addArrangedSubview(badge)
+
+        let count = NSTextField(labelWithString: L10n.tr("scaffold.workspaceFiles", cfg.files.count))
+        count.font = .systemFont(ofSize: 12)
+        count.textColor = .secondaryLabelColor
+        workspaceStack.addArrangedSubview(count)
+
+        // 环节顺序与向导「选择环节/参数配置」一致：按工程先后顺序（stageOrder）。
+        let orderedStages = cfg.stages.sorted { stageIndex($0) < stageIndex($1) }
+        for id in orderedStages {
+            let pairs = orderedParams(id: id, dict: cfg.params[id] ?? [:])
+            let card = stageCard(name: stageName(id), params: pairs)
+            workspaceStack.addArrangedSubview(card)
+            // 卡片宽度约束必须在加入 workspaceStack 之后再激活（同一视图层级）
+            card.widthAnchor.constraint(equalTo: workspaceStack.widthAnchor, constant: -32).isActive = true
+        }
+
+        _ = dir
+    }
+
+    /// 环节参数的人类可读标签（取 stage.yaml 的 label，缺失回退 key）。
+    private func paramLabel(_ stageId: String, _ key: String) -> String {
+        guard let stage = catalog.first(where: { $0.id == stageId }),
+              let param = stage.params.first(where: { $0.key == key }) else { return key }
+        return param.label
+    }
+
+    /// 参数顺序与「参数配置」步骤一致：按 stage.yaml 的 params 定义顺序，仅取非空值。
+    private func orderedParams(id: String, dict: [String: String]) -> [(String, String)] {
+        if let stage = catalog.first(where: { $0.id == id }) {
+            var out: [(String, String)] = []
+            for p in stage.params {
+                if let v = dict[p.key], !v.isEmpty {
+                    out.append((p.label, v))
+                }
+            }
+            return out
+        }
+        // 回退：环节不在目录中时按 key 排序
+        return dict.filter { !$0.value.isEmpty }
+            .sorted { $0.key < $1.key }
+            .map { (paramLabel(id, $0.key), $0.value) }
+    }
+
+    /// 配置卡片：圆角描边，内部为「环节名 + 参数行」。
+    private func stageCard(name: String, params: [(String, String)]) -> NSView {
+        let card = WorkspaceStageCardView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(stack)
+        // 用约束内边距（而非 edgeInsets）让参数与卡片边框留出间距
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
+        ])
+
+        let nameL = NSTextField(labelWithString: name)
+        nameL.font = .systemFont(ofSize: 12, weight: .semibold)
+        stack.addArrangedSubview(nameL)
+
+        for (l, v) in params {
+            let row = paramRow(label: l, value: v)
+            stack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        return card
+    }
+
+    /// 参数行：label（次级色）+ value（主色），可换行。
+    private func paramRow(label: String, value: String) -> NSTextField {
+        let t = NSTextField(labelWithString: "")
+        t.font = .systemFont(ofSize: 12)
+        t.lineBreakMode = .byWordWrapping
+        t.maximumNumberOfLines = 2
+        let attr = NSMutableAttributedString()
+        attr.append(NSAttributedString(string: label + ": ",
+            attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: NSFont.systemFont(ofSize: 12)]))
+        attr.append(NSAttributedString(string: value,
+            attributes: [.foregroundColor: NSColor.labelColor, .font: NSFont.systemFont(ofSize: 12)]))
+        t.attributedStringValue = attr
+        return t
+    }
+
+    private func renderInitPrompt(dir: String?) {
+        guard let dir = dir else {
+            let msg = NSTextField(labelWithString: L10n.tr("scaffold.workspaceNoDir"))
+            msg.font = .systemFont(ofSize: 13)
+            msg.textColor = .labelColor
+            msg.lineBreakMode = .byWordWrapping
+            msg.maximumNumberOfLines = 3
+            msg.widthAnchor.constraint(lessThanOrEqualToConstant: 320).isActive = true
+            workspaceStack.addArrangedSubview(msg)
+            return
+        }
+        // 未用脚手架初始化：仅空目录才允许初始化
+        if directoryIsEmpty(dir) {
+            let msg = NSTextField(labelWithString: L10n.tr("scaffold.workspaceNotGenerated"))
+            msg.font = .systemFont(ofSize: 13)
+            msg.textColor = .labelColor
+            msg.lineBreakMode = .byWordWrapping
+            msg.maximumNumberOfLines = 3
+            msg.widthAnchor.constraint(lessThanOrEqualToConstant: 320).isActive = true
+            workspaceStack.addArrangedSubview(msg)
+
+            let desc = NSTextField(labelWithString: L10n.tr("scaffold.workspaceInitHint"))
+            desc.font = .systemFont(ofSize: 12)
+            desc.textColor = .secondaryLabelColor
+            desc.lineBreakMode = .byWordWrapping
+            desc.maximumNumberOfLines = 3
+            desc.widthAnchor.constraint(lessThanOrEqualToConstant: 320).isActive = true
+            workspaceStack.addArrangedSubview(desc)
+        } else {
+            let msg = NSTextField(labelWithString: L10n.tr("scaffold.workspaceNotEmpty"))
+            msg.font = .systemFont(ofSize: 13)
+            msg.textColor = .labelColor
+            msg.lineBreakMode = .byWordWrapping
+            msg.maximumNumberOfLines = 3
+            msg.widthAnchor.constraint(lessThanOrEqualToConstant: 320).isActive = true
+            workspaceStack.addArrangedSubview(msg)
+
+            let desc = NSTextField(labelWithString: L10n.tr("scaffold.workspaceNotEmptyHint"))
+            desc.font = .systemFont(ofSize: 12)
+            desc.textColor = .secondaryLabelColor
+            desc.lineBreakMode = .byWordWrapping
+            desc.maximumNumberOfLines = 3
+            desc.widthAnchor.constraint(lessThanOrEqualToConstant: 320).isActive = true
+            workspaceStack.addArrangedSubview(desc)
+        }
+    }
+
+    /// 目录是否为空（无任何文件/子目录）。
+    private func directoryIsEmpty(_ dir: String) -> Bool {
+        ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []).isEmpty
+    }
+
+    private func appendRowButtons(dir: String) {
+        let open = NSButton(title: L10n.tr("scaffold.openDir"), target: self, action: #selector(openWorkspaceTapped(_:)))
+        open.bezelStyle = .rounded
+        open.controlSize = .small
+        let finder = NSButton(title: L10n.tr("scaffold.viewInFinder"), target: self, action: #selector(revealWorkspaceTapped(_:)))
+        finder.bezelStyle = .rounded
+        finder.controlSize = .small
+        let row = NSStackView(views: [open, finder])
+        row.orientation = .horizontal
+        row.spacing = 8
+        row.translatesAutoresizingMaskIntoConstraints = false
+        workspaceStack.addArrangedSubview(row)
+        _ = dir
     }
 
     // MARK: 步骤视图
 
     private func buildTargetStep() {
-        let title = NSTextField(labelWithString: L10n.tr("scaffold.step.target"))
-        title.font = .systemFont(ofSize: 15, weight: .semibold)
-        let subtitle = NSTextField(labelWithString: L10n.tr("scaffold.targetHint"))
-        subtitle.font = .systemFont(ofSize: 12)
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.maximumNumberOfLines = 2
-        subtitle.lineBreakMode = .byWordWrapping
+        targetTitleLabel.stringValue = L10n.tr("scaffold.step.target")
+        targetTitleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        targetSubtitleLabel.stringValue = L10n.tr("scaffold.targetHint")
+        targetSubtitleLabel.font = .systemFont(ofSize: 12)
+        targetSubtitleLabel.textColor = .secondaryLabelColor
+        targetSubtitleLabel.maximumNumberOfLines = 2
+        targetSubtitleLabel.lineBreakMode = .byWordWrapping
 
         // 位置（Location）在最上
-        let dirLabel = NSTextField(labelWithString: L10n.tr("scaffold.parentDir"))
-        dirLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        parentDirLabel.stringValue = L10n.tr("scaffold.parentDir")
+        parentDirLabel.font = .systemFont(ofSize: 13, weight: .medium)
         dirButton.title = L10n.tr("scaffold.pickDir")
         dirButton.bezelStyle = .rounded
         dirButton.controlSize = .regular
@@ -1705,15 +2291,15 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         dirButton.translatesAutoresizingMaskIntoConstraints = false
         dirButton.widthAnchor.constraint(equalToConstant: 160).isActive = true
 
-        let dirRow = NSStackView(views: [dirLabel, dirButton])
+        let dirRow = NSStackView(views: [parentDirLabel, dirButton])
         dirRow.orientation = .horizontal
         dirRow.spacing = 10
         dirRow.alignment = .centerY
         dirRow.translatesAutoresizingMaskIntoConstraints = false
 
         // 项目名（= 目录名 说明已由「将创建目录」预览承担，标签不再赘述）
-        let projectLabel = NSTextField(labelWithString: L10n.tr("scaffold.projectName"))
-        projectLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        projectNameLabel.stringValue = L10n.tr("scaffold.projectName")
+        projectNameLabel.font = .systemFont(ofSize: 13, weight: .medium)
         projectNameField.placeholderString = L10n.tr("scaffold.projectNamePlaceholder")
         projectNameField.font = .systemFont(ofSize: 14)
         projectNameField.controlSize = .large
@@ -1722,7 +2308,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         projectNameField.translatesAutoresizingMaskIntoConstraints = false
         projectNameField.widthAnchor.constraint(equalToConstant: 200).isActive = true
 
-        let nameRow = NSStackView(views: [projectLabel, projectNameField])
+        let nameRow = NSStackView(views: [projectNameLabel, projectNameField])
         nameRow.orientation = .horizontal
         nameRow.spacing = 10
         nameRow.alignment = .centerY
@@ -1755,7 +2341,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         targetRootLabel.lineBreakMode = .byTruncatingTail
         targetRootLabel.maximumNumberOfLines = 1
 
-        let stack = NSStackView(views: [title, subtitle, dirRow, nameRow, summaryRow, targetRootLabel])
+        let stack = NSStackView(views: [targetTitleLabel, targetSubtitleLabel, dirRow, nameRow, summaryRow, targetRootLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -1784,15 +2370,27 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         ])
     }
 
+    /// 语言切换后重建步骤 1（目标与位置）的静态标签文案。
+    private func rebuildTargetStep() {
+        targetTitleLabel.stringValue = L10n.tr("scaffold.step.target")
+        targetSubtitleLabel.stringValue = L10n.tr("scaffold.targetHint")
+        parentDirLabel.stringValue = L10n.tr("scaffold.parentDir")
+        dirButton.title = parentDir.isEmpty ? L10n.tr("scaffold.pickDir") : (parentDir as NSString).lastPathComponent
+        projectNameLabel.stringValue = L10n.tr("scaffold.projectName")
+        projectNameField.placeholderString = L10n.tr("scaffold.projectNamePlaceholder")
+        projectSummaryLabel?.stringValue = L10n.tr("scaffold.projectSummary") + " *"
+        projectSummaryField.placeholderString = L10n.tr("scaffold.projectSummaryPlaceholder")
+    }
+
     private func buildStagesStep() {
         stagesHeader.font = .systemFont(ofSize: 13, weight: .medium)
         stagesHeader.translatesAutoresizingMaskIntoConstraints = false
 
         // 按目的预设（快捷勾选，不影响自由组合）
-        let presetLabel = NSTextField(labelWithString: L10n.tr("scaffold.presetTitle"))
-        presetLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        presetLabel.textColor = .secondaryLabelColor
-        presetLabel.translatesAutoresizingMaskIntoConstraints = false
+        presetTitleLabel.stringValue = L10n.tr("scaffold.presetTitle")
+        presetTitleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        presetTitleLabel.textColor = .secondaryLabelColor
+        presetTitleLabel.translatesAutoresizingMaskIntoConstraints = false
         let presetRow = NSStackView()
         presetRow.orientation = .horizontal
         presetRow.spacing = 8
@@ -1827,17 +2425,17 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         let v = NSView()
         v.translatesAutoresizingMaskIntoConstraints = false
         v.addSubview(stagesHeader)
-        v.addSubview(presetLabel)
+        v.addSubview(presetTitleLabel)
         v.addSubview(presetRow)
         v.addSubview(stageScroll)
         NSLayoutConstraint.activate([
             stagesHeader.topAnchor.constraint(equalTo: v.topAnchor, constant: 14),
             stagesHeader.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 16),
             stagesHeader.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -16),
-            presetLabel.topAnchor.constraint(equalTo: stagesHeader.bottomAnchor, constant: 10),
-            presetLabel.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 16),
-            presetLabel.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -16),
-            presetRow.topAnchor.constraint(equalTo: presetLabel.bottomAnchor, constant: 6),
+            presetTitleLabel.topAnchor.constraint(equalTo: stagesHeader.bottomAnchor, constant: 10),
+            presetTitleLabel.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 16),
+            presetTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -16),
+            presetRow.topAnchor.constraint(equalTo: presetTitleLabel.bottomAnchor, constant: 6),
             presetRow.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 16),
             presetRow.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -16),
             stageScroll.topAnchor.constraint(equalTo: presetRow.bottomAnchor, constant: 10),
@@ -1993,9 +2591,15 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         let stagesDone = !selection.isEmpty
         let paramsDone = (plan?.validationErrors.isEmpty ?? true)
         let previewError = !(plan?.stageErrors.isEmpty ?? true)
+        // 在「当前项目」首页且尚未进入向导（或 Back 取消复位后）时，步骤 2~5 折叠隐藏；
+        // 进入向导后展开，步骤切换走时间线/导航。
+        let onlyWorkspace = (currentStep == .workspace && !hasEnteredWizard)
         for item in stepItems {
             guard let step = Step(rawValue: item.number) else { continue }
+            item.isHidden = (onlyWorkspace && step != .workspace)
             switch step {
+            case .workspace:
+                item.state = (step == currentStep) ? .current : .done
             case .target:
                 item.state = (step == currentStep) ? .current : (targetDone ? .done : .idle)
             case .stages:
@@ -2018,12 +2622,14 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     private func setStep(_ step: Step) {
         currentStep = step
+        workspaceStepView?.isHidden = step != .workspace
         targetStepView?.isHidden = step != .target
         stagesStepView?.isHidden = step != .stages
         paramsStepView?.isHidden = step != .params
         previewStepView?.isHidden = step != .preview
+        if step == .workspace { rebuildWorkspaceStep() }
         // 进入滚动步骤：开启置顶时间窗（布局落定后由 handleRootLayout 执行）
-        if step == .stages || step == .params {
+        if step == .workspace || step == .stages || step == .params {
             scrollTopDeadline = Date().addingTimeInterval(1.0)
             handleRootLayout()
         }
@@ -2034,11 +2640,19 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     }
 
     private func updateFooter() {
-        prevButton.isEnabled = currentStep != .target
+        prevButton.title = L10n.tr("scaffold.prev")
+        // 目标步骤的 Back 作为「取消/返回当前项目」：从向导任意步骤都能回到首页；
+        // 回到首页即折叠步骤 2~5（见 prevTapped 的 hasEnteredWizard 复位）。
+        prevButton.isEnabled = (currentStep != .workspace)
         if currentStep == .preview {
             nextButton.title = L10n.tr("scaffold.generate")
             nextButton.action = #selector(generateTapped(_:))
             if let p = plan { updateGenerateEnabled(p) }
+        } else if currentStep == .workspace {
+            // 当前项目首页：不提供向导前进/后退，仅经操作按钮进入向导。
+            nextButton.title = L10n.tr("scaffold.next")
+            nextButton.action = #selector(nextTapped(_:))
+            nextButton.isEnabled = false
         } else {
             nextButton.title = L10n.tr("scaffold.next")
             nextButton.action = #selector(nextTapped(_:))
@@ -2048,6 +2662,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     @objc private func prevTapped(_ sender: Any?) {
         guard let prev = Step(rawValue: currentStep.rawValue - 1) else { return }
+        // Back 回到「当前项目」首页即视为取消向导：复位入口状态，时间线折叠回仅显示当前项目。
+        if prev == .workspace { hasEnteredWizard = false }
         setStep(prev)
     }
 
@@ -2066,6 +2682,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     }
 
     private func rebuildPresetButtons() {
+        presetTitleLabel.stringValue = L10n.tr("scaffold.presetTitle")
         let presets = ScaffoldPreset.all
         for (idx, b) in presetButtons.enumerated() {
             if idx < presets.count { b.title = presetTitle(presets[idx].id) }
@@ -2106,6 +2723,25 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
                     for b in buttons {
                         b.target = self
                         b.action = #selector(paramRadioChanged(_:))
+                    }
+                }
+                // 接线 string / select / bool / multiselect 控件（参数步骤可编辑）
+                for (_, field) in editor.stringControls {
+                    field.target = self
+                    field.action = #selector(paramStringChanged(_:))
+                }
+                for (_, pop) in editor.selectControls {
+                    pop.target = self
+                    pop.action = #selector(paramSelectChanged(_:))
+                }
+                for (_, cb) in editor.boolControls {
+                    cb.target = self
+                    cb.action = #selector(paramBoolChanged(_:))
+                }
+                for (_, boxes) in editor.multiControls {
+                    for b in boxes {
+                        b.target = self
+                        b.action = #selector(paramMultiChanged(_:))
                     }
                 }
                 stageStack.addArrangedSubview(editor.card)
@@ -2174,6 +2810,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             guard let editor = editors[id] else { continue }
             // 无参数的环节（如 repo-knowledge）步骤 3 不显示参数区
             if editor.paramRows.isEmpty { continue }
+            // 用当前 params 同步控件显示（如 AGENTS.md 的 techSummary 默认取步骤 1 项目简介）
+            editor.syncControls(values: params[id] ?? [:])
             let title = NSTextField(labelWithString: editor.stage.name)
             title.font = .systemFont(ofSize: 14, weight: .semibold)
             title.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -2253,7 +2891,10 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     }
 
     @objc private func summaryChanged(_ sender: Any?) {
-        params["agents-md", default: [:]][Self.techSummaryKey] = projectSummaryField.stringValue
+        // 仅当步骤 3 的 AGENTS.md techSummary 未被独立改过时，才把它同步成步骤 1 的项目简介
+        if !techSummaryLocked {
+            params["agents-md", default: [:]][Self.techSummaryKey] = projectSummaryField.stringValue
+        }
         refreshPlan()
     }
 
@@ -2284,6 +2925,9 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         guard let id = sender.identifier?.rawValue else { return }
         let parts = id.split(separator: ".", maxSplits: 1).map(String.init)
         guard parts.count == 2 else { return }
+        if parts[0] == "agents-md", parts[1] == Self.techSummaryKey {
+            techSummaryLocked = true
+        }
         params[parts[0], default: [:]][parts[1]] = sender.stringValue
         refreshPlan()
     }
@@ -2322,6 +2966,93 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         refreshPlan()
     }
 
+    @objc private func paramMultiChanged(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        let parts = id.split(separator: ".", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let stage = editors[parts[0]]?.stage,
+              let param = stage.params.first(where: { $0.key == parts[1] }),
+              let boxes = editors[parts[0]]?.multiControls[id] else { return }
+        let chosen = boxes.enumerated().compactMap { idx, b -> String? in
+            (b.state == .on && idx < param.options.count) ? param.options[idx] : nil
+        }
+        params[parts[0], default: [:]][parts[1]] = chosen.joined(separator: " ")
+        refreshPlan()
+    }
+
+
+    @objc private func newProjectTapped(_ sender: Any?) { beginNewProject() }
+
+    @objc private func initCurrentTapped(_ sender: Any?) {
+        guard let dir = currentWorkspaceDir else { return }
+        beginInitCurrent(dir)
+    }
+
+    @objc private func updateConfigTapped(_ sender: Any?) {
+        guard let dir = currentWorkspaceDir, let cfg = loadWorkspaceConfig(dir) else { return }
+        beginRegenerate(cfg)
+    }
+
+    @objc private func openWorkspaceTapped(_ sender: Any?) { openDir(currentWorkspaceDir ?? "") }
+    @objc private func revealWorkspaceTapped(_ sender: Any?) { revealDir(currentWorkspaceDir ?? "") }
+
+    /// 右上角「初始化项目脚手架」：进入新建项目向导（默认行为）。
+    private func beginNewProject() {
+        initTarget = nil
+        hasEnteredWizard = true
+        setStep(.target)
+    }
+
+    /// 初始化当前目录：把脚手架生成到该目录内（不改名、不新建子目录）。
+    private func beginInitCurrent(_ dir: String) {
+        initTarget = dir
+        hasEnteredWizard = true
+        loadProjectTarget(dir: dir)
+        setStep(.stages)
+    }
+
+    /// 更新已有配置：载入 state.json 的环节/参数到向导，重新生成。
+    private func beginRegenerate(_ cfg: WorkspaceConfig) {
+        initTarget = cfg.targetRoot.isEmpty ? currentWorkspaceDir : cfg.targetRoot
+        hasEnteredWizard = true
+        selection = cfg.stages
+        params = cfg.params
+        if let ts = cfg.params["agents-md"]?[Self.techSummaryKey], !ts.isEmpty {
+            projectSummaryField.stringValue = ts
+            techSummaryLocked = true
+        } else {
+            techSummaryLocked = false
+        }
+        loadProjectTarget(dir: initTarget ?? "")
+        rebuildStageList()
+        refreshPlan()
+        // 与新建向导一致：先停在步骤 2（目标）确认目录/项目名，再下一步进入已载入的环节/参数。
+        setStep(.target)
+    }
+
+    /// 把向导目标设为一个已存在目录：parentDir=父目录、projectName=目录名。
+    private func loadProjectTarget(dir: String) {
+        guard !dir.isEmpty else { return }
+        let ns = dir as NSString
+        let parent = ns.deletingLastPathComponent
+        let name = ns.lastPathComponent
+        parentDir = parent
+        projectName = name
+        projectNameField.stringValue = name
+        dirButton.title = parent.isEmpty ? L10n.tr("scaffold.pickDir") : (parent as NSString).lastPathComponent
+        dirButton.toolTip = parent
+        refreshPlan()
+    }
+
+    private func openDir(_ path: String) {
+        guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+
+    private func revealDir(_ path: String) {
+        guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+
     @objc private func presetTapped(_ sender: NSButton) {
         let presets = ScaffoldPreset.all
         guard sender.tag >= 0, sender.tag < presets.count else { return }
@@ -2346,10 +3077,14 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     private func refreshPlan() {
         projectName = projectNameField.stringValue
-        // 项目简介在步骤 1 填写，直接带入 agents-md 的 techSummary 参数
-        params["agents-md", default: [:]][Self.techSummaryKey] = projectSummaryField.stringValue
+        // 项目简介在步骤 1 填写，作为 AGENTS.md techSummary 的默认值；
+        // 一旦用户在步骤 3 独立改过（techSummaryLocked），就不再覆盖。
+        if !techSummaryLocked {
+            params["agents-md", default: [:]][Self.techSummaryKey] = projectSummaryField.stringValue
+        }
         let p = ScaffoldPlan.build(catalog: catalog, selection: selection, params: params,
-                                   projectName: projectName, parentDir: parentDir)
+                                   projectName: projectName, parentDir: parentDir,
+                                   existingTargetRoot: initTarget ?? "")
         plan = p
         updateTargetRootLabel(p)
         // 步骤 1 项目简介（必填）动态高亮
@@ -2582,6 +3317,14 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
                     }
                     self.updateStatus(msg)
                 }
+                // 生成成功后，best-effort 把新项目登记为 dsh web 工作区（幂等；服务未就绪则跳过）；
+                // 新建工作区时还会顺带创建一个空 session，dsh web 立即显示可用会话。
+                if let port = self.serverReadyPort, result.written.isEmpty == false {
+                    let root = p.targetRoot
+                    DispatchQueue.global(qos: .utility).async {
+                        ScaffoldWorkspaceRPC.ensure(port: port, path: root)
+                    }
+                }
                 self.refreshPlan()
             }
         }
@@ -2602,12 +3345,86 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     }
 
     private func openTargetDir() {
-        guard let url = targetURL() else { return }
-        NSWorkspace.shared.open(url)
+        if let url = targetURL() {
+            NSWorkspace.shared.open(url)
+        } else if let dir = currentWorkspaceDir {
+            openDir(dir)
+        }
     }
 
     private func revealInFinder() {
-        guard let url = targetURL() else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        if let url = targetURL() {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else if let dir = currentWorkspaceDir {
+            revealDir(dir)
+        }
     }
 }
+
+
+// MARK: - dsh web workspace 注册（生成后把新项目登记为工作区，幂等）
+
+enum ScaffoldWorkspaceRPC {
+    private static func call(_ method: String, _ payload: [String: Any],
+                             port: Int, timeout: TimeInterval = 6) -> [String: Any]? {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/api/\(method)") else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: timeout)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        let rpcId = UUID().uuidString
+        let body: [String: Any] = ["type": "client-request", "rpcId": rpcId, "method": method, "payload": payload]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: [String: Any]?
+        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
+            defer { semaphore.signal() }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (json["rpcId"] as? String) == rpcId,
+                  let res = json["result"] as? [String: Any],
+                  (res["ok"] as? Bool) == true,
+                  let value = res["value"] as? [String: Any] else { return }
+            result = value
+        }
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + timeout + 1)
+        task.cancel()
+        return result
+    }
+
+    private static func canonical(_ p: String) -> String {
+        URL(fileURLWithPath: p).standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    /// 幂等地把 <path> 登记为 dsh web 工作区：已存在（按 canonical path 匹配）则不创建。
+    /// 若确实新建了工作区，顺带在里面创建一个空 session（dsh 会展示为一个可用的新会话）。
+    static func ensure(port: Int, path: String) {
+        let target = canonical(path)
+        var wid: String?
+        var created = false
+        // 已存在 → 复用，不创建
+        if let list = call("workspace.list", [:], port: port),
+           let items = list["items"] as? [[String: Any]] {
+            for ws in items {
+                guard let p = ws["path"] as? String else { continue }
+                if canonical(p) == target {
+                    wid = ws["workspaceId"] as? String
+                    break
+                }
+            }
+        }
+        if wid == nil {
+            if let value = call("workspace.create", ["path": path], port: port),
+               let ws = value["workspace"] as? [String: Any],
+               let id = ws["workspaceId"] as? String {
+                wid = id
+                created = (value["created"] as? Bool) ?? true
+            }
+        }
+        // 新建工作区时，同时创建一个空 session
+        if created, let wid = wid {
+            _ = call("session.create", ["workspaceId": wid], port: port)
+        }
+    }
+}
+

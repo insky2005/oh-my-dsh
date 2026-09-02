@@ -277,6 +277,9 @@ write(targetFile, "user content")
 let applyNoBackup = ScaffoldApplier.apply(plan: applyPlan, options: ScaffoldApplier.Options(backupConflicts: false))
 check(applyNoBackup.backups.isEmpty, "apply: backupConflicts=false no backup")
 eq(read(targetFile), "one world demo", "apply: overwritten without backup")
+// state.json 记录 files（workspace「更新配置」回读依据）
+let stateFinal = read((applyRoot as NSString).appendingPathComponent("demo/.scaffold/state.json"))
+check(stateFinal.contains("\"files\"") && stateFinal.contains("one.txt"), "apply: state.json records files list", stateFinal)
 
 // MARK: - 端到端：纯后端 API 预设（10.1）
 
@@ -289,7 +292,7 @@ var e2eParams: [String: [String: String]] = [:]
 for (sid, defaults) in ScaffoldPreset.backend.paramDefaults {
     e2eParams[sid] = defaults
 }
-e2eParams["agents-md"] = ["techSummary": "一个纯后端 API 服务 / a backend API service", "primaryLang": "Java"]
+e2eParams["agents-md"] = ["techSummary": "一个纯后端 API 服务 / a backend API service", "primaryLang": "java"]
 e2eParams["makefile"] = ["backendBuild": "mvn -q package", "backendTest": "mvn -q test", "testCmd": "mvn -q test", "lintCmd": "mvn -q checkstyle:check"]
 e2eParams["git-init"] = ["license": "MIT", "gitIgnorePreset": "java"]
 e2eParams["ci-cd"] = ["platform": "github-actions", "hasBackend": "true", "hasFrontend": "false"]
@@ -434,6 +437,105 @@ let cdTemplate = read((builtinDir as NSString).appendingPathComponent("ci-cd/tem
 let cdRendered = try! ScaffoldTemplateRenderer.render(cdTemplate, context: ["ciBuild": "make build", "imageRepo": "reg", "projectSlug": "app", "imageTag": "1"])
 check(cdRendered.contains("${{ secrets.DOCKER_USERNAME }}"), "render: GHA ${{ }} escape round-trip", cdRendered)
 check(!cdRendered.contains("{{{{"), "render: no leftover escape")
+
+
+// MARK: - 多语言 AGENTS.md（primaryLang 多选）与 Makefile 语言预设
+
+let multiDir = tmpDir("multi")
+let multiPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["agents-md"],
+                                   params: ["agents-md": ["techSummary": "t", "primaryLang": "java node python"]],
+                                   projectName: "multi", parentDir: multiDir)
+let agentsTmpl = read((builtinDir as NSString).appendingPathComponent("agents-md/templates/AGENTS.md.tmpl"))
+let multiAgents = try! ScaffoldTemplateRenderer.render(agentsTmpl, context: multiPlan.context)
+check(multiAgents.contains("- Java") && multiAgents.contains("- Node.js") && multiAgents.contains("- Python"),
+       "multi: AGENTS.md lists selected languages", multiAgents)
+check(!multiAgents.contains("- Go") && !multiAgents.contains("- Rust"), "multi: AGENTS.md omits unselected languages")
+check(multiAgents.contains("Primary languages"), "multi: AGENTS.md plural label")
+
+let mkTmpl = read((builtinDir as NSString).appendingPathComponent("makefile/templates/Makefile.tmpl"))
+let goPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["makefile"],
+                                params: ["makefile": ["lang": "go"]], projectName: "goapp", parentDir: tmpDir("go"))
+let goMk = try! ScaffoldTemplateRenderer.render(mkTmpl, context: goPlan.context)
+check(goMk.contains("go test ./...") && goMk.contains("gofmt -w .") && goMk.contains("go run ."), "makefile: go preset targets", goMk)
+check(!goMk.contains("mvn") && !goMk.contains("npm ci"), "makefile: go preset no java/node commands")
+
+let pyPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["makefile"],
+                                params: ["makefile": ["lang": "python"]], projectName: "pyapp", parentDir: tmpDir("py"))
+let pyMk = try! ScaffoldTemplateRenderer.render(mkTmpl, context: pyPlan.context)
+check(pyMk.contains("pytest") && pyMk.contains("ruff check .") && pyMk.contains("pip install -r requirements.txt"), "makefile: python preset targets", pyMk)
+
+let nodePlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["makefile"],
+                                  params: ["makefile": ["lang": "node"]], projectName: "nodeapp", parentDir: tmpDir("node"))
+let nodeMk = try! ScaffoldTemplateRenderer.render(mkTmpl, context: nodePlan.context)
+check(nodeMk.contains("node-build:") && nodeMk.contains("npm run build") && nodeMk.contains("npm test") && nodeMk.contains("npm ci") && nodeMk.contains("npm run dev"), "makefile: node preset targets", nodeMk)
+
+// makefile 多语言：同时选 java + node，生成各自 <lang>-<action> 目标并存
+let bothPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["makefile"],
+                                  params: ["makefile": ["lang": "java node"]], projectName: "both", parentDir: tmpDir("both"))
+let bothMk = try! ScaffoldTemplateRenderer.render(mkTmpl, context: bothPlan.context)
+check(bothMk.contains("java-build:") && bothMk.contains("node-build:"), "makefile: multi-lang both targets", bothMk)
+check(bothMk.contains("build: java-build node-build"), "makefile: multi-lang umbrella build chains both", bothMk)
+
+// makefile lang=none：默认仍渲染 backend/frontend 目标（多端模式）
+let nonePlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["makefile"],
+                                  params: ["makefile": ["backendBuild": "mvn -q package", "backendTest": "mvn -q test"]],
+                                  projectName: "none", parentDir: tmpDir("none"))
+let noneMk = try! ScaffoldTemplateRenderer.render(mkTmpl, context: nonePlan.context)
+check(noneMk.contains("backend-test") && noneMk.contains("mvn -q package"), "makefile: lang=none multi-tier targets", noneMk)
+
+// CI 派生命令随 lang 变化
+let ciPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["ci-cd", "makefile"],
+                                params: ["ci-cd": ["platform": "github-actions", "hasBackend": "true", "hasFrontend": "false"],
+                                         "makefile": ["lang": "go"]], projectName: "ci-go", parentDir: tmpDir("cigo"))
+eq(ciPlan.context["ciTest"] ?? "", "go test ./...", "ci: go test derived")
+eq(ciPlan.context["ciBuild"] ?? "", "go build -o bin/app .", "ci: go build derived")
+eq(ciPlan.context["ciLint"] ?? "", "golangci-lint run", "ci: go lint derived")
+
+
+// MARK: - README 使用项目名与项目简介（git-init）
+
+let readmeTmpl = read((builtinDir as NSString).appendingPathComponent("git-init/templates/README.md.tmpl"))
+let readmeWith = try! ScaffoldTemplateRenderer.render(readmeTmpl,
+    context: ["projectName": "my-api", "techSummary": "内部 API 网关 / internal API gateway", "techSummaryEmpty": "false", "hasMakefile": "true"])
+check(readmeWith.contains("# my-api"), "readme: project name heading")
+check(readmeWith.contains("内部 API 网关"), "readme: uses step-1 project summary", readmeWith)
+let readmeWithout = try! ScaffoldTemplateRenderer.render(readmeTmpl,
+    context: ["projectName": "my-api", "techSummary": "", "techSummaryEmpty": "true", "hasMakefile": "true"])
+check(readmeWithout.contains("项目简介待补充"), "readme: placeholder when no summary", readmeWithout)
+
+
+// MARK: - git-init license=none 不产出 LICENSE
+
+let licDir = tmpDir("lic")
+let licPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["git-init"],
+                                 params: ["git-init": ["license": "none", "gitIgnorePreset": "generic"]],
+                                 projectName: "lic", parentDir: licDir)
+let licPaths = licPlan.entries.map { $0.path }
+check(!licPaths.contains("LICENSE"), "git-init: license=none => no LICENSE file", licPaths.joined(separator: ", "))
+let mitDir = tmpDir("lic-mit")
+let mitPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["git-init"],
+                                 params: ["git-init": ["license": "MIT", "gitIgnorePreset": "generic"]],
+                                 projectName: "licmit", parentDir: mitDir)
+check(mitPlan.entries.contains { $0.path == "LICENSE" && $0.content.contains("MIT License") }, "git-init: license=MIT => MIT LICENSE", mitPlan.entries.map{$0.path}.joined(separator:", "))
+
+
+// MARK: - 孤儿文件清理（改选后移除上一轮生成的文件：license MIT→none 移除 LICENSE）
+
+let licRegenDir = tmpDir("licregen")
+let licA = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["git-init"],
+                              params: ["git-init": ["license": "MIT", "gitIgnorePreset": "generic"]],
+                              projectName: "proj", parentDir: licRegenDir)
+_ = ScaffoldApplier.apply(plan: licA, options: ScaffoldApplier.Options(backupConflicts: true))
+let licRoot = (licRegenDir as NSString).appendingPathComponent("proj")
+check(exists((licRoot as NSString).appendingPathComponent("LICENSE")), "regen: MIT first run writes LICENSE")
+let licB = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["git-init"],
+                              params: ["git-init": ["license": "none", "gitIgnorePreset": "generic"]],
+                              projectName: "proj", parentDir: licRegenDir)
+let licBRes = ScaffoldApplier.apply(plan: licB, options: ScaffoldApplier.Options(backupConflicts: true))
+check(!exists((licRoot as NSString).appendingPathComponent("LICENSE")), "regen: switch to none removes LICENSE", "\(licBRes.removed)")
+check(licBRes.removed.contains("LICENSE"), "regen: LICENSE recorded as removed", "\(licBRes.removed)")
+let stateAfter = read((licRoot as NSString).appendingPathComponent(".scaffold/state.json"))
+check(!stateAfter.contains("LICENSE"), "regen: state.json files no longer lists LICENSE", stateAfter)
 
 print("----")
 print("\(passed) passed, \(failures) failed")

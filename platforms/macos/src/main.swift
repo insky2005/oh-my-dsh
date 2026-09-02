@@ -429,6 +429,19 @@ enum L10n {
         "scaffold.catalogErrors": ("环节库加载警告：%@", "Stage library warnings: %@"),
         "scaffold.settingsBackup": ("脚手架：覆盖冲突前备份", "Scaffold: back up conflicts before overwrite"),
         // scaffold 向导 UI
+        "scaffold.step.workspace": ("当前项目", "Current workspace"),
+        "scaffold.workspaceTitle": ("当前项目 / 工作区", "Current project / workspace"),
+        "scaffold.workspaceGenerated": ("已由脚手架初始化 ✓", "Initialized by scaffold ✓"),
+        "scaffold.workspaceFiles": ("生成 %d 个文件", "%d files generated"),
+        "scaffold.workspaceNotGenerated": ("此目录未用脚手架初始化", "This folder was not scaffolded"),
+        "scaffold.workspaceNoDir": ("未检测到当前项目目录", "No active project directory detected"),
+        "scaffold.workspaceInitHint": ("点击下方按钮，按所选环节/参数把脚手架配置生成到当前目录内。", "Generate scaffold config into this folder per the selected stages/parameters."),
+        "scaffold.initThisDir": ("初始化此目录", "Initialize this folder"),
+        "scaffold.workspaceNotEmpty": ("此目录已有内容，无法直接初始化脚手架", "This folder already has content; cannot initialize scaffold here"),
+        "scaffold.workspaceNotEmptyHint": ("脚手架初始化仅支持空目录。如需新项目，请用工具栏「新项目」创建。", "Scaffold init only supports empty folders. Use the toolbar “New project” to create one."),
+        "scaffold.updateConfig": ("更新配置", "Update config"),
+        "scaffold.newProject": ("新项目", "New project"),
+        "scaffold.newProjectHint": ("创建一个新项目", "Create a new project"),
         "scaffold.step.target": ("目标与位置", "Target & location"),
         "scaffold.step.stages": ("选择环节", "Choose stages"),
         "scaffold.step.params": ("参数配置", "Parameters"),
@@ -1590,6 +1603,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("launch: scaffoldPanel created")
         scaffoldPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
         scaffoldPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
+        scaffoldPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
 
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
@@ -1623,7 +1637,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                                                action: #selector(scaffoldEntryTapped(_:)))
         // 7.3 scaffoldEnabled：默认显示，可在设置中关闭（UserDefaults 键见 ScaffoldPanelController）。
         scaffoldBarButton.isHidden = !ScaffoldPanelController.scaffoldEnabledDefault()
-        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton, scaffoldBarButton])
+        let barStack = NSStackView(views: [scaffoldBarButton, previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -2842,6 +2856,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 }
                 self.tasksPanel?.workspaceChanged()
                 self.channelPanel?.workspaceChanged()
+                self.scaffoldPanel?.workspaceChanged()
                 // Web → panel session link: follow the session the user is
                 // viewing — the panel auto-expands its row (or collapses all
                 // when no session matches, e.g. a different workspace).

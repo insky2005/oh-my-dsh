@@ -1,8 +1,16 @@
 # {{projectName}} — 统一命令入口 / unified command entry
+# 语言预设 / language preset: {{lang}}
 # 未配置的命令以注释占位 / Unconfigured commands appear as comments.
 
-.PHONY: dev build test lint clean backend-build frontend-build frontend-install
+.PHONY: dev build test lint format check install start clean \
+  backend-build backend-test frontend-install frontend-build \
+  java-build java-test java-lint java-dev java-format java-install java-start \
+  node-build node-test node-lint node-dev node-format node-install node-start \
+  go-build go-test go-lint go-dev go-format go-install go-start \
+  py-build py-test py-lint py-dev py-format py-install py-start
 
+{{#if langEmpty}}
+# ---- 多端/自定义模式（未选语言预设，用下方 backend/frontend 命令） ----
 dev: ## 本地开发 / local dev
 {{#if devCmd}}	{{devCmd}}
 {{/if}}{{#if devCmdEmpty}}	@echo "dev: 未配置命令 / no dev command configured"
@@ -26,5 +34,124 @@ backend-build: ## 后端构建 / backend build
 {{/if}}lint: ## 代码检查 / lint
 {{#if lintCmd}}	{{lintCmd}}
 {{/if}}{{#if lintCmdEmpty}}	@echo "lint: 未配置 lint 命令 / no lint command configured"
-{{/if}}clean: ## 清理 / clean
+{{/if}}format: ## 代码格式化 / format
+{{#if formatCmd}}	{{formatCmd}}
+{{/if}}{{#if formatCmdEmpty}}	@echo "format: 未配置格式化命令 / no format command configured"
+{{/if}}check: ## lint + test / check
+{{#if checkCmd}}	{{checkCmd}}
+{{/if}}{{#if checkCmdEmpty}}	@echo "check: 未配置 check 命令 / no check command configured"
+{{/if}}install: ## 依赖安装 / install
+{{#if installCmd}}	{{installCmd}}
+{{/if}}{{#if installCmdEmpty}}	@echo "install: 未配置安装命令 / no install command configured"
+{{/if}}start: ## 启动 / start
+{{#if startCmd}}	{{startCmd}}
+{{/if}}{{#if startCmdEmpty}}	@echo "start: 未配置启动命令 / no start command configured"
+{{/if}}{{/if}}
+
+{{#if langAny}}
+# ---- 语言预设（可多选，各语言 <lang>-<action> 并存，统一目标汇总） ----
+dev: {{#if lang.java}}java-dev{{/if}}{{#if lang.node}} node-dev{{/if}}{{#if lang.go}} go-dev{{/if}}{{#if lang.python}} py-dev{{/if}} ## 本地开发 / local dev
+build: {{#if lang.java}}java-build{{/if}}{{#if lang.node}} node-build{{/if}}{{#if lang.go}} go-build{{/if}}{{#if lang.python}} py-build{{/if}} ## 构建 / build
+test: {{#if lang.java}}java-test{{/if}}{{#if lang.node}} node-test{{/if}}{{#if lang.go}} go-test{{/if}}{{#if lang.python}} py-test{{/if}} ## 测试 / test
+lint: {{#if lang.java}}java-lint{{/if}}{{#if lang.node}} node-lint{{/if}}{{#if lang.go}} go-lint{{/if}}{{#if lang.python}} py-lint{{/if}} ## 代码检查 / lint
+format: {{#if lang.java}}java-format{{/if}}{{#if lang.node}} node-format{{/if}}{{#if lang.go}} go-format{{/if}}{{#if lang.python}} py-format{{/if}} ## 代码格式化 / format
+check: lint test ## lint + test / check
+install: {{#if lang.java}}java-install{{/if}}{{#if lang.node}} node-install{{/if}}{{#if lang.go}} go-install{{/if}}{{#if lang.python}} py-install{{/if}} ## 依赖安装 / install
+start: {{#if lang.java}}java-start{{/if}}{{#if lang.node}} node-start{{/if}}{{#if lang.go}} go-start{{/if}}{{#if lang.python}} py-start{{/if}} ## 启动 / start
+
+{{#if lang.java}}
+java-build: ## Java 构建 / java build
+{{#if buildCmd}}	{{buildCmd}}
+{{/if}}{{#if buildCmdEmpty}}	mvn -q package
+{{/if}}java-test: ## Java 测试 / java test
+{{#if testCmd}}	{{testCmd}}
+{{/if}}{{#if testCmdEmpty}}	mvn -q test
+{{/if}}java-lint: ## Java 代码检查 / java lint
+{{#if lintCmd}}	{{lintCmd}}
+{{/if}}{{#if lintCmdEmpty}}	mvn -q spotless:check
+{{/if}}java-dev: ## Java 本地开发 / java dev
+{{#if devCmd}}	{{devCmd}}
+{{/if}}{{#if devCmdEmpty}}	mvn spring-boot:run
+{{/if}}java-format: ## Java 格式化 / java format
+{{#if formatCmd}}	{{formatCmd}}
+{{/if}}{{#if formatCmdEmpty}}	mvn spotless:apply
+{{/if}}java-install: ## Java 依赖安装 / java install
+{{#if installCmd}}	{{installCmd}}
+{{/if}}{{#if installCmdEmpty}}	mvn -q dependency:go-offline
+{{/if}}java-start: ## Java 启动 / java start
+{{#if startCmd}}	{{startCmd}}
+{{/if}}{{#if startCmdEmpty}}	java -jar target/*.jar
+{{/if}}{{/if}}
+{{#if lang.node}}
+node-build: ## Node 构建 / node build
+{{#if buildCmd}}	{{buildCmd}}
+{{/if}}{{#if buildCmdEmpty}}	npm run build
+{{/if}}node-test: ## Node 测试 / node test
+{{#if testCmd}}	{{testCmd}}
+{{/if}}{{#if testCmdEmpty}}	npm test
+{{/if}}node-lint: ## Node 代码检查 / node lint
+{{#if lintCmd}}	{{lintCmd}}
+{{/if}}{{#if lintCmdEmpty}}	npm run lint
+{{/if}}node-dev: ## Node 本地开发 / node dev
+{{#if devCmd}}	{{devCmd}}
+{{/if}}{{#if devCmdEmpty}}	npm run dev
+{{/if}}node-format: ## Node 格式化 / node format
+{{#if formatCmd}}	{{formatCmd}}
+{{/if}}{{#if formatCmdEmpty}}	npx prettier --write .
+{{/if}}node-install: ## Node 依赖安装 / node install
+{{#if installCmd}}	{{installCmd}}
+{{/if}}{{#if installCmdEmpty}}	npm ci
+{{/if}}node-start: ## Node 启动 / node start
+{{#if startCmd}}	{{startCmd}}
+{{/if}}{{#if startCmdEmpty}}	npm start
+{{/if}}{{/if}}
+{{#if lang.go}}
+go-build: ## Go 构建 / go build
+{{#if buildCmd}}	{{buildCmd}}
+{{/if}}{{#if buildCmdEmpty}}	go build -o bin/app .
+{{/if}}go-test: ## Go 测试 / go test
+{{#if testCmd}}	{{testCmd}}
+{{/if}}{{#if testCmdEmpty}}	go test ./...
+{{/if}}go-lint: ## Go 代码检查 / go lint
+{{#if lintCmd}}	{{lintCmd}}
+{{/if}}{{#if lintCmdEmpty}}	golangci-lint run
+{{/if}}go-dev: ## Go 本地开发 / go dev
+{{#if devCmd}}	{{devCmd}}
+{{/if}}{{#if devCmdEmpty}}	go run .
+{{/if}}go-format: ## Go 格式化 / go format
+{{#if formatCmd}}	{{formatCmd}}
+{{/if}}{{#if formatCmdEmpty}}	gofmt -w .
+{{/if}}go-install: ## Go 依赖安装 / go install
+{{#if installCmd}}	{{installCmd}}
+{{/if}}{{#if installCmdEmpty}}	go mod download
+{{/if}}go-start: ## Go 启动 / go start
+{{#if startCmd}}	{{startCmd}}
+{{/if}}{{#if startCmdEmpty}}	./bin/app
+{{/if}}{{/if}}
+{{#if lang.python}}
+py-build: ## Python 构建 / python build
+{{#if buildCmd}}	{{buildCmd}}
+{{/if}}{{#if buildCmdEmpty}}	@echo "build: Python 无编译步骤 / no compile step for Python"
+{{/if}}py-test: ## Python 测试 / python test
+{{#if testCmd}}	{{testCmd}}
+{{/if}}{{#if testCmdEmpty}}	pytest
+{{/if}}py-lint: ## Python 代码检查 / python lint
+{{#if lintCmd}}	{{lintCmd}}
+{{/if}}{{#if lintCmdEmpty}}	ruff check .
+{{/if}}py-dev: ## Python 本地开发 / python dev
+{{#if devCmd}}	{{devCmd}}
+{{/if}}{{#if devCmdEmpty}}	uvicorn app.main:app --reload
+{{/if}}py-format: ## Python 格式化 / python format
+{{#if formatCmd}}	{{formatCmd}}
+{{/if}}{{#if formatCmdEmpty}}	ruff format .
+{{/if}}py-install: ## Python 依赖安装 / python install
+{{#if installCmd}}	{{installCmd}}
+{{/if}}{{#if installCmdEmpty}}	pip install -r requirements.txt
+{{/if}}py-start: ## Python 启动 / python start
+{{#if startCmd}}	{{startCmd}}
+{{/if}}{{#if startCmdEmpty}}	python -m app
+{{/if}}{{/if}}
+{{/if}}
+
+clean: ## 清理 / clean
 	@echo "clean: 请按需补充清理命令 / add clean commands as needed"
