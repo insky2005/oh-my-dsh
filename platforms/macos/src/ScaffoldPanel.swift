@@ -3890,8 +3890,11 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         fileBarUnderline.boxType = .separator
         fileBarUnderline.translatesAutoresizingMaskIntoConstraints = false
 
-        // 内容区：CodeEditorView 嵌入（行号槽 + 语法高亮 + 撤销）
+        // 内容区：CodeEditorView 嵌入（行号槽 + 语法高亮 + 撤销）。
+        // masksToBounds：约束 CodeEditorView 内容不得越界向上覆盖编辑器头部/文件标签栏。
         editorContent.translatesAutoresizingMaskIntoConstraints = false
+        editorContent.wantsLayer = true
+        editorContent.layer?.masksToBounds = true
 
         editorErrorLabel.font = .systemFont(ofSize: 11)
         editorErrorLabel.textColor = .systemRed
