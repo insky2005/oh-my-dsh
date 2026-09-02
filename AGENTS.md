@@ -26,7 +26,7 @@
 3. 版本号单一来源：`build-app.sh` 从 git tag 读取 VERSION，BUILD 由 CI 注入；
 4. 新增文案必须中英双语成对（`main.swift` 的 `L10n.table`）；
 5. macOS 源码清单单一事实来源为 `platforms/macos/swift-sources.sh`（glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，`build-app.sh` / `local-ci.sh` / `ci.yml` 共用，新增文件无需逐个登记）；仅当新文件是独立工具（如 `MakeIcon.swift`，含顶层代码）时需在 `swift_sources()` 显式排除；
-6. 面板 UI 遵循 `PreviewPanel.swift` 基件约定；layer-backed 合成陷阱见 `docs/terminal-header-fix.md`。
+6. 面板 UI 遵循 `PreviewPanel.swift` 基件约定；**所有 AppKit 布局统一读 `docs/appkit-ui-layout-guide.md`**（容器裁剪 / layer 合成 / autoresizing / 滚动 doc 高度等越界·遮罩·点不到问题的活文档，会持续积累）；layer 合成陷阱原始排障见 `docs/terminal-header-fix.md`。
 
 ## 分支与提交（强制，见 docs/git-workflow.md）
 

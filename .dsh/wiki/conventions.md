@@ -40,6 +40,7 @@ manual: false
 
 ## 面板 UI 约定
 
+- **写任何面板/控件布局前，先读 `docs/appkit-ui-layout-guide.md`**（会随真实 bug 持续积累的 AppKit 布局规范：容器裁剪 / layer 合成 / autoresizing / 滚动 doc 高度等越界·遮罩·点不到问题的速查 + 真实现场 + 排查法）；
 - 右栏五个面板共享 `PreviewPanel.swift` 的 UI 基件（`HoverButton`/`DynamicFillView`/`CustomIconButton`/`HeaderLabel` 等），视觉与交互保持一致：40pt 头部 + 内容区、统一背景条、图标深浅色均可见；浏览器面板在其上扩展 `CustomIconButton`（`size`/`showsBackground`/`hoverColor`，见 [preview-panel](modules/preview-panel.md)）做 Chrome 式页签与关闭按钮；
 - **layer-backed 窗口合成陷阱**（`docs/terminal-header-fix.md`，wiki 面板同源，见 `docs/repo-wiki-design.md` §14 修复 12）：`isOpaque = true` 且无独立 layer 的视图，绘制会溢出到父 layer 覆盖同级视图；隔离绘制用**父容器的** `wantsLayer = true` + `masksToBounds = true`（不是子视图的 wantsLayer）；根视图用 `isOpaque = false` 的自绘背景视图（`TerminalRootView`/`WikiRootView` 模式）；**经验推广**：任何「平时隐藏、生成/状态变化时才显示」的 opaque 无 layer 视图（如 wiki 面板底部状态条）都可能触发同类合成溢出——显示前先给视图自身 `wantsLayer = true` + `masksToBounds = true`；
 - markdown 预览：预览面板把 markdown 当**纯文本**显示（软换行保真是有意取舍）；wiki 面板则需真正渲染（`WikiMarkdownRenderer`，同样保留软换行）。
