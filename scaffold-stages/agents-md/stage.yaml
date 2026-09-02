@@ -11,10 +11,10 @@ params:
     default: ""
     validate: nonEmpty
   - key: primaryLang
-    label: { zh: 主语言, en: Primary language }
-    type: select
-    options: [TypeScript, JavaScript, Python, Java, Go, Rust, C#, Swift, Kotlin, PHP, Ruby, Shell, Other]
-    default: TypeScript
+    label: { zh: 主语言（可多选）, en: Primary languages (multi-select) }
+    type: multiselect
+    options: [typescript, javascript, node, python, java, go, rust, csharp, swift, kotlin, php, ruby, shell, other]
+    default: typescript
 files:
   - path: AGENTS.md
     template: templates/AGENTS.md.tmpl

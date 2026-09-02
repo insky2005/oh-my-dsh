@@ -5,26 +5,19 @@ description:
   zh: Makefile：dev/build/test/lint/clean 统一命令入口
   en: 'Makefile: unified dev/build/test/lint/clean entry point'
 params:
+  - key: lang
+    label: { zh: 语言预设（可多选）, en: Language preset (multi-select) }
+    type: multiselect
+    options: [java, node, go, python]
+    default: ""
   - key: devCmd
     label: { zh: dev 命令, en: dev command }
     type: string
     default: ""
-  - key: backendBuild
-    label: { zh: 后端构建命令, en: backend build command }
+  - key: buildCmd
+    label: { zh: 构建命令, en: build command }
     type: string
-    default: "mvn -q package"
-  - key: backendTest
-    label: { zh: 后端测试命令, en: backend test command }
-    type: string
-    default: "mvn -q test"
-  - key: frontendInstall
-    label: { zh: 前端安装命令, en: frontend install command }
-    type: string
-    default: "npm ci"
-  - key: frontendBuild
-    label: { zh: 前端构建命令, en: frontend build command }
-    type: string
-    default: "npm run build"
+    default: ""
   - key: testCmd
     label: { zh: 测试命令, en: test command }
     type: string
@@ -32,7 +25,39 @@ params:
   - key: lintCmd
     label: { zh: lint 命令, en: lint command }
     type: string
-    default: "npm run lint"
+    default: ""
+  - key: formatCmd
+    label: { zh: 格式化命令, en: format command }
+    type: string
+    default: ""
+  - key: checkCmd
+    label: { zh: check 命令（lint+test）, en: check command (lint+test) }
+    type: string
+    default: ""
+  - key: installCmd
+    label: { zh: 安装依赖命令, en: install command }
+    type: string
+    default: ""
+  - key: startCmd
+    label: { zh: 启动命令, en: start command }
+    type: string
+    default: ""
+  - key: backendBuild
+    label: { zh: 后端构建命令（多端模式）, en: backend build command (multi-tier) }
+    type: string
+    default: "mvn -q package"
+  - key: backendTest
+    label: { zh: 后端测试命令（多端模式）, en: backend test command (multi-tier) }
+    type: string
+    default: "mvn -q test"
+  - key: frontendInstall
+    label: { zh: 前端安装命令（多端模式）, en: frontend install command (multi-tier) }
+    type: string
+    default: "npm ci"
+  - key: frontendBuild
+    label: { zh: 前端构建命令（多端模式）, en: frontend build command (multi-tier) }
+    type: string
+    default: "npm run build"
 files:
   - path: Makefile
     template: templates/Makefile.tmpl

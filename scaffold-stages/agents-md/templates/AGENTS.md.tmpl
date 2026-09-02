@@ -4,7 +4,22 @@
 
 {{techSummary}}
 
-- 主语言 / Primary language: {{primaryLang}}
+- 主语言 / Primary languages:
+{{#if primaryLang.typescript}}  - TypeScript
+{{/if}}{{#if primaryLang.javascript}}  - JavaScript
+{{/if}}{{#if primaryLang.node}}  - Node.js
+{{/if}}{{#if primaryLang.python}}  - Python
+{{/if}}{{#if primaryLang.java}}  - Java
+{{/if}}{{#if primaryLang.go}}  - Go
+{{/if}}{{#if primaryLang.rust}}  - Rust
+{{/if}}{{#if primaryLang.csharp}}  - C#
+{{/if}}{{#if primaryLang.swift}}  - Swift
+{{/if}}{{#if primaryLang.kotlin}}  - Kotlin
+{{/if}}{{#if primaryLang.php}}  - PHP
+{{/if}}{{#if primaryLang.ruby}}  - Ruby
+{{/if}}{{#if primaryLang.shell}}  - Shell
+{{/if}}{{#if primaryLang.other}}  - 其他 / Other
+{{/if}}
 
 ## 目录结构 / Directory layout
 
