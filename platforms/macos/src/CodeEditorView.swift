@@ -179,6 +179,9 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
     var onDirtyChange: ((Bool) -> Void)?
     var onSaveError: ((String) -> Void)?
 
+    /// 当前缓冲区全文（物化/校验等需要读取 live buffer）。
+    var text: String { codeTextView.string }
+
     // MARK: - Init
 
     init(path: String, text: String, language: String?, dark: Bool) {
@@ -411,6 +414,15 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
         } catch {
             onSaveError?(error.localizedDescription)
             return false
+        }
+    }
+
+    /// Mark the buffer clean without touching disk (the caller already persisted
+    /// the content elsewhere, e.g. via an atomic library write).
+    func markClean() {
+        if isDirty {
+            isDirty = false
+            onDirtyChange?(false)
         }
     }
 }

@@ -466,8 +466,8 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 - `StageCatalogLoader` 搜索链变为：**用户环节库（`$DSH_HOME/scaffold-stages/`，`DSH_SCAFFOLD_USER_STAGES` 可覆盖，同名覆盖内置）→ 内置（bundle Resources）→ `DSH_SCAFFOLD_STAGES`（追加，不覆盖）**；`LoadResult` 增加 `builtinIDs`（内置库全量 id，无论是否被覆盖），`ScaffoldStage` 增加 `isCustom`（来源为用户库）；
 - 用户环节库引擎函数（可单测）：`userStagesDir/userStageDir/saveUserStage`（建目录 + 可选复制 templates/ + 写 stage.yaml）`removeUserStage`（恢复/删除）`parseStageID/validateStageID`；
 - 排序持久化：`scaffoldStageOrder`（UserDefaults [String]）+ `ScaffoldStageOrder.merge`（saved → defaults → catalog 剩余；失效 id 过滤），面板步骤 2/3 与预览共用该顺序；
-- 面板右上角齿轮「环节管理」：全量环节列表（内置 / 自定义·已修改 / 自定义·新建 徽标），上移下移排序，编辑（YAML 文本编辑器 + 校验），新建（骨架 YAML），恢复（删用户拷贝回内置）/ 删除（新建自定义）；修改内置保存后即自定义、可恢复；向导步骤 2 的分类列表动态追加非内置分类；
-- `main.swift`：L10n 新增 `scaffold.settings*` / `scaffold.stage*` / `scaffold.editor*` / `scaffold.confirm*` 中英键；
-- `tests/scaffold-panel/`：新增 22 例引擎单测（用户库覆盖/新建/恢复/模板复制、id 校验、排序合并）。
+- 面板右上角齿轮「环节管理」：全量环节列表（内置 / 自定义·已修改 / 自定义·新建 徽标），上移下移排序，编辑（多文件标签页：stage.yaml + templates/ 下每个文件一个标签，CodeEditorView 行号/语法高亮/撤销，脏标记「文件名 + *」，新建模板按钮「＋」弹窗输入文件名），新建（骨架 YAML），恢复（删用户拷贝回内置）/ 删除（新建自定义）；修改内置保存后即自定义、可恢复；向导步骤 2 的分类列表动态追加非内置分类；保存语义同 Files 面板：逐文件保存、保存后留在编辑器；内置环节首次保存（yaml 或模板）即物化到用户库，之后的模板写入直指用户库，渲染自动采用用户版模板；
+- `main.swift`：L10n 新增 `scaffold.settings*` / `scaffold.stage*` / `scaffold.editor*` / `scaffold.confirm*` / `scaffold.newTemplate` / `scaffold.templateName*` / `scaffold.saveYamlFirst` 中英键；
+- `tests/scaffold-panel/`：新增 27 例引擎单测（用户库覆盖/新建/恢复/模板复制、id 校验、排序合并、**编辑器闭环：面板内编辑模板 → 用户库 → 渲染采用用户版**）。
 
-**验证**：`tests/scaffold-panel/run.sh` 192 passed / 0 failed；`scripts/local-ci.sh swift` 全绿（各面板单测 + swiftc 全量编译检查）。
+**验证**：`tests/scaffold-panel/run.sh` 197 passed / 0 failed；`scripts/local-ci.sh swift` 全绿（各面板单测 + swiftc 全量编译检查）。

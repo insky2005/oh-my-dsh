@@ -72,6 +72,30 @@ final class CustomIconButton: NSView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
+// Scaffold 面板编辑器用到的 CodeEditorView 桩（无头测试不渲染，仅满足编译/链接；
+// 真实实现见 platforms/macos/src/CodeEditorView.swift，由 FilePanel 共用）。
+final class LineNumberGutterView: NSView {
+    weak var codeTextView: NSTextView?
+}
+final class CodeEditorView: NSView {
+    static func language(forExtension ext: String) -> String? { nil }
+    let path: String
+    var onDirtyChange: ((Bool) -> Void)?
+    var onSaveError: ((String) -> Void)?
+    private(set) var isDirty = false
+    var text = ""
+    init(path: String, text: String, language: String?, dark: Bool) {
+        self.path = path
+        self.text = text
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    @discardableResult
+    func writeBack() -> Bool { isDirty = false; return true }
+    func markClean() { isDirty = false }
+    func reloadFromDisk() {}
+}
+
 // Browser panel stubs（无头测试不实例化，仅满足编译/链接；与真实 CEFShim.h
 // 接口同名，见 platforms/macos/cef/CEFShim.h）。
 @objc protocol CEFBrowserDelegate: NSObjectProtocol {
