@@ -537,6 +537,73 @@ check(licBRes.removed.contains("LICENSE"), "regen: LICENSE recorded as removed",
 let stateAfter = read((licRoot as NSString).appendingPathComponent(".scaffold/state.json"))
 check(!stateAfter.contains("LICENSE"), "regen: state.json files no longer lists LICENSE", stateAfter)
 
+// MARK: - 环节管理设置：用户环节库（覆盖内置 / 新建自定义 / 恢复）+ 排序合并
+
+// 用户库覆盖内置（docker 改名） + 新建自定义（my-custom），与内置库同目录加载
+let userRoot = tmpDir("user-stages")
+write(userRoot + "/docker/stage.yaml", """
+id: docker
+name: { zh: 我的 Docker, en: My Docker }
+category: examples
+description: { zh: 修改过的, en: Modified }
+""")
+write(userRoot + "/my-custom/stage.yaml", """
+id: my-custom
+name: { zh: 自定义环节, en: Custom Stage }
+category: collaboration
+description: { zh: 新建的, en: New }
+""")
+let mergedRes = StageCatalogLoader.load(dirs: [userRoot, builtinDir], builtinDir: builtinDir, userDir: userRoot)
+check(mergedRes.errors.isEmpty, "settings: user override is silent (no duplicate error)", mergedRes.errors.joined(separator: "; "))
+eq(mergedRes.stages.count, 11, "settings: 10 builtin + 1 new custom (override not duplicated)")
+let dockerS = mergedRes.stages.first { $0.id == "docker" }
+check(dockerS?.isCustom == true, "settings: overridden builtin is marked custom")
+check(dockerS?.nameZh == "我的 Docker" && dockerS?.nameEn == "My Docker", "settings: user copy wins over builtin definition")
+check(mergedRes.builtinIDs.contains("docker"), "settings: builtinIDs keeps overridden id (restore available)")
+let customS = mergedRes.stages.first { $0.id == "my-custom" }
+check(customS?.isCustom == true, "settings: new custom stage marked custom")
+check(!mergedRes.builtinIDs.contains("my-custom"), "settings: new stage not in builtinIDs (delete, no restore)")
+let gitInitS = mergedRes.stages.first { $0.id == "git-init" }
+check(gitInitS?.isCustom == false, "settings: untouched builtin stays builtin")
+// 反向目录顺序也应用户优先（用户库恒胜出）
+let reverseRes = StageCatalogLoader.load(dirs: [builtinDir, userRoot], builtinDir: builtinDir, userDir: userRoot)
+let dockerRev = reverseRes.stages.first { $0.id == "docker" }
+eq(dockerRev?.nameZh, "我的 Docker", "settings: user wins regardless of dir order")
+
+// saveUserStage：写 stage.yaml + 复制 templates（修改内置 → 用户库带模板）
+let saveRoot = tmpDir("save-user")
+setenv("DSH_SCAFFOLD_USER_STAGES", saveRoot, 1)
+let mkYaml = read((builtinDir as NSString).appendingPathComponent("makefile/stage.yaml"))
+try! StageCatalogLoader.saveUserStage(id: "makefile", yaml: mkYaml,
+                                      templatesFrom: (builtinDir as NSString).appendingPathComponent("makefile"))
+check(exists((saveRoot as NSString).appendingPathComponent("makefile/stage.yaml")), "settings: save writes stage.yaml to user library")
+check(exists((saveRoot as NSString).appendingPathComponent("makefile/templates/Makefile.tmpl")), "settings: save copies templates/ along")
+// removeUserStage（恢复内置 = 删用户拷贝）
+check(StageCatalogLoader.removeUserStage(id: "makefile"), "settings: removeUserStage returns true")
+check(!exists((saveRoot as NSString).appendingPathComponent("makefile")), "settings: restore deletes user stage dir")
+// 删除不存在的 → false
+check(!StageCatalogLoader.removeUserStage(id: "no-such-stage"), "settings: removeUserStage false for missing")
+
+// 校验器与 id 解析
+check(StageCatalogLoader.validateStageID("my-stage"), "settings: valid id")
+check(!StageCatalogLoader.validateStageID("My_Stage"), "settings: uppercase/underscore rejected")
+check(!StageCatalogLoader.validateStageID(""), "settings: empty id rejected")
+check(!StageCatalogLoader.validateStageID("a b"), "settings: space rejected")
+let parsedID = try! StageCatalogLoader.parseStageID(from: "id: abc-123\nname: { zh: X, en: Y }\n")
+eq(parsedID, "abc-123", "settings: parseStageID reads id")
+
+// 排序合并：saved → defaults → catalog 剩余；saved 中失效 id 过滤
+let orderMerged = ScaffoldStageOrder.merge(
+    saved: ["docker", "git-init"],
+    defaults: ["git-init", "repo-knowledge", "agents-md", "docker"],
+    catalogIDs: ["git-init", "repo-knowledge", "agents-md", "docker", "deploy"])
+eq(orderMerged, ["docker", "git-init", "repo-knowledge", "agents-md", "deploy"], "settings: order saved-first then defaults then catalog rest")
+let orderFiltered = ScaffoldStageOrder.merge(
+    saved: ["ghost", "deploy"], defaults: ["deploy"], catalogIDs: ["deploy", "real"])
+eq(orderFiltered, ["deploy", "real"], "settings: stale saved ids dropped")
+let orderEmpty = ScaffoldStageOrder.merge(saved: nil, defaults: ["b", "a"], catalogIDs: ["a", "b", "c"])
+eq(orderEmpty, ["b", "a", "c"], "settings: no saved = defaults + catalog rest")
+
 print("----")
 print("\(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

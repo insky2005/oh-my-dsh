@@ -368,6 +368,8 @@ struct ScaffoldStage {
     let commands: [String]
     /// 环节目录（stage.yaml + templates/ 所在），渲染时定位模板文件。
     let directory: String
+    /// 是否来自用户环节库（自定义：覆盖内置或新建；内置修改保存后即为 true）。
+    let isCustom: Bool
 
     var name: String { L10n.isZh ? nameZh : nameEn }
     var desc: String { L10n.isZh ? descriptionZh : descriptionEn }
@@ -379,11 +381,27 @@ struct StageCatalogLoader {
     struct LoadResult {
         var stages: [ScaffoldStage] = []
         var errors: [String] = []
+        /// 内置环节库中存在的环节 id（无论是否被用户覆盖），用于「已修改内置 vs 新建自定义」判定。
+        var builtinIDs: Set<String> = []
     }
 
-    /// 搜索链：内置（bundle Resources）→ DSH_SCAFFOLD_STAGES（追加，不覆盖同名）。
+    /// 用户环节库根目录：DSH_SCAFFOLD_USER_STAGES（QA/测试覆盖）→ $DSH_HOME/scaffold-stages。
+    static func userStagesDir() -> String {
+        if let env = ProcessInfo.processInfo.environment["DSH_SCAFFOLD_USER_STAGES"], !env.isEmpty {
+            return env
+        }
+        let home = ProcessInfo.processInfo.environment["DSH_HOME"] ?? (NSHomeDirectory() + "/.dsh")
+        return (home as NSString).appendingPathComponent("scaffold-stages")
+    }
+
+    /// 搜索链：用户环节库（同名覆盖内置）→ 内置（bundle Resources）→ DSH_SCAFFOLD_STAGES（追加，不覆盖）。
     static func searchDirs() -> [String] {
         var dirs: [String] = []
+        let user = userStagesDir()
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: user, isDirectory: &isDir), isDir.boolValue {
+            dirs.append(user)
+        }
         if let res = Bundle.main.resourceURL {
             let p = res.appendingPathComponent("scaffold-stages").path
             var isDir: ObjCBool = false
@@ -397,11 +415,24 @@ struct StageCatalogLoader {
         return dirs
     }
 
-    /// 按目录顺序加载；同名 id 先到先得（内置优先，env 追加不覆盖）。坏清单隔离。
-    static func load(dirs: [String] = searchDirs()) -> LoadResult {
+    /// 内置环节库目录（bundle Resources；headless 下不存在）。
+    static func builtinBundleDir() -> String? {
+        guard let res = Bundle.main.resourceURL else { return nil }
+        let p = res.appendingPathComponent("scaffold-stages").path
+        var isDir: ObjCBool = false
+        return (FileManager.default.fileExists(atPath: p, isDirectory: &isDir) && isDir.boolValue) ? p : nil
+    }
+
+    /// 按目录顺序加载；同名 id 先到先得，但用户环节库恒优先（无论目录顺序，用户库同名
+    /// 环节覆盖此前加载的内置/env 环节；内置/env 之间的重复保持旧语义：跳过 + 报错）。
+    /// builtinDir/userDir 影响标记而非加载：builtinDir 的 id 计入 builtinIDs（无论是否被覆盖）；
+    /// 来自 userDir 的环节 isCustom=true。
+    static func load(dirs: [String] = searchDirs(), builtinDir: String? = nil, userDir: String? = nil) -> LoadResult {
         var result = LoadResult()
         var seen = Set<String>()
+        var customWinner = Set<String>()
         let fm = FileManager.default
+        let user = URL(fileURLWithPath: userDir ?? userStagesDir()).standardizedFileURL.path
         for dir in dirs {
             let entries = (try? fm.contentsOfDirectory(atPath: dir)) ?? []
             for name in entries.sorted() {
@@ -412,22 +443,100 @@ struct StageCatalogLoader {
                 let yamlPath = (stageDir as NSString).appendingPathComponent("stage.yaml")
                 guard fm.fileExists(atPath: yamlPath) else { continue }
                 do {
-                    let stage = try loadStage(from: stageDir)
-                    if seen.contains(stage.id) {
-                        result.errors.append("\(stage.id): 跳过重复环节（同名已加载）/ duplicate stage skipped")
-                    } else {
+                    let isCustom = URL(fileURLWithPath: dir).standardizedFileURL.path == user
+                    let stage = try loadStage(from: stageDir, isCustom: isCustom)
+                    if !seen.contains(stage.id) {
                         seen.insert(stage.id)
+                        if isCustom { customWinner.insert(stage.id) }
                         result.stages.append(stage)
+                    } else if isCustom, let idx = result.stages.firstIndex(where: { $0.id == stage.id }) {
+                        // 用户库同名：覆盖先前加载的内置/env 环节（用户优先）
+                        result.stages[idx] = stage
+                        customWinner.insert(stage.id)
+                    } else if !customWinner.contains(stage.id) {
+                        // 内置/env 之间的重复：跳过 + 报错（env 追加语义，不覆盖）
+                        result.errors.append("\(stage.id): 跳过重复环节（同名已加载）/ duplicate stage skipped")
                     }
+                    // customWinner 已决的重复（内置/env 与用户库同名）→ 静默跳过（覆盖为预期行为）
                 } catch {
                     result.errors.append("\(name): 加载失败：\(error.localizedDescription) / load failed")
                 }
             }
         }
+        // builtinIDs：扫描内置目录（独立于加载结果，被覆盖的 id 也在列）
+        if let bd = builtinDir ?? builtinBundleDir() {
+            result.builtinIDs = collectIDs(in: bd)
+        }
         return result
     }
 
-    static func loadStage(from dir: String) throws -> ScaffoldStage {
+    /// 收集目录下所有 stage.yaml 的 id（坏清单静默跳过，仅用于内置标记）。
+    static func collectIDs(in dir: String) -> Set<String> {
+        var out = Set<String>()
+        let fm = FileManager.default
+        for name in ((try? fm.contentsOfDirectory(atPath: dir)) ?? []).sorted() {
+            guard !name.hasPrefix(".") else { continue }
+            let stageDir = (dir as NSString).appendingPathComponent(name)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: stageDir, isDirectory: &isDir), isDir.boolValue else { continue }
+            let yamlPath = (stageDir as NSString).appendingPathComponent("stage.yaml")
+            guard fm.fileExists(atPath: yamlPath) else { continue }
+            if let text = try? String(contentsOfFile: yamlPath, encoding: .utf8),
+               let id = try? parseStageID(from: text), !id.isEmpty {
+                out.insert(id)
+            }
+        }
+        return out
+    }
+
+    /// 从 stage.yaml 文本解析 id（供保存校验/内置扫描）。
+    static func parseStageID(from yaml: String) throws -> String {
+        let node = try MiniYAML.parse(yaml)
+        guard let map = node.mapValue() else { throw ScaffoldCatalogError.message("stage.yaml 顶层须为 map / top level must be a map") }
+        guard let id = map["id"]?.scalarValue(), !id.isEmpty else { throw ScaffoldCatalogError.message("缺少 id / missing id") }
+        return id
+    }
+
+    /// 环节 id 合法性：小写字母/数字/连字符，非空。
+    static func validateStageID(_ id: String) -> Bool {
+        guard !id.isEmpty else { return false }
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-")
+        return id.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+
+    /// 用户库中某环节的目录（<user>/<id>）。
+    static func userStageDir(id: String) -> String {
+        (userStagesDir() as NSString).appendingPathComponent(id)
+    }
+
+    /// 保存用户环节：建目录 → （可选）复制来源目录的 templates/ → 写 stage.yaml。
+    static func saveUserStage(id: String, yaml: String, templatesFrom: String? = nil) throws {
+        let dir = userStageDir(id: id)
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        // 复制模板目录（修改内置时模板需一并带到用户库）
+        if let src = templatesFrom, !src.isEmpty {
+            let srcTpl = (src as NSString).appendingPathComponent("templates")
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: srcTpl, isDirectory: &isDir), isDir.boolValue {
+                let dstTpl = (dir as NSString).appendingPathComponent("templates")
+                if fm.fileExists(atPath: dstTpl) { try? fm.removeItem(atPath: dstTpl) }
+                try fm.copyItem(atPath: srcTpl, toPath: dstTpl)
+            }
+        }
+        let yamlPath = (dir as NSString).appendingPathComponent("stage.yaml")
+        try yaml.write(toFile: yamlPath, atomically: true, encoding: .utf8)
+    }
+
+    /// 删除用户环节（恢复内置 = 删除覆盖拷贝；删除自定义 = 删除整个目录）。
+    @discardableResult
+    static func removeUserStage(id: String) -> Bool {
+        let dir = userStageDir(id: id)
+        guard FileManager.default.fileExists(atPath: dir) else { return false }
+        return (try? FileManager.default.removeItem(atPath: dir)) != nil
+    }
+
+    static func loadStage(from dir: String, isCustom: Bool = false) throws -> ScaffoldStage {
         let yamlPath = (dir as NSString).appendingPathComponent("stage.yaml")
         let text: String
         do { text = try String(contentsOfFile: yamlPath, encoding: .utf8) }
@@ -490,7 +599,31 @@ struct StageCatalogLoader {
         return ScaffoldStage(id: id, nameZh: nameZh, nameEn: nameEn, category: category,
                              descriptionZh: descZh, descriptionEn: descEn,
                              params: params, files: files, commands: commands,
-                             directory: dir)
+                             directory: dir, isCustom: isCustom)
+    }
+}
+
+// MARK: - ScaffoldStageOrder（环节排序：用户排序 + 默认排序 + 目录序合并）
+
+enum ScaffoldStageOrder {
+    /// 合并规则：saved（仅保留存在于 catalog 的 id，保序）→ defaults（未在 saved 中）→ catalog 剩余（目录序）。
+    static func merge(saved: [String]?, defaults: [String], catalogIDs: [String]) -> [String] {
+        var result: [String] = []
+        var seen = Set<String>()
+        let idSet = Set(catalogIDs)
+        for id in (saved ?? []) where idSet.contains(id) && !seen.contains(id) {
+            seen.insert(id)
+            result.append(id)
+        }
+        for id in defaults where !seen.contains(id) && idSet.contains(id) {
+            seen.insert(id)
+            result.append(id)
+        }
+        for id in catalogIDs where !seen.contains(id) {
+            seen.insert(id)
+            result.append(id)
+        }
+        return result
     }
 }
 
@@ -1087,6 +1220,147 @@ struct ScaffoldPreset {
     static let all: [ScaffoldPreset] = [backend, fullstack, foundation]
 }
 
+/// 设置列表行内的小按钮（闭包回调，避免 @objc selector 爆破）。
+private final class ActionButton: NSButton {
+    var onAction: (() -> Void)?
+    override func mouseDown(with event: NSEvent) {
+        if isEnabled { onAction?() }
+    }
+}
+
+/// 环节类型徽标（内置 / 自定义·已修改 / 自定义·新建）：圆角色块 + 文字。
+private final class StageTypeBadge: NSView {
+    enum Kind {
+        case builtin        // 内置
+        case modified       // 自定义 · 已修改内置
+        case custom         // 自定义 · 新建
+    }
+    var kind: Kind = .builtin { didSet { needsDisplay = true } }
+
+    override var isOpaque: Bool { false }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+    private var text: String {
+        switch kind {
+        case .builtin: return L10n.tr("scaffold.stageBuiltin")
+        case .modified: return L10n.tr("scaffold.stageModified")
+        case .custom: return L10n.tr("scaffold.stageNew")
+        }
+    }
+    func textWidth() -> CGFloat {
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11, weight: .medium)]
+        return (text as NSString).size(withAttributes: attrs).width + 14
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let color: NSColor
+        switch kind {
+        case .builtin: color = dark ? NSColor(white: 0.6, alpha: 1) : NSColor(white: 0.5, alpha: 1)
+        case .modified: color = .systemOrange
+        case .custom: color = .systemBlue
+        }
+        color.withAlphaComponent(0.18).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: color,
+        ]
+        let size = (text as NSString).size(withAttributes: attrs)
+        (text as NSString).draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2),
+                                withAttributes: attrs)
+    }
+}
+
+/// 环节管理设置列表行：名称 + 类型徽标 + 分类，右侧 上移/下移/编辑/恢复或删除。
+private final class StageSettingsRow: NSView {
+    let stage: ScaffoldStage
+    var onEdit: (() -> Void)?
+    var onRestore: (() -> Void)?   // 已修改内置 → 恢复
+    var onDelete: (() -> Void)?    // 新建自定义 → 删除
+    var onMoveUp: (() -> Void)?
+    var onMoveDown: (() -> Void)?
+    private let badge = StageTypeBadge()
+    private let nameLabel: NSTextField
+    private let detailLabel: NSTextField
+
+    init(stage: ScaffoldStage, isModifiedBuiltin: Bool, isFirst: Bool, isLast: Bool) {
+        self.stage = stage
+        nameLabel = NSTextField(labelWithString: stage.name)
+        nameLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        detailLabel = NSTextField(labelWithString: stage.category)
+        detailLabel.font = .systemFont(ofSize: 11)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.lineBreakMode = .byTruncatingTail
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        badge.kind = stage.isCustom ? (isModifiedBuiltin ? .modified : .custom) : .builtin
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(badge)
+        addSubview(nameLabel)
+        addSubview(detailLabel)
+
+        let up = ActionButton(title: "↑", target: nil, action: nil)
+        up.controlSize = .small
+        up.bezelStyle = .rounded
+        up.toolTip = L10n.tr("scaffold.moveUp")
+        up.isEnabled = !isFirst
+        up.onAction = { [weak self] in self?.onMoveUp?() }
+
+        let down = ActionButton(title: "↓", target: nil, action: nil)
+        down.controlSize = .small
+        down.bezelStyle = .rounded
+        down.toolTip = L10n.tr("scaffold.moveDown")
+        down.isEnabled = !isLast
+        down.onAction = { [weak self] in self?.onMoveDown?() }
+
+        let restoreBtn = ActionButton(title: L10n.tr("scaffold.restoreStage"), target: nil, action: nil)
+        restoreBtn.controlSize = .small
+        restoreBtn.bezelStyle = .rounded
+        restoreBtn.isHidden = !(stage.isCustom && isModifiedBuiltin)
+        restoreBtn.onAction = { [weak self] in self?.onRestore?() }
+
+        let deleteBtn = ActionButton(title: L10n.tr("scaffold.deleteStage"), target: nil, action: nil)
+        deleteBtn.controlSize = .small
+        deleteBtn.bezelStyle = .rounded
+        deleteBtn.isHidden = !(stage.isCustom && !isModifiedBuiltin)
+        deleteBtn.onAction = { [weak self] in self?.onDelete?() }
+
+        let editBtn = ActionButton(title: L10n.tr("scaffold.editStage"), target: nil, action: nil)
+        editBtn.controlSize = .small
+        editBtn.bezelStyle = .rounded
+        editBtn.onAction = { [weak self] in self?.onEdit?() }
+
+        let btnRow = NSStackView(views: [up, down, editBtn, restoreBtn, deleteBtn])
+        btnRow.orientation = .horizontal
+        btnRow.spacing = 4
+        btnRow.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(btnRow)
+        NSLayoutConstraint.activate([
+            badge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            badge.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            badge.widthAnchor.constraint(equalToConstant: badge.textWidth()),
+            badge.heightAnchor.constraint(equalToConstant: 18),
+            nameLabel.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 8),
+            nameLabel.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: btnRow.leadingAnchor, constant: -8),
+            detailLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            detailLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 3),
+            detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: btnRow.leadingAnchor, constant: -8),
+            btnRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            btnRow.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: 52),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 // MARK: - Scaffold 面板（M1.1 UI 优化：向导式时间线 + 卡片环节 + tree 预览）
 
 /// 面板根视图。镜像 WikiRootView/TerminalRootView 的 layer 合成规避约定
@@ -1568,13 +1842,22 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         }
     }
 
-    /// 环节在工程中的先后顺序（展示与参数步骤共用；未列出的按目录序排后）。
-    private static let stageOrder: [String] = [
+    /// 环节在工程中的默认先后顺序（展示与参数步骤共用；未列出的按目录序排后）。
+    /// 用户可在「环节管理」设置中调整排序，持久化到 scaffoldStageOrder（UserDefaults）。
+    static let defaultStageOrder: [String] = [
         "git-init", "repo-knowledge", "agents-md", "git-conventions", "docs-standards",
         "conventions", "docker", "makefile", "ci-cd", "deploy",
     ]
+    static let stageOrderKey = "scaffoldStageOrder"
+
+    /// 有效顺序：用户排序（仅保留 catalog 存在者）→ 默认排序 → catalog 剩余（目录序）。
+    private func effectiveStageOrder() -> [String] {
+        let saved = UserDefaults.standard.stringArray(forKey: Self.stageOrderKey)
+        return ScaffoldStageOrder.merge(saved: saved, defaults: Self.defaultStageOrder,
+                                        catalogIDs: catalog.map { $0.id })
+    }
     private func stageIndex(_ id: String) -> Int {
-        Self.stageOrder.firstIndex(of: id) ?? Int.max
+        effectiveStageOrder().firstIndex(of: id) ?? Int.max
     }
 
     private enum Step: Int, CaseIterable {
@@ -1606,6 +1889,15 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     private let railStack = NSStackView()
     private var stepItems: [ScaffoldStepItem] = []
+    /// 工具栏行 / 步骤栏容器（设置视图激活时隐藏）。
+    private var toolbarView: NSView?
+    private var railView: NSView?
+    private var toolbarUnderlineView: NSView?
+    /// 设置视图激活时的 contentContainer 布局（顶/左切到全宽全高）。
+    private var contentTopSettings: NSLayoutConstraint?
+    private var contentTopNormal: NSLayoutConstraint?
+    private var contentLeadingSettings: NSLayoutConstraint?
+    private var contentLeadingNormal: NSLayoutConstraint?
 
     private let contentContainer = NSView()
     private var workspaceStepView: NSView!
@@ -1655,6 +1947,32 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     private let statusBar = DynamicFillView()
     private let statusLabel = HeaderLabel()
     private let statusSpinner = NSProgressIndicator()
+
+    // MARK: 环节管理设置（右上角 ⚙）
+
+    private var settingsButton: CustomIconButton!
+    /// 设置视图是否激活（激活时隐藏步骤栏/工具栏/向导视图，显示环节管理列表）。
+    private var settingsActive = false
+    /// 编辑器是否处于「新建」模式（isNew=true 时允许且必须改 id）。
+    private var editorStageID = ""
+    private var editorIsNew = false
+    /// 一行的编辑目标：内置环节的来源目录（修改内置后 templates 复制跟随）；nil = 新建。
+    private var editorTemplatesFrom: String?
+    /// 内置环节库 id（用于「已修改内置」判定与恢复可用性）。
+    private var builtinIDs: Set<String> = []
+    private var settingsView: NSView!
+    private let settingsHeader = DynamicFillView()
+    private let settingsTitleLabel = NSTextField(labelWithString: "")
+    private let settingsScroll = NSScrollView()
+    private let settingsStack = NSStackView()
+    private let settingsFooterLabel = NSTextField(labelWithString: "")
+    // 编辑器（YAML 文本）
+    private let editorView = NSView()
+    private let editorTitleLabel = NSTextField(labelWithString: "")
+    private let editorIDLabel = NSTextField(labelWithString: "")
+    private let editorTextView = NSTextView()
+    private let editorErrorLabel = NSTextField(labelWithString: "")
+    private let editorHintLabel = NSTextField(labelWithString: "")
 
     // MARK: 状态
 
@@ -1747,6 +2065,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             initTarget = nil
             projectNameField.stringValue = ""
             projectSummaryField.stringValue = ""
+            if settingsActive { hideSettings() }
             setStep(.workspace)
         } else {
             updateToolbarState()
@@ -1778,6 +2097,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         newProjectButton?.title = L10n.tr("scaffold.newProject")
         initProjectButton?.title = L10n.tr("scaffold.initThisDir")
         updateConfigButton?.title = L10n.tr("scaffold.updateConfig")
+        settingsButton?.toolTip = L10n.tr("scaffold.settingsTitle")
         hideButton?.toolTip = L10n.tr("preview.closePanel")
         headerTitle.stringValue = L10n.tr("scaffold.title")
         rebuildPresetButtons()
@@ -1813,6 +2133,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         openButton.onAction = { [weak self] in self?.openTargetDir() }
         finderButton = CustomIconButton(glyph: .reveal, tooltip: L10n.tr("scaffold.viewInFinderHint"))
         finderButton.onAction = { [weak self] in self?.revealInFinder() }
+        settingsButton = CustomIconButton(glyph: .symbol("gearshape"), tooltip: L10n.tr("scaffold.settingsTitle"))
+        settingsButton.onAction = { [weak self] in self?.toggleSettings() }
         hideButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("preview.closePanel"))
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
 
@@ -1832,7 +2154,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         nextButton.translatesAutoresizingMaskIntoConstraints = false
         nextButton.widthAnchor.constraint(equalToConstant: 88).isActive = true
 
-        let actions = NSStackView(views: [openButton, finderButton, hideButton])
+        let actions = NSStackView(views: [openButton, finderButton, settingsButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -1857,6 +2179,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true
+        toolbarView = toolbar
 
         newProjectButton = NSButton(title: L10n.tr("scaffold.newProject"), target: self, action: #selector(newProjectTapped(_:)))
         newProjectButton.bezelStyle = .rounded
@@ -1897,6 +2220,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         let toolbarUnderline = NSBox()
         toolbarUnderline.boxType = .separator
         toolbarUnderline.translatesAutoresizingMaskIntoConstraints = false
+        toolbarUnderlineView = toolbarUnderline
 
         // 步骤时间线（左栏）
         railStack.orientation = .vertical
@@ -1909,6 +2233,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         rail.wantsLayer = true
         rail.layer?.masksToBounds = true
         rail.addSubview(railStack)
+        railView = rail
         NSLayoutConstraint.activate([
             rail.widthAnchor.constraint(equalToConstant: 160),
             railStack.topAnchor.constraint(equalTo: rail.topAnchor, constant: 14),
@@ -1969,8 +2294,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             rail.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             rail.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
 
-            contentContainer.topAnchor.constraint(equalTo: toolbarUnderline.bottomAnchor),
-            contentContainer.leadingAnchor.constraint(equalTo: rail.trailingAnchor),
+            toolbarUnderline.heightAnchor.constraint(equalToConstant: 1),
+
             contentContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             contentContainer.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
 
@@ -1979,6 +2304,13 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             statusBar.topAnchor.constraint(equalTo: contentContainer.bottomAnchor),
             statusBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+        // contentContainer 顶/左双态：正常（rail + toolbar 下方）vs 设置视图（全宽全高）
+        contentTopNormal = contentContainer.topAnchor.constraint(equalTo: toolbarUnderline.bottomAnchor)
+        contentTopSettings = contentContainer.topAnchor.constraint(equalTo: header.bottomAnchor)
+        contentLeadingNormal = contentContainer.leadingAnchor.constraint(equalTo: rail.trailingAnchor)
+        contentLeadingSettings = contentContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+        contentTopNormal?.isActive = true
+        contentLeadingNormal?.isActive = true
 
         buildWorkspaceStep()
         buildTargetStep()
@@ -1986,6 +2318,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         buildParamsStep()
         buildPreviewStep()
         rebuildStepRail()
+        buildSettingsViews()
         setStep(.workspace)
     }
 
@@ -2678,6 +3011,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         let result = StageCatalogLoader.load()
         catalog = result.stages
         catalogErrors = result.errors
+        builtinIDs = result.builtinIDs
         rebuildStageList()
     }
 
@@ -2697,13 +3031,16 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         }
         editors.removeAll()
 
-        let categories = ["foundation", "examples", "collaboration"]
+        // 分类：内置三类在前，用户环节可能的其他分类（自定义 yaml category）追加在后
+        var categories = ["foundation", "examples", "collaboration"]
+        categories += Set(catalog.map { $0.category }).subtracting(categories).sorted()
         for cat in categories {
             // 按工程先后顺序排列（未在 stageOrder 中的按目录序排后）
             let stages = catalog.filter { $0.category == cat }
                 .sorted { stageIndex($0.id) < stageIndex($1.id) }
             guard !stages.isEmpty else { continue }
-            let titleLabel = NSTextField(labelWithString: L10n.tr("scaffold.stageCategory.\(cat)"))
+            let isKnown = cat == "foundation" || cat == "examples" || cat == "collaboration"
+            let titleLabel = NSTextField(labelWithString: isKnown ? L10n.tr("scaffold.stageCategory.\(cat)") : cat)
             titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
             titleLabel.textColor = .secondaryLabelColor
             titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -3358,6 +3695,423 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         } else if let dir = currentWorkspaceDir {
             revealDir(dir)
         }
+    }
+
+    // MARK: 环节管理设置（右上角 ⚙）
+
+    private func buildSettingsViews() {
+        // —— 设置视图：头部（返回 + 标题 + 新建环节） + 滚动列表 + footer ——
+        let settingsContainer = NSView()
+        settingsContainer.translatesAutoresizingMaskIntoConstraints = false
+        settingsContainer.wantsLayer = true
+        settingsContainer.layer?.masksToBounds = true
+
+        settingsHeader.kind = .window
+        settingsHeader.translatesAutoresizingMaskIntoConstraints = false
+        settingsTitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        settingsTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        let backBtn = ActionButton(title: "‹ " + L10n.tr("scaffold.back"), target: nil, action: nil)
+        backBtn.bezelStyle = .rounded
+        backBtn.controlSize = .small
+        backBtn.onAction = { [weak self] in self?.toggleSettings() }
+        let newBtn = ActionButton(title: L10n.tr("scaffold.newStage"), target: nil, action: nil)
+        newBtn.bezelStyle = .rounded
+        newBtn.controlSize = .small
+        newBtn.onAction = { [weak self] in self?.beginNewStage() }
+        settingsHeader.addSubview(backBtn)
+        settingsHeader.addSubview(settingsTitleLabel)
+        settingsHeader.addSubview(newBtn)
+        NSLayoutConstraint.activate([
+            backBtn.leadingAnchor.constraint(equalTo: settingsHeader.leadingAnchor, constant: 10),
+            backBtn.centerYAnchor.constraint(equalTo: settingsHeader.centerYAnchor),
+            settingsTitleLabel.leadingAnchor.constraint(equalTo: backBtn.trailingAnchor, constant: 10),
+            settingsTitleLabel.centerYAnchor.constraint(equalTo: settingsHeader.centerYAnchor),
+            newBtn.trailingAnchor.constraint(equalTo: settingsHeader.trailingAnchor, constant: -10),
+            newBtn.centerYAnchor.constraint(equalTo: settingsHeader.centerYAnchor),
+            settingsHeader.heightAnchor.constraint(equalToConstant: 36),
+        ])
+
+        settingsStack.orientation = .vertical
+        settingsStack.alignment = .leading
+        settingsStack.spacing = 8
+        settingsStack.edgeInsets = NSEdgeInsets(top: 12, left: 10, bottom: 12, right: 10)
+        settingsStack.translatesAutoresizingMaskIntoConstraints = false
+        let doc = FlippedWorkspaceView()
+        doc.translatesAutoresizingMaskIntoConstraints = false
+        doc.addSubview(settingsStack)
+        NSLayoutConstraint.activate([
+            settingsStack.topAnchor.constraint(equalTo: doc.topAnchor),
+            settingsStack.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
+            settingsStack.widthAnchor.constraint(equalTo: doc.widthAnchor),
+        ])
+        settingsScroll.documentView = doc
+        settingsScroll.hasVerticalScroller = true
+        settingsScroll.autohidesScrollers = true
+        settingsScroll.drawsBackground = false
+        settingsScroll.translatesAutoresizingMaskIntoConstraints = false
+
+        settingsFooterLabel.font = .systemFont(ofSize: 11)
+        settingsFooterLabel.textColor = .secondaryLabelColor
+        settingsFooterLabel.lineBreakMode = .byTruncatingTail
+        settingsFooterLabel.maximumNumberOfLines = 2
+        settingsFooterLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        settingsContainer.addSubview(settingsHeader)
+        settingsContainer.addSubview(settingsScroll)
+        settingsContainer.addSubview(settingsFooterLabel)
+        NSLayoutConstraint.activate([
+            settingsHeader.topAnchor.constraint(equalTo: settingsContainer.topAnchor),
+            settingsHeader.leadingAnchor.constraint(equalTo: settingsContainer.leadingAnchor),
+            settingsHeader.trailingAnchor.constraint(equalTo: settingsContainer.trailingAnchor),
+            settingsScroll.topAnchor.constraint(equalTo: settingsHeader.bottomAnchor),
+            settingsScroll.leadingAnchor.constraint(equalTo: settingsContainer.leadingAnchor),
+            settingsScroll.trailingAnchor.constraint(equalTo: settingsContainer.trailingAnchor),
+            settingsFooterLabel.topAnchor.constraint(equalTo: settingsScroll.bottomAnchor, constant: 6),
+            settingsFooterLabel.leadingAnchor.constraint(equalTo: settingsContainer.leadingAnchor, constant: 12),
+            settingsFooterLabel.trailingAnchor.constraint(equalTo: settingsContainer.trailingAnchor, constant: -12),
+            settingsFooterLabel.bottomAnchor.constraint(equalTo: settingsContainer.bottomAnchor, constant: -8),
+        ])
+        settingsView = settingsContainer
+
+        // —— 编辑器视图：头部（返回 + 标题 + 保存） + ID 行 + YAML 文本区 + 错误/提示 ——
+        editorView.translatesAutoresizingMaskIntoConstraints = false
+        editorView.wantsLayer = true
+        editorView.layer?.masksToBounds = true
+
+        let editorHeader = DynamicFillView()
+        editorHeader.kind = .window
+        editorHeader.translatesAutoresizingMaskIntoConstraints = false
+        editorTitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        editorTitleLabel.lineBreakMode = .byTruncatingTail
+        editorTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        let editorBack = ActionButton(title: "‹ " + L10n.tr("scaffold.back"), target: nil, action: nil)
+        editorBack.bezelStyle = .rounded
+        editorBack.controlSize = .small
+        editorBack.onAction = { [weak self] in self?.closeEditor() }
+        let saveBtn = ActionButton(title: L10n.tr("scaffold.save"), target: nil, action: nil)
+        saveBtn.bezelStyle = .rounded
+        saveBtn.controlSize = .small
+        saveBtn.onAction = { [weak self] in self?.saveStageEditor() }
+        editorHeader.addSubview(editorBack)
+        editorHeader.addSubview(editorTitleLabel)
+        editorHeader.addSubview(saveBtn)
+        NSLayoutConstraint.activate([
+            editorBack.leadingAnchor.constraint(equalTo: editorHeader.leadingAnchor, constant: 10),
+            editorBack.centerYAnchor.constraint(equalTo: editorHeader.centerYAnchor),
+            editorTitleLabel.leadingAnchor.constraint(equalTo: editorBack.trailingAnchor, constant: 10),
+            editorTitleLabel.centerYAnchor.constraint(equalTo: editorHeader.centerYAnchor),
+            editorTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: saveBtn.leadingAnchor, constant: -8),
+            saveBtn.trailingAnchor.constraint(equalTo: editorHeader.trailingAnchor, constant: -10),
+            saveBtn.centerYAnchor.constraint(equalTo: editorHeader.centerYAnchor),
+            editorHeader.heightAnchor.constraint(equalToConstant: 36),
+        ])
+
+        editorIDLabel.font = .systemFont(ofSize: 12)
+        editorIDLabel.textColor = .secondaryLabelColor
+        editorIDLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let editorScroll = NSScrollView()
+        editorTextView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        editorTextView.isRichText = false
+        editorTextView.isVerticallyResizable = true
+        editorTextView.isHorizontallyResizable = false
+        editorTextView.autoresizingMask = [.width]
+        editorTextView.minSize = NSSize(width: 0, height: 0)
+        editorTextView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        editorTextView.textContainer?.widthTracksTextView = true
+        editorTextView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        editorScroll.documentView = editorTextView
+        editorScroll.hasVerticalScroller = true
+        editorScroll.autohidesScrollers = true
+        editorScroll.borderType = .bezelBorder
+        editorScroll.translatesAutoresizingMaskIntoConstraints = false
+
+        editorErrorLabel.font = .systemFont(ofSize: 11)
+        editorErrorLabel.textColor = .systemRed
+        editorErrorLabel.lineBreakMode = .byWordWrapping
+        editorErrorLabel.maximumNumberOfLines = 3
+        editorErrorLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        editorHintLabel.font = .systemFont(ofSize: 11)
+        editorHintLabel.textColor = .secondaryLabelColor
+        editorHintLabel.lineBreakMode = .byWordWrapping
+        editorHintLabel.maximumNumberOfLines = 3
+        editorHintLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        editorView.addSubview(editorHeader)
+        editorView.addSubview(editorIDLabel)
+        editorView.addSubview(editorScroll)
+        editorView.addSubview(editorErrorLabel)
+        editorView.addSubview(editorHintLabel)
+        NSLayoutConstraint.activate([
+            editorHeader.topAnchor.constraint(equalTo: editorView.topAnchor),
+            editorHeader.leadingAnchor.constraint(equalTo: editorView.leadingAnchor),
+            editorHeader.trailingAnchor.constraint(equalTo: editorView.trailingAnchor),
+            editorIDLabel.topAnchor.constraint(equalTo: editorHeader.bottomAnchor, constant: 10),
+            editorIDLabel.leadingAnchor.constraint(equalTo: editorView.leadingAnchor, constant: 12),
+            editorIDLabel.trailingAnchor.constraint(equalTo: editorView.trailingAnchor, constant: -12),
+            editorScroll.topAnchor.constraint(equalTo: editorIDLabel.bottomAnchor, constant: 8),
+            editorScroll.leadingAnchor.constraint(equalTo: editorView.leadingAnchor, constant: 12),
+            editorScroll.trailingAnchor.constraint(equalTo: editorView.trailingAnchor, constant: -12),
+            editorErrorLabel.topAnchor.constraint(equalTo: editorScroll.bottomAnchor, constant: 6),
+            editorErrorLabel.leadingAnchor.constraint(equalTo: editorView.leadingAnchor, constant: 12),
+            editorErrorLabel.trailingAnchor.constraint(equalTo: editorView.trailingAnchor, constant: -12),
+            editorHintLabel.topAnchor.constraint(equalTo: editorErrorLabel.bottomAnchor, constant: 2),
+            editorHintLabel.leadingAnchor.constraint(equalTo: editorView.leadingAnchor, constant: 12),
+            editorHintLabel.trailingAnchor.constraint(equalTo: editorView.trailingAnchor, constant: -12),
+            editorHintLabel.bottomAnchor.constraint(equalTo: editorView.bottomAnchor, constant: -10),
+        ])
+
+        contentContainer.addSubview(settingsView)
+        contentContainer.addSubview(editorView)
+        NSLayoutConstraint.activate([
+            settingsView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            settingsView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            settingsView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            settingsView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            editorView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            editorView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            editorView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            editorView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+        ])
+        settingsView.isHidden = true
+        editorView.isHidden = true
+    }
+
+    /// 右上角 ⚙：开关环节管理设置视图。
+    private func toggleSettings() {
+        if settingsActive {
+            hideSettings()
+        } else {
+            showSettings()
+        }
+    }
+
+    private func showSettings() {
+        settingsActive = true
+        settingsButton?.showsBackground = true
+        toolbarView?.isHidden = true
+        railView?.isHidden = true
+        toolbarUnderlineView?.isHidden = true
+        for v in [workspaceStepView, targetStepView, stagesStepView, paramsStepView, previewStepView] {
+            v?.isHidden = true
+        }
+        contentTopSettings?.isActive = true
+        contentTopNormal?.isActive = false
+        contentLeadingSettings?.isActive = true
+        contentLeadingNormal?.isActive = false
+        rebuildSettingsList()
+        settingsView?.isHidden = false
+        editorView.isHidden = true
+        updateStatus("")
+    }
+
+    private func hideSettings() {
+        settingsActive = false
+        settingsButton?.showsBackground = false
+        toolbarView?.isHidden = false
+        railView?.isHidden = false
+        toolbarUnderlineView?.isHidden = false
+        settingsView?.isHidden = true
+        editorView.isHidden = true
+        contentTopSettings?.isActive = false
+        contentTopNormal?.isActive = true
+        contentLeadingSettings?.isActive = false
+        contentLeadingNormal?.isActive = true
+        if currentStep == .workspace { rebuildWorkspaceStep() }
+        setStep(currentStep)
+        updateStatus("")
+    }
+
+    /// 重建环节管理列表（按有效顺序全量显示，标记内置/自定义）。
+    private func rebuildSettingsList() {
+        for sub in settingsStack.arrangedSubviews {
+            settingsStack.removeArrangedSubview(sub)
+            sub.removeFromSuperview()
+        }
+        settingsTitleLabel.stringValue = L10n.tr("scaffold.settingsTitle")
+        let order = effectiveStageOrder()
+        let ordered = catalog.sorted { (order.firstIndex(of: $0.id) ?? Int.max) < (order.firstIndex(of: $1.id) ?? Int.max) }
+        for (i, stage) in ordered.enumerated() {
+            let row = StageSettingsRow(stage: stage,
+                                       isModifiedBuiltin: builtinIDs.contains(stage.id),
+                                       isFirst: i == 0,
+                                       isLast: i == ordered.count - 1)
+            row.onEdit = { [weak self] in self?.beginEditStage(stage.id) }
+            row.onRestore = { [weak self] in self?.confirmRestoreStage(stage.id) }
+            row.onDelete = { [weak self] in self?.confirmDeleteStage(stage.id) }
+            row.onMoveUp = { [weak self] in self?.moveStage(stage.id, delta: -1) }
+            row.onMoveDown = { [weak self] in self?.moveStage(stage.id, delta: 1) }
+            settingsStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: settingsStack.widthAnchor).isActive = true
+        }
+        if catalog.isEmpty {
+            let empty = NSTextField(labelWithString: L10n.tr("scaffold.catalogEmpty"))
+            empty.font = .systemFont(ofSize: 12)
+            empty.textColor = .secondaryLabelColor
+            settingsStack.addArrangedSubview(empty)
+        }
+        settingsFooterLabel.stringValue = L10n.tr("scaffold.settingsFooter", StageCatalogLoader.userStagesDir())
+        settingsStack.invalidateIntrinsicContentSize()
+    }
+
+    /// 调整环节排序并持久化。
+    private func moveStage(_ id: String, delta: Int) {
+        var order = effectiveStageOrder()
+        guard let from = order.firstIndex(of: id) else { return }
+        let to = from + delta
+        guard to >= 0, to < order.count else { return }
+        order.remove(at: from)
+        order.insert(id, at: to)
+        UserDefaults.standard.set(order, forKey: Self.stageOrderKey)
+        rebuildSettingsList()
+        rebuildStageList()
+        rebuildParamsStep()
+        refreshPlan()
+        updateStatus(L10n.tr("scaffold.stageReorderOK"))
+    }
+
+    // MARK: 环节编辑（YAML）
+
+    /// 新建环节：预填骨架 YAML，打开编辑器。
+    private func beginNewStage() {
+        editorStageID = ""
+        editorIsNew = true
+        editorTemplatesFrom = nil
+        let skeleton = """
+        id: my-stage
+        name:
+          zh: 我的环节
+          en: My Stage
+        category: foundation
+        description:
+          zh: 新环节描述（可修改）
+          en: New stage description (editable)
+        """
+        openEditor(id: "", isNew: true, yaml: skeleton)
+    }
+
+    /// 编辑已有环节：内置环节保存后即转为自定义（templates 复制跟随）。
+    private func beginEditStage(_ id: String) {
+        guard let stage = catalog.first(where: { $0.id == id }) else { return }
+        editorStageID = id
+        editorIsNew = false
+        // 内置环节：保存时把 templates/ 复制到用户库；自定义环节已在用户库，无需复制
+        editorTemplatesFrom = stage.isCustom ? nil : stage.directory
+        let yamlPath = (stage.directory as NSString).appendingPathComponent("stage.yaml")
+        let yaml = (try? String(contentsOfFile: yamlPath, encoding: .utf8)) ?? "# 读取失败 / read failed"
+        openEditor(id: id, isNew: false, yaml: yaml)
+    }
+
+    private func openEditor(id: String, isNew: Bool, yaml: String) {
+        editorTitleLabel.stringValue = isNew
+            ? L10n.tr("scaffold.editorTitleNew")
+            : L10n.tr("scaffold.editorTitleEdit", id)
+        editorIDLabel.stringValue = isNew
+            ? L10n.tr("scaffold.editorIDHint")
+            : L10n.tr("scaffold.editorID", id)
+        editorTextView.string = yaml
+        editorErrorLabel.stringValue = ""
+        editorHintLabel.stringValue = L10n.tr("scaffold.editorHint")
+        settingsView?.isHidden = true
+        editorView.isHidden = false
+        editorTextView.window?.makeFirstResponder(editorTextView)
+    }
+
+    private func closeEditor() {
+        editorView.isHidden = true
+        settingsView?.isHidden = false
+        rebuildSettingsList()
+    }
+
+    /// 保存编辑器内容（校验 YAML + id 规则）。
+    private func saveStageEditor() {
+        let yaml = editorTextView.string
+        let parsedID: String
+        do {
+            parsedID = try StageCatalogLoader.parseStageID(from: yaml)
+        } catch {
+            editorErrorLabel.stringValue = L10n.tr("scaffold.stageYAMLError", error.localizedDescription)
+            return
+        }
+        guard StageCatalogLoader.validateStageID(parsedID) else {
+            editorErrorLabel.stringValue = L10n.tr("scaffold.stageIDInvalid")
+            return
+        }
+        if editorIsNew {
+            // 新建：id 必须唯一（目录中不存在 / 目录中未加载）
+            let existing = Set(catalog.map { $0.id })
+            if existing.contains(parsedID)
+                || FileManager.default.fileExists(atPath: StageCatalogLoader.userStageDir(id: parsedID)) {
+                editorErrorLabel.stringValue = L10n.tr("scaffold.stageIDTaken", parsedID)
+                return
+            }
+        } else {
+            guard parsedID == editorStageID else {
+                editorErrorLabel.stringValue = L10n.tr("scaffold.stageIDChanged")
+                return
+            }
+        }
+        do {
+            try StageCatalogLoader.saveUserStage(id: parsedID, yaml: yaml, templatesFrom: editorTemplatesFrom)
+        } catch {
+            editorErrorLabel.stringValue = L10n.tr("scaffold.stageYAMLError", error.localizedDescription)
+            return
+        }
+        reloadCatalog()
+        updateStatus(L10n.tr("scaffold.stageSaveOK", parsedID))
+        closeEditor()
+    }
+
+    // MARK: 恢复 / 删除
+
+    /// 恢复内置：删除用户库覆盖拷贝 → 回到内置版本。
+    private func confirmRestoreStage(_ id: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L10n.tr("scaffold.confirmRestoreTitle")
+        alert.informativeText = L10n.tr("scaffold.confirmRestoreMessage", stageName(id))
+        alert.addButton(withTitle: L10n.tr("scaffold.restoreStage"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        guard let win = view.window else { return }
+        alert.beginSheetModal(for: win) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self = self else { return }
+            StageCatalogLoader.removeUserStage(id: id)
+            self.reloadCatalog()
+            self.updateStatus(L10n.tr("scaffold.stageRestored", stageName(id)))
+        }
+    }
+
+    /// 删除自定义环节（新建的；已修改内置走恢复）。
+    private func confirmDeleteStage(_ id: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L10n.tr("scaffold.confirmDeleteTitle")
+        alert.informativeText = L10n.tr("scaffold.confirmDeleteMessage", stageName(id))
+        alert.addButton(withTitle: L10n.tr("scaffold.deleteStage"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        guard let win = view.window else { return }
+        alert.beginSheetModal(for: win) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self = self else { return }
+            StageCatalogLoader.removeUserStage(id: id)
+            self.reloadCatalog()
+            self.updateStatus(L10n.tr("scaffold.stageDeleted", stageName(id)))
+        }
+    }
+
+    /// 环节库变更后全量刷新：加载 + 清理向导状态 + 重建列表/参数/预览/设置列表。
+    private func reloadCatalog() {
+        let result = StageCatalogLoader.load()
+        catalog = result.stages
+        catalogErrors = result.errors
+        builtinIDs = result.builtinIDs
+        let valid = Set(catalog.map { $0.id })
+        selection = selection.filter { valid.contains($0) }
+        params = params.filter { valid.contains($0.key) }
+        rebuildStageList()
+        rebuildParamsStep()
+        refreshPlan()
+        if settingsActive { rebuildSettingsList() }
     }
 }
 

@@ -108,6 +108,7 @@
 
 - **环节库（10 个工程基础环节）**：`git-init`（.gitignore/README/LICENSE + `git init -b main`）、`agents-md`（AGENTS.md 随所选环节自洽）、`docs-standards`、`conventions`（.editorconfig/CONTRIBUTING.md）、`git-conventions`（git.md/commit 模板/可选纯 shell commit-msg 校验钩子，已有 hook 先备份不覆盖）、`makefile`、`ci-cd`（GitHub Actions / GitLab CI / Jenkins 三选一，Jenkins 凭据只引用不内联）、`docker`（多阶段 Dockerfile/compose.yaml）、`deploy`（可执行部署脚本：docker/k8s/rancher，`--dry-run` + 失败自动回滚）、`repo-knowledge`（.dsh/wiki 占位）；随 App 分发（`Contents/Resources/scaffold-stages/`），`DSH_SCAFFOLD_STAGES=<dir>` 追加开发目录；
 - **组合搭建**：勾选环节、填参数（string/select/bool），预览**将生成文件清单**（同路径多环节标红 + 覆盖来源），校验器（nonEmpty/slug/safePath/javaPackage）行内报错；3 个预设（纯后端 API / 前后端兼备 / 文档+规范）只是快捷勾选，可再改选；
+- **环节管理（右上角 ⚙）**：全量环节列表（内置 / 自定义标识），可**编辑内置环节**（保存后转自定义、可随时恢复内置）、**新建自定义环节**（`$DSH_HOME/scaffold-stages/` 持久化，模板随定义复制）、**↑↓ 调整环节排序**——面板步骤 2/3 与预览按该顺序展示；
 - **确定性渲染**：模板语法 v1 刻意最小（`{{var}}` + `{{#if}}`，`{{{{}}` 转义字面量），文件名同样参与渲染；渲染失败的环节整环节跳过并报告，其余照常；
 - **落盘**：冲突文件先备份到 `.scaffold-backup/`（设置可关）再写；环节命令（git init 等）失败不阻断其余；生成记录写 `.scaffold/state.json`（环节+参数+时间），重跑幂等；
 - **边界**：目标目录非空 → 确认弹窗（覆盖+备份）；项目名中文 → ASCII slug（保底 project）；路径穿越/绝对路径被 `safePath` 拒绝；坏清单隔离不拖垮内置环节；
