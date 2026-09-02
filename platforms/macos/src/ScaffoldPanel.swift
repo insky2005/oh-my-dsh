@@ -4215,7 +4215,10 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             editorSaveBtn?.isEnabled = false
             return
         }
-        editorSaveBtn?.isEnabled = editorFiles[editorSelectedTab].isDirty
+        // 新建文件（尚未落盘 isNewFile）总是可保存——即使内容未改动也要允许落盘
+        // （新建 stage 骨架已预填、新建模板初始为空）；已落盘文件仅在有改动时亮起。
+        let file = editorFiles[editorSelectedTab]
+        editorSaveBtn?.isEnabled = file.isNewFile || file.isDirty
     }
 
     /// 新建模板文件：输入文件名 → 加标签并打开（未落盘，保存时写入用户库）。
@@ -4340,6 +4343,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             editorTitleLabel.stringValue = L10n.tr("scaffold.editorTitleEdit", parsedID)
         }
         file.isDirty = false
+        file.isNewFile = false
         file.editor?.markClean()
         refreshTabTitle(file)
         reloadCatalog()
@@ -4385,6 +4389,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             return
         }
         file.isDirty = false
+        file.isNewFile = false
         file.editor?.markClean()
         refreshTabTitle(file)
         reloadCatalog()
