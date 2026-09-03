@@ -1187,37 +1187,213 @@ struct ScaffoldApplier {
     }
 }
 
-// MARK: - ScaffoldPreset（预设组合：快捷勾选，不限制自由组合）
+// MARK: - ScaffoldPreset（项目预设：面向不同项目的环节组合 + 参数默认值）
 
+/// 一个「项目预设」= 名称/描述 + 有序环节 id 列表 + 各环节参数默认值。
+/// 预设库分两层：产品内置（代码种子，只能恢复不能改源）+
+/// 用户自定义（$DSH_HOME/scaffold-presets/ 下的 preset.yaml，同名覆盖内置，可恢复/删除）。
 struct ScaffoldPreset {
     let id: String
+    let nameZh: String
+    let nameEn: String
+    let descZh: String
+    let descEn: String
+    /// 有序环节 id（预设勾选顺序）。
     let stageIds: [String]
+    /// 各环节参数默认值：stageId -> [paramKey: value]
     let paramDefaults: [String: [String: String]]
+    /// 是否来自用户库（自定义：覆盖内置或新建）。
+    let isCustom: Bool
+    /// 是否覆盖了内置（isCustom && id 在内置清单中）→ 可恢复内置。
+    let isModifiedBuiltin: Bool
+
+    var name: String { L10n.isZh ? nameZh : nameEn }
+    var desc: String { L10n.isZh ? descZh : descEn }
+    var stageCount: Int { stageIds.count }
+
+    // MARK: 内置预设种子（产品内置；zh/en 名称与描述内嵌，同 stage.yaml 数据化）
 
     static let backend = ScaffoldPreset(
         id: "backend",
+        nameZh: "纯后端 API", nameEn: "Backend API only",
+        descZh: "面向纯后端 API 项目：工程基础 + CI/CD + 容器化 + 部署",
+        descEn: "Backend-only API project: foundation + CI/CD + containerization + deploy",
         stageIds: ["git-init", "git-conventions", "agents-md", "conventions", "docs-standards",
                    "makefile", "ci-cd", "docker", "deploy", "repo-knowledge"],
         paramDefaults: [
             "ci-cd": ["hasBackend": "true", "hasFrontend": "false"],
             "docker": ["runtime": "java"],
-        ]
+        ],
+        isCustom: false, isModifiedBuiltin: false
     )
     static let fullstack = ScaffoldPreset(
         id: "fullstack",
+        nameZh: "前后端兼备", nameEn: "Full-stack",
+        descZh: "面向前后端兼备项目：工程基础 + CI/CD + 容器化 + 部署",
+        descEn: "Full-stack project: foundation + CI/CD + containerization + deploy",
         stageIds: ["git-init", "git-conventions", "agents-md", "conventions", "docs-standards",
                    "makefile", "ci-cd", "docker", "deploy", "repo-knowledge"],
         paramDefaults: [
             "ci-cd": ["hasBackend": "true", "hasFrontend": "true"],
             "makefile": ["frontendInstall": "npm ci", "frontendBuild": "npm run build"],
-        ]
+        ],
+        isCustom: false, isModifiedBuiltin: false
     )
     static let foundation = ScaffoldPreset(
         id: "foundation",
+        nameZh: "文档+规范", nameEn: "Docs & conventions",
+        descZh: "文档与工程规范骨架（不含构建/部署栈）",
+        descEn: "Docs & engineering conventions foundation (no build/deploy stack)",
         stageIds: ["git-init", "git-conventions", "agents-md", "docs-standards", "conventions", "repo-knowledge"],
-        paramDefaults: [:]
+        paramDefaults: [:],
+        isCustom: false, isModifiedBuiltin: false
     )
-    static let all: [ScaffoldPreset] = [backend, fullstack, foundation]
+    /// 内置预设清单（产品）。
+    static let builtin: [ScaffoldPreset] = [backend, fullstack, foundation]
+    static let all: [ScaffoldPreset] = builtin
+}
+
+// MARK: - ScaffoldPresetYAML（preset.yaml 序列化 / 解析）
+
+enum ScaffoldPresetYAML {
+    static func serialize(_ p: ScaffoldPreset) -> String {
+        var s = "id: \(p.id)\n"
+        s += "name: { zh: " + q(p.nameZh) + ", en: " + q(p.nameEn) + " }\n"
+        s += "description: { zh: " + q(p.descZh) + ", en: " + q(p.descEn) + " }\n"
+        if !p.stageIds.isEmpty {
+            s += "stages:\n"
+            for sid in p.stageIds { s += "  - " + sid + "\n" }
+        }
+        if !p.paramDefaults.isEmpty {
+            s += "params:\n"
+            for sid in p.paramDefaults.keys.sorted() {
+                let kv = p.paramDefaults[sid] ?? [:]
+                s += "  " + sid + ":\n"
+                for k in kv.keys.sorted() {
+                    s += "    " + k + ": " + q(kv[k] ?? "") + "\n"
+                }
+            }
+        }
+        return s
+    }
+    private static func q(_ s: String) -> String {
+        let inner = s.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"" + inner + "\""
+    }
+
+    static func parse(_ text: String, isCustom: Bool, isModifiedBuiltin: Bool) throws -> ScaffoldPreset {
+        let node = try MiniYAML.parse(text)
+        guard let map = node.mapValue() else {
+            throw ScaffoldCatalogError.message("preset.yaml 顶层须为 map / top must be a map")
+        }
+        guard let id = map["id"]?.scalarValue(), !id.isEmpty else {
+            throw ScaffoldCatalogError.message("缺少 id / missing id")
+        }
+        func lang(_ key: String, _ sub: String) -> String { map[key]?.mapValue()?[sub]?.scalarValue() ?? "" }
+        var stages: [String] = []
+        if let list = map["stages"]?.listValue() {
+            stages = list.compactMap { $0.scalarValue() }
+        } else if let inline = map["stages"]?.scalarValue(), !inline.isEmpty {
+            let body = inline.trimmingCharacters(in: CharacterSet(charactersIn: "[] "))
+            stages = body.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        }
+        var paramDefaults: [String: [String: String]] = [:]
+        if let params = map["params"]?.mapValue() {
+            for (sid, node2) in params {
+                if let inner = node2.mapValue() {
+                    var kv: [String: String] = [:]
+                    for (k, v) in inner { kv[k] = v.scalarValue() ?? "" }
+                    paramDefaults[sid] = kv
+                }
+            }
+        }
+        return ScaffoldPreset(id: id,
+                              nameZh: lang("name", "zh"), nameEn: lang("name", "en"),
+                              descZh: lang("description", "zh"), descEn: lang("description", "en"),
+                              stageIds: stages, paramDefaults: paramDefaults,
+                              isCustom: isCustom, isModifiedBuiltin: isModifiedBuiltin)
+    }
+}
+
+// MARK: - PresetLibrary（预设库：内置种子 + 用户库覆盖 / 加载 / 保存 / 恢复 / 校验）
+
+enum PresetLibrary {
+    static func userPresetsDir() -> String {
+        if let env = ProcessInfo.processInfo.environment["DSH_SCAFFOLD_USER_PRESETS"], !env.isEmpty {
+            return env
+        }
+        let home = ProcessInfo.processInfo.environment["DSH_HOME"] ?? (NSHomeDirectory() + "/.dsh")
+        return (home as NSString).appendingPathComponent("scaffold-presets")
+    }
+    static func userPresetPath(id: String) -> String {
+        (userPresetsDir() as NSString).appendingPathComponent(id + ".yaml")
+    }
+
+    static func load(builtin: [ScaffoldPreset] = ScaffoldPreset.builtin) -> (presets: [ScaffoldPreset], builtinIDs: Set<String>, errors: [String]) {
+        var presets = builtin
+        var errors: [String] = []
+        let builtinIDs = Set(builtin.map { $0.id })
+        let dir = userPresetsDir()
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue else {
+            return (presets, builtinIDs, errors)
+        }
+        for name in ((try? fm.contentsOfDirectory(atPath: dir)) ?? []).sorted() {
+            guard name.hasSuffix(".yaml"), !name.hasPrefix(".") else { continue }
+            let id = String(name.dropLast(5))
+            let path = (dir as NSString).appendingPathComponent(name)
+            guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
+            do {
+                let p = try ScaffoldPresetYAML.parse(text, isCustom: true, isModifiedBuiltin: builtinIDs.contains(id))
+                if let idx = presets.firstIndex(where: { $0.id == p.id }) {
+                    presets[idx] = p
+                } else {
+                    presets.append(p)
+                }
+            } catch {
+                errors.append("\(name): \(error.localizedDescription)")
+            }
+        }
+        return (presets, builtinIDs, errors)
+    }
+
+    static func saveUserPreset(_ p: ScaffoldPreset) throws {
+        let dir = userPresetsDir()
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try ScaffoldPresetYAML.serialize(p).write(toFile: userPresetPath(id: p.id), atomically: true, encoding: .utf8)
+    }
+
+    @discardableResult
+    static func removeUserPreset(id: String) -> Bool {
+        let path = userPresetPath(id: id)
+        guard FileManager.default.fileExists(atPath: path) else { return false }
+        return (try? FileManager.default.removeItem(atPath: path)) != nil
+    }
+
+    static func parsePresetID(from text: String) throws -> String {
+        try ScaffoldPresetYAML.parse(text, isCustom: false, isModifiedBuiltin: false).id
+    }
+    static func validatePresetID(_ id: String) -> Bool {
+        guard !id.isEmpty else { return false }
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-")
+        return id.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+}
+
+// MARK: - 预设顺序（用户排序 + 内置序 + 目录序）
+
+enum ScaffoldPresetOrder {
+    static func merge(saved: [String]?, defaults: [String], ids: [String]) -> [String] {
+        var result: [String] = []
+        var seen = Set<String>()
+        let idSet = Set(ids)
+        for id in (saved ?? []) where idSet.contains(id) && !seen.contains(id) { seen.insert(id); result.append(id) }
+        for id in defaults where !seen.contains(id) && idSet.contains(id) { seen.insert(id); result.append(id) }
+        for id in ids where !seen.contains(id) { seen.insert(id); result.append(id) }
+        return result
+    }
 }
 
 /// 设置列表行内的小按钮（闭包回调，避免 @objc selector 爆破）。
@@ -1280,7 +1456,7 @@ private final class StageTypeBadge: NSView {
     }
 }
 
-/// 环节管理设置列表行：名称 + 类型徽标 + 分类，右侧 上移/下移/编辑/恢复或删除。
+/// 环节管理设置列表行（整宽卡片）：名称 + 类型徽标 + 分类，右侧 编辑/恢复/删除，排序（上移/下移）置于最右端。
 private final class StageSettingsRow: NSView {
     let stage: ScaffoldStage
     var onEdit: (() -> Void)?
@@ -1343,28 +1519,49 @@ private final class StageSettingsRow: NSView {
         editBtn.bezelStyle = .rounded
         editBtn.onAction = { [weak self] in self?.onEdit?() }
 
-        let btnRow = NSStackView(views: [up, down, editBtn, restoreBtn, deleteBtn])
+        // 操作按钮：编辑/恢复/删除在前，排序（上移/下移）放到最右端，整组靠右排齐。
+        let btnRow = NSStackView(views: [editBtn, restoreBtn, deleteBtn, up, down])
         btnRow.orientation = .horizontal
         btnRow.spacing = 4
         btnRow.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(btnRow)
         NSLayoutConstraint.activate([
-            badge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            badge.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            badge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            badge.topAnchor.constraint(equalTo: topAnchor, constant: 13),
             badge.widthAnchor.constraint(equalToConstant: badge.textWidth()),
             badge.heightAnchor.constraint(equalToConstant: 18),
-            nameLabel.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 8),
+            nameLabel.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 9),
             nameLabel.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: btnRow.leadingAnchor, constant: -8),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: btnRow.leadingAnchor, constant: -10),
             detailLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
             detailLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 3),
-            detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: btnRow.leadingAnchor, constant: -8),
-            btnRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: btnRow.leadingAnchor, constant: -10),
+            btnRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             btnRow.centerYAnchor.constraint(equalTo: centerYAnchor),
-            heightAnchor.constraint(equalToConstant: 52),
+            heightAnchor.constraint(equalToConstant: 54),
         ])
     }
+
+    override var isOpaque: Bool { false }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    /// 卡片背景 + 描边（深浅色自适应，与 WorkspaceStageCardView 同风格）。
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let bg: NSColor = dark ? NSColor(white: 0.22, alpha: 1) : NSColor(white: 0.97, alpha: 1)
+        bg.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+        let border: NSColor = dark ? NSColor(white: 0.33, alpha: 1) : NSColor(white: 0.72, alpha: 1)
+        border.setStroke()
+        let p = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        p.lineWidth = 1
+        p.stroke()
+    }
+
     required init?(coder: NSCoder) { fatalError() }
 }
 
@@ -1924,8 +2121,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     // MARK: 子视图
 
     private let headerTitle = NSTextField(labelWithString: "")
-    private var openButton: CustomIconButton!
-    private var finderButton: CustomIconButton!
     private var newProjectButton: NSButton!
     private var initProjectButton: NSButton!
     private var updateConfigButton: NSButton!
@@ -2143,8 +2338,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     /// 语言切换后刷新文案。
     func refreshTooltips() {
-        openButton?.toolTip = L10n.tr("scaffold.openDirHint")
-        finderButton?.toolTip = L10n.tr("scaffold.viewInFinderHint")
         newProjectButton?.title = L10n.tr("scaffold.newProject")
         initProjectButton?.title = L10n.tr("scaffold.initThisDir")
         updateConfigButton?.title = L10n.tr("scaffold.updateConfig")
@@ -2180,10 +2373,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        openButton = CustomIconButton(glyph: .openInApp, tooltip: L10n.tr("scaffold.openDirHint"))
-        openButton.onAction = { [weak self] in self?.openTargetDir() }
-        finderButton = CustomIconButton(glyph: .reveal, tooltip: L10n.tr("scaffold.viewInFinderHint"))
-        finderButton.onAction = { [weak self] in self?.revealInFinder() }
         settingsButton = CustomIconButton(glyph: .symbol("gearshape"), tooltip: L10n.tr("scaffold.settingsTitle"))
         settingsButton.onAction = { [weak self] in self?.toggleSettings() }
         hideButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("preview.closePanel"))
@@ -2205,7 +2394,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         nextButton.translatesAutoresizingMaskIntoConstraints = false
         nextButton.widthAnchor.constraint(equalToConstant: 88).isActive = true
 
-        let actions = NSStackView(views: [openButton, finderButton, settingsButton, hideButton])
+        let actions = NSStackView(views: [settingsButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -3723,31 +3912,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         statusBar.isHidden = text.isEmpty
     }
 
-    // MARK: 打开目录
-
-    private func targetURL() -> URL? {
-        guard let p = plan, !p.targetRoot.isEmpty else { return nil }
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: p.targetRoot, isDirectory: &isDir) else { return nil }
-        return URL(fileURLWithPath: p.targetRoot)
-    }
-
-    private func openTargetDir() {
-        if let url = targetURL() {
-            NSWorkspace.shared.open(url)
-        } else if let dir = currentWorkspaceDir {
-            openDir(dir)
-        }
-    }
-
-    private func revealInFinder() {
-        if let url = targetURL() {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-        } else if let dir = currentWorkspaceDir {
-            revealDir(dir)
-        }
-    }
-
     // MARK: 环节管理设置（右上角 ⚙）
 
     private func buildSettingsViews() {
@@ -3799,6 +3963,10 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             settingsStack.widthAnchor.constraint(equalTo: settingsDoc.widthAnchor),
         ])
         settingsScroll.documentView = settingsDoc
+        // 文档视图宽度钉满可见区：否则 settingsDoc 无宽度约束会被收窄成内容的拟合宽度，
+        // 列表行（整宽卡片）只占内容区 ~40%。钉满后 stack（width==doc width）随之铺满；
+        // 每行再 widthAnchor==stack.width-20 显式拉伸到整行宽度。
+        settingsDoc.widthAnchor.constraint(equalTo: settingsScroll.contentView.widthAnchor).isActive = true
         settingsScroll.hasVerticalScroller = true
         settingsScroll.autohidesScrollers = true
         settingsScroll.drawsBackground = false
@@ -3848,7 +4016,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         newTemplateBtn.bezelStyle = .rounded
         newTemplateBtn.controlSize = .small
         newTemplateBtn.onAction = { [weak self] in self?.newTemplateFile() }
-        let saveBtn = ActionButton.make(title: L10n.tr("scaffold.save"))
+        let saveBtn = ActionButton.make(title: L10n.tr("scaffold.saveAll"))
         saveBtn.bezelStyle = .rounded
         saveBtn.controlSize = .small
         saveBtn.onAction = { [weak self] in self?.saveStageEditor() }
@@ -4030,7 +4198,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             row.onMoveUp = { [weak self] in self?.moveStage(stage.id, delta: -1) }
             row.onMoveDown = { [weak self] in self?.moveStage(stage.id, delta: 1) }
             settingsStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: settingsStack.widthAnchor).isActive = true
+            // 行宽显式铺满栈内容区（edgeInsets 左右各 10）——与 workspace 首页同法
+            row.widthAnchor.constraint(equalTo: settingsStack.widthAnchor, constant: -20).isActive = true
         }
         if catalog.isEmpty {
             let empty = NSTextField(labelWithString: L10n.tr("scaffold.catalogEmpty"))
@@ -4209,16 +4378,12 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         file.tabButton.title = file.isDirty ? file.displayName + " *" : file.displayName
     }
 
-    /// 保存按钮可用性：当前文件有未保存修改时可保存。
+    /// Save All 可用性：任一文件有未保存修改（或为尚未落盘的新文件）即可保存整个环节。
     private func refreshEditorSaveState() {
-        guard editorFiles.indices.contains(editorSelectedTab) else {
-            editorSaveBtn?.isEnabled = false
-            return
-        }
         // 新建文件（尚未落盘 isNewFile）总是可保存——即使内容未改动也要允许落盘
-        // （新建 stage 骨架已预填、新建模板初始为空）；已落盘文件仅在有改动时亮起。
-        let file = editorFiles[editorSelectedTab]
-        editorSaveBtn?.isEnabled = file.isNewFile || file.isDirty
+        // （新建 stage 骨架已预填、新建模板初始为空）；已落盘文件仅在有改动时参与。
+        let saveable = editorFiles.contains { $0.isDirty || $0.isNewFile }
+        editorSaveBtn?.isEnabled = saveable
     }
 
     /// 新建模板文件：输入文件名 → 加标签并打开（未落盘，保存时写入用户库）。
@@ -4284,22 +4449,13 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         updateStatus(L10n.tr("scaffold.settingsFooter", target))
     }
 
-    /// 保存编辑器内容（校验 YAML + id 规则）。
-    /// 保存当前文件标签页（Files 风格：保存后留在编辑器，不关闭）。
+    /// Save All：把整个环节一起保存（stage.yaml + templates/ 下所有文件）。
+    /// 先校验并落盘 stage.yaml（校验 id + 唯一性 + 物化到用户库），再依次写回其余文件；
+    /// 保存后留在编辑器（不关闭），全部文件标记为干净。
     private func saveStageEditor() {
-        guard editorFiles.indices.contains(editorSelectedTab) else { return }
-        let file = editorFiles[editorSelectedTab]
-
-        if file.relativePath == "stage.yaml" {
-            saveYamlFile(file)
-        } else {
-            saveTemplateFile(file)
-        }
-    }
-
-    /// 保存 stage.yaml：校验 id → 写用户库（内置时 templates 复制跟随）→ 刷新路径与目录。
-    private func saveYamlFile(_ file: StageEditorFile) {
-        let yaml = file.editor?.text ?? loadFileText(file)
+        // 1) 定位 stage.yaml，其内容决定环节 id 与物化目标
+        guard let yamlFile = editorFiles.first(where: { $0.relativePath == "stage.yaml" }) else { return }
+        let yaml = yamlFile.editor?.text ?? loadFileText(yamlFile)
         let parsedID: String
         do {
             parsedID = try StageCatalogLoader.parseStageID(from: yaml)
@@ -4325,6 +4481,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
                 return
             }
         }
+        // 2) 物化：建目录 +（内置时）复制 templates + 写 stage.yaml
         do {
             try StageCatalogLoader.saveUserStage(id: parsedID, yaml: yaml, templatesFrom: editorTemplatesFrom)
         } catch {
@@ -4342,58 +4499,27 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             // 新建环节首次保存：标题改为「编辑环节：id」
             editorTitleLabel.stringValue = L10n.tr("scaffold.editorTitleEdit", parsedID)
         }
-        file.isDirty = false
-        file.isNewFile = false
-        file.editor?.markClean()
-        refreshTabTitle(file)
-        reloadCatalog()
-        updateStatus(L10n.tr("scaffold.stageSaveOK", parsedID))
-        refreshEditorSaveState()
-    }
-
-    /// 保存模板文件：先确保环节已物化到用户库（内置/新建时），再写回用户库路径。
-    private func saveTemplateFile(_ file: StageEditorFile) {
-        if editorIsNew {
-            // 新建环节尚未确定 id：必须先保存 stage.yaml
-            editorErrorLabel.stringValue = L10n.tr("scaffold.saveYamlFirst")
-            return
-        }
-        guard !editorStageID.isEmpty else {
-            editorErrorLabel.stringValue = L10n.tr("scaffold.saveYamlFirst")
-            return
-        }
-        // 内置环节（未物化）：先写 stage.yaml 基线 + 复制内置模板到用户库
-        let userStageDir = StageCatalogLoader.userStageDir(id: editorStageID)
-        if !FileManager.default.fileExists(atPath: userStageDir) {
-            guard let yamlFile = editorFiles.first(where: { $0.relativePath == "stage.yaml" }) else { return }
-            let yaml = yamlFile.editor?.text ?? loadFileText(yamlFile)
+        // 3) 依次写回其余文件（templates/ 下等），与 stage.yaml 一并落盘
+        for f in editorFiles where f.relativePath != "stage.yaml" {
+            let content = f.editor?.text ?? ""
+            let targetDir = (f.savePath as NSString).deletingLastPathComponent
             do {
-                try StageCatalogLoader.saveUserStage(id: editorStageID, yaml: yaml,
-                                                     templatesFrom: editorTemplatesFrom)
+                try FileManager.default.createDirectory(atPath: targetDir, withIntermediateDirectories: true)
+                try content.write(toFile: f.savePath, atomically: true, encoding: .utf8)
             } catch {
                 editorErrorLabel.stringValue = L10n.tr("scaffold.stageYAMLError", error.localizedDescription)
                 return
             }
-            editorTemplatesFrom = nil
-            // 物化后所有文件路径对准用户库（内置来源路径 → 用户库路径）
-            refreshEditorFilePaths()
         }
-        // 写模板文件（确保 templates/ 目录存在）
-        let targetDir = (file.savePath as NSString).deletingLastPathComponent
-        do {
-            try FileManager.default.createDirectory(atPath: targetDir, withIntermediateDirectories: true)
-            let content = file.editor?.text ?? ""
-            try content.write(toFile: file.savePath, atomically: true, encoding: .utf8)
-        } catch {
-            editorErrorLabel.stringValue = L10n.tr("scaffold.stageYAMLError", error.localizedDescription)
-            return
+        // 4) 全部标记为干净并刷新
+        for f in editorFiles {
+            f.isDirty = false
+            f.isNewFile = false
+            f.editor?.markClean()
+            refreshTabTitle(f)
         }
-        file.isDirty = false
-        file.isNewFile = false
-        file.editor?.markClean()
-        refreshTabTitle(file)
         reloadCatalog()
-        updateStatus(L10n.tr("scaffold.stageSaveOK", editorStageID + "/" + file.relativePath))
+        updateStatus(L10n.tr("scaffold.stageSaveOK", parsedID))
         refreshEditorSaveState()
     }
 
