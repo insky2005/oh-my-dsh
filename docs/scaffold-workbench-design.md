@@ -471,3 +471,19 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 - `tests/scaffold-panel/`：新增 27 例引擎单测（用户库覆盖/新建/恢复/模板复制、id 校验、排序合并、**编辑器闭环：面板内编辑模板 → 用户库 → 渲染采用用户版**）。
 
 **验证**：`tests/scaffold-panel/run.sh` 197 passed / 0 failed；`scripts/local-ci.sh swift` 全绿（各面板单测 + swiftc 全量编译检查）。
+
+### M1.x（项目预设管理：设置页签 + 内置/自定义 + 结构化编辑器 + 向导读取，feature/scaffold-workbench）
+
+**实现**（把「项目预设」从硬编码 3 组快捷勾选升级为一等可管理资源，镜像环节子系统）：
+
+- `ScaffoldPreset` 扩展为完整模型：`id + name(zh/en) + description(zh/en) + 有序 stageIds + paramDefaults`，并携带 `isCustom` / `isModifiedBuiltin`；产品内置预设（`backend`/`fullstack`/`foundation`）仍以代码种子定义（`ScaffoldPreset.builtin`）；
+- 新增 `ScaffoldPresetYAML`（preset.yaml 序列化/解析：`name/description` 双语 map + `stages` 有序列表 + `params` 每环节参数默认值嵌套 map）与 `PresetLibrary`（用户预设库 `$DSH_HOME/scaffold-presets/`，`DSH_SCAFFOLD_USER_PRESETS` 可覆盖；加载=内置种子 + 用户库同名覆盖；`saveUserPreset` / `removeUserPreset` / `parsePresetID` / `validatePresetID`）；排序用 `ScaffoldPresetOrder`（saved→默认→目录序，持久化 `scaffoldPresetOrder`）；
+- 设置面板：右上角 ⚙ 设置标题改为「环节 / 项目预设」页签切换（NSSegmentedControl），「新建」按钮随页签变为 新建环节/新建预设；「项目预设」页签列出全部预设（内置种子 + 用户覆盖），`PresetSettingsRow` 含类型徽标（内置/已修改/新建）+ 名称/环节数/描述 + 编辑/恢复/删除/上移下移；
+- 预设编辑器（结构化表单，非 YAML）：名称（中/英）+ 描述（中/英）+ 环节多选卡片（勾选即入组，序 = 勾选序）+ 已选环节的参数默认值输入（复用 `StageEditor` 参数行）；新建按名称 slug 生成 id，编辑可改内容不可改 id，保存写用户库（内置首次保存即物化为自定义），可恢复/删除；
+- 向导「按目的预设」由硬编码 `ScaffoldPreset.all` 改为读取预设目录（内置 + 用户自定义，按 `scaffoldPresetOrder` 排序，动态重建按钮行），`applyPreset` 仅勾选当前目录仍存在的环节并应用参数默认值；
+- `main.swift`：L10n 新增 `scaffold.preset*` / `scaffold.settings*Tab` / `scaffold.presetEditor*` / `scaffold.presetField*` / `scaffold.confirm*Preset*` 中英键；
+- `tests/scaffold-panel/`：新增 36 例预设引擎单测（内置种子/序列化 round-trip/解析 id/库覆盖与恢复/保存与删除/排序合并），`233 passed / 0 failed`。
+
+**验证**：`tests/scaffold-panel/run.sh` 233 passed / 0 failed；`scripts/local-ci.sh swift` 全绿（各面板单测 + swiftc 全量编译检查，仅既有 WebKit/Highlightr 警告）。
+
+> 注：结构化编辑器本轮完成引擎 + 设置列表/页签 + 编辑器交互 + 向导读取的代码层与编译验证；表单运行时布局（嵌套 stack 塌陷、滚动高度）需在 App 内按 `docs/appkit-ui-layout-guide.md` 做一次人工 QA。
