@@ -1565,6 +1565,112 @@ private final class StageSettingsRow: NSView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
+/// 项目预设设置列表行（整宽卡片）：预设名 + 类型徽标 + 描述（含环节数），右侧 编辑/恢复/删除/排序。
+private final class PresetSettingsRow: NSView {
+    let preset: ScaffoldPreset
+    var onEdit: (() -> Void)?
+    var onRestore: (() -> Void)?   // 已修改内置 → 恢复
+    var onDelete: (() -> Void)?    // 新建自定义 → 删除
+    var onMoveUp: (() -> Void)?
+    var onMoveDown: (() -> Void)?
+    private let badge = StageTypeBadge()
+    private let nameLabel: NSTextField
+    private let detailLabel: NSTextField
+
+    init(preset: ScaffoldPreset, isModifiedBuiltin: Bool, isFirst: Bool, isLast: Bool) {
+        self.preset = preset
+        nameLabel = NSTextField(labelWithString: preset.name)
+        nameLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        let stageCount = preset.stageIds.count
+        detailLabel = NSTextField(labelWithString: L10n.tr("scaffold.presetStageCount", stageCount)
+            + (preset.desc.isEmpty ? "" : "  ·  " + preset.desc))
+        detailLabel.font = .systemFont(ofSize: 11)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.lineBreakMode = .byTruncatingTail
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        badge.kind = preset.isCustom ? (isModifiedBuiltin ? .modified : .custom) : .builtin
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(badge)
+        addSubview(nameLabel)
+        addSubview(detailLabel)
+
+        let up = ActionButton.make(title: "↑")
+        up.controlSize = .small
+        up.bezelStyle = .rounded
+        up.toolTip = L10n.tr("scaffold.moveUp")
+        up.isEnabled = !isFirst
+        up.onAction = { [weak self] in self?.onMoveUp?() }
+
+        let down = ActionButton.make(title: "↓")
+        down.controlSize = .small
+        down.bezelStyle = .rounded
+        down.toolTip = L10n.tr("scaffold.moveDown")
+        down.isEnabled = !isLast
+        down.onAction = { [weak self] in self?.onMoveDown?() }
+
+        let restoreBtn = ActionButton.make(title: L10n.tr("scaffold.restorePreset"))
+        restoreBtn.controlSize = .small
+        restoreBtn.bezelStyle = .rounded
+        restoreBtn.isHidden = !(preset.isCustom && isModifiedBuiltin)
+        restoreBtn.onAction = { [weak self] in self?.onRestore?() }
+
+        let deleteBtn = ActionButton.make(title: L10n.tr("scaffold.deletePreset"))
+        deleteBtn.controlSize = .small
+        deleteBtn.bezelStyle = .rounded
+        deleteBtn.isHidden = !(preset.isCustom && !isModifiedBuiltin)
+        deleteBtn.onAction = { [weak self] in self?.onDelete?() }
+
+        let editBtn = ActionButton.make(title: L10n.tr("scaffold.editPreset"))
+        editBtn.controlSize = .small
+        editBtn.bezelStyle = .rounded
+        editBtn.onAction = { [weak self] in self?.onEdit?() }
+
+        let btnRow = NSStackView(views: [editBtn, restoreBtn, deleteBtn, up, down])
+        btnRow.orientation = .horizontal
+        btnRow.spacing = 4
+        btnRow.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(btnRow)
+        NSLayoutConstraint.activate([
+            badge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            badge.topAnchor.constraint(equalTo: topAnchor, constant: 13),
+            badge.widthAnchor.constraint(equalToConstant: badge.textWidth()),
+            badge.heightAnchor.constraint(equalToConstant: 18),
+            nameLabel.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 9),
+            nameLabel.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: btnRow.leadingAnchor, constant: -10),
+            detailLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            detailLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 3),
+            detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: btnRow.leadingAnchor, constant: -10),
+            btnRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            btnRow.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: 54),
+        ])
+    }
+
+    override var isOpaque: Bool { false }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let bg: NSColor = dark ? NSColor(white: 0.22, alpha: 1) : NSColor(white: 0.97, alpha: 1)
+        bg.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+        let border: NSColor = dark ? NSColor(white: 0.33, alpha: 1) : NSColor(white: 0.72, alpha: 1)
+        border.setStroke()
+        let p = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        p.lineWidth = 1
+        p.stroke()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 /// 环节编辑器中的单个文件（stage.yaml 或 templates/ 下某模板）。
 /// 对齐 Files 面板的编辑模式：每个文件一个标签页 + CodeEditorView 实例，
 /// 切换标签时复用 live editor（内存未保存编辑不丢失）。
@@ -2101,6 +2207,22 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         effectiveStageOrder().firstIndex(of: id) ?? Int.max
     }
 
+
+    // MARK: 项目预设顺序
+
+    /// 内置预设的默认顺序（settings「项目预设」与向导按钮共用）。
+    static let defaultPresetOrder: [String] = ScaffoldPreset.builtin.map { $0.id }
+    static let presetOrderKey = "scaffoldPresetOrder"
+
+    private func effectivePresetOrder() -> [String] {
+        let saved = UserDefaults.standard.stringArray(forKey: Self.presetOrderKey)
+        return ScaffoldPresetOrder.merge(saved: saved, defaults: Self.defaultPresetOrder,
+                                         ids: presetCatalog.map { $0.id })
+    }
+    private func presetIndex(_ id: String) -> Int {
+        effectivePresetOrder().firstIndex(of: id) ?? Int.max
+    }
+
     private enum Step: Int, CaseIterable {
         case workspace = 1, target = 2, stages = 3, params = 4, preview = 5
         var titleKey: String {
@@ -2159,6 +2281,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     // 步骤 2「按目的预设」标题（语言切换时重建）
     private let presetTitleLabel = NSTextField(labelWithString: "")
     private var presetButtons: [NSButton] = []
+    /// 「按目的预设」按钮行的容器 stack（动态重建）。
+    private var presetRowStack: NSStackView?
 
     // 步骤 2：选择环节（卡片）
     private let stagesHeader = NSTextField(labelWithString: "")
@@ -2202,6 +2326,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     private var settingsView: NSView!
     private let settingsHeader = DynamicFillView()
     private let settingsTitleLabel = NSTextField(labelWithString: "")
+    private var settingsNewBtn: ActionButton!
+    private var settingsSeg: NSSegmentedControl?
     private let settingsScroll = NSScrollView()
     private let settingsStack = NSStackView()
     /// 设置列表滚动 doc（重建列表后用 fittingSize 驱动文档高度，否则内容溢出区不可点击）。
@@ -2222,8 +2348,38 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     // MARK: 状态
 
+    // 项目预设编辑器（结构化表单）状态
+    private var presetEditorID = ""
+    private var presetEditorIsNew = false
+    private var presetEditNameZh = ""
+    private var presetEditNameEn = ""
+    private var presetEditDescZh = ""
+    private var presetEditDescEn = ""
+    /// 预设编辑器已选环节（有序）。
+    private var presetEditStageIDs: [String] = []
+    private var presetEditNameZhField: NSTextField!
+    private var presetEditNameEnField: NSTextField!
+    private var presetEditDescZhField: NSTextField!
+    private var presetEditDescEnField: NSTextField!
+    private var presetEditScroll: NSScrollView!
+    private var presetEditStack: NSStackView!
+    private var presetEditDoc: FlippedWorkspaceView!
+    private var presetEditSaveBtn: ActionButton!
+    private var presetEditErrorLabel: NSTextField!
+    private var presetEditTitleLabel: NSTextField!
+    private let presetEditView = NSView()
+
     private var catalog: [ScaffoldStage] = []
     private var catalogErrors: [String] = []
+    private var presetCatalog: [ScaffoldPreset] = []
+    private var presetBuiltinIDs: Set<String> = []
+    private var presetErrors: [String] = []
+
+    // MARK: 设置页签（环节 / 项目预设）
+
+    /// 设置面板当前页签。nil = 未进入设置。
+    private enum SettingsTab: Int { case stages = 0, presets = 1 }
+    private var settingsTab: SettingsTab = .stages
     private var editors: [String: StageEditor] = [:]
     private var radioGroups: [String: [NSButton]] = [:]
     private var selection: [String] = []
@@ -2351,6 +2507,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         rebuildParamsStep()
         updateFooter()
         if currentStep == .workspace { rebuildWorkspaceStep() }
+        refreshSettingsHeaderTexts()
         refreshPlan()
     }
 
@@ -2968,17 +3125,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         presetRow.orientation = .horizontal
         presetRow.spacing = 8
         presetRow.translatesAutoresizingMaskIntoConstraints = false
-        let presets = ScaffoldPreset.all
-        for (idx, preset) in presets.enumerated() {
-            let b = NSButton(title: presetTitle(preset.id), target: self, action: #selector(presetTapped(_:)))
-            b.tag = idx
-            b.bezelStyle = .rounded
-            b.controlSize = .regular
-            b.font = .systemFont(ofSize: 12)
-            b.translatesAutoresizingMaskIntoConstraints = false
-            presetRow.addArrangedSubview(b)
-            presetButtons.append(b)
-        }
+        presetRowStack = presetRow
+        rebuildPresetButtons()
 
         stageStack.orientation = .vertical
         stageStack.alignment = .width
@@ -3132,15 +3280,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         ])
     }
 
-    private func presetTitle(_ id: String) -> String {
-        switch id {
-        case "backend": return L10n.tr("scaffold.presetBackend")
-        case "fullstack": return L10n.tr("scaffold.presetFullstack")
-        case "foundation": return L10n.tr("scaffold.presetFoundation")
-        default: return id
-        }
-    }
-
     // MARK: 步骤导航
 
     private func rebuildStepRail() {
@@ -3252,14 +3391,47 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         catalog = result.stages
         catalogErrors = result.errors
         builtinIDs = result.builtinIDs
+        loadPresets()
+        rebuildPresetButtons()
         rebuildStageList()
     }
 
+    /// 加载项目预设目录（内置种子 + 用户库覆盖）。
+    private func loadPresets() {
+        let res = PresetLibrary.load()
+        presetCatalog = res.presets
+        presetBuiltinIDs = res.builtinIDs
+        presetErrors = res.errors
+    }
+
+    /// 重建向导「按目的预设」按钮行：从预设目录（内置 + 用户，按有效顺序）动态生成。
     private func rebuildPresetButtons() {
         presetTitleLabel.stringValue = L10n.tr("scaffold.presetTitle")
-        let presets = ScaffoldPreset.all
-        for (idx, b) in presetButtons.enumerated() {
-            if idx < presets.count { b.title = presetTitle(presets[idx].id) }
+        for sub in (presetRowStack?.arrangedSubviews ?? []) {
+            presetRowStack?.removeArrangedSubview(sub)
+            sub.removeFromSuperview()
+        }
+        presetButtons.removeAll()
+        guard let row = presetRowStack else { return }
+        let order = effectivePresetOrder()
+        let ordered = presetCatalog.sorted { (order.firstIndex(of: $0.id) ?? Int.max) < (order.firstIndex(of: $1.id) ?? Int.max) }
+        for (idx, preset) in ordered.enumerated() {
+            let b = NSButton(title: preset.name, target: self, action: #selector(presetTapped(_:)))
+            b.tag = idx
+            b.bezelStyle = .rounded
+            b.controlSize = .regular
+            b.font = .systemFont(ofSize: 12)
+            b.translatesAutoresizingMaskIntoConstraints = false
+            row.addArrangedSubview(b)
+            presetButtons.append(b)
+        }
+        // 无预设时给一行占位提示
+        if ordered.isEmpty {
+            let empty = NSTextField(labelWithString: L10n.tr("scaffold.presetStagePickerEmpty"))
+            empty.font = .systemFont(ofSize: 12)
+            empty.textColor = .secondaryLabelColor
+            empty.translatesAutoresizingMaskIntoConstraints = false
+            row.addArrangedSubview(empty)
         }
     }
 
@@ -3631,14 +3803,19 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     }
 
     @objc private func presetTapped(_ sender: NSButton) {
-        let presets = ScaffoldPreset.all
-        guard sender.tag >= 0, sender.tag < presets.count else { return }
-        applyPreset(presets[sender.tag])
+        // 按钮行按有效预设顺序生成，tag = 该顺序下标
+        let order = effectivePresetOrder()
+        guard sender.tag >= 0, sender.tag < order.count else { return }
+        guard let preset = presetCatalog.first(where: { $0.id == order[sender.tag] }) else { return }
+        applyPreset(preset)
     }
 
+    /// 套用一个项目预设：勾选其环节（仅保留当前目录中仍存在的环节）+ 应用参数默认值。
     private func applyPreset(_ preset: ScaffoldPreset) {
-        selection = preset.stageIds
+        let valid = Set(catalog.map { $0.id })
+        selection = preset.stageIds.filter { valid.contains($0) }
         for (sid, pv) in preset.paramDefaults {
+            guard valid.contains(sid) else { continue }
             for (k, v) in pv {
                 params[sid, default: [:]][k] = v
             }
@@ -3934,19 +4111,39 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         let newBtn = ActionButton.make(title: L10n.tr("scaffold.newStage"))
         newBtn.bezelStyle = .rounded
         newBtn.controlSize = .small
-        newBtn.onAction = { [weak self] in self?.beginNewStage() }
+        newBtn.onAction = { [weak self] in
+            guard let self = self else { return }
+            switch self.settingsTab {
+            case .stages: self.beginNewStage()
+            case .presets: self.beginNewPreset()
+            }
+        }
+        settingsNewBtn = newBtn
+        // 设置页签切换：环节 / 项目预设
+        let seg = NSSegmentedControl(labels: [L10n.tr("scaffold.settingsStageTab"), L10n.tr("scaffold.settingsPresetTab")],
+                                     trackingMode: .selectOne, target: self, action: #selector(settingsTabChanged(_:)))
+        seg.selectedSegment = 0
+        seg.segmentStyle = .rounded
+        seg.controlSize = .small
+        seg.font = .systemFont(ofSize: 11)
+        seg.translatesAutoresizingMaskIntoConstraints = false
+        settingsSeg = seg
         settingsHeader.addSubview(backBtn)
+        settingsHeader.addSubview(seg)
         settingsHeader.addSubview(settingsTitleLabel)
         settingsHeader.addSubview(newBtn)
         NSLayoutConstraint.activate([
-            backBtn.leadingAnchor.constraint(equalTo: settingsHeader.leadingAnchor, constant: 10),
+            backBtn.leadingAnchor.constraint(equalTo: settingsHeader.leadingAnchor, constant: 8),
             backBtn.centerYAnchor.constraint(equalTo: settingsHeader.centerYAnchor),
-            settingsTitleLabel.leadingAnchor.constraint(equalTo: backBtn.trailingAnchor, constant: 10),
+            seg.leadingAnchor.constraint(equalTo: backBtn.trailingAnchor, constant: 6),
+            seg.centerYAnchor.constraint(equalTo: settingsHeader.centerYAnchor),
+            seg.widthAnchor.constraint(equalToConstant: 180),
+            settingsTitleLabel.leadingAnchor.constraint(equalTo: seg.trailingAnchor, constant: 8),
             settingsTitleLabel.centerYAnchor.constraint(equalTo: settingsHeader.centerYAnchor),
             settingsTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: newBtn.leadingAnchor, constant: -8),
             newBtn.trailingAnchor.constraint(equalTo: settingsHeader.trailingAnchor, constant: -10),
             newBtn.centerYAnchor.constraint(equalTo: settingsHeader.centerYAnchor),
-            settingsHeader.heightAnchor.constraint(equalToConstant: 36),
+            settingsHeader.heightAnchor.constraint(equalToConstant: 40),
         ])
 
         settingsStack.orientation = .vertical
@@ -4117,8 +4314,10 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             editorFinderBtn.bottomAnchor.constraint(equalTo: editorView.bottomAnchor, constant: -10),
         ])
 
+        buildPresetEditorViews()
         contentContainer.addSubview(settingsView)
         contentContainer.addSubview(editorView)
+        contentContainer.addSubview(presetEditView)
         NSLayoutConstraint.activate([
             settingsView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
             settingsView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
@@ -4128,9 +4327,101 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             editorView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             editorView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             editorView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            presetEditView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            presetEditView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            presetEditView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            presetEditView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
         settingsView.isHidden = true
         editorView.isHidden = true
+        presetEditView.isHidden = true
+    }
+
+    // MARK: 项目预设编辑器（结构化表单：名称/描述 + 环节多选排序 + 参数默认值）
+
+    private func buildPresetEditorViews() {
+        presetEditView.translatesAutoresizingMaskIntoConstraints = false
+        presetEditView.wantsLayer = true
+        presetEditView.layer?.masksToBounds = true
+
+        // 头部：返回 + 标题 + 保存
+        let header = DynamicFillView()
+        header.kind = .window
+        header.translatesAutoresizingMaskIntoConstraints = false
+        let backBtn = ActionButton.make(title: "‹ " + L10n.tr("scaffold.back"))
+        backBtn.bezelStyle = .rounded
+        backBtn.controlSize = .small
+        backBtn.onAction = { [weak self] in self?.closePresetEditor() }
+        let titleLabel = NSTextField(labelWithString: L10n.tr("scaffold.presetEditorNew"))
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        presetEditTitleLabel = titleLabel
+        let saveBtn = ActionButton.make(title: L10n.tr("scaffold.save"))
+        saveBtn.bezelStyle = .rounded
+        saveBtn.controlSize = .small
+        saveBtn.onAction = { [weak self] in self?.savePresetEditor() }
+        presetEditSaveBtn = saveBtn
+        header.addSubview(backBtn)
+        header.addSubview(titleLabel)
+        header.addSubview(saveBtn)
+        NSLayoutConstraint.activate([
+            backBtn.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
+            backBtn.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            titleLabel.leadingAnchor.constraint(equalTo: backBtn.trailingAnchor, constant: 10),
+            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: saveBtn.leadingAnchor, constant: -8),
+            saveBtn.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -10),
+            saveBtn.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            header.heightAnchor.constraint(equalToConstant: 36),
+        ])
+
+        // 滚动内容
+        presetEditStack = NSStackView()
+        presetEditStack.orientation = .vertical
+        presetEditStack.alignment = .leading
+        presetEditStack.spacing = 8
+        presetEditStack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        presetEditStack.translatesAutoresizingMaskIntoConstraints = false
+        presetEditDoc = FlippedWorkspaceView()
+        presetEditDoc.translatesAutoresizingMaskIntoConstraints = false
+        presetEditDoc.addSubview(presetEditStack)
+        NSLayoutConstraint.activate([
+            presetEditStack.topAnchor.constraint(equalTo: presetEditDoc.topAnchor),
+            presetEditStack.leadingAnchor.constraint(equalTo: presetEditDoc.leadingAnchor),
+            presetEditStack.widthAnchor.constraint(equalTo: presetEditDoc.widthAnchor),
+        ])
+        presetEditScroll = NSScrollView()
+        presetEditScroll.documentView = presetEditDoc
+        presetEditScroll.hasVerticalScroller = true
+        presetEditScroll.autohidesScrollers = true
+        presetEditScroll.drawsBackground = false
+        presetEditScroll.translatesAutoresizingMaskIntoConstraints = false
+        presetEditDoc.widthAnchor.constraint(equalTo: presetEditScroll.contentView.widthAnchor).isActive = true
+
+        presetEditErrorLabel = NSTextField(labelWithString: "")
+        presetEditErrorLabel.font = .systemFont(ofSize: 11)
+        presetEditErrorLabel.textColor = .systemRed
+        presetEditErrorLabel.lineBreakMode = .byWordWrapping
+        presetEditErrorLabel.maximumNumberOfLines = 3
+        presetEditErrorLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        presetEditView.addSubview(header)
+        presetEditView.addSubview(presetEditScroll)
+        presetEditView.addSubview(presetEditErrorLabel)
+        NSLayoutConstraint.activate([
+            header.topAnchor.constraint(equalTo: presetEditView.topAnchor),
+            header.leadingAnchor.constraint(equalTo: presetEditView.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: presetEditView.trailingAnchor),
+            presetEditScroll.topAnchor.constraint(equalTo: header.bottomAnchor),
+            presetEditScroll.leadingAnchor.constraint(equalTo: presetEditView.leadingAnchor),
+            presetEditScroll.trailingAnchor.constraint(equalTo: presetEditView.trailingAnchor),
+            presetEditErrorLabel.topAnchor.constraint(equalTo: presetEditScroll.bottomAnchor, constant: 6),
+            presetEditErrorLabel.leadingAnchor.constraint(equalTo: presetEditView.leadingAnchor, constant: 12),
+            presetEditErrorLabel.trailingAnchor.constraint(equalTo: presetEditView.trailingAnchor, constant: -12),
+            presetEditErrorLabel.bottomAnchor.constraint(equalTo: presetEditView.bottomAnchor, constant: -8),
+        ])
     }
 
     /// 右上角 ⚙：开关环节管理设置视图。
@@ -4158,6 +4449,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         rebuildSettingsList()
         settingsView?.isHidden = false
         editorView.isHidden = true
+        presetEditView.isHidden = true
         updateStatus("")
     }
 
@@ -4169,6 +4461,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         toolbarUnderlineView?.isHidden = false
         settingsView?.isHidden = true
         editorView.isHidden = true
+        presetEditView.isHidden = true
         contentTopSettings?.isActive = false
         contentTopNormal?.isActive = true
         contentLeadingSettings?.isActive = false
@@ -4178,13 +4471,51 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         updateStatus("")
     }
 
-    /// 重建环节管理列表（按有效顺序全量显示，标记内置/自定义）。
+    /// 语言切换时刷新设置面板头部文案（页签名 + 新建按钮）。
+    private func refreshSettingsHeaderTexts() {
+        guard let seg = settingsSeg else { return }
+        seg.setLabel(L10n.tr("scaffold.settingsStageTab"), forSegment: 0)
+        seg.setLabel(L10n.tr("scaffold.settingsPresetTab"), forSegment: 1)
+        settingsNewBtn?.title = (settingsTab == .presets)
+            ? L10n.tr("scaffold.newPreset")
+            : L10n.tr("scaffold.newStage")
+        if settingsActive { rebuildSettingsList() }
+    }
+
+    /// 设置页签切换。
+    @objc private func settingsTabChanged(_ sender: NSSegmentedControl) {
+        settingsTab = (sender.selectedSegment == 1) ? .presets : .stages
+        rebuildSettingsList()
+    }
+
+    /// 重建设置列表：按页签渲染「环节管理」或「项目预设」列表。
     private func rebuildSettingsList() {
         for sub in settingsStack.arrangedSubviews {
             settingsStack.removeArrangedSubview(sub)
             sub.removeFromSuperview()
         }
-        settingsTitleLabel.stringValue = L10n.tr("scaffold.settingsTitle")
+        settingsSeg?.selectedSegment = (settingsTab == .presets) ? 1 : 0
+        switch settingsTab {
+        case .stages: rebuildStageSettingsRows()
+        case .presets: rebuildPresetSettingsRows()
+        }
+        settingsStack.invalidateIntrinsicContentSize()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let fitting = self.settingsStack.fittingSize
+            if fitting.height > 0 {
+                let w = max(fitting.width, self.settingsScroll.contentView.bounds.width)
+                self.settingsStack.setFrameSize(NSSize(width: w, height: fitting.height))
+                self.settingsDoc.setFrameSize(NSSize(width: w, height: fitting.height))
+            }
+            self.view.layoutSubtreeIfNeeded()
+        }
+    }
+
+    /// 环节管理页签：全量环节列表（按有效顺序，标记内置/自定义）。
+    private func rebuildStageSettingsRows() {
+        settingsTitleLabel.stringValue = L10n.tr("scaffold.settingsStageTab")
+        settingsNewBtn?.title = L10n.tr("scaffold.newStage")
         let order = effectiveStageOrder()
         let ordered = catalog.sorted { (order.firstIndex(of: $0.id) ?? Int.max) < (order.firstIndex(of: $1.id) ?? Int.max) }
         for (i, stage) in ordered.enumerated() {
@@ -4198,7 +4529,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             row.onMoveUp = { [weak self] in self?.moveStage(stage.id, delta: -1) }
             row.onMoveDown = { [weak self] in self?.moveStage(stage.id, delta: 1) }
             settingsStack.addArrangedSubview(row)
-            // 行宽显式铺满栈内容区（edgeInsets 左右各 10）——与 workspace 首页同法
             row.widthAnchor.constraint(equalTo: settingsStack.widthAnchor, constant: -20).isActive = true
         }
         if catalog.isEmpty {
@@ -4208,19 +4538,48 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             settingsStack.addArrangedSubview(empty)
         }
         settingsFooterLabel.stringValue = L10n.tr("scaffold.settingsFooter", StageCatalogLoader.userStagesDir())
-        // 文档帧 = stack 的 fitting 尺寸：否则首轮布局后文档高度陈旧（clip 高度/0），
-        // 列表渲染出来但超出文档 bounds 的区域 hitTest 失败 → 行内按钮不可点击。
-        settingsStack.invalidateIntrinsicContentSize()
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            let fitting = self.settingsStack.fittingSize
-            if fitting.height > 0 {
-                let w = max(fitting.width, self.settingsScroll.contentView.bounds.width)
-                self.settingsStack.setFrameSize(NSSize(width: w, height: fitting.height))
-                self.settingsDoc.setFrameSize(NSSize(width: w, height: fitting.height))
-            }
-            self.view.layoutSubtreeIfNeeded()
+    }
+
+    /// 项目预设页签：全量预设列表（内置种子 + 用户覆盖，按有效顺序，标记内置/自定义）。
+    private func rebuildPresetSettingsRows() {
+        settingsTitleLabel.stringValue = L10n.tr("scaffold.settingsPresetTab")
+        settingsNewBtn?.title = L10n.tr("scaffold.newPreset")
+        let order = effectivePresetOrder()
+        let ordered = presetCatalog.sorted { (order.firstIndex(of: $0.id) ?? Int.max) < (order.firstIndex(of: $1.id) ?? Int.max) }
+        for (i, preset) in ordered.enumerated() {
+            let row = PresetSettingsRow(preset: preset,
+                                        isModifiedBuiltin: presetBuiltinIDs.contains(preset.id),
+                                        isFirst: i == 0,
+                                        isLast: i == ordered.count - 1)
+            row.onEdit = { [weak self] in self?.beginEditPreset(preset.id) }
+            row.onRestore = { [weak self] in self?.confirmRestorePreset(preset.id) }
+            row.onDelete = { [weak self] in self?.confirmDeletePreset(preset.id) }
+            row.onMoveUp = { [weak self] in self?.movePreset(preset.id, delta: -1) }
+            row.onMoveDown = { [weak self] in self?.movePreset(preset.id, delta: 1) }
+            settingsStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: settingsStack.widthAnchor, constant: -20).isActive = true
         }
+        if presetCatalog.isEmpty {
+            let empty = NSTextField(labelWithString: L10n.tr("scaffold.catalogEmpty"))
+            empty.font = .systemFont(ofSize: 12)
+            empty.textColor = .secondaryLabelColor
+            settingsStack.addArrangedSubview(empty)
+        }
+        settingsFooterLabel.stringValue = L10n.tr("scaffold.settingsFooterPreset", PresetLibrary.userPresetsDir())
+    }
+
+    /// 调整预设排序并持久化。
+    private func movePreset(_ id: String, delta: Int) {
+        var order = effectivePresetOrder()
+        guard let from = order.firstIndex(of: id) else { return }
+        let to = from + delta
+        guard to >= 0, to < order.count else { return }
+        order.remove(at: from)
+        order.insert(id, at: to)
+        UserDefaults.standard.set(order, forKey: Self.presetOrderKey)
+        reloadPresets()
+        rebuildPresetButtons()
+        updateStatus(L10n.tr("scaffold.presetReorderOK"))
     }
 
     /// 调整环节排序并持久化。
@@ -4303,6 +4662,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         rebuildEditorTabs()
         settingsView?.isHidden = true
         editorView.isHidden = false
+        presetEditView.isHidden = true
         editorSelectedTab = 0
         selectEditorFile(index: 0)
     }
@@ -4567,18 +4927,338 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         }
     }
 
+    // MARK: 项目预设编辑器（结构化表单）
+
+    /// 新建项目预设：打开空表单。
+    private func beginNewPreset() {
+        presetEditorID = ""
+        presetEditorIsNew = true
+        presetEditNameZh = ""
+        presetEditNameEn = ""
+        presetEditDescZh = ""
+        presetEditDescEn = ""
+        presetEditStageIDs = []
+        presetEditParamDefaults = [:]
+        openPresetEditor()
+    }
+
+    /// 编辑已有预设：载入表单（名称/描述/环节顺序/参数默认值）。
+    private func beginEditPreset(_ id: String) {
+        guard let preset = presetCatalog.first(where: { $0.id == id }) else { return }
+        presetEditorID = id
+        presetEditorIsNew = false
+        presetEditNameZh = preset.nameZh
+        presetEditNameEn = preset.nameEn
+        presetEditDescZh = preset.descZh
+        presetEditDescEn = preset.descEn
+        presetEditStageIDs = preset.stageIds
+        // 记录需保留的既有参数默认值，供编辑器字段预填
+        presetEditParamDefaults = preset.paramDefaults
+        openPresetEditor()
+    }
+
+    /// 当前预设编辑器要保留的参数默认值（编辑模式载入；新建为空）。
+    private var presetEditParamDefaults: [String: [String: String]] = [:]
+
+    private func openPresetEditor() {
+        settingsView?.isHidden = true
+        editorView.isHidden = true
+        presetEditView.isHidden = false
+        presetEditTitleLabel?.stringValue = presetEditorIsNew
+            ? L10n.tr("scaffold.presetEditorNew")
+            : L10n.tr("scaffold.presetEditorEdit", presetEditorID)
+        presetEditErrorLabel?.stringValue = ""
+        // 让缓存的四个文本字段显示当前值（新建/编辑切换时重置）
+        presetEditNameZhField?.stringValue = presetEditNameZh
+        presetEditNameEnField?.stringValue = presetEditNameEn
+        presetEditDescZhField?.stringValue = presetEditDescZh
+        presetEditDescEnField?.stringValue = presetEditDescEn
+        rebuildPresetEditor()
+    }
+
+    private func closePresetEditor() {
+        presetEditView.isHidden = true
+        settingsView?.isHidden = false
+        // 编辑器里若改了名（新建未保存），回到设置列表时刷新该行显示
+        rebuildSettingsList()
+    }
+
+    /// 重建预设编辑器表单（名称/描述字段 + 环节多选 + 选中环节的参数默认值）。
+    private func rebuildPresetEditor() {
+        for sub in (presetEditStack?.arrangedSubviews ?? []) {
+            presetEditStack?.removeArrangedSubview(sub)
+            sub.removeFromSuperview()
+        }
+        guard let stack = presetEditStack else { return }
+
+        // 名称/描述字段（预先创建并缓存，避免重建时丢失输入）
+        if presetEditNameZhField == nil { makePresetNameFields() }
+        for field in [presetEditNameZhField!, presetEditNameEnField!, presetEditDescZhField!, presetEditDescEnField!] {
+            let row = fieldRowContainer(field)
+            stack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        let sep = NSBox()
+        sep.boxType = .separator
+        sep.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(sep)
+        sep.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        let title = NSTextField(labelWithString: L10n.tr("scaffold.presetChooseStages"))
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(title)
+        title.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        let order = effectiveStageOrder()
+        let orderedStages = catalog.sorted { (order.firstIndex(of: $0.id) ?? Int.max) < (order.firstIndex(of: $1.id) ?? Int.max) }
+        for stage in orderedStages {
+            let editor = StageEditor(stage: stage) { [weak self] in
+                guard let self = self else { return }
+                if let i = self.presetEditStageIDs.firstIndex(of: stage.id) {
+                    self.presetEditStageIDs.remove(at: i)
+                } else {
+                    self.presetEditStageIDs.append(stage.id)
+                }
+                self.rebuildPresetEditor()
+            }
+            editor.card.isSelected = presetEditStageIDs.contains(stage.id)
+            stack.addArrangedSubview(editor.card)
+            editor.card.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -8).isActive = true
+
+            if presetEditStageIDs.contains(stage.id) {
+                let existing = presetEditParamDefaults[stage.id] ?? [:]
+                for (key, field) in editor.stringControls {
+                    let base = stage.params.first { $0.key == key }?.defaultValue ?? ""
+                    field.stringValue = existing[key] ?? base
+                    field.target = self
+                    field.action = #selector(presetParamFieldChanged(_:))
+                }
+                for (key, pop) in editor.selectControls {
+                    let opts = stage.params.first { $0.key == key }?.options ?? []
+                    if let v = existing[key], let i = opts.firstIndex(of: v), i < pop.itemArray.count {
+                        pop.selectItem(at: i)
+                    }
+                    pop.target = self
+                    pop.action = #selector(presetParamSelectChanged(_:))
+                }
+                if !editor.paramRows.isEmpty {
+                    let sub = NSTextField(labelWithString: L10n.tr("scaffold.presetParamHint"))
+                    sub.font = .systemFont(ofSize: 11)
+                    sub.textColor = .secondaryLabelColor
+                    sub.translatesAutoresizingMaskIntoConstraints = false
+                    stack.addArrangedSubview(sub)
+                    sub.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+                    for row in editor.paramRows {
+                        stack.addArrangedSubview(row)
+                    }
+                }
+            }
+        }
+        if presetEditStageIDs.isEmpty {
+            let hint = NSTextField(labelWithString: L10n.tr("scaffold.presetStagePickerEmpty"))
+            hint.font = .systemFont(ofSize: 12)
+            hint.textColor = .secondaryLabelColor
+            hint.translatesAutoresizingMaskIntoConstraints = false
+            stack.addArrangedSubview(hint)
+        }
+
+        stack.invalidateIntrinsicContentSize()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let stack = self.presetEditStack else { return }
+            let fitting = stack.fittingSize
+            if fitting.height > 0 {
+                let w = max(fitting.width, self.presetEditScroll.contentView.bounds.width)
+                stack.setFrameSize(NSSize(width: w, height: fitting.height))
+                self.presetEditDoc?.setFrameSize(NSSize(width: w, height: fitting.height))
+            }
+            self.view.layoutSubtreeIfNeeded()
+        }
+    }
+
+    private func makePresetNameFields() {
+        presetEditNameZhField = makePresetField(value: presetEditNameZh, id: "nameZh")
+        presetEditNameEnField = makePresetField(value: presetEditNameEn, id: "nameEn")
+        presetEditDescZhField = makePresetField(value: presetEditDescZh, id: "descZh")
+        presetEditDescEnField = makePresetField(value: presetEditDescEn, id: "descEn")
+    }
+    private func makePresetField(value: String, id: String) -> NSTextField {
+        let f = NSTextField(string: value)
+        f.identifier = NSUserInterfaceItemIdentifier("presetfield." + id)
+        f.target = self
+        f.action = #selector(presetNameFieldChanged(_:))
+        return f
+    }
+    private func fieldRowContainer(_ field: NSTextField) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 10
+        row.alignment = .centerY
+        row.translatesAutoresizingMaskIntoConstraints = false
+        let label = NSTextField(labelWithString: fieldLabel(for: field))
+        label.font = .systemFont(ofSize: 12)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        row.addArrangedSubview(label)
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        row.addArrangedSubview(field)
+        return row
+    }
+    private func fieldLabel(for field: NSTextField) -> String {
+        switch field.identifier?.rawValue {
+        case "presetfield.nameZh": return L10n.tr("scaffold.presetFieldNameZh")
+        case "presetfield.nameEn": return L10n.tr("scaffold.presetFieldNameEn")
+        case "presetfield.descZh": return L10n.tr("scaffold.presetFieldDescZh")
+        case "presetfield.descEn": return L10n.tr("scaffold.presetFieldDescEn")
+        default: return ""
+        }
+    }
+    @objc private func presetNameFieldChanged(_ sender: NSTextField) {
+        let v = sender.stringValue
+        switch sender.identifier?.rawValue {
+        case "presetfield.nameZh": presetEditNameZh = v
+        case "presetfield.nameEn": presetEditNameEn = v
+        case "presetfield.descZh": presetEditDescZh = v
+        case "presetfield.descEn": presetEditDescEn = v
+        default: break
+        }
+    }
+
+    @objc private func presetParamFieldChanged(_ sender: NSTextField) {
+        guard let sid = sender.identifier?.rawValue else { return }
+        let parts = sid.split(separator: ".", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return }
+        presetEditParamDefaults[parts[0], default: [:]][parts[1]] = sender.stringValue
+    }
+
+    @objc private func presetParamSelectChanged(_ sender: NSPopUpButton) {
+        guard let sid = sender.identifier?.rawValue else { return }
+        let parts = sid.split(separator: ".", maxSplits: 1).map(String.init)
+        guard parts.count == 2,
+              let stage = catalog.first(where: { $0.id == parts[0] }),
+              let param = stage.params.first(where: { $0.key == parts[1] }) else { return }
+        let idx = sender.indexOfSelectedItem
+        if idx >= 0, idx < param.options.count {
+            presetEditParamDefaults[parts[0], default: [:]][parts[1]] = param.options[idx]
+        }
+    }
+
+    /// 保存项目预设：从编辑器收集名称/描述/环节顺序/参数默认值 → 写入用户库。
+    private func savePresetEditor() {
+        let nameZh = presetEditNameZh.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nameEn = presetEditNameEn.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !nameZh.isEmpty || !nameEn.isEmpty else {
+            presetEditErrorLabel?.stringValue = L10n.tr("scaffold.presetEmptyName")
+            return
+        }
+        let stageIds = presetEditStageIDs
+        var paramDefaults: [String: [String: String]] = [:]
+        let valid = Set(catalog.map { $0.id })
+        for sid in stageIds where valid.contains(sid) {
+            var kv: [String: String] = [:]
+            for (k, v) in presetEditParamDefaults[sid] ?? [:] where !v.isEmpty {
+                kv[k] = v
+            }
+            if !kv.isEmpty { paramDefaults[sid] = kv }
+        }
+        let id = presetEditorIsNew ? slugPresetID(nameZh.isEmpty ? nameEn : nameZh) : presetEditorID
+        guard !id.isEmpty else {
+            presetEditErrorLabel?.stringValue = L10n.tr("scaffold.presetEmptyName")
+            return
+        }
+        if presetEditorIsNew && Set(presetCatalog.map { $0.id }).contains(id) {
+            presetEditErrorLabel?.stringValue = L10n.tr("scaffold.presetIDTaken", id)
+            return
+        }
+        let preset = ScaffoldPreset(id: id, nameZh: nameZh, nameEn: nameEn.isEmpty ? nameZh : nameEn,
+                                    descZh: presetEditDescZh, descEn: presetEditDescEn,
+                                    stageIds: stageIds, paramDefaults: paramDefaults,
+                                    isCustom: true, isModifiedBuiltin: presetBuiltinIDs.contains(id))
+        do {
+            try PresetLibrary.saveUserPreset(preset)
+        } catch {
+            presetEditErrorLabel?.stringValue = L10n.tr("scaffold.stageYAMLError", error.localizedDescription)
+            return
+        }
+        reloadPresets()
+        closePresetEditor()
+        updateStatus(L10n.tr("scaffold.presetSaveOK", preset.name))
+    }
+
+    private func slugPresetID(_ name: String) -> String {
+        let ascii = name.folding(options: [.diacriticInsensitive, .widthInsensitive], locale: .current)
+        let cleaned = String(ascii.unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0) || $0 == " " || $0 == "-" || $0 == "_"
+        })
+        var slug = cleaned.lowercased().replacingOccurrences(of: "_", with: "-")
+            .split(whereSeparator: { $0 == " " }).joined(separator: "-")
+        let fine = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-")
+        slug = String(slug.unicodeScalars.filter { fine.contains($0) })
+        return slug.isEmpty ? "preset" : slug
+    }
+
+    // MARK: 项目预设 恢复 / 删除
+
+    /// 恢复内置预设：删除用户库覆盖文件 → 回到产品内置种子。
+    private func confirmRestorePreset(_ id: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L10n.tr("scaffold.confirmRestorePresetTitle")
+        alert.informativeText = L10n.tr("scaffold.confirmRestorePresetMessage", presetName(id))
+        alert.addButton(withTitle: L10n.tr("scaffold.restorePreset"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        guard let win = view.window else { return }
+        alert.beginSheetModal(for: win) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self = self else { return }
+            PresetLibrary.removeUserPreset(id: id)
+            self.reloadPresets()
+            self.updateStatus(L10n.tr("scaffold.presetRestored", self.presetName(id)))
+        }
+    }
+
+    /// 删除自定义预设（新建的；已修改内置走恢复）。
+    private func confirmDeletePreset(_ id: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L10n.tr("scaffold.confirmDeletePresetTitle")
+        alert.informativeText = L10n.tr("scaffold.confirmDeletePresetMessage", presetName(id))
+        alert.addButton(withTitle: L10n.tr("scaffold.deletePreset"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        guard let win = view.window else { return }
+        alert.beginSheetModal(for: win) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self = self else { return }
+            PresetLibrary.removeUserPreset(id: id)
+            self.reloadPresets()
+            self.updateStatus(L10n.tr("scaffold.presetDeleted", self.presetName(id)))
+        }
+    }
+
+    private func presetName(_ id: String) -> String {
+        presetCatalog.first(where: { $0.id == id })?.name ?? id
+    }
+
     /// 环节库变更后全量刷新：加载 + 清理向导状态 + 重建列表/参数/预览/设置列表。
+    /// 预设库变更后刷新：重新加载 + 重建设置预设列表 + 向导按钮。
+    private func reloadPresets() {
+        loadPresets()
+        rebuildPresetButtons()
+        if settingsActive, settingsTab == .presets { rebuildSettingsList() }
+    }
+
     private func reloadCatalog() {
         let result = StageCatalogLoader.load()
         catalog = result.stages
         catalogErrors = result.errors
         builtinIDs = result.builtinIDs
+        loadPresets()
         let valid = Set(catalog.map { $0.id })
         selection = selection.filter { valid.contains($0) }
         params = params.filter { valid.contains($0.key) }
         rebuildStageList()
         rebuildParamsStep()
         refreshPlan()
+        rebuildPresetButtons()
         if settingsActive { rebuildSettingsList() }
     }
 }
