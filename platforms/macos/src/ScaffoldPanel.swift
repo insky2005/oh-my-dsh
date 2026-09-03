@@ -4959,6 +4959,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     /// 当前预设编辑器要保留的参数默认值（编辑模式载入；新建为空）。
     private var presetEditParamDefaults: [String: [String: String]] = [:]
+    /// 预设编辑器当前选中环节对应的 StageEditor（保存时 collectValues 读取全部参数类型）。
+    private var presetEditSelectedEditors: [String: StageEditor] = [:]
 
     private func openPresetEditor() {
         settingsView?.isHidden = true
@@ -5009,6 +5011,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         title.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(title)
         title.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        presetEditSelectedEditors = [:]
 
         let order = effectiveStageOrder()
         let orderedStages = catalog.sorted { (order.firstIndex(of: $0.id) ?? Int.max) < (order.firstIndex(of: $1.id) ?? Int.max) }
@@ -5027,6 +5030,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             editor.card.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -8).isActive = true
 
             if presetEditStageIDs.contains(stage.id) {
+                presetEditSelectedEditors[stage.id] = editor
                 let existing = presetEditParamDefaults[stage.id] ?? [:]
                 for (key, field) in editor.stringControls {
                     let base = stage.params.first { $0.key == key }?.defaultValue ?? ""
@@ -5156,11 +5160,12 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         var paramDefaults: [String: [String: String]] = [:]
         let valid = Set(catalog.map { $0.id })
         for sid in stageIds where valid.contains(sid) {
-            var kv: [String: String] = [:]
-            for (k, v) in presetEditParamDefaults[sid] ?? [:] where !v.isEmpty {
-                kv[k] = v
+            // 收集该环节编辑器里所有参数控件当前值（string/select/radio/bool/multi 全覆盖）。
+            // 为空值的参数不写入（渲染用 stage 默认）。
+            if let editor = presetEditSelectedEditors[sid] {
+                let values = editor.collectValues().filter { !$0.value.isEmpty }
+                if !values.isEmpty { paramDefaults[sid] = values }
             }
-            if !kv.isEmpty { paramDefaults[sid] = kv }
         }
         let id = presetEditorIsNew ? slugPresetID(nameZh.isEmpty ? nameEn : nameZh) : presetEditorID
         guard !id.isEmpty else {
