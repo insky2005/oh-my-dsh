@@ -659,6 +659,105 @@ check(customPlan.isValid, "editor: custom stage plan valid", (customPlan.validat
 let noteEntry = customPlan.entries.first { $0.path == "NOTE.md" }
 eq(noteEntry?.content ?? "nil", "hello agent, from demo-x!\n", "editor: new custom template renders")
 
+
+// MARK: - 项目预设引擎（序列化 / 解析 / 库覆盖 / 恢复 / 删除 / 排序）
+
+// 内置预设种子
+eq(ScaffoldPreset.builtin.count, 3, "preset: 3 builtin seeds")
+eq(ScaffoldPreset.backend.stageIds.count, 10, "preset: backend = 10 stages")
+check(ScaffoldPreset.foundation.stageIds.contains("repo-knowledge"), "preset: foundation includes repo-knowledge")
+check(!ScaffoldPreset.foundation.stageIds.contains("ci-cd"), "preset: foundation excludes ci-cd")
+
+// 序列化 → 解析 round-trip（含名称/描述/环节顺序/参数默认值）
+let roundPreset = ScaffoldPreset(
+    id: "my-backend",
+    nameZh: "我的后端", nameEn: "My Backend",
+    descZh: "自定义描述", descEn: "custom desc",
+    stageIds: ["git-init", "agents-md", "ci-cd"],
+    paramDefaults: ["ci-cd": ["hasBackend": "true", "hasFrontend": "false"]],
+    isCustom: true, isModifiedBuiltin: false)
+let rtYaml = ScaffoldPresetYAML.serialize(roundPreset)
+let rt = try! ScaffoldPresetYAML.parse(rtYaml, isCustom: true, isModifiedBuiltin: false)
+eq(rt.id, "my-backend", "preset roundtrip: id")
+eq(rt.nameZh, "我的后端", "preset roundtrip: nameZh")
+eq(rt.nameEn, "My Backend", "preset roundtrip: nameEn")
+eq(rt.descEn, "custom desc", "preset roundtrip: descEn")
+eq(rt.stageIds, ["git-init", "agents-md", "ci-cd"], "preset roundtrip: stage order")
+eq(rt.paramDefaults["ci-cd"]?["hasBackend"], "true", "preset roundtrip: param default")
+eq(rt.paramDefaults["ci-cd"]?["hasFrontend"], "false", "preset roundtrip: param default 2")
+check(rtYaml.contains("my-backend"), "preset serialize: contains id")
+check(rtYaml.contains("stages:"), "preset serialize: contains stages block")
+check(rtYaml.contains("hasBackend"), "preset serialize: contains params")
+
+// id 解析与校验
+let pid = try! PresetLibrary.parsePresetID(from: "id: abc-9\nname: { zh: X, en: Y }\n")
+eq(pid, "abc-9", "preset: parsePresetID reads id")
+check(PresetLibrary.validatePresetID("my-preset"), "preset: valid id")
+check(!PresetLibrary.validatePresetID("Bad_Preset"), "preset: invalid id rejected")
+check(!PresetLibrary.validatePresetID(""), "preset: empty id rejected")
+
+// 用户库覆盖内置 + 新建自定义 + 恢复
+let presetUserRoot = tmpDir("preset-user")
+setenv("DSH_SCAFFOLD_USER_PRESETS", presetUserRoot, 1)
+// 覆盖内置 fullstack
+write((presetUserRoot as NSString).appendingPathComponent("fullstack.yaml"), """
+id: fullstack
+name: { zh: 我的全栈, en: My Fullstack }
+description: { zh: t, en: t }
+stages:
+  - git-init
+  - agents-md
+""")
+// 新建自定义
+write((presetUserRoot as NSString).appendingPathComponent("ops.yaml"), """
+id: ops
+name: { zh: 运维型, en: Ops }
+description: { zh: t, en: t }
+stages:
+  - git-init
+  - docker
+  - deploy
+""")
+let pl = PresetLibrary.load()
+let fsPreset = pl.presets.first { $0.id == "fullstack" }
+check(fsPreset?.isCustom == true, "preset: overridden builtin is custom")
+check(fsPreset?.isModifiedBuiltin == true, "preset: overridden builtin isModifiedBuiltin")
+eq(fsPreset?.nameZh, "我的全栈", "preset: user copy wins name")
+check(pl.builtinIDs.contains("fullstack"), "preset: builtinIDs keeps overridden id (restore available)")
+let opsPreset = pl.presets.first { $0.id == "ops" }
+check(opsPreset?.isCustom == true, "preset: new custom marked custom")
+check(opsPreset?.isModifiedBuiltin == false, "preset: new custom not modifiedBuiltin")
+check(!pl.builtinIDs.contains("ops"), "preset: new custom not in builtinIDs")
+let builtinFullstack = pl.presets.first { $0.id == "fullstack" && !$0.isCustom }
+check(builtinFullstack == nil, "preset: overridden builtin not duplicated")
+
+// 保存用户预设 + 删除/恢复
+let round2 = ScaffoldPreset(id: "round2", nameZh: "轮2", nameEn: "Round 2",
+                            descZh: "", descEn: "", stageIds: ["makefile"], paramDefaults: [:],
+                            isCustom: true, isModifiedBuiltin: false)
+try! PresetLibrary.saveUserPreset(round2)
+check(exists((presetUserRoot as NSString).appendingPathComponent("round2.yaml")), "preset: save writes user preset file")
+check(PresetLibrary.removeUserPreset(id: "round2"), "preset: remove user preset returns true")
+check(!exists((presetUserRoot as NSString).appendingPathComponent("round2.yaml")), "preset: removed file gone")
+check(!PresetLibrary.removeUserPreset(id: "no-such"), "preset: remove missing returns false")
+// 恢复内置：删覆盖 fullstack.yaml → 回到内置种子
+check(PresetLibrary.removeUserPreset(id: "fullstack"), "preset: restore deletes override")
+let afterRestore = PresetLibrary.load()
+let restoredFs = afterRestore.presets.first { $0.id == "fullstack" }
+check(restoredFs?.isCustom == false, "preset: restored builtin is builtin again")
+eq(restoredFs?.nameZh, "前后端兼备", "preset: restored builtin name restored")
+
+// 排序合并：saved → 内置序 → 剩余
+let presetOrder = ScaffoldPresetOrder.merge(
+    saved: ["ops", "fullstack"],
+    defaults: ["backend", "fullstack", "foundation"],
+    ids: ["backend", "fullstack", "foundation", "ops"])
+eq(presetOrder, ["ops", "fullstack", "backend", "foundation"], "preset order: saved first then defaults then rest")
+let presetOrderNil = ScaffoldPresetOrder.merge(saved: nil, defaults: ["backend"], ids: ["foundation", "backend", "custom"])
+eq(presetOrderNil, ["backend", "foundation", "custom"], "preset order: nil saved = defaults + rest")
+let presetOrderStale = ScaffoldPresetOrder.merge(saved: ["ghost", "ops"], defaults: ["backend"], ids: ["backend", "ops"])
+eq(presetOrderStale, ["ops", "backend"], "preset order: stale saved dropped")
+
 print("----")
 print("\(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
