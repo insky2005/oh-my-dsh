@@ -5032,19 +5032,31 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             if presetEditStageIDs.contains(stage.id) {
                 presetEditSelectedEditors[stage.id] = editor
                 let existing = presetEditParamDefaults[stage.id] ?? [:]
-                for (key, field) in editor.stringControls {
-                    let base = stage.params.first { $0.key == key }?.defaultValue ?? ""
-                    field.stringValue = existing[key] ?? base
+                editor.syncControls(values: existing)
+                // 接线全部参数控件类型（string/select/radio/bool/multi）→ 写回 presetEditParamDefaults
+                for (_, field) in editor.stringControls {
                     field.target = self
                     field.action = #selector(presetParamFieldChanged(_:))
                 }
-                for (key, pop) in editor.selectControls {
-                    let opts = stage.params.first { $0.key == key }?.options ?? []
-                    if let v = existing[key], let i = opts.firstIndex(of: v), i < pop.itemArray.count {
-                        pop.selectItem(at: i)
-                    }
+                for (_, pop) in editor.selectControls {
                     pop.target = self
                     pop.action = #selector(presetParamSelectChanged(_:))
+                }
+                for (_, cb) in editor.boolControls {
+                    cb.target = self
+                    cb.action = #selector(presetParamBoolChanged(_:))
+                }
+                for (_, radios) in editor.radioGroups {
+                    for b in radios {
+                        b.target = self
+                        b.action = #selector(presetParamRadioChanged(_:))
+                    }
+                }
+                for (_, boxes) in editor.multiControls {
+                    for b in boxes {
+                        b.target = self
+                        b.action = #selector(presetParamMultiChanged(_:))
+                    }
                 }
                 if !editor.paramRows.isEmpty {
                     let sub = NSTextField(labelWithString: L10n.tr("scaffold.presetParamHint"))
@@ -5148,6 +5160,39 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         }
     }
 
+    @objc private func presetParamBoolChanged(_ sender: NSButton) {
+        guard let sid = sender.identifier?.rawValue else { return }
+        let parts = sid.split(separator: ".", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return }
+        presetEditParamDefaults[parts[0], default: [:]][parts[1]] = (sender.state == .on) ? "true" : "false"
+    }
+
+    @objc private func presetParamRadioChanged(_ sender: NSButton) {
+        guard let sid = sender.identifier?.rawValue else { return }
+        let parts = sid.split(separator: ".", maxSplits: 1).map(String.init)
+        guard parts.count == 2,
+              let stage = catalog.first(where: { $0.id == parts[0] }),
+              let param = stage.params.first(where: { $0.key == parts[1] }),
+              let group = presetEditSelectedEditors[parts[0]]?.radioGroups[sid] else { return }
+        guard let selected = group.first(where: { $0.state == .on }) else { return }
+        if selected.tag >= 0, selected.tag < param.options.count {
+            presetEditParamDefaults[parts[0], default: [:]][parts[1]] = param.options[selected.tag]
+        }
+    }
+
+    @objc private func presetParamMultiChanged(_ sender: NSButton) {
+        guard let sid = sender.identifier?.rawValue else { return }
+        let parts = sid.split(separator: ".", maxSplits: 1).map(String.init)
+        guard parts.count == 2,
+              let stage = catalog.first(where: { $0.id == parts[0] }),
+              let param = stage.params.first(where: { $0.key == parts[1] }),
+              let boxes = presetEditSelectedEditors[parts[0]]?.multiControls[sid] else { return }
+        let chosen = boxes.enumerated().compactMap { idx, b -> String? in
+            (b.state == .on && idx < param.options.count) ? param.options[idx] : nil
+        }
+        presetEditParamDefaults[parts[0], default: [:]][parts[1]] = chosen.joined(separator: " ")
+    }
+
     /// 保存项目预设：从编辑器收集名称/描述/环节顺序/参数默认值 → 写入用户库。
     private func savePresetEditor() {
         let nameZh = presetEditNameZh.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5160,12 +5205,9 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         var paramDefaults: [String: [String: String]] = [:]
         let valid = Set(catalog.map { $0.id })
         for sid in stageIds where valid.contains(sid) {
-            // 收集该环节编辑器里所有参数控件当前值（string/select/radio/bool/multi 全覆盖）。
-            // 为空值的参数不写入（渲染用 stage 默认）。
-            if let editor = presetEditSelectedEditors[sid] {
-                let values = editor.collectValues().filter { !$0.value.isEmpty }
-                if !values.isEmpty { paramDefaults[sid] = values }
-            }
+            // 已选环节的参数默认值（由各控件 handler 实时写入 presetEditParamDefaults）
+            let kv = (presetEditParamDefaults[sid] ?? [:]).filter { !$0.value.isEmpty }
+            if !kv.isEmpty { paramDefaults[sid] = kv }
         }
         let id = presetEditorIsNew ? slugPresetID(nameZh.isEmpty ? nameEn : nameZh) : presetEditorID
         guard !id.isEmpty else {
