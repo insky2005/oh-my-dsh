@@ -8,7 +8,7 @@ params:
   - key: runtime
     label: { zh: 运行时, en: Runtime }
     type: select
-    options: [java, node, static]
+    options: [java, node, static, go, python]
     default: node
   - key: exposePort
     label: { zh: 对外端口, en: Exposed port }
@@ -27,3 +27,6 @@ files:
     template: templates/.dockerignore.tmpl
   - path: compose.yaml
     template: templates/compose.yaml.tmpl
+  - path: nginx.conf
+    template: templates/nginx.conf.tmpl
+    if: runtime=static

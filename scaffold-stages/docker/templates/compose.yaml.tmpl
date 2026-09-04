@@ -5,11 +5,7 @@ services:
     image: {{imageRepo}}/{{projectSlug}}:{{imageTag}}
     ports:
       - "{{exposePort}}:{{exposePort}}"
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:{{exposePort}}{{healthzPath}}"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
+    # 健康检查由 Dockerfile HEALTHCHECK 承担（按 runtime 内置 wget/curl），compose 不再重复定义
     # 占位依赖 / placeholder dependencies（按需启用）
     # depends_on:
     #   - db

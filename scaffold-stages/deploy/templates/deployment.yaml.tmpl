@@ -20,6 +20,9 @@ spec:
           image: {{imageRepo}}/{{projectSlug}}:{{imageTag}}
           ports:
             - containerPort: {{servicePort}}
+          envFrom:
+            - configMapRef:
+                name: {{projectSlug}}-config
           livenessProbe:
             httpGet:
               path: {{healthzPath}}

@@ -25,8 +25,8 @@
 
 {{#if hasMakefile}}- `Makefile`：统一命令入口（dev/build/test/lint）
 {{/if}}{{#if hasDocker}}- `Dockerfile` / `compose.yaml`：容器化与本地编排
-{{/if}}{{#if hasCI}}- `.github/workflows/`（或 `.gitlab-ci.yml` / `Jenkinsfile`）：CI/CD 门禁
-{{/if}}{{#if hasDocs}}- `docs/`：架构、ADR、开发约定与运维手册
+{{/if}}{{#if hasCiCd}}- `.github/workflows/`（或 `.gitlab-ci.yml` / `Jenkinsfile`）：CI/CD 门禁
+{{/if}}{{#if hasDocsStandards}}- `docs/`：架构、ADR、开发约定与运维手册
 {{/if}}{{#if hasConventions}}- `.editorconfig` / `CONTRIBUTING.md`：开发规范与贡献指南
 {{/if}}{{#if hasGitConventions}}- `docs/conventions/git.md`：Git 提交与分支规范
 {{/if}}{{#if hasDeploy}}- `deploy/`：生产部署脚本与 manifests

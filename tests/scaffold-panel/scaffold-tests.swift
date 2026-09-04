@@ -452,6 +452,41 @@ check(multiAgents.contains("- Java") && multiAgents.contains("- Node.js") && mul
 check(!multiAgents.contains("- Go") && !multiAgents.contains("- Rust"), "multi: AGENTS.md omits unselected languages")
 check(multiAgents.contains("Primary languages"), "multi: AGENTS.md plural label")
 
+// A1 回归：AGENTS.md 目录结构用真实派生键（hasCiCd/hasDocsStandards），勾选 CI + docs 必须列出
+let agentsCIDocsPlan = ScaffoldPlan.build(catalog: loadBuiltin(),
+                                          selection: ["agents-md", "ci-cd", "docs-standards"],
+                                          params: ["agents-md": ["techSummary": "t"]],
+                                          projectName: "cidocs", parentDir: tmpDir("cidocs"))
+let agentsCIDocs = try! ScaffoldTemplateRenderer.render(agentsTmpl, context: agentsCIDocsPlan.context)
+check(agentsCIDocs.contains(".github/workflows/") || agentsCIDocs.contains(".gitlab-ci.yml") || agentsCIDocs.contains("Jenkinsfile"),
+      "A1: AGENTS lists CI/CD when ci-cd selected", agentsCIDocs)
+check(agentsCIDocs.contains("docs/"), "A1: AGENTS lists docs/ when docs-standards selected", agentsCIDocs)
+check(!agentsCIDocs.contains("{{#if hasCI") && !agentsCIDocs.contains("{{#if hasDocs}"),
+      "A1: no dead hasCI/hasDocs refs left in rendered output")
+
+// A2/A4 回归：docker runtime=static 产出 nginx.conf 且端口自洽；go/python 运行时分支可渲染
+let dockerStage = builtin.stages.first { $0.id == "docker" }!
+let dockerOpts = dockerStage.params.first { $0.key == "runtime" }?.options ?? []
+check(dockerOpts.contains("go") && dockerOpts.contains("python"), "A4: docker runtime options include go/python")
+check(dockerStage.files.contains { $0.pathTemplate == "nginx.conf" }, "A2: docker stage lists nginx.conf (static)")
+let staticParent = tmpDir("static")
+let staticPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["docker"],
+                                    params: ["docker": ["runtime": "static", "exposePort": "8080", "healthzPath": "/healthz"]],
+                                    projectName: "web", parentDir: staticParent)
+check(staticPlan.isValid, "A2: static plan valid", (staticPlan.validationErrors + staticPlan.stageErrors).joined(separator: "; "))
+let staticRoot = (staticParent as NSString).appendingPathComponent("web")
+_ = ScaffoldApplier.apply(plan: staticPlan, options: ScaffoldApplier.Options(backupConflicts: true))
+check(exists((staticRoot as NSString).appendingPathComponent("nginx.conf")), "A2: static generates nginx.conf")
+let staticDockerfile = read((staticRoot as NSString).appendingPathComponent("Dockerfile"))
+check(staticDockerfile.contains("nginx.conf"), "A2: static Dockerfile copies nginx.conf", staticDockerfile)
+check(staticDockerfile.contains("EXPOSE 8080"), "A2: static Dockerfile exposes 8080")
+for lang in ["go", "python"] {
+  let lp = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["docker"],
+                              params: ["docker": ["runtime": lang, "exposePort": "8080", "healthzPath": "/healthz"]],
+                              projectName: "x", parentDir: tmpDir("dlang"))
+  check(lp.stageErrors.isEmpty, "A4: docker runtime=\(lang) renders", lp.stageErrors.joined(separator: "; "))
+}
+
 let mkTmpl = read((builtinDir as NSString).appendingPathComponent("makefile/templates/Makefile.tmpl"))
 let goPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["makefile"],
                                 params: ["makefile": ["lang": "go"]], projectName: "goapp", parentDir: tmpDir("go"))

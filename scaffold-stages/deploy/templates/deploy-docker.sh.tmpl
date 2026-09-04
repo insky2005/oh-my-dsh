@@ -36,6 +36,15 @@ if [ -n "$REMOTE_HOST" ]; then
 fi
 [ -f deploy/.env ] || echo "note: deploy/.env missing (copy deploy/.env.example)"
 
+# 本机自动探测当前运行镜像 tag 作为回滚基线（远程需显式 PREV_TAG=<old-tag>）
+if [ -z "$PREV_TAG" ] && [ -z "$REMOTE_HOST" ]; then
+  cid="$(docker compose -f deploy/docker-compose.prod.yml ps -q 2>/dev/null | head -n1 || true)"
+  if [ -n "$cid" ]; then
+    PREV_TAG="$(docker inspect "$cid" 2>/dev/null | tr -d '[:space:]' | sed -nE 's#.*"Image":"([^"]+)".*#\1#p' | head -n1 | sed -E 's#^.*:([^:]+)$#\1#')"
+    [ -n "$PREV_TAG" ] && echo "note: detected running image tag $PREV_TAG (rollback baseline)"
+  fi
+fi
+
 run() {
   if [ "$DRY_RUN" = 1 ]; then echo "dry-run: $*"; else eval "$*"; fi
 }
@@ -79,7 +88,9 @@ rollback() {
     return 1
   fi
   echo "health check failed — rolling back to $IMAGE_REPO/{{projectSlug}}:$PREV_TAG"
-  IMAGE_TAG="$PREV_TAG" up || true
+  IMAGE_TAG="$PREV_TAG"
+  export IMAGE_TAG
+  up || true
 }
 
 confirm
