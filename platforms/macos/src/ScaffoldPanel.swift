@@ -1321,10 +1321,21 @@ enum PresetLibrary {
         let fm = FileManager.default
         for dir in builtinPresetDirs() {
             let entries = (try? fm.contentsOfDirectory(atPath: dir)) ?? []
-            for name in entries.sorted() where name.hasSuffix(".yaml") && !name.hasPrefix(".") {
-                let id = String(name.dropLast(5))
-                guard !seen.contains(id) else { continue }
-                let path = (dir as NSString).appendingPathComponent(name)
+            for name in entries.sorted() {
+                guard !name.hasPrefix(".") else { continue }
+                var id0: String?
+                var yamlPath: String?
+                let entry = (dir as NSString).appendingPathComponent(name)
+                var isDir: ObjCBool = false
+                if fm.fileExists(atPath: entry, isDirectory: &isDir), isDir.boolValue {
+                    // 文件夹布局：scaffold-presets/<id>/preset.yaml（预留 <id>/templates/ 扩展）
+                    let cand = (entry as NSString).appendingPathComponent("preset.yaml")
+                    if fm.fileExists(atPath: cand) { id0 = name; yamlPath = cand }
+                } else if name.hasSuffix(".yaml") {
+                    // 兼容平铺：scaffold-presets/<id>.yaml
+                    id0 = String(name.dropLast(5)); yamlPath = entry
+                }
+                guard let id = id0, let path = yamlPath, !seen.contains(id) else { continue }
                 guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
                 if let p = try? ScaffoldPresetYAML.parse(text, isCustom: false, isModifiedBuiltin: false), p.id == id {
                     out.append(p)

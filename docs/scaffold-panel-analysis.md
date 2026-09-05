@@ -95,7 +95,7 @@
 - 保存语义同文件面板：逐文件保存、保存后留在编辑器；footer 显示用户库路径。
 
 ### 3.5 项目预设管理（设置 · 项目预设页签）
-- 列表：内置预设（backend/fullstack/foundation，来自 scaffold-presets/ 的 yaml）+ 用户覆盖，类型徽标，操作：编辑/恢复/删除/排序；
+- 列表：内置预设（backend/fullstack/foundation，来自 scaffold-presets/<id>/preset.yaml，文件夹布局）+ 用户覆盖，类型徽标，操作：编辑/恢复/删除/排序；
 - **结构化编辑器**（非 YAML）：名称（中/英）+ 描述（中/英）+ 环节多选卡片（按勾选顺序入组）+ 每环节参数默认值（复用 StageEditor 控件，全类型 string/select/radio/bool/multi）；
 - 用户库 $DSH_HOME/scaffold-presets/；内置首次保存即物化为自定义；
 - 向导步骤 1 的预设卡片读取预设目录（内置 + 用户，按序排序、动态重建），缺失环节标注「（缺失环节 …）」。

@@ -73,7 +73,7 @@
 - verdict 分级：可发布 / 需修 / 不适合（对应评估方案 D1-D8 与打分）。
 
 ### P4 落地形态
-- 内置预设：在仓库 scaffold-presets/ 增 <id>.yaml（id + 双语 name/desc + stages 有序列表 + params 默认值；随 App 进 Contents/Resources/scaffold-presets），加文档卡与 golden。
+- 内置预设：在仓库 scaffold-presets/<id>/preset.yaml 增文件（id + 双语 name/desc + stages 有序列表 + params 默认值；文件夹布局，预留 <id>/templates/，随 App 进 Contents/Resources/scaffold-presets），加文档卡与 golden。
 - 用户 / 团队预设：以 preset.yaml 文档 + 本流程产出交付，用户用预设编辑器导入自定义；不必改代码。
 - 落地前用同一组参数再渲染一次，确认与 P2 golden 一致（防手抄错）。
 

@@ -123,7 +123,7 @@
 
 ## 5. 内置预设审计
 
-内置三组（scaffold-presets/ 的 backend.yaml / fullstack.yaml / foundation.yaml）：
+内置三组（scaffold-presets/<id>/preset.yaml，文件夹布局同内置 stage）：
 
 | id | 环节 | 参数默认 | 适配场景 | 评估 |
 |---|---|---|---|---|
