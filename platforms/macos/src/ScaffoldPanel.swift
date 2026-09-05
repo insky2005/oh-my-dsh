@@ -2199,7 +2199,13 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     /// 有效顺序：用户排序（仅保留 catalog 存在者）→ 默认排序 → catalog 剩余（目录序）。
     private func effectiveStageOrder() -> [String] {
-        let saved = UserDefaults.standard.stringArray(forKey: Self.stageOrderKey)
+        var saved = UserDefaults.standard.stringArray(forKey: Self.stageOrderKey)
+        // 迁移：conventions→coding-conventions 改名/重排前的旧用户排序已不适用。
+        // 命中已不存在的旧 id（conventions）即视为过期排序，丢弃并回到新的规范默认序。
+        if let s = saved, s.contains("conventions") {
+            UserDefaults.standard.removeObject(forKey: Self.stageOrderKey)
+            saved = nil
+        }
         return ScaffoldStageOrder.merge(saved: saved, defaults: Self.defaultStageOrder,
                                         catalogIDs: catalog.map { $0.id })
     }
