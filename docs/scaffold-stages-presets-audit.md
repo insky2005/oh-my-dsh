@@ -123,7 +123,7 @@
 
 ## 5. 内置预设审计
 
-内置三组（ScaffoldPreset.builtin）：
+内置三组（scaffold-presets/ 的 backend.yaml / fullstack.yaml / foundation.yaml）：
 
 | id | 环节 | 参数默认 | 适配场景 | 评估 |
 |---|---|---|---|---|
@@ -203,6 +203,6 @@
 
 - 环节内容：scaffold-stages/<id>/stage.yaml + templates/
 - 派生逻辑：platforms/macos/src/ScaffoldPanel.swift → ScaffoldPlan.build（§2 所列键）
-- 内置预设：同文件 ScaffoldPreset.builtin / static backend·fullstack·foundation
+- 内置预设：scaffold-presets/（backend / fullstack / foundation.yaml，随包分发，加载同内置 stage）
 - 引擎单测：tests/scaffold-panel/scaffold-tests.swift（含端到端组合：纯后端 API / jenkins / git-conventions(enforce) / deploy 全选）
 

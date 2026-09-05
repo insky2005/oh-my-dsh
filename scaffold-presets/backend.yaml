@@ -1,0 +1,20 @@
+id: backend
+name: { zh: "纯后端 API", en: "Backend API only" }
+description: { zh: "面向纯后端 API 项目：工程基础 + CI/CD + 容器化 + 部署", en: "Backend-only API project: foundation + CI/CD + containerization + deploy" }
+stages:
+  - agents-md
+  - git-init
+  - git-conventions
+  - docs-standards
+  - coding-conventions
+  - docker
+  - makefile
+  - ci-cd
+  - deploy
+  - repo-knowledge
+params:
+  ci-cd:
+    hasBackend: "true"
+    hasFrontend: "false"
+  docker:
+    runtime: "java"

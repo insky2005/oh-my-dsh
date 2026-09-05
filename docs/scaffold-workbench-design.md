@@ -476,7 +476,7 @@ POST /api/session.prompt  { …, "method":"session.prompt",
 
 **实现**（把「项目预设」从硬编码 3 组快捷勾选升级为一等可管理资源，镜像环节子系统）：
 
-- `ScaffoldPreset` 扩展为完整模型：`id + name(zh/en) + description(zh/en) + 有序 stageIds + paramDefaults`，并携带 `isCustom` / `isModifiedBuiltin`；产品内置预设（`backend`/`fullstack`/`foundation`）仍以代码种子定义（`ScaffoldPreset.builtin`）；
+- `ScaffoldPreset` 扩展为完整模型：`id + name(zh/en) + description(zh/en) + 有序 stageIds + paramDefaults`，并携带 `isCustom` / `isModifiedBuiltin`；产品内置预设（`backend`/`fullstack`/`foundation`）改为文件定义（仓库 `scaffold-presets/*.yaml`，构建进 `Contents/Resources/scaffold-presets`，加载同内置 stage）；
 - 新增 `ScaffoldPresetYAML`（preset.yaml 序列化/解析：`name/description` 双语 map + `stages` 有序列表 + `params` 每环节参数默认值嵌套 map）与 `PresetLibrary`（用户预设库 `$DSH_HOME/scaffold-presets/`，`DSH_SCAFFOLD_USER_PRESETS` 可覆盖；加载=内置种子 + 用户库同名覆盖；`saveUserPreset` / `removeUserPreset` / `parsePresetID` / `validatePresetID`）；排序用 `ScaffoldPresetOrder`（saved→默认→目录序，持久化 `scaffoldPresetOrder`）；
 - 设置面板：右上角 ⚙ 设置标题改为「环节 / 项目预设」页签切换（NSSegmentedControl），「新建」按钮随页签变为 新建环节/新建预设；「项目预设」页签列出全部预设（内置种子 + 用户覆盖），`PresetSettingsRow` 含类型徽标（内置/已修改/新建）+ 名称/环节数/描述 + 编辑/恢复/删除/上移下移；
 - 预设编辑器（结构化表单，非 YAML）：名称（中/英）+ 描述（中/英）+ 环节多选卡片（勾选即入组，序 = 勾选序）+ 已选环节的参数默认值输入（复用 `StageEditor` 参数行）；新建按名称 slug 生成 id，编辑可改内容不可改 id，保存写用户库（内置首次保存即物化为自定义），可恢复/删除；

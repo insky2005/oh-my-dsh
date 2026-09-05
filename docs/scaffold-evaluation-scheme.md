@@ -168,7 +168,7 @@
 3. 语言/形态自洽：makefile.lang 与 docker.runtime 与后端语言一致；缺支持要标缺口或提供语言族自定义预设（A4）。
 4. 默认参数可直达可用：预设注入的默认值让组合「生成即最小可用」（D5/D6 C4）。
 5. 跑一遍 D1–D4 门槛：该组合真渲染到临时目录，断言 AGENTS 结构/命令、makefile↔CI、端口/镜像一致。
-6. 命名/简介双语一致：内置种子在 ScaffoldPreset.builtin 双语 name/desc 与 stageIds/paramDefaults 不脱节。
+6. 命名/简介双语一致：内置预设文件（scaffold-presets/*.yaml）的 name/desc 双语与 stageIds/params 不脱节。
 
 ---
 

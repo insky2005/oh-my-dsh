@@ -324,6 +324,17 @@ else
   echo "WARNING: scaffold-stages missing ($SCAFFOLD_STAGES); scaffold panel will have no stages" >&2
 fi
 
+# Scaffold Workbench built-in preset library (scaffold-presets/): copied into
+# Contents/Resources so ScaffoldPanel.swift can load it via Bundle.main
+# (same pattern as scaffold-stages). Dev/QA override via DSH_SCAFFOLD_PRESETS.
+SCAFFOLD_PRESETS="$ROOT/scaffold-presets"
+if [ -d "$SCAFFOLD_PRESETS" ]; then
+  ditto "$SCAFFOLD_PRESETS" "$APP/Contents/Resources/scaffold-presets"
+  echo "    scaffold-presets embedded: $APP/Contents/Resources/scaffold-presets"
+else
+  echo "WARNING: scaffold-presets missing ($SCAFFOLD_PRESETS); scaffold panel will have no builtin presets" >&2
+fi
+
 echo "==> [5/7] writing Info.plist"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -1211,46 +1211,20 @@ struct ScaffoldPreset {
     var desc: String { L10n.isZh ? descZh : descEn }
     var stageCount: Int { stageIds.count }
 
-    // MARK: 内置预设种子（产品内置；zh/en 名称与描述内嵌，同 stage.yaml 数据化）
-
-    static let backend = ScaffoldPreset(
-        id: "backend",
-        nameZh: "纯后端 API", nameEn: "Backend API only",
-        descZh: "面向纯后端 API 项目：工程基础 + CI/CD + 容器化 + 部署",
-        descEn: "Backend-only API project: foundation + CI/CD + containerization + deploy",
-        stageIds: ["agents-md", "git-init", "git-conventions", "docs-standards", "coding-conventions",
-                   "docker", "makefile", "ci-cd", "deploy", "repo-knowledge"],
-        paramDefaults: [
-            "ci-cd": ["hasBackend": "true", "hasFrontend": "false"],
-            "docker": ["runtime": "java"],
-        ],
-        isCustom: false, isModifiedBuiltin: false
-    )
-    static let fullstack = ScaffoldPreset(
-        id: "fullstack",
-        nameZh: "前后端兼备", nameEn: "Full-stack",
-        descZh: "面向前后端兼备项目：工程基础 + CI/CD + 容器化 + 部署",
-        descEn: "Full-stack project: foundation + CI/CD + containerization + deploy",
-        stageIds: ["agents-md", "git-init", "git-conventions", "docs-standards", "coding-conventions",
-                   "docker", "makefile", "ci-cd", "deploy", "repo-knowledge"],
-        paramDefaults: [
-            "ci-cd": ["hasBackend": "true", "hasFrontend": "true"],
-            "makefile": ["frontendInstall": "npm ci", "frontendBuild": "npm run build"],
-        ],
-        isCustom: false, isModifiedBuiltin: false
-    )
-    static let foundation = ScaffoldPreset(
-        id: "foundation",
-        nameZh: "文档+规范", nameEn: "Docs & conventions",
-        descZh: "文档与工程规范骨架（不含构建/部署栈）",
-        descEn: "Docs & engineering conventions foundation (no build/deploy stack)",
-        stageIds: ["agents-md", "git-init", "git-conventions", "docs-standards", "coding-conventions", "repo-knowledge"],
-        paramDefaults: [:],
-        isCustom: false, isModifiedBuiltin: false
-    )
-    /// 内置预设清单（产品）。
-    static let builtin: [ScaffoldPreset] = [backend, fullstack, foundation]
-    static let all: [ScaffoldPreset] = builtin
+    // MARK: 内置预设（数据即配置：scaffold-presets/*.yaml，构建时进 Contents/Resources/scaffold-presets，与内置 stage 同源同法）
+    /// 内置预设的固定 id 与展示顺序。
+    static let builtinOrder: [String] = ["backend", "fullstack", "foundation"]
+    /// 从内置资源目录（scaffold-presets/）加载内置预设。
+    static var builtin: [ScaffoldPreset] { PresetLibrary.loadBuiltin() }
+    static var all: [ScaffoldPreset] { builtin }
+    static var backend: ScaffoldPreset { builtin.first { $0.id == "backend" } ?? .emptyBuiltin("backend") }
+    static var fullstack: ScaffoldPreset { builtin.first { $0.id == "fullstack" } ?? .emptyBuiltin("fullstack") }
+    static var foundation: ScaffoldPreset { builtin.first { $0.id == "foundation" } ?? .emptyBuiltin("foundation") }
+    /// 兜底（内置资源缺失时占位；正常产品/测试均有文件）。
+    private static func emptyBuiltin(_ id: String) -> ScaffoldPreset {
+        ScaffoldPreset(id: id, nameZh: id, nameEn: id, descZh: "", descEn: "",
+                       stageIds: [], paramDefaults: [:], isCustom: false, isModifiedBuiltin: false)
+    }
 }
 
 // MARK: - ScaffoldPresetYAML（preset.yaml 序列化 / 解析）
@@ -1330,10 +1304,42 @@ enum PresetLibrary {
         (userPresetsDir() as NSString).appendingPathComponent(id + ".yaml")
     }
 
-    static func load(builtin: [ScaffoldPreset] = ScaffoldPreset.builtin) -> (presets: [ScaffoldPreset], builtinIDs: Set<String>, errors: [String]) {
-        var presets = builtin
+    /// 内置预设资源目录：开发/测试用 DSH_SCAFFOLD_PRESETS 指向仓库 scaffold-presets；否则取 bundle 的 Contents/Resources/scaffold-presets。
+    static func builtinPresetDirs() -> [String] {
+        if let env = ProcessInfo.processInfo.environment["DSH_SCAFFOLD_PRESETS"], !env.isEmpty { return [env] }
+        if let res = Bundle.main.resourceURL {
+            let p = res.appendingPathComponent("scaffold-presets").path
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: p, isDirectory: &isDir), isDir.boolValue { return [p] }
+        }
+        return []
+    }
+    /// 从内置资源目录加载内置预设（按 builtinOrder 排序；同名后载不覆盖）。
+    static func loadBuiltin() -> [ScaffoldPreset] {
+        var out: [ScaffoldPreset] = []
+        var seen = Set<String>()
+        let fm = FileManager.default
+        for dir in builtinPresetDirs() {
+            let entries = (try? fm.contentsOfDirectory(atPath: dir)) ?? []
+            for name in entries.sorted() where name.hasSuffix(".yaml") && !name.hasPrefix(".") {
+                let id = String(name.dropLast(5))
+                guard !seen.contains(id) else { continue }
+                let path = (dir as NSString).appendingPathComponent(name)
+                guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
+                if let p = try? ScaffoldPresetYAML.parse(text, isCustom: false, isModifiedBuiltin: false), p.id == id {
+                    out.append(p)
+                    seen.insert(id)
+                }
+            }
+        }
+        let order = ScaffoldPreset.builtinOrder
+        return out.sorted { (order.firstIndex(of: $0.id) ?? Int.max) < (order.firstIndex(of: $1.id) ?? Int.max) }
+    }
+
+    static func load() -> (presets: [ScaffoldPreset], builtinIDs: Set<String>, errors: [String]) {
+        var presets = loadBuiltin()
         var errors: [String] = []
-        let builtinIDs = Set(builtin.map { $0.id })
+        let builtinIDs = Set(presets.map { $0.id })
         let dir = userPresetsDir()
         let fm = FileManager.default
         var isDir: ObjCBool = false
@@ -2217,7 +2223,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     // MARK: 项目预设顺序
 
     /// 内置预设的默认顺序（settings「项目预设」与向导按钮共用）。
-    static let defaultPresetOrder: [String] = ScaffoldPreset.builtin.map { $0.id }
+    static let defaultPresetOrder: [String] = ScaffoldPreset.builtinOrder
     static let presetOrderKey = "scaffoldPresetOrder"
 
     private func effectivePresetOrder() -> [String] {

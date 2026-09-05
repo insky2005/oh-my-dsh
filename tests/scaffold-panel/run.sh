@@ -15,8 +15,10 @@ cp ../terminal-emulator/stubs.swift "$TMP/stubs.swift"
 cp ../../platforms/macos/src/ScaffoldPanel.swift "$TMP/ScaffoldPanel.swift"
 # 内置环节库（10 环节）拷入临时目录，DSH_SCAFFOLD_STAGES 指向它（追加语义，测试即唯一来源）。
 cp -R ../../scaffold-stages "$TMP/stages"
+# 内置预设库（backend/fullstack/foundation）拷入临时目录，DSH_SCAFFOLD_PRESETS 指向它（内置预设数据即文件）。
+cp -R ../../scaffold-presets "$TMP/presets"
 cp scaffold-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
-DSH_SCAFFOLD_STAGES="$TMP/stages" swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
+DSH_SCAFFOLD_STAGES="$TMP/stages" DSH_SCAFFOLD_PRESETS="$TMP/presets" swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
   -o "$TMP/scaffold-tests" "$TMP/stubs.swift" "$TMP/ScaffoldPanel.swift" "$TMP/main.swift"
-DSH_SCAFFOLD_STAGES="$TMP/stages" "$TMP/scaffold-tests"
+DSH_SCAFFOLD_STAGES="$TMP/stages" DSH_SCAFFOLD_PRESETS="$TMP/presets" "$TMP/scaffold-tests"
 rm -rf "$TMP"

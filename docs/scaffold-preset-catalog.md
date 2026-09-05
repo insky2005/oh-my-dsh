@@ -10,7 +10,7 @@
 
 - 环节 10 个 foundation：agents-md · git-init · git-conventions · docs-standards · coding-conventions · docker · makefile · ci-cd · deploy · repo-knowledge。
 - 关键默认参数：只列预设覆盖环节默认值的；未列 = 继承环节默认。参数键与 stage.yaml 一致。
-- 状态：内置 = 已在 ScaffoldPreset.builtin；草稿 = 本清单推荐、按流程落地；需补环节 = 依赖未内置的示例栈（如 vue3-frontend / java-backend）。
+- 状态：内置 = 已在 scaffold-presets/ 以 yaml 随包发布（backend/fullstack/foundation）；草稿 = 本清单推荐、按流程落地；需补环节 = 依赖未内置的示例栈（如 vue3-frontend / java-backend）。
 - 验收卡：每项给 must-have（适合性门槛）+ 可证伪 correct 断言；golden 指向 fixtures（生成方式见附录）。
 
 ---

@@ -1,0 +1,21 @@
+id: fullstack
+name: { zh: "前后端兼备", en: "Full-stack" }
+description: { zh: "面向前后端兼备项目：工程基础 + CI/CD + 容器化 + 部署", en: "Full-stack project: foundation + CI/CD + containerization + deploy" }
+stages:
+  - agents-md
+  - git-init
+  - git-conventions
+  - docs-standards
+  - coding-conventions
+  - docker
+  - makefile
+  - ci-cd
+  - deploy
+  - repo-knowledge
+params:
+  ci-cd:
+    hasBackend: "true"
+    hasFrontend: "true"
+  makefile:
+    frontendInstall: "npm ci"
+    frontendBuild: "npm run build"

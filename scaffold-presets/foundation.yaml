@@ -1,0 +1,10 @@
+id: foundation
+name: { zh: "文档+规范", en: "Docs & conventions" }
+description: { zh: "文档与工程规范骨架（不含构建/部署栈）", en: "Docs & engineering conventions foundation (no build/deploy stack)" }
+stages:
+  - agents-md
+  - git-init
+  - git-conventions
+  - docs-standards
+  - coding-conventions
+  - repo-knowledge

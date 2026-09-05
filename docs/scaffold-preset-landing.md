@@ -14,7 +14,7 @@
 3. 验收卡（可证伪的 correct 断言 + suitable 门槛）；
 4. golden tree 基准（随模板改动能 diff 的权威产物树）+ 自动化守卫。
 
-适用对象：新内置预设（改 ScaffoldPreset.builtin）或面向团队/自定义的预设（preset.yaml 文档），以及「为某预设补验收 / 补 golden」的后续工作。
+适用对象：新内置预设（在 scaffold-presets/ 增 yaml 文件，随包发布）或面向团队/自定义的预设（preset.yaml 文档），以及「为某预设补验收 / 补 golden」的后续工作。
 
 ---
 
@@ -73,7 +73,7 @@
 - verdict 分级：可发布 / 需修 / 不适合（对应评估方案 D1-D8 与打分）。
 
 ### P4 落地形态
-- 内置种子：ScaffoldPreset.builtin 加种子（id + 双语 name/desc + stageIds + paramDefaults），需要时补 L10n；加文档卡。
+- 内置预设：在仓库 scaffold-presets/ 增 <id>.yaml（id + 双语 name/desc + stages 有序列表 + params 默认值；随 App 进 Contents/Resources/scaffold-presets），加文档卡与 golden。
 - 用户 / 团队预设：以 preset.yaml 文档 + 本流程产出交付，用户用预设编辑器导入自定义；不必改代码。
 - 落地前用同一组参数再渲染一次，确认与 P2 golden 一致（防手抄错）。
 
