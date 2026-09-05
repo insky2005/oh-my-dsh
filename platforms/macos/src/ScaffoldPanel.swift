@@ -852,7 +852,7 @@ struct ScaffoldPlan {
     }
 
     static func build(catalog: [ScaffoldStage], selection: [String], params: [String: [String: String]],
-                      projectName: String, parentDir: String, existingTargetRoot: String = "") -> Result {
+                      projectName: String, parentDir: String, existingTargetRoot: String = "", presetOverlay: String? = nil) -> Result {
         var r = Result()
         r.projectName = projectName
         r.projectSlug = slugify(projectName)
@@ -1022,6 +1022,24 @@ struct ScaffoldPlan {
                 r.commandSequence.append(contentsOf: stage.commands)
             } catch {
                 r.stageErrors.append("\(stage.id): 渲染失败：\(error.localizedDescription) / render failed")
+            }
+        }
+
+                // 5.5 预设固化覆盖层：activePreset 的 templates/ 文件按内部层级渲染进项目根（固定覆盖，叠加在环节产物之后）
+        if let pid = presetOverlay, !pid.isEmpty {
+            for (rel, absPath) in PresetLibrary.presetTemplateFiles(for: pid) {
+                let outPath = rel.hasSuffix(".tmpl") ? String(rel.dropLast(5)) : rel
+                guard !outPath.contains(".."), !outPath.hasPrefix("/") else {
+                    r.stageErrors.append("preset:\(pid): unsafe overlay path \(outPath)")
+                    continue
+                }
+                guard let text = try? String(contentsOfFile: absPath, encoding: .utf8) else { continue }
+                do {
+                    let content = try ScaffoldTemplateRenderer.render(text, context: context)
+                    r.entries.append(Entry(stageId: "preset:" + pid, path: outPath, content: content))
+                } catch {
+                    r.stageErrors.append("preset:\(pid): \(error.localizedDescription)")
+                }
             }
         }
 
@@ -1316,6 +1334,40 @@ enum PresetLibrary {
             if FileManager.default.fileExists(atPath: p, isDirectory: &isDir), isDir.boolValue { return [p] }
         }
         return []
+    }
+    /// 定位某预设（内置或用户）的文件夹（含 preset.yaml）；找不到返回 nil。
+    static func presetFolder(for id: String) -> String? {
+        let fm = FileManager.default
+        let udir = userPresetsDir()
+        let uf = (udir as NSString).appendingPathComponent(id)
+        if fm.fileExists(atPath: (uf as NSString).appendingPathComponent("preset.yaml")) { return uf }
+        for dir in builtinPresetDirs() {
+            let bf = (dir as NSString).appendingPathComponent(id)
+            if fm.fileExists(atPath: (bf as NSString).appendingPathComponent("preset.yaml")) { return bf }
+        }
+        return nil
+    }
+    /// 某预设 templates/ 下的文件（相对路径原样写进项目根 + 绝对路径）；无模板返回空。
+    static func presetTemplateFiles(for id: String) -> [(rel: String, abs: String)] {
+        guard let folder = presetFolder(for: id) else { return [] }
+        let tdir = (folder as NSString).appendingPathComponent("templates")
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: tdir, isDirectory: &isDir), isDir.boolValue else { return [] }
+        var out: [(String, String)] = []
+        func walk(_ dir: String, _ base: String) {
+            guard let items = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
+            for name in items.sorted() where !name.hasPrefix(".") {
+                let p = (dir as NSString).appendingPathComponent(name)
+                var d: ObjCBool = false
+                if FileManager.default.fileExists(atPath: p, isDirectory: &d), d.boolValue {
+                    walk(p, base.isEmpty ? name : base + "/" + name)
+                } else {
+                    out.append((base.isEmpty ? name : base + "/" + name, p))
+                }
+            }
+        }
+        walk(tdir, "")
+        return out
     }
     /// 从内置资源目录加载内置预设（按 builtinOrder 排序；同名后载不覆盖）。
     static func loadBuiltin() -> [ScaffoldPreset] {

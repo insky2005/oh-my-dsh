@@ -790,6 +790,23 @@ let afterRestore = PresetLibrary.load()
 let restoredFs = afterRestore.presets.first { $0.id == "fullstack" }
 check(restoredFs?.isCustom == false, "preset: restored builtin is builtin again")
 eq(restoredFs?.nameZh, "前后端兼备", "preset: restored builtin name restored")
+// 预设固化覆盖层：用户预设 templates/ 文件按内部层级渲染进项目根（固定覆盖）
+let baseRoot = presetUserRoot as NSString
+write(baseRoot.appendingPathComponent("mybase/preset.yaml"), """
+id: mybase
+name: { zh: 基础, en: Base }
+description: { zh: t, en: t }
+stages:
+  - git-init
+""")
+write(baseRoot.appendingPathComponent("mybase/templates/team/note.txt.tmpl"), "hi {{projectSlug}}\n")
+let overlayPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: [],
+                                     params: [:], projectName: "ovr", parentDir: tmpDir("ovr"),
+                                     presetOverlay: "mybase")
+check(overlayPlan.isValid, "overlay: plan valid", (overlayPlan.validationErrors + overlayPlan.stageErrors).joined(separator: "; "))
+let overlayEntry = overlayPlan.entries.first { $0.path == "team/note.txt" }
+check(overlayEntry != nil, "overlay: preset template rendered into project (team/note.txt)")
+check(overlayEntry?.content.contains("hi ovr") == true, "overlay: template rendered with context", overlayEntry?.content ?? "nil")
 
 // 排序合并：saved → 内置序 → 剩余
 let presetOrder = ScaffoldPresetOrder.merge(
