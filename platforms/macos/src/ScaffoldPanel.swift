@@ -1300,8 +1300,11 @@ enum PresetLibrary {
         let home = ProcessInfo.processInfo.environment["DSH_HOME"] ?? (NSHomeDirectory() + "/.dsh")
         return (home as NSString).appendingPathComponent("scaffold-presets")
     }
+    /// 用户预设 yaml（文件夹布局，与内置预设一致）：<dir>/<id>/preset.yaml。
     static func userPresetPath(id: String) -> String {
-        (userPresetsDir() as NSString).appendingPathComponent(id + ".yaml")
+        let dir = userPresetsDir() as NSString
+        let folder = dir.appendingPathComponent(id) as NSString
+        return folder.appendingPathComponent("preset.yaml")
     }
 
     /// 内置预设资源目录：开发/测试用 DSH_SCAFFOLD_PRESETS 指向仓库 scaffold-presets；否则取 bundle 的 Contents/Resources/scaffold-presets。
@@ -1357,36 +1360,59 @@ enum PresetLibrary {
         guard fm.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue else {
             return (presets, builtinIDs, errors)
         }
+        func ingest(_ id: String, _ path: String, _ label: String) {
+            guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+            do {
+                let p = try ScaffoldPresetYAML.parse(text, isCustom: true, isModifiedBuiltin: builtinIDs.contains(id))
+                if let idx = presets.firstIndex(where: { $0.id == p.id }) { presets[idx] = p }
+                else { presets.append(p) }
+            } catch { errors.append("\(label): \(error.localizedDescription)") }
+        }
+        var folderIds = Set<String>()
+        for name in ((try? fm.contentsOfDirectory(atPath: dir)) ?? []).sorted() {
+            guard !name.hasPrefix(".") else { continue }
+            let entry = (dir as NSString).appendingPathComponent(name)
+            var isSub: ObjCBool = false
+            guard fm.fileExists(atPath: entry, isDirectory: &isSub), isSub.boolValue else { continue }
+            let cand = (entry as NSString).appendingPathComponent("preset.yaml")
+            guard fm.fileExists(atPath: cand) else { continue }
+            folderIds.insert(name)
+            ingest(name, cand, name + "/preset.yaml")
+        }
         for name in ((try? fm.contentsOfDirectory(atPath: dir)) ?? []).sorted() {
             guard name.hasSuffix(".yaml"), !name.hasPrefix(".") else { continue }
             let id = String(name.dropLast(5))
-            let path = (dir as NSString).appendingPathComponent(name)
-            guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
-            do {
-                let p = try ScaffoldPresetYAML.parse(text, isCustom: true, isModifiedBuiltin: builtinIDs.contains(id))
-                if let idx = presets.firstIndex(where: { $0.id == p.id }) {
-                    presets[idx] = p
-                } else {
-                    presets.append(p)
-                }
-            } catch {
-                errors.append("\(name): \(error.localizedDescription)")
-            }
+            guard !folderIds.contains(id) else { continue }
+            ingest(id, (dir as NSString).appendingPathComponent(name), name)
         }
         return (presets, builtinIDs, errors)
     }
 
     static func saveUserPreset(_ p: ScaffoldPreset) throws {
+        let fm = FileManager.default
         let dir = userPresetsDir()
-        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        // 统一写为文件夹 <id>/preset.yaml（与内置预设一致）；顺手清理旧平铺 <id>.yaml
+        let folder = (dir as NSString).appendingPathComponent(p.id)
+        try fm.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        let legacy = (dir as NSString).appendingPathComponent(p.id + ".yaml")
+        if fm.fileExists(atPath: legacy) { try? fm.removeItem(atPath: legacy) }
         try ScaffoldPresetYAML.serialize(p).write(toFile: userPresetPath(id: p.id), atomically: true, encoding: .utf8)
     }
 
     @discardableResult
     static func removeUserPreset(id: String) -> Bool {
-        let path = userPresetPath(id: id)
-        guard FileManager.default.fileExists(atPath: path) else { return false }
-        return (try? FileManager.default.removeItem(atPath: path)) != nil
+        let fm = FileManager.default
+        let dir = userPresetsDir()
+        let folder = (dir as NSString).appendingPathComponent(id)
+        let presetInFolder = (folder as NSString).appendingPathComponent("preset.yaml")
+        if fm.fileExists(atPath: presetInFolder) {
+            // 连可能存在的 templates/ 一起移除（内置预设同理：恢复/删除即丢弃覆盖件）
+            return (try? fm.removeItem(atPath: folder)) != nil
+        }
+        let legacy = (dir as NSString).appendingPathComponent(id + ".yaml")
+        guard fm.fileExists(atPath: legacy) else { return false }
+        return (try? fm.removeItem(atPath: legacy)) != nil
     }
 
     static func parsePresetID(from text: String) throws -> String {

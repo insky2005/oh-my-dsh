@@ -778,9 +778,11 @@ let round2 = ScaffoldPreset(id: "round2", nameZh: "轮2", nameEn: "Round 2",
                             descZh: "", descEn: "", stageIds: ["makefile"], paramDefaults: [:],
                             isCustom: true, isModifiedBuiltin: false)
 try! PresetLibrary.saveUserPreset(round2)
-check(exists((presetUserRoot as NSString).appendingPathComponent("round2.yaml")), "preset: save writes user preset file")
+check(exists((presetUserRoot as NSString).appendingPathComponent("round2/preset.yaml")), "preset: save writes user preset file (folder layout)")
+let plAfterSave = PresetLibrary.load()
+check(plAfterSave.presets.contains { $0.id == "round2" && $0.isCustom }, "preset: folder-layout user preset reloads", plAfterSave.presets.map { $0.id }.joined(separator: ","))
 check(PresetLibrary.removeUserPreset(id: "round2"), "preset: remove user preset returns true")
-check(!exists((presetUserRoot as NSString).appendingPathComponent("round2.yaml")), "preset: removed file gone")
+check(!exists((presetUserRoot as NSString).appendingPathComponent("round2/preset.yaml")), "preset: removed file gone")
 check(!PresetLibrary.removeUserPreset(id: "no-such"), "preset: remove missing returns false")
 // 恢复内置：删覆盖 fullstack.yaml → 回到内置种子
 check(PresetLibrary.removeUserPreset(id: "fullstack"), "preset: restore deletes override")
