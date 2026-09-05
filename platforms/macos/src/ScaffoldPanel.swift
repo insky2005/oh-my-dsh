@@ -1218,8 +1218,8 @@ struct ScaffoldPreset {
         nameZh: "纯后端 API", nameEn: "Backend API only",
         descZh: "面向纯后端 API 项目：工程基础 + CI/CD + 容器化 + 部署",
         descEn: "Backend-only API project: foundation + CI/CD + containerization + deploy",
-        stageIds: ["git-init", "git-conventions", "agents-md", "conventions", "docs-standards",
-                   "makefile", "ci-cd", "docker", "deploy", "repo-knowledge"],
+        stageIds: ["agents-md", "git-init", "git-conventions", "docs-standards", "coding-conventions",
+                   "docker", "makefile", "ci-cd", "deploy", "repo-knowledge"],
         paramDefaults: [
             "ci-cd": ["hasBackend": "true", "hasFrontend": "false"],
             "docker": ["runtime": "java"],
@@ -1231,8 +1231,8 @@ struct ScaffoldPreset {
         nameZh: "前后端兼备", nameEn: "Full-stack",
         descZh: "面向前后端兼备项目：工程基础 + CI/CD + 容器化 + 部署",
         descEn: "Full-stack project: foundation + CI/CD + containerization + deploy",
-        stageIds: ["git-init", "git-conventions", "agents-md", "conventions", "docs-standards",
-                   "makefile", "ci-cd", "docker", "deploy", "repo-knowledge"],
+        stageIds: ["agents-md", "git-init", "git-conventions", "docs-standards", "coding-conventions",
+                   "docker", "makefile", "ci-cd", "deploy", "repo-knowledge"],
         paramDefaults: [
             "ci-cd": ["hasBackend": "true", "hasFrontend": "true"],
             "makefile": ["frontendInstall": "npm ci", "frontendBuild": "npm run build"],
@@ -1244,7 +1244,7 @@ struct ScaffoldPreset {
         nameZh: "文档+规范", nameEn: "Docs & conventions",
         descZh: "文档与工程规范骨架（不含构建/部署栈）",
         descEn: "Docs & engineering conventions foundation (no build/deploy stack)",
-        stageIds: ["git-init", "git-conventions", "agents-md", "docs-standards", "conventions", "repo-knowledge"],
+        stageIds: ["agents-md", "git-init", "git-conventions", "docs-standards", "coding-conventions", "repo-knowledge"],
         paramDefaults: [:],
         isCustom: false, isModifiedBuiltin: false
     )
@@ -2192,8 +2192,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     /// 环节在工程中的默认先后顺序（展示与参数步骤共用；未列出的按目录序排后）。
     /// 用户可在「环节管理」设置中调整排序，持久化到 scaffoldStageOrder（UserDefaults）。
     static let defaultStageOrder: [String] = [
-        "git-init", "repo-knowledge", "agents-md", "git-conventions", "docs-standards",
-        "conventions", "docker", "makefile", "ci-cd", "deploy",
+        "agents-md", "git-init", "git-conventions", "docs-standards", "coding-conventions",
+        "docker", "makefile", "ci-cd", "deploy", "repo-knowledge",
     ]
     static let stageOrderKey = "scaffoldStageOrder"
 

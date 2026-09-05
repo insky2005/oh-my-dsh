@@ -33,7 +33,7 @@
 与「Repo Wiki」是互补分工：Wiki 是「内容全代理」；脚手架是「**确定性壳层先落骨架，代理只做深化**」（深化为 M3 规划）。这让产物**可复现、规范稳定、可审计**——区别于「口头让 Agent 现场起项目」。
 
 ### 1.3 定位侧重（本文件口径）
-产品内置的环节库**全部是企业工程规范类（category: foundation）**：git-init / git-conventions / agents-md / docs-standards / conventions / makefile / ci-cd / docker / deploy / repo-knowledge。因此本功能当前的实际价值重心是**「企业工程规范的落地与复用」**，而非「生成某种语言业务代码」（示例栈 java-backend / vue3-frontend 尚未随内置库发布，M3 深化也未实现）。
+产品内置的环节库**全部是企业工程规范类（category: foundation）**：agents-md / git-init / git-conventions / docs-standards / coding-conventions / docker / makefile / ci-cd / deploy / repo-knowledge。因此本功能当前的实际价值重心是**「企业工程规范的落地与复用」**，而非「生成某种语言业务代码」（示例栈 java-backend / vue3-frontend 尚未随内置库发布，M3 深化也未实现）。
 
 ---
 
@@ -137,7 +137,7 @@
 | git-conventions | Git 提交/分支规范 | docs/conventions/git.md（Conventional Commits + 分支前缀）、.gitmessage、scripts/install-git-hooks.sh（enforce=true，纯 shell commit-msg 校验） |
 | agents-md | Agent 协作入口 | AGENTS.md（结构/命令/规范引用/禁区/与 dsh 协作），随所选环节自洽 |
 | docs-standards | 文档规范骨架 | docs/architecture.md、ADR 模板、conventions、ops runbook |
-| conventions | 开发规范落地 | .editorconfig、CONTRIBUTING.md（PR/DoD 清单） |
+| coding-conventions | 开发规范落地 | .editorconfig、CONTRIBUTING.md（PR/DoD 清单） |
 | makefile | 统一命令入口 | Makefile（dev/build/test/lint/clean，按参数展开） |
 | ci-cd | CI/CD 模板 | GitHub Actions / GitLab CI / **Jenkinsfile**（lint→test→build + 参数门控发布 + 凭据占位不内联密钥） |
 | docker | 容器化 | Dockerfile（多阶段）、.dockerignore、compose.yaml |
@@ -151,7 +151,7 @@
 |---|---|---|---|
 | backend | 纯后端 API | 全部 10 个 foundation | ci-cd: hasBackend=true、hasFrontend=false；docker: runtime=java |
 | fullstack | 前后端兼备 | 全部 10 个 | ci-cd: 双 true；makefile: frontendInstall/frontendBuild |
-| foundation | 文档+规范 | git-init / git-conventions / agents-md / docs-standards / conventions / repo-knowledge | 无 |
+| foundation | 文档+规范 | agents-md / git-init / git-conventions / docs-standards / coding-conventions / repo-knowledge | 无 |
 
 预设 = **有序环节组合 + 每环节参数默认值**；套用仅勾选当前库仍存在的环节。
 

@@ -27,7 +27,7 @@
 {{/if}}{{#if hasDocker}}- `Dockerfile` / `compose.yaml`：容器化与本地编排
 {{/if}}{{#if hasCiCd}}- `.github/workflows/`（或 `.gitlab-ci.yml` / `Jenkinsfile`）：CI/CD 门禁
 {{/if}}{{#if hasDocsStandards}}- `docs/`：架构、ADR、开发约定与运维手册
-{{/if}}{{#if hasConventions}}- `.editorconfig` / `CONTRIBUTING.md`：开发规范与贡献指南
+{{/if}}{{#if hasCodingConventions}}- `.editorconfig` / `CONTRIBUTING.md`：开发规范与贡献指南
 {{/if}}{{#if hasGitConventions}}- `docs/conventions/git.md`：Git 提交与分支规范
 {{/if}}{{#if hasDeploy}}- `deploy/`：生产部署脚本与 manifests
 {{/if}}
@@ -43,7 +43,7 @@
 
 ## 工程规范 / Engineering conventions
 
-{{#if hasConventions}}- 开发规范见 `CONTRIBUTING.md`（PR 流程、DoD 检查清单）。
+{{#if hasCodingConventions}}- 开发规范见 `CONTRIBUTING.md`（PR 流程、DoD 检查清单）。
 {{/if}}{{#if hasGitConventions}}- Git 提交与分支规范见 `docs/conventions/git.md`（Conventional Commits、分支前缀、主干保护、PR 合并规则）。
 {{/if}}
 

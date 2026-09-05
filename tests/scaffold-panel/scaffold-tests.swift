@@ -53,7 +53,7 @@ let builtin = StageCatalogLoader.load(dirs: [builtinDir])
 eq(builtin.stages.count, 10, "catalog: built-in 10 stages")
 check(builtin.errors.isEmpty, "catalog: no load errors", builtin.errors.joined(separator: "; "))
 let ids = Set(builtin.stages.map { $0.id })
-for want in ["git-init", "git-conventions", "agents-md", "docs-standards", "conventions",
+for want in ["git-init", "git-conventions", "agents-md", "docs-standards", "coding-conventions",
              "makefile", "ci-cd", "docker", "deploy", "repo-knowledge"] {
     check(ids.contains(want), "catalog: has stage \(want)")
 }
@@ -61,6 +61,13 @@ let gitInit = builtin.stages.first { $0.id == "git-init" }!
 eq(gitInit.category, "foundation", "catalog: git-init category")
 check(gitInit.files.contains { $0.pathTemplate == "README.md" }, "catalog: git-init README.md")
 check(gitInit.commands.contains("git init -b main"), "catalog: git-init command")
+
+// 规范：默认排序为给定规范顺序，且覆盖全部内置环节（无一遗漏）；conventions 已改名 coding-conventions
+let expectedStageOrder = ["agents-md", "git-init", "git-conventions", "docs-standards", "coding-conventions",
+                          "docker", "makefile", "ci-cd", "deploy", "repo-knowledge"]
+eq(ScaffoldPanelController.defaultStageOrder, expectedStageOrder, "catalog: default stage order is canonical")
+eq(Set(expectedStageOrder), ids, "catalog: default stage order covers all builtin stages (no omissions)")
+check(ids.contains("coding-conventions") && !ids.contains("conventions"), "catalog: conventions renamed to coding-conventions")
 
 // MARK: - 坏清单隔离（9.11）
 

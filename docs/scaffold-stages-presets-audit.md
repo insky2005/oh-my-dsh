@@ -2,7 +2,7 @@
 # 内置环节与预设审计（内容合理性 / 正确性 / 有效性）+ 预设推荐
 
 > 文档性质：**内容级审计** —— 逐环节核对 scaffold-stages/ 下真实的 stage.yaml 与 templates/ 内容，评估**合理性 / 正确性 / 有效性**；并对内置预设给出现状评估与**面向更多企业工作场景的预设推荐**。
-> 审计对象：scaffold-stages/（git-init · git-conventions · agents-md · docs-standards · conventions · makefile · ci-cd · docker · deploy · repo-knowledge，均 category: foundation）+ ScaffoldPreset.builtin（backend / fullstack / foundation）+ ScaffoldPlan.build 的派生上下文逻辑（platforms/macos/src/ScaffoldPanel.swift）。
+> 审计对象：scaffold-stages/（agents-md · git-init · git-conventions · docs-standards · coding-conventions · docker · makefile · ci-cd · deploy · repo-knowledge，均 category: foundation）+ ScaffoldPreset.builtin（backend / fullstack / foundation）+ ScaffoldPlan.build 的派生上下文逻辑（platforms/macos/src/ScaffoldPanel.swift）。
 > 定位口径：**企业工程规范落地**（配套：docs/scaffold-panel-analysis.md）。
 > 撰写：2026-08（按分支 feature/scaffold-workbench 当前内容）。结论分「确定问题 / 设计权衡 / 待确认」；示例栈（java-backend / vue3-frontend）未随内置库发布，故本审计只覆盖现存 foundation 环节。
 > 配套：docs/scaffold-workbench-design.md（技术）、docs/scaffold-panel-analysis.md（功能）、docs/scaffold-panel-ui.md（交互）。
@@ -34,7 +34,7 @@
 ## 2. 派生上下文事实（供判读）
 
 引擎（ScaffoldPlan.build）对每个**选中环节**生成：
-- has<Capitalize(id)>（把 id 按「-」切分、每段首字母大写再拼接）：git-init→hasGitInit；ci-cd→**hasCiCd**；git-conventions→hasGitConventions；docs-standards→**hasDocsStandards**；agents-md→hasAgentsMd；makefile→hasMakefile；docker→hasDocker；deploy→hasDeploy；conventions→hasConventions；repo-knowledge→hasRepoKnowledge。
+- has<Capitalize(id)>（把 id 按「-」切分、每段首字母大写再拼接）：git-init→hasGitInit；ci-cd→**hasCiCd**；git-conventions→hasGitConventions；docs-standards→**hasDocsStandards**；agents-md→hasAgentsMd；makefile→hasMakefile；docker→hasDocker；deploy→hasDeploy；coding-conventions→hasCodingConventions；repo-knowledge→hasRepoKnowledge。
 - select 参数 → 键.选项 布尔；multiselect → 键.选项 + 键Empty / 键Any；string → 键Empty。
 - 选中 ci-cd 时派生 ciLint / ciTest / ciBuild / ciFrontend。
 - 兜底：trunk=main、imageRepo=your-registry、imageTag=latest、jenkinsAgentLabel=linux、techSummary（空 + techSummaryEmpty）。
@@ -68,7 +68,7 @@
 - 正确性：docsLang 是 select，模板 {{docsLang}} 输出 bilingual/zh/en；conventions.md 用 hasGitConventions、runbook 用 hasDeploy（均正确）。ADR / 架构为占位骨架，合理。
 - 有效性：作为企业文档骨架合格；与 AGENTS「目录结构」联动因 3.3 的 hasDocs 失效而丢失 docs/ 行（连带问题）。
 
-### 3.5 conventions（开发规范落地）
+### 3.5 coding-conventions（开发规范落地）
 - 内容：.editorconfig（root + 通用 + md 例外 + Makefile tab）、CONTRIBUTING.md（vcs.github/gitlab 分支、DoD 清单）。
 - 正确性：CONTRIBUTING 用 hasGitConventions（正确）+ vcs.github / vcs.gitlab（select 选项）。.editorconfig 内容标准。DoD 清单通用。
 - 有效性：好；建议按需扩展（如代码风格细则引用，v2）。
@@ -129,7 +129,7 @@
 |---|---|---|---|---|
 | backend 纯后端 API | 全部 10 个 foundation | ci-cd hasBackend=true；docker runtime=java | 后端 API 新项目 | 合理但**语言固化**（java+mvn），Go/Python 后端不适配；且一次拉起 deploy+k8s 等，偏重 |
 | fullstack 前后端兼备 | 全部 10 个 | ci-cd 双 true；makefile frontendInstall/frontendBuild | 前后端一体 | 合理；但 makefile 走多端模式、后端默认 mvn，语言同样固化 |
-| foundation 文档+规范 | git-init/git-conventions/agents-md/docs-standards/conventions/repo-knowledge | 无 | 只落规范、不含栈 | 好；与「企业规范落地」定位最贴，可作存量项目规范化默认 |
+| foundation 文档+规范 | agents-md/git-init/git-conventions/docs-standards/coding-conventions/repo-knowledge | 无 | 只落规范、不含栈 | 好；与「企业规范落地」定位最贴，可作存量项目规范化默认 |
 
 共性缺口：
 1. **不覆盖语言维度**：backend/fullstack 硬编码 docker runtime=java + makefile 的 mvn 默认；企业里 Go/Python/Node 后端很普遍 → 需要一个「语言可切换」的表达（预设里加 makefile.lang / docker.runtime / ci-cd 命令即可，但内置预设没这么做，且 docker 无 go/python，见 A4）。
@@ -146,30 +146,30 @@
 
 ### 6.1 分层 / 推荐清单
 1. **base-conventions「企业规范基础（存量治理）」** —— 面向**既有 / 新仓只先落规范**：
-   git-init + git-conventions(enforce=true) + conventions + agents-md + docs-standards + repo-knowledge + makefile(按栈填命令) + ci-cd(hasBackend 按需)
+   git-init + git-conventions(enforce=true) + coding-conventions + agents-md + docs-standards + repo-knowledge + makefile(按栈填命令) + ci-cd(hasBackend 按需)
    定位：团队统一 Git / 文档 / DoD / Agent 入口；不含容器 / 部署（避免污染既有代码）。比 foundation 多 ci-cd 门禁。→ 替代 / 扩展现有 foundation，最适合企业铺开。
 
 2. **frontend-spa「纯前端应用」**：
-   git-init(gitIgnorePreset=node) + git-conventions + agents-md(primaryLang 含 typescript/node) + conventions + docs-standards + makefile(lang 含 node) + ci-cd(hasBackend=false, hasFrontend=true) + docker(runtime=node 或 static，待 A2 修复后建议 static/80) [+ deploy(k8s，若公司用 K8s)]
+   git-init(gitIgnorePreset=node) + git-conventions + agents-md(primaryLang 含 typescript/node) + coding-conventions + docs-standards + makefile(lang 含 node) + ci-cd(hasBackend=false, hasFrontend=true) + docker(runtime=node 或 static，待 A2 修复后建议 static/80) [+ deploy(k8s，若公司用 K8s)]
    覆盖独立前端仓的 CI（装依赖 → lint → build → 部署占位）。
 
 3. **backend-go「Go 后端服务」 / backend-python「Python 后端服务」**（语言可切换族，取代 backend 的 java 固化）：
-   git-init + git-conventions + agents-md + conventions + docs-standards + makefile(lang=go 或 python) + ci-cd(hasBackend=true) + docker(runtime=go→需先补 A4) + deploy(k8s)
+   git-init + git-conventions + agents-md + coding-conventions + docs-standards + makefile(lang=go 或 python) + ci-cd(hasBackend=true) + docker(runtime=go→需先补 A4) + deploy(k8s)
    用参数把 docker.runtime / makefile.lang / ci 命令与所选后端语言对齐。
 
 4. **microservice-group「微服务 / 多仓统一规范」**（治理视角）：
-   不生成单一 app，而强调**跨仓库一致**：git-conventions(enforce) + conventions + agents-md + docs-standards + ci-cd(镜像占位 + 发布门控) + repo-knowledge + makefile(统一目标约定)
+   不生成单一 app，而强调**跨仓库一致**：git-conventions(enforce) + coding-conventions + agents-md + docs-standards + ci-cd(镜像占位 + 发布门控) + repo-knowledge + makefile(统一目标约定)
    定位：团队用它给「每个新 service 仓」套同款规范模板，保证一致性（需配合每个仓分别跑一次；脚手架 v1 是单项目模型，多仓一致性靠同预设复用来达成，见注）。
 
 5. **oss-library「开源库 / SDK 发布」**：
-   git-init(license=Apache-2.0, gitIgnorePreset 按语言) + git-conventions(enforce) + conventions + docs-standards(docsLang=en/bilingual) + makefile(test/lint) + ci-cd + repo-knowledge
+   git-init(license=Apache-2.0, gitIgnorePreset 按语言) + git-conventions(enforce) + coding-conventions + docs-standards(docsLang=en/bilingual) + makefile(test/lint) + ci-cd + repo-knowledge
    突出：LICENSE 全文本、ADR、CI 仅 test/lint + tag 触发发布占位。
 
 6. **cli-tool「内部 CLI / 自动化工具」**（轻量）：
-   git-init + git-conventions + agents-md + conventions + docs-standards(可选) + makefile(lang 按脚本语言)；不含 docker/deploy/ci 强栈；突出 makefile 统一入口。
+   git-init + git-conventions + agents-md + coding-conventions + docs-standards(可选) + makefile(lang 按脚本语言)；不含 docker/deploy/ci 强栈；突出 makefile 统一入口。
 
 7. **etl-data「数据 / 批处理工程」**：
-   git-init + git-conventions + agents-md + conventions + docs-standards + makefile(lang=python, 填 ETL 命令) + ci-cd(单测 / 校验门禁)
+   git-init + git-conventions + agents-md + coding-conventions + docs-standards + makefile(lang=python, 填 ETL 命令) + ci-cd(单测 / 校验门禁)
    企业数据管道仓的规范落地（不部署 web 服务，故不强制 docker/deploy）。
 
 8. **api-gateway-bff**：与 fullstack 等价但显式前端为管理台 / 网关形态；可并入 fullstack 预设家族，不必新增。
