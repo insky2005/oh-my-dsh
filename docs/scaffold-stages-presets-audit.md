@@ -146,30 +146,30 @@
 
 ### 6.1 分层 / 推荐清单
 1. **base-conventions「企业规范基础（存量治理）」** —— 面向**既有 / 新仓只先落规范**：
-   git-init + git-conventions(enforce=true) + coding-conventions + agents-md + docs-standards + repo-knowledge + makefile(按栈填命令) + ci-cd(hasBackend 按需)
+   agents-md + git-init + git-conventions(enforce=true) + docs-standards + coding-conventions + makefile(按栈填命令) + ci-cd(hasBackend 按需) + repo-knowledge
    定位：团队统一 Git / 文档 / DoD / Agent 入口；不含容器 / 部署（避免污染既有代码）。比 foundation 多 ci-cd 门禁。→ 替代 / 扩展现有 foundation，最适合企业铺开。
 
 2. **frontend-spa「纯前端应用」**：
-   git-init(gitIgnorePreset=node) + git-conventions + agents-md(primaryLang 含 typescript/node) + coding-conventions + docs-standards + makefile(lang 含 node) + ci-cd(hasBackend=false, hasFrontend=true) + docker(runtime=node 或 static，待 A2 修复后建议 static/80) [+ deploy(k8s，若公司用 K8s)]
+   agents-md(primaryLang 含 typescript/node) + git-init(gitIgnorePreset=node) + git-conventions + docs-standards + coding-conventions + docker(runtime=node 或 static，待 A2 修复后建议 static/80) + makefile(lang 含 node) + ci-cd(hasBackend=false, hasFrontend=true) [+ deploy(k8s，若公司用 K8s)]
    覆盖独立前端仓的 CI（装依赖 → lint → build → 部署占位）。
 
 3. **backend-go「Go 后端服务」 / backend-python「Python 后端服务」**（语言可切换族，取代 backend 的 java 固化）：
-   git-init + git-conventions + agents-md + coding-conventions + docs-standards + makefile(lang=go 或 python) + ci-cd(hasBackend=true) + docker(runtime=go→需先补 A4) + deploy(k8s)
+   agents-md + git-init + git-conventions + docs-standards + coding-conventions + docker(runtime=go→需先补 A4) + makefile(lang=go 或 python) + ci-cd(hasBackend=true) + deploy(k8s)
    用参数把 docker.runtime / makefile.lang / ci 命令与所选后端语言对齐。
 
 4. **microservice-group「微服务 / 多仓统一规范」**（治理视角）：
-   不生成单一 app，而强调**跨仓库一致**：git-conventions(enforce) + coding-conventions + agents-md + docs-standards + ci-cd(镜像占位 + 发布门控) + repo-knowledge + makefile(统一目标约定)
+   不生成单一 app，而强调**跨仓库一致**：agents-md + git-conventions(enforce) + docs-standards + coding-conventions + makefile(统一目标约定) + ci-cd(镜像占位 + 发布门控) + repo-knowledge
    定位：团队用它给「每个新 service 仓」套同款规范模板，保证一致性（需配合每个仓分别跑一次；脚手架 v1 是单项目模型，多仓一致性靠同预设复用来达成，见注）。
 
 5. **oss-library「开源库 / SDK 发布」**：
-   git-init(license=Apache-2.0, gitIgnorePreset 按语言) + git-conventions(enforce) + coding-conventions + docs-standards(docsLang=en/bilingual) + makefile(test/lint) + ci-cd + repo-knowledge
+   git-init(license=Apache-2.0, gitIgnorePreset 按语言) + git-conventions(enforce) + docs-standards(docsLang=en/bilingual) + coding-conventions + makefile(test/lint) + ci-cd + repo-knowledge
    突出：LICENSE 全文本、ADR、CI 仅 test/lint + tag 触发发布占位。
 
 6. **cli-tool「内部 CLI / 自动化工具」**（轻量）：
-   git-init + git-conventions + agents-md + coding-conventions + docs-standards(可选) + makefile(lang 按脚本语言)；不含 docker/deploy/ci 强栈；突出 makefile 统一入口。
+   agents-md + git-init + git-conventions + docs-standards(可选) + coding-conventions + makefile(lang 按脚本语言)；不含 docker/deploy/ci 强栈；突出 makefile 统一入口。
 
 7. **etl-data「数据 / 批处理工程」**：
-   git-init + git-conventions + agents-md + coding-conventions + docs-standards + makefile(lang=python, 填 ETL 命令) + ci-cd(单测 / 校验门禁)
+   agents-md + git-init + git-conventions + docs-standards + coding-conventions + makefile(lang=python, 填 ETL 命令) + ci-cd(单测 / 校验门禁)
    企业数据管道仓的规范落地（不部署 web 服务，故不强制 docker/deploy）。
 
 8. **api-gateway-bff**：与 fullstack 等价但显式前端为管理台 / 网关形态；可并入 fullstack 预设家族，不必新增。
