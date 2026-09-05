@@ -2497,6 +2497,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     private var initTarget: String?
     /// 步骤 3 中 AGENTS.md 的 techSummary 是否被用户独立改过（改过后不再被步骤 1 覆盖）。
     private var techSummaryLocked = false
+    /// 当前套用的预设 id：其 templates/ 作为固化覆盖层随生成渲染进项目（新项目/切换/重生成时重置）。
+    private var activePresetID: String? = nil
     /// 当前工作区目录（workspace 步骤检测到的项目目录）。
     private var currentWorkspaceDir: String?
     private let workspaceScroll = NSScrollView()
@@ -2566,6 +2568,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             parentDir = ""
             techSummaryLocked = false
             initTarget = nil
+            activePresetID = nil
             projectNameField.stringValue = ""
             projectSummaryField.stringValue = ""
             if settingsActive { hideSettings() }
@@ -3848,6 +3851,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     /// 右上角「初始化项目脚手架」：进入新建项目向导（默认行为）。
     private func beginNewProject() {
         initTarget = nil
+        activePresetID = nil
         hasEnteredWizard = true
         setStep(.target)
     }
@@ -3855,6 +3859,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     /// 初始化当前目录：把脚手架生成到该目录内（不改名、不新建子目录）。
     private func beginInitCurrent(_ dir: String) {
         initTarget = dir
+        activePresetID = nil
         hasEnteredWizard = true
         loadProjectTarget(dir: dir)
         setStep(.stages)
@@ -3863,6 +3868,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     /// 更新已有配置：载入 state.json 的环节/参数到向导，重新生成。
     private func beginRegenerate(_ cfg: WorkspaceConfig) {
         initTarget = cfg.targetRoot.isEmpty ? currentWorkspaceDir : cfg.targetRoot
+        activePresetID = nil
         hasEnteredWizard = true
         selection = cfg.stages
         params = cfg.params
@@ -3925,6 +3931,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             editor.card.isSelected = selection.contains(id)
             editor.syncControls(values: params[id] ?? [:])
         }
+        activePresetID = preset.id
         refreshPlan()
     }
 
@@ -3939,7 +3946,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         }
         let p = ScaffoldPlan.build(catalog: catalog, selection: selection, params: params,
                                    projectName: projectName, parentDir: parentDir,
-                                   existingTargetRoot: initTarget ?? "")
+                                   existingTargetRoot: initTarget ?? "", presetOverlay: activePresetID)
         plan = p
         updateTargetRootLabel(p)
         // 步骤 1 项目简介（必填）动态高亮
