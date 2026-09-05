@@ -852,7 +852,7 @@ struct ScaffoldPlan {
     }
 
     static func build(catalog: [ScaffoldStage], selection: [String], params: [String: [String: String]],
-                      projectName: String, parentDir: String, existingTargetRoot: String = "", presetOverlay: String? = nil) -> Result {
+                      projectName: String, parentDir: String, existingTargetRoot: String = "") -> Result {
         var r = Result()
         r.projectName = projectName
         r.projectSlug = slugify(projectName)
@@ -1022,24 +1022,6 @@ struct ScaffoldPlan {
                 r.commandSequence.append(contentsOf: stage.commands)
             } catch {
                 r.stageErrors.append("\(stage.id): 渲染失败：\(error.localizedDescription) / render failed")
-            }
-        }
-
-                // 5.5 预设固化覆盖层：activePreset 的 templates/ 文件按内部层级渲染进项目根（固定覆盖，叠加在环节产物之后）
-        if let pid = presetOverlay, !pid.isEmpty {
-            for (rel, absPath) in PresetLibrary.presetTemplateFiles(for: pid) {
-                let outPath = rel.hasSuffix(".tmpl") ? String(rel.dropLast(5)) : rel
-                guard !outPath.contains(".."), !outPath.hasPrefix("/") else {
-                    r.stageErrors.append("preset:\(pid): unsafe overlay path \(outPath)")
-                    continue
-                }
-                guard let text = try? String(contentsOfFile: absPath, encoding: .utf8) else { continue }
-                do {
-                    let content = try ScaffoldTemplateRenderer.render(text, context: context)
-                    r.entries.append(Entry(stageId: "preset:" + pid, path: outPath, content: content))
-                } catch {
-                    r.stageErrors.append("preset:\(pid): \(error.localizedDescription)")
-                }
             }
         }
 
@@ -1334,40 +1316,6 @@ enum PresetLibrary {
             if FileManager.default.fileExists(atPath: p, isDirectory: &isDir), isDir.boolValue { return [p] }
         }
         return []
-    }
-    /// 定位某预设（内置或用户）的文件夹（含 preset.yaml）；找不到返回 nil。
-    static func presetFolder(for id: String) -> String? {
-        let fm = FileManager.default
-        let udir = userPresetsDir()
-        let uf = (udir as NSString).appendingPathComponent(id)
-        if fm.fileExists(atPath: (uf as NSString).appendingPathComponent("preset.yaml")) { return uf }
-        for dir in builtinPresetDirs() {
-            let bf = (dir as NSString).appendingPathComponent(id)
-            if fm.fileExists(atPath: (bf as NSString).appendingPathComponent("preset.yaml")) { return bf }
-        }
-        return nil
-    }
-    /// 某预设 templates/ 下的文件（相对路径原样写进项目根 + 绝对路径）；无模板返回空。
-    static func presetTemplateFiles(for id: String) -> [(rel: String, abs: String)] {
-        guard let folder = presetFolder(for: id) else { return [] }
-        let tdir = (folder as NSString).appendingPathComponent("templates")
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: tdir, isDirectory: &isDir), isDir.boolValue else { return [] }
-        var out: [(String, String)] = []
-        func walk(_ dir: String, _ base: String) {
-            guard let items = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
-            for name in items.sorted() where !name.hasPrefix(".") {
-                let p = (dir as NSString).appendingPathComponent(name)
-                var d: ObjCBool = false
-                if FileManager.default.fileExists(atPath: p, isDirectory: &d), d.boolValue {
-                    walk(p, base.isEmpty ? name : base + "/" + name)
-                } else {
-                    out.append((base.isEmpty ? name : base + "/" + name, p))
-                }
-            }
-        }
-        walk(tdir, "")
-        return out
     }
     /// 从内置资源目录加载内置预设（按 builtinOrder 排序；同名后载不覆盖）。
     static func loadBuiltin() -> [ScaffoldPreset] {
@@ -2497,8 +2445,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     private var initTarget: String?
     /// 步骤 3 中 AGENTS.md 的 techSummary 是否被用户独立改过（改过后不再被步骤 1 覆盖）。
     private var techSummaryLocked = false
-    /// 当前套用的预设 id：其 templates/ 作为固化覆盖层随生成渲染进项目（新项目/切换/重生成时重置）。
-    private var activePresetID: String? = nil
     /// 当前工作区目录（workspace 步骤检测到的项目目录）。
     private var currentWorkspaceDir: String?
     private let workspaceScroll = NSScrollView()
@@ -2568,7 +2514,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             parentDir = ""
             techSummaryLocked = false
             initTarget = nil
-            activePresetID = nil
             projectNameField.stringValue = ""
             projectSummaryField.stringValue = ""
             if settingsActive { hideSettings() }
@@ -3851,7 +3796,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     /// 右上角「初始化项目脚手架」：进入新建项目向导（默认行为）。
     private func beginNewProject() {
         initTarget = nil
-        activePresetID = nil
         hasEnteredWizard = true
         setStep(.target)
     }
@@ -3859,7 +3803,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     /// 初始化当前目录：把脚手架生成到该目录内（不改名、不新建子目录）。
     private func beginInitCurrent(_ dir: String) {
         initTarget = dir
-        activePresetID = nil
         hasEnteredWizard = true
         loadProjectTarget(dir: dir)
         setStep(.stages)
@@ -3868,7 +3811,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     /// 更新已有配置：载入 state.json 的环节/参数到向导，重新生成。
     private func beginRegenerate(_ cfg: WorkspaceConfig) {
         initTarget = cfg.targetRoot.isEmpty ? currentWorkspaceDir : cfg.targetRoot
-        activePresetID = nil
         hasEnteredWizard = true
         selection = cfg.stages
         params = cfg.params
@@ -3931,7 +3873,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             editor.card.isSelected = selection.contains(id)
             editor.syncControls(values: params[id] ?? [:])
         }
-        activePresetID = preset.id
         refreshPlan()
     }
 
@@ -3946,7 +3887,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         }
         let p = ScaffoldPlan.build(catalog: catalog, selection: selection, params: params,
                                    projectName: projectName, parentDir: parentDir,
-                                   existingTargetRoot: initTarget ?? "", presetOverlay: activePresetID)
+                                   existingTargetRoot: initTarget ?? "")
         plan = p
         updateTargetRootLabel(p)
         // 步骤 1 项目简介（必填）动态高亮
