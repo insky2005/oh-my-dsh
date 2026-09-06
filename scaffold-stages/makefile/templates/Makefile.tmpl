@@ -100,7 +100,7 @@ node-build: ## Node 构建 / node build
 {{/if}}{{#if formatCmdEmpty}}	npx prettier --write .
 {{/if}}node-install: ## Node 依赖安装 / node install
 {{#if installCmd}}	{{installCmd}}
-{{/if}}{{#if installCmdEmpty}}	npm ci
+{{/if}}{{#if installCmdEmpty}}	npm install
 {{/if}}node-start: ## Node 启动 / node start
 {{#if startCmd}}	{{startCmd}}
 {{/if}}{{#if startCmdEmpty}}	npm start

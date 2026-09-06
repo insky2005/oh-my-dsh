@@ -501,7 +501,7 @@ let goPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["makefile"],
                                 params: ["makefile": ["lang": "go"]], projectName: "goapp", parentDir: tmpDir("go"))
 let goMk = try! ScaffoldTemplateRenderer.render(mkTmpl, context: goPlan.context)
 check(goMk.contains("go test ./...") && goMk.contains("gofmt -w .") && goMk.contains("go run ."), "makefile: go preset targets", goMk)
-check(!goMk.contains("mvn") && !goMk.contains("npm ci"), "makefile: go preset no java/node commands")
+check(!goMk.contains("mvn") && !goMk.contains("npm"), "makefile: go preset no java/node commands")
 
 let pyPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["makefile"],
                                 params: ["makefile": ["lang": "python"]], projectName: "pyapp", parentDir: tmpDir("py"))
@@ -511,7 +511,7 @@ check(pyMk.contains("pytest") && pyMk.contains("ruff check .") && pyMk.contains(
 let nodePlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["makefile"],
                                   params: ["makefile": ["lang": "node"]], projectName: "nodeapp", parentDir: tmpDir("node"))
 let nodeMk = try! ScaffoldTemplateRenderer.render(mkTmpl, context: nodePlan.context)
-check(nodeMk.contains("node-build:") && nodeMk.contains("npm run build") && nodeMk.contains("npm test") && nodeMk.contains("npm ci") && nodeMk.contains("npm run dev"), "makefile: node preset targets", nodeMk)
+check(nodeMk.contains("node-build:") && nodeMk.contains("npm run build") && nodeMk.contains("npm test") && nodeMk.contains("npm install") && nodeMk.contains("npm run dev"), "makefile: node preset targets", nodeMk)
 
 // makefile 多语言：同时选 java + node，生成各自 <lang>-<action> 目标并存
 let bothPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["makefile"],

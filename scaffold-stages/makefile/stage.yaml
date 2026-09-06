@@ -53,7 +53,7 @@ params:
   - key: frontendInstall
     label: { zh: 前端安装命令（多端模式）, en: frontend install command (multi-tier) }
     type: string
-    default: "npm ci"
+    default: "npm install"
   - key: frontendBuild
     label: { zh: 前端构建命令（多端模式）, en: frontend build command (multi-tier) }
     type: string
