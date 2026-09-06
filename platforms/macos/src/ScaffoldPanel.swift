@@ -2302,6 +2302,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     /// 工具栏行 / 步骤栏容器（设置视图激活时隐藏）。
     private var toolbarView: NSView?
     private var railView: NSView?
+    /// 步骤操作条（Back / Next / Generate），覆盖在各步骤内容底部；步骤1（当前项目）与设置视图隐藏。
+    private var actionBarView: DynamicFillView?
     private var toolbarUnderlineView: NSView?
     /// 设置视图激活时的 contentContainer 布局（顶/左切到全宽全高）。
     private var contentTopSettings: NSLayoutConstraint?
@@ -2645,13 +2647,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         updateConfigButton.font = .systemFont(ofSize: 12)
         updateConfigButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let toolbarSeparator = NSBox()
-        toolbarSeparator.boxType = .separator
-        toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
-        toolbarSeparator.widthAnchor.constraint(equalToConstant: 1).isActive = true
-        toolbarSeparator.heightAnchor.constraint(equalToConstant: 18).isActive = true
-
-        let toolbarStack = NSStackView(views: [prevButton, nextButton, toolbarSeparator, newProjectButton, initProjectButton, updateConfigButton])
+        let toolbarStack = NSStackView(views: [newProjectButton, initProjectButton, updateConfigButton])
         toolbarStack.orientation = .horizontal
         toolbarStack.spacing = 6
         toolbarStack.translatesAutoresizingMaskIntoConstraints = false
@@ -2765,6 +2761,35 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         buildPreviewStep()
         rebuildStepRail()
         buildSettingsViews()
+        // 步骤操作条（Back / Next / Generate）：置于各步骤内容底部（步骤1「当前项目」无此条）
+        let actionBar = DynamicFillView()
+        actionBar.kind = .control
+        actionBar.translatesAutoresizingMaskIntoConstraints = false
+        actionBar.wantsLayer = true
+        actionBar.layer?.masksToBounds = true
+        let actionSep = NSBox()
+        actionSep.boxType = .separator
+        actionSep.translatesAutoresizingMaskIntoConstraints = false
+        actionBar.addSubview(actionSep)
+        actionBar.addSubview(prevButton)
+        actionBar.addSubview(nextButton)
+        contentContainer.addSubview(actionBar)
+        actionBarView = actionBar
+        NSLayoutConstraint.activate([
+            actionSep.topAnchor.constraint(equalTo: actionBar.topAnchor),
+            actionSep.leadingAnchor.constraint(equalTo: actionBar.leadingAnchor),
+            actionSep.trailingAnchor.constraint(equalTo: actionBar.trailingAnchor),
+            actionSep.heightAnchor.constraint(equalToConstant: 1),
+            prevButton.leadingAnchor.constraint(equalTo: actionBar.leadingAnchor, constant: 14),
+            prevButton.centerYAnchor.constraint(equalTo: actionBar.centerYAnchor),
+            nextButton.trailingAnchor.constraint(equalTo: actionBar.trailingAnchor, constant: -14),
+            nextButton.centerYAnchor.constraint(equalTo: actionBar.centerYAnchor),
+            actionBar.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            actionBar.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            actionBar.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            actionBar.heightAnchor.constraint(equalToConstant: 36),
+        ])
+        actionBar.isHidden = true
         setStep(.workspace)
     }
 
@@ -3419,6 +3444,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             nextButton.action = #selector(nextTapped(_:))
             nextButton.isEnabled = true
         }
+        // 步骤操作条仅向导步骤（2-5）显示；步骤1「当前项目」与设置视图隐藏
+        actionBarView?.isHidden = (currentStep == .workspace) || settingsActive
     }
 
     @objc private func prevTapped(_ sender: Any?) {
@@ -4112,6 +4139,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
                 self.updateGenerateEnabled(p)
                 if result.written.isEmpty {
                     self.updateStatus(L10n.tr("scaffold.failed", result.commandResults.first?.error ?? "unknown"))
+                    self.refreshPlan()
                 } else {
                     var msg = L10n.tr("scaffold.done")
                     let failed = result.commandResults.filter { $0.exitCode != nil && $0.exitCode != 0 }
@@ -4119,18 +4147,34 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
                         msg += "  " + L10n.tr("scaffold.notGitInit", failed.first?.command ?? "")
                     }
                     self.updateStatus(msg)
-                }
-                // 生成成功后，best-effort 把新项目登记为 dsh web 工作区（幂等；服务未就绪则跳过）；
-                // 新建工作区时还会顺带创建一个空 session，dsh web 立即显示可用会话。
-                if let port = self.serverReadyPort, result.written.isEmpty == false {
-                    let root = p.targetRoot
-                    DispatchQueue.global(qos: .utility).async {
-                        ScaffoldWorkspaceRPC.ensure(port: port, path: root)
+                    // 生成成功后，best-effort 把新项目登记为 dsh web 工作区（幂等；服务未就绪则跳过）；
+                    // 新建工作区时还会顺带创建一个空 session，dsh web 立即显示可用会话。
+                    if let port = self.serverReadyPort {
+                        let root = p.targetRoot
+                        DispatchQueue.global(qos: .utility).async {
+                            ScaffoldWorkspaceRPC.ensure(port: port, path: root)
+                        }
                     }
+                    // 提示成功后收起向导（隐藏步骤 2-5），回到「当前项目」首页（步骤 1）。
+                    self.finishToWorkspaceHome()
                 }
-                self.refreshPlan()
             }
         }
+    }
+
+    /// 生成成功后收起向导：清空本次组合，回到「当前项目」首页（步骤 1），隐藏步骤 2-5。
+    private func finishToWorkspaceHome() {
+        hasEnteredWizard = false
+        selection = []
+        params = [:]
+        projectName = ""
+        parentDir = ""
+        initTarget = nil
+        techSummaryLocked = false
+        projectNameField.stringValue = ""
+        projectSummaryField.stringValue = ""
+        if settingsActive { hideSettings() }
+        setStep(.workspace)
     }
 
     private func updateStatus(_ text: String) {
@@ -4488,6 +4532,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         toolbarView?.isHidden = true
         railView?.isHidden = true
         toolbarUnderlineView?.isHidden = true
+        actionBarView?.isHidden = true
         for v in [workspaceStepView, targetStepView, stagesStepView, paramsStepView, previewStepView] {
             v?.isHidden = true
         }
