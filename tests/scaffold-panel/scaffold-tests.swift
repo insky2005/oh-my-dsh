@@ -50,7 +50,8 @@ func exists(_ path: String) -> Bool {
 let builtinDir = ProcessInfo.processInfo.environment["DSH_SCAFFOLD_STAGES"] ?? ""
 check(!builtinDir.isEmpty, "env DSH_SCAFFOLD_STAGES set (run.sh)")
 let builtin = StageCatalogLoader.load(dirs: [builtinDir])
-eq(builtin.stages.count, 10, "catalog: built-in 10 stages")
+eq(builtin.stages.filter { $0.category == "foundation" }.count, 10, "catalog: 10 foundation stages")
+check(builtin.stages.contains { $0.id == "vue3-frontend" && $0.category == "examples" }, "catalog: vue3-frontend example stage present")
 check(builtin.errors.isEmpty, "catalog: no load errors", builtin.errors.joined(separator: "; "))
 let ids = Set(builtin.stages.map { $0.id })
 for want in ["git-init", "git-conventions", "agents-md", "docs-standards", "coding-conventions",
@@ -66,7 +67,8 @@ check(gitInit.commands.contains("git init -b main"), "catalog: git-init command"
 let expectedStageOrder = ["agents-md", "git-init", "git-conventions", "docs-standards", "coding-conventions",
                           "docker", "makefile", "ci-cd", "deploy", "repo-knowledge"]
 eq(ScaffoldPanelController.defaultStageOrder, expectedStageOrder, "catalog: default stage order is canonical")
-eq(Set(expectedStageOrder), ids, "catalog: default stage order covers all builtin stages (no omissions)")
+check(Set(expectedStageOrder).isSubset(of: ids), "catalog: default (foundation) order fully covered, no omissions")
+check(ids.contains("vue3-frontend"), "catalog: vue3-frontend present (examples, after foundation default order)")
 check(ids.contains("coding-conventions") && !ids.contains("conventions"), "catalog: conventions renamed to coding-conventions")
 
 // MARK: - 坏清单隔离（9.11）
@@ -597,7 +599,7 @@ description: { zh: 新建的, en: New }
 """)
 let mergedRes = StageCatalogLoader.load(dirs: [userRoot, builtinDir], builtinDir: builtinDir, userDir: userRoot)
 check(mergedRes.errors.isEmpty, "settings: user override is silent (no duplicate error)", mergedRes.errors.joined(separator: "; "))
-eq(mergedRes.stages.count, 11, "settings: 10 builtin + 1 new custom (override not duplicated)")
+eq(mergedRes.stages.count, builtin.stages.count + 1, "settings: all builtin + 1 new custom (override not duplicated)")
 let dockerS = mergedRes.stages.first { $0.id == "docker" }
 check(dockerS?.isCustom == true, "settings: overridden builtin is marked custom")
 check(dockerS?.nameZh == "我的 Docker" && dockerS?.nameEn == "My Docker", "settings: user copy wins over builtin definition")
@@ -801,6 +803,35 @@ let presetOrderNil = ScaffoldPresetOrder.merge(saved: nil, defaults: ["backend"]
 eq(presetOrderNil, ["backend", "foundation", "custom"], "preset order: nil saved = defaults + rest")
 let presetOrderStale = ScaffoldPresetOrder.merge(saved: ["ghost", "ops"], defaults: ["backend"], ids: ["backend", "ops"])
 eq(presetOrderStale, ["ops", "backend"], "preset order: stale saved dropped")
+
+
+// MARK: - 端到端：vue3-frontend 示例栈（Vue3 + Vite + TS + vitest，最小可运行）
+let vueDir = tmpDir("vue3")
+let vuePlan = ScaffoldPlan.build(catalog: loadBuiltin(),
+  selection: ["git-init", "git-conventions", "agents-md", "docs-standards", "coding-conventions",
+              "vue3-frontend", "makefile", "ci-cd", "docker"],
+  params: ["agents-md": ["techSummary": "a Vue3 SPA"],
+           "makefile": ["lang": "node"],
+           "ci-cd": ["platform": "github-actions", "hasBackend": "false", "hasFrontend": "true"],
+           "docker": ["runtime": "static", "exposePort": "80", "healthzPath": "/healthz"]],
+  projectName: "my-vue", parentDir: vueDir)
+check(vuePlan.isValid, "vue3 e2e: plan valid", (vuePlan.validationErrors + vuePlan.stageErrors).joined(separator: "; "))
+let vRoot = (vueDir as NSString).appendingPathComponent("my-vue")
+_ = ScaffoldApplier.apply(plan: vuePlan, options: ScaffoldApplier.Options(backupConflicts: true))
+for f in ["package.json", "vite.config.ts", "tsconfig.json", "index.html",
+          "src/main.ts", "src/App.vue", "src/components/HelloWorld.vue", "src/env.d.ts",
+          "src/api/client.ts", "src/lib/counter.ts", "src/lib/counter.spec.ts",
+          "Makefile", ".github/workflows/ci.yml", "Dockerfile", "nginx.conf"] {
+  check(exists((vRoot as NSString).appendingPathComponent(f)), "vue3 e2e: \(f) exists")
+}
+let vuePkg = read((vRoot as NSString).appendingPathComponent("package.json"))
+check(vuePkg.contains("\"vue\":") && vuePkg.contains("\"dev\": \"vite\"") && vuePkg.contains("\"test\": \"vitest run\""),
+      "vue3 e2e: package.json runnable (vue/vite/vitest)", vuePkg)
+check(!vuePkg.contains("{{") && !vuePkg.contains("{{{{"), "vue3 e2e: no renderer leftovers in package.json")
+let vueApp = read((vRoot as NSString).appendingPathComponent("src/App.vue"))
+check(vueApp.contains("<HelloWorld") && !vueApp.contains("{{{{"), "vue3 e2e: App.vue valid (no escaped braces leaked)")
+let vueDocker = read((vRoot as NSString).appendingPathComponent("Dockerfile"))
+check(vueDocker.contains("nginx.conf"), "vue3 e2e: static Dockerfile uses nginx.conf")
 
 print("----")
 print("\(passed) passed, \(failures) failed")

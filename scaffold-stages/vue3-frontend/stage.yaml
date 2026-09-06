@@ -1,0 +1,41 @@
+id: vue3-frontend
+name: { zh: Vue3 前端（Vite+TS+Vitest）, en: Vue3 Frontend (Vite+TS+Vitest) }
+category: examples
+description:
+  zh: 最小可运行的 Vue 3 + Vite + TypeScript 前端骨架（含 vitest 单测示例）
+  en: Minimal runnable Vue 3 + Vite + TypeScript frontend skeleton (with a vitest example)
+params:
+  - key: apiBase
+    label: { zh: API 基础路径, en: API base path }
+    type: string
+    default: /api
+  - key: vitePort
+    label: { zh: 开发服务器端口, en: Dev server port }
+    type: string
+    default: "5173"
+    validate: nonEmpty
+files:
+  - path: package.json
+    template: templates/package.json.tmpl
+  - path: vite.config.ts
+    template: templates/vite.config.ts.tmpl
+  - path: tsconfig.json
+    template: templates/tsconfig.json.tmpl
+  - path: index.html
+    template: templates/index.html.tmpl
+  - path: src/main.ts
+    template: templates/main.ts.tmpl
+  - path: src/App.vue
+    template: templates/App.vue.tmpl
+  - path: src/components/HelloWorld.vue
+    template: templates/HelloWorld.vue.tmpl
+  - path: src/style.css
+    template: templates/style.css.tmpl
+  - path: src/env.d.ts
+    template: templates/env.d.ts.tmpl
+  - path: src/api/client.ts
+    template: templates/client.ts.tmpl
+  - path: src/lib/counter.ts
+    template: templates/counter.ts.tmpl
+  - path: src/lib/counter.spec.ts
+    template: templates/counter.spec.ts.tmpl

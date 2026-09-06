@@ -1,0 +1,15 @@
+import { describe, it, expect } from 'vitest'
+import { useCounter } from './counter'
+
+describe('useCounter', () => {
+  it('increments from initial', () => {
+    const c = useCounter(1)
+    expect(c.inc()).toBe(2)
+  })
+
+  it('resets to zero', () => {
+    const c = useCounter(3)
+    c.inc()
+    expect(c.reset()).toBe(0)
+  })
+})

@@ -24,7 +24,7 @@
 | backend | 纯后端 API | 后端 API 新仓（java 固化） | 内置 |
 | backend-go / backend-python | 后端服务（语言族） | Go / Python 后端（消除 java 固化） | 草稿 |
 | fullstack | 前后端兼备 | 前后端一体仓 | 内置 |
-| frontend-spa | 纯前端应用（Vue3 范例） | 独立前端仓 / SPA | 草稿·需先补 vue3-frontend |
+| frontend-spa | 纯前端应用（Vue3 范例） | 独立前端仓 / SPA | 草稿（vue3-frontend 示例已内置） |
 | oss-library | 开源库 / SDK | 对外发布的库，Apache + CI release 门控 | 草稿 |
 | cli-tool | 内部 CLI / 自动化 | 轻量命令行工具 | 草稿 |
 | etl-data | 数据 / 批处理 | 数据管道 / 批处理仓（Python） | 草稿 |
@@ -69,7 +69,7 @@
 - must-have：Makefile 同时有 backend-* 与 frontend-*；CI 分后端与前端步；AGENTS 命令自洽。
 - golden：现有 e2e 覆盖主干，建议补 fullstack 专用 golden 锁参数。
 
-### F. frontend-spa 纯前端应用（Vue3 范例）【草稿·需先补 vue3-frontend 示例环节】
+### F. frontend-spa 纯前端应用（Vue3 范例）【草稿（vue3-frontend 示例已内置，2026-08 落地）】
 - 场景：独立前端 / SPA 仓（Vue3 + Vite + TS 目标）。
 - 环节（现状 foundation 可落地部分，按规范顺序）：agents-md(ts/node) + git-init(node) + git-conventions + docs-standards + coding-conventions + docker(runtime=static, exposePort=80) + makefile(lang=node) + ci-cd(hasFrontend=true hasBackend=false)。
 - 关键参数：git-init gitIgnorePreset=node；makefile lang=node；docker runtime=static；ci-cd 仅前端。
@@ -78,10 +78,10 @@
   - must-have（适合性）：1) 能 make dev 起 Vue3 dev server；2) CI 跑 lint+单测+build；3) 产物含 package.json 与 Vue3 源码骨架。
   - correct 断言：Makefile 有 node-dev/build/test/lint；ci.yml 含前端 install&build 步；hook bash -n 通过；nginx.conf 监听 80。
 - 当前结论（实测缺口）：
-  1) 无 vue3-frontend 示例环节 → 产物无 package.json/src/vite，make dev 与 docker build 会失败（只能算规范+CI+容器骨架，不算可运行 app）；
+  1) 已内置 vue3-frontend 示例栈（Vite+Vue3+TS+vitest）→ 组合可渲染出最小可运行 Vue3 应用（package.json/src/vite 齐备；make dev 前需 npm install）；
   2) frontend-only 的 ci.yml 没有 test 步（vitest 不进 CI）→ 需给 ci-cd 补前端 test 步。
-- 落地路径：先补 vue3-frontend 示例环节（M2），再按流程 P0-P6 落地本预设 + golden。
-- golden：待生成（需先有 vue3-frontend）。
+- 落地路径：vue3-frontend 已内置；按流程 P0-P6 把 frontend-spa 固化为内置预设 + golden。
+- golden：待生成（可用已跑通的 my-vue-app 渲染树为雏形，固化到 tests/fixtures/frontend-spa-golden/）。
 
 ### G. oss-library 开源库 / SDK【草稿】
 - 场景：对外发布库（npm/Maven/Go module），Apache + changelog + ADR + CI release 门控。
@@ -118,7 +118,7 @@
 | P0 | 落 base-conventions 内置种子 + golden（最贴近企业规范落地主张） | 无（现有环节够） |
 | P0 | 修 ci-cd：frontend-only 也跑 test 步 | ci-cd 模板 |
 | P1 | 落 backend-go / backend-python 语言族预设 + golden | docker go/python 已补（A4 完成） |
-| P1 | 补 vue3-frontend 示例环节，再落 frontend-spa + golden | 需新建示例环节（M2） |
+| P1 | 落 frontend-spa 内置预设 + golden（vue3-frontend 示例已内置） | 无（stage 已就绪） |
 | P2 | oss-library / cli-tool / etl-data 验收 + golden | 无 |
 | P2 | foundation / fullstack 补专用 golden | 无 |
 

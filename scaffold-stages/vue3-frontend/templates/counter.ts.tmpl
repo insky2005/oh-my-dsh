@@ -1,0 +1,14 @@
+export function useCounter(initial = 0) {
+  let count = initial
+  return {
+    get: () => count,
+    inc: () => {
+      count += 1
+      return count
+    },
+    reset: () => {
+      count = 0
+      return count
+    }
+  }
+}
