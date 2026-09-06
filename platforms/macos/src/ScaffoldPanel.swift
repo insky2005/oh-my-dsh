@@ -3821,9 +3821,11 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         guard parts.count == 2, let group = radioGroups[id],
               let stage = editors[parts[0]]?.stage,
               let param = stage.params.first(where: { $0.key == parts[1] }) else { return }
-        // 选项展示为本地化标签，值按索引取原始选项
-        if let selected = group.first(where: { $0.state == .on }), selected.tag >= 0, selected.tag < param.options.count {
-            params[parts[0], default: [:]][parts[1]] = param.options[selected.tag]
+        // 单选互斥：点中的选中、其余取消（普通 NSButton 不会自动互斥）；值以被点击项为准
+        for b in group { b.state = (b === sender) ? .on : .off }
+        let idx = sender.tag
+        if idx >= 0, idx < param.options.count {
+            params[parts[0], default: [:]][parts[1]] = param.options[idx]
         }
         refreshPlan()
     }
@@ -5306,9 +5308,11 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
               let stage = catalog.first(where: { $0.id == parts[0] }),
               let param = stage.params.first(where: { $0.key == parts[1] }),
               let group = presetEditSelectedEditors[parts[0]]?.radioGroups[sid] else { return }
-        guard let selected = group.first(where: { $0.state == .on }) else { return }
-        if selected.tag >= 0, selected.tag < param.options.count {
-            presetEditParamDefaults[parts[0], default: [:]][parts[1]] = param.options[selected.tag]
+        // 单选互斥：点中的选中、其余取消；值以被点击项为准
+        for b in group { b.state = (b === sender) ? .on : .off }
+        let idx = sender.tag
+        if idx >= 0, idx < param.options.count {
+            presetEditParamDefaults[parts[0], default: [:]][parts[1]] = param.options[idx]
         }
     }
 
