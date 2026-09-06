@@ -648,6 +648,7 @@ enum L10n {
         "scaffold.step.preview": ("预览与生成", "Preview & generate"),
         "scaffold.prev": ("上一步", "Back"),
         "scaffold.next": ("下一步", "Next"),
+        "scaffold.cancel": ("取消", "Cancel"),
         "scaffold.targetHint": ("给项目起名并选择存放位置，可一键套用预设组合。", "Name the project, pick a location — or apply a preset."),
         "scaffold.presetTitle": ("按目的预设 / Presets", "按目的预设 / Presets"),
         "scaffold.stagesHeader": ("环节（可多选）", "Stages (multi-select)"),

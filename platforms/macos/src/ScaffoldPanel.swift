@@ -2302,8 +2302,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     /// 工具栏行 / 步骤栏容器（设置视图激活时隐藏）。
     private var toolbarView: NSView?
     private var railView: NSView?
-    /// 步骤操作条（Back / Next / Generate），覆盖在各步骤内容底部；步骤1（当前项目）与设置视图隐藏。
-    private var actionBarView: DynamicFillView?
     private var toolbarUnderlineView: NSView?
     /// 设置视图激活时的 contentContainer 布局（顶/左切到全宽全高）。
     private var contentTopSettings: NSLayoutConstraint?
@@ -2353,7 +2351,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     private let fileOutline = NSOutlineView()
     private var fileTree: FileTreeNode?
 
-    // 底部导航（位于头部）
+    // 顶部导航（向导操作：取消 / 上一步 / 下一步·生成）
+    private let cancelButton = NSButton()
     private let prevButton = NSButton()
     private let nextButton = NSButton()
 
@@ -2602,6 +2601,14 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         nextButton.translatesAutoresizingMaskIntoConstraints = false
         nextButton.widthAnchor.constraint(equalToConstant: 88).isActive = true
 
+        cancelButton.title = L10n.tr("scaffold.cancel")
+        cancelButton.bezelStyle = .rounded
+        cancelButton.controlSize = .small
+        cancelButton.font = .systemFont(ofSize: 12)
+        cancelButton.target = self
+        cancelButton.action = #selector(cancelTapped(_:))
+        cancelButton.translatesAutoresizingMaskIntoConstraints = false
+
         let actions = NSStackView(views: [settingsButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
@@ -2647,7 +2654,13 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         updateConfigButton.font = .systemFont(ofSize: 12)
         updateConfigButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let toolbarStack = NSStackView(views: [newProjectButton, initProjectButton, updateConfigButton])
+        let navSep = NSBox()
+        navSep.boxType = .separator
+        navSep.translatesAutoresizingMaskIntoConstraints = false
+        navSep.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        navSep.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        // 顶部导航组集中在一处（取消 / 上一步 / 下一步·生成），其后为项目操作
+        let toolbarStack = NSStackView(views: [cancelButton, prevButton, nextButton, navSep, newProjectButton, initProjectButton, updateConfigButton])
         toolbarStack.orientation = .horizontal
         toolbarStack.spacing = 6
         toolbarStack.translatesAutoresizingMaskIntoConstraints = false
@@ -2761,35 +2774,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         buildPreviewStep()
         rebuildStepRail()
         buildSettingsViews()
-        // 步骤操作条（Back / Next / Generate）：置于各步骤内容底部（步骤1「当前项目」无此条）
-        let actionBar = DynamicFillView()
-        actionBar.kind = .control
-        actionBar.translatesAutoresizingMaskIntoConstraints = false
-        actionBar.wantsLayer = true
-        actionBar.layer?.masksToBounds = true
-        let actionSep = NSBox()
-        actionSep.boxType = .separator
-        actionSep.translatesAutoresizingMaskIntoConstraints = false
-        actionBar.addSubview(actionSep)
-        actionBar.addSubview(prevButton)
-        actionBar.addSubview(nextButton)
-        contentContainer.addSubview(actionBar)
-        actionBarView = actionBar
-        NSLayoutConstraint.activate([
-            actionSep.topAnchor.constraint(equalTo: actionBar.topAnchor),
-            actionSep.leadingAnchor.constraint(equalTo: actionBar.leadingAnchor),
-            actionSep.trailingAnchor.constraint(equalTo: actionBar.trailingAnchor),
-            actionSep.heightAnchor.constraint(equalToConstant: 1),
-            prevButton.leadingAnchor.constraint(equalTo: actionBar.leadingAnchor, constant: 14),
-            prevButton.centerYAnchor.constraint(equalTo: actionBar.centerYAnchor),
-            nextButton.trailingAnchor.constraint(equalTo: actionBar.trailingAnchor, constant: -14),
-            nextButton.centerYAnchor.constraint(equalTo: actionBar.centerYAnchor),
-            actionBar.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            actionBar.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            actionBar.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
-            actionBar.heightAnchor.constraint(equalToConstant: 36),
-        ])
-        actionBar.isHidden = true
         setStep(.workspace)
     }
 
@@ -3427,6 +3411,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     private func updateFooter() {
         prevButton.title = L10n.tr("scaffold.prev")
+        cancelButton.title = L10n.tr("scaffold.cancel")
         // 目标步骤的 Back 作为「取消/返回当前项目」：从向导任意步骤都能回到首页；
         // 回到首页即折叠步骤 2~5（见 prevTapped 的 hasEnteredWizard 复位）。
         prevButton.isEnabled = (currentStep != .workspace)
@@ -3444,8 +3429,15 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             nextButton.action = #selector(nextTapped(_:))
             nextButton.isEnabled = true
         }
-        // 步骤操作条仅向导步骤（2-5）显示；步骤1「当前项目」与设置视图隐藏
-        actionBarView?.isHidden = (currentStep == .workspace) || settingsActive
+        // 顶部导航按钮：向导步骤（2-5）可用；步骤1「当前项目」禁用
+        let inWizard = currentStep != .workspace
+        prevButton.isEnabled = inWizard
+        cancelButton.isEnabled = inWizard
+    }
+
+    @objc private func cancelTapped(_ sender: Any?) {
+        // 取消向导：回到步骤1「当前项目」并隐藏步骤 2-5
+        finishToWorkspaceHome()
     }
 
     @objc private func prevTapped(_ sender: Any?) {
@@ -4532,7 +4524,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         toolbarView?.isHidden = true
         railView?.isHidden = true
         toolbarUnderlineView?.isHidden = true
-        actionBarView?.isHidden = true
         for v in [workspaceStepView, targetStepView, stagesStepView, paramsStepView, previewStepView] {
             v?.isHidden = true
         }
