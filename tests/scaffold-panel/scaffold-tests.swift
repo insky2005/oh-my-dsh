@@ -841,6 +841,16 @@ let dfltPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["vue3-fron
                                   params: [:], projectName: "dv", parentDir: tmpDir("dflt"))
 let dflt = dfltPlan.entries.first { $0.path == "vue3-frontend/package.json" }
 check(dflt != nil, "vue3 e2e: default example dir is the stage-id subdir (vue3-frontend/package.json)")
+// registry 参数：cnpm → 生成含镜像的 .npmrc；system → 不生成
+let cnPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["vue3-frontend"],
+                                params: ["vue3-frontend": ["dir": "web2", "registry": "cnpm"]],
+                                projectName: "rc", parentDir: tmpDir("rc"))
+let cnEntry = cnPlan.entries.first { $0.path == "web2/.npmrc" }
+check(cnEntry?.content.contains("registry.npmmirror.com") == true, "vue3 e2e: registry=cnpm writes .npmrc with cnpm mirror")
+let sysPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["vue3-frontend"],
+                                 params: ["vue3-frontend": ["dir": "web3", "registry": "system"]],
+                                 projectName: "rs", parentDir: tmpDir("rs"))
+check(!sysPlan.entries.contains { $0.path == "web3/.npmrc" }, "vue3 e2e: registry=system writes no .npmrc")
 
 
 // MARK: - 端到端：java-backend 示例栈（Spring Boot 3 + Maven，输出到独立子目录 + 自带 Makefile）

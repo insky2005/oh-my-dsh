@@ -86,7 +86,7 @@
 
 ### 4.1 stage.yaml 要点
 - id: vue3-frontend，category: examples
-- params：dir（默认 vue3-frontend，safePath）、apiBase（默认 /api）、vitePort（默认 5173）
+- params：dir（默认 vue3-frontend，safePath）、registry（npmjs / cnpm / system，默认 npmjs；npmjs/cnpm 会在子目录生成 .npmrc 指向对应源，system 不生成）、apiBase（默认 /api）、vitePort（默认 5173）
 - 所有 file path = `{{dir}}/…`：Makefile / package.json / vite.config.ts / tsconfig.json / index.html / src/…
 
 ### 4.2 子 Makefile（转发 npm）

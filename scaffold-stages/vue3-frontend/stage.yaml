@@ -10,6 +10,11 @@ params:
     type: string
     default: vue3-frontend
     validate: safePath
+  - key: registry
+    label: { zh: npm registry（项目级 .npmrc）, en: npm registry (project .npmrc) }
+    type: select
+    options: [npmjs, cnpm, system]
+    default: npmjs
   - key: apiBase
     label: { zh: API 基础路径, en: API base path }
     type: string
@@ -20,6 +25,12 @@ params:
     default: "5173"
     validate: nonEmpty
 files:
+  - path: "{{dir}}/.npmrc"
+    template: templates/npmrc-npmjs.tmpl
+    if: registry=npmjs
+  - path: "{{dir}}/.npmrc"
+    template: templates/npmrc-cnpm.tmpl
+    if: registry=cnpm
   - path: "{{dir}}/Makefile"
     template: templates/Makefile.tmpl
   - path: "{{dir}}/package.json"
