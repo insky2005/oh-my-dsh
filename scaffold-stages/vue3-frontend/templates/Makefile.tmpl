@@ -1,0 +1,24 @@
+# {{projectSlug}} — Vue3 前端（本示例自带 Makefile，语言指令集中在这里）
+# 用法：cd {{dir}} && make <target>
+.PHONY: dev build preview test lint typecheck install
+
+dev:        ## 本地开发（vite dev server，端口 {{vitePort}}）
+	npm run dev
+
+build:      ## 类型检查 + 构建到 dist/
+	npm run build
+
+preview:    ## 预览构建产物
+	npm run preview
+
+test:       ## 单测（vitest）
+	npm test
+
+lint:       ## 类型检查（vue-tsc，作 lint 兜底）
+	npm run lint
+
+typecheck:  ## 类型检查
+	npm run typecheck
+
+install:    ## 安装依赖（首次生成 lockfile）
+	npm install

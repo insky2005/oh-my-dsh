@@ -819,7 +819,7 @@ let vuePlan = ScaffoldPlan.build(catalog: loadBuiltin(),
 check(vuePlan.isValid, "vue3 e2e: plan valid", (vuePlan.validationErrors + vuePlan.stageErrors).joined(separator: "; "))
 let vRoot = (vueDir as NSString).appendingPathComponent("my-vue")
 _ = ScaffoldApplier.apply(plan: vuePlan, options: ScaffoldApplier.Options(backupConflicts: true))
-for f in ["web/package.json", "web/vite.config.ts", "web/tsconfig.json", "web/index.html",
+for f in ["web/Makefile", "web/package.json", "web/vite.config.ts", "web/tsconfig.json", "web/index.html",
           "web/src/main.ts", "web/src/App.vue", "web/src/components/HelloWorld.vue", "web/src/env.d.ts",
           "web/src/api/client.ts", "web/src/lib/counter.ts", "web/src/lib/counter.spec.ts",
           "Makefile", ".github/workflows/ci.yml", "Dockerfile", "nginx.conf"] {
@@ -830,6 +830,8 @@ let vuePkg = read((vRoot as NSString).appendingPathComponent("web/package.json")
 check(vuePkg.contains("\"vue\":") && vuePkg.contains("\"dev\": \"vite\"") && vuePkg.contains("\"test\": \"vitest run\""),
       "vue3 e2e: package.json runnable (vue/vite/vitest)", vuePkg)
 check(!vuePkg.contains("{{") && !vuePkg.contains("{{{{"), "vue3 e2e: no renderer leftovers in package.json")
+let vueSubMk = read((vRoot as NSString).appendingPathComponent("web/Makefile"))
+check(vueSubMk.contains("npm run dev") && vueSubMk.contains(".PHONY"), "vue3 e2e: example has its own Makefile (language commands)", vueSubMk)
 let vueApp = read((vRoot as NSString).appendingPathComponent("web/src/App.vue"))
 check(vueApp.contains("<HelloWorld") && !vueApp.contains("{{{{"), "vue3 e2e: App.vue valid (no escaped braces leaked)")
 let vueDocker = read((vRoot as NSString).appendingPathComponent("Dockerfile"))

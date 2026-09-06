@@ -20,6 +20,8 @@ params:
     default: "5173"
     validate: nonEmpty
 files:
+  - path: "{{dir}}/Makefile"
+    template: templates/Makefile.tmpl
   - path: "{{dir}}/package.json"
     template: templates/package.json.tmpl
   - path: "{{dir}}/vite.config.ts"
