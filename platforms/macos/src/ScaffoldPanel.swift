@@ -2302,6 +2302,9 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     /// 工具栏行 / 步骤栏容器（设置视图激活时隐藏）。
     private var toolbarView: NSView?
     private var railView: NSView?
+    /// 步骤导航行（取消/上一步/下一步·生成），置于向导步骤(2-5)内容区顶部。
+    private var stepNavBar: DynamicFillView!
+    private var stepNavBarHeight: NSLayoutConstraint?
     private var toolbarUnderlineView: NSView?
     /// 设置视图激活时的 contentContainer 布局（顶/左切到全宽全高）。
     private var contentTopSettings: NSLayoutConstraint?
@@ -2654,13 +2657,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         updateConfigButton.font = .systemFont(ofSize: 12)
         updateConfigButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let navSep = NSBox()
-        navSep.boxType = .separator
-        navSep.translatesAutoresizingMaskIntoConstraints = false
-        navSep.widthAnchor.constraint(equalToConstant: 1).isActive = true
-        navSep.heightAnchor.constraint(equalToConstant: 18).isActive = true
-        // 顶部导航组集中在一处（取消 / 上一步 / 下一步·生成），其后为项目操作
-        let toolbarStack = NSStackView(views: [cancelButton, prevButton, nextButton, navSep, newProjectButton, initProjectButton, updateConfigButton])
+        // 工具栏仅保留项目操作；向导导航（取消/上一步/下一步·生成）置于各步骤内容区顶部的导航行
+        let toolbarStack = NSStackView(views: [newProjectButton, initProjectButton, updateConfigButton])
         toolbarStack.orientation = .horizontal
         toolbarStack.spacing = 6
         toolbarStack.translatesAutoresizingMaskIntoConstraints = false
@@ -2767,6 +2765,42 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         contentTopNormal?.isActive = true
         contentLeadingNormal?.isActive = true
 
+        // 步骤导航行：仅向导步骤(2-5)显示；置于内容区顶部，步骤内容在其下方
+        let stepNav = DynamicFillView()
+        stepNav.kind = .control
+        stepNav.translatesAutoresizingMaskIntoConstraints = false
+        stepNav.wantsLayer = true
+        stepNav.layer?.masksToBounds = true
+        let snSep = NSBox()
+        snSep.boxType = .separator
+        snSep.translatesAutoresizingMaskIntoConstraints = false
+        stepNav.addSubview(snSep)
+        stepNav.addSubview(cancelButton)
+        stepNav.addSubview(prevButton)
+        stepNav.addSubview(nextButton)
+        contentContainer.addSubview(stepNav)
+        stepNavBar = stepNav
+        NSLayoutConstraint.activate([
+            snSep.bottomAnchor.constraint(equalTo: stepNav.bottomAnchor),
+            snSep.leadingAnchor.constraint(equalTo: stepNav.leadingAnchor),
+            snSep.trailingAnchor.constraint(equalTo: stepNav.trailingAnchor),
+            snSep.heightAnchor.constraint(equalToConstant: 1),
+            cancelButton.leadingAnchor.constraint(equalTo: stepNav.leadingAnchor, constant: 14),
+            cancelButton.centerYAnchor.constraint(equalTo: stepNav.centerYAnchor),
+            prevButton.leadingAnchor.constraint(equalTo: cancelButton.trailingAnchor, constant: 8),
+            prevButton.centerYAnchor.constraint(equalTo: stepNav.centerYAnchor),
+            // 三键集中靠左成一组（不左右分开）
+            nextButton.leadingAnchor.constraint(equalTo: prevButton.trailingAnchor, constant: 8),
+            nextButton.centerYAnchor.constraint(equalTo: stepNav.centerYAnchor),
+            stepNav.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            stepNav.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            stepNav.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+        ])
+        let navH = stepNav.heightAnchor.constraint(equalToConstant: 0)
+        navH.isActive = true
+        stepNavBarHeight = navH
+        stepNav.isHidden = true
+
         buildWorkspaceStep()
         buildTargetStep()
         buildStagesStep()
@@ -2812,7 +2846,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         workspaceStepView = v
         contentContainer.addSubview(v)
         NSLayoutConstraint.activate([
-            v.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            v.topAnchor.constraint(equalTo: stepNavBar.bottomAnchor),
             v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             v.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
@@ -3151,7 +3185,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         targetStepView = v
         contentContainer.addSubview(v)
         NSLayoutConstraint.activate([
-            v.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            v.topAnchor.constraint(equalTo: stepNavBar.bottomAnchor),
             v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             v.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
@@ -3225,7 +3259,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         stagesStepView = v
         contentContainer.addSubview(v)
         NSLayoutConstraint.activate([
-            v.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            v.topAnchor.constraint(equalTo: stepNavBar.bottomAnchor),
             v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             v.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
@@ -3269,7 +3303,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         paramsStepView = v
         contentContainer.addSubview(v)
         NSLayoutConstraint.activate([
-            v.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            v.topAnchor.constraint(equalTo: stepNavBar.bottomAnchor),
             v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             v.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
@@ -3331,7 +3365,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         previewStepView = v
         contentContainer.addSubview(v)
         NSLayoutConstraint.activate([
-            v.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            v.topAnchor.constraint(equalTo: stepNavBar.bottomAnchor),
             v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             v.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
@@ -3429,10 +3463,17 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             nextButton.action = #selector(nextTapped(_:))
             nextButton.isEnabled = true
         }
-        // 顶部导航按钮：向导步骤（2-5）可用；步骤1「当前项目」禁用
+        updateStepNavBar()
+    }
+
+    /// 步骤导航行：向导步骤(2-5)固定显示在内容区顶部（高 34）；步骤1「当前项目」与设置视图隐藏（高 0）。
+    private func updateStepNavBar() {
+        let show = (currentStep != .workspace) && !settingsActive
+        stepNavBar.isHidden = !show
+        stepNavBarHeight?.constant = show ? 34 : 0
         let inWizard = currentStep != .workspace
-        prevButton.isEnabled = inWizard
         cancelButton.isEnabled = inWizard
+        prevButton.isEnabled = inWizard
     }
 
     @objc private func cancelTapped(_ sender: Any?) {
@@ -4520,6 +4561,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     private func showSettings() {
         settingsActive = true
+        updateStepNavBar()
         settingsButton?.showsBackground = true
         toolbarView?.isHidden = true
         railView?.isHidden = true
@@ -4551,6 +4593,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         contentTopNormal?.isActive = true
         contentLeadingSettings?.isActive = false
         contentLeadingNormal?.isActive = true
+        updateStepNavBar()
         if currentStep == .workspace { rebuildWorkspaceStep() }
         setStep(currentStep)
         updateStatus("")
