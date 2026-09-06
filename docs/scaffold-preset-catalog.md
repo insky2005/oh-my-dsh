@@ -77,8 +77,9 @@
 - 验收卡：
   - must-have（适合性）：1) 能 make dev 起 Vue3 dev server；2) CI 跑 lint+单测+build；3) 产物含 package.json 与 Vue3 源码骨架。
   - correct 断言：Makefile 有 node-dev/build/test/lint；ci.yml 含前端 install&build 步；hook bash -n 通过；nginx.conf 监听 80。
+- 布局：示例输出到项目下**独立子目录**（默认 = stage id，即 `vue3-frontend/`，可用 `dir` 参数改名如 `web/`），多个示例栈互不污染根目录。
 - 当前结论（实测缺口）：
-  1) 已内置 vue3-frontend 示例栈（Vite+Vue3+TS+vitest）→ 组合可渲染出最小可运行 Vue3 应用（package.json/src/vite 齐备；make dev 前需 npm install）；
+  1) 已内置 vue3-frontend 示例栈（Vite+Vue3+TS+vitest，输出到独立子目录）→ 组合可渲染出最小可运行 Vue3 应用（在子目录内 npm install 后 npm run dev/test）；
   2) frontend-only 的 ci.yml 没有 test 步（vitest 不进 CI）→ 需给 ci-cd 补前端 test 步。
 - 落地路径：vue3-frontend 已内置；按流程 P0-P6 把 frontend-spa 固化为内置预设 + golden。
 - golden：待生成（可用已跑通的 my-vue-app 渲染树为雏形，固化到 tests/fixtures/frontend-spa-golden/）。

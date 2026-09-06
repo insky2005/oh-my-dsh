@@ -813,25 +813,32 @@ let vuePlan = ScaffoldPlan.build(catalog: loadBuiltin(),
   params: ["agents-md": ["techSummary": "a Vue3 SPA"],
            "makefile": ["lang": "node"],
            "ci-cd": ["platform": "github-actions", "hasBackend": "false", "hasFrontend": "true"],
-           "docker": ["runtime": "static", "exposePort": "80", "healthzPath": "/healthz"]],
+           "docker": ["runtime": "static", "exposePort": "80", "healthzPath": "/healthz"],
+           "vue3-frontend": ["dir": "web"]],
   projectName: "my-vue", parentDir: vueDir)
 check(vuePlan.isValid, "vue3 e2e: plan valid", (vuePlan.validationErrors + vuePlan.stageErrors).joined(separator: "; "))
 let vRoot = (vueDir as NSString).appendingPathComponent("my-vue")
 _ = ScaffoldApplier.apply(plan: vuePlan, options: ScaffoldApplier.Options(backupConflicts: true))
-for f in ["package.json", "vite.config.ts", "tsconfig.json", "index.html",
-          "src/main.ts", "src/App.vue", "src/components/HelloWorld.vue", "src/env.d.ts",
-          "src/api/client.ts", "src/lib/counter.ts", "src/lib/counter.spec.ts",
+for f in ["web/package.json", "web/vite.config.ts", "web/tsconfig.json", "web/index.html",
+          "web/src/main.ts", "web/src/App.vue", "web/src/components/HelloWorld.vue", "web/src/env.d.ts",
+          "web/src/api/client.ts", "web/src/lib/counter.ts", "web/src/lib/counter.spec.ts",
           "Makefile", ".github/workflows/ci.yml", "Dockerfile", "nginx.conf"] {
   check(exists((vRoot as NSString).appendingPathComponent(f)), "vue3 e2e: \(f) exists")
 }
-let vuePkg = read((vRoot as NSString).appendingPathComponent("package.json"))
+check(!exists((vRoot as NSString).appendingPathComponent("src")), "vue3 e2e: example code NOT emitted at project root")
+let vuePkg = read((vRoot as NSString).appendingPathComponent("web/package.json"))
 check(vuePkg.contains("\"vue\":") && vuePkg.contains("\"dev\": \"vite\"") && vuePkg.contains("\"test\": \"vitest run\""),
       "vue3 e2e: package.json runnable (vue/vite/vitest)", vuePkg)
 check(!vuePkg.contains("{{") && !vuePkg.contains("{{{{"), "vue3 e2e: no renderer leftovers in package.json")
-let vueApp = read((vRoot as NSString).appendingPathComponent("src/App.vue"))
+let vueApp = read((vRoot as NSString).appendingPathComponent("web/src/App.vue"))
 check(vueApp.contains("<HelloWorld") && !vueApp.contains("{{{{"), "vue3 e2e: App.vue valid (no escaped braces leaked)")
 let vueDocker = read((vRoot as NSString).appendingPathComponent("Dockerfile"))
 check(vueDocker.contains("nginx.conf"), "vue3 e2e: static Dockerfile uses nginx.conf")
+// dir 参数默认 = stage id 子目录（vue3-frontend/package.json），用户可改
+let dfltPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["vue3-frontend"],
+                                  params: [:], projectName: "dv", parentDir: tmpDir("dflt"))
+let dflt = dfltPlan.entries.first { $0.path == "vue3-frontend/package.json" }
+check(dflt != nil, "vue3 e2e: default example dir is the stage-id subdir (vue3-frontend/package.json)")
 
 print("----")
 print("\(passed) passed, \(failures) failed")
