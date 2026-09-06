@@ -932,6 +932,10 @@ struct ScaffoldPlan {
                     context["\(param.key)Any"] = selected.isEmpty ? "false" : "true"
                 } else {
                     context["\(param.key)Empty"] = value.isEmpty ? "true" : "false"
+                    // javaPackage 类参数：派生 <key>Path（点号→斜杠），供源码包目录路径使用
+                    if param.validate == "javaPackage" {
+                        context["\(param.key)Path"] = value.replacingOccurrences(of: ".", with: "/")
+                    }
                 }
             }
         }

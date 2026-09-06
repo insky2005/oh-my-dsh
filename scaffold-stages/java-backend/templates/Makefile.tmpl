@@ -1,0 +1,21 @@
+# {{projectSlug}} — Java 后端（Spring Boot 3 + Maven）本示例自带 Makefile
+# 用法：cd {{dir}} && make <target>
+.PHONY: dev build test lint install run clean
+
+dev:     ## 本地开发（spring-boot:run，端口 {{port}}）
+	mvn spring-boot:run
+
+build:   ## 打包（跳过测试；要跑测试用 test）
+	mvn -q -DskipTests package
+
+test:    ## 单测（@WebMvcTest）
+	mvn -q test
+
+lint:    ## 以编译作为 lint 兜底
+	mvn -q compile
+
+install: ## 拉取依赖（离线可用）
+	mvn -q dependency:go-offline
+
+run:     ## 运行已打好的 jar
+	java -jar target/*.jar

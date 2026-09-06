@@ -41,6 +41,7 @@
 - default = 本环节 id（如 vue3-frontend），便于多示例时一眼区分；用户可在参数里改成 web / app 等。
 - validate：safePath（拒绝 ../ 、绝对路径），避免目录穿越。
 - 该环节所有产出文件 path **一律以 `{{dir}}/` 为前缀**。
+- Java 包名 → 目录：引擎对 `validate: javaPackage` 的 string 参数会自动派生 `<key>Path`（点号→斜杠），源码路径用它（如 `{{dir}}/src/main/java/{{packageNamePath}}/Application.java`）。
 
 ### 2.3 自带 Makefile（关键）
 - 在子目录内生成一个 `Makefile`（path = `{{dir}}/Makefile`），把**该语言命令**收口：
@@ -105,11 +106,11 @@ dev/build/preview/typecheck/lint/test/test:watch 齐全，与子 Makefile 一一
 
 ---
 
-## 5. 未来示例对照（复用同一模式）
+## 5. 示例对照（范本 + 未来，复用同一模式）
 
 | 示例 | 默认子目录 | 自带 Makefile 主要命令 |
 |---|---|---|
-| java-backend（未来） | backend/ 或 java-backend/ | mvn spring-boot:run / mvn package / mvn test |
+| java-backend（已落地·范本二，2026-08） | 默认 java-backend/（可改 backend/） | mvn spring-boot:run / mvn -q package / mvn -q test |
 | go-backend（未来） | backend/ 或 go-backend/ | go run . / go build / go test ./... |
 | python-api（未来） | api/ 或 python-api/ | uvicorn / pytest / ruff |
 

@@ -348,9 +348,9 @@ let jenkinsParams: [String: [String: String]] = [
 let jenkinsPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["ci-cd", "makefile"],
                                      params: jenkinsParams, projectName: "ci-app", parentDir: jenkinsDir)
 check(jenkinsPlan.isValid, "jenkins: plan valid", (jenkinsPlan.validationErrors + jenkinsPlan.stageErrors).joined(separator: "; "))
-let jRoot = (jenkinsDir as NSString).appendingPathComponent("ci-app")
+let javRoot = (jenkinsDir as NSString).appendingPathComponent("ci-app")
 _ = ScaffoldApplier.apply(plan: jenkinsPlan, options: ScaffoldApplier.Options(backupConflicts: true))
-let jenkinsfile = read((jRoot as NSString).appendingPathComponent("Jenkinsfile"))
+let jenkinsfile = read((javRoot as NSString).appendingPathComponent("Jenkinsfile"))
 check(jenkinsfile.contains("pipeline {"), "jenkins: declarative pipeline")
 check(jenkinsfile.contains("agent { label 'linux' }"), "jenkins: agent label placeholder", jenkinsfile)
 check(jenkinsfile.contains("stage('Lint')") && jenkinsfile.contains("stage('Test')") && jenkinsfile.contains("stage('Build')"),
@@ -361,8 +361,8 @@ check(!jenkinsfile.contains("password = '"), "jenkins: no inline secret pattern"
 check(jenkinsfile.contains("params.PUBLISH"), "jenkins: publish gated by param (default off)")
 check(jenkinsfile.contains("archiveArtifacts"), "jenkins: post.always archives")
 check(jenkinsfile.contains("timestamps()") && jenkinsfile.contains("disableConcurrentBuilds()"), "jenkins: options")
-check(!exists((jRoot as NSString).appendingPathComponent(".gitlab-ci.yml")), "jenkins: no gitlab-ci")
-check(!exists((jRoot as NSString).appendingPathComponent(".github/workflows/ci.yml")), "jenkins: no gh ci")
+check(!exists((javRoot as NSString).appendingPathComponent(".gitlab-ci.yml")), "jenkins: no gitlab-ci")
+check(!exists((javRoot as NSString).appendingPathComponent(".github/workflows/ci.yml")), "jenkins: no gh ci")
 
 // MARK: - 端到端：git-conventions enforce=true（10.1）
 
@@ -841,6 +841,31 @@ let dfltPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["vue3-fron
                                   params: [:], projectName: "dv", parentDir: tmpDir("dflt"))
 let dflt = dfltPlan.entries.first { $0.path == "vue3-frontend/package.json" }
 check(dflt != nil, "vue3 e2e: default example dir is the stage-id subdir (vue3-frontend/package.json)")
+
+
+// MARK: - 端到端：java-backend 示例栈（Spring Boot 3 + Maven，输出到独立子目录 + 自带 Makefile）
+let jbDir = tmpDir("java")
+let jbPlan = ScaffoldPlan.build(catalog: loadBuiltin(), selection: ["java-backend"],
+                               params: ["java-backend": ["dir": "backend", "packageName": "com.acme.api"]],
+                               projectName: "svc", parentDir: jbDir)
+check(jbPlan.isValid, "java e2e: plan valid", (jbPlan.validationErrors + jbPlan.stageErrors).joined(separator: "; "))
+let jbRoot = (jbDir as NSString).appendingPathComponent("svc")
+_ = ScaffoldApplier.apply(plan: jbPlan, options: ScaffoldApplier.Options(backupConflicts: true))
+for f in ["backend/Makefile", "backend/pom.xml",
+          "backend/src/main/resources/application.yml",
+          "backend/src/main/java/com/acme/api/Application.java",
+          "backend/src/main/java/com/acme/api/HealthController.java",
+          "backend/src/test/java/com/acme/api/HealthControllerTest.java"] {
+  check(exists((jbRoot as NSString).appendingPathComponent(f)), "java e2e: \(f) exists")
+}
+check(!exists((jbRoot as NSString).appendingPathComponent("src")), "java e2e: no java emitted at project root")
+let jbMk = read((jbRoot as NSString).appendingPathComponent("backend/Makefile"))
+check(jbMk.contains("mvn spring-boot:run") && jbMk.contains("mvn -q test"), "java e2e: backend Makefile has maven targets", jbMk)
+let jbPom = read((jbRoot as NSString).appendingPathComponent("backend/pom.xml"))
+check(jbPom.contains("<artifactId>svc</artifactId>") && jbPom.contains("<java.version>17</java.version>"),
+      "java e2e: pom artifactId/javaVersion rendered", jbPom)
+let jbApp = read((jbRoot as NSString).appendingPathComponent("backend/src/main/java/com/acme/api/Application.java"))
+check(jbApp.contains("package com.acme.api;") && !jbApp.contains("{{"), "java e2e: source package rendered, no renderer leftovers", jbApp)
 
 print("----")
 print("\(passed) passed, \(failures) failed")

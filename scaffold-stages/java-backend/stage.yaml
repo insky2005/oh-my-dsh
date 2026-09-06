@@ -1,0 +1,45 @@
+id: java-backend
+name: { zh: Java 后端（Spring Boot 3 + Maven）, en: Java Backend (Spring Boot 3 + Maven) }
+category: examples
+description:
+  zh: 最小可运行的 Spring Boot 3 + Maven 后端（含 /healthz 与 @WebMvcTest 单测）；输出到项目下独立子目录
+  en: Minimal runnable Spring Boot 3 + Maven backend (/healthz + @WebMvcTest); emitted into its own subdir
+params:
+  - key: dir
+    label: { zh: 子目录（相对项目根）, en: Subdirectory (relative to project root) }
+    type: string
+    default: java-backend
+    validate: safePath
+  - key: packageName
+    label: { zh: Java 包名, en: Java package }
+    type: string
+    default: com.example.backend
+    validate: javaPackage
+  - key: groupId
+    label: { zh: Maven groupId, en: Maven groupId }
+    type: string
+    default: com.example
+    validate: javaPackage
+  - key: javaVersion
+    label: { zh: Java 版本, en: Java version }
+    type: select
+    options: ["17", "21"]
+    default: "17"
+  - key: port
+    label: { zh: 服务端口, en: Service port }
+    type: string
+    default: "8080"
+    validate: nonEmpty
+files:
+  - path: "{{dir}}/Makefile"
+    template: templates/Makefile.tmpl
+  - path: "{{dir}}/pom.xml"
+    template: templates/pom.xml.tmpl
+  - path: "{{dir}}/src/main/resources/application.yml"
+    template: templates/application.yml.tmpl
+  - path: "{{dir}}/src/main/java/{{packageNamePath}}/Application.java"
+    template: templates/Application.java.tmpl
+  - path: "{{dir}}/src/main/java/{{packageNamePath}}/HealthController.java"
+    template: templates/HealthController.java.tmpl
+  - path: "{{dir}}/src/test/java/{{packageNamePath}}/HealthControllerTest.java"
+    template: templates/HealthControllerTest.java.tmpl
