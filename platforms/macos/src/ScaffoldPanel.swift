@@ -3791,7 +3791,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             techSummaryLocked = true
         }
         params[parts[0], default: [:]][parts[1]] = sender.stringValue
-        refreshPlan()
+        editors[parts[0]]?.updateRequiredHighlights()
+        refreshPlan(rebuildParams: false)
     }
 
     @objc private func paramSelectChanged(_ sender: NSPopUpButton) {
@@ -3804,7 +3805,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         if idx >= 0, idx < param.options.count {
             params[parts[0], default: [:]][parts[1]] = param.options[idx]
         }
-        refreshPlan()
+        refreshPlan(rebuildParams: false)
     }
 
     @objc private func paramBoolChanged(_ sender: NSButton) {
@@ -3812,7 +3813,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         let parts = id.split(separator: ".", maxSplits: 1).map(String.init)
         guard parts.count == 2 else { return }
         params[parts[0], default: [:]][parts[1]] = (sender.state == .on) ? "true" : "false"
-        refreshPlan()
+        editors[parts[0]]?.updateRequiredHighlights()
+        refreshPlan(rebuildParams: false)
     }
 
     @objc private func paramRadioChanged(_ sender: NSButton) {
@@ -3827,7 +3829,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         if idx >= 0, idx < param.options.count {
             params[parts[0], default: [:]][parts[1]] = param.options[idx]
         }
-        refreshPlan()
+        refreshPlan(rebuildParams: false)
     }
 
     @objc private func paramMultiChanged(_ sender: NSButton) {
@@ -3840,7 +3842,8 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             (b.state == .on && idx < param.options.count) ? param.options[idx] : nil
         }
         params[parts[0], default: [:]][parts[1]] = chosen.joined(separator: " ")
-        refreshPlan()
+        editors[parts[0]]?.updateRequiredHighlights()
+        refreshPlan(rebuildParams: false)
     }
 
 
@@ -3944,7 +3947,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     // MARK: 规划与预览
 
-    private func refreshPlan() {
+    private func refreshPlan(rebuildParams: Bool = true) {
         projectName = projectNameField.stringValue
         // 项目简介在步骤 1 填写，作为 AGENTS.md techSummary 的默认值；
         // 一旦用户在步骤 3 独立改过（techSummaryLocked），就不再覆盖。
@@ -3962,7 +3965,9 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         projectSummaryLabel?.textColor = summaryEmpty ? .systemRed : .secondaryLabelColor
         updateStagesHeader()
         updateParamsHeader()
-        rebuildParamsStep()
+        // 参数值变化时不重建表单（避免反复拆装控件导致 radio 状态被打回/NSStackView 崩溃）；
+        // 仅在步骤/选择变化等场景重建（rebuildParams 默认 true）。
+        if rebuildParams { rebuildParamsStep() }
         rebuildPreview(p)
         updateGenerateEnabled(p)
         updateStepRail()
