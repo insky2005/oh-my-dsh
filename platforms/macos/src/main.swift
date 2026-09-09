@@ -1437,6 +1437,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Where a check→download→apply round was started (drives how "Later" and
     /// the throttle behave).
     enum UpgradeOrigin { case manual, auto }
+    /// Test hook: when DSH_AUTO_UPGRADE_NOW=1, the auto-upgrade runs on every
+    /// launch (throttle ignored) and never writes a next-run timestamp, so the
+    /// flow can be exercised repeatedly without clearing UserDefaults.
+    private var forceAutoUpgradeNow: Bool {
+        ProcessInfo.processInfo.environment["DSH_AUTO_UPGRADE_NOW"] == "1"
+    }
     private var previewToggleMenuItem: NSMenuItem?
     private var terminalToggleMenuItem: NSMenuItem?
     private var wikiToggleMenuItem: NSMenuItem?
@@ -2586,6 +2592,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// a brief-session quit before a round completes does not consume the
     /// window and the next launch retries.
     private func deferAutoUpgrade(by delay: TimeInterval) {
+        // When force-testing (DSH_AUTO_UPGRADE_NOW=1) leave the throttle alone so
+        // every launch re-checks; otherwise persist the next-run delay.
+        guard !forceAutoUpgradeNow else { return }
         UserDefaults.standard.set(Date().timeIntervalSince1970 + delay, forKey: "nextAutoUpgradeCheck")
     }
 
@@ -2610,7 +2619,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func scheduleAutoUpgradeIfNeeded() {
         guard autoUpgradeEnabled(), !upgradeInFlight else { return }
         let nextAt = UserDefaults.standard.double(forKey: "nextAutoUpgradeCheck")
-        guard Date().timeIntervalSince1970 >= nextAt else { return }
+        guard forceAutoUpgradeNow || Date().timeIntervalSince1970 >= nextAt else { return }
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self, let updater = self.currentUpdater(),
