@@ -820,6 +820,27 @@ final class ServerManager {
         return body.contains("__DSH_BOOT__")
     }
 
+    /// Parse the self-advertised entry URL a spawned dsh web prints to its log,
+    /// e.g. "dsh web: http://127.0.0.1:<port>/?token=…". Returns nil until the
+    /// line appears. Handles token and tokenless forms (whatever dsh advertises,
+    /// we load exactly that URL so token-auth'd versions work).
+    private func servedEntryURL(logPath: String, port: Int) -> URL? {
+        guard let text = try? String(contentsOfFile: logPath, encoding: .utf8) else { return nil }
+        let needle = "http://127.0.0.1:\(port)"
+        for line in text.split(separator: "\n") {
+            let s = String(line)
+            guard let range = s.range(of: needle) else { continue }
+            var tail = String(s[range.lowerBound...])
+            if let sp = tail.firstIndex(where: { $0 == " " || $0 == "\t" || $0 == ")" }) {
+                tail = String(tail[..<sp])
+            }
+            if let u = URL(string: tail), (u.scheme == "http" || u.scheme == "https") {
+                return u
+            }
+        }
+        return nil
+    }
+
     private func httpGet(_ url: URL, timeout: TimeInterval) -> Data? {
         let semaphore = DispatchSemaphore(value: 0)
         var result: Data?
@@ -1213,31 +1234,42 @@ final class ServerManager {
             process = proc
             spawned = true
 
-            // 5. Poll until the UI is served.
+            // 5. Poll until the UI is served. dsh web (since 0.1.2-rc.1) prints the
+            //    address it is serving on, including its per-instance token, e.g.
+            //    "dsh web: http://127.0.0.1:<port>/?token=...". We load exactly that
+            //    advertised URL so token-auth'd dsh works; for versions that don't
+            //    print one we fall back to the legacy __DSH_BOOT__ probe.
+            var servedURL: URL?
             var failed = false
             let deadline = Date().addingTimeInterval(90)
-            while Date() < deadline {
-                if isDSHServing(port: port, timeout: 1) {
-                    // Settle: a too-old node can briefly serve the boot shell
-                    // (which carries __DSH_BOOT__) and then crash while loading
-                    // the plugin tree. Require the server AND process to still
-                    // be alive a moment later before declaring it up.
+            while Date() < deadline && !failed {
+                if let advertised = servedEntryURL(logPath: logPath, port: port) {
+                    // Settle: require the process to still be alive a moment later
+                    // (a too-old node can briefly serve then crash while loading the
+                    // plugin tree).
                     Thread.sleep(forTimeInterval: 1.0)
-                    if proc.isRunning && isDSHServing(port: port, timeout: 1) {
-                        refreshFacts(node: node)
-                        AppLog.shared.log("dsh web is up on 127.0.0.1:\(port) (node=\(node))")
-                        return URL(string: "http://127.0.0.1:\(port)")!
+                    if proc.isRunning {
+                        servedURL = advertised
+                        break
                     }
                     failed = true
-                    break
-                }
-                if !proc.isRunning {
+                } else if isDSHServing(port: port, timeout: 1) {
+                    Thread.sleep(forTimeInterval: 1.0)
+                    if proc.isRunning && isDSHServing(port: port, timeout: 1) {
+                        servedURL = URL(string: "http://127.0.0.1:\(port)")!
+                        break
+                    }
                     failed = true
-                    break
                 }
-                Thread.sleep(forTimeInterval: 0.5)
+                if !proc.isRunning { failed = true }
+                if !failed { Thread.sleep(forTimeInterval: 0.5) }
             }
-            if !failed && !isDSHServing(port: port, timeout: 1) { failed = true }
+            if let servedURL = servedURL, proc.isRunning {
+                refreshFacts(node: node)
+                AppLog.shared.log("dsh web is up on \(servedURL.absoluteString) (node=\(node))")
+                return servedURL
+            }
+            failed = true
 
             if failed, node != explicitNode, let bundled, node != bundled {
                 // OS node failed to boot dsh web; the bundled runtime is the
