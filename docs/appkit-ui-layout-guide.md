@@ -128,6 +128,11 @@ settingsDoc 引用 + 重建列表后异步回填。
 **必须**驱动 doc 高度，否则「看得见点不到」。把这段封装成公共 helper，不要每处复制
 （见 §7 待办）。
 
+**宽度补充**：仅回填高度还不够——documentView 自身**无宽度约束**时会被
+Auto Layout 收窄成内容的拟合宽度（列表行/卡片只占可见区 ~40%）。做法：把 doc 的
+widthAnchor 钉到 `scroll.contentView.widthAnchor`（全宽），再让内容行
+`widthAnchor == stack.widthAnchor`（stack 已等于 doc 宽）即整行铺满。
+
 ---
 
 ## 4. 可复用 / 反直觉的模式速查
@@ -140,6 +145,7 @@ settingsDoc 引用 + 重建列表后异步回填。
 | 系统控件约束 | autoresizing 默认 true | 工厂统一设 false |
 | 首次嵌入 | 显示瞬间塞子视图 | 先 layout 或父容器加裁剪 |
 | 滚动 doc 高度 | fittingSize 不自动 | 手动回填 doc frame |
+| 滚动 doc 宽度 | doc 无宽度约束被收窄成内容宽 | doc.width == scroll.contentView.width |
 | 行宽拉伸 | 约束不撑满 | 子视图 widthAnchor == stack.widthAnchor |
 
 ---
