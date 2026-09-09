@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **恢复 dsh 0.1.2-rc.1 下的会话 workspace / 项目目录读取（DSHSessionRPC）**：0.1.2-rc.1 移除并改了 /api/session.list（改为 token + 控制器 RPC），壳层读当前会话 cwd/workspace 会 401/404 而失败。修复为当 live API 取不到时，回退读取 dsh 持久化的 $DSH_HOME/storages/workspace.json（磁盘、无需鉴权）：按 sessionId 找到所属 workspace 的 path，否则取最近更新的 workspace path，用于终端/预览/wiki/tasks 的项目目录定位。
 - **适配 dsh 0.1.2-rc.1 的 Web token 鉴权（升级到该版本后启动失败）**：dsh 0.1.2-rc.1 起给 Web 界面加了每实例 token + cookie 鉴权，裸 GET 根路径返回 401、无 __DSH_BOOT__，而 oh-my-dsh 原先用裸 GET 根路径判就绪、并直接加载根路径，导致升级到 0.1.2-rc.1 后 App 判定「dsh web 启动失败」。修复为：启动时读取 dsh web 自己打印的服务地址（含 token，来自其日志行 dsh web: http://127.0.0.1:<port>/?token=...），据此做就绪判定，webView 也直接加载该带 token 地址（WKWebView 跟随 303 种 cookie 后正常显示）；无 token 的旧版本回退到原 __DSH_BOOT__ 探测。见 ServerManager.start() / servedEntryURL()。
 - **自动升级节流时间戳改为「本轮跑完才写」+「稍后提醒」**：不再在开始检测时就消耗 24h 窗口（秒退/中途退出不会吞掉窗口，下次启动会重试）；自动检测下载完成后若用户选「稍后」，则把下次自动检查推到约 2 小时后并定时提醒，用户仍可随时手动升级；离线/下载失败按 ~2h 重试，无需升级/已升级按 ~24h 节流。
 - **开发版（DSH_DEV_BUILD=1）运行隔离**：开发版构建现在自拉起**独立 dsh 实例**（不复用已在 3080 运行的实例，3080 被占时自动取空闲端口），并使用**独立 DSH_HOME（默认 ~/.dsh-dev）**，使 dsh 会话/配置/skills/channel 与正式 ~/.dsh 完全隔离；同时错开 CEF CDP（9333→9433）与 Browser API（3081→4081）端口，可与正式版并存测试（均尊重用户显式 DSH_HOME / DSH_CDP_PORT / DSH_BROWSER_PORT 覆盖）。旧开发版 CEF profile ~/.dsh/browser-dev 会**自动迁移**到新隔离目录 ~/.dsh-dev/browser-dev（幂等，目标已存在则跳过）。shell 侧 channel token 读写路径统一改为按 $DSH_HOME 解析，开发版不再写入正式 ~/.dsh。

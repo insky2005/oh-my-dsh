@@ -1335,6 +1335,52 @@ enum ProjectDirectory {
 /// `client-request` envelope). Used by the preview panel's project tree, the
 /// terminal panel's session start directory and the wiki root.
 enum DSHSessionRPC {
+    /// dsh data home for on-disk state (env DSH_HOME or ~/.dsh).
+    private static func dataHome() -> String {
+        if let h = ProcessInfo.processInfo.environment["DSH_HOME"],
+           !h.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return h.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return (NSHomeDirectory() as NSString).appendingPathComponent(".dsh")
+    }
+
+    /// dsh 0.1.2+ persists workspaces (path + member sessions) under
+    /// $DSH_HOME/storages/workspace.json. Read it to recover a session's project
+    /// directory without hitting the live API (now token + controller RPC, and no
+    /// longer serving /api/session.list). With a sessionId, returns the path of a
+    /// workspace containing it; otherwise the most recently updated existing one.
+    static func persistedWorkspacePath(sessionId: String?) -> String? {
+        let file = (dataHome() as NSString).appendingPathComponent("storages/workspace.json")
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: file)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tables = json["tables"] as? [String: Any],
+              let ws = tables["workspaces"] as? [String: Any] else { return nil }
+        let fm = FileManager.default
+        if let sid = sessionId, !sid.isEmpty {
+            var bestPath: String?
+            var bestUp = ""
+            for (_, v) in ws {
+                guard let w = v as? [String: Any],
+                      (w["sessionIds"] as? [String])?.contains(sid) == true,
+                      let path = w["path"] as? String,
+                      !path.isEmpty, fm.fileExists(atPath: path) else { continue }
+                let up = w["updatedAt"] as? String ?? ""
+                if up >= bestUp { bestUp = up; bestPath = path }
+            }
+            if let bestPath { return bestPath }
+        }
+        var bestPath2: String?
+        var bestUp2 = ""
+        for (_, v) in ws {
+            guard let w = v as? [String: Any],
+                  let path = w["path"] as? String,
+                  !path.isEmpty, fm.fileExists(atPath: path) else { continue }
+            let up = w["updatedAt"] as? String ?? ""
+            if up >= bestUp2 { bestUp2 = up; bestPath2 = path }
+        }
+        return bestPath2
+    }
+
 
     /// Query `session.list` and pick the most relevant session's working
     /// directory — running sessions first, then the most recently updated
@@ -1386,6 +1432,9 @@ enum DSHSessionRPC {
         task.resume()
         _ = semaphore.wait(timeout: .now() + timeout + 1)
         task.cancel()
+        // dsh 0.1.2+ removed /api/session.list (token + controller RPC): a nil
+        // here is the norm, so fall back to the persisted workspace store.
+        if result == nil { result = persistedWorkspacePath(sessionId: nil) }
         return result
     }
 
@@ -1421,6 +1470,9 @@ enum DSHSessionRPC {
         task.resume()
         _ = semaphore.wait(timeout: .now() + timeout + 1)
         task.cancel()
+        // dsh 0.1.2+ no longer serves /api/session.list: fall back to the persisted
+        // workspace store, mapping the session id to its containing workspace.
+        if result == nil { result = persistedWorkspacePath(sessionId: sessionId) }
         return result
     }
 
