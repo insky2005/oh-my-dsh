@@ -15,6 +15,7 @@ All notable changes to this project are documented in this file. Format follows
 ### Fixed
 
 - **自动升级节流时间戳改为「本轮跑完才写」+「稍后提醒」**：不再在开始检测时就消耗 24h 窗口（秒退/中途退出不会吞掉窗口，下次启动会重试）；自动检测下载完成后若用户选「稍后」，则把下次自动检查推到约 2 小时后并定时提醒，用户仍可随时手动升级；离线/下载失败按 ~2h 重试，无需升级/已升级按 ~24h 节流。
+- **开发版（DSH_DEV_BUILD=1）运行隔离**：开发版构建现在自拉起**独立 dsh 实例**（不复用已在 3080 运行的实例，3080 被占时自动取空闲端口），并使用**独立 DSH_HOME（默认 ~/.dsh-dev）**，使 dsh 会话/配置/skills/channel 与正式 ~/.dsh 完全隔离；同时错开 CEF CDP（9333→9433）与 Browser API（3081→4081）端口，可与正式版并存测试（均尊重用户显式 DSH_HOME / DSH_CDP_PORT / DSH_BROWSER_PORT 覆盖）。旧开发版 CEF profile ~/.dsh/browser-dev 会**自动迁移**到新隔离目录 ~/.dsh-dev/browser-dev（幂等，目标已存在则跳过）。shell 侧 channel token 读写路径统一改为按 $DSH_HOME 解析，开发版不再写入正式 ~/.dsh。
 - **自动升级进行中「检查并升级 dsh」菜单置灰**：当自动升级开启且后台正在检测/下载/安装时，Settings 菜单里的「检查并升级 dsh…(⌘U)」自动置灰不可点，避免与自动流程并发；手动流程下载/安装期间同样置灰。Settings 窗口内按钮在忙碌时点按会提示「已有升级流程正在进行」。
 - **升级流程不再用全窗口状态浮层盖住整个界面**：手动/自动「检查、下载、安装」阶段均在后台静默执行，不再调用会铺满主窗口（白底+转圈）的 showStatus 浮层，避免点 Settings 的 Check & Upgrade 时整个 App 闪屏；只在每步完成时弹确认/结果框（真正重启服务那一下仍走启动浮层）。
 

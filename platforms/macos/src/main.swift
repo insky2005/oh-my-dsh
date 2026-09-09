@@ -1556,6 +1556,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Apply the persisted appearance before any window is created, so the
         // first frame already uses the right theme (no flash of the default).
         AppTheme.apply()
+        // 开发版隔离（独立实例 + 独立 DSH_HOME + 错开端口）须在 dsh web / CEF / skills
+        // / channel 启动前注入环境变量。
+        applyDevIsolation()
         installSignalHandlers()
         buildMenu()
         AppLog.shared.log("launch: menu built")
@@ -3573,7 +3576,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             completion(false)
             return
         }
-        let dshHome = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh")
+        let dshHome = dshDataHome
         let savePath = ((dshHome as NSString).appendingPathComponent("channels") as NSString).appendingPathComponent(channelId + ".json")
         try? FileManager.default.createDirectory(atPath: (dshHome as NSString).appendingPathComponent("channels"), withIntermediateDirectories: true)
 
@@ -3712,7 +3715,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Unbind a channel: stop its runner and remove its local channel files.
     private func unbindChannel(channelId: String) {
         stopChannelRunner(channelId: channelId)
-        let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/channels")
+        let dir = (dshDataHome as NSString).appendingPathComponent("channels")
         let fm = FileManager.default
         if let files = try? fm.contentsOfDirectory(atPath: dir) {
             for f in files where f.hasPrefix(channelId) {
@@ -3727,6 +3730,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// 资源（端口 / channel runner 等），都以 isDevBuild 为入口在此处快速追加覆盖项。
     private var isDevBuild: Bool {
         (Bundle.main.object(forInfoDictionaryKey: "DSHDevBuild") as? String) == "1"
+    }
+
+    /// 开发版运行隔离（DSH_DEV_BUILD=1 打包，Info.plist 写入 DSHDevBuild=1）。
+    /// 让开发版与已安装正式版并存测试而不互相干扰：
+    ///   1. 独立 dsh 实例 —— 强制自拉起（DSH_NATIVE_FORCE_SPAWN=1），不复用已在
+    ///      127.0.0.1:3080 运行的 dsh web；3080 被占时自动取空闲端口。
+    ///   2. 独立运行空间 —— 默认用 ~/.dsh-dev 作 DSH_HOME（用户显式设 DSH_HOME 时
+    ///      尊重覆盖），使 dsh 的会话/配置/skills/channel 与正式 ~/.dsh 完全隔离。
+    ///   3. 错开固定端口 —— CEF CDP 默认 9333→9433、Browser API 默认 3081→4081
+    ///      （均尊重用户显式覆盖），可与正式版同时运行。
+    /// 通过 setenv 注入，dsh web 子进程与各按 $DSH_HOME 解析的组件自动落到 dev 目录。
+    private func applyDevIsolation() {
+        guard isDevBuild else { return }
+        let env = ProcessInfo.processInfo.environment
+        // 1) 独立 DSH_HOME（尊重显式覆盖）
+        let explicitHome = env["DSH_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if explicitHome.isEmpty {
+            let devHome = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh-dev")
+            setenv("DSH_HOME", devHome, 1)
+            // 旧开发版把 CEF profile 放在 ~/.dsh/browser-dev；迁到新隔离目录保留数据。
+            migrateLegacyDevBrowserProfile(toHome: devHome)
+        }
+        // 2) 不复用已启动实例
+        if env["DSH_NATIVE_FORCE_SPAWN"] != "1" {
+            setenv("DSH_NATIVE_FORCE_SPAWN", "1", 1)
+        }
+        // 3) 错开 CEF CDP / Browser API 端口（尊重显式覆盖）
+        if env["DSH_CDP_PORT"].flatMap({ Int($0) }) == nil {
+            setenv("DSH_CDP_PORT", "9433", 1)
+        }
+        if env["DSH_BROWSER_PORT"].flatMap({ Int($0) }) == nil {
+            setenv("DSH_BROWSER_PORT", "4081", 1)
+        }
+        let e = ProcessInfo.processInfo.environment
+        AppLog.shared.log("dev isolation: DSH_HOME=\(e["DSH_HOME"] ?? "?") forceSpawn=\(e["DSH_NATIVE_FORCE_SPAWN"] ?? "-") cdp=\(e["DSH_CDP_PORT"] ?? "?") browserApi=\(e["DSH_BROWSER_PORT"] ?? "?")")
+    }
+
+    /// 迁移旧开发版（隔离前）在共享 ~/.dsh 下创建的 CEF profile（~/.dsh/browser-dev）
+    /// 到新的开发隔离目录 ~/.dsh-dev/browser-dev，保留既有浏览器数据。幂等：
+    /// 源不存在或目标已存在（已迁过/已有新数据）则跳过，避免覆盖。
+    private func migrateLegacyDevBrowserProfile(toHome devHome: String) {
+        let fm = FileManager.default
+        let legacy = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/browser-dev")
+        let dest = (devHome as NSString).appendingPathComponent("browser-dev")
+        guard fm.fileExists(atPath: legacy) else { return }
+        guard !fm.fileExists(atPath: dest) else {
+            AppLog.shared.log("dev isolation: legacy ~/.dsh/browser-dev exists, target \(dest) present — skip migrate")
+            return
+        }
+        try? fm.createDirectory(atPath: devHome, withIntermediateDirectories: true)
+        do {
+            try fm.moveItem(atPath: legacy, toPath: dest)
+            AppLog.shared.log("dev isolation: migrated \(legacy) -> \(dest)")
+        } catch {
+            AppLog.shared.log("dev isolation: browser-dev migrate failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// 本 App（shell 侧）读写 dsh 数据目录的实际路径：优先 $DSH_HOME（开发版已由
+    /// applyDevIsolation() 注入 ~/.dsh-dev），否则默认 ~/.dsh。让 shell 自己的文件
+    /// （如 channel token/清理）与 dsh 运行空间保持一致，开发版不会写入正式 ~/.dsh。
+    private var dshDataHome: String {
+        if let h = ProcessInfo.processInfo.environment["DSH_HOME"],
+           !h.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return h.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return (NSHomeDirectory() as NSString).appendingPathComponent(".dsh")
     }
 
     /// 初始化 CEF（浏览器面板渲染内核）并启动消息泵定时器。
