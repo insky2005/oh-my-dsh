@@ -129,12 +129,19 @@ enum L10n {
         "status.startFailed": ("无法启动 oh-my-dsh\n\n%@", "Failed to start oh-my-dsh\n\n%@"),
         "status.checking": ("正在检查 dsh 更新…", "Checking for dsh updates…"),
         "status.upgrading": ("正在升级 dsh（%@ → %@）…", "Upgrading dsh (%@ → %@)…"),
+        "status.downloading": ("正在下载 dsh %@…", "Downloading dsh %@…"),
+        "status.applying": ("正在安装 dsh %@…", "Installing dsh %@…"),
         "status.pageLoadFailed": ("页面加载失败：%@", "Page load failed: %@"),
         // buttons
         "btn.retry": ("重试", "Retry"),
         "btn.ok": ("好", "OK"),
         "btn.save": ("保存", "Save"),
         "btn.cancel": ("取消", "Cancel"),
+        "btn.download": ("下载", "Download"),
+        "btn.installNow": ("立即升级", "Install & Restart"),
+        "btn.later": ("稍后", "Later"),
+        "btn.yes": ("是", "Yes"),
+        "btn.no": ("否", "No"),
         // preview panel
         "preview.openInDefaultApp": ("在默认应用中打开", "Open in Default App"),
         "preview.openInDefaultAppHint": ("用系统默认应用打开当前文件", "Open the current file with its default app"),
@@ -207,6 +214,18 @@ enum L10n {
         "alert.upgradeFailed": ("升级失败", "Upgrade Failed"),
         "alert.upToDate": ("dsh 已是最新版本：%@", "dsh is up to date: %@"),
         "alert.upgraded": ("dsh 已升级：%@ → %@", "dsh upgraded: %@ → %@"),
+        // stepwise / staged upgrade prompts
+        "alert.upgradeAvailable": ("发现 dsh 新版本：%@（下一步）", "dsh update available: %@ (next step)"),
+        "alert.upgradeAvailableInfo": ("当前版本：%@\n可升级到：%@\n\n下载后仍会二次确认，才真正替换运行版本。",
+                                       "Current: %@\nNext step: %@\n\nAfter downloading you confirm again before it replaces the running dsh."),
+        "alert.downloadDone": ("dsh %@ 已下载完成", "dsh %@ is ready"),
+        "alert.downloadDoneInfo": ("已下载到本地缓存，尚未改动运行中的 dsh。\n是否立即升级并重启服务？",
+                                   "Downloaded to the local cache; the running dsh is unchanged.\nInstall and restart now?"),
+        "alert.downloadFailed": ("下载失败", "Download Failed"),
+        "alert.downloadCancelled": ("已取消下载", "Download Cancelled"),
+        "alert.upgradeInProgress": ("已有升级流程正在进行，请稍候", "An upgrade is already in progress — please wait"),
+        "alert.rolledBack": ("升级失败，已自动回滚到 %@。\n\n%@", "Upgrade failed; rolled back to %@.\n\n%@"),
+        "err.prefetchFailed": ("下载 dsh 失败（%@）", "Failed to download dsh (%@)"),
         "alert.noVersionInfo": ("无法获取 dsh 版本信息（registry：%@）",
                                 "Cannot fetch dsh version info (registry: %@)"),
         "alert.setRegistryTitle": ("设置 dsh registry", "Set dsh Registry"),
@@ -485,7 +504,28 @@ enum AppTheme {
     }
 }
 
+/// Cooperative cancellation token for a running staged download. A caller
+/// keeps a reference and asks to stop; the running npm process is terminated.
+final class UpgradeCancelToken {
+    private let lock = NSLock()
+    private var _cancelled = false
+    var cancelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _cancelled
+    }
+    func requestStop() {
+        lock.lock(); _cancelled = true; lock.unlock()
+    }
+}
+
 /// Upgrades the bundled dsh tree with the bundled node + npm.
+///
+/// dsh upgrades are STEPWISE (one release candidate — stable or rc — at a
+/// time) and STAGED so the heavy download never touches the live tree:
+///   - prefetch() warms the shared npm cache with the pinned version in a
+///     throwaway staging dir (the "download" phase; cancellable, cheap to drop);
+///   - apply() installs the pinned version in place from the warm cache,
+///     backing up the live tree first and restoring it automatically on failure.
 final class DSHUpdater {
     let nodePath: String
     let dshDir: String
@@ -503,6 +543,8 @@ final class DSHUpdater {
               FileManager.default.fileExists(atPath: npmCli) else { return nil }
     }
 
+    // MARK: versions
+
     var currentVersion: String? {
         let pkg = dshDir + "/node_modules/@deepseek-ai/dsh/package.json"
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: pkg)),
@@ -511,60 +553,195 @@ final class DSHUpdater {
         return v
     }
 
-    func latestVersion(registry: String) -> String? {
+    private func registryJSON(registry: String) -> [String: Any]? {
         guard let data = HTTP.get(registry + "/@deepseek-ai/dsh", timeout: 15),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return json
+    }
+
+    func latestVersion(registry: String) -> String? {
+        guard let json = registryJSON(registry: registry),
               let tags = json["dist-tags"] as? [String: Any],
               let latest = tags["latest"] as? String else { return nil }
         return latest
     }
 
-    /// Runs `node npm-cli.js install <target>` inside the bundled dsh dir.
-    /// Returns the newly installed version.
-    @discardableResult
-    func upgrade(registry: String, spec: String? = nil) throws -> String {
-        let target = spec ?? "@deepseek-ai/dsh@latest"
-        let cacheDir = NSHomeDirectory() + "/Library/Caches/oh-my-dsh/npm-cache"
-        try? FileManager.default.createDirectory(atPath: cacheDir, withIntermediateDirectories: true)
+    /// Every published version string (unsorted). Stepwise target selection
+    /// (stable/rc candidates, never jumping to latest) runs in the shared core.
+    func publishedVersions(registry: String) -> [String] {
+        guard let json = registryJSON(registry: registry),
+              let versions = json["versions"] as? [String: Any] else { return [] }
+        return Array(versions.keys)
+    }
 
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: nodePath)
-        proc.arguments = [npmCli, "install", "--loglevel=error",
-                          "--no-audit", "--no-fund", "--registry", registry, target]
+    // MARK: npm process plumbing
+
+    private var sharedCacheDir: String {
+        NSHomeDirectory() + "/Library/Caches/oh-my-dsh/npm-cache"
+    }
+    private var stagingDir: String {
+        NSHomeDirectory() + "/Library/Caches/oh-my-dsh/staging"
+    }
+    private var backupsRoot: String {
+        NSHomeDirectory() + "/Library/Caches/oh-my-dsh/upgrade-backups"
+    }
+
+    /// npm env: pass OS env through, but prepend the bundled node's dir to PATH
+    /// (npm lifecycle scripts look up `node` on PATH) and route the npm cache
+    /// to the shared cache dir so prefetch and apply share warmed downloads.
+    private func npmEnv() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
-        // OS environment passed through untouched (no PATH rewrite) — npm runs
-        // via npm-cli.js's absolute path. But npm lifecycle scripts (e.g. the
-        // @deepseek-ai/dsh-subprocess-local postinstall that runs `node ensure-spawn-helper.mjs`)
-        // are spawned through the shell and look up `node` on PATH, which a
-        // Finder/GUI-launched app may not have. Prepend the bundled node's dir so
-        // those scripts find the very node running npm.
         let nodeBinDir = (nodePath as NSString).deletingLastPathComponent
         if let existing = env["PATH"], !existing.isEmpty {
             env["PATH"] = nodeBinDir + ":" + existing
         } else {
             env["PATH"] = nodeBinDir
         }
-        env["npm_config_cache"] = cacheDir
+        env["npm_config_cache"] = sharedCacheDir
         env["npm_config_update_notifier"] = "false"
-        proc.environment = env
-        proc.currentDirectoryURL = URL(fileURLWithPath: dshDir)
+        return env
+    }
 
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = pipe
-        try proc.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
-        guard proc.terminationStatus == 0 else {
-            let out = String(data: data, encoding: .utf8) ?? ""
-            throw NSError(domain: "DSHUpgrade", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: L10n.tr("err.upgradeFailed", proc.terminationStatus, String(out.suffix(1500))),
-            ])
+    /// Runs `node <npmCli> <args…>` in `cwd`, streaming merged output. Returns
+    /// the exit code (-1 on spawn failure). Terminates the process as soon as
+    /// `cancel` is requested, so a download can be interrupted.
+    @discardableResult
+    private func runNpm(_ args: [String], cwd: String, cancel: UpgradeCancelToken? = nil,
+                        onOutput: ((String) -> Void)? = nil) -> Int {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: nodePath)
+        proc.arguments = args
+        proc.environment = npmEnv()
+        proc.currentDirectoryURL = URL(fileURLWithPath: cwd)
+
+        let out = Pipe()
+        proc.standardOutput = out
+        proc.standardError = out
+
+        let finished = DispatchGroup()
+        finished.enter()
+        out.fileHandleForReading.readabilityHandler = { fh in
+            let data = fh.availableData
+            if data.isEmpty {
+                fh.readabilityHandler = nil
+                finished.leave()
+            } else if cancel?.cancelled == true {
+                fh.readabilityHandler = nil
+                finished.leave()
+            } else if let s = String(data: data, encoding: .utf8), !s.isEmpty {
+                onOutput?(s)
+            }
         }
-        guard let v = currentVersion else {
+
+        // Cancellation watcher: terminate the process shortly after requested.
+        DispatchQueue.global().async {
+            while proc.isRunning {
+                if cancel?.cancelled == true { proc.terminate(); break }
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+        }
+
+        do { try proc.run() } catch {
+            out.fileHandleForReading.readabilityHandler = nil
+            return -1
+        }
+        proc.waitUntilExit()
+        finished.wait()
+        return Int(proc.terminationStatus)
+    }
+
+    // MARK: staged download (prefetch) & in-place apply
+
+    /// Download phase: warm the shared npm cache with the pinned `version` by
+    /// installing it into a throwaway staging dir. The live dsh tree is never
+    /// touched, so this is cancellable and safe to abandon (only the cache
+    /// matters; the staging dir is removed when done).
+    @discardableResult
+    func prefetch(registry: String, version: String, cancel: UpgradeCancelToken? = nil,
+                  onOutput: ((String) -> Void)? = nil) throws -> Bool {
+        let fm = FileManager.default
+        let staging = stagingDir
+        _ = try? fm.removeItem(atPath: staging)
+        do { try fm.createDirectory(atPath: staging, withIntermediateDirectories: true) } catch {
+            throw NSError(domain: "DSHUpgrade", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: L10n.tr("err.prefetchFailed", error.localizedDescription)])
+        }
+        defer { _ = try? fm.removeItem(atPath: staging) }
+        var log = ""
+        let args = [npmCli, "install", "--loglevel=error", "--no-audit", "--no-fund",
+                    "--registry", registry, "@deepseek-ai/dsh@" + version]
+        let code = runNpm(args, cwd: staging, cancel: cancel, onOutput: { log.append($0) })
+        if cancel?.cancelled == true { return false }
+        guard code == 0 else {
+            throw NSError(domain: "DSHUpgrade", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: L10n.tr("err.prefetchFailed", String(log.suffix(500)))])
+        }
+        return true
+    }
+
+    private func pruneBackups(keeping: Int) {
+        let fm = FileManager.default
+        let dirs = ((try? fm.contentsOfDirectory(atPath: backupsRoot)) ?? [])
+            .filter { var d: ObjCBool = false
+                fm.fileExists(atPath: backupsRoot + "/" + $0, isDirectory: &d)
+                return d.boolValue }
+            .sorted { $0 < $1 }
+        if dirs.count > keeping {
+            for name in dirs[0 ..< (dirs.count - keeping)] {
+                try? fm.removeItem(atPath: backupsRoot + "/" + name)
+            }
+        }
+    }
+
+    /// Snapshot the whole live dsh tree before an in-place install so a failed
+    /// upgrade can roll back. Keeps only the most recent backup.
+    private func backup() -> String? {
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: backupsRoot, withIntermediateDirectories: true)
+        pruneBackups(keeping: 1)
+        let name = (currentVersion ?? "current") + "-" + String(Int(Date().timeIntervalSince1970))
+        let dest = backupsRoot + "/" + name
+        do { try fm.copyItem(atPath: dshDir, toPath: dest) } catch { return nil }
+        return dest
+    }
+
+    /// Restore a backup over the (possibly partially written) live tree.
+    private func restore(fromBackup backupPath: String) -> Bool {
+        let fm = FileManager.default
+        let displaced = dshDir + ".upgrade-old"
+        _ = try? fm.removeItem(atPath: displaced)
+        do { try fm.moveItem(atPath: dshDir, toPath: displaced) } catch { return false }
+        do {
+            try fm.moveItem(atPath: backupPath, toPath: dshDir)
+            _ = try? fm.removeItem(atPath: displaced)
+            return true
+        } catch {
+            _ = try? fm.moveItem(atPath: displaced, toPath: dshDir)
+            return false
+        }
+    }
+
+    /// Apply phase: back up the live tree, install the pinned `version` in
+    /// place from the (pre-warmed) cache, verify the installed version, and
+    /// roll back to the backup on any failure. Returns the installed version.
+    @discardableResult
+    func apply(registry: String, version: String) throws -> String {
+        let backupPath = backup()
+        var log = ""
+        let args = [npmCli, "install", "--loglevel=error", "--no-audit", "--no-fund",
+                    "--prefer-offline", "--registry", registry, "@deepseek-ai/dsh@" + version]
+        let code = runNpm(args, cwd: dshDir, onOutput: { log.append($0) })
+        if code != 0 {
+            if let b = backupPath { _ = restore(fromBackup: b) }
+            throw NSError(domain: "DSHUpgrade", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: L10n.tr("err.upgradeFailed", code, String(log.suffix(1500)))])
+        }
+        guard let v = currentVersion, VersionKit.compare(v, version) == 0 else {
+            if let b = backupPath { _ = restore(fromBackup: b) }
             throw NSError(domain: "DSHUpgrade", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.noVersionAfterUpgrade")])
         }
+        if let b = backupPath { _ = try? FileManager.default.removeItem(atPath: b) }
         return v
     }
 }
@@ -609,6 +786,15 @@ enum CoreBridge {
     /// Latest dsh version from the registry via core (or nil).
     static func latestVersion(registry: String) -> String? {
         run(["upgrade", "latest", registry])
+    }
+
+    /// Stepwise upgrade target via core: the next release candidate (stable/rc)
+    /// strictly newer than `current`. Returns nil when core is unavailable or
+    /// prints an empty result (nothing newer — an empty string then means "no
+    /// update"; the caller can treat a returned "" as none).
+    static func nextStepTarget(current: String, versions: [String]) -> String? {
+        guard !versions.isEmpty else { return nil }
+        return run(["upgrade", "next", current] + versions)
     }
 }
 
@@ -1240,6 +1426,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let server = ServerManager()
     private var didSpawnServer = false
     private var autoUpgradeMenuItem: NSMenuItem!
+    // Stepwise / staged upgrade state: at most one check→download→apply flow
+    // runs at a time; upgradeCancelToken lets the user abort an in-flight
+    // download before the final (confirmed) in-place install.
+    private var upgradeInFlight = false
+    private var upgradeCancelToken: UpgradeCancelToken?
     private var previewToggleMenuItem: NSMenuItem?
     private var terminalToggleMenuItem: NSMenuItem?
     private var wikiToggleMenuItem: NSMenuItem?
@@ -2296,11 +2487,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         showStatus(L10n.tr("status.starting"), spinner: true, retry: false)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            // Auto-upgrade the bundled dsh (at most once per 24h) before the
-            // server starts, so the new version is used immediately.
-            if self.autoUpgradeEnabled() {
-                self.runAutoUpgradeIfNeeded()
-            }
             do {
                 let url = try self.server.start()
                 let didSpawn = self.server.spawned
@@ -2317,6 +2503,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     // Tell the tasks panel: repo detection + issue load resolve now.
                     self.tasksPanel?.serverReady(port: self.server.port)
                     self.channelPanel?.ensureLoaded()
+                    // Stepwise auto-upgrade (throttled, non-blocking): detect +
+                    // background-download a newer dsh, then ask the user before
+                    // the in-place install. Deliberately after the server is up
+                    // so boot is never delayed by a registry check or download.
+                    self.scheduleAutoUpgradeIfNeeded()
                 }
             } catch {
                 AppLog.shared.log("server start failed: \(error.localizedDescription)")
@@ -2360,46 +2551,168 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return UserDefaults.standard.object(forKey: "autoUpgradeDsh") as? Bool ?? true
     }
 
-    /// Silent background check: once per 24h, upgrade the bundled dsh to the
-    /// registry's latest. Never throws — failures are logged only.
-    private func runAutoUpgradeIfNeeded() {
+    /// A DSHUpdater for the active bundled runtime, or nil when dsh is not the
+    /// self-contained bundled runtime (auto/manual upgrades only apply there).
+    private func currentUpdater() -> DSHUpdater? {
+        guard let node = server.resolveNode(), let bin = server.resolveDSHBin(),
+              let updater = DSHUpdater(nodePath: node, dshBin: bin) else { return nil }
+        return updater
+    }
+
+    /// The next STEPWISE upgrade target for \`updater\`: among published stable/rc
+    /// versions strictly newer than the installed one, the immediately-next by
+    /// semver (never jumps to dist-tags.latest). Chosen in the shared core so
+    /// every platform shares the rule; falls back to latest only if core is
+    /// unavailable (degraded).
+    private func stepTarget(for updater: DSHUpdater) -> String? {
+        guard let current = updater.currentVersion else { return nil }
+        let versions = updater.publishedVersions(registry: RegistryConfig.current)
+        if let t = CoreBridge.nextStepTarget(current: current, versions: versions) {
+            return t.isEmpty ? nil : t
+        }
+        if let latest = updater.latestVersion(registry: RegistryConfig.current),
+           VersionKit.compare(latest, current) > 0 { return latest }
+        return nil
+    }
+
+    /// Auto-upgrade entry, called on the main thread after the server is up.
+    /// Throttled to once per 24h. When a newer step target exists it downloads
+    /// in the background (no user action needed for the download), then asks
+    /// the user to confirm before the in-place install + restart.
+    private func scheduleAutoUpgradeIfNeeded() {
+        guard autoUpgradeEnabled(), !upgradeInFlight else { return }
         let lastKey = "lastAutoUpgradeCheck"
         let now = Date().timeIntervalSince1970
-        if now - UserDefaults.standard.double(forKey: lastKey) < 86_400 { return }
+        guard now - UserDefaults.standard.double(forKey: lastKey) >= 86_400 else { return }
         UserDefaults.standard.set(now, forKey: lastKey)
 
-        guard let node = server.resolveNode(), let bin = server.resolveDSHBin(),
-              let updater = DSHUpdater(nodePath: node, dshBin: bin) else { return }
-        guard let current = updater.currentVersion else { return }
-        // Version check via the shared core (identical logic across platforms);
-        // falls back to the in-Swift implementation if core is unavailable.
-        let latest = CoreBridge.latestVersion(registry: RegistryConfig.current)
-            ?? updater.latestVersion(registry: RegistryConfig.current)
-        guard let latest = latest else {
-            AppLog.shared.log("auto-upgrade: version check failed (offline? registry=\(RegistryConfig.current))")
-            return
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self, let updater = self.currentUpdater(),
+                  let current = updater.currentVersion else { return }
+            let latest = updater.latestVersion(registry: RegistryConfig.current)
+            guard let target = self.stepTarget(for: updater) else {
+                if let latest, VersionKit.compare(latest, current) <= 0 {
+                    AppLog.shared.log("auto-upgrade: up to date (\(current))")
+                } else {
+                    AppLog.shared.log("auto-upgrade: no further step (current=\(current))")
+                }
+                return
+            }
+            AppLog.shared.log("auto-upgrade: next step \(current) -> \(target) via \(RegistryConfig.current)")
+            DispatchQueue.main.async {
+                self.startDownloadThenPromptApply(updater: updater, current: current, target: target)
+            }
         }
-        let cmp = CoreBridge.compareVersions(latest, current) ?? VersionKit.compare(latest, current)
-        if cmp <= 0 {
-            AppLog.shared.log("auto-upgrade: already latest (\(current))")
-            return
+    }
+
+    /// Download phase shared by manual & auto: background-prefetch \`target\` into
+    /// the shared npm cache (the live dsh tree is untouched), then prompt for
+    /// the in-place install once the download completes. Cancellable while
+    /// downloading.
+    private func startDownloadThenPromptApply(updater: DSHUpdater, current: String, target: String) {
+        guard !upgradeInFlight else { return }
+        upgradeInFlight = true
+        let token = UpgradeCancelToken()
+        upgradeCancelToken = token
+        showStatus(L10n.tr("status.downloading", target), spinner: true, retry: false)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var cancelled = false
+            var failure: String?
+            do {
+                _ = try updater.prefetch(registry: RegistryConfig.current, version: target, cancel: token)
+                cancelled = token.cancelled
+            } catch {
+                cancelled = token.cancelled
+                if !cancelled { failure = error.localizedDescription }
+            }
+            AppLog.shared.log("upgrade download \(target): \(failure ?? (cancelled ? "cancelled" : "ok"))")
+
+            DispatchQueue.main.async {
+                self.upgradeCancelToken = nil
+                if cancelled {
+                    self.upgradeInFlight = false
+                    self.hideStatus()
+                    let a = NSAlert()
+                    a.messageText = L10n.tr("alert.downloadCancelled")
+                    a.informativeText = L10n.tr("status.downloading", target)
+                    a.addButton(withTitle: L10n.tr("btn.ok"))
+                    a.runModal()
+                    return
+                }
+                if let failure = failure {
+                    self.upgradeInFlight = false
+                    self.hideStatus()
+                    let a = NSAlert()
+                    a.messageText = L10n.tr("alert.downloadFailed")
+                    a.informativeText = failure
+                    a.addButton(withTitle: L10n.tr("btn.ok"))
+                    a.runModal()
+                    return
+                }
+                self.offerApply(updater: updater, current: current, target: target)
+            }
         }
-        AppLog.shared.log("auto-upgrade: \(current) -> \(latest) via \(RegistryConfig.current)")
-        DispatchQueue.main.async {
-            self.showStatus(L10n.tr("status.upgrading", current, latest), spinner: true, retry: false)
+    }
+
+    /// Second confirmation (manual & auto): the download finished; ask the user
+    /// before replacing the live dsh tree and restarting the server.
+    private func offerApply(updater: DSHUpdater, current: String, target: String) {
+        hideStatus()
+        let a = NSAlert()
+        a.messageText = L10n.tr("alert.downloadDone", target)
+        a.informativeText = L10n.tr("alert.downloadDoneInfo")
+        a.addButton(withTitle: L10n.tr("btn.installNow"))
+        a.addButton(withTitle: L10n.tr("btn.later"))
+        if a.runModal() == .alertFirstButtonReturn {
+            performApply(updater: updater, current: current, target: target)
+        } else {
+            upgradeInFlight = false
         }
-        do {
-            let new = try updater.upgrade(registry: RegistryConfig.current)
-            server.refreshFacts()
-            AppLog.shared.log("auto-upgrade: done, now \(new)")
-            // Restart the running server + reload the WebView so the upgraded
-            // dsh actually takes effect (otherwise the old code stays in memory).
-            restartServerAfterUpgrade()
-        } catch {
-            AppLog.shared.log("auto-upgrade: failed: \(error.localizedDescription)")
-        }
-        DispatchQueue.main.async {
-            self.hideStatus()
+    }
+
+    /// In-place install (with backup & automatic rollback on failure) on a
+    /// background queue, then restart the server so the new dsh takes effect.
+    private func performApply(updater: DSHUpdater, current: String, target: String) {
+        showStatus(L10n.tr("status.applying", target), spinner: true, retry: false)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let new = try updater.apply(registry: RegistryConfig.current, version: target)
+                self.server.refreshFacts()
+                AppLog.shared.log("upgrade applied: \(current) -> \(new)")
+                DispatchQueue.main.async {
+                    self.upgradeInFlight = false
+                    self.hideStatus()
+                    self.restartServerAfterUpgrade()
+                    let a = NSAlert()
+                    a.messageText = L10n.tr("alert.dshUpgrade")
+                    a.informativeText = L10n.tr("alert.upgraded", current, new)
+                    a.addButton(withTitle: L10n.tr("btn.ok"))
+                    a.runModal()
+                }
+            } catch {
+                let msg = error.localizedDescription
+                let rolledBack = updater.currentVersion
+                AppLog.shared.log("upgrade apply failed: \(msg)")
+                DispatchQueue.main.async {
+                    self.upgradeInFlight = false
+                    self.hideStatus()
+                    let a = NSAlert()
+                    a.messageText = L10n.tr("alert.upgradeFailed")
+                    if let rolledBack {
+                        a.informativeText = L10n.tr("alert.rolledBack", rolledBack, msg)
+                    } else {
+                        a.informativeText = msg
+                    }
+                    a.addButton(withTitle: L10n.tr("btn.ok"))
+                    a.runModal()
+                    // A failed install / rollback may have left a stale tree on
+                    // disk — restart so the server reloads whatever is there.
+                    self.restartServerAfterUpgrade()
+                }
+            }
         }
     }
 
@@ -2459,9 +2772,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    /// Manual "Check & Upgrade": three-stage. (1) Check the next STEPWISE target
+    /// and prompt with its version; (2) download it in the background on
+    /// confirm (live dsh untouched); (3) after the download, ask again before
+    /// the in-place install + restart.
     @objc func upgradeDSH() {
-        guard let node = server.resolveNode(), let bin = server.resolveDSHBin(),
-              let updater = DSHUpdater(nodePath: node, dshBin: bin) else {
+        if upgradeInFlight {
+            let busy = NSAlert()
+            busy.messageText = L10n.tr("alert.dshUpgrade")
+            busy.informativeText = L10n.tr("alert.upgradeInProgress")
+            busy.addButton(withTitle: L10n.tr("btn.ok"))
+            busy.runModal()
+            return
+        }
+        guard let updater = currentUpdater() else {
             let alert = NSAlert()
             alert.messageText = L10n.tr("alert.cannotUpgrade")
             alert.informativeText = L10n.tr("alert.noRuntime")
@@ -2472,42 +2796,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         showStatus(L10n.tr("status.checking"), spinner: true, retry: false)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            var ok = true
-            var message = ""
-            if let current = updater.currentVersion,
-               let latest = updater.latestVersion(registry: RegistryConfig.current) {
-                if VersionKit.compare(latest, current) <= 0 {
-                    message = L10n.tr("alert.upToDate", current)
-                    AppLog.shared.log("manual upgrade: already latest (\(current))")
-                } else {
-                    DispatchQueue.main.async {
-                        self.showStatus(L10n.tr("status.upgrading", current, latest), spinner: true, retry: false)
-                    }
-                    do {
-                        let new = try updater.upgrade(registry: RegistryConfig.current)
-                        self.server.refreshFacts()
-                        message = L10n.tr("alert.upgraded", current, new)
-                        AppLog.shared.log("manual upgrade: \(current) -> \(new)")
-                        // Restart the running server + reload the WebView so the
-                        // upgraded dsh takes effect.
-                        self.restartServerAfterUpgrade()
-                    } catch {
-                        ok = false
-                        message = error.localizedDescription
-                        AppLog.shared.log("manual upgrade failed: \(error.localizedDescription)")
-                    }
+            guard let current = updater.currentVersion else {
+                DispatchQueue.main.async {
+                    self.hideStatus()
+                    let a = NSAlert()
+                    a.messageText = L10n.tr("alert.upgradeFailed")
+                    a.informativeText = L10n.tr("alert.noVersionInfo", RegistryConfig.current)
+                    a.addButton(withTitle: L10n.tr("btn.ok"))
+                    a.runModal()
                 }
-            } else {
-                ok = false
-                message = L10n.tr("alert.noVersionInfo", RegistryConfig.current)
+                return
             }
+            guard let target = self.stepTarget(for: updater) else {
+                AppLog.shared.log("manual upgrade: up to date (\(current))")
+                DispatchQueue.main.async {
+                    self.hideStatus()
+                    let a = NSAlert()
+                    a.messageText = L10n.tr("alert.dshUpgrade")
+                    a.informativeText = L10n.tr("alert.upToDate", current)
+                    a.addButton(withTitle: L10n.tr("btn.ok"))
+                    a.runModal()
+                }
+                return
+            }
+            AppLog.shared.log("manual upgrade: found \(current) -> \(target)")
             DispatchQueue.main.async {
                 self.hideStatus()
-                let alert = NSAlert()
-                alert.messageText = ok ? L10n.tr("alert.dshUpgrade") : L10n.tr("alert.upgradeFailed")
-                alert.informativeText = message
-                alert.addButton(withTitle: L10n.tr("btn.ok"))
-                alert.runModal()
+                let a = NSAlert()
+                a.messageText = L10n.tr("alert.upgradeAvailable", target)
+                a.informativeText = L10n.tr("alert.upgradeAvailableInfo", current, target)
+                a.addButton(withTitle: L10n.tr("btn.download"))
+                a.addButton(withTitle: L10n.tr("btn.cancel"))
+                if a.runModal() == .alertFirstButtonReturn {
+                    self.startDownloadThenPromptApply(updater: updater, current: current, target: target)
+                }
             }
         }
     }

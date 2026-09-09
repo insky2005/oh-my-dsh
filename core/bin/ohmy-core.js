@@ -12,6 +12,7 @@
  *   node core/bin/ohmy-core.js serving <port> [needBootMarker]
  *   node core/bin/ohmy-core.js upgrade compare <a> <b>
  *   node core/bin/ohmy-core.js upgrade latest <registry>
+ *   node core/bin/ohmy-core.js upgrade next <current> <versions...>  # stepwise target (stable/rc)
  *   node core/bin/ohmy-core.js session cwd <port>
  *   node core/bin/ohmy-core.js session cwd-by-id <port> <sessionId>
  *   node core/bin/ohmy-core.js session run <port> <conversationId> <text> <workspaceRoot>
@@ -70,8 +71,11 @@ function println(s) {
       } else if (sub === 'latest') {
         const reg = rest[0] || core.DEFAULT_REGISTRY;
         printJson(await core.latestVersion(reg));
+      } else if (sub === 'next') {
+        if (rest.length < 2) fail('usage: upgrade next <current> <versions...>');
+        println(core.nextStepTarget(rest[0], rest.slice(1)) || '');
       } else {
-        fail('usage: upgrade compare <a> <b> | latest <registry>');
+        fail('usage: upgrade compare <a> <b> | latest <registry> | next <current> <versions...>');
       }
       break;
     case 'session':

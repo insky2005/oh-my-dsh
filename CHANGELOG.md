@@ -7,6 +7,11 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **dsh 升级改为「分步 + 分阶段 + 二次确认」**：不再一步升到 dist-tags.latest，每次只升到**紧邻的下一个发布候选**（stable/rc，排除 alpha/beta/dev；从 registry versions 取号，选步逻辑入共享 core 的 nextStepTarget，Swift 与 core 同一规则）。手动「检查并升级」为三段式：① 检测并提示「当前 vA → 可升 vB」→ 用户确认；② 后台把 vB 预热进共享 npm 缓存（不改动线上 dsh 树、可取消）；③ 下载完成**再次确认**后才原地安装 + 重启。自动升级（启用时）**先起服务不再阻塞启动**，24h 节流到达后在后台检测并下载，下载完成后弹窗请用户确认才正式升级（prefetch / apply 拆分见 core/lib/upgrade.js 与 main.swift 的 DSHUpdater）。
+- **dsh 升级备份与失败自动回滚**：正式升级前整树快照 runtime/dsh 到 ~/Library/Caches/oh-my-dsh/upgrade-backups/（只留最近一份）；安装失败或安装后版本校验不符自动回滚到备份并给出提示。
+
 ### Fixed
 
 - **自动升级 dsh 失败（exit 127）**：App 内自动升级用打包 node 的绝对路径启动 npm，但 npm 执行依赖包 lifecycle 脚本（如 `@deepseek-ai/dsh-subprocess-local` 的 postinstall `node ensure-spawn-helper.mjs`）时通过 shell 按 `PATH` 找 `node`；GUI 启动的 App 继承 launchd 的精简 PATH 通常没有 `node`，报 `sh: node: command not found`、升级中断。修复为给升级子进程前置注入打包 node 所在目录到 `PATH`。
