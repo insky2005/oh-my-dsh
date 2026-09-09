@@ -1431,6 +1431,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // download before the final (confirmed) in-place install.
     private var upgradeInFlight = false
     private var upgradeCancelToken: UpgradeCancelToken?
+    /// Auto-upgrade "remind me later" timer (scheduled when the user defers an
+    /// auto offer; fires scheduleAutoUpgradeIfNeeded again after ~2h).
+    private var autoUpgradeReminderTimer: Timer?
+    /// Where a check→download→apply round was started (drives how "Later" and
+    /// the throttle behave).
+    enum UpgradeOrigin { case manual, auto }
     private var previewToggleMenuItem: NSMenuItem?
     private var terminalToggleMenuItem: NSMenuItem?
     private var wikiToggleMenuItem: NSMenuItem?
@@ -2575,73 +2581,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return nil
     }
 
-    /// Auto-upgrade entry, called on the main thread after the server is up.
-    /// Throttled to once per 24h. When a newer step target exists it downloads
-    /// in the background (no user action needed for the download), then asks
-    /// the user to confirm before the in-place install + restart.
+    /// Persist the next auto-upgrade run time as a delay from now. Only called
+    /// when an auto round reaches a terminal outcome — never at the start — so
+    /// a brief-session quit before a round completes does not consume the
+    /// window and the next launch retries.
+    private func deferAutoUpgrade(by delay: TimeInterval) {
+        UserDefaults.standard.set(Date().timeIntervalSince1970 + delay, forKey: "nextAutoUpgradeCheck")
+    }
+
+    /// Schedule a main-thread "remind me later" that re-runs the (now due) auto
+    /// check. Added to .common so it also fires while a modal alert is up.
+    private func remindAutoUpgradeLater(after delay: TimeInterval) {
+        autoUpgradeReminderTimer?.invalidate()
+        let t = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            self?.scheduleAutoUpgradeIfNeeded()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        autoUpgradeReminderTimer = t
+    }
+
+    /// Auto-upgrade entry, called on the main thread (at boot and on a reminder
+    /// timer). Due only once the persisted next-run time has passed. It never
+    /// commits that next-run time up front — the next run time is written only
+    /// when this round reaches an outcome (up-to-date → +24h; offline/step error
+    /// → +2h; offered and deferred → +2h; applied → +24h). A newer step target
+    /// is downloaded silently in the background, then the user is asked before
+    /// the in-place install.
     private func scheduleAutoUpgradeIfNeeded() {
         guard autoUpgradeEnabled(), !upgradeInFlight else { return }
-        let lastKey = "lastAutoUpgradeCheck"
-        let now = Date().timeIntervalSince1970
-        guard now - UserDefaults.standard.double(forKey: lastKey) >= 86_400 else { return }
-        UserDefaults.standard.set(now, forKey: lastKey)
+        let nextAt = UserDefaults.standard.double(forKey: "nextAutoUpgradeCheck")
+        guard Date().timeIntervalSince1970 >= nextAt else { return }
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self, let updater = self.currentUpdater(),
                   let current = updater.currentVersion else { return }
             let latest = updater.latestVersion(registry: RegistryConfig.current)
+            guard latest != nil else {
+                // Registry unreachable — retry shortly instead of burning the day.
+                DispatchQueue.main.async {
+                    self.deferAutoUpgrade(by: 7200)
+                    AppLog.shared.log("auto-upgrade: version check failed; will retry (registry=\(RegistryConfig.current))")
+                }
+                return
+            }
             guard let target = self.stepTarget(for: updater) else {
-                if let latest, VersionKit.compare(latest, current) <= 0 {
+                DispatchQueue.main.async {
+                    self.deferAutoUpgrade(by: 86_400)
                     AppLog.shared.log("auto-upgrade: up to date (\(current))")
-                } else {
-                    AppLog.shared.log("auto-upgrade: no further step (current=\(current))")
                 }
                 return
             }
             AppLog.shared.log("auto-upgrade: next step \(current) -> \(target) via \(RegistryConfig.current)")
             DispatchQueue.main.async {
-                self.startDownloadThenPromptApply(updater: updater, current: current, target: target)
+                self.startDownloadThenPromptApply(updater: updater, current: current, target: target, origin: .auto)
             }
         }
     }
 
     /// Download phase shared by manual & auto: background-prefetch \`target\` into
     /// the shared npm cache (the live dsh tree is untouched), then prompt for
-    /// the in-place install once the download completes. Cancellable while
-    /// downloading.
-    private func startDownloadThenPromptApply(updater: DSHUpdater, current: String, target: String) {
+    /// the in-place install once the download completes. Runs fully in the
+    /// background; only the step-completion prompt is surfaced to the user.
+    private func startDownloadThenPromptApply(updater: DSHUpdater, current: String, target: String, origin: UpgradeOrigin) {
         guard !upgradeInFlight else { return }
         upgradeInFlight = true
+        autoUpgradeReminderTimer?.invalidate()
+        autoUpgradeReminderTimer = nil
         let token = UpgradeCancelToken()
         upgradeCancelToken = token
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            var cancelled = false
             var failure: String?
             do {
                 _ = try updater.prefetch(registry: RegistryConfig.current, version: target, cancel: token)
-                cancelled = token.cancelled
             } catch {
-                cancelled = token.cancelled
-                if !cancelled { failure = error.localizedDescription }
+                if !token.cancelled { failure = error.localizedDescription }
             }
-            AppLog.shared.log("upgrade download \(target): \(failure ?? (cancelled ? "cancelled" : "ok"))")
+            AppLog.shared.log("upgrade download \(target): \(failure ?? "ok")")
 
             DispatchQueue.main.async {
                 self.upgradeCancelToken = nil
-                if cancelled {
-                    self.upgradeInFlight = false
-                    self.hideStatus()
-                    let a = NSAlert()
-                    a.messageText = L10n.tr("alert.downloadCancelled")
-                    a.informativeText = L10n.tr("status.downloading", target)
-                    a.addButton(withTitle: L10n.tr("btn.ok"))
-                    a.runModal()
-                    return
-                }
+                self.upgradeInFlight = false
                 if let failure = failure {
-                    self.upgradeInFlight = false
-                    self.hideStatus()
+                    if origin == .auto { self.deferAutoUpgrade(by: 7200) }
                     let a = NSAlert()
                     a.messageText = L10n.tr("alert.downloadFailed")
                     a.informativeText = failure
@@ -2649,30 +2672,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     a.runModal()
                     return
                 }
-                self.offerApply(updater: updater, current: current, target: target)
+                self.offerApply(updater: updater, current: current, target: target, origin: origin)
             }
         }
     }
 
     /// Second confirmation (manual & auto): the download finished; ask the user
-    /// before replacing the live dsh tree and restarting the server.
-    private func offerApply(updater: DSHUpdater, current: String, target: String) {
-        hideStatus()
+    /// before replacing the live dsh tree and restarting. "Later" defers an
+    /// auto offer by ~2h and schedules a reminder; a manual "Later" just stops
+    /// (the user can re-check anytime).
+    private func offerApply(updater: DSHUpdater, current: String, target: String, origin: UpgradeOrigin) {
         let a = NSAlert()
         a.messageText = L10n.tr("alert.downloadDone", target)
         a.informativeText = L10n.tr("alert.downloadDoneInfo")
         a.addButton(withTitle: L10n.tr("btn.installNow"))
         a.addButton(withTitle: L10n.tr("btn.later"))
         if a.runModal() == .alertFirstButtonReturn {
-            performApply(updater: updater, current: current, target: target)
+            performApply(updater: updater, current: current, target: target, origin: origin)
         } else {
             upgradeInFlight = false
+            if origin == .auto {
+                deferAutoUpgrade(by: 7200)
+                remindAutoUpgradeLater(after: 7200)
+            }
         }
     }
 
     /// In-place install (with backup & automatic rollback on failure) on a
     /// background queue, then restart the server so the new dsh takes effect.
-    private func performApply(updater: DSHUpdater, current: String, target: String) {
+    private func performApply(updater: DSHUpdater, current: String, target: String, origin: UpgradeOrigin) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             do {
@@ -2681,7 +2709,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 AppLog.shared.log("upgrade applied: \(current) -> \(new)")
                 DispatchQueue.main.async {
                     self.upgradeInFlight = false
-                    self.hideStatus()
+                    self.autoUpgradeReminderTimer?.invalidate()
+                    self.autoUpgradeReminderTimer = nil
+                    if origin == .auto { self.deferAutoUpgrade(by: 86_400) }
                     self.restartServerAfterUpgrade()
                     let a = NSAlert()
                     a.messageText = L10n.tr("alert.dshUpgrade")
@@ -2695,7 +2725,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 AppLog.shared.log("upgrade apply failed: \(msg)")
                 DispatchQueue.main.async {
                     self.upgradeInFlight = false
-                    self.hideStatus()
+                    self.autoUpgradeReminderTimer?.invalidate()
+                    self.autoUpgradeReminderTimer = nil
+                    if origin == .auto { self.deferAutoUpgrade(by: 7200) }
                     let a = NSAlert()
                     a.messageText = L10n.tr("alert.upgradeFailed")
                     if let rolledBack {
@@ -2824,7 +2856,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 a.addButton(withTitle: L10n.tr("btn.download"))
                 a.addButton(withTitle: L10n.tr("btn.cancel"))
                 if a.runModal() == .alertFirstButtonReturn {
-                    self.startDownloadThenPromptApply(updater: updater, current: current, target: target)
+                    self.startDownloadThenPromptApply(updater: updater, current: current, target: target, origin: .manual)
                 }
             }
         }
