@@ -1426,14 +1426,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let server = ServerManager()
     private var didSpawnServer = false
     private var autoUpgradeMenuItem: NSMenuItem!
+    /// "Check & Upgrade dsh…" menu item (⌘U) — greyed out while an upgrade is
+    /// busy so the user cannot start a manual check concurrently.
+    private var checkUpgradeMenuItem: NSMenuItem!
     // Stepwise / staged upgrade state: at most one check→download→apply flow
     // runs at a time; upgradeCancelToken lets the user abort an in-flight
     // download before the final (confirmed) in-place install.
-    private var upgradeInFlight = false
+    private var upgradeInFlight = false {
+        didSet { refreshCheckUpgradeEnabled() }
+    }
+    /// True while an AUTO round is actively running its background detection /
+    /// download. Keeps "Check & Upgrade dsh" greyed out so it cannot be
+    /// clicked mid auto-upgrade. (Manual rounds grey it via upgradeInFlight.)
+    private var autoUpgradeRunning = false {
+        didSet { refreshCheckUpgradeEnabled() }
+    }
     private var upgradeCancelToken: UpgradeCancelToken?
     /// Auto-upgrade "remind me later" timer (scheduled when the user defers an
     /// auto offer; fires scheduleAutoUpgradeIfNeeded again after ~2h).
     private var autoUpgradeReminderTimer: Timer?
+    /// Keep "Check & Upgrade dsh" enabled only when nothing upgrade-related is
+    /// running (auto round or an in-flight download/apply).
+    private func refreshCheckUpgradeEnabled() {
+        checkUpgradeMenuItem?.isEnabled = !(autoUpgradeRunning || upgradeInFlight)
+    }
     /// Where a check→download→apply round was started (drives how "Later" and
     /// the throttle behave).
     enum UpgradeOrigin { case manual, auto }
@@ -2620,14 +2636,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard autoUpgradeEnabled(), !upgradeInFlight else { return }
         let nextAt = UserDefaults.standard.double(forKey: "nextAutoUpgradeCheck")
         guard forceAutoUpgradeNow || Date().timeIntervalSince1970 >= nextAt else { return }
+        // Grey out "Check & Upgrade dsh" while this auto round runs.
+        autoUpgradeRunning = true
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
+            // Resolve on the background thread; every path below brings a single
+            // terminal decision back to the main thread so autoUpgradeRunning is
+            // always cleared (or carried into the download, which keeps the menu
+            // greyed via upgradeInFlight).
             guard let self = self, let updater = self.currentUpdater(),
-                  let current = updater.currentVersion else { return }
+                  let current = updater.currentVersion else {
+                DispatchQueue.main.async { self?.autoUpgradeRunning = false }
+                return
+            }
             let latest = updater.latestVersion(registry: RegistryConfig.current)
             guard latest != nil else {
                 // Registry unreachable — retry shortly instead of burning the day.
                 DispatchQueue.main.async {
+                    self.autoUpgradeRunning = false
                     self.deferAutoUpgrade(by: 7200)
                     AppLog.shared.log("auto-upgrade: version check failed; will retry (registry=\(RegistryConfig.current))")
                 }
@@ -2635,6 +2661,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
             guard let target = self.stepTarget(for: updater) else {
                 DispatchQueue.main.async {
+                    self.autoUpgradeRunning = false
                     self.deferAutoUpgrade(by: 86_400)
                     AppLog.shared.log("auto-upgrade: up to date (\(current))")
                 }
@@ -2642,6 +2669,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
             AppLog.shared.log("auto-upgrade: next step \(current) -> \(target) via \(RegistryConfig.current)")
             DispatchQueue.main.async {
+                // self is already non-optional here (bg guard); autoUpgradeRunning
+                // stays true and download+apply keep the menu greyed.
                 self.startDownloadThenPromptApply(updater: updater, current: current, target: target, origin: .auto)
             }
         }
@@ -2671,8 +2700,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
             DispatchQueue.main.async {
                 self.upgradeCancelToken = nil
-                self.upgradeInFlight = false
                 if let failure = failure {
+                    // Round ends here: re-enable the menu and retry auto shortly.
+                    self.upgradeInFlight = false
+                    self.autoUpgradeRunning = false
                     if origin == .auto { self.deferAutoUpgrade(by: 7200) }
                     let a = NSAlert()
                     a.messageText = L10n.tr("alert.downloadFailed")
@@ -2681,6 +2712,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     a.runModal()
                     return
                 }
+                // upgradeInFlight stays true through the install-confirm + apply so
+                // the menu remains greyed; it is cleared in offerApply/performApply.
                 self.offerApply(updater: updater, current: current, target: target, origin: origin)
             }
         }
@@ -2697,9 +2730,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         a.addButton(withTitle: L10n.tr("btn.installNow"))
         a.addButton(withTitle: L10n.tr("btn.later"))
         if a.runModal() == .alertFirstButtonReturn {
+            // upgradeInFlight / autoUpgradeRunning stay true through the apply.
             performApply(updater: updater, current: current, target: target, origin: origin)
         } else {
+            // Declined ("Later"): this round is done.
             upgradeInFlight = false
+            autoUpgradeRunning = false
             if origin == .auto {
                 deferAutoUpgrade(by: 7200)
                 remindAutoUpgradeLater(after: 7200)
@@ -2718,6 +2754,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 AppLog.shared.log("upgrade applied: \(current) -> \(new)")
                 DispatchQueue.main.async {
                     self.upgradeInFlight = false
+                    self.autoUpgradeRunning = false
                     self.autoUpgradeReminderTimer?.invalidate()
                     self.autoUpgradeReminderTimer = nil
                     if origin == .auto { self.deferAutoUpgrade(by: 86_400) }
@@ -2734,6 +2771,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 AppLog.shared.log("upgrade apply failed: \(msg)")
                 DispatchQueue.main.async {
                     self.upgradeInFlight = false
+                    self.autoUpgradeRunning = false
                     self.autoUpgradeReminderTimer?.invalidate()
                     self.autoUpgradeReminderTimer = nil
                     if origin == .auto { self.deferAutoUpgrade(by: 7200) }
@@ -2815,7 +2853,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// confirm (live dsh untouched); (3) after the download, ask again before
     /// the in-place install + restart.
     @objc func upgradeDSH() {
-        if upgradeInFlight {
+        if upgradeInFlight || autoUpgradeRunning {
             let busy = NSAlert()
             busy.messageText = L10n.tr("alert.dshUpgrade")
             busy.informativeText = L10n.tr("alert.upgradeInProgress")
@@ -3218,6 +3256,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         settingsMenu.addItem(.separator())
         let upgrade = settingsMenu.addItem(withTitle: L10n.tr("menu.checkUpgrade"), action: #selector(upgradeDSH), keyEquivalent: "u")
         upgrade.target = self
+        checkUpgradeMenuItem = upgrade
+        refreshCheckUpgradeEnabled()
         let auto = settingsMenu.addItem(withTitle: L10n.tr("menu.autoUpgrade"), action: #selector(toggleAutoUpgrade(_:)), keyEquivalent: "")
         auto.target = self
         auto.state = autoUpgradeEnabled() ? .on : .off

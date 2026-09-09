@@ -15,6 +15,7 @@ All notable changes to this project are documented in this file. Format follows
 ### Fixed
 
 - **自动升级节流时间戳改为「本轮跑完才写」+「稍后提醒」**：不再在开始检测时就消耗 24h 窗口（秒退/中途退出不会吞掉窗口，下次启动会重试）；自动检测下载完成后若用户选「稍后」，则把下次自动检查推到约 2 小时后并定时提醒，用户仍可随时手动升级；离线/下载失败按 ~2h 重试，无需升级/已升级按 ~24h 节流。
+- **自动升级进行中「检查并升级 dsh」菜单置灰**：当自动升级开启且后台正在检测/下载/安装时，Settings 菜单里的「检查并升级 dsh…(⌘U)」自动置灰不可点，避免与自动流程并发；手动流程下载/安装期间同样置灰。Settings 窗口内按钮在忙碌时点按会提示「已有升级流程正在进行」。
 - **升级流程不再用全窗口状态浮层盖住整个界面**：手动/自动「检查、下载、安装」阶段均在后台静默执行，不再调用会铺满主窗口（白底+转圈）的 showStatus 浮层，避免点 Settings 的 Check & Upgrade 时整个 App 闪屏；只在每步完成时弹确认/结果框（真正重启服务那一下仍走启动浮层）。
 
 - **自动升级 dsh 失败（exit 127）**：App 内自动升级用打包 node 的绝对路径启动 npm，但 npm 执行依赖包 lifecycle 脚本（如 `@deepseek-ai/dsh-subprocess-local` 的 postinstall `node ensure-spawn-helper.mjs`）时通过 shell 按 `PATH` 找 `node`；GUI 启动的 App 继承 launchd 的精简 PATH 通常没有 `node`，报 `sh: node: command not found`、升级中断。修复为给升级子进程前置注入打包 node 所在目录到 `PATH`。
