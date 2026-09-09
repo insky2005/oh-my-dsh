@@ -2614,8 +2614,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         upgradeInFlight = true
         let token = UpgradeCancelToken()
         upgradeCancelToken = token
-        showStatus(L10n.tr("status.downloading", target), spinner: true, retry: false)
-
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             var cancelled = false
@@ -2675,7 +2673,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// In-place install (with backup & automatic rollback on failure) on a
     /// background queue, then restart the server so the new dsh takes effect.
     private func performApply(updater: DSHUpdater, current: String, target: String) {
-        showStatus(L10n.tr("status.applying", target), spinner: true, retry: false)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             do {
@@ -2793,7 +2790,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             alert.runModal()
             return
         }
-        showStatus(L10n.tr("status.checking"), spinner: true, retry: false)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             guard let current = updater.currentVersion else {
