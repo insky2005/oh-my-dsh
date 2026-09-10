@@ -15,6 +15,7 @@
 
 - `.dsh/wiki/index.md` 与 `.dsh/wiki/conventions.md` —— 工程约定（L10n / 构建 / 测试 / 日志）；
 - `docs/productization.md` —— 产品化总纲（路线图 / 分发 / 升级 / 多平台 / 开源治理）；
+- `docs/dsh-version-impact.md` —— **dsh 升级影响清单**（五个耦合面 + 每次升级的执行 SOP + 0.1.2 复盘；动 dsh 相关代码前先读）；
 - `docs/milestones/` —— 各里程碑目标（M1 产品化基础 … M5 Apple 生态）；
 - `docs/release-process.md` —— **发布流程**（CHANGELOG → tag → local-release → 版本推进）；
 - `README.md` —— 安装 / 构建 / 环境变量。

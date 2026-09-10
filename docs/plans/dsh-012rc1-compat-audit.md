@@ -2,6 +2,7 @@
 
 > 分支 feature/dsh-upgrade-staged。目标：把内置 dsh 升到 0.1.2-rc.1，并让 oh-my-dsh 各面板与 dsh web 的交互在新接口/新鉴权下恢复。
 > 状态基准：已在真机（dev 隔离 ~/.dsh-dev）把内置 dsh 升到 0.1.2-rc.1 验证启动与鉴权。
+> 通用清单（每次 dsh 升级的耦合面 + 执行 SOP）见 docs/dsh-version-impact.md。
 
 ## 一、背景与决策
 - **dsh 0.1.2-rc.1 两大变化**（已实测）：
