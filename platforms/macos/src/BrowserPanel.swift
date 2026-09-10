@@ -1138,7 +1138,7 @@ final class BrowserPanelController: NSObject {
         let targetURL = BrowserURL.normalize(url ?? "about:blank") ?? "about:blank"
         let tab = BrowserCEFTab(id: nextTabId, owner: self, url: targetURL)
         nextTabId += 1
-        UserDefaults.standard.set(targetURL, forKey: "browserLastURL")
+        ShellConfig.shared.set(targetURL, forKey: "browserLastURL")
         if contentContainer.bounds.width > 10 {
             tab.container.frame = contentContainer.bounds
         }
@@ -1347,7 +1347,7 @@ final class BrowserPanelController: NSObject {
             return
         }
         tab.load(url: target)
-        UserDefaults.standard.set(target, forKey: "browserLastURL")
+        ShellConfig.shared.set(target, forKey: "browserLastURL")
     }
 
     // MARK: 头部操作

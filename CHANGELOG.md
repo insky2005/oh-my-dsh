@@ -7,7 +7,54 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **dsh 升级改为「分步 + 分阶段 + 二次确认」**：不再一步升到 dist-tags.latest，每次只升到**紧邻的下一个发布候选**（stable/rc，排除 alpha/beta/dev；从 registry versions 取号，选步逻辑入共享 core 的 nextStepTarget，Swift 与 core 同一规则）。手动「检查并升级」为三段式：① 检测并提示「当前 vA → 可升 vB」→ 用户确认；② 后台把 vB 预热进共享 npm 缓存（不改动线上 dsh 树、可取消）；③ 下载完成**再次确认**后才原地安装 + 重启。自动升级（启用时）**先起服务不再阻塞启动**，24h 节流到达后在后台检测并下载，下载完成后弹窗请用户确认才正式升级（prefetch / apply 拆分见 core/lib/upgrade.js 与 main.swift 的 DSHUpdater）。
+- **dsh 升级备份与失败自动回滚**：正式升级前整树快照 runtime/dsh 到 ~/Library/Caches/oh-my-dsh/upgrade-backups/（只留最近一份）；安装失败或安装后版本校验不符自动回滚到备份并给出提示。
+
 ### Fixed
+
+- **dsh 私有 workspace 存储读取加护栏（R4）**：`workspace.list` 在 dsh 0.1.2 被移除后，壳层只能读 dsh 自己持久化的 `$DSH_HOME/storages/workspace.json` 来枚举工作区——那是 `defineDomain({ name: "workspace", version: 2 })`（`dsh-workspace/lib/invariant.js`）定义的**私有带 schema 存储**，还带 `pendingMutation` 这类中断恢复标记，上游随时可能改字段/搬文件/升版本，读不懂时会让 5 处功能（频道 `/wks`、门控、`/ses`、面板项目目录、wiki/issue-runner 的工作区归属）**静默变空**。本次不加新数据源（0.1.2 已无 `workspace.list`，`workspace/follow` 是流式），而是把这条兜底变得可观测、可收口：
+  - core 与 Swift 两侧读取器都校验 `unit.name/unit.version`；版本对不上仍**尽力解析**但明确报出（`[workspace-store] … is domain workspace v3, this build understands v2 — read best-effort`），形状意外报 `unexpected shape`，**文件缺失保持安静**（0.1.1 本就正常没有它）；
+  - 日志出口：core → 频道 runner 日志，Swift → `app.log`；
+  - **单一实现收口**：原先有三份各自解析该私有格式的代码（core `workspace-store.js`、Swift `DshWorkspaceStore`、`main.swift` 的 `persistedWorkspacePath`），现在 `main.swift` 改为调用 `DshWorkspaceStore`，只剩 core 与 Swift 两处；
+  - 只读不写；补 core 4 条 + Swift 4 条用例（版本不匹配/形状意外/缺失安静 + 解析顺序与字段）。
+  - docs/dsh-version-impact.md 新增 §6.2「R4 详解」（依赖的具体结构、五个静默断裂点、三个次要坑、升级时的验证命令）。
+- **修复「面板点会话行定位到 dsh web」在 dsh 0.1.2 下静默失效（R3 实测坏点）**：注入的 `sessionOpenerScript` 固定发 `POST /api/session/list`，但 body 里仍是点号 `method:"session.list"` 且 payload 未包 `args`，0.1.2 服务端直接拒绝（`gateway/bad-request: method "session.list" does not match endpoint "session/list"`）；0.1.1 上该斜杠路径又不存在，等于**写死单版本形状、两个世代各坏一次**。改为运行时双面：先按 0.1.2 形状（`session/list` + `payload.args._request`）请求，失败再回退点号（`/api/session.list` + `payload`），失败原因打 `[dsh-opener]` 日志。另外 `DSH_UI_DEBUG=1` 新增页面加载后的注入桥自检（`dsh injected bridges: {tracker, opener, preview, rows}`），让这类「成功时无感、失败时无声」的脚本至少有可观测信号；docs/dsh-version-impact.md 新增 §6.1 详解 R3 的三个脚本各自依赖什么、坏了什么症状、升级时怎么验。
+- **外部已启动的 dsh 0.1.2 实例不再「悄悄」被忽略**：0.1.2 起的实例会用 401 + `authentication required` 回应裸请求，壳层因此判为不可复用而另起一个实例——这是**按设计**的：token 每进程随机且只存在于该进程 stdout，拿不到；而只要 `DSH_HOME` 相同，壳层自拉起的实例与外部实例就是同一份数据（workspaces / 会话 / settings / channels 全在 `$DSH_HOME` 下），复用只省一个进程。现在这个判断会写进 `app.log`（`existing dsh web on 3080 wants its launch token … not adopting`），不再出现「怎么又起了一个实例」无从解释的情况；唯一的注意点是同一个 `DSH_HOME` 不要长期并行跑两个 dsh web（两者持久化同一批文件）。见 docs/dsh-version-impact.md A3/R2。
+- **修复内置 dsh 0.1.2 下壳层原生 RPC 全部失效（wiki 生成、issue-runner 流水线、会话目录跟随）**：`WikiRPC`（WikiPanel）、`IssueRunnerPanel` 的会话/工作区调用与 `DSHSessionRPC`（main.swift）此前只会讲 dsh ≤0.1.1 的老接口——点号方法名、payload 直接是参数、且**不带任何鉴权**；0.1.2 起 `/api` 只认 launch token 换来的 cookie、端点改斜杠、参数包进 `payload.args.<request|_request>`，于是这些原生调用全部 401/404（wiki 点「生成」拿不到 sessionId、issue-runner 建会话/发消息失败、workspace.list 扫描为空；只有 `DSHSessionRPC` 有磁盘兜底不至于完全失灵）。修复为新增共享的 `platforms/macos/src/DshWebRPC.swift`：
+  - **双面调用**：先按 0.1.2 斜杠端点 + `payload.args.<request|_request>` 试，失败再回退点号方法，并**按端点**记忆所选接口面（同一服务有 `session/list` 却没有 `workspace/list`，按服务记忆会互相污染）；`modernExtras` 只在 0.1.2 面注入（如 session/prompt 必填的 requestId）；
+  - **鉴权**：用一个独立 **ephemeral URLSession** 访问 dsh web 自报的 `/?token=…` 种下 `dsh-auth-*` cookie（WebView 的 cookie 在 WebKit 自己的数据存储里、与 URLSession 的 `HTTPCookieStorage` 互不共享，只能自行换取），每端口只换一次，401 时自动重换一次并重试；
+  - **工作区列表**：0.1.2 已无 `workspace.list`，回退读 dsh 持久化的 `$DSH_HOME/storages/workspace.json`（`DshWorkspaceStore`，与 core 同一份契约，按 `global.workspaceIds` 保序）；
+  - token 由 `ServerManager.webToken`（dsh web 自报的带 token 入口地址）在服务就绪时注入，**不落日志**；
+  - 消费者全部改接：`WikiRPC`（createSession/prompt/sessionRunning/cancel/workspaceList/resolveWorkspaceId）、`IssueRunnerPanel`（会话 + 工作区）、`DSHSessionRPC`（会话 cwd 两条路径，保留磁盘兜底）。
+  - **测试**：新增 `tests/dsh-rpc/run.sh`（headless，注入 HTTP 假传输：信封形状、斜杠/点号回退、按端点记忆、token 换取与 401 重换、workspace.json 解析），接入 `ci.yml` 与 `scripts/local-ci.sh`；wiki 面板测试的编译清单补上该文件。
+- **修复开发版（内置 dsh 0.1.2-rc.1）下 Channel 指令全部失效 —— 微信发 /wks 回「没有可用的 workspace」，而面板里明明有已启用的 workspace（C1）**：channel runner（core）此前只讲 dsh ≤0.1.1 的老接口——点号方法名（/api/workspace.list、/api/session.list…）、payload 直接是参数、且不带任何鉴权。0.1.2 起 dsh 换了两处：① /api 被**每实例 launch token 换来的 cookie** 挡住（裸 POST 一律 401）；② 方法名改为**斜杠端点**、参数包在 payload.args 里，并且**彻底移除了 workspace.list**（工作区改由 workspace/follow 流式下发）。于是 runner 的每次调用都失败：列不出工作区（/wks「没有可用 workspace」）、列不出会话（/ses 空）、普通消息与 /new 也建不了会话。修复为：
+  - core 新增 **dsh 版本无关的 RPC 传输层**（core/lib/dsh-rpc.js）：先按 0.1.2 的斜杠端点 + 信封尝试，端点不存在（404）再回退老的点号方法，且**按端点（而非按服务）记忆**所选接口形态，避免 workspace/list 的 404 连带把 session/list 也拖回老接口；
+  - 新增 **launch token → browser cookie 交换**：GET `/?token=…` 取 dsh-auth-* Cookie 并缓存，之后带 cookie 调 /api（无 token 时静默退回旧版行为，不破坏 0.1.1）；
+  - **工作区列表磁盘兜底**（core/lib/workspace-store.js）：0.1.2 没有 workspace.list，改读 dsh 自己持久化的 $DSH_HOME/storages/workspace.json（与壳层 B 方案同一个文件，按 global.workspaceIds 保序，取 workspaceId/path/title/sessionIds），因此 /wks 即便没拿到 token 也能列出工作区；
+  - **会话读取/回推适配**：会话列表改走 session/list；最后一条回复改由 session/page 按 session/list 给出的 projection cursor（projections.asOfSeq）回放；prompt 补上 0.1.2 必填的 requestId；
+  - **壳层把 token 传给 runner**：ServerManager 记住 dsh web 自报的带 token 入口地址（entryURL/webToken），启动 `channel run` 时以 `--dsh-token` 传入（不落日志）；CLI 同时支持环境变量 DSH_WEB_TOKEN；
+  - **修正 channel runner 启动时机**：原先在 `startServer()`（异步）之后立即启动，runner 可能拿到默认端口 3080 且拿不到 token，现改为服务就绪（端口与 token 都已知）后再启动。
+- **修复开发版读不到保存的面板宽度（ShellConfig 早期缓存错误 home）**：ShellConfig 在 applyDevIsolation 注入 DSH_HOME 之前被首次访问，按旧路径（~/.dsh/shell/config.json，不存在）载入并把"已加载"置真，之后一直返回空缓存 → 读不到保存宽度、回退默认 560。改为"按路径感知重载"（缓存记录载入路径，DSH_HOME 变化即重新加载）。
+- **面板宽度逻辑修正**：560 现在是面板**最小宽度**（此前被当作"默认宽度"，导致点面板总缩回 560）；用户拖动的宽度会被记住，**程序化布局不再回写覆盖**（切面板替换 subviews[1] 时的等分宽度不再被保存）。切面板时**按目标宽度预置新面板视图 frame + 零时长无动画**，消除"先等分(WebView≈1000)再扩到 1100"的中间帧。冲突策略（WebView 优先）：窗口 < 约1709pt 放不下"面板≥560 + WebView≥1100"时自动隐藏面板，保 WebView ≥1100。
+- **ShellConfig 写入防抖异步**：改为 0.3s 防抖、后台线程经 core CLI 持久化（失败回退直写），退出时 flushNow，避免高频（面板拖动）同步 spawn 子进程阻塞主线程。
+- **壳层配置改为语言无关的文件存储（core 单一实现）**：新增共享 core 的 settings 模块（core/lib/settings.js + ohmy-core settings get/set/unset/list/path），把壳层自有配置存成 UTF-8 JSON：$DSH_HOME/shell/config.json（dev → ~/.dsh-dev/shell/config.json）。Swift 侧新增 ShellConfig 门面：读直接读该 JSON（快、无子进程），写委托 core CLI（写入/合并/原子化语义单一实现，失败时回退直写）。已迁移 ~12 个自有 key（appLanguage/appTheme/dshRegistry/autoUpgradeDsh/nextAutoUpgradeCheck/hasCompletedOnboarding/preview*/rightPanelKind/browserLastURL/browserRenderMode/channel.global.list/wiki*）。仍留在原生 UserDefaults 的仅系统/框架强制项：AppleLanguages、NSWindow Frame。dev 隔离注入（applyDevIsolation）提前到任何配置读取之前。
+- **开发版使用独立 bundle id（com.ohmydsh.app.dev）→ 独立 UserDefaults 域**：此前 dev 与正式版共用 com.ohmydsh.app，导致 dev 的偏好/状态与正式版共享——例如 Channel 面板「全局配置」的通道列表 channel.global.list（含缓存状态/连接）会显示正式版那份。改为 dev 构建时 bundle id 加 .dev 后缀，dev 拥有自己的 UserDefaults 域（channel.global.list、auto-upgrade 节流、语言/registry/主题等全部独立），可与正式版并存。
+- **所有家目录级 ~/.dsh 硬编码统一改走 DSH_HOME（开发版不再误读正式 ~/.dsh）**：
+  - ChannelPanel 三处硬编码 ~/.dsh/channels（channel 运行状态、项目关联 workspaces.json、项目开关）→ 复用 env-aware 的 ChannelStoreReader.channelsDir()；
+  - IssueRunnerPanel 的 GitHub token 路径（~/.dsh/gh-token、~/.dsh/tokens/<owner>-<repo>）→ 按 $DSH_HOME 解析；
+  - core：channel-runner 的 channel-runtime 目录与 ohmy-core 的 --dsh-home 默认值 → 优先 process.env.DSH_HOME；
+  - 内置技能文档（web-dev-tools 的 browser-api.port、issue-resolve 的 token 路径）→ 改为 ${DSH_HOME:-$HOME/.dsh}（dev/prod 通吃；内嵌文本与仓库副本保持字节一致，skills 测试通过）。
+  - 保持不变的：项目内 <repo>/.dsh（tasks/channels.json/wiki）与有意保留常量（dev home、旧 browser-dev 迁移源）。
+- **适配 dsh 0.1.2-rc.1 的预览打开文件（D3）**：0.1.2 把文件打开从 host.openPath 迁到会话控制器的 session/openWorkspacePath（端点 /api/session/openWorkspacePath，路径在 payload.args.request.path —— 实测抓包确认）。预览拦截脚本改为同时匹配新旧端点，并按 payload.args.request.path → args.path → payload.path 依次取路径，恢复「消息流里点文件 → 在预览面板打开」。
+- **修复 dsh 0.1.2-rc.1 下切换会话不跟随切换项目目录（会话跟踪）**：0.1.2 客户端把 RPC method 从点号改为斜杠（如 subagents/list）并把 sessionId 放到 payload.args.*，壳层注入的 session 跟踪脚本按旧的点号 method 与 payload.sessionId 匹配会全部落空，导致 webView 切会话不通知壳层、项目目录不跟随。修复为同时识别新旧两种 method 名，并从 payload.args（parentSessionId/agentId/sessionId/request.sessionId）回退到旧的 payload.* 取 sessionId。配合 B（workspace.json 磁盘映射）即可在切换会话后更新终端/预览/wiki/tasks 的项目目录。
+- **恢复 dsh 0.1.2-rc.1 下的会话 workspace / 项目目录读取（DSHSessionRPC）**：0.1.2-rc.1 移除并改了 /api/session.list（改为 token + 控制器 RPC），壳层读当前会话 cwd/workspace 会 401/404 而失败。修复为当 live API 取不到时，回退读取 dsh 持久化的 $DSH_HOME/storages/workspace.json（磁盘、无需鉴权）：按 sessionId 找到所属 workspace 的 path，否则取最近更新的 workspace path，用于终端/预览/wiki/tasks 的项目目录定位。
+- **适配 dsh 0.1.2-rc.1 的 Web token 鉴权（升级到该版本后启动失败）**：dsh 0.1.2-rc.1 起给 Web 界面加了每实例 token + cookie 鉴权，裸 GET 根路径返回 401、无 __DSH_BOOT__，而 oh-my-dsh 原先用裸 GET 根路径判就绪、并直接加载根路径，导致升级到 0.1.2-rc.1 后 App 判定「dsh web 启动失败」。修复为：启动时读取 dsh web 自己打印的服务地址（含 token，来自其日志行 dsh web: http://127.0.0.1:<port>/?token=...），据此做就绪判定，webView 也直接加载该带 token 地址（WKWebView 跟随 303 种 cookie 后正常显示）；无 token 的旧版本回退到原 __DSH_BOOT__ 探测。见 ServerManager.start() / servedEntryURL()。
+- **自动升级节流时间戳改为「本轮跑完才写」+「稍后提醒」**：不再在开始检测时就消耗 24h 窗口（秒退/中途退出不会吞掉窗口，下次启动会重试）；自动检测下载完成后若用户选「稍后」，则把下次自动检查推到约 2 小时后并定时提醒，用户仍可随时手动升级；离线/下载失败按 ~2h 重试，无需升级/已升级按 ~24h 节流。
+- **开发版（DSH_DEV_BUILD=1）运行隔离**：开发版构建现在自拉起**独立 dsh 实例**（不复用已在 3080 运行的实例，3080 被占时自动取空闲端口），并使用**独立 DSH_HOME（默认 ~/.dsh-dev）**，使 dsh 会话/配置/skills/channel 与正式 ~/.dsh 完全隔离；同时错开 CEF CDP（9333→9433）与 Browser API（3081→4081）端口，可与正式版并存测试（均尊重用户显式 DSH_HOME / DSH_CDP_PORT / DSH_BROWSER_PORT 覆盖）。旧开发版 CEF profile ~/.dsh/browser-dev 会**自动迁移**到新隔离目录 ~/.dsh-dev/browser-dev（幂等，目标已存在则跳过）。shell 侧 channel token 读写路径统一改为按 $DSH_HOME 解析，开发版不再写入正式 ~/.dsh。
+- **自动升级进行中「检查并升级 dsh」菜单置灰**：当自动升级开启且后台正在检测/下载/安装时，Settings 菜单里的「检查并升级 dsh…(⌘U)」自动置灰不可点，避免与自动流程并发；手动流程下载/安装期间同样置灰。Settings 窗口内按钮在忙碌时点按会提示「已有升级流程正在进行」。
+- **升级流程不再用全窗口状态浮层盖住整个界面**：手动/自动「检查、下载、安装」阶段均在后台静默执行，不再调用会铺满主窗口（白底+转圈）的 showStatus 浮层，避免点 Settings 的 Check & Upgrade 时整个 App 闪屏；只在每步完成时弹确认/结果框（真正重启服务那一下仍走启动浮层）。
 
 - **自动升级 dsh 失败（exit 127）**：App 内自动升级用打包 node 的绝对路径启动 npm，但 npm 执行依赖包 lifecycle 脚本（如 `@deepseek-ai/dsh-subprocess-local` 的 postinstall `node ensure-spawn-helper.mjs`）时通过 shell 按 `PATH` 找 `node`；GUI 启动的 App 继承 launchd 的精简 PATH 通常没有 `node`，报 `sh: node: command not found`、升级中断。修复为给升级子进程前置注入打包 node 所在目录到 `PATH`。
 - **升级后未重启服务 / WebView 未重载**：自动/手动升级跑完后运行中的 dsh web 仍在内存里跑旧代码（只刷新版本事实、没重启服务），新版本要等下次启动才生效。修复为升级成功后停止 App 自己拉起的服务并重新拉起 + 重载 WebView（含首次启动失败的场景）。

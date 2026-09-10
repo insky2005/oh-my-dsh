@@ -15,7 +15,7 @@
 #   2. runs `npm install <dsh>` (via that downloaded Node) in
 #      Contents/Resources/runtime/dsh, pulling @deepseek-ai/dsh and its whole
 #      dependency closure from the npm registry (default spec:
-#      @deepseek-ai/dsh@0.1.1-rc.2; override with DSH_PACKAGE_SPEC).
+#      @deepseek-ai/dsh@0.1.2-rc.1; override with DSH_PACKAGE_SPEC).
 #
 # China mirrors are used by default for speed (override with DSH_NODE_MIRROR /
 # DSH_NPM_REGISTRY). Downloads and the built runtime are cached in .cache/ so
@@ -57,6 +57,12 @@ esac
 # App 运行时会据此应用 dev 覆盖项（隔离 CEF profile 等，见 main.swift 的 isDevBuild /
 # devBuildOverrides），用于与已安装版并存测试；未来再遇资源冲突可在同一处快速追加。
 DEV_BUILD="${DSH_DEV_BUILD:-0}"
+
+# 开发版使用独立 bundle id → 独立 UserDefaults 域（.dev 后缀），使 dev 与正式版的
+# 偏好/状态（channel.global.list、auto-upgrade 节流、语言/registry/主题等）彻底隔离。
+if [ "$DEV_BUILD" = "1" ]; then
+  BUNDLE_ID="$BUNDLE_ID.dev"
+fi
 
 SRC="src"
 BUILD_DIR="$ROOT/.build"
@@ -153,7 +159,7 @@ download_node() {
 # install_dsh <target-dir>: npm install dsh into target; registry fallback
 install_dsh() {
   local target="$1"
-  local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.1-rc.2}"
+  local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.2-rc.1}"
   mkdir -p "$target"
   ( cd "$target" \
     && npm init -y >/dev/null 2>&1 \
@@ -164,7 +170,7 @@ install_dsh() {
 
 # build_runtime: node bin + npm + dsh tree into $CACHE_DIR/runtime (cached)
 build_runtime() {
-  local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.1-rc.2}"
+  local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.2-rc.1}"
   # runtime 按架构分目录（$CACHE_DIR/runtime/<arch>）：双架构 release 的
   # arm64/x86_64 各自 node+dsh 树互不覆盖，缓存跨轮生效；旧单目录会让
   # 每轮 release 的每个架构都 rm -rf 重建（缓存形同虚设）。
@@ -221,7 +227,7 @@ if [ "$MODE" = "prefetch" ]; then
   build_runtime
   echo ""
   echo "Prefetched runtime ready: $CACHE_DIR/runtime/$ARCH"
-  echo "Node: $NODE_VERSION | dsh: ${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.1-rc.2}"
+  echo "Node: $NODE_VERSION | dsh: ${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.2-rc.1}"
   echo "A later './build-app.sh' will reuse it without network."
   exit 0
 fi

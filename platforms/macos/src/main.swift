@@ -55,7 +55,7 @@ enum L10n {
     /// explicit shell-language choice exists.
     static var hasExplicitChoice: Bool {
         if let env = ProcessInfo.processInfo.environment["DSH_LANG"], !env.isEmpty { return true }
-        if let saved = UserDefaults.standard.string(forKey: "appLanguage"), !saved.isEmpty { return true }
+        if let saved = ShellConfig.shared.string(forKey: "appLanguage"), !saved.isEmpty { return true }
         return false
     }
 
@@ -64,7 +64,7 @@ enum L10n {
     static var lang: String {
         let env = ProcessInfo.processInfo.environment["DSH_LANG"] ?? ""
         if !env.isEmpty { return env.hasPrefix("zh") ? "zh" : "en" }
-        if let saved = UserDefaults.standard.string(forKey: "appLanguage") {
+        if let saved = ShellConfig.shared.string(forKey: "appLanguage") {
             if saved.hasPrefix("zh") { return "zh" }
             if saved.hasPrefix("en") { return "en" }
         }
@@ -75,9 +75,9 @@ enum L10n {
     /// captured system language stays cached, so "follow system" is instant.
     static func set(_ l: String?) {
         if let l = l {
-            UserDefaults.standard.set(l.hasPrefix("en") ? "en" : "zh", forKey: "appLanguage")
+            ShellConfig.shared.set(l.hasPrefix("en") ? "en" : "zh", forKey: "appLanguage")
         } else {
-            UserDefaults.standard.removeObject(forKey: "appLanguage")
+            ShellConfig.shared.removeObject(forKey: "appLanguage")
         }
     }
     static var isZh: Bool { lang == "zh" }
@@ -129,12 +129,19 @@ enum L10n {
         "status.startFailed": ("无法启动 oh-my-dsh\n\n%@", "Failed to start oh-my-dsh\n\n%@"),
         "status.checking": ("正在检查 dsh 更新…", "Checking for dsh updates…"),
         "status.upgrading": ("正在升级 dsh（%@ → %@）…", "Upgrading dsh (%@ → %@)…"),
+        "status.downloading": ("正在下载 dsh %@…", "Downloading dsh %@…"),
+        "status.applying": ("正在安装 dsh %@…", "Installing dsh %@…"),
         "status.pageLoadFailed": ("页面加载失败：%@", "Page load failed: %@"),
         // buttons
         "btn.retry": ("重试", "Retry"),
         "btn.ok": ("好", "OK"),
         "btn.save": ("保存", "Save"),
         "btn.cancel": ("取消", "Cancel"),
+        "btn.download": ("下载", "Download"),
+        "btn.installNow": ("立即升级", "Install & Restart"),
+        "btn.later": ("稍后", "Later"),
+        "btn.yes": ("是", "Yes"),
+        "btn.no": ("否", "No"),
         // preview panel
         "preview.openInDefaultApp": ("在默认应用中打开", "Open in Default App"),
         "preview.openInDefaultAppHint": ("用系统默认应用打开当前文件", "Open the current file with its default app"),
@@ -207,6 +214,18 @@ enum L10n {
         "alert.upgradeFailed": ("升级失败", "Upgrade Failed"),
         "alert.upToDate": ("dsh 已是最新版本：%@", "dsh is up to date: %@"),
         "alert.upgraded": ("dsh 已升级：%@ → %@", "dsh upgraded: %@ → %@"),
+        // stepwise / staged upgrade prompts
+        "alert.upgradeAvailable": ("发现 dsh 新版本：%@（下一步）", "dsh update available: %@ (next step)"),
+        "alert.upgradeAvailableInfo": ("当前版本：%@\n可升级到：%@\n\n下载后仍会二次确认，才真正替换运行版本。",
+                                       "Current: %@\nNext step: %@\n\nAfter downloading you confirm again before it replaces the running dsh."),
+        "alert.downloadDone": ("dsh %@ 已下载完成", "dsh %@ is ready"),
+        "alert.downloadDoneInfo": ("已下载到本地缓存，尚未改动运行中的 dsh。\n是否立即升级并重启服务？",
+                                   "Downloaded to the local cache; the running dsh is unchanged.\nInstall and restart now?"),
+        "alert.downloadFailed": ("下载失败", "Download Failed"),
+        "alert.downloadCancelled": ("已取消下载", "Download Cancelled"),
+        "alert.upgradeInProgress": ("已有升级流程正在进行，请稍候", "An upgrade is already in progress — please wait"),
+        "alert.rolledBack": ("升级失败，已自动回滚到 %@。\n\n%@", "Upgrade failed; rolled back to %@.\n\n%@"),
+        "err.prefetchFailed": ("下载 dsh 失败（%@）", "Failed to download dsh (%@)"),
         "alert.noVersionInfo": ("无法获取 dsh 版本信息（registry：%@）",
                                 "Cannot fetch dsh version info (registry: %@)"),
         "alert.setRegistryTitle": ("设置 dsh registry", "Set dsh Registry"),
@@ -449,13 +468,13 @@ enum RegistryConfig {
     static var current: String {
         let env = ProcessInfo.processInfo.environment["DSH_REGISTRY"] ?? ""
         if !env.isEmpty { return normalize(env) }
-        if let saved = UserDefaults.standard.string(forKey: "dshRegistry"), !saved.isEmpty {
+        if let saved = ShellConfig.shared.string(forKey: "dshRegistry"), !saved.isEmpty {
             return normalize(saved)
         }
         return "https://registry.npmmirror.com"
     }
-    static func set(_ url: String) { UserDefaults.standard.set(url, forKey: "dshRegistry") }
-    static func reset() { UserDefaults.standard.removeObject(forKey: "dshRegistry") }
+    static func set(_ url: String) { ShellConfig.shared.set(url, forKey: "dshRegistry") }
+    static func reset() { ShellConfig.shared.removeObject(forKey: "dshRegistry") }
     private static func normalize(_ s: String) -> String {
         var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         while t.hasSuffix("/") { t.removeLast() }
@@ -469,10 +488,10 @@ enum RegistryConfig {
 /// WKWebView re-renders with the new appearance automatically).
 enum AppTheme {
     static var current: String {
-        UserDefaults.standard.string(forKey: "appTheme") ?? "system"
+        ShellConfig.shared.string(forKey: "appTheme") ?? "system"
     }
     static func set(_ mode: String) {
-        UserDefaults.standard.set(mode, forKey: "appTheme")
+        ShellConfig.shared.set(mode, forKey: "appTheme")
         apply()
     }
     static func apply() {
@@ -485,7 +504,28 @@ enum AppTheme {
     }
 }
 
+/// Cooperative cancellation token for a running staged download. A caller
+/// keeps a reference and asks to stop; the running npm process is terminated.
+final class UpgradeCancelToken {
+    private let lock = NSLock()
+    private var _cancelled = false
+    var cancelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _cancelled
+    }
+    func requestStop() {
+        lock.lock(); _cancelled = true; lock.unlock()
+    }
+}
+
 /// Upgrades the bundled dsh tree with the bundled node + npm.
+///
+/// dsh upgrades are STEPWISE (one release candidate — stable or rc — at a
+/// time) and STAGED so the heavy download never touches the live tree:
+///   - prefetch() warms the shared npm cache with the pinned version in a
+///     throwaway staging dir (the "download" phase; cancellable, cheap to drop);
+///   - apply() installs the pinned version in place from the warm cache,
+///     backing up the live tree first and restoring it automatically on failure.
 final class DSHUpdater {
     let nodePath: String
     let dshDir: String
@@ -503,6 +543,8 @@ final class DSHUpdater {
               FileManager.default.fileExists(atPath: npmCli) else { return nil }
     }
 
+    // MARK: versions
+
     var currentVersion: String? {
         let pkg = dshDir + "/node_modules/@deepseek-ai/dsh/package.json"
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: pkg)),
@@ -511,60 +553,195 @@ final class DSHUpdater {
         return v
     }
 
-    func latestVersion(registry: String) -> String? {
+    private func registryJSON(registry: String) -> [String: Any]? {
         guard let data = HTTP.get(registry + "/@deepseek-ai/dsh", timeout: 15),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return json
+    }
+
+    func latestVersion(registry: String) -> String? {
+        guard let json = registryJSON(registry: registry),
               let tags = json["dist-tags"] as? [String: Any],
               let latest = tags["latest"] as? String else { return nil }
         return latest
     }
 
-    /// Runs `node npm-cli.js install <target>` inside the bundled dsh dir.
-    /// Returns the newly installed version.
-    @discardableResult
-    func upgrade(registry: String, spec: String? = nil) throws -> String {
-        let target = spec ?? "@deepseek-ai/dsh@latest"
-        let cacheDir = NSHomeDirectory() + "/Library/Caches/oh-my-dsh/npm-cache"
-        try? FileManager.default.createDirectory(atPath: cacheDir, withIntermediateDirectories: true)
+    /// Every published version string (unsorted). Stepwise target selection
+    /// (stable/rc candidates, never jumping to latest) runs in the shared core.
+    func publishedVersions(registry: String) -> [String] {
+        guard let json = registryJSON(registry: registry),
+              let versions = json["versions"] as? [String: Any] else { return [] }
+        return Array(versions.keys)
+    }
 
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: nodePath)
-        proc.arguments = [npmCli, "install", "--loglevel=error",
-                          "--no-audit", "--no-fund", "--registry", registry, target]
+    // MARK: npm process plumbing
+
+    private var sharedCacheDir: String {
+        NSHomeDirectory() + "/Library/Caches/oh-my-dsh/npm-cache"
+    }
+    private var stagingDir: String {
+        NSHomeDirectory() + "/Library/Caches/oh-my-dsh/staging"
+    }
+    private var backupsRoot: String {
+        NSHomeDirectory() + "/Library/Caches/oh-my-dsh/upgrade-backups"
+    }
+
+    /// npm env: pass OS env through, but prepend the bundled node's dir to PATH
+    /// (npm lifecycle scripts look up `node` on PATH) and route the npm cache
+    /// to the shared cache dir so prefetch and apply share warmed downloads.
+    private func npmEnv() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
-        // OS environment passed through untouched (no PATH rewrite) — npm runs
-        // via npm-cli.js's absolute path. But npm lifecycle scripts (e.g. the
-        // @deepseek-ai/dsh-subprocess-local postinstall that runs `node ensure-spawn-helper.mjs`)
-        // are spawned through the shell and look up `node` on PATH, which a
-        // Finder/GUI-launched app may not have. Prepend the bundled node's dir so
-        // those scripts find the very node running npm.
         let nodeBinDir = (nodePath as NSString).deletingLastPathComponent
         if let existing = env["PATH"], !existing.isEmpty {
             env["PATH"] = nodeBinDir + ":" + existing
         } else {
             env["PATH"] = nodeBinDir
         }
-        env["npm_config_cache"] = cacheDir
+        env["npm_config_cache"] = sharedCacheDir
         env["npm_config_update_notifier"] = "false"
-        proc.environment = env
-        proc.currentDirectoryURL = URL(fileURLWithPath: dshDir)
+        return env
+    }
 
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = pipe
-        try proc.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
-        guard proc.terminationStatus == 0 else {
-            let out = String(data: data, encoding: .utf8) ?? ""
-            throw NSError(domain: "DSHUpgrade", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: L10n.tr("err.upgradeFailed", proc.terminationStatus, String(out.suffix(1500))),
-            ])
+    /// Runs `node <npmCli> <args…>` in `cwd`, streaming merged output. Returns
+    /// the exit code (-1 on spawn failure). Terminates the process as soon as
+    /// `cancel` is requested, so a download can be interrupted.
+    @discardableResult
+    private func runNpm(_ args: [String], cwd: String, cancel: UpgradeCancelToken? = nil,
+                        onOutput: ((String) -> Void)? = nil) -> Int {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: nodePath)
+        proc.arguments = args
+        proc.environment = npmEnv()
+        proc.currentDirectoryURL = URL(fileURLWithPath: cwd)
+
+        let out = Pipe()
+        proc.standardOutput = out
+        proc.standardError = out
+
+        let finished = DispatchGroup()
+        finished.enter()
+        out.fileHandleForReading.readabilityHandler = { fh in
+            let data = fh.availableData
+            if data.isEmpty {
+                fh.readabilityHandler = nil
+                finished.leave()
+            } else if cancel?.cancelled == true {
+                fh.readabilityHandler = nil
+                finished.leave()
+            } else if let s = String(data: data, encoding: .utf8), !s.isEmpty {
+                onOutput?(s)
+            }
         }
-        guard let v = currentVersion else {
+
+        // Cancellation watcher: terminate the process shortly after requested.
+        DispatchQueue.global().async {
+            while proc.isRunning {
+                if cancel?.cancelled == true { proc.terminate(); break }
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+        }
+
+        do { try proc.run() } catch {
+            out.fileHandleForReading.readabilityHandler = nil
+            return -1
+        }
+        proc.waitUntilExit()
+        finished.wait()
+        return Int(proc.terminationStatus)
+    }
+
+    // MARK: staged download (prefetch) & in-place apply
+
+    /// Download phase: warm the shared npm cache with the pinned `version` by
+    /// installing it into a throwaway staging dir. The live dsh tree is never
+    /// touched, so this is cancellable and safe to abandon (only the cache
+    /// matters; the staging dir is removed when done).
+    @discardableResult
+    func prefetch(registry: String, version: String, cancel: UpgradeCancelToken? = nil,
+                  onOutput: ((String) -> Void)? = nil) throws -> Bool {
+        let fm = FileManager.default
+        let staging = stagingDir
+        _ = try? fm.removeItem(atPath: staging)
+        do { try fm.createDirectory(atPath: staging, withIntermediateDirectories: true) } catch {
+            throw NSError(domain: "DSHUpgrade", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: L10n.tr("err.prefetchFailed", error.localizedDescription)])
+        }
+        defer { _ = try? fm.removeItem(atPath: staging) }
+        var log = ""
+        let args = [npmCli, "install", "--loglevel=error", "--no-audit", "--no-fund",
+                    "--registry", registry, "@deepseek-ai/dsh@" + version]
+        let code = runNpm(args, cwd: staging, cancel: cancel, onOutput: { log.append($0) })
+        if cancel?.cancelled == true { return false }
+        guard code == 0 else {
+            throw NSError(domain: "DSHUpgrade", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: L10n.tr("err.prefetchFailed", String(log.suffix(500)))])
+        }
+        return true
+    }
+
+    private func pruneBackups(keeping: Int) {
+        let fm = FileManager.default
+        let dirs = ((try? fm.contentsOfDirectory(atPath: backupsRoot)) ?? [])
+            .filter { var d: ObjCBool = false
+                fm.fileExists(atPath: backupsRoot + "/" + $0, isDirectory: &d)
+                return d.boolValue }
+            .sorted { $0 < $1 }
+        if dirs.count > keeping {
+            for name in dirs[0 ..< (dirs.count - keeping)] {
+                try? fm.removeItem(atPath: backupsRoot + "/" + name)
+            }
+        }
+    }
+
+    /// Snapshot the whole live dsh tree before an in-place install so a failed
+    /// upgrade can roll back. Keeps only the most recent backup.
+    private func backup() -> String? {
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: backupsRoot, withIntermediateDirectories: true)
+        pruneBackups(keeping: 1)
+        let name = (currentVersion ?? "current") + "-" + String(Int(Date().timeIntervalSince1970))
+        let dest = backupsRoot + "/" + name
+        do { try fm.copyItem(atPath: dshDir, toPath: dest) } catch { return nil }
+        return dest
+    }
+
+    /// Restore a backup over the (possibly partially written) live tree.
+    private func restore(fromBackup backupPath: String) -> Bool {
+        let fm = FileManager.default
+        let displaced = dshDir + ".upgrade-old"
+        _ = try? fm.removeItem(atPath: displaced)
+        do { try fm.moveItem(atPath: dshDir, toPath: displaced) } catch { return false }
+        do {
+            try fm.moveItem(atPath: backupPath, toPath: dshDir)
+            _ = try? fm.removeItem(atPath: displaced)
+            return true
+        } catch {
+            _ = try? fm.moveItem(atPath: displaced, toPath: dshDir)
+            return false
+        }
+    }
+
+    /// Apply phase: back up the live tree, install the pinned `version` in
+    /// place from the (pre-warmed) cache, verify the installed version, and
+    /// roll back to the backup on any failure. Returns the installed version.
+    @discardableResult
+    func apply(registry: String, version: String) throws -> String {
+        let backupPath = backup()
+        var log = ""
+        let args = [npmCli, "install", "--loglevel=error", "--no-audit", "--no-fund",
+                    "--prefer-offline", "--registry", registry, "@deepseek-ai/dsh@" + version]
+        let code = runNpm(args, cwd: dshDir, onOutput: { log.append($0) })
+        if code != 0 {
+            if let b = backupPath { _ = restore(fromBackup: b) }
+            throw NSError(domain: "DSHUpgrade", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: L10n.tr("err.upgradeFailed", code, String(log.suffix(1500)))])
+        }
+        guard let v = currentVersion, VersionKit.compare(v, version) == 0 else {
+            if let b = backupPath { _ = restore(fromBackup: b) }
             throw NSError(domain: "DSHUpgrade", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.noVersionAfterUpgrade")])
         }
+        if let b = backupPath { _ = try? FileManager.default.removeItem(atPath: b) }
         return v
     }
 }
@@ -610,6 +787,15 @@ enum CoreBridge {
     static func latestVersion(registry: String) -> String? {
         run(["upgrade", "latest", registry])
     }
+
+    /// Stepwise upgrade target via core: the next release candidate (stable/rc)
+    /// strictly newer than `current`. Returns nil when core is unavailable or
+    /// prints an empty result (nothing newer — an empty string then means "no
+    /// update"; the caller can treat a returned "" as none).
+    static func nextStepTarget(current: String, versions: [String]) -> String? {
+        guard !versions.isEmpty else { return nil }
+        return run(["upgrade", "next", current] + versions)
+    }
 }
 
 // MARK: - dsh web server management
@@ -620,13 +806,27 @@ final class ServerManager {
     private(set) var spawned = false
     private(set) var process: Process?
 
+    /// The entry URL dsh web advertises ("http://127.0.0.1:<port>/?token=…").
+    /// dsh 0.1.2+ fences /api behind a browser cookie minted from that token, so
+    /// the shell hands it to the channel runner (native clients have no cookie).
+    private(set) var entryURL: URL?
+
+    /// The launch token from the entry URL, nil when dsh advertises none.
+    var webToken: String? {
+        guard let url = entryURL,
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let value = items.first(where: { $0.name == "token" })?.value,
+              !value.isEmpty else { return nil }
+        return value
+    }
+
     /// Resolved runtime facts, surfaced in the About panel.
     private(set) var dshVersion = L10n.tr("fact.unknown")
     private(set) var nodeVersion = L10n.tr("fact.unknown")
     private(set) var nodePath = L10n.tr("fact.unknown")
     private(set) var runtimeSource = L10n.tr("fact.unknown")
 
-    /// The web UI root page always injects `window.__DSH_BOOT__`.
+    /// The web UI root page always injects `window.__DSH_BOOT__` on dsh <= 0.1.1.
     func isDSHServing(port: Int, timeout: TimeInterval = 2) -> Bool {
         guard let url = URL(string: "http://127.0.0.1:\(port)/"),
               let data = httpGet(url, timeout: timeout),
@@ -634,19 +834,63 @@ final class ServerManager {
         return body.contains("__DSH_BOOT__")
     }
 
+    /// True when something on `port` is a dsh web that refuses a bare request
+    /// because it wants its launch token (dsh >= 0.1.2). Such an instance CANNOT be
+    /// adopted — the token is random per process and only in that process's stdout —
+    /// but it is worth distinguishing from "nothing is listening" in the log.
+    ///
+    /// Not adopting it costs little: the shell spawns its own instance and, with the
+    /// same DSH_HOME, both share the same workspaces/sessions/settings. Running two
+    /// dsh web on ONE home at the same time is still best avoided (they persist to
+    /// the same files), so the log says which one we started.
+    func isDSHAuthenticated(port: Int, timeout: TimeInterval = 2) -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/") else { return false }
+        let (status, data) = httpGetWithStatus(url, timeout: timeout)
+        guard status == 401, let data = data,
+              let body = String(data: data, encoding: .utf8) else { return false }
+        return body.contains("authentication required")
+    }
+
+    /// Parse the self-advertised entry URL a spawned dsh web prints to its log,
+    /// e.g. "dsh web: http://127.0.0.1:<port>/?token=…". Returns nil until the
+    /// line appears. Handles token and tokenless forms (whatever dsh advertises,
+    /// we load exactly that URL so token-auth'd versions work).
+    private func servedEntryURL(logPath: String, port: Int) -> URL? {
+        guard let text = try? String(contentsOfFile: logPath, encoding: .utf8) else { return nil }
+        let needle = "http://127.0.0.1:\(port)"
+        for line in text.split(separator: "\n") {
+            let s = String(line)
+            guard let range = s.range(of: needle) else { continue }
+            var tail = String(s[range.lowerBound...])
+            if let sp = tail.firstIndex(where: { $0 == " " || $0 == "\t" || $0 == ")" }) {
+                tail = String(tail[..<sp])
+            }
+            if let u = URL(string: tail), (u.scheme == "http" || u.scheme == "https") {
+                return u
+            }
+        }
+        return nil
+    }
+
     private func httpGet(_ url: URL, timeout: TimeInterval) -> Data? {
+        httpGetWithStatus(url, timeout: timeout).data
+    }
+
+    private func httpGetWithStatus(_ url: URL, timeout: TimeInterval) -> (status: Int, data: Data?) {
         let semaphore = DispatchSemaphore(value: 0)
+        var status = -1
         var result: Data?
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "GET"
-        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
+        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
+            status = (response as? HTTPURLResponse)?.statusCode ?? -1
             result = data
             semaphore.signal()
         }
         task.resume()
         _ = semaphore.wait(timeout: .now() + timeout + 1)
         task.cancel()
-        return result
+        return (status, result)
     }
 
     private func isPortFree(_ port: Int) -> Bool {
@@ -967,7 +1211,15 @@ final class ServerManager {
         if env["DSH_NATIVE_FORCE_SPAWN"] != "1" && isDSHServing(port: 3080) {
             spawned = false
             AppLog.shared.log("reusing existing dsh web on 127.0.0.1:3080")
-            return URL(string: "http://127.0.0.1:3080")!
+            entryURL = URL(string: "http://127.0.0.1:3080")
+            return entryURL!
+        }
+        // dsh >= 0.1.2 mints a random per-process launch token and answers 401 to a
+        // bare GET, so an externally started instance cannot be adopted (its token
+        // never leaves its own stdout). Spawn our own instead: same DSH_HOME ⇒ same
+        // workspaces/sessions/settings (docs/dsh-version-impact.md, R2).
+        if env["DSH_NATIVE_FORCE_SPAWN"] != "1" && isDSHAuthenticated(port: 3080) {
+            AppLog.shared.log("existing dsh web on 3080 wants its launch token (dsh 0.1.2+); not adopting — starting our own instance (same DSH_HOME ⇒ same data)")
         }
 
         // 2. Pick the port (env override for testing, otherwise 3080, else a free port).
@@ -1027,31 +1279,43 @@ final class ServerManager {
             process = proc
             spawned = true
 
-            // 5. Poll until the UI is served.
+            // 5. Poll until the UI is served. dsh web (since 0.1.2-rc.1) prints the
+            //    address it is serving on, including its per-instance token, e.g.
+            //    "dsh web: http://127.0.0.1:<port>/?token=...". We load exactly that
+            //    advertised URL so token-auth'd dsh works; for versions that don't
+            //    print one we fall back to the legacy __DSH_BOOT__ probe.
+            var servedURL: URL?
             var failed = false
             let deadline = Date().addingTimeInterval(90)
-            while Date() < deadline {
-                if isDSHServing(port: port, timeout: 1) {
-                    // Settle: a too-old node can briefly serve the boot shell
-                    // (which carries __DSH_BOOT__) and then crash while loading
-                    // the plugin tree. Require the server AND process to still
-                    // be alive a moment later before declaring it up.
+            while Date() < deadline && !failed {
+                if let advertised = servedEntryURL(logPath: logPath, port: port) {
+                    // Settle: require the process to still be alive a moment later
+                    // (a too-old node can briefly serve then crash while loading the
+                    // plugin tree).
                     Thread.sleep(forTimeInterval: 1.0)
-                    if proc.isRunning && isDSHServing(port: port, timeout: 1) {
-                        refreshFacts(node: node)
-                        AppLog.shared.log("dsh web is up on 127.0.0.1:\(port) (node=\(node))")
-                        return URL(string: "http://127.0.0.1:\(port)")!
+                    if proc.isRunning {
+                        servedURL = advertised
+                        break
                     }
                     failed = true
-                    break
-                }
-                if !proc.isRunning {
+                } else if isDSHServing(port: port, timeout: 1) {
+                    Thread.sleep(forTimeInterval: 1.0)
+                    if proc.isRunning && isDSHServing(port: port, timeout: 1) {
+                        servedURL = URL(string: "http://127.0.0.1:\(port)")!
+                        break
+                    }
                     failed = true
-                    break
                 }
-                Thread.sleep(forTimeInterval: 0.5)
+                if !proc.isRunning { failed = true }
+                if !failed { Thread.sleep(forTimeInterval: 0.5) }
             }
-            if !failed && !isDSHServing(port: port, timeout: 1) { failed = true }
+            if let servedURL = servedURL, proc.isRunning {
+                refreshFacts(node: node)
+                entryURL = servedURL
+                AppLog.shared.log("dsh web is up on \(servedURL.absoluteString) (node=\(node))")
+                return servedURL
+            }
+            failed = true
 
             if failed, node != explicitNode, let bundled, node != bundled {
                 // OS node failed to boot dsh web; the bundled runtime is the
@@ -1117,92 +1381,82 @@ enum ProjectDirectory {
 /// `client-request` envelope). Used by the preview panel's project tree, the
 /// terminal panel's session start directory and the wiki root.
 enum DSHSessionRPC {
+    /// dsh 0.1.2+ persists workspaces (path + member sessions) under
+    /// $DSH_HOME/storages/workspace.json. Read it to recover a session's project
+    /// directory without the live API. That layout is PRIVATE to dsh, so the read
+    /// goes through DshWorkspaceStore (domain name/version gate + diagnostic log)
+    /// instead of parsing the file a third time. With a sessionId, returns the path
+    /// of a workspace containing it; otherwise the most recently updated existing one.
+    static func persistedWorkspacePath(sessionId: String?) -> String? {
+        let items = DshWorkspaceStore.persistedItems(log: { AppLog.shared.log($0) })
+        let fm = FileManager.default
+        func existingPath(_ item: [String: Any]) -> String? {
+            guard let path = item["path"] as? String, !path.isEmpty,
+                  fm.fileExists(atPath: path) else { return nil }
+            return path
+        }
+        func updatedAt(_ item: [String: Any]) -> String { (item["updatedAt"] as? String) ?? "" }
+        if let sid = sessionId, !sid.isEmpty {
+            let hit = items
+                .filter { ($0["sessionIds"] as? [String])?.contains(sid) == true }
+                .compactMap { item -> ([String: Any], String)? in
+                    guard let path = existingPath(item) else { return nil }
+                    return (item, path)
+                }
+                .max { updatedAt($0.0) < updatedAt($1.0) }
+            if let path = hit?.1 { return path }
+        }
+        return items
+            .compactMap { item -> ([String: Any], String)? in
+                guard let path = existingPath(item) else { return nil }
+                return (item, path)
+            }
+            .max { updatedAt($0.0) < updatedAt($1.0) }?.1
+    }
 
-    /// Query `session.list` and pick the most relevant session's working
+    /// Query the session list and pick the most relevant session's working
     /// directory — running sessions first, then the most recently updated
     /// non-blank one. Blocks on a background caller; nil when unresolved.
+    /// Works on both dsh API generations (see DshWebRPC): on dsh >= 0.1.2 the live
+    /// call needs the launch-token cookie, and a nil result still falls back to the
+    /// persisted workspace store.
     static func fetchActiveSessionCwd(port: Int, timeout: TimeInterval = 6) -> String? {
-        let url = URL(string: "http://127.0.0.1:\(port)/api/session.list")!
-        var request = URLRequest(url: url, timeoutInterval: timeout)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        let rpcId = UUID().uuidString
-        let body: [String: Any] = [
-            "type": "client-request",
-            "rpcId": rpcId,
-            "method": "session.list",
-            "payload": [String: Any](),
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-        let semaphore = DispatchSemaphore(value: 0)
         var result: String?
-        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
-            defer { semaphore.signal() }
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  (json["rpcId"] as? String) == rpcId,
-                  let res = json["result"] as? [String: Any],
-                  (res["ok"] as? Bool) == true,
-                  let value = res["value"] as? [String: Any],
-                  let items = value["items"] as? [[String: Any]] else { return }
-            let candidates = items.filter { session in
-                (session["blank"] as? Bool) != true && (session["cwd"] as? String) != nil
-            }
+        if let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port, timeout: timeout),
+           let items = value["items"] as? [[String: Any]] {
             // Ignore throwaway sessions whose working dir lives under the system
             // temp folder (e.g. leftover `chan-e2e-*` dirs from channel E2E tests)
             // so the terminal never defaults into them. If every candidate is
             // temp-only, return nothing and let the caller fall back to home.
             let tmpPrefix = FileManager.default.temporaryDirectory.standardizedFileURL.path
-            let real = candidates.filter { session in
-                guard let cwd = session["cwd"] as? String else { return false }
-                return !(cwd as NSString).standardizingPath.hasPrefix(tmpPrefix)
+            let real = items.compactMap { session -> [String: Any]? in
+                guard (session["blank"] as? Bool) != true,
+                      let cwd = session["cwd"] as? String,
+                      !(cwd as NSString).standardizingPath.hasPrefix(tmpPrefix) else { return nil }
+                return session
             }
-            guard !real.isEmpty else { return }
             let running = real.filter { ($0["running"] as? Bool) == true }
             let pool = running.isEmpty ? real : running
             result = pool
                 .sorted { ($0["updatedAt"] as? Double ?? 0) > ($1["updatedAt"] as? Double ?? 0) }
                 .first?["cwd"] as? String
         }
-        task.resume()
-        _ = semaphore.wait(timeout: .now() + timeout + 1)
-        task.cancel()
+        // No token / older-method-less server: fall back to the persisted store.
+        if result == nil { result = persistedWorkspacePath(sessionId: nil) }
         return result
     }
 
-    /// The working directory of one specific session (session.list lookup by
+    /// The working directory of one specific session (session list lookup by
     /// id) — used to follow the session the user just opened in dsh web.
     static func fetchSessionCwd(port: Int, sessionId: String, timeout: TimeInterval = 6) -> String? {
-        let url = URL(string: "http://127.0.0.1:\(port)/api/session.list")!
-        var request = URLRequest(url: url, timeoutInterval: timeout)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        let rpcId = UUID().uuidString
-        let body: [String: Any] = [
-            "type": "client-request",
-            "rpcId": rpcId,
-            "method": "session.list",
-            "payload": [String: Any](),
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-        let semaphore = DispatchSemaphore(value: 0)
         var result: String?
-        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
-            defer { semaphore.signal() }
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  (json["rpcId"] as? String) == rpcId,
-                  let res = json["result"] as? [String: Any],
-                  (res["ok"] as? Bool) == true,
-                  let value = res["value"] as? [String: Any],
-                  let items = value["items"] as? [[String: Any]] else { return }
+        if let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port, timeout: timeout),
+           let items = value["items"] as? [[String: Any]] {
             result = items.first { ($0["sessionId"] as? String) == sessionId }?["cwd"] as? String
         }
-        task.resume()
-        _ = semaphore.wait(timeout: .now() + timeout + 1)
-        task.cancel()
+        // Fall back to the persisted workspace store, mapping the session id to
+        // its containing workspace.
+        if result == nil { result = persistedWorkspacePath(sessionId: sessionId) }
         return result
     }
 
@@ -1240,6 +1494,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let server = ServerManager()
     private var didSpawnServer = false
     private var autoUpgradeMenuItem: NSMenuItem!
+    /// "Check & Upgrade dsh…" menu item (⌘U) — greyed out while an upgrade is
+    /// busy so the user cannot start a manual check concurrently.
+    private var checkUpgradeMenuItem: NSMenuItem!
+    // Stepwise / staged upgrade state: at most one check→download→apply flow
+    // runs at a time; upgradeCancelToken lets the user abort an in-flight
+    // download before the final (confirmed) in-place install.
+    private var upgradeInFlight = false {
+        didSet { refreshCheckUpgradeEnabled() }
+    }
+    /// True while an AUTO round is actively running its background detection /
+    /// download. Keeps "Check & Upgrade dsh" greyed out so it cannot be
+    /// clicked mid auto-upgrade. (Manual rounds grey it via upgradeInFlight.)
+    private var autoUpgradeRunning = false {
+        didSet { refreshCheckUpgradeEnabled() }
+    }
+    private var upgradeCancelToken: UpgradeCancelToken?
+    /// Auto-upgrade "remind me later" timer (scheduled when the user defers an
+    /// auto offer; fires scheduleAutoUpgradeIfNeeded again after ~2h).
+    private var autoUpgradeReminderTimer: Timer?
+    /// Keep "Check & Upgrade dsh" enabled only when nothing upgrade-related is
+    /// running (auto round or an in-flight download/apply).
+    private func refreshCheckUpgradeEnabled() {
+        checkUpgradeMenuItem?.isEnabled = !(autoUpgradeRunning || upgradeInFlight)
+    }
+    /// Where a check→download→apply round was started (drives how "Later" and
+    /// the throttle behave).
+    enum UpgradeOrigin { case manual, auto }
+    /// Test hook: when DSH_AUTO_UPGRADE_NOW=1, the auto-upgrade runs on every
+    /// launch (throttle ignored) and never writes a next-run timestamp, so the
+    /// flow can be exercised repeatedly without clearing UserDefaults.
+    private var forceAutoUpgradeNow: Bool {
+        ProcessInfo.processInfo.environment["DSH_AUTO_UPGRADE_NOW"] == "1"
+    }
     private var previewToggleMenuItem: NSMenuItem?
     private var terminalToggleMenuItem: NSMenuItem?
     private var wikiToggleMenuItem: NSMenuItem?
@@ -1280,19 +1567,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var rightPanel: RightPanel = .none
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
+    /// True while the right panel is being laid out programmatically (panel
+    /// switch / width application). The divider resize callback must NOT save
+    /// the width then — only a genuine user drag updates the saved width,
+    /// otherwise a programmatic re-layout would clobber it with the default.
+    private var isProgrammaticPanelLayout = false
     /// Minimum web-view width. dsh web auto-collapses its left sidebar below
     /// its LG breakpoint (1024pt); keeping the web view at 1100pt leaves a
     /// comfortable margin so the sidebar never folds away.
     private let minWebViewWidth: CGFloat = 1100
-    /// Smallest allowed width of the right panel slot (max of both panels').
+    /// **Minimum** allowed width of the right panel slot. 560 is a comfortable
+    /// reading floor; a panel's own minimum (300/260) is never higher, but we
+    /// still take the max so a panel can raise the floor if it ever needs to.
     private static let rightPanelMinWidth: CGFloat =
-        max(FilePanelController.minWidth,
-            max(TerminalPanelController.minWidth,
-                max(WikiPanelController.minWidth,
-                    max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth, ChannelPanelController.minWidth))))
-    /// Fixed default panel width. Deliberately NOT window-relative: a
-    /// "half the window" default made the width chase the window as it was
-    /// widened, flip-flopping on every toggle.
+        max(560,
+            max(FilePanelController.minWidth,
+                max(TerminalPanelController.minWidth,
+                    max(WikiPanelController.minWidth,
+                        max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth, ChannelPanelController.minWidth)))))
+    /// *Initial* panel width when the user has never chosen one. The user's
+    /// saved/dragged width always wins (clamped to the minimum above); this is
+    /// only the first-run width. Deliberately NOT window-relative: a "half the
+    /// window" default made the width chase the window, flip-flopping on toggle.
     private static let rightPanelDefaultWidth: CGFloat = 560
     /// Width of the activity bar (leftmost/rightmost icon strip).
     private let activityBarWidth: CGFloat = 48
@@ -1329,6 +1625,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             exit(0)
         }
         NSApp.setActivationPolicy(.regular)
+        // 开发版隔离（独立实例 + 独立 DSH_HOME + 错开端口）必须在任何配置读取
+        // （L10n/AppTheme/Registry 走 ShellConfig = $DSH_HOME/shell/config.json）与
+        // dsh web / CEF / skills / channel 启动之前注入环境变量。
+        applyDevIsolation()
         // Snapshot the real system language BEFORE overriding AppleLanguages.
         L10n.captureSystemLang()
         // Make the WebView's navigator.language follow the shell language so
@@ -1349,7 +1649,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         startServer()
         startCEF()
         startBrowserAPIServer()
-        startConfiguredChannelRunners()
+        // Channel runners start once the server is up (see startServer): they
+        // need its actual port and, on dsh 0.1.2+, its advertised launch token.
         showOnboardingIfNeeded()
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -1401,6 +1702,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func applicationWillTerminate(_ notification: Notification) {
         AppLog.shared.log("terminate: begin")
+        // Flush any debounced ShellConfig writes before exit.
+        ShellConfig.shared.flushNow()
         terminalPanel?.shutdownAll()
         browserPanel?.shutdownAll()
         browserAPIServer?.stop()
@@ -1600,9 +1903,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // have left set to true), "rightPanelKind" picks which panel — so a
         // fresh install starts with the panel closed, and only explicit user
         // actions mark it open.
-        let visible = UserDefaults.standard.bool(forKey: "previewPanelState")
+        let visible = ShellConfig.shared.bool(forKey: "previewPanelState")
         let kind: RightPanel
-        switch UserDefaults.standard.string(forKey: "rightPanelKind") {
+        switch ShellConfig.shared.string(forKey: "rightPanelKind") {
         case "terminal": kind = .terminal
         case "wiki": kind = .wiki
         case "tasks": kind = .tasks
@@ -1648,7 +1951,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func setRightPanel(_ panel: RightPanel) {
         guard let split = splitView else { return }
         if ProcessInfo.processInfo.environment["DSH_PREVIEW_DEBUG"] == "1" {
-            AppLog.shared.log("setRightPanel enter: panel=\(panel) win=\(window.frame) split=\(split.bounds) content=\(window.contentView?.bounds ?? .zero) pwSaved=\(UserDefaults.standard.object(forKey: "previewPanelWidth") ?? "nil" as Any)")
+            AppLog.shared.log("setRightPanel enter: panel=\(panel) win=\(window.frame) split=\(split.bounds) content=\(window.contentView?.bounds ?? .zero) pwSaved=\(ShellConfig.shared.object(forKey: "previewPanelWidth") ?? "nil" as Any)")
         }
         // Wait until Auto Layout has actually laid the split out: its bounds
         // width must be windowWidth - activityBar. Using the pre-layout frame
@@ -1666,6 +1969,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return
         }
         rightPanel = panel
+        // The layout work below is programmatic: its divider changes must not be
+        // recorded as a user-chosen width (see isProgrammaticPanelLayout).
+        isProgrammaticPanelLayout = true
+        defer { isProgrammaticPanelLayout = false }
         let visible = panel != .none
         AppLog.shared.log("setRightPanel apply panel=\(panel) splitW=\(split.bounds.width) winW=\(window.frame.width)")
         previewToggleMenuItem?.state = (panel == .preview) ? .on : .off
@@ -1690,6 +1997,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 split.subviews[1].removeFromSuperview()
             }
             if !split.subviews.contains(activeView) {
+                // Pre-size to the target BEFORE adding: NSSplitView otherwise
+                // lays out an equal split on the subview swap, which briefly
+                // shrinks the web view below minWebViewWidth (dsh web collapses
+                // its sidebar for a frame) before applyRightPanelLayout corrects
+                // it. Setting the frame first makes that first layout correct.
+                let divider = split.dividerThickness
+                let bound = max(split.bounds.width - minWebViewWidth - divider, Self.rightPanelMinWidth)
+                let target = min(targetPanelWidth(), bound)
+                activeView.frame = NSRect(x: max(0, split.bounds.width - target - divider), y: 0,
+                                          width: target, height: split.bounds.height)
                 split.addSubview(activeView)
                 split.setHoldingPriority(NSLayoutConstraint.Priority(rawValue: 260), forSubviewAt: 1)
             }
@@ -1756,7 +2073,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 dumpHierarchy(activeView, label: "\(panel)-post", maxDepth: 4)
             }
         }
-        UserDefaults.standard.set(visible, forKey: "previewPanelState")
+        ShellConfig.shared.set(visible, forKey: "previewPanelState")
         let kind: String
         switch panel {
         case .terminal: kind = "terminal"
@@ -1766,7 +2083,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .channel: kind = "channel"
         default: kind = "preview"
         }
-        UserDefaults.standard.set(kind, forKey: "rightPanelKind")
+        ShellConfig.shared.set(kind, forKey: "rightPanelKind")
         // Note: the panel width is persisted only while the user drags the
         // divider (splitViewDidResizeSubviews) — never overwrite the user's
         // setting here with a clamped value.
@@ -1939,7 +2256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// The target panel width: the user's dragged width when saved, else the
     /// fixed default (never window-relative).
     private func targetPanelWidth() -> CGFloat {
-        if let saved = UserDefaults.standard.object(forKey: "previewPanelWidth") as? NSNumber,
+        if let saved = ShellConfig.shared.object(forKey: "previewPanelWidth") as? NSNumber,
            saved.doubleValue >= Self.rightPanelMinWidth {
             return CGFloat(saved.doubleValue)
         }
@@ -1953,6 +2270,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// same divider, so toggling panels never changes the widths.
     private func applyRightPanelLayout() {
         guard let split = splitView, rightPanel != .none else { return }
+        isProgrammaticPanelLayout = true
+        defer { isProgrammaticPanelLayout = false }
         let divider = split.dividerThickness
         let pw = targetPanelWidth()
         let neededW = activityBarWidth + pw + minWebViewWidth + divider
@@ -1964,8 +2283,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         let maxPw = split.bounds.width - minWebViewWidth - divider
         let target = min(pw, max(maxPw, Self.rightPanelMinWidth))
+        // Apply without implicit animation so no intermediate frame is shown.
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = 0
+        NSAnimationContext.current.allowsImplicitAnimation = false
         split.setPosition(split.bounds.width - target - divider, ofDividerAt: 0)
         split.adjustSubviews()
+        NSAnimationContext.endGrouping()
         window.contentView?.layoutSubtreeIfNeeded()
         AppLog.shared.log("layout: panel=\(split.subviews.count > 1 ? split.subviews[1].frame.width : 0)pt webView=\(split.bounds.width - (split.subviews.count > 1 ? split.subviews[1].frame.width : 0) - divider)pt")
     }
@@ -1989,17 +2313,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard splitView.subviews.count > 1 else { return }
         guard rightPanel != .none else { return }
         let pw = splitView.subviews[1].frame.width
-        if pw >= Self.rightPanelMinWidth {
-            UserDefaults.standard.set(pw, forKey: "previewPanelWidth")
+        if pw >= Self.rightPanelMinWidth && !isProgrammaticPanelLayout {
+            ShellConfig.shared.set(pw, forKey: "previewPanelWidth")
         }
         // Auto-hide ONLY when the window is genuinely too narrow for even the
         // minimum panel + web view (user shrank the window) — NOT during
         // transient programmatic states like the launch half-split, which are
         // corrected by applyRightPanelLayout moments later.
+        // WebView-priority policy: the panel needs >= rightPanelMinWidth (560)
+        // and the web view >= minWebViewWidth (1100). The two together need
+        // activityBar + panelMin + webViewMin + divider (~1709pt). When the
+        // window is narrower than that both cannot fit, so the panel yields and
+        // auto-hides (the web view keeps its minimum).
         let webW = splitView.bounds.width - pw - splitView.dividerThickness
-        let windowTooNarrow = window.frame.width < minWebViewWidth + activityBarWidth + Self.rightPanelMinWidth
-        if webW < minWebViewWidth && windowTooNarrow {
-            AppLog.shared.log("window too narrow; auto-hiding right panel (webView \(Int(webW))pt < \(Int(minWebViewWidth))pt)")
+        let requiredW = activityBarWidth + Self.rightPanelMinWidth + minWebViewWidth + splitView.dividerThickness
+        if webW < minWebViewWidth && window.frame.width < requiredW {
+            AppLog.shared.log("window too narrow for panel(\(Int(Self.rightPanelMinWidth))) + webView(\(Int(minWebViewWidth))): need \(Int(requiredW))pt, have \(Int(window.frame.width))pt; auto-hiding panel")
             setRightPanel(.none)
         }
     }
@@ -2116,9 +2445,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       if (window.__dshSessionTracked) return;
       window.__dshSessionTracked = true;
       var origFetch = window.fetch;
+      // dsh 0.1.2+ uses slash method names (e.g. subagents/list) and carries
+      // the session id under payload.args; keep the legacy dot names/shape too
+      // so both client generations are tracked.
       var tracked = {
         'session.history': 1, 'session.prompt': 1, 'session.rename': 1,
-        'session.selectModel': 1, 'subagent.list': 1, 'subagents.list': 1
+        'session.selectModel': 1, 'subagent.list': 1, 'subagents.list': 1,
+        'session/history': 1, 'session/prompt': 1, 'session/rename': 1,
+        'session/selectModel': 1, 'subagent/list': 1, 'subagents/list': 1
       };
       window.fetch = function (input, init) {
         var url = typeof input === 'string' ? input : (input && (input.href || input.url)) || '';
@@ -2127,7 +2461,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             var body = typeof init.body === 'string' ? JSON.parse(init.body) : null;
             if (body && body.type === 'client-request' && tracked[body.method]
                 && body.payload) {
-              var sid = body.payload.sessionId || body.payload.parentSessionId;
+              var a = body.payload.args || {};
+              var req = a.request || {};
+              var sid = a.parentSessionId || a.agentId || a.sessionId || req.sessionId
+                        || body.payload.sessionId || body.payload.parentSessionId;
               if (!window.__dshSessionSeen) window.__dshSessionSeen = [];
               if (window.__dshSessionSeen.length < 100) {
                 window.__dshSessionSeen.push(body.method + ':' + (sid || ''));
@@ -2182,14 +2519,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         console.log("[dsh-opener] row-not-found", sessionId, title);
         return { ok: false, reason: "row-not-found" };
       }
-      window.__dshOpenSession = function (sessionId) {
-        if (!sessionId) return { ok: false, reason: "no-id" };
-        return fetch("/api/session.list", {
+      // One session-list call in the shape the RUNNING server expects:
+      //   dsh >= 0.1.2 — POST /api/session/list, method = "session/list",
+      //                  args wrapped in payload.args._request;
+      //   dsh <= 0.1.1 — POST /api/session.list, method = "session.list", payload = args.
+      // The two must match (0.1.2 rejects "method does not match endpoint"), and
+      // which one is right is only known at runtime — hence the fallback below.
+      function fetchSessions(modern) {
+        var rpcId = "dsh-open-" + Date.now();
+        var req = modern
+          ? {
+              url: "/api/session/list",
+              body: { type: "client-request", rpcId: rpcId, method: "session/list", payload: { args: { _request: {} } } }
+            }
+          : {
+              url: "/api/session.list",
+              body: { type: "client-request", rpcId: rpcId, method: "session.list", payload: {} }
+            };
+        return fetch(req.url, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ type: "client-request", rpcId: "dsh-open-" + Date.now(), method: "session.list", payload: {} })
+          body: JSON.stringify(req.body)
         }).then(function (res) { return res.json(); }).then(function (json) {
-          var items = (json && json.result && json.result.ok && json.result.value && json.result.value.items) || [];
+          var ok = json && json.result && json.result.ok && json.result.value;
+          var items = (ok && json.result.value.items) || null;
+          if (!items) console.log("[dsh-opener] list failed", modern ? "modern" : "legacy", json && json.result && json.result.error && json.result.error.message);
+          return items;
+        }).catch(function (err) { console.log("[dsh-opener] list error", String(err)); return null; });
+      }
+      window.__dshOpenSession = function (sessionId) {
+        if (!sessionId) return { ok: false, reason: "no-id" };
+        return fetchSessions(true).then(function (items) {
+          if (items) return items;
+          return fetchSessions(false);   // older dsh: dot method surface
+        }).then(function (items) {
+          items = items || [];
           var target = null;
           for (var i = 0; i < items.length; i++) { if (items[i].sessionId === sessionId) { target = items[i]; break; } }
           if (!target) { console.log("[dsh-opener] no-session", sessionId); return { ok: false, reason: "no-session" }; }
@@ -2219,10 +2583,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       var origFetch = window.fetch;
       window.fetch = function (input, init) {
         var url = typeof input === 'string' ? input : (input && (input.href || input.url)) || '';
-        if (url.indexOf('/api/host.openPath') !== -1) {
+        // dsh 0.1.2+ moved file-open to the session controller RPC
+        // session/openWorkspacePath (endpoint /api/session/openWorkspacePath,
+        // payload.args.path); match the legacy host.openPath too and accept
+        // either payload shape.
+        if (url.indexOf('/api/host.openPath') !== -1 || url.indexOf('/openWorkspacePath') !== -1) {
           var body = null;
           try { body = JSON.parse((init && init.body) || '{}'); } catch (e) {}
-          var path = body && body.payload && typeof body.payload.path === 'string' ? body.payload.path : null;
+          var pl = (body && body.payload) || {};
+          var args = pl.args || {};
+          var req = args.request || {};
+          var path = (typeof req.path === 'string') ? req.path
+                   : (typeof args.path === 'string') ? args.path
+                   : (typeof pl.path === 'string') ? pl.path : null;
           if (path && path.charAt(0) === '/') {
             window.__dshPreviewHit = path;
             try {
@@ -2296,11 +2669,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         showStatus(L10n.tr("status.starting"), spinner: true, retry: false)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            // Auto-upgrade the bundled dsh (at most once per 24h) before the
-            // server starts, so the new version is used immediately.
-            if self.autoUpgradeEnabled() {
-                self.runAutoUpgradeIfNeeded()
-            }
             do {
                 let url = try self.server.start()
                 let didSpawn = self.server.spawned
@@ -2317,6 +2685,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     // Tell the tasks panel: repo detection + issue load resolve now.
                     self.tasksPanel?.serverReady(port: self.server.port)
                     self.channelPanel?.ensureLoaded()
+                    // Native RPC (wiki / issue-runner / session cwd) authenticates
+                    // like a browser on dsh 0.1.2+: exchange the advertised launch
+                    // token for its cookie once the server is up.
+                    DshWebRPC.token = self.server.webToken
+                    // Listeners need the actual port + (0.1.2+) the launch token,
+                    // both only known once dsh web is up.
+                    self.startConfiguredChannelRunners()
+                    // Stepwise auto-upgrade (throttled, non-blocking): detect +
+                    // background-download a newer dsh, then ask the user before
+                    // the in-place install. Deliberately after the server is up
+                    // so boot is never delayed by a registry check or download.
+                    self.scheduleAutoUpgradeIfNeeded()
                 }
             } catch {
                 AppLog.shared.log("server start failed: \(error.localizedDescription)")
@@ -2357,49 +2737,219 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func autoUpgradeEnabled() -> Bool {
         if ProcessInfo.processInfo.environment["DSH_AUTO_UPGRADE"] == "0" { return false }
-        return UserDefaults.standard.object(forKey: "autoUpgradeDsh") as? Bool ?? true
+        return ShellConfig.shared.object(forKey: "autoUpgradeDsh") as? Bool ?? true
     }
 
-    /// Silent background check: once per 24h, upgrade the bundled dsh to the
-    /// registry's latest. Never throws — failures are logged only.
-    private func runAutoUpgradeIfNeeded() {
-        let lastKey = "lastAutoUpgradeCheck"
-        let now = Date().timeIntervalSince1970
-        if now - UserDefaults.standard.double(forKey: lastKey) < 86_400 { return }
-        UserDefaults.standard.set(now, forKey: lastKey)
-
+    /// A DSHUpdater for the active bundled runtime, or nil when dsh is not the
+    /// self-contained bundled runtime (auto/manual upgrades only apply there).
+    private func currentUpdater() -> DSHUpdater? {
         guard let node = server.resolveNode(), let bin = server.resolveDSHBin(),
-              let updater = DSHUpdater(nodePath: node, dshBin: bin) else { return }
-        guard let current = updater.currentVersion else { return }
-        // Version check via the shared core (identical logic across platforms);
-        // falls back to the in-Swift implementation if core is unavailable.
-        let latest = CoreBridge.latestVersion(registry: RegistryConfig.current)
-            ?? updater.latestVersion(registry: RegistryConfig.current)
-        guard let latest = latest else {
-            AppLog.shared.log("auto-upgrade: version check failed (offline? registry=\(RegistryConfig.current))")
-            return
+              let updater = DSHUpdater(nodePath: node, dshBin: bin) else { return nil }
+        return updater
+    }
+
+    /// The next STEPWISE upgrade target for \`updater\`: among published stable/rc
+    /// versions strictly newer than the installed one, the immediately-next by
+    /// semver (never jumps to dist-tags.latest). Chosen in the shared core so
+    /// every platform shares the rule; falls back to latest only if core is
+    /// unavailable (degraded).
+    private func stepTarget(for updater: DSHUpdater) -> String? {
+        guard let current = updater.currentVersion else { return nil }
+        let versions = updater.publishedVersions(registry: RegistryConfig.current)
+        if let t = CoreBridge.nextStepTarget(current: current, versions: versions) {
+            return t.isEmpty ? nil : t
         }
-        let cmp = CoreBridge.compareVersions(latest, current) ?? VersionKit.compare(latest, current)
-        if cmp <= 0 {
-            AppLog.shared.log("auto-upgrade: already latest (\(current))")
-            return
+        if let latest = updater.latestVersion(registry: RegistryConfig.current),
+           VersionKit.compare(latest, current) > 0 { return latest }
+        return nil
+    }
+
+    /// Persist the next auto-upgrade run time as a delay from now. Only called
+    /// when an auto round reaches a terminal outcome — never at the start — so
+    /// a brief-session quit before a round completes does not consume the
+    /// window and the next launch retries.
+    private func deferAutoUpgrade(by delay: TimeInterval) {
+        // When force-testing (DSH_AUTO_UPGRADE_NOW=1) leave the throttle alone so
+        // every launch re-checks; otherwise persist the next-run delay.
+        guard !forceAutoUpgradeNow else { return }
+        ShellConfig.shared.set(Date().timeIntervalSince1970 + delay, forKey: "nextAutoUpgradeCheck")
+    }
+
+    /// Schedule a main-thread "remind me later" that re-runs the (now due) auto
+    /// check. Added to .common so it also fires while a modal alert is up.
+    private func remindAutoUpgradeLater(after delay: TimeInterval) {
+        autoUpgradeReminderTimer?.invalidate()
+        let t = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            self?.scheduleAutoUpgradeIfNeeded()
         }
-        AppLog.shared.log("auto-upgrade: \(current) -> \(latest) via \(RegistryConfig.current)")
-        DispatchQueue.main.async {
-            self.showStatus(L10n.tr("status.upgrading", current, latest), spinner: true, retry: false)
+        RunLoop.main.add(t, forMode: .common)
+        autoUpgradeReminderTimer = t
+    }
+
+    /// Auto-upgrade entry, called on the main thread (at boot and on a reminder
+    /// timer). Due only once the persisted next-run time has passed. It never
+    /// commits that next-run time up front — the next run time is written only
+    /// when this round reaches an outcome (up-to-date → +24h; offline/step error
+    /// → +2h; offered and deferred → +2h; applied → +24h). A newer step target
+    /// is downloaded silently in the background, then the user is asked before
+    /// the in-place install.
+    private func scheduleAutoUpgradeIfNeeded() {
+        guard autoUpgradeEnabled(), !upgradeInFlight else { return }
+        let nextAt = ShellConfig.shared.double(forKey: "nextAutoUpgradeCheck")
+        guard forceAutoUpgradeNow || Date().timeIntervalSince1970 >= nextAt else { return }
+        // Grey out "Check & Upgrade dsh" while this auto round runs.
+        autoUpgradeRunning = true
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            // Resolve on the background thread; every path below brings a single
+            // terminal decision back to the main thread so autoUpgradeRunning is
+            // always cleared (or carried into the download, which keeps the menu
+            // greyed via upgradeInFlight).
+            guard let self = self, let updater = self.currentUpdater(),
+                  let current = updater.currentVersion else {
+                DispatchQueue.main.async { self?.autoUpgradeRunning = false }
+                return
+            }
+            let latest = updater.latestVersion(registry: RegistryConfig.current)
+            guard latest != nil else {
+                // Registry unreachable — retry shortly instead of burning the day.
+                DispatchQueue.main.async {
+                    self.autoUpgradeRunning = false
+                    self.deferAutoUpgrade(by: 7200)
+                    AppLog.shared.log("auto-upgrade: version check failed; will retry (registry=\(RegistryConfig.current))")
+                }
+                return
+            }
+            guard let target = self.stepTarget(for: updater) else {
+                DispatchQueue.main.async {
+                    self.autoUpgradeRunning = false
+                    self.deferAutoUpgrade(by: 86_400)
+                    AppLog.shared.log("auto-upgrade: up to date (\(current))")
+                }
+                return
+            }
+            AppLog.shared.log("auto-upgrade: next step \(current) -> \(target) via \(RegistryConfig.current)")
+            DispatchQueue.main.async {
+                // self is already non-optional here (bg guard); autoUpgradeRunning
+                // stays true and download+apply keep the menu greyed.
+                self.startDownloadThenPromptApply(updater: updater, current: current, target: target, origin: .auto)
+            }
         }
-        do {
-            let new = try updater.upgrade(registry: RegistryConfig.current)
-            server.refreshFacts()
-            AppLog.shared.log("auto-upgrade: done, now \(new)")
-            // Restart the running server + reload the WebView so the upgraded
-            // dsh actually takes effect (otherwise the old code stays in memory).
-            restartServerAfterUpgrade()
-        } catch {
-            AppLog.shared.log("auto-upgrade: failed: \(error.localizedDescription)")
+    }
+
+    /// Download phase shared by manual & auto: background-prefetch \`target\` into
+    /// the shared npm cache (the live dsh tree is untouched), then prompt for
+    /// the in-place install once the download completes. Runs fully in the
+    /// background; only the step-completion prompt is surfaced to the user.
+    private func startDownloadThenPromptApply(updater: DSHUpdater, current: String, target: String, origin: UpgradeOrigin) {
+        guard !upgradeInFlight else { return }
+        upgradeInFlight = true
+        autoUpgradeReminderTimer?.invalidate()
+        autoUpgradeReminderTimer = nil
+        let token = UpgradeCancelToken()
+        upgradeCancelToken = token
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var failure: String?
+            do {
+                _ = try updater.prefetch(registry: RegistryConfig.current, version: target, cancel: token)
+            } catch {
+                if !token.cancelled { failure = error.localizedDescription }
+            }
+            AppLog.shared.log("upgrade download \(target): \(failure ?? "ok")")
+
+            DispatchQueue.main.async {
+                self.upgradeCancelToken = nil
+                if let failure = failure {
+                    // Round ends here: re-enable the menu and retry auto shortly.
+                    self.upgradeInFlight = false
+                    self.autoUpgradeRunning = false
+                    if origin == .auto { self.deferAutoUpgrade(by: 7200) }
+                    let a = NSAlert()
+                    a.messageText = L10n.tr("alert.downloadFailed")
+                    a.informativeText = failure
+                    a.addButton(withTitle: L10n.tr("btn.ok"))
+                    a.runModal()
+                    return
+                }
+                // upgradeInFlight stays true through the install-confirm + apply so
+                // the menu remains greyed; it is cleared in offerApply/performApply.
+                self.offerApply(updater: updater, current: current, target: target, origin: origin)
+            }
         }
-        DispatchQueue.main.async {
-            self.hideStatus()
+    }
+
+    /// Second confirmation (manual & auto): the download finished; ask the user
+    /// before replacing the live dsh tree and restarting. "Later" defers an
+    /// auto offer by ~2h and schedules a reminder; a manual "Later" just stops
+    /// (the user can re-check anytime).
+    private func offerApply(updater: DSHUpdater, current: String, target: String, origin: UpgradeOrigin) {
+        let a = NSAlert()
+        a.messageText = L10n.tr("alert.downloadDone", target)
+        a.informativeText = L10n.tr("alert.downloadDoneInfo")
+        a.addButton(withTitle: L10n.tr("btn.installNow"))
+        a.addButton(withTitle: L10n.tr("btn.later"))
+        if a.runModal() == .alertFirstButtonReturn {
+            // upgradeInFlight / autoUpgradeRunning stay true through the apply.
+            performApply(updater: updater, current: current, target: target, origin: origin)
+        } else {
+            // Declined ("Later"): this round is done.
+            upgradeInFlight = false
+            autoUpgradeRunning = false
+            if origin == .auto {
+                deferAutoUpgrade(by: 7200)
+                remindAutoUpgradeLater(after: 7200)
+            }
+        }
+    }
+
+    /// In-place install (with backup & automatic rollback on failure) on a
+    /// background queue, then restart the server so the new dsh takes effect.
+    private func performApply(updater: DSHUpdater, current: String, target: String, origin: UpgradeOrigin) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let new = try updater.apply(registry: RegistryConfig.current, version: target)
+                self.server.refreshFacts()
+                AppLog.shared.log("upgrade applied: \(current) -> \(new)")
+                DispatchQueue.main.async {
+                    self.upgradeInFlight = false
+                    self.autoUpgradeRunning = false
+                    self.autoUpgradeReminderTimer?.invalidate()
+                    self.autoUpgradeReminderTimer = nil
+                    if origin == .auto { self.deferAutoUpgrade(by: 86_400) }
+                    self.restartServerAfterUpgrade()
+                    let a = NSAlert()
+                    a.messageText = L10n.tr("alert.dshUpgrade")
+                    a.informativeText = L10n.tr("alert.upgraded", current, new)
+                    a.addButton(withTitle: L10n.tr("btn.ok"))
+                    a.runModal()
+                }
+            } catch {
+                let msg = error.localizedDescription
+                let rolledBack = updater.currentVersion
+                AppLog.shared.log("upgrade apply failed: \(msg)")
+                DispatchQueue.main.async {
+                    self.upgradeInFlight = false
+                    self.autoUpgradeRunning = false
+                    self.autoUpgradeReminderTimer?.invalidate()
+                    self.autoUpgradeReminderTimer = nil
+                    if origin == .auto { self.deferAutoUpgrade(by: 7200) }
+                    let a = NSAlert()
+                    a.messageText = L10n.tr("alert.upgradeFailed")
+                    if let rolledBack {
+                        a.informativeText = L10n.tr("alert.rolledBack", rolledBack, msg)
+                    } else {
+                        a.informativeText = msg
+                    }
+                    a.addButton(withTitle: L10n.tr("btn.ok"))
+                    a.runModal()
+                    // A failed install / rollback may have left a stale tree on
+                    // disk — restart so the server reloads whatever is there.
+                    self.restartServerAfterUpgrade()
+                }
+            }
         }
     }
 
@@ -2459,9 +3009,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    /// Manual "Check & Upgrade": three-stage. (1) Check the next STEPWISE target
+    /// and prompt with its version; (2) download it in the background on
+    /// confirm (live dsh untouched); (3) after the download, ask again before
+    /// the in-place install + restart.
     @objc func upgradeDSH() {
-        guard let node = server.resolveNode(), let bin = server.resolveDSHBin(),
-              let updater = DSHUpdater(nodePath: node, dshBin: bin) else {
+        if upgradeInFlight || autoUpgradeRunning {
+            let busy = NSAlert()
+            busy.messageText = L10n.tr("alert.dshUpgrade")
+            busy.informativeText = L10n.tr("alert.upgradeInProgress")
+            busy.addButton(withTitle: L10n.tr("btn.ok"))
+            busy.runModal()
+            return
+        }
+        guard let updater = currentUpdater() else {
             let alert = NSAlert()
             alert.messageText = L10n.tr("alert.cannotUpgrade")
             alert.informativeText = L10n.tr("alert.noRuntime")
@@ -2469,45 +3030,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             alert.runModal()
             return
         }
-        showStatus(L10n.tr("status.checking"), spinner: true, retry: false)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            var ok = true
-            var message = ""
-            if let current = updater.currentVersion,
-               let latest = updater.latestVersion(registry: RegistryConfig.current) {
-                if VersionKit.compare(latest, current) <= 0 {
-                    message = L10n.tr("alert.upToDate", current)
-                    AppLog.shared.log("manual upgrade: already latest (\(current))")
-                } else {
-                    DispatchQueue.main.async {
-                        self.showStatus(L10n.tr("status.upgrading", current, latest), spinner: true, retry: false)
-                    }
-                    do {
-                        let new = try updater.upgrade(registry: RegistryConfig.current)
-                        self.server.refreshFacts()
-                        message = L10n.tr("alert.upgraded", current, new)
-                        AppLog.shared.log("manual upgrade: \(current) -> \(new)")
-                        // Restart the running server + reload the WebView so the
-                        // upgraded dsh takes effect.
-                        self.restartServerAfterUpgrade()
-                    } catch {
-                        ok = false
-                        message = error.localizedDescription
-                        AppLog.shared.log("manual upgrade failed: \(error.localizedDescription)")
-                    }
+            guard let current = updater.currentVersion else {
+                DispatchQueue.main.async {
+                    self.hideStatus()
+                    let a = NSAlert()
+                    a.messageText = L10n.tr("alert.upgradeFailed")
+                    a.informativeText = L10n.tr("alert.noVersionInfo", RegistryConfig.current)
+                    a.addButton(withTitle: L10n.tr("btn.ok"))
+                    a.runModal()
                 }
-            } else {
-                ok = false
-                message = L10n.tr("alert.noVersionInfo", RegistryConfig.current)
+                return
             }
+            guard let target = self.stepTarget(for: updater) else {
+                AppLog.shared.log("manual upgrade: up to date (\(current))")
+                DispatchQueue.main.async {
+                    self.hideStatus()
+                    let a = NSAlert()
+                    a.messageText = L10n.tr("alert.dshUpgrade")
+                    a.informativeText = L10n.tr("alert.upToDate", current)
+                    a.addButton(withTitle: L10n.tr("btn.ok"))
+                    a.runModal()
+                }
+                return
+            }
+            AppLog.shared.log("manual upgrade: found \(current) -> \(target)")
             DispatchQueue.main.async {
                 self.hideStatus()
-                let alert = NSAlert()
-                alert.messageText = ok ? L10n.tr("alert.dshUpgrade") : L10n.tr("alert.upgradeFailed")
-                alert.informativeText = message
-                alert.addButton(withTitle: L10n.tr("btn.ok"))
-                alert.runModal()
+                let a = NSAlert()
+                a.messageText = L10n.tr("alert.upgradeAvailable", target)
+                a.informativeText = L10n.tr("alert.upgradeAvailableInfo", current, target)
+                a.addButton(withTitle: L10n.tr("btn.download"))
+                a.addButton(withTitle: L10n.tr("btn.cancel"))
+                if a.runModal() == .alertFirstButtonReturn {
+                    self.startDownloadThenPromptApply(updater: updater, current: current, target: target, origin: .manual)
+                }
             }
         }
     }
@@ -2515,7 +3073,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Shared auto-upgrade toggle used by the Settings menu and the Settings
     /// window; keeps the menu checkbox in sync.
     func setAutoUpgradeEnabled(_ enabled: Bool) {
-        UserDefaults.standard.set(enabled, forKey: "autoUpgradeDsh")
+        ShellConfig.shared.set(enabled, forKey: "autoUpgradeDsh")
         autoUpgradeMenuItem?.state = enabled ? .on : .off
         AppLog.shared.log("auto-upgrade \(enabled ? "enabled" : "disabled")")
     }
@@ -2611,6 +3169,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             })
             """) { result, _ in
                 AppLog.shared.log("dsh viewport/sidebar: \(result ?? "?")")
+            }
+            // Injected-bridge health: the three scripts patch the page at document
+            // start, so a dsh web change that breaks them fails SILENTLY (no row
+            // click, no directory follow, no preview intercept). Report installed
+            // flags so a broken bridge is at least visible in the log.
+            webView.evaluateJavaScript("""
+            JSON.stringify({
+              tracker: !!window.__dshSessionTracked,
+              opener: !!window.__dshSessionOpener,
+              preview: !!window.__dshPreviewInstalled,
+              rows: document.querySelectorAll('[role="treeitem"]').length
+            })
+            """) { result, _ in
+                AppLog.shared.log("dsh injected bridges: \(result ?? "?")")
             }
         }
         // Session-tracking diagnostics (DSH_SESSION_DEBUG=1): dump the
@@ -2859,6 +3431,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         settingsMenu.addItem(.separator())
         let upgrade = settingsMenu.addItem(withTitle: L10n.tr("menu.checkUpgrade"), action: #selector(upgradeDSH), keyEquivalent: "u")
         upgrade.target = self
+        checkUpgradeMenuItem = upgrade
+        refreshCheckUpgradeEnabled()
         let auto = settingsMenu.addItem(withTitle: L10n.tr("menu.autoUpgrade"), action: #selector(toggleAutoUpgrade(_:)), keyEquivalent: "")
         auto.target = self
         auto.state = autoUpgradeEnabled() ? .on : .off
@@ -3025,7 +3599,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// the main window is on screen; dismissed with "Get Started" or
     /// "Learn More" (which opens the repo README in the browser).
     private func showOnboardingIfNeeded() {
-        guard !didShowOnboarding, !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") else { return }
+        guard !didShowOnboarding, !ShellConfig.shared.bool(forKey: "hasCompletedOnboarding") else { return }
         didShowOnboarding = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self = self, let window = self.window else { return }
@@ -3035,7 +3609,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             alert.addButton(withTitle: L10n.tr("onboarding.getStarted"))
             alert.addButton(withTitle: L10n.tr("onboarding.learnMore"))
             alert.beginSheetModal(for: window) { response in
-                UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
+                ShellConfig.shared.set(true, forKey: "hasCompletedOnboarding")
                 if response == .alertSecondButtonReturn,
                    let url = URL(string: "https://github.com/insky2005/oh-my-dsh") {
                     NSWorkspace.shared.open(url)
@@ -3174,7 +3748,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             completion(false)
             return
         }
-        let dshHome = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh")
+        let dshHome = dshDataHome
         let savePath = ((dshHome as NSString).appendingPathComponent("channels") as NSString).appendingPathComponent(channelId + ".json")
         try? FileManager.default.createDirectory(atPath: (dshHome as NSString).appendingPathComponent("channels"), withIntermediateDirectories: true)
 
@@ -3247,7 +3821,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: node)
-        proc.arguments = [cli, "channel", "run", channelId, String(port), "[]", "--project-root", activeRoot]
+        var args = [cli, "channel", "run", channelId, String(port), "[]", "--project-root", activeRoot]
+        // dsh 0.1.2+ authenticates /api with a cookie minted from the launch
+        // token dsh web advertises; a spawned runner has no browser cookie, so
+        // pass the token (never logged). Without it /wks, /ses and message
+        // routing cannot reach dsh at all (docs/plans/dsh-012rc1-compat-audit.md).
+        if let token = server.webToken {
+            args.append(contentsOf: ["--dsh-token", token])
+        }
+        proc.arguments = args
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = pipe
@@ -3280,7 +3862,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     /// Start channel listeners for every configured global channel at launch.
     private func startConfiguredChannelRunners() {
-        guard let data = UserDefaults.standard.data(forKey: "channel.global.list"),
+        guard let data = ShellConfig.shared.data(forKey: "channel.global.list"),
               let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             AppLog.shared.log("channel runners: no configured channels")
             return
@@ -3313,7 +3895,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Unbind a channel: stop its runner and remove its local channel files.
     private func unbindChannel(channelId: String) {
         stopChannelRunner(channelId: channelId)
-        let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/channels")
+        let dir = (dshDataHome as NSString).appendingPathComponent("channels")
         let fm = FileManager.default
         if let files = try? fm.contentsOfDirectory(atPath: dir) {
             for f in files where f.hasPrefix(channelId) {
@@ -3328,6 +3910,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// 资源（端口 / channel runner 等），都以 isDevBuild 为入口在此处快速追加覆盖项。
     private var isDevBuild: Bool {
         (Bundle.main.object(forInfoDictionaryKey: "DSHDevBuild") as? String) == "1"
+    }
+
+    /// 开发版运行隔离（DSH_DEV_BUILD=1 打包，Info.plist 写入 DSHDevBuild=1）。
+    /// 让开发版与已安装正式版并存测试而不互相干扰：
+    ///   1. 独立 dsh 实例 —— 强制自拉起（DSH_NATIVE_FORCE_SPAWN=1），不复用已在
+    ///      127.0.0.1:3080 运行的 dsh web；3080 被占时自动取空闲端口。
+    ///   2. 独立运行空间 —— 默认用 ~/.dsh-dev 作 DSH_HOME（用户显式设 DSH_HOME 时
+    ///      尊重覆盖），使 dsh 的会话/配置/skills/channel 与正式 ~/.dsh 完全隔离。
+    ///   3. 错开固定端口 —— CEF CDP 默认 9333→9433、Browser API 默认 3081→4081
+    ///      （均尊重用户显式覆盖），可与正式版同时运行。
+    /// 通过 setenv 注入，dsh web 子进程与各按 $DSH_HOME 解析的组件自动落到 dev 目录。
+    private func applyDevIsolation() {
+        guard isDevBuild else { return }
+        let env = ProcessInfo.processInfo.environment
+        // 1) 独立 DSH_HOME（尊重显式覆盖）
+        let explicitHome = env["DSH_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if explicitHome.isEmpty {
+            let devHome = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh-dev")
+            setenv("DSH_HOME", devHome, 1)
+            // 旧开发版把 CEF profile 放在 ~/.dsh/browser-dev；迁到新隔离目录保留数据。
+            migrateLegacyDevBrowserProfile(toHome: devHome)
+        }
+        // 2) 不复用已启动实例
+        if env["DSH_NATIVE_FORCE_SPAWN"] != "1" {
+            setenv("DSH_NATIVE_FORCE_SPAWN", "1", 1)
+        }
+        // 3) 错开 CEF CDP / Browser API 端口（尊重显式覆盖）
+        if env["DSH_CDP_PORT"].flatMap({ Int($0) }) == nil {
+            setenv("DSH_CDP_PORT", "9433", 1)
+        }
+        if env["DSH_BROWSER_PORT"].flatMap({ Int($0) }) == nil {
+            setenv("DSH_BROWSER_PORT", "4081", 1)
+        }
+        let e = ProcessInfo.processInfo.environment
+        AppLog.shared.log("dev isolation: DSH_HOME=\(e["DSH_HOME"] ?? "?") forceSpawn=\(e["DSH_NATIVE_FORCE_SPAWN"] ?? "-") cdp=\(e["DSH_CDP_PORT"] ?? "?") browserApi=\(e["DSH_BROWSER_PORT"] ?? "?")")
+    }
+
+    /// 迁移旧开发版（隔离前）在共享 ~/.dsh 下创建的 CEF profile（~/.dsh/browser-dev）
+    /// 到新的开发隔离目录 ~/.dsh-dev/browser-dev，保留既有浏览器数据。幂等：
+    /// 源不存在或目标已存在（已迁过/已有新数据）则跳过，避免覆盖。
+    private func migrateLegacyDevBrowserProfile(toHome devHome: String) {
+        let fm = FileManager.default
+        let legacy = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/browser-dev")
+        let dest = (devHome as NSString).appendingPathComponent("browser-dev")
+        guard fm.fileExists(atPath: legacy) else { return }
+        guard !fm.fileExists(atPath: dest) else {
+            AppLog.shared.log("dev isolation: legacy ~/.dsh/browser-dev exists, target \(dest) present — skip migrate")
+            return
+        }
+        try? fm.createDirectory(atPath: devHome, withIntermediateDirectories: true)
+        do {
+            try fm.moveItem(atPath: legacy, toPath: dest)
+            AppLog.shared.log("dev isolation: migrated \(legacy) -> \(dest)")
+        } catch {
+            AppLog.shared.log("dev isolation: browser-dev migrate failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// 本 App（shell 侧）读写 dsh 数据目录的实际路径：优先 $DSH_HOME（开发版已由
+    /// applyDevIsolation() 注入 ~/.dsh-dev），否则默认 ~/.dsh。让 shell 自己的文件
+    /// （如 channel token/清理）与 dsh 运行空间保持一致，开发版不会写入正式 ~/.dsh。
+    private var dshDataHome: String {
+        if let h = ProcessInfo.processInfo.environment["DSH_HOME"],
+           !h.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return h.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return (NSHomeDirectory() as NSString).appendingPathComponent(".dsh")
     }
 
     /// 初始化 CEF（浏览器面板渲染内核）并启动消息泵定时器。
@@ -3355,7 +4004,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         do {
             // 渲染模式：defaults write com.ohmydsh.app browserRenderMode -string windowed
             // 切换窗口化（Chromium 原生绘制）vs OSR（默认，帧回调自绘）。
-            let windowed = UserDefaults.standard.string(forKey: "browserRenderMode") == "windowed"
+            let windowed = ShellConfig.shared.string(forKey: "browserRenderMode") == "windowed"
             CEFShim.setWindowedMode(windowed)
             AppLog.shared.log("CEF render mode: \(windowed ? "windowed" : "osr")")
             try CEFShim.initialize(withCachePath: cachePath,
@@ -3453,16 +4102,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // MARK: Wiki settings (UserDefaults-backed menu toggles)
 
     private func wikiAutoRegenerateEnabled() -> Bool {
-        UserDefaults.standard.object(forKey: WikiPaths.autoRegenerateKey) as? Bool ?? false
+        ShellConfig.shared.object(forKey: WikiPaths.autoRegenerateKey) as? Bool ?? false
     }
 
     private func wikiRegisterAgentsMdEnabled() -> Bool {
-        UserDefaults.standard.object(forKey: WikiPaths.registerAgentsMdKey) as? Bool ?? false
+        ShellConfig.shared.object(forKey: WikiPaths.registerAgentsMdKey) as? Bool ?? false
     }
 
     @objc private func toggleWikiAutoRegenerate(_ sender: NSMenuItem) {
         let enabled = sender.state == .off
-        UserDefaults.standard.set(enabled, forKey: WikiPaths.autoRegenerateKey)
+        ShellConfig.shared.set(enabled, forKey: WikiPaths.autoRegenerateKey)
         sender.state = enabled ? .on : .off
         AppLog.shared.log("wiki auto-regenerate \(enabled ? "enabled" : "disabled")")
     }
@@ -3472,7 +4121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// the current project when one is resolved.
     @objc private func toggleWikiRegisterAgentsMD(_ sender: NSMenuItem) {
         let enabled = sender.state == .off
-        UserDefaults.standard.set(enabled, forKey: WikiPaths.registerAgentsMdKey)
+        ShellConfig.shared.set(enabled, forKey: WikiPaths.registerAgentsMdKey)
         sender.state = enabled ? .on : .off
         AppLog.shared.log("wiki AGENTS.md register \(enabled ? "enabled" : "disabled")")
         if let repo = wikiPanel?.currentRepoRoot {
@@ -3486,7 +4135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     @objc private func setWikiRootMode(_ sender: NSMenuItem) {
         let mode = sender.tag == 1 ? "dsh-home" : "in-repo"
-        UserDefaults.standard.set(mode, forKey: WikiPaths.rootModeKey)
+        ShellConfig.shared.set(mode, forKey: WikiPaths.rootModeKey)
         AppLog.shared.log("wiki root mode set to \(mode)")
         wikiPanel?.reloadRoot()
         // Rebuild the menu so the radio state updates.

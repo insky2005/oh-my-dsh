@@ -11,8 +11,10 @@ CACHE="$(cd ../../.build/module-cache && pwd)"
 TMP="$(mktemp -d)"
 cp ../terminal-emulator/stubs.swift "$TMP/stubs.swift"
 cp ../../platforms/macos/src/WikiPanel.swift "$TMP/WikiPanel.swift"
+# WikiRPC talks to dsh through the shared, version-agnostic helper (DshWebRPC).
+cp ../../platforms/macos/src/DshWebRPC.swift "$TMP/DshWebRPC.swift"
 cp wiki-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
-  -o "$TMP/wiki-tests" "$TMP/stubs.swift" "$TMP/WikiPanel.swift" "$TMP/main.swift"
+  -o "$TMP/wiki-tests" "$TMP/stubs.swift" "$TMP/WikiPanel.swift" "$TMP/DshWebRPC.swift" "$TMP/main.swift"
 "$TMP/wiki-tests"
 rm -rf "$TMP"

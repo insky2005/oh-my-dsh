@@ -9,6 +9,25 @@ final class AppLog {
     static let shared = AppLog()
     func log(_ msg: String) {}
 }
+/// Shell settings facade ($DSH_HOME/shell/config.json). Real implementation:
+/// platforms/macos/src/ShellConfig.swift; headless panel tests use this stub.
+final class ShellConfig {
+    static let shared = ShellConfig()
+    private var store: [String: Any] = [:]
+    var filePath: String { "" }
+    func object(forKey key: String) -> Any? { store[key] }
+    func string(forKey key: String) -> String? { store[key] as? String }
+    func bool(forKey key: String) -> Bool { (store[key] as? Bool) ?? false }
+    func double(forKey key: String) -> Double { (store[key] as? NSNumber)?.doubleValue ?? 0 }
+    func array(forKey key: String) -> [Any]? { store[key] as? [Any] }
+    func data(forKey key: String) -> Data? {
+        guard let v = store[key] else { return nil }
+        return try? JSONSerialization.data(withJSONObject: v, options: [.fragmentsAllowed])
+    }
+    func set(_ value: Any, forKey key: String) { store[key] = value }
+    func removeObject(forKey key: String) { store.removeValue(forKey: key) }
+    func flushNow() {}
+}
 class HoverButton: NSButton {
     var showsFeedback = true
 }

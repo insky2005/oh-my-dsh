@@ -27,6 +27,7 @@ const { createDingTalkTransport, createDingTalkStreamClient } = require('./dingt
 const { createDingTalkAdapter } = require('./dingtalk');
 const { createDingTalkAuth } = require('./dingtalk-access');
 const { createSessionDriver, listWorkspaceSessions } = require('./session-driver');
+const { listWorkspaces } = require('./workspace-store');
 const { createChannelManager, normalizeEvent, resolveRefBinding } = require('./channel');
 const { createCommandRunner, parseCommand } = require('./channel-commands');
 const { createChannelSessions } = require('./channel-sessions');
@@ -105,16 +106,23 @@ function buildDingTalkAdapters({ refs, dshHome, transportOpts, ensureChannelId }
 }
 
 /**
- * Load dsh workspaces (via workspace.list) and assign codes.
+ * Load dsh workspaces and assign codes. Uses the live workspace.list RPC when
+ * the server serves it (dsh <= 0.1.1) and falls back to the persisted store
+ * $DSH_HOME/storages/workspace.json otherwise (dsh >= 0.1.2).
  * Returns [{ id, path, name, code }], empty on failure.
  */
-async function loadWorkspaces(port, host, timeoutMs) {
+async function loadWorkspaces(port, host, timeoutMs, opts) {
   try {
-    const { rpc } = require('./session-driver');
-    const json = await rpc(port, 'workspace.list', {}, host || '127.0.0.1', timeoutMs || 8000);
-    const v = json && json.result && json.result.value;
-    if (!v || !Array.isArray(v.items)) return [];
-    return assignCodes(v.items);
+    const items = await listWorkspaces(port, {
+      host: host || '127.0.0.1',
+      timeoutMs: timeoutMs || 8000,
+      token: opts && opts.token,
+      dshHome: opts && opts.dshHome,
+      // The persisted store is dsh's PRIVATE layout: say so out loud when it is
+      // unreadable/renamed instead of reporting「没有可用的 workspace」mutely.
+      log: (m) => console.log(m),
+    });
+    return assignCodes(items);
   } catch {
     return [];
   }
@@ -132,6 +140,8 @@ async function loadWorkspaces(port, host, timeoutMs) {
  *   sessionOpts - overrides for createSessionDriver (poll interval etc.)
  *   transportOpts - overrides for the platform transport
  *   intervalMs  - weixin adapter long-poll interval (ignored for push transports)
+ *   dshToken    - dsh web launch token (the one in the URL dsh web prints),
+ *                 required to reach the API of dsh >= 0.1.2 (cookie auth)
  *   onEvent     - optional callback(event, result) after handling each message
  *   commands    - optional pre-built command runner deps
  */
@@ -150,7 +160,14 @@ async function runChannel(opts = {}) {
   const adapter = adapters.get(channelId);
   if (!adapter) throw new Error('channel-runner: no adapter for ' + channelId);
 
-  const sessionDriver = createSessionDriver({ port: opts.port || 3080, ...(opts.sessionOpts || {}) });
+  // dsh >= 0.1.2 fences /api behind a per-instance browser cookie; the shell
+  // passes the launch token it read from dsh web's own URL
+  // (docs/plans/dsh-012rc1-compat-audit.md, C1).
+  const dshToken = opts.dshToken || process.env.DSH_WEB_TOKEN || '';
+  const rpcOpts = { token: dshToken, dshHome: opts.dshHome };
+  const sessionDriver = createSessionDriver({
+    port: opts.port || 3080, token: dshToken, dshHome: opts.dshHome, ...(opts.sessionOpts || {}),
+  });
   const manager = createChannelManager({
     adapters,
     refsByChannel,
@@ -158,9 +175,10 @@ async function runChannel(opts = {}) {
     jobQueue: createQueue(),
   });
 
+  const resolvedHome = opts.dshHome || process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
   const projectRoot = opts.projectRoot
     || (opts.refs && opts.refs[0] && opts.refs[0].workspaceRoot)
-    || path.join(os.homedir(), '.dsh', 'channel-runtime', channelId);
+    || path.join(resolvedHome, 'channel-runtime', channelId);
   const store = opts.sessions || createChannelSessions({ channelId, dshHome: opts.dshHome, defaultProjectRoot: projectRoot });
 
   let enabledCache = { roots: null, at: 0 };
@@ -178,7 +196,7 @@ async function runChannel(opts = {}) {
   const port = opts.port || 3080;
   const wsHost = opts.host || '127.0.0.1';
   const homeDir = opts.homeDir || require('node:os').homedir();
-  const getCodedWorkspaces = async () => loadWorkspaces(port, wsHost, opts.timeoutMs);
+  const getCodedWorkspaces = async () => loadWorkspaces(port, wsHost, opts.timeoutMs, rpcOpts);
 
   const runtime = opts.runtime || createChannelRuntimeStore({ channelId, dshHome: opts.dshHome });
   const getLastWorkspace = () => runtime.getLastWorkspace();
@@ -187,7 +205,7 @@ async function runChannel(opts = {}) {
     const lw = runtime.getLastWorkspace();
     return (lw && lw.projectRoot) || projectRoot;
   };
-  const currentSessions = () => listWorkspaceSessions(port, wsHost, currentWorkspaceRoot(), opts.timeoutMs);
+  const currentSessions = () => listWorkspaceSessions(port, wsHost, currentWorkspaceRoot(), opts.timeoutMs, rpcOpts);
   const sessionCode = async (sessionId) => {
     const list = await currentSessions();
     const idx = list.findIndex((s) => s.sessionId === sessionId);
@@ -195,6 +213,10 @@ async function runChannel(opts = {}) {
   };
 
   const commandRunner = opts.commands || createCommandRunner({
+    // ~-shorten reply paths with the SAME home the runner uses (it defaults to
+    // os.homedir(), which leaks the full /Users/... path whenever the shell
+    // injects another home — e.g. tests, or a foreign HOME).
+    homeDir,
     getSessions: () => currentSessions(),
     getWorkspaces: async () => {
       const ws = await getCodedWorkspaces();

@@ -12,7 +12,7 @@ oh-my-dsh 壳层内置一个**浏览器面板**（CEF 嵌入式 Chromium 内核�
 API 服务随 App 启动常驻，默认端口 **3081**。按顺序取：
 
 ```bash
-PORT="$(cat "$HOME/.dsh/browser-api.port" 2>/dev/null || echo 3081)"
+PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/browser-api.port" 2>/dev/null || echo 3081)"
 ```
 
 （若设置了 `DSH_BROWSER_PORT` 环境变量则端口不同；port 文件由 App 写入。App 未运行时 API 不可用——先请用户打开 oh-my-dsh。）

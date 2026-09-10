@@ -12,6 +12,7 @@
  *   node core/bin/ohmy-core.js serving <port> [needBootMarker]
  *   node core/bin/ohmy-core.js upgrade compare <a> <b>
  *   node core/bin/ohmy-core.js upgrade latest <registry>
+ *   node core/bin/ohmy-core.js upgrade next <current> <versions...>  # stepwise target (stable/rc)
  *   node core/bin/ohmy-core.js session cwd <port>
  *   node core/bin/ohmy-core.js session cwd-by-id <port> <sessionId>
  *   node core/bin/ohmy-core.js session run <port> <conversationId> <text> <workspaceRoot>
@@ -23,7 +24,11 @@
  *   node core/bin/ohmy-core.js channel login-dingtalk [--save <file>]
  *   node core/bin/ohmy-core.js channel listen <token> [--once]
  *   node core/bin/ohmy-core.js channel reply <token> <to> <text>
- *   node core/bin/ohmy-core.js channel run <channelId> <port> <refsJson> [--dsh-home <dir>]
+ *   node core/bin/ohmy-core.js settings get <key>
+ *   node core/bin/ohmy-core.js settings set <key> <json>
+ *   node core/bin/ohmy-core.js settings unset <key>
+ *   node core/bin/ohmy-core.js settings list
+ *   node core/bin/ohmy-core.js channel run <channelId> <port> <refsJson> [--dsh-home <dir>] [--dsh-token <token>]
  */
 
 const core = require('../index');
@@ -70,8 +75,32 @@ function println(s) {
       } else if (sub === 'latest') {
         const reg = rest[0] || core.DEFAULT_REGISTRY;
         printJson(await core.latestVersion(reg));
+      } else if (sub === 'next') {
+        if (rest.length < 2) fail('usage: upgrade next <current> <versions...>');
+        println(core.nextStepTarget(rest[0], rest.slice(1)) || '');
       } else {
-        fail('usage: upgrade compare <a> <b> | latest <registry>');
+        fail('usage: upgrade compare <a> <b> | latest <registry> | next <current> <versions...>');
+      }
+      break;
+    case 'settings':
+      if (sub === 'get') {
+        if (!rest[0]) fail('usage: settings get <key>');
+        println(JSON.stringify(core.settingsGet(rest[0])));
+      } else if (sub === 'set') {
+        if (!rest[0] || rest.length < 2) fail('usage: settings set <key> <json>');
+        let val; try { val = JSON.parse(rest[1]); } catch { val = rest[1]; }
+        core.settingsSet(rest[0], val);
+        println('ok');
+      } else if (sub === 'unset') {
+        if (!rest[0]) fail('usage: settings unset <key>');
+        core.settingsUnset(rest[0]);
+        println('ok');
+      } else if (sub === 'list') {
+        printJson(core.settingsReadAll());
+      } else if (sub === 'path') {
+        println(core.settingsPath());
+      } else {
+        fail('usage: settings get <key> | set <key> <json> | unset <key> | list | path');
       }
       break;
     case 'session':
@@ -180,10 +209,15 @@ function println(s) {
         const port = parseInt(rest[1], 10);
         const refs = JSON.parse(rest[2] || '[]');
         const dshIdx = rest.indexOf('--dsh-home');
-        const dshHome = dshIdx >= 0 ? rest[dshIdx + 1] : (require('node:os').homedir() + '/.dsh');
+        const dshHome = dshIdx >= 0 ? rest[dshIdx + 1]
+          : (process.env.DSH_HOME || (require('node:os').homedir() + '/.dsh'));
+        // dsh >= 0.1.2 fences its /api RPC behind a per-instance cookie minted
+        // from the launch token in the URL dsh web prints; the shell passes it.
+        const tokIdx = rest.indexOf('--dsh-token');
+        const dshToken = tokIdx >= 0 ? (rest[tokIdx + 1] || '') : (process.env.DSH_WEB_TOKEN || '');
         const prIdx = rest.indexOf('--project-root');
         const projectRoot = prIdx >= 0 ? rest[prIdx + 1] : '';
-        if (!channelId || !Number.isInteger(port)) fail('usage: channel run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>]');
+        if (!channelId || !Number.isInteger(port)) fail('usage: channel run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>] [--dsh-token <token>]');
         // NOTE: runWeixinChannel already wires its own onEvent handler that
         // parses slash commands FIRST and routes only ordinary text to the
         // manager. Registering an extra handler here that calls manager.enqueue
@@ -192,7 +226,7 @@ function println(s) {
         // a logging callback via opts.onEvent (receiver for both paths).
         const runner = channelId.startsWith('dingtalk') ? core.runDingTalkChannel : core.runWeixinChannel;
         const handle = await runner({
-          channelId, port, refs, projectRoot, dshHome,
+          channelId, port, refs, projectRoot, dshHome, dshToken,
           onEvent: (event, result) => {
             const replyText = result && result.reply && result.reply.text;
             println('handled: ' + JSON.stringify({ conversationId: event.conversationId, text: event.text, reply: replyText }));
@@ -206,7 +240,7 @@ function println(s) {
         process.on('SIGINT', stop); process.on('SIGTERM', stop);
         setInterval(() => {}, 1 << 30);
       } else {
-        fail('usage: channel route <refsJson> <conversationId> <text> | normalize <eventJson> | state <current> <next> | login [--save <file>] | login-dingtalk [--save <file>] | listen <token> [--once] | reply <token> <to> <text> | run <channelId> <port> <refsJson> [--dsh-home <dir>]');
+        fail('usage: channel route <refsJson> <conversationId> <text> | normalize <eventJson> | state <current> <next> | login [--save <file>] | login-dingtalk [--save <file>] | listen <token> [--once] | reply <token> <to> <text> | run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>] [--dsh-token <token>]');
       }
       break;
     default:

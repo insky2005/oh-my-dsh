@@ -12,6 +12,13 @@ const { runWeixinChannel } = require('../lib/channel-runner');
 // Enable a channel for a project in the (temp) global store, as the panel's
 // "project switch" does (docs/channel-project-switch.md). Presence of the root
 // in <channelId>.workspaces.json = enabled for that workspace.
+/// Close a mock server AND destroy its sockets (Node keeps connections alive by
+/// default, so server.close() alone can leave the test process hanging).
+function closeServer(srv) {
+  try { if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections(); } catch { /* ignore */ }
+  try { srv.close(); } catch { /* ignore */ }
+}
+
 function enableForProject(dshHome, channelId, projectRoot) {
   const dir = path.join(dshHome, 'channels');
   fs.mkdirSync(dir, { recursive: true });
@@ -59,10 +66,12 @@ test('channel-runner: router no-match sends unbounded hint', async () => {
 // Drive one inbound message through runWeixinChannel against a mock transport
 // (dsh web workspace.list) and a temp store. Returns the reply text the adapter
 // sent, or null if nothing was sent within the wait window.
-async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceId: 'a', path: '/Users/loie/repo/alpha', title: 'Alpha' }], homeDir = '/Users/loie', storeProjectRoot, dshHome: dshHomeOpt }) {
+async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceId: 'a', path: '/Users/loie/repo/alpha', title: 'Alpha' }], homeDir = '/Users/loie', storeProjectRoot, dshHome: dshHomeOpt, modern = false, dshToken }) {
   const http = require('node:http');
 
   // Mock dsh web: workspace.list (with per-workspace sessionIds) + session.list.
+  // `modern` switches the mock to the dsh >= 0.1.2 surface: slash endpoints, a
+  // launch-token cookie fence and NO workspace.list (docs/plans/dsh-012rc1-compat-audit.md, C1).
   const wsSrv = await new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
       let body = '';
@@ -70,8 +79,31 @@ async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceI
       req.on('end', () => {
         let rpcId = '';
         try { rpcId = JSON.parse(body).rpcId || ''; } catch { /* ignore */ }
-        res.writeHead(200, { 'content-type': 'application/json' });
         const url = String(req.url || '');
+        if (modern) {
+          if (req.method === 'GET') {
+            if (url === '/?token=' + dshToken) { res.writeHead(303, { 'set-cookie': ['dsh-auth-m=1; Path=/'] }); res.end(); return; }
+            res.writeHead(401); res.end('unauthorized');
+            return;
+          }
+          if (!String(req.headers.cookie || '').includes('dsh-auth-m=1')) { res.writeHead(401); res.end('unauthorized'); return; }
+          if (url === '/api/session/list') {
+            const items = sessions.map((s) => ({
+              sessionId: s.sessionId || s.id,
+              updatedAt: s.updatedAt || 0,
+              running: false,
+              cwd: s.projectRoot || s.path,
+              projections: { asOfSeq: 1, values: { title: s.name || null } },
+            }));
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ rpcId, result: { ok: true, value: { items } } }));
+            return;
+          }
+          res.writeHead(404);
+          res.end('not found');
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
         if (url.includes('/api/workspace.list')) {
           const items = workspaces.map((w) => ({
             workspaceId: w.workspaceId || w.id || w.path,
@@ -131,7 +163,7 @@ async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceI
   };
 
   const handle = await runWeixinChannel({
-    channelId: 'wx-q', port: wsSrv.port, refs: [], dshHome, projectRoot, homeDir,
+    channelId: 'wx-q', port: wsSrv.port, refs: [], dshHome, projectRoot, homeDir, dshToken,
     transportOpts: { fetch: fetchImpl, baseUrl: 'https://x' },
     intervalMs: 50,
   });
@@ -140,7 +172,7 @@ async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceI
   const deadline = Date.now() + 5000;
   while (sent === null && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
   await handle.stop();
-  wsSrv.srv.close();
+  closeServer(wsSrv.srv);
   return sent;
 }
 
@@ -181,7 +213,7 @@ async function runChannelSequence(texts, { projectRoot = '/Users/loie/repo/alpha
   await handle.start();
   const sendSeq = async (t) => { queued.push(t); const dl = Date.now() + 8000; let lastLen = -1, lastChange = Date.now(); while (Date.now() < dl) { if (sent.length !== lastLen) { lastLen = sent.length; lastChange = Date.now(); } if (Date.now() - lastChange > 200) break; await new Promise((r) => setTimeout(r, 30)); } };
   for (const t of texts) await sendSeq(t);
-  await handle.stop(); wsSrv.srv.close();
+  await handle.stop(); closeServer(wsSrv.srv);
   return { sent, renames };
 }
 
@@ -346,7 +378,7 @@ async function runProjectGate({ projectRoot = '/Users/loie/repo/alpha', channelI
   queued.push(text);
   const dl = Date.now() + 6000;
   while (sent === null && Date.now() < dl) await new Promise((r) => setTimeout(r, 40));
-  await handle.stop(); wsSrv.srv.close();
+  await handle.stop(); closeServer(wsSrv.srv);
   return { sent, creates: creates.length };
 }
 
@@ -397,4 +429,60 @@ test('project switch: /workspaces only lists enabled workspaces (none enabled ->
 test('project switch: /workspaces lists a workspace only when it is enabled', async () => {
   const r = await runProjectGate({ enabled: true, text: '/workspaces' });
   assert.match(r.sent || '', /Alpha/);
+});
+// ---- dsh >= 0.1.2 (dev app): slash endpoints + launch-token cookie ----
+// Regression: /wks replied "没有可用的 workspace" on a 0.1.2 dsh because the
+// runner only spoke the legacy dot-method API — where workspace.list exists and
+// /api needs no auth. On 0.1.2 workspace.list is gone (the list is read from the
+// persisted workspace store) and session/list + session/page need the cookie
+// minted from the launch token. docs/plans/dsh-012rc1-compat-audit.md (C1).
+
+/** Seed $DSH_HOME/storages/workspace.json exactly as dsh web persists it. */
+function seedWorkspaceStore(dshHome, items) {
+  const dir = path.join(dshHome, 'storages');
+  fs.mkdirSync(dir, { recursive: true });
+  const tables = {};
+  for (const it of items) {
+    tables[it.workspaceId] = {
+      path: it.path, title: it.title, sessionIds: it.sessionIds || [],
+      createdAt: '2026-09-10T00:00:00.000Z', updatedAt: '2026-09-10T00:00:00.000Z',
+    };
+  }
+  fs.writeFileSync(path.join(dir, 'workspace.json'), JSON.stringify({
+    unit: { name: 'workspace', version: 2 },
+    global: { initialized: true, workspaceIds: items.map((i) => i.workspaceId), archivedSessionIds: [] },
+    tables: { workspaces: tables },
+  }), 'utf8');
+}
+
+test('channel-runner: /wks lists the enabled workspace on dsh >= 0.1.2 (no workspace.list RPC)', async () => {
+  const dshHome = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-012-'));
+  seedWorkspaceStore(dshHome, [{ workspaceId: 'w-1', path: '/Users/loie/repo/alpha', title: 'Alpha', sessionIds: [] }]);
+  const sent = await runQuickCommand({ text: '/wks', modern: true, dshHome });
+  assert.ok(sent, 'expected a reply');
+  assert.match(sent, /workspace 列表：/);
+  assert.match(sent, /#w1 \(Alpha\): ~\/repo\/alpha/);
+});
+
+test('channel-runner: /ses lists workspace sessions on dsh >= 0.1.2 with the launch token', async () => {
+  const dshHome = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-012t-'));
+  seedWorkspaceStore(dshHome, [{ workspaceId: 'w-1', path: '/Users/loie/repo/alpha', title: 'Alpha', sessionIds: ['sess-1'] }]);
+  const sent = await runQuickCommand({
+    text: '/ses',
+    modern: true,
+    dshHome,
+    dshToken: 'tok',
+    storeProjectRoot: '/Users/loie/repo/alpha',
+    sessions: [{ sessionId: 'sess-1', projectRoot: '/Users/loie/repo/alpha', name: '会话甲', updatedAt: 1 }],
+  });
+  assert.ok(sent, 'expected a reply');
+  assert.match(sent, /#s1 \(sess-1\), 会话甲/);
+});
+
+test('channel-runner: #wN switches workspace on dsh >= 0.1.2 too', async () => {
+  const dshHome = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-012w-'));
+  seedWorkspaceStore(dshHome, [{ workspaceId: 'w-1', path: '/Users/loie/repo/alpha', title: 'Alpha', sessionIds: [] }]);
+  const sent = await runQuickCommand({ text: '#w1', modern: true, dshHome, dshToken: 'tok' });
+  assert.ok(sent, 'expected a reply');
+  assert.match(sent, /已切换到工作区 #w1 \(Alpha\), ~\/repo\/alpha/);
 });

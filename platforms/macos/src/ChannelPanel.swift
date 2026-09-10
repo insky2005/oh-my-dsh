@@ -766,7 +766,7 @@ final class ChannelPanelController: NSObject {
     /// ~/.dsh/channels/<channelId>.state.json. Called when the global-config view
     /// is opened (no polling).
     private func liveState(for channelId: String) -> GlobalChannel.State {
-        let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/channels")
+        let dir = ChannelStoreReader.channelsDir()
         let p = (dir as NSString).appendingPathComponent(channelId + ".state.json")
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: p)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -794,7 +794,7 @@ final class ChannelPanelController: NSObject {
     // MARK: - Persistence
 
     private func loadGlobalChannels() {
-        if let data = UserDefaults.standard.data(forKey: "channel.global.list"),
+        if let data = ShellConfig.shared.data(forKey: "channel.global.list"),
            let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
             channels = arr.compactMap { dict in
                 guard let id = dict["id"] as? String, let platform = dict["platform"] as? String else { return nil }
@@ -817,7 +817,7 @@ final class ChannelPanelController: NSObject {
             ["id": c.id, "platform": c.platform, "name": c.name, "enabled": c.enabled, "state": c.state.rawValue, "connection": c.connection]
         }
         if let data = try? JSONSerialization.data(withJSONObject: arr) {
-            UserDefaults.standard.set(data, forKey: "channel.global.list")
+            ShellConfig.shared.set(data, forKey: "channel.global.list")
         }
     }
 
@@ -849,7 +849,7 @@ final class ChannelPanelController: NSObject {
     // = that workspace has this channel enabled (docs/channel-project-switch.md).
 
     private func channelWorkspacesPath(_ channelId: String) -> String {
-        let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/channels")
+        let dir = ChannelStoreReader.channelsDir()
         return (dir as NSString).appendingPathComponent(channelId + ".workspaces.json")
     }
 
@@ -872,7 +872,7 @@ final class ChannelPanelController: NSObject {
         guard let root = currentRoot else { return }
         var roots = Set(enabledRoots(for: channelId))
         if enabled { roots.insert(root) } else { roots.remove(root) }
-        let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/channels")
+        let dir = ChannelStoreReader.channelsDir()
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         var dict: [String: Any] = [:]
         for r in roots {

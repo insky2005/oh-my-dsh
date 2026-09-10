@@ -28,6 +28,7 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 | 凭据/配置存储 | ✅ | core/lib/channel-store.js | `~/.dsh/channels/<id>.json`（文件优先，chmod 600），App 与 CLI/代理共用；面板元数据存 UserDefaults |
 | 微信 ClawBot 适配器（M2） | ✅ | core/lib/weixin-clawbot.js + weixin-clawbot-transport.js | 纯官方 iLink 协议（@tencent-weixin/openclaw-weixin 2.4.6 官方源码推导）；**严格串行长轮询**（修复 setInterval 破坏游标导致重复回复，见 channel-issues.md） |
 | 消息分发 Router + 会话驱动（M3） | ✅ | core/lib/channel.js（router）+ core/lib/session-driver.js + core/lib/channel-runner.js | 已在真实 dsh web 端到端验证 |
+| dsh API 传输层（0.1.1 点号 ⇄ 0.1.2 斜杠端点 + token cookie） | ✅ | core/lib/dsh-rpc.js + core/lib/workspace-store.js | 一元 RPC 双面兼容：先试 0.1.2 斜杠端点/`payload.args` 信封，404 再回退老点号方法；0.1.2 的 /api 用 `GET /?token=…` 换来的 cookie 鉴权（壳层经 `--dsh-token` 传入）；**0.1.2 无 workspace.list**，工作区列表回退 dsh 持久化的 `$DSH_HOME/storages/workspace.json`；连接会话列表走 session/list、回复走 session/page。见 docs/plans/dsh-012rc1-compat-audit.md §九 |
 | workspace 代号 + #tag 路由 | ✅ | core/lib/channel-workspaces.js | /wks 分配 #wN、#tag 路由（代号精确 > workspace 名）、回退规则（最近 → 第一个） |
 | 指令解析与执行 v2 | ✅ | core/lib/channel-commands.js + core/lib/channel-runner.js | /help /ping /status /workspaces(/wks) /sessions(/ses) /new，快捷 #wN/#sN；清单见 channel-commands.md |
 | 异步应答 + 忙门 + sendTyping | ✅ | core/lib/channel-runner.js、weixin-clawbot-transport.js | sendTyping 替代「处理中」文字（微信原生「正在输入…」）+ 后台生成 + 结果回推；同 conversation 在途时后续消息回「请等待」不入队（见 channel-association-model.md §8） |
@@ -56,7 +57,7 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| core 全量单测 | ✅ | `node --test core/tests/` **148 全绿**（2026-08-22 核对；其中 channel 相关 71 项） |
+| core 全量单测 | ✅ | `node --test core/tests/` **212 全绿**（2026-09-10 核对；含 dsh 0.1.2 传输层 7 项 + workspace 存储 4 项 + channel 0.1.2 回归 3 项） |
 | 传输层回归（mock HTTP） | ✅ | core/tests/e2e-channel.test.js：getupdates / -14 过期 / 无 token / sendmessage 报文 / QR 登录，不依赖真实 dsh web |
 | 真实微信 E2E | ✅ | 扫码登录拿 bot_token → getupdates 收入站（含 context_token）→ sendmessage 回传回复，用户确认收到；印证主动发送须带 context_token |
 | 重复回复回归 | ✅ | 严格串行长轮询修复后 /help 只回 1 条（channel-issues.md） |

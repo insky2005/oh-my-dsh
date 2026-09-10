@@ -801,28 +801,16 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     // MARK: - dsh session helpers
 
     /// All registered dsh workspace paths (for repo detection fallback).
+    /// Live workspace.list when the server serves it (dsh <= 0.1.1), else the
+    /// store dsh persists — dsh >= 0.1.2 dropped the RPC (DshWorkspaceStore).
     static func listWorkspacePaths(port: Int) -> [String] {
-        let body = #"{"type":"client-request","rpcId":"ir-wslist","method":"workspace.list","payload":{}}"#
-        guard let data = Self.rpcPost(port: port, path: "/api/workspace.list", body: body),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let result = json["result"] as? [String: Any],
-              (result["ok"] as? Bool) == true,
-              let value = result["value"] as? [String: Any],
-              let items = value["items"] as? [[String: Any]] else { return [] }
-        return items.compactMap { $0["path"] as? String }
+        DshWorkspaceStore.items(port: port, log: { AppLog.shared.log($0) }).compactMap { $0["path"] as? String }
     }
 
     static func resolveMainWorkspaceId(port: Int, path: String) -> String? {
         let std = (path as NSString).standardizingPath
-        // workspace.list → find matching path (or prefix, symlink-resolved)
-        let body = #"{"type":"client-request","rpcId":"ir-ws","method":"workspace.list","payload":{}}"#
-        guard let data = Self.rpcPost(port: port, path: "/api/workspace.list", body: body),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let result = json["result"] as? [String: Any],
-              (result["ok"] as? Bool) == true,
-              let value = result["value"] as? [String: Any],
-              let items = value["items"] as? [[String: Any]] else { return nil }
-        for ws in items {
+        // find matching path (or prefix, symlink-resolved)
+        for ws in DshWorkspaceStore.items(port: port, log: { AppLog.shared.log($0) }) {
             guard let wsPath = ws["path"] as? String else { continue }
             if (wsPath as NSString).standardizingPath == std { return ws["workspaceId"] as? String }
         }
@@ -838,23 +826,14 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         } else {
             return nil
         }
-        let body = Self.rpcBody(method: "session.create", payload: payload, rpcId: "ir-create")
-        guard let data = Self.rpcPost(port: port, path: "/api/session.create", body: body),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let result = json["result"] as? [String: Any],
-              (result["ok"] as? Bool) == true,
-              let value = result["value"] as? [String: Any],
+        guard let value = DshWebRPC.call(DshWebRPC.sessionCreate, payload, port: port),
               let sid = value["sessionId"] as? String else { return nil }
         return sid
     }
 
     static func renameSession(port: Int, sessionId: String, title: String) -> Bool {
-        let body = Self.rpcBody(method: "session.rename", payload: ["sessionId": sessionId, "title": title], rpcId: "ir-rename")
-        guard let data = Self.rpcPost(port: port, path: "/api/session.rename", body: body),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let result = json["result"] as? [String: Any],
-              (result["ok"] as? Bool) == true else { return false }
-        return true
+        return DshWebRPC.call(DshWebRPC.sessionRename,
+                              ["sessionId": sessionId, "title": title], port: port) != nil
     }
 
     static func promptSession(port: Int, sessionId: String, text: String) -> Bool {
@@ -863,21 +842,13 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             "mode": "queue",
             "content": [["type": "text", "text": text]],
         ]
-        let body = Self.rpcBody(method: "session.prompt", payload: payload, rpcId: "ir-prompt")
-        guard let data = Self.rpcPost(port: port, path: "/api/session.prompt", body: body),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let result = json["result"] as? [String: Any],
-              (result["ok"] as? Bool) == true else { return false }
-        return true
+        // dsh >= 0.1.2 requires a client request id for idempotent delivery.
+        return DshWebRPC.call(DshWebRPC.sessionPrompt, payload, port: port,
+                              modernExtras: ["requestId": UUID().uuidString]) != nil
     }
 
     static func sessionRunning(port: Int, sessionId: String) -> Bool {
-        let body = Self.rpcBody(method: "session.list", payload: [:], rpcId: "ir-poll")
-        guard let data = Self.rpcPost(port: port, path: "/api/session.list", body: body),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let result = json["result"] as? [String: Any],
-              (result["ok"] as? Bool) == true,
-              let value = result["value"] as? [String: Any],
+        guard let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port),
               let items = value["items"] as? [[String: Any]] else { return false }
         for item in items {
             guard (item["sessionId"] as? String) == sessionId else { continue }
@@ -887,41 +858,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     }
 
     static func cancelSession(port: Int, sessionId: String) -> Bool {
-        let body = Self.rpcBody(method: "session.cancel", payload: ["sessionId": sessionId], rpcId: "ir-cancel")
-        guard let data = Self.rpcPost(port: port, path: "/api/session.cancel", body: body),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let result = json["result"] as? [String: Any],
-              (result["ok"] as? Bool) == true else { return false }
-        return true
-    }
-
-    private static func rpcBody(method: String, payload: [String: Any], rpcId: String) -> String {
-        let dict: [String: Any] = [
-            "type": "client-request",
-            "rpcId": rpcId,
-            "method": method,
-            "payload": payload,
-        ]
-        let data = (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
-        return String(data: data, encoding: .utf8) ?? "{}"
-    }
-
-    private static func rpcPost(port: Int, path: String, body: String, timeout: TimeInterval = 10) -> Data? {
-        guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return nil }
-        var request = URLRequest(url: url, timeoutInterval: timeout)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = body.data(using: .utf8)
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Data?
-        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
-            result = data
-            semaphore.signal()
-        }
-        task.resume()
-        _ = semaphore.wait(timeout: .now() + timeout + 1)
-        task.cancel()
-        return result
+        return DshWebRPC.call(DshWebRPC.sessionCancel, ["sessionId": sessionId], port: port) != nil
     }
 
     // MARK: - PR creation (GitHub REST)
@@ -958,10 +895,18 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     /// Generic Keychain service (repo-agnostic fallback).
     private static let genericTokenService = "oh-my-dsh.issuerunner.github-token"
     /// Shared generic token file: the single place a user can drop a token for
-    /// BOTH the app shell and external tools/agents (`~/.dsh/gh-token`).
-    private static let genericTokenFilePath = NSHomeDirectory() + "/.dsh/gh-token"
-    /// Per-repo token dir for file-based tokens: `~/.dsh/tokens/<owner>-<repo>`.
-    private static let tokenDir = NSHomeDirectory() + "/.dsh/tokens"
+    /// BOTH the app shell and external tools/agents (`${DSH_HOME:-$HOME/.dsh}/gh-token`).
+    /// Resolved dsh home ($DSH_HOME or ~/.dsh) — dev builds use ~/.dsh-dev.
+    private static let dshHomePath: String = {
+        if let h = ProcessInfo.processInfo.environment["DSH_HOME"],
+           !h.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return h.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return NSHomeDirectory() + "/.dsh"
+    }()
+    private static let genericTokenFilePath = dshHomePath + "/gh-token"
+    /// Per-repo token dir for file-based tokens: `${DSH_HOME:-$HOME/.dsh}/tokens/<owner>-<repo>`.
+    private static let tokenDir = dshHomePath + "/tokens"
 
     /// Keychain service for a specific repo (owner/repo scoped).
     private static func tokenService(for repo: (owner: String, repo: String)) -> String {
@@ -1491,7 +1436,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         要求：
         1. 加载全局 `$DSH_HOME/skills/issue-resolve/SKILL.md`（或内嵌说明）并严格按其流程执行（读 issue → 改代码 → 跑测试 → commit → push）；
         2. 当前分支应为 \(branch)，只在此分支上工作；
-        3. 推送私有仓库/需要认证的 GitHub 调用时，token 在 `~/.dsh/tokens/<owner>-<repo>` 或 `~/.dsh/gh-token`（`cat` 读取即可，**绝不在对话/汇报中回显**）；
+        3. 推送私有仓库/需要认证的 GitHub 调用时，token 在 `${DSH_HOME:-$HOME/.dsh}/tokens/<owner>-<repo>` 或 `${DSH_HOME:-$HOME/.dsh}/gh-token`（`cat` 读取即可，**绝不在对话/汇报中回显**）；
         4. 完成后简短汇报改动与测试结果。
         """
     }

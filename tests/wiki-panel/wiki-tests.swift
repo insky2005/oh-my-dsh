@@ -164,12 +164,12 @@ let p2 = WikiPaths.stableHash("/tmp/repo-A")
 eq(p1, p2, "paths: stableHash deterministic")
 check(p1.count == 12, "paths: stableHash length 12", p1)
 let savedMode = WikiPaths.rootMode
-UserDefaults.standard.set("in-repo", forKey: WikiPaths.rootModeKey)
+ShellConfig.shared.set("in-repo", forKey: WikiPaths.rootModeKey)
 check(WikiPaths.wikiRoot(for: "/tmp/repo-A").hasSuffix(".dsh/wiki"), "paths: in-repo root")
-UserDefaults.standard.set("dsh-home", forKey: WikiPaths.rootModeKey)
+ShellConfig.shared.set("dsh-home", forKey: WikiPaths.rootModeKey)
 let home = WikiPaths.wikiRoot(for: "/tmp/repo-A")
 check(home.contains("repo-wiki"), "paths: dsh-home root", home)
-UserDefaults.standard.set(savedMode, forKey: WikiPaths.rootModeKey)
+ShellConfig.shared.set(savedMode, forKey: WikiPaths.rootModeKey)
 
 // MARK: - AGENTS.md registration
 

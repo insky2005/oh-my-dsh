@@ -1,7 +1,7 @@
 ---
 title: 模块：任务面板（IssueRunner）
 tags: [module, tasks, github, issue, queue, index]
-updated: 2026-08-22T15:04:38Z
+updated: 2026-09-10T12:05:00Z
 sources: [platforms/macos/src/IssueRunnerPanel.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/tests/issues.test.js, .dsh/skills/issue-resolve/SKILL.md, docs/issue-runner-design.md, docs/git-workflow.md]
 manual: false
 ---
@@ -16,6 +16,7 @@ manual: false
 
 - **不用 worktree**：worktree 在 dsh 上分组错乱（未注册 workspace 的会话前端按 cwd 归组）且生命周期清理负担重；用 git branch + 严格串行队列绕开（见 `docs/issue-runner-design.md` 决策记录）；
 - **会话创建**：`session.create(workspaceId=主项目)` 单独传 workspaceId 即 ok，cwd 自动 = 主项目目录（实测），归主 workspace 无错乱；
+- **RPC 走 `DshWebRPC`（2026-09-10）**：会话 `create/rename/prompt/list/cancel` 与工作区列表全部改接原生共享 helper——先试 dsh 0.1.2 斜杠端点 + `payload.args.request`，再回退点号方法；0.1.2 需 launch-token cookie（401 自动重换），prompt 补 `requestId`；`workspace.list` 在 0.1.2 不存在 → 回退磁盘 `$DSH_HOME/storages/workspace.json`（`DshWorkspaceStore`）；
 - **可追溯**：会话/分支/PR 全保留不自动删；会话改名 `fix(#N): …` 便于 dsh web 左侧辨识；
 - **worktree 迭代预留**：等 dsh web 原生支持后切换，队列与监控逻辑不变。
 

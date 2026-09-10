@@ -269,7 +269,7 @@ scripts/             跨平台工具（version.sh 版本单一来源 / changelog
 .dsh/skills/         web-dev-tools / repo-knowledge / issue-resolve 等面板配套 skill（App 启动时同步安装到全局 $DSH_HOME/skills/）
 .cache/              构建缓存（node tarball、npm 缓存、已构建运行时/CEF，按架构分目录）
 dist/                构建产物（.app / .pkg / .dmg）
-docs/                设计/排查文档（productization.md、git-workflow.md、repo-wiki-design.md、issue-runner-design.md、milestones/、plans/ 等）
+docs/                设计/排查文档（productization.md、dsh-version-impact.md、git-workflow.md、repo-wiki-design.md、issue-runner-design.md、milestones/、plans/ 等）
 ```
 
 ## 如何贡献

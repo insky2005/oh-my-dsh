@@ -58,7 +58,7 @@ enum BuiltinSkill: CaseIterable {
     API 服务随 App 启动常驻，默认端口 **3081**。按顺序取：
     
     ```bash
-    PORT="$(cat "$HOME/.dsh/browser-api.port" 2>/dev/null || echo 3081)"
+    PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/browser-api.port" 2>/dev/null || echo 3081)"
     ```
     
     （若设置了 `DSH_BROWSER_PORT` 环境变量则端口不同；port 文件由 App 写入。App 未运行时 API 不可用——先请用户打开 oh-my-dsh。）
@@ -200,7 +200,7 @@ enum BuiltinSkill: CaseIterable {
     3. 不改动 `.env*`/密钥/口令相关文件，不提交敏感信息；
     4. 测试失败必须停下说明，不得静默跳过；
     5. 推送失败（无远端/权限）时停下汇报，不伪造成功；
-    6. **GitHub 写操作需 token**：推送私有仓库 / 需要认证的调用时，从 `~/.dsh/tokens/<owner>-<repo>` 或 `~/.dsh/gh-token` 读取（`cat` 即得），**绝不打印/回显 token 内容，绝不在对话、汇报、日志、commit message 中泄露 token**；公开仓库推送通常无需 token；
+    6. **GitHub 写操作需 token**：推送私有仓库 / 需要认证的调用时，从 `${DSH_HOME:-$HOME/.dsh}/tokens/<owner>-<repo>` 或 `${DSH_HOME:-$HOME/.dsh}/gh-token` 读取（`cat` 即得），**绝不打印/回显 token 内容，绝不在对话、汇报、日志、commit message 中泄露 token**；公开仓库推送通常无需 token；
     7. 汇报简短（几行），不粘贴大段正文。
     """
 }

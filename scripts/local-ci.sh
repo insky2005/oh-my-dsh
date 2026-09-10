@@ -62,6 +62,8 @@ stage_swift() {
   tests/skills/run.sh
   echo "--- channel panel tests ---"
   tests/channel-panel/run.sh
+  echo "--- native dsh RPC helper tests ---"
+  tests/dsh-rpc/run.sh
   echo "--- build CEF integration artifacts (arm64) ---"
   mkdir -p .build/module-cache
   platforms/macos/build-cef.sh arm64
