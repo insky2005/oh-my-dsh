@@ -167,10 +167,32 @@
 |---|---|---|
 | ~~R1 Swift 原生 RPC 无 cookie~~（2026-09-10 已修） | `WikiRPC`、`IssueRunnerPanel`、`DSHSessionRPC` 现统一走 `DshWebRPC.swift`：先试 0.1.2 斜杠端点（`payload.args.<request\|_request>`）再回退点号方法，按**端点**记忆所选面；token 由壳层 `ServerManager.webToken` 注入，经一个**独立 ephemeral URLSession** 访问 `/?token=…` 种下 `dsh-auth-*` cookie（WebView 的 cookie 在 WebKit 数据存储里、与 URLSession 的 `HTTPCookieStorage` 互不共享，故必须自行换取），401 时自动重换一次；`workspace.list` 在 0.1.2 不存在，回退读 `$DSH_HOME/storages/workspace.json`（`DshWorkspaceStore`，与 core 同一份契约） | 已修；若是**复用外部已启动**的 0.1.2 实例仍拿不到 token（见 R2），此时原生 RPC 退化为磁盘兜底 |
 | ~~R2 复用外部 0.1.2 实例~~（2026-09-10 定论：不做） | 外部实例的 token 只存在于它自己的 stdout，无法获取；但**只要 `DSH_HOME` 相同，壳层自拉起的实例与外部实例就是同一份数据**（workspaces / sessions / settings / channels 全在 `$DSH_HOME` 下），复用只省一个进程，不值当。**唯一注意**：同一个 `DSH_HOME` 上不要长期并行跑两个 dsh web（两者都往同一批文件持久化），验完外部实例就关掉它 | 只有出现「必须与某个已启动实例共享**内存态**（未落盘状态、正在跑的 turn 视图）」的需求时才重估 |
-| R3 注入脚本依赖 fetch + DOM | B1/B5：客户端改传输或改版侧栏结构即失效 | 升级后 B 面验证项失败 |
+| **R3 注入脚本依赖 fetch + DOM**（**仍在**，且已实测出过坏点） | 三个注入脚本直接依赖 dsh web 客户端实现：fetch 形态与信封、方法名白名单、sessionId 位置、侧栏 `[role=treeitem].sessionRow` DOM、文件打开 RPC 端点。上游改传输（已有 WebSocket mux）或改 DOM 就**静默失效**。2026-09-10 实测发现 `sessionOpenerScript` 在 0.1.2 下一直是坏的（写死点号 method 打到斜杠端点，服务端 \`method does not match endpoint\`），已修为运行时双面 —— 详见 §6.1 | 升级后 B 面三项验证任一失败即命中 |
 | R4 `workspace.json` 兜底是私有布局 | D1 属 dsh 内部持久化格式，可能改名（如 `storages/` 结构调整） | 工作区列表突然为空且接口也没变 |
 | R5 单一版本策略 | 只为「内置版本」做适配，老版本兼容靠回退（C1）；回退在两侧都失效时会静默出空结果 | 引入第二个受支持版本时重估 |
 
+
+### R3 详解：注入脚本（这是**当前唯一还在「静默失效」风险里**的一面）
+
+壳层往 WKWebView 注入三个脚本（`rebuildWebView()` 里 `WKUserScript(injectionTime: .atDocumentStart)`，随每次重建 WebView 重装），它们**直接依赖 dsh web 客户端内部实现**，一旦上游改动就静默失效（没有报错、没有弹窗，只是某个功能不动作）：
+
+| 脚本 | 依赖的 dsh web 细节 | 失效后的症状 | 现状 |
+|---|---|---|---|
+| `sessionTrackerScript`（B1–B4） | ① 一元 RPC 走 `window.fetch`；② 方法名白名单 `session.history/prompt/rename/selectModel` + `subagent(s).list`（点号与斜杠两套都认）；③ sessionId 在 `payload.args.*` 或 `payload.*`；④ **每次切会话必然发一次 `subagents/list`（带 parentSessionId）**这一非幂等时序 | web 里切会话 → 面板/终端/预览/wiki/tasks 的项目目录**不跟随** | ✅ 0.1.2 实测可用 |
+| `sessionOpenerScript`（B5/B6） | ① 会话列表 RPC 的**请求形状**（斜杠 vs 点号、是否 `args` 包裹）；② `projections.values.title`；③ 侧栏 DOM：`[role="treeitem"]` + `className` 含 `sessionRow` + 行文本等于标题 + `aria-expanded` 折叠组 | 面板点会话行 → 不跳转（`[dsh-opener] no-session / row-not-found`） | ⚠️ **0.1.2 下原本就是坏的**（见下），已于 2026-09-10 修 |
+| `previewInterceptorScript`（B7） | ① 文件打开走 fetch 的一元 RPC（`host.openPath` / `session/openWorkspacePath`）；② 路径在 `payload.args.request.path` 等位置；③ 能用 **假 `server-response`** 吞掉这次请求（客户端 promise 正常 resolve） | 点消息里的文件 → 不由面板打开，改弹系统默认应用（或什么都不发生） | ✅ 0.1.2 实测可用 |
+
+**已实测确认的坏点（0.1.2-rc.1，2026-09-10）**：`__dshOpenSession` 当时固定发 `POST /api/session/list` 但 body 里写 `method:"session.list"`、payload 也不包 `args`，服务端直接拒绝：
+
+```
+gateway/bad-request: method "session.list" does not match endpoint "session/list"
+```
+
+而且它在 0.1.1 上同样不通（那条斜杠路径不存在）—— 一个写死单版本形状的注入脚本，**两个世代各坏一次**。已改为运行时双面：先按 0.1.2 形状（`session/list` + `payload.args._request`）请求，拿不到再回退点号（`/api/session.list` + `payload`），并对失败原因打 `[dsh-opener]` 日志。
+
+**为什么这类风险难发现**：三个脚本都是「成功时无感、失败时无声」。现有可观测手段：`DSH_UI_DEBUG=1`（新增：页面加载后打印 `dsh injected bridges: {tracker, opener, preview, rows}`）、`DSH_SESSION_DEBUG=1`（dump `__dshSessionSeen` / 最后跟踪到的会话）、`DSH_PREVIEW_DEBUG=1`（自检拦截器是否装上、并伪造一次 `host.openPath` 验证）、页面 console 里的 `[dsh-opener]` 日志。
+
+**升级时的判据（写进 §5 的 B 面验证）**：切会话看目录是否跟随 → 面板点会话行看 web 是否跳转 → 点文件链接看是否在文件面板打开；三项任一失败即 R3 命中。真要大改时，替代方案是**放弃 hook HTTP 层**，改为在页面内直接读 dsh 客户端自己的状态（或让 core 通过 dsh API 查询），见审计文档 §四.3。
 
 ## 7. 参考
 

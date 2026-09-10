@@ -2533,15 +2533,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         console.log("[dsh-opener] row-not-found", sessionId, title);
         return { ok: false, reason: "row-not-found" };
       }
-      window.__dshOpenSession = function (sessionId) {
-        if (!sessionId) return { ok: false, reason: "no-id" };
-        // dsh 0.1.2+ moved session RPC to the slash path /api/session/list.
-        return fetch("/api/session/list", {
+      // One session-list call in the shape the RUNNING server expects:
+      //   dsh >= 0.1.2 — POST /api/session/list, method = "session/list",
+      //                  args wrapped in payload.args._request;
+      //   dsh <= 0.1.1 — POST /api/session.list, method = "session.list", payload = args.
+      // The two must match (0.1.2 rejects "method does not match endpoint"), and
+      // which one is right is only known at runtime — hence the fallback below.
+      function fetchSessions(modern) {
+        var rpcId = "dsh-open-" + Date.now();
+        var req = modern
+          ? {
+              url: "/api/session/list",
+              body: { type: "client-request", rpcId: rpcId, method: "session/list", payload: { args: { _request: {} } } }
+            }
+          : {
+              url: "/api/session.list",
+              body: { type: "client-request", rpcId: rpcId, method: "session.list", payload: {} }
+            };
+        return fetch(req.url, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ type: "client-request", rpcId: "dsh-open-" + Date.now(), method: "session.list", payload: {} })
+          body: JSON.stringify(req.body)
         }).then(function (res) { return res.json(); }).then(function (json) {
-          var items = (json && json.result && json.result.ok && json.result.value && json.result.value.items) || [];
+          var ok = json && json.result && json.result.ok && json.result.value;
+          var items = (ok && json.result.value.items) || null;
+          if (!items) console.log("[dsh-opener] list failed", modern ? "modern" : "legacy", json && json.result && json.result.error && json.result.error.message);
+          return items;
+        }).catch(function (err) { console.log("[dsh-opener] list error", String(err)); return null; });
+      }
+      window.__dshOpenSession = function (sessionId) {
+        if (!sessionId) return { ok: false, reason: "no-id" };
+        return fetchSessions(true).then(function (items) {
+          if (items) return items;
+          return fetchSessions(false);   // older dsh: dot method surface
+        }).then(function (items) {
+          items = items || [];
           var target = null;
           for (var i = 0; i < items.length; i++) { if (items[i].sessionId === sessionId) { target = items[i]; break; } }
           if (!target) { console.log("[dsh-opener] no-session", sessionId); return { ok: false, reason: "no-session" }; }
@@ -3157,6 +3183,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             })
             """) { result, _ in
                 AppLog.shared.log("dsh viewport/sidebar: \(result ?? "?")")
+            }
+            // Injected-bridge health: the three scripts patch the page at document
+            // start, so a dsh web change that breaks them fails SILENTLY (no row
+            // click, no directory follow, no preview intercept). Report installed
+            // flags so a broken bridge is at least visible in the log.
+            webView.evaluateJavaScript("""
+            JSON.stringify({
+              tracker: !!window.__dshSessionTracked,
+              opener: !!window.__dshSessionOpener,
+              preview: !!window.__dshPreviewInstalled,
+              rows: document.querySelectorAll('[role="treeitem"]').length
+            })
+            """) { result, _ in
+                AppLog.shared.log("dsh injected bridges: \(result ?? "?")")
             }
         }
         // Session-tracking diagnostics (DSH_SESSION_DEBUG=1): dump the
