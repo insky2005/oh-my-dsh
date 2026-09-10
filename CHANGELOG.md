@@ -14,6 +14,13 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **修复开发版（内置 dsh 0.1.2-rc.1）下 Channel 指令全部失效 —— 微信发 /wks 回「没有可用的 workspace」，而面板里明明有已启用的 workspace（C1）**：channel runner（core）此前只讲 dsh ≤0.1.1 的老接口——点号方法名（/api/workspace.list、/api/session.list…）、payload 直接是参数、且不带任何鉴权。0.1.2 起 dsh 换了两处：① /api 被**每实例 launch token 换来的 cookie** 挡住（裸 POST 一律 401）；② 方法名改为**斜杠端点**、参数包在 payload.args 里，并且**彻底移除了 workspace.list**（工作区改由 workspace/follow 流式下发）。于是 runner 的每次调用都失败：列不出工作区（/wks「没有可用 workspace」）、列不出会话（/ses 空）、普通消息与 /new 也建不了会话。修复为：
+  - core 新增 **dsh 版本无关的 RPC 传输层**（core/lib/dsh-rpc.js）：先按 0.1.2 的斜杠端点 + 信封尝试，端点不存在（404）再回退老的点号方法，且**按端点（而非按服务）记忆**所选接口形态，避免 workspace/list 的 404 连带把 session/list 也拖回老接口；
+  - 新增 **launch token → browser cookie 交换**：GET `/?token=…` 取 dsh-auth-* Cookie 并缓存，之后带 cookie 调 /api（无 token 时静默退回旧版行为，不破坏 0.1.1）；
+  - **工作区列表磁盘兜底**（core/lib/workspace-store.js）：0.1.2 没有 workspace.list，改读 dsh 自己持久化的 $DSH_HOME/storages/workspace.json（与壳层 B 方案同一个文件，按 global.workspaceIds 保序，取 workspaceId/path/title/sessionIds），因此 /wks 即便没拿到 token 也能列出工作区；
+  - **会话读取/回推适配**：会话列表改走 session/list；最后一条回复改由 session/page 按 session/list 给出的 projection cursor（projections.asOfSeq）回放；prompt 补上 0.1.2 必填的 requestId；
+  - **壳层把 token 传给 runner**：ServerManager 记住 dsh web 自报的带 token 入口地址（entryURL/webToken），启动 `channel run` 时以 `--dsh-token` 传入（不落日志）；CLI 同时支持环境变量 DSH_WEB_TOKEN；
+  - **修正 channel runner 启动时机**：原先在 `startServer()`（异步）之后立即启动，runner 可能拿到默认端口 3080 且拿不到 token，现改为服务就绪（端口与 token 都已知）后再启动。
 - **修复开发版读不到保存的面板宽度（ShellConfig 早期缓存错误 home）**：ShellConfig 在 applyDevIsolation 注入 DSH_HOME 之前被首次访问，按旧路径（~/.dsh/shell/config.json，不存在）载入并把"已加载"置真，之后一直返回空缓存 → 读不到保存宽度、回退默认 560。改为"按路径感知重载"（缓存记录载入路径，DSH_HOME 变化即重新加载）。
 - **面板宽度逻辑修正**：560 现在是面板**最小宽度**（此前被当作"默认宽度"，导致点面板总缩回 560）；用户拖动的宽度会被记住，**程序化布局不再回写覆盖**（切面板替换 subviews[1] 时的等分宽度不再被保存）。切面板时**按目标宽度预置新面板视图 frame + 零时长无动画**，消除"先等分(WebView≈1000)再扩到 1100"的中间帧。冲突策略（WebView 优先）：窗口 < 约1709pt 放不下"面板≥560 + WebView≥1100"时自动隐藏面板，保 WebView ≥1100。
 - **ShellConfig 写入防抖异步**：改为 0.3s 防抖、后台线程经 core CLI 持久化（失败回退直写），退出时 flushNow，避免高频（面板拖动）同步 spawn 子进程阻塞主线程。

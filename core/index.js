@@ -18,6 +18,10 @@ module.exports = {
   ...require('./lib/ports'),
   // Version compare / registry / upgrade helpers (ported from VersionKit/RegistryConfig/DSHUpdater)
   ...require('./lib/upgrade'),
+  // dsh web HTTP RPC transport (legacy dot-method + dsh >= 0.1.2 slash-endpoint/cookie)
+  ...require('./lib/dsh-rpc'),
+  // dsh workspace list (live workspace.list RPC + persisted workspace.json store)
+  ...require('./lib/workspace-store'),
   // dsh web session RPC (ported from DSHSessionRPC)
   ...require('./lib/session'),
   // GitHub issues & PR integration (IssueRunner panel)

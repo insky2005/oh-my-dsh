@@ -806,6 +806,20 @@ final class ServerManager {
     private(set) var spawned = false
     private(set) var process: Process?
 
+    /// The entry URL dsh web advertises ("http://127.0.0.1:<port>/?token=…").
+    /// dsh 0.1.2+ fences /api behind a browser cookie minted from that token, so
+    /// the shell hands it to the channel runner (native clients have no cookie).
+    private(set) var entryURL: URL?
+
+    /// The launch token from the entry URL, nil when dsh advertises none.
+    var webToken: String? {
+        guard let url = entryURL,
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let value = items.first(where: { $0.name == "token" })?.value,
+              !value.isEmpty else { return nil }
+        return value
+    }
+
     /// Resolved runtime facts, surfaced in the About panel.
     private(set) var dshVersion = L10n.tr("fact.unknown")
     private(set) var nodeVersion = L10n.tr("fact.unknown")
@@ -1174,7 +1188,8 @@ final class ServerManager {
         if env["DSH_NATIVE_FORCE_SPAWN"] != "1" && isDSHServing(port: 3080) {
             spawned = false
             AppLog.shared.log("reusing existing dsh web on 127.0.0.1:3080")
-            return URL(string: "http://127.0.0.1:3080")!
+            entryURL = URL(string: "http://127.0.0.1:3080")
+            return entryURL!
         }
 
         // 2. Pick the port (env override for testing, otherwise 3080, else a free port).
@@ -1266,6 +1281,7 @@ final class ServerManager {
             }
             if let servedURL = servedURL, proc.isRunning {
                 refreshFacts(node: node)
+                entryURL = servedURL
                 AppLog.shared.log("dsh web is up on \(servedURL.absoluteString) (node=\(node))")
                 return servedURL
             }
@@ -1665,7 +1681,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         startServer()
         startCEF()
         startBrowserAPIServer()
-        startConfiguredChannelRunners()
+        // Channel runners start once the server is up (see startServer): they
+        // need its actual port and, on dsh 0.1.2+, its advertised launch token.
         showOnboardingIfNeeded()
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -2674,6 +2691,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     // Tell the tasks panel: repo detection + issue load resolve now.
                     self.tasksPanel?.serverReady(port: self.server.port)
                     self.channelPanel?.ensureLoaded()
+                    // Listeners need the actual port + (0.1.2+) the launch token,
+                    // both only known once dsh web is up.
+                    self.startConfiguredChannelRunners()
                     // Stepwise auto-upgrade (throttled, non-blocking): detect +
                     // background-download a newer dsh, then ask the user before
                     // the in-place install. Deliberately after the server is up
@@ -3789,7 +3809,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: node)
-        proc.arguments = [cli, "channel", "run", channelId, String(port), "[]", "--project-root", activeRoot]
+        var args = [cli, "channel", "run", channelId, String(port), "[]", "--project-root", activeRoot]
+        // dsh 0.1.2+ authenticates /api with a cookie minted from the launch
+        // token dsh web advertises; a spawned runner has no browser cookie, so
+        // pass the token (never logged). Without it /wks, /ses and message
+        // routing cannot reach dsh at all (docs/plans/dsh-012rc1-compat-audit.md).
+        if let token = server.webToken {
+            args.append(contentsOf: ["--dsh-token", token])
+        }
+        proc.arguments = args
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = pipe

@@ -17,7 +17,7 @@
 | B1 | 会话 cwd / 活跃会话工作区 | native DSHSessionRPC POST /api/session.list | 401 / 404 | 已坏（本次主诉） |
 | B2 | 具体会话 cwd | 同上 fetchSessionCwd | 401 / 404 | 已坏 |
 | B3 | 项目目录解析 | resolveProjectDirectory → B1 | 拿不到 cwd → nil | 受影响 |
-| C1 | 频道 runner（ohmy-core channel run）| 子进程 HTTP 到 dsh web 端口，走会话 RPC | 传输/鉴权变更 → 风险 | 待核 |
+| C1 | 频道 runner（ohmy-core channel run）| 子进程 HTTP 到 dsh web 端口，走会话 RPC | 传输/鉴权变更 → 风险 | **已修**（斜杠端点 + token cookie + workspace.json 兜底；见 §九） |
 | D1 | 会话切换跟踪 | 注入 sessionTrackerScript 拦 fetch /api/* 的 client-request（session.*/subagent.list）| 若客户端改传输（Gateway/stream）则拦截不到 | 待核 |
 | D2 | 面板→打开 dsh 会话 | 注入 sessionOpenerScript：POST /api/session.list 查标题→DOM 点行 | session.list 404 → 查标题失败 | 已坏（DOM 点行或仍可用） |
 | D3 | 预览文件打开 | 注入 previewInterceptorScript 拦 /api/host.openPath | 若客户端改文件打开 RPC 则拦不到 | 待核 |
@@ -53,7 +53,7 @@
   - D1 会话切换跟随工作目录 —— 切到不同 workspace 的会话后目录正确切换（app.log: project directory followed session）。
   - D3 预览打开文件 —— 点对话文件链接在 Files（预览面板）打开；抓包确认 RPC 为 POST /api/session/openWorkspacePath，路径在 payload.args.request.path。
   - D2 面板点开会话 —— 路径已改 /api/session/list（斜杠），待顺手确认。
-- **遗留**：C1 频道 runner 在 0.1.2 下的会话操作待确认；native DSHSessionRPC 无 cookie（现靠磁盘兜底）；复用外部已启动 dsh web 的 token。
+- **遗留**：native DSHSessionRPC 无 cookie（现靠磁盘兜底）；复用外部已启动 dsh web 的 token（非自拉起时拿不到 token，runner 只能走磁盘兜底）。
 - **抓包方法留档**：browser-skill（bsk）驱动真实 Chrome；也可用内置 CEF 面板 / curl(cookie jar) 直连端点验证。0.1.2 RPC 信封 = POST /api/<endpoint>，body.method=endpoint（斜杠），payload 视方法而定（args.request.path 等）。
 
 
@@ -65,4 +65,17 @@
 - **鉴权只挡 native 直连**；注入在 oh-my-dsh WKWebView 里的脚本（D1/D2/D3）因页面已种 cookie 属**已鉴权**，只要把路径改对即可，**无需整套 WebSocket/Gateway 重写**。
 - 已落实：D2（sessionOpenerScript）fetch 路径 → `/api/session/list`；native DSHSessionRPC URL 同步改斜杠（仍以磁盘 workspace.json 兜底，因 native 无 cookie 会 401）。
 - 待壳内验证：D1 会话切换跟踪（客户端仍走 fetch client-request，method 名若仍为点号则有效）；D3 文件打开端点（`host.openPath` 在 0.1.2 的实际替代路径需触发一次文件打开实测）。
+
+## 九、C1 频道 runner 适配（2026-09-10，已实现）
+
+微信实测症状：dev（内置 dsh 0.1.2-rc.1）里 Channel 已绑微信、面板里也有已启用该通道的 workspace，但发 /wks 回「没有可用的 workspace」。根因即 C1：runner 只讲 0.1.1 的老接口。
+
+- 一元 RPC 在 0.1.2 **仍是** `POST /api/<endpoint>` + client-request 信封，但**端点改斜杠**、参数放 `payload.args.<request|_request>`（实测：session/list 用 `_request`；session/create、session/rename、session/prompt、session/cancel、session/page 用 `request`；无参端点可直接 `{}`；参数名不对会回 gateway/arguments-invalid）。
+- `/api` 只认 **cookie**：`GET /?token=<launch token>` → 303 + `dsh-auth-*` Cookie（authority 绑定 `127.0.0.1:<port>`），带 cookie 后同一端点 200；token 每次进程随机，只有壳层能从 dsh web 自报的入口地址拿到。
+- **workspace.list 在 0.1.2 已不存在**（工作区改由 workspace/follow 流式下发，`workspace/create|rename|delete` 等在，但没有 list）→ 改用 dsh 持久化的 `$DSH_HOME/storages/workspace.json`（按 `global.workspaceIds` 保序，字段 workspaceId/path/title/sessionIds，与 B 方案同一个文件）。**所以 /wks 即使拿不到 token 也能列出工作区。**
+- **最后一条回复**：0.1.2 没有 session.history/session.search，改走 `session/page`——`throughSeq` 必须取自 session/list 的 `projections.asOfSeq`（越界会回 `gateway/bad-request: past cursor`），`maxMessages` 可选；记录仍是 `event.type === 'assistant/message'` + `event.data.message` 旧形状，extractText 可直接复用。
+- 传输层 core/lib/dsh-rpc.js **按端点记忆接口形态**（同一个 0.1.2 服务有 session/list 但没有 workspace/list，若按服务记忆会互相污染）。
+- token 传递链：ServerManager.entryURL/webToken → `channel run … --dsh-token <token>`（或环境变量 DSH_WEB_TOKEN）→ core（channel-runner / session-driver / workspace-store）。**token 不写日志。**
+- 顺带修正启动时序：channel runner 原先在 `startServer()`（异步）之后立刻启动，可能拿到默认端口 3080 且没有 token，现改为服务就绪后启动。
+- 单测：`core/tests/dsh-rpc.test.js`（新旧两种 mock 服务、cookie 交换、端点互不污染、session/page cursor、磁盘兜底）、`core/tests/workspace-store.test.js`，以及 `channel-runner.test.js` 的三条 0.1.2 回归（/wks、/ses、#w1）。
 

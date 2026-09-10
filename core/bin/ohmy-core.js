@@ -28,7 +28,7 @@
  *   node core/bin/ohmy-core.js settings set <key> <json>
  *   node core/bin/ohmy-core.js settings unset <key>
  *   node core/bin/ohmy-core.js settings list
- *   node core/bin/ohmy-core.js channel run <channelId> <port> <refsJson> [--dsh-home <dir>]
+ *   node core/bin/ohmy-core.js channel run <channelId> <port> <refsJson> [--dsh-home <dir>] [--dsh-token <token>]
  */
 
 const core = require('../index');
@@ -211,9 +211,13 @@ function println(s) {
         const dshIdx = rest.indexOf('--dsh-home');
         const dshHome = dshIdx >= 0 ? rest[dshIdx + 1]
           : (process.env.DSH_HOME || (require('node:os').homedir() + '/.dsh'));
+        // dsh >= 0.1.2 fences its /api RPC behind a per-instance cookie minted
+        // from the launch token in the URL dsh web prints; the shell passes it.
+        const tokIdx = rest.indexOf('--dsh-token');
+        const dshToken = tokIdx >= 0 ? (rest[tokIdx + 1] || '') : (process.env.DSH_WEB_TOKEN || '');
         const prIdx = rest.indexOf('--project-root');
         const projectRoot = prIdx >= 0 ? rest[prIdx + 1] : '';
-        if (!channelId || !Number.isInteger(port)) fail('usage: channel run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>]');
+        if (!channelId || !Number.isInteger(port)) fail('usage: channel run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>] [--dsh-token <token>]');
         // NOTE: runWeixinChannel already wires its own onEvent handler that
         // parses slash commands FIRST and routes only ordinary text to the
         // manager. Registering an extra handler here that calls manager.enqueue
@@ -222,7 +226,7 @@ function println(s) {
         // a logging callback via opts.onEvent (receiver for both paths).
         const runner = channelId.startsWith('dingtalk') ? core.runDingTalkChannel : core.runWeixinChannel;
         const handle = await runner({
-          channelId, port, refs, projectRoot, dshHome,
+          channelId, port, refs, projectRoot, dshHome, dshToken,
           onEvent: (event, result) => {
             const replyText = result && result.reply && result.reply.text;
             println('handled: ' + JSON.stringify({ conversationId: event.conversationId, text: event.text, reply: replyText }));
@@ -236,7 +240,7 @@ function println(s) {
         process.on('SIGINT', stop); process.on('SIGTERM', stop);
         setInterval(() => {}, 1 << 30);
       } else {
-        fail('usage: channel route <refsJson> <conversationId> <text> | normalize <eventJson> | state <current> <next> | login [--save <file>] | login-dingtalk [--save <file>] | listen <token> [--once] | reply <token> <to> <text> | run <channelId> <port> <refsJson> [--dsh-home <dir>]');
+        fail('usage: channel route <refsJson> <conversationId> <text> | normalize <eventJson> | state <current> <next> | login [--save <file>] | login-dingtalk [--save <file>] | listen <token> [--once] | reply <token> <to> <text> | run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>] [--dsh-token <token>]');
       }
       break;
     default:
