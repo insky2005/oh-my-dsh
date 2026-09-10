@@ -32,7 +32,7 @@
 |---|---|---|---|---|---|
 | A1 | 自拉起命令：`node <dsh>/lib/bin.js web --no-open --port <port>`；可 `--port` 指定任意端口 | 参数名/子命令若变（`web` → 其他）则拉不起来 | App 弹「dsh web 启动失败」 | main.swift `ServerManager.start()`（spawn 段） | 开发版启动后 `lsof -iTCP -sTCP:LISTEN` 看端口 + WebView 首屏 |
 | A2 | 就绪自报：stderr/stdout 打印 `dsh web: http://127.0.0.1:<port>/?token=…`（0.1.2+）；旧版靠根页面含 `__DSH_BOOT__` | 0.1.2 起裸 GET `/` 返回 401（无 `__DSH_BOOT__`） | 就绪判定超时 → 判定启动失败（白屏 overlay） | `servedEntryURL()` / `isDSHServing()` | `cat ~/Library/Logs/oh-my-dsh/server.log`（含 token 行） |
-| A3 | **复用**外部已启动实例：裸 GET 3080 判 `__DSH_BOOT__` | 0.1.2 外部实例裸 GET 401 → **判为不可用**，App 会另起一个空闲端口实例 | 不再复用（行为可接受） | `ServerManager.start()` 复用分支 | 起一个 0.1.2 dsh web 在 3080，再启动 App，看日志是否 reuse |
+| A3 | **复用**外部已启动实例：裸 GET 3080 判 `__DSH_BOOT__` | 0.1.2 外部实例裸 GET 401 → **判为不可用**，App 另起一个空闲端口实例（**按设计，不复用**：token 每进程随机且只在该进程 stdout，拿不到；同 `DSH_HOME` 下数据本就共享，复用只省一个进程） | 行为正确，日志已说明原因 | `ServerManager.start()` 复用分支 + `isDSHAuthenticated()` | 起一个 0.1.2 dsh web 在 3080，再启动 App，看 `app.log` 的 not adopting 行 |
 | A4 | Web 鉴权：`/?token=…` → 303 + `dsh-auth-*` Cookie（authority `127.0.0.1:<port>` 绑定），`/api` **只认 cookie**（query token 无效） | 0.1.2 首次引入 | WebView 白屏（401）；native RPC 全部 401 | WebView 直接加载 servedURL（带 token）；core `dsh-rpc.authenticate()` 换 cookie | `curl -i "http://127.0.0.1:<port>/?token=…"` 看 `set-cookie` |
 | A5 | 每实例 token **随机**（进程内生成），只在自报 URL 里出现 | 任何「读文件拿 token」的想法都不成立 | native/子进程拿不到 token → 401 | 壳层 ServerManager.`entryURL`/`webToken` → `--dsh-token` | 重启 App 后 token 变化（`server.log` 对比） |
 | A6 | dsh 子进程环境：`DSH_HOME`、登录 shell PATH | 新增必需环境变量（未来可能） | dsh web 起不来或行为异常 | spawn 处 `penv` 拼装 | `ps eww` / 日志打印 |
@@ -111,7 +111,7 @@
 | 面 | 0.1.2 下的表现 | 处置 | 状态 |
 |---|---|---|---|
 | A1/A2/A4 | 裸 GET 401 → App 判启动失败、WebView 白屏 | 读自报的带 token 地址做就绪判定 + 加载该地址 | 已修 |
-| A3 | 外部已启动的 0.1.2 实例判不可用 → 另起实例 | 接受（未做 token 获取） | 遗留 |
+| A3 | 外部已启动的 0.1.2 实例判不可用 → 另起实例 | 按设计不复用（同 `DSH_HOME` ⇒ 同一份 workspace/会话/设置，复用只省一个进程）；`isDSHAuthenticated()` 把这个判断写进日志，避免「怎么又起了一个实例」无从解释 | 已定论 |
 | B1–B3 | web 切会话不通知壳层 → 项目目录不跟随 | 注入脚本同时认点号/斜杠 method 与 `payload.args` | 已修 |
 | B7 | 点文件链接不再被拦截 | 拦截脚本加 `session/openWorkspacePath` + `args.request.path` | 已修 |
 | B5 | 面板点开会话标题解析 404 | fetch 路径改 `/api/session/list` | 已修（DOM 点行本就可用） |
@@ -166,7 +166,7 @@
 | 风险 | 说明 | 触发再评估 |
 |---|---|---|
 | ~~R1 Swift 原生 RPC 无 cookie~~（2026-09-10 已修） | `WikiRPC`、`IssueRunnerPanel`、`DSHSessionRPC` 现统一走 `DshWebRPC.swift`：先试 0.1.2 斜杠端点（`payload.args.<request\|_request>`）再回退点号方法，按**端点**记忆所选面；token 由壳层 `ServerManager.webToken` 注入，经一个**独立 ephemeral URLSession** 访问 `/?token=…` 种下 `dsh-auth-*` cookie（WebView 的 cookie 在 WebKit 数据存储里、与 URLSession 的 `HTTPCookieStorage` 互不共享，故必须自行换取），401 时自动重换一次；`workspace.list` 在 0.1.2 不存在，回退读 `$DSH_HOME/storages/workspace.json`（`DshWorkspaceStore`，与 core 同一份契约） | 已修；若是**复用外部已启动**的 0.1.2 实例仍拿不到 token（见 R2），此时原生 RPC 退化为磁盘兜底 |
-| R2 复用外部 0.1.2 实例 | 拿不到 token → 只能另起实例（A3）；若将来要支持复用，需要用户粘贴带 token 的 URL | 用户反馈「想用我自己起的 dsh」 |
+| ~~R2 复用外部 0.1.2 实例~~（2026-09-10 定论：不做） | 外部实例的 token 只存在于它自己的 stdout，无法获取；但**只要 `DSH_HOME` 相同，壳层自拉起的实例与外部实例就是同一份数据**（workspaces / sessions / settings / channels 全在 `$DSH_HOME` 下），复用只省一个进程，不值当。**唯一注意**：同一个 `DSH_HOME` 上不要长期并行跑两个 dsh web（两者都往同一批文件持久化），验完外部实例就关掉它 | 只有出现「必须与某个已启动实例共享**内存态**（未落盘状态、正在跑的 turn 视图）」的需求时才重估 |
 | R3 注入脚本依赖 fetch + DOM | B1/B5：客户端改传输或改版侧栏结构即失效 | 升级后 B 面验证项失败 |
 | R4 `workspace.json` 兜底是私有布局 | D1 属 dsh 内部持久化格式，可能改名（如 `storages/` 结构调整） | 工作区列表突然为空且接口也没变 |
 | R5 单一版本策略 | 只为「内置版本」做适配，老版本兼容靠回退（C1）；回退在两侧都失效时会静默出空结果 | 引入第二个受支持版本时重估 |

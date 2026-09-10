@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **外部已启动的 dsh 0.1.2 实例不再「悄悄」被忽略**：0.1.2 起的实例会用 401 + `authentication required` 回应裸请求，壳层因此判为不可复用而另起一个实例——这是**按设计**的：token 每进程随机且只存在于该进程 stdout，拿不到；而只要 `DSH_HOME` 相同，壳层自拉起的实例与外部实例就是同一份数据（workspaces / 会话 / settings / channels 全在 `$DSH_HOME` 下），复用只省一个进程。现在这个判断会写进 `app.log`（`existing dsh web on 3080 wants its launch token … not adopting`），不再出现「怎么又起了一个实例」无从解释的情况；唯一的注意点是同一个 `DSH_HOME` 不要长期并行跑两个 dsh web（两者持久化同一批文件）。见 docs/dsh-version-impact.md A3/R2。
 - **修复内置 dsh 0.1.2 下壳层原生 RPC 全部失效（wiki 生成、issue-runner 流水线、会话目录跟随）**：`WikiRPC`（WikiPanel）、`IssueRunnerPanel` 的会话/工作区调用与 `DSHSessionRPC`（main.swift）此前只会讲 dsh ≤0.1.1 的老接口——点号方法名、payload 直接是参数、且**不带任何鉴权**；0.1.2 起 `/api` 只认 launch token 换来的 cookie、端点改斜杠、参数包进 `payload.args.<request|_request>`，于是这些原生调用全部 401/404（wiki 点「生成」拿不到 sessionId、issue-runner 建会话/发消息失败、workspace.list 扫描为空；只有 `DSHSessionRPC` 有磁盘兜底不至于完全失灵）。修复为新增共享的 `platforms/macos/src/DshWebRPC.swift`：
   - **双面调用**：先按 0.1.2 斜杠端点 + `payload.args.<request|_request>` 试，失败再回退点号方法，并**按端点**记忆所选接口面（同一服务有 `session/list` 却没有 `workspace/list`，按服务记忆会互相污染）；`modernExtras` 只在 0.1.2 面注入（如 session/prompt 必填的 requestId）；
   - **鉴权**：用一个独立 **ephemeral URLSession** 访问 dsh web 自报的 `/?token=…` 种下 `dsh-auth-*` cookie（WebView 的 cookie 在 WebKit 自己的数据存储里、与 URLSession 的 `HTTPCookieStorage` 互不共享，只能自行换取），每端口只换一次，401 时自动重换一次并重试；

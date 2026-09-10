@@ -826,12 +826,29 @@ final class ServerManager {
     private(set) var nodePath = L10n.tr("fact.unknown")
     private(set) var runtimeSource = L10n.tr("fact.unknown")
 
-    /// The web UI root page always injects `window.__DSH_BOOT__`.
+    /// The web UI root page always injects `window.__DSH_BOOT__` on dsh <= 0.1.1.
     func isDSHServing(port: Int, timeout: TimeInterval = 2) -> Bool {
         guard let url = URL(string: "http://127.0.0.1:\(port)/"),
               let data = httpGet(url, timeout: timeout),
               let body = String(data: data, encoding: .utf8) else { return false }
         return body.contains("__DSH_BOOT__")
+    }
+
+    /// True when something on `port` is a dsh web that refuses a bare request
+    /// because it wants its launch token (dsh >= 0.1.2). Such an instance CANNOT be
+    /// adopted — the token is random per process and only in that process's stdout —
+    /// but it is worth distinguishing from "nothing is listening" in the log.
+    ///
+    /// Not adopting it costs little: the shell spawns its own instance and, with the
+    /// same DSH_HOME, both share the same workspaces/sessions/settings. Running two
+    /// dsh web on ONE home at the same time is still best avoided (they persist to
+    /// the same files), so the log says which one we started.
+    func isDSHAuthenticated(port: Int, timeout: TimeInterval = 2) -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/") else { return false }
+        let (status, data) = httpGetWithStatus(url, timeout: timeout)
+        guard status == 401, let data = data,
+              let body = String(data: data, encoding: .utf8) else { return false }
+        return body.contains("authentication required")
     }
 
     /// Parse the self-advertised entry URL a spawned dsh web prints to its log,
@@ -856,18 +873,24 @@ final class ServerManager {
     }
 
     private func httpGet(_ url: URL, timeout: TimeInterval) -> Data? {
+        httpGetWithStatus(url, timeout: timeout).data
+    }
+
+    private func httpGetWithStatus(_ url: URL, timeout: TimeInterval) -> (status: Int, data: Data?) {
         let semaphore = DispatchSemaphore(value: 0)
+        var status = -1
         var result: Data?
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "GET"
-        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
+        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
+            status = (response as? HTTPURLResponse)?.statusCode ?? -1
             result = data
             semaphore.signal()
         }
         task.resume()
         _ = semaphore.wait(timeout: .now() + timeout + 1)
         task.cancel()
-        return result
+        return (status, result)
     }
 
     private func isPortFree(_ port: Int) -> Bool {
@@ -1190,6 +1213,13 @@ final class ServerManager {
             AppLog.shared.log("reusing existing dsh web on 127.0.0.1:3080")
             entryURL = URL(string: "http://127.0.0.1:3080")
             return entryURL!
+        }
+        // dsh >= 0.1.2 mints a random per-process launch token and answers 401 to a
+        // bare GET, so an externally started instance cannot be adopted (its token
+        // never leaves its own stdout). Spawn our own instead: same DSH_HOME ⇒ same
+        // workspaces/sessions/settings (docs/dsh-version-impact.md, R2).
+        if env["DSH_NATIVE_FORCE_SPAWN"] != "1" && isDSHAuthenticated(port: 3080) {
+            AppLog.shared.log("existing dsh web on 3080 wants its launch token (dsh 0.1.2+); not adopting — starting our own instance (same DSH_HOME ⇒ same data)")
         }
 
         // 2. Pick the port (env override for testing, otherwise 3080, else a free port).

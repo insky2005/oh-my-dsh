@@ -14,7 +14,7 @@
 | # | 交互面 | 机制 | 0.1.2-rc.1 影响 | 状态 |
 |---|---|---|---|---|
 | A1 | 服务拉起就绪 + WebView 加载 | ServerManager.start()、webView.load(url) | 需读 dsh 打印的带 token 地址 | 已修（servedEntryURL） |
-| A2 | 复用外部已启动 dsh web（非自拉起） | 复用 3080 返回裸 URL | 外部 0.1.2 需 token → 401 | 遗留（待取 token） |
+| A2 | 复用外部已启动 dsh web（非自拉起） | 复用 3080 返回裸 URL | 外部 0.1.2 需 token → 401 | **按设计不复用**（token 只在该进程 stdout，拿不到；同 DSH_HOME 即同一份数据，复用只省一个进程）；`isDSHAuthenticated()` 把该判断写进日志，见 docs/dsh-version-impact.md R2 |
 | B1 | 会话 cwd / 活跃会话工作区 | native DSHSessionRPC POST /api/session.list | 401 / 404 | 已坏（本次主诉） |
 | B2 | 具体会话 cwd | 同上 fetchSessionCwd | 401 / 404 | 已坏 |
 | B3 | 项目目录解析 | resolveProjectDirectory → B1 | 拿不到 cwd → nil | 受影响 |
@@ -54,7 +54,7 @@
   - D1 会话切换跟随工作目录 —— 切到不同 workspace 的会话后目录正确切换（app.log: project directory followed session）。
   - D3 预览打开文件 —— 点对话文件链接在 Files（预览面板）打开；抓包确认 RPC 为 POST /api/session/openWorkspacePath，路径在 payload.args.request.path。
   - D2 面板点开会话 —— 路径已改 /api/session/list（斜杠），待顺手确认。
-- **遗留**：native DSHSessionRPC 无 cookie（现靠磁盘兜底）；复用外部已启动 dsh web 的 token（非自拉起时拿不到 token，runner 只能走磁盘兜底）。
+- **遗留**：复用外部已启动 dsh web 的 token —— 2026-09-10 定论**不做**（同 DSH_HOME 即同一份数据，复用只省一个进程）。native DSHSessionRPC「无 cookie」已于同日修复（新增 `DshWebRPC.swift`，见 §九 与 docs/dsh-version-impact.md R1）。
 - **抓包方法留档**：browser-skill（bsk）驱动真实 Chrome；也可用内置 CEF 面板 / curl(cookie jar) 直连端点验证。0.1.2 RPC 信封 = POST /api/<endpoint>，body.method=endpoint（斜杠），payload 视方法而定（args.request.path 等）。
 
 
