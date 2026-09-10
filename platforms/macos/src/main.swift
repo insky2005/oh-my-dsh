@@ -1398,96 +1398,48 @@ enum DSHSessionRPC {
     }
 
 
-    /// Query `session.list` and pick the most relevant session's working
+    /// Query the session list and pick the most relevant session's working
     /// directory — running sessions first, then the most recently updated
     /// non-blank one. Blocks on a background caller; nil when unresolved.
+    /// Works on both dsh API generations (DshWebRPC): on dsh >= 0.1.2 the live
+    /// call needs the launch-token cookie, and a nil result still falls back to
+    /// the persisted workspace store.
     static func fetchActiveSessionCwd(port: Int, timeout: TimeInterval = 6) -> String? {
-        let url = URL(string: "http://127.0.0.1:\(port)/api/session/list")!
-        var request = URLRequest(url: url, timeoutInterval: timeout)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        let rpcId = UUID().uuidString
-        let body: [String: Any] = [
-            "type": "client-request",
-            "rpcId": rpcId,
-            "method": "session.list",
-            "payload": [String: Any](),
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-        let semaphore = DispatchSemaphore(value: 0)
         var result: String?
-        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
-            defer { semaphore.signal() }
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  (json["rpcId"] as? String) == rpcId,
-                  let res = json["result"] as? [String: Any],
-                  (res["ok"] as? Bool) == true,
-                  let value = res["value"] as? [String: Any],
-                  let items = value["items"] as? [[String: Any]] else { return }
-            let candidates = items.filter { session in
-                (session["blank"] as? Bool) != true && (session["cwd"] as? String) != nil
-            }
+        if let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port, timeout: timeout),
+           let items = value["items"] as? [[String: Any]] {
             // Ignore throwaway sessions whose working dir lives under the system
             // temp folder (e.g. leftover `chan-e2e-*` dirs from channel E2E tests)
             // so the terminal never defaults into them. If every candidate is
             // temp-only, return nothing and let the caller fall back to home.
             let tmpPrefix = FileManager.default.temporaryDirectory.standardizedFileURL.path
-            let real = candidates.filter { session in
-                guard let cwd = session["cwd"] as? String else { return false }
-                return !(cwd as NSString).standardizingPath.hasPrefix(tmpPrefix)
+            let real = items.compactMap { session -> [String: Any]? in
+                guard (session["blank"] as? Bool) != true,
+                      let cwd = session["cwd"] as? String,
+                      !(cwd as NSString).standardizingPath.hasPrefix(tmpPrefix) else { return nil }
+                return session
             }
-            guard !real.isEmpty else { return }
             let running = real.filter { ($0["running"] as? Bool) == true }
             let pool = running.isEmpty ? real : running
             result = pool
                 .sorted { ($0["updatedAt"] as? Double ?? 0) > ($1["updatedAt"] as? Double ?? 0) }
                 .first?["cwd"] as? String
         }
-        task.resume()
-        _ = semaphore.wait(timeout: .now() + timeout + 1)
-        task.cancel()
-        // dsh 0.1.2+ removed /api/session.list (token + controller RPC): a nil
-        // here is the norm, so fall back to the persisted workspace store.
+        // No token / older-method-less server: fall back to the persisted store.
         if result == nil { result = persistedWorkspacePath(sessionId: nil) }
         return result
     }
 
-    /// The working directory of one specific session (session.list lookup by
+    /// The working directory of one specific session (session list lookup by
     /// id) — used to follow the session the user just opened in dsh web.
     static func fetchSessionCwd(port: Int, sessionId: String, timeout: TimeInterval = 6) -> String? {
-        let url = URL(string: "http://127.0.0.1:\(port)/api/session/list")!
-        var request = URLRequest(url: url, timeoutInterval: timeout)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        let rpcId = UUID().uuidString
-        let body: [String: Any] = [
-            "type": "client-request",
-            "rpcId": rpcId,
-            "method": "session.list",
-            "payload": [String: Any](),
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-        let semaphore = DispatchSemaphore(value: 0)
         var result: String?
-        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
-            defer { semaphore.signal() }
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  (json["rpcId"] as? String) == rpcId,
-                  let res = json["result"] as? [String: Any],
-                  (res["ok"] as? Bool) == true,
-                  let value = res["value"] as? [String: Any],
-                  let items = value["items"] as? [[String: Any]] else { return }
+        if let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port, timeout: timeout),
+           let items = value["items"] as? [[String: Any]] {
             result = items.first { ($0["sessionId"] as? String) == sessionId }?["cwd"] as? String
         }
-        task.resume()
-        _ = semaphore.wait(timeout: .now() + timeout + 1)
-        task.cancel()
-        // dsh 0.1.2+ no longer serves /api/session.list: fall back to the persisted
-        // workspace store, mapping the session id to its containing workspace.
+        // Fall back to the persisted workspace store, mapping the session id to
+        // its containing workspace.
         if result == nil { result = persistedWorkspacePath(sessionId: sessionId) }
         return result
     }
@@ -2691,6 +2643,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     // Tell the tasks panel: repo detection + issue load resolve now.
                     self.tasksPanel?.serverReady(port: self.server.port)
                     self.channelPanel?.ensureLoaded()
+                    // Native RPC (wiki / issue-runner / session cwd) authenticates
+                    // like a browser on dsh 0.1.2+: exchange the advertised launch
+                    // token for its cookie once the server is up.
+                    DshWebRPC.token = self.server.webToken
                     // Listeners need the actual port + (0.1.2+) the launch token,
                     // both only known once dsh web is up.
                     self.startConfiguredChannelRunners()

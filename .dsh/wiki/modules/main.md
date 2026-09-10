@@ -1,7 +1,7 @@
 ---
 title: 模块：main.swift（壳层核心）
 tags: [module, main, server, appdelegate, menu]
-updated: 2026-08-25T08:22:22Z
+updated: 2026-09-10T12:05:00Z
 sources: [platforms/macos/src/main.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, docs/builtin-skills-design.md, docs/channel-status.md, docs/channel-project-switch.md]
 manual: false
 ---
@@ -23,7 +23,8 @@ manual: false
 | `DSHUpdater` | 内置 dsh 升级：`init` 要求 dshBin 路径含 `/Contents/Resources/runtime/`（只升内置）；`currentVersion`（读 package.json）、`latestVersion`（查 registry dist-tags）、`upgrade`（node npm-cli.js install；PR #36 起给升级子进程前置注入内置 node 目录到 `PATH`——npm 依赖 lifecycle 脚本（如 `@deepseek-ai/dsh-subprocess-local` 的 postinstall `node ensure-spawn-helper.mjs`）经 shell 按 `PATH` 找 `node`，GUI 启动的 App 继承 launchd 精简 PATH 通常无 node，此前报 `sh: node: command not found` 升级中断） |
 | `ServerManager` | 服务生命周期：`resolveNode`（`DSH_NODE` 显式覆盖 > 系统 node：PATH→nvm current→nvm default→nvm 最新→Homebrew 首个**通过版本门槛**者 > 内置 node 兜底）、`loginShellPath`（`/bin/zsh -ilc` 读一次登录 shell PATH，8s 超时兜底、结果缓存，失败保留继承值，赋给 dsh web 子进程）、`resolveDSHBin`（`DSH_CLI` > 内置 > npx 缓存/nvm/PATH/homebrew，最新 mtime 胜出）、`start`（复用 3080 → 或自拉起 + 90s 轮询就绪，含 1s 沉降校验防引导页假就绪；系统 node 启动失败回退内置 node 重试一次，`DSH_NODE` 显式指定不回退）、`stop`（SIGTERM → 3s → SIGKILL，只停自拉起的） |
 | `ProjectDirectory` | 共享"活动项目目录"（`static var current`，standardized 路径去重）；由 `dshSession` 消息维护，供预览树/终端 cwd/wiki 根/任务面板工作区消费 |
-| `DSHSessionRPC` | `fetchActiveSessionCwd`（POST /api/session.list，client-request 信封）+ `fetchSessionCwd(port:sessionId:)`（按会话 id 查 cwd）+ `resolveProjectDirectory`（优先返回 `ProjectDirectory.current`，否则后台实时查询并缓存） |
+| `DSHSessionRPC` | `fetchActiveSessionCwd`（session 列表查询）+ `fetchSessionCwd(port:sessionId:)`（按会话 id 查 cwd）+ `resolveProjectDirectory`（优先返回 `ProjectDirectory.current`，否则后台实时查询并缓存）；**2026-09-10 起经 `DshWebRPC` 调 dsh**——先试 0.1.2 斜杠端点 + `payload.args._request`，再回退点号 `session.list`，并按端点记忆；0.1.2 还需 launch-token cookie（见 `DshWebRPC.swift`），拿不到则回退磁盘 `$DSH_HOME/storages/workspace.json` |
+| `DshWebRPC` / `DshWorkspaceStore` | 原生（非 WebView）dsh RPC 的唯一入口：双面端点 + ephemeral URLSession 的 token→cookie 换取（401 自动重换）+ 工作区列表（`workspace.list` → 磁盘 `storages/workspace.json`，与 core 同契约）；`WikiRPC`、`IssueRunnerPanel`、`DSHSessionRPC` 均走它。测试 `tests/dsh-rpc/run.sh` |
 | `AppDelegate` | 生命周期/窗口/分割视图/活动栏/右栏插槽/菜单/升级/导航委托/下载/脚本消息；`applicationShouldTerminate`/`windowShouldClose` 用全局 `g_cefClosingWindow` 标记拦截 CEF 关页签时误关主窗口引发的退出（取消 + 0.3s 后恢复主窗口）；`windowWillClose` 记诊断日志；`uiDebug`（`DSH_UI_DEBUG=1` 或 `--ui-debug`）统一 QA 开关 |
 
 ## 关键行为

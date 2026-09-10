@@ -639,41 +639,9 @@ enum WikiPrompts {
     }
 }
 
-// MARK: - Generation RPC (same client-request envelope as DSHSessionRPC)
+// MARK: - Generation RPC (dsh web client-request envelope, both API generations)
 
 enum WikiRPC {
-
-    private static func call(_ method: String, _ payload: [String: Any],
-                             port: Int, timeout: TimeInterval = 6) -> [String: Any]? {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/api/\(method)") else { return nil }
-        var request = URLRequest(url: url, timeoutInterval: timeout)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        let rpcId = UUID().uuidString
-        let body: [String: Any] = [
-            "type": "client-request",
-            "rpcId": rpcId,
-            "method": method,
-            "payload": payload,
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: [String: Any]?
-        let task = URLSession.shared.dataTask(with: request) { data, _, _ in
-            defer { semaphore.signal() }
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  (json["rpcId"] as? String) == rpcId,
-                  let res = json["result"] as? [String: Any],
-                  (res["ok"] as? Bool) == true,
-                  let value = res["value"] as? [String: Any] else { return }
-            result = value
-        }
-        task.resume()
-        _ = semaphore.wait(timeout: .now() + timeout + 1)
-        task.cancel()
-        return result
-    }
 
     /// session.create { workspaceId | cwd } -> { sessionId }. Passing the
     /// registered workspace's id (like the dsh web client does) groups the
@@ -686,7 +654,7 @@ enum WikiRPC {
         } else {
             payload = ["cwd": cwd]
         }
-        guard let value = call("session.create", payload, port: port),
+        guard let value = DshWebRPC.call(DshWebRPC.sessionCreate, payload, port: port),
               let sid = value["sessionId"] as? String else { return nil }
         return sid
     }
@@ -697,33 +665,30 @@ enum WikiRPC {
         URL(fileURLWithPath: p).standardizedFileURL.resolvingSymlinksInPath().path
     }
 
-    /// workspace.list -> raw item dictionaries.
+    /// The registered workspaces: the live workspace.list RPC when the server
+    /// serves it (dsh <= 0.1.1), else the store dsh persists (dsh >= 0.1.2 has no
+    /// workspace.list) — see DshWorkspaceStore.
     static func workspaceList(port: Int) -> [[String: Any]] {
-        guard let value = call("workspace.list", [:], port: port),
-              let items = value["items"] as? [[String: Any]] else { return [] }
-        return items
+        DshWorkspaceStore.items(port: port)
     }
 
     /// The registered workspace whose path matches `cwd`, if any.
     static func resolveWorkspaceId(port: Int, cwd: String) -> String? {
-        let target = canonical(cwd)
-        for ws in workspaceList(port: port) {
-            guard let path = ws["path"] as? String else { continue }
-            if canonical(path) == target { return ws["workspaceId"] as? String }
-        }
-        return nil
+        DshWorkspaceStore.workspaceId(forPath: cwd, port: port)
     }
 
     /// session.prompt { sessionId, mode: "queue", content: [{type:"text",...}] }
     static func prompt(port: Int, sessionId: String, text: String) -> Bool {
         let content: [[String: Any]] = [["type": "text", "text": text]]
         let payload: [String: Any] = ["sessionId": sessionId, "mode": "queue", "content": content]
-        return call("session.prompt", payload, port: port) != nil
+        // dsh >= 0.1.2 requires a client request id for idempotent delivery.
+        return DshWebRPC.call(DshWebRPC.sessionPrompt, payload, port: port,
+                              modernExtras: ["requestId": UUID().uuidString]) != nil
     }
 
-    /// True while the generation session is still running (session.list).
+    /// True while the generation session is still running (session list).
     static func sessionRunning(port: Int, sessionId: String) -> Bool {
-        guard let value = call("session.list", [:], port: port),
+        guard let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port),
               let items = value["items"] as? [[String: Any]] else { return false }
         for item in items {
             guard (item["sessionId"] as? String) == sessionId else { continue }
@@ -734,7 +699,7 @@ enum WikiRPC {
 
     /// session.cancel { sessionId } — user-initiated cancellation.
     static func cancel(port: Int, sessionId: String) -> Bool {
-        call("session.cancel", ["sessionId": sessionId], port: port) != nil
+        DshWebRPC.call(DshWebRPC.sessionCancel, ["sessionId": sessionId], port: port) != nil
     }
 }
 

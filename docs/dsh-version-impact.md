@@ -120,7 +120,7 @@
 | C5/C6/C7 | `/ses` 空、回复读不到、建会话失败 | session/list + session/page（cursor）+ `requestId` | 已修 |
 | C8 | 内部推理可能被转发 | extractText 过滤 reasoning/tool-call | 已修 |
 | B1/B2 会话 cwd / 项目目录 | `/api/session.list` 404 → cwd 取不到 | 磁盘 `workspace.json` 兜底（按 sessionId 找所属 workspace） | 已修 |
-| **Swift 原生 RPC（WikiRPC / IssueRunnerPanel / DSHSessionRPC）** | 点号端点 + **无 cookie** → wiki 生成、issue-runner 建会话/发消息、`workspace.list` 扫描全部失败（DSHSessionRPC 有磁盘兜底，其余没有） | — | **遗留（见 §6）** |
+| **Swift 原生 RPC（WikiRPC / IssueRunnerPanel / DSHSessionRPC）** | 点号端点 + **无 cookie** → wiki 生成、issue-runner 建会话/发消息、`workspace.list` 扫描全部失败（DSHSessionRPC 有磁盘兜底，其余没有） | 新增 `DshWebRPC.swift`：原生侧同一套双面 + token→cookie；`workspace.list` 走 `DshWorkspaceStore`（RPC → 磁盘）；三处消费者全部改接 | 已修 |
 | 注入脚本 | 若客户端改传输（WebSocket/Gateway）则拦不到 | 目前客户端仍走 fetch | 风险待观察 |
 
 ### 4.3 定位手法（下次照做）
@@ -165,7 +165,7 @@
 
 | 风险 | 说明 | 触发再评估 |
 |---|---|---|
-| **R1 Swift 原生 RPC 无 cookie** | `WikiRPC`、`IssueRunnerPanel` 的 dsh 会话/工作区调用仍是点号端点、不 cookie → 在内置 0.1.2 下**失败**（wiki 生成、issue-runner 建会话、`workspace.list` 扫描）。WebView 的 cookie 由 WebKit 自己的数据存储持有（`~/Library/WebKit/<bundle-id>/WebsiteData`），与 URLSession 用的 `HTTPCookieStorage`（持久化文件 `~/Library/Cookies`，当前为空）**互不共享**，无法直接复用；仓库审计也已记录此结论 | 只要内置 dsh ≥0.1.2 就应修：把这两处接到 `dsh-rpc` 语义（token 由壳层持有，可直接换 cookie 后重试）或改走 core |
+| ~~R1 Swift 原生 RPC 无 cookie~~（2026-09-10 已修） | `WikiRPC`、`IssueRunnerPanel`、`DSHSessionRPC` 现统一走 `DshWebRPC.swift`：先试 0.1.2 斜杠端点（`payload.args.<request\|_request>`）再回退点号方法，按**端点**记忆所选面；token 由壳层 `ServerManager.webToken` 注入，经一个**独立 ephemeral URLSession** 访问 `/?token=…` 种下 `dsh-auth-*` cookie（WebView 的 cookie 在 WebKit 数据存储里、与 URLSession 的 `HTTPCookieStorage` 互不共享，故必须自行换取），401 时自动重换一次；`workspace.list` 在 0.1.2 不存在，回退读 `$DSH_HOME/storages/workspace.json`（`DshWorkspaceStore`，与 core 同一份契约） | 已修；若是**复用外部已启动**的 0.1.2 实例仍拿不到 token（见 R2），此时原生 RPC 退化为磁盘兜底 |
 | R2 复用外部 0.1.2 实例 | 拿不到 token → 只能另起实例（A3）；若将来要支持复用，需要用户粘贴带 token 的 URL | 用户反馈「想用我自己起的 dsh」 |
 | R3 注入脚本依赖 fetch + DOM | B1/B5：客户端改传输或改版侧栏结构即失效 | 升级后 B 面验证项失败 |
 | R4 `workspace.json` 兜底是私有布局 | D1 属 dsh 内部持久化格式，可能改名（如 `storages/` 结构调整） | 工作区列表突然为空且接口也没变 |

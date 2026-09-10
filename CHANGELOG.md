@@ -14,6 +14,13 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **修复内置 dsh 0.1.2 下壳层原生 RPC 全部失效（wiki 生成、issue-runner 流水线、会话目录跟随）**：`WikiRPC`（WikiPanel）、`IssueRunnerPanel` 的会话/工作区调用与 `DSHSessionRPC`（main.swift）此前只会讲 dsh ≤0.1.1 的老接口——点号方法名、payload 直接是参数、且**不带任何鉴权**；0.1.2 起 `/api` 只认 launch token 换来的 cookie、端点改斜杠、参数包进 `payload.args.<request|_request>`，于是这些原生调用全部 401/404（wiki 点「生成」拿不到 sessionId、issue-runner 建会话/发消息失败、workspace.list 扫描为空；只有 `DSHSessionRPC` 有磁盘兜底不至于完全失灵）。修复为新增共享的 `platforms/macos/src/DshWebRPC.swift`：
+  - **双面调用**：先按 0.1.2 斜杠端点 + `payload.args.<request|_request>` 试，失败再回退点号方法，并**按端点**记忆所选接口面（同一服务有 `session/list` 却没有 `workspace/list`，按服务记忆会互相污染）；`modernExtras` 只在 0.1.2 面注入（如 session/prompt 必填的 requestId）；
+  - **鉴权**：用一个独立 **ephemeral URLSession** 访问 dsh web 自报的 `/?token=…` 种下 `dsh-auth-*` cookie（WebView 的 cookie 在 WebKit 自己的数据存储里、与 URLSession 的 `HTTPCookieStorage` 互不共享，只能自行换取），每端口只换一次，401 时自动重换一次并重试；
+  - **工作区列表**：0.1.2 已无 `workspace.list`，回退读 dsh 持久化的 `$DSH_HOME/storages/workspace.json`（`DshWorkspaceStore`，与 core 同一份契约，按 `global.workspaceIds` 保序）；
+  - token 由 `ServerManager.webToken`（dsh web 自报的带 token 入口地址）在服务就绪时注入，**不落日志**；
+  - 消费者全部改接：`WikiRPC`（createSession/prompt/sessionRunning/cancel/workspaceList/resolveWorkspaceId）、`IssueRunnerPanel`（会话 + 工作区）、`DSHSessionRPC`（会话 cwd 两条路径，保留磁盘兜底）。
+  - **测试**：新增 `tests/dsh-rpc/run.sh`（headless，注入 HTTP 假传输：信封形状、斜杠/点号回退、按端点记忆、token 换取与 401 重换、workspace.json 解析），接入 `ci.yml` 与 `scripts/local-ci.sh`；wiki 面板测试的编译清单补上该文件。
 - **修复开发版（内置 dsh 0.1.2-rc.1）下 Channel 指令全部失效 —— 微信发 /wks 回「没有可用的 workspace」，而面板里明明有已启用的 workspace（C1）**：channel runner（core）此前只讲 dsh ≤0.1.1 的老接口——点号方法名（/api/workspace.list、/api/session.list…）、payload 直接是参数、且不带任何鉴权。0.1.2 起 dsh 换了两处：① /api 被**每实例 launch token 换来的 cookie** 挡住（裸 POST 一律 401）；② 方法名改为**斜杠端点**、参数包在 payload.args 里，并且**彻底移除了 workspace.list**（工作区改由 workspace/follow 流式下发）。于是 runner 的每次调用都失败：列不出工作区（/wks「没有可用 workspace」）、列不出会话（/ses 空）、普通消息与 /new 也建不了会话。修复为：
   - core 新增 **dsh 版本无关的 RPC 传输层**（core/lib/dsh-rpc.js）：先按 0.1.2 的斜杠端点 + 信封尝试，端点不存在（404）再回退老的点号方法，且**按端点（而非按服务）记忆**所选接口形态，避免 workspace/list 的 404 连带把 session/list 也拖回老接口；
   - 新增 **launch token → browser cookie 交换**：GET `/?token=…` 取 dsh-auth-* Cookie 并缓存，之后带 cookie 调 /api（无 token 时静默退回旧版行为，不破坏 0.1.1）；
