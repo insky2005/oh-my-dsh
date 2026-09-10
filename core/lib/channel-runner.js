@@ -210,6 +210,10 @@ async function runChannel(opts = {}) {
   };
 
   const commandRunner = opts.commands || createCommandRunner({
+    // ~-shorten reply paths with the SAME home the runner uses (it defaults to
+    // os.homedir(), which leaks the full /Users/... path whenever the shell
+    // injects another home — e.g. tests, or a foreign HOME).
+    homeDir,
     getSessions: () => currentSessions(),
     getWorkspaces: async () => {
       const ws = await getCodedWorkspaces();
