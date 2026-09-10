@@ -2534,10 +2534,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       var origFetch = window.fetch;
       window.fetch = function (input, init) {
         var url = typeof input === 'string' ? input : (input && (input.href || input.url)) || '';
-        if (url.indexOf('/api/host.openPath') !== -1) {
+        // dsh 0.1.2+ moved file-open to the session controller RPC
+        // session/openWorkspacePath (endpoint /api/session/openWorkspacePath,
+        // payload.args.path); match the legacy host.openPath too and accept
+        // either payload shape.
+        if (url.indexOf('/api/host.openPath') !== -1 || url.indexOf('/openWorkspacePath') !== -1) {
           var body = null;
           try { body = JSON.parse((init && init.body) || '{}'); } catch (e) {}
-          var path = body && body.payload && typeof body.payload.path === 'string' ? body.payload.path : null;
+          var pl = (body && body.payload) || {};
+          var args = pl.args || {};
+          var path = typeof args.path === 'string' ? args.path : (typeof pl.path === 'string' ? pl.path : null);
           if (path && path.charAt(0) === '/') {
             window.__dshPreviewHit = path;
             try {
