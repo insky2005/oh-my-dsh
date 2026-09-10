@@ -44,3 +44,13 @@
 ## 六、待确认/上游依赖
 - 需要从运行中的 0.1.2-rc.1 客户端确认：文件打开、会话切换、会话 workspace 在新传输下走哪个全局/接口（决定四.3/4 的具体挂钩点）。
 - 0.1.2-rc.1 若仍为 RC 可能继续变；锁定后按此适配，后续 RC 变化走本表复核。
+
+## 七、浏览器抓包（browser-skill）实测结论（2026-09-10）
+在已鉴权页面实测 0.1.2-rc.1 客户端实际发出的请求，重要修正：
+- **一元 RPC 仍是 HTTP POST + client-request**（WebSocket 仅用于流式），但端点方法名改走路径，且**点号改斜杠**：
+  - 会话列表：`POST /api/session.list` → **`POST /api/session/list`**
+  - 还观察到：`/api/subagents/list`、`/api/session/modelCatalog`、`/api/agentPresets/list`、`/api/settings/describe`、`/api/credentials/describe`、`/api/dynamicCordisRunner/*` 等。
+- **鉴权只挡 native 直连**；注入在 oh-my-dsh WKWebView 里的脚本（D1/D2/D3）因页面已种 cookie 属**已鉴权**，只要把路径改对即可，**无需整套 WebSocket/Gateway 重写**。
+- 已落实：D2（sessionOpenerScript）fetch 路径 → `/api/session/list`；native DSHSessionRPC URL 同步改斜杠（仍以磁盘 workspace.json 兜底，因 native 无 cookie 会 401）。
+- 待壳内验证：D1 会话切换跟踪（客户端仍走 fetch client-request，method 名若仍为点号则有效）；D3 文件打开端点（`host.openPath` 在 0.1.2 的实际替代路径需触发一次文件打开实测）。
+

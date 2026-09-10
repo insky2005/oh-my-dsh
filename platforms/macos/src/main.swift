@@ -1386,7 +1386,7 @@ enum DSHSessionRPC {
     /// directory — running sessions first, then the most recently updated
     /// non-blank one. Blocks on a background caller; nil when unresolved.
     static func fetchActiveSessionCwd(port: Int, timeout: TimeInterval = 6) -> String? {
-        let url = URL(string: "http://127.0.0.1:\(port)/api/session.list")!
+        let url = URL(string: "http://127.0.0.1:\(port)/api/session/list")!
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
@@ -1441,7 +1441,7 @@ enum DSHSessionRPC {
     /// The working directory of one specific session (session.list lookup by
     /// id) — used to follow the session the user just opened in dsh web.
     static func fetchSessionCwd(port: Int, sessionId: String, timeout: TimeInterval = 6) -> String? {
-        let url = URL(string: "http://127.0.0.1:\(port)/api/session.list")!
+        let url = URL(string: "http://127.0.0.1:\(port)/api/session/list")!
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
@@ -2490,7 +2490,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       }
       window.__dshOpenSession = function (sessionId) {
         if (!sessionId) return { ok: false, reason: "no-id" };
-        return fetch("/api/session.list", {
+        // dsh 0.1.2+ moved session RPC to the slash path /api/session/list.
+        return fetch("/api/session/list", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ type: "client-request", rpcId: "dsh-open-" + Date.now(), method: "session.list", payload: {} })
