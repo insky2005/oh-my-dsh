@@ -45,6 +45,18 @@
 - 需要从运行中的 0.1.2-rc.1 客户端确认：文件打开、会话切换、会话 workspace 在新传输下走哪个全局/接口（决定四.3/4 的具体挂钩点）。
 - 0.1.2-rc.1 若仍为 RC 可能继续变；锁定后按此适配，后续 RC 变化走本表复核。
 
+## 八、实测验证与决策（2026-09-10）
+- **版本策略**：采用 (a) —— 内置 dsh 固定 **0.1.2-rc.1**（build-app.sh 的 DSH_PACKAGE_SPEC 默认），壳层与 dsh 同步升级；待 0.1.2 正式版再推进。
+- **实测通过**：
+  - A1 启动（token 化）/ E1 重载 —— 正常。
+  - B 会话 workspace/项目目录读取 —— 磁盘 workspace.json 兜底生效。
+  - D1 会话切换跟随工作目录 —— 切到不同 workspace 的会话后目录正确切换（app.log: project directory followed session）。
+  - D3 预览打开文件 —— 点对话文件链接在 Files（预览面板）打开；抓包确认 RPC 为 POST /api/session/openWorkspacePath，路径在 payload.args.request.path。
+  - D2 面板点开会话 —— 路径已改 /api/session/list（斜杠），待顺手确认。
+- **遗留**：C1 频道 runner 在 0.1.2 下的会话操作待确认；native DSHSessionRPC 无 cookie（现靠磁盘兜底）；复用外部已启动 dsh web 的 token。
+- **抓包方法留档**：browser-skill（bsk）驱动真实 Chrome；也可用内置 CEF 面板 / curl(cookie jar) 直连端点验证。0.1.2 RPC 信封 = POST /api/<endpoint>，body.method=endpoint（斜杠），payload 视方法而定（args.request.path 等）。
+
+
 ## 七、浏览器抓包（browser-skill）实测结论（2026-09-10）
 在已鉴权页面实测 0.1.2-rc.1 客户端实际发出的请求，重要修正：
 - **一元 RPC 仍是 HTTP POST + client-request**（WebSocket 仅用于流式），但端点方法名改走路径，且**点号改斜杠**：
