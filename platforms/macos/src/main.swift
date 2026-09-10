@@ -2543,7 +2543,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           try { body = JSON.parse((init && init.body) || '{}'); } catch (e) {}
           var pl = (body && body.payload) || {};
           var args = pl.args || {};
-          var path = typeof args.path === 'string' ? args.path : (typeof pl.path === 'string' ? pl.path : null);
+          var req = args.request || {};
+          var path = (typeof req.path === 'string') ? req.path
+                   : (typeof args.path === 'string') ? args.path
+                   : (typeof pl.path === 'string') ? pl.path : null;
           if (path && path.charAt(0) === '/') {
             window.__dshPreviewHit = path;
             try {
