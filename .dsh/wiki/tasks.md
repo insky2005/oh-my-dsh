@@ -1,7 +1,7 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-08-26T14:29:30Z
+updated: 2026-09-10T23:50:00Z
 sources: [README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
 manual: false
 ---
@@ -50,7 +50,7 @@ open "dist/oh-my-dsh.app"
 ## 跑单元测试
 
 ```bash
-node --test core/tests/*.test.js  # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，186 用例；不带引号由 bash 展开 glob，Node 20 兼容）
+node --test core/tests/*.test.js  # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，216 用例；不带引号由 bash 展开 glob，Node 20 兼容）
 tests/terminal-emulator/run.sh      # 模拟器测试（core/tests/ansi.test.js 的薄封装）
 tests/wiki-panel/run.sh             # Repo Wiki 模型层
 tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
@@ -91,7 +91,9 @@ tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：�
 3. 终端输入异常（粘贴乱码/方向键失效）：`DSH_TERMINAL_DEBUG=1` 看字节级 I/O；对照 `docs/terminal-input-fix.md`（写入 API 用 `withUnsafeBytes`；DECCKM/括号粘贴模式跟踪；强制 UTF-8 locale）；
 4. 服务起不来：日志 `err.noNode`/`err.noDSH` → 设 `DSH_NODE`/`DSH_CLI` 指向本机安装；超时 90s → 看 server.log 尾部；
 5. 预览面板不响应文件点击：`DSH_PREVIEW_DEBUG=1` 看探针（`__dshPreviewInstalled` / `__dshPreviewHit` / 伪造 `host.openPath` 的返回）；
-6. 端口被占：默认 3080，`DSH_NATIVE_PORT` 指定端口；`DSH_NATIVE_FORCE_SPAWN=1` 强制自拉起（绕过复用检查）。
+6. 端口被占：默认 3080，`DSH_NATIVE_PORT` 指定端口；`DSH_NATIVE_FORCE_SPAWN=1` 强制自拉起（绕过复用检查）。3080 上已有 dsh ≥ 0.1.2 时壳层**本就不复用**（裸 GET 401 + `authentication required`），`app.log` 有 `existing dsh web on 3080 wants its launch token … not adopting` 一行——这是预期行为，不是故障；
+7. 工作区列表为空 / 面板项目目录回退 home：先看 `channel-runner-<id>.log` 或 `app.log` 有没有 `[workspace-store]` 诊断（`unexpected shape` / `is domain workspace vN, this build understands v2`）——私有存储被上游改了字段或升了版本；验证命令见 docs/dsh-version-impact.md §6.2，改两侧读取器（`core/lib/workspace-store.js` + `platforms/macos/src/DshWebRPC.swift`）并补用例；
+8. 面板点会话行不跳转 web / 切会话目录不跟随：`DSH_UI_DEBUG=1` 看 `dsh injected bridges: {tracker, opener, preview, rows}`（注入脚本是否装上）+ 页面 console 的 `[dsh-opener]` 日志，对照 docs/dsh-version-impact.md §6.1（R3：注入脚本依赖 dsh web 客户端内部实现，上游一改即静默失效）。
 
 ## 发布清单（简版，分支规范见 docs/git-workflow.md）
 
@@ -130,7 +132,7 @@ node core/bin/ohmy-core.js channel route <refsJson> <conversationId> <text> # �
 
 客户端内指令（微信里发）：全局 `/help` `/ping` `/status`；工作区指令 `/workspaces`(`/wks`)、`/sessions`(`/ses`)（无内容列出 / 有内容切换，等同 `#wN`/`#sN`）、`/new [内容]`（统一回 `创建新会话 #sN (sessionId)`，无内容建占位 `New Session`（dsh 标题由 dsh web 按首条消息自动命名）等首条消息激活、有内容 prompt=内容并回推答案）；纯代号 `#wN`/`#sN` 快捷切换当前工作区/会话；消息含 `#w1` 或 `#<workspace名>` 按 #tag 路由到对应项目（清单见 docs/channel-commands.md，改动须同步维护该文档）。
 
-验证：`node --test core/tests/` **186 全绿**（较 171 新增 dingtalk 适配器/transport/access 用例；含 channel 相关 association/busy/重写后的 sessions/project-switch/dingtalk 等）；`tests/channel-panel/run.sh`（ChannelStoreReader）无头单测；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；钉钉 Stream 连接已跑通（SDK 语义：connected= socket 打开，4c7f44b）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
+验证：`node --test core/tests/` **216 全绿**（2026-09-11 实测；2026-08-26 为 186，其后新增 dsh 双面 RPC / workspace-store 护栏等用例；含 channel 相关 association/busy/重写后的 sessions/project-switch/dingtalk 等）；`tests/channel-panel/run.sh`（ChannelStoreReader）无头单测；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；钉钉 Stream 连接已跑通（SDK 语义：connected= socket 打开，4c7f44b）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
 
 > ✅ 消息/会话存储**已全局化**（2026-08-22 落地）：会话映射与消息归档到全局 `~/.dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶，无会话入 system 桶），项目内仅剩引用配置 `.dsh/channels.json`；旧项目格式经 `channel migrate` CLI / 惰性迁移（见 [channel-panel](modules/channel-panel.md)）。**「项目开关」关联（PR #30，2026-08-23）**：通道↔项目启用关系存**全局** `~/.dsh/channels/<channelId>.workspaces.json`（project=workspace，出现即启用，见 [channel-panel](modules/channel-panel.md)「项目开关」与 docs/channel-project-switch.md），项目内 refs 文件不再作为启用来源。仍待办：引用配置落位 `.dsh/channels/channels.json` 并提交。
 

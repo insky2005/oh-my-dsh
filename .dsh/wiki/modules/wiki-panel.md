@@ -1,8 +1,8 @@
 ---
 title: 模块：WikiPanel.swift（Repo Wiki 面板）
 tags: [module, wiki, knowledge-base, rpc, skill]
-updated: 2026-09-10T12:05:00Z
-sources: [platforms/macos/src/WikiPanel.swift, docs/repo-wiki-design.md, .dsh/skills/repo-knowledge/SKILL.md]
+updated: 2026-09-10T23:50:00Z
+sources: [platforms/macos/src/WikiPanel.swift, platforms/macos/src/DshWebRPC.swift, docs/repo-wiki-design.md, .dsh/skills/repo-knowledge/SKILL.md]
 manual: false
 ---
 
@@ -21,7 +21,7 @@ manual: false
 | `WikiMarkdownRenderer` | 轻量 markdown → `NSAttributedString`：标题、粗/斜体、行内+围栏代码、有序/无序列表、链接、引用、分隔线；**软换行用 U+2028 行分隔符**（不触发 NSTextView 段落间距），列表项间补 `\n`；`internalURL` 生成 `dshwiki://` 页内链接 |
 | `WikiSkill` | **已移除**（v1.13.0）：`ensureInstalled`（按仓库写入 `repo-wiki` SKILL.md）删除——skill 改由 [SkillInstaller](skill-installer.md) 启动时安装到全局 `$DSH_HOME/skills/repo-knowledge/`，任何 workspace 可加载 |
 | `WikiPrompts` | 生成/更新/重建 index 的触发文案（中英），含 skill 缺失时的 `fallbackInstructions` |
-| `WikiRPC` | `resolveWorkspaceId`（按规范化路径匹配工作区）、`createSession(port:cwd:workspaceId:)`（有匹配工作区传 `workspaceId`，否则回退 `cwd`）、`prompt(port:sessionId:text:)`（mode: queue）、`sessionRunning(port:sessionId:)`、`cancel(port:sessionId:)`；**2026-09-10 起统一经 `DshWebRPC`**（先试 dsh 0.1.2 斜杠端点 `session/create|prompt|cancel|list` + `payload.args.request`，再回退点号 `session.*`；0.1.2 带 launch-token cookie，prompt 补 `requestId`），工作区列表走 `DshWorkspaceStore`（0.1.2 无 `workspace.list` → 读 `$DSH_HOME/storages/workspace.json`）；曾有的 `attachOrphans` 已移除（修复 15，见下） |
+| `WikiRPC` | `resolveWorkspaceId`（按规范化路径匹配工作区）、`createSession(port:cwd:workspaceId:)`（有匹配工作区传 `workspaceId`，否则回退 `cwd`）、`prompt(port:sessionId:text:)`（mode: queue）、`sessionRunning(port:sessionId:)`、`cancel(port:sessionId:)`；**2026-09-10 起统一经 `DshWebRPC`**（先试 dsh 0.1.2 斜杠端点 `session/create|prompt|cancel|list` + `payload.args.request`，再回退点号 `session.*`；0.1.2 带 launch-token cookie，prompt 补 `requestId`），工作区列表走 `DshWorkspaceStore`（0.1.2 无 `workspace.list` → 读 `$DSH_HOME/storages/workspace.json`；**2026-09-10 起 `workspaceList`/`resolveWorkspaceId` 传 `log: { AppLog.shared.log($0) }`**，私有存储域名/版本对不上时写 `app.log` 的 `[workspace-store]` 行而非静默返回空，见 [data-model](../data-model.md)）；曾有的 `attachOrphans` 已移除（修复 15，见下） |
 | `WikiAgentsMD` | AGENTS.md 注册块**幂等**写入/移除（`<!-- repo-wiki:managed --> … <!-- /repo-wiki:managed -->`） |
 | `WikiAutoCommit` | **兜底提交**（代理未提交时）：`commitWikiChanges(repoRoot:)` 检测 git 工作树 → `git status --porcelain -- .dsh/wiki` 有变更才提交 → `git add` + commit；**主提交路径是维护代理**（按指令 add+commit 并概括 message；repo-knowledge skill 规则不内置提交步骤），此兜底仅在代理未提交时生效，message 由 `commitMessage(status:diff:)` 从实际变更内容提取（如「docs(wiki): 更新 overview：工作区版本 1.8.0…」）；**绝不 push**，失败仅记 AppLog，幂等（无变更不提交）；后台执行，提交成功后主线程 `refresh()` 刷新树 |
 | `WikiRootView` | 面板根视图（`isOpaque = false` 自绘背景，镜像 `TerminalRootView`） |

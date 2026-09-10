@@ -1,8 +1,8 @@
 ---
 title: 仓库概览
 tags: [overview, tech-stack, build, run, test]
-updated: 2026-08-26T14:29:30Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/src/SkillInstaller.swift, docs/builtin-skills-design.md, platforms/macos/build-cef.sh, platforms/macos/make-pkg.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/MakeIcon.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-runner.js, core/tests/issues.test.js, core/tests/channel-runner.test.js, docs/productization.md, docs/git-workflow.md, docs/channel-design.md, docs/channel-status.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/plans/PREVIEW_PLAN-file-panel.md, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, Jenkinsfile, .github/workflows/, tests/wiki-panel/run.sh]
+updated: 2026-09-10T23:50:00Z
+sources: [README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/src/SkillInstaller.swift, docs/builtin-skills-design.md, platforms/macos/build-cef.sh, platforms/macos/make-pkg.sh, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/MakeIcon.swift, core/lib/issues.js, core/lib/jobqueue.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-runner.js, core/tests/issues.test.js, core/tests/channel-runner.test.js, docs/productization.md, docs/git-workflow.md, docs/channel-design.md, docs/channel-status.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/plans/PREVIEW_PLAN-file-panel.md, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, Jenkinsfile, .github/workflows/, tests/wiki-panel/run.sh, docs/dsh-version-impact.md]
 manual: false
 ---
 
@@ -86,21 +86,21 @@ open "dist/oh-my-dsh.app"     # 或双击
 ```
 
 - 运行时**无需**本机安装 Node 或 dsh（自包含）；
-- 启动先探测 `127.0.0.1:3080` 是否已有 `dsh web`（页面含 `window.__DSH_BOOT__` 判定）→ 复用；否则按 node 选择策略（`DSH_NODE` > 系统 node（PATH→nvm current→nvm default→nvm 最新→Homebrew，候选须 ≥ 22.0.0，`DSH_NODE_MIN` 可覆盖）> 内置 node）拉起 `dsh web --port <n>`（3080 被占自动换空闲端口），dsh web 环境合并登录 shell PATH（`loginShellPath()`），系统 node 启动失败自动回退内置 node 重试一次（`DSH_NODE` 显式指定不回退），90 秒超时 + 1s 沉降校验；
+- 启动先探测 `127.0.0.1:3080` 是否已有 `dsh web`（页面含 `window.__DSH_BOOT__` 判定，dsh ≤ 0.1.1）→ 复用；若 3080 上是 dsh ≥ 0.1.2（裸 GET 回 401 + `authentication required`，`isDSHAuthenticated`）则**按设计不复用**、记日志后自拉起（token 每进程随机、只在该进程 stdout；同 `DSH_HOME` 下数据本就共享；`DSH_NATIVE_FORCE_SPAWN=1` 可跳过复用检查）；否则按 node 选择策略（`DSH_NODE` > 系统 node（PATH→nvm current→nvm default→nvm 最新→Homebrew，候选须 ≥ 22.0.0，`DSH_NODE_MIN` 可覆盖）> 内置 node）拉起 `dsh web --port <n>`（3080 被占自动换空闲端口），dsh web 环境合并登录 shell PATH（`loginShellPath()`），系统 node 启动失败自动回退内置 node 重试一次（`DSH_NODE` 显式指定不回退），90 秒超时 + 1s 沉降校验；
 - **项目目录跟随当前会话**：壳层注入 `sessionTrackerScript` 监听 dsh web 的会话 RPC（`session.history/prompt/rename/selectModel`、`subagent.list`），用户切换会话/工作区时经 `dshSession` 消息把新的项目目录同步给预览树、终端新会话、wiki 根与任务面板（共享 `ProjectDirectory`；任务面板跟随会话**无条件**刷新——workspacePath 权威、非 GitHub 仓库诚实显示空态，见 [architecture](architecture.md)）；
 - 日志：`~/Library/Logs/oh-my-dsh/app.log`（壳层）、`server.log`（自拉起服务输出）。
 
 ## 测试
 
 ```bash
-node --test core/tests/*.test.js     # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，186 用例；不带引号由 bash 展开 glob，Node 20 兼容）
+node --test core/tests/*.test.js     # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，216 用例；不带引号由 bash 展开 glob，Node 20 兼容）
 tests/terminal-emulator/run.sh       # 模拟器测试（已迁 core/tests/ansi.test.js 的薄封装）
 tests/wiki-panel/run.sh              # Repo Wiki 模型层无头单测（实测 41 passed）
 tests/skills/run.sh                  # 内置 skill 安装器无头单测（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
 tests/channel-panel/run.sh            # 通道项目视图数据模型（ChannelStoreReader 读全局 store）
 ```
 
-- core 单测为 Node 测试（`core/tests/*.test.js`：ansi 42 / ports 5 / session 4 / upgrade 4 / issues 8 / jobqueue 7 / tasks 7 = 77 + channel 相关 109 = **186 全绿**，2026-08-26 实测；channel 覆盖 channel/commands/runner/sessions/workspaces/weixin-clawbot/dingtalk/e2e-channel/channel-association/channel-busy/project-switch）；`tests/terminal-emulator/run.sh` 现为 `core/tests/ansi.test.js` 的薄封装；
+- core 单测为 Node 测试（`core/tests/*.test.js`：ansi 42 / ports 5 / session 4 / upgrade 10 / issues 8 / jobqueue 7 / tasks 7 = 83 + 其余（channel 相关 / dsh-rpc / workspace-store 等）133 = **216 全绿**，2026-09-11 实测；channel 覆盖 channel/commands/runner/sessions/workspaces/weixin-clawbot/dingtalk/e2e-channel/channel-association/channel-busy/project-switch）；`tests/terminal-emulator/run.sh` 现为 `core/tests/ansi.test.js` 的薄封装；
 - Swift 无头单测模式（`tests/wiki-panel/`）：`stubs.swift` + 复制源码 + 测试文件改名 `main.swift` → `swiftc` 编译成可执行文件运行（无窗口/无 PTY 依赖）；
 - 设计文档（`docs/repo-wiki-design.md` §14）记录 v1.7.0 验证：全量编译零错误、wiki 单测 41/41（实测 `tests/wiki-panel/run.sh` 41 passed）、终端模拟器 46 项回归全过（Swift 实现，后迁 core/tests/ansi.test.js 42 项）；并记录 16 轮修复（build 43→63，其中修复 10–14：生成中提示改叠加浮层、定位状态条合成溢出根因、生成状态按工作区关联、终端新会话目录跟随当前工作区等，详见 [wiki-panel](modules/wiki-panel.md)；修复 15 移除失效的 `attachOrphans`、16 repo-wiki SKILL 优化）；
 - 产品化方案（`docs/productization.md`，2026-08-15，状态已批准执行）：P0 现状基线（v1.7.x，已达成）→ P1 开源基础（GitHub 公开 + MIT、CI、共享核心抽取，约 1–2 周）→ P2 Windows 版（≈2–3 个月）→ P3 Linux 版（≈1–2 个月）→ P4 生态增长；Apple 生态（Developer ID 签名/公证/Sparkle 升级/Homebrew Cask）依赖开发者账号，统一暂缓至最后阶段 F；配套 `docs/milestones/`（M1 产品化基础 … M5 Apple 生态 5 份里程碑目标文档，后续开发任务来源，见 README「目录」）。
