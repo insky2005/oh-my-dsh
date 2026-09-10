@@ -5,8 +5,10 @@ import Foundation
 /// shared core: core/lib/settings.js / `ohmy-core settings …`).
 ///
 /// Any language can read that file. To keep a single implementation of the
-/// write/merge/atomic semantics, mutations are delegated to the core CLI; a
-/// direct atomic write is used only as a fallback if the core is unavailable.
+/// write/merge/atomic semantics, mutations are delegated to the core CLI, but
+/// **coalesced + off the main thread** (a 0.3s debounce) so high-frequency
+/// updates (e.g. panel resizing) never spawn a subprocess per event nor block
+/// the UI. A direct atomic write is the fallback if the core is unavailable.
 /// Reads go straight to the JSON file (fast, no subprocess).
 ///
 /// Same surface as UserDefaults for a drop-in swap on owned keys:
@@ -17,7 +19,14 @@ final class ShellConfig {
 
     private let lock = NSLock()
     private var cache: [String: Any] = [:]
-    private var loaded = false
+    /// The file path the cache was loaded from. Tracked (not a plain bool) so a
+    /// later DSH_HOME change (dev isolation is injected at launch) triggers a
+    /// reload instead of permanently serving an empty cache loaded from the
+    /// wrong home.
+    private var loadedPath: String?
+    private var dirty = Set<String>()
+    private var pending: DispatchWorkItem?
+    private let persistQueue = DispatchQueue(label: "com.ohmydsh.shellconfig.persist")
 
     /// Resolved dsh home ($DSH_HOME or ~/.dsh) — dev builds use ~/.dsh-dev.
     private var home: String {
@@ -33,9 +42,11 @@ final class ShellConfig {
     }
 
     private func loadIfNeeded() {
-        if loaded { return }
-        loaded = true
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: filePath)),
+        let path = filePath
+        if loadedPath == path { return }
+        loadedPath = path
+        cache = [:]
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         cache = obj
     }
@@ -65,26 +76,54 @@ final class ShellConfig {
         return try? JSONSerialization.data(withJSONObject: v, options: [.fragmentsAllowed])
     }
 
-    // MARK: writes (delegated to the shared core CLI)
+    // MARK: writes (delegated to the shared core CLI, coalesced)
 
     func set(_ value: Any, forKey key: String) {
         var v = value
         if let d = value as? Data, let decoded = try? JSONSerialization.jsonObject(with: d) { v = decoded }
-        lock.lock(); loadIfNeeded(); cache[key] = v; lock.unlock()
-        if let js = Self.jsonString(v), CoreBridge.run(["settings", "set", key, js]) != nil { return }
-        AppLog.shared.log("shellconfig: core set failed for \(key); direct write fallback")
-        writeFileFallback()
+        lock.lock(); loadIfNeeded(); cache[key] = v; dirty.insert(key); lock.unlock()
+        schedulePersist()
     }
 
     func removeObject(forKey key: String) {
-        lock.lock(); loadIfNeeded(); cache.removeValue(forKey: key); lock.unlock()
-        if CoreBridge.run(["settings", "unset", key]) != nil { return }
-        AppLog.shared.log("shellconfig: core unset failed for \(key); direct write fallback")
-        writeFileFallback()
+        lock.lock(); loadIfNeeded(); cache.removeValue(forKey: key); dirty.insert(key); lock.unlock()
+        schedulePersist()
     }
 
-    private func writeFileFallback() {
-        lock.lock(); let snapshot = cache; lock.unlock()
+    /// Persist immediately (e.g. on app termination). Safe to call anytime.
+    func flushNow() {
+        lock.lock(); pending?.cancel(); pending = nil; lock.unlock()
+        flush()
+    }
+
+    private func schedulePersist() {
+        lock.lock(); pending?.cancel(); lock.unlock()
+        let item = DispatchWorkItem { [weak self] in self?.flush() }
+        lock.lock(); pending = item; lock.unlock()
+        persistQueue.asyncAfter(deadline: .now() + 0.3, execute: item)
+    }
+
+    private func flush() {
+        lock.lock()
+        let keys = dirty
+        dirty.removeAll()
+        let snapshot = cache
+        lock.unlock()
+        guard !keys.isEmpty else { return }
+
+        // Delegate to the canonical core writer, one call per changed key.
+        var coreOK = true
+        for key in keys {
+            guard let v = snapshot[key], let js = Self.jsonString(v) else { continue }
+            if CoreBridge.run(["settings", "set", key, js]) == nil { coreOK = false; break }
+        }
+        if !coreOK {
+            AppLog.shared.log("shellconfig: core persist failed; direct write fallback (\(keys.count) keys)")
+            writeFileFallback(snapshot)
+        }
+    }
+
+    private func writeFileFallback(_ snapshot: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: snapshot, options: [.prettyPrinted, .sortedKeys]) else { return }
         let dir = (filePath as NSString).deletingLastPathComponent
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)

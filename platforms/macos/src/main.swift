@@ -1583,19 +1583,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var rightPanel: RightPanel = .none
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
+    /// True while the right panel is being laid out programmatically (panel
+    /// switch / width application). The divider resize callback must NOT save
+    /// the width then — only a genuine user drag updates the saved width,
+    /// otherwise a programmatic re-layout would clobber it with the default.
+    private var isProgrammaticPanelLayout = false
     /// Minimum web-view width. dsh web auto-collapses its left sidebar below
     /// its LG breakpoint (1024pt); keeping the web view at 1100pt leaves a
     /// comfortable margin so the sidebar never folds away.
     private let minWebViewWidth: CGFloat = 1100
-    /// Smallest allowed width of the right panel slot (max of both panels').
+    /// **Minimum** allowed width of the right panel slot. 560 is a comfortable
+    /// reading floor; a panel's own minimum (300/260) is never higher, but we
+    /// still take the max so a panel can raise the floor if it ever needs to.
     private static let rightPanelMinWidth: CGFloat =
-        max(FilePanelController.minWidth,
-            max(TerminalPanelController.minWidth,
-                max(WikiPanelController.minWidth,
-                    max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth, ChannelPanelController.minWidth))))
-    /// Fixed default panel width. Deliberately NOT window-relative: a
-    /// "half the window" default made the width chase the window as it was
-    /// widened, flip-flopping on every toggle.
+        max(560,
+            max(FilePanelController.minWidth,
+                max(TerminalPanelController.minWidth,
+                    max(WikiPanelController.minWidth,
+                        max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth, ChannelPanelController.minWidth)))))
+    /// *Initial* panel width when the user has never chosen one. The user's
+    /// saved/dragged width always wins (clamped to the minimum above); this is
+    /// only the first-run width. Deliberately NOT window-relative: a "half the
+    /// window" default made the width chase the window, flip-flopping on toggle.
     private static let rightPanelDefaultWidth: CGFloat = 560
     /// Width of the activity bar (leftmost/rightmost icon strip).
     private let activityBarWidth: CGFloat = 48
@@ -1708,6 +1717,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func applicationWillTerminate(_ notification: Notification) {
         AppLog.shared.log("terminate: begin")
+        // Flush any debounced ShellConfig writes before exit.
+        ShellConfig.shared.flushNow()
         terminalPanel?.shutdownAll()
         browserPanel?.shutdownAll()
         browserAPIServer?.stop()
@@ -1973,6 +1984,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return
         }
         rightPanel = panel
+        // The layout work below is programmatic: its divider changes must not be
+        // recorded as a user-chosen width (see isProgrammaticPanelLayout).
+        isProgrammaticPanelLayout = true
+        defer { isProgrammaticPanelLayout = false }
         let visible = panel != .none
         AppLog.shared.log("setRightPanel apply panel=\(panel) splitW=\(split.bounds.width) winW=\(window.frame.width)")
         previewToggleMenuItem?.state = (panel == .preview) ? .on : .off
@@ -1997,6 +2012,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 split.subviews[1].removeFromSuperview()
             }
             if !split.subviews.contains(activeView) {
+                // Pre-size to the target BEFORE adding: NSSplitView otherwise
+                // lays out an equal split on the subview swap, which briefly
+                // shrinks the web view below minWebViewWidth (dsh web collapses
+                // its sidebar for a frame) before applyRightPanelLayout corrects
+                // it. Setting the frame first makes that first layout correct.
+                let divider = split.dividerThickness
+                let bound = max(split.bounds.width - minWebViewWidth - divider, Self.rightPanelMinWidth)
+                let target = min(targetPanelWidth(), bound)
+                activeView.frame = NSRect(x: max(0, split.bounds.width - target - divider), y: 0,
+                                          width: target, height: split.bounds.height)
                 split.addSubview(activeView)
                 split.setHoldingPriority(NSLayoutConstraint.Priority(rawValue: 260), forSubviewAt: 1)
             }
@@ -2260,6 +2285,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// same divider, so toggling panels never changes the widths.
     private func applyRightPanelLayout() {
         guard let split = splitView, rightPanel != .none else { return }
+        isProgrammaticPanelLayout = true
+        defer { isProgrammaticPanelLayout = false }
         let divider = split.dividerThickness
         let pw = targetPanelWidth()
         let neededW = activityBarWidth + pw + minWebViewWidth + divider
@@ -2271,8 +2298,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         let maxPw = split.bounds.width - minWebViewWidth - divider
         let target = min(pw, max(maxPw, Self.rightPanelMinWidth))
+        // Apply without implicit animation so no intermediate frame is shown.
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = 0
+        NSAnimationContext.current.allowsImplicitAnimation = false
         split.setPosition(split.bounds.width - target - divider, ofDividerAt: 0)
         split.adjustSubviews()
+        NSAnimationContext.endGrouping()
         window.contentView?.layoutSubtreeIfNeeded()
         AppLog.shared.log("layout: panel=\(split.subviews.count > 1 ? split.subviews[1].frame.width : 0)pt webView=\(split.bounds.width - (split.subviews.count > 1 ? split.subviews[1].frame.width : 0) - divider)pt")
     }
@@ -2296,17 +2328,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard splitView.subviews.count > 1 else { return }
         guard rightPanel != .none else { return }
         let pw = splitView.subviews[1].frame.width
-        if pw >= Self.rightPanelMinWidth {
+        if pw >= Self.rightPanelMinWidth && !isProgrammaticPanelLayout {
             ShellConfig.shared.set(pw, forKey: "previewPanelWidth")
         }
         // Auto-hide ONLY when the window is genuinely too narrow for even the
         // minimum panel + web view (user shrank the window) — NOT during
         // transient programmatic states like the launch half-split, which are
         // corrected by applyRightPanelLayout moments later.
+        // WebView-priority policy: the panel needs >= rightPanelMinWidth (560)
+        // and the web view >= minWebViewWidth (1100). The two together need
+        // activityBar + panelMin + webViewMin + divider (~1709pt). When the
+        // window is narrower than that both cannot fit, so the panel yields and
+        // auto-hides (the web view keeps its minimum).
         let webW = splitView.bounds.width - pw - splitView.dividerThickness
-        let windowTooNarrow = window.frame.width < minWebViewWidth + activityBarWidth + Self.rightPanelMinWidth
-        if webW < minWebViewWidth && windowTooNarrow {
-            AppLog.shared.log("window too narrow; auto-hiding right panel (webView \(Int(webW))pt < \(Int(minWebViewWidth))pt)")
+        let requiredW = activityBarWidth + Self.rightPanelMinWidth + minWebViewWidth + splitView.dividerThickness
+        if webW < minWebViewWidth && window.frame.width < requiredW {
+            AppLog.shared.log("window too narrow for panel(\(Int(Self.rightPanelMinWidth))) + webView(\(Int(minWebViewWidth))): need \(Int(requiredW))pt, have \(Int(window.frame.width))pt; auto-hiding panel")
             setRightPanel(.none)
         }
     }

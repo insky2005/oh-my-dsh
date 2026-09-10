@@ -14,6 +14,9 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **修复开发版读不到保存的面板宽度（ShellConfig 早期缓存错误 home）**：ShellConfig 在 applyDevIsolation 注入 DSH_HOME 之前被首次访问，按旧路径（~/.dsh/shell/config.json，不存在）载入并把"已加载"置真，之后一直返回空缓存 → 读不到保存宽度、回退默认 560。改为"按路径感知重载"（缓存记录载入路径，DSH_HOME 变化即重新加载）。
+- **面板宽度逻辑修正**：560 现在是面板**最小宽度**（此前被当作"默认宽度"，导致点面板总缩回 560）；用户拖动的宽度会被记住，**程序化布局不再回写覆盖**（切面板替换 subviews[1] 时的等分宽度不再被保存）。切面板时**按目标宽度预置新面板视图 frame + 零时长无动画**，消除"先等分(WebView≈1000)再扩到 1100"的中间帧。冲突策略（WebView 优先）：窗口 < 约1709pt 放不下"面板≥560 + WebView≥1100"时自动隐藏面板，保 WebView ≥1100。
+- **ShellConfig 写入防抖异步**：改为 0.3s 防抖、后台线程经 core CLI 持久化（失败回退直写），退出时 flushNow，避免高频（面板拖动）同步 spawn 子进程阻塞主线程。
 - **壳层配置改为语言无关的文件存储（core 单一实现）**：新增共享 core 的 settings 模块（core/lib/settings.js + ohmy-core settings get/set/unset/list/path），把壳层自有配置存成 UTF-8 JSON：$DSH_HOME/shell/config.json（dev → ~/.dsh-dev/shell/config.json）。Swift 侧新增 ShellConfig 门面：读直接读该 JSON（快、无子进程），写委托 core CLI（写入/合并/原子化语义单一实现，失败时回退直写）。已迁移 ~12 个自有 key（appLanguage/appTheme/dshRegistry/autoUpgradeDsh/nextAutoUpgradeCheck/hasCompletedOnboarding/preview*/rightPanelKind/browserLastURL/browserRenderMode/channel.global.list/wiki*）。仍留在原生 UserDefaults 的仅系统/框架强制项：AppleLanguages、NSWindow Frame。dev 隔离注入（applyDevIsolation）提前到任何配置读取之前。
 - **开发版使用独立 bundle id（com.ohmydsh.app.dev）→ 独立 UserDefaults 域**：此前 dev 与正式版共用 com.ohmydsh.app，导致 dev 的偏好/状态与正式版共享——例如 Channel 面板「全局配置」的通道列表 channel.global.list（含缓存状态/连接）会显示正式版那份。改为 dev 构建时 bundle id 加 .dev 后缀，dev 拥有自己的 UserDefaults 域（channel.global.list、auto-upgrade 节流、语言/registry/主题等全部独立），可与正式版并存。
 - **所有家目录级 ~/.dsh 硬编码统一改走 DSH_HOME（开发版不再误读正式 ~/.dsh）**：
