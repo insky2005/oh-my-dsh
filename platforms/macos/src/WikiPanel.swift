@@ -669,12 +669,12 @@ enum WikiRPC {
     /// serves it (dsh <= 0.1.1), else the store dsh persists (dsh >= 0.1.2 has no
     /// workspace.list) — see DshWorkspaceStore.
     static func workspaceList(port: Int) -> [[String: Any]] {
-        DshWorkspaceStore.items(port: port)
+        DshWorkspaceStore.items(port: port, log: { AppLog.shared.log($0) })
     }
 
     /// The registered workspace whose path matches `cwd`, if any.
     static func resolveWorkspaceId(port: Int, cwd: String) -> String? {
-        DshWorkspaceStore.workspaceId(forPath: cwd, port: port)
+        DshWorkspaceStore.workspaceId(forPath: cwd, port: port, log: { AppLog.shared.log($0) })
     }
 
     /// session.prompt { sessionId, mode: "queue", content: [{type:"text",...}] }

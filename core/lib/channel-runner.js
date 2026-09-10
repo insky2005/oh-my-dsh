@@ -118,6 +118,9 @@ async function loadWorkspaces(port, host, timeoutMs, opts) {
       timeoutMs: timeoutMs || 8000,
       token: opts && opts.token,
       dshHome: opts && opts.dshHome,
+      // The persisted store is dsh's PRIVATE layout: say so out loud when it is
+      // unreadable/renamed instead of reporting「没有可用的 workspace」mutely.
+      log: (m) => console.log(m),
     });
     return assignCodes(items);
   } catch {

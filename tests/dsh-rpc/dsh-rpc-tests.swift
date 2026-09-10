@@ -158,5 +158,41 @@ eq(DshWorkspaceStore.workspaceId(forPath: "/p/alpha", port: nil, dshHome: home),
 eq(DshWorkspaceStore.workspaceId(forPath: "/p/unknown", port: nil, dshHome: home), nil, "store: unknown path has no workspaceId")
 try? FileManager.default.removeItem(atPath: home)
 
+
+// MARK: - Persisted store: domain gate + diagnostics (R4)
+
+func storeHome(unit: [String: Any]?, tables: [String: Any]?, order: [String]?) -> String {
+    let home = NSTemporaryDirectory() + "dsh-store-" + UUID().uuidString
+    let dir = home + "/storages"
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    var doc: [String: Any] = [:]
+    if let unit = unit { doc["unit"] = unit }
+    if let order = order { doc["global"] = ["workspaceIds": order] }
+    if let tables = tables { doc["tables"] = ["workspaces": tables] }
+    try? JSONSerialization.data(withJSONObject: doc).write(to: URL(fileURLWithPath: dir + "/workspace.json"))
+    return home
+}
+
+let v3Home = storeHome(unit: ["name": "workspace", "version": 3],
+                       tables: ["w-1": ["path": "/p/alpha", "title": "Alpha", "sessionIds": []]],
+                       order: ["w-1"])
+var logs: [String] = []
+eq(DshWorkspaceStore.persistedItems(dshHome: v3Home, log: { logs.append($0) }).count, 1,
+   "store: a bumped domain version is still read best-effort")
+check(logs.contains { $0.contains("understands v2") }, "store: the version mismatch is reported")
+eq(DshWorkspaceStore.readStore(dshHome: v3Home).reason, "version", "store: reason = version")
+
+let shapeHome = storeHome(unit: ["name": "workspace", "version": 2], tables: nil, order: [])
+logs = []
+eq(DshWorkspaceStore.persistedItems(dshHome: shapeHome, log: { logs.append($0) }).count, 0,
+   "store: an unexpected shape yields no items")
+check(logs.contains { $0.contains("unexpected shape") }, "store: the unexpected shape is reported")
+
+logs = []
+eq(DshWorkspaceStore.persistedItems(dshHome: NSTemporaryDirectory() + "missing-" + UUID().uuidString,
+                                    log: { logs.append($0) }).count, 0, "store: a missing store yields no items")
+eq(logs.count, 0, "store: a missing store stays quiet (normal on dsh <= 0.1.1)")
+for h in [v3Home, shapeHome] { try? FileManager.default.removeItem(atPath: h) }
+
 print(failures == 0 ? "dsh-rpc tests passed" : "dsh-rpc tests FAILED (\(failures))")
 exit(failures == 0 ? 0 : 1)

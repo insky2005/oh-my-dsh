@@ -146,7 +146,7 @@
 - [ ] B 注入：切会话 → `ProjectDirectory` 跟随（终端/预览/wiki/tasks 目录变）；面板点会话行 → web 跳转；点文件链接 → 文件面板打开。
 - [ ] C 频道：微信 `/help` `/ping` `/status` `/wks` `/ses` `/new …` + **发一句普通消息**看是否回推答案（覆盖 C5–C7）。
 - [ ] C 工作区：`/wks` 能列出**面板已启用**的 workspace（覆盖 C4）。
-- [ ] D 布局：`storages/workspace.json` 仍存在且字段未变（D1 兜底是否还有效）。
+- [ ] D 布局：`storages/workspace.json` 仍在、`unit.version` 仍为 **2**、工作区数量与面板一致（R4；命令见 §6.2）——变了就要同时改 `core/lib/workspace-store.js` 与 `platforms/macos/src/DshWebRPC.swift` 的读取器并补用例。
 - [ ] E 升级链路本身：`ohmy-core upgrade` 能判定「下一步」；升级后服务重启、版本事实刷新。
 - [ ] 其它面板回归：wiki 生成、issue-runner 跑一条、浏览器面板、终端、文件预览。
 
@@ -168,7 +168,7 @@
 | ~~R1 Swift 原生 RPC 无 cookie~~（2026-09-10 已修） | `WikiRPC`、`IssueRunnerPanel`、`DSHSessionRPC` 现统一走 `DshWebRPC.swift`：先试 0.1.2 斜杠端点（`payload.args.<request\|_request>`）再回退点号方法，按**端点**记忆所选面；token 由壳层 `ServerManager.webToken` 注入，经一个**独立 ephemeral URLSession** 访问 `/?token=…` 种下 `dsh-auth-*` cookie（WebView 的 cookie 在 WebKit 数据存储里、与 URLSession 的 `HTTPCookieStorage` 互不共享，故必须自行换取），401 时自动重换一次；`workspace.list` 在 0.1.2 不存在，回退读 `$DSH_HOME/storages/workspace.json`（`DshWorkspaceStore`，与 core 同一份契约） | 已修；若是**复用外部已启动**的 0.1.2 实例仍拿不到 token（见 R2），此时原生 RPC 退化为磁盘兜底 |
 | ~~R2 复用外部 0.1.2 实例~~（2026-09-10 定论：不做） | 外部实例的 token 只存在于它自己的 stdout，无法获取；但**只要 `DSH_HOME` 相同，壳层自拉起的实例与外部实例就是同一份数据**（workspaces / sessions / settings / channels 全在 `$DSH_HOME` 下），复用只省一个进程，不值当。**唯一注意**：同一个 `DSH_HOME` 上不要长期并行跑两个 dsh web（两者都往同一批文件持久化），验完外部实例就关掉它 | 只有出现「必须与某个已启动实例共享**内存态**（未落盘状态、正在跑的 turn 视图）」的需求时才重估 |
 | **R3 注入脚本依赖 fetch + DOM**（**仍在**，且已实测出过坏点） | 三个注入脚本直接依赖 dsh web 客户端实现：fetch 形态与信封、方法名白名单、sessionId 位置、侧栏 `[role=treeitem].sessionRow` DOM、文件打开 RPC 端点。上游改传输（已有 WebSocket mux）或改 DOM 就**静默失效**。2026-09-10 实测发现 `sessionOpenerScript` 在 0.1.2 下一直是坏的（写死点号 method 打到斜杠端点，服务端 \`method does not match endpoint\`），已修为运行时双面 —— 详见 §6.1 | 升级后 B 面三项验证任一失败即命中 |
-| R4 `workspace.json` 兜底是私有布局 | D1 属 dsh 内部持久化格式，可能改名（如 `storages/` 结构调整） | 工作区列表突然为空且接口也没变 |
+| **R4 `workspace.json` 兜底是私有布局**（**仍在**，已加护栏） | 兜底读的是 dsh 内部带 schema/版本号的私有域存储（`defineDomain({name:'workspace',version:2})`，还有 `pendingMutation` 恢复标记），上游可随时改字段/搬文件/升版本；读不懂 = 上述五处**静默变空**。现已加域名+版本校验、诊断日志、单一实现收口（见 §6.2） | 升级后 `unit.version` 变化，或工作区列表突然为空而接口没变 |
 | R5 单一版本策略 | 只为「内置版本」做适配，老版本兼容靠回退（C1）；回退在两侧都失效时会静默出空结果 | 引入第二个受支持版本时重估 |
 
 
@@ -193,6 +193,61 @@ gateway/bad-request: method "session.list" does not match endpoint "session/list
 **为什么这类风险难发现**：三个脚本都是「成功时无感、失败时无声」。现有可观测手段：`DSH_UI_DEBUG=1`（新增：页面加载后打印 `dsh injected bridges: {tracker, opener, preview, rows}`）、`DSH_SESSION_DEBUG=1`（dump `__dshSessionSeen` / 最后跟踪到的会话）、`DSH_PREVIEW_DEBUG=1`（自检拦截器是否装上、并伪造一次 `host.openPath` 验证）、页面 console 里的 `[dsh-opener]` 日志。
 
 **升级时的判据（写进 §5 的 B 面验证）**：切会话看目录是否跟随 → 面板点会话行看 web 是否跳转 → 点文件链接看是否在文件面板打开；三项任一失败即 R3 命中。真要大改时，替代方案是**放弃 hook HTTP 层**，改为在页面内直接读 dsh 客户端自己的状态（或让 core 通过 dsh API 查询），见审计文档 §四.3。
+
+### R4 详解：`workspace.json` 兜底是 dsh 的**私有布局**
+
+**为什么必须用它**：dsh ≥ 0.1.2 删掉了 `workspace.list`，工作区改由 `workspace/follow` **流式**下发（是长连接流，不适合一次性读取）。而壳层有三处**必须**拿到「有哪些工作区」：频道 `/wks` 与门控、面板项目目录解析、wiki/issue-runner 的工作区归属。唯一可离线枚举的来源，就是 dsh 自己持久化的那份存储。
+
+**我们依赖的是什么**（`$DSH_HOME/storages/workspace.json`）：
+
+```json
+{
+  "unit":   { "name": "workspace", "version": 2 },
+  "global": { "initialized": true, "workspaceIds": ["<id>", "…"], "archivedSessionIds": [], "pendingMutation": {…}? },
+  "tables": { "workspaces": { "<workspaceId>": { "path", "title", "sessionIds", "createdAt", "updatedAt" } } }
+}
+```
+
+**问题所在**：这不是 API，而是 dsh 内部由 `defineDomain({ name: "workspace", version: 2, … })` 定义的**带 schema 的私有域存储**（`@deepseek-ai/dsh-workspace/lib/invariant.js`）。它自带版本号（v2）、zod 校验，甚至还有 `pendingMutation` 这种「两次写入之间被打断」的恢复标记 —— 换句话说，**上游随时可能改字段名、搬走文件、或把 version 提到 3 并做迁移**，而这一切不会有任何兼容性承诺或变更通知。我们的读取器一旦读不懂，表现就是这个兜底「静默变空」。
+
+**会静默空掉的五处**（都不报错，只是功能不可用）：
+
+| 消费者 | 断裂表现 |
+|---|---|
+| 频道 `/wks` | 回「没有可用的 workspace」 |
+| 频道门控 `isEnabledForRoot` | 路径列表空 → 普通消息被回「该项目未启用该通道」 |
+| 频道 `/ses` | `listWorkspaceSessions` 拿不到 workspace 的 `sessionIds` → 会话列表空 |
+| 面板项目目录（终端/预览/wiki/tasks） | `persistedWorkspacePath` 取不到 → 退回 home |
+| wiki / issue-runner | `resolveWorkspaceId` 为 nil → 会话落到 Ungrouped；`listWorkspacePaths` 空 |
+
+另外三个**次要但真实**的坑：
+
+1. **它是内存注册表的落盘副本**：dsh 以内存表为准、变更时刷盘；我们读到的可能比运行中的服务慢一拍（刚建的工作区还没落盘），或在**同 DSH_HOME 跑两个实例**时读到另一个实例写下的内容（见 R2 的注意点）。
+2. **写入不是单条原子事务**：`global.workspaceIds`（顺序）与 `tables`（记录）是两次写，中间被打断会留下 `pendingMutation`；dsh 启动时会自我修复（`validateStoredState`），我们读到中间态时可能看到「顺序里有、记录里没有」的工作区（已过滤掉，不会崩，但会少一项）。
+3. **恢复标记/归档语义**：`archivedSessionIds`、`pendingMutation` 我们**不解释**，只读 path/title/sessionIds。
+
+**已做的缓解（不是修复，是让失败可见 + 收口）**：
+
+- **域名校验 + 版本校验**：core 与 Swift 两侧读取器都会检查 `unit.name === "workspace"` 与 `unit.version === 2`；版本对不上时**仍然尽力解析**（形状可能兼容），但会明确报出来：
+  ```
+  [workspace-store] persisted workspace store …/storages/workspace.json is domain workspace v3,
+                    this build understands v2 — read best-effort
+  ```
+  形状意外（没有 `tables.workspaces`）同样报 `unexpected shape`；**文件不存在则保持安静**（dsh ≤ 0.1.1 本来就正常没有它）。
+- **日志出口**：core 侧走频道 runner 日志（`~/Library/Logs/oh-my-dsh/channel-runner-<id>.log`），Swift 侧走 `app.log`（`AppLog`）——不再出现「工作区列表莫名空了但日志里什么都没有」。
+- **单一实现收口**：原先有**三份**各自解析这个私有格式的代码（core `workspace-store.js`、Swift `DshWorkspaceStore`、`main.swift` 的 `persistedWorkspacePath`）。现在 `main.swift` 那份改为调用 `DshWorkspaceStore`，只剩 core 与 Swift 两处（跨语言无法合并），上游一改只需动这两处。
+- **测试钉住契约**：core 4 条 + Swift 4 条用例覆盖「版本不匹配仍尽力解析并报错」「形状意外报错」「文件缺失保持安静」，外加解析出的顺序/字段断言。
+- **只读、绝不写**：我们从不在这个文件上写任何东西，最坏情况是不会破坏 dsh 的数据。
+
+**升级时怎么验（§5 的 D 面）**：
+
+```bash
+DSH_HOME=${DSH_HOME:-$HOME/.dsh}
+python3 -c "import json,sys; d=json.load(open('$DSH_HOME/storages/workspace.json')); \
+print('domain', d.get('unit'), 'workspaces', len(d.get('tables',{}).get('workspaces',{})))"
+```
+
+期望看到 `domain {'name': 'workspace', 'version': 2}` 且工作区数量与面板一致；**version 变了就按 §6.2 更新两侧读取器并补用例**，同时确认 `/wks` 仍列得出工作区。
 
 ## 7. 参考
 

@@ -203,16 +203,58 @@ enum DshWorkspaceStore {
         return (NSHomeDirectory() as NSString).appendingPathComponent(".dsh")
     }
 
+    /// The domain this reader understands (dsh-workspace/lib/invariant.js:
+    /// `defineDomain({ name: "workspace", version: 2, … })`). The persisted layout is
+    /// PRIVATE to dsh — it may rename fields, move the file or bump this version
+    /// without notice — so a mismatch is reported rather than silently returning [].
+    static let supportedDomainName = "workspace"
+    static let supportedDomainVersion = 2
+
+    /// Outcome of reading the persisted store (items are best-effort even when the
+    /// layout is not the one we know).
+    struct StoreRead {
+        var items: [[String: Any]]
+        var reason: String            // ok | missing | unreadable | unexpected | version
+        var name: String?
+        var version: Int?
+        var file: String
+
+        /// Line to log, or nil when there is nothing to report.
+        var diagnostic: String? {
+            switch reason {
+            case "ok", "missing":
+                return nil
+            case "version":
+                return "persisted workspace store \(file) is domain \(name ?? "?") v\(version.map(String.init) ?? "?")"
+                    + ", this build understands v\(DshWorkspaceStore.supportedDomainVersion)"
+                    + (items.isEmpty ? " — cannot read it" : " — read best-effort")
+            case "unexpected":
+                return "persisted workspace store \(file) has an unexpected shape (no tables.workspaces / domain name)"
+            default:
+                return "persisted workspace store \(file) could not be read (\(reason))"
+            }
+        }
+    }
+
     /// Workspaces persisted by dsh, in dsh web's own order (`global.workspaceIds`).
     /// Each item mirrors the old workspace.list shape:
     /// `{workspaceId, path, title, sessionIds, createdAt, updatedAt}`.
-    static func persistedItems(dshHome: String? = nil) -> [[String: Any]] {
+    static func readStore(dshHome: String? = nil) -> StoreRead {
         let home = dshHome ?? dataHome()
         let file = (home as NSString).appendingPathComponent("storages/workspace.json")
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: file)),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let tables = json["tables"] as? [String: Any],
-              let workspaces = tables["workspaces"] as? [String: Any] else { return [] }
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: file)) else {
+            return StoreRead(items: [], reason: FileManager.default.fileExists(atPath: file) ? "unreadable" : "missing", file: file)
+        }
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return StoreRead(items: [], reason: "unreadable", file: file)
+        }
+        let unit = json["unit"] as? [String: Any]
+        let name = unit?["name"] as? String
+        let version = unit?["version"] as? Int
+        guard let tables = json["tables"] as? [String: Any],
+              let workspaces = tables["workspaces"] as? [String: Any] else {
+            return StoreRead(items: [], reason: "unexpected", name: name, version: version, file: file)
+        }
         let order = (json["global"] as? [String: Any])?["workspaceIds"] as? [String] ?? []
         let ids = order.filter { workspaces[$0] != nil }
             + workspaces.keys.filter { !order.contains($0) }.sorted()
@@ -230,17 +272,32 @@ enum DshWorkspaceStore {
             if let updated = ws["updatedAt"] { item["updatedAt"] = updated }
             items.append(item)
         }
-        return items
+        if name != supportedDomainName {
+            return StoreRead(items: items, reason: "unexpected", name: name, version: version, file: file)
+        }
+        if version != supportedDomainVersion {
+            return StoreRead(items: items, reason: "version", name: name, version: version, file: file)
+        }
+        return StoreRead(items: items, reason: "ok", name: name, version: version, file: file)
+    }
+
+    /// Persisted workspaces; `log` receives a diagnostic when the store is not the
+    /// layout we know (callers pass AppLog so this never degrades silently).
+    static func persistedItems(dshHome: String? = nil, log: ((String) -> Void)? = nil) -> [[String: Any]] {
+        let read = readStore(dshHome: dshHome)
+        if let note = read.diagnostic { log?("[workspace-store] " + note) }
+        return read.items
     }
 
     /// Live workspace.list when the server still serves it, else the persisted store.
-    static func items(port: Int?, timeout: TimeInterval = 6, dshHome: String? = nil) -> [[String: Any]] {
+    static func items(port: Int?, timeout: TimeInterval = 6, dshHome: String? = nil,
+                      log: ((String) -> Void)? = nil) -> [[String: Any]] {
         if let port = port,
            let value = DshWebRPC.call(DshWebRPC.workspaceList, [:], port: port, timeout: timeout),
            let items = value["items"] as? [[String: Any]] {
             return items
         }
-        return persistedItems(dshHome: dshHome)
+        return persistedItems(dshHome: dshHome, log: log)
     }
 
     /// Canonical form of a path (standardized + symlinks resolved) so session cwds
@@ -250,9 +307,10 @@ enum DshWorkspaceStore {
     }
 
     /// The workspaceId of the workspace whose path matches `path` (nil when unknown).
-    static func workspaceId(forPath path: String, port: Int?, dshHome: String? = nil) -> String? {
+    static func workspaceId(forPath path: String, port: Int?, dshHome: String? = nil,
+                            log: ((String) -> Void)? = nil) -> String? {
         let target = canonical(path)
-        for ws in items(port: port, dshHome: dshHome) {
+        for ws in items(port: port, dshHome: dshHome, log: log) {
             guard let wsPath = ws["path"] as? String else { continue }
             if canonical(wsPath) == target { return ws["workspaceId"] as? String }
         }

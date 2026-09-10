@@ -804,13 +804,13 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     /// Live workspace.list when the server serves it (dsh <= 0.1.1), else the
     /// store dsh persists — dsh >= 0.1.2 dropped the RPC (DshWorkspaceStore).
     static func listWorkspacePaths(port: Int) -> [String] {
-        DshWorkspaceStore.items(port: port).compactMap { $0["path"] as? String }
+        DshWorkspaceStore.items(port: port, log: { AppLog.shared.log($0) }).compactMap { $0["path"] as? String }
     }
 
     static func resolveMainWorkspaceId(port: Int, path: String) -> String? {
         let std = (path as NSString).standardizingPath
         // find matching path (or prefix, symlink-resolved)
-        for ws in DshWorkspaceStore.items(port: port) {
+        for ws in DshWorkspaceStore.items(port: port, log: { AppLog.shared.log($0) }) {
             guard let wsPath = ws["path"] as? String else { continue }
             if (wsPath as NSString).standardizingPath == std { return ws["workspaceId"] as? String }
         }
