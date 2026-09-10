@@ -12,6 +12,13 @@ const { runWeixinChannel } = require('../lib/channel-runner');
 // Enable a channel for a project in the (temp) global store, as the panel's
 // "project switch" does (docs/channel-project-switch.md). Presence of the root
 // in <channelId>.workspaces.json = enabled for that workspace.
+/// Close a mock server AND destroy its sockets (Node keeps connections alive by
+/// default, so server.close() alone can leave the test process hanging).
+function closeServer(srv) {
+  try { if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections(); } catch { /* ignore */ }
+  try { srv.close(); } catch { /* ignore */ }
+}
+
 function enableForProject(dshHome, channelId, projectRoot) {
   const dir = path.join(dshHome, 'channels');
   fs.mkdirSync(dir, { recursive: true });
@@ -165,7 +172,7 @@ async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceI
   const deadline = Date.now() + 5000;
   while (sent === null && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
   await handle.stop();
-  wsSrv.srv.close();
+  closeServer(wsSrv.srv);
   return sent;
 }
 
@@ -206,7 +213,7 @@ async function runChannelSequence(texts, { projectRoot = '/Users/loie/repo/alpha
   await handle.start();
   const sendSeq = async (t) => { queued.push(t); const dl = Date.now() + 8000; let lastLen = -1, lastChange = Date.now(); while (Date.now() < dl) { if (sent.length !== lastLen) { lastLen = sent.length; lastChange = Date.now(); } if (Date.now() - lastChange > 200) break; await new Promise((r) => setTimeout(r, 30)); } };
   for (const t of texts) await sendSeq(t);
-  await handle.stop(); wsSrv.srv.close();
+  await handle.stop(); closeServer(wsSrv.srv);
   return { sent, renames };
 }
 
@@ -371,7 +378,7 @@ async function runProjectGate({ projectRoot = '/Users/loie/repo/alpha', channelI
   queued.push(text);
   const dl = Date.now() + 6000;
   while (sent === null && Date.now() < dl) await new Promise((r) => setTimeout(r, 40));
-  await handle.stop(); wsSrv.srv.close();
+  await handle.stop(); closeServer(wsSrv.srv);
   return { sent, creates: creates.length };
 }
 

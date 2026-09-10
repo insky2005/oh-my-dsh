@@ -13,6 +13,13 @@ const os = require('node:os');
 const path = require('node:path');
 const { readWorkspaceStore, listWorkspaces, dshHomePath } = require('../lib/workspace-store');
 
+/// Close a mock server AND destroy its sockets (Node keeps connections alive by
+/// default, so server.close() alone can leave the test process hanging).
+function closeServer(srv) {
+  try { if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections(); } catch { /* ignore */ }
+  try { srv.close(); } catch { /* ignore */ }
+}
+
 function seed(dshHome, doc) {
   const dir = path.join(dshHome, 'storages');
   fs.mkdirSync(dir, { recursive: true });
@@ -61,7 +68,7 @@ test('workspace-store: listWorkspaces falls back to the store when the server ha
     assert.equal(items.length, 1);
     assert.equal(items[0].path, '/p/alpha');
     assert.equal(items[0].title, 'Alpha');
-  } finally { srv.close(); }
+  } finally { closeServer(srv); }
 });
 
 test('workspace-store: dshHomePath honours an explicit home over DSH_HOME', () => {

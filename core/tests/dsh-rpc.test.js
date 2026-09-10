@@ -17,6 +17,16 @@ const { lastMessage, listWorkspaceSessions } = require('../lib/session-driver');
 
 const COOKIE = 'dsh-auth-test=ok';
 
+/**
+ * Close a mock server AND destroy its sockets. Node's global agent keeps
+ * connections alive by default (>=19), and `server.close()` alone then waits for
+ * them — which can leave a test file (and a CI job) hanging.
+ */
+function closeServer(srv) {
+  try { if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections(); } catch { /* ignore */ }
+  try { srv.close(); } catch { /* ignore */ }
+}
+
 /** Mock dsh >= 0.1.2: /api needs the launch-token cookie; endpoints are slash paths. */
 function startModernServer({ token = 'tok', sessions = [], records = [] } = {}) {
   const calls = [];
@@ -98,7 +108,7 @@ test('dsh-rpc: dsh >= 0.1.2 slash endpoint + launch-token cookie', async () => {
     assert.equal(surfaceOf(SESSION_LIST, { port, token: 'tok' }), 'modern');
     assert.equal(calls[0].endpoint, 'session/list');
     assert.deepEqual(calls[0].payload, { args: { _request: {} } }, 'modern envelope wraps args');
-  } finally { srv.close(); }
+  } finally { closeServer(srv); }
 });
 
 test('dsh-rpc: without the launch token a 0.1.2 server cannot be reached', async () => {
@@ -106,7 +116,7 @@ test('dsh-rpc: without the launch token a 0.1.2 server cannot be reached', async
   const { srv, port } = await startModernServer({ sessions: [item] });
   try {
     assert.equal(await callRpc(SESSION_LIST, {}, { port }), null);
-  } finally { srv.close(); }
+  } finally { closeServer(srv); }
 });
 
 test('dsh-rpc: dsh <= 0.1.1 dot-method surface still works (fallback)', async () => {
@@ -117,7 +127,7 @@ test('dsh-rpc: dsh <= 0.1.1 dot-method surface still works (fallback)', async ()
     assert.equal(json.result.value.items.length, 1);
     assert.equal(surfaceOf(SESSION_LIST, { port }), 'legacy');
     assert.deepEqual(calls.map((c) => c.endpoint), ['session/list', 'session.list']);
-  } finally { srv.close(); }
+  } finally { closeServer(srv); }
 });
 
 test('dsh-rpc: an endpoint the server lacks (workspace/list on 0.1.2) does not poison other endpoints', async () => {
@@ -129,7 +139,7 @@ test('dsh-rpc: an endpoint the server lacks (workspace/list on 0.1.2) does not p
     const json = await callRpc(SESSION_LIST, {}, { port, token: 'tok' });
     assert.equal(json.result.value.items.length, 1, 'session/list stays on the modern surface');
     assert.deepEqual(calls.map((c) => c.endpoint), ['workspace/list', 'workspace.list', 'session/list']);
-  } finally { srv.close(); }
+  } finally { closeServer(srv); }
 });
 
 test('dsh-rpc: lastMessage replays session/page up to the session/list cursor', async () => {
@@ -148,7 +158,7 @@ test('dsh-rpc: lastMessage replays session/page up to the session/list cursor', 
     const page = calls.find((c) => c.endpoint === 'session/page');
     assert.equal(page.payload.args.request.throughSeq, 12, 'page uses the projection cursor');
     assert.equal(page.payload.args.request.address.sessionId, 'session-1');
-  } finally { srv.close(); }
+  } finally { closeServer(srv); }
 });
 
 test('dsh-rpc: listWorkspaceSessions falls back to the persisted workspace store on 0.1.2', async () => {
@@ -169,7 +179,7 @@ test('dsh-rpc: listWorkspaceSessions falls back to the persisted workspace store
     assert.equal(list.length, 1);
     assert.equal(list[0].sessionId, 'session-1');
     assert.equal(list[0].name, 'Alpha chat');
-  } finally { srv.close(); }
+  } finally { closeServer(srv); }
 });
 test('dsh-rpc: a stale cookie is re-exchanged once after a dsh web restart', async () => {
   _resetForTests();
@@ -205,6 +215,6 @@ test('dsh-rpc: a stale cookie is re-exchanged once after a dsh web restart', asy
     const second = await callRpc(SESSION_LIST, {}, { port, token: 'tok' });
     assert.equal(second.result.value.items.length, 1, 'stale cookie must be re-exchanged');
     assert.equal(gets.length, 2, 'exactly one cookie exchange per generation');
-  } finally { srv.close(); }
+  } finally { closeServer(srv); }
 });
 
