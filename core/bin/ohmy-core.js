@@ -24,6 +24,10 @@
  *   node core/bin/ohmy-core.js channel login-dingtalk [--save <file>]
  *   node core/bin/ohmy-core.js channel listen <token> [--once]
  *   node core/bin/ohmy-core.js channel reply <token> <to> <text>
+ *   node core/bin/ohmy-core.js settings get <key>
+ *   node core/bin/ohmy-core.js settings set <key> <json>
+ *   node core/bin/ohmy-core.js settings unset <key>
+ *   node core/bin/ohmy-core.js settings list
  *   node core/bin/ohmy-core.js channel run <channelId> <port> <refsJson> [--dsh-home <dir>]
  */
 
@@ -76,6 +80,27 @@ function println(s) {
         println(core.nextStepTarget(rest[0], rest.slice(1)) || '');
       } else {
         fail('usage: upgrade compare <a> <b> | latest <registry> | next <current> <versions...>');
+      }
+      break;
+    case 'settings':
+      if (sub === 'get') {
+        if (!rest[0]) fail('usage: settings get <key>');
+        println(JSON.stringify(core.settingsGet(rest[0])));
+      } else if (sub === 'set') {
+        if (!rest[0] || rest.length < 2) fail('usage: settings set <key> <json>');
+        let val; try { val = JSON.parse(rest[1]); } catch { val = rest[1]; }
+        core.settingsSet(rest[0], val);
+        println('ok');
+      } else if (sub === 'unset') {
+        if (!rest[0]) fail('usage: settings unset <key>');
+        core.settingsUnset(rest[0]);
+        println('ok');
+      } else if (sub === 'list') {
+        printJson(core.settingsReadAll());
+      } else if (sub === 'path') {
+        println(core.settingsPath());
+      } else {
+        fail('usage: settings get <key> | set <key> <json> | unset <key> | list | path');
       }
       break;
     case 'session':

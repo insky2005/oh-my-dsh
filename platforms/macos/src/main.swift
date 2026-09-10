@@ -55,7 +55,7 @@ enum L10n {
     /// explicit shell-language choice exists.
     static var hasExplicitChoice: Bool {
         if let env = ProcessInfo.processInfo.environment["DSH_LANG"], !env.isEmpty { return true }
-        if let saved = UserDefaults.standard.string(forKey: "appLanguage"), !saved.isEmpty { return true }
+        if let saved = ShellConfig.shared.string(forKey: "appLanguage"), !saved.isEmpty { return true }
         return false
     }
 
@@ -64,7 +64,7 @@ enum L10n {
     static var lang: String {
         let env = ProcessInfo.processInfo.environment["DSH_LANG"] ?? ""
         if !env.isEmpty { return env.hasPrefix("zh") ? "zh" : "en" }
-        if let saved = UserDefaults.standard.string(forKey: "appLanguage") {
+        if let saved = ShellConfig.shared.string(forKey: "appLanguage") {
             if saved.hasPrefix("zh") { return "zh" }
             if saved.hasPrefix("en") { return "en" }
         }
@@ -75,9 +75,9 @@ enum L10n {
     /// captured system language stays cached, so "follow system" is instant.
     static func set(_ l: String?) {
         if let l = l {
-            UserDefaults.standard.set(l.hasPrefix("en") ? "en" : "zh", forKey: "appLanguage")
+            ShellConfig.shared.set(l.hasPrefix("en") ? "en" : "zh", forKey: "appLanguage")
         } else {
-            UserDefaults.standard.removeObject(forKey: "appLanguage")
+            ShellConfig.shared.removeObject(forKey: "appLanguage")
         }
     }
     static var isZh: Bool { lang == "zh" }
@@ -468,13 +468,13 @@ enum RegistryConfig {
     static var current: String {
         let env = ProcessInfo.processInfo.environment["DSH_REGISTRY"] ?? ""
         if !env.isEmpty { return normalize(env) }
-        if let saved = UserDefaults.standard.string(forKey: "dshRegistry"), !saved.isEmpty {
+        if let saved = ShellConfig.shared.string(forKey: "dshRegistry"), !saved.isEmpty {
             return normalize(saved)
         }
         return "https://registry.npmmirror.com"
     }
-    static func set(_ url: String) { UserDefaults.standard.set(url, forKey: "dshRegistry") }
-    static func reset() { UserDefaults.standard.removeObject(forKey: "dshRegistry") }
+    static func set(_ url: String) { ShellConfig.shared.set(url, forKey: "dshRegistry") }
+    static func reset() { ShellConfig.shared.removeObject(forKey: "dshRegistry") }
     private static func normalize(_ s: String) -> String {
         var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         while t.hasSuffix("/") { t.removeLast() }
@@ -488,10 +488,10 @@ enum RegistryConfig {
 /// WKWebView re-renders with the new appearance automatically).
 enum AppTheme {
     static var current: String {
-        UserDefaults.standard.string(forKey: "appTheme") ?? "system"
+        ShellConfig.shared.string(forKey: "appTheme") ?? "system"
     }
     static func set(_ mode: String) {
-        UserDefaults.standard.set(mode, forKey: "appTheme")
+        ShellConfig.shared.set(mode, forKey: "appTheme")
         apply()
     }
     static func apply() {
@@ -1632,6 +1632,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             exit(0)
         }
         NSApp.setActivationPolicy(.regular)
+        // 开发版隔离（独立实例 + 独立 DSH_HOME + 错开端口）必须在任何配置读取
+        // （L10n/AppTheme/Registry 走 ShellConfig = $DSH_HOME/shell/config.json）与
+        // dsh web / CEF / skills / channel 启动之前注入环境变量。
+        applyDevIsolation()
         // Snapshot the real system language BEFORE overriding AppleLanguages.
         L10n.captureSystemLang()
         // Make the WebView's navigator.language follow the shell language so
@@ -1640,9 +1644,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Apply the persisted appearance before any window is created, so the
         // first frame already uses the right theme (no flash of the default).
         AppTheme.apply()
-        // 开发版隔离（独立实例 + 独立 DSH_HOME + 错开端口）须在 dsh web / CEF / skills
-        // / channel 启动前注入环境变量。
-        applyDevIsolation()
         installSignalHandlers()
         buildMenu()
         AppLog.shared.log("launch: menu built")
@@ -1906,9 +1907,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // have left set to true), "rightPanelKind" picks which panel — so a
         // fresh install starts with the panel closed, and only explicit user
         // actions mark it open.
-        let visible = UserDefaults.standard.bool(forKey: "previewPanelState")
+        let visible = ShellConfig.shared.bool(forKey: "previewPanelState")
         let kind: RightPanel
-        switch UserDefaults.standard.string(forKey: "rightPanelKind") {
+        switch ShellConfig.shared.string(forKey: "rightPanelKind") {
         case "terminal": kind = .terminal
         case "wiki": kind = .wiki
         case "tasks": kind = .tasks
@@ -1954,7 +1955,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func setRightPanel(_ panel: RightPanel) {
         guard let split = splitView else { return }
         if ProcessInfo.processInfo.environment["DSH_PREVIEW_DEBUG"] == "1" {
-            AppLog.shared.log("setRightPanel enter: panel=\(panel) win=\(window.frame) split=\(split.bounds) content=\(window.contentView?.bounds ?? .zero) pwSaved=\(UserDefaults.standard.object(forKey: "previewPanelWidth") ?? "nil" as Any)")
+            AppLog.shared.log("setRightPanel enter: panel=\(panel) win=\(window.frame) split=\(split.bounds) content=\(window.contentView?.bounds ?? .zero) pwSaved=\(ShellConfig.shared.object(forKey: "previewPanelWidth") ?? "nil" as Any)")
         }
         // Wait until Auto Layout has actually laid the split out: its bounds
         // width must be windowWidth - activityBar. Using the pre-layout frame
@@ -2062,7 +2063,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 dumpHierarchy(activeView, label: "\(panel)-post", maxDepth: 4)
             }
         }
-        UserDefaults.standard.set(visible, forKey: "previewPanelState")
+        ShellConfig.shared.set(visible, forKey: "previewPanelState")
         let kind: String
         switch panel {
         case .terminal: kind = "terminal"
@@ -2072,7 +2073,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .channel: kind = "channel"
         default: kind = "preview"
         }
-        UserDefaults.standard.set(kind, forKey: "rightPanelKind")
+        ShellConfig.shared.set(kind, forKey: "rightPanelKind")
         // Note: the panel width is persisted only while the user drags the
         // divider (splitViewDidResizeSubviews) — never overwrite the user's
         // setting here with a clamped value.
@@ -2245,7 +2246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// The target panel width: the user's dragged width when saved, else the
     /// fixed default (never window-relative).
     private func targetPanelWidth() -> CGFloat {
-        if let saved = UserDefaults.standard.object(forKey: "previewPanelWidth") as? NSNumber,
+        if let saved = ShellConfig.shared.object(forKey: "previewPanelWidth") as? NSNumber,
            saved.doubleValue >= Self.rightPanelMinWidth {
             return CGFloat(saved.doubleValue)
         }
@@ -2296,7 +2297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard rightPanel != .none else { return }
         let pw = splitView.subviews[1].frame.width
         if pw >= Self.rightPanelMinWidth {
-            UserDefaults.standard.set(pw, forKey: "previewPanelWidth")
+            ShellConfig.shared.set(pw, forKey: "previewPanelWidth")
         }
         // Auto-hide ONLY when the window is genuinely too narrow for even the
         // minimum panel + web view (user shrank the window) — NOT during
@@ -2681,7 +2682,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func autoUpgradeEnabled() -> Bool {
         if ProcessInfo.processInfo.environment["DSH_AUTO_UPGRADE"] == "0" { return false }
-        return UserDefaults.standard.object(forKey: "autoUpgradeDsh") as? Bool ?? true
+        return ShellConfig.shared.object(forKey: "autoUpgradeDsh") as? Bool ?? true
     }
 
     /// A DSHUpdater for the active bundled runtime, or nil when dsh is not the
@@ -2716,7 +2717,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // When force-testing (DSH_AUTO_UPGRADE_NOW=1) leave the throttle alone so
         // every launch re-checks; otherwise persist the next-run delay.
         guard !forceAutoUpgradeNow else { return }
-        UserDefaults.standard.set(Date().timeIntervalSince1970 + delay, forKey: "nextAutoUpgradeCheck")
+        ShellConfig.shared.set(Date().timeIntervalSince1970 + delay, forKey: "nextAutoUpgradeCheck")
     }
 
     /// Schedule a main-thread "remind me later" that re-runs the (now due) auto
@@ -2739,7 +2740,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// the in-place install.
     private func scheduleAutoUpgradeIfNeeded() {
         guard autoUpgradeEnabled(), !upgradeInFlight else { return }
-        let nextAt = UserDefaults.standard.double(forKey: "nextAutoUpgradeCheck")
+        let nextAt = ShellConfig.shared.double(forKey: "nextAutoUpgradeCheck")
         guard forceAutoUpgradeNow || Date().timeIntervalSince1970 >= nextAt else { return }
         // Grey out "Check & Upgrade dsh" while this auto round runs.
         autoUpgradeRunning = true
@@ -3017,7 +3018,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Shared auto-upgrade toggle used by the Settings menu and the Settings
     /// window; keeps the menu checkbox in sync.
     func setAutoUpgradeEnabled(_ enabled: Bool) {
-        UserDefaults.standard.set(enabled, forKey: "autoUpgradeDsh")
+        ShellConfig.shared.set(enabled, forKey: "autoUpgradeDsh")
         autoUpgradeMenuItem?.state = enabled ? .on : .off
         AppLog.shared.log("auto-upgrade \(enabled ? "enabled" : "disabled")")
     }
@@ -3529,7 +3530,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// the main window is on screen; dismissed with "Get Started" or
     /// "Learn More" (which opens the repo README in the browser).
     private func showOnboardingIfNeeded() {
-        guard !didShowOnboarding, !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") else { return }
+        guard !didShowOnboarding, !ShellConfig.shared.bool(forKey: "hasCompletedOnboarding") else { return }
         didShowOnboarding = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self = self, let window = self.window else { return }
@@ -3539,7 +3540,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             alert.addButton(withTitle: L10n.tr("onboarding.getStarted"))
             alert.addButton(withTitle: L10n.tr("onboarding.learnMore"))
             alert.beginSheetModal(for: window) { response in
-                UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
+                ShellConfig.shared.set(true, forKey: "hasCompletedOnboarding")
                 if response == .alertSecondButtonReturn,
                    let url = URL(string: "https://github.com/insky2005/oh-my-dsh") {
                     NSWorkspace.shared.open(url)
@@ -3784,7 +3785,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     /// Start channel listeners for every configured global channel at launch.
     private func startConfiguredChannelRunners() {
-        guard let data = UserDefaults.standard.data(forKey: "channel.global.list"),
+        guard let data = ShellConfig.shared.data(forKey: "channel.global.list"),
               let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             AppLog.shared.log("channel runners: no configured channels")
             return
@@ -3926,7 +3927,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         do {
             // 渲染模式：defaults write com.ohmydsh.app browserRenderMode -string windowed
             // 切换窗口化（Chromium 原生绘制）vs OSR（默认，帧回调自绘）。
-            let windowed = UserDefaults.standard.string(forKey: "browserRenderMode") == "windowed"
+            let windowed = ShellConfig.shared.string(forKey: "browserRenderMode") == "windowed"
             CEFShim.setWindowedMode(windowed)
             AppLog.shared.log("CEF render mode: \(windowed ? "windowed" : "osr")")
             try CEFShim.initialize(withCachePath: cachePath,
@@ -4024,16 +4025,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // MARK: Wiki settings (UserDefaults-backed menu toggles)
 
     private func wikiAutoRegenerateEnabled() -> Bool {
-        UserDefaults.standard.object(forKey: WikiPaths.autoRegenerateKey) as? Bool ?? false
+        ShellConfig.shared.object(forKey: WikiPaths.autoRegenerateKey) as? Bool ?? false
     }
 
     private func wikiRegisterAgentsMdEnabled() -> Bool {
-        UserDefaults.standard.object(forKey: WikiPaths.registerAgentsMdKey) as? Bool ?? false
+        ShellConfig.shared.object(forKey: WikiPaths.registerAgentsMdKey) as? Bool ?? false
     }
 
     @objc private func toggleWikiAutoRegenerate(_ sender: NSMenuItem) {
         let enabled = sender.state == .off
-        UserDefaults.standard.set(enabled, forKey: WikiPaths.autoRegenerateKey)
+        ShellConfig.shared.set(enabled, forKey: WikiPaths.autoRegenerateKey)
         sender.state = enabled ? .on : .off
         AppLog.shared.log("wiki auto-regenerate \(enabled ? "enabled" : "disabled")")
     }
@@ -4043,7 +4044,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// the current project when one is resolved.
     @objc private func toggleWikiRegisterAgentsMD(_ sender: NSMenuItem) {
         let enabled = sender.state == .off
-        UserDefaults.standard.set(enabled, forKey: WikiPaths.registerAgentsMdKey)
+        ShellConfig.shared.set(enabled, forKey: WikiPaths.registerAgentsMdKey)
         sender.state = enabled ? .on : .off
         AppLog.shared.log("wiki AGENTS.md register \(enabled ? "enabled" : "disabled")")
         if let repo = wikiPanel?.currentRepoRoot {
@@ -4057,7 +4058,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     @objc private func setWikiRootMode(_ sender: NSMenuItem) {
         let mode = sender.tag == 1 ? "dsh-home" : "in-repo"
-        UserDefaults.standard.set(mode, forKey: WikiPaths.rootModeKey)
+        ShellConfig.shared.set(mode, forKey: WikiPaths.rootModeKey)
         AppLog.shared.log("wiki root mode set to \(mode)")
         wikiPanel?.reloadRoot()
         // Rebuild the menu so the radio state updates.

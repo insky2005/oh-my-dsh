@@ -26,7 +26,7 @@ enum WikiPaths {
     static let registerAgentsMdKey = "wikiRegisterAgentsMd"
 
     static var rootMode: String {
-        UserDefaults.standard.string(forKey: rootModeKey) ?? "in-repo"
+        ShellConfig.shared.string(forKey: rootModeKey) ?? "in-repo"
     }
 
     /// Default in-repo wiki root: <repoRoot>/.dsh/wiki/
@@ -1352,7 +1352,7 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
             .map { Date().timeIntervalSince($0.updated) } ?? .greatestFiniteMagnitude
         guard staleCount >= 3 && indexAge > 3600 else { return }
         lastAutoTrigger = Date()
-        if UserDefaults.standard.object(forKey: WikiPaths.autoRegenerateKey) as? Bool == true {
+        if ShellConfig.shared.object(forKey: WikiPaths.autoRegenerateKey) as? Bool == true {
             AppLog.shared.log("wiki auto-regenerate: stale=\(staleCount) indexAge=\(Int(indexAge))s")
             startGeneration(.update)
         } else {
@@ -1481,7 +1481,7 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
     /// to start). Only the repo currently shown is refreshed in place; other
     /// repos' files are picked up when the user switches to them.
     private func generationSettled(key: String, gen: Generation, ok: Bool) {
-        if ok, UserDefaults.standard.object(forKey: WikiPaths.registerAgentsMdKey) as? Bool == true {
+        if ok, ShellConfig.shared.object(forKey: WikiPaths.registerAgentsMdKey) as? Bool == true {
             _ = WikiAgentsMD.register(repoRoot: gen.repo)
         }
         if let repo = repoRoot, WikiRPC.canonical(repo) == key {
@@ -1489,7 +1489,7 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
                 lastSignature = [:]
                 refresh()
                 if gen.kind == .initial,
-                   UserDefaults.standard.object(forKey: WikiPaths.autoRegenerateKey) == nil {
+                   ShellConfig.shared.object(forKey: WikiPaths.autoRegenerateKey) == nil {
                     promptEnableAutoUpdate()
                 }
                 // Auto-commit the changed wiki docs (add + commit, NO push).
@@ -1535,7 +1535,7 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
         alert.addButton(withTitle: L10n.tr("wiki.autoPromptLater"))
         let resp = alert.runModal()
         if resp == .alertFirstButtonReturn {
-            UserDefaults.standard.set(true, forKey: WikiPaths.autoRegenerateKey)
+            ShellConfig.shared.set(true, forKey: WikiPaths.autoRegenerateKey)
             AppLog.shared.log("wiki auto-update enabled via first-generation prompt")
             onAutoUpdateSettingChanged?()
         }

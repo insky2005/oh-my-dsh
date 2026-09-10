@@ -892,13 +892,13 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         panel.allowsMultipleSelection = false
         panel.message = L10n.tr("preview.pickFolderMessage")
         panel.prompt = L10n.tr("preview.pickFolderOpen")
-        if let last = UserDefaults.standard.string(forKey: "previewLastDirectory") {
+        if let last = ShellConfig.shared.string(forKey: "previewLastDirectory") {
             panel.directoryURL = URL(fileURLWithPath: last)
         }
         guard let window = view.window else { return }
         panel.beginSheetModal(for: window) { [weak self] resp in
             guard resp == .OK, let url = panel.url else { return }
-            UserDefaults.standard.set(url.path, forKey: "previewLastDirectory")
+            ShellConfig.shared.set(url.path, forKey: "previewLastDirectory")
             self?.setTreeRoot(url.path)
             self?.open(path: url.path)
         }

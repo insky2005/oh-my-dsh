@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **壳层配置改为语言无关的文件存储（core 单一实现）**：新增共享 core 的 settings 模块（core/lib/settings.js + ohmy-core settings get/set/unset/list/path），把壳层自有配置存成 UTF-8 JSON：$DSH_HOME/shell/config.json（dev → ~/.dsh-dev/shell/config.json）。Swift 侧新增 ShellConfig 门面：读直接读该 JSON（快、无子进程），写委托 core CLI（写入/合并/原子化语义单一实现，失败时回退直写）。已迁移 ~12 个自有 key（appLanguage/appTheme/dshRegistry/autoUpgradeDsh/nextAutoUpgradeCheck/hasCompletedOnboarding/preview*/rightPanelKind/browserLastURL/browserRenderMode/channel.global.list/wiki*）。仍留在原生 UserDefaults 的仅系统/框架强制项：AppleLanguages、NSWindow Frame。dev 隔离注入（applyDevIsolation）提前到任何配置读取之前。
 - **开发版使用独立 bundle id（com.ohmydsh.app.dev）→ 独立 UserDefaults 域**：此前 dev 与正式版共用 com.ohmydsh.app，导致 dev 的偏好/状态与正式版共享——例如 Channel 面板「全局配置」的通道列表 channel.global.list（含缓存状态/连接）会显示正式版那份。改为 dev 构建时 bundle id 加 .dev 后缀，dev 拥有自己的 UserDefaults 域（channel.global.list、auto-upgrade 节流、语言/registry/主题等全部独立），可与正式版并存。
 - **所有家目录级 ~/.dsh 硬编码统一改走 DSH_HOME（开发版不再误读正式 ~/.dsh）**：
   - ChannelPanel 三处硬编码 ~/.dsh/channels（channel 运行状态、项目关联 workspaces.json、项目开关）→ 复用 env-aware 的 ChannelStoreReader.channelsDir()；
