@@ -184,7 +184,8 @@ function println(s) {
         const port = parseInt(rest[1], 10);
         const refs = JSON.parse(rest[2] || '[]');
         const dshIdx = rest.indexOf('--dsh-home');
-        const dshHome = dshIdx >= 0 ? rest[dshIdx + 1] : (require('node:os').homedir() + '/.dsh');
+        const dshHome = dshIdx >= 0 ? rest[dshIdx + 1]
+          : (process.env.DSH_HOME || (require('node:os').homedir() + '/.dsh'));
         const prIdx = rest.indexOf('--project-root');
         const projectRoot = prIdx >= 0 ? rest[prIdx + 1] : '';
         if (!channelId || !Number.isInteger(port)) fail('usage: channel run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>]');

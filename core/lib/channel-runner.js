@@ -158,9 +158,10 @@ async function runChannel(opts = {}) {
     jobQueue: createQueue(),
   });
 
+  const resolvedHome = opts.dshHome || process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
   const projectRoot = opts.projectRoot
     || (opts.refs && opts.refs[0] && opts.refs[0].workspaceRoot)
-    || path.join(os.homedir(), '.dsh', 'channel-runtime', channelId);
+    || path.join(resolvedHome, 'channel-runtime', channelId);
   const store = opts.sessions || createChannelSessions({ channelId, dshHome: opts.dshHome, defaultProjectRoot: projectRoot });
 
   let enabledCache = { roots: null, at: 0 };

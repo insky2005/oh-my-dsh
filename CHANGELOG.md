@@ -14,7 +14,12 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
-- **开发版 Channel 配置改走 DSH_HOME（不再误读正式 ~/.dsh）**：ChannelPanel 有三处硬编码 ~/.dsh/channels（读取 channel 运行状态、项目关联 workspaces.json、写入项目开关），无视 DSH_HOME，导致开发版（~/.dsh-dev）实际读写的是正式 ~/.dsh/channels。改为复用 env-aware 的 ChannelStoreReader.channelsDir()，开发版 Channel 配置与运行状态落到 ~/.dsh-dev/channels。
+- **所有家目录级 ~/.dsh 硬编码统一改走 DSH_HOME（开发版不再误读正式 ~/.dsh）**：
+  - ChannelPanel 三处硬编码 ~/.dsh/channels（channel 运行状态、项目关联 workspaces.json、项目开关）→ 复用 env-aware 的 ChannelStoreReader.channelsDir()；
+  - IssueRunnerPanel 的 GitHub token 路径（~/.dsh/gh-token、~/.dsh/tokens/<owner>-<repo>）→ 按 $DSH_HOME 解析；
+  - core：channel-runner 的 channel-runtime 目录与 ohmy-core 的 --dsh-home 默认值 → 优先 process.env.DSH_HOME；
+  - 内置技能文档（web-dev-tools 的 browser-api.port、issue-resolve 的 token 路径）→ 改为 ${DSH_HOME:-$HOME/.dsh}（dev/prod 通吃；内嵌文本与仓库副本保持字节一致，skills 测试通过）。
+  - 保持不变的：项目内 <repo>/.dsh（tasks/channels.json/wiki）与有意保留常量（dev home、旧 browser-dev 迁移源）。
 - **适配 dsh 0.1.2-rc.1 的预览打开文件（D3）**：0.1.2 把文件打开从 host.openPath 迁到会话控制器的 session/openWorkspacePath（端点 /api/session/openWorkspacePath，路径在 payload.args.request.path —— 实测抓包确认）。预览拦截脚本改为同时匹配新旧端点，并按 payload.args.request.path → args.path → payload.path 依次取路径，恢复「消息流里点文件 → 在预览面板打开」。
 - **修复 dsh 0.1.2-rc.1 下切换会话不跟随切换项目目录（会话跟踪）**：0.1.2 客户端把 RPC method 从点号改为斜杠（如 subagents/list）并把 sessionId 放到 payload.args.*，壳层注入的 session 跟踪脚本按旧的点号 method 与 payload.sessionId 匹配会全部落空，导致 webView 切会话不通知壳层、项目目录不跟随。修复为同时识别新旧两种 method 名，并从 payload.args（parentSessionId/agentId/sessionId/request.sessionId）回退到旧的 payload.* 取 sessionId。配合 B（workspace.json 磁盘映射）即可在切换会话后更新终端/预览/wiki/tasks 的项目目录。
 - **恢复 dsh 0.1.2-rc.1 下的会话 workspace / 项目目录读取（DSHSessionRPC）**：0.1.2-rc.1 移除并改了 /api/session.list（改为 token + 控制器 RPC），壳层读当前会话 cwd/workspace 会 401/404 而失败。修复为当 live API 取不到时，回退读取 dsh 持久化的 $DSH_HOME/storages/workspace.json（磁盘、无需鉴权）：按 sessionId 找到所属 workspace 的 path，否则取最近更新的 workspace path，用于终端/预览/wiki/tasks 的项目目录定位。
