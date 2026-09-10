@@ -2422,9 +2422,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       if (window.__dshSessionTracked) return;
       window.__dshSessionTracked = true;
       var origFetch = window.fetch;
+      // dsh 0.1.2+ uses slash method names (e.g. subagents/list) and carries
+      // the session id under payload.args; keep the legacy dot names/shape too
+      // so both client generations are tracked.
       var tracked = {
         'session.history': 1, 'session.prompt': 1, 'session.rename': 1,
-        'session.selectModel': 1, 'subagent.list': 1, 'subagents.list': 1
+        'session.selectModel': 1, 'subagent.list': 1, 'subagents.list': 1,
+        'session/history': 1, 'session/prompt': 1, 'session/rename': 1,
+        'session/selectModel': 1, 'subagent/list': 1, 'subagents/list': 1
       };
       window.fetch = function (input, init) {
         var url = typeof input === 'string' ? input : (input && (input.href || input.url)) || '';
@@ -2433,7 +2438,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             var body = typeof init.body === 'string' ? JSON.parse(init.body) : null;
             if (body && body.type === 'client-request' && tracked[body.method]
                 && body.payload) {
-              var sid = body.payload.sessionId || body.payload.parentSessionId;
+              var a = body.payload.args || {};
+              var req = a.request || {};
+              var sid = a.parentSessionId || a.agentId || a.sessionId || req.sessionId
+                        || body.payload.sessionId || body.payload.parentSessionId;
               if (!window.__dshSessionSeen) window.__dshSessionSeen = [];
               if (window.__dshSessionSeen.length < 100) {
                 window.__dshSessionSeen.push(body.method + ':' + (sid || ''));
