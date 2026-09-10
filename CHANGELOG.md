@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **开发版使用独立 bundle id（com.ohmydsh.app.dev）→ 独立 UserDefaults 域**：此前 dev 与正式版共用 com.ohmydsh.app，导致 dev 的偏好/状态与正式版共享——例如 Channel 面板「全局配置」的通道列表 channel.global.list（含缓存状态/连接）会显示正式版那份。改为 dev 构建时 bundle id 加 .dev 后缀，dev 拥有自己的 UserDefaults 域（channel.global.list、auto-upgrade 节流、语言/registry/主题等全部独立），可与正式版并存。
 - **所有家目录级 ~/.dsh 硬编码统一改走 DSH_HOME（开发版不再误读正式 ~/.dsh）**：
   - ChannelPanel 三处硬编码 ~/.dsh/channels（channel 运行状态、项目关联 workspaces.json、项目开关）→ 复用 env-aware 的 ChannelStoreReader.channelsDir()；
   - IssueRunnerPanel 的 GitHub token 路径（~/.dsh/gh-token、~/.dsh/tokens/<owner>-<repo>）→ 按 $DSH_HOME 解析；

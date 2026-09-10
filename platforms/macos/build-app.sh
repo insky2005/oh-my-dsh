@@ -58,6 +58,12 @@ esac
 # devBuildOverrides），用于与已安装版并存测试；未来再遇资源冲突可在同一处快速追加。
 DEV_BUILD="${DSH_DEV_BUILD:-0}"
 
+# 开发版使用独立 bundle id → 独立 UserDefaults 域（.dev 后缀），使 dev 与正式版的
+# 偏好/状态（channel.global.list、auto-upgrade 节流、语言/registry/主题等）彻底隔离。
+if [ "$DEV_BUILD" = "1" ]; then
+  BUNDLE_ID="$BUNDLE_ID.dev"
+fi
+
 SRC="src"
 BUILD_DIR="$ROOT/.build"
 CACHE_DIR="$ROOT/.cache"
