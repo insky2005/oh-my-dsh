@@ -9,7 +9,7 @@
 - **完全自包含**：App 内置 Node 运行时（含 npm）+ 完整的 `@deepseek-ai/dsh` 依赖树，**不依赖本机安装的 node 或 dsh**，拿到即可用（全新机器也能跑）；
 - **复用已有服务**：启动先检查 `127.0.0.1:3080` 是否已有 `dsh web` 在服务（如 harness 本身正在运行）→ **复用**，不重复启动；否则用内置运行时**自己拉起**（端口被占用自动换空闲端口），就绪后装进原生窗口；
 - **退出只清自己的**：Cmd+Q、关窗口、`kill`（SIGTERM/SIGINT/SIGHUP，含注销/关机）都会触发清理，关掉**自己拉起的**服务（优雅退出，3 秒内未退出则 SIGKILL），绝不干扰外部实例；
-- **dsh 可升级（含自动升级）**：设置菜单「检查并升级 dsh…」(`⌘U`) 手动升级；「自动升级 dsh」默认开启，每次启动最多检查一次（24h 节流），发现新版自动用内置 npm 原地升级；
+- **dsh 可升级（含自动升级）**：设置菜单「检查并升级 dsh…」(`⌘U`) 为**分步升级**——检测到「当前 vA → 可升 vB」→ 确认 → 后台把 vB 预热进缓存（可取消）→ **再次确认**才原地安装 + 重启；升级前整树备份、失败自动回滚；「自动升级 dsh」默认开启，每次启动最多检查一次（24h 节流），**不阻塞启动**（后台检测下载、下载完成后弹窗请用户确认）；
 - **中/英界面**：设置 →「语言」可选「系统 / 中文 / English」（默认跟随系统），可记忆；`DSH_LANG=zh|en` 强制指定；切换联动刷新 dsh web 页面语言（会话在服务端不受影响）；
 - **registry 可配置，默认国内源**：检查/升级走 npm registry，默认 `https://registry.npmmirror.com`，可在「设置 dsh registry…」里改（运行期），构建期用 `DSH_NPM_REGISTRY` 覆盖；
 - **首次引导 onboarding**：首次启动展示欢迎说明（内置运行时/自包含原理/上手提示）；
@@ -167,11 +167,11 @@ open "dist/oh-my-dsh-<version>-arm64.dmg"
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `DSH_NODE_VERSION` | 自动检测最新 LTS | 指定下载的 Node 版本，如 `v22.23.2` |
-| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@<默认版本>` | 传给 `npm install` 的包说明，如 `@deepseek-ai/dsh@latest` |
+| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.2-rc.1` | 传给 `npm install` 的包说明（内置 dsh 版本，壳层与该版本同步适配；可覆盖为 `@deepseek-ai/dsh@latest` 等） |
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh 用） |
 | `DSH_ARCH` | `uname -m` | 目标架构：`arm64` / `x86_64`（CI 构建 arm64，release 构建 arm64 + x86_64；不再出 universal） |
-| `DSH_DEV_BUILD` | `0` | `1` 打包**开发版**（Info.plist 写 `DSHDevBuild=1`）：运行时自动用独立 CEF profile `~/.dsh/browser-dev` 并跳过单实例退出，可与已安装正式版并存测试 |
+| `DSH_DEV_BUILD` | `0` | `1` 打包**开发版**（Info.plist 写 `DSHDevBuild=1`）：独立 bundle id `com.ohmydsh.app.dev`（独立 UserDefaults 域）；运行时**自拉起独立 dsh 实例**（不复用 3080 上的正式实例，被占则自动换空闲端口）、使用**独立 `DSH_HOME`（默认 `~/.dsh-dev`）**、CEF CDP / Browser API 端口错开（9333→9433、3081→4081），可与已安装正式版并存测试（均尊重显式 `DSH_HOME` / `DSH_CDP_PORT` / `DSH_BROWSER_PORT` 覆盖） |
 | `DSH_CEF_VERSION` | build-cef.sh pin 的版本 | 浏览器面板的 CEF/Chromium 版本（如 `150.0.18+gdb11278+chromium-150.0.7871.213`） |
 
 构建缓存：Node tarball、npm 缓存、已构建的运行时与 CEF 产物存放在 `.cache/`（按架构分目录，不随 `.build/` 清除）；
@@ -192,9 +192,10 @@ open "dist/oh-my-dsh.app"
 
 ## dsh 升级
 
-- **手动**：设置菜单 →「检查并升级 dsh…」(`⌘U`)，对比 registry 最新版，有新版则用内置 npm 原地升级并提示；
-- **自动**：设置菜单 →「自动升级 dsh」开关（默认开），每次启动自动检查（24 小时内最多一次），发现新版本在启动服务前先升级；
-- 升级只作用于**内置运行时**（`Contents/Resources/runtime/dsh`），绝不碰系统安装的 dsh；
+- **手动（分步 + 二次确认）**：设置菜单 →「检查并升级 dsh…」(`⌘U`)：① 检测并提示「当前 vA → 可升 vB」→ 用户确认；② 后台把 vB 预热进共享 npm 缓存（**不改动线上 dsh 树、可取消**）；③ 下载完成**再次确认**才原地安装 + 重启服务并重载页面。每次只升到**紧邻的下一个发布候选**（stable/rc，排除 alpha/beta/dev），不会一步跳到 latest；
+- **自动**：设置菜单 →「自动升级 dsh」开关（默认开），每次启动最多检查一次（24h 节流）；**不再阻塞启动**——服务先起来，后台检测并预热下载，**下载完成后弹窗请用户确认**才正式升级；选「稍后」推迟约 2 小时并定时提醒，离线 / 下载失败按约 2h 重试；
+- **备份与回滚**：正式升级前把 `runtime/dsh` 整树快照到 `~/Library/Caches/oh-my-dsh/upgrade-backups/`（只保留最近一份）；安装失败或安装后版本校验不符时**自动回滚**并提示；
+- 升级只作用于**内置运行时**（`Contents/Resources/runtime/dsh`），绝不碰系统安装的 dsh；升级进行中「检查并升级」菜单项自动置灰，避免与自动流程并发；
 - 升级日志见 `~/Library/Logs/oh-my-dsh/app.log`（`auto-upgrade: …` 行）；
 - 注意：升级会改写 App 包内文件，ad-hoc 签名因此失效，但本地运行不受影响；重新 `./platforms/macos/build-app.sh` 可还原干净包。
 
@@ -217,6 +218,7 @@ open "dist/oh-my-dsh.app"
 | `DSH_NATIVE_FORCE_SPAWN=1` | 跳过「复用已有服务」检查，总是自己拉起（测试/专用实例用） |
 | `DSH_REGISTRY` | 运行期 dsh 检查/升级用的 npm registry（优先于「设置 dsh registry…」与默认国内源） |
 | `DSH_AUTO_UPGRADE=0` | 本次运行关闭自动升级 |
+| `DSH_AUTO_UPGRADE_NOW=1` | 测试钩子：忽略 24h 节流，每次启动都跑一遍自动升级流程 |
 | `DSH_LANG=zh|en` | 强制界面语言（优先于「设置」→「语言」的选择；默认跟随系统） |
 | `DSH_BROWSER_PORT` | 浏览器面板 REST API 端口（默认 3081，占用自动递增；生效端口写 `~/.dsh/browser-api.port`） |
 | `DSH_CDP_PORT` | 浏览器面板 CDP 端口（默认 9333） |
@@ -224,6 +226,10 @@ open "dist/oh-my-dsh.app"
 
 > 其他 QA/调试钩子（环境变量或 `--ui-debug`）：`DSH_UI_DEBUG=1` 统一开关（打开浏览器面板 + 面板层级 dump + 截图）、
 > `DSH_PREVIEW_TEST_PATH` / `DSH_TERMINAL_TEST` / `DSH_WIKI_TEST`（启动即开对应面板）、`DSH_PREVIEW_DEBUG`（fetch 拦截探针）、`DSH_SESSION_DEBUG`（会话跟踪 dump）。
+
+> **壳层设置存放位置**：语言 / 主题 / 面板宽度 / 浏览器 / 通道 / wiki 等**壳层自有设置**存为 UTF-8 JSON `$DSH_HOME/shell/config.json`
+> （开发版 `~/.dsh-dev/shell/config.json`），可由外部工具 / 代理直接读写（写入经 core CLI 合并 + 原子落盘，壳层侧 0.3s 防抖异步）；
+> 仅系统级项（`AppleLanguages`、窗口位置）仍留在原生 UserDefaults。
 
 > **GitHub token（任务面板，按仓库作用域）**：面板「配置 GitHub Token」保存时**同时写入** Keychain 专属
 > （`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）和文件专属（`~/.dsh/tokens/<owner>-<repo>`，chmod 600）——
@@ -279,7 +285,7 @@ docs/                设计/排查文档（productization.md、dsh-version-impac
 
 - **Bug / 功能请求**：使用仓库的 Issue 模板（bug / feature）提交；
 - **本地测试**：`node --test core/tests/`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层）、
-  `tests/wiki-panel/run.sh`（Wiki 面板单测）、`tests/terminal-emulator/run.sh`（模拟器测试）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）；
+  `tests/wiki-panel/run.sh`（Wiki 面板单测）、`tests/terminal-emulator/run.sh`（模拟器测试）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）；
 - **CI**：push/PR 自动跑 core 单测 + 壳层编译检查 + macOS arm64 构建（`.github/workflows/ci.yml`）；发布由 release 流程构建双架构。
 
 本项目遵循 [MIT License](LICENSE)，代码只封装、绝不修改 DeepSeek Harness 上游源码。

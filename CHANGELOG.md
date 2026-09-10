@@ -5,12 +5,19 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
-## [Unreleased]
+## [1.14.0] - 2026-09-11
 
 ### Added
 
+- **钉钉原生适配器（`dingtalk-stream`）**：通道面板新增**钉钉自建应用机器人**接入，走官方 Stream 模式长连接（无需公网回调 / 内网穿透），与微信共享同一套面板模型（接入向导 / 连接状态 / 项目视图会话消息 / 每会话跨项目路由）。core 新增独立适配器模块（`core/lib/dingtalk.js`、`dingtalk-stream-transport.js`、`dingtalk-device.js`、`dingtalk-access.js`）与配套单测（`core/tests/dingtalk*.test.js`），面板侧完成向导接线与生命周期（启动拉起 runner、退出关闭）；设计与边界见 `docs/channel-dingtalk-stream.md`。
+- **钉钉绑定向导（device-code 扫码）+ owner-binding 安全门**：向导内完成 device-code 绑定——`init/begin` 得二维码 → 面板内渲染 → 手机钉钉扫码**自动创建企业内部应用 + 机器人** → 本地 `poll` 拿 AppKey/AppSecret 写入 store（chmod 600）；不便于扫码时提供「在浏览器中打开」链接。绑定完成后**只有本机管理员能驱动 dsh**：未绑定前机器人**拒绝所有人**（防任何组织成员经机器人操作本机 bash/文件/token），用 `/bind <口令>` 绑定（口令本机生成、见面板与运行日志），且**串行化处理——只有第一个发送正确口令的人能绑定**（修掉并发 last-writer-wins）；绑定成功回两条消息（确认 + 完整 `/help`）。绑定状态落 `~/.dsh/channels/<channelId>.binding.json`（chmod 600）；已配置的钉钉通道重开向导**不再重复扫码**（否则会重复创建应用），并自动恢复 `/bind` 口令；向导任一步「返回」都会取消在途 login 子进程。
+- **通道面板交互增强**：全局配置新增**解绑**（清空该通道配置并停掉 runner）；平台卡片状态点支持**悬浮提示**（不再只靠颜色传达状态，对色觉障碍友好）；微信绑定页展示「**已配置**」状态 + 显式「重新登录」（避免误替换已绑定 token）；钉钉无「正在输入」能力，以文字 ack 代替 sendTyping。
 - **dsh 升级改为「分步 + 分阶段 + 二次确认」**：不再一步升到 dist-tags.latest，每次只升到**紧邻的下一个发布候选**（stable/rc，排除 alpha/beta/dev；从 registry versions 取号，选步逻辑入共享 core 的 nextStepTarget，Swift 与 core 同一规则）。手动「检查并升级」为三段式：① 检测并提示「当前 vA → 可升 vB」→ 用户确认；② 后台把 vB 预热进共享 npm 缓存（不改动线上 dsh 树、可取消）；③ 下载完成**再次确认**后才原地安装 + 重启。自动升级（启用时）**先起服务不再阻塞启动**，24h 节流到达后在后台检测并下载，下载完成后弹窗请用户确认才正式升级（prefetch / apply 拆分见 core/lib/upgrade.js 与 main.swift 的 DSHUpdater）。
-- **dsh 升级备份与失败自动回滚**：正式升级前整树快照 runtime/dsh 到 ~/Library/Caches/oh-my-dsh/upgrade-backups/（只留最近一份）；安装失败或安装后版本校验不符自动回滚到备份并给出提示。
+- **dsh 升级备份与失败自动回滚**：正式升级前整树快照 runtime/dsh 到 ~/Library/Caches/oh-my-dsh/upgrade-backups/（只留最近一份）；安装失败或安装后版本校验不符自动回滚到备份并给出提示。新增调试钩子 `DSH_AUTO_UPGRADE_NOW=1`（忽略 24h 节流、每次启动都跑自动升级，便于验证该流程）。
+
+### Changed
+
+- **内置 dsh 版本推进到 `@deepseek-ai/dsh@0.1.2-rc.1`**（0.1.1 → 0.1.1-rc.2 → 0.1.2-rc.1，`build-app.sh` 的 `DSH_PACKAGE_SPEC` 默认值与打印行同步；构建期可用 `DSH_PACKAGE_SPEC` 覆盖）。壳层与内置 dsh **同步移动**：0.1.2 改了 `/api` 的鉴权（每实例 launch token → cookie）与 RPC 形状（斜杠端点 + `payload.args`），并移除了 `workspace.list` / `session.list` 的旧形态，本版全部兼容改动都围绕这些变化（见下方 Fixed）；升级影响清单、五个耦合面与执行 SOP 见 `docs/dsh-version-impact.md`，逐项兼容审计与验证记录见 `docs/plans/` 下的 0.1.2 文档。
 
 ### Fixed
 
@@ -55,9 +62,21 @@ All notable changes to this project are documented in this file. Format follows
 - **开发版（DSH_DEV_BUILD=1）运行隔离**：开发版构建现在自拉起**独立 dsh 实例**（不复用已在 3080 运行的实例，3080 被占时自动取空闲端口），并使用**独立 DSH_HOME（默认 ~/.dsh-dev）**，使 dsh 会话/配置/skills/channel 与正式 ~/.dsh 完全隔离；同时错开 CEF CDP（9333→9433）与 Browser API（3081→4081）端口，可与正式版并存测试（均尊重用户显式 DSH_HOME / DSH_CDP_PORT / DSH_BROWSER_PORT 覆盖）。旧开发版 CEF profile ~/.dsh/browser-dev 会**自动迁移**到新隔离目录 ~/.dsh-dev/browser-dev（幂等，目标已存在则跳过）。shell 侧 channel token 读写路径统一改为按 $DSH_HOME 解析，开发版不再写入正式 ~/.dsh。
 - **自动升级进行中「检查并升级 dsh」菜单置灰**：当自动升级开启且后台正在检测/下载/安装时，Settings 菜单里的「检查并升级 dsh…(⌘U)」自动置灰不可点，避免与自动流程并发；手动流程下载/安装期间同样置灰。Settings 窗口内按钮在忙碌时点按会提示「已有升级流程正在进行」。
 - **升级流程不再用全窗口状态浮层盖住整个界面**：手动/自动「检查、下载、安装」阶段均在后台静默执行，不再调用会铺满主窗口（白底+转圈）的 showStatus 浮层，避免点 Settings 的 Check & Upgrade 时整个 App 闪屏；只在每步完成时弹确认/结果框（真正重启服务那一下仍走启动浮层）。
-
 - **自动升级 dsh 失败（exit 127）**：App 内自动升级用打包 node 的绝对路径启动 npm，但 npm 执行依赖包 lifecycle 脚本（如 `@deepseek-ai/dsh-subprocess-local` 的 postinstall `node ensure-spawn-helper.mjs`）时通过 shell 按 `PATH` 找 `node`；GUI 启动的 App 继承 launchd 的精简 PATH 通常没有 `node`，报 `sh: node: command not found`、升级中断。修复为给升级子进程前置注入打包 node 所在目录到 `PATH`。
 - **升级后未重启服务 / WebView 未重载**：自动/手动升级跑完后运行中的 dsh web 仍在内存里跑旧代码（只刷新版本事实、没重启服务），新版本要等下次启动才生效。修复为升级成功后停止 App 自己拉起的服务并重新拉起 + 重载 WebView（含首次启动失败的场景）。
+- **钉钉 Stream 连接长期停在「连接中」**：连接就绪判定改用 SDK 语义的「socket 已打开（connected）」（不再等一个永远不会来的回调）、以原始 ticket 建连、并补上明确的连接超时——修掉绑定成功后卡片一直显示 connecting 的状态。
+- **通道消息分桶修正**：命令 / 系统类消息（`/help`、`/status` 等，无项目上下文）固定进**通道级全局桶**，只有 dsh 会话消息才按 workspace 归属——此前这类消息会被记到某个工作区下，项目视图与路由错乱。
+- **通道「启用」只由项目开关决定**：归档（archive）通道不再把它自动重新启用（迁移只播种一次）。
+- **`/wks <N>` 按序号切换工作区**（对齐 `/ses <N>`），不再只支持带内容形式。
+- **解绑按钮不再误打开绑定向导**：把该按钮从卡片点击手势中排除（改用 NSGestureRecognizer 委托，替换原先按点击坐标的脆弱判断）。
+- **重开绑定向导的状态修正**：step 0/1 不再显示 `/bind` 口令行，恢复为「已绑定」后正确显示「已完成」。
+
+### Docs
+
+- **dsh 升级影响清单**：新增 `docs/dsh-version-impact.md`（五个耦合面 A–F + 每次升级的执行 SOP + 0.1.1 → 0.1.2-rc.1 实例复盘），并补写 §6 的 **R3 详解（注入脚本）** 与 **R4 详解（`workspace.json` 私有存储兜底）**，明确「当前唯一还在静默失效风险里」的面与升级时的验证命令。
+- **钉钉**：新增 `docs/channel-dingtalk-stream.md`（原生适配器设计：独立于微信、device-code 绑定、owner-binding 门控、Stream 长连接语义），并更新 `docs/channel-status.md` / 通道面板文档（绑定 / 解绑 / 指令状态）；allowlist 与群聊拒绝配额等留作后续迭代。
+- **README / CONTRIBUTING 同步本次发布**：README 更新「内置 dsh 版本 = 0.1.2-rc.1」、dsh 升级改为「分步 + 二次确认 + 备份回滚/自动升级后台化」、开发版隔离（独立实例 / 独立 `DSH_HOME` / 独立 bundle id / 端口错开）、壳层设置改存 `$DSH_HOME/shell/config.json` 与 `DSH_AUTO_UPGRADE_NOW`；CONTRIBUTING 补 `tests/dsh-rpc` 套件、core 模块说明与 `swift-sources.sh` 单一来源约定。
+- **Wiki 同步**：dsh 0.1.2 兼容收尾（R4 存储护栏 / R3 注入脚本双面 / 外部 0.1.2 实例不复用）与钉钉原生适配器、通道绑定 / 解绑文档刷新，并记录 216 用例测试基线。
 
 ## [1.13.0] - 2026-08-24
 

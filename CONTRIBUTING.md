@@ -10,12 +10,12 @@ oh-my-dsh/
 ├── LICENSE  README.md  CHANGELOG.md  CONTRIBUTING.md  SECURITY.md
 ├── .github/             # CI 工作流 / ISSUE_TEMPLATE / CODEOWNERS（纯文档改动 docs/**、*.md 不触发 CI）
 ├── core/                # 共享核心（Node，平台无关）：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks /
-│                        #   channel（统一抽象 · 路由 · 指令 · 会话映射 · 微信适配器）；单测随 node --test core/tests/ 跑
+│                        #   dsh RPC 传输层 · shell 设置 · workspace 存储 · channel（统一抽象 · 路由 · 指令 · 会话映射 · 微信 ClawBot 与钉钉 stream 适配器）；单测随 node --test core/tests/ 跑
 ├── platforms/
 │   └── macos/           # macOS 壳：src/（Swift：main + 各面板）+ cef/（CEFShim + helper）+ build-app.sh + build-cef.sh + make-pkg.sh
 ├── scripts/             # 跨平台工具：version.sh（版本单一来源）/ changelog.sh / local-ci.sh（本机 CI）/ local-release.sh /
 │                        #   github-publish.sh / release-checksums.sh / release-fix.sh / git-remote.sh / migrate-platforms-macos.sh
-├── tests/               # 面板模型层单测套件（wiki-panel / browser-panel / terminal-emulator / channel-panel / skills，均 headless run.sh）
+├── tests/               # 面板模型层单测套件（wiki-panel / browser-panel / terminal-emulator / channel-panel / dsh-rpc / skills，均 headless run.sh）
 ├── docs/                # 设计/排查文档（productization.md、milestones/、channel-*.md、issue-runner-design.md 等）
 └── .dsh/                # wiki / skills（web-dev-tools / repo-knowledge / issue-resolve，随仓库提交）
 ```
@@ -36,8 +36,8 @@ oh-my-dsh/
 ## 运行测试
 
 ```bash
-# 共享核心单测（主套件，headless）：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 /
-# channel（指令 · 路由 · 会话 · 传输层）
+# 共享核心单测（主套件，headless）：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / dsh RPC 传输层 / shell 设置 /
+# workspace 存储 / issues / 队列 / 任务索引 / channel（指令 · 路由 · 会话 · 传输层 · 微信 ClawBot 与钉钉 stream 适配器 · 钉钉绑定鉴权）
 node --test core/tests/
 
 # 面板模型层单测（headless run.sh 套件）
@@ -45,6 +45,7 @@ tests/wiki-panel/run.sh
 tests/browser-panel/run.sh              # 浏览器面板模型层（REST 路由 / 日志缓冲）
 tests/terminal-emulator/run.sh          # 模拟器测试（core/tests/ansi.test.js 的薄封装）
 tests/channel-panel/run.sh              # 通道面板项目视图数据模型
+tests/dsh-rpc/run.sh                    # 壳层原生 dsh RPC（0.1.2 信封/斜杠端点、launch token 换 cookie、回退记忆）
 tests/skills/run.sh                     # 内置 skill 安装/覆盖/迁移与 SKILL.md 字节一致
 
 # 本机 CI：与 .github/workflows/ci.yml 三阶段对齐（core → swift 编译检查 → arm64 构建，不打包）
@@ -70,7 +71,7 @@ test(core): migrate emulator tests into core/      # 测试
 - 一个 PR 一个主题，保持小而可审查；
 - **提交前 `git status` 确认只含本次改动**，不顺手提交无关文件（尤其其他会话/代理的在途改动不要碰）；
 - 新增面向用户的文案必须中英双语成对（见 `.dsh/wiki/conventions.md` 的 L10n 约定；新增 Swift 文案登记进 `main.swift` 的 `L10n.table`）；
-- 新增 Swift 文件必须在 `build-app.sh` 的编译清单里登记（`platforms/macos/build-app.sh` 的 `SWIFT_SOURCES`）；
+- macOS 源码清单以 `platforms/macos/swift-sources.sh` 为**单一事实来源**（glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，`build-app.sh` / `scripts/local-ci.sh` / `.github/workflows/ci.yml` 三方共用，新增文件无需逐个登记）；仅当新文件是**独立工具**（含顶层代码，如 `MakeIcon.swift`）时才需在 `swift_sources()` 里显式排除；
 - 新增面板需配套模型层单测（`tests/<name>/run.sh` 模式；平台无关逻辑放 `core/tests/*.test.js`，随 `node --test core/tests/` 跑）；
 - **文档与实现同步**：改动 Channel 指令时同步更新 `docs/channel-commands.md`（维护说明见该文档文末）；面板/核心行为变更同步 `docs/channel-status.md`；
 - **GitHub token 不外泄**：需要 GitHub 写操作（开 PR、评论/关闭 issue、推私有仓库）时读取 `~/.dsh/tokens/<owner>-<repo>`（通用兜底 `~/.dsh/gh-token`），**绝不打印/回显/写入 commit message**。
@@ -98,4 +99,5 @@ test(core): migrate emulator tests into core/      # 测试
 - 工程约定：`.dsh/wiki/conventions.md`
 - 分支与提交规范：`docs/git-workflow.md`
 - 发布流程：`docs/release-process.md`（CHANGELOG → tag → local-release → 版本推进）
-- Channel 面板：`docs/channel-design.md` / `docs/channel-commands.md` / `docs/channel-status.md`（问题排查见 `docs/channel-issues.md`）
+- Channel 面板：`docs/channel-design.md` / `docs/channel-commands.md` / `docs/channel-status.md`（钉钉接入见 `docs/channel-dingtalk-stream.md`；问题排查见 `docs/channel-issues.md`）
+- dsh 上游升级：`docs/dsh-version-impact.md`（五个耦合面 + 升级执行 SOP + 版本复盘；动 dsh 相关代码前先读）
