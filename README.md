@@ -100,18 +100,21 @@
 - **当前限制**：飞书仅展示卡片（适配器待实现）；钉钉富特性（AI Card 流式 / 互动审批卡 / 图片 / DWS）留作后续增强，v1 以文本/Markdown 回复为主；
 - 设计与指令清单：`docs/channel-design.md`、`docs/channel-dingtalk-stream.md`、`docs/channel-commands.md`、`docs/channel-status.md`、`docs/channel-project-switch.md`。
 
-### 审计面板（`⌥⌘R` / 活动栏「审计」图标）
+### 审查面板（`⌥⌘R` / 活动栏「审查」图标）
 
 **只读**回答「这个会话里代理到底改了哪些文件、改成什么」——直接读 dsh 自己落盘的会话日志（`$DSH_HOME/sessions/<workspace>/<session>/session.jsonl[.zstd]`），不写任何文件、不发任何请求、不改 dsh。
 
-- **按文件分组列出变更**：每个文件显示逐次改动、`+N −M` 行数，以及该条记录**从哪来**：
+**按 会话 → 对话（turn）→ 文件 → 变更内容 的树展示，每层可展开/收起**；对话用该轮的用户消息做摘要；
+会话在第一次展开时才真正审计（列表只读日志头，展开才解码全量日志并缓存）。
+
+- **每个文件的逐次改动**都标出该条记录**从哪来**：
   - `已应用` —— 顶层 `write`/`edit` 工具结果里的 hunk（与 dsh web 的 diff 卡片同源）；
   - `参数还原` —— 由调用参数还原（`run_code` 嵌套调用没有 hunk 元数据）；
   - `全文写入` / `新建` —— 只记录了写入内容（新建文件没有「旧内容」可比）；
   - `嵌套调用` 标记 —— 该改动来自 `run_code` 内部的工具调用；
 - **shell 命令单列**：`bash` 直改（`sed -i`、`>`、`rm`、`git checkout` …）没有结构化的前后内容记录，面板按「可能写文件」启发式标出，默认只显示可疑项（可关掉过滤看全部）；
 - **失败调用单列**：记录为「尝试但未生效」的改动不混进变更列表；
-- **会话选择与跟随**：工具栏下拉列出当前工作区最近的会话日志（含 subagent 子会话，标 `sub`）；在 dsh web 切换会话时面板自动跟随；工作区切换自动重读；
+- **跟随 dsh web**：在 dsh web 切换会话时，面板展开同一 sessionId（按 id 解析，跨工作区也能定位），并标为「当前会话」；工作区切换只重列会话、不清审计缓存；
 - **读取诊断**：Zstandard 尾部未完成帧、无法解析的行等一律显式列出（不静默丢数据）；
 - **只读边界**：日志里没有的东西不会显示——`bash` 直改、以及日志尚未落盘的部分，面板只标注「需人工核对」；
 - 设计与覆盖矩阵：`docs/review-panel-design.md`。
@@ -304,7 +307,7 @@ docs/                设计/排查文档（productization.md、dsh-version-impac
 与 [SECURITY.md](SECURITY.md)（安全报告渠道）。
 
 - **Bug / 功能请求**：使用仓库的 Issue 模板（bug / feature）提交；
-- **本地测试**：`node --test core/tests/`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层）、
+- **本地测试**：`node --test --test-timeout=60000 core/tests/*.test.js`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层 / review-log 变更审计；`--test-timeout` 保证任何泄漏定时器的用例快速失败而不是挂死）、
   `tests/wiki-panel/run.sh`（Wiki 面板单测）、`tests/terminal-emulator/run.sh`（模拟器测试）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠）；
 - **CI**：push/PR 自动跑 core 单测 + 壳层编译检查 + macOS arm64 构建（`.github/workflows/ci.yml`）；发布由 release 流程构建双架构。
 

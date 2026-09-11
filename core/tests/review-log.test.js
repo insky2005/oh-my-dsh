@@ -119,6 +119,44 @@ test('review-log: nested run_code dispatches are audited from their arguments', 
   assert.equal(audit.stats.nested, 2); // one entry per dispatch (the run_code call itself is top-level)
 });
 
+test('review-log: turns are labelled by the user message and inherited by nested calls', () => {
+  const events = [
+    HEADER,
+    { type: 'turn/start', seq: 4, data: { turn: 1 } },
+    { type: 'user/message', seq: 5, data: { content: [{ type: 'text', text: 'first ask' }], source: { kind: 'user' }, role: 'user' } },
+    { type: 'tool/call', seq: 6, data: { turn: 1, step: 1, callId: 'root', name: 'run_code', arguments: '{}' } },
+    { type: 'tool/code-dispatch-start', seq: 7, data: { rootCallId: 'root', parentCallId: 'root', subCallId: 'root:code:1', name: 'write', arguments: { file_path: '/work/proj/a.txt', content: 'x' } } },
+    { type: 'tool/code-dispatch', seq: 8, data: { rootCallId: 'root', parentCallId: 'root', subCallId: 'root:code:1', name: 'write', arguments: { file_path: '/work/proj/a.txt', content: 'x' }, isError: false, content: [] } },
+    { type: 'turn/start', seq: 9, data: { turn: 2 } },
+    { type: 'user/message', seq: 10, data: { content: [{ type: 'text', text: 'second ask' }], source: { kind: 'user' }, role: 'user' } },
+    { type: 'tool/call', seq: 11, data: { turn: 2, step: 1, callId: 'c9', name: 'edit', arguments: JSON.stringify({ file_path: '/work/proj/a.txt', old_string: 'x', new_string: 'y' }) } },
+    topResult(12, 'c9', undefined),
+  ];
+  const audit = review.buildAudit(events, { workspace: '/work/proj' });
+  assert.deepEqual(audit.turns.map((t) => t.turn), [1, 2]);
+  assert.equal(audit.turns[0].prompt, 'first ask');
+  assert.equal(audit.turns[1].prompt, 'second ask');
+  const nested = audit.entries.find((e) => e.surface === 'nested');
+  assert.equal(nested.turn, 1, 'nested dispatch inherits the run_code call turn');
+  assert.equal(nested.step, 1);
+  const second = audit.entries.find((e) => e.callId === 'c9');
+  assert.equal(second.turn, 2);
+});
+
+test('review-log: a tool-result message never becomes a turn prompt', () => {
+  const events = [
+    HEADER,
+    { type: 'turn/start', seq: 4, data: { turn: 1 } },
+    { type: 'user/message', seq: 5, data: { content: [{ type: 'text', text: 'real ask' }], source: { kind: 'user' }, role: 'user' } },
+    topCall(6, 'c1', 'read', { file_path: '/work/proj/a.txt' }),
+    topResult(7, 'c1', undefined),
+    { type: 'turn/start', seq: 8, data: { turn: 2 } },
+  ];
+  const audit = review.buildAudit(events, { workspace: '/work/proj' });
+  assert.equal(audit.turns[0].prompt, 'real ask');
+  assert.equal(audit.turns[1].prompt, null);
+});
+
 test('review-log: a failed mutation records its error state without hunks', () => {
   const events = [
     HEADER,

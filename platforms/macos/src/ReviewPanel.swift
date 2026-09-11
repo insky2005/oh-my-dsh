@@ -1,19 +1,29 @@
 import AppKit
 
-// MARK: - Review（变更审计）panel — READ-ONLY
+// MARK: - Review（审查）panel — READ-ONLY
 //
-// Shows what an agent changed in the dsh sessions of the current workspace:
-// per-file groups with the applied hunks, the changes reconstructed from nested
-// run_code dispatches, and the shell commands that may have written files
-// outside any structured record. The audit itself is computed by the shared
-// core (`core/lib/review-log.js`) because dsh session logs are Zstandard
-// frames; this panel runs the core CLI and renders its JSON.
+// Shows what an agent changed in this workspace's dsh sessions as a tree:
+//   会话 (session) → 对话 (turn) → 文件 (file) → 变更内容 (hunks)
+// Every level expands/collapses. The audit itself is computed by the shared core
+// (`core/lib/review-log.js`) because dsh session logs are Zstandard frames; this
+// panel runs the core CLI and renders its JSON.
 //
 // Design + coverage notes: docs/review-panel-design.md
 
-/// Panel root: non-opaque self-drawn background (same pattern as
-/// `TerminalRootView`/`WikiRootView`/`ChannelRootView` — an opaque, layer-less
-/// root composites over its siblings in this layer-backed window).
+/// Content background: white, per the panel's document-style look (the visual
+/// language follows the Channel panel's project view, which uses light rounded
+/// blocks on a light surface).
+final class ReviewPaperView: NSView {
+    override var isOpaque: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.white.setFill()
+        dirtyRect.fill()
+    }
+}
+
+/// Panel root: non-opaque self-drawn chrome background (same pattern as
+/// `TerminalRootView`/`WikiRootView`/`ChannelRootView`). The content area is a
+/// white paper view mounted on top of it.
 final class ReviewRootView: NSView {
     override var isOpaque: Bool { false }
     override func draw(_ dirtyRect: NSRect) {
@@ -24,13 +34,26 @@ final class ReviewRootView: NSView {
     }
 }
 
+/// Palette for the white content surface (explicit colours so the tree stays
+/// readable on the white paper regardless of the system appearance).
+private enum ReviewInk {
+    static let title = NSColor(calibratedWhite: 0.13, alpha: 1)
+    static let body = NSColor(calibratedWhite: 0.30, alpha: 1)
+    static let muted = NSColor(calibratedWhite: 0.52, alpha: 1)
+    static let hairline = NSColor(calibratedWhite: 0.80, alpha: 1)
+    static let sessionFill = NSColor(calibratedRed: 0.90, green: 0.93, blue: 0.99, alpha: 1)
+    static let turnFill = NSColor(calibratedWhite: 0.955, alpha: 1)
+    static let blockFill = NSColor.white
+    static let added = NSColor(calibratedRed: 0.10, green: 0.48, blue: 0.20, alpha: 1)
+    static let removed = NSColor(calibratedRed: 0.72, green: 0.16, blue: 0.16, alpha: 1)
+}
+
 final class ReviewPanelController: NSObject {
 
     var onRequestHide: (() -> Void)?
-    /// The workspace whose sessions are audited (wired to main.swift).
+    /// The workspace whose sessions are listed (wired to main.swift).
     var workspacePath: (() -> String?)?
-    /// QA hook: fires after each render, so `--ui-debug` can snapshot the
-    /// loaded panel (its mount-time snapshot only ever catches the load state).
+    /// QA hook: fires after each render (see main.swift's --ui-debug snapshot).
     var onDidRender: (() -> Void)?
 
     static let minWidth: CGFloat = 320
@@ -41,36 +64,48 @@ final class ReviewPanelController: NSObject {
     private let headerTitle = HeaderLabel()
     private let refreshButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: "")
     private let hideButton = CustomIconButton(glyph: .close, tooltip: "")
-    private let sessionPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let expandAllButton = NSButton(title: "", target: nil, action: nil)
+    private let collapseAllButton = NSButton(title: "", target: nil, action: nil)
     private let suspectToggle = NSButton(checkboxWithTitle: "", target: nil, action: nil)
 
     // Content
-    private let contentContainer = DynamicFillView()
+    private let contentContainer = ReviewPaperView()
     private let scroll = NSScrollView()
     private let list = FlippedStackView()
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
 
-    // State
+    // State (expansion is tracked with *collapse* sets for sessions/turns and an
+    // expand set for files, so a freshly loaded audit opens on a useful default).
     private var sessions: [ReviewSessionSummary] = []
-    private var audit: ReviewAudit?
-    private var selectedSessionId: String?
-    /// The session dsh web is currently viewing — preferred when present.
+    private var audits: [String: ReviewAudit] = [:]
+    private var auditing: Set<String> = []
+    private var failedAudits: Set<String> = []
+    private var expandedSessions: Set<String> = []
+    private var collapsedTurns: Set<String> = []
+    private var expandedFiles: Set<String> = []
+    private var expandedShells: Set<String> = []
     private var activeSessionId: String?
+    private var workspace: String?
     private var suspectOnly = true
     private var hasLoaded = false
     private var isLoading = false
+    private var pendingReload = false
     private var loadToken = 0
+    /// Sessions whose tree already got its default expansion applied.
+    private var preparedSessions: Set<String> = []
 
-    /// Cap on rendered diff lines per entry (a big create is summarized, not dumped).
     private let maxDiffLinesPerEntry = 200
+    private let maxSessions = 60
 
     override init() {
         super.init()
         buildUI()
         refreshButton.onAction = { [weak self] in self?.reload() }
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
-        sessionPopup.target = self
-        sessionPopup.action = #selector(sessionChanged(_:))
+        expandAllButton.target = self
+        expandAllButton.action = #selector(expandAllTapped(_:))
+        collapseAllButton.target = self
+        collapseAllButton.action = #selector(collapseAllTapped(_:))
         suspectToggle.target = self
         suspectToggle.action = #selector(suspectToggled(_:))
         updateLabels()
@@ -83,24 +118,34 @@ final class ReviewPanelController: NSObject {
         if !hasLoaded { reload() }
     }
 
-    /// The workspace changed (session/project switch) — start over.
+    /// The workspace changed (session/project switch) — re-list, keep the audit
+    /// cache (a session's audit does not depend on the current workspace).
     func workspaceChanged() {
-        audit = nil
-        sessions = []
-        selectedSessionId = nil
         hasLoaded = false
-        render()
         if isViewVisible { reload() }
     }
 
-    /// Follow the session dsh web is showing (panel ↔ web link).
+    /// Follow the session dsh web is showing: expand it (auditing it if needed).
+    /// Works even when that session belongs to another workspace — the session is
+    /// resolved by id, never by the workspace list.
     func setActiveSession(_ sessionId: String?) {
+        guard let sessionId = sessionId, !sessionId.isEmpty else { return }
+        let changed = activeSessionId != sessionId
         activeSessionId = sessionId
-        guard let sessionId = sessionId, sessions.contains(where: { $0.id == sessionId }),
-              selectedSessionId != sessionId else { return }
-        selectedSessionId = sessionId
-        syncPopupSelection()
-        reload()
+        if !sessions.contains(where: { $0.id == sessionId }) && !isLoading {
+            // Not in the current list (older than the cap, or another workspace):
+            // re-list before giving up, then expand whatever came back.
+            reload()
+        }
+        if changed {
+            expandedSessions.insert(sessionId)
+            // Reopen every turn of that session (collapse state is keyed per turn).
+            let prefix = "turn:\(sessionId)#"
+            collapsedTurns = collapsedTurns.filter { !$0.hasPrefix(prefix) }
+            AppLog.shared.log("review: follow web session \(sessionId) (listed=\(sessions.contains { $0.id == sessionId }))")
+        }
+        ensureAudit(sessionId)
+        render()
     }
 
     /// Language change → refresh the visible strings.
@@ -115,6 +160,8 @@ final class ReviewPanelController: NSObject {
         headerTitle.text = L10n.tr("review.title")
         refreshButton.toolTip = L10n.tr("review.refresh")
         hideButton.toolTip = L10n.tr("preview.closePanel")
+        expandAllButton.title = L10n.tr("review.expandAll")
+        collapseAllButton.title = L10n.tr("review.collapseAll")
         suspectToggle.title = L10n.tr("review.suspectOnly")
     }
 
@@ -142,17 +189,19 @@ final class ReviewPanelController: NSObject {
             actions.centerYAnchor.constraint(equalTo: header.centerYAnchor),
         ])
 
-        // Toolbar: session picker + the suspect-only filter.
+        // Toolbar: tree-wide expand/collapse + the shell-command filter.
         let toolbar = DynamicFillView()
         toolbar.kind = .window
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true
 
-        sessionPopup.translatesAutoresizingMaskIntoConstraints = false
-        sessionPopup.controlSize = .small
-        sessionPopup.font = NSFont.systemFont(ofSize: 11)
-        sessionPopup.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        for button in [expandAllButton, collapseAllButton] {
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.bezelStyle = .rounded
+            button.controlSize = .small
+            button.font = NSFont.systemFont(ofSize: 11)
+        }
         suspectToggle.translatesAutoresizingMaskIntoConstraints = false
         suspectToggle.controlSize = .small
         suspectToggle.font = NSFont.systemFont(ofSize: 11)
@@ -162,14 +211,16 @@ final class ReviewPanelController: NSObject {
         toolbarSeparator.boxType = .separator
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
 
-        toolbar.addSubview(sessionPopup)
+        toolbar.addSubview(expandAllButton)
+        toolbar.addSubview(collapseAllButton)
         toolbar.addSubview(suspectToggle)
         toolbar.addSubview(toolbarSeparator)
         NSLayoutConstraint.activate([
-            sessionPopup.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 10),
-            sessionPopup.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-            sessionPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
-            suspectToggle.leadingAnchor.constraint(greaterThanOrEqualTo: sessionPopup.trailingAnchor, constant: 8),
+            expandAllButton.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 10),
+            expandAllButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            collapseAllButton.leadingAnchor.constraint(equalTo: expandAllButton.trailingAnchor, constant: 6),
+            collapseAllButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            suspectToggle.leadingAnchor.constraint(greaterThanOrEqualTo: collapseAllButton.trailingAnchor, constant: 8),
             suspectToggle.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -10),
             suspectToggle.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
             toolbarSeparator.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
@@ -177,7 +228,6 @@ final class ReviewPanelController: NSObject {
             toolbarSeparator.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor),
         ])
 
-        contentContainer.kind = .control
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.wantsLayer = true
         contentContainer.layer?.masksToBounds = true
@@ -188,14 +238,20 @@ final class ReviewPanelController: NSObject {
         scroll.autohidesScrollers = true
         list.orientation = .vertical
         list.alignment = .leading
-        list.spacing = 10
-        list.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 12, right: 10)
+        list.spacing = 8
+        list.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 14, right: 10)
         list.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = list
+        NSLayoutConstraint.activate([
+            list.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            list.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
+            list.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            list.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+        ])
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.font = NSFont.systemFont(ofSize: 11)
-        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.textColor = ReviewInk.muted
         statusLabel.alignment = .center
         statusLabel.isHidden = true
 
@@ -206,7 +262,6 @@ final class ReviewPanelController: NSObject {
             scroll.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
-            list.widthAnchor.constraint(equalTo: scroll.widthAnchor),
             statusLabel.centerXAnchor.constraint(equalTo: contentContainer.centerXAnchor),
             statusLabel.centerYAnchor.constraint(equalTo: contentContainer.centerYAnchor),
             statusLabel.widthAnchor.constraint(lessThanOrEqualTo: contentContainer.widthAnchor, constant: -40),
@@ -235,7 +290,13 @@ final class ReviewPanelController: NSObject {
     // MARK: - Loading
 
     private func reload() {
-        guard !isLoading else { return }
+        if isLoading {
+            // Never drop a request: the follow-web-session path and the
+            // workspace-change path both call reload(), and a dropped second
+            // call is exactly how the panel used to show another session's data.
+            pendingReload = true
+            return
+        }
         guard let workspace = workspacePath?(), !workspace.isEmpty else {
             showStatus(L10n.tr("review.noWorkspace"))
             return
@@ -243,52 +304,92 @@ final class ReviewPanelController: NSObject {
         isLoading = true
         loadToken += 1
         let token = loadToken
-        let preferred = selectedSessionId ?? activeSessionId
+        let workspaceAtStart = workspace
         let activeAtStart = activeSessionId
+        self.workspace = workspace
         showStatus(L10n.tr("review.loading"))
-        AppLog.shared.log("review: reload workspace=\(workspace) preferredSession=\(preferred ?? "-")")
+        AppLog.shared.log("review: list sessions workspace=\(workspace) active=\(activeAtStart ?? "-")")
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let listedJSON = CoreBridge.run(["review", "sessions", "--workspace", workspace, "--limit", "50"],
-                                            timeout: 30, preferBundledNode: true)
+            // One listing without a workspace filter: the panel partitions it
+            // itself, so the session dsh web is showing is found even when it
+            // belongs to another workspace (the old --workspace filter silently
+            // dropped it, which is why the panel could show a different session).
+            let listedJSON = CoreBridge.run(["review", "sessions", "--limit", "200"],
+                                            timeout: 60, preferBundledNode: true)
             let listed = listedJSON.flatMap { ReviewLogModel.decodeSessions($0) }
-            let sessions = listed?.sessions ?? []
-
-            // Keep the current selection while it still exists; otherwise prefer
-            // the session dsh web is showing, else the newest.
-            var target: ReviewSessionSummary?
-            if let preferred = preferred { target = sessions.first { $0.id == preferred } }
-            if target == nil { target = sessions.first { $0.id == activeAtStart } }
-            if target == nil { target = sessions.first }
-
-            var auditJSON: String?
-            if let target = target {
-                auditJSON = CoreBridge.run(["review", "audit", target.id, "--workspace", workspace],
-                                           timeout: 120, preferBundledNode: true)
+            var sessions = listed?.sessions ?? []
+            let total = listed?.total ?? sessions.count
+            let inWorkspace = sessions.filter { $0.cwd == workspaceAtStart }
+            let active = activeAtStart.flatMap { id in sessions.first { $0.id == id } }
+            sessions = inWorkspace
+            if let active = active, !sessions.contains(where: { $0.id == active.id }) {
+                sessions.insert(active, at: 0)
             }
-            let audit = auditJSON.flatMap { ReviewLogModel.decodeAudit($0) }
+            if sessions.count > self?.maxSessions ?? 60 {
+                sessions = Array(sessions.prefix(self?.maxSessions ?? 60))
+            }
+            let diagnostics = listed?.diagnostics ?? []
             DispatchQueue.main.async {
                 guard let self = self, self.loadToken == token else { return }
                 self.isLoading = false
                 self.hasLoaded = true
                 self.sessions = sessions
-                self.selectedSessionId = target?.id
-                self.audit = audit
-                self.syncPopupSelection()
-                if let audit = audit {
-                    let codes = (audit.diagnostics ?? []).map { $0.code }.joined(separator: ",")
-                    AppLog.shared.log("review: audit \(target?.id ?? "-") entries=\(audit.entries.count) "
-                        + "files=\(audit.stats?.files ?? -1) diagnostics=[\(codes)]")
-                } else {
-                    AppLog.shared.log("review: audit FAILED for \(target?.id ?? "-") (sessions=\(sessions.count))")
+                if let first = sessions.first(where: { $0.id == activeAtStart }) {
+                    // The web session is in the list: open it (and only it).
+                    self.expandedSessions.insert(first.id)
+                } else if self.expandedSessions.isEmpty, let first = sessions.first {
+                    self.expandedSessions.insert(first.id)
                 }
+                AppLog.shared.log("review: listed \(sessions.count)/\(total) sessions for workspace "
+                    + "(active matched=\(sessions.contains { $0.id == activeAtStart })) diagnostics=\(diagnostics.count)")
                 if sessions.isEmpty {
                     self.showStatus(L10n.tr("review.noSessions"))
-                } else if audit == nil {
-                    self.showStatus(L10n.tr("review.loadFailed"))
                 } else {
                     self.render()
+                    // Audit the sessions the user can actually see expanded.
+                    for session in sessions where self.expandedSessions.contains(session.id) {
+                        self.ensureAudit(session.id)
+                    }
                 }
+                if self.pendingReload {
+                    self.pendingReload = false
+                    self.reload()
+                }
+            }
+        }
+    }
+
+    /// Audit one session on demand (cached; never audits twice).
+    private func ensureAudit(_ sessionId: String) {
+        if audits[sessionId] != nil || auditing.contains(sessionId) { return }
+        auditing.insert(sessionId)
+        AppLog.shared.log("review: audit \(sessionId)")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // No --workspace: the id alone must resolve, wherever that session lives.
+            let json = CoreBridge.run(["review", "audit", sessionId], timeout: 180, preferBundledNode: true)
+            let audit = json.flatMap { ReviewLogModel.decodeAudit($0) }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.auditing.remove(sessionId)
+                if let audit = audit, audit.session != nil {
+                    self.audits[sessionId] = audit
+                    let codes = (audit.diagnostics ?? []).map { $0.code }.joined(separator: ",")
+                    AppLog.shared.log("review: audit \(sessionId) entries=\(audit.entries.count) "
+                        + "files=\(audit.stats?.files ?? -1) turns=\(audit.turns?.count ?? 0) diagnostics=[\(codes)]")
+                    if !self.preparedSessions.contains(sessionId), self.expandedSessions.contains(sessionId) {
+                        // Default tree state: the newest 对话 open, older ones folded.
+                        self.preparedSessions.insert(sessionId)
+                        let groups = ReviewLogModel.turnGroups(audit, suspectShellsOnly: self.suspectOnly)
+                        for group in groups.dropFirst() {
+                            self.collapsedTurns.insert(self.expandKeyTurn(sessionId, group.turn))
+                        }
+                    }
+                } else {
+                    self.failedAudits.insert(sessionId)
+                    AppLog.shared.log("review: audit FAILED for \(sessionId)")
+                }
+                self.render()
             }
         }
     }
@@ -301,137 +402,424 @@ final class ReviewPanelController: NSObject {
 
     // MARK: - Actions
 
-    @objc private func sessionChanged(_ sender: Any?) {
-        let index = sessionPopup.indexOfSelectedItem
-        guard index >= 0, index < sessions.count else { return }
-        let id = sessions[index].id
-        guard id != selectedSessionId else { return }
-        selectedSessionId = id
-        reload()
-    }
-
     @objc private func suspectToggled(_ sender: Any?) {
         suspectOnly = (sender as? NSButton)?.state == .on
         render()
     }
 
-    private func syncPopupSelection() {
-        sessionPopup.removeAllItems()
+    @objc private func expandAllTapped(_ sender: Any?) {
         for session in sessions {
-            sessionPopup.addItem(withTitle: ReviewLogModel.sessionLabel(session))
+            expandedSessions.insert(session.id)
+            ensureAudit(session.id)
         }
-        if let selected = selectedSessionId, let index = sessions.firstIndex(where: { $0.id == selected }) {
-            sessionPopup.selectItem(at: index)
+        for (id, audit) in audits {
+            for group in ReviewLogModel.turnGroups(audit, suspectShellsOnly: suspectOnly) {
+                collapsedTurns.remove(expandKeyTurn(id, group.turn))
+                for file in group.files { expandedFiles.insert(expandKeyFile(id, group.turn, file.path)) }
+            }
         }
+        render()
     }
+
+    @objc private func collapseAllTapped(_ sender: Any?) {
+        expandedSessions.removeAll()
+        expandedFiles.removeAll()
+        collapsedTurns.removeAll()
+        render()
+    }
+
+    /// Expansion keys for the tree (one per level, scoped to its session).
+    private func expandKeyTurn(_ sessionId: String, _ turn: Int?) -> String { "turn:\(sessionId)#\(turn.map(String.init) ?? "-")" }
+    private func expandKeyFile(_ sessionId: String, _ turn: Int?, _ path: String) -> String { "file:\(expandKeyTurn(sessionId, turn))#\(path)" }
+    private func expandKeyShell(_ sessionId: String, _ turn: Int?) -> String { "shell:\(expandKeyTurn(sessionId, turn))" }
 
     // MARK: - Rendering
 
     private func render() {
-        guard let audit = audit else {
-            if !isLoading { showStatus(sessions.isEmpty ? L10n.tr("review.noSessions") : L10n.tr("review.empty")) }
-            return
-        }
-        statusLabel.isHidden = true
+        // Click closures live in `headerActions` keyed by view identity; every
+        // render rebuilds the tree, so stale entries must not accumulate.
+        headerActions.removeAll()
         var rows: [NSView] = []
-
-        if let stats = audit.stats {
-            rows.append(makeSummaryCard(stats, session: audit.session))
+        statusLabel.isHidden = true
+        rows.append(makeSummaryCard())
+        for session in sessions {
+            rows.append(makeSessionBlock(session))
         }
-        for diagnostic in audit.diagnostics ?? [] {
-            rows.append(makeTextBlock(diagnostic.message, color: .secondaryLabelColor, size: 10, monospaced: false))
-        }
-
-        let groups = ReviewLogModel.fileGroups(audit.entries)
-        if groups.isEmpty {
-            rows.append(makeTextBlock(L10n.tr("review.empty"), color: .secondaryLabelColor, size: 11, monospaced: false))
-        }
-        for group in groups {
-            rows.append(makeFileGroupView(group))
-        }
-
-        let failures = ReviewLogModel.failures(audit.entries)
-        if !failures.isEmpty {
-            rows.append(makeCallsSection(title: L10n.tr("review.failedHeader"), entries: failures, failed: true))
-        }
-
-        let bash = ReviewLogModel.bashEntries(audit.entries, suspectOnly: suspectOnly)
-        if !bash.isEmpty {
-            rows.append(makeCallsSection(title: L10n.tr("review.bashHeader"), entries: bash, failed: false))
-        }
-
         list.setViews(rows, in: .top)
+        // Full-width rows: a .leading-aligned stack sizes arranged views to their
+        // fitting width, which would leave short rows hugging their content.
+        for row in rows {
+            row.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -20).isActive = true
+        }
         onDidRender?()
     }
 
-    private func makeSummaryCard(_ stats: ReviewStats, session: ReviewSessionInfo?) -> NSView {
-        let card = DynamicFillView()
-        card.kind = .control
-        card.translatesAutoresizingMaskIntoConstraints = false
-        card.wantsLayer = true
-        card.layer?.cornerRadius = 6
-        card.layer?.masksToBounds = true
-
-        var parts = [String(format: L10n.tr("review.summaryFiles"), stats.files),
-                     "+(stats.added) −(stats.removed)"]
-        if stats.nested > 0 { parts.append(L10n.tr("review.nested") + " (stats.nested)") }
-        if stats.bashSuspect > 0 { parts.append(L10n.tr("review.suspectShort") + " (stats.bashSuspect)") }
-        if stats.failed > 0 { parts.append(L10n.tr("review.error") + " (stats.failed)") }
-        var text = parts.joined(separator: "  ·  ")
-        if let session = session, let created = session.createdAt {
-            let stamp = DateFormatter.localizedString(from: Date(timeIntervalSince1970: created / 1000),
-                                                      dateStyle: .short, timeStyle: .short)
-            text += "\n" + ReviewLogModel.shortId(session.id) + " · " + stamp
+    /// Header summary over everything currently audited (never a half-filled line:
+    /// every number is labelled, and the audited/total session count is explicit).
+    private func makeSummaryCard() -> NSView {
+        var sessionsCount = 0
+        var turnsCount = 0
+        var files = Set<String>()
+        var added = 0, removed = 0, nested = 0, suspect = 0, shells = 0, failed = 0
+        for (id, audit) in audits {
+            guard let stats = audit.stats else { continue }
+            sessionsCount += 1
+            turnsCount += ReviewLogModel.turnGroups(audit, suspectShellsOnly: suspectOnly).count
+            for group in ReviewLogModel.fileGroups(ReviewLogModel.mutations(audit.entries)) {
+                files.insert("\(id)#\(group.path)")
+            }
+            added += stats.added
+            removed += stats.removed
+            nested += stats.nested
+            suspect += stats.bashSuspect
+            shells += stats.bashCalls
+            failed += stats.failed
         }
-        let label = makeTextBlock(text, color: .labelColor, size: 11, monospaced: false)
+        let parts = [
+            L10n.tr("review.summarySessions") + " \(sessionsCount)/\(sessions.count)",
+            L10n.tr("review.summaryTurns") + " \(turnsCount)",
+            L10n.tr("review.filesShort") + " \(files.count)",
+            "+\(added) −\(removed)",
+            L10n.tr("review.nested") + " \(nested)",
+            L10n.tr("review.suspectShort") + " \(suspect)/\(shells)",
+            L10n.tr("review.error") + " \(failed)",
+        ]
+        return makeCard(text: parts.joined(separator: "  ·  "), fill: ReviewInk.turnFill,
+                        textColor: ReviewInk.body, font: NSFont.systemFont(ofSize: 11), padding: 9)
+    }
+
+    private func makeSessionBlock(_ session: ReviewSessionSummary) -> NSView {
+        let expanded = expandedSessions.contains(session.id)
+        let audit = audits[session.id]
+        var trailing = ""
+        if auditing.contains(session.id) {
+            trailing = L10n.tr("review.reading")
+        } else if let stats = audit?.stats {
+            trailing = "\(stats.files) " + L10n.tr("review.filesShort")
+                + " ·  +\(stats.added) −\(stats.removed)"
+                + (stats.nested > 0 ? " ·  " + L10n.tr("review.nested") + " \(stats.nested)" : "")
+        } else if failedAudits.contains(session.id) {
+            trailing = L10n.tr("review.loadFailed")
+        } else if expanded {
+            trailing = L10n.tr("review.reading")
+        }
+        var detail = ReviewLogModel.clockLabel(session.mtimeMs) + " · " + ReviewLogModel.byteLabel(session.sizeBytes)
+        if session.isSubagent { detail += " · " + L10n.tr("review.subagent") }
+        if session.id == activeSessionId { detail += " · " + L10n.tr("review.current") }
+
+        var children: [NSView] = []
+        if expanded {
+            if let audit = audit {
+                let groups = ReviewLogModel.turnGroups(audit, suspectShellsOnly: suspectOnly)
+                if groups.isEmpty {
+                    children.append(makeNote(L10n.tr("review.empty")))
+                } else {
+                    for group in groups { children.append(makeTurnBlock(sessionId: session.id, group: group)) }
+                }
+                for diagnostic in audit.diagnostics ?? [] {
+                    children.append(makeNote(diagnostic.message))
+                }
+            } else if failedAudits.contains(session.id) {
+                children.append(makeNote(L10n.tr("review.loadFailed")))
+            } else {
+                children.append(makeNote(L10n.tr("review.reading")))
+            }
+        }
+        return makeBlock(title: ReviewLogModel.shortId(session.id), detail: detail, trailing: trailing,
+                         symbol: "doc.text", fill: ReviewInk.sessionFill, border: ReviewInk.hairline,
+                         titleFont: NSFont.systemFont(ofSize: 13, weight: .semibold), titleColor: ReviewInk.title,
+                         expanded: expanded,
+                         onToggle: { [weak self] in
+                             guard let self = self else { return }
+                             if self.expandedSessions.contains(session.id) {
+                                 self.expandedSessions.remove(session.id)
+                             } else {
+                                 self.expandedSessions.insert(session.id)
+                                 self.ensureAudit(session.id)
+                             }
+                             self.render()
+                         },
+                         onOpen: nil,
+                         children: children)
+    }
+
+    private func makeTurnBlock(sessionId: String, group: ReviewLogModel.ReviewTurnGroup) -> NSView {
+        let key = expandKeyTurn(sessionId, group.turn)
+        let expanded = !collapsedTurns.contains(key)
+        let title = group.turn.map { L10n.tr("review.turn") + " \($0)" } ?? L10n.tr("review.turnUnknown")
+        var detail = group.prompt?.replacingOccurrences(of: "\n", with: " ") ?? ""
+        if detail.count > 90 { detail = String(detail.prefix(90)) + "…" }
+        var parts = ["\(group.files.count) " + L10n.tr("review.filesShort"), "+\(group.added) −\(group.removed)"]
+        if !group.shells.isEmpty { parts.append(L10n.tr("review.shell") + " \(group.shells.count)") }
+        if !group.failures.isEmpty { parts.append(L10n.tr("review.error") + " \(group.failures.count)") }
+
+        var children: [NSView] = []
+        if expanded {
+            for file in group.files { children.append(makeFileBlock(sessionId: sessionId, turn: group.turn, group: file)) }
+            if !group.shells.isEmpty { children.append(makeShellBlock(sessionId: sessionId, turn: group.turn, entries: group.shells)) }
+            if !group.failures.isEmpty { children.append(makeFailureBlock(entries: group.failures)) }
+        }
+        return makeBlock(title: title, detail: detail.isEmpty ? nil : detail, trailing: parts.joined(separator: " · "),
+                         symbol: "bubble.left", fill: ReviewInk.turnFill, border: ReviewInk.hairline,
+                         titleFont: NSFont.systemFont(ofSize: 12, weight: .semibold), titleColor: ReviewInk.title,
+                         expanded: expanded,
+                         onToggle: { [weak self] in
+                             guard let self = self else { return }
+                             if self.collapsedTurns.contains(key) { self.collapsedTurns.remove(key) } else { self.collapsedTurns.insert(key) }
+                             self.render()
+                         },
+                         onOpen: nil,
+                         children: children)
+    }
+
+    private func makeFileBlock(sessionId: String, turn: Int?, group: ReviewFileGroup) -> NSView {
+        let key = expandKeyFile(sessionId, turn, group.path)
+        let expanded = expandedFiles.contains(key)
+        var badges: [String] = []
+        if group.created { badges.append(L10n.tr("review.cat.create")) }
+        if group.hasNested { badges.append(L10n.tr("review.nested")) }
+        var parts = ["+\(group.added) −\(group.removed)"]
+        parts.append(contentsOf: badges)
+
+        var children: [NSView] = []
+        if expanded {
+            for entry in group.entries {
+                children.append(makeEntryMetaRow(entry))
+                let lines = ReviewLogModel.diffLines(entry.hunks)
+                if !lines.isEmpty { children.append(makeDiffView(lines)) }
+            }
+        }
+        return makeBlock(title: group.path, detail: nil, trailing: parts.joined(separator: " · "),
+                         symbol: "doc.text", fill: ReviewInk.blockFill, border: ReviewInk.hairline,
+                         titleFont: NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold), titleColor: ReviewInk.body,
+                         expanded: expanded,
+                         onToggle: { [weak self] in
+                             guard let self = self else { return }
+                             if self.expandedFiles.contains(key) { self.expandedFiles.remove(key) } else { self.expandedFiles.insert(key) }
+                             self.render()
+                         },
+                         onOpen: nil,
+                         children: children)
+    }
+
+    private func makeShellBlock(sessionId: String, turn: Int?, entries: [ReviewEntry]) -> NSView {
+        let key = expandKeyShell(sessionId, turn)
+        let expanded = expandedShells.contains(key)
+        var children: [NSView] = []
+        if expanded {
+            children.append(makeNote(L10n.tr("review.unstructuredNote")))
+            for entry in entries.prefix(80) {
+                children.append(makeCodeLine(entry.command ?? "", color: ReviewInk.body))
+            }
+            if entries.count > 80 {
+                children.append(makeNote(String(format: L10n.tr("review.moreLines"), entries.count - 80)))
+            }
+        }
+        return makeBlock(title: L10n.tr("review.bashHeader"), detail: nil, trailing: "\(entries.count)",
+                         symbol: "terminal", fill: ReviewInk.blockFill, border: ReviewInk.hairline,
+                         titleFont: NSFont.systemFont(ofSize: 11, weight: .semibold), titleColor: ReviewInk.body,
+                         expanded: expanded,
+                         onToggle: { [weak self] in
+                             guard let self = self else { return }
+                             if self.expandedShells.contains(key) { self.expandedShells.remove(key) } else { self.expandedShells.insert(key) }
+                             self.render()
+                         },
+                         onOpen: nil,
+                         children: children)
+    }
+
+    private func makeFailureBlock(entries: [ReviewEntry]) -> NSView {
+        var children: [NSView] = []
+        for entry in entries.prefix(40) {
+            children.append(makeCodeLine("\(entry.tool) · \(entry.path ?? entry.command ?? "")", color: ReviewInk.removed))
+        }
+        return makeBlock(title: L10n.tr("review.failedHeader"), detail: nil, trailing: "\(entries.count)",
+                         symbol: "exclamationmark.triangle", fill: ReviewInk.blockFill, border: ReviewInk.hairline,
+                         titleFont: NSFont.systemFont(ofSize: 11, weight: .semibold), titleColor: ReviewInk.body,
+                         expanded: true, onToggle: nil, onOpen: nil, children: children)
+    }
+
+    // MARK: - Block construction
+
+    /// One disclosure block: a clickable title bar (chevron + symbol + title +
+    /// detail + trailing summary) and an optional children stack — the same
+    /// rounded-block language the Channel panel's project view uses.
+    private func makeBlock(title: String, detail: String?, trailing: String?, symbol: String,
+                           fill: NSColor, border: NSColor, titleFont: NSFont, titleColor: NSColor,
+                           expanded: Bool, onToggle: (() -> Void)?, onOpen: (() -> Void)?,
+                           children: [NSView]) -> NSView {
+        let block = RoundedBlockView()
+        block.translatesAutoresizingMaskIntoConstraints = false
+        block.radius = 8
+        block.lightFill = fill
+        block.darkFill = fill
+        block.lightBorder = border
+        block.darkBorder = border
+
+        let chevron = NSImageView()
+        if let image = NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil) {
+            chevron.image = image
+            chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+            chevron.contentTintColor = ReviewInk.muted
+        }
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.widthAnchor.constraint(equalToConstant: 14).isActive = true
+        chevron.heightAnchor.constraint(equalToConstant: 14).isActive = true
+
+        let icon = NSImageView()
+        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
+            icon.image = image
+            icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+            icon.contentTintColor = ReviewInk.muted
+        }
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.widthAnchor.constraint(equalToConstant: 15).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 15).isActive = true
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = titleFont
+        titleLabel.textColor = titleColor
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.toolTip = title
+
+        var headerViews: [NSView] = [chevron, icon, titleLabel]
+        if let detail = detail, !detail.isEmpty {
+            let detailLabel = NSTextField(labelWithString: detail)
+            detailLabel.font = NSFont.systemFont(ofSize: 10)
+            detailLabel.textColor = ReviewInk.muted
+            detailLabel.lineBreakMode = .byTruncatingTail
+            detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            detailLabel.translatesAutoresizingMaskIntoConstraints = false
+            headerViews.append(detailLabel)
+        }
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        headerViews.append(spacer)
+        if let trailing = trailing, !trailing.isEmpty {
+            let trailingLabel = NSTextField(labelWithString: trailing)
+            trailingLabel.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+            trailingLabel.textColor = ReviewInk.body
+            trailingLabel.translatesAutoresizingMaskIntoConstraints = false
+            trailingLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+            headerViews.append(trailingLabel)
+        }
+
+        let headerRow = NSStackView(views: headerViews)
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .centerY
+        headerRow.spacing = 6
+        headerRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let header = NSView()
+        header.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(headerRow)
+        NSLayoutConstraint.activate([
+            headerRow.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 8),
+            headerRow.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
+            headerRow.topAnchor.constraint(equalTo: header.topAnchor, constant: 7),
+            headerRow.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -7),
+        ])
+        if onToggle != nil {
+            let click = NSClickGestureRecognizer(target: self, action: #selector(blockTapped(_:)))
+            header.addGestureRecognizer(click)
+            headerActions[ObjectIdentifier(header)] = onToggle
+        }
+
+        let childrenStack = NSStackView()
+        childrenStack.orientation = .vertical
+        childrenStack.alignment = .leading
+        childrenStack.spacing = 6
+        childrenStack.translatesAutoresizingMaskIntoConstraints = false
+        childrenStack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        for child in children {
+            childrenStack.addArrangedSubview(child)
+            child.widthAnchor.constraint(equalTo: childrenStack.widthAnchor).isActive = true
+        }
+        childrenStack.isHidden = !expanded
+
+        block.addSubview(header)
+        block.addSubview(childrenStack)
+        NSLayoutConstraint.activate([
+            header.topAnchor.constraint(equalTo: block.topAnchor),
+            header.leadingAnchor.constraint(equalTo: block.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: block.trailingAnchor),
+        ])
+        if expanded {
+            NSLayoutConstraint.activate([
+                childrenStack.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
+                childrenStack.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 12),
+                childrenStack.trailingAnchor.constraint(equalTo: block.trailingAnchor, constant: -10),
+                childrenStack.bottomAnchor.constraint(equalTo: block.bottomAnchor, constant: -8),
+            ])
+        } else {
+            NSLayoutConstraint.activate([
+                header.bottomAnchor.constraint(equalTo: block.bottomAnchor),
+            ])
+        }
+        return block
+    }
+
+    /// Click routing for block headers (the header view is created inside
+    /// `makeBlock`, so its target closure is kept here).
+    private var headerActions: [ObjectIdentifier: () -> Void] = [:]
+
+    @objc private func blockTapped(_ gesture: NSClickGestureRecognizer) {
+        guard let view = gesture.view else { return }
+        headerActions[ObjectIdentifier(view)]?()
+    }
+
+    // MARK: - Leaf views
+
+    private func makeCard(text: String, fill: NSColor, textColor: NSColor, font: NSFont, padding: CGFloat) -> NSView {
+        let card = RoundedBlockView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.radius = 8
+        card.lightFill = fill
+        card.darkFill = fill
+        card.lightBorder = ReviewInk.hairline
+        card.darkBorder = ReviewInk.hairline
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = font
+        label.textColor = textColor
+        label.maximumNumberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(label)
         NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
+            label.topAnchor.constraint(equalTo: card.topAnchor, constant: padding),
+            label.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -padding),
             label.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
             label.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
-            label.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
         ])
         return card
     }
 
-    private func makeFileGroupView(_ group: ReviewFileGroup) -> NSView {
-        let container = NSStackView()
-        container.orientation = .vertical
-        container.alignment = .leading
-        container.spacing = 6
-        container.translatesAutoresizingMaskIntoConstraints = false
-
-        var headerParts = [group.path]
-        if group.created { headerParts.append(L10n.tr("review.cat.create")) }
-        if group.hasNested { headerParts.append(L10n.tr("review.nested")) }
-        if group.hasAppliedHunks == false { headerParts.append(L10n.tr("review.cat.args")) }
-        let header = NSTextField(labelWithString: headerParts.joined(separator: "  ·  "))
-        header.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
-        header.lineBreakMode = .byTruncatingMiddle
-        header.toolTip = group.path
-
-        let totals = NSTextField(labelWithString: "+\(group.added) −\(group.removed)")
-        totals.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-        totals.textColor = .secondaryLabelColor
-
-        let headerRow = NSStackView(views: [header, totals])
-        headerRow.orientation = .horizontal
-        headerRow.spacing = 8
-        headerRow.alignment = .firstBaseline
-
-        container.addArrangedSubview(headerRow)
-        for entry in group.entries {
-            let meta = makeEntryMetaRow(entry)
-            container.addArrangedSubview(meta)
-            let lines = ReviewLogModel.diffLines(entry.hunks)
-            if !lines.isEmpty {
-                container.addArrangedSubview(makeDiffView(lines))
-            }
-        }
-        return container
+    private func makeNote(_ text: String) -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = NSFont.systemFont(ofSize: 10)
+        label.textColor = ReviewInk.muted
+        label.maximumNumberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
     }
 
-    private func makeEntryMetaRow(_ entry: ReviewEntry) -> NSView {
+    private func makeCodeLine(_ text: String, color: NSColor) -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        label.textColor = color
+        label.maximumNumberOfLines = 6
+        label.lineBreakMode = .byCharWrapping
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }
+
+    private func makeEntryMetaRow(_ entry: ReviewEntry) -> NSTextField {
         var parts: [String] = [entry.tool]
         if let turn = entry.turn, let step = entry.step { parts.append("T\(turn)/S\(step)") }
         switch entry.category {
@@ -445,8 +833,9 @@ final class ReviewPanelController: NSObject {
         if entry.isError { parts.append(L10n.tr("review.error")) }
         let label = NSTextField(labelWithString: parts.joined(separator: " · "))
         label.font = NSFont.systemFont(ofSize: 10)
-        label.textColor = .tertiaryLabelColor
+        label.textColor = ReviewInk.muted
         label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }
 
@@ -456,15 +845,13 @@ final class ReviewPanelController: NSObject {
         let font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
         for line in shown {
             let prefix = line.kind == .removed ? "− " : "+ "
-            let color: NSColor = line.kind == .removed
-                ? NSColor.systemRed.withAlphaComponent(0.85)
-                : NSColor.systemGreen.withAlphaComponent(0.9)
             text.append(NSAttributedString(string: prefix + line.text + "\n",
-                                           attributes: [.font: font, .foregroundColor: color]))
+                                           attributes: [.font: font,
+                                                        .foregroundColor: line.kind == .removed ? ReviewInk.removed : ReviewInk.added]))
         }
         if lines.count > shown.count {
             text.append(NSAttributedString(string: String(format: L10n.tr("review.moreLines"), lines.count - shown.count) + "\n",
-                                           attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
+                                           attributes: [.font: font, .foregroundColor: ReviewInk.muted]))
         }
         let field = NSTextField(labelWithAttributedString: text)
         field.translatesAutoresizingMaskIntoConstraints = false
@@ -473,50 +860,8 @@ final class ReviewPanelController: NSObject {
         field.maximumNumberOfLines = 0
         field.lineBreakMode = .byCharWrapping
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.drawsBackground = true
+        field.backgroundColor = .white
         return field
-    }
-
-    private func makeCallsSection(title: String, entries: [ReviewEntry], failed: Bool) -> NSView {
-        let container = NSStackView()
-        container.orientation = .vertical
-        container.alignment = .leading
-        container.spacing = 4
-        container.translatesAutoresizingMaskIntoConstraints = false
-
-        let heading = NSTextField(labelWithString: title)
-        heading.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        container.addArrangedSubview(heading)
-        if !failed {
-            container.addArrangedSubview(makeTextBlock(L10n.tr("review.unstructuredNote"),
-                                                       color: .tertiaryLabelColor, size: 10, monospaced: false))
-        }
-        for entry in entries.prefix(60) {
-            let body = failed
-                ? (entry.path ?? entry.command ?? entry.tool)
-                : (entry.command ?? "")
-            let line = NSTextField(wrappingLabelWithString: body)
-            line.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-            line.textColor = failed ? NSColor.systemRed.withAlphaComponent(0.85) : .labelColor
-            line.maximumNumberOfLines = 6
-            line.lineBreakMode = .byCharWrapping
-            line.translatesAutoresizingMaskIntoConstraints = false
-            container.addArrangedSubview(line)
-        }
-        if entries.count > 60 {
-            container.addArrangedSubview(makeTextBlock(String(format: L10n.tr("review.moreLines"), entries.count - 60) + " (" + title + ")",
-                                                       color: .secondaryLabelColor, size: 10, monospaced: false))
-        }
-        return container
-    }
-
-    private func makeTextBlock(_ text: String, color: NSColor, size: CGFloat, monospaced: Bool) -> NSTextField {
-        let label = NSTextField(wrappingLabelWithString: text)
-        label.font = monospaced ? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-                                : NSFont.systemFont(ofSize: size)
-        label.textColor = color
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.maximumNumberOfLines = 0
-        label.lineBreakMode = .byWordWrapping
-        return label
     }
 }

@@ -374,6 +374,12 @@ function buildAudit(events, options = {}) {
   const pending = new Map();
   const entries = [];
   let order = 0;
+  // Turn context: top-level calls carry turn/step; a nested `run_code` dispatch
+  // inherits its parent call's turn so the panel can group by 对话 (turn).
+  const contextByCallId = new Map();
+  const turns = new Map();
+  let currentTurn = null;
+  let currentPrompt = null;
 
   const addEntry = (entry) => {
     entries.push(entry);
@@ -383,6 +389,27 @@ function buildAudit(events, options = {}) {
   for (const event of events) {
     if (!event || typeof event !== 'object') continue;
     const data = event.data || {};
+    if (event.type === 'turn/start') {
+      currentTurn = data.turn === undefined ? null : data.turn;
+      currentPrompt = null;
+      if (currentTurn !== null && !turns.has(currentTurn)) {
+        turns.set(currentTurn, { turn: currentTurn, prompt: null, startedAt: event.time || null });
+      }
+      continue;
+    }
+    if (event.type === 'user/message') {
+      const source = data.source || {};
+      const parts = Array.isArray(data.content) ? data.content : [];
+      const text = parts.filter((p) => p && p.type === 'text' && typeof p.text === 'string')
+        .map((p) => p.text).join(' ').trim();
+      if (source.kind === 'user' && text && currentTurn !== null) {
+        currentPrompt = currentPrompt || text;
+        const record = turns.get(currentTurn) || { turn: currentTurn, prompt: null, startedAt: event.time || null };
+        if (!record.prompt) record.prompt = text;
+        turns.set(currentTurn, record);
+      }
+      continue;
+    }
     if (event.type === 'tool/call') {
       const event0 = data;
       const entry = addEntry({
@@ -406,6 +433,7 @@ function buildAudit(events, options = {}) {
         removed: 0,
         note: null,
       });
+      contextByCallId.set(String(entry.callId), { turn: entry.turn, step: entry.step });
       const args = parseArgs(event0.arguments);
       if (MUTATION_TOOLS.has(event0.name)) {
         const m = mutationEntry(event0.name, args);
@@ -429,10 +457,13 @@ function buildAudit(events, options = {}) {
       continue;
     }
     if (event.type === 'tool/code-dispatch-start') {
+      const inherited = contextByCallId.get(String(data.parentCallId))
+        || contextByCallId.get(String(data.rootCallId))
+        || { turn: null, step: null };
       const entry = addEntry({
         seq: event.seq,
-        turn: null,
-        step: null,
+        turn: inherited.turn,
+        step: inherited.step,
         order: order++,
         tool: data.name,
         surface: 'nested',
@@ -552,7 +583,11 @@ function buildAudit(events, options = {}) {
       delegationDepth: header.delegationDepth || 0,
     }
     : null;
-  return { session, entries, stats, diagnostics };
+  const turnList = Array.from(turns.values()).sort((a, b) => a.turn - b.turn);
+  for (const record of turnList) {
+    if (record.prompt && record.prompt.length > 200) record.prompt = record.prompt.slice(0, 200) + '…';
+  }
+  return { session, entries, turns: turnList, stats, diagnostics };
 }
 
 /**
@@ -564,13 +599,14 @@ function buildAudit(events, options = {}) {
 function auditSessionLog(options) {
   const diagnostics = [];
   if (!options || !options.file) {
-    return { session: null, entries: [], stats: null, diagnostics: [{ code: 'no-file', message: '[review] 缺少会话文件路径' }] };
+    return { session: null, turns: [], entries: [], stats: null, diagnostics: [{ code: 'no-file', message: '[review] 缺少会话文件路径' }] };
   }
   const text = decodeSessionLog(options.file, { diagnostics });
   const events = parseEvents(text, diagnostics);
   const audit = buildAudit(events, { workspace: options.workspace });
   return {
     session: audit.session,
+    turns: audit.turns,
     entries: audit.entries,
     stats: audit.stats,
     diagnostics: diagnostics.concat(audit.diagnostics),
@@ -584,7 +620,7 @@ function auditSessionLog(options) {
  */
 function auditSession(options) {
   if (!options || !options.sessionId) {
-    return { session: null, entries: [], stats: null, diagnostics: [{ code: 'no-session-id', message: '[review] 缺少 sessionId' }] };
+    return { session: null, turns: [], entries: [], stats: null, diagnostics: [{ code: 'no-session-id', message: '[review] 缺少 sessionId' }] };
   }
   const listed = listSessionLogs({ dshHome: options.dshHome, workspace: options.workspace, limit: -1 });
   const match = listed.sessions.filter((s) => s.id === options.sessionId).sort((a, b) => b.mtimeMs - a.mtimeMs)[0]
@@ -592,6 +628,7 @@ function auditSession(options) {
   if (!match) {
     return {
       session: null,
+      turns: [],
       entries: [],
       stats: null,
       diagnostics: listed.diagnostics.concat([{ code: 'session-not-found', message: '[review] 未找到会话 ' + options.sessionId }]),

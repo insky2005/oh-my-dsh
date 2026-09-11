@@ -82,9 +82,17 @@ struct ReviewDiagnostic: Decodable, Equatable {
     var message: String
 }
 
+/// One 对话 (turn) of the session, labelled with the user message that started it.
+struct ReviewTurn: Decodable, Equatable {
+    var turn: Int
+    var prompt: String?
+    var startedAt: Double?
+}
+
 /// Result of `review audit`.
 struct ReviewAudit: Decodable, Equatable {
     var session: ReviewSessionInfo?
+    var turns: [ReviewTurn]?
     var entries: [ReviewEntry]
     var stats: ReviewStats?
     var diagnostics: [ReviewDiagnostic]?
@@ -168,11 +176,8 @@ enum ReviewLogModel {
         entries.filter { $0.isBash && (!suspectOnly || $0.suspicion == "write-like") }
     }
 
-    /// Group the successful mutations by file path with totals.
-    ///
-    /// Groups come back **most-recently-changed first** (git-log order): an audit
-    /// opens on what the agent just did, instead of burying it under a first big
-    /// file creation. Entries inside a group stay chronological.
+    /// Group the successful mutations by file path with totals, in the order the
+    /// files were first touched (chronological within the caller's scope).
     static func fileGroups(_ entries: [ReviewEntry]) -> [ReviewFileGroup] {
         var order: [String] = []
         var byPath: [String: ReviewFileGroup] = [:]
@@ -192,11 +197,58 @@ enum ReviewLogModel {
             group.hasAppliedHunks = group.hasAppliedHunks || entry.category == "diff"
             byPath[key] = group
         }
-        return order.compactMap { byPath[$0] }.sorted { lhs, rhs in
-            let l = lhs.entries.last?.order ?? 0
-            let r = rhs.entries.last?.order ?? 0
-            return l > r
+        return order.compactMap { byPath[$0] }
+    }
+
+    /// One 对话 (turn) with its files, shell calls and failures.
+    struct ReviewTurnGroup: Equatable {
+        /// The dsh turn number, or nil for entries the log recorded without one.
+        var turn: Int?
+        /// The user message that opened the turn (nil when the log has none).
+        var prompt: String?
+        var files: [ReviewFileGroup]
+        var shells: [ReviewEntry]
+        var failures: [ReviewEntry]
+        var added: Int
+        var removed: Int
+        var entries: Int
+    }
+
+    /// Split an audit into 会话 → 对话 → 文件 levels. Turns come back **newest
+    /// first** so the panel opens on what the agent just did; a trailing group
+    /// with `turn == nil` holds records the log left without a turn number.
+    ///
+    /// `suspectShellsOnly` mirrors the panel's shell filter.
+    static func turnGroups(_ audit: ReviewAudit, suspectShellsOnly: Bool) -> [ReviewTurnGroup] {
+        var prompts: [Int: String] = [:]
+        for turn in audit.turns ?? [] {
+            if let prompt = turn.prompt { prompts[turn.turn] = prompt }
         }
+        var buckets: [Int: [ReviewEntry]] = [:]
+        var order: [Int] = []
+        for entry in audit.entries where entry.isMutation || entry.isBash {
+            let key = entry.turn ?? -1
+            if buckets[key] == nil { buckets[key] = []; order.append(key) }
+            buckets[key]!.append(entry)
+        }
+        var groups: [ReviewTurnGroup] = []
+        for key in order {
+            let all = buckets[key] ?? []
+            let mutations = all.filter { $0.isMutation && !$0.isError }
+            let shells = all.filter { $0.isBash && (!suspectShellsOnly || $0.suspicion == "write-like") }
+            let failures = all.filter { $0.isMutation && $0.isError }
+            if mutations.isEmpty && shells.isEmpty && failures.isEmpty { continue }
+            groups.append(ReviewTurnGroup(
+                turn: key < 0 ? nil : key,
+                prompt: key < 0 ? nil : prompts[key],
+                files: fileGroups(mutations),
+                shells: shells,
+                failures: failures,
+                added: mutations.reduce(0) { $0 + $1.added },
+                removed: mutations.reduce(0) { $0 + $1.removed },
+                entries: mutations.count))
+        }
+        return groups.sorted { ($0.turn ?? -1) > ($1.turn ?? -1) }
     }
 
     /// Flatten hunks into renderable lines: each hunk yields its removed block

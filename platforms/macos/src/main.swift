@@ -287,18 +287,27 @@ enum L10n {
         "menu.toggleBrowser": ("显示/隐藏 浏览器面板", "Toggle Browser Panel"),
         "bar.channel": ("通道", "Channel"),
         "menu.toggleChannel": ("显示/隐藏 通道面板", "Toggle Channel Panel"),
-        // review (change audit) panel — read-only
-        "bar.review": ("审计", "Review"),
-        "menu.toggleReview": ("显示/隐藏 审计面板", "Toggle Review Panel"),
-        "review.title": ("变更审计", "Change Review"),
+        // review panel — read-only change audit (name fixed: 审查 / Review)
+        "bar.review": ("审查", "Review"),
+        "menu.toggleReview": ("显示/隐藏 审查面板", "Toggle Review Panel"),
+        "review.title": ("审查", "Review"),
         "review.refresh": ("重新读取", "Reload"),
+        "review.expandAll": ("全部展开", "Expand All"),
+        "review.collapseAll": ("全部收起", "Collapse All"),
         "review.suspectOnly": ("只看可疑命令", "Suspect only"),
         "review.loading": ("读取会话日志…", "Reading session logs…"),
+        "review.reading": ("读取中…", "reading…"),
         "review.empty": ("该会话没有记录到文件变更", "No file changes recorded in this session"),
         "review.noSessions": ("当前工作区没有会话日志", "No session logs for this workspace"),
         "review.noWorkspace": ("未定位到工作区", "No workspace resolved"),
         "review.loadFailed": ("读取失败（详见应用日志）", "Read failed (see the app log)"),
-        "review.summaryFiles": ("%d 个文件", "%d files"),
+        "review.summarySessions": ("会话", "sessions"),
+        "review.summaryTurns": ("对话", "turns"),
+        "review.filesShort": ("文件", "files"),
+        "review.turn": ("对话", "Turn"),
+        "review.turnUnknown": ("未标注轮次", "Unnumbered"),
+        "review.subagent": ("子代理", "subagent"),
+        "review.current": ("当前会话", "current"),
         "review.nested": ("嵌套", "nested"),
         "review.nestedCall": ("嵌套调用", "nested call"),
         "review.suspect": ("可能写文件", "may write"),
@@ -1913,7 +1922,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelBarButton = makeActivityButton(symbol: "dot.radiowaves.left.and.right",
                                               tooltip: L10n.tr("bar.channel"),
                                               action: #selector(channelEntryTapped(_:)))
-        reviewBarButton = makeActivityButton(symbol: "text.magnifyingglass",
+        reviewBarButton = makeActivityButton(symbol: "doc.text",
                                              tooltip: L10n.tr("bar.review"),
                                              action: #selector(reviewEntryTapped(_:)))
         let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton])
@@ -2175,7 +2184,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         dlog("ui debug: \(label) panel inWindow=\(panelView.window != nil) layer=\(panelView.layer != nil) isHidden=\(panelView.isHidden) layerHidden=\(panelView.layer?.isHidden ?? false) frame=\(panelView.frame) windowAppearance=\(String(describing: window.appearance)) effective=\(String(describing: panelView.effectiveAppearance.name)) splitSubviews=\(splitView?.subviews.map { $0 === previewPanel?.view ? "preview" : ($0 === terminalPanel?.view ? "terminal" : "web/other") } ?? [])")
         // Recursive view-hierarchy + frame dump of the panel's top levels, so
         // a "header renders blank" report can be pinned to frames/hierarchy.
-        dumpHierarchy(panelView, label: label, maxDepth: label == "browser" ? 8 : 4)
+        // The review panel renders a 会话→对话→文件→变更 tree, so its dump needs the
+        // same depth as the browser panel's own view stack.
+        dumpHierarchy(panelView, label: label, maxDepth: (label == "browser" || label.hasPrefix("review")) ? 8 : 4)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self = self, panelView.window != nil, panelView.bounds.width > 10 else { return }
             guard let rep = panelView.bitmapImageRepForCachingDisplay(in: panelView.bounds) else { return }

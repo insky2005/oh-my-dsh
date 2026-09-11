@@ -19,10 +19,10 @@ let auditJSON = """
     {"seq": 10, "order": 0, "turn": 1, "step": 1, "tool": "edit", "surface": "top", "status": "ok", "category": "diff",
      "path": "src/a.js", "pathAbs": "/work/proj/src/a.js", "command": null, "suspicion": null,
      "hunks": [{"oldText": "let x = 1;", "newText": "let x = 1;\\nlet z = 2;"}], "added": 2, "removed": 1, "note": "applied-hunks"},
-    {"seq": 20, "order": 1, "turn": 1, "step": 2, "tool": "write", "surface": "nested", "status": "ok", "category": "content",
+    {"seq": 20, "order": 1, "turn": 2, "step": 2, "tool": "write", "surface": "nested", "status": "ok", "category": "content",
      "path": "core/new.js", "pathAbs": "/work/proj/core/new.js", "command": null, "suspicion": null,
      "hunks": [{"oldText": null, "newText": "a\\nb"}], "added": 2, "removed": 0, "note": "created-content"},
-    {"seq": 21, "order": 2, "turn": 1, "step": 2, "tool": "edit", "surface": "top", "status": "error", "category": "args",
+    {"seq": 21, "order": 2, "turn": 2, "step": 2, "tool": "edit", "surface": "top", "status": "error", "category": "args",
      "path": "src/b.js", "pathAbs": "/work/proj/src/b.js", "command": null, "suspicion": null,
      "hunks": [], "added": 0, "removed": 0, "note": "args"},
     {"seq": 30, "order": 3, "turn": 1, "step": 3, "tool": "bash", "surface": "top", "status": "ok", "category": "bash",
@@ -32,6 +32,8 @@ let auditJSON = """
      "path": null, "pathAbs": null, "command": "sed -i '' -e s/a/b/ src/a.js", "suspicion": "write-like",
      "hunks": [], "added": 0, "removed": 0, "note": null}
   ],
+  "turns": [{"turn": 1, "prompt": "first ask", "startedAt": 900},
+              {"turn": 2, "prompt": "second ask", "startedAt": 1900}],
   "stats": {"entries": 5, "mutations": 3, "files": 2, "added": 4, "removed": 1,
             "nested": 1, "bashCalls": 2, "bashSuspect": 1, "failed": 1},
   "diagnostics": [{"code": "zstd-torn-frame", "message": "[review] 日志末尾存在未完成帧"}]
@@ -57,11 +59,11 @@ test("failures carry their path", ReviewLogModel.failures(entries).first?.path =
 
 let groups = ReviewLogModel.fileGroups(entries)
 test("file groups group by path", groups.count == 2)
-test("file groups list the most recently changed file first", groups.first?.path == "core/new.js")
-test("file group totals add up", groups[1].added == 2 && groups[1].removed == 1)
-test("file group flags created file", groups[0].created)
-test("file group flags nested origin", groups[0].hasNested && !groups[1].hasNested)
-test("file group flags applied hunks", groups[1].hasAppliedHunks && !groups[0].hasAppliedHunks)
+test("file groups keep the order files were first touched", groups.first?.path == "src/a.js")
+test("file group totals add up", groups[0].added == 2 && groups[0].removed == 1)
+test("file group flags created file", groups[1].created)
+test("file group flags nested origin", groups[1].hasNested && !groups[0].hasNested)
+test("file group flags applied hunks", groups[0].hasAppliedHunks && !groups[1].hasAppliedHunks)
 test("failed entries are not grouped", !groups.contains { $0.path == "src/b.js" })
 
 test("bash filter includes all by default", ReviewLogModel.bashEntries(entries, suspectOnly: false).count == 2)
@@ -69,10 +71,10 @@ let suspect = ReviewLogModel.bashEntries(entries, suspectOnly: true)
 test("bash filter narrows to suspects", suspect.count == 1)
 test("suspect bash keeps its command", suspect.first?.command == "sed -i '' -e s/a/b/ src/a.js")
 
-let lines = ReviewLogModel.diffLines(groups[1].entries[0].hunks)
+let lines = ReviewLogModel.diffLines(groups[0].entries[0].hunks)
 test("diff lines render removed then added", lines.map(\.kind) == [.removed, .added, .added])
 test("diff lines keep text", lines[0].text == "let x = 1;" && lines[2].text == "let z = 2;")
-test("pure insertion renders only added lines", ReviewLogModel.diffLines(groups[0].entries[0].hunks).allSatisfy { $0.kind == .added })
+test("pure insertion renders only added lines", ReviewLogModel.diffLines(groups[1].entries[0].hunks).allSatisfy { $0.kind == .added })
 test("empty hunks render nothing", ReviewLogModel.diffLines([]).isEmpty)
 
 test("short id strips the session prefix", ReviewLogModel.shortId("session-abc12345-0000") == "abc12345")
@@ -100,6 +102,22 @@ test("sessions decode", listed.sessions.count == 2 && listed.total == 2)
 test("subagent session detected", listed.sessions[1].isSubagent && !listed.sessions[0].isSubagent)
 test("session label marks subagents", ReviewLogModel.sessionLabel(listed.sessions[1]).hasSuffix("· sub"))
 test("session label uses the short id", ReviewLogModel.sessionLabel(listed.sessions[0]).hasPrefix("74e368ee · "))
+
+// --- turn hierarchy (会话 → 对话 → 文件 → 变更内容) ---
+
+test("audit decodes turns", audit.turns?.count == 2 && audit.turns?.first?.prompt == "first ask")
+
+let turnGroups = ReviewLogModel.turnGroups(audit, suspectShellsOnly: false)
+test("turn groups split by 对话", turnGroups.count == 2)
+test("turn groups list the newest turn first", turnGroups.first?.turn == 2)
+test("turn group carries its prompt", turnGroups.first?.prompt == "second ask")
+test("turn group keeps only its own files", turnGroups.first?.files.map(\.path) == ["core/new.js"])
+test("turn group totals add up", turnGroups.first?.added == 2 && turnGroups.first?.removed == 0)
+test("turn group separates failures", turnGroups.first?.failures.count == 1)
+test("turn group carries shell calls", turnGroups[1].shells.count == 2)
+test("turn group narrows shell calls when asked", ReviewLogModel.turnGroups(audit, suspectShellsOnly: true)[1].shells.count == 1)
+test("oldest turn is last", turnGroups.last?.turn == 1)
+test("turn group files stay chronological", turnGroups[1].files.count == 1 && turnGroups[1].files[0].path == "src/a.js")
 
 test("garbage json decodes to nil", ReviewLogModel.decodeAudit("not json") == nil)
 test("empty json decodes to nil", ReviewLogModel.decodeAudit("") == nil)
