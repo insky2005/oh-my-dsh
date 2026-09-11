@@ -11,6 +11,13 @@ const { CHANNEL_STATES, normalizeEvent } = require('../lib/channel');
 const { runDingTalkChannel } = require('../lib/channel-runner');
 const { saveChannelAccount } = require('../lib/channel-store');
 
+/// Close a mock server AND destroy its sockets (Node keeps connections alive by
+/// default, so `server.close()` alone can leave the test process hanging).
+function closeServer(srv) {
+  try { if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections(); } catch { /* ignore */ }
+  try { srv.close(); } catch { /* ignore */ }
+}
+
 /** A controllable mock DingTalk Stream client. */
 function makeMockClient(overrides = {}) {
   const topics = new Map();
@@ -184,11 +191,14 @@ test('dingtalk runner: end-to-end via injected client + fetch', async () => {
   });
   await handle.start();
   // fire an inbound robot message -> routes to session -> replies via webhook
-  client._fire(TOPIC_ROBOT, robotFrame('m-r1'));
-  await new Promise((r) => setTimeout(r, 300));
-  await handle.stop();
-  wsSrv.srv.close();
-  assert.ok(replied, 'expected a reply to be sent to the sessionWebhook');
-  assert.equal(replied.msgtype, 'text');
-  assert.ok(replied.text.content.length > 0);
+  try {
+    client._fire(TOPIC_ROBOT, robotFrame('m-r1'));
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(replied, 'expected a reply to be sent to the sessionWebhook');
+    assert.equal(replied.msgtype, 'text');
+    assert.ok(replied.text.content.length > 0);
+  } finally {
+    await handle.stop();
+    closeServer(wsSrv.srv);
+  }
 });

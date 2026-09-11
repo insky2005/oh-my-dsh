@@ -37,8 +37,10 @@ oh-my-dsh/
 
 ```bash
 # 共享核心单测（主套件，headless）：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / dsh RPC 传输层 / shell 设置 /
-# workspace 存储 / issues / 队列 / 任务索引 / channel（指令 · 路由 · 会话 · 传输层 · 微信 ClawBot 与钉钉 stream 适配器 · 钉钉绑定鉴权）
-node --test core/tests/
+# workspace 存储 / issues / 队列 / 任务索引 / channel（指令 · 路由 · 会话 · 传输层 · 微信 ClawBot 与钉钉 stream 适配器 · 钉钉绑定鉴权）/
+# review-log（会话日志变更审计：zstd 多帧解码 · 三类记录合并 · 轮次归属）
+# --test-timeout：用例若泄漏定时器/runner，60s 后判失败而不是把整轮挂死（CI 同参数）。grep glob 不加引号以兼容 Node 20。
+node --test --test-timeout=60000 core/tests/*.test.js
 
 # 面板模型层单测（headless run.sh 套件）
 tests/wiki-panel/run.sh
