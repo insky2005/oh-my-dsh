@@ -287,6 +287,33 @@ enum L10n {
         "menu.toggleBrowser": ("显示/隐藏 浏览器面板", "Toggle Browser Panel"),
         "bar.channel": ("通道", "Channel"),
         "menu.toggleChannel": ("显示/隐藏 通道面板", "Toggle Channel Panel"),
+        // review (change audit) panel — read-only
+        "bar.review": ("审计", "Review"),
+        "menu.toggleReview": ("显示/隐藏 审计面板", "Toggle Review Panel"),
+        "review.title": ("变更审计", "Change Review"),
+        "review.refresh": ("重新读取", "Reload"),
+        "review.suspectOnly": ("只看可疑命令", "Suspect only"),
+        "review.loading": ("读取会话日志…", "Reading session logs…"),
+        "review.empty": ("该会话没有记录到文件变更", "No file changes recorded in this session"),
+        "review.noSessions": ("当前工作区没有会话日志", "No session logs for this workspace"),
+        "review.noWorkspace": ("未定位到工作区", "No workspace resolved"),
+        "review.loadFailed": ("读取失败（详见应用日志）", "Read failed (see the app log)"),
+        "review.summaryFiles": ("%d 个文件", "%d files"),
+        "review.nested": ("嵌套", "nested"),
+        "review.nestedCall": ("嵌套调用", "nested call"),
+        "review.suspect": ("可能写文件", "may write"),
+        "review.suspectShort": ("shell 可疑", "suspect shell"),
+        "review.shell": ("shell", "shell"),
+        "review.other": ("其它", "other"),
+        "review.error": ("失败", "failed"),
+        "review.cat.diff": ("已应用", "applied"),
+        "review.cat.args": ("参数还原", "from args"),
+        "review.cat.content": ("全文写入", "full content"),
+        "review.cat.create": ("新建", "created"),
+        "review.failedHeader": ("失败的调用（未改动）", "Failed calls (not applied)"),
+        "review.bashHeader": ("shell 命令（无前后内容记录）", "Shell commands (no before/after record)"),
+        "review.unstructuredNote": ("shell 直改不经结构化记录，需人工核对", "shell writes bypass structured records — verify manually"),
+        "review.moreLines": ("…还有 %d 行", "…%d more lines"),
         "channel.title": ("通道", "Channel"),
         "channel.add": ("新增通道", "Add Channel"),
         "channel.refresh": ("刷新", "Refresh"),
@@ -761,9 +788,13 @@ enum CoreBridge {
     }
 
     /// Run `<node> <core-cli> args…`, returning trimmed stdout or nil.
-    static func run(_ args: [String], timeout: TimeInterval = 15) -> String? {
+    /// `preferBundledNode` picks the embedded runtime first: the session-log
+    /// audit needs Zstandard decoding, which only Node >= 22.15 provides — a
+    /// user-installed Node 18/20 would otherwise fail the Review panel.
+    static func run(_ args: [String], timeout: TimeInterval = 15, preferBundledNode: Bool = false) -> String? {
         guard let cli = coreCLIPath else { return nil }
-        guard let node = ServerManager().resolveNode() else { return nil }
+        let manager = ServerManager()
+        guard let node = (preferBundledNode ? manager.bundledNode() : nil) ?? manager.resolveNode() else { return nil }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: node)
         proc.arguments = [cli] + args
@@ -939,7 +970,7 @@ final class ServerManager {
     /// Bundled self-contained node binary (Contents/Resources/runtime/node).
     /// Universal builds embed runtime/node-arm64 + runtime/node-x86_64 and a
     /// plain `node` (host arch) for compatibility; pick by uname -m.
-    private func bundledNode() -> String? {
+    func bundledNode() -> String? {
         guard let res = Bundle.main.resourceURL else { return nil }
         let runtime = res.appendingPathComponent("runtime")
         var machine = utsname()
@@ -1536,6 +1567,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var appearanceMenuItems: [NSMenuItem] = []
     private var browserToggleMenuItem: NSMenuItem?
     private var channelToggleMenuItem: NSMenuItem?
+    private var reviewToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip).
     private var previewBarButton: ActivityBarButton!
     private var closeTabMenuItem: NSMenuItem?
@@ -1544,6 +1576,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var tasksBarButton: ActivityBarButton!
     private var browserBarButton: ActivityBarButton!
     private var channelBarButton: ActivityBarButton!
+    private var reviewBarButton: ActivityBarButton!
 
     private var window: NSWindow!
     private var webView: WKWebView!
@@ -1554,6 +1587,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var tasksPanel: IssueRunnerPanelController!
     private var browserPanel: BrowserPanelController!
     private var channelPanel: ChannelPanelController!
+    private var reviewPanel: ReviewPanelController!
     /// Browser panel localhost REST API (Agent / user curl). Runs from launch.
     private var browserAPIServer: BrowserAPIServer!
     private var browserAPIBridge: BrowserAPIBridge!
@@ -1563,7 +1597,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
     /// terminal, wiki, tasks and browser panels share one slot; the activity
     /// bar toggles between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel }
+    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review }
     private var rightPanel: RightPanel = .none
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
@@ -1584,7 +1618,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             max(FilePanelController.minWidth,
                 max(TerminalPanelController.minWidth,
                     max(WikiPanelController.minWidth,
-                        max(IssueRunnerPanelController.minWidth, BrowserPanelController.minWidth, ChannelPanelController.minWidth)))))
+                        max(IssueRunnerPanelController.minWidth,
+                            max(BrowserPanelController.minWidth,
+                                max(ChannelPanelController.minWidth, ReviewPanelController.minWidth)))))))
     /// *Initial* panel width when the user has never chosen one. The user's
     /// saved/dragged width always wins (clamped to the minimum above); this is
     /// only the first-run width. Deliberately NOT window-relative: a "half the
@@ -1769,6 +1805,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.browser)
             AppLog.shared.log("browser self-test enabled")
         }
+        // Review self-test hook (debugging / QA only): opens the change-audit
+        // panel when DSH_REVIEW_TEST=1. Deliberately LAST so it also wins under
+        // --ui-debug/DSH_UI_DEBUG=1, whose browser-panel default would otherwise
+        // take the slot (and the panel snapshot along with it).
+        if ProcessInfo.processInfo.environment["DSH_REVIEW_TEST"] == "1" {
+            setRightPanel(.review)
+            AppLog.shared.log("review self-test enabled")
+        }
     }
 
     /// Build the activity bar (leftmost icon strip) + the main split view:
@@ -1825,6 +1869,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self?.openDSHSession(sessionId)
         }
 
+        reviewPanel = ReviewPanelController()
+        AppLog.shared.log("launch: reviewPanel created")
+        reviewPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        // QA (--ui-debug): snapshot the panel again once it has rendered data.
+        reviewPanel.onDidRender = { [weak self] in
+            guard let self = self, self.uiDebug else { return }
+            self.dumpPanelDebugInfo(panelView: self.reviewPanel.view, label: "review-loaded")
+        }
+        // QA hook: DSH_REVIEW_TEST_PATH points the audit at a fixed workspace
+        // (mirrors DSH_PREVIEW_TEST_PATH / DSH_WIKI_TEST_PATH).
+        reviewPanel.workspacePath = { [weak self] in
+            if let override = ProcessInfo.processInfo.environment["DSH_REVIEW_TEST_PATH"], !override.isEmpty {
+                return override
+            }
+            return self?.activeWorkspacePath()
+        }
+
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
@@ -1852,7 +1913,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelBarButton = makeActivityButton(symbol: "dot.radiowaves.left.and.right",
                                               tooltip: L10n.tr("bar.channel"),
                                               action: #selector(channelEntryTapped(_:)))
-        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton])
+        reviewBarButton = makeActivityButton(symbol: "text.magnifyingglass",
+                                             tooltip: L10n.tr("bar.review"),
+                                             action: #selector(reviewEntryTapped(_:)))
+        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -1911,6 +1975,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "tasks": kind = .tasks
         case "browser": kind = .browser
         case "channel": kind = .channel
+        case "review": kind = .review
         default: kind = .preview
         }
         setRightPanel(visible ? kind : .none)
@@ -1925,6 +1990,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .tasks: return tasksPanel.view
         case .browser: return browserPanel.view
         case .channel: return channelPanel.view
+        case .review: return reviewPanel.view
         case .none: return NSView()
         }
     }
@@ -1981,12 +2047,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tasksToggleMenuItem?.state = (panel == .tasks) ? .on : .off
         browserToggleMenuItem?.state = (panel == .browser) ? .on : .off
         channelToggleMenuItem?.state = (panel == .channel) ? .on : .off
+        reviewToggleMenuItem?.state = (panel == .review) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
         tasksBarButton?.setActive(panel == .tasks)
         browserBarButton?.setActive(panel == .browser)
         channelBarButton?.setActive(panel == .channel)
+        reviewBarButton?.setActive(panel == .review)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
@@ -2050,6 +2118,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 channelPanel.ensureLoaded()
                 if uiDebug {
                     self.dumpPanelDebugInfo(panelView: channelPanel.view, label: "channel")
+                }
+            case .review:
+                reviewPanel.ensureLoaded()
+                if uiDebug {
+                    self.dumpPanelDebugInfo(panelView: reviewPanel.view, label: "review")
                 }
             }
         } else {
@@ -3329,10 +3402,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 }
                 self.tasksPanel?.workspaceChanged()
                 self.channelPanel?.workspaceChanged()
+                self.reviewPanel?.workspaceChanged()
                 // Web → panel session link: follow the session the user is
                 // viewing — the panel auto-expands its row (or collapses all
                 // when no session matches, e.g. a different workspace).
                 self.channelPanel?.setActiveSession(sid)
+                self.reviewPanel?.setActiveSession(sid)
             }
         }
     }
@@ -3415,6 +3490,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleChannel.target = self
         toggleChannel.state = (rightPanel == .channel) ? .on : .off
         channelToggleMenuItem = toggleChannel
+        let toggleReview = viewMenu.addItem(withTitle: L10n.tr("menu.toggleReview"), action: #selector(reviewEntryTapped(_:)), keyEquivalent: "r")
+        toggleReview.keyEquivalentModifierMask = [.command, .option]
+        toggleReview.target = self
+        toggleReview.state = (rightPanel == .review) ? .on : .off
+        reviewToggleMenuItem = toggleReview
         viewItem.submenu = viewMenu
 
         // Settings menu: dsh settings/upgrade/registry + logs + language.
@@ -3552,6 +3632,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         terminalBarButton?.toolTip = L10n.tr("bar.terminal")
         browserBarButton?.toolTip = L10n.tr("bar.browser")
         channelBarButton?.toolTip = L10n.tr("bar.channel")
+        reviewBarButton?.toolTip = L10n.tr("bar.review")
         wikiBarButton?.toolTip = L10n.tr("bar.wiki")
         tasksBarButton?.toolTip = L10n.tr("bar.tasks")
         // 各面板头部操作按钮 tooltip 同样跟随语言
@@ -3561,6 +3642,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tasksPanel?.refreshTooltips()
         browserPanel?.refreshTooltips()
         channelPanel?.refreshTooltips()
+        reviewPanel?.refreshTooltips()
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url
@@ -3739,6 +3821,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     @objc private func channelEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .channel ? .none : .channel)
+    }
+    /// Toggle the Review (change audit) panel (activity bar entry / ⌥⌘R).
+    @objc private func reviewEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .review ? .none : .review)
     }
     /// Run QR login for a channel via the core CLI, open the QR URL in the
     /// browser, and save the token to ~/.dsh/channels/<channelId>.json.
@@ -4195,6 +4281,7 @@ final class SettingsWindowController {
         ("menu.toggleWiki", "⌥⌘W"),
         ("menu.toggleBrowser", "⌥⌘B"),
         ("menu.toggleChannel", "⌥⌘H"),
+        ("menu.toggleReview", "⌥⌘R"),
         ("settings.openMenu", "⌘,"),
     ]
 
