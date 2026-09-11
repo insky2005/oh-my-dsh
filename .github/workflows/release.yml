@@ -20,7 +20,7 @@ jobs:
     name: prepare (CEF + node caches)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Cache CEF + node + built artifacts (.cache/)
         uses: actions/cache@v6
         with:
@@ -50,7 +50,7 @@ jobs:
           - arch: x86_64
             runner: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # version.sh reads tags
       - name: Cache runtime + node tarballs (.cache/)
@@ -89,7 +89,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Download all artifacts
