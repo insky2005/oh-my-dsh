@@ -97,7 +97,6 @@ final class ReviewPanelController: NSObject {
     private let contentContainer = ReviewPaperView()
     private let scroll = NSScrollView()
     private let list = FlippedStackView()
-    private let statusLabel = NSTextField(wrappingLabelWithString: "")
 
     // State (expansion is tracked with *collapse* sets for sessions/turns and an
     // expand set for files, so a freshly loaded audit opens on a useful default).
@@ -141,6 +140,15 @@ final class ReviewPanelController: NSObject {
     /// Load once when the panel is first shown.
     func ensureLoaded() {
         if !hasLoaded { reload() }
+    }
+
+    /// Warm the session listing before the panel is ever opened (called once the
+    /// dsh web page is up). The listing costs a core-CLI round trip (~0.5–1.5s on
+    /// this machine); doing it in the background makes the first open render
+    /// immediately instead of showing an empty panel while node starts.
+    func prewarm() {
+        guard !hasLoaded, !isLoading else { return }
+        reload()
     }
 
     /// The workspace changed (session/project switch) — re-list, keep the audit
@@ -274,22 +282,12 @@ final class ReviewPanelController: NSObject {
             list.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
 
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.font = NSFont.systemFont(ofSize: 11)
-        statusLabel.textColor = ReviewInk.muted
-        statusLabel.alignment = .center
-        statusLabel.isHidden = true
-
         contentContainer.addSubview(scroll)
-        contentContainer.addSubview(statusLabel)
         NSLayoutConstraint.activate([
             scroll.topAnchor.constraint(equalTo: contentContainer.topAnchor),
             scroll.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
-            statusLabel.centerXAnchor.constraint(equalTo: contentContainer.centerXAnchor),
-            statusLabel.centerYAnchor.constraint(equalTo: contentContainer.centerYAnchor),
-            statusLabel.widthAnchor.constraint(lessThanOrEqualTo: contentContainer.widthAnchor, constant: -40),
         ])
 
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -332,7 +330,9 @@ final class ReviewPanelController: NSObject {
         let workspaceAtStart = workspace
         let activeAtStart = activeSessionId
         self.workspace = workspace
-        showStatus(L10n.tr("review.loading"))
+        // Keep whatever is already rendered (a refresh must not blank the panel);
+        // only an empty panel falls back to the centred status text.
+        if sessions.isEmpty { showStatus(L10n.tr("review.loading")) } else { render() }
         AppLog.shared.log("review: list sessions workspace=\(workspace) active=\(activeAtStart ?? "-")")
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -419,10 +419,14 @@ final class ReviewPanelController: NSObject {
         }
     }
 
+    /// Status line rendered as a top-aligned card instead of a centred label:
+    /// it paints immediately (no blank panel while the core CLI runs) and does
+    /// not jump when the real rows arrive.
     private func showStatus(_ text: String) {
-        list.setViews([], in: .top)
-        statusLabel.stringValue = text
-        statusLabel.isHidden = false
+        let card = makeCard(text: text, fill: ReviewInk.turnFill, textColor: ReviewInk.body,
+                            font: NSFont.systemFont(ofSize: 11), padding: 9)
+        list.setViews([card], in: .top)
+        card.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -20).isActive = true
     }
 
     // MARK: - Actions
@@ -465,7 +469,6 @@ final class ReviewPanelController: NSObject {
         // render rebuilds the tree, so stale entries must not accumulate.
         headerActions.removeAll()
         var rows: [NSView] = []
-        statusLabel.isHidden = true
         rows.append(makeSummaryCard())
         for session in sessions {
             rows.append(makeSessionBlock(session))
@@ -500,7 +503,9 @@ final class ReviewPanelController: NSObject {
             shells += stats.bashCalls
             failed += stats.failed
         }
-        let parts = [
+        var parts: [String] = []
+        if isLoading { parts.append(L10n.tr("review.reading")) }
+        parts.append(contentsOf: [
             L10n.tr("review.summarySessions") + " \(sessionsCount)/\(sessions.count)",
             L10n.tr("review.summaryTurns") + " \(turnsCount)",
             L10n.tr("review.filesShort") + " \(files.count)",
@@ -508,7 +513,7 @@ final class ReviewPanelController: NSObject {
             L10n.tr("review.nested") + " \(nested)",
             L10n.tr("review.suspectShort") + " \(suspect)/\(shells)",
             L10n.tr("review.error") + " \(failed)",
-        ]
+        ])
         return makeCard(text: parts.joined(separator: "  ·  "), fill: ReviewInk.turnFill,
                         textColor: ReviewInk.body, font: NSFont.systemFont(ofSize: 11), padding: 9)
     }

@@ -1881,6 +1881,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reviewPanel = ReviewPanelController()
         AppLog.shared.log("launch: reviewPanel created")
         reviewPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        // Warm the session listing right away (the workspace resolves from dsh's
+        // persisted store when the page has not reported a session yet), so
+        // opening the panel renders instead of waiting on the core CLI.
+        reviewPanel.prewarm()
         // QA (--ui-debug): snapshot the panel again once it has rendered data.
         reviewPanel.onDidRender = { [weak self] in
             guard let self = self, self.uiDebug else { return }
@@ -3219,6 +3223,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         AppLog.shared.log("page did finish loading: \(webView.url?.absoluteString ?? "?")")
+        // Warm the Review panel's session listing now that a workspace resolves,
+        // so opening the panel renders immediately instead of waiting on the
+        // core CLI (the first-open "empty panel" the user sees).
+        reviewPanel?.prewarm()
         // Report the page's actual browser language (follows AppleLanguages).
         webView.evaluateJavaScript("navigator.language") { result, _ in
             if let lang = result as? String {
@@ -4192,6 +4200,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if let current = ProjectDirectory.current,
            FileManager.default.fileExists(atPath: current) {
             return current
+        }
+        // Fallback: a panel can be opened before dsh web reports the session the
+        // user is viewing (fresh launch / page still loading), and a nil
+        // workspace leaves it with nothing to show. dsh persists the workspace
+        // list itself, so read the last one from there.
+        if let persisted = DSHSessionRPC.persistedWorkspacePath(sessionId: nil),
+           FileManager.default.fileExists(atPath: persisted) {
+            return persisted
         }
         return ProjectDirectory.current
     }
