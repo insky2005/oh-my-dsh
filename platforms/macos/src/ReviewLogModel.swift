@@ -268,6 +268,21 @@ enum ReviewLogModel {
         return out
     }
 
+    /// The sessions the panel may show: **only** those whose log cwd is the
+    /// workspace being reviewed, newest first (the listing already arrives sorted
+    /// by mtime), capped at `limit`.
+    ///
+    /// Deliberately never pins the followed session: a cross-workspace switch must
+    /// not leave the previous workspace's session sitting above the new
+    /// workspace's list. `beyondLimit` reports whether sessions were dropped.
+    static func sessionsForWorkspace(_ sessions: [ReviewSessionSummary],
+                                     workspace: String,
+                                     limit: Int) -> (sessions: [ReviewSessionSummary], beyondLimit: Bool) {
+        let scoped = sessions.filter { $0.cwd == workspace }
+        guard limit > 0, scoped.count > limit else { return (scoped, false) }
+        return (Array(scoped.prefix(limit)), true)
+    }
+
     /// Extract `sessionId → title` from a dsh web `session.list` result.
     ///
     /// dsh reports the display title it shows in its own UI under

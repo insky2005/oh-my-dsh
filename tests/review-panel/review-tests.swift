@@ -119,6 +119,29 @@ test("turn group narrows shell calls when asked", ReviewLogModel.turnGroups(audi
 test("oldest turn is last", turnGroups.last?.turn == 1)
 test("turn group files stay chronological", turnGroups[1].files.count == 1 && turnGroups[1].files[0].path == "src/a.js")
 
+// --- workspace scoping (cross-workspace switch must not leak sessions) ---
+
+func summary(_ id: String, cwd: String, mtime: Double) -> ReviewSessionSummary {
+    ReviewSessionSummary(id: id, dir: "/s/\(id)", file: "/s/\(id)/session.jsonl.zstd", cwd: cwd,
+                         createdAt: 0, parentSession: nil, delegationDepth: 0,
+                         compressed: true, sizeBytes: 10, mtimeMs: mtime)
+}
+let workspaceSessions = [summary("session-a1", cwd: "/ws/A", mtime: 900),
+              summary("session-a2", cwd: "/ws/A", mtime: 800),
+              summary("session-b1", cwd: "/ws/B", mtime: 700),
+              summary("session-b2", cwd: "/ws/B", mtime: 600),
+              summary("session-b3", cwd: "/ws/B", mtime: 500)]
+let scopedB = ReviewLogModel.sessionsForWorkspace(workspaceSessions, workspace: "/ws/B", limit: 60)
+test("only the workspace's sessions are kept", scopedB.sessions.map { $0.id } == ["session-b1", "session-b2", "session-b3"])
+test("the other workspace's session is never pinned on top", !scopedB.sessions.contains { $0.id == "session-a1" })
+test("order is preserved (newest first)", scopedB.sessions.first?.id == "session-b1")
+test("no truncation when under the cap", scopedB.beyondLimit == false)
+let cappedA = ReviewLogModel.sessionsForWorkspace(workspaceSessions, workspace: "/ws/A", limit: 1)
+test("the cap applies to the scoped list only", cappedA.sessions.map { $0.id } == ["session-a1"] && cappedA.beyondLimit)
+test("an unknown workspace yields no sessions", ReviewLogModel.sessionsForWorkspace(workspaceSessions, workspace: "/ws/C", limit: 60).sessions.isEmpty)
+test("a session without a resolved cwd is excluded", ReviewLogModel.sessionsForWorkspace(
+    [summary("session-x", cwd: "", mtime: 1)], workspace: "", limit: 60).sessions.count == 1)
+
 // --- session titles (how a session is recognised in dsh web) ---
 
 let listPayload: [String: Any] = ["items": [

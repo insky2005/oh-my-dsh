@@ -371,15 +371,13 @@ final class ReviewPanelController: NSObject {
             let listed = listedJSON.flatMap { ReviewLogModel.decodeSessions($0) }
             var sessions = listed?.sessions ?? []
             let total = listed?.total ?? sessions.count
-            let inWorkspace = sessions.filter { $0.cwd == workspaceAtStart }
-            let active = activeAtStart.flatMap { id in sessions.first { $0.id == id } }
-            sessions = inWorkspace
-            if let active = active, !sessions.contains(where: { $0.id == active.id }) {
-                sessions.insert(active, at: 0)
-            }
-            if sessions.count > self?.maxSessions ?? 60 {
-                sessions = Array(sessions.prefix(self?.maxSessions ?? 60))
-            }
+            // STRICTLY the sessions of the workspace being shown (never pin the
+            // followed session: a cross-workspace switch must not leave the
+            // previous workspace's session above the new workspace's list).
+            let scoped = ReviewLogModel.sessionsForWorkspace(sessions, workspace: workspaceAtStart,
+                                                             limit: self?.maxSessions ?? 60)
+            sessions = scoped.sessions
+            let truncated = scoped.beyondLimit
             let diagnostics = listed?.diagnostics ?? []
             // Session titles come from dsh web (session.list projections), so the
             // panel names sessions the same way the web UI does.
@@ -405,8 +403,9 @@ final class ReviewPanelController: NSObject {
                     self.expandedSessions.insert(first.id)
                 }
                 AppLog.shared.log("review: listed \(sessions.count)/\(total) sessions workspace=\(workspaceAtStart) "
-                    + "(active=\(activeNow ?? "-") matched=\(sessions.contains { $0.id == activeNow }) "
-                    + "expanded=\(self.expandedSessions.count)) diagnostics=\(diagnostics.count)")
+                    + "first=\(sessions.first?.id ?? "-") active=\(activeNow ?? "-") "
+                    + "matched=\(sessions.contains { $0.id == activeNow }) "
+                    + "expanded=\(self.expandedSessions.count) truncated=\(truncated) diagnostics=\(diagnostics.count)")
                 if sessions.isEmpty {
                     self.showStatus(L10n.tr("review.noSessions"))
                 } else {
@@ -553,6 +552,12 @@ final class ReviewPanelController: NSObject {
             L10n.tr("review.suspectShort") + " \(suspect)/\(shells)",
             L10n.tr("review.error") + " \(failed)",
         ])
+        if let active = activeSessionId, !active.isEmpty,
+           !sessions.contains(where: { $0.id == active }) {
+            // The followed session is not part of this workspace's list (another
+            // workspace, or older than the cap) — say so instead of showing it.
+            parts.append(L10n.tr("review.activeElsewhere"))
+        }
         return makeCard(text: parts.joined(separator: "  ·  "), fill: ReviewInk.turnFill,
                         textColor: ReviewInk.body, font: NSFont.systemFont(ofSize: 11), padding: 9)
     }
