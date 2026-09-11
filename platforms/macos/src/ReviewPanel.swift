@@ -69,6 +69,14 @@ private enum ReviewInk {
     static let blockFill = ReviewFill.adaptive(
         light: NSColor.white,
         dark: NSColor(calibratedWhite: 0.185, alpha: 1))
+    /// The session dsh web is showing: an accent-tinted block with accent ink.
+    static let currentSessionFill = ReviewFill.adaptive(
+        light: NSColor.controlAccentColor.withAlphaComponent(0.20),
+        dark: NSColor.controlAccentColor.withAlphaComponent(0.40))
+    static let currentSessionBorder = ReviewFill.adaptive(
+        light: NSColor.controlAccentColor.withAlphaComponent(0.45),
+        dark: NSColor.controlAccentColor.withAlphaComponent(0.55))
+    static let currentSessionTitle = NSColor.controlAccentColor
     static let added: NSColor = .systemGreen
     static let removed: NSColor = .systemRed
 }
@@ -154,8 +162,13 @@ final class ReviewPanelController: NSObject {
     /// The workspace changed (session/project switch) — re-list, keep the audit
     /// cache (a session's audit does not depend on the current workspace).
     func workspaceChanged() {
+        // Switching between sessions of the SAME workspace must not re-list: the
+        // session list is unchanged, and re-listing was the flicker (and the
+        // stale-list race) on every session switch.
+        let resolved = workspacePath?()
+        if let resolved = resolved, resolved == workspace { return }
         hasLoaded = false
-        if isViewVisible { reload() }
+        reload()
     }
 
     /// Follow the session dsh web is showing: expand it (auditing it if needed).
@@ -165,20 +178,27 @@ final class ReviewPanelController: NSObject {
         guard let sessionId = sessionId, !sessionId.isEmpty else { return }
         let changed = activeSessionId != sessionId
         activeSessionId = sessionId
-        if !sessions.contains(where: { $0.id == sessionId }) && !isLoading {
-            // Not in the current list (older than the cap, or another workspace):
-            // re-list before giving up, then expand whatever came back.
-            reload()
-        }
-        if changed {
-            expandedSessions.insert(sessionId)
-            // Reopen every turn of that session (collapse state is keyed per turn).
-            let prefix = "turn:\(sessionId)#"
-            collapsedTurns = collapsedTurns.filter { !$0.hasPrefix(prefix) }
-            AppLog.shared.log("review: follow web session \(sessionId) (listed=\(sessions.contains { $0.id == sessionId }))")
-        }
+        guard changed else { return }
+
+        // The tree follows dsh web: the followed session is the ONLY expanded one
+        // (switching sessions collapses whatever was open before), and its turns
+        // reopen so the newest 对话 is visible immediately.
+        expandedSessions = [sessionId]
+        let prefix = "turn:\(sessionId)#"
+        collapsedTurns = collapsedTurns.filter { !$0.hasPrefix(prefix) }
+        let listed = sessions.contains { $0.id == sessionId }
+        AppLog.shared.log("review: follow web session \(sessionId) (listed=\(listed))")
         ensureAudit(sessionId)
-        render()
+
+        if listed {
+            render()
+            return
+        }
+        // Not in the current list: another workspace, or older than the cap.
+        // A listing already in flight will pick the current active id up when it
+        // lands; otherwise re-list. Never paint the stale list here — that is
+        // exactly what showed one workspace's sessions under another's session.
+        if !isLoading { reload() }
     }
 
     /// Language change → refresh the visible strings.
@@ -360,14 +380,19 @@ final class ReviewPanelController: NSObject {
                 self.isLoading = false
                 self.hasLoaded = true
                 self.sessions = sessions
-                if let first = sessions.first(where: { $0.id == activeAtStart }) {
-                    // The web session is in the list: open it (and only it).
-                    self.expandedSessions.insert(first.id)
-                } else if self.expandedSessions.isEmpty, let first = sessions.first {
+                // Resolve the followed session against the CURRENT active id (it can
+                // change while a listing is in flight — that is the cross-workspace
+                // switch), never against the id captured when the listing started.
+                let activeNow = self.activeSessionId
+                if let followed = sessions.first(where: { $0.id == activeNow }) {
+                    self.expandedSessions.insert(followed.id)
+                } else if !sessions.contains(where: { self.expandedSessions.contains($0.id) }),
+                          let first = sessions.first {
                     self.expandedSessions.insert(first.id)
                 }
-                AppLog.shared.log("review: listed \(sessions.count)/\(total) sessions for workspace "
-                    + "(active matched=\(sessions.contains { $0.id == activeAtStart })) diagnostics=\(diagnostics.count)")
+                AppLog.shared.log("review: listed \(sessions.count)/\(total) sessions workspace=\(workspaceAtStart) "
+                    + "(active=\(activeNow ?? "-") matched=\(sessions.contains { $0.id == activeNow }) "
+                    + "expanded=\(self.expandedSessions.count)) diagnostics=\(diagnostics.count)")
                 if sessions.isEmpty {
                     self.showStatus(L10n.tr("review.noSessions"))
                 } else {
@@ -535,7 +560,6 @@ final class ReviewPanelController: NSObject {
         }
         var detail = ReviewLogModel.clockLabel(session.mtimeMs) + " · " + ReviewLogModel.byteLabel(session.sizeBytes)
         if session.isSubagent { detail += " · " + L10n.tr("review.subagent") }
-        if session.id == activeSessionId { detail += " · " + L10n.tr("review.current") }
 
         var children: [NSView] = []
         if expanded {
@@ -555,9 +579,15 @@ final class ReviewPanelController: NSObject {
                 children.append(makeNote(L10n.tr("review.reading")))
             }
         }
+        // The session dsh web is showing is highlighted by fill + accent title
+        // instead of a "current" text suffix.
+        let isCurrent = session.id == activeSessionId
         return makeBlock(title: ReviewLogModel.shortId(session.id), detail: detail, trailing: trailing,
-                         symbol: "doc.text", fill: ReviewInk.sessionFill, border: ReviewInk.hairline,
-                         titleFont: NSFont.systemFont(ofSize: 13, weight: .semibold), titleColor: ReviewInk.title,
+                         symbol: "doc.text",
+                         fill: isCurrent ? ReviewInk.currentSessionFill : ReviewInk.sessionFill,
+                         border: isCurrent ? ReviewInk.currentSessionBorder : ReviewInk.hairline,
+                         titleFont: NSFont.systemFont(ofSize: 13, weight: .semibold),
+                         titleColor: isCurrent ? ReviewInk.currentSessionTitle : ReviewInk.title,
                          expanded: expanded,
                          onToggle: { [weak self] in
                              guard let self = self else { return }

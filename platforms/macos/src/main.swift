@@ -307,7 +307,6 @@ enum L10n {
         "review.turn": ("对话", "Turn"),
         "review.turnUnknown": ("未标注轮次", "Unnumbered"),
         "review.subagent": ("子代理", "subagent"),
-        "review.current": ("当前会话", "current"),
         "review.nested": ("嵌套", "nested"),
         "review.nestedCall": ("嵌套调用", "nested call"),
         "review.suspect": ("可能写文件", "may write"),
