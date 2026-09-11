@@ -10,15 +10,26 @@ import AppKit
 //
 // Design + coverage notes: docs/review-panel-design.md
 
-/// Content background: white, per the panel's document-style look (the visual
-/// language follows the Channel panel's project view, which uses light rounded
-/// blocks on a light surface).
+/// Content surface: the paper the tree is drawn on. Follows the system
+/// appearance (white in light mode, a dark surface in dark mode) — the visual
+/// language still matches the Channel panel's project view.
 final class ReviewPaperView: NSView {
     override var isOpaque: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.white.setFill()
+        ReviewInk.paper.setFill()
         dirtyRect.fill()
     }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+}
+
+/// A light/dark pair for the rounded blocks (RoundedBlockView picks by appearance).
+struct ReviewFill {
+    var light: NSColor
+    var dark: NSColor
+    static func adaptive(light: NSColor, dark: NSColor) -> ReviewFill { ReviewFill(light: light, dark: dark) }
 }
 
 /// Panel root: non-opaque self-drawn chrome background (same pattern as
@@ -34,18 +45,32 @@ final class ReviewRootView: NSView {
     }
 }
 
-/// Palette for the white content surface (explicit colours so the tree stays
-/// readable on the white paper regardless of the system appearance).
+/// Appearance-adaptive palette for the review tree.
+///
+/// Text/icons use AppKit's semantic colours (`labelColor` / `secondaryLabelColor` /
+/// `tertiaryLabelColor`, `separatorColor`) so they re-resolve automatically when
+/// the user switches theme; block fills are explicit light/dark pairs (the same
+/// recipe the Channel panel uses) because the tree needs more contrast than the
+/// stock control colours give.
 private enum ReviewInk {
-    static let title = NSColor(calibratedWhite: 0.13, alpha: 1)
-    static let body = NSColor(calibratedWhite: 0.30, alpha: 1)
-    static let muted = NSColor(calibratedWhite: 0.52, alpha: 1)
-    static let hairline = NSColor(calibratedWhite: 0.80, alpha: 1)
-    static let sessionFill = NSColor(calibratedRed: 0.90, green: 0.93, blue: 0.99, alpha: 1)
-    static let turnFill = NSColor(calibratedWhite: 0.955, alpha: 1)
-    static let blockFill = NSColor.white
-    static let added = NSColor(calibratedRed: 0.10, green: 0.48, blue: 0.20, alpha: 1)
-    static let removed = NSColor(calibratedRed: 0.72, green: 0.16, blue: 0.16, alpha: 1)
+    static let paper: NSColor = .textBackgroundColor
+    static let title: NSColor = .labelColor
+    static let body: NSColor = .secondaryLabelColor
+    static let muted: NSColor = .tertiaryLabelColor
+    static let hairline = ReviewFill.adaptive(
+        light: NSColor(calibratedWhite: 0.80, alpha: 1),
+        dark: NSColor(calibratedWhite: 0.38, alpha: 0.7))
+    static let sessionFill = ReviewFill.adaptive(
+        light: NSColor(calibratedRed: 0.90, green: 0.93, blue: 0.99, alpha: 1),
+        dark: NSColor(calibratedRed: 0.17, green: 0.21, blue: 0.30, alpha: 1))
+    static let turnFill = ReviewFill.adaptive(
+        light: NSColor(calibratedWhite: 0.955, alpha: 1),
+        dark: NSColor(calibratedWhite: 0.235, alpha: 1))
+    static let blockFill = ReviewFill.adaptive(
+        light: NSColor.white,
+        dark: NSColor(calibratedWhite: 0.185, alpha: 1))
+    static let added: NSColor = .systemGreen
+    static let removed: NSColor = .systemRed
 }
 
 final class ReviewPanelController: NSObject {
@@ -645,16 +670,16 @@ final class ReviewPanelController: NSObject {
     /// detail + trailing summary) and an optional children stack — the same
     /// rounded-block language the Channel panel's project view uses.
     private func makeBlock(title: String, detail: String?, trailing: String?, symbol: String,
-                           fill: NSColor, border: NSColor, titleFont: NSFont, titleColor: NSColor,
+                           fill: ReviewFill, border: ReviewFill, titleFont: NSFont, titleColor: NSColor,
                            expanded: Bool, onToggle: (() -> Void)?, onOpen: (() -> Void)?,
                            children: [NSView]) -> NSView {
         let block = RoundedBlockView()
         block.translatesAutoresizingMaskIntoConstraints = false
         block.radius = 8
-        block.lightFill = fill
-        block.darkFill = fill
-        block.lightBorder = border
-        block.darkBorder = border
+        block.lightFill = fill.light
+        block.darkFill = fill.dark
+        block.lightBorder = border.light
+        block.darkBorder = border.dark
 
         let chevron = NSImageView()
         if let image = NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil) {
@@ -775,14 +800,14 @@ final class ReviewPanelController: NSObject {
 
     // MARK: - Leaf views
 
-    private func makeCard(text: String, fill: NSColor, textColor: NSColor, font: NSFont, padding: CGFloat) -> NSView {
+    private func makeCard(text: String, fill: ReviewFill, textColor: NSColor, font: NSFont, padding: CGFloat) -> NSView {
         let card = RoundedBlockView()
         card.translatesAutoresizingMaskIntoConstraints = false
         card.radius = 8
-        card.lightFill = fill
-        card.darkFill = fill
-        card.lightBorder = ReviewInk.hairline
-        card.darkBorder = ReviewInk.hairline
+        card.lightFill = fill.light
+        card.darkFill = fill.dark
+        card.lightBorder = ReviewInk.hairline.light
+        card.darkBorder = ReviewInk.hairline.dark
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = font
         label.textColor = textColor
@@ -860,8 +885,9 @@ final class ReviewPanelController: NSObject {
         field.maximumNumberOfLines = 0
         field.lineBreakMode = .byCharWrapping
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        field.drawsBackground = true
-        field.backgroundColor = .white
+        // No own background: the field sits on the block surface, so it follows
+        // the theme instead of pinning a white rectangle in dark mode.
+        field.drawsBackground = false
         return field
     }
 }

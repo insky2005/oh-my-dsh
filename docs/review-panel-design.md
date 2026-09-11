@@ -104,7 +104,9 @@ node core/bin/ohmy-core.js review audit-file <path.jsonl[.zstd]> [--workspace <d
   跨工作区的会话也能定位），并把它作为当前会话标记；工作区变化只重列会话，不清审计缓存；
 - 请求不会丢：加载中的再次 `reload` 会被排队重跑（此前用 `guard !isLoading` 直接丢弃，
   正是"面板显示别的会话数据"的根因）；
-- 内容区白底 + 圆角块（视觉语言对齐 Channel 面板的项目视图），正文使用固定深色，深浅色模式下都可读；
+- 内容区与圆角块**跟随主题**（浅色：白底 + 浅蓝会话块；深色：深色表面 + 暗蓝会话块——配方与 Channel 面板项目视图一致）；
+  正文与图标用 AppKit 语义色（`labelColor`/`secondaryLabelColor`/`tertiaryLabelColor`/`separatorColor`），diff 用 `systemGreen`/`systemRed`，
+  切换主题即时生效（语义色在绘制时解析，视图无需重建）；
 - 面板**完全只读**：没有按钮会写盘或调用写接口。
 
 ## 7. 测试与 QA
