@@ -19,8 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Node + core tests
-        # 不带引号：bash 展开 glob，兼容 Node 20（引号 glob 需 Node 21+）
-        run: node --test core/tests/*.test.js
+        # 不带引号：bash 展开 glob，兼容 Node 20（引号 glob 需 Node 21+）；
+        # --test-timeout 让泄漏定时器的用例快速失败而不是把整轮挂死。
+        run: node --test --test-timeout=60000 core/tests/*.test.js
       - name: Wiki panel tests
         run: tests/wiki-panel/run.sh
       - name: Clean build (no cache restore — validates fresh downloads)

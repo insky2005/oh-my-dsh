@@ -24,7 +24,8 @@ jobs:
           # node --test 的引号 glob（Node 21+ 才支持）。
           node-version: 20
       - name: core unit tests
-        run: node --test core/tests/*.test.js
+        # --test-timeout: a leaking test fails fast instead of hanging the job.
+        run: node --test --test-timeout=60000 core/tests/*.test.js
 
   # --- 前置准备：预编译双架构 CEF 产物 + 预下载 node + 预取 runtime，统一缓存。
   # 随后的 build 矩阵与 swift 测试通过 needs 依赖它，直接命中缓存，避免各 job

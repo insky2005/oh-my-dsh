@@ -169,11 +169,16 @@ async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceI
   });
   await handle.start();
 
-  const deadline = Date.now() + 5000;
-  while (sent === null && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
-  await handle.stop();
-  closeServer(wsSrv.srv);
-  return sent;
+  // try/finally: a failed wait must still stop the runner, or its polling
+  // timers keep this file's process alive and `node --test` waits forever.
+  try {
+    const deadline = Date.now() + 5000;
+    while (sent === null && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    return sent;
+  } finally {
+    await handle.stop();
+    closeServer(wsSrv.srv);
+  }
 }
 
 // Drive a SEQUENCE of messages through runWeixinChannel against a mock dsh web
@@ -212,9 +217,12 @@ async function runChannelSequence(texts, { projectRoot = '/Users/loie/repo/alpha
   const handle = await runWeixinChannel({ channelId: 'wx-s', port: wsSrv.port, refs: [], dshHome, homeDir: '/Users/loie', projectRoot, transportOpts: { fetch: fetchImpl, baseUrl: 'https://x' }, intervalMs: 40 });
   await handle.start();
   const sendSeq = async (t) => { queued.push(t); const dl = Date.now() + 8000; let lastLen = -1, lastChange = Date.now(); while (Date.now() < dl) { if (sent.length !== lastLen) { lastLen = sent.length; lastChange = Date.now(); } if (Date.now() - lastChange > 200) break; await new Promise((r) => setTimeout(r, 30)); } };
-  for (const t of texts) await sendSeq(t);
-  await handle.stop(); closeServer(wsSrv.srv);
-  return { sent, renames };
+  try {
+    for (const t of texts) await sendSeq(t);
+    return { sent, renames };
+  } finally {
+    await handle.stop(); closeServer(wsSrv.srv);
+  }
 }
 
 test('channel-runner: /new 统一回复、无内容建 New Session 等待、有内容生成回推', async () => {
@@ -375,11 +383,14 @@ async function runProjectGate({ projectRoot = '/Users/loie/repo/alpha', channelI
   };
   const handle = await runWeixinChannel({ channelId, port: wsSrv.port, refs: [], dshHome, homeDir: '/Users/loie', projectRoot, transportOpts: { fetch: fetchImpl, baseUrl: 'https://x' }, intervalMs: 40 });
   await handle.start();
-  queued.push(text);
-  const dl = Date.now() + 6000;
-  while (sent === null && Date.now() < dl) await new Promise((r) => setTimeout(r, 40));
-  await handle.stop(); closeServer(wsSrv.srv);
-  return { sent, creates: creates.length };
+  try {
+    queued.push(text);
+    const dl = Date.now() + 6000;
+    while (sent === null && Date.now() < dl) await new Promise((r) => setTimeout(r, 40));
+    return { sent, creates: creates.length };
+  } finally {
+    await handle.stop(); closeServer(wsSrv.srv);
+  }
 }
 
 test('project switch OFF: ordinary message replies 未启用该通道 and creates no session', async () => {

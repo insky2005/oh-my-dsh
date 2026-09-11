@@ -8,12 +8,20 @@ const fs = require('node:fs');
 const { saveChannelAccount } = require('../lib/channel-store');
 const { runWeixinChannel } = require('../lib/channel-runner');
 
+/// Close a mock server AND destroy its sockets (Node keeps connections alive by
+/// default, so `server.close()` alone can leave the test process hanging).
+function closeServer(srv) {
+  try { if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections(); } catch { /* ignore */ }
+  try { srv.close(); } catch { /* ignore */ }
+}
+
 // Busy gate: while one generation is in-flight for a conversation, further
 // messages get 请等待 and are NOT queued. A gate on session.history holds the
 // first generation open so we can observe the busy state deterministically.
 test('busy gate: in-flight generation blocks next message (请等待), answer pushed on completion', async () => {
   const http = require('node:http');
   let seq = 0;
+  let historySeen = false;
   let release = null;
   const gate = new Promise((res) => { release = res; });
   const creates = [];
@@ -31,7 +39,7 @@ test('busy gate: in-flight generation blocks next message (请等待), answer pu
         else if (url.includes('session.rename')) { res.end(JSON.stringify({ rpcId, result: { ok: true, value: { ok: true } } })); }
         else if (url.includes('session.prompt')) { if (sessions[p.sessionId]) sessions[p.sessionId].prompted = 1; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { accepted: true } } })); }
         else if (url.includes('session.cancel')) { res.end(JSON.stringify({ rpcId, result: { ok: true, value: { ok: true } } })); }
-        else if (url.includes('session.history')) { await gate; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { events: [{ event: { type: 'assistant/message', data: { message: { role: 'assistant', content: [{ type: 'text', text: '答案-' + (p.sessionId || '') }] } } } }] } } })); }
+        else if (url.includes('session.history')) { historySeen = true; await gate; res.end(JSON.stringify({ rpcId, result: { ok: true, value: { events: [{ event: { type: 'assistant/message', data: { message: { role: 'assistant', content: [{ type: 'text', text: '答案-' + (p.sessionId || '') }] } } } }] } } })); }
         else { res.end(JSON.stringify({ rpcId, result: { ok: true, value: null } })); }
       });
     });
@@ -53,19 +61,29 @@ test('busy gate: in-flight generation blocks next message (请等待), answer pu
   const handle = await runWeixinChannel({ channelId: 'wx-b', port: srv.port, refs: [], dshHome, homeDir: '/Users/loie', projectRoot: '/Users/loie/repo/alpha', transportOpts: { fetch: fetchImpl, baseUrl: 'https://x' }, intervalMs: 30 });
   await handle.start();
   const push = async (t) => { queued.push(t); };
-  const waitFor = async (pred) => { const dl = Date.now() + 5000; while (Date.now() < dl) { if (pred()) return true; await new Promise((r) => setTimeout(r, 30)); } return false; };
+  const waitFor = async (pred) => { const dl = Date.now() + 10000; while (Date.now() < dl) { if (pred()) return true; await new Promise((r) => setTimeout(r, 30)); } return false; };
 
   // msg1 starts a generation (typing indicator is a no-op in the mock transport,
   // so there is no "处理中" text any more). The generation blocks on the gate.
-  await push('第一问');
-  // while still in-flight, msg2 -> 请等待 (proves msg1 is busy, not queued)
-  await push('第二问');
-  assert.ok(await waitFor(() => sent.some((s) => /请等待/.test(s))), 'msg2 gets 请等待: ' + JSON.stringify(sent));
-  assert.equal(creates.length, 1, 'msg2 was not queued (only one session.create)');
-  // release the gate -> msg1 answer pushed
-  release();
-  assert.ok(await waitFor(() => sent.some((s) => /答案-sess-1/.test(s))), 'msg1 answer pushed: ' + JSON.stringify(sent));
-  assert.equal(creates.length, 1);
-
-  await handle.stop(); srv.srv.close();
+  try {
+    await push('第一问');
+    // Deterministic sequencing: only deliver 第二问 once 第一问's generation has
+    // actually reached the server (its gated session.history request). Pushing
+    // both up-front raced the runner's 30ms poll under CPU contention — the rare
+    // flake that made this file fail (and, before the try/finally above, hang).
+    assert.ok(await waitFor(() => historySeen), '第一问 generation reached the server');
+    // while still in-flight, msg2 -> 请等待 (proves msg1 is busy, not queued)
+    await push('第二问');
+    assert.ok(await waitFor(() => sent.some((s) => /请等待/.test(s))), 'msg2 gets 请等待: ' + JSON.stringify(sent));
+    assert.equal(creates.length, 1, 'msg2 was not queued (only one session.create)');
+    // release the gate -> msg1 answer pushed
+    release();
+    assert.ok(await waitFor(() => sent.some((s) => /答案-sess-1/.test(s))), 'msg1 answer pushed: ' + JSON.stringify(sent));
+    assert.equal(creates.length, 1);
+  } finally {
+    // An assertion failure must still stop the runner (30ms polling) and close
+    // the mock server, otherwise this file never exits and the suite hangs.
+    await handle.stop();
+    closeServer(srv.srv);
+  }
 });

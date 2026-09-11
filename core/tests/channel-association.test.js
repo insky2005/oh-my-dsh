@@ -9,6 +9,13 @@ const { saveChannelAccount } = require('../lib/channel-store');
 const { runWeixinChannel } = require('../lib/channel-runner');
 const { resolveRefBinding } = require('../lib/channel');
 
+/// Close a mock server AND destroy its sockets (Node keeps connections alive by
+/// default, so `server.close()` alone can leave the test process hanging).
+function closeServer(srv) {
+  try { if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections(); } catch { /* ignore */ }
+  try { srv.close(); } catch { /* ignore */ }
+}
+
 // Drive a sequence of messages (commands + ordinary) through runWeixinChannel and
 // record what the mock dsh web session driver did: session.create payloads and
 // prompt targets. Verifies A (session reuse, incl. after /new) + C (workspaceId).
@@ -52,9 +59,12 @@ async function runOrdinarySequence(texts, { projectRoot = '/Users/loie/repo/alph
   const handle = await runWeixinChannel({ channelId: 'wx-o', port: wsSrv.port, refs, dshHome, homeDir: '/Users/loie', projectRoot, transportOpts: { fetch: fetchImpl, baseUrl: 'https://x' }, intervalMs: 40 });
   await handle.start();
   const sendSeq = async (t) => { queued.push(t); const dl = Date.now() + 8000; let lastLen = -1, lastChange = Date.now(); while (Date.now() < dl) { if (sent.length !== lastLen) { lastLen = sent.length; lastChange = Date.now(); } if (Date.now() - lastChange > 200) break; await new Promise((r) => setTimeout(r, 30)); } };
-  for (const t of texts) await sendSeq(t);
-  await handle.stop(); wsSrv.srv.close();
-  return { sent, creates, prompts };
+  try {
+    for (const t of texts) await sendSeq(t);
+    return { sent, creates, prompts };
+  } finally {
+    await handle.stop(); closeServer(wsSrv.srv);
+  }
 }
 
 test('A: ordinary messages reuse one session per conversation', async () => {

@@ -46,7 +46,9 @@ done
 # ---------- 阶段1 core：Node 单测（ci.yml core job） ----------
 stage_core() {
   echo "==> [1/3 core] node unit tests (core job)"
-  node --test core/tests/*.test.js
+  # --test-timeout: a test that leaks a runner/timer now FAILS after 60s instead
+  # of hanging the whole run forever (node --test has no default test timeout).
+  node --test --test-timeout=60000 core/tests/*.test.js
 }
 
 # ---------- 阶段2 swift：面板测试 + swiftc 编译检查（ci.yml swift job） ----------
