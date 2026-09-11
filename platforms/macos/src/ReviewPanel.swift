@@ -86,6 +86,8 @@ final class ReviewPanelController: NSObject {
     var onRequestHide: (() -> Void)?
     /// The workspace whose sessions are listed (wired to main.swift).
     var workspacePath: (() -> String?)?
+    /// dsh web's port, for reading session titles (wired to main.swift).
+    var portProvider: (() -> Int)?
     /// QA hook: fires after each render (see main.swift's --ui-debug snapshot).
     var onDidRender: (() -> Void)?
 
@@ -109,6 +111,9 @@ final class ReviewPanelController: NSObject {
     // State (expansion is tracked with *collapse* sets for sessions/turns and an
     // expand set for files, so a freshly loaded audit opens on a useful default).
     private var sessions: [ReviewSessionSummary] = []
+    /// Session id → the title dsh web shows (that is how the user recognizes a
+    /// session). Sessions absent from the web list fall back to their short id.
+    private var sessionTitles: [String: String] = [:]
     private var audits: [String: ReviewAudit] = [:]
     private var auditing: Set<String> = []
     private var failedAudits: Set<String> = []
@@ -349,6 +354,7 @@ final class ReviewPanelController: NSObject {
         let token = loadToken
         let workspaceAtStart = workspace
         let activeAtStart = activeSessionId
+        let port = portProvider?() ?? 0
         self.workspace = workspace
         // Keep whatever is already rendered (a refresh must not blank the panel);
         // only an empty panel falls back to the centred status text.
@@ -375,11 +381,19 @@ final class ReviewPanelController: NSObject {
                 sessions = Array(sessions.prefix(self?.maxSessions ?? 60))
             }
             let diagnostics = listed?.diagnostics ?? []
+            // Session titles come from dsh web (session.list projections), so the
+            // panel names sessions the same way the web UI does.
+            var titles: [String: String] = [:]
+            if port > 0,
+               let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port, timeout: 6) {
+                titles = ReviewLogModel.sessionTitles(fromSessionList: value)
+            }
             DispatchQueue.main.async {
                 guard let self = self, self.loadToken == token else { return }
                 self.isLoading = false
                 self.hasLoaded = true
                 self.sessions = sessions
+                if !titles.isEmpty { self.sessionTitles = titles }
                 // Resolve the followed session against the CURRENT active id (it can
                 // change while a listing is in flight — that is the cross-workspace
                 // switch), never against the id captured when the listing started.
@@ -558,7 +572,10 @@ final class ReviewPanelController: NSObject {
         } else if expanded {
             trailing = L10n.tr("review.reading")
         }
-        var detail = ReviewLogModel.clockLabel(session.mtimeMs) + " · " + ReviewLogModel.byteLabel(session.sizeBytes)
+        let shortId = ReviewLogModel.shortId(session.id)
+        let webTitle = sessionTitles[session.id]
+        var detail = shortId + " · " + ReviewLogModel.clockLabel(session.mtimeMs)
+            + " · " + ReviewLogModel.byteLabel(session.sizeBytes)
         if session.isSubagent { detail += " · " + L10n.tr("review.subagent") }
 
         var children: [NSView] = []
@@ -582,7 +599,7 @@ final class ReviewPanelController: NSObject {
         // The session dsh web is showing is highlighted by fill + accent title
         // instead of a "current" text suffix.
         let isCurrent = session.id == activeSessionId
-        return makeBlock(title: ReviewLogModel.shortId(session.id), detail: detail, trailing: trailing,
+        return makeBlock(title: webTitle ?? shortId, detail: detail, trailing: trailing,
                          symbol: "doc.text",
                          fill: isCurrent ? ReviewInk.currentSessionFill : ReviewInk.sessionFill,
                          border: isCurrent ? ReviewInk.currentSessionBorder : ReviewInk.hairline,
@@ -600,6 +617,7 @@ final class ReviewPanelController: NSObject {
                              self.render()
                          },
                          onOpen: nil,
+                         titleTooltip: webTitle.map { "\($0)\n\(session.id)" } ?? session.id,
                          children: children)
     }
 
@@ -607,8 +625,8 @@ final class ReviewPanelController: NSObject {
         let key = expandKeyTurn(sessionId, group.turn)
         let expanded = !collapsedTurns.contains(key)
         let title = group.turn.map { L10n.tr("review.turn") + " \($0)" } ?? L10n.tr("review.turnUnknown")
-        var detail = group.prompt?.replacingOccurrences(of: "\n", with: " ") ?? ""
-        if detail.count > 90 { detail = String(detail.prefix(90)) + "…" }
+        var prompt: String? = group.prompt?.replacingOccurrences(of: "\n", with: " ")
+        if let text = prompt, text.count > 240 { prompt = String(text.prefix(240)) + "…" }
         var parts = ["\(group.files.count) " + L10n.tr("review.filesShort"), "+\(group.added) −\(group.removed)"]
         if !group.shells.isEmpty { parts.append(L10n.tr("review.shell") + " \(group.shells.count)") }
         if !group.failures.isEmpty { parts.append(L10n.tr("review.error") + " \(group.failures.count)") }
@@ -619,7 +637,7 @@ final class ReviewPanelController: NSObject {
             if !group.shells.isEmpty { children.append(makeShellBlock(sessionId: sessionId, turn: group.turn, entries: group.shells)) }
             if !group.failures.isEmpty { children.append(makeFailureBlock(entries: group.failures)) }
         }
-        return makeBlock(title: title, detail: detail.isEmpty ? nil : detail, trailing: parts.joined(separator: " · "),
+        return makeBlock(title: title, detail: nil, subtitle: prompt, trailing: parts.joined(separator: " · "),
                          symbol: "bubble.left", fill: ReviewInk.turnFill, border: ReviewInk.hairline,
                          titleFont: NSFont.systemFont(ofSize: 12, weight: .semibold), titleColor: ReviewInk.title,
                          expanded: expanded,
@@ -704,10 +722,10 @@ final class ReviewPanelController: NSObject {
     /// One disclosure block: a clickable title bar (chevron + symbol + title +
     /// detail + trailing summary) and an optional children stack — the same
     /// rounded-block language the Channel panel's project view uses.
-    private func makeBlock(title: String, detail: String?, trailing: String?, symbol: String,
+    private func makeBlock(title: String, detail: String?, subtitle: String? = nil, trailing: String?, symbol: String,
                            fill: ReviewFill, border: ReviewFill, titleFont: NSFont, titleColor: NSColor,
                            expanded: Bool, onToggle: (() -> Void)?, onOpen: (() -> Void)?,
-                           children: [NSView]) -> NSView {
+                           titleTooltip: String? = nil, children: [NSView]) -> NSView {
         let block = RoundedBlockView()
         block.translatesAutoresizingMaskIntoConstraints = false
         block.radius = 8
@@ -739,11 +757,14 @@ final class ReviewPanelController: NSObject {
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = titleFont
         titleLabel.textColor = titleColor
-        titleLabel.lineBreakMode = .byTruncatingMiddle
-        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        // The title is the block's identity ("对话 2", the session name): it keeps
+        // its intrinsic width, and the flexible detail/subtitle gives way instead.
+        // (With low resistance the prompt text used to squeeze the title away.)
+        titleLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.toolTip = title
+        titleLabel.toolTip = titleTooltip ?? title
 
         var headerViews: [NSView] = [chevron, icon, titleLabel]
         if let detail = detail, !detail.isEmpty {
@@ -751,6 +772,7 @@ final class ReviewPanelController: NSObject {
             detailLabel.font = NSFont.systemFont(ofSize: 10)
             detailLabel.textColor = ReviewInk.muted
             detailLabel.lineBreakMode = .byTruncatingTail
+            detailLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
             detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             detailLabel.translatesAutoresizingMaskIntoConstraints = false
             headerViews.append(detailLabel)
@@ -778,11 +800,31 @@ final class ReviewPanelController: NSObject {
         let header = NSView()
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerRow)
+        var headerBottom = headerRow.bottomAnchor
+        var headerBottomInset: CGFloat = -7
+        if let subtitle = subtitle, !subtitle.isEmpty {
+            // Long content (a turn's prompt) goes on its own line instead of
+            // fighting the title for horizontal space.
+            let subtitleLabel = NSTextField(wrappingLabelWithString: subtitle)
+            subtitleLabel.font = NSFont.systemFont(ofSize: 10)
+            subtitleLabel.textColor = ReviewInk.muted
+            subtitleLabel.maximumNumberOfLines = 2
+            subtitleLabel.lineBreakMode = .byTruncatingTail
+            subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+            header.addSubview(subtitleLabel)
+            NSLayoutConstraint.activate([
+                subtitleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 34),
+                subtitleLabel.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
+                subtitleLabel.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 1),
+            ])
+            headerBottom = subtitleLabel.bottomAnchor
+            headerBottomInset = -6
+        }
         NSLayoutConstraint.activate([
             headerRow.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 8),
             headerRow.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
             headerRow.topAnchor.constraint(equalTo: header.topAnchor, constant: 7),
-            headerRow.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -7),
+            headerBottom.constraint(equalTo: header.bottomAnchor, constant: headerBottomInset),
         ])
         if onToggle != nil {
             let click = NSClickGestureRecognizer(target: self, action: #selector(blockTapped(_:)))

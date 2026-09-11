@@ -1891,6 +1891,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         // QA hook: DSH_REVIEW_TEST_PATH points the audit at a fixed workspace
         // (mirrors DSH_PREVIEW_TEST_PATH / DSH_WIKI_TEST_PATH).
+        reviewPanel.portProvider = { [weak self] in self?.server.port ?? 3080 }
         reviewPanel.workspacePath = { [weak self] in
             if let override = ProcessInfo.processInfo.environment["DSH_REVIEW_TEST_PATH"], !override.isEmpty {
                 return override

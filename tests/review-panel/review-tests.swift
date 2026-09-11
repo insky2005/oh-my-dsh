@@ -119,6 +119,24 @@ test("turn group narrows shell calls when asked", ReviewLogModel.turnGroups(audi
 test("oldest turn is last", turnGroups.last?.turn == 1)
 test("turn group files stay chronological", turnGroups[1].files.count == 1 && turnGroups[1].files[0].path == "src/a.js")
 
+// --- session titles (how a session is recognised in dsh web) ---
+
+let listPayload: [String: Any] = ["items": [
+    ["sessionId": "session-a", "projections": ["values": ["title": "修复登录超时"]]],
+    ["sessionId": "session-b", "projections": ["values": ["title": "   "]]],
+    ["sessionId": "session-c", "projections": ["values": [:]]],
+    ["sessionId": "session-d"],
+    ["projections": ["values": ["title": "无 id"]]],
+    ["sessionId": "session-e", "projections": ["values": ["title": "带空格 "]]],
+]]
+let titles = ReviewLogModel.sessionTitles(fromSessionList: listPayload)
+test("session titles map id → dsh web title", titles["session-a"] == "修复登录超时")
+test("blank titles are dropped (caller falls back to the short id)", titles["session-b"] == nil && titles["session-c"] == nil)
+test("items without a title are skipped", titles["session-d"] == nil)
+test("items without a sessionId are skipped", titles.count == 2)
+test("titles are trimmed", titles["session-e"] == "带空格")
+test("a malformed payload yields an empty map", ReviewLogModel.sessionTitles(fromSessionList: [:]).isEmpty)
+
 test("garbage json decodes to nil", ReviewLogModel.decodeAudit("not json") == nil)
 test("empty json decodes to nil", ReviewLogModel.decodeAudit("") == nil)
 

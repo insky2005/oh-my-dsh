@@ -268,6 +268,25 @@ enum ReviewLogModel {
         return out
     }
 
+    /// Extract `sessionId → title` from a dsh web `session.list` result.
+    ///
+    /// dsh reports the display title it shows in its own UI under
+    /// `items[].projections.values.title`; sessions without one (a brand-new
+    /// session) are omitted so callers fall back to the short id. Malformed
+    /// entries are skipped rather than failing the whole map.
+    static func sessionTitles(fromSessionList value: [String: Any]) -> [String: String] {
+        var titles: [String: String] = [:]
+        guard let items = value["items"] as? [[String: Any]] else { return titles }
+        for item in items {
+            guard let sessionId = item["sessionId"] as? String, !sessionId.isEmpty else { continue }
+            let projected = (item["projections"] as? [String: Any])?["values"] as? [String: Any]
+            guard let title = projected?["title"] as? String else { continue }
+            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { titles[sessionId] = trimmed }
+        }
+        return titles
+    }
+
     /// "session-74e368ee-21ee-4e99-8789-23b6c73143f9" → "74e368ee" (the short id
     /// dsh's own UI shows); anything unexpected is returned unchanged.
     static func shortId(_ id: String) -> String {
