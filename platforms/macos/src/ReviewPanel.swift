@@ -294,6 +294,10 @@ final class ReviewPanelController: NSObject {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.autohidesScrollers = true
+        // Overlay scrollers: a legacy scroller takes ~16pt from the clip view, so
+        // the rows would visibly narrow the moment clicking a session makes the
+        // content taller than the viewport.
+        scroll.scrollerStyle = .overlay
         list.orientation = .vertical
         list.alignment = .leading
         list.spacing = 8
@@ -315,7 +319,11 @@ final class ReviewPanelController: NSObject {
             scroll.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
 
-        view.translatesAutoresizingMaskIntoConstraints = false
+        // NOTE: the root view stays translatesAutoresizingMaskIntoConstraints = true
+        // (the default) — NSSplitView sizes the pane by frame, and every other
+        // panel's root view is left that way. Opting into Auto Layout here produced
+        // a stale layout on the first mount (pane 620pt wide with its 505pt
+        // header/content), which also left the content area empty.
         view.addSubview(header)
         view.addSubview(toolbar)
         view.addSubview(contentContainer)

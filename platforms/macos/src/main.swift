@@ -1881,10 +1881,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reviewPanel = ReviewPanelController()
         AppLog.shared.log("launch: reviewPanel created")
         reviewPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
-        // Warm the session listing right away (the workspace resolves from dsh's
-        // persisted store when the page has not reported a session yet), so
-        // opening the panel renders instead of waiting on the core CLI.
-        reviewPanel.prewarm()
         // QA (--ui-debug): snapshot the panel again once it has rendered data.
         reviewPanel.onDidRender = { [weak self] in
             guard let self = self, self.uiDebug else { return }
@@ -1899,6 +1895,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
             return self?.activeWorkspacePath()
         }
+        // Warm the session listing right away — AFTER both providers are wired:
+        // prewarming before them resolved no workspace and left the panel empty on
+        // its first open. This way the first open already has content.
+        reviewPanel.prewarm()
 
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
