@@ -7,7 +7,15 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
-- 暂无（v1.14.0 已发布；开发线已推进到 1.15.0）。
+### Fixed
+
+- **修复正式版点 Wiki 面板「生成/更新知识库」无反应、起不出 dsh 会话（复用别人的 dsh web 导致原生 RPC 全 401）**：正式版（非开发版）启动时若 3080 上已经有一个 dsh web，会走「复用」分支——而该分支写死 `entryURL = http://127.0.0.1:3080`（**不带 `?token=`**），于是 `server.webToken == nil` → `DshWebRPC.token = nil` → 独立 ephemeral session 换不到 cookie → `session/create`、`session/prompt` 一律 401 → `WikiRPC.createSession` 返回 nil，而旧的失败路径「还没有在途生成」时什么都不做，表现就是点了没反应。三层根因叠加：① 3080 上是**壳层自己上次异常退出留下的孤儿**（实测 `lsof`：`stdout/stderr = ~/Library/Logs/oh-my-dsh/server.log` + `cwd = HOME`，正是 `ServerManager` 拉 dsh web 的写法；同机另有 5 个同类残留），而 `applicationWillTerminate` 只停「本次自拉的」服务、复用过的实例永远收不掉；② 就绪探针 `isDSHServing()` 用 `URLSession.shared`，它共享 app 持久 cookie 存储里一张**未过期**的 `dsh-auth-*`（authority `127.0.0.1:3080`，30 天），使裸 GET 返回 200 + 含 `__DSH_BOOT__` 的真页面，被误判成「老版本、无需鉴权、可以复用」（磁盘缓存同理可骗）；③ 该 3080 实例其实是 dsh 0.1.2，`/api` 只认 token。处置：
+  - `ServerManager.start()` **彻底删除复用分支**（连同 `DSH_NATIVE_FORCE_SPAWN` 开关）：永远自拉起自己的 dsh web（3080 被占自动换空闲端口），保证拿到 launch token；同 `DSH_HOME` 下数据本就共享，自拉起不丢任何东西；
+  - 就绪探针改用**专用 session**（`httpCookieStorage = nil`、`httpShouldSetCookies = false`、`.reloadIgnoringLocalCacheData`、`urlCache = nil`），不再被持久 cookie / 磁盘缓存欺骗；
+  - 新增 **`reapRecordedOrphan()`**：拉起时把 `{pid, port, token}` 记到 `$DSH_HOME/shell/dsh-web.json`，下次启动若该实例仍在（用 token 探活证明还是自己那台，绝不误杀别的进程）就先回收再拉起——「上次没关干净」不再累积；正常退出时清除记录；
+  - `app.log` 在 `webToken == nil` 时明确告警「native RPC cannot authenticate (401)」，不再静默；
+  - Wiki 面板：会话压根没起来时状态条显示「生成失败（详见日志）」并写 `app.log`（端口/仓库/workspaceId），不再是一次无效点击；
+  - `DshWebRPC`：只有端点真的不存在（HTTP 404/405）才降级为点号方法——此前**任何**失败（超时/401/业务错误）都会把该端点永久钉成 legacy，一次抖动就让本次运行内所有后续调用打到 0.1.2 根本没有的端点；cookie 换成功才记为已认证；`WikiRPC.createSession` 在 workspaceId 被拒时回退 `cwd` 建会话（保证「能在对应 workspace 起出会话」），create/prompt 超时 6s→15s。详见 docs/dsh-version-impact.md §4.4（含完整证据链）。
 
 ## [1.14.0] - 2026-09-11
 

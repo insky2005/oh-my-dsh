@@ -132,6 +132,53 @@ eq((v?["items"] as? [[String: Any]])?.first?["sessionId"] as? String, "s-2", "40
 eq(fake.requests.filter { $0.hasPrefix("GET ") }.count, 2, "401: exactly one extra token exchange")
 DshWebRPC.perform = { fake.perform($0) }
 
+// MARK: - Only an absent endpoint may pin the legacy surface
+//
+// Any other failure used to disable the slash endpoint for the whole process,
+// and on dsh >= 0.1.2 every later call then fell through to <dot.method>, which
+// that server does not serve — e.g. the wiki "+" (session/create) died for the
+// rest of the app run after a single hiccup.
+
+DshWebRPC.resetForTests()
+DshWebRPC.token = "launch-token"
+fake.requests = []; fake.bodies = [:]
+var postAttempts = 0
+DshWebRPC.perform = { request in
+    let key = requestKey(request)
+    fake.requests.append(key)
+    if key.hasPrefix("GET ") { return (303, nil) }
+    postAttempts += 1
+    if postAttempts <= 2 { return (-1, nil) }   // first call: both surfaces time out
+    return (200, try? JSONSerialization.data(withJSONObject: okValue(["sessionId": "s-3"])))
+}
+check(DshWebRPC.call(DshWebRPC.sessionCreate, ["cwd": "/tmp/x"], port: 6005) == nil,
+      "timeout: the call itself still fails")
+eq(DshWebRPC.call(DshWebRPC.sessionCreate, ["cwd": "/tmp/x"], port: 6005)?["sessionId"] as? String, "s-3",
+   "timeout: the slash endpoint is retried instead of being abandoned")
+eq(fake.requests.filter { $0 == "POST /api/session/create" }.count, 2,
+   "timeout: both calls went to the slash endpoint")
+
+// A business error (endpoint present, args rejected) is not an absent endpoint.
+DshWebRPC.resetForTests()
+var calls = 0
+DshWebRPC.perform = { request in
+    let key = requestKey(request)
+    fake.requests.append(key)
+    if key.hasPrefix("GET ") { return (303, nil) }
+    calls += 1
+    if calls <= 2 {
+        let err: [String: Any] = ["result": ["ok": false,
+                                            "error": ["code": "workspace/not-found", "message": "nope"]]]
+        return (200, try? JSONSerialization.data(withJSONObject: err))
+    }
+    return (200, try? JSONSerialization.data(withJSONObject: okValue(["sessionId": "s-4"])))
+}
+check(DshWebRPC.call(DshWebRPC.sessionCreate, ["workspaceId": "w-1"], port: 6006) == nil,
+      "workspace/not-found: the call fails")
+eq(DshWebRPC.call(DshWebRPC.sessionCreate, ["cwd": "/tmp/x"], port: 6006)?["sessionId"] as? String, "s-4",
+   "workspace/not-found: the next call still uses the slash endpoint")
+DshWebRPC.perform = { fake.perform($0) }
+
 // MARK: - Persisted workspace store (dsh >= 0.1.2 fallback)
 
 let home = NSTemporaryDirectory() + "dsh-rpc-test-" + UUID().uuidString

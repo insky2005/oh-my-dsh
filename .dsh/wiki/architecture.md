@@ -13,7 +13,7 @@ manual: false
 ```
 ┌────────────────────────────── oh-my-dsh.app（壳层，Swift）──────────────────────────────┐
 │ AppDelegate（main.swift）                                                                │
-│   ├─ ServerManager   服务探测/拉起/复用/停止；resolveNode/resolveDSHBin                   │
+│   ├─ ServerManager   服务拉起/回收残留/停止；resolveNode/resolveDSHBin                     │
 │   ├─ DSHUpdater      内置 dsh 检查与升级（node + npm-cli.js install）；版本检查经 CoreBridge 调共享核心│
 │   ├─ CoreBridge      调共享核心 CLI（core/bin/ohmy-core.js，嵌入 runtime/core）；版本比较/最新版本查询   │
 │   ├─ RegistryConfig  运行期 npm registry（默认国内源）                                    │
@@ -33,7 +33,7 @@ manual: false
 │           └─ BrowserAPIServer（BrowserAPI.swift，127.0.0.1:3081 REST，Agent 驱动 + QA 端点）      │
 │ WKWebView ← 加载 http://127.0.0.1:<port>（dsh web 界面）                                 │
 └──────────────────────────────┬───────────────────────────────────────────────────────────┘
-                               │ 复用或自拉起
+                               │ 自拉起（从不复用）
                                ▼
         dsh web 服务（@deepseek-ai/dsh，DeepSeek Harness 源码不动）
         ├─ HTTP :3080（默认）— 页面 + /api/* RPC（session.* / host.openPath）

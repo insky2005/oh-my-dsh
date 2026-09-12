@@ -648,13 +648,22 @@ enum WikiRPC {
     /// session under that workspace instead of leaving it Ungrouped; `cwd` is
     /// the fallback when no matching workspace exists.
     static func createSession(port: Int, cwd: String, workspaceId: String?) -> String? {
-        let payload: [String: Any]
+        // Creating the session under the registered workspace keeps it grouped
+        // (like the dsh web client). The workspace id comes from dsh's own private
+        // store, which the shell only mirrors — when the server rejects it (stale
+        // store, workspace archived, a dsh that no longer knows the id) fall back
+        // to a plain cwd create so generation still starts instead of the click
+        // silently doing nothing.
         if let wid = workspaceId, !wid.isEmpty {
-            payload = ["workspaceId": wid]
-        } else {
-            payload = ["cwd": cwd]
+            if let sid = createSession(port: port, payload: ["workspaceId": wid]) { return sid }
+            AppLog.shared.log("wiki: session/create workspaceId \(wid) rejected — retrying with cwd \(cwd)")
         }
-        guard let value = DshWebRPC.call(DshWebRPC.sessionCreate, payload, port: port),
+        return createSession(port: port, payload: ["cwd": cwd])
+    }
+
+    /// One session/create attempt with the given args (nil when it failed).
+    private static func createSession(port: Int, payload: [String: Any]) -> String? {
+        guard let value = DshWebRPC.call(DshWebRPC.sessionCreate, payload, port: port, timeout: 15),
               let sid = value["sessionId"] as? String else { return nil }
         return sid
     }
@@ -682,7 +691,7 @@ enum WikiRPC {
         let content: [[String: Any]] = [["type": "text", "text": text]]
         let payload: [String: Any] = ["sessionId": sessionId, "mode": "queue", "content": content]
         // dsh >= 0.1.2 requires a client request id for idempotent delivery.
-        return DshWebRPC.call(DshWebRPC.sessionPrompt, payload, port: port,
+        return DshWebRPC.call(DshWebRPC.sessionPrompt, payload, port: port, timeout: 15,
                               modernExtras: ["requestId": UUID().uuidString]) != nil
     }
 
@@ -1389,10 +1398,12 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
             // client) so the generation session is not left Ungrouped.
             let wid = WikiRPC.resolveWorkspaceId(port: port, cwd: repo)
             guard let sid = WikiRPC.createSession(port: port, cwd: repo, workspaceId: wid) else {
+                AppLog.shared.log("wiki generation failed: session/create port=\(port) repo=\(repo) workspace=\(wid ?? "-")")
                 DispatchQueue.main.async { self.generationFailed(repo: repo) }
                 return
             }
             guard WikiRPC.prompt(port: port, sessionId: sid, text: prompt) else {
+                AppLog.shared.log("wiki generation failed: session/prompt session=\(sid)")
                 DispatchQueue.main.async { self.generationFailed(repo: repo) }
                 return
             }
@@ -1488,6 +1499,15 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
         }
         if let gen = gen {
             generationSettled(key: key, gen: gen, ok: false)
+        } else if let current = repoRoot, WikiRPC.canonical(current) == key {
+            // The session never started (dsh rejected session/create or
+            // session/prompt). Say so instead of quietly restoring the UI — a
+            // dead click is indistinguishable from a broken button. The server's
+            // own message is in the app log (DshWebRPC.log → AppLog).
+            setStatus(L10n.tr("wiki.failed"), spin: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                self?.hideStatus()
+            }
         }
     }
 

@@ -1,13 +1,13 @@
 # oh-my-dsh — DeepSeek Harness 原生 macOS 壳
 
 把 DeepSeek Harness 的 Web 界面（`dsh web`）封装成一个可以在 macOS 上**直接双击运行**的原生 App。
-**不改动任何 DeepSeek Harness 源码**——它只是一个壳：内置运行时自拉起/复用 `dsh web`，用原生 `WKWebView`
+**不改动任何 DeepSeek Harness 源码**——它只是一个壳：内置运行时自拉起 `dsh web`，用原生 `WKWebView`
 呈现界面，并在窗口右侧提供七个原生面板（文件 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务 / 通道 / 审计）。
 
 ## 特性一览
 
 - **完全自包含**：App 内置 Node 运行时（含 npm）+ 完整的 `@deepseek-ai/dsh` 依赖树，**不依赖本机安装的 node 或 dsh**，拿到即可用（全新机器也能跑）；
-- **复用已有服务**：启动先检查 `127.0.0.1:3080` 是否已有 `dsh web` 在服务（如 harness 本身正在运行）→ **复用**，不重复启动；否则用内置运行时**自己拉起**（端口被占用自动换空闲端口），就绪后装进原生窗口；
+- **总是自拉起自己的服务**：用内置运行时**自己拉起** `dsh web`（默认 3080，被占用自动换空闲端口），就绪后装进原生窗口。**从不复用**别的实例——dsh ≥ 0.1.2 的 `/api` 只认「由本进程 launch token 换来的 cookie」，复用别人的实例拿不到 token，会让所有原生 RPC（wiki 生成 / 任务面板 / 会话目录）401 静默失败；同 `DSH_HOME` 下数据本就共享，自拉起不丢任何东西；
 - **退出只清自己的**：Cmd+Q、关窗口、`kill`（SIGTERM/SIGINT/SIGHUP，含注销/关机）都会触发清理，关掉**自己拉起的**服务（优雅退出，3 秒内未退出则 SIGKILL），绝不干扰外部实例；
 - **dsh 可升级（含自动升级）**：设置菜单「检查并升级 dsh…」(`⌘U`) 为**分步升级**——检测到「当前 vA → 可升 vB」→ 确认 → 后台把 vB 预热进缓存（可取消）→ **再次确认**才原地安装 + 重启；升级前整树备份、失败自动回滚；「自动升级 dsh」默认开启，每次启动最多检查一次（24h 节流），**不阻塞启动**（后台检测下载、下载完成后弹窗请用户确认）；
 - **中/英界面**：设置 →「语言」可选「系统 / 中文 / English」（默认跟随系统），可记忆；`DSH_LANG=zh|en` 强制指定；切换联动刷新 dsh web 页面语言（会话在服务端不受影响）；
@@ -190,7 +190,7 @@ open "dist/oh-my-dsh-<version>-arm64.dmg"
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh 用） |
 | `DSH_ARCH` | `uname -m` | 目标架构：`arm64` / `x86_64`（CI 构建 arm64，release 构建 arm64 + x86_64；不再出 universal） |
-| `DSH_DEV_BUILD` | `0` | `1` 打包**开发版**（Info.plist 写 `DSHDevBuild=1`）：独立 bundle id `com.ohmydsh.app.dev`（独立 UserDefaults 域）；运行时**自拉起独立 dsh 实例**（不复用 3080 上的正式实例，被占则自动换空闲端口）、使用**独立 `DSH_HOME`（默认 `~/.dsh-dev`）**、CEF CDP / Browser API 端口错开（9333→9433、3081→4081），可与已安装正式版并存测试（均尊重显式 `DSH_HOME` / `DSH_CDP_PORT` / `DSH_BROWSER_PORT` 覆盖） |
+| `DSH_DEV_BUILD` | `0` | `1` 打包**开发版**（Info.plist 写 `DSHDevBuild=1`）：独立 bundle id `com.ohmydsh.app.dev`（独立 UserDefaults 域）；运行时**自拉起独立 dsh 实例**（3080 被占则自动换空闲端口）、使用**独立 `DSH_HOME`（默认 `~/.dsh-dev`）**、CEF CDP / Browser API 端口错开（9333→9433、3081→4081），可与已安装正式版并存测试（均尊重显式 `DSH_HOME` / `DSH_CDP_PORT` / `DSH_BROWSER_PORT` 覆盖） |
 | `DSH_CEF_VERSION` | build-cef.sh pin 的版本 | 浏览器面板的 CEF/Chromium 版本（如 `150.0.18+gdb11278+chromium-150.0.7871.213`） |
 
 构建缓存：Node tarball、npm 缓存、已构建的运行时与 CEF 产物存放在 `.cache/`（按架构分目录，不随 `.build/` 清除）；
@@ -223,7 +223,7 @@ open "dist/oh-my-dsh.app"
 | 场景 | 行为 |
 |---|---|
 | App 自己拉起了服务 | 退出时**关闭**（SIGTERM → 3 秒后 SIGKILL 兜底） |
-| 复用了已在运行的服务（如 harness CLI 启动的） | 退出时**不关闭**——那台服务不是 App 启动的，不该被 App 杀掉 |
+| 上次异常退出（崩溃 / 强杀）残留的服务 | 下次启动时按 `$DSH_HOME/shell/dsh-web.json` 的记录（pid + 端口 + launch token）**回收**：token 每进程随机，用它探活即证明还是自己那台，绝不误杀别的进程 |
 
 ## 环境变量（可选）
 
@@ -234,7 +234,6 @@ open "dist/oh-my-dsh.app"
 | `DSH_NODE_MIN` | 系统 node 候选的最低版本门槛（默认 `22.0.0`） |
 | `DSH_HOME` | 传给 `dsh web` 的 `DSH_HOME`（默认 `~/.dsh`，首次使用自动初始化 web profile） |
 | `DSH_NATIVE_PORT` | 自拉起时使用的端口（默认 3080，被占用则自动换空闲端口） |
-| `DSH_NATIVE_FORCE_SPAWN=1` | 跳过「复用已有服务」检查，总是自己拉起（测试/专用实例用） |
 | `DSH_REGISTRY` | 运行期 dsh 检查/升级用的 npm registry（优先于「设置 dsh registry…」与默认国内源） |
 | `DSH_AUTO_UPGRADE=0` | 本次运行关闭自动升级 |
 | `DSH_AUTO_UPGRADE_NOW=1` | 测试钩子：忽略 24h 节流，每次启动都跑一遍自动升级流程 |
@@ -261,12 +260,12 @@ open "dist/oh-my-dsh.app"
 
 ## 日志
 
-- `~/Library/Logs/oh-my-dsh/app.log` — App 自身行为（启动、复用/拉起、运行时版本信息、自动/手动升级、页面加载、退出清理、面板/QA dump）
+- `~/Library/Logs/oh-my-dsh/app.log` — App 自身行为（启动、拉起/回收 dsh web、运行时版本信息、自动/手动升级、页面加载、退出清理、面板/QA dump）
 - `~/Library/Logs/oh-my-dsh/server.log` — 自拉起的 `dsh web` 进程输出
 
 ## 工作原理（为什么不动源码）
 
-壳二进制只做三件事：探测端口 → 用内置 `node` 执行内置 `<dsh>/lib/bin.js web --port <n>` 拉起/复用 → `WKWebView` 加载 `http://127.0.0.1:<n>`。
+壳二进制只做三件事：探测空闲端口 → 用内置 `node` 执行内置 `<dsh>/lib/bin.js web --port <n>` 拉起（并回收自己上次残留的实例）→ `WKWebView` 加载 `http://127.0.0.1:<n>/?token=…`。
 `dsh` 本体、`~/.dsh` 配置、会话数据全部原样，无任何补丁或注入。内置运行时装在 `Contents/Resources/runtime/`
 （`node` + `npm` + `dsh/` 依赖树），App 优先使用它，找不到时才回退到本机安装。
 右侧六个面板是壳层原生 UI，其中文件面板通过 WebView 注入拦截文件打开、任务/知识库/浏览器/通道通过 dsh 既有能力（RPC / 会话 / 独立浏览器内核）驱动。

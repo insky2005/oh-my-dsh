@@ -74,17 +74,25 @@ enum DshWebRPC {
         if known != false {
             var args = payload
             for (k, v) in modernExtras { args[k] = v }
-            if let json = post(method: endpoint.modern, payload: ["args": [endpoint.field: args]],
-                               port: port, timeout: timeout),
-               let value = modernValue(json) {
+            let modern = post(method: endpoint.modern, payload: ["args": [endpoint.field: args]],
+                              port: port, timeout: timeout)
+            if let value = modernValue(modern.json) {
                 lock.lock_run { surface[key] = true }
                 return value
             }
-            lock.lock_run { surface[key] = false }
+            // Only a genuinely ABSENT endpoint (404/405) means this server wants
+            // the legacy dot method. Pinning on anything else was a trap: one
+            // transient failure (401 while the launch token is still being
+            // exchanged, a timeout on a busy server, a business error) disabled
+            // the slash endpoint for the whole process — and on dsh >= 0.1.2 every
+            // later call then fell through to <dot.method>, which it does not
+            // serve, so the feature stayed dead until the app was restarted.
+            if modern.status == 404 || modern.status == 405 {
+                lock.lock_run { surface[key] = false }
+            }
         }
-        guard let json = post(method: endpoint.legacy, payload: payload, port: port, timeout: timeout),
-              let value = legacyValue(json) else { return nil }
-        return value
+        let legacy = post(method: endpoint.legacy, payload: payload, port: port, timeout: timeout)
+        return legacyValue(legacy.json)
     }
 
     /// The client-request envelope (pure — unit tested).
@@ -108,7 +116,7 @@ enum DshWebRPC {
     }
 
     private static func post(method: String, payload: [String: Any], port: Int,
-                             timeout: TimeInterval) -> [String: Any]? {
+                             timeout: TimeInterval) -> (status: Int, json: [String: Any]?) {
         authenticate(port: port, timeout: timeout)
         var res = send(method: method, payload: payload, port: port, timeout: timeout)
         if res.status == 401, let token = token, !token.isEmpty {
@@ -117,8 +125,8 @@ enum DshWebRPC {
             authenticate(port: port, timeout: timeout)
             res = send(method: method, payload: payload, port: port, timeout: timeout)
         }
-        guard let body = res.body else { return nil }
-        return (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        guard let body = res.body else { return (res.status, nil) }
+        return (res.status, (try? JSONSerialization.jsonObject(with: body)) as? [String: Any])
     }
 
     private static func send(method: String, payload: [String: Any], port: Int,
@@ -139,7 +147,11 @@ enum DshWebRPC {
               let url = URL(string: "http://127.0.0.1:\(port)/?token=\(token)") else { return }
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "GET"
-        _ = perform(request)
+        // Remember the port only when the exchange actually answered: a timed-out
+        // GET stores no cookie, and marking it anyway left every later call on
+        // that port answering 401 forever.
+        let res = perform(request)
+        guard res.status == 200 || res.status == 302 || res.status == 303 else { return }
         _ = lock.lock_run { authenticatedPorts.insert(port) }
     }
 

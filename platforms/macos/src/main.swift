@@ -867,29 +867,53 @@ final class ServerManager {
     private(set) var nodePath = L10n.tr("fact.unknown")
     private(set) var runtimeSource = L10n.tr("fact.unknown")
 
-    /// The web UI root page always injects `window.__DSH_BOOT__` on dsh <= 0.1.1.
+    /// Dedicated session for readiness probes: NO cookies, NO cache.
+    ///
+    /// Both matter. `URLSession.shared` shares the app's persisted cookie store,
+    /// and a `dsh-auth-*` cookie (minted once per authority, 30-day lifetime) made
+    /// a bare GET to an authenticated dsh >= 0.1.2 answer 200 + the real page,
+    /// which contains `__DSH_BOOT__` — so "is a legacy dsh serving here?" said yes
+    /// for a server that actually demands a launch token (docs/dsh-version-impact.md
+    /// §4.4). A cached copy of that page could do the same.
+    private static let probeSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.httpCookieAcceptPolicy = .never
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.urlCache = nil
+        return URLSession(configuration: config)
+    }()
+
+    /// Same, but never follows a redirect: the launch-token exchange answers 303
+    /// and its target needs the cookie it just set, so following it would answer
+    /// 401 and hide the fact that the token matched.
+    private final class NoRedirect: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
+    }
+
+    private static let tokenProbeSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.httpCookieAcceptPolicy = .never
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.urlCache = nil
+        return URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
+    }()
+
+    /// True when the web UI root page answers with `window.__DSH_BOOT__` — always
+    /// the case on dsh <= 0.1.1, which serves it to an unauthenticated GET.
     func isDSHServing(port: Int, timeout: TimeInterval = 2) -> Bool {
         guard let url = URL(string: "http://127.0.0.1:\(port)/"),
               let data = httpGet(url, timeout: timeout),
               let body = String(data: data, encoding: .utf8) else { return false }
         return body.contains("__DSH_BOOT__")
-    }
-
-    /// True when something on `port` is a dsh web that refuses a bare request
-    /// because it wants its launch token (dsh >= 0.1.2). Such an instance CANNOT be
-    /// adopted — the token is random per process and only in that process's stdout —
-    /// but it is worth distinguishing from "nothing is listening" in the log.
-    ///
-    /// Not adopting it costs little: the shell spawns its own instance and, with the
-    /// same DSH_HOME, both share the same workspaces/sessions/settings. Running two
-    /// dsh web on ONE home at the same time is still best avoided (they persist to
-    /// the same files), so the log says which one we started.
-    func isDSHAuthenticated(port: Int, timeout: TimeInterval = 2) -> Bool {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/") else { return false }
-        let (status, data) = httpGetWithStatus(url, timeout: timeout)
-        guard status == 401, let data = data,
-              let body = String(data: data, encoding: .utf8) else { return false }
-        return body.contains("authentication required")
     }
 
     /// Parse the self-advertised entry URL a spawned dsh web prints to its log,
@@ -923,7 +947,7 @@ final class ServerManager {
         var result: Data?
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "GET"
-        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
+        let task = ServerManager.probeSession.dataTask(with: request) { data, response, _ in
             status = (response as? HTTPURLResponse)?.statusCode ?? -1
             result = data
             semaphore.signal()
@@ -1238,8 +1262,8 @@ final class ServerManager {
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Ensure a DSH web server is reachable. Reuses an existing one on the
-    /// default port, otherwise spawns `dsh web` and waits for it.
+    /// Ensure a DSH web server is reachable: ALWAYS spawns its own
+    /// `dsh web` (an already-running instance is never adopted, see below).
     func start() throws -> URL {
         let env = ProcessInfo.processInfo.environment
 
@@ -1247,21 +1271,22 @@ final class ServerManager {
         // the app reuses an already-running server instead of spawning one.
         refreshFacts()
 
-        // 1. Reuse an already-running dsh web (e.g. started by the harness CLI).
-        //    DSH_NATIVE_FORCE_SPAWN=1 skips reuse (testing / dedicated instance).
-        if env["DSH_NATIVE_FORCE_SPAWN"] != "1" && isDSHServing(port: 3080) {
-            spawned = false
-            AppLog.shared.log("reusing existing dsh web on 127.0.0.1:3080")
-            entryURL = URL(string: "http://127.0.0.1:3080")
-            return entryURL!
-        }
-        // dsh >= 0.1.2 mints a random per-process launch token and answers 401 to a
-        // bare GET, so an externally started instance cannot be adopted (its token
-        // never leaves its own stdout). Spawn our own instead: same DSH_HOME ⇒ same
-        // workspaces/sessions/settings (docs/dsh-version-impact.md, R2).
-        if env["DSH_NATIVE_FORCE_SPAWN"] != "1" && isDSHAuthenticated(port: 3080) {
-            AppLog.shared.log("existing dsh web on 3080 wants its launch token (dsh 0.1.2+); not adopting — starting our own instance (same DSH_HOME ⇒ same data)")
-        }
+        // 1. Never adopt an already-running dsh web — always spawn our own.
+        //
+        //    Adopting cannot work on dsh >= 0.1.2: /api is fenced by a cookie
+        //    minted from a launch token that only ever exists in the owning
+        //    process stdout, so an adopted server leaves this shell with
+        //    webToken == nil and EVERY native RPC (session/create, session/prompt
+        //    — i.e. wiki generation, the issue runner, session cwd) answers 401.
+        //    That is exactly what happened: a leftover instance held 3080, a stale
+        //    persisted dsh-auth cookie made the readiness probe read 200 +
+        //    __DSH_BOOT__ from it, the shell adopted it, and "Generate wiki"
+        //    silently did nothing (docs/dsh-version-impact.md §4.4).
+        //    Adopting also leaked the server: an adopted one is never stopped on
+        //    quit (spawned == false), so it held 3080 across runs.
+        //    Same DSH_HOME ⇒ the spawned instance shares workspaces/sessions/
+        //    settings with any other dsh web, so nothing is lost (R2).
+        reapRecordedOrphan()
 
         // 2. Pick the port (env override for testing, otherwise 3080, else a free port).
         var port = 3080
@@ -1354,6 +1379,9 @@ final class ServerManager {
                 refreshFacts(node: node)
                 entryURL = servedURL
                 AppLog.shared.log("dsh web is up on \(servedURL.absoluteString) (node=\(node))")
+                // Record it (pid + port + launch token) so a later run can
+                // reap it if this process never got to stop it.
+                Self.writeRecord(pid: proc.processIdentifier, port: port, token: webToken)
                 return servedURL
             }
             failed = true
@@ -1380,6 +1408,110 @@ final class ServerManager {
         throw NSError(domain: "DSHShell", code: 1, userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.noNode")])
     }
 
+    // MARK: spawn record (leftover cleanup)
+
+    /// One dsh web this shell spawned: pid, port and its launch token.
+    /// `appPid` is the shell instance that spawned it — a live sibling sharing the
+    /// same DSH_HOME (dev + release launched with an explicit DSH_HOME) still owns
+    /// its own server, so its record must never be reaped.
+    private struct Record: Codable {
+        var pid: Int32
+        var port: Int
+        var token: String?
+        var appPid: Int32?
+    }
+
+    /// `$DSH_HOME/shell/dsh-web.json` — the instance this shell spawned last.
+    private static func recordPath() -> String {
+        let env = ProcessInfo.processInfo.environment["DSH_HOME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let home = env.isEmpty ? (NSHomeDirectory() + "/.dsh") : env
+        let dir = home + "/shell"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        return dir + "/dsh-web.json"
+    }
+
+    private static func writeRecord(pid: Int32, port: Int, token: String?) {
+        let record = Record(pid: pid, port: port, token: token,
+                            appPid: ProcessInfo.processInfo.processIdentifier)
+        guard let data = try? JSONEncoder().encode(record) else { return }
+        try? data.write(to: URL(fileURLWithPath: recordPath()), options: .atomic)
+    }
+
+    private static func readRecord() -> Record? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: recordPath())) else { return nil }
+        return try? JSONDecoder().decode(Record.self, from: data)
+    }
+
+    private static func removeRecord() {
+        try? FileManager.default.removeItem(atPath: recordPath())
+    }
+
+    /// Kill the dsh web a PREVIOUS run of this shell left behind.
+    ///
+    /// `stop()` only runs on a clean exit, so a crash or a Force Quit leaves the
+    /// instance running (observed: leftovers holding ports for days, and one of
+    /// them held 3080 and made every later run adopt a server it could not
+    /// authenticate to). The record carries the launch token, which is random per
+    /// process: answering the token URL proves the pid is still OUR instance, so a
+    /// recycled pid can never be killed by mistake.
+    private func reapRecordedOrphan() {
+        guard let record = Self.readRecord() else { return }
+        defer { Self.removeRecord() }
+        let selfPid = ProcessInfo.processInfo.processIdentifier
+        guard record.pid > 0, record.pid != selfPid else { return }
+        // A live sibling shell (dev + release sharing an explicit DSH_HOME) still
+        // owns the server it spawned — never reap that one.
+        if let appPid = record.appPid, appPid != selfPid, kill(appPid, 0) == 0 { return }
+        guard kill(record.pid, 0) == 0 else { return }   // already gone
+        guard let token = record.token, !token.isEmpty,
+              Self.tokenAccepted(port: record.port, token: token) else { return }
+        AppLog.shared.log("reaping dsh web left by a previous run (pid \(record.pid), port \(record.port))")
+        kill(record.pid, SIGTERM)
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline && kill(record.pid, 0) == 0 && Self.portOpen(record.port) {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        if Self.portOpen(record.port) {
+            kill(record.pid, SIGKILL)
+            AppLog.shared.log("orphaned dsh web did not exit in time; SIGKILL sent")
+        }
+    }
+
+    /// True when `port` answers the recorded launch token (dsh >= 0.1.2 answers
+    /// 303 to /?token=…; the redirect is followed, so 200 also counts).
+    private static func tokenAccepted(port: Int, token: String) -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/?token=\(token)") else { return false }
+        let semaphore = DispatchSemaphore(value: 0)
+        var status = -1
+        var request = URLRequest(url: url, timeoutInterval: 2)
+        request.httpMethod = "GET"
+        let task = tokenProbeSession.dataTask(with: request) { _, response, _ in
+            status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            semaphore.signal()
+        }
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + 3)
+        task.cancel()
+        return status == 200 || status == 302 || status == 303
+    }
+
+    private static func portOpen(_ port: Int) -> Bool {
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = CFSwapInt16HostToBig(UInt16(port))
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        let rc = withUnsafePointer(to: &addr) { p in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return rc == 0
+    }
+
     /// Stop the server we spawned. Never touches a server we did not spawn.
     /// Waits briefly for a graceful exit, then escalates to SIGKILL.
     func stop() {
@@ -1397,6 +1529,7 @@ final class ServerManager {
             AppLog.shared.log("dsh web exited cleanly")
         }
         spawned = false
+        Self.removeRecord()
     }
 }
 
@@ -2779,6 +2912,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     // like a browser on dsh 0.1.2+: exchange the advertised launch
                     // token for its cookie once the server is up.
                     DshWebRPC.token = self.server.webToken
+                    if DshWebRPC.token == nil {
+                        // Without the launch token nothing on /api can authenticate:
+                        // session/create and session/prompt answer 401, so wiki
+                        // generation and the issue runner fail (loudly, since the
+                        // panels now report it) instead of silently doing nothing.
+                        AppLog.shared.log("warning: dsh web advertised no launch token — native RPC cannot authenticate (401)")
+                    }
                     // Listeners need the actual port + (0.1.2+) the launch token,
                     // both only known once dsh web is up.
                     self.startConfiguredChannelRunners()
@@ -4022,8 +4162,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     /// 开发版运行隔离（DSH_DEV_BUILD=1 打包，Info.plist 写入 DSHDevBuild=1）。
     /// 让开发版与已安装正式版并存测试而不互相干扰：
-    ///   1. 独立 dsh 实例 —— 强制自拉起（DSH_NATIVE_FORCE_SPAWN=1），不复用已在
-    ///      127.0.0.1:3080 运行的 dsh web；3080 被占时自动取空闲端口。
+    ///   1. 独立 dsh 实例 —— 自拉起（壳层从不复用别人的实例，见 ServerManager.start）；
+    ///      3080 被占时自动取空闲端口，故开发版可与正式版并存。
     ///   2. 独立运行空间 —— 默认用 ~/.dsh-dev 作 DSH_HOME（用户显式设 DSH_HOME 时
     ///      尊重覆盖），使 dsh 的会话/配置/skills/channel 与正式 ~/.dsh 完全隔离。
     ///   3. 错开固定端口 —— CEF CDP 默认 9333→9433、Browser API 默认 3081→4081
@@ -4040,11 +4180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             // 旧开发版把 CEF profile 放在 ~/.dsh/browser-dev；迁到新隔离目录保留数据。
             migrateLegacyDevBrowserProfile(toHome: devHome)
         }
-        // 2) 不复用已启动实例
-        if env["DSH_NATIVE_FORCE_SPAWN"] != "1" {
-            setenv("DSH_NATIVE_FORCE_SPAWN", "1", 1)
-        }
-        // 3) 错开 CEF CDP / Browser API 端口（尊重显式覆盖）
+        // 2) 错开 CEF CDP / Browser API 端口（尊重显式覆盖）
         if env["DSH_CDP_PORT"].flatMap({ Int($0) }) == nil {
             setenv("DSH_CDP_PORT", "9433", 1)
         }
@@ -4052,7 +4188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setenv("DSH_BROWSER_PORT", "4081", 1)
         }
         let e = ProcessInfo.processInfo.environment
-        AppLog.shared.log("dev isolation: DSH_HOME=\(e["DSH_HOME"] ?? "?") forceSpawn=\(e["DSH_NATIVE_FORCE_SPAWN"] ?? "-") cdp=\(e["DSH_CDP_PORT"] ?? "?") browserApi=\(e["DSH_BROWSER_PORT"] ?? "?")")
+        AppLog.shared.log("dev isolation: DSH_HOME=\(e["DSH_HOME"] ?? "?") cdp=\(e["DSH_CDP_PORT"] ?? "?") browserApi=\(e["DSH_BROWSER_PORT"] ?? "?")")
     }
 
     /// 迁移旧开发版（隔离前）在共享 ~/.dsh 下创建的 CEF profile（~/.dsh/browser-dev）

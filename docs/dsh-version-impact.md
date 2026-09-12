@@ -32,7 +32,7 @@
 |---|---|---|---|---|---|
 | A1 | 自拉起命令：`node <dsh>/lib/bin.js web --no-open --port <port>`；可 `--port` 指定任意端口 | 参数名/子命令若变（`web` → 其他）则拉不起来 | App 弹「dsh web 启动失败」 | main.swift `ServerManager.start()`（spawn 段） | 开发版启动后 `lsof -iTCP -sTCP:LISTEN` 看端口 + WebView 首屏 |
 | A2 | 就绪自报：stderr/stdout 打印 `dsh web: http://127.0.0.1:<port>/?token=…`（0.1.2+）；旧版靠根页面含 `__DSH_BOOT__` | 0.1.2 起裸 GET `/` 返回 401（无 `__DSH_BOOT__`） | 就绪判定超时 → 判定启动失败（白屏 overlay） | `servedEntryURL()` / `isDSHServing()` | `cat ~/Library/Logs/oh-my-dsh/server.log`（含 token 行） |
-| A3 | **复用**外部已启动实例：裸 GET 3080 判 `__DSH_BOOT__` | 0.1.2 外部实例裸 GET 401 → **判为不可用**，App 另起一个空闲端口实例（**按设计，不复用**：token 每进程随机且只在该进程 stdout，拿不到；同 `DSH_HOME` 下数据本就共享，复用只省一个进程） | 行为正确，日志已说明原因 | `ServerManager.start()` 复用分支 + `isDSHAuthenticated()` | 起一个 0.1.2 dsh web 在 3080，再启动 App，看 `app.log` 的 not adopting 行 |
+| A3 | 外部已启动实例（4080/3080 上的 `dsh web`） | 0.1.2 起 `/api` 只认「本进程 launch token 换来的 cookie」，**别人的实例永远拿不到 token** | 若去复用：`webToken == nil` → 所有原生 RPC 401 → wiki 生成/任务面板静默失败（§4.4 实战） | `ServerManager.start()`：**复用逻辑已于 2026-09-12 整体删除，永远自拉起**；对照 `reapRecordedOrphan()`（回收自己上次残留的实例） | 启动 `app.log` 必须是 `using node=… port=<n>` + `dsh web is up on http://127.0.0.1:<n>/?token=…`（**不应**再出现 `reusing existing dsh web …`） |
 | A4 | Web 鉴权：`/?token=…` → 303 + `dsh-auth-*` Cookie（authority `127.0.0.1:<port>` 绑定），`/api` **只认 cookie**（query token 无效） | 0.1.2 首次引入 | WebView 白屏（401）；native RPC 全部 401 | WebView 直接加载 servedURL（带 token）；core `dsh-rpc.authenticate()` 换 cookie | `curl -i "http://127.0.0.1:<port>/?token=…"` 看 `set-cookie` |
 | A5 | 每实例 token **随机**（进程内生成），只在自报 URL 里出现 | 任何「读文件拿 token」的想法都不成立 | native/子进程拿不到 token → 401 | 壳层 ServerManager.`entryURL`/`webToken` → `--dsh-token` | 重启 App 后 token 变化（`server.log` 对比） |
 | A6 | dsh 子进程环境：`DSH_HOME`、登录 shell PATH | 新增必需环境变量（未来可能） | dsh web 起不来或行为异常 | spawn 处 `penv` 拼装 | `ps eww` / 日志打印 |
@@ -111,7 +111,7 @@
 | 面 | 0.1.2 下的表现 | 处置 | 状态 |
 |---|---|---|---|
 | A1/A2/A4 | 裸 GET 401 → App 判启动失败、WebView 白屏 | 读自报的带 token 地址做就绪判定 + 加载该地址 | 已修 |
-| A3 | 外部已启动的 0.1.2 实例判不可用 → 另起实例 | 按设计不复用（同 `DSH_HOME` ⇒ 同一份 workspace/会话/设置，复用只省一个进程）；`isDSHAuthenticated()` 把这个判断写进日志，避免「怎么又起了一个实例」无从解释 | 已定论 |
+| A3 | 外部已启动的 0.1.2 实例判不可用 → 另起实例 | 按设计不复用（同 `DSH_HOME` ⇒ 同一份 workspace/会话/设置，复用只省一个进程） | 2026-09-12 升级为**彻底删除复用分支**（原实现仍会复用一个「探针被骗过」的实例，见 §4.4） |
 | B1–B3 | web 切会话不通知壳层 → 项目目录不跟随 | 注入脚本同时认点号/斜杠 method 与 `payload.args` | 已修 |
 | B7 | 点文件链接不再被拦截 | 拦截脚本加 `session/openWorkspacePath` + `args.request.path` | 已修 |
 | B5 | 面板点开会话标题解析 404 | fetch 路径改 `/api/session/list` | 已修（DOM 点行本就可用） |
@@ -122,6 +122,34 @@
 | B1/B2 会话 cwd / 项目目录 | `/api/session.list` 404 → cwd 取不到 | 磁盘 `workspace.json` 兜底（按 sessionId 找所属 workspace） | 已修 |
 | **Swift 原生 RPC（WikiRPC / IssueRunnerPanel / DSHSessionRPC）** | 点号端点 + **无 cookie** → wiki 生成、issue-runner 建会话/发消息、`workspace.list` 扫描全部失败（DSHSessionRPC 有磁盘兜底，其余没有） | 新增 `DshWebRPC.swift`：原生侧同一套双面 + token→cookie；`workspace.list` 走 `DshWorkspaceStore`（RPC → 磁盘）；三处消费者全部改接 | 已修 |
 | 注入脚本 | 若客户端改传输（WebSocket/Gateway）则拦不到 | 目前客户端仍走 fetch | 风险待观察 |
+
+### 4.4 复盘：复用别人的 dsh web → wiki 生成静默失败（2026-09-12）
+
+**症状**：装好的正式版（1.14.0）点 Wiki 面板的「+（生成或更新知识库）」无任何反应，`app.log` 里既没有 `wiki generation started` 也没有报错；开发版同一操作正常。
+
+**根因（三段叠在一起）**：
+
+1. **3080 被自己上次的残留实例占着**：`applicationWillTerminate` 只停「本次自拉起的」服务，崩溃 / 强杀 / 复用过的实例都留着。实测 `lsof -p <pid>` 显示 3080 的进程 `stdout/stderr = ~/Library/Logs/oh-my-dsh/server.log`、`cwd = HOME`——正是 `ServerManager` 拉 dsh web 的写法，即**壳层自己上次留下的孤儿**（同机另有 5 个同类残留）。
+2. **探针被骗，误判为「可复用的老实例」**：`isDSHServing()` 用 `URLSession.shared`，它共享 app 持久 cookie 存储；那里躺着一张仍未过期的 `dsh-auth-*`（authority `127.0.0.1:3080`，30 天有效期）。实测同一 URL：
+   ```
+   GET http://127.0.0.1:3080/                → 401
+   GET http://127.0.0.1:3080/ + 那张 cookie   → 200，页面含 __DSH_BOOT__
+   ```
+   于是「页面里有 `__DSH_BOOT__` ⇒ 老版本、无需鉴权、可以复用」判错——它其实是需要 token 的 0.1.2。（磁盘缓存同理可骗过探针。）
+3. **复用即无 token**：复用分支写死 `entryURL = URL(string: "http://127.0.0.1:3080")`（不带 `?token=`）→ `server.webToken == nil` → `DshWebRPC.token = nil` → 而 `DshWebRPCTransport` 是**独立 ephemeral session**（自己的空 cookie 存储）→ `session/create`、`session/prompt` 全部 **401** → `WikiRPC.createSession` 返回 nil → 旧 `generationFailed()` 在「还没有在途生成」时**什么都不做** → 点了没反应。旁证：该次启动的 channel runner 命令行里**没有 `--dsh-token`**。
+
+**为什么开发版复现不出来**：`applyDevIsolation()` 当年强制 `DSH_NATIVE_FORCE_SPAWN=1`，**跳过复用分支**，永远自拉起并拿到 token。
+
+**处置（本次）**：
+
+- `ServerManager.start()`：**删除复用分支**，永远自拉起（`DSH_NATIVE_FORCE_SPAWN` 一并移除）；
+- 探针改为**专用 session**（`httpCookieStorage = nil`、`httpShouldSetCookies = false`、`.reloadIgnoringLocalCacheData`、`urlCache = nil`），不再被持久 cookie / 磁盘缓存欺骗；
+- 新增 `reapRecordedOrphan()`：拉起时把 `{pid, port, token}` 记到 `$DSH_HOME/shell/dsh-web.json`，下次启动若该实例仍在（用 token 探活证明是自己的）→ 先回收再拉起，杜绝「上次没关干净」累积；
+- `app.log` 在 `webToken == nil` 时明确告警（原生 RPC 将 401），不再静默；
+- Wiki 面板在「会话压根没起来」时状态条显示「生成失败（详见日志）」并写日志（不再是一次无效点击）；
+- `DshWebRPC`：只有端点真的不存在（404/405）才降级到点号方法，超时/401/业务错误不再把该端点永久钉死；cookie 换成功才记为已认证；`WikiRPC.createSession` 在 workspaceId 被拒时回退 `cwd` 建会话（保证「能在对应 workspace 起出会话」）。
+
+**教训**：① 「能不能复用」不能用「页面长什么样」来判断，必须用「我有没有它的 token」；② 任何**把失败记成状态**的缓存（端点选面、认证标记）都会把一次抖动放大成永久故障；③ 复用会让生命周期变成别人的——**自己拉起的自己收**，收不了就下次启动收。
 
 ### 4.3 定位手法（下次照做）
 
@@ -142,7 +170,7 @@
 - [ ] **在隔离环境先升**：开发版（`~/.dsh-dev`）先行，正式版不动（A/D7）。
 
 ### 升级后（逐面验证，失败即按 §3 定位）
-- [ ] A 启动：App 起得来、日志有 `dsh web is up on …/?token=…`、WebView 首屏正常（非 401）。
+- [ ] A 启动：App 起得来、日志有 `using node=… port=<n>` + `dsh web is up on …/?token=…`、WebView 首屏正常（非 401）；**不应出现 `reusing existing dsh web`**（复用已删除），也不应出现 `advertised no launch token` 告警。
 - [ ] B 注入：切会话 → `ProjectDirectory` 跟随（终端/预览/wiki/tasks 目录变）；面板点会话行 → web 跳转；点文件链接 → 文件面板打开。
 - [ ] C 频道：微信 `/help` `/ping` `/status` `/wks` `/ses` `/new …` + **发一句普通消息**看是否回推答案（覆盖 C5–C7）。
 - [ ] C 工作区：`/wks` 能列出**面板已启用**的 workspace（覆盖 C4）。
@@ -165,8 +193,8 @@
 
 | 风险 | 说明 | 触发再评估 |
 |---|---|---|
-| ~~R1 Swift 原生 RPC 无 cookie~~（2026-09-10 已修） | `WikiRPC`、`IssueRunnerPanel`、`DSHSessionRPC` 现统一走 `DshWebRPC.swift`：先试 0.1.2 斜杠端点（`payload.args.<request\|_request>`）再回退点号方法，按**端点**记忆所选面；token 由壳层 `ServerManager.webToken` 注入，经一个**独立 ephemeral URLSession** 访问 `/?token=…` 种下 `dsh-auth-*` cookie（WebView 的 cookie 在 WebKit 数据存储里、与 URLSession 的 `HTTPCookieStorage` 互不共享，故必须自行换取），401 时自动重换一次；`workspace.list` 在 0.1.2 不存在，回退读 `$DSH_HOME/storages/workspace.json`（`DshWorkspaceStore`，与 core 同一份契约） | 已修；若是**复用外部已启动**的 0.1.2 实例仍拿不到 token（见 R2），此时原生 RPC 退化为磁盘兜底 |
-| ~~R2 复用外部 0.1.2 实例~~（2026-09-10 定论：不做） | 外部实例的 token 只存在于它自己的 stdout，无法获取；但**只要 `DSH_HOME` 相同，壳层自拉起的实例与外部实例就是同一份数据**（workspaces / sessions / settings / channels 全在 `$DSH_HOME` 下），复用只省一个进程，不值当。**唯一注意**：同一个 `DSH_HOME` 上不要长期并行跑两个 dsh web（两者都往同一批文件持久化），验完外部实例就关掉它 | 只有出现「必须与某个已启动实例共享**内存态**（未落盘状态、正在跑的 turn 视图）」的需求时才重估 |
+| ~~R1 Swift 原生 RPC 无 cookie~~（2026-09-10 已修） | `WikiRPC`、`IssueRunnerPanel`、`DSHSessionRPC` 现统一走 `DshWebRPC.swift`：先试 0.1.2 斜杠端点（`payload.args.<request\|_request>`）再回退点号方法，按**端点**记忆所选面；token 由壳层 `ServerManager.webToken` 注入，经一个**独立 ephemeral URLSession** 访问 `/?token=…` 种下 `dsh-auth-*` cookie（WebView 的 cookie 在 WebKit 数据存储里、与 URLSession 的 `HTTPCookieStorage` 互不共享，故必须自行换取），401 时自动重换一次；`workspace.list` 在 0.1.2 不存在，回退读 `$DSH_HOME/storages/workspace.json`（`DshWorkspaceStore`，与 core 同一份契约） | 已修；2026-09-12 追加：只有 404/405 才降级（超时/401/业务错误不再把端点永久钉死）、cookie 换成功才记为已认证、workspaceId 被拒回落 `cwd` 建会话（§4.4） |
+| ~~R2 复用外部实例~~（**2026-09-12 复用逻辑已整体删除**） | 外部实例的 token 只存在于它自己的 stdout，无法获取；复用必然 `webToken == nil` ⇒ 原生 RPC 全 401（§4.4 实战踩过）。现在 **永远自拉起**，并回收自己上次残留的实例（`$DSH_HOME/shell/dsh-web.json` + token 探活）| 只有出现「必须与某个已启动实例共享**内存态**（未落盘状态、正在跑的 turn 视图）」的需求时才重估 |
 | **R3 注入脚本依赖 fetch + DOM**（**仍在**，且已实测出过坏点） | 三个注入脚本直接依赖 dsh web 客户端实现：fetch 形态与信封、方法名白名单、sessionId 位置、侧栏 `[role=treeitem].sessionRow` DOM、文件打开 RPC 端点。上游改传输（已有 WebSocket mux）或改 DOM 就**静默失效**。2026-09-10 实测发现 `sessionOpenerScript` 在 0.1.2 下一直是坏的（写死点号 method 打到斜杠端点，服务端 \`method does not match endpoint\`），已修为运行时双面 —— 详见 §6.1 | 升级后 B 面三项验证任一失败即命中 |
 | **R4 `workspace.json` 兜底是私有布局**（**仍在**，已加护栏） | 兜底读的是 dsh 内部带 schema/版本号的私有域存储（`defineDomain({name:'workspace',version:2})`，还有 `pendingMutation` 恢复标记），上游可随时改字段/搬文件/升版本；读不懂 = 上述五处**静默变空**。现已加域名+版本校验、诊断日志、单一实现收口（见 §6.2） | 升级后 `unit.version` 变化，或工作区列表突然为空而接口没变 |
 | R5 单一版本策略 | 只为「内置版本」做适配，老版本兼容靠回退（C1）；回退在两侧都失效时会静默出空结果 | 引入第二个受支持版本时重估 |
