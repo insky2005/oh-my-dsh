@@ -2,7 +2,7 @@
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
 updated: 2026-09-12T06:40:00Z
-sources: [tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
+sources: [tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
 manual: false
 ---
 
@@ -45,6 +45,7 @@ DSH_DEV_BUILD=1 ./platforms/macos/build-app.sh     # Info.plist 写 DSHDevBuild=
 open "dist/oh-my-dsh.app"
 ```
 
+- 文件面板工作区页签记忆（`tests/file-panel/run.sh` 覆盖逻辑，界面手测）：打开若干文件时头部**始终**显示「文件」而非路径（路径在标题悬停 tooltip 与页签 tooltip 里）→ dsh web 切到 B 工作区会话（页签栏清空、树根变 B）→ 切回 A（页签按原顺序重开且选中项还原）；A 中改文件不保存后切换 → 二选一提示（保存并切换 / 不保存；**没有「取消切换」**——dsh web 已切过去，面板必须跟随，否则两边不一致）：选保存则磁盘已更新、选不保存则磁盘未变，两种都照样切到 B；若文件保存失败、或提示被 ESC 关掉，该页签**保留在页签栏**且面板仍切到 B（不得静默丢弃、不得卡住）；有未保存修改时点**页签 ✕ / ⌘W** 或**面板右上角 ✕** → 三选一（保存并关闭 / 不保存 / 取消；取消 = 不关；保存失败则中止关闭并报错）；点 ✕（无未保存）→ 页签清空，此后切走再切回**不**自动重开；`~/Library/Logs/oh-my-dsh/app.log` 有 `preview workspace switch` / `preview restore` 日志；
 - 验证点：窗口标题 `oh-my-dsh (DeepSeek Harness)`；活动栏图标互斥切换（预览/终端/浏览器/知识库/任务/通道/审查）；⌥⌘P / ⌥⌘T / ⌥⌘B / ⌥⌘W / ⌥⌘J / ⌥⌘H / ⌥⌘R 快捷键；About 面板显示 dsh/Node 版本与 registry；文件面板编辑文本后 ⌘S 保存、页签标题出现 `*` 未保存标记（见 [file-panel](modules/file-panel.md)）。
 
 ## 跑单元测试

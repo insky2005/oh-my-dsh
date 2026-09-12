@@ -1,8 +1,8 @@
 ---
 title: 工程约定
 tags: [conventions, l10n, build, qa-hooks, versioning]
-updated: 2026-09-12T06:40:00Z
-sources: [tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, .github/workflows/nightly.yml, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/channel-issues.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/builtin-skills-design.md, docs/release-process.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-ci.sh, scripts/github-publish.sh, tests/skills/, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-knowledge/SKILL.md, docs/dsh-version-impact.md]
+updated: 2026-09-12T09:09:44Z
+sources: [tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, .github/workflows/nightly.yml, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/channel-issues.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/builtin-skills-design.md, docs/release-process.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-ci.sh, scripts/github-publish.sh, tests/skills/, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-knowledge/SKILL.md, docs/dsh-version-impact.md, tests/file-panel/]
 manual: false
 ---
 
@@ -64,10 +64,11 @@ manual: false
 ## 测试约定
 
 - 共享核心单测走 Node：`node --test --test-timeout=60000 core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道 / dsh-rpc / settings / workspace-store / review-log，**233 用例，2026-09-12 本机实测 230 通过 / 3 跳过**——Node 20 无 zstd 时 review-log 的 zstd 用例自动 skip）；**必须带 `--test-timeout`**：`node --test` 无默认超时，泄漏 runner/定时器的用例会把整套挂死（ebac11a 修复，ci.yml / nightly.yml / local-ci.sh / `core/package.json` 四处同参数）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
-- CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + `tests/browser-panel/run.sh` + `tests/skills/run.sh`（内置 skill 安装器）+ `tests/channel-panel/run.sh`（通道项目视图数据模型）+ `tests/review-panel/run.sh`（审查面板展示模型，64 项）+ 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh` 单一来源，先 `mkdir -p .build/module-cache`）；编译检查清单含 `IssueRunnerPanel.swift`（f4ed4ff 起——曾漏文件导致 main.swift 引用编译失败，CI 失败根因）与 `BrowserPanel.swift`/`BrowserAPI.swift`；构建矩阵为 arm64（x86_64 交叉编译由 release.yml 打 tag 时构建，产品不再出 universal），**不再使用退役中的 macos-13/x86_64 runner**；
+- CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + `tests/browser-panel/run.sh` + `tests/skills/run.sh`（内置 skill 安装器）+ `tests/channel-panel/run.sh`（通道项目视图数据模型）+ `tests/review-panel/run.sh`（审查面板展示模型，64 项）+ `tests/file-panel/run.sh`（文件面板工作区页签记忆：模型 28 项 + 真面板 41 项）+ `tests/l10n/run.sh`（L10n 键名 lint：`L10n.tr("…")` 字面量必须存在于 `L10n.table`，重复键 / 中英缺一 FAIL——防「键名当文案显示」）+ 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh` 单一来源，先 `mkdir -p .build/module-cache`）；编译检查清单含 `IssueRunnerPanel.swift`（f4ed4ff 起——曾漏文件导致 main.swift 引用编译失败，CI 失败根因）与 `BrowserPanel.swift`/`BrowserAPI.swift`；构建矩阵为 arm64（x86_64 交叉编译由 release.yml 打 tag 时构建，产品不再出 universal），**不再使用退役中的 macos-13/x86_64 runner**；
 - 面板/壳层 Swift 无头单测模式（`tests/*/run.sh`）：`stubs.swift` + 把被测源码复制进临时目录 + 测试文件改名 `main.swift`（顶层代码需要）→ `swiftc` 编译运行，无窗口/无 PTY 依赖；
 - 终端模拟器测试不触 PTY（沙箱可能禁 `/dev/ptmx`），已迁 `core/tests/ansi.test.js`（42 项），`tests/terminal-emulator/run.sh` 为薄封装；
-- 新增面板需配套模型层单测（如 `tests/wiki-panel/`、`tests/review-panel/`）；平台无关逻辑放 `core/tests/*.test.js`（如审计折叠 `core/lib/review-log.js` → `core/tests/review-log.test.js`）。
+- **文案键必须存在且成对**：`L10n.tr` 缺键时的兜底是「显示键名本身」（`table[key] ?? (key, key)`），改键名 / 新增文案后跑 `tests/l10n/run.sh`（CI 已接入），它比对 `L10n.tr("…")` 字面量与 `L10n.table`；
+- 新增面板需配套模型层单测（如 `tests/wiki-panel/`、`tests/review-panel/`）；面板状态机也可直接驱动真 controller（如 `tests/file-panel/`：`stubs.swift` + `FilePanel.swift`/`CodeEditorView.swift`/Highlightr + `NSApplication.shared`，无窗口断言页签集合）；平台无关逻辑放 `core/tests/*.test.js`（如审计折叠 `core/lib/review-log.js` → `core/tests/review-log.test.js`）。
 
 ## 内置 Skill 与启动约束（v1.13.0）
 

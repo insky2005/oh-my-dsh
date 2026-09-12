@@ -85,6 +85,10 @@ jobs:
         run: tests/dsh-rpc/run.sh
       - name: Review (change audit) panel tests
         run: tests/review-panel/run.sh
+      - name: File panel (workspace tab memory) tests
+        run: tests/file-panel/run.sh
+      - name: L10n key lint
+        run: tests/l10n/run.sh
       - name: Build CEF integration artifacts (arm64)
         run: |
           mkdir -p .build/module-cache
