@@ -1,8 +1,8 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-09-10T23:50:00Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
+updated: 2026-09-12T06:40:00Z
+sources: [tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
 manual: false
 ---
 
@@ -45,18 +45,22 @@ DSH_DEV_BUILD=1 ./platforms/macos/build-app.sh     # Info.plist 写 DSHDevBuild=
 open "dist/oh-my-dsh.app"
 ```
 
-- 验证点：窗口标题 `oh-my-dsh (DeepSeek Harness)`；活动栏图标互斥切换（预览/终端/知识库/任务/浏览器/通道）；⌥⌘P / ⌥⌘T / ⌥⌘W / ⌥⌘J 快捷键；About 面板显示 dsh/Node 版本与 registry；文件面板编辑文本后 ⌘S 保存、页签标题出现 `*` 未保存标记（见 [file-panel](modules/file-panel.md)）。
+- 验证点：窗口标题 `oh-my-dsh (DeepSeek Harness)`；活动栏图标互斥切换（预览/终端/浏览器/知识库/任务/通道/审查）；⌥⌘P / ⌥⌘T / ⌥⌘B / ⌥⌘W / ⌥⌘J / ⌥⌘H / ⌥⌘R 快捷键；About 面板显示 dsh/Node 版本与 registry；文件面板编辑文本后 ⌘S 保存、页签标题出现 `*` 未保存标记（见 [file-panel](modules/file-panel.md)）。
 
 ## 跑单元测试
 
 ```bash
-node --test core/tests/*.test.js  # 共享核心单测（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道，216 用例；不带引号由 bash 展开 glob，Node 20 兼容）
+node --test --test-timeout=60000 core/tests/*.test.js   # 共享核心单测（233 用例；不带引号由 bash 展开 glob，Node 20 兼容；--test-timeout 让泄漏定时器的用例 60s 失败而非挂死整套）
 tests/terminal-emulator/run.sh      # 模拟器测试（core/tests/ansi.test.js 的薄封装）
 tests/wiki-panel/run.sh             # Repo Wiki 模型层
+tests/browser-panel/run.sh          # 浏览器面板模型层（REST 路由 / 日志缓冲）
+tests/channel-panel/run.sh          # 通道项目视图数据模型（ChannelStoreReader）
+tests/dsh-rpc/run.sh                # 壳层原生 dsh RPC（0.1.2 信封/斜杠端点、launch token 换 cookie、回退记忆）
+tests/review-panel/run.sh           # 审查面板展示模型（64 项）
 tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
 ```
 
-- 均无窗口依赖，可在纯命令行环境运行；失败即非零退出（`set -euo pipefail`）；
+- 均无窗口依赖，可在纯命令行环境运行；失败即非零退出（`set -euo pipefail`）；`scripts/local-ci.sh` 按 ci.yml 三阶段跑同一组（core → swift 测试 + `swiftc` 编译检查 → arm64 构建，不打包）；
 - `tests/wiki-panel/run.sh` 会先 `mkdir -p .build/module-cache` 再编译（干净环境/CI 无 `.build/` 时必需，见 `c2d626b`）。
 
 ## 加一个新右栏面板（参照 v1.7.0 Wiki 面板）
@@ -84,6 +88,14 @@ tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：�
 - 生成由 dsh 代理执行（`session.create` + `session.prompt` mode: queue），会话在 dsh web 左侧可见、可取消；生成期间阅读区上方**叠加半透明浮层**（居中「Generating…」+ 每秒耗时的底部状态条），页面与左侧树全程可见（代理每写出一页树即实时出现）；「取消」走 `session.cancel`；失败/取消后自动恢复原内容；生成状态按仓库关联，切换仓库不影响别处进行中的生成；
 - 开关：设置菜单 →「自动更新知识库」「写入 AGENTS.md 注册块」「知识库根目录」（仓库内 .dsh/wiki 或 DSH_HOME 私有）。
 
+## 审计会话变更（审查面板，只读）
+
+- 打开：活动栏「审查」图标 / **⌥⌘R**（QA 钩子 `DSH_REVIEW_TEST=1` 启动即开，`DSH_REVIEW_TEST_PATH=<dir>` 固定审计的工作区）；
+- 树为 **会话 → 对话(turn) → 文件 → 变更内容**，每层可展开/收起；**按需审计**——会话列表只读日志头，某会话首次展开才跑 `review audit` 并缓存；工具栏「全部展开 / 全部收起 / 只看可疑命令（默认开）」；
+- 每条改动标出**来源**：`已应用`（工具结果的 hunk）/ `参数还原`（如 `run_code` 嵌套调用）/ `全文写入`、`新建`；`shell 命令（无前后内容记录）` 与 `失败的调用（未改动）` 各自单列、不计入变更统计；
+- 等价 CLI（与面板同一 core 实现）：`node core/bin/ohmy-core.js review sessions [--workspace <dir>]` / `review audit <sessionId>` / `review audit-file <path.jsonl[.zstd]>`；
+- **只读**：不写盘、不调写接口、不改 dsh；回滚/接受拒绝**不在范围**（只读数据里没有可回滚的完整信息），设计与覆盖矩阵见 docs/review-panel-design.md。
+
 ## 排查问题
 
 1. 看日志：`~/Library/Logs/oh-my-dsh/app.log`（壳层）、`server.log`（服务输出）；设置菜单「打开日志文件夹」(⌘L) 直达；
@@ -93,7 +105,8 @@ tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：�
 5. 预览面板不响应文件点击：`DSH_PREVIEW_DEBUG=1` 看探针（`__dshPreviewInstalled` / `__dshPreviewHit` / 伪造 `host.openPath` 的返回）；
 6. 端口被占：默认 3080，`DSH_NATIVE_PORT` 指定端口；`DSH_NATIVE_FORCE_SPAWN=1` 强制自拉起（绕过复用检查）。3080 上已有 dsh ≥ 0.1.2 时壳层**本就不复用**（裸 GET 401 + `authentication required`），`app.log` 有 `existing dsh web on 3080 wants its launch token … not adopting` 一行——这是预期行为，不是故障；
 7. 工作区列表为空 / 面板项目目录回退 home：先看 `channel-runner-<id>.log` 或 `app.log` 有没有 `[workspace-store]` 诊断（`unexpected shape` / `is domain workspace vN, this build understands v2`）——私有存储被上游改了字段或升了版本；验证命令见 docs/dsh-version-impact.md §6.2，改两侧读取器（`core/lib/workspace-store.js` + `platforms/macos/src/DshWebRPC.swift`）并补用例；
-8. 面板点会话行不跳转 web / 切会话目录不跟随：`DSH_UI_DEBUG=1` 看 `dsh injected bridges: {tracker, opener, preview, rows}`（注入脚本是否装上）+ 页面 console 的 `[dsh-opener]` 日志，对照 docs/dsh-version-impact.md §6.1（R3：注入脚本依赖 dsh web 客户端内部实现，上游一改即静默失效）。
+8. **审查面板空/读不到变更**：先用 CLI 定位——`node core/bin/ohmy-core.js review sessions [--workspace <dir>]` 看会话是否被发现、`… review audit <sessionId>` 看条目与 `diagnostics`；面板必须经**内置** node 调 core（`CoreBridge.run(…, preferBundledNode: true)`，用户自装 Node 18/20 无 zstd 解不了压缩日志）；`DSH_REVIEW_TEST=1`（可加 `DSH_REVIEW_TEST_PATH=<dir>`）启动即开面板；面板是只读的——`bash` 直改（`sed -i`/`>`/`rm`）只有命令文本、标注「需人工核对」，日志未落盘的尾部不可见，这些都是设计边界而非故障；
+9. 面板点会话行不跳转 web / 切会话目录不跟随：`DSH_UI_DEBUG=1` 看 `dsh injected bridges: {tracker, opener, preview, rows}`（注入脚本是否装上）+ 页面 console 的 `[dsh-opener]` 日志，对照 docs/dsh-version-impact.md §6.1（R3：注入脚本依赖 dsh web 客户端内部实现，上游一改即静默失效）。
 
 ## 发布清单（简版，分支规范见 docs/git-workflow.md）
 
@@ -107,7 +120,7 @@ tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：�
    - 本机：`scripts/local-release.sh`（两架构）或 `scripts/local-release.sh pack`（只打包不发布）；自动读 version.sh、做 SHA-256SUMS、发布 GitHub Release；
    - 或 CI：push `v*` tag 触发 release.yml（见下）；
 5. 提交时检查 `git status`：只含源码/文档/wiki 变更（.build/.cache/dist/pic 已忽略）；
-6. 发布后**立即**把 `scripts/version.sh` 的 `FALLBACK_VERSION`/`FALLBACK_BUILD` 推进到下一个 minor（发布 v1.12.0 → fallback `1.13.0`/69），并更新 CHANGELOG 顶部 `[Unreleased]` 占位，单 commit。
+6. 发布后**立即**把 `scripts/version.sh` 的 `FALLBACK_VERSION`/`FALLBACK_BUILD` 推进到下一个 minor（如发布 v1.14.0 → fallback `1.15.0`/71，当前即此线），并更新 CHANGELOG 顶部 `[Unreleased]` 占位，单 commit（不 push main 之外的改写；`main` 禁 force-push）。
 
 **发布已知坑（v1.12.0 实战校准，见 `docs/release-process.md`）**：tag 推送会触发 CI release.yml，而 CI 的 **CEF prepare 前置 job 当前是坏的**（GitHub runner 上从 cef-builds.spotifycdn.com 下载超时，连续两代 Release run 挂死、publish job 被跳过）——**发布以本地 `local-release.sh` 为准**，CI 失败 run 直接忽略（暂不修复）；上传约 1.1GB 资产慢网耗时 1–2h+，`github-publish.sh` 已幂等化（release 已存在则复用只补传缺失资产 + 逐资产进度输出），中断可直接重跑；**发布统一走 curl API、暂不使用 gh CLI**（gh 分支保留为自动检测兜底）；DMG 构建必须 `danger-full-access` 沙箱（hdiutil 需访问 /dev）。
 
@@ -132,7 +145,7 @@ node core/bin/ohmy-core.js channel route <refsJson> <conversationId> <text> # �
 
 客户端内指令（微信里发）：全局 `/help` `/ping` `/status`；工作区指令 `/workspaces`(`/wks`)、`/sessions`(`/ses`)（无内容列出 / 有内容切换，等同 `#wN`/`#sN`）、`/new [内容]`（统一回 `创建新会话 #sN (sessionId)`，无内容建占位 `New Session`（dsh 标题由 dsh web 按首条消息自动命名）等首条消息激活、有内容 prompt=内容并回推答案）；纯代号 `#wN`/`#sN` 快捷切换当前工作区/会话；消息含 `#w1` 或 `#<workspace名>` 按 #tag 路由到对应项目（清单见 docs/channel-commands.md，改动须同步维护该文档）。
 
-验证：`node --test core/tests/` **216 全绿**（2026-09-11 实测；2026-08-26 为 186，其后新增 dsh 双面 RPC / workspace-store 护栏等用例；含 channel 相关 association/busy/重写后的 sessions/project-switch/dingtalk 等）；`tests/channel-panel/run.sh`（ChannelStoreReader）无头单测；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；钉钉 Stream 连接已跑通（SDK 语义：connected= socket 打开，4c7f44b）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
+验证：`node --test --test-timeout=60000 core/tests/*.test.js` **233 用例**（2026-09-12 本机实测 230 通过 / 3 跳过——无 zstd 的 Node 20 下 review-log 的 zstd 用例自动 skip；2026-09-11 为 216；含 channel 相关 association/busy/重写后的 sessions/project-switch/dingtalk 等）；`tests/channel-panel/run.sh`（ChannelStoreReader）无头单测；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；钉钉 Stream 连接已跑通（SDK 语义：connected= socket 打开，4c7f44b）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
 
 > ✅ 消息/会话存储**已全局化**（2026-08-22 落地）：会话映射与消息归档到全局 `~/.dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶，无会话入 system 桶），项目内仅剩引用配置 `.dsh/channels.json`；旧项目格式经 `channel migrate` CLI / 惰性迁移（见 [channel-panel](modules/channel-panel.md)）。**「项目开关」关联（PR #30，2026-08-23）**：通道↔项目启用关系存**全局** `~/.dsh/channels/<channelId>.workspaces.json`（project=workspace，出现即启用，见 [channel-panel](modules/channel-panel.md)「项目开关」与 docs/channel-project-switch.md），项目内 refs 文件不再作为启用来源。仍待办：引用配置落位 `.dsh/channels/channels.json` 并提交。
 

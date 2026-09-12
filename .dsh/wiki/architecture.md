@@ -1,8 +1,8 @@
 ---
 title: 架构
 tags: [architecture, layers, dataflow, deployment]
-updated: 2026-09-10T23:50:00Z
-sources: [platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/swift-sources.sh, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/cef/CEFShim.h, platforms/macos/cef/CEFShim.mm, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-runner.js, core/lib/workspace-store.js, core/lib/session-driver.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md, docs/plans/PREVIEW_PLAN-file-panel.md, .dsh/skills/repo-wiki/SKILL.md]
+updated: 2026-09-12T06:40:00Z
+sources: [core/lib/review-log.js, core/bin/ohmy-core.js, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, tests/review-panel/, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/swift-sources.sh, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/cef/CEFShim.h, platforms/macos/cef/CEFShim.mm, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-runner.js, core/lib/workspace-store.js, core/lib/session-driver.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md, docs/plans/PREVIEW_PLAN-file-panel.md, .dsh/skills/repo-wiki/SKILL.md]
 manual: false
 ---
 
@@ -21,12 +21,14 @@ manual: false
 │   ├─ L10n            中/英文案表（跟随系统，DSH_LANG 可覆盖）                             │
 │   ├─ DSHSessionRPC   经 HTTP RPC 解析会话 cwd（client-request 信封）                      │
 │   ├─ ProjectDirectory 共享"活动项目目录"（跟随 dsh web 当前会话，见数据流 6）             │
-│   └─ 右栏插槽 RightPanel { none, preview, terminal, wiki, tasks, browser, channel }（六面板互斥）   │
+│   └─ 右栏插槽 RightPanel { none, preview, terminal, wiki, tasks, browser, channel, review }（七面板互斥）│
 │        ├─ FilePanelController（FilePanel.swift，预览/文件面板；PreviewPanel.swift 保留为回滚基线+共享组件）│
 │        ├─ TerminalPanelController（TerminalPanel.swift）                                         │
 │        ├─ WikiPanelController（WikiPanel.swift）                                                 │
 │        ├─ IssueRunnerPanelController（IssueRunnerPanel.swift）                                   │
 │        ├─ ChannelPanelController（ChannelPanel.swift，通道/消息平台面板）                         │
+│        ├─ ReviewPanelController（ReviewPanel.swift + ReviewLogModel.swift，只读审计；审计计算经     │
+│        │   CoreBridge → core/bin/ohmy-core.js review …（preferBundledNode，需 zstd））             │
 │        └─ BrowserPanelController（BrowserPanel.swift + BrowserCDP.swift，CEF 内核经 CEFShim）     │
 │           └─ BrowserAPIServer（BrowserAPI.swift，127.0.0.1:3081 REST，Agent 驱动 + QA 端点）      │
 │ WKWebView ← 加载 http://127.0.0.1:<port>（dsh web 界面）                                 │
@@ -42,8 +44,8 @@ manual: false
 
 ## 模块依赖
 
-- `main.swift` 持有六个面板 controller（`previewPanel`（`FilePanelController`）/`terminalPanel`/`wikiPanel`/`tasksPanel`/`browserPanel`/`channelPanel`），通过 `setRightPanel` 把活动面板根视图挂为 NSSplitView 右 pane（`subviews[1]`），隐藏时把 divider 推到最右；浏览器面板的 REST API（`BrowserAPIServer`）随 App 启动/停止，`BrowserAPIBridge` 闭包把 `setRightPanel` 与 QA 诊断（debugDump/debugState/debugHierarchy）接给 AppDelegate；
-- 各面板复用 `PreviewPanel.swift` 中定义的共享 UI 组件：`HoverButton`、`DynamicFillView`、`ActivityBarButton`、`PanelIconButton`、`HeaderLabel`、`CustomIconButton`、`BakedIconView`；FilePanel 复用这些类型、只自带 file-private `TreeNode`/`DirRow`（避免符号重定义），见 [file-panel](modules/file-panel.md)；
+- `main.swift` 持有七个面板 controller（`previewPanel`（`FilePanelController`）/`terminalPanel`/`wikiPanel`/`tasksPanel`/`browserPanel`/`channelPanel`/`reviewPanel`），通过 `setRightPanel` 把活动面板根视图挂为 NSSplitView 右 pane（`subviews[1]`），隐藏时把 divider 推到最右；浏览器面板的 REST API（`BrowserAPIServer`）随 App 启动/停止，`BrowserAPIBridge` 闭包把 `setRightPanel` 与 QA 诊断（debugDump/debugState/debugHierarchy）接给 AppDelegate；
+- 各面板复用 `PreviewPanel.swift` 中定义的共享 UI 组件：`HoverButton`、`DynamicFillView`、`ActivityBarButton`、`PanelIconButton`、`HeaderLabel`、`CustomIconButton`、`BakedIconView`（审查面板另自带主题自适应的 `ReviewFill`/`ReviewPaperView`/`ReviewRootView`，配方与 Channel 面板项目视图一致）；FilePanel 复用这些类型、只自带 file-private `TreeNode`/`DirRow`（避免符号重定义），见 [file-panel](modules/file-panel.md)；
 - 所有 L10n 文案集中在 `main.swift` 的 `L10n.table`；
 - 面板通过 `serverPortProvider` 闭包取当前端口，`serverReady(port:)` 在服务就绪后获得门控通知；
 - **共享项目目录**：`ProjectDirectory`（main.swift）保存当前活动项目目录，四处消费——预览树、终端新会话 cwd、wiki 根解析（`resolveProjectDirectory` 优先返回它，其次实时查询并缓存）、任务面板工作区识别（`tasksPanel.workspacePath` 优先返回 `ProjectDirectory.current` 且**权威**：非 GitHub 仓库 → 诚实空态、不替换其他工作区；仅启动早期未解析时才回退 `workspace.list` 解析并重试，见数据流 4b）；
@@ -63,6 +65,8 @@ manual: false
 6. **退出**：SIGTERM/SIGINT/SIGHUP → `NSApp.terminate`；`applicationWillTerminate` → `terminalPanel.shutdownAll()`（终止全部 PTY 会话进程组）+ `browserPanel.shutdownAll()`（关浏览器 + 断开 CDP）+ `browserAPIServer.stop()` + 停 CEF 消息泵 + `CEFShim.shutdown()`（泵 20 轮收尾，不调 `CefShutdown`）+ `channelPanel` 关闭已拉起的 channel runner（runner 收到 SIGTERM 立即退出，不残留僵尸进程）→ `server.stop()`（**只停自拉起的**服务：`terminate()` 后等 3 秒，未退出则 SIGKILL；复用的外部服务绝不动）；`applicationShouldTerminate` 拦截 CEF 引发的误退出（`g_cefClosingWindow` 置位期间取消并恢复主窗口）。
 
 5c. **通道（Channel，v1.10 之后 / feature/channel，2026-08-22 合并进 main）**：右栏 `channelPanel`（`ChannelPanelController`）配置全局 channel（微信 ClawBot / 钉钉 / 飞书平台卡片 + 扫码登录向导，面板内 `CIQRCodeGenerator` 渲染二维码；微信调 core `channel login --save` 落 `~/.dsh/channels/<id>.json`，钉钉走 device-code 扫码注册（PR #39））与项目视图（Channel 行 + NSSwitch 开关写**全局** `~/.dsh/channels/<channelId>.workspaces.json`，见 [channel-panel](modules/channel-panel.md)「项目开关」）；core 层（Node，平台无关）负责全部逻辑——`core/lib/channel.js`（五态状态机 + 路由优先级 + resolveRefBinding + 编排）、`weixin-clawbot*.js`（微信 iLink 官方协议适配器，**严格串行长轮询**防重复回复）、`dingtalk*.js`（钉钉 **dingtalk-stream** 原生适配器：DWClient 长连接 + device-code 注册 + `/bind` owner-binding 安全门，2026-08-26 PR #39）、`session-driver.js`（经 dsh RPC 驱动会话，**复用会话**）、`channel-runner.js`（编排 + 指令优先路由 + 异步应答忙门 + 通道级状态 `~/.dsh/channels/<id>.state.json` + **项目开关门控** `isEnabledForRoot`——未启用该通道的 workspace 回「该项目未启用该通道」、不建会话；runWeixinChannel / runDingTalkChannel 同构编排）、`channel-sessions.js`（**全局**会话映射/消息归档 + `set/isWorkspaceEnabled` 项目开关；系统/指令消息落通道级全局桶）；数据流：平台入站消息 → adapter.onEvent → ChannelEvent → parseCommand（指令直接回复）或按关联模型路由命中项目（会话复用/新建）→ sendTyping（微信原生 / 钉钉文字 ack）→ 后台 session.prompt(mode: queue) → 回推 ChannelReply（微信带 context_token / 钉钉 POST sessionWebhook）+ 取消 typing；详见 [channel-panel](modules/channel-panel.md) 与 [data-model](data-model.md)。
+
+5d. **审查面板（只读变更审计，PR #44 / 2026-09-12）**：\`ReviewPanelController\` 不碰 dsh、不写任何文件——读 dsh 自己落盘的会话日志 \`$DSH_HOME/sessions/<workspace-slug>/<session-id>/session.jsonl[.zstd]\`，经 \`CoreBridge.run(["review","sessions|audit",…], preferBundledNode: true)\` 调 core CLI（\`core/lib/review-log.js\`）折叠出「会话→对话(turn)→文件→变更内容」树：① \`tool/result\` 的 \`meta.diffs\`（已应用 hunk，**仅顶层** write/edit）；② 顶层 \`tool/call\` / 嵌套 \`tool/code-dispatch-start\` 的 \`arguments\`（参数还原，覆盖 run_code 嵌套调用与新建文件的全文）；③ \`bash\` 调用（仅命令文本 + 「可能写文件」启发式，单列）；失败/被拒调用单列且不计入变更统计；帧解压失败、未完成尾帧、无法解析的行进 diagnostics 原样展示。**审计逻辑必须在 core**：dsh 日志是多帧 Zstandard 拼接、Apple Compression 框架无 zstd、内置 Node（v24）才有 \`zlib.zstdDecompressSync\`（用户自装 Node 18/20 解不了，故 \`preferBundledNode\`）。面板**按需审计**（会话列表只读日志头；某会话首次展开才跑 \`review audit\`，结果内存缓存），跟随 dsh web 的 sessionId（按 id 跨工作区定位，工作区变化只重列会话、不清缓存），会话标题经 \`DshWebRPC\` 的 \`session.list\` 读取（打开时读、失败重试、无标题回退 dsh web「新会话」占位）。入口：活动栏「审查」图标 / ⌥⌘R；QA 钩子 \`DSH_REVIEW_TEST=1\`、\`DSH_REVIEW_TEST_PATH\`。详见 [review-panel](modules/review-panel.md) 与 docs/review-panel-design.md。
 
 ## 部署形态
 

@@ -1,8 +1,8 @@
 ---
 title: 模块：通道（Channel）—— 消息平台接入 + 远程驱动 dsh
 tags: [module, channel, weixin, clawbot, dingtalk, stream, adapter, router, session-driver, qrcode, commands, association]
-updated: 2026-09-10T23:50:00Z
-sources: [platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, platforms/macos/src/main.swift, core/lib/channel.js, core/lib/channel-runner.js, core/lib/channel-commands.js, core/lib/channel-store.js, core/lib/channel-sessions.js, core/lib/channel-workspaces.js, core/lib/weixin-clawbot.js, core/lib/weixin-clawbot-transport.js, core/lib/session-driver.js, core/lib/dingtalk.js, core/lib/dingtalk-stream-transport.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/tests/dingtalk.test.js, core/tests/dingtalk-stream-transport.test.js, core/tests/dingtalk-access.test.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, core/tests/dsh-rpc.test.js, core/tests/workspace-store.test.js, core/bin/ohmy-core.js, core/vendor/qrcode-terminal/, docs/channel-design.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-association-model.md, docs/channel-issues.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/dsh-version-impact.md]
+updated: 2026-09-12T06:40:00Z
+sources: [core/tests/channel-association.test.js, core/tests/channel-busy.test.js, core/tests/channel-runner.test.js, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, platforms/macos/src/main.swift, core/lib/channel.js, core/lib/channel-runner.js, core/lib/channel-commands.js, core/lib/channel-store.js, core/lib/channel-sessions.js, core/lib/channel-workspaces.js, core/lib/weixin-clawbot.js, core/lib/weixin-clawbot-transport.js, core/lib/session-driver.js, core/lib/dingtalk.js, core/lib/dingtalk-stream-transport.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/tests/dingtalk.test.js, core/tests/dingtalk-stream-transport.test.js, core/tests/dingtalk-access.test.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, core/tests/dsh-rpc.test.js, core/tests/workspace-store.test.js, core/bin/ohmy-core.js, core/vendor/qrcode-terminal/, docs/channel-design.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-association-model.md, docs/channel-issues.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/dsh-version-impact.md]
 manual: false
 ---
 
@@ -81,10 +81,10 @@ channel 子命令：route <refsJson> <conversationId> <text>（路由匹配）�
 
 ## 测试与验证
 
-- node --test core/tests/ **216 全绿**（2026-09-11 实测；2026-08-26 为 186，其后新增 dsh 双面 RPC/workspace-store 护栏等用例；channel 相关含 channel/commands/runner/sessions/workspaces/weixin-clawbot/dingtalk/e2e-channel/channel-association/channel-busy/project-switch 等）；
+- node --test core/tests/ **233 用例**（2026-09-12 本机实测 230 通过 / 3 跳过——无 zstd 的 Node 20 上 review-log 的 zstd 用例自动 skip；2026-09-11 为 216；channel 相关含 channel/commands/runner/sessions/workspaces/weixin-clawbot/dingtalk/e2e-channel/channel-association/channel-busy/project-switch 等）；
 - e2e-channel.test.js：mock HTTP 覆盖传输层（getupdates 映射 / -14 过期 / 无 token / sendmessage 报文 / QR 登录），不依赖真实 dsh web、不做会话创建；
 - channel-association.test.js：断言 A（同一 conversation 复用同一 sessionId、跨 conversation 独立）、B（refs 显式绑定）、C（会话归属 workspaceId）、/new 绑定 conversation 后下一条普通消息复用而非新建；
-- channel-sessions.test.js（重写）：全局分桶存储、按 sessionId 保留全部会话（re-binding 保留旧会话）、set/isWorkspaceEnabled 项目开关持久化；channel-busy.test.js：忙门/异步应答；channel-runner.test.js：含「项目开关」门控用例（普通消息/#wN/#sN//sessions 未启用回「未启用该通道」，/workspaces 只列已启用）+ /sessions、/workspaces 带内容切换用例；
+- channel-sessions.test.js（重写）：全局分桶存储、按 sessionId 保留全部会话（re-binding 保留旧会话）、set/isWorkspaceEnabled 项目开关持久化；channel-busy.test.js：忙门/异步应答（ebac11a 起 mock server 用 try/finally + `closeAllConnections()` 收尾、按 `session.history` 到达再推第二条消息，避免 30ms 轮询竞态造成的偶发失败与整套挂死）；channel-runner.test.js：含「项目开关」门控用例（普通消息/#wN/#sN//sessions 未启用回「未启用该通道」，/workspaces 只列已启用）+ /sessions、/workspaces 带内容切换用例；
 - tests/channel-panel/run.sh（channel-tests.swift）：ChannelStoreReader 无头单测（读全局 sessions/分桶消息过滤 projectRoot）；
 - 真实微信端到端已验证：扫码登录拿 bot_token → getupdates 收入站（含 context_token）→ sendmessage 回传，用户确认收到；
 - Swift 编译清单：ChannelPanel.swift / ChannelStoreReader.swift 由 swift-sources.sh 单一来源自动收录（不再逐个登记）。

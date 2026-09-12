@@ -1,8 +1,8 @@
 ---
 title: 工程约定
 tags: [conventions, l10n, build, qa-hooks, versioning]
-updated: 2026-09-10T23:50:00Z
-sources: [README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/channel-issues.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/builtin-skills-design.md, docs/release-process.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-ci.sh, scripts/github-publish.sh, tests/skills/, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-knowledge/SKILL.md, docs/dsh-version-impact.md]
+updated: 2026-09-12T06:40:00Z
+sources: [tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, .github/workflows/nightly.yml, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/channel-issues.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/builtin-skills-design.md, docs/release-process.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-ci.sh, scripts/github-publish.sh, tests/skills/, .gitignore, .github/workflows/ci.yml, core/tests/, .dsh/skills/repo-knowledge/SKILL.md, docs/dsh-version-impact.md]
 manual: false
 ---
 
@@ -26,7 +26,7 @@ manual: false
 - 编译：`swiftc -O -swift-version 5`，frameworks 为 AppKit/WebKit/PDFKit；**macOS 编译源文件清单单一事实来源 `platforms/macos/swift-sources.sh`**（glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，排除独立工具 `MakeIcon.swift`），`platforms/macos/build-app.sh` / `scripts/local-ci.sh` / `.github/workflows/ci.yml` 三方共用——新增 `.swift` 文件**不再需要逐个登记**（根治了此前 `feature/channel` 追加 `ChannelPanel.swift` 曾漏登 local-ci 导致的 `ChannelPanelController 未定义`、3e69783 修复的历史问题）；
 - `module-cache-path` 固定在 `.build/module-cache`（沙箱/环境问题规避）；
 - 图标：`MakeIcon.swift` 程序化渲染（16…1024px 全尺寸）→ `iconutil -c icns`，不提交二进制图；
-- 版本号单一来源：`scripts/version.sh`（HEAD 命中 git tag vX.Y.Z → VERSION 取 tag，否则回退 1.13.0；BUILD 取 CI 运行号，本地回退 69）；`platforms/macos/build-app.sh` 运行期读取，**勿在脚本硬编码版本**；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`platforms/macos/make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；
+- 版本号单一来源：`scripts/version.sh`（HEAD 命中 git tag vX.Y.Z → VERSION 取 tag，否则回退 1.15.0；BUILD 取 CI 运行号，本地回退 71）；`platforms/macos/build-app.sh` 运行期读取，**勿在脚本硬编码版本**；产物命名 `oh-my-dsh-<version>-<arch>.{pkg,dmg}`（`platforms/macos/make-pkg.sh` 从 Info.plist 读取版本，避免两处失配）；
 - **fallback 推进规则**（`docs/productization.md`）：每次发布打 tag 后立即把 `FALLBACK_VERSION` 推进到**下一个 minor**（发布 v1.9.0 → fallback 1.10.0），开发期构建永远显示「下一个未发布版本」；CI 打 tag 的 job 用 tag 版本（HEAD 命中时优先）；
 - `git status` 应只出现源码/文档变更：`.build/` `.cache/` `dist/` `pic/` `.DS_Store` 均在 `.gitignore`；`.dsh/tasks/local.json`（本机会话覆盖）也忽略——**`index.json` 随仓库提交**（任务关联共享，见 [data-model](data-model.md)）；channel 消息/会话已**全局化**到 `~/.dsh/channels/`（仓库之外，天然不入 git，含用户聊天内容），**「项目开关」关联也存全局** `~/.dsh/channels/<channelId>.workspaces.json`（PR #30，project=workspace，见 docs/channel-project-switch.md）；项目内仅剩引用配置 `.dsh/channels.json`（已不作为启用来源，仅 ChannelPanel 一次性迁移），按 docs/channel-storage.md 应随仓库提交（当前旧路径文件仍未跟踪，迁移到 `.dsh/channels/channels.json` 并提交是待办）。
 
@@ -40,7 +40,7 @@ manual: false
 
 ## 面板 UI 约定
 
-- 右栏五个面板共享 `PreviewPanel.swift` 的 UI 基件（`HoverButton`/`DynamicFillView`/`CustomIconButton`/`HeaderLabel` 等），视觉与交互保持一致：40pt 头部 + 内容区、统一背景条、图标深浅色均可见；浏览器面板在其上扩展 `CustomIconButton`（`size`/`showsBackground`/`hoverColor`，见 [preview-panel](modules/preview-panel.md)）做 Chrome 式页签与关闭按钮；
+- 右栏七个面板共享 `PreviewPanel.swift` 的 UI 基件（`HoverButton`/`DynamicFillView`/`CustomIconButton`/`HeaderLabel` 等），视觉与交互保持一致：40pt 头部 + 内容区、统一背景条、图标深浅色均可见；浏览器面板在其上扩展 `CustomIconButton`（`size`/`showsBackground`/`hoverColor`，见 [preview-panel](modules/preview-panel.md)）做 Chrome 式页签与关闭按钮；
 - **layer-backed 窗口合成陷阱**（`docs/terminal-header-fix.md`，wiki 面板同源，见 `docs/repo-wiki-design.md` §14 修复 12）：`isOpaque = true` 且无独立 layer 的视图，绘制会溢出到父 layer 覆盖同级视图；隔离绘制用**父容器的** `wantsLayer = true` + `masksToBounds = true`（不是子视图的 wantsLayer）；根视图用 `isOpaque = false` 的自绘背景视图（`TerminalRootView`/`WikiRootView` 模式）；**经验推广**：任何「平时隐藏、生成/状态变化时才显示」的 opaque 无 layer 视图（如 wiki 面板底部状态条）都可能触发同类合成溢出——显示前先给视图自身 `wantsLayer = true` + `masksToBounds = true`；
 - markdown 预览：预览面板把 markdown 当**纯文本**显示（软换行保真是有意取舍）；wiki 面板则需真正渲染（`WikiMarkdownRenderer`，同样保留软换行）。
 
@@ -53,21 +53,21 @@ manual: false
 ## QA 钩子与环境变量（调试约定）
 
 - `DSH_PREVIEW_TEST_PATH=<path>`：启动即用指定路径打开预览面板；
-- `DSH_TERMINAL_TEST=1`：启动即开终端面板；`DSH_WIKI_TEST=1`（可加 `DSH_WIKI_TEST_PATH=<dir>` 指定 fixture wiki 根）；`DSH_BROWSER_TEST=1`：启动即开浏览器面板；
+- `DSH_TERMINAL_TEST=1`：启动即开终端面板；`DSH_WIKI_TEST=1`（可加 `DSH_WIKI_TEST_PATH=<dir>` 指定 fixture wiki 根）；`DSH_BROWSER_TEST=1`：启动即开浏览器面板；`DSH_REVIEW_TEST=1`：启动即开审查面板（**故意最后判断**，`DSH_UI_DEBUG=1` 下也生效），`DSH_REVIEW_TEST_PATH=<dir>` 固定审计的工作区；
 - `DSH_UI_DEBUG=1` 或 `--ui-debug`（统一 `uiDebug` 开关，`open --args` 场景可用）：打开浏览器面板 + 面板视图层级 dump + 截图（写 `~/Library/Logs/oh-my-dsh/panel-*-debug.png`）；浏览器面板另经 `POST /api/browser/debug`、`/api/browser/hierarchy` 拉 QA 诊断（层级/命中测试/截图，见 [browser-panel](modules/browser-panel.md)）；
 - 浏览器渲染模式：`defaults write com.ohmydsh.app browserRenderMode -string windowed` 切 CEF 窗口化（Chromium 原生绘制），默认 OSR 离屏（帧回调自绘）；
 - `DSH_PREVIEW_DEBUG=1`：预览拦截器探针（`__dshPreviewInstalled`/hit、伪造 `host.openPath` 请求验证）；`DSH_TERMINAL_DEBUG=1`：终端 I/O 字节级日志；
 - `DSH_SESSION_DEBUG=1`：会话跟踪器诊断——日志 dump `window.__dshSessionSeen`（观察到的 session.*/subagent.list 请求序列）与跟踪器状态（`__dshSessionTracked`/`__dshLastTrackedSession`）；
 - `DSH_NATIVE_FORCE_SPAWN=1`：跳过复用检查强制自拉起（测试/专用实例）；
-- 其他运行期变量（`DSH_CLI`/`DSH_NODE`/`DSH_HOME`/`DSH_NATIVE_PORT`/`DSH_REGISTRY`/`DSH_AUTO_UPGRADE=0`/`DSH_LANG`/`DSH_BROWSER_PORT`（浏览器 REST API 端口，默认 3081））见 README「环境变量」表。
+- 其他运行期变量（`DSH_CLI`/`DSH_NODE`/`DSH_HOME`/`DSH_NATIVE_PORT`/`DSH_REGISTRY`/`DSH_AUTO_UPGRADE=0`/`DSH_AUTO_UPGRADE_NOW=1`（测试钩子：忽略 24h 节流，每次启动都跑自动升级流程）/`DSH_LANG`/`DSH_BROWSER_PORT`（浏览器 REST API 端口，默认 3081）/`DSH_CDP_PORT`（默认 9333））见 README「环境变量」表。
 
 ## 测试约定
 
-- 共享核心单测走 Node：`node --test core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道 / dsh-rpc / workspace-store，216 用例，2026-09-11 实测全绿）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
-- CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + `tests/browser-panel/run.sh` + `tests/skills/run.sh`（内置 skill 安装器）+ `tests/channel-panel/run.sh`（通道项目视图数据模型）+ 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh` 单一来源，先 `mkdir -p .build/module-cache`）；编译检查清单含 `IssueRunnerPanel.swift`（f4ed4ff 起——曾漏文件导致 main.swift 引用编译失败，CI 失败根因）与 `BrowserPanel.swift`/`BrowserAPI.swift`；构建矩阵为 arm64（x86_64 交叉编译由 release.yml 打 tag 时构建，产品不再出 universal），**不再使用退役中的 macos-13/x86_64 runner**；
+- 共享核心单测走 Node：`node --test --test-timeout=60000 core/tests/*.test.js`（ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks / channel 通道 / dsh-rpc / settings / workspace-store / review-log，**233 用例，2026-09-12 本机实测 230 通过 / 3 跳过**——Node 20 无 zstd 时 review-log 的 zstd 用例自动 skip）；**必须带 `--test-timeout`**：`node --test` 无默认超时，泄漏 runner/定时器的用例会把整套挂死（ebac11a 修复，ci.yml / nightly.yml / local-ci.sh / `core/package.json` 四处同参数）；**glob 不带引号**——由 bash 展开成文件列表，兼容 Node 20（引号 glob 需 Node 21+，CI 踩过此坑，见 `c2d626b`）；
+- CI（push/PR，`ci.yml`）：core 单测走 ubuntu；壳层在 macos-14 跑模拟器单测（`core/tests/ansi.test.js`）+ `tests/wiki-panel/run.sh` + `tests/browser-panel/run.sh` + `tests/skills/run.sh`（内置 skill 安装器）+ `tests/channel-panel/run.sh`（通道项目视图数据模型）+ `tests/review-panel/run.sh`（审查面板展示模型，64 项）+ 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh` 单一来源，先 `mkdir -p .build/module-cache`）；编译检查清单含 `IssueRunnerPanel.swift`（f4ed4ff 起——曾漏文件导致 main.swift 引用编译失败，CI 失败根因）与 `BrowserPanel.swift`/`BrowserAPI.swift`；构建矩阵为 arm64（x86_64 交叉编译由 release.yml 打 tag 时构建，产品不再出 universal），**不再使用退役中的 macos-13/x86_64 runner**；
 - 面板/壳层 Swift 无头单测模式（`tests/*/run.sh`）：`stubs.swift` + 把被测源码复制进临时目录 + 测试文件改名 `main.swift`（顶层代码需要）→ `swiftc` 编译运行，无窗口/无 PTY 依赖；
 - 终端模拟器测试不触 PTY（沙箱可能禁 `/dev/ptmx`），已迁 `core/tests/ansi.test.js`（42 项），`tests/terminal-emulator/run.sh` 为薄封装；
-- 新增面板需配套模型层单测（如 `tests/wiki-panel/`）。
+- 新增面板需配套模型层单测（如 `tests/wiki-panel/`、`tests/review-panel/`）；平台无关逻辑放 `core/tests/*.test.js`（如审计折叠 `core/lib/review-log.js` → `core/tests/review-log.test.js`）。
 
 ## 内置 Skill 与启动约束（v1.13.0）
 
@@ -75,7 +75,7 @@ manual: false
 - **skill frontmatter 用合法键**：省略弃用的驼峰键（`modelInvocable`/`userInvocable` 会导致 dsh 忽略该 skill），用 kebab 键 `user-invocable: false` 表「仅 model 可调用」；
 - **skill 命名**：统一「领域词-能力词」双段 kebab（如 `web-dev-tools`/`repo-knowledge`/`issue-resolve`），符合 dsh 命名约束；
 - **单实例约束**：App 启动按 bundle id 检测已有实例，有则聚焦并退出——两个副本共用 CEF profile（`~/.dsh/browser`）会互相异常终止（「Chromium didn't shut down correctly.」）；
-- **开发版构建**：`DSH_DEV_BUILD=1`（或 `scripts/local-ci.sh dev`）打包 Info.plist 写 `DSHDevBuild=1`——运行时 `isDevBuild` 用独立 CEF profile（`~/.dsh/browser-dev`）并跳过单实例退出，可与已安装正式版并存测试；未来隔离端口/channel 等资源也在 `main.swift` 的 `isDevBuild` 覆盖处快速追加。
+- **开发版构建（`main.swift` 的 `applyDevIsolation`，`isDevBuild` 为唯一入口）**：`DSH_DEV_BUILD=1`（或 `scripts/local-ci.sh dev`）打包 Info.plist 写 `DSHDevBuild=1` + 独立 bundle id `com.ohmydsh.app.dev`（独立 UserDefaults 域）——运行时① 独立 **dsh 实例**（强制 `DSH_NATIVE_FORCE_SPAWN=1` 不复用 3080，被占自动取空闲端口）；② 独立 `DSH_HOME` 默认 `~/.dsh-dev`（会话/配置/skills/channel 与正式 `~/.dsh` 完全隔离；用户显式 `DSH_HOME` 尊重覆盖）；③ 端口错开（CEF CDP 9333→9433、Browser API 3081→4081，尊重显式覆盖）；④ CEF profile `~/.dsh-dev/browser-dev`（旧 `~/.dsh/browser-dev` 幂等迁移过来）；⑤ 跳过单实例退出。可与已安装正式版并存测试；新增隔离资源在该方法内快速追加。
 
 ## 日志约定
 

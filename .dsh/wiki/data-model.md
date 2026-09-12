@@ -1,16 +1,20 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-09-10T23:50:00Z
-sources: [platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md]
+updated: 2026-09-12T06:40:00Z
+sources: [core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md]
 manual: false
 ---
 
 # 数据模型
 
-本仓库无数据库：状态以 **UserDefaults** 持久化，进程间/代理间通信走 **HTTP RPC 信封**，磁盘上的"数据文件"是 wiki markdown 页（含 frontmatter）、任务关联索引（`.dsh/tasks/`）与日志。
+本仓库无数据库：壳层设置以 **`$DSH_HOME/shell/config.json`**（JSON，`ShellConfig` / `core/lib/settings.js`）持久化（少量系统级项仍在 **UserDefaults**），进程间/代理间通信走 **HTTP RPC 信封**，磁盘上的"数据文件"是 wiki markdown 页（含 frontmatter）、任务关联索引（`.dsh/tasks/`）与日志。
 
-## UserDefaults 键（壳层持久化状态）
+## 壳层设置键（`$DSH_HOME/shell/config.json`，`ShellConfig`）
+
+语言无关的 JSON 键值（可由外部工具/代理直接读写：写入经 core CLI `ohmy-core settings set|unset|list` 合并 + 原子落盘，壳层侧 0.3s 防抖异步、退出前 `flushNow()`；读取直读 JSON）；开发版用 `~/.dsh-dev/shell/config.json`（独立 `DSH_HOME`）。
+
+| 键 | 含义 | 出处 |
 
 | 键 | 含义 | 出处 |
 |---|---|---|
@@ -20,7 +24,7 @@ manual: false
 | `AppleLanguages` | 覆写 WebView 的 `navigator.language`（"zh-CN"/"en-US"） | AppDelegate |
 | `dshRegistry` | 运行期 npm registry（删除 = 默认国内源） | `RegistryConfig` |
 | `autoUpgradeDsh` | 自动升级开关（默认开） | AppDelegate |
-| `lastAutoUpgradeCheck` | 自动升级 24h 节流时间戳 | `runAutoUpgradeIfNeeded` |
+| `nextAutoUpgradeCheck` | 下次允许自动升级的时间戳（24h 节流；`DSH_AUTO_UPGRADE_NOW=1` 忽略节流，测试钩子） | `runAutoUpgradeIfNeeded` |
 | `previewPanelState` | 右栏可见性（true = 打开） | `setRightPanel` |
 | `rightPanelKind` | 右栏当前面板（"preview"/"terminal"/"wiki"/"tasks"/"browser"/"channel"） | `setRightPanel` |
 | `previewPanelWidth` | 用户拖拽的面板宽度 | `splitViewDidResizeSubviews` |
@@ -32,9 +36,11 @@ manual: false
 
 > 凭据不走 UserDefaults：GitHub token 按仓库作用域存储，**读取优先文件**（免 Keychain 每次弹密码）、Keychain 兜底——解析顺序为 文件专属 `~/.dsh/tokens/<owner>-<repo>` → 文件通用 `~/.dsh/gh-token` → Keychain 专属（`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）→ Keychain 通用（`oh-my-dsh.issuerunner.github-token`）；面板保存时 Keychain 与文件**双写**（Keychain 条目设 `kSecAttrAccessibleAfterFirstUnlock`，文件 chmod 600，App 与外部工具/代理共用），见 [issue-runner-panel](modules/issue-runner-panel.md)。
 
+> 上表中仅 `AppleLanguages`（WebView 语言覆写，`UserDefaults.standard` 写入以影响系统组件）等系统级项仍走原生 UserDefaults；其余键均由 `ShellConfig` 落到 `$DSH_HOME/shell/config.json`（开发版 `~/.dsh-dev/shell/config.json`），对外与 UserDefaults 同形（`object/string/bool/double/data(forKey:)`、`set`、`removeObject`），便于跨语言工具读写。
+
 ## 领域模型（代码内）
 
-- **`RightPanel` 枚举**（main.swift）：`none / preview / terminal / wiki / tasks / browser / channel`——右栏插槽互斥状态；
+- **`RightPanel` 枚举**（main.swift）：`none / preview / terminal / wiki / tasks / browser / channel / review`——右栏插槽互斥状态（`rightPanelKind` 持久化，含 `"review"`）；
 - **`ProjectDirectory`**（main.swift）：壳层共享的"活动项目目录"（`static var current`），跟随 dsh web 当前会话（见 `sessionTrackerScript` 数据流），`resolveProjectDirectory` 优先返回它；
 - **`L10n.table`**：`[String: (zh: String, en: String)]` 文案表，`L10n.tr(key)` 按 `lang` 取文案并填充 `%@/%d`；
 - **`WikiPage`**（WikiPanel.swift）：`path / title / tags / updated / sources / manual`，由 frontmatter 解析而来；
@@ -48,6 +54,13 @@ manual: false
 - **`JobQueue`**（core/lib/jobqueue.js）：串行任务队列状态机 `createQueue()`——任务含 `source`（"remote" = 通道远程驱动，issue-runner 为另一来源）/`state`（pending/running/done/failed/cancelled）等字段，`enqueue`/`peek`/`markRunning`/`complete`/`fail`/`cancel`/`retry`/`snapshot`/`removeFinished` 操作（IssueRunner 面板用它串行执行「切分支→会话→推送→PR」流水线，见 [issue-runner-panel](modules/issue-runner-panel.md)）；
 - **`TaskIndex`**（IssueRunnerPanel.swift，与 core/lib/tasks.js 结构一致）：`.dsh/tasks/` 关联索引读写——`loadIndex`/`mergeTask`/`findTask`/`rememberSession`/`sessionForIssue`；index.json 写 `{"version": 1, "tasks": [...]}`（任务条目可含 `title`，startTask 起写入），local.json 写 `{"sessions": {issue: {sessionId, updatedAt}}}`；
 - **任务状态机（IssueRunnerTask.State）**：`pending / running / done / failed / cancelled`，与 JobQueue 的 state 字段一致；`IssueRunnerTask` 另含 `body`（issue 正文 markdown，cb13c97 起由 `parseIssues`/`fetchIssues` 取）；交互为**行内展开详情**（`expandedIssue` 手风琴，c852894 起替代 NSAlert 弹窗）——展开行 168pt 高、详情区可滚动（4576dd2），单元格按钮按状态给动作（pending→Process、running→Cancel Task、done→Open PR、failed/cancelled→Retry，均带 Close；done 且有 PR 额外「评论并关闭 Issue」）；工作区切换到**不同仓库**（owner/repo 变化）时 `applyRepo` 先清空任务列表——issue 号按仓库归属。
+
+## dsh 会话日志（审查面板数据源，只读）
+
+- **位置**：`$DSH_HOME/sessions/<workspace-slug>/<session-id>/session.jsonl`（压缩时 `.jsonl.zstd`），一行一事件；
+- **格式要点**：dsh 的 Zstandard 后端把日志写成**多个独立可解压帧的拼接**（每批落盘一帧），一次性解压只拿得到**第一帧**（实测真实日志仅返回 214 字节的会话头）；`core/lib/review-log.js` 的 `scanZstdFrames()` 只走帧头/块头逐帧解码。Apple 的 Compression 框架在这套 SDK 上**没有 zstd 算法**，Swift 侧无法自行解码——这是审计逻辑放在 core、且必须用**内置** Node（v24，含 `zlib.zstdDecompressSync`）的原因（`CoreBridge.run(…, preferBundledNode: true)`）；
+- **审计读取的三类记录**：① `tool/result` → `data.meta.diffs`（已应用 hunk，**仅顶层** `write`/`edit`）；② 顶层 `tool/call` / 嵌套 `tool/code-dispatch-start` → `arguments`（参数还原，覆盖 `run_code` 嵌套调用与新建文件全文）；③ `tool/call name=bash` → 命令文本（无前后内容）。turn 归属来自 `turn/start` + `tool/call.turn`（嵌套派发**继承父调用**的 turn）；
+- **输出契约**（`node core/bin/ohmy-core.js review sessions|audit|audit-file`）与每条 entry 的字段（`surface/status/category/path/hunks/added/removed/command/suspicion/note`）见 [review-panel](modules/review-panel.md) 与 docs/review-panel-design.md §5；读取失败（帧解压失败 / 尾部未完成帧 / 无法解析的 JSONL 行）一律进 `diagnostics` 显式报出，不静默丢数据。
 
 ## RPC 信封（与 dsh web 通信）
 

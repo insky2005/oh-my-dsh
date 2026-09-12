@@ -1,8 +1,8 @@
 ---
 title: 模块：构建与打包脚本
 tags: [module, build, packaging, icon, release, ci]
-updated: 2026-08-22T15:04:38Z
-sources: [platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, platforms/macos/src/MakeIcon.swift, platforms/macos/build-cef.sh, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, Jenkinsfile, .github/workflows/release.yml, .github/workflows/ci.yml, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/vendor/Highlightr/]
+updated: 2026-09-12T06:40:00Z
+sources: [tests/review-panel/, core/lib/review-log.js, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, platforms/macos/src/MakeIcon.swift, platforms/macos/build-cef.sh, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, Jenkinsfile, .github/workflows/release.yml, .github/workflows/ci.yml, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/vendor/Highlightr/]
 manual: false
 ---
 
@@ -10,7 +10,7 @@ manual: false
 
 ## platforms/macos/swift-sources.sh（编译清单单一事实来源）
 
-定义 `swift_sources <src_dir>`（打印每个源文件一行）：glob 收录 `src/*.swift` + `vendor/Highlightr/*.swift`，**排除独立工具 `MakeIcon.swift`**（顶层代码、非 app target）。被 `build-app.sh` / `scripts/local-ci.sh` / `.github/workflows/ci.yml` 三方共用——新增 app Swift 文件**自动收录、无需登记**，三处清单永不漂移（根治「新增文件遗漏 local-ci」）。`scripts/local-ci.sh` 另有 `dev` 模式（`DSH_DEV_BUILD=1` 打开发版）与 `tests/skills/run.sh` 步骤。
+定义 `swift_sources <src_dir>`（打印每个源文件一行）：glob 收录 `src/*.swift` + `vendor/Highlightr/*.swift`，**排除独立工具 `MakeIcon.swift`**（顶层代码、非 app target）。被 `build-app.sh` / `scripts/local-ci.sh` / `.github/workflows/ci.yml` 三方共用——新增 app Swift 文件**自动收录、无需登记**，三处清单永不漂移（根治「新增文件遗漏 local-ci」）。`scripts/local-ci.sh` 另有 `dev` 模式（`DSH_DEV_BUILD=1` 打开发版），swift 阶段依次跑 `tests/terminal-emulator`→`wiki-panel`→`browser-panel`→`skills`→`channel-panel`→`review-panel`→`dsh-rpc` 各 `run.sh`，再做全源码 `swiftc` 编译检查。
 
 ## platforms/macos/build-app.sh（一键构建，约 350 行）
 
@@ -18,7 +18,7 @@ manual: false
 
 - `resolve_node_version`：`DSH_NODE_VERSION` 未设时查镜像 `index.json` 用 python3 选最新 LTS；网络不可用则从 `.cache/node` 缓存 tarball 推导；
 - `download_node`：下载 darwin-arm64 tarball（镜像失败换官方），用 `SHASUMS256.txt` + `shasum -a 256 -c` 校验；
-- `install_dsh` / `build_runtime`：用下载的 Node 自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.1.1-rc.2`（默认 `DSH_PACKAGE_SPEC`），主 registry 失败自动重试官方源；`(Node版本|spec|arch)` 写入 `.runtime-info`，相同组合直接复用 `.cache/runtime/<arch>`；
+- `install_dsh` / `build_runtime`：用下载的 Node 自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.1.2-rc.1`（默认 `DSH_PACKAGE_SPEC`；壳层与该版本同步适配），主 registry 失败自动重试官方源；`(Node版本|spec|arch)` 写入 `.runtime-info`，相同组合直接复用 `.cache/runtime/<arch>`；
 - **`--prefetch`**：只建 runtime 到 `.cache/runtime`，不产出 App（供离线全量构建）；
 - **6 步构建**：① 准备目录（`rm -rf .build dist/oh-my-dsh.app`）② `MakeIcon.swift` 编译渲染 iconset → `iconutil -c icns` → 拷入 Resources ③ `swiftc -O -swift-version 5 -framework AppKit/WebKit/PDFKit` 编译源清单经 `swift_sources`（`platforms/macos/swift-sources.sh` **单一事实来源**：glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，排除独立工具 `MakeIcon.swift`），`build-app.sh` / `scripts/local-ci.sh` / `ci.yml` 三方共用、**新增文件无需登记**（根治此前 `feature/channel` 追加 `ChannelPanel.swift` 后曾漏登 local-ci 导致编译检查失败、3e69783 修复的问题）④ `build_runtime` + `ditto` 嵌入 `Contents/Resources/runtime/` ④.5 **Highlightr 资源嵌入**：`cp` 4 个 highlight.js 资源文件（`highlight.min.js`/`pojoaque.min.css`/`xcode.min.css`/`atom-one-dark.min.css`）到 `$APP/Contents/Resources/` **根**（Highlightr 用 `Bundle.main` 无子目录加载，见 [file-panel](file-panel.md)；缺失给 WARNING 不影响构建）⑤ 写 `Info.plist`（`LSMinimumSystemVersion` 13.0、`CFBundleLocalizations` zh/en、ATS 允许 127.0.0.1/localhost 明文、`NSHighResolutionCapable`）⑥ `codesign --force --deep --sign -`（ad-hoc）。
 
@@ -39,10 +39,10 @@ manual: false
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `DSH_NODE_VERSION` | 自动检测最新 LTS | 指定 Node 版本（如 v22.23.2） |
-| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.1-rc.2` | npm install 的包说明 |
+| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.2-rc.1` | npm install 的包说明（内置 dsh 版本，可覆盖为 `@latest` 等） |
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh） |
-| `DSH_DEV_BUILD` | `0` | =1 打开发版：Info.plist 写 `DSHDevBuild=1`（运行时 `isDevBuild`：独立 CEF profile `~/.dsh/browser-dev` + 跳过单实例退出） |
+| `DSH_DEV_BUILD` | `0` | =1 打开发版：Info.plist 写 `DSHDevBuild=1` + 独立 bundle id `com.ohmydsh.app.dev`（独立 UserDefaults 域）；运行时 `isDevBuild`（`applyDevIsolation`）：强制自拉起独立 dsh 实例、独立 `DSH_HOME` 默认 `~/.dsh-dev`、CEF profile `~/.dsh-dev/browser-dev`（旧 `~/.dsh/browser-dev` 幂等迁移）、CDP 9333→9433 / Browser API 3081→4081 错开、跳过单实例退出 |
 
 缓存位置：`.cache/`（node tarball、npm-cache、已构建 runtime），持久且不随 `.build/` 清除；**runtime 缓存按架构分目录（`.cache/runtime/<arch>`）**——双架构 release 的 arm64/x86_64 各自 node+dsh 树互不覆盖、缓存跨轮生效；构建中间产物在 `.build/`（含 `module-cache`，swiftc 沙箱规避用）。
 
@@ -54,7 +54,7 @@ manual: false
 
 ## scripts/version.sh（版本单一来源）
 
-- 输出两行 `VERSION`/`BUILD`：VERSION 仅当 HEAD 恰在 `vX.Y.Z` tag 上取该 tag，否则回退 `FALLBACK_VERSION`（当前 1.13.0）；BUILD 取 CI 运行号（`GITHUB_RUN_NUMBER`/`CI_PIPELINE_IID`/`BUILD_NUMBER`），否则回退 69；
+- 输出两行 `VERSION`/`BUILD`：VERSION 仅当 HEAD 恰在 `vX.Y.Z` tag 上取该 tag，否则回退 `FALLBACK_VERSION`（当前 **1.15.0**，即 v1.14.0 发布后推进的开发线）；BUILD 取 CI 运行号（`GITHUB_RUN_NUMBER`/`CI_PIPELINE_IID`/`BUILD_NUMBER`），否则回退 **71**；
 - `build-app.sh`/`local-release.sh`/`github-publish.sh`/`release-checksums.sh` 统一读它，**版本不再由调用方传参**。
 
 ## scripts/local-release.sh（本机 Release，与 release.yml 对齐）
@@ -68,6 +68,12 @@ manual: false
 
 - `release-checksums.sh [version]`：对 `dist/oh-my-dsh-<version>-<arch>.{pkg,dmg}`（arm64/x86_64，不再出 universal）写 `dist/SHA-256SUMS` 并打印 release notes（安装引导）；版本可不传（自动读 version.sh）；
 - `github-publish.sh [version]`：创建/更新 GitHub Release 并上传产物；**发布统一走 curl API 路径**（暂不使用 gh CLI，gh 分支保留为自动检测兜底）；发布前校验 HEAD 恰在 vVERSION tag 上；**幂等化**（v1.12.0 起）：release 已存在（上次中断残留）则复用只 PATCH title/notes + **只补传缺失资产**（已上传的按名字跳过）+ 逐资产进度输出（`du -sh`），中断可安全重跑无需手动删半成品 release。
+
+## CI 与测试参数（ci.yml / nightly.yml / local-ci.sh）
+
+- **core 单测统一带超时**：`node --test --test-timeout=60000 core/tests/*.test.js`（ebac11a，2026-09-12）——`node --test` 无默认用例超时，某用例泄漏 runner/定时器会把整套**挂死**；四处同参数：`.github/workflows/ci.yml`、`.github/workflows/nightly.yml`、`scripts/local-ci.sh`、`core/package.json` 的 `test` 脚本；glob **不带引号**（bash 展开，兼容 Node 20）；
+- `ci.yml` 的 swift job 依次跑终端模拟器 / wiki-panel / browser-panel / skills / channel-panel / **review-panel** / **dsh-rpc** 单测 + 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh`），再构建 arm64 CEF 产物与 App；
+- 平台无关逻辑的单测放 core（如审计折叠 `core/lib/review-log.js` → `core/tests/review-log.test.js`，17 用例，无 zstd 的 Node 上 3 项自动 skip），面板展示模型放 `tests/<panel>/run.sh`。
 
 ## Jenkinsfile（Jenkins 打包 + 发布）
 
