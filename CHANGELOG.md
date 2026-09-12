@@ -7,6 +7,10 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **文件面板（Files）页签按工作区记忆与恢复**：切换工作区（在 dsh web 切到另一工作区的会话）时，先把原工作区的已打开页签（顺序 + 当前选中项）记入内存并**关闭全部页签**——释放编辑器 / 语法高亮 / 预览内容，不再把旧工作区的文件挂在新工作区上；切回原工作区时按原顺序重开并还原选中项，磁盘上已消失的文件自动跳过。**未保存修改先询问**：保存并切换（任一文件保存失败即中止切换、保留缓冲）/ 不保存 / 取消（面板留在原工作区）。点面板右上角「关闭」按钮 = 关闭全部页签**并清空全部工作区的记忆**（彻底回收）；切到其它面板不算关闭。记忆仅存在于本次进程，不落盘。新增 `platforms/macos/src/WorkspaceTabMemory.swift`（纯逻辑）与 `tests/file-panel/run.sh`（模型 28 例 + 真面板 27 例），已接入 `scripts/local-ci.sh` 与 CI swift job。
+
 ### Fixed
 
 - **修复正式版点 Wiki 面板「生成/更新知识库」无反应、起不出 dsh 会话（复用别人的 dsh web 导致原生 RPC 全 401）**：正式版（非开发版）启动时若 3080 上已经有一个 dsh web，会走「复用」分支——而该分支写死 `entryURL = http://127.0.0.1:3080`（**不带 `?token=`**），于是 `server.webToken == nil` → `DshWebRPC.token = nil` → 独立 ephemeral session 换不到 cookie → `session/create`、`session/prompt` 一律 401 → `WikiRPC.createSession` 返回 nil，而旧的失败路径「还没有在途生成」时什么都不做，表现就是点了没反应。三层根因叠加：① 3080 上是**壳层自己上次异常退出留下的孤儿**（实测 `lsof`：`stdout/stderr = ~/Library/Logs/oh-my-dsh/server.log` + `cwd = HOME`，正是 `ServerManager` 拉 dsh web 的写法；同机另有 5 个同类残留），而 `applicationWillTerminate` 只停「本次自拉的」服务、复用过的实例永远收不掉；② 就绪探针 `isDSHServing()` 用 `URLSession.shared`，它共享 app 持久 cookie 存储里一张**未过期**的 `dsh-auth-*`（authority `127.0.0.1:3080`，30 天），使裸 GET 返回 200 + 含 `__DSH_BOOT__` 的真页面，被误判成「老版本、无需鉴权、可以复用」（磁盘缓存同理可骗）；③ 该 3080 实例其实是 dsh 0.1.2，`/api` 只认 token。处置：
