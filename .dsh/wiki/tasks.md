@@ -45,7 +45,7 @@ DSH_DEV_BUILD=1 ./platforms/macos/build-app.sh     # Info.plist 写 DSHDevBuild=
 open "dist/oh-my-dsh.app"
 ```
 
-- 文件面板工作区页签记忆（`tests/file-panel/run.sh` 覆盖逻辑，界面手测）：A 工作区开若干文件 → dsh web 切到 B 工作区会话（页签栏清空、树根变 B）→ 切回 A（页签按原顺序重开且选中项还原）；A 中改文件不保存后切换 → 三选一提示（保存并切换 / 不保存 / 取消，取消后面板留在 A）；点 Files 面板右上角 ✕ → 页签清空，此后切走再切回**不**自动重开；`~/Library/Logs/oh-my-dsh/app.log` 有 `preview workspace switch` / `preview restore` 日志；
+- 文件面板工作区页签记忆（`tests/file-panel/run.sh` 覆盖逻辑，界面手测）：A 工作区开若干文件 → dsh web 切到 B 工作区会话（页签栏清空、树根变 B）→ 切回 A（页签按原顺序重开且选中项还原）；A 中改文件不保存后切换 → 三选一提示（保存并切换 / 不保存 / 取消；取消后面板留在 A，且**再次切回 B 应重新弹窗**——不得出现「面板没反应」）；点 Files 面板右上角 ✕ → 页签清空，此后切走再切回**不**自动重开；`~/Library/Logs/oh-my-dsh/app.log` 有 `preview workspace switch` / `preview restore` 日志；
 - 验证点：窗口标题 `oh-my-dsh (DeepSeek Harness)`；活动栏图标互斥切换（预览/终端/浏览器/知识库/任务/通道/审查）；⌥⌘P / ⌥⌘T / ⌥⌘B / ⌥⌘W / ⌥⌘J / ⌥⌘H / ⌥⌘R 快捷键；About 面板显示 dsh/Node 版本与 registry；文件面板编辑文本后 ⌘S 保存、页签标题出现 `*` 未保存标记（见 [file-panel](modules/file-panel.md)）。
 
 ## 跑单元测试

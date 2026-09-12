@@ -34,14 +34,14 @@ manual: false
 页签集合**跟随工作区**（= 面板的目录树根）：切换工作区时旧工作区的页签被关闭并记忆，切回时按原顺序重开。此前页签跨工作区常驻——旧工作区文件挂在新工作区上，且后台继续持有编辑器 / 高亮 / 预览内容。
 
 - **收口点 `setTreeRoot(_:thenOpen:)`**：面板唯一的换根入口（`setProjectDirectory` 工作区跟随 / 项目目录按钮 / 目录选择器）。根变为**不同目录**时转 `beginWorkspaceSwitch(from:to:thenOpen:)`；`treeRoot == nil` 的首次解析**不关任何页签**（点文件链接可能先于树根开出页签）。同路径重指不触碰页签；
-- **`beginWorkspaceSwitch`**：无 dirty 页签直接交接；有则 `NSAlert` 三选一——**保存并切换**（逐个 `CodeEditorView.writeBack()`，任一失败即 `preview.saveFailed` 并**中止切换**、保留缓冲）/ **不保存** / **取消**（面板留在原工作区；`declinedSwitchTarget` 记住该目标，同一目标不再重复询问）。无窗口（无头 QA）时中止而非静默丢数据；sheet 回调里校验「根未变 + 原 dirty 页签仍在」，避免提示期间关面板 / 手动保存造成错乱；
+- **`beginWorkspaceSwitch`**：无 dirty 页签直接交接；有则 `NSAlert` 三选一——**保存并切换**（逐个 `CodeEditorView.writeBack()`，任一失败即 `preview.saveFailed` 并**中止切换**、保留缓冲）/ **不保存** / **取消**（面板留在原工作区；**只延迟、不拉黑**——下一次请求照常询问；并发请求时**最新优先**，旧的 sheet 被 `supersedePendingSwitchPrompt` 结束）。无窗口（无头 QA）时中止而非静默丢数据；sheet 回调里校验「根未变 + 原 dirty 页签仍在」，避免提示期间关面板 / 手动保存造成错乱；
 - **`performWorkspaceSwitch`**：`tabMemory.remember(paths:selectedPath:for: 旧根)` → `closeEveryTab()`（释放内容区，**不清记忆**）→ `applyTreeRoot(新根)` → `restoreTabs(for: 新根)` → 最后才执行 `thenOpen`（调用方"顺带打开这个目录"的页签必须在交接**之后**开，否则会被记到旧工作区）；
 - **`restoreTabs`**：按记录顺序重开（文件夹页签同样重开），磁盘上已消失的路径跳过并记日志；记忆的选中项若仍在则恢复选中，否则停在最后打开的那个；
 - **记忆键**：目录树根路径经 `WorkspaceTabMemory.key(for:)`（`standardizingPath` + 去尾斜杠；不解析符号链接，与 `open(path:)` 的归一化一致）；
-- **关闭按钮 = 彻底回收**：`closeAllTabs()` = `closeEveryTab()` + `tabMemory.forgetAll()` + 清 `declinedSwitchTarget`；切到其它面板（活动栏）**不算**关闭，页签保留；
+- **关闭按钮 = 彻底回收**：`closeAllTabs()` = `supersedePendingSwitchPrompt()` + `closeEveryTab()` + `tabMemory.forgetAll()`；切到其它面板（活动栏）**不算**关闭，页签保留；
 - **不落盘**：记忆仅存在于进程内（`WorkspaceTabMemory` 为 struct，面板持有一个实例），**不**记录目录树展开状态与滚动位置（重开时按磁盘内容重新渲染）；
 - **与回滚基线分叉**：PreviewPanel.swift 仍是「只重设树根、不动页签」，本节行为仅存在于 FilePanel；
-- **测试**：`tests/file-panel/run.sh` —— `WorkspaceTabMemory` 模型 28 例 + 真实 `FilePanelController`（无窗口、无 dsh 服务）驱动 27 例（首次根不关页签 / 关旧开新 / 顺序与选中恢复 / 文件夹页签 / 文件消失跳过 / 同路径 no-op / 尾斜杠等价 / 关闭按钮清记忆），已接入 `scripts/local-ci.sh` 与 `ci.yml` swift job。
+- **测试**：`tests/file-panel/run.sh` —— `WorkspaceTabMemory` 模型 28 例 + 真实 `FilePanelController`（无窗口、无 dsh 服务）驱动 28 例（首次根不关页签 / 关旧开新 / 顺序与选中恢复 / 文件夹页签 / 文件消失跳过 / 同路径 no-op / 尾斜杠等价 / 关闭按钮清记忆），已接入 `scripts/local-ci.sh` 与 `ci.yml` swift job。
 
 ## CodeEditorView（代码编辑器视图）
 
