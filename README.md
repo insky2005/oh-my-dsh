@@ -2,7 +2,7 @@
 
 把 DeepSeek Harness 的 Web 界面（`dsh web`）封装成一个可以在 macOS 上**直接双击运行**的原生 App。
 **不改动任何 DeepSeek Harness 源码**——它只是一个壳：内置运行时自拉起/复用 `dsh web`，用原生 `WKWebView`
-呈现界面，并在窗口右侧提供六个原生面板（文件 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务 / 通道）。
+呈现界面，并在窗口右侧提供七个原生面板（文件 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务 / 通道 / 审计）。
 
 ## 特性一览
 
@@ -18,8 +18,8 @@
 
 ## 右栏面板
 
-窗口**最右侧是活动栏**（图标入口，六个面板互斥切换），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
-「视图」菜单提供六面板的显示/隐藏快捷键。
+窗口**最右侧是活动栏**（图标入口，七个面板互斥切换），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
+「视图」菜单提供七面板的显示/隐藏快捷键。
 
 ### 文件面板（`⌥⌘P` / 活动栏「文件」图标）
 
@@ -99,6 +99,25 @@
 - **全局存储**：会话映射与消息日志归档到全局 `~/.dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶）；「项目开关」关联存全局 `~/.dsh/channels/<channelId>.workspaces.json`（见 `docs/channel-storage.md`、`docs/channel-project-switch.md`）；
 - **当前限制**：飞书仅展示卡片（适配器待实现）；钉钉富特性（AI Card 流式 / 互动审批卡 / 图片 / DWS）留作后续增强，v1 以文本/Markdown 回复为主；
 - 设计与指令清单：`docs/channel-design.md`、`docs/channel-dingtalk-stream.md`、`docs/channel-commands.md`、`docs/channel-status.md`、`docs/channel-project-switch.md`。
+
+### 审查面板（`⌥⌘R` / 活动栏「审查」图标）
+
+**只读**回答「这个会话里代理到底改了哪些文件、改成什么」——直接读 dsh 自己落盘的会话日志（`$DSH_HOME/sessions/<workspace>/<session>/session.jsonl[.zstd]`），不写任何文件、不发任何请求、不改 dsh。
+
+**按 会话 → 对话（turn）→ 文件 → 变更内容 的树展示，每层可展开/收起**；对话用该轮的用户消息做摘要；
+会话在第一次展开时才真正审计（列表只读日志头，展开才解码全量日志并缓存）。
+
+- **每个文件的逐次改动**都标出该条记录**从哪来**：
+  - `已应用` —— 顶层 `write`/`edit` 工具结果里的 hunk（与 dsh web 的 diff 卡片同源）；
+  - `参数还原` —— 由调用参数还原（`run_code` 嵌套调用没有 hunk 元数据）；
+  - `全文写入` / `新建` —— 只记录了写入内容（新建文件没有「旧内容」可比）；
+  - `嵌套调用` 标记 —— 该改动来自 `run_code` 内部的工具调用；
+- **shell 命令单列**：`bash` 直改（`sed -i`、`>`、`rm`、`git checkout` …）没有结构化的前后内容记录，面板按「可能写文件」启发式标出，默认只显示可疑项（可关掉过滤看全部）；
+- **失败调用单列**：记录为「尝试但未生效」的改动不混进变更列表；
+- **跟随 dsh web**：在 dsh web 切换会话时，面板展开同一 sessionId（按 id 解析，跨工作区也能定位），并标为「当前会话」；工作区切换只重列会话、不清审计缓存；
+- **读取诊断**：Zstandard 尾部未完成帧、无法解析的行等一律显式列出（不静默丢数据）；
+- **只读边界**：日志里没有的东西不会显示——`bash` 直改、以及日志尚未落盘的部分，面板只标注「需人工核对」；
+- 设计与覆盖矩阵：`docs/review-panel-design.md`。
 
 ![channel](./docs/screenshots/channel.png)
 
@@ -223,9 +242,11 @@ open "dist/oh-my-dsh.app"
 | `DSH_BROWSER_PORT` | 浏览器面板 REST API 端口（默认 3081，占用自动递增；生效端口写 `~/.dsh/browser-api.port`） |
 | `DSH_CDP_PORT` | 浏览器面板 CDP 端口（默认 9333） |
 | `DSH_BROWSER_TEST=1` | 启动即打开浏览器面板（QA/调试钩子） |
+| `DSH_REVIEW_TEST=1` | 启动即打开审计面板（QA/调试钩子） |
+| `DSH_REVIEW_TEST_PATH` | 审计面板固定读取的工作区路径（QA/调试钩子，默认跟随当前工作区） |
 
 > 其他 QA/调试钩子（环境变量或 `--ui-debug`）：`DSH_UI_DEBUG=1` 统一开关（打开浏览器面板 + 面板层级 dump + 截图）、
-> `DSH_PREVIEW_TEST_PATH` / `DSH_TERMINAL_TEST` / `DSH_WIKI_TEST`（启动即开对应面板）、`DSH_PREVIEW_DEBUG`（fetch 拦截探针）、`DSH_SESSION_DEBUG`（会话跟踪 dump）。
+> `DSH_PREVIEW_TEST_PATH` / `DSH_TERMINAL_TEST` / `DSH_WIKI_TEST` / `DSH_REVIEW_TEST`（启动即开对应面板）、`DSH_PREVIEW_DEBUG`（fetch 拦截探针）、`DSH_SESSION_DEBUG`（会话跟踪 dump）。
 
 > **壳层设置存放位置**：语言 / 主题 / 面板宽度 / 浏览器 / 通道 / wiki 等**壳层自有设置**存为 UTF-8 JSON `$DSH_HOME/shell/config.json`
 > （开发版 `~/.dsh-dev/shell/config.json`），可由外部工具 / 代理直接读写（写入经 core CLI 合并 + 原子落盘，壳层侧 0.3s 防抖异步）；
@@ -262,13 +283,15 @@ platforms/macos/src/                  原生壳（Swift）
   WikiPanel.swift      Repo Wiki 知识库面板（生成/维护/浏览 + 自动 git 提交）
   IssueRunnerPanel.swift 任务面板（GitHub issues 串行流水线 + 关联索引 + 评论并关闭）
   ChannelPanel.swift     通道面板（微信/钉钉接入：引导卡片/扫码向导/项目视图 + 启动自动拉起 listener）
+  ReviewPanel.swift      审计面板（只读：会话日志变更/嵌套调用/shell 可疑命令）
+  ReviewLogModel.swift   审计面板数据模型（核心 JSON 解码 + 文件分组/diff 折叠，纯 Foundation 可无头测试）
   BrowserPanel.swift / BrowserAPI.swift / BrowserCDP.swift  浏览器面板（CEF 渲染 + REST API + CDP）
   MakeIcon.swift     App 图标生成器（渲染 → iconset → icns）
 platforms/macos/cef/                   CEFShim.h/.mm（ObjC++ 桥：OSR 渲染/输入转发/DevTools）+ helper
 platforms/macos/build-app.sh           一键构建脚本（编译、打包、镜像下载 Node、npm 装 dsh、预下载模式、签名）
 platforms/macos/build-cef.sh           CEF 构建脚本（版本 pin + sha1 校验 + 缓存 + shim/helper 编译）
 platforms/macos/make-pkg.sh            安装包脚本（pkgbuild 生成 .pkg + hdiutil 生成 .dmg）
-core/                共享核心（Node 模块：ANSI 模拟器 / 服务管理 / 升级 / 会话 RPC / issues / jobqueue / tasks 关联索引 / channel（统一抽象·路由·指令·会话关联·全局存储·微信 ClawBot 与钉钉 stream 适配器），跨平台复用）
+core/                共享核心（Node 模块：ANSI 模拟器 / 服务管理 / 升级 / 会话 RPC / issues / jobqueue / tasks 关联索引 / channel（统一抽象·路由·指令·会话关联·全局存储·微信 ClawBot 与钉钉 stream 适配器）/ review-log（会话日志变更审计，zstd 多帧解码），跨平台复用）
 platforms/           各平台壳（macos/ 现有壳，windows/ linux/ 规划中）
 scripts/             跨平台工具（version.sh 版本单一来源 / changelog.sh / release-checksums.sh / github-publish.sh / local-release.sh / git-remote.sh）
 .github/             CI 工作流（core 单测、壳层单测/编译检查 + arm64 构建；release.yml 打 tag 时构建 x86_64 + 发布）
@@ -284,8 +307,8 @@ docs/                设计/排查文档（productization.md、dsh-version-impac
 与 [SECURITY.md](SECURITY.md)（安全报告渠道）。
 
 - **Bug / 功能请求**：使用仓库的 Issue 模板（bug / feature）提交；
-- **本地测试**：`node --test core/tests/`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层）、
-  `tests/wiki-panel/run.sh`（Wiki 面板单测）、`tests/terminal-emulator/run.sh`（模拟器测试）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）；
+- **本地测试**：`node --test --test-timeout=60000 core/tests/*.test.js`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层 / review-log 变更审计；`--test-timeout` 保证任何泄漏定时器的用例快速失败而不是挂死）、
+  `tests/wiki-panel/run.sh`（Wiki 面板单测）、`tests/terminal-emulator/run.sh`（模拟器测试）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠）；
 - **CI**：push/PR 自动跑 core 单测 + 壳层编译检查 + macOS arm64 构建（`.github/workflows/ci.yml`）；发布由 release 流程构建双架构。
 
 本项目遵循 [MIT License](LICENSE)，代码只封装、绝不修改 DeepSeek Harness 上游源码。

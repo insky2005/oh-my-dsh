@@ -83,6 +83,8 @@ jobs:
         run: tests/channel-panel/run.sh
       - name: Native dsh RPC helper tests (both API generations)
         run: tests/dsh-rpc/run.sh
+      - name: Review (change audit) panel tests
+        run: tests/review-panel/run.sh
       - name: Build CEF integration artifacts (arm64)
         run: |
           mkdir -p .build/module-cache

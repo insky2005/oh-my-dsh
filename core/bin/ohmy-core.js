@@ -29,6 +29,10 @@
  *   node core/bin/ohmy-core.js settings unset <key>
  *   node core/bin/ohmy-core.js settings list
  *   node core/bin/ohmy-core.js channel run <channelId> <port> <refsJson> [--dsh-home <dir>] [--dsh-token <token>]
+ *   node core/bin/ohmy-core.js review sessions [--workspace <dir>] [--limit <n>] [--dsh-home <dir>]
+ *   node core/bin/ohmy-core.js review audit <sessionId> [--workspace <dir>] [--dsh-home <dir>] [--max-entries <n>]
+ *   node core/bin/ohmy-core.js review audit-file <path.jsonl[.zstd]> [--workspace <dir>] [--max-entries <n>]
+ *       -- READ-ONLY session-log change audit (Review panel; see docs/review-panel-design.md)
  */
 
 const core = require('../index');
@@ -243,7 +247,38 @@ function println(s) {
         fail('usage: channel route <refsJson> <conversationId> <text> | normalize <eventJson> | state <current> <next> | login [--save <file>] | login-dingtalk [--save <file>] | listen <token> [--once] | reply <token> <to> <text> | run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>] [--dsh-token <token>]');
       }
       break;
+    case 'review':
+      {
+        const flag = (name) => {
+          const i = rest.indexOf('--' + name);
+          return i >= 0 ? rest[i + 1] : undefined;
+        };
+        const dshHome = flag('dsh-home');
+        const workspace = flag('workspace');
+        const limitRaw = flag('limit');
+        const entriesRaw = flag('max-entries');
+        const maxEntries = entriesRaw === undefined ? 0 : parseInt(entriesRaw, 10) || 0;
+        if (sub === 'sessions') {
+          const limit = limitRaw === undefined ? 40 : parseInt(limitRaw, 10);
+          printJson(core.listSessionLogs({ dshHome, workspace, limit: Number.isInteger(limit) ? limit : 40 }));
+        } else if (sub === 'audit') {
+          const sessionId = rest[0];
+          if (!sessionId) fail('usage: review audit <sessionId> [--workspace <dir>] [--dsh-home <dir>] [--max-entries <n>]');
+          const audit = core.auditSession({ sessionId, dshHome, workspace });
+          if (maxEntries > 0 && audit.entries) audit.entries = audit.entries.slice(-maxEntries);
+          printJson(audit);
+        } else if (sub === 'audit-file') {
+          const file = rest[0];
+          if (!file) fail('usage: review audit-file <path.jsonl[.zstd]> [--workspace <dir>] [--max-entries <n>]');
+          const audit = core.auditSessionLog({ file, workspace });
+          if (maxEntries > 0 && audit.entries) audit.entries = audit.entries.slice(-maxEntries);
+          printJson(audit);
+        } else {
+          fail('usage: review sessions [--workspace <dir>] [--limit <n>] [--dsh-home <dir>] | audit <sessionId> [--workspace <dir>] [--max-entries <n>] | audit-file <path> [--workspace <dir>] [--max-entries <n>]');
+        }
+      }
+      break;
     default:
-      fail('usage: ohmy-core { ports | serving | upgrade | session | channel } …');
+      fail('usage: ohmy-core { ports | serving | upgrade | session | channel | review } …');
   }
 })().catch((e) => { console.error(e); process.exit(1); });

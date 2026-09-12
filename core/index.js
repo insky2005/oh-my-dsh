@@ -58,4 +58,6 @@ module.exports = {
   ...require('./lib/channel-runner'),
   // Language-agnostic shell settings store ($DSH_HOME/shell/config.json)
   ...require('./lib/settings'),
+  // Read-only session-log change audit (Review panel; docs/review-panel-design.md)
+  ...require('./lib/review-log'),
 };
