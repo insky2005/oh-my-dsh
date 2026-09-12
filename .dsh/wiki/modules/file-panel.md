@@ -21,7 +21,8 @@ manual: false
 
 1. **无后缀 / 点文件按文本预览**：`looksLikeText(_:)` 启发式——可 UTF-8 解码、无 NUL 字节、控制字符占比低（排除 \n/\r/\t，阈值 <8）即视为文本，与扩展名无关（`LICENSE`、`Makefile`、`.gitignore`、`.env`、`.npmrc` 均以文本显示）；
 2. **文件内编辑 + 行号 + 保存**：文本/代码文件可在面板内编辑，左侧 `LineNumberGutterView` 行号栏（随滚动/行数刷新，宽随最大行号位数自适应），头部「保存」按钮 + **⌘S**，未保存标记（页签标题尾部 `*`），`Data.write(to:.atomic)` 原子写回；
-3. **语法高亮**：开源组件 **Highlightr**（MIT v2.3.0）vendored 进 `platforms/macos/src/vendor/Highlightr/`，底层 highlight.js 支持 180+ 语言；`CodeEditorView.language(forExtension:)` 映射扩展名 → highlight.js 语言名（swift/js/ts/py/go/rust/cpp/md 等），未知回退纯文本；主题明暗跟随（xcode 浅 / atom-one-dark 深）。
+3. **头部固定标题**：面板头部显示固定的面板名「文件 / Files」（复用活动栏键 `bar.preview`，语言切换经 `refreshTooltips()` 刷新），**不跟随当前文件的路径**；路径改放在**头部标题的悬停 tooltip**（活动页签的完整路径）与页签自身的 tooltip 里。
+4. **语法高亮**：开源组件 **Highlightr**（MIT v2.3.0）vendored 进 `platforms/macos/src/vendor/Highlightr/`，底层 highlight.js 支持 180+ 语言；`CodeEditorView.language(forExtension:)` 映射扩展名 → highlight.js 语言名（swift/js/ts/py/go/rust/cpp/md 等），未知回退纯文本；主题明暗跟随（xcode 浅 / atom-one-dark 深）。
 
 ## 可编辑前置条件（防数据损坏）
 
@@ -42,7 +43,7 @@ manual: false
 - **关闭时的未保存提示**（`askAboutUnsaved` + `saveTabs`，页签 ✕ / ⌘W 与面板 ✕ 共用）：**保存并关闭 / 不保存 / 取消**——取消 = 什么都不关（这里「取消」是正当答案，因为关闭是面板内的用户动作，与工作区切换不同）；保存失败 → 中止关闭、保留缓冲并报 `preview.saveFailed`；**无窗口（无人可问）→ 一律不关**，绝不静默丢弃。关闭提示与切换提示共用 `pendingPromptAlert`：新的切换请求会让在途的关闭提示失效（该提示的回调按第三键处理 = 不关）；
 - **不落盘**：记忆仅存在于进程内（`WorkspaceTabMemory` 为 struct，面板持有一个实例），**不**记录目录树展开状态与滚动位置（重开时按磁盘内容重新渲染）；
 - **与回滚基线分叉**：PreviewPanel.swift 仍是「只重设树根、不动页签」，本节行为仅存在于 FilePanel；
-- **测试**：`tests/file-panel/run.sh` —— `WorkspaceTabMemory` 模型 28 例 + 真实 `FilePanelController`（无窗口、无 dsh 服务）驱动 38 例（首次根不关页签 / 关旧开新 / 顺序与选中恢复 / 文件夹页签 / 文件消失跳过 / 同路径 no-op / 尾斜杠等价 / 关闭按钮清记忆 / 有未保存改动时仍跟随且页签保留 / 保存后正常交接 / 关页签与关面板遇未保存不静默丢弃），已接入 `scripts/local-ci.sh` 与 `ci.yml` swift job。
+- **测试**：`tests/file-panel/run.sh` —— `WorkspaceTabMemory` 模型 28 例 + 真实 `FilePanelController`（无窗口、无 dsh 服务）驱动 41 例（首次根不关页签 / 关旧开新 / 顺序与选中恢复 / 文件夹页签 / 文件消失跳过 / 同路径 no-op / 尾斜杠等价 / 关闭按钮清记忆 / 有未保存改动时仍跟随且页签保留 / 保存后正常交接 / 关页签与关面板遇未保存不静默丢弃 / 头部固定标题且路径进 tooltip），已接入 `scripts/local-ci.sh` 与 `ci.yml` swift job。
 
 ## CodeEditorView（代码编辑器视图）
 

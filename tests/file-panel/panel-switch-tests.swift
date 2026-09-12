@@ -44,6 +44,13 @@ test("the first root resolution keeps that tab", panel.openTabPaths == [a1.path]
 
 // --- switching away closes the old workspace's tabs ------------------------
 
+// --- the header shows a fixed panel title, never the file path ---------------
+
+test("the header shows the panel's fixed title",
+     panel.headerTitle == "bar.preview")            // stub L10n returns the key
+test("the header title is not the open file's path", panel.headerTitle != a1.path)
+test("the open file's path lives in the header tooltip", panel.headerTooltip == a1.path)
+
 panel.open(path: a2.path)
 panel.open(path: a1.path)   // re-opening an open path selects it
 test("tabs are listed in tab-bar order", panel.openTabPaths == [a1.path, a2.path])

@@ -11,6 +11,10 @@ All notable changes to this project are documented in this file. Format follows
 
 - **文件面板（Files）页签按工作区记忆与恢复**：切换工作区（在 dsh web 切到另一工作区的会话）时，先把原工作区的已打开页签（顺序 + 当前选中项）记入内存并**关闭全部页签**——释放编辑器 / 语法高亮 / 预览内容，不再把旧工作区的文件挂在新工作区上；切回原工作区时按原顺序重开并还原选中项，磁盘上已消失的文件自动跳过。**未保存修改先询问**：保存并切换 / 不保存——**面板始终跟随工作区**（dsh web 已经切过去了，不存在「留在原工作区」这个答案，否则两边显示不一致）；保存失败的页签**保留在页签栏**（既不静默丢弃改动、也不掉队），面板不可见（无人可问）时同样保留并照常跟随。点面板右上角「关闭」按钮 = 关闭全部页签**并清空全部工作区的记忆**（彻底回收）；切到其它面板不算关闭。**关闭时若还有未保存修改会先问**（页签 ✕ / ⌘W 与面板 ✕ 同一套提示：保存并关闭 / 不保存 / 取消，取消 = 不关；保存失败则中止关闭并保留缓冲）。记忆仅存在于本次进程，不落盘。新增 `platforms/macos/src/WorkspaceTabMemory.swift`（纯逻辑）与 `tests/file-panel/run.sh`（模型 28 例 + 真面板 38 例），已接入 `scripts/local-ci.sh` 与 CI swift job。
 
+### Changed
+
+- **文件面板（Files）头部改为固定标题「文件 / Files」**：不再跟随当前文件显示其路径（路径没有丢——页签 tooltip 与头部标题的悬停 tooltip 都带完整路径），语言切换时随 `refreshTooltips()` 一起刷新。
+
 ### Fixed
 
 - **修复「未保存提示点取消后，反复切换工作区 Files 面板再无反应」**：页签记忆首次落地时用一个「已拒绝的目标」标记（`declinedSwitchTarget`）避免同一目标重复询问，但该标记只在**另一个**工作区到来时才清除——取消后面板仍停在原工作区（树根没变），于是对同一工作区的后续每次切换请求都被**静默吞掉**，面板永久卡在不再跟随的工作区上（`app.log` 实测：`cancelled by user` 之后每次都是 `stays declined`）。现在取消/中止**只延迟、不拉黑**：不再记标记，下一次请求（= dsh web 里真实的会话切换）照常询问；同时把「已有询问在途」由「忽略新请求」改为**最新请求优先**（`supersedePendingSwitchPrompt` 结束旧 sheet，杜绝卡死）。回归测试见 `tests/file-panel/panel-switch-tests.swift`（`a later switch to the same workspace is attempted again`，对修复前的 `FilePanel.swift` 实测失败）。

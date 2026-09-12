@@ -63,13 +63,21 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// The directory the panel currently follows (its tree root), if any.
     var projectRootPath: String? { treeRoot?.path }
 
+    /// The header's title (a fixed panel name, never a file path).
+    var headerTitle: String { titleLabel.text }
+
+    /// The hover tooltip of the header title (the active tab's full path).
+    var headerTooltip: String? { titleLabel.toolTip }
+
     /// Run the header Close button's action (close every tab + clear the
     /// per-workspace tab memory), exactly as clicking it does.
     func performCloseAction() { hidePanel(nil) }
 
     // MARK: - Subviews
 
-    private let pathLabel = HeaderLabel()
+    /// 头部固定标题（「文件 / Files」，与活动栏同名）：**不跟随当前文件的路径**。
+    /// 路径没有丢——页签 tooltip 与这里的悬停 tooltip 都带完整路径。
+    private let titleLabel = HeaderLabel()
     private var projectButton: CustomIconButton!
     private var openButton: CustomIconButton!
     private var revealButton: CustomIconButton!
@@ -188,8 +196,9 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         // All header content is custom-drawn (HeaderLabel / CustomIconButton):
         // NSTextField/NSButton cells were observed not rendering in some
         // environments, while Core Graphics text and bezier paths render.
-        pathLabel.translatesAutoresizingMaskIntoConstraints = false
-        pathLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.text = Self.panelTitle
 
         // Icon buttons with tooltips (hover shows what each does).
         projectButton = CustomIconButton(glyph: .folder, tooltip: L10n.tr("preview.openProjectHint"))
@@ -218,12 +227,12 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         let header = DynamicFillView()
         header.kind = .window
         header.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(pathLabel)
+        header.addSubview(titleLabel)
         header.addSubview(actions)
         NSLayoutConstraint.activate([
-            pathLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
-            pathLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            pathLabel.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor, constant: -8),
+            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
+            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor, constant: -8),
             actions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
             actions.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             header.heightAnchor.constraint(equalToConstant: 40),
@@ -440,12 +449,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         if let next = tabs.indices.contains(idx) ? tabs[idx] : tabs.last {
             select(next.id)
         } else {
-            contentContainer.subviews.forEach { $0.removeFromSuperview() }
-            pathLabel.text = ""
-            openButton.isEnabled = false
-            revealButton.isEnabled = false
-            showEmptyState()
-            refreshSaveState()
+            resetContentArea()
         }
     }
 
@@ -465,11 +469,16 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         return tabs.first(where: { $0.id == id })?.path
     }
 
+    /// 头部随活动页签变化的部分：按钮可用性 + 悬停提示里的完整路径。
+    /// 标题本身是固定的面板名（见 panelTitle），不显示路径。
     private func updateHeader(for path: String) {
-        pathLabel.text = path
+        titleLabel.toolTip = path
         openButton.isEnabled = true
         revealButton.isEnabled = true
     }
+
+    /// 面板的固定标题：与活动栏的「文件 / Files」同名，语言切换时刷新。
+    private static var panelTitle: String { L10n.tr("bar.preview") }
 
     // MARK: - Actions (top-right)
 
@@ -596,7 +605,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// Empty the content area and the header (no tab is open/rendered).
     private func resetContentArea() {
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
-        pathLabel.text = ""
+        titleLabel.toolTip = nil
         openButton.isEnabled = false
         revealButton.isEnabled = false
         showEmptyState()
@@ -605,6 +614,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     /// 语言切换后刷新头部按钮 tooltip（构建时一次性设置，需手动跟随）。
     func refreshTooltips() {
+        titleLabel.text = Self.panelTitle
         projectButton?.toolTip = L10n.tr("preview.openProjectHint")
         openButton?.toolTip = L10n.tr("preview.openInDefaultAppHint")
         revealButton?.toolTip = L10n.tr("preview.revealInFinderHint")
