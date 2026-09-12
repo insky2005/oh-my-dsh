@@ -822,11 +822,11 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         let names = dirty.map { ($0.path as NSString).lastPathComponent }
         let listed = names.prefix(5).joined(separator: "\n") + (names.count > 5 ? "\n…" : "")
         let alert = NSAlert()
-        alert.messageText = L10n.tr("preview.switchUnsavedTitle")
+        alert.messageText = L10n.tr("preview.unsavedTitle")
         alert.informativeText = L10n.tr("preview.switchUnsavedMessage", listed)
         alert.alertStyle = .warning
         alert.addButton(withTitle: L10n.tr("preview.switchSave"))
-        alert.addButton(withTitle: L10n.tr("preview.switchDiscard"))
+        alert.addButton(withTitle: L10n.tr("preview.discard"))
         pendingPromptAlert = alert
         AppLog.shared.log("preview workspace switch asks about \(dirty.count) unsaved tab(s): \(from) -> \(to)")
         alert.beginSheetModal(for: window) { [weak self] response in

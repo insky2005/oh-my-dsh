@@ -72,7 +72,7 @@ manual: false
 ## CI 与测试参数（ci.yml / nightly.yml / local-ci.sh）
 
 - **core 单测统一带超时**：`node --test --test-timeout=60000 core/tests/*.test.js`（ebac11a，2026-09-12）——`node --test` 无默认用例超时，某用例泄漏 runner/定时器会把整套**挂死**；四处同参数：`.github/workflows/ci.yml`、`.github/workflows/nightly.yml`、`scripts/local-ci.sh`、`core/package.json` 的 `test` 脚本；glob **不带引号**（bash 展开，兼容 Node 20）；
-- `ci.yml` 的 swift job 依次跑终端模拟器 / wiki-panel / browser-panel / skills / channel-panel / **review-panel** / **dsh-rpc** / **file-panel** 单测 + 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh`），再构建 arm64 CEF 产物与 App；
+- `ci.yml` 的 swift job 依次跑终端模拟器 / wiki-panel / browser-panel / skills / channel-panel / **review-panel** / **dsh-rpc** / **file-panel** 单测 + **L10n 键名 lint**（`tests/l10n/`） + 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh`），再构建 arm64 CEF 产物与 App；
 - 平台无关逻辑的单测放 core（如审计折叠 `core/lib/review-log.js` → `core/tests/review-log.test.js`，17 用例，无 zstd 的 Node 上 3 项自动 skip），面板展示模型放 `tests/<panel>/run.sh`。
 
 ## Jenkinsfile（Jenkins 打包 + 发布）
