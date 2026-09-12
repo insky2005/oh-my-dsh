@@ -283,6 +283,18 @@ enum ReviewLogModel {
         return (Array(scoped.prefix(limit)), true)
     }
 
+    /// The name to show for a session row.
+    ///
+    /// dsh web shows its own placeholder for a session that has no title yet (an
+    /// empty session), so the panel does the same — but only when the title map
+    /// actually came back: an empty map means the fetch failed, and claiming
+    /// "untitled" for every row would be wrong (the short id is honest then).
+    static func sessionDisplayName(id: String, titles: [String: String], untitledPlaceholder: String) -> String {
+        if let title = titles[id], !title.isEmpty { return title }
+        if !titles.isEmpty { return untitledPlaceholder }
+        return shortId(id)
+    }
+
     /// Extract `sessionId → title` from a dsh web `session.list` result.
     ///
     /// dsh reports the display title it shows in its own UI under

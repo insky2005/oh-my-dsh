@@ -307,6 +307,7 @@ enum L10n {
         "review.turn": ("对话", "Turn"),
         "review.turnUnknown": ("未标注轮次", "Unnumbered"),
         "review.subagent": ("子代理", "subagent"),
+        "review.untitled": ("新会话", "New Session"),
         "review.activeElsewhere": ("跟随的会话不在本工作区", "followed session is in another workspace"),
         "review.nested": ("嵌套", "nested"),
         "review.nestedCall": ("嵌套调用", "nested call"),

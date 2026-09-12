@@ -620,6 +620,10 @@ final class ReviewPanelController: NSObject {
             trailing = L10n.tr("review.reading")
         }
         let shortId = ReviewLogModel.shortId(session.id)
+        // A titleless session is what dsh web itself renders as "New Session" /
+        // "新会话" — match it instead of showing a bare hash.
+        let displayName = ReviewLogModel.sessionDisplayName(id: session.id, titles: sessionTitles,
+                                                            untitledPlaceholder: L10n.tr("review.untitled"))
         let webTitle = sessionTitles[session.id]
         var detail = shortId + " · " + ReviewLogModel.clockLabel(session.mtimeMs)
             + " · " + ReviewLogModel.byteLabel(session.sizeBytes)
@@ -646,7 +650,7 @@ final class ReviewPanelController: NSObject {
         // The session dsh web is showing is highlighted by fill + accent title
         // instead of a "current" text suffix.
         let isCurrent = session.id == activeSessionId
-        return makeBlock(title: webTitle ?? shortId, detail: detail, trailing: trailing,
+        return makeBlock(title: displayName, detail: detail, trailing: trailing,
                          symbol: "doc.text",
                          fill: isCurrent ? ReviewInk.currentSessionFill : ReviewInk.sessionFill,
                          border: isCurrent ? ReviewInk.currentSessionBorder : ReviewInk.hairline,

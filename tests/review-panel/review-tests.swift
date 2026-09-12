@@ -160,6 +160,24 @@ test("items without a sessionId are skipped", titles.count == 2)
 test("titles are trimmed", titles["session-e"] == "带空格")
 test("a malformed payload yields an empty map", ReviewLogModel.sessionTitles(fromSessionList: [:]).isEmpty)
 
+// --- session display name (untitled sessions read like dsh web) ---
+
+test("a titled session shows its title",
+     ReviewLogModel.sessionDisplayName(id: "session-a", titles: ["session-a": "修复登录超时"],
+                                       untitledPlaceholder: "新会话") == "修复登录超时")
+test("a titleless session shows the dsh web placeholder",
+     ReviewLogModel.sessionDisplayName(id: "session-b", titles: ["session-a": "x"],
+                                       untitledPlaceholder: "新会话") == "新会话")
+test("placeholder follows the language",
+     ReviewLogModel.sessionDisplayName(id: "session-b", titles: ["session-a": "x"],
+                                       untitledPlaceholder: "New Session") == "New Session")
+test("an empty title map falls back to the short id (fetch failed)",
+     ReviewLogModel.sessionDisplayName(id: "session-74e368ee-1111", titles: [:],
+                                       untitledPlaceholder: "新会话") == "74e368ee")
+test("an empty title string is treated as untitled",
+     ReviewLogModel.sessionDisplayName(id: "session-c", titles: ["session-c": ""],
+                                       untitledPlaceholder: "新会话") == "新会话")
+
 test("garbage json decodes to nil", ReviewLogModel.decodeAudit("not json") == nil)
 test("empty json decodes to nil", ReviewLogModel.decodeAudit("") == nil)
 
