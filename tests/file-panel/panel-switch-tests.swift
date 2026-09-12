@@ -114,10 +114,11 @@ panel.setProjectDirectory(wsB.path)
 panel.setProjectDirectory(wsA.path)
 test("remembering works again after Close", panel.openTabPaths == [a1.path])
 
-// --- unsaved edits: with no window to confirm in, the switch is aborted ------
-// (the save / discard / cancel sheet itself needs a window and is covered by the
-// manual pass in .dsh/wiki/tasks.md; this pins the no-window guard, which is
-// what keeps a headless / QA run from silently discarding the user's edits)
+// --- unsaved edits: the panel MUST still follow (dsh web already switched),
+// keeping the unsaved tab open when there is nobody to ask -------------------
+// (the save / don't-save sheet needs a window and is covered by the manual pass
+// in .dsh/wiki/tasks.md; what is pinned here is the invariant behind it: the
+// panel never stays behind and never discards edits silently)
 
 func firstEditableTextView(in view: NSView) -> NSTextView? {
     if let tv = view as? NSTextView, tv.isEditable { return tv }
@@ -133,21 +134,24 @@ test("the open tab's editable text view is reachable", editor != nil)
 
 editor?.insertText("x", replacementRange: NSRange(location: 0, length: 0))
 panel.setProjectDirectory(wsB.path)
-test("an unsaved edit with no window to confirm in aborts the switch", panel.openTabPaths == [a1.path])
+test("an unsaved tab stays open when there is nobody to ask", panel.openTabPaths == [a1.path])
+test("the panel follows the workspace anyway", panel.projectRootPath == wsB.path)
 
-// Regression: an aborted (or user-cancelled) switch must only DEFER, never
-// blacklist the target — a later request for the same workspace has to be
-// attempted again. It used to be swallowed forever ("stays declined"), leaving
-// the panel silently stuck on a workspace it had stopped following.
+// Regression (user-reported desync/freeze): a request must never be deferred or
+// swallowed — switching again keeps working, and once the edit is saved the tab
+// is handed over to the workspace it belongs to like any other.
 panel.saveActiveTab()
-panel.setProjectDirectory(wsB.path)
-test("a later switch to the same workspace is attempted again", panel.openTabPaths.isEmpty)
-
 panel.setProjectDirectory(wsA.path)
-test("that workspace is reachable once more afterwards", panel.openTabPaths == [a1.path])
+test("the panel follows back", panel.projectRootPath == wsA.path)
+test("the saved tab was handed over to the workspace it left", panel.openTabPaths.isEmpty)
+
+panel.setProjectDirectory(wsB.path)
+test("switching to that workspace again still works", panel.projectRootPath == wsB.path)
+test("its remembered tab comes back", panel.openTabPaths == [a1.path])
 
 panel.performCloseAction()
 test("closing the panel still clears everything", panel.openTabPaths.isEmpty)
+test("closing the panel empties the content area", panel.selectedTabPath == nil)
 
 try? fm.removeItem(at: root)
 print("done")

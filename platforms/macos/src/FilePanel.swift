@@ -60,6 +60,9 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// The selected tab's path, if any.
     var selectedTabPath: String? { currentTabPath }
 
+    /// The directory the panel currently follows (its tree root), if any.
+    var projectRootPath: String? { treeRoot?.path }
+
     /// Run the header Close button's action (close every tab + clear the
     /// per-workspace tab memory), exactly as clicking it does.
     func performCloseAction() { hidePanel(nil) }
@@ -123,6 +126,9 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// ignoring used to leave the panel permanently stuck on a workspace it no
     /// longer followed.
     private var pendingSwitchAlert: NSAlert?
+    /// Bumped for every switch request so a superseded prompt's completion is
+    /// recognised and never applied.
+    private var switchRequestGeneration = 0
 
     /// Directory tree state (root of the current project folder).
     private var treeRoot: TreeNode?
@@ -467,13 +473,30 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     /// Drop every open tab and reset the content area (no memory side effects).
     private func closeEveryTab() {
-        for tab in tabs {
-            tabStack.removeArrangedSubview(tab.container)
-            tab.container.removeFromSuperview()
-        }
-        tabs.removeAll()
+        closeTabs(Set(tabs.map { $0.id }))
         selectedId = nil
+        resetContentArea()
+    }
+
+    /// Close the given tabs, releasing their content (no memory side effects).
+    /// Used by the workspace hand-off, which keeps tabs with unresolved unsaved
+    /// edits open while closing the rest.
+    private func closeTabs(_ ids: Set<Int>) {
+        for id in ids {
+            guard let idx = tabs.firstIndex(where: { $0.id == id }) else { continue }
+            tabStack.removeArrangedSubview(tabs[idx].container)
+            tabs[idx].container.removeFromSuperview()
+            tabs.remove(at: idx)
+        }
+        if let selected = selectedId, !tabs.contains(where: { $0.id == selected }) {
+            selectedId = nil
+        }
         onTabsChanged?()
+        refreshSaveState()
+    }
+
+    /// Empty the content area and the header (no tab is open/rendered).
+    private func resetContentArea() {
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
         pathLabel.text = ""
         openButton.isEnabled = false
@@ -668,27 +691,36 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     // MARK: - Workspace tab hand-off
 
     /// A switch is pending: the tree root is moving from `from` to `to`.
-    /// Asks about unsaved edits first (save / discard / cancel), then hands the
-    /// tabs over — see performWorkspaceSwitch.
+    ///
+    /// The panel ALWAYS follows the workspace — dsh web has already switched, so
+    /// there is no "stay here" answer (that is what left the two sides showing
+    /// different workspaces). When unsaved edits are in the way the sheet only
+    /// asks whether to SAVE them:
+    ///   - 保存并切换: write every dirty buffer, then hand the tabs over; a tab
+    ///     whose save failed stays open (never discard silently);
+    ///   - 不保存: hand over, dropping the edits;
+    ///   - nobody to ask (panel hidden / headless) or an unrecognised dismissal:
+    ///     keep the dirty tabs open and follow anyway.
     private func beginWorkspaceSwitch(from: String, to: String, thenOpen: String? = nil) {
         // A prompt from an earlier switch may still be up (workspaces can be
         // flipped in dsh web faster than the sheet is answered): the newest
         // request wins — never ignore a request, or the panel ends up stuck on a
         // workspace it silently stopped following.
         supersedePendingSwitchPrompt()
+        switchRequestGeneration += 1
+        let generation = switchRequestGeneration
         let dirty = tabs.filter { $0.isDirty && $0.editor != nil }
         guard !dirty.isEmpty else {
             performWorkspaceSwitch(from: from, to: to, thenOpen: thenOpen)
             return
         }
-        // Unsaved edits: ask before their tabs go away. Without a window
-        // (headless QA, or the panel was never shown) there is nobody to ask —
-        // abort instead of silently discarding the user's edits.
+        let dirtyIds = Set(dirty.map { $0.id })
         guard let window = view.window else {
-            AppLog.shared.log("preview workspace switch aborted (unsaved edits, no window to confirm): \(to)")
+            AppLog.shared.log("preview workspace switch: \(dirty.count) unsaved tab(s) kept open, "
+                              + "no window to ask in: \(to)")
+            performWorkspaceSwitch(from: from, to: to, thenOpen: thenOpen, keeping: dirtyIds)
             return
         }
-        let dirtyIds = dirty.map { $0.id }
         let names = dirty.map { ($0.path as NSString).lastPathComponent }
         let listed = names.prefix(5).joined(separator: "\n") + (names.count > 5 ? "\n…" : "")
         let alert = NSAlert()
@@ -697,42 +729,44 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         alert.alertStyle = .warning
         alert.addButton(withTitle: L10n.tr("preview.switchSave"))
         alert.addButton(withTitle: L10n.tr("preview.switchDiscard"))
-        alert.addButton(withTitle: L10n.tr("preview.switchCancel"))
         pendingSwitchAlert = alert
         AppLog.shared.log("preview workspace switch asks about \(dirty.count) unsaved tab(s): \(from) -> \(to)")
         alert.beginSheetModal(for: window) { [weak self] response in
-            guard let self = self else { return }
+            guard let self = self, generation == self.switchRequestGeneration else {
+                AppLog.shared.log("preview workspace switch: superseded prompt ignored: \(to)")
+                return
+            }
             self.pendingSwitchAlert = nil
-            // The world can move while the sheet is up (the user may close the
-            // panel, or save through the menu): only continue when the very same
-            // root still holds the very same tabs.
-            let stillThere = dirtyIds.allSatisfy { id in self.tabs.contains(where: { $0.id == id }) }
-            guard stillThere,
-                  self.treeRoot.map({ WorkspaceTabMemory.key(for: $0.path) }) == WorkspaceTabMemory.key(for: from) else {
-                AppLog.shared.log("preview workspace switch abandoned (tabs changed while asking): \(to)")
+            // The root can move while the sheet is up only via a newer request,
+            // which the generation check above already rejected.
+            let root = self.treeRoot.map { $0.path } ?? from
+            guard WorkspaceTabMemory.key(for: root) == WorkspaceTabMemory.key(for: from) else {
+                AppLog.shared.log("preview workspace switch: stale request ignored (root already moved): \(to)")
                 return
             }
             switch response {
-            case .alertFirstButtonReturn:
-                for id in dirtyIds {
-                    guard let idx = self.tabs.firstIndex(where: { $0.id == id }),
-                          self.tabs[idx].isDirty, let editor = self.tabs[idx].editor else { continue }
-                    AppLog.shared.log("preview workspace switch saving: \(self.tabs[idx].path)")
-                    guard editor.writeBack() else {   // reports through presentSaveError
-                        AppLog.shared.log("preview workspace switch aborted (save failed): \(to)")
-                        return
-                    }
-                }
-                self.performWorkspaceSwitch(from: from, to: to, thenOpen: thenOpen)
             case .alertSecondButtonReturn:
                 AppLog.shared.log("preview workspace switch discarding unsaved edits: \(to)")
                 self.performWorkspaceSwitch(from: from, to: to, thenOpen: thenOpen)
+            case .alertFirstButtonReturn:
+                var failed: Set<Int> = []
+                for id in dirtyIds.sorted() {
+                    guard let idx = self.tabs.firstIndex(where: { $0.id == id }),
+                          self.tabs[idx].isDirty, let editor = self.tabs[idx].editor else { continue }
+                    AppLog.shared.log("preview workspace switch saving: \(self.tabs[idx].path)")
+                    if !editor.writeBack() { failed.insert(id) }   // reports via presentSaveError
+                }
+                if !failed.isEmpty {
+                    AppLog.shared.log("preview workspace switch: \(failed.count) tab(s) could not be saved, "
+                                      + "kept open: \(to)")
+                }
+                self.performWorkspaceSwitch(from: from, to: to, thenOpen: thenOpen, keeping: failed)
             default:
-                // Cancelled: the panel stays on the workspace it shows. This
-                // only defers the switch — the next request (a real session
-                // change in dsh web) asks again, so the panel can never get
-                // stuck refusing to follow.
-                AppLog.shared.log("preview workspace switch cancelled by user (panel stays): \(to)")
+                // Dismissed without an answer (ESC / window closed): never guess
+                // and never discard — keep the edits and follow anyway.
+                AppLog.shared.log("preview workspace switch: dismissed without an answer, "
+                                  + "unsaved tab(s) kept open: \(to)")
+                self.performWorkspaceSwitch(from: from, to: to, thenOpen: thenOpen, keeping: dirtyIds)
             }
         }
     }
@@ -740,19 +774,34 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// Hand the open tabs over from one workspace to another: remember & close
     /// the outgoing set (releasing its resources), re-root the tree, then reopen
     /// whatever the incoming workspace had open.
-    private func performWorkspaceSwitch(from: String, to: String, thenOpen: String? = nil) {
-        tabMemory.remember(paths: tabs.map { $0.path }, selectedPath: currentTabPath, for: from)
+    ///
+    /// `keeping` are tabs whose unsaved edits could NOT be resolved (nobody to
+    /// ask, or the save failed): they stay open and are not remembered — closing
+    /// them would silently discard the edits, and refusing to move would leave
+    /// the panel on a workspace dsh web has already left.
+    private func performWorkspaceSwitch(from: String, to: String, thenOpen: String? = nil,
+                                        keeping pinned: Set<Int> = []) {
+        let leaving = tabs.filter { !pinned.contains($0.id) }
+        let selectedLeaves = leaving.contains { $0.id == selectedId }
+        tabMemory.remember(paths: leaving.map { $0.path },
+                           selectedPath: selectedLeaves ? currentTabPath : nil,
+                           for: from)
         AppLog.shared.log("preview workspace switch: \(from) -> \(to) "
-                          + "(remembered \(tabs.count) tab(s), closed)")
-        closeEveryTab()
+                          + "(remembered \(leaving.count) tab(s), kept \(pinned.count))")
+        closeTabs(Set(leaving.map { $0.id }))
         applyTreeRoot(to)
         restoreTabs(for: to)
         if let thenOpen = thenOpen { open(path: thenOpen) }
+        if tabs.isEmpty {
+            resetContentArea()
+        } else if selectedId == nil, let last = tabs.last {
+            select(last.id)   // e.g. only pinned tabs remain: show one of them
+        }
     }
 
-    /// Dismiss a still-open switch sheet so the newest switch request wins.
-    /// The dismissed prompt's completion runs with the cancel response, which
-    /// only logs — its own request is superseded and never applied.
+    /// Dismiss a still-open switch sheet so the newest switch request wins. The
+    /// dismissed prompt's completion is recognised by its stale generation and
+    /// never applied.
     private func supersedePendingSwitchPrompt() {
         guard let alert = pendingSwitchAlert else { return }
         pendingSwitchAlert = nil

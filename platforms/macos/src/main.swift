@@ -172,7 +172,6 @@ enum L10n {
         "preview.switchUnsavedMessage": ("切换工作区会关闭以下文件，其中有未保存的修改：\n%@", "Switching workspace closes these files; some have unsaved changes:\n%@"),
         "preview.switchSave": ("保存并切换", "Save and Switch"),
         "preview.switchDiscard": ("不保存", "Don't Save"),
-        "preview.switchCancel": ("取消", "Cancel"),
         // terminal panel
         "menu.toggleTerminal": ("显示/隐藏 终端面板", "Toggle Terminal Panel"),
         "terminal.title": ("终端", "Terminal"),
