@@ -38,10 +38,11 @@ manual: false
 - **`performWorkspaceSwitch(…, keeping:)`**：把「要离开的页签」`tabMemory.remember(paths:selectedPath:for: 旧根)` → `closeTabs(它们)`（释放内容区，**不清记忆**）→ `applyTreeRoot(新根)` → `restoreTabs(for: 新根)` → 最后才执行 `thenOpen`（调用方"顺带打开这个目录"的页签必须在交接**之后**开，否则会被记到旧工作区）；`keeping` 里的页签（未保存改动无法落定）留在页签栏且不写入记忆，交接后若一个页签都不剩则 `resetContentArea()`，若选中项已关闭则改选剩下的最后一个；
 - **`restoreTabs`**：按记录顺序重开（文件夹页签同样重开），磁盘上已消失的路径跳过并记日志；记忆的选中项若仍在则恢复选中，否则停在最后打开的那个；
 - **记忆键**：目录树根路径经 `WorkspaceTabMemory.key(for:)`（`standardizingPath` + 去尾斜杠；不解析符号链接，与 `open(path:)` 的归一化一致）；
-- **关闭按钮 = 彻底回收**：`closeAllTabs()` = `supersedePendingSwitchPrompt()` + `closeEveryTab()` + `tabMemory.forgetAll()`；切到其它面板（活动栏）**不算**关闭，页签保留；
+- **关闭按钮 = 彻底回收**：`closeAllTabs()` = `supersedePendingPrompt()` + `closeEveryTab()` + `tabMemory.forgetAll()`；切到其它面板（活动栏）**不算**关闭，页签保留；
+- **关闭时的未保存提示**（`askAboutUnsaved` + `saveTabs`，页签 ✕ / ⌘W 与面板 ✕ 共用）：**保存并关闭 / 不保存 / 取消**——取消 = 什么都不关（这里「取消」是正当答案，因为关闭是面板内的用户动作，与工作区切换不同）；保存失败 → 中止关闭、保留缓冲并报 `preview.saveFailed`；**无窗口（无人可问）→ 一律不关**，绝不静默丢弃。关闭提示与切换提示共用 `pendingPromptAlert`：新的切换请求会让在途的关闭提示失效（该提示的回调按第三键处理 = 不关）；
 - **不落盘**：记忆仅存在于进程内（`WorkspaceTabMemory` 为 struct，面板持有一个实例），**不**记录目录树展开状态与滚动位置（重开时按磁盘内容重新渲染）；
 - **与回滚基线分叉**：PreviewPanel.swift 仍是「只重设树根、不动页签」，本节行为仅存在于 FilePanel；
-- **测试**：`tests/file-panel/run.sh` —— `WorkspaceTabMemory` 模型 28 例 + 真实 `FilePanelController`（无窗口、无 dsh 服务）驱动 32 例（首次根不关页签 / 关旧开新 / 顺序与选中恢复 / 文件夹页签 / 文件消失跳过 / 同路径 no-op / 尾斜杠等价 / 关闭按钮清记忆 / 有未保存改动时仍跟随且页签保留 / 保存后正常交接），已接入 `scripts/local-ci.sh` 与 `ci.yml` swift job。
+- **测试**：`tests/file-panel/run.sh` —— `WorkspaceTabMemory` 模型 28 例 + 真实 `FilePanelController`（无窗口、无 dsh 服务）驱动 38 例（首次根不关页签 / 关旧开新 / 顺序与选中恢复 / 文件夹页签 / 文件消失跳过 / 同路径 no-op / 尾斜杠等价 / 关闭按钮清记忆 / 有未保存改动时仍跟随且页签保留 / 保存后正常交接 / 关页签与关面板遇未保存不静默丢弃），已接入 `scripts/local-ci.sh` 与 `ci.yml` swift job。
 
 ## CodeEditorView（代码编辑器视图）
 
@@ -55,7 +56,7 @@ manual: false
 
 - 入口与 PreviewPanel 相同：main.swift 的 `previewInterceptorScript` 拦截 `/api/host.openPath` → `setRightPanel(.preview)` + `previewPanel.open(path:)`；
 - **菜单**：新增「文件 File」菜单（`menu.file`/`menu.save` L10n 键）——`保存 Save`（⌘S → `saveActiveFile` → `previewPanel.saveActiveTab()`）与「关闭页签」（⌘W → `closeActiveFileTab`，无页签时禁用，⌘W 落到关窗）；`updateCloseTabMenuState()` 由 `onTabsChanged` 驱动；
-- **L10n 新增键**：`preview.saveHint`（保存当前文件）、`preview.saveFailed`（保存失败：%@）、`menu.file`、`menu.save`；工作区切换询问另加 `preview.switchUnsavedTitle` / `preview.switchUnsavedMessage` / `preview.switchSave` / `preview.switchDiscard`（中英成对；**没有**「取消切换」这一项——面板必须跟随）；
+- **L10n 新增键**：`preview.saveHint`（保存当前文件）、`preview.saveFailed`（保存失败：%@）、`menu.file`、`menu.save`；未保存提示另加 `preview.unsavedTitle`（标题，两处共用）、`preview.switchUnsavedMessage` / `preview.switchSave`（切换工作区；**没有**「取消切换」这一项——面板必须跟随）、`preview.closeUnsavedMessage` / `preview.closeSave` / `preview.discard`（关闭页签 / 关闭面板，第三键复用 `btn.cancel`）；
 - `build-app.sh` `SWIFT_SOURCES` 追加：`FilePanel.swift`、`CodeEditorView.swift`、`vendor/Highlightr/{CodeAttributedString,Highlightr,Theme,HTMLUtils,Shims}.swift`；并把 4 个 highlight.js 资源文件 `cp` 到 `$APP/Contents/Resources/` **根**（Highlightr 按无子目录路径加载）；缺失给 WARNING 不影响构建；
 - `local-ci.sh` 与 `ci.yml` 的 swiftc 编译检查清单同步追加上述新文件。
 

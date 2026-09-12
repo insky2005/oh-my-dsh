@@ -153,5 +153,33 @@ panel.performCloseAction()
 test("closing the panel still clears everything", panel.openTabPaths.isEmpty)
 test("closing the panel empties the content area", panel.selectedTabPath == nil)
 
+// --- closing with unsaved edits asks first ----------------------------------
+// (the save / don't-save / cancel sheet needs a window and is covered by the
+// manual pass in .dsh/wiki/tasks.md; what is pinned headlessly is the guard
+// behind it: with nobody to ask, nothing is closed and the panel is not hidden)
+
+panel.open(path: a1.path)
+let dirtyEditor = firstEditableTextView(in: panel.view)
+dirtyEditor?.insertText("y", replacementRange: NSRange(location: 0, length: 0))
+var hideRequests = 0
+panel.onRequestHide = { hideRequests += 1 }
+
+panel.closeActiveTab()          // ⌘W / the tab's ✕, on a tab with unsaved edits
+test("closing a tab with unsaved edits keeps it (no window to confirm in)",
+     panel.openTabPaths == [a1.path])
+
+panel.performCloseAction()      // the header ✕
+test("closing the panel with unsaved edits keeps the tabs", panel.openTabPaths == [a1.path])
+test("closing the panel with unsaved edits does not hide it", hideRequests == 0)
+
+panel.saveActiveTab()           // the edit is resolved
+panel.closeActiveTab()
+test("closing a tab with no unsaved edits works", panel.openTabPaths.isEmpty)
+
+panel.open(path: a1.path)
+panel.performCloseAction()
+test("closing a clean panel hides it", hideRequests == 1)
+test("closing a clean panel drops the tabs", panel.openTabPaths.isEmpty)
+
 try? fm.removeItem(at: root)
 print("done")

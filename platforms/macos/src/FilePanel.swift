@@ -121,11 +121,11 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// preview content — after remembering what was open, and reopens that set
     /// when the user switches back. Cleared wholesale by the Close button.
     private var tabMemory = WorkspaceTabMemory()
-    /// The unsaved-changes sheet a switch is currently asking in, if any. A
-    /// newer switch request dismisses it (newest wins) instead of being ignored —
-    /// ignoring used to leave the panel permanently stuck on a workspace it no
-    /// longer followed.
-    private var pendingSwitchAlert: NSAlert?
+    /// The unsaved-changes sheet the panel is currently asking in (a workspace
+    /// switch or a close), if any. A newer switch request dismisses it (newest
+    /// wins) instead of being ignored — ignoring used to leave the panel
+    /// permanently stuck on a workspace it no longer followed.
+    private var pendingPromptAlert: NSAlert?
     /// Bumped for every switch request so a superseded prompt's completion is
     /// recognised and never applied.
     private var switchRequestGeneration = 0
@@ -393,6 +393,30 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         close(sender.tag)
     }
 
+    /// Close a tab the USER asked to close (the tab's ✕, or ⌘W): when it has
+    /// unsaved edits, ask first — this is a panel-local action, so "cancel" is a
+    /// legitimate answer here (unlike a workspace switch, which dsh web already
+    /// performed).
+    private func close(_ id: Int) {
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        guard tab.isDirty, tab.editor != nil else {
+            closeNow(id)
+            return
+        }
+        askAboutUnsaved([tab], message: "preview.closeUnsavedMessage", saveTitle: "preview.closeSave") { [weak self] decision in
+            guard let self = self else { return }
+            switch decision {
+            case .cancel:
+                AppLog.shared.log("preview close tab cancelled (unsaved): \(tab.path)")
+            case .discard:
+                self.closeNow(id)
+            case .save:
+                guard self.saveTabs([tab]) else { return }   // error shown; tab stays
+                self.closeNow(id)
+            }
+        }
+    }
+
     private func select(_ id: Int) {
         guard let tab = tabs.first(where: { $0.id == id }) else { return }
         selectedId = id
@@ -404,7 +428,9 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         refreshSaveState()
     }
 
-    private func close(_ id: Int) {
+    /// Drop one tab immediately (no unsaved-changes question — callers have
+    /// either resolved it or are not user-initiated).
+    private func closeNow(_ id: Int) {
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         tabs[idx].container.removeFromSuperview()
         tabs.remove(at: idx)
@@ -458,17 +484,89 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     }
 
     @objc private func hidePanel(_ sender: Any?) {
-        // 关闭面板 = 关闭所有预览页签（释放渲染内容），再收起面板
-        closeAllTabs()
-        onRequestHide?()
+        // 关闭面板 = 关闭所有预览页签（释放渲染内容）+ 清空工作区记忆，再收起面板。
+        // 有未保存修改时先问一句：取消 = 面板保持原样（不关也不清）。
+        let dirty = tabs.filter { $0.isDirty && $0.editor != nil }
+        guard !dirty.isEmpty else {
+            closeAllTabs()
+            onRequestHide?()
+            return
+        }
+        askAboutUnsaved(dirty, message: "preview.closeUnsavedMessage", saveTitle: "preview.closeSave") { [weak self] decision in
+            guard let self = self else { return }
+            switch decision {
+            case .cancel:
+                AppLog.shared.log("preview close cancelled (unsaved tabs kept)")
+            case .discard:
+                self.closeAllTabs()
+                self.onRequestHide?()
+            case .save:
+                guard self.saveTabs(dirty) else { return }   // error shown; panel stays
+                self.closeAllTabs()
+                self.onRequestHide?()
+            }
+        }
     }
 
     /// 关闭所有预览页签并清空内容区（面板关闭时释放资源）。
     private func closeAllTabs() {
-        supersedePendingSwitchPrompt()
+        supersedePendingPrompt()
         closeEveryTab()
         tabMemory.forgetAll()          // 关闭面板 = 回收：连各工作区的记忆一并清空
         AppLog.shared.log("preview close: all tabs dropped (workspace tab memory cleared)")
+    }
+
+    /// The answer to an unsaved-changes question before a user-initiated close.
+    private enum UnsavedDecision { case save, discard, cancel }
+
+    /// Ask about unsaved edits before a close the USER asked for (a tab's ✕, ⌘W,
+    /// or the panel's ✕). `cancel` abandons the action; `save`/`discard` proceed
+    /// (the caller saves first for .save). With no window there is nobody to ask:
+    /// nothing is discarded — the action is abandoned instead.
+    private func askAboutUnsaved(_ dirty: [Tab], message: String, saveTitle: String,
+                                 proceed: @escaping (UnsavedDecision) -> Void) {
+        guard !dirty.isEmpty else {
+            proceed(.discard)
+            return
+        }
+        guard let window = view.window else {
+            AppLog.shared.log("preview close: \(dirty.count) unsaved tab(s) kept (no window to confirm in)")
+            proceed(.cancel)
+            return
+        }
+        let names = dirty.map { ($0.path as NSString).lastPathComponent }
+        let listed = names.prefix(5).joined(separator: "\n") + (names.count > 5 ? "\n…" : "")
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("preview.unsavedTitle")
+        alert.informativeText = L10n.tr(message, listed)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L10n.tr(saveTitle))
+        alert.addButton(withTitle: L10n.tr("preview.discard"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))   // ESC
+        pendingPromptAlert = alert
+        AppLog.shared.log("preview close: asks about \(dirty.count) unsaved tab(s)")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            self?.pendingPromptAlert = nil
+            switch response {
+            case .alertFirstButtonReturn: proceed(.save)
+            case .alertSecondButtonReturn: proceed(.discard)
+            default: proceed(.cancel)
+            }
+        }
+    }
+
+    /// Write back every tab among `candidates` that is still dirty. Returns false
+    /// when any save failed (the editor already reported it through onSaveError),
+    /// so the caller can keep the tab / panel open instead of losing the buffer.
+    private func saveTabs(_ candidates: [Tab]) -> Bool {
+        var allSaved = true
+        for candidate in candidates {
+            guard let idx = tabs.firstIndex(where: { $0.id == candidate.id }),
+                  tabs[idx].isDirty, let editor = tabs[idx].editor else { continue }
+            AppLog.shared.log("preview close: saving \(tabs[idx].path)")
+            if !editor.writeBack() { allSaved = false }
+        }
+        return allSaved
     }
 
     /// Drop every open tab and reset the content area (no memory side effects).
@@ -706,7 +804,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         // flipped in dsh web faster than the sheet is answered): the newest
         // request wins — never ignore a request, or the panel ends up stuck on a
         // workspace it silently stopped following.
-        supersedePendingSwitchPrompt()
+        supersedePendingPrompt()
         switchRequestGeneration += 1
         let generation = switchRequestGeneration
         let dirty = tabs.filter { $0.isDirty && $0.editor != nil }
@@ -729,14 +827,14 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         alert.alertStyle = .warning
         alert.addButton(withTitle: L10n.tr("preview.switchSave"))
         alert.addButton(withTitle: L10n.tr("preview.switchDiscard"))
-        pendingSwitchAlert = alert
+        pendingPromptAlert = alert
         AppLog.shared.log("preview workspace switch asks about \(dirty.count) unsaved tab(s): \(from) -> \(to)")
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self = self, generation == self.switchRequestGeneration else {
                 AppLog.shared.log("preview workspace switch: superseded prompt ignored: \(to)")
                 return
             }
-            self.pendingSwitchAlert = nil
+            self.pendingPromptAlert = nil
             // The root can move while the sheet is up only via a newer request,
             // which the generation check above already rejected.
             let root = self.treeRoot.map { $0.path } ?? from
@@ -799,12 +897,12 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         }
     }
 
-    /// Dismiss a still-open switch sheet so the newest switch request wins. The
-    /// dismissed prompt's completion is recognised by its stale generation and
-    /// never applied.
-    private func supersedePendingSwitchPrompt() {
-        guard let alert = pendingSwitchAlert else { return }
-        pendingSwitchAlert = nil
+    /// Dismiss a still-open prompt sheet so the newest switch request wins. The
+    /// dismissed prompt's completion sees the stale generation (switch) or the
+    /// third-button response (close) and is never applied.
+    private func supersedePendingPrompt() {
+        guard let alert = pendingPromptAlert else { return }
+        pendingPromptAlert = nil
         let sheet = alert.window
         guard let parent = sheet.sheetParent else { return }
         AppLog.shared.log("preview workspace switch: superseding the pending prompt")
