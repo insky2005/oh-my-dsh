@@ -135,16 +135,19 @@ editor?.insertText("x", replacementRange: NSRange(location: 0, length: 0))
 panel.setProjectDirectory(wsB.path)
 test("an unsaved edit with no window to confirm in aborts the switch", panel.openTabPaths == [a1.path])
 
+// Regression: an aborted (or user-cancelled) switch must only DEFER, never
+// blacklist the target — a later request for the same workspace has to be
+// attempted again. It used to be swallowed forever ("stays declined"), leaving
+// the panel silently stuck on a workspace it had stopped following.
+panel.saveActiveTab()
 panel.setProjectDirectory(wsB.path)
-test("a declined workspace is not asked again while it stays declined", panel.openTabPaths == [a1.path])
+test("a later switch to the same workspace is attempted again", panel.openTabPaths.isEmpty)
+
+panel.setProjectDirectory(wsA.path)
+test("that workspace is reachable once more afterwards", panel.openTabPaths == [a1.path])
 
 panel.performCloseAction()
-panel.setProjectDirectory(wsA.path)
-panel.open(path: a1.path)
-panel.setProjectDirectory(wsB.path)
-// The Close action also dropped the declined marker, so this switch goes
-// through (B has no memory left — the Close cleared it — hence no tabs).
-test("closing the panel releases the declined state too", panel.openTabPaths.isEmpty)
+test("closing the panel still clears everything", panel.openTabPaths.isEmpty)
 
 try? fm.removeItem(at: root)
 print("done")

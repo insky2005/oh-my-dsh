@@ -118,12 +118,11 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// preview content — after remembering what was open, and reopens that set
     /// when the user switches back. Cleared wholesale by the Close button.
     private var tabMemory = WorkspaceTabMemory()
-    /// The workspace path a switch is currently being prepared for (an unsaved-
-    /// changes sheet may be up); further switch requests are ignored meanwhile.
-    private var switchTargetInFlight: String?
-    /// The last switch the user cancelled (or that was aborted), so the same
-    /// target is not asked again until a different workspace comes along.
-    private var declinedSwitchTarget: String?
+    /// The unsaved-changes sheet a switch is currently asking in, if any. A
+    /// newer switch request dismisses it (newest wins) instead of being ignored —
+    /// ignoring used to leave the panel permanently stuck on a workspace it no
+    /// longer followed.
+    private var pendingSwitchAlert: NSAlert?
 
     /// Directory tree state (root of the current project folder).
     private var treeRoot: TreeNode?
@@ -460,9 +459,9 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     /// 关闭所有预览页签并清空内容区（面板关闭时释放资源）。
     private func closeAllTabs() {
+        supersedePendingSwitchPrompt()
         closeEveryTab()
         tabMemory.forgetAll()          // 关闭面板 = 回收：连各工作区的记忆一并清空
-        declinedSwitchTarget = nil
         AppLog.shared.log("preview close: all tabs dropped (workspace tab memory cleared)")
     }
 
@@ -672,16 +671,11 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// Asks about unsaved edits first (save / discard / cancel), then hands the
     /// tabs over — see performWorkspaceSwitch.
     private func beginWorkspaceSwitch(from: String, to: String, thenOpen: String? = nil) {
-        guard switchTargetInFlight == nil else {
-            AppLog.shared.log("preview workspace switch ignored (one already in flight): \(to)")
-            return
-        }
-        if let declined = declinedSwitchTarget,
-           WorkspaceTabMemory.key(for: declined) == WorkspaceTabMemory.key(for: to) {
-            AppLog.shared.log("preview workspace switch stays declined: \(to)")
-            return
-        }
-        declinedSwitchTarget = nil
+        // A prompt from an earlier switch may still be up (workspaces can be
+        // flipped in dsh web faster than the sheet is answered): the newest
+        // request wins — never ignore a request, or the panel ends up stuck on a
+        // workspace it silently stopped following.
+        supersedePendingSwitchPrompt()
         let dirty = tabs.filter { $0.isDirty && $0.editor != nil }
         guard !dirty.isEmpty else {
             performWorkspaceSwitch(from: from, to: to, thenOpen: thenOpen)
@@ -692,7 +686,6 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         // abort instead of silently discarding the user's edits.
         guard let window = view.window else {
             AppLog.shared.log("preview workspace switch aborted (unsaved edits, no window to confirm): \(to)")
-            declinedSwitchTarget = to
             return
         }
         let dirtyIds = dirty.map { $0.id }
@@ -705,11 +698,11 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         alert.addButton(withTitle: L10n.tr("preview.switchSave"))
         alert.addButton(withTitle: L10n.tr("preview.switchDiscard"))
         alert.addButton(withTitle: L10n.tr("preview.switchCancel"))
-        switchTargetInFlight = to
+        pendingSwitchAlert = alert
         AppLog.shared.log("preview workspace switch asks about \(dirty.count) unsaved tab(s): \(from) -> \(to)")
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self = self else { return }
-            self.switchTargetInFlight = nil
+            self.pendingSwitchAlert = nil
             // The world can move while the sheet is up (the user may close the
             // panel, or save through the menu): only continue when the very same
             // root still holds the very same tabs.
@@ -727,7 +720,6 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
                     AppLog.shared.log("preview workspace switch saving: \(self.tabs[idx].path)")
                     guard editor.writeBack() else {   // reports through presentSaveError
                         AppLog.shared.log("preview workspace switch aborted (save failed): \(to)")
-                        self.declinedSwitchTarget = to
                         return
                     }
                 }
@@ -736,8 +728,11 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
                 AppLog.shared.log("preview workspace switch discarding unsaved edits: \(to)")
                 self.performWorkspaceSwitch(from: from, to: to, thenOpen: thenOpen)
             default:
-                AppLog.shared.log("preview workspace switch cancelled by user: \(to)")
-                self.declinedSwitchTarget = to
+                // Cancelled: the panel stays on the workspace it shows. This
+                // only defers the switch — the next request (a real session
+                // change in dsh web) asks again, so the panel can never get
+                // stuck refusing to follow.
+                AppLog.shared.log("preview workspace switch cancelled by user (panel stays): \(to)")
             }
         }
     }
@@ -753,7 +748,18 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         applyTreeRoot(to)
         restoreTabs(for: to)
         if let thenOpen = thenOpen { open(path: thenOpen) }
-        declinedSwitchTarget = nil
+    }
+
+    /// Dismiss a still-open switch sheet so the newest switch request wins.
+    /// The dismissed prompt's completion runs with the cancel response, which
+    /// only logs — its own request is superseded and never applied.
+    private func supersedePendingSwitchPrompt() {
+        guard let alert = pendingSwitchAlert else { return }
+        pendingSwitchAlert = nil
+        let sheet = alert.window
+        guard let parent = sheet.sheetParent else { return }
+        AppLog.shared.log("preview workspace switch: superseding the pending prompt")
+        parent.endSheet(sheet, returnCode: .alertThirdButtonReturn)
     }
 
     /// Reopen the tabs remembered for a workspace (folder tabs reopen as folders,
