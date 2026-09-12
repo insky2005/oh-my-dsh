@@ -88,7 +88,7 @@ open "dist/oh-my-dsh.app"     # 或双击
 ```
 
 - 运行时**无需**本机安装 Node 或 dsh（自包含）；
-- 启动先探测 `127.0.0.1:3080` 是否已有 `dsh web`（页面含 `window.__DSH_BOOT__` 判定，dsh ≤ 0.1.1）→ 复用；若 3080 上是 dsh ≥ 0.1.2（裸 GET 回 401 + `authentication required`，`isDSHAuthenticated`）则**按设计不复用**、记日志后自拉起（token 每进程随机、只在该进程 stdout；同 `DSH_HOME` 下数据本就共享；`DSH_NATIVE_FORCE_SPAWN=1` 可跳过复用检查）；否则按 node 选择策略（`DSH_NODE` > 系统 node（PATH→nvm current→nvm default→nvm 最新→Homebrew，候选须 ≥ 22.0.0，`DSH_NODE_MIN` 可覆盖）> 内置 node）拉起 `dsh web --port <n>`（3080 被占自动换空闲端口），dsh web 环境合并登录 shell PATH（`loginShellPath()`），系统 node 启动失败自动回退内置 node 重试一次（`DSH_NODE` 显式指定不回退），90 秒超时 + 1s 沉降校验；
+- 启动**从不复用**已有实例（2026-09-12 起复用分支整体删除：dsh ≥ 0.1.2 的 `/api` 只认本进程 launch token 换来的 cookie，复用别人的实例必然无 token → 原生 RPC 全 401），先回收自己上次残留的实例（`$DSH_HOME/shell/dsh-web.json` 记 pid/port/token，用 token 探活确认真是自己的才杀），再按 node 选择策略（`DSH_NODE` > 系统 node（PATH→nvm current→nvm default→nvm 最新→Homebrew，候选须 ≥ 22.0.0，`DSH_NODE_MIN` 可覆盖）> 内置 node）拉起 `dsh web --port <n>`（3080 被占自动换空闲端口），dsh web 环境合并登录 shell PATH（`loginShellPath()`），系统 node 启动失败自动回退内置 node 重试一次（`DSH_NODE` 显式指定不回退），90 秒超时 + 1s 沉降校验；
 - **项目目录跟随当前会话**：壳层注入 `sessionTrackerScript` 监听 dsh web 的会话 RPC（`session.history/prompt/rename/selectModel`、`subagent.list`），用户切换会话/工作区时经 `dshSession` 消息把新的项目目录同步给预览树、终端新会话、wiki 根与任务面板（共享 `ProjectDirectory`；任务面板跟随会话**无条件**刷新——workspacePath 权威、非 GitHub 仓库诚实显示空态，见 [architecture](architecture.md)）；
 - 日志：`~/Library/Logs/oh-my-dsh/app.log`（壳层）、`server.log`（自拉起服务输出）。
 

@@ -12,7 +12,7 @@ manual: false
 
 1. **绝不改动 DeepSeek Harness 源码**：壳层只封装 `dsh web`，不补丁、不注入 dsh 源码；一切扩展走壳层面板 + dsh 既有能力（skill / session RPC / AGENTS.md 指令加载）；
 2. **自包含优先**：运行时不依赖本机 node/dsh（构建期嵌入 `Contents/Resources/runtime/`）；构建不复制本机任何 node/dsh 文件；
-3. **退出只清理自己拉起的服务**：复用的外部 `dsh web` 实例绝不被壳层杀掉；
+3. **退出只清理自己拉起的服务**：壳层从不复用别人的实例（2026-09-12 起复用分支已删除）；自己上次异常退出残留的实例，下次启动由 `reapRecordedOrphan()` 按 `$DSH_HOME/shell/dsh-web.json`（pid+port+token，用 token 探活证明确实是本进程拉起的）回收；
 4. **版本化知识库**：`.dsh/wiki/` 随仓库提交/共享，可增量更新，`manual: true` 页面永不覆盖。
 
 ## 语言与文案（L10n）
@@ -79,7 +79,7 @@ manual: false
 
 ## 日志约定
 
-- 统一经 `AppLog.shared.log`（串行队列 + ISO8601 毫秒时间戳）；关键路径都要留日志（启动/复用/升级/页面加载/退出清理），便于远端排查；
+- 统一经 `AppLog.shared.log`（串行队列 + ISO8601 毫秒时间戳）；关键路径都要留日志（启动/拉起与回收服务/升级/页面加载/退出清理），便于远端排查；
 - **读 dsh 私有磁盘布局必须「校验 + 报诊断」，不许静默返回空**（R4，2026-09-10）：`$DSH_HOME/storages/workspace.json` 是 dsh 的 `defineDomain({name:'workspace',version:2})` 私有域存储，core（`core/lib/workspace-store.js`）与 Swift（`DshWorkspaceStore`）两侧读取器都校验域名/版本，读不懂时把原因交给日志出口（core → 频道 runner 日志，Swift → `AppLog`），文件缺失则保持安静；日志格式 `[workspace-store] …`。同一私有格式只允许一份解析实现（`main.swift` 的 `persistedWorkspacePath` 已改为调用 `DshWorkspaceStore`）。见 [data-model](data-model.md) 与 docs/dsh-version-impact.md §6.2。
 
 ## Wiki 维护约定（代理执行）
