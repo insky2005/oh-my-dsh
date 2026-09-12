@@ -3226,8 +3226,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("page did finish loading: \(webView.url?.absoluteString ?? "?")")
         // Warm the Review panel's session listing now that a workspace resolves,
         // so opening the panel renders immediately instead of waiting on the
-        // core CLI (the first-open "empty panel" the user sees).
+        // core CLI (the first-open "empty panel" the user sees), and pick up the
+        // session titles dsh web can only serve once it is answering.
         reviewPanel?.prewarm()
+        reviewPanel?.webPageReady()
         // Report the page's actual browser language (follows AppleLanguages).
         webView.evaluateJavaScript("navigator.language") { result, _ in
             if let lang = result as? String {

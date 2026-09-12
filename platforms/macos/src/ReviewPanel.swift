@@ -164,6 +164,45 @@ final class ReviewPanelController: NSObject {
         reload()
     }
 
+    /// dsh web is serving (page finished loading): (re)read the session titles so
+    /// rows show the names the web UI shows instead of bare hashes.
+    func webPageReady() {
+        refreshSessionTitles()
+    }
+
+    /// Read `sessionId → title` from dsh web. Retries a few times: at launch the
+    /// server may still be booting (the port/cookie are only valid once it serves),
+    /// and a single failed fetch would leave every row shown as a short id.
+    private func refreshSessionTitles(attempt: Int = 0) {
+        let port = portProvider?() ?? 0
+        guard port > 0 else { retrySessionTitles(after: attempt); return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port, timeout: 6)
+            let titles = value.map { ReviewLogModel.sessionTitles(fromSessionList: $0) } ?? [:]
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard !titles.isEmpty else {
+                    self.retrySessionTitles(after: attempt)
+                    return
+                }
+                let changed = titles != self.sessionTitles
+                self.sessionTitles = titles
+                AppLog.shared.log("review: titles \(titles.count) (attempt \(attempt), changed=\(changed))")
+                if changed, !self.sessions.isEmpty { self.render() }
+            }
+        }
+    }
+
+    private func retrySessionTitles(after attempt: Int) {
+        guard attempt < 6 else {
+            AppLog.shared.log("review: titles unavailable after \(attempt) attempts (showing short ids)")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.refreshSessionTitles(attempt: attempt + 1)
+        }
+    }
+
     /// The workspace changed (session/project switch) — re-list, keep the audit
     /// cache (a session's audit does not depend on the current workspace).
     func workspaceChanged() {
@@ -362,7 +401,6 @@ final class ReviewPanelController: NSObject {
         let token = loadToken
         let workspaceAtStart = workspace
         let activeAtStart = activeSessionId
-        let port = portProvider?() ?? 0
         self.workspace = workspace
         // Keep whatever is already rendered (a refresh must not blank the panel);
         // only an empty panel falls back to the centred status text.
@@ -387,19 +425,15 @@ final class ReviewPanelController: NSObject {
             sessions = scoped.sessions
             let truncated = scoped.beyondLimit
             let diagnostics = listed?.diagnostics ?? []
-            // Session titles come from dsh web (session.list projections), so the
-            // panel names sessions the same way the web UI does.
-            var titles: [String: String] = [:]
-            if port > 0,
-               let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port, timeout: 6) {
-                titles = ReviewLogModel.sessionTitles(fromSessionList: value)
-            }
             DispatchQueue.main.async {
                 guard let self = self, self.loadToken == token else { return }
                 self.isLoading = false
                 self.hasLoaded = true
                 self.sessions = sessions
-                if !titles.isEmpty { self.sessionTitles = titles }
+                // Names come from dsh web and are fetched separately (below): at
+                // launch the web server is not serving yet, so a fetch bundled into
+                // the listing silently produced hashes for the first render.
+                self.refreshSessionTitles()
                 // Resolve the followed session against the CURRENT active id (it can
                 // change while a listing is in flight — that is the cross-workspace
                 // switch), never against the id captured when the listing started.
