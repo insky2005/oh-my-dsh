@@ -114,6 +114,9 @@ final class ReviewPanelController: NSObject {
     /// Session id → the title dsh web shows (that is how the user recognizes a
     /// session). Sessions absent from the web list fall back to their short id.
     private var sessionTitles: [String: String] = [:]
+    /// True once dsh web answered the title query (an empty answer is still an
+    /// answer: those sessions simply have no title yet).
+    private var titlesFetched = false
     private var audits: [String: ReviewAudit] = [:]
     private var auditing: Set<String> = []
     private var failedAudits: Set<String> = []
@@ -125,6 +128,8 @@ final class ReviewPanelController: NSObject {
     private var workspace: String?
     private var suspectOnly = true
     private var hasLoaded = false
+    /// True once the panel has been opened at least once (title reads are lazy).
+    private var hasBeenShown = false
     private var isLoading = false
     private var pendingReload = false
     private var loadToken = 0
@@ -150,9 +155,13 @@ final class ReviewPanelController: NSObject {
 
     // MARK: - Public entry points
 
-    /// Load once when the panel is first shown.
+    /// Called every time the panel is mounted (opened). The listing is loaded
+    /// once; the session titles are read on **every** open — dsh web is serving by
+    /// then, and a session that had no title last time may have been named since.
     func ensureLoaded() {
+        hasBeenShown = true
         if !hasLoaded { reload() }
+        refreshSessionTitles()
     }
 
     /// Warm the session listing before the panel is ever opened (called once the
@@ -164,30 +173,28 @@ final class ReviewPanelController: NSObject {
         reload()
     }
 
-    /// dsh web is serving (page finished loading): (re)read the session titles so
-    /// rows show the names the web UI shows instead of bare hashes.
-    func webPageReady() {
-        refreshSessionTitles()
-    }
-
-    /// Read `sessionId → title` from dsh web. Retries a few times: at launch the
-    /// server may still be booting (the port/cookie are only valid once it serves),
-    /// and a single failed fetch would leave every row shown as a short id.
+    /// Read `sessionId → title` from dsh web. Retries a few times, because the
+    /// panel can be opened before dsh web answers (fresh launch) — a single failed
+    /// fetch would leave every row shown as a short id.
     private func refreshSessionTitles(attempt: Int = 0) {
         let port = portProvider?() ?? 0
         guard port > 0 else { retrySessionTitles(after: attempt); return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port, timeout: 6)
-            let titles = value.map { ReviewLogModel.sessionTitles(fromSessionList: $0) } ?? [:]
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                guard !titles.isEmpty else {
+                // dsh web unreachable (still booting at launch) → retry. An answer
+                // with zero titles is NOT a failure: sessions may simply be new.
+                guard let value = value else {
                     self.retrySessionTitles(after: attempt)
                     return
                 }
-                let changed = titles != self.sessionTitles
+                let titles = ReviewLogModel.sessionTitles(fromSessionList: value)
+                let changed = titles != self.sessionTitles || !self.titlesFetched
                 self.sessionTitles = titles
-                AppLog.shared.log("review: titles \(titles.count) (attempt \(attempt), changed=\(changed))")
+                self.titlesFetched = true
+                AppLog.shared.log("review: titles \(titles.count) of \(self.sessions.count) sessions "
+                    + "(attempt \(attempt), changed=\(changed))")
                 if changed, !self.sessions.isEmpty { self.render() }
             }
         }
@@ -430,10 +437,12 @@ final class ReviewPanelController: NSObject {
                 self.isLoading = false
                 self.hasLoaded = true
                 self.sessions = sessions
-                // Names come from dsh web and are fetched separately (below): at
-                // launch the web server is not serving yet, so a fetch bundled into
-                // the listing silently produced hashes for the first render.
-                self.refreshSessionTitles()
+                // Names come from dsh web and are fetched separately (below), and
+                // only once the panel has been opened: a launch-time fetch bundled
+                // into the listing silently produced hashes (the server was not
+                // serving yet), and fetching titles for a panel nobody opened is
+                // wasted work.
+                if self.hasBeenShown { self.refreshSessionTitles() }
                 // Resolve the followed session against the CURRENT active id (it can
                 // change while a listing is in flight — that is the cross-workspace
                 // switch), never against the id captured when the listing started.
@@ -623,6 +632,7 @@ final class ReviewPanelController: NSObject {
         // A titleless session is what dsh web itself renders as "New Session" /
         // "新会话" — match it instead of showing a bare hash.
         let displayName = ReviewLogModel.sessionDisplayName(id: session.id, titles: sessionTitles,
+                                                            fetched: titlesFetched,
                                                             untitledPlaceholder: L10n.tr("review.untitled"))
         let webTitle = sessionTitles[session.id]
         var detail = shortId + " · " + ReviewLogModel.clockLabel(session.mtimeMs)

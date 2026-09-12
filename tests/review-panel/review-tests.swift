@@ -163,19 +163,22 @@ test("a malformed payload yields an empty map", ReviewLogModel.sessionTitles(fro
 // --- session display name (untitled sessions read like dsh web) ---
 
 test("a titled session shows its title",
-     ReviewLogModel.sessionDisplayName(id: "session-a", titles: ["session-a": "修复登录超时"],
+     ReviewLogModel.sessionDisplayName(id: "session-a", titles: ["session-a": "修复登录超时"], fetched: true,
                                        untitledPlaceholder: "新会话") == "修复登录超时")
 test("a titleless session shows the dsh web placeholder",
-     ReviewLogModel.sessionDisplayName(id: "session-b", titles: ["session-a": "x"],
+     ReviewLogModel.sessionDisplayName(id: "session-b", titles: ["session-a": "x"], fetched: true,
                                        untitledPlaceholder: "新会话") == "新会话")
 test("placeholder follows the language",
-     ReviewLogModel.sessionDisplayName(id: "session-b", titles: ["session-a": "x"],
+     ReviewLogModel.sessionDisplayName(id: "session-b", titles: ["session-a": "x"], fetched: true,
                                        untitledPlaceholder: "New Session") == "New Session")
-test("an empty title map falls back to the short id (fetch failed)",
-     ReviewLogModel.sessionDisplayName(id: "session-74e368ee-1111", titles: [:],
+test("a failed fetch falls back to the short id",
+     ReviewLogModel.sessionDisplayName(id: "session-74e368ee-1111", titles: [:], fetched: false,
                                        untitledPlaceholder: "新会话") == "74e368ee")
+test("an answered-but-empty map still means untitled",
+     ReviewLogModel.sessionDisplayName(id: "session-74e368ee-1111", titles: [:], fetched: true,
+                                       untitledPlaceholder: "新会话") == "新会话")
 test("an empty title string is treated as untitled",
-     ReviewLogModel.sessionDisplayName(id: "session-c", titles: ["session-c": ""],
+     ReviewLogModel.sessionDisplayName(id: "session-c", titles: ["session-c": ""], fetched: true,
                                        untitledPlaceholder: "新会话") == "新会话")
 
 test("garbage json decodes to nil", ReviewLogModel.decodeAudit("not json") == nil)
