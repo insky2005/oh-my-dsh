@@ -367,6 +367,162 @@ final class SkillCandidateRowView: SkillCardView {
     @objc private func installTapped() { onInstall?() }
 }
 
+
+/// One registry card on the registry-management page: name, what it can do
+/// (search / catalog), the URLs, plus enable + delete.
+final class RegistryCardView: SkillCardView {
+
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let kindLabel = NSTextField(labelWithString: "")
+    private let searchLabel = NSTextField(labelWithString: "")
+    private let catalogLabel = NSTextField(labelWithString: "")
+    private let enabledToggle = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let deleteButton = NSButton()
+
+    var onToggleEnabled: ((Bool) -> Void)?
+    var onDelete: (() -> Void)?
+
+    init(entry: SkillRegistryRecord) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.stringValue = entry.label
+        titleLabel.font = NSFont.boldSystemFont(ofSize: 12)
+
+        kindLabel.stringValue = L10n.tr(entry.catalog.labelKey)
+        kindLabel.font = NSFont.systemFont(ofSize: 10)
+        kindLabel.textColor = .secondaryLabelColor
+
+        searchLabel.font = NSFont.systemFont(ofSize: 10)
+        searchLabel.textColor = .tertiaryLabelColor
+        searchLabel.lineBreakMode = .byTruncatingMiddle
+        searchLabel.stringValue = entry.searchURL ?? ""
+        searchLabel.isHidden = (entry.searchURL ?? "").isEmpty
+        searchLabel.toolTip = entry.searchURL
+
+        catalogLabel.font = NSFont.systemFont(ofSize: 10)
+        catalogLabel.textColor = .tertiaryLabelColor
+        catalogLabel.lineBreakMode = .byTruncatingMiddle
+        catalogLabel.stringValue = entry.catalogURL
+        catalogLabel.isHidden = entry.catalogURL.isEmpty
+        catalogLabel.toolTip = entry.catalogURL
+
+        enabledToggle.title = L10n.tr("skills.registry.enabled")
+        enabledToggle.state = entry.enabled ? .on : .off
+        enabledToggle.controlSize = .small
+        enabledToggle.font = NSFont.systemFont(ofSize: 11)
+        enabledToggle.target = self
+        enabledToggle.action = #selector(toggled)
+
+        deleteButton.title = L10n.tr("skills.registry.delete")
+        deleteButton.bezelStyle = .rounded
+        deleteButton.controlSize = .small
+        deleteButton.font = NSFont.systemFont(ofSize: 11)
+        deleteButton.target = self
+        deleteButton.action = #selector(deleteTapped)
+
+        let titleRow = NSStackView(views: [titleLabel, kindLabel, NSView(), enabledToggle, deleteButton])
+        titleRow.orientation = .horizontal
+        titleRow.alignment = .centerY
+        titleRow.spacing = 8
+
+        let info = NSStackView(views: [searchLabel, catalogLabel])
+        info.orientation = .vertical
+        info.alignment = .leading
+        info.spacing = 2
+
+        let stack = NSStackView(views: [titleRow, info])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 4
+        stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            titleRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @objc private func toggled() { onToggleEnabled?(enabledToggle.state == .on) }
+    @objc private func deleteTapped() { onDelete?() }
+}
+
+/// The "add a registry" card: name + address (auto-detected type) + hint.
+final class RegistryAddCardView: SkillCardView {
+
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let nameField = NSTextField(string: "")
+    private let addressField = NSTextField(string: "")
+    private let addButton = NSButton()
+    private let noteLabel = NSTextField(wrappingLabelWithString: "")
+
+    var onAdd: ((String, String) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.stringValue = L10n.tr("skills.addRegistry")
+        titleLabel.font = NSFont.boldSystemFont(ofSize: 12)
+
+        nameField.placeholderString = L10n.tr("skills.registry.name")
+        nameField.font = NSFont.systemFont(ofSize: 11)
+        nameField.translatesAutoresizingMaskIntoConstraints = false
+
+        addressField.placeholderString = L10n.tr("skills.registry.address")
+        addressField.font = NSFont.systemFont(ofSize: 11)
+        addressField.translatesAutoresizingMaskIntoConstraints = false
+
+        addButton.title = L10n.tr("skills.addRegistry")
+        addButton.bezelStyle = .rounded
+        addButton.controlSize = .small
+        addButton.font = NSFont.systemFont(ofSize: 11)
+        addButton.target = self
+        addButton.action = #selector(addTapped)
+
+        noteLabel.stringValue = L10n.tr("skills.registry.note")
+        noteLabel.font = NSFont.systemFont(ofSize: 10)
+        noteLabel.textColor = .secondaryLabelColor
+
+        let fields = NSStackView(views: [nameField, addressField, addButton])
+        fields.orientation = .horizontal
+        fields.alignment = .centerY
+        fields.spacing = 6
+        nameField.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        addressField.widthAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
+
+        let stack = NSStackView(views: [titleLabel, fields, noteLabel])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            fields.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @objc private func addTapped() {
+        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let address = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !address.isEmpty else { return }
+        onAdd?(name, address)
+    }
+}
+
 final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
 
     // Wiring (injected by main.swift)
@@ -408,7 +564,18 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     private let resultsList = FlippedStackView()
     private let addressButton = NSButton()
     private let importButton = NSButton()
-    private let manageRegistryButton = NSButton()
+    /// Header (top-right) entry for the registry-management page.
+    private let registryButton: CustomIconButton
+    // Registries page (shown INSIDE the content area, not as a sheet)
+    private let registriesView = NSView()
+    private let registriesTitle = NSTextField(labelWithString: "")
+    private let registriesBackButton: CustomIconButton
+    private let registriesScroll = NSScrollView()
+    private let registriesList = FlippedStackView()
+    private var page: PanelPage = .installed
+
+    /// Panel pages: the two tab contents plus the registry-management page.
+    enum PanelPage { case installed, available, registries }
     private let statusLabel = NSTextField(labelWithString: "")
 
     private let store: SkillStore
@@ -435,6 +602,8 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         store.seedDefaultRegistriesIfEmpty()
         refreshButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: "")
         hideButton = CustomIconButton(glyph: .close, tooltip: "")
+        registryButton = CustomIconButton(glyph: .symbol("shippingbox"), tooltip: "")
+        registriesBackButton = CustomIconButton(glyph: .symbol("chevron.left"), tooltip: "")
         super.init()
         buildUI()
         refreshTooltips()
@@ -447,6 +616,9 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         headerTitle.text = L10n.tr("skills.title")
         refreshButton.toolTip = L10n.tr("skills.refresh")
         hideButton.toolTip = L10n.tr("skills.hide")
+        registryButton.toolTip = L10n.tr("skills.manageRegistry")
+        registriesBackButton.toolTip = L10n.tr("skills.registry.back")
+        registriesTitle.stringValue = L10n.tr("skills.registry.title")
         segmented.setLabel(L10n.tr("skills.tab.installed"), forSegment: 0)
         segmented.setLabel(L10n.tr("skills.tab.available"), forSegment: 1)
         installedSearch.placeholderString = L10n.tr("skills.searchInstalled")
@@ -455,7 +627,6 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         catalogButton.title = L10n.tr("skills.catalogAction")
         addressButton.title = L10n.tr("skills.fromAddress")
         importButton.title = L10n.tr("skills.import")
-        manageRegistryButton.title = L10n.tr("skills.manageRegistry")
         rebuildLevelFilter()
         renderInstalled()
         renderAvailable()
@@ -478,13 +649,14 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         // trap the review panel hit. Keep the root frame-based.
         refreshButton.onAction = { [weak self] in self?.reloadAll() }
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
+        registryButton.onAction = { [weak self] in self?.toggleRegistryPage() }
 
         let header = DynamicFillView()
         header.kind = .window
         header.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerTitle)
-        let actions = NSStackView(views: [refreshButton, hideButton])
+        let actions = NSStackView(views: [registryButton, refreshButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -512,6 +684,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
 
         buildInstalledTab()
         buildAvailableTab()
+        buildRegistriesPage()
 
         statusLabel.font = NSFont.systemFont(ofSize: 10)
         statusLabel.textColor = .secondaryLabelColor
@@ -604,7 +777,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     }
 
     private func buildAvailableTab() {
-        for b in [searchButton, catalogButton, addressButton, importButton, manageRegistryButton] {
+        for b in [searchButton, catalogButton, addressButton, importButton] {
             b.bezelStyle = .rounded
             b.controlSize = .small
             b.font = NSFont.systemFont(ofSize: 11)
@@ -614,7 +787,6 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         catalogButton.action = #selector(loadCatalog)
         addressButton.action = #selector(installFromAddress)
         importButton.action = #selector(manualImport)
-        manageRegistryButton.action = #selector(manageRegistries)
 
         registryTabs.onSelect = { [weak self] _ in self?.registryChanged() }
         registryTabs.setContentHuggingPriority(.defaultHigh, for: .horizontal)
@@ -641,7 +813,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         toolbarRow.spacing = 6
         toolbarRow.translatesAutoresizingMaskIntoConstraints = false
 
-        let bottomRow = NSStackView(views: [addressButton, importButton, manageRegistryButton])
+        let bottomRow = NSStackView(views: [addressButton, importButton])
         bottomRow.orientation = .horizontal
         bottomRow.spacing = 6
         bottomRow.translatesAutoresizingMaskIntoConstraints = false
@@ -682,10 +854,31 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     // MARK: - Tab switching
 
     @objc private func tabChanged() {
-        let showInstalled = segmented.selectedSegment == 0
-        installedView.removeFromSuperview()
-        availableView.removeFromSuperview()
-        let child = showInstalled ? installedView : availableView
+        showPage(segmented.selectedSegment == 0 ? .installed : .available)
+    }
+
+    /// The registry button toggles between the management page and the tab the
+    /// panel was on before.
+    private func toggleRegistryPage() {
+        if page == .registries {
+            showPage(segmented.selectedSegment == 0 ? .installed : .available)
+        } else {
+            showPage(.registries)
+        }
+    }
+
+    /// Switch the content area (also the QA/test entry point for the registry page).
+    func showPage(_ target: PanelPage) {
+        page = target
+        for child in [installedView, availableView, registriesView] {
+            child.removeFromSuperview()
+        }
+        let child: NSView
+        switch target {
+        case .installed: child = installedView
+        case .available: child = availableView
+        case .registries: child = registriesView
+        }
         contentContainer.addSubview(child)
         NSLayoutConstraint.activate([
             child.topAnchor.constraint(equalTo: contentContainer.topAnchor),
@@ -693,7 +886,12 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
             child.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             child.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
-        if showInstalled { renderInstalled() } else { renderRegistryPopup(); renderAvailable() }
+        registryButton.showsBackground = (target == .registries)
+        switch target {
+        case .installed: renderInstalled()
+        case .available: renderRegistryPopup(); renderAvailable()
+        case .registries: renderRegistries()
+        }
     }
 
     // MARK: - Data
@@ -1013,125 +1211,114 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         }
     }
 
-    @objc private func manageRegistries() {
-        let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 380),
-                             styleMask: [.titled], backing: .buffered, defer: false)
-        sheet.title = L10n.tr("skills.manageRegistry")
-        let root = NSView(frame: sheet.contentView?.bounds ?? .zero)
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-        stack.translatesAutoresizingMaskIntoConstraints = false
+    // MARK: - Registries page
 
-        for entry in store.data.registries {
-            let title = NSTextField(labelWithString: entry.label)
-            title.font = NSFont.boldSystemFont(ofSize: 12)
-            let detail = NSTextField(labelWithString: (entry.searchURL ?? "-") + "  |  " + entry.catalog.rawValue + " " + entry.catalogURL)
-            detail.font = NSFont.systemFont(ofSize: 10)
-            detail.textColor = .secondaryLabelColor
-            detail.lineBreakMode = .byTruncatingMiddle
-            let remove = NSButton(title: L10n.tr("skills.registry.delete"), target: self, action: #selector(registryDeleteTapped(_:)))
-            remove.bezelStyle = .rounded
-            remove.controlSize = .small
-            remove.font = NSFont.systemFont(ofSize: 11)
-            remove.identifier = NSUserInterfaceItemIdentifier(entry.id)
-            let line = NSStackView(views: [title, NSView(), remove])
-            line.orientation = .horizontal
-            line.spacing = 6
-            stack.addArrangedSubview(line)
-            stack.addArrangedSubview(detail)
-            line.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+    /// Management page rendered INSIDE the panel (the header's top-right button
+    /// switches to it); registries are cards, with an "add" card on top of the
+    /// list.
+    private func buildRegistriesPage() {
+        registriesTitle.font = NSFont.boldSystemFont(ofSize: 12)
+        registriesTitle.translatesAutoresizingMaskIntoConstraints = false
+        registriesBackButton.onAction = { [weak self] in
+            guard let self = self else { return }
+            self.showPage(self.segmented.selectedSegment == 0 ? .installed : .available)
         }
 
-        let nameField = NSTextField(string: "")
-        nameField.placeholderString = L10n.tr("skills.registry.name")
-        nameField.translatesAutoresizingMaskIntoConstraints = false
-        nameField.widthAnchor.constraint(equalToConstant: 150).isActive = true
-        let addressField = NSTextField(string: "")
-        addressField.placeholderString = L10n.tr("skills.registry.address")
-        addressField.translatesAutoresizingMaskIntoConstraints = false
-        addressField.widthAnchor.constraint(equalToConstant: 240).isActive = true
-        let addButton = NSButton(title: L10n.tr("skills.addRegistry"), target: nil, action: nil)
-        addButton.bezelStyle = .rounded
-        addButton.controlSize = .small
-        addButton.font = NSFont.systemFont(ofSize: 11)
-        let addRow = NSStackView(views: [nameField, addressField, addButton])
-        addRow.orientation = .horizontal
-        addRow.spacing = 6
-        stack.addArrangedSubview(addRow)
-        let note = NSTextField(wrappingLabelWithString: L10n.tr("skills.registry.note"))
-        note.font = NSFont.systemFont(ofSize: 10)
-        note.textColor = .secondaryLabelColor
-        stack.addArrangedSubview(note)
+        let headerRow = NSStackView(views: [registriesBackButton, registriesTitle, NSView()])
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .centerY
+        headerRow.spacing = 8
+        headerRow.translatesAutoresizingMaskIntoConstraints = false
 
-        root.addSubview(stack)
+        registriesScroll.translatesAutoresizingMaskIntoConstraints = false
+        registriesScroll.hasVerticalScroller = true
+        registriesScroll.drawsBackground = false
+        registriesList.orientation = .vertical
+        registriesList.alignment = .leading
+        registriesList.spacing = 8
+        registriesList.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+        registriesList.translatesAutoresizingMaskIntoConstraints = false
+        registriesScroll.documentView = registriesList
+
+        registriesView.addSubview(headerRow)
+        registriesView.addSubview(registriesScroll)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: root.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            headerRow.topAnchor.constraint(equalTo: registriesView.topAnchor, constant: 8),
+            headerRow.leadingAnchor.constraint(equalTo: registriesView.leadingAnchor, constant: 8),
+            headerRow.trailingAnchor.constraint(equalTo: registriesView.trailingAnchor, constant: -8),
+
+            registriesScroll.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 6),
+            registriesScroll.leadingAnchor.constraint(equalTo: registriesView.leadingAnchor),
+            registriesScroll.trailingAnchor.constraint(equalTo: registriesView.trailingAnchor),
+            registriesScroll.bottomAnchor.constraint(equalTo: registriesView.bottomAnchor),
+            registriesList.leadingAnchor.constraint(equalTo: registriesScroll.contentView.leadingAnchor),
+            registriesList.trailingAnchor.constraint(equalTo: registriesScroll.contentView.trailingAnchor),
+            registriesList.topAnchor.constraint(equalTo: registriesScroll.contentView.topAnchor),
+            registriesList.widthAnchor.constraint(equalTo: registriesScroll.contentView.widthAnchor),
         ])
-        sheet.contentView = root
-        addButton.target = self
-        addButton.action = #selector(registryAddTapped(_:))
-        registrySheetFields = [nameField, addressField]
-        presentSheet(sheet, doneTitle: L10n.tr("skills.ok"))
+        registriesView.translatesAutoresizingMaskIntoConstraints = false
     }
 
-    private var registrySheetFields: [NSTextField] = []
-    private var registrySheet: NSWindow?
+    private func renderRegistries() {
+        for sub in registriesList.arrangedSubviews { sub.removeFromSuperview() }
+        registriesTitle.stringValue = L10n.tr("skills.registry.title")
 
-    @objc private func registryAddTapped(_ sender: NSButton) {
-        guard registrySheetFields.count == 2 else { return }
-        let name = registrySheetFields[0].stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let address = registrySheetFields[1].stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !address.isEmpty else { return }
+        for entry in store.data.registries {
+            let card = RegistryCardView(entry: entry)
+            card.onToggleEnabled = { [weak self] on in
+                guard let self = self else { return }
+                var updated = entry
+                updated.enabled = on
+                self.store.upsertRegistry(updated)
+                AppLog.shared.log("skills: registry " + entry.id + " enabled=" + String(on))
+                self.renderRegistryPopup()
+                self.renderRegistries()
+            }
+            card.onDelete = { [weak self] in self?.confirmDeleteRegistry(entry) }
+            registriesList.addArrangedSubview(card)
+            card.widthAnchor.constraint(equalTo: registriesList.widthAnchor, constant: -20).isActive = true
+        }
+
+        if store.data.registries.isEmpty {
+            let empty = emptyCard(L10n.tr("skills.registry.empty"))
+            registriesList.addArrangedSubview(empty)
+            empty.widthAnchor.constraint(equalTo: registriesList.widthAnchor, constant: -20).isActive = true
+        }
+
+        let addCard = RegistryAddCardView()
+        addCard.onAdd = { [weak self] name, address in self?.addRegistry(name: name, address: address) }
+        registriesList.addArrangedSubview(addCard)
+        addCard.widthAnchor.constraint(equalTo: registriesList.widthAnchor, constant: -20).isActive = true
+    }
+
+    private func addRegistry(name: String, address: String) {
         guard let probed = SkillRegistryClient.probe(address) else {
-            setStatus(L10n.tr("skills.err.unsupportedAddress"), error: true)
+            setStatus(L10n.tr("skills.err.unsupportedAddress") + " " + address, error: true)
             return
         }
         var entry = probed
         if !name.isEmpty { entry.label = name }
         store.upsertRegistry(entry)
         AppLog.shared.log("skills: registry added " + entry.label + " (" + entry.catalog.rawValue + ")")
-        registrySheet?.sheetParent?.endSheet(registrySheet!)
+        setStatus(L10n.tr("skills.registry.added"), error: false)
         renderRegistryPopup()
+        renderRegistries()
     }
 
-    @objc private func registryDeleteTapped(_ sender: NSButton) {
-        guard let id = sender.identifier?.rawValue else { return }
-        store.removeRegistry(id: id)
-        AppLog.shared.log("skills: registry removed " + id)
-        registrySheet?.sheetParent?.endSheet(registrySheet!)
-        renderRegistryPopup()
-    }
-
-    private func presentSheet(_ sheet: NSWindow, doneTitle: String) {
-        let button = NSButton(title: doneTitle, target: self, action: #selector(closeSheet))
-        button.bezelStyle = .rounded
-        button.keyEquivalent = "\u{1b}"
-        sheet.contentView?.addSubview(button)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            button.trailingAnchor.constraint(equalTo: sheet.contentView!.trailingAnchor, constant: -12),
-            button.bottomAnchor.constraint(equalTo: sheet.contentView!.bottomAnchor, constant: -12),
-        ])
-        registrySheet = sheet
-        if let window = view.window {
-            window.beginSheet(sheet, completionHandler: nil)
-        } else {
-            sheet.makeKeyAndOrderFront(nil)
+    private func confirmDeleteRegistry(_ entry: SkillRegistryRecord) {
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("skills.registry.delete")
+        alert.informativeText = entry.label
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L10n.tr("skills.registry.delete"))
+        alert.addButton(withTitle: L10n.tr("skills.cancel"))
+        runAlert(alert) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self = self else { return }
+            self.store.removeRegistry(id: entry.id)
+            AppLog.shared.log("skills: registry removed " + entry.id)
+            self.renderRegistryPopup()
+            self.renderRegistries()
         }
-    }
-
-    @objc private func closeSheet() {
-        if let sheet = registrySheet, let parent = sheet.sheetParent {
-            parent.endSheet(sheet)
-        } else {
-            registrySheet?.close()
-        }
-        registrySheet = nil
     }
 
     // MARK: - Install

@@ -25,8 +25,26 @@ test("header shows the panel's fixed title key", panel.headerTitleKey() == "skil
 panel.refreshTooltips()
 test("a language switch keeps the fixed title", panel.headerTitleKey() == "skills.title")
 
-// Scans the fixture roots, renders the installed list and the registry popup.
+// Scans the fixture roots, renders the installed list and the registry tabs.
 panel.ensureLoaded()
 panel.refreshTooltips()
+
+// The registry-management page is rendered INSIDE the content area (the header's
+// top-right button switches to it), so exercise all three pages.
+panel.showPage(.registries)
+panel.showPage(.available)
+panel.showPage(.installed)
+
+// Instantiating the panel seeds the default registry into the shell store.
+let home = ProcessInfo.processInfo.environment["DSH_HOME"] ?? ""
+let storeFile = (home as NSString).appendingPathComponent("shell/skills.json")
+test("shell store seeded at $DSH_HOME/shell/skills.json", FileManager.default.fileExists(atPath: storeFile))
+if let raw = try? String(contentsOfFile: storeFile, encoding: .utf8) {
+    // NOTE: JSONEncoder escapes forward slashes ("api\/search"), so match on
+    // markers without slashes.
+    test("default skills.sh registry persisted", raw.contains("skills-sh") && raw.contains("{q}"))
+} else {
+    test("default skills.sh registry persisted", false)
+}
 
 print("done")
