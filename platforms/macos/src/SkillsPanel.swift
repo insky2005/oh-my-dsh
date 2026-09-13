@@ -724,18 +724,25 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         renderInstalled()
     }
 
+    /// Tab order in the installed toolbar: All / Shared / Built-in / User /
+    /// Project (shared first, since that is the level external tools install
+    /// into — see docs/skills-manager-design.md).
     private static var levelEntries: [(String, SkillLevel?)] {
         [(L10n.tr("skills.filter.all"), nil),
+         (L10n.tr("skills.badge.shared"), .shared),
          (L10n.tr("skills.badge.builtin"), .builtin),
          (L10n.tr("skills.badge.user"), .user),
-         (L10n.tr("skills.badge.shared"), .shared),
          (L10n.tr("skills.badge.project"), .project)]
     }
 
     private func rebuildLevelFilter() {
         let entries = SkillsPanelController.levelEntries
-        levelTabs.setItems(entries.map { $0.0 }, selected: levelTabs.selectedIndex)
-        filterLevel = entries[max(0, min(levelTabs.selectedIndex, entries.count - 1))].1
+        // Keep the SELECTED LEVEL across rebuilds (language switches, rescans):
+        // the tab order may differ from the previous build, so match by value
+        // instead of carrying the old index over.
+        let index = entries.firstIndex { $0.1 == filterLevel } ?? 0
+        levelTabs.setItems(entries.map { $0.0 }, selected: index)
+        filterLevel = entries[index].1
     }
 
     private func levelTabChanged(_ index: Int) {
