@@ -74,6 +74,8 @@ stage_swift() {
   tests/l10n/run.sh
   echo "--- native dsh RPC helper tests ---"
   tests/dsh-rpc/run.sh
+  echo "--- dsh auth-cookie janitor tests ---"
+  tests/dsh-auth-cookies/run.sh
   echo "--- build CEF integration artifacts (arm64) ---"
   mkdir -p .build/module-cache
   platforms/macos/build-cef.sh arm64
