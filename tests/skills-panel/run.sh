@@ -21,4 +21,16 @@ swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
 mkdir -p "$TMP/fixture/home"
 DSH_HOME="$TMP/fixture/home" DSH_AGENTS_HOME="$TMP/fixture/agents" \
   TEST_ROOT="$TMP/fixture" "$TMP/skills-panel-tests"
+
+echo "--- skills panel controller (headless smoke) ---"
+# Separate build dir: top-level code must live in a file named main.swift, and
+# the model-layer binary above already owns the outer one.
+mkdir -p "$TMP/panel"
+cp "$TMP/stubs.swift" "$TMP/SkillsCore.swift" "$TMP/SkillSources.swift" "$TMP/SkillInstaller.swift" "$TMP/panel/"
+cp ../../platforms/macos/src/SkillsPanel.swift "$TMP/panel/SkillsPanel.swift"
+cp panel-tests.swift "$TMP/panel/main.swift"
+swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
+  -o "$TMP/skills-panel-controller-tests" "$TMP/panel/"*.swift
+DSH_HOME="$TMP/fixture/home" DSH_AGENTS_HOME="$TMP/fixture/agents" \
+  TEST_ROOT="$TMP/fixture" "$TMP/skills-panel-controller-tests"
 rm -rf "$TMP"
