@@ -73,6 +73,8 @@ jobs:
             cache-${{ runner.os }}-prepare-
       - name: Terminal emulator tests (migrated to core)
         run: node --test core/tests/ansi.test.js
+      - name: Terminal panel tests (header)
+        run: tests/terminal-panel/run.sh
       - name: Wiki panel tests
         run: tests/wiki-panel/run.sh
       - name: Browser panel tests

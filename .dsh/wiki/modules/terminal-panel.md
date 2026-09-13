@@ -1,8 +1,8 @@
 ---
 title: 模块：TerminalPanel.swift（终端面板）
 tags: [module, terminal, pty, ansi, emulator]
-updated: 2026-08-15T15:31:24Z
-sources: [platforms/macos/src/TerminalPanel.swift, docs/terminal-input-fix.md, docs/terminal-header-fix.md]
+updated: 2026-09-12T11:20:00Z
+sources: [platforms/macos/src/TerminalPanel.swift, docs/terminal-input-fix.md, docs/terminal-header-fix.md, tests/terminal-panel/]
 manual: false
 ---
 
@@ -37,6 +37,7 @@ manual: false
 
 ### `TerminalPanelController`（多标签面板）
 
+- **头部固定标题**：面板头部显示固定的面板名「终端 / Terminal」（复用活动栏键 `bar.terminal`，语言切换经 `refreshTooltips()` 刷新），**不跟随会话**；会话标题（OSC 标题 / 已结束状态）留在页签与头部标题的悬停 tooltip 里（「会话已结束」本身仍在内容区叠加提示）。回归测试 `tests/terminal-panel/`（无头，不建 PTY：标题固定、语言切换后仍固定、关会话后不被清空）；
 - `minWidth = 300`；标签页默认命名「终端 1/2/3…」，OSC 标题自动改名；`⌘1-9` 直切、`⌘⇧[`/`⌘⇧]` 循环、`+` 新建、`✕` 关闭；
 - `serverReady(port:)` 门控：服务就绪后新会话以**当前查看的工作区目录**为 cwd 启动——`newSession()`/`spawnWithCwd()` 调 `DSHSessionRPC.resolveProjectDirectory`（优先共享 `ProjectDirectory.current`=当前工作区，未设置时回退实时查询并缓存；不再用 running/最近更新启发式，build 60→61 修复 14），失败回退 `~`，`armSpawnFallbackTimer` 兜底；
 - `exit` / `⌃D` → 正常结束自动关标签页（最后一个标签退出则收起面板）；异常退出（信号杀死）→ 保留「会话已结束 + 重启」态；

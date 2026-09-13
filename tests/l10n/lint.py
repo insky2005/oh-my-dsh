@@ -71,6 +71,11 @@ def main():
     # reported as missing.
     known = keys | loose_keys
 
+    # A literal inside string interpolation (e.g. "\(L10n.tr(\"a.b\"))") can hide
+    # from the plain string scan, so anything used through L10n.tr() also counts
+    # as referenced — otherwise the "unused key" warning would mislead.
+    referenced |= used
+
     failures = []
     missing = sorted(used - known)
     if missing:
