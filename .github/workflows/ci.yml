@@ -73,6 +73,8 @@ jobs:
             cache-${{ runner.os }}-prepare-
       - name: Terminal emulator tests (migrated to core)
         run: node --test core/tests/ansi.test.js
+      - name: Terminal panel tests (header)
+        run: tests/terminal-panel/run.sh
       - name: Wiki panel tests
         run: tests/wiki-panel/run.sh
       - name: Browser panel tests
@@ -85,6 +87,10 @@ jobs:
         run: tests/dsh-rpc/run.sh
       - name: Review (change audit) panel tests
         run: tests/review-panel/run.sh
+      - name: File panel (workspace tab memory) tests
+        run: tests/file-panel/run.sh
+      - name: L10n key lint
+        run: tests/l10n/run.sh
       - name: Build CEF integration artifacts (arm64)
         run: |
           mkdir -p .build/module-cache

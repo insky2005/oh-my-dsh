@@ -1,7 +1,7 @@
 ---
 title: 模块：PreviewPanel.swift（预览面板，回滚基线）
 tags: [module, preview, file-tree, tabs, rollback]
-updated: 2026-08-21T14:32:00Z
+updated: 2026-09-12T09:09:44Z
 sources: [platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/FilePanel.swift, docs/plans/PREVIEW_PLAN-file-panel.md]
 manual: false
 ---
@@ -44,4 +44,5 @@ manual: false
 - 文本解码失败（非 UTF-8）→ `preview.unreadable` 提示；文件过大 → 截断提示；
 - 树变更轮询为 2s 间隔（轻量 mtime 比对），非 FSEvents；
 - 目录树根失败时提供手动选文件夹兜底（RPC 失败场景）；
-- 当前实际接入壳层的是 FilePanel（`previewPanel` 类型为 `FilePanelController`），本文件不再被实例化，仅保留作为回滚基线与共享 UI 组件来源。
+- 当前实际接入壳层的是 FilePanel（`previewPanel` 类型为 `FilePanelController`），本文件不再被实例化，仅保留作为回滚基线与共享 UI 组件来源；
+- **分叉提示**：FilePanel 已进一步演进——本文件的 `setProjectDirectory` 仍是「只重设树根、不动已开页签」，而 FilePanel 会在换根时按工作区**记忆并关闭 / 重开页签**（见 [file-panel](modules/file-panel.md)）；回滚到大基线时该能力随之消失。

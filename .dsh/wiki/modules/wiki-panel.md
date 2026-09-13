@@ -1,8 +1,8 @@
 ---
 title: 模块：WikiPanel.swift（Repo Wiki 面板）
 tags: [module, wiki, knowledge-base, rpc, skill]
-updated: 2026-09-10T23:50:00Z
-sources: [platforms/macos/src/WikiPanel.swift, platforms/macos/src/DshWebRPC.swift, docs/repo-wiki-design.md, .dsh/skills/repo-knowledge/SKILL.md]
+updated: 2026-09-12T11:45:00Z
+sources: [platforms/macos/src/WikiPanel.swift, platforms/macos/src/DshWebRPC.swift, docs/repo-wiki-design.md, .dsh/skills/repo-knowledge/SKILL.md, tests/wiki-panel/]
 manual: false
 ---
 
@@ -37,6 +37,7 @@ manual: false
 - **失败必可见**（2026-09-12）：会话压根没起来时（`session/create` 或 `session/prompt` 被 dsh 拒绝，如 401/`workspace/not-found`），状态条显示「生成失败（详见日志）」5 秒并写 `app.log`（端口 / 仓库 / workspaceId）——此前 `generationFailed()` 在「还没有在途生成」时什么都不做，表现为**点了没反应**；`WikiRPC.createSession` 另在 workspaceId 被拒时自动回退 `cwd` 建会话（保证「能在对应 workspace 起出会话」），create/prompt 超时 6s→15s；`DshWebRPC` 只在端点真的不存在（404/405）时才降级点号方法（超时/401/业务错误不再把该端点永久钉死，见 docs/dsh-version-impact.md §4.4）；
 - **生成中浮层**（build 56→61 收敛）：历次实现（spinner 栈 / Core Graphics 自绘 `WikiCenteredLabel` / NSTextField 栈）要么渲染失败、要么清空阅读区后提示失败导致整片空白；最终方案——`showGenerating()` **不清空任何内容**，在阅读区上叠加半透明浮层（`WikiOverlayView`，随明暗 0.82 透明度背景、非 opaque、背景绘制失败自动退化透明）+ 居中 `NSTextField`「Generating…」（空态同款已验证渲染）；底部状态条每秒刷新已耗时（`wiki.generatingElapsed`）；生成期间 2s 轮询**不再跳过**——代理每写出一页，左侧树即实时出现该页；完成/失败/取消后 `scanAndReload` 清空子视图时浮层自动移除；「取消」走 `WikiRPC.cancel`（`session.cancel`）并显示「已取消」3 秒；失败/取消后都 `refresh()` 恢复内容区；
 - **陈旧/手动标记**：树节点与页头显示「可能过期」（⚠）/「手动维护」（✎）；`manual: true` 页代理永不覆盖；
+- **头部固定标题**：面板头部显示固定的面板名「知识库 / Wiki」（复用活动栏键 `bar.wiki`，语言切换经 `refreshTooltips()` 刷新），**不跟随当前页面**；被阅读的页面名改放进头部标题的**悬停 tooltip**（生成中浮层、空态、关闭面板时清掉该提示）。回归测试 `tests/wiki-panel/panel-header-tests.swift`（无头：标题固定 / 语言切换后仍固定）；
 - **渲染与导航**：`showPage` 渲染 frontmatter 摘要条 + markdown 正文 + backlinks 区；`textView(_:clickedOnLink:)`：`dshwiki://` 页内跳转，其余交默认浏览器。
 
 ## 与其他模块的关系

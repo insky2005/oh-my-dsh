@@ -56,6 +56,8 @@ stage_swift() {
   echo "==> [2/3 swift] panel tests + swiftc compile check (swift job)"
   echo "--- terminal emulator (migrated to core) ---"
   node --test core/tests/ansi.test.js
+  echo "--- terminal panel tests (header) ---"
+  tests/terminal-panel/run.sh
   echo "--- wiki panel tests ---"
   tests/wiki-panel/run.sh
   echo "--- browser panel tests ---"
@@ -66,6 +68,10 @@ stage_swift() {
   tests/channel-panel/run.sh
   echo "--- review (change audit) panel tests ---"
   tests/review-panel/run.sh
+  echo "--- file panel (workspace tab memory) tests ---"
+  tests/file-panel/run.sh
+  echo "--- L10n key lint ---"
+  tests/l10n/run.sh
   echo "--- native dsh RPC helper tests ---"
   tests/dsh-rpc/run.sh
   echo "--- build CEF integration artifacts (arm64) ---"

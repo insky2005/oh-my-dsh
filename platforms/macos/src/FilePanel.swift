@@ -51,9 +51,33 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// Whether any preview tab is currently open.
     var hasOpenTabs: Bool { !tabs.isEmpty }
 
+    // MARK: - Headless test surface (tests/file-panel/run.sh)
+
+    /// The open tabs' paths, in tab-bar order. The panel's tab state has no
+    /// other reader, and the workspace hand-off is only observable through it.
+    var openTabPaths: [String] { tabs.map { $0.path } }
+
+    /// The selected tab's path, if any.
+    var selectedTabPath: String? { currentTabPath }
+
+    /// The directory the panel currently follows (its tree root), if any.
+    var projectRootPath: String? { treeRoot?.path }
+
+    /// The header's title (a fixed panel name, never a file path).
+    var headerTitle: String { titleLabel.text }
+
+    /// The hover tooltip of the header title (the active tab's full path).
+    var headerTooltip: String? { titleLabel.toolTip }
+
+    /// Run the header Close button's action (close every tab + clear the
+    /// per-workspace tab memory), exactly as clicking it does.
+    func performCloseAction() { hidePanel(nil) }
+
     // MARK: - Subviews
 
-    private let pathLabel = HeaderLabel()
+    /// 头部固定标题（「文件 / Files」，与活动栏同名）：**不跟随当前文件的路径**。
+    /// 路径没有丢——页签 tooltip 与这里的悬停 tooltip 都带完整路径。
+    private let titleLabel = HeaderLabel()
     private var projectButton: CustomIconButton!
     private var openButton: CustomIconButton!
     private var revealButton: CustomIconButton!
@@ -99,6 +123,20 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     private var selectedId: Int?
     private var nextId = 1
     private var dirRows: [DirRow] = []
+
+    /// Per-workspace memory of the open preview tabs (see setTreeRoot): a
+    /// workspace switch closes every tab — releasing its editor / highlighting /
+    /// preview content — after remembering what was open, and reopens that set
+    /// when the user switches back. Cleared wholesale by the Close button.
+    private var tabMemory = WorkspaceTabMemory()
+    /// The unsaved-changes sheet the panel is currently asking in (a workspace
+    /// switch or a close), if any. A newer switch request dismisses it (newest
+    /// wins) instead of being ignored — ignoring used to leave the panel
+    /// permanently stuck on a workspace it no longer followed.
+    private var pendingPromptAlert: NSAlert?
+    /// Bumped for every switch request so a superseded prompt's completion is
+    /// recognised and never applied.
+    private var switchRequestGeneration = 0
 
     /// Directory tree state (root of the current project folder).
     private var treeRoot: TreeNode?
@@ -158,8 +196,9 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         // All header content is custom-drawn (HeaderLabel / CustomIconButton):
         // NSTextField/NSButton cells were observed not rendering in some
         // environments, while Core Graphics text and bezier paths render.
-        pathLabel.translatesAutoresizingMaskIntoConstraints = false
-        pathLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.text = Self.panelTitle
 
         // Icon buttons with tooltips (hover shows what each does).
         projectButton = CustomIconButton(glyph: .folder, tooltip: L10n.tr("preview.openProjectHint"))
@@ -188,12 +227,12 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         let header = DynamicFillView()
         header.kind = .window
         header.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(pathLabel)
+        header.addSubview(titleLabel)
         header.addSubview(actions)
         NSLayoutConstraint.activate([
-            pathLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
-            pathLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            pathLabel.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor, constant: -8),
+            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
+            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor, constant: -8),
             actions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
             actions.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             header.heightAnchor.constraint(equalToConstant: 40),
@@ -363,6 +402,30 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         close(sender.tag)
     }
 
+    /// Close a tab the USER asked to close (the tab's ✕, or ⌘W): when it has
+    /// unsaved edits, ask first — this is a panel-local action, so "cancel" is a
+    /// legitimate answer here (unlike a workspace switch, which dsh web already
+    /// performed).
+    private func close(_ id: Int) {
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        guard tab.isDirty, tab.editor != nil else {
+            closeNow(id)
+            return
+        }
+        askAboutUnsaved([tab], message: "preview.closeUnsavedMessage", saveTitle: "preview.closeSave") { [weak self] decision in
+            guard let self = self else { return }
+            switch decision {
+            case .cancel:
+                AppLog.shared.log("preview close tab cancelled (unsaved): \(tab.path)")
+            case .discard:
+                self.closeNow(id)
+            case .save:
+                guard self.saveTabs([tab]) else { return }   // error shown; tab stays
+                self.closeNow(id)
+            }
+        }
+    }
+
     private func select(_ id: Int) {
         guard let tab = tabs.first(where: { $0.id == id }) else { return }
         selectedId = id
@@ -374,7 +437,9 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         refreshSaveState()
     }
 
-    private func close(_ id: Int) {
+    /// Drop one tab immediately (no unsaved-changes question — callers have
+    /// either resolved it or are not user-initiated).
+    private func closeNow(_ id: Int) {
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         tabs[idx].container.removeFromSuperview()
         tabs.remove(at: idx)
@@ -384,12 +449,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         if let next = tabs.indices.contains(idx) ? tabs[idx] : tabs.last {
             select(next.id)
         } else {
-            contentContainer.subviews.forEach { $0.removeFromSuperview() }
-            pathLabel.text = ""
-            openButton.isEnabled = false
-            revealButton.isEnabled = false
-            showEmptyState()
-            refreshSaveState()
+            resetContentArea()
         }
     }
 
@@ -409,11 +469,16 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         return tabs.first(where: { $0.id == id })?.path
     }
 
+    /// 头部随活动页签变化的部分：按钮可用性 + 悬停提示里的完整路径。
+    /// 标题本身是固定的面板名（见 panelTitle），不显示路径。
     private func updateHeader(for path: String) {
-        pathLabel.text = path
+        titleLabel.toolTip = path
         openButton.isEnabled = true
         revealButton.isEnabled = true
     }
+
+    /// 面板的固定标题：与活动栏的「文件 / Files」同名，语言切换时刷新。
+    private static var panelTitle: String { L10n.tr("bar.preview") }
 
     // MARK: - Actions (top-right)
 
@@ -428,22 +493,119 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     }
 
     @objc private func hidePanel(_ sender: Any?) {
-        // 关闭面板 = 关闭所有预览页签（释放渲染内容），再收起面板
-        closeAllTabs()
-        onRequestHide?()
+        // 关闭面板 = 关闭所有预览页签（释放渲染内容）+ 清空工作区记忆，再收起面板。
+        // 有未保存修改时先问一句：取消 = 面板保持原样（不关也不清）。
+        let dirty = tabs.filter { $0.isDirty && $0.editor != nil }
+        guard !dirty.isEmpty else {
+            closeAllTabs()
+            onRequestHide?()
+            return
+        }
+        askAboutUnsaved(dirty, message: "preview.closeUnsavedMessage", saveTitle: "preview.closeSave") { [weak self] decision in
+            guard let self = self else { return }
+            switch decision {
+            case .cancel:
+                AppLog.shared.log("preview close cancelled (unsaved tabs kept)")
+            case .discard:
+                self.closeAllTabs()
+                self.onRequestHide?()
+            case .save:
+                guard self.saveTabs(dirty) else { return }   // error shown; panel stays
+                self.closeAllTabs()
+                self.onRequestHide?()
+            }
+        }
     }
 
     /// 关闭所有预览页签并清空内容区（面板关闭时释放资源）。
     private func closeAllTabs() {
-        for tab in tabs {
-            tabStack.removeArrangedSubview(tab.container)
-            tab.container.removeFromSuperview()
+        supersedePendingPrompt()
+        closeEveryTab()
+        tabMemory.forgetAll()          // 关闭面板 = 回收：连各工作区的记忆一并清空
+        AppLog.shared.log("preview close: all tabs dropped (workspace tab memory cleared)")
+    }
+
+    /// The answer to an unsaved-changes question before a user-initiated close.
+    private enum UnsavedDecision { case save, discard, cancel }
+
+    /// Ask about unsaved edits before a close the USER asked for (a tab's ✕, ⌘W,
+    /// or the panel's ✕). `cancel` abandons the action; `save`/`discard` proceed
+    /// (the caller saves first for .save). With no window there is nobody to ask:
+    /// nothing is discarded — the action is abandoned instead.
+    private func askAboutUnsaved(_ dirty: [Tab], message: String, saveTitle: String,
+                                 proceed: @escaping (UnsavedDecision) -> Void) {
+        guard !dirty.isEmpty else {
+            proceed(.discard)
+            return
         }
-        tabs.removeAll()
+        guard let window = view.window else {
+            AppLog.shared.log("preview close: \(dirty.count) unsaved tab(s) kept (no window to confirm in)")
+            proceed(.cancel)
+            return
+        }
+        let names = dirty.map { ($0.path as NSString).lastPathComponent }
+        let listed = names.prefix(5).joined(separator: "\n") + (names.count > 5 ? "\n…" : "")
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("preview.unsavedTitle")
+        alert.informativeText = L10n.tr(message, listed)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L10n.tr(saveTitle))
+        alert.addButton(withTitle: L10n.tr("preview.discard"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))   // ESC
+        pendingPromptAlert = alert
+        AppLog.shared.log("preview close: asks about \(dirty.count) unsaved tab(s)")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            self?.pendingPromptAlert = nil
+            switch response {
+            case .alertFirstButtonReturn: proceed(.save)
+            case .alertSecondButtonReturn: proceed(.discard)
+            default: proceed(.cancel)
+            }
+        }
+    }
+
+    /// Write back every tab among `candidates` that is still dirty. Returns false
+    /// when any save failed (the editor already reported it through onSaveError),
+    /// so the caller can keep the tab / panel open instead of losing the buffer.
+    private func saveTabs(_ candidates: [Tab]) -> Bool {
+        var allSaved = true
+        for candidate in candidates {
+            guard let idx = tabs.firstIndex(where: { $0.id == candidate.id }),
+                  tabs[idx].isDirty, let editor = tabs[idx].editor else { continue }
+            AppLog.shared.log("preview close: saving \(tabs[idx].path)")
+            if !editor.writeBack() { allSaved = false }
+        }
+        return allSaved
+    }
+
+    /// Drop every open tab and reset the content area (no memory side effects).
+    private func closeEveryTab() {
+        closeTabs(Set(tabs.map { $0.id }))
         selectedId = nil
+        resetContentArea()
+    }
+
+    /// Close the given tabs, releasing their content (no memory side effects).
+    /// Used by the workspace hand-off, which keeps tabs with unresolved unsaved
+    /// edits open while closing the rest.
+    private func closeTabs(_ ids: Set<Int>) {
+        for id in ids {
+            guard let idx = tabs.firstIndex(where: { $0.id == id }) else { continue }
+            tabStack.removeArrangedSubview(tabs[idx].container)
+            tabs[idx].container.removeFromSuperview()
+            tabs.remove(at: idx)
+        }
+        if let selected = selectedId, !tabs.contains(where: { $0.id == selected }) {
+            selectedId = nil
+        }
         onTabsChanged?()
+        refreshSaveState()
+    }
+
+    /// Empty the content area and the header (no tab is open/rendered).
+    private func resetContentArea() {
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
-        pathLabel.text = ""
+        titleLabel.toolTip = nil
         openButton.isEnabled = false
         revealButton.isEnabled = false
         showEmptyState()
@@ -452,6 +614,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     /// 语言切换后刷新头部按钮 tooltip（构建时一次性设置，需手动跟随）。
     func refreshTooltips() {
+        titleLabel.text = Self.panelTitle
         projectButton?.toolTip = L10n.tr("preview.openProjectHint")
         openButton?.toolTip = L10n.tr("preview.openInDefaultAppHint")
         revealButton?.toolTip = L10n.tr("preview.revealInFinderHint")
@@ -523,8 +686,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
             guard let self = self else { return }
             if let cwd = cwd {
                 AppLog.shared.log("preview project dir (RPC): \(cwd)")
-                self.setTreeRoot(cwd)
-                self.open(path: cwd)
+                self.setTreeRoot(cwd, thenOpen: cwd)
             } else {
                 AppLog.shared.log("preview project dir: RPC failed, using picker")
                 self.pickDirectoryFallback()
@@ -533,8 +695,9 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     }
 
     /// Re-root the project directory tree when the active dsh session's
-    /// workspace changes (called by the shell's dshSession handler). Only the
-    /// tree is re-pointed; open preview tabs stay untouched.
+    /// workspace changes (called by the shell's dshSession handler). The tabs of
+    /// the outgoing workspace are remembered and closed, and the incoming
+    /// workspace's remembered tabs are reopened — see setTreeRoot.
     func setProjectDirectory(_ path: String) {
         AppLog.shared.log("preview project dir updated: \(path)")
         treeTriedLoad = false
@@ -581,18 +744,46 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         panel.beginSheetModal(for: window) { [weak self] resp in
             guard resp == .OK, let url = panel.url else { return }
             ShellConfig.shared.set(url.path, forKey: "previewLastDirectory")
-            self?.setTreeRoot(url.path)
-            self?.open(path: url.path)
+            // setTreeRoot hands the open tabs over when this is a different
+            // folder, then opens the picked folder as the new workspace's tab.
+            self?.setTreeRoot(url.path, thenOpen: url.path)
         }
     }
 
     // MARK: - Directory tree
 
     /// Replace the tree root with the given directory and reload.
-    private func setTreeRoot(_ path: String) {
+    ///
+    /// This is the panel's ONLY re-root entry point — the workspace follow
+    /// (setProjectDirectory), the project-folder button and the folder picker
+    /// all land here — so a root change is also where the per-workspace tab
+    /// hand-off happens: when the root moves to a DIFFERENT directory, the
+    /// outgoing workspace's tabs are remembered and closed (they belong to that
+    /// workspace and hold editors/highlighting/preview content alive), and the
+    /// incoming workspace's remembered tabs are reopened. A first resolution
+    /// (treeRoot == nil) never closes anything: file links can open tabs before
+    /// the tree has a root.
+    /// `thenOpen` is a path to open as a tab once the root is in place — the
+    /// caller's own "show me this folder" step (project-folder button, folder
+    /// picker). It must NOT run before the hand-off decides the fate of the old
+    /// tabs, or the caller's tab would be remembered under the OLD workspace.
+    private func setTreeRoot(_ path: String, thenOpen: String? = nil) {
         guard (path as NSString).isAbsolutePath else { return }
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return }
+        if let previous = treeRoot?.path,
+           WorkspaceTabMemory.key(for: previous) != WorkspaceTabMemory.key(for: path) {
+            beginWorkspaceSwitch(from: previous, to: path, thenOpen: thenOpen)
+            return   // the hand-off continues into applyTreeRoot
+        }
+        applyTreeRoot(path)
+        if let thenOpen = thenOpen { open(path: thenOpen) }
+    }
+
+    /// Install `path` as the tree root and start watching it (the body of the
+    /// original setTreeRoot, split out so a workspace switch can re-root AFTER
+    /// it has dealt with the outgoing tabs).
+    private func applyTreeRoot(_ path: String) {
         applyInitialTreeWidthIfNeeded()
         let root = TreeNode(name: (path as NSString).lastPathComponent, path: path, isDir: true)
         root.children = Self.loadChildren(of: root)
@@ -603,6 +794,151 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         treeOutline.selectRowIndexes([], byExtendingSelection: false)
         startTreeWatcher()
         AppLog.shared.log("preview tree root: \(path) (\(root.children?.count ?? 0) entries)")
+    }
+
+    // MARK: - Workspace tab hand-off
+
+    /// A switch is pending: the tree root is moving from `from` to `to`.
+    ///
+    /// The panel ALWAYS follows the workspace — dsh web has already switched, so
+    /// there is no "stay here" answer (that is what left the two sides showing
+    /// different workspaces). When unsaved edits are in the way the sheet only
+    /// asks whether to SAVE them:
+    ///   - 保存并切换: write every dirty buffer, then hand the tabs over; a tab
+    ///     whose save failed stays open (never discard silently);
+    ///   - 不保存: hand over, dropping the edits;
+    ///   - nobody to ask (panel hidden / headless) or an unrecognised dismissal:
+    ///     keep the dirty tabs open and follow anyway.
+    private func beginWorkspaceSwitch(from: String, to: String, thenOpen: String? = nil) {
+        // A prompt from an earlier switch may still be up (workspaces can be
+        // flipped in dsh web faster than the sheet is answered): the newest
+        // request wins — never ignore a request, or the panel ends up stuck on a
+        // workspace it silently stopped following.
+        supersedePendingPrompt()
+        switchRequestGeneration += 1
+        let generation = switchRequestGeneration
+        let dirty = tabs.filter { $0.isDirty && $0.editor != nil }
+        guard !dirty.isEmpty else {
+            performWorkspaceSwitch(from: from, to: to, thenOpen: thenOpen)
+            return
+        }
+        let dirtyIds = Set(dirty.map { $0.id })
+        guard let window = view.window else {
+            AppLog.shared.log("preview workspace switch: \(dirty.count) unsaved tab(s) kept open, "
+                              + "no window to ask in: \(to)")
+            performWorkspaceSwitch(from: from, to: to, thenOpen: thenOpen, keeping: dirtyIds)
+            return
+        }
+        let names = dirty.map { ($0.path as NSString).lastPathComponent }
+        let listed = names.prefix(5).joined(separator: "\n") + (names.count > 5 ? "\n…" : "")
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("preview.unsavedTitle")
+        alert.informativeText = L10n.tr("preview.switchUnsavedMessage", listed)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L10n.tr("preview.switchSave"))
+        alert.addButton(withTitle: L10n.tr("preview.discard"))
+        pendingPromptAlert = alert
+        AppLog.shared.log("preview workspace switch asks about \(dirty.count) unsaved tab(s): \(from) -> \(to)")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self = self, generation == self.switchRequestGeneration else {
+                AppLog.shared.log("preview workspace switch: superseded prompt ignored: \(to)")
+                return
+            }
+            self.pendingPromptAlert = nil
+            // The root can move while the sheet is up only via a newer request,
+            // which the generation check above already rejected.
+            let root = self.treeRoot.map { $0.path } ?? from
+            guard WorkspaceTabMemory.key(for: root) == WorkspaceTabMemory.key(for: from) else {
+                AppLog.shared.log("preview workspace switch: stale request ignored (root already moved): \(to)")
+                return
+            }
+            switch response {
+            case .alertSecondButtonReturn:
+                AppLog.shared.log("preview workspace switch discarding unsaved edits: \(to)")
+                self.performWorkspaceSwitch(from: from, to: to, thenOpen: thenOpen)
+            case .alertFirstButtonReturn:
+                var failed: Set<Int> = []
+                for id in dirtyIds.sorted() {
+                    guard let idx = self.tabs.firstIndex(where: { $0.id == id }),
+                          self.tabs[idx].isDirty, let editor = self.tabs[idx].editor else { continue }
+                    AppLog.shared.log("preview workspace switch saving: \(self.tabs[idx].path)")
+                    if !editor.writeBack() { failed.insert(id) }   // reports via presentSaveError
+                }
+                if !failed.isEmpty {
+                    AppLog.shared.log("preview workspace switch: \(failed.count) tab(s) could not be saved, "
+                                      + "kept open: \(to)")
+                }
+                self.performWorkspaceSwitch(from: from, to: to, thenOpen: thenOpen, keeping: failed)
+            default:
+                // Dismissed without an answer (ESC / window closed): never guess
+                // and never discard — keep the edits and follow anyway.
+                AppLog.shared.log("preview workspace switch: dismissed without an answer, "
+                                  + "unsaved tab(s) kept open: \(to)")
+                self.performWorkspaceSwitch(from: from, to: to, thenOpen: thenOpen, keeping: dirtyIds)
+            }
+        }
+    }
+
+    /// Hand the open tabs over from one workspace to another: remember & close
+    /// the outgoing set (releasing its resources), re-root the tree, then reopen
+    /// whatever the incoming workspace had open.
+    ///
+    /// `keeping` are tabs whose unsaved edits could NOT be resolved (nobody to
+    /// ask, or the save failed): they stay open and are not remembered — closing
+    /// them would silently discard the edits, and refusing to move would leave
+    /// the panel on a workspace dsh web has already left.
+    private func performWorkspaceSwitch(from: String, to: String, thenOpen: String? = nil,
+                                        keeping pinned: Set<Int> = []) {
+        let leaving = tabs.filter { !pinned.contains($0.id) }
+        let selectedLeaves = leaving.contains { $0.id == selectedId }
+        tabMemory.remember(paths: leaving.map { $0.path },
+                           selectedPath: selectedLeaves ? currentTabPath : nil,
+                           for: from)
+        AppLog.shared.log("preview workspace switch: \(from) -> \(to) "
+                          + "(remembered \(leaving.count) tab(s), kept \(pinned.count))")
+        closeTabs(Set(leaving.map { $0.id }))
+        applyTreeRoot(to)
+        restoreTabs(for: to)
+        if let thenOpen = thenOpen { open(path: thenOpen) }
+        if tabs.isEmpty {
+            resetContentArea()
+        } else if selectedId == nil, let last = tabs.last {
+            select(last.id)   // e.g. only pinned tabs remain: show one of them
+        }
+    }
+
+    /// Dismiss a still-open prompt sheet so the newest switch request wins. The
+    /// dismissed prompt's completion sees the stale generation (switch) or the
+    /// third-button response (close) and is never applied.
+    private func supersedePendingPrompt() {
+        guard let alert = pendingPromptAlert else { return }
+        pendingPromptAlert = nil
+        let sheet = alert.window
+        guard let parent = sheet.sheetParent else { return }
+        AppLog.shared.log("preview workspace switch: superseding the pending prompt")
+        parent.endSheet(sheet, returnCode: .alertThirdButtonReturn)
+    }
+
+    /// Reopen the tabs remembered for a workspace (folder tabs reopen as folders,
+    /// same as before the switch). Paths that no longer exist are skipped, and the
+    /// remembered selection is restored when it survived.
+    private func restoreTabs(for workspace: String) {
+        guard let snapshot = tabMemory.snapshot(for: workspace) else { return }
+        let fm = FileManager.default
+        var missing = 0
+        for path in snapshot.paths {
+            if fm.fileExists(atPath: path) {
+                open(path: path)
+            } else {
+                missing += 1
+            }
+        }
+        if let selected = snapshot.selectedPath,
+           let tab = tabs.first(where: { $0.path == selected }) {
+            select(tab.id)
+        }
+        AppLog.shared.log("preview restore: \(tabs.count)/\(snapshot.paths.count) tab(s) reopened for \(workspace)"
+                          + (missing > 0 ? " (\(missing) missing)" : ""))
     }
 
     /// Start (once) the filesystem watcher that keeps the tree fresh.

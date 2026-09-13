@@ -1470,6 +1470,7 @@ final class TerminalPanelController: NSObject {
         // environments, while Core Graphics text and bezier paths render.
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        headerTitle.text = Self.panelTitle
 
         // Icon buttons with tooltips (hover shows what each does).
         let newButton = CustomIconButton(glyph: .plus, tooltip: L10n.tr("terminal.new"))
@@ -1686,7 +1687,9 @@ final class TerminalPanelController: NSObject {
         emulator.onTitle = { [weak self, weak tab] title in
             guard let self = self, let tab = tab else { return }
             tab.titleButton.title = title
-            if self.selectedId == tab.id { self.headerTitle.text = title }
+            // 头部标题固定为面板名（见 panelTitle）；会话标题属于页签，
+            // 这里只把它同步进头部标题的悬停提示。
+            if self.selectedId == tab.id { self.headerTitle.toolTip = title }
         }
         session.onOutput = { [weak termView] text in
             if ProcessInfo.processInfo.environment["DSH_TERMINAL_DEBUG"] == "1" {
@@ -1745,7 +1748,9 @@ final class TerminalPanelController: NSObject {
             icon.heightAnchor.constraint(equalToConstant: 48),
         ])
         if selectedId == tab.id {
-            headerTitle.text = L10n.tr("terminal.sessionEnded", code)
+            // 「会话已结束」已在内容区叠加提示（上方 icon+label+重开按钮），
+            // 头部不再改标题（固定面板名），只把状态放进悬停提示。
+            headerTitle.toolTip = L10n.tr("terminal.sessionEnded", code)
         }
     }
 
@@ -1782,9 +1787,22 @@ final class TerminalPanelController: NSObject {
 
     /// 语言切换后刷新头部按钮 tooltip。
     func refreshTooltips() {
+        headerTitle.text = Self.panelTitle
         newButton?.toolTip = L10n.tr("terminal.new")
         closeButton?.toolTip = L10n.tr("preview.closePanel")
     }
+
+    /// 面板的固定头部标题：与活动栏同名（「终端 / Terminal」），语言切换时刷新。
+    /// 不跟随会话：会话标题（OSC 标题 / cwd / 已结束状态）留在页签与悬停提示里。
+    private static var panelTitle: String { L10n.tr("bar.terminal") }
+
+    // MARK: - Headless test surface (tests/terminal-panel/run.sh)
+
+    /// The header title (a fixed panel name, never a session title).
+    var headerTitleText: String { headerTitle.text }
+
+    /// The hover tooltip of the header title (the active session's title).
+    var headerTooltipText: String? { headerTitle.toolTip }
 
     private func currentGridSize() -> (rows: Int, cols: Int) {
         let w = contentContainer.bounds.width
@@ -1811,7 +1829,7 @@ final class TerminalPanelController: NSObject {
             v.topAnchor.constraint(equalTo: contentContainer.topAnchor),
             v.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
-        headerTitle.text = tab.titleButton.title
+        headerTitle.toolTip = tab.titleButton.title
         v.needsDisplay = true
         DispatchQueue.main.async { [weak self] in self?.focusActiveTerminal() }
     }
@@ -1828,7 +1846,7 @@ final class TerminalPanelController: NSObject {
             select(next.id)
         } else {
             contentContainer.subviews.forEach { $0.removeFromSuperview() }
-            headerTitle.text = ""
+            headerTitle.toolTip = nil
             showEmptyState()
         }
     }
