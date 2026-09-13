@@ -41,14 +41,65 @@ final class ShellConfig {
         ((home as NSString).appendingPathComponent("shell") as NSString).appendingPathComponent("config.json")
     }
 
+    /// Legacy UserDefaults keys the shell owns. Before 1.14 every one of these
+    /// lived in UserDefaults; the move to this file **silently dropped** any key
+    /// the app had not written again — the user's value stayed in the plist and
+    /// the shell fell back to its built-in default. That is exactly how the
+    /// browser panel turned blank in 1.14.0: `browserRenderMode = windowed`
+    /// vanished, so the shell fell back to the (then broken) OSR renderer.
+    /// Copy them across once, so an upgrade never changes behaviour silently.
+    static let legacyUserDefaultsKeys: [String] = [
+        "appLanguage", "appTheme", "dshRegistry",
+        "browserRenderMode", "browserLastURL",
+        "previewPanelState", "previewPanelWidth", "previewLastDirectory",
+        "rightPanelKind", "hasCompletedOnboarding",
+        "autoUpgradeDsh", "nextAutoUpgradeCheck",
+        "channel.global.list",
+        "wikiRootMode", "wikiAutoRegenerate", "wikiRegisterAgentsMd",
+    ]
+    /// Marker: set once the legacy values have been merged (never migrated twice).
+    private static let migrationFlagKey = "legacyUserDefaultsMigratedAt"
+
     private func loadIfNeeded() {
         let path = filePath
         if loadedPath == path { return }
         loadedPath = path
         cache = [:]
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-        cache = obj
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            cache = obj
+        }
+        migrateLegacyUserDefaultsIfNeeded()
+    }
+
+    /// One-time merge of the pre-1.14 UserDefaults values (see
+    /// `legacyUserDefaultsKeys`). Only keys this file has no value for are
+    /// copied — an explicit value (including one the user changed later) always
+    /// wins. Called from `loadIfNeeded` (which runs under `lock`), so it writes
+    /// the file directly instead of going through `flush()`.
+    private func migrateLegacyUserDefaultsIfNeeded() {
+        guard cache[Self.migrationFlagKey] == nil else { return }
+        let defaults = UserDefaults.standard
+        var moved: [String] = []
+        for key in Self.legacyUserDefaultsKeys where cache[key] == nil {
+            guard let raw = defaults.object(forKey: key) else { continue }
+            cache[key] = Self.jsonValue(raw)
+            moved.append(key)
+        }
+        cache[Self.migrationFlagKey] = Date().timeIntervalSince1970
+        writeFileFallback(cache)
+        AppLog.shared.log("shellconfig: legacy UserDefaults merge (moved \(moved.count): "
+            + (moved.isEmpty ? "none" : moved.joined(separator: ", ")) + ") -> " + filePath)
+    }
+
+    /// UserDefaults value → JSON-writable value (Data holds a JSON-encoded
+    /// payload from the legacy `data(forKey:)` round-trip).
+    private static func jsonValue(_ raw: Any) -> Any {
+        if let d = raw as? Data, let decoded = try? JSONSerialization.jsonObject(with: d) {
+            return decoded
+        }
+        if let n = raw as? NSNumber { return n }
+        return raw
     }
 
     private func stored(_ key: String) -> Any? {
