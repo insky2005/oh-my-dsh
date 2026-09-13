@@ -1,8 +1,8 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-09-12T06:40:00Z
-sources: [core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md]
+updated: 2026-09-13T04:45:00Z
+sources: [core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/DshWebCookieJanitor.swift, tests/shell-config/, tests/dsh-auth-cookies/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md]
 manual: false
 ---
 
@@ -15,8 +15,6 @@ manual: false
 语言无关的 JSON 键值（可由外部工具/代理直接读写：写入经 core CLI `ohmy-core settings set|unset|list` 合并 + 原子落盘，壳层侧 0.3s 防抖异步、退出前 `flushNow()`；读取直读 JSON）；开发版用 `~/.dsh-dev/shell/config.json`（独立 `DSH_HOME`）。
 
 | 键 | 含义 | 出处 |
-
-| 键 | 含义 | 出处 |
 |---|---|---|
 | `appLanguage` | 显式语言选择（"zh"/"en"；删除 = 跟随系统） | `L10n` |
 | `appTheme` | 主题（"system"/"light"/"dark"，设置窗口切换） | `AppTheme` |
@@ -26,10 +24,11 @@ manual: false
 | `autoUpgradeDsh` | 自动升级开关（默认开） | AppDelegate |
 | `nextAutoUpgradeCheck` | 下次允许自动升级的时间戳（24h 节流；`DSH_AUTO_UPGRADE_NOW=1` 忽略节流，测试钩子） | `runAutoUpgradeIfNeeded` |
 | `previewPanelState` | 右栏可见性（true = 打开） | `setRightPanel` |
-| `rightPanelKind` | 右栏当前面板（"preview"/"terminal"/"wiki"/"tasks"/"browser"/"channel"） | `setRightPanel` |
+| `rightPanelKind` | 右栏当前面板（"preview"/"terminal"/"wiki"/"tasks"/"browser"/"channel"/"review"） | `setRightPanel` |
 | `previewPanelWidth` | 用户拖拽的面板宽度 | `splitViewDidResizeSubviews` |
 | `browserLastURL` | 浏览器面板启动恢复的地址（默认 about:blank） | `BrowserPanelController` |
-| `browserRenderMode` | 浏览器面板 CEF 渲染模式（"windowed" = 窗口化；删除/缺省 = OSR 离屏默认） | `startBrowserAPI`（`CEFShim.setWindowedMode`） |
+| `browserRenderMode` | 浏览器面板 CEF 渲染模式（**默认窗口化**：判定 `!= "osr"`，删除/缺省即窗口化；显式设 `osr` 才走离屏帧自绘，2026-09-13 起） | `startBrowserAPI`（`CEFShim.setWindowedMode`） |
+| `legacyUserDefaultsMigratedAt` | 旧 UserDefaults 取值迁移标记（时间戳；写入即表示一次性合并已做，不再重复） | `ShellConfig.migrateLegacyUserDefaultsIfNeeded` |
 | `wikiRootMode` | wiki 根模式（"in-repo" / "dsh-home"） | `WikiPaths` |
 | `wikiAutoRegenerate` | wiki 自动更新开关（默认关） | `WikiPaths` |
 | `wikiRegisterAgentsMd` | 写入 AGENTS.md 注册块开关（默认关） | `WikiPaths` |
@@ -37,6 +36,14 @@ manual: false
 > 凭据不走 UserDefaults：GitHub token 按仓库作用域存储，**读取优先文件**（免 Keychain 每次弹密码）、Keychain 兜底——解析顺序为 文件专属 `~/.dsh/tokens/<owner>-<repo>` → 文件通用 `~/.dsh/gh-token` → Keychain 专属（`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）→ Keychain 通用（`oh-my-dsh.issuerunner.github-token`）；面板保存时 Keychain 与文件**双写**（Keychain 条目设 `kSecAttrAccessibleAfterFirstUnlock`，文件 chmod 600，App 与外部工具/代理共用），见 [issue-runner-panel](modules/issue-runner-panel.md)。
 
 > 上表中仅 `AppleLanguages`（WebView 语言覆写，`UserDefaults.standard` 写入以影响系统组件）等系统级项仍走原生 UserDefaults；其余键均由 `ShellConfig` 落到 `$DSH_HOME/shell/config.json`（开发版 `~/.dsh-dev/shell/config.json`），对外与 UserDefaults 同形（`object/string/bool/double/data(forKey:)`、`set`、`removeObject`），便于跨语言工具读写。
+
+> **旧 UserDefaults 取值一次性迁移（2026-09-13，407ccb1）**：1.14 把这些键从 `UserDefaults` 搬进 `config.json` 时**没有搬运已有取值**——用户显式设过的值留在 plist 里再没人读，壳层静默回落到代码默认（这正是 v1.14.0「浏览器面板一片空白」的一半根因：`browserRenderMode=windowed` 丢失后回落到当时损坏的 OSR 路径）。现在 `ShellConfig.loadIfNeeded()`（持锁）内做一次合并：`legacyUserDefaultsKeys` 列出的 16 个壳层自有键（`appLanguage`/`appTheme`/`dshRegistry`/`browserRenderMode`/`browserLastURL`/`previewPanelState`/`previewPanelWidth`/`previewLastDirectory`/`rightPanelKind`/`hasCompletedOnboarding`/`autoUpgradeDsh`/`nextAutoUpgradeCheck`/`channel.global.list`/`wikiRootMode`/`wikiAutoRegenerate`/`wikiRegisterAgentsMd`）**只搬本文件尚无取值的键**（显式值永远优先），写完在文件里落 `legacyUserDefaultsMigratedAt` 标记保证只做一次；迁移直接原子写文件而不走 `flush()`（在锁内，避免自锁），并记日志 `shellconfig: legacy UserDefaults merge (moved N: …) -> <path>`。回归测试 `tests/shell-config/`（13 例）。
+
+## dsh 浏览器认证 cookie（WKWebsiteDataStore）
+
+- **名字即身份**：dsh ≥ 0.1.2 的浏览器会话 cookie 名 = `"dsh-auth-" + base64url(sha256(authority))`，`authority` = 该实例的 `host:port`（壳层只加载 `http://127.0.0.1:<port>/`，因此 `authority(port:) == "127.0.0.1:<port>"`，换成 `localhost` 会得到另一族 cookie）；
+- **cookie 本身不含端口**（RFC 6265 按 domain+path 匹配），WKWebView 的 cookie 存储又按 bundle id 持久化且 30 天 TTL ⇒ 每次自拉起新端口的 dsh web 就多一只 ~226 B 的新 cookie、**永不复用覆盖、只增不减**；累积到第 63 只（`Cookie:` 头 ~14.1 KB）时超出 node 默认 16 KiB header cap，2.1 KB 的插件 combo bundle 请求回 **431** → 界面 **Failed to load plugins**；
+- 因此壳层把 cookie 存储当成**有生命周期的缓存**：启动加载入口 URL 前清掉非本次 authority 的 `dsh-auth-*`、退出清掉本次的（`DshWebCookieJanitor`，只碰该前缀，见 [main](modules/main.md)），并在 spawn 时给 `NODE_OPTIONS` 追加 `--max-http-header-size=65536` 作保险带。
 
 ## 领域模型（代码内）
 

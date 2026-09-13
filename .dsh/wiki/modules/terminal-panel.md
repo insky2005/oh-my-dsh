@@ -1,7 +1,7 @@
 ---
 title: 模块：TerminalPanel.swift（终端面板）
 tags: [module, terminal, pty, ansi, emulator]
-updated: 2026-09-12T11:20:00Z
+updated: 2026-09-13T01:32:38Z
 sources: [platforms/macos/src/TerminalPanel.swift, docs/terminal-input-fix.md, docs/terminal-header-fix.md, tests/terminal-panel/]
 manual: false
 ---

@@ -1,7 +1,7 @@
 ---
 title: 模块：BrowserPanel.swift / BrowserAPI.swift（浏览器面板，CEF/Chromium 内核）
 tags: [module, browser, cef, chromium, osr, rest-api, agent]
-updated: 2026-08-22T15:04:38Z
+updated: 2026-09-13T04:05:56Z
 sources: [platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/BrowserCDP.swift, platforms/macos/cef/CEFShim.h, platforms/macos/cef/CEFShim.mm, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, docs/plans/BROWSER_PLAN-browser-panel.md, docs/terminal-header-fix.md, docs/devtools-drag-fix.md]
 manual: false
 ---
@@ -37,7 +37,7 @@ manual: false
 
 - **布局**：40pt 头部 + 33pt 页签栏 + 分隔线 + 36pt 地址栏 + 内容区钉底；**地址栏位于页签下方**；头部/工具栏/内容容器全部 `wantsLayer + masksToBounds` layer 隔离（`docs/terminal-header-fix.md` 同源合成陷阱），根视图 `BrowserRootView` layer-backed + `isOpaque=false` 自绘背景；
 - **页签**：`BrowserTabItemView`（圆角胶囊背景、标题+关闭按钮一体、活动页签加粗、关闭按钮 hover 红色 `hoverColor=systemRed`）；`+` 按钮带常显背景（`CustomIconButton.showsBackground`）紧跟页签；页签最大 200pt、数量多时均分缩小；上限 `maxTabs = 8`（每 tab 一个渲染进程）；
-- **新标签**：`about:blank` 时聚焦地址栏并全选（Chrome 式直接输入覆盖）；API 带 URL 新建不抢焦点；`BrowserURL.normalize` 支持 `about:blank`/`file://`/`data:`/`devtools://`/带 scheme+host，否则补 `https://`；`browserLastURL`（UserDefaults）启动恢复；
+- **新标签**：`about:blank` 时聚焦地址栏并全选（Chrome 式直接输入覆盖）；API 带 URL 新建不抢焦点；`BrowserURL.normalize` 支持 `about:blank`/`file://`/`data:`/`devtools://`/带 scheme+host，否则补 `https://`；`browserLastURL`（壳层设置 `$DSH_HOME/shell/config.json`，经 `ShellConfig`；旧 UserDefaults 值由启动时一次性迁移补位）启动恢复；
 - **右上角 ✕ = 彻底关闭浏览器**：`closeAllTabs()`（逐页签 `closeTab`）+ 收起面板；页签 ✕ 只关单页签。
 
 ## 生命周期与退出（防重入/防误退出）

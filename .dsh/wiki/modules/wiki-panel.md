@@ -1,7 +1,7 @@
 ---
 title: 模块：WikiPanel.swift（Repo Wiki 面板）
 tags: [module, wiki, knowledge-base, rpc, skill]
-updated: 2026-09-12T11:45:00Z
+updated: 2026-09-13T01:53:29Z
 sources: [platforms/macos/src/WikiPanel.swift, platforms/macos/src/DshWebRPC.swift, docs/repo-wiki-design.md, .dsh/skills/repo-knowledge/SKILL.md, tests/wiki-panel/]
 manual: false
 ---
@@ -14,7 +14,7 @@ manual: false
 
 | 类型 | 职责 |
 |---|---|
-| `WikiPaths` | UserDefaults 键（`wikiRootMode`/`wikiAutoRegenerate`/`wikiRegisterAgentsMd`）；`wikiRoot(for:)`（in-repo `.dsh/wiki` 或 `$DSH_HOME/repo-wiki/<hash12>`，hash = FNV-1a 64）；`stableHash` |
+| `WikiPaths` | 壳层设置键（`$DSH_HOME/shell/config.json`，经 `ShellConfig`；1.14 前为 UserDefaults，现由启动时一次性迁移补位）（`wikiRootMode`/`wikiAutoRegenerate`/`wikiRegisterAgentsMd`）；`wikiRoot(for:)`（in-repo `.dsh/wiki` 或 `$DSH_HOME/repo-wiki/<hash12>`，hash = FNV-1a 64）；`stableHash` |
 | `WikiFrontmatter` | YAML frontmatter 解析（`title/tags/updated/sources/manual` 键值对）与 bool/date 读取 |
 | `WikiPage` | `path / title / tags / updated / sources / manual`，`displayName` 取 title |
 | `WikiScanner` | 扫描 wiki 根：收集页面（排除 `_meta/` 与 `manual: true` 处理）、`computeStale`（页面 `updated` vs `sources` 最新 mtime）、`buildBacklinks`（扫描页内相对链接）、`signature`（路径→mtime 快照，供变更检测） |

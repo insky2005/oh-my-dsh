@@ -1,7 +1,7 @@
 ---
 title: 模块：SkillInstaller.swift（内置 Skill 全局安装器）
 tags: [module, skills, installer, provisioning, dsh-home]
-updated: 2026-08-22T15:04:38Z
+updated: 2026-08-22T15:09:47Z
 sources: [platforms/macos/src/SkillInstaller.swift, platforms/macos/src/main.swift, docs/builtin-skills-design.md, .dsh/skills/web-dev-tools/SKILL.md, .dsh/skills/repo-knowledge/SKILL.md, .dsh/skills/issue-resolve/SKILL.md, tests/skills/run.sh, tests/skills/skills-tests.swift]
 manual: false
 ---

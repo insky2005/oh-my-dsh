@@ -1,8 +1,8 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-09-12T06:40:00Z
-sources: [tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
+updated: 2026-09-13T04:45:00Z
+sources: [platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, docs/dsh-version-impact.md, tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
 manual: false
 ---
 
@@ -58,6 +58,11 @@ tests/browser-panel/run.sh          # 浏览器面板模型层（REST 路由 / �
 tests/channel-panel/run.sh          # 通道项目视图数据模型（ChannelStoreReader）
 tests/dsh-rpc/run.sh                # 壳层原生 dsh RPC（0.1.2 信封/斜杠端点、launch token 换 cookie、回退记忆）
 tests/review-panel/run.sh           # 审查面板展示模型（64 项）
+tests/file-panel/run.sh             # 文件面板工作区页签记忆 / 未保存提示（模型 28 项 + 真面板）
+tests/terminal-panel/run.sh         # 终端面板头部固定标题（4 项，不建 PTY）
+tests/l10n/run.sh                   # L10n 键名 lint（L10n.tr 字面量必须在 L10n.table 中且中英成对）
+tests/shell-config/run.sh           # ShellConfig 旧 UserDefaults 一次性迁移（13 项）
+tests/dsh-auth-cookies/run.sh       # dsh 认证 cookie 清理纯逻辑（22 项）
 tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
 ```
 
@@ -107,7 +112,9 @@ tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：�
 6. 端口被占：默认 3080，`DSH_NATIVE_PORT` 指定端口；壳层**从不复用**已有实例（复用分支已删除），3080 被占就自动换空闲端口，`app.log` 是 `using node=… port=<n>` + `dsh web is up on …/?token=…`；若出现 `warning: dsh web advertised no launch token`，说明原生 RPC 会 401（wiki 生成/任务面板会失败）——按 docs/dsh-version-impact.md §4.4 排查（历史根因：复用了别人的/上次残留的实例）；自己上次残留的实例由 `reapRecordedOrphan()`（`$DSH_HOME/shell/dsh-web.json`）在启动时回收；
 7. 工作区列表为空 / 面板项目目录回退 home：先看 `channel-runner-<id>.log` 或 `app.log` 有没有 `[workspace-store]` 诊断（`unexpected shape` / `is domain workspace vN, this build understands v2`）——私有存储被上游改了字段或升了版本；验证命令见 docs/dsh-version-impact.md §6.2，改两侧读取器（`core/lib/workspace-store.js` + `platforms/macos/src/DshWebRPC.swift`）并补用例；
 8. **审查面板空/读不到变更**：先用 CLI 定位——`node core/bin/ohmy-core.js review sessions [--workspace <dir>]` 看会话是否被发现、`… review audit <sessionId>` 看条目与 `diagnostics`；面板必须经**内置** node 调 core（`CoreBridge.run(…, preferBundledNode: true)`，用户自装 Node 18/20 无 zstd 解不了压缩日志）；`DSH_REVIEW_TEST=1`（可加 `DSH_REVIEW_TEST_PATH=<dir>`）启动即开面板；面板是只读的——`bash` 直改（`sed -i`/`>`/`rm`）只有命令文本、标注「需人工核对」，日志未落盘的尾部不可见，这些都是设计边界而非故障；
-9. 面板点会话行不跳转 web / 切会话目录不跟随：`DSH_UI_DEBUG=1` 看 `dsh injected bridges: {tracker, opener, preview, rows}`（注入脚本是否装上）+ 页面 console 的 `[dsh-opener]` 日志，对照 docs/dsh-version-impact.md §6.1（R3：注入脚本依赖 dsh web 客户端内部实现，上游一改即静默失效）。
+9. **界面能渲染但插件全挂（Failed to load plugins）**：几乎必然是 **dsh 认证 cookie 累积**——dsh ≥ 0.1.2 的 cookie 名由 authority（`127.0.0.1:<port>`）派生、cookie 本身不区分端口，壳层每次自拉起新端口就多留一只（~226 B / 30 天 TTL），累积 `Cookie:` 头超过 node 默认 16 KiB header cap 后，client-modules 那条 ~2.1 KB 的 45 插件 combo bundle 请求被回 **431**（空 body）→ `<script src>` error → 插件全挂（外壳正常、bootstrap 仍 200）。判断：`app.log` 里 `dsh cookies: purged N stale of M (kept 127.0.0.1:<port>)` 的 N 很大即已命中；修法已内置（启动清非本次 authority 的 `dsh-auth-*`、退出清本次的 + `NODE_OPTIONS=--max-http-header-size=65536`），排查/回归见 `tests/dsh-auth-cookies/run.sh` 与 docs/dsh-version-impact.md §6.3（R6）；
+10. **升级后某个设置「自己变回默认」**：壳层设置自 1.14 起存 `$DSH_HOME/shell/config.json`（`ShellConfig`），旧 `UserDefaults` 键由启动时一次性迁移（只搬尚无取值的键 + `legacyUserDefaultsMigratedAt` 标记）。若用户显式设过的值失效，先看 `app.log` 的 `shellconfig: legacy UserDefaults merge (moved N: …)` 与 config.json 实际取值；回归 `tests/shell-config/run.sh`；
+11. 面板点会话行不跳转 web / 切会话目录不跟随：`DSH_UI_DEBUG=1` 看 `dsh injected bridges: {tracker, opener, preview, rows}`（注入脚本是否装上）+ 页面 console 的 `[dsh-opener]` 日志，对照 docs/dsh-version-impact.md §6.1（R3：注入脚本依赖 dsh web 客户端内部实现，上游一改即静默失效）。
 
 ## 发布清单（简版，分支规范见 docs/git-workflow.md）
 
