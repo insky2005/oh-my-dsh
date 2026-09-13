@@ -1335,6 +1335,11 @@ final class ServerManager {
             // here, and on failure the inherited PATH is kept unchanged.
             if let login = loginShellPath(), !login.isEmpty { penv["PATH"] = login }
             if penv["DSH_HOME"] == nil { penv["DSH_HOME"] = NSHomeDirectory() + "/.dsh" }
+            // Seatbelt for the same 16 KiB header budget the janitor cleans up:
+            // the client-modules plugin batch is one ~2.1 KB combo URL, so a
+            // growing Cookie header can 431 the whole UI. The janitor is the fix;
+            // this keeps any future header growth from taking the app down.
+            penv["NODE_OPTIONS"] = DshWebServerOptions.appendingHeaderLimit(to: penv["NODE_OPTIONS"])
             proc.environment = penv
             proc.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
 
@@ -1896,6 +1901,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         cefPumpTimer?.invalidate()
         CEFShim.shutdown()
         if didSpawnServer { server.stop() }
+        // WKWebView's cookie store outlives the process and dsh mints a fresh
+        // cookie per launch, so leave none of ours behind (see DshWebCookieJanitor).
+        DshWebCookieJanitor.purgeAll { AppLog.shared.log($0) }
         AppLog.shared.log("terminate: done")
     }
 
@@ -2904,6 +2912,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 AppLog.shared.log("server ready: \(url.absoluteString) spawned=\(didSpawn)")
                 DispatchQueue.main.async {
                     self.didSpawnServer = didSpawn
+                    // Drop the auth cookies of long-gone instances BEFORE the page
+                    // loads. dsh names each cookie after its authority (host:port)
+                    // and cookies ignore ports, so every launch left one more behind
+                    // — until the pile pushed the plugin-bundle request past node's
+                    // 16 KiB header cap and every launch failed with 431
+                    // ("Failed to load plugins"). See DshWebCookieJanitor.
+                    DshWebCookieJanitor.purgeStale(keeping: DshWebCookieJanitor.authority(port: self.server.port)) {
+                        AppLog.shared.log($0)
+                    }
                     self.webView.load(URLRequest(url: url))
                     // Tell the terminal panel the server is reachable so any
                     // spawn deferred during server boot starts in the

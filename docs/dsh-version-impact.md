@@ -198,6 +198,7 @@
 | **R3 注入脚本依赖 fetch + DOM**（**仍在**，且已实测出过坏点） | 三个注入脚本直接依赖 dsh web 客户端实现：fetch 形态与信封、方法名白名单、sessionId 位置、侧栏 `[role=treeitem].sessionRow` DOM、文件打开 RPC 端点。上游改传输（已有 WebSocket mux）或改 DOM 就**静默失效**。2026-09-10 实测发现 `sessionOpenerScript` 在 0.1.2 下一直是坏的（写死点号 method 打到斜杠端点，服务端 \`method does not match endpoint\`），已修为运行时双面 —— 详见 §6.1 | 升级后 B 面三项验证任一失败即命中 |
 | **R4 `workspace.json` 兜底是私有布局**（**仍在**，已加护栏） | 兜底读的是 dsh 内部带 schema/版本号的私有域存储（`defineDomain({name:'workspace',version:2})`，还有 `pendingMutation` 恢复标记），上游可随时改字段/搬文件/升版本；读不懂 = 上述五处**静默变空**。现已加域名+版本校验、诊断日志、单一实现收口（见 §6.2） | 升级后 `unit.version` 变化，或工作区列表突然为空而接口没变 |
 | R5 单一版本策略 | 只为「内置版本」做适配，老版本兼容靠回退（C1）；回退在两侧都失效时会静默出空结果 | 引入第二个受支持版本时重估 |
+| **R6 `dsh-auth-*` cookie 按 authority 命名、无限累积**（2026-09-13 已修） | dsh 0.1.2+ 的浏览器 cookie 名 = `"dsh-auth-" + base64url(sha256(authority))`，authority 是**该实例的 host:port**；cookie 又不区分端口 ⇒ 每次自拉起一个新端口就多留一只（~226 B / 30 天 TTL），只增不减。累积 Cookie 头一旦把 **~2.1 KB 的插件 batch URL** 顶过 node 的 16 KiB 头上限（第 63 只）即 **431** → 界面「Failed to load plugins」。壳层已按「退出清理 + 启动清理 + node 头上限保险带」处置（见 §6.3） | 上游改 cookie 命名/鉴权载体（不再按 authority 派生），或 dsh 把插件 batch 换成多条更短 URL 后重估 |
 
 
 ### R3 详解：注入脚本（这是**当前唯一还在「静默失效」风险里**的一面）
@@ -277,11 +278,41 @@ print('domain', d.get('unit'), 'workspaces', len(d.get('tables',{}).get('workspa
 
 期望看到 `domain {'name': 'workspace', 'version': 2}` 且工作区数量与面板一致；**version 变了就按 §6.2 更新两侧读取器并补用例**，同时确认 `/wks` 仍列得出工作区。
 
+### R6 详解：`dsh-auth-*` cookie 按 authority 命名 → 累积压垮请求头
+
+**我们依赖的是什么**（`@deepseek-ai/dsh-client-connection`，0.1.2+）：浏览器会话 cookie 由 launch token 换取（`GET /?token=…` → 303 + `Set-Cookie`），
+
+```js
+cookieName(authority) = "dsh-auth-" + base64url(sha256(authority))   // authority = "127.0.0.1:<port>"
+sessionCookie(...)     = "<name>=<value>; Max-Age=2592000; Path=/; Expires=…; HttpOnly; SameSite=Strict"
+```
+
+服务端**按名字精确取自己那一只**（`cookieValue()` 按 `;` 切分，忽略其它 cookie）；cookie 值里签着 `{version, authority, issuedAt, expiresAt}`。
+
+**为什么会炸**：cookie 按 (domain, path) 匹配、**不区分端口**（RFC 6265），所以壳层每次启动自拉起的新实例（随机端口）都落进**同一份** WKWebView cookie 列表；名字里带 authority ⇒ 新端口**不复用旧名**（这是 dsh 故意的：多实例并存时互不覆盖）⇒ 只增不减，每只 ~226 B。
+
+**唯一被压垮的是那一条请求**：client-modules 的 application batch 把 45 个插件拼成**同一条 ~2.1 KB 的 combo URL**（`/plugins/??a/client.js,b/client.js,…&rev=…`），而 node http 默认 `maxHeaderSize = 16 KiB`。累积 `Cookie:` 头 > ~14.1 KB（第 63 只）时「请求行 + 请求头」整体超限，服务端回 **431 Request Header Fields Too Large**（空 body）；`<script src>` 收到 4xx 触发的是 **element 的 error 事件**（不是 JS 异常），client-modules 于是报 `client-modules: bundle script … failed to load` → 界面 **Failed to load plugins**。紧挨着的 bootstrap（路径仅 ~80 B）仍 200，所以现象是「外壳能渲染、插件全挂」。
+
+**实测数据**（curl 对同一台 dsh web，2026-09-13）：
+
+| 请求 | Cookie 头 | 结果 |
+|---|---|---|
+| batch（2,165 B 路径）+ 68 只 cookie | 15,502 B | **431** |
+| bootstrap（80 B 路径）+ 68 只 cookie | 15,502 B | 200 |
+| batch + 40 只 cookie | 9,118 B | 200（3,718,152 B） |
+| batch + 1 只 cookie | 226 B | 200 |
+
+阈值扫描：62 只 = 14,134 B → 200；**63 只 = 14,362 B → 431**。旁证：WebKit 磁盘缓存里每次**失败**启动只有 bootstrap 落盘、batch 从不落盘（431 不进缓存）；换一个全新 cookie 存储（同二进制、同 dsh、同 `DSH_HOME`、同 URL）立刻抓到 3.7 MB bundle；`~/Library/HTTPStorages/com.ohmydsh.app.dev.binarycookies` 实测 **68 只未过期** cookie、69 个端口，正式版当时 2 只（同一个坑，只是还没到）。
+
+**处置**（`platforms/macos/src/DshWebCookieJanitor.swift`，测试 `tests/dsh-auth-cookies/run.sh`）：**启动**加载入口 URL 之前清掉所有非本次 authority 的 `dsh-auth-*`（保留当前那只，中途重载无 token 的 `webView.url` 不掉凭据）；**退出**清掉本次留下的（`applicationWillTerminate`，异步 + 泵 run loop 有界等待 1.5 s，best effort——真正的保证是启动清理）；spawn dsh web 时给 `NODE_OPTIONS` 追加 `--max-http-header-size=65536` 作保险带（环境已显式设置则原样保留）。清理**只碰 `dsh-auth-*`**：UI 偏好在 localStorage、会话/工作区在 `$DSH_HOME`、壳层配置在 `$DSH_HOME/shell/config.json`、Browser 面板（CEF）另有自己的 cookie 存储。
+
+**升级时怎么验**（并进 §5 的 A 面）：① 启动后 `app.log` 有 `dsh cookies: purged N stale …`；② `~/Library/HTTPStorages/<bundleid>.binarycookies` 的 cookie 数稳定在 1（不再随启动次数增长）；③ `curl -H "Cookie: <造一堆>" "<batch URL>"` 回 200 而非 431（保险带生效）。若上游改了 cookie 命名规则或鉴权载体（例如换成 header），本清理只会「清不掉」（不再有害），但护栏同时失效——按上表重估。
+
 ## 7. 参考
 
 - 实战审计（0.1.2 逐项状态与实测契约）：`docs/plans/dsh-012rc1-compat-audit.md`
 - 频道侧实现与状态：`docs/channel-status.md`、`docs/channel-commands.md`、`docs/channel-project-switch.md`
 - 产品化与版本策略：`docs/productization.md` §8；发布流程：`docs/release-process.md`
-- 代码锚点：`platforms/macos/src/main.swift`（ServerManager / DSHSessionRPC / 注入脚本 / 升级）、`platforms/macos/src/WikiPanel.swift`（WikiRPC）、`platforms/macos/src/IssueRunnerPanel.swift`、`core/lib/dsh-rpc.js`、`core/lib/workspace-store.js`、`core/lib/session-driver.js`、`core/lib/channel-runner.js`、`core/lib/upgrade.js`、`platforms/macos/build-app.sh`
+- 代码锚点：`platforms/macos/src/main.swift`（ServerManager / DSHSessionRPC / 注入脚本 / 升级）、`platforms/macos/src/WikiPanel.swift`（WikiRPC）、`platforms/macos/src/IssueRunnerPanel.swift`、`platforms/macos/src/DshWebCookieJanitor.swift`、`core/lib/dsh-rpc.js`、`core/lib/workspace-store.js`、`core/lib/session-driver.js`、`core/lib/channel-runner.js`、`core/lib/upgrade.js`、`platforms/macos/build-app.sh`
 - 仓库知识库：`.dsh/wiki/modules/main.md`、`.dsh/wiki/modules/channel-panel.md`、`.dsh/wiki/data-model.md`（RPC 信封）
 

@@ -85,6 +85,8 @@ jobs:
         run: tests/channel-panel/run.sh
       - name: Native dsh RPC helper tests (both API generations)
         run: tests/dsh-rpc/run.sh
+      - name: dsh auth-cookie janitor tests
+        run: tests/dsh-auth-cookies/run.sh
       - name: Review (change audit) panel tests
         run: tests/review-panel/run.sh
       - name: File panel (workspace tab memory) tests
