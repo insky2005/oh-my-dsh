@@ -10,17 +10,20 @@ manual: false
 
 右栏浏览器面板：多标签 **CEF 嵌入式 Chromium** 浏览器，面向「开发调试 web 页面」与「Agent 排查网页问题」两个目标。Agent 经 localhost REST API（curl 即用）驱动，配套技能 `.dsh/skills/web-dev-tools/SKILL.md`（v1.13.0 由 `shell-browser` 更名，经 SkillInstaller 全局安装到 `$DSH_HOME/skills/web-dev-tools/`）。
 
+> ⚠️ v1.14.0 事故（已修，见 `docs/browser-blank-panel-fix.md`）：面板内容区一片空白 + 右键菜单弹错位。两层根因——① 1.14 设置搬家（UserDefaults → `config.json`）没迁移旧值，用户设的 `browserRenderMode=windowed` 失效、静默回落到 OSR；② OSR 自绘帧画在容器层上、被 `pageView` 的不透明子层盖住。**当前默认已是 windowed，且 `ShellConfig` 首次加载会把旧 UserDefaults 取值一次性迁移过来。**
+
 ## 背景：Chromium 内核 + 根因修正 + 版本 pin
 
 - CEF 148+ 在 macOS 要求**五个 helper app**（base/Alerts/GPU/Plugin/Renderer，同一份二进制、名字承重，见发行包 `CEF_HELPER_APP_SUFFIXES`）——只打 base helper 时 renderer 静默失败；补上 `(Renderer)` 后 CEF 144/150/151 全部正常渲染（完整记录见 `docs/plans/BROWSER_PLAN-browser-panel.md` §二）；
 - 版本单一来源在 `platforms/macos/build-cef.sh`（`DSH_CEF_VERSION` 覆盖）：当前 pin **`150.0.18+gdb11278+chromium-150.0.7871.213`**（arm64/x86_64 sha1 从 cef-builds.spotifycdn.com/index.json 核对），CEF 产物经 `.cache` 缓存；
 - 钥匙串：`use-mock-keychain`（不弹密码框）；GPU：`enable-unsafe-swiftshader` + `ignore-gpu-blocklist` 软件渲染兜底（GPU 路径恢复默认）。
 
-## 渲染模式：OSR 离屏（默认）/ windowed 切换
+## 渲染模式：windowed（默认）/ OSR 回退
 
-- **默认 OSR（windowless）**：Chromium 把每帧 BGRA 像素经 `CEFShim.setPaintHandler` 回调给壳层，`BrowserOSRView.presentFrame` 转成 `CGImage` 自绘到 `CALayer.contents`（字节序 BGRA：`premultipliedFirst` + `byteOrder32Little`；`contentsScale` 跟随窗口 backingScaleFactor）；windowed 路径在 layer-backed 壳窗口内呈现失效（`docs/plans/BROWSER_PLAN-browser-panel.md`）；
-- **窗口化切换**：`defaults write com.ohmydsh.app browserRenderMode -string windowed`（UserDefaults 键 `browserRenderMode`）→ CEF 自建 NSView 原生绘制（零拷贝），必须在 CEF `initialize` 之前设（`settings.windowless_rendering_enabled = !windowed`）；
-- `GetViewRect`/`GetScreenInfo`（device_scale_factor=2.0）取自容器尺寸；容器尺寸变化 → `CEFShim.resizeBrowser`（`WasResized`）同步 OSR 视口。
+- **默认窗口化**：CEF 自建 NSView（`SetAsChild`）原生绘制、零拷贝（`docs/plans/BROWSER_PLAN-browser-panel.md` 第十一节）；开关在 `$DSH_HOME/shell/config.json` 的 `browserRenderMode`（`ShellConfig`），**设 `osr` 才回退到离屏自绘**，且必须在 CEF `initialize` 之前设（`settings.windowless_rendering_enabled = !windowed`）；
+- **OSR 回退（windowless）**：Chromium 把每帧 BGRA 像素经 `CEFShim.setPaintHandler` 回调给壳层，`BrowserOSRView.presentFrame` 转成 `CGImage` 自绘到 **`pageView` 自己的 `CALayer.contents`**（字节序 BGRA：`premultipliedFirst` + `byteOrder32Little`；`contentsScale` 跟随窗口 backingScaleFactor）。⚠️ **不能画在 `BrowserOSRView`（容器）的 layer 上**：`pageView` 是它的子视图（层合成在父层 contents 之上）且垫着不透明背景，会把帧整块盖住 → 内容区一片空白而标题/地址栏照常更新（v1.14.0 事故，见 `docs/browser-blank-panel-fix.md`）；
+- **帧派发按 shim 的 `browserId`**（不是 `tab.id`；DevTools 子浏览器也吃同一计数器）：主浏览器 → `pageView`，DevTools 子浏览器 → `devtoolsContent`（`presentDevToolsFrame`）；
+- `GetViewRect`/`GetScreenInfo`（device_scale_factor=2.0）取自容器尺寸；容器尺寸变化 → `CEFShim.resizeBrowser`（`WasResized`）同步 OSR 视口。注意 OSR 下**输入事件坐标是点、`OnBeforeContextMenu` 的菜单参数是设备像素（2×）**，两套坐标系并不统一。
 
 ## BrowserOSRView（OSR 内容视图）
 
@@ -48,6 +51,8 @@ manual: false
 
 OSR 下 CEF 不知道宿主窗口位置，默认菜单弹错位：`OnBeforeContextMenu` 把菜单模型转成条目数组（id/type/label）回调 Swift，宿主在**正确屏幕坐标**弹 NSMenu；`CEFShim.executeContextMenuCommand` 执行 `MENU_ID_BACK/FORWARD/RELOAD/STOPLOAD/UNDO/REDO/CUT/COPY/PASTE/SELECT_ALL/VIEW_SOURCE`（链接/拼写等命令暂不处理）。
 
+锚点：**以当前鼠标的屏幕坐标为准**（`NSEvent.mouseLocation`，右键必来自鼠标；`NSMenu.popUp(in: nil)` 收的就是屏幕坐标），CEF 的 `GetXCoord/GetYCoord` 只在鼠标不在窗口内（键盘唤起菜单）时兜底并写 `app.log`。曾直接把 CEF 参数按视图坐标换算——OSR 下那是**设备像素**（2×），点落到窗口右下之外，AppKit 只能把菜单塞回屏幕边缘，表现为「点右键跑到左边、点下面弹到上面」（v1.14.0 事故）。
+
 ## DevTools
 
 「DevTools」按钮 → `CEFShim.showDevTools`：CEF 原生 ShowDevTools（Chromium 自带完整调试器），CEF 150 mac 无 `SetAsPopup` → 自建独立 NSWindow（960×640，`g_devtoolsWindow` 强引用防释放）`SetAsChild` 挂载。此前用 `inspector.html?ws=…` 在系统浏览器打开，CDP WebSocket 连接不稳且挤占面板页签，已废弃。
@@ -62,7 +67,7 @@ OSR 下 CEF 不知道宿主窗口位置，默认菜单弹错位：`OnBeforeConte
 
 - POSIX socket 极简 HTTP/1.1（127.0.0.1，默认 3081，`DSH_BROWSER_PORT` 覆盖，占用递增 +5；生效端口写 `$DSH_HOME/browser-api.port`；App 启动即起）；CORS 头 + OPTIONS 预检；
 - 路由：`status`/`open`（自动展开，`show:false` 抑制）/`tabs`/`back`/`forward`/`reload`/`stop`/`eval`/`console`/`console/clear`/`screenshot`(PNG)/`hide`，**新增 QA 端点**：
-  - `POST /api/browser/debug`：触发视图层级 dump（AppLog + `panel-browser-debug.png`）+ 返回 OSR 渲染状态（`debugState`：containerInWindow/osrLayerContents/frameCount/lastFrameSize/avgAlpha/avgLum…）；可选 body `{"click":[x,y]}` 模拟点击（`simulateClick`，验证 OSR 点击链路）；
+  - `POST /api/browser/debug`：触发视图层级 dump（AppLog + `panel-browser-debug.png`）+ 返回 OSR 渲染状态（`debugState`：containerInWindow/osrLayerContents（读 **pageView** 层，即帧的真实落点）/osrLayerScale/frameCount/lastFrameSize/avgAlpha/avgLum…）；可选 body `{"click":[x,y]}` 模拟点击（`simulateClick`，验证 OSR 点击链路）；
   - `POST /api/browser/hierarchy`：全窗口视图层级 JSON + 命中测试（面板/内容区中心 `hitTest`）+ 窗口/面板截图（写 `/tmp/window-shot.png`、`/tmp/panel-browser-shot.png`）——定位「内容区被盖住/事件被截」的遮挡视图；
 - 可单测纯模型：`HTTPRequest.parse`、`BrowserAPIRouter`（协议 `BrowserAPIDelegate` 抽象面板）、`BrowserLogBuffer`、`BrowserURL.normalize`；
 - 桥接 `BrowserAPIBridge`：异步操作（eval/screenshot）主线程派发 + 信号量同步等待（10s 超时），其余 `DispatchQueue.main.sync` 读快照；`debugDump`/`debugState`/`debugHierarchy` 闭包由 AppDelegate 接线（main.swift）。
@@ -75,7 +80,7 @@ OSR 下 CEF 不知道宿主窗口位置，默认菜单弹错位：`OnBeforeConte
 
 ## 测试
 
-`tests/browser-panel/run.sh`（日志缓冲/URL 规范化/HTTP 解析/REST 路由 + FakeDelegate；无窗口/CEF 实例化）。注意：OSR 输入转发落地后，`tests/terminal-emulator/stubs.swift` 需补 `sendMouseClick` 等桩，`run.sh` 才能编译通过（当前 WIP 分支测试为红）。
+`tests/browser-panel/run.sh`（71 例：日志缓冲/URL 规范化/HTTP 解析/REST 路由 + FakeDelegate；**OSR 帧落点与派发**——帧必须落在 `pageView` 层而非容器层、按 `browserId` 派发、DevTools 帧进 `devtoolsContent`、菜单锚点兜底；无窗口/CEF 实例化）。`tests/shell-config/run.sh`（13 例：旧 UserDefaults 一次性迁移进 `config.json` / 只做一次 / 显式值优先 / 不搬无关键）。注意：`tests/terminal-emulator/stubs.swift` 的 `CEFShim` 桩会记录最后一次注册的 paint/menu 回调并给 `createBrowser` 发递增 id（供帧派发用例触发）。
 
 ## 已知限制
 
