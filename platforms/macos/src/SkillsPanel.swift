@@ -518,10 +518,14 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        view.addSubview(header)
-        view.addSubview(segmented)
+        // Z-order: subviews added later draw ON TOP, so the content container
+        // (an opaque, full-width filler) goes in FIRST and the header/tab strip
+        // last. DynamicFillView also clamps its fill to its own bounds now, but
+        // this order keeps the panel correct on its own.
         view.addSubview(contentContainer)
+        view.addSubview(segmented)
         view.addSubview(statusLabel)
+        view.addSubview(header)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: view.topAnchor),
             header.leadingAnchor.constraint(equalTo: view.leadingAnchor),

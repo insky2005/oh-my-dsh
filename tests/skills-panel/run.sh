@@ -33,4 +33,13 @@ swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
   -o "$TMP/skills-panel-controller-tests" "$TMP/panel/"*.swift
 DSH_HOME="$TMP/fixture/home" DSH_AGENTS_HOME="$TMP/fixture/agents" \
   TEST_ROOT="$TMP/fixture" "$TMP/skills-panel-controller-tests"
+
+echo "--- panel painting (real DynamicFillView/HeaderLabel) ---"
+mkdir -p "$TMP/render"
+cp stubs-min.swift "$TMP/render/stubs.swift"
+cp ../../platforms/macos/src/PreviewPanel.swift "$TMP/render/PreviewPanel.swift"
+cp render-tests.swift "$TMP/render/main.swift"
+swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit -framework PDFKit \
+  -o "$TMP/render-tests" "$TMP/render/"*.swift
+"$TMP/render-tests"
 rm -rf "$TMP"

@@ -16,6 +16,10 @@ All notable changes to this project are documented in this file. Format follows
   - 新增 `platforms/macos/src/SkillsPanel.swift`（右栏面板）、`SkillsCore.swift`（纯 Foundation 模型：frontmatter 读写、四根扫描与级别判定、壳层技能记录 `shell/skills.json`）、`SkillSources.swift`（地址解析、registry 清单与搜索、拉取/安装/移除，传输可注入）与 `tests/skills-panel/`（无头模型单测，已接入 `scripts/local-ci.sh` 与 CI swift job）；`tests/skills/` 的内置技能字节断言保持不变。
   - 设计、四档级别判定与 registry 模型：`docs/skills-manager-design.md`；dsh 升级核对项见 `docs/dsh-version-impact.md` D2/D2b/D2c/D2d。
 
+### Fixed
+
+- **面板顶部条/标签被同色不透明兄弟视图覆盖（技能面板的标题与按钮不可见）**：`DynamicFillView` 是不透明视图，原实现按 `dirtyRect` 填充，而 AppKit 可能给不透明视图传入**大于其自身 bounds** 的脏矩形——于是内容容器（先添加、层级更低的兄弟）会把它上方的头部条、标签条整条刷成自己的底色，看起来就是"顶部空白/被遮住"。改为 `bounds.intersection(dirtyRect).fill()` 只填自己拥有的区域；技能面板同时把内容容器放到最底层、头部最后添加（双重保险）。新增无头绘制回归测试（`tests/skills-panel/render-tests.swift`：真实 `DynamicFillView`/`HeaderLabel` 离屏渲染后断言头部条有内容、且不透明兄弟不会越界覆盖），已验证**去掉该修复后测试会失败**。
+
 ### Changed
 
 - README 面板数量文案与目录树同步为八个面板。
