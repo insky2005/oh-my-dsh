@@ -296,6 +296,93 @@ enum L10n {
         // review panel — read-only change audit (name fixed: 审查 / Review)
         "bar.review": ("审查", "Review"),
         "menu.toggleReview": ("显示/隐藏 审查面板", "Toggle Review Panel"),
+        "menu.toggleSkills": ("显示/隐藏 技能面板", "Toggle Skills Panel"),
+        "bar.skills": ("技能", "Skills"),
+        // skills panel
+        "skills.title": ("技能", "Skills"),
+        "skills.hide": ("隐藏面板", "Hide Panel"),
+        "skills.refresh": ("刷新", "Refresh"),
+        "skills.tab.installed": ("已安装", "Installed"),
+        "skills.tab.available": ("可安装", "Available"),
+        "skills.searchInstalled": ("搜索已安装技能", "Search installed skills"),
+        "skills.search": ("搜索技能（至少 2 个字符）", "Search skills (min 2 chars)"),
+        "skills.searchAction": ("搜索", "Search"),
+        "skills.catalogAction": ("清单", "Catalog"),
+        "skills.loading": ("加载中…", "Loading…"),
+        "skills.catalogLoaded": ("清单已加载", "Catalog loaded"),
+        "skills.searchDone": ("搜索完成", "Search complete"),
+        "skills.found": ("已发现 %d 个技能", "Found %d skills"),
+        "skills.install": ("安装", "Install"),
+        "skills.installing": ("安装中…", "Installing…"),
+        "skills.installedOk": ("安装完成", "Installed"),
+        "skills.remove": ("移除", "Remove"),
+        "skills.removeConfirm": ("确认移除该技能？目录会被删除。", "Remove this skill? Its directory is deleted."),
+        "skills.removedOk": ("已移除", "Removed"),
+        "skills.overwrite": ("覆盖", "Overwrite"),
+        "skills.overwriteConfirm": ("目标已存在，是否覆盖？", "Target exists — overwrite?"),
+        "skills.detail": ("详情", "Details"),
+        "skills.reveal": ("在 Finder 中显示", "Reveal in Finder"),
+        "skills.copyPath": ("复制路径", "Copy Path"),
+        "skills.ok": ("好", "OK"),
+        "skills.cancel": ("取消", "Cancel"),
+        "skills.saved": ("已保存", "Saved"),
+        "skills.fromAddress": ("从地址安装…", "Install from Address…"),
+        "skills.addressHint": ("支持 owner/repo、owner/repo@skill、GitHub/GitLab 地址、well-known 地址与本地路径", "owner/repo, owner/repo@skill, GitHub/GitLab URLs, well-known URLs and local paths"),
+        "skills.warnPermissions": ("技能以完整代理权限运行，安装前请审阅其内容。", "Skills run with full agent permissions — review them before installing."),
+        "skills.import": ("手动导入…", "Import…"),
+        "skills.importHint": ("选择一个技能目录（含 SKILL.md）或单个 SKILL.md 文件", "Pick a skill folder (with SKILL.md) or a single SKILL.md"),
+        "skills.manageRegistry": ("管理 registry…", "Manage Registries…"),
+        "skills.addRegistry": ("添加", "Add"),
+        "skills.noCatalogHint": ("该 registry 未配置清单来源：请按关键字搜索，或添加一个可列出清单的 registry（owner/repo 或 well-known 地址）。", "This registry has no catalog source: search by keyword, or add one (owner/repo or well-known URL)."),
+        "skills.empty.installed": ("未找到技能", "No skills found"),
+        "skills.empty.results": ("暂无结果", "No results"),
+        "skills.target.user": ("用户级", "User"),
+        "skills.target.project": ("项目级", "Project"),
+        "skills.toggle.userInvocable": ("用户可调用", "User-invocable"),
+        "skills.toggle.modelInvocable": ("模型可调用", "Model-invocable"),
+        "skills.toggle.hintKey": ("写入 SKILL.md 的 user-invocable / disable-model-invocation", "Writes user-invocable / disable-model-invocation into SKILL.md"),
+        "skills.badge.builtin": ("内置", "Built-in"),
+        "skills.badge.user": ("用户级", "User"),
+        "skills.badge.shared": ("共享级", "Shared"),
+        "skills.badge.project": ("项目级", "Project"),
+        "skills.badge.shadowed": ("被遮蔽", "Shadowed"),
+        "skills.filter.all": ("全部", "All"),
+        "skills.builtinLocked": ("内置技能由 App 维护，不可修改", "Built-in skill, maintained by the app — read-only"),
+        "skills.sharedManaged": ("共享级技能由外部工具管理，不在此移除", "Shared-level skill, owned by external tools — not removed here"),
+        "skills.detail.name": ("名称", "Name"),
+        "skills.detail.level": ("级别", "Level"),
+        "skills.detail.root": ("根目录", "Root"),
+        "skills.detail.path": ("文件", "File"),
+        "skills.detail.files": ("文件数", "Files"),
+        "skills.detail.source": ("来源", "Source"),
+        "skills.detail.installedAt": ("安装时间", "Installed"),
+        "skills.registry.name": ("名称", "Name"),
+        "skills.registry.address": ("地址（owner/repo 或 URL）", "Address (owner/repo or URL)"),
+        "skills.registry.delete": ("删除", "Delete"),
+        "skills.registry.note": ("owner/repo 或 GitHub 地址 → 列出该仓库的技能清单；well-known 地址 → 读取 /.well-known/skills/index.json；其他 URL → 视为 skills.sh 兼容的搜索接口。", "owner/repo or a GitHub URL lists that repo's skills; a well-known URL reads /.well-known/skills/index.json; any other URL is treated as a skills.sh-compatible search endpoint."),
+        "skills.registry.catalogNone": ("仅搜索", "Search only"),
+        "skills.registry.catalogWellKnown": ("well-known 清单", "well-known catalog"),
+        "skills.registry.catalogGitHub": ("GitHub 仓库清单", "GitHub repo catalog"),
+        "skills.root.userDsh": ("用户级（$DSH_HOME/skills）", "User ($DSH_HOME/skills)"),
+        "skills.root.userAgents": ("共享级（~/.agents/skills）", "Shared (~/.agents/skills)"),
+        "skills.root.projectDsh": ("项目级（.dsh/skills）", "Project (.dsh/skills)"),
+        "skills.root.projectAgents": ("项目级（.agents/skills）", "Project (.agents/skills)"),
+        "skills.err.unsupportedAddress": ("无法识别的地址", "Unrecognized address"),
+        "skills.err.unsupportedTarget": ("该级别不支持安装或写入", "This level cannot be installed into"),
+        "skills.err.insecureURL": ("仅支持 https 地址", "Only https URLs are allowed"),
+        "skills.err.noSkillsFound": ("未找到有效技能（需要含 name 与 description 的 SKILL.md）", "No valid skill found (needs a SKILL.md with name and description)"),
+        "skills.err.invalidName": ("技能名不合规（仅小写字母、数字与连字符）", "Invalid skill name (lowercase letters, digits and hyphens only)"),
+        "skills.err.missingFrontmatter": ("SKILL.md 缺少合法 frontmatter", "SKILL.md has no valid frontmatter"),
+        "skills.err.targetExists": ("目标已存在", "Target already exists"),
+        "skills.err.builtinProtected": ("不能覆盖内置技能（请改名或换目标级别）", "A built-in skill cannot be overwritten (rename it or change the target level)"),
+        "skills.err.builtinReadOnly": ("内置技能不可修改", "Built-in skills are read-only"),
+        "skills.err.sharedNotRemovable": ("共享级技能请用外部工具管理", "Manage shared-level skills with their own tool"),
+        "skills.err.gitUnavailable": ("git 不可用", "git is unavailable"),
+        "skills.err.unsafePath": ("不安全的文件路径", "Unsafe file path"),
+        "skills.err.queryTooShort": ("请输入至少 2 个字符", "Type at least 2 characters"),
+        "skills.err.noCatalog": ("该 registry 未配置清单来源", "This registry has no catalog source"),
+        "skills.err.network": ("网络请求失败", "Network request failed"),
+        "skills.err.io": ("文件操作失败", "File operation failed"),
         "review.title": ("审查", "Review"),
         "review.refresh": ("重新读取", "Reload"),
         "review.expandAll": ("全部展开", "Expand All"),
@@ -1722,6 +1809,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var browserToggleMenuItem: NSMenuItem?
     private var channelToggleMenuItem: NSMenuItem?
     private var reviewToggleMenuItem: NSMenuItem?
+    private var skillsToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip).
     private var previewBarButton: ActivityBarButton!
     private var closeTabMenuItem: NSMenuItem?
@@ -1731,6 +1819,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var browserBarButton: ActivityBarButton!
     private var channelBarButton: ActivityBarButton!
     private var reviewBarButton: ActivityBarButton!
+    private var skillsBarButton: ActivityBarButton!
 
     private var window: NSWindow!
     private var webView: WKWebView!
@@ -1742,6 +1831,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var browserPanel: BrowserPanelController!
     private var channelPanel: ChannelPanelController!
     private var reviewPanel: ReviewPanelController!
+    private var skillsPanel: SkillsPanelController!
     /// Browser panel localhost REST API (Agent / user curl). Runs from launch.
     private var browserAPIServer: BrowserAPIServer!
     private var browserAPIBridge: BrowserAPIBridge!
@@ -1751,7 +1841,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
     /// terminal, wiki, tasks and browser panels share one slot; the activity
     /// bar toggles between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review }
+    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review, skills }
     private var rightPanel: RightPanel = .none
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
@@ -1774,7 +1864,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     max(WikiPanelController.minWidth,
                         max(IssueRunnerPanelController.minWidth,
                             max(BrowserPanelController.minWidth,
-                                max(ChannelPanelController.minWidth, ReviewPanelController.minWidth)))))))
+                                max(ChannelPanelController.minWidth,
+                                    max(ReviewPanelController.minWidth,
+                                        SkillsPanelController.minWidth))))))))
     /// *Initial* panel width when the user has never chosen one. The user's
     /// saved/dragged width always wins (clamped to the minimum above); this is
     /// only the first-run width. Deliberately NOT window-relative: a "half the
@@ -1970,6 +2062,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.review)
             AppLog.shared.log("review self-test enabled")
         }
+        // Skills self-test hook (debugging / QA): opens the skills manager.
+        // DSH_SKILLS_TEST_ROOT points the panel's user root at a fixture home.
+        if ProcessInfo.processInfo.environment["DSH_SKILLS_TEST"] == "1" {
+            setRightPanel(.skills)
+            AppLog.shared.log("skills self-test enabled")
+        }
     }
 
     /// Build the activity bar (leftmost icon strip) + the main split view:
@@ -2048,6 +2146,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // its first open. This way the first open already has content.
         reviewPanel.prewarm()
 
+        skillsPanel = SkillsPanelController()
+        AppLog.shared.log("launch: skillsPanel created")
+        skillsPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        skillsPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
+        skillsPanel.onOpenFile = { [weak self] path in
+            guard let self = self else { return }
+            self.previewPanel.open(path: path)
+            self.setRightPanel(.preview)
+        }
+        skillsPanel.onRevealInFinder = { path in
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        }
+
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
@@ -2056,7 +2167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityBar.translatesAutoresizingMaskIntoConstraints = false
 
         // 活动栏图标：tooltip 跟随系统语言（L10n 中英切换）；
-        // 顺序 = 文件、终端、浏览器、Wiki、任务。
+        // 顺序 = 文件、终端、浏览器、Wiki、任务、通道、审查、技能。
         previewBarButton = makeActivityButton(symbol: "doc.on.doc",
                                               tooltip: L10n.tr("bar.preview"),
                                               action: #selector(togglePreviewPanel(_:)))
@@ -2078,7 +2189,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reviewBarButton = makeActivityButton(symbol: "doc.text",
                                              tooltip: L10n.tr("bar.review"),
                                              action: #selector(reviewEntryTapped(_:)))
-        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton])
+        skillsBarButton = makeActivityButton(symbol: "puzzlepiece",
+                                             tooltip: L10n.tr("bar.skills"),
+                                             action: #selector(skillsEntryTapped(_:)))
+        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton, skillsBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -2138,6 +2252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "browser": kind = .browser
         case "channel": kind = .channel
         case "review": kind = .review
+        case "skills": kind = .skills
         default: kind = .preview
         }
         setRightPanel(visible ? kind : .none)
@@ -2153,6 +2268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .browser: return browserPanel.view
         case .channel: return channelPanel.view
         case .review: return reviewPanel.view
+        case .skills: return skillsPanel.view
         case .none: return NSView()
         }
     }
@@ -2210,6 +2326,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         browserToggleMenuItem?.state = (panel == .browser) ? .on : .off
         channelToggleMenuItem?.state = (panel == .channel) ? .on : .off
         reviewToggleMenuItem?.state = (panel == .review) ? .on : .off
+        skillsToggleMenuItem?.state = (panel == .skills) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
@@ -2217,6 +2334,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         browserBarButton?.setActive(panel == .browser)
         channelBarButton?.setActive(panel == .channel)
         reviewBarButton?.setActive(panel == .review)
+        skillsBarButton?.setActive(panel == .skills)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
@@ -2286,6 +2404,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if uiDebug {
                     self.dumpPanelDebugInfo(panelView: reviewPanel.view, label: "review")
                 }
+            case .skills:
+                skillsPanel.ensureLoaded()
+                if uiDebug {
+                    self.dumpPanelDebugInfo(panelView: skillsPanel.view, label: "skills")
+                }
             }
         } else {
             split.setPosition(split.bounds.width, ofDividerAt: 0)
@@ -2316,6 +2439,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .tasks: kind = "tasks"
         case .browser: kind = "browser"
         case .channel: kind = "channel"
+        case .review: kind = "review"
+        case .skills: kind = "skills"
         default: kind = "preview"
         }
         ShellConfig.shared.set(kind, forKey: "rightPanelKind")
@@ -3680,6 +3805,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleReview.target = self
         toggleReview.state = (rightPanel == .review) ? .on : .off
         reviewToggleMenuItem = toggleReview
+
+        let toggleSkills = viewMenu.addItem(withTitle: L10n.tr("menu.toggleSkills"), action: #selector(skillsEntryTapped(_:)), keyEquivalent: "s")
+        toggleSkills.keyEquivalentModifierMask = [.command, .option]
+        toggleSkills.target = self
+        toggleSkills.state = (rightPanel == .skills) ? .on : .off
+        skillsToggleMenuItem = toggleSkills
         viewItem.submenu = viewMenu
 
         // Settings menu: dsh settings/upgrade/registry + logs + language.
@@ -3818,6 +3949,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         browserBarButton?.toolTip = L10n.tr("bar.browser")
         channelBarButton?.toolTip = L10n.tr("bar.channel")
         reviewBarButton?.toolTip = L10n.tr("bar.review")
+        skillsBarButton?.toolTip = L10n.tr("bar.skills")
         wikiBarButton?.toolTip = L10n.tr("bar.wiki")
         tasksBarButton?.toolTip = L10n.tr("bar.tasks")
         // 各面板头部操作按钮 tooltip 同样跟随语言
@@ -3828,6 +3960,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         browserPanel?.refreshTooltips()
         channelPanel?.refreshTooltips()
         reviewPanel?.refreshTooltips()
+        skillsPanel?.refreshTooltips()
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url
@@ -4010,6 +4143,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Toggle the Review (change audit) panel (activity bar entry / ⌥⌘R).
     @objc private func reviewEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .review ? .none : .review)
+    }
+
+    /// Toggle the Skills manager panel (activity bar entry / ⌥⌘S).
+    @objc private func skillsEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .skills ? .none : .skills)
     }
     /// Run QR login for a channel via the core CLI, open the QR URL in the
     /// browser, and save the token to ~/.dsh/channels/<channelId>.json.
@@ -4475,6 +4613,7 @@ final class SettingsWindowController {
         ("menu.toggleBrowser", "⌥⌘B"),
         ("menu.toggleChannel", "⌥⌘H"),
         ("menu.toggleReview", "⌥⌘R"),
+        ("menu.toggleSkills", "⌥⌘S"),
         ("settings.openMenu", "⌘,"),
     ]
 

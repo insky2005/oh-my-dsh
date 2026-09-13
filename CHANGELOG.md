@@ -7,6 +7,19 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **技能面板（Skills / `⌥⌘S`，活动栏「技能」）：在壳层里查找 / 安装 / 移除 agent 技能，并管理调用开关**。面板分「已安装」与「可安装」两个页签：**已安装**扫描 dsh 的四个技能根（`<工作区>/.dsh/skills`、`<工作区>/.agents/skills`、`$DSH_HOME/skills`、`~/.agents/skills`），按 dsh 的 rank 去重并逐行标出**级别** —— `内置` / `用户级` / `共享级` / `项目级`（同名被压住的标「被遮蔽」）；**可安装**按当前 registry 渲染清单或按关键字搜索，支持清单勾选安装、从地址安装与手动导入本地目录。**内置技能只读**（开关禁用、无移除入口、不可被安装覆盖——App 启动时按内嵌内容同步，字节一致性不变，故 `SkillInstaller.swift` 零改动）；**共享级**（外部 skills CLI 管理的 `~/.agents/skills`）可看可改开关、但不在面板里移除；**用户级 / 项目级**可改开关、可移除。
+  - **调用开关写回 SKILL.md frontmatter**：`用户可调用` → `user-invocable`、`模型可调用` → `disable-model-invocation`（关闭即写 `true`）；**切回默认值会删掉该键**，从而字节还原原文件；只增删改这两行，键序/注释/引号/CRLF/正文全部原样保留（不是 YAML 往返）。**只写规范键**——dsh 对旧的驼峰键（`userInvocable` 等）会直接忽略整个技能。改完 dsh 自动发现，无需重启；重启后开关仍在（记录在壳层 `$DSH_HOME/shell/skills.json`，面板重装同一技能时按记录重放）。
+  - **安装目标**：默认 **用户级** `$DSH_HOME/skills/<name>/`（所有工作区通用），可选 **项目级** `<工作区>/.dsh/skills/<name>/`（rank 100、优先级最高，写用户仓库前会提示 git diff）；同名已存在先确认，目标是内置同名技能则拒绝；技能目录**整目录复制**（SKILL.md + 附件），拒绝路径穿越、仅接受 https、失败不留半成品。
+  - **registry 是可配置项**（`shell/skills.json` 的 `registries`，默认预置 skills.sh）：`owner/repo` 或 GitHub 地址 → **列出该仓库的技能清单**（浅克隆后本地扫描，避开 GitHub API 限流）；well-known 地址 → 读 `/.well-known/skills/index.json` 清单；其他 URL → 视为 skills.sh 兼容的搜索接口（模板 `{q}`/`{limit}`）。**skills.sh 只提供关键字搜索、没有全量清单接口**（实测 `/api/leaderboard`、`/api/skills` 均 404，站点榜单是 HTML）——因此该 registry 未配清单来源时，列表区明确提示「按关键字搜索」，不做 HTML 抓取。
+  - 新增 `platforms/macos/src/SkillsPanel.swift`（右栏面板）、`SkillsCore.swift`（纯 Foundation 模型：frontmatter 读写、四根扫描与级别判定、壳层技能记录 `shell/skills.json`）、`SkillSources.swift`（地址解析、registry 清单与搜索、拉取/安装/移除，传输可注入）与 `tests/skills-panel/`（无头模型单测，已接入 `scripts/local-ci.sh` 与 CI swift job）；`tests/skills/` 的内置技能字节断言保持不变。
+  - 设计、四档级别判定与 registry 模型：`docs/skills-manager-design.md`；dsh 升级核对项见 `docs/dsh-version-impact.md` D2/D2b/D2c/D2d。
+
+### Changed
+
+- README 面板数量文案与目录树同步为八个面板。
+
 ### Fixed
 
 - **修复「新建的会话在审查面板里只有一行会话、看不到里面改的文件」**：面板的审计结果**按 sessionId 缓存后永不失效**——而新建会话一诞生（成为 dsh web 当前会话）就会被审一次，那会儿日志里只有会话头，于是「0 文件 / 本会话没有记录到文件变更」被**永久钉住**：后面改了多少文件都不会再读一次（点刷新也只重列会话，不动审计缓存）。会话日志是**活文档**（dsh 每落盘一批追加一个独立可解压的 Zstandard 帧，只增不减），因此缓存必须按**日志身份**而不是 id 认账：

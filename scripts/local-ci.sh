@@ -66,6 +66,8 @@ stage_swift() {
   tests/shell-config/run.sh
   echo "--- built-in skills tests ---"
   tests/skills/run.sh
+  echo "--- skills manager panel tests ---"
+  tests/skills-panel/run.sh
   echo "--- channel panel tests ---"
   tests/channel-panel/run.sh
   echo "--- review (change audit) panel tests ---"
