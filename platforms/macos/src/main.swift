@@ -2158,6 +2158,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsPanel.onRevealInFinder = { path in
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
         }
+        // QA (--ui-debug): snapshot the panel again once it has rendered content.
+        skillsPanel.onDidRender = { [weak self] in
+            guard let self = self, self.uiDebug else { return }
+            self.dumpPanelDebugInfo(panelView: self.skillsPanel.view, label: "skills-loaded")
+        }
 
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
@@ -2464,7 +2469,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // a "header renders blank" report can be pinned to frames/hierarchy.
         // The review panel renders a 会话→对话→文件→变更 tree, so its dump needs the
         // same depth as the browser panel's own view stack.
-        dumpHierarchy(panelView, label: label, maxDepth: (label == "browser" || label.hasPrefix("review")) ? 8 : 4)
+        dumpHierarchy(panelView, label: label, maxDepth: (label == "browser" || label.hasPrefix("review") || label.hasPrefix("skills")) ? 8 : 4)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self = self, panelView.window != nil, panelView.bounds.width > 10 else { return }
             guard let rep = panelView.bitmapImageRepForCachingDisplay(in: panelView.bounds) else { return }

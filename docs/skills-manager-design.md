@@ -56,6 +56,7 @@ RegistryEntry { id, label, enabled,
 ```
 
 - 存储于 `$DSH_HOME/shell/skills.json` 的 `registries`；**默认预置一条 skills.sh**（`catalog.kind = none`；base 可被 `SKILLS_API_URL` 覆盖）；
+- 两个工具栏都用**扁平标签**（`SkillTabStrip`）而不是下拉：registry 标签在左、级别筛选（全部/内置/用户级/共享级/项目级）在左，搜索框统一右对齐；
 - **「可安装」列表 = 当前 registry 的清单**：`wellKnown` → 拉 `<base>/.well-known/skills/index.json` 列出；`githubRepo` → `git clone --depth 1` 后本地扫描列出（避免 GitHub API 限流）；`none` → 提示「未配置清单来源」并转为关键字搜索；
 - 添加 registry 时自动探测：`owner/repo` 或 GitHub 地址 → `githubRepo`；以 `/.well-known/skills/index.json` 结尾或该索引可访问 → `wellKnown`；其余 URL → 视为 skills.sh 兼容的搜索接口（`<base>/api/search?q={q}&limit={limit}`）；
 - 组织级全仓枚举（`owner/*`）列为后续项。

@@ -21,9 +21,165 @@ final class SkillsRootView: NSView {
     }
 }
 
-/// One row of the installed list: name, level badge, path, the two invocation
+/// Card background shared by both lists: a rounded fill + hairline border
+/// resolved per appearance at draw time (a fixed CGColor layer background would
+/// freeze the light/dark resolution — same reason DynamicFillView exists).
+class SkillCardView: NSView {
+
+    override var isOpaque: Bool { false }
+
+    /// Accent-tinted card, used for the registry tab's selected state.
+    var highlighted = false { didSet { needsDisplay = true } }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let fill: NSColor
+        let border: NSColor
+        if highlighted {
+            fill = NSColor.controlAccentColor.withAlphaComponent(dark ? 0.22 : 0.12)
+            border = NSColor.controlAccentColor.withAlphaComponent(dark ? 0.55 : 0.45)
+        } else {
+            fill = dark ? NSColor(calibratedWhite: 0.20, alpha: 1) : NSColor(calibratedWhite: 1.0, alpha: 1)
+            border = dark ? NSColor(calibratedWhite: 0.38, alpha: 0.7) : NSColor(calibratedWhite: 0.82, alpha: 1)
+        }
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        fill.setFill()
+        path.fill()
+        border.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
+}
+
+
+/// One flat tab: borderless text label with an accent underline when selected
+/// (no bezel, no dropdown look). Used by both Skills toolbars.
+final class SkillTabItemView: NSView {
+
+    var onTap: (() -> Void)?
+
+    private(set) var title: String
+    var isSelected = false { didSet { needsDisplay = true } }
+    private var isHovered = false
+    private var trackingArea: NSTrackingArea?
+
+    init(title: String) {
+        self.title = title
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func setTitle(_ value: String) {
+        title = value
+        invalidateIntrinsicContentSize()
+        needsDisplay = true
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let size = (title as NSString).size(withAttributes: [.font: Self.font])
+        return NSSize(width: ceil(size.width) + 18, height: 24)
+    }
+
+    static let font = NSFont.systemFont(ofSize: 11, weight: .medium)
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let ta = trackingArea { removeTrackingArea(ta) }
+        let ta = NSTrackingArea(rect: .zero,
+                                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                owner: self, userInfo: nil)
+        addTrackingArea(ta)
+        trackingArea = ta
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false; needsDisplay = true }
+    override func mouseDown(with event: NSEvent) { onTap?() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        if isHovered, !isSelected {
+            (dark ? NSColor(calibratedWhite: 1, alpha: 0.06) : NSColor(calibratedWhite: 0, alpha: 0.05)).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 2), xRadius: 5, yRadius: 5).fill()
+        }
+        let color: NSColor = isSelected
+            ? .controlAccentColor
+            : (dark ? NSColor(calibratedWhite: 0.78, alpha: 1) : NSColor(calibratedWhite: 0.35, alpha: 1))
+        let attrs: [NSAttributedString.Key: Any] = [.font: Self.font, .foregroundColor: color]
+        let size = (title as NSString).size(withAttributes: attrs)
+        (title as NSString).draw(at: NSPoint(x: (bounds.width - size.width) / 2,
+                                             y: (bounds.height - size.height) / 2 + 1),
+                                 withAttributes: attrs)
+        if isSelected {
+            NSColor.controlAccentColor.setFill()
+            NSBezierPath(rect: NSRect(x: 4, y: 0, width: max(0, bounds.width - 8), height: 2)).fill()
+        }
+    }
+}
+
+/// A row of flat tabs (the registry selector and the level filter). Replaces the
+/// dropdowns: every choice is visible at once.
+final class SkillTabStrip: NSView {
+
+    var onSelect: ((Int) -> Void)?
+    private(set) var selectedIndex = 0
+    private var items: [SkillTabItemView] = []
+    private let row = NSStackView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 2
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor),
+            row.topAnchor.constraint(equalTo: topAnchor),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func setItems(_ titles: [String], selected: Int) {
+        for view in row.arrangedSubviews { view.removeFromSuperview() }
+        items = []
+        for (index, title) in titles.enumerated() {
+            let item = SkillTabItemView(title: title)
+            item.onTap = { [weak self] in self?.select(index) }
+            row.addArrangedSubview(item)
+            items.append(item)
+        }
+        selectedIndex = max(0, min(selected, max(0, titles.count - 1)))
+        applySelection()
+    }
+
+    func select(_ index: Int, notify: Bool = true) {
+        guard index >= 0, index < items.count else { return }
+        selectedIndex = index
+        applySelection()
+        if notify { onSelect?(index) }
+    }
+
+    private func applySelection() {
+        for (index, item) in items.enumerated() { item.isSelected = index == selectedIndex }
+    }
+}
+
+/// One card of the installed list: name, level badge, path, the two invocation
 /// toggles and the row actions.
-final class SkillRowView: NSView {
+final class SkillRowView: SkillCardView {
 
     private let nameLabel = NSTextField(labelWithString: "")
     private let badgeLabel = NSTextField(labelWithString: "")
@@ -149,8 +305,8 @@ final class SkillRowView: NSView {
     @objc private func revealTapped() { onReveal?() }
 }
 
-/// One row of the available (registry) list: a checkbox, name, source, installs.
-final class SkillCandidateRowView: NSView {
+/// One card of the available (registry) list: a checkbox, name, source, installs.
+final class SkillCandidateRowView: SkillCardView {
 
     private let check = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let nameLabel = NSTextField(labelWithString: "")
@@ -218,6 +374,9 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     var onOpenFile: ((String) -> Void)?
     var onRevealInFinder: ((String) -> Void)?
     var workspacePath: (() -> String?)?
+    /// QA hook (--ui-debug): fires after each render so the shell can snapshot
+    /// the panel once it actually has content (same pattern as ReviewPanel).
+    var onDidRender: (() -> Void)?
 
     static let minWidth: CGFloat = 300
 
@@ -232,13 +391,16 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     // Installed tab
     private let installedView = NSView()
     private let installedSearch = NSSearchField()
-    private let levelFilter = NSPopUpButton()
+    /// Flat tabs (all / built-in / user / shared / project) — was a dropdown.
+    private let levelTabs = SkillTabStrip()
     private let installedScroll = NSScrollView()
     private let installedList = FlippedStackView()
 
     // Available tab
     private let availableView = NSView()
-    private let registryPopup = NSPopUpButton()
+    /// Flat registry tabs (the toolbar switches between registries directly
+    /// instead of hiding them in a dropdown).
+    private let registryTabs = SkillTabStrip()
     private let availableSearch = NSSearchField()
     private let searchButton = NSButton()
     private let catalogButton = NSButton()
@@ -308,14 +470,19 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     // MARK: - UI
 
     private func buildUI() {
-        view.translatesAutoresizingMaskIntoConstraints = false
-
+        // NOTE: the panel root is mounted directly as the split view's second
+        // pane, which positions subviews by FRAME. Setting
+        // translatesAutoresizingMaskIntoConstraints = false here (as an earlier
+        // version did) leaves the pane without any size, so the header collapsed
+        // to its fitting width and the content area stayed empty — the same
+        // trap the review panel hit. Keep the root frame-based.
         refreshButton.onAction = { [weak self] in self?.reloadAll() }
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
 
         let header = DynamicFillView()
         header.kind = .window
         header.translatesAutoresizingMaskIntoConstraints = false
+        headerTitle.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerTitle)
         let actions = NSStackView(views: [refreshButton, hideButton])
         actions.orientation = .horizontal
@@ -387,34 +554,40 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         installedSearch.delegate = self
         installedSearch.target = self
         installedSearch.action = #selector(searchChanged)
+        installedSearch.setContentHuggingPriority(.required, for: .horizontal)
+        installedSearch.widthAnchor.constraint(equalToConstant: 170).isActive = true
 
-        levelFilter.translatesAutoresizingMaskIntoConstraints = false
-        levelFilter.controlSize = .small
-        levelFilter.font = NSFont.systemFont(ofSize: 11)
-        levelFilter.target = self
-        levelFilter.action = #selector(levelFilterChanged)
+        levelTabs.onSelect = { [weak self] index in self?.levelTabChanged(index) }
 
         installedScroll.translatesAutoresizingMaskIntoConstraints = false
         installedScroll.hasVerticalScroller = true
         installedScroll.drawsBackground = false
         installedList.orientation = .vertical
         installedList.alignment = .leading
-        installedList.spacing = 0
+        installedList.spacing = 8
+        installedList.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
         installedList.translatesAutoresizingMaskIntoConstraints = false
         installedScroll.documentView = installedList
 
-        installedView.addSubview(installedSearch)
-        installedView.addSubview(levelFilter)
+        // Toolbar: level filter on the LEFT, search pinned RIGHT (same shape as
+        // the registry tab's toolbar).
+        let installedToolbar = NSStackView(views: [levelTabs, NSView(), installedSearch])
+        installedToolbar.orientation = .horizontal
+        installedToolbar.alignment = .centerY
+        installedToolbar.spacing = 6
+        installedToolbar.translatesAutoresizingMaskIntoConstraints = false
+        let installedSpacer = installedToolbar.arrangedSubviews[1]
+        installedSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        installedSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        installedView.addSubview(installedToolbar)
         installedView.addSubview(installedScroll)
         NSLayoutConstraint.activate([
-            installedSearch.topAnchor.constraint(equalTo: installedView.topAnchor, constant: 8),
-            installedSearch.leadingAnchor.constraint(equalTo: installedView.leadingAnchor, constant: 8),
-            levelFilter.centerYAnchor.constraint(equalTo: installedSearch.centerYAnchor),
-            levelFilter.leadingAnchor.constraint(equalTo: installedSearch.trailingAnchor, constant: 6),
-            levelFilter.trailingAnchor.constraint(equalTo: installedView.trailingAnchor, constant: -8),
-            levelFilter.widthAnchor.constraint(greaterThanOrEqualToConstant: 110),
+            installedToolbar.topAnchor.constraint(equalTo: installedView.topAnchor, constant: 8),
+            installedToolbar.leadingAnchor.constraint(equalTo: installedView.leadingAnchor, constant: 8),
+            installedToolbar.trailingAnchor.constraint(equalTo: installedView.trailingAnchor, constant: -8),
 
-            installedScroll.topAnchor.constraint(equalTo: installedSearch.bottomAnchor, constant: 6),
+            installedScroll.topAnchor.constraint(equalTo: installedToolbar.bottomAnchor, constant: 6),
             installedScroll.leadingAnchor.constraint(equalTo: installedView.leadingAnchor),
             installedScroll.trailingAnchor.constraint(equalTo: installedView.trailingAnchor),
             installedScroll.bottomAnchor.constraint(equalTo: installedView.bottomAnchor),
@@ -439,28 +612,32 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         importButton.action = #selector(manualImport)
         manageRegistryButton.action = #selector(manageRegistries)
 
-        registryPopup.translatesAutoresizingMaskIntoConstraints = false
-        registryPopup.controlSize = .small
-        registryPopup.font = NSFont.systemFont(ofSize: 11)
-        registryPopup.target = self
-        registryPopup.action = #selector(registryChanged)
+        registryTabs.onSelect = { [weak self] _ in self?.registryChanged() }
+        registryTabs.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        registryTabs.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
 
         availableSearch.translatesAutoresizingMaskIntoConstraints = false
         availableSearch.controlSize = .small
         availableSearch.font = NSFont.systemFont(ofSize: 11)
         availableSearch.target = self
         availableSearch.action = #selector(doSearch)
+        availableSearch.setContentHuggingPriority(.required, for: .horizontal)
+        availableSearch.widthAnchor.constraint(equalToConstant: 170).isActive = true
 
-        let topRow = NSStackView(views: [registryPopup, manageRegistryButton, searchButton, catalogButton])
-        topRow.orientation = .horizontal
-        topRow.spacing = 6
-        topRow.translatesAutoresizingMaskIntoConstraints = false
+        // Spacer: takes the slack so the search controls hug the right edge.
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let searchRow = NSStackView(views: [availableSearch])
-        searchRow.orientation = .horizontal
-        searchRow.translatesAutoresizingMaskIntoConstraints = false
+        // Toolbar: flat registry tabs on the LEFT, search pinned RIGHT.
+        let toolbarRow = NSStackView(views: [registryTabs, spacer, availableSearch, searchButton, catalogButton])
+        toolbarRow.orientation = .horizontal
+        toolbarRow.alignment = .centerY
+        toolbarRow.spacing = 6
+        toolbarRow.translatesAutoresizingMaskIntoConstraints = false
 
-        let bottomRow = NSStackView(views: [addressButton, importButton])
+        let bottomRow = NSStackView(views: [addressButton, importButton, manageRegistryButton])
         bottomRow.orientation = .horizontal
         bottomRow.spacing = 6
         bottomRow.translatesAutoresizingMaskIntoConstraints = false
@@ -470,24 +647,20 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         resultsScroll.drawsBackground = false
         resultsList.orientation = .vertical
         resultsList.alignment = .leading
-        resultsList.spacing = 0
+        resultsList.spacing = 8
+        resultsList.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
         resultsList.translatesAutoresizingMaskIntoConstraints = false
         resultsScroll.documentView = resultsList
 
-        availableView.addSubview(topRow)
-        availableView.addSubview(searchRow)
+        availableView.addSubview(toolbarRow)
         availableView.addSubview(resultsScroll)
         availableView.addSubview(bottomRow)
         NSLayoutConstraint.activate([
-            topRow.topAnchor.constraint(equalTo: availableView.topAnchor, constant: 8),
-            topRow.leadingAnchor.constraint(equalTo: availableView.leadingAnchor, constant: 8),
-            topRow.trailingAnchor.constraint(lessThanOrEqualTo: availableView.trailingAnchor, constant: -8),
+            toolbarRow.topAnchor.constraint(equalTo: availableView.topAnchor, constant: 8),
+            toolbarRow.leadingAnchor.constraint(equalTo: availableView.leadingAnchor, constant: 8),
+            toolbarRow.trailingAnchor.constraint(equalTo: availableView.trailingAnchor, constant: -8),
 
-            searchRow.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 6),
-            searchRow.leadingAnchor.constraint(equalTo: availableView.leadingAnchor, constant: 8),
-            searchRow.trailingAnchor.constraint(equalTo: availableView.trailingAnchor, constant: -8),
-
-            resultsScroll.topAnchor.constraint(equalTo: searchRow.bottomAnchor, constant: 6),
+            resultsScroll.topAnchor.constraint(equalTo: toolbarRow.bottomAnchor, constant: 6),
             resultsScroll.leadingAnchor.constraint(equalTo: availableView.leadingAnchor),
             resultsScroll.trailingAnchor.constraint(equalTo: availableView.trailingAnchor),
             resultsList.leadingAnchor.constraint(equalTo: resultsScroll.contentView.leadingAnchor),
@@ -533,7 +706,13 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         renderInstalled()
         renderRegistryPopup()
         renderAvailable()
+        AppLog.shared.log("skills: scanned " + String(skills.count) + " skill(s) across "
+            + String(roots.count) + " root(s); "
+            + skills.map { $0.name + "(" + $0.level.rawValue + ")" }.joined(separator: ", "))
         setStatus(L10n.tr("skills.found").replacingOccurrences(of: "%d", with: String(skills.count)), error: false)
+        // Let the shell snapshot AFTER the rows exist (a startup-time dump has no
+        // backing store yet, so its PNG came out empty).
+        DispatchQueue.main.async { [weak self] in self?.onDidRender?() }
     }
 
     private func rescan() {
@@ -541,30 +720,23 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         renderInstalled()
     }
 
-    private func rebuildLevelFilter() {
-        let entries: [(String, SkillLevel?)] = [
-            (L10n.tr("skills.filter.all"), nil),
-            (L10n.tr("skills.badge.builtin"), .builtin),
-            (L10n.tr("skills.badge.user"), .user),
-            (L10n.tr("skills.badge.shared"), .shared),
-            (L10n.tr("skills.badge.project"), .project),
-        ]
-        let current = levelFilter.indexOfSelectedItem
-        levelFilter.removeAllItems()
-        for (title, _) in entries { levelFilter.addItem(withTitle: title) }
-        if current >= 0, current < entries.count { levelFilter.selectItem(at: current) }
-        filterLevel = entries[max(0, min(current, entries.count - 1))].1
+    private static var levelEntries: [(String, SkillLevel?)] {
+        [(L10n.tr("skills.filter.all"), nil),
+         (L10n.tr("skills.badge.builtin"), .builtin),
+         (L10n.tr("skills.badge.user"), .user),
+         (L10n.tr("skills.badge.shared"), .shared),
+         (L10n.tr("skills.badge.project"), .project)]
     }
 
-    @objc private func levelFilterChanged() {
-        let index = levelFilter.indexOfSelectedItem
-        switch index {
-        case 1: filterLevel = .builtin
-        case 2: filterLevel = .user
-        case 3: filterLevel = .shared
-        case 4: filterLevel = .project
-        default: filterLevel = nil
-        }
+    private func rebuildLevelFilter() {
+        let entries = SkillsPanelController.levelEntries
+        levelTabs.setItems(entries.map { $0.0 }, selected: levelTabs.selectedIndex)
+        filterLevel = entries[max(0, min(levelTabs.selectedIndex, entries.count - 1))].1
+    }
+
+    private func levelTabChanged(_ index: Int) {
+        let entries = SkillsPanelController.levelEntries
+        filterLevel = entries[max(0, min(index, entries.count - 1))].1
         renderInstalled()
     }
 
@@ -581,7 +753,9 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
             return s.name.lowercased().contains(query) || s.description.lowercased().contains(query)
         }
         if visible.isEmpty {
-            installedList.addArrangedSubview(emptyLabel(L10n.tr("skills.empty.installed")))
+            let empty = emptyCard(L10n.tr("skills.empty.installed"))
+            installedList.addArrangedSubview(empty)
+            empty.widthAnchor.constraint(equalTo: installedList.widthAnchor, constant: -20).isActive = true
             return
         }
         for skill in visible {
@@ -592,50 +766,55 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
             row.onOpen = { [weak self] in self?.onOpenFile?(skill.skillFile) }
             row.onReveal = { [weak self] in self?.onRevealInFinder?(skill.dir) }
             row.onDetail = { [weak self] in self?.showDetail(skill) }
-            let wrapper = NSStackView(views: [row])
-            wrapper.orientation = .vertical
-            wrapper.alignment = .leading
-            wrapper.translatesAutoresizingMaskIntoConstraints = false
             row.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                row.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-                row.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-            ])
-            let separator = NSBox()
-            separator.boxType = .separator
-            installedList.addArrangedSubview(wrapper)
-            installedList.addArrangedSubview(separator)
-            wrapper.widthAnchor.constraint(equalTo: installedList.widthAnchor).isActive = true
-            separator.widthAnchor.constraint(equalTo: installedList.widthAnchor).isActive = true
+            installedList.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: installedList.widthAnchor, constant: -20).isActive = true
         }
     }
 
-    private func emptyLabel(_ text: String) -> NSTextField {
+    /// Empty-state text that spans the list width (so .center actually centers).
+    private func emptyCard(_ text: String) -> NSView {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = NSFont.systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
         label.alignment = .center
-        return label
+        label.translatesAutoresizingMaskIntoConstraints = false
+        let holder = NSView()
+        holder.translatesAutoresizingMaskIntoConstraints = false
+        holder.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: holder.topAnchor, constant: 24),
+            label.bottomAnchor.constraint(equalTo: holder.bottomAnchor, constant: -24),
+            label.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -12),
+        ])
+        return holder
     }
 
     private func renderRegistryPopup() {
         let entries = store.data.registries.filter { $0.enabled }
-        let current = registryPopup.titleOfSelectedItem
-        registryPopup.removeAllItems()
-        for e in entries { registryPopup.addItem(withTitle: e.label) }
-        if let current = current, entries.contains(where: { $0.label == current }) {
-            registryPopup.selectItem(withTitle: current)
-        }
+        let current = activeRegistryLabel
+        let titles = entries.isEmpty ? ["-"] : entries.map { $0.label }
+        let selected = entries.firstIndex(where: { $0.label == current }) ?? 0
+        registryTabs.setItems(titles, selected: selected)
+    }
+
+    private var activeRegistryLabel: String? {
+        let entries = store.data.registries.filter { $0.enabled }
+        guard !entries.isEmpty else { return nil }
+        let index = registryTabs.selectedIndex
+        guard index >= 0, index < entries.count else { return entries.first?.label }
+        return entries[index].label
     }
 
     private var activeRegistry: SkillRegistryRecord? {
         let entries = store.data.registries.filter { $0.enabled }
         guard !entries.isEmpty else { return nil }
-        let index = registryPopup.indexOfSelectedItem
+        let index = registryTabs.selectedIndex
         return entries[max(0, min(index, entries.count - 1))]
     }
 
-    @objc private func registryChanged() {
+    private func registryChanged() {
         candidates = []
         selected.removeAll()
         renderAvailable()
@@ -648,28 +827,21 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
             let hint = (activeRegistry?.catalog == SkillCatalogKind.none)
                 ? L10n.tr("skills.noCatalogHint")
                 : L10n.tr("skills.empty.results")
-            resultsList.addArrangedSubview(emptyLabel(hint))
+            let empty = emptyCard(hint)
+            resultsList.addArrangedSubview(empty)
+            empty.widthAnchor.constraint(equalTo: resultsList.widthAnchor, constant: -20).isActive = true
             return
         }
-        for (index, candidate) in candidates.enumerated() {
+        for candidate in candidates {
             let key = candidate.name + "|" + candidate.sourceLabel
-            let row = SkillCandidateRowView(candidate: candidate, selected: selected.contains(key))
-            row.onToggle = { [weak self] on in
+            let card = SkillCandidateRowView(candidate: candidate, selected: selected.contains(key))
+            card.onToggle = { [weak self] on in
                 if on { self?.selected.insert(key) } else { self?.selected.remove(key) }
             }
-            row.onInstall = { [weak self] in self?.startInstall(address: candidate.address, label: candidate.name) }
-            let wrapper = NSStackView(views: [row])
-            wrapper.orientation = .vertical
-            wrapper.alignment = .leading
-            wrapper.translatesAutoresizingMaskIntoConstraints = false
-            row.translatesAutoresizingMaskIntoConstraints = false
-            let separator = NSBox()
-            separator.boxType = .separator
-            resultsList.addArrangedSubview(wrapper)
-            resultsList.addArrangedSubview(separator)
-            wrapper.widthAnchor.constraint(equalTo: resultsList.widthAnchor).isActive = true
-            separator.widthAnchor.constraint(equalTo: resultsList.widthAnchor).isActive = true
-            _ = index
+            card.onInstall = { [weak self] in self?.startInstall(address: candidate.address, label: candidate.name) }
+            card.translatesAutoresizingMaskIntoConstraints = false
+            resultsList.addArrangedSubview(card)
+            card.widthAnchor.constraint(equalTo: resultsList.widthAnchor, constant: -20).isActive = true
         }
     }
 
