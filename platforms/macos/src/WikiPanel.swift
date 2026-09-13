@@ -919,7 +919,7 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
     // MARK: UI
 
     private func buildUI() {
-        headerTitle.text = L10n.tr("wiki.title")
+        headerTitle.text = Self.panelTitle
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
@@ -939,6 +939,7 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
             self?.selectedPath = nil
             self?.sections = []
             self?.treeOutline.reloadData()
+            self?.headerTitle.toolTip = nil
             self?.onRequestHide?()
         }
 
@@ -1132,7 +1133,20 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
     }
 
     /// 语言切换后刷新头部按钮 tooltip。
+    /// 面板的固定头部标题：与活动栏同名（「知识库 / Wiki」），语言切换时刷新。
+    /// 不跟随页面：页面名放在悬停提示里（页签/树上仍有页面名）。
+    private static var panelTitle: String { L10n.tr("bar.wiki") }
+
+    // MARK: - Headless test surface (tests/wiki-panel/run.sh)
+
+    /// The header title (a fixed panel name, never a page name).
+    var headerTitleText: String { headerTitle.text }
+
+    /// The hover tooltip of the header title (the page being read, if any).
+    var headerTooltipText: String? { headerTitle.toolTip }
+
     func refreshTooltips() {
+        headerTitle.text = Self.panelTitle
         generateButton?.toolTip = L10n.tr("wiki.generateHint")
         revealButton?.toolTip = L10n.tr("preview.revealInFinderHint")
         openButton?.toolTip = L10n.tr("preview.openInDefaultAppHint")
@@ -1534,8 +1548,9 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
     /// (NSTextField in a centered stack); the overlay backdrop is best-effort
     /// (falls back to transparent if the custom fill does not draw).
     private func showGeneratingOverlay() {
-        // Not showing a page anymore — clear the stale page title.
-        headerTitle.text = L10n.tr("wiki.title")
+        // Not showing a page anymore — drop the stale page name (the header
+        // title itself is the fixed panel name, see panelTitle).
+        headerTitle.toolTip = nil
         generatingOverlay?.removeFromSuperview()
         let overlay = WikiOverlayView()
         overlay.translatesAutoresizingMaskIntoConstraints = false
@@ -1654,10 +1669,11 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
 
     private func showEmptyState() {
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
-        // Reset the header title — the panel is no longer showing any page
-        // (e.g. after switching to a workspace whose directory has no wiki).
+        // The panel no longer shows a page (e.g. after switching to a
+        // workspace whose directory has no wiki): drop the page name hint. The
+        // header title stays the fixed panel name.
         selectedPath = nil
-        headerTitle.text = L10n.tr("wiki.title")
+        headerTitle.toolTip = nil
         let iconView = BakedIconView(symbol: "book.closed")
         let label = NSTextField(wrappingLabelWithString: L10n.tr("wiki.empty"))
         label.font = .systemFont(ofSize: 12)
@@ -1718,7 +1734,8 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
             scroll.topAnchor.constraint(equalTo: contentContainer.topAnchor),
             scroll.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
-        headerTitle.text = page.displayName
+        // 头部标题固定为面板名（见 panelTitle）；页面名放进悬停提示。
+        headerTitle.toolTip = page.displayName
         // scroll to top
         if let doc = scroll.documentView, doc.frame.height > 0 {
             scroll.contentView.scroll(to: NSPoint(x: 0, y: doc.bounds.maxY))

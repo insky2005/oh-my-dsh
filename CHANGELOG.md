@@ -13,7 +13,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Changed
 
-- **面板头部改为固定标题（文件 / 终端）**：文件面板头部固定「文件 / Files」（不再跟随当前文件显示路径）、终端面板头部固定「终端 / Terminal」（不再跟随会话标题 / 已结束状态）；两者都复用活动栏同名键（`bar.preview` / `bar.terminal`），语言切换时随 `refreshTooltips()` 刷新。信息没有丢——文件面板的路径、终端面板的会话标题/已结束状态都改放进**头部标题的悬停 tooltip**（终端「会话已结束」仍在内容区叠加提示里），页签 tooltip 也一直带着。新增 `tests/terminal-panel/`（无头，不建 PTY：标题固定 / 语言切换后仍固定 / 关会话后不被清空）。
+- **面板头部改为固定标题（文件 / 终端 / 知识库）**：文件面板头部固定「文件 / Files」（不再跟随当前文件显示路径）、终端面板头部固定「终端 / Terminal」（不再跟随会话标题 / 已结束状态）、知识库面板头部固定「知识库 / Wiki」（不再跟随当前页面名）；三者都复用活动栏同名键（`bar.preview` / `bar.terminal` / `bar.wiki`），语言切换时随 `refreshTooltips()` 刷新。信息没有丢——文件面板的路径、终端面板的会话标题/已结束状态、知识库面板的页面名都改放进**头部标题的悬停 tooltip**（终端「会话已结束」仍在内容区叠加提示里；页面名在树与页头上本来就有），页签 tooltip 也一直带着。新增 `tests/terminal-panel/`（无头，不建 PTY）与 `tests/wiki-panel/panel-header-tests.swift`（无头，不扫目录）：标题固定 / 语言切换后仍固定 / 关会话后不被清空。
 
 ### Fixed
 
