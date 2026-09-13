@@ -62,6 +62,8 @@ stage_swift() {
   tests/wiki-panel/run.sh
   echo "--- browser panel tests ---"
   tests/browser-panel/run.sh
+  echo "--- shell config tests ---"
+  tests/shell-config/run.sh
   echo "--- built-in skills tests ---"
   tests/skills/run.sh
   echo "--- channel panel tests ---"

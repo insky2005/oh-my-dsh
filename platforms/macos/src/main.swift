@@ -4269,9 +4269,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         cleanStaleCEFSingleton(in: cachePath)
         let logPath = NSHomeDirectory() + "/Library/Logs/oh-my-dsh/cef.log"
         do {
-            // 渲染模式：defaults write com.ohmydsh.app browserRenderMode -string windowed
-            // 切换窗口化（Chromium 原生绘制）vs OSR（默认，帧回调自绘）。
-            let windowed = ShellConfig.shared.string(forKey: "browserRenderMode") == "windowed"
+            // 渲染模式：默认 **窗口化**（Chromium 原生绘制、零拷贝），与
+            // docs/plans/BROWSER_PLAN-browser-panel.md §十一 的最终决策一致；
+            // 设成 "osr" 可回退到离屏帧自绘（帧由 BrowserOSRView 画在 pageView 上）。
+            // 注意：此键 1.13 及以前只存在于 UserDefaults，1.14 起读 ShellConfig
+            // （$DSH_HOME/shell/config.json）——旧值由 ShellConfig 一次性迁移补齐，
+            // 否则用户显式设的 windowed 会丢失、静默回落到另一条渲染路径。
+            let windowed = ShellConfig.shared.string(forKey: "browserRenderMode") != "osr"
             CEFShim.setWindowedMode(windowed)
             AppLog.shared.log("CEF render mode: \(windowed ? "windowed" : "osr")")
             try CEFShim.initialize(withCachePath: cachePath,

@@ -104,10 +104,23 @@ final class CustomIconButton: NSView {
 var g_cefClosingWindow = false
 
 @objc class CEFShim: NSObject {
+    // 测试可观察面：真实 shim 把回调存在 C++ 侧，测试里存下来供手动触发；
+    // browserId 计数器与真实实现同款（全局递增，DevTools 子浏览器也吃号），
+    // 用来钉住「按 browserId 而不是 tab.id 派发帧」这条约定。
+    static var lastPaintHandler: ((Int64, UnsafeRawPointer, Int32, Int32) -> Void)?
+    static var lastMenuHandler: ((Int64, Float, Float, [[AnyHashable: Any]]) -> Void)?
+    static var lastCursorHandler: ((Int64, UnsafeMutableRawPointer) -> Void)?
+    private static var nextBrowserId: Int64 = 1
+    static func resetBrowserIdCounter() { nextBrowserId = 1 }
+
     @objc class var isInitialized: Bool { false }
     @objc class func initialize(withCachePath: String, remoteDebuggingPort: Int32, logPath: String) throws {}
     @objc class func runMessageLoopWork() {}
-    @objc class func createBrowser(in view: NSView, url: String?, delegate: CEFBrowserDelegate) -> Int64 { 0 }
+    @objc class func createBrowser(in view: NSView, url: String?, delegate: CEFBrowserDelegate) -> Int64 {
+        let id = nextBrowserId
+        nextBrowserId += 1
+        return id
+    }
     @objc class func closeBrowser(_ id: Int64) {}
     @objc class func navigateBrowser(_ id: Int64, url: String) {}
     @objc class func goBack(_ id: Int64) {}
@@ -115,9 +128,9 @@ var g_cefClosingWindow = false
     @objc class func reload(_ id: Int64) {}
     @objc class func stop(_ id: Int64) {}
     @objc class func resizeBrowser(_ id: Int64, width: Float, height: Float) {}
-    @objc class func setMenuRequestHandler(_ handler: ((Int64, Float, Float, [[AnyHashable: Any]]) -> Void)?) {}
-    @objc class func setCursorHandler(_ handler: ((Int64, UnsafeMutableRawPointer) -> Void)?) {}
-    @objc class func setPaintHandler(_ handler: ((Int64, UnsafeRawPointer, Int32, Int32) -> Void)?) {}
+    @objc class func setMenuRequestHandler(_ handler: ((Int64, Float, Float, [[AnyHashable: Any]]) -> Void)?) { lastMenuHandler = handler }
+    @objc class func setCursorHandler(_ handler: ((Int64, UnsafeMutableRawPointer) -> Void)?) { lastCursorHandler = handler }
+    @objc class func setPaintHandler(_ handler: ((Int64, UnsafeRawPointer, Int32, Int32) -> Void)?) { lastPaintHandler = handler }
     @objc class func sendMouseClick(_ id: Int64, x: Float, y: Float, button: Int32, count: Int32, modifiers: Int32) {}
     @objc class func sendMouseMove(_ id: Int64, x: Float, y: Float, modifiers: Int32) {}
     @objc class func sendMouseWheel(_ id: Int64, x: Float, y: Float, deltaX: Float, deltaY: Float, modifiers: Int32) {}

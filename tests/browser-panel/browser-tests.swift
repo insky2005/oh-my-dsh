@@ -190,10 +190,101 @@ func testRouter() {
     eq(cors["Content-Type"], statusResp.contentType, "router: CORS content type")
 }
 
+
+// MARK: - OSR 帧落点（1.14.0 空白面板回归）
+
+/// 造一帧 BGRA 像素（CEF OnPaint 的字节序：B,G,R,A）。
+func makeFrame(width: Int, height: Int, b: UInt8, g: UInt8, r: UInt8) -> [UInt8] {
+    var px: [UInt8] = []
+    px.reserveCapacity(width * height * 4)
+    for _ in 0..<(width * height) { px.append(contentsOf: [b, g, r, 255]) }
+    return px
+}
+
+/// 帧必须画在 pageView（可见的页面区）自己的 layer 上。画在 BrowserOSRView
+/// 父层上时，pageView 的不透明背景（子视图 layer 在父层 contents 之上）会把
+/// 整帧盖住 —— 页面一片空白而页签标题/地址栏照常更新，正是 1.14.0 的现象。
+func testOSRFrameTargetsPageViewLayer() {
+    let container = BrowserOSRView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+    check(container.layer != nil, "osr: container is layer-backed")
+    check(container.pageView.layer != nil, "osr: pageView is layer-backed")
+
+    let frame = makeFrame(width: 4, height: 4, b: 0, g: 0, r: 255)
+    frame.withUnsafeBytes { raw in
+        container.presentFrame(raw.baseAddress!, width: 4, height: 4)
+    }
+    check(container.pageView.layer?.contents != nil, "osr: frame lands on pageView layer (visible area)")
+    check(container.layer?.contents == nil, "osr: container layer stays empty (covered by pageView)")
+    eq(container.frameCount, 1, "osr: frame counter")
+    eq(container.lastFrameSize.width, 4, "osr: frame width recorded")
+    eq(container.lastFrameSize.height, 4, "osr: frame height recorded")
+
+    // DevTools 子浏览器（OSR 下同样是 OnPaint）必须画在 devtoolsContent 上，
+    // 不能污染主页面区。
+    let pageContents = container.pageView.layer?.contents as AnyObject?
+    let dtFrame = makeFrame(width: 4, height: 4, b: 255, g: 0, r: 0)
+    dtFrame.withUnsafeBytes { raw in
+        container.presentDevToolsFrame(raw.baseAddress!, width: 4, height: 4)
+    }
+    check(container.devtoolsContent.layer?.contents != nil, "osr: devtools frame lands on devtoolsContent layer")
+    check((container.pageView.layer?.contents as AnyObject?) === pageContents,
+          "osr: devtools frame leaves the page layer alone")
+}
+
+/// 帧派发必须按 shim 的 browserId 认页签（tab.id 会跟它错位：DevTools 子浏览器
+/// 也吃同一个计数器，关过页签后更是必然错位）。错配的后果是帧画到别的页签上。
+func testOSRPaintRoutingUsesBrowserId() {
+    CEFShim.resetBrowserIdCounter()
+    let panel = BrowserPanelController()
+    guard let paint = CEFShim.lastPaintHandler else {
+        check(false, "osr: panel registers a paint handler")
+        return
+    }
+    let tab1 = panel.newTab(url: "https://example.com")
+    // 模拟 DevTools 子浏览器占用一个 browserId（走同一个 shim 计数器）。
+    _ = CEFShim.createBrowser(in: NSView(), url: "about:blank", delegate: tab1)
+    let tab2 = panel.newTab(url: "https://example.org")
+    check(tab2.browserId != tab2.id, "osr: browserId diverges from tabId (setup)",
+          "tabId=\(tab2.id) browserId=\(tab2.browserId)")
+
+    let frame = makeFrame(width: 4, height: 4, b: 0, g: 255, r: 0)
+    frame.withUnsafeBytes { raw in
+        paint(tab2.browserId, raw.baseAddress!, 4, 4)
+    }
+    check(tab2.container.pageView.layer?.contents != nil, "osr: frame routed to the right tab (by browserId)")
+    check(tab1.container.pageView.layer?.contents == nil, "osr: other tab's page area untouched")
+
+    // DevTools 子浏览器 id → 该页签的 DevTools 区。
+    tab2.container.devtoolsBrowserId = 99
+    let dtFrame = makeFrame(width: 4, height: 4, b: 255, g: 255, r: 0)
+    dtFrame.withUnsafeBytes { raw in
+        paint(99, raw.baseAddress!, 4, 4)
+    }
+    check(tab2.container.devtoolsContent.layer?.contents != nil, "osr: devtools browser frames go to devtoolsContent")
+}
+
+/// 右键菜单锚点：鼠标在窗口内时就用鼠标的屏幕坐标（CEF 的 OSR 坐标是设备
+/// 像素，按视图坐标换算会得到「上下颠倒 + 偏出面板」的菜单）。
+func testContextMenuAnchorPrefersMouse() {
+    let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 400, height: 300),
+                          styleMask: [.titled], backing: .buffered, defer: false)
+    let pageView = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+    window.contentView?.addSubview(pageView)
+    // 鼠标不在窗口内（无头测试里鼠标在屏幕某处）→ 退回 CEF 坐标换算，
+    // 结果应落在窗口坐标系内（不崩、不发散）。
+    let point = BrowserPanelController.contextMenuScreenPoint(cefX: 10, cefY: 20,
+                                                             pageView: pageView, window: window)
+    check(point.x.isFinite && point.y.isFinite, "menu: fallback anchor is finite")
+    check(window.frame.contains(point), "menu: fallback anchor stays inside the window frame")
+}
+
 testLogBuffer()
 testURLNormalize()
 testHTTPParse()
 testRouter()
+testOSRFrameTargetsPageViewLayer()
+testOSRPaintRoutingUsesBrowserId()
+testContextMenuAnchorPrefersMouse()
 
 print("== browser panel tests: \(passed) passed, \(failures) failed")
 if failures > 0 {

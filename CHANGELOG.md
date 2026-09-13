@@ -40,6 +40,13 @@ All notable changes to this project are documented in this file. Format follows
   - Wiki 面板：会话压根没起来时状态条显示「生成失败（详见日志）」并写 `app.log`（端口/仓库/workspaceId），不再是一次无效点击；
   - `DshWebRPC`：只有端点真的不存在（HTTP 404/405）才降级为点号方法——此前**任何**失败（超时/401/业务错误）都会把该端点永久钉成 legacy，一次抖动就让本次运行内所有后续调用打到 0.1.2 根本没有的端点；cookie 换成功才记为已认证；`WikiRPC.createSession` 在 workspaceId 被拒时回退 `cwd` 建会话（保证「能在对应 workspace 起出会话」），create/prompt 超时 6s→15s。详见 docs/dsh-version-impact.md §4.4（含完整证据链）。
 
+- **修复「内置浏览器面板一片空白（页签/地址栏照常更新）+ 右键菜单弹错位」**：两处根因叠加，都落在 **OSR（离屏帧自绘）渲染路径**上。
+  - **触发（1.14.0 设置搬家丢了用户取值）**：1.14.0 把壳层设置从 `UserDefaults` 搬进 `$DSH_HOME/shell/config.json`（`ShellConfig`）时**没有迁移已有取值**——用户显式设过的 `browserRenderMode = windowed`（窗口化渲染，见 docs/plans/BROWSER_PLAN-browser-panel.md §十一的既定默认）留在 plist 里再没人读，于是回落到代码里的 `osr` 分支，而 OSR 路径（下述）本身是坏的。现在 `ShellConfig` **首次加载时一次性把旧 UserDefaults 里壳层自有键搬进 config.json**（只搬本文件尚无取值的键，`legacyUserDefaultsMigratedAt` 标记保证只做一次、显式值永远优先；browserRenderMode / appTheme / previewPanelWidth / channel.global.list 等一并保住），并把**代码默认改回文档记载的 `windowed`**（要 OSR 需显式设 `osr`）。
+  - **OSR 自绘帧画在被盖住的层上（空白的直接原因）**：帧原来写进 `BrowserOSRView`（容器，父层）的 `layer.contents`，而容器的子视图 `pageView`（页面区，铺满容器且垫着不透明黑/白背景）的 layer 画在父层 contents **之上**，整帧被盖住 → 内容区永远只剩背景色。CEF 本身没问题：标题、地址栏、console、CDP 截图全部正常，所以只靠 REST API 排查发现不了。现在帧**画在 `pageView` 自己的 layer 上**（同层：背景色在 contents 之下做兜底，窗口化模式不受影响）。详见 docs/browser-blank-panel-fix.md。
+  - **右键菜单位置（“点右键，左边有反应”）**：OSR 下 CEF 给的菜单坐标与宿主视图坐标系不一致（视口按 `GetScreenInfo.device_scale_factor` 走设备像素：帧回调 1814×2174 对应 907×1087 点），按视图坐标换算得到的点落到窗口右下之外，AppKit 只能把它塞回屏幕边缘 → 表现为“点下面弹上面、点右边跑到左边”。现在**以当前鼠标的屏幕坐标为准**（右键必来自鼠标），CEF 参数只作键盘唤起菜单时的兜底，两者差异写 `app.log`。
+  - **OSR 帧派发错配**：帧回调原来按 `tab.id` 找页签，而 CEF 给的是 shim 的 `browserId`（DevTools 子浏览器同吃同一计数器，开过 DevTools / 关过页签后必然错位）→ 改为按 `browserId` 认页签，DevTools 子浏览器的帧进 `devtoolsContent`（不再画进主页面区）。
+  - 回归测试：`tests/browser-panel/` 新增帧落点（pageView 而非容器）、按 browserId 派发、DevTools 帧进 DevTools 区、菜单锚点（共 71 例，对修复前的代码实测 4 例 FAIL）；新增 `tests/shell-config/`（旧 UserDefaults 迁移 / 只做一次 / config.json 优先 / 不搬无关键，13 例）。两套均已接入 `scripts/local-ci.sh` 与 CI。
+
 ## [1.14.0] - 2026-09-11
 
 ### Added

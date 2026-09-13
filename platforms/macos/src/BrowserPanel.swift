@@ -575,11 +575,30 @@ final class BrowserOSRView: NSView {
     /// 最近一帧尺寸（QA 用）。
     private(set) var lastFrameSize = (width: 0, height: 0)
 
-    /// 显示一帧 BGRA 像素。
+    /// 显示一帧 BGRA 像素（主页面区）。
+    ///
+    /// 帧必须落在 **pageView 自己的 layer** 上，不能落在 BrowserOSRView（父）
+    /// 的 layer 上：pageView 是容器的子视图，它的 layer 画在父层 contents
+    /// *之上*，而 pageView 又垫着不透明背景（暗=黑/亮=白，为窗口化模式的
+    /// about:blank 透明页准备）。帧画在父层上会被 pageView 整块盖住 ——
+    /// 现象就是「页签标题/地址栏都更新了，内容区一片空白」，而 CEF 本身、
+    /// CDP 截图、console 全都正常（所以只靠 REST API 排查发现不了）。
+    /// 画在 pageView 上则同层：背景色在 contents 之下做兜底，互不遮挡。
     func presentFrame(_ buffer: UnsafeRawPointer, width: Int, height: Int) {
         frameCount += 1
         lastFrameSize = (width, height)
         writeFrameProbe(buffer, width: width, height: height)
+        blit(buffer, width: width, height: height, into: pageView.layer)
+    }
+
+    /// 显示一帧 BGRA 像素（DevTools 子窗口区）。OSR 下 DevTools 是独立 CEF
+    /// 浏览器，同样走 OnPaint，但它属于 devtoolsContent 而不是主页面区。
+    func presentDevToolsFrame(_ buffer: UnsafeRawPointer, width: Int, height: Int) {
+        blit(buffer, width: width, height: height, into: devtoolsContent.layer)
+    }
+
+    /// 把 BGRA 帧像素写进目标 layer。
+    private func blit(_ buffer: UnsafeRawPointer, width: Int, height: Int, into layer: CALayer?) {
         guard let layer = layer else { return }
         let bytesPerRow = width * 4
         let cfData = CFDataCreate(kCFAllocatorDefault, buffer.assumingMemoryBound(to: UInt8.self), bytesPerRow * height)
@@ -898,16 +917,23 @@ final class BrowserPanelController: NSObject {
         super.init()
         buildUI()
         showEmptyState()
-        // 注册 OSR 帧回调：按 browserId 派发给对应标签页自绘。
+        // 注册 OSR 帧回调：CEF 给的是 **browserId**（shim 侧 ID，DevTools 子浏览器
+        // 也吃同一个计数器），必须按 browserId 认页签——按 tab.id 认会在开过
+        // DevTools / 关过页签后错配（帧画到别的页签上）。主浏览器 → 页面区，
+        // DevTools 子浏览器 → DevTools 区。
         CEFShim.setPaintHandler { [weak self] browserId, buffer, width, height in
-            guard let self = self,
-                  let tab = self.tab(withId: browserId) else { return }
-            tab.container.presentFrame(buffer, width: Int(width), height: Int(height))
+            guard let self = self else { return }
+            if let tab = self.tabs.first(where: { $0.browserId == browserId }) {
+                tab.container.presentFrame(buffer, width: Int(width), height: Int(height))
+            } else if let tab = self.tabs.first(where: { $0.container.devtoolsBrowserId == browserId }) {
+                tab.container.presentDevToolsFrame(buffer, width: Int(width), height: Int(height))
+            }
         }
         // 光标变化回调：OSR hover 跟随页面（链接 → 手型）。
         CEFShim.setCursorHandler { [weak self] browserId, cursorPtr in
             guard let self = self else { return }
-            guard let tab = self.tab(withId: browserId), tab === self.activeTab else { return }
+            guard let tab = self.tabs.first(where: { $0.browserId == browserId }),
+                  tab === self.activeTab else { return }
             let cursor = Unmanaged<NSCursor>.fromOpaque(cursorPtr).takeUnretainedValue()
             cursor.set()
         }
@@ -915,17 +941,38 @@ final class BrowserPanelController: NSObject {
         // 由宿主在正确屏幕坐标弹 NSMenu，命令经菜单 id 驱动 CEF 动作。
         CEFShim.setMenuRequestHandler { [weak self] browserId, x, y, items in
             guard let self = self,
-                  let tab = self.tab(withId: browserId),
+                  let tab = self.tabs.first(where: { $0.browserId == browserId }),
                   tab === self.activeTab,
                   let window = tab.container.window else { return }
-            let viewPoint = tab.container.convert(
-                NSPoint(x: CGFloat(x), y: tab.container.bounds.height - CGFloat(y)), to: nil)
-            let screenPoint = window.convertPoint(toScreen: viewPoint)
-            self.popupContextMenu(at: screenPoint, items: items, tab: tab)
+            let point = Self.contextMenuScreenPoint(cefX: x, cefY: y,
+                                                    pageView: tab.container.pageView,
+                                                    window: window)
+            self.popupContextMenu(at: point, items: items, tab: tab)
         }
     }
 
     // MARK: 上下文菜单（OSR）
+
+    /// CEF 菜单事件 → 屏幕坐标。
+    ///
+    /// 右键必然来自鼠标，所以最可靠的锚点就是**当前鼠标的屏幕坐标**——
+    /// NSMenu.popUp(in: nil) 要的正是屏幕坐标，点右键时鼠标就在用户点的位置。
+    /// CEF 的 GetXCoord/GetYCoord 只作兜底：OSR 下它的坐标系跟宿主视图并不一致
+    /// （CEF 视口按 GetScreenInfo 的 device_scale_factor 走设备像素：帧回调
+    /// 1814×2174 对应 907×1087 点），直接按视图坐标换算会得到「上下颠倒 +
+    /// 偏出面板」的菜单（1.14.0 实测：点下面弹到上面、菜单跑到屏幕左半边）。
+    static func contextMenuScreenPoint(cefX: Float, cefY: Float,
+                                       pageView: NSView, window: NSWindow) -> NSPoint {
+        let mouse = NSEvent.mouseLocation
+        if NSPointInRect(mouse, window.frame) { return mouse }
+        // 键盘唤起的菜单（鼠标不在窗口内）：退回 CEF 参数，按视图左上原点换算。
+        let local = NSPoint(x: CGFloat(cefX), y: pageView.bounds.height - CGFloat(cefY))
+        let screen = window.convertPoint(toScreen: pageView.convert(local, to: nil))
+        AppLog.shared.log("browser context menu: mouse outside window; CEF anchor "
+            + String(Int(cefX)) + "," + String(Int(cefY))
+            + " -> screen " + NSStringFromPoint(screen))
+        return screen
+    }
 
     /// 在正确屏幕坐标弹出 CEF 上下文菜单；命令经菜单 id 驱动 CEF 动作。
     private func popupContextMenu(at screenPoint: NSPoint, items: [[AnyHashable: Any]], tab: BrowserCEFTab) {
@@ -1530,8 +1577,9 @@ final class BrowserPanelController: NSObject {
         ]
         if let tab = activeTab {
             state["containerInWindow"] = tab.container.window != nil
-            state["osrLayerContents"] = tab.container.layer?.contents != nil
-            state["osrLayerScale"] = tab.container.layer?.contentsScale ?? 0
+            // OSR 帧画在 pageView（可见页面区）的 layer 上，见 presentFrame。
+            state["osrLayerContents"] = tab.container.pageView.layer?.contents != nil
+            state["osrLayerScale"] = tab.container.pageView.layer?.contentsScale ?? 0
             state["osrBounds"] = NSStringFromRect(tab.container.bounds)
             state["frameCount"] = tab.container.frameCount
             state["lastFrameSize"] = "\(tab.container.lastFrameSize.width)x\(tab.container.lastFrameSize.height)"

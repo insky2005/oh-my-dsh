@@ -79,6 +79,8 @@ jobs:
         run: tests/wiki-panel/run.sh
       - name: Browser panel tests
         run: tests/browser-panel/run.sh
+      - name: Shell config tests
+        run: tests/shell-config/run.sh
       - name: Built-in skills tests
         run: tests/skills/run.sh
       - name: Channel panel tests
