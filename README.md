@@ -15,6 +15,7 @@
 - **首次引导 onboarding**：首次启动展示欢迎说明（内置运行时/自包含原理/上手提示）；
 - **关于面板**：App 菜单 →「关于 oh-my-dsh」显示 App 版本、build、依赖的 dsh 版本与运行时来源、Node 版本+路径、dsh registry。
 - **通道面板（远程驱动）**：绑定微信个人号（官方 iLink 协议）或钉钉（dingtalk-stream 原生适配器），在微信/钉钉里发消息 / 斜杠指令远程驱动 dsh 干活——消息路由到项目会话、结果回复回原平台；扫码登录、项目开关、会话列表均在面板内完成。
+- **审查面板（只读审计）**：直接读 dsh 落盘的会话日志，按 会话 → 对话 → 文件 → 变更内容 列出代理到底改了哪些文件、改成什么（标出每处改动是工具 hunk、参数还原还是仅全文写入），并显式列出 shell 直改与失败的调用——**只读、不写任何文件、不发任何请求**。
 
 ## 右栏面板
 
@@ -31,7 +32,7 @@
 - **语法高亮**：内置 highlight.js（经 vendored Highlightr，MIT），180+ 语言，明暗自适应；图片 / PDF / 文件夹列表 / 未知类型（图标 + 元数据）按类型预览；
 - **多文件以页签切换**，可关闭（`File ▸ 关闭页签` ⌘W）；右上角提供「项目目录」（重新定位，RPC 失败时回退手动选文件夹）、「保存」「在默认应用中打开」「在 Finder 中显示」「关闭」；
 - **打开文件实时刷新**：已打开的页签在磁盘内容变化后自动刷新——代理（或任何进程）改写打开的文件时，可编辑页签经 `reloadFromDisk()` 保留滚动位置、且不覆盖未保存的本地编辑（dirty 页签跳过），只读文本 / 图片 / PDF / 元数据页签直接重渲染（与 Wiki 面板 2s 轮询刷新一致），打开即所见最新内容；
-- 面板宽度可拖拽并记住，且**自动保证 WebView 宽度 ≥1050pt**（dsh web 低于 1024pt 会自动收起左侧会话栏）；
+- 面板宽度可拖拽并记住，且**自动保证 WebView 宽度 ≥1100pt**（dsh web 低于 1024pt 会自动收起左侧会话栏）；
 - 纯 WebView 侧注入实现，不改任何 DeepSeek Harness 源码。
 
 ![files](./docs/screenshots/files.png)
@@ -54,7 +55,7 @@
 **多标签嵌入式 Chromium 浏览器**（CEF/Chromium 内核，每标签一个渲染进程），面向开发调试 web 页面与 Agent 排查网页问题。
 
 - **多标签**：`+` 新建 / `✕` 关闭 / `⌘1-9` 切换，上限 8 个；地址栏导航（无 scheme 自动补 `https://`）、后退/前进/刷新·停止、标签标题随页面更新；启动恢复上次 URL；
-- **渲染**：默认 **OSR 离屏渲染**（每帧像素自绘，支持鼠标/键盘/滚轮/光标跟随/上下文菜单）；可切窗口化——`defaults write com.ohmydsh.app browserRenderMode -string windowed`；
+- **渲染**：默认 **窗口化渲染**（CEF 视图原生合成；曾误设为 OSR，1.15.0 已改回）；如确需 **OSR 离屏渲染**（每帧像素自绘），在 `$DSH_HOME/shell/config.json` 里设 `"browserRenderMode": "osr"`；
 - **Chromium 原生 DevTools**：头部「DevTools」按钮弹出独立窗口的完整调试器（Elements/Network/Console/Sources）；
 - **控制台/网络日志**：经 CDP 捕获页面 console、异常与网络请求，供 REST API 读取（`eval`/`screenshot` 也走 CDP；CDP 端口默认 `9333`，`DSH_CDP_PORT` 覆盖）；
 - **Agent 驱动（curl 即用）**：壳层常驻 localhost REST API（默认 `127.0.0.1:3081`，端口文件 `~/.dsh/browser-api.port`）——`status` / `open` / `tabs` / `back` / `forward` / `reload` / `stop` / `eval` / `console` / `console/clear` / `screenshot`(PNG) / `hide`，外加 QA 端点 `debug` / `hierarchy`；Agent 驱动时面板自动展开，截图可存工作区供读图/分享；配套技能 `web-dev-tools`（App 启动时安装到全局 `$DSH_HOME/skills/web-dev-tools/SKILL.md`，model+user 可调用）开箱即用；
@@ -100,6 +101,8 @@
 - **当前限制**：飞书仅展示卡片（适配器待实现）；钉钉富特性（AI Card 流式 / 互动审批卡 / 图片 / DWS）留作后续增强，v1 以文本/Markdown 回复为主；
 - 设计与指令清单：`docs/channel-design.md`、`docs/channel-dingtalk-stream.md`、`docs/channel-commands.md`、`docs/channel-status.md`、`docs/channel-project-switch.md`。
 
+![channel](./docs/screenshots/channel.png)
+
 ### 审查面板（`⌥⌘R` / 活动栏「审查」图标）
 
 **只读**回答「这个会话里代理到底改了哪些文件、改成什么」——直接读 dsh 自己落盘的会话日志（`$DSH_HOME/sessions/<workspace>/<session>/session.jsonl[.zstd]`），不写任何文件、不发任何请求、不改 dsh。
@@ -118,8 +121,6 @@
 - **读取诊断**：Zstandard 尾部未完成帧、无法解析的行等一律显式列出（不静默丢数据）；
 - **只读边界**：日志里没有的东西不会显示——`bash` 直改、以及日志尚未落盘的部分，面板只标注「需人工核对」；
 - 设计与覆盖矩阵：`docs/review-panel-design.md`。
-
-![channel](./docs/screenshots/channel.png)
 
 ## 产物
 
@@ -268,7 +269,7 @@ open "dist/oh-my-dsh.app"
 壳二进制只做三件事：探测空闲端口 → 用内置 `node` 执行内置 `<dsh>/lib/bin.js web --port <n>` 拉起（并回收自己上次残留的实例）→ `WKWebView` 加载 `http://127.0.0.1:<n>/?token=…`。
 `dsh` 本体、`~/.dsh` 配置、会话数据全部原样，无任何补丁或注入。内置运行时装在 `Contents/Resources/runtime/`
 （`node` + `npm` + `dsh/` 依赖树），App 优先使用它，找不到时才回退到本机安装。
-右侧六个面板是壳层原生 UI，其中文件面板通过 WebView 注入拦截文件打开、任务/知识库/浏览器/通道通过 dsh 既有能力（RPC / 会话 / 独立浏览器内核）驱动。
+右侧七个面板是壳层原生 UI，其中文件面板通过 WebView 注入拦截文件打开，任务 / 知识库 / 浏览器 / 通道 / 审查通过 dsh 既有能力（RPC / 会话 / 独立浏览器内核 / 会话日志）驱动。
 
 ## 目录
 
@@ -276,7 +277,8 @@ open "dist/oh-my-dsh.app"
 platforms/macos/src/                  原生壳（Swift）
   main.swift        壳层核心：日志/L10n/服务管理/升级/窗口/菜单/设置窗口/onboarding/右栏插槽/WebView 注入
   PreviewPanel.swift  文件面板回滚基线 + 共享 UI 组件库
-  FilePanel.swift    文件面板（预览+编辑：无后缀/点文件、行号栏、保存 ⌘S、语法高亮）
+  FilePanel.swift    文件面板（预览+编辑：无后缀/点文件、行号栏、保存 ⌘S、语法高亮、按工作区记忆页签）
+  WorkspaceTabMemory.swift 文件面板的工作区页签记忆（顺序/选中项，纯逻辑可无头测试）
   CodeEditorView.swift 文件面板编辑视图（行号栏 + vendored Highlightr 高亮）
   TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）
   WikiPanel.swift      Repo Wiki 知识库面板（生成/维护/浏览 + 自动 git 提交）
@@ -285,6 +287,9 @@ platforms/macos/src/                  原生壳（Swift）
   ReviewPanel.swift      审计面板（只读：会话日志变更/嵌套调用/shell 可疑命令）
   ReviewLogModel.swift   审计面板数据模型（核心 JSON 解码 + 文件分组/diff 折叠，纯 Foundation 可无头测试）
   BrowserPanel.swift / BrowserAPI.swift / BrowserCDP.swift  浏览器面板（CEF 渲染 + REST API + CDP）
+  DshWebRPC.swift      壳层原生 dsh RPC（0.1.2 斜杠端点 + launch token 换 cookie，wiki/任务/会话共用）
+  DshWebCookieJanitor.swift 启动/退出清理非本次 authority 的 dsh-auth-* cookie + 回收上次残留实例
+  ShellConfig.swift    壳层设置门面（读 $DSH_HOME/shell/config.json，写委托 core CLI，含旧 UserDefaults 迁移）
   MakeIcon.swift     App 图标生成器（渲染 → iconset → icns）
 platforms/macos/cef/                   CEFShim.h/.mm（ObjC++ 桥：OSR 渲染/输入转发/DevTools）+ helper
 platforms/macos/build-app.sh           一键构建脚本（编译、打包、镜像下载 Node、npm 装 dsh、预下载模式、签名）
@@ -297,7 +302,7 @@ scripts/             跨平台工具（version.sh 版本单一来源 / changelog
 .dsh/skills/         web-dev-tools / repo-knowledge / issue-resolve 等面板配套 skill（App 启动时同步安装到全局 $DSH_HOME/skills/）
 .cache/              构建缓存（node tarball、npm 缓存、已构建运行时/CEF，按架构分目录）
 dist/                构建产物（.app / .pkg / .dmg）
-docs/                设计/排查文档（productization.md、dsh-version-impact.md、git-workflow.md、repo-wiki-design.md、issue-runner-design.md、milestones/、plans/ 等）
+docs/                设计/排查文档（productization.md、dsh-version-impact.md、git-workflow.md、release-process.md、repo-wiki-design.md、review-panel-design.md、browser-blank-panel-fix.md、issue-runner-design.md、milestones/、plans/ 等）
 ```
 
 ## 如何贡献
@@ -307,7 +312,7 @@ docs/                设计/排查文档（productization.md、dsh-version-impac
 
 - **Bug / 功能请求**：使用仓库的 Issue 模板（bug / feature）提交；
 - **本地测试**：`node --test --test-timeout=60000 core/tests/*.test.js`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层 / review-log 变更审计；`--test-timeout` 保证任何泄漏定时器的用例快速失败而不是挂死）、
-  `tests/wiki-panel/run.sh`（Wiki 面板单测）、`tests/terminal-emulator/run.sh`（模拟器测试）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠）；
+  `tests/wiki-panel/run.sh`（Wiki 面板）、`tests/terminal-emulator/run.sh`（模拟器）、`tests/terminal-panel/run.sh`（终端面板头部）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/file-panel/run.sh`（文件面板：工作区页签记忆 / 未保存提示 / 切换语义）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/dsh-auth-cookies/run.sh`（dsh-auth cookie 清理与 NODE_OPTIONS）、`tests/shell-config/run.sh`（壳层设置与旧 UserDefaults 迁移）、`tests/l10n/run.sh`（L10n 键名 lint）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠）；`scripts/local-ci.sh` 一次跑全部；
 - **CI**：push/PR 自动跑 core 单测 + 壳层编译检查 + macOS arm64 构建（`.github/workflows/ci.yml`）；发布由 release 流程构建双架构。
 
 本项目遵循 [MIT License](LICENSE)，代码只封装、绝不修改 DeepSeek Harness 上游源码。

@@ -5,10 +5,14 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
-## [Unreleased]
+## [1.15.0] - 2026-09-13
 
 ### Added
 
+- **审查面板（Review / `⌥⌘R`，活动栏「审查」）：只读回答「这个会话里代理到底改了哪些文件、改成什么」**：直接读 dsh 自己落盘的会话日志（`$DSH_HOME/sessions/<workspace>/<session>/session.jsonl[.zstd]`），**不写任何文件、不发任何请求、不改 dsh**。面板按 **会话 → 对话（turn）→ 文件 → 变更内容** 的树展示，每层可展开/收起，对话用该轮的用户消息做摘要；会话只在**第一次展开**时才真正审计（列表只读日志头，展开才解码全量日志并缓存）。每个文件的**逐次改动都标出来源**：`已应用`（顶层 `write`/`edit` 工具结果里的 hunk，与 dsh web 的 diff 卡片同源）、`参数还原`（由调用参数还原——`run_code` 嵌套调用没有 hunk 元数据）、`全文写入`/`新建`（日志只记了写入内容），嵌套调用另标 `嵌套调用`；`bash` 直改（`sed -i`、`>`、`rm`、`git checkout` …）没有结构化的前后内容记录，单列为「shell 命令」并按「可能写文件」启发式打标（默认只显示可疑项，可关掉过滤看全部）；失败/被拒的调用单列「失败的调用（未改动）」，不计入变更统计；读取诊断（Zstandard 尾部未完成帧、无法解析的行）一律显式列出，**不静默丢数据**。**跟随 dsh web**：在 web 里切换会话时面板展开同一 sessionId（按 id 解析，跨工作区也能定位）并标为「当前会话」；工作区切换只重列会话、不清审计缓存。**只读边界**：日志里没有的东西不会显示——`bash` 直改与尚未落盘的部分只标注「需人工核对」。
+  - 审计折叠逻辑放在 **core**（`core/lib/review-log.js`）：dsh 的 JSONL 后端把日志写成**多个独立可解压的 Zstandard 帧的拼接**（每次落盘一批一帧），一次性解压只能拿到第一帧；Apple 的 Compression 框架在这套 SDK 上**没有 zstd 算法**，Swift 侧无法自行解码。因此 core 自带 `scanZstdFrames()` 逐帧解码，壳层经 `CoreBridge.run(…, preferBundledNode: true)` 调用（**必须用内置 Node**，用户自装的 Node 18/20 没有 zstd），且**不依赖 dsh 的私有模块**——不新增升级耦合面；
+  - 新增 `platforms/macos/src/ReviewPanel.swift`（右栏面板）、`ReviewLogModel.swift`（展示模型：JSON 解码 + 文件分组 / diff 折叠，纯 Foundation，可无头测试）、`core/bin/ohmy-core.js review sessions|audit|audit-file`（CLI 契约）与 `tests/review-panel/`（模型层单测），已接入 `scripts/local-ci.sh` 与 CI swift job；
+  - 覆盖矩阵（哪些改动能被看到、哪些只能「需人工核对」、为什么不做回滚）见 `docs/review-panel-design.md`。
 - **文件面板（Files）页签按工作区记忆与恢复**：切换工作区（在 dsh web 切到另一工作区的会话）时，先把原工作区的已打开页签（顺序 + 当前选中项）记入内存并**关闭全部页签**——释放编辑器 / 语法高亮 / 预览内容，不再把旧工作区的文件挂在新工作区上；切回原工作区时按原顺序重开并还原选中项，磁盘上已消失的文件自动跳过。**未保存修改先询问**：保存并切换 / 不保存——**面板始终跟随工作区**（dsh web 已经切过去了，不存在「留在原工作区」这个答案，否则两边显示不一致）；保存失败的页签**保留在页签栏**（既不静默丢弃改动、也不掉队），面板不可见（无人可问）时同样保留并照常跟随。点面板右上角「关闭」按钮 = 关闭全部页签**并清空全部工作区的记忆**（彻底回收）；切到其它面板不算关闭。**关闭时若还有未保存修改会先问**（页签 ✕ / ⌘W 与面板 ✕ 同一套提示：保存并关闭 / 不保存 / 取消，取消 = 不关；保存失败则中止关闭并保留缓冲）。记忆仅存在于本次进程，不落盘。新增 `platforms/macos/src/WorkspaceTabMemory.swift`（纯逻辑）与 `tests/file-panel/run.sh`（模型 28 例 + 真面板 38 例），已接入 `scripts/local-ci.sh` 与 CI swift job。
 
 ### Changed
@@ -16,6 +20,10 @@ All notable changes to this project are documented in this file. Format follows
 - **面板头部改为固定标题（文件 / 终端 / 知识库）**：文件面板头部固定「文件 / Files」（不再跟随当前文件显示路径）、终端面板头部固定「终端 / Terminal」（不再跟随会话标题 / 已结束状态）、知识库面板头部固定「知识库 / Wiki」（不再跟随当前页面名）；三者都复用活动栏同名键（`bar.preview` / `bar.terminal` / `bar.wiki`），语言切换时随 `refreshTooltips()` 刷新。信息没有丢——文件面板的路径、终端面板的会话标题/已结束状态、知识库面板的页面名都改放进**头部标题的悬停 tooltip**（终端「会话已结束」仍在内容区叠加提示里；页面名在树与页头上本来就有），页签 tooltip 也一直带着。新增 `tests/terminal-panel/`（无头，不建 PTY）与 `tests/wiki-panel/panel-header-tests.swift`（无头，不扫目录）：标题固定 / 语言切换后仍固定 / 关会话后不被清空。
 
 ### Fixed
+
+- **审查面板首轮体验问题成批修掉（空面板 / 宽度 / 跨工作区 / 会话名 / 主题）**：① **消除「刚打开时面板一片空」**（工作区兜底 + 预取 + 不擦内容）与**面板宽度不跟手**（根视图误入 Auto Layout，改回手动布局并把滚动条换成覆盖式）；② **跨工作区切换后只显示目标工作区的会话**（不再把上一个工作区的会话钉在首位）；③ 会话列表**点行展开后不再重列**、只展开当前会话、当前会话改用**高亮**标出（去掉 `current` 文字），Turn 标题不再被长内容挤掉；④ **会话名不再显示 sessionId hash**——标题改为**打开面板时**独立读取 + 失败重试（去掉启动期抓取与页面就绪钩子），无标题的会话显示为 dsh web 的「新会话 / New Session」；⑤ 内容区 / 圆角块**跟随浅色 / 深色主题**。
+
+- **修复「core 单测整套挂死」**：个别用例泄漏的 runner / 打开句柄会让 `node --test` **永不退出**（本机表现为整套测试挂住、CI 超时才失败）。现在核心套件统一加 `--test-timeout=60000`（用例泄漏后 60s 判失败，而不是把整轮拖死；README / CONTRIBUTING / CI 同参数），并修掉泄漏 runner 的用例本身。
 
 - **修复「dsh 认证 cookie 无限累积 → 启动后 WebView 报 Failed to load plugins」**：`dsh >= 0.1.2` 用 launch token 换浏览器 cookie 做鉴权，而 **cookie 名由 authority（`host:port`）派生**——`cookieName(authority) = "dsh-auth-" + base64url(sha256(authority))`；cookie 本身**不区分端口**（RFC 6265 按 domain+path 匹配），WKWebView 的 cookie 存储又按 bundle id 持久化。于是壳层**每次启动都自拉起一个新端口的 dsh web** = 每次多一只 ~226 B 的新 cookie（30 天 TTL，实测开发版已累积 **68 只**），且**永不复用、永不覆盖**、只增不减。链路唯一被压垮的是 **client-modules 的 application batch**：45 个插件拼成**同一条 ~2.1 KB 的 combo URL**，而 node http 默认 `maxHeaderSize` 是 16 KiB——累积 `Cookie:` 头一旦超过 ~14.1 KB（**第 63 只**），请求行 + cookie 头整体超限，服务端回 **431 Request Header Fields Too Large**（空 body）→ `<script src>` 触发 **element 的 error 事件**（不是 JS 异常）→ client-modules 抛 `bundle script … failed to load` → 界面显示 **Failed to load plugins**；而紧挨着的 bootstrap（路径仅 ~80 B）仍 200，所以外壳能渲染、只有插件全挂。逐项实测：68 只 cookie → 431、40 只 → 200（3,718,152 B）、1 只 → 200；阈值扫描 62 只(14,134 B) → 200、**63 只(14,362 B) → 431**；换一个全新 cookie 存储（同二进制、同服务器）立刻恢复正常。处置：
   - 新增 **`platforms/macos/src/DshWebCookieJanitor.swift`**：复刻 dsh 的 cookie 名派生（含 `authority(port:)`），**启动时在加载入口 URL 之前**清掉所有 `dsh-auth-*` 里**非本次 authority** 的（保留当前那只，中途重载无 token 的 `webView.url` 不会掉凭据），**退出时**清掉本次留下的
@@ -46,6 +54,13 @@ All notable changes to this project are documented in this file. Format follows
   - **右键菜单位置（“点右键，左边有反应”）**：OSR 下 CEF 给的菜单坐标与宿主视图坐标系不一致（视口按 `GetScreenInfo.device_scale_factor` 走设备像素：帧回调 1814×2174 对应 907×1087 点），按视图坐标换算得到的点落到窗口右下之外，AppKit 只能把它塞回屏幕边缘 → 表现为“点下面弹上面、点右边跑到左边”。现在**以当前鼠标的屏幕坐标为准**（右键必来自鼠标），CEF 参数只作键盘唤起菜单时的兜底，两者差异写 `app.log`。
   - **OSR 帧派发错配**：帧回调原来按 `tab.id` 找页签，而 CEF 给的是 shim 的 `browserId`（DevTools 子浏览器同吃同一计数器，开过 DevTools / 关过页签后必然错位）→ 改为按 `browserId` 认页签，DevTools 子浏览器的帧进 `devtoolsContent`（不再画进主页面区）。
   - 回归测试：`tests/browser-panel/` 新增帧落点（pageView 而非容器）、按 browserId 派发、DevTools 帧进 DevTools 区、菜单锚点（共 71 例，对修复前的代码实测 4 例 FAIL）；新增 `tests/shell-config/`（旧 UserDefaults 迁移 / 只做一次 / config.json 优先 / 不搬无关键，13 例）。两套均已接入 `scripts/local-ci.sh` 与 CI。
+
+### Docs
+
+- **审查面板**：新增 `docs/review-panel-design.md`（目标 / 非目标、数据来源的三类记录、覆盖矩阵、为什么审计逻辑在 core 而不在 Swift、CLI 契约），并在 `.dsh/wiki/modules/` 下新增模块页 `review-panel.md`。
+- **浏览器面板空白事故**：新增 `docs/browser-blank-panel-fix.md`（OSR 帧落点、菜单锚点、帧派发的根因与排查手段、回归测试）；`docs/dsh-version-impact.md` 补写 **§6.3「R6 详解」**（dsh-auth cookie 累积：cookie 名派生规则、431 的 ~14 KB 阈值实测、启动/退出清理时机与升级时的验证命令）。
+- **wiki 增量同步**：审查面板模块页、文件面板工作区页签记忆、工作区切换的取消语义、dsh 认证 cookie 清理与 ShellConfig 旧设置迁移、浏览器面板渲染默认（windowed）与 1.14.0 空白事故、v1.15.0 版本线与用例基线。
+- **README / CONTRIBUTING 同步本次发布**：README 修正浏览器面板渲染**默认已改回 windowed**（原文写「默认 OSR」，与代码不符）、WebView 最小宽度（1050 → 1100pt）与「右侧六个面板」（→ 七个）的表述，并在「特性一览」补审查面板、在「目录」补 `ShellConfig.swift` / `DshWebRPC.swift` / `DshWebCookieJanitor.swift` / `WorkspaceTabMemory.swift`；CONTRIBUTING 补齐本次新增与既有但漏列的测试套件（`review-panel` / `file-panel` / `l10n` / `shell-config` / `dsh-auth-cookies` / `terminal-panel` / `terminal-emulator`）与 `tests/` 结构说明。
 
 ## [1.14.0] - 2026-09-11
 

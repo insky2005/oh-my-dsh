@@ -10,12 +10,14 @@ oh-my-dsh/
 ├── LICENSE  README.md  CHANGELOG.md  CONTRIBUTING.md  SECURITY.md
 ├── .github/             # CI 工作流 / ISSUE_TEMPLATE / CODEOWNERS（纯文档改动 docs/**、*.md 不触发 CI）
 ├── core/                # 共享核心（Node，平台无关）：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / jobqueue / tasks /
-│                        #   dsh RPC 传输层 · shell 设置 · workspace 存储 · channel（统一抽象 · 路由 · 指令 · 会话映射 · 微信 ClawBot 与钉钉 stream 适配器）；单测随 node --test core/tests/ 跑
+│                        #   dsh RPC 传输层 · shell 设置 · workspace 存储 · review-log（会话日志变更审计）· channel（统一抽象 · 路由 · 指令 ·
+│                        #   会话映射 · 微信 ClawBot 与钉钉 stream 适配器）；单测随 node --test core/tests/ 跑
 ├── platforms/
 │   └── macos/           # macOS 壳：src/（Swift：main + 各面板）+ cef/（CEFShim + helper）+ build-app.sh + build-cef.sh + make-pkg.sh
 ├── scripts/             # 跨平台工具：version.sh（版本单一来源）/ changelog.sh / local-ci.sh（本机 CI）/ local-release.sh /
 │                        #   github-publish.sh / release-checksums.sh / release-fix.sh / git-remote.sh / migrate-platforms-macos.sh
-├── tests/               # 面板模型层单测套件（wiki-panel / browser-panel / terminal-emulator / channel-panel / dsh-rpc / skills，均 headless run.sh）
+├── tests/               # 面板模型层单测套件（wiki-panel / browser-panel / terminal-panel / terminal-emulator / channel-panel /
+│                        #   file-panel / review-panel / shell-config / dsh-rpc / dsh-auth-cookies / l10n / skills，均 headless run.sh）
 ├── docs/                # 设计/排查文档（productization.md、milestones/、channel-*.md、issue-runner-design.md 等）
 └── .dsh/                # wiki / skills（web-dev-tools / repo-knowledge / issue-resolve，随仓库提交）
 ```
@@ -42,12 +44,18 @@ oh-my-dsh/
 # --test-timeout：用例若泄漏定时器/runner，60s 后判失败而不是把整轮挂死（CI 同参数）。grep glob 不加引号以兼容 Node 20。
 node --test --test-timeout=60000 core/tests/*.test.js
 
-# 面板模型层单测（headless run.sh 套件）
-tests/wiki-panel/run.sh
-tests/browser-panel/run.sh              # 浏览器面板模型层（REST 路由 / 日志缓冲）
+# 面板模型层单测（headless run.sh 套件）；全套一次跑用 scripts/local-ci.sh test
+tests/wiki-panel/run.sh                 # Repo Wiki 知识库面板模型层
+tests/browser-panel/run.sh              # 浏览器面板模型层（REST 路由 / 日志缓冲 / OSR 帧落点与菜单锚点）
+tests/terminal-panel/run.sh             # 终端面板（头部标题固定 / 关会话后不被清空，不建 PTY）
 tests/terminal-emulator/run.sh          # 模拟器测试（core/tests/ansi.test.js 的薄封装）
 tests/channel-panel/run.sh              # 通道面板项目视图数据模型
+tests/file-panel/run.sh                 # 文件面板（工作区页签记忆 / 未保存提示 / 切换语义）
+tests/review-panel/run.sh               # 审查（变更审计）面板展示模型：JSON 解码 / 文件分组 / diff 折叠
+tests/shell-config/run.sh               # 壳层设置文件与旧 UserDefaults 迁移
 tests/dsh-rpc/run.sh                    # 壳层原生 dsh RPC（0.1.2 信封/斜杠端点、launch token 换 cookie、回退记忆）
+tests/dsh-auth-cookies/run.sh           # dsh-auth cookie 名派生 / 启动与退出清理 / NODE_OPTIONS 追加
+tests/l10n/run.sh                       # L10n 键名 lint（缺失键 / 重复键 / 中英缺一）
 tests/skills/run.sh                     # 内置 skill 安装/覆盖/迁移与 SKILL.md 字节一致
 
 # 本机 CI：与 .github/workflows/ci.yml 三阶段对齐（core → swift 编译检查 → arm64 构建，不打包）
