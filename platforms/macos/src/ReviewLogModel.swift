@@ -121,6 +121,30 @@ struct ReviewSessionsResult: Decodable, Equatable {
     var diagnostics: [ReviewDiagnostic]?
 }
 
+/// The identity of a session log file at the moment its audit was taken
+/// (size + mtime).
+///
+/// dsh appends one independently decodable Zstandard frame per durable batch,
+/// so a log only ever grows: as long as the file still matches the stamp an
+/// audit was taken from, that audit still covers everything on disk. This is
+/// what keeps a *live* session's audit honest — a cache keyed by session id
+/// alone froze the panel on the moment the session was first expanded.
+struct ReviewLogStamp: Equatable {
+    var size: Double
+    var mtimeMs: Double
+
+    /// The stamp of the log at `path`, or nil when it is unknown or unreadable
+    /// (a session whose log path the listing has not reported yet, or one that
+    /// vanished).
+    static func read(_ path: String?) -> ReviewLogStamp? {
+        guard let path = path, !path.isEmpty else { return nil }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else { return nil }
+        let size = (attributes[.size] as? NSNumber)?.doubleValue ?? 0
+        let mtime = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return ReviewLogStamp(size: size, mtimeMs: (mtime * 1000).rounded())
+    }
+}
+
 // MARK: - Display folding
 
 /// Files touched by one session, in first-seen order.
@@ -159,6 +183,19 @@ enum ReviewLogModel {
     private static func decode<T: Decodable>(_ type: T.Type, from json: String) -> T? {
         guard let data = json.data(using: .utf8), !data.isEmpty else { return nil }
         return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    /// True when a cached audit result must be recomputed because the session
+    /// log on disk is no longer the one it was taken from.
+    ///
+    /// `onDisk == nil` (the log path is not known yet, or the file is gone)
+    /// means "cannot tell": keep the cache rather than re-reading a session that
+    /// may never change. Any recorded stamp that differs — *including* "nothing
+    /// recorded yet" — is a real change, and it refreshes exactly once because
+    /// the next audit stores the stamp it started from.
+    static func auditNeedsRefresh(cached: ReviewLogStamp?, onDisk: ReviewLogStamp?) -> Bool {
+        guard let onDisk = onDisk else { return false }
+        return cached != onDisk
     }
 
     /// Successful mutations of a session, in log order.

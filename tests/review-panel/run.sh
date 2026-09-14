@@ -13,4 +13,17 @@ cp review-tests.swift "$TMP/main.swift"
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
   -o "$TMP/review-tests" "$TMP/ReviewLogModel.swift" "$TMP/main.swift"
 "$TMP/review-tests"
+
+echo "--- review panel controller (headless regression: a live session's log) ---"
+# Separate build dir: top-level code must live in a file named main.swift, and
+# the model-layer binary above already owns the outer one.
+mkdir -p "$TMP/panel"
+cp controller-stubs.swift "$TMP/panel/stubs.swift"
+cp ../../platforms/macos/src/ReviewLogModel.swift "$TMP/panel/ReviewLogModel.swift"
+cp ../../platforms/macos/src/ReviewPanel.swift "$TMP/panel/ReviewPanel.swift"
+cp controller-tests.swift "$TMP/panel/main.swift"
+swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
+  -o "$TMP/review-controller-tests" "$TMP/panel/"*.swift
+"$TMP/review-controller-tests"
+
 rm -rf "$TMP"
