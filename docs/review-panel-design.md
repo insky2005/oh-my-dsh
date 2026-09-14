@@ -94,8 +94,16 @@ node core/bin/ohmy-core.js review audit-file <path.jsonl[.zstd]> [--workspace <d
 | **文件** | 路径 · `+A −R` ·（新建/嵌套徽标） | 每次改动：来源标签 + 逐行 diff |
 | **变更内容** | — | 删除行（红 −）/新增行（绿 +），单条上限 200 行 |
 
-- **按需审计**：会话列表只读日志头（便宜）；某个会话第一次展开时才跑一次 `review audit`，
-  结果进内存缓存，不重复读；
+- **按需审计 + 只认「同一份日志」**：会话列表只读日志头（便宜）；某个会话第一次展开时才跑一次 `review audit`。
+  缓存**不能只按 sessionId**：会话日志是**活文档**（dsh 每落盘一批追加一个独立可解压的 Zstandard 帧，只增不减），
+  而新建会话一诞生就会被审一次——那会儿日志里只有会话头，按 id 缓存就把「0 文件 / 无变更」**永久钉住**了。
+  因此审计结果与**日志身份**（`ReviewLogStamp`：size + mtime）一起存，只有两者都与盘上一致才复用；
+  日志路径未知时判为「无法判断」，保留缓存（不反复重读）。戳在**审计前**打、读完落盘，因此审计进行中追加的帧
+  仍然比戳新，下个 tick 会再读一次（失败结果同样打戳，坏会话不会反复重试）；
+- **新鲜度由三处触发**：① 打开面板即重列会话并重审「已展开且日志变了」的会话（打开面板本就是在问「改了什么」，
+  期间不擦内容）；② 面板**在屏上**时每 5 s 给已展开会话的日志做一次 `stat`（不 spawn CLI），只有真的变了才跑
+  `review audit`；面板收起/切走即停（隐藏只把分隔线收成 0、视图仍在树上，故可见性不能只看 `superview`）；
+  ③ 跟随 dsh web 切会话时按同一规则重审；
 - **对话可区分**：turn 来自日志的 `turn/start` + `tool/call.turn`；`run_code` 的嵌套派发没有
   自己的 turn，**继承父调用的 turn**（`core/lib/review-log.js` 的 `contextByCallId`），
   轮次标题用 `user/message` 的用户消息做摘要；
@@ -113,13 +121,16 @@ node core/bin/ohmy-core.js review audit-file <path.jsonl[.zstd]> [--workspace <d
 
 - `node --test core/tests/review-log.test.js`：帧扫描、多帧解码、撕裂帧、三类记录的合并、失败条目、
   shell 启发式、路径相对化、会话发现（zstd 相关用例在无 zstd 的 Node 上自动 skip，保证 CI Node 20 也能跑）；
-- `tests/review-panel/run.sh`：Swift 模型层（JSON 解码、文件分组、diff 折叠、过滤、标签）无头单测；
+- `tests/review-panel/run.sh`：① Swift 模型层（JSON 解码、文件分组、diff 折叠、过滤、标签）无头单测；
+  ② **面板控制器无头回归**（`controller-tests.swift` + 假 core CLI `stubs`）：钉住「审计结果必须在日志变化后失效」——
+  新建会话首次读出「0 文件」、日志增长后**无需任何操作**自动重读并列出文件、日志未变时**不重复**审计（对修复前代码实测 6 例 FAIL）；
 - QA 钩子：`DSH_REVIEW_TEST=1` 启动即打开面板；`DSH_REVIEW_TEST_PATH=<dir>` 固定审计的工作区。
 
 ## 8. 已知边界
 
 1. `bash` 直改只有命令文本，**内容不可得**——面板明确标注「需人工核对」；
 2. 日志尚未落盘的尾部（`session-checkpoint-policy` 的批处理窗口内）看不到，撕裂帧只在 `diagnostics` 里提示；
+   落盘之后会被自动读到——面板在屏上时按日志身份增量重审（见 §6），不需要手动刷新；
 3. `meta.diffs` 为空既可能是「新建」也可能是「内容与原文逐字节相同」，面板对后者会保守地标 `新建`；
 4. 通过 dsh 之外的手段（其他进程、IDE）改的文件不在日志里；
 5. 面板不提供跨会话/跨工作区的全局汇总（按需再加，数据源已经具备）。

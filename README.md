@@ -108,7 +108,9 @@
 **只读**回答「这个会话里代理到底改了哪些文件、改成什么」——直接读 dsh 自己落盘的会话日志（`$DSH_HOME/sessions/<workspace>/<session>/session.jsonl[.zstd]`），不写任何文件、不发任何请求、不改 dsh。
 
 **按 会话 → 对话（turn）→ 文件 → 变更内容 的树展示，每层可展开/收起**；对话用该轮的用户消息做摘要；
-会话在第一次展开时才真正审计（列表只读日志头，展开才解码全量日志并缓存）。
+会话在第一次展开时才真正审计（列表只读日志头，展开才解码全量日志）。**审计结果会跟着日志走**：正在对话的会话
+日志一直在追加，面板按日志身份（大小 + mtime）判断有没有新内容——面板在屏上时每 5 s 做一次 `stat`，只有真的变了
+才重读一次，所以新建会话里刚改的文件会**自己出现**，不需要重开面板或点刷新。
 
 - **每个文件的逐次改动**都标出该条记录**从哪来**：
   - `已应用` —— 顶层 `write`/`edit` 工具结果里的 hunk（与 dsh web 的 diff 卡片同源）；
@@ -119,7 +121,7 @@
 - **失败调用单列**：记录为「尝试但未生效」的改动不混进变更列表；
 - **跟随 dsh web**：在 dsh web 切换会话时，面板展开同一 sessionId（按 id 解析，跨工作区也能定位），并标为「当前会话」；工作区切换只重列会话、不清审计缓存；
 - **读取诊断**：Zstandard 尾部未完成帧、无法解析的行等一律显式列出（不静默丢数据）；
-- **只读边界**：日志里没有的东西不会显示——`bash` 直改、以及日志尚未落盘的部分，面板只标注「需人工核对」；
+- **只读边界**：日志里没有的东西不会显示——`bash` 直改、以及日志**尚未落盘**的部分只标注「需人工核对」（落盘后会自动读到，见上）；
 - 设计与覆盖矩阵：`docs/review-panel-design.md`。
 
 ## 产物
@@ -312,7 +314,7 @@ docs/                设计/排查文档（productization.md、dsh-version-impac
 
 - **Bug / 功能请求**：使用仓库的 Issue 模板（bug / feature）提交；
 - **本地测试**：`node --test --test-timeout=60000 core/tests/*.test.js`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层 / review-log 变更审计；`--test-timeout` 保证任何泄漏定时器的用例快速失败而不是挂死）、
-  `tests/wiki-panel/run.sh`（Wiki 面板）、`tests/terminal-emulator/run.sh`（模拟器）、`tests/terminal-panel/run.sh`（终端面板头部）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/file-panel/run.sh`（文件面板：工作区页签记忆 / 未保存提示 / 切换语义）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/dsh-auth-cookies/run.sh`（dsh-auth cookie 清理与 NODE_OPTIONS）、`tests/shell-config/run.sh`（壳层设置与旧 UserDefaults 迁移）、`tests/l10n/run.sh`（L10n 键名 lint）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠）；`scripts/local-ci.sh` 一次跑全部；
+  `tests/wiki-panel/run.sh`（Wiki 面板）、`tests/terminal-emulator/run.sh`（模拟器）、`tests/terminal-panel/run.sh`（终端面板头部）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/file-panel/run.sh`（文件面板：工作区页签记忆 / 未保存提示 / 切换语义）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/dsh-auth-cookies/run.sh`（dsh-auth cookie 清理与 NODE_OPTIONS）、`tests/shell-config/run.sh`（壳层设置与旧 UserDefaults 迁移）、`tests/l10n/run.sh`（L10n 键名 lint）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠 + 控制器无头回归「日志变了必须重审、没变不许重审」）；`scripts/local-ci.sh` 一次跑全部；
 - **CI**：push/PR 自动跑 core 单测 + 壳层编译检查 + macOS arm64 构建（`.github/workflows/ci.yml`）；发布由 release 流程构建双架构。
 
 本项目遵循 [MIT License](LICENSE)，代码只封装、绝不修改 DeepSeek Harness 上游源码。

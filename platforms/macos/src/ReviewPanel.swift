@@ -118,6 +118,13 @@ final class ReviewPanelController: NSObject {
     /// answer: those sessions simply have no title yet).
     private var titlesFetched = false
     private var audits: [String: ReviewAudit] = [:]
+    /// Session id → the log file's identity when its audit was taken. The audit
+    /// cache is only reusable while this still matches the file on disk (see
+    /// `ReviewLogModel.auditNeedsRefresh`) — sessions are live documents.
+    private var auditStamps: [String: ReviewLogStamp] = [:]
+    /// Session id → session-log path, learned from the listing; the stamp above
+    /// is a `stat` of this file.
+    private var sessionLogPaths: [String: String] = [:]
     private var auditing: Set<String> = []
     private var failedAudits: Set<String> = []
     private var expandedSessions: Set<String> = []
@@ -133,6 +140,12 @@ final class ReviewPanelController: NSObject {
     private var isLoading = false
     private var pendingReload = false
     private var loadToken = 0
+    /// Repeats while the panel is on screen: each tick is one `stat` per
+    /// expanded session, and only a log that actually grew costs a re-audit.
+    private var auditTimer: Timer?
+    /// Cadence of that tick; writable so the headless controller test can run it
+    /// fast (see tests/review-panel/run.sh).
+    var auditPollInterval: TimeInterval = 5
     /// Sessions whose tree already got its default expansion applied.
     private var preparedSessions: Set<String> = []
 
@@ -160,8 +173,14 @@ final class ReviewPanelController: NSObject {
     /// then, and a session that had no title last time may have been named since.
     func ensureLoaded() {
         hasBeenShown = true
-        if !hasLoaded { reload() }
+        // Opening the panel is the user asking "what did it change since I last
+        // looked?" — always re-list (and re-audit whatever grew meanwhile)
+        // instead of trusting the listing cached at launch. A refresh never
+        // blanks the panel: the current tree renders first, the fresh data
+        // replaces it when the core CLI answers.
+        reload()
         refreshSessionTitles()
+        startAuditPolling()
     }
 
     /// Warm the session listing before the panel is ever opened (called once the
@@ -258,7 +277,12 @@ final class ReviewPanelController: NSObject {
         render()
     }
 
-    private var isViewVisible: Bool { view.superview != nil }
+    /// True when the panel is actually on screen. Hiding a panel only collapses
+    /// its divider width — the view stays mounted — so `superview != nil` alone
+    /// would keep polling (and running the core CLI) behind a closed panel.
+    private var isViewVisible: Bool {
+        view.superview != nil && view.window != nil && view.frame.width > 1
+    }
 
     private func updateLabels() {
         headerTitle.text = L10n.tr("review.title")
@@ -437,6 +461,10 @@ final class ReviewPanelController: NSObject {
                 self.isLoading = false
                 self.hasLoaded = true
                 self.sessions = sessions
+                // Remember where each session's log lives: that path is what the
+                // freshness check stats (kept across listings so a followed
+                // session of another workspace keeps its path too).
+                for session in sessions { self.sessionLogPaths[session.id] = session.file }
                 // Names come from dsh web and are fetched separately (below), and
                 // only once the panel has been opened: a launch-time fetch bundled
                 // into the listing silently produced hashes (the server was not
@@ -474,10 +502,21 @@ final class ReviewPanelController: NSObject {
         }
     }
 
-    /// Audit one session on demand (cached; never audits twice).
+    /// Audit one session on demand. A completed read is cached **together with
+    /// the identity of the log it was taken from** and reused only while that log
+    /// is unchanged: a session is written to while you read it, so a cache keyed
+    /// by session id alone froze the tree on the moment the session was first
+    /// expanded — a brand-new session showed "0 文件" (no files at all) for the
+    /// rest of the conversation.
     private func ensureAudit(_ sessionId: String) {
-        if audits[sessionId] != nil || auditing.contains(sessionId) { return }
+        if auditing.contains(sessionId) { return }
+        if audits[sessionId] != nil || failedAudits.contains(sessionId) {
+            guard auditIsStale(sessionId) else { return }
+        }
         auditing.insert(sessionId)
+        // Stamped BEFORE the read: anything dsh appends while the audit runs is
+        // then still newer than the stamp, so the next check picks it up.
+        let stamp = logStamp(for: sessionId)
         AppLog.shared.log("review: audit \(sessionId)")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             // No --workspace: the id alone must resolve, wherever that session lives.
@@ -486,8 +525,12 @@ final class ReviewPanelController: NSObject {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.auditing.remove(sessionId)
+                // Record where this read stopped even on failure: without it a
+                // failing session would be retried on every poll.
+                self.auditStamps[sessionId] = stamp ?? self.logStamp(for: sessionId)
                 if let audit = audit, audit.session != nil {
                     self.audits[sessionId] = audit
+                    self.failedAudits.remove(sessionId)
                     let codes = (audit.diagnostics ?? []).map { $0.code }.joined(separator: ",")
                     AppLog.shared.log("review: audit \(sessionId) entries=\(audit.entries.count) "
                         + "files=\(audit.stats?.files ?? -1) turns=\(audit.turns?.count ?? 0) diagnostics=[\(codes)]")
@@ -506,6 +549,54 @@ final class ReviewPanelController: NSObject {
                 self.render()
             }
         }
+    }
+
+    // MARK: - Freshness of a cached audit
+
+    /// True when this session's stored result no longer matches its log on disk.
+    /// Sessions with nothing cached yet are always stale; a session whose log
+    /// path is not known cannot be judged (and is therefore kept as-is).
+    private func auditIsStale(_ sessionId: String) -> Bool {
+        guard audits[sessionId] != nil || failedAudits.contains(sessionId) else { return true }
+        return ReviewLogModel.auditNeedsRefresh(cached: auditStamps[sessionId],
+                                                onDisk: logStamp(for: sessionId))
+    }
+
+    /// The log file's current identity, or nil when its path is unknown.
+    private func logStamp(for sessionId: String) -> ReviewLogStamp? {
+        ReviewLogStamp.read(sessionLogPaths[sessionId])
+    }
+
+    /// Follow the tree's session logs while the panel is on screen: a live
+    /// session keeps appending frames, and the panel must not stay frozen on the
+    /// first read. One `stat` per expanded session per tick — the core CLI only
+    /// runs when a log actually changed.
+    private func startAuditPolling() {
+        guard auditTimer == nil else { return }
+        let timer = Timer(timeInterval: auditPollInterval, repeats: true) { [weak self] _ in
+            self?.pollAudits()
+        }
+        timer.tolerance = 1
+        // .common so the tick survives scrolling the tree (menu tracking and
+        // scrolling run the runloop in a non-default mode).
+        RunLoop.main.add(timer, forMode: .common)
+        auditTimer = timer
+    }
+
+    private func stopAuditPolling() {
+        auditTimer?.invalidate()
+        auditTimer = nil
+    }
+
+    private func pollAudits() {
+        guard isViewVisible else {
+            // Off screen: nothing to keep up with, and no reason to spawn the
+            // core CLI behind a closed panel. A later open restarts the tick.
+            stopAuditPolling()
+            return
+        }
+        guard !expandedSessions.isEmpty else { return }
+        for sessionId in expandedSessions { ensureAudit(sessionId) }
     }
 
     /// Status line rendered as a top-aligned card instead of a centred label:
