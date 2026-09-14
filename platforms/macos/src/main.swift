@@ -2163,6 +2163,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsPanel.onRevealInFinder = { path in
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
         }
+        // dsh web caches the user-invocable skill catalog per session and only
+        // drops that cache on connection/reset, so a change made here would not
+        // show up in the composer's "/" menu until the page was reloaded.
+        skillsPanel.onCatalogChanged = { [weak self] in self?.nudgeDSHWebCaches() }
         // QA (--ui-debug): snapshot the panel again once it has rendered content.
         skillsPanel.onDidRender = { [weak self] in
             guard let self = self, self.uiDebug else { return }
@@ -4153,6 +4157,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Toggle the Review (change audit) panel (activity bar entry / ⌥⌘R).
     @objc private func reviewEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .review ? .none : .review)
+    }
+
+    /// Timestamp of the last skill-catalog nudge (throttled: toggling several
+    /// skills in a row must not reconnect the page repeatedly).
+    private var lastCatalogNudge = Date.distantPast
+
+    /// Make dsh web drop its client-side caches WITHOUT reloading the page.
+    ///
+    /// The client keeps the per-session skill catalog in memory and clears it
+    /// only on "connection/reset" (or when the agent preset changes). Synthetic
+    /// browser offline→online events make the client's own connection loop
+    /// reconnect, which emits connection/reset inside the page — the same
+    /// invalidation a manual refresh performs, minus the document reload.
+    func nudgeDSHWebCaches() {
+        guard ProcessInfo.processInfo.environment["DSH_SKILLS_NO_NUDGE"] != "1" else { return }
+        guard let web = webView, web.url != nil else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastCatalogNudge) > 1.5 else {
+            AppLog.shared.log("skills: catalog nudge throttled")
+            return
+        }
+        lastCatalogNudge = now
+        let js = "try{window.dispatchEvent(new Event('offline'));"
+            + "setTimeout(function(){window.dispatchEvent(new Event('online'));},200);}catch(e){}"
+        web.evaluateJavaScript(js) { _, error in
+            AppLog.shared.log("skills: catalog nudge sent"
+                + (error == nil ? "" : " (error: " + (error?.localizedDescription ?? "?") + ")"))
+        }
     }
 
     /// Toggle the Skills manager panel (activity bar entry / ⌥⌘S).

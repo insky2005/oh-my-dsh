@@ -530,6 +530,12 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     var onOpenFile: ((String) -> Void)?
     var onRevealInFinder: ((String) -> Void)?
     var workspacePath: (() -> String?)?
+    /// Fired whenever a change makes dsh web's cached skill catalog stale
+    /// (invocation flags / install / remove). dsh's client caches the catalog
+    /// per session and only drops it on connection/reset, so the shell nudges
+    /// the page to reconnect (see AppDelegate.nudgeDSHWebCaches).
+    var onCatalogChanged: (() -> Void)?
+
     /// QA hook (--ui-debug): fires after each render so the shell can snapshot
     /// the panel once it actually has content (same pattern as ReviewPanel).
     var onDidRender: (() -> Void)?
@@ -589,6 +595,15 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
 
     /// Called by the shell whenever the panel is (re)shown.
     func ensureLoaded() { reloadAll() }
+
+    /// Test hook: apply invocation flags to an installed skill by name. Drives the
+    /// exact path the row toggles use (including onCatalogChanged).
+    @discardableResult
+    func applyInvocationForQA(name: String, userInvocable: Bool?, modelInvocable: Bool?) -> Bool {
+        guard let skill = skills.first(where: { $0.name == name }) else { return false }
+        setInvocation(skill, userInvocable: userInvocable, modelInvocable: modelInvocable)
+        return true
+    }
 
     /// QA hook: DSH_SKILLS_TEST_ROOT swaps the user root for a fixture home.
     static func storeHome() -> String {
@@ -1081,6 +1096,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
             AppLog.shared.log("skills: invocation " + skill.name + " user=" + String(ui) + " model=" + String(model))
             rescan()
             setStatus(L10n.tr("skills.saved"), error: false)
+            onCatalogChanged?()
         } catch let error as SkillPanelError {
             AppLog.shared.log("skills: invocation failed " + skill.name + " " + error.l10nKey)
             setStatus(message(for: error), error: true)
@@ -1110,6 +1126,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
                 try SkillInstallService.remove(skill, store: self.store)
                 AppLog.shared.log("skills: removed " + skill.name + " (" + skill.dir + ")")
                 self.setStatus(L10n.tr("skills.removedOk"), error: false)
+                self.onCatalogChanged?()
             } catch let error as SkillPanelError {
                 self.setStatus(self.message(for: error), error: true)
             } catch {
@@ -1390,6 +1407,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
             AppLog.shared.log("skills: imported " + skill.name + " -> " + skill.dir)
             setStatus(L10n.tr("skills.installedOk"), error: false)
             rescan()
+            onCatalogChanged?()
         } catch SkillPanelError.targetExists(let detail) {
             confirmOverwrite(title: L10n.tr("skills.overwriteConfirm"), detail: detail) { [weak self] in
                 self?.performImport(path: path, projectLevel: projectLevel, overwrite: true)
@@ -1442,6 +1460,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
                     self.setStatus(L10n.tr("skills.installedOk"), error: false)
                     self.roots = self.currentRoots()
                     self.rescan()
+                    self.onCatalogChanged?()
                 }
             } catch SkillPanelError.targetExists(let detail) {
                 DispatchQueue.main.async {

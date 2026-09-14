@@ -88,6 +88,20 @@ dsh 只认 frontmatter，所以开关必然写进 SKILL.md；为了**可逆**（
 - 记录写入 `$DSH_HOME/shell/skills.json` 的 `invocation`；面板重装/更新同一技能时按记录重放，用户的开关不会被源文件覆盖；
 - 外部技能（共享级、仓库自带项目级）只改文件不记覆盖；其被外部工具重新拉取可能重置开关（UI 已注明）。
 
+## 6.1 让 dsh web 立刻看到改动（客户端缓存失效）
+
+改动写完 `SKILL.md` 后，**dsh web 的对话输入框（输入 `/` 的技能菜单）不会自动更新**——它按会话级缓存技能目录：
+
+- `dsh-client-ui-skill` 用 `Map<sessionId, {promise, settled}>` 缓存 `skills/list` 的结果，**只在两种情况失效**：`agent-preset/selected`（切换 agent preset）与 `connection/reset`（客户端连接重连）；`connection/reset` 由 `dsh-api-gateway` 在连接进入 "connected"（含重连）时触发；
+- skills 变化**不是会话事件**，服务端不会向客户端推送，所以外部改动（本面板、手改文件、CLI 安装）不会让这个缓存失效——这正是"必须刷新页面才生效"的原因。
+
+壳层的处理：改动后向 web 页注入一小段 JS，派发**浏览器 offline → online 事件**；dsh 客户端自身的连接循环监听这两个事件（`window.addEventListener('online'/'offline')` → `setNetworkAvailable`），于是它会**重连并触发 `connection/reset`**，各客户端插件的缓存（含技能目录）随之清空并重取——效果与手动刷新一致，但不重载文档。
+
+- 实现：`AppDelegate.nudgeDSHWebCaches()`（`platforms/macos/src/main.swift`），由面板的 `onCatalogChanged` 在**改开关 / 安装 / 移除**后触发；
+- 1.5s 节流，避免连续改多个技能时反复重连；
+- 逃生开关：`DSH_SKILLS_NO_NUDGE=1` 关闭该行为（此时与手动刷新前的表现一致）；
+- 边界：重连会中断"正在流式输出"的那条流（客户端会自行重连并重新拉取会话状态，服务端那一轮不受影响）——这是客户端既有的恢复路径。
+
 ## 7. 磁盘布局（壳层自有）
 
 ```
