@@ -248,6 +248,32 @@ enum SkillRegistryClient {
         return try parseSearchResponse(body)
     }
 
+    /// The default view of a search-only registry: there is no listing endpoint,
+    /// so run the registry's broad queries, merge the hits and sort by installs
+    /// (the API already returns them install-sorted).
+    static func popular(_ registry: SkillRegistryRecord, limit: Int = 30) throws -> [SkillCandidate] {
+        let queries = registry.popularQueries.isEmpty
+            ? SkillRegistryRecord.defaultPopularQueries
+            : registry.popularQueries
+        var merged: [String: SkillCandidate] = [:]
+        var lastError: SkillPanelError?
+        for query in queries {
+            do {
+                for item in try search(registry, query: query, limit: 100) {
+                    let key = item.sourceLabel + "|" + item.name
+                    if merged[key] == nil { merged[key] = item }
+                }
+            } catch let error as SkillPanelError {
+                lastError = error
+            }
+        }
+        if merged.isEmpty, let error = lastError { throw error }
+        return merged.values
+            .sorted { ($0.installs ?? 0) > ($1.installs ?? 0) }
+            .prefix(limit)
+            .map { $0 }
+    }
+
     static func renderSearchURL(_ template: String, query: String, limit: Int) throws -> String {
         let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
         var url = template.replacingOccurrences(of: "{q}", with: encoded)
@@ -403,7 +429,8 @@ enum SkillRegistryClient {
         return SkillRegistryRecord(id: "search-" + root, label: URL(string: root)?.host ?? root,
                                    enabled: true,
                                    searchURL: root + "/api/search?q={q}&limit={limit}",
-                                   catalog: .none, catalogURL: "")
+                                   catalog: .none, catalogURL: "",
+                                   popularQueries: SkillRegistryRecord.defaultPopularQueries)
     }
 
     static func firstMatchShorthand(_ input: String) -> Bool {

@@ -407,6 +407,12 @@ final class RegistryCardView: SkillCardView {
         catalogLabel.isHidden = entry.catalogURL.isEmpty
         catalogLabel.toolTip = entry.catalogURL
 
+        if !entry.popularQueries.isEmpty {
+            catalogLabel.stringValue = (entry.catalogURL.isEmpty ? "" : entry.catalogURL + "  ·  ")
+                + L10n.tr("skills.registry.popularQueries") + ": " + entry.popularQueries.joined(separator: ", ")
+            catalogLabel.isHidden = false
+        }
+
         enabledToggle.title = L10n.tr("skills.registry.enabled")
         enabledToggle.state = entry.enabled ? .on : .off
         enabledToggle.controlSize = .small
@@ -591,6 +597,9 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     private var candidates: [SkillCandidate] = []
     private var selected = Set<String>()
     private var filterLevel: SkillLevel?
+    /// Registry whose default list is already loaded (skips redundant refetches
+    /// when the tab is re-shown).
+    private var loadedDefaultRegistryID: String?
     private var busy = false
 
     /// Called by the shell whenever the panel is (re)shown.
@@ -904,7 +913,10 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         registryButton.showsBackground = (target == .registries)
         switch target {
         case .installed: renderInstalled()
-        case .available: renderRegistryPopup(); renderAvailable()
+        case .available:
+            renderRegistryPopup()
+            renderAvailable()
+            loadDefaultList()
         case .registries: renderRegistries()
         }
     }
@@ -919,6 +931,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     func reloadAll() {
         roots = currentRoots()
         skills = SkillScanner.scan(roots)
+        loadedDefaultRegistryID = nil      // a refresh also re-pulls the default list
         rebuildLevelFilter()
         renderInstalled()
         renderRegistryPopup()
@@ -1041,8 +1054,52 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     private func registryChanged() {
         candidates = []
         selected.removeAll()
+        loadedDefaultRegistryID = nil
         renderAvailable()
-        if let reg = activeRegistry, reg.catalog != SkillCatalogKind.none { loadCatalog() }
+        loadDefaultList(force: true)
+    }
+
+    /// What the available tab shows BEFORE the user types anything: the
+    /// registry's catalog when it has one, otherwise its "popular" list —
+    /// search-only registries (skills.sh) cannot be enumerated, but a broad
+    /// query returns the ecosystem sorted by installs.
+    private func loadDefaultList(force: Bool = false) {
+        guard let registry = activeRegistry else { return }
+        if !force, loadedDefaultRegistryID == registry.id { return }
+        loadedDefaultRegistryID = registry.id
+        if registry.catalog != SkillCatalogKind.none {
+            loadCatalog()
+            return
+        }
+        guard registry.searchURL != nil else {
+            setStatus(L10n.tr("skills.noCatalogHint"), error: true)
+            return
+        }
+        setBusy(true)
+        setStatus(L10n.tr("skills.loading"), error: false)
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let found = try SkillRegistryClient.popular(registry)
+                DispatchQueue.main.async {
+                    self.candidates = found
+                    self.selected.removeAll()
+                    self.renderAvailable()
+                    self.setBusy(false)
+                    self.setStatus(L10n.tr("skills.popular"), error: false)
+                }
+            } catch let error as SkillPanelError {
+                DispatchQueue.main.async {
+                    self.setBusy(false)
+                    self.setStatus(self.message(for: error), error: true)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.setBusy(false)
+                    self.setStatus(error.localizedDescription, error: true)
+                }
+            }
+        }
     }
 
     private func renderAvailable() {

@@ -61,6 +61,15 @@ RegistryEntry { id, label, enabled,
 - 添加 registry 时自动探测：`owner/repo` 或 GitHub 地址 → `githubRepo`；以 `/.well-known/skills/index.json` 结尾或该索引可访问 → `wellKnown`；其余 URL → 视为 skills.sh 兼容的搜索接口（`<base>/api/search?q={q}&limit={limit}`）；
 - 组织级全仓枚举（`owner/*`）列为后续项。
 
+### 默认视图：热门（按安装量）
+
+进入「可安装」页签时列表**不会空白**：
+
+- registry 有清单来源（`wellKnown` / `githubRepo`）→ 直接列出该 registry 的清单；
+- registry 只有搜索接口（`skills.sh` 型）→ 拉**热门列表**：以 registry 的 `popularQueries`（默认预置 `["sk","ag"]`）做宽查询，合并去重后**按 installs 降序取前 30**。实测依据：`GET /api/search?q=sk&limit=100` 返回 100 条、按安装量降序（3.4M → 357K，覆盖 vercel-labs / anthropics / mattpocock / microsoft 等主力来源）；两个宽查询合并可提高覆盖面。状态栏显示「热门 · 按安装量」，用户输入关键字后即切换为搜索结果；「刷新」会重新拉取。
+
+`popularQueries` 是 registry 配置项的一部分（可在 store 中改；管理页卡片会显示当前取值）。
+
 ### 为什么 skills.sh 只能搜不能列
 
 实测（`skills@1.4.5` 源码 + 线上 API）：skills.sh 公开接口只有 `GET /api/search?q=<≥2 字符>&limit=N` → `{skills:[{id, skillId, name, installs, source}]}`；`/api/leaderboard`、`/api/skills`、`/api/skill` 均 404；站点虽有 `/`、`/trending`、`/hot`、`/official`、`/topic/<x>`、`/<owner>/<repo>` 等页面，但没有对应 JSON API。**结论：不做 HTML 抓取**；想要「可浏览清单」，在该 registry 里补一个清单来源（`owner/repo` 或 well-known 地址）即可。

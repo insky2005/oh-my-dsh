@@ -115,7 +115,7 @@
 - **用户级 / 项目级**：可改开关、可移除（项目级会写进用户仓库，确认框会提示）；
 - **调用开关**：`用户可调用` 写 `user-invocable`、`模型可调用` 写 `disable-model-invocation`（关 = 写 true）——改的是 `SKILL.md` 的 frontmatter，dsh 自动识别，无需重启；切回默认值会**删掉该键**，文件字节还原；
 
-**可安装**：顶部选 registry，列表就是该 registry 的技能清单。
+**可安装**：顶部选 registry，列表就是该 registry 的技能清单；**进入即有内容** —— 有清单来源的 registry（GitHub 仓库 / well-known）直接列出清单，只有搜索接口的（skills.sh）默认显示**热门列表（按安装量降序，前 30）**，输入关键字即切换为搜索结果。
 
 - **registry 可配置**（`$DSH_HOME/shell/skills.json`）：`owner/repo` 或 GitHub 地址 → 列该仓库的技能清单；well-known 地址 → 读 `/.well-known/skills/index.json`；其他 URL → 视为 skills.sh 兼容的搜索接口（默认预置 skills.sh，仅有搜索，无全量清单，故无清单来源时列表区会提示「按关键字搜索」）；
 - **安装方式**：清单勾选安装 / 「从地址安装…」（`owner/repo`、`owner/repo@skill`、GitHub·GitLab 地址、well-known 地址、本地路径）/ 「手动导入…」（本地目录含 SKILL.md，或单个 SKILL.md，附件一并复制）；

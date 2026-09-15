@@ -530,19 +530,25 @@ struct SkillRegistryRecord: Codable, Equatable {
     var catalog: SkillCatalogKind
     /// well-known base URL, or "owner/repo" for a GitHub catalog.
     var catalogURL: String
+    /// Broad queries used to build the DEFAULT "popular" list for search-only
+    /// registries (skills.sh has no listing endpoint; a wide query returns the
+    /// ecosystem sorted by installs).
+    var popularQueries: [String]
 
     enum CodingKeys: String, CodingKey {
-        case id, label, enabled, searchURL, catalog, catalogURL
+        case id, label, enabled, searchURL, catalog, catalogURL, popularQueries
     }
 
     init(id: String, label: String, enabled: Bool = true,
-         searchURL: String? = nil, catalog: SkillCatalogKind = .none, catalogURL: String = "") {
+         searchURL: String? = nil, catalog: SkillCatalogKind = .none, catalogURL: String = "",
+         popularQueries: [String] = []) {
         self.id = id
         self.label = label
         self.enabled = enabled
         self.searchURL = searchURL
         self.catalog = catalog
         self.catalogURL = catalogURL
+        self.popularQueries = popularQueries
     }
 
     init(from decoder: Decoder) throws {
@@ -553,7 +559,15 @@ struct SkillRegistryRecord: Codable, Equatable {
         searchURL = try? c.decodeIfPresent(String.self, forKey: .searchURL)
         catalog = (try? c.decode(SkillCatalogKind.self, forKey: .catalog)) ?? .none
         catalogURL = (try? c.decode(String.self, forKey: .catalogURL)) ?? ""
+        popularQueries = (try? c.decode([String].self, forKey: .popularQueries)) ?? []
     }
+
+    /// Wide queries that make skills.sh's search endpoint behave like a
+    /// leaderboard: the API has no listing endpoint (/api/leaderboard and
+    /// /api/skills both 404), but a broad query returns the ecosystem SORTED BY
+    /// INSTALLS (measured: q=sk&limit=100 -> 3.4M … 357K installs, covering
+    /// vercel-labs, anthropics, mattpocock, microsoft, …).
+    static let defaultPopularQueries = ["sk", "ag"]
 
     /// skills.sh itself: keyword search only, no enumerable catalog.
     static func defaultSkillsSh() -> SkillRegistryRecord {
@@ -565,7 +579,8 @@ struct SkillRegistryRecord: Codable, Equatable {
                                    enabled: true,
                                    searchURL: base + "/api/search?q={q}&limit={limit}",
                                    catalog: .none,
-                                   catalogURL: "")
+                                   catalogURL: "",
+                                   popularQueries: SkillRegistryRecord.defaultPopularQueries)
     }
 }
 

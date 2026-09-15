@@ -413,6 +413,55 @@ do {
     check(e == .queryTooShort, "search: one-char query -> queryTooShort")
 } catch { check(false, "search: unexpected error") }
 
+// popular(): search-only registries have no listing endpoint, so the default
+// view merges a few broad queries and sorts everything by installs.
+SkillTransport.fetch = { request in
+    let url = request.url?.absoluteString ?? ""
+    let dup = #"{"name":"alpha","installs":100,"source":"acme/skills"}"#
+    if url.contains("q=sk") {
+        return (200, Data(("{\"skills\":[{\"name\":\"find-skills\",\"installs\":3406311,\"source\":\"vercel-labs/skills\"}," + dup + "]}").utf8))
+    }
+    if url.contains("q=ag") {
+        return (200, Data(("{\"skills\":[{\"name\":\"agent-browser\",\"installs\":855964,\"source\":\"vercel-labs/agent-browser\"}," + dup + "]}").utf8))
+    }
+    return (404, nil)
+}
+do {
+    let searchOnly = SkillRegistryRecord(id: "s", label: "s",
+                                         searchURL: "https://skills.sh/api/search?q={q}&limit={limit}",
+                                         catalog: .none, catalogURL: "",
+                                         popularQueries: ["sk", "ag"])
+    let merged = try SkillRegistryClient.popular(searchOnly, limit: 10)
+    check(merged.count == 3, "popular: duplicate entries merged (got " + String(merged.count) + ")")
+    check(merged.first?.name == "find-skills", "popular: highest installs first")
+    check(merged[1].name == "agent-browser", "popular: sorted by installs desc")
+    let top2 = try SkillRegistryClient.popular(searchOnly, limit: 2)
+    check(top2.count == 2, "popular: limit applied")
+    let defaults = SkillRegistryRecord(id: "d", label: "d",
+                                       searchURL: "https://skills.sh/api/search?q={q}&limit={limit}",
+                                       catalog: .none, catalogURL: "")
+    check(defaults.popularQueries.isEmpty, "popular: user registries carry no seeded queries")
+    let seeded = SkillRegistryRecord.defaultSkillsSh()
+    check(seeded.popularQueries == SkillRegistryRecord.defaultPopularQueries,
+          "popular: the built-in skills.sh registry seeds the default queries")
+} catch {
+    check(false, "popular threw " + String(describing: error))
+}
+
+// popularQueries survive a store round-trip.
+do {
+    let home3 = (root as NSString).appendingPathComponent("home3")
+    let s3 = SkillStore(home: home3)
+    s3.upsertRegistry(SkillRegistryRecord(id: "x", label: "X",
+                                          searchURL: "https://x/api/search?q={q}",
+                                          catalog: .none, catalogURL: "",
+                                          popularQueries: ["aa", "bb"]))
+    s3.reload()
+    check(s3.registry(id: "x")?.popularQueries == ["aa", "bb"], "store: popularQueries persisted")
+} catch {
+    check(false, "store popularQueries threw")
+}
+
 // GitHub catalog via a fake git clone that materialises a repo tree.
 SkillTransport.run = { launch, args, cwd in
     guard launch == SkillTransport.gitPath, let dest = args.last, let cwd = cwd else { return (1, "bad args") }
