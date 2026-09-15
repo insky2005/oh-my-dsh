@@ -588,6 +588,9 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     private let resultsList = FlippedStackView()
     private let addressButton = NSButton()
     private let importButton = NSButton()
+    /// Bulk install of the ticked candidates (the checkbox column's purpose).
+    private let installSelectedButton = NSButton()
+    private let selectAllButton = NSButton()
     /// Header (top-right) entry for the registry-management page.
     private let registryButton: CustomIconButton
     // Registries page (shown INSIDE the content area, not as a sheet)
@@ -616,6 +619,16 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
 
     /// Called by the shell whenever the panel is (re)shown.
     func ensureLoaded() { reloadAll() }
+
+    /// Test hooks for the candidate selection (the checkbox column feeds the
+    /// bulk install button).
+    func setCandidatesForQA(_ list: [SkillCandidate]) {
+        candidates = list
+        selected.removeAll()
+        renderAvailable()
+    }
+    func selectAllForQA() { toggleSelectAll() }
+    var selectedCountForQA: Int { selected.count }
 
     /// Test hook: apply invocation flags to an installed skill by name. Drives the
     /// exact path the row toggles use (including onCatalogChanged).
@@ -663,6 +676,8 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         catalogButton.title = L10n.tr("skills.catalogAction")
         addressButton.title = L10n.tr("skills.fromAddress")
         importButton.title = L10n.tr("skills.import")
+        selectAllButton.title = L10n.tr("skills.selectAll")
+        updateSelectionUI()
         rebuildLevelFilter()
         renderInstalled()
         renderAvailable()
@@ -813,7 +828,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     }
 
     private func buildAvailableTab() {
-        for b in [searchButton, catalogButton, addressButton, importButton] {
+        for b in [searchButton, catalogButton, addressButton, importButton, installSelectedButton, selectAllButton] {
             b.bezelStyle = .rounded
             b.controlSize = .small
             b.font = NSFont.systemFont(ofSize: 11)
@@ -823,6 +838,8 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         catalogButton.action = #selector(loadCatalog)
         addressButton.action = #selector(installFromAddress)
         importButton.action = #selector(manualImport)
+        installSelectedButton.action = #selector(installSelectedTapped)
+        selectAllButton.action = #selector(toggleSelectAll)
 
         registryTabs.onSelect = { [weak self] _ in self?.registryChanged() }
         registryTabs.setContentHuggingPriority(.defaultHigh, for: .horizontal)
@@ -849,7 +866,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         toolbarRow.spacing = 6
         toolbarRow.translatesAutoresizingMaskIntoConstraints = false
 
-        let bottomRow = NSStackView(views: [addressButton, importButton])
+        let bottomRow = NSStackView(views: [addressButton, importButton, selectAllButton, NSView(), installSelectedButton])
         bottomRow.orientation = .horizontal
         bottomRow.spacing = 6
         bottomRow.translatesAutoresizingMaskIntoConstraints = false
@@ -1137,6 +1154,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
             resultsList.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: resultsList.widthAnchor, constant: -20).isActive = true
         }
+        updateSelectionUI()
     }
 
     /// Open a candidate's detail page (skills.sh / GitHub / well-known URL) in
@@ -1154,6 +1172,99 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         setStatus(L10n.tr("skills.err.unsupportedAddress"), error: true)
     }
 
+    /// The checkbox column selects candidates for a bulk install; the button
+    /// label carries the count so the selection is never a dead end.
+    private func updateSelectionUI() {
+        installSelectedButton.title = L10n.tr("skills.installSelected")
+            .replacingOccurrences(of: "%d", with: String(selected.count))
+        installSelectedButton.isEnabled = !selected.isEmpty && !busy
+        let visibleKeys = candidates.map { $0.name + "|" + $0.sourceLabel }
+        let allSelected = !visibleKeys.isEmpty && visibleKeys.allSatisfy { selected.contains($0) }
+        selectAllButton.title = L10n.tr(allSelected ? "skills.clearSelection" : "skills.selectAll")
+        selectAllButton.isEnabled = !candidates.isEmpty && !busy
+    }
+
+    @objc private func toggleSelectAll() {
+        let visibleKeys = candidates.map { $0.name + "|" + $0.sourceLabel }
+        if !visibleKeys.isEmpty, visibleKeys.allSatisfy({ selected.contains($0) }) {
+            selected.removeAll()
+        } else {
+            selected.formUnion(visibleKeys)
+        }
+        renderAvailable()
+    }
+
+    @objc private func installSelectedTapped() {
+        let chosen = candidates.filter { selected.contains($0.name + "|" + $0.sourceLabel) }
+        guard !chosen.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("skills.installSelected").replacingOccurrences(of: "%d", with: String(chosen.count))
+        alert.informativeText = chosen.map { $0.name }.joined(separator: ", ")
+            + "\n\n" + L10n.tr("skills.warnPermissions")
+        alert.addButton(withTitle: L10n.tr("skills.target.user"))
+        alert.addButton(withTitle: L10n.tr("skills.target.project"))
+        alert.addButton(withTitle: L10n.tr("skills.cancel"))
+        runAlert(alert) { [weak self] response in
+            guard let self = self else { return }
+            if response == .alertThirdButtonReturn { return }
+            self.performBulkInstall(chosen, projectLevel: response == .alertSecondButtonReturn)
+        }
+    }
+
+    /// Install every selected candidate into one root, reporting a summary.
+    /// Existing targets count as failures (never overwritten in bulk).
+    private func performBulkInstall(_ chosen: [SkillCandidate], projectLevel: Bool) {
+        guard let root = targetRoot(projectLevel: projectLevel) else {
+            setStatus(L10n.tr("skills.err.unsupportedTarget"), error: true)
+            return
+        }
+        setBusy(true)
+        setStatus(L10n.tr("skills.installing"), error: false)
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            var installed = 0
+            var failures: [String] = []
+            for (index, candidate) in chosen.enumerated() {
+                let progress = L10n.tr("skills.installing") + " "
+                    + String(index + 1) + "/" + String(chosen.count)
+                DispatchQueue.main.async { self.setStatus(progress, error: false) }
+                let temp = SkillFetcher.makeTempDir()
+                defer { try? FileManager.default.removeItem(atPath: temp) }
+                do {
+                    let fetched = try SkillFetcher.fetch(candidate.address, temp: temp)
+                    guard let first = fetched.first else { throw SkillPanelError.noSkillsFound }
+                    _ = try SkillInstallService.install(first, into: root, store: self.store)
+                    installed += 1
+                } catch let error as SkillPanelError {
+                    failures.append(candidate.name + " (" + error.l10nKey + ")")
+                } catch {
+                    failures.append(candidate.name)
+                }
+            }
+            DispatchQueue.main.async {
+                self.setBusy(false)
+                self.roots = self.currentRoots()
+                self.rescan()
+                self.selected.removeAll()
+                self.renderAvailable()
+                let summary = L10n.tr("skills.bulkDone")
+                    .replacingOccurrences(of: "{ok}", with: String(installed))
+                    .replacingOccurrences(of: "{fail}", with: String(failures.count))
+                let joinedFailures = failures.joined(separator: ", ")
+                let logFailures = failures.joined(separator: "; ")
+                var logLine = "skills: bulk install ok=" + String(installed)
+                logLine += " failed=" + String(failures.count)
+                if !failures.isEmpty { logLine += " [" + logFailures + "]" }
+                AppLog.shared.log(logLine)
+                var statusLine = summary
+                if !failures.isEmpty { statusLine = summary + " — " + joinedFailures }
+                self.setStatus(statusLine, error: !failures.isEmpty)
+                if installed > 0 { self.onCatalogChanged?() }
+                self.updateSelectionUI()
+            }
+        }
+    }
+
     private func setStatus(_ text: String, error: Bool) {
         statusLabel.stringValue = text
         statusLabel.textColor = error ? .systemRed : .secondaryLabelColor
@@ -1166,6 +1277,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         addressButton.isEnabled = !value
         importButton.isEnabled = !value
         refreshButton.isEnabled = !value
+        updateSelectionUI()
     }
 
     // MARK: - Invocation flags
