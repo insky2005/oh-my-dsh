@@ -277,37 +277,6 @@ do {
     check(false, "install/remove threw " + String(describing: error))
 }
 
-// Bulk install semantics: many skills into one root; an existing target is a
-// per-item failure (bulk never overwrites).
-do {
-    let bulkRoot = SkillRoot(kind: .userDsh, level: .user,
-                             path: (root as NSString).appendingPathComponent("bulk/skills"),
-                             rank: SkillRoots.rankUserDsh)
-    func fetched(_ name: String) -> FetchedSkill {
-        let md = "---\nname: " + name + "\ndescription: bulk\n---\nbody\n"
-        return FetchedSkill(name: name, description: "bulk",
-                            files: ["SKILL.md": Data(md.utf8)],
-                            sourceLabel: "acme/skills", sourceType: "github",
-                            sourceUrl: "https://github.com/acme/skills", ref: nil,
-                            path: "skills/" + name + "/SKILL.md")
-    }
-    for name in ["bulk-a", "bulk-b", "bulk-c"] {
-        _ = try SkillInstallService.install(fetched(name), into: bulkRoot, store: store)
-    }
-    let names = SkillScanner.scan([bulkRoot]).map { $0.name }.sorted()
-    check(names == ["bulk-a", "bulk-b", "bulk-c"],
-          "bulk: three skills installed into one root (got " + names.joined(separator: ",") + ")")
-    var failures = 0
-    do {
-        _ = try SkillInstallService.install(fetched("bulk-a"), into: bulkRoot, store: store)
-    } catch let error as SkillPanelError {
-        if case .targetExists = error { failures += 1 }
-    }
-    check(failures == 1, "bulk: an existing target counts as a failure, never overwritten")
-} catch {
-    check(false, "bulk install threw " + String(describing: error))
-}
-
 // ----------------------------------------------------------------- registry store
 
 let store2 = SkillStore(home: (root as NSString).appendingPathComponent("home2"))

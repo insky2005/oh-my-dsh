@@ -54,19 +54,6 @@ if let text = try? String(contentsOfFile: toolFile, encoding: .utf8) {
 }
 test("second toggle notifies again", catalogChanged == 2)
 
-// The checkbox column in the available list selects candidates for a BULK
-// install, so it must actually accumulate selection (and 全选 must toggle it).
-let fakeA = SkillCandidate(name: "bulk-a", description: "a", sourceLabel: "acme/skills", installs: 10,
-                           address: .github(owner: "acme", repo: "skills", ref: nil, subpath: nil, skill: "bulk-a"))
-let fakeB = SkillCandidate(name: "bulk-b", description: "b", sourceLabel: "acme/skills", installs: 5,
-                           address: .github(owner: "acme", repo: "skills", ref: nil, subpath: nil, skill: "bulk-b"))
-panel.setCandidatesForQA([fakeA, fakeB])
-test("selection starts empty", panel.selectedCountForQA == 0)
-panel.selectAllForQA()
-test("select-all ticks every visible candidate", panel.selectedCountForQA == 2)
-panel.selectAllForQA()
-test("select-all again clears the selection", panel.selectedCountForQA == 0)
-
 // The registry-management page is rendered INSIDE the content area (the header's
 // top-right button switches to it), so exercise all three pages.
 panel.showPage(.registries)

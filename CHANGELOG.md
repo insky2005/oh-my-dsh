@@ -24,8 +24,6 @@ All notable changes to this project are documented in this file. Format follows
 
 - **候选技能可查看详情**：可用列表的每张卡新增「详情」按钮，用**系统默认浏览器**打开该技能的页面（只接受 http(s)，不用内置浏览器面板）——skills.sh 型 registry 打开 `https://www.skills.sh/<source>/<skill>`（如 `https://www.skills.sh/vercel-labs/skills/find-skills`），GitHub 清单打开仓库内技能目录，well-known 打开该技能的 `SKILL.md`，裸 git 打开远端，本地路径改为在 Finder 中显示。
 
-- **可用列表支持多选批量安装**：每张卡前的勾选框此前**没有任何作用**（只维护了一个无人消费的选中集合）——现在它用于多选，配合新增的「全选 / 清空」与底部「安装选中（N）」按钮：把选中的候选逐个装进同一目标（用户级 / 项目级），状态栏逐条报进度（i/N），同名已存在按失败计数且**不覆盖**，结束给出「成功 {ok} / 失败 {fail}」与失败明细，成功后清空选择并刷新 dsh web 的技能菜单。
-
 ### Changed
 
 - README 面板数量文案与目录树同步为八个面板。
