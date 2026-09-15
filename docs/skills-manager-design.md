@@ -72,7 +72,7 @@ RegistryEntry { id, label, enabled,
 
 ### 详情页
 
-候选卡上的「详情」按钮打开该技能的**人类可读页面**（在壳层浏览器面板内，不切系统浏览器），URL 按来源推导（`SkillCandidate.detailURL(registry:)`）：
+候选卡上的「详情」按钮打开该技能的**人类可读页面**（交给**系统默认浏览器**，只允许 http(s)，不用内置浏览器面板），URL 按来源推导（`SkillCandidate.detailURL(registry:)`）：
 
 | 来源 | 详情页 |
 |---|---|

@@ -2165,12 +2165,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsPanel.onRevealInFinder = { path in
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
         }
-        // Skill detail pages open in the shell's own browser panel (no context
-        // switch to the system browser).
-        skillsPanel.onOpenURL = { [weak self] url in
-            guard let self = self else { return }
-            _ = self.browserPanel.openURL(url, tab: nil)
-            self.setRightPanel(.browser)
+        // Skill detail pages open in the SYSTEM default browser (the embedded
+        // browser panel is for troubleshooting pages, not for reading docs).
+        skillsPanel.onOpenURL = { url in
+            guard let parsed = URL(string: url), let scheme = parsed.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else {
+                AppLog.shared.log("skills: refusing to open non-http url " + url)
+                return
+            }
+            NSWorkspace.shared.open(parsed)
+            AppLog.shared.log("skills: opened in system browser " + url)
         }
         // dsh web caches the user-invocable skill catalog per session and only
         // drops that cache on connection/reset, so a change made here would not

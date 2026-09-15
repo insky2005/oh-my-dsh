@@ -545,7 +545,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     var onRequestHide: (() -> Void)?
     var onOpenFile: ((String) -> Void)?
     var onRevealInFinder: ((String) -> Void)?
-    /// Open an http(s) URL (the shell shows it in its browser panel).
+    /// Open an http(s) URL (the shell hands it to the system browser).
     var onOpenURL: ((String) -> Void)?
     var workspacePath: (() -> String?)?
     /// Fired whenever a change makes dsh web's cached skill catalog stale
@@ -1140,7 +1140,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     }
 
     /// Open a candidate's detail page (skills.sh / GitHub / well-known URL) in
-    /// the shell's browser panel; local sources are revealed in Finder.
+    /// the system default browser; local sources are revealed in Finder.
     private func openDetail(_ candidate: SkillCandidate) {
         if let url = candidate.detailURL(registry: activeRegistry), !url.isEmpty {
             AppLog.shared.log("skills: open detail " + candidate.name + " -> " + url)

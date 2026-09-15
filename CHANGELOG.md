@@ -22,7 +22,7 @@ All notable changes to this project are documented in this file. Format follows
 
 - **技能面板的改动现在会被 dsh web 立即看到（对话输入框 `/` 的技能菜单不再需要手动刷新）**：dsh 客户端按会话缓存技能目录，且只在 `connection/reset`（连接重连）或切换 agent preset 时失效；技能文件变化不是会话事件、服务端不会推送，所以此前改完 `user-invocable` / 安装 / 移除都必须手动刷新页面。现在面板在**改开关 / 安装 / 移除**后通知壳层，由壳层向 web 页注入 JS 派发**浏览器 offline → online 事件**，触发客户端自身重连并发出 `connection/reset`，各客户端插件缓存（含技能目录）随之清空并重取——与手动刷新等效但不重载文档。1.5s 节流；`DSH_SKILLS_NO_NUDGE=1` 可关闭。
 
-- **候选技能可查看详情**：可用列表的每张卡新增「详情」按钮，在壳层浏览器面板内打开该技能的页面（不切系统浏览器）——skills.sh 型 registry 打开 `https://www.skills.sh/<source>/<skill>`（如 `https://www.skills.sh/vercel-labs/skills/find-skills`），GitHub 清单打开仓库内技能目录，well-known 打开该技能的 `SKILL.md`，裸 git 打开远端，本地路径改为在 Finder 中显示。
+- **候选技能可查看详情**：可用列表的每张卡新增「详情」按钮，用**系统默认浏览器**打开该技能的页面（只接受 http(s)，不用内置浏览器面板）——skills.sh 型 registry 打开 `https://www.skills.sh/<source>/<skill>`（如 `https://www.skills.sh/vercel-labs/skills/find-skills`），GitHub 清单打开仓库内技能目录，well-known 打开该技能的 `SKILL.md`，裸 git 打开远端，本地路径改为在 Finder 中显示。
 
 ### Changed
 
