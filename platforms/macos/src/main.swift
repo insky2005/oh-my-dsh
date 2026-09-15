@@ -334,6 +334,7 @@ enum L10n {
         "skills.manageRegistry": ("管理 registry…", "Manage Registries…"),
         "skills.addRegistry": ("添加", "Add"),
         "skills.popular": ("热门 · 按安装量", "Popular · by installs"),
+        "skills.cardHint": ("点击卡片查看详情（系统浏览器）· 鼠标移入显示安装按钮", "Click the card for details (system browser) · hover to install"),
         "skills.registry.popularQueries": ("默认热门查询", "Popular queries"),
         "skills.noCatalogHint": ("该 registry 未配置清单来源：请按关键字搜索，或添加一个可列出清单的 registry（owner/repo 或 well-known 地址）。", "This registry has no catalog source: search by keyword, or add one (owner/repo or well-known URL)."),
         "skills.empty.installed": ("未找到技能", "No skills found"),

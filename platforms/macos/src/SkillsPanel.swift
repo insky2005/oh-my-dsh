@@ -305,17 +305,25 @@ final class SkillRowView: SkillCardView {
     @objc private func revealTapped() { onReveal?() }
 }
 
-/// One card of the available (registry) list: a checkbox, name, source, installs.
+/// One card of the available (registry) list.
+///
+/// Interaction: the WHOLE card is the "details" target (click -> the skill's page
+/// in the system browser, see SkillCandidate.detailURL); the Install button only
+/// appears while the pointer is over the card, so the list stays quiet.
 final class SkillCandidateRowView: SkillCardView {
 
     private let nameLabel = NSTextField(labelWithString: "")
     private let metaLabel = NSTextField(labelWithString: "")
     private let descLabel = NSTextField(wrappingLabelWithString: "")
     private let installButton = NSButton()
-    private let detailButton = NSButton()
 
     var onInstall: (() -> Void)?
     var onDetail: (() -> Void)?
+
+    /// Test/QA observable: whether the hover-only Install button is showing.
+    var isInstallButtonVisible: Bool { !installButton.isHidden }
+
+    private var trackingArea: NSTrackingArea?
 
     init(candidate: SkillCandidate) {
         super.init(frame: .zero)
@@ -325,13 +333,8 @@ final class SkillCandidateRowView: SkillCardView {
         installButton.font = NSFont.systemFont(ofSize: 11)
         installButton.target = self
         installButton.action = #selector(installTapped)
+        installButton.isHidden = true          // shown on hover
 
-        detailButton.title = L10n.tr("skills.detail")
-        detailButton.bezelStyle = .rounded
-        detailButton.controlSize = .small
-        detailButton.font = NSFont.systemFont(ofSize: 11)
-        detailButton.target = self
-        detailButton.action = #selector(detailTapped)
         nameLabel.font = NSFont.boldSystemFont(ofSize: 12)
         nameLabel.stringValue = candidate.name
         var meta = candidate.sourceLabel
@@ -346,7 +349,9 @@ final class SkillCandidateRowView: SkillCardView {
         descLabel.maximumNumberOfLines = 2
         descLabel.stringValue = candidate.description
 
-        let titleRow = NSStackView(views: [nameLabel, NSView(), detailButton, installButton])
+        toolTip = L10n.tr("skills.cardHint")
+
+        let titleRow = NSStackView(views: [nameLabel, NSView(), installButton])
         titleRow.orientation = .horizontal
         titleRow.spacing = 6
         titleRow.alignment = .centerY
@@ -367,10 +372,33 @@ final class SkillCandidateRowView: SkillCardView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    @objc private func installTapped() { onInstall?() }
-    @objc private func detailTapped() { onDetail?() }
-}
+    // MARK: hover (install button) + click (details)
 
+    func setHovered(_ hovered: Bool) {
+        installButton.isHidden = !hovered
+        highlighted = hovered
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area = trackingArea { removeTrackingArea(area) }
+        let area = NSTrackingArea(rect: .zero,
+                                  options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { setHovered(true) }
+    override func mouseExited(with event: NSEvent) { setHovered(false) }
+
+    /// The card body opens the detail page; the Install button sits on top of it
+    /// and keeps its own clicks (AppKit routes to the deepest view).
+    override func mouseDown(with event: NSEvent) { onDetail?() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+
+    @objc private func installTapped() { onInstall?() }
+}
 
 /// One registry card on the registry-management page: name, what it can do
 /// (search / catalog), the URLs, plus enable + delete.

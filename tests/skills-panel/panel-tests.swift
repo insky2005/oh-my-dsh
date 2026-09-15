@@ -54,6 +54,27 @@ if let text = try? String(contentsOfFile: toolFile, encoding: .utf8) {
 }
 test("second toggle notifies again", catalogChanged == 2)
 
+// Available-list card interaction: the card body opens the detail page, and the
+// Install button only appears while the pointer is over the card.
+let hoverProbe = SkillCandidate(name: "hover-probe", description: "d", sourceLabel: "acme/skills",
+                                installs: 3,
+                                address: .github(owner: "acme", repo: "skills", ref: nil, subpath: nil, skill: "hover-probe"))
+let probeCard = SkillCandidateRowView(candidate: hoverProbe)
+test("install button starts hidden", !probeCard.isInstallButtonVisible)
+probeCard.setHovered(true)
+test("hovering reveals the install button", probeCard.isInstallButtonVisible)
+probeCard.setHovered(false)
+test("leaving the card hides it again", !probeCard.isInstallButtonVisible)
+
+var detailOpened = false
+probeCard.onDetail = { detailOpened = true }
+if let click = NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: [],
+                                  timestamp: 0, windowNumber: 0, context: nil,
+                                  eventNumber: 1, clickCount: 1, pressure: 1) {
+    probeCard.mouseDown(with: click)
+}
+test("clicking the card opens the detail page", detailOpened)
+
 // The registry-management page is rendered INSIDE the content area (the header's
 // top-right button switches to it), so exercise all three pages.
 panel.showPage(.registries)

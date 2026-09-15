@@ -70,6 +70,12 @@ RegistryEntry { id, label, enabled,
 
 `popularQueries` 是 registry 配置项的一部分（可在 store 中改；管理页卡片会显示当前取值）。
 
+### 候选卡的交互
+
+- **点击卡片本体 = 看详情**（在系统默认浏览器打开，见下）；卡片悬停时整卡加一点 accent 底色 + 手型光标，提示可点；
+- **「安装」按钮只在鼠标移入时出现**（`SkillCandidateRowView.setHovered`；移出即隐藏），列表默认安静，不会一堆按钮抢注意力。按钮位于卡片右上角、层级高于卡片，点击按钮不会触发"看详情"（AppKit 命中测试优先给最深层视图）；
+- 卡片 tooltip 说明这两个动作。
+
 ### 详情页
 
 候选卡上的「详情」按钮打开该技能的**人类可读页面**（交给**系统默认浏览器**，只允许 http(s)，不用内置浏览器面板），URL 按来源推导（`SkillCandidate.detailURL(registry:)`）：

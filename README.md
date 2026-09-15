@@ -118,7 +118,7 @@
 **可安装**：顶部选 registry，列表就是该 registry 的技能清单；**进入即有内容** —— 有清单来源的 registry（GitHub 仓库 / well-known）直接列出清单，只有搜索接口的（skills.sh）默认显示**热门列表（按安装量降序，前 30）**，输入关键字即切换为搜索结果。
 
 - **registry 可配置**（`$DSH_HOME/shell/skills.json`）：`owner/repo` 或 GitHub 地址 → 列该仓库的技能清单；well-known 地址 → 读 `/.well-known/skills/index.json`；其他 URL → 视为 skills.sh 兼容的搜索接口（默认预置 skills.sh，仅有搜索，无全量清单，故无清单来源时列表区会提示「按关键字搜索」）；
-- **看详情**：候选卡上的「详情」用**系统默认浏览器**打开该技能的页面（skills.sh 型 registry → `https://www.skills.sh/<source>/<skill>`；GitHub → 仓库内技能目录；well-known → 该技能的 SKILL.md；本地路径 → 在 Finder 中显示）；
+- **交互**：**整张卡片可点 = 看详情**（用系统默认浏览器打开该技能的页面：skills.sh 型 registry → `https://www.skills.sh/<source>/<skill>`；GitHub → 仓库内技能目录；well-known → 该技能的 SKILL.md；本地路径 → 在 Finder 中显示），悬停时整卡有 accent 底色提示可点；**「安装」按钮只在鼠标移入卡片时出现**，移出即隐藏；
 - **安装方式**：清单勾选安装 / 「从地址安装…」（`owner/repo`、`owner/repo@skill`、GitHub·GitLab 地址、well-known 地址、本地路径）/ 「手动导入…」（本地目录含 SKILL.md，或单个 SKILL.md，附件一并复制）；
 - **落点**：默认 **用户级** `$DSH_HOME/skills/<name>/`（所有工作区通用），可选 **项目级** `<工作区>/.dsh/skills/<name>/`（优先级最高）；同名已存在会先确认，内置同名技能拒绝覆盖；
 - **安全**：技能以完整代理权限运行，安装确认处固定提示；仅接受 https 地址，路径穿越被拒绝，失败不留半成品。
