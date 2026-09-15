@@ -438,10 +438,55 @@ enum SkillRegistryClient {
         return SkillAddressParser.firstMatch(input, "^([^/]+)/([^/]+)$") != nil
     }
 
+    /// scheme://host of a URL (used to build skills.sh-style detail pages).
+    static func webBase(of url: String?) -> String? {
+        guard let url = url, let parsed = URL(string: url),
+              let scheme = parsed.scheme, let host = parsed.host else { return nil }
+        return scheme + "://" + host
+    }
+
     static func isSecure(_ url: String) -> Bool {
         if url.hasPrefix("https://") { return true }
         if url.hasPrefix("http://127.0.0.1") || url.hasPrefix("http://localhost") { return true }
         return false
+    }
+}
+
+
+extension SkillCandidate {
+
+    /// Human-readable detail page for this candidate, opened in the shell's
+    /// browser panel:
+    ///   search (skills.sh style) -> <registry host>/<source>/<skill>
+    ///                               e.g. https://www.skills.sh/vercel-labs/skills/find-skills
+    ///   GitHub catalog           -> github.com/<owner>/<repo>[/tree/HEAD/<subpath>]
+    ///   well-known catalog       -> <base>/.well-known/skills/<name>/SKILL.md
+    ///   plain git                -> the remote URL
+    ///   local                    -> nil (the panel reveals it in Finder instead)
+    func detailURL(registry: SkillRegistryRecord?) -> String? {
+        switch address {
+        case .github(let owner, let repo, let ref, let subpath, _):
+            if let registry = registry, registry.catalog == SkillCatalogKind.none,
+               let host = SkillRegistryClient.webBase(of: registry.searchURL) {
+                // skills.sh-style registry: it has a page per (source, skill).
+                let source = sourceLabel.contains("/") ? sourceLabel : owner + "/" + repo
+                return host + "/" + source + "/" + name
+            }
+            var url = "https://github.com/" + owner + "/" + repo
+            let branch = (ref?.isEmpty == false ? ref! : "HEAD")
+            if let sub = subpath, !sub.isEmpty {
+                var path = sub
+                while path.hasSuffix("/") { path = String(path.dropLast()) }
+                url += "/tree/" + branch + "/" + path
+            }
+            return url
+        case .wellKnown(let base):
+            return SkillAddressParser.trimSlash(base) + "/SKILL.md"
+        case .git(let url, _):
+            return url.hasSuffix(".git") ? String(url.dropLast(4)) : url
+        case .local:
+            return nil
+        }
     }
 }
 

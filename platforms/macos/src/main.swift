@@ -2165,6 +2165,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsPanel.onRevealInFinder = { path in
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
         }
+        // Skill detail pages open in the shell's own browser panel (no context
+        // switch to the system browser).
+        skillsPanel.onOpenURL = { [weak self] url in
+            guard let self = self else { return }
+            _ = self.browserPanel.openURL(url, tab: nil)
+            self.setRightPanel(.browser)
+        }
         // dsh web caches the user-invocable skill catalog per session and only
         // drops that cache on connection/reset, so a change made here would not
         // show up in the composer's "/" menu until the page was reloaded.

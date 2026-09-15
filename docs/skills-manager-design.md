@@ -70,6 +70,18 @@ RegistryEntry { id, label, enabled,
 
 `popularQueries` 是 registry 配置项的一部分（可在 store 中改；管理页卡片会显示当前取值）。
 
+### 详情页
+
+候选卡上的「详情」按钮打开该技能的**人类可读页面**（在壳层浏览器面板内，不切系统浏览器），URL 按来源推导（`SkillCandidate.detailURL(registry:)`）：
+
+| 来源 | 详情页 |
+|---|---|
+| skills.sh 型搜索命中 | `<registry host>/<source>/<skill>`，如 `https://www.skills.sh/vercel-labs/skills/find-skills` |
+| GitHub 清单 | `https://github.com/<owner>/<repo>[/tree/<ref\|HEAD>/<subpath>]` |
+| well-known 清单 | `<base>/.well-known/skills/<name>/SKILL.md` |
+| 裸 git | 远端 URL（去掉 .git） |
+| 本地路径 | 无页面 → 改为在 Finder 中显示 |
+
 ### 为什么 skills.sh 只能搜不能列
 
 实测（`skills@1.4.5` 源码 + 线上 API）：skills.sh 公开接口只有 `GET /api/search?q=<≥2 字符>&limit=N` → `{skills:[{id, skillId, name, installs, source}]}`；`/api/leaderboard`、`/api/skills`、`/api/skill` 均 404；站点虽有 `/`、`/trending`、`/hot`、`/official`、`/topic/<x>`、`/<owner>/<repo>` 等页面，但没有对应 JSON API。**结论：不做 HTML 抓取**；想要「可浏览清单」，在该 registry 里补一个清单来源（`owner/repo` 或 well-known 地址）即可。

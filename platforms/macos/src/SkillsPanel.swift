@@ -313,9 +313,11 @@ final class SkillCandidateRowView: SkillCardView {
     private let metaLabel = NSTextField(labelWithString: "")
     private let descLabel = NSTextField(wrappingLabelWithString: "")
     private let installButton = NSButton()
+    private let detailButton = NSButton()
 
     var onToggle: ((Bool) -> Void)?
     var onInstall: (() -> Void)?
+    var onDetail: (() -> Void)?
 
     init(candidate: SkillCandidate, selected: Bool) {
         super.init(frame: .zero)
@@ -328,6 +330,13 @@ final class SkillCandidateRowView: SkillCardView {
         installButton.font = NSFont.systemFont(ofSize: 11)
         installButton.target = self
         installButton.action = #selector(installTapped)
+
+        detailButton.title = L10n.tr("skills.detail")
+        detailButton.bezelStyle = .rounded
+        detailButton.controlSize = .small
+        detailButton.font = NSFont.systemFont(ofSize: 11)
+        detailButton.target = self
+        detailButton.action = #selector(detailTapped)
         nameLabel.font = NSFont.boldSystemFont(ofSize: 12)
         nameLabel.stringValue = candidate.name
         var meta = candidate.sourceLabel
@@ -342,7 +351,7 @@ final class SkillCandidateRowView: SkillCardView {
         descLabel.maximumNumberOfLines = 2
         descLabel.stringValue = candidate.description
 
-        let titleRow = NSStackView(views: [check, nameLabel, NSView(), installButton])
+        let titleRow = NSStackView(views: [check, nameLabel, NSView(), detailButton, installButton])
         titleRow.orientation = .horizontal
         titleRow.spacing = 6
         titleRow.alignment = .centerY
@@ -365,6 +374,7 @@ final class SkillCandidateRowView: SkillCardView {
 
     @objc private func toggled() { onToggle?(check.state == .on) }
     @objc private func installTapped() { onInstall?() }
+    @objc private func detailTapped() { onDetail?() }
 }
 
 
@@ -535,6 +545,8 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
     var onRequestHide: (() -> Void)?
     var onOpenFile: ((String) -> Void)?
     var onRevealInFinder: ((String) -> Void)?
+    /// Open an http(s) URL (the shell shows it in its browser panel).
+    var onOpenURL: ((String) -> Void)?
     var workspacePath: (() -> String?)?
     /// Fired whenever a change makes dsh web's cached skill catalog stale
     /// (invocation flags / install / remove). dsh's client caches the catalog
@@ -1120,10 +1132,26 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
                 if on { self?.selected.insert(key) } else { self?.selected.remove(key) }
             }
             card.onInstall = { [weak self] in self?.startInstall(address: candidate.address, label: candidate.name) }
+            card.onDetail = { [weak self] in self?.openDetail(candidate) }
             card.translatesAutoresizingMaskIntoConstraints = false
             resultsList.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: resultsList.widthAnchor, constant: -20).isActive = true
         }
+    }
+
+    /// Open a candidate's detail page (skills.sh / GitHub / well-known URL) in
+    /// the shell's browser panel; local sources are revealed in Finder.
+    private func openDetail(_ candidate: SkillCandidate) {
+        if let url = candidate.detailURL(registry: activeRegistry), !url.isEmpty {
+            AppLog.shared.log("skills: open detail " + candidate.name + " -> " + url)
+            onOpenURL?(url)
+            return
+        }
+        if case .local(let path) = candidate.address {
+            onRevealInFinder?(path)
+            return
+        }
+        setStatus(L10n.tr("skills.err.unsupportedAddress"), error: true)
     }
 
     private func setStatus(_ text: String, error: Bool) {

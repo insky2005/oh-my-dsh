@@ -462,6 +462,43 @@ do {
     check(false, "store popularQueries threw")
 }
 
+// detailURL(): where a candidate's "详情" button points.
+do {
+    let skillsSh = SkillRegistryRecord(id: "skills-sh", label: "skills.sh",
+                                       searchURL: "https://www.skills.sh/api/search?q={q}&limit={limit}",
+                                       catalog: .none, catalogURL: "")
+    let searchHit = SkillCandidate(name: "find-skills", description: "", sourceLabel: "vercel-labs/skills",
+                                   installs: 3406311,
+                                   address: .github(owner: "vercel-labs", repo: "skills", ref: nil,
+                                                    subpath: nil, skill: "find-skills"))
+    check(searchHit.detailURL(registry: skillsSh) == "https://www.skills.sh/vercel-labs/skills/find-skills",
+          "detail: search hit links to the registry's (source, skill) page")
+
+    let ghRegistry = SkillRegistryRecord(id: "gh", label: "acme/skills", searchURL: nil,
+                                         catalog: .githubRepo, catalogURL: "acme/skills")
+    let repoHit = SkillCandidate(name: "acme-tool", description: "", sourceLabel: "acme/skills", installs: nil,
+                                 address: .github(owner: "acme", repo: "skills", ref: nil,
+                                                  subpath: "skills/acme-tool/", skill: "acme-tool"))
+    check(repoHit.detailURL(registry: ghRegistry) == "https://github.com/acme/skills/tree/HEAD/skills/acme-tool",
+          "detail: github catalog links to the skill folder")
+    let pinned = SkillCandidate(name: "acme-tool", description: "", sourceLabel: "acme/skills", installs: nil,
+                                address: .github(owner: "acme", repo: "skills", ref: "main",
+                                                 subpath: nil, skill: nil))
+    check(pinned.detailURL(registry: ghRegistry) == "https://github.com/acme/skills",
+          "detail: github repo root when there is no subpath")
+
+    let wk = SkillCandidate(name: "alpha", description: "", sourceLabel: "registry.example", installs: nil,
+                            address: .wellKnown(baseURL: "https://registry.example/.well-known/skills/alpha"))
+    check(wk.detailURL(registry: nil) == "https://registry.example/.well-known/skills/alpha/SKILL.md",
+          "detail: well-known links to SKILL.md")
+    let git = SkillCandidate(name: "x", description: "", sourceLabel: "git", installs: nil,
+                             address: .git(url: "https://git.example/x.git", ref: nil))
+    check(git.detailURL(registry: nil) == "https://git.example/x", "detail: git remote without .git")
+    let local = SkillCandidate(name: "x", description: "", sourceLabel: "local", installs: nil,
+                               address: .local(path: "/tmp/x"))
+    check(local.detailURL(registry: nil) == nil, "detail: local sources have no page")
+}
+
 // GitHub catalog via a fake git clone that materialises a repo tree.
 SkillTransport.run = { launch, args, cwd in
     guard launch == SkillTransport.gitPath, let dest = args.last, let cwd = cwd else { return (1, "bad args") }
