@@ -75,6 +75,7 @@ RegistryEntry { id, label, enabled,
 - **点击卡片本体 = 看详情**（在系统默认浏览器打开，见下）；卡片悬停时整卡加一点 accent 底色 + 手型光标，提示可点；
 - **「安装」按钮只在鼠标移入时出现**（`SkillCandidateRowView.setHovered`；移出即隐藏），列表默认安静，不会一堆按钮抢注意力。按钮位于卡片右上角、层级高于卡片，点击按钮不会触发"看详情"（AppKit 命中测试优先给最深层视图）；
 - 卡片 tooltip 说明这两个动作。
+- **滚动时的 hover 必须自己重算**：AppKit 的 tracking area 只在**指针移动**时触发 enter/exit —— 内容从静止的指针下滚过时，划过的卡片收不到 `mouseExited`，会一直保持高亮（实测症状：滚动后"划过的都亮着"）。因此面板监听 clip view 的 `boundsDidChangeNotification`，每次滚动用 `SkillHoverResolver.hoveredIndex(cardFrames:clipBounds:mouse:)`（纯函数、有单测）按**当前指针位置**重算唯一 hover 的卡片；滚出可视区的卡片即使指针列穿过它的 frame 也不会高亮。
 
 ### 详情页
 

@@ -177,6 +177,34 @@ final class SkillTabStrip: NSView {
     }
 }
 
+
+/// Which available-list card the pointer is over.
+///
+/// Tracking areas alone are not enough: they fire on POINTER movement, so a card
+/// that scrolls out from under a stationary pointer never receives mouseExited
+/// and keeps its hover highlight ("划过的 skill 都高亮了"). The panel therefore
+/// recomputes the hovered card on every scroll tick from the pointer position,
+/// using this pure helper (unit-tested with synthetic rects).
+enum SkillHoverResolver {
+
+    /// - Parameters:
+    ///   - cardFrames: card frames in the CLIP view's coordinate space, in list order.
+    ///   - clipBounds: the clip view's bounds (the visible slice of the list).
+    ///   - mouse: pointer position in the same coordinate space.
+    /// - Returns: index of the hovered card, or nil when the pointer is between
+    ///   cards / outside a visible card.
+    static func hoveredIndex(cardFrames: [NSRect], clipBounds: NSRect, mouse: NSPoint) -> Int? {
+        for (index, frame) in cardFrames.enumerated() {
+            // Cards scrolled out of the clip view never hover, even if the
+            // pointer column runs through their frame.
+            let visible = frame.intersection(clipBounds)
+            guard !visible.isNull, visible.height > 0, visible.width > 0 else { continue }
+            if visible.contains(mouse) { return index }
+        }
+        return nil
+    }
+}
+
 /// One card of the installed list: name, level badge, path, the two invocation
 /// toggles and the row actions.
 final class SkillRowView: SkillCardView {
@@ -885,6 +913,12 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         resultsList.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
         resultsList.translatesAutoresizingMaskIntoConstraints = false
         resultsScroll.documentView = resultsList
+        // Hover must follow SCROLLING too (tracking areas only react to pointer
+        // movement), so recompute it whenever the clip view scrolls.
+        resultsScroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(listDidScroll),
+                                               name: NSView.boundsDidChangeNotification,
+                                               object: resultsScroll.contentView)
 
         availableView.addSubview(toolbarRow)
         availableView.addSubview(resultsScroll)
@@ -1152,6 +1186,33 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
             card.translatesAutoresizingMaskIntoConstraints = false
             resultsList.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: resultsList.widthAnchor, constant: -20).isActive = true
+        }
+        refreshHover()
+    }
+
+    @objc private func listDidScroll() { refreshHover() }
+
+    /// Recompute which card is hovered from the CURRENT pointer position. Called
+    /// after scrolling (a card sliding out from under a stationary pointer never
+    /// gets mouseExited, so it would otherwise stay highlighted) and after the
+    /// list re-renders.
+    func refreshHover() {
+        let cards = resultsList.arrangedSubviews.compactMap { $0 as? SkillCandidateRowView }
+        guard !cards.isEmpty else { return }
+        guard let window = resultsList.window else {
+            // Headless (tests) / detached: nothing is hovered.
+            for card in cards { card.setHovered(false) }
+            return
+        }
+        let clip = resultsScroll.contentView
+        let mouseInWindow = window.mouseLocationOutsideOfEventStream
+        let mouseInClip = clip.convert(mouseInWindow, from: nil)
+        let frames = cards.map { $0.convert($0.bounds, to: clip) }
+        let hovered = SkillHoverResolver.hoveredIndex(cardFrames: frames,
+                                                      clipBounds: clip.bounds,
+                                                      mouse: mouseInClip)
+        for (index, card) in cards.enumerated() {
+            card.setHovered(index == hovered)
         }
     }
 

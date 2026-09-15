@@ -24,6 +24,10 @@ All notable changes to this project are documented in this file. Format follows
 
 - **候选技能可查看详情（点击卡片即可）**：可用列表**整张卡片可点**，点击用**系统默认浏览器**打开该技能的页面（只接受 http(s)，不用内置浏览器面板）；**「安装」按钮改为鼠标移入卡片时才出现**，移出即隐藏，平时列表保持干净。详情页 URL：skills.sh 型 registry 打开 `https://www.skills.sh/<source>/<skill>`（如 `https://www.skills.sh/vercel-labs/skills/find-skills`），GitHub 清单打开仓库内技能目录，well-known 打开该技能的 `SKILL.md`，裸 git 打开远端，本地路径改为在 Finder 中显示。
 
+### Fixed
+
+- **可用列表滚动后"划过的技能全部保持高亮"**：AppKit 的 tracking area 只在指针移动时触发 enter/exit，内容从静止指针下滚过时不会触发 `mouseExited`，于是划过的卡片一直亮着、也不还原。现在面板监听 clip view 的滚动通知，每次滚动按**当前指针位置**重算唯一 hover 的卡片（`SkillHoverResolver`，纯函数 + 4 条单测：命中/落在卡片间隙/已被滚出可视区/指针在列表外）。
+
 ### Changed
 
 - README 面板数量文案与目录树同步为八个面板。

@@ -75,6 +75,26 @@ if let click = NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifie
 }
 test("clicking the card opens the detail page", detailOpened)
 
+// Scrolling must not leave stale hover highlights: a card that slides out from
+// under a stationary pointer never gets mouseExited, so the panel recomputes the
+// hovered card from the pointer position (SkillHoverResolver).
+let cardFrames = [NSRect(x: 0, y: 0, width: 300, height: 60),
+                  NSRect(x: 0, y: 68, width: 300, height: 60),
+                  NSRect(x: 0, y: 136, width: 300, height: 60)]
+let clip = NSRect(x: 0, y: 0, width: 300, height: 140)
+test("hover: pointer inside the second card",
+     SkillHoverResolver.hoveredIndex(cardFrames: cardFrames, clipBounds: clip,
+                                     mouse: NSPoint(x: 150, y: 100)) == 1)
+test("hover: pointer between cards -> nothing hovered",
+     SkillHoverResolver.hoveredIndex(cardFrames: cardFrames, clipBounds: clip,
+                                     mouse: NSPoint(x: 150, y: 64)) == nil)
+test("hover: a card scrolled out of view never hovers",
+     SkillHoverResolver.hoveredIndex(cardFrames: cardFrames, clipBounds: clip,
+                                     mouse: NSPoint(x: 150, y: 160)) == nil)
+test("hover: pointer outside the list -> nothing hovered",
+     SkillHoverResolver.hoveredIndex(cardFrames: cardFrames, clipBounds: clip,
+                                     mouse: NSPoint(x: 400, y: 100)) == nil)
+
 // The registry-management page is rendered INSIDE the content area (the header's
 // top-right button switches to it), so exercise all three pages.
 panel.showPage(.registries)
