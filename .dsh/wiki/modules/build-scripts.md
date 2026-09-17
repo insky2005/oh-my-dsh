@@ -1,8 +1,8 @@
 ---
 title: 模块：构建与打包脚本
 tags: [module, build, packaging, icon, release, ci]
-updated: 2026-09-13T04:45:00Z
-sources: [platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, tests/review-panel/, core/lib/review-log.js, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, platforms/macos/src/MakeIcon.swift, platforms/macos/build-cef.sh, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, Jenkinsfile, .github/workflows/release.yml, .github/workflows/ci.yml, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/vendor/Highlightr/, tests/file-panel/]
+updated: 2026-09-17T23:45:00Z
+sources: [tests/skills-panel/, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, tests/review-panel/, core/lib/review-log.js, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, platforms/macos/src/MakeIcon.swift, platforms/macos/build-cef.sh, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, Jenkinsfile, .github/workflows/release.yml, .github/workflows/ci.yml, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/vendor/Highlightr/, tests/file-panel/]
 manual: false
 ---
 
@@ -10,7 +10,7 @@ manual: false
 
 ## platforms/macos/swift-sources.sh（编译清单单一事实来源）
 
-定义 `swift_sources <src_dir>`（打印每个源文件一行）：glob 收录 `src/*.swift` + `vendor/Highlightr/*.swift`，**排除独立工具 `MakeIcon.swift`**（顶层代码、非 app target）。被 `build-app.sh` / `scripts/local-ci.sh` / `.github/workflows/ci.yml` 三方共用——新增 app Swift 文件**自动收录、无需登记**，三处清单永不漂移（根治「新增文件遗漏 local-ci」）。`scripts/local-ci.sh` 另有 `dev` 模式（`DSH_DEV_BUILD=1` 打开发版），swift 阶段依次跑 `tests/terminal-emulator`→`wiki-panel`→`browser-panel`→`skills`→`channel-panel`→`review-panel`→`dsh-rpc` 各 `run.sh`，再做全源码 `swiftc` 编译检查。
+定义 `swift_sources <src_dir>`（打印每个源文件一行）：glob 收录 `src/*.swift` + `vendor/Highlightr/*.swift`，**排除独立工具 `MakeIcon.swift`**（顶层代码、非 app target）。被 `build-app.sh` / `scripts/local-ci.sh` / `.github/workflows/ci.yml` 三方共用——新增 app Swift 文件**自动收录、无需登记**，三处清单永不漂移（根治「新增文件遗漏 local-ci」）。`scripts/local-ci.sh` 另有 `dev` 模式（`DSH_DEV_BUILD=1` 打开发版），swift 阶段依次跑 `tests/terminal-emulator`→`wiki-panel`→`browser-panel`→`skills`→**`skills-panel`**→`channel-panel`→`review-panel`→`dsh-rpc` 各 `run.sh`，再做全源码 `swiftc` 编译检查。
 
 ## platforms/macos/build-app.sh（一键构建，约 350 行）
 
@@ -54,7 +54,7 @@ manual: false
 
 ## scripts/version.sh（版本单一来源）
 
-- 输出两行 `VERSION`/`BUILD`：VERSION 仅当 HEAD 恰在 `vX.Y.Z` tag 上取该 tag，否则回退 `FALLBACK_VERSION`（当前 **1.15.0**，即 v1.14.0 发布后推进的开发线）；BUILD 取 CI 运行号（`GITHUB_RUN_NUMBER`/`CI_PIPELINE_IID`/`BUILD_NUMBER`），否则回退 **71**；
+- 输出两行 `VERSION`/`BUILD`：VERSION 仅当 HEAD 恰在 `vX.Y.Z` tag 上取该 tag，否则回退 `FALLBACK_VERSION`（当前 **1.16.0**，即 v1.15.0 发布后推进的开发线）；BUILD 取 CI 运行号（`GITHUB_RUN_NUMBER`/`CI_PIPELINE_IID`/`BUILD_NUMBER`），否则回退 **72**；
 - `build-app.sh`/`local-release.sh`/`github-publish.sh`/`release-checksums.sh` 统一读它，**版本不再由调用方传参**。
 
 ## scripts/local-release.sh（本机 Release，与 release.yml 对齐）
@@ -72,7 +72,7 @@ manual: false
 ## CI 与测试参数（ci.yml / nightly.yml / local-ci.sh）
 
 - **core 单测统一带超时**：`node --test --test-timeout=60000 core/tests/*.test.js`（ebac11a，2026-09-12）——`node --test` 无默认用例超时，某用例泄漏 runner/定时器会把整套**挂死**；四处同参数：`.github/workflows/ci.yml`、`.github/workflows/nightly.yml`、`scripts/local-ci.sh`、`core/package.json` 的 `test` 脚本；glob **不带引号**（bash 展开，兼容 Node 20）；
-- `ci.yml` 的 swift job 依次跑终端模拟器 / terminal-panel（头部） / wiki-panel / browser-panel / **shell-config（`ShellConfig` 旧 UserDefaults 迁移）** / skills / channel-panel / **dsh-rpc** / **dsh-auth-cookies（dsh 认证 cookie 清理）** / **review-panel** / **file-panel** 单测 + **L10n 键名 lint**（`tests/l10n/`） + 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh`），再构建 arm64 CEF 产物与 App；新增套件必须同时接进 `scripts/local-ci.sh` 与 `ci.yml`（8374736 / 407ccb1 的落地方式）；
+- `ci.yml` 的 swift job 依次跑终端模拟器 / terminal-panel（头部） / wiki-panel / browser-panel / **shell-config（`ShellConfig` 旧 UserDefaults 迁移）** / skills / **skills-panel（技能面板：模型 + 控制器 + 绘制回归）** / channel-panel / **dsh-rpc** / **dsh-auth-cookies（dsh 认证 cookie 清理）** / **review-panel** / **file-panel** 单测 + **L10n 键名 lint**（`tests/l10n/`） + 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh`），再构建 arm64 CEF 产物与 App；新增套件必须同时接进 `scripts/local-ci.sh` 与 `ci.yml`（8374736 / 407ccb1 的落地方式）；
 - 平台无关逻辑的单测放 core（如审计折叠 `core/lib/review-log.js` → `core/tests/review-log.test.js`，17 用例，无 zstd 的 Node 上 3 项自动 skip），面板展示模型放 `tests/<panel>/run.sh`。
 
 ## Jenkinsfile（Jenkins 打包 + 发布）

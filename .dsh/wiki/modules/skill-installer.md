@@ -1,8 +1,8 @@
 ---
 title: 模块：SkillInstaller.swift（内置 Skill 全局安装器）
 tags: [module, skills, installer, provisioning, dsh-home]
-updated: 2026-08-22T15:09:47Z
-sources: [platforms/macos/src/SkillInstaller.swift, platforms/macos/src/main.swift, docs/builtin-skills-design.md, .dsh/skills/web-dev-tools/SKILL.md, .dsh/skills/repo-knowledge/SKILL.md, .dsh/skills/issue-resolve/SKILL.md, tests/skills/run.sh, tests/skills/skills-tests.swift]
+updated: 2026-09-17T23:45:00Z
+sources: [platforms/macos/src/SkillInstaller.swift, platforms/macos/src/main.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillsPanel.swift, docs/skills-manager-design.md, tests/skills-panel/, docs/builtin-skills-design.md, .dsh/skills/web-dev-tools/SKILL.md, .dsh/skills/repo-knowledge/SKILL.md, .dsh/skills/issue-resolve/SKILL.md, tests/skills/run.sh, tests/skills/skills-tests.swift]
 manual: false
 ---
 
@@ -50,6 +50,12 @@ v1.13.0 开发线（PR #27 feature/builtin-skills-global）新增，Foundation-o
 - **启动**：`main.swift` `applicationDidFinishLaunching` 在 `buildWindow()`/dsh web 启动前调用 `SkillInstaller.installBuiltinSkills()`（best-effort，失败不阻塞启动；复用已有 dsh web 同样生效）；
 - **移除按仓库安装**：`WikiPanel.swift` 停用 `WikiSkill.ensureInstalled`、`IssueRunnerPanel.swift` 停用 `ensureIssueFixSkillInstalled`（及各自调用点）——收敛唯一事实来源；仓库 `.dsh/skills/{web-dev-tools,repo-knowledge,issue-resolve}` 提交副本保留（该仓库自身项目仍以 rank 100 命中）；
 - **编译清单**：经 `platforms/macos/swift-sources.sh` 单一事实来源 glob 自动收录（无需登记）。
+
+## 与技能面板（Skills Manager）的边界（2026-09-17，PR #50）
+
+- **面板不改本模块**：`SkillsPanel.swift`/`SkillsCore.swift`/`SkillSources.swift` 对 `builtin` 级别只读——不给任何写入入口，安装时同名目标是内置技能则抛 `builtinProtected`，因此内嵌 markdown 与已安装文件**始终字节一致**，本文件与 `tests/skills/` 的字节断言不受影响；
+- **内置的判定口径与这里一致**：面板认「内置」需三者同时满足——位于 `$DSH_HOME/skills/<name>`、`<name>` ∈ `BuiltinSkill.dirName` ∪ 旧名、且存在旁路标记 `.ohmy-dsh-managed`（`SkillsCore.swift` 的 `BuiltinSkillNames`）。用户自己装的同名技能没有标记，因此不会被误判为内置、也不会被面板锁住；
+- 面板只对**非内置**技能改 `user-invocable` / `disable-model-invocation`，属另一条写入路径（见 [skills-panel](skills-panel.md)），与本模块的托管更新互不覆盖。
 
 ## 测试（`tests/skills/`，Foundation-only 无头）
 

@@ -1,21 +1,21 @@
 ---
 title: 模块：PreviewPanel.swift（预览面板，回滚基线）
 tags: [module, preview, file-tree, tabs, rollback]
-updated: 2026-09-12T09:11:53Z
-sources: [platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/FilePanel.swift, docs/plans/PREVIEW_PLAN-file-panel.md]
+updated: 2026-09-17T23:45:00Z
+sources: [platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/SkillsPanel.swift, tests/skills-panel/, docs/plans/PREVIEW_PLAN-file-panel.md, CHANGELOG.md]
 manual: false
 ---
 
 # 模块：PreviewPanel.swift（预览面板，回滚基线）
 
-约 1480 行。右栏预览面板的**回滚基线**：`feature/file-panel` 已把现行预览实现改为其强化分支 [FilePanel](file-panel.md)（`FilePanelController`），PreviewPanel.swift 本身**零改动**保留、编译登记原样，仅作回滚对照/兜底。本文档描述 PreviewPanel 原始能力（FilePanel 继承其大部分）：点击 dsh web 对话中的文件链接（工具产物）不再弹系统默认应用，而是在面板内预览；左侧为项目目录树。同时是**共享 UI 组件库**。
+1519 行（2026-09-17 实测）。右栏预览面板的**回滚基线**：`feature/file-panel` 已把现行预览实现改为其强化分支 [FilePanel](file-panel.md)（`FilePanelController`），PreviewPanel.swift 本身**零改动**保留、编译登记原样，仅作回滚对照/兜底。本文档描述 PreviewPanel 原始能力（FilePanel 继承其大部分）：点击 dsh web 对话中的文件链接（工具产物）不再弹系统默认应用，而是在面板内预览；左侧为项目目录树。同时是**共享 UI 组件库**。
 
 ## 共享 UI 组件（其他面板复用）
 
 | 组件 | 说明 |
 |---|---|
 | `HoverButton` | 无边框图标按钮：hover 高亮 + 手型光标 + 选中态高亮 |
-| `DynamicFillView` | 自绘背景视图（`kind: .window / .control`），深浅色自动跟随（动态填充，非固定 CGColor） |
+| `DynamicFillView` | 自绘背景视图（`kind: .window / .control`），深浅色自动跟随（动态填充，非固定 CGColor）。⚠️ **只填自己拥有的区域**：`draw(_:)` 用 `bounds.intersection(dirtyRect).fill()`——AppKit 可能给不透明视图传入**大于其 bounds** 的脏矩形，直接 `dirtyRect.fill()` 会越过自身边界、刷掉**层级更低的同色兄弟视图**（技能面板的头部标题与标签条正是这样整条消失的，2119bb1 修复；回归测试 `tests/skills-panel/render-tests.swift` 用真实 `DynamicFillView`/`HeaderLabel` 离屏渲染钉住） |
 | `ActivityBarButton` | 活动栏图标按钮，图标颜色烘烤进图片（`BakedIconView`）保证深色可见 |
 | `PanelIconButton` | 面板头部图标按钮（按深浅色刷新 tint） |
 | `HeaderLabel` | 自绘文本标签（深浅色自适应颜色） |
@@ -44,5 +44,6 @@ manual: false
 - 文本解码失败（非 UTF-8）→ `preview.unreadable` 提示；文件过大 → 截断提示；
 - 树变更轮询为 2s 间隔（轻量 mtime 比对），非 FSEvents；
 - 目录树根失败时提供手动选文件夹兜底（RPC 失败场景）；
+- **不透明自绘视图的绘制契约**：内容容器要放到**最底层/最先添加**，头部条最后添加；即使如此也不能依赖「脏矩形不会越界」——见上表 `DynamicFillView` 与 `docs/terminal-header-fix.md` 的合成陷阱（同源问题的另一面）；
 - 当前实际接入壳层的是 FilePanel（`previewPanel` 类型为 `FilePanelController`），本文件不再被实例化，仅保留作为回滚基线与共享 UI 组件来源；
 - **分叉提示**：FilePanel 已进一步演进——本文件的 `setProjectDirectory` 仍是「只重设树根、不动已开页签」，而 FilePanel 会在换根时按工作区**记忆并关闭 / 重开页签**（见 [file-panel](modules/file-panel.md)）；回滚到大基线时该能力随之消失。

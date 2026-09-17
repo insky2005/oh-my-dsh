@@ -1,14 +1,14 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-09-13T04:45:00Z
-sources: [core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/DshWebCookieJanitor.swift, tests/shell-config/, tests/dsh-auth-cookies/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md]
+updated: 2026-09-17T23:45:00Z
+sources: [platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillInstaller.swift, docs/skills-manager-design.md, tests/skills-panel/, core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/DshWebCookieJanitor.swift, tests/shell-config/, tests/dsh-auth-cookies/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md]
 manual: false
 ---
 
 # 数据模型
 
-本仓库无数据库：壳层设置以 **`$DSH_HOME/shell/config.json`**（JSON，`ShellConfig` / `core/lib/settings.js`）持久化（少量系统级项仍在 **UserDefaults**），进程间/代理间通信走 **HTTP RPC 信封**，磁盘上的"数据文件"是 wiki markdown 页（含 frontmatter）、任务关联索引（`.dsh/tasks/`）与日志。
+本仓库无数据库：壳层设置以 **`$DSH_HOME/shell/config.json`**（JSON，`ShellConfig` / `core/lib/settings.js`）持久化（少量系统级项仍在 **UserDefaults**），进程间/代理间通信走 **HTTP RPC 信封**，磁盘上的"数据文件"是 wiki markdown 页（含 frontmatter）、任务关联索引（`.dsh/tasks/`）、技能记录（`$DSH_HOME/shell/skills.json`）与日志。
 
 ## 壳层设置键（`$DSH_HOME/shell/config.json`，`ShellConfig`）
 
@@ -24,7 +24,7 @@ manual: false
 | `autoUpgradeDsh` | 自动升级开关（默认开） | AppDelegate |
 | `nextAutoUpgradeCheck` | 下次允许自动升级的时间戳（24h 节流；`DSH_AUTO_UPGRADE_NOW=1` 忽略节流，测试钩子） | `runAutoUpgradeIfNeeded` |
 | `previewPanelState` | 右栏可见性（true = 打开） | `setRightPanel` |
-| `rightPanelKind` | 右栏当前面板（"preview"/"terminal"/"wiki"/"tasks"/"browser"/"channel"/"review"） | `setRightPanel` |
+| `rightPanelKind` | 右栏当前面板（"preview"/"terminal"/"wiki"/"tasks"/"browser"/"channel"/"review"/"skills"） | `setRightPanel` |
 | `previewPanelWidth` | 用户拖拽的面板宽度 | `splitViewDidResizeSubviews` |
 | `browserLastURL` | 浏览器面板启动恢复的地址（默认 about:blank） | `BrowserPanelController` |
 | `browserRenderMode` | 浏览器面板 CEF 渲染模式（**默认窗口化**：判定 `!= "osr"`，删除/缺省即窗口化；显式设 `osr` 才走离屏帧自绘，2026-09-13 起） | `startBrowserAPI`（`CEFShim.setWindowedMode`） |
@@ -39,6 +39,13 @@ manual: false
 
 > **旧 UserDefaults 取值一次性迁移（2026-09-13，407ccb1）**：1.14 把这些键从 `UserDefaults` 搬进 `config.json` 时**没有搬运已有取值**——用户显式设过的值留在 plist 里再没人读，壳层静默回落到代码默认（这正是 v1.14.0「浏览器面板一片空白」的一半根因：`browserRenderMode=windowed` 丢失后回落到当时损坏的 OSR 路径）。现在 `ShellConfig.loadIfNeeded()`（持锁）内做一次合并：`legacyUserDefaultsKeys` 列出的 16 个壳层自有键（`appLanguage`/`appTheme`/`dshRegistry`/`browserRenderMode`/`browserLastURL`/`previewPanelState`/`previewPanelWidth`/`previewLastDirectory`/`rightPanelKind`/`hasCompletedOnboarding`/`autoUpgradeDsh`/`nextAutoUpgradeCheck`/`channel.global.list`/`wikiRootMode`/`wikiAutoRegenerate`/`wikiRegisterAgentsMd`）**只搬本文件尚无取值的键**（显式值永远优先），写完在文件里落 `legacyUserDefaultsMigratedAt` 标记保证只做一次；迁移直接原子写文件而不走 `flush()`（在锁内，避免自锁），并记日志 `shellconfig: legacy UserDefaults merge (moved N: …) -> <path>`。回归测试 `tests/shell-config/`（13 例）。
 
+## 技能数据（skills.json + SKILL.md frontmatter）
+
+- **壳层技能记录** `$DSH_HOME/shell/skills.json`（版本化 JSON，原子写，`SkillStore`；与 `shell/config.json` 同目录但**不走 `ShellConfig`**——值是结构化对象、成批变更，独立文件避免每个键一次 node 子进程；缺失/损坏按空配置处理不抛错）：
+  `registries`（`[{id,label,enabled,searchURL?,catalog:{kind:none|wellKnown|githubRepo,url},popularQueries}]`，默认预置 skills.sh）、`invocation.<name>`（`baselineUserInvocable` / `baselineDisableModelInvocation` / `userInvocable` / `disableModelInvocation` / `updatedAt`）、`installed.<name>`（`source` / `sourceType` / `sourceUrl` / `ref` / `path` / `level` / `baseUserInvocable` / `baseDisableModelInvocation` / `contentHash` / `installedAt` / `updatedAt`）；
+- **技能的持久态在 SKILL.md 本身**：调用开关只认 frontmatter 键 `user-invocable`（默认 true）与 `disable-model-invocation`（默认 false），面板改开关是**只增删改这两行**的文本编辑（切回基线值即删键、字节还原），不是 YAML 往返；旧驼峰键（`userInvocable` 等）会让 dsh **抛错并忽略整个技能**；
+- **发现的四个根与优先级**（rank 小者同名优先）：`<工作区>/.dsh/skills`(100) > `<工作区>/.agents/skills`(200) > `$DSH_HOME/skills`(400，跳过 `.system`) > `$DSH_AGENTS_HOME`/`~/.agents/skills`(500)；见 [skills-panel](modules/skills-panel.md) 与 `docs/dsh-version-impact.md` D2/D2b/D2c/D2d。
+
 ## dsh 浏览器认证 cookie（WKWebsiteDataStore）
 
 - **名字即身份**：dsh ≥ 0.1.2 的浏览器会话 cookie 名 = `"dsh-auth-" + base64url(sha256(authority))`，`authority` = 该实例的 `host:port`（壳层只加载 `http://127.0.0.1:<port>/`，因此 `authority(port:) == "127.0.0.1:<port>"`，换成 `localhost` 会得到另一族 cookie）；
@@ -47,7 +54,7 @@ manual: false
 
 ## 领域模型（代码内）
 
-- **`RightPanel` 枚举**（main.swift）：`none / preview / terminal / wiki / tasks / browser / channel / review`——右栏插槽互斥状态（`rightPanelKind` 持久化，含 `"review"`）；
+- **`RightPanel` 枚举**（main.swift）：`none / preview / terminal / wiki / tasks / browser / channel / review / skills`——右栏插槽互斥状态（`rightPanelKind` 持久化，含 `"review"` / `"skills"`）；
 - **`ProjectDirectory`**（main.swift）：壳层共享的"活动项目目录"（`static var current`），跟随 dsh web 当前会话（见 `sessionTrackerScript` 数据流），`resolveProjectDirectory` 优先返回它；
 - **`L10n.table`**：`[String: (zh: String, en: String)]` 文案表，`L10n.tr(key)` 按 `lang` 取文案并填充 `%@/%d`；
 - **`WikiPage`**（WikiPanel.swift）：`path / title / tags / updated / sources / manual`，由 frontmatter 解析而来；
@@ -67,6 +74,7 @@ manual: false
 - **位置**：`$DSH_HOME/sessions/<workspace-slug>/<session-id>/session.jsonl`（压缩时 `.jsonl.zstd`），一行一事件；
 - **格式要点**：dsh 的 Zstandard 后端把日志写成**多个独立可解压帧的拼接**（每批落盘一帧），一次性解压只拿得到**第一帧**（实测真实日志仅返回 214 字节的会话头）；`core/lib/review-log.js` 的 `scanZstdFrames()` 只走帧头/块头逐帧解码。Apple 的 Compression 框架在这套 SDK 上**没有 zstd 算法**，Swift 侧无法自行解码——这是审计逻辑放在 core、且必须用**内置** Node（v24，含 `zlib.zstdDecompressSync`）的原因（`CoreBridge.run(…, preferBundledNode: true)`）；
 - **审计读取的三类记录**：① `tool/result` → `data.meta.diffs`（已应用 hunk，**仅顶层** `write`/`edit`）；② 顶层 `tool/call` / 嵌套 `tool/code-dispatch-start` → `arguments`（参数还原，覆盖 `run_code` 嵌套调用与新建文件全文）；③ `tool/call name=bash` → 命令文本（无前后内容）。turn 归属来自 `turn/start` + `tool/call.turn`（嵌套派发**继承父调用**的 turn）；
+- **缓存身份 `ReviewLogStamp`（Swift，`ReviewLogModel.swift`）**：`{size, mtimeMs}`，由 `ReviewLogStamp.read(path)` 从文件属性取；`auditNeedsRefresh(cached:onDisk:)` 只在两者相等时复用缓存，`onDisk == nil`（路径未知/文件消失）判为「无法判断」保留缓存。因为日志**只增不减**，同一份日志上的审计结果永远有效——这是「新建会话不再只显示会话、看不到文件」的关键（PR #49）；
 - **输出契约**（`node core/bin/ohmy-core.js review sessions|audit|audit-file`）与每条 entry 的字段（`surface/status/category/path/hunks/added/removed/command/suspicion/note`）见 [review-panel](modules/review-panel.md) 与 docs/review-panel-design.md §5；读取失败（帧解压失败 / 尾部未完成帧 / 无法解析的 JSONL 行）一律进 `diagnostics` 显式报出，不静默丢数据。
 
 ## RPC 信封（与 dsh web 通信）

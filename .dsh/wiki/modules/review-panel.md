@@ -1,14 +1,14 @@
 ---
 title: 模块：审查面板（Review / 变更审计）
 tags: [module, review, audit, session-log, zstd, read-only]
-updated: 2026-09-12T06:40:00Z
-sources: [platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, platforms/macos/src/main.swift, core/lib/review-log.js, core/bin/ohmy-core.js, core/index.js, core/tests/review-log.test.js, tests/review-panel/, docs/review-panel-design.md, README.md]
+updated: 2026-09-17T23:45:00Z
+sources: [platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, platforms/macos/src/main.swift, core/lib/review-log.js, core/bin/ohmy-core.js, core/index.js, core/tests/review-log.test.js, tests/review-panel/, docs/review-panel-design.md, platforms/macos/src/SkillsPanel.swift, scripts/local-ci.sh, .github/workflows/ci.yml, README.md, CHANGELOG.md]
 manual: false
 ---
 
 # 模块：审查面板（Review / 变更审计）
 
-**完全只读**，回答「这个会话里代理到底改了哪些文件、改成什么」：直接读 dsh 自己落盘的会话日志，**不写任何文件、不调写接口、不改 dsh 源码**。按 **会话 → 对话(turn) → 文件 → 变更内容** 树展示，每层可展开/收起。合并自 PR #44 `feature/review-panel`（2026-09-12，v1.15.0 开发线）；设计与覆盖矩阵见 `docs/review-panel-design.md`。
+**完全只读**，回答「这个会话里代理到底改了哪些文件、改成什么」：直接读 dsh 自己落盘的会话日志，**不写任何文件、不调写接口、不改 dsh 源码**。按 **会话 → 对话(turn) → 文件 → 变更内容** 树展示，每层可展开/收起。合并自 PR #44 `feature/review-panel`（2026-09-12，随 **v1.15.0** 发布）；审计结果随会话日志增量刷新由 **PR #49 `fix/review-audit-staleness`**（2026-09-17）补上。设计与覆盖矩阵见 `docs/review-panel-design.md`。
 
 不做回滚/接受拒绝：只读数据里没有可回滚的完整信息（顶层 `write`/`edit` 的工具结果只留「Updated file」，落盘的 `meta.diffs` 是带 3 行上下文的 hunk，新建文件更是空数组）。
 
@@ -18,8 +18,8 @@ manual: false
 |---|---|---|
 | `core/lib/review-log.js` | 655 行 | 审计折叠：会话日志定位、Zstandard 多帧扫描/解码、三类记录合并、turn 归属、shell 启发式、诊断收集（经 `core/index.js` 导出） |
 | `core/bin/ohmy-core.js` | — | CLI 入口 `review sessions` / `review audit` / `review audit-file`（与面板共用同一 core 实现） |
-| `platforms/macos/src/ReviewLogModel.swift` | 353 行 | 纯 Foundation 展示模型：JSON 解码 + 文件分组 / turn 分组 / diff 折叠 / 过滤 / 标签（无 AppKit，可无头测试） |
-| `platforms/macos/src/ReviewPanel.swift` | 1031 行 | `ReviewPanelController`：右栏 UI、按需审计、缓存、跟随 dsh web、主题与 L10n |
+| `platforms/macos/src/ReviewLogModel.swift` | 390 行 | 纯 Foundation 展示模型：JSON 解码 + 文件分组 / turn 分组 / diff 折叠 / 过滤 / 标签 + **`ReviewLogStamp`（日志身份 = size + mtime）/ `auditNeedsRefresh(cached:onDisk:)`**（无 AppKit，可无头测试） |
+| `platforms/macos/src/ReviewPanel.swift` | 1122 行 | `ReviewPanelController`：右栏 UI、按需审计 + 缓存失效、可见时轮询、跟随 dsh web、主题与 L10n |
 
 ## 数据来源：dsh 会话日志的三类记录
 
@@ -51,7 +51,8 @@ node core/bin/ohmy-core.js review audit-file <path.jsonl[.zstd]> [--workspace <d
 
 ## 面板行为
 
-- **按需审计**：会话列表只读日志头——打开面板便宜；某个会话第一次展开时才跑一次 `review audit`（超时 180s），结果进内存缓存（`audits`），不重复读；
+- **按需审计 + 缓存按「日志身份」失效**（PR #49）：会话列表只读日志头——打开面板便宜；某个会话第一次展开时才跑一次 `review audit`（超时 180s）。缓存**不能只按 sessionId**：会话日志是**活文档**（dsh 每落盘一批追加一个独立可解压的 Zstandard 帧，只增不减），而新建会话一诞生就会被审一次（那会儿日志里只有会话头），按 id 缓存会把「0 文件 / 无变更」**永久钉住**。因此审计结果与 `ReviewLogStamp`（size + mtime）一起存（`auditStamps`），只有两者都与盘上一致才复用；日志路径未知时判为「无法判断」、保留缓存（不反复重读）；戳在**审计前**打、读完落盘，因此审计进行中追加的帧仍比戳新、下个 tick 会再读一次（失败结果同样打戳，坏会话不会每 5 s 重试）；
+- **新鲜度三处触发**：① 打开面板即重列会话并重审「已展开且日志变了」的会话（`ensureLoaded()` 不再只列一次；重列期间**不擦内容**——沿用「刷新不清屏」约定）；② 面板**在屏上**时每 `auditPollInterval = 5` s 给已展开会话的日志做一次 `stat`（不 spawn CLI），只有真的变了才跑 `review audit`；面板收起/切走即停——可见性判定是 `view.superview != nil && view.window != nil && view.frame.width > 1`（隐藏只把分隔线收成 0、视图仍在树上，只看 `superview` 会在收起的面板后面继续跑 CLI）；③ 跟随 dsh web 切会话时按同一规则重审；
 - **跟随 dsh web**：web 切会话 → 面板按 **sessionId** 展开同一会话（不按工作区过滤，跨工作区也能定位）并标为当前会话；工作区变化只重列会话，**不清审计缓存**；同工作区内切换会话不再重列（消除闪烁）；加载中的再次 reload 会排队重跑（不再丢弃请求）；
 - **会话标题**：经 `DshWebRPC` 的 `session.list` 读 dsh web 标题（打开面板时读取，带失败重试；无标题显示 dsh web 的「新会话 / New Session」占位，再不行回退短 id）；
 - 工具栏：全部展开 / 全部收起 / 只看可疑命令（默认开）；`⌥⌘R` 与活动栏「审查」图标（symbol `doc.text`）切换，`rightPanelKind` 持久化 `"review"`；
@@ -60,10 +61,10 @@ node core/bin/ohmy-core.js review audit-file <path.jsonl[.zstd]> [--workspace <d
 
 ## 已知边界
 
-`bash` 直改（`sed -i`/`>`/`rm`/`git checkout`）内容不可得，只标注「需人工核对」；日志尚未落盘的尾部（批处理窗口内）看不到；`meta.diffs` 为空时保守标 `新建`；dsh 之外的手段改的文件不在日志里；不提供跨会话/跨工作区汇总。
+`bash` 直改（`sed -i`/`>`/`rm`/`git checkout`）内容不可得，只标注「需人工核对」；日志尚未落盘的尾部（批处理窗口内）当时看不到——**落盘后会被自动读到**（在屏上时按日志身份增量重审，无需手动刷新）；`meta.diffs` 为空时保守标 `新建`；dsh 之外的手段改的文件不在日志里；不提供跨会话/跨工作区汇总。
 
 ## 测试与 QA
 
 - `node --test core/tests/review-log.test.js`：**17 用例**（帧扫描、多帧解码、撕裂帧、三类记录合并、失败条目、shell 启发式、路径相对化、会话发现；无 zstd 的 Node 上相关 3 项自动 skip——本机 Node v20.19.6 实测 14 通过 / 3 跳过）；
-- `tests/review-panel/run.sh`：Swift 模型层无头单测（64 项通过，JSON 解码 / 文件分组 / turn 分组 / diff 折叠 / 过滤 / 标签）；已接入 `.github/workflows/ci.yml` 与 `scripts/local-ci.sh`；
+- `tests/review-panel/run.sh`（本机实测 **76 项 ok**）：① 模型层（64 项：JSON 解码 / 文件分组 / turn 分组 / diff 折叠 / 过滤 / 标签）；② **面板控制器无头回归**（`controller-tests.swift` + 假 core CLI stubs，12 项）——钉住「审计结果必须在日志变化后失效」：新建会话首次读出「0 文件」→ 日志增长后**无需任何操作**自动重读并列出文件 → 日志未变时**不重复**审计（对修复前代码实测 6 例 FAIL）；已接入 `.github/workflows/ci.yml` 与 `scripts/local-ci.sh`；
 - QA 钩子：`DSH_REVIEW_TEST=1` 启动即打开面板（**故意放最后**，`DSH_UI_DEBUG=1` 下也生效）；`DSH_REVIEW_TEST_PATH=<dir>` 固定审计的工作区；`--ui-debug` 下面板层级 dump 深度 8（与浏览器面板同级）+ 渲染完成后二次快照 `panel-review-loaded-debug.png`。

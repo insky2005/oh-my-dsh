@@ -1,8 +1,8 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-09-13T04:45:00Z
-sources: [platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, docs/dsh-version-impact.md, tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
+updated: 2026-09-17T23:45:00Z
+sources: [platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, docs/skills-manager-design.md, tests/skills-panel/, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, docs/dsh-version-impact.md, tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
 manual: false
 ---
 
@@ -46,7 +46,7 @@ open "dist/oh-my-dsh.app"
 ```
 
 - 文件面板工作区页签记忆（`tests/file-panel/run.sh` 覆盖逻辑，界面手测）：打开若干文件时文件面板头部**始终**显示「文件」而非路径（路径在标题悬停 tooltip 与页签 tooltip 里）、终端面板头部**始终**显示「终端」而非会话标题/已结束状态、知识库面板头部**始终**显示「知识库」而非当前页面名（同样在 tooltip / 内容区 / 树里）→ dsh web 切到 B 工作区会话（页签栏清空、树根变 B）→ 切回 A（页签按原顺序重开且选中项还原）；A 中改文件不保存后切换 → 二选一提示（保存并切换 / 不保存；**没有「取消切换」**——dsh web 已切过去，面板必须跟随，否则两边不一致）：选保存则磁盘已更新、选不保存则磁盘未变，两种都照样切到 B；若文件保存失败、或提示被 ESC 关掉，该页签**保留在页签栏**且面板仍切到 B（不得静默丢弃、不得卡住）；有未保存修改时点**页签 ✕ / ⌘W** 或**面板右上角 ✕** → 三选一（保存并关闭 / 不保存 / 取消；取消 = 不关；保存失败则中止关闭并报错）；点 ✕（无未保存）→ 页签清空，此后切走再切回**不**自动重开；`~/Library/Logs/oh-my-dsh/app.log` 有 `preview workspace switch` / `preview restore` 日志；
-- 验证点：窗口标题 `oh-my-dsh (DeepSeek Harness)`；活动栏图标互斥切换（预览/终端/浏览器/知识库/任务/通道/审查）；⌥⌘P / ⌥⌘T / ⌥⌘B / ⌥⌘W / ⌥⌘J / ⌥⌘H / ⌥⌘R 快捷键；About 面板显示 dsh/Node 版本与 registry；文件面板编辑文本后 ⌘S 保存、页签标题出现 `*` 未保存标记（见 [file-panel](modules/file-panel.md)）。
+- 验证点：窗口标题 `oh-my-dsh (DeepSeek Harness)`；活动栏图标互斥切换（预览/终端/浏览器/知识库/任务/通道/审查/技能）；⌥⌘P / ⌥⌘T / ⌥⌘B / ⌥⌘W / ⌥⌘J / ⌥⌘H / ⌥⌘R / ⌥⌘S 快捷键；About 面板显示 dsh/Node 版本与 registry；文件面板编辑文本后 ⌘S 保存、页签标题出现 `*` 未保存标记（见 [file-panel](modules/file-panel.md)）。
 
 ## 跑单元测试
 
@@ -57,7 +57,8 @@ tests/wiki-panel/run.sh             # Repo Wiki 模型层
 tests/browser-panel/run.sh          # 浏览器面板模型层（REST 路由 / 日志缓冲）
 tests/channel-panel/run.sh          # 通道项目视图数据模型（ChannelStoreReader）
 tests/dsh-rpc/run.sh                # 壳层原生 dsh RPC（0.1.2 信封/斜杠端点、launch token 换 cookie、回退记忆）
-tests/review-panel/run.sh           # 审查面板展示模型（64 项）
+tests/review-panel/run.sh           # 审查面板（模型 64 项 + 控制器日志新鲜度 12 项 = 76 项）
+tests/skills-panel/run.sh           # 技能面板（模型层 + 控制器冒烟 + 真实绘制回归，121 项）
 tests/file-panel/run.sh             # 文件面板工作区页签记忆 / 未保存提示（模型 28 项 + 真面板）
 tests/terminal-panel/run.sh         # 终端面板头部固定标题（4 项，不建 PTY）
 tests/l10n/run.sh                   # L10n 键名 lint（L10n.tr 字面量必须在 L10n.table 中且中英成对）
@@ -97,10 +98,21 @@ tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：�
 ## 审计会话变更（审查面板，只读）
 
 - 打开：活动栏「审查」图标 / **⌥⌘R**（QA 钩子 `DSH_REVIEW_TEST=1` 启动即开，`DSH_REVIEW_TEST_PATH=<dir>` 固定审计的工作区）；
-- 树为 **会话 → 对话(turn) → 文件 → 变更内容**，每层可展开/收起；**按需审计**——会话列表只读日志头，某会话首次展开才跑 `review audit` 并缓存；工具栏「全部展开 / 全部收起 / 只看可疑命令（默认开）」；
+- 树为 **会话 → 对话(turn) → 文件 → 变更内容**，每层可展开/收起；**按需审计**——会话列表只读日志头，某会话首次展开才跑 `review audit`；结果**按日志身份（size + mtime）缓存**，面板在屏上时每 5 s `stat` 一次，日志增长即自动重读（新建会话里刚改的文件会自己出现，无需重开面板或点刷新）；工具栏「全部展开 / 全部收起 / 只看可疑命令（默认开）」；
 - 每条改动标出**来源**：`已应用`（工具结果的 hunk）/ `参数还原`（如 `run_code` 嵌套调用）/ `全文写入`、`新建`；`shell 命令（无前后内容记录）` 与 `失败的调用（未改动）` 各自单列、不计入变更统计；
 - 等价 CLI（与面板同一 core 实现）：`node core/bin/ohmy-core.js review sessions [--workspace <dir>]` / `review audit <sessionId>` / `review audit-file <path.jsonl[.zstd]>`；
 - **只读**：不写盘、不调写接口、不改 dsh；回滚/接受拒绝**不在范围**（只读数据里没有可回滚的完整信息），设计与覆盖矩阵见 docs/review-panel-design.md。
+
+## 管理技能（技能面板，`⌥⌘S`）
+
+- 打开：活动栏「技能」图标 / 视图菜单 / **⌥⌘S**（QA 钩子 `DSH_SKILLS_TEST=1` 启动即开；`DSH_SKILLS_TEST_ROOT=<dir>` 换用户根到 fixture；`DSH_SKILLS_NO_NUDGE=1` 关闭改完后的 web 缓存失效）；
+- **已安装**：扫 dsh 四个技能根（`<工作区>/.dsh/skills` 100 / `<工作区>/.agents/skills` 200 / `$DSH_HOME/skills` 400 / `~/.agents/skills` 500），rank 小者同名优先、其余标「被遮蔽」，逐行标级别；**内置只读**（无开关、无移除）、共享级可改开关不可移除、用户级/项目级可改可删；
+- **调用开关**：`用户可调用` → 写 `user-invocable`、`模型可调用` → 写 `disable-model-invocation`（关闭即写 `true`）；**切回默认值会删掉该键**（字节还原），只动这两行、其余原样；只写规范键（旧驼峰键会让 dsh 忽略整个技能）；
+- **可安装**：选 registry → 有清单来源（GitHub 仓库 / well-known）直接列清单，只有搜索接口的（skills.sh）默认显示热门（按 installs 降序前 30）；**整卡点击 = 详情（系统浏览器）**，鼠标移入才显示「安装」按钮；「从地址安装…」支持 `owner/repo`、`owner/repo@skill`、GitHub/GitLab、well-known、本地路径；「手动导入…」选目录或单个 SKILL.md；
+- 落点默认 **用户级** `$DSH_HOME/skills/<name>/`，可选 **项目级**（会写用户仓库，确认框提示）；
+- 改完无需手动刷新 dsh web：面板经 `nudgeDSHWebCaches()` 派发 offline→online 触发客户端重连，清掉技能目录缓存（1.5s 节流）；
+- 开关不生效排查：确认改的是**非内置**技能、`SKILL.md` 里只有规范键；记录与安装来源见 `$DSH_HOME/shell/skills.json`；dsh 侧契约（根 / 优先级 / 键名）见 `docs/dsh-version-impact.md` D2/D2b/D2c/D2d 与 `docs/skills-manager-design.md`；
+- 回归：`tests/skills-panel/run.sh`（121 项）。
 
 ## 排查问题
 
@@ -128,7 +140,7 @@ tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：�
    - 本机：`scripts/local-release.sh`（两架构）或 `scripts/local-release.sh pack`（只打包不发布）；自动读 version.sh、做 SHA-256SUMS、发布 GitHub Release；
    - 或 CI：push `v*` tag 触发 release.yml（见下）；
 5. 提交时检查 `git status`：只含源码/文档/wiki 变更（.build/.cache/dist/pic 已忽略）；
-6. 发布后**立即**把 `scripts/version.sh` 的 `FALLBACK_VERSION`/`FALLBACK_BUILD` 推进到下一个 minor（如发布 v1.14.0 → fallback `1.15.0`/71，当前即此线），并更新 CHANGELOG 顶部 `[Unreleased]` 占位，单 commit（不 push main 之外的改写；`main` 禁 force-push）。
+6. 发布后**立即**把 `scripts/version.sh` 的 `FALLBACK_VERSION`/`FALLBACK_BUILD` 推进到下一个 minor（如发布 v1.15.0 → fallback `1.16.0`/72，当前即此线），并更新 CHANGELOG 顶部 `[Unreleased]` 占位，单 commit（不 push main 之外的改写；`main` 禁 force-push）。
 
 **发布已知坑（v1.12.0 实战校准，见 `docs/release-process.md`）**：tag 推送会触发 CI release.yml，而 CI 的 **CEF prepare 前置 job 当前是坏的**（GitHub runner 上从 cef-builds.spotifycdn.com 下载超时，连续两代 Release run 挂死、publish job 被跳过）——**发布以本地 `local-release.sh` 为准**，CI 失败 run 直接忽略（暂不修复）；上传约 1.1GB 资产慢网耗时 1–2h+，`github-publish.sh` 已幂等化（release 已存在则复用只补传缺失资产 + 逐资产进度输出），中断可直接重跑；**发布统一走 curl API、暂不使用 gh CLI**（gh 分支保留为自动检测兜底）；DMG 构建必须 `danger-full-access` 沙箱（hdiutil 需访问 /dev）。
 
