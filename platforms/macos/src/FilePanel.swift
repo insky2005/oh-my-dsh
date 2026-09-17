@@ -366,8 +366,15 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     private func makeTabItem(id: Int, title: String, tooltip: String)
         -> (view: NSView, titleButton: NSButton, closeButton: NSButton) {
-        let titleButton = NSButton(title: title, target: self, action: #selector(selectTab(_:)))
-        titleButton.bezelStyle = .texturedRounded
+        // PanelTabButton = bezelless HoverButton: the tab paints the shared
+        // panel-control fill (normal, highlight when selected or hovered)
+        // instead of an AppKit bezel.
+        let titleButton = PanelTabButton(frame: .zero)
+        titleButton.title = title
+        titleButton.target = self
+        titleButton.action = #selector(selectTab(_:))
+        titleButton.isBordered = false
+        titleButton.font = .systemFont(ofSize: 12)
         titleButton.setButtonType(.pushOnPushOff)
         titleButton.state = .off
         titleButton.tag = id

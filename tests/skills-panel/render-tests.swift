@@ -135,4 +135,46 @@ for (name, expected) in [(NSAppearance.Name.aqua, "#f9fafb"), (NSAppearance.Name
           dominant { $0.kind = .panel } == dominant { $0.kind = .custom(token) })
 }
 
+// 5. Cards / buttons / tabs paint the panel-control scale (PanelControl): a
+//    normal fill, and the highlight fill when hovered / selected / toggled on.
+check("panel control dark fill is #43454a", hex(PanelControl.darkNormal) == "#43454a")
+check("panel control dark highlight is #353638", hex(PanelControl.darkHighlight) == "#353638")
+check("panel control light fill is #ffffff", hex(PanelControl.lightNormal) == "#ffffff")
+check("panel control light highlight is #f1f3f5", hex(PanelControl.lightHighlight) == "#f1f3f5")
+check("panel control picks fill + highlight by appearance",
+      hex(PanelControl.fill(for: NSAppearance(named: .darkAqua)!, highlighted: false)) == "#43454a"
+      && hex(PanelControl.fill(for: NSAppearance(named: .darkAqua)!, highlighted: true)) == "#353638"
+      && hex(PanelControl.fill(for: NSAppearance(named: .aqua)!, highlighted: false)) == "#ffffff"
+      && hex(PanelControl.fill(for: NSAppearance(named: .aqua)!, highlighted: true)) == "#f1f3f5")
+
+/// Render an arbitrary view on its own and return its dominant pixel colour.
+func renderDominant(_ appearance: NSAppearance.Name, _ view: NSView) -> String {
+    let host = NSView(frame: NSRect(x: 0, y: 0, width: 64, height: 32))
+    host.appearance = NSAppearance(named: appearance)
+    view.frame = host.bounds
+    host.addSubview(view)
+    host.layoutSubtreeIfNeeded()
+    return band(host, rows: 0..<32).colors.max { $0.value < $1.value }?.key ?? ""
+}
+
+// Compared render-to-render for the same reason as above (the display colour
+// space shifts dark values, so the reference view goes through the pipeline too).
+for (name, dark) in [(NSAppearance.Name.aqua, false), (NSAppearance.Name.darkAqua, true)] {
+    func reference(highlighted: Bool) -> String {
+        let view = DynamicFillView()
+        view.kind = .custom(PanelControl.fill(dark: dark, highlighted: highlighted))
+        return renderDominant(name, view)
+    }
+    func button(state: NSControl.StateValue) -> String {
+        let b = HoverButton(frame: NSRect(x: 0, y: 0, width: 64, height: 32))
+        b.isBordered = false
+        b.state = state
+        return renderDominant(name, b)
+    }
+    check("button paints the normal control fill in \(name.rawValue)",
+          button(state: .off) == reference(highlighted: false))
+    check("selected button paints the highlight control fill in \(name.rawValue)",
+          button(state: .on) == reference(highlighted: true))
+}
+
 print("done")

@@ -31,6 +31,9 @@ final class ShellConfig {
 class HoverButton: NSButton {
     var showsFeedback = true
 }
+/// Real implementation: platforms/macos/src/PreviewPanel.swift — a bezelless
+/// HoverButton that paints the shared panel-control fill.
+final class PanelTabButton: HoverButton {}
 enum DSHSessionRPC {
     static func fetchActiveSessionCwd(port: Int, timeout: TimeInterval = 6) -> String? { nil }
     static func resolveProjectDirectory(port: Int, timeout: TimeInterval = 6,

@@ -23,6 +23,43 @@
 
 import AppKit
 
+/// Interactive surfaces — cards, buttons and tabs — one step up from the panel
+/// surface: a normal fill, and a highlight fill for hover / press / selection.
+///
+///      dark  normal #43454A   highlight #353638
+///      light normal #FFFFFF   highlight #F1F3F5
+///
+/// Same two flavours as PanelSurface: `fill(dark:highlighted:)` for draw(_:)
+/// code, `dynamic(highlighted:)` for stock AppKit surfaces (layer backgrounds
+/// included — resolve those through `fill` since a CGColor is a snapshot).
+enum PanelControl {
+    /// #43454A — card / button / tab fill.
+    static let darkNormal = NSColor(srgbRed: 0x43 / 255.0, green: 0x45 / 255.0,
+                                    blue: 0x4A / 255.0, alpha: 1)
+    /// #353638 — hover / pressed / selected fill (dark theme).
+    static let darkHighlight = NSColor(srgbRed: 0x35 / 255.0, green: 0x36 / 255.0,
+                                       blue: 0x38 / 255.0, alpha: 1)
+    /// #FFFFFF — card / button / tab fill (light theme).
+    static let lightNormal = NSColor(srgbRed: 1.0, green: 1.0, blue: 1.0, alpha: 1)
+    /// #F1F3F5 — hover / pressed / selected fill (light theme).
+    static let lightHighlight = NSColor(srgbRed: 0xF1 / 255.0, green: 0xF3 / 255.0,
+                                        blue: 0xF5 / 255.0, alpha: 1)
+
+    static func fill(dark: Bool, highlighted: Bool) -> NSColor {
+        dark ? (highlighted ? darkHighlight : darkNormal)
+             : (highlighted ? lightHighlight : lightNormal)
+    }
+
+    static func fill(for appearance: NSAppearance, highlighted: Bool) -> NSColor {
+        fill(dark: appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
+             highlighted: highlighted)
+    }
+
+    static func dynamic(highlighted: Bool) -> NSColor {
+        NSColor(name: nil) { fill(for: $0, highlighted: highlighted) }
+    }
+}
+
 enum PanelSurface {
     /// #1B1B1C — dark theme panel surface.
     static let dark = NSColor(srgbRed: 0x1B / 255.0, green: 0x1B / 255.0,

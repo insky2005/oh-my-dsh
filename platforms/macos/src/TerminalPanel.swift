@@ -1400,8 +1400,11 @@ final class TerminalPanelController: NSObject {
             self.session = session
             self.emulator = emulator
             self.termView = termView
-            let titleButton = NSButton(title: title, target: nil, action: nil)
-            titleButton.bezelStyle = .texturedRounded
+            // PanelTabButton = bezelless HoverButton（共用面板控件底色）
+            let titleButton = PanelTabButton(frame: .zero)
+            titleButton.title = title
+            titleButton.isBordered = false
+            titleButton.font = .systemFont(ofSize: 12)
             titleButton.setButtonType(.pushOnPushOff)
             titleButton.state = .off
             titleButton.tag = id

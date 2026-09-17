@@ -781,20 +781,8 @@ final class BrowserTabItemView: NSView {
     private var isHovered = false { didSet { updateStyle() } }
     private var trackingArea: NSTrackingArea?
 
-    /// 动态背景色（亮/暗外观切换自动变化，不写死）。
-    /// 暗色：深灰系（活动最深）；浅色：浅灰系（活动略深但仍浅）。
-    private let activeBg = NSColor(name: nil) { app in
-        let dark = app.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return dark ? NSColor(white: 0.10, alpha: 1) : NSColor(white: 0.74, alpha: 1)
-    }
-    private let hoverBg = NSColor(name: nil) { app in
-        let dark = app.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return dark ? NSColor(white: 0.22, alpha: 1) : NSColor(white: 0.64, alpha: 1)
-    }
-    private let normalBg = NSColor(name: nil) { app in
-        let dark = app.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return dark ? NSColor(white: 0.17, alpha: 1) : NSColor(white: 0.55, alpha: 1)
-    }
+    // 页签底色走共用面板控件色阶（PanelControl）：常态档 / 高亮档（活动或悬停）。
+    // 具体色值在 updateStyle 里按 effectiveAppearance 显式解析（layer 背景不吃动态色）。
 
     init(title: String, tabId: Int64) {
         super.init(frame: .zero)
@@ -864,9 +852,9 @@ final class BrowserTabItemView: NSView {
 
     private func updateStyle() {
         closeButton.isHidden = !(isActive || isHovered)
-        // 背景：动态色（活动最深，hover 居中，非活动最浅仍可见分隔）
-        let bg = isActive ? activeBg : (isHovered ? hoverBg : normalBg)
-        layer?.backgroundColor = bg.cgColor
+        // 背景：共用面板控件色阶（活动 / 悬停 = 高亮档，其余 = 常态档）
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        layer?.backgroundColor = PanelControl.fill(dark: dark, highlighted: isActive || isHovered).cgColor
         // 活动页签标题加粗
         titleButton.font = .systemFont(ofSize: 12, weight: isActive ? .semibold : .regular)
     }
@@ -1008,7 +996,6 @@ final class BrowserPanelController: NSObject {
         headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         newTabButton = CustomIconButton(glyph: .plus, tooltip: L10n.tr("browser.newTabHint"), size: 18)
-        newTabButton.showsBackground = true  // 页签样式统一：带背景、hover 高亮
         // .fill 分布下固定宽度（不被拉伸）
         newTabButton.setContentHuggingPriority(.required, for: .horizontal)
         newTabButton.setContentCompressionResistancePriority(.required, for: .horizontal)

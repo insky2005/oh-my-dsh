@@ -58,15 +58,15 @@ private enum ReviewInk {
     static let hairline = ReviewFill.adaptive(
         light: NSColor(calibratedWhite: 0.80, alpha: 1),
         dark: NSColor(calibratedWhite: 0.38, alpha: 0.7))
+    /// Block fills come from the shared panel-control scale (PanelControl): the
+    /// session / turn containers take the normal fill, the innermost content
+    /// block the highlight fill, so the nesting still reads.
     static let sessionFill = ReviewFill.adaptive(
-        light: NSColor(calibratedRed: 0.90, green: 0.93, blue: 0.99, alpha: 1),
-        dark: NSColor(calibratedRed: 0.17, green: 0.21, blue: 0.30, alpha: 1))
+        light: PanelControl.lightNormal, dark: PanelControl.darkNormal)
     static let turnFill = ReviewFill.adaptive(
-        light: NSColor(calibratedWhite: 0.955, alpha: 1),
-        dark: NSColor(calibratedWhite: 0.235, alpha: 1))
+        light: PanelControl.lightNormal, dark: PanelControl.darkNormal)
     static let blockFill = ReviewFill.adaptive(
-        light: NSColor.white,
-        dark: NSColor(calibratedWhite: 0.185, alpha: 1))
+        light: PanelControl.lightHighlight, dark: PanelControl.darkHighlight)
     /// The session dsh web is showing: an accent-tinted block with accent ink.
     static let currentSessionFill = ReviewFill.adaptive(
         light: NSColor.controlAccentColor.withAlphaComponent(0.20),

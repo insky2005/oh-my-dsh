@@ -26,7 +26,8 @@ class SkillCardView: NSView {
 
     override var isOpaque: Bool { false }
 
-    /// Accent-tinted card, used for the registry tab's selected state.
+    /// Selected card (the registry tab's current choice): highlight fill plus an
+    /// accent border so the selection still reads.
     var highlighted = false { didSet { needsDisplay = true } }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -36,13 +37,12 @@ class SkillCardView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let fill: NSColor
+        // Card fill comes from the shared panel-control scale (PanelControl).
+        let fill = PanelControl.fill(dark: dark, highlighted: highlighted)
         let border: NSColor
         if highlighted {
-            fill = NSColor.controlAccentColor.withAlphaComponent(dark ? 0.22 : 0.12)
             border = NSColor.controlAccentColor.withAlphaComponent(dark ? 0.55 : 0.45)
         } else {
-            fill = dark ? NSColor(calibratedWhite: 0.20, alpha: 1) : NSColor(calibratedWhite: 1.0, alpha: 1)
             border = dark ? NSColor(calibratedWhite: 0.38, alpha: 0.7) : NSColor(calibratedWhite: 0.82, alpha: 1)
         }
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
@@ -104,10 +104,9 @@ final class SkillTabItemView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        if isHovered, !isSelected {
-            (dark ? NSColor(calibratedWhite: 1, alpha: 0.06) : NSColor(calibratedWhite: 0, alpha: 0.05)).setFill()
-            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 2), xRadius: 5, yRadius: 5).fill()
-        }
+        // Flat tab fill: the shared panel-control scale (normal / highlight).
+        PanelControl.fill(dark: dark, highlighted: isSelected || isHovered).setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 2), xRadius: 5, yRadius: 5).fill()
         let color: NSColor = isSelected
             ? .controlAccentColor
             : (dark ? NSColor(calibratedWhite: 0.78, alpha: 1) : NSColor(calibratedWhite: 0.35, alpha: 1))
@@ -976,7 +975,6 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
             child.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             child.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
-        registryButton.showsBackground = (target == .registries)
         switch target {
         case .installed: renderInstalled()
         case .available:
