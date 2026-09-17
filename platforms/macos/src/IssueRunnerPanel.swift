@@ -159,6 +159,9 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         tableView.dataSource = self
         tableView.delegate = self
         tableView.allowsMultipleSelection = false
+        // 内容区 = 面板底色。NSTableView 默认画自己的 controlBackgroundColor
+        // （浅色白 / 深色近黑），会盖住面板根视图的 PanelSurface。
+        tableView.backgroundColor = PanelSurface.dynamic
 
         tableScroll.documentView = tableView
         tableScroll.hasVerticalScroller = true

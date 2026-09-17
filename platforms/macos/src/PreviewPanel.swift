@@ -625,6 +625,8 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
 
         // --- content area: project tree (left) | preview (right) ---
         treeOutline.headerView = nil
+        // 内容区 = 面板底色（默认 controlBackgroundColor 会盖住面板根视图）
+        treeOutline.backgroundColor = PanelSurface.dynamic
         let treeColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
         treeOutline.addTableColumn(treeColumn)
         treeOutline.outlineTableColumn = treeColumn
@@ -1245,6 +1247,7 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         table.addTableColumn(column(L10n.tr("preview.modified"), id: "modified", width: 130))
         table.rowHeight = 20
         table.usesAlternatingRowBackgroundColors = true
+        table.backgroundColor = PanelSurface.dynamic
         table.dataSource = self
         table.delegate = self
         table.target = self

@@ -994,6 +994,8 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
 
         // tree
         treeOutline.headerView = nil
+        // 内容区 = 面板底色（默认 controlBackgroundColor 会盖住面板根视图）
+        treeOutline.backgroundColor = PanelSurface.dynamic
         let treeColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("page"))
         treeOutline.addTableColumn(treeColumn)
         treeOutline.outlineTableColumn = treeColumn
