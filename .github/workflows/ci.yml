@@ -83,6 +83,8 @@ jobs:
         run: tests/shell-config/run.sh
       - name: Built-in skills tests
         run: tests/skills/run.sh
+      - name: Skills manager panel tests
+        run: tests/skills-panel/run.sh
       - name: Channel panel tests
         run: tests/channel-panel/run.sh
       - name: Native dsh RPC helper tests (both API generations)

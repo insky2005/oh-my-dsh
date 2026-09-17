@@ -7,6 +7,31 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **技能面板（Skills / `⌥⌘S`，活动栏「技能」）：在壳层里查找 / 安装 / 移除 agent 技能，并管理调用开关**。面板分「已安装」与「可安装」两个页签：**已安装**扫描 dsh 的四个技能根（`<工作区>/.dsh/skills`、`<工作区>/.agents/skills`、`$DSH_HOME/skills`、`~/.agents/skills`），按 dsh 的 rank 去重并逐行标出**级别** —— `内置` / `用户级` / `共享级` / `项目级`（同名被压住的标「被遮蔽」）；**可安装**按当前 registry 渲染清单或按关键字搜索，支持清单勾选安装、从地址安装与手动导入本地目录。**内置技能只读**（开关禁用、无移除入口、不可被安装覆盖——App 启动时按内嵌内容同步，字节一致性不变，故 `SkillInstaller.swift` 零改动）；**共享级**（外部 skills CLI 管理的 `~/.agents/skills`）可看可改开关、但不在面板里移除；**用户级 / 项目级**可改开关、可移除。
+  - **调用开关写回 SKILL.md frontmatter**：`用户可调用` → `user-invocable`、`模型可调用` → `disable-model-invocation`（关闭即写 `true`）；**切回默认值会删掉该键**，从而字节还原原文件；只增删改这两行，键序/注释/引号/CRLF/正文全部原样保留（不是 YAML 往返）。**只写规范键**——dsh 对旧的驼峰键（`userInvocable` 等）会直接忽略整个技能。改完 dsh 自动发现，无需重启；重启后开关仍在（记录在壳层 `$DSH_HOME/shell/skills.json`，面板重装同一技能时按记录重放）。
+  - **安装目标**：默认 **用户级** `$DSH_HOME/skills/<name>/`（所有工作区通用），可选 **项目级** `<工作区>/.dsh/skills/<name>/`（rank 100、优先级最高，写用户仓库前会提示 git diff）；同名已存在先确认，目标是内置同名技能则拒绝；技能目录**整目录复制**（SKILL.md + 附件），拒绝路径穿越、仅接受 https、失败不留半成品。
+  - **registry 是可配置项**（`shell/skills.json` 的 `registries`，默认预置 skills.sh）：`owner/repo` 或 GitHub 地址 → **列出该仓库的技能清单**（浅克隆后本地扫描，避开 GitHub API 限流）；well-known 地址 → 读 `/.well-known/skills/index.json` 清单；其他 URL → 视为 skills.sh 兼容的搜索接口（模板 `{q}`/`{limit}`）。**skills.sh 只提供关键字搜索、没有全量清单接口**（实测 `/api/leaderboard`、`/api/skills` 均 404，站点榜单是 HTML）——因此该 registry 未配清单来源时，列表区明确提示「按关键字搜索」，不做 HTML 抓取。
+  - 新增 `platforms/macos/src/SkillsPanel.swift`（右栏面板）、`SkillsCore.swift`（纯 Foundation 模型：frontmatter 读写、四根扫描与级别判定、壳层技能记录 `shell/skills.json`）、`SkillSources.swift`（地址解析、registry 清单与搜索、拉取/安装/移除，传输可注入）与 `tests/skills-panel/`（无头模型单测，已接入 `scripts/local-ci.sh` 与 CI swift job）；`tests/skills/` 的内置技能字节断言保持不变。
+  - 设计、四档级别判定与 registry 模型：`docs/skills-manager-design.md`；dsh 升级核对项见 `docs/dsh-version-impact.md` D2/D2b/D2c/D2d。
+
+### Fixed
+
+- **面板顶部条/标签被同色不透明兄弟视图覆盖（技能面板的标题与按钮不可见）**：`DynamicFillView` 是不透明视图，原实现按 `dirtyRect` 填充，而 AppKit 可能给不透明视图传入**大于其自身 bounds** 的脏矩形——于是内容容器（先添加、层级更低的兄弟）会把它上方的头部条、标签条整条刷成自己的底色，看起来就是"顶部空白/被遮住"。改为 `bounds.intersection(dirtyRect).fill()` 只填自己拥有的区域；技能面板同时把内容容器放到最底层、头部最后添加（双重保险）。新增无头绘制回归测试（`tests/skills-panel/render-tests.swift`：真实 `DynamicFillView`/`HeaderLabel` 离屏渲染后断言头部条有内容、且不透明兄弟不会越界覆盖），已验证**去掉该修复后测试会失败**。
+
+- **技能面板的改动现在会被 dsh web 立即看到（对话输入框 `/` 的技能菜单不再需要手动刷新）**：dsh 客户端按会话缓存技能目录，且只在 `connection/reset`（连接重连）或切换 agent preset 时失效；技能文件变化不是会话事件、服务端不会推送，所以此前改完 `user-invocable` / 安装 / 移除都必须手动刷新页面。现在面板在**改开关 / 安装 / 移除**后通知壳层，由壳层向 web 页注入 JS 派发**浏览器 offline → online 事件**，触发客户端自身重连并发出 `connection/reset`，各客户端插件缓存（含技能目录）随之清空并重取——与手动刷新等效但不重载文档。1.5s 节流；`DSH_SKILLS_NO_NUDGE=1` 可关闭。
+
+- **候选技能可查看详情（点击卡片即可）**：可用列表**整张卡片可点**，点击用**系统默认浏览器**打开该技能的页面（只接受 http(s)，不用内置浏览器面板）；**「安装」按钮改为鼠标移入卡片时才出现**，移出即隐藏，平时列表保持干净。详情页 URL：skills.sh 型 registry 打开 `https://www.skills.sh/<source>/<skill>`（如 `https://www.skills.sh/vercel-labs/skills/find-skills`），GitHub 清单打开仓库内技能目录，well-known 打开该技能的 `SKILL.md`，裸 git 打开远端，本地路径改为在 Finder 中显示。
+
+### Fixed
+
+- **可用列表滚动后"划过的技能全部保持高亮"**：AppKit 的 tracking area 只在指针移动时触发 enter/exit，内容从静止指针下滚过时不会触发 `mouseExited`，于是划过的卡片一直亮着、也不还原。现在面板监听 clip view 的滚动通知，每次滚动按**当前指针位置**重算唯一 hover 的卡片（`SkillHoverResolver`，纯函数 + 4 条单测：命中/落在卡片间隙/已被滚出可视区/指针在列表外）。
+
+### Changed
+
+- README 面板数量文案与目录树同步为八个面板。
+
 ### Fixed
 
 - **修复「新建的会话在审查面板里只有一行会话、看不到里面改的文件」**：面板的审计结果**按 sessionId 缓存后永不失效**——而新建会话一诞生（成为 dsh web 当前会话）就会被审一次，那会儿日志里只有会话头，于是「0 文件 / 本会话没有记录到文件变更」被**永久钉住**：后面改了多少文件都不会再读一次（点刷新也只重列会话，不动审计缓存）。会话日志是**活文档**（dsh 每落盘一批追加一个独立可解压的 Zstandard 帧，只增不减），因此缓存必须按**日志身份**而不是 id 认账：

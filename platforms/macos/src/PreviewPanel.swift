@@ -116,7 +116,12 @@ final class DynamicFillView: NSView {
             color = c
         }
         color.setFill()
-        dirtyRect.fill()
+        // Fill only what this view actually owns. AppKit can hand an opaque view
+        // a dirty rect LARGER than its bounds, and filling that paints over
+        // sibling views lower in z-order: the Skills panel's header (title +
+        // buttons) and its tab selector vanished exactly this way until the fill
+        // was clamped, and the render harness reproduces it deterministically.
+        bounds.intersection(dirtyRect).fill()
     }
 }
 

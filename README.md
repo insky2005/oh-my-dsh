@@ -2,7 +2,7 @@
 
 把 DeepSeek Harness 的 Web 界面（`dsh web`）封装成一个可以在 macOS 上**直接双击运行**的原生 App。
 **不改动任何 DeepSeek Harness 源码**——它只是一个壳：内置运行时自拉起 `dsh web`，用原生 `WKWebView`
-呈现界面，并在窗口右侧提供七个原生面板（文件 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务 / 通道 / 审计）。
+呈现界面，并在窗口右侧提供八个原生面板（文件 / 终端 / 浏览器 / Repo Wiki 知识库 / 任务 / 通道 / 审计 / 技能）。
 
 ## 特性一览
 
@@ -15,12 +15,13 @@
 - **首次引导 onboarding**：首次启动展示欢迎说明（内置运行时/自包含原理/上手提示）；
 - **关于面板**：App 菜单 →「关于 oh-my-dsh」显示 App 版本、build、依赖的 dsh 版本与运行时来源、Node 版本+路径、dsh registry。
 - **通道面板（远程驱动）**：绑定微信个人号（官方 iLink 协议）或钉钉（dingtalk-stream 原生适配器），在微信/钉钉里发消息 / 斜杠指令远程驱动 dsh 干活——消息路由到项目会话、结果回复回原平台；扫码登录、项目开关、会话列表均在面板内完成。
+- **技能面板（Skills）**：在壳层里管理 agent 技能——**查找**（registry 清单 / 关键字搜索 / 已装技能搜索）、**安装**（清单勾选 / 输入地址 / 手动导入本地目录）、**移除**，并按 **内置 / 用户级 / 共享级 / 项目级** 标注每个技能；非内置技能可切换 `user-invocable` 与 `disable-model-invocation`（写回 `SKILL.md` frontmatter，重启后保持）；registry 可配置（skills.sh 搜索型、well-known 清单、GitHub 仓库清单）。
 - **审查面板（只读审计）**：直接读 dsh 落盘的会话日志，按 会话 → 对话 → 文件 → 变更内容 列出代理到底改了哪些文件、改成什么（标出每处改动是工具 hunk、参数还原还是仅全文写入），并显式列出 shell 直改与失败的调用——**只读、不写任何文件、不发任何请求**。
 
 ## 右栏面板
 
-窗口**最右侧是活动栏**（图标入口，七个面板互斥切换），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
-「视图」菜单提供七面板的显示/隐藏快捷键。
+窗口**最右侧是活动栏**（图标入口，八个面板互斥切换），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
+「视图」菜单提供八面板的显示/隐藏快捷键。
 
 ### 文件面板（`⌥⌘P` / 活动栏「文件」图标）
 
@@ -102,6 +103,27 @@
 - 设计与指令清单：`docs/channel-design.md`、`docs/channel-dingtalk-stream.md`、`docs/channel-commands.md`、`docs/channel-status.md`、`docs/channel-project-switch.md`。
 
 ![channel](./docs/screenshots/channel.png)
+
+### 技能面板（`⌥⌘S` / 活动栏「技能」图标）
+
+管理 agent 技能（SKILL.md）：**已安装** 与 **可安装** 两个页签。
+
+**已安装**：扫描 dsh 的四个技能根，按优先级去重，逐行标出级别 —— `内置` / `用户级` / `共享级` / `项目级`，同名被压住的标「被遮蔽」，并给出描述与完整路径。
+
+- **内置技能只读**：开关禁用、无「移除」、卸载不掉（App 启动时按内嵌内容同步，内嵌与已装文件保持字节一致）；
+- **共享级**（`~/.agents/skills`，外部 skills CLI 管理）：可看到、可改开关，但不在面板里移除；
+- **用户级 / 项目级**：可改开关、可移除（项目级会写进用户仓库，确认框会提示）；
+- **调用开关**：`用户可调用` 写 `user-invocable`、`模型可调用` 写 `disable-model-invocation`（关 = 写 true）——改的是 `SKILL.md` 的 frontmatter，dsh 自动识别，无需重启；切回默认值会**删掉该键**，文件字节还原；
+
+**可安装**：顶部选 registry，列表就是该 registry 的技能清单；**进入即有内容** —— 有清单来源的 registry（GitHub 仓库 / well-known）直接列出清单，只有搜索接口的（skills.sh）默认显示**热门列表（按安装量降序，前 30）**，输入关键字即切换为搜索结果。
+
+- **registry 可配置**（`$DSH_HOME/shell/skills.json`）：`owner/repo` 或 GitHub 地址 → 列该仓库的技能清单；well-known 地址 → 读 `/.well-known/skills/index.json`；其他 URL → 视为 skills.sh 兼容的搜索接口（默认预置 skills.sh，仅有搜索，无全量清单，故无清单来源时列表区会提示「按关键字搜索」）；
+- **交互**：**整张卡片可点 = 看详情**（用系统默认浏览器打开该技能的页面：skills.sh 型 registry → `https://www.skills.sh/<source>/<skill>`；GitHub → 仓库内技能目录；well-known → 该技能的 SKILL.md；本地路径 → 在 Finder 中显示），悬停时整卡有 accent 底色提示可点；**「安装」按钮只在鼠标移入卡片时出现**，移出即隐藏；
+- **安装方式**：清单勾选安装 / 「从地址安装…」（`owner/repo`、`owner/repo@skill`、GitHub·GitLab 地址、well-known 地址、本地路径）/ 「手动导入…」（本地目录含 SKILL.md，或单个 SKILL.md，附件一并复制）；
+- **落点**：默认 **用户级** `$DSH_HOME/skills/<name>/`（所有工作区通用），可选 **项目级** `<工作区>/.dsh/skills/<name>/`（优先级最高）；同名已存在会先确认，内置同名技能拒绝覆盖；
+- **安全**：技能以完整代理权限运行，安装确认处固定提示；仅接受 https 地址，路径穿越被拒绝，失败不留半成品。
+
+设计与机制（四档级别判定、registry 模型、开关的可逆写法）：`docs/skills-manager-design.md`。
 
 ### 审查面板（`⌥⌘R` / 活动栏「审查」图标）
 
@@ -271,7 +293,7 @@ open "dist/oh-my-dsh.app"
 壳二进制只做三件事：探测空闲端口 → 用内置 `node` 执行内置 `<dsh>/lib/bin.js web --port <n>` 拉起（并回收自己上次残留的实例）→ `WKWebView` 加载 `http://127.0.0.1:<n>/?token=…`。
 `dsh` 本体、`~/.dsh` 配置、会话数据全部原样，无任何补丁或注入。内置运行时装在 `Contents/Resources/runtime/`
 （`node` + `npm` + `dsh/` 依赖树），App 优先使用它，找不到时才回退到本机安装。
-右侧七个面板是壳层原生 UI，其中文件面板通过 WebView 注入拦截文件打开，任务 / 知识库 / 浏览器 / 通道 / 审查通过 dsh 既有能力（RPC / 会话 / 独立浏览器内核 / 会话日志）驱动。
+右侧八个面板是壳层原生 UI，其中文件面板通过 WebView 注入拦截文件打开，任务 / 知识库 / 浏览器 / 通道 / 审查 / 技能通过 dsh 既有能力（RPC / 会话 / 独立浏览器内核 / 会话日志 / SKILL.md 发现）驱动。
 
 ## 目录
 
@@ -286,6 +308,9 @@ platforms/macos/src/                  原生壳（Swift）
   WikiPanel.swift      Repo Wiki 知识库面板（生成/维护/浏览 + 自动 git 提交）
   IssueRunnerPanel.swift 任务面板（GitHub issues 串行流水线 + 关联索引 + 评论并关闭）
   ChannelPanel.swift     通道面板（微信/钉钉接入：引导卡片/扫码向导/项目视图 + 启动自动拉起 listener）
+  SkillsPanel.swift      技能面板（已安装/可安装/registry/调用开关/移除）
+  SkillsCore.swift       技能模型（frontmatter 读写、四根扫描与级别、壳层技能记录）
+  SkillSources.swift     技能来源（地址解析、registry 清单与搜索、拉取/安装/移除）
   ReviewPanel.swift      审计面板（只读：会话日志变更/嵌套调用/shell 可疑命令）
   ReviewLogModel.swift   审计面板数据模型（核心 JSON 解码 + 文件分组/diff 折叠，纯 Foundation 可无头测试）
   BrowserPanel.swift / BrowserAPI.swift / BrowserCDP.swift  浏览器面板（CEF 渲染 + REST API + CDP）
@@ -314,7 +339,7 @@ docs/                设计/排查文档（productization.md、dsh-version-impac
 
 - **Bug / 功能请求**：使用仓库的 Issue 模板（bug / feature）提交；
 - **本地测试**：`node --test --test-timeout=60000 core/tests/*.test.js`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层 / review-log 变更审计；`--test-timeout` 保证任何泄漏定时器的用例快速失败而不是挂死）、
-  `tests/wiki-panel/run.sh`（Wiki 面板）、`tests/terminal-emulator/run.sh`（模拟器）、`tests/terminal-panel/run.sh`（终端面板头部）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/file-panel/run.sh`（文件面板：工作区页签记忆 / 未保存提示 / 切换语义）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/dsh-auth-cookies/run.sh`（dsh-auth cookie 清理与 NODE_OPTIONS）、`tests/shell-config/run.sh`（壳层设置与旧 UserDefaults 迁移）、`tests/l10n/run.sh`（L10n 键名 lint）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠 + 控制器无头回归「日志变了必须重审、没变不许重审」）；`scripts/local-ci.sh` 一次跑全部；
+  `tests/wiki-panel/run.sh`（Wiki 面板）、`tests/terminal-emulator/run.sh`（模拟器）、`tests/terminal-panel/run.sh`（终端面板头部）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/file-panel/run.sh`（文件面板：工作区页签记忆 / 未保存提示 / 切换语义）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/dsh-auth-cookies/run.sh`（dsh-auth cookie 清理与 NODE_OPTIONS）、`tests/shell-config/run.sh`（壳层设置与旧 UserDefaults 迁移）、`tests/l10n/run.sh`（L10n 键名 lint）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/skills-panel/run.sh`（技能面板：frontmatter 字节保真 / 四根级别与遮蔽 / 内置与共享级写操作拒绝 / 安装·移除 / registry 清单与搜索 + 面板控制器无头冒烟 + 离屏绘制回归）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠 + 控制器无头回归「日志变了必须重审、没变不许重审」）；`scripts/local-ci.sh` 一次跑全部；
 - **CI**：push/PR 自动跑 core 单测 + 壳层编译检查 + macOS arm64 构建（`.github/workflows/ci.yml`）；发布由 release 流程构建双架构。
 
 本项目遵循 [MIT License](LICENSE)，代码只封装、绝不修改 DeepSeek Harness 上游源码。

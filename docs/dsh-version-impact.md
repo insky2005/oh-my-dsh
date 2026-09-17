@@ -69,7 +69,10 @@
 | # | 路径 | 归属 | 依赖方式 | 断裂表现 | 代码位置 |
 |---|---|---|---|---|---|
 | D1 | `storages/workspace.json`（`tables.workspaces[<workspaceId>] = {path,title,sessionIds,…}` + `global.workspaceIds` 顺序） | dsh | **读**：工作区列表兜底 + 会话→项目目录映射 | 工作区/项目目录取不到 | core `workspace-store.js`、main.swift `persistedWorkspacePath` |
-| D2 | `skills/<name>/SKILL.md` | dsh 发现，我们写入 | 启动时安装内置 skill（缺失即装、托管标记、用户改过不覆盖） | 内置 skill（web-dev-tools / repo-knowledge / issue-resolve）不被 dsh 发现 | `SkillInstaller.swift` |
+| D2 | `skills/<name>/SKILL.md` | dsh 发现，我们写入 | 启动时安装内置 skill（缺失即装、托管标记、用户改过不覆盖）；技能面板在**非内置**技能上改写 `user-invocable` / `disable-model-invocation` 两行 | 内置 skill（web-dev-tools / repo-knowledge / issue-resolve）不被 dsh 发现；开关写了但 dsh 不认 | `SkillInstaller.swift`（安装）、`SkillsCore.swift`（frontmatter 读写/扫描）、`SkillSources.swift`（安装/移除） |
+| D2b | 技能调用 frontmatter 键名：`user-invocable`（默认 true）、`disable-model-invocation`（默认 false）；**旧驼峰键会让 dsh 忽略整个技能** | 键名若改（或默认值反转），面板开关的语义/写出的键会失配 | 开关看似生效但技能可见性不变；写错键还会让技能整个消失 | `SkillsCore.swift` `SkillFrontmatterIO`（只写规范键、切回默认即删键）；`tests/skills-panel/run.sh` | 改一个技能的两个开关 → dsh 新会话里模型目录/用户技能列表随之变化 |
+| D2c | 技能根与优先级：`<ws>/.dsh/skills`(100) > `<ws>/.agents/skills`(200) > `$DSH_HOME/skills`(400) > `~/.agents/skills`(500) | 新增/调整根会让面板的级别标注与去重判断失准 | 面板标错级别、或把被遮蔽的技能当成生效技能 | `SkillsCore.swift` `SkillRoots` / `SkillScanner`（rank 升序 + `shadowedBy`） | 面板「已安装」列表中同名技能的级别与被遮蔽标记 |
+| D2d | `shell/skills.json`（我们自己的）：registries / invocation / installed | 与 dsh 无关（壳层自有） | 面板设置丢失（registry、开关记录） | `SkillsCore.swift` `SkillStore`；缺失即按空配置处理 | 改一个 registry 或开关后重启 App，设置仍在 |
 | D3 | `channels/*` | **我们**（放在 dsh home 下） | 凭据/会话映射/消息归档/workspace 启用/state | 通道配置丢失 | core `channel-store/sessions/runner` |
 | D4 | `shell/config.json` | **我们** | 壳层设置（语言/主题/面板宽度/registry…） | 面板宽度、语言回默认 | core `settings.js` + `ShellConfig.swift` |
 | D5 | `browser-api.port` | **我们** | 浏览器面板 REST 端口文件的约定位置，供 web-dev-tools 技能发现 | Agent 技能找不到浏览器面板 API | main.swift 启动段 + `SkillInstaller` 文案 |
