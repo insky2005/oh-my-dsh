@@ -14,9 +14,7 @@ import AppKit
 final class SkillsRootView: NSView {
     override var isOpaque: Bool { false }
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let color = dark ? NSColor(calibratedWhite: 0.28, alpha: 1) : NSColor(calibratedWhite: 0.94, alpha: 1)
-        color.setFill()
+        PanelSurface.color(for: effectiveAppearance).setFill()
         dirtyRect.fill()
     }
 }
@@ -738,7 +736,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         registryButton.onAction = { [weak self] in self?.toggleRegistryPage() }
 
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerTitle)
@@ -765,7 +763,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
         segmented.action = #selector(tabChanged)
         segmented.translatesAutoresizingMaskIntoConstraints = false
 
-        contentContainer.kind = .window
+        contentContainer.kind = .panel
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
 
         buildInstalledTab()

@@ -106,11 +106,7 @@ final class BrowserRootView: NSView {
         needsDisplay = true
     }
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let color: NSColor = dark
-            ? NSColor(calibratedWhite: 0.28, alpha: 1)
-            : NSColor(calibratedWhite: 0.94, alpha: 1)
-        color.setFill()
+        PanelSurface.color(for: effectiveAppearance).setFill()
         dirtyRect.fill()
     }
 }
@@ -139,7 +135,7 @@ final class DevToolsBarView: NSView {
         wantsLayer = true
         layer?.masksToBounds = true
         let bg = DynamicFillView()
-        bg.kind = .control
+        bg.kind = .panel
         bg.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bg)
         let label = HeaderLabel()
@@ -357,13 +353,14 @@ final class BrowserOSRView: NSView {
         updatePageBackground()
     }
 
-    /// 主窗口区背景：暗色=黑 / 亮色=白（about:blank 等透明页面时）。
+    /// 主窗口区背景：壳层面板底色（深色 #1B1B1C / 浅色 #F9FAFB），
+    /// about:blank 等透明页面时可见。
     /// devtoolsContent 也垫不透明背景：拖动中 CEF 视图保持静止、pageView
     /// 裁剪区变化，若 devtoolsContent 无背景，DevTools 区下方会透出主页面
     /// 内容（串窗口）。见 docs/devtools-drag-fix.md「唯一注意点」。
     private func updatePageBackground() {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let bg = (dark ? NSColor.black : NSColor.white).cgColor
+        let bg = PanelSurface.color(dark: dark).cgColor
         pageView.layer?.backgroundColor = bg
         devtoolsContent.layer?.backgroundColor = bg
     }
@@ -1034,7 +1031,7 @@ final class BrowserPanelController: NSObject {
         headerActions.translatesAutoresizingMaskIntoConstraints = false
 
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         // layer 隔离（docs/terminal-header-fix.md）：opaque 无独立 layer 的
         // 视图绘制会溢出盖住垫底的内容区（实测 header 移除后内容区即恢复）。
@@ -1086,7 +1083,7 @@ final class BrowserPanelController: NSObject {
         devToolsButton.onAction = { [weak self] in self?.openDevTools() }
 
         let toolbar = DynamicFillView()
-        toolbar.kind = .control
+        toolbar.kind = .panel
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         // layer 隔离：opaque 无 layer 视图的绘制会溢出盖住上方头部按钮
         // （docs/terminal-header-fix.md 同源问题；wiki 面板工具行同款处理）。

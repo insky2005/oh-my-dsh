@@ -21,6 +21,7 @@ mkdir -p "$TMP/panel"
 cp controller-stubs.swift "$TMP/panel/stubs.swift"
 cp ../../platforms/macos/src/ReviewLogModel.swift "$TMP/panel/ReviewLogModel.swift"
 cp ../../platforms/macos/src/ReviewPanel.swift "$TMP/panel/ReviewPanel.swift"
+cp ../../platforms/macos/src/PanelSurface.swift "$TMP/panel/PanelSurface.swift"   # 面板底色 token
 cp controller-tests.swift "$TMP/panel/main.swift"
 swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
   -o "$TMP/review-controller-tests" "$TMP/panel/"*.swift

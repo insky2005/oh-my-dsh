@@ -2191,7 +2191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
         let activityBar = DynamicFillView()
-        activityBar.kind = .control
+        activityBar.kind = .panel
         activityBar.translatesAutoresizingMaskIntoConstraints = false
 
         // 活动栏图标：tooltip 跟随系统语言（L10n 中英切换）；

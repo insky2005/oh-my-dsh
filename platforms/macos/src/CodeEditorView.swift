@@ -263,7 +263,7 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
         tv.font = Self.codeFont
         tv.textColor = .textColor
         tv.drawsBackground = true
-        tv.backgroundColor = .textBackgroundColor
+        tv.backgroundColor = PanelSurface.dynamic
         tv.textContainerInset = NSSize(width: 8, height: 8)
         tv.isVerticallyResizable = true
         tv.isHorizontallyResizable = true

@@ -82,15 +82,17 @@ class HoverButton: NSButton {
     }
 }
 
-/// A view that fills itself with a dynamic color, re-resolved whenever the
-/// effective appearance changes. Used to give every panel's top bar a
-/// consistent, always-visible background strip in light AND dark mode (a
-/// fixed CGColor layer background would freeze the light/dark resolution).
+/// A view that fills itself with the panel surface (see PanelSurface.swift —
+/// the one #1B1B1C / #F9FAFB token every panel's top bar and content area
+/// paints), or an explicit color,
+/// re-resolved whenever the effective appearance changes. Used to give every
+/// panel's top bar and content area a consistent, always-visible background in
+/// light AND dark mode (a fixed CGColor layer background would freeze the
+/// light/dark resolution).
 final class DynamicFillView: NSView {
-    /// Semantic background with EXPLICIT per-mode shades (no dynamic-color
-    /// resolution at draw time — that proved unreliable in some environments).
-    enum Kind { case window, control, custom(NSColor) }
-    var kind: Kind = .window {
+    /// Panel surface (default) or an explicit, non-adaptive color.
+    enum Kind { case panel, custom(NSColor) }
+    var kind: Kind = .panel {
         didSet { needsDisplay = true }
     }
     override var isOpaque: Bool { true }
@@ -103,15 +105,10 @@ final class DynamicFillView: NSView {
         needsDisplay = true
     }
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let color: NSColor
         switch kind {
-        case .window:
-            // A clearly GRAY strip (distinct from both the near-black terminal
-            // screen and the window chrome) in dark mode; light gray in light.
-            color = dark ? NSColor(calibratedWhite: 0.28, alpha: 1) : NSColor(calibratedWhite: 0.94, alpha: 1)
-        case .control:
-            color = dark ? NSColor(calibratedWhite: 0.20, alpha: 1) : NSColor(calibratedWhite: 0.86, alpha: 1)
+        case .panel:
+            color = PanelSurface.color(for: effectiveAppearance)
         case .custom(let c):
             color = c
         }
@@ -571,7 +568,7 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         // Header strip: explicit dynamic background so the top bar is a
         // defined block (consistent with the terminal panel) in both modes.
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(pathLabel)
         header.addSubview(actions)
@@ -1240,7 +1237,7 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
+        scroll.backgroundColor = PanelSurface.dynamic
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         embed(scroll)
@@ -1376,15 +1373,15 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         // NSTextView.scrollableTextView() returns a ready-made scroll view with
         // a vertically resizable text view — the reliable way to display text
         // of any length (a bare NSTextView with a zero frame is not visible).
-        // Backgrounds use the dynamic .textBackgroundColor so the preview
+        // Backgrounds use the dynamic PanelSurface.dynamic so the preview
         // follows light/dark appearance (a bare scrollableTextView renders a
         // fixed white background otherwise).
         let scroll = NSTextView.scrollableTextView()
         scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
+        scroll.backgroundColor = PanelSurface.dynamic
         guard let textView = scroll.documentView as? NSTextView else { return }
         textView.drawsBackground = true
-        textView.backgroundColor = .textBackgroundColor
+        textView.backgroundColor = PanelSurface.dynamic
         textView.isEditable = false
         textView.isRichText = false
         textView.textContainerInset = NSSize(width: 8, height: 8)
@@ -1418,7 +1415,7 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         let scroll = NSScrollView()
         scroll.documentView = imageView
         scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
+        scroll.backgroundColor = PanelSurface.dynamic
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
@@ -1436,7 +1433,7 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         pdfView.document = doc
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
-        pdfView.backgroundColor = .textBackgroundColor
+        pdfView.backgroundColor = PanelSurface.dynamic
         AppLog.shared.log("preview pdf: \(doc.pageCount) pages")
         embed(pdfView)
     }

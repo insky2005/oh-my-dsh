@@ -64,8 +64,8 @@ enum DshWebRPC {
 // MARK: - View stand-ins (the panel's chrome only)
 
 final class DynamicFillView: NSView {
-    enum Kind { case window, control, custom(NSColor) }
-    var kind: Kind = .window
+    enum Kind { case panel, custom(NSColor) }
+    var kind: Kind = .panel
 }
 
 final class HeaderLabel: NSView {

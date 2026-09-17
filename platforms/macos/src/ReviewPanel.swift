@@ -38,9 +38,7 @@ struct ReviewFill {
 final class ReviewRootView: NSView {
     override var isOpaque: Bool { false }
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let color = dark ? NSColor(calibratedWhite: 0.20, alpha: 1) : NSColor(calibratedWhite: 0.96, alpha: 1)
-        color.setFill()
+        PanelSurface.color(for: effectiveAppearance).setFill()
         dirtyRect.fill()
     }
 }
@@ -53,7 +51,7 @@ final class ReviewRootView: NSView {
 /// recipe the Channel panel uses) because the tree needs more contrast than the
 /// stock control colours give.
 private enum ReviewInk {
-    static let paper: NSColor = .textBackgroundColor
+    static let paper: NSColor = PanelSurface.dynamic
     static let title: NSColor = .labelColor
     static let body: NSColor = .secondaryLabelColor
     static let muted: NSColor = .tertiaryLabelColor
@@ -305,7 +303,7 @@ final class ReviewPanelController: NSObject {
         actions.translatesAutoresizingMaskIntoConstraints = false
 
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerTitle)
         header.addSubview(actions)
@@ -319,7 +317,7 @@ final class ReviewPanelController: NSObject {
 
         // Toolbar: tree-wide expand/collapse + the shell-command filter.
         let toolbar = DynamicFillView()
-        toolbar.kind = .window
+        toolbar.kind = .panel
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true

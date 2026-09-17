@@ -7,9 +7,7 @@ import CoreImage.CIFilterBuiltins
 final class ChannelRootView: NSView {
     override var isOpaque: Bool { false }
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let color = dark ? NSColor(calibratedWhite: 0.28, alpha: 1) : NSColor(calibratedWhite: 0.94, alpha: 1)
-        color.setFill()
+        PanelSurface.color(for: effectiveAppearance).setFill()
         dirtyRect.fill()
     }
 }
@@ -184,7 +182,7 @@ final class ChannelPanelController: NSObject {
         actions.translatesAutoresizingMaskIntoConstraints = false
 
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerTitle)
         header.addSubview(actions)
@@ -202,7 +200,7 @@ final class ChannelPanelController: NSObject {
         // toolbar (28pt) — empty placeholder, with a separator below it so the
         // toolbar is visually separated from the content area.
         let toolbar = DynamicFillView()
-        toolbar.kind = .window
+        toolbar.kind = .panel
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true
@@ -216,7 +214,7 @@ final class ChannelPanelController: NSObject {
             toolbarSeparator.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor),
         ])
 
-        contentContainer.kind = .control
+        contentContainer.kind = .panel
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.wantsLayer = true
         contentContainer.layer?.masksToBounds = true
@@ -626,6 +624,8 @@ final class ChannelPanelController: NSObject {
     private func buildProject() {
         projectScroll.translatesAutoresizingMaskIntoConstraints = false
         projectScroll.hasVerticalScroller = true
+        // 面板底色由 contentContainer 画，滚动视图保持透明
+        projectScroll.drawsBackground = false
         projectScroll.documentView = projectList
 
         projectList.orientation = .vertical
