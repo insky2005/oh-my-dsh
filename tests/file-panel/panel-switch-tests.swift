@@ -271,5 +271,24 @@ test("a narrow panel still leaves the content pane room",
 test("an extremely narrow panel never goes below the minimum",
      FilePanelController.restoredTreeWidth(300, splitWidth: 200) == 160)
 
+// --- image preview badge must never resize itself (crash regression) --------
+// QC: opening an image crashed in
+// -[NSView _invalidateIntrinsicContentSizeDirtyingConstraints:] because the badge
+// measured its text and invalidated its intrinsic size — and a magnification
+// change can arrive during a layout pass (applyFit runs from layout()).
+
+let badge = ZoomBadgeView()
+let badgeBoxSize = badge.intrinsicContentSize
+badge.text = "12%"
+badge.text = "1600%"
+test("the zoom badge keeps a constant size whatever it shows",
+     badge.intrinsicContentSize == badgeBoxSize)
+test("the badge box is fixed (no intrinsic-size measuring)",
+     badgeBoxSize == ZoomBadgeView.size)
+let widestPercentage = ("1600%" as NSString).size(withAttributes:
+                        [.font: NSFont.systemFont(ofSize: 10, weight: .medium)]).width
+test("the fixed badge box fits the widest percentage",
+     ZoomBadgeView.size.width >= widestPercentage + 12)
+
 try? fm.removeItem(at: root)
 print("done")

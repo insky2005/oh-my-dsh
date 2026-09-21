@@ -30,6 +30,8 @@ final class ImagePreviewView: NSView {
     private let badge = ZoomBadgeView()
     private var followsViewport = true
     private var magnificationObservation: NSKeyValueObservation?
+    /// Last value shown in the badge (skips redundant redraws).
+    private var badgePercentage = -1
 
     init(image: NSImage) {
         imageSize = image.size.width > 0 && image.size.height > 0
@@ -57,6 +59,12 @@ final class ImagePreviewView: NSView {
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.topAnchor.constraint(equalTo: topAnchor),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // FIXED size: the badge must never resize itself. The zoom is applied
+            // from inside layout(), so a magnify notification can arrive DURING a
+            // layout pass; resizing a view at that moment crashes AppKit (QC: the
+            // app crashed as soon as an image was opened).
+            badge.widthAnchor.constraint(equalToConstant: ZoomBadgeView.size.width),
+            badge.heightAnchor.constraint(equalToConstant: ZoomBadgeView.size.height),
             badge.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             badge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
         ])
@@ -67,7 +75,7 @@ final class ImagePreviewView: NSView {
 
         // Trackpad pinch and ⌘-scroll change the magnification behind our back.
         magnificationObservation = scroll.observe(\.magnification, options: [.new]) { [weak self] _, _ in
-            self?.refreshBadge()
+            DispatchQueue.main.async { self?.refreshBadge() }
         }
         toolTip = L10n.tr("preview.imageZoomHint")
     }
@@ -121,13 +129,19 @@ final class ImagePreviewView: NSView {
 
     private func applyFit() {
         let fitted = ImageZoom.fitMagnification(imageSize: imageSize, viewport: viewportSize)
-        guard fitted > 0 else { return }
+        // Only when it actually changes: setting the magnification re-tiles the
+        // scroll view, and doing that from layout() with the same value would
+        // ping-pong between the two.
+        guard fitted > 0, abs(scroll.magnification - fitted) > 0.0001 else { return }
         scroll.magnification = fitted
         refreshBadge()
     }
 
     private func refreshBadge() {
-        badge.text = "\(Int((scroll.magnification * 100).rounded()))%"
+        let percentage = Int((scroll.magnification * 100).rounded())
+        guard percentage != badgePercentage else { return }
+        badgePercentage = percentage
+        badge.text = "\(percentage)%"
     }
 
     /// Test surface (tests/file-panel): the current zoom factor.
@@ -190,20 +204,24 @@ final class ImageZoomingView: NSImageView {
 // MARK: - Zoom badge
 
 /// The floating "42 %" badge in the corner of the preview.
+///
+/// Its size is CONSTANT: changing the text only schedules a redraw. Measuring the
+/// text and invalidating the intrinsic size here crashed AppKit when the badge was
+/// updated during a layout pass (the zoom is applied from layout()), and a zoom
+/// percentage always fits the fixed box.
 final class ZoomBadgeView: NSView {
+
+    /// Fixed box this badge is laid out in (see ImagePreviewView.init).
+    static let size = NSSize(width: 54, height: 18)
 
     var text: String = "" {
         didSet {
             guard text != oldValue else { return }
-            invalidateIntrinsicContentSize()
             needsDisplay = true
         }
     }
 
-    override var intrinsicContentSize: NSSize {
-        let size = (text as NSString).size(withAttributes: attributes)
-        return NSSize(width: ceil(size.width) + 12, height: ceil(size.height) + 4)
-    }
+    override var intrinsicContentSize: NSSize { Self.size }
 
     private var attributes: [NSAttributedString.Key: Any] {
         [.font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor]

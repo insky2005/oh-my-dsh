@@ -264,6 +264,8 @@
 - 新增 `ImagePreviewView.swift`：打开时/面板尺寸变化时**按比例适应窗口**（`ImageZoom.fitMagnification`，等比、以较紧的一边为准，**不放大超过 100%**，避免把小图标糊掉）；用户手动缩放后不再自动重新适应（以用户为准），直到 ⌘0、双击或重新打开文件。
 - 缩放方式：触控板**捏合**（NSScrollView magnification）、**⌘+ / ⌘− / ⌘0**、**⌘+滚轮**、**双击**（适应窗口 ↔ 100% 切换）；放大后可直接拖拽/滚动条平移。缩放范围 5%–1600%，单步 ×1.25。
 - 右下角浮动**百分比角标**（跟随 magnification 变化，KVO 驱动）；悬停提示写明操作方式（`preview.imageZoomHint`，中英成对）。
+
+**崩溃修复（QA 反馈：打开图片直接崩）**：角标原来会按文本测量并 `invalidateIntrinsicContentSize()`，而缩放是在 `layout()` 里应用的，于是 magnify 的 KVO 回调可能在**一次布局过程中**触发角标改尺寸 → 崩在 `-[NSView _invalidateIntrinsicContentSizeDirtyingConstraints:]`。三处一起改：① 角标改为**固定尺寸**（54×18，加宽高约束，`intrinsicContentSize` 恒定），文本变化只 `needsDisplay`；② KVO 回调**推迟到下一个 runloop**（`DispatchQueue.main.async`）再刷新；③ `applyFit()` 在数值未变时不再重复设置 magnification，避免与布局互相触发。新增 3 条断言（角标尺寸恒定 / 固定盒子 / 能容纳 "1600%"）钉住这一点。
 - 缩放数学抽成纯模型 `ImageZoom.swift`（适应比例/夹取/单步），视图只管 AppKit。
 
 **验证**：`tests/file-panel/image-zoom-tests.swift` 17 条断言（宽图按宽、窄图按高、方形、小图不放大、零尺寸回退 100%、上下限夹取、NaN 兜底、单步乘除、边界不动、40 次连续放大单调且收敛到上限）全绿；`tests/file-panel` 与 `scripts/local-ci.sh swift` 全绿。**待手动 QA**：打开大截图应整幅可见且不变形；⌘+/⌘−/⌘0、⌘滚轮、双击、捏合都能缩放；放大后可拖拽平移。
