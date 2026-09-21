@@ -1,10 +1,10 @@
 # 壳层 UI 配色方案（oh-my-dsh 原生面板）
 
 > 适用范围：`platforms/macos/src/` 下所有原生面板（文件 / 终端 / 浏览器 / Wiki /
-> 任务 / 通道 / 审查 / 技能）及其共享基件。
+> 任务 / 通道 / 审查 / 技能 / 工程脚手架）及其共享基件。
 > **单一事实来源**：`platforms/macos/src/PanelSurface.swift`——改色只改这一个文件。
 > 对应提交：`9cf1f1b`（面板底色）· `40a4377`（控件两档）· `5d659c5`（列表内容区修正）
-> 最后更新：2026-09-17
+> 最后更新：2026-09-21（纳入工程脚手架面板）
 
 一句话：**壳层只用一套灰阶**——面板底色一档 + 控件两档（常态 / 高亮），全部取自
 dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
@@ -110,7 +110,7 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
 | 位置 | 实现 |
 |---|---|
 | 面板 header / toolbar / status bar | `DynamicFillView()`（`Kind` 默认 `.panel`），各面板 `buildUI()` |
-| 面板根视图 | `TerminalRootView` / `WikiRootView` / `ChannelRootView` / `SkillsRootView` / `IssueRunnerRootView` / `ReviewRootView` / `BrowserRootView` |
+| 面板根视图 | `TerminalRootView` / `WikiRootView` / `ChannelRootView` / `SkillsRootView` / `IssueRunnerRootView` / `ReviewRootView` / `BrowserRootView` / `ScaffoldRootView` |
 | 面板内容容器 | `contentContainer`（终端 / 通道 / 技能 …），`DynamicFillView()` |
 | 活动栏（最左图标条） | `main.swift` `activityBar` |
 | 终端屏幕底 + 反色单元格默认色 | `TerminalView.draw` / `effectiveCell` |
@@ -119,7 +119,7 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
 | 代码编辑器（含行号栏底色） | `CodeEditorView` `NSTextView.backgroundColor` |
 | Wiki 阅读区 | `WikiPanel.showPage`（scroll + textView） |
 | Review「纸张」 | `ReviewInk.paper` |
-| 列表内容区：任务列表 / Wiki 页面树 / 文件目录树 | `NSTableView` / `NSOutlineView.backgroundColor = PanelSurface.dynamic` |
+| 列表内容区：任务列表 / Wiki 页面树 / 文件目录树 / 脚手架预览文件树 | `NSTableView` / `NSOutlineView.backgroundColor = PanelSurface.dynamic` |
 
 ### 4.2 控件两档 `PanelControl`
 
@@ -134,6 +134,9 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
 | 卡片：通道配置卡 | 常态档 | — | `ChannelCardView` |
 | 卡片：审查树 | session / turn 容器 → 常态档 | 最内层 block → 高亮档 | `ReviewInk.sessionFill` / `.turnFill` / `.blockFill` |
 | 消息气泡（中性 / 出站） | — | 高亮档（落在卡片底色上仍有对比） | `MessageBubble` |
+| 卡片：脚手架环节卡 / 设置行 / 首页配置卡 | 常态档 | 选中卡 → 高亮档 + accent 边框 | `ScaffoldStageCard` / `StageSettingsRow` / `PresetSettingsRow` / `WorkspaceStageCardView`（`ScaffoldColorScheme.cardFill` / `cardBorder`） |
+| 步骤时间线胶囊（脚手架向导） | — | 当前步骤 → 高亮档 | `ScaffoldStepItem`（`ScaffoldColorScheme.stepPillFill`） |
+| 环节编辑器的文件页签 | 常态档 | 选中 / hover → 高亮档 | `PanelTabButton`（同文件 / 预览 / 终端页签） |
 
 ---
 
@@ -156,6 +159,9 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
 | 终端 ANSI | xterm 16 色 + 256 色立方 + 灰阶（默认前景 `textColor`，默认背景 = 面板底色） | `TerminalEmulator.basePalette` / `palette256` |
 | 代码高亮 | Highlightr 主题 `atom-one-dark`（深）/ `xcode`（浅） | `CodeEditorView` |
 | 启动遮罩 | `.windowBackgroundColor` | `main.swift` `buildStatusOverlay` |
+| 脚手架：步骤徽标 / 勾选徽标 | 未到 `.systemGray` · 当前 / 勾选 `.controlAccentColor` · 已完成 `.systemGreen` · 报错 `.systemRed` | `ScaffoldColorScheme.stepBadgeFill` / `checkTint` |
+| 脚手架：环节类型徽标 | 自定义·已修改 `.systemOrange` · 自定义·新建 `.systemBlue`（内置走次级文字档） | `ScaffoldColorScheme.typeBadgeTint` |
+| 脚手架：步骤标题 / 卡片描边 | 标题 深 白 0.78 / 0.95 / 0.80 · 浅 黑 0.38 / 0.12 / 0.30（未到 / 当前 / 已完成）；卡片描边 深 白 0.35@0.6 · 浅 黑 0.20@0.8，选中 = accent | `ScaffoldColorScheme.stepTitle` / `cardBorder` |
 
 ---
 
@@ -196,7 +202,10 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
 7. opaque 且无独立 layer 的视图，绘制会溢出到父视图 layer（见
    [terminal-header-fix](terminal-header-fix.md)：contentContainer 需
    `wantsLayer + masksToBounds`）；
-8. 新增令牌一律加在 `PanelSurface.swift`，不要在面板里写死灰度。
+8. 新增令牌一律加在 `PanelSurface.swift`，不要在面板里写死灰度；
+9. 面板内的"哪个控件用哪一档"就近收敛成一张纯函数表，别散在各自的 `draw(_:)` 里
+   （审查面板 `ReviewInk`、脚手架面板 `ScaffoldColorScheme`）——这样能无头断言，
+   也不会再出现同一面板卡片深浅不一的情况。
 
 ---
 
@@ -205,7 +214,10 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
 - `tests/skills-panel/run.sh` 的离屏渲染回归（真实 `DynamicFillView` / `HoverButton`）：
   断言 6 个令牌的取值、按外观取档、以及 `.panel` / 按钮常态 / 按钮选中**实际渲染**出的
   像素颜色等于令牌值（深浅两种外观各一条）；
-- `scripts/local-ci.sh swift`：全部无头面板用例 + `swiftc` 全量编译检查。
+- `scripts/local-ci.sh swift`：全部无头面板用例 + `swiftc` 全量编译检查；
+- `tests/scaffold-panel/run.sh` 的「配色」段：断言脚手架面板的取色映射
+  （面板底色 = `PanelSurface`、卡片常态 / 选中 = `PanelControl` 两档、语义色不参与灰阶替换、
+  深色走白档 / 浅色走黑档）——改这些映射时测试会先失败。
 
 ---
 
@@ -215,6 +227,6 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
 |---|---|
 | 目录列表隔行条纹 | 文件 / 预览面板的目录列表仍开 `usesAlternatingRowBackgroundColors`（行级样式），若要求内容区是纯面板底色可关掉 |
 | 系统 bezel 控件 | 见 §6；如需统一需改自绘按钮 / 分段控件 |
-| 文字与描边尚未令牌化 | 目前散落在各面板（§5 后四行）；建议后续收敛为 `PanelInk`（文字 / 图标 / 描边各两档） |
+| 文字与描边尚未令牌化 | 目前散落在各面板（§5 后几行）；建议后续收敛为共享的 `PanelInk`（文字 / 图标 / 描边各两档）——审查 / 脚手架面板已各自收敛成面板内的 ink 表（`ReviewInk` / `ScaffoldColorScheme`） |
 | 深色下"高亮比常态暗" | 按既定取值实现（`#43454A` → `#353638`）；若希望高亮更亮，改 `PanelControl.darkHighlight` 一处即可 |
 | 终端 ANSI / 代码高亮主题 | 有意不纳入灰阶方案（属于内容语义色） |
