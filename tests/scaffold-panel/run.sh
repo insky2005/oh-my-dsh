@@ -10,6 +10,9 @@ cd "$(dirname "$0")"
 # swiftc 需要 module-cache；CI 干净环境没有 .build/，先建好再 cd。
 mkdir -p ../../.build/module-cache
 CACHE="$(cd ../../.build/module-cache && pwd)"
+echo "--- 配色 lint（docs/ui-color-scheme.md）---"
+python3 color-lint.py
+echo "--- 引擎单测 ---"
 TMP="$(mktemp -d)"
 cp ../terminal-emulator/stubs.swift "$TMP/stubs.swift"
 cp stubs-editor.swift "$TMP/stubs-editor.swift"   # CodeEditorView 桩（仅本测试用，勿混入共享桩）
