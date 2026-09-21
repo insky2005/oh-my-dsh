@@ -17,7 +17,7 @@ oh-my-dsh/
 ├── scripts/             # 跨平台工具：version.sh（版本单一来源）/ changelog.sh / local-ci.sh（本机 CI）/ local-release.sh /
 │                        #   github-publish.sh / release-checksums.sh / release-fix.sh / git-remote.sh / migrate-platforms-macos.sh
 ├── tests/               # 面板模型层单测套件（wiki-panel / browser-panel / terminal-panel / terminal-emulator / channel-panel /
-│                        #   file-panel / review-panel / shell-config / dsh-rpc / dsh-auth-cookies / l10n / skills，均 headless run.sh）
+│                        #   file-panel / review-panel / skills-panel / shell-config / dsh-rpc / dsh-auth-cookies / l10n / skills，均 headless run.sh）
 ├── docs/                # 设计/排查文档（productization.md、milestones/、channel-*.md、issue-runner-design.md 等）
 └── .dsh/                # wiki / skills（web-dev-tools / repo-knowledge / issue-resolve，随仓库提交）
 ```
@@ -50,12 +50,15 @@ tests/browser-panel/run.sh              # 浏览器面板模型层（REST 路由
 tests/terminal-panel/run.sh             # 终端面板（头部标题固定 / 关会话后不被清空，不建 PTY）
 tests/terminal-emulator/run.sh          # 模拟器测试（core/tests/ansi.test.js 的薄封装）
 tests/channel-panel/run.sh              # 通道面板项目视图数据模型
-tests/file-panel/run.sh                 # 文件面板（工作区页签记忆 / 未保存提示 / 切换语义）
-tests/review-panel/run.sh               # 审查（变更审计）面板展示模型：JSON 解码 / 文件分组 / diff 折叠
+tests/file-panel/run.sh                 # 文件面板（工作区页签记忆 / 未保存提示 / 切换语义 / 图片缩放数学 / 真窗口目录树宽度）
+tests/review-panel/run.sh               # 审查（变更审计）面板展示模型：JSON 解码 / 文件分组 / diff 折叠 / 日志新鲜度
+                                        #   + controller-tests.swift（真控制器：日志增长自动重读，不重复审计）
 tests/shell-config/run.sh               # 壳层设置文件与旧 UserDefaults 迁移
 tests/dsh-rpc/run.sh                    # 壳层原生 dsh RPC（0.1.2 信封/斜杠端点、launch token 换 cookie、回退记忆）
 tests/dsh-auth-cookies/run.sh           # dsh-auth cookie 名派生 / 启动与退出清理 / NODE_OPTIONS 追加
 tests/l10n/run.sh                       # L10n 键名 lint（缺失键 / 重复键 / 中英缺一）
+tests/skills-panel/run.sh               # 技能面板（frontmatter 读写 / 四根扫描与级别 / registry 与地址解析）
+                                        #   + controller/冒烟 + render-tests.swift（离屏绘制：头部不被不透明兄弟覆盖）
 tests/skills/run.sh                     # 内置 skill 安装/覆盖/迁移与 SKILL.md 字节一致
 
 # 本机 CI：与 .github/workflows/ci.yml 三阶段对齐（core → swift 编译检查 → arm64 构建，不打包）

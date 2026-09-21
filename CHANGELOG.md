@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
-## [Unreleased]
+## [1.16.0] - 2026-09-21
 
 ### Added
 
@@ -15,24 +15,26 @@ All notable changes to this project are documented in this file. Format follows
   - **registry 是可配置项**（`shell/skills.json` 的 `registries`，默认预置 skills.sh）：`owner/repo` 或 GitHub 地址 → **列出该仓库的技能清单**（浅克隆后本地扫描，避开 GitHub API 限流）；well-known 地址 → 读 `/.well-known/skills/index.json` 清单；其他 URL → 视为 skills.sh 兼容的搜索接口（模板 `{q}`/`{limit}`）。**skills.sh 只提供关键字搜索、没有全量清单接口**（实测 `/api/leaderboard`、`/api/skills` 均 404，站点榜单是 HTML）——因此该 registry 未配清单来源时，列表区明确提示「按关键字搜索」，不做 HTML 抓取。
   - 新增 `platforms/macos/src/SkillsPanel.swift`（右栏面板）、`SkillsCore.swift`（纯 Foundation 模型：frontmatter 读写、四根扫描与级别判定、壳层技能记录 `shell/skills.json`）、`SkillSources.swift`（地址解析、registry 清单与搜索、拉取/安装/移除，传输可注入）与 `tests/skills-panel/`（无头模型单测，已接入 `scripts/local-ci.sh` 与 CI swift job）；`tests/skills/` 的内置技能字节断言保持不变。
   - 设计、四档级别判定与 registry 模型：`docs/skills-manager-design.md`；dsh 升级核对项见 `docs/dsh-version-impact.md` D2/D2b/D2c/D2d。
+- **技能面板的「可安装」列表：整张卡片可点看详情 + 悬停才出现安装按钮**：点击卡片用**系统默认浏览器**打开该技能的页面（只接受 http(s)，不用内置浏览器面板）——skills.sh 型 registry 打开 `https://www.skills.sh/<source>/<skill>`，GitHub 清单打开仓库内技能目录，well-known 打开该技能的 `SKILL.md`，裸 git 打开远端，本地路径改为在 Finder 中显示；**「安装」按钮改为鼠标移入卡片时才出现**，移出即隐藏，平时列表保持干净；「可安装」页签进入即默认显示**热门列表（按安装量降序，前 30）**，输入关键字切换为搜索结果。
+- **文件面板：目录树右键菜单与头部菜单按钮（#1 #2 UI 返工）**：目录树右键菜单按对象给项 —— 目录上「新建文件夹 → 新建文件 ｜ 重命名 → 删除 → 在 Finder 中显示」，**文件上不提供新建项**，「在 Finder 中显示」单独分组；新建在当前目录下创建并进入命名，重命名 / 删除（移到**废纸篓**，可恢复）后页签跟随改名或关闭。面板头部改为「**打开项目 ▾ / 当前文件 ▾**」两个菜单按钮（点击总是打开菜单，不再出现「点了没反应」），「打开文件」按钮**仅在选中文件时可用**；项目目录可用外部应用打开。
+- **文件面板：图片预览自适应窗口 + 手动缩放（#8）**：打开图片时按比例**适应窗口**（等比、以较紧的一边为准、不放大超过 100%），支持触控板**捏合**、`⌘+` / `⌘−` / `⌘0`、`⌘`+滚轮、**双击**（适应窗口 ↔ 100%）与放大后拖拽平移，缩放范围 5%–1600%、单步 ×1.25，右下角浮动百分比角标；新增 `ImagePreviewView.swift` 与纯模型 `ImageZoom.swift`（缩放数学可无头测试）。
+- **终端面板：滚动方向 / 选中即复制 / 页签按 workspace 隔离（#3 #4 #5）**：滚动方向对齐其余面板的语义；**双击选词**、**选中文本即复制**（新增设置项「终端：选中文本即复制」可关）；终端页签**按 workspace 隔离并记忆**，在 dsh web 切换工作区时同步联动、切到没有终端的工作区自动开启；并恢复触控板滚动惯性。
+- **壳层：页面刷新自愈 + 「视图 → 重新加载页面」`⌘R`（#6）**：长时运行后 WebView 手里那份 cookie 可能不再被接受（页面只显示纯文本 `dsh web authentication required…`，而面板照常可用），此前的右键「重新载入」走的是 WebKit 默认菜单、等价于裸 `reload()`，救不回来。现在：① 视图菜单新增**「重新加载页面 `⌘R`」**，刷新改走 `server.entryURL`（带启动 token 的入口地址，303 重新落一份 cookie）而不是裸 reload；② **主框架 401 / 加载失败自动自愈一次**——自己拉起的 dsh web 若已死则重拉；③ `ServerManager.stop()` 清空 `entryURL`/`process` 并新增 `isRunning`，补刷新与 cookie 诊断日志（此前的刷新不留任何日志，复现过也查不到）。成因收敛过程见 `docs/ux-feedback.md` #6。
+
+### Changed
+
+- **面板配色统一为单一灰阶令牌**：面板顶部/内容区底色统一为 `#1B1B1C`（浅色 `#F9FAFB`），卡片 / 按钮 / 页签底色统一为控件两档 `#43454A` / `#353638`（浅色 `#FFFFFF` / `#F1F3F5`）——六色全部取自 dsh web 的 `neutral bluish` 设计令牌，壳层与 web 界面天然同调，取代「每个面板各写一档灰」的历史局面。**单一事实来源 `platforms/macos/src/PanelSurface.swift`，改色只改这一个文件**；方案见 `docs/ui-color-scheme.md`（含两套取色 API、CALayer 不吃动态色的注意事项、语义色与系统绘制控件的边界）。
+- **文件面板：大文件保留语法高亮（分块着色）**：不再按行数 / 大小关闭高亮，改为**分块着色**，3000+ 行的文件打开后依然有高亮且不卡 UI。
+- README 面板数量文案与目录树同步为八个面板。
 
 ### Fixed
 
 - **面板顶部条/标签被同色不透明兄弟视图覆盖（技能面板的标题与按钮不可见）**：`DynamicFillView` 是不透明视图，原实现按 `dirtyRect` 填充，而 AppKit 可能给不透明视图传入**大于其自身 bounds** 的脏矩形——于是内容容器（先添加、层级更低的兄弟）会把它上方的头部条、标签条整条刷成自己的底色，看起来就是"顶部空白/被遮住"。改为 `bounds.intersection(dirtyRect).fill()` 只填自己拥有的区域；技能面板同时把内容容器放到最底层、头部最后添加（双重保险）。新增无头绘制回归测试（`tests/skills-panel/render-tests.swift`：真实 `DynamicFillView`/`HeaderLabel` 离屏渲染后断言头部条有内容、且不透明兄弟不会越界覆盖），已验证**去掉该修复后测试会失败**。
+- **Tasks 面板内容区未吃到面板底色**：`NSTableView` 自身背景盖住了面板底色，改为跟随配色令牌。
 
 - **技能面板的改动现在会被 dsh web 立即看到（对话输入框 `/` 的技能菜单不再需要手动刷新）**：dsh 客户端按会话缓存技能目录，且只在 `connection/reset`（连接重连）或切换 agent preset 时失效；技能文件变化不是会话事件、服务端不会推送，所以此前改完 `user-invocable` / 安装 / 移除都必须手动刷新页面。现在面板在**改开关 / 安装 / 移除**后通知壳层，由壳层向 web 页注入 JS 派发**浏览器 offline → online 事件**，触发客户端自身重连并发出 `connection/reset`，各客户端插件缓存（含技能目录）随之清空并重取——与手动刷新等效但不重载文档。1.5s 节流；`DSH_SKILLS_NO_NUDGE=1` 可关闭。
 
-- **候选技能可查看详情（点击卡片即可）**：可用列表**整张卡片可点**，点击用**系统默认浏览器**打开该技能的页面（只接受 http(s)，不用内置浏览器面板）；**「安装」按钮改为鼠标移入卡片时才出现**，移出即隐藏，平时列表保持干净。详情页 URL：skills.sh 型 registry 打开 `https://www.skills.sh/<source>/<skill>`（如 `https://www.skills.sh/vercel-labs/skills/find-skills`），GitHub 清单打开仓库内技能目录，well-known 打开该技能的 `SKILL.md`，裸 git 打开远端，本地路径改为在 Finder 中显示。
-
-### Fixed
-
 - **可用列表滚动后"划过的技能全部保持高亮"**：AppKit 的 tracking area 只在指针移动时触发 enter/exit，内容从静止指针下滚过时不会触发 `mouseExited`，于是划过的卡片一直亮着、也不还原。现在面板监听 clip view 的滚动通知，每次滚动按**当前指针位置**重算唯一 hover 的卡片（`SkillHoverResolver`，纯函数 + 4 条单测：命中/落在卡片间隙/已被滚出可视区/指针在列表外）。
-
-### Changed
-
-- README 面板数量文案与目录树同步为八个面板。
-
-### Fixed
 
 - **修复「新建的会话在审查面板里只有一行会话、看不到里面改的文件」**：面板的审计结果**按 sessionId 缓存后永不失效**——而新建会话一诞生（成为 dsh web 当前会话）就会被审一次，那会儿日志里只有会话头，于是「0 文件 / 本会话没有记录到文件变更」被**永久钉住**：后面改了多少文件都不会再读一次（点刷新也只重列会话，不动审计缓存）。会话日志是**活文档**（dsh 每落盘一批追加一个独立可解压的 Zstandard 帧，只增不减），因此缓存必须按**日志身份**而不是 id 认账：
   - `ReviewLogModel.ReviewLogStamp`（size + mtime，纯 Foundation）+ `ReviewLogModel.auditNeedsRefresh(cached:onDisk:)`：只有日志与审计时所读的**仍是同一份**才复用缓存；日志路径未知（尚未出现在列表里）时判为「无法判断」，保留缓存而不是反复重读；
@@ -40,6 +42,22 @@ All notable changes to this project are documented in this file. Format follows
   - **打开面板即重列**（`ensureLoaded()` 不再只列一次）：打开面板本就是在问「自上次看看它改了什么」；重列期间**不擦内容**（先把现有树画出来，数据到了再替换）——沿用「刷新不清屏」的既有约定；
   - **可见时轮询**：面板在屏上时每 5 s 给已展开会话的日志做一次 `stat`，只有**真的变了**才跑一次 `review audit`（未变化时零 CLI 调用）；面板收起/切走即停（隐藏只把分隔线宽度收成 0、视图仍挂在树上，所以可见性判定不能只看 `superview`）；
   - 回归测试 `tests/review-panel/controller-tests.swift`（无头驱动真控制器 + 假 core CLI）：新建会话第一次读 → 如实显示「0 文件 / 无变更」→ 日志增长后**不需要任何操作**自动重读并列出文件，且日志不再变化时**不会**重复审计；对修复前的代码实测 6 例 FAIL（`tests/review-panel/run.sh` 已接入 `scripts/local-ci.sh`）。
+
+- **文件面板：关闭再打开后目录树宽度变成上限 420（#9，第三版才修好）**：关闭面板时壳层把右侧窗格宽度收成 0，`contentSplit` 随之被压扁，再次打开时 NSSplitView 从 0 重新分配、把目录树推到允许的最大值 420。前两版用「0 → N 宽度转变」+ 事件监视器恢复**从未执行过**（拿真实 `app.log` 对照确认：既没有恢复记录，也从未记住过宽度）——根因是 `NSSplitView` 拖分隔条时跑的是**它自己的 event-tracking loop**，这类事件不经过 `NSEvent.addLocalMonitorForEvents`。第三版改为：新增 `TreeDividerSplitView: NSSplitView` 子类 override `mouseDown(with:)`（`super` 返回即「拖拽结束」），据此**准确**区分「用户拖拽」与「程序重排」——拖拽结束记录宽度、非拖拽的宽度变化一律纠正回记住的宽度，另有「关闭面板」「面板切走」两个兜底记录点，所以从未拖过也能正确回到默认 160。`tests/file-panel/` 用**真实 NSWindow + 真实 split view** 跑完整序列（拖到 300 → 收成 0 → 恢复 900 → 断言仍是 300），并断言「框架自己重排到 420 必须被纠正且不会被记成用户选择」。
+- **文件面板：打开图片即崩溃**：百分比角标原会按文本测量并 `invalidateIntrinsicContentSize()`，而缩放是在 `layout()` 里应用的，于是 magnify 的 KVO 回调可能在**一次布局过程中**触发角标改尺寸、崩在 `-[NSView _invalidateIntrinsicContentSizeDirtyingConstraints:]`。三处一起改：角标改为**固定尺寸**（54×18，文本变化只 `needsDisplay`）、KVO 回调**推迟到下一个 runloop**、`applyFit()` 数值未变时不再重复设置 magnification。
+- **文件面板：图片预览不居中 + 拖动面板宽度时缩放反复跳变**：新增 `CenteringClipView`（`constrainBoundsRect` 里把小于视口的文档居中，NSScrollView 默认把文档钉在左下角 → 图片贴在左下角）+ `ImageZoom.padding`(16pt) 内边距，fit 按「视口 − 2×边距」计算；缩放跳动则是因为 fit 误用 `contentView.bounds`（开启动量缩放后它是**文档坐标**）作视口，形成「设 magnification → 视口值变 → 重新 fit」的振荡，改用 clip view 的 **frame**（屏幕点）后二者互不影响，并在视口退化（live resize 中间帧）时跳过、设置 magnification 时用 `CATransaction` 关闭隐式动画。
+- **文件面板：大文件（3000+ 行）磁盘变更后重新加载把应用卡住（#7）**：改为**异步读取 + 单次高亮 + 稳定性窗口**，代理改写大文件后不再卡 UI。
+- **终端面板（#3 #4 #5 后续）**：恢复滚动惯性、双击后**按词扩选**、在 dsh web 切换 workspace 且目标工作区没有终端时自动开启一个。
+
+### Docs
+
+- 新增 `docs/ui-color-scheme.md`（面板配色方案：六色令牌表、两套取色 API、CALayer 与动态色的坑、语义色边界）。
+- `docs/ux-feedback.md`：记录 9 条使用问题（Files 新建/外部打开、目录树宽度、大文件重载、图片缩放；Terminal 滚动/选词/页签；WebView 刷新 401），逐条补实现位置与验证结论；#6 收敛到「面板正常 → 仅 WebView 那份 cookie 被拒」并给出 ⌘R 与右键 Reload 一致化方案。
+- `.dsh/wiki/` 同步：技能面板（Skills Manager）、审查面板日志新鲜度、面板配色统一、UX 反馈修复。
+
+### Tests
+
+- 新增 `tests/file-panel/`（模型 28 例 + 真面板 38 例，含真窗口复现「关闭/重开面板丢目录树宽度」、`image-zoom-tests.swift` 17 条缩放断言）、`tests/skills-panel/`（模型单测 + 控制器冒烟 + 离屏绘制回归）、`tests/terminal-panel/`、`tests/wiki-panel/panel-header-tests.swift`，全部接入 `scripts/local-ci.sh` 与 CI swift job。
 
 ## [1.15.0] - 2026-09-13
 
