@@ -188,5 +188,58 @@ panel.performCloseAction()
 test("closing a clean panel hides it", hideRequests == 1)
 test("closing a clean panel drops the tabs", panel.openTabPaths.isEmpty)
 
+// --- creating / renaming / deleting entries (follow-up on #1) ---------------
+//
+// The context menu itself needs a clicked row and a window, but everything it
+// performs is path-addressed and therefore testable here: the file really
+// appears on disk, an open tab follows a rename, and a delete closes its tab
+// (through the Trash, so a mis-click stays recoverable).
+
+panel.setProjectDirectory(wsA.path)
+let newFile = wsA.appendingPathComponent("notes.txt")
+let newFolder = wsA.appendingPathComponent("docs")
+
+test("a new file is created and opens a tab",
+     panel.createTreeItem(named: "notes.txt", isDir: false, in: wsA.path) && fm.fileExists(atPath: newFile.path))
+test("the new file is the selected tab", panel.selectedTabPath == newFile.path)
+test("a new folder is created",
+     panel.createTreeItem(named: "docs", isDir: true, in: wsA.path) && fm.fileExists(atPath: newFolder.path))
+test("an existing name is refused",
+     !panel.createTreeItem(named: "notes.txt", isDir: false, in: wsA.path))
+test("a name containing a slash is refused",
+     !panel.createTreeItem(named: "a/b", isDir: false, in: wsA.path))
+test("an empty name is refused", !panel.createTreeItem(named: "   ", isDir: false, in: wsA.path))
+
+let renamed = wsA.appendingPathComponent("todo.txt")
+test("an entry is renamed on disk",
+     panel.renameTreePath(newFile.path, to: "todo.txt") && fm.fileExists(atPath: renamed.path))
+test("the renamed file keeps its tab (re-pointed)", panel.openTabPaths == [renamed.path])
+test("renaming onto an existing name is refused",
+     !panel.renameTreePath(renamed.path, to: "one.md"))
+test("renaming to the same name is a no-op", !panel.renameTreePath(renamed.path, to: "todo.txt"))
+
+// Deleting moves the entry to the Trash (never an irreversible unlink). Where
+// the Trash is unreachable — e.g. an agent sandbox that denies ~/.Trash — the
+// panel must REFUSE instead: the file stays and its tab stays open.
+let deleted = panel.deleteTreePath(renamed.path)
+let survived = fm.fileExists(atPath: renamed.path)
+test("a delete trashes the entry (or leaves it untouched when it cannot)",
+     deleted ? !survived : survived)
+test("a successful delete closes the tab, a refused one keeps it",
+     deleted ? panel.openTabPaths.isEmpty : panel.openTabPaths == [renamed.path])
+test("deleting a missing path is refused", !panel.deleteTreePath(renamed.path))
+if !deleted { panel.closeActiveTab() }   // keep the later assertions independent
+
+// A renamed FOLDER carries the tabs of the files inside it.
+let movedInto = wsA.appendingPathComponent("docs/inner.md")
+try! "# inner".write(to: movedInto, atomically: true, encoding: .utf8)
+panel.open(path: movedInto.path)
+test("the file inside the folder is open", panel.openTabPaths == [movedInto.path])
+let renamedFolder = wsA.appendingPathComponent("manuals")
+test("a folder can be renamed", panel.renameTreePath(newFolder.path, to: "manuals"))
+test("a tab under a renamed folder follows it",
+     panel.openTabPaths == [wsA.appendingPathComponent("manuals/inner.md").path])
+panel.closeActiveTab()
+
 try? fm.removeItem(at: root)
 print("done")

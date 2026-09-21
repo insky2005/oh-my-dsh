@@ -31,7 +31,7 @@ private final class TreeNode {
 
 final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDelegate,
                                      NSOutlineViewDataSource, NSOutlineViewDelegate,
-                                     NSSplitViewDelegate {
+                                     NSSplitViewDelegate, NSMenuDelegate {
 
     /// Root view mounted directly as the right pane of the main split view.
     /// Opaque, clearly-gray background (DynamicFillView) so the whole top
@@ -293,10 +293,17 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         let newFolderItem = NSMenuItem(title: L10n.tr("files.newFolder"), action: #selector(newFolderInTree(_:)), keyEquivalent: "")
         newFolderItem.target = self
         treeMenu.addItem(newFolderItem)
+        let renameItem = NSMenuItem(title: L10n.tr("files.rename"), action: #selector(renameTreeSelection(_:)), keyEquivalent: "")
+        renameItem.target = self
+        treeMenu.addItem(renameItem)
+        let deleteItem = NSMenuItem(title: L10n.tr("files.delete"), action: #selector(deleteTreeSelection(_:)), keyEquivalent: "")
+        deleteItem.target = self
+        treeMenu.addItem(deleteItem)
         treeMenu.addItem(.separator())
         let revealTreeItem = NSMenuItem(title: L10n.tr("files.revealInTree"), action: #selector(revealTreeSelection(_:)), keyEquivalent: "")
         revealTreeItem.target = self
         treeMenu.addItem(revealTreeItem)
+        treeMenu.delegate = self
         treeOutline.menu = treeMenu
 
         treeScroll.documentView = treeOutline
@@ -905,30 +912,34 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         alert.accessoryView = field
         let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard response == .alertFirstButtonReturn else { return }
-            self?.createItem(named: field.stringValue, isDir: isDir, in: dir)
+            _ = self?.createTreeItem(named: field.stringValue, isDir: isDir, in: dir)
         }
-        if let window = view.window {
-            alert.beginSheetModal(for: window, completionHandler: finish)
-            DispatchQueue.main.async { window.makeFirstResponder(field) }
-        } else {
-            finish(alert.runModal())
+        // The prompt is only reachable from the tree context menu, i.e. with a
+        // mounted panel; without a window there is nobody to ask.
+        guard let window = view.window else {
+            AppLog.shared.log("preview tree create: no window to prompt in")
+            return
         }
+        alert.beginSheetModal(for: window, completionHandler: finish)
+        DispatchQueue.main.async { window.makeFirstResponder(field) }
     }
 
     /// Create an empty file (or a folder) and reveal it in the tree. The new file
     /// opens in a preview/editor tab so it can be filled in straight away.
-    private func createItem(named rawName: String, isDir: Bool, in dir: String) {
+    /// Internal (not private) so the headless panel tests can drive it.
+    @discardableResult
+    func createTreeItem(named rawName: String, isDir: Bool, in dir: String) -> Bool {
         let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
+        guard !name.isEmpty else { return false }
         guard !name.contains("/"), name != ".", name != ".." else {
             presentPanelError(L10n.tr("files.invalidName"))
-            return
+            return false
         }
         let full = (dir as NSString).appendingPathComponent(name)
         let fm = FileManager.default
         guard !fm.fileExists(atPath: full) else {
             presentPanelError(L10n.tr("files.alreadyExists", name))
-            return
+            return false
         }
         do {
             if isDir {
@@ -940,13 +951,14 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         } catch {
             AppLog.shared.log("preview tree create failed: \(full) \u{2014} \(error.localizedDescription)")
             presentPanelError(L10n.tr("files.createFailed", error.localizedDescription))
-            return
+            return false
         }
         AppLog.shared.log("preview tree created \(isDir ? "folder" : "file"): \(full)")
         expandTreePath(dir)
         refreshTree()
         selectTreeRow(path: full)
         if !isDir { open(path: full) }
+        return true
     }
 
     /// Expand the tree row showing `path` (so a freshly created child becomes a
@@ -971,6 +983,174 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         }
     }
 
+    // MARK: - Rename / delete a tree entry (follow-up on #1)
+
+    /// The tree row under the context menu (nil when the click hit empty space).
+    private func clickedTreeItem() -> TreeNode? {
+        let row = treeOutline.clickedRow
+        guard row >= 0, let node = treeOutline.item(atRow: row) as? TreeNode else { return nil }
+        return node
+    }
+
+    /// Menu validation: the project root can be neither renamed nor deleted (the
+    /// whole tree hangs off it), and the create entries need a root at all.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let node = clickedTreeItem()
+        let hasRow = node != nil && node?.path != treeRoot?.path
+        for item in menu.items {
+            switch item.action {
+            case #selector(renameTreeSelection(_:)), #selector(deleteTreeSelection(_:)), #selector(revealTreeSelection(_:)):
+                item.isEnabled = hasRow
+            case #selector(newFileInTree(_:)), #selector(newFolderInTree(_:)):
+                item.isEnabled = treeRoot != nil
+            default:
+                break
+            }
+        }
+    }
+
+    @objc private func renameTreeSelection(_ sender: Any?) {
+        guard let node = clickedTreeItem(), node.path != treeRoot?.path else { return }
+        promptForRename(node)
+    }
+
+    /// Path-addressed rename: what the context menu ultimately performs, and
+    /// what the headless tests drive (they have no clicked row).
+    @discardableResult
+    func renameTreePath(_ path: String, to newName: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: path) else { return false }
+        return moveTreeEntry(at: path, to: newName)
+    }
+
+    /// Path-addressed delete (move to the Trash).
+    @discardableResult
+    func deleteTreePath(_ path: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: path) else { return false }
+        return trashTreeEntry(at: path)
+    }
+
+    /// Ask for the new name with it pre-selected, so the user can type straight
+    /// over it (same sheet-or-modal pattern as the create action).
+    private func promptForRename(_ node: TreeNode) {
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("files.rename")
+        alert.informativeText = node.path
+        alert.addButton(withTitle: L10n.tr("files.renameAction"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = node.name
+        alert.accessoryView = field
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            _ = self?.moveTreeEntry(at: node.path, to: field.stringValue)
+        }
+        guard let window = view.window else {
+            AppLog.shared.log("preview tree rename: no window to prompt in")
+            return
+        }
+        alert.beginSheetModal(for: window, completionHandler: finish)
+        DispatchQueue.main.async {
+            window.makeFirstResponder(field)
+            field.currentEditor()?.selectAll(nil)
+        }
+    }
+
+    /// Rename a tree entry (a move inside its own directory). Tabs that live
+    /// under the old path are re-pointed, so an open editor keeps working and
+    /// saves to the new path instead of recreating the old one.
+    @discardableResult
+    func moveTreeEntry(at path: String, to rawName: String) -> Bool {
+        let oldName = (path as NSString).lastPathComponent
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !name.contains("/"), name != ".", name != ".." else {
+            presentPanelError(L10n.tr("files.invalidName"))
+            return false
+        }
+        guard name != oldName else { return false }   // unchanged: nothing to do
+        let parent = (path as NSString).deletingLastPathComponent
+        let target = (parent as NSString).appendingPathComponent(name)
+        guard !FileManager.default.fileExists(atPath: target) else {
+            presentPanelError(L10n.tr("files.alreadyExists", name))
+            return false
+        }
+        do {
+            try FileManager.default.moveItem(atPath: path, toPath: target)
+        } catch {
+            AppLog.shared.log("preview tree rename failed: \(path) -> \(target) \u{2014} \(error.localizedDescription)")
+            presentPanelError(L10n.tr("files.renameFailed", error.localizedDescription))
+            return false
+        }
+        AppLog.shared.log("preview tree renamed: \(path) -> \(target)")
+        repointTabs(from: path, to: target)
+        expandTreePath(parent)
+        refreshTree()
+        selectTreeRow(path: target)
+        return true
+    }
+
+    @objc private func deleteTreeSelection(_ sender: Any?) {
+        guard let node = clickedTreeItem(), node.path != treeRoot?.path else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("files.delete")
+        alert.informativeText = L10n.tr(node.isDir ? "files.deleteFolderMessage" : "files.deleteFileMessage", node.name)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L10n.tr("files.deleteAction"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            _ = self?.trashTreeEntry(at: node.path)
+        }
+        guard let window = view.window else {
+            AppLog.shared.log("preview tree delete: no window to confirm in")
+            return
+        }
+        alert.beginSheetModal(for: window, completionHandler: finish)
+    }
+
+    /// Move an entry to the Trash — never an irreversible unlink, so a mis-click
+    /// in the tree stays recoverable from Finder.
+    @discardableResult
+    func trashTreeEntry(at path: String) -> Bool {
+        var trashed: NSURL?
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: &trashed)
+        } catch {
+            AppLog.shared.log("preview tree delete failed: \(path) \u{2014} \(error.localizedDescription)")
+            presentPanelError(L10n.tr("files.deleteFailed", error.localizedDescription))
+            return false
+        }
+        AppLog.shared.log("preview tree trashed: \(path)")
+        closeTabs(under: path)
+        refreshTree()
+        return true
+    }
+
+    /// Re-point every open tab that lives under `from` to `to`: a renamed file
+    /// keeps its tab, a renamed folder keeps the tabs of the files inside it.
+    private func repointTabs(from oldPath: String, to newPath: String) {
+        for idx in tabs.indices {
+            let path = tabs[idx].path
+            guard path == oldPath || path.hasPrefix(oldPath + "/") else { continue }
+            let updated = newPath + path.dropFirst(oldPath.count)
+            AppLog.shared.log("preview tab repointed: \(path) -> \(updated)")
+            tabs[idx].path = updated
+            refreshTabTitle(at: idx)
+            if tabs[idx].id == selectedId {
+                updateHeader(for: updated)
+                render(updated)
+            }
+        }
+    }
+
+    /// Close the tabs whose entry was removed from the tree.
+    private func closeTabs(under path: String) {
+        let doomed = tabs.filter { $0.path == path || $0.path.hasPrefix(path + "/") }
+        for tab in doomed {
+            AppLog.shared.log("preview tab closed (entry removed): \(tab.path)")
+            closeNow(tab.id)
+        }
+    }
+
     /// Context menu: reveal the clicked tree entry in Finder.
     @objc private func revealTreeSelection(_ sender: Any?) {
         let row = treeOutline.clickedRow
@@ -979,18 +1159,17 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: node.path)])
     }
 
-    /// Non-blocking error alert (sheet over the panel window).
+    /// Non-blocking error alert: a sheet over the panel window, or the log alone
+    /// when there is no window (headless tests / panel not mounted). Never
+    /// `runModal()` — that would block the app on an invisible alert.
     private func presentPanelError(_ message: String) {
         AppLog.shared.log("preview panel error: \(message)")
+        guard let window = view.window else { return }
         let alert = NSAlert()
         alert.messageText = message
         alert.alertStyle = .warning
         alert.addButton(withTitle: L10n.tr("btn.ok"))
-        if let window = view.window {
-            alert.beginSheetModal(for: window, completionHandler: nil)
-        } else {
-            alert.runModal()
-        }
+        alert.beginSheetModal(for: window, completionHandler: nil)
     }
 
     /// Re-root the project directory tree when the active dsh session's
