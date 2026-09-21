@@ -877,6 +877,76 @@ check(jbPom.contains("<artifactId>svc</artifactId>") && jbPom.contains("<java.ve
 let jbApp = read((jbRoot as NSString).appendingPathComponent("backend/src/main/java/com/acme/api/Application.java"))
 check(jbApp.contains("package com.acme.api;") && !jbApp.contains("{{"), "java e2e: source package rendered, no renderer leftovers", jbApp)
 
+
+// MARK: - 配色（对齐 docs/ui-color-scheme.md：表面色只走 PanelSurface / PanelControl）
+
+/// 比较用：统一转到 sRGB 再按分量比（面板自绘取的是显式分档色，非动态系统色）。
+func rgba(_ c: NSColor) -> String {
+    let s = c.usingColorSpace(.sRGB) ?? c
+    return String(format: "%.4f,%.4f,%.4f,%.2f", s.redComponent, s.greenComponent, s.blueComponent, s.alphaComponent)
+}
+func sameColor(_ a: NSColor, _ b: NSColor) -> Bool { rgba(a) == rgba(b) }
+
+// 面板底色 = PanelSurface（§4.1）
+check(sameColor(ScaffoldColorScheme.panelFill(dark: true), PanelSurface.dark),
+      "color: 面板底色(深) = PanelSurface.dark")
+check(sameColor(ScaffoldColorScheme.panelFill(dark: false), PanelSurface.light),
+      "color: 面板底色(浅) = PanelSurface.light")
+
+// 卡片 / 设置行 = PanelControl 常态档，选中 = 高亮档（§4.2）
+check(sameColor(ScaffoldColorScheme.cardFill(dark: true), PanelControl.darkNormal),
+      "color: 卡片(深) = PanelControl 常态档")
+check(sameColor(ScaffoldColorScheme.cardFill(dark: true, selected: true), PanelControl.darkHighlight),
+      "color: 卡片选中(深) = PanelControl 高亮档")
+check(sameColor(ScaffoldColorScheme.cardFill(dark: false), PanelControl.lightNormal),
+      "color: 卡片(浅) = PanelControl 常态档")
+check(sameColor(ScaffoldColorScheme.cardFill(dark: false, selected: true), PanelControl.lightHighlight),
+      "color: 卡片选中(浅) = PanelControl 高亮档")
+check(rgba(ScaffoldColorScheme.cardFill(dark: true)) != rgba(ScaffoldColorScheme.cardFill(dark: true, selected: true)),
+      "color: 卡片常态/选中两档不同（深）")
+check(rgba(ScaffoldColorScheme.cardFill(dark: false)) != rgba(ScaffoldColorScheme.cardFill(dark: false, selected: true)),
+      "color: 卡片常态/选中两档不同（浅）")
+
+// 卡片描边：选中 = accent（§5）
+check(sameColor(ScaffoldColorScheme.cardBorder(dark: true, selected: true), .controlAccentColor),
+      "color: 卡片选中描边 = 系统强调色")
+check(rgba(ScaffoldColorScheme.cardBorder(dark: true)) != rgba(PanelControl.darkNormal),
+      "color: 卡片常态描边不是填充色（描边可见）")
+
+// 步骤时间线：当前胶囊 = 高亮档；徽标 = 中性系统色 / 语义色（§4.2、§5）
+check(sameColor(ScaffoldColorScheme.stepPillFill(dark: true), PanelControl.darkHighlight),
+      "color: 当前步骤胶囊(深) = PanelControl 高亮档")
+check(sameColor(ScaffoldColorScheme.stepPillFill(dark: false), PanelControl.lightHighlight),
+      "color: 当前步骤胶囊(浅) = PanelControl 高亮档")
+check(sameColor(ScaffoldColorScheme.stepBadgeFill(.idle), .systemGray), "color: 未到步骤徽标 = 系统灰")
+check(sameColor(ScaffoldColorScheme.stepBadgeFill(.current), .controlAccentColor), "color: 当前步骤徽标 = 强调色")
+check(sameColor(ScaffoldColorScheme.stepBadgeFill(.done), .systemGreen), "color: 已完成步骤徽标 = 系统绿")
+check(sameColor(ScaffoldColorScheme.stepBadgeFill(.error), .systemRed), "color: 报错步骤徽标 = 系统红")
+
+// 勾选徽标 / 类型徽标：勾选与自定义态走语义色（§5）
+check(sameColor(ScaffoldColorScheme.checkTint(dark: true, checked: true), .controlAccentColor),
+      "color: 勾选徽标(已选) = 强调色")
+check(!sameColor(ScaffoldColorScheme.checkTint(dark: true, checked: true),
+                 ScaffoldColorScheme.checkTint(dark: true, checked: false)),
+      "color: 勾选徽标两态不同")
+check(sameColor(ScaffoldColorScheme.typeBadgeTint(dark: false, kind: .modified), .systemOrange),
+      "color: 类型徽标(已修改) = 系统橙")
+check(sameColor(ScaffoldColorScheme.typeBadgeTint(dark: false, kind: .custom), .systemBlue),
+      "color: 类型徽标(新建) = 系统蓝")
+check(rgba(ScaffoldColorScheme.typeBadgeTint(dark: true, kind: .builtin))
+      != rgba(ScaffoldColorScheme.typeBadgeTint(dark: false, kind: .builtin)),
+      "color: 类型徽标(内置) 随明暗分档")
+
+// 文字档：深色走白档、浅色走黑档（§5）
+for state in [ScaffoldStepState.idle, .current, .done] {
+    let d = ScaffoldColorScheme.stepTitle(dark: true, state: state).usingColorSpace(.sRGB)
+    let l = ScaffoldColorScheme.stepTitle(dark: false, state: state).usingColorSpace(.sRGB)
+    check((d?.redComponent ?? 0) > 0.5 && (l?.redComponent ?? 1) < 0.5,
+          "color: 步骤标题(\(state)) 深色用白档 / 浅色用黑档")
+}
+check(sameColor(ScaffoldColorScheme.stepTitle(dark: true, state: .error), .systemRed),
+      "color: 步骤标题(报错) = 系统红")
+
 print("----")
 print("\(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

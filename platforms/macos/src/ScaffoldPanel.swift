@@ -1444,6 +1444,80 @@ enum ScaffoldPresetOrder {
 }
 
 /// 设置列表行内的小按钮（闭包回调，避免 @objc selector 爆破）。
+// MARK: - 配色（唯一来源 docs/ui-color-scheme.md）
+
+/// 环节类型徽标语义（内置 / 自定义·已修改 / 自定义·新建）。
+enum ScaffoldStageBadgeKind { case builtin, modified, custom }
+
+/// 步骤时间线状态（未到 / 当前 / 已完成 / 报错）。
+enum ScaffoldStepState { case idle, current, done, error }
+
+/// 脚手架面板的取色集中在这里（纯函数，无头可测：tests/scaffold-panel 的「配色」段）：
+///
+/// - 面板底色 / 卡片 / 选中态一律走 `PanelSurface` / `PanelControl` 的既有档位，
+///   面板内不再写死灰度（docs/ui-color-scheme.md §1.2、§7.8）；
+/// - 文字与描边按 §5 的档位（深色走白档、浅色走黑档）；
+/// - 语义色（accent / 绿 / 橙 / 红 / 蓝）不参与灰阶替换（§5）。
+enum ScaffoldColorScheme {
+    /// 面板底色（ScaffoldRootView）→ `PanelSurface`（§4.1）。
+    static func panelFill(dark: Bool) -> NSColor { PanelSurface.color(dark: dark) }
+
+    /// 卡片 / 设置行 → `PanelControl` 常态档；选中 → 高亮档（§4.2）。
+    static func cardFill(dark: Bool, selected: Bool = false) -> NSColor {
+        PanelControl.fill(dark: dark, highlighted: selected)
+    }
+
+    /// 卡片描边：选中用系统强调色（§5），常态用 §5 的卡片描边档
+    /// （深 白 0.35@0.6 · 浅 黑 0.20@0.8）。
+    static func cardBorder(dark: Bool, selected: Bool = false) -> NSColor {
+        selected ? .controlAccentColor
+                 : (dark ? NSColor(white: 1, alpha: 0.35) : NSColor(white: 0, alpha: 0.20))
+    }
+
+    /// 环节类型徽标：内置走次级文字档，自定义·已修改 / 新建走语义色（§5）。
+    static func typeBadgeTint(dark: Bool, kind: ScaffoldStageBadgeKind) -> NSColor {
+        switch kind {
+        case .builtin: return dark ? NSColor(white: 0.78, alpha: 1) : NSColor(white: 0.38, alpha: 1)
+        case .modified: return .systemOrange
+        case .custom: return .systemBlue
+        }
+    }
+
+    /// 步骤时间线：当前步骤胶囊背景 → `PanelControl` 高亮档（§4.2「选中」）。
+    static func stepPillFill(dark: Bool) -> NSColor {
+        PanelControl.fill(dark: dark, highlighted: true)
+    }
+
+    /// 步骤徽标实心圆：未到用中性系统色（同通道面板的状态点），其余用语义色（§5）。
+    static func stepBadgeFill(_ state: ScaffoldStepState) -> NSColor {
+        switch state {
+        case .idle: return .systemGray
+        case .current: return .controlAccentColor
+        case .done: return .systemGreen
+        case .error: return .systemRed
+        }
+    }
+
+    /// 徽标文字（画在实心语义色圆上）：深浅两套都是白色。
+    static let badgeGlyph = NSColor.white
+
+    /// 步骤标题文字（§5 文字档：当前 = 正文、已完成 = 次级、未到 = 更弱）。
+    static func stepTitle(dark: Bool, state: ScaffoldStepState) -> NSColor {
+        switch state {
+        case .idle: return dark ? NSColor(white: 0.78, alpha: 1) : NSColor(white: 0.38, alpha: 1)
+        case .current: return dark ? NSColor(white: 0.95, alpha: 1) : NSColor(white: 0.12, alpha: 1)
+        case .done: return dark ? NSColor(white: 0.80, alpha: 1) : NSColor(white: 0.30, alpha: 1)
+        case .error: return .systemRed
+        }
+    }
+
+    /// 卡片勾选徽标：勾选 = 系统强调色，未勾选 = 描边档（深 白 0.55 · 浅 黑 0.45）。
+    static func checkTint(dark: Bool, checked: Bool) -> NSColor {
+        checked ? .controlAccentColor
+                : (dark ? NSColor(white: 0.55, alpha: 1) : NSColor(white: 0.45, alpha: 1))
+    }
+}
+
 private final class ActionButton: NSButton {
     var onAction: (() -> Void)?
     /// 工厂：AppKit 中编程创建的 NSButton 默认 translatesAutoresizingMaskIntoConstraints=true，
@@ -1460,12 +1534,7 @@ private final class ActionButton: NSButton {
 
 /// 环节类型徽标（内置 / 自定义·已修改 / 自定义·新建）：圆角色块 + 文字。
 private final class StageTypeBadge: NSView {
-    enum Kind {
-        case builtin        // 内置
-        case modified       // 自定义 · 已修改内置
-        case custom         // 自定义 · 新建
-    }
-    var kind: Kind = .builtin { didSet { needsDisplay = true } }
+    var kind: ScaffoldStageBadgeKind = .builtin { didSet { needsDisplay = true } }
 
     override var isOpaque: Bool { false }
     override func viewDidChangeEffectiveAppearance() {
@@ -1485,12 +1554,7 @@ private final class StageTypeBadge: NSView {
     }
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let color: NSColor
-        switch kind {
-        case .builtin: color = dark ? NSColor(white: 0.6, alpha: 1) : NSColor(white: 0.5, alpha: 1)
-        case .modified: color = .systemOrange
-        case .custom: color = .systemBlue
-        }
+        let color = ScaffoldColorScheme.typeBadgeTint(dark: dark, kind: kind)
         color.withAlphaComponent(0.18).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         let attrs: [NSAttributedString.Key: Any] = [
@@ -1596,14 +1660,13 @@ private final class StageSettingsRow: NSView {
         needsDisplay = true
     }
 
-    /// 卡片背景 + 描边（深浅色自适应，与 WorkspaceStageCardView 同风格）。
+    /// 卡片背景 + 描边：背景取 PanelControl 常态档，描边走 §5 卡片档
+    /// （与 WorkspaceStageCardView / ScaffoldStageCard 同一套取色）。
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let bg: NSColor = dark ? NSColor(white: 0.22, alpha: 1) : NSColor(white: 0.97, alpha: 1)
-        bg.setFill()
+        ScaffoldColorScheme.cardFill(dark: dark).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
-        let border: NSColor = dark ? NSColor(white: 0.33, alpha: 1) : NSColor(white: 0.72, alpha: 1)
-        border.setStroke()
+        ScaffoldColorScheme.cardBorder(dark: dark).setStroke()
         let p = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
         p.lineWidth = 1
         p.stroke()
@@ -1706,11 +1769,9 @@ private final class PresetSettingsRow: NSView {
     }
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let bg: NSColor = dark ? NSColor(white: 0.22, alpha: 1) : NSColor(white: 0.97, alpha: 1)
-        bg.setFill()
+        ScaffoldColorScheme.cardFill(dark: dark).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
-        let border: NSColor = dark ? NSColor(white: 0.33, alpha: 1) : NSColor(white: 0.72, alpha: 1)
-        border.setStroke()
+        ScaffoldColorScheme.cardBorder(dark: dark).setStroke()
         let p = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
         p.lineWidth = 1
         p.stroke()
@@ -1737,15 +1798,19 @@ private final class StageEditorFile {
     var isNewFile = false
     /// 新文件的初始内容（骨架 YAML 等；loadPath 为空时编辑器以此为种子）。
     var initialText = ""
-    let tabButton: ActionButton
+    let tabButton: PanelTabButton
 
     init(relativePath: String, displayName: String, loadPath: String, savePath: String) {
         self.relativePath = relativePath
         self.displayName = displayName
         self.loadPath = loadPath
         self.savePath = savePath
-        tabButton = ActionButton.make(title: displayName)
-        tabButton.bezelStyle = .texturedRounded
+        // 页签走面板基件：无 bezel 的 HoverButton，常态/选中各一档控件底色
+        //（ui-color-scheme §4.2「页签标题」），与文件 / 预览 / 终端面板的页签一致。
+        tabButton = PanelTabButton(frame: .zero)
+        tabButton.title = displayName
+        tabButton.isBordered = false
+        tabButton.font = .systemFont(ofSize: 12)
         tabButton.setButtonType(.pushOnPushOff)
         tabButton.state = .off
         tabButton.cell?.lineBreakMode = .byTruncatingTail
@@ -1777,9 +1842,10 @@ final class ScaffoldRootView: NSView {
     }
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let color: NSColor = dark ? NSColor(calibratedWhite: 0.28, alpha: 1) : NSColor(calibratedWhite: 0.94, alpha: 1)
-        color.setFill()
-        dirtyRect.fill()
+        ScaffoldColorScheme.panelFill(dark: dark).setFill()
+        // 面板底色是"表面"：只填自己的 bounds（AppKit 会递上比 bounds 更大的
+        // dirtyRect，直接 fill 会盖住 z 序更低的兄弟视图，见 ui-color-scheme §7.6）。
+        bounds.intersection(dirtyRect).fill()
     }
 }
 
@@ -1790,8 +1856,7 @@ private final class FlippedWorkspaceView: NSView {
 }
 
 private final class ScaffoldStepItem: NSView {
-    enum State { case idle, current, done, error }
-    var state: State = .idle { didSet { needsDisplay = true } }
+    var state: ScaffoldStepState = .idle { didSet { needsDisplay = true } }
     let number: Int
     let title: String
     var onAction: (() -> Void)?
@@ -1817,26 +1882,17 @@ private final class ScaffoldStepItem: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        // 当前步骤高亮胶囊背景
+        // 当前步骤：控件高亮档的胶囊背景（§4.2「选中」）
         if state == .current {
-            let bg = dark ? NSColor.controlAccentColor.withAlphaComponent(0.30)
-                          : NSColor.controlAccentColor.withAlphaComponent(0.15)
-            bg.setFill()
+            ScaffoldColorScheme.stepPillFill(dark: dark).setFill()
             NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 8, yRadius: 8).fill()
         }
-        // 徽标：数字 / ✓ / ⚠
+        // 徽标：数字 / ✓ / !
         let badgeRect = NSRect(x: 12, y: (bounds.height - 22) / 2, width: 22, height: 22)
-        let badgeColor: NSColor
-        switch state {
-        case .idle: badgeColor = dark ? NSColor(white: 0.42, alpha: 1) : NSColor(white: 0.62, alpha: 1)
-        case .current: badgeColor = NSColor.controlAccentColor
-        case .done: badgeColor = NSColor.systemGreen
-        case .error: badgeColor = NSColor.systemRed
-        }
-        badgeColor.setFill()
+        ScaffoldColorScheme.stepBadgeFill(state).setFill()
         NSBezierPath(ovalIn: badgeRect).fill()
-        let textColor = NSColor.white
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12, weight: .bold), .foregroundColor: textColor]
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12, weight: .bold),
+                                                    .foregroundColor: ScaffoldColorScheme.badgeGlyph]
         var glyph: NSString
         switch state {
         case .done: glyph = "✓"
@@ -1847,13 +1903,7 @@ private final class ScaffoldStepItem: NSView {
         glyph.draw(at: NSPoint(x: badgeRect.midX - size.width / 2, y: badgeRect.midY - size.height / 2), withAttributes: attrs)
 
         // 标题
-        let titleColor: NSColor
-        switch state {
-        case .idle: titleColor = dark ? NSColor(white: 0.72, alpha: 1) : NSColor(white: 0.45, alpha: 1)
-        case .current: titleColor = dark ? NSColor(white: 0.95, alpha: 1) : NSColor(white: 0.12, alpha: 1)
-        case .done: titleColor = dark ? NSColor(white: 0.8, alpha: 1) : NSColor(white: 0.3, alpha: 1)
-        case .error: titleColor = NSColor.systemRed
-        }
+        let titleColor = ScaffoldColorScheme.stepTitle(dark: dark, state: state)
         let tAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: titleColor]
         let tSize = (title as NSString).size(withAttributes: tAttrs)
         (title as NSString).draw(at: NSPoint(x: 46, y: (bounds.height - tSize.height) / 2), withAttributes: tAttrs)
@@ -1871,8 +1921,7 @@ private final class ScaffoldBadge: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let rect = bounds.insetBy(dx: 2, dy: 2)
-        let color: NSColor = isChecked ? NSColor.controlAccentColor
-                                       : (dark ? NSColor(white: 0.55, alpha: 1) : NSColor(white: 0.65, alpha: 1))
+        let color = ScaffoldColorScheme.checkTint(dark: dark, checked: isChecked)
         color.setStroke()
         let circle = NSBezierPath(ovalIn: rect)
         circle.lineWidth = 1.5
@@ -1885,7 +1934,7 @@ private final class ScaffoldBadge: NSView {
             check.line(to: NSPoint(x: rect.midX - 1, y: rect.maxY - 4))
             check.line(to: NSPoint(x: rect.maxX - 3, y: rect.minY + 4))
             check.lineWidth = 2
-            NSColor.white.setStroke()
+            ScaffoldColorScheme.badgeGlyph.setStroke()
             check.stroke()
         }
     }
@@ -1948,13 +1997,10 @@ private final class ScaffoldStageCard: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let bg: NSColor = isSelected
-            ? (dark ? NSColor.controlAccentColor.withAlphaComponent(0.30) : NSColor.controlAccentColor.withAlphaComponent(0.14))
-            : (dark ? NSColor(white: 0.22, alpha: 1) : NSColor(white: 0.97, alpha: 1))
-        bg.setFill()
+        // 常态 = 控件常态档；选中 = 控件高亮档 + accent 边框（§4.2「卡片」）
+        ScaffoldColorScheme.cardFill(dark: dark, selected: isSelected).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10).fill()
-        let border: NSColor = isSelected ? NSColor.controlAccentColor : NSColor.separatorColor
-        border.setStroke()
+        ScaffoldColorScheme.cardBorder(dark: dark, selected: isSelected).setStroke()
         let p = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
         p.lineWidth = isSelected ? 1.5 : 1
         p.stroke()
@@ -1972,11 +2018,9 @@ private final class WorkspaceStageCardView: NSView {
     }
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let bg: NSColor = dark ? NSColor(white: 0.22, alpha: 1) : NSColor(white: 0.97, alpha: 1)
-        bg.setFill()
+        ScaffoldColorScheme.cardFill(dark: dark).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
-        let border: NSColor = dark ? NSColor(white: 0.35, alpha: 1) : NSColor(white: 0.7, alpha: 1)
-        border.setStroke()
+        ScaffoldColorScheme.cardBorder(dark: dark).setStroke()
         let p = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
         p.lineWidth = 1
         p.stroke()
@@ -3343,6 +3387,10 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         fileOutline.rowSizeStyle = .medium
         fileOutline.autoresizesOutlineColumn = true
         fileOutline.allowsMultipleSelection = false
+        // 列表内容区：表格自带的 controlBackgroundColor（浅色纯白 / 深色近黑）会盖住
+        // 面板底色，必须显式改成面板底色（ui-color-scheme §7.3）；也不要隔行条纹。
+        fileOutline.backgroundColor = PanelSurface.dynamic
+        fileOutline.usesAlternatingRowBackgroundColors = false
         fileScroll.documentView = fileOutline
         fileScroll.hasVerticalScroller = true
         fileScroll.autohidesScrollers = true
@@ -4824,9 +4872,15 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         for (i, file) in editorFiles.enumerated() {
             file.tabButton.title = file.isDirty ? file.displayName + " *" : file.displayName
             file.tabButton.state = .off
-            file.tabButton.onAction = { [weak self] in self?.selectEditorFile(index: i) }
+            file.tabButton.tag = i
+            file.tabButton.target = self
+            file.tabButton.action = #selector(editorFileTabTapped(_:))
             editorFileStack.addArrangedSubview(file.tabButton)
         }
+    }
+
+    @objc private func editorFileTabTapped(_ sender: NSButton) {
+        selectEditorFile(index: sender.tag)
     }
 
     /// 切换文件标签：live editor 复用（未保存编辑不丢失），否则新建 CodeEditorView。
