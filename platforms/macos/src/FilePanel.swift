@@ -29,6 +29,19 @@ private final class TreeNode {
 }
 
 
+/// The Files panel's root view. Its only job is to report mounting: the shell
+/// removes this view from the split view when the panel is closed and adds it back
+/// when the panel reopens, and the panel has to restore its divider position then
+/// (nothing inside the view sees a 0-width frame, so a transition cannot be used).
+final class FilePanelRootView: DynamicFillView {
+    var onMounted: (() -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { onMounted?() }
+    }
+}
+
 final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDelegate,
                                      NSOutlineViewDataSource, NSOutlineViewDelegate,
                                      NSSplitViewDelegate, NSMenuDelegate {
@@ -36,7 +49,10 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// Root view mounted directly as the right pane of the main split view.
     /// Opaque, clearly-gray background (DynamicFillView) so the whole top
     /// block reads as one strip; also re-lays its internal tree on resize.
-    let view = DynamicFillView()
+    /// It reports when the shell (re)mounts the panel — the panel view is REMOVED
+    /// from the split view when the panel is closed and re-added when it opens,
+    /// which is when the inner split view must be told where the divider was.
+    let view = FilePanelRootView()
     /// Invoked when the user hits the panel's "Close" button.
     var onRequestHide: (() -> Void)?
 
@@ -153,10 +169,12 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// panel is reopened, because the collapse/reopen cycle otherwise leaves the
     /// divider at the tree pane's maximum.
     private var rememberedTreeWidth: CGFloat?
-    /// Last seen width of the content split view, to detect the 0 → N transition.
-    private var lastSplitWidth: CGFloat = 0
-    /// Local monitor that records the divider width on mouse-up (see below).
-    private var treeWidthMonitor: Any?
+    /// Local monitors that tell a divider DRAG from a programmatic re-layout.
+    private var treeWidthMonitors: [Any] = []
+    /// True while a mouse press inside the panel is in flight.
+    private var mouseDownInPanel = false
+    /// Guards our own setPosition from being corrected recursively.
+    private var isRestoringTreeWidth = false
     /// Auto-refresh: polls mtime of the tree root and every expanded directory,
     /// reloading the tree when the filesystem changes (new files written by the
     /// agent show up without reopening the panel).
@@ -194,7 +212,20 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     override init() {
         super.init()
         buildUI()
-        installTreeWidthMonitor()
+        installTreeWidthMonitors()
+        view.onMounted = { [weak self] in
+            // A mount cannot happen mid-drag, and the drag flag must not survive a
+            // detach/attach cycle (a missing mouse-up would block every correction).
+            self?.mouseDownInPanel = false
+            // The inner split view re-distributes during the mount layout, and the
+            // exact pass it happens in is not guaranteed — so re-assert a few times.
+            // The correction is a no-op when the width is already right.
+            for delay in [0.0, 0.12, 0.4] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.restoreTreeWidthIfDisturbed()
+                }
+            }
+        }
         showEmptyState()
     }
 
@@ -339,13 +370,6 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         contentSplit.addSubview(treePane)
         contentSplit.addSubview(contentContainer)
         contentSplit.setHoldingPriority(NSLayoutConstraint.Priority(rawValue: 260), forSubviewAt: 1)
-        // Watch for the 0 → N width transition of a panel that is being reopened:
-        // that is when the divider has to be put back where the user left it.
-        contentSplit.postsFrameChangedNotifications = true
-        NotificationCenter.default.addObserver(self,
-                                              selector: #selector(contentSplitFrameChanged(_:)),
-                                              name: NSView.frameDidChangeNotification,
-                                              object: contentSplit)
         self.contentSplit = contentSplit
 
         view.addSubview(header)
@@ -1275,7 +1299,8 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// from open(path:) and by the shell whenever the panel is shown; retries
     /// are allowed until the server is reachable.
     func ensureTreeLoaded() {
-        installTreeWidthMonitor()   // the panel is coming into use
+        installTreeWidthMonitors()   // the panel is coming into use
+        restoreTreeWidthIfDisturbed()
         guard !treeTriedLoad, treeRoot == nil else { return }
         treeTriedLoad = true
         resolveProjectDirectory { [weak self] cwd in
@@ -1660,41 +1685,64 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// Whether the panel is really on screen (its layout is meaningful).
     private var isPanelVisible: Bool { view.window != nil && !view.isHidden }
 
-    /// Remember the divider width the user settled on. Recorded on mouse-up inside
-    /// the panel — the moment a divider drag ends — and deliberately NOT from the
-    /// split view's resize callbacks: closing the panel collapses the whole pane,
-    /// which resizes the split view too and would be mistaken for a user choice.
-    private func installTreeWidthMonitor() {
-        guard treeWidthMonitor == nil else { return }
-        treeWidthMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
-            guard let self = self, self.isPanelVisible else { return event }
-            let point = self.view.convert(event.locationInWindow, from: nil)
-            guard self.view.bounds.contains(point) else { return event }
+    /// Watch the mouse so a divider DRAG can be told from a programmatic
+    /// re-distribution:
+    ///   - a press inside the panel arms `mouseDownInPanel`, so the width the drag
+    ///     produces is never corrected while the user is still moving it;
+    ///   - the release records where the user left the divider.
+    private func installTreeWidthMonitors() {
+        guard treeWidthMonitors.isEmpty else { return }
+        let inPanel: (NSEvent) -> Bool = { [weak self] event in
+            guard let self = self, self.isPanelVisible else { return false }
+            return self.view.bounds.contains(self.view.convert(event.locationInWindow, from: nil))
+        }
+        let down = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
+            if self != nil, inPanel(event) { self?.mouseDownInPanel = true }
+            return event
+        }
+        let up = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+            guard let self = self else { return event }
+            self.mouseDownInPanel = false
+            guard inPanel(event) else { return event }
             let width = self.treePaneWidth
             if width >= Self.minTreeWidth - 1, width <= Self.maxTreeWidth + 1 {
                 self.rememberedTreeWidth = width
             }
             return event
         }
+        treeWidthMonitors = [down, up].compactMap { $0 }
     }
 
-    /// The pane came back after being collapsed: NSSplitView grows the tree pane
-    /// to its MAXIMUM (420pt) instead of restoring the divider, so put the width
-    /// the user left it at back (QA report: reopening the panel always gave a
-    /// 420pt tree).
-    @objc private func contentSplitFrameChanged(_ notification: Notification) {
-        let width = contentSplit.bounds.width
-        let wasCollapsed = lastSplitWidth <= 1
-        lastSplitWidth = width
-        guard width > 1, wasCollapsed, let remembered = rememberedTreeWidth else { return }
-        let target = Self.restoredTreeWidth(remembered, splitWidth: width)
-        AppLog.shared.log("preview tree width restored: \(Int(target))pt (was \(Int(remembered))pt)")
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.contentSplit.setPosition(target, ofDividerAt: 0)
-            self.contentSplit.adjustSubviews()
-        }
+    /// Put the tree pane back to the width the user left when the split view
+    /// re-distributes it on its own.
+    ///
+    /// Why this is needed at all: closing the panel makes the shell REMOVE the
+    /// panel view from the split view and re-add it on the next open (see
+    /// AppDelegate.setRightPanel), so the inner split view is laid out fresh and
+    /// gives the tree pane its maximum (420pt; QA report). Nothing inside this view
+    /// ever observes a 0-width frame — the view is simply detached and re-added —
+    /// hence the correction runs on every non-user resize instead of a transition.
+    private func restoreTreeWidthIfDisturbed() {
+        guard !isRestoringTreeWidth, !mouseDownInPanel else { return }
+        guard isPanelVisible, contentSplit.bounds.width > 1 else { return }
+        guard let remembered = rememberedTreeWidth else { return }
+        let target = Self.restoredTreeWidth(remembered, splitWidth: contentSplit.bounds.width)
+        let current = treePaneWidth
+        guard current >= 1, abs(current - target) > 1 else { return }
+        isRestoringTreeWidth = true
+        AppLog.shared.log("preview tree width corrected: \(Int(current))pt -> \(Int(target))pt")
+        contentSplit.setPosition(target, ofDividerAt: 0)
+        contentSplit.adjustSubviews()
+        isRestoringTreeWidth = false
     }
+
+    /// The split view resized its panes: either the user dragged the divider (leave
+    /// it alone) or something re-distributed them (put the remembered width back).
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard notification.object as? NSSplitView === contentSplit else { return }
+        restoreTreeWidthIfDisturbed()
+    }
+
 
     /// Read a directory's immediate children (directories first, then name).
     private static func loadChildren(of node: TreeNode) -> [TreeNode]? {

@@ -283,7 +283,15 @@
 - **重新打开时恢复**：监听 `contentSplit` 的 `frameDidChangeNotification`，检测 **0 → N** 的转变（面板刚被重新展开），把记住的宽度夹取后 `setPosition` 回去；日志会打印 `preview tree width restored: Npt (was Mpt)`。
 - **夹取规则**抽成纯函数 `FilePanelController.restoredTreeWidth(_:splitWidth:)`：不超 160–420 的区间，并且在窄面板下至少给内容区留 240pt（避免恢复成一个把内容挤没的宽度）。分隔条上下限也改用同一组常量，不再散落魔法数字。
 
-**验证**：`tests/file-panel/panel-switch-tests.swift` 新增 5 条断言（宽面板原样恢复 / 过窄抬到下限 / 过宽压到上限 / 窄面板给内容区留位 / 极窄面板不低于下限）全绿；`tests/file-panel` 与 `scripts/local-ci.sh swift` 全绿。**待手动 QA**：拖宽目录树 → 关闭面板 → 重新打开，宽度应保持；重启 App 后回到默认 160（本次只在会话内记住，跨启动持久化未做）。
+**第二轮修正（第一版没修好，QA 反馈）**：第一版想靠「contentSplit 宽度 0 → N 的转变」来触发恢复，但看 `AppDelegate.setRightPanel` 才明白：关闭面板时壳层是把面板视图**从 split view 里移除**、再次打开时**重新 addSubview** —— 视图被摘掉时自身宽度并不会变成 0，所以那个转变**永远不会发生**，恢复逻辑从未执行。
+
+改为两条不依赖「宽度转变」的路径：
+
+- **每次「非用户」的重新分配都纠正回来**：`splitViewDidResizeSubviews` 里调 `restoreTreeWidthIfDisturbed()` —— 只要当前宽度与记住的宽度差 > 1pt 且**不是用户正在拖拽**，就 `setPosition` 回去（用 `isRestoringTreeWidth` 防止递归）。
+- **区分「拖拽」与「程序重排」**：新增 `leftMouseDown` / `leftMouseUp` 本地监视器 —— 在面板内按下时置 `mouseDownInPanel`（拖拽期间绝不纠正），松开时记录宽度（用户意图）。
+- **挂载钩子**：根视图换成 `FilePanelRootView`（`DynamicFillView` 去掉 `final` 以便继承），`viewDidMoveToWindow` 有 window 时回调；重开后按 0 / 0.12s / 0.4s 三次幂等地纠正（重排发生在哪一次布局不保证）。
+
+**验证**：`tests/file-panel/panel-switch-tests.swift` 5 条夹取断言全绿；`tests/file-panel` 与 `scripts/local-ci.sh swift` EXIT=0。**待手动 QA**：拖宽目录树 → 关闭面板 → 重新打开，宽度应保持；日志里会出现 `preview tree width corrected: Npt -> Mpt`（若一直不出现且宽度仍错，说明重排发生在完全不同的时机，需要拿日志再定位）。
 ---
 
 ## 备注

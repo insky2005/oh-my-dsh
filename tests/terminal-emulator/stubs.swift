@@ -40,7 +40,7 @@ enum DSHSessionRPC {
                                         completion: @escaping (String?) -> Void) { completion(nil) }
 }
 
-final class DynamicFillView: NSView {
+class DynamicFillView: NSView {   // 真件非 final：FilePanelRootView 继承它
     enum Kind { case panel, custom(NSColor) }
     var kind: Kind = .panel
     var fill: NSColor = .windowBackgroundColor

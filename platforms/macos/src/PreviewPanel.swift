@@ -98,7 +98,7 @@ final class PanelTabButton: HoverButton {
 /// panel's top bar and content area a consistent, always-visible background in
 /// light AND dark mode (a fixed CGColor layer background would freeze the
 /// light/dark resolution).
-final class DynamicFillView: NSView {
+class DynamicFillView: NSView {
     /// Panel surface (default) or an explicit, non-adaptive color.
     enum Kind { case panel, custom(NSColor) }
     var kind: Kind = .panel {
