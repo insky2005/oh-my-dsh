@@ -1,7 +1,7 @@
 ---
 title: 模块：审查面板（Review / 变更审计）
 tags: [module, review, audit, session-log, zstd, read-only]
-updated: 2026-09-17T23:45:00Z
+updated: 2026-09-21T09:43:26Z
 sources: [platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, platforms/macos/src/main.swift, core/lib/review-log.js, core/bin/ohmy-core.js, core/index.js, core/tests/review-log.test.js, tests/review-panel/, docs/review-panel-design.md, platforms/macos/src/SkillsPanel.swift, scripts/local-ci.sh, .github/workflows/ci.yml, README.md, CHANGELOG.md]
 manual: false
 ---

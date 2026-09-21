@@ -1,14 +1,14 @@
 ---
 title: 模块：技能面板（Skills Manager）
 tags: [module, skills, skill-md, registry, frontmatter, panel]
-updated: 2026-09-17T23:45:00Z
+updated: 2026-09-21T09:43:26Z
 sources: [platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, tests/skills-panel/, tests/skills/, docs/skills-manager-design.md, docs/dsh-version-impact.md, docs/builtin-skills-design.md, scripts/local-ci.sh, .github/workflows/ci.yml, README.md, CHANGELOG.md]
 manual: false
 ---
 
 # 模块：技能面板（Skills Manager）
 
-在壳层内管理 agent 技能（SKILL.md）：**查找 / 安装 / 移除**与**调用开关**，不离开 App、不改 dsh 源码。合并自 **PR #50 `feature/skills-manager`**（2026-09-17，HEAD `a704ba1`）。设计文档：`docs/skills-manager-design.md`。
+在壳层内管理 agent 技能（SKILL.md）：**查找 / 安装 / 移除**与**调用开关**，不离开 App、不改 dsh 源码。合并自 **PR #50 `feature/skills-manager`**（2026-09-17，HEAD `a704ba1`），随 **v1.16.0**（2026-09-21）发布。设计文档：`docs/skills-manager-design.md`。
 
 - 入口：活动栏「技能」图标（SF Symbol `puzzlepiece`）/ 视图菜单 / **⌥⌘S**；右栏插槽第 8 个成员 `RightPanel.skills`，`rightPanelKind` 持久化 `"skills"`；`SkillsPanelController.minWidth = 300`。
 

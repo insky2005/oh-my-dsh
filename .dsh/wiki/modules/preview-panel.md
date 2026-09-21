@@ -1,7 +1,7 @@
 ---
 title: 模块：PreviewPanel.swift（预览面板，回滚基线）
 tags: [module, preview, file-tree, tabs, rollback]
-updated: 2026-09-21T08:44:56Z
+updated: 2026-09-21T09:43:26Z
 sources: [platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/SkillsPanel.swift, tests/skills-panel/, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, docs/ux-feedback.md, CHANGELOG.md]
 manual: false
 ---
