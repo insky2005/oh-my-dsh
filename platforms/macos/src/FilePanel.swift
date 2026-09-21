@@ -292,25 +292,10 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         treeOutline.dataSource = self
         treeOutline.delegate = self
         treeOutline.autoresizesOutlineColumn = true
-        // 目录树右键菜单（docs/ux-feedback.md #1）：在点中的目录里新建文件/文件夹。
-        // NSOutlineView 的 clickedRow 在菜单弹出前已更新，动作里读它即可。
+        // 目录树右键菜单（docs/ux-feedback.md #1）：条目与顺序随「点到了什么」变化，
+        // 由 TreeMenuModel 决定（纯模型，tests/file-panel 覆盖），这里只负责建菜单。
+        // NSOutlineView 的 clickedRow 在 menuNeedsUpdate 之前已更新。
         let treeMenu = NSMenu()
-        let newFileItem = NSMenuItem(title: L10n.tr("files.newFile"), action: #selector(newFileInTree(_:)), keyEquivalent: "")
-        newFileItem.target = self
-        treeMenu.addItem(newFileItem)
-        let newFolderItem = NSMenuItem(title: L10n.tr("files.newFolder"), action: #selector(newFolderInTree(_:)), keyEquivalent: "")
-        newFolderItem.target = self
-        treeMenu.addItem(newFolderItem)
-        let renameItem = NSMenuItem(title: L10n.tr("files.rename"), action: #selector(renameTreeSelection(_:)), keyEquivalent: "")
-        renameItem.target = self
-        treeMenu.addItem(renameItem)
-        let deleteItem = NSMenuItem(title: L10n.tr("files.delete"), action: #selector(deleteTreeSelection(_:)), keyEquivalent: "")
-        deleteItem.target = self
-        treeMenu.addItem(deleteItem)
-        treeMenu.addItem(.separator())
-        let revealTreeItem = NSMenuItem(title: L10n.tr("files.revealInTree"), action: #selector(revealTreeSelection(_:)), keyEquivalent: "")
-        revealTreeItem.target = self
-        treeMenu.addItem(revealTreeItem)
         treeMenu.delegate = self
         treeOutline.menu = treeMenu
 
@@ -1031,20 +1016,46 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         return node
     }
 
-    /// Menu validation: the project root can be neither renamed nor deleted (the
-    /// whole tree hangs off it), and the create entries need a root at all.
+    /// Build the tree menu for the row under the pointer. NSMenu is used as a
+    /// dynamic delegate here because both the ORDER and the SET of entries depend
+    /// on what was clicked: a file has no "New Folder"; the project root can be
+    /// neither renamed nor deleted; a click on empty space only offers creation.
+    /// The rules live in TreeMenuModel (pure, unit-tested).
     func menuNeedsUpdate(_ menu: NSMenu) {
         let node = clickedTreeItem()
-        let hasRow = node != nil && node?.path != treeRoot?.path
-        for item in menu.items {
-            switch item.action {
-            case #selector(renameTreeSelection(_:)), #selector(deleteTreeSelection(_:)), #selector(revealTreeSelection(_:)):
-                item.isEnabled = hasRow
-            case #selector(newFileInTree(_:)), #selector(newFolderInTree(_:)):
-                item.isEnabled = treeRoot != nil
-            default:
-                break
-            }
+        let entries = TreeMenuModel.entries(hasRoot: treeRoot != nil,
+                                            hasRow: node != nil,
+                                            isRoot: treeRoot != nil && node?.path == treeRoot?.path,
+                                            isFile: node?.isDir == false)
+        menu.removeAllItems()
+        for entry in entries {
+            if entry.separatorBefore, menu.numberOfItems > 0 { menu.addItem(.separator()) }
+            let menuItem = NSMenuItem(title: menuTitle(for: entry.item),
+                                      action: menuSelector(for: entry.item),
+                                      keyEquivalent: "")
+            menuItem.target = self
+            menuItem.isEnabled = entry.enabled
+            menu.addItem(menuItem)
+        }
+    }
+
+    private func menuTitle(for item: TreeMenuItem) -> String {
+        switch item {
+        case .newFolder: return L10n.tr("files.newFolder")
+        case .newFile: return L10n.tr("files.newFile")
+        case .rename: return L10n.tr("files.rename")
+        case .delete: return L10n.tr("files.delete")
+        case .reveal: return L10n.tr("files.revealInTree")
+        }
+    }
+
+    private func menuSelector(for item: TreeMenuItem) -> Selector {
+        switch item {
+        case .newFolder: return #selector(newFolderInTree(_:))
+        case .newFile: return #selector(newFileInTree(_:))
+        case .rename: return #selector(renameTreeSelection(_:))
+        case .delete: return #selector(deleteTreeSelection(_:))
+        case .reveal: return #selector(revealTreeSelection(_:))
         }
     }
 

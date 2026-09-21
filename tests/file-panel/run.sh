@@ -30,6 +30,15 @@ swiftc -swift-version 5 -module-cache-path "$CACHE" \
 "$TMP/open-with-tests"
 rm -rf "$TMP"
 
+echo "--- tree context menu (model) ---"
+TMP="$(mktemp -d)"
+cp "$SRC/FilePanelTreeMenu.swift" "$TMP/FilePanelTreeMenu.swift"
+cp tree-menu-tests.swift "$TMP/main.swift"
+swiftc -swift-version 5 -module-cache-path "$CACHE" \
+  -o "$TMP/tree-menu-tests" "$TMP/FilePanelTreeMenu.swift" "$TMP/main.swift"
+"$TMP/tree-menu-tests"
+rm -rf "$TMP"
+
 echo "--- file panel workspace hand-off (panel) ---"
 TMP="$(mktemp -d)"
 cp ../terminal-emulator/stubs.swift "$TMP/stubs.swift"   # L10n/AppLog/ShellConfig/共享 UI 基件
@@ -38,13 +47,14 @@ cp "$SRC/CodeEditorView.swift" "$TMP/CodeEditorView.swift"
 cp "$SRC/PanelSurface.swift" "$TMP/PanelSurface.swift"   # 面板底色 token
 cp "$SRC/WorkspaceTabMemory.swift" "$TMP/WorkspaceTabMemory.swift"
 cp "$SRC/OpenWithApps.swift" "$TMP/OpenWithApps.swift"   # 项目目录「用外部应用打开」catalog（#2）
+cp "$SRC/FilePanelTreeMenu.swift" "$TMP/FilePanelTreeMenu.swift"   # 目录树右键菜单模型（#1）
 cp "$SRC"/vendor/Highlightr/*.swift "$TMP/"
 cp panel-switch-tests.swift "$TMP/main.swift"
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
   -framework AppKit -framework PDFKit -framework JavaScriptCore \
   -o "$TMP/panel-switch-tests" \
   "$TMP/stubs.swift" "$TMP/PanelSurface.swift" "$TMP/FilePanel.swift" "$TMP/CodeEditorView.swift" \
-  "$TMP/WorkspaceTabMemory.swift" "$TMP/OpenWithApps.swift" \
+  "$TMP/WorkspaceTabMemory.swift" "$TMP/OpenWithApps.swift" "$TMP/FilePanelTreeMenu.swift" \
   "$TMP"/Highlightr.swift "$TMP"/CodeAttributedString.swift \
   "$TMP"/Theme.swift "$TMP"/HTMLUtils.swift "$TMP"/Shims.swift "$TMP/main.swift"
 "$TMP/panel-switch-tests"
