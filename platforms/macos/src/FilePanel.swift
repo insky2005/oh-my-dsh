@@ -2065,20 +2065,17 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
                             title: L10n.tr("preview.unreadable", path))
             return
         }
-        let imageView = NSImageView()
-        imageView.image = img
-        imageView.imageScaling = .scaleProportionallyDown
-        imageView.frame = NSRect(origin: .zero, size: img.size)
-
-        let scroll = NSScrollView()
-        scroll.documentView = imageView
-        scroll.drawsBackground = true
-        scroll.backgroundColor = PanelSurface.dynamic
-        scroll.hasVerticalScroller = true
-        scroll.hasHorizontalScroller = true
-        scroll.autohidesScrollers = true
-        AppLog.shared.log("preview image: \(Int(img.size.width))x\(Int(img.size.height))")
-        embed(scroll)
+        // Zoomable preview: opens fitted to the viewport (proportionally), then
+        // ⌘+/⌘−/⌘0, ⌘-scroll, pinch and double-click zoom it (QA request).
+        let preview = ImagePreviewView(image: img)
+        AppLog.shared.log("preview image: \(Int(img.size.width))x\(Int(img.size.height)) (fit to viewport)")
+        embed(preview)
+        // The fit needs the real viewport size, and the keyboard zoom needs focus:
+        // both only exist once the view is laid out in a window.
+        DispatchQueue.main.async { [weak self] in
+            preview.fitToViewport()
+            self?.view.window?.makeFirstResponder(preview.focusView)
+        }
     }
 
     private func showPDF(path: String) {

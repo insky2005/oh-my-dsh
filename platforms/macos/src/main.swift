@@ -202,6 +202,7 @@ enum L10n {
         "preview.pickFolderMessage": ("无法自动定位项目目录，请选择要浏览的文件夹", "Could not locate the project folder automatically — choose a folder to browse"),
         "preview.pickFolderOpen": ("打开", "Open"),
         "preview.saveHint": ("保存当前文件", "Save the current file"),
+        "preview.imageZoomHint": ("⌘+ / ⌘− 缩放，⌘0 或双击适应窗口，拖拽平移", "⌘+/⌘− to zoom, ⌘0 or double-click to fit, drag to pan"),
         "preview.saveFailed": ("保存失败：%@", "Save failed: %@"),
         "preview.unsavedTitle": ("有未保存的修改", "Unsaved Changes"),
         "preview.switchUnsavedMessage": ("切换工作区会关闭以下文件，其中有未保存的修改：\n%@", "Switching workspace closes these files; some have unsaved changes:\n%@"),
