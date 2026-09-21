@@ -1,14 +1,14 @@
 ---
 title: 模块：FilePanel.swift / CodeEditorView.swift（文件面板，预览+编辑+语法高亮）
 tags: [module, file-panel, preview, code-editor, syntax-highlight, highlightr, edit, line-numbers]
-updated: 2026-09-12T15:13:11Z
-sources: [platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/vendor/Highlightr/Highlightr.swift, platforms/macos/src/vendor/Highlightr/CodeAttributedString.swift, platforms/macos/src/vendor/Highlightr/Theme.swift, platforms/macos/src/main.swift, platforms/macos/build-app.sh, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/WorkspaceTabMemory.swift, tests/file-panel/]
+updated: 2026-09-21T04:19:55Z
+sources: [platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/vendor/Highlightr/Highlightr.swift, platforms/macos/src/vendor/Highlightr/CodeAttributedString.swift, platforms/macos/src/vendor/Highlightr/Theme.swift, platforms/macos/src/main.swift, platforms/macos/build-app.sh, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/WorkspaceTabMemory.swift, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, tests/file-panel/]
 manual: false
 ---
 
 # 模块：FilePanel.swift + CodeEditorView.swift（文件面板）
 
-约 1246 + 388 行。**右栏「预览」面板的现行实现**（`FilePanelController`）：在 PreviewPanel 的目录树 + 多标签页 + 图片/PDF/元数据预览基础上，新增**无后缀/点文件按文本预览、文件内编辑 + 行号、语法高亮**。作为 PreviewPanel 的**强化分支**，PreviewPanel.swift 本身**零改动**保留，仅作回滚对照（见 [preview-panel](preview-panel.md)）。
+约 1626 + 416 行（2026-09-21 实测）。**右栏「预览」面板的现行实现**（`FilePanelController`）：在 PreviewPanel 的目录树 + 多标签页 + 图片/PDF/元数据预览基础上，新增**无后缀/点文件按文本预览、文件内编辑 + 行号、语法高亮**。作为 PreviewPanel 的**强化分支**；PreviewPanel.swift 的**控制逻辑**零改动保留，仅作回滚对照（见 [preview-panel](preview-panel.md)），但其共享基件随全局配色统一一起演进。
 
 ## 与 PreviewPanel 的关系（可回滚优先）
 
@@ -22,7 +22,8 @@ manual: false
 1. **无后缀 / 点文件按文本预览**：`looksLikeText(_:)` 启发式——可 UTF-8 解码、无 NUL 字节、控制字符占比低（排除 \n/\r/\t，阈值 <8）即视为文本，与扩展名无关（`LICENSE`、`Makefile`、`.gitignore`、`.env`、`.npmrc` 均以文本显示）；
 2. **文件内编辑 + 行号 + 保存**：文本/代码文件可在面板内编辑，左侧 `LineNumberGutterView` 行号栏（随滚动/行数刷新，宽随最大行号位数自适应），头部「保存」按钮 + **⌘S**，未保存标记（页签标题尾部 `*`），`Data.write(to:.atomic)` 原子写回；
 3. **头部固定标题**：面板头部显示固定的面板名「文件 / Files」（复用活动栏键 `bar.preview`，语言切换经 `refreshTooltips()` 刷新），**不跟随当前文件的路径**；路径改放在**头部标题的悬停 tooltip**（活动页签的完整路径）与页签自身的 tooltip 里。
-4. **语法高亮**：开源组件 **Highlightr**（MIT v2.3.0）vendored 进 `platforms/macos/src/vendor/Highlightr/`，底层 highlight.js 支持 180+ 语言；`CodeEditorView.language(forExtension:)` 映射扩展名 → highlight.js 语言名（swift/js/ts/py/go/rust/cpp/md 等），未知回退纯文本；主题明暗跟随（xcode 浅 / atom-one-dark 深）。
+4. **面板配色**（2026-09-17）：页签标题由 `NSButton(bezelStyle: .texturedRounded)` 改为 `PanelTabButton`（无边框 `HoverButton` 子类，常态 / 选中 / hover 走 `PanelControl` 两档）；目录树 `NSOutlineView`、目录列表 `NSTableView` 与文本 / 图片 / PDF 预览的 `NSScrollView` 显式设 `backgroundColor = PanelSurface.dynamic`（表格默认 `controlBackgroundColor` 会盖住面板底色），见 `docs/ui-color-scheme.md`；
+5. **语法高亮**：开源组件 **Highlightr**（MIT v2.3.0）vendored 进 `platforms/macos/src/vendor/Highlightr/`，底层 highlight.js 支持 180+ 语言；`CodeEditorView.language(forExtension:)` 映射扩展名 → highlight.js 语言名（swift/js/ts/py/go/rust/cpp/md 等），未知回退纯文本；主题明暗跟随（xcode 浅 / atom-one-dark 深）。
 
 ## 可编辑前置条件（防数据损坏）
 
@@ -47,7 +48,7 @@ manual: false
 
 ## CodeEditorView（代码编辑器视图）
 
-- `CodeEditorView: NSView`：横向+纵向 `NSScrollView` 内含并排两个 `NSTextView`——左行号栏（只读、不可聚焦）+ 右代码区（`isEditable=true`、`isRichText=false`、等宽字体 `monospacedSystemFont(12)`）；
+- `CodeEditorView: NSView`：横向+纵向 `NSScrollView` 内含并排两个 `NSTextView`（代码区底色 `PanelSurface.dynamic`）——左行号栏（只读、不可聚焦）+ 右代码区（`isEditable=true`、`isRichText=false`、等宽字体 `monospacedSystemFont(12)`）；
 - 行号栏 `LineNumberGutterView`：直接由代码视图实时布局（`visibleRect` + `layoutManager` + `enumerateLineFragments`）推导可见行，数字总对齐、无第二滚动视图可失步；flipped y 原点匹配 NSTextView；Core Graphics 绘制（与面板头部同管线）；
 - 代码区：`widthTracksTextView=false` + 大容器 → 长行不换行、横向滚动；启用 undo、查找栏；
 - **Highlightr 初始化守卫**：`Highlightr()` 显式构造并判 nil（`CodeAttributedString()` 会 force-unwrap `Highlightr()`! 而崩溃）；`highlightingAvailable()` 校验 4 个资源文件（`highlight.min.js` + `pojoaque.min.css` + `xcode.min.css` + `atom-one-dark.min.css`）在 **Bundle.main 根**存在（Highlightr 用 `Bundle(for:)` + `path(forResource:)` 无子目录加载），缺失则退化为纯文本不崩溃；

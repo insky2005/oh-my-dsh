@@ -1,8 +1,8 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-09-17T23:45:00Z
-sources: [platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, docs/skills-manager-design.md, tests/skills-panel/, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, docs/dsh-version-impact.md, tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/]
+updated: 2026-09-21T04:19:55Z
+sources: [platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, docs/skills-manager-design.md, tests/skills-panel/, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, docs/dsh-version-impact.md, tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md]
 manual: false
 ---
 
@@ -77,6 +77,12 @@ tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：�
 3. 新增 `.swift` 文件**无需登记**（`platforms/macos/swift-sources.sh` 单一事实来源，glob 自动收录；版本走 git tag + `scripts/version.sh`，勿手改）；
 4. `L10n.table` 加中英文案键；README 特性说明；
 5. 配套无头单测（仿 `tests/wiki-panel/`：`stubs.swift` + `run.sh`）。
+
+## 改面板配色 / 新增面板底色
+
+- **只改一处**：`platforms/macos/src/PanelSurface.swift`（`PanelSurface` 面板底色 + `PanelControl` 控件两档）；取值、层级与「谁用哪个令牌」的映射见 `docs/ui-color-scheme.md`；改完跑 `tests/skills-panel/run.sh`（离屏渲染回归钉住 6 个令牌取值与实际像素）；
+- 取色规则：面板根视图 / header / toolbar / status bar / 内容容器 → `DynamicFillView()`（默认 `.panel`）；`NSTextView`/`NSScrollView`/`PDFView` → `PanelSurface.dynamic`；**`NSTableView`/`NSOutlineView` 必须显式 `backgroundColor = PanelSurface.dynamic`**（默认 `controlBackgroundColor` 会盖住面板底色）；卡片 / 按钮 / 页签 → `PanelControl.fill(dark:highlighted:)`（CALayer 背景用 `.cgColor` 并在 `viewDidChangeEffectiveAppearance` 重设）；
+- 新增档位优先从 dsh 的 `--dsw-static-neutral-bluish-*` 灰阶里挑，不要新写 `calibratedWhite`；语义色（accent / 绿 / 橙 / 红 / 消息气泡 / 链接）不参与灰阶替换。
 
 ## 改文案 / 语言
 

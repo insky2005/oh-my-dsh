@@ -1,25 +1,26 @@
 ---
 title: 模块：PreviewPanel.swift（预览面板，回滚基线）
 tags: [module, preview, file-tree, tabs, rollback]
-updated: 2026-09-17T23:45:00Z
-sources: [platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/SkillsPanel.swift, tests/skills-panel/, docs/plans/PREVIEW_PLAN-file-panel.md, CHANGELOG.md]
+updated: 2026-09-21T04:19:55Z
+sources: [platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/SkillsPanel.swift, tests/skills-panel/, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, CHANGELOG.md]
 manual: false
 ---
 
 # 模块：PreviewPanel.swift（预览面板，回滚基线）
 
-1519 行（2026-09-17 实测）。右栏预览面板的**回滚基线**：`feature/file-panel` 已把现行预览实现改为其强化分支 [FilePanel](file-panel.md)（`FilePanelController`），PreviewPanel.swift 本身**零改动**保留、编译登记原样，仅作回滚对照/兜底。本文档描述 PreviewPanel 原始能力（FilePanel 继承其大部分）：点击 dsh web 对话中的文件链接（工具产物）不再弹系统默认应用，而是在面板内预览；左侧为项目目录树。同时是**共享 UI 组件库**。
+1536 行（2026-09-21 实测）。右栏预览面板的**回滚基线**：`feature/file-panel` 已把现行预览实现改为其强化分支 [FilePanel](file-panel.md)（`FilePanelController`），仅作回滚对照/兜底。面板**行为**未变，但其中的共享基件已随 2026-09-17 的面板配色统一一并修改（`DynamicFillView.Kind` 收敛为 `.panel`/`.custom`、`HoverButton`/`CustomIconButton` 改走 `PanelControl`、新增 `PanelTabButton`）——它不再是「逐字节未改」的代表，配色令牌见 `docs/ui-color-scheme.md`。本文档描述 PreviewPanel 原始能力（FilePanel 继承其大部分）：点击 dsh web 对话中的文件链接（工具产物）不再弹系统默认应用，而是在面板内预览；左侧为项目目录树。同时是**共享 UI 组件库**。
 
 ## 共享 UI 组件（其他面板复用）
 
 | 组件 | 说明 |
 |---|---|
-| `HoverButton` | 无边框图标按钮：hover 高亮 + 手型光标 + 选中态高亮 |
-| `DynamicFillView` | 自绘背景视图（`kind: .window / .control`），深浅色自动跟随（动态填充，非固定 CGColor）。⚠️ **只填自己拥有的区域**：`draw(_:)` 用 `bounds.intersection(dirtyRect).fill()`——AppKit 可能给不透明视图传入**大于其 bounds** 的脏矩形，直接 `dirtyRect.fill()` 会越过自身边界、刷掉**层级更低的同色兄弟视图**（技能面板的头部标题与标签条正是这样整条消失的，2119bb1 修复；回归测试 `tests/skills-panel/render-tests.swift` 用真实 `DynamicFillView`/`HeaderLabel` 离屏渲染钉住） |
+| `HoverButton` | 无边框图标按钮：hover 高亮 + 手型光标 + 选中态高亮；底色改由 `PanelControl.fill(dark:highlighted:)` 统一（常态档，hover / `state == .on` 时高亮档） |
+| `PanelTabButton` | 页签标题按钮（`HoverButton` 子类）：无边框、按面板控件两档着色，并额外给标题留 16pt 横向内边距 + 24pt 最小高（无边框 NSButton 否则紧贴标题）。文件 / 预览 / 终端三个面板的页签共用 |
+| `DynamicFillView` | 自绘背景视图（`kind: .panel`（默认，面板底色）/ `.custom(NSColor)`），深浅色自动跟随（动态填充，非固定 CGColor；色值来自 `PanelSurface`）。⚠️ **只填自己拥有的区域**：`draw(_:)` 用 `bounds.intersection(dirtyRect).fill()`——AppKit 可能给不透明视图传入**大于其 bounds** 的脏矩形，直接 `dirtyRect.fill()` 会越过自身边界、刷掉**层级更低的同色兄弟视图**（技能面板的头部标题与标签条正是这样整条消失的，2119bb1 修复；回归测试 `tests/skills-panel/render-tests.swift` 用真实 `DynamicFillView`/`HeaderLabel` 离屏渲染钉住） |
 | `ActivityBarButton` | 活动栏图标按钮，图标颜色烘烤进图片（`BakedIconView`）保证深色可见 |
-| `PanelIconButton` | 面板头部图标按钮（按深浅色刷新 tint） |
+| `PanelIconButton` | 面板头部图标按钮（按深浅色刷新 tint；样式继承 `CustomIconButton`，故常态即面板控件常态档） |
 | `HeaderLabel` | 自绘文本标签（深浅色自适应颜色） |
-| `CustomIconButton` | 自绘图标按钮（`onAction` 闭包、hover、enabled 态；`Glyph` 枚举：plus/close/folder/openInApp/reveal/play/stop + `symbol(String)`——b7c5407 起支持 SF Symbol 字形（tinted 系统图片，15pt 居中绘制，如任务面板刷新按钮 `arrow.clockwise`），refresh 手绘圆形箭头随之移除）；可配 `size`（默认 26）、`showsBackground`（常显圆角背景，页签「+」等与页签样式统一）、`hoverColor`（hover 高亮色，默认 accent；页签关闭按钮用 `systemRed` 更明显） |
+| `CustomIconButton` | 自绘图标按钮（`onAction` 闭包、hover、enabled 态；`Glyph` 枚举：plus/close/folder/openInApp/reveal/play/stop + `symbol(String)`——b7c5407 起支持 SF Symbol 字形（tinted 系统图片，15pt 居中绘制，如任务面板刷新按钮 `arrow.clockwise`），refresh 手绘圆形箭头随之移除）；可配 `size`（默认 26）、`hoverColor`（hover 高亮色；仅页签关闭按钮用 `systemRed` 特例）；常态/高亮底色走 `PanelControl`（`showsBackground` 已删除） |
 
 ## PreviewPanelController 职责
 
