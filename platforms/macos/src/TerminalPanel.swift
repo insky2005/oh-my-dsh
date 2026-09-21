@@ -935,6 +935,14 @@ final class TerminalView: NSView {
     private var mouseCurrentLine = 0
     private var mouseCurrentCol = 0
     private var isSelecting = false
+    /// Selection granularity of the current drag: a plain drag selects cells, a
+    /// drag that started with a double click extends by whole words, a triple
+    /// click by whole lines (docs/ux-feedback.md #4 follow-up).
+    private enum DragUnit { case character, word, line }
+    private var dragUnit: DragUnit = .character
+    /// The word the double click landed on, kept as the fixed end of a word-wise
+    /// drag.
+    private var anchorWord: (line: Int, start: Int, end: Int)?
 
     /// Tab shortcuts: Cmd+1…9 selects a tab by index; Cmd+Shift+[ / ] cycles.
     var onCmdDigit: ((Int) -> Void)?
@@ -1122,20 +1130,40 @@ final class TerminalView: NSView {
         return followOutput ? maxTop : min(topLine, maxTop)
     }
 
+    /// Fractional trackpad deltas accumulate here so slow two-finger scrolling
+    /// moves a line at a time instead of being truncated away (issue #3).
+    private var scrollRemainder: CGFloat = 0
+
     override func scrollWheel(with event: NSEvent) {
         let dy = event.scrollingDeltaY
         guard dy != 0 else { return }
-        // Positive deltaY = two-finger-up = scroll back into history (natural
-        // scrolling). If QA finds the direction inverted, flip this sign.
-        let step: Int
-        if abs(dy) < 1 {
-            step = dy > 0 ? 1 : -1
+        // Sign follows NSScrollView — the rest of the app. A positive
+        // scrollingDeltaY is the "natural" two-finger swipe DOWN (content moves
+        // down = the viewport shows EARLIER lines); the previous version added
+        // the delta, which scrolled the opposite way from every other pane
+        // (docs/ux-feedback.md #3). The terminal draws its own viewport, so it
+        // has to apply that sign itself. scrollingDeltaY already accounts for
+        // the system "natural scrolling" preference, so no extra flip is needed
+        // — if QA ever sees it inverted with natural scrolling OFF, this is the
+        // sign to revisit.
+        // Scaling: a trackpad reports POINT deltas (including a decaying
+        // momentum phase after the fingers leave), a wheel reports one step per
+        // notch. Four points per line is what this panel always used, and it is
+        // what makes a flick decelerate instead of crawling at a constant speed
+        // (QA follow-up on #3); wheel notches map to a line each.
+        let lines: Int
+        if event.hasPreciseScrollingDeltas {
+            scrollRemainder += dy / 4
+            let whole = scrollRemainder.rounded(.towardZero)
+            scrollRemainder -= whole                  // keep the fraction for the next event
+            lines = Int(whole)
         } else {
-            step = Int(dy / 4)
+            lines = Int(dy)
         }
+        guard lines != 0 else { return }
         let total = emulator.totalLineCount
         let maxTop = max(0, total - emulator.rows)
-        topLine = min(max(visibleTopLine() + step, 0), maxTop)
+        topLine = min(max(visibleTopLine() - lines, 0), maxTop)
         followOutput = topLine >= maxTop
         needsDisplay = true
     }
@@ -1161,9 +1189,78 @@ final class TerminalView: NSView {
                                           endLine: end.0, endCol: end.1)
     }
 
+    /// Characters that break a "word" for double-click selection. Paths, URLs
+    /// and flags stay whole (`/usr/local/bin`, `--max-http-header-size`,
+    /// `a-b_c.txt:12`) — the same units Terminal.app selects. Only quotes and
+    /// shell/bracket punctuation split, which is what a user wants when copying
+    /// an argument out of a command line. The backtick is written as \u{60} so
+    /// this source file needs no escaping gymnastics.
+    private static let wordDelimiters = "\"'|()[]{}<>,;" + "\u{60}"
+
+    private static func isWordChar(_ ch: Character) -> Bool {
+        if ch.isWhitespace { return false }
+        return !wordDelimiters.contains(ch)
+    }
+
+    /// The double-click unit around (line, col): the run of word characters, or
+    /// the run of the same delimiter when the click landed on one (so clicking a
+    /// space selects the spaces, like Terminal.app).
+    private func wordRange(atLine line: Int, col: Int) -> (start: Int, end: Int)? {
+        let cells = emulator.line(at: line)
+        guard !cells.isEmpty else { return nil }
+        var index = min(max(col, 0), cells.count - 1)
+        // A wide character's second column belongs to the cell on its left.
+        if cells[index].continuation, index > 0 { index -= 1 }
+        let ch = cells[index].ch
+        let startsWord = Self.isWordChar(ch)
+        var start = index
+        while start > 0 {
+            let prev = cells[start - 1]
+            if prev.continuation { start -= 1; continue }
+            if Self.isWordChar(prev.ch) != startsWord { break }
+            if prev.ch.isWhitespace != ch.isWhitespace { break }
+            if !startsWord && prev.ch != ch { break }
+            start -= 1
+        }
+        var end = index
+        while end + 1 < cells.count {
+            let next = cells[end + 1]
+            if next.continuation { end += 1; continue }
+            if Self.isWordChar(next.ch) != startsWord { break }
+            if next.ch.isWhitespace != ch.isWhitespace { break }
+            if !startsWord && next.ch != ch { break }
+            end += 1
+        }
+        return (start, end)
+    }
+
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let pt = cell(at: convert(event.locationInWindow, from: nil))
+        // Double click selects a word, triple click the whole line (issue #4:
+        // the terminal used to only support press-and-drag).
+        if event.clickCount >= 2 {
+            let line = pt.line
+            let wordSelection = event.clickCount < 3
+            let range = wordSelection
+                ? (wordRange(atLine: line, col: pt.col) ?? (start: pt.col, end: pt.col))
+                : (start: 0, end: max(0, emulator.cols - 1))
+            mouseAnchorLine = line
+            mouseAnchorCol = range.start
+            mouseCurrentLine = line
+            mouseCurrentCol = range.end
+            // A drag started by a double/triple click EXTENDS the selection in
+            // the same unit instead of being ignored (follow-up on #4).
+            dragUnit = wordSelection ? .word : .line
+            anchorWord = (line: line, start: range.start, end: range.end)
+            isSelecting = true
+            emulator.selection = normalizeSelection()
+            needsDisplay = true
+            copySelectionIfAutoCopy()
+            return
+        }
+        dragUnit = .character
+        anchorWord = nil
         mouseAnchorLine = pt.line
         mouseAnchorCol = pt.col
         mouseCurrentLine = pt.line
@@ -1176,18 +1273,86 @@ final class TerminalView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard isSelecting else { return }
         let pt = cell(at: convert(event.locationInWindow, from: nil))
+        switch dragUnit {
+        case .character:
+            mouseCurrentLine = pt.line
+            mouseCurrentCol = pt.col
+            emulator.selection = normalizeSelection()
+        case .word:
+            emulator.selection = wordDragSelection(to: pt)
+        case .line:
+            let first = min(mouseAnchorLine, pt.line)
+            let last = max(mouseAnchorLine, pt.line)
+            emulator.selection = TerminalEmulator.Selection(startLine: first, startCol: 0,
+                                                             endLine: last, endCol: max(0, emulator.cols - 1))
+        }
         mouseCurrentLine = pt.line
         mouseCurrentCol = pt.col
-        emulator.selection = normalizeSelection()
         needsDisplay = true
     }
 
+    /// A word-wise drag: the word the double click selected stays whole, and the
+    /// word under the pointer is added whole, so dragging right/left/up/down
+    /// selects complete words (Terminal.app behaves the same way).
+    private func wordDragSelection(to pt: (line: Int, col: Int)) -> TerminalEmulator.Selection? {
+        guard let anchor = anchorWord else {
+            return normalizeSelection()
+        }
+        let target = wordRange(atLine: pt.line, col: pt.col) ?? (start: pt.col, end: pt.col)
+        let anchorBefore = (anchor.line, anchor.start) <= (pt.line, target.start)
+        if anchorBefore {
+            return TerminalEmulator.Selection(startLine: anchor.line, startCol: anchor.start,
+                                              endLine: pt.line, endCol: target.end)
+        }
+        return TerminalEmulator.Selection(startLine: pt.line, startCol: target.start,
+                                          endLine: anchor.line, endCol: anchor.end)
+    }
+
     override func mouseUp(with event: NSEvent) {
+        let dragged = isSelecting
+        let wasCharacterDrag = dragUnit == .character
         isSelecting = false
-        if mouseAnchorLine == mouseCurrentLine && mouseAnchorCol == mouseCurrentCol {
+        dragUnit = .character
+        anchorWord = nil
+        if wasCharacterDrag, mouseAnchorLine == mouseCurrentLine && mouseAnchorCol == mouseCurrentCol {
             emulator.clearSelection() // plain click: clear selection
             needsDisplay = true
+            return
         }
+        // Drag-select copies on release (issue #4) so the user can paste
+        // straight away without ⌘C.
+        if dragged { copySelectionIfAutoCopy() }
+    }
+
+    // MARK: - Clipboard
+
+    /// ShellConfig key for "copy the selection as soon as it is made".
+    static let autoCopyKey = "terminal.autoCopy"
+
+    /// Whether a completed selection is copied automatically. Default ON — the
+    /// user asked for select-then-paste (issue #4); the Settings menu exposes
+    /// the switch for anyone who wants the old ⌘C-only behaviour.
+    static var autoCopyEnabled: Bool {
+        (ShellConfig.shared.object(forKey: autoCopyKey) as? Bool) ?? true
+    }
+
+    /// Write the current selection to the general pasteboard.
+    /// Returns false when there is nothing to copy.
+    @discardableResult
+    private func copySelectionToPasteboard(verbose: Bool = false) -> Bool {
+        guard let sel = emulator.selection else { return false }
+        let text = emulator.selectedText(sel)
+        guard !text.isEmpty else { return false }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        if verbose { AppLog.shared.log("term clipboard: copied (text.count) char(s)") }
+        return true
+    }
+
+    private func copySelectionIfAutoCopy() {
+        guard Self.autoCopyEnabled else { return }
+        _ = copySelectionToPasteboard(verbose: true)
     }
 
     // MARK: - Responder actions (Edit menu: Cmd+C/V/A)
@@ -1198,18 +1363,14 @@ final class TerminalView: NSView {
     // first responder).
 
     @objc func copy(_ sender: Any?) {
-        guard let sel = emulator.selection else {
-            session?.write(Data([0x03])) // no selection: send ^C (SIGINT)
+        // A selection copies (the auto-copy path shares this helper); with
+        // nothing selected ⌘C keeps its terminal meaning: send ^C / SIGINT.
+        if let sel = emulator.selection, !emulator.selectedText(sel)
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            _ = copySelectionToPasteboard(verbose: true)
             return
         }
-        let text = emulator.selectedText(sel)
-        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            session?.write(Data([0x03]))
-            return
-        }
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(text, forType: .string)
+        session?.write(Data([0x03]))
     }
 
     @objc func paste(_ sender: Any?) {
@@ -1434,6 +1595,24 @@ final class TerminalPanelController: NSObject {
     private var startedOnce = false
     private var shuttingDown = false
 
+    // MARK: - Per-workspace tabs (issue #5)
+
+    /// Which workspace each tab belongs to + the last tab selected per
+    /// workspace (pure model, headless-tested).
+    private var tabWorkspaces = TerminalWorkspaceTabs()
+    /// The workspace (dsh session working directory) currently being viewed.
+    private var currentWorkspace = NSHomeDirectory()
+    /// True once the shell told us the real workspace (dshSession handler) or
+    /// the first session resolved one — until then a spawn adopts its own
+    /// directory as the current workspace so the very first tab is visible.
+    private var workspaceKnown = false
+
+    /// The tabs belonging to the workspace being viewed (tab-bar order).
+    private var visibleTabs: [Tab] {
+        let ids = Set(tabWorkspaces.visibleIds(tabs.map(\.id), current: currentWorkspace))
+        return tabs.filter { ids.contains($0.id) }
+    }
+
     /// dsh web server state for the session-start directory. The server may
     /// still be booting when the panel first opens (fresh spawn on app
     /// launch), so spawns are deferred until it is reachable — otherwise the
@@ -1580,7 +1759,10 @@ final class TerminalPanelController: NSObject {
         // （首次打开、或关闭面板清空会话后重开都适用）。
         guard !shuttingDown else { return }
         startedOnce = true
-        if tabs.isEmpty {
+        // Only the CURRENT workspace counts: switching to a workspace with no
+        // terminal yet opens a fresh tab there (the other tabs keep running,
+        // hidden — see syncTabVisibility).
+        if visibleTabs.isEmpty {
             newSession()
         }
     }
@@ -1592,7 +1774,7 @@ final class TerminalPanelController: NSObject {
         guard clickMonitor == nil else { return }
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
             guard let self = self, let win = self.view.window, win.isKeyWindow,
-                  self.selectedId != nil, !self.tabs.isEmpty else { return event }
+                  self.selectedId != nil, !self.visibleTabs.isEmpty else { return event }
             let p = self.view.convert(event.locationInWindow, from: nil)
             if self.view.bounds.contains(p) {
                 self.focusActiveTerminal()
@@ -1630,7 +1812,7 @@ final class TerminalPanelController: NSObject {
         // currently viewing in dsh web — and falls back to a live session
         // query). Completion arrives on the main queue; home is the fallback.
         DSHSessionRPC.resolveProjectDirectory(port: port, timeout: 5) { [weak self] cwd in
-            self?.spawnTab(cwd: cwd ?? NSHomeDirectory())
+            self?.spawnTab(cwd: cwd ?? NSHomeDirectory(), workspaceIsFallback: cwd == nil)
         }
     }
 
@@ -1656,11 +1838,15 @@ final class TerminalPanelController: NSObject {
 
     private func spawnWithCwd(port: Int) {
         DSHSessionRPC.resolveProjectDirectory(port: port, timeout: 5) { [weak self] cwd in
-            self?.spawnTab(cwd: cwd ?? NSHomeDirectory())
+            self?.spawnTab(cwd: cwd ?? NSHomeDirectory(), workspaceIsFallback: cwd == nil)
         }
     }
 
-    private func spawnTab(cwd: String) {
+    /// Spawn a session in `cwd` as a new tab. `workspaceIsFallback` marks a
+    /// tab whose project directory could not be resolved (server still booting,
+    /// RPC failure): such a tab is visible in EVERY workspace so the user never
+    /// loses a perfectly usable shell by switching workspace.
+    private func spawnTab(cwd: String, workspaceIsFallback: Bool = false) {
         guard !shuttingDown else { return }
         let shell = TerminalSession.resolveShell()
         let env = TerminalSession.buildEnv()
@@ -1704,8 +1890,68 @@ final class TerminalPanelController: NSObject {
         }
         tabs.append(tab)
         tabStack.addArrangedSubview(tab.container)
-        select(id)
-        AppLog.shared.log("terminal: session \(id) spawned pid=\(session.pid) shell=\(shell) cwd=\(cwd)")
+        // Remember which workspace this session belongs to, and adopt it as the
+        // current workspace when nobody told us one yet (first tab of the run).
+        tabWorkspaces.assign(tabId: id, workspacePath: cwd, isGlobal: workspaceIsFallback)
+        if !workspaceKnown {
+            currentWorkspace = cwd
+            workspaceKnown = true
+        }
+        tab.container.isHidden = !tabWorkspaces.isVisible(tabId: id, current: currentWorkspace)
+        if tab.container.isHidden {
+            syncTabVisibility()
+        } else {
+            select(id)
+        }
+        AppLog.shared.log("terminal: session \(id) spawned pid=\(session.pid) shell=\(shell) cwd=\(cwd) workspace=\(currentWorkspace) fallback=\(workspaceIsFallback)")
+    }
+
+    // MARK: - Per-workspace tabs (issue #5)
+
+    /// The workspace the user is viewing changed (the shell's dshSession
+    /// handler). Tabs of the outgoing workspace are hidden — their shells keep
+    /// running — and the incoming workspace's tabs come back, with its last
+    /// selected tab re-selected.
+    func setWorkspaceDirectory(_ path: String) {
+        let key = TerminalWorkspaceTabs.key(for: path)
+        guard key != TerminalWorkspaceTabs.key(for: currentWorkspace) || !workspaceKnown else { return }
+        AppLog.shared.log("terminal workspace: \(currentWorkspace) -> \(path) (\(tabs.count) session(s) total)")
+        currentWorkspace = path
+        workspaceKnown = true
+        syncTabVisibility()
+        // QA follow-up on #5: switching to a workspace with no live terminal
+        // opens one straight away, so the user never has to hit "+" after a
+        // switch. Only while the panel is really on screen — spawning a PTY per
+        // workspace the user merely passes through would waste shells.
+        if visibleTabs.isEmpty, isPanelOnScreen {
+            AppLog.shared.log("terminal workspace: no session for \(path) — starting one")
+            newSession()
+        }
+    }
+
+    /// Whether this panel is the pane currently mounted and visible in the shell.
+    private var isPanelOnScreen: Bool { !view.isHidden && view.window != nil }
+
+    /// Show only the tabs of the current workspace and make sure the selection
+    /// points at a visible tab (or at the empty state when this workspace has
+    /// no terminal yet — its sessions, if any, stay alive in the background).
+    private func syncTabVisibility() {
+        let visible = Set(tabWorkspaces.visibleIds(tabs.map(\.id), current: currentWorkspace))
+        for tab in tabs { tab.container.isHidden = !visible.contains(tab.id) }
+        if let selected = selectedId, visible.contains(selected) {
+            tabWorkspaces.rememberSelection(tabId: selected, current: currentWorkspace)
+            return
+        }
+        selectedId = nil
+        if let restored = tabWorkspaces.lastSelectedId(current: currentWorkspace, among: tabs.map(\.id)) {
+            select(restored)
+        } else if let first = tabs.first(where: { visible.contains($0.id) }) {
+            select(first.id)
+        } else {
+            contentContainer.subviews.forEach { $0.removeFromSuperview() }
+            headerTitle.toolTip = nil
+            showEmptyState()
+        }
     }
 
     /// A session ended. Clean exits (the user typed `exit` / Ctrl+D at the
@@ -1717,7 +1963,9 @@ final class TerminalPanelController: NSObject {
         AppLog.shared.log("terminal: session \(tab.id) ended (exit \(code)\(clean ? "" : ", signaled")")
         if clean {
             close(tab.id)
-            if tabs.isEmpty { onRequestHide?() }
+            // Only hide the panel when the CURRENT workspace is left with no
+            // terminal — other workspaces may still hold running sessions.
+            if visibleTabs.isEmpty { onRequestHide?() }
             return
         }
         markEnded(tab, code: code)
@@ -1771,6 +2019,9 @@ final class TerminalPanelController: NSObject {
             tab.session.terminate()
         }
         tabs.removeAll()
+        tabWorkspaces.forgetAll()
+        // The next session adopts whatever workspace is active then.
+        workspaceKnown = false
         selectedId = nil
         // 清空页签栏 UI（否则页签残留且无法再操作）
         for sub in tabStack.arrangedSubviews {
@@ -1816,6 +2067,8 @@ final class TerminalPanelController: NSObject {
     private func select(_ id: Int) {
         guard let tab = tabs.first(where: { $0.id == id }) else { return }
         selectedId = id
+        // Coming back to a workspace re-selects the tab the user left on.
+        tabWorkspaces.rememberSelection(tabId: id, current: currentWorkspace)
         for t in tabs {
             t.titleButton.state = (t.id == id) ? .on : .off
         }
@@ -1840,14 +2093,21 @@ final class TerminalPanelController: NSObject {
         tab.session.terminate()
         tab.container.removeFromSuperview()
         tabs.remove(at: idx)
+        tabWorkspaces.forget(tabId: id)
         guard selectedId == id else { return }
         selectedId = nil
-        if let next = tabs.indices.contains(idx) ? tabs[idx] : tabs.last {
-            select(next.id)
-        } else {
+        // The next tab must be one of THIS workspace: a hidden tab of another
+        // workspace would leave the panel showing the empty state with a
+        // selected-but-invisible tab.
+        let visible = visibleTabs
+        if visible.isEmpty {
             contentContainer.subviews.forEach { $0.removeFromSuperview() }
             headerTitle.toolTip = nil
             showEmptyState()
+        } else if tabs.indices.contains(idx), visible.contains(where: { $0.id == tabs[idx].id }) {
+            select(tabs[idx].id)
+        } else if let last = visible.last {
+            select(last.id)
         }
     }
 
@@ -1859,22 +2119,25 @@ final class TerminalPanelController: NSObject {
         close(sender.tag)
     }
 
-    /// Cmd+1…9: select the nth tab (clamped).
+    /// Cmd+1…9: select the nth tab (clamped). Shortcuts only ever address the
+    /// tabs of the current workspace — the hidden ones are not in the tab bar.
     private func selectTabIndex(_ index: Int) {
-        guard !tabs.isEmpty else { return }
-        let i = min(max(index - 1, 0), tabs.count - 1)
-        select(tabs[i].id)
+        let visible = visibleTabs
+        guard !visible.isEmpty else { return }
+        let i = min(max(index - 1, 0), visible.count - 1)
+        select(visible[i].id)
     }
 
-    /// Cmd+Shift+[ / ]: cycle to the previous/next tab.
+    /// Cmd+Shift+[ / ]: cycle to the previous/next tab (current workspace).
     private func cycleTab(delta: Int) {
-        guard !tabs.isEmpty else { return }
-        guard let idx = tabs.firstIndex(where: { $0.id == selectedId }) else {
-            select(tabs[0].id)
+        let visible = visibleTabs
+        guard !visible.isEmpty else { return }
+        guard let idx = visible.firstIndex(where: { $0.id == selectedId }) else {
+            select(visible[0].id)
             return
         }
-        let next = (idx + delta + tabs.count) % tabs.count
-        select(tabs[next].id)
+        let next = (idx + delta + visible.count) % visible.count
+        select(visible[next].id)
     }
 
     @objc private func restartTapped(_ sender: NSButton) {

@@ -98,7 +98,7 @@ final class PanelTabButton: HoverButton {
 /// panel's top bar and content area a consistent, always-visible background in
 /// light AND dark mode (a fixed CGColor layer background would freeze the
 /// light/dark resolution).
-final class DynamicFillView: NSView {
+class DynamicFillView: NSView {
     /// Panel surface (default) or an explicit, non-adaptive color.
     enum Kind { case panel, custom(NSColor) }
     var kind: Kind = .panel {
@@ -312,6 +312,7 @@ final class HeaderLabel: NSView {
 final class CustomIconButton: NSView {
     enum Glyph { case plus, close, folder, openInApp, reveal, symbol(String), play, stop }
     var onAction: (() -> Void)?
+
     var isEnabled = true {
         didSet { needsDisplay = true }
     }
@@ -360,6 +361,7 @@ final class CustomIconButton: NSView {
     override func mouseDown(with event: NSEvent) {
         if isEnabled { onAction?() }
     }
+
 
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -438,6 +440,233 @@ final class CustomIconButton: NSView {
             path.appendRect(NSRect(x: inset.minX + 1, y: inset.minY + 1,
                                    width: inset.width - 2, height: inset.height - 2))
         }
+        path.stroke()
+    }
+}
+
+/// A header button that owns a MENU, drawn with the same Core Graphics /
+/// PanelControl pipeline as CustomIconButton (no cell, no NSImage tinting).
+///
+/// It exists because an icon-only button that hides a menu is unreadable — you
+/// have to hover for the tooltip to learn what it does (QA feedback on the Files
+/// panel header). This control therefore shows:
+///  - an optional LABEL next to the icon (what the button is for),
+///  - a CHEVRON with a hairline divider (that it opens a menu),
+///  - a hover / open highlight, so the menu affordance is visible.
+///
+/// Clicking ANYWHERE on the button opens the menu — a menu button must never
+/// hide "choose again" behind a small chevron target (QA: after picking an app
+/// the button kept using it with no way back to the list). `onAction`, when set,
+/// stays available on ⌥-click as a power-user shortcut for the remembered /
+/// default choice.
+final class PanelMenuButton: NSView {
+
+    enum Glyph { case folder, openInApp, reveal, doc, symbol(String) }
+
+    /// Label drawn after the icon. Kept as a property so a language switch can
+    /// re-set it (the panel calls refreshTooltips()).
+    var title: String {
+        didSet {
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+    /// ⌥-click shortcut for the remembered / default choice (the button itself
+    /// always opens the menu).
+    var onAction: (() -> Void)?
+    /// Opens the menu. The callee builds and pops it (this control knows nothing
+    /// about the menu contents).
+    var onShowMenu: (() -> Void)?
+    var isEnabled = true {
+        didSet { needsDisplay = true }
+    }
+
+    private let glyph: Glyph
+    private let height: CGFloat = 26
+    private var isHovered = false
+    /// True while this button owns the open menu (kept highlighted).
+    private var isMenuOpen = false
+    private var trackingArea: NSTrackingArea?
+
+    /// Width of the chevron zone: clicking inside it opens the menu even when the
+    /// button has a primary action.
+    private let chevronZone: CGFloat = 18
+    private let iconSize = NSSize(width: 15, height: 15)
+    private let chevronSize = NSSize(width: 9, height: 9)
+
+    init(glyph: Glyph, title: String, tooltip: String) {
+        self.glyph = glyph
+        self.title = title
+        super.init(frame: .zero)
+        toolTip = tooltip
+        translatesAutoresizingMaskIntoConstraints = false
+        // Prefer the full (icon + label + chevron) width, but let the header
+        // shrink the button: draw() falls back to an icon + chevron chip when
+        // the label no longer fits.
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        heightAnchor.constraint(equalToConstant: height).isActive = true
+        // Never squash below an icon + chevron chip, however tight the header is.
+        widthAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var acceptsFirstResponder: Bool { false }
+
+    /// Label metrics for the current appearance.
+    private func labelAttributes(_ color: NSColor) -> [NSAttributedString.Key: Any] {
+        [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: color]
+    }
+
+    /// Full content width for the current title.
+    private var contentWidth: CGFloat {
+        let attrs = labelAttributes(.labelColor)
+        let labelWidth = title.isEmpty ? 0 : (title as NSString).size(withAttributes: attrs).width
+        let labelPart = title.isEmpty ? 0 : 6 + ceil(labelWidth)
+        return 8 + iconSize.width + labelPart + chevronZone + chevronSize.width + 4
+    }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: contentWidth, height: height) }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let ta = trackingArea { removeTrackingArea(ta) }
+        let ta = NSTrackingArea(rect: .zero,
+                                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                owner: self, userInfo: nil)
+        addTrackingArea(ta)
+        trackingArea = ta
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false; needsDisplay = true }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        // ⌥-click = the remembered / default choice, without opening the menu.
+        if event.modifierFlags.contains(.option), let onAction = onAction {
+            onAction()
+            return
+        }
+        openMenu()
+    }
+
+    /// Open the menu programmatically (same as clicking the chevron).
+    func showMenu() {
+        guard isEnabled else { return }
+        openMenu()
+    }
+
+    private func openMenu() {
+        // Highlight while the menu tracks: popUp returns once it is dismissed.
+        isMenuOpen = true
+        needsDisplay = true
+        onShowMenu?()
+        isMenuOpen = false
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        if isEnabled {
+            PanelControl.fill(dark: dark, highlighted: isHovered || isMenuOpen).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 5, yRadius: 5).fill()
+        }
+        let base: NSColor = dark ? NSColor(white: 0.9, alpha: 1) : NSColor(white: 0.25, alpha: 1)
+        let color = isEnabled ? base : base.withAlphaComponent(0.35)
+
+        // Layout: [icon][label] | [chevron]. The label is dropped when the
+        // header squeezes the button, leaving an icon + chevron chip.
+        let dividerX = bounds.maxX - chevronZone
+        let chevronX = dividerX + 4
+        let labelAttrs = labelAttributes(color)
+        let labelWidth = title.isEmpty ? 0 : (title as NSString).size(withAttributes: labelAttrs).width
+        let iconAndLabelWidth = iconSize.width + (title.isEmpty ? 0 : 6 + labelWidth)
+        let availableWidth = dividerX - 12   // left padding + the gap before the divider
+        let fitsLabel = !title.isEmpty && iconAndLabelWidth <= availableWidth
+        let startX = fitsLabel ? 8 : max(8, dividerX / 2 - iconSize.width / 2)
+        let midY = bounds.midY
+
+        // Icon
+        drawGlyph(in: NSRect(x: startX, y: midY - iconSize.height / 2,
+                             width: iconSize.width, height: iconSize.height), color: color)
+        if fitsLabel {
+            let labelOrigin = NSPoint(x: startX + iconSize.width + 6,
+                                      y: midY - (title as NSString).size(withAttributes: labelAttrs).height / 2)
+            (title as NSString).draw(at: labelOrigin, withAttributes: labelAttrs)
+        }
+
+
+        // Chevron
+        let chevronRect = NSRect(x: chevronX, y: midY - chevronSize.height / 2,
+                                 width: chevronSize.width, height: chevronSize.height)
+        drawChevron(in: chevronRect, color: color)
+    }
+
+    private func drawGlyph(in rect: NSRect, color: NSColor) {
+        if case .symbol(let name) = glyph {
+            let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+            if let image = NSImage(systemSymbolName: name, accessibilityDescription: toolTip)?
+                .withSymbolConfiguration(config) {
+                image.draw(in: rect)
+            }
+            return
+        }
+        color.setStroke()
+        let path = NSBezierPath()
+        path.lineWidth = 1.6
+        path.lineCapStyle = .round
+        switch glyph {
+        case .folder:
+            path.move(to: NSPoint(x: rect.minX, y: rect.minY + 2))
+            path.line(to: NSPoint(x: rect.minX + 6, y: rect.minY + 2))
+            path.line(to: NSPoint(x: rect.minX + 9, y: rect.minY + 5))
+            path.line(to: NSPoint(x: rect.maxX, y: rect.minY + 5))
+            path.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
+            path.line(to: NSPoint(x: rect.minX, y: rect.maxY))
+            path.close()
+        case .openInApp:
+            path.move(to: NSPoint(x: rect.minX, y: rect.maxY))
+            path.line(to: NSPoint(x: rect.maxX, y: rect.minY))
+            path.move(to: NSPoint(x: rect.maxX - 4, y: rect.minY))
+            path.line(to: NSPoint(x: rect.maxX, y: rect.minY))
+            path.line(to: NSPoint(x: rect.maxX, y: rect.minY + 4))
+        case .reveal:
+            path.appendOval(in: rect.insetBy(dx: 0.5, dy: 0.5))
+            path.appendOval(in: NSRect(x: rect.midX - 1.5, y: rect.midY - 1.5, width: 3, height: 3))
+        case .doc:
+            path.move(to: NSPoint(x: rect.minX, y: rect.minY))
+            path.line(to: NSPoint(x: rect.maxX - 4, y: rect.minY))
+            path.line(to: NSPoint(x: rect.maxX, y: rect.minY + 4))
+            path.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
+            path.line(to: NSPoint(x: rect.minX, y: rect.maxY))
+            path.close()
+            path.move(to: NSPoint(x: rect.minX + 3, y: rect.minY + 5))
+            path.line(to: NSPoint(x: rect.maxX - 3, y: rect.minY + 5))
+            path.move(to: NSPoint(x: rect.minX + 3, y: rect.minY + 8))
+            path.line(to: NSPoint(x: rect.maxX - 3, y: rect.minY + 8))
+        case .symbol:
+            break   // handled above
+        }
+        path.stroke()
+    }
+
+    private func drawChevron(in rect: NSRect, color: NSColor) {
+        color.setStroke()
+        let path = NSBezierPath()
+        path.lineWidth = 1.6
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        path.move(to: NSPoint(x: rect.minX, y: rect.midY + 1.5))
+        path.line(to: NSPoint(x: rect.midX, y: rect.midY - 1.5))
+        path.line(to: NSPoint(x: rect.maxX, y: rect.midY + 1.5))
         path.stroke()
     }
 }

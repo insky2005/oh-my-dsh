@@ -188,5 +188,176 @@ panel.performCloseAction()
 test("closing a clean panel hides it", hideRequests == 1)
 test("closing a clean panel drops the tabs", panel.openTabPaths.isEmpty)
 
+// --- creating / renaming / deleting entries (follow-up on #1) ---------------
+//
+// The context menu itself needs a clicked row and a window, but everything it
+// performs is path-addressed and therefore testable here: the file really
+// appears on disk, an open tab follows a rename, and a delete closes its tab
+// (through the Trash, so a mis-click stays recoverable).
+
+panel.setProjectDirectory(wsA.path)
+let newFile = wsA.appendingPathComponent("notes.txt")
+let newFolder = wsA.appendingPathComponent("docs")
+
+test("a new file is created and opens a tab",
+     panel.createTreeItem(named: "notes.txt", isDir: false, in: wsA.path) && fm.fileExists(atPath: newFile.path))
+test("the new file is the selected tab", panel.selectedTabPath == newFile.path)
+test("a new folder is created",
+     panel.createTreeItem(named: "docs", isDir: true, in: wsA.path) && fm.fileExists(atPath: newFolder.path))
+test("an existing name is refused",
+     !panel.createTreeItem(named: "notes.txt", isDir: false, in: wsA.path))
+test("a name containing a slash is refused",
+     !panel.createTreeItem(named: "a/b", isDir: false, in: wsA.path))
+test("an empty name is refused", !panel.createTreeItem(named: "   ", isDir: false, in: wsA.path))
+
+let renamed = wsA.appendingPathComponent("todo.txt")
+test("an entry is renamed on disk",
+     panel.renameTreePath(newFile.path, to: "todo.txt") && fm.fileExists(atPath: renamed.path))
+test("the renamed file keeps its tab (re-pointed)", panel.openTabPaths == [renamed.path])
+test("renaming onto an existing name is refused",
+     !panel.renameTreePath(renamed.path, to: "one.md"))
+test("renaming to the same name is a no-op", !panel.renameTreePath(renamed.path, to: "todo.txt"))
+
+// Deleting moves the entry to the Trash (never an irreversible unlink). Where
+// the Trash is unreachable — e.g. an agent sandbox that denies ~/.Trash — the
+// panel must REFUSE instead: the file stays and its tab stays open.
+let deleted = panel.deleteTreePath(renamed.path)
+let survived = fm.fileExists(atPath: renamed.path)
+test("a delete trashes the entry (or leaves it untouched when it cannot)",
+     deleted ? !survived : survived)
+test("a successful delete closes the tab, a refused one keeps it",
+     deleted ? panel.openTabPaths.isEmpty : panel.openTabPaths == [renamed.path])
+test("deleting a missing path is refused", !panel.deleteTreePath(renamed.path))
+if !deleted { panel.closeActiveTab() }   // keep the later assertions independent
+
+// A renamed FOLDER carries the tabs of the files inside it.
+let movedInto = wsA.appendingPathComponent("docs/inner.md")
+try! "# inner".write(to: movedInto, atomically: true, encoding: .utf8)
+panel.open(path: movedInto.path)
+test("the file inside the folder is open", panel.openTabPaths == [movedInto.path])
+let renamedFolder = wsA.appendingPathComponent("manuals")
+test("a folder can be renamed", panel.renameTreePath(newFolder.path, to: "manuals"))
+test("a tab under a renamed folder follows it",
+     panel.openTabPaths == [wsA.appendingPathComponent("manuals/inner.md").path])
+panel.closeActiveTab()
+
+// --- the per-file action button follows the selected tab --------------------
+// (QA: it appeared usable while nothing was open, and clicking it did nothing)
+
+let freshPanel = FilePanelController()
+test("the file action button starts disabled (nothing open)", !freshPanel.fileActionButtonEnabled)
+freshPanel.open(path: a1.path)
+test("opening a file enables the file action button", freshPanel.fileActionButtonEnabled)
+freshPanel.open(path: wsA.path)
+test("a folder tab disables the file action button", !freshPanel.fileActionButtonEnabled)
+test("the folder is the selected tab", freshPanel.selectedTabPath == wsA.path)
+freshPanel.open(path: a1.path)
+test("selecting a file again re-enables it", freshPanel.fileActionButtonEnabled)
+freshPanel.performCloseAction()
+test("closing the panel disables it again", !freshPanel.fileActionButtonEnabled)
+
+// --- tree pane width restored on reopen ------------------------------------
+// (QA: closing the panel and opening it again left the tree at its maximum,
+//  420pt, instead of the width the user had dragged it to)
+
+test("the remembered width is restored as-is in a wide panel",
+     FilePanelController.restoredTreeWidth(300, splitWidth: 900) == 300)
+test("a too-narrow remembered width is raised to the minimum",
+     FilePanelController.restoredTreeWidth(40, splitWidth: 900) == 160)
+test("a too-wide remembered width is capped at the maximum",
+     FilePanelController.restoredTreeWidth(900, splitWidth: 2000) == 420)
+test("a narrow panel still leaves the content pane room",
+     FilePanelController.restoredTreeWidth(400, splitWidth: 500) == 260)
+test("an extremely narrow panel never goes below the minimum",
+     FilePanelController.restoredTreeWidth(300, splitWidth: 200) == 160)
+
+// --- image preview badge must never resize itself (crash regression) --------
+// QC: opening an image crashed in
+// -[NSView _invalidateIntrinsicContentSizeDirtyingConstraints:] because the badge
+// measured its text and invalidated its intrinsic size — and a magnification
+// change can arrive during a layout pass (applyFit runs from layout()).
+
+let badge = ZoomBadgeView()
+let badgeBoxSize = badge.intrinsicContentSize
+badge.text = "12%"
+badge.text = "1600%"
+test("the zoom badge keeps a constant size whatever it shows",
+     badge.intrinsicContentSize == badgeBoxSize)
+test("the badge box is fixed (no intrinsic-size measuring)",
+     badgeBoxSize == ZoomBadgeView.size)
+let widestPercentage = ("1600%" as NSString).size(withAttributes:
+                        [.font: NSFont.systemFont(ofSize: 10, weight: .medium)]).width
+test("the fixed badge box fits the widest percentage",
+     ZoomBadgeView.size.width >= widestPercentage + 12)
+
+// --- the tree pane width survives closing / reopening the panel ------------
+// QA: drag the divider, close the panel, open it again → the tree was back at its
+// 420pt maximum. These assertions drive the exact sequence in a real window:
+// a user drag, a collapse to zero width (the shell collapses the pane), a reopen,
+// and a framework re-distribution that has to be corrected.
+
+let widthPanel = FilePanelController()
+let widthWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+                           styleMask: [.titled], backing: .buffered, defer: false)
+widthWindow.contentView = widthPanel.view
+widthPanel.setProjectDirectory(wsA.path)
+widthWindow.layoutIfNeeded()
+widthPanel.view.layoutSubtreeIfNeeded()
+
+// The default width, before any user choice. (The panel applies it during its
+// first real layout, so a couple of passes are needed here.)
+widthWindow.layoutIfNeeded()
+widthPanel.view.layoutSubtreeIfNeeded()
+widthWindow.layoutIfNeeded()
+print("  (tree width at start: \(widthPanel.treePaneWidthForTesting)pt, pane width \(widthPanel.view.bounds.width)pt)")
+test("the tree has a width before any user choice", widthPanel.treePaneWidthForTesting > 0)
+
+// The user drags the divider.
+widthPanel.simulateTreeDragForTesting(to: 300)
+test("a divider drag is applied", abs(widthPanel.treePaneWidthForTesting - 300) < 2)
+test("a divider drag is remembered",
+     widthPanel.rememberedTreeWidthForTesting.map { abs($0 - 300) < 2 } == true)
+
+// The panel is closed: the shell collapses its pane to nothing …
+widthPanel.view.frame = NSRect(x: 0, y: 0, width: 0, height: 600)
+widthPanel.view.layoutSubtreeIfNeeded()
+test("collapsing the panel is ignored (nothing to remember)",
+     widthPanel.rememberedTreeWidthForTesting.map { abs($0 - 300) < 2 } == true)
+
+// … and opened again: the pane gets its width back and the panel re-mounts.
+widthPanel.view.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+widthPanel.view.layoutSubtreeIfNeeded()
+widthPanel.ensureTreeLoaded()          // what the shell does when the panel opens
+widthWindow.layoutIfNeeded()
+widthPanel.view.layoutSubtreeIfNeeded()
+print("  (tree width after reopen: \(widthPanel.treePaneWidthForTesting)pt)")
+test("reopening keeps the width the user left, not the 420pt maximum",
+     abs(widthPanel.treePaneWidthForTesting - 300) < 2)
+
+// Whatever the framework does to the divider on its own must be corrected.
+widthPanel.simulateFrameworkRedistributionForTesting(to: 420)
+test("a framework re-distribution is corrected back",
+     abs(widthPanel.treePaneWidthForTesting - 300) < 2)
+test("the corrected width is not remembered as a user choice",
+     widthPanel.rememberedTreeWidthForTesting.map { abs($0 - 300) < 2 } == true)
+
+// A drag to the maximum IS a user choice and must stick.
+widthPanel.simulateTreeDragForTesting(to: 420)
+widthPanel.simulateFrameworkRedistributionForTesting(to: 160)
+test("a user-chosen maximum is restored, not clamped away",
+     abs(widthPanel.treePaneWidthForTesting - 420) < 2)
+
+// --- image preview: padded box + centred content ----------------------------
+
+let previewImage = NSImage(size: NSSize(width: 400, height: 200))
+let imagePreview = ImagePreviewView(image: previewImage)
+test("the image sits in a padded document box",
+     imagePreview.focusView.frame.size == NSSize(width: 400 + 2 * ImageZoom.padding,
+                                                height: 200 + 2 * ImageZoom.padding))
+test("the image is drawn unscaled (the box provides the margin)",
+     imagePreview.focusView.imageScaling == .scaleNone)
+test("the image is centred inside that box", imagePreview.focusView.imageAlignment == .alignCenter)
+test("a document smaller than the viewport is centred", imagePreview.centersContent)
+
 try? fm.removeItem(at: root)
 print("done")

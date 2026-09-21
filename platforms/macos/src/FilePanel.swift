@@ -29,14 +29,62 @@ private final class TreeNode {
 }
 
 
+/// The Files panel's inner split view (directory tree | preview content).
+///
+/// It exists for one reason: telling a USER divider drag from a programmatic
+/// re-layout. NSSplitView runs its own event-TRACKING loop while a divider is
+/// dragged, and events consumed by a tracking loop never reach
+/// `NSEvent.addLocalMonitorForEvents` — an event-monitor based attempt at this
+/// never fired at all (the width was never even recorded, so nothing was ever
+/// restored). Overriding `mouseDown` wraps the entire drag: super runs the
+/// tracking loop and returns only when the drag is over.
+final class TreeDividerSplitView: NSSplitView {
+
+    /// True while the user is dragging a divider.
+    private(set) var isUserDraggingDivider = false
+
+    /// Test-only: mark the drag state (a headless test cannot run the tracking loop).
+    func setDraggingForTesting(_ dragging: Bool) { isUserDraggingDivider = dragging }
+    /// Called right after a user drag ends (the width is final then).
+    var onUserDragEnded: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        isUserDraggingDivider = true
+        super.mouseDown(with: event)      // returns when the drag tracking ends
+        isUserDraggingDivider = false
+        onUserDragEnded?()
+    }
+}
+
+/// The Files panel's root view. Its only job is to report mounting: the shell
+/// removes this view from the split view when the panel is closed and adds it back
+/// when the panel reopens, and the panel has to restore its divider position then
+/// (nothing inside the view sees a 0-width frame, so a transition cannot be used).
+final class FilePanelRootView: DynamicFillView {
+    /// The panel was (re)mounted into the window.
+    var onMounted: (() -> Void)?
+    /// The panel is being taken out of the window — the shell does that when it
+    /// switches to another panel, and the divider width has to be captured BEFORE
+    /// the split view re-distributes (it is still the user's width at this point).
+    var onUnmounted: (() -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { onMounted?() } else { onUnmounted?() }
+    }
+}
+
 final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDelegate,
                                      NSOutlineViewDataSource, NSOutlineViewDelegate,
-                                     NSSplitViewDelegate {
+                                     NSSplitViewDelegate, NSMenuDelegate {
 
     /// Root view mounted directly as the right pane of the main split view.
     /// Opaque, clearly-gray background (DynamicFillView) so the whole top
     /// block reads as one strip; also re-lays its internal tree on resize.
-    let view = DynamicFillView()
+    /// It reports when the shell (re)mounts the panel — the panel view is REMOVED
+    /// from the split view when the panel is closed and re-added when it opens,
+    /// which is when the inner split view must be told where the divider was.
+    let view = FilePanelRootView()
     /// Invoked when the user hits the panel's "Close" button.
     var onRequestHide: (() -> Void)?
 
@@ -73,14 +121,49 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// per-workspace tab memory), exactly as clicking it does.
     func performCloseAction() { hidePanel(nil) }
 
+    // MARK: - Tree pane width (test surface)
+
+    /// The current tree pane width.
+    var treePaneWidthForTesting: CGFloat { treePaneWidth }
+
+    /// The width the panel remembers (nil until a drag / close records one).
+    var rememberedTreeWidthForTesting: CGFloat? { rememberedTreeWidth }
+
+    /// Emulate a USER divider drag. A real drag runs inside the split view's own
+    /// tracking loop, which a headless test cannot drive, so this reproduces exactly
+    /// what that loop does: mark the drag, move the divider, then record the width.
+    func simulateTreeDragForTesting(to width: CGFloat) {
+        contentSplit.setDraggingForTesting(true)
+        contentSplit.setPosition(width, ofDividerAt: 0)
+        contentSplit.adjustSubviews()
+        contentSplit.setDraggingForTesting(false)
+        rememberCurrentTreeWidth(log: false)
+    }
+
+    /// Emulate the framework re-distributing the panes on its own (what happens
+    /// when the panel is reopened): move the divider WITHOUT a drag. The panel must
+    /// notice through its resize callback and put the remembered width back.
+    func simulateFrameworkRedistributionForTesting(to width: CGFloat) {
+        contentSplit.setPosition(width, ofDividerAt: 0)
+        contentSplit.adjustSubviews()
+        splitViewDidResizeSubviews(Notification(name: NSSplitView.didResizeSubviewsNotification,
+                                                object: contentSplit))
+    }
+
+    /// Whether the per-file action button («打开文件») is usable. It must follow
+    /// the selected tab: a button that looks usable with nothing open silently
+    /// does nothing when clicked (QA report: "the dropdown does not respond").
+    var fileActionButtonEnabled: Bool { fileMenuButton?.isEnabled ?? false }
+
     // MARK: - Subviews
 
     /// 头部固定标题（「文件 / Files」，与活动栏同名）：**不跟随当前文件的路径**。
     /// 路径没有丢——页签 tooltip 与这里的悬停 tooltip 都带完整路径。
     private let titleLabel = HeaderLabel()
-    private var projectButton: CustomIconButton!
-    private var openButton: CustomIconButton!
-    private var revealButton: CustomIconButton!
+    /// 「打开项目 ▾」：主区用记住的目标打开项目目录，chevron 区（或右键）选应用。
+    private var projectButton: PanelMenuButton!
+    /// 「当前文件 ▾」：主区用默认应用打开，chevron 区给出 显示/复制路径 等动作。
+    private var fileMenuButton: PanelMenuButton!
     private var hideButton: CustomIconButton!
     private var saveButton: CustomIconButton!
     private let tabScroll = NSScrollView()
@@ -90,7 +173,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     private let treeScroll = NSScrollView()
     private let treeOutline = NSOutlineView()
     /// Content area split view (tree | preview).
-    private var contentSplit: NSSplitView!
+    private var contentSplit: TreeDividerSplitView!
 
     // MARK: - State
 
@@ -143,6 +226,12 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     private var treeTriedLoad = false
     /// Whether the tree pane's default width has been applied.
     private var treeWidthInitialized = false
+    /// The tree pane width as the user last left it (in-session). Restored when the
+    /// panel is reopened, because the collapse/reopen cycle otherwise leaves the
+    /// divider at the tree pane's maximum.
+    private var rememberedTreeWidth: CGFloat?
+    /// Guards our own setPosition from being corrected recursively.
+    private var isRestoringTreeWidth = false
     /// Auto-refresh: polls mtime of the tree root and every expanded directory,
     /// reloading the tree when the filesystem changes (new files written by the
     /// agent show up without reopening the panel).
@@ -180,6 +269,20 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     override init() {
         super.init()
         buildUI()
+        view.onUnmounted = { [weak self] in
+            // Before the split view throws the divider position away.
+            self?.rememberCurrentTreeWidth(log: false)
+        }
+        view.onMounted = { [weak self] in
+            // The inner split view re-distributes during the mount layout, and the
+            // exact pass it happens in is not guaranteed — so re-assert a few times.
+            // The correction is a no-op when the width is already right.
+            for delay in [0.0, 0.12, 0.4] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.restoreTreeWidthIfDisturbed()
+                }
+            }
+        }
         showEmptyState()
     }
 
@@ -201,23 +304,33 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         titleLabel.text = Self.panelTitle
 
         // Icon buttons with tooltips (hover shows what each does).
-        projectButton = CustomIconButton(glyph: .folder, tooltip: L10n.tr("preview.openProjectHint"))
-        projectButton.onAction = { [weak self] in self?.openProjectDirectory(nil) }
-        let openButton = CustomIconButton(glyph: .openInApp, tooltip: L10n.tr("preview.openInDefaultAppHint"))
-        openButton.onAction = { [weak self] in self?.openInDefaultApp(nil) }
-        let revealButton = CustomIconButton(glyph: .reveal, tooltip: L10n.tr("preview.revealInFinderHint"))
-        revealButton.onAction = { [weak self] in self?.revealInFinder(nil) }
+        // Header menu buttons: a label + a chevron say what the button is for and
+        // that it opens a list, and a click ALWAYS opens that list — picking an
+        // app must never turn the button into "that app only" with no way back
+        // (QA feedback). The last choice stays available on ⌥-click and is
+        // check-marked in the menu.
+        projectButton = PanelMenuButton(glyph: .folder,
+                                        title: L10n.tr("files.openProjectButton"),
+                                        tooltip: L10n.tr("files.openWithHint"))
+        projectButton.onAction = { [weak self] in self?.openProjectWithRememberedTarget() }
+        projectButton.onShowMenu = { [weak self] in self?.showOpenWithMenu() }
+        let fileMenuButton = PanelMenuButton(glyph: .doc,
+                                             title: L10n.tr("files.fileMenuButton"),
+                                             tooltip: L10n.tr("files.fileMenuHint"))
+        // ⌥-click keeps the old one-click behaviour (system default app); the
+        // menu lists it first along with the rest of the per-file actions.
+        fileMenuButton.onAction = { [weak self] in self?.openInDefaultApp(nil) }
+        fileMenuButton.onShowMenu = { [weak self] in self?.showFileActionsMenu() }
         let hideButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("preview.closePanel"))
         hideButton.onAction = { [weak self] in self?.hidePanel(nil) }
         let saveButton = CustomIconButton(glyph: .symbol("externaldrive"), tooltip: L10n.tr("preview.saveHint"))
         saveButton.onAction = { [weak self] in self?.saveActiveTab() }
         saveButton.isEnabled = false
-        self.openButton = openButton
-        self.revealButton = revealButton
+        self.fileMenuButton = fileMenuButton
         self.hideButton = hideButton
         self.saveButton = saveButton
 
-        let actions = NSStackView(views: [projectButton, openButton, revealButton, saveButton, hideButton])
+        let actions = NSStackView(views: [projectButton, fileMenuButton, saveButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -281,6 +394,12 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         treeOutline.dataSource = self
         treeOutline.delegate = self
         treeOutline.autoresizesOutlineColumn = true
+        // 目录树右键菜单（docs/ux-feedback.md #1）：条目与顺序随「点到了什么」变化，
+        // 由 TreeMenuModel 决定（纯模型，tests/file-panel 覆盖），这里只负责建菜单。
+        // NSOutlineView 的 clickedRow 在 menuNeedsUpdate 之前已更新。
+        let treeMenu = NSMenu()
+        treeMenu.delegate = self
+        treeOutline.menu = treeMenu
 
         treeScroll.documentView = treeOutline
         treeScroll.hasVerticalScroller = true
@@ -300,7 +419,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
             treeScroll.bottomAnchor.constraint(equalTo: treePane.bottomAnchor),
         ])
 
-        let contentSplit = NSSplitView()
+        let contentSplit = TreeDividerSplitView()
         contentSplit.isVertical = true
         contentSplit.dividerStyle = .thin
         contentSplit.delegate = self
@@ -308,6 +427,10 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         contentSplit.addSubview(treePane)
         contentSplit.addSubview(contentContainer)
         contentSplit.setHoldingPriority(NSLayoutConstraint.Priority(rawValue: 260), forSubviewAt: 1)
+        // The drag ended: this is the width the user chose.
+        contentSplit.onUserDragEnded = { [weak self] in
+            self?.rememberCurrentTreeWidth(log: true)
+        }
         self.contentSplit = contentSplit
 
         view.addSubview(header)
@@ -482,8 +605,18 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// 标题本身是固定的面板名（见 panelTitle），不显示路径。
     private func updateHeader(for path: String) {
         titleLabel.toolTip = path
-        openButton.isEnabled = true
-        revealButton.isEnabled = true
+        // 「打开文件」acts on the FILE shown in the panel: it is disabled for a
+        // folder tab, and while nothing is open at all (a button that looks
+        // usable but silently does nothing is worse than a disabled one — QA
+        // feedback: the menu appeared to be broken).
+        fileMenuButton.isEnabled = !Self.isDirectory(path)
+    }
+
+    /// Whether a path is a directory (a folder tab is not a "file").
+    static func isDirectory(_ path: String) -> Bool {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else { return false }
+        return isDir.boolValue
     }
 
     /// 面板的固定标题：与活动栏的「文件 / Files」同名，语言切换时刷新。
@@ -502,6 +635,9 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     }
 
     @objc private func hidePanel(_ sender: Any?) {
+        // The panel is being closed: capture the divider width NOW, while the panel
+        // still has it (the collapse that follows squeezes the split view).
+        rememberCurrentTreeWidth(log: true)
         // 关闭面板 = 关闭所有预览页签（释放渲染内容）+ 清空工作区记忆，再收起面板。
         // 有未保存修改时先问一句：取消 = 面板保持原样（不关也不清）。
         let dirty = tabs.filter { $0.isDirty && $0.editor != nil }
@@ -615,8 +751,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     private func resetContentArea() {
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
         titleLabel.toolTip = nil
-        openButton.isEnabled = false
-        revealButton.isEnabled = false
+        fileMenuButton.isEnabled = false
         showEmptyState()
         refreshSaveState()
     }
@@ -624,9 +759,10 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// 语言切换后刷新头部按钮 tooltip（构建时一次性设置，需手动跟随）。
     func refreshTooltips() {
         titleLabel.text = Self.panelTitle
-        projectButton?.toolTip = L10n.tr("preview.openProjectHint")
-        openButton?.toolTip = L10n.tr("preview.openInDefaultAppHint")
-        revealButton?.toolTip = L10n.tr("preview.revealInFinderHint")
+        projectButton?.title = L10n.tr("files.openProjectButton")
+        projectButton?.toolTip = L10n.tr("files.openWithHint")
+        fileMenuButton?.title = L10n.tr("files.fileMenuButton")
+        fileMenuButton?.toolTip = L10n.tr("files.fileMenuHint")
         hideButton?.toolTip = L10n.tr("preview.closePanel")
         saveButton?.toolTip = L10n.tr("preview.saveHint")
     }
@@ -702,6 +838,516 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
             }
         }
     }
+    // MARK: - Open the project directory with… (docs/ux-feedback.md #2)
+
+    /// ShellConfig key holding the remembered target id ("panel" / "finder" /
+    /// a bundle identifier / "path:<app path>").
+    static let openWithKey = "files.openProjectWith"
+
+    /// Left click: run the remembered target. First use (nothing remembered) or
+    /// a remembered application that is no longer installed falls back to the
+    /// menu, so the user always learns the feature exists.
+    private func openProjectWithRememberedTarget() {
+        guard let remembered = ShellConfig.shared.string(forKey: Self.openWithKey) else {
+            showOpenWithMenu()
+            return
+        }
+        // An application picked through the file panel is remembered by PATH —
+        // it is by definition not in the catalog.
+        if remembered.hasPrefix("path:") {
+            guard let appURL = appURL(forPersistedId: remembered) else {
+                showOpenWithMenu()
+                return
+            }
+            resolveProjectDirectory { [weak self] cwd in
+                guard let self = self, let dir = cwd ?? self.treeRoot?.path else { return }
+                self.openDirectoryWithApp(dir, appURL: appURL)
+            }
+            return
+        }
+        guard let entry = OpenWithCatalog.rememberedEntry(remembered, isInstalled: { self.isInstalled($0) }) else {
+            showOpenWithMenu()
+            return
+        }
+        performOpenWith(entry)
+    }
+
+    private func isInstalled(_ entry: OpenWithEntry) -> Bool { appURL(for: entry) != nil }
+
+    private func appURL(for entry: OpenWithEntry) -> URL? {
+        guard let id = entry.bundleIdentifier else { return nil }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)
+    }
+
+    /// Application URL for a persisted id: a catalog bundle id, an app picked
+    /// through the file panel ("path:…"), or any other bundle identifier.
+    private func appURL(forPersistedId id: String) -> URL? {
+        if id.hasPrefix("path:") {
+            let path = String(id.dropFirst("path:".count))
+            return FileManager.default.fileExists(atPath: path) ? URL(fileURLWithPath: path) : nil
+        }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)
+    }
+
+    /// The picker: panel itself, Finder, then every INSTALLED editor / IDE /
+    /// terminal from the catalog, then "choose another app…".
+    private func showOpenWithMenu() {
+        guard let button = projectButton else { return }
+        let remembered = ShellConfig.shared.string(forKey: Self.openWithKey)
+        let menu = NSMenu(title: L10n.tr("files.openWithMenu"))
+        func add(_ title: String, id: String) {
+            let item = NSMenuItem(title: title, action: #selector(openWithMenuItemTapped(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = id
+            item.state = (id == remembered) ? .on : .off
+            menu.addItem(item)
+        }
+        add(L10n.tr("files.openInPanel"), id: OpenWithCatalog.panel.id)
+        add(L10n.tr("files.openInFinder"), id: OpenWithCatalog.finder.id)
+        let editors = OpenWithCatalog.editors.filter { isInstalled($0) }
+        if !editors.isEmpty {
+            menu.addItem(.separator())
+            for entry in editors { add(entry.title, id: entry.id) }
+        }
+        let terminals = OpenWithCatalog.terminals.filter { isInstalled($0) }
+        if !terminals.isEmpty {
+            menu.addItem(.separator())
+            for entry in terminals { add(entry.title, id: entry.id) }
+        }
+        menu.addItem(.separator())
+        add(L10n.tr("files.openWithOther"), id: "choose")
+        popBelow(menu, button)
+    }
+
+    /// The current file's action menu — the former "open with default app" and
+    /// "reveal in Finder" buttons merged into one dropdown (QA feedback), with
+    /// the default-app action kept as the button's primary click.
+    private func showFileActionsMenu() {
+        guard let button = fileMenuButton, let path = currentTabPath else {
+            AppLog.shared.log("preview file menu: no file tab is selected — nothing to act on")
+            return
+        }
+        guard !Self.isDirectory(path) else {
+            AppLog.shared.log("preview file menu: the selected tab is a folder (\(path))")
+            return
+        }
+        let menu = NSMenu(title: L10n.tr("files.fileMenuButton"))
+        func add(_ title: String, _ action: Selector) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        add(L10n.tr("preview.openInDefaultApp"), #selector(openInDefaultApp(_:)))
+        add(L10n.tr("files.revealInFinder"), #selector(revealInFinder(_:)))
+        menu.addItem(.separator())
+        add(L10n.tr("files.copyPath"), #selector(copyCurrentFilePath(_:)))
+        popBelow(menu, button)
+    }
+
+    /// 头部按钮的复制路径动作。
+    @objc private func copyCurrentFilePath(_ sender: Any?) {
+        guard let path = currentTabPath else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(path, forType: .string)
+        AppLog.shared.log("preview copy path: \(path)")
+    }
+
+    /// Drop a menu just under a header button. The anchor is the menu's TOP-LEFT
+    /// corner in the view's (non-flipped) coordinates, so a small negative y puts
+    /// it below the button instead of over the header strip.
+    private func popBelow(_ menu: NSMenu, _ button: NSView) {
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: button)
+    }
+
+    @objc private func openWithMenuItemTapped(_ sender: NSMenuItem) {
+        let id = (sender.representedObject as? String) ?? ""
+        if id == "choose" { pickApplicationForOpenWith(); return }
+        guard let entry = OpenWithCatalog.entry(id: id) else { return }
+        ShellConfig.shared.set(id, forKey: Self.openWithKey)
+        AppLog.shared.log("preview open-with remembered: \(id)")
+        performOpenWith(entry)
+    }
+
+    /// Pick an application that is not in the catalog (stored by path so it
+    /// keeps working, or by bundle id when the app has one).
+    private func pickApplicationForOpenWith() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowsOtherFileTypes = true
+        panel.message = L10n.tr("files.openWithOtherMessage")
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        guard let window = view.window else { return }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self = self else { return }
+            let id = Bundle(url: url)?.bundleIdentifier ?? OpenWithCatalog.pathEntryId(url.path)
+            ShellConfig.shared.set(id, forKey: Self.openWithKey)
+            AppLog.shared.log("preview open-with picked: \(url.path) id=\(id)")
+            self.openDirectoryWithApp(url.path, appURL: url)
+        }
+    }
+
+    /// Run one target. The panel target keeps its own resolution path (tree +
+    /// folder tab); everything else hands the ACTIVE PROJECT DIRECTORY over.
+    private func performOpenWith(_ entry: OpenWithEntry) {
+        switch entry.group {
+        case .panel:
+            openProjectDirectory(nil)
+        case .finder:
+            resolveProjectDirectory { [weak self] cwd in
+                guard let self = self else { return }
+                guard let dir = cwd ?? self.treeRoot?.path else {
+                    self.pickDirectoryFallback()
+                    return
+                }
+                AppLog.shared.log("preview open-with: Finder -> \(dir)")
+                NSWorkspace.shared.open(URL(fileURLWithPath: dir))
+            }
+        case .editor, .terminal:
+            guard let appURL = appURL(for: entry) else {
+                AppLog.shared.log("preview open-with: \(entry.id) is not installed; showing the menu")
+                showOpenWithMenu()
+                return
+            }
+            resolveProjectDirectory { [weak self] cwd in
+                guard let self = self, let dir = cwd ?? self.treeRoot?.path else { return }
+                self.openDirectoryWithApp(dir, appURL: appURL)
+            }
+        }
+    }
+
+    /// Open `path` with an external application (editors / IDEs open the folder,
+    /// terminals open a new shell there).
+    private func openDirectoryWithApp(_ path: String, appURL: URL) {
+        AppLog.shared.log("preview open-with: \(appURL.lastPathComponent) -> \(path)")
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.open([URL(fileURLWithPath: path)],
+                                withApplicationAt: appURL,
+                                configuration: config) { [weak self] _, error in
+            guard let error = error else { return }
+            AppLog.shared.log("preview open-with failed: \(error.localizedDescription)")
+            DispatchQueue.main.async {
+                self?.presentPanelError(L10n.tr("files.openWithFailed", error.localizedDescription))
+            }
+        }
+    }
+
+    // MARK: - New file / new folder in the tree (docs/ux-feedback.md #1)
+
+    /// The directory a create action applies to: the clicked folder, the clicked
+    /// file’s parent, or the tree root when the click was on empty space.
+    private func newItemTargetDirectory() -> String? {
+        let row = treeOutline.clickedRow
+        guard row >= 0, let node = treeOutline.item(atRow: row) as? TreeNode else { return treeRoot?.path }
+        return node.isDir ? node.path : (node.path as NSString).deletingLastPathComponent
+    }
+
+    @objc private func newFileInTree(_ sender: Any?) { promptForNewItem(isDir: false) }
+
+    @objc private func newFolderInTree(_ sender: Any?) { promptForNewItem(isDir: true) }
+
+    /// Ask for a name (sheet over the window, modal alert when there is none) and
+    /// create the item inside the target directory.
+    private func promptForNewItem(isDir: Bool) {
+        guard let dir = newItemTargetDirectory() else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.tr(isDir ? "files.newFolder" : "files.newFile")
+        alert.informativeText = L10n.tr("files.newItemLocation", dir)
+        alert.addButton(withTitle: L10n.tr("files.create"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = L10n.tr(isDir ? "files.newFolderPlaceholder" : "files.newFilePlaceholder")
+        alert.accessoryView = field
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            _ = self?.createTreeItem(named: field.stringValue, isDir: isDir, in: dir)
+        }
+        // The prompt is only reachable from the tree context menu, i.e. with a
+        // mounted panel; without a window there is nobody to ask.
+        guard let window = view.window else {
+            AppLog.shared.log("preview tree create: no window to prompt in")
+            return
+        }
+        alert.beginSheetModal(for: window, completionHandler: finish)
+        DispatchQueue.main.async { window.makeFirstResponder(field) }
+    }
+
+    /// Create an empty file (or a folder) and reveal it in the tree. The new file
+    /// opens in a preview/editor tab so it can be filled in straight away.
+    /// Internal (not private) so the headless panel tests can drive it.
+    @discardableResult
+    func createTreeItem(named rawName: String, isDir: Bool, in dir: String) -> Bool {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return false }
+        guard !name.contains("/"), name != ".", name != ".." else {
+            presentPanelError(L10n.tr("files.invalidName"))
+            return false
+        }
+        let full = (dir as NSString).appendingPathComponent(name)
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: full) else {
+            presentPanelError(L10n.tr("files.alreadyExists", name))
+            return false
+        }
+        do {
+            if isDir {
+                try fm.createDirectory(atPath: full, withIntermediateDirectories: false)
+            } else if !fm.createFile(atPath: full, contents: Data()) {
+                throw NSError(domain: "oh-my-dsh", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: L10n.tr("files.createFailed", full)])
+            }
+        } catch {
+            AppLog.shared.log("preview tree create failed: \(full) \u{2014} \(error.localizedDescription)")
+            presentPanelError(L10n.tr("files.createFailed", error.localizedDescription))
+            return false
+        }
+        AppLog.shared.log("preview tree created \(isDir ? "folder" : "file"): \(full)")
+        expandTreePath(dir)
+        refreshTree()
+        selectTreeRow(path: full)
+        if !isDir { open(path: full) }
+        return true
+    }
+
+    /// Expand the tree row showing `path` (so a freshly created child becomes a
+    /// visible row after the reload).
+    private func expandTreePath(_ path: String) {
+        for row in 0..<treeOutline.numberOfRows {
+            if let node = treeOutline.item(atRow: row) as? TreeNode, node.path == path {
+                treeOutline.expandItem(node)
+                return
+            }
+        }
+    }
+
+    /// Select (and scroll to) the tree row showing `path`.
+    private func selectTreeRow(path: String) {
+        for row in 0..<treeOutline.numberOfRows {
+            if let node = treeOutline.item(atRow: row) as? TreeNode, node.path == path {
+                treeOutline.selectRowIndexes([row], byExtendingSelection: false)
+                treeOutline.scrollRowToVisible(row)
+                return
+            }
+        }
+    }
+
+    // MARK: - Rename / delete a tree entry (follow-up on #1)
+
+    /// The tree row under the context menu (nil when the click hit empty space).
+    private func clickedTreeItem() -> TreeNode? {
+        let row = treeOutline.clickedRow
+        guard row >= 0, let node = treeOutline.item(atRow: row) as? TreeNode else { return nil }
+        return node
+    }
+
+    /// Build the tree menu for the row under the pointer. NSMenu is used as a
+    /// dynamic delegate here because both the ORDER and the SET of entries depend
+    /// on what was clicked: a file has no "New Folder"; the project root can be
+    /// neither renamed nor deleted; a click on empty space only offers creation.
+    /// The rules live in TreeMenuModel (pure, unit-tested).
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let node = clickedTreeItem()
+        let entries = TreeMenuModel.entries(hasRoot: treeRoot != nil,
+                                            hasRow: node != nil,
+                                            isRoot: treeRoot != nil && node?.path == treeRoot?.path,
+                                            isFile: node?.isDir == false)
+        menu.removeAllItems()
+        for entry in entries {
+            if entry.separatorBefore, menu.numberOfItems > 0 { menu.addItem(.separator()) }
+            let menuItem = NSMenuItem(title: menuTitle(for: entry.item),
+                                      action: menuSelector(for: entry.item),
+                                      keyEquivalent: "")
+            menuItem.target = self
+            menuItem.isEnabled = entry.enabled
+            menu.addItem(menuItem)
+        }
+    }
+
+    private func menuTitle(for item: TreeMenuItem) -> String {
+        switch item {
+        case .newFolder: return L10n.tr("files.newFolder")
+        case .newFile: return L10n.tr("files.newFile")
+        case .rename: return L10n.tr("files.rename")
+        case .delete: return L10n.tr("files.delete")
+        case .reveal: return L10n.tr("files.revealInTree")
+        }
+    }
+
+    private func menuSelector(for item: TreeMenuItem) -> Selector {
+        switch item {
+        case .newFolder: return #selector(newFolderInTree(_:))
+        case .newFile: return #selector(newFileInTree(_:))
+        case .rename: return #selector(renameTreeSelection(_:))
+        case .delete: return #selector(deleteTreeSelection(_:))
+        case .reveal: return #selector(revealTreeSelection(_:))
+        }
+    }
+
+    @objc private func renameTreeSelection(_ sender: Any?) {
+        guard let node = clickedTreeItem(), node.path != treeRoot?.path else { return }
+        promptForRename(node)
+    }
+
+    /// Path-addressed rename: what the context menu ultimately performs, and
+    /// what the headless tests drive (they have no clicked row).
+    @discardableResult
+    func renameTreePath(_ path: String, to newName: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: path) else { return false }
+        return moveTreeEntry(at: path, to: newName)
+    }
+
+    /// Path-addressed delete (move to the Trash).
+    @discardableResult
+    func deleteTreePath(_ path: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: path) else { return false }
+        return trashTreeEntry(at: path)
+    }
+
+    /// Ask for the new name with it pre-selected, so the user can type straight
+    /// over it (same sheet-or-modal pattern as the create action).
+    private func promptForRename(_ node: TreeNode) {
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("files.rename")
+        alert.informativeText = node.path
+        alert.addButton(withTitle: L10n.tr("files.renameAction"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = node.name
+        alert.accessoryView = field
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            _ = self?.moveTreeEntry(at: node.path, to: field.stringValue)
+        }
+        guard let window = view.window else {
+            AppLog.shared.log("preview tree rename: no window to prompt in")
+            return
+        }
+        alert.beginSheetModal(for: window, completionHandler: finish)
+        DispatchQueue.main.async {
+            window.makeFirstResponder(field)
+            field.currentEditor()?.selectAll(nil)
+        }
+    }
+
+    /// Rename a tree entry (a move inside its own directory). Tabs that live
+    /// under the old path are re-pointed, so an open editor keeps working and
+    /// saves to the new path instead of recreating the old one.
+    @discardableResult
+    func moveTreeEntry(at path: String, to rawName: String) -> Bool {
+        let oldName = (path as NSString).lastPathComponent
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !name.contains("/"), name != ".", name != ".." else {
+            presentPanelError(L10n.tr("files.invalidName"))
+            return false
+        }
+        guard name != oldName else { return false }   // unchanged: nothing to do
+        let parent = (path as NSString).deletingLastPathComponent
+        let target = (parent as NSString).appendingPathComponent(name)
+        guard !FileManager.default.fileExists(atPath: target) else {
+            presentPanelError(L10n.tr("files.alreadyExists", name))
+            return false
+        }
+        do {
+            try FileManager.default.moveItem(atPath: path, toPath: target)
+        } catch {
+            AppLog.shared.log("preview tree rename failed: \(path) -> \(target) \u{2014} \(error.localizedDescription)")
+            presentPanelError(L10n.tr("files.renameFailed", error.localizedDescription))
+            return false
+        }
+        AppLog.shared.log("preview tree renamed: \(path) -> \(target)")
+        repointTabs(from: path, to: target)
+        expandTreePath(parent)
+        refreshTree()
+        selectTreeRow(path: target)
+        return true
+    }
+
+    @objc private func deleteTreeSelection(_ sender: Any?) {
+        guard let node = clickedTreeItem(), node.path != treeRoot?.path else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("files.delete")
+        alert.informativeText = L10n.tr(node.isDir ? "files.deleteFolderMessage" : "files.deleteFileMessage", node.name)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L10n.tr("files.deleteAction"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            _ = self?.trashTreeEntry(at: node.path)
+        }
+        guard let window = view.window else {
+            AppLog.shared.log("preview tree delete: no window to confirm in")
+            return
+        }
+        alert.beginSheetModal(for: window, completionHandler: finish)
+    }
+
+    /// Move an entry to the Trash — never an irreversible unlink, so a mis-click
+    /// in the tree stays recoverable from Finder.
+    @discardableResult
+    func trashTreeEntry(at path: String) -> Bool {
+        var trashed: NSURL?
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: &trashed)
+        } catch {
+            AppLog.shared.log("preview tree delete failed: \(path) \u{2014} \(error.localizedDescription)")
+            presentPanelError(L10n.tr("files.deleteFailed", error.localizedDescription))
+            return false
+        }
+        AppLog.shared.log("preview tree trashed: \(path)")
+        closeTabs(under: path)
+        refreshTree()
+        return true
+    }
+
+    /// Re-point every open tab that lives under `from` to `to`: a renamed file
+    /// keeps its tab, a renamed folder keeps the tabs of the files inside it.
+    private func repointTabs(from oldPath: String, to newPath: String) {
+        for idx in tabs.indices {
+            let path = tabs[idx].path
+            guard path == oldPath || path.hasPrefix(oldPath + "/") else { continue }
+            let updated = newPath + path.dropFirst(oldPath.count)
+            AppLog.shared.log("preview tab repointed: \(path) -> \(updated)")
+            tabs[idx].path = updated
+            refreshTabTitle(at: idx)
+            if tabs[idx].id == selectedId {
+                updateHeader(for: updated)
+                render(updated)
+            }
+        }
+    }
+
+    /// Close the tabs whose entry was removed from the tree.
+    private func closeTabs(under path: String) {
+        let doomed = tabs.filter { $0.path == path || $0.path.hasPrefix(path + "/") }
+        for tab in doomed {
+            AppLog.shared.log("preview tab closed (entry removed): \(tab.path)")
+            closeNow(tab.id)
+        }
+    }
+
+    /// Context menu: reveal the clicked tree entry in Finder.
+    @objc private func revealTreeSelection(_ sender: Any?) {
+        let row = treeOutline.clickedRow
+        guard row >= 0, let node = treeOutline.item(atRow: row) as? TreeNode else { return }
+        AppLog.shared.log("preview reveal in Finder: \(node.path)")
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: node.path)])
+    }
+
+    /// Non-blocking error alert: a sheet over the panel window, or the log alone
+    /// when there is no window (headless tests / panel not mounted). Never
+    /// `runModal()` — that would block the app on an invisible alert.
+    private func presentPanelError(_ message: String) {
+        AppLog.shared.log("preview panel error: \(message)")
+        guard let window = view.window else { return }
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L10n.tr("btn.ok"))
+        alert.beginSheetModal(for: window, completionHandler: nil)
+    }
 
     /// Re-root the project directory tree when the active dsh session's
     /// workspace changes (called by the shell's dshSession handler). The tabs of
@@ -717,6 +1363,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// from open(path:) and by the shell whenever the panel is shown; retries
     /// are allowed until the server is reachable.
     func ensureTreeLoaded() {
+        restoreTreeWidthIfDisturbed()   // the panel is coming into use
         guard !treeTriedLoad, treeRoot == nil else { return }
         treeTriedLoad = true
         resolveProjectDirectory { [weak self] cwd in
@@ -995,19 +1642,34 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// Editable tabs reuse their live editor (so unsaved edits survive) and are
     /// skipped while dirty; read-only tabs are re-rendered when visible.
     private func refreshOpenTabsIfChanged() {
+        let now = Date()
         for (idx, tab) in tabs.enumerated() {
             let m = Self.mtime(of: tab.path)
             guard let m = m, let prev = tab.fileMtime, m != prev else { continue }
+            // A file that is STILL being written (an agent saving in a loop, a
+            // build stepping on it) must not be reloaded once per tick: each
+            // reload of a large file costs a full re-read + highlight, so a burst
+            // used to look like a freeze (QA report). Wait until the file has been
+            // quiet for the stability window — the mtime is deliberately NOT
+            // absorbed yet, so the next tick re-checks it.
+            guard EditorLoadPolicy.isStable(mtime: m, now: now) else {
+                AppLog.shared.log("preview reload deferred (still being written): \(tab.path)")
+                continue
+            }
             tabs[idx].fileMtime = m   // absorb the change so we don't redo it
             if let editor = tab.editor {
                 if tab.isDirty {
-                    AppLog.shared.log("preview tab changed on disk; kept unsaved edits: (tab.path)")
+                    AppLog.shared.log("preview tab changed on disk; kept unsaved edits: \(tab.path)")
                     continue
                 }
-                AppLog.shared.log("preview reload editor (disk changed): (tab.path)")
-                editor.reloadFromDisk()
+                let started = Date()
+                AppLog.shared.log("preview reload editor (disk changed): \(tab.path)")
+                editor.reloadFromDisk {
+                    AppLog.shared.log("preview reload applied: \(tab.path) in "
+                                      + String(format: "%.0f ms", Date().timeIntervalSince(started) * 1000))
+                }
             } else if tab.id == selectedId {
-                AppLog.shared.log("preview reload tab (disk changed): (tab.path)")
+                AppLog.shared.log("preview reload tab (disk changed): \(tab.path)")
                 render(tab.path)
             }
         }
@@ -1059,10 +1721,81 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     private func applyInitialTreeWidthIfNeeded() {
         guard !treeWidthInitialized, contentSplit.bounds.width > 0 else { return }
         treeWidthInitialized = true
-        contentSplit.setPosition(160, ofDividerAt: 0)
+        contentSplit.setPosition(Self.minTreeWidth, ofDividerAt: 0)
         contentSplit.adjustSubviews()
-        AppLog.shared.log("preview tree width initialized: 160pt")
+        AppLog.shared.log("preview tree width initialized: \(Int(Self.minTreeWidth))pt")
     }
+
+    // MARK: - Tree pane width (remembered across close/reopen)
+
+    /// Divider limits for the tree pane.
+    static let minTreeWidth: CGFloat = 160
+    static let maxTreeWidth: CGFloat = 420
+    /// The content side keeps at least this much room, whatever the panel width.
+    static let minContentWidth: CGFloat = 240
+
+    /// The width the tree pane should get when it has to be restored: the
+    /// remembered one, clamped to the divider range and to leave the content pane
+    /// usable in a narrow panel.
+    static func restoredTreeWidth(_ remembered: CGFloat, splitWidth: CGFloat) -> CGFloat {
+        let upper = min(maxTreeWidth, max(minTreeWidth, splitWidth - minContentWidth))
+        return min(max(remembered, minTreeWidth), upper)
+    }
+
+    /// Current width of the tree pane.
+    private var treePaneWidth: CGFloat { contentSplit.subviews.first?.frame.width ?? 0 }
+
+    /// Whether the panel is really on screen (its layout is meaningful).
+    private var isPanelVisible: Bool { view.window != nil && !view.isHidden }
+
+    /// Record the width the user dragged the divider to. Called while a drag is in
+    /// progress (silently) and once when it ends (logged) — the drag state comes
+    /// from the split view itself, because a tracking loop swallows events before
+    /// any local event monitor can see them.
+    private func rememberCurrentTreeWidth(log: Bool) {
+        guard isPanelVisible, contentSplit.bounds.width > 1 else { return }
+        let width = treePaneWidth
+        guard width >= Self.minTreeWidth - 1, width <= Self.maxTreeWidth + 1 else { return }
+        rememberedTreeWidth = width
+        if log { AppLog.shared.log("preview tree width remembered: \(Int(width))pt") }
+    }
+
+    /// Put the tree pane back to the width the user left when the split view
+    /// re-distributes it on its own.
+    ///
+    /// Why this is needed at all: closing the panel makes the shell REMOVE the
+    /// panel view from the split view and re-add it on the next open (see
+    /// AppDelegate.setRightPanel), so the inner split view is laid out fresh and
+    /// gives the tree pane its maximum (420pt; QA report). Nothing inside this view
+    /// ever observes a 0-width frame — the view is simply detached and re-added —
+    /// hence the correction runs on every non-user resize instead of a transition.
+    private func restoreTreeWidthIfDisturbed() {
+        guard !isRestoringTreeWidth, !contentSplit.isUserDraggingDivider else { return }
+        guard isPanelVisible, contentSplit.bounds.width > 1 else { return }
+        guard let remembered = rememberedTreeWidth else { return }
+        let target = Self.restoredTreeWidth(remembered, splitWidth: contentSplit.bounds.width)
+        let current = treePaneWidth
+        guard current >= 1, abs(current - target) > 1 else { return }
+        isRestoringTreeWidth = true
+        AppLog.shared.log("preview tree width corrected: \(Int(current))pt -> \(Int(target))pt (remembered \(Int(remembered))pt)")
+        contentSplit.setPosition(target, ofDividerAt: 0)
+        contentSplit.adjustSubviews()
+        isRestoringTreeWidth = false
+    }
+
+    /// The split view resized its panes: either the user dragged the divider (follow
+    /// it) or something re-distributed them on its own (put the remembered width
+    /// back). The distinction comes from the split view subclass, which knows when
+    /// its tracking loop is running.
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard notification.object as? NSSplitView === contentSplit else { return }
+        if contentSplit.isUserDraggingDivider {
+            rememberCurrentTreeWidth(log: false)
+        } else {
+            restoreTreeWidthIfDisturbed()
+        }
+    }
+
 
     /// Read a directory's immediate children (directories first, then name).
     private static func loadChildren(of node: TreeNode) -> [TreeNode]? {
@@ -1155,11 +1888,11 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     /// Keep the tree narrow but usable when dragging the divider.
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        160
+        Self.minTreeWidth
     }
 
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        420
+        Self.maxTreeWidth
     }
 
     // MARK: - Rendering
@@ -1234,6 +1967,8 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     }
 
     private func showEmptyState() {
+        // Nothing is open: the per-file action button has nothing to act on.
+        fileMenuButton?.isEnabled = false
         showPlaceholder(symbol: "doc.text.magnifyingglass", title: L10n.tr("preview.empty"))
     }
 
@@ -1506,20 +2241,17 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
                             title: L10n.tr("preview.unreadable", path))
             return
         }
-        let imageView = NSImageView()
-        imageView.image = img
-        imageView.imageScaling = .scaleProportionallyDown
-        imageView.frame = NSRect(origin: .zero, size: img.size)
-
-        let scroll = NSScrollView()
-        scroll.documentView = imageView
-        scroll.drawsBackground = true
-        scroll.backgroundColor = PanelSurface.dynamic
-        scroll.hasVerticalScroller = true
-        scroll.hasHorizontalScroller = true
-        scroll.autohidesScrollers = true
-        AppLog.shared.log("preview image: \(Int(img.size.width))x\(Int(img.size.height))")
-        embed(scroll)
+        // Zoomable preview: opens fitted to the viewport (proportionally), then
+        // ⌘+/⌘−/⌘0, ⌘-scroll, pinch and double-click zoom it (QA request).
+        let preview = ImagePreviewView(image: img)
+        AppLog.shared.log("preview image: \(Int(img.size.width))x\(Int(img.size.height)) (fit to viewport)")
+        embed(preview)
+        // The fit needs the real viewport size, and the keyboard zoom needs focus:
+        // both only exist once the view is laid out in a window.
+        DispatchQueue.main.async { [weak self] in
+            preview.fitToViewport()
+            self?.view.window?.makeFirstResponder(preview.focusView)
+        }
     }
 
     private func showPDF(path: String) {
