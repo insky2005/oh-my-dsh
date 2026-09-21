@@ -27,6 +27,8 @@ logs/
 .env
 .env.*
 !.env.example
+# 脚手架模板里也有 .env.example 模板（否则被 .env.* 吃掉，克隆/CI 上模板缺失）
+!.env.example.tmpl
 
 # debug screenshots / QA artifacts (local only)
 pic/
