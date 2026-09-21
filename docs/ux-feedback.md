@@ -133,12 +133,32 @@
 - **B 凭证失效类**（本次未复现）：cookie 被清（janitor 只在启动/退出跑，理论不中途清）、30 天到期、dsh 签名密钥因 `$DSH_HOME/.credentials.yaml` 重建而更换。
 - **C 插件包请求失败**（历史 431 问题）：页面拿到了 index 但 bundle script 加载失败，看起来像「页面打不开」；本次实测只剩 1 个 cookie，暂不成立。
 
+**使用者补充（2026-09-21，关键）**
+
+1. 失败页面显示的就是纯文本 `dsh web authentication required…` → **确认是 401**（不是白屏、不是网络错误页）；
+2. 当时 **Files / Terminal / Review 面板全部正常** → 服务活着，且壳层的 token 通道正常（面板走 `DshWebRPC`，用 token 现换 cookie）→ **死的只是 WebView 手里那一份 cookie**；
+3. 刷新方式：WebView 右键「重新载入」（= WebKit 默认菜单的 Reload = 裸 `reload()`）；
+4. **触发动机**：刷新之前 dsh web 的**对话区已经不出新内容、也无法操作**（页面像卡死）——刷新本来是想恢复它。
+
+据此收敛：
+
+- **排除 A2**（服务没死：面板正常）与 **A3**（不是网络层错误：拿到了 401 响应体）、**排除 C**（页面正常渲染出了 dsh 的 401 文本，不是插件包加载失败）；
+- 留下 **A1 / B**：刷新请求到达了服务，但 WebView 那份 cookie 不被接受（不存在 / authority 不匹配 / 签名不再被认）；
+- 新增 **A4「页面底下被换了服务」**（最能解释第 4 点）：长时运行中 dsh web 被重启过（自动升级路径 `restartServerAfterUpgrade()` L3122，或升级失败回滚后的重启 L3356）——旧页面到旧服务的连接随之断开（**对话区卡死**），而 `startServer()` 里的 `DshWebCookieJanitor.purgeStale(keeping: 新 authority)`（L3074）会清掉旧端口的 cookie；此后**旧 URL + 没有可用 cookie** → 右键 Reload 裸请求 `/` → 401。面板不受影响，因为它们每次都用 token 重新换 cookie。
+
+**刷新入口与快捷键（回答「右键 Reload 与 ⌘R 能否一致」）**
+
+- 现状：右键「重新载入」由 **WKWebView 系统菜单**提供（见上）；**⌘R 目前没有绑定任何菜单项**（⌥⌘R 才是 Review 面板，见 `main.swift` L3831-3832），也就是说今天按 ⌘R 并不等于刷新。
+- 目标不是「把裸 reload 复制一份给 ⌘R」，而是**让两条路都不再依赖那份会失效的 cookie**：
+  - **做法 A（推荐，一处修复两处受益）**：新增「视图 → 重新加载页面 ⌘R」走方案 1（`entryURL` 重新认证）；**同时**按方案 3 拦截主框架 401 自动自愈 → 右键 Reload 即使触发也会被自动救回，两者结果一致。
+  - **做法 B（字面一致，更彻底）**：把主 WebView 换成 `WKWebView` 子类，override `menu(for:)`，用自家「重新加载页面（重新认证）」替换系统那个 Reload 项 → 右键菜单直接调用壳层逻辑，⌘R 与右键完全同一实现。代价是新增一个约 20 行的子类（只改菜单构造，不动渲染，风险低）。
+
 **建议方案（自愈式刷新，一次覆盖 A/B/C）**
 
 1. **刷新=重新认证，而不是裸 reload**：`reloadPage()` 改为加载 `server.entryURL`（带 token 的入口地址）——303 会重新落一份 30 天 cookie 并回到 `/`。token 与进程同生命周期（实测 22 h 后仍有效），所以对 A1/B 自愈；视觉上只多一次重定向。旧版 dsh（无 token）回退到现在的 `webView.reload()`。
 2. **刷新前做存活判定 + 自愈**：先用 `isDSHServing(port:)` / `tokenAccepted(port:token:)` 探测；失败则 (a) 重读 server.log 里最新自报入口地址（服务重启后端口/token 会变）、(b) 若是自己 spawn 的服务且已死 → `startServer()` 重拉并重新派发 `serverReady` / `DshWebRPC.token` / channel runner 的 port+token、(c) 仍不可恢复 → 走已有的 `showStatus(..., retry: true)` 错误态。
 3. **主框架 401/失败拦截**：`decidePolicyFor navigationResponse` 里识别主框架 401（text/plain 的 `dsh web authentication required`）→ 自动按方案 1 重试一次；`didFailProvisionalNavigation`（L3646）已有错误态，补一次自动重试。
-4. **给刷新一个正式入口**：菜单「视图 → 重新加载页面」+ 快捷键（避免依赖 WebView 右键菜单）；`reloadPage()` 与方案 1 合并。
+4. **给刷新一个正式入口**：菜单「视图 → 重新加载页面」+ **⌘R**（当前未占用；⌥⌘R 仍是 Review 面板），`reloadPage()` 与方案 1 合并；配合方案 3，使 ⌘R 与右键「重新载入」结果一致（做法 A/B 见上）。
 5. **先补诊断日志**（成本最低、收益最大）：记录每次刷新（URL / 是否带 token / 探测结果 / 响应状态 401·403·200 / cookie 是否存在及 authority / 服务进程是否存活 / 端口是否仍是启动时记录的那个）。下次复现即可定位，不必再猜。
 
 **验收**
@@ -147,11 +167,10 @@
 - 手动 kill 掉 dsh web 进程后刷新 → 自动重拉并恢复正常，日志有完整记录；
 - 3080 被别的 dsh web 占用时启动 → 刷新不被别人实例的 401 打死。
 
-**待确认**（使用者补充即可定位到具体成因）
+**验收补充**
 
-1. 刷新失败时页面上具体显示什么？（纯文本 `dsh web authentication required…` / 白屏 /「无法连接」/ 浏览器错误页）
-2. 当时其他面板（Files / Terminal / Review）还正常吗？（用于区分「服务死了」与「只是 WebView 凭证」）
-3. 刷新方式：WebView 右键「重新载入」，还是其他操作？
+- ⌘R 与右键「重新载入」结果一致，且两者都能在 cookie 失效时自愈（不再出现 401 纯文本页）；
+- 长时运行后「对话区卡住」时，用 ⌘R 能一键恢复到可用状态（这正是使用者触发刷新的原始动机，值得单列回归用例）。
 
 ---
 
