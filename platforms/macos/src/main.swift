@@ -132,6 +132,8 @@ enum L10n {
         "status.downloading": ("正在下载 dsh %@…", "Downloading dsh %@…"),
         "status.applying": ("正在安装 dsh %@…", "Installing dsh %@…"),
         "status.pageLoadFailed": ("页面加载失败：%@", "Page load failed: %@"),
+        "status.reconnecting": ("页面加载失败，正在重新认证并重试…", "Page load failed; re-authenticating and retrying…"),
+        "menu.reloadPage": ("重新加载页面", "Reload Page"),
         // buttons
         "btn.retry": ("重试", "Retry"),
         "btn.ok": ("好", "OK"),
@@ -164,6 +166,25 @@ enum L10n {
         "preview.binary": ("二进制文件，无法预览文本内容", "Binary file — text preview unavailable"),
         "preview.openProject": ("项目目录", "Project Folder"),
         "preview.openProjectHint": ("在面板中打开当前项目目录", "Open the current project folder in the panel"),
+        // Files 面板：项目目录「用外部应用打开」（docs/ux-feedback.md #2）。
+        "files.openWithHint": ("打开项目目录（右键选择应用）", "Open the project directory (right-click to choose an app)"),
+        "files.openWithMenu": ("用以下方式打开项目目录", "Open Project Directory With"),
+        "files.openInPanel": ("在文件面板中打开", "Open in Files Panel"),
+        "files.openInFinder": ("在 Finder 中打开", "Open in Finder"),
+        "files.openWithOther": ("选择其它应用…", "Choose Another App…"),
+        "files.openWithOtherMessage": ("选择用于打开项目目录的应用", "Choose the app to open the project directory with"),
+        "files.openWithFailed": ("打开失败：%@", "Open failed: %@"),
+        // Files 面板：目录树新建文件 / 文件夹 + 右键菜单（docs/ux-feedback.md #1）。
+        "files.newFile": ("新建文件", "New File"),
+        "files.newFolder": ("新建文件夹", "New Folder"),
+        "files.newItemLocation": ("位置：%@", "Location: %@"),
+        "files.newFilePlaceholder": ("文件名（含扩展名）", "File name (with extension)"),
+        "files.newFolderPlaceholder": ("文件夹名", "Folder name"),
+        "files.create": ("创建", "Create"),
+        "files.invalidName": ("名称不能为空，也不能包含 “/”", "The name must not be empty or contain “/”"),
+        "files.alreadyExists": ("同名文件或文件夹已存在：%@", "A file or folder with that name already exists: %@"),
+        "files.createFailed": ("创建失败：%@", "Create failed: %@"),
+        "files.revealInTree": ("在 Finder 中显示", "Show in Finder"),
         "preview.pickFolderMessage": ("无法自动定位项目目录，请选择要浏览的文件夹", "Could not locate the project folder automatically — choose a folder to browse"),
         "preview.pickFolderOpen": ("打开", "Open"),
         "preview.saveHint": ("保存当前文件", "Save the current file"),
@@ -197,6 +218,8 @@ enum L10n {
         "wiki.searchPlaceholder": ("搜索页面标题…", "Search page titles…"),
         "wiki.backlinks": ("反向链接", "Backlinks"),
         "wiki.settingsAuto": ("自动更新知识库", "Auto-update Wiki"),
+        // 终端：选中即复制（docs/ux-feedback.md #4）。
+        "settings.terminalAutoCopy": ("终端：选中文本即复制", "Terminal: copy on select"),
         "wiki.settingsRegister": ("写入 AGENTS.md 注册块", "Register in AGENTS.md"),
         "wiki.settingsRoot": ("知识库根目录", "Wiki Root"),
         "wiki.settingsRootInRepo": ("仓库内 .dsh/wiki", "In-repo .dsh/wiki"),
@@ -953,6 +976,12 @@ final class ServerManager {
     /// the shell hands it to the channel runner (native clients have no cookie).
     private(set) var entryURL: URL?
 
+    /// True while the dsh web process this shell spawned is still alive.
+    /// The refresh path uses it to tell "our auth is stale" (reload through the
+    /// launch token) from "our server is gone" (respawn it) — issue #6 in
+    /// docs/ux-feedback.md.
+    var isRunning: Bool { process?.isRunning ?? false }
+
     /// The launch token from the entry URL, nil when dsh advertises none.
     var webToken: String? {
         guard let url = entryURL,
@@ -1635,6 +1664,10 @@ final class ServerManager {
             AppLog.shared.log("dsh web exited cleanly")
         }
         spawned = false
+        process = nil
+        // The launch token died with the process: never let a later reload (or
+        // a panel RPC) reuse the old entry URL / token (issue #6).
+        entryURL = nil
         Self.removeRecord()
     }
 }
@@ -2400,6 +2433,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 }
             case .terminal:
                 // Lazily spawn the first terminal session, then focus it.
+                // Adopt the shell's current workspace first when it already
+                // knows one (startup resolution), so the tab bar shows this
+                // workspace's tabs instead of the home default.
+                if let dir = ProjectDirectory.current {
+                    terminalPanel.setWorkspaceDirectory(dir)
+                }
                 terminalPanel.ensureSession()
                 DispatchQueue.main.async { [weak self] in self?.terminalPanel.focusActiveTerminal() }
                 if uiDebug {
@@ -3532,6 +3571,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        // dsh answers an unauthenticated page load with 401 + a plain-text body
+        // ("dsh web authentication required…"). WebKit would happily render that
+        // text, which is how a stale browser cookie turned a reload into "the
+        // page won't open" (docs/ux-feedback.md #6). Re-authenticate through the
+        // launch token instead — the same exchange the first load performs.
+        if navigationResponse.isForMainFrame,
+           let http = navigationResponse.response as? HTTPURLResponse,
+           http.statusCode == 401,
+           let url = navigationResponse.response.url, isLocal(url) {
+            AppLog.shared.log("page load answered 401 from \(url.absoluteString): browser cookie no longer accepted — re-authenticating")
+            decisionHandler(.cancel)
+            retryWithFreshAuth(reason: "401")
+            return
+        }
         if navigationResponse.canShowMIMEType {
             decisionHandler(.allow)
         } else {
@@ -3541,6 +3594,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         AppLog.shared.log("page did finish loading: \(webView.url?.absoluteString ?? "?")")
+        loadRecoveryAttempted = false      // a good page re-arms the one-shot recovery
         // Warm the Review panel's session listing now that a workspace resolves,
         // so opening the panel renders immediately instead of waiting on the core
         // CLI (the first-open "empty panel" the user sees). Session titles are read
@@ -3646,7 +3700,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         let ns = error as NSError
         if ns.code == NSURLErrorCancelled { return }
-        AppLog.shared.log("provisional navigation failed: \(error.localizedDescription)")
+        AppLog.shared.log("provisional navigation failed: \(error.localizedDescription) (our dsh web alive=\(server.isRunning) port=\(server.port))")
+        // A dead or restarted dsh web cannot be fixed by reloading the same
+        // URL: respawn/ re-authenticate ONCE, then surface the error state so
+        // the user still gets the retry button (issue #6).
+        if !loadRecoveryAttempted {
+            loadRecoveryAttempted = true
+            showStatus(L10n.tr("status.reconnecting"), spinner: true, retry: false)
+            retryWithFreshAuth(reason: "load failure")
+            return
+        }
         showStatus(L10n.tr("status.pageLoadFailed", error.localizedDescription), spinner: false, retry: true)
     }
 
@@ -3734,6 +3797,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     if ProjectDirectory.current != cwd {
                         ProjectDirectory.set(cwd)
                         self.previewPanel?.setProjectDirectory(cwd)
+                        // Terminal tabs belong to a workspace too: hide the ones
+                        // from the workspace being left (their shells keep
+                        // running) and bring this workspace's tabs back.
+                        self.terminalPanel?.setWorkspaceDirectory(cwd)
                         self.wikiPanel?.reloadRoot()
                         AppLog.shared.log("project directory followed session \(sid): \(cwd)")
                     }
@@ -3798,6 +3865,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let viewItem = NSMenuItem()
         mainMenu.addItem(viewItem)
         let viewMenu = NSMenu(title: L10n.tr("menu.view"))
+        // ⌘R reloads the dsh web page — the same thing (and more) as WebKit's
+        // context-menu "Reload": it goes through the launch token, so a stale
+        // browser cookie is repaired instead of showing dsh's 401 page
+        // (docs/ux-feedback.md #6).
+        let reloadItem = viewMenu.addItem(withTitle: L10n.tr("menu.reloadPage"), action: #selector(reloadPage), keyEquivalent: "r")
+        reloadItem.keyEquivalentModifierMask = [.command]
+        reloadItem.target = self
+        viewMenu.addItem(.separator())
         let togglePreview = viewMenu.addItem(withTitle: L10n.tr("menu.togglePreview"), action: #selector(togglePreviewPanel(_:)), keyEquivalent: "p")
         togglePreview.keyEquivalentModifierMask = [.command, .option]
         togglePreview.target = self
@@ -3871,6 +3946,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let wikiAuto = settingsMenu.addItem(withTitle: L10n.tr("wiki.settingsAuto"), action: #selector(toggleWikiAutoRegenerate(_:)), keyEquivalent: "")
         wikiAuto.target = self
         wikiAuto.state = wikiAutoRegenerateEnabled() ? .on : .off
+        // Terminal behaviour: copy a finished selection (drag / double click)
+        // straight to the pasteboard so ⌘V works without ⌘C (issue #4).
+        let termAutoCopy = settingsMenu.addItem(withTitle: L10n.tr("settings.terminalAutoCopy"), action: #selector(toggleTerminalAutoCopy(_:)), keyEquivalent: "")
+        termAutoCopy.target = self
+        termAutoCopy.state = TerminalView.autoCopyEnabled ? .on : .off
         let wikiRegister = settingsMenu.addItem(withTitle: L10n.tr("wiki.settingsRegister"), action: #selector(toggleWikiRegisterAgentsMD(_:)), keyEquivalent: "")
         wikiRegister.target = self
         wikiRegister.state = wikiRegisterAgentsMdEnabled() ? .on : .off
@@ -4582,6 +4662,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         ShellConfig.shared.object(forKey: WikiPaths.registerAgentsMdKey) as? Bool ?? false
     }
 
+    /// Terminal «copy on select» (issue #4): the selection is written to the
+    /// pasteboard as soon as it is made, so a paste needs no ⌘C. Stored in
+    /// ShellConfig; the terminal reads it per selection.
+    @objc private func toggleTerminalAutoCopy(_ sender: NSMenuItem) {
+        let enabled = sender.state == .off
+        ShellConfig.shared.set(enabled, forKey: TerminalView.autoCopyKey)
+        sender.state = enabled ? .on : .off
+        AppLog.shared.log("terminal copy-on-select \(enabled ? "enabled" : "disabled")")
+    }
+
     @objc private func toggleWikiAutoRegenerate(_ sender: NSMenuItem) {
         let enabled = sender.state == .off
         ShellConfig.shared.set(enabled, forKey: WikiPaths.autoRegenerateKey)
@@ -4615,8 +4705,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         buildMenu()
     }
 
+    /// One-shot guard for the automatic recovery so a server that is really
+    /// gone cannot make the shell reload in a loop (issue #6). Re-armed by a
+    /// successful page load.
+    private var loadRecoveryAttempted = false
+    /// Guards the re-authentication path itself (the 401 interception and the
+    /// load-failure path can both fire for one reload).
+    private var reauthInFlight = false
+    private var lastPageLoadRequestAt = Date.distantPast
+
+    /// View ▸ Reload Page (⌘R). Kept identical in effect to WebKit's own
+    /// context-menu "Reload" — both end up reloading through the launch-token
+    /// entry URL, because a bare reload of the tokenless `/` depends on a
+    /// browser cookie that can go stale (docs/ux-feedback.md #6).
     @objc private func reloadPage() {
-        webView.reload()
+        reloadPageReauthenticating(reason: "menu")
+    }
+
+    /// Reload dsh web in a way that also repairs its authentication.
+    @objc func reloadPageReauthenticating(reason: String) {
+        let now = Date()
+        let sinceLast = now.timeIntervalSince(lastPageLoadRequestAt)
+        lastPageLoadRequestAt = now
+        AppLog.shared.log("page load request (\(reason)): port=\(server.port) ourServerAlive=\(server.isRunning) "
+                          + "entryToken=\(server.webToken == nil ? "none" : "yes") sinceLast=\(String(format: "%.1f", sinceLast))s")
+        logAuthCookieState(reason: reason)
+        if let entry = server.entryURL {
+            // The advertised entry URL carries this process's launch token; dsh
+            // answers 303 + a fresh 30-day cookie, so this also repairs a cookie
+            // that was dropped, expired, or minted for another instance.
+            webView.load(URLRequest(url: entry))
+        } else {
+            // Legacy dsh (no token) or a server that is already gone.
+            webView.reload()
+        }
+    }
+
+    /// Recover from a failed load or a 401: re-authenticate once, respawning our
+    /// own dsh web when it is the thing that died.
+    private func retryWithFreshAuth(reason: String) {
+        guard !reauthInFlight else { return }
+        reauthInFlight = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self else { return }
+            self.reauthInFlight = false
+            if let entry = self.server.entryURL, self.server.isRunning {
+                AppLog.shared.log("page recovery (\(reason)): re-authenticating via the launch token")
+                self.webView.load(URLRequest(url: entry))
+            } else if self.didSpawnServer {
+                // Our child is gone (crash / external kill / upgrade): bring a
+                // fresh dsh web up; startServer() loads the new entry URL and
+                // re-wires the panels' port + token.
+                AppLog.shared.log("page recovery (\(reason)): our dsh web is not running — starting a new one")
+                self.startServer()
+            } else {
+                AppLog.shared.log("page recovery (\(reason)): nothing to recover with; reloading the current URL")
+                self.webView.reload()
+            }
+        }
+    }
+
+    /// Diagnostics for issue #6: what the WebView's cookie jar actually holds
+    /// for the server we are talking to. A stale/absent cookie for the current
+    /// authority is exactly the state that produced dsh's 401 page.
+    func logAuthCookieState(reason: String) {
+        let authority = DshWebCookieJanitor.authority(port: server.port)
+        let expected = DshWebCookieJanitor.cookieName(forAuthority: authority)
+        let store = webView?.configuration.websiteDataStore ?? WKWebsiteDataStore.default()
+        store.httpCookieStore.getAllCookies { cookies in
+            let mine = cookies.first { $0.name == expected }
+            let others = cookies.filter { $0.name.hasPrefix(DshWebCookieJanitor.prefix) }.count
+            let expiry = mine?.expiresDate.map { ISO8601DateFormatter().string(from: $0) } ?? "session"
+            AppLog.shared.log("page auth cookie (\(reason)): \(authority) -> "
+                              + (mine == nil ? "MISSING" : "present (expires \(expiry))")
+                              + ", other dsh-auth cookies: \(max(0, others - (mine == nil ? 0 : 1)))")
+        }
     }
 
     @objc private func goBack() {

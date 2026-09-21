@@ -8,12 +8,14 @@
 
 | # | 面板 | 问题 | 类型 | 优先级 | 状态 |
 |---|---|---|---|---|---|
-| 1 | Files | 目录树缺少「新建文件夹 / 新建文件」入口 | 功能缺失 | 中 | 🔲 |
-| 2 | Files | 右上角「在面板中打开当前项目目录」应支持用外部应用打开 | 交互改进 | 中 | 🔲 |
-| 3 | Terminal | 滚轮滚动方向与其他面板相反 | Bug | 高 | 🔲 |
-| 4 | Terminal | 双击不能选词；拖选后需再按 ⌘C 才能复制 | 交互改进 | 中 | 🔲 |
-| 5 | Terminal | 终端页签未按 workspace 隔离/记忆 | 交互改进 | 低 | 💬 |
-| 6 | Shell | 长时间运行后手动刷新 WebView → dsh web 页面打不开（疑似 key 失效） | Bug | 高 | 💬 |
+| 1 | Files | 目录树缺少「新建文件夹 / 新建文件」入口 | 功能缺失 | 中 | ✅ |
+| 2 | Files | 右上角「在面板中打开当前项目目录」应支持用外部应用打开 | 交互改进 | 中 | ✅ |
+| 3 | Terminal | 滚轮滚动方向与其他面板相反 | Bug | 高 | ✅ |
+| 4 | Terminal | 双击不能选词；拖选后需再按 ⌘C 才能复制 | 交互改进 | 中 | ✅ |
+| 5 | Terminal | 终端页签未按 workspace 隔离/记忆 | 交互改进 | 低 | ✅ |
+| 6 | Shell | 长时间运行后手动刷新 WebView → dsh web 页面打不开（疑似 key 失效） | Bug | 高 | 🔧 |
+
+> 实现分支 `feature/ux-feedback-fixes`（#1–#6 均已落地；#6 的自愈路径另有真实环境回归待做，见该条目「验收」）。
 
 ---
 
@@ -30,7 +32,9 @@
 - `platforms/macos/src/FilePanel.swift` —— `treeOutline`（NSOutlineView，L67）、`TreeNode` / `loadChildren`、`setTreeRoot`（L592）；
 - 目前该文件内没有任何 `NSMenu`/`menu(for:)` 实现（已 grep 确认），右键菜单需要从零加。
 
-**待定**：是否同时做重命名 / 删除 / 拖拽移动（范围问题，实现前先确认）。
+**待定**：重命名 / 删除 / 拖拽移动仍未做（本轮只做「新建」，见状态 ✅）。
+
+**实现**（`feature/ux-feedback-fixes`）：`FilePanel.swift` 目录树右键菜单（`treeOutline.menu`，`clickedRow` 定位目标目录）+ `promptForNewItem(isDir:)` 名称输入框 + `createItem(named:isDir:in:)`（重名/非法名/失败均给出可见反馈，成功后展开并选中新节点，文件自动在标签页打开）；文案键 `files.newFile` / `files.newFolder` / `files.newItemLocation` / `files.create` / `files.invalidName` / `files.alreadyExists` / `files.createFailed` / `files.revealInTree`。
 
 ---
 
@@ -49,7 +53,9 @@
 
 **实现思路**：按已知 bundle id 用 `NSWorkspace.urlForApplication(withBundleIdentifier:)` 探测安装情况；`NSWorkspace.open(_:withApplicationAt:configuration:)` 打开目录；选择持久化到 `ShellConfig`（如 `openProjectWithApp`）。
 
-**验收**：Finder / 至少一个 IDE / 一个终端能正确打开当前项目目录；重启 App 后记忆生效。
+**实现**（`feature/ux-feedback-fixes`）：新增纯模型 `OpenWithApps.swift`（`OpenWithCatalog`：面板 / Finder / 13 个编辑器与 IDE / 8 个终端，按 bundle id 探测是否安装）+ `FilePanel.openProjectWithRememberedTarget()`（左键用记住的目标，未选过或应用已卸载则弹菜单）+ `showOpenWithMenu()`（右键常驻）+ 「选择其它应用…」文件选择器（按 bundle id 或路径记忆）。右键动作由 `CustomIconButton.onSecondaryAction` 提供（`PreviewPanel.swift`）。
+
+**验收**：Finder / 至少一个 IDE / 一个终端能正确打开当前项目目录；重启 App 后记忆生效 —— 待手动 QA。
 
 ---
 
@@ -61,7 +67,9 @@
 
 **疑点**：实现只读 `event.scrollingDeltaY` 并直接换算步长，未考虑 `isDirectionInvertedFromDevice`（自然滚动开关）与系统滚动语义；而其他面板走 NSScrollView 的标准行为，二者因此不一致。源码注释也留了「If QA finds the direction inverted, flip this sign」。
 
-**验收**：触控板（自然滚动开/关）与鼠标滚轮两种设备下，终端滚动方向与文件树一致：内容朝向与手势方向一致（即手势「上滑看下文」）。
+**实现**（`feature/ux-feedback-fixes`）：`TerminalPanel.swift` `TerminalView.scrollWheel(with:)` 改为 NSScrollView 语义（正 `scrollingDeltaY` → 显示更早的行），并加小数累加器，慢速双指滚动不再被 `Int()` 截断丢掉。
+
+**验收**：触控板（自然滚动开/关）与鼠标滚轮两种设备下，终端滚动方向与文件树一致：内容朝向与手势方向一致（即手势「上滑看下文」）—— 待手动 QA。
 
 ---
 
@@ -78,7 +86,9 @@
 - `mouseDown/mouseDragged/mouseUp`（L1164-1191）：目前只做单点锚定 + 拖选，`mouseUp` 仅在原地点击时清空选区，未使用 `event.clickCount`；
 - `copy(_:)`（L1200-1213）：有选区复制、无选区发 `\x03`（SIGINT）——自动复制不能破坏这个无选区语义。
 
-**验收**：双击选词、三击选行；拖选后直接 ⌘V 得到刚选中的文本。
+**实现**（`feature/ux-feedback-fixes`）：`mouseDown` 增加 `clickCount` 分支（双击选词 / 三击整行，词边界把路径、URL、参数完整保留，点分隔符则选该分隔符连续段）；`mouseUp` 在拖选结束时调用 `copySelectionIfAutoCopy()`；开关 `terminal.autoCopy`（默认开）由「设置 → 终端：选中文本即复制」控制；⌘C 仍保留「无选区时发 SIGINT」的语义。
+
+**验收**：双击选词、三击选行；拖选后直接 ⌘V 得到刚选中的文本 —— 待手动 QA。
 
 ---
 
@@ -92,7 +102,9 @@
 - 参照 `platforms/macos/src/FilePanel.swift` `setProjectDirectory(_:)`（L538）—— 收到 dsh 会话/workspace 变化回调时只重指目录树，已打开的预览页签保持不动；
 - 终端侧 `TerminalPanel.swift` 目前没有对应钩子，需在 `TerminalPanelController` 增加 `setWorkspace(id:path:)` 之类入口，并在 shell 的 dshSession 处理器（`main.swift`）里调用。
 
-**待定**：隐藏期间会话保活的数量上限与内存占用策略；是否需要「会话随 workspace 关闭而回收」开关。
+**实现**（`feature/ux-feedback-fixes`）：新增纯模型 `TerminalWorkspaceTabs.swift`（页签 → workspace 映射、每 workspace 的「上次选中」、`forget/forgetAll`、无法解析项目目录的兜底页签标记为全局可见）；`TerminalPanelController.setWorkspaceDirectory(_:)` + `syncTabVisibility()` 只隐藏**不终止**——切回来仍是同一个会话；⌘1…9 / ⌘⇧[ ] 只在当前 workspace 的页签间切换；shell 的 `dshSession` 处理器（`main.swift`）与「打开终端面板」路径都会同步 workspace。
+
+**待定**：隐藏期间会话数量上限与内存占用策略（当前不设上限，与「不杀会话」的取舍一致）。
 
 ---
 
@@ -160,6 +172,14 @@
 3. **主框架 401/失败拦截**：`decidePolicyFor navigationResponse` 里识别主框架 401（text/plain 的 `dsh web authentication required`）→ 自动按方案 1 重试一次；`didFailProvisionalNavigation`（L3646）已有错误态，补一次自动重试。
 4. **给刷新一个正式入口**：菜单「视图 → 重新加载页面」+ **⌘R**（当前未占用；⌥⌘R 仍是 Review 面板），`reloadPage()` 与方案 1 合并；配合方案 3，使 ⌘R 与右键「重新载入」结果一致（做法 A/B 见上）。
 5. **先补诊断日志**（成本最低、收益最大）：记录每次刷新（URL / 是否带 token / 探测结果 / 响应状态 401·403·200 / cookie 是否存在及 authority / 服务进程是否存活 / 端口是否仍是启动时记录的那个）。下次复现即可定位，不必再猜。
+
+**实现**（`feature/ux-feedback-fixes`，对应上面的方案 1 + 3 + 4 + 5）
+
+- **⌘R 入口**：视图菜单新增「重新加载页面 ⌘R」（此前 ⌘R 未绑定，⌥⌘R 仍是 Review 面板）→ `reloadPage()` → `reloadPageReauthenticating(reason:)`（`main.swift`）。
+- **刷新=重新认证**：`reloadPageReauthenticating` 优先加载 `server.entryURL`（带启动 token 的入口地址，303 会重新落一份 30 天 cookie）；无 token（旧版 dsh）或服务已不在时回退 `webView.reload()`。
+- **401 拦截自愈**：`decidePolicyFor navigationResponse` 识别主框架 401 → `retryWithFreshAuth(reason:)` 用 token 重新认证（右键菜单那个 WebKit 原生 Reload 因此也会被自动救回）；`didFailProvisionalNavigation` 同样先自愈一次（自己 spawn 的 dsh web 已死则 `startServer()` 重拉），再落到错误态。自愈带一次性守卫 `loadRecoveryAttempted`（成功加载后重新武装），不会打转。
+- **诊断日志**：每次刷新记录 `port / ourServerAlive / entryToken / sinceLast`，并用 `logAuthCookieState(reason:)` 打印当前 authority 对应的 `dsh-auth-*` cookie 是否存在、过期时间、以及其它残留 cookie 数；加载失败还会带上服务是否存活与端口。
+- **健壮性顺带修复**：`ServerManager.stop()` 现在会清空 `entryURL` 与 `process`，避免服务重启后旧 token 被刷新路径或面板 RPC 复用；新增 `server.isRunning` 供上述判定使用。
 
 **验收**
 
