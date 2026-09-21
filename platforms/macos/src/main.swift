@@ -2276,6 +2276,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if ProcessInfo.processInfo.environment["DSH_SKILLS_TEST"] == "1" {
             setRightPanel(.skills)
             AppLog.shared.log("skills self-test enabled")
+        }
         // Scaffold self-test hook (debugging / QA only): opens the scaffold
         // panel at launch when DSH_SCAFFOLD_TEST=1 is set. DSH_SCAFFOLD_TEST_DIR
         // prefills the target parent directory; DSH_SCAFFOLD_STAGES appends a
@@ -2404,7 +2405,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         scaffoldPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
         scaffoldPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
         scaffoldPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
-
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
@@ -2443,7 +2443,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                                                action: #selector(scaffoldEntryTapped(_:)))
         // 7.3 scaffoldEnabled：默认显示，可在设置中关闭（UserDefaults 键见 ScaffoldPanelController）。
         scaffoldBarButton.isHidden = !ScaffoldPanelController.scaffoldEnabledDefault()
-        let barStack = NSStackView(views: [scaffoldBarButton, previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton, skillsBarButton])
+        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton, skillsBarButton, scaffoldBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -2669,6 +2669,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 skillsPanel.ensureLoaded()
                 if uiDebug {
                     self.dumpPanelDebugInfo(panelView: skillsPanel.view, label: "skills")
+                }
             case .scaffold:
                 scaffoldPanel.ensureLoaded()
                 if uiDebug {
@@ -4676,6 +4677,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Toggle the Skills manager panel (activity bar entry / ⌥⌘S).
     @objc private func skillsEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .skills ? .none : .skills)
+    }
     /// Toggle the Scaffold Workbench panel (activity bar entry / ⌃⌥S).
     @objc private func scaffoldEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .scaffold ? .none : .scaffold)
