@@ -16,6 +16,7 @@
 | 6 | Shell | 长时间运行后手动刷新 WebView → dsh web 页面打不开（疑似 key 失效） | Bug | 高 | 🔧 |
 | 7 | Files | 大文件（3000+ 行）在磁盘变更后重新加载时卡住应用 | Bug | 高 | ✅ |
 | 8 | Files | 图片预览按原始尺寸显示，不能自适应也不能缩放 | 交互改进 | 中 | ✅ |
+| 9 | Files | 关闭面板再打开后，目录树宽度变成 420（上限）而不是关闭前的宽度 | Bug | 中 | ✅ |
 
 > 实现分支 `feature/ux-feedback-fixes`（#1–#6 均已落地；#6 的自愈路径另有真实环境回归待做，见该条目「验收」）。
 
@@ -266,6 +267,21 @@
 - 缩放数学抽成纯模型 `ImageZoom.swift`（适应比例/夹取/单步），视图只管 AppKit。
 
 **验证**：`tests/file-panel/image-zoom-tests.swift` 17 条断言（宽图按宽、窄图按高、方形、小图不放大、零尺寸回退 100%、上下限夹取、NaN 兜底、单步乘除、边界不动、40 次连续放大单调且收敛到上限）全绿；`tests/file-panel` 与 `scripts/local-ci.sh swift` 全绿。**待手动 QA**：打开大截图应整幅可见且不变形；⌘+/⌘−/⌘0、⌘滚轮、双击、捏合都能缩放；放大后可拖拽平移。
+---
+
+## 9. 关闭面板再打开后，目录树宽度变成上限 420
+
+**现象**：Files 面板右上角「✕」关闭面板，再次打开时目录树宽度变成 **420pt（`constrainMaxCoordinate` 的上限）**，而不是关闭前用户拖出来的宽度。
+
+**根因**：关闭面板时壳层把右侧整个窗格宽度收成 0，`contentSplit` 随之被压到 0；再次打开时 NSSplitView 从 0 重新分配空间，把第一栏（目录树）推到它允许的**最大值 420**。而 `applyInitialTreeWidthIfNeeded()` 里的 `treeWidthInitialized` 早已为 true，所以不会再回落到初始 160，用户的拖拽位置也没有被记住 —— 结果就是每次都变成 420。
+
+**修复（`feature/ux-feedback-fixes`）**
+
+- **记住用户拖出来的宽度**：`installTreeWidthMonitor()`（`NSEvent` 本地 `leftMouseUp` 监视器）在面板内松开鼠标时记录 `treePaneWidth`，即「拖拽分隔条结束」的那一刻。刻意**不从 split view 的 resize 回调记录**——关闭面板同样会触发 resize，那会把「被压扁的状态」误当成用户选择。
+- **重新打开时恢复**：监听 `contentSplit` 的 `frameDidChangeNotification`，检测 **0 → N** 的转变（面板刚被重新展开），把记住的宽度夹取后 `setPosition` 回去；日志会打印 `preview tree width restored: Npt (was Mpt)`。
+- **夹取规则**抽成纯函数 `FilePanelController.restoredTreeWidth(_:splitWidth:)`：不超 160–420 的区间，并且在窄面板下至少给内容区留 240pt（避免恢复成一个把内容挤没的宽度）。分隔条上下限也改用同一组常量，不再散落魔法数字。
+
+**验证**：`tests/file-panel/panel-switch-tests.swift` 新增 5 条断言（宽面板原样恢复 / 过窄抬到下限 / 过宽压到上限 / 窄面板给内容区留位 / 极窄面板不低于下限）全绿；`tests/file-panel` 与 `scripts/local-ci.sh swift` 全绿。**待手动 QA**：拖宽目录树 → 关闭面板 → 重新打开，宽度应保持；重启 App 后回到默认 160（本次只在会话内记住，跨启动持久化未做）。
 ---
 
 ## 备注

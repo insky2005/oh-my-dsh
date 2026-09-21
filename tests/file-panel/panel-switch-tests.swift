@@ -256,5 +256,20 @@ test("selecting a file again re-enables it", freshPanel.fileActionButtonEnabled)
 freshPanel.performCloseAction()
 test("closing the panel disables it again", !freshPanel.fileActionButtonEnabled)
 
+// --- tree pane width restored on reopen ------------------------------------
+// (QA: closing the panel and opening it again left the tree at its maximum,
+//  420pt, instead of the width the user had dragged it to)
+
+test("the remembered width is restored as-is in a wide panel",
+     FilePanelController.restoredTreeWidth(300, splitWidth: 900) == 300)
+test("a too-narrow remembered width is raised to the minimum",
+     FilePanelController.restoredTreeWidth(40, splitWidth: 900) == 160)
+test("a too-wide remembered width is capped at the maximum",
+     FilePanelController.restoredTreeWidth(900, splitWidth: 2000) == 420)
+test("a narrow panel still leaves the content pane room",
+     FilePanelController.restoredTreeWidth(400, splitWidth: 500) == 260)
+test("an extremely narrow panel never goes below the minimum",
+     FilePanelController.restoredTreeWidth(300, splitWidth: 200) == 160)
+
 try? fm.removeItem(at: root)
 print("done")
