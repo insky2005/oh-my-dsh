@@ -347,5 +347,17 @@ widthPanel.simulateFrameworkRedistributionForTesting(to: 160)
 test("a user-chosen maximum is restored, not clamped away",
      abs(widthPanel.treePaneWidthForTesting - 420) < 2)
 
+// --- image preview: padded box + centred content ----------------------------
+
+let previewImage = NSImage(size: NSSize(width: 400, height: 200))
+let imagePreview = ImagePreviewView(image: previewImage)
+test("the image sits in a padded document box",
+     imagePreview.focusView.frame.size == NSSize(width: 400 + 2 * ImageZoom.padding,
+                                                height: 200 + 2 * ImageZoom.padding))
+test("the image is drawn unscaled (the box provides the margin)",
+     imagePreview.focusView.imageScaling == .scaleNone)
+test("the image is centred inside that box", imagePreview.focusView.imageAlignment == .alignCenter)
+test("a document smaller than the viewport is centred", imagePreview.centersContent)
+
 try? fm.removeItem(at: root)
 print("done")

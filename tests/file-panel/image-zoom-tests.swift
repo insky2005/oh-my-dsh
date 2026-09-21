@@ -37,6 +37,21 @@ test("a zero viewport falls back to 100 %",
 test("a zero image falls back to 100 %",
      ImageZoom.fitMagnification(imageSize: empty, viewport: viewport) == 1)
 
+// --- the margin kept around the image --------------------------------------
+
+test("the preview keeps a margin around the image", ImageZoom.padding > 0)
+test("the fit accounts for the margin",
+     ImageZoom.fitMagnification(imageSize: NSSize(width: 1000, height: 1000),
+                                viewport: NSSize(width: 1000, height: 1000),
+                                padding: 20) == 0.96)
+test("the margin never produces a zero or negative fit",
+     ImageZoom.fitMagnification(imageSize: NSSize(width: 1000, height: 1000),
+                                viewport: NSSize(width: 20, height: 20),
+                                padding: ImageZoom.padding) == ImageZoom.minMagnification)
+test("a zero padding reproduces the plain fit",
+     ImageZoom.fitMagnification(imageSize: big, viewport: viewport, padding: 0)
+     == ImageZoom.fitMagnification(imageSize: big, viewport: viewport))
+
 // --- manual zoom -----------------------------------------------------------
 
 test("clamping keeps the lower bound", ImageZoom.clamped(0) == ImageZoom.minMagnification)

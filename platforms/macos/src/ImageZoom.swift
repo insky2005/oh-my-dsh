@@ -16,13 +16,26 @@ enum ImageZoom {
     /// One ⌘+ / ⌘− press multiplies the zoom by this.
     static let stepRatio: CGFloat = 1.25
 
+    /// Margin the preview keeps around the image (points). The fit is computed
+    /// against the viewport minus this margin, and the image sits in a document
+    /// view that is that much larger, which is what produces the visible gap.
+    static let padding: CGFloat = 16
+
     /// The magnification that shows the whole image inside `viewport`, keeping its
     /// aspect ratio. A small image is NOT blown up past 100 % (fit is about making
     /// large screenshots readable, not about blurring icons).
-    static func fitMagnification(imageSize: NSSize, viewport: NSSize) -> CGFloat {
+    ///
+    /// `padding` is the margin the preview keeps around the image on every side,
+    /// so the fit is computed against the viewport MINUS the margin.
+    static func fitMagnification(imageSize: NSSize, viewport: NSSize,
+                                 padding: CGFloat = 0) -> CGFloat {
+        // A degenerate viewport (mid-resize, before the first layout) carries no
+        // information: report 100 % and let the caller decide whether to apply it.
         guard imageSize.width > 0, imageSize.height > 0,
               viewport.width > 0, viewport.height > 0 else { return 1 }
-        let scale = min(viewport.width / imageSize.width, viewport.height / imageSize.height)
+        let availableWidth = max(1, viewport.width - 2 * padding)
+        let availableHeight = max(1, viewport.height - 2 * padding)
+        let scale = min(availableWidth / imageSize.width, availableHeight / imageSize.height)
         return min(clamped(scale), 1)
     }
 

@@ -265,6 +265,12 @@
 - 缩放方式：触控板**捏合**（NSScrollView magnification）、**⌘+ / ⌘− / ⌘0**、**⌘+滚轮**、**双击**（适应窗口 ↔ 100% 切换）；放大后可直接拖拽/滚动条平移。缩放范围 5%–1600%，单步 ×1.25。
 - 右下角浮动**百分比角标**（跟随 magnification 变化，KVO 驱动）；悬停提示写明操作方式（`preview.imageZoomHint`，中英成对）。
 
+**第三轮修正（QA 反馈：不居中 + 拖动宽度时缩放不丝滑）**
+
+- **居中 + 边距**：新增 `CenteringClipView`（`constrainBoundsRect` 里把小于视口的文档居中）——NSScrollView 默认把文档钉在左下角，这正是「图片贴在内容区左下角」的原因；文档视图改为「图片 + `ImageZoom.padding`(16pt) 内边距」的盒子、图片 `scaleNone` + `alignCenter` 绘制，fit 也按「视口 − 2×边距」计算，于是四个方向都留出空隙。
+- **缩放丝滑**：根因是 fit 用了 `contentView.bounds.size` 作为视口 —— 开启动量缩放后 clip view 的 **bounds 是文档坐标（frame ÷ magnification）**，于是「设置 magnification → 视口值变化 → 重新 fit」形成振荡，表现为先跳到 100% 再缩回的反复；改为用 clip view 的 **frame**（屏幕点）作为基准，二者不再互相影响；同时：视口退化（live resize 的中间帧）时**直接跳过**而不是回落到 100%，设置 magnification 时用 `CATransaction` 关闭隐式动画。
+- 另外：用户**捏合缩放**现在会把 `followsViewport` 置 false（通过 `isApplyingFit` 区分「自己设的」与「用户捏的」），否则下一次尺寸变化会把捏合结果弹回 fit。
+
 **崩溃修复（QA 反馈：打开图片直接崩）**：角标原来会按文本测量并 `invalidateIntrinsicContentSize()`，而缩放是在 `layout()` 里应用的，于是 magnify 的 KVO 回调可能在**一次布局过程中**触发角标改尺寸 → 崩在 `-[NSView _invalidateIntrinsicContentSizeDirtyingConstraints:]`。三处一起改：① 角标改为**固定尺寸**（54×18，加宽高约束，`intrinsicContentSize` 恒定），文本变化只 `needsDisplay`；② KVO 回调**推迟到下一个 runloop**（`DispatchQueue.main.async`）再刷新；③ `applyFit()` 在数值未变时不再重复设置 magnification，避免与布局互相触发。新增 3 条断言（角标尺寸恒定 / 固定盒子 / 能容纳 "1600%"）钉住这一点。
 - 缩放数学抽成纯模型 `ImageZoom.swift`（适应比例/夹取/单步），视图只管 AppKit。
 

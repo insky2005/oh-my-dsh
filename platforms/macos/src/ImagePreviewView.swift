@@ -32,14 +32,23 @@ final class ImagePreviewView: NSView {
     private var magnificationObservation: NSKeyValueObservation?
     /// Last value shown in the badge (skips redundant redraws).
     private var badgePercentage = -1
+    /// True while the view itself is setting the magnification, so the observation
+    /// can tell its own changes from a user pinch.
+    private var isApplyingFit = false
 
     init(image: NSImage) {
         imageSize = image.size.width > 0 && image.size.height > 0
             ? image.size
             : NSSize(width: 1, height: 1)
-        focusView = ImageZoomingView(image: image, size: imageSize)
+        // The document view carries the padding around the image, and the image is
+        // drawn unscaled and centred inside it: that is what keeps the image away
+        // from the panel edges (QC: it hugged the bottom-left corner).
+        focusView = ImageZoomingView(image: image, size: imageSize, padding: ImageZoom.padding)
         super.init(frame: .zero)
 
+        // A clip view that centres a document smaller than the viewport: without it
+        // NSScrollView pins the document to the bottom-left corner.
+        scroll.contentView = CenteringClipView()
         scroll.documentView = focusView
         scroll.drawsBackground = true
         scroll.backgroundColor = PanelSurface.dynamic
@@ -73,9 +82,15 @@ final class ImagePreviewView: NSView {
         focusView.onZoomStep = { [weak self] direction in self?.zoom(by: direction) }
         focusView.onFitRequested = { [weak self] in self?.fitToViewport() }
 
-        // Trackpad pinch and ⌘-scroll change the magnification behind our back.
+        // Trackpad pinch changes the magnification behind our back. Deferred: a
+        // magnification change can be delivered during a layout pass (applyFit sets
+        // it from layout()), and touching views there is not safe.
         magnificationObservation = scroll.observe(\.magnification, options: [.new]) { [weak self] _, _ in
-            DispatchQueue.main.async { self?.refreshBadge() }
+            guard let self = self else { return }
+            // A change we did not make is a USER zoom: stop following the viewport,
+            // or the next resize would snap it back to fit.
+            if !self.isApplyingFit { self.followsViewport = false }
+            DispatchQueue.main.async { self.refreshBadge() }
         }
         toolTip = L10n.tr("preview.imageZoomHint")
     }
@@ -103,20 +118,32 @@ final class ImagePreviewView: NSView {
     /// 100 %: one image point per view point.
     func zoomToActualSize() {
         followsViewport = false
-        scroll.magnification = ImageZoom.clamped(1)
-        refreshBadge()
+        setMagnification(ImageZoom.clamped(1))
     }
 
     /// One zoom step (+1 in, -1 out). Manual zoom stops the auto re-fit.
     func zoom(by direction: Int) {
         followsViewport = false
-        scroll.magnification = ImageZoom.stepped(scroll.magnification, direction: direction)
+        setMagnification(ImageZoom.stepped(scroll.magnification, direction: direction))
+    }
+
+    /// Apply a magnification without implicit layer animation. Animating it made a
+    /// window resize look like the image jumping to 100 % and back (QC).
+    private func setMagnification(_ value: CGFloat) {
+        guard abs(scroll.magnification - value) > 0.0001 else { return }
+        isApplyingFit = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        scroll.magnification = value
+        CATransaction.commit()
+        isApplyingFit = false
         refreshBadge()
     }
 
     /// Double click: fit when zoomed in/out by hand, 100 % when already fitted.
     func toggleFitAndActualSize() {
-        let fitted = ImageZoom.fitMagnification(imageSize: imageSize, viewport: viewportSize)
+        let fitted = ImageZoom.fitMagnification(imageSize: imageSize, viewport: viewportSize,
+                                               padding: ImageZoom.padding)
         if followsViewport && abs(scroll.magnification - fitted) < 0.001 {
             zoomToActualSize()
         } else {
@@ -124,17 +151,22 @@ final class ImagePreviewView: NSView {
         }
     }
 
-    /// The area the image is fitted into.
-    private var viewportSize: NSSize { scroll.contentView.bounds.size }
+    /// The area the image is fitted into, in SCREEN points: the clip view's FRAME.
+    ///
+    /// Its `bounds` must NOT be used: with magnification enabled the bounds are in
+    /// document units (frame / magnification), so using them made the fit depend on
+    /// the magnification it was about to set — the value oscillated between fit and
+    /// 100 % while a panel resize ran (QC: the zoom was not smooth).
+    private var viewportSize: NSSize { scroll.contentView.frame.size }
 
     private func applyFit() {
-        let fitted = ImageZoom.fitMagnification(imageSize: imageSize, viewport: viewportSize)
-        // Only when it actually changes: setting the magnification re-tiles the
-        // scroll view, and doing that from layout() with the same value would
-        // ping-pong between the two.
-        guard fitted > 0, abs(scroll.magnification - fitted) > 0.0001 else { return }
-        scroll.magnification = fitted
-        refreshBadge()
+        let viewport = viewportSize
+        // During a live resize the viewport can be degenerate for a frame; a fit
+        // computed from that is meaningless and would flash 100 %.
+        guard viewport.width > 1, viewport.height > 1 else { return }
+        let fitted = ImageZoom.fitMagnification(imageSize: imageSize, viewport: viewport,
+                                                padding: ImageZoom.padding)
+        setMagnification(fitted)
     }
 
     private func refreshBadge() {
@@ -144,8 +176,12 @@ final class ImagePreviewView: NSView {
         badge.text = "\(percentage)%"
     }
 
-    /// Test surface (tests/file-panel): the current zoom factor.
+    // MARK: - Test surface (tests/file-panel)
+
+    /// The current zoom factor.
     var magnification: CGFloat { scroll.magnification }
+    /// Whether a document smaller than the viewport is centred (see CenteringClipView).
+    var centersContent: Bool { scroll.contentView is CenteringClipView }
 }
 
 // MARK: - The document view (gestures)
@@ -158,10 +194,19 @@ final class ImageZoomingView: NSImageView {
     var onZoomStep: ((Int) -> Void)?
     var onFitRequested: (() -> Void)?
 
-    init(image: NSImage, size: NSSize) {
-        super.init(frame: NSRect(origin: .zero, size: size))
+    /// The padding kept around the image on every side.
+    let padding: CGFloat
+
+    init(image: NSImage, size: NSSize, padding: CGFloat) {
+        self.padding = padding
+        // The document is the image PLUS the padding; the image is drawn unscaled
+        // (alignment centres it in that box), so zooming scales both together.
+        super.init(frame: NSRect(x: 0, y: 0,
+                                width: size.width + 2 * padding,
+                                height: size.height + 2 * padding))
         self.image = image
-        imageScaling = .scaleProportionallyDown
+        imageScaling = .scaleNone
+        imageAlignment = .alignCenter
     }
 
     required init?(coder: NSCoder) {
@@ -198,6 +243,30 @@ final class ImageZoomingView: NSImageView {
         case "0": onFitRequested?()
         default: super.keyDown(with: event)
         }
+    }
+}
+
+// MARK: - Centring clip view
+
+/// An NSClipView that centres a document smaller than the viewport.
+///
+/// NSScrollView pins such a document to the bottom-left corner; with the padding
+/// box around the image that put the picture against the panel edges (QC report).
+/// Constraining the bounds origin keeps it centred for every magnification and
+/// still lets a LARGER document scroll normally.
+final class CenteringClipView: NSClipView {
+
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var rect = super.constrainBoundsRect(proposedBounds)
+        guard let document = documentView else { return rect }
+        let documentSize = document.frame.size
+        if documentSize.width < rect.width {
+            rect.origin.x = -(rect.width - documentSize.width) / 2
+        }
+        if documentSize.height < rect.height {
+            rect.origin.y = -(rect.height - documentSize.height) / 2
+        }
+        return rect
     }
 }
 
