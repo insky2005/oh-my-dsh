@@ -42,6 +42,9 @@ final class TreeDividerSplitView: NSSplitView {
 
     /// True while the user is dragging a divider.
     private(set) var isUserDraggingDivider = false
+
+    /// Test-only: mark the drag state (a headless test cannot run the tracking loop).
+    func setDraggingForTesting(_ dragging: Bool) { isUserDraggingDivider = dragging }
     /// Called right after a user drag ends (the width is final then).
     var onUserDragEnded: (() -> Void)?
 
@@ -117,6 +120,35 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// Run the header Close button's action (close every tab + clear the
     /// per-workspace tab memory), exactly as clicking it does.
     func performCloseAction() { hidePanel(nil) }
+
+    // MARK: - Tree pane width (test surface)
+
+    /// The current tree pane width.
+    var treePaneWidthForTesting: CGFloat { treePaneWidth }
+
+    /// The width the panel remembers (nil until a drag / close records one).
+    var rememberedTreeWidthForTesting: CGFloat? { rememberedTreeWidth }
+
+    /// Emulate a USER divider drag. A real drag runs inside the split view's own
+    /// tracking loop, which a headless test cannot drive, so this reproduces exactly
+    /// what that loop does: mark the drag, move the divider, then record the width.
+    func simulateTreeDragForTesting(to width: CGFloat) {
+        contentSplit.setDraggingForTesting(true)
+        contentSplit.setPosition(width, ofDividerAt: 0)
+        contentSplit.adjustSubviews()
+        contentSplit.setDraggingForTesting(false)
+        rememberCurrentTreeWidth(log: false)
+    }
+
+    /// Emulate the framework re-distributing the panes on its own (what happens
+    /// when the panel is reopened): move the divider WITHOUT a drag. The panel must
+    /// notice through its resize callback and put the remembered width back.
+    func simulateFrameworkRedistributionForTesting(to width: CGFloat) {
+        contentSplit.setPosition(width, ofDividerAt: 0)
+        contentSplit.adjustSubviews()
+        splitViewDidResizeSubviews(Notification(name: NSSplitView.didResizeSubviewsNotification,
+                                                object: contentSplit))
+    }
 
     /// Whether the per-file action button («打开文件») is usable. It must follow
     /// the selected tab: a button that looks usable with nothing open silently

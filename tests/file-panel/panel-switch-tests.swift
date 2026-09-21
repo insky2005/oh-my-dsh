@@ -290,5 +290,62 @@ let widestPercentage = ("1600%" as NSString).size(withAttributes:
 test("the fixed badge box fits the widest percentage",
      ZoomBadgeView.size.width >= widestPercentage + 12)
 
+// --- the tree pane width survives closing / reopening the panel ------------
+// QA: drag the divider, close the panel, open it again → the tree was back at its
+// 420pt maximum. These assertions drive the exact sequence in a real window:
+// a user drag, a collapse to zero width (the shell collapses the pane), a reopen,
+// and a framework re-distribution that has to be corrected.
+
+let widthPanel = FilePanelController()
+let widthWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+                           styleMask: [.titled], backing: .buffered, defer: false)
+widthWindow.contentView = widthPanel.view
+widthPanel.setProjectDirectory(wsA.path)
+widthWindow.layoutIfNeeded()
+widthPanel.view.layoutSubtreeIfNeeded()
+
+// The default width, before any user choice. (The panel applies it during its
+// first real layout, so a couple of passes are needed here.)
+widthWindow.layoutIfNeeded()
+widthPanel.view.layoutSubtreeIfNeeded()
+widthWindow.layoutIfNeeded()
+print("  (tree width at start: \(widthPanel.treePaneWidthForTesting)pt, pane width \(widthPanel.view.bounds.width)pt)")
+test("the tree has a width before any user choice", widthPanel.treePaneWidthForTesting > 0)
+
+// The user drags the divider.
+widthPanel.simulateTreeDragForTesting(to: 300)
+test("a divider drag is applied", abs(widthPanel.treePaneWidthForTesting - 300) < 2)
+test("a divider drag is remembered",
+     widthPanel.rememberedTreeWidthForTesting.map { abs($0 - 300) < 2 } == true)
+
+// The panel is closed: the shell collapses its pane to nothing …
+widthPanel.view.frame = NSRect(x: 0, y: 0, width: 0, height: 600)
+widthPanel.view.layoutSubtreeIfNeeded()
+test("collapsing the panel is ignored (nothing to remember)",
+     widthPanel.rememberedTreeWidthForTesting.map { abs($0 - 300) < 2 } == true)
+
+// … and opened again: the pane gets its width back and the panel re-mounts.
+widthPanel.view.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+widthPanel.view.layoutSubtreeIfNeeded()
+widthPanel.ensureTreeLoaded()          // what the shell does when the panel opens
+widthWindow.layoutIfNeeded()
+widthPanel.view.layoutSubtreeIfNeeded()
+print("  (tree width after reopen: \(widthPanel.treePaneWidthForTesting)pt)")
+test("reopening keeps the width the user left, not the 420pt maximum",
+     abs(widthPanel.treePaneWidthForTesting - 300) < 2)
+
+// Whatever the framework does to the divider on its own must be corrected.
+widthPanel.simulateFrameworkRedistributionForTesting(to: 420)
+test("a framework re-distribution is corrected back",
+     abs(widthPanel.treePaneWidthForTesting - 300) < 2)
+test("the corrected width is not remembered as a user choice",
+     widthPanel.rememberedTreeWidthForTesting.map { abs($0 - 300) < 2 } == true)
+
+// A drag to the maximum IS a user choice and must stick.
+widthPanel.simulateTreeDragForTesting(to: 420)
+widthPanel.simulateFrameworkRedistributionForTesting(to: 160)
+test("a user-chosen maximum is restored, not clamped away",
+     abs(widthPanel.treePaneWidthForTesting - 420) < 2)
+
 try? fm.removeItem(at: root)
 print("done")

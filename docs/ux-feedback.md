@@ -292,6 +292,8 @@
 - **非**拖拽导致的宽度变化 → 一律纠正回记住的宽度，日志 `preview tree width corrected: 420pt -> Npt (remembered Npt)`；
 - 即使从未拖过，也有两个「兜底记录点」：关闭面板时（`hidePanel`，此刻宽度还是用户的）、以及面板被切走时（根视图 `onUnmounted`），所以默认 160 也能正确回来。
 
+**自动化复现（`tests/file-panel`，真实 NSWindow + 真实 split view）**：这次不再只靠口头判断 —— 测试里建一个 900pt 宽的真窗口，跑完整序列：**拖动分隔条到 300 → 面板收成 0 宽（= 关闭）→ 恢复 900 宽（= 重新打开）→ 断言宽度仍是 300 而不是框架默认/上限**；另外还断言「框架自己重排到 420 时必须被纠正回 300 且不会被记成用户选择」「用户主动拖到 420 则必须保持 420」。测试输出也证明了机制存在：**首次布局时框架给的宽度是 449.5pt（≈ 一半），完全不是用户的值**。共 6 条断言，`tests/file-panel` 与 `scripts/local-ci.sh swift` 全绿。
+
 改为两条不依赖「宽度转变」的路径：
 
 - **每次「非用户」的重新分配都纠正回来**：`splitViewDidResizeSubviews` 里调 `restoreTreeWidthIfDisturbed()` —— 只要当前宽度与记住的宽度差 > 1pt 且**不是用户正在拖拽**，就 `setPosition` 回去（用 `isRestoringTreeWidth` 防止递归）。
