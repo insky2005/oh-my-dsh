@@ -1514,19 +1514,34 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// Editable tabs reuse their live editor (so unsaved edits survive) and are
     /// skipped while dirty; read-only tabs are re-rendered when visible.
     private func refreshOpenTabsIfChanged() {
+        let now = Date()
         for (idx, tab) in tabs.enumerated() {
             let m = Self.mtime(of: tab.path)
             guard let m = m, let prev = tab.fileMtime, m != prev else { continue }
+            // A file that is STILL being written (an agent saving in a loop, a
+            // build stepping on it) must not be reloaded once per tick: each
+            // reload of a large file costs a full re-read + highlight, so a burst
+            // used to look like a freeze (QA report). Wait until the file has been
+            // quiet for the stability window — the mtime is deliberately NOT
+            // absorbed yet, so the next tick re-checks it.
+            guard EditorLoadPolicy.isStable(mtime: m, now: now) else {
+                AppLog.shared.log("preview reload deferred (still being written): \(tab.path)")
+                continue
+            }
             tabs[idx].fileMtime = m   // absorb the change so we don't redo it
             if let editor = tab.editor {
                 if tab.isDirty {
-                    AppLog.shared.log("preview tab changed on disk; kept unsaved edits: (tab.path)")
+                    AppLog.shared.log("preview tab changed on disk; kept unsaved edits: \(tab.path)")
                     continue
                 }
-                AppLog.shared.log("preview reload editor (disk changed): (tab.path)")
-                editor.reloadFromDisk()
+                let started = Date()
+                AppLog.shared.log("preview reload editor (disk changed): \(tab.path)")
+                editor.reloadFromDisk {
+                    AppLog.shared.log("preview reload applied: \(tab.path) in "
+                                      + String(format: "%.0f ms", Date().timeIntervalSince(started) * 1000))
+                }
             } else if tab.id == selectedId {
-                AppLog.shared.log("preview reload tab (disk changed): (tab.path)")
+                AppLog.shared.log("preview reload tab (disk changed): \(tab.path)")
                 render(tab.path)
             }
         }

@@ -173,6 +173,9 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
     private let dark: Bool
     private var usesHighlighting = false
     private var suppressDirty = false
+    /// Bumped per reload request so a slow background read cannot overwrite a
+    /// newer one.
+    private var reloadGeneration = 0
     private(set) var isDirty = false
     private var gutterWidthConstraint: NSLayoutConstraint!
 
@@ -198,10 +201,17 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
     private func setup(text: String) {
         // Build the code editor around the highlighting storage when available.
         var storage: NSTextStorage?
-        if let lang = language, Self.highlightingAvailable(),
+        // Large files stay plain text: highlighting them costs seconds of JS plus
+        // a full-document attribute pass, which is what froze the panel when such
+        // a file was reloaded (see EditorLoadPolicy).
+        let highlightingWorthIt = EditorLoadPolicy.shouldHighlight(text: text, language: language)
+        if let lang = language, Self.highlightingAvailable(), highlightingWorthIt,
            let cas = Self.makeHighlightingStorage(language: lang, dark: dark) {
             storage = cas
             usesHighlighting = true
+        } else if let lang = language, !highlightingWorthIt {
+            let lines = EditorLoadPolicy.lineCount(of: text)
+            AppLog.shared.log("preview: \(lines) line(s) — syntax highlighting skipped for \(lang)")
         }
         codeTextView = makeCodeTextView(storage: storage)
 
@@ -234,7 +244,7 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
         codeTextView.string = text
         suppressDirty = false
         if let cas = storage as? CodeAttributedString {
-            cas.language = language   // triggers a full highlight on a background thread
+            cas.language = language   // the ONE highlight of the initial load
         }
         updateGutterWidthAndRedraw()
     }
@@ -375,14 +385,47 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
     /// Keeps the buffer non-dirty: the replace happens with dirty-tracking
     /// suppressed, matching the initial load.
     func reloadFromDisk() {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              let newText = String(data: data, encoding: .utf8) else { return }
+        reloadFromDisk(completion: nil)
+    }
+
+    /// Read the file on a background queue and apply it on the main thread — the
+    /// read must never block the UI, and only the LAST request wins (a file that
+    /// was rewritten twice while the first read was in flight must not push stale
+    /// content into the editor).
+    func reloadFromDisk(completion: (() -> Void)? = nil) {
+        reloadGeneration += 1
+        let generation = reloadGeneration
+        let url = URL(fileURLWithPath: path)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let text = (try? Data(contentsOf: url, options: .mappedIfSafe))
+                .flatMap { String(data: $0, encoding: .utf8) }
+            DispatchQueue.main.async {
+                guard let self = self, generation == self.reloadGeneration else { return }
+                guard let text = text else { completion?(); return }
+                if text != self.codeTextView.string { self.applyReload(text) }
+                completion?()
+            }
+        }
+    }
+
+    /// Replace the buffer in one text-storage edit with highlighting suspended,
+    /// then re-highlight ONCE. Letting the replacement highlight on its own would
+    /// highlight the whole document, and re-assigning `language` right after would
+    /// do it a second time — the pair is what made a big-file reload freeze.
+    private func applyReload(_ newText: String) {
         let offset = codeScroll.contentView.bounds.origin
+        let storage = codeTextView.textStorage as? CodeAttributedString
+        storage?.language = nil
         suppressDirty = true
+        codeTextView.textStorage?.beginEditing()
         codeTextView.string = newText
+        codeTextView.textStorage?.endEditing()
         suppressDirty = false
-        if let cas = codeTextView.textStorage as? CodeAttributedString {
-            cas.language = language   // re-highlight on a background thread
+        if let storage = storage,
+           EditorLoadPolicy.shouldHighlight(text: newText, language: language) {
+            storage.language = language            // exactly one highlight, async
+        } else {
+            storage?.language = nil                // too big: stay plain text
         }
         updateGutterWidthAndRedraw()
         if let doc = codeScroll.documentView, doc.frame.height > offset.y {

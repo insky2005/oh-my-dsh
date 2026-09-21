@@ -14,6 +14,7 @@
 | 4 | Terminal | 双击不能选词；拖选后需再按 ⌘C 才能复制 | 交互改进 | 中 | ✅ |
 | 5 | Terminal | 终端页签未按 workspace 隔离/记忆 | 交互改进 | 低 | ✅ |
 | 6 | Shell | 长时间运行后手动刷新 WebView → dsh web 页面打不开（疑似 key 失效） | Bug | 高 | 🔧 |
+| 7 | Files | 大文件（3000+ 行）在磁盘变更后重新加载时卡住应用 | Bug | 高 | ✅ |
 
 > 实现分支 `feature/ux-feedback-fixes`（#1–#6 均已落地；#6 的自愈路径另有真实环境回归待做，见该条目「验收」）。
 
@@ -213,6 +214,28 @@
 - ⌘R 与右键「重新载入」结果一致，且两者都能在 cookie 失效时自愈（不再出现 401 纯文本页）；
 - 长时运行后「对话区卡住」时，用 ⌘R 能一键恢复到可用状态（这正是使用者触发刷新的原始动机，值得单列回归用例）。
 
+---
+
+## 7. 大文件（3000+ 行）磁盘变更后重新加载把应用卡住
+
+**现象**：Files 面板打开一个大文件（3000+ 行），当文件在磁盘上被修改、面板自动重新加载时，整个应用卡住。
+
+**根因（代码定位）**
+
+1. **一次重载触发两遍全文件高亮**：`CodeEditorView.reloadFromDisk()` 先 `codeTextView.string = newText` —— 替换整段文本会让 `CodeAttributedString.processEditing()` 对**被替换的整段**（即全文）做一次 highlight；紧接着又 `cas.language = language`，而 `language.didSet` 是 `highlight(NSMakeRange(0, length))` —— **再来一次全文高亮**。每次高亮 = 后台 JS 高亮全文 + 主线程逐段 `setAttributes` 全文档（并触发整篇重排版）。3000+ 行时这就是秒级主线程卡顿。
+2. **写文件过程中每 2s 重载一次**：`treeWatcherTick`（间隔 2s）→ `refreshOpenTabsIfChanged()`，只要 mtime 变了就重载。agent 反复写同一个文件时，每一跳都付一次上面那个代价 → 表现为持续卡死。
+3. 附带：读取文件用的是主线程 `Data(contentsOf:)`。
+
+**修复（`feature/ux-feedback-fixes`）**
+
+- 新增纯策略 `EditorLoadPolicy.swift`（可单测）：超过 **2000 行或 256 KB** 的文件**不再做语法高亮**（仍可正常查看/编辑，仅退化为纯文本）；**写文件稳定性窗口 0.6s**。
+- `reloadFromDisk()` 改为**后台读取 + 主线程应用**，并用 generation 计数保证「最后一次请求胜出」（慢读不会把旧内容塞回编辑器）。
+- 应用新内容时**先关掉高亮（`language = nil`）→ `beginEditing/endEditing` 一次替换 → 再设一次 `language`**：整篇恰好**一次**高亮；超限文件保持纯文本。
+- `refreshOpenTabsIfChanged()` 增加**稳定性窗口**：mtime 在 0.6s 内还在变的文件先不重载（且**不吃掉**这次变化），因此「agent 连续写文件」只会在写完后重载**一次**，日志里会看到 `preview reload deferred (still being written)` 与重载耗时。
+
+**验证**：`tests/file-panel/editor-load-policy-tests.swift`（行数统计 / 行数·字节阈值 / 边界 / 稳定性窗口与时钟偏斜 共 14 断言）全绿；`scripts/local-ci.sh swift` EXIT=0。**待手动 QA**：打开 3000+ 行文件，用外部命令连续改写它，确认面板不卡、且最终内容会同步。
+
+**已知遗留**：目录树 watcher 每 2s 会对所有可见目录做一次 `stat` + 目录列举（主线程）；超大仓库下仍可能偏重，可后续按需异步化。
 ---
 
 ## 备注
