@@ -233,12 +233,22 @@
 
 **修复（`feature/ux-feedback-fixes`）**
 
-- 新增纯策略 `EditorLoadPolicy.swift`（可单测）：超过 **2000 行或 256 KB** 的文件**不再做语法高亮**（仍可正常查看/编辑，仅退化为纯文本）；**写文件稳定性窗口 0.6s**。
+- 新增纯策略 `EditorLoadPolicy.swift`（可单测）：**写文件稳定性窗口 0.6s**；**高亮分块大小**（300 行 / 32 KB）；高亮「安全阀」只对**极端文件**（>4 万行或 >4 MB，如一整份压缩产物/日志）才退化为纯文本。
 - `reloadFromDisk()` 改为**后台读取 + 主线程应用**，并用 generation 计数保证「最后一次请求胜出」（慢读不会把旧内容塞回编辑器）。
-- 应用新内容时**先关掉高亮（`language = nil`）→ `beginEditing/endEditing` 一次替换 → 再设一次 `language`**：整篇恰好**一次**高亮；超限文件保持纯文本。
+- 应用新内容时：用新加的 `CodeAttributedString.setLanguage(_:automaticallyHighlighting:)`（vendored Highlightr 的**本地新增**，已注释标注）抑制两条自动高亮路径（替换文本触发的段落高亮 + `language` didSet 的全文高亮），再 `beginEditing/endEditing` 一次性替换文本。
 - `refreshOpenTabsIfChanged()` 增加**稳定性窗口**：mtime 在 0.6s 内还在变的文件先不重载（且**不吃掉**这次变化），因此「agent 连续写文件」只会在写完后重载**一次**，日志里会看到 `preview reload deferred (still being written)` 与重载耗时。
 
-**验证**：`tests/file-panel/editor-load-policy-tests.swift`（行数统计 / 行数·字节阈值 / 边界 / 稳定性窗口与时钟偏斜 共 14 断言）全绿；`scripts/local-ci.sh swift` EXIT=0。**待手动 QA**：打开 3000+ 行文件，用外部命令连续改写它，确认面板不卡、且最终内容会同步。
+**高亮不再"按大小关闭"，改为分块着色（第二轮修正，QA 反馈）**
+
+第一版用「超过 2000 行 / 256 KB 就不高亮」换性能，QA 认为不可取 —— 3000 行文件失去配色确实说不过去。现在：**正常源文件一律保留语法高亮**，性能由三件事保证：
+
+1. **分块着色**：`CodeEditorView.highlightInChunks()` 按「整行」切片（300 行 / 32 KB 一片，切分逻辑是纯函数 `EditorLoadPolicy.highlightChunk(in:from:)`），每片之间 `DispatchQueue.main.async` 让出主线程 —— 大文件自上而下渐进上色，UI 全程可响应；切换深浅色主题的重着色也走这条路（suppress 标记同时罩住 vendor 的 `themeChanged`）。
+2. **一次重载只有一次高亮**（不再「段落高亮 + didSet 全文高亮」两遍）。
+3. **写文件期间不重复重载**（0.6s 稳定性窗口）+ 读取在后台线程。
+
+安全阀只留给极端文件（>4 万行或 >4 MB 的日志/压缩产物），命中时会写日志说明。
+
+**验证**：`tests/file-panel/editor-load-policy-tests.swift` 23 条断言全绿（行数统计；3000 行与 20000 行**仍高亮**；安全阀边界；字节阈值与多字节；分块覆盖全文不重不漏且**不切行**；超长单行独占一片；稳定性窗口与时钟偏斜）；`tests/file-panel` 与 `scripts/local-ci.sh swift` 全绿。**待手动 QA**：打开 3000+ 行文件，用外部命令连续改写，确认面板不卡、颜色渐进恢复、内容同步。
 
 **已知遗留**：目录树 watcher 每 2s 会对所有可见目录做一次 `stat` + 目录列举（主线程）；超大仓库下仍可能偏重，可后续按需异步化。
 ---

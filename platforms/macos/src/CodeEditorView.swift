@@ -176,6 +176,8 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
     /// Bumped per reload request so a slow background read cannot overwrite a
     /// newer one.
     private var reloadGeneration = 0
+    /// Bumped per chunked highlight pass so an older pass stops at the next chunk.
+    private var highlightGeneration = 0
     private(set) var isDirty = false
     private var gutterWidthConstraint: NSLayoutConstraint!
 
@@ -244,7 +246,15 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
         codeTextView.string = text
         suppressDirty = false
         if let cas = storage as? CodeAttributedString {
-            cas.language = language   // the ONE highlight of the initial load
+            let highlight = EditorLoadPolicy.shouldHighlight(text: text, language: language)
+            cas.setLanguage(highlight ? language : nil, automaticallyHighlighting: false)
+            if highlight {
+                highlightInChunks()     // progressive: the UI stays responsive
+            } else if let lang = language {
+                AppLog.shared.log("preview: \(EditorLoadPolicy.lineCount(of: text)) line(s) — "
+                                  + "above the highlighting safety valve, shown plain (\(lang))")
+            }
+            cas.suppressesAutomaticHighlight = false   // later edits highlight normally
         }
         updateGutterWidthAndRedraw()
     }
@@ -358,11 +368,16 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        // Follow light/dark by swapping the highlight.js theme (setTheme
-        // triggers a re-highlight through the storage's themeChanged hook).
+        // Follow light/dark by swapping the highlight.js theme. The storage's
+        // themeChanged hook would re-colour EVERYTHING in one pass, so it is
+        // suppressed here and the colours are re-applied in chunks instead.
         if let cas = codeTextView.textStorage as? CodeAttributedString {
             let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let suppressed = cas.suppressesAutomaticHighlight
+            cas.suppressesAutomaticHighlight = true
             cas.highlightr.setTheme(to: isDark ? "atom-one-dark" : "xcode")
+            cas.suppressesAutomaticHighlight = suppressed
+            if !suppressed { highlightInChunks() }
         }
     }
 
@@ -415,18 +430,16 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
     private func applyReload(_ newText: String) {
         let offset = codeScroll.contentView.bounds.origin
         let storage = codeTextView.textStorage as? CodeAttributedString
-        storage?.language = nil
+        let highlight = EditorLoadPolicy.shouldHighlight(text: newText, language: language)
+        // Swap the buffer with BOTH automatic highlight paths suppressed: neither
+        // the replacement itself nor a language assignment may start a pass (that
+        // pair used to run the whole document twice).
+        storage?.setLanguage(highlight ? language : nil, automaticallyHighlighting: false)
         suppressDirty = true
         codeTextView.textStorage?.beginEditing()
         codeTextView.string = newText
         codeTextView.textStorage?.endEditing()
         suppressDirty = false
-        if let storage = storage,
-           EditorLoadPolicy.shouldHighlight(text: newText, language: language) {
-            storage.language = language            // exactly one highlight, async
-        } else {
-            storage?.language = nil                // too big: stay plain text
-        }
         updateGutterWidthAndRedraw()
         if let doc = codeScroll.documentView, doc.frame.height > offset.y {
             codeScroll.contentView.scroll(to: offset)
@@ -435,6 +448,34 @@ final class CodeEditorView: NSView, NSTextViewDelegate {
             codeScroll.contentView.scroll(to: NSPoint(x: 0, y: 0))
             codeScroll.reflectScrolledClipView(codeScroll.contentView)
         }
+        if highlight { highlightInChunks() }
+        storage?.suppressesAutomaticHighlight = false   // later edits highlight normally
+    }
+
+    // MARK: - Highlighting
+
+    /// Colour the buffer in whole-line chunks, yielding to the run loop between
+    /// them. One pass over the whole document would block the main thread for as
+    /// long as it takes (that was the freeze); chunked, the file shows its colours
+    /// from the top down while the UI keeps responding.
+    private func highlightInChunks() {
+        guard let storage = codeTextView.textStorage as? CodeAttributedString,
+              storage.language != nil else { return }
+        highlightGeneration += 1
+        let generation = highlightGeneration
+        var location = 0
+        func highlightNextChunk() {
+            // A newer reload (or a theme change) invalidates this pass.
+            guard generation == self.highlightGeneration else { return }
+            let length = storage.length
+            guard location < length else { return }
+            let chunk = EditorLoadPolicy.highlightChunk(in: storage.string as NSString, from: location)
+            guard chunk.length > 0 else { return }
+            storage.highlight(chunk)
+            location = chunk.location + chunk.length
+            DispatchQueue.main.async { highlightNextChunk() }
+        }
+        highlightNextChunk()
     }
 
     // MARK: - Save

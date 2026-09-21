@@ -90,8 +90,30 @@ open class CodeAttributedString : NSTextStorage
     {
         didSet
         {
-            highlight(NSMakeRange(0, stringStorage.length))
+            if !suppressesAutomaticHighlight
+            {
+                highlight(NSMakeRange(0, stringStorage.length))
+            }
         }
+    }
+
+    // MARK: - Local addition (oh-my-dsh, not upstream Highlightr)
+    //
+    // Setting `language` highlights the WHOLE document, and every text edit
+    // highlights the edited paragraph range. The shell needs to replace a large
+    // buffer and then colour it in whole-line CHUNKS (yielding to the run loop in
+    // between) so a big-file reload never blocks the UI: this flag suppresses the
+    // automatic pass while the caller drives `highlight(_:)` itself.
+    /// While true, `language`/`processEditing()` do not start a highlight pass.
+    public var suppressesAutomaticHighlight = false
+
+    /// Set the language WITHOUT the automatic full-document highlight, and leave
+    /// automatic highlighting (for later edits) in the requested state.
+    public func setLanguage(_ newLanguage: String?, automaticallyHighlighting automatically: Bool)
+    {
+        suppressesAutomaticHighlight = true
+        language = newLanguage
+        suppressesAutomaticHighlight = !automatically
     }
     
     /// Returns a standard String based on the current one.
@@ -144,7 +166,7 @@ open class CodeAttributedString : NSTextStorage
     open override func processEditing()
     {
         super.processEditing()
-        if language != nil {
+        if language != nil && !suppressesAutomaticHighlight {
             if self.editedMask.contains(.editedCharacters)
             {
                 let string = (self.string as NSString)
@@ -154,6 +176,8 @@ open class CodeAttributedString : NSTextStorage
         }
     }
 
+    /// Highlight one range. Internal (same module) so the shell can drive it in
+    /// chunks — see suppressesAutomaticHighlight above.
     func highlight(_ range: NSRange)
     {
         if(language == nil)
@@ -210,7 +234,9 @@ open class CodeAttributedString : NSTextStorage
     {
         highlightr.themeChanged =
             { [weak self] _ in
-                    guard let self = self else { return }
+                    // Local addition: a theme change must not start an unbounded
+                    // full-document pass either — the caller re-colours in chunks.
+                    guard let self = self, !self.suppressesAutomaticHighlight else { return }
                     self.highlight(NSMakeRange(0, self.stringStorage.length))
         }
     }
