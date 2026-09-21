@@ -117,6 +117,8 @@
 **相关代码**
 
 - 刷新入口：`platforms/macos/src/main.swift` `reloadPage()`（L4618，调 `webView.reload()`）——**没有绑定任何菜单/快捷键**（用户只能右键 WebView → 重新载入；⌘R 是 Review 面板）；
+  - 该右键「重新载入」是 **WKWebView（WebKit 系统默认上下文菜单）**提供的，不是 dsh web 页面提供的：dsh web 前端 bundle 里没有任何自建右键菜单/对 `contextmenu` 的 `preventDefault`（5 处出现全是 React 内部事件名表），壳层也没给主 WebView 加 `menu(for:)`/`willOpenMenu`，全仓库唯一的自定义右键菜单在 CEF 浏览器面板（`BrowserPanel.swift:979`）；主 WebView 无子类、未开 developerExtras。
+  - 因此它的行为就等于 `webView.reload()`：**重新请求当前 URL（`http://127.0.0.1:<port>/`，不带 token），只靠 cookie 认证**，不会走 `/?token=` 那条重新签发 cookie 的路径——这正是「一旦 cookie 不被接受就 401 打不开」的结构性原因，也说明修复要由壳层提供走 token 的刷新入口（方案 1+4）。
 - 首屏加载：`startServer()` → `webView.load(URLRequest(url: entryURL))`（L3077，entryURL 是 dsh 自报的带 token 地址）；
 - 端口/token 生命周期：`ServerManager.start()`（L1368，端口冲突就换随机端口）、`stop()`（L1623，**不清 `entryURL`/`port`**）；
 - 服务重启路径：`restartServerAfterUpgrade()`（L3122）；
