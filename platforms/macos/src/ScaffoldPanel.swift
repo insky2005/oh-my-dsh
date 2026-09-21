@@ -2622,7 +2622,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         actions.translatesAutoresizingMaskIntoConstraints = false
 
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerTitle)
         header.addSubview(actions)
@@ -2637,7 +2637,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
         // 工具栏：Back / Next、分隔符、New project / Init project / Update config。
         let toolbar = DynamicFillView()
-        toolbar.kind = .window
+        toolbar.kind = .panel
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true
@@ -2685,7 +2685,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         railStack.spacing = 6
         railStack.translatesAutoresizingMaskIntoConstraints = false
         let rail = DynamicFillView()
-        rail.kind = .control
+        rail.kind = .panel
         rail.translatesAutoresizingMaskIntoConstraints = false
         rail.wantsLayer = true
         rail.layer?.masksToBounds = true
@@ -2705,7 +2705,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         contentContainer.layer?.masksToBounds = true
 
         // 状态条
-        statusBar.kind = .control
+        statusBar.kind = .panel
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         statusBar.wantsLayer = true
         statusBar.layer?.masksToBounds = true
@@ -2771,7 +2771,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
         // 步骤导航行：仅向导步骤(2-5)显示；置于内容区顶部，步骤内容在其下方
         let stepNav = DynamicFillView()
-        stepNav.kind = .control
+        stepNav.kind = .panel
         stepNav.translatesAutoresizingMaskIntoConstraints = false
         stepNav.wantsLayer = true
         stepNav.layer?.masksToBounds = true
@@ -3548,6 +3548,18 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         }
     }
 
+
+    /// 分类标题：内置三类走 L10n（键名必须是字面量——tests/l10n/run.sh 会拦动态拼键），
+    /// 用户自定义分类（自定义 stage.yaml 的 category）原样显示。
+    static func stageCategoryTitle(_ category: String) -> String {
+        switch category {
+        case "foundation": return L10n.tr("scaffold.stageCategory.foundation")
+        case "examples": return L10n.tr("scaffold.stageCategory.examples")
+        case "collaboration": return L10n.tr("scaffold.stageCategory.collaboration")
+        default: return category
+        }
+    }
+
     /// 重建环节卡片列表（按 category 分组，勾选状态保留）。
     private func rebuildStageList() {
         for sub in stageStack.arrangedSubviews {
@@ -3564,8 +3576,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
             let stages = catalog.filter { $0.category == cat }
                 .sorted { stageIndex($0.id) < stageIndex($1.id) }
             guard !stages.isEmpty else { continue }
-            let isKnown = cat == "foundation" || cat == "examples" || cat == "collaboration"
-            let titleLabel = NSTextField(labelWithString: isKnown ? L10n.tr("scaffold.stageCategory.\(cat)") : cat)
+            let titleLabel = NSTextField(labelWithString: Self.stageCategoryTitle(cat))
             titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
             titleLabel.textColor = .secondaryLabelColor
             titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -4235,7 +4246,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
         settingsContainer.wantsLayer = true
         settingsContainer.layer?.masksToBounds = true
 
-        settingsHeader.kind = .window
+        settingsHeader.kind = .panel
         settingsHeader.translatesAutoresizingMaskIntoConstraints = false
         settingsTitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         settingsTitleLabel.lineBreakMode = .byTruncatingTail
@@ -4336,7 +4347,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
         // —— 单文件编辑器（Files 风格）：头部 + 文件标签页 + CodeEditorView ——
         let editorHeader = DynamicFillView()
-        editorHeader.kind = .window
+        editorHeader.kind = .panel
         editorHeader.translatesAutoresizingMaskIntoConstraints = false
         editorTitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         editorTitleLabel.lineBreakMode = .byTruncatingTail
@@ -4483,7 +4494,7 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
         // 头部：返回 + 标题 + 保存
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         let backBtn = ActionButton.make(title: "‹ " + L10n.tr("scaffold.back"))
         backBtn.bezelStyle = .rounded
@@ -4573,7 +4584,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
     private func showSettings() {
         settingsActive = true
         updateStepNavBar()
-        settingsButton?.showsBackground = true
         toolbarView?.isHidden = true
         railView?.isHidden = true
         toolbarUnderlineView?.isHidden = true
@@ -4593,7 +4603,6 @@ final class ScaffoldPanelController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     private func hideSettings() {
         settingsActive = false
-        settingsButton?.showsBackground = false
         toolbarView?.isHidden = false
         railView?.isHidden = false
         toolbarUnderlineView?.isHidden = false
