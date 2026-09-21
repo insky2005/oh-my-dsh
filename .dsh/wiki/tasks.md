@@ -1,8 +1,8 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-09-21T04:19:55Z
-sources: [platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, docs/skills-manager-design.md, tests/skills-panel/, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, docs/dsh-version-impact.md, tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md]
+updated: 2026-09-21T08:45:21Z
+sources: [platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, docs/skills-manager-design.md, tests/skills-panel/, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, docs/dsh-version-impact.md, tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, tests/terminal-panel/run.sh, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/FilePanelTreeMenu.swift, docs/ux-feedback.md, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md]
 manual: false
 ---
 
@@ -46,6 +46,8 @@ open "dist/oh-my-dsh.app"
 ```
 
 - 文件面板工作区页签记忆（`tests/file-panel/run.sh` 覆盖逻辑，界面手测）：打开若干文件时文件面板头部**始终**显示「文件」而非路径（路径在标题悬停 tooltip 与页签 tooltip 里）、终端面板头部**始终**显示「终端」而非会话标题/已结束状态、知识库面板头部**始终**显示「知识库」而非当前页面名（同样在 tooltip / 内容区 / 树里）→ dsh web 切到 B 工作区会话（页签栏清空、树根变 B）→ 切回 A（页签按原顺序重开且选中项还原）；A 中改文件不保存后切换 → 二选一提示（保存并切换 / 不保存；**没有「取消切换」**——dsh web 已切过去，面板必须跟随，否则两边不一致）：选保存则磁盘已更新、选不保存则磁盘未变，两种都照样切到 B；若文件保存失败、或提示被 ESC 关掉，该页签**保留在页签栏**且面板仍切到 B（不得静默丢弃、不得卡住）；有未保存修改时点**页签 ✕ / ⌘W** 或**面板右上角 ✕** → 三选一（保存并关闭 / 不保存 / 取消；取消 = 不关；保存失败则中止关闭并报错）；点 ✕（无未保存）→ 页签清空，此后切走再切回**不**自动重开；`~/Library/Logs/oh-my-dsh/app.log` 有 `preview workspace switch` / `preview restore` 日志；
+- **页面刷新自愈（docs/ux-feedback.md #6）**：⌘R（或 WebView 右键「重新载入」）都应重新走 launch token 认证——正常情况下页面正常重载；把自拉起的 dsh web 进程手动 kill 后刷新，应自动重拉并恢复，日志有 `page load request (reason): port=… ourServerAlive=…` 与 `page recovery (…) re-authenticating via the launch token`；若出现 401 纯文本页即说明自愈没生效（不再应出现）；`~/Library/Logs/oh-my-dsh/app.log` 里 `logAuthCookieState` 会打印当前 authority 的 `dsh-auth-*` cookie 状态；
+- **文件 / 终端面板（docs/ux-feedback.md #1 #2 #3 #4 #5 #7 #8 #9）**：目录树右键三组菜单（新建/重命名/删除/在 Finder 中显示，项目根不可改名删除）、重命名后被改名目录下的页签要跟随、删除走废纸篓且页签关闭；头部「打开项目 ▾ / 打开文件 ▾」点击即弹菜单、⌥ 点击走记住的方式、「打开文件」在未选中文件时置灰；图片预览居中留边距、⌘+/⌘−/⌘0/⌘滚轮/双击/捏合都能缩放且拖动面板宽度不跳变；大文件（3000+ 行）在外部持续写入时不卡顿、颜色渐进恢复；目录树拖宽 → 关闭面板 → 重开宽度保持（日志 `preview tree width remembered/corrected`）；终端滚动方向与其他面板一致、双击选词三击选行后可继续按词/行扩选、拖选完直接 ⌘V；切换 workspace 时终端页签跟随（shell 不退出，切回恢复选中，本工作区无终端时自动开一个）；
 - 验证点：窗口标题 `oh-my-dsh (DeepSeek Harness)`；活动栏图标互斥切换（预览/终端/浏览器/知识库/任务/通道/审查/技能）；⌥⌘P / ⌥⌘T / ⌥⌘B / ⌥⌘W / ⌥⌘J / ⌥⌘H / ⌥⌘R / ⌥⌘S 快捷键；About 面板显示 dsh/Node 版本与 registry；文件面板编辑文本后 ⌘S 保存、页签标题出现 `*` 未保存标记（见 [file-panel](modules/file-panel.md)）。
 
 ## 跑单元测试
@@ -59,8 +61,8 @@ tests/channel-panel/run.sh          # 通道项目视图数据模型（ChannelSt
 tests/dsh-rpc/run.sh                # 壳层原生 dsh RPC（0.1.2 信封/斜杠端点、launch token 换 cookie、回退记忆）
 tests/review-panel/run.sh           # 审查面板（模型 64 项 + 控制器日志新鲜度 12 项 = 76 项）
 tests/skills-panel/run.sh           # 技能面板（模型层 + 控制器冒烟 + 真实绘制回归，121 项）
-tests/file-panel/run.sh             # 文件面板工作区页签记忆 / 未保存提示（模型 28 项 + 真面板）
-tests/terminal-panel/run.sh         # 终端面板头部固定标题（4 项，不建 PTY）
+tests/file-panel/run.sh             # 文件面板：页签记忆模型 28 项 + open-with / tree-menu / image-zoom / editor-load-policy 模型 + 真实 NSWindow 面板场景
+tests/terminal-panel/run.sh         # 终端面板：头部固定标题 + 工作区页签隔离模型 + 选中即复制开关（不建 PTY）
 tests/l10n/run.sh                   # L10n 键名 lint（L10n.tr 字面量必须在 L10n.table 中且中英成对）
 tests/shell-config/run.sh           # ShellConfig 旧 UserDefaults 一次性迁移（13 项）
 tests/dsh-auth-cookies/run.sh       # dsh 认证 cookie 清理纯逻辑（22 项）
@@ -132,7 +134,8 @@ tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：�
 8. **审查面板空/读不到变更**：先用 CLI 定位——`node core/bin/ohmy-core.js review sessions [--workspace <dir>]` 看会话是否被发现、`… review audit <sessionId>` 看条目与 `diagnostics`；面板必须经**内置** node 调 core（`CoreBridge.run(…, preferBundledNode: true)`，用户自装 Node 18/20 无 zstd 解不了压缩日志）；`DSH_REVIEW_TEST=1`（可加 `DSH_REVIEW_TEST_PATH=<dir>`）启动即开面板；面板是只读的——`bash` 直改（`sed -i`/`>`/`rm`）只有命令文本、标注「需人工核对」，日志未落盘的尾部不可见，这些都是设计边界而非故障；
 9. **界面能渲染但插件全挂（Failed to load plugins）**：几乎必然是 **dsh 认证 cookie 累积**——dsh ≥ 0.1.2 的 cookie 名由 authority（`127.0.0.1:<port>`）派生、cookie 本身不区分端口，壳层每次自拉起新端口就多留一只（~226 B / 30 天 TTL），累积 `Cookie:` 头超过 node 默认 16 KiB header cap 后，client-modules 那条 ~2.1 KB 的 45 插件 combo bundle 请求被回 **431**（空 body）→ `<script src>` error → 插件全挂（外壳正常、bootstrap 仍 200）。判断：`app.log` 里 `dsh cookies: purged N stale of M (kept 127.0.0.1:<port>)` 的 N 很大即已命中；修法已内置（启动清非本次 authority 的 `dsh-auth-*`、退出清本次的 + `NODE_OPTIONS=--max-http-header-size=65536`），排查/回归见 `tests/dsh-auth-cookies/run.sh` 与 docs/dsh-version-impact.md §6.3（R6）；
 10. **升级后某个设置「自己变回默认」**：壳层设置自 1.14 起存 `$DSH_HOME/shell/config.json`（`ShellConfig`），旧 `UserDefaults` 键由启动时一次性迁移（只搬尚无取值的键 + `legacyUserDefaultsMigratedAt` 标记）。若用户显式设过的值失效，先看 `app.log` 的 `shellconfig: legacy UserDefaults merge (moved N: …)` 与 config.json 实际取值；回归 `tests/shell-config/run.sh`；
-11. 面板点会话行不跳转 web / 切会话目录不跟随：`DSH_UI_DEBUG=1` 看 `dsh injected bridges: {tracker, opener, preview, rows}`（注入脚本是否装上）+ 页面 console 的 `[dsh-opener]` 日志，对照 docs/dsh-version-impact.md §6.1（R3：注入脚本依赖 dsh web 客户端内部实现，上游一改即静默失效）。
+11. **刷新后 dsh web 打不开 / 显示 401 纯文本页**：壳层把刷新改成走 launch token（`server.entryURL`）并对主框架 401 自动重认证一次（见 [main](modules/main.md)）。先看 `app.log`：`page load request (…)` 的 `ourServerAlive/entryToken` 与 `logAuthCookieState` 的 cookie 状态、`page recovery (401|load failure)` 是否出现；若持续 401，说明 token 通道本身有问题（对照 §6 与 docs/dsh-version-impact.md §4.4）；自愈只做一次（`loadRecoveryAttempted`），不成功即落到带「重试」的错误态，不会打转；
+12. 面板点会话行不跳转 web / 切会话目录不跟随：`DSH_UI_DEBUG=1` 看 `dsh injected bridges: {tracker, opener, preview, rows}`（注入脚本是否装上）+ 页面 console 的 `[dsh-opener]` 日志，对照 docs/dsh-version-impact.md §6.1（R3：注入脚本依赖 dsh web 客户端内部实现，上游一改即静默失效）。
 
 ## 发布清单（简版，分支规范见 docs/git-workflow.md）
 

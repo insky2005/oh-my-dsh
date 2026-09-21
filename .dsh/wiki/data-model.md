@@ -1,8 +1,8 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-09-17T23:45:00Z
-sources: [platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillInstaller.swift, docs/skills-manager-design.md, tests/skills-panel/, core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/DshWebCookieJanitor.swift, tests/shell-config/, tests/dsh-auth-cookies/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md]
+updated: 2026-09-21T08:45:10Z
+sources: [platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillInstaller.swift, docs/skills-manager-design.md, tests/skills-panel/, core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/DshWebCookieJanitor.swift, tests/shell-config/, tests/dsh-auth-cookies/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/TerminalWorkspaceTabs.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImageZoom.swift, docs/ux-feedback.md, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md]
 manual: false
 ---
 
@@ -26,6 +26,8 @@ manual: false
 | `previewPanelState` | 右栏可见性（true = 打开） | `setRightPanel` |
 | `rightPanelKind` | 右栏当前面板（"preview"/"terminal"/"wiki"/"tasks"/"browser"/"channel"/"review"/"skills"） | `setRightPanel` |
 | `previewPanelWidth` | 用户拖拽的面板宽度 | `splitViewDidResizeSubviews` |
+| `files.openProjectWith` | 文件面板「打开项目」的目标（`"panel"` / `"finder"` / bundle id / `"path:<应用路径>"`；缺省或记住的应用已卸载 → 改为弹菜单） | `FilePanelController.openWithKey` |
+| `terminal.autoCopy` | 终端「选中文本即复制」开关（**默认开**；无选区时 ⌘C 仍发 SIGINT） | `TerminalView.autoCopyKey` |
 | `browserLastURL` | 浏览器面板启动恢复的地址（默认 about:blank） | `BrowserPanelController` |
 | `browserRenderMode` | 浏览器面板 CEF 渲染模式（**默认窗口化**：判定 `!= "osr"`，删除/缺省即窗口化；显式设 `osr` 才走离屏帧自绘，2026-09-13 起） | `startBrowserAPI`（`CEFShim.setWindowedMode`） |
 | `legacyUserDefaultsMigratedAt` | 旧 UserDefaults 取值迁移标记（时间戳；写入即表示一次性合并已做，不再重复） | `ShellConfig.migrateLegacyUserDefaultsIfNeeded` |
@@ -60,6 +62,10 @@ manual: false
 - **`WikiPage`**（WikiPanel.swift）：`path / title / tags / updated / sources / manual`，由 frontmatter 解析而来；
 - **`WikiScanner.Index`**：`pages`、`backlinks`（页面绝对路径 → 引用它的页面列表）、`repoRoot`、`signature`（路径 → mtime，用于变更检测）；
 - **`WikiMarkdownRenderer`**：软换行用 Unicode `U+2028` 行分隔符（紧排换行、不产生段落间距；`\n` 在 NSTextView 中会触发段落间距），列表项之间补 `\n`；
+- **`TerminalWorkspaceTabs`**（TerminalWorkspaceTabs.swift，**纯内存、不落盘**）：终端页签的 workspace 归属模型——`workspaceByTab`（tabId → workspace key，key 复用 `WorkspaceTabMemory.key(for:)`）+ `globalTabs`（无法解析项目目录时 spawn 的兜底页签，处处可见）+ `forgottenTabs`（已关闭的 id 必须消失）+ `lastSelectedByWorkspace`（每个 workspace 上次选中的页签）；切换 workspace 只**隐藏**页签、不终止 shell，切回按记录恢复选中；见 [terminal-panel](modules/terminal-panel.md)；
+- **文件面板内存态**（不落盘）：`WorkspaceTabMemory`（工作区 → 已关闭页签路径 + 选中项，换根时记忆/恢复）、`rememberedTreeWidth`（用户拖出来的目录树宽度，关闭面板再打开时恢复，区间 160–420pt 且给内容区留 ≥240pt）、图片预览的 `followsViewport`（用户捏合后不再自动 fit）；见 [file-panel](modules/file-panel.md)；
+- **`OpenWithEntry`**（OpenWithApps.swift，纯模型）：`{id, title, bundleIdentifier?, l10nKey?, group(panel|finder|editor|terminal)}`——「用外部应用打开项目目录」的目录项；记忆值就是 `id`（bundle id 或 `path:<应用路径>`）；
+- **`EditorLoadPolicy`**（EditorLoadPolicy.swift，纯常量与纯函数，非持久数据）：分块高亮 300 行 / 32 KB、安全阀 4 万行 / 4 MB、写文件稳定性窗口 0.6s；
 - **`TerminalEmulator.Cell`**：`ch / fg / bg / bold / italic / underline / inverse / continuation`；`ParserState`（ground/escape/csi/osc/dcs 等）驱动 ANSI 解析；
 - **`TerminalSession.State`**：`running / exited(code) / terminated`；
 - **`WikiPanelController.generations`**（内存态，build 59→60）：`[canonicalRepo: Generation]`——生成状态按仓库根（`WikiRPC.canonical` 规范化路径）关联，多仓库可并发各一个生成；`syncGenerationUI()` 据此让 UI 只反映当前仓库；
