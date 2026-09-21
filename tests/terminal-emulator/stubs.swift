@@ -77,10 +77,27 @@ final class HeaderLabel: NSView {
     override var intrinsicContentSize: NSSize { NSSize(width: 40, height: 14) }
 }
 
+/// 真件：platforms/macos/src/PreviewPanel.swift —— 带标签 + chevron 的「菜单按钮」
+/// （主区跑 onAction，chevron 区开菜单；Files 面板头部用它，见 #2 后续）。
+final class PanelMenuButton: NSView {
+    enum Glyph { case folder, openInApp, reveal, doc, symbol(String) }
+    var title: String
+    var onAction: (() -> Void)?
+    var onShowMenu: (() -> Void)?
+    var isEnabled = true
+    init(glyph: Glyph, title: String, tooltip: String) {
+        self.title = title
+        super.init(frame: .zero)
+        self.toolTip = tooltip
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    func showMenu() { onShowMenu?() }
+}
+
 final class CustomIconButton: NSView {
     enum Glyph { case plus, close, folder, openInApp, reveal, symbol(String), play, stop }
     var onAction: (() -> Void)?
-    var onSecondaryAction: (() -> Void)?   // 真件：右键动作（Files 项目按钮 #2）
     var isEnabled = true
     var showsBackground = false
     var hoverColor: NSColor?

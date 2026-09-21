@@ -59,7 +59,14 @@
 
 **实现思路**：按已知 bundle id 用 `NSWorkspace.urlForApplication(withBundleIdentifier:)` 探测安装情况；`NSWorkspace.open(_:withApplicationAt:configuration:)` 打开目录；选择持久化到 `ShellConfig`（如 `openProjectWithApp`）。
 
-**实现**（`feature/ux-feedback-fixes`）：新增纯模型 `OpenWithApps.swift`（`OpenWithCatalog`：面板 / Finder / 13 个编辑器与 IDE / 8 个终端，按 bundle id 探测是否安装）+ `FilePanel.openProjectWithRememberedTarget()`（左键用记住的目标，未选过或应用已卸载则弹菜单）+ `showOpenWithMenu()`（右键常驻）+ 「选择其它应用…」文件选择器（按 bundle id 或路径记忆）。右键动作由 `CustomIconButton.onSecondaryAction` 提供（`PreviewPanel.swift`）。
+**实现**（`feature/ux-feedback-fixes`）：新增纯模型 `OpenWithApps.swift`（`OpenWithCatalog`：面板 / Finder / 13 个编辑器与 IDE / 8 个终端，按 bundle id 探测是否安装）+ `FilePanel.openProjectWithRememberedTarget()`、`showOpenWithMenu()`（含「选择其它应用…」文件选择器，按 bundle id 或路径记忆）。
+
+**UI 返工（QA 反馈）**：原来头部是纯图标按钮，功能要靠 tooltip 才看得懂，菜单还弹在按钮上方（挡住头部）。现在：
+
+- 新增共享控件 **`PanelMenuButton`**（`PreviewPanel.swift`）：Core Graphics 自绘的「图标 + 文字 + ▾」菜单按钮，带 hover 高亮、指针光标、菜单打开期间保持高亮；窄面板下自动退化为「图标 + ▾」chip，不会把文字压烂；
+- 头部两个按钮改为 **「打开项目 ▾」** 与 **「当前文件 ▾」**（后者合并了原来的「默认应用打开」+「在 Finder 中显示」，菜单里另有「复制路径」）；
+- **点击整颗按钮就是打开菜单**（不再做「主区=记住的应用、chevron=菜单」的分裂按钮——那会让用户在选过一次之后找不到「再选一次」的入口）；上次选择在菜单里打勾，**⌥点击**按钮才是「直接用上次的方式 / 默认应用打开」的快捷操作；
+- 菜单统一从按钮**下方**弹出（`popBelow(_:_:)`），不再压在头部标题上。
 
 **验收**：Finder / 至少一个 IDE / 一个终端能正确打开当前项目目录；重启 App 后记忆生效 —— 待手动 QA。
 

@@ -78,9 +78,10 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// 头部固定标题（「文件 / Files」，与活动栏同名）：**不跟随当前文件的路径**。
     /// 路径没有丢——页签 tooltip 与这里的悬停 tooltip 都带完整路径。
     private let titleLabel = HeaderLabel()
-    private var projectButton: CustomIconButton!
-    private var openButton: CustomIconButton!
-    private var revealButton: CustomIconButton!
+    /// 「打开项目 ▾」：主区用记住的目标打开项目目录，chevron 区（或右键）选应用。
+    private var projectButton: PanelMenuButton!
+    /// 「当前文件 ▾」：主区用默认应用打开，chevron 区给出 显示/复制路径 等动作。
+    private var fileMenuButton: PanelMenuButton!
     private var hideButton: CustomIconButton!
     private var saveButton: CustomIconButton!
     private let tabScroll = NSScrollView()
@@ -201,26 +202,33 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         titleLabel.text = Self.panelTitle
 
         // Icon buttons with tooltips (hover shows what each does).
-        projectButton = CustomIconButton(glyph: .folder, tooltip: L10n.tr("files.openWithHint"))
-        // 左键：用「记住的目标」打开（默认仍是面板内打开）；右键：始终弹出选择菜单。
-        // 这样常用工具一键直达，同时随时可换（docs/ux-feedback.md #2）。
+        // Header menu buttons: a label + a chevron say what the button is for and
+        // that it opens a list, and a click ALWAYS opens that list — picking an
+        // app must never turn the button into "that app only" with no way back
+        // (QA feedback). The last choice stays available on ⌥-click and is
+        // check-marked in the menu.
+        projectButton = PanelMenuButton(glyph: .folder,
+                                        title: L10n.tr("files.openProjectButton"),
+                                        tooltip: L10n.tr("files.openWithHint"))
         projectButton.onAction = { [weak self] in self?.openProjectWithRememberedTarget() }
-        projectButton.onSecondaryAction = { [weak self] in self?.showOpenWithMenu() }
-        let openButton = CustomIconButton(glyph: .openInApp, tooltip: L10n.tr("preview.openInDefaultAppHint"))
-        openButton.onAction = { [weak self] in self?.openInDefaultApp(nil) }
-        let revealButton = CustomIconButton(glyph: .reveal, tooltip: L10n.tr("preview.revealInFinderHint"))
-        revealButton.onAction = { [weak self] in self?.revealInFinder(nil) }
+        projectButton.onShowMenu = { [weak self] in self?.showOpenWithMenu() }
+        let fileMenuButton = PanelMenuButton(glyph: .doc,
+                                             title: L10n.tr("files.fileMenuButton"),
+                                             tooltip: L10n.tr("files.fileMenuHint"))
+        // ⌥-click keeps the old one-click behaviour (system default app); the
+        // menu lists it first along with the rest of the per-file actions.
+        fileMenuButton.onAction = { [weak self] in self?.openInDefaultApp(nil) }
+        fileMenuButton.onShowMenu = { [weak self] in self?.showFileActionsMenu() }
         let hideButton = CustomIconButton(glyph: .close, tooltip: L10n.tr("preview.closePanel"))
         hideButton.onAction = { [weak self] in self?.hidePanel(nil) }
         let saveButton = CustomIconButton(glyph: .symbol("externaldrive"), tooltip: L10n.tr("preview.saveHint"))
         saveButton.onAction = { [weak self] in self?.saveActiveTab() }
         saveButton.isEnabled = false
-        self.openButton = openButton
-        self.revealButton = revealButton
+        self.fileMenuButton = fileMenuButton
         self.hideButton = hideButton
         self.saveButton = saveButton
 
-        let actions = NSStackView(views: [projectButton, openButton, revealButton, saveButton, hideButton])
+        let actions = NSStackView(views: [projectButton, fileMenuButton, saveButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -506,8 +514,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// 标题本身是固定的面板名（见 panelTitle），不显示路径。
     private func updateHeader(for path: String) {
         titleLabel.toolTip = path
-        openButton.isEnabled = true
-        revealButton.isEnabled = true
+        fileMenuButton.isEnabled = true
     }
 
     /// 面板的固定标题：与活动栏的「文件 / Files」同名，语言切换时刷新。
@@ -639,8 +646,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     private func resetContentArea() {
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
         titleLabel.toolTip = nil
-        openButton.isEnabled = false
-        revealButton.isEnabled = false
+        fileMenuButton.isEnabled = false
         showEmptyState()
         refreshSaveState()
     }
@@ -648,9 +654,10 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// 语言切换后刷新头部按钮 tooltip（构建时一次性设置，需手动跟随）。
     func refreshTooltips() {
         titleLabel.text = Self.panelTitle
-        projectButton?.toolTip = L10n.tr("preview.openProjectHint")
-        openButton?.toolTip = L10n.tr("preview.openInDefaultAppHint")
-        revealButton?.toolTip = L10n.tr("preview.revealInFinderHint")
+        projectButton?.title = L10n.tr("files.openProjectButton")
+        projectButton?.toolTip = L10n.tr("files.openWithHint")
+        fileMenuButton?.title = L10n.tr("files.fileMenuButton")
+        fileMenuButton?.toolTip = L10n.tr("files.fileMenuHint")
         hideButton?.toolTip = L10n.tr("preview.closePanel")
         saveButton?.toolTip = L10n.tr("preview.saveHint")
     }
@@ -804,9 +811,41 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         }
         menu.addItem(.separator())
         add(L10n.tr("files.openWithOther"), id: "choose")
-        menu.popUp(positioning: nil,
-                   at: NSPoint(x: 0, y: button.bounds.height + 2),
-                   in: button)
+        popBelow(menu, button)
+    }
+
+    /// The current file's action menu — the former "open with default app" and
+    /// "reveal in Finder" buttons merged into one dropdown (QA feedback), with
+    /// the default-app action kept as the button's primary click.
+    private func showFileActionsMenu() {
+        guard let button = fileMenuButton, currentTabPath != nil else { return }
+        let menu = NSMenu(title: L10n.tr("files.fileMenuButton"))
+        func add(_ title: String, _ action: Selector) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        add(L10n.tr("preview.openInDefaultApp"), #selector(openInDefaultApp(_:)))
+        add(L10n.tr("files.revealInFinder"), #selector(revealInFinder(_:)))
+        menu.addItem(.separator())
+        add(L10n.tr("files.copyPath"), #selector(copyCurrentFilePath(_:)))
+        popBelow(menu, button)
+    }
+
+    /// 头部按钮的复制路径动作。
+    @objc private func copyCurrentFilePath(_ sender: Any?) {
+        guard let path = currentTabPath else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(path, forType: .string)
+        AppLog.shared.log("preview copy path: \(path)")
+    }
+
+    /// Drop a menu just under a header button. The anchor is the menu's TOP-LEFT
+    /// corner in the view's (non-flipped) coordinates, so a small negative y puts
+    /// it below the button instead of over the header strip.
+    private func popBelow(_ menu: NSMenu, _ button: NSView) {
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: button)
     }
 
     @objc private func openWithMenuItemTapped(_ sender: NSMenuItem) {

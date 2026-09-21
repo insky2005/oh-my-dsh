@@ -167,7 +167,12 @@ enum L10n {
         "preview.openProject": ("项目目录", "Project Folder"),
         "preview.openProjectHint": ("在面板中打开当前项目目录", "Open the current project folder in the panel"),
         // Files 面板：项目目录「用外部应用打开」（docs/ux-feedback.md #2）。
-        "files.openWithHint": ("打开项目目录（右键选择应用）", "Open the project directory (right-click to choose an app)"),
+        "files.openWithHint": ("打开项目目录：点击选择方式（⌥点击用上次的方式）", "Open the project directory: click to choose how (⌥-click repeats the last choice)"),
+        "files.openProjectButton": ("打开项目", "Open Project"),
+        "files.fileMenuButton": ("当前文件", "Current File"),
+        "files.fileMenuHint": ("当前文件操作：点击选择（⌥点击直接用默认应用打开）", "Current file actions: click to choose (⌥-click opens with the default app)"),
+        "files.revealInFinder": ("在 Finder 中显示", "Show in Finder"),
+        "files.copyPath": ("复制路径", "Copy Path"),
         "files.openWithMenu": ("用以下方式打开项目目录", "Open Project Directory With"),
         "files.openInPanel": ("在文件面板中打开", "Open in Files Panel"),
         "files.openInFinder": ("在 Finder 中打开", "Open in Finder"),
