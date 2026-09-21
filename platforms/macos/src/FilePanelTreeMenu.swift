@@ -40,13 +40,13 @@ enum TreeMenuModel {
         guard hasRoot else { return [] }
         var entries: [TreeMenuEntry] = []
 
-        // Group 1: create inside the clicked directory.
-        // A file's menu is about that file, so "New Folder" is not offered for it
-        // (QA feedback) — "New File" still is: it lands next to the file.
+        // Group 1: create inside the clicked directory. A FILE's menu is about that
+        // file, so it offers no creation at all (QA feedback: neither "New Folder"
+        // nor "New File" — you rename it, delete it, or reveal it).
         if !isFile {
             entries.append(TreeMenuEntry(item: .newFolder, separatorBefore: false, enabled: true))
+            entries.append(TreeMenuEntry(item: .newFile, separatorBefore: false, enabled: true))
         }
-        entries.append(TreeMenuEntry(item: .newFile, separatorBefore: false, enabled: true))
 
         // Group 2: operations on the clicked entry (root excluded).
         if hasRow {

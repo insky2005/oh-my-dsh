@@ -27,15 +27,14 @@ test("Delete stays with Rename", onFolder.first { $0.item == .delete }?.separato
 test("no separator above New Folder", onFolder.first?.separatorBefore == false)
 test("every folder entry is enabled", onFolder.allSatisfy { $0.enabled })
 
-// A right click on a FILE: no "New Folder" (the menu is about that file), and the
-// ordering/separator stay the same.
+// A right click on a FILE: the menu is about that file only — no creation at all.
 let onFile = TreeMenuModel.entries(hasRoot: true, hasRow: true, isRoot: false, isFile: true)
-test("a file has no New Folder", items(onFile) == [.newFile, .rename, .delete, .reveal])
-test("a file can still create a sibling file", enabled(onFile, .newFile) == true)
-test("the separator stays above Rename for a file",
+test("a file offers no creation entries", items(onFile) == [.rename, .delete, .reveal])
+test("a file menu has no separators at all (nothing precedes Rename)",
      onFile.first { $0.item == .rename }?.separatorBefore == true)
-test("a file gets its own group for Show in Finder too",
+test("a file gets its own group for Show in Finder",
      onFile.first { $0.item == .reveal }?.separatorBefore == true)
+test("every file entry is enabled", onFile.allSatisfy { $0.enabled })
 
 // The project root: visible but immutable.
 let onRoot = TreeMenuModel.entries(hasRoot: true, hasRow: true, isRoot: true, isFile: false)
