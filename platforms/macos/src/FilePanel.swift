@@ -73,6 +73,11 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// per-workspace tab memory), exactly as clicking it does.
     func performCloseAction() { hidePanel(nil) }
 
+    /// Whether the per-file action button («打开文件») is usable. It must follow
+    /// the selected tab: a button that looks usable with nothing open silently
+    /// does nothing when clicked (QA report: "the dropdown does not respond").
+    var fileActionButtonEnabled: Bool { fileMenuButton?.isEnabled ?? false }
+
     // MARK: - Subviews
 
     /// 头部固定标题（「文件 / Files」，与活动栏同名）：**不跟随当前文件的路径**。
@@ -499,7 +504,18 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// 标题本身是固定的面板名（见 panelTitle），不显示路径。
     private func updateHeader(for path: String) {
         titleLabel.toolTip = path
-        fileMenuButton.isEnabled = true
+        // 「打开文件」acts on the FILE shown in the panel: it is disabled for a
+        // folder tab, and while nothing is open at all (a button that looks
+        // usable but silently does nothing is worse than a disabled one — QA
+        // feedback: the menu appeared to be broken).
+        fileMenuButton.isEnabled = !Self.isDirectory(path)
+    }
+
+    /// Whether a path is a directory (a folder tab is not a "file").
+    static func isDirectory(_ path: String) -> Bool {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else { return false }
+        return isDir.boolValue
     }
 
     /// 面板的固定标题：与活动栏的「文件 / Files」同名，语言切换时刷新。
@@ -803,7 +819,14 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// "reveal in Finder" buttons merged into one dropdown (QA feedback), with
     /// the default-app action kept as the button's primary click.
     private func showFileActionsMenu() {
-        guard let button = fileMenuButton, currentTabPath != nil else { return }
+        guard let button = fileMenuButton, let path = currentTabPath else {
+            AppLog.shared.log("preview file menu: no file tab is selected — nothing to act on")
+            return
+        }
+        guard !Self.isDirectory(path) else {
+            AppLog.shared.log("preview file menu: the selected tab is a folder (\(path))")
+            return
+        }
         let menu = NSMenu(title: L10n.tr("files.fileMenuButton"))
         func add(_ title: String, _ action: Selector) {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
@@ -1768,6 +1791,8 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     }
 
     private func showEmptyState() {
+        // Nothing is open: the per-file action button has nothing to act on.
+        fileMenuButton?.isEnabled = false
         showPlaceholder(symbol: "doc.text.magnifyingglass", title: L10n.tr("preview.empty"))
     }
 

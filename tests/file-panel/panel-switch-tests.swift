@@ -241,5 +241,20 @@ test("a tab under a renamed folder follows it",
      panel.openTabPaths == [wsA.appendingPathComponent("manuals/inner.md").path])
 panel.closeActiveTab()
 
+// --- the per-file action button follows the selected tab --------------------
+// (QA: it appeared usable while nothing was open, and clicking it did nothing)
+
+let freshPanel = FilePanelController()
+test("the file action button starts disabled (nothing open)", !freshPanel.fileActionButtonEnabled)
+freshPanel.open(path: a1.path)
+test("opening a file enables the file action button", freshPanel.fileActionButtonEnabled)
+freshPanel.open(path: wsA.path)
+test("a folder tab disables the file action button", !freshPanel.fileActionButtonEnabled)
+test("the folder is the selected tab", freshPanel.selectedTabPath == wsA.path)
+freshPanel.open(path: a1.path)
+test("selecting a file again re-enables it", freshPanel.fileActionButtonEnabled)
+freshPanel.performCloseAction()
+test("closing the panel disables it again", !freshPanel.fileActionButtonEnabled)
+
 try? fm.removeItem(at: root)
 print("done")
