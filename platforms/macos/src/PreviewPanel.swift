@@ -312,6 +312,10 @@ final class HeaderLabel: NSView {
 final class CustomIconButton: NSView {
     enum Glyph { case plus, close, folder, openInApp, reveal, symbol(String), play, stop }
     var onAction: (() -> Void)?
+    /// Right-click action for buttons with a secondary behaviour: the Files panel
+    /// project button always shows the open-with menu on a secondary click, while
+    /// a left click performs the remembered choice (issue #2).
+    var onSecondaryAction: (() -> Void)?
     var isEnabled = true {
         didSet { needsDisplay = true }
     }
@@ -359,6 +363,13 @@ final class CustomIconButton: NSView {
     override func mouseExited(with event: NSEvent) { isHovered = false; needsDisplay = true }
     override func mouseDown(with event: NSEvent) {
         if isEnabled { onAction?() }
+    }
+
+    /// Secondary click runs the secondary behaviour when one is set (otherwise
+    /// it falls back to the primary action).
+    override func rightMouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        (onSecondaryAction ?? onAction)?()
     }
 
     override func draw(_ dirtyRect: NSRect) {

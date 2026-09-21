@@ -201,8 +201,11 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         titleLabel.text = Self.panelTitle
 
         // Icon buttons with tooltips (hover shows what each does).
-        projectButton = CustomIconButton(glyph: .folder, tooltip: L10n.tr("preview.openProjectHint"))
-        projectButton.onAction = { [weak self] in self?.openProjectDirectory(nil) }
+        projectButton = CustomIconButton(glyph: .folder, tooltip: L10n.tr("files.openWithHint"))
+        // 左键：用「记住的目标」打开（默认仍是面板内打开）；右键：始终弹出选择菜单。
+        // 这样常用工具一键直达，同时随时可换（docs/ux-feedback.md #2）。
+        projectButton.onAction = { [weak self] in self?.openProjectWithRememberedTarget() }
+        projectButton.onSecondaryAction = { [weak self] in self?.showOpenWithMenu() }
         let openButton = CustomIconButton(glyph: .openInApp, tooltip: L10n.tr("preview.openInDefaultAppHint"))
         openButton.onAction = { [weak self] in self?.openInDefaultApp(nil) }
         let revealButton = CustomIconButton(glyph: .reveal, tooltip: L10n.tr("preview.revealInFinderHint"))
@@ -281,6 +284,20 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         treeOutline.dataSource = self
         treeOutline.delegate = self
         treeOutline.autoresizesOutlineColumn = true
+        // 目录树右键菜单（docs/ux-feedback.md #1）：在点中的目录里新建文件/文件夹。
+        // NSOutlineView 的 clickedRow 在菜单弹出前已更新，动作里读它即可。
+        let treeMenu = NSMenu()
+        let newFileItem = NSMenuItem(title: L10n.tr("files.newFile"), action: #selector(newFileInTree(_:)), keyEquivalent: "")
+        newFileItem.target = self
+        treeMenu.addItem(newFileItem)
+        let newFolderItem = NSMenuItem(title: L10n.tr("files.newFolder"), action: #selector(newFolderInTree(_:)), keyEquivalent: "")
+        newFolderItem.target = self
+        treeMenu.addItem(newFolderItem)
+        treeMenu.addItem(.separator())
+        let revealTreeItem = NSMenuItem(title: L10n.tr("files.revealInTree"), action: #selector(revealTreeSelection(_:)), keyEquivalent: "")
+        revealTreeItem.target = self
+        treeMenu.addItem(revealTreeItem)
+        treeOutline.menu = treeMenu
 
         treeScroll.documentView = treeOutline
         treeScroll.hasVerticalScroller = true
@@ -700,6 +717,279 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
                 AppLog.shared.log("preview project dir: RPC failed, using picker")
                 self.pickDirectoryFallback()
             }
+        }
+    }
+    // MARK: - Open the project directory with… (docs/ux-feedback.md #2)
+
+    /// ShellConfig key holding the remembered target id ("panel" / "finder" /
+    /// a bundle identifier / "path:<app path>").
+    static let openWithKey = "files.openProjectWith"
+
+    /// Left click: run the remembered target. First use (nothing remembered) or
+    /// a remembered application that is no longer installed falls back to the
+    /// menu, so the user always learns the feature exists.
+    private func openProjectWithRememberedTarget() {
+        guard let remembered = ShellConfig.shared.string(forKey: Self.openWithKey) else {
+            showOpenWithMenu()
+            return
+        }
+        // An application picked through the file panel is remembered by PATH —
+        // it is by definition not in the catalog.
+        if remembered.hasPrefix("path:") {
+            guard let appURL = appURL(forPersistedId: remembered) else {
+                showOpenWithMenu()
+                return
+            }
+            resolveProjectDirectory { [weak self] cwd in
+                guard let self = self, let dir = cwd ?? self.treeRoot?.path else { return }
+                self.openDirectoryWithApp(dir, appURL: appURL)
+            }
+            return
+        }
+        guard let entry = OpenWithCatalog.rememberedEntry(remembered, isInstalled: { self.isInstalled($0) }) else {
+            showOpenWithMenu()
+            return
+        }
+        performOpenWith(entry)
+    }
+
+    private func isInstalled(_ entry: OpenWithEntry) -> Bool { appURL(for: entry) != nil }
+
+    private func appURL(for entry: OpenWithEntry) -> URL? {
+        guard let id = entry.bundleIdentifier else { return nil }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)
+    }
+
+    /// Application URL for a persisted id: a catalog bundle id, an app picked
+    /// through the file panel ("path:…"), or any other bundle identifier.
+    private func appURL(forPersistedId id: String) -> URL? {
+        if id.hasPrefix("path:") {
+            let path = String(id.dropFirst("path:".count))
+            return FileManager.default.fileExists(atPath: path) ? URL(fileURLWithPath: path) : nil
+        }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)
+    }
+
+    /// The picker: panel itself, Finder, then every INSTALLED editor / IDE /
+    /// terminal from the catalog, then "choose another app…".
+    private func showOpenWithMenu() {
+        guard let button = projectButton else { return }
+        let remembered = ShellConfig.shared.string(forKey: Self.openWithKey)
+        let menu = NSMenu(title: L10n.tr("files.openWithMenu"))
+        func add(_ title: String, id: String) {
+            let item = NSMenuItem(title: title, action: #selector(openWithMenuItemTapped(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = id
+            item.state = (id == remembered) ? .on : .off
+            menu.addItem(item)
+        }
+        add(L10n.tr("files.openInPanel"), id: OpenWithCatalog.panel.id)
+        add(L10n.tr("files.openInFinder"), id: OpenWithCatalog.finder.id)
+        let editors = OpenWithCatalog.editors.filter { isInstalled($0) }
+        if !editors.isEmpty {
+            menu.addItem(.separator())
+            for entry in editors { add(entry.title, id: entry.id) }
+        }
+        let terminals = OpenWithCatalog.terminals.filter { isInstalled($0) }
+        if !terminals.isEmpty {
+            menu.addItem(.separator())
+            for entry in terminals { add(entry.title, id: entry.id) }
+        }
+        menu.addItem(.separator())
+        add(L10n.tr("files.openWithOther"), id: "choose")
+        menu.popUp(positioning: nil,
+                   at: NSPoint(x: 0, y: button.bounds.height + 2),
+                   in: button)
+    }
+
+    @objc private func openWithMenuItemTapped(_ sender: NSMenuItem) {
+        let id = (sender.representedObject as? String) ?? ""
+        if id == "choose" { pickApplicationForOpenWith(); return }
+        guard let entry = OpenWithCatalog.entry(id: id) else { return }
+        ShellConfig.shared.set(id, forKey: Self.openWithKey)
+        AppLog.shared.log("preview open-with remembered: \(id)")
+        performOpenWith(entry)
+    }
+
+    /// Pick an application that is not in the catalog (stored by path so it
+    /// keeps working, or by bundle id when the app has one).
+    private func pickApplicationForOpenWith() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowsOtherFileTypes = true
+        panel.message = L10n.tr("files.openWithOtherMessage")
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        guard let window = view.window else { return }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self = self else { return }
+            let id = Bundle(url: url)?.bundleIdentifier ?? OpenWithCatalog.pathEntryId(url.path)
+            ShellConfig.shared.set(id, forKey: Self.openWithKey)
+            AppLog.shared.log("preview open-with picked: \(url.path) id=\(id)")
+            self.openDirectoryWithApp(url.path, appURL: url)
+        }
+    }
+
+    /// Run one target. The panel target keeps its own resolution path (tree +
+    /// folder tab); everything else hands the ACTIVE PROJECT DIRECTORY over.
+    private func performOpenWith(_ entry: OpenWithEntry) {
+        switch entry.group {
+        case .panel:
+            openProjectDirectory(nil)
+        case .finder:
+            resolveProjectDirectory { [weak self] cwd in
+                guard let self = self else { return }
+                guard let dir = cwd ?? self.treeRoot?.path else {
+                    self.pickDirectoryFallback()
+                    return
+                }
+                AppLog.shared.log("preview open-with: Finder -> \(dir)")
+                NSWorkspace.shared.open(URL(fileURLWithPath: dir))
+            }
+        case .editor, .terminal:
+            guard let appURL = appURL(for: entry) else {
+                AppLog.shared.log("preview open-with: \(entry.id) is not installed; showing the menu")
+                showOpenWithMenu()
+                return
+            }
+            resolveProjectDirectory { [weak self] cwd in
+                guard let self = self, let dir = cwd ?? self.treeRoot?.path else { return }
+                self.openDirectoryWithApp(dir, appURL: appURL)
+            }
+        }
+    }
+
+    /// Open `path` with an external application (editors / IDEs open the folder,
+    /// terminals open a new shell there).
+    private func openDirectoryWithApp(_ path: String, appURL: URL) {
+        AppLog.shared.log("preview open-with: \(appURL.lastPathComponent) -> \(path)")
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.open([URL(fileURLWithPath: path)],
+                                withApplicationAt: appURL,
+                                configuration: config) { [weak self] _, error in
+            guard let error = error else { return }
+            AppLog.shared.log("preview open-with failed: \(error.localizedDescription)")
+            DispatchQueue.main.async {
+                self?.presentPanelError(L10n.tr("files.openWithFailed", error.localizedDescription))
+            }
+        }
+    }
+
+    // MARK: - New file / new folder in the tree (docs/ux-feedback.md #1)
+
+    /// The directory a create action applies to: the clicked folder, the clicked
+    /// file’s parent, or the tree root when the click was on empty space.
+    private func newItemTargetDirectory() -> String? {
+        let row = treeOutline.clickedRow
+        guard row >= 0, let node = treeOutline.item(atRow: row) as? TreeNode else { return treeRoot?.path }
+        return node.isDir ? node.path : (node.path as NSString).deletingLastPathComponent
+    }
+
+    @objc private func newFileInTree(_ sender: Any?) { promptForNewItem(isDir: false) }
+
+    @objc private func newFolderInTree(_ sender: Any?) { promptForNewItem(isDir: true) }
+
+    /// Ask for a name (sheet over the window, modal alert when there is none) and
+    /// create the item inside the target directory.
+    private func promptForNewItem(isDir: Bool) {
+        guard let dir = newItemTargetDirectory() else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.tr(isDir ? "files.newFolder" : "files.newFile")
+        alert.informativeText = L10n.tr("files.newItemLocation", dir)
+        alert.addButton(withTitle: L10n.tr("files.create"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = L10n.tr(isDir ? "files.newFolderPlaceholder" : "files.newFilePlaceholder")
+        alert.accessoryView = field
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.createItem(named: field.stringValue, isDir: isDir, in: dir)
+        }
+        if let window = view.window {
+            alert.beginSheetModal(for: window, completionHandler: finish)
+            DispatchQueue.main.async { window.makeFirstResponder(field) }
+        } else {
+            finish(alert.runModal())
+        }
+    }
+
+    /// Create an empty file (or a folder) and reveal it in the tree. The new file
+    /// opens in a preview/editor tab so it can be filled in straight away.
+    private func createItem(named rawName: String, isDir: Bool, in dir: String) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        guard !name.contains("/"), name != ".", name != ".." else {
+            presentPanelError(L10n.tr("files.invalidName"))
+            return
+        }
+        let full = (dir as NSString).appendingPathComponent(name)
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: full) else {
+            presentPanelError(L10n.tr("files.alreadyExists", name))
+            return
+        }
+        do {
+            if isDir {
+                try fm.createDirectory(atPath: full, withIntermediateDirectories: false)
+            } else if !fm.createFile(atPath: full, contents: Data()) {
+                throw NSError(domain: "oh-my-dsh", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: L10n.tr("files.createFailed", full)])
+            }
+        } catch {
+            AppLog.shared.log("preview tree create failed: \(full) \u{2014} \(error.localizedDescription)")
+            presentPanelError(L10n.tr("files.createFailed", error.localizedDescription))
+            return
+        }
+        AppLog.shared.log("preview tree created \(isDir ? "folder" : "file"): \(full)")
+        expandTreePath(dir)
+        refreshTree()
+        selectTreeRow(path: full)
+        if !isDir { open(path: full) }
+    }
+
+    /// Expand the tree row showing `path` (so a freshly created child becomes a
+    /// visible row after the reload).
+    private func expandTreePath(_ path: String) {
+        for row in 0..<treeOutline.numberOfRows {
+            if let node = treeOutline.item(atRow: row) as? TreeNode, node.path == path {
+                treeOutline.expandItem(node)
+                return
+            }
+        }
+    }
+
+    /// Select (and scroll to) the tree row showing `path`.
+    private func selectTreeRow(path: String) {
+        for row in 0..<treeOutline.numberOfRows {
+            if let node = treeOutline.item(atRow: row) as? TreeNode, node.path == path {
+                treeOutline.selectRowIndexes([row], byExtendingSelection: false)
+                treeOutline.scrollRowToVisible(row)
+                return
+            }
+        }
+    }
+
+    /// Context menu: reveal the clicked tree entry in Finder.
+    @objc private func revealTreeSelection(_ sender: Any?) {
+        let row = treeOutline.clickedRow
+        guard row >= 0, let node = treeOutline.item(atRow: row) as? TreeNode else { return }
+        AppLog.shared.log("preview reveal in Finder: \(node.path)")
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: node.path)])
+    }
+
+    /// Non-blocking error alert (sheet over the panel window).
+    private func presentPanelError(_ message: String) {
+        AppLog.shared.log("preview panel error: \(message)")
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L10n.tr("btn.ok"))
+        if let window = view.window {
+            alert.beginSheetModal(for: window, completionHandler: nil)
+        } else {
+            alert.runModal()
         }
     }
 

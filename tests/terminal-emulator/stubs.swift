@@ -80,6 +80,7 @@ final class HeaderLabel: NSView {
 final class CustomIconButton: NSView {
     enum Glyph { case plus, close, folder, openInApp, reveal, symbol(String), play, stop }
     var onAction: (() -> Void)?
+    var onSecondaryAction: (() -> Void)?   // 真件：右键动作（Files 项目按钮 #2）
     var isEnabled = true
     var showsBackground = false
     var hoverColor: NSColor?
