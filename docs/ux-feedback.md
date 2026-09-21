@@ -283,7 +283,14 @@
 - **重新打开时恢复**：监听 `contentSplit` 的 `frameDidChangeNotification`，检测 **0 → N** 的转变（面板刚被重新展开），把记住的宽度夹取后 `setPosition` 回去；日志会打印 `preview tree width restored: Npt (was Mpt)`。
 - **夹取规则**抽成纯函数 `FilePanelController.restoredTreeWidth(_:splitWidth:)`：不超 160–420 的区间，并且在窄面板下至少给内容区留 240pt（避免恢复成一个把内容挤没的宽度）。分隔条上下限也改用同一组常量，不再散落魔法数字。
 
-**第二轮修正（第一版没修好，QA 反馈）**：第一版想靠「contentSplit 宽度 0 → N 的转变」来触发恢复，但看 `AppDelegate.setRightPanel` 才明白：关闭面板时壳层是把面板视图**从 split view 里移除**、再次打开时**重新 addSubview** —— 视图被摘掉时自身宽度并不会变成 0，所以那个转变**永远不会发生**，恢复逻辑从未执行。
+**第三轮修正（前两版都没修好，QA 反馈 + 实测日志定位）**：拿真实 `app.log` 对照后确认 —— 两版恢复逻辑**从头到尾没有执行过**，日志里既没有恢复记录，也从未「记住」过宽度。根因是**事件监视器拿不到分隔条拖拽**：`NSSplitView` 拖拽分隔条时跑的是它**自己的 event-tracking loop**（`nextEventMatchingMask:` 一类），这类事件**不会**经过 `NSEvent.addLocalMonitorForEvents`，所以 `leftMouseDown/Up` 监视器从不触发 → `rememberedTreeWidth` 永远是 nil → 恢复分支的 `guard let remembered` 直接返回。
+
+**第三轮做法**：
+
+- 新增 `TreeDividerSplitView: NSSplitView` 子类（文件名里就叫 `TreeDividerSplitView`），override `mouseDown(with:)` —— 因为它内部会跑完整个拖拽 tracking loop，`super.mouseDown` 返回即「拖拽结束」，于是能**准确**知道「用户拖拽中 / 已结束」，不再依赖任何事件监视器；
+- 拖拽中：`splitViewDidResizeSubviews` 实时跟随并记录宽度；拖拽结束：落定并打日志 `preview tree width remembered: Npt`；
+- **非**拖拽导致的宽度变化 → 一律纠正回记住的宽度，日志 `preview tree width corrected: 420pt -> Npt (remembered Npt)`；
+- 即使从未拖过，也有两个「兜底记录点」：关闭面板时（`hidePanel`，此刻宽度还是用户的）、以及面板被切走时（根视图 `onUnmounted`），所以默认 160 也能正确回来。
 
 改为两条不依赖「宽度转变」的路径：
 
