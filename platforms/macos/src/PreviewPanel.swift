@@ -68,29 +68,40 @@ class HoverButton: NSButton {
 
     override func draw(_ dirtyRect: NSRect) {
         if showsFeedback && isEnabled {
-            if state == .on {
-                NSColor.controlAccentColor.withAlphaComponent(0.25).setFill()
-            } else if isHovered {
-                NSColor.quaternaryLabelColor.withAlphaComponent(0.45).setFill()
-            }
-            if state == .on || isHovered {
-                NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2),
-                             xRadius: 5, yRadius: 5).fill()
-            }
+            // Panel controls share one fill: the normal one, or the highlight
+            // fill while hovered / toggled on (see PanelControl).
+            let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            PanelControl.fill(dark: dark, highlighted: state == .on || isHovered).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2),
+                         xRadius: 5, yRadius: 5).fill()
         }
         super.draw(dirtyRect)
     }
 }
 
-/// A view that fills itself with a dynamic color, re-resolved whenever the
-/// effective appearance changes. Used to give every panel's top bar a
-/// consistent, always-visible background strip in light AND dark mode (a
-/// fixed CGColor layer background would freeze the light/dark resolution).
+/// A panel tab title: a bezelless push-on-push-off button that paints the shared
+/// panel-control fill (normal / highlight when selected or hovered) instead of an
+/// AppKit bezel, so tabs read the same as the cards and buttons beside them.
+/// The intrinsic size keeps a comfortable text padding — a borderless NSButton
+/// otherwise hugs its title exactly.
+final class PanelTabButton: HoverButton {
+    override var intrinsicContentSize: NSSize {
+        let base = super.intrinsicContentSize
+        return NSSize(width: base.width + 16, height: max(base.height, 24))
+    }
+}
+
+/// A view that fills itself with the panel surface (see PanelSurface.swift —
+/// the one #1B1B1C / #F9FAFB token every panel's top bar and content area
+/// paints), or an explicit color,
+/// re-resolved whenever the effective appearance changes. Used to give every
+/// panel's top bar and content area a consistent, always-visible background in
+/// light AND dark mode (a fixed CGColor layer background would freeze the
+/// light/dark resolution).
 final class DynamicFillView: NSView {
-    /// Semantic background with EXPLICIT per-mode shades (no dynamic-color
-    /// resolution at draw time — that proved unreliable in some environments).
-    enum Kind { case window, control, custom(NSColor) }
-    var kind: Kind = .window {
+    /// Panel surface (default) or an explicit, non-adaptive color.
+    enum Kind { case panel, custom(NSColor) }
+    var kind: Kind = .panel {
         didSet { needsDisplay = true }
     }
     override var isOpaque: Bool { true }
@@ -103,15 +114,10 @@ final class DynamicFillView: NSView {
         needsDisplay = true
     }
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let color: NSColor
         switch kind {
-        case .window:
-            // A clearly GRAY strip (distinct from both the near-black terminal
-            // screen and the window chrome) in dark mode; light gray in light.
-            color = dark ? NSColor(calibratedWhite: 0.28, alpha: 1) : NSColor(calibratedWhite: 0.94, alpha: 1)
-        case .control:
-            color = dark ? NSColor(calibratedWhite: 0.20, alpha: 1) : NSColor(calibratedWhite: 0.86, alpha: 1)
+        case .panel:
+            color = PanelSurface.color(for: effectiveAppearance)
         case .custom(let c):
             color = c
         }
@@ -309,11 +315,7 @@ final class CustomIconButton: NSView {
     var isEnabled = true {
         didSet { needsDisplay = true }
     }
-    /// 常显圆角背景（页签「+」等需要与页签样式统一的按钮）。
-    var showsBackground = false {
-        didSet { needsDisplay = true }
-    }
-    /// hover 高亮色（默认 accent；页签关闭按钮用红色更明显）。
+    /// hover 高亮色（默认走 PanelControl 的高亮档；页签关闭按钮用红色更明显）。
     var hoverColor: NSColor? = nil {
         didSet { needsDisplay = true }
     }
@@ -360,12 +362,17 @@ final class CustomIconButton: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        if (isHovered || showsBackground) && isEnabled {
-            let c = hoverColor ?? NSColor.controlAccentColor
-            c.withAlphaComponent(isHovered ? 0.35 : 0.15).setFill()
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        if isEnabled {
+            // Every icon button carries the shared panel-control fill: the normal
+            // one, or the highlight one on hover (red for the tab close button).
+            if isHovered, let hover = hoverColor {
+                hover.withAlphaComponent(0.35).setFill()
+            } else {
+                PanelControl.fill(dark: dark, highlighted: isHovered).setFill()
+            }
             NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 5, yRadius: 5).fill()
         }
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let base: NSColor = dark ? NSColor(white: 0.9, alpha: 1) : NSColor(white: 0.25, alpha: 1)
         let color = isEnabled ? base : base.withAlphaComponent(0.35)
 
@@ -571,7 +578,7 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         // Header strip: explicit dynamic background so the top bar is a
         // defined block (consistent with the terminal panel) in both modes.
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(pathLabel)
         header.addSubview(actions)
@@ -618,6 +625,8 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
 
         // --- content area: project tree (left) | preview (right) ---
         treeOutline.headerView = nil
+        // 内容区 = 面板底色（默认 controlBackgroundColor 会盖住面板根视图）
+        treeOutline.backgroundColor = PanelSurface.dynamic
         let treeColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
         treeOutline.addTableColumn(treeColumn)
         treeOutline.outlineTableColumn = treeColumn
@@ -711,8 +720,15 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
 
     private func makeTabItem(id: Int, title: String, tooltip: String)
         -> (view: NSView, titleButton: NSButton, closeButton: NSButton) {
-        let titleButton = NSButton(title: title, target: self, action: #selector(selectTab(_:)))
-        titleButton.bezelStyle = .texturedRounded
+        // PanelTabButton = bezelless HoverButton: the tab paints the shared
+        // panel-control fill (normal, highlight when selected or hovered)
+        // instead of an AppKit bezel.
+        let titleButton = PanelTabButton(frame: .zero)
+        titleButton.title = title
+        titleButton.target = self
+        titleButton.action = #selector(selectTab(_:))
+        titleButton.isBordered = false
+        titleButton.font = .systemFont(ofSize: 12)
         titleButton.setButtonType(.pushOnPushOff)
         titleButton.state = .off
         titleButton.tag = id
@@ -1231,6 +1247,7 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         table.addTableColumn(column(L10n.tr("preview.modified"), id: "modified", width: 130))
         table.rowHeight = 20
         table.usesAlternatingRowBackgroundColors = true
+        table.backgroundColor = PanelSurface.dynamic
         table.dataSource = self
         table.delegate = self
         table.target = self
@@ -1240,7 +1257,7 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
+        scroll.backgroundColor = PanelSurface.dynamic
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         embed(scroll)
@@ -1376,15 +1393,15 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         // NSTextView.scrollableTextView() returns a ready-made scroll view with
         // a vertically resizable text view — the reliable way to display text
         // of any length (a bare NSTextView with a zero frame is not visible).
-        // Backgrounds use the dynamic .textBackgroundColor so the preview
+        // Backgrounds use the dynamic PanelSurface.dynamic so the preview
         // follows light/dark appearance (a bare scrollableTextView renders a
         // fixed white background otherwise).
         let scroll = NSTextView.scrollableTextView()
         scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
+        scroll.backgroundColor = PanelSurface.dynamic
         guard let textView = scroll.documentView as? NSTextView else { return }
         textView.drawsBackground = true
-        textView.backgroundColor = .textBackgroundColor
+        textView.backgroundColor = PanelSurface.dynamic
         textView.isEditable = false
         textView.isRichText = false
         textView.textContainerInset = NSSize(width: 8, height: 8)
@@ -1418,7 +1435,7 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         let scroll = NSScrollView()
         scroll.documentView = imageView
         scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
+        scroll.backgroundColor = PanelSurface.dynamic
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
@@ -1436,7 +1453,7 @@ final class PreviewPanelController: NSObject, NSTableViewDataSource, NSTableView
         pdfView.document = doc
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
-        pdfView.backgroundColor = .textBackgroundColor
+        pdfView.backgroundColor = PanelSurface.dynamic
         AppLog.shared.log("preview pdf: \(doc.pageCount) pages")
         embed(pdfView)
     }

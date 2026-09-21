@@ -14,8 +14,10 @@ cp ../terminal-emulator/stubs.swift "$TMP/stubs.swift"
 cp ../../platforms/macos/src/BrowserPanel.swift "$TMP/BrowserPanel.swift"
 cp ../../platforms/macos/src/BrowserAPI.swift "$TMP/BrowserAPI.swift"
 cp ../../platforms/macos/src/BrowserCDP.swift "$TMP/BrowserCDP.swift"
+cp ../../platforms/macos/src/PanelSurface.swift "$TMP/PanelSurface.swift"   # 面板底色 token
 cp browser-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
-  -o "$TMP/browser-tests" "$TMP/stubs.swift" "$TMP/BrowserPanel.swift" "$TMP/BrowserAPI.swift" "$TMP/BrowserCDP.swift" "$TMP/main.swift"
+  -o "$TMP/browser-tests" "$TMP/stubs.swift" "$TMP/PanelSurface.swift" "$TMP/BrowserPanel.swift" \
+  "$TMP/BrowserAPI.swift" "$TMP/BrowserCDP.swift" "$TMP/main.swift"
 "$TMP/browser-tests"
 rm -rf "$TMP"

@@ -997,7 +997,7 @@ final class TerminalView: NSView {
     // MARK: - Rendering
 
     override func draw(_ dirtyRect: NSRect) {
-        let bg = NSColor.textBackgroundColor
+        let bg = PanelSurface.dynamic
         bg.setFill()
         dirtyRect.fill()
 
@@ -1018,7 +1018,7 @@ final class TerminalView: NSView {
 
     private func effectiveCell(_ cell: TerminalEmulator.Cell) -> (fg: NSColor?, bg: NSColor?) {
         if cell.inverse {
-            let fg = cell.bg ?? NSColor.textBackgroundColor
+            let fg = cell.bg ?? PanelSurface.dynamic
             let bg = cell.fg ?? NSColor.textColor
             return (fg, bg)
         }
@@ -1337,12 +1337,12 @@ final class TerminalView: NSView {
 }
 
 
-/// Root view for the terminal panel. Draws the same gray background as
-/// DynamicFillView(kind=.window) but with isOpaque=false so Core Animation
+/// Root view for the terminal panel. Draws the shared panel surface (see
+/// PanelSurface) but with isOpaque=false so Core Animation
 /// properly composites all subviews (especially the header) in the
 /// layer-backed window.
 final class TerminalRootView: NSView {
-    var kind: DynamicFillView.Kind = .window {
+    var kind: DynamicFillView.Kind = .panel {
         didSet { needsDisplay = true }
     }
     override var isOpaque: Bool { false }
@@ -1355,13 +1355,10 @@ final class TerminalRootView: NSView {
         needsDisplay = true
     }
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let color: NSColor
         switch kind {
-        case .window:
-            color = dark ? NSColor(calibratedWhite: 0.28, alpha: 1) : NSColor(calibratedWhite: 0.94, alpha: 1)
-        case .control:
-            color = dark ? NSColor(calibratedWhite: 0.20, alpha: 1) : NSColor(calibratedWhite: 0.86, alpha: 1)
+        case .panel:
+            color = PanelSurface.color(for: effectiveAppearance)
         case .custom(let c):
             color = c
         }
@@ -1403,8 +1400,11 @@ final class TerminalPanelController: NSObject {
             self.session = session
             self.emulator = emulator
             self.termView = termView
-            let titleButton = NSButton(title: title, target: nil, action: nil)
-            titleButton.bezelStyle = .texturedRounded
+            // PanelTabButton = bezelless HoverButton（共用面板控件底色）
+            let titleButton = PanelTabButton(frame: .zero)
+            titleButton.title = title
+            titleButton.isBordered = false
+            titleButton.font = .systemFont(ofSize: 12)
             titleButton.setButtonType(.pushOnPushOff)
             titleButton.state = .off
             titleButton.tag = id
@@ -1492,7 +1492,7 @@ final class TerminalPanelController: NSObject {
         // Header strip: explicit dynamic background so the top bar is a
         // defined block (consistent with the preview panel) in both modes.
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerTitle)
         header.addSubview(actions)

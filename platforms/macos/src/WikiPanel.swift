@@ -783,7 +783,7 @@ enum WikiAgentsMD {
 /// so an opaque content view's drawing can never bleed over the header's
 /// buttons in the layer-backed window. The background is drawn here instead.
 final class WikiRootView: NSView {
-    var kind: DynamicFillView.Kind = .window {
+    var kind: DynamicFillView.Kind = .panel {
         didSet { needsDisplay = true }
     }
     override var isOpaque: Bool { false }
@@ -796,13 +796,10 @@ final class WikiRootView: NSView {
         needsDisplay = true
     }
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let color: NSColor
         switch kind {
-        case .window:
-            color = dark ? NSColor(calibratedWhite: 0.28, alpha: 1) : NSColor(calibratedWhite: 0.94, alpha: 1)
-        case .control:
-            color = dark ? NSColor(calibratedWhite: 0.20, alpha: 1) : NSColor(calibratedWhite: 0.86, alpha: 1)
+        case .panel:
+            color = PanelSurface.color(for: effectiveAppearance)
         case .custom(let c):
             color = c
         }
@@ -949,7 +946,7 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
         actions.translatesAutoresizingMaskIntoConstraints = false
 
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerTitle)
         header.addSubview(actions)
@@ -978,7 +975,7 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
         infoLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let toolbar = DynamicFillView()
-        toolbar.kind = .window
+        toolbar.kind = .panel
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true
@@ -997,6 +994,8 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
 
         // tree
         treeOutline.headerView = nil
+        // 内容区 = 面板底色（默认 controlBackgroundColor 会盖住面板根视图）
+        treeOutline.backgroundColor = PanelSurface.dynamic
         let treeColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("page"))
         treeOutline.addTableColumn(treeColumn)
         treeOutline.outlineTableColumn = treeColumn
@@ -1046,7 +1045,7 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
         self.contentSplit = contentSplit
 
         // status bar (hidden until a generation runs)
-        statusBar.kind = .control
+        statusBar.kind = .panel
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.text = ""
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1702,7 +1701,7 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
         let scroll = NSScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
+        scroll.backgroundColor = PanelSurface.dynamic
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
 
@@ -1711,7 +1710,7 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
         tv.isSelectable = true
         tv.isRichText = true
         tv.drawsBackground = true
-        tv.backgroundColor = .textBackgroundColor
+        tv.backgroundColor = PanelSurface.dynamic
         tv.textContainerInset = NSSize(width: 12, height: 12)
         tv.delegate = self
         tv.isVerticallyResizable = true

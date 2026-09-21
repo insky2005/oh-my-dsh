@@ -225,7 +225,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         // Header strip: explicit dynamic background so the top bar is a
         // defined block (consistent with the terminal panel) in both modes.
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(titleLabel)
         header.addSubview(actions)
@@ -272,6 +272,8 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
 
         // --- content area: project tree (left) | preview (right) ---
         treeOutline.headerView = nil
+        // 内容区 = 面板底色（默认 controlBackgroundColor 会盖住面板根视图）
+        treeOutline.backgroundColor = PanelSurface.dynamic
         let treeColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
         treeOutline.addTableColumn(treeColumn)
         treeOutline.outlineTableColumn = treeColumn
@@ -366,8 +368,15 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     private func makeTabItem(id: Int, title: String, tooltip: String)
         -> (view: NSView, titleButton: NSButton, closeButton: NSButton) {
-        let titleButton = NSButton(title: title, target: self, action: #selector(selectTab(_:)))
-        titleButton.bezelStyle = .texturedRounded
+        // PanelTabButton = bezelless HoverButton: the tab paints the shared
+        // panel-control fill (normal, highlight when selected or hovered)
+        // instead of an AppKit bezel.
+        let titleButton = PanelTabButton(frame: .zero)
+        titleButton.title = title
+        titleButton.target = self
+        titleButton.action = #selector(selectTab(_:))
+        titleButton.isBordered = false
+        titleButton.font = .systemFont(ofSize: 12)
         titleButton.setButtonType(.pushOnPushOff)
         titleButton.state = .off
         titleButton.tag = id
@@ -1290,6 +1299,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         table.addTableColumn(column(L10n.tr("preview.modified"), id: "modified", width: 130))
         table.rowHeight = 20
         table.usesAlternatingRowBackgroundColors = true
+        table.backgroundColor = PanelSurface.dynamic
         table.dataSource = self
         table.delegate = self
         table.target = self
@@ -1299,7 +1309,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
+        scroll.backgroundColor = PanelSurface.dynamic
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         embed(scroll)
@@ -1463,14 +1473,14 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         // NSTextView.scrollableTextView() returns a ready-made scroll view with
         // a vertically resizable text view — the reliable way to display text
         // of any length (a bare NSTextView with a zero frame is not visible).
-        // Backgrounds use the dynamic .textBackgroundColor so the preview
+        // Backgrounds use the dynamic PanelSurface.dynamic so the preview
         // follows light/dark appearance.
         let scroll = NSTextView.scrollableTextView()
         scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
+        scroll.backgroundColor = PanelSurface.dynamic
         guard let textView = scroll.documentView as? NSTextView else { return }
         textView.drawsBackground = true
-        textView.backgroundColor = .textBackgroundColor
+        textView.backgroundColor = PanelSurface.dynamic
         textView.isEditable = false
         textView.isRichText = false
         textView.textContainerInset = NSSize(width: 8, height: 8)
@@ -1504,7 +1514,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         let scroll = NSScrollView()
         scroll.documentView = imageView
         scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
+        scroll.backgroundColor = PanelSurface.dynamic
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
@@ -1522,7 +1532,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         pdfView.document = doc
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
-        pdfView.backgroundColor = .textBackgroundColor
+        pdfView.backgroundColor = PanelSurface.dynamic
         AppLog.shared.log("preview pdf: \(doc.pageCount) pages")
         embed(pdfView)
     }

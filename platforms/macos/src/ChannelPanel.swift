@@ -7,9 +7,7 @@ import CoreImage.CIFilterBuiltins
 final class ChannelRootView: NSView {
     override var isOpaque: Bool { false }
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let color = dark ? NSColor(calibratedWhite: 0.28, alpha: 1) : NSColor(calibratedWhite: 0.94, alpha: 1)
-        color.setFill()
+        PanelSurface.color(for: effectiveAppearance).setFill()
         dirtyRect.fill()
     }
 }
@@ -184,7 +182,7 @@ final class ChannelPanelController: NSObject {
         actions.translatesAutoresizingMaskIntoConstraints = false
 
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerTitle)
         header.addSubview(actions)
@@ -202,7 +200,7 @@ final class ChannelPanelController: NSObject {
         // toolbar (28pt) — empty placeholder, with a separator below it so the
         // toolbar is visually separated from the content area.
         let toolbar = DynamicFillView()
-        toolbar.kind = .window
+        toolbar.kind = .panel
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true
@@ -216,7 +214,7 @@ final class ChannelPanelController: NSObject {
             toolbarSeparator.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor),
         ])
 
-        contentContainer.kind = .control
+        contentContainer.kind = .panel
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.wantsLayer = true
         contentContainer.layer?.masksToBounds = true
@@ -626,6 +624,8 @@ final class ChannelPanelController: NSObject {
     private func buildProject() {
         projectScroll.translatesAutoresizingMaskIntoConstraints = false
         projectScroll.hasVerticalScroller = true
+        // 面板底色由 contentContainer 画，滚动视图保持透明
+        projectScroll.drawsBackground = false
         projectScroll.documentView = projectList
 
         projectList.orientation = .vertical
@@ -1064,8 +1064,8 @@ final class ChannelHeaderBlock: RoundedBlockView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         radius = 8
-        lightFill = NSColor(calibratedRed: 0.88, green: 0.92, blue: 1.0, alpha: 1)
-        darkFill = NSColor(calibratedRed: 0.17, green: 0.21, blue: 0.30, alpha: 1)
+        lightFill = PanelControl.lightNormal
+        darkFill = PanelControl.darkNormal
         lightBorder = NSColor(calibratedWhite: 0.7, alpha: 0.6)
         darkBorder = NSColor(calibratedWhite: 0.42, alpha: 0.5)
 
@@ -1153,8 +1153,8 @@ final class ChannelSessionRow: RoundedBlockView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         radius = 8
-        lightFill = NSColor(calibratedWhite: 0.97, alpha: 1)
-        darkFill = NSColor(calibratedWhite: 0.235, alpha: 1)
+        lightFill = PanelControl.lightNormal
+        darkFill = PanelControl.darkNormal
         lightBorder = NSColor(calibratedWhite: 0.78, alpha: 0.7)
         darkBorder = NSColor(calibratedWhite: 0.38, alpha: 0.5)
 
@@ -1300,7 +1300,8 @@ final class SessionTitleBar: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let band = dark ? NSColor(calibratedWhite: 0.32, alpha: 1) : NSColor(calibratedWhite: 0.86, alpha: 1)
+        // 卡片内的标题条 = 面板控件高亮档（与卡片常态档区分开）
+        let band = PanelControl.fill(dark: dark, highlighted: true)
         band.setFill()
         roundedCornersPath(bounds, radius: 8, roundTop: true, roundBottom: !expanded).fill()
     }
@@ -1416,8 +1417,8 @@ final class MessageBubble: NSView {
             bg = dark ? NSColor(calibratedRed: 0.16, green: 0.30, blue: 0.55, alpha: 1)
                       : NSColor(calibratedRed: 0.84, green: 0.91, blue: 1.0, alpha: 1)
         } else {
-            bg = dark ? NSColor(calibratedWhite: 0.32, alpha: 1)
-                      : NSColor(calibratedWhite: 0.93, alpha: 1)
+            // 中性气泡用面板控件高亮档：落在卡片底色上仍有对比
+            bg = PanelControl.fill(dark: dark, highlighted: true)
         }
         bg.setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10).fill()
@@ -1542,10 +1543,9 @@ final class ChannelCardView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // appearance-aware card background (light in light, dark in dark)
+        // 卡片底色走共用面板控件色阶（PanelControl 常态档）
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let bg = dark ? NSColor(calibratedWhite: 0.22, alpha: 1) : NSColor(calibratedWhite: 0.95, alpha: 1)
-        bg.setFill()
+        PanelControl.fill(dark: dark, highlighted: false).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
         // subtle border so the card reads on the panel background
         let border = dark ? NSColor(calibratedWhite: 0.35, alpha: 0.6) : NSColor(calibratedWhite: 0.8, alpha: 0.8)

@@ -8,9 +8,7 @@ import AppKit
 final class IssueRunnerRootView: NSView {
     override var isOpaque: Bool { false }
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let color = dark ? NSColor(calibratedWhite: 0.28, alpha: 1) : NSColor(calibratedWhite: 0.94, alpha: 1)
-        color.setFill()
+        PanelSurface.color(for: effectiveAppearance).setFill()
         dirtyRect.fill()
     }
 }
@@ -121,7 +119,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         actions.translatesAutoresizingMaskIntoConstraints = false
 
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerTitle)
         header.addSubview(actions)
@@ -137,7 +135,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         // toolbar: repo + status info
         repoLabel.translatesAutoresizingMaskIntoConstraints = false
         let toolbar = DynamicFillView()
-        toolbar.kind = .window
+        toolbar.kind = .panel
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true
@@ -161,6 +159,9 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         tableView.dataSource = self
         tableView.delegate = self
         tableView.allowsMultipleSelection = false
+        // 内容区 = 面板底色。NSTableView 默认画自己的 controlBackgroundColor
+        // （浅色白 / 深色近黑），会盖住面板根视图的 PanelSurface。
+        tableView.backgroundColor = PanelSurface.dynamic
 
         tableScroll.documentView = tableView
         tableScroll.hasVerticalScroller = true
@@ -169,7 +170,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         tableScroll.translatesAutoresizingMaskIntoConstraints = false
 
         // status bar
-        statusBar.kind = .control
+        statusBar.kind = .panel
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.text = ""
         statusLabel.translatesAutoresizingMaskIntoConstraints = false

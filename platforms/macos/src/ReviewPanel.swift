@@ -38,9 +38,7 @@ struct ReviewFill {
 final class ReviewRootView: NSView {
     override var isOpaque: Bool { false }
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let color = dark ? NSColor(calibratedWhite: 0.20, alpha: 1) : NSColor(calibratedWhite: 0.96, alpha: 1)
-        color.setFill()
+        PanelSurface.color(for: effectiveAppearance).setFill()
         dirtyRect.fill()
     }
 }
@@ -53,22 +51,22 @@ final class ReviewRootView: NSView {
 /// recipe the Channel panel uses) because the tree needs more contrast than the
 /// stock control colours give.
 private enum ReviewInk {
-    static let paper: NSColor = .textBackgroundColor
+    static let paper: NSColor = PanelSurface.dynamic
     static let title: NSColor = .labelColor
     static let body: NSColor = .secondaryLabelColor
     static let muted: NSColor = .tertiaryLabelColor
     static let hairline = ReviewFill.adaptive(
         light: NSColor(calibratedWhite: 0.80, alpha: 1),
         dark: NSColor(calibratedWhite: 0.38, alpha: 0.7))
+    /// Block fills come from the shared panel-control scale (PanelControl): the
+    /// session / turn containers take the normal fill, the innermost content
+    /// block the highlight fill, so the nesting still reads.
     static let sessionFill = ReviewFill.adaptive(
-        light: NSColor(calibratedRed: 0.90, green: 0.93, blue: 0.99, alpha: 1),
-        dark: NSColor(calibratedRed: 0.17, green: 0.21, blue: 0.30, alpha: 1))
+        light: PanelControl.lightNormal, dark: PanelControl.darkNormal)
     static let turnFill = ReviewFill.adaptive(
-        light: NSColor(calibratedWhite: 0.955, alpha: 1),
-        dark: NSColor(calibratedWhite: 0.235, alpha: 1))
+        light: PanelControl.lightNormal, dark: PanelControl.darkNormal)
     static let blockFill = ReviewFill.adaptive(
-        light: NSColor.white,
-        dark: NSColor(calibratedWhite: 0.185, alpha: 1))
+        light: PanelControl.lightHighlight, dark: PanelControl.darkHighlight)
     /// The session dsh web is showing: an accent-tinted block with accent ink.
     static let currentSessionFill = ReviewFill.adaptive(
         light: NSColor.controlAccentColor.withAlphaComponent(0.20),
@@ -305,7 +303,7 @@ final class ReviewPanelController: NSObject {
         actions.translatesAutoresizingMaskIntoConstraints = false
 
         let header = DynamicFillView()
-        header.kind = .window
+        header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerTitle)
         header.addSubview(actions)
@@ -319,7 +317,7 @@ final class ReviewPanelController: NSObject {
 
         // Toolbar: tree-wide expand/collapse + the shell-command filter.
         let toolbar = DynamicFillView()
-        toolbar.kind = .window
+        toolbar.kind = .panel
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true

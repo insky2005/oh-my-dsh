@@ -42,7 +42,7 @@ func band(_ view: NSView, rows: Range<Int>) -> (colors: [String: Int], bright: I
 
 func makeHeader(in host: NSView, topInset: CGFloat, width: CGFloat) -> DynamicFillView {
     let header = DynamicFillView()
-    header.kind = .window
+    header.kind = .panel
     header.frame = NSRect(x: 0, y: host.bounds.height - topInset - 28, width: width, height: 28)
     let title = HeaderLabel()
     title.translatesAutoresizingMaskIntoConstraints = false
@@ -89,5 +89,92 @@ container3.frame = NSRect(x: 0, y: 0, width: 900, height: 120)
 host3.addSubview(container3, positioned: .below, relativeTo: header3)
 host3.layoutSubtreeIfNeeded()
 check("header below-sibling ordering keeps the ink", band(host3, rows: 0..<56).bright > 100)
+
+// 4. The panel surface token. Every panel's top region (header / toolbar /
+//    status bar) and its content area paint this one surface — #1B1B1C in dark,
+//    #F9FAFB in light — so the whole right-hand column reads as a single
+//    surface. Pinned here so a stray shade can't creep back in.
+func hex(_ color: NSColor) -> String {
+    guard let c = color.usingColorSpace(.sRGB) else { return "?" }
+    return String(format: "#%02x%02x%02x",
+                  Int((c.redComponent * 255).rounded()),
+                  Int((c.greenComponent * 255).rounded()),
+                  Int((c.blueComponent * 255).rounded()))
+}
+check("panel surface dark token is #1b1b1c", hex(PanelSurface.dark) == "#1b1b1c")
+check("panel surface light token is #f9fafb", hex(PanelSurface.light) == "#f9fafb")
+check("panel surface picks the dark token for a dark appearance",
+      hex(PanelSurface.color(for: NSAppearance(named: .darkAqua)!)) == "#1b1b1c")
+check("panel surface picks the light token for a light appearance",
+      hex(PanelSurface.color(for: NSAppearance(named: .aqua)!)) == "#f9fafb")
+var dynamicDark = ""
+var dynamicLight = ""
+NSAppearance(named: .darkAqua)!.performAsCurrentDrawingAppearance { dynamicDark = hex(PanelSurface.dynamic) }
+NSAppearance(named: .aqua)!.performAsCurrentDrawingAppearance { dynamicLight = hex(PanelSurface.dynamic) }
+check("panel surface dynamic color follows the appearance",
+      dynamicDark == "#1b1b1c" && dynamicLight == "#f9fafb")
+
+for (name, expected) in [(NSAppearance.Name.aqua, "#f9fafb"), (NSAppearance.Name.darkAqua, "#1b1b1c")] {
+    // Two views through the SAME render pipeline: `kind = .panel` must paint
+    // exactly what the token resolves to. (Comparing a rendered colour against a
+    // hex constant instead would also fold in the display colour space, which
+    // shifts a dark value by ~6/255 — the light one happens to survive it, which
+    // would make such a check pass for the wrong reason.)
+    func dominant(configure: (DynamicFillView) -> Void) -> String {
+        let host4 = NSView(frame: NSRect(x: 0, y: 0, width: 64, height: 32))
+        host4.appearance = NSAppearance(named: name)
+        let surface = DynamicFillView()
+        configure(surface)
+        surface.frame = host4.bounds
+        host4.addSubview(surface)
+        host4.layoutSubtreeIfNeeded()
+        return band(host4, rows: 0..<32).colors.max { $0.value < $1.value }?.key ?? ""
+    }
+    let token = PanelSurface.color(for: NSAppearance(named: name)!)
+    check("panel surface kind paints the \(expected) token for \(name.rawValue)",
+          dominant { $0.kind = .panel } == dominant { $0.kind = .custom(token) })
+}
+
+// 5. Cards / buttons / tabs paint the panel-control scale (PanelControl): a
+//    normal fill, and the highlight fill when hovered / selected / toggled on.
+check("panel control dark fill is #43454a", hex(PanelControl.darkNormal) == "#43454a")
+check("panel control dark highlight is #353638", hex(PanelControl.darkHighlight) == "#353638")
+check("panel control light fill is #ffffff", hex(PanelControl.lightNormal) == "#ffffff")
+check("panel control light highlight is #f1f3f5", hex(PanelControl.lightHighlight) == "#f1f3f5")
+check("panel control picks fill + highlight by appearance",
+      hex(PanelControl.fill(for: NSAppearance(named: .darkAqua)!, highlighted: false)) == "#43454a"
+      && hex(PanelControl.fill(for: NSAppearance(named: .darkAqua)!, highlighted: true)) == "#353638"
+      && hex(PanelControl.fill(for: NSAppearance(named: .aqua)!, highlighted: false)) == "#ffffff"
+      && hex(PanelControl.fill(for: NSAppearance(named: .aqua)!, highlighted: true)) == "#f1f3f5")
+
+/// Render an arbitrary view on its own and return its dominant pixel colour.
+func renderDominant(_ appearance: NSAppearance.Name, _ view: NSView) -> String {
+    let host = NSView(frame: NSRect(x: 0, y: 0, width: 64, height: 32))
+    host.appearance = NSAppearance(named: appearance)
+    view.frame = host.bounds
+    host.addSubview(view)
+    host.layoutSubtreeIfNeeded()
+    return band(host, rows: 0..<32).colors.max { $0.value < $1.value }?.key ?? ""
+}
+
+// Compared render-to-render for the same reason as above (the display colour
+// space shifts dark values, so the reference view goes through the pipeline too).
+for (name, dark) in [(NSAppearance.Name.aqua, false), (NSAppearance.Name.darkAqua, true)] {
+    func reference(highlighted: Bool) -> String {
+        let view = DynamicFillView()
+        view.kind = .custom(PanelControl.fill(dark: dark, highlighted: highlighted))
+        return renderDominant(name, view)
+    }
+    func button(state: NSControl.StateValue) -> String {
+        let b = HoverButton(frame: NSRect(x: 0, y: 0, width: 64, height: 32))
+        b.isBordered = false
+        b.state = state
+        return renderDominant(name, b)
+    }
+    check("button paints the normal control fill in \(name.rawValue)",
+          button(state: .off) == reference(highlighted: false))
+    check("selected button paints the highlight control fill in \(name.rawValue)",
+          button(state: .on) == reference(highlighted: true))
+}
 
 print("done")

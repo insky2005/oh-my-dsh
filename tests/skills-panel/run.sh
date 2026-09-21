@@ -28,6 +28,7 @@ echo "--- skills panel controller (headless smoke) ---"
 mkdir -p "$TMP/panel"
 cp "$TMP/stubs.swift" "$TMP/SkillsCore.swift" "$TMP/SkillSources.swift" "$TMP/SkillInstaller.swift" "$TMP/panel/"
 cp ../../platforms/macos/src/SkillsPanel.swift "$TMP/panel/SkillsPanel.swift"
+cp ../../platforms/macos/src/PanelSurface.swift "$TMP/panel/PanelSurface.swift"   # 面板底色 token
 cp panel-tests.swift "$TMP/panel/main.swift"
 swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
   -o "$TMP/skills-panel-controller-tests" "$TMP/panel/"*.swift
@@ -38,6 +39,7 @@ echo "--- panel painting (real DynamicFillView/HeaderLabel) ---"
 mkdir -p "$TMP/render"
 cp stubs-min.swift "$TMP/render/stubs.swift"
 cp ../../platforms/macos/src/PreviewPanel.swift "$TMP/render/PreviewPanel.swift"
+cp ../../platforms/macos/src/PanelSurface.swift "$TMP/render/PanelSurface.swift"   # 面板底色 token
 cp render-tests.swift "$TMP/render/main.swift"
 swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit -framework PDFKit \
   -o "$TMP/render-tests" "$TMP/render/"*.swift
