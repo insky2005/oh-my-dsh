@@ -53,7 +53,9 @@ enum TreeMenuModel {
             let mutable = !isRoot
             entries.append(TreeMenuEntry(item: .rename, separatorBefore: true, enabled: mutable))
             entries.append(TreeMenuEntry(item: .delete, separatorBefore: false, enabled: mutable))
-            entries.append(TreeMenuEntry(item: .reveal, separatorBefore: false, enabled: true))
+            // Group 3: revealing does not mutate the entry, so it gets its own
+            // group (QA feedback).
+            entries.append(TreeMenuEntry(item: .reveal, separatorBefore: true, enabled: true))
         }
         return entries
     }

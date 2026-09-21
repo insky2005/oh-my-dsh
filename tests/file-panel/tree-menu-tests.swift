@@ -21,6 +21,9 @@ test("a folder offers create + rename/delete/reveal in that order",
      items(onFolder) == [.newFolder, .newFile, .rename, .delete, .reveal])
 test("the create group and the item group are separated",
      onFolder.first { $0.item == .rename }?.separatorBefore == true)
+test("Show in Finder sits in a group of its own",
+     onFolder.first { $0.item == .reveal }?.separatorBefore == true)
+test("Delete stays with Rename", onFolder.first { $0.item == .delete }?.separatorBefore == false)
 test("no separator above New Folder", onFolder.first?.separatorBefore == false)
 test("every folder entry is enabled", onFolder.allSatisfy { $0.enabled })
 
@@ -31,6 +34,8 @@ test("a file has no New Folder", items(onFile) == [.newFile, .rename, .delete, .
 test("a file can still create a sibling file", enabled(onFile, .newFile) == true)
 test("the separator stays above Rename for a file",
      onFile.first { $0.item == .rename }?.separatorBefore == true)
+test("a file gets its own group for Show in Finder too",
+     onFile.first { $0.item == .reveal }?.separatorBefore == true)
 
 // The project root: visible but immutable.
 let onRoot = TreeMenuModel.entries(hasRoot: true, hasRow: true, isRoot: true, isFile: false)

@@ -38,7 +38,7 @@
 - 删除：确认后**移到废纸篓**（不做不可恢复的 unlink）；被删条目下的页签自动关闭；若系统不可用（如回收站不可写）则拒绝删除并保留文件与页签，不会静默丢数据；
 - 菜单项校验：项目根目录本身不可重命名/删除（`NSMenuDelegate.menuNeedsUpdate`）。
 
-**菜单顺序与条件（QA 反馈）**：菜单改为动态构建，顺序固定为 **新建文件夹 → 新建文件 →（分隔线）→ 重命名 → 删除 → 在 Finder 中显示**；右键点在**文件**上时不显示「新建文件夹」（菜单是针对该文件的），点在**空白处**时只显示新建两项，点**项目根目录**时重命名/删除置灰。判定逻辑抽到纯模型 `FilePanelTreeMenu.swift`（`TreeMenuModel.entries(hasRoot:hasRow:isRoot:isFile:)`），由 `tests/file-panel/tree-menu-tests.swift` 覆盖。
+**菜单顺序与条件（QA 反馈）**：菜单改为动态构建，分三组：**新建文件夹 → 新建文件 ｜ 重命名 → 删除 ｜ 在 Finder 中显示**（两组分隔线）；右键点在**文件**上时不显示「新建文件夹」（菜单是针对该文件的），点在**空白处**时只显示新建两项，点**项目根目录**时重命名/删除置灰。判定逻辑抽到纯模型 `FilePanelTreeMenu.swift`（`TreeMenuModel.entries(hasRoot:hasRow:isRoot:isFile:)`），由 `tests/file-panel/tree-menu-tests.swift` 覆盖。
 
 **待定**：拖拽移动仍未做。
 
