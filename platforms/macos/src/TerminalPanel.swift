@@ -935,6 +935,14 @@ final class TerminalView: NSView {
     private var mouseCurrentLine = 0
     private var mouseCurrentCol = 0
     private var isSelecting = false
+    /// Selection granularity of the current drag: a plain drag selects cells, a
+    /// drag that started with a double click extends by whole words, a triple
+    /// click by whole lines (docs/ux-feedback.md #4 follow-up).
+    private enum DragUnit { case character, word, line }
+    private var dragUnit: DragUnit = .character
+    /// The word the double click landed on, kept as the fixed end of a word-wise
+    /// drag.
+    private var anchorWord: (line: Int, start: Int, end: Int)?
 
     /// Tab shortcuts: Cmd+1…9 selects a tab by index; Cmd+Shift+[ / ] cycles.
     var onCmdDigit: ((Int) -> Void)?
@@ -1138,10 +1146,21 @@ final class TerminalView: NSView {
         // the system "natural scrolling" preference, so no extra flip is needed
         // — if QA ever sees it inverted with natural scrolling OFF, this is the
         // sign to revisit.
-        scrollRemainder += dy
-        let lines = Int(scrollRemainder)          // truncates toward zero
+        // Scaling: a trackpad reports POINT deltas (including a decaying
+        // momentum phase after the fingers leave), a wheel reports one step per
+        // notch. Four points per line is what this panel always used, and it is
+        // what makes a flick decelerate instead of crawling at a constant speed
+        // (QA follow-up on #3); wheel notches map to a line each.
+        let lines: Int
+        if event.hasPreciseScrollingDeltas {
+            scrollRemainder += dy / 4
+            let whole = scrollRemainder.rounded(.towardZero)
+            scrollRemainder -= whole                  // keep the fraction for the next event
+            lines = Int(whole)
+        } else {
+            lines = Int(dy)
+        }
         guard lines != 0 else { return }
-        scrollRemainder -= CGFloat(lines)
         let total = emulator.totalLineCount
         let maxTop = max(0, total - emulator.rows)
         topLine = min(max(visibleTopLine() - lines, 0), maxTop)
@@ -1222,19 +1241,26 @@ final class TerminalView: NSView {
         // the terminal used to only support press-and-drag).
         if event.clickCount >= 2 {
             let line = pt.line
-            let range = event.clickCount >= 3
-                ? (start: 0, end: max(0, emulator.cols - 1))
-                : (wordRange(atLine: line, col: pt.col) ?? (start: pt.col, end: pt.col))
+            let wordSelection = event.clickCount < 3
+            let range = wordSelection
+                ? (wordRange(atLine: line, col: pt.col) ?? (start: pt.col, end: pt.col))
+                : (start: 0, end: max(0, emulator.cols - 1))
             mouseAnchorLine = line
             mouseAnchorCol = range.start
             mouseCurrentLine = line
             mouseCurrentCol = range.end
-            isSelecting = false      // the unit is final; a drag after it starts over
+            // A drag started by a double/triple click EXTENDS the selection in
+            // the same unit instead of being ignored (follow-up on #4).
+            dragUnit = wordSelection ? .word : .line
+            anchorWord = (line: line, start: range.start, end: range.end)
+            isSelecting = true
             emulator.selection = normalizeSelection()
             needsDisplay = true
             copySelectionIfAutoCopy()
             return
         }
+        dragUnit = .character
+        anchorWord = nil
         mouseAnchorLine = pt.line
         mouseAnchorCol = pt.col
         mouseCurrentLine = pt.line
@@ -1247,16 +1273,48 @@ final class TerminalView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard isSelecting else { return }
         let pt = cell(at: convert(event.locationInWindow, from: nil))
+        switch dragUnit {
+        case .character:
+            mouseCurrentLine = pt.line
+            mouseCurrentCol = pt.col
+            emulator.selection = normalizeSelection()
+        case .word:
+            emulator.selection = wordDragSelection(to: pt)
+        case .line:
+            let first = min(mouseAnchorLine, pt.line)
+            let last = max(mouseAnchorLine, pt.line)
+            emulator.selection = TerminalEmulator.Selection(startLine: first, startCol: 0,
+                                                             endLine: last, endCol: max(0, emulator.cols - 1))
+        }
         mouseCurrentLine = pt.line
         mouseCurrentCol = pt.col
-        emulator.selection = normalizeSelection()
         needsDisplay = true
+    }
+
+    /// A word-wise drag: the word the double click selected stays whole, and the
+    /// word under the pointer is added whole, so dragging right/left/up/down
+    /// selects complete words (Terminal.app behaves the same way).
+    private func wordDragSelection(to pt: (line: Int, col: Int)) -> TerminalEmulator.Selection? {
+        guard let anchor = anchorWord else {
+            return normalizeSelection()
+        }
+        let target = wordRange(atLine: pt.line, col: pt.col) ?? (start: pt.col, end: pt.col)
+        let anchorBefore = (anchor.line, anchor.start) <= (pt.line, target.start)
+        if anchorBefore {
+            return TerminalEmulator.Selection(startLine: anchor.line, startCol: anchor.start,
+                                              endLine: pt.line, endCol: target.end)
+        }
+        return TerminalEmulator.Selection(startLine: pt.line, startCol: target.start,
+                                          endLine: anchor.line, endCol: anchor.end)
     }
 
     override func mouseUp(with event: NSEvent) {
         let dragged = isSelecting
+        let wasCharacterDrag = dragUnit == .character
         isSelecting = false
-        if mouseAnchorLine == mouseCurrentLine && mouseAnchorCol == mouseCurrentCol {
+        dragUnit = .character
+        anchorWord = nil
+        if wasCharacterDrag, mouseAnchorLine == mouseCurrentLine && mouseAnchorCol == mouseCurrentCol {
             emulator.clearSelection() // plain click: clear selection
             needsDisplay = true
             return
@@ -1861,7 +1919,18 @@ final class TerminalPanelController: NSObject {
         currentWorkspace = path
         workspaceKnown = true
         syncTabVisibility()
+        // QA follow-up on #5: switching to a workspace with no live terminal
+        // opens one straight away, so the user never has to hit "+" after a
+        // switch. Only while the panel is really on screen — spawning a PTY per
+        // workspace the user merely passes through would waste shells.
+        if visibleTabs.isEmpty, isPanelOnScreen {
+            AppLog.shared.log("terminal workspace: no session for \(path) — starting one")
+            newSession()
+        }
     }
+
+    /// Whether this panel is the pane currently mounted and visible in the shell.
+    private var isPanelOnScreen: Bool { !view.isHidden && view.window != nil }
 
     /// Show only the tabs of the current workspace and make sure the selection
     /// points at a visible tab (or at the empty state when this workspace has

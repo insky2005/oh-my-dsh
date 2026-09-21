@@ -32,7 +32,13 @@
 - `platforms/macos/src/FilePanel.swift` —— `treeOutline`（NSOutlineView，L67）、`TreeNode` / `loadChildren`、`setTreeRoot`（L592）；
 - 目前该文件内没有任何 `NSMenu`/`menu(for:)` 实现（已 grep 确认），右键菜单需要从零加。
 
-**待定**：重命名 / 删除 / 拖拽移动仍未做（本轮只做「新建」，见状态 ✅）。
+**后续补充（QA 反馈）**：目录树右键菜单新增 **重命名** 与 **删除**。
+
+- 重命名：输入框预填原名并整段选中，同目录内改名；重名/非法名/失败都有可见反馈；**已打开的页签会跟着改名重新指向**（重命名文件夹时，其下所有已打开文件同样跟随），未保存的编辑继续有效、保存到新路径；
+- 删除：确认后**移到废纸篓**（不做不可恢复的 unlink）；被删条目下的页签自动关闭；若系统不可用（如回收站不可写）则拒绝删除并保留文件与页签，不会静默丢数据；
+- 菜单项校验：项目根目录本身不可重命名/删除（`NSMenuDelegate.menuNeedsUpdate`）。
+
+**待定**：拖拽移动仍未做。
 
 **实现**（`feature/ux-feedback-fixes`）：`FilePanel.swift` 目录树右键菜单（`treeOutline.menu`，`clickedRow` 定位目标目录）+ `promptForNewItem(isDir:)` 名称输入框 + `createItem(named:isDir:in:)`（重名/非法名/失败均给出可见反馈，成功后展开并选中新节点，文件自动在标签页打开）；文案键 `files.newFile` / `files.newFolder` / `files.newItemLocation` / `files.create` / `files.invalidName` / `files.alreadyExists` / `files.createFailed` / `files.revealInTree`。
 
@@ -67,7 +73,9 @@
 
 **疑点**：实现只读 `event.scrollingDeltaY` 并直接换算步长，未考虑 `isDirectionInvertedFromDevice`（自然滚动开关）与系统滚动语义；而其他面板走 NSScrollView 的标准行为，二者因此不一致。源码注释也留了「If QA finds the direction inverted, flip this sign」。
 
-**实现**（`feature/ux-feedback-fixes`）：`TerminalPanel.swift` `TerminalView.scrollWheel(with:)` 改为 NSScrollView 语义（正 `scrollingDeltaY` → 显示更早的行），并加小数累加器，慢速双指滚动不再被 `Int()` 截断丢掉。
+**实现**（`feature/ux-feedback-fixes`）：`TerminalPanel.swift` `TerminalView.scrollWheel(with:)` 改为 NSScrollView 语义（正 `scrollingDeltaY` → 显示更早的行）。
+
+**后续修正（QA 反馈）**：第一版把 delta 按「1 点 = 1 行」换算，手势被放大成匀速滚动，丢掉了原来的惯性刹车感。现改为：触控板精确 delta 按 **4 点 = 1 行**（与改版前的灵敏度一致）并保留小数累加器，动量阶段的衰减 delta 自然体现为「先快后慢」；鼠标滚轮（非精确 delta）一格 = 一行。
 
 **验收**：触控板（自然滚动开/关）与鼠标滚轮两种设备下，终端滚动方向与文件树一致：内容朝向与手势方向一致（即手势「上滑看下文」）—— 待手动 QA。
 
@@ -88,7 +96,9 @@
 
 **实现**（`feature/ux-feedback-fixes`）：`mouseDown` 增加 `clickCount` 分支（双击选词 / 三击整行，词边界把路径、URL、参数完整保留，点分隔符则选该分隔符连续段）；`mouseUp` 在拖选结束时调用 `copySelectionIfAutoCopy()`；开关 `terminal.autoCopy`（默认开）由「设置 → 终端：选中文本即复制」控制；⌘C 仍保留「无选区时发 SIGINT」的语义。
 
-**验收**：双击选词、三击选行；拖选后直接 ⌘V 得到刚选中的文本 —— 待手动 QA。
+**后续修正（QA 反馈）**：双击选词后原来无法继续拖动扩选。现在双击/三击会带着**选择单位**进入拖拽：双击后拖动按「整词」扩选（锚定那个词始终完整，指针下的词整词并入），三击后按「整行」扩选；普通拖拽仍是逐格选择。
+
+**验收**：双击选词、三击选行；双击后拖动可选多个词；拖选后直接 ⌘V 得到刚选中的文本 —— 待手动 QA。
 
 ---
 
@@ -103,6 +113,8 @@
 - 终端侧 `TerminalPanel.swift` 目前没有对应钩子，需在 `TerminalPanelController` 增加 `setWorkspace(id:path:)` 之类入口，并在 shell 的 dshSession 处理器（`main.swift`）里调用。
 
 **实现**（`feature/ux-feedback-fixes`）：新增纯模型 `TerminalWorkspaceTabs.swift`（页签 → workspace 映射、每 workspace 的「上次选中」、`forget/forgetAll`、无法解析项目目录的兜底页签标记为全局可见）；`TerminalPanelController.setWorkspaceDirectory(_:)` + `syncTabVisibility()` 只隐藏**不终止**——切回来仍是同一个会话；⌘1…9 / ⌘⇧[ ] 只在当前 workspace 的页签间切换；shell 的 `dshSession` 处理器（`main.swift`）与「打开终端面板」路径都会同步 workspace。
+
+**后续修正（QA 反馈）**：切到「没有活终端」的 workspace 时，只要终端面板可见就**自动开一个**，不用再手动点「+」；面板不可见时不开（避免用户只是路过某个 workspace 也白白拉起 shell）。
 
 **待定**：隐藏期间会话数量上限与内存占用策略（当前不设上限，与「不杀会话」的取舍一致）。
 
