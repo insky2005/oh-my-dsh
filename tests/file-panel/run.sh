@@ -39,6 +39,21 @@ swiftc -swift-version 5 -module-cache-path "$CACHE" \
 "$TMP/tree-menu-tests"
 rm -rf "$TMP"
 
+echo "--- injected composer script (lint) ---"
+# The bridge script is a SWIFT string literal injected into dsh web: a lone
+# backslash escape is eaten by Swift before the page sees it (a raw newline
+# inside a JS string literal then breaks parsing and the bridge silently never
+# installs — exactly how it shipped broken once). It must stay escape-free.
+python3 - "$SRC/main.swift" <<'PY'
+import re, sys, pathlib
+src = pathlib.Path(sys.argv[1]).read_text()
+m = re.search(r'private static let composerReferenceScript = """\n(.*?)\n    """', src, re.S)
+assert m, "composerReferenceScript block not found in main.swift"
+bad = [line for line in m.group(1).splitlines() if "\\" in line]
+assert not bad, "injected script must not contain backslash escapes: " + " | ".join(bad)
+print("ok - composerReferenceScript is escape-free (%d lines)" % len(m.group(1).splitlines()))
+PY
+
 echo "--- composer reference grammar (model) ---"
 TMP="$(mktemp -d)"
 cp "$SRC/ComposerReference.swift" "$TMP/ComposerReference.swift"

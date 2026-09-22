@@ -65,6 +65,36 @@ clipboardText  = "@src/foo.ts"     // 复制/持久化投影
 
 成功时 `app.log` 记录 `composer reference inserted (chip): @src/foo.ts`；dsh 升级后若日志里出现其它 reason，就是 B9 那一行需要复核。
 
+## 4.5 踩过的坑：Swift 字面量吃掉转义 → 整段 JS 解析失败（`bridge-unavailable`）
+
+**现象**：真机右键 → 弹「添加引用失败：bridge-unavailable」。日志里前一行还是好的（`preview tree → composer: @README.md`），说明菜单/回调/取值都对，是页面里那个桥接函数**不存在**。
+
+**根因**：脚本是 Swift 多行字符串字面量，源码里写成 `last !== '\n'`（**单个**反斜杠）——Swift 先把它编译成**真正的换行字节**，页面拿到的 JS 于是变成
+
+```js
+if (tail !== '' && last !== '
+' && last !== '	')      // ← 单引号里是一个真换行：语法错误
+```
+
+整段脚本在 documentStart 解析就抛错 → `window.__dshInsertFileReference` 从未定义 → 每次调用都回 `bridge-unavailable`（其它三个注入脚本照常工作，所以只有这一个功能坏）。
+
+**为什么早先的「抽取脚本再跑一遍」没抓到**：抽取出来的是**源码文本**，而 JS 自己会把 `\n` 当成转义——源码文本能跑 ≠ Swift 编译后的文本能跑。**必须用编译后的字符串验证**：
+
+```bash
+python3 - <<'PY'   # 从二进制里取出编译后的脚本
+import pathlib
+d = pathlib.Path("dist/oh-my-dsh.app/Contents/MacOS/oh-my-dsh").read_bytes()
+s = d.find(b"(function () {\n  if (window.__dshInsertFileReference) return;")
+e = d.find(b"\x00", s); t = d[s:e].decode()
+pathlib.Path(".tmp/bridge.js").write_text(t[:t.rindex("})()") + 4])
+PY
+node --check .tmp/bridge.js        # 语法必须过
+```
+
+**修法（两层防护）**：
+1. **脚本里彻底不用转义序列**：空白判定改成按字符码 —— `var lastCode = tail.charCodeAt(tail.length - 1); var atWhitespace = [32, 10, 9, 13, 160].indexOf(lastCode) !== -1;`（空格 / LF / TAB / CR / NBSP），于是「Swift 吃转义」这一类问题从根上不存在；
+2. **加 lint 钉住**：`tests/file-panel/run.sh` 的 "injected composer script (lint)" 步直接扫 `main.swift` 里 `composerReferenceScript` 这段，**只要出现反斜杠就失败**（`scripts/local-ci.sh` 与 CI swift job 都会跑）。
+
 ## 5. 验证
 
 ### 无头（已接入 `tests/file-panel/run.sh` → `scripts/local-ci.sh`）

@@ -121,6 +121,7 @@ manual: false
 | `open-with-tests.swift` | `OpenWithCatalog` 目录与记忆规则（未装应用不命中 / `path:` 形态） |
 | `tree-menu-tests.swift` | `TreeMenuModel.entries` 分组、顺序、置灰与「文件不显示新建」、`canReference` 与根/无监听方禁用 |
 | `composer-reference-tests.swift` | `ComposerReferenceFormatter` 19 项（引号与目录尾斜杠 / `..` 归一 / 工作区外与非法字符拒绝 / label 与 appearance） |
+| （`run.sh` 内联 lint）| `composerReferenceScript` 必须**零反斜杠转义**——Swift 字面量会吃掉单反斜杠，整段 JS 解析失败 → 桥接函数不存在 → `bridge-unavailable`（`docs/file-panel-composer-reference.md` §4.5） |
 | `image-zoom-tests.swift` | `ImageZoom` 17 项（适应比例 / 夹取 / 单步 / 边界收敛） |
 | `editor-load-policy-tests.swift` | `EditorLoadPolicy` 23 项（行数 / 分块不重不漏不切行 / 安全阀边界 / 稳定性窗口） |
 | `panel-switch-tests.swift` | 真实 `FilePanelController` + **真实 NSWindow / split view**：页签交接、头部按钮启用态、宽度夹取、角标固定尺寸、图片居中盒子 |

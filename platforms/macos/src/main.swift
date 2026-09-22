@@ -3064,8 +3064,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             // An @ token only reads as a reference at the start of a line or
             // after whitespace, so never glue it to the draft's last character.
             var tail = root.getTextContent();
-            var last = tail === '' ? '' : tail.charAt(tail.length - 1);
-            if (tail !== '' && last !== ' ' && last !== '\n' && last !== '\t') nodes.push(new textClass(' '));
+            // No escape sequences anywhere in this script: it is a Swift string
+            // literal, and Swift EATS a lone escape before the page ever sees it
+            // (the page then gets a raw newline inside a JS string literal, the
+            // script fails to parse, and the bridge silently never installs).
+            // Whitespace is therefore matched by character code: 32 space, 10 LF,
+            // 9 TAB, 13 CR, 160 NBSP.
+            var lastCode = tail === '' ? -1 : tail.charCodeAt(tail.length - 1);
+            var atWhitespace = [32, 10, 9, 13, 160].indexOf(lastCode) !== -1;
+            if (tail !== '' && !atWhitespace) nodes.push(new textClass(' '));
             nodes.push(new chipClass({ source: 'reference', ref: mention, label: label,
                                        appearance: appearance, clipboardText: mention }));
             nodes.push(new textClass(' '));
