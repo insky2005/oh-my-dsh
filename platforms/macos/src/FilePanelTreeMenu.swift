@@ -12,6 +12,7 @@ import Foundation
 
 /// One entry of the tree's context menu.
 enum TreeMenuItem: String, Equatable, CaseIterable {
+    case addToConversation
     case newFolder
     case newFile
     case rename
@@ -34,17 +35,29 @@ enum TreeMenuModel {
     /// - Parameters:
     ///   - hasRoot: the panel has a project directory loaded (no root → no menu).
     ///   - hasRow: the click landed on a row (empty space → create-only).
-    ///   - isRoot: that row IS the project root (it cannot be renamed/deleted).
+    ///   - isRoot: that row IS the project root (it cannot be renamed/deleted, and
+    ///     it has no workspace-relative path to reference in the composer).
     ///   - isFile: that row is a file (creating a folder is offered for folders).
-    static func entries(hasRoot: Bool, hasRow: Bool, isRoot: Bool, isFile: Bool) -> [TreeMenuEntry] {
+    ///   - canReference: the row has a usable `@` mention AND someone is listening
+    ///     (the shell injects it into dsh web's composer).
+    static func entries(hasRoot: Bool, hasRow: Bool, isRoot: Bool, isFile: Bool,
+                        canReference: Bool = false) -> [TreeMenuEntry] {
         guard hasRoot else { return [] }
         var entries: [TreeMenuEntry] = []
+
+        // Group 0: hand the entry to the conversation. It leads the menu (it is
+        // the one entry that only ever ADDS something, to a place the user is
+        // already looking at) and it is the only group offered for every row kind.
+        if hasRow {
+            entries.append(TreeMenuEntry(item: .addToConversation, separatorBefore: false,
+                                         enabled: !isRoot && canReference))
+        }
 
         // Group 1: create inside the clicked directory. A FILE's menu is about that
         // file, so it offers no creation at all (QA feedback: neither "New Folder"
         // nor "New File" — you rename it, delete it, or reveal it).
         if !isFile {
-            entries.append(TreeMenuEntry(item: .newFolder, separatorBefore: false, enabled: true))
+            entries.append(TreeMenuEntry(item: .newFolder, separatorBefore: !entries.isEmpty, enabled: true))
             entries.append(TreeMenuEntry(item: .newFile, separatorBefore: false, enabled: true))
         }
 
