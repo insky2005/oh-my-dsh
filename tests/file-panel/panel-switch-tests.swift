@@ -256,6 +256,38 @@ test("selecting a file again re-enables it", freshPanel.fileActionButtonEnabled)
 freshPanel.performCloseAction()
 test("closing the panel disables it again", !freshPanel.fileActionButtonEnabled)
 
+// --- add to conversation: the tree hands the composer a workspace-relative @ ---
+// (The context menu itself needs a clicked row; the hand-off it performs is
+// path-addressed — the panel decides WHICH reference, the shell writes it into
+// dsh web's composer. Grammar coverage lives in composer-reference-tests.swift.)
+
+let refPanel = FilePanelController()
+refPanel.setProjectDirectory(wsA.path)
+var handed: [ComposerReference] = []
+refPanel.onAddToConversation = { handed.append($0) }
+
+test("a file is handed over as a workspace-relative @ reference",
+     refPanel.addTreePathToConversation(a1.path, isDirectory: false)?.text == "@one.md")
+test("the chip label is the file name", handed.last?.label == "one.md")
+test("the chip is drawn as a file", handed.last?.appearance == "file")
+refPanel.addTreePathToConversation(a2.path, isDirectory: false)
+test("a nested file keeps its directory", handed.last?.text == "@src/two.swift")
+test("a folder is marked by a trailing slash",
+     refPanel.addTreePathToConversation(aSrc.path, isDirectory: true)?.text == "@src/")
+test("a folder chip is drawn as a folder", handed.last?.appearance == "folder")
+
+let handedSoFar = handed.count
+test("the workspace root itself has no reference",
+     refPanel.addTreePathToConversation(wsA.path, isDirectory: true) == nil)
+test("a path outside the workspace has no reference",
+     refPanel.addTreePathToConversation(b1.path, isDirectory: false) == nil)
+test("nothing is handed over without a reference", handed.count == handedSoFar)
+
+let silentPanel = FilePanelController()
+silentPanel.setProjectDirectory(wsA.path)
+test("without a listener the panel hands nothing over",
+     silentPanel.addTreePathToConversation(a1.path, isDirectory: false) == nil)
+
 // --- tree pane width restored on reopen ------------------------------------
 // (QA: closing the panel and opening it again left the tree at its maximum,
 //  420pt, instead of the width the user had dragged it to)

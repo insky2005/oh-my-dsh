@@ -199,6 +199,11 @@ enum L10n {
         "files.deleteFileMessage": ("将「%@」移到废纸篓？", "Move “%@” to the Trash?"),
         "files.deleteFolderMessage": ("将文件夹「%@」及其内容移到废纸篓？", "Move the folder “%@” and its contents to the Trash?"),
         "files.deleteFailed": ("删除失败：%@", "Delete failed: %@"),
+        // Files 面板：目录树右键「添加到对话」（把文件/文件夹作为 @ 引用插入 dsh web 输入框）。
+        "files.addToConversation": ("添加到对话", "Add to Conversation"),
+        "files.addToConversationNoSession": ("请先在对话中打开一个会话，再添加文件引用",
+                                             "Open a session in the conversation, then add a file reference"),
+        "files.addToConversationFailed": ("添加引用失败：%@", "Could not add the reference: %@"),
         "preview.pickFolderMessage": ("无法自动定位项目目录，请选择要浏览的文件夹", "Could not locate the project folder automatically — choose a folder to browse"),
         "preview.pickFolderOpen": ("打开", "Open"),
         "preview.saveHint": ("保存当前文件", "Save the current file"),
@@ -2138,6 +2143,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         previewPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
         previewPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
         previewPanel.onTabsChanged = { [weak self] in self?.updateCloseTabMenuState() }
+        // Files 面板 → dsh web 输入框：右键「添加到对话」把文件/文件夹作为 @ 引用
+        // 追加到草稿（引用语法与相对路径由面板的 ComposerReference 决定）。
+        previewPanel.onAddToConversation = { [weak self] reference in
+            self?.insertComposerReference(reference)
+        }
 
         terminalPanel = TerminalPanelController()
         AppLog.shared.log("launch: terminalPanel created")
@@ -2852,6 +2862,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         config.userContentController.addUserScript(
             WKUserScript(source: Self.sessionOpenerScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
 
+        // Files panel → web composer: exposes window.__dshInsertFileReference(…)
+        // so "Add to Conversation" can append an @ reference to the draft.
+        config.userContentController.addUserScript(
+            WKUserScript(source: Self.composerReferenceScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+
         webView?.removeFromSuperview()
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
@@ -3004,6 +3019,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           var title = (target.projections && target.projections.values && target.projections.values.title) || target.sessionId;
           return openById(sessionId, title, 0);
         }).catch(function (err) { console.log("[dsh-opener] error", String(err)); return { ok: false, reason: String(err) }; });
+      };
+    })()
+    """
+
+    /// Panel → composer bridge. dsh web's composer is a Lexical editor whose
+    /// references are `reference-chip` decorator nodes: a reference picked from
+    /// the "@" menu and this insertion are therefore the SAME node, and the
+    /// source registry serializes it back to its `ref` text ("@path") when the
+    /// message is sent — what the model reads is identical either way. Writing
+    /// the node beats faking keystrokes: it does not depend on which element
+    /// holds focus, and it cannot half-type a token the user then sends.
+    ///
+    /// Coupling surface (docs/dsh-version-impact.md — "composer DOM + node
+    /// registry"). Every hop is a dsh-private detail, so every hop is guarded
+    /// and reports WHY it failed instead of throwing into the void:
+    ///   [data-composer-input]        the composer's contenteditable (slot mark)
+    ///   el.__lexicalEditor           Lexical stamps the editor onto its root
+    ///   editor._nodes[type].klass    the node classes (module-private, so the
+    ///                                chip class is only reachable here)
+    ///   editor._pendingEditorState   the state an update() callback edits
+    private static let composerReferenceScript = """
+    (function () {
+      if (window.__dshInsertFileReference) return;
+      window.__dshInsertFileReference = function (mention, label, appearance) {
+        var el = document.querySelector('[data-composer-input]');
+        if (!el) return { ok: false, reason: 'no-composer' };
+        var editor = el.__lexicalEditor;
+        // No session open: the composer renders inert (the hero state) with no
+        // editor behind it — nothing to write into.
+        if (!editor) return { ok: false, reason: 'no-editor' };
+        var chipReg = editor._nodes && editor._nodes.get('reference-chip');
+        var textReg = editor._nodes && editor._nodes.get('text');
+        var chipClass = chipReg && chipReg.klass;
+        var textClass = textReg && textReg.klass;
+        if (!chipClass || !textClass) return { ok: false, reason: 'unknown-composer' };
+        var out = { ok: false, reason: 'not-run' };
+        try {
+          editor.update(function () {
+            var state = editor._pendingEditorState;
+            var root = state && state._nodeMap && state._nodeMap.get('root');
+            if (!root) { out.reason = 'no-root'; return; }
+            var nodes = [];
+            // An @ token only reads as a reference at the start of a line or
+            // after whitespace, so never glue it to the draft's last character.
+            var tail = root.getTextContent();
+            // No escape sequences anywhere in this script: it is a Swift string
+            // literal, and Swift EATS a lone escape before the page ever sees it
+            // (the page then gets a raw newline inside a JS string literal, the
+            // script fails to parse, and the bridge silently never installs).
+            // Whitespace is therefore matched by character code: 32 space, 10 LF,
+            // 9 TAB, 13 CR, 160 NBSP.
+            var lastCode = tail === '' ? -1 : tail.charCodeAt(tail.length - 1);
+            var atWhitespace = [32, 10, 9, 13, 160].indexOf(lastCode) !== -1;
+            if (tail !== '' && !atWhitespace) nodes.push(new textClass(' '));
+            nodes.push(new chipClass({ source: 'reference', ref: mention, label: label,
+                                       appearance: appearance, clipboardText: mention }));
+            nodes.push(new textClass(' '));
+            root.selectEnd().insertNodes(nodes);
+            out.ok = true;
+            out.mode = 'chip';
+            delete out.reason;
+          });
+        } catch (e) {
+          out.ok = false;
+          out.reason = 'throw: ' + (e && e.message ? e.message : String(e));
+        }
+        // Leave the caret in the composer so the user can keep typing.
+        if (out.ok) { try { el.focus(); } catch (e2) {} }
+        return out;
       };
     })()
     """
@@ -3469,6 +3553,106 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    /// Files panel → composer: append one workspace-relative `@` reference to
+    /// the draft dsh web is showing (the panel decided WHICH reference; the
+    /// shell owns the page). The draft is only ever appended to — the user's
+    /// text, images and chips stay untouched.
+    private func insertComposerReference(_ reference: ComposerReference) {
+        guard let web = webView, web.url != nil else {
+            presentComposerNotice(L10n.tr("files.addToConversationNoSession"))
+            return
+        }
+        let js = "window.__dshInsertFileReference"
+            + " ? window.__dshInsertFileReference(\(Self.jsLiteral(reference.text)),"
+            + " \(Self.jsLiteral(reference.label)), \(Self.jsLiteral(reference.appearance)))"
+            + " : { ok: false, reason: 'bridge-unavailable' }"
+        // The composer is a web input: focusing the page is what lets the user
+        // keep typing right after the reference lands.
+        window?.makeFirstResponder(web)
+        web.evaluateJavaScript(js) { [weak self] result, error in
+            let dict = result as? [String: Any]
+            if dict == nil, let error = error {
+                AppLog.shared.log("composer reference failed: \(error.localizedDescription)")
+                self?.presentComposerNotice(L10n.tr("files.addToConversationFailed", error.localizedDescription))
+                return
+            }
+            guard (dict?["ok"] as? Bool) == true else {
+                let reason = (dict?["reason"] as? String) ?? "unknown"
+                // dlog: the outcome also goes to stdout, so a shell started from
+                // a terminal (dev / QA) reports it even when the log file is not
+                // writable — this bridge fails silently otherwise.
+                self?.dlog("composer reference refused: \(reason)")
+                // The one failure worth explaining: there is nothing to write into.
+                if reason == "no-editor" || reason == "no-composer" {
+                    self?.presentComposerNotice(L10n.tr("files.addToConversationNoSession"))
+                } else {
+                    self?.presentComposerNotice(L10n.tr("files.addToConversationFailed", reason))
+                }
+                return
+            }
+            self?.dlog("composer reference inserted"
+                + " (\(dict?["mode"] as? String ?? "?")): \(reference.text)")
+        }
+    }
+
+    /// A JSON string literal, for embedding a value in an evaluated script.
+    private static func jsLiteral(_ value: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: [value]),
+              let array = String(data: data, encoding: .utf8), array.count >= 2 else {
+            return "\"\""
+        }
+        return String(array.dropFirst().dropLast())
+    }
+
+    /// Non-blocking notice over the main window (log only when there is none,
+    /// e.g. a headless run — never `runModal()`).
+    private func presentComposerNotice(_ message: String) {
+        AppLog.shared.log("composer notice: \(message)")
+        guard let window = window else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("files.addToConversation")
+        alert.informativeText = message
+        alert.addButton(withTitle: L10n.tr("btn.ok"))
+        alert.beginSheetModal(for: window, completionHandler: nil)
+    }
+
+    /// Once-per-launch guard for the composer QA probe.
+    private var composerProbeStarted = false
+
+    /// QA hook: exercise Files-panel → composer without a click.
+    ///
+    /// `DSH_COMPOSER_TEST_PATH` is the entry to reference (absolute, or relative
+    /// to the project directory) and `DSH_COMPOSER_TEST_SESSION` the session to
+    /// open first — a freshly loaded page shows the hero screen, whose composer
+    /// has no editor to write into. Both go through the SAME formatting and
+    /// injection the context menu uses; the outcome lands in the app log.
+    private func runComposerTestProbeIfNeeded() {
+        let env = ProcessInfo.processInfo.environment
+        guard !composerProbeStarted,
+              let raw = env["DSH_COMPOSER_TEST_PATH"], !raw.isEmpty else { return }
+        composerProbeStarted = true
+        if let session = env["DSH_COMPOSER_TEST_SESSION"], !session.isEmpty {
+            openDSHSession(session)
+        }
+        // The session open + session tracker round trip needs a moment before
+        // the project directory (the mention's root) is the session's.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            guard let self = self else { return }
+            let root = self.activeWorkspacePath() ?? FileManager.default.currentDirectoryPath
+            let path = raw.hasPrefix("/") ? raw : (root as NSString).appendingPathComponent(raw)
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            guard let reference = ComposerReferenceFormatter.mention(path: path, root: root,
+                                                                     isDirectory: isDirectory.boolValue) else {
+                self.dlog("composer probe: no reference for \(path)"
+                    + " (exists: \(exists), root: \(root))")
+                return
+            }
+            self.dlog("composer probe: inserting \(reference.text) (exists: \(exists), root: \(root))")
+            self.insertComposerReference(reference)
+        }
+    }
+
     /// Manual "Check & Upgrade": three-stage. (1) Check the next STEPWISE target
     /// and prompt with its version; (2) download it in the background on
     /// confirm (live dsh untouched); (3) after the download, ask again before
@@ -3615,6 +3799,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // CLI (the first-open "empty panel" the user sees). Session titles are read
         // when the panel is opened, not here — nothing else to do at page load.
         reviewPanel?.prewarm()
+        // QA hook (DSH_COMPOSER_TEST_PATH): drive the panel → composer path
+        // once the page is up, so the feature can be verified without a click.
+        runComposerTestProbeIfNeeded()
         // Report the page's actual browser language (follows AppleLanguages).
         webView.evaluateJavaScript("navigator.language") { result, _ in
             if let lang = result as? String {
@@ -3650,15 +3837,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             """) { result, _ in
                 AppLog.shared.log("dsh viewport/sidebar: \(result ?? "?")")
             }
-            // Injected-bridge health: the three scripts patch the page at document
+            // Injected-bridge health: the four scripts patch the page at document
             // start, so a dsh web change that breaks them fails SILENTLY (no row
-            // click, no directory follow, no preview intercept). Report installed
-            // flags so a broken bridge is at least visible in the log.
+            // click, no directory follow, no preview intercept, no composer
+            // reference). Report installed flags — plus whether the composer is
+            // the expected Lexical editor — so a broken bridge is visible in the
+            // log (docs/dsh-version-impact.md B9).
             webView.evaluateJavaScript("""
             JSON.stringify({
               tracker: !!window.__dshSessionTracked,
               opener: !!window.__dshSessionOpener,
               preview: !!window.__dshPreviewInstalled,
+              composer: !!window.__dshInsertFileReference,
+              composerEditor: !!(document.querySelector('[data-composer-input]') || {}).__lexicalEditor,
               rows: document.querySelectorAll('[role="treeitem"]').length
             })
             """) { result, _ in

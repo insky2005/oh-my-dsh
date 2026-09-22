@@ -96,6 +96,13 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// host can enable/disable the Cmd+W close-tab menu item.
     var onTabsChanged: (() -> Void)?
 
+    /// "Add to conversation": the tree computed the composer reference for the
+    /// clicked row (workspace-relative `@path`, see ComposerReference) and hands
+    /// it to the host, which injects it into dsh web's composer. While no handler
+    /// is installed the menu entry stays disabled — the panel never pretends to
+    /// have a conversation to add to.
+    var onAddToConversation: ((ComposerReference) -> Void)?
+
     /// Whether any preview tab is currently open.
     var hasOpenTabs: Bool { !tabs.isEmpty }
 
@@ -1150,10 +1157,12 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
     /// The rules live in TreeMenuModel (pure, unit-tested).
     func menuNeedsUpdate(_ menu: NSMenu) {
         let node = clickedTreeItem()
+        let reference = node.flatMap { composerReference(path: $0.path, isDirectory: $0.isDir) }
         let entries = TreeMenuModel.entries(hasRoot: treeRoot != nil,
                                             hasRow: node != nil,
                                             isRoot: treeRoot != nil && node?.path == treeRoot?.path,
-                                            isFile: node?.isDir == false)
+                                            isFile: node?.isDir == false,
+                                            canReference: reference != nil && onAddToConversation != nil)
         menu.removeAllItems()
         for entry in entries {
             if entry.separatorBefore, menu.numberOfItems > 0 { menu.addItem(.separator()) }
@@ -1168,6 +1177,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     private func menuTitle(for item: TreeMenuItem) -> String {
         switch item {
+        case .addToConversation: return L10n.tr("files.addToConversation")
         case .newFolder: return L10n.tr("files.newFolder")
         case .newFile: return L10n.tr("files.newFile")
         case .rename: return L10n.tr("files.rename")
@@ -1178,6 +1188,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     private func menuSelector(for item: TreeMenuItem) -> Selector {
         switch item {
+        case .addToConversation: return #selector(addTreeSelectionToConversation(_:))
         case .newFolder: return #selector(newFolderInTree(_:))
         case .newFile: return #selector(newFileInTree(_:))
         case .rename: return #selector(renameTreeSelection(_:))
@@ -1326,6 +1337,38 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
             AppLog.shared.log("preview tab closed (entry removed): \(tab.path)")
             closeNow(tab.id)
         }
+    }
+
+    /// The composer reference for a tree path, or nil when it has none (no
+    /// project root, the root itself, or a path the `@` grammar cannot carry —
+    /// see ComposerReferenceFormatter). The panel owns the tree root the path is
+    /// made relative to, so this is where "which reference" is decided.
+    func composerReference(path: String, isDirectory: Bool) -> ComposerReference? {
+        guard let root = treeRoot?.path else { return nil }
+        return ComposerReferenceFormatter.mention(path: path, root: root, isDirectory: isDirectory)
+    }
+
+    /// Path-addressed "add to conversation": what the context menu ultimately
+    /// performs, and what the headless tests drive (they have no clicked row).
+    /// The host owns the composer; returning the reference keeps the panel's
+    /// half assertable.
+    @discardableResult
+    func addTreePathToConversation(_ path: String, isDirectory: Bool) -> ComposerReference? {
+        guard let reference = composerReference(path: path, isDirectory: isDirectory),
+              let sink = onAddToConversation else {
+            AppLog.shared.log("preview tree → composer: no reference for \(path)")
+            return nil
+        }
+        AppLog.shared.log("preview tree → composer: \(reference.text)")
+        sink(reference)
+        return reference
+    }
+
+    /// Context menu: put the clicked entry into the conversation as an `@`
+    /// reference.
+    @objc private func addTreeSelectionToConversation(_ sender: Any?) {
+        guard let node = clickedTreeItem() else { return }
+        addTreePathToConversation(node.path, isDirectory: node.isDir)
     }
 
     /// Context menu: reveal the clicked tree entry in Finder.

@@ -1,8 +1,8 @@
 ---
 title: 模块：FilePanel.swift / CodeEditorView.swift（文件面板，预览+编辑+语法高亮）
-tags: [module, file-panel, preview, code-editor, syntax-highlight, highlightr, edit, line-numbers, tree-menu, image-zoom]
-updated: 2026-09-21T08:44:40Z
-sources: [platforms/macos/src/FilePanel.swift, platforms/macos/src/FilePanelTreeMenu.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImagePreviewView.swift, platforms/macos/src/ImageZoom.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/vendor/Highlightr/Highlightr.swift, platforms/macos/src/vendor/Highlightr/CodeAttributedString.swift, platforms/macos/src/vendor/Highlightr/Theme.swift, platforms/macos/build-app.sh, docs/ux-feedback.md, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/WorkspaceTabMemory.swift, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, tests/file-panel/]
+tags: [module, file-panel, preview, code-editor, syntax-highlight, highlightr, edit, line-numbers, tree-menu, image-zoom, composer-reference]
+updated: 2026-09-22T09:16:43Z
+sources: [platforms/macos/src/FilePanel.swift, platforms/macos/src/FilePanelTreeMenu.swift, platforms/macos/src/ComposerReference.swift, docs/file-panel-composer-reference.md, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImagePreviewView.swift, platforms/macos/src/ImageZoom.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/vendor/Highlightr/Highlightr.swift, platforms/macos/src/vendor/Highlightr/CodeAttributedString.swift, platforms/macos/src/vendor/Highlightr/Theme.swift, platforms/macos/build-app.sh, docs/ux-feedback.md, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/WorkspaceTabMemory.swift, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, tests/file-panel/]
 manual: false
 ---
 
@@ -34,17 +34,29 @@ manual: false
 
 ## 目录树右键菜单（新建 / 重命名 / 删除 / 在 Finder 中显示，#1）
 
-判定的**纯模型**是 `FilePanelTreeMenu.swift`：`TreeMenuModel.entries(hasRoot:hasRow:isRoot:isFile:)` 返回 `[TreeMenuEntry(item:separatorBefore:enabled:)]`，菜单分三组：
+判定的**纯模型**是 `FilePanelTreeMenu.swift`：`TreeMenuModel.entries(hasRoot:hasRow:isRoot:isFile:canReference:)` 返回 `[TreeMenuEntry(item:separatorBefore:enabled:)]`，菜单分四组：
 
 | 组 | 条目 | 条件 |
 |---|---|---|
+| 加入对话 | 添加到对话 | 需 `hasRow` 且**能算出 `@` 引用**（`canReference`：非根、路径在工作区内、无引号/控制字符）且壳层已接线；**项目根**上置灰 |
 | 新建 | 新建文件夹 → 新建文件 | 仅点**文件夹**（含空白处右键）时出现；点在**文件**上不显示 |
 | 条目操作 | 重命名 → 删除 | 需 `hasRow`；**项目根目录**上置灰（不可改名/删除） |
 | 定位 | 在 Finder 中显示 | 单独成组（不改动该条目） |
 
 - 实现：`treeOutline.menu` + `clickedRow` 定位目标目录（`clickedTreeItem()`）、`NSMenuDelegate.menuNeedsUpdate` 动态构建；**新建** `promptForNewItem(isDir:)` → `createTreeItem(named:isDir:in:)`（重名 / 非法名 / 失败都有可见反馈，成功后展开并选中新节点，文件自动开页签）；**重命名** `renameTreePath(_:to:)` → `moveTreeEntry(at:to:)`（输入框预填原名整段选中），成功后 `repointTabs(from:to:)` 把已打开页签（含被改名文件夹下的所有文件）指向新路径，未保存的编辑继续有效；**删除** `trashTreeEntry(at:)` 移到废纸篓（不做不可恢复 unlink），被删条目下的页签 `closeTabs(under:)` 自动关闭；系统回收站不可写则拒绝删除并保留文件与页签；
-- 文案键：`files.newFile` / `files.newFolder` / `files.newItemLocation` / `files.newFilePlaceholder` / `files.newFolderPlaceholder` / `files.create` / `files.invalidName` / `files.alreadyExists` / `files.createFailed` / `files.revealInTree` / `files.rename(Action)` / `files.renameFailed` / `files.delete(Action)` / `files.deleteFileMessage` / `files.deleteFolderMessage` / `files.deleteFailed`（中英成对，见 [conventions](../conventions.md)）；
+- 文案键：`files.addToConversation` / `files.addToConversationNoSession` / `files.addToConversationFailed` / `files.newFile` / `files.newFolder` / `files.newItemLocation` / `files.newFilePlaceholder` / `files.newFolderPlaceholder` / `files.create` / `files.invalidName` / `files.alreadyExists` / `files.createFailed` / `files.revealInTree` / `files.rename(Action)` / `files.renameFailed` / `files.delete(Action)` / `files.deleteFileMessage` / `files.deleteFolderMessage` / `files.deleteFailed`（中英成对，见 [conventions](../conventions.md)）；
 - **待定**：拖拽移动未做。
+
+## 目录树右键「添加到对话」→ dsh web 输入框的 `@` 引用（B9）
+
+右键文件/文件夹 → **添加到对话** → dsh web 输入框末尾出现该条目的**引用 chip**（与用户敲 `@` 从候选中选出来的是**同一种节点**），光标留在输入框末尾可直接续写。
+
+- **语法/相对路径是纯模型** `ComposerReference.swift`（`ComposerReferenceFormatter.mention(path:root:isDirectory:)`）：引用相对**工作区根**（dsh 在会话 cwd 下解析 `@`），文件 `@src/foo.ts`、目录 **`@src/`（尾斜杠 = 目录）**、含空格走引号（目录是**不闭合**的 `@"my dir/`，dsh 的补全靠它继续下钻）；工作区根自己、工作区之外、名字含 `"`/控制字符 → **无引用**（菜单置灰，不编坏 token）；
+- **面板只决定「加哪一个」**：`onAddToConversation: ((ComposerReference) -> Void)?`（无监听方即置灰），壳层 `insertComposerReference()` 负责页面；
+- **壳层把 chip 节点直接写进 dsh web 的 Lexical 编辑器**（`composerReferenceScript` → `window.__dshInsertFileReference(mention,label,appearance)`）：取 `[data-composer-input].__lexicalEditor` → `editor._nodes.get('reference-chip').klass`（chip 类模块私有，只能从这里拿）→ 在 `editor.update()` 里 `root.selectEnd().insertNodes([可选空格, chip, 空格])`；**不伪造按键、不依赖焦点**。提交时由 source codec 序列化成 `ref` = `@path`，即模型读到的文本；
+- **失败都不静默**：桥接函数回 `{ok,reason}`（`bridge-unavailable` / `no-composer` / `no-editor`（启动页无会话）/ `unknown-composer` / `throw:…`），壳层弹非阻塞提示 + `app.log`；`DSH_UI_DEBUG=1` 的注入桥健康检查新增 `composer` / `composerEditor` 两个字段；
+- **QA 钩子**：`DSH_COMPOSER_TEST_PATH`（要引用的条目，绝对路径或相对项目目录）+ `DSH_COMPOSER_TEST_SESSION`（先打开的会话，因为新页面停在启动页没有 editor）——走的是**与右键同一条**格式化 + 注入路径，结果进 `app.log`；
+- **dsh 耦合**：输入框槽位标记、Lexical 实例挂载点、节点登记表、`reference-chip` 类型名与字段全部是 dsh 私有细节 —— 升级核对项见 `docs/dsh-version-impact.md` **B9** 与 `docs/file-panel-composer-reference.md`（含 WKWebView 实测记录）。
 
 ## 图片预览（自适应 + 手动缩放，#8）
 
@@ -107,7 +119,9 @@ manual: false
 |---|---|
 | `workspace-tab-tests.swift` | `WorkspaceTabMemory` 模型 28 例（归一化 / 记忆 / 恢复顺序与选中） |
 | `open-with-tests.swift` | `OpenWithCatalog` 目录与记忆规则（未装应用不命中 / `path:` 形态） |
-| `tree-menu-tests.swift` | `TreeMenuModel.entries` 分组、顺序、置灰与「文件不显示新建」 |
+| `tree-menu-tests.swift` | `TreeMenuModel.entries` 分组、顺序、置灰与「文件不显示新建」、`canReference` 与根/无监听方禁用 |
+| `composer-reference-tests.swift` | `ComposerReferenceFormatter` 19 项（引号与目录尾斜杠 / `..` 归一 / 工作区外与非法字符拒绝 / label 与 appearance） |
+| （`run.sh` 内联 lint）| `composerReferenceScript` 必须**零反斜杠转义**——Swift 字面量会吃掉单反斜杠，整段 JS 解析失败 → 桥接函数不存在 → `bridge-unavailable`（`docs/file-panel-composer-reference.md` §4.5） |
 | `image-zoom-tests.swift` | `ImageZoom` 17 项（适应比例 / 夹取 / 单步 / 边界收敛） |
 | `editor-load-policy-tests.swift` | `EditorLoadPolicy` 23 项（行数 / 分块不重不漏不切行 / 安全阀边界 / 稳定性窗口） |
 | `panel-switch-tests.swift` | 真实 `FilePanelController` + **真实 NSWindow / split view**：页签交接、头部按钮启用态、宽度夹取、角标固定尺寸、图片居中盒子 |

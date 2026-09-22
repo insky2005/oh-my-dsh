@@ -49,6 +49,7 @@
 | B6 | 标题来源：`session/list` → `items[].projections.values.title`（dsh web 按首条消息自动命名） | 字段路径变化 | 面板/指令显示的会话名为空 | `sessionOpenerScript` / `sessionDriver` / ChannelStoreReader | `/ses` 回复里的标题 |
 | B7 | 文件打开 RPC：旧 `/api/host.openPath`；0.1.2 `session/openWorkspacePath`（路径在 `payload.args.request.path`） | 0.1.2 迁移 | 预览面板不再拦截文件打开 → 弹系统默认应用 | `previewInterceptorScript`（已双匹配 + 多路取路径） | 消息流里点文件 → 是否在文件面板打开 |
 | B8 | 根页面注入 `window.__DSH_BOOT__` | 0.1.2 起仅鉴权后可读 | 仅影响旧版就绪判定（已由 A2 覆盖） | `isDSHServing()` | 同上 |
+| B9 | 输入框（composer）DOM + 节点登记表：`[data-composer-input]`（contenteditable）、`el.__lexicalEditor`（Lexical 挂在根元素上）、`editor._nodes[type].klass`、`editor._pendingEditorState._nodeMap["root"]`、chip 类型名 `reference-chip`（字段 `{source, ref, label, appearance, clipboardText}`） | 上游换编辑器（textarea / 另一套富文本）、改槽位标记、或改 chip 节点类型名与字段 | Files 面板右键「添加到对话」**不插入**（面板/日志报 `no-composer` / `no-editor` / `unknown-composer`，不静默） | `composerReferenceScript` + `insertComposerReference()` | 右键任一文件 → 输入框出现引用 chip（或 `app.log: composer reference inserted (chip)`）；自动化见 §5 的 B 面 |
 
 ### C. 一元 RPC（会话 / 工作区）
 
@@ -174,7 +175,7 @@
 
 ### 升级后（逐面验证，失败即按 §3 定位）
 - [ ] A 启动：App 起得来、日志有 `using node=… port=<n>` + `dsh web is up on …/?token=…`、WebView 首屏正常（非 401）；**不应出现 `reusing existing dsh web`**（复用已删除），也不应出现 `advertised no launch token` 告警。
-- [ ] B 注入：切会话 → `ProjectDirectory` 跟随（终端/预览/wiki/tasks 目录变）；面板点会话行 → web 跳转；点文件链接 → 文件面板打开。
+- [ ] B 注入：切会话 → `ProjectDirectory` 跟随（终端/预览/wiki/tasks 目录变）；面板点会话行 → web 跳转；点文件链接 → 文件面板打开；**右键文件夹「添加到对话」→ 输入框出现引用 chip**（B9；无头复现见下）。
 - [ ] C 频道：微信 `/help` `/ping` `/status` `/wks` `/ses` `/new …` + **发一句普通消息**看是否回推答案（覆盖 C5–C7）。
 - [ ] C 工作区：`/wks` 能列出**面板已启用**的 workspace（覆盖 C4）。
 - [ ] D 布局：`storages/workspace.json` 仍在、`unit.version` 仍为 **2**、工作区数量与面板一致（R4；命令见 §6.2）——变了就要同时改 `core/lib/workspace-store.js` 与 `platforms/macos/src/DshWebRPC.swift` 的读取器并补用例。
@@ -206,13 +207,14 @@
 
 ### R3 详解：注入脚本（这是**当前唯一还在「静默失效」风险里**的一面）
 
-壳层往 WKWebView 注入三个脚本（`rebuildWebView()` 里 `WKUserScript(injectionTime: .atDocumentStart)`，随每次重建 WebView 重装），它们**直接依赖 dsh web 客户端内部实现**，一旦上游改动就静默失效（没有报错、没有弹窗，只是某个功能不动作）：
+壳层往 WKWebView 注入四个脚本（`rebuildWebView()` 里 `WKUserScript(injectionTime: .atDocumentStart)`，随每次重建 WebView 重装），它们**直接依赖 dsh web 客户端内部实现**，一旦上游改动就静默失效（没有报错、没有弹窗，只是某个功能不动作）：
 
 | 脚本 | 依赖的 dsh web 细节 | 失效后的症状 | 现状 |
 |---|---|---|---|
 | `sessionTrackerScript`（B1–B4） | ① 一元 RPC 走 `window.fetch`；② 方法名白名单 `session.history/prompt/rename/selectModel` + `subagent(s).list`（点号与斜杠两套都认）；③ sessionId 在 `payload.args.*` 或 `payload.*`；④ **每次切会话必然发一次 `subagents/list`（带 parentSessionId）**这一非幂等时序 | web 里切会话 → 面板/终端/预览/wiki/tasks 的项目目录**不跟随** | ✅ 0.1.2 实测可用 |
 | `sessionOpenerScript`（B5/B6） | ① 会话列表 RPC 的**请求形状**（斜杠 vs 点号、是否 `args` 包裹）；② `projections.values.title`；③ 侧栏 DOM：`[role="treeitem"]` + `className` 含 `sessionRow` + 行文本等于标题 + `aria-expanded` 折叠组 | 面板点会话行 → 不跳转（`[dsh-opener] no-session / row-not-found`） | ⚠️ **0.1.2 下原本就是坏的**（见下），已于 2026-09-10 修 |
 | `previewInterceptorScript`（B7） | ① 文件打开走 fetch 的一元 RPC（`host.openPath` / `session/openWorkspacePath`）；② 路径在 `payload.args.request.path` 等位置；③ 能用 **假 `server-response`** 吞掉这次请求（客户端 promise 正常 resolve） | 点消息里的文件 → 不由面板打开，改弹系统默认应用（或什么都不发生） | ✅ 0.1.2 实测可用 |
+| `composerReferenceScript`（B9） | ⚠️ 实测踩过：脚本正文里**不能出现单反斜杠转义**（Swift 字符串字面量会先吃掉它），必须保持「零转义」并靠 `tests/file-panel/run.sh` 的 lint 钉住 —— 详见 `docs/file-panel-composer-reference.md` §4.5。依赖：① 输入框 contenteditable 的槽位标记 `[data-composer-input]`；② Lexical 把实例挂在根元素上（`el.__lexicalEditor`）；③ 节点类可从 `editor._nodes[type].klass` 取（chip 类**模块私有**，只能从这里拿）；④ 更新回调里能读到 `editor._pendingEditorState._nodeMap["root"]` | 右键「添加到对话」不插入；若 chip **类型名对不上**则整个输入框功能不受影响（我们只在自己那条路径上失败并报原因） | ✅ 0.1.2-rc.1 实测可用（WKWebView 内插入 `reference-chip`，状态 JSON 含 `ref`/label，装饰器渲染出 chip；见 `docs/file-panel-composer-reference.md`） |
 
 **已实测确认的坏点（0.1.2-rc.1，2026-09-10）**：`__dshOpenSession` 当时固定发 `POST /api/session/list` 但 body 里写 `method:"session.list"`、payload 也不包 `args`，服务端直接拒绝：
 
@@ -314,6 +316,7 @@ sessionCookie(...)     = "<name>=<value>; Max-Age=2592000; Path=/; Expires=…; 
 ## 7. 参考
 
 - 实战审计（0.1.2 逐项状态与实测契约）：`docs/plans/dsh-012rc1-compat-audit.md`
+- Files 面板 → 输入框引用（B9 的实现与实测）：`docs/file-panel-composer-reference.md`
 - 频道侧实现与状态：`docs/channel-status.md`、`docs/channel-commands.md`、`docs/channel-project-switch.md`
 - 产品化与版本策略：`docs/productization.md` §8；发布流程：`docs/release-process.md`
 - 代码锚点：`platforms/macos/src/main.swift`（ServerManager / DSHSessionRPC / 注入脚本 / 升级）、`platforms/macos/src/WikiPanel.swift`（WikiRPC）、`platforms/macos/src/IssueRunnerPanel.swift`、`platforms/macos/src/DshWebCookieJanitor.swift`、`core/lib/dsh-rpc.js`、`core/lib/workspace-store.js`、`core/lib/session-driver.js`、`core/lib/channel-runner.js`、`core/lib/upgrade.js`、`platforms/macos/build-app.sh`

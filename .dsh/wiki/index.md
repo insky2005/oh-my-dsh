@@ -22,7 +22,7 @@ manual: false
 
 - [main（壳层核心）](modules/main.md) — 服务管理、升级、菜单、窗口与右栏插槽
 - [preview-panel（预览面板）](modules/preview-panel.md) — 文件/文件夹预览、项目目录树（回滚基线 + 共享 UI 组件，含 2026-09-21 新增的 `PanelMenuButton` 头部菜单按钮；现行实现为 file-panel）
-- [file-panel（文件面板）](modules/file-panel.md) — 预览强化：无后缀/点文件按文本预览、文件内编辑 + 行号、Highlightr **分块**语法高亮（大文件不再关配色）、**目录树右键菜单**（新建/重命名/删除/在 Finder 中显示）、**头部菜单按钮**（打开项目 ▾ / 打开文件 ▾，外部应用目录）、**图片预览自适应 + 缩放**、**目录树宽度跨关闭恢复**、**页签按工作区记忆/恢复**
+- [file-panel（文件面板）](modules/file-panel.md) — 预览强化：无后缀/点文件按文本预览、文件内编辑 + 行号、Highlightr **分块**语法高亮（大文件不再关配色）、**目录树右键菜单**（添加到对话 / 新建/重命名/删除/在 Finder 中显示）、**头部菜单按钮**（打开项目 ▾ / 打开文件 ▾，外部应用目录）、**图片预览自适应 + 缩放**、**目录树宽度跨关闭恢复**、**页签按工作区记忆/恢复**
 - [terminal-panel（终端面板）](modules/terminal-panel.md) — PTY 会话 + ANSI/VT 模拟器 + **页签按 workspace 隔离**（隐藏不杀会话、切回恢复选中）+ 双击选词/三击选行与**选中即复制**（`terminal.autoCopy`）+ 滚动方向对齐面板语义
 - [wiki-panel（Repo Wiki 面板）](modules/wiki-panel.md) — 知识库生成/维护/浏览
 - [issue-runner-panel（任务面板）](modules/issue-runner-panel.md) — GitHub issue 驱动的串行任务流水线（切分支→修复→推送→PR）
