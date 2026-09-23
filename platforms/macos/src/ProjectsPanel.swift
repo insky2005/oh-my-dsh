@@ -289,6 +289,12 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
     /// dsh web's sidebar picks the new workspace up through its own workspace
     /// stream (verified against dsh 0.1.2), so no page nudge is needed.
     var onWorkspaceRegistered: (() -> Void)?
+    /// Make this folder the shell's current workspace (main.swift re-roots every
+    /// panel through `adoptProjectDirectory`). Sent right after the panel creates
+    /// or adopts a workspace: that folder is the one the user just asked for, so
+    /// its card must come up highlighted — the highlight IS the current
+    /// workspace, the panel deliberately has no second selection state.
+    var onSelectWorkspace: ((String) -> Void)?
     var onOpenSettings: (() -> Void)?
     /// QA hook (--ui-debug): fires after each render.
     var onDidRender: (() -> Void)?
@@ -333,6 +339,10 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
     /// The open "new workspace" sheet (nil when none) — kept so the informative
     /// text can follow what the user types.
     private var promptAlert: NSAlert?
+    /// Canonical path of a just-created workspace whose card must be scrolled into
+    /// view on the next render that contains it (the list is sorted by name, so a
+    /// new card can land far below the fold).
+    private var pendingScrollPath: String?
 
     override init() {
         super.init()
@@ -435,6 +445,11 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
             }
             setStatus(L10n.tr("projects.created", name), isError: false)
         }
+        // The workspace the user just made (or adopted) is the one they mean to
+        // work in: select it now. The card highlight follows ProjectDirectory,
+        // which only main.swift writes, so this goes through the caller.
+        pendingScrollPath = DshWorkspaceStore.canonical(path)
+        onSelectWorkspace?(path)
         registerInBackground(path: path)
         reload()
         return true
@@ -751,8 +766,27 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
         emptyView.isHidden = !workspaces.isEmpty
         scroll.isHidden = workspaces.isEmpty
 
+        scrollToNewWorkspaceIfNeeded()
+
         hasRendered = true
         onDidRender?()
+    }
+
+    /// Bring a just-created workspace's card on screen. The card is already
+    /// highlighted (it is the current workspace now) — this makes sure the user
+    /// can SEE that, instead of hunting for it in a long alphabetical list.
+    private func scrollToNewWorkspaceIfNeeded() {
+        guard let pending = pendingScrollPath,
+              let card = list.arrangedSubviews.compactMap({ $0 as? ProjectCardView })
+                  .first(where: { DshWorkspaceStore.canonical($0.workspace.path) == pending })
+        else { return }
+        pendingScrollPath = nil
+        // The stack has just been rebuilt; scroll once it has laid out.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, card.superview != nil else { return }
+            self.view.layoutSubtreeIfNeeded()
+            card.scrollToVisible(card.bounds.insetBy(dx: 0, dy: -10))
+        }
     }
 
     // MARK: - The create sheet

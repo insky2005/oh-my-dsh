@@ -135,9 +135,11 @@ panel.currentWorkspacePath = { current }
 var entered: [String] = []
 var opened: [(path: String, target: ProjectTargetPanel)] = []
 var newSessions: [String] = []
+var selections: [String] = []
 panel.onEnterWorkspace = { entered.append($0) }
 panel.onOpenPanel = { opened.append(($0, $1)) }
 panel.onCreateSession = { newSessions.append($0) }
+panel.onSelectWorkspace = { selections.append($0) }
 
 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 700),
                       styleMask: [.titled], backing: .buffered, defer: false)
@@ -175,6 +177,7 @@ test("an invalid name says why",
      labels(panel.view).contains { $0 == "projects.invalidName" })
 test("a name with a colon creates nothing", panel.createWorkspace(named: "a:b") == false)
 test("a name with a colon does not reach dsh", fake.workspaceCreates.count == createCountBefore)
+test("a refused name selects nothing", selections.isEmpty)
 
 test("a valid name creates the directory", panel.createWorkspace(named: "gamma") == true)
 var isDir: ObjCBool = false
@@ -192,12 +195,19 @@ func samePath(_ a: String?, _ b: String) -> Bool {
 test("dsh was asked to register it",
      waitUntil(3) { fake.workspaceCreates.contains { samePath($0["path"] as? String, root + "/gamma") } })
 test("the new workspace appears in the list", waitUntil(3) { panel.workspaces.count == 3 })
+// A workspace the user just created is the one they mean to work in: the panel
+// asks main.swift to make it current, which is what highlights its card (the
+// highlight IS ProjectDirectory.current — there is no second selection state).
+test("creating selects the new workspace so its card highlights",
+     selections.contains { samePath($0, root + "/gamma") })
 
 // An existing directory (created in Finder) is adopted, not complained about.
 try! fm.createDirectory(atPath: root + "/delta", withIntermediateDirectories: true)
 test("an existing directory is accepted", panel.createWorkspace(named: "delta") == true)
 test("an existing directory says so instead of failing",
      waitUntil(2) { labels(panel.view).contains { $0 == "projects.nameExists" } })
+test("adopting an existing directory selects it as well",
+     selections.contains { samePath($0, root + "/delta") })
 
 // MARK: - A server that cannot serve the verb
 

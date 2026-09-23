@@ -2449,6 +2449,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         projectsPanel.onCreateSession = { [weak self] path in
             self?.createSessionInWorkspace(path)
         }
+        // A workspace was just created (or adopted) in the panel: make it the
+        // shell's current workspace right away, so its card comes up highlighted
+        // and the other panels point at the folder the user just asked for.
+        // Nothing else selects it: the panel has no selection state of its own.
+        projectsPanel.onSelectWorkspace = { [weak self] path in
+            guard let self = self else { return }
+            guard self.adoptProjectDirectory(path) else { return }
+            self.dlog("projects: selected the new workspace " + path)
+        }
         // A folder's dsh workspace was just created from the panel: dsh web's
         // sidebar picks the new row up on its own (an added workspace reaches
         // every connected client through dsh's workspace stream within a second

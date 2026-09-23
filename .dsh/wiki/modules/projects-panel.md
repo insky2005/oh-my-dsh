@@ -52,7 +52,7 @@ manual: false
 
 | 流程 | 实测行为 |
 |---|---|
-| 新建 `abc` | `validateName` → `createDirectory`（**同步**，单个目录创建）→ `registerInBackground`（`workspace/create`，幂等）→ `reload()`。同名**目录**不是错误：状态行「该工作区已存在」并**继续注册**；同名**文件** → `projects.createFailed`；**不自动切换当前工作区**（避免没点入口右栏就跳走） |
+| 新建 `abc` | `validateName` → `createDirectory`（**同步**，单个目录创建）→ **`onSelectWorkspace(path)`（main.swift → `adoptProjectDirectory`，创建即选中：卡片立刻高亮）+ `pendingScrollPath`（卡片滚进视野）** → `registerInBackground`（`workspace/create`，幂等）→ `reload()`。同名**目录**不是错误：状态行「该工作区已存在」、**同样选中**并**继续注册**；同名**文件** → `projects.createFailed`；被名字规则拒绝时**什么都不做**（不建目录、不改变当前工作区） |
 | 六个快捷入口 | 卡片回调 `onOpenPanel(path, target)` → `main.swift openWorkspace`：先 `adoptProjectDirectory(path)`（不是存在的目录即中止，**不切面板**），再 `setRightPanel(...)`；日志 `projects: opened the <target> panel for <path>` |
 | 新会话（仅已注册） | 主线程 `adoptProjectDirectory(path)` → `await window.__dshNewSession(<目录名>)`：**点 dsh web 侧栏该工作区行自带的 `+`**，由 dsh 自己 reuse-or-create 并 open（见下节）。失败（侧栏 DOM 变样）才走兜底：`register + session/create` 把会话建出来 + 状态行 `projects.newSessionFallback`；全过程**不 nudge、不重连、不点行** |
 | 在 dsh 中打开（点卡片 / 已注册） | 后台 `newestSessionId(port:inPath:)`（`session/list` 中 cwd canonical 相等、**且 `blank != true`** 者，**running 优先**，其次 `updatedAt` 最大）→ 有则 `adoptProjectDirectory` + `openDSHSession`（点卡片 = `retry: 1`），无（含"只有空会话"）则走「新会话」 |
@@ -84,9 +84,10 @@ manual: false
 ## 当前工作区（单一真相，无第二个选中状态）
 
 - 壳层的「当前工作区」只有 `ProjectDirectory.current` 一个真相（既有 `dshSession` 处理器在 web 切会话时写它）；面板**没有**面板内选中项——卡片高亮是每次渲染时算出来的：`canonical(ProjectDirectory.current) == canonical(ws.path)`（`DshWorkspaceStore.canonical` 走 `realpath(3)`，因此 `/var` 与 `/private/var`、符号链接路径与真实路径都能对上）；
-- 六个入口与「新会话」都经 `main.swift` 的 **`adoptProjectDirectory(_:)`** 重根原语：`standardizingPath` → **必须是已存在的目录**（否则拒绝并记 `project directory refused (not an existing directory)`）→ 路径真的变了才依次 `previewPanel.setProjectDirectory` / `terminalPanel.setWorkspaceDirectory`（终端页签按工作区收起/恢复） / `wikiPanel.reloadRoot` / `tasks`·`channel`·`review` 的 `workspaceChanged` / `projectsPanel.workspaceChanged`（只重渲染 + 重列徽标）；
+- 六个入口、「新会话」与**新建/采纳工作区**（`onSelectWorkspace`）都经 `main.swift` 的 **`adoptProjectDirectory(_:)`** 重根原语：`standardizingPath` → **必须是已存在的目录**（否则拒绝并记 `project directory refused (not an existing directory)`）→ 路径真的变了才依次 `previewPanel.setProjectDirectory` / `terminalPanel.setWorkspaceDirectory`（终端页签按工作区收起/恢复） / `wikiPanel.reloadRoot` / `tasks`·`channel`·`review` 的 `workspaceChanged` / `projectsPanel.workspaceChanged`（只重渲染 + 重列徽标）；
 - **有意的小行为修正**：旧 `dshSession` 处理器不检查目录是否存在，会把各面板重根到已删除的目录；抽出的原语带 `fileExists + isDirectory` 守卫，这种情况直接返回 `false`；
-- 用户在 dsh web 里切到别的工作区 → 同一个原语被调用 → 面板高亮随之移动，**面板高亮 / 终端页签归属 / 任务·通道·审查的工作区不可能互相打架**（设计 D5）。
+- 用户在 dsh web 里切到别的工作区 → 同一个原语被调用 → 面板高亮随之移动，**面板高亮 / 终端页签归属 / 任务·通道·审查的工作区不可能互相打架**（设计 D5）；
+- **创建即选中**（2026-09-24）：面板建/采纳工作区后立刻经 `onSelectWorkspace` 把它变成当前工作区（否则用户刚建完却看不到"选中"、还得自己在列表里找），并记下 `pendingScrollPath` → 下一次含该卡片的 `render()` 里 `scrollToVisible` 把它滚进视野（列表按名字排序，新卡片可能落在很下面）。日志 `projects: selected the new workspace <path>`。
 
 ## dsh 侧契约（新增耦合面 C10a/b/c、B10）
 
