@@ -156,16 +156,98 @@ download_node() {
   done
 }
 
-# install_dsh <target-dir>: npm install dsh into target; registry fallback
+# ---------------------------------------------------------------------------
+# Runtime dependency lock (E7)
+#
+# Pinning `@deepseek-ai/dsh@<ver>` is NOT enough: its cordis/tooling plugins are
+# declared with caret ranges, so a plain `npm install` picks whatever 1.x is
+# latest TODAY. dsh 0.1.2-rc.1 + cordis-plugin-hmr 1.0.19 (instead of 1.0.17)
+# fails its own boot ("user patch-layer watching requires the Cordis HMR
+# service") — measured 2026-09-23. So every supported spec ships a committed
+# lockfile and the build installs with `npm ci` (reproducible closure).
+#
+# `DSH_PACKAGE_SPEC=@deepseek-ai/dsh@1.2.3` -> runtime-locks/dsh-1.2.3/
+locks_dir_for_spec() {
+  local spec="$1"
+  echo "$ROOT/platforms/macos/runtime-locks/$(printf '%s' "$spec" | sed -e 's#^@[^/]*/##' -e 's/@/-/')"
+}
+
+# Short fingerprint of the lockfile (part of the runtime cache key, so editing
+# the lock always rebuilds). "none" when the spec has no committed lock.
+lock_fingerprint() {
+  local dir="$1"
+  if [ -f "$dir/package-lock.json" ]; then
+    shasum -a 256 "$dir/package-lock.json" | cut -c1-12
+  else
+    echo "none"
+  fi
+}
+
+# install_dsh <target-dir>: install dsh into target, from the committed lock
+# when the spec has one (reproducible), else a plain install + loud warning.
 install_dsh() {
   local target="$1"
   local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.2-rc.1}"
+  local lock_dir; lock_dir="$(locks_dir_for_spec "$spec")"
   mkdir -p "$target"
+  if [ -f "$lock_dir/package-lock.json" ]; then
+    echo "    using committed runtime lock: ${lock_dir#$ROOT/}"
+    cp "$lock_dir/package.json" "$lock_dir/package-lock.json" "$target/"
+    ( cd "$target" \
+      && ( npm ci --loglevel=error --registry "$NPM_REGISTRY" \
+           || { echo "    primary registry ($NPM_REGISTRY) failed; retrying official…" >&2; \
+                npm ci --loglevel=error --registry "$NPM_REGISTRY_OFFICIAL"; } ) )
+    return 0
+  fi
+  echo "    WARNING: no committed lock for $spec — installing unpinned (caret" >&2
+  echo "             ranges may pull newer plugins that break this dsh version)" >&2
   ( cd "$target" \
     && npm init -y >/dev/null 2>&1 \
     && ( npm install --loglevel=error --registry "$NPM_REGISTRY" "$spec" \
          || { echo "    primary registry ($NPM_REGISTRY) failed; retrying official…" >&2; \
               npm install --loglevel=error --registry "$NPM_REGISTRY_OFFICIAL" "$spec"; } ) )
+}
+
+# smoke_runtime <stage-dir> <dsh-dir>: boot the freshly installed dsh web once
+# and fail the build when it cannot come up. Dependency drift is otherwise a
+# silent build success + a dead app for the user (measured 2026-09-23).
+smoke_runtime() {
+  local stage="$1" dsh_dir="$2"
+  local node_bin=""
+  for cand in "$stage/node-$HOST_ARCH" "$stage/node"; do
+    [ -x "$cand" ] && { node_bin="$cand"; break; }
+  done
+  if [ -z "$node_bin" ]; then
+    # Cross-arch stage (e.g. x86_64 on an arm64 host) has no runnable host node.
+    # The dependency closure is arch-independent (same lock), so skipping here is
+    # safe — and failing would break the x86_64 release build.
+    echo "    smoke: skipped (cross-arch stage $ARCH on $HOST_ARCH host)"
+    return 0
+  fi
+  local port=$(( 40200 + ($$ % 400) ))
+  local home_dir="$BUILD_DIR/smoke-home" log="$BUILD_DIR/smoke.log"
+  rm -rf "$home_dir"; mkdir -p "$home_dir"
+  echo "    smoke: booting bundled dsh on 127.0.0.1:$port …"
+  DSH_HOME="$home_dir" "$node_bin" "$dsh_dir/node_modules/@deepseek-ai/dsh/lib/bin.js" \
+    web --no-open --port "$port" > "$log" 2>&1 &
+  local pid=$!
+  local ok=0 i
+  for i in $(seq 1 40); do
+    if grep -q "dsh web: http" "$log" 2>/dev/null; then sleep 3; ok=1; break; fi
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 1
+  done
+  if [ "$ok" = 1 ] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    echo "    smoke: dsh web came up (kept the tree)"
+    return 0
+  fi
+  kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+  echo "ERROR: bundled dsh failed its startup smoke test — this build would produce" >&2
+  echo "       an app whose web server cannot boot. Log:" >&2
+  sed 's/^/       /' "$log" | head -30 >&2
+  echo "       (fix the runtime lock under platforms/macos/runtime-locks/, or skip with DSH_SKIP_RUNTIME_SMOKE=1)" >&2
+  exit 1
 }
 
 # build_runtime: node bin + npm + dsh tree into $CACHE_DIR/runtime (cached)
@@ -176,8 +258,11 @@ build_runtime() {
   # 每轮 release 的每个架构都 rm -rf 重建（缓存形同虚设）。
   local stage="$CACHE_DIR/runtime/$ARCH"
   local info="$stage/.runtime-info"
-  if [ -f "$info" ] && grep -qx "$NODE_VERSION|$spec|$ARCH" "$info" 2>/dev/null; then
-    echo "    reusing previously built runtime ($NODE_VERSION + $spec, $ARCH)"
+  # The cache key carries the lock fingerprint: editing the committed lock must
+  # rebuild, otherwise a stale tree would keep shipping.
+  local lock_fp; lock_fp="$(lock_fingerprint "$(locks_dir_for_spec "$spec")")"
+  if [ -f "$info" ] && grep -qx "$NODE_VERSION|$spec|$ARCH|$lock_fp" "$info" 2>/dev/null; then
+    echo "    reusing previously built runtime ($NODE_VERSION + $spec, $ARCH, lock $lock_fp)"
     return 0
   fi
   rm -rf "$stage"
@@ -214,7 +299,13 @@ build_runtime() {
   done
   install_dsh "$stage/dsh"
   rm -rf "$node_stage"
-  echo "$NODE_VERSION|$spec|$ARCH" > "$info"
+  # A tree that cannot boot is worse than a failed build (see smoke_runtime).
+  if [ "${DSH_SKIP_RUNTIME_SMOKE:-0}" != "1" ]; then
+    smoke_runtime "$stage" "$stage/dsh"
+  else
+    echo "    smoke: skipped (DSH_SKIP_RUNTIME_SMOKE=1)"
+  fi
+  echo "$NODE_VERSION|$spec|$ARCH|$lock_fp" > "$info"
   echo "    runtime built: $stage ($NODE_VERSION + $spec, $ARCH)"
 }
 

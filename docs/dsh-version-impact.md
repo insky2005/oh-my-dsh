@@ -91,6 +91,7 @@
 | E4 | 版本自描述：安装后读 `package.json version`；registry 版本列表选「下一个候选」 | 版本号/发布渠道变化 | 升级判定错 | core `upgrade.js`（`latestVersion/nextStepTarget/pinSpec/buildPrefetchArgs/buildApplyArgs`） | `ohmy-core upgrade …` |
 | E5 | 升级方式：**原地 `npm install <spec>` 装进 `runtime/dsh`，不重装 App** | 上游若改为非 npm 分发 | 升级功能失效 | main.swift `DSHUpdater` + `upgrade.js` | 升级一次，看 `runtime/dsh` 版本 |
 | E6 | 「重启服务即生效」：升级后杀自己拉起的 dsh web 并重拉 | dsh 若引入缓存/守护进程 | 版本升级了但 UI 还是旧的 | main.swift 升级后重启段 | `app.log` |
+| **E7** | 运行时**依赖闭包**：dsh 用 caret 范围声明 cordis 插件（`^1.0.17` 等），`npm install <spec>` 会装**当天最新的 1.x** | 上游一发新版插件，**旧 dsh 就可能起不来**（实测 0.1.2-rc.1 + `cordis-plugin-hmr` 1.0.19 → 启动即抛 `user patch-layer watching requires the Cordis HMR service`） | 构建"成功"、App 里 dsh web 直接退出（启动失败/白屏） | `build-app.sh`：`platforms/macos/runtime-locks/<spec>/package-lock.json` + **`npm ci`**，装完后做**启动冒烟**（失败即构建失败） | 构建日志 `using committed runtime lock …` + `smoke: dsh web came up` |
 
 ### F. 侧通道（与 dsh 解耦，但同属运行时）
 
@@ -226,6 +227,7 @@
 | **R3 注入脚本依赖 fetch + DOM**（**仍在**，且已实测出过坏点） | 三个注入脚本直接依赖 dsh web 客户端实现：fetch 形态与信封、方法名白名单、sessionId 位置、侧栏 `[role=treeitem].sessionRow` DOM、文件打开 RPC 端点。上游改传输（已有 WebSocket mux）或改 DOM 就**静默失效**。2026-09-10 实测发现 `sessionOpenerScript` 在 0.1.2 下一直是坏的（写死点号 method 打到斜杠端点，服务端 \`method does not match endpoint\`），已修为运行时双面 —— 详见 §6.1 | 升级后 B 面三项验证任一失败即命中 |
 | **R4 `workspace.json` 兜底是私有布局**（**仍在**，已加护栏） | 兜底读的是 dsh 内部带 schema/版本号的私有域存储（`defineDomain({name:'workspace',version:2})`，还有 `pendingMutation` 恢复标记），上游可随时改字段/搬文件/升版本；读不懂 = 上述五处**静默变空**。现已加域名+版本校验、诊断日志、单一实现收口（见 §6.2） | 升级后 `unit.version` 变化，或工作区列表突然为空而接口没变 |
 | **R7 会话日志「世代命名」**（0.1.5 实测踩过，已修） | 审查面板直接读 dsh 落盘的会话日志，而**文件名里编码了 Session 格式世代**（0.1.2 = `session.jsonl`，0.1.5 = `session.v3.jsonl`，压缩加 `.zstd`）；迁移过的会话还会把老文件留成冻结归档。只认世代 0 的名字 ⇒ 新会话一条都列不出来、老会话永远停旧，**不报错**。已改为按规范名枚举 + 世代最大者优先（见 §6.4） | 上游再提世代（出现 `session.v4.jsonl`）时**不需要改代码**（规则是「取最大世代」），但若换成非 `session*.jsonl` 的容器/目录名就要重估 |
+| **R8 运行时闭包漂移**（2026-09-23 实测踩到，已修） | 只钉 `DSH_PACKAGE_SPEC` **不够**：dsh 的 cordis 工具链是 caret 范围，`npm install` 会随上游发版改闭包。实测重建 0.1.2-rc.1 得到 `cordis-plugin-hmr 1.0.19`（生产包是 1.0.17）后，**dsh 自己启动就抛** `user patch-layer watching requires the Cordis HMR service`（profile 的 `patchReload: "live"` 需要 HMR 服务，而新插件在旧 loader 下起不来）。已改为**提交 lockfile + `npm ci` + 构建期启动冒烟**（见 §6.5） | 每次新增/变更 dsh spec（要配一份新 lock）；上游换掉 cordis 工具链或改 profile 机制时重估 |
 | R5 单一版本策略 | 只为「内置版本」做适配，老版本兼容靠回退（C1）；回退在两侧都失效时会静默出空结果 | 引入第二个受支持版本时重估 |
 | **R6 `dsh-auth-*` cookie 按 authority 命名、无限累积**（2026-09-13 已修） | dsh 0.1.2+ 的浏览器 cookie 名 = `"dsh-auth-" + base64url(sha256(authority))`，authority 是**该实例的 host:port**；cookie 又不区分端口 ⇒ 每次自拉起一个新端口就多留一只（~226 B / 30 天 TTL），只增不减。累积 Cookie 头一旦把 **~2.1 KB 的插件 batch URL** 顶过 node 的 16 KiB 头上限（第 63 只）即 **431** → 界面「Failed to load plugins」。壳层已按「退出清理 + 启动清理 + node 头上限保险带」处置（见 §6.3） | 上游改 cookie 命名/鉴权载体（不再按 authority 派生），或 dsh 把插件 batch 换成多条更短 URL 后重估 |
 
@@ -378,6 +380,42 @@ node -e "const c=require('./core'); const l=c.listSessionLogs({dshHome:process.e
 
 **未来触发**：上游再提世代（`session.v4.jsonl`）**不需要改代码**——规则是「取最大世代」；但若把日志换成
 非 `session*.jsonl` 的容器名/目录结构，本条与 §3 D6/D8 要一起重估。
+
+### R8 详解：运行时依赖闭包漂移（只钉 dsh 版本不够）
+
+**现象**（2026-09-23）：新构建的开发版启动即崩，`dsh web` 打印入口 URL 后立刻抛：
+
+```
+Error: dsh: user patch-layer watching requires the Cordis HMR service
+    at watchUserPatches (…/dsh-app-boot/lib/index.js:1078:28)
+```
+
+**定位**：与 profile、与 `~/.dsh-dev`、与本次改动都无关——用**全新空 home** 也会复现，而同版本的**已安装生产包**不报错。
+对比两棵树的闭包：
+
+| 包 | 今天重建（坏） | 生产包（好） |
+|---|---|---|
+| `@deepseek-ai/cordis-plugin-hmr` | **1.0.19** | 1.0.17 |
+| `cordis-plugin-loader` | **1.0.5** | 1.0.3 |
+| `cordis-plugin-include` | **1.0.9** | 1.0.7 |
+| `cordis-plugin-timer` | **1.1.6** | 1.1.4 |
+
+dsh 的 `package.json` 用 caret 声明这些插件（`^1.0.17`），所以 `npm install @deepseek-ai/dsh@0.1.2-rc.1` 拿到的是**今天最新的 1.x**；
+新版 HMR 插件在 0.1.2-rc.1 的 loader 下无法实例化 → `ctx.get("hmr") === undefined` → profile 的 `patchReload: "live"` 走到 `watchUserPatches` 抛错退出。
+把 `hmr` 单独钉回 1.0.17 **不够**（仍报错）——漂移是整组的。
+
+**修法**（`build-app.sh`）：
+
+1. 仓库内每个受支持的 dsh spec 配一份**已知可启动**的闭包锁：`platforms/macos/runtime-locks/<spec>/{package.json,package-lock.json}`
+   （0.1.2-rc.1 那份从"真能启动"的生产运行树导出，583 个包、`lockfileVersion: 3`）；
+2. 构建时用 **`npm ci`**（不是 `npm install`）复现该闭包，主 registry 失败回退官方源；没有 lock 的 spec 走老路并**大声警告**；
+3. **装完做启动冒烟**：`smoke_runtime()` 用刚装好的树起一次 `dsh web`，40 秒内必须打出入口 URL 且进程存活，否则**构建失败**并打印日志
+   （可用 `DSH_SKIP_RUNTIME_SMOKE=1` 跳过，仅限离线调试）；
+4. runtime 缓存键加上 lock 指纹（`node|spec|arch|lockHash`），改锁即重建，避免复用旧树。
+
+**升级时怎么验**：构建日志必须出现 `using committed runtime lock: …` 与 `smoke: dsh web came up`；若出现 `WARNING: no committed lock for <spec>`，说明这个 spec 还没配锁，先补一份再发。
+
+**教训**：① 「钉版本」要钉到**闭包**（lockfile），只钉顶层包等于没钉；② 构建"成功"不等于产物能用——**能启动**才是验收标准，所以把冒烟放进构建；③ 这类漂移**只影响旧版本**（新 dsh 与新插件自洽），正是"长期停在一个旧 dsh 上"的隐性代价。
 
 ## 7. 参考
 
