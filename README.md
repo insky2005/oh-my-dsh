@@ -134,7 +134,7 @@
 
 ### 审查面板（`⌥⌘R` / 活动栏「审查」图标）
 
-**只读**回答「这个会话里代理到底改了哪些文件、改成什么」——直接读 dsh 自己落盘的会话日志（`$DSH_HOME/sessions/<workspace>/<session>/session.jsonl[.zstd]`），不写任何文件、不发任何请求、不改 dsh。
+**只读**回答「这个会话里代理到底改了哪些文件、改成什么」——直接读 dsh 自己落盘的会话日志（`$DSH_HOME/sessions/<workspace>/<session>/session[.vN].jsonl[.zstd]`；日志文件名里的 `.vN` 是 dsh 的 **Session 格式世代**，dsh 0.1.5 的新会话是 `session.v3.jsonl`，面板按规范名枚举并**取世代最大的那一份**），不写任何文件、不发任何请求、不改 dsh。
 
 **按 会话 → 对话（turn）→ 文件 → 变更内容 的树展示，每层可展开/收起**；对话用该轮的用户消息做摘要；
 会话在第一次展开时才真正审计（列表只读日志头，展开才解码全量日志）。**审计结果会跟着日志走**：正在对话的会话
@@ -218,7 +218,7 @@ open "dist/oh-my-dsh-<version>-arm64.dmg"
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `DSH_NODE_VERSION` | 自动检测最新 LTS | 指定下载的 Node 版本，如 `v22.23.2` |
-| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.2-rc.1` | 传给 `npm install` 的包说明（内置 dsh 版本，壳层与该版本同步适配；可覆盖为 `@deepseek-ai/dsh@latest` 等） |
+| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.5-rc.2` | 传给 `npm install` 的包说明（内置 dsh 版本，壳层与该版本同步适配；可覆盖为 `@deepseek-ai/dsh@latest` 等） |
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh 用） |
 | `DSH_ARCH` | `uname -m` | 目标架构：`arm64` / `x86_64`（CI 构建 arm64，release 构建 arm64 + x86_64；不再出 universal） |
@@ -277,7 +277,9 @@ open "dist/oh-my-dsh.app"
 | `DSH_REVIEW_TEST_PATH` | 审计面板固定读取的工作区路径（QA/调试钩子，默认跟随当前工作区） |
 
 > 其他 QA/调试钩子（环境变量或 `--ui-debug`）：`DSH_UI_DEBUG=1` 统一开关（打开浏览器面板 + 面板层级 dump + 截图）、
-> `DSH_PREVIEW_TEST_PATH` / `DSH_TERMINAL_TEST` / `DSH_WIKI_TEST` / `DSH_REVIEW_TEST`（启动即开对应面板）、`DSH_PREVIEW_DEBUG`（fetch 拦截探针）、`DSH_SESSION_DEBUG`（会话跟踪 dump）。
+> `DSH_PREVIEW_TEST_PATH` / `DSH_TERMINAL_TEST` / `DSH_WIKI_TEST` / `DSH_REVIEW_TEST` / `DSH_SKILLS_TEST`（启动即开对应面板）、
+> `DSH_PANEL_TEST="files,terminal,wiki,tasks,browser,channel,review,skills"`（**按序开全部面板**，配 `DSH_UI_DEBUG=1` 每个面板各落一张 `panel-<name>-debug.png` ——dsh 升级后的面板全量核对就靠它）、
+> `DSH_PREVIEW_DEBUG`（fetch 拦截探针，同时演练 `host.openPath` 与 `session/openWorkspacePath` 两种形状）、`DSH_SESSION_DEBUG`（会话跟踪 dump）。
 
 > **壳层设置存放位置**：语言 / 主题 / 面板宽度 / 浏览器 / 通道 / wiki 等**壳层自有设置**存为 UTF-8 JSON `$DSH_HOME/shell/config.json`
 > （开发版 `~/.dsh-dev/shell/config.json`），可由外部工具 / 代理直接读写（写入经 core CLI 合并 + 原子落盘，壳层侧 0.3s 防抖异步）；
