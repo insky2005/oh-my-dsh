@@ -16,7 +16,7 @@
 2. **面板内快速创建工作区**：只输入工作区名（即目录名），例：`abc` → 创建 `<root>/abc`；
 3. **工作区列表 + 快速进入**：对每个工作区，一键进入**文件 / 终端 / 知识库 / 任务 / 通道 / 审查**面板，并让这些面板以**该工作区**为根；一键**新建 dsh web 会话**（会话属于该工作区）；一键**在 dsh 中打开**（复用该工作区最近一条会话，没有则新建）。
 
-面板入口：**活动栏第一个图标**（`folder`）/ 视图菜单首项 / **⌥⌘O**；右栏面板槽第 9 个成员（`RightPanel.projects`）。
+面板入口：**活动栏第一个图标**（`folder`）/ 视图菜单首项 / **⌥⌘P**；右栏面板槽第 9 个成员（`RightPanel.projects`）。
 
 ### 1.2 已定决策（本次设计前置确认）
 
@@ -25,7 +25,7 @@
 | D1 | **列表范围 = 仅 projects 根目录下的直属子目录** | 不在面板里列 dsh 已注册、但位于根目录之外的工作区（那些仍归 dsh web 侧边栏管） |
 | D2 | **新建 = 只建目录 + 注册为 dsh 工作区** | 不做 `git init`、不写 `AGENTS.md`、不建 `.dsh/wiki`；是否需要仓库/指引由用户在会话里自行决定 |
 | D3 | **不提供任何删除/移除/重命名入口** | 清理走 Finder 与 dsh web 自己的侧边栏；面板对工作区只做「创建 / 进入」，不写删除路径 |
-| D4 | **活动栏放第一位** | 顺序：项目、文件、终端、浏览器、知识库、任务、通道、审查、技能；「视图」菜单首项同为「项目」，与活动栏一一对应 |
+| D4 | **活动栏放第一位**；快捷键 **⌥⌘P** | 顺序：项目、文件、终端、浏览器、知识库、任务、通道、审查、技能；「视图」菜单首项同为「项目」，与活动栏一一对应。⌥⌘P 原先属于「文件面板」，本次**让位**给它（文件面板改 **⌥⌘F**，菜单文案「预览面板」改「文件面板」）——见 §13.E |
 
 ### 1.3 非目标
 
@@ -167,10 +167,10 @@ dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 
 
 ## 5. 面板结构与交互
 
-活动栏首位（`ActivityBarButton(symbol: "folder")`；用 macOS 13 一定存在的符号——`NSImage(systemSymbolName:)` 对未知符号返回 nil，图标会空白），右栏槽第 9 个面板，快捷键 **⌥⌘O**。
+活动栏首位（`ActivityBarButton(symbol: "folder")`；用 macOS 13 一定存在的符号——`NSImage(systemSymbolName:)` 对未知符号返回 nil，图标会空白），右栏槽第 9 个面板，快捷键 **⌥⌘P**（由「文件面板」让出，见 §13.E）。
 
 ```
-项目面板（右栏槽第 9 个，活动栏首位，⌥⌘O）
+项目面板（右栏槽第 9 个，活动栏首位，⌥⌘P）
 ├─ 头部（DynamicFillView + HeaderLabel）         [＋ 新建] [⟳] [⚙] [✕]
 ├─ 根目录行（次要色路径 + tooltip 全路径）   根目录：~/.dsh/oh-my-dsh/projects  [更改…]
 ├─ 内容（NSScrollView + FlippedStackView）  工作区卡片 × N
@@ -387,6 +387,8 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 
 复用（语义完全一致，不复制新键）：`btn.cancel`、`files.create`、`files.revealInFinder`、`files.copyPath`、`snapshot.action.refresh`（刷新）、`preview.closePanel`（关闭）。
 
+**变更（既有键）**：`menu.togglePreview` → **`menu.toggleFiles`**——值由「显示/隐藏 预览面板」/「Toggle Preview Panel」改为「显示/隐藏 文件面板」/「Toggle Files Panel」，快捷键由 **⌥⌘P** 改为 **⌥⌘F**（⌥⌘P 让给「项目」）。理由与受影响位置见 §13.E。
+
 ---
 
 ## 11. 测试计划
@@ -434,7 +436,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 4. 卡片「新会话」→ dsh web 切到新会话（面板项目目录也随之变为该工作区）；先把 dsh web 断网再恢复以模拟侧栏未刷新 → 仍能落到目标会话（重试/重载兜底），日志有 `openDSHSession` 结果。
 5. 依次点 文件 / 终端 / 知识库 / 任务 / 通道 / 审查 → 右栏切到对应面板，且内容以 `…/abc` 为根（文件树根、终端 cwd、wiki 根、任务/通道/审查的工作区）；知识库显示空态而不是别的仓库内容。
 6. 在 dsh web 手动切到另一个工作区的会话 → 面板跟随重根（既有行为不回归），项目面板高亮切到对应卡片；任务/通道/审查刷新。
-7. 设置窗口「项目」区块：改根目录并保存 → 面板立即刷新；相对路径被拒；「恢复默认」后 `shell/config.json` 里 `projectsRoot` 键消失；`⌥⌘O` 与菜单项 checkmark 同步。
+7. 设置窗口「项目」区块：改根目录并保存 → 面板立即刷新；相对路径被拒；「恢复默认」后 `shell/config.json` 里 `projectsRoot` 键消失；`⌥⌘P` 与菜单项 checkmark 同步（且「文件面板」已是 ⌥⌘F）。
 8. QA：`DSH_PROJECTS_TEST=1 DSH_PROJECTS_TEST_ROOT=/tmp/ws DSH_UI_DEBUG=1` 启动 → 面板直接打开且落在 `/tmp/ws`。
 9. `tests/projects-panel/run.sh`、`tests/dsh-rpc/run.sh`、`tests/l10n/run.sh` 全绿；`scripts/local-ci.sh swift`（含 swiftc 全量编译检查）通过。
 
@@ -451,6 +453,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 | D3 | 不提供删除/移除/重命名 | 面板不引入破坏性操作；清理交给 Finder 与 dsh web |
 | D4 | 活动栏第一位 + 视图菜单首项 | 「项目是入口」的心智模型；与其余八个面板顺序一致 |
 | D5 | 不引入第二个「当前工作区」状态 | 避免面板选中项与 `ProjectDirectory` 两套状态互相覆盖 |
+| D6 | 顺带把「预览面板」正名为「**文件面板**」，快捷键改 **⌥⌘F** | 同一个面板在活动栏/头部/README 里早已叫「文件」，只有视图菜单还叫「预览」；⌥⌘P 让给「项目」（详见 §13.E） |
 
 **后续可选项（明确不在本次范围）**
 
@@ -459,6 +462,27 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 - 列出并管理根目录之外的 dsh 工作区（跨根目录视图）；
 - 与 Composer @ 引用（`docs/file-panel-composer-reference.md`）联动：把整个工作区作为会话引用；
 - 工作区级「最近会话」列表（当前只提供「打开最近一条」，不做内嵌会话列表）。
+
+### E. 顺带调整的既有行为
+
+视图菜单里的「显示/隐藏 预览面板」改为「**显示/隐藏 文件面板**」，快捷键由 **⌥⌘P** 改为 **⌥⌘F**，把 **⌥⌘P** 让给「项目」。
+
+- **理由**：同一个面板在活动栏（`bar.preview` = 文件 / Files）、面板头部、README 里**早就叫「文件」**，只有视图菜单这一处还叫「预览」，属于历史遗留（面板实现已从 `PreviewPanel.swift` 换成 `FilePanel.swift`）；改名后一个面板只有一个名字。
+- **L10n 键同步改名** `menu.togglePreview` → `menu.toggleFiles`（值也改），不留名不符实的死键（`tests/l10n/run.sh` 对未引用键只 WARN，所以必须主动改）。
+- **选择器 `togglePreviewPanel(_:)` 保持不改**：纯内部标识，改名收益小于改动面。
+- **受影响位置清单**（实现时逐个同步，避免留旧文案/旧快捷键）：
+
+  | 位置 | 现状 | 改为 |
+  |---|---|---|
+  | `platforms/macos/src/main.swift`（L10n 表） | `menu.togglePreview` = 显示/隐藏 预览面板 | `menu.toggleFiles` = 显示/隐藏 文件面板 |
+  | `main.swift` `buildMenu()` 视图菜单项 | `keyEquivalent: "p"` + ⌥⌘ 掩码 | `keyEquivalent: "f"` |
+  | `main.swift` `SettingsWindowController.shortcutRows` | `("menu.togglePreview", "⌥⌘P")` | `("menu.toggleFiles", "⌥⌘F")` + 新增 `("menu.toggleProjects", "⌥⌘P")` |
+  | `README.md` 面板章节标题 | 文件面板（`⌥⌘P` / 活动栏「文件」图标） | 文件面板（`⌥⌘F` / 活动栏「文件」图标） |
+  | `.dsh/wiki/tasks.md` 验证点 | ⌥⌘P / ⌥⌘T / … 八面板 | ⌥⌘F / ⌥⌘P（项目）/ … 九面板 |
+  | `.dsh/wiki/modules/main.md` 视图菜单清单 | ⌥⌘P … 八面板切换 | ⌥⌘F … + 项目 ⌥⌘P（九面板） |
+  | `.dsh/wiki/modules/preview-panel.md` 头部入口 | 打开项目目录（`⌥⌘P` 同入口） | （`⌥⌘F` 同入口） |
+  | `CHANGELOG.md` `[Unreleased]` | — | 新增 `### Changed` 一条（菜单文案正名 + 快捷键让位） |
+- **冲突已核**：现有 keyEquivalent 集合为 `,` `Z` `a b c h j l p q r s t u v w x z`，加上 ⌥⌘ 面板组（p t w j b h r s）；**`f` 未被占用**，⌥⌘F 不与任何菜单项或系统快捷键冲突。
 
 ---
 
