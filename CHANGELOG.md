@@ -9,6 +9,13 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **会话快照与回退（Session Snapshots，设置菜单 →「会话快照…」）**：dsh 升级会把会话日志换成新世代（0.1.5 起新建会话写 `session.v3.jsonl.zstd`，被迁移的老会话把原文件留成冻结归档），而**上游只有升级链、没有降级通道**——这是一次不可逆的数据迁移。壳层现在在**任何 App / 内置 dsh 版本组合变化之前**自动留一份可回退的快照：
+  - **数据快照**：`$DSH_HOME/sessions/ + storages/`，APFS clonefile（实测 306 MB / 246 会话 = **0.124 s**、几乎不占额外空间），最多保留 3 份；裁剪时保护「当前数据所属组合 / 最近一次回退目标 / `forCombo` 等于当前组合」三份；
+  - **树池**：`runtime/dsh` 整树**按 dsh 版本去重**存一份（实测 256 MB / 24,872 文件 = 5–6 s、约 14 MB），每次启动自查补齐——**这一步是必需的**：装新 pkg 会把旧 bundle 连同旧 `runtime/dsh` 一起替换掉，事后再抓来不及；
+  - **触发时机**：① 功能首次启用（`bootstrap` 基线）② App/dsh 组合变化 ③ **App 内升级 dsh 之前（强制，`performApply` 里接线）** ④ 用户点回退时的现场快照（`pre-rollback`，使回退可撤销）。顺序铁律是**先快照、再起 dsh**——dsh 一打开会话就会补写 `session/end-seed`，晚一步就抓不到干净状态；组合未变时启动只读一次状态文件（实测 **0.059 s**）；
+  - **回退并退出**：预览「将恢复 N 条（并移除其新世代日志）/ 将隔离 M 条 / 内置 dsh 换回 X」→ 二次确认 → 停自拉起的 dsh web → 现场整体停放到 pre-rollback 快照 → 恢复目标数据 → 快照之后新建的会话**移入隔离区而不是删除**（带清单） → 换回旧 dsh 树（池内 rename，**离线瞬时**；缺则提示联网补装或改重装旧 App） → 写回 `dataCombo` 并**钉住自动升级** → 退出 App（活着的 dsh 会立刻把会话再迁移回去，所以必须退出）。事务带 `rollback-journal.json`：中途崩溃或「数据与树版本不一致」会在下次启动给出提示，可**续做/撤销**；
+  - **边界**：这是数据回退，不是 App 回退（pkg 装不了旧版本）——「问题出在 App 本身」时走「只回退数据 + 提示安装旧版 App」，快照 meta 记着当时的 App 版本供提示使用；凭据（`credentials*`）、壳层自身状态与 token（`shell/`，含 `dsh-web.json` 里那把 launch token）、通道绑定（`channels/`）、CEF profile（`browser*/`）**一律不进快照、不回退**；
+  - 实现：`core/lib/snapshot.js`（纯决策：触发判定 / 回退计划 / 裁剪保护 / 事务状态机）、`core/lib/snapshot-io.js`（落盘：clonefile、树池、隔离、裁剪）、`ohmy-core snapshot …` CLI、`platforms/macos/src/SnapshotModel.swift` + `SnapshotWindow.swift` 与启动前钩子；测试 `core/tests/snapshot*.test.js`（21 例）、`tests/snapshot-rollback/run.sh`（端到端，含升级路径与崩溃拒绝）、`tests/snapshot-panel/run.sh`（窗口模型），均已接入 CI。设计与九类场景演绎：`docs/session-snapshot-rollback-design.md`。
 - **升级核对专用 QA 钩子（仅开发/QA）**：`DSH_PANEL_TEST="files,terminal,wiki,tasks,browser,channel,review,skills"` 在启动后按序切到每个面板（配 `DSH_UI_DEBUG=1` 每个面板各落一张 `panel-<name>-debug.png`）——此前只有六个单面板钩子，且缺的恰是**没有菜单快捷键、脚本点不到**的 tasks 与 channel；`DSH_PREVIEW_DEBUG=1` 的文件打开探针同时演练**新旧两种请求形状**（`host.openPath` 与 `session/openWorkspacePath` + `payload.args.request.path`），拦截器只认老形状时会当场失败，而不是在 UI 里静默。
 
 ### Fixed
