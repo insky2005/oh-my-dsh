@@ -8,7 +8,7 @@ manual: false
 
 # 模块：项目面板（Projects Panel）
 
-把「工作区 = projects 根目录下的一个子目录」变成壳层一等公民：**在面板里建目录 + 幂等注册成 dsh 工作区，再用六个入口就地打开它**，不离开 App、不改 dsh 源码。分支 `feature/projects-panel`（设计文档 `docs/projects-panel-design.md`，PR #56）——**已实现、未发布**（CHANGELOG `[Unreleased]`，版本线 fallback `1.17.0`/BUILD 73）。实现提交：`b59ac97` 模型 → `f541f4d` RPC → `232d38c` 面板 + 控制器测试 → `6d8c327` main.swift 接线 → `206b577`（卡片命中测试修复）→ `0f1b7b2`（README/CONTRIBUTING/CHANGELOG/影响清单）→ `6af1206`+`ed989ac`（点项目切 dsh web：桥改 `callAsyncJavaScript`、去掉重载兜底）→ `041d1bd`（未注册目录不联动 + 「创建 dsh 工作区」）。
+把「工作区 = projects 根目录下的一个子目录」变成壳层一等公民：**在面板里建目录 + 幂等注册成 dsh 工作区，再用六个入口就地打开它**，不离开 App、不改 dsh 源码。分支 `feature/projects-panel`（设计文档 `docs/projects-panel-design.md`，PR #56）——**已实现、未发布**（CHANGELOG `[Unreleased]`，版本线 fallback `1.17.0`/BUILD 73）。实现提交：`b59ac97` 模型 → `f541f4d` RPC → `232d38c` 面板 + 控制器测试 → `6d8c327` main.swift 接线 → `206b577`（卡片命中测试修复）→ `0f1b7b2`（README/CONTRIBUTING/CHANGELOG/影响清单）→ `6af1206`+`ed989ac`（点项目切 dsh web：桥改 `callAsyncJavaScript`、去掉重载兜底）→ `041d1bd`（未注册目录不联动 + 标题行 folder+「添加工作区」）+ `1a3d8be`（文档同步）→ 按钮布局调整（「添加工作区」/「新会话」上移到标题行徽标之后，均为图标按钮，tooltip 与 dsh web 同词）。
 
 - 入口：活动栏**首位**「项目」图标（SF Symbol `folder`）/ 视图菜单**首项** / **⌥⌘P**；右栏插槽第 9 个成员 `RightPanel.projects`，`rightPanelKind` 持久化 `"projects"`；`ProjectsPanelController.minWidth = 320`；
 - **⌥⌘P 是让位来的**：该键原属「预览面板」，PR #57（`0253b35`，`feature/menu-files-panel`）把视图菜单正名为「文件面板」并改用 **⌥⌘F**，空出的 ⌥⌘P 交给本项目面板（L10n 键 `menu.togglePreview` 同步改名 `menu.toggleFiles`）。
@@ -18,7 +18,7 @@ manual: false
 | 文件 | 规模 | 职责 |
 |---|---|---|
 | `platforms/macos/src/ProjectsCore.swift` | 217 行 | 纯 Foundation 模型：`ProjectWorkspace`、`resolvedRoot(configValue:dshHome:envOverride:)`（+ `RootSource`）、`absolutePath`、`validateName`、`workspacePath`、`listDirectories`、`merge(entries:registry:canonical:)` |
-| `platforms/macos/src/ProjectsPanel.swift` | 787 行 | `ProjectsPanelController`（含 `registerWorkspace(path:)` / `warnNeedsWorkspace()`）+ `ProjectCardView`（三行卡片：按 `workspace.registered` 分流，未注册时多一个「创建 dsh 工作区」）+ `ProjectsRootView`（`PanelSurface` 底色）+ `ProjectTargetPanel`（六个入口枚举，rawValue 即 `DSH_PANEL_TEST` 的面板名） |
+| `platforms/macos/src/ProjectsPanel.swift` | 776 行 | `ProjectsPanelController`（含 `registerWorkspace(path:)` / `warnNeedsWorkspace()`）+ `ProjectCardView`（三行卡片：标题行 = 名称 + 徽标 + 该卡唯一的 dsh 动作按钮，按 `workspace.registered` 在 `folder.badge.plus`「添加工作区」与 `plus`「新会话」之间切换）+ `ProjectsRootView`（`PanelSurface` 底色）+ `ProjectTargetPanel`（六个入口枚举，rawValue 即 `DSH_PANEL_TEST` 的面板名） |
 | `platforms/macos/src/DshWebRPC.swift` | 431 行（`DshWorkspaceOps` 约 70 行） | `register` / `createSession` / `newestSessionId` + 端点 `DshWebRPC.workspaceCreate = Endpoint("workspace/create", "workspace.create")` |
 | `platforms/macos/src/main.swift` | 6209 行 | 接线：活动栏首位 / 视图菜单 ⌥⌘P / `adoptProjectDirectory` 重根原语 / `openWorkspace` / `openWorkspaceInDsh` / `createSessionInWorkspace` / 设置窗口「项目」区块 / QA 钩子 |
 | `tests/projects-panel/` | 4 文件 | 无头测试：模型 45 项 + 控制器 49 项，`run.sh` 一次跑完（本机实测 **94 项 ok / EXIT=0**） |
@@ -41,10 +41,12 @@ manual: false
 
 **卡片按注册状态分流**（`041d1bd`，判据 `ProjectCardView.canUseDshActions = workspace.registered`）：
 
-| 状态 | 整卡可点 | 「新会话」 | 六个面板入口 | 额外动作 |
-|---|---|---|---|---|
-| 已注册（徽标「已注册 · N 个会话」） | = 在 dsh 中打开 | 可用 | 可用 | — |
-| **未注册**（徽标「未注册」） | **不调用壳层**，改由状态行提示 `projects.needsWorkspace`；标题转次要色、光标 `arrow`（非手型） | **禁用**，tooltip = `projects.needsWorkspace` | **仍然可用**——文件 / 终端 / 知识库 / 任务 / 通道 / 审查是壳层本地操作（重根 + 切面板），不碰 dsh web | 「**创建 dsh 工作区**」按钮（仅未注册时显示，L10n `projects.register` / `projects.registerTooltip`） |
+| 状态 | 整卡可点 | 标题行的 dsh 动作按钮 | 六个面板入口 |
+|---|---|---|---|
+| 已注册（徽标「已注册 · N 个会话」） | = 在 dsh 中打开 | `plus` 图标，tooltip **「新会话 / New Session」** → 在该工作区建会话并切过去 | 可用 |
+| **未注册**（徽标「未注册」） | **不调用壳层**，改由状态行提示 `projects.needsWorkspace`；标题转次要色、光标 `arrow`（非手型） | `folder.badge.plus` 图标，tooltip **「添加工作区 / Add workspace」**（与 dsh web 同词）→ 注册该目录 | **仍然可用**——文件 / 终端 / 知识库 / 任务 / 通道 / 审查是壳层本地操作（重根 + 切面板），不碰 dsh web |
+
+- **两个 dsh 动作互斥**（都在标题行徽标之后，由 `ProjectCardView.dshActionButton()` 一处决定），所以都没有"禁用态"：未注册的卡片根本没有「新会话」按钮可点；，L10n `projects.register` / `projects.registerTooltip`） |
 
 - 面板侧还有**第二道防线**：`ProjectsPanelController.render()` 的闭包内先判 `registered` 再转发，未注册时只 `warnNeedsWorkspace()`（状态行提示，不触发壳层）——即使将来有别的入口直接触发闭包也不会漏。
 
@@ -54,9 +56,9 @@ manual: false
 | 六个快捷入口 | 卡片回调 `onOpenPanel(path, target)` → `main.swift openWorkspace`：先 `adoptProjectDirectory(path)`（不是存在的目录即中止，**不切面板**），再 `setRightPanel(...)`；日志 `projects: opened the <target> panel for <path>` |
 | 新会话（仅已注册） | 后台 `DshWorkspaceOps.register`（8s）→ `createSession(workspaceId 优先，被拒退回 cwd，15s)` → 主线程 `adoptProjectDirectory` + `nudgeDSHWebCaches()` + **0.5s 后** `openDSHSession(sid, retry: 3, workspaceName: <目录名>)`（新建的会话还没进侧栏，给的预算比点卡片多）；失败只进状态行（`projects.newSessionFailed`），**不弹模态** |
 | 在 dsh 中打开（点卡片 / 已注册） | 后台 `newestSessionId(port:inPath:)`（`session/list` 中 cwd canonical 相等者，**running 优先**，其次 `updatedAt` 最大）→ 有则 `adoptProjectDirectory` + `openDSHSession`（点卡片 = `retry: 1`），无则走「新会话」 |
-| 创建 dsh 工作区（仅未注册） | `ProjectsPanelController.registerWorkspace(path:)`：端口为 0 → 状态行 `projects.registerFailed`；否则后台 `DshWorkspaceOps.register`（**幂等**）→ 成功：`app.log` 写 `projects: registered <path> as <id>` + 状态行 `projects.registerDone` + 回调 `onWorkspaceRegistered`（main.swift → `nudgeDSHWebCaches()`，让 web 侧栏认领新工作区）+ `reload()`（徽标翻「已注册」、dsh 动作解锁）；失败：状态行 `projects.registerFailed`（dsh 未起 / `workspace/create` 被拒），**不弹模态、不动磁盘**。本次新增 5 个 L10n 键：`projects.register` / `registerTooltip` / `registerDone` / `registerFailed` / `needsWorkspace`（中英成对） |
+| 添加工作区 / 注册（仅未注册，标题行 folder+） | `ProjectsPanelController.registerWorkspace(path:)`：端口为 0 → 状态行 `projects.registerFailed`；否则后台 `DshWorkspaceOps.register`（**幂等**）→ 成功：`app.log` 写 `projects: registered <path> as <id>` + 状态行 `projects.registerDone` + 回调 `onWorkspaceRegistered`（main.swift → `nudgeDSHWebCaches()`，让 web 侧栏认领新工作区）+ `reload()`（徽标翻「已注册」、dsh 动作解锁）；失败：状态行 `projects.registerFailed`（dsh 未起 / `workspace/create` 被拒），**不弹模态、不动磁盘**。本次新增 5 个 L10n 键：`projects.register` / `registerTooltip` / `registerDone` / `registerFailed` / `needsWorkspace`（中英成对） |
 
-- `DshWorkspaceOps.register` 把 nil 一律当「未注册」（旧 dsh / 服务未起 / store 漂移），**永不阻塞目录创建**、**不回收已建目录**；下次「新会话 / 在 dsh 中打开」会再注册一次（幂等）；
+- `DshWorkspaceOps.register` 把 nil 一律当「未注册」（旧 dsh / 服务未起 / store 漂移），**永不阻塞目录创建**、**不回收已建目录**；未注册的目录不再被「新会话 / 在 dsh 中打开」隐式注册——那两条路径对未注册卡片直接不提供，重试注册只能点标题行的 folder+ 按钮（或重新「+ 新建工作区」）；
 - 状态行是唯一结果通道：`setStatus` 每次都写 `app.log` 的 `projects: <文本>`，**成功类 5s 后自动清空、失败保留到下次操作**；名字非法的提示走 sheet 内联 + 状态行（`presentError` 有窗口时才补一个 sheet）。
 
 ## 点项目 → dsh web 切会话（桥 + 有界重试，`6af1206` + `ed989ac`）
@@ -95,7 +97,7 @@ manual: false
 | 侧栏还没有新工作区 / 新会话的行 | 点卡片直接尝试（失败后 1.5s 再试一次）；「新会话」先 `nudgeDSHWebCaches()`、**0.5s 后**才点行 → 失败**最多重试一次**（1.5s；「新会话」路径给 `retry: 3`）→ 仍失败：**不重载页面**，状态行 `projects.openFailed`（行没找到）/ `projects.openFailedNoSession`（`no-session`）+ 侧栏现场，点击路径到此为止（有界、无副作用） | `openDSHSession <id>: row-not-found … (sidebar: groups=… sessionRows=… workspaceRow=…)` |
 | 该 session id 始终不在侧栏（已删除 / 不属于当前 dsh） | 同上：放弃 + 状态行。**旧版本会 `reloadPageReauthenticating(reason: "session-open")`，再由 `didFinish` 重放 pendingOpenSession** —— 行永不存在时每 ~10.2s 一轮、永不停止（实测 8 连续轮，`sinceLast` 恒为 10.1–10.2s）；`ed989ac` 删掉了 `pendingOpenSession` 与 didFinish 重放分支，这条死循环路径已不存在 | `openDSHSession <id>: giving up (…)` |
 | 未注册目录上触发 dsh 动作（点卡片 / 「新会话」） | 不发任何请求、不重载：按钮已禁用，闭包内再判一次 `registered`，只写状态行 `projects.needsWorkspace`；六个本地面板入口照常工作 | 面板状态行 |
-| 未注册目录点「创建 dsh 工作区」而 dsh 未起 / 端点被拒 | 状态行 `projects.registerFailed`；目录保留、不改磁盘、不弹模态（成功时 `app.log` 有 `projects: registered …` 可核对） | 面板状态行 + `app.log` |
+| 未注册目录点「添加工作区」而 dsh 未起 / 端点被拒 | 状态行 `projects.registerFailed`；目录保留、不改磁盘、不弹模态（成功时 `app.log` 有 `projects: registered …` 可核对） | 面板状态行 + `app.log` |
 | `storages/workspace.json` 读不懂（上游改布局 / 升版本） | 注册状态与会话数退化为「未注册 / 0」，功能不受影响 | `[workspace-store] …`（既有 R4 护栏） |
 | 根目录不存在 / 无子目录 | 空态 `projects.rootMissing` / `projects.empty` +「+ 新建工作区」；不自动写盘 | 面板 |
 | 名字非法（空 / 含 `/` 或 `:` / 控制字符 / `.`·`..` / 以 `.` 开头 / > 64 字符） | 创建前拦截 + 规则提示，**不创建任何东西**、不发请求 | sheet 内联 + 状态行 |

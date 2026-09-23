@@ -8,7 +8,7 @@ manual: false
 
 # 模块：main.swift（壳层核心）
 
-约 6209 行（2026-09-23 实测），程序入口（`NSApplication.shared` + `AppDelegate` + `app.run()`）。职责：日志、L10n、服务管理、dsh 升级、窗口/菜单、设置窗口（⌘,）、首次引导 onboarding、右栏插槽（**九个面板**）、WebView 注入、CoreBridge（调 core CLI）、channel runner 生命周期（`startConfiguredChannelRunners` / `runChannelLogin`）。另实现 `NSApplicationDelegate` + `NSWindowDelegate`（CEF 误关主窗口守卫、退出诊断）。
+约 6208 行（2026-09-24 实测），程序入口（`NSApplication.shared` + `AppDelegate` + `app.run()`）。职责：日志、L10n、服务管理、dsh 升级、窗口/菜单、设置窗口（⌘,）、首次引导 onboarding、右栏插槽（**九个面板**）、WebView 注入、CoreBridge（调 core CLI）、channel runner 生命周期（`startConfiguredChannelRunners` / `runChannelLogin`）。另实现 `NSApplicationDelegate` + `NSWindowDelegate`（CEF 误关主窗口守卫、退出诊断）。
 
 ## 组成（按文件内顺序）
 

@@ -86,8 +86,6 @@ final class ProjectCardView: NSView {
     private let badge = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
     private let pathLabel = NSTextField(labelWithString: "")
-    private var newSessionButton: NSButton!
-    private var registerButton: NSButton!
 
     /// Whether this card's dsh actions ("open in dsh", "new session") apply: a
     /// directory dsh does not know cannot be linked to dsh web at all — the user
@@ -171,9 +169,13 @@ final class ProjectCardView: NSView {
         pathLabel.toolTip = workspace.path
         pathLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let titleRow = NSStackView(views: [titleLabel, badge])
+        // The badge is followed by the ONE dsh action this card offers: "添加工作区"
+        // (folder +) while the folder has no dsh workspace, "新会话" (+) once it has
+        // one. Keeping it on the title row is what the user asked for — it reads as
+        // "this workspace, do the obvious thing" instead of as another toolbar entry.
+        let titleRow = NSStackView(views: [titleLabel, badge, dshActionButton()])
         titleRow.orientation = .horizontal
-        titleRow.alignment = .firstBaseline
+        titleRow.alignment = .centerY
         titleRow.spacing = 8
         titleRow.distribution = .fill
         titleRow.translatesAutoresizingMaskIntoConstraints = false
@@ -200,7 +202,24 @@ final class ProjectCardView: NSView {
         ])
     }
 
-    /// The six panel quick entries + "新会话" + reveal + copy path.
+    /// The one dsh action this card offers, mounted right after the badge:
+    ///   * unregistered -> "添加工作区" (folder +), i.e. create the dsh workspace;
+    ///   * registered   -> "新会话" (+), i.e. start a session in it.
+    /// The two are mutually exclusive, so neither ever needs a disabled state.
+    private func dshActionButton() -> CustomIconButton {
+        if canUseDshActions {
+            let button = CustomIconButton(glyph: .plus, tooltip: L10n.tr("projects.newSession"), size: 22)
+            button.onAction = { [weak self] in self?.onNewSession?() }
+            return button
+        }
+        let button = CustomIconButton(glyph: .symbol("folder.badge.plus"),
+                                      tooltip: L10n.tr("projects.register"), size: 22)
+        button.onAction = { [weak self] in self?.onRegister?() }
+        return button
+    }
+
+    /// The six panel quick entries + reveal + copy path. The dsh action lives on
+    /// the title row (see dshActionButton) — these are all local.
     private func actionButtons() -> [NSView] {
         var views: [NSView] = []
         for target in ProjectTargetPanel.allCases {
@@ -210,34 +229,6 @@ final class ProjectCardView: NSView {
             button.onAction = { [weak self] in self?.onPanel?(target) }
             views.append(button)
         }
-
-        let newSession = NSButton(title: L10n.tr("projects.newSession"), target: self,
-                                  action: #selector(newSessionTapped(_:)))
-        newSession.bezelStyle = .rounded
-        newSession.controlSize = .small
-        newSession.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        newSession.contentTintColor = .controlAccentColor
-        newSession.translatesAutoresizingMaskIntoConstraints = false
-        // No dsh workspace yet -> nothing to create a session in. The tooltip and
-        // the panel's own guard (see the controller) say why.
-        newSession.isEnabled = canUseDshActions
-        newSession.toolTip = canUseDshActions ? L10n.tr("projects.newSession") : L10n.tr("projects.needsWorkspace")
-        newSessionButton = newSession
-        views.append(newSession)
-
-        // The one action an unregistered folder does offer: create its dsh
-        // workspace (afterwards the badge flips and the dsh actions unlock).
-        let register = NSButton(title: L10n.tr("projects.register"), target: self,
-                                action: #selector(registerTapped(_:)))
-        register.bezelStyle = .rounded
-        register.controlSize = .small
-        register.font = NSFont.systemFont(ofSize: 11)
-        register.contentTintColor = .controlAccentColor
-        register.translatesAutoresizingMaskIntoConstraints = false
-        register.toolTip = L10n.tr("projects.registerTooltip")
-        register.isHidden = canUseDshActions
-        registerButton = register
-        views.append(register)
 
         let reveal = CustomIconButton(glyph: .reveal, tooltip: L10n.tr("files.revealInFinder"), size: 24)
         reveal.onAction = { [weak self] in self?.onReveal?() }
@@ -249,9 +240,7 @@ final class ProjectCardView: NSView {
         return views
     }
 
-    @objc private func newSessionTapped(_ sender: Any?) { onNewSession?() }
 
-    @objc private func registerTapped(_ sender: Any?) { onRegister?() }
 }
 
 /// The Projects panel. Wired by main.swift; every side effect that touches the

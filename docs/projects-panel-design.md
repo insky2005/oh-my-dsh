@@ -37,7 +37,7 @@
   · **未注册**：标题次要色、光标非手型、「新会话」**禁用**（tooltip = `projects.needsWorkspace`）、点卡片不调用壳层（状态行提示同一句）；
   · **六个面板入口始终可用**——文件 / 终端 / 知识库 / 任务 / 通道 / 审查是壳层**本地**操作（重根 + 切面板），不碰 dsh web；
   · 面板侧还有第二道防线：卡片闭包内先判 `registered` 再转发（`warnNeedsWorkspace()` 只提示）；
-- 未注册的卡片提供**唯一**的 dsh 动作：「**创建 dsh 工作区**」（`projects.register`，仅未注册时显示）→ `ProjectsPanelController.registerWorkspace(path:)` 后台调 `DshWorkspaceOps.register`（幂等）→ 成功：状态行 `projects.registerDone` + `onWorkspaceRegistered`（main.swift 走 `nudgeDSHWebCaches()` 让 web 侧栏认领）+ 面板 reload（徽标翻「已注册」、dsh 动作解锁）；失败：状态行 `projects.registerFailed`，不弹模态、**不动磁盘**；
+- 未注册的卡片提供**唯一**的 dsh 动作：标题行的 `folder.badge.plus` 按钮（tooltip **「添加工作区 / Add workspace」**，与 dsh web 同词，L10n `projects.register`）→ `ProjectsPanelController.registerWorkspace(path:)` 后台调 `DshWorkspaceOps.register`（幂等）→ 成功：状态行 `projects.registerDone` + `onWorkspaceRegistered`（main.swift 走 `nudgeDSHWebCaches()` 让 web 侧栏认领）+ 面板 reload（徽标翻「已注册」、dsh 动作解锁）；失败：状态行 `projects.registerFailed`，不弹模态、**不动磁盘**；
 - 「+ 新建工作区」不变：`mkdir` + 顺带注册（幂等）。
 
 ### 1.3 非目标
@@ -207,9 +207,12 @@ dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 
 
 ### 5.2 卡片（三行）
 
-1. **第一行**：目录名（semibold 13pt）+ 右侧徽标。名字区域**可点 = 「在 dsh 中打开」**（tooltip 说明：复用该工作区最近一条会话，没有则新建）；徽标二选一：`已注册 · N 个会话` / `未注册`。
+1. **第一行**：目录名（semibold 13pt）+ 右侧徽标 + **该卡唯一的 dsh 动作按钮**。名字区域**可点 = 「在 dsh 中打开」**（tooltip 说明：复用该工作区最近一条会话，没有则新建）；徽标二选一：`已注册 · N 个会话` / `未注册`；动作按钮紧随徽标（2026-09-24 从操作行上移，用户明确要求）：
+   - **未注册** → `folder.badge.plus` 图标按钮，tooltip 文案与 dsh web 一致：**「添加工作区 / Add workspace」**（点击 = 注册该目录，§1.4）；
+   - **已注册** → `plus` 图标按钮，tooltip **「新会话 / New Session」**（点击 = 在该工作区建会话并切过去）；
+   - 两者互斥，故都不需要"禁用态"；开关由 `ProjectCardView.dshActionButton()` 一处决定。
 2. **第二行**：绝对路径（次要色、中间截断、tooltip 全路径）。
-3. **第三行**：操作行，全部 `CustomIconButton` + tooltip（图标与活动栏同源，用户一眼能对上）：
+3. **第三行**：操作行，全部 `CustomIconButton` + tooltip（图标与活动栏同源，用户一眼能对上）——**只剩本地动作**：
 
 | 按钮 | 符号 | 动作 |
 |---|---|---|
@@ -219,12 +222,10 @@ dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 
 | 任务 | `checkmark.circle` | 进入任务面板（工作区 = 该工作区） |
 | 通道 | `dot.radiowaves.left.and.right` | 进入通道面板（工作区 = 该工作区） |
 | 审查 | `doc.text` | 进入审查面板（工作区 = 该工作区） |
-| **新会话** | `plus` + 文本 | 在该工作区建一条 dsh web 会话并切过去（**仅已注册**可用，见 §1.4） |
-| **创建 dsh 工作区** | 文本（仅未注册时显示） | 把该目录注册成 dsh 工作区；成功后 dsh 动作解锁（§1.4） |
 | 在 Finder 中显示 | `.reveal` | `NSWorkspace.activateFileViewerSelecting` |
 | 复制路径 | `link` | 路径写剪贴板（tooltip 用 `files.copyPath`；用 `link` 而非 `doc.on.doc` 以免与「文件」入口撞符号） |
 
-**强调色出现在两处**：卡片左侧 accent 细边（或描边）= 这是**当前工作区**（`ProjectDirectory.current` 归一后相等）；「新会话」按钮。其余配色一律取自 `PanelSurface`（面板底色）与 `PanelControl`（卡片/按钮两档），**不新增颜色令牌**（见 `docs/ui-color-scheme.md`）。
+**强调色出现在两处**：卡片左侧 accent 细边（或描边）= 这是**当前工作区**（`ProjectDirectory.current` 归一后相等）；标题行的 dsh 动作按钮（`+ / folder+`）。其余配色一律取自 `PanelSurface`（面板底色）与 `PanelControl`（卡片/按钮两档），**不新增颜色令牌**（见 `docs/ui-color-scheme.md`）。
 
 ### 5.3 空态与状态行
 

@@ -15,7 +15,7 @@ All notable changes to this project are documented in this file. Format follows
   - **新会话**：在该工作区建一条 dsh web 会话并切过去（先 `session/create { workspaceId }` 保证归属分组，被拒退回 `cwd`）；**在 dsh 中打开**（点卡片名称）复用该工作区最近一条会话（运行中优先），没有则新建；另有在 Finder 中显示 / 复制路径；
   - **单一真相**：当前工作区始终是壳层的 `ProjectDirectory`，重根收口到新抽出的 `AppDelegate.adoptProjectDirectory(_:)`（`dshSession` 跟随与面板快捷入口共用同一个原语，面板只做高亮）；该原语带 `fileExists` 守卫，拒绝把面板重根到已消失的目录（旧代码会照常重根）；
   - **侧边栏延迟**：dsh web 客户端还没重拉列表时（刚建好的工作区/会话），先 `nudgeDSHWebCaches()`、一次 1.5s 重试，仍失败则把会话 id 存进 `pendingOpenSessionId` 并重载页面、在 `didFinish` 后补打开一次；
-  - **未注册的目录不联动**：项目根目录下某个目录若不在 dsh web 的 workspace 里，卡片就不提供 dsh 动作（「新会话」禁用、点卡片只在状态行提示），六个**本地**面板入口（文件/终端/知识库/任务/通道/审查）照常可用，并多出一个「**创建 dsh 工作区**」按钮（幂等注册 → 徽标翻「已注册」、dsh 动作解锁）；
+  - **未注册的目录不联动**：项目根目录下某个目录若不在 dsh web 的 workspace 里，卡片就不提供 dsh 动作（「新会话」禁用、点卡片只在状态行提示），六个**本地**面板入口（文件/终端/知识库/任务/通道/审查）照常可用，并在徽标后面多出一个 **folder+ 图标按钮「添加工作区 / Add workspace」**（与 dsh web 同词；幂等注册 → 徽标翻「已注册」、dsh 动作解锁）；**已注册**的卡片则在徽标后面显示 **`+` 图标「新会话 / New Session」**（两个按钮互斥，都在标题行）；
   - 实现：`platforms/macos/src/ProjectsCore.swift`（纯模型：根目录解析 / 命名规则 / 目录列举 / 与 dsh 注册表按 canonical 路径合并）、`ProjectsPanel.swift`（面板：卡片三行 + 头部 + 根目录行 + 空态 + 结果行 + 取名 sheet）、`DshWebRPC.swift` 新增 `workspaceCreate` 端点与 `DshWorkspaceOps`（注册 / 建会话 / 按工作区挑会话）、`main.swift` 接线与设置窗口「项目」区块（路径字段 + 选择…/保存/恢复默认）；测试 `tests/projects-panel/`（模型 45 项 + 控制器无头 49 项 = **94 项**）与 `tests/dsh-rpc/` 新增 14 项（整套 54 项），均已接入 CI 与 `scripts/local-ci.sh`；设计见 `docs/projects-panel-design.md`。
   - 顺带修正 `DshWorkspaceStore.canonical`：改用 `realpath(3)`，让 macOS 目录列举给出的 `/private/var/...` 与用户/dsh 存写的 `/var/...` 归一到同一条工作区（此前两种写法互不相等，面板会把已注册工作区标成「未注册」）。
 
