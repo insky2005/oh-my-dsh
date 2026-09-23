@@ -104,4 +104,37 @@ assert_eq "$(echo "$OUT" | jget 'd.state.dataCombo.dsh')" 0.9.9 "--no-snapshot s
 OUT="$($CLI launch --app-version 1.16.2 --dsh-version 0.9.9 --dsh-dir "$H/runtime/dsh" --home "$H")"
 assert_eq "$(echo "$OUT" | jget 'd.launch.action')" none "the next launch sees an unchanged combo"
 
+
+# --- jump-version case: the pool never captured the outgoing tree -----------
+
+echo "== path B with a missing tree: install it, then finish the rollback"
+H2="$(mktemp -d)"
+mkdir -p "$H2/sessions/--w--/s-old" "$H2/storages" "$H2/runtime/dsh/lib"
+echo '{"type":"session","version":0}' > "$H2/sessions/--w--/s-old/session.jsonl.zstd"
+echo '{}' > "$H2/storages/workspace.json"
+echo 0.1.2-rc.1 > "$H2/runtime/dsh/lib/bin.js"
+$CLI launch --app-version 1.16.0 --dsh-version 0.1.2-rc.1 --dsh-dir "$H2/runtime/dsh" --home "$H2" >/dev/null
+# a newer app arrives with a newer dsh, and the pre-upgrade snapshot is taken
+rm -rf "$H2/runtime/dsh"; mkdir -p "$H2/runtime/dsh/lib"; echo 0.1.5-rc.2 > "$H2/runtime/dsh/lib/bin.js"
+UP3="$($CLI launch --app-version 1.16.2 --dsh-version 0.1.5-rc.2 --dsh-dir "$H2/runtime/dsh" --home "$H2")"
+ID3="$(echo "$UP3" | jget 'd.snapshotId')"
+# the user jumped versions: the pool never got the old tree
+rm -rf "$H2/shell/snapshots/trees/0.1.2-rc.1"
+PLAN="$($CLI plan-rollback --id "$ID3" --current-dsh 0.1.5-rc.2 --min-supported 0.1.2-rc.1 --home "$H2")"
+assert_eq "$(echo "$PLAN" | jget 'd.plan.tree.action')" install-then-swap "a missing tree asks for an install"
+PARTIAL="$($CLI rollback --id "$ID3" --server-stopped --current-app 1.16.2 --current-dsh 0.1.5-rc.2 --dsh-dir "$H2/runtime/dsh" --min-supported 0.1.2-rc.1 --home "$H2")"
+assert_eq "$(echo "$PARTIAL" | jget 'd.partial')" true "the data half completes and the tree half waits"
+assert_eq "$(echo "$PARTIAL" | jget 'd.needsTreeInstall')" 0.1.2-rc.1 "the shell is told which version to fetch"
+[ -e "$H2/shell/rollback-journal.json" ] || fail "an unfinished rollback must leave its journal"
+# the shell npm-installs that version into the pool, then asks to finish
+mkdir -p "$H2/shell/snapshots/trees/0.1.2-rc.1"
+echo 0.1.2-rc.1 > "$H2/shell/snapshots/trees/0.1.2-rc.1/version"
+FIN="$($CLI finish-rollback --id "$ID3" --current-app 1.16.2 --current-dsh 0.1.5-rc.2 --dsh-dir "$H2/runtime/dsh" --home "$H2")"
+assert_eq "$(echo "$FIN" | jget 'd.ok')" true "finish-rollback completes the transaction"
+assert_eq "$(cat "$H2/runtime/dsh/version" 2>/dev/null || echo missing)" 0.1.2-rc.1 "the built-in dsh is the pooled one"
+[ -e "$H2/shell/rollback-journal.json" ] && fail "the journal must be cleared once finished"
+assert_eq "$(jfile 'd.dataCombo.dsh' "$H2/shell/dsh-state.json")" 0.1.2-rc.1 "the data combo is restored"
+assert_eq "$(jfile 'd.upgradePinned.dsh' "$H2/shell/dsh-state.json")" 0.1.2-rc.1 "auto-upgrade stays pinned"
+rm -rf "$H2"
+
 echo "all snapshot-rollback checks passed"

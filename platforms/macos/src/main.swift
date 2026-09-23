@@ -957,6 +957,36 @@ final class DSHUpdater {
         if let b = backupPath { _ = try? FileManager.default.removeItem(atPath: b) }
         return v
     }
+
+    /// Install one dsh version into an arbitrary directory (the snapshot tree
+    /// pool). Used when a rollback needs a version the pool never captured — the
+    /// user jumped straight from an app that predates this feature — so the
+    /// built-in dsh can still be swapped back instead of falling back to
+    /// "data only + reinstall the old app".
+    /// @returns the installed version, or nil on failure.
+    func installVersion(_ version: String, into dest: String, registry: String) -> String? {
+        let fm = FileManager.default
+        _ = try? fm.createDirectory(atPath: dest, withIntermediateDirectories: true)
+        let manifest = dest + "/package.json"
+        if !fm.fileExists(atPath: manifest) {
+            try? "{\"name\":\"ohmy-dsh-snapshot-tree\",\"private\":true}\n"
+                .write(toFile: manifest, atomically: true, encoding: .utf8)
+        }
+        var log = ""
+        let args = [npmCli, "install", "--loglevel=error", "--no-audit", "--no-fund",
+                    "--registry", registry, "@deepseek-ai/dsh@" + version]
+        let code = runNpm(args, cwd: dest, onOutput: { log.append($0) })
+        guard code == 0 else {
+            AppLog.shared.log("snapshot tree install failed (dsh " + version + ", exit " + String(code) + "): " + String(log.suffix(400)))
+            return nil
+        }
+        let installed = dest + "/node_modules/@deepseek-ai/dsh/package.json"
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: installed)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let v = json["version"] as? String else { return nil }
+        AppLog.shared.log("snapshot tree install: dsh " + v + " -> " + dest)
+        return v
+    }
 }
 
 /// Bridge to the shared core (`core/bin/ohmy-core.js`, embedded in the app
@@ -3276,9 +3306,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return
         }
         if (json["partial"] as? Bool) == true, let needed = json["needsTreeInstall"] as? String {
-            AppLog.shared.log("snapshot rollback: data rolled back, tree " + needed + " missing from the pool")
-            presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.rollback.needsTree", needed))
-            return
+            // The pool never captured that dsh version (the user jumped straight
+            // from an app that predates this feature). Fill it now — the version
+            // is on the registry — then let the CLI finish the transaction
+            // (swap the tree, write the state file, clear the journal).
+            AppLog.shared.log("snapshot rollback: data rolled back; filling the tree pool with dsh " + needed)
+            let poolDir = dshDataHome + "/shell/snapshots/trees/" + needed
+            guard updater.installVersion(needed, into: poolDir, registry: RegistryConfig.current) != nil else {
+                presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.rollback.needsTree", needed))
+                return
+            }
+            let finished = CoreBridge.run(["snapshot", "finish-rollback", "--id", entry.id,
+                                           "--current-app", appVersion, "--current-dsh", dshVersion,
+                                           "--dsh-dir", updater.dshDir] + base,
+                                          timeout: 600, preferBundledNode: true)
+            if finished == nil {
+                AppLog.shared.log("snapshot rollback: finish-rollback failed after filling the pool")
+                presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.rollback.needsTree", needed))
+                return
+            }
         }
         AppLog.shared.log("snapshot rollback done for " + entry.id + " — quitting")
         let done = NSAlert()
