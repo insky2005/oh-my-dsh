@@ -167,7 +167,7 @@
 4. 判断鉴权实现：`dsh-client-connection/lib/index.js` 的 `requestRejection` / `BrowserAuth.isAuthenticated`（是否只认 cookie）。
 
 
-### 4.5 实例复盘：0.1.2-rc.1 → 0.1.5-rc.2（2026-09-23，`release/1.16` 补丁）
+### 4.5 实例复盘：0.1.2-rc.1 → 0.1.5-rc.2（2026-09-23 完成审计；**升级暂缓**，等会话快照/回退功能上线后执行）
 
 **这次上游只动了一处会让壳层静默出错的地方：会话日志的文件名。**
 

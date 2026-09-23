@@ -218,7 +218,7 @@ open "dist/oh-my-dsh-<version>-arm64.dmg"
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `DSH_NODE_VERSION` | 自动检测最新 LTS | 指定下载的 Node 版本，如 `v22.23.2` |
-| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.5-rc.2` | 传给 `npm install` 的包说明（内置 dsh 版本，壳层与该版本同步适配；可覆盖为 `@deepseek-ai/dsh@latest` 等） |
+| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.2-rc.1` | 传给 `npm install` 的包说明（内置 dsh 版本，壳层与该版本同步适配；可覆盖为 `@deepseek-ai/dsh@latest` 等） |
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh 用） |
 | `DSH_ARCH` | `uname -m` | 目标架构：`arm64` / `x86_64`（CI 构建 arm64，release 构建 arm64 + x86_64；不再出 universal） |
