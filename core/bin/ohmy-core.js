@@ -278,7 +278,217 @@ function println(s) {
         }
       }
       break;
+    case 'snapshot':
+      {
+        const S = core.snapshot;
+        const IO = core.snapshotIO;
+        const flag = (name) => {
+          const i = rest.indexOf('--' + name);
+          return i >= 0 ? rest[i + 1] : undefined;
+        };
+        const home = flag('home');
+        const dshHome = IO.dshHomeDir(home);
+        const flagNum = (name, dflt) => {
+          const raw = flag(name);
+          const n = raw === undefined ? NaN : parseInt(raw, 10);
+          return Number.isInteger(n) ? n : dflt;
+        };
+        const listPool = () => IO.defaultIO.listNames(IO.treesDir(dshHome))
+          .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+          .map((e) => e.name);
+
+        if (sub === 'launch') {
+          // The whole pre-spawn job: capture the running tree, snapshot when the
+          // (app, dsh) combo changed, update state, prune. Must run BEFORE dsh web
+          // starts: dsh writes on open, so a session can migrate the moment it runs.
+          const appVersion = flag('app-version');
+          const dshVersion = flag('dsh-version');
+          const dshDir = flag('dsh-dir');
+          const currentCombo = S.comboOf(appVersion, dshVersion);
+          const state = IO.readState(dshHome);
+          const decision = S.decideLaunch({ state, currentCombo });
+          const tree = (flag('no-tree') === undefined && dshDir)
+            ? IO.captureTree({ home: dshHome, dshDir, version: dshVersion, expectedLock: flag('expected-lock') })
+            : { action: 'skipped', dir: null };
+          let snapshotId = null;
+          const adoptOnly = flag('no-snapshot') !== undefined;
+          if (decision.action === 'snapshot' && !adoptOnly) {
+            const made = IO.createSnapshot({
+              home: dshHome, appVersion, dshVersion, reason: decision.reason,
+              fromCombo: decision.fromCombo || currentCombo, at: new Date(),
+            });
+            snapshotId = made.id;
+          }
+          const next = state || { version: 1, history: [] };
+          next.dataCombo = currentCombo;
+          next.lastLaunch = { combo: currentCombo, at: new Date().toISOString() };
+          // --no-snapshot: the caller (e.g. the in-app dsh upgrade) already took
+          // the snapshot as part of its transaction; here we only record the new
+          // combo so the next launch does not snapshot again.
+          next.history = (next.history || []).concat(snapshotId
+            ? [{ at: new Date().toISOString(), action: 'snapshot', snapshot: snapshotId, reason: decision.reason, fromCombo: decision.fromCombo || null, forCombo: currentCombo }]
+            : []);
+          IO.writeState(dshHome, next);
+          const prune = IO.pruneSnapshots({ home: dshHome, keep: flagNum('keep', 3), state: next, currentCombo, currentDshVersion: dshVersion });
+          const journal = S.resumePlan(IO.readJournal(dshHome));
+          const mismatch = !!(next.dataCombo && dshVersion && next.dataCombo.dsh && next.dataCombo.dsh !== dshVersion);
+          printJson({ ok: true, launch: decision, snapshotId, tree, prune, journal, mismatch, state: next });
+        } else if (sub === 'tree') {
+          // Post-boot capture: only ever pool a tree that has PROVEN it boots
+          // (the shell calls this once the page has finished loading).
+          const version = flag('dsh-version');
+          const dir = flag('dsh-dir');
+          if (!version || !dir) fail('usage: snapshot tree --dsh-version <v> --dsh-dir <path> [--expected-lock <path>] [--force] [--home <dir>]');
+          const res = IO.captureTree({ home: dshHome, dshDir: dir, version, expectedLock: flag('expected-lock'), force: flag('force') !== undefined });
+          printJson(Object.assign({ ok: res.action !== 'rejected' }, res));
+        } else if (sub === 'list') {
+          printJson({
+            snapshots: IO.listSnapshots(dshHome).map((s) => ({
+              id: s.id, broken: s.broken, createdAt: s.createdAt, sessions: s.sessions, bytes: s.bytes,
+              reason: s.meta ? s.meta.reason : null,
+              fromCombo: s.meta ? s.meta.fromCombo : null,
+              forCombo: s.meta ? s.meta.forCombo : null,
+              dshTree: s.meta ? s.meta.dshTree : null,
+              treeAvailable: !!(s.meta && s.meta.dshTree && IO.defaultIO.exists(IO.treeDir(dshHome, String(s.meta.dshTree).replace(/^trees\//, '')))),
+              restoredFrom: s.meta ? s.meta.restoredFrom : null,
+            })),
+            state: IO.readState(dshHome),
+            pool: listPool(),
+            journal: S.resumePlan(IO.readJournal(dshHome)),
+          });
+        } else if (sub === 'status') {
+          const state = IO.readState(dshHome);
+          const dshVersion = flag('dsh-version');
+          printJson({
+            state, pool: listPool(), snapshotCount: IO.listSnapshots(dshHome).length,
+            journal: S.resumePlan(IO.readJournal(dshHome)),
+            mismatch: !!(state && state.dataCombo && dshVersion && state.dataCombo.dsh !== dshVersion),
+          });
+        } else if (sub === 'create') {
+          const reason = flag('reason');
+          if (!reason) fail('usage: snapshot create --reason <bootstrap|combo-change|dsh-upgrade|pre-rollback> --app-version <A> --dsh-version <D> [--from-app <A>] [--from-dsh <D>] [--home <dir>]');
+          const fromCombo = S.comboOf(flag('from-app'), flag('from-dsh'));
+          // Capture the tree that is about to be left behind, so a later rollback
+          // can put it back even if the .pkg replaced the whole app bundle.
+          const tree = (flag('dsh-dir') && fromCombo.dsh)
+            ? IO.captureTree({ home: dshHome, dshDir: flag('dsh-dir'), version: fromCombo.dsh })
+            : { action: 'skipped', dir: null };
+          const made = IO.createSnapshot({
+            home: dshHome, appVersion: flag('app-version'), dshVersion: flag('dsh-version'), reason,
+            fromCombo, at: new Date(),
+          });
+          printJson({ ok: true, id: made.id, dir: made.dir, meta: made.meta, clone: made.clone, tree });
+        } else if (sub === 'plan-rollback') {
+          const id = flag('id') || rest[0];
+          const target = IO.listSnapshots(dshHome).find((s) => s.id === id);
+          if (!target) fail('snapshot plan-rollback: unknown snapshot ' + String(id));
+          if (target.broken) fail('snapshot plan-rollback: snapshot meta is unreadable ' + String(id));
+          const treeVersion = target.meta.dshTree ? String(target.meta.dshTree).replace(/^trees\//, '') : null;
+          const plan = S.planRollback({
+            snapshot: target.meta,
+            snapshotSessionIds: IO.snapshotSessionIds(target.dir),
+            currentSessions: IO.listSessions(dshHome).map((s) => ({ id: s.id, files: s.files })),
+            currentDshVersion: flag('current-dsh'),
+            minSupportedDshVersion: flag('min-supported'),
+            treeAvailable: !!(treeVersion && IO.defaultIO.exists(IO.treeDir(dshHome, treeVersion))),
+          });
+          printJson({ ok: true, target: { id: target.id, meta: target.meta }, plan, pool: listPool() });
+        } else if (sub === 'rollback' || sub === 'finish-rollback') {
+          const id = flag('id') || rest[0];
+          const target = IO.listSnapshots(dshHome).find((s) => s.id === id);
+          if (!target || target.broken) fail('snapshot rollback: unknown or unreadable snapshot ' + String(id));
+          const currentApp = flag('current-app');
+          const currentDsh = flag('current-dsh');
+          const currentCombo = S.comboOf(currentApp, currentDsh);
+          const dshDir = flag('dsh-dir');
+          const treeVersion = target.meta.dshTree ? String(target.meta.dshTree).replace(/^trees\//, '') : null;
+          const resume = IO.readJournal(dshHome);
+          let journal = (sub === 'finish-rollback' && resume) ? resume : null;
+          if (sub === 'rollback') {
+            if (resume && resume.nextStep !== 'done') fail('snapshot rollback: a previous rollback is unfinished (' + resume.nextStep + '); run finish-rollback or undo first');
+            if (flag('server-stopped') === undefined) fail('snapshot rollback: --server-stopped is required (the caller must stop dsh web first)');
+            const stamp = S.timestampOf(new Date()) + '_rollback';
+            journal = S.newJournal({ targetId: id, mode: 'B', at: new Date() });
+            journal = S.advanceJournal(journal, 'stop-server', { note: 'caller stopped dsh web' });
+            IO.writeJournal(dshHome, journal);
+            const preId = S.snapshotId({ at: new Date(), app: currentApp, dsh: currentDsh, reason: 'pre-rollback' });
+            const applied = IO.applyRollback({
+              home: dshHome, target, preRollbackId: preId, preRollbackCombo: currentCombo, forCombo: target.meta.fromCombo, at: new Date(),
+            });
+            journal = S.advanceJournal(journal, 'snapshot-live', { note: preId });
+            journal = S.advanceJournal(journal, 'restore-data', { note: applied.restored.length + ' sessions' });
+            journal = S.advanceJournal(journal, 'quarantine', { note: applied.quarantined.length + ' sessions' });
+            IO.writeJournal(dshHome, journal);
+            if (treeVersion && dshDir && treeVersion !== currentDsh) {
+              const poolDir = IO.treeDir(dshHome, treeVersion);
+              // Defense in depth: a pooled tree whose lock differs from the
+              // committed one is not the closure we know is good — never swap it
+              // back in; let the caller install the version from the lock.
+              const expected = flag('expected-lock');
+              if (IO.defaultIO.exists(poolDir) && expected && IO.defaultIO.exists(expected)) {
+                const have = IO.lockFingerprint(poolDir + '/package-lock.json');
+                const want = IO.lockFingerprint(expected);
+                if (have && want && have !== want) {
+                  IO.defaultIO.remove(poolDir);
+                  IO.writeJournal(dshHome, journal);
+                  printJson({ ok: true, partial: true, needsTreeInstall: treeVersion, reason: 'pooled-tree-closure-mismatch', have, want, journal, applied, preRollbackId: preId, stamp });
+                  return;
+                }
+              }
+              if (!IO.defaultIO.exists(poolDir)) {
+                // the caller has to npm-install that version into the pool, then call finish-rollback
+                IO.writeJournal(dshHome, journal);
+                printJson({ ok: true, partial: true, needsTreeInstall: treeVersion, journal, applied, preRollbackId: preId, stamp });
+                return;
+              }
+              IO.swapTree({ home: dshHome, dshDir, toVersion: treeVersion, currentVersion: currentDsh, stamp });
+            }
+            journal = S.advanceJournal(journal, 'swap-tree', { note: treeVersion || 'not-needed' });
+            journal = writeRollbackState();
+            printJson({ ok: true, partial: false, journal, applied, preRollbackId: preId, state: IO.readState(dshHome) });
+          } else {
+            if (!journal) fail('snapshot finish-rollback: no unfinished rollback journal');
+            if (journal.nextStep === 'swap-tree') {
+              if (treeVersion && dshDir && treeVersion !== currentDsh) {
+                if (!IO.defaultIO.exists(IO.treeDir(dshHome, treeVersion))) fail('snapshot finish-rollback: tree ' + treeVersion + ' still missing from the pool');
+                IO.swapTree({ home: dshHome, dshDir, toVersion: treeVersion, currentVersion: currentDsh, stamp: S.timestampOf(new Date()) + '_rollback' });
+              }
+              journal = S.advanceJournal(journal, 'swap-tree', { note: 'finished by caller' });
+            }
+            printJson({ ok: true, journal: writeRollbackState(), state: IO.readState(dshHome) });
+          }
+          function writeRollbackState() {
+            const state = IO.readState(dshHome) || { version: 1, history: [] };
+            state.dataCombo = target.meta.fromCombo;
+            state.rollback = { snapshot: id, at: new Date().toISOString(), pending: false };
+            if (journal.mode === 'B' && treeVersion) {
+              state.upgradePinned = { dsh: target.meta.fromCombo.dsh, at: new Date().toISOString(), reason: 'rollback' };
+            }
+            state.history = (state.history || []).concat([{ at: new Date().toISOString(), action: 'rollback', snapshot: id, toCombo: target.meta.fromCombo }]);
+            IO.writeState(dshHome, state);
+            journal = S.advanceJournal(journal, 'write-state', { note: 'dataCombo restored' });
+            IO.writeJournal(dshHome, journal);
+            IO.clearJournal(dshHome);
+            return journal;
+          }
+        } else if (sub === 'delete') {
+          const id = flag('id') || rest[0];
+          if (!id) fail('usage: snapshot delete --id <snapshot-id> [--home <dir>]');
+          IO.defaultIO.remove(require('node:path').join(IO.snapshotsDir(dshHome), id));
+          printJson({ ok: true, deleted: id, remaining: IO.listSnapshots(dshHome).length });
+        } else {
+          fail('usage: snapshot launch --app-version <A> --dsh-version <D> [--dsh-dir <path>] [--home <dir>] [--keep <n>] [--no-tree]'
+            + ' | tree --dsh-version <D> --dsh-dir <path> [--expected-lock <path>] [--force]'
+            + ' | list [--home <dir>] | status [--dsh-version <D>] [--home <dir>]'
+            + ' | create --reason <r> --app-version <A> --dsh-version <D> [--from-app <A>] [--from-dsh <D>]'
+            + ' | plan-rollback --id <id> [--current-dsh <v>] [--min-supported <v>]'
+            + ' | rollback --id <id> --server-stopped --current-app <A> --current-dsh <D> [--dsh-dir <path>] [--min-supported <v>]'
+            + ' | finish-rollback --id <id> --current-app <A> --current-dsh <D> [--dsh-dir <path>]'
+            + ' | delete --id <id>');
+        }
+      }
+      break;
     default:
-      fail('usage: ohmy-core { ports | serving | upgrade | session | channel | review } …');
+      fail('usage: ohmy-core { ports | serving | upgrade | session | channel | snapshot | review } …');
   }
 })().catch((e) => { console.error(e); process.exit(1); });

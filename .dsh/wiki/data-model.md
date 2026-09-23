@@ -77,7 +77,7 @@ manual: false
 
 ## dsh 会话日志（审查面板数据源，只读）
 
-- **位置**：`$DSH_HOME/sessions/<workspace-slug>/<session-id>/session.jsonl`（压缩时 `.jsonl.zstd`），一行一事件；
+- **位置**：`$DSH_HOME/sessions/<workspace-slug>/<session-id>/session[.vN].jsonl`（压缩时 `.jsonl.zstd`），一行一事件；`.vN` 是 dsh 的 Session 格式世代（0.1.2 写 `session.jsonl`，0.1.5 写 `session.v3.jsonl`），读取器按规范名枚举并取**世代最大者**；
 - **格式要点**：dsh 的 Zstandard 后端把日志写成**多个独立可解压帧的拼接**（每批落盘一帧），一次性解压只拿得到**第一帧**（实测真实日志仅返回 214 字节的会话头）；`core/lib/review-log.js` 的 `scanZstdFrames()` 只走帧头/块头逐帧解码。Apple 的 Compression 框架在这套 SDK 上**没有 zstd 算法**，Swift 侧无法自行解码——这是审计逻辑放在 core、且必须用**内置** Node（v24，含 `zlib.zstdDecompressSync`）的原因（`CoreBridge.run(…, preferBundledNode: true)`）；
 - **审计读取的三类记录**：① `tool/result` → `data.meta.diffs`（已应用 hunk，**仅顶层** `write`/`edit`）；② 顶层 `tool/call` / 嵌套 `tool/code-dispatch-start` → `arguments`（参数还原，覆盖 `run_code` 嵌套调用与新建文件全文）；③ `tool/call name=bash` → 命令文本（无前后内容）。turn 归属来自 `turn/start` + `tool/call.turn`（嵌套派发**继承父调用**的 turn）；
 - **缓存身份 `ReviewLogStamp`（Swift，`ReviewLogModel.swift`）**：`{size, mtimeMs}`，由 `ReviewLogStamp.read(path)` 从文件属性取；`auditNeedsRefresh(cached:onDisk:)` 只在两者相等时复用缓存，`onDisk == nil`（路径未知/文件消失）判为「无法判断」保留缓存。因为日志**只增不减**，同一份日志上的审计结果永远有效——这是「新建会话不再只显示会话、看不到文件」的关键（PR #49）；

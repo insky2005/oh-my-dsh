@@ -18,8 +18,10 @@
 
 ## 2. 数据来源：dsh 会话日志的三类记录
 
-日志位于 `$DSH_HOME/sessions/<workspace-slug>/<session-id>/session.jsonl[.zstd]`，一行一个事件，事件类型见
-`dsh-session/lib/types/known-event-types.js`。审计只读其中三类：
+日志位于 `$DSH_HOME/sessions/<workspace-slug>/<session-id>/session[.vN].jsonl[.zstd]`，一行一个事件，事件类型见
+`dsh-session/lib/types/known-event-types.js`。文件名里的 `.vN` 是 dsh 的 **Session 格式世代**（世代 0 就写成
+`session.jsonl`）：读取器按规范名枚举目录、**取世代号最大的那一份**（同代压缩优先），因为被迁移过的会话会把
+原文件留成冻结归档、活日志换成新世代名（dsh 0.1.5 的新会话 = `session.v3.jsonl.zstd`）。审计只读其中三类：
 
 | # | 记录 | 提供什么 | 覆盖范围 |
 |---|---|---|---|

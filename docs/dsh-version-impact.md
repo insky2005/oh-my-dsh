@@ -77,8 +77,10 @@
 | D3 | `channels/*` | **我们**（放在 dsh home 下） | 凭据/会话映射/消息归档/workspace 启用/state | 通道配置丢失 | core `channel-store/sessions/runner` |
 | D4 | `shell/config.json` | **我们** | 壳层设置（语言/主题/面板宽度/registry…） | 面板宽度、语言回默认 | core `settings.js` + `ShellConfig.swift` |
 | D5 | `browser-api.port` | **我们** | 浏览器面板 REST 端口文件的约定位置，供 web-dev-tools 技能发现 | Agent 技能找不到浏览器面板 API | main.swift 启动段 + `SkillInstaller` 文案 |
-| D6 | `sessions/`、`credentials`、`profiles` | dsh | 目前**不直接读**（仅 dsh 自己用） | — | — |
+| D6 | `sessions/<workspace-slug>/<session-id>/`：**会话日志文件名是「世代命名」**（世代 0 = `session.jsonl`，之后 `session.v<N>.jsonl`；压缩再加 `.zstd`） | dsh | **读**（审查面板的审计数据源，见 D8） | 新会话列不出来（空面板）、迁移过的会话读到**冻结归档**而停旧 | `core/lib/review-log.js` `sessionLogCandidates()` |
+| D8 | `sessions/` 里的当前世代：0.1.2 写 `session.jsonl`，**0.1.5 写 `session.v3.jsonl`** | dsh | **读**：按规范名枚举 + **世代最大者优先**（同代压缩优先） | `review: listed 0/N sessions` / `audit FAILED`（不报错、只是空） | `core/lib/review-log.js` `parseSessionLogName` / `sessionLogCandidates`；`core/tests/review-log.test.js` |
 | D7 | dev 隔离：`~/.dsh-dev`（+ `browser-dev` 迁移） | 我们 | 开发版独立 home，避免污染正式版 | dev 读到正式版数据 | main.swift `applyDevIsolation()` |
+| D9 | `credentials`、`profiles` | dsh | 目前**不直接读**（仅 dsh 自己用） | — | — |
 
 ### E. 分发、升级与运行时
 
@@ -90,6 +92,7 @@
 | E4 | 版本自描述：安装后读 `package.json version`；registry 版本列表选「下一个候选」 | 版本号/发布渠道变化 | 升级判定错 | core `upgrade.js`（`latestVersion/nextStepTarget/pinSpec/buildPrefetchArgs/buildApplyArgs`） | `ohmy-core upgrade …` |
 | E5 | 升级方式：**原地 `npm install <spec>` 装进 `runtime/dsh`，不重装 App** | 上游若改为非 npm 分发 | 升级功能失效 | main.swift `DSHUpdater` + `upgrade.js` | 升级一次，看 `runtime/dsh` 版本 |
 | E6 | 「重启服务即生效」：升级后杀自己拉起的 dsh web 并重拉 | dsh 若引入缓存/守护进程 | 版本升级了但 UI 还是旧的 | main.swift 升级后重启段 | `app.log` |
+| **E7** | 运行时**依赖闭包**：dsh 用 caret 范围声明 cordis 插件（`^1.0.17` 等），`npm install <spec>` 会装**当天最新的 1.x** | 上游一发新版插件，**旧 dsh 就可能起不来**（实测 0.1.2-rc.1 + `cordis-plugin-hmr` 1.0.19 → 启动即抛 `user patch-layer watching requires the Cordis HMR service`） | 构建"成功"、App 里 dsh web 直接退出（启动失败/白屏） | `build-app.sh`：`platforms/macos/runtime-locks/<spec>/package-lock.json` + **`npm ci`**，装完后做**启动冒烟**（失败即构建失败） | 构建日志 `using committed runtime lock …` + `smoke: dsh web came up` |
 
 ### F. 侧通道（与 dsh 解耦，但同属运行时）
 
@@ -166,6 +169,23 @@
 4. 判断鉴权实现：`dsh-client-connection/lib/index.js` 的 `requestRejection` / `BrowserAuth.isAuthenticated`（是否只认 cookie）。
 
 
+### 4.5 实例复盘：0.1.2-rc.1 → 0.1.5-rc.2（2026-09-23 完成审计；**升级暂缓**，等会话快照/回退功能上线后执行）
+
+**这次上游只动了一处会让壳层静默出错的地方：会话日志的文件名。**
+
+- **静态比对**（0.1.2-rc.1 的 223 个 `@deepseek-ai/*` 包 vs 0.1.5-rc.2 的 233 个）：RPC 端点**只增不减**
+  （新增 `workspaceFiles/*`、`fileUploads/upload`、`sessionFeedback/record`、`goals/get`），壳层用到的端点
+  一个没消失，参数包裹字段（`_request` / `request` / `parentSessionId`）逐个核对**完全一致**；`dsh-auth-*`
+  cookie、`dsh web: <带 token 的 URL>` 就绪行、`workspace.json` 的 domain `workspace` v2、技能四根与
+  rank(100/200/400/500)、frontmatter 规范键都未变；客户端仍走 `window.fetch` + `client-request` 信封，
+  侧栏仍是 `[role="treeitem"]` + `sessionRow`，文件打开仍是 `session/openWorkspacePath`。
+- **唯一断裂**：会话日志按 **Session 格式世代**命名（`session.jsonl` → `session.v3.jsonl`，`.zstd` 叠加），
+  0.1.5 新建会话直接写**世代 3**，迁移过的老会话把原来的文件留成冻结归档。审查面板只认世代 0 ⇒ 新会话
+  列不出来（`review: listed 0/N sessions` + `audit FAILED`），老会话停旧。修法与用例见 §6.4 / R7。
+- **升级 SOP 增加两条核对项**：D 面「活日志文件名 + 审查面板能否列出并审计」、收尾「八面板全量扫描」
+  （新增 QA 钩子 `DSH_PANEL_TEST`，一次跑完八个面板并各落一张截图）。
+- **逐面实测记录**（含命令与日志原样）：`docs/plans/dsh-015rc2-compat-audit.md`。
+
 ## 5. 每次 dsh 升级的执行清单（SOP）
 
 ### 升级前
@@ -178,6 +198,7 @@
 - [ ] B 注入：切会话 → `ProjectDirectory` 跟随（终端/预览/wiki/tasks 目录变）；面板点会话行 → web 跳转；点文件链接 → 文件面板打开；**右键文件夹「添加到对话」→ 输入框出现引用 chip**（B9；无头复现见下）。
 - [ ] C 频道：微信 `/help` `/ping` `/status` `/wks` `/ses` `/new …` + **发一句普通消息**看是否回推答案（覆盖 C5–C7）。
 - [ ] C 工作区：`/wks` 能列出**面板已启用**的 workspace（覆盖 C4）。
+- [ ] D 会话日志：新建一个会话，看 `$DSH_HOME/sessions/<slug>/<id>/` 里**活日志的文件名**（世代名）是否仍是壳层认识的那一种；再看审查面板能否**列出**它、能否审计出一条真实会话的改动（R7；命令见 §6.4）。老会话被迁移后会同时存在冻结归档与活日志，面板必须读活的那份。
 - [ ] D 布局：`storages/workspace.json` 仍在、`unit.version` 仍为 **2**、工作区数量与面板一致（R4；命令见 §6.2）——变了就要同时改 `core/lib/workspace-store.js` 与 `platforms/macos/src/DshWebRPC.swift` 的读取器并补用例。
 - [ ] E 升级链路本身：`ohmy-core upgrade` 能判定「下一步」；升级后服务重启、版本事实刷新。
 - [ ] 其它面板回归：wiki 生成、issue-runner 跑一条、浏览器面板、终端、文件预览。
@@ -188,7 +209,12 @@
 - [ ] `scripts/local-ci.sh swift`（swiftc 全量编译检查）；发版走 `scripts/local-ci.sh dev` / `local-release.sh`
 
 ### 收尾
-- [ ] 更新 `docs/plans/dsh-012rc1-compat-audit.md`（或新起一份审计）与本清单 §3/§4。
+- [ ] 八面板全量扫描（一条命令）：开发版启动时带
+      `DSH_HOME=$HOME/.dsh-dev DSH_UI_DEBUG=1 DSH_PANEL_TEST="files,terminal,wiki,tasks,browser,channel,review,skills"`，
+      每个面板会各落一张 `~/Library/Logs/oh-my-dsh/panel-<name>-debug.png`；逐张看（或 OCR）确认面板**真的渲染出内容**
+      而不是空壳。此前只有六个单面板钩子，且缺的恰是没有快捷键、脚本点不到的 tasks 与 channel。
+- [ ] `core/tests/` 全绿 + 面板测试套件（`scripts/local-ci.sh swift`）。
+- [ ] 更新 `docs/plans/` 下最新的那份审计（本次：`docs/plans/dsh-015rc2-compat-audit.md`）与本清单 §3/§4。
 - [ ] `CHANGELOG.md` 的 `[Unreleased]` 记录「适配点 + 修复点」，注明受影响面板。
 - [ ] 版本推进：`scripts/version.sh` 的 `FALLBACK_VERSION/BUILD`、`build-app.sh` 的 `DSH_PACKAGE_SPEC`（两处 + 打印行）、README/`docs/productization.md` 的版本矩阵。
 
@@ -201,6 +227,8 @@
 | ~~R2 复用外部实例~~（**2026-09-12 复用逻辑已整体删除**） | 外部实例的 token 只存在于它自己的 stdout，无法获取；复用必然 `webToken == nil` ⇒ 原生 RPC 全 401（§4.4 实战踩过）。现在 **永远自拉起**，并回收自己上次残留的实例（`$DSH_HOME/shell/dsh-web.json` + token 探活）| 只有出现「必须与某个已启动实例共享**内存态**（未落盘状态、正在跑的 turn 视图）」的需求时才重估 |
 | **R3 注入脚本依赖 fetch + DOM**（**仍在**，且已实测出过坏点） | 三个注入脚本直接依赖 dsh web 客户端实现：fetch 形态与信封、方法名白名单、sessionId 位置、侧栏 `[role=treeitem].sessionRow` DOM、文件打开 RPC 端点。上游改传输（已有 WebSocket mux）或改 DOM 就**静默失效**。2026-09-10 实测发现 `sessionOpenerScript` 在 0.1.2 下一直是坏的（写死点号 method 打到斜杠端点，服务端 \`method does not match endpoint\`），已修为运行时双面 —— 详见 §6.1 | 升级后 B 面三项验证任一失败即命中 |
 | **R4 `workspace.json` 兜底是私有布局**（**仍在**，已加护栏） | 兜底读的是 dsh 内部带 schema/版本号的私有域存储（`defineDomain({name:'workspace',version:2})`，还有 `pendingMutation` 恢复标记），上游可随时改字段/搬文件/升版本；读不懂 = 上述五处**静默变空**。现已加域名+版本校验、诊断日志、单一实现收口（见 §6.2） | 升级后 `unit.version` 变化，或工作区列表突然为空而接口没变 |
+| **R7 会话日志「世代命名」**（0.1.5 实测踩过，已修） | 审查面板直接读 dsh 落盘的会话日志，而**文件名里编码了 Session 格式世代**（0.1.2 = `session.jsonl`，0.1.5 = `session.v3.jsonl`，压缩加 `.zstd`）；迁移过的会话还会把老文件留成冻结归档。只认世代 0 的名字 ⇒ 新会话一条都列不出来、老会话永远停旧，**不报错**。已改为按规范名枚举 + 世代最大者优先（见 §6.4） | 上游再提世代（出现 `session.v4.jsonl`）时**不需要改代码**（规则是「取最大世代」），但若换成非 `session*.jsonl` 的容器/目录名就要重估 |
+| **R8 运行时闭包漂移**（2026-09-23 实测踩到，已修） | 只钉 `DSH_PACKAGE_SPEC` **不够**：dsh 的 cordis 工具链是 caret 范围，`npm install` 会随上游发版改闭包。实测重建 0.1.2-rc.1 得到 `cordis-plugin-hmr 1.0.19`（生产包是 1.0.17）后，**dsh 自己启动就抛** `user patch-layer watching requires the Cordis HMR service`（profile 的 `patchReload: "live"` 需要 HMR 服务，而新插件在旧 loader 下起不来）。已改为**提交 lockfile + `npm ci` + 构建期启动冒烟**（见 §6.5） | 每次新增/变更 dsh spec（要配一份新 lock）；上游换掉 cordis 工具链或改 profile 机制时重估 |
 | R5 单一版本策略 | 只为「内置版本」做适配，老版本兼容靠回退（C1）；回退在两侧都失效时会静默出空结果 | 引入第二个受支持版本时重估 |
 | **R6 `dsh-auth-*` cookie 按 authority 命名、无限累积**（2026-09-13 已修） | dsh 0.1.2+ 的浏览器 cookie 名 = `"dsh-auth-" + base64url(sha256(authority))`，authority 是**该实例的 host:port**；cookie 又不区分端口 ⇒ 每次自拉起一个新端口就多留一只（~226 B / 30 天 TTL），只增不减。累积 Cookie 头一旦把 **~2.1 KB 的插件 batch URL** 顶过 node 的 16 KiB 头上限（第 63 只）即 **431** → 界面「Failed to load plugins」。壳层已按「退出清理 + 启动清理 + node 头上限保险带」处置（见 §6.3） | 上游改 cookie 命名/鉴权载体（不再按 authority 派生），或 dsh 把插件 batch 换成多条更短 URL 后重估 |
 
@@ -313,9 +341,90 @@ sessionCookie(...)     = "<name>=<value>; Max-Age=2592000; Path=/; Expires=…; 
 
 **升级时怎么验**（并进 §5 的 A 面）：① 启动后 `app.log` 有 `dsh cookies: purged N stale …`；② `~/Library/HTTPStorages/<bundleid>.binarycookies` 的 cookie 数稳定在 1（不再随启动次数增长）；③ `curl -H "Cookie: <造一堆>" "<batch URL>"` 回 200 而非 431（保险带生效）。若上游改了 cookie 命名规则或鉴权载体（例如换成 header），本清理只会「清不掉」（不再有害），但护栏同时失效——按上表重估。
 
+### R7 详解：会话日志的「世代命名」（审查面板的数据源）
+
+**我们依赖的是什么**：审查面板的审计数据来自 dsh 自己落盘的会话日志
+`$DSH_HOME/sessions/<workspace-slug>/<session-id>/\<logfile\>`，容器是「多条独立可解码的 Zstandard 帧」的
+JSONL（见 `docs/review-panel-design.md`）。**文件名本身带版本语义**（`@deepseek-ai/dsh-session-format`）：
+
+```js
+sessionFormatLogFilename(v) = v === 0 ? "session.jsonl" : \`session.v${v}.jsonl\`;   // 压缩存贮再加 ".zstd"
+```
+
+- 0.1.2-rc.1：新会话 = `session.jsonl.zstd`（世代 0）；
+- 0.1.5-rc.2：新会话 = **`session.v3.jsonl.zstd`**（世代 3）；
+- **被迁移的会话两份并存**：原来的 `session.jsonl.zstd` 成为冻结归档，活日志是 `session.v3.jsonl.zstd`
+  （实测同一会话：归档 19 条事件 / 活日志 22 条，之后的新事件只进活日志）。
+
+**为什么难发现**：读不到文件不是错误，只是「这个会话没有日志」——列表少几行、审计树空白，日志里只有
+`review: listed 0/N sessions` 这种**看起来正常**的行。而且它只在**新建/迁移过**的会话上出现，老 home 里
+世代 0 的存量会话一切照旧，很容易漏。
+
+**修法**（`core/lib/review-log.js`）：
+
+1. 规范名解析 `parseSessionLogName(name)`：`^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$` —— 只认规范名，
+   `.v0`、大写 `V`、前导零、`.tmp`/`.gz` 之类一律不算（dsh 自己也不把它们当已提交世代）；
+2. `sessionLogCandidates(dir)`：枚举目录里所有规范日志，**世代号降序**、同代**压缩优先**；
+3. `sessionLogFile()` = 候选里的第一个；`listSessionLogs()` / `auditSession()` 自动跟着走；
+4. 用例 6 条钉住契约（`core/tests/review-log.test.js`）：只有新世代文件时能发现并审计、迁移会话读**活日志**
+   而不是归档、非规范名忽略、世代 0 仍兼容、压缩与非压缩两种新世代文件。
+
+**升级时怎么验**（写进 §5 的 D 面）：
+
+```bash
+# ① 新建一个会话，看活日志的文件名
+ls ~/.dsh-dev/sessions/*/<session-id>/            # 期望会话名里的世代号能被 sessionLogCandidates 认出
+# ② 壳层读取器（用 App 内置 node，≥22.15 才有 zstd）
+node -e "const c=require('./core'); const l=c.listSessionLogs({dshHome:process.env.HOME+'/.dsh-dev',limit:-1});
+         console.log(l.total, l.sessions.map(s=>s.file.split('/').pop()))"
+# ③ 面板侧：app.log 里应出现 "review: listed N/M sessions … diagnostics=0"，而不是 "listed 0/…" / "audit FAILED"
+```
+
+**未来触发**：上游再提世代（`session.v4.jsonl`）**不需要改代码**——规则是「取最大世代」；但若把日志换成
+非 `session*.jsonl` 的容器名/目录结构，本条与 §3 D6/D8 要一起重估。
+
+### R8 详解：运行时依赖闭包漂移（只钉 dsh 版本不够）
+
+**现象**（2026-09-23）：新构建的开发版启动即崩，`dsh web` 打印入口 URL 后立刻抛：
+
+```
+Error: dsh: user patch-layer watching requires the Cordis HMR service
+    at watchUserPatches (…/dsh-app-boot/lib/index.js:1078:28)
+```
+
+**定位**：与 profile、与 `~/.dsh-dev`、与本次改动都无关——用**全新空 home** 也会复现，而同版本的**已安装生产包**不报错。
+对比两棵树的闭包：
+
+| 包 | 今天重建（坏） | 生产包（好） |
+|---|---|---|
+| `@deepseek-ai/cordis-plugin-hmr` | **1.0.19** | 1.0.17 |
+| `cordis-plugin-loader` | **1.0.5** | 1.0.3 |
+| `cordis-plugin-include` | **1.0.9** | 1.0.7 |
+| `cordis-plugin-timer` | **1.1.6** | 1.1.4 |
+
+dsh 的 `package.json` 用 caret 声明这些插件（`^1.0.17`），所以 `npm install @deepseek-ai/dsh@0.1.2-rc.1` 拿到的是**今天最新的 1.x**；
+新版 HMR 插件在 0.1.2-rc.1 的 loader 下无法实例化 → `ctx.get("hmr") === undefined` → profile 的 `patchReload: "live"` 走到 `watchUserPatches` 抛错退出。
+把 `hmr` 单独钉回 1.0.17 **不够**（仍报错）——漂移是整组的。
+
+**修法**（`build-app.sh`）：
+
+1. 仓库内每个受支持的 dsh spec 配一份**已知可启动**的闭包锁：`platforms/macos/runtime-locks/<spec>/{package.json,package-lock.json}`
+   （0.1.2-rc.1 那份从"真能启动"的生产运行树导出，583 个包、`lockfileVersion: 3`）；
+2. 构建时用 **`npm ci`**（不是 `npm install`）复现该闭包，主 registry 失败回退官方源；没有 lock 的 spec 走老路并**大声警告**；
+3. **装完做启动冒烟**：`smoke_runtime()` 用刚装好的树起一次 `dsh web`，40 秒内必须打出入口 URL 且进程存活，否则**构建失败**并打印日志
+   （可用 `DSH_SKIP_RUNTIME_SMOKE=1` 跳过，仅限离线调试）；
+4. runtime 缓存键加上 lock 指纹（`node|spec|arch|lockHash`），改锁即重建，避免复用旧树。
+
+**升级时怎么验**：构建日志必须出现 `using committed runtime lock: …` 与 `smoke: dsh web came up`；若出现 `WARNING: no committed lock for <spec>`，说明这个 spec 还没配锁，先补一份再发。
+
+**同源教训（快照树池）**：抓树必须**只在"这棵树已经启动成功"之后**（壳层挂在页面加载完成时抓，见 `docs/session-snapshot-rollback-design.md` §6）——否则"构建坏了但 App 起来了"会把一棵从没启动成功的树存进池，回退时又把坏树换回来（2026-09-23 用户实测踩到）。
+
+**教训**：① 「钉版本」要钉到**闭包**（lockfile），只钉顶层包等于没钉；② 构建"成功"不等于产物能用——**能启动**才是验收标准，所以把冒烟放进构建；③ 这类漂移**只影响旧版本**（新 dsh 与新插件自洽），正是"长期停在一个旧 dsh 上"的隐性代价。
+
 ## 7. 参考
 
 - 实战审计（0.1.2 逐项状态与实测契约）：`docs/plans/dsh-012rc1-compat-audit.md`
+- 实战审计（0.1.2-rc.1 → 0.1.5-rc.2，含八面板全量验证）：`docs/plans/dsh-015rc2-compat-audit.md`
 - Files 面板 → 输入框引用（B9 的实现与实测）：`docs/file-panel-composer-reference.md`
 - 频道侧实现与状态：`docs/channel-status.md`、`docs/channel-commands.md`、`docs/channel-project-switch.md`
 - 产品化与版本策略：`docs/productization.md` §8；发布流程：`docs/release-process.md`

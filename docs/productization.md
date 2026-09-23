@@ -642,7 +642,7 @@ WebKit（macOS/Linux）与 Chromium（WebView2）对 dsh web 的渲染差异、P
 |---|---|---|
 | App 版本 | 1.7.1 / build 63 | `build-app.sh` VERSION/BUILD |
 | 源码规模 | `src/` 5 个 Swift 文件约 7.6k 行（main 2236 / TerminalPanel 1875 / WikiPanel 1928 / PreviewPanel 1445 / MakeIcon 104） | `wc -l` |
-| 内嵌运行时 | Node v24.19.0 + npm + dsh 0.1.2-rc.1 | 运行时实测 |
+| 内嵌运行时 | Node v24.21.0 + npm + dsh 0.1.2-rc.1 | 运行时实测 |
 | 上游 | deepseek-ai/deepseek-harness，MIT，npm 发布，RC 阶段 | `@deepseek-ai/dsh` package.json |
 | 构建 | `build-app.sh`：下载 Node（SHA-256 校验）+ npm install dsh，国内镜像默认，`.cache/` 缓存 | `build-app.sh` |
 | 打包 | `make-pkg.sh`：pkgbuild `.pkg` + hdiutil `.dmg`，preinstall 清旧版 | `make-pkg.sh` |

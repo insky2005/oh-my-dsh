@@ -127,6 +127,42 @@ enum L10n {
         // status
         "status.starting": ("正在启动 oh-my-dsh 服务…", "Starting oh-my-dsh service…"),
         "status.startFailed": ("无法启动 oh-my-dsh\n\n%@", "Failed to start oh-my-dsh\n\n%@"),
+        "snapshot.unavailable": ("会话快照不可用（内置运行时缺失）", "Session snapshots unavailable (bundled runtime missing)"),
+        "snapshot.unfinished": ("上次回退未完成（停在「%@」）", "An earlier rollback is unfinished (stuck at \"%@\")"),
+        "snapshot.title": ("会话快照", "Session Snapshots"),
+        "snapshot.menu": ("会话快照…", "Session Snapshots…"),
+        "snapshot.col.time": ("时间", "Time"),
+        "snapshot.col.reason": ("原因", "Reason"),
+        "snapshot.col.from": ("当时版本 App / dsh", "App / dsh then"),
+        "snapshot.col.sessions": ("会话", "Sessions"),
+        "snapshot.col.size": ("大小", "Size"),
+        "snapshot.col.tree": ("内置 dsh 回退", "Built-in dsh"),
+        "snapshot.action.rollback": ("回退到此快照并退出…", "Roll Back and Quit…"),
+        "snapshot.action.reveal": ("在 Finder 中显示", "Reveal in Finder"),
+        "snapshot.action.delete": ("删除", "Delete"),
+        "snapshot.action.refresh": ("刷新", "Refresh"),
+        "snapshot.reason.bootstrap": ("基线（功能启用）", "Baseline (feature started)"),
+        "snapshot.reason.combo-change": ("版本变化前", "Before a version change"),
+        "snapshot.reason.dsh-upgrade": ("升级 dsh 前", "Before a dsh upgrade"),
+        "snapshot.reason.pre-rollback": ("回退前的现场（可撤销）", "Pre-rollback state (undo)"),
+        "snapshot.reason.broken": ("无法读取", "Unreadable"),
+        "snapshot.tree.dataOnly": ("仅数据（不需要）", "Data only"),
+        "snapshot.tree.available": ("可换回 %@", "Restore %@"),
+        "snapshot.tree.missing": ("缺 %@（需联网安装）", "%@ missing (install needed)"),
+        "snapshot.status.data": ("当前会话数据属于 oh-my-dsh %@ / dsh %@", "Session data belongs to oh-my-dsh %@ / dsh %@"),
+        "snapshot.status.pinned": ("已固定 dsh %@（回退中）", "dsh %@ pinned (rolled back)"),
+        "snapshot.status.pool": ("树池：%@", "Tree pool: %@"),
+        "snapshot.delete.title": ("删除这份快照？", "Delete this snapshot?"),
+        "snapshot.delete.info": ("%@\n\n删除后无法再用它回退。", "%@\n\nIt can no longer be used for a rollback."),
+        "snapshot.confirm.title": ("回退到此快照并退出？", "Roll back to this snapshot and quit?"),
+        "snapshot.confirm.restore": ("• 恢复 %d 条会话（并移除其新世代日志）", "• Restore %d sessions (dropping their newer-generation logs)"),
+        "snapshot.confirm.quarantine": ("• 把 %d 条快照之后新建的会话移入隔离区（不删除）", "• Move %d sessions created later into quarantine (not deleted)"),
+        "snapshot.confirm.tree": ("• 内置 dsh 换回 %@", "• Built-in dsh goes back to %@"),
+        "snapshot.confirm.treeNone": ("• 内置 dsh 保持当前版本（只回退数据）", "• Built-in dsh stays as is (data-only rollback)"),
+        "snapshot.confirm.quit": ("回退成功后应用会立即退出。", "The app quits right after a successful rollback."),
+        "snapshot.rollback.done": ("已回退到 %@，应用即将退出。", "Rolled back to %@; the app will now quit."),
+        "snapshot.rollback.failed": ("回退失败：%@", "Rollback failed: %@"),
+        "snapshot.rollback.needsTree": ("数据已回退，但内置 dsh %@ 缺少可换回的副本：请联网后重试，或改为重装旧版 App。", "Data rolled back, but no pooled copy of dsh %@ is available: retry online, or reinstall the older app instead."),
         "status.checking": ("正在检查 dsh 更新…", "Checking for dsh updates…"),
         "status.upgrading": ("正在升级 dsh（%@ → %@）…", "Upgrading dsh (%@ → %@)…"),
         "status.downloading": ("正在下载 dsh %@…", "Downloading dsh %@…"),
@@ -144,6 +180,7 @@ enum L10n {
         "btn.later": ("稍后", "Later"),
         "btn.yes": ("是", "Yes"),
         "btn.no": ("否", "No"),
+        "btn.delete": ("删除", "Delete"),
         // preview panel
         "preview.openInDefaultApp": ("在默认应用中打开", "Open in Default App"),
         "preview.openInDefaultAppHint": ("用系统默认应用打开当前文件", "Open the current file with its default app"),
@@ -923,6 +960,50 @@ final class DSHUpdater {
                           userInfo: [NSLocalizedDescriptionKey: L10n.tr("err.noVersionAfterUpgrade")])
         }
         if let b = backupPath { _ = try? FileManager.default.removeItem(atPath: b) }
+        return v
+    }
+
+    /// Install one dsh version into an arbitrary directory (the snapshot tree
+    /// pool). Used when a rollback needs a version the pool never captured — the
+    /// user jumped straight from an app that predates this feature — so the
+    /// built-in dsh can still be swapped back instead of falling back to
+    /// "data only + reinstall the old app".
+    /// @returns the installed version, or nil on failure.
+    func installVersion(_ version: String, into dest: String, registry: String, lockPath: String? = nil) -> String? {
+        let fm = FileManager.default
+        _ = try? fm.createDirectory(atPath: dest, withIntermediateDirectories: true)
+        var args: [String]
+        if let lock = lockPath, fm.fileExists(atPath: lock) {
+            // Reproducible closure: dsh declares its cordis tooling with caret
+            // ranges, so a plain install may pull a plugin release the old dsh
+            // cannot even boot with (see docs/dsh-version-impact.md R8).
+            let dir = (lock as NSString).deletingLastPathComponent
+            try? fm.removeItem(atPath: dest + "/package.json")
+            try? fm.removeItem(atPath: dest + "/package-lock.json")
+            try? fm.copyItem(atPath: dir + "/package.json", toPath: dest + "/package.json")
+            try? fm.copyItem(atPath: lock, toPath: dest + "/package-lock.json")
+            AppLog.shared.log("snapshot tree install: using committed lock for dsh " + version)
+            args = [npmCli, "ci", "--loglevel=error", "--no-audit", "--no-fund", "--registry", registry]
+        } else {
+            let manifest = dest + "/package.json"
+            if !fm.fileExists(atPath: manifest) {
+                try? "{\"name\":\"ohmy-dsh-snapshot-tree\",\"private\":true}\n"
+                    .write(toFile: manifest, atomically: true, encoding: .utf8)
+            }
+            args = [npmCli, "install", "--loglevel=error", "--no-audit", "--no-fund",
+                    "--registry", registry, "@deepseek-ai/dsh@" + version]
+        }
+        var log = ""
+        let code = runNpm(args, cwd: dest, onOutput: { log.append($0) })
+        guard code == 0 else {
+            AppLog.shared.log("snapshot tree install failed (dsh " + version + ", exit " + String(code) + "): " + String(log.suffix(400)))
+            return nil
+        }
+        let installed = dest + "/node_modules/@deepseek-ai/dsh/package.json"
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: installed)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let v = json["version"] as? String else { return nil }
+        AppLog.shared.log("snapshot tree install: dsh " + v + " -> " + dest)
         return v
     }
 }
@@ -1904,6 +1985,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// bar toggles between them, and they are mutually exclusive.
     enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review, skills }
     private var rightPanel: RightPanel = .none
+    /// Set by prepareSessionSnapshot() when session snapshots need the user's
+    /// attention (unavailable runtime / an unfinished rollback). Surfaced by the
+    /// snapshot UI; logged at launch either way.
+    private var snapshotNotice: String?
+    /// One post-boot tree capture per launch (see captureRuntimeTree).
+    private var didCaptureRuntimeTree = false
+    /// The「会话快照…」window (created lazily).
+    private var snapshotWindowController: SnapshotWindowController?
+    /// Oldest dsh generation this shell still adapts to (core keeps both API
+    /// surfaces and the review reader understands every log generation). A
+    /// snapshot whose dsh is older than this may only be rolled back data-only.
+    private static let minSupportedDshVersion = "0.1.2-rc.1"
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
     /// True while the right panel is being laid out programmatically (panel
@@ -2128,6 +2221,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if ProcessInfo.processInfo.environment["DSH_SKILLS_TEST"] == "1" {
             setRightPanel(.skills)
             AppLog.shared.log("skills self-test enabled")
+        }
+        // Panel sweep hook (QA only): DSH_PANEL_TEST="files,terminal,wiki,tasks,
+        // browser,channel,review,skills" shows every named panel in sequence, so
+        // a dsh upgrade can be checked end to end (with DSH_UI_DEBUG=1 each one
+        // also writes panel-<label>-debug.png). The one-panel hooks above only
+        // cover six of the eight panels, and the two they miss (tasks, channel)
+        // are exactly the ones with no menu shortcut reachable from a script.
+        if let sweep = ProcessInfo.processInfo.environment["DSH_PANEL_TEST"], !sweep.isEmpty {
+            runPanelSweep(sweep)
+        }
+    }
+
+    /// Sequentially show the panels named in a comma-separated DSH_PANEL_TEST
+    /// list, one every few seconds (QA hook — see buildSplitView).
+    private func runPanelSweep(_ list: String) {
+        let names = list.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        AppLog.shared.log("panel sweep: \(names.joined(separator: ","))")
+        for (index, name) in names.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8.0 + Double(index) * 5.0) { [weak self] in
+                guard let self = self else { return }
+                guard let panel = Self.panelNamed(name) else {
+                    AppLog.shared.log("panel sweep: unknown panel '\(name)'")
+                    return
+                }
+                self.setRightPanel(panel)
+                AppLog.shared.log("panel sweep: showing \(name)")
+            }
+        }
+    }
+
+    /// Map a DSH_PANEL_TEST name onto its panel (QA hook).
+    private static func panelNamed(_ name: String) -> RightPanel? {
+        switch name.lowercased() {
+        case "files", "preview", "文件": return .preview
+        case "terminal", "终端": return .terminal
+        case "wiki", "知识库": return .wiki
+        case "tasks", "任务": return .tasks
+        case "browser", "浏览器": return .browser
+        case "channel", "通道": return .channel
+        case "review", "审查": return .review
+        case "skills", "技能": return .skills
+        default: return nil
         }
     }
 
@@ -3193,10 +3328,261 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     // MARK: Server boot
 
+    // MARK: session snapshots — window, rollback, quit
+
+    /// Menu entry: show the snapshot list (creating the window on first use).
+    @objc private func openSessionSnapshots(_ sender: Any?) {
+        if snapshotWindowController == nil {
+            let controller = SnapshotWindowController()
+            controller.dshHome = { [weak self] in
+                self?.dshDataHome ?? (NSHomeDirectory() + "/.dsh")
+            }
+            controller.onRollback = { [weak self] entry in
+                self?.confirmAndRollback(entry)
+            }
+            snapshotWindowController = controller
+        }
+        snapshotWindowController?.setNotice(snapshotNotice)
+        snapshotWindowController?.show()
+    }
+
+    /// Preview the rollback, confirm what it will touch, then — with dsh web
+    /// stopped — run the transaction and quit. The app must not keep running
+    /// afterwards: a live dsh would immediately re-migrate the restored sessions.
+    private func confirmAndRollback(_ entry: SnapshotModel.Entry) {
+        guard let updater = currentUpdater(), let dshVersion = updater.currentVersion else {
+            presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.unavailable"))
+            return
+        }
+        let appVersion = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "?"
+        let base = ["--home", dshDataHome]
+        let planJSON = CoreBridge.run(["snapshot", "plan-rollback", "--id", entry.id,
+                                       "--current-dsh", dshVersion,
+                                       "--min-supported", Self.minSupportedDshVersion] + base,
+                                      timeout: 120, preferBundledNode: true)
+        guard let planJSON = planJSON, let plan = SnapshotModel.parseRollback(planJSON) else {
+            presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.unavailable"))
+            return
+        }
+
+        var lines: [String] = []
+        if plan.restoreCount + plan.addMissingCount > 0 {
+            lines.append(L10n.tr("snapshot.confirm.restore", plan.restoreCount + plan.addMissingCount))
+        }
+        if plan.quarantineCount > 0 {
+            lines.append(L10n.tr("snapshot.confirm.quarantine", plan.quarantineCount))
+        }
+        if plan.touchesTree, let target = plan.treeVersion {
+            lines.append(L10n.tr("snapshot.confirm.tree", target))
+        } else {
+            lines.append(L10n.tr("snapshot.confirm.treeNone"))
+        }
+        if let reason = plan.fallbackReason {
+            lines.append("(" + reason + ")")
+        }
+        lines.append(L10n.tr("snapshot.confirm.quit"))
+
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("snapshot.confirm.title")
+        alert.informativeText = lines.joined(separator: "\n")
+        alert.addButton(withTitle: L10n.tr("snapshot.action.rollback"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        // dsh web must be gone before the files move: a live writer would race
+        // the quarantine/clone steps (and its own session locks would survive).
+        server.stop()
+        AppLog.shared.log("snapshot rollback: dsh web stopped, running transaction for " + entry.id)
+        var rollbackArgs = ["snapshot", "rollback", "--id", entry.id, "--server-stopped",
+                            "--current-app", appVersion, "--current-dsh", dshVersion,
+                            "--dsh-dir", updater.dshDir,
+                            "--min-supported", Self.minSupportedDshVersion]
+        if let lock = committedRuntimeLockPath(dshVersion: entry.dshVersion) {
+            rollbackArgs += ["--expected-lock", lock]
+        }
+        let out = CoreBridge.run(rollbackArgs + base, timeout: 900, preferBundledNode: true)
+        guard let out = out,
+              let data = out.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            AppLog.shared.log("snapshot rollback: transaction failed to run")
+            presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.rollback.failed", "cli"))
+            return
+        }
+        if (json["partial"] as? Bool) == true, let needed = json["needsTreeInstall"] as? String {
+            // The pool never captured that dsh version (the user jumped straight
+            // from an app that predates this feature). Fill it now — the version
+            // is on the registry — then let the CLI finish the transaction
+            // (swap the tree, write the state file, clear the journal).
+            AppLog.shared.log("snapshot rollback: data rolled back; filling the tree pool with dsh " + needed)
+            let poolDir = dshDataHome + "/shell/snapshots/trees/" + needed
+            // Install from the committed lock when the app ships one for that
+            // version (reproducible closure — see docs/dsh-version-impact.md R8).
+            guard updater.installVersion(needed, into: poolDir, registry: RegistryConfig.current,
+                                         lockPath: committedRuntimeLockPath(dshVersion: needed)) != nil else {
+                presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.rollback.needsTree", needed))
+                return
+            }
+            let finished = CoreBridge.run(["snapshot", "finish-rollback", "--id", entry.id,
+                                           "--current-app", appVersion, "--current-dsh", dshVersion,
+                                           "--dsh-dir", updater.dshDir] + base,
+                                          timeout: 600, preferBundledNode: true)
+            if finished == nil {
+                AppLog.shared.log("snapshot rollback: finish-rollback failed after filling the pool")
+                presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.rollback.needsTree", needed))
+                return
+            }
+        }
+        AppLog.shared.log("snapshot rollback done for " + entry.id + " — quitting")
+        let done = NSAlert()
+        done.messageText = L10n.tr("snapshot.title")
+        done.informativeText = L10n.tr("snapshot.rollback.done", entry.id)
+        done.addButton(withTitle: L10n.tr("btn.ok"))
+        done.runModal()
+        NSApp.terminate(nil)
+    }
+
+    /// One-button informational alert.
+    private func presentSimpleAlert(_ title: String, _ body: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = body
+        alert.addButton(withTitle: L10n.tr("btn.ok"))
+        alert.runModal()
+    }
+
+    @objc private func openSessionSnapshotsPlaceholder() {}
+    /// Capture the running dsh tree into the version pool — called only once the
+    /// page has finished loading, i.e. this tree has PROVEN it boots. A tree
+    /// captured any earlier can be one that never started, and a rollback would
+    /// then reinstall that broken tree (see docs/dsh-version-impact.md R8).
+    private func captureRuntimeTree() {
+        guard !didCaptureRuntimeTree else { return }
+        guard let updater = currentUpdater(), let dshVersion = updater.currentVersion else { return }
+        didCaptureRuntimeTree = true
+        let lockPath = committedRuntimeLockPath(dshVersion: dshVersion)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            var args = ["snapshot", "tree",
+                        "--dsh-version", dshVersion,
+                        "--dsh-dir", updater.dshDir,
+                        "--home", self.dshDataHome]
+            if let lockPath = lockPath { args += ["--expected-lock", lockPath] }
+            guard let out = CoreBridge.run(args, timeout: 300, preferBundledNode: true) else {
+                AppLog.shared.log("snapshot tree: capture hook unavailable")
+                return
+            }
+            AppLog.shared.log("snapshot tree: " + out)
+        }
+    }
+
+    /// The committed runtime lock for one dsh version, shipped inside the app
+    /// (`Contents/Resources/runtime-locks/dsh-<version>/package-lock.json`).
+    private func committedRuntimeLockPath(dshVersion: String) -> String? {
+        guard let res = Bundle.main.resourceURL else { return nil }
+        let path = res.appendingPathComponent("runtime-locks/dsh-" + dshVersion + "/package-lock.json").path
+        return FileManager.default.fileExists(atPath: path) ? path : nil
+    }
+    // MARK: session snapshots — upgrade integration
+
+    /// Take the pre-upgrade snapshot (data + the outgoing tree). Failure never
+    /// blocks the upgrade, but it is logged loudly: without it the migration
+    /// cannot be rolled back.
+    private func snapshotBeforeUpgrade(from current: String, to target: String, updater: DSHUpdater) {
+        let appVersion = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "?"
+        let out = CoreBridge.run(["snapshot", "create",
+                                  "--reason", "dsh-upgrade",
+                                  "--app-version", appVersion,
+                                  "--dsh-version", target,
+                                  "--from-app", appVersion,
+                                  "--from-dsh", current,
+                                  "--dsh-dir", updater.dshDir,
+                                  "--home", dshDataHome],
+                                 timeout: 600, preferBundledNode: true)
+        guard let out = out, let data = out.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = json["id"] as? String else {
+            snapshotNotice = L10n.tr("snapshot.unavailable")
+            AppLog.shared.log("snapshot before upgrade: FAILED — the dsh upgrade will not be rollbackable")
+            return
+        }
+        let tree = ((json["tree"] as? [String: Any])?["action"] as? String) ?? "?"
+        AppLog.shared.log("snapshot before upgrade: id=\(id) tree=\(tree) (" + current + " -> " + target + ")")
+    }
+
+    /// After a successful in-place install: pin the new combo so the next launch
+    /// does not snapshot again (the pre-upgrade snapshot already covers it).
+    private func adoptComboAfterUpgrade(dshVersion: String, updater: DSHUpdater) {
+        let appVersion = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "?"
+        let out = CoreBridge.run(["snapshot", "launch",
+                                  "--app-version", appVersion,
+                                  "--dsh-version", dshVersion,
+                                  "--dsh-dir", updater.dshDir,
+                                  "--no-snapshot",
+                                  "--home", dshDataHome],
+                                 timeout: 600, preferBundledNode: true)
+        AppLog.shared.log(out == nil
+                          ? "snapshot after upgrade: could not record the new combo"
+                          : "snapshot after upgrade: recorded dsh " + dshVersion)
+    }
+
+    // MARK: session snapshots (docs/session-snapshot-rollback-design.md)
+
+    /// The pre-spawn half of the snapshot feature (called from startServer on a
+    /// background queue): capture the running dsh tree into the version pool,
+    /// take a data snapshot when the (app, dsh) combo changed, update
+    /// `shell/dsh-state.json` and prune. Never blocks or fails startup — every
+    /// problem is logged and remembered in `snapshotNotice`.
+    private func prepareSessionSnapshot() {
+        guard let updater = currentUpdater(), let dshVersion = updater.currentVersion else {
+            AppLog.shared.log("session snapshot: bundled runtime not found — skipped")
+            return
+        }
+        let appVersion = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "?"
+        // --no-tree: the tree is captured AFTER the page loads (captureRuntimeTree).
+        // Pooling a tree that never booted is how a broken build poisons every
+        // later rollback (measured 2026-09-23).
+        let args = ["snapshot", "launch",
+                    "--app-version", appVersion,
+                    "--dsh-version", dshVersion,
+                    "--dsh-dir", updater.dshDir,
+                    "--no-tree",
+                    "--home", dshDataHome]
+        guard let out = CoreBridge.run(args, timeout: 300, preferBundledNode: true),
+              let data = out.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            AppLog.shared.log("session snapshot: launch hook unavailable (core CLI / bundled node missing)")
+            snapshotNotice = L10n.tr("snapshot.unavailable")
+            return
+        }
+        let launch = json["launch"] as? [String: Any]
+        let action = (launch?["action"] as? String) ?? "?"
+        let reason = (launch?["reason"] as? String) ?? "-"
+        let id = (json["snapshotId"] as? String) ?? "-"
+        let tree = ((json["tree"] as? [String: Any])?["action"] as? String) ?? "?"
+        AppLog.shared.log("session snapshot: app=\(appVersion) dsh=\(dshVersion) action=\(action) reason=\(reason) id=\(id) tree=\(tree)")
+        if let journal = json["journal"] as? [String: Any],
+           (journal["status"] as? String) == "in-progress" {
+            let step = (journal["nextStep"] as? String) ?? "?"
+            AppLog.shared.log("session snapshot: an earlier rollback is unfinished at step '\(step)'")
+            snapshotNotice = L10n.tr("snapshot.unfinished", step)
+        }
+        if (json["mismatch"] as? Bool) == true {
+            let state = json["state"] as? [String: Any]
+            let combo = state?["dataCombo"] as? [String: Any]
+            AppLog.shared.log("session snapshot: session data belongs to dsh \((combo?["dsh"] as? String) ?? "?") but \(dshVersion) is installed")
+        }
+    }
+
     private func startServer() {
         showStatus(L10n.tr("status.starting"), spinner: true, retry: false)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
+            // Session snapshot FIRST. dsh migrates a session the moment it opens
+            // one (it appends `session/end-seed`), and an upgrade makes that
+            // migration irreversible — so the pre-upgrade state must be captured
+            // before dsh web is allowed to run. Cheap: one tree clone per dsh
+            // version, one data snapshot per (app, dsh) combo change.
+            self.prepareSessionSnapshot()
             do {
                 let url = try self.server.start()
                 let didSpawn = self.server.spawned
@@ -3453,10 +3839,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func performApply(updater: DSHUpdater, current: String, target: String, origin: UpgradeOrigin) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
+            // Snapshot FIRST: upgrading dsh migrates every session it opens and
+            // that migration cannot be undone by dsh itself, so the pre-upgrade
+            // state (data + the tree being replaced) must be on disk before a
+            // single new-dsh byte runs. See docs/session-snapshot-rollback-design.md §5.
+            self.snapshotBeforeUpgrade(from: current, to: target, updater: updater)
             do {
                 let new = try updater.apply(registry: RegistryConfig.current, version: target)
                 self.server.refreshFacts()
                 AppLog.shared.log("upgrade applied: \(current) -> \(new)")
+                // Record the new combo WITHOUT a second snapshot (this upgrade's
+                // snapshot is already on disk) so the next launch does not
+                // snapshot a half-migrated data set.
+                self.adoptComboAfterUpgrade(dshVersion: new, updater: updater)
                 DispatchQueue.main.async {
                     self.upgradeInFlight = false
                     self.autoUpgradeRunning = false
@@ -3793,6 +4188,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         AppLog.shared.log("page did finish loading: \(webView.url?.absoluteString ?? "?")")
+        // The page loading proves the bundled dsh actually boots — only now is its
+        // tree safe to keep for a later rollback.
+        captureRuntimeTree()
         loadRecoveryAttempted = false      // a good page re-arms the one-shot recovery
         // Warm the Review panel's session listing now that a workspace resolves,
         // so opening the panel renders immediately instead of waiting on the core
@@ -3821,6 +4219,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                     webView.evaluateJavaScript("JSON.stringify(window.__dshProbeAsync)") { r2, _ in
                         AppLog.shared.log("preview debug probe async: \(r2 ?? "none")")
+                    }
+                    webView.evaluateJavaScript("JSON.stringify(window.__dshProbeModernAsync)") { r3, _ in
+                        AppLog.shared.log("preview debug probe modern async: \(r3 ?? "none")")
                     }
                 }
             }
@@ -3870,11 +4271,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     /// Probe evaluated in the page when DSH_PREVIEW_DEBUG=1: checks the
-    /// interceptor installed state, then fires a `host.openPath` request the
-    /// exact way dsh web's client does (HTTP POST to /api/host.openPath) and
-    /// verifies the interceptor captured the path synchronously (the hit flag
-    /// is set before the promise resolves) and returned a fake success (read
-    /// back on a second pass via __dshProbeAsync).
+    /// interceptor installed state, then fires BOTH file-open request shapes the
+    /// interceptor must swallow — the legacy `host.openPath` and the modern
+    /// (dsh >= 0.1.2) `session/openWorkspacePath` with `payload.args.request.path`
+    /// — each the way the dsh web client builds it, and verifies the interceptor
+    /// captured the path synchronously (the hit flag is set before the promise
+    /// resolves) and returned a fake success (read back via __dshProbeAsync).
+    /// The modern shape is the one the upgraded client actually sends, so an
+    /// interceptor that only knows the legacy one fails here instead of silently
+    /// in the UI (see docs/dsh-version-impact.md B7).
     private static let previewDebugProbeJS = """
     (function () {
       var out = { installed: !!window.__dshPreviewInstalled, hit: window.__dshPreviewHit || null };
@@ -3882,7 +4287,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       out.chips = chips.length;
       out.mentions = document.querySelectorAll('button[class*="fileMention"]').length;
       window.__dshProbeAsync = null;
+      window.__dshProbeModernAsync = null;
       var testPath = '/tmp/dsh-preview-fetch-test.txt';
+      var modernPath = '/tmp/dsh-preview-modern-test.txt';
       var fakeBody = JSON.stringify({
         type: 'client-request',
         rpcId: 'debug-probe-rpc',
@@ -3899,6 +4306,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return true;
       });
       out.hitSync = window.__dshPreviewHit || null;
+      // dsh >= 0.1.2 shape: endpoint session/openWorkspacePath, args.request.path.
+      window.__dshPreviewHit = null;
+      var modernBody = JSON.stringify({
+        type: 'client-request',
+        rpcId: 'debug-probe-modern',
+        method: 'session/openWorkspacePath',
+        payload: { args: { request: { path: modernPath } } }
+      });
+      fetch('/api/session/openWorkspacePath', { method: 'POST', body: modernBody }).then(function (r) {
+        return r.json();
+      }).then(function (json) {
+        window.__dshProbeModernAsync = { fakeResponse: json, hitAfter: window.__dshPreviewHitModern || null };
+        return true;
+      }).catch(function (e) {
+        window.__dshProbeModernAsync = { error: String(e) };
+        return true;
+      });
+      // Read the modern hit BEFORE restoring the legacy probe's flag (the
+      // interceptor sets it synchronously, the promise resolves later).
+      out.hitSyncModern = window.__dshPreviewHit || null;
+      window.__dshPreviewHitModern = out.hitSyncModern;
+      window.__dshPreviewHit = out.hitSync;
       return JSON.stringify(out);
     })()
     """
@@ -4172,6 +4601,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         dshHome.tag = 1
         dshHome.state = WikiPaths.rootMode == "dsh-home" ? .on : .off
         rootItem.submenu = rootMenu
+        settingsMenu.addItem(.separator())
+        let snapshots = settingsMenu.addItem(withTitle: L10n.tr("snapshot.menu"), action: #selector(openSessionSnapshots(_:)), keyEquivalent: "")
+        snapshots.target = self
         settingsMenu.addItem(.separator())
         let logs = settingsMenu.addItem(withTitle: L10n.tr("menu.openLogs"), action: #selector(openLogs), keyEquivalent: "l")
         logs.target = self

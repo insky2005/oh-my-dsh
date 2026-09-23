@@ -91,6 +91,10 @@ jobs:
         run: tests/dsh-rpc/run.sh
       - name: dsh auth-cookie janitor tests
         run: tests/dsh-auth-cookies/run.sh
+      - name: Session snapshot / rollback CLI (headless end-to-end)
+        run: tests/snapshot-rollback/run.sh
+      - name: Session snapshot window data model
+        run: tests/snapshot-panel/run.sh
       - name: Review (change audit) panel tests
         run: tests/review-panel/run.sh
       - name: File panel (workspace tab memory) tests
