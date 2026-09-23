@@ -10,7 +10,7 @@ manual: false
 
 把「工作区 = projects 根目录下的一个子目录」变成壳层一等公民：**在面板里建目录 + 幂等注册成 dsh 工作区，再用六个入口就地打开它**，不离开 App、不改 dsh 源码。分支 `feature/projects-panel`（设计文档 `docs/projects-panel-design.md`，PR #56）——**已实现、未发布**（CHANGELOG `[Unreleased]`，版本线 fallback `1.17.0`/BUILD 73）。实现提交：`b59ac97` 模型 → `f541f4d` RPC → `232d38c` 面板 + 控制器测试 → `6d8c327` main.swift 接线 → `206b577`（卡片命中测试修复）→ `0f1b7b2`（README/CONTRIBUTING/CHANGELOG/影响清单）→ `6af1206`+`ed989ac`（点项目切 dsh web：桥改 `callAsyncJavaScript`、去掉重载兜底）→ `041d1bd`（未注册目录不联动 + 标题行 folder+「添加工作区」）+ `1a3d8be`（文档同步）→ 按钮布局调整（「添加工作区」/「新会话」上移到标题行徽标之后，均为图标按钮，tooltip 与 dsh web 同词）。
 
-- 入口：活动栏**首位**「项目」图标（SF Symbol `folder`）/ 视图菜单**首项** / **⌥⌘P**；右栏插槽第 9 个成员 `RightPanel.projects`，`rightPanelKind` 持久化 `"projects"`；`ProjectsPanelController.minWidth = 320`；
+- 入口：活动栏**首位**「项目」图标（SF Symbol `folder`）/ 视图菜单**首项** / **⌥⌘P**；面板顶部：标题「项目」+ `folder.badge.plus`「添加工作区 / Add workspace」/ 刷新 / 设置 / 关闭（文案与 tooltip 统一走 `updateLabels()`，语言切换时由 `AppDelegate.applyLanguage` 调 `refreshTooltips()` 重建）；右栏插槽第 9 个成员 `RightPanel.projects`，`rightPanelKind` 持久化 `"projects"`；`ProjectsPanelController.minWidth = 320`；
 - **⌥⌘P 是让位来的**：该键原属「预览面板」，PR #57（`0253b35`，`feature/menu-files-panel`）把视图菜单正名为「文件面板」并改用 **⌥⌘F**，空出的 ⌥⌘P 交给本项目面板（L10n 键 `menu.togglePreview` 同步改名 `menu.toggleFiles`）。
 
 ## 组成
@@ -37,7 +37,7 @@ manual: false
 
 ## 卡片与三条流程
 
-卡片三行：① 目录名（semibold 13pt）+ 徽标（`已注册 · N 个会话` / `未注册`）；② 绝对路径（次要色、中间截断、tooltip = 全路径）；③ 操作行 = **文件 / 终端 / 知识库 / 任务 / 通道 / 审查** 六个 `CustomIconButton`（SF Symbol 与活动栏同源：`doc.on.doc`/`terminal`/`book.closed`/`checkmark.circle`/`dot.radiowaves.left.and.right`/`doc.text`）+ **新会话**（带文字的强调色按钮）+ 在 Finder 中显示 + 复制路径。**整卡可点 = 在 dsh 中打开**（`mouseDown` → `onOpen`；**仅限已注册**，见下面的分流表）。`206b577` 修掉「点名称没反应」：名称/徽标/路径都是 `NSTextField` 标签，标签自己会命中测试、把点击吃掉，于是 `ProjectCardView.hitTest(_:)` 覆写——命中的不是操作行控件（`NSButton` / `CustomIconButton`）就归位到卡片本身，操作行按钮仍按最深子视图优先正常工作。
+卡片三行（2026-09-24 布局调整后）：① 目录名（semibold 13pt）+ 徽标（`已注册 · N 个会话` / `未注册`）+ **该卡唯一的 dsh 动作按钮**（徽标之后，`folder.badge.plus`「添加工作区」或 `+`「新会话」，互斥）；② 绝对路径（次要色、中间截断、tooltip = 全路径）+ **行尾两个路径工具**（在 Finder 中显示 `.reveal` / 复制路径 `link`，22pt）；③ 操作行 = **文件 / 终端 / 知识库 / 任务 / 通道 / 审查** 六个 `CustomIconButton`（SF Symbol 与活动栏同源：`doc.on.doc`/`terminal`/`book.closed`/`checkmark.circle`/`dot.radiowaves.left.and.right`/`doc.text`）。**整卡可点 = 在 dsh 中打开**（`mouseDown` → `onOpen`；**仅限已注册**，见下面的分流表）。`206b577` 修掉「点名称没反应」：名称/徽标/路径都是 `NSTextField` 标签，标签自己会命中测试、把点击吃掉，于是 `ProjectCardView.hitTest(_:)` 覆写——命中的不是操作行控件（`NSButton` / `CustomIconButton`）就归位到卡片本身，操作行按钮仍按最深子视图优先正常工作。
 
 **卡片按注册状态分流**（`041d1bd`，判据 `ProjectCardView.canUseDshActions = workspace.registered`）：
 
@@ -99,7 +99,7 @@ manual: false
 | 未注册目录上触发 dsh 动作（点卡片 / 「新会话」） | 不发任何请求、不重载：按钮已禁用，闭包内再判一次 `registered`，只写状态行 `projects.needsWorkspace`；六个本地面板入口照常工作 | 面板状态行 |
 | 未注册目录点「添加工作区」而 dsh 未起 / 端点被拒 | 状态行 `projects.registerFailed`；目录保留、不改磁盘、不弹模态（成功时 `app.log` 有 `projects: registered …` 可核对） | 面板状态行 + `app.log` |
 | `storages/workspace.json` 读不懂（上游改布局 / 升版本） | 注册状态与会话数退化为「未注册 / 0」，功能不受影响 | `[workspace-store] …`（既有 R4 护栏） |
-| 根目录不存在 / 无子目录 | 空态 `projects.rootMissing` / `projects.empty` +「+ 新建工作区」；不自动写盘 | 面板 |
+| 根目录不存在 / 无子目录 | 空态 `projects.rootMissing` / `projects.empty` +「添加工作区 / Add workspace」按钮（头部右上角同图标 `folder.badge.plus`、同文案）；不自动写盘 | 面板 |
 | 名字非法（空 / 含 `/` 或 `:` / 控制字符 / `.`·`..` / 以 `.` 开头 / > 64 字符） | 创建前拦截 + 规则提示，**不创建任何东西**、不发请求 | sheet 内联 + 状态行 |
 | 根目录里的符号链接指向目录 | 视为工作区；canonical 归一后仍能与注册表匹配（链接进已有仓库是正常用法） | 面板徽标 |
 | 慢卷 / 网络卷 | 列举 + 注册表读取全在后台队列（注册表最坏阻塞 6s），主线程只渲染；`loadToken` 保证慢的那次结果不会覆盖新的 | — |
