@@ -1,6 +1,6 @@
 # 项目（Projects）面板设计
 
-> 状态：**已实现**（`feature/projects-panel`）。实现落在 `platforms/macos/src/ProjectsCore.swift`（纯模型）、`ProjectsPanel.swift`（面板 UI）、`DshWebRPC.swift`（`workspaceCreate` + `DshWorkspaceOps`）、`main.swift`（接线 / 重根原语 / 设置窗口「项目」区块 / QA 钩子）；测试 `tests/projects-panel/`（模型 45 项 + 控制器 39 项 = 84 项）与 `tests/dsh-rpc/`（+14 项，整套 54 项）。
+> 状态：**已实现**（`feature/projects-panel`）。实现落在 `platforms/macos/src/ProjectsCore.swift`（纯模型）、`ProjectsPanel.swift`（面板 UI）、`DshWebRPC.swift`（`workspaceCreate` + `DshWorkspaceOps`）、`main.swift`（接线 / 重根原语 / 设置窗口「项目」区块 / QA 钩子）；测试 `tests/projects-panel/`（模型 45 项 + 控制器 49 项 = **94 项**）与 `tests/dsh-rpc/`（+14 项，整套 54 项）。
 > 提交：`b59ac97` 模型 → `f541f4d` RPC → `232d38c` 面板+控制器测试 → `6d8c327` main.swift 接线；文档为 `28435f1`…`b581cab`。
 > 关联：`docs/dsh-version-impact.md`（本次新增耦合面：C10 工作区注册与建会话、B10 侧栏行点击桥；沿用 C4/R4 的 workspace.json 兜底）、`docs/skills-manager-design.md` / `docs/review-panel-design.md`（面板体例参照）、`docs/ui-color-scheme.md`（配色令牌）、`.dsh/wiki/tasks.md`（加面板清单）
 > 实现（规划）：`platforms/macos/src/ProjectsCore.swift`（纯模型）、`ProjectsPanel.swift`（面板）、`DshWebRPC.swift`（新增 `DshWorkspaceOps`）、`main.swift`（接线）；测试 `tests/projects-panel/`、`tests/dsh-rpc/`
@@ -27,6 +27,18 @@
 | D2 | **新建 = 只建目录 + 注册为 dsh 工作区** | 不做 `git init`、不写 `AGENTS.md`、不建 `.dsh/wiki`；是否需要仓库/指引由用户在会话里自行决定 |
 | D3 | **不提供任何删除/移除/重命名入口** | 清理走 Finder 与 dsh web 自己的侧边栏；面板对工作区只做「创建 / 进入」，不写删除路径 |
 | D4 | **活动栏放第一位**；快捷键 **⌥⌘P** | 顺序：项目、文件、终端、浏览器、知识库、任务、通道、审查、技能；「视图」菜单首项同为「项目」，与活动栏一一对应。⌥⌘P 原先属于「文件面板」，本次**让位**给它（文件面板改 **⌥⌘F**，菜单文案「预览面板」改「文件面板」）——见 §13.E |
+
+### 1.4 未注册目录的处理（2026-09-24 追加）
+
+**项目根目录下的某个目录不在 dsh web 的 workspace 里时，面板不与 dsh web 联动**：
+
+- 卡片的 dsh 动作按注册状态分流（`ProjectCardView.canUseDshActions = workspace.registered`）：
+  · **已注册**：整卡可点 = 在 dsh 中打开；「新会话」可用；
+  · **未注册**：标题次要色、光标非手型、「新会话」**禁用**（tooltip = `projects.needsWorkspace`）、点卡片不调用壳层（状态行提示同一句）；
+  · **六个面板入口始终可用**——文件 / 终端 / 知识库 / 任务 / 通道 / 审查是壳层**本地**操作（重根 + 切面板），不碰 dsh web；
+  · 面板侧还有第二道防线：卡片闭包内先判 `registered` 再转发（`warnNeedsWorkspace()` 只提示）；
+- 未注册的卡片提供**唯一**的 dsh 动作：「**创建 dsh 工作区**」（`projects.register`，仅未注册时显示）→ `ProjectsPanelController.registerWorkspace(path:)` 后台调 `DshWorkspaceOps.register`（幂等）→ 成功：状态行 `projects.registerDone` + `onWorkspaceRegistered`（main.swift 走 `nudgeDSHWebCaches()` 让 web 侧栏认领）+ 面板 reload（徽标翻「已注册」、dsh 动作解锁）；失败：状态行 `projects.registerFailed`，不弹模态、**不动磁盘**；
+- 「+ 新建工作区」不变：`mkdir` + 顺带注册（幂等）。
 
 ### 1.3 非目标
 
@@ -207,7 +219,8 @@ dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 
 | 任务 | `checkmark.circle` | 进入任务面板（工作区 = 该工作区） |
 | 通道 | `dot.radiowaves.left.and.right` | 进入通道面板（工作区 = 该工作区） |
 | 审查 | `doc.text` | 进入审查面板（工作区 = 该工作区） |
-| **新会话** | `plus` + 文本 | 在该工作区建一条 dsh web 会话并切过去 |
+| **新会话** | `plus` + 文本 | 在该工作区建一条 dsh web 会话并切过去（**仅已注册**可用，见 §1.4） |
+| **创建 dsh 工作区** | 文本（仅未注册时显示） | 把该目录注册成 dsh 工作区；成功后 dsh 动作解锁（§1.4） |
 | 在 Finder 中显示 | `.reveal` | `NSWorkspace.activateFileViewerSelecting` |
 | 复制路径 | `link` | 路径写剪贴板（tooltip 用 `files.copyPath`；用 `link` 而非 `doc.on.doc` 以免与「文件」入口撞符号） |
 
@@ -327,6 +340,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 | `$DSH_HOME/storages/workspace.json` 读不懂（上游改布局/升版本） | 注册状态与会话数退化为「未注册 / 0」，功能不受影响（只影响徽标）；诊断进日志 | `[workspace-store] …`（既有护栏，R4） |
 | 根目录不存在 | 空态 + 根路径提示；不自动写盘；首次新建时 `mkdir -p` 连带建根 | — |
 | 根目录在慢卷/网络卷 | 列举与注册表读取全在后台队列，主线程只渲染 | — |
+| **目录未注册**（dsh 侧没有该 workspace） | 不与 dsh web 联动：「新会话」禁用、点卡片只提示 `projects.needsWorkspace`；六个面板入口仍可用；卡片提供「创建 dsh 工作区」 | 徽标「未注册」+ 状态行 |
 | 名字与已有**目录**冲突 | 非错误：提示「已存在」，选中该卡片，仍做幂等注册 | 状态行 |
 | 名字与已有**文件**冲突 | `createDirectory` 报 EEXIST → `创建失败：…` | 状态行 |
 | 名字含 `/`、`:`、`.` 开头、过长、空 | 创建前拦截 + 提示规则；不创建任何东西 | sheet 内联提示 |

@@ -67,7 +67,7 @@ tests/l10n/run.sh                   # L10n 键名 lint（L10n.tr 字面量必须
 tests/shell-config/run.sh           # ShellConfig 旧 UserDefaults 一次性迁移（13 项）
 tests/dsh-auth-cookies/run.sh       # dsh 认证 cookie 清理纯逻辑（22 项）
 tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
-tests/projects-panel/run.sh         # 项目面板：模型 45 项（projects 根 / 命名规则 / 列举 / 注册匹配）+ 控制器 39 项（无头，假 dsh 传输）
+tests/projects-panel/run.sh         # 项目面板：模型 45 项（projects 根 / 命名规则 / 列举 / 注册匹配）+ 控制器 49 项（无头，假 dsh 传输）
 ```
 
 - 均无窗口依赖，可在纯命令行环境运行；失败即非零退出（`set -euo pipefail`）；`scripts/local-ci.sh` 按 ci.yml 三阶段跑同一组（core → swift 测试 + `swiftc` 编译检查 → arm64 构建，不打包）；
@@ -132,8 +132,9 @@ tests/projects-panel/run.sh         # 项目面板：模型 45 项（projects �
 - **操作行**：**文件 / 终端 / 知识库 / 任务 / 通道 / 审查** 六个快捷入口（点一下即把「当前工作区」切到它并打开对应面板——文件树根、终端 cwd、wiki 根、任务/通道/审查的工作区一起跟随）+「**新会话**」（建一条属于该工作区的 dsh web 会话并切过去）+ 在 Finder 中显示 / 复制路径；**点卡片名称 = 在 dsh 中打开**（复用该工作区**最近一条会话**，运行中优先，没有才新建）；
 - **当前工作区只有一个真相**：卡片高亮来自 `ProjectDirectory.current`（在 dsh web 里切会话时面板跟随移动）；新建**不会**自动切换当前工作区，要切就点六个入口或「新会话」；
 - 结果都在面板底部状态行（成功 5s 后自动清空、失败保留到下次操作，**不弹模态**）：`已创建工作区 abc` / `该工作区已存在` / `已创建目录，但尚未注册到 dsh（服务未就绪…）` / `创建失败：…` / `无法新建会话：…`；同时写 `~/Library/Logs/oh-my-dsh/app.log` 的 `projects:` 行；
-- 「新会话」/「在 dsh 中打开」后 web 没切过去：面板会先把新会话推给客户端（nudge）→ 0.5s 后点侧栏行 → 失败重试一次 → 仍失败则**重载页面**并在加载完成后补打开一次（日志 `openDSHSession …: row-not-found`）；重载会短暂中断正在流式输出的那一轮，属既有设计的兜底而非故障；
-- 回归：`tests/projects-panel/run.sh`（模型 45 + 控制器 39 = **84 项**）、`tests/dsh-rpc/run.sh`（含 `DshWorkspaceOps` 的 register / createSession / newestSessionId 14 项）。
+- 「新会话」/「在 dsh 中打开」后 web 没切过去：面板先 nudge 客户端（offline→online）→ 0.5s 后点侧栏行 → 桥内部自带重试（标题 8×120ms；会话没标题时改按**工作区分组**点组内第一条，8×150ms）→ 仍需一次外部重试 → **放弃并在状态行说明**（`projects.openFailed` / `openFailedNoSession`）。**永远不会自动重载页面**（2026-09-23 起的 ed989ac：旧版在失败时重载页面，配合 didFinish 重放会形成每 ~10.2s 一轮的死循环刷新）；失败时 `app.log` 会打印原因 + 侧栏现场 `(sidebar: groups=N sessionRows=M workspaceRow=yes/no)`；
+- 未注册的目录**不联动** dsh web：卡片「新会话」禁用、点卡片只在状态行提示 `projects.needsWorkspace`；六个本地面板入口仍可用；卡片上的「创建 dsh 工作区」会调 `workspace/create`（幂等），成功后徽标翻「已注册」并解锁 dsh 动作；
+- 回归：`tests/projects-panel/run.sh`（模型 45 + 控制器 49 = **94 项**）、`tests/dsh-rpc/run.sh`（含 `DshWorkspaceOps` 的 register / createSession / newestSessionId 14 项）。
 
 ## 排查问题
 
