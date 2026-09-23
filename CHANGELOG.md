@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
+## [Unreleased]
+
+### Changed
+
+- **内置 dsh 版本推进到 `@deepseek-ai/dsh@0.1.5-rc.2`**（0.1.2-rc.1 → 0.1.5-rc.2；`build-app.sh` 的 `DSH_PACKAGE_SPEC` 默认值（两处）+ 打印行 + 注释同步，构建期仍可用 `DSH_PACKAGE_SPEC` 覆盖）。按 `docs/dsh-version-impact.md` 的五个耦合面逐项复核（A 启动/就绪/鉴权 · B 注入脚本 · C 一元 RPC · D `$DSH_HOME` 布局 · E 分发与升级），**实测结论：端点只增不减、形状未变，唯一断裂面是会话日志文件名**（见 Fixed）：
+  - **A**：`dsh web --no-open --port N` 仍自报 `dsh web: http://127.0.0.1:PORT/?token=…`；`/?token=` → cookie 交换、`/api` 只认 cookie、`dsh-auth-*` 命名与 TTL 均未变；启动日志无 `reusing existing dsh web`、cookie 清理照常。
+  - **C**：`session/list`（`payload.args._request`）、`session/create|prompt|cancel|rename|page`（`args.request`）、`subagents/list`、`session/openWorkspacePath` 全部存在且参数包裹字段未变（`workspace/list` 仍不存在 → 磁盘 `workspace.json` 兜底照旧生效）；实测 create → rename → prompt → `session/page` 全链路 OK，回复文本提取照常。
+  - **B**：四个注入脚本依赖的客户端契约未变——会话列表 RPC 仍是 `POST /api/<slash/endpoint>` + `client-request` 信封、侧栏仍是 `[role="treeitem"]` + `sessionRow`、文件打开仍是 `session/openWorkspacePath`（`payload.args.request.path`）；`DSH_UI_DEBUG=1` 下 `tracker/opener/preview` 三个桥接脚本实测均已装好，切会话后项目目录照常跟随。
+  - **D**：`storages/workspace.json` 仍是 domain `workspace` v2；技能四根与 rank（100/200/400/500）不变，frontmatter 规范键（`user-invocable` / `disable-model-invocation`）不变、旧驼峰键仍被拒。
+  - **E**：仍是 npm 原地安装（内置 node v24.21.0 跑 `npm install`），运行时布局 `runtime/dsh/lib/bin.js` 不变；升级助手对 `0.1.5-rc.2` 的 RC 判定与「下一个候选」计算照常。
+  - 逐面实测记录与命令见 `docs/plans/dsh-015rc2-compat-audit.md`；通用清单已把本次新增的两条核对项补进 `docs/dsh-version-impact.md`（§3 D 会话日志世代命名、§5 面板全量扫描 SOP）。
+- **升级核对专用 QA 钩子（仅开发/QA）**：`DSH_PANEL_TEST="files,terminal,wiki,tasks,browser,channel,review,skills"` 在启动后按序切到每个面板（配 `DSH_UI_DEBUG=1` 每个面板各落一张 `panel-<name>-debug.png`）——此前只有六个单面板钩子，且缺的恰是**没有菜单快捷键、脚本点不到**的 tasks 与 channel；`DSH_PREVIEW_DEBUG=1` 的文件打开探针同时演练**新旧两种请求形状**（`host.openPath` 与 `session/openWorkspacePath` + `payload.args.request.path`），拦截器只认老形状时会当场失败而不是在 UI 里静默。
+
+### Fixed
+
+- **审查面板在 dsh 0.1.5 下「看不到任何会话」（静默空列表 / 只显示迁移前的旧内容）**：dsh 按 **Session 格式世代**给会话日志命名——世代 0 是 `session.jsonl`，之后每代带 `.vN`（`session.v3.jsonl`），压缩存储再加 `.zstd`。**本版内置的 dsh 0.1.5-rc.2 新建会话直接写 `session.v3.jsonl.zstd`**；被迁移过的老会话则把原来的 `session.jsonl.zstd` 留作冻结归档、活日志换成 `session.v3.jsonl.zstd`（实测同一会话：归档 19 条事件、活日志 22 条，且新事件只进活日志）。壳层读取器原先只认世代 0 的两个文件名，于是**新会话一条都列不出来、老会话永远停在迁移前的旧内容**——面板不报错，只是空或旧（`app.log` 里表现为 `review: listed 0/4 sessions` + `review: audit FAILED`）。现在 `core/lib/review-log.js` 按**规范文件名**枚举（`^session(\.v[1-9][0-9]*)?\.jsonl(\.zstd)?$`，`.v0`/大写/临时后缀等非规范名一律拒绝），**取世代号最大的那一份**（迁移会话因此读活日志而不是归档），同代压缩优先；新增 `sessionLogCandidates()` 暴露完整候选顺序。`core/tests/review-log.test.js` 增 6 条用例（新世代会话可被发现并审计、迁移会话读活日志、非规范名忽略、世代 0 向后兼容、压缩/非压缩两种新世代文件）——**修复前这些用例在真机上会整片失败**（dev 隔离目录里的 v3 会话一条都列不出来）。
+
 ## [1.16.0] - 2026-09-21
 
 ### Added

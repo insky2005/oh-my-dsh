@@ -23,7 +23,7 @@ manual: false
 
 ## 数据来源：dsh 会话日志的三类记录
 
-日志位于 `$DSH_HOME/sessions/<workspace-slug>/<session-id>/session.jsonl[.zstd]`（一行一事件），审计只读其中三类（详见设计文档 §2–§3）：
+日志位于 `$DSH_HOME/sessions/<workspace-slug>/<session-id>/session[.vN].jsonl[.zstd]`（一行一事件），审计只读其中三类（详见设计文档 §2–§3）：
 
 | # | 记录 | 提供什么 |
 |---|---|---|
