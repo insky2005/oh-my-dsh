@@ -33,15 +33,26 @@ try! Data("not a workspace".utf8).write(to: URL(fileURLWithPath: root + "/notes.
 // dsh's persisted workspace registry: alpha is registered with two sessions,
 // beta is not registered at all (a folder the user created in Finder).
 try! fm.createDirectory(atPath: home + "/storages", withIntermediateDirectories: true)
-let store: [String: Any] = [
-    "unit": ["name": "workspace", "version": 2],
-    "global": ["workspaceIds": ["w-alpha"]],
-    "tables": ["workspaces": [
-        "w-alpha": ["path": alphaPath, "title": "alpha", "sessionIds": ["s-1", "s-2"]],
-    ]],
-]
-try! JSONSerialization.data(withJSONObject: store)
-    .write(to: URL(fileURLWithPath: home + "/storages/workspace.json"))
+/// Rewrite the persisted workspace store. alpha starts registered; the "create
+/// dsh workspace" test calls this again with beta added — which is exactly what
+/// dsh does on its side after workspace/create.
+func writeStore(_ registered: [(id: String, path: String, sessions: [String])]) {
+    var tables: [String: Any] = [:]
+    var order: [String] = []
+    for entry in registered {
+        order.append(entry.id)
+        tables[entry.id] = ["path": entry.path, "title": (entry.path as NSString).lastPathComponent,
+                            "sessionIds": entry.sessions]
+    }
+    let doc: [String: Any] = [
+        "unit": ["name": "workspace", "version": 2],
+        "global": ["workspaceIds": order],
+        "tables": ["workspaces": tables],
+    ]
+    try? JSONSerialization.data(withJSONObject: doc)
+        .write(to: URL(fileURLWithPath: home + "/storages/workspace.json"))
+}
+writeStore([(id: "w-alpha", path: alphaPath, sessions: ["s-1", "s-2"])])
 
 setenv("DSH_HOME", home, 1)
 setenv("DSH_PROJECTS_TEST_ROOT", root, 1)
@@ -222,6 +233,59 @@ test("the current workspace is the one flagged on the card",
      alphaCard?.isCurrentWorkspace == true)
 let betaCard = cards(panel.view).first { $0.workspace.name == "beta" }
 test("the other card is not flagged", betaCard?.isCurrentWorkspace == false)
+
+// MARK: - An unregistered folder is inert for dsh web (and can be registered)
+
+test("an unregistered card knows its dsh actions are unavailable",
+     betaCard?.canUseDshActions == false)
+let enteredBefore = entered.count
+let sessionsBefore = newSessions.count
+betaCard?.onOpen?()
+test("clicking an unregistered card does not ask the shell to open it",
+     entered.count == enteredBefore)
+betaCard?.onNewSession?()
+test("new session on an unregistered card does not reach the shell",
+     newSessions.count == sessionsBefore)
+test("the refused action says why",
+     labels(panel.view).contains { $0 == "projects.needsWorkspace" })
+// The six panel quick entries stay available: they are local (they re-root the
+// shell's own panels), they do not talk to dsh web.
+betaCard?.onPanel?(.files)
+test("the local panel entries still work for an unregistered folder",
+     opened.last?.path == betaPath && opened.last?.target == .files)
+
+// The card's own action: create the dsh workspace for that folder.
+// The rejected-registration test above made DshWebRPC pin this port's
+// workspace/create endpoint to the legacy surface (404 is the one signal that
+// downgrades it, by design). The fake only speaks the modern shape, so start the
+// register test from a fresh surface decision — this is test plumbing, not a
+// product behaviour.
+DshWebRPC.resetForTests()
+DshWebRPC.token = "test-token"
+let createsBefore = fake.workspaceCreates.count
+betaCard?.onRegister?()
+test("registering asks dsh for that exact path",
+     waitUntil(3) {
+         fake.workspaceCreates.count > createsBefore
+             && samePath(fake.workspaceCreates.last?["path"] as? String, betaPath)
+     })
+test("registering reports success",
+     waitUntil(3) { labels(panel.view).contains { $0.hasPrefix("projects.registerDone") } })
+
+// dsh persists it (the fake transport does not write the store, so do it here) and
+// the panel re-reads the registry: the card flips to registered and its dsh
+// actions unlock.
+writeStore([(id: "w-alpha", path: alphaPath, sessions: ["s-1", "s-2"]),
+            (id: "w-beta", path: betaPath, sessions: [])])
+panel.reload()
+test("the registered workspace is picked up on the next load",
+     waitUntil(3) { panel.workspaces.first { $0.name == "beta" }?.registered == true })
+_ = waitUntil(3) { cards(panel.view).count == 2 }
+let betaAfter = cards(panel.view).first { $0.workspace.name == "beta" }
+test("the card now allows the dsh actions", betaAfter?.canUseDshActions == true)
+betaAfter?.onNewSession?()
+test("new session works once the workspace exists",
+     newSessions.last == betaPath)
 
 // MARK: - The root follows the setting
 

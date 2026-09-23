@@ -72,6 +72,9 @@ final class ProjectCardView: NSView {
     var onOpen: (() -> Void)?
     var onPanel: ((ProjectTargetPanel) -> Void)?
     var onNewSession: (() -> Void)?
+    /// "Create the dsh workspace for this folder" — offered only while the
+    /// directory is NOT registered (see the badge).
+    var onRegister: (() -> Void)?
     var onReveal: (() -> Void)?
     var onCopyPath: (() -> Void)?
 
@@ -83,6 +86,13 @@ final class ProjectCardView: NSView {
     private let badge = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
     private let pathLabel = NSTextField(labelWithString: "")
+    private var newSessionButton: NSButton!
+    private var registerButton: NSButton!
+
+    /// Whether this card's dsh actions ("open in dsh", "new session") apply: a
+    /// directory dsh does not know cannot be linked to dsh web at all — the user
+    /// creates the workspace first (the card's own button). Internal for tests.
+    var canUseDshActions: Bool { workspace.registered }
 
     init(workspace: ProjectWorkspace, isCurrent: Bool) {
         self.workspace = workspace
@@ -113,7 +123,11 @@ final class ProjectCardView: NSView {
         path.stroke()
     }
 
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    override func resetCursorRects() {
+        // The whole card is the "open in dsh" target — but only while the folder
+        // actually has a dsh workspace behind it.
+        addCursorRect(bounds, cursor: canUseDshActions ? .pointingHand : .arrow)
+    }
 
     override func mouseDown(with event: NSEvent) { onOpen?() }
 
@@ -134,8 +148,11 @@ final class ProjectCardView: NSView {
         titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.toolTip = L10n.tr("projects.openInDsh")
+        titleLabel.toolTip = workspace.registered ? L10n.tr("projects.openInDsh") : L10n.tr("projects.needsWorkspace")
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // An unregistered folder is inert for dsh web (no sessions to open), so
+        // it reads as secondary until the workspace has been created.
+        titleLabel.textColor = workspace.registered ? .labelColor : .secondaryLabelColor
 
         badge.stringValue = workspace.registered
             ? L10n.tr("projects.registered") + " · " + L10n.tr("projects.sessions", workspace.sessionCount)
@@ -201,8 +218,26 @@ final class ProjectCardView: NSView {
         newSession.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         newSession.contentTintColor = .controlAccentColor
         newSession.translatesAutoresizingMaskIntoConstraints = false
-        newSession.toolTip = L10n.tr("projects.newSession")
+        // No dsh workspace yet -> nothing to create a session in. The tooltip and
+        // the panel's own guard (see the controller) say why.
+        newSession.isEnabled = canUseDshActions
+        newSession.toolTip = canUseDshActions ? L10n.tr("projects.newSession") : L10n.tr("projects.needsWorkspace")
+        newSessionButton = newSession
         views.append(newSession)
+
+        // The one action an unregistered folder does offer: create its dsh
+        // workspace (afterwards the badge flips and the dsh actions unlock).
+        let register = NSButton(title: L10n.tr("projects.register"), target: self,
+                                action: #selector(registerTapped(_:)))
+        register.bezelStyle = .rounded
+        register.controlSize = .small
+        register.font = NSFont.systemFont(ofSize: 11)
+        register.contentTintColor = .controlAccentColor
+        register.translatesAutoresizingMaskIntoConstraints = false
+        register.toolTip = L10n.tr("projects.registerTooltip")
+        register.isHidden = canUseDshActions
+        registerButton = register
+        views.append(register)
 
         let reveal = CustomIconButton(glyph: .reveal, tooltip: L10n.tr("files.revealInFinder"), size: 24)
         reveal.onAction = { [weak self] in self?.onReveal?() }
@@ -215,6 +250,8 @@ final class ProjectCardView: NSView {
     }
 
     @objc private func newSessionTapped(_ sender: Any?) { onNewSession?() }
+
+    @objc private func registerTapped(_ sender: Any?) { onRegister?() }
 }
 
 /// The Projects panel. Wired by main.swift; every side effect that touches the
@@ -237,6 +274,9 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
     var onOpenPanel: ((String, ProjectTargetPanel) -> Void)?
     /// Create a session in this workspace and switch dsh web to it.
     var onCreateSession: ((String) -> Void)?
+    /// A dsh workspace was just created for a folder: main.swift nudges dsh web so
+    /// its sidebar picks the new workspace up.
+    var onWorkspaceRegistered: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     /// QA hook (--ui-debug): fires after each render.
     var onDidRender: (() -> Void)?
@@ -376,6 +416,38 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
         registerInBackground(path: path)
         reload()
         return true
+    }
+
+    /// A dsh action was requested for a folder dsh does not know: say so instead
+    /// of silently doing nothing (the buttons are disabled; this covers the card
+    /// click and any future entry point).
+    func warnNeedsWorkspace() {
+        setStatus(L10n.tr("projects.needsWorkspace"), isError: true)
+    }
+
+    /// Create the dsh workspace for an existing folder (the card's own action when
+    /// the badge says 未注册). Idempotent on dsh's side; on success the card flips
+    /// to 已注册 and the dsh actions unlock — no page reload involved.
+    func registerWorkspace(_ path: String) {
+        guard let port = portProvider?(), port > 0 else {
+            setStatus(L10n.tr("projects.registerFailed", "dsh web is not running"), isError: true)
+            return
+        }
+        setStatus(L10n.tr("projects.registerPending"), isError: false)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let id = DshWorkspaceOps.register(port: port, path: path)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let id = id else {
+                    self.setStatus(L10n.tr("projects.registerFailed", "workspace/create was rejected"), isError: true)
+                    return
+                }
+                AppLog.shared.log("projects: registered " + path + " as " + id)
+                self.setStatus(L10n.tr("projects.registerDone", (path as NSString).lastPathComponent), isError: false)
+                self.onWorkspaceRegistered?()
+                self.reload()
+            }
+        }
     }
 
     /// workspace/create is idempotent, so an existing directory is simply
@@ -625,9 +697,20 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
             let isCurrent = current.map { $0 == DshWorkspaceStore.canonical(workspace.path) } ?? false
             let card = ProjectCardView(workspace: workspace, isCurrent: isCurrent)
             let path = workspace.path
-            card.onOpen = { [weak self] in self?.onEnterWorkspace?(path) }
+            // A folder without a dsh workspace cannot be linked to dsh web: those
+            // two actions are refused here (the buttons are disabled too, so this
+            // is the second line of defence — and the one the tests drive).
+            let registered = workspace.registered
+            card.onOpen = { [weak self] in
+                guard registered else { self?.warnNeedsWorkspace(); return }
+                self?.onEnterWorkspace?(path)
+            }
             card.onPanel = { [weak self] target in self?.onOpenPanel?(path, target) }
-            card.onNewSession = { [weak self] in self?.onCreateSession?(path) }
+            card.onNewSession = { [weak self] in
+                guard registered else { self?.warnNeedsWorkspace(); return }
+                self?.onCreateSession?(path)
+            }
+            card.onRegister = { [weak self] in self?.registerWorkspace(path) }
             card.onReveal = { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
             card.onCopyPath = {
                 NSPasteboard.general.clearContents()

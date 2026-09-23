@@ -646,6 +646,11 @@ enum L10n {
         "projects.registered": ("已注册", "Registered"),
         "projects.unregistered": ("未注册", "Not registered"),
         "projects.openInDsh": ("在 dsh 中打开", "Open in dsh"),
+        "projects.register": ("创建 dsh 工作区", "Create dsh workspace"),
+        "projects.registerTooltip": ("该目录还不是 dsh 工作区：创建后即可在此新建会话 / 在 dsh 中打开", "This folder is not a dsh workspace yet — create it to start sessions here or open it in dsh"),
+        "projects.registerDone": ("已在 dsh 中创建该工作区：%@", "Created the dsh workspace: %@"),
+        "projects.registerFailed": ("创建 dsh 工作区失败：%@", "Could not create the dsh workspace: %@"),
+        "projects.needsWorkspace": ("该目录还不是 dsh 工作区：先点「创建 dsh 工作区」", "This folder is not a dsh workspace yet — use “Create dsh workspace” first"),
         "projects.newSession": ("新会话", "New Session"),
         "projects.newSessionFailed": ("无法新建会话：%@", "Could not create a session: %@"),
         "projects.openFailed": ("未能在 dsh web 侧栏定位该会话（%@…）：请在侧栏点开对应工作区手动选择", "Could not find that session in dsh web's sidebar (%@…): open the workspace in the sidebar and pick it there"),
@@ -2443,6 +2448,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // 「新会话」：在该工作区建一条会话并切过去。
         projectsPanel.onCreateSession = { [weak self] path in
             self?.createSessionInWorkspace(path)
+        }
+        // A folder's dsh workspace was just created from the panel: let the web
+        // client pick it up (its sidebar is the only place the user sees it).
+        projectsPanel.onWorkspaceRegistered = { [weak self] in
+            self?.nudgeDSHWebCaches()
         }
         // QA (--ui-debug): snapshot the panel again once it has rendered.
         projectsPanel.onDidRender = { [weak self] in
