@@ -127,6 +127,8 @@ enum L10n {
         // status
         "status.starting": ("正在启动 oh-my-dsh 服务…", "Starting oh-my-dsh service…"),
         "status.startFailed": ("无法启动 oh-my-dsh\n\n%@", "Failed to start oh-my-dsh\n\n%@"),
+        "snapshot.unavailable": ("会话快照不可用（内置运行时缺失）", "Session snapshots unavailable (bundled runtime missing)"),
+        "snapshot.unfinished": ("上次回退未完成（停在「%@」）", "An earlier rollback is unfinished (stuck at \"%@\")"),
         "status.checking": ("正在检查 dsh 更新…", "Checking for dsh updates…"),
         "status.upgrading": ("正在升级 dsh（%@ → %@）…", "Upgrading dsh (%@ → %@)…"),
         "status.downloading": ("正在下载 dsh %@…", "Downloading dsh %@…"),
@@ -1899,6 +1901,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// bar toggles between them, and they are mutually exclusive.
     enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review, skills }
     private var rightPanel: RightPanel = .none
+    /// Set by prepareSessionSnapshot() when session snapshots need the user's
+    /// attention (unavailable runtime / an unfinished rollback). Surfaced by the
+    /// snapshot UI; logged at launch either way.
+    private var snapshotNotice: String?
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
     /// True while the right panel is being laid out programmatically (panel
@@ -3151,10 +3157,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     // MARK: Server boot
 
+    // MARK: session snapshots (docs/session-snapshot-rollback-design.md)
+
+    /// The pre-spawn half of the snapshot feature (called from startServer on a
+    /// background queue): capture the running dsh tree into the version pool,
+    /// take a data snapshot when the (app, dsh) combo changed, update
+    /// `shell/dsh-state.json` and prune. Never blocks or fails startup — every
+    /// problem is logged and remembered in `snapshotNotice`.
+    private func prepareSessionSnapshot() {
+        guard let updater = currentUpdater(), let dshVersion = updater.currentVersion else {
+            AppLog.shared.log("session snapshot: bundled runtime not found — skipped")
+            return
+        }
+        let appVersion = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "?"
+        let args = ["snapshot", "launch",
+                    "--app-version", appVersion,
+                    "--dsh-version", dshVersion,
+                    "--dsh-dir", updater.dshDir,
+                    "--home", dshDataHome]
+        guard let out = CoreBridge.run(args, timeout: 300, preferBundledNode: true),
+              let data = out.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            AppLog.shared.log("session snapshot: launch hook unavailable (core CLI / bundled node missing)")
+            snapshotNotice = L10n.tr("snapshot.unavailable")
+            return
+        }
+        let launch = json["launch"] as? [String: Any]
+        let action = (launch?["action"] as? String) ?? "?"
+        let reason = (launch?["reason"] as? String) ?? "-"
+        let id = (json["snapshotId"] as? String) ?? "-"
+        let tree = ((json["tree"] as? [String: Any])?["action"] as? String) ?? "?"
+        AppLog.shared.log("session snapshot: app=\(appVersion) dsh=\(dshVersion) action=\(action) reason=\(reason) id=\(id) tree=\(tree)")
+        if let journal = json["journal"] as? [String: Any],
+           (journal["status"] as? String) == "in-progress" {
+            let step = (journal["nextStep"] as? String) ?? "?"
+            AppLog.shared.log("session snapshot: an earlier rollback is unfinished at step '\(step)'")
+            snapshotNotice = L10n.tr("snapshot.unfinished", step)
+        }
+        if (json["mismatch"] as? Bool) == true {
+            let state = json["state"] as? [String: Any]
+            let combo = state?["dataCombo"] as? [String: Any]
+            AppLog.shared.log("session snapshot: session data belongs to dsh \((combo?["dsh"] as? String) ?? "?") but \(dshVersion) is installed")
+        }
+    }
+
     private func startServer() {
         showStatus(L10n.tr("status.starting"), spinner: true, retry: false)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
+            // Session snapshot FIRST. dsh migrates a session the moment it opens
+            // one (it appends `session/end-seed`), and an upgrade makes that
+            // migration irreversible — so the pre-upgrade state must be captured
+            // before dsh web is allowed to run. Cheap: one tree clone per dsh
+            // version, one data snapshot per (app, dsh) combo change.
+            self.prepareSessionSnapshot()
             do {
                 let url = try self.server.start()
                 let didSpawn = self.server.spawned
