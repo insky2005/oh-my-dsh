@@ -9,6 +9,15 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **项目面板（Projects，`⌥⌘P`，活动栏首位「项目」图标）：把「工作区 = 一个目录」变成壳层里的一等公民**。面板以可配置的**项目根目录**（默认 `$DSH_HOME/oh-my-dsh/projects`，可改成任意绝对路径，存 `shell/config.json` 的 `projectsRoot`）为范围，每个直属子目录就是一张工作区卡片：
+  - **新建工作区**只需输入目录名：面板 `mkdir -p <root>/<name>` 后调 dsh 的 `workspace/create`（**幂等**、路径须已存在）注册；注册失败（dsh 未起来 / 旧版本）只标「未注册」并在下次操作重试，**目录保留**；名字规则在创建前拦截（空 / 含 `/` 或 `:` / 以 `.` 开头 / 超 64 字符）；同名目录已存在按「采用」处理，不报错；
+  - **六个快捷入口**：文件 / 终端 / 知识库 / 任务 / 通道 / 审查——点一下即把壳层当前工作区切到它并打开对应面板（终端 cwd、文件树根、wiki 根、任务·通道·审查的工作区一起跟随）；
+  - **新会话**：在该工作区建一条 dsh web 会话并切过去（先 `session/create { workspaceId }` 保证归属分组，被拒退回 `cwd`）；**在 dsh 中打开**（点卡片名称）复用该工作区最近一条会话（运行中优先），没有则新建；另有在 Finder 中显示 / 复制路径；
+  - **单一真相**：当前工作区始终是壳层的 `ProjectDirectory`，重根收口到新抽出的 `AppDelegate.adoptProjectDirectory(_:)`（`dshSession` 跟随与面板快捷入口共用同一个原语，面板只做高亮）；该原语带 `fileExists` 守卫，拒绝把面板重根到已消失的目录（旧代码会照常重根）；
+  - **侧边栏延迟**：dsh web 客户端还没重拉列表时（刚建好的工作区/会话），先 `nudgeDSHWebCaches()`、一次 1.5s 重试，仍失败则把会话 id 存进 `pendingOpenSessionId` 并重载页面、在 `didFinish` 后补打开一次；
+  - 实现：`platforms/macos/src/ProjectsCore.swift`（纯模型：根目录解析 / 命名规则 / 目录列举 / 与 dsh 注册表按 canonical 路径合并）、`ProjectsPanel.swift`（面板：卡片三行 + 头部 + 根目录行 + 空态 + 结果行 + 取名 sheet）、`DshWebRPC.swift` 新增 `workspaceCreate` 端点与 `DshWorkspaceOps`（注册 / 建会话 / 按工作区挑会话）、`main.swift` 接线与设置窗口「项目」区块（路径字段 + 选择…/保存/恢复默认）；测试 `tests/projects-panel/`（模型 44 项 + 控制器无头 35 项）与 `tests/dsh-rpc/` 新增 9 项，均已接入 CI 与 `scripts/local-ci.sh`；设计见 `docs/projects-panel-design.md`。
+  - 顺带修正 `DshWorkspaceStore.canonical`：改用 `realpath(3)`，让 macOS 目录列举给出的 `/private/var/...` 与用户/dsh 存写的 `/var/...` 归一到同一条工作区（此前两种写法互不相等，面板会把已注册工作区标成「未注册」）。
+
 - **Files 面板：目录树右键「添加到对话」把文件/文件夹作为 `@` 引用插进 dsh web 的输入框**：在文件或文件夹上右键 → **添加到对话** → 输入框末尾出现该条目（文件夹带尾斜杠，含空格的路径走 dsh 的 `@"…"` 引号语法）的引用 chip —— 与用户自己敲 `@` 从候选里选出来的是**同一种节点**，提交时序列化成同一段 `@相对路径` 文本。项目根与空白处不提供（没有「相对的自己」）；未打开会话时条目禁用并提示。**不改 dsh 源码**：壳层把 chip 节点直接写进 dsh web 的 Lexical 编辑器（`window.__dshInsertFileReference`），不伪造按键也不依赖焦点。新增纯模型 `platforms/macos/src/ComposerReference.swift`（引用语法 + 相对路径，无头单测 `tests/file-panel/composer-reference-tests.swift`）与目录树菜单规则/用例更新；真 WKWebView 实测与 dsh 升级核对项见 `docs/dsh-version-impact.md` B9 与 `docs/file-panel-composer-reference.md`；QA 钩子 `DSH_COMPOSER_TEST_PATH` / `DSH_COMPOSER_TEST_SESSION`。
 
 ### Changed
