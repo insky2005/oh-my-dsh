@@ -429,30 +429,37 @@ final class CustomIconButton: NSView {
                                        width: inset.width - 2, height: inset.height - 2))
             path.appendOval(in: NSRect(x: bounds.midX - 1.5, y: bounds.midY - 1.5, width: 3, height: 3))
         case .folderPlus:
-            // Folder + a LARGE PLAIN plus (the Projects panel's "添加工作区"): SF
-            // Symbols' folder.badge.plus draws a small circled plus in the corner,
-            // which reads as a different action than the reference icon
-            // (pic/folder+.jpg). Drawn here as: folder silhouette (left edge, tab,
-            // body top, bottom) whose right wall IS the plus's vertical arm — the
-            // same construction the reference uses.
-            let box = NSRect(x: (bounds.width - 17) / 2, y: (bounds.height - 14.5) / 2,
-                             width: 17, height: 14.5)
-            let left = box.minX, bottom = box.minY, right = box.maxX, top = box.maxY
-            let bodyTop = bottom + 9
-            let arm: CGFloat = 3.4
-            let centreX = right - arm
-            let centreY = bottom + 5.6
-            path.move(to: NSPoint(x: left, y: bottom))
-            path.line(to: NSPoint(x: left, y: top - 1.2))
-            path.line(to: NSPoint(x: left + 6.5, y: top - 1.2))
-            path.line(to: NSPoint(x: left + 8, y: bodyTop))
-            path.line(to: NSPoint(x: centreX + arm, y: bodyTop))
-            path.move(to: NSPoint(x: left, y: bottom))
-            path.line(to: NSPoint(x: centreX + arm, y: bottom))
-            path.move(to: NSPoint(x: centreX - arm, y: centreY))
-            path.line(to: NSPoint(x: centreX + arm, y: centreY))
-            path.move(to: NSPoint(x: centreX, y: centreY - arm))
-            path.line(to: NSPoint(x: centreX, y: centreY + arm))
+            // "Add workspace": a folder with a big PLAIN plus at its top right.
+            // Traced from the reference icon (pic/folder+.jpg, a 44x38 canvas) so the
+            // shapes match: folder box (11, 8.5)-(37.5, 31), tab top edge to x=21,
+            // shoulder folding down to the body-top line at (23, 13.5), bottom-right
+            // rounded corner; the body-top line and the right wall are CUT where the
+            // badge sits (the reference leaves a gap, SF-Symbols style) and the plain
+            // 11x11 plus is centred exactly ON the body-top line.
+            // SF Symbols' own folder.badge.plus draws a circled badge instead, which
+            // is a different look — hence this custom glyph.
+            let refWidth: CGFloat = 44, refHeight: CGFloat = 38
+            let scale = min(bounds.width / refWidth, bounds.height / refHeight)
+            let originX = (bounds.width - refWidth * scale) / 2
+            let originY = (bounds.height - refHeight * scale) / 2
+            // Reference y is measured from the TOP, AppKit's from the bottom.
+            func ref(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+                NSPoint(x: originX + x * scale, y: originY + (refHeight - y) * scale)
+            }
+            path.lineWidth = max(2 * scale, 1.2)
+            path.move(to: ref(11, 31))
+            path.line(to: ref(11, 10.5))
+            path.curve(to: ref(14, 8.5), controlPoint1: ref(11, 8.5), controlPoint2: ref(12.5, 8.5))
+            path.line(to: ref(21, 8.5))
+            path.line(to: ref(23, 13.5))
+            path.move(to: ref(11, 31))
+            path.line(to: ref(35.5, 31))
+            path.curve(to: ref(37.5, 29), controlPoint1: ref(37.5, 31), controlPoint2: ref(37.5, 30))
+            path.line(to: ref(37.5, 24))
+            path.move(to: ref(28, 13.5))
+            path.line(to: ref(39, 13.5))
+            path.move(to: ref(33.5, 8))
+            path.line(to: ref(33.5, 19))
         case .symbol:
             break   // handled above via the SF Symbol path
         case .play:
