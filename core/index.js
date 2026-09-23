@@ -24,6 +24,8 @@ module.exports = {
   ...require('./lib/workspace-store'),
   // Session snapshot / rollback planning (pure decisions; docs/session-snapshot-rollback-design.md)
   snapshot: require('./lib/snapshot'),
+  // Session snapshot / rollback filesystem layer (injectable IO)
+  snapshotIO: require('./lib/snapshot-io'),
   // dsh web session RPC (ported from DSHSessionRPC)
   ...require('./lib/session'),
   // GitHub issues & PR integration (IssueRunner panel)
