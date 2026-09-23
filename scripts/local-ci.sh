@@ -82,6 +82,8 @@ stage_swift() {
   tests/dsh-auth-cookies/run.sh
   echo "--- session snapshot / rollback CLI (headless end-to-end) ---"
   tests/snapshot-rollback/run.sh
+  echo "--- session snapshot window data model ---"
+  tests/snapshot-panel/run.sh
   echo "--- build CEF integration artifacts (arm64) ---"
   mkdir -p .build/module-cache
   platforms/macos/build-cef.sh arm64

@@ -129,6 +129,40 @@ enum L10n {
         "status.startFailed": ("无法启动 oh-my-dsh\n\n%@", "Failed to start oh-my-dsh\n\n%@"),
         "snapshot.unavailable": ("会话快照不可用（内置运行时缺失）", "Session snapshots unavailable (bundled runtime missing)"),
         "snapshot.unfinished": ("上次回退未完成（停在「%@」）", "An earlier rollback is unfinished (stuck at \"%@\")"),
+        "snapshot.title": ("会话快照", "Session Snapshots"),
+        "snapshot.menu": ("会话快照…", "Session Snapshots…"),
+        "snapshot.col.time": ("时间", "Time"),
+        "snapshot.col.reason": ("原因", "Reason"),
+        "snapshot.col.from": ("当时版本 App / dsh", "App / dsh then"),
+        "snapshot.col.sessions": ("会话", "Sessions"),
+        "snapshot.col.size": ("大小", "Size"),
+        "snapshot.col.tree": ("内置 dsh 回退", "Built-in dsh"),
+        "snapshot.action.rollback": ("回退到此快照并退出…", "Roll Back and Quit…"),
+        "snapshot.action.reveal": ("在 Finder 中显示", "Reveal in Finder"),
+        "snapshot.action.delete": ("删除", "Delete"),
+        "snapshot.action.refresh": ("刷新", "Refresh"),
+        "snapshot.reason.bootstrap": ("基线（功能启用）", "Baseline (feature started)"),
+        "snapshot.reason.combo-change": ("版本变化前", "Before a version change"),
+        "snapshot.reason.dsh-upgrade": ("升级 dsh 前", "Before a dsh upgrade"),
+        "snapshot.reason.pre-rollback": ("回退前的现场（可撤销）", "Pre-rollback state (undo)"),
+        "snapshot.reason.broken": ("无法读取", "Unreadable"),
+        "snapshot.tree.dataOnly": ("仅数据（不需要）", "Data only"),
+        "snapshot.tree.available": ("可换回 %@", "Restore %@"),
+        "snapshot.tree.missing": ("缺 %@（需联网安装）", "%@ missing (install needed)"),
+        "snapshot.status.data": ("当前会话数据属于 oh-my-dsh %@ / dsh %@", "Session data belongs to oh-my-dsh %@ / dsh %@"),
+        "snapshot.status.pinned": ("已固定 dsh %@（回退中）", "dsh %@ pinned (rolled back)"),
+        "snapshot.status.pool": ("树池：%@", "Tree pool: %@"),
+        "snapshot.delete.title": ("删除这份快照？", "Delete this snapshot?"),
+        "snapshot.delete.info": ("%@\n\n删除后无法再用它回退。", "%@\n\nIt can no longer be used for a rollback."),
+        "snapshot.confirm.title": ("回退到此快照并退出？", "Roll back to this snapshot and quit?"),
+        "snapshot.confirm.restore": ("• 恢复 %d 条会话（并移除其新世代日志）", "• Restore %d sessions (dropping their newer-generation logs)"),
+        "snapshot.confirm.quarantine": ("• 把 %d 条快照之后新建的会话移入隔离区（不删除）", "• Move %d sessions created later into quarantine (not deleted)"),
+        "snapshot.confirm.tree": ("• 内置 dsh 换回 %@", "• Built-in dsh goes back to %@"),
+        "snapshot.confirm.treeNone": ("• 内置 dsh 保持当前版本（只回退数据）", "• Built-in dsh stays as is (data-only rollback)"),
+        "snapshot.confirm.quit": ("回退成功后应用会立即退出。", "The app quits right after a successful rollback."),
+        "snapshot.rollback.done": ("已回退到 %@，应用即将退出。", "Rolled back to %@; the app will now quit."),
+        "snapshot.rollback.failed": ("回退失败：%@", "Rollback failed: %@"),
+        "snapshot.rollback.needsTree": ("数据已回退，但内置 dsh %@ 缺少可换回的副本：请联网后重试，或改为重装旧版 App。", "Data rolled back, but no pooled copy of dsh %@ is available: retry online, or reinstall the older app instead."),
         "status.checking": ("正在检查 dsh 更新…", "Checking for dsh updates…"),
         "status.upgrading": ("正在升级 dsh（%@ → %@）…", "Upgrading dsh (%@ → %@)…"),
         "status.downloading": ("正在下载 dsh %@…", "Downloading dsh %@…"),
@@ -146,6 +180,7 @@ enum L10n {
         "btn.later": ("稍后", "Later"),
         "btn.yes": ("是", "Yes"),
         "btn.no": ("否", "No"),
+        "btn.delete": ("删除", "Delete"),
         // preview panel
         "preview.openInDefaultApp": ("在默认应用中打开", "Open in Default App"),
         "preview.openInDefaultAppHint": ("用系统默认应用打开当前文件", "Open the current file with its default app"),
@@ -1905,6 +1940,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// attention (unavailable runtime / an unfinished rollback). Surfaced by the
     /// snapshot UI; logged at launch either way.
     private var snapshotNotice: String?
+    /// The「会话快照…」window (created lazily).
+    private var snapshotWindowController: SnapshotWindowController?
+    /// Oldest dsh generation this shell still adapts to (core keeps both API
+    /// surfaces and the review reader understands every log generation). A
+    /// snapshot whose dsh is older than this may only be rolled back data-only.
+    private static let minSupportedDshVersion = "0.1.2-rc.1"
     /// Re-entrancy guard for window widening (see ensureWebViewWidth).
     private var isWideningWindow = false
     /// True while the right panel is being laid out programmatically (panel
@@ -3157,6 +3198,107 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     // MARK: Server boot
 
+    // MARK: session snapshots — window, rollback, quit
+
+    /// Menu entry: show the snapshot list (creating the window on first use).
+    @objc private func openSessionSnapshots(_ sender: Any?) {
+        if snapshotWindowController == nil {
+            let controller = SnapshotWindowController()
+            controller.dshHome = { [weak self] in
+                self?.dshDataHome ?? (NSHomeDirectory() + "/.dsh")
+            }
+            controller.onRollback = { [weak self] entry in
+                self?.confirmAndRollback(entry)
+            }
+            snapshotWindowController = controller
+        }
+        snapshotWindowController?.setNotice(snapshotNotice)
+        snapshotWindowController?.show()
+    }
+
+    /// Preview the rollback, confirm what it will touch, then — with dsh web
+    /// stopped — run the transaction and quit. The app must not keep running
+    /// afterwards: a live dsh would immediately re-migrate the restored sessions.
+    private func confirmAndRollback(_ entry: SnapshotModel.Entry) {
+        guard let updater = currentUpdater(), let dshVersion = updater.currentVersion else {
+            presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.unavailable"))
+            return
+        }
+        let appVersion = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "?"
+        let base = ["--home", dshDataHome]
+        let planJSON = CoreBridge.run(["snapshot", "plan-rollback", "--id", entry.id,
+                                       "--current-dsh", dshVersion,
+                                       "--min-supported", Self.minSupportedDshVersion] + base,
+                                      timeout: 120, preferBundledNode: true)
+        guard let planJSON = planJSON, let plan = SnapshotModel.parseRollback(planJSON) else {
+            presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.unavailable"))
+            return
+        }
+
+        var lines: [String] = []
+        if plan.restoreCount + plan.addMissingCount > 0 {
+            lines.append(L10n.tr("snapshot.confirm.restore", plan.restoreCount + plan.addMissingCount))
+        }
+        if plan.quarantineCount > 0 {
+            lines.append(L10n.tr("snapshot.confirm.quarantine", plan.quarantineCount))
+        }
+        if plan.touchesTree, let target = plan.treeVersion {
+            lines.append(L10n.tr("snapshot.confirm.tree", target))
+        } else {
+            lines.append(L10n.tr("snapshot.confirm.treeNone"))
+        }
+        if let reason = plan.fallbackReason {
+            lines.append("(" + reason + ")")
+        }
+        lines.append(L10n.tr("snapshot.confirm.quit"))
+
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("snapshot.confirm.title")
+        alert.informativeText = lines.joined(separator: "\n")
+        alert.addButton(withTitle: L10n.tr("snapshot.action.rollback"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        // dsh web must be gone before the files move: a live writer would race
+        // the quarantine/clone steps (and its own session locks would survive).
+        server.stop()
+        AppLog.shared.log("snapshot rollback: dsh web stopped, running transaction for " + entry.id)
+        let out = CoreBridge.run(["snapshot", "rollback", "--id", entry.id, "--server-stopped",
+                                  "--current-app", appVersion, "--current-dsh", dshVersion,
+                                  "--dsh-dir", updater.dshDir,
+                                  "--min-supported", Self.minSupportedDshVersion] + base,
+                                 timeout: 900, preferBundledNode: true)
+        guard let out = out,
+              let data = out.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            AppLog.shared.log("snapshot rollback: transaction failed to run")
+            presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.rollback.failed", "cli"))
+            return
+        }
+        if (json["partial"] as? Bool) == true, let needed = json["needsTreeInstall"] as? String {
+            AppLog.shared.log("snapshot rollback: data rolled back, tree " + needed + " missing from the pool")
+            presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.rollback.needsTree", needed))
+            return
+        }
+        AppLog.shared.log("snapshot rollback done for " + entry.id + " — quitting")
+        let done = NSAlert()
+        done.messageText = L10n.tr("snapshot.title")
+        done.informativeText = L10n.tr("snapshot.rollback.done", entry.id)
+        done.addButton(withTitle: L10n.tr("btn.ok"))
+        done.runModal()
+        NSApp.terminate(nil)
+    }
+
+    /// One-button informational alert.
+    private func presentSimpleAlert(_ title: String, _ body: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = body
+        alert.addButton(withTitle: L10n.tr("btn.ok"))
+        alert.runModal()
+    }
+
+    @objc private func openSessionSnapshotsPlaceholder() {}
     // MARK: session snapshots (docs/session-snapshot-rollback-design.md)
 
     /// The pre-spawn half of the snapshot feature (called from startServer on a
@@ -4110,6 +4252,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         dshHome.tag = 1
         dshHome.state = WikiPaths.rootMode == "dsh-home" ? .on : .off
         rootItem.submenu = rootMenu
+        settingsMenu.addItem(.separator())
+        let snapshots = settingsMenu.addItem(withTitle: L10n.tr("snapshot.menu"), action: #selector(openSessionSnapshots(_:)), keyEquivalent: "")
+        snapshots.target = self
         settingsMenu.addItem(.separator())
         let logs = settingsMenu.addItem(withTitle: L10n.tr("menu.openLogs"), action: #selector(openLogs), keyEquivalent: "l")
         logs.target = self
