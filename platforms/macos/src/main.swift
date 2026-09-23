@@ -2024,7 +2024,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var didCaptureRuntimeTree = false
     /// A session the shell wanted to open but dsh web had no sidebar row for yet:
     /// parked here across a page reload and consumed by webView(_:didFinish:).
-    private var pendingOpenSessionId: String?
+    private var pendingOpenSession: PendingSessionOpen?
     /// The「会话快照…」window (created lazily).
     private var snapshotWindowController: SnapshotWindowController?
     /// Oldest dsh generation this shell still adapts to (core keeps both API
@@ -3159,41 +3159,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     })()
     """
 
-    /// Panel → web session link bridge. Exposes window.__dshOpenSession(id)
-    /// which switches dsh web to the given session. dsh web does not expose
-    /// its session store globally, so we locate the matching sidebar row by
-    /// title (resolved via a session.list RPC we fire on demand) and click
-    /// it — the same gesture the user performs to switch sessions.
+    /// Panel → web session link bridge. Exposes
+    /// window.__dshOpenSession(sessionId, workspaceName), which switches dsh web
+    /// to that session. dsh web exposes no session store and no per-session URL,
+    /// so we click the matching sidebar row — the same gesture the user performs.
+    /// Two strategies, in order:
+    ///   1. the row whose text equals the session's title (session/list ->
+    ///      projections.values.title) — exact, but only named sessions have one;
+    ///   2. the first session row INSIDE the sidebar group named after the
+    ///      workspace directory (the shell knows that name) — this is what makes
+    ///      an untitled, just-created session reachable at all.
+    /// Resolves to {ok, via} or {ok:false, reason}; main.swift awaits it through
+    /// callAsyncJavaScript because evaluateJavaScript cannot return a promise
+    /// (docs/dsh-version-impact.md B10).
     private static let sessionOpenerScript = """
     (function () {
       if (window.__dshSessionOpener) return;
       window.__dshSessionOpener = true;
+      function rows() {
+        return Array.prototype.slice.call(document.querySelectorAll('[role="treeitem"]'));
+      }
+      function isSessionRow(node) {
+        return (node.className || "").indexOf("sessionRow") !== -1;
+      }
+      function lines(node) {
+        return (node.innerText || "").split(String.fromCharCode(10)).map(function (s) { return s.trim(); });
+      }
       function expandGroups() {
-        var groups = Array.prototype.slice.call(document.querySelectorAll('[role="treeitem"]'));
-        for (var g = 0; g < groups.length; g++) {
-          var r = groups[g];
-          if (r.getAttribute("aria-expanded") === "false") r.click();
+        var all = rows();
+        for (var g = 0; g < all.length; g++) {
+          if (all[g].getAttribute("aria-expanded") === "false") all[g].click();
         }
       }
       function findAndClick(title) {
-        var rows = Array.prototype.slice.call(document.querySelectorAll('[role="treeitem"]'));
-        for (var i = 0; i < rows.length; i++) {
-          if (rows[i].className.indexOf("sessionRow") === -1) continue;
-          var lines = (rows[i].innerText || "").split(String.fromCharCode(10)).map(function (s) { return s.trim(); });
-          if (lines.indexOf(title) !== -1) { rows[i].click(); return true; }
+        var all = rows();
+        for (var i = 0; i < all.length; i++) {
+          if (!isSessionRow(all[i])) continue;
+          if (lines(all[i]).indexOf(title) !== -1) { all[i].click(); return true; }
         }
         return false;
       }
-      function openById(sessionId, title, attempt) {
-        if (findAndClick(title)) return { ok: true };
+      // The workspace (group) row whose text mentions the directory name.
+      function groupRow(name) {
+        var all = rows();
+        for (var i = 0; i < all.length; i++) {
+          if (isSessionRow(all[i])) continue;
+          if (lines(all[i]).indexOf(name) !== -1) return all[i];
+        }
+        for (var j = 0; j < all.length; j++) {
+          if (isSessionRow(all[j])) continue;
+          if ((all[j].innerText || "").indexOf(name) !== -1) return all[j];
+        }
+        return null;
+      }
+      // The first session row nested under a group (dsh lists a group's sessions
+      // by recency, so the first one is the most recent).
+      function firstSessionUnder(group) {
+        var all = rows(), seen = false;
+        for (var i = 0; i < all.length; i++) {
+          var node = all[i];
+          if (node === group) { seen = true; continue; }
+          if (!seen) continue;
+          if (isSessionRow(node)) return node;
+          if (group.contains && group.contains(node)) continue;
+          return null;
+        }
+        return null;
+      }
+      function openByWorkspace(name, attempt) {
+        if (!name) { console.log("[dsh-opener] row-not-found (no workspace name)"); return { ok: false, reason: "row-not-found" }; }
+        expandGroups();
+        var group = groupRow(name);
+        if (group) {
+          if (group.getAttribute("aria-expanded") === "false") group.click();
+          var session = firstSessionUnder(group);
+          if (session) { session.click(); return { ok: true, via: "workspace" }; }
+        }
+        if (attempt < 8) {
+          return new Promise(function (resolve) {
+            setTimeout(function () { resolve(openByWorkspace(name, attempt + 1)); }, 150);
+          });
+        }
+        console.log("[dsh-opener] workspace-row-not-found", name);
+        return { ok: false, reason: "workspace-row-not-found" };
+      }
+      function openById(sessionId, title, workspaceName, attempt) {
+        if (findAndClick(title)) return { ok: true, via: "title" };
         if (attempt < 8) {
           expandGroups();
           return new Promise(function (resolve) {
-            setTimeout(function () { resolve(openById(sessionId, title, attempt + 1)); }, 120);
+            setTimeout(function () { resolve(openById(sessionId, title, workspaceName, attempt + 1)); }, 120);
           });
         }
-        console.log("[dsh-opener] row-not-found", sessionId, title);
-        return { ok: false, reason: "row-not-found" };
+        return openByWorkspace(workspaceName, 0);
       }
       // One session-list call in the shape the RUNNING server expects:
       //   dsh >= 0.1.2 — POST /api/session/list, method = "session/list",
@@ -3223,7 +3281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           return items;
         }).catch(function (err) { console.log("[dsh-opener] list error", String(err)); return null; });
       }
-      window.__dshOpenSession = function (sessionId) {
+      window.__dshOpenSession = function (sessionId, workspaceName) {
         if (!sessionId) return { ok: false, reason: "no-id" };
         return fetchSessions(true).then(function (items) {
           if (items) return items;
@@ -3232,13 +3290,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           items = items || [];
           var target = null;
           for (var i = 0; i < items.length; i++) { if (items[i].sessionId === sessionId) { target = items[i]; break; } }
-          if (!target) { console.log("[dsh-opener] no-session", sessionId); return { ok: false, reason: "no-session" }; }
-          var title = (target.projections && target.projections.values && target.projections.values.title) || target.sessionId;
-          return openById(sessionId, title, 0);
+          if (!target) {
+            // Not in the page's list yet (client has not re-fetched): fall back to
+            // the workspace group rather than giving up.
+            if (workspaceName) return openByWorkspace(workspaceName, 0);
+            console.log("[dsh-opener] no-session", sessionId);
+            return { ok: false, reason: "no-session" };
+          }
+          var projections = target.projections && target.projections.values;
+          var title = (projections && projections.title) || "";
+          if (!title) return openByWorkspace(workspaceName, 0);   // untitled: no text to match
+          return openById(sessionId, title, workspaceName, 0);
         }).catch(function (err) { console.log("[dsh-opener] error", String(err)); return { ok: false, reason: String(err) }; });
       };
     })()
     """
+
 
     /// Panel → composer bridge. dsh web's composer is a Lexical editor whose
     /// references are `reference-chip` decorator nodes: a reference picked from
@@ -4014,41 +4081,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Panel → web session link: switch dsh web to the given session. Driven by
     /// the sessionOpenerScript bridge injected into the web view.
     ///
+    /// MUST go through callAsyncJavaScript: the bridge resolves a Promise, and
+    /// evaluateJavaScript cannot serialize one — it failed with "the type of the
+    /// JavaScript return value is not supported", which made every fallback below
+    /// unreachable (the user saw "clicking a project does nothing").
+    ///
     /// A session created through the host RPC is not in the page's sidebar until
-    /// the client re-fetches its lists, so the first click can miss the row
-    /// ("row-not-found"). One retry covers the usual lag; if that still fails the
-    /// page is reloaded with the id parked in pendingOpenSessionId, which
-    /// webView(_:didFinish:) consumes — so "new session" in the Projects panel
-    /// lands on the new session instead of silently doing nothing.
-    private func openDSHSession(_ sessionId: String, retry: Int = 1) {
+    /// the client re-fetches its lists, so the first attempt can miss the row:
+    /// nudge -> click -> one retry -> reload the page with the request parked in
+    /// pendingOpenSession, which webView(_:didFinish:) consumes.
+    private func openDSHSession(_ sessionId: String, retry: Int = 1, workspaceName: String? = nil) {
         guard let webView = webView else { return }
-        // sessionId is an opaque token (uuid) — quote it for JS safely.
-        let escaped = sessionId.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let js = "window.__dshOpenSession ? window.__dshOpenSession(\"\(escaped)\") : Promise.resolve({ok:false,reason:\"bridge-unavailable\"})"
-        webView.evaluateJavaScript(js) { [weak self] result, error in
+        var args: [String: Any] = ["sessionId": sessionId]
+        if let name = workspaceName, !name.isEmpty { args["workspaceName"] = name }
+        let body = "return await window.__dshOpenSession(sessionId, workspaceName);"
+        webView.callAsyncJavaScript(body, arguments: args, in: nil, in: .page) { [weak self] result in
             guard let self = self else { return }
-            if let err = error {
-                AppLog.shared.log("openDSHSession JS error: \(err.localizedDescription)")
-                return
-            }
-            guard let dict = result as? [String: Any], let ok = dict["ok"] as? Bool else { return }
-            if ok {
-                self.pendingOpenSessionId = nil
-                return
-            }
-            let reason = dict["reason"] as? String ?? "?"
-            AppLog.shared.log("openDSHSession \(sessionId): \(reason)")
-            if retry > 0 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                    self?.openDSHSession(sessionId, retry: retry - 1)
+            switch result {
+            case .failure(let error):
+                AppLog.shared.log("openDSHSession \(sessionId) bridge error: \(error.localizedDescription)")
+            case .success(let value):
+                guard let dict = value as? [String: Any] else {
+                    AppLog.shared.log("openDSHSession \(sessionId): unexpected bridge result")
+                    return
                 }
-                return
+                if (dict["ok"] as? Bool) == true {
+                    self.pendingOpenSession = nil
+                    AppLog.shared.log("openDSHSession \(sessionId): ok via \(dict["via"] as? String ?? "?")")
+                    return
+                }
+                let reason = dict["reason"] as? String ?? "?"
+                AppLog.shared.log("openDSHSession \(sessionId): \(reason)")
+                if retry > 0 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        self?.openDSHSession(sessionId, retry: retry - 1, workspaceName: workspaceName)
+                    }
+                    return
+                }
+                AppLog.shared.log("openDSHSession \(sessionId): reloading the page and opening it after load")
+                self.pendingOpenSession = PendingSessionOpen(sessionId: sessionId, workspaceName: workspaceName)
+                self.reloadPageReauthenticating(reason: "session-open")
             }
-            AppLog.shared.log("openDSHSession \(sessionId): row still missing — reloading the page and opening it after load")
-            self.pendingOpenSessionId = sessionId
-            self.reloadPageReauthenticating(reason: "session-open")
         }
+    }
+
+    /// A session the shell wants dsh web to show but the page had no row for:
+    /// parked across a reload, consumed once by webView(_:didFinish:).
+    private struct PendingSessionOpen {
+        let sessionId: String
+        let workspaceName: String?
     }
 
     // MARK: - Projects panel actions (a workspace = a directory under the root)
@@ -4104,14 +4185,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// workspace's newest session, or create one when it has none yet.
     private func openWorkspaceInDsh(_ path: String) {
         let port = server.port
+        let workspaceName = (path as NSString).lastPathComponent
+        AppLog.shared.log("projects: open request for " + path)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let existing = DshWorkspaceOps.newestSessionId(port: port, inPath: path)
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if let sid = existing {
                     _ = self.adoptProjectDirectory(path)
-                    self.openDSHSession(sid)
                     AppLog.shared.log("projects: re-opened the newest session of " + path)
+                    self.openDSHSession(sid, workspaceName: workspaceName)
                 } else {
                     self.createSessionInWorkspace(path)
                 }
@@ -4143,7 +4226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 // client re-fetches; nudge, then click the sidebar row.
                 self.nudgeDSHWebCaches()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    self?.openDSHSession(sid)
+                    self?.openDSHSession(sid, workspaceName: (path as NSString).lastPathComponent)
                 }
                 AppLog.shared.log("projects: created session \(sid) in " + path)
             }
@@ -4400,12 +4483,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // when the panel is opened, not here — nothing else to do at page load.
         reviewPanel?.prewarm()
         // A session the shell asked for while the page had no row for it: open it
-        // now that the document (and its session list) is back. One shot.
-        if let pending = pendingOpenSessionId {
-            pendingOpenSessionId = nil
-            AppLog.shared.log("opening the pending session after the page reload: " + pending)
+        // now that the document (and its session list) is back. One shot, but with
+        // retries — the sidebar renders a moment after the document does.
+        if let pending = pendingOpenSession {
+            pendingOpenSession = nil
+            AppLog.shared.log("opening the pending session after the page reload: " + pending.sessionId)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.openDSHSession(pending, retry: 0)
+                self?.openDSHSession(pending.sessionId, retry: 3, workspaceName: pending.workspaceName)
             }
         }
         // QA hook (DSH_COMPOSER_TEST_PATH): drive the panel → composer path
