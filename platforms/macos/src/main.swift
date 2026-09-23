@@ -2124,6 +2124,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.skills)
             AppLog.shared.log("skills self-test enabled")
         }
+        // Panel sweep hook (QA only): DSH_PANEL_TEST="files,terminal,wiki,tasks,
+        // browser,channel,review,skills" shows every named panel in sequence, so
+        // a dsh upgrade can be checked end to end (with DSH_UI_DEBUG=1 each one
+        // also writes panel-<label>-debug.png). The one-panel hooks above only
+        // cover six of the eight panels, and the two they miss (tasks, channel)
+        // are exactly the ones with no menu shortcut reachable from a script.
+        if let sweep = ProcessInfo.processInfo.environment["DSH_PANEL_TEST"], !sweep.isEmpty {
+            runPanelSweep(sweep)
+        }
+    }
+
+    /// Sequentially show the panels named in a comma-separated DSH_PANEL_TEST
+    /// list, one every few seconds (QA hook — see buildSplitView).
+    private func runPanelSweep(_ list: String) {
+        let names = list.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        AppLog.shared.log("panel sweep: \(names.joined(separator: ","))")
+        for (index, name) in names.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8.0 + Double(index) * 5.0) { [weak self] in
+                guard let self = self else { return }
+                guard let panel = Self.panelNamed(name) else {
+                    AppLog.shared.log("panel sweep: unknown panel '\(name)'")
+                    return
+                }
+                self.setRightPanel(panel)
+                AppLog.shared.log("panel sweep: showing \(name)")
+            }
+        }
+    }
+
+    /// Map a DSH_PANEL_TEST name onto its panel (QA hook).
+    private static func panelNamed(_ name: String) -> RightPanel? {
+        switch name.lowercased() {
+        case "files", "preview", "文件": return .preview
+        case "terminal", "终端": return .terminal
+        case "wiki", "知识库": return .wiki
+        case "tasks", "任务": return .tasks
+        case "browser", "浏览器": return .browser
+        case "channel", "通道": return .channel
+        case "review", "审查": return .review
+        case "skills", "技能": return .skills
+        default: return nil
+        }
     }
 
     /// Build the activity bar (leftmost icon strip) + the main split view:
@@ -3635,6 +3677,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     webView.evaluateJavaScript("JSON.stringify(window.__dshProbeAsync)") { r2, _ in
                         AppLog.shared.log("preview debug probe async: \(r2 ?? "none")")
                     }
+                    webView.evaluateJavaScript("JSON.stringify(window.__dshProbeModernAsync)") { r3, _ in
+                        AppLog.shared.log("preview debug probe modern async: \(r3 ?? "none")")
+                    }
                 }
             }
             // Report dsh web's actual viewport and sidebar state inside the
@@ -3679,11 +3724,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     /// Probe evaluated in the page when DSH_PREVIEW_DEBUG=1: checks the
-    /// interceptor installed state, then fires a `host.openPath` request the
-    /// exact way dsh web's client does (HTTP POST to /api/host.openPath) and
-    /// verifies the interceptor captured the path synchronously (the hit flag
-    /// is set before the promise resolves) and returned a fake success (read
-    /// back on a second pass via __dshProbeAsync).
+    /// interceptor installed state, then fires BOTH file-open request shapes the
+    /// interceptor must swallow — the legacy `host.openPath` and the modern
+    /// (dsh >= 0.1.2) `session/openWorkspacePath` with `payload.args.request.path`
+    /// — each the way the dsh web client builds it, and verifies the interceptor
+    /// captured the path synchronously (the hit flag is set before the promise
+    /// resolves) and returned a fake success (read back via __dshProbeAsync).
+    /// The modern shape is the one the upgraded client actually sends, so an
+    /// interceptor that only knows the legacy one fails here instead of silently
+    /// in the UI (see docs/dsh-version-impact.md B7).
     private static let previewDebugProbeJS = """
     (function () {
       var out = { installed: !!window.__dshPreviewInstalled, hit: window.__dshPreviewHit || null };
@@ -3691,7 +3740,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       out.chips = chips.length;
       out.mentions = document.querySelectorAll('button[class*="fileMention"]').length;
       window.__dshProbeAsync = null;
+      window.__dshProbeModernAsync = null;
       var testPath = '/tmp/dsh-preview-fetch-test.txt';
+      var modernPath = '/tmp/dsh-preview-modern-test.txt';
       var fakeBody = JSON.stringify({
         type: 'client-request',
         rpcId: 'debug-probe-rpc',
@@ -3708,6 +3759,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return true;
       });
       out.hitSync = window.__dshPreviewHit || null;
+      // dsh >= 0.1.2 shape: endpoint session/openWorkspacePath, args.request.path.
+      window.__dshPreviewHit = null;
+      var modernBody = JSON.stringify({
+        type: 'client-request',
+        rpcId: 'debug-probe-modern',
+        method: 'session/openWorkspacePath',
+        payload: { args: { request: { path: modernPath } } }
+      });
+      fetch('/api/session/openWorkspacePath', { method: 'POST', body: modernBody }).then(function (r) {
+        return r.json();
+      }).then(function (json) {
+        window.__dshProbeModernAsync = { fakeResponse: json, hitAfter: window.__dshPreviewHitModern || null };
+        return true;
+      }).catch(function (e) {
+        window.__dshProbeModernAsync = { error: String(e) };
+        return true;
+      });
+      // Read the modern hit BEFORE restoring the legacy probe's flag (the
+      // interceptor sets it synchronously, the promise resolves later).
+      out.hitSyncModern = window.__dshPreviewHit || null;
+      window.__dshPreviewHitModern = out.hitSyncModern;
+      window.__dshPreviewHit = out.hitSync;
       return JSON.stringify(out);
     })()
     """
