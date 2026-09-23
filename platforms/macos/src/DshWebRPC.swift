@@ -46,6 +46,12 @@ enum DshWebRPC {
     /// modern attempt is expected to fail and callers fall back to the persisted
     /// store (see DshWorkspaceStore).
     static let workspaceList = Endpoint("workspace/list", "workspace.list", field: "_request")
+    /// dsh >= 0.1.2: register (or resolve) a workspace over an existing directory.
+    /// `workspace/create { request: { path } }` -> `{workspace:{workspaceId,…},created}`.
+    /// Idempotent — an already-registered path returns the existing workspace
+    /// (`created:false`), and the verb carries no capability gate (only
+    /// `directoryPicker/*` does). See docs/projects-panel-design.md §4.2 / C10a.
+    static let workspaceCreate = Endpoint("workspace/create", "workspace.create")
 
     /// Launch token from the URL dsh web advertises (nil on dsh <= 0.1.1).
     /// ServerManager sets it once dsh web is up; never logged.
@@ -314,8 +320,23 @@ enum DshWorkspaceStore {
 
     /// Canonical form of a path (standardized + symlinks resolved) so session cwds
     /// and workspace paths compare reliably.
+    ///
+    /// Uses `realpath(3)` rather than Foundation's `resolvingSymlinksInPath()`:
+    /// a directory listing on macOS reports `/private/var/…` while the same path
+    /// written by a user (or stored by dsh) may say `/var/…` — Foundation's
+    /// variant leaves both as-is, so the two spellings of one directory failed to
+    /// match (the Projects panel would report a workspace as unregistered, and
+    /// `workspaceId(forPath:)` would miss). `realpath` resolves the existing
+    /// prefix exactly the way the listing does, folding the two together; a path
+    /// that does not exist yet falls back to the standardized form (which is what
+    /// this returned before).
     static func canonical(_ path: String) -> String {
-        URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+        let standardized = (path as NSString).standardizingPath
+        if let resolved = realpath(standardized, nil) {
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
+        return standardized
     }
 
     /// The workspaceId of the workspace whose path matches `path` (nil when unknown).
@@ -327,6 +348,76 @@ enum DshWorkspaceStore {
             if canonical(wsPath) == target { return ws["workspaceId"] as? String }
         }
         return nil
+    }
+}
+
+
+// MARK: - Workspace registration & sessions (Projects panel)
+
+/// The three dsh operations the Projects panel needs, kept next to the endpoint
+/// they use instead of being inlined into the panel (the panel must stay testable
+/// through a fake `DshWebRPC.perform`). Behaviour mirrors what the dsh web client
+/// itself does when the user adds a folder / starts a session there.
+///
+/// WikiPanel keeps its own private `WikiRPC.createSession` twin on purpose: it is
+/// shipped code with its own tests, and this feature must not refactor it.
+enum DshWorkspaceOps {
+
+    /// Register the directory as a dsh workspace and return its workspaceId, or
+    /// nil when the call cannot be served (dsh ≤ 0.1.1, server still booting,
+    /// store drift). Callers MUST treat nil as "unregistered", never as a failure
+    /// that aborts the operation — the directory itself is already there.
+    static func register(port: Int, path: String, timeout: TimeInterval = 8) -> String? {
+        guard let value = DshWebRPC.call(DshWebRPC.workspaceCreate, ["path": path], port: port, timeout: timeout),
+              let workspace = value["workspace"] as? [String: Any],
+              let id = workspace["workspaceId"] as? String, !id.isEmpty else { return nil }
+        return id
+    }
+
+    /// Create one session whose working directory is `cwd`.
+    ///
+    /// Passing `workspaceId` first makes dsh web group the session under that
+    /// workspace (the same thing its own "new session" button does); a server that
+    /// rejects the id (stale store, archived workspace, older dsh) falls back to a
+    /// plain `cwd` create, which still produces a usable session.
+    static func createSession(port: Int, cwd: String, workspaceId: String?,
+                              timeout: TimeInterval = 15) -> String? {
+        if let wid = workspaceId, !wid.isEmpty,
+           let sid = createSession(port: port, payload: ["workspaceId": wid], timeout: timeout) {
+            return sid
+        }
+        return createSession(port: port, payload: ["cwd": cwd], timeout: timeout)
+    }
+
+    private static func createSession(port: Int, payload: [String: Any], timeout: TimeInterval) -> String? {
+        guard let value = DshWebRPC.call(DshWebRPC.sessionCreate, payload, port: port, timeout: timeout),
+              let sid = value["sessionId"] as? String, !sid.isEmpty else { return nil }
+        return sid
+    }
+
+    /// The session to re-open when the user asks for a workspace: among the
+    /// sessions whose cwd canonicalizes to `path`, a running one wins; otherwise
+    /// the most recently updated. nil when the workspace has no session yet (the
+    /// caller then creates one).
+    static func newestSessionId(port: Int, inPath path: String, timeout: TimeInterval = 6) -> String? {
+        guard let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port, timeout: timeout),
+              let items = value["items"] as? [[String: Any]] else { return nil }
+        let target = DshWorkspaceStore.canonical(path)
+        let matches = items.filter { item in
+            guard let cwd = item["cwd"] as? String, !cwd.isEmpty else { return false }
+            return DshWorkspaceStore.canonical(cwd) == target
+        }
+        guard !matches.isEmpty else { return nil }
+        let running = matches.filter { ($0["running"] as? Bool) == true }
+        let pool = running.isEmpty ? matches : running
+        let sid = pool.sorted { updatedAt($0) > updatedAt($1) }.first?["sessionId"] as? String
+        return (sid?.isEmpty == false) ? sid : nil
+    }
+
+    private static func updatedAt(_ item: [String: Any]) -> Double {
+        if let d = item["updatedAt"] as? Double { return d }
+        if let n = item["updatedAt"] as? NSNumber { return n.doubleValue }
+        return 0
     }
 }
 
