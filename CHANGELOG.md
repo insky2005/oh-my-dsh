@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
-## [Unreleased]
+## [1.16.1] - 2026-09-23
 
 ### Changed
 
