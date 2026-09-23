@@ -124,10 +124,18 @@ $DSH_HOME/shell/
 
 ## 6. 树池的填充与补齐
 
-- **惰性填充**：每次启动自查 `trees/<当前 dsh 版本>` 是否存在，缺则 `cp -cR` clone（5–6 s / ~14 MB，每版本一次）。
+- **惰性填充 + 装机时机**：每次启动自查 `trees/<当前 dsh 版本>` 是否存在，缺则 `cp -cR` clone（5–6 s / ~14 MB，每版本一次）。
   必须这样做，因为**装新 pkg 会把旧 bundle（含旧 `runtime/dsh`）整体替换掉**，「升级前抓旧树」来不及。
+- **只收"已经证明能启动"的树**（2026-09-23 实测踩坑后加）：抓树**不在 spawn 之前**，而是**页面加载完成之后**
+  （`captureRuntimeTree()` 挂在 `didFinish`，一次/启动；`snapshot launch` 用 `--no-tree` 只做数据快照）。
+  否则"构建坏了但 App 起来了"的状态下，池里会存下**从没启动成功过**的树，回退时把坏树换回 bundle —— 表现就是回退后启动报同一个错。
+- **闭包校验（`--expected-lock`）**：仓库为每个受支持 spec 提交一份已知可启动的闭包锁
+  （`platforms/macos/runtime-locks/<spec>/package-lock.json`，随 App 分发到 `Contents/Resources/runtime-locks/`）。
+  抓树时：与提交 lock 指纹不一致的树**拒绝入池**，池里已有的不一致副本会被替换；
+  换树时：池中那棵若与提交 lock 不一致则**拒绝换入**，回报 `needsTreeInstall`，让壳层用 lock 重新 `npm ci`。
+  根因是 dsh 用 caret 范围声明 cordis 工具链（见 `docs/dsh-version-impact.md` R8）。
 - **补齐（针对跳版本用户）**：升级/回退事务里若目标版本不在池里（例如用户从 1.16.0 直跳带 0.1.5 的版本），
-  尝试 `npm install @deepseek-ai/dsh@<版本>` 装入池（联网约 20 s）；失败则该快照标「仅可回退数据」。
+  用 `npm ci` 从提交的 lock 装一份进池（联网约 20 s；没有 lock 的版本退回 `npm install`）；失败则该快照标「仅可回退数据」。
 
 ## 7. 回退事务（原子性）
 

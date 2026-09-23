@@ -386,6 +386,14 @@ build_runtime
 RUNTIME="$APP/Contents/Resources/runtime"
 mkdir -p "$RUNTIME"
 ditto "$CACHE_DIR/runtime/$ARCH" "$RUNTIME"
+# Committed runtime locks (one per supported dsh spec) travel with the app: the
+# snapshot feature installs a missing dsh version from them (npm ci) instead of
+# a drifting `npm install`, and uses them to reject a pooled tree whose closure
+# is not the known-good one.
+if [ -d "$ROOT/platforms/macos/runtime-locks" ]; then
+  ditto "$ROOT/platforms/macos/runtime-locks" "$APP/Contents/Resources/runtime-locks"
+  echo "    runtime locks embedded: $APP/Contents/Resources/runtime-locks ($(ls "$ROOT/platforms/macos/runtime-locks" | wc -l | tr -d ' ') spec(s))"
+fi
 # 共享核心 core/ 一并嵌入运行时（shell 通过 node runtime/core/bin/ohmy-core.js 调用）。
 if [ -d "$ROOT/core" ]; then
   ditto "$ROOT/core" "$RUNTIME/core"

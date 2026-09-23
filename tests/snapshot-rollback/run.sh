@@ -137,4 +137,29 @@ assert_eq "$(jfile 'd.dataCombo.dsh' "$H2/shell/dsh-state.json")" 0.1.2-rc.1 "th
 assert_eq "$(jfile 'd.upgradePinned.dsh' "$H2/shell/dsh-state.json")" 0.1.2-rc.1 "auto-upgrade stays pinned"
 rm -rf "$H2"
 
+
+echo "== a pooled tree with the wrong closure is refused (dependency drift)"
+H3="$(mktemp -d)"
+mkdir -p "$H3/sessions/--w--/s1" "$H3/storages" "$H3/runtime/dsh/lib" "$H3/locks/dsh-0.1.2-rc.1"
+echo '{"type":"session","version":0}' > "$H3/sessions/--w--/s1/session.jsonl.zstd"
+echo '{}' > "$H3/storages/workspace.json"
+echo 0.1.2-rc.1 > "$H3/runtime/dsh/lib/bin.js"
+# the committed lock for the version we are about to roll back to
+printf '{"lockfileVersion":3,"packages":{"node_modules/@deepseek-ai/dsh":{"version":"0.1.2-rc.1"}}}\n' > "$H3/locks/dsh-0.1.2-rc.1/package-lock.json"
+$CLI launch --app-version 1.16.0 --dsh-version 0.1.2-rc.1 --dsh-dir "$H3/runtime/dsh" --no-tree --home "$H3" >/dev/null
+# a tree whose own lock differs from the committed one (drifted closure)
+mkdir -p "$H3/shell/snapshots/trees/0.1.2-rc.1"
+printf '{"lockfileVersion":3,"packages":{"node_modules/@deepseek-ai/dsh":{"version":"0.1.2-rc.1"},"node_modules/@deepseek-ai/cordis-plugin-hmr":{"version":"9.9.9"}}}\n' > "$H3/shell/snapshots/trees/0.1.2-rc.1/package-lock.json"
+echo drifted > "$H3/shell/snapshots/trees/0.1.2-rc.1/version"
+rm -rf "$H3/runtime/dsh"; mkdir -p "$H3/runtime/dsh/lib"; echo 0.1.5-rc.2 > "$H3/runtime/dsh/lib/bin.js"
+UP4="$($CLI launch --app-version 1.16.2 --dsh-version 0.1.5-rc.2 --dsh-dir "$H3/runtime/dsh" --no-tree --home "$H3")"
+ID4="$(echo "$UP4" | jget 'd.snapshotId')"
+G="$($CLI rollback --id "$ID4" --server-stopped --current-app 1.16.2 --current-dsh 0.1.5-rc.2 \
+  --dsh-dir "$H3/runtime/dsh" --expected-lock "$H3/locks/dsh-0.1.2-rc.1/package-lock.json" --home "$H3")"
+assert_eq "$(echo "$G" | jget 'd.partial')" true "a drifted pooled tree is not swapped in"
+assert_eq "$(echo "$G" | jget 'd.reason')" pooled-tree-closure-mismatch "the reason names the closure mismatch"
+assert_eq "$(echo "$G" | jget 'd.needsTreeInstall')" 0.1.2-rc.1 "the caller is told to install that version instead"
+[ -e "$H3/shell/snapshots/trees/0.1.2-rc.1" ] && fail "the drifted pooled tree must be dropped"
+rm -rf "$H3"
+
 echo "all snapshot-rollback checks passed"

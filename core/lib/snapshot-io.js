@@ -216,22 +216,51 @@ function createSnapshot({ home, appVersion, dshVersion, reason, at, io, fromComb
 
 /**
  * Make sure the tree of `version` is in the pool (one copy per dsh version).
- * Called at launch: installing a new .pkg replaces the whole app bundle — and
- * with it the old `runtime/dsh` — before any of our code runs, so the only way
- * to keep the old tree is to have captured it while it was still running.
- * @returns {{action: 'present'|'cloned'|'none', dir: string|null, clone?: string}}
+ *
+ * Call this only for a tree that has PROVEN it boots (the shell captures after
+ * the page has loaded). A tree captured from a broken build poisons every later
+ * rollback — measured 2026-09-23: a drifted closure (cordis-plugin-hmr 1.0.19
+ * instead of 1.0.17) was pooled from a build that never started, and rolling
+ * back to it reinstalled the broken tree.
+ *
+ * `expectedLock` (path to the committed `package-lock.json` for this dsh
+ * version) is a second guard: when the pool already holds this version, a tree
+ * whose own lock differs from the committed one is REPLACED (the committed lock
+ * is the closure we know is good); a tree being captured whose lock differs is
+ * REJECTED unless `force`.
+ *
+ * @returns {{action: 'present'|'cloned'|'rejected'|'none', dir: string|null, reason?: string, clone?: string}}
  */
-function captureTree({ home, dshDir, version, io }) {
+function captureTree({ home, dshDir, version, io, expectedLock, force }) {
   const I = io || defaultIO;
   if (!version || !dshDir || !I.exists(dshDir)) return { action: 'none', dir: null };
   const root = dshHomeDir(home);
   const dest = treeDir(root, version);
-  if (I.exists(dest)) return { action: 'present', dir: dest };
+  const want = expectedLock && I.exists(expectedLock) ? lockFingerprint(expectedLock) : null;
+  if (I.exists(dest)) {
+    const have = lockFingerprint(path.join(dest, 'package-lock.json'));
+    if (!want || !have || have === want) return { action: 'present', dir: dest, lock: have || null };
+    // pooled copy is not the committed closure — refresh it
+    I.remove(dest);
+  }
+  const have = lockFingerprint(path.join(dshDir, 'package-lock.json'));
+  if (want && have && have !== want && !force) {
+    return { action: 'rejected', dir: null, reason: 'closure-mismatch', have, want };
+  }
   const tmp = dest + '.tmp-' + process.pid;
   I.remove(tmp);
   const clone = I.cloneDir(dshDir, tmp);
   I.move(tmp, dest);
-  return { action: 'cloned', dir: dest, clone };
+  return { action: 'cloned', dir: dest, clone, lock: have || null };
+}
+
+/** sha256 of a file, or null (used for the closure identity of a tree). */
+function lockFingerprint(file) {
+  try {
+    return require('node:crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex').slice(0, 16);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -383,6 +412,7 @@ module.exports = {
   snapshotSessionIds,
   createSnapshot,
   captureTree,
+  lockFingerprint,
   swapTree,
   applyRollback,
   pruneSnapshots,

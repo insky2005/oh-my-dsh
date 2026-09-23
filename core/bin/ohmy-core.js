@@ -308,7 +308,7 @@ function println(s) {
           const state = IO.readState(dshHome);
           const decision = S.decideLaunch({ state, currentCombo });
           const tree = (flag('no-tree') === undefined && dshDir)
-            ? IO.captureTree({ home: dshHome, dshDir, version: dshVersion })
+            ? IO.captureTree({ home: dshHome, dshDir, version: dshVersion, expectedLock: flag('expected-lock') })
             : { action: 'skipped', dir: null };
           let snapshotId = null;
           const adoptOnly = flag('no-snapshot') !== undefined;
@@ -333,6 +333,14 @@ function println(s) {
           const journal = S.resumePlan(IO.readJournal(dshHome));
           const mismatch = !!(next.dataCombo && dshVersion && next.dataCombo.dsh && next.dataCombo.dsh !== dshVersion);
           printJson({ ok: true, launch: decision, snapshotId, tree, prune, journal, mismatch, state: next });
+        } else if (sub === 'tree') {
+          // Post-boot capture: only ever pool a tree that has PROVEN it boots
+          // (the shell calls this once the page has finished loading).
+          const version = flag('dsh-version');
+          const dir = flag('dsh-dir');
+          if (!version || !dir) fail('usage: snapshot tree --dsh-version <v> --dsh-dir <path> [--expected-lock <path>] [--force] [--home <dir>]');
+          const res = IO.captureTree({ home: dshHome, dshDir: dir, version, expectedLock: flag('expected-lock'), force: flag('force') !== undefined });
+          printJson(Object.assign({ ok: res.action !== 'rejected' }, res));
         } else if (sub === 'list') {
           printJson({
             snapshots: IO.listSnapshots(dshHome).map((s) => ({
@@ -412,7 +420,22 @@ function println(s) {
             journal = S.advanceJournal(journal, 'quarantine', { note: applied.quarantined.length + ' sessions' });
             IO.writeJournal(dshHome, journal);
             if (treeVersion && dshDir && treeVersion !== currentDsh) {
-              if (!IO.defaultIO.exists(IO.treeDir(dshHome, treeVersion))) {
+              const poolDir = IO.treeDir(dshHome, treeVersion);
+              // Defense in depth: a pooled tree whose lock differs from the
+              // committed one is not the closure we know is good — never swap it
+              // back in; let the caller install the version from the lock.
+              const expected = flag('expected-lock');
+              if (IO.defaultIO.exists(poolDir) && expected && IO.defaultIO.exists(expected)) {
+                const have = IO.lockFingerprint(poolDir + '/package-lock.json');
+                const want = IO.lockFingerprint(expected);
+                if (have && want && have !== want) {
+                  IO.defaultIO.remove(poolDir);
+                  IO.writeJournal(dshHome, journal);
+                  printJson({ ok: true, partial: true, needsTreeInstall: treeVersion, reason: 'pooled-tree-closure-mismatch', have, want, journal, applied, preRollbackId: preId, stamp });
+                  return;
+                }
+              }
+              if (!IO.defaultIO.exists(poolDir)) {
                 // the caller has to npm-install that version into the pool, then call finish-rollback
                 IO.writeJournal(dshHome, journal);
                 printJson({ ok: true, partial: true, needsTreeInstall: treeVersion, journal, applied, preRollbackId: preId, stamp });
@@ -455,6 +478,7 @@ function println(s) {
           printJson({ ok: true, deleted: id, remaining: IO.listSnapshots(dshHome).length });
         } else {
           fail('usage: snapshot launch --app-version <A> --dsh-version <D> [--dsh-dir <path>] [--home <dir>] [--keep <n>] [--no-tree]'
+            + ' | tree --dsh-version <D> --dsh-dir <path> [--expected-lock <path>] [--force]'
             + ' | list [--home <dir>] | status [--dsh-version <D>] [--home <dir>]'
             + ' | create --reason <r> --app-version <A> --dsh-version <D> [--from-app <A>] [--from-dsh <D>]'
             + ' | plan-rollback --id <id> [--current-dsh <v>] [--min-supported <v>]'

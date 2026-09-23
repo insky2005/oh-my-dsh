@@ -964,17 +964,31 @@ final class DSHUpdater {
     /// built-in dsh can still be swapped back instead of falling back to
     /// "data only + reinstall the old app".
     /// @returns the installed version, or nil on failure.
-    func installVersion(_ version: String, into dest: String, registry: String) -> String? {
+    func installVersion(_ version: String, into dest: String, registry: String, lockPath: String? = nil) -> String? {
         let fm = FileManager.default
         _ = try? fm.createDirectory(atPath: dest, withIntermediateDirectories: true)
-        let manifest = dest + "/package.json"
-        if !fm.fileExists(atPath: manifest) {
-            try? "{\"name\":\"ohmy-dsh-snapshot-tree\",\"private\":true}\n"
-                .write(toFile: manifest, atomically: true, encoding: .utf8)
+        var args: [String]
+        if let lock = lockPath, fm.fileExists(atPath: lock) {
+            // Reproducible closure: dsh declares its cordis tooling with caret
+            // ranges, so a plain install may pull a plugin release the old dsh
+            // cannot even boot with (see docs/dsh-version-impact.md R8).
+            let dir = (lock as NSString).deletingLastPathComponent
+            try? fm.removeItem(atPath: dest + "/package.json")
+            try? fm.removeItem(atPath: dest + "/package-lock.json")
+            try? fm.copyItem(atPath: dir + "/package.json", toPath: dest + "/package.json")
+            try? fm.copyItem(atPath: lock, toPath: dest + "/package-lock.json")
+            AppLog.shared.log("snapshot tree install: using committed lock for dsh " + version)
+            args = [npmCli, "ci", "--loglevel=error", "--no-audit", "--no-fund", "--registry", registry]
+        } else {
+            let manifest = dest + "/package.json"
+            if !fm.fileExists(atPath: manifest) {
+                try? "{\"name\":\"ohmy-dsh-snapshot-tree\",\"private\":true}\n"
+                    .write(toFile: manifest, atomically: true, encoding: .utf8)
+            }
+            args = [npmCli, "install", "--loglevel=error", "--no-audit", "--no-fund",
+                    "--registry", registry, "@deepseek-ai/dsh@" + version]
         }
         var log = ""
-        let args = [npmCli, "install", "--loglevel=error", "--no-audit", "--no-fund",
-                    "--registry", registry, "@deepseek-ai/dsh@" + version]
         let code = runNpm(args, cwd: dest, onOutput: { log.append($0) })
         guard code == 0 else {
             AppLog.shared.log("snapshot tree install failed (dsh " + version + ", exit " + String(code) + "): " + String(log.suffix(400)))
@@ -1970,6 +1984,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// attention (unavailable runtime / an unfinished rollback). Surfaced by the
     /// snapshot UI; logged at launch either way.
     private var snapshotNotice: String?
+    /// One post-boot tree capture per launch (see captureRuntimeTree).
+    private var didCaptureRuntimeTree = false
     /// The「会话快照…」window (created lazily).
     private var snapshotWindowController: SnapshotWindowController?
     /// Oldest dsh generation this shell still adapts to (core keeps both API
@@ -3293,11 +3309,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // the quarantine/clone steps (and its own session locks would survive).
         server.stop()
         AppLog.shared.log("snapshot rollback: dsh web stopped, running transaction for " + entry.id)
-        let out = CoreBridge.run(["snapshot", "rollback", "--id", entry.id, "--server-stopped",
-                                  "--current-app", appVersion, "--current-dsh", dshVersion,
-                                  "--dsh-dir", updater.dshDir,
-                                  "--min-supported", Self.minSupportedDshVersion] + base,
-                                 timeout: 900, preferBundledNode: true)
+        var rollbackArgs = ["snapshot", "rollback", "--id", entry.id, "--server-stopped",
+                            "--current-app", appVersion, "--current-dsh", dshVersion,
+                            "--dsh-dir", updater.dshDir,
+                            "--min-supported", Self.minSupportedDshVersion]
+        if let lock = committedRuntimeLockPath(dshVersion: entry.dshVersion) {
+            rollbackArgs += ["--expected-lock", lock]
+        }
+        let out = CoreBridge.run(rollbackArgs + base, timeout: 900, preferBundledNode: true)
         guard let out = out,
               let data = out.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -3312,7 +3331,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             // (swap the tree, write the state file, clear the journal).
             AppLog.shared.log("snapshot rollback: data rolled back; filling the tree pool with dsh " + needed)
             let poolDir = dshDataHome + "/shell/snapshots/trees/" + needed
-            guard updater.installVersion(needed, into: poolDir, registry: RegistryConfig.current) != nil else {
+            // Install from the committed lock when the app ships one for that
+            // version (reproducible closure — see docs/dsh-version-impact.md R8).
+            guard updater.installVersion(needed, into: poolDir, registry: RegistryConfig.current,
+                                         lockPath: committedRuntimeLockPath(dshVersion: needed)) != nil else {
                 presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.rollback.needsTree", needed))
                 return
             }
@@ -3345,6 +3367,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func openSessionSnapshotsPlaceholder() {}
+    /// Capture the running dsh tree into the version pool — called only once the
+    /// page has finished loading, i.e. this tree has PROVEN it boots. A tree
+    /// captured any earlier can be one that never started, and a rollback would
+    /// then reinstall that broken tree (see docs/dsh-version-impact.md R8).
+    private func captureRuntimeTree() {
+        guard !didCaptureRuntimeTree else { return }
+        guard let updater = currentUpdater(), let dshVersion = updater.currentVersion else { return }
+        didCaptureRuntimeTree = true
+        let lockPath = committedRuntimeLockPath(dshVersion: dshVersion)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            var args = ["snapshot", "tree",
+                        "--dsh-version", dshVersion,
+                        "--dsh-dir", updater.dshDir,
+                        "--home", self.dshDataHome]
+            if let lockPath = lockPath { args += ["--expected-lock", lockPath] }
+            guard let out = CoreBridge.run(args, timeout: 300, preferBundledNode: true) else {
+                AppLog.shared.log("snapshot tree: capture hook unavailable")
+                return
+            }
+            AppLog.shared.log("snapshot tree: " + out)
+        }
+    }
+
+    /// The committed runtime lock for one dsh version, shipped inside the app
+    /// (`Contents/Resources/runtime-locks/dsh-<version>/package-lock.json`).
+    private func committedRuntimeLockPath(dshVersion: String) -> String? {
+        guard let res = Bundle.main.resourceURL else { return nil }
+        let path = res.appendingPathComponent("runtime-locks/dsh-" + dshVersion + "/package-lock.json").path
+        return FileManager.default.fileExists(atPath: path) ? path : nil
+    }
     // MARK: session snapshots — upgrade integration
 
     /// Take the pre-upgrade snapshot (data + the outgoing tree). Failure never
@@ -3401,10 +3454,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return
         }
         let appVersion = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "?"
+        // --no-tree: the tree is captured AFTER the page loads (captureRuntimeTree).
+        // Pooling a tree that never booted is how a broken build poisons every
+        // later rollback (measured 2026-09-23).
         let args = ["snapshot", "launch",
                     "--app-version", appVersion,
                     "--dsh-version", dshVersion,
                     "--dsh-dir", updater.dshDir,
+                    "--no-tree",
                     "--home", dshDataHome]
         guard let out = CoreBridge.run(args, timeout: 300, preferBundledNode: true),
               let data = out.data(using: .utf8),
@@ -3947,6 +4004,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         AppLog.shared.log("page did finish loading: \(webView.url?.absoluteString ?? "?")")
+        // The page loading proves the bundled dsh actually boots — only now is its
+        // tree safe to keep for a later rollback.
+        captureRuntimeTree()
         loadRecoveryAttempted = false      // a good page re-arms the one-shot recovery
         // Warm the Review panel's session listing now that a workspace resolves,
         // so opening the panel renders immediately instead of waiting on the core

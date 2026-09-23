@@ -415,6 +415,8 @@ dsh 的 `package.json` 用 caret 声明这些插件（`^1.0.17`），所以 `npm
 
 **升级时怎么验**：构建日志必须出现 `using committed runtime lock: …` 与 `smoke: dsh web came up`；若出现 `WARNING: no committed lock for <spec>`，说明这个 spec 还没配锁，先补一份再发。
 
+**同源教训（快照树池）**：抓树必须**只在"这棵树已经启动成功"之后**（壳层挂在页面加载完成时抓，见 `docs/session-snapshot-rollback-design.md` §6）——否则"构建坏了但 App 起来了"会把一棵从没启动成功的树存进池，回退时又把坏树换回来（2026-09-23 用户实测踩到）。
+
 **教训**：① 「钉版本」要钉到**闭包**（lockfile），只钉顶层包等于没钉；② 构建"成功"不等于产物能用——**能启动**才是验收标准，所以把冒烟放进构建；③ 这类漂移**只影响旧版本**（新 dsh 与新插件自洽），正是"长期停在一个旧 dsh 上"的隐性代价。
 
 ## 7. 参考
