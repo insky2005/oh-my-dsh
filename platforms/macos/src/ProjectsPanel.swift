@@ -390,7 +390,12 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
             let id = DshWorkspaceOps.register(port: port, path: path)
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                if id == nil { self.setStatus(L10n.tr("projects.registerPending"), isError: false) }
+                if let id = id {
+                    // The acceptance check ("did dsh register it?") reads this line.
+                    AppLog.shared.log("projects: registered " + path + " as " + id)
+                } else {
+                    self.setStatus(L10n.tr("projects.registerPending"), isError: false)
+                }
                 self.reload()
             }
         }
