@@ -60,6 +60,8 @@ tests/snapshot-rollback/run.sh          # 会话快照 / 回退 CLI 端到端（
 tests/snapshot-panel/run.sh             # 会话快照窗口的数据模型（解析 list/plan-rollback、格式化、坏数据不崩）
 tests/projects-panel/run.sh             # 项目面板（根目录解析 / 命名规则 / 目录列举 / dsh 注册表合并
                                         #   + 控制器无头：建目录与注册请求 / 六个快捷入口 / 改根）
+tests/injected-scripts/run.sh           # 注入 dsh web 的 JS 守卫：脚本可解析（node --check）/ 每个 window.__dshX
+                                        #   桥名都有脚本安装它 / 不含会被 Swift 吃掉的转义
 tests/l10n/run.sh                       # L10n 键名 lint（缺失键 / 重复键 / 中英缺一）
 tests/skills-panel/run.sh               # 技能面板（frontmatter 读写 / 四根扫描与级别 / registry 与地址解析）
                                         #   + controller/冒烟 + render-tests.swift（离屏绘制：头部不被不透明兄弟覆盖）

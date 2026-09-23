@@ -12,9 +12,9 @@ All notable changes to this project are documented in this file. Format follows
 - **项目面板（Projects，`⌥⌘P`，活动栏首位「项目」图标）：把「工作区 = 一个目录」变成壳层里的一等公民**。面板以可配置的**项目根目录**（默认 `$DSH_HOME/oh-my-dsh/projects`，可改成任意绝对路径，存 `shell/config.json` 的 `projectsRoot`）为范围，每个直属子目录就是一张工作区卡片：
   - **新建工作区**只需输入目录名：面板 `mkdir -p <root>/<name>` 后调 dsh 的 `workspace/create`（**幂等**、路径须已存在）注册；注册失败（dsh 未起来 / 旧版本）只标「未注册」并在下次操作重试，**目录保留**；名字规则在创建前拦截（空 / 含 `/` 或 `:` / 以 `.` 开头 / 超 64 字符）；同名目录已存在按「采用」处理，不报错；
   - **六个快捷入口**：文件 / 终端 / 知识库 / 任务 / 通道 / 审查——点一下即把壳层当前工作区切到它并打开对应面板（终端 cwd、文件树根、wiki 根、任务·通道·审查的工作区一起跟随）；
-  - **新会话**：在该工作区建一条 dsh web 会话并切过去（先 `session/create { workspaceId }` 保证归属分组，被拒退回 `cwd`）；**在 dsh 中打开**（点卡片名称）复用该工作区最近一条会话（运行中优先），没有则新建；另有在 Finder 中显示 / 复制路径；
+  - **新会话**：点 dsh web 侧栏**该工作区行自带的 `+`**（注入桥 `window.__dshNewSession(工作区名)`）——由 dsh 自己决定**复用该工作区已有的空会话**还是新建，然后打开它，壳层只是"替用户点了那一下"；**在 dsh 中打开**（点卡片名称）复用该工作区最近一条**可打开**的会话（`blank` 空会话在侧栏不可见，故跳过；运行中优先），没有则走「新会话」；另有在 Finder 中显示 / 复制路径；
   - **单一真相**：当前工作区始终是壳层的 `ProjectDirectory`，重根收口到新抽出的 `AppDelegate.adoptProjectDirectory(_:)`（`dshSession` 跟随与面板快捷入口共用同一个原语，面板只做高亮）；该原语带 `fileExists` 守卫，拒绝把面板重根到已消失的目录（旧代码会照常重根）；
-  - **侧边栏延迟**：dsh web 客户端还没重拉列表时（刚建好的工作区/会话），先 `nudgeDSHWebCaches()`、一次 1.5s 重试，仍失败则把会话 id 存进 `pendingOpenSessionId` 并重载页面、在 `didFinish` 后补打开一次；
+  - **侧边栏延迟**：刚注册的工作区由 dsh 自己的**工作区流**送达客户端侧栏（实测 1–2 秒内出现，**不需要刷新、更不需要重连**）；「新会话」的桥内部重试 12×150ms 等工作区行出现，「在 dsh 中打开」失败后 1.5s 再试一次，仍失败就**放弃**并写面板状态行——**永不自动重载页面**（旧版的失败重载 + `didFinish` 重放会形成每 ~10s 一轮的死循环刷新，已在 `ed989ac` 删除）；
   - **未注册的目录不联动**：项目根目录下某个目录若不在 dsh web 的 workspace 里，卡片就不提供 dsh 动作（「新会话」禁用、点卡片只在状态行提示），六个**本地**面板入口（文件/终端/知识库/任务/通道/审查）照常可用，并在徽标后面多出一个 **folder+ 图标按钮「添加工作区 / Add workspace」**（与 dsh web 同词；幂等注册 → 徽标翻「已注册」、dsh 动作解锁）；**已注册**的卡片则在徽标后面显示 **`+` 图标「新会话 / New Session」**（两个按钮互斥，都在标题行）；
   - 实现：`platforms/macos/src/ProjectsCore.swift`（纯模型：根目录解析 / 命名规则 / 目录列举 / 与 dsh 注册表按 canonical 路径合并）、`ProjectsPanel.swift`（面板：卡片三行 + 头部 + 根目录行 + 空态 + 结果行 + 取名 sheet）、`DshWebRPC.swift` 新增 `workspaceCreate` 端点与 `DshWorkspaceOps`（注册 / 建会话 / 按工作区挑会话）、`main.swift` 接线与设置窗口「项目」区块（路径字段 + 选择…/保存/恢复默认）；测试 `tests/projects-panel/`（模型 45 项 + 控制器无头 49 项 = **94 项**）与 `tests/dsh-rpc/` 新增 14 项（整套 54 项），均已接入 CI 与 `scripts/local-ci.sh`；设计见 `docs/projects-panel-design.md`。
   - 顺带修正 `DshWorkspaceStore.canonical`：改用 `realpath(3)`，让 macOS 目录列举给出的 `/private/var/...` 与用户/dsh 存写的 `/var/...` 归一到同一条工作区（此前两种写法互不相等，面板会把已注册工作区标成「未注册」）。
@@ -24,6 +24,10 @@ All notable changes to this project are documented in this file. Format follows
 ### Changed
 
 - **视图菜单「显示/隐藏 预览面板」正名为「显示/隐藏 文件面板」，快捷键由 `⌥⌘P` 改为 `⌥⌘F`**：该面板的实现从 v1.7 起已由 `FilePanel.swift` 承担，活动栏（`bar.preview` = 文件 / Files）、面板头部与 README 里也一直叫「文件」，只有视图菜单还留着旧名「预览」。同时把 **`⌥⌘P` 空出来给即将落地的「项目」面板**（本提交只做让位，面板本身单独评审）。L10n 键同步改名 `menu.togglePreview` → `menu.toggleFiles`（避免留一个名不符实的死键），设置窗口的快捷键清单同步更新为 ⌥⌘F。
+
+### Fixed
+
+- **项目面板「新会话」每次都要 dsh web 重连，而且新会话根本不出现（实际已经建了）**。根因有两层，都在"壳层替 dsh web 建会话"这个做法上：① dsh web 侧栏对会话有一条**可见性规则**——*Ordinary sessions are visible; among blank sessions, only the current one is visible*（`dsh-client-ui-workspace/lib/client.js` 的 `sessionVisible`；`blank` = 从未发过消息的会话）。壳层用 `session/create` 建的正是 blank 会话，而它不是页面的当前会话，于是**侧栏里连这一行都没有**；壳层切页面的唯一手段是点行，于是「新会话」永远切不过去，还每点一次就多留一条谁也打不开的空会话（`app.log` 里 `workspaceRow=yes` + `sessionRows` 不增长、`session/list` 里空会话越积越多）。② 为了掩盖①，旧代码每次先 `nudgeDSHWebCaches()`——派发合成的浏览器 `offline`→`online` 让客户端重连，这就是用户看到的**每次点都重连**。现在「新会话」改走 dsh 自己的入口：注入桥新增 `window.__dshNewSession(工作区名)`（`sessionOpenerScript`），在侧栏找到该工作区行并点它行内自带的 `+`（`dsh-client-ui-workspace` 的 `ProjectRowItem`；行内按钮固定 [工作区菜单, 新建会话]，取最后一枚；hover 才显示但 `click()` 有效，实测可用），于是 dsh 自己执行 `connectWorkspace` 的语义——**复用该工作区已有的 blank 会话，没有才建，然后 open**（会话成为当前会话，blank 行随之以本地化的「新会话 / New Session」出现在侧栏）。结果：不重连、不堆空会话、完全复用 dsh 的语义；壳层经 `dshSession` 追踪器跟随页面切过去的会话。侧栏 DOM 变样时（B10）保留兜底：走 RPC 建会话 + 状态行 `projects.newSessionFallback` 提示去侧栏该工作区行点「+」（那一步会复用这条空会话），**不再 nudge、也不再点行**。配套：`DshWorkspaceOps.newestSessionId` 跳过 `blank == true` 的会话（「在 dsh 中打开」不会再选中一条打不开的空会话，只剩空会话时改为走「新会话」由 dsh 复用）；`onWorkspaceRegistered` 不再 nudge（实测新工作区经 dsh 的工作区流 1–2 秒内自己出现在侧栏）。新增无头套件 `tests/injected-scripts/`（注入 dsh web 的所有 JS 必须可解析、每个 `window.__dshX` 桥名都必须有脚本安装它、不许出现会被 Swift 吃掉的转义——历史上这类错误的表现就是"按钮点了没反应"），`tests/dsh-rpc/` 补 3 例守 blank 跳过；两套均已接入 `scripts/local-ci.sh` 与 CI。
 
 ## [1.16.2] - 2026-09-23
 

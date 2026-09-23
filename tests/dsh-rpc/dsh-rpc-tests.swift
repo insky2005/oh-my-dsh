@@ -348,6 +348,39 @@ fake.routes = ["GET /?token=launch-token": (303, nil),
 eq(DshWorkspaceOps.newestSessionId(port: 6017, inPath: "/p/abc"), nil,
    "newestSessionId: a workspace without sessions answers nil (the caller creates one)")
 
+// A BLANK session (never prompted) is skipped even when it is the newest: dsh web
+// renders a blank session ONLY while it is the page's current one, so re-opening
+// one from outside the page is impossible and it would hide the workspace's real
+// sessions. nil means "nothing worth re-opening" — the caller starts a session
+// and dsh web answers by REUSING that very blank session.
+DshWebRPC.resetForTests()
+let withBlank: [[String: Any]] = [
+    ["sessionId": "s-blank-newest", "cwd": "/p/abc", "blank": true, "running": false, "updatedAt": 900.0],
+    ["sessionId": "s-real-older", "cwd": "/p/abc", "blank": false, "running": false, "updatedAt": 3.0],
+]
+fake.routes = ["GET /?token=launch-token": (303, nil),
+               "POST /api/session/list": (200, okValue(["items": withBlank]))]
+eq(DshWorkspaceOps.newestSessionId(port: 6018, inPath: "/p/abc"), "s-real-older",
+   "newestSessionId: a blank session is skipped even when it is the newest")
+
+DshWebRPC.resetForTests()
+fake.routes = ["GET /?token=launch-token": (303, nil),
+               "POST /api/session/list": (200, okValue(["items": [withBlank[0]]]))]
+eq(DshWorkspaceOps.newestSessionId(port: 6019, inPath: "/p/abc"), nil,
+   "newestSessionId: a workspace whose only session is blank answers nil (the caller reuses it)")
+
+// A plain running blank session must not win over a real idle one either: the
+// running flag is only meaningful among sessions that can actually be opened.
+DshWebRPC.resetForTests()
+let runningBlank: [[String: Any]] = [
+    ["sessionId": "s-blank-running", "cwd": "/p/abc", "blank": true, "running": true, "updatedAt": 999.0],
+    ["sessionId": "s-real-idle", "cwd": "/p/abc", "blank": false, "running": false, "updatedAt": 1.0],
+]
+fake.routes = ["GET /?token=launch-token": (303, nil),
+               "POST /api/session/list": (200, okValue(["items": runningBlank]))]
+eq(DshWorkspaceOps.newestSessionId(port: 6020, inPath: "/p/abc"), "s-real-idle",
+   "newestSessionId: a running session only wins among openable (non-blank) ones")
+
 // canonical(): a macOS directory listing reports /private/var/... while the same
 // path typed by the user (or stored by dsh) may say /var/... — both must compare
 // equal, or the panel reports a registered workspace as unregistered.

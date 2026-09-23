@@ -397,13 +397,20 @@ enum DshWorkspaceOps {
 
     /// The session to re-open when the user asks for a workspace: among the
     /// sessions whose cwd canonicalizes to `path`, a running one wins; otherwise
-    /// the most recently updated. nil when the workspace has no session yet (the
-    /// caller then creates one).
+    /// the most recently updated.
+    ///
+    /// BLANK sessions (never prompted — dsh's own `blank` flag) are skipped on
+    /// purpose: dsh web renders one only while it IS the current session, so a
+    /// blank session cannot be opened from outside the page, and returning it
+    /// would hide the workspace's real, visible sessions. nil therefore also
+    /// means "nothing worth re-opening here" — the caller then starts a session,
+    /// which dsh web answers by reusing that very blank session.
     static func newestSessionId(port: Int, inPath path: String, timeout: TimeInterval = 6) -> String? {
         guard let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port, timeout: timeout),
               let items = value["items"] as? [[String: Any]] else { return nil }
         let target = DshWorkspaceStore.canonical(path)
         let matches = items.filter { item in
+            if (item["blank"] as? Bool) == true { return false }
             guard let cwd = item["cwd"] as? String, !cwd.isEmpty else { return false }
             return DshWorkspaceStore.canonical(cwd) == target
         }

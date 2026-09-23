@@ -285,8 +285,9 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
     var onOpenPanel: ((String, ProjectTargetPanel) -> Void)?
     /// Create a session in this workspace and switch dsh web to it.
     var onCreateSession: ((String) -> Void)?
-    /// A dsh workspace was just created for a folder: main.swift nudges dsh web so
-    /// its sidebar picks the new workspace up.
+    /// A dsh workspace was just created for a folder. main.swift only logs it:
+    /// dsh web's sidebar picks the new workspace up through its own workspace
+    /// stream (verified against dsh 0.1.2), so no page nudge is needed.
     var onWorkspaceRegistered: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     /// QA hook (--ui-debug): fires after each render.

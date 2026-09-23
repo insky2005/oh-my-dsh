@@ -652,6 +652,7 @@ enum L10n {
         "projects.needsWorkspace": ("该目录还不是 dsh 工作区：先点「创建 dsh 工作区」", "This folder is not a dsh workspace yet — use “Create dsh workspace” first"),
         "projects.newSession": ("新会话", "New Session"),
         "projects.newSessionFailed": ("无法新建会话：%@", "Could not create a session: %@"),
+        "projects.newSessionFallback": ("会话已创建，但没能在 dsh web 侧栏定位它：请在侧栏「%@」工作区行点「+」打开", "The session was created, but dsh web's sidebar has no row for it: click “+” on the “%@” workspace row to open it"),
         "projects.openFailed": ("未能在 dsh web 侧栏定位该会话（%@…）：请在侧栏点开对应工作区手动选择", "Could not find that session in dsh web's sidebar (%@…): open the workspace in the sidebar and pick it there"),
         "projects.openFailedNoSession": ("dsh web 还没有列出这条会话（%@…）：稍候片刻再点，或直接在侧栏选择", "dsh web does not list that session yet (%@…): retry in a moment, or pick it in the sidebar"),
         "projects.settingsSection": ("项目", "Projects"),
@@ -2448,10 +2449,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         projectsPanel.onCreateSession = { [weak self] path in
             self?.createSessionInWorkspace(path)
         }
-        // A folder's dsh workspace was just created from the panel: let the web
-        // client pick it up (its sidebar is the only place the user sees it).
+        // A folder's dsh workspace was just created from the panel: dsh web's
+        // sidebar picks the new row up on its own (an added workspace reaches
+        // every connected client through dsh's workspace stream within a second
+        // or two), so nothing is nudged here. The old synthetic offline/online
+        // nudge is gone on purpose: all it did was make the page reconnect,
+        // which the user sees as a flicker — the row appears without it.
         projectsPanel.onWorkspaceRegistered = { [weak self] in
-            self?.nudgeDSHWebCaches()
+            self?.dlog("projects: workspace registered — dsh web picks it up through its workspace stream")
         }
         // QA (--ui-debug): snapshot the panel again once it has rendered.
         projectsPanel.onDidRender = { [weak self] in
@@ -3170,11 +3175,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     })()
     """
 
-    /// Panel → web session link bridge. Exposes
-    /// window.__dshOpenSession(sessionId, workspaceName), which switches dsh web
-    /// to that session. dsh web exposes no session store and no per-session URL,
-    /// so we click the matching sidebar row — the same gesture the user performs.
-    /// Two strategies, in order:
+    /// Panel → web session bridge. Two entry points, both DOM-driven because
+    /// dsh web exposes no session store and no per-session URL — clicking what
+    /// the user would click is the only gesture available:
+    ///
+    ///   * window.__dshNewSession(workspaceName) — the Projects panel's "新会话":
+    ///     clicks the workspace row's own "+" button, i.e. dsh's create-or-reuse
+    ///     gesture (reuse the workspace's blank session, else create, then open).
+    ///     The shell never POSTs session/create for this: a session created
+    ///     behind the page's back stays invisible (the sidebar shows a blank
+    ///     session only while it is the current one), so there would be no row
+    ///     to click and one empty session would pile up per click.
+    ///   * window.__dshOpenSession(sessionId, workspaceName) — switch dsh web to
+    ///     an existing session. Two strategies, in order:
     ///   1. the row whose text equals the session's title (session/list ->
     ///      projections.values.title) — exact, but only named sessions have one;
     ///   2. the first session row INSIDE the sidebar group named after the
@@ -3305,6 +3318,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           return items;
         }).catch(function (err) { console.log("[dsh-opener] list error", String(err)); return null; });
       }
+      // The workspace row's own "new session" button. dsh's gesture (not ours):
+      // reuse the workspace's blank session when there is one, otherwise create
+      // it, then OPEN it. Reusing it here rather than POSTing session/create is
+      // what makes the result visible at all — the sidebar renders a blank
+      // session ONLY while it is the current one ("among blank sessions, only
+      // the current one is visible"), so a session created behind the page's
+      // back has no row to open, and clicking a row is how the shell switches
+      // the page. It also stops one empty session piling up per click.
+      function newSessionButton(row) {
+        var buttons = row.querySelectorAll("button");
+        return buttons.length === 0 ? null : buttons[buttons.length - 1];
+      }
+      function newSessionInWorkspace(name, attempt) {
+        var group = groupRow(name);
+        if (group !== null) {
+          var button = newSessionButton(group);
+          if (button !== null) {
+            var label = button.getAttribute("aria-label") || "";
+            button.click();
+            return { ok: true, via: "workspace-new-session", button: label };
+          }
+        }
+        // The row can be a moment late (a workspace registered seconds ago
+        // arrives through dsh's own workspace stream).
+        if (attempt < 12) {
+          return new Promise(function (resolve) {
+            setTimeout(function () { resolve(newSessionInWorkspace(name, attempt + 1)); }, 150);
+          });
+        }
+        console.log("[dsh-opener] new-session workspace-row-not-found", name);
+        return failed("workspace-row-not-found", name);
+      }
+      window.__dshNewSession = function (workspaceName) {
+        if (!workspaceName) return { ok: false, reason: "no-workspace" };
+        return newSessionInWorkspace(workspaceName, 0);
+      };
       window.__dshOpenSession = function (sessionId, workspaceName) {
         if (!sessionId) return { ok: false, reason: "no-id" };
         return fetchSessions(true).then(function (items) {
@@ -4231,7 +4280,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     /// "Open in dsh" (the card's title / a click on the card): reuse the
-    /// workspace's newest session, or create one when it has none yet.
+    /// workspace's newest REAL session, or start one when it has none yet (its
+    /// only sessions are blank ones, which dsh web's sidebar hides — the start
+    /// path reuses exactly such a session rather than making another).
     private func openWorkspaceInDsh(_ path: String) {
         let port = server.port
         let workspaceName = (path as NSString).lastPathComponent
@@ -4251,10 +4302,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    /// "New session": create a session in the workspace, re-root the shell to it
-    /// and switch dsh web to that session. Failures land in the panel's status
-    /// line — never in a modal alert (the panel may be a narrow column).
+    /// "New session": let dsh web's OWN sidebar entry do it — click the "+" on
+    /// that workspace's row (window.__dshNewSession). That is dsh's
+    /// create-or-reuse gesture: it reuses the workspace's blank session when
+    /// there is one, otherwise creates it, and then OPENS it.
+    ///
+    /// Doing it here instead of POSTing session/create ourselves is what makes
+    /// the session usable at all: the sidebar renders a blank session ONLY while
+    /// it is the current one, so a session created behind the page's back has no
+    /// row to click (the shell's only way to switch the page) — and every click
+    /// left one more empty session behind. The shell still re-roots itself to the
+    /// workspace first; the page's own switch reaches it through the session
+    /// tracker, so ProjectDirectory and the panel stay in agreement.
+    ///
+    /// Failures land in the panel's status line — never in a modal alert (the
+    /// panel may be a narrow column).
     private func createSessionInWorkspace(_ path: String) {
+        _ = adoptProjectDirectory(path)
+        guard let web = webView, web.url != nil else {
+            projectsPanel?.setStatus(L10n.tr("projects.newSessionFailed", "dsh web is not loaded"), isError: true)
+            return
+        }
+        let name = (path as NSString).lastPathComponent
+        AppLog.shared.log("projects: asking dsh web for a new session in " + path)
+        web.callAsyncJavaScript("return await window.__dshNewSession(workspaceName);",
+                                arguments: ["workspaceName": name], in: nil, in: .page) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let value):
+                let dict = value as? [String: Any]
+                if (dict?["ok"] as? Bool) == true {
+                    AppLog.shared.log("projects: dsh web started a session in " + path
+                                      + " (via " + (dict?["via"] as? String ?? "?") + ")")
+                    return
+                }
+                let reason = dict?["reason"] as? String ?? "unexpected bridge result"
+                AppLog.shared.log("projects: dsh web could not start a session in " + path + ": " + reason
+                                  + " " + Self.sidebarProbe(dict ?? [:]))
+                self.createSessionOverRPC(path, because: reason)
+            case .failure(let error):
+                AppLog.shared.log("projects: new-session bridge error: " + error.localizedDescription)
+                self.createSessionOverRPC(path, because: "bridge-error")
+            }
+        }
+    }
+
+    /// Fallback for a sidebar whose DOM no longer answers (it is a private detail
+    /// of dsh web — docs/dsh-version-impact.md B10). Create the session over the
+    /// host RPC so the click still leaves a usable session in dsh's registry, and
+    /// say why dsh web did not switch: a session created this way is blank, and
+    /// it appears the moment the user clicks that workspace's "+" in the sidebar
+    /// (which reuses exactly this session instead of making another one).
+    private func createSessionOverRPC(_ path: String, because reason: String) {
         let port = server.port
         guard port > 0 else {
             projectsPanel?.setStatus(L10n.tr("projects.newSessionFailed", "dsh web is not running"), isError: true)
@@ -4270,16 +4369,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                                                   isError: true)
                     return
                 }
-                _ = self.adoptProjectDirectory(path)
-                // The page only learns about the new workspace/session once its
-                // client re-fetches; nudge, then click the sidebar row.
-                self.nudgeDSHWebCaches()
-                // A just-created session needs the client a moment to list it, so
-                // this path retries more than a plain click does.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    self?.openDSHSession(sid, retry: 3, workspaceName: (path as NSString).lastPathComponent)
-                }
-                AppLog.shared.log("projects: created session \(sid) in " + path)
+                AppLog.shared.log("projects: created session \(sid) in " + path
+                                  + " (the sidebar bridge said: " + reason + ")")
+                self.projectsPanel?.setStatus(L10n.tr("projects.newSessionFallback",
+                                                      (path as NSString).lastPathComponent), isError: true)
             }
         }
     }

@@ -101,6 +101,8 @@ jobs:
         run: tests/file-panel/run.sh
       - name: Projects panel tests (model + controller)
         run: tests/projects-panel/run.sh
+      - name: Injected-script guard (dsh web bridges)
+        run: tests/injected-scripts/run.sh
       - name: L10n key lint
         run: tests/l10n/run.sh
       - name: Build CEF integration artifacts (arm64)

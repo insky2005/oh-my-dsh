@@ -37,7 +37,7 @@
   · **未注册**：标题次要色、光标非手型、「新会话」**禁用**（tooltip = `projects.needsWorkspace`）、点卡片不调用壳层（状态行提示同一句）；
   · **六个面板入口始终可用**——文件 / 终端 / 知识库 / 任务 / 通道 / 审查是壳层**本地**操作（重根 + 切面板），不碰 dsh web；
   · 面板侧还有第二道防线：卡片闭包内先判 `registered` 再转发（`warnNeedsWorkspace()` 只提示）；
-- 未注册的卡片提供**唯一**的 dsh 动作：标题行的 `folderPlus` 按钮（**自定义字形**：文件夹轮廓 + 大的**朴素**加号，加号竖臂即文件夹右壁、无圆形底；参考图 `pic/folder+.jpg`。SF Symbols 的 `folder.badge.plus` 是右上角"圆圈加号"角标，故不用；tooltip **「添加工作区 / Add workspace」**，与 dsh web 同词，L10n `projects.register`）→ `ProjectsPanelController.registerWorkspace(path:)` 后台调 `DshWorkspaceOps.register`（幂等）→ 成功：状态行 `projects.registerDone` + `onWorkspaceRegistered`（main.swift 走 `nudgeDSHWebCaches()` 让 web 侧栏认领）+ 面板 reload（徽标翻「已注册」、dsh 动作解锁）；失败：状态行 `projects.registerFailed`，不弹模态、**不动磁盘**；
+- 未注册的卡片提供**唯一**的 dsh 动作：标题行的 `folderPlus` 按钮（**自定义字形**：文件夹轮廓 + 大的**朴素**加号，加号竖臂即文件夹右壁、无圆形底；参考图 `pic/folder+.jpg`。SF Symbols 的 `folder.badge.plus` 是右上角"圆圈加号"角标，故不用；tooltip **「添加工作区 / Add workspace」**，与 dsh web 同词，L10n `projects.register`）→ `ProjectsPanelController.registerWorkspace(path:)` 后台调 `DshWorkspaceOps.register`（幂等）→ 成功：状态行 `projects.registerDone` + `onWorkspaceRegistered`（main.swift 只记一行日志：新工作区经 dsh 的工作区流自己到达客户端侧栏，**不 nudge、不重连**——2026-09-24 实测）+ 面板 reload（徽标翻「已注册」、dsh 动作解锁）；失败：状态行 `projects.registerFailed`，不弹模态、**不动磁盘**；
 - 「+ 新建工作区」不变：`mkdir` + 顺带注册（幂等）。
 
 ### 1.3 非目标
@@ -154,6 +154,7 @@ SessionCreateValue   = { sessionId, agentPreset? }
 - 传 `workspaceId`：新会话**归属该工作区**（在 dsh web 侧边栏分组在工作区下），壳层优先用它；
 - 传 `cwd`：会话工作目录直接指定（老 dsh 或 `workspaceId` 被拒时的回退；结果会落在「Ungrouped」分组，功能可用）；
 - 与既有 `WikiRPC.createSession(port:cwd:workspaceId:)` 的策略**完全一致**（先 workspaceId、被拒退 cwd）。本设计把等价逻辑收进共享的 `DshWorkspaceOps`，**但不去重构 WikiPanel 的私有实现**（避免动已上线面板；两处 15 行重复是有意为之，后续如需统一另开一次专门重构）。
+- **面板的「新会话」不走这条 RPC**（2026-09-24 修正）：见 §4.5b——dsh web 只渲染**当前那一条 blank 会话**，壳层自己建的 blank 会话在侧栏里没有行可点，等于每次点「新会话」都留下一条谁也打不开的空会话。面板改为点 dsh web 侧栏工作区行自带的「+」，由 dsh 自己决定复用还是新建。
 
 ### 4.4 工作区读取：没有 `workspace/list`
 
@@ -161,20 +162,36 @@ SessionCreateValue   = { sessionId, agentPreset? }
 
 ### 4.5 「在 dsh web 中打开某会话」只能靠注入桥
 
-dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 现有 `sessionOpenerScript` 注入 `window.__dshOpenSession(sessionId)`：先按会话 id 查 `session/list` 拿标题，再在侧栏 DOM 里找 `[role="treeitem"]` 且 `className` 含 `sessionRow`、行文本等于标题的那一行并 `click()`（最多重试 8 次，每次先展开 `aria-expanded=false` 的组）。这是影响清单 **B 面 / R3** 的既有弱点，本设计**不加重**它，只做两件事：
+dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 现有 `sessionOpenerScript` 注入 `window.__dshOpenSession(sessionId)`：先按会话 id 查 `session/list` 拿标题，再在侧栏 DOM 里找 `[role="treeitem"]` 且 `className` 含 `sessionRow`、行文本等于标题的那一行并 `click()`（最多重试 8 次，每次先展开 `aria-expanded=false` 的组）；会话没有标题（blank）时退化为点该工作区分组下的第一条会话行。这是影响清单 **B 面 / R3** 的既有弱点，本设计**不加重**它，只做一件事：`openDSHSession` 增加**一次** 1.5s 重试，仍失败则**放弃**并把原因写进面板状态行 + `app.log`（**永不自动重载页面**：旧版的失败兜底重载 + `didFinish` 重放会形成每 ~10s 一轮的死循环刷新，见 `ed989ac`）。
 
-1. 调用前先 `nudgeDSHWebCaches()`（合成 `offline` → `online` 让 web 客户端重连、重拉列表）——否则壳层刚创建的会话/工作区可能还不在侧栏里；
-2. `openDSHSession` 增加**一次** 1.5s 重试；仍失败则记 `pendingOpenSessionId` 并重载页面——复用既有的 `reloadPageReauthenticating(reason:)`（⌘R 同款：走 launch token 重新认证 + 主框架 401 自愈），在 `webView(_:didFinish:)` 里再打开一次（只打开一次，用完清空）。
+### 4.5b 「新会话」= 点 dsh web 自己的入口，壳层不建会话
+
+dsh web 侧栏对会话有一条**可见性规则**（`dsh-client-ui-workspace/lib/client.js` 的 `sessionVisible`，逐字读自 0.1.2）：
+
+> Ordinary sessions are visible; among blank sessions, **only the current one is visible**.
+
+`blank` = 从未发过消息的会话（`session/list` 的 `items[].blank`）。也就是说壳层用 `session/create` 建出来的会话，**在它成为页面当前会话之前，侧栏里根本没有这一行**——而壳层切页面的唯一手段就是点行，于是「新会话」永远切不过去，还每点一次就多留一条谁也打不开的空会话（实测 `app.log` 的 `workspace-row-not-found` + 侧栏 `sessionRows` 不增长）。
+
+dsh 自己的「新会话」（工作区行悬停出现的 `+`，`aria-label = "在“<工作区>”中新建会话" / "New session in <workspace>"`）语义正相反——`connectWorkspace()`：
+
+1. 先找该工作区**已有的 blank 会话**（`blank && cwd === workspace.path && 归该工作区 && 未归档`）→ 命中就**复用**；
+2. 没有才 `session/create`；
+3. 然后 `open()` 它 —— 它成为当前会话，**blank 行随之显示**（行文本就是本地化的「新会话 / New Session」）。
+
+所以面板的「新会话」改成注入桥 `window.__dshNewSession(workspaceName)`：在侧栏按工作区名找到工作区行（`role="treeitem"` 且 `aria-expanded` 存在，非 `sessionRow`），点它行内**最后一个 button**（工作区行的按钮固定是 [工作区菜单 …, 新建会话 +]，最后一枚恒为新建会话；两个按钮都靠 CSS hover 显示，`x=0 w=0` 也照样可 `click()`——实测有效），最多重试 12×150ms（刚注册的工作区要等 dsh 的工作区流把它送到客户端）。结果：**不重连、不堆积空会话、复用 dsh 的语义**，会话由 dsh 自己创建/复用并打开，壳层通过 `dshSession` 追踪器跟随。
+
+桥找不到工作区行时（dsh 侧栏 DOM 变样，B10）保留一条**兜底**：走老路 `register + session/create` 把会话建出来（`projects.newSessionFallback` 提示用户去侧栏该工作区行点「+」，那一步会**复用**这条 blank 会话），但**不再 nudge、也不再点行**（blank 行本来就不存在，点行只会点到别的会话）。
 
 ### 4.6 契约速查
 
 | # | 依赖 | 值 / 形状 | 壳层位置 | 验证方式 |
 |---|---|---|---|---|
 | C10a | `workspace/create` | `{request:{path}}` → `{workspace:{workspaceId,…},created}`，幂等，路径须存在 | `DshWebRPC.swift` `DshWorkspaceOps.register` | 单测（假传输）+ 手工：新建后 dsh web 侧栏出现该工作区 |
-| C10b | `session/create` | `{workspaceId\|cwd}` → `{sessionId}` | `DshWorkspaceOps.createSession` | 单测 + 手工：面板「新会话」后 web 切到新会话 |
+| C10b | `session/create` | `{workspaceId\|cwd}` → `{sessionId}`；**blank 会话只在"是当前会话"时可见** | `DshWorkspaceOps.createSession`（**仅兜底**；面板「新会话」走 B10b） | 单测 + 手工：面板「新会话」后 web 切到该工作区的新会话，且**会话总数不增长**（复用 blank） |
 | C10c | `session/list` | `items[].{sessionId,cwd,running,updatedAt,blank}` | `DshWorkspaceOps.newestSessionId` | 单测 + 手工：工作区已有会话时「在 dsh 中打开」复用最近一条 |
 | C4/R4 | 工作区列表 | 0.1.2 无 `workspace/list` → `storages/workspace.json`（domain workspace v2） | `DshWorkspaceStore.items` | `tests/dsh-rpc/run.sh` + `app.log` 的 `[workspace-store]` 诊断 |
-| B10/R3 | 侧栏行点击 | `__dshOpenSession(id)`：`session/list` 取标题 → 点 `[role="treeitem"].sessionRow` | `sessionOpenerScript` + `openDSHSession` | `DSH_UI_DEBUG=1` 的 `dsh injected bridges` + console `[dsh-opener]` |
+| B10/R3 | 侧栏行点击 | `__dshOpenSession(id)`：`session/list` 取标题 → 点 `[role="treeitem"].sessionRow` | `sessionOpenerScript` + `openDSHSession` | `DSH_UI_DEBUG=1` 的 `dsh injected bridges` + console `[dsh-opener]`；`tests/injected-scripts/run.sh` 保证脚本可解析、桥名对得上 |
+| B10b | 侧栏工作区行的「+」 | `__dshNewSession(name)`：工作区行内**最后一枚 button** → dsh 自己 reuse-or-create + open | `sessionOpenerScript` + `createSessionInWorkspace` | 同上 + `app.log` 的 `projects: dsh web started a session in … (via workspace-new-session)` |
 
 ---
 
@@ -277,23 +294,21 @@ dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 
 
 ```
 [新会话] on abc（主线程）
-  └─ 后台线程：
-        wid = DshWorkspaceOps.register(port, "…/abc")          // 幂等；失败 → nil
-        sid = DshWorkspaceOps.createSession(port, cwd:"…/abc", workspaceId: wid)
-              // 先 workspaceId；被拒则只用 cwd（落 Ungrouped）
-     成功 → 主线程：
-        adoptProjectDirectory("…/abc")        // 面板先跟上
-        nudgeDSHWebCaches()                   // 让 web 客户端重新拉会话/工作区列表
-        0.5s 后 openDSHSession(sid, retry: 1) // 点侧栏行切过去
-        失败 → pendingOpenSessionId = sid; reloadPage()
-               → webView(_:didFinish:) 里再打开一次（只打开一次）
-     失败 → 状态行「无法新建会话：<原因>」（不弹模态）
+  └─ adoptProjectDirectory("…/abc")          // 壳层先跟上（面板/终端/wiki 重根）
+     await window.__dshNewSession("abc")     // 点侧栏该工作区行的「+」
+       ok  → 日志 projects: dsh web started a session in <path> (via workspace-new-session)
+             dsh 自己 reuse-or-create 并 open → dshSession 追踪器回报当前会话 → 面板跟随
+       失败 → 兜底（dsh 侧栏 DOM 变样时）：
+              register + session/create 把会话建出来（幂等；不重试、不点行、不 nudge）
+              → 状态行 projects.newSessionFallback「…请在侧栏该工作区行点「+」」
+              那一步 dsh 会**复用**这条空会话，所以不会越点越多
 
 [在 dsh 中打开] on abc
   └─ 后台：register → newestSessionId(port, inPath: "…/abc")
-             // session/list 里 canonical(cwd) 相等者，running 优先，其次 updatedAt 最大
+             // session/list 里 canonical(cwd) 相等、且 **blank != true** 者，
+             // running 优先，其次 updatedAt 最大
      有 → 主线程 adoptProjectDirectory + openDSHSession(该 id)
-     无 → 走上面的「新会话」
+     无（含"只有空会话"）→ 走上面的「新会话」（dsh 会复用那条空会话）
 ```
 
 ---
@@ -338,7 +353,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 |---|---|---|
 | dsh web 还没起来 / 端口未就绪 | 目录照建；状态行「已创建目录，尚未注册到 dsh」；「新会话」报错只进状态行，不崩、不弹模态 | `app.log` 的 `projects:` 行 |
 | dsh ≤0.1.1 或旧端点不认 `workspace/create` | 记「未注册」；建会话退回只传 `cwd`（进 Ungrouped，功能可用） | 同上 + `[dsh-opener]` |
-| 侧栏还没有新工作区/新会话的行 | nudge → 0.5s 点行 → 失败重试一次 → 仍失败则重载页面并在 `didFinish` 打开一次 | `openDSHSession …: row-not-found` 日志 |
+| 侧栏还没有新工作区/新会话的行 | 「新会话」直接点工作区行的「+」（桥内部重试 12×150ms，等 dsh 的工作区流把行送到）；「在 dsh 中打开」`openDSHSession` 重试一次后放弃并写状态行——**不重连、不重载页面** | `projects: dsh web could not start a session …` / `openDSHSession …: row-not-found` 日志 |
 | `$DSH_HOME/storages/workspace.json` 读不懂（上游改布局/升版本） | 注册状态与会话数退化为「未注册 / 0」，功能不受影响（只影响徽标）；诊断进日志 | `[workspace-store] …`（既有护栏，R4） |
 | 根目录不存在 | 空态 + 根路径提示；不自动写盘；首次新建时 `mkdir -p` 连带建根 | — |
 | 根目录在慢卷/网络卷 | 列举与注册表读取全在后台队列，主线程只渲染 | — |
@@ -452,14 +467,14 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 ## 12. 手工验收清单
 
 1. 全新环境启动 → **活动栏最上面第一个图标是「项目」**（其后：文件、终端、浏览器、知识库、任务、通道、审查、技能；九个图标互斥切换，与「视图」菜单首项一致）→ 面板显示默认根 `<DSH_HOME>/oh-my-dsh/projects`，空态提示，且**此时磁盘上还没有该目录**。
-2. 点「+」输入 `abc` → 目录被创建、卡片出现、徽标「已注册 · 0 个会话」；`app.log` 有注册成功日志；dsh web 重连后侧边栏出现该工作区。
+2. 点「+」输入 `abc` → 目录被创建、卡片出现、徽标「已注册 · 0 个会话」；`app.log` 有注册成功日志；**不需要任何重连/刷新**，dsh web 侧边栏一两秒内自己出现该工作区（工作区流推送；已实测）。
 3. 输入空串、`a/b`、`a:b`、`.x`、65 字符 → 提示规则且**不**建目录；输入已存在的 `abc` → 提示已存在并选中该卡片。
-4. 卡片「新会话」→ dsh web 切到新会话（面板项目目录也随之变为该工作区）；先把 dsh web 断网再恢复以模拟侧栏未刷新 → 仍能落到目标会话（重试/重载兜底），日志有 `openDSHSession` 结果。
+4. 卡片「新会话」→ dsh web 切到该工作区的会话（面板项目目录也随之变为该工作区），**页面不重连**（无 offline/online 痕迹），且**反复点不会堆空会话**：侧栏里该工作区下始终只有一条「新会话 / New Session」行，`session/list` 的总数不增长（dsh 复用 blank 会话）；日志为 `projects: dsh web started a session in … (via workspace-new-session)`。
 5. 依次点 文件 / 终端 / 知识库 / 任务 / 通道 / 审查 → 右栏切到对应面板，且内容以 `…/abc` 为根（文件树根、终端 cwd、wiki 根、任务/通道/审查的工作区）；知识库显示空态而不是别的仓库内容。
 6. 在 dsh web 手动切到另一个工作区的会话 → 面板跟随重根（既有行为不回归），项目面板高亮切到对应卡片；任务/通道/审查刷新。
 7. 设置窗口「项目」区块：改根目录并保存 → 面板立即刷新；相对路径被拒；「恢复默认」后 `shell/config.json` 里 `projectsRoot` 键消失；`⌥⌘P` 与菜单项 checkmark 同步（且「文件面板」已是 ⌥⌘F）。
 8. QA：`DSH_PROJECTS_TEST=1 DSH_PROJECTS_TEST_ROOT=/tmp/ws DSH_UI_DEBUG=1` 启动 → 面板直接打开且落在 `/tmp/ws`。
-9. `tests/projects-panel/run.sh`、`tests/dsh-rpc/run.sh`、`tests/l10n/run.sh` 全绿；`scripts/local-ci.sh swift`（含 swiftc 全量编译检查）通过。
+9. `tests/projects-panel/run.sh`、`tests/dsh-rpc/run.sh`、`tests/injected-scripts/run.sh`、`tests/l10n/run.sh` 全绿；`scripts/local-ci.sh swift`（含 swiftc 全量编译检查）通过。
 10. **与快照/回退共存**：在 dsh 里新建一个工作区（面板注册）→ 用「会话快照…」回退到该工作区出现之前的快照 → 重开后项目面板仍正常（列目录、徽标按恢复后的注册表显示，不崩、不报错），且能再次创建/注册该工作区（`workspace/create` 幂等）。
 
 ---
@@ -518,9 +533,10 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 | 面 | 条目 | 内容 | 失效表现 | 防御 |
 |---|---|---|---|---|
 | C（一元 RPC） | **C10a** | `workspace/create {request:{path}}`（幂等、路径须存在、参数名 `request`） | 新建的工作区不出现在 dsh web 侧边栏；会话落到 Ungrouped | 失败只降级为「未注册」+ 状态行提示，不阻塞目录创建；下次操作幂等重试 |
-| C | **C10b** | `session/create {workspaceId\|cwd}` | 面板「新会话」没有反应 | 先 workspaceId 再退 cwd；失败进状态行 |
+| C | **C10b** | `session/create {workspaceId\|cwd}`；`session/list` 的 `blank` 语义（blank 只在"是当前会话"时可见） | 面板「新会话」没有反应 / 空会话越点越多 | 面板「新会话」改走 B10b（点 dsh 自己的入口）；`createSession` 只作兜底；`newestSessionId` 跳过 blank |
 | C | **C10c** | `session/list` 的 `cwd`/`running`/`updatedAt` 字段 | 「在 dsh 中打开」挑不到会话 → 退化为新建 | 字段缺失时按「无会话」处理 |
-| B（注入/ DOM） | **B10** | `__dshOpenSession` 依赖侧栏 `[role="treeitem"].sessionRow` 与标题文本（既有 R3） | 新会话建了但 web 不切过去 | nudge → 重试一次 → 重载页面 + `didFinish` 补打开；日志 `[dsh-opener]` |
+| B（注入/ DOM） | **B10** | `__dshOpenSession` 依赖侧栏 `[role="treeitem"].sessionRow` 与标题文本（既有 R3） | 要打开的会话切不过去 | 重试一次后放弃 + 状态行；**永不自动重载页面**；日志 `[dsh-opener]` |
+| B | **B10b** | `__dshNewSession` 依赖侧栏工作区行与其行内**最后一枚 button**（hover 才显示，但 `click()` 有效） | 「新会话」建了会话但 web 不切过去 | 桥内重试 12×150ms；失败兜底走 RPC 建会话 + 状态行 `projects.newSessionFallback`；`tests/injected-scripts/run.sh` 守脚本可解析与桥名一致 |
 | D（磁盘布局） | 沿用 **C4/R4** | 注册状态读取仍走 `storages/workspace.json`（domain workspace v2） | 徽标退化为「未注册」，功能不受影响 | 既有版本/域名护栏 + 诊断日志 |
 
 升级 SOP 追加两条核对项（落地时写入影响清单 §5）：
