@@ -37,7 +37,7 @@ manual: false
 
 ## 卡片与三条流程
 
-卡片三行（2026-09-24 布局调整后）：① 目录名（semibold 13pt）+ 徽标（`已注册 · N 个会话` / `未注册`）+ **该卡唯一的 dsh 动作按钮**（徽标之后，`folderPlus`「添加工作区」或 `+`「新会话」，互斥）；② 绝对路径（次要色、中间截断、tooltip = 全路径）+ **行尾两个路径工具**（在 Finder 中显示 `.reveal` / 复制路径 `link`，22pt）；③ 操作行 = **文件 / 终端 / 知识库 / 任务 / 通道 / 审查** 六个 `CustomIconButton`（SF Symbol 与活动栏同源：`doc.on.doc`/`terminal`/`book.closed`/`checkmark.circle`/`dot.radiowaves.left.and.right`/`doc.text`）。**整卡可点 = 在 dsh 中打开**（`mouseDown` → `onOpen`；**仅限已注册**，见下面的分流表）。`206b577` 修掉「点名称没反应」：名称/徽标/路径都是 `NSTextField` 标签，标签自己会命中测试、把点击吃掉，于是 `ProjectCardView.hitTest(_:)` 覆写——命中的不是操作行控件（`NSButton` / `CustomIconButton`）就归位到卡片本身，操作行按钮仍按最深子视图优先正常工作。
+卡片三行（2026-09-24 布局调整后）：① 目录名（semibold 13pt）+ 徽标（`已注册 · N 个会话` / `未注册`）+ **该卡唯一的 dsh 动作按钮**（徽标之后，`folderPlus`「添加工作区」或 `+`「新会话」，互斥）；② 绝对路径（次要色、中间截断、tooltip = 全路径）+ **紧贴路径文本的两个工具**（在 Finder 中显示 `.reveal` / 复制路径 `link`，22pt；行尾放低 hugging 弹性占位吸收余量，故不右对齐；窄卡片时先截断路径）；③ 操作行 = **文件 / 终端 / 知识库 / 任务 / 通道 / 审查** 六个 `CustomIconButton`（SF Symbol 与活动栏同源：`doc.on.doc`/`terminal`/`book.closed`/`checkmark.circle`/`dot.radiowaves.left.and.right`/`doc.text`）。**整卡可点 = 在 dsh 中打开**（`mouseDown` → `onOpen`；**仅限已注册**，见下面的分流表）。`206b577` 修掉「点名称没反应」：名称/徽标/路径都是 `NSTextField` 标签，标签自己会命中测试、把点击吃掉，于是 `ProjectCardView.hitTest(_:)` 覆写——命中的不是操作行控件（`NSButton` / `CustomIconButton`）就归位到卡片本身，操作行按钮仍按最深子视图优先正常工作。
 
 **卡片按注册状态分流**（`041d1bd`，判据 `ProjectCardView.canUseDshActions = workspace.registered`）：
 

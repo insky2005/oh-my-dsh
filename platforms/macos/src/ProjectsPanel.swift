@@ -181,14 +181,24 @@ final class ProjectCardView: NSView {
         titleRow.translatesAutoresizingMaskIntoConstraints = false
 
         // The path line carries its own two utilities (show in Finder / copy path):
-        // they belong to "where is this folder", not to the panel entries below.
-        let pathRow = NSStackView(views: [pathLabel] + pathButtons())
+        // they belong to "where is this folder", not to the panel entries below —
+        // and they sit IMMEDIATELY after the path text (not flushed right), which
+        // is what the trailing spacer is for: the row is as wide as the card so a
+        // long path can truncate, but only the spacer absorbs the slack.
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        spacer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        let pathRow = NSStackView(views: [pathLabel] + pathButtons() + [spacer])
         pathRow.orientation = .horizontal
         pathRow.alignment = .centerY
         pathRow.spacing = 6
         pathRow.distribution = .fill
         pathRow.translatesAutoresizingMaskIntoConstraints = false
-        pathLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // The label hugs its text (so the buttons follow it) but gives way first
+        // when the card gets narrow — that is where the truncation happens.
+        pathLabel.setContentHuggingPriority(.required, for: .horizontal)
+        pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let actions = NSStackView(views: actionButtons())
         actions.orientation = .horizontal
