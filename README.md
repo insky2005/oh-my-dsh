@@ -207,8 +207,13 @@ open "dist/oh-my-dsh-<version>-arm64.dmg"
    （自动选最新 LTS，失败自动回退 nodejs.org），用官方 `SHASUMS256.txt` 校验 SHA-256 后，
    把 `bin/node` 和 `lib/node_modules/npm`（升级功能要用）嵌入 `Contents/Resources/runtime/`；
 2. **安装 dsh**：用刚下载的 Node 自带 npm，在 `Contents/Resources/runtime/dsh` 里执行
-   `npm install @deepseek-ai/dsh@<版本>`（默认版本，含其全部依赖闭包），默认走国内 npm 源
-   `registry.npmmirror.com`（失败自动回退 npmjs.org）。
+   **`npm ci`**（默认版本，含其全部依赖闭包），默认走国内 npm 源 `registry.npmmirror.com`（失败自动回退 npmjs.org）。
+   ⚠️ **闭包用提交的 lockfile 钉死**：`platforms/macos/runtime-locks/<spec>/package-lock.json`（随 App 分发到
+   `Contents/Resources/runtime-locks/`）。**只改 `DSH_PACKAGE_SPEC` 而不配 lock 是不行的**——dsh 用 caret 范围声明
+   它的 cordis 工具链，裸 `npm install` 会装当天最新的 1.x，可能让这个 dsh 版本**启动即崩**
+   （实测：`cordis-plugin-hmr` 1.0.19 装进 0.1.2-rc.1 → `user patch-layer watching requires the Cordis HMR service`，见
+   `docs/dsh-version-impact.md` R8）。装完还会跑一次**启动冒烟**（`smoke_runtime`：起一次 `dsh web`，40 秒内必须打出入口 URL
+   且进程存活，否则构建失败；跨架构 stage 自动跳过，`DSH_SKIP_RUNTIME_SMOKE=1` 可临时跳过）。
 
 **Node 选择策略（运行期）**：`DSH_NODE` 显式指定 > 系统 node（PATH→nvm current→nvm default→nvm 最新→Homebrew，
 取**通过版本门槛** `≥22.0.0` 者，`DSH_NODE_MIN` 可覆盖）> 内置 node 兜底；dsh web 子进程经登录 shell 合并用户 PATH。
@@ -218,7 +223,7 @@ open "dist/oh-my-dsh-<version>-arm64.dmg"
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `DSH_NODE_VERSION` | 自动检测最新 LTS | 指定下载的 Node 版本，如 `v22.23.2` |
-| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.2-rc.1` | 传给 `npm install` 的包说明（内置 dsh 版本，壳层与该版本同步适配；可覆盖为 `@deepseek-ai/dsh@latest` 等） |
+| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.2-rc.1` | 内置 dsh 版本（壳层与该版本同步适配；每个受支持版本需在 `platforms/macos/runtime-locks/<spec>/` 配一份 lockfile，构建用 `npm ci` 复现闭包） |
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh 用） |
 | `DSH_ARCH` | `uname -m` | 目标架构：`arm64` / `x86_64`（CI 构建 arm64，release 构建 arm64 + x86_64；不再出 universal） |
