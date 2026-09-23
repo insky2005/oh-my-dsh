@@ -424,6 +424,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 - `DSH_PROJECTS_TEST=1`：启动后直接打开项目面板（仿 `DSH_SKILLS_TEST`）；
 - `DSH_PROJECTS_TEST_ROOT=<dir>`：覆盖根目录（仅 QA）；
 - `DSH_UI_DEBUG=1`：面板渲染后落 `panel-projects-debug.png` + 视图层级 dump（沿用 `dumpPanelDebugInfo`）；
+- `DSH_PANEL_TEST="projects,files,terminal,…"`：**main 现有的全量扫描钩子**（随 v1.16.2 sync 进入 main；`buildSplitView` 末尾 → `AppDelegate.panelNamed(_:)` → `runPanelSweep`）。接线三件事：① `panelNamed` 增加 `case "projects", "项目"`；② 同步该钩子注释里的面板清单（八 → 九）；③ `setRightPanel` 的 `uiDebug` 分支带 `label: "projects"` 落截图；
 - 接线：`scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml` 的 swift job 各加 `tests/projects-panel/run.sh`；`tests/l10n/run.sh` 自动覆盖新键。
 
 ---
