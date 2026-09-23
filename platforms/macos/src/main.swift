@@ -107,7 +107,7 @@ enum L10n {
         "menu.edit": ("编辑", "Edit"),
         "menu.view": ("视图", "View"),
         "menu.appearance": ("外观", "Appearance"),
-        "menu.togglePreview": ("显示/隐藏 预览面板", "Toggle Preview Panel"),
+        "menu.toggleFiles": ("显示/隐藏 文件面板", "Toggle Files Panel"),
         // activity bar
         "bar.preview": ("文件", "Files"),
         "bar.terminal": ("终端", "Terminal"),
@@ -4508,7 +4508,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reloadItem.keyEquivalentModifierMask = [.command]
         reloadItem.target = self
         viewMenu.addItem(.separator())
-        let togglePreview = viewMenu.addItem(withTitle: L10n.tr("menu.togglePreview"), action: #selector(togglePreviewPanel(_:)), keyEquivalent: "p")
+        let togglePreview = viewMenu.addItem(withTitle: L10n.tr("menu.toggleFiles"), action: #selector(togglePreviewPanel(_:)), keyEquivalent: "f")
         togglePreview.keyEquivalentModifierMask = [.command, .option]
         togglePreview.target = self
         togglePreview.state = (rightPanel == .preview) ? .on : .off
@@ -5464,7 +5464,7 @@ final class SettingsWindowController {
     private let shortcutRows: [(key: String, shortcut: String)] = [
         ("menu.checkUpgrade", "⌘U"),
         ("menu.openLogs", "⌘L"),
-        ("menu.togglePreview", "⌥⌘P"),
+        ("menu.toggleFiles", "⌥⌘F"),
         ("menu.toggleTerminal", "⌥⌘T"),
         ("menu.toggleWiki", "⌥⌘W"),
         ("menu.toggleBrowser", "⌥⌘B"),

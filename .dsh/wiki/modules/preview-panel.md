@@ -32,7 +32,7 @@ manual: false
   - 图片：`showImage`；PDF：`showPDF`（PDFKit）；
   - 未知类型/二进制：`showMetadata` 图标 + 元数据（名称/大小/类型/创建/修改/路径/上一级）；
 - **项目目录树**：`TreeNode` 懒加载子节点（`children == nil` 表示未加载）；`resolveProjectDirectory` 经 `DSHSessionRPC` 解析活动会话 cwd（优先共享 `ProjectDirectory`），失败回退 `pickDirectoryFallback`（手动选文件夹）；`startTreeWatcher` 每 2s 轮询 mtime，变化即刷新；树宽可拖拽（初始宽度 160pt，拖动最小值 160pt）；`setProjectDirectory(_:)` 由壳层在会话切换时调用——只重设树根，已打开的预览页签不受影响；
-- **头部操作**：打开项目目录（`⌥⌘P` 同入口）、在默认应用中打开、在 Finder 中显示、关闭面板；
+- **头部操作**：打开项目目录（`⌥⌘F` 同入口）、在默认应用中打开、在 Finder 中显示、关闭面板；
 - `minWidth = 260`（面板最小宽）；面板宽由分割条控制并持久化（`previewPanelWidth`，AppDelegate 侧）。
 
 ## 与壳层的数据流

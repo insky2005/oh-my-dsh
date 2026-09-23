@@ -11,6 +11,10 @@ All notable changes to this project are documented in this file. Format follows
 
 - **Files 面板：目录树右键「添加到对话」把文件/文件夹作为 `@` 引用插进 dsh web 的输入框**：在文件或文件夹上右键 → **添加到对话** → 输入框末尾出现该条目（文件夹带尾斜杠，含空格的路径走 dsh 的 `@"…"` 引号语法）的引用 chip —— 与用户自己敲 `@` 从候选里选出来的是**同一种节点**，提交时序列化成同一段 `@相对路径` 文本。项目根与空白处不提供（没有「相对的自己」）；未打开会话时条目禁用并提示。**不改 dsh 源码**：壳层把 chip 节点直接写进 dsh web 的 Lexical 编辑器（`window.__dshInsertFileReference`），不伪造按键也不依赖焦点。新增纯模型 `platforms/macos/src/ComposerReference.swift`（引用语法 + 相对路径，无头单测 `tests/file-panel/composer-reference-tests.swift`）与目录树菜单规则/用例更新；真 WKWebView 实测与 dsh 升级核对项见 `docs/dsh-version-impact.md` B9 与 `docs/file-panel-composer-reference.md`；QA 钩子 `DSH_COMPOSER_TEST_PATH` / `DSH_COMPOSER_TEST_SESSION`。
 
+### Changed
+
+- **视图菜单「显示/隐藏 预览面板」正名为「显示/隐藏 文件面板」，快捷键由 `⌥⌘P` 改为 `⌥⌘F`**：该面板的实现从 v1.7 起已由 `FilePanel.swift` 承担，活动栏（`bar.preview` = 文件 / Files）、面板头部与 README 里也一直叫「文件」，只有视图菜单还留着旧名「预览」。同时把 **`⌥⌘P` 空出来给即将落地的「项目」面板**（本提交只做让位，面板本身单独评审）。L10n 键同步改名 `menu.togglePreview` → `menu.toggleFiles`（避免留一个名不符实的死键），设置窗口的快捷键清单同步更新为 ⌥⌘F。
+
 ## [1.16.2] - 2026-09-23
 
 ### Added
