@@ -1,6 +1,6 @@
 # 项目（Projects）面板设计
 
-> 状态：**已实现**（`feature/projects-panel`）。实现落在 `platforms/macos/src/ProjectsCore.swift`（纯模型）、`ProjectsPanel.swift`（面板 UI）、`DshWebRPC.swift`（`workspaceCreate` + `DshWorkspaceOps`）、`main.swift`（接线 / 重根原语 / 设置窗口「项目」区块 / QA 钩子）；测试 `tests/projects-panel/`（模型 44 项 + 控制器 35 项）与 `tests/dsh-rpc/`（+9 项）。
+> 状态：**已实现**（`feature/projects-panel`）。实现落在 `platforms/macos/src/ProjectsCore.swift`（纯模型）、`ProjectsPanel.swift`（面板 UI）、`DshWebRPC.swift`（`workspaceCreate` + `DshWorkspaceOps`）、`main.swift`（接线 / 重根原语 / 设置窗口「项目」区块 / QA 钩子）；测试 `tests/projects-panel/`（模型 45 项 + 控制器 39 项 = 84 项）与 `tests/dsh-rpc/`（+14 项，整套 54 项）。
 > 提交：`b59ac97` 模型 → `f541f4d` RPC → `232d38c` 面板+控制器测试 → `6d8c327` main.swift 接线；文档为 `28435f1`…`b581cab`。
 > 关联：`docs/dsh-version-impact.md`（本次新增耦合面：C10 工作区注册与建会话、B10 侧栏行点击桥；沿用 C4/R4 的 workspace.json 兜底）、`docs/skills-manager-design.md` / `docs/review-panel-design.md`（面板体例参照）、`docs/ui-color-scheme.md`（配色令牌）、`.dsh/wiki/tasks.md`（加面板清单）
 > 实现（规划）：`platforms/macos/src/ProjectsCore.swift`（纯模型）、`ProjectsPanel.swift`（面板）、`DshWebRPC.swift`（新增 `DshWorkspaceOps`）、`main.swift`（接线）；测试 `tests/projects-panel/`、`tests/dsh-rpc/`

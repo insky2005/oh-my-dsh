@@ -1,8 +1,8 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-09-21T09:43:26Z
-sources: [platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, docs/skills-manager-design.md, tests/skills-panel/, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, docs/dsh-version-impact.md, tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, tests/terminal-panel/run.sh, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/FilePanelTreeMenu.swift, docs/ux-feedback.md, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, CONTRIBUTING.md]
+updated: 2026-09-23T12:13:33Z
+sources: [platforms/macos/src/ProjectsPanel.swift, platforms/macos/src/ProjectsCore.swift, docs/projects-panel-design.md, tests/projects-panel/, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, docs/skills-manager-design.md, tests/skills-panel/, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, docs/dsh-version-impact.md, tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, tests/terminal-panel/run.sh, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/FilePanelTreeMenu.swift, docs/ux-feedback.md, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, CONTRIBUTING.md]
 manual: false
 ---
 
@@ -48,7 +48,7 @@ open "dist/oh-my-dsh.app"
 - 文件面板工作区页签记忆（`tests/file-panel/run.sh` 覆盖逻辑，界面手测）：打开若干文件时文件面板头部**始终**显示「文件」而非路径（路径在标题悬停 tooltip 与页签 tooltip 里）、终端面板头部**始终**显示「终端」而非会话标题/已结束状态、知识库面板头部**始终**显示「知识库」而非当前页面名（同样在 tooltip / 内容区 / 树里）→ dsh web 切到 B 工作区会话（页签栏清空、树根变 B）→ 切回 A（页签按原顺序重开且选中项还原）；A 中改文件不保存后切换 → 二选一提示（保存并切换 / 不保存；**没有「取消切换」**——dsh web 已切过去，面板必须跟随，否则两边不一致）：选保存则磁盘已更新、选不保存则磁盘未变，两种都照样切到 B；若文件保存失败、或提示被 ESC 关掉，该页签**保留在页签栏**且面板仍切到 B（不得静默丢弃、不得卡住）；有未保存修改时点**页签 ✕ / ⌘W** 或**面板右上角 ✕** → 三选一（保存并关闭 / 不保存 / 取消；取消 = 不关；保存失败则中止关闭并报错）；点 ✕（无未保存）→ 页签清空，此后切走再切回**不**自动重开；`~/Library/Logs/oh-my-dsh/app.log` 有 `preview workspace switch` / `preview restore` 日志；
 - **页面刷新自愈（docs/ux-feedback.md #6）**：⌘R（或 WebView 右键「重新载入」）都应重新走 launch token 认证——正常情况下页面正常重载；把自拉起的 dsh web 进程手动 kill 后刷新，应自动重拉并恢复，日志有 `page load request (reason): port=… ourServerAlive=…` 与 `page recovery (…) re-authenticating via the launch token`；若出现 401 纯文本页即说明自愈没生效（不再应出现）；`~/Library/Logs/oh-my-dsh/app.log` 里 `logAuthCookieState` 会打印当前 authority 的 `dsh-auth-*` cookie 状态；
 - **文件 / 终端面板（docs/ux-feedback.md #1 #2 #3 #4 #5 #7 #8 #9）**：目录树右键三组菜单（新建/重命名/删除/在 Finder 中显示，项目根不可改名删除）、重命名后被改名目录下的页签要跟随、删除走废纸篓且页签关闭；头部「打开项目 ▾ / 打开文件 ▾」点击即弹菜单、⌥ 点击走记住的方式、「打开文件」在未选中文件时置灰；图片预览居中留边距、⌘+/⌘−/⌘0/⌘滚轮/双击/捏合都能缩放且拖动面板宽度不跳变；大文件（3000+ 行）在外部持续写入时不卡顿、颜色渐进恢复；目录树拖宽 → 关闭面板 → 重开宽度保持（日志 `preview tree width remembered/corrected`）；终端滚动方向与其他面板一致、双击选词三击选行后可继续按词/行扩选、拖选完直接 ⌘V；切换 workspace 时终端页签跟随（shell 不退出，切回恢复选中，本工作区无终端时自动开一个）；
-- 验证点：窗口标题 `oh-my-dsh (DeepSeek Harness)`；活动栏图标互斥切换（预览/终端/浏览器/知识库/任务/通道/审查/技能）；⌥⌘F / ⌥⌘T / ⌥⌘B / ⌥⌘W / ⌥⌘J / ⌥⌘H / ⌥⌘R / ⌥⌘S 快捷键；About 面板显示 dsh/Node 版本与 registry；文件面板编辑文本后 ⌘S 保存、页签标题出现 `*` 未保存标记（见 [file-panel](modules/file-panel.md)）。
+- 验证点：窗口标题 `oh-my-dsh (DeepSeek Harness)`；活动栏图标互斥切换（**项目（首位）**/文件/终端/浏览器/知识库/任务/通道/审查/技能，共**九个**）；**⌥⌘P** / ⌥⌘F / ⌥⌘T / ⌥⌘B / ⌥⌘W / ⌥⌘J / ⌥⌘H / ⌥⌘R / ⌥⌘S 九面板快捷键（⌥⌘P 由文件面板让出，后者已是 ⌥⌘F）；About 面板显示 dsh/Node 版本与 registry；文件面板编辑文本后 ⌘S 保存、页签标题出现 `*` 未保存标记（见 [file-panel](modules/file-panel.md)）。
 
 ## 跑单元测试
 
@@ -67,6 +67,7 @@ tests/l10n/run.sh                   # L10n 键名 lint（L10n.tr 字面量必须
 tests/shell-config/run.sh           # ShellConfig 旧 UserDefaults 一次性迁移（13 项）
 tests/dsh-auth-cookies/run.sh       # dsh 认证 cookie 清理纯逻辑（22 项）
 tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
+tests/projects-panel/run.sh         # 项目面板：模型 45 项（projects 根 / 命名规则 / 列举 / 注册匹配）+ 控制器 39 项（无头，假 dsh 传输）
 ```
 
 - 均无窗口依赖，可在纯命令行环境运行；失败即非零退出（`set -euo pipefail`）；`scripts/local-ci.sh` 按 ci.yml 三阶段跑同一组（core → swift 测试 + `swiftc` 编译检查 → arm64 构建，不打包）；
@@ -121,6 +122,18 @@ tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：�
 - 改完无需手动刷新 dsh web：面板经 `nudgeDSHWebCaches()` 派发 offline→online 触发客户端重连，清掉技能目录缓存（1.5s 节流）；
 - 开关不生效排查：确认改的是**非内置**技能、`SKILL.md` 里只有规范键；记录与安装来源见 `$DSH_HOME/shell/skills.json`；dsh 侧契约（根 / 优先级 / 键名）见 `docs/dsh-version-impact.md` D2/D2b/D2c/D2d 与 `docs/skills-manager-design.md`；
 - 回归：`tests/skills-panel/run.sh`（121 项）。
+
+## 管理项目 / 工作区（项目面板，`⌥⌘P`）
+
+- 打开：活动栏**首位**「项目」图标 / 视图菜单**首项** / **⌥⌘P**（QA 钩子 `DSH_PROJECTS_TEST=1` 启动即开；`DSH_PROJECTS_TEST_ROOT=<dir>` 把 projects 根指到 fixture——**仅 QA**，不写 `shell/config.json`）；
+- **根目录**：默认 `$DSH_HOME/oh-my-dsh/projects`（开发版 `~/.dsh-dev/…`）；面板头部「更改…」与设置窗口「项目」区块改的是**同一个键** `shell/config.json` 的 `projectsRoot`（`~` 会展开，非绝对路径拒绝保存；「恢复默认」= 删键）；**打开面板不写盘**，只有「新建工作区」才 `mkdir -p`（连带建根）；
+- **新建工作区**：点「+」只输入目录名（如 `abc`）→ 建 `<root>/abc` → 幂等注册成 dsh 工作区（`workspace/create`）。注册失败（dsh 未起 / 旧版本 / 注册表读不懂）**只标「未注册」、目录保留**，下次「新会话 / 在 dsh 中打开」会自动再注册；同名目录不是错误（提示「该工作区已存在」并继续注册），名字含 `/`·`:`、以 `.` 开头、空、超 64 字符都会在创建前被拦下；
+- **卡片三行**：名称 + 徽标（`已注册 · N 个会话` / `未注册`）、绝对路径（tooltip = 全路径）、操作行；
+- **操作行**：**文件 / 终端 / 知识库 / 任务 / 通道 / 审查** 六个快捷入口（点一下即把「当前工作区」切到它并打开对应面板——文件树根、终端 cwd、wiki 根、任务/通道/审查的工作区一起跟随）+「**新会话**」（建一条属于该工作区的 dsh web 会话并切过去）+ 在 Finder 中显示 / 复制路径；**点卡片名称 = 在 dsh 中打开**（复用该工作区**最近一条会话**，运行中优先，没有才新建）；
+- **当前工作区只有一个真相**：卡片高亮来自 `ProjectDirectory.current`（在 dsh web 里切会话时面板跟随移动）；新建**不会**自动切换当前工作区，要切就点六个入口或「新会话」；
+- 结果都在面板底部状态行（成功 5s 后自动清空、失败保留到下次操作，**不弹模态**）：`已创建工作区 abc` / `该工作区已存在` / `已创建目录，但尚未注册到 dsh（服务未就绪…）` / `创建失败：…` / `无法新建会话：…`；同时写 `~/Library/Logs/oh-my-dsh/app.log` 的 `projects:` 行；
+- 「新会话」/「在 dsh 中打开」后 web 没切过去：面板会先把新会话推给客户端（nudge）→ 0.5s 后点侧栏行 → 失败重试一次 → 仍失败则**重载页面**并在加载完成后补打开一次（日志 `openDSHSession …: row-not-found`）；重载会短暂中断正在流式输出的那一轮，属既有设计的兜底而非故障；
+- 回归：`tests/projects-panel/run.sh`（模型 45 + 控制器 39 = **84 项**）、`tests/dsh-rpc/run.sh`（含 `DshWorkspaceOps` 的 register / createSession / newestSessionId 14 项）。
 
 ## 排查问题
 
