@@ -22,6 +22,11 @@ function tempHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'review-'));
 }
 
+/** JSONL text for a list of events (the generation-naming tests write files directly). */
+function eventsToJsonl(events) {
+  return events.map((e) => JSON.stringify(e)).join('\n') + '\n';
+}
+
 /** Write a plaintext session log at the dsh layout and return its path. */
 function seedSession(dshHome, slug, id, events) {
   const dir = path.join(dshHome, 'sessions', slug, id);
@@ -294,4 +299,128 @@ test('review-log: a torn trailing frame is skipped with a diagnostic', { skip: t
 
 test('review-log: an invalid frame magic is reported, not thrown', { skip: typeof zlib.zstdCompressSync !== 'function' }, () => {
   assert.throws(() => review.scanZstdFrames(Buffer.from('not a zstd frame at all')), /invalid frame magic/);
+});
+
+// --- session-log generation naming (dsh 0.1.5) ------------------------------
+//
+// dsh names one immutable Session format generation per file: generation 0 keeps
+// `session.jsonl`, later generations add a `.vN` component. dsh 0.1.5 writes NEW
+// sessions as `session.v3.jsonl` (compressed: `session.v3.jsonl.zstd`), and a
+// migrated session keeps its frozen generation-0 archive next to the live one.
+// A reader that only knows the generation-0 names lists NOTHING on that dsh —
+// silently, which is exactly how the Review panel would rot unnoticed.
+
+test('review-log: generation basenames parse canonically', () => {
+  assert.deepEqual(review.parseSessionLogName('session.jsonl'), { generation: 0, compressed: false });
+  assert.deepEqual(review.parseSessionLogName('session.jsonl.zstd'), { generation: 0, compressed: true });
+  assert.deepEqual(review.parseSessionLogName('session.v3.jsonl'), { generation: 3, compressed: false });
+  assert.deepEqual(review.parseSessionLogName('session.v3.jsonl.zstd'), { generation: 3, compressed: true });
+  for (const bad of ['session.v0.jsonl', 'session.V3.jsonl', 'session.v3.jsonl.zst', 'session.v03.jsonl',
+    'session.jsonl.tmp', 'other.jsonl', 'session.v3.jsonl.gz', 'session.lock']) {
+    assert.equal(review.parseSessionLogName(bad), null, bad + ' must not parse');
+  }
+});
+
+test('review-log: newest generation wins, compressed first within a generation', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gen-'));
+  for (const name of ['session.jsonl', 'session.jsonl.zstd', 'session.v2.jsonl', 'session.v3.jsonl.zstd']) {
+    fs.writeFileSync(path.join(dir, name), '');
+  }
+  assert.deepEqual(
+    review.sessionLogCandidates(dir).map((c) => path.basename(c.path)),
+    ['session.v3.jsonl.zstd', 'session.v2.jsonl', 'session.jsonl.zstd', 'session.jsonl'],
+  );
+  assert.equal(path.basename(review.sessionLogFile(dir)), 'session.v3.jsonl.zstd');
+  assert.equal(review.sessionLogFile(fs.mkdtempSync(path.join(os.tmpdir(), 'gen-empty-'))), null);
+});
+
+test('review-log: a dsh 0.1.5 session (only session.v3.jsonl) is discovered and audited', () => {
+  const dshHome = tempHome();
+  const dir = path.join(dshHome, 'sessions', '--work-proj--', 'session-a');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'session.v3.jsonl'), eventsToJsonl([
+    HEADER,
+    topCall(10, 'c1', 'write', { file_path: '/work/proj/new.txt', content: 'hi' }),
+    topResult(11, 'c1', { diffs: [] }),
+  ]), 'utf8');
+
+  const listed = review.listSessionLogs({ dshHome, workspace: '/work/proj' });
+  assert.equal(listed.sessions.length, 1);
+  assert.equal(path.basename(listed.sessions[0].file), 'session.v3.jsonl');
+  assert.equal(listed.sessions[0].compressed, false);
+
+  const audit = review.auditSession({ sessionId: 'session-a', dshHome, workspace: '/work/proj' });
+  assert.equal(audit.session.id, 'session-a');
+  assert.equal(audit.stats.files, 1);
+  assert.equal(audit.entries[0].path, 'new.txt');
+});
+
+test('review-log: the compressed new-generation artifact is discovered too', { skip: typeof zlib.zstdCompressSync !== 'function' }, () => {
+  const dshHome = tempHome();
+  const dir = path.join(dshHome, 'sessions', '--work-proj--', 'session-a');
+  fs.mkdirSync(dir, { recursive: true });
+  const events = [
+    HEADER,
+    topCall(10, 'c1', 'write', { file_path: '/work/proj/new.txt', content: 'hi' }),
+    topResult(11, 'c1', { diffs: [] }),
+  ];
+  const frames = events.map((e) => zlib.zstdCompressSync(Buffer.from(JSON.stringify(e) + '\n', 'utf8')));
+  fs.writeFileSync(path.join(dir, 'session.v3.jsonl.zstd'), Buffer.concat(frames));
+
+  const listed = review.listSessionLogs({ dshHome, workspace: '/work/proj' });
+  assert.equal(listed.sessions.length, 1);
+  assert.equal(path.basename(listed.sessions[0].file), 'session.v3.jsonl.zstd');
+  assert.equal(listed.sessions[0].compressed, true);
+
+  const audit = review.auditSession({ sessionId: 'session-a', dshHome, workspace: '/work/proj' });
+  assert.equal(audit.stats.files, 1);
+  assert.equal(audit.entries[0].path, 'new.txt');
+});
+
+test('review-log: a migrated session reads the live generation, not the frozen archive', () => {
+  const dshHome = tempHome();
+  const dir = path.join(dshHome, 'sessions', '--work-proj--', 'session-a');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'session.jsonl'), eventsToJsonl([
+    HEADER,
+    topCall(10, 'c1', 'write', { file_path: '/work/proj/old.txt', content: 'old' }),
+    topResult(11, 'c1', { diffs: [] }),
+  ]), 'utf8');
+  fs.writeFileSync(path.join(dir, 'session.v3.jsonl'), eventsToJsonl([
+    HEADER,
+    topCall(10, 'c1', 'write', { file_path: '/work/proj/old.txt', content: 'old' }),
+    topResult(11, 'c1', { diffs: [] }),
+    topCall(12, 'c2', 'write', { file_path: '/work/proj/live.txt', content: 'live' }),
+    topResult(13, 'c2', { diffs: [] }),
+  ]), 'utf8');
+
+  const listed = review.listSessionLogs({ dshHome, workspace: '/work/proj' });
+  assert.equal(path.basename(listed.sessions[0].file), 'session.v3.jsonl');
+
+  const audit = review.auditSession({ sessionId: 'session-a', dshHome, workspace: '/work/proj' });
+  assert.deepEqual(audit.entries.map((e) => e.path), ['old.txt', 'live.txt']);
+  assert.equal(audit.stats.files, 2);
+});
+
+test('review-log: non-canonical log names are ignored, the session is skipped', () => {
+  const dshHome = tempHome();
+  const dir = path.join(dshHome, 'sessions', '--work-proj--', 'session-a');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'session.v3.jsonl.tmp'), eventsToJsonl([HEADER]), 'utf8');
+
+  const listed = review.listSessionLogs({ dshHome, workspace: '/work/proj' });
+  assert.equal(listed.sessions.length, 0);
+});
+
+test('review-log: the generation-0 names still work (back-compat)', () => {
+  const dshHome = tempHome();
+  seedSession(dshHome, '--work-proj--', 'session-a', [
+    HEADER,
+    topCall(10, 'c1', 'edit', { file_path: '/work/proj/src/a.js', old_string: 'x', new_string: 'y' }),
+    topResult(11, 'c1', { diffs: [{ path: '/work/proj/src/a.js', oldText: 'x', newText: 'y' }] }),
+  ]);
+  const listed = review.listSessionLogs({ dshHome, workspace: '/work/proj' });
+  assert.equal(listed.sessions.length, 1);
+  assert.equal(path.basename(listed.sessions[0].file), 'session.jsonl');
+  assert.equal(review.auditSession({ sessionId: 'session-a', dshHome, workspace: '/work/proj' }).stats.files, 1);
 });
