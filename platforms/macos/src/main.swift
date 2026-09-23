@@ -648,6 +648,8 @@ enum L10n {
         "projects.openInDsh": ("在 dsh 中打开", "Open in dsh"),
         "projects.newSession": ("新会话", "New Session"),
         "projects.newSessionFailed": ("无法新建会话：%@", "Could not create a session: %@"),
+        "projects.openFailed": ("未能在 dsh web 侧栏定位该会话（%@…）：请在侧栏点开对应工作区手动选择", "Could not find that session in dsh web's sidebar (%@…): open the workspace in the sidebar and pick it there"),
+        "projects.openFailedNoSession": ("dsh web 还没有列出这条会话（%@…）：稍候片刻再点，或直接在侧栏选择", "dsh web does not list that session yet (%@…): retry in a moment, or pick it in the sidebar"),
         "projects.settingsSection": ("项目", "Projects"),
         "projects.settingsRootHint": ("默认：%@（留空即用默认）", "Default: %@ (leave empty to use it)"),
         "projects.settingsPick": ("选择…", "Choose…"),
@@ -2022,9 +2024,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var snapshotNotice: String?
     /// One post-boot tree capture per launch (see captureRuntimeTree).
     private var didCaptureRuntimeTree = false
-    /// A session the shell wanted to open but dsh web had no sidebar row for yet:
-    /// parked here across a page reload and consumed by webView(_:didFinish:).
-    private var pendingOpenSession: PendingSessionOpen?
+    /// The session whose "open in dsh" is currently being attempted, so a retry
+    /// chain and a fresh click for the same id cannot overlap (see openDSHSession).
+    private var openInFlight: String?
     /// The「会话快照…」window (created lazily).
     private var snapshotWindowController: SnapshotWindowController?
     /// Oldest dsh generation this shell still adapts to (core keeps both API
@@ -3226,8 +3228,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         return null;
       }
+      // What the sidebar looked like — main.swift logs this on failure (B10).
+      function probe() {
+        var all = rows(), groups = 0, sessionRows = 0;
+        for (var i = 0; i < all.length; i++) { if (isSessionRow(all[i])) sessionRows++; else groups++; }
+        return { groups: groups, sessionRows: sessionRows };
+      }
+      function failed(reason, name) {
+        var out = probe();
+        out.ok = false;
+        out.reason = reason;
+        out.workspaceFound = name ? !!groupRow(name) : false;
+        return out;
+      }
       function openByWorkspace(name, attempt) {
-        if (!name) { console.log("[dsh-opener] row-not-found (no workspace name)"); return { ok: false, reason: "row-not-found" }; }
+        if (!name) { console.log("[dsh-opener] row-not-found (no workspace name)"); return failed("row-not-found", null); }
         expandGroups();
         var group = groupRow(name);
         if (group) {
@@ -3241,7 +3256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           });
         }
         console.log("[dsh-opener] workspace-row-not-found", name);
-        return { ok: false, reason: "workspace-row-not-found" };
+        return failed("workspace-row-not-found", name);
       }
       function openById(sessionId, title, workspaceName, attempt) {
         if (findAndClick(title)) return { ok: true, via: "title" };
@@ -3295,7 +3310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             // the workspace group rather than giving up.
             if (workspaceName) return openByWorkspace(workspaceName, 0);
             console.log("[dsh-opener] no-session", sessionId);
-            return { ok: false, reason: "no-session" };
+            return failed("no-session", workspaceName);
           }
           var projections = target.projections && target.projections.values;
           var title = (projections && projections.title) || "";
@@ -4087,16 +4102,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// unreachable (the user saw "clicking a project does nothing").
     ///
     /// A session created through the host RPC is not in the page's sidebar until
-    /// the client re-fetches its lists, so the first attempt can miss the row:
-    /// nudge -> click -> one retry -> reload the page with the request parked in
-    /// pendingOpenSession, which webView(_:didFinish:) consumes.
+    /// the client re-fetches its lists, so an attempt can miss the row. The policy
+    /// is deliberately bounded and NON-DISRUPTIVE:
+    ///   nudge the client -> try (the bridge retries internally) -> retry up to
+    ///   `retry` more times -> give up with a status-line message.
+    /// It used to reload the whole page as a last resort, which turned a plain
+    /// click into a page reload — and, because the reload replayed the request
+    /// through webView(_:didFinish:), into an endless reload loop (~10 s apart)
+    /// whenever the sidebar really had no row for that session id.
     private func openDSHSession(_ sessionId: String, retry: Int = 1, workspaceName: String? = nil) {
         guard let webView = webView else { return }
+        guard !sessionId.isEmpty else { return }
+        // One open per session at a time: overlapping chains (a fresh click racing
+        // a retry of the previous one) only produce confusing logs.
+        if openInFlight == sessionId { return }
+        openInFlight = sessionId
         var args: [String: Any] = ["sessionId": sessionId]
         if let name = workspaceName, !name.isEmpty { args["workspaceName"] = name }
         let body = "return await window.__dshOpenSession(sessionId, workspaceName);"
         webView.callAsyncJavaScript(body, arguments: args, in: nil, in: .page) { [weak self] result in
             guard let self = self else { return }
+            guard self.openInFlight == sessionId else { return }
+            self.openInFlight = nil
             switch result {
             case .failure(let error):
                 AppLog.shared.log("openDSHSession \(sessionId) bridge error: \(error.localizedDescription)")
@@ -4106,30 +4133,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     return
                 }
                 if (dict["ok"] as? Bool) == true {
-                    self.pendingOpenSession = nil
                     AppLog.shared.log("openDSHSession \(sessionId): ok via \(dict["via"] as? String ?? "?")")
                     return
                 }
                 let reason = dict["reason"] as? String ?? "?"
-                AppLog.shared.log("openDSHSession \(sessionId): \(reason)")
+                AppLog.shared.log("openDSHSession \(sessionId): \(reason) \(Self.sidebarProbe(dict))")
                 if retry > 0 {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                         self?.openDSHSession(sessionId, retry: retry - 1, workspaceName: workspaceName)
                     }
                     return
                 }
-                AppLog.shared.log("openDSHSession \(sessionId): reloading the page and opening it after load")
-                self.pendingOpenSession = PendingSessionOpen(sessionId: sessionId, workspaceName: workspaceName)
-                self.reloadPageReauthenticating(reason: "session-open")
+                self.reportOpenFailure(sessionId: sessionId, reason: reason, workspaceName: workspaceName)
             }
         }
     }
 
-    /// A session the shell wants dsh web to show but the page had no row for:
-    /// parked across a reload, consumed once by webView(_:didFinish:).
-    private struct PendingSessionOpen {
-        let sessionId: String
-        let workspaceName: String?
+    /// What the page's sidebar looked like when the lookup failed — the one piece
+    /// of evidence a "click does not switch" report needs (B10 diagnostics).
+    private static func sidebarProbe(_ dict: [String: Any]) -> String {
+        let groups = dict["groups"] as? Int ?? -1
+        let rows = dict["sessionRows"] as? Int ?? -1
+        let workspace = (dict["workspaceFound"] as? Bool) == true ? "yes" : "no"
+        return "(sidebar: groups=\(groups) sessionRows=\(rows) workspaceRow=\(workspace))"
+    }
+
+    /// Give up (no page reload): say what happened where the user is looking.
+    private func reportOpenFailure(sessionId: String, reason: String, workspaceName: String?) {
+        let short = String(sessionId.prefix(18))
+        AppLog.shared.log("openDSHSession \(sessionId): giving up (\(reason)); the session is not in dsh web's sidebar")
+        let message: String
+        switch reason {
+        case "no-session":
+            message = L10n.tr("projects.openFailedNoSession", short)
+        default:
+            message = L10n.tr("projects.openFailed", short)
+        }
+        projectsPanel?.setStatus(message, isError: true)
     }
 
     // MARK: - Projects panel actions (a workspace = a directory under the root)
@@ -4225,8 +4265,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 // The page only learns about the new workspace/session once its
                 // client re-fetches; nudge, then click the sidebar row.
                 self.nudgeDSHWebCaches()
+                // A just-created session needs the client a moment to list it, so
+                // this path retries more than a plain click does.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    self?.openDSHSession(sid, workspaceName: (path as NSString).lastPathComponent)
+                    self?.openDSHSession(sid, retry: 3, workspaceName: (path as NSString).lastPathComponent)
                 }
                 AppLog.shared.log("projects: created session \(sid) in " + path)
             }
@@ -4482,16 +4524,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // CLI (the first-open "empty panel" the user sees). Session titles are read
         // when the panel is opened, not here — nothing else to do at page load.
         reviewPanel?.prewarm()
-        // A session the shell asked for while the page had no row for it: open it
-        // now that the document (and its session list) is back. One shot, but with
-        // retries — the sidebar renders a moment after the document does.
-        if let pending = pendingOpenSession {
-            pendingOpenSession = nil
-            AppLog.shared.log("opening the pending session after the page reload: " + pending.sessionId)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.openDSHSession(pending.sessionId, retry: 3, workspaceName: pending.workspaceName)
-            }
-        }
         // QA hook (DSH_COMPOSER_TEST_PATH): drive the panel → composer path
         // once the page is up, so the feature can be verified without a click.
         runComposerTestProbeIfNeeded()
