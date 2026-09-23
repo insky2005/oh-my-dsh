@@ -22,6 +22,8 @@ module.exports = {
   ...require('./lib/dsh-rpc'),
   // dsh workspace list (live workspace.list RPC + persisted workspace.json store)
   ...require('./lib/workspace-store'),
+  // Session snapshot / rollback planning (pure decisions; docs/session-snapshot-rollback-design.md)
+  snapshot: require('./lib/snapshot'),
   // dsh web session RPC (ported from DSHSessionRPC)
   ...require('./lib/session'),
   // GitHub issues & PR integration (IssueRunner panel)
