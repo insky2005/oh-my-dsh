@@ -237,5 +237,18 @@ $DSH_HOME/shell/
 
 铁律：**`main` 的 `DSH_PACKAGE_SPEC` 在本功能并入 main 之前保持 0.1.2-rc.1**。
 
+## 16. 开发版实测记录（2026-09-23，`DSH_DEV_BUILD=1`）
 
+环境：开发版 App（内置 dsh `0.1.2-rc.1`）× **工作区内的独立 home**（`DSH_HOME=<repo>/.tmp/…/dsh`），fixture 只从开发隔离目录
+`~/.dsh-dev` 复制 2 条会话 + `workspace.json`——**未指向也未修改 `~/.dsh` 的生产数据**（实测结束时其"新世代会话数"仍为 0）。
 
+| 步 | 动作 | 观测结果 |
+|---|---|---|
+| 1 | 首次启动开发版 | 启动钩子打出 `bootstrap` 快照（2 条会话 / 663 KB）+ 树池 `trees/0.1.2-rc.1`；`dsh-state.json` 写入 `dataCombo = 1.16.2 / 0.1.2-rc.1` |
+| 2 | 把 bundle 内置 dsh 升到 `0.1.5-rc.2`（模拟装新 pkg / 应用内升级） | —（旧树此刻从磁盘消失，但已在池里） |
+| 3 | 再次启动 | 组合变化 → **升级前快照** `combo-change`（`from 0.1.2-rc.1 → for 0.1.5-rc.2`，`dshTree = trees/0.1.2-rc.1`）；树池补齐 `0.1.5-rc.2`；`dataCombo` 更新为新组合 |
+| 4 | 通过 RPC 打开老会话（迁移的触发点） | 该会话出现 `session.v3.jsonl.zstd`，v0 归档保留 |
+| 5 | 停 App → 执行回退（等同"回退并退出"） | 计划 `mode=B / 恢复 2 条 / 删新世代 2 个 / 换树 swap`；执行后 **bundle 内的 dsh 被物理换回 `0.1.2-rc.1`**、会话恢复为仅 `session.jsonl.zstd`、`dataCombo` 回旧组合且 `upgradePinned = 0.1.2-rc.1`、journal 清空，并留下 `pre-rollback` 现场快照（可撤销） |
+| 6 | 再次启动 | **不新增快照**（组合与 `dataCombo` 一致）；树池自动补回 `0.1.2-rc.1`（另有 `.displaced-*` 保留被换下来的那棵树）；审查读取器仍能列出两条会话 |
+
+**结论**：「快照 → 升级 dsh → 会话被迁移 → 回退 → 重开」在真实开发版上闭环，且回退把**内置 dsh 一起带回旧版本**（path B，离线 rename）。
