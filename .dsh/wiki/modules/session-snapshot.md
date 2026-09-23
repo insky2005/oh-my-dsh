@@ -22,13 +22,28 @@ dsh 按 **Session 格式世代**命名会话日志（世代 0 = `session.jsonl`�
 
 `shell/`、`credentials*`、`channels/`、`browser*/`、`skills/` 等**不进快照**。
 
+
+## 踩坑与守卫（2026-09-23 实测，都是"一次污染 = 永久失效"型）
+
+1. **只把"已经证明能启动"的树收进池**。抓树**不在 spawn dsh web 之前**，而是**页面加载完成之后**
+   （`captureRuntimeTree()` 挂在 `didFinish`，一次/启动）。否则"构建坏了但 App 起来了"会把一棵**从没启动成功过**的树存进池，
+   回退时再把坏树换回来（用户实测踩到：升级 0.1.5 正常 → 回退后启动报同一个错）。
+2. **闭包校验（`--expected-lock`）**。仓库为每个受支持 spec 提交一份已知可启动的闭包锁
+   `platforms/macos/runtime-locks/<spec>/package-lock.json`（随 App 分发）；抓树/换树时与它比对指纹：
+   不一致的树**拒绝入池**（池里已有的会被替换），回退时**拒绝换入**并回报 `needsTreeInstall`（改用 lock `npm ci`）。
+   根因是 dsh 用 caret 范围声明 cordis 工具链（`docs/dsh-version-impact.md` R8：hmr 1.0.19 会让 0.1.2-rc.1 起不来）。
+3. **构建期启动冒烟**：`build-app.sh` 的 `smoke_runtime()` 装完树就起一次 `dsh web`，失败即构建失败——「构建成功」不等于「产物能用」。
+
 ## 代码锚点
+
 
 - `core/lib/snapshot.js`：纯决策（触发判定 / 回退计划 / 裁剪保护 / 树池判定 / journal 状态机）；
 - `core/lib/snapshot-io.js`：落盘（clonefile 优先、树池、隔离、裁剪、原子写）；
 - `core/bin/ohmy-core.js` 的 `snapshot` 子命令（launch / list / status / create / plan-rollback / rollback / finish-rollback / delete）；
 - `platforms/macos/src/main.swift`：`prepareSessionSnapshot()`（spawn dsh web 之前）、`snapshotBeforeUpgrade()` / `adoptComboAfterUpgrade()`（升级事务）、`openSessionSnapshots` / `confirmAndRollback`（菜单与回退并退出）；
 - `platforms/macos/src/SnapshotModel.swift` + `SnapshotWindow.swift`：窗口与数据模型；
+- `platforms/macos/src/main.swift` 另外三处：`captureRuntimeTree()`（页面加载后抓树）、`snapshotBeforeUpgrade()` / `adoptComboAfterUpgrade()`（升级事务）、`confirmAndRollback()`（回退并退出，含池缺失时用 lock 补装）；
+- `platforms/macos/runtime-locks/`（提交的闭包锁）+ `build-app.sh` 的 `smoke_runtime()`（构建期启动冒烟）；
 - 测试：`core/tests/snapshot.test.js`、`core/tests/snapshot-io.test.js`、`tests/snapshot-rollback/run.sh`、`tests/snapshot-panel/run.sh`。
 
 ## 相关
