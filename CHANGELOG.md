@@ -5,6 +5,10 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
+## [Unreleased]
+
+- 暂无（v1.16.2 已发布；本条线下一个版本是 **1.16.3**，计划在会话快照/回退稳定后推进内置 dsh）。
+
 ## [1.16.2] - 2026-09-23
 
 ### Added

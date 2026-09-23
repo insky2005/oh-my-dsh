@@ -21,8 +21,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-FALLBACK_VERSION="${FALLBACK_VERSION:-1.16.2}"
-FALLBACK_BUILD="${FALLBACK_BUILD:-73}"
+FALLBACK_VERSION="${FALLBACK_VERSION:-1.16.3}"
+FALLBACK_BUILD="${FALLBACK_BUILD:-74}"
 
 VERSION="$FALLBACK_VERSION"
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
