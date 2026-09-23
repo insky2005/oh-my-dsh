@@ -632,7 +632,7 @@ enum L10n {
         "projects.rootLabel": ("根目录：%@", "Root: %@"),
         "projects.changeRoot": ("更改…", "Change…"),
         "projects.changeRootTooltip": ("选择项目存放的根目录", "Choose the projects root folder"),
-        "projects.newWorkspace": ("新建工作区", "New Workspace"),
+
         "projects.newWorkspaceLocation": ("将创建于 %@", "Will be created at %@"),
         "projects.namePlaceholder": ("工作区名（作为目录名）", "Workspace name (used as the folder name)"),
         "projects.invalidName": ("工作区名不能为空，不能含 “/” 或 “:”，不能以 “.” 开头，且不超过 64 个字符", "Invalid name: must not be empty, contain “/” or “:”, start with “.”, or exceed 64 characters"),
@@ -5046,6 +5046,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelPanel?.refreshTooltips()
         reviewPanel?.refreshTooltips()
         skillsPanel?.refreshTooltips()
+        projectsPanel?.refreshTooltips()
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url

@@ -180,13 +180,23 @@ final class ProjectCardView: NSView {
         titleRow.distribution = .fill
         titleRow.translatesAutoresizingMaskIntoConstraints = false
 
+        // The path line carries its own two utilities (show in Finder / copy path):
+        // they belong to "where is this folder", not to the panel entries below.
+        let pathRow = NSStackView(views: [pathLabel] + pathButtons())
+        pathRow.orientation = .horizontal
+        pathRow.alignment = .centerY
+        pathRow.spacing = 6
+        pathRow.distribution = .fill
+        pathRow.translatesAutoresizingMaskIntoConstraints = false
+        pathLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
         let actions = NSStackView(views: actionButtons())
         actions.orientation = .horizontal
         actions.alignment = .centerY
         actions.spacing = 2
         actions.translatesAutoresizingMaskIntoConstraints = false
 
-        let column = NSStackView(views: [titleRow, pathLabel, actions])
+        let column = NSStackView(views: [titleRow, pathRow, actions])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 4
@@ -198,7 +208,7 @@ final class ProjectCardView: NSView {
             column.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             titleRow.widthAnchor.constraint(equalTo: column.widthAnchor),
-            pathLabel.widthAnchor.constraint(equalTo: column.widthAnchor),
+            pathRow.widthAnchor.constraint(equalTo: column.widthAnchor),
         ])
     }
 
@@ -218,8 +228,18 @@ final class ProjectCardView: NSView {
         return button
     }
 
-    /// The six panel quick entries + reveal + copy path. The dsh action lives on
-    /// the title row (see dshActionButton) — these are all local.
+    /// The folder-path utilities: show in Finder + copy path (they sit on the
+    /// path line, right after the path itself).
+    private func pathButtons() -> [NSView] {
+        let reveal = CustomIconButton(glyph: .reveal, tooltip: L10n.tr("files.revealInFinder"), size: 22)
+        reveal.onAction = { [weak self] in self?.onReveal?() }
+        let copy = CustomIconButton(glyph: .symbol("link"), tooltip: L10n.tr("files.copyPath"), size: 22)
+        copy.onAction = { [weak self] in self?.onCopyPath?() }
+        return [reveal, copy]
+    }
+
+    /// The six panel quick entries — all local (they re-root the shell's own
+    /// panels); the dsh action lives on the title row (see dshActionButton).
     private func actionButtons() -> [NSView] {
         var views: [NSView] = []
         for target in ProjectTargetPanel.allCases {
@@ -229,14 +249,6 @@ final class ProjectCardView: NSView {
             button.onAction = { [weak self] in self?.onPanel?(target) }
             views.append(button)
         }
-
-        let reveal = CustomIconButton(glyph: .reveal, tooltip: L10n.tr("files.revealInFinder"), size: 24)
-        reveal.onAction = { [weak self] in self?.onReveal?() }
-        views.append(reveal)
-
-        let copy = CustomIconButton(glyph: .symbol("link"), tooltip: L10n.tr("files.copyPath"), size: 24)
-        copy.onAction = { [weak self] in self?.onCopyPath?() }
-        views.append(copy)
         return views
     }
 
@@ -285,7 +297,7 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
     // MARK: - Views
 
     private let headerTitle = HeaderLabel()
-    private let newButton = CustomIconButton(glyph: .plus, tooltip: "")
+    private let newButton = CustomIconButton(glyph: .symbol("folder.badge.plus"), tooltip: "")
     private let refreshButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: "")
     private let settingsButton = CustomIconButton(glyph: .symbol("gearshape"), tooltip: "")
     private let hideButton = CustomIconButton(glyph: .close, tooltip: "")
@@ -323,6 +335,15 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
 
     // MARK: - Public entry points
 
+    /// Language switch: every static label and tooltip of this panel is set once,
+    /// so re-apply them (and re-render, which rebuilds the cards' buttons).
+    /// Called from AppDelegate.applyLanguage — same contract as the other panels'
+    /// refreshTooltips().
+    func refreshTooltips() {
+        updateLabels()
+        render()
+    }
+
     /// Called every time the panel is mounted: always re-read (the root may have
     /// been changed from the settings window, workspaces may have appeared in
     /// Finder, dsh may have registered something meanwhile).
@@ -341,13 +362,14 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
     /// Language change / first mount: refresh every static label.
     func updateLabels() {
         headerTitle.text = L10n.tr("projects.title")
-        newButton.toolTip = L10n.tr("projects.newWorkspace")
+        // Same wording as dsh web's own "Add workspace" entry.
+        newButton.toolTip = L10n.tr("projects.register")
         refreshButton.toolTip = L10n.tr("snapshot.action.refresh")
         settingsButton.toolTip = L10n.tr("settings.title")
         hideButton.toolTip = L10n.tr("preview.closePanel")
         changeRootButton.title = L10n.tr("projects.changeRoot")
         changeRootButton.toolTip = L10n.tr("projects.changeRootTooltip")
-        emptyButton.title = L10n.tr("projects.newWorkspace")
+        emptyButton.title = L10n.tr("projects.register")
         updateRootLabel()
     }
 
@@ -729,7 +751,8 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
     /// and follows what the user types.
     func promptForNewWorkspace() {
         let alert = NSAlert()
-        alert.messageText = L10n.tr("projects.newWorkspace")
+        // One name for the whole action, matching dsh web: "添加工作区 / Add workspace".
+        alert.messageText = L10n.tr("projects.register")
         alert.informativeText = L10n.tr("projects.newWorkspaceLocation",
                                         ProjectsCore.workspacePath(root: effectiveRoot(), name: "..."))
         alert.addButton(withTitle: L10n.tr("files.create"))

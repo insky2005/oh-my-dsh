@@ -199,7 +199,7 @@ dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 
 | 控件 | 行为 |
 |---|---|
 | 标题「项目」 | `HeaderLabel`（面板头部**固定**显示面板名，不显示工作区名——遵循既有面板约定） |
-| `+` 新建工作区 | 取名 sheet（§5.4） |
+| `folder.badge.plus` 添加工作区 | tooltip **「添加工作区 / Add workspace」**（与 dsh web 同词）→ 取名 sheet（§5.4）：输入目录名即 `mkdir` + 幂等注册 |
 | `⟳` 刷新 | 重读根 + 列举 + 注册表（后台） |
 | `⚙` 设置 | 打开壳层设置窗口（`openSettingsWindow`） |
 | `✕` 关闭 | `onRequestHide` → 收起右栏（沿用既有语义） |
@@ -211,8 +211,8 @@ dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 
    - **未注册** → `folder.badge.plus` 图标按钮，tooltip 文案与 dsh web 一致：**「添加工作区 / Add workspace」**（点击 = 注册该目录，§1.4）；
    - **已注册** → `plus` 图标按钮，tooltip **「新会话 / New Session」**（点击 = 在该工作区建会话并切过去）；
    - 两者互斥，故都不需要"禁用态"；开关由 `ProjectCardView.dshActionButton()` 一处决定。
-2. **第二行**：绝对路径（次要色、中间截断、tooltip 全路径）。
-3. **第三行**：操作行，全部 `CustomIconButton` + tooltip（图标与活动栏同源，用户一眼能对上）——**只剩本地动作**：
+2. **第二行**：绝对路径（次要色、中间截断、tooltip 全路径）+ **行尾两个路径工具**：在 Finder 中显示（`.reveal`）、复制路径（`link`）——它们是"这个目录在哪"的附属动作，故与路径同行（2026-09-24 从操作行上移）。
+3. **第三行**：操作行，全部 `CustomIconButton` + tooltip（图标与活动栏同源，用户一眼能对上）——**六个面板入口**：
 
 | 按钮 | 符号 | 动作 |
 |---|---|---|
@@ -222,10 +222,11 @@ dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 
 | 任务 | `checkmark.circle` | 进入任务面板（工作区 = 该工作区） |
 | 通道 | `dot.radiowaves.left.and.right` | 进入通道面板（工作区 = 该工作区） |
 | 审查 | `doc.text` | 进入审查面板（工作区 = 该工作区） |
-| 在 Finder 中显示 | `.reveal` | `NSWorkspace.activateFileViewerSelecting` |
-| 复制路径 | `link` | 路径写剪贴板（tooltip 用 `files.copyPath`；用 `link` 而非 `doc.on.doc` 以免与「文件」入口撞符号） |
+（在 Finder 中显示 / 复制路径已移到第二行，见表后说明。）
 
-**强调色出现在两处**：卡片左侧 accent 细边（或描边）= 这是**当前工作区**（`ProjectDirectory.current` 归一后相等）；标题行的 dsh 动作按钮（`+ / folder+`）。其余配色一律取自 `PanelSurface`（面板底色）与 `PanelControl`（卡片/按钮两档），**不新增颜色令牌**（见 `docs/ui-color-scheme.md`）。
+**强调色出现在两处**：卡片左侧 accent 细边（或描边）= 这是**当前工作区**（`ProjectDirectory.current` 归一后相等）；标题行的 dsh 动作按钮（`+ / folder+`）。
+
+**文案随语言切换**：面板所有静态文案与 tooltip 集中在 `updateLabels()`，卡片文案在每次 `render()` 时重建；`AppDelegate.applyLanguage` 通过与其它面板一致的 `refreshTooltips()`（= `updateLabels() + render()`）刷新它们。其余配色一律取自 `PanelSurface`（面板底色）与 `PanelControl`（卡片/按钮两档），**不新增颜色令牌**（见 `docs/ui-color-scheme.md`）。
 
 ### 5.3 空态与状态行
 
