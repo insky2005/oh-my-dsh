@@ -311,7 +311,8 @@ function println(s) {
             ? IO.captureTree({ home: dshHome, dshDir, version: dshVersion })
             : { action: 'skipped', dir: null };
           let snapshotId = null;
-          if (decision.action === 'snapshot') {
+          const adoptOnly = flag('no-snapshot') !== undefined;
+          if (decision.action === 'snapshot' && !adoptOnly) {
             const made = IO.createSnapshot({
               home: dshHome, appVersion, dshVersion, reason: decision.reason,
               fromCombo: decision.fromCombo || currentCombo, at: new Date(),
@@ -321,6 +322,9 @@ function println(s) {
           const next = state || { version: 1, history: [] };
           next.dataCombo = currentCombo;
           next.lastLaunch = { combo: currentCombo, at: new Date().toISOString() };
+          // --no-snapshot: the caller (e.g. the in-app dsh upgrade) already took
+          // the snapshot as part of its transaction; here we only record the new
+          // combo so the next launch does not snapshot again.
           next.history = (next.history || []).concat(snapshotId
             ? [{ at: new Date().toISOString(), action: 'snapshot', snapshot: snapshotId, reason: decision.reason, fromCombo: decision.fromCombo || null, forCombo: currentCombo }]
             : []);
@@ -355,11 +359,17 @@ function println(s) {
         } else if (sub === 'create') {
           const reason = flag('reason');
           if (!reason) fail('usage: snapshot create --reason <bootstrap|combo-change|dsh-upgrade|pre-rollback> --app-version <A> --dsh-version <D> [--from-app <A>] [--from-dsh <D>] [--home <dir>]');
+          const fromCombo = S.comboOf(flag('from-app'), flag('from-dsh'));
+          // Capture the tree that is about to be left behind, so a later rollback
+          // can put it back even if the .pkg replaced the whole app bundle.
+          const tree = (flag('dsh-dir') && fromCombo.dsh)
+            ? IO.captureTree({ home: dshHome, dshDir: flag('dsh-dir'), version: fromCombo.dsh })
+            : { action: 'skipped', dir: null };
           const made = IO.createSnapshot({
             home: dshHome, appVersion: flag('app-version'), dshVersion: flag('dsh-version'), reason,
-            fromCombo: S.comboOf(flag('from-app'), flag('from-dsh')), at: new Date(),
+            fromCombo, at: new Date(),
           });
-          printJson({ ok: true, id: made.id, dir: made.dir, meta: made.meta, clone: made.clone });
+          printJson({ ok: true, id: made.id, dir: made.dir, meta: made.meta, clone: made.clone, tree });
         } else if (sub === 'plan-rollback') {
           const id = flag('id') || rest[0];
           const target = IO.listSnapshots(dshHome).find((s) => s.id === id);

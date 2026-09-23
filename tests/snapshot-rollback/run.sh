@@ -91,4 +91,17 @@ PLAN="$($CLI plan-rollback --id "$UP" --current-dsh 0.1.5-rc.2 --min-supported 0
 assert_eq "$(echo "$PLAN" | jget 'd.plan.mode')" A "below-min-supported falls back to data-only"
 assert_eq "$(echo "$PLAN" | jget 'd.plan.tree.action')" none "path A never touches the tree"
 
+echo "== in-app dsh upgrade: snapshot before, adopt after (no double snapshot)"
+UP2="$($CLI create --reason dsh-upgrade --app-version 1.16.2 --dsh-version 0.9.9 \
+  --from-app 1.16.0 --from-dsh 0.1.2-rc.1 --dsh-dir "$H/runtime/dsh" --home "$H")"
+assert_eq "$(echo "$UP2" | jget 'd.id.endsWith("_dsh-upgrade")')" true "the pre-upgrade snapshot is tagged dsh-upgrade"
+assert_eq "$(echo "$UP2" | jget 'd.meta.dshTree')" trees/0.1.2-rc.1 "it references the outgoing tree"
+assert_eq "$(echo "$UP2" | jget 'd.meta.fromCombo.dsh + "->" + d.meta.forCombo.dsh')" "0.1.2-rc.1->0.9.9" "from/for combos are recorded"
+
+OUT="$($CLI launch --app-version 1.16.2 --dsh-version 0.9.9 --dsh-dir "$H/runtime/dsh" --no-snapshot --home "$H")"
+assert_eq "$(echo "$OUT" | jget 'd.snapshotId === null')" true "--no-snapshot takes no second snapshot"
+assert_eq "$(echo "$OUT" | jget 'd.state.dataCombo.dsh')" 0.9.9 "--no-snapshot still adopts the new combo"
+OUT="$($CLI launch --app-version 1.16.2 --dsh-version 0.9.9 --dsh-dir "$H/runtime/dsh" --home "$H")"
+assert_eq "$(echo "$OUT" | jget 'd.launch.action')" none "the next launch sees an unchanged combo"
+
 echo "all snapshot-rollback checks passed"

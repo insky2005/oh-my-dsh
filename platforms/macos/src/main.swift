@@ -3299,6 +3299,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func openSessionSnapshotsPlaceholder() {}
+    // MARK: session snapshots — upgrade integration
+
+    /// Take the pre-upgrade snapshot (data + the outgoing tree). Failure never
+    /// blocks the upgrade, but it is logged loudly: without it the migration
+    /// cannot be rolled back.
+    private func snapshotBeforeUpgrade(from current: String, to target: String, updater: DSHUpdater) {
+        let appVersion = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "?"
+        let out = CoreBridge.run(["snapshot", "create",
+                                  "--reason", "dsh-upgrade",
+                                  "--app-version", appVersion,
+                                  "--dsh-version", target,
+                                  "--from-app", appVersion,
+                                  "--from-dsh", current,
+                                  "--dsh-dir", updater.dshDir,
+                                  "--home", dshDataHome],
+                                 timeout: 600, preferBundledNode: true)
+        guard let out = out, let data = out.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = json["id"] as? String else {
+            snapshotNotice = L10n.tr("snapshot.unavailable")
+            AppLog.shared.log("snapshot before upgrade: FAILED — the dsh upgrade will not be rollbackable")
+            return
+        }
+        let tree = ((json["tree"] as? [String: Any])?["action"] as? String) ?? "?"
+        AppLog.shared.log("snapshot before upgrade: id=\(id) tree=\(tree) (" + current + " -> " + target + ")")
+    }
+
+    /// After a successful in-place install: pin the new combo so the next launch
+    /// does not snapshot again (the pre-upgrade snapshot already covers it).
+    private func adoptComboAfterUpgrade(dshVersion: String, updater: DSHUpdater) {
+        let appVersion = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "?"
+        let out = CoreBridge.run(["snapshot", "launch",
+                                  "--app-version", appVersion,
+                                  "--dsh-version", dshVersion,
+                                  "--dsh-dir", updater.dshDir,
+                                  "--no-snapshot",
+                                  "--home", dshDataHome],
+                                 timeout: 600, preferBundledNode: true)
+        AppLog.shared.log(out == nil
+                          ? "snapshot after upgrade: could not record the new combo"
+                          : "snapshot after upgrade: recorded dsh " + dshVersion)
+    }
+
     // MARK: session snapshots (docs/session-snapshot-rollback-design.md)
 
     /// The pre-spawn half of the snapshot feature (called from startServer on a
@@ -3609,10 +3652,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func performApply(updater: DSHUpdater, current: String, target: String, origin: UpgradeOrigin) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
+            // Snapshot FIRST: upgrading dsh migrates every session it opens and
+            // that migration cannot be undone by dsh itself, so the pre-upgrade
+            // state (data + the tree being replaced) must be on disk before a
+            // single new-dsh byte runs. See docs/session-snapshot-rollback-design.md §5.
+            self.snapshotBeforeUpgrade(from: current, to: target, updater: updater)
             do {
                 let new = try updater.apply(registry: RegistryConfig.current, version: target)
                 self.server.refreshFacts()
                 AppLog.shared.log("upgrade applied: \(current) -> \(new)")
+                // Record the new combo WITHOUT a second snapshot (this upgrade's
+                // snapshot is already on disk) so the next launch does not
+                // snapshot a half-migrated data set.
+                self.adoptComboAfterUpgrade(dshVersion: new, updater: updater)
                 DispatchQueue.main.async {
                     self.upgradeInFlight = false
                     self.autoUpgradeRunning = false
