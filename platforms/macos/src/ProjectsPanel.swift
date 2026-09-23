@@ -218,12 +218,12 @@ final class ProjectCardView: NSView {
     /// The two are mutually exclusive, so neither ever needs a disabled state.
     private func dshActionButton() -> CustomIconButton {
         if canUseDshActions {
-            let button = CustomIconButton(glyph: .plus, tooltip: L10n.tr("projects.newSession"), size: 22)
+            let button = CustomIconButton(glyph: .plus, tooltip: L10n.tr("projects.newSession"), size: 24)
             button.onAction = { [weak self] in self?.onNewSession?() }
             return button
         }
-        let button = CustomIconButton(glyph: .symbol("folder.badge.plus"),
-                                      tooltip: L10n.tr("projects.register"), size: 22)
+        let button = CustomIconButton(glyph: .folderPlus,
+                                      tooltip: L10n.tr("projects.register"), size: 24)
         button.onAction = { [weak self] in self?.onRegister?() }
         return button
     }
@@ -297,7 +297,7 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
     // MARK: - Views
 
     private let headerTitle = HeaderLabel()
-    private let newButton = CustomIconButton(glyph: .symbol("folder.badge.plus"), tooltip: "")
+    private let newButton = CustomIconButton(glyph: .folderPlus, tooltip: "")
     private let refreshButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: "")
     private let settingsButton = CustomIconButton(glyph: .symbol("gearshape"), tooltip: "")
     private let hideButton = CustomIconButton(glyph: .close, tooltip: "")

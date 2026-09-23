@@ -36,7 +36,7 @@ final class HeaderLabel: NSView {
 }
 
 final class CustomIconButton: NSView {
-    enum Glyph { case plus, close, folder, openInApp, reveal, symbol(String), play, stop }
+    enum Glyph { case plus, close, folder, openInApp, reveal, symbol(String), play, stop, folderPlus }
     var onAction: (() -> Void)?
     var isEnabled = true
     init(glyph: Glyph, tooltip: String, size: CGFloat = 26) {

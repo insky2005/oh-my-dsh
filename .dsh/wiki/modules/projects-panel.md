@@ -10,7 +10,7 @@ manual: false
 
 把「工作区 = projects 根目录下的一个子目录」变成壳层一等公民：**在面板里建目录 + 幂等注册成 dsh 工作区，再用六个入口就地打开它**，不离开 App、不改 dsh 源码。分支 `feature/projects-panel`（设计文档 `docs/projects-panel-design.md`，PR #56）——**已实现、未发布**（CHANGELOG `[Unreleased]`，版本线 fallback `1.17.0`/BUILD 73）。实现提交：`b59ac97` 模型 → `f541f4d` RPC → `232d38c` 面板 + 控制器测试 → `6d8c327` main.swift 接线 → `206b577`（卡片命中测试修复）→ `0f1b7b2`（README/CONTRIBUTING/CHANGELOG/影响清单）→ `6af1206`+`ed989ac`（点项目切 dsh web：桥改 `callAsyncJavaScript`、去掉重载兜底）→ `041d1bd`（未注册目录不联动 + 标题行 folder+「添加工作区」）+ `1a3d8be`（文档同步）→ 按钮布局调整（「添加工作区」/「新会话」上移到标题行徽标之后，均为图标按钮，tooltip 与 dsh web 同词）。
 
-- 入口：活动栏**首位**「项目」图标（SF Symbol `folder`）/ 视图菜单**首项** / **⌥⌘P**；面板顶部：标题「项目」+ `folder.badge.plus`「添加工作区 / Add workspace」/ 刷新 / 设置 / 关闭（文案与 tooltip 统一走 `updateLabels()`，语言切换时由 `AppDelegate.applyLanguage` 调 `refreshTooltips()` 重建）；右栏插槽第 9 个成员 `RightPanel.projects`，`rightPanelKind` 持久化 `"projects"`；`ProjectsPanelController.minWidth = 320`；
+- 入口：活动栏**首位**「项目」图标（SF Symbol `folder`）/ 视图菜单**首项** / **⌥⌘P**；面板顶部：标题「项目」+ `folderPlus`（自定义字形：文件夹 + 朴素加号，见 `PreviewPanel.swift` 的 `CustomIconButton.Glyph.folderPlus`）「添加工作区 / Add workspace」/ 刷新 / 设置 / 关闭（文案与 tooltip 统一走 `updateLabels()`，语言切换时由 `AppDelegate.applyLanguage` 调 `refreshTooltips()` 重建）；右栏插槽第 9 个成员 `RightPanel.projects`，`rightPanelKind` 持久化 `"projects"`；`ProjectsPanelController.minWidth = 320`；
 - **⌥⌘P 是让位来的**：该键原属「预览面板」，PR #57（`0253b35`，`feature/menu-files-panel`）把视图菜单正名为「文件面板」并改用 **⌥⌘F**，空出的 ⌥⌘P 交给本项目面板（L10n 键 `menu.togglePreview` 同步改名 `menu.toggleFiles`）。
 
 ## 组成
@@ -18,7 +18,7 @@ manual: false
 | 文件 | 规模 | 职责 |
 |---|---|---|
 | `platforms/macos/src/ProjectsCore.swift` | 217 行 | 纯 Foundation 模型：`ProjectWorkspace`、`resolvedRoot(configValue:dshHome:envOverride:)`（+ `RootSource`）、`absolutePath`、`validateName`、`workspacePath`、`listDirectories`、`merge(entries:registry:canonical:)` |
-| `platforms/macos/src/ProjectsPanel.swift` | 776 行 | `ProjectsPanelController`（含 `registerWorkspace(path:)` / `warnNeedsWorkspace()`）+ `ProjectCardView`（三行卡片：标题行 = 名称 + 徽标 + 该卡唯一的 dsh 动作按钮，按 `workspace.registered` 在 `folder.badge.plus`「添加工作区」与 `plus`「新会话」之间切换）+ `ProjectsRootView`（`PanelSurface` 底色）+ `ProjectTargetPanel`（六个入口枚举，rawValue 即 `DSH_PANEL_TEST` 的面板名） |
+| `platforms/macos/src/ProjectsPanel.swift` | 776 行 | `ProjectsPanelController`（含 `registerWorkspace(path:)` / `warnNeedsWorkspace()`）+ `ProjectCardView`（三行卡片：标题行 = 名称 + 徽标 + 该卡唯一的 dsh 动作按钮，按 `workspace.registered` 在 `folderPlus`「添加工作区」与 `plus`「新会话」之间切换）+ `ProjectsRootView`（`PanelSurface` 底色）+ `ProjectTargetPanel`（六个入口枚举，rawValue 即 `DSH_PANEL_TEST` 的面板名） |
 | `platforms/macos/src/DshWebRPC.swift` | 431 行（`DshWorkspaceOps` 约 70 行） | `register` / `createSession` / `newestSessionId` + 端点 `DshWebRPC.workspaceCreate = Endpoint("workspace/create", "workspace.create")` |
 | `platforms/macos/src/main.swift` | 6209 行 | 接线：活动栏首位 / 视图菜单 ⌥⌘P / `adoptProjectDirectory` 重根原语 / `openWorkspace` / `openWorkspaceInDsh` / `createSessionInWorkspace` / 设置窗口「项目」区块 / QA 钩子 |
 | `tests/projects-panel/` | 4 文件 | 无头测试：模型 45 项 + 控制器 49 项，`run.sh` 一次跑完（本机实测 **94 项 ok / EXIT=0**） |
@@ -37,14 +37,14 @@ manual: false
 
 ## 卡片与三条流程
 
-卡片三行（2026-09-24 布局调整后）：① 目录名（semibold 13pt）+ 徽标（`已注册 · N 个会话` / `未注册`）+ **该卡唯一的 dsh 动作按钮**（徽标之后，`folder.badge.plus`「添加工作区」或 `+`「新会话」，互斥）；② 绝对路径（次要色、中间截断、tooltip = 全路径）+ **行尾两个路径工具**（在 Finder 中显示 `.reveal` / 复制路径 `link`，22pt）；③ 操作行 = **文件 / 终端 / 知识库 / 任务 / 通道 / 审查** 六个 `CustomIconButton`（SF Symbol 与活动栏同源：`doc.on.doc`/`terminal`/`book.closed`/`checkmark.circle`/`dot.radiowaves.left.and.right`/`doc.text`）。**整卡可点 = 在 dsh 中打开**（`mouseDown` → `onOpen`；**仅限已注册**，见下面的分流表）。`206b577` 修掉「点名称没反应」：名称/徽标/路径都是 `NSTextField` 标签，标签自己会命中测试、把点击吃掉，于是 `ProjectCardView.hitTest(_:)` 覆写——命中的不是操作行控件（`NSButton` / `CustomIconButton`）就归位到卡片本身，操作行按钮仍按最深子视图优先正常工作。
+卡片三行（2026-09-24 布局调整后）：① 目录名（semibold 13pt）+ 徽标（`已注册 · N 个会话` / `未注册`）+ **该卡唯一的 dsh 动作按钮**（徽标之后，`folderPlus`「添加工作区」或 `+`「新会话」，互斥）；② 绝对路径（次要色、中间截断、tooltip = 全路径）+ **行尾两个路径工具**（在 Finder 中显示 `.reveal` / 复制路径 `link`，22pt）；③ 操作行 = **文件 / 终端 / 知识库 / 任务 / 通道 / 审查** 六个 `CustomIconButton`（SF Symbol 与活动栏同源：`doc.on.doc`/`terminal`/`book.closed`/`checkmark.circle`/`dot.radiowaves.left.and.right`/`doc.text`）。**整卡可点 = 在 dsh 中打开**（`mouseDown` → `onOpen`；**仅限已注册**，见下面的分流表）。`206b577` 修掉「点名称没反应」：名称/徽标/路径都是 `NSTextField` 标签，标签自己会命中测试、把点击吃掉，于是 `ProjectCardView.hitTest(_:)` 覆写——命中的不是操作行控件（`NSButton` / `CustomIconButton`）就归位到卡片本身，操作行按钮仍按最深子视图优先正常工作。
 
 **卡片按注册状态分流**（`041d1bd`，判据 `ProjectCardView.canUseDshActions = workspace.registered`）：
 
 | 状态 | 整卡可点 | 标题行的 dsh 动作按钮 | 六个面板入口 |
 |---|---|---|---|
 | 已注册（徽标「已注册 · N 个会话」） | = 在 dsh 中打开 | `plus` 图标，tooltip **「新会话 / New Session」** → 在该工作区建会话并切过去 | 可用 |
-| **未注册**（徽标「未注册」） | **不调用壳层**，改由状态行提示 `projects.needsWorkspace`；标题转次要色、光标 `arrow`（非手型） | `folder.badge.plus` 图标，tooltip **「添加工作区 / Add workspace」**（与 dsh web 同词）→ 注册该目录 | **仍然可用**——文件 / 终端 / 知识库 / 任务 / 通道 / 审查是壳层本地操作（重根 + 切面板），不碰 dsh web |
+| **未注册**（徽标「未注册」） | **不调用壳层**，改由状态行提示 `projects.needsWorkspace`；标题转次要色、光标 `arrow`（非手型） | `folderPlus` 自定义字形（文件夹 + 朴素大加号，替代 SF 的圆圈角标 `folder.badge.plus`），tooltip **「添加工作区 / Add workspace」**（与 dsh web 同词）→ 注册该目录 | **仍然可用**——文件 / 终端 / 知识库 / 任务 / 通道 / 审查是壳层本地操作（重根 + 切面板），不碰 dsh web |
 
 - **两个 dsh 动作互斥**（都在标题行徽标之后，由 `ProjectCardView.dshActionButton()` 一处决定），所以都没有"禁用态"：未注册的卡片根本没有「新会话」按钮可点；，L10n `projects.register` / `projects.registerTooltip`） |
 
@@ -99,7 +99,7 @@ manual: false
 | 未注册目录上触发 dsh 动作（点卡片 / 「新会话」） | 不发任何请求、不重载：按钮已禁用，闭包内再判一次 `registered`，只写状态行 `projects.needsWorkspace`；六个本地面板入口照常工作 | 面板状态行 |
 | 未注册目录点「添加工作区」而 dsh 未起 / 端点被拒 | 状态行 `projects.registerFailed`；目录保留、不改磁盘、不弹模态（成功时 `app.log` 有 `projects: registered …` 可核对） | 面板状态行 + `app.log` |
 | `storages/workspace.json` 读不懂（上游改布局 / 升版本） | 注册状态与会话数退化为「未注册 / 0」，功能不受影响 | `[workspace-store] …`（既有 R4 护栏） |
-| 根目录不存在 / 无子目录 | 空态 `projects.rootMissing` / `projects.empty` +「添加工作区 / Add workspace」按钮（头部右上角同图标 `folder.badge.plus`、同文案）；不自动写盘 | 面板 |
+| 根目录不存在 / 无子目录 | 空态 `projects.rootMissing` / `projects.empty` +「添加工作区 / Add workspace」按钮（头部右上角同图标 `folderPlus`、同文案）；不自动写盘 | 面板 |
 | 名字非法（空 / 含 `/` 或 `:` / 控制字符 / `.`·`..` / 以 `.` 开头 / > 64 字符） | 创建前拦截 + 规则提示，**不创建任何东西**、不发请求 | sheet 内联 + 状态行 |
 | 根目录里的符号链接指向目录 | 视为工作区；canonical 归一后仍能与注册表匹配（链接进已有仓库是正常用法） | 面板徽标 |
 | 慢卷 / 网络卷 | 列举 + 注册表读取全在后台队列（注册表最坏阻塞 6s），主线程只渲染；`loadToken` 保证慢的那次结果不会覆盖新的 | — |

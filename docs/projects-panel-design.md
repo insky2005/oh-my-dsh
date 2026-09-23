@@ -37,7 +37,7 @@
   · **未注册**：标题次要色、光标非手型、「新会话」**禁用**（tooltip = `projects.needsWorkspace`）、点卡片不调用壳层（状态行提示同一句）；
   · **六个面板入口始终可用**——文件 / 终端 / 知识库 / 任务 / 通道 / 审查是壳层**本地**操作（重根 + 切面板），不碰 dsh web；
   · 面板侧还有第二道防线：卡片闭包内先判 `registered` 再转发（`warnNeedsWorkspace()` 只提示）；
-- 未注册的卡片提供**唯一**的 dsh 动作：标题行的 `folder.badge.plus` 按钮（tooltip **「添加工作区 / Add workspace」**，与 dsh web 同词，L10n `projects.register`）→ `ProjectsPanelController.registerWorkspace(path:)` 后台调 `DshWorkspaceOps.register`（幂等）→ 成功：状态行 `projects.registerDone` + `onWorkspaceRegistered`（main.swift 走 `nudgeDSHWebCaches()` 让 web 侧栏认领）+ 面板 reload（徽标翻「已注册」、dsh 动作解锁）；失败：状态行 `projects.registerFailed`，不弹模态、**不动磁盘**；
+- 未注册的卡片提供**唯一**的 dsh 动作：标题行的 `folderPlus` 按钮（**自定义字形**：文件夹轮廓 + 大的**朴素**加号，加号竖臂即文件夹右壁、无圆形底；参考图 `pic/folder+.jpg`。SF Symbols 的 `folder.badge.plus` 是右上角"圆圈加号"角标，故不用；tooltip **「添加工作区 / Add workspace」**，与 dsh web 同词，L10n `projects.register`）→ `ProjectsPanelController.registerWorkspace(path:)` 后台调 `DshWorkspaceOps.register`（幂等）→ 成功：状态行 `projects.registerDone` + `onWorkspaceRegistered`（main.swift 走 `nudgeDSHWebCaches()` 让 web 侧栏认领）+ 面板 reload（徽标翻「已注册」、dsh 动作解锁）；失败：状态行 `projects.registerFailed`，不弹模态、**不动磁盘**；
 - 「+ 新建工作区」不变：`mkdir` + 顺带注册（幂等）。
 
 ### 1.3 非目标
@@ -199,7 +199,7 @@ dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 
 | 控件 | 行为 |
 |---|---|
 | 标题「项目」 | `HeaderLabel`（面板头部**固定**显示面板名，不显示工作区名——遵循既有面板约定） |
-| `folder.badge.plus` 添加工作区 | tooltip **「添加工作区 / Add workspace」**（与 dsh web 同词）→ 取名 sheet（§5.4）：输入目录名即 `mkdir` + 幂等注册 |
+| `folderPlus` 添加工作区 | tooltip **「添加工作区 / Add workspace」**（与 dsh web 同词）→ 取名 sheet（§5.4）：输入目录名即 `mkdir` + 幂等注册 |
 | `⟳` 刷新 | 重读根 + 列举 + 注册表（后台） |
 | `⚙` 设置 | 打开壳层设置窗口（`openSettingsWindow`） |
 | `✕` 关闭 | `onRequestHide` → 收起右栏（沿用既有语义） |
@@ -208,7 +208,7 @@ dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 
 ### 5.2 卡片（三行）
 
 1. **第一行**：目录名（semibold 13pt）+ 右侧徽标 + **该卡唯一的 dsh 动作按钮**。名字区域**可点 = 「在 dsh 中打开」**（tooltip 说明：复用该工作区最近一条会话，没有则新建）；徽标二选一：`已注册 · N 个会话` / `未注册`；动作按钮紧随徽标（2026-09-24 从操作行上移，用户明确要求）：
-   - **未注册** → `folder.badge.plus` 图标按钮，tooltip 文案与 dsh web 一致：**「添加工作区 / Add workspace」**（点击 = 注册该目录，§1.4）；
+   - **未注册** → `folderPlus` 图标按钮（自定义字形，见 §1.4），tooltip 文案与 dsh web 一致：**「添加工作区 / Add workspace」**（点击 = 注册该目录，§1.4）；
    - **已注册** → `plus` 图标按钮，tooltip **「新会话 / New Session」**（点击 = 在该工作区建会话并切过去）；
    - 两者互斥，故都不需要"禁用态"；开关由 `ProjectCardView.dshActionButton()` 一处决定。
 2. **第二行**：绝对路径（次要色、中间截断、tooltip 全路径）+ **行尾两个路径工具**：在 Finder 中显示（`.reveal`）、复制路径（`link`）——它们是"这个目录在哪"的附属动作，故与路径同行（2026-09-24 从操作行上移）。

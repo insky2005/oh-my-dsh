@@ -310,7 +310,7 @@ final class HeaderLabel: NSView {
 /// terminal text, both confirmed to render). Handles hover highlight, click
 /// and tooltip natively.
 final class CustomIconButton: NSView {
-    enum Glyph { case plus, close, folder, openInApp, reveal, symbol(String), play, stop }
+    enum Glyph { case plus, close, folder, openInApp, reveal, symbol(String), play, stop, folderPlus }
     var onAction: (() -> Void)?
 
     var isEnabled = true {
@@ -428,6 +428,31 @@ final class CustomIconButton: NSView {
             path.appendOval(in: NSRect(x: inset.minX + 1, y: inset.minY + 1,
                                        width: inset.width - 2, height: inset.height - 2))
             path.appendOval(in: NSRect(x: bounds.midX - 1.5, y: bounds.midY - 1.5, width: 3, height: 3))
+        case .folderPlus:
+            // Folder + a LARGE PLAIN plus (the Projects panel's "添加工作区"): SF
+            // Symbols' folder.badge.plus draws a small circled plus in the corner,
+            // which reads as a different action than the reference icon
+            // (pic/folder+.jpg). Drawn here as: folder silhouette (left edge, tab,
+            // body top, bottom) whose right wall IS the plus's vertical arm — the
+            // same construction the reference uses.
+            let box = NSRect(x: (bounds.width - 17) / 2, y: (bounds.height - 14.5) / 2,
+                             width: 17, height: 14.5)
+            let left = box.minX, bottom = box.minY, right = box.maxX, top = box.maxY
+            let bodyTop = bottom + 9
+            let arm: CGFloat = 3.4
+            let centreX = right - arm
+            let centreY = bottom + 5.6
+            path.move(to: NSPoint(x: left, y: bottom))
+            path.line(to: NSPoint(x: left, y: top - 1.2))
+            path.line(to: NSPoint(x: left + 6.5, y: top - 1.2))
+            path.line(to: NSPoint(x: left + 8, y: bodyTop))
+            path.line(to: NSPoint(x: centreX + arm, y: bodyTop))
+            path.move(to: NSPoint(x: left, y: bottom))
+            path.line(to: NSPoint(x: centreX + arm, y: bottom))
+            path.move(to: NSPoint(x: centreX - arm, y: centreY))
+            path.line(to: NSPoint(x: centreX + arm, y: centreY))
+            path.move(to: NSPoint(x: centreX, y: centreY - arm))
+            path.line(to: NSPoint(x: centreX, y: centreY + arm))
         case .symbol:
             break   // handled above via the SF Symbol path
         case .play:
