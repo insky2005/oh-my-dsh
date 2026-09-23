@@ -1,6 +1,6 @@
 # 项目（Projects）面板设计
 
-> 状态：**设计**（`feature/projects-panel`）——本文件是第一个交付物，评审通过后才落代码。
+> 状态：**设计定稿，待实现**（`feature/projects-panel` / PR #56）。评审意见已并入：① 面板快捷键定为 **⌥⌘P**；② 「文件面板」正名 + 快捷键改 ⌥⌘F 作为**独立改动**拆出，**已合并进 main**（PR #57，`0253b35`）；③ 实现顺序见 §15。本文件只描述设计，不含代码。
 > 关联：`docs/dsh-version-impact.md`（本次新增耦合面：C10 工作区注册与建会话、B10 侧栏行点击桥；沿用 C4/R4 的 workspace.json 兜底）、`docs/skills-manager-design.md` / `docs/review-panel-design.md`（面板体例参照）、`docs/ui-color-scheme.md`（配色令牌）、`.dsh/wiki/tasks.md`（加面板清单）
 > 实现（规划）：`platforms/macos/src/ProjectsCore.swift`（纯模型）、`ProjectsPanel.swift`（面板）、`DshWebRPC.swift`（新增 `DshWorkspaceOps`）、`main.swift`（接线）；测试 `tests/projects-panel/`、`tests/dsh-rpc/`
 
@@ -60,7 +60,7 @@
 | 读取方 | 面板（每次打开/刷新）、设置窗口「项目」区块 |
 | 写入方 | 面板头部「更改…」、设置窗口「保存…」/「恢复默认」 |
 
-配置走既有的 `ShellConfig`（写操作合并去抖后交给 core `settings.js`，失败回落直接原子写）。core 的 settings store **对键名没有白名单**（`core/lib/settings.js` 只做 read/modify/atomic-write），因此新增键无需改 core。
+配置走既有的 `ShellConfig`（写操作合并去抖后交给 core `settings.js`，失败回落直接原子写）。core 的 settings store **对键名没有白名单**（`core/lib/settings.js` 只做 read/modify/atomic-write），因此新增键无需改 core。`projectsRoot` 是**全新键**，**不要**加进 `ShellConfig.legacyUserDefaultsKeys`（那份清单只用于从旧 UserDefaults 一次性搬值，新键没有历史值可搬）。
 
 **测试用覆盖**：`DSH_PROJECTS_TEST_ROOT=<dir>` 优先级高于 `projectsRoot`（仅 QA 钩子使用，见 §11.4）。
 
@@ -151,7 +151,7 @@ SessionCreateValue   = { sessionId, agentPreset? }
 dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 现有 `sessionOpenerScript` 注入 `window.__dshOpenSession(sessionId)`：先按会话 id 查 `session/list` 拿标题，再在侧栏 DOM 里找 `[role="treeitem"]` 且 `className` 含 `sessionRow`、行文本等于标题的那一行并 `click()`（最多重试 8 次，每次先展开 `aria-expanded=false` 的组）。这是影响清单 **B 面 / R3** 的既有弱点，本设计**不加重**它，只做两件事：
 
 1. 调用前先 `nudgeDSHWebCaches()`（合成 `offline` → `online` 让 web 客户端重连、重拉列表）——否则壳层刚创建的会话/工作区可能还不在侧栏里；
-2. `openDSHSession` 增加**一次** 1.5s 重试；仍失败则记 `pendingOpenSessionId` 并重载页面（带 token 的入口 URL），在 `webView(_:didFinish:)` 里再打开一次。
+2. `openDSHSession` 增加**一次** 1.5s 重试；仍失败则记 `pendingOpenSessionId` 并重载页面——复用既有的 `reloadPageReauthenticating(reason:)`（⌘R 同款：走 launch token 重新认证 + 主框架 401 自愈），在 `webView(_:didFinish:)` 里再打开一次（只打开一次，用完清空）。
 
 ### 4.6 契约速查
 
@@ -167,7 +167,7 @@ dsh web 不暴露会话 store 到全局，也没有"打开会话"的 URL —— 
 
 ## 5. 面板结构与交互
 
-活动栏首位（`ActivityBarButton(symbol: "folder")`；用 macOS 13 一定存在的符号——`NSImage(systemSymbolName:)` 对未知符号返回 nil，图标会空白），右栏槽第 9 个面板，快捷键 **⌥⌘P**（由「文件面板」让出，见 §13.E）。
+活动栏首位（`ActivityBarButton(symbol: "folder")`；用 macOS 13 一定存在的符号——`NSImage(systemSymbolName:)` 对未知符号返回 nil，图标会空白），右栏槽第 9 个面板，快捷键 **⌥⌘P**（由「文件面板」让出并**已生效**：PR #57 已合并，见 §13.E）。
 
 ```
 项目面板（右栏槽第 9 个，活动栏首位，⌥⌘P）
@@ -312,6 +312,8 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 
 原处理器保持既有语义：**路径变了才重根**，随后仍**无条件**调用三个 `workspaceChanged()` 与 `setActiveSession(_:)`（那是「同一工作区里换会话也要刷新列表/展开行」的既有行为）。
 
+> **一处有意的小行为修正**：抽出的原语带 `fileExists` 守卫，而现行 `dshSession` 处理器**不检查目录是否存在**——即会话的 cwd 已被删除时，旧代码仍会 `ProjectDirectory.set()` 并把各面板重根到一个不存在的目录。新原语在这种情况直接返回 `false`（不重根、记一行日志），避免面板被指向已消失的目录。这是**有意**的差异，不是重构走样；实现时需在 PR 描述里点明。
+
 ---
 
 ## 8. 失败模式与边界
@@ -328,6 +330,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 | 名字与已有**文件**冲突 | `createDirectory` 报 EEXIST → `创建失败：…` | 状态行 |
 | 名字含 `/`、`:`、`.` 开头、过长、空 | 创建前拦截 + 提示规则；不创建任何东西 | sheet 内联提示 |
 | 根目录里的符号链接指向目录 | 视为工作区；`canonical` 归一后与注册表匹配（因此「已注册」判定仍准确） | 面板徽标 |
+| **会话快照回退**（main 已有特性）之后 | 工作区注册表就在快照数据集内（`SNAPSHOT_INCLUDES = ['sessions','storages']`，见 `core/lib/snapshot.js`），回退会把 `storages/workspace.json` 一起换回去——面板**无需任何特殊处理**：回退本身会退出 App，重开后按新注册表重读即可；表现为徽标在「已注册 ↔ 未注册」间变化、会话数按被隔离/恢复的会话重算 | `[workspace-store]` 诊断 + 面板徽标 |
 | 终端/知识库重根时面板不可见 | 沿用既有语义：终端只为**屏上**的面板起 PTY，用户切过去时再起；wiki 只在可见时扫描 | `terminal workspace:` 日志 |
 | 用户在设置里填相对路径 | 不保存 + 内联错误提示；面板侧若读到非法配置则回退默认值并记日志 | `app.log` |
 
@@ -387,7 +390,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 
 复用（语义完全一致，不复制新键）：`btn.cancel`、`files.create`、`files.revealInFinder`、`files.copyPath`、`snapshot.action.refresh`（刷新）、`preview.closePanel`（关闭）。
 
-**变更（既有键）**：`menu.togglePreview` → **`menu.toggleFiles`**——值由「显示/隐藏 预览面板」/「Toggle Preview Panel」改为「显示/隐藏 文件面板」/「Toggle Files Panel」，快捷键由 **⌥⌘P** 改为 **⌥⌘F**（⌥⌘P 让给「项目」）。理由与受影响位置见 §13.E。
+**变更（既有键）**：`menu.togglePreview` → **`menu.toggleFiles`**——值由「显示/隐藏 预览面板」/「Toggle Preview Panel」改为「显示/隐藏 文件面板」/「Toggle Files Panel」，快捷键由 **⌥⌘P** 改为 **⌥⌘F**。**该变更已落地**（PR #57，main `0253b35`）：实现阶段只需**新增** `menu.toggleProjects`（⌥⌘P），不要重复改动 `menu.toggleFiles`。理由与完整清单见 §13.E。
 
 ---
 
@@ -440,6 +443,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 7. 设置窗口「项目」区块：改根目录并保存 → 面板立即刷新；相对路径被拒；「恢复默认」后 `shell/config.json` 里 `projectsRoot` 键消失；`⌥⌘P` 与菜单项 checkmark 同步（且「文件面板」已是 ⌥⌘F）。
 8. QA：`DSH_PROJECTS_TEST=1 DSH_PROJECTS_TEST_ROOT=/tmp/ws DSH_UI_DEBUG=1` 启动 → 面板直接打开且落在 `/tmp/ws`。
 9. `tests/projects-panel/run.sh`、`tests/dsh-rpc/run.sh`、`tests/l10n/run.sh` 全绿；`scripts/local-ci.sh swift`（含 swiftc 全量编译检查）通过。
+10. **与快照/回退共存**：在 dsh 里新建一个工作区（面板注册）→ 用「会话快照…」回退到该工作区出现之前的快照 → 重开后项目面板仍正常（列目录、徽标按恢复后的注册表显示，不崩、不报错），且能再次创建/注册该工作区（`workspace/create` 幂等）。
 
 ---
 
@@ -454,7 +458,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 | D3 | 不提供删除/移除/重命名 | 面板不引入破坏性操作；清理交给 Finder 与 dsh web |
 | D4 | 活动栏第一位 + 视图菜单首项 | 「项目是入口」的心智模型；与其余八个面板顺序一致 |
 | D5 | 不引入第二个「当前工作区」状态 | 避免面板选中项与 `ProjectDirectory` 两套状态互相覆盖 |
-| D6 | 「预览面板」正名为「**文件面板**」、快捷键改 **⌥⌘F**，**独立成支落地** | 同一个面板在活动栏/头部/README 里早已叫「文件」，只有视图菜单还叫「预览」；该改动不依赖本特性，走 `feature/menu-files-panel`（PR #57）单独合并，「项目」面板只依赖它让出的 ⌥⌘P 空档（详见 §13.E） |
+| D6 | 「预览面板」正名为「**文件面板**」、快捷键改 **⌥⌘F**，拆为独立改动**并已落地** | 同一个面板在活动栏/头部/README 里早已叫「文件」，只有视图菜单还叫「预览」；该改动不依赖本特性，已走 `feature/menu-files-panel`（PR #57）**合并进 main**（`0253b35`），「项目」面板只依赖它让出的 ⌥⌘P 空档（详见 §13.E） |
 
 **后续可选项（明确不在本次范围）**
 
@@ -464,28 +468,29 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 - 与 Composer @ 引用（`docs/file-panel-composer-reference.md`）联动：把整个工作区作为会话引用；
 - 工作区级「最近会话」列表（当前只提供「打开最近一条」，不做内嵌会话列表）。
 
-### E. 配套的既有改动（独立分支落地）
+### E. 配套的既有改动（**已落地**）
 
 视图菜单里的「显示/隐藏 预览面板」改为「**显示/隐藏 文件面板**」，快捷键由 **⌥⌘P** 改为 **⌥⌘F**，把 **⌥⌘P** 让给「项目」。
 
-> **归属**：该改动**不依赖本特性**（它只是让出快捷键），已从本分支拆出，走 `feature/menu-files-panel`（PR #57）单独评审与合并；本分支（设计与后续实现）只依赖「⌥⌘P 已空出」这一结果，而**不**依赖该提交本身——若它先合进 main，本分支 rebase 后自然带上。
+> **状态**：该改动不依赖本特性（它只是让出快捷键），已从本分支拆出、走 `feature/menu-files-panel` 单独评审，并**已合并进 main**（PR #57 → `0253b35` `Merge pull request #57`）。本分支也已 rebase 到该 main 之上。**实现阶段对 §E 的内容只剩一件事**：新增「项目」面板自己的 `menu.toggleProjects`（⌥⌘P），其余全部已完成、**不要重复改动**。
 
 - **理由**：同一个面板在活动栏（`bar.preview` = 文件 / Files）、面板头部、README 里**早就叫「文件」**，只有视图菜单这一处还叫「预览」，属于历史遗留（面板实现已从 `PreviewPanel.swift` 换成 `FilePanel.swift`）；改名后一个面板只有一个名字。
 - **L10n 键同步改名** `menu.togglePreview` → `menu.toggleFiles`（值也改），不留名不符实的死键（`tests/l10n/run.sh` 对未引用键只 WARN，所以必须主动改）。
 - **选择器 `togglePreviewPanel(_:)` 保持不改**：纯内部标识，改名收益小于改动面。
-- **受影响位置清单**（实现时逐个同步，避免留旧文案/旧快捷键）：
+- **位置清单（已完成，记录备查）**：
 
   | 位置 | 现状 | 改为 |
   |---|---|---|
   | `platforms/macos/src/main.swift`（L10n 表） | `menu.togglePreview` = 显示/隐藏 预览面板 | `menu.toggleFiles` = 显示/隐藏 文件面板 |
   | `main.swift` `buildMenu()` 视图菜单项 | `keyEquivalent: "p"` + ⌥⌘ 掩码 | `keyEquivalent: "f"` |
-  | `main.swift` `SettingsWindowController.shortcutRows` | `("menu.togglePreview", "⌥⌘P")` | `("menu.toggleFiles", "⌥⌘F")` + 新增 `("menu.toggleProjects", "⌥⌘P")` |
+  | `main.swift` `SettingsWindowController.shortcutRows` | `("menu.togglePreview", "⌥⌘P")` | `("menu.toggleFiles", "⌥⌘F")` ✅ |
   | `README.md` 面板章节标题 | 文件面板（`⌥⌘P` / 活动栏「文件」图标） | 文件面板（`⌥⌘F` / 活动栏「文件」图标） |
-  | `.dsh/wiki/tasks.md` 验证点 | ⌥⌘P / ⌥⌘T / … 八面板 | ⌥⌘F / ⌥⌘P（项目）/ … 九面板 |
-  | `.dsh/wiki/modules/main.md` 视图菜单清单 | ⌥⌘P … 八面板切换 | ⌥⌘F … + 项目 ⌥⌘P（九面板） |
+  | `.dsh/wiki/tasks.md` 验证点 | ⌥⌘P / ⌥⌘T / … | ⌥⌘F / ⌥⌘T / … ✅（「项目 ⌥⌘P + 九面板」随面板落地，见 §16） |
+  | `.dsh/wiki/modules/main.md` 视图菜单清单 | ⌥⌘P … 八面板切换 | ⌥⌘F … ✅（同上，九面板随面板落地） |
   | `.dsh/wiki/modules/preview-panel.md` 头部入口 | 打开项目目录（`⌥⌘P` 同入口） | （`⌥⌘F` 同入口） |
   | `CHANGELOG.md` `[Unreleased]` | — | 新增 `### Changed` 一条（菜单文案正名 + 快捷键让位） |
-- **冲突已核**：现有 keyEquivalent 集合为 `,` `Z` `a b c h j l p q r s t u v w x z`，加上 ⌥⌘ 面板组（p t w j b h r s）；**`f` 未被占用**，⌥⌘F 不与任何菜单项或系统快捷键冲突。
+- **本轮唯一待做**：`shortcutRows` 与「视图」菜单各增一行 `menu.toggleProjects` / ⌥⌘P（即 §5、§11.4 的首项接线），不再触碰 `menu.toggleFiles`。
+- **快捷键占用（2026-09-24 在 main `0253b35` 上核对）**：`keyEquivalent` 集合 = `,` `Z` `a b c f h j l q r s t u v w x z`（`p` 已随 PR #57 释放，`f` 现由文件面板占用）；⌥⌘ 面板组现为 f/t/w/b/h/r/s 七个，**⌥⌘P 空档**，供「项目」使用，无冲突。
 
 ---
 
@@ -505,3 +510,39 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 
 1. 新建一个工作区 → dsh web 侧边栏是否出现该工作区；再点「新会话」→ 是否切到该会话（覆盖 C10a/C10b/B10）；
 2. `workspace/create` 的参数名是否仍为 `request`（typert 贡献里 `wire` 字段），`session/create` 是否仍接受 `workspaceId`（覆盖 C10a/C10b）。
+
+**编号已核对**（2026-09-24，main `0253b35`）：影响清单 A 面到 **A6**、B 面到 **B9**、C 面到 **C9**、D 面到 **D9**（含 D2b/c/d）、R 清单到 **R8** —— 故本次取 `C10a/b/c` 与 `B10`，不与既有条目撞号。
+
+---
+
+## 15. 实现顺序（提交切分）
+
+全部在 `feature/projects-panel`（已 rebase 到 main，当前只含本设计文档）：
+
+| # | 提交 | 内容 |
+|---|---|---|
+| 1 | `feat(projects): 纯模型 ProjectsCore + 无头单测` | 根目录解析 / 命名校验 / 目录列举 / 注册匹配（§3） |
+| 2 | `feat(dsh): workspace/create 与 DshWorkspaceOps + dsh-rpc 用例` | §4 的 C10a/b/c |
+| 3 | `feat(projects): 项目面板 + L10n + main.swift 接线` | §5、§10：`RightPanel` 加 `.projects`、活动栏首位、视图菜单首项 ⌥⌘P、`rightPanelKind` 持久化、`adoptProjectDirectory` 抽取（§7）、`didFinish` 待打开 |
+| 4 | `feat(projects): 设置窗口「项目」区块 + QA 钩子` | §9、§11.4（含 `DSH_PANEL_TEST` 三处接线） |
+| 5 | `test(projects): 控制器无头测试 + CI/local-ci 接线` | §11.2、§11.4 末条 |
+| 6 | `docs(projects): 影响清单登记 + README/CONTRIBUTING/CHANGELOG + 知识库` | §14、§16 |
+
+每步提交前 `git status` 确认只含本次改动；分支推送后开 PR（main 只接受 PR）。
+
+---
+
+## 16. 文档与发布物同步清单（实现阶段）
+
+| 位置 | 需要改什么 |
+|---|---|
+| `docs/dsh-version-impact.md` | §3C 增 **C10a/C10b/C10c**、§3B 增 **B10**；§5 SOP 增两条核对项（内容见 §14）；与既有 C4/R4、R3 互引 |
+| `README.md` | ① 「「视图」菜单提供**八**面板的显示/隐藏快捷键」→ **九**；② 面板章节列表新增「### 项目面板（`⌥⌘P` / 活动栏首位「项目」图标）」；③ 测试清单补 `tests/projects-panel/run.sh`（README 按 AGENTS.md **在当前分支直接改**，不另开 PR） |
+| `CONTRIBUTING.md` | 测试清单补一行 `tests/projects-panel/run.sh` |
+| `CHANGELOG.md` | `[Unreleased]` 的 `### Added` 增一条（项目面板 + 工作区快捷入口）；发布时按 `scripts/changelog.sh` 复核重排 |
+| `.dsh/wiki/index.md` | 新增模块条目 `modules/projects-panel.md` |
+| `.dsh/wiki/modules/projects-panel.md` | **新建**：定位 / 根目录与配置 / 卡片操作 / 三条流程 / 与 `ProjectDirectory` 的关系 / 失败模式 / QA 钩子 |
+| `.dsh/wiki/modules/main.md` | 右栏插槽补第 9 个面板、活动栏顺序（项目在首位）、视图菜单 ⌥⌘P、`RightPanel` 枚举与 `rightPanelKind` 映射 |
+| `.dsh/wiki/tasks.md` | 新增「管理项目 / 工作区」操作手册；测试清单补 `tests/projects-panel/run.sh`；QA 钩子表补 `DSH_PROJECTS_TEST[_ROOT]`；「加一个新右栏面板」清单若列 QA 钩子，同步 `DSH_PANEL_TEST` 的第九项 |
+| 本文件 | 实现完成后把状态行由「设计定稿，待实现」改为「已实现（PR #NN）」并补实测记录 |
+
