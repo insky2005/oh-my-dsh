@@ -5,8 +5,10 @@
  *
  * Answers "which files did the agent change, and how?" for one dsh session,
  * without touching dsh: it reads the session log dsh itself persists under
- * `$DSH_HOME/sessions/<workspace-slug>/<session-id>/session.jsonl[.zstd]` and
- * folds the recorded tool traffic into an audit model.
+ * `$DSH_HOME/sessions/<workspace-slug>/<session-id>/session[.vN].jsonl[.zstd]`
+ * (generation 0 = the original `session.jsonl`; dsh 0.1.5 writes new sessions
+ * as `session.v3.jsonl` — see sessionLogCandidates) and folds the recorded tool
+ * traffic into an audit model.
  *
  * Three record families are merged (see docs/review-panel-design.md):
  *   1. `tool/result` → `data.meta.diffs` — the applied contextual hunks of a
@@ -31,8 +33,32 @@ const path = require('node:path');
 const os = require('node:os');
 const zlib = require('node:zlib');
 
-/** Session-log artifact names, in preference order (zstd first). */
+/** Session-log artifact names of the ORIGINAL format generation (zstd first). */
 const SESSION_LOG_FILES = ['session.jsonl.zstd', 'session.jsonl'];
+
+/**
+ * Canonical session-log basenames, any format generation.
+ *
+ * dsh names the raw log of one immutable Session format generation
+ * (`@deepseek-ai/dsh-session-format`): generation 0 keeps the original
+ * `session.jsonl`, every later generation carries a lowercase `.vN` component
+ * (`session.v3.jsonl`) — plus the `.zstd` compression suffix when the store
+ * compresses. dsh 0.1.5 writes NEW sessions as generation 3, so a reader that
+ * only knows the generation-0 names sees an EMPTY session directory (silently:
+ * the Review panel just lists nothing). Temporary/uppercase/`.v0` names are not
+ * canonical and are ignored.
+ */
+const SESSION_LOG_NAME = /^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$/;
+
+/** Parse a session-log basename → { generation, compressed } or null. */
+function parseSessionLogName(name) {
+  const m = SESSION_LOG_NAME.exec(name);
+  if (!m) return null;
+  return {
+    generation: m[1] === undefined ? 0 : Number(m[1]),
+    compressed: m[2] === '.zstd',
+  };
+}
 
 /** Zstandard frame magic (`0xFD2FB528`, little-endian on disk). */
 const ZSTD_MAGIC = 4247762216;
@@ -88,13 +114,46 @@ function sessionsDir(dshHome) {
   return path.join(dshHomeDir(dshHome), 'sessions');
 }
 
-/** The session-log artifact inside a session directory, or null. */
-function sessionLogFile(sessionDir) {
-  for (const name of SESSION_LOG_FILES) {
-    const p = path.join(sessionDir, name);
-    if (fs.existsSync(p)) return p;
+/**
+ * Every session-log artifact inside one session directory, best candidate FIRST.
+ *
+ * Preference order: NEWEST generation first (a migrated session keeps its frozen
+ * `session.jsonl` archive next to the live `session.v3.jsonl` — the archive is
+ * older and shorter, so reading it would show a stale audit), then the
+ * compressed artifact of that generation (the writer appends to the `.zstd`
+ * one when the store compresses).
+ *
+ * @param {string} sessionDir - one `.../<session-id>` directory.
+ * @returns {Array<{path: string, generation: number, compressed: boolean}>}
+ */
+function sessionLogCandidates(sessionDir) {
+  let names;
+  try {
+    names = fs.readdirSync(sessionDir);
+  } catch {
+    return [];
   }
-  return null;
+  const found = [];
+  for (const name of names) {
+    const parsed = parseSessionLogName(name);
+    if (!parsed) continue;
+    const full = path.join(sessionDir, name);
+    try {
+      if (!fs.statSync(full).isFile()) continue;
+    } catch {
+      continue;
+    }
+    found.push({ path: full, generation: parsed.generation, compressed: parsed.compressed });
+  }
+  found.sort((a, b) => (b.generation - a.generation)
+    || (Number(b.compressed) - Number(a.compressed)));
+  return found;
+}
+
+/** The best session-log artifact inside a session directory, or null. */
+function sessionLogFile(sessionDir) {
+  const candidates = sessionLogCandidates(sessionDir);
+  return candidates.length ? candidates[0].path : null;
 }
 
 /**
@@ -639,6 +698,8 @@ function auditSession(options) {
 
 module.exports = {
   SESSION_LOG_FILES,
+  parseSessionLogName,
+  sessionLogCandidates,
   dshHomeDir,
   sessionsDir,
   sessionLogFile,

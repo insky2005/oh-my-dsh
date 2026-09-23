@@ -40,7 +40,7 @@ oh-my-dsh/
 ```bash
 # 共享核心单测（主套件，headless）：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / dsh RPC 传输层 / shell 设置 /
 # workspace 存储 / issues / 队列 / 任务索引 / channel（指令 · 路由 · 会话 · 传输层 · 微信 ClawBot 与钉钉 stream 适配器 · 钉钉绑定鉴权）/
-# review-log（会话日志变更审计：zstd 多帧解码 · 三类记录合并 · 轮次归属）
+# review-log（会话日志变更审计：zstd 多帧解码 · 三类记录合并 · 轮次归属 · 日志世代命名发现）
 # --test-timeout：用例若泄漏定时器/runner，60s 后判失败而不是把整轮挂死（CI 同参数）。grep glob 不加引号以兼容 Node 20。
 node --test --test-timeout=60000 core/tests/*.test.js
 
@@ -56,6 +56,8 @@ tests/review-panel/run.sh               # 审查（变更审计）面板展示�
 tests/shell-config/run.sh               # 壳层设置文件与旧 UserDefaults 迁移
 tests/dsh-rpc/run.sh                    # 壳层原生 dsh RPC（0.1.2 信封/斜杠端点、launch token 换 cookie、回退记忆）
 tests/dsh-auth-cookies/run.sh           # dsh-auth cookie 名派生 / 启动与退出清理 / NODE_OPTIONS 追加
+tests/snapshot-rollback/run.sh          # 会话快照 / 回退 CLI 端到端（引导 -> 升级 dsh -> 回退 -> 重开）
+tests/snapshot-panel/run.sh             # 会话快照窗口的数据模型（解析 list/plan-rollback、格式化、坏数据不崩）
 tests/l10n/run.sh                       # L10n 键名 lint（缺失键 / 重复键 / 中英缺一）
 tests/skills-panel/run.sh               # 技能面板（frontmatter 读写 / 四根扫描与级别 / registry 与地址解析）
                                         #   + controller/冒烟 + render-tests.swift（离屏绘制：头部不被不透明兄弟覆盖）

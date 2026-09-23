@@ -134,7 +134,7 @@
 
 ### 审查面板（`⌥⌘R` / 活动栏「审查」图标）
 
-**只读**回答「这个会话里代理到底改了哪些文件、改成什么」——直接读 dsh 自己落盘的会话日志（`$DSH_HOME/sessions/<workspace>/<session>/session.jsonl[.zstd]`），不写任何文件、不发任何请求、不改 dsh。
+**只读**回答「这个会话里代理到底改了哪些文件、改成什么」——直接读 dsh 自己落盘的会话日志（`$DSH_HOME/sessions/<workspace>/<session>/session[.vN].jsonl[.zstd]`；日志文件名里的 `.vN` 是 dsh 的 **Session 格式世代**，dsh 0.1.5 的新会话是 `session.v3.jsonl`，面板按规范名枚举并**取世代最大的那一份**），不写任何文件、不发任何请求、不改 dsh。
 
 **按 会话 → 对话（turn）→ 文件 → 变更内容 的树展示，每层可展开/收起**；对话用该轮的用户消息做摘要；
 会话在第一次展开时才真正审计（列表只读日志头，展开才解码全量日志）。**审计结果会跟着日志走**：正在对话的会话
@@ -207,8 +207,13 @@ open "dist/oh-my-dsh-<version>-arm64.dmg"
    （自动选最新 LTS，失败自动回退 nodejs.org），用官方 `SHASUMS256.txt` 校验 SHA-256 后，
    把 `bin/node` 和 `lib/node_modules/npm`（升级功能要用）嵌入 `Contents/Resources/runtime/`；
 2. **安装 dsh**：用刚下载的 Node 自带 npm，在 `Contents/Resources/runtime/dsh` 里执行
-   `npm install @deepseek-ai/dsh@<版本>`（默认版本，含其全部依赖闭包），默认走国内 npm 源
-   `registry.npmmirror.com`（失败自动回退 npmjs.org）。
+   **`npm ci`**（默认版本，含其全部依赖闭包），默认走国内 npm 源 `registry.npmmirror.com`（失败自动回退 npmjs.org）。
+   ⚠️ **闭包用提交的 lockfile 钉死**：`platforms/macos/runtime-locks/<spec>/package-lock.json`（随 App 分发到
+   `Contents/Resources/runtime-locks/`）。**只改 `DSH_PACKAGE_SPEC` 而不配 lock 是不行的**——dsh 用 caret 范围声明
+   它的 cordis 工具链，裸 `npm install` 会装当天最新的 1.x，可能让这个 dsh 版本**启动即崩**
+   （实测：`cordis-plugin-hmr` 1.0.19 装进 0.1.2-rc.1 → `user patch-layer watching requires the Cordis HMR service`，见
+   `docs/dsh-version-impact.md` R8）。装完还会跑一次**启动冒烟**（`smoke_runtime`：起一次 `dsh web`，40 秒内必须打出入口 URL
+   且进程存活，否则构建失败；跨架构 stage 自动跳过，`DSH_SKIP_RUNTIME_SMOKE=1` 可临时跳过）。
 
 **Node 选择策略（运行期）**：`DSH_NODE` 显式指定 > 系统 node（PATH→nvm current→nvm default→nvm 最新→Homebrew，
 取**通过版本门槛** `≥22.0.0` 者，`DSH_NODE_MIN` 可覆盖）> 内置 node 兜底；dsh web 子进程经登录 shell 合并用户 PATH。
@@ -218,7 +223,7 @@ open "dist/oh-my-dsh-<version>-arm64.dmg"
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `DSH_NODE_VERSION` | 自动检测最新 LTS | 指定下载的 Node 版本，如 `v22.23.2` |
-| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.2-rc.1` | 传给 `npm install` 的包说明（内置 dsh 版本，壳层与该版本同步适配；可覆盖为 `@deepseek-ai/dsh@latest` 等） |
+| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.2-rc.1` | 内置 dsh 版本（壳层与该版本同步适配；每个受支持版本需在 `platforms/macos/runtime-locks/<spec>/` 配一份 lockfile，构建用 `npm ci` 复现闭包） |
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh 用） |
 | `DSH_ARCH` | `uname -m` | 目标架构：`arm64` / `x86_64`（CI 构建 arm64，release 构建 arm64 + x86_64；不再出 universal） |
@@ -250,6 +255,31 @@ open "dist/oh-my-dsh.app"
 - 升级日志见 `~/Library/Logs/oh-my-dsh/app.log`（`auto-upgrade: …` 行）；
 - 注意：升级会改写 App 包内文件，ad-hoc 签名因此失效，但本地运行不受影响；重新 `./platforms/macos/build-app.sh` 可还原干净包。
 
+
+## 会话快照与回退（Session Snapshots）
+
+dsh 升级会**把会话日志换成新世代**（0.1.5 起新建会话写 `session.v3.jsonl`，老会话被迁移后把原文件留成冻结归档），
+而且**上游没有降级通道**——这是一次不可逆的数据迁移。所以壳层在任何「App / 内置 dsh 版本组合变化」发生**之前**自动留一份可回退的快照，
+设置菜单 →「**会话快照…**」里可以查看与回退。
+
+| 资源 | 内容 | 成本（实测） |
+|---|---|---|
+| 数据快照 | `$DSH_HOME/sessions/ + storages/`，最多保留 3 份 | 306 MB / 246 会话 → **0.124 s**（APFS clonefile，实际几乎不占空间） |
+| 树池 | `runtime/dsh` 整树，**按 dsh 版本去重**存一份 | 256 MB / 24,872 文件 → 5–6 s、约 14 MB（每个版本只一次） |
+| 隔离区 | 回退时"快照之后新建的会话"移到这里，**不删除** | 0（rename） |
+
+**触发时机**：① 功能首次启用（基线）；② App / dsh 版本组合变化；③ **App 内升级 dsh 之前（强制）**；④ 用户点回退时的现场快照（使回退本身可撤销）。
+顺序铁律是「**先打快照、再起 dsh**」——dsh 一打开会话就会写盘，晚一步就抓不到干净状态。组合没变时启动只读一次状态文件（~60 ms）。
+
+**回退并退出**：选一份快照 → 预览「将恢复 N 条 / 将隔离 M 条 / 内置 dsh 换回 X」→ 二次确认 →
+停掉壳层自拉起的 dsh web → 把现场整体停放到一份 pre-rollback 快照（可撤销）→ 恢复数据并删掉被恢复会话的新世代日志 →
+快照之后新建的会话移入隔离区 → 换回旧 dsh 树（池内 rename，**离线瞬时**）→ 写回数据所属组合并**钉住自动升级** → 退出 App。
+事务带 journal：中途崩溃或「数据与树版本不一致」会在下次启动提示，可续做或撤销。
+
+**边界**：这是数据回退，不是 App 回退——pkg 装不了旧版本，所以「问题出在 App 本身」时要选「只回退数据 + 重装旧版 App」
+（快照 meta 里记着当时的 App 版本，界面会据此提示装哪一版）。凭据（`credentials*`）、壳层自身状态与 token（`shell/`）、
+通道绑定（`channels/`）、CEF profile（`browser*/`）**一律不进快照、不回退**。设计与场景演绎：`docs/session-snapshot-rollback-design.md`。
+
 ## 退出行为说明
 
 | 场景 | 行为 |
@@ -277,7 +307,9 @@ open "dist/oh-my-dsh.app"
 | `DSH_REVIEW_TEST_PATH` | 审计面板固定读取的工作区路径（QA/调试钩子，默认跟随当前工作区） |
 
 > 其他 QA/调试钩子（环境变量或 `--ui-debug`）：`DSH_UI_DEBUG=1` 统一开关（打开浏览器面板 + 面板层级 dump + 截图）、
-> `DSH_PREVIEW_TEST_PATH` / `DSH_TERMINAL_TEST` / `DSH_WIKI_TEST` / `DSH_REVIEW_TEST`（启动即开对应面板）、`DSH_PREVIEW_DEBUG`（fetch 拦截探针）、`DSH_SESSION_DEBUG`（会话跟踪 dump）。
+> `DSH_PREVIEW_TEST_PATH` / `DSH_TERMINAL_TEST` / `DSH_WIKI_TEST` / `DSH_REVIEW_TEST` / `DSH_SKILLS_TEST`（启动即开对应面板）、
+> `DSH_PANEL_TEST="files,terminal,wiki,tasks,browser,channel,review,skills"`（**按序开全部面板**，配 `DSH_UI_DEBUG=1` 每个面板各落一张 `panel-<name>-debug.png` ——dsh 升级后的面板全量核对就靠它）、
+> `DSH_PREVIEW_DEBUG`（fetch 拦截探针，同时演练 `host.openPath` 与 `session/openWorkspacePath` 两种形状）、`DSH_SESSION_DEBUG`（会话跟踪 dump）。
 
 > **壳层设置存放位置**：语言 / 主题 / 面板宽度 / 浏览器 / 通道 / wiki 等**壳层自有设置**存为 UTF-8 JSON `$DSH_HOME/shell/config.json`
 > （开发版 `~/.dsh-dev/shell/config.json`），可由外部工具 / 代理直接读写（写入经 core CLI 合并 + 原子落盘，壳层侧 0.3s 防抖异步）；
