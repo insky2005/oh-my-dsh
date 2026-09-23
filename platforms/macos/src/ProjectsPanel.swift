@@ -117,6 +117,16 @@ final class ProjectCardView: NSView {
 
     override func mouseDown(with event: NSEvent) { onOpen?() }
 
+    /// The whole card is the "open in dsh" target, but its own labels must not
+    /// swallow the click (a label IS a hit-testable view). Anything that is not
+    /// one of the action-row controls therefore counts as the card itself; the
+    /// buttons keep working because AppKit hit-tests the deepest subview first.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        if hit is NSButton || hit is CustomIconButton { return hit }
+        return self
+    }
+
     // MARK: - Layout
 
     private func build() {
