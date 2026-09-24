@@ -590,8 +590,6 @@ enum L10n {
         "tasks.loading": ("加载 Issues…", "Loading issues…"),
         "tasks.loadFailed": ("加载 Issues 失败（网络/限流/Token？）", "Failed to load issues (network/rate-limit/token?)"),
         "tasks.running": ("正在处理 #%d…", "Processing #%d…"),
-        "tasks.creatingPr": ("正在创建 #%d 的 PR…", "Creating PR for #%d…"),
-        "tasks.sessionLabel": ("任务会话", "task session"),
         "tasks.errBranch": ("切换/创建分支失败（分支已存在或被占用？）", "Failed to create/checkout branch (exists or busy?)"),
         "tasks.errSession": ("创建 dsh 会话失败", "Failed to create dsh session"),
         "tasks.errPrompt": ("向会话发送任务失败", "Failed to prompt the session"),
@@ -604,17 +602,12 @@ enum L10n {
         "tasks.errNotGit": ("当前工作区不是 git 仓库（无法切分支 / 建会话）", "The current workspace is not a git repository (cannot switch branches or open a session)"),
         "tasks.errDirtyTree": ("工作区有未提交改动，已停止切换分支（请先 commit 或 stash）", "The worktree has uncommitted changes; branch switching stopped (commit or stash first)"),
         "tasks.errPull": ("拉取基线分支失败（网络不通或分支已分叉？）", "Failed to pull the base branch (no network, or the branch diverged?)"),
-        "tasks.failTitle": ("任务失败", "Task Failed"),
         "tasks.prTitle": ("fix(#%d)", "fix(#%d)"),
         "tasks.prBody": ("自动修复 GitHub issue #%d（由 oh-my-dsh 任务面板处理）", "Automated fix for GitHub issue #%d (processed by oh-my-dsh task panel)"),
         "tasks.configTitle": ("GitHub Token", "GitHub Token"),
         "tasks.configInfo": ("GitHub token（只写文件：有当前仓库时写 ~/.dsh/tokens/<owner>-<repo>，否则写通用 ~/.dsh/gh-token；chmod 600，App 与外部工具共用）。解析顺序：文件专属 → 文件通用；不再读取 macOS 钥匙串。仅用于拉取 issues、创建 PR、评论关闭 issue；公开仓库可留空。", "GitHub token (written to a FILE only: ~/.dsh/tokens/<owner>-<repo> when a repo is known, otherwise the generic ~/.dsh/gh-token; chmod 600, shared with external tools). Resolution: per-repo file → generic file; the macOS Keychain is no longer read. Used only to fetch issues, create PRs, comment & close issues; public repos may leave empty."),
         "tasks.tokenPlaceholder": ("ghp_xxx（可选）", "ghp_xxx (optional)"),
-        "tasks.detailTitle": ("Issue #%d", "Issue #%d"),
-        "tasks.detailLabels": ("标签：%@", "Labels: %@"),
-        "tasks.detailBranch": ("分支：%@", "Branch: %@"),
         "tasks.detailPR": ("PR：%@", "PR: %@"),
-        "tasks.detailState": ("状态：%@", "State: %@"),
         "tasks.state.pending": ("待处理", "Pending"),
         "tasks.state.queued": ("队列中", "Queued"),
         "tasks.state.running": ("处理中", "Running"),
@@ -627,7 +620,6 @@ enum L10n {
         "tasks.detailOpenPR": ("打开 PR", "Open PR"),
         "tasks.detailRetry": ("重试", "Retry"),
         "tasks.detailCancelTask": ("取消任务", "Cancel Task"),
-        "tasks.detailClose": ("关闭", "Close"),
         "tasks.detailCommentClose": ("评论并关闭 Issue", "Comment & Close Issue"),
         "tasks.detailOpenIssue": ("打开 Issue", "Open Issue"),
         "tasks.filter.all": ("全部", "All"),
@@ -689,7 +681,6 @@ enum L10n {
         "tasks.deleteQueueInfo": ("队列内 %d 个任务会回到「未入队」；已完成任务的记录保留。", "Its %d task(s) return to the not-queued area; finished records are kept."),
         "tasks.commentCloseTitle": ("评论并关闭 Issue #%d", "Comment & Close Issue #%d"),
         "tasks.commentCloseInfo": ("将发布一条评论并关闭该 issue（需 GitHub token）。可编辑下方评论内容：", "Posts a comment and closes the issue (needs a GitHub token). You can edit the comment below:"),
-        "tasks.commentCloseDone": ("已评论并关闭 issue #%d", "Commented & closed issue #%d"),
         "tasks.commentCloseFailed": ("评论/关闭失败（检查 token 与网络）", "Comment/close failed (check token & network)"),
         "tasks.commentTemplate": ("已由 oh-my-dsh 任务面板处理完成，对应 PR：#%@", "Processed by the oh-my-dsh task panel; PR: %@"),
         // Projects panel (a workspace = a directory under the projects root)
@@ -2335,6 +2326,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if ProcessInfo.processInfo.environment["DSH_PROJECTS_TEST"] == "1" {
             setRightPanel(.projects)
             AppLog.shared.log("projects self-test enabled")
+        }
+        // Tasks self-test hook (debugging / QA): opens the task panel. With
+        // DSH_TASKS_TEST_PATH=<repo> it loads that repo's .dsh/tasks/ board
+        // instead of waiting for the workspace to resolve (fixture QA).
+        if ProcessInfo.processInfo.environment["DSH_TASKS_TEST"] == "1" {
+            setRightPanel(.tasks)
+            AppLog.shared.log("tasks self-test enabled")
         }
         // Panel sweep hook (QA only): DSH_PANEL_TEST="projects,files,terminal,wiki,
         // tasks,browser,channel,review,skills" shows every named panel in sequence,

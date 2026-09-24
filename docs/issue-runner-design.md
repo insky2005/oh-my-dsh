@@ -1,6 +1,6 @@
 # 任务面板设计（IssueRunner / Tasks）
 
-> 状态：**v1 已实现**（v1.8.0+，方案 E：branch-based 串行队列）；**v2 方案已定稿，待实现**（2026-09-24：多队列泳道 + 手动任务 + 卡片式 UI + token 仅文件；决策记录见 §V2-13）
+> 状态：**v1 已实现**（v1.8.0+，方案 E：branch-based 串行队列）；**v2 已实现**（2026-09-24：多队列泳道 + 手动任务 + 卡片式 UI + token 仅文件；决策记录见 §V2-13）。v1 章节保留为历史决策记录，实现现状以 §V2-* 与 `.dsh/wiki/modules/issue-runner-panel.md` 为准
 > 更新：2026-09-24
 > 关联：`docs/git-workflow.md`（分支规范）、`docs/ui-color-scheme.md`（配色令牌）、`docs/projects-panel-design.md`（卡片面板体例）、`docs/dsh-version-impact.md`（会话 RPC 耦合面）、`.dsh/wiki/modules/issue-runner-panel.md`
 
@@ -405,7 +405,7 @@ QA 钩子：`DSH_TASKS_TEST=1` 启动即开面板；`DSH_PANEL_TEST=` 全量核�
 4. `feat(tasks): 手动创建任务` —— 表单（含队列选择 / 新建队列）+ 通用提示词；
 5. `refactor(tasks): issue 任务改走自动单任务队列` —— 行为与 v1 逐条对齐（分支名、PR、评论关闭不变）；
 6. `refactor(tasks): 任务清单改卡片式 UI` —— 队列分区 + 未入队区 + 自动队列折叠 + hover / 展开；
-7. `test(tasks): tests/tasks-panel 无头套件 + CI 登记`，`docs: 本文档、README、.dsh/wiki` 同步。
+7. `test(tasks): tests/tasks-panel 无头套件 + CI 登记`，`docs: 本文档、README、.dsh/wiki` 同步 —— 已完成（三阶段 347 项；本文件、README、CONTRIBUTING、`.dsh/wiki/tasks.md` 与 `modules/issue-runner-panel.md` 同步；另补 `.gitignore` 的 `manual.json` / `queues.json`、清掉 9 个 v1 遗留 L10n 键）。
 
 分支：`feature/tasks-manual-queue`（本仓库规范：不在 main 上开发，合并走 PR）。
 

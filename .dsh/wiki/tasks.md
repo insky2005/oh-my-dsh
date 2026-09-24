@@ -137,6 +137,19 @@ tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到�
 - 未注册的目录**不联动** dsh web：卡片「新会话」禁用、点卡片只在状态行提示 `projects.needsWorkspace`；六个本地面板入口仍可用；卡片上的「创建 dsh 工作区」会调 `workspace/create`（幂等），成功后徽标翻「已注册」并解锁 dsh 动作；
 - 回归：`tests/projects-panel/run.sh`（模型 45 + 控制器 49 = **94 项**）、`tests/dsh-rpc/run.sh`（含 `DshWorkspaceOps` 的 register / createSession / newestSessionId **17 项**，其中 3 项是"blank 会话必须跳过"）、`tests/injected-scripts/run.sh`（注入桥：脚本可解析 + 桥名与壳层调用对得上）。
 
+
+## 任务面板：队列工作流（手动任务 / 队列 / issue）
+
+- 打开：活动栏「任务」图标 / 视图菜单 / **⌥⌘J**（QA 钩子 `DSH_TASKS_TEST=1` 启动即开；`DSH_UI_DEBUG=1` 落 `~/Library/Logs/oh-my-dsh/panel-tasks-debug.png`）；
+- **两种来源**：`Issue #N`（GitHub issue 拉取）与 `手动`（自己建的任务）——卡片左上角来源徽标区分，工具栏第二行有来源筛选（全部 / Issue / 手动）；
+- **新建任务**（头部 `+`）：只填**标题 + 描述**（描述就是发给代理的指令）→ 任务落到**未入队**区；**从卡片上决定去哪里**：点「加入队列 ▾」选已有队列或「新建队列…」（队列名 / 分支 / 基于分支 / 队列完成后自动开 PR）；
+- **队列 = 泳道**：同一队列的任务**共享一个分支、按 FIFO 顺序执行**，后一个任务看得到前一个的 commit（依赖关系由分支累积表达）；**全局严格串行**（一个工作树只能在一个分支上），队列之间也不并行；
+- **队列头**：名称 · `分支 → 基线` · `n/m` 进度 · 状态徽标（活跃 / 暂停 / 已完成）· 失败计数 · `开始` / `暂停` / `打开 PR` / `⋯`（重命名 · 改分支 · 完成后自动开 PR 开关 · 删除）；issue 任务的自动队列默认折成**一行**，点开即展开；
+- **失败即暂停队列**（队内共享分支，继续跑等于基于半成品）：卡片给「重试 / 跳过并继续」；**切到另一队列前要求工作区干净**（脏工作区拒绝启动并提示）；
+- **issue 任务**：点「处理」自动建一个**单任务队列**（分支 `fix/issue-N` / `feature/issue-N`，保留「一 issue 一分支一 PR」）；「全部处理」给每个 pending issue 各建一个，串行依次跑；
+- **PR**：队内任务只 push，**队列最后一项完成时**才开 PR（先查已有 PR 复用，避免 422）；PR 建不出来**不算失败**；不是 GitHub 仓库时 PR 能力自动关闭（只切分支 + push）；
+- **重启恢复**：读 `<repo>/.dsh/tasks/` 四文件（`index.json` 提交 / `manual.json`、`queues.json`、`local.json` 本机，**已在 .gitignore**）；上次运行中的任务标「已中断」、活跃队列暂停，**不自动开跑**；
+- 回归：`tests/tasks-panel/run.sh`（**347 项**：模型 126 + 运行器 154 + 视图模型 67，运行器用假 git/假 dsh 驱动完整流水线）、`core/tests/tasks.test.js`（18 项）；细节见 [issue-runner-panel](modules/issue-runner-panel.md) 与 docs/issue-runner-design.md。
 ## 排查问题
 
 1. 看日志：`~/Library/Logs/oh-my-dsh/app.log`（壳层）、`server.log`（服务输出）；设置菜单「打开日志文件夹」(⌘L) 直达；

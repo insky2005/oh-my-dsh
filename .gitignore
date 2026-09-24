@@ -31,8 +31,10 @@ logs/
 # debug screenshots / QA artifacts (local only)
 pic/
 
-# task association index: machine-scoped session overlay (index.json IS committed)
+# task association index: machine-scoped files (index.json IS committed)
 .dsh/tasks/local.json
+.dsh/tasks/manual.json
+.dsh/tasks/queues.json
 
 # Xcode / Swift
 DerivedData/
