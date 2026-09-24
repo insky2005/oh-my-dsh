@@ -114,7 +114,7 @@ $DSH_HOME/skills/issue-resolve/SKILL.md —— 代理在任务会话中加载的
 ## V2 方案（2026-09-24 定稿，待实现）
 
 > 本章是本次迭代（分支 `feature/tasks-manual-queue`）的落地依据。上文 v1 章节保留作历史决策记录。
-> **模型决策已定稿**（详见 §V2-13 决策记录）：多队列模型先行；队列分支用户可填（默认由队列名生成 slug）；队内失败暂停队列；PR 是**可选能力**；issue 任务保持 v1 逻辑、自动生成**单任务队列**。
+> **模型决策已定稿**（详见 §V2-13 决策记录）：多队列模型先行；队列分支用户可填（默认由队列名生成 slug，中文名回退 `feature/queue-<id4>`）；队内失败暂停队列；PR 是**可选能力**；issue 任务保持 v1 逻辑、自动生成**单任务队列**；创建任务表单只填标题 + 描述（一律先进「未入队」区）；队列计数含自动队列。
 
 ### V2-0 需求与改动面
 
@@ -246,7 +246,7 @@ struct Queue {
 | 任务 | 分支 | 说明 |
 |---|---|---|
 | issue 任务（自动单任务队列） | `feature/issue-N` 或 `fix/issue-N` | 沿用 `branchForIssue` 的 label 判定与 `docs/git-workflow.md` 规范，行为与 v1 完全一致 |
-| 手动任务（用户队列） | 队列的 `branch` | 队列分支默认由队列名生成 slug（小写、非字母数字换 `-`、去首尾、截断 40 字符），**用户可改**；留空 = 不切分支，在当前分支上执行 |
+| 手动任务（用户队列） | 队列的 `branch` | 队列分支默认 = `feature/` + 队列名 slug（小写、非字母数字换 `-`、去首尾、截断 40）；**slug 为空（纯中文 / emoji 名）时回退为 `feature/queue-<id 前 4 位>`**（例 `feature/queue-7f3a`）；**用户可改**；留空 = 不切分支，在当前分支上执行 |
 
 **PR 是可选能力，不是硬依赖**（决策 4）：
 
@@ -262,10 +262,13 @@ struct Queue {
 **入口**：工具栏「+」→ 新建任务表单（NSAlert + accessoryView，体例与「配置 GitHub Token」一致）：
 
 1. **标题**（必填）：卡片主行、会话名；
-2. **描述 / 指令**（必填，多行 NSTextView）：发给代理的提示词正文；
-3. **队列**（下拉：已有队列 / **新建队列…** / 暂不入队）：选择「新建队列」时展开 队列名 + 分支 + 基于分支 三个字段；
-4. **完成后创建 PR**（开关，默认：工作区是 GitHub 仓库时开、否则置灰关）：属于**队列**属性，同一队列的任务共享；
-5. **立即加入队列**（开关，默认开）。
+2. **描述 / 指令**（必填，多行 NSTextView）：发给代理的提示词正文。
+
+表单**只有这两个字段**（决策 6）：创建后任务**一律进入「未入队」区**，队列归属完全由卡片上的操作决定 ——
+
+1. 点卡片 **「加入队列 ▾」** → 选**已有队列**，或**新建队列…**（弹队列表单：**队列名** / **分支**（默认见 §V2-6，可改、可留空）/ **基于分支**（默认 `main`）/ **完成后创建 PR**（开关，属于队列属性，队内任务共享；工作区不是 GitHub 仓库时置灰关））；
+2. 入队后：全局空闲 → 立刻启动队首；否则排队（见 §V2-5）；
+3. 改主意：卡片「移出队列」→ 回到未入队区，或再点「加入队列 ▾」换到别的队列。
 
 **执行流水线**（与 issue 任务复用同一套，差异如下）：
 
@@ -301,17 +304,49 @@ struct Queue {
   └────────────────────────────────────────────┘
 
 ┌ 未入队 ────────────────────────────────────────┐
-  [Issue #12] 修复暗色模式下…            [处理]     ← issue 任务（自动单任务队列，折叠为普通卡片）
+  [Issue #12] 修复暗色模式下…            [处理]     ← issue 任务（自动单任务队列：紧凑一行，与用户队列同一套组件与计数口径）
   [手动] 整理 README 的安装章节   [加入队列 ▾]      ← 手动任务
 ```
 
-- **队列头**：名称、分支、进度 `n/m`、状态（活跃 / 暂停 / 完成）、操作按钮（开始 / 暂停 / 开 PR）；`autoCreated` 的自动单任务队列**不显示队列头**，直接渲染为普通卡片（否则 50 个 issue 会变成 50 个队列头）；
+- **队列头**：名称、分支、进度 `n/m`、状态（活跃 / 暂停 / 完成）、操作按钮（开始 / 暂停 / 开 PR）；**所有队列（含 `autoCreated` 的自动单任务队列）都渲染队列头**，与计数口径一致 —— 自动队列因只含一个任务，默认以**紧凑形态**（队列头与卡片合一的一行）呈现，点开即展开为标准形态；
 - **来源徽标**：`Issue #N` 与 `手动` —— 需求「创建的任务和 github issue 任务分开标记」的落点之一；工具栏另有来源筛选段控件（全部 / Issue / 手动）；
 - **状态徽标**：待处理 / 队列中 #n / 运行中（配小 spinner）/ 已完成 / 失败 / 已取消 / 已关闭；失败 `systemRed`、完成 `systemGreen`（沿用现有语义色）；
 - **交互**：点卡片非按钮区域 = 展开 / 收起详情（正文可滚动，长正文不挤走按钮，保留 v1 的 NSTextView 方案）；hover 时卡片底色提亮（`PanelControl.fill(dark:highlighted:)`）并显示行内图标按钮；**移出队列 / 取消 / 重试都不弹模态**，结果回底部状态条（成功 5s 自动清空、失败留到下次操作）；只有「评论并关闭 Issue」保留确认框（会改 GitHub 远端状态）；
 - **底部状态条保留**（加载中 / 队列 n/m / 错误回显），compositing trap 的 `wantsLayer + masksToBounds` 写法不变。
 
 **配色纪律**（`docs/ui-color-scheme.md`）：面板根 / header / toolbar / 状态条用 `DynamicFillView()`（`.panel`），卡片底与图标按钮用 `PanelControl.fill(dark:highlighted:)`，**不新写** `calibratedWhite` 灰阶；卡片在 `viewDidChangeEffectiveAppearance` 重绘取色。
+
+### V2-8a 队列总览与计数
+
+「有几个队列、每个队列什么状态、队列下哪些任务什么状态」由三层一起回答：
+
+| 层 | 内容 |
+|---|---|
+| **摘要条**（工具栏第二行） | `honghe/order-service · 队列 12 · 排队 5 · 运行 1 · 失败 1` + 来源筛选段控件（全部 / Issue / 手动） |
+| **队列区块**（每个队列一块） | **队列头**：名称 + 分支（`feature/dark-mode → main`）+ 进度 `1/3` + 状态（活跃 / 暂停 / 已完成）+ 操作（开始 / 暂停 / 开 PR / ⋯ 改名·改分支·归档·删除）；**队内任务卡片**按 FIFO 排列，带队内序号 `#2` 与状态徽标 |
+| **未入队区** | 列表末尾，标题带计数 `未入队 (7)` |
+
+```
+┌ 任务 ────────────────────────────── ⟳  +  ⚙  ✕ ┐
+│ honghe/order-service   队列 12 · 排队 5 · 运行 1 · 失败 1   [全部|Issue|手动] │
+├──────────────────────────────────────────────────┤
+│ ▾ 深色模式改造   feature/dark-mode → main   ▶1/3   [开始][暂停][⋯] │
+│     ● [手动] 重构终端标题栏配色            运行中                │
+│     ○ [手动] 补齐深色下的图标资源          队列中 #2             │
+│ ▸ 支付重构       feature/pay-refactor → main  ▶2/4  [开始][暂停][⋯] │
+│ ▸ 文档整理       docs/cleanup → main       ⏸ 暂停 · 1 个失败  [开始][跳过] │
+│ ▸ Issue #12      fix/issue-12 → main       ✓ 已完成              │
+├──────────────────────────────────────────────────┤
+│ 未入队 (7)                                        │
+│   [Issue #34] 修复暗色模式下…             [处理]     │
+│   [手动] 整理 README 安装章节         [加入队列 ▾]   │
+└──────────────────────────────────────────────────┘
+```
+
+- **计数口径（决策 8）**：摘要条统计**所有**队列，含 issue 任务的自动单任务队列（行为一致）；自动队列不额外占用版面 —— 以「队列头与卡片合一的一行」呈现，点开即展开为标准形态（队列头 + 卡片）；
+- **折叠**：点队列头整体折叠 / 展开（记住状态）；「已完成」的队列默认折叠为一行；工具栏另给「隐藏已完成队列」筛选；
+- **失败两级可见**：队列头汇总 `1 个失败`，队内失败卡片自身标 `失败`；暂停的队列头给「开始 / 跳过」；
+- **空态**：一个队列都没有时显示引导「在任务卡片上点『加入队列 ▾ → 新建队列…』创建第一个队列」。
 
 ### V2-9 L10n（中英成对，`main.swift` 的 `L10n.table`）
 
@@ -321,8 +356,9 @@ struct Queue {
 
 - 来源与筛选：`tasks.source.github`、`tasks.source.manual`、`tasks.filter.all` / `.github` / `.manual`；
 - 队列：`tasks.queue.add`、`tasks.queue.addPick`、`tasks.queue.remove`、`tasks.queue.new`、`tasks.queue.name`、`tasks.queue.branch`、`tasks.queue.base`、`tasks.queue.start`、`tasks.queue.pause`、`tasks.queue.openPR`、`tasks.queue.progress`、`tasks.queue.idle`、`tasks.queue.pendingCount`、`tasks.queue.unnamed`；
+- 队列总览：`tasks.summary`（队列 %d · 排队 %d · 运行 %d · 失败 %d）、`tasks.queue.compact`、`tasks.queue.expand`、`tasks.queue.hideDone`、`tasks.queue.failedCount`、`tasks.queue.empty`、`tasks.queue.state.active` / `.paused` / `.finished`、`tasks.section.unqueued`（未入队 (%d)）；
 - 状态：`tasks.state.queued`、`tasks.state.interrupted`、`tasks.sec.dirtyTree`（工作区有未提交改动）、`tasks.sec.noRemote`、`tasks.sec.prUnavailable`、`tasks.sec.branchPushedNoPR`；
-- 手动任务：`tasks.new.title`、`tasks.new.name`、`tasks.new.body`、`tasks.new.queue`、`tasks.new.createPR`、`tasks.new.enqueue`、`tasks.new.create`、`tasks.errName`、`tasks.errBody`、`tasks.prompt.*`（通用提示词模板）；
+- 手动任务：`tasks.new.title`、`tasks.new.name`、`tasks.new.body`、`tasks.new.create`、`tasks.errName`、`tasks.errBody`、`tasks.prompt.*`（通用提示词模板）；
 - 详情与错误：`tasks.detailSession`、`tasks.detailSource`、`tasks.detailQueue`、`tasks.errInterrupted`、`tasks.errNotGit`、`tasks.errCheckout`。
 
 ### V2-10 测试与 CI
@@ -374,6 +410,9 @@ QA 钩子：`DSH_TASKS_TEST=1` 启动即开面板；`DSH_PANEL_TEST=` 全量核�
 3. **队内失败暂停队列** —— 共享分支上有依赖，失败后必须停下来等用户决定，不自动跳过；
 4. **PR 是可选能力** —— GitHub issue 任务可用；公司内部仓库 / 无 PR 能力的远端下，手动任务与队列只做「分支 + commit + push」，PR 相关自动关闭，失败也不判队列失败；
 5. **issue 任务保持 v1 逻辑** —— 「处理」自动创建单任务队列，分支与 PR 语义不变。
+6. **创建表单不带队列字段** —— 新建任务只有标题 + 描述，创建后一律进入「未入队」区；队列归属只由卡片上的「加入队列 ▾」决定（选已有队列 / 新建队列…）。队列表单才含 队列名 / 分支 / 基于分支 / 完成后创建 PR；
+7. **队列分支默认值** —— `feature/` + 队列名 slug；slug 为空（纯中文 / emoji 名）时回退 `feature/queue-<id 前 4 位>`；
+8. **队列计数包含自动队列** —— 摘要条与列表按同一口径统计所有队列（含 issue 任务的自动单任务队列）；自动队列默认以紧凑形态（队列头与卡片合一的一行）渲染，可展开。
 
 **阶段 2 迭代预留**：
 
