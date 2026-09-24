@@ -2458,14 +2458,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             guard self.adoptProjectDirectory(path) else { return }
             self.dlog("projects: selected the new workspace " + path)
         }
-        // A folder's dsh workspace was just created from the panel: dsh web's
-        // sidebar picks the new row up on its own (an added workspace reaches
-        // every connected client through dsh's workspace stream within a second
-        // or two), so nothing is nudged here. The old synthetic offline/online
-        // nudge is gone on purpose: all it did was make the page reconnect,
-        // which the user sees as a flicker — the row appears without it.
-        projectsPanel.onWorkspaceRegistered = { [weak self] in
-            self?.dlog("projects: workspace registered — dsh web picks it up through its workspace stream")
+        // The folder is now a dsh workspace: put dsh web on it, the way dsh's own
+        // "添加工作区 / Add workspace" entry does (its picker resolves the folder
+        // and immediately starts a session there: WorkspacePickFlow.onPick ->
+        // startSession). That session start is also the only thing that makes the
+        // sidebar SELECT the new workspace — a workspace row alone is not
+        // "current", and a workspace with no session has nothing to select.
+        //
+        // No nudge for the row itself: an added workspace reaches every connected
+        // client through dsh's workspace stream (measured ~0.2 s), and the old
+        // synthetic offline/online nudge only made the page reconnect.
+        projectsPanel.onWorkspaceRegistered = { [weak self] path in
+            self?.dshWebFollowNewWorkspace(path)
         }
         // QA (--ui-debug): snapshot the panel again once it has rendered.
         projectsPanel.onDidRender = { [weak self] in
@@ -3346,6 +3350,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           if (button !== null) {
             var label = button.getAttribute("aria-label") || "";
             button.click();
+            // The sidebar does not scroll to a newly selected workspace on its
+            // own, and a long list hides it below the fold: bring the row into
+            // view once React has re-rendered the selection (re-find it — the
+            // click can replace the row element).
+            setTimeout(function () {
+              var row = groupRow(name);
+              if (row && row.scrollIntoView) {
+                try { row.scrollIntoView({ block: "nearest" }); } catch (e) {}
+              }
+            }, 300);
             return { ok: true, via: "workspace-new-session", button: label };
           }
         }
@@ -4309,6 +4323,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 }
             }
         }
+    }
+
+    /// A workspace was just registered from the Projects panel (created from
+    /// scratch, or an existing folder adopted). dsh web itself answers "add
+    /// workspace" by starting a session in it — `WorkspacePickFlow.onPick` calls
+    /// `startSession(workspaceId)` right after the picker resolves — and that is
+    /// also the only way the new workspace becomes the page's current one: a
+    /// workspace row on its own is not "current", and a workspace with no session
+    /// has nothing to select. So the shell does the same thing here.
+    private func dshWebFollowNewWorkspace(_ path: String) {
+        AppLog.shared.log("projects: workspace registered — opening it in dsh web: " + path)
+        createSessionInWorkspace(path)
     }
 
     /// "New session": let dsh web's OWN sidebar entry do it — click the "+" on

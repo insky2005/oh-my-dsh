@@ -285,10 +285,14 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
     var onOpenPanel: ((String, ProjectTargetPanel) -> Void)?
     /// Create a session in this workspace and switch dsh web to it.
     var onCreateSession: ((String) -> Void)?
-    /// A dsh workspace was just created for a folder. main.swift only logs it:
-    /// dsh web's sidebar picks the new workspace up through its own workspace
-    /// stream (verified against dsh 0.1.2), so no page nudge is needed.
-    var onWorkspaceRegistered: (() -> Void)?
+    /// dsh just registered this folder as a workspace (idempotent, so this also
+    /// covers "the folder was already a workspace"). dsh web needs no nudge for
+    /// the ROW — the new workspace reaches every connected client through dsh's
+    /// own workspace stream (measured: ~0.2 s) — but main.swift uses this to put
+    /// the page ON that workspace, exactly like dsh's own "Add workspace" entry
+    /// does (`WorkspacePickFlow.onPick` → `startSession`). The path is passed so
+    /// the shell knows which workspace to open.
+    var onWorkspaceRegistered: ((String) -> Void)?
     /// Make this folder the shell's current workspace (main.swift re-roots every
     /// panel through `adoptProjectDirectory`). Sent right after the panel creates
     /// or adopts a workspace: that folder is the one the user just asked for, so
@@ -481,7 +485,7 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
                 }
                 AppLog.shared.log("projects: registered " + path + " as " + id)
                 self.setStatus(L10n.tr("projects.registerDone", (path as NSString).lastPathComponent), isError: false)
-                self.onWorkspaceRegistered?()
+                self.onWorkspaceRegistered?(path)
                 self.reload()
             }
         }
@@ -506,6 +510,9 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
                     self.setStatus(L10n.tr("projects.registerPending"), isError: false)
                 }
                 self.reload()
+                // Registration succeeded: let main.swift put dsh web on this
+                // workspace (a folder dsh cannot register stays where it is).
+                if id != nil { self.onWorkspaceRegistered?(path) }
             }
         }
     }

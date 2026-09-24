@@ -140,6 +140,10 @@ panel.onEnterWorkspace = { entered.append($0) }
 panel.onOpenPanel = { opened.append(($0, $1)) }
 panel.onCreateSession = { newSessions.append($0) }
 panel.onSelectWorkspace = { selections.append($0) }
+// dsh's own "add workspace" immediately starts a session in the new workspace;
+// the shell mirrors that, so the panel must say WHICH workspace was registered.
+var registrations: [String] = []
+panel.onWorkspaceRegistered = { registrations.append($0) }
 
 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 700),
                       styleMask: [.titled], backing: .buffered, defer: false)
@@ -195,6 +199,8 @@ func samePath(_ a: String?, _ b: String) -> Bool {
 test("dsh was asked to register it",
      waitUntil(3) { fake.workspaceCreates.contains { samePath($0["path"] as? String, root + "/gamma") } })
 test("the new workspace appears in the list", waitUntil(3) { panel.workspaces.count == 3 })
+test("registering the new workspace hands its path back to the shell",
+     waitUntil(3) { registrations.contains { samePath($0, root + "/gamma") } })
 // A workspace the user just created is the one they mean to work in: the panel
 // asks main.swift to make it current, which is what highlights its card (the
 // highlight IS ProjectDirectory.current — there is no second selection state).
@@ -281,6 +287,8 @@ test("registering asks dsh for that exact path",
      })
 test("registering reports success",
      waitUntil(3) { labels(panel.view).contains { $0.hasPrefix("projects.registerDone") } })
+test("the folder-plus action hands the registered path back to the shell",
+     waitUntil(3) { registrations.contains { samePath($0, betaPath) } })
 
 // dsh persists it (the fake transport does not write the store, so do it here) and
 // the panel re-reads the registry: the card flips to registered and its dsh

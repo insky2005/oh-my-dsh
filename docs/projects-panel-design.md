@@ -274,12 +274,16 @@ dsh 自己的「新会话」（工作区行悬停出现的 `+`，`aria-label = "
      ├─ onSelectWorkspace("…/abc") ─► main.swift adoptProjectDirectory（重根 = 选中）
      ├─ workspace/create {path} ─► /api/workspace/create   (幂等)
      │                              ◄─ {workspace:{workspaceId},created}
+     ├─ onWorkspaceRegistered(path) ─► main.swift dshWebFollowNewWorkspace
+     │        └─ 点侧栏该工作区行的「+」（__dshNewSession）→ dsh 复用/新建会话并 open
      └─ 主线程：重列 + 状态行「已创建工作区 abc」/「已存在」
 ```
 
 - `mkdir` 成功但注册失败（服务未起/老 dsh）→ 目录**保留**，状态行提示「尚未注册」，卡片徽标显示「未注册」；下次「新会话 / 在 dsh 中打开」会再注册一次（幂等）。
 - **创建即选中**（2026-09-24 改）：刚建/刚采纳的工作区立刻经 `onSelectWorkspace` → `adoptProjectDirectory` 成为**当前工作区**，于是它的卡片**高亮**（高亮就是 `ProjectDirectory.current`，面板不引入第二个选中态，见 §7），各面板重根到这个新目录；同时 `pendingScrollPath` 让下一次渲染把该卡片**滚动进视野**（列表按名字排序，新卡片可能落在很下面）。**旧行为是"创建不切换"**（怕用户没点入口、右栏内容就跳走），但那反直觉：用户刚在这里建完项目，却看不到任何"选中"反馈、还得自己在列表里找卡片。
 - 同名目录已存在时**同样选中**（用户输入的正是这个目录名），并继续做（幂等的）注册。
+- **注册成功后 dsh web 也切到它**（2026-09-24 加）：`onWorkspaceRegistered(path)` → `dshWebFollowNewWorkspace(path)` → 复用「新会话」那条桥（点侧栏该工作区行的 `+`，见 §4.5b）。这不是新发明，而是 **dsh 自己的行为**：侧栏「添加工作区」在选完文件夹后立刻 `startSession(workspaceId)`（`WorkspacePickFlow.onPick`）。原因是**一行工作区行不等于"当前工作区"**：没有会话的工作区在 dsh web 里没有可选中项，页面仍旧停在原来那条会话上——用户看到的就是"壳层卡片亮了，dsh web 没动"。卡片 folder+（给已存在但未注册的目录）走同一条回调，因此**行为一致**。
+- 面板**不再 nudge**：新工作区的行由 dsh 的工作区流推给所有客户端（实测 **~0.17 s** 出现在侧栏 DOM，无需刷新、无需重连）。
 
 ### 6.2 快捷入口（文件/终端/知识库/任务/通道/审查）
 
@@ -469,7 +473,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 ## 12. 手工验收清单
 
 1. 全新环境启动 → **活动栏最上面第一个图标是「项目」**（其后：文件、终端、浏览器、知识库、任务、通道、审查、技能；九个图标互斥切换，与「视图」菜单首项一致）→ 面板显示默认根 `<DSH_HOME>/oh-my-dsh/projects`，空态提示，且**此时磁盘上还没有该目录**。
-2. 点「+」输入 `abc` → 目录被创建、卡片出现并**立刻高亮为当前工作区**（卡片在视野外会自动滚进来；日志 `projects: selected the new workspace …`）、徽标「已注册 · 0 个会话」；`app.log` 有注册成功日志；**不需要任何重连/刷新**，dsh web 侧边栏一两秒内自己出现该工作区（工作区流推送；已实测）。
+2. 点「+」输入 `abc` → 目录被创建、卡片出现并**立刻高亮为当前工作区**（卡片在视野外会自动滚进来；日志 `projects: selected the new workspace …`）、徽标「已注册 · 0 个会话」；**dsh web 随即也切到该工作区**（侧栏出现它的「新会话 / New Session」行并被选中、滚进视野；日志 `projects: workspace registered — opening it in dsh web: <path>` + `projects: dsh web started a session in <path> (via workspace-new-session)`；无重连）；`app.log` 有注册成功日志；**不需要任何重连/刷新**，dsh web 侧边栏一两秒内自己出现该工作区（工作区流推送；已实测）。
 3. 输入空串、`a/b`、`a:b`、`.x`、65 字符 → 提示规则且**不**建目录、**不**改变当前工作区；输入已存在的 `abc` → 提示已存在，并**选中**该卡片（高亮 + 滚进视野）。
 4. 卡片「新会话」→ dsh web 切到该工作区的会话（面板项目目录也随之变为该工作区），**页面不重连**（无 offline/online 痕迹），且**反复点不会堆空会话**：侧栏里该工作区下始终只有一条「新会话 / New Session」行，`session/list` 的总数不增长（dsh 复用 blank 会话）；日志为 `projects: dsh web started a session in … (via workspace-new-session)`。
 5. 依次点 文件 / 终端 / 知识库 / 任务 / 通道 / 审查 → 右栏切到对应面板，且内容以 `…/abc` 为根（文件树根、终端 cwd、wiki 根、任务/通道/审查的工作区）；知识库显示空态而不是别的仓库内容。
@@ -543,7 +547,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 
 升级 SOP 追加两条核对项（落地时写入影响清单 §5）：
 
-1. 新建一个工作区 → dsh web 侧边栏是否出现该工作区；再点「新会话」→ 是否切到该会话（覆盖 C10a/C10b/B10）；
+1. 新建一个工作区 → dsh web 侧边栏是否出现该工作区、并且**页面是否切到它的新会话**（覆盖 C10a/C10b/B10/B10b）；再点「新会话」→ 是否仍落到该工作区（覆盖 C10b）；
 2. `workspace/create` 的参数名是否仍为 `request`（typert 贡献里 `wire` 字段），`session/create` 是否仍接受 `workspaceId`（覆盖 C10a/C10b）。
 
 **编号已核对**（2026-09-24，main `0253b35`）：影响清单 A 面到 **A6**、B 面到 **B9**、C 面到 **C9**、D 面到 **D9**（含 D2b/c/d）、R 清单到 **R8** —— 故本次取 `C10a/b/c` 与 `B10`，不与既有条目撞号。
