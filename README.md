@@ -21,11 +21,25 @@
 
 ## 右栏面板
 
-窗口**最右侧是活动栏**（图标入口，八个面板互斥切换），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
+窗口**最右侧是活动栏**（图标入口，九个面板互斥切换，**首位是「项目」**），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
 
 所有原生面板**共用一套灰阶配色**（面板底色一档 + 控件常态/高亮两档，全部取自 dsh web 的 `neutral bluish` 设计令牌），深浅两套主题一一对应；**单一事实来源为 `PanelSurface.swift`——改色只改这一个文件**，方案见 [`docs/ui-color-scheme.md`](./docs/ui-color-scheme.md)。
 
-「视图」菜单提供八面板的显示/隐藏快捷键。
+「视图」菜单提供九面板的显示/隐藏快捷键（首项即「项目」）。
+
+### 项目面板（`⌥⌘P` / 活动栏首位「项目」图标）
+
+把「工作区 = 一个目录」变成壳层里的一等公民：**在面板里建目录、再用六个面板就地打开它**。
+
+- **项目根目录可配置**：默认 `$DSH_HOME/oh-my-dsh/projects`（开发版 `~/.dsh-dev/…`），面板头部「更改…」或设置窗口的「项目」区块都能改（存 `shell/config.json` 的 `projectsRoot`）；**只有新建工作区时才会创建目录**，单纯打开面板不写盘；
+- **新建工作区**：只输入目录名（如 `abc`），面板 `mkdir` 后调 dsh 的 `workspace/create` **幂等注册**——注册失败（dsh 未起来 / 旧版本）只标「未注册」，目录保留，之后在卡片上点「创建 dsh 工作区」重试即可；
+- **每个工作区一张卡片**：名称 + 徽标（已注册 · N 个会话 / 未注册）+ 标题行右侧的**那一个 dsh 动作按钮**；第二行是路径紧跟着「在 Finder 中显示 / 复制路径」两个小按钮（贴路径文本，不右对齐）；第三行是六个面板入口。面板右上角的 `folder+` 同样是「添加工作区 / Add workspace」（输入目录名即建目录并注册）。**未注册的目录不与 dsh web 联动**（点卡片/「新会话」都不可用，只在状态行提示），徽标后面显示 **folder+ 图标 =「添加工作区 / Add workspace」**（与 dsh web 同词），点它把该目录注册进 dsh；**已注册**的徽标后面则是 **+ 图标 =「新会话 / New Session」**。两种状态下**六个本地面板入口都照常可用**。已注册的卡片：
+  - **文件 / 终端 / 知识库 / 任务 / 通道 / 审查** 六个快捷入口：点一下就把壳层当前工作区切到它并打开对应面板（终端 cwd、文件树根、wiki 根、任务/通道/审查的工作区一起跟着走）；
+  - **新会话**（标题行 `+` 图标）：在该工作区建一条 dsh web 会话并切过去（先 `session/create { workspaceId }` 保证归属分组，被拒退回 `cwd`）；
+  - **在 dsh 中打开**（点卡片名称）：复用该工作区**最近一条会话**（运行中优先），没有则新建；
+  - 在 Finder 中显示 / 复制路径；
+- **单一真相**：当前工作区始终是壳层的 `ProjectDirectory`（面板只做高亮）——在 dsh web 里切到别的工作区的会话，面板也跟着换根，两边不会各说各话；
+- dsh web 侧边栏有延迟时（刚建好的工作区/会话）：面板先 nudge 客户端、桥内部重试、再补一次；**始终不会自动重载页面**——定位不到时在状态行说明原因（侧栏现场会写进 `app.log`），由你决定手动刷新。
 
 ### 文件面板（`⌥⌘F` / 活动栏「文件」图标）
 
@@ -382,7 +396,7 @@ docs/                设计/排查文档（productization.md、dsh-version-impac
 
 - **Bug / 功能请求**：使用仓库的 Issue 模板（bug / feature）提交；
 - **本地测试**：`node --test --test-timeout=60000 core/tests/*.test.js`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层 / review-log 变更审计；`--test-timeout` 保证任何泄漏定时器的用例快速失败而不是挂死）、
-  `tests/wiki-panel/run.sh`（Wiki 面板）、`tests/terminal-emulator/run.sh`（模拟器）、`tests/terminal-panel/run.sh`（终端面板头部）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/file-panel/run.sh`（文件面板：工作区页签记忆 / 未保存提示 / 切换语义）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/dsh-auth-cookies/run.sh`（dsh-auth cookie 清理与 NODE_OPTIONS）、`tests/shell-config/run.sh`（壳层设置与旧 UserDefaults 迁移）、`tests/l10n/run.sh`（L10n 键名 lint）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/skills-panel/run.sh`（技能面板：frontmatter 字节保真 / 四根级别与遮蔽 / 内置与共享级写操作拒绝 / 安装·移除 / registry 清单与搜索 + 面板控制器无头冒烟 + 离屏绘制回归）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠 + 控制器无头回归「日志变了必须重审、没变不许重审」）；`scripts/local-ci.sh` 一次跑全部；
+  `tests/projects-panel/run.sh`（项目面板：根目录/命名规则/列举/注册合并 + 控制器无头：建目录、注册请求、快捷入口回调、改根）、`tests/injected-scripts/run.sh`（注入 dsh web 的 JS：脚本可解析 + 桥名与壳层调用对得上）、`tests/wiki-panel/run.sh`（Wiki 面板）、`tests/terminal-emulator/run.sh`（模拟器）、`tests/terminal-panel/run.sh`（终端面板头部）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/file-panel/run.sh`（文件面板：工作区页签记忆 / 未保存提示 / 切换语义）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/dsh-auth-cookies/run.sh`（dsh-auth cookie 清理与 NODE_OPTIONS）、`tests/shell-config/run.sh`（壳层设置与旧 UserDefaults 迁移）、`tests/l10n/run.sh`（L10n 键名 lint）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/skills-panel/run.sh`（技能面板：frontmatter 字节保真 / 四根级别与遮蔽 / 内置与共享级写操作拒绝 / 安装·移除 / registry 清单与搜索 + 面板控制器无头冒烟 + 离屏绘制回归）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠 + 控制器无头回归「日志变了必须重审、没变不许重审」）；`scripts/local-ci.sh` 一次跑全部；
 - **CI**：push/PR 自动跑 core 单测 + 壳层编译检查 + macOS arm64 构建（`.github/workflows/ci.yml`）；发布由 release 流程构建双架构。
 
 本项目遵循 [MIT License](LICENSE)，代码只封装、绝不修改 DeepSeek Harness 上游源码。

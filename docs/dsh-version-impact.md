@@ -51,6 +51,9 @@
 | B8 | 根页面注入 `window.__DSH_BOOT__` | 0.1.2 起仅鉴权后可读 | 仅影响旧版就绪判定（已由 A2 覆盖） | `isDSHServing()` | 同上 |
 | B9 | 输入框（composer）DOM + 节点登记表：`[data-composer-input]`（contenteditable）、`el.__lexicalEditor`（Lexical 挂在根元素上）、`editor._nodes[type].klass`、`editor._pendingEditorState._nodeMap["root"]`、chip 类型名 `reference-chip`（字段 `{source, ref, label, appearance, clipboardText}`） | 上游换编辑器（textarea / 另一套富文本）、改槽位标记、或改 chip 节点类型名与字段 | Files 面板右键「添加到对话」**不插入**（面板/日志报 `no-composer` / `no-editor` / `unknown-composer`，不静默） | `composerReferenceScript` + `insertComposerReference()` | 右键任一文件 → 输入框出现引用 chip（或 `app.log: composer reference inserted (chip)`）；自动化见 §5 的 B 面 |
 
+| B10 | **Projects 面板点开会话**：沿用 B5/B6 的 `__dshOpenSession` 侧栏行点击（会话 id → `session/list` 取标题 → 点 `[role="treeitem"].sessionRow`）；会话没有标题时退化为点该工作区组下第一条会话行 | 同 R3（DOM / 传输改动即静默失效） | 要打开的会话切不过去（console 里 `[dsh-opener] row-not-found`） | `platforms/macos/src/main.swift`（`openDSHSession(_:retry:)`） | `DSH_UI_DEBUG=1` 的 `dsh injected bridges` + console `[dsh-opener]`；`tests/injected-scripts/run.sh` |
+| B10b | **Projects 面板「新会话」= 点 dsh web 侧栏工作区行自带的 `+`**（`__dshNewSession(name)`）：`dsh-client-ui-workspace` 的 `ProjectRowItem` 渲染 `div.projectRow[role="treeitem"][aria-expanded]`，行内按钮固定为 [工作区菜单, 新建会话]，故取**最后一枚 button**（hover 才显示，`x=0 w=0` 也能 `click()`——实测有效）；`aria-label` 是本地化模板（`New session in {name}` / `在“{name}”中新建会话`），只作日志不作选择依据 | 侧栏行结构/按钮顺序变化，或 dsh 改掉"复用 blank 会话"的语义（`connectWorkspace`） | 「新会话」点了没反应，或每次多点一条空会话 | `sessionOpenerScript` + `createSessionInWorkspace` | `tests/injected-scripts/run.sh`；手工：点「新会话」→ 侧栏出现该工作区的「新会话」行且 `session/list` 总数不增 |
+
 ### C. 一元 RPC（会话 / 工作区）
 
 | # | 依赖的 dsh 契约 | 版本变化/风险 | 断裂表现 | 代码位置 | 验证方式 |
@@ -64,6 +67,9 @@
 | C7 | 写操作：`session/create`（`workspaceId\|cwd`）、`session/rename`、`session/prompt`（0.1.2 必填 `requestId` + `mode` + `content[]`）、`session/cancel` | 0.1.2 增字段 | 建会话/发消息失败 | 同上 + `channel-runner` | 微信发一句话 / `/new` |
 | C8 | 消息内容形状：`event.data.message.content[]`（含 `reasoning`/`tool-call` 片段） | 可能新增片段类型 | 内部推理被转发到微信 | `extractText`（过滤 reasoning/tool-call） | 发一句触发思考的提问 |
 | C9 | 传输入口 host 必须是 `127.0.0.1:<port>`（cookie 按 authority 绑定） | — | 换成 localhost 时 cookie 不匹配 → 401 | `dsh-rpc.ctxOf` | 同上 |
+| C10a | **Projects 面板注册工作区**：`workspace/create { request: { path } }` → `{workspace:{workspaceId,…},created}`（**幂等**、"over an existing directory"、verb 为 direct 无 capability 门控、wire 参数名 `request`） | 0.1.2 新增可用；上游若改参数名/结果形状 | 新建的工作区不出现在 dsh web 侧边栏；会话落 Ungrouped | `platforms/macos/src/DshWebRPC.swift`（`DshWorkspaceOps.register`） | `tests/dsh-rpc/run.sh`；手工：面板新建工作区 → 刷新 web 侧栏 | 
+| C10b | **Projects 面板建会话（兜底路径）**：`session/create { workspaceId\|cwd }`（先 workspaceId 保证分组，被拒退 cwd）；`session/list` 的 `items[].blank` —— **blank 会话只在它是页面当前会话时可见**（`sessionVisible`），所以壳层自建的 blank 会话在侧栏没有行可点 | 同 C7；`blank` 字段或可见性规则变化会改变 §B10b 的复用语义 | 面板「新会话」无反应；旧实现还会每次留一条打不开的空会话 | `DshWorkspaceOps.createSession`（**仅兜底**）、`newestSessionId`（跳过 blank） | 同上 + `tests/projects-panel/run.sh`、`tests/dsh-rpc/run.sh` |
+| C10c | **按工作区挑会话**：`session/list` 的 `items[].{cwd,running,updatedAt}`（cwd 经 `DshWorkspaceStore.canonical` 归一后比较） | 字段重命名/移除 | 「在 dsh 中打开」挑不到会话 → 退化为新建 | `DshWorkspaceOps.newestSessionId` | `tests/dsh-rpc/run.sh` |
 
 ### D. `$DSH_HOME` 磁盘布局
 
@@ -198,6 +204,7 @@
 - [ ] B 注入：切会话 → `ProjectDirectory` 跟随（终端/预览/wiki/tasks 目录变）；面板点会话行 → web 跳转；点文件链接 → 文件面板打开；**右键文件夹「添加到对话」→ 输入框出现引用 chip**（B9；无头复现见下）。
 - [ ] C 频道：微信 `/help` `/ping` `/status` `/wks` `/ses` `/new …` + **发一句普通消息**看是否回推答案（覆盖 C5–C7）。
 - [ ] C 工作区：`/wks` 能列出**面板已启用**的 workspace（覆盖 C4）。
+- [ ] C 项目面板：在「项目」面板新建一个工作区 → **不做任何刷新/重连**，dsh web 侧边栏一两秒内自己出现该工作区（覆盖 **C10a**）；点「新会话」→ web 切到该工作区的新会话、**且不重连、反复点不堆空会话**（覆盖 **C10b / B10b**）；再点卡片名称「在 dsh 中打开」→ 复用刚建的那条会话（覆盖 **C10c / B10**）。
 - [ ] D 会话日志：新建一个会话，看 `$DSH_HOME/sessions/<slug>/<id>/` 里**活日志的文件名**（世代名）是否仍是壳层认识的那一种；再看审查面板能否**列出**它、能否审计出一条真实会话的改动（R7；命令见 §6.4）。老会话被迁移后会同时存在冻结归档与活日志，面板必须读活的那份。
 - [ ] D 布局：`storages/workspace.json` 仍在、`unit.version` 仍为 **2**、工作区数量与面板一致（R4；命令见 §6.2）——变了就要同时改 `core/lib/workspace-store.js` 与 `platforms/macos/src/DshWebRPC.swift` 的读取器并补用例。
 - [ ] E 升级链路本身：`ohmy-core upgrade` 能判定「下一步」；升级后服务重启、版本事实刷新。
@@ -205,7 +212,7 @@
 
 ### 自动化（CI 已有，勿漏）
 - [ ] `node --test core/tests/`（当前 212 全绿）
-- [ ] `tests/wiki-panel/run.sh`、`tests/channel-panel/run.sh`、`tests/browser-panel/run.sh`、`tests/skills/run.sh`、`tests/terminal-emulator/run.sh`
+- [ ] `tests/projects-panel/run.sh`（项目面板：模型 + 控制器）、`tests/wiki-panel/run.sh`、`tests/channel-panel/run.sh`、`tests/browser-panel/run.sh`、`tests/skills/run.sh`、`tests/terminal-emulator/run.sh`
 - [ ] `scripts/local-ci.sh swift`（swiftc 全量编译检查）；发版走 `scripts/local-ci.sh dev` / `local-release.sh`
 
 ### 收尾

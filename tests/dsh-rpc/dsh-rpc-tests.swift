@@ -241,5 +241,152 @@ eq(DshWorkspaceStore.persistedItems(dshHome: NSTemporaryDirectory() + "missing-"
 eq(logs.count, 0, "store: a missing store stays quiet (normal on dsh <= 0.1.1)")
 for h in [v3Home, shapeHome] { try? FileManager.default.removeItem(atPath: h) }
 
+
+// MARK: - DshWorkspaceOps (Projects panel: register / create session / pick session)
+
+DshWebRPC.resetForTests()
+DshWebRPC.token = "launch-token"
+fake.requests = []; fake.bodies = [:]
+fake.routes = [
+    "GET /?token=launch-token": (303, nil),
+    "POST /api/workspace/create": (200, okValue(["workspace": ["workspaceId": "w-new", "path": "/p/abc"],
+                                                 "created": true])),
+]
+eq(DshWorkspaceOps.register(port: 6010, path: "/p/abc"), "w-new", "register: answers the workspaceId")
+let createArgs = ((fake.bodies["POST /api/workspace/create"]?["payload"] as? [String: Any])?["args"] as? [String: Any])?["request"] as? [String: Any]
+eq(createArgs?["path"] as? String, "/p/abc", "register: workspace/create carries path under args.request")
+
+fake.routes["POST /api/workspace/create"] = (200, okValue(["workspace": ["workspaceId": "w-old"], "created": false]))
+eq(DshWorkspaceOps.register(port: 6010, path: "/p/abc"), "w-old",
+   "register: idempotent — created:false still resolves the workspaceId")
+
+// A server that does not serve the verb (dsh <= 0.1.1, or an older build) must
+// degrade to "unregistered", never to an exception or a retry storm.
+DshWebRPC.resetForTests()
+fake.requests = []
+fake.routes = ["POST /api/workspace/create": (404, nil), "POST /api/workspace.create": (404, nil)]
+eq(DshWorkspaceOps.register(port: 6011, path: "/p/abc"), nil,
+   "register: an absent endpoint yields nil (the caller keeps the directory)")
+fake.routes = ["POST /api/workspace/create": (200, okValue(["created": true]))]
+eq(DshWorkspaceOps.register(port: 6011, path: "/p/abc"), nil,
+   "register: a value without workspaceId yields nil")
+
+// createSession: workspaceId first (so dsh web groups the session), cwd as the
+// fallback when the id is rejected.
+DshWebRPC.resetForTests()
+DshWebRPC.token = "launch-token"
+var attempts: [[String: Any]] = []
+fake.requests = []
+DshWebRPC.perform = { request in
+    let key = requestKey(request)
+    fake.requests.append(key)
+    if key.hasPrefix("GET ") { return (303, nil) }
+    if let body = request.httpBody,
+       let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+       let payload = obj["payload"] as? [String: Any],
+       let args = payload["args"] as? [String: Any],
+       let req = args["request"] as? [String: Any] {
+        attempts.append(req)
+    }
+    if attempts.count == 1 {
+        let err: [String: Any] = ["result": ["ok": false,
+                                             "error": ["code": "workspace/not-found", "message": "nope"]]]
+        return (200, try? JSONSerialization.data(withJSONObject: err))
+    }
+    return (200, try? JSONSerialization.data(withJSONObject: okValue(["sessionId": "s-fallback"])))
+}
+eq(DshWorkspaceOps.createSession(port: 6012, cwd: "/p/abc", workspaceId: "w-old"), "s-fallback",
+   "createSession: falls back to cwd when the workspaceId is rejected")
+eq(attempts.first?["workspaceId"] as? String, "w-old", "createSession: the first attempt carries the workspaceId")
+eq(attempts.count, 2, "createSession: exactly one fallback attempt")
+eq(attempts.last?["cwd"] as? String, "/p/abc", "createSession: the fallback carries the cwd")
+DshWebRPC.perform = { fake.perform($0) }
+
+// A missing workspaceId goes straight to the cwd form.
+DshWebRPC.resetForTests()
+fake.requests = []; fake.bodies = [:]
+fake.routes = [
+    "GET /?token=launch-token": (303, nil),
+    "POST /api/session/create": (200, okValue(["sessionId": "s-cwd"])),
+]
+eq(DshWorkspaceOps.createSession(port: 6014, cwd: "/p/abc", workspaceId: nil), "s-cwd",
+   "createSession: no workspaceId -> plain cwd create")
+eq(fake.requests.filter { $0 == "POST /api/session/create" }.count, 1,
+   "createSession: no wasted attempt without a workspaceId")
+
+// newestSessionId: running wins, then the most recently updated; the cwd must
+// match (trailing slash and symlinked spellings included) and cwd-less sessions
+// are never picked.
+let sessionItems: [[String: Any]] = [
+    ["sessionId": "s-run-old", "cwd": "/p/abc", "running": true, "updatedAt": 5.0],
+    ["sessionId": "s-run-new", "cwd": "/p/abc/", "running": true, "updatedAt": 7.0],
+    ["sessionId": "s-idle-newest", "cwd": "/p/abc", "running": false, "updatedAt": 900.0],
+    ["sessionId": "s-other", "cwd": "/p/other", "running": true, "updatedAt": 9999.0],
+    ["sessionId": "s-nocwd", "running": true, "updatedAt": 10000.0],
+]
+DshWebRPC.resetForTests()
+fake.routes = ["GET /?token=launch-token": (303, nil),
+               "POST /api/session/list": (200, okValue(["items": sessionItems]))]
+eq(DshWorkspaceOps.newestSessionId(port: 6015, inPath: "/p/abc"), "s-run-new",
+   "newestSessionId: running first, then updatedAt (trailing slash still matches)")
+
+DshWebRPC.resetForTests()
+let idleOnly = sessionItems.map { item -> [String: Any] in
+    var copy = item
+    copy["running"] = false
+    return copy
+}
+fake.routes = ["GET /?token=launch-token": (303, nil),
+               "POST /api/session/list": (200, okValue(["items": idleOnly]))]
+eq(DshWorkspaceOps.newestSessionId(port: 6016, inPath: "/p/abc"), "s-idle-newest",
+   "newestSessionId: with nothing running the newest session is picked")
+
+DshWebRPC.resetForTests()
+fake.routes = ["GET /?token=launch-token": (303, nil),
+               "POST /api/session/list": (200, okValue(["items": []])),
+               "POST /api/session/list2": (404, nil)]
+eq(DshWorkspaceOps.newestSessionId(port: 6017, inPath: "/p/abc"), nil,
+   "newestSessionId: a workspace without sessions answers nil (the caller creates one)")
+
+// A BLANK session (never prompted) is skipped even when it is the newest: dsh web
+// renders a blank session ONLY while it is the page's current one, so re-opening
+// one from outside the page is impossible and it would hide the workspace's real
+// sessions. nil means "nothing worth re-opening" — the caller starts a session
+// and dsh web answers by REUSING that very blank session.
+DshWebRPC.resetForTests()
+let withBlank: [[String: Any]] = [
+    ["sessionId": "s-blank-newest", "cwd": "/p/abc", "blank": true, "running": false, "updatedAt": 900.0],
+    ["sessionId": "s-real-older", "cwd": "/p/abc", "blank": false, "running": false, "updatedAt": 3.0],
+]
+fake.routes = ["GET /?token=launch-token": (303, nil),
+               "POST /api/session/list": (200, okValue(["items": withBlank]))]
+eq(DshWorkspaceOps.newestSessionId(port: 6018, inPath: "/p/abc"), "s-real-older",
+   "newestSessionId: a blank session is skipped even when it is the newest")
+
+DshWebRPC.resetForTests()
+fake.routes = ["GET /?token=launch-token": (303, nil),
+               "POST /api/session/list": (200, okValue(["items": [withBlank[0]]]))]
+eq(DshWorkspaceOps.newestSessionId(port: 6019, inPath: "/p/abc"), nil,
+   "newestSessionId: a workspace whose only session is blank answers nil (the caller reuses it)")
+
+// A plain running blank session must not win over a real idle one either: the
+// running flag is only meaningful among sessions that can actually be opened.
+DshWebRPC.resetForTests()
+let runningBlank: [[String: Any]] = [
+    ["sessionId": "s-blank-running", "cwd": "/p/abc", "blank": true, "running": true, "updatedAt": 999.0],
+    ["sessionId": "s-real-idle", "cwd": "/p/abc", "blank": false, "running": false, "updatedAt": 1.0],
+]
+fake.routes = ["GET /?token=launch-token": (303, nil),
+               "POST /api/session/list": (200, okValue(["items": runningBlank]))]
+eq(DshWorkspaceOps.newestSessionId(port: 6020, inPath: "/p/abc"), "s-real-idle",
+   "newestSessionId: a running session only wins among openable (non-blank) ones")
+
+// canonical(): a macOS directory listing reports /private/var/... while the same
+// path typed by the user (or stored by dsh) may say /var/... — both must compare
+// equal, or the panel reports a registered workspace as unregistered.
+let tmpDir = NSTemporaryDirectory()
+eq(DshWorkspaceStore.canonical(tmpDir), DshWorkspaceStore.canonical("/private" + tmpDir),
+   "canonical: the /var and /private/var spellings of one directory fold together")
+
 print(failures == 0 ? "dsh-rpc tests passed" : "dsh-rpc tests FAILED (\(failures))")
 exit(failures == 0 ? 0 : 1)

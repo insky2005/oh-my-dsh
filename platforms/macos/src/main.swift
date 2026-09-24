@@ -108,7 +108,9 @@ enum L10n {
         "menu.view": ("视图", "View"),
         "menu.appearance": ("外观", "Appearance"),
         "menu.toggleFiles": ("显示/隐藏 文件面板", "Toggle Files Panel"),
+        "menu.toggleProjects": ("显示/隐藏 项目面板", "Toggle Projects Panel"),
         // activity bar
+        "bar.projects": ("项目", "Projects"),
         "bar.preview": ("文件", "Files"),
         "bar.terminal": ("终端", "Terminal"),
         "edit.undo": ("撤销", "Undo"),
@@ -625,6 +627,39 @@ enum L10n {
         "tasks.commentCloseDone": ("已评论并关闭 issue #%d", "Commented & closed issue #%d"),
         "tasks.commentCloseFailed": ("评论/关闭失败（检查 token 与网络）", "Comment/close failed (check token & network)"),
         "tasks.commentTemplate": ("已由 oh-my-dsh 任务面板处理完成，对应 PR：#%@", "Processed by the oh-my-dsh task panel; PR: %@"),
+        // Projects panel (a workspace = a directory under the projects root)
+        "projects.title": ("项目", "Projects"),
+        "projects.rootLabel": ("根目录：%@", "Root: %@"),
+        "projects.changeRoot": ("更改…", "Change…"),
+        "projects.changeRootTooltip": ("选择项目存放的根目录", "Choose the projects root folder"),
+
+        "projects.newWorkspaceLocation": ("将创建于 %@", "Will be created at %@"),
+        "projects.namePlaceholder": ("工作区名（作为目录名）", "Workspace name (used as the folder name)"),
+        "projects.invalidName": ("工作区名不能为空，不能含 “/” 或 “:”，不能以 “.” 开头，且不超过 64 个字符", "Invalid name: must not be empty, contain “/” or “:”, start with “.”, or exceed 64 characters"),
+        "projects.nameExists": ("该工作区已存在", "That workspace already exists"),
+        "projects.createFailed": ("创建失败：%@", "Could not create it: %@"),
+        "projects.created": ("已创建工作区 %@", "Created workspace %@"),
+        "projects.registerPending": ("已创建目录，但尚未注册到 dsh（服务未就绪，稍后会自动重试）", "Folder created; not registered with dsh yet (server not ready — it will retry)"),
+        "projects.empty": ("还没有工作区。点「+」新建一个。", "No workspaces yet — create one with “+”."),
+        "projects.rootMissing": ("根目录不存在：%@", "Root folder does not exist: %@"),
+        "projects.sessions": ("%d 个会话", "%d sessions"),
+        "projects.registered": ("已注册", "Registered"),
+        "projects.unregistered": ("未注册", "Not registered"),
+        "projects.openInDsh": ("在 dsh 中打开", "Open in dsh"),
+        "projects.register": ("添加工作区", "Add workspace"),
+        "projects.registerDone": ("已在 dsh 中创建该工作区：%@", "Created the dsh workspace: %@"),
+        "projects.registerFailed": ("创建 dsh 工作区失败：%@", "Could not create the dsh workspace: %@"),
+        "projects.needsWorkspace": ("该目录还不是 dsh 工作区：先点「创建 dsh 工作区」", "This folder is not a dsh workspace yet — use “Create dsh workspace” first"),
+        "projects.newSession": ("新会话", "New Session"),
+        "projects.newSessionFailed": ("无法新建会话：%@", "Could not create a session: %@"),
+        "projects.newSessionFallback": ("会话已创建，但没能在 dsh web 侧栏定位它：请在侧栏「%@」工作区行点「+」打开", "The session was created, but dsh web's sidebar has no row for it: click “+” on the “%@” workspace row to open it"),
+        "projects.openFailed": ("未能在 dsh web 侧栏定位该会话（%@…）：请在侧栏点开对应工作区手动选择", "Could not find that session in dsh web's sidebar (%@…): open the workspace in the sidebar and pick it there"),
+        "projects.openFailedNoSession": ("dsh web 还没有列出这条会话（%@…）：稍候片刻再点，或直接在侧栏选择", "dsh web does not list that session yet (%@…): retry in a moment, or pick it in the sidebar"),
+        "projects.settingsSection": ("项目", "Projects"),
+        "projects.settingsRootHint": ("默认：%@（留空即用默认）", "Default: %@ (leave empty to use it)"),
+        "projects.settingsPick": ("选择…", "Choose…"),
+        "projects.settingsReset": ("恢复默认", "Reset to Default"),
+        "projects.settingsInvalidPath": ("请输入绝对路径（可用 “~”）", "Enter an absolute path (a leading “~” is allowed)"),
     ]
 
     /// Localize a key, optionally filling %@ / %d placeholders.
@@ -1951,8 +1986,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var browserToggleMenuItem: NSMenuItem?
     private var channelToggleMenuItem: NSMenuItem?
     private var reviewToggleMenuItem: NSMenuItem?
+    private var projectsToggleMenuItem: NSMenuItem?
     private var skillsToggleMenuItem: NSMenuItem?
-    /// Activity-bar entries (leftmost icon strip).
+    /// Activity-bar entries (leftmost icon strip). "项目" comes first (design D4).
+    private var projectsBarButton: ActivityBarButton!
     private var previewBarButton: ActivityBarButton!
     private var closeTabMenuItem: NSMenuItem?
     private var terminalBarButton: ActivityBarButton!
@@ -1973,6 +2010,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var browserPanel: BrowserPanelController!
     private var channelPanel: ChannelPanelController!
     private var reviewPanel: ReviewPanelController!
+    private var projectsPanel: ProjectsPanelController!
     private var skillsPanel: SkillsPanelController!
     /// Browser panel localhost REST API (Agent / user curl). Runs from launch.
     private var browserAPIServer: BrowserAPIServer!
@@ -1983,7 +2021,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
     /// terminal, wiki, tasks and browser panels share one slot; the activity
     /// bar toggles between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review, skills }
+    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review, skills, projects }
     private var rightPanel: RightPanel = .none
     /// Set by prepareSessionSnapshot() when session snapshots need the user's
     /// attention (unavailable runtime / an unfinished rollback). Surfaced by the
@@ -1991,6 +2029,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var snapshotNotice: String?
     /// One post-boot tree capture per launch (see captureRuntimeTree).
     private var didCaptureRuntimeTree = false
+    /// The session whose "open in dsh" is currently being attempted, so a retry
+    /// chain and a fresh click for the same id cannot overlap (see openDSHSession).
+    private var openInFlight: String?
     /// The「会话快照…」window (created lazily).
     private var snapshotWindowController: SnapshotWindowController?
     /// Oldest dsh generation this shell still adapts to (core keeps both API
@@ -2020,7 +2061,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                             max(BrowserPanelController.minWidth,
                                 max(ChannelPanelController.minWidth,
                                     max(ReviewPanelController.minWidth,
-                                        SkillsPanelController.minWidth))))))))
+                                        max(SkillsPanelController.minWidth,
+                                            ProjectsPanelController.minWidth)))))))))
     /// *Initial* panel width when the user has never chosen one. The user's
     /// saved/dragged width always wins (clamped to the minimum above); this is
     /// only the first-run width. Deliberately NOT window-relative: a "half the
@@ -2222,11 +2264,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.skills)
             AppLog.shared.log("skills self-test enabled")
         }
-        // Panel sweep hook (QA only): DSH_PANEL_TEST="files,terminal,wiki,tasks,
-        // browser,channel,review,skills" shows every named panel in sequence, so
-        // a dsh upgrade can be checked end to end (with DSH_UI_DEBUG=1 each one
+        // Projects self-test hook (debugging / QA): opens the Projects panel.
+        // DSH_PROJECTS_TEST_ROOT points it at a fixture projects root without
+        // touching shell/config.json (see ProjectsCore.envRootKey).
+        if ProcessInfo.processInfo.environment["DSH_PROJECTS_TEST"] == "1" {
+            setRightPanel(.projects)
+            AppLog.shared.log("projects self-test enabled")
+        }
+        // Panel sweep hook (QA only): DSH_PANEL_TEST="projects,files,terminal,wiki,
+        // tasks,browser,channel,review,skills" shows every named panel in sequence,
+        // so a dsh upgrade can be checked end to end (with DSH_UI_DEBUG=1 each one
         // also writes panel-<label>-debug.png). The one-panel hooks above only
-        // cover six of the eight panels, and the two they miss (tasks, channel)
+        // cover eight of the nine panels, and the ones they miss (tasks, channel)
         // are exactly the ones with no menu shortcut reachable from a script.
         if let sweep = ProcessInfo.processInfo.environment["DSH_PANEL_TEST"], !sweep.isEmpty {
             runPanelSweep(sweep)
@@ -2262,6 +2311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "channel", "通道": return .channel
         case "review", "审查": return .review
         case "skills", "技能": return .skills
+        case "projects", "项目": return .projects
         default: return nil
         }
     }
@@ -2380,6 +2430,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.dumpPanelDebugInfo(panelView: self.skillsPanel.view, label: "skills-loaded")
         }
 
+        projectsPanel = ProjectsPanelController()
+        AppLog.shared.log("launch: projectsPanel created")
+        projectsPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        projectsPanel.portProvider = { [weak self] in self?.server.port ?? 3080 }
+        projectsPanel.dshHomeProvider = { [weak self] in self?.dshDataHome ?? (NSHomeDirectory() + "/.dsh") }
+        projectsPanel.currentWorkspacePath = { ProjectDirectory.current }
+        projectsPanel.onOpenSettings = { [weak self] in self?.openSettingsWindow(nil) }
+        // 六个快捷入口：先重根（adoptProjectDirectory），再切面板。
+        projectsPanel.onOpenPanel = { [weak self] path, target in
+            self?.openWorkspace(path, in: target)
+        }
+        // 卡片名称 / 点击卡片 = 在 dsh 中打开：复用该工作区最近一条会话，没有则新建。
+        projectsPanel.onEnterWorkspace = { [weak self] path in
+            self?.openWorkspaceInDsh(path)
+        }
+        // 「新会话」：在该工作区建一条会话并切过去。
+        projectsPanel.onCreateSession = { [weak self] path in
+            self?.createSessionInWorkspace(path)
+        }
+        // A workspace was just created (or adopted) in the panel: make it the
+        // shell's current workspace right away, so its card comes up highlighted
+        // and the other panels point at the folder the user just asked for.
+        // Nothing else selects it: the panel has no selection state of its own.
+        projectsPanel.onSelectWorkspace = { [weak self] path in
+            guard let self = self else { return }
+            guard self.adoptProjectDirectory(path) else { return }
+            self.dlog("projects: selected the new workspace " + path)
+        }
+        // The folder is now a dsh workspace: put dsh web on it, the way dsh's own
+        // "添加工作区 / Add workspace" entry does (its picker resolves the folder
+        // and immediately starts a session there: WorkspacePickFlow.onPick ->
+        // startSession). That session start is also the only thing that makes the
+        // sidebar SELECT the new workspace — a workspace row alone is not
+        // "current", and a workspace with no session has nothing to select.
+        //
+        // No nudge for the row itself: an added workspace reaches every connected
+        // client through dsh's workspace stream (measured ~0.2 s), and the old
+        // synthetic offline/online nudge only made the page reconnect.
+        projectsPanel.onWorkspaceRegistered = { [weak self] path in
+            self?.dshWebFollowNewWorkspace(path)
+        }
+        // QA (--ui-debug): snapshot the panel again once it has rendered.
+        projectsPanel.onDidRender = { [weak self] in
+            guard let self = self, self.uiDebug else { return }
+            self.dumpPanelDebugInfo(panelView: self.projectsPanel.view, label: "projects-loaded")
+        }
+
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
@@ -2388,7 +2485,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityBar.translatesAutoresizingMaskIntoConstraints = false
 
         // 活动栏图标：tooltip 跟随系统语言（L10n 中英切换）；
-        // 顺序 = 文件、终端、浏览器、Wiki、任务、通道、审查、技能。
+        // 顺序 = 项目、文件、终端、浏览器、Wiki、任务、通道、审查、技能
+        // （「项目」在首位，见设计 §5/D4）。
+        projectsBarButton = makeActivityButton(symbol: "folder",
+                                               tooltip: L10n.tr("bar.projects"),
+                                               action: #selector(projectsEntryTapped(_:)))
         previewBarButton = makeActivityButton(symbol: "doc.on.doc",
                                               tooltip: L10n.tr("bar.preview"),
                                               action: #selector(togglePreviewPanel(_:)))
@@ -2413,7 +2514,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsBarButton = makeActivityButton(symbol: "puzzlepiece",
                                              tooltip: L10n.tr("bar.skills"),
                                              action: #selector(skillsEntryTapped(_:)))
-        let barStack = NSStackView(views: [previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton, skillsBarButton])
+        let barStack = NSStackView(views: [projectsBarButton, previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton, skillsBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -2474,6 +2575,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "channel": kind = .channel
         case "review": kind = .review
         case "skills": kind = .skills
+        case "projects": kind = .projects
         default: kind = .preview
         }
         setRightPanel(visible ? kind : .none)
@@ -2490,6 +2592,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .channel: return channelPanel.view
         case .review: return reviewPanel.view
         case .skills: return skillsPanel.view
+        case .projects: return projectsPanel.view
         case .none: return NSView()
         }
     }
@@ -2548,6 +2651,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelToggleMenuItem?.state = (panel == .channel) ? .on : .off
         reviewToggleMenuItem?.state = (panel == .review) ? .on : .off
         skillsToggleMenuItem?.state = (panel == .skills) ? .on : .off
+        projectsToggleMenuItem?.state = (panel == .projects) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
@@ -2556,6 +2660,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelBarButton?.setActive(panel == .channel)
         reviewBarButton?.setActive(panel == .review)
         skillsBarButton?.setActive(panel == .skills)
+        projectsBarButton?.setActive(panel == .projects)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
@@ -2636,6 +2741,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if uiDebug {
                     self.dumpPanelDebugInfo(panelView: skillsPanel.view, label: "skills")
                 }
+            case .projects:
+                projectsPanel.ensureLoaded()
+                if uiDebug {
+                    self.dumpPanelDebugInfo(panelView: projectsPanel.view, label: "projects")
+                }
             }
         } else {
             split.setPosition(split.bounds.width, ofDividerAt: 0)
@@ -2668,6 +2778,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .channel: kind = "channel"
         case .review: kind = "review"
         case .skills: kind = "skills"
+        case .projects: kind = "projects"
         default: kind = "preview"
         }
         ShellConfig.shared.set(kind, forKey: "rightPanelKind")
@@ -3077,41 +3188,120 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     })()
     """
 
-    /// Panel → web session link bridge. Exposes window.__dshOpenSession(id)
-    /// which switches dsh web to the given session. dsh web does not expose
-    /// its session store globally, so we locate the matching sidebar row by
-    /// title (resolved via a session.list RPC we fire on demand) and click
-    /// it — the same gesture the user performs to switch sessions.
+    /// Panel → web session bridge. Two entry points, both DOM-driven because
+    /// dsh web exposes no session store and no per-session URL — clicking what
+    /// the user would click is the only gesture available:
+    ///
+    ///   * window.__dshNewSession(workspaceName) — the Projects panel's "新会话":
+    ///     clicks the workspace row's own "+" button, i.e. dsh's create-or-reuse
+    ///     gesture (reuse the workspace's blank session, else create, then open).
+    ///     The shell never POSTs session/create for this: a session created
+    ///     behind the page's back stays invisible (the sidebar shows a blank
+    ///     session only while it is the current one), so there would be no row
+    ///     to click and one empty session would pile up per click.
+    ///   * window.__dshOpenSession(sessionId, workspaceName) — switch dsh web to
+    ///     an existing session. Two strategies, in order:
+    ///   1. the row whose text equals the session's title (session/list ->
+    ///      projections.values.title) — exact, but only named sessions have one;
+    ///   2. the first session row INSIDE the sidebar group named after the
+    ///      workspace directory (the shell knows that name) — this is what makes
+    ///      an untitled, just-created session reachable at all.
+    /// Resolves to {ok, via} or {ok:false, reason}; main.swift awaits it through
+    /// callAsyncJavaScript because evaluateJavaScript cannot return a promise
+    /// (docs/dsh-version-impact.md B10).
     private static let sessionOpenerScript = """
     (function () {
       if (window.__dshSessionOpener) return;
       window.__dshSessionOpener = true;
+      function rows() {
+        return Array.prototype.slice.call(document.querySelectorAll('[role="treeitem"]'));
+      }
+      function isSessionRow(node) {
+        return (node.className || "").indexOf("sessionRow") !== -1;
+      }
+      function lines(node) {
+        return (node.innerText || "").split(String.fromCharCode(10)).map(function (s) { return s.trim(); });
+      }
       function expandGroups() {
-        var groups = Array.prototype.slice.call(document.querySelectorAll('[role="treeitem"]'));
-        for (var g = 0; g < groups.length; g++) {
-          var r = groups[g];
-          if (r.getAttribute("aria-expanded") === "false") r.click();
+        var all = rows();
+        for (var g = 0; g < all.length; g++) {
+          if (all[g].getAttribute("aria-expanded") === "false") all[g].click();
         }
       }
       function findAndClick(title) {
-        var rows = Array.prototype.slice.call(document.querySelectorAll('[role="treeitem"]'));
-        for (var i = 0; i < rows.length; i++) {
-          if (rows[i].className.indexOf("sessionRow") === -1) continue;
-          var lines = (rows[i].innerText || "").split(String.fromCharCode(10)).map(function (s) { return s.trim(); });
-          if (lines.indexOf(title) !== -1) { rows[i].click(); return true; }
+        var all = rows();
+        for (var i = 0; i < all.length; i++) {
+          if (!isSessionRow(all[i])) continue;
+          if (lines(all[i]).indexOf(title) !== -1) { all[i].click(); return true; }
         }
         return false;
       }
-      function openById(sessionId, title, attempt) {
-        if (findAndClick(title)) return { ok: true };
+      // The workspace (group) row whose text mentions the directory name.
+      function groupRow(name) {
+        var all = rows();
+        for (var i = 0; i < all.length; i++) {
+          if (isSessionRow(all[i])) continue;
+          if (lines(all[i]).indexOf(name) !== -1) return all[i];
+        }
+        for (var j = 0; j < all.length; j++) {
+          if (isSessionRow(all[j])) continue;
+          if ((all[j].innerText || "").indexOf(name) !== -1) return all[j];
+        }
+        return null;
+      }
+      // The first session row nested under a group (dsh lists a group's sessions
+      // by recency, so the first one is the most recent).
+      function firstSessionUnder(group) {
+        var all = rows(), seen = false;
+        for (var i = 0; i < all.length; i++) {
+          var node = all[i];
+          if (node === group) { seen = true; continue; }
+          if (!seen) continue;
+          if (isSessionRow(node)) return node;
+          if (group.contains && group.contains(node)) continue;
+          return null;
+        }
+        return null;
+      }
+      // What the sidebar looked like — main.swift logs this on failure (B10).
+      function probe() {
+        var all = rows(), groups = 0, sessionRows = 0;
+        for (var i = 0; i < all.length; i++) { if (isSessionRow(all[i])) sessionRows++; else groups++; }
+        return { groups: groups, sessionRows: sessionRows };
+      }
+      function failed(reason, name) {
+        var out = probe();
+        out.ok = false;
+        out.reason = reason;
+        out.workspaceFound = name ? !!groupRow(name) : false;
+        return out;
+      }
+      function openByWorkspace(name, attempt) {
+        if (!name) { console.log("[dsh-opener] row-not-found (no workspace name)"); return failed("row-not-found", null); }
+        expandGroups();
+        var group = groupRow(name);
+        if (group) {
+          if (group.getAttribute("aria-expanded") === "false") group.click();
+          var session = firstSessionUnder(group);
+          if (session) { session.click(); return { ok: true, via: "workspace" }; }
+        }
+        if (attempt < 8) {
+          return new Promise(function (resolve) {
+            setTimeout(function () { resolve(openByWorkspace(name, attempt + 1)); }, 150);
+          });
+        }
+        console.log("[dsh-opener] workspace-row-not-found", name);
+        return failed("workspace-row-not-found", name);
+      }
+      function openById(sessionId, title, workspaceName, attempt) {
+        if (findAndClick(title)) return { ok: true, via: "title" };
         if (attempt < 8) {
           expandGroups();
           return new Promise(function (resolve) {
-            setTimeout(function () { resolve(openById(sessionId, title, attempt + 1)); }, 120);
+            setTimeout(function () { resolve(openById(sessionId, title, workspaceName, attempt + 1)); }, 120);
           });
         }
-        console.log("[dsh-opener] row-not-found", sessionId, title);
-        return { ok: false, reason: "row-not-found" };
+        return openByWorkspace(workspaceName, 0);
       }
       // One session-list call in the shape the RUNNING server expects:
       //   dsh >= 0.1.2 — POST /api/session/list, method = "session/list",
@@ -3141,7 +3331,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           return items;
         }).catch(function (err) { console.log("[dsh-opener] list error", String(err)); return null; });
       }
-      window.__dshOpenSession = function (sessionId) {
+      // The workspace row's own "new session" button. dsh's gesture (not ours):
+      // reuse the workspace's blank session when there is one, otherwise create
+      // it, then OPEN it. Reusing it here rather than POSTing session/create is
+      // what makes the result visible at all — the sidebar renders a blank
+      // session ONLY while it is the current one ("among blank sessions, only
+      // the current one is visible"), so a session created behind the page's
+      // back has no row to open, and clicking a row is how the shell switches
+      // the page. It also stops one empty session piling up per click.
+      function newSessionButton(row) {
+        var buttons = row.querySelectorAll("button");
+        return buttons.length === 0 ? null : buttons[buttons.length - 1];
+      }
+      function newSessionInWorkspace(name, attempt) {
+        var group = groupRow(name);
+        if (group !== null) {
+          var button = newSessionButton(group);
+          if (button !== null) {
+            var label = button.getAttribute("aria-label") || "";
+            button.click();
+            // The sidebar does not scroll to a newly selected workspace on its
+            // own, and a long list hides it below the fold: bring the row into
+            // view once React has re-rendered the selection (re-find it — the
+            // click can replace the row element).
+            setTimeout(function () {
+              var row = groupRow(name);
+              if (row && row.scrollIntoView) {
+                try { row.scrollIntoView({ block: "nearest" }); } catch (e) {}
+              }
+            }, 300);
+            return { ok: true, via: "workspace-new-session", button: label };
+          }
+        }
+        // The row can be a moment late (a workspace registered seconds ago
+        // arrives through dsh's own workspace stream).
+        if (attempt < 12) {
+          return new Promise(function (resolve) {
+            setTimeout(function () { resolve(newSessionInWorkspace(name, attempt + 1)); }, 150);
+          });
+        }
+        console.log("[dsh-opener] new-session workspace-row-not-found", name);
+        return failed("workspace-row-not-found", name);
+      }
+      window.__dshNewSession = function (workspaceName) {
+        if (!workspaceName) return { ok: false, reason: "no-workspace" };
+        return newSessionInWorkspace(workspaceName, 0);
+      };
+      window.__dshOpenSession = function (sessionId, workspaceName) {
         if (!sessionId) return { ok: false, reason: "no-id" };
         return fetchSessions(true).then(function (items) {
           if (items) return items;
@@ -3150,13 +3386,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           items = items || [];
           var target = null;
           for (var i = 0; i < items.length; i++) { if (items[i].sessionId === sessionId) { target = items[i]; break; } }
-          if (!target) { console.log("[dsh-opener] no-session", sessionId); return { ok: false, reason: "no-session" }; }
-          var title = (target.projections && target.projections.values && target.projections.values.title) || target.sessionId;
-          return openById(sessionId, title, 0);
+          if (!target) {
+            // Not in the page's list yet (client has not re-fetched): fall back to
+            // the workspace group rather than giving up.
+            if (workspaceName) return openByWorkspace(workspaceName, 0);
+            console.log("[dsh-opener] no-session", sessionId);
+            return failed("no-session", workspaceName);
+          }
+          var projections = target.projections && target.projections.values;
+          var title = (projections && projections.title) || "";
+          if (!title) return openByWorkspace(workspaceName, 0);   // untitled: no text to match
+          return openById(sessionId, title, workspaceName, 0);
         }).catch(function (err) { console.log("[dsh-opener] error", String(err)); return { ok: false, reason: String(err) }; });
       };
     })()
     """
+
 
     /// Panel → composer bridge. dsh web's composer is a Lexical editor whose
     /// references are `reference-chip` decorator nodes: a reference picked from
@@ -3931,19 +4176,238 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     /// Panel → web session link: switch dsh web to the given session. Driven by
     /// the sessionOpenerScript bridge injected into the web view.
-    private func openDSHSession(_ sessionId: String) {
+    ///
+    /// MUST go through callAsyncJavaScript: the bridge resolves a Promise, and
+    /// evaluateJavaScript cannot serialize one — it failed with "the type of the
+    /// JavaScript return value is not supported", which made every fallback below
+    /// unreachable (the user saw "clicking a project does nothing").
+    ///
+    /// A session created through the host RPC is not in the page's sidebar until
+    /// the client re-fetches its lists, so an attempt can miss the row. The policy
+    /// is deliberately bounded and NON-DISRUPTIVE:
+    ///   nudge the client -> try (the bridge retries internally) -> retry up to
+    ///   `retry` more times -> give up with a status-line message.
+    /// It used to reload the whole page as a last resort, which turned a plain
+    /// click into a page reload — and, because the reload replayed the request
+    /// through webView(_:didFinish:), into an endless reload loop (~10 s apart)
+    /// whenever the sidebar really had no row for that session id.
+    private func openDSHSession(_ sessionId: String, retry: Int = 1, workspaceName: String? = nil) {
         guard let webView = webView else { return }
-        // sessionId is an opaque token (uuid) — quote it for JS safely.
-        let escaped = sessionId.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let js = "window.__dshOpenSession ? window.__dshOpenSession(\"\(escaped)\") : Promise.resolve({ok:false,reason:\"bridge-unavailable\"})"
-        webView.evaluateJavaScript(js) { result, error in
-            if let err = error {
-                AppLog.shared.log("openDSHSession JS error: \(err.localizedDescription)")
-                return
+        guard !sessionId.isEmpty else { return }
+        // One open per session at a time: overlapping chains (a fresh click racing
+        // a retry of the previous one) only produce confusing logs.
+        if openInFlight == sessionId { return }
+        openInFlight = sessionId
+        var args: [String: Any] = ["sessionId": sessionId]
+        if let name = workspaceName, !name.isEmpty { args["workspaceName"] = name }
+        let body = "return await window.__dshOpenSession(sessionId, workspaceName);"
+        webView.callAsyncJavaScript(body, arguments: args, in: nil, in: .page) { [weak self] result in
+            guard let self = self else { return }
+            guard self.openInFlight == sessionId else { return }
+            self.openInFlight = nil
+            switch result {
+            case .failure(let error):
+                AppLog.shared.log("openDSHSession \(sessionId) bridge error: \(error.localizedDescription)")
+            case .success(let value):
+                guard let dict = value as? [String: Any] else {
+                    AppLog.shared.log("openDSHSession \(sessionId): unexpected bridge result")
+                    return
+                }
+                if (dict["ok"] as? Bool) == true {
+                    AppLog.shared.log("openDSHSession \(sessionId): ok via \(dict["via"] as? String ?? "?")")
+                    return
+                }
+                let reason = dict["reason"] as? String ?? "?"
+                AppLog.shared.log("openDSHSession \(sessionId): \(reason) \(Self.sidebarProbe(dict))")
+                if retry > 0 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        self?.openDSHSession(sessionId, retry: retry - 1, workspaceName: workspaceName)
+                    }
+                    return
+                }
+                self.reportOpenFailure(sessionId: sessionId, reason: reason, workspaceName: workspaceName)
             }
-            if let dict = result as? [String: Any], let ok = dict["ok"] as? Bool, !ok {
-                AppLog.shared.log("openDSHSession \(sessionId): \(dict["reason"] ?? "?" )")
+        }
+    }
+
+    /// What the page's sidebar looked like when the lookup failed — the one piece
+    /// of evidence a "click does not switch" report needs (B10 diagnostics).
+    private static func sidebarProbe(_ dict: [String: Any]) -> String {
+        let groups = dict["groups"] as? Int ?? -1
+        let rows = dict["sessionRows"] as? Int ?? -1
+        let workspace = (dict["workspaceFound"] as? Bool) == true ? "yes" : "no"
+        return "(sidebar: groups=\(groups) sessionRows=\(rows) workspaceRow=\(workspace))"
+    }
+
+    /// Give up (no page reload): say what happened where the user is looking.
+    private func reportOpenFailure(sessionId: String, reason: String, workspaceName: String?) {
+        let short = String(sessionId.prefix(18))
+        AppLog.shared.log("openDSHSession \(sessionId): giving up (\(reason)); the session is not in dsh web's sidebar")
+        let message: String
+        switch reason {
+        case "no-session":
+            message = L10n.tr("projects.openFailedNoSession", short)
+        default:
+            message = L10n.tr("projects.openFailed", short)
+        }
+        projectsPanel?.setStatus(message, isError: true)
+    }
+
+    // MARK: - Projects panel actions (a workspace = a directory under the root)
+
+    /// Re-root the whole shell to `path`: the ONE place that writes
+    /// ProjectDirectory and re-points every project-dir consumer. Shared by the
+    /// Projects panel's quick entries and by the dshSession follow below, so the
+    /// two can never fight over what "the current workspace" means.
+    ///
+    /// A path that is no longer a directory is refused (the old dshSession code
+    /// re-rooted anyway, pointing every panel at a directory that had vanished).
+    @discardableResult
+    private func adoptProjectDirectory(_ path: String) -> Bool {
+        let std = (path as NSString).standardizingPath
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: std, isDirectory: &isDir), isDir.boolValue else {
+            AppLog.shared.log("project directory refused (not an existing directory): " + std)
+            return false
+        }
+        let changed = ProjectDirectory.current != std
+        ProjectDirectory.set(std)
+        guard changed else { return true }
+        previewPanel?.setProjectDirectory(std)
+        // Terminal tabs belong to a workspace too: hide the ones from the
+        // workspace being left (their shells keep running) and bring this
+        // workspace's tabs back.
+        terminalPanel?.setWorkspaceDirectory(std)
+        wikiPanel?.reloadRoot()
+        tasksPanel?.workspaceChanged()
+        channelPanel?.workspaceChanged()
+        reviewPanel?.workspaceChanged()
+        // The Projects panel only re-renders its highlight + badges here.
+        projectsPanel?.workspaceChanged()
+        AppLog.shared.log("project directory adopted: " + std)
+        return true
+    }
+
+    /// A Projects-panel quick entry: re-root to the workspace, then show the panel.
+    private func openWorkspace(_ path: String, in target: ProjectTargetPanel) {
+        guard adoptProjectDirectory(path) else { return }
+        switch target {
+        case .files: setRightPanel(.preview)
+        case .terminal: setRightPanel(.terminal)
+        case .wiki: setRightPanel(.wiki)
+        case .tasks: setRightPanel(.tasks)
+        case .channel: setRightPanel(.channel)
+        case .review: setRightPanel(.review)
+        }
+        AppLog.shared.log("projects: opened the \(target.rawValue) panel for " + path)
+    }
+
+    /// "Open in dsh" (the card's title / a click on the card): reuse the
+    /// workspace's newest REAL session, or start one when it has none yet (its
+    /// only sessions are blank ones, which dsh web's sidebar hides — the start
+    /// path reuses exactly such a session rather than making another).
+    private func openWorkspaceInDsh(_ path: String) {
+        let port = server.port
+        let workspaceName = (path as NSString).lastPathComponent
+        AppLog.shared.log("projects: open request for " + path)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let existing = DshWorkspaceOps.newestSessionId(port: port, inPath: path)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let sid = existing {
+                    _ = self.adoptProjectDirectory(path)
+                    AppLog.shared.log("projects: re-opened the newest session of " + path)
+                    self.openDSHSession(sid, workspaceName: workspaceName)
+                } else {
+                    self.createSessionInWorkspace(path)
+                }
+            }
+        }
+    }
+
+    /// A workspace was just registered from the Projects panel (created from
+    /// scratch, or an existing folder adopted). dsh web itself answers "add
+    /// workspace" by starting a session in it — `WorkspacePickFlow.onPick` calls
+    /// `startSession(workspaceId)` right after the picker resolves — and that is
+    /// also the only way the new workspace becomes the page's current one: a
+    /// workspace row on its own is not "current", and a workspace with no session
+    /// has nothing to select. So the shell does the same thing here.
+    private func dshWebFollowNewWorkspace(_ path: String) {
+        AppLog.shared.log("projects: workspace registered — opening it in dsh web: " + path)
+        createSessionInWorkspace(path)
+    }
+
+    /// "New session": let dsh web's OWN sidebar entry do it — click the "+" on
+    /// that workspace's row (window.__dshNewSession). That is dsh's
+    /// create-or-reuse gesture: it reuses the workspace's blank session when
+    /// there is one, otherwise creates it, and then OPENS it.
+    ///
+    /// Doing it here instead of POSTing session/create ourselves is what makes
+    /// the session usable at all: the sidebar renders a blank session ONLY while
+    /// it is the current one, so a session created behind the page's back has no
+    /// row to click (the shell's only way to switch the page) — and every click
+    /// left one more empty session behind. The shell still re-roots itself to the
+    /// workspace first; the page's own switch reaches it through the session
+    /// tracker, so ProjectDirectory and the panel stay in agreement.
+    ///
+    /// Failures land in the panel's status line — never in a modal alert (the
+    /// panel may be a narrow column).
+    private func createSessionInWorkspace(_ path: String) {
+        _ = adoptProjectDirectory(path)
+        guard let web = webView, web.url != nil else {
+            projectsPanel?.setStatus(L10n.tr("projects.newSessionFailed", "dsh web is not loaded"), isError: true)
+            return
+        }
+        let name = (path as NSString).lastPathComponent
+        AppLog.shared.log("projects: asking dsh web for a new session in " + path)
+        web.callAsyncJavaScript("return await window.__dshNewSession(workspaceName);",
+                                arguments: ["workspaceName": name], in: nil, in: .page) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let value):
+                let dict = value as? [String: Any]
+                if (dict?["ok"] as? Bool) == true {
+                    AppLog.shared.log("projects: dsh web started a session in " + path
+                                      + " (via " + (dict?["via"] as? String ?? "?") + ")")
+                    return
+                }
+                let reason = dict?["reason"] as? String ?? "unexpected bridge result"
+                AppLog.shared.log("projects: dsh web could not start a session in " + path + ": " + reason
+                                  + " " + Self.sidebarProbe(dict ?? [:]))
+                self.createSessionOverRPC(path, because: reason)
+            case .failure(let error):
+                AppLog.shared.log("projects: new-session bridge error: " + error.localizedDescription)
+                self.createSessionOverRPC(path, because: "bridge-error")
+            }
+        }
+    }
+
+    /// Fallback for a sidebar whose DOM no longer answers (it is a private detail
+    /// of dsh web — docs/dsh-version-impact.md B10). Create the session over the
+    /// host RPC so the click still leaves a usable session in dsh's registry, and
+    /// say why dsh web did not switch: a session created this way is blank, and
+    /// it appears the moment the user clicks that workspace's "+" in the sidebar
+    /// (which reuses exactly this session instead of making another one).
+    private func createSessionOverRPC(_ path: String, because reason: String) {
+        let port = server.port
+        guard port > 0 else {
+            projectsPanel?.setStatus(L10n.tr("projects.newSessionFailed", "dsh web is not running"), isError: true)
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let workspaceId = DshWorkspaceOps.register(port: port, path: path)
+            let sessionId = DshWorkspaceOps.createSession(port: port, cwd: path, workspaceId: workspaceId)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let sid = sessionId else {
+                    self.projectsPanel?.setStatus(L10n.tr("projects.newSessionFailed", "session/create was rejected"),
+                                                  isError: true)
+                    return
+                }
+                AppLog.shared.log("projects: created session \(sid) in " + path
+                                  + " (the sidebar bridge said: " + reason + ")")
+                self.projectsPanel?.setStatus(L10n.tr("projects.newSessionFallback",
+                                                      (path as NSString).lastPathComponent), isError: true)
             }
         }
     }
@@ -4429,14 +4893,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 // If fetch failed (cwd nil), still re-trigger — the panel's
                 // resolver falls back to scanning registered workspaces.
                 if let cwd = cwd {
-                    if ProjectDirectory.current != cwd {
-                        ProjectDirectory.set(cwd)
-                        self.previewPanel?.setProjectDirectory(cwd)
-                        // Terminal tabs belong to a workspace too: hide the ones
-                        // from the workspace being left (their shells keep
-                        // running) and bring this workspace's tabs back.
-                        self.terminalPanel?.setWorkspaceDirectory(cwd)
-                        self.wikiPanel?.reloadRoot()
+                    // One shared re-root primitive (see adoptProjectDirectory):
+                    // the Projects panel's quick entries use the same one.
+                    if self.adoptProjectDirectory(cwd) {
                         AppLog.shared.log("project directory followed session \(sid): \(cwd)")
                     }
                 }
@@ -4508,6 +4967,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reloadItem.keyEquivalentModifierMask = [.command]
         reloadItem.target = self
         viewMenu.addItem(.separator())
+        // 「项目」在首位（与活动栏一一对应，设计 §5/D4）；⌥⌘P 由「文件面板」
+        // 让出（PR #57 已把文件面板改为 ⌥⌘F）。
+        let toggleProjects = viewMenu.addItem(withTitle: L10n.tr("menu.toggleProjects"), action: #selector(projectsEntryTapped(_:)), keyEquivalent: "p")
+        toggleProjects.keyEquivalentModifierMask = [.command, .option]
+        toggleProjects.target = self
+        toggleProjects.state = (rightPanel == .projects) ? .on : .off
+        projectsToggleMenuItem = toggleProjects
         let togglePreview = viewMenu.addItem(withTitle: L10n.tr("menu.toggleFiles"), action: #selector(togglePreviewPanel(_:)), keyEquivalent: "f")
         togglePreview.keyEquivalentModifierMask = [.command, .option]
         togglePreview.target = self
@@ -4690,6 +5156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("language set: lang=\(L10n.lang) followSystem=\(!L10n.hasExplicitChoice) AppleLanguages=\(UserDefaults.standard.array(forKey: "AppleLanguages") ?? [])")
         buildMenu() // rebuild the whole menu in the new language
         // 活动栏 tooltip 跟随语言（构建时一次性设置，切换后需手动刷新）
+        projectsBarButton?.toolTip = L10n.tr("bar.projects")
         previewBarButton?.toolTip = L10n.tr("bar.preview")
         terminalBarButton?.toolTip = L10n.tr("bar.terminal")
         browserBarButton?.toolTip = L10n.tr("bar.browser")
@@ -4707,6 +5174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         channelPanel?.refreshTooltips()
         reviewPanel?.refreshTooltips()
         skillsPanel?.refreshTooltips()
+        projectsPanel?.refreshTooltips()
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url
@@ -4885,6 +5353,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     @objc private func channelEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .channel ? .none : .channel)
+    }
+    /// Toggle the Projects panel (activity bar's first entry / ⌥⌘P).
+    @objc private func projectsEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .projects ? .none : .projects)
     }
     /// Toggle the Review (change audit) panel (activity bar entry / ⌥⌘R).
     @objc private func reviewEntryTapped(_ sender: Any?) {
@@ -5271,6 +5743,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             : "browser api server failed to start (preferred \(preferred))")
     }
 
+    /// The settings window changed the projects root: the Projects panel re-reads
+    /// it (its own "更改…" button goes the other way — panel → setting).
+    func projectsRootDidChange() {
+        projectsPanel?.workRootChanged()
+    }
+
     /// The workspace directory the task panel should operate on: the shell's
     /// shared active project directory (follows the session the user is
     /// viewing), falling back to the workspace root of the main repo.
@@ -5459,11 +5937,14 @@ final class SettingsWindowController {
     private var versionLabel: NSTextField!
     private var languageButtons: [NSButton] = []
     private var themeButtons: [NSButton] = []
+    private var projectsField: NSTextField!
+    private var projectsHint: NSTextField!
 
     /// (label key, key equivalent) pairs for the read-only Shortcuts list.
     private let shortcutRows: [(key: String, shortcut: String)] = [
         ("menu.checkUpgrade", "⌘U"),
         ("menu.openLogs", "⌘L"),
+        ("menu.toggleProjects", "⌥⌘P"),
         ("menu.toggleFiles", "⌥⌘F"),
         ("menu.toggleTerminal", "⌥⌘T"),
         ("menu.toggleWiki", "⌥⌘W"),
@@ -5482,6 +5963,9 @@ final class SettingsWindowController {
         if window == nil { buildWindow() }
         syncVersion()
         autoUpgradeCheckbox?.state = (appDelegate?.autoUpgradeEnabled() ?? true) ? .on : .off
+        // The Projects panel's "更改…" writes the same setting, so re-read it here.
+        projectsField?.stringValue = ShellConfig.shared.string(forKey: ProjectsCore.configKey) ?? ""
+        refreshProjectsHint()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         AppLog.shared.log("settings window shown")
@@ -5510,14 +5994,16 @@ final class SettingsWindowController {
         window.title = L10n.tr("settings.title")
 
         let languageSection = buildLanguageSection()
+        let projectsSection = buildProjectsSection()
         let registrySection = buildRegistrySection()
         let upgradeSection = buildUpgradeSection()
         let themeSection = buildThemeSection()
         let shortcutsSection = buildShortcutsSection()
 
-        let sep1 = makeSeparator(), sep2 = makeSeparator(), sep3 = makeSeparator(), sep4 = makeSeparator()
-        let sections = [languageSection, sep1, registrySection, sep2,
-                        upgradeSection, sep3, themeSection, sep4, shortcutsSection]
+        let sep1 = makeSeparator(), sep2 = makeSeparator(), sep3 = makeSeparator()
+        let sep4 = makeSeparator(), sep5 = makeSeparator()
+        let sections = [languageSection, sep1, projectsSection, sep2, registrySection, sep3,
+                        upgradeSection, sep4, themeSection, sep5, shortcutsSection]
 
         let mainStack = NSStackView(views: sections)
         mainStack.orientation = .vertical
@@ -5579,6 +6065,62 @@ final class SettingsWindowController {
         return b
     }
 
+    // MARK: Projects root
+
+    @objc private func pickProjectsRoot(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.message = L10n.tr("projects.changeRootTooltip")
+        panel.prompt = L10n.tr("projects.settingsPick")
+        let current = projectsField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let resolved = ProjectsCore.absolutePath(current) {
+            panel.directoryURL = URL(fileURLWithPath: resolved)
+        }
+        guard let window = window else { return }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.projectsField.stringValue = url.path
+        }
+    }
+
+    /// Save the projects root (the panel reads the same key, so a save is
+    /// immediately visible there). Only an absolute path is accepted; an empty
+    /// field clears the setting and means "use the default".
+    @objc private func saveProjectsRoot(_ sender: Any?) {
+        let raw = projectsField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.isEmpty {
+            resetProjectsRoot(sender)
+            return
+        }
+        guard let absolute = ProjectsCore.absolutePath(raw) else {
+            projectsHint.stringValue = L10n.tr("projects.settingsInvalidPath")
+            projectsHint.textColor = .systemRed
+            return
+        }
+        ShellConfig.shared.set(absolute, forKey: ProjectsCore.configKey)
+        projectsField.stringValue = absolute
+        appDelegate?.projectsRootDidChange()
+        refreshProjectsHint()
+        AppLog.shared.log("settings: projects root = " + absolute)
+    }
+
+    @objc private func resetProjectsRoot(_ sender: Any?) {
+        ShellConfig.shared.removeObject(forKey: ProjectsCore.configKey)
+        projectsField.stringValue = ""
+        appDelegate?.projectsRootDidChange()
+        refreshProjectsHint()
+        AppLog.shared.log("settings: projects root reset to the default")
+    }
+
+    private func refreshProjectsHint() {
+        let dshHome = ProcessInfo.processInfo.environment["DSH_HOME"] ?? (NSHomeDirectory() + "/.dsh")
+        projectsHint.textColor = .secondaryLabelColor
+        projectsHint.stringValue = L10n.tr("projects.settingsRootHint", ProjectsCore.defaultRoot(dshHome: dshHome))
+    }
+
     // MARK: Sections
 
     private func buildLanguageSection() -> NSStackView {
@@ -5619,6 +6161,39 @@ final class SettingsWindowController {
         let section = makeSection(headerKey: "settings.registry", views: [registryField, buttons, registryHint])
         buttons.trailingAnchor.constraint(equalTo: section.trailingAnchor).isActive = true
         registryHint.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        return section
+    }
+
+    /// Projects root (the folder the Projects panel creates workspaces in).
+    /// Same setting the panel's own "更改…" button writes — empty means default.
+    private func buildProjectsSection() -> NSStackView {
+        let dshHome = ProcessInfo.processInfo.environment["DSH_HOME"] ?? (NSHomeDirectory() + "/.dsh")
+        let defaultRoot = ProjectsCore.defaultRoot(dshHome: dshHome)
+        projectsField = NSTextField(string: ShellConfig.shared.string(forKey: ProjectsCore.configKey) ?? "")
+        projectsField.placeholderString = defaultRoot
+        projectsField.translatesAutoresizingMaskIntoConstraints = false
+
+        let pick = NSButton(title: L10n.tr("projects.settingsPick"), target: self, action: #selector(pickProjectsRoot(_:)))
+        pick.translatesAutoresizingMaskIntoConstraints = false
+        let save = NSButton(title: L10n.tr("btn.save"), target: self, action: #selector(saveProjectsRoot(_:)))
+        save.translatesAutoresizingMaskIntoConstraints = false
+        let reset = NSButton(title: L10n.tr("projects.settingsReset"), target: self, action: #selector(resetProjectsRoot(_:)))
+        reset.translatesAutoresizingMaskIntoConstraints = false
+        let buttons = NSStackView(views: [pick, save, reset])
+        buttons.orientation = .horizontal
+        buttons.spacing = 8
+        buttons.translatesAutoresizingMaskIntoConstraints = false
+
+        projectsHint = NSTextField(wrappingLabelWithString: L10n.tr("projects.settingsRootHint", defaultRoot))
+        projectsHint.font = .systemFont(ofSize: 11)
+        projectsHint.textColor = .secondaryLabelColor
+        projectsHint.translatesAutoresizingMaskIntoConstraints = false
+
+        let section = makeSection(headerKey: "projects.settingsSection",
+                                  views: [projectsField, buttons, projectsHint])
+        projectsField.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        buttons.trailingAnchor.constraint(equalTo: section.trailingAnchor).isActive = true
+        projectsHint.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
         return section
     }
 

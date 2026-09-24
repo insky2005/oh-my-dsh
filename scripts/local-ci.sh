@@ -74,6 +74,10 @@ stage_swift() {
   tests/review-panel/run.sh
   echo "--- file panel (workspace tab memory) tests ---"
   tests/file-panel/run.sh
+  echo "--- projects panel (model + controller) tests ---"
+  tests/projects-panel/run.sh
+  echo "--- injected-script guard (dsh web bridges) ---"
+  tests/injected-scripts/run.sh
   echo "--- L10n key lint ---"
   tests/l10n/run.sh
   echo "--- native dsh RPC helper tests ---"

@@ -310,7 +310,7 @@ final class HeaderLabel: NSView {
 /// terminal text, both confirmed to render). Handles hover highlight, click
 /// and tooltip natively.
 final class CustomIconButton: NSView {
-    enum Glyph { case plus, close, folder, openInApp, reveal, symbol(String), play, stop }
+    enum Glyph { case plus, close, folder, openInApp, reveal, symbol(String), play, stop, folderPlus }
     var onAction: (() -> Void)?
 
     var isEnabled = true {
@@ -428,6 +428,38 @@ final class CustomIconButton: NSView {
             path.appendOval(in: NSRect(x: inset.minX + 1, y: inset.minY + 1,
                                        width: inset.width - 2, height: inset.height - 2))
             path.appendOval(in: NSRect(x: bounds.midX - 1.5, y: bounds.midY - 1.5, width: 3, height: 3))
+        case .folderPlus:
+            // "Add workspace": a folder with a big PLAIN plus at its top right.
+            // Traced from the reference icon (pic/folder+.jpg, a 44x38 canvas) so the
+            // shapes match: folder box (11, 8.5)-(37.5, 31), tab top edge to x=21,
+            // shoulder folding down to the body-top line at (23, 13.5), bottom-right
+            // rounded corner; the body-top line and the right wall are CUT where the
+            // badge sits (the reference leaves a gap, SF-Symbols style) and the plain
+            // 11x11 plus is centred exactly ON the body-top line.
+            // SF Symbols' own folder.badge.plus draws a circled badge instead, which
+            // is a different look — hence this custom glyph.
+            let refWidth: CGFloat = 44, refHeight: CGFloat = 38
+            let scale = min(bounds.width / refWidth, bounds.height / refHeight)
+            let originX = (bounds.width - refWidth * scale) / 2
+            let originY = (bounds.height - refHeight * scale) / 2
+            // Reference y is measured from the TOP, AppKit's from the bottom.
+            func ref(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+                NSPoint(x: originX + x * scale, y: originY + (refHeight - y) * scale)
+            }
+            path.lineWidth = max(2 * scale, 1.2)
+            path.move(to: ref(11, 31))
+            path.line(to: ref(11, 10.5))
+            path.curve(to: ref(14, 8.5), controlPoint1: ref(11, 8.5), controlPoint2: ref(12.5, 8.5))
+            path.line(to: ref(21, 8.5))
+            path.line(to: ref(23, 13.5))
+            path.move(to: ref(11, 31))
+            path.line(to: ref(35.5, 31))
+            path.curve(to: ref(37.5, 29), controlPoint1: ref(37.5, 31), controlPoint2: ref(37.5, 30))
+            path.line(to: ref(37.5, 24))
+            path.move(to: ref(28, 13.5))
+            path.line(to: ref(39, 13.5))
+            path.move(to: ref(33.5, 8))
+            path.line(to: ref(33.5, 19))
         case .symbol:
             break   // handled above via the SF Symbol path
         case .play:
