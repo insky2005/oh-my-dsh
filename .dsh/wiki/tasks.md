@@ -50,7 +50,7 @@ open "dist/oh-my-dsh.app"
 ## 跑单元测试
 
 ```bash
-node --test --test-timeout=60000 core/tests/*.test.js   # 共享核心单测（25 个 .test.js、**261 例**；2026-09-24 实测 257 通过 / 4 跳过；不带引号由 bash 展开 glob，Node 20 兼容；--test-timeout 让泄漏定时器的用例 60s 失败而非挂死整套）
+node --test --test-timeout=60000 core/tests/*.test.js   # 共享核心单测（25 个 .test.js、**272 例**；2026-09-24 实测 268 通过 / 4 跳过；不带引号由 bash 展开 glob，Node 20 兼容；--test-timeout 让泄漏定时器的用例 60s 失败而非挂死整套）
 tests/terminal-emulator/run.sh      # 模拟器测试（core/tests/ansi.test.js 的薄封装）
 tests/wiki-panel/run.sh             # Repo Wiki 模型层
 tests/browser-panel/run.sh          # 浏览器面板模型层（REST 路由 / 日志缓冲）
@@ -65,11 +65,12 @@ tests/shell-config/run.sh           # ShellConfig 旧 UserDefaults 一次性迁�
 tests/dsh-auth-cookies/run.sh       # dsh 认证 cookie 清理纯逻辑（22 项）
 tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
 tests/projects-panel/run.sh         # 项目面板：模型 45 项（projects 根 / 命名规则 / 列举 / 注册匹配）+ 控制器 49 项（无头，假 dsh 传输）
+tests/tasks-panel/run.sh            # 任务面板模型层：队列模型（入队 / 移出 / 失败暂停队列 / 跳过并继续 / 重启恢复）+ .dsh/tasks 四文件持久化（126 项）
 tests/injected-scripts/run.sh       # 注入 dsh web 的 JS 片段守卫（JS 引擎可解析 + `window.__dsh*` 桥名对得上 + 不许出现会被 Swift 字符串吃掉的转义）
 tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到端（真实临时 $DSH_HOME：bootstrap → 升级 dsh → 回退 → 重启）+ tests/snapshot-panel/run.sh 窗口数据模型（SnapshotModel 解码 list/status/plan-rollback 的 JSON）
 ```
 
-- 均无窗口依赖，可在纯命令行环境运行；失败即非零退出（`set -euo pipefail`）；`scripts/local-ci.sh` 按 ci.yml 三阶段跑同一组（core → swift 测试 + `swiftc` 编译检查 → arm64 构建，不打包）；**共 17 套无头套件**（`tests/*/run.sh` 现有 17 个，CI 登记其中 16 个 + `core/tests/ansi.test.js`；未登记的那个 `tests/terminal-emulator/run.sh` 只是 `core/tests/ansi.test.js` 的薄封装）；`scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml` 是两份**必须一致**的清单——新增测试目录要同时登记进这两处，漏一处 CI 就少跑一套；
+- 均无窗口依赖，可在纯命令行环境运行；失败即非零退出（`set -euo pipefail`）；`scripts/local-ci.sh` 按 ci.yml 三阶段跑同一组（core → swift 测试 + `swiftc` 编译检查 → arm64 构建，不打包）；**共 18 套无头套件**（`tests/*/run.sh` 现有 18 个，CI 登记其中 17 个 + `core/tests/ansi.test.js`；未登记的那个 `tests/terminal-emulator/run.sh` 只是 `core/tests/ansi.test.js` 的薄封装）；`scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml` 是两份**必须一致**的清单——新增测试目录要同时登记进这两处，漏一处 CI 就少跑一套；
 - `tests/wiki-panel/run.sh` 会先 `mkdir -p .build/module-cache` 再编译（干净环境/CI 无 `.build/` 时必需，见 `c2d626b`）。
 
 ## 加一个新右栏面板（参照 v1.7.0 Wiki 面板）
@@ -187,7 +188,7 @@ node core/bin/ohmy-core.js channel route <refsJson> <conversationId> <text> # �
 
 客户端内指令（微信里发）：全局 `/help` `/ping` `/status`；工作区指令 `/workspaces`(`/wks`)、`/sessions`(`/ses`)（无内容列出 / 有内容切换，等同 `#wN`/`#sN`）、`/new [内容]`（统一回 `创建新会话 #sN (sessionId)`，无内容建占位 `New Session`（dsh 标题由 dsh web 按首条消息自动命名）等首条消息激活、有内容 prompt=内容并回推答案）；纯代号 `#wN`/`#sN` 快捷切换当前工作区/会话；消息含 `#w1` 或 `#<workspace名>` 按 #tag 路由到对应项目（清单见 docs/channel-commands.md，改动须同步维护该文档）。
 
-验证：`node --test --test-timeout=60000 core/tests/*.test.js`，当前 **261 用例**（2026-09-24 实测 257 通过 / 4 跳过；2026-09-12 为 233 用例、230 通过 / 3 跳过——无 zstd 的 Node 20 下 review-log 的 zstd 用例自动 skip；2026-09-11 为 216；含 channel 相关 association/busy/重写后的 sessions/project-switch/dingtalk 等）；`tests/channel-panel/run.sh`（ChannelStoreReader）无头单测；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；钉钉 Stream 连接已跑通（SDK 语义：connected= socket 打开，4c7f44b）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
+验证：`node --test --test-timeout=60000 core/tests/*.test.js`，当前 **272 用例**（2026-09-24 实测 268 通过 / 4 跳过；2026-09-12 为 233 用例、230 通过 / 3 跳过——无 zstd 的 Node 20 下 review-log 的 zstd 用例自动 skip；2026-09-11 为 216；含 channel 相关 association/busy/重写后的 sessions/project-switch/dingtalk 等）；`tests/channel-panel/run.sh`（ChannelStoreReader）无头单测；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；钉钉 Stream 连接已跑通（SDK 语义：connected= socket 打开，4c7f44b）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
 
 > ✅ 消息/会话存储**已全局化**（2026-08-22 落地）：会话映射与消息归档到全局 `~/.dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶，无会话入 system 桶），项目内仅剩引用配置 `.dsh/channels.json`；旧项目格式经 `channel migrate` CLI / 惰性迁移（见 [channel-panel](modules/channel-panel.md)）。**「项目开关」关联（PR #30，2026-08-23）**：通道↔项目启用关系存**全局** `~/.dsh/channels/<channelId>.workspaces.json`（project=workspace，出现即启用，见 [channel-panel](modules/channel-panel.md)「项目开关」与 docs/channel-project-switch.md），项目内 refs 文件不再作为启用来源。仍待办：引用配置落位 `.dsh/channels/channels.json` 并提交。
 

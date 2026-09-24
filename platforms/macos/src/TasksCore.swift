@@ -1,0 +1,710 @@
+import Foundation
+
+// MARK: - Source & state
+
+/// Where a task came from — drives the source badge on a task card
+/// (Issue #12 vs 手动).
+enum TaskSource: String {
+    case github
+    case manual
+}
+
+/// One task's lifecycle.
+///
+/// v2 adds queued (a task waiting for its serial slot inside a queue);
+/// pending therefore means "not in any queue" and is never started
+/// implicitly. The remaining cases keep v1's raw values, so an existing
+/// index.json needs no migration.
+enum TaskState: String {
+    case pending
+    case queued
+    case running
+    case done
+    case failed
+    case cancelled
+    case closed
+
+    var isFinished: Bool {
+        switch self {
+        case .done, .failed, .cancelled, .closed: return true
+        case .pending, .queued, .running: return false
+        }
+    }
+
+    /// May be put into a queue (again).
+    var isQueueable: Bool {
+        switch self {
+        case .pending, .failed, .cancelled: return true
+        case .queued, .running, .done, .closed: return false
+        }
+    }
+}
+
+/// A queue's own state: active runs its tasks one at a time, paused waits for
+/// the user (a task failed, the worktree was dirty, or the app restarted),
+/// done has nothing left to run.
+enum QueueState: String {
+    case active
+    case paused
+    case done
+}
+
+// MARK: - Task
+
+/// One task — a GitHub issue or a locally created manual task.
+///
+/// The dsh session id is NOT part of the task's own record: a session only
+/// exists on the machine that created it, so it lives in local.json
+/// (TaskLocalState.sessions), exactly like v1's issue to session overlay.
+struct TaskItem: Equatable {
+    var id: String
+    var source: TaskSource
+    var number: Int?
+    var title: String
+    var body: String?
+    var labels: [String]
+    var state: TaskState
+    var queueId: String?
+    var branch: String?
+    var prUrl: String?
+    var sessionId: String?
+    var error: String?
+    var startedAt: Date?
+    var finishedAt: Date?
+
+    init(id: String,
+         source: TaskSource,
+         number: Int? = nil,
+         title: String,
+         body: String? = nil,
+         labels: [String] = [],
+         state: TaskState = .pending,
+         queueId: String? = nil,
+         branch: String? = nil,
+         prUrl: String? = nil,
+         sessionId: String? = nil,
+         error: String? = nil,
+         startedAt: Date? = nil,
+         finishedAt: Date? = nil) {
+        self.id = id
+        self.source = source
+        self.number = number
+        self.title = title
+        self.body = body
+        self.labels = labels
+        self.state = state
+        self.queueId = queueId
+        self.branch = branch
+        self.prUrl = prUrl
+        self.sessionId = sessionId
+        self.error = error
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+    }
+
+    /// ISO-8601 in the exact shape v1 wrote (2026-08-20T15:26:43Z).
+    static let iso8601: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    // MARK: ids
+
+    static func githubID(_ number: Int) -> String { "issue-\(number)" }
+
+    static func manualID(_ token: String) -> String { "manual-\(token)" }
+
+    /// A fresh manual id: manual- followed by 8 lowercase hex characters.
+    static func newManualID() -> String {
+        let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8)
+        return manualID(String(token).lowercased())
+    }
+
+    /// "issue-12" -> (.github, 12); "manual-ab12cd34" -> (.manual, nil).
+    static func parse(id: String) -> (source: TaskSource, number: Int?)? {
+        if id.hasPrefix("issue-"), let n = Int(id.dropFirst("issue-".count)) { return (.github, n) }
+        if id.hasPrefix("manual-") { return (.manual, nil) }
+        return nil
+    }
+
+    // MARK: factories
+
+    static func github(number: Int, title: String, body: String? = nil, labels: [String] = []) -> TaskItem {
+        TaskItem(id: githubID(number), source: .github, number: number,
+                 title: title, body: body, labels: labels)
+    }
+
+    static func manual(title: String, body: String? = nil, id: String = TaskItem.newManualID()) -> TaskItem {
+        TaskItem(id: id, source: .manual, title: title, body: body)
+    }
+
+    // MARK: persistence
+
+    /// manual.json entry (machine-scoped). The session id is deliberately
+    /// absent — it lives in local.json.
+    func manualDictionary() -> [String: Any] {
+        var d: [String: Any] = ["id": id, "title": title, "state": state.rawValue, "source": source.rawValue]
+        if let body = body { d["body"] = body }
+        if let queueId = queueId { d["queueId"] = queueId }
+        if let branch = branch { d["branch"] = branch }
+        if let prUrl = prUrl { d["prUrl"] = prUrl }
+        if let error = error { d["error"] = error }
+        if let startedAt = startedAt { d["startedAt"] = TaskItem.iso8601.string(from: startedAt) }
+        if let finishedAt = finishedAt { d["finishedAt"] = TaskItem.iso8601.string(from: finishedAt) }
+        return d
+    }
+
+    static func fromManual(_ d: [String: Any]) -> TaskItem? {
+        guard let id = d["id"] as? String, id.hasPrefix("manual-") else { return nil }
+        return TaskItem(id: id,
+                        source: .manual,
+                        number: nil,
+                        title: (d["title"] as? String) ?? id,
+                        body: d["body"] as? String,
+                        labels: [],
+                        state: TaskState(rawValue: (d["state"] as? String) ?? "pending") ?? .pending,
+                        queueId: d["queueId"] as? String,
+                        branch: d["branch"] as? String,
+                        prUrl: d["prUrl"] as? String,
+                        sessionId: nil,
+                        error: d["error"] as? String,
+                        startedAt: (d["startedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) },
+                        finishedAt: (d["finishedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
+    }
+
+    /// index.json entry — the v1 committed shape (keyed by issue number), so
+    /// existing files, teammates and external tools keep working unchanged.
+    /// body is written as NSNull when absent, which v1 used as "already looked
+    /// up, nothing there" (only the single-issue endpoint can fill it later).
+    func indexDictionary() -> [String: Any] {
+        var d: [String: Any] = [
+            "issue": number ?? 0,
+            "source": source.rawValue,
+            "title": title,
+            "state": state.rawValue,
+            "labels": labels,
+        ]
+        if let body = body { d["body"] = body } else { d["body"] = NSNull() }
+        if let branch = branch { d["branch"] = branch }
+        if let prUrl = prUrl { d["prUrl"] = prUrl }
+        if let error = error { d["error"] = error }
+        if let startedAt = startedAt { d["startedAt"] = TaskItem.iso8601.string(from: startedAt) }
+        if let finishedAt = finishedAt { d["finishedAt"] = TaskItem.iso8601.string(from: finishedAt) }
+        return d
+    }
+
+    static func fromIndex(_ d: [String: Any]) -> TaskItem? {
+        guard let number = d["issue"] as? Int else { return nil }
+        return TaskItem(id: githubID(number),
+                        source: .github,
+                        number: number,
+                        title: (d["title"] as? String) ?? "issue #\(number)",
+                        body: d["body"] as? String,
+                        labels: (d["labels"] as? [String]) ?? [],
+                        state: TaskState(rawValue: (d["state"] as? String) ?? "pending") ?? .pending,
+                        queueId: nil,
+                        branch: d["branch"] as? String,
+                        prUrl: d["prUrl"] as? String,
+                        sessionId: nil,
+                        error: d["error"] as? String,
+                        startedAt: (d["startedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) },
+                        finishedAt: (d["finishedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
+    }
+}
+
+// MARK: - Branch naming
+
+/// Branch names — one place, shared by the panel, the runner and the tests.
+enum TaskBranch {
+
+    /// Lower-cased, ASCII letters/digits only, every other run collapsed into a
+    /// single dash, trimmed, at most 40 characters. A name without any ASCII
+    /// letter or digit at all (a pure Chinese queue name) yields an empty
+    /// string, and the caller falls back to the queue id.
+    static func slug(_ name: String) -> String {
+        var out = ""
+        for ch in name.lowercased() {
+            let keep = ch.isASCII && (ch.isLetter || ch.isNumber)
+            if keep {
+                out.append(ch)
+            } else if !out.isEmpty && !out.hasSuffix("-") {
+                out.append("-")
+            }
+        }
+        while out.hasSuffix("-") { out.removeLast() }
+        var trimmed = String(out.prefix(40))
+        while trimmed.hasSuffix("-") { trimmed.removeLast() }
+        return trimmed
+    }
+
+    /// feature/ plus the name's slug; when the name has no usable slug at all
+    /// the default falls back to the queue id (feature/queue-7f3a) instead of an
+    /// empty branch name. Never returns an empty string.
+    static func defaultBranch(queueName: String, queueID: String) -> String {
+        let s = slug(queueName)
+        if s.isEmpty { return "feature/queue-" + String(queueID.suffix(4)) }
+        return "feature/" + s
+    }
+
+    /// v1 rule kept intact (docs/git-workflow.md): feature-class issues get
+    /// feature/issue-N, everything else fix/issue-N.
+    static func issueBranch(number: Int, labels: [String]) -> String {
+        let lowered = labels.map { $0.lowercased() }
+        let isFeature = lowered.contains { $0.contains("feature") || $0.contains("enhancement") }
+        return isFeature ? "feature/issue-\(number)" : "fix/issue-\(number)"
+    }
+}
+
+// MARK: - Queue
+
+/// A queue is a lane: every task in it shares ONE branch and runs strictly in
+/// order, so a later task sees the earlier task's commits.
+struct TaskQueue: Equatable {
+    var id: String
+    var name: String
+    /// The branch every task of this queue works on. nil = do not switch
+    /// branches at all (run on whatever is checked out).
+    var branch: String?
+    var baseBranch: String
+    var taskIds: [String]
+    var state: QueueState
+    /// true for the single-task queue the panel creates for an ISSUE task
+    /// (rendered compactly, but counted like any other queue).
+    var autoCreated: Bool
+    /// Whether the queue opens a PR once it is finished. Requires a GitHub
+    /// workspace; false everywhere else (an internal repo has no PR to open).
+    var autoPR: Bool
+    var prUrl: String?
+    var createdAt: Date?
+
+    init(id: String,
+         name: String,
+         branch: String? = nil,
+         baseBranch: String = "main",
+         taskIds: [String] = [],
+         state: QueueState = .paused,
+         autoCreated: Bool = false,
+         autoPR: Bool = false,
+         prUrl: String? = nil,
+         createdAt: Date? = nil) {
+        self.id = id
+        self.name = name
+        self.branch = branch
+        self.baseBranch = baseBranch
+        self.taskIds = taskIds
+        self.state = state
+        self.autoCreated = autoCreated
+        self.autoPR = autoPR
+        self.prUrl = prUrl
+        self.createdAt = createdAt
+    }
+
+    static func newID() -> String {
+        let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8)
+        return "q-" + String(token).lowercased()
+    }
+
+    /// The single-task queue an issue task runs in (decision 5): created on
+    /// 处理, reused on retry, so v1's one-issue-one-branch-one-PR rule — and its
+    /// fix/issue-N naming — survive untouched.
+    static func auto(for task: TaskItem) -> TaskQueue {
+        let number = task.number ?? 0
+        return TaskQueue(id: TaskQueue.newID(),
+                         name: "Issue #\(number)",
+                         branch: TaskBranch.issueBranch(number: number, labels: task.labels),
+                         baseBranch: "main",
+                         taskIds: [task.id],
+                         state: .paused,
+                         autoCreated: true,
+                         autoPR: true,
+                         prUrl: nil,
+                         createdAt: Date())
+    }
+
+    /// 1-based position inside the queue, nil when the task is not in it.
+    func order(of taskID: String) -> Int? {
+        guard let i = taskIds.firstIndex(of: taskID) else { return nil }
+        return i + 1
+    }
+
+    func dictionary() -> [String: Any] {
+        var d: [String: Any] = [
+            "id": id,
+            "name": name,
+            "baseBranch": baseBranch,
+            "taskIds": taskIds,
+            "state": state.rawValue,
+            "autoCreated": autoCreated,
+            "autoPR": autoPR,
+        ]
+        if let branch = branch { d["branch"] = branch }
+        if let prUrl = prUrl { d["prUrl"] = prUrl }
+        if let createdAt = createdAt { d["createdAt"] = TaskItem.iso8601.string(from: createdAt) }
+        return d
+    }
+
+    static func from(_ d: [String: Any]) -> TaskQueue? {
+        guard let id = d["id"] as? String, let name = d["name"] as? String else { return nil }
+        return TaskQueue(id: id,
+                         name: name,
+                         branch: d["branch"] as? String,
+                         baseBranch: (d["baseBranch"] as? String) ?? "main",
+                         taskIds: (d["taskIds"] as? [String]) ?? [],
+                         state: QueueState(rawValue: (d["state"] as? String) ?? "paused") ?? .paused,
+                         autoCreated: (d["autoCreated"] as? Bool) ?? false,
+                         autoPR: (d["autoPR"] as? Bool) ?? false,
+                         prUrl: d["prUrl"] as? String,
+                         createdAt: (d["createdAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
+    }
+}
+
+// MARK: - Machine-scoped overlay (local.json)
+
+/// The part of the board that belongs to THIS machine: the dsh session each
+/// task was run in, plus the queue the user last worked on.
+struct TaskLocalState: Equatable {
+    /// task id -> dsh sessionId.
+    var sessions: [String: String] = [:]
+    /// task id -> ISO-8601 stamp of the last write for that session, kept so
+    /// rewriting the file does not invent new timestamps for old sessions.
+    var sessionUpdatedAt: [String: String] = [:]
+    var activeQueueID: String?
+    var runningTaskID: String?
+
+    /// v1 keyed sessions by ISSUE NUMBER ("6"); v2 keys them by task id
+    /// ("issue-6"). Reading accepts both and rewrites nothing on load.
+    static func taskID(fromStoredKey key: String) -> String {
+        let digits = CharacterSet(charactersIn: "0123456789")
+        if !key.isEmpty, key.rangeOfCharacter(from: digits.inverted) == nil {
+            return TaskItem.githubID(Int(key) ?? 0)
+        }
+        return key
+    }
+
+    static func from(_ d: [String: Any]) -> TaskLocalState {
+        var s = TaskLocalState()
+        if let raw = d["sessions"] as? [String: Any] {
+            for (key, value) in raw {
+                guard let entry = value as? [String: Any],
+                      let sessionId = entry["sessionId"] as? String else { continue }
+                let id = taskID(fromStoredKey: key)
+                s.sessions[id] = sessionId
+                if let updatedAt = entry["updatedAt"] as? String { s.sessionUpdatedAt[id] = updatedAt }
+            }
+        }
+        s.activeQueueID = d["activeQueueId"] as? String
+        s.runningTaskID = d["runningTaskId"] as? String
+        return s
+    }
+
+    func dictionary() -> [String: Any] {
+        var out: [String: Any] = [:]
+        for (id, sessionId) in sessions {
+            out[id] = [
+                "sessionId": sessionId,
+                "updatedAt": sessionUpdatedAt[id] ?? TaskItem.iso8601.string(from: Date()),
+            ]
+        }
+        var d: [String: Any] = ["sessions": out]
+        if let activeQueueID = activeQueueID { d["activeQueueId"] = activeQueueID }
+        if let runningTaskID = runningTaskID { d["runningTaskId"] = runningTaskID }
+        return d
+    }
+}
+
+// MARK: - Board
+
+/// Tasks plus queues plus the machine overlay, with every rule the panel and
+/// the runner share. Pure value type: no timers, no I/O, no AppKit — the runner
+/// (step 3) and the UI (step 6) only call into this.
+struct TaskBoard {
+    var tasks: [TaskItem] = []
+    var queues: [TaskQueue] = []
+    var local = TaskLocalState()
+
+    // MARK: lookups
+
+    func task(_ id: String) -> TaskItem? { tasks.first { $0.id == id } }
+
+    func queue(_ id: String) -> TaskQueue? { queues.first { $0.id == id } }
+
+    func index(ofTask id: String) -> Int? { tasks.firstIndex { $0.id == id } }
+
+    func index(ofQueue id: String) -> Int? { queues.firstIndex { $0.id == id } }
+
+    /// Tasks that are in no queue at all — the 未入队 area.
+    var unqueued: [TaskItem] { tasks.filter { $0.queueId == nil && $0.state != .running } }
+
+    func tasks(inQueue queueID: String) -> [TaskItem] {
+        guard let queue = queue(queueID) else { return [] }
+        return queue.taskIds.compactMap { task($0) }
+    }
+
+    /// The auto (issue-task) queue a task already runs in, if any.
+    func autoQueueID(forTask taskID: String) -> String? {
+        queues.first { $0.autoCreated && $0.taskIds.contains(taskID) }?.id
+    }
+
+    /// Counts for the summary strip: queues, queued, running, failed.
+    /// Every queue counts, auto ones included (decision 8).
+    func summary() -> (queues: Int, queued: Int, running: Int, failed: Int) {
+        (queues.count,
+         tasks.filter { $0.state == .queued }.count,
+         tasks.filter { $0.state == .running }.count,
+         tasks.filter { $0.state == .failed }.count)
+    }
+
+    // MARK: queue membership
+
+    /// Append a task to a queue (FIFO). Moving a task that already sits in a
+    /// different queue moves it out first. Idempotent for the same queue.
+    @discardableResult
+    mutating func enqueue(taskID: String, into queueID: String) -> Bool {
+        guard let ti = index(ofTask: taskID), index(ofQueue: queueID) != nil else { return false }
+        guard tasks[ti].state.isQueueable else { return false }
+        if tasks[ti].queueId == queueID { return false }
+        if tasks[ti].queueId != nil { _ = dequeue(taskID: taskID) }
+        guard let qi = index(ofQueue: queueID) else { return false }
+        tasks[ti].state = .queued
+        tasks[ti].queueId = queueID
+        queues[qi].taskIds.append(taskID)
+        return true
+    }
+
+    /// Take a task out of its queue while it is still waiting — it returns to
+    /// the 未入队 area. A running task cannot be dequeued (that is 取消).
+    @discardableResult
+    mutating func dequeue(taskID: String) -> Bool {
+        guard let ti = index(ofTask: taskID), let queueID = tasks[ti].queueId,
+              let qi = index(ofQueue: queueID), tasks[ti].state == .queued else { return false }
+        queues[qi].taskIds.removeAll { $0 == taskID }
+        tasks[ti].queueId = nil
+        tasks[ti].state = .pending
+        return true
+    }
+
+    /// Delete a queue. Tasks that never started go back to 未入队; finished ones
+    /// keep their record but lose the membership. Refused while one of its tasks
+    /// is running (cancel it first).
+    @discardableResult
+    mutating func removeQueue(_ queueID: String) -> Bool {
+        guard let qi = index(ofQueue: queueID) else { return false }
+        let ids = queues[qi].taskIds
+        if ids.contains(where: { task($0)?.state == .running }) { return false }
+        for id in ids {
+            guard let ti = index(ofTask: id) else { continue }
+            tasks[ti].queueId = nil
+            if tasks[ti].state == .queued { tasks[ti].state = .pending }
+        }
+        queues.remove(at: qi)
+        if local.activeQueueID == queueID { local.activeQueueID = nil }
+        return true
+    }
+
+    /// Create a user queue. A nil branch derives the default from the name; an
+    /// explicit empty string means "do not switch branches at all".
+    @discardableResult
+    mutating func createQueue(name: String,
+                              branch: String? = nil,
+                              baseBranch: String = "main",
+                              autoPR: Bool = false,
+                              autoCreated: Bool = false) -> TaskQueue {
+        let queueID = TaskQueue.newID()
+        let resolved: String?
+        if let branch = branch {
+            resolved = branch.isEmpty ? nil : branch
+        } else {
+            resolved = TaskBranch.defaultBranch(queueName: name, queueID: queueID)
+        }
+        let queue = TaskQueue(id: queueID, name: name, branch: resolved, baseBranch: baseBranch,
+                              taskIds: [], state: .paused, autoCreated: autoCreated,
+                              autoPR: autoPR, prUrl: nil, createdAt: Date())
+        queues.append(queue)
+        return queue
+    }
+
+    /// The queue the runner works on: the selected one while it is active, else
+    /// the first active queue (covers a restart that did not persist the id).
+    func activeQueue() -> TaskQueue? {
+        if let id = local.activeQueueID, let q = queue(id), q.state == .active { return q }
+        return queues.first { $0.state == .active }
+    }
+
+    /// The task the runner should start now, or nil. Serial by construction:
+    /// while ANY task runs nothing else may start, and only the active queue
+    /// contributes. Failed/cancelled/done entries are skipped rather than
+    /// blocking the queue (that is what 跳过并继续 means).
+    func nextStartable() -> String? {
+        if local.runningTaskID != nil { return nil }
+        if tasks.contains(where: { $0.state == .running }) { return nil }
+        guard let queue = activeQueue() else { return nil }
+        for id in queue.taskIds where task(id)?.state == .queued { return id }
+        return nil
+    }
+
+    /// 1-based position of a task inside its queue.
+    func order(of taskID: String) -> Int? {
+        guard let queueID = task(taskID)?.queueId, let queue = queue(queueID) else { return nil }
+        return queue.order(of: taskID)
+    }
+
+    // MARK: transitions
+
+    /// Start a task: it becomes the one running task and its queue becomes the
+    /// active one. The queue's branch is authoritative, so it is copied onto the
+    /// task for display and traceability.
+    mutating func markRunning(_ taskID: String, at date: Date = Date()) {
+        guard let i = index(ofTask: taskID) else { return }
+        tasks[i].state = .running
+        tasks[i].startedAt = date
+        tasks[i].error = nil
+        if let queueID = tasks[i].queueId, let qi = index(ofQueue: queueID) {
+            queues[qi].state = .active
+            local.activeQueueID = queueID
+            if let branch = queues[qi].branch { tasks[i].branch = branch }
+        }
+        local.runningTaskID = taskID
+    }
+
+    mutating func markDone(_ taskID: String, prUrl: String? = nil, at date: Date = Date()) {
+        guard let i = index(ofTask: taskID) else { return }
+        tasks[i].state = .done
+        tasks[i].finishedAt = date
+        if let prUrl = prUrl { tasks[i].prUrl = prUrl }
+        local.runningTaskID = nil
+        refreshQueueCompletion()
+    }
+
+    /// Fail a task. A queue containing it is PAUSED and its id returned: inside
+    /// a queue every task shares one branch, so running the next one would build
+    /// on half-finished work. The user then chooses 重试 or 跳过并继续.
+    @discardableResult
+    mutating func markFailed(_ taskID: String, error: String, at date: Date = Date()) -> String? {
+        guard let i = index(ofTask: taskID) else { return nil }
+        tasks[i].state = .failed
+        tasks[i].error = error
+        tasks[i].finishedAt = date
+        local.runningTaskID = nil
+        return pauseQueue(containing: tasks[i])
+    }
+
+    /// Cancel a task (user-initiated). Cancelling frees the serial slot without
+    /// marking the task done, so its queue is paused exactly like a failure.
+    @discardableResult
+    mutating func markCancelled(_ taskID: String, at date: Date = Date()) -> String? {
+        guard let i = index(ofTask: taskID) else { return nil }
+        tasks[i].state = .cancelled
+        tasks[i].finishedAt = date
+        local.runningTaskID = nil
+        return pauseQueue(containing: tasks[i])
+    }
+
+    /// Close a GitHub task (its issue was closed) — only meaningful for issue
+    /// tasks; the record is kept for traceability.
+    mutating func markClosed(_ taskID: String) {
+        guard let i = index(ofTask: taskID) else { return }
+        tasks[i].state = .closed
+    }
+
+    /// Retry a failed/cancelled task and resume its queue (the card's 重试).
+    /// A task with no queue simply returns to 未入队.
+    @discardableResult
+    mutating func retryAndResume(_ taskID: String) -> Bool {
+        guard let i = index(ofTask: taskID), tasks[i].state.isQueueable else { return false }
+        tasks[i].error = nil
+        tasks[i].finishedAt = nil
+        if let queueID = tasks[i].queueId, let qi = index(ofQueue: queueID) {
+            tasks[i].state = .queued
+            queues[qi].state = .active
+            local.activeQueueID = queueID
+        } else {
+            tasks[i].state = .pending
+        }
+        return true
+    }
+
+    /// Resume a paused queue without retrying anything (跳过并继续): the runner
+    /// walks past the failed entry and takes the next queued task.
+    @discardableResult
+    mutating func resumeQueue(_ queueID: String) -> Bool {
+        guard let qi = index(ofQueue: queueID) else { return false }
+        queues[qi].state = .active
+        local.activeQueueID = queueID
+        return true
+    }
+
+    @discardableResult
+    mutating func pauseQueue(_ queueID: String) -> Bool {
+        guard let qi = index(ofQueue: queueID) else { return false }
+        queues[qi].state = .paused
+        return true
+    }
+
+    /// Mark a queue done when it has no queued/running task left.
+    mutating func refreshQueueCompletion() {
+        for i in queues.indices {
+            let open = queues[i].taskIds.contains { id in
+                guard let state = task(id)?.state else { return false }
+                return state == .queued || state == .running
+            }
+            if !open && !queues[i].taskIds.isEmpty && queues[i].state != .done {
+                queues[i].state = .done
+            }
+        }
+    }
+
+    /// Pause the queue a task belongs to (only while it is active). Returns the
+    /// paused queue's id.
+    private mutating func pauseQueue(containing task: TaskItem) -> String? {
+        guard let queueID = task.queueId, let qi = index(ofQueue: queueID),
+              queues[qi].state == .active else { return nil }
+        queues[qi].state = .paused
+        return queueID
+    }
+
+    // MARK: repair / restart
+
+    /// The queue's taskIds is the source of truth for membership; the per-task
+    /// queueId is a denormalized copy. Re-derive it after loading so the two can
+    /// never drift apart (and a task listed in a queue but still pending becomes
+    /// queued again).
+    mutating func reindexQueueMembership() {
+        for i in tasks.indices { tasks[i].queueId = nil }
+        for queue in queues {
+            for id in queue.taskIds {
+                guard let ti = index(ofTask: id) else { continue }
+                tasks[ti].queueId = queue.id
+                if tasks[ti].state == .pending { tasks[ti].state = .queued }
+            }
+        }
+    }
+
+    /// Attach the session ids recorded on this machine.
+    mutating func attachSessions(_ sessions: [String: String]) {
+        for i in tasks.indices {
+            if let sessionId = sessions[tasks[i].id] { tasks[i].sessionId = sessionId }
+        }
+    }
+
+    /// Bring a board loaded from disk in line with reality after a restart: a
+    /// task recorded as running cannot still be running (its dsh session died
+    /// with the app), and a queue recorded as active is paused so that nothing
+    /// starts before the user says so.
+    @discardableResult
+    mutating func reconcileAfterRestart(interruptedError: String) -> (interrupted: [String], pausedQueues: [String]) {
+        var interrupted: [String] = []
+        for i in tasks.indices where tasks[i].state == .running {
+            tasks[i].state = .failed
+            tasks[i].error = interruptedError
+            interrupted.append(tasks[i].id)
+        }
+        var paused: [String] = []
+        for i in queues.indices where queues[i].state == .active {
+            queues[i].state = .paused
+            paused.append(queues[i].id)
+        }
+        local.runningTaskID = nil
+        return (interrupted, paused)
+    }
+}

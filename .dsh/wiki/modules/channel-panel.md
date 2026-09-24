@@ -81,7 +81,7 @@ channel 子命令：route <refsJson> <conversationId> <text>（路由匹配）�
 
 ## 测试与验证
 
-- node --test core/tests/ **261 用例**（25 个 `*.test.js`，2026-09-24 按 `test(` 计数；2026-09-12 时为 233、实测 230 通过 / 3 跳过——无 zstd 的 Node 20 上 review-log 的 zstd 用例自动 skip；2026-09-11 为 216；channel 相关含 channel/commands/runner/sessions/workspaces/weixin-clawbot/dingtalk/e2e-channel/channel-association/channel-busy/project-switch 等）；
+- node --test core/tests/ **272 用例**（25 个 `*.test.js`，2026-09-24 按 `test(` 计数；2026-09-12 时为 233、实测 230 通过 / 3 跳过——无 zstd 的 Node 20 上 review-log 的 zstd 用例自动 skip；2026-09-11 为 216；channel 相关含 channel/commands/runner/sessions/workspaces/weixin-clawbot/dingtalk/e2e-channel/channel-association/channel-busy/project-switch 等）；
 - e2e-channel.test.js：mock HTTP 覆盖传输层（getupdates 映射 / -14 过期 / 无 token / sendmessage 报文 / QR 登录），不依赖真实 dsh web、不做会话创建；
 - channel-association.test.js：断言 A（同一 conversation 复用同一 sessionId、跨 conversation 独立）、B（refs 显式绑定）、C（会话归属 workspaceId）、/new 绑定 conversation 后下一条普通消息复用而非新建；
 - channel-sessions.test.js（重写）：全局分桶存储、按 sessionId 保留全部会话（re-binding 保留旧会话）、set/isWorkspaceEnabled 项目开关持久化；channel-busy.test.js：忙门/异步应答（ebac11a 起 mock server 用 try/finally + `closeAllConnections()` 收尾、按 `session.history` 到达再推第二条消息，避免 30ms 轮询竞态造成的偶发失败与整套挂死）；channel-runner.test.js：含「项目开关」门控用例（普通消息/#wN/#sN//sessions 未启用回「未启用该通道」，/workspaces 只列已启用）+ /sessions、/workspaces 带内容切换用例；

@@ -76,6 +76,8 @@ stage_swift() {
   tests/file-panel/run.sh
   echo "--- projects panel (model + controller) tests ---"
   tests/projects-panel/run.sh
+  echo "--- tasks panel (model + four-file store) tests ---"
+  tests/tasks-panel/run.sh
   echo "--- injected-script guard (dsh web bridges) ---"
   tests/injected-scripts/run.sh
   echo "--- L10n key lint ---"
