@@ -107,6 +107,27 @@ final class BrowserCDPClient {
         handleEvent(method: method, params: params)
     }
 
+    /// 把一个 CDP console 参数值渲染成一行文本。
+    ///
+    /// 不能直接 data(withJSONObject: value)：NSJSONSerialization 只接受
+    /// **顶层容器**（数组 / 字典），传 String / NSNumber / NSNull 这类标量会抛
+    /// ObjC 异常 NSInvalidArgumentException —— 而 try? 接不住 ObjC 异常，
+    /// 进程直接 SIGTRAP（DispatchQueue: oh-my-dsh.browser-cdp）。CAS 登录页
+    /// 这类页面一句 console.log(0) / console.log(null) 就足以让 App 崩掉。
+    ///
+    /// 做法：先包成单元素数组再序列化（可序列化性用 isValidJSONObject 预检，
+    /// 顺带挡掉 NaN / ±Infinity 这类同样会抛异常的值），最后去掉外层方括号；
+    /// 任何拿不准的值退化成 String(describing:)。
+    static func consoleArgumentText(_ value: Any) -> String {
+        if let s = value as? String { return s }
+        guard JSONSerialization.isValidJSONObject([value]),
+              let data = try? JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed]),
+              let json = String(data: data, encoding: .utf8),
+              json.hasPrefix("["), json.hasSuffix("]"), json.count >= 2
+        else { return String(describing: value) }
+        return String(json.dropFirst().dropLast())
+    }
+
     private func handleEvent(method: String, params: [String: Any]) {
         let text: String
         let level: String
@@ -116,11 +137,7 @@ final class BrowserCDPClient {
             let args = (params["args"] as? [[String: Any]]) ?? []
             let parts = args.map { arg -> String in
                 if let value = arg["value"] {
-                    if let s = value as? String { return s }
-                    if let data = try? JSONSerialization.data(withJSONObject: value) {
-                        return String(data: data, encoding: .utf8) ?? String(describing: value)
-                    }
-                    return String(describing: value)
+                    return Self.consoleArgumentText(value)
                 }
                 if let desc = arg["description"] as? String { return desc }
                 return ""

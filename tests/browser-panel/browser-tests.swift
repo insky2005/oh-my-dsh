@@ -278,10 +278,33 @@ func testContextMenuAnchorPrefersMouse() {
     check(window.frame.contains(point), "menu: fallback anchor stays inside the window frame")
 }
 
+/// CDP console 参数渲染：JS 里的标量（数字 / 布尔 / null）曾经让
+/// NSJSONSerialization 抛 ObjC 异常直接把 App 打崩（CAS 登录页），这里把
+/// 每一种 RemoteObject 取值都钉住——关键断言是「调用不崩、返回可读文本」。
+func testConsoleArgumentText() {
+    eq(BrowserCDPClient.consoleArgumentText("hi"), "hi", "cdp: string passes through")
+    eq(BrowserCDPClient.consoleArgumentText(0), "0", "cdp: zero renders")
+    eq(BrowserCDPClient.consoleArgumentText(42), "42", "cdp: number renders")
+    eq(BrowserCDPClient.consoleArgumentText(2.5), "2.5", "cdp: double renders")
+    eq(BrowserCDPClient.consoleArgumentText(true), "true", "cdp: bool renders")
+    eq(BrowserCDPClient.consoleArgumentText(false), "false", "cdp: false renders")
+    eq(BrowserCDPClient.consoleArgumentText(NSNull()), "null", "cdp: null renders")
+    eq(BrowserCDPClient.consoleArgumentText([1, 2]), "[1,2]", "cdp: array renders as JSON")
+    eq(BrowserCDPClient.consoleArgumentText(["a": 1]), "{\"a\":1}", "cdp: object renders as JSON")
+    // 不可序列化的值（NaN / Infinity）不能走到 JSONSerialization 的抛异常路径。
+    check(BrowserCDPClient.consoleArgumentText(Double.nan).lowercased().contains("nan"),
+          "cdp: NaN degrades to text", BrowserCDPClient.consoleArgumentText(Double.nan))
+    check(!BrowserCDPClient.consoleArgumentText(Double.infinity).isEmpty, "cdp: Infinity returns text")
+    // 嵌套容器 + 空容器（最外层数组只被剥掉一层）。
+    eq(BrowserCDPClient.consoleArgumentText([1, [2, 3]]), "[1,[2,3]]", "cdp: nested array keeps inner brackets")
+    eq(BrowserCDPClient.consoleArgumentText([String: Any]()), "{}", "cdp: empty object")
+}
+
 testLogBuffer()
 testURLNormalize()
 testHTTPParse()
 testRouter()
+testConsoleArgumentText()
 testOSRFrameTargetsPageViewLayer()
 testOSRPaintRoutingUsesBrowserId()
 testContextMenuAnchorPrefersMouse()
