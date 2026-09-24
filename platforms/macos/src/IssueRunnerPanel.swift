@@ -13,32 +13,10 @@ final class IssueRunnerRootView: NSView {
     }
 }
 
-/// One issue/task row shown in the list.
-struct IssueRunnerTask {
-    enum State: String {
-        case pending, running, done, failed, cancelled, closed
-        var badge: String {
-            switch self {
-            case .pending: return "·"
-            case .running: return "…"
-            case .done: return "✓"
-            case .failed: return "✗"
-            case .cancelled: return "−"
-            case .closed: return "☑"
-            }
-        }
-    }
-    var number: Int
-    var title: String
-    var labels: [String]
-    var state: State = .pending
-    var prUrl: String?
-    var error: String?
-    var branch: String?          // fix/issue-N
-    var sessionId: String?       // dsh session created for this task
-    var startedAt: Date?
-    var body: String?            // issue description (markdown)
-}
+/// Rows are the board's own model now (TasksCore.swift): the panel renders the
+/// github half of it and hands every state change to TasksRunner. The card list
+/// (step 6) renders manual tasks and queues from the same board.
+typealias IssueRunnerTask = TaskItem
 
 final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
 
@@ -66,13 +44,19 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     private let statusSpinner = NSProgressIndicator()
 
     // State
-    private var tasks: [IssueRunnerTask] = []
+    /// Github-task VIEW of the runner's board (issue numbers are per repo, so a
+    /// workspace switch drops the whole board). Manual tasks and queues are on
+    /// the board too but not rendered until the card list lands (step 6).
+    private var tasks: [TaskItem] = []
+    /// The execution engine. Every state change goes through it; the panel only
+    /// renders and calls in.
+    private var runner: TasksRunner?
     private var repo: (owner: String, repo: String)?
     private var repoRootPath: String?
-    /// The issue currently expanded inline (shows detail + action buttons).
-    private var expandedIssue: Int?
-    private var pollTimer: Timer?
-    private var runningNumber: Int?
+    /// The task currently expanded inline (shows detail + action buttons).
+    private var expandedTaskID: String?
+    /// Drives the runner: start the next queued task, advance the running one.
+    private var stepTimer: Timer?
 
     // MARK: - Init & UI
 
@@ -91,7 +75,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     }
 
     deinit {
-        pollTimer?.invalidate()
+        stepTimer?.invalidate()
     }
 
     private func updateLabels() {
@@ -244,41 +228,134 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         resolveRepoAndReload()
     }
 
-    /// Restore task state from the `.dsh/tasks/` index (after an app restart):
-    /// committed index gives issue → branch/PR/state; local overlay gives the
-    /// session id on this machine. Merges into the in-memory list; the open
-    /// issues fetch then fills in titles for anything still missing.
-    func restoreFromIndex(repoRoot: String) {
-        let indexTasks = TaskIndex.loadIndex(repoRoot)
-        for entry in indexTasks {
-            guard let issue = entry["issue"] as? Int else { continue }
-            var task = IssueRunnerTask(number: issue,
-                                       title: (entry["title"] as? String) ?? "issue #\(issue)",
-                                       labels: [])
-            task.branch = entry["branch"] as? String
-            task.prUrl = entry["prUrl"] as? String
-            task.error = entry["error"] as? String
-            task.body = entry["body"] as? String
-            task.labels = entry["labels"] as? [String] ?? []
-            switch entry["state"] as? String {
-            case "done": task.state = .done
-            case "failed": task.state = .failed
-            case "cancelled": task.state = .cancelled
-            case "running": task.state = .running
-            case "closed": task.state = .closed
-            default: task.state = .pending
+    // MARK: - Board / runner wiring
+
+    /// Load the board for this repo, hand it to the runner and bring it in line
+    /// with reality after a restart: a task recorded as running cannot still be
+    /// running (its session died with the app) and an active queue is paused, so
+    /// NOTHING starts until the user says so.
+    private func setupRunner(repoRoot: String) {
+        var board = TasksStore.load(repoRoot)
+        let recovered = board.reconcileAfterRestart(interruptedError: TaskFailure.interrupted.rawValue)
+        TasksStore.saveLocalHalf(repoRoot, board)
+        runner = TasksRunner(board: board, env: makeEnv(repoRoot: repoRoot))
+        expandedTaskID = nil
+        syncFromBoard()
+        startStepTimer()
+        let extra = recovered.interrupted.isEmpty ? "" : ", interrupted: " + recovered.interrupted.joined(separator: ",")
+        AppLog.shared.log("tasks: board loaded at \(repoRoot) — \(board.tasks.count) tasks, \(board.queues.count) queues" + extra)
+    }
+
+    /// Everything the runner needs from the outside world: git in this repo, the
+    /// dsh session RPC on this port, GitHub REST with this repo's token, and the
+    /// four-file persistence under .dsh/tasks/.
+    private func makeEnv(repoRoot: String) -> TaskRunnerEnv {
+        let port = serverPortProvider?() ?? 3080
+        let workspaceId = Self.resolveMainWorkspaceId(port: port, path: repoRoot)
+        let repo = self.repo
+        let token = repo.flatMap { loadToken(for: $0) }
+        return TaskRunnerEnv(
+            git: TaskGit(run: { args in
+                              Self.runProcess("/usr/bin/git", ["-C", repoRoot] + args, cwd: repoRoot)
+                          },
+                          remoteName: { Self.pushRemoteName(path: repoRoot) }),
+            repoRoot: repoRoot,
+            createSession: { cwd in Self.createSession(port: port, workspaceId: workspaceId, cwd: cwd) },
+            renameSession: { id, title in Self.renameSession(port: port, sessionId: id, title: title) },
+            promptSession: { id, text in Self.promptSession(port: port, sessionId: id, text: text) },
+            sessionRunning: { id in Self.sessionRunning(port: port, sessionId: id) },
+            cancelSession: { id in Self.cancelSession(port: port, sessionId: id) },
+            findExistingPR: { branch in
+                guard let repo = repo else { return nil }
+                return Self.findExistingPR(owner: repo.owner, repo: repo.repo, branch: branch, token: token)
+            },
+            createPR: { branch, base, title, body in
+                guard let repo = repo else { return nil }
+                return Self.createPR(owner: repo.owner, repo: repo.repo, title: title,
+                                     head: branch, base: base, body: body, token: token)
+            },
+            prText: { task, _ in
+                let number = task.number ?? 0
+                return (title: L10n.tr("tasks.prTitle", number), body: L10n.tr("tasks.prBody", number))
+            },
+            promptText: { task, queue in
+                if task.source == .github {
+                    return TaskPrompts.issue(number: task.number ?? 0, title: task.title,
+                                             branch: queue?.branch ?? task.branch ?? "")
+                }
+                return TaskPrompts.manual(title: task.title, body: task.body,
+                                          branch: queue?.branch, queueName: queue?.name)
+            },
+            persist: { board in TasksStore.saveLocalHalf(repoRoot, board) },
+            persistIssueTask: { task in TasksStore.saveIssueTask(repoRoot, task) },
+            log: { message in AppLog.shared.log(message) },
+            perform: { blocking, completion in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    blocking()
+                    DispatchQueue.main.async { completion() }
+                }
             }
-            // Local overlay: re-attach the session id recorded on this machine.
-            task.sessionId = TaskIndex.sessionForIssue(repoRoot, issue: issue)
-            // Do not clobber a task already in memory with the same issue.
-            if !tasks.contains(where: { $0.number == issue }) {
-                tasks.append(task)
-            }
-        }
-        tasks.sort { $0.number < $1.number }
+        )
+    }
+
+    /// No GitHub repo here: drop the board and stop stepping.
+    private func clearBoard() {
+        runner = nil
+        tasks = []
+        stepTimer?.invalidate()
+        stepTimer = nil
+        expandedTaskID = nil
+        tableView.reloadData()
+        updateLabels()
+    }
+
+    /// Copy the board's github tasks into the table's view list.
+    private func syncFromBoard() {
+        tasks = (runner?.board.tasks ?? [])
+            .filter { $0.source == .github }
+            .sorted { ($0.number ?? 0) < ($1.number ?? 0) }
+        boardSignature = boardSignatureNow()
         tableView.reloadData()
     }
 
+    /// Cheap fingerprint of everything the table renders, so the 3-second step
+    /// timer does not rebuild the list (and fight the user's scrolling) while
+    /// nothing is moving.
+    private var boardSignature = ""
+
+    private func boardSignatureNow() -> String {
+        guard let runner = runner else { return "" }
+        let tasks = runner.board.tasks.map { $0.id + ":" + $0.state.rawValue + ":" + ($0.prUrl ?? "") }
+        let queues = runner.board.queues.map { $0.id + ":" + $0.state.rawValue + ":" + String($0.taskIds.count) }
+        return (tasks + queues).joined(separator: "|")
+    }
+
+    /// Resync only when the board actually changed.
+    private func syncFromBoardIfChanged() {
+        guard boardSignatureNow() != boardSignature else { return }
+        syncFromBoard()
+    }
+
+    private func startStepTimer() {
+        stepTimer?.invalidate()
+        let timer = Timer(timeInterval: 3.0, repeats: true) { [weak self] _ in self?.stepRunner() }
+        RunLoop.main.add(timer, forMode: .common)
+        stepTimer = timer
+    }
+
+    /// One runner step: advance the running task, start the next queued one.
+    private func stepRunner() {
+        guard let runner = runner else { return }
+        let wasBusy = runner.isBusy
+        _ = runner.step()
+        syncFromBoardIfChanged()
+        if runner.isBusy {
+            let number = runner.runningTaskID.flatMap { runner.board.task($0)?.number } ?? 0
+            setStatus(L10n.tr("tasks.running", number), spin: true)
+        } else if wasBusy {
+            hideStatus()
+        }
+    }
     // MARK: - Repo detection & issue loading
 
     /// Number of deferred retries while waiting for the dsh workspace list to
@@ -301,9 +378,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
                 applyRepo(path: path)
             } else {
                 repo = nil
-                tasks = []
-                tableView.reloadData()
-                updateLabels()
+                clearBoard()
             }
             return
         }
@@ -325,31 +400,26 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             }
         } else {
             repo = nil
-            tasks = []
-            tableView.reloadData()
-            updateLabels()
+            clearBoard()
         }
     }
 
     private func applyRepo(path: String) {
         guard let detected = Self.detectGitHubRemote(path) else {
             repo = nil
-            tasks = []
-            tableView.reloadData()
-            updateLabels()
+            clearBoard()
             return
         }
-        // Workspace switched to a DIFFERENT repo → drop the previous repo's
-        // task list (issue numbers are per-repo).
-        if repo?.owner != detected.owner || repo?.repo != detected.repo {
-            tasks = []
-        }
+        // A DIFFERENT repo means a different board: issue numbers are per-repo,
+        // so the previous tasks/queues must not leak into this one.
+        let changedRepo = repo?.owner != detected.owner || repo?.repo != detected.repo
         repo = (detected.owner, detected.repo)
         repoRootPath = path
         AppLog.shared.log("tasks repo resolved: \(detected.owner)/\(detected.repo) at \(path)")
         updateLabels()
-        // Restore any previously recorded task associations (issue → branch/PR/session).
-        restoreFromIndex(repoRoot: path)
+        if changedRepo || runner == nil {
+            setupRunner(repoRoot: path)
+        }
         reloadIssues()
     }
 
@@ -378,126 +448,128 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         return (owner, repoName)
     }
 
+    /// Fetch the repo's open issues and merge them into the runner's board:
+    ///   - a new issue becomes a pending github task (nothing is written to the
+    ///     committed index until the task actually runs, exactly like v1);
+    ///   - a known task gets its title/labels/body refreshed AND persisted, so
+    ///     the content survives a restart even after the issue closes;
+    ///   - a task whose issue is no longer open is marked closed, keeping its
+    ///     record and adapting its buttons. In-flight tasks are never touched.
+    /// Afterwards, closed issues with no stored body are back-filled from the
+    /// single-issue endpoint (which also works for closed issues).
     private func reloadIssues() {
-        guard let repo = repo else { return }
+        guard let repo = repo, let runner = runner else { return }
         setStatus(L10n.tr("tasks.loading"), spin: true)
         let token = loadToken(for: repo)
+        let root = repoRootPath ?? ""
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let issues = Self.fetchIssues(owner: repo.owner, repo: repo.repo, token: token)
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self, let runner = self.runner else { return }
                 self.hideStatus()
                 guard let issues = issues else {
                     self.setStatus(L10n.tr("tasks.loadFailed"), spin: false)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.hideStatus() }
                     return
                 }
-                // Merge issues into the task list:
-                //  - new issues: append as pending tasks
-                //  - existing tasks (e.g. restored from the index): refresh
-                //    title/labels so the real issue title is always shown
-                //    (restored tasks start with a placeholder title).
-                for issue in issues {
-                    if let idx = self.tasks.firstIndex(where: { $0.number == issue.number }) {
-                        // Issue reopened: a previously-closed task becomes
-                        // actionable again (persisted so a restart agrees).
-                        if self.tasks[idx].state == .closed {
-                            self.tasks[idx].state = .pending
-                            if let path = self.repoRootPath ?? self.workspacePath?() {
-                                TaskIndex.mergeTask(path, issue: issue.number, update: ["state": "pending"])
+                var indexUpdates: [(Int, [String: Any])] = []
+                runner.updateBoard { board in
+                    for issue in issues {
+                        let id = TaskItem.githubID(issue.number)
+                        if let idx = board.index(ofTask: id) {
+                            // The issue was reopened: the task is actionable again.
+                            if board.tasks[idx].state == .closed {
+                                board.tasks[idx].state = .pending
+                                indexUpdates.append((issue.number, ["state": "pending"]))
                             }
-                        }
-                        self.tasks[idx].title = issue.title
-                        self.tasks[idx].labels = issue.labels
-                        self.tasks[idx].body = issue.body
-                        // Persist title/body/labels so the content survives a
-                        // restart even after the issue closes (closed issues
-                        // are no longer returned by the open-issues fetch).
-                        if let path = self.repoRootPath ?? self.workspacePath?() {
-                            let entry = TaskIndex.findTask(path, issue: issue.number)
-                            var update: [String: Any] = [:]
-                            if (entry?["title"] as? String) != issue.title { update["title"] = issue.title }
-                            if (entry?["labels"] as? [String]) != issue.labels { update["labels"] = issue.labels }
-                            if (entry?["body"] as? String) != issue.body { update["body"] = issue.body ?? NSNull() }
-                            if !update.isEmpty {
-                                TaskIndex.mergeTask(path, issue: issue.number, update: update)
+                            if board.tasks[idx].title != issue.title
+                                || board.tasks[idx].labels != issue.labels
+                                || board.tasks[idx].body != issue.body {
+                                indexUpdates.append((issue.number, [
+                                    "title": issue.title,
+                                    "labels": issue.labels,
+                                    "body": issue.body ?? NSNull(),
+                                ]))
                             }
+                            board.tasks[idx].title = issue.title
+                            board.tasks[idx].labels = issue.labels
+                            board.tasks[idx].body = issue.body
+                        } else {
+                            var task = TaskItem.github(number: issue.number, title: issue.title,
+                                                       body: issue.body, labels: issue.labels)
+                            task.state = .pending
+                            board.tasks.append(task)
                         }
-                    } else {
-                        var newTask = IssueRunnerTask(number: issue.number,
-                                                      title: issue.title,
-                                                      labels: issue.labels)
-                        newTask.body = issue.body
-                        self.tasks.append(newTask)
                     }
-                }
-                // Tasks whose issue is no longer open (closed via "Comment &
-                // Close Issue", merged, or closed externally) are marked with
-                // their actual state and kept in the list; their buttons adapt
-                // (Comment & Close hidden, primary becomes "Open Issue").
-                // In-flight (.running) tasks are left untouched.
-                let openNumbers = Set(issues.map { $0.number })
-                for i in self.tasks.indices where !openNumbers.contains(self.tasks[i].number) && self.tasks[i].state != .running {
-                    if self.tasks[i].state != .closed {
-                        self.tasks[i].state = .closed
-                        if let path = self.repoRootPath ?? self.workspacePath?(),
-                           TaskIndex.findTask(path, issue: self.tasks[i].number)?["state"] as? String != "closed" {
-                            TaskIndex.mergeTask(path, issue: self.tasks[i].number, update: [
+                    let openNumbers = Set(issues.map { $0.number })
+                    for i in board.tasks.indices where board.tasks[i].source == .github {
+                        let number = board.tasks[i].number ?? 0
+                        guard !openNumbers.contains(number) else { continue }
+                        guard board.tasks[i].state != .running, board.tasks[i].state != .queued else { continue }
+                        if board.tasks[i].state != .closed {
+                            board.tasks[i].state = .closed
+                            indexUpdates.append((number, [
                                 "state": "closed",
                                 "closedAt": ISO8601DateFormatter().string(from: Date()),
-                            ])
+                            ]))
                         }
                     }
                 }
-                self.tasks.sort { $0.number < $1.number }
-                self.tableView.reloadData()
+                for (issue, update) in indexUpdates {
+                    TasksStore.mergeIssueTask(root, issue: issue, update: update)
+                }
+                self.syncFromBoard()
+                self.backfillClosedIssues(openNumbers: Set(issues.map { $0.number }),
+                                          repo: repo, token: token, root: root)
+            }
+        }
+    }
 
-                // Closed issues never come back in the open-issues fetch, so a
-                // task with no stored body (e.g. restored from the index after
-                // a restart) would show no content. Recover title/body/labels
-                // from the single-issue endpoint (works for closed issues too)
-                // and persist them so this is a one-time cost per task.
-                // Skip tasks we already tried to recover and found empty
-                // (index has a "body" key, even if null): only fetch once.
-                let missing = self.tasks.filter { task in
-                    guard !openNumbers.contains(task.number), task.body == nil else { return false }
-                    if let path = self.repoRootPath ?? self.workspacePath?(),
-                       let entry = TaskIndex.findTask(path, issue: task.number),
-                       entry["body"] != nil { return false }
-                    return true
+    /// Closed issues never come back in the open-issues fetch, so a task with no
+    /// stored body (restored from the index after a restart) would show nothing.
+    /// Recover title/body/labels from the single-issue endpoint and persist them
+    /// — a one-time cost per task (the index then carries a body key, even a
+    /// null one, so the lookup is never repeated).
+    private func backfillClosedIssues(openNumbers: Set<Int>,
+                                      repo: (owner: String, repo: String),
+                                      token: String?,
+                                      root: String) {
+        guard let runner = runner else { return }
+        let missing = runner.board.tasks.filter { task in
+            guard task.source == .github, let number = task.number,
+                  !openNumbers.contains(number), task.body == nil else { return false }
+            guard let entry = TasksStore.findIssueTask(root, issue: number) else { return true }
+            return entry["body"] == nil
+        }
+        guard !missing.isEmpty else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var recovered: [Int: (title: String, body: String?, labels: [String])] = [:]
+            for task in missing {
+                guard let number = task.number else { continue }
+                if let detail = Self.fetchIssueDetail(owner: repo.owner, repo: repo.repo,
+                                                      number: number, token: token) {
+                    recovered[number] = detail
                 }
-                if !missing.isEmpty {
-                    let owner = repo.owner
-                    let repoName = repo.repo
-                    let token = token
-                    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                        guard let self = self else { return }
-                        var recovered: [Int: (title: String, body: String?, labels: [String])] = [:]
-                        for task in missing {
-                            if let d = Self.fetchIssueDetail(owner: owner, repo: repoName, number: task.number, token: token) {
-                                recovered[task.number] = d
-                            }
-                        }
-                        guard !recovered.isEmpty else { return }
-                        DispatchQueue.main.async {
-                            for (number, d) in recovered {
-                                if let idx = self.tasks.firstIndex(where: { $0.number == number }) {
-                                    self.tasks[idx].title = d.title
-                                    self.tasks[idx].body = d.body
-                                    self.tasks[idx].labels = d.labels
-                                    if let path = self.repoRootPath ?? self.workspacePath?() {
-                                        TaskIndex.mergeTask(path, issue: number, update: [
-                                            "title": d.title,
-                                            "body": d.body ?? NSNull(),
-                                            "labels": d.labels,
-                                        ])
-                                    }
-                                }
-                            }
-                            self.tableView.reloadData()
-                        }
+            }
+            guard !recovered.isEmpty else { return }
+            DispatchQueue.main.async {
+                guard let self = self, let runner = self.runner else { return }
+                runner.updateBoard { board in
+                    for (number, detail) in recovered {
+                        guard let idx = board.index(ofTask: TaskItem.githubID(number)) else { continue }
+                        board.tasks[idx].title = detail.title
+                        board.tasks[idx].body = detail.body
+                        board.tasks[idx].labels = detail.labels
                     }
                 }
+                for (number, detail) in recovered {
+                    TasksStore.mergeIssueTask(root, issue: number, update: [
+                        "title": detail.title,
+                        "body": detail.body ?? NSNull(),
+                        "labels": detail.labels,
+                    ])
+                }
+                self.syncFromBoard()
             }
         }
     }
@@ -561,196 +633,42 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         return result
     }
 
-    // MARK: - Task execution (serial queue)
+    // MARK: - Task execution (through the runner)
 
+    /// 全部处理: every pending issue task gets its OWN single-task queue (v1's
+    /// one-issue-one-branch-one-PR rule, decision 5). The first one starts right
+    /// away, the rest wait their turn — the runner is strictly serial.
     private func runAllTapped() {
-        // Start the first pending task; subsequent ones auto-start when the
-        // running one finishes (serial queue).
-        if runningNumber != nil { return }
-        if let next = tasks.first(where: { $0.state == .pending }) {
-            startTask(number: next.number)
-        }
+        guard let runner = runner else { return }
+        let pending = runner.board.tasks
+            .filter { $0.source == .github && $0.state == .pending }
+            .sorted { ($0.number ?? 0) < ($1.number ?? 0) }
+        for task in pending { _ = runner.startIssueTask(task.id) }
+        syncFromBoard()
     }
 
-    /// Branch name for an issue, following the unified branch convention
-    /// (docs/git-workflow.md): feature-class issues → `feature/issue-N`,
-    /// everything else (bug / unclassified) → `fix/issue-N`.
-    /// Classification is by label: any label containing "feature",
-    /// "enhancement" or "kind/feature" counts as a feature.
-    private func branchForIssue(number: Int) -> String {
-        guard let idx = tasks.firstIndex(where: { $0.number == number }) else {
-            return "fix/issue-\(number)"
-        }
-        let labels = tasks[idx].labels.map { $0.lowercased() }
-        let isFeature = labels.contains { $0.contains("feature") || $0.contains("enhancement") }
-        return isFeature ? "feature/issue-\(number)" : "fix/issue-\(number)"
+    /// 处理 one issue: create (or reuse) its single-task queue and run it.
+    private func startIssueTask(_ taskID: String) {
+        guard let runner = runner else { return }
+        _ = runner.startIssueTask(taskID)
+        syncFromBoard()
     }
 
-    func startTask(number: Int) {
-        guard runningNumber == nil else { return }   // strict serial
-        guard let idx = tasks.firstIndex(where: { $0.number == number }),
-              tasks[idx].state == .pending else { return }
-        guard let repo = repo else { return }
-        guard let path = repoRootPath ?? workspacePath?() else { return }
-
-        let branch = branchForIssue(number: number)   // feature/issue-N or fix/issue-N
-        tasks[idx].state = .running
-        tasks[idx].startedAt = Date()
-        tasks[idx].branch = branch
-        runningNumber = number
-        tableView.reloadData()
-        setStatus(L10n.tr("tasks.running", number), spin: true)
-
-        // Persist the association (issue → branch) in the committed index.
-        TaskIndex.mergeTask(path, issue: number, update: [
-            "branch": branch,
-            "state": "running",
-            "title": tasks[idx].title,
-            "startedAt": ISO8601DateFormatter().string(from: Date()),
-        ])
-
-        let token = loadToken(for: repo)
-        let port = serverPortProvider?() ?? 3080
-        let workspaceId = Self.resolveMainWorkspaceId(port: port, path: path)
-
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            // 0. issue-resolve skill is provisioned globally at app startup (SkillInstaller)
-            // 1. checkout main → pull → new branch
-            guard Self.gitCheckoutBranch(path: path, branch: branch) else {
-                DispatchQueue.main.async { self?.taskFailed(number: number, error: L10n.tr("tasks.errBranch")) }
-                return
-            }
-            // 2. create a dsh session in the main workspace (cwd auto-correct)
-            guard let sessionId = Self.createSession(port: port, workspaceId: workspaceId, cwd: path) else {
-                DispatchQueue.main.async { self?.taskFailed(number: number, error: L10n.tr("tasks.errSession")) }
-                return
-            }
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                if let idx = self.tasks.firstIndex(where: { $0.number == number }) {
-                    self.tasks[idx].sessionId = sessionId
-                    self.tableView.reloadData()
-                }
-            }
-            // Record the session in the LOCAL (machine-scoped) overlay so a
-            // restart can re-attach issue → session on this machine.
-            TaskIndex.rememberSession(path, issue: number, sessionId: sessionId)
-            // 3. rename session for traceability
-            _ = Self.renameSession(port: port, sessionId: sessionId, title: "fix(#\(number)): \(L10n.tr("tasks.sessionLabel"))")
-            // 4. prompt the agent with the issue-resolve skill + issue content
-            let issue = self?.tasks.first { $0.number == number }
-            let prompt = Self.issueFixPrompt(number: number, title: issue?.title ?? "", branch: branch)
-            guard Self.promptSession(port: port, sessionId: sessionId, text: prompt) else {
-                DispatchQueue.main.async { self?.taskFailed(number: number, error: L10n.tr("tasks.errPrompt")) }
-                return
-            }
-            // 5. poll until the session finishes
-            self?.pollSession(number: number, sessionId: sessionId, port: port, path: path, token: token)
-        }
-    }
-
-    private func pollSession(number: Int, sessionId: String, port: Int, path: String, token: String?) {
-        pollTimer?.invalidate()
-        let start = Date()
-        let timer = Timer(timeInterval: 3.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            let running = Self.sessionRunning(port: port, sessionId: sessionId)
-            if running {
-                if Date().timeIntervalSince(start) > 30 * 60 {  // 30min timeout
-                    self.taskFailed(number: number, error: L10n.tr("tasks.errTimeout"))
-                    _ = Self.cancelSession(port: port, sessionId: sessionId)
-                    return
-                }
-                return
-            }
-            self.pollTimer?.invalidate()
-            self.pollTimer = nil
-            // Session ended: verify the branch was pushed, then open the PR.
-            let branch = self.branchForIssue(number: number)
-            if Self.gitBranchPushed(path: path, branch: branch) {
-                self.openPR(number: number, token: token)
-            } else {
-                self.taskFailed(number: number, error: L10n.tr("tasks.errNoPush"))
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        pollTimer = timer
-    }
-
-    private func openPR(number: Int, token: String?) {
-        guard let repo = repo else { return }
-        guard let idx = tasks.firstIndex(where: { $0.number == number }) else { return }
-        let branch = tasks[idx].branch ?? branchForIssue(number: number)
-        setStatus(L10n.tr("tasks.creatingPr", number), spin: true)
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let pr = Self.createPR(owner: repo.owner, repo: repo.repo,
-                                   title: L10n.tr("tasks.prTitle", number),
-                                   head: branch, base: "main", body: L10n.tr("tasks.prBody", number),
-                                   token: token)
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                if let pr = pr {
-                    self.taskDone(number: number, prUrl: pr)
-                } else {
-                    self.taskFailed(number: number, error: L10n.tr("tasks.errPR"))
-                }
-            }
-        }
-    }
-
-    private func taskDone(number: Int, prUrl: String) {
-        guard let idx = tasks.firstIndex(where: { $0.number == number }) else { return }
-        tasks[idx].state = .done
-        tasks[idx].prUrl = prUrl
-        // Persist done + PR association.
-        if let path = workspacePath?() {
-            TaskIndex.mergeTask(path, issue: number, update: [
-                "state": "done",
-                "prUrl": prUrl,
-                "finishedAt": ISO8601DateFormatter().string(from: Date()),
-            ])
-        }
-        finishCurrentTask(number: number)
-    }
-
-    private func taskFailed(number: Int, error: String) {
-        guard let idx = tasks.firstIndex(where: { $0.number == number }) else { return }
-        tasks[idx].state = .failed
-        tasks[idx].error = error
-        if let path = workspacePath?() {
-            TaskIndex.mergeTask(path, issue: number, update: [
-                "state": "failed",
-                "error": error,
-                "finishedAt": ISO8601DateFormatter().string(from: Date()),
-            ])
-        }
-        AppLog.shared.log("issue task \(number) failed: \(error)")
-        finishCurrentTask(number: number)
-    }
-
-    private func finishCurrentTask(number: Int) {
-        runningNumber = nil
-        pollTimer?.invalidate()
-        pollTimer = nil
-        tableView.reloadData()
-        hideStatus()
-        // Serial queue: auto-start the next pending task.
-        if let next = tasks.first(where: { $0.state == .pending }) {
-            startTask(number: next.number)
-        }
-    }
-
+    /// 取消 the running task. Its queue is paused and the branch/session are kept
+    /// for traceability (v1 behaviour).
     func cancelRunningTask() {
-        guard let number = runningNumber,
-              let idx = tasks.firstIndex(where: { $0.number == number }),
-              let sessionId = tasks[idx].sessionId else { return }
-        let port = serverPortProvider?() ?? 3080
-        _ = Self.cancelSession(port: port, sessionId: sessionId)
-        tasks[idx].state = .cancelled
-        finishCurrentTask(number: number)
-        AppLog.shared.log("issue task \(number) cancelled")
+        guard let runner = runner else { return }
+        _ = runner.cancelRunning()
+        syncFromBoard()
+        hideStatus()
     }
 
+    /// 重试 a failed/cancelled task (back into its queue, resuming it).
+    private func retryTask(_ taskID: String) {
+        guard let runner = runner else { return }
+        _ = runner.retry(taskID: taskID)
+        syncFromBoard()
+    }
     // MARK: - git helpers (native Process)
 
     static func runProcess(_ launch: String, _ args: [String], cwd: String? = nil) -> String? {
@@ -768,18 +686,6 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func gitCheckoutBranch(path: String, branch: String) -> Bool {
-        // Make sure main is checked out & up to date, then create the branch.
-        _ = runProcess("/usr/bin/git", ["-C", path, "checkout", "main"], cwd: path)
-        _ = runProcess("/usr/bin/git", ["-C", path, "pull", "--ff-only"], cwd: path)
-        // Branch may already exist locally (resume) — checkout it, else create.
-        let existing = runProcess("/usr/bin/git", ["-C", path, "rev-parse", "--verify", "--quiet", branch], cwd: path)
-        if existing != nil {
-            return runProcess("/usr/bin/git", ["-C", path, "checkout", branch], cwd: path) != nil
-        }
-        return runProcess("/usr/bin/git", ["-C", path, "checkout", "-b", branch], cwd: path) != nil
-    }
-
     /// The remote name used to push branches / check for pushes. Prefers the
     /// remote literally named "github", else "origin", else the first remote
     /// (mirrors detectGitHubRemote's preference).
@@ -789,13 +695,6 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         if names.contains("github") { return "github" }
         if names.contains("origin") { return "origin" }
         return names.first
-    }
-
-    /// True when the branch exists on the push remote (ls-remote heads).
-    static func gitBranchPushed(path: String, branch: String) -> Bool {
-        guard let remote = pushRemoteName(path: path) else { return false }
-        let out = runProcess("/usr/bin/git", ["-C", path, "ls-remote", "--heads", remote, branch], cwd: path)
-        return out?.contains(branch) == true
     }
 
     // MARK: - dsh session helpers
@@ -883,6 +782,34 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
                   let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
             prUrl = json["html_url"] as? String
+        }
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + 20)
+        task.cancel()
+        return prUrl
+    }
+
+    /// An OPEN pull request whose head is this branch, or nil. Queried before
+    /// creating a queue PR so that a second task on the same branch reuses the
+    /// existing one instead of hitting GitHub's "a pull request already exists"
+    /// (422) — every task in a queue shares one branch.
+    static func findExistingPR(owner: String, repo: String, branch: String, token: String?) -> String? {
+        let escaped = branch.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? branch
+        guard let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/pulls?state=open&head=\(owner):\(escaped)") else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "accept")
+        request.setValue("oh-my-dsh", forHTTPHeaderField: "user-agent")
+        if let token = token, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "authorization")
+        }
+        let semaphore = DispatchSemaphore(value: 0)
+        var prUrl: String?
+        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
+            defer { semaphore.signal() }
+            guard let data = data,
+                  let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
+            prUrl = items.first?["html_url"] as? String
         }
         task.resume()
         _ = semaphore.wait(timeout: .now() + 20)
@@ -989,7 +916,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < tasks.count else { return nil }
         let task = tasks[row]
-        let expanded = (task.number == expandedIssue)
+        let expanded = (task.id == expandedTaskID)
         let id = NSUserInterfaceItemIdentifier(expanded ? "taskCellExpanded" : "taskCell")
         let cell: NSTableCellView
         if let reused = tableView.makeView(withIdentifier: id, owner: nil) as? NSTableCellView {
@@ -1095,15 +1022,16 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     }
 
     private func populateCell(_ cell: NSTableCellView, task: IssueRunnerTask, expanded: Bool) {
-        cell.objectValue = task.number   // buttons read this to know the issue
+        cell.objectValue = task.id   // buttons read this to know which task
         let badge = task.state.badge
-        var prefix = "#\(task.number) \(badge)"
+        var prefix = "#\(task.number ?? 0) \(badge)"
         if task.state == .running, task.sessionId != nil { prefix += " ⟳" }
         if let title = cell.viewWithTag(100) as? NSTextField {
             title.stringValue = "\(prefix) \(task.title)"
             switch task.state {
             case .failed: title.textColor = .systemRed
-            case .closed: title.textColor = .secondaryLabelColor
+            case .closed, .cancelled: title.textColor = .secondaryLabelColor
+            case .queued: title.textColor = .secondaryLabelColor
             default: title.textColor = .labelColor
             }
         }
@@ -1136,6 +1064,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     private func primaryActionTitle(for task: IssueRunnerTask) -> String {
         switch task.state {
         case .pending: return L10n.tr("tasks.detailProcess")
+        case .queued: return L10n.tr("tasks.queue.remove")
         case .running: return L10n.tr("tasks.detailCancelTask")
         case .done: return L10n.tr("tasks.detailOpenPR")
         case .failed, .cancelled: return L10n.tr("tasks.detailRetry")
@@ -1143,13 +1072,13 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         }
     }
 
+    /// 处理 is always available now: with a queue, starting a task while another
+    /// one runs simply queues it (v1 disabled the button instead).
     private func primaryActionEnabled(for task: IssueRunnerTask) -> Bool {
         switch task.state {
-        case .pending: return runningNumber == nil   // serial: disabled while another runs
-        case .running: return true
+        case .pending, .running, .queued, .closed: return true
         case .done: return task.prUrl != nil
-        case .failed, .cancelled: return runningNumber == nil
-        case .closed: return true
+        case .failed, .cancelled: return true
         }
     }
 
@@ -1161,19 +1090,19 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         guard row < tasks.count else { return 22 }
-        return tasks[row].number == expandedIssue ? 168 : 22
+        return tasks[row].id == expandedTaskID ? 168 : 22
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         let row = tableView.selectedRow
         guard row >= 0, row < tasks.count else { return }
-        let number = tasks[row].number
+        let taskID = tasks[row].id
         tableView.deselectAll(nil)
         // Clicking a row toggles the inline detail (expand / collapse).
-        if expandedIssue == number {
-            expandedIssue = nil
+        if expandedTaskID == taskID {
+            expandedTaskID = nil
         } else {
-            expandedIssue = number
+            expandedTaskID = taskID
         }
         tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<tasks.count))
         tableView.reloadData()
@@ -1181,15 +1110,15 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
 
     /// Row button handler. The primary (tag 200), secondary (tag 201) and
     /// comment/close (tag 202) buttons live inside an expanded cell; the
-    /// cell's objectValue carries the issue number. Actions are explicit —
-    /// never implicit row clicks.
+    /// cell's objectValue carries the task ID. Actions are explicit — never
+    /// implicit row clicks.
     @objc private func cellButtonTapped(_ sender: NSButton) {
         guard let cell = sender.superview as? NSTableCellView,
-              let number = cell.objectValue as? Int,
-              let idx = tasks.firstIndex(where: { $0.number == number }) else { return }
-        let task = tasks[idx]
+              let taskID = cell.objectValue as? String,
+              let task = tasks.first(where: { $0.id == taskID }) else { return }
+        let number = task.number ?? 0
         if sender.tag == 201 {   // secondary = close / collapse
-            expandedIssue = nil
+            expandedTaskID = nil
             tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<tasks.count))
             tableView.reloadData()
             return
@@ -1198,10 +1127,13 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             commentAndCloseTapped(number: number)
             return
         }
-        // Primary action depends on state.
+        // Primary action depends on state; every state change goes to the runner.
         switch task.state {
         case .pending:
-            if runningNumber == nil { startTask(number: number) }
+            startIssueTask(taskID)
+        case .queued:
+            _ = runner?.dequeue(taskID: taskID)
+            syncFromBoard()
         case .running:
             cancelRunningTask()
         case .done:
@@ -1211,25 +1143,8 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
                let u = URL(string: "https://github.com/\(repo.owner)/\(repo.repo)/issues/\(number)") {
                 NSWorkspace.shared.open(u)
             }
-        case .failed:
-            if let i = tasks.firstIndex(where: { $0.number == number }) {
-                tasks[i].state = .pending
-                tasks[i].error = nil
-                if let path = repoRootPath {
-                    TaskIndex.mergeTask(path, issue: number, update: ["state": "pending", "error": NSNull()])
-                }
-                tableView.reloadData()
-            }
-            startTask(number: number)
-        case .cancelled:
-            if let i = tasks.firstIndex(where: { $0.number == number }) {
-                tasks[i].state = .pending
-                if let path = repoRootPath {
-                    TaskIndex.mergeTask(path, issue: number, update: ["state": "pending"])
-                }
-                tableView.reloadData()
-            }
-            startTask(number: number)
+        case .failed, .cancelled:
+            retryTask(taskID)
         }
     }
 
@@ -1278,18 +1193,19 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
                 self.hideStatus()
                 if ok {
                     AppLog.shared.log("issue \(number) commented & closed")
-                    // Mark the task with its actual state (issue now closed).
-                    // The row stays in the list; its buttons adapt.
-                    if let idx = self.tasks.firstIndex(where: { $0.number == number }) {
-                        self.tasks[idx].state = .closed
-                        if let path = self.repoRootPath ?? self.workspacePath?() {
-                            TaskIndex.mergeTask(path, issue: number, update: [
-                                "state": "closed",
-                                "closedAt": ISO8601DateFormatter().string(from: Date()),
-                            ])
-                        }
+                    // Mark the task with its actual state (issue now closed) on
+                    // the board; the row stays in the list and its buttons adapt.
+                    self.runner?.updateBoard { board in
+                        guard let idx = board.index(ofTask: TaskItem.githubID(number)) else { return }
+                        board.tasks[idx].state = .closed
                     }
-                    self.tableView.reloadData()
+                    if let path = self.repoRootPath ?? self.workspacePath?() {
+                        TasksStore.mergeIssueTask(path, issue: number, update: [
+                            "state": "closed",
+                            "closedAt": ISO8601DateFormatter().string(from: Date()),
+                        ])
+                    }
+                    self.syncFromBoard()
                     // Refresh issues so new/updated ones appear.
                     self.reloadIssues()
                 } else {
@@ -1355,6 +1271,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         let stateName: String
         switch task.state {
         case .pending: stateName = L10n.tr("tasks.state.pending")
+        case .queued: stateName = L10n.tr("tasks.state.queued")
         case .running: stateName = L10n.tr("tasks.state.running")
         case .done: stateName = L10n.tr("tasks.state.done")
         case .failed: stateName = L10n.tr("tasks.state.failed")
@@ -1376,99 +1293,5 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             }
         }
         return lines.joined(separator: "\n")
-    }
-
-
-    // MARK: - issue-resolve prompt
-
-    static func issueFixPrompt(number: Int, title: String, branch: String) -> String {
-        return """
-        请加载 issue-resolve skill 并完成以下 GitHub issue 的修复：
-
-        ## Issue #\(number)
-        标题：\(title)
-
-        要求：
-        1. 加载全局 `$DSH_HOME/skills/issue-resolve/SKILL.md`（或内嵌说明）并严格按其流程执行（读 issue → 改代码 → 跑测试 → commit → push）；
-        2. 当前分支应为 \(branch)，只在此分支上工作；
-        3. 推送私有仓库/需要认证的 GitHub 调用时，token 在 `${DSH_HOME:-$HOME/.dsh}/tokens/<owner>-<repo>` 或 `${DSH_HOME:-$HOME/.dsh}/gh-token`（`cat` 读取即可，**绝不在对话/汇报中回显**）；
-        4. 完成后简短汇报改动与测试结果。
-        """
-    }
-}
-
-// MARK: - Task association index (.dsh/tasks/)
-
-/// Persists the issue ↔ branch ↔ PR ↔ session association under
-/// `<repoRoot>/.dsh/tasks/`:
-///   - index.json: repo-scoped, committed (issue → branch → prUrl → state)
-///   - local.json: machine-scoped, gitignored (adds sessionId for THIS machine)
-/// Mirrors core/lib/tasks.js so the shell and any future platform agree.
-enum TaskIndex {
-
-    static let indexFile = "index.json"
-    static let localFile = "local.json"
-
-    private static func tasksDir(_ repoRoot: String) -> String {
-        let dir = (repoRoot as NSString).appendingPathComponent(".dsh/tasks")
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    private static func readJSON(_ path: String) -> [String: Any] {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return [:]
-        }
-        return obj
-    }
-
-    private static func writeJSON(_ path: String, _ obj: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]) else { return }
-        try? data.write(to: URL(fileURLWithPath: path))
-    }
-
-    /// Load the committed index (fresh when missing).
-    static func loadIndex(_ repoRoot: String) -> [[String: Any]] {
-        let obj = readJSON(tasksDir(repoRoot) + "/" + indexFile)
-        return obj["tasks"] as? [[String: Any]] ?? []
-    }
-
-    /// Merge an update for one issue into the committed index (upsert).
-    static func mergeTask(_ repoRoot: String, issue: Int, update: [String: Any]) {
-        var tasks = loadIndex(repoRoot)
-        var merged: [String: Any] = ["issue": issue]
-        if let idx = tasks.firstIndex(where: { ($0["issue"] as? Int) == issue }) {
-            merged = tasks[idx]
-            merged["issue"] = issue
-            tasks.remove(at: idx)
-        }
-        for (k, v) in update { merged[k] = v }
-        tasks.append(merged)
-        tasks.sort { (($0["issue"] as? Int) ?? 0) < (($1["issue"] as? Int) ?? 0) }
-        writeJSON(tasksDir(repoRoot) + "/" + indexFile, ["version": 1, "tasks": tasks])
-    }
-
-    /// Find a committed task entry for an issue.
-    static func findTask(_ repoRoot: String, issue: Int) -> [String: Any]? {
-        loadIndex(repoRoot).first { ($0["issue"] as? Int) == issue }
-    }
-
-    /// Record the dsh session id for an issue in the LOCAL (gitignored) overlay.
-    static func rememberSession(_ repoRoot: String, issue: Int, sessionId: String) {
-        let file = tasksDir(repoRoot) + "/" + localFile
-        var local = readJSON(file)
-        var sessions = local["sessions"] as? [String: Any] ?? [:]
-        sessions[String(issue)] = ["sessionId": sessionId, "updatedAt": ISO8601DateFormatter().string(from: Date())]
-        local["sessions"] = sessions
-        writeJSON(file, local)
-    }
-
-    /// The session id recorded for an issue on THIS machine.
-    static func sessionForIssue(_ repoRoot: String, issue: Int) -> String? {
-        let local = readJSON(tasksDir(repoRoot) + "/" + localFile)
-        let sessions = local["sessions"] as? [String: Any] ?? [:]
-        guard let entry = sessions[String(issue)] as? [String: Any] else { return nil }
-        return entry["sessionId"] as? String
     }
 }

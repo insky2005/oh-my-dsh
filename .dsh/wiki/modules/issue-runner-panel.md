@@ -20,6 +20,20 @@ manual: false
 - **可追溯**：会话/分支/PR 全保留不自动删；会话改名 `fix(#N): …` 便于 dsh web 左侧辨识；
 - **worktree 迭代预留**：等 dsh web 原生支持后切换，队列与监控逻辑不变。
 
+## v2 重构（进行中）
+
+分支 `feature/tasks-manual-queue`，方案见 docs/issue-runner-design.md §V2。**执行路径已换成 `TasksRunner`**（`platforms/macos/src/TasksRunner.swift` + 纯模型 `TasksCore.swift` + 四文件持久化 `TasksStore.swift`）：
+
+- 面板不再自己 `startTask`/`pollSession`/`openPR`/`finishCurrentTask`/`gitCheckoutBranch`/`gitBranchPushed`，也不再写 Swift 版 `TaskIndex`（该类已删除，改为 `TasksStore` 的 index/manual/queues/local 四文件，`local.json` 的 session 键从 issue 号改成 task id 且**读侧兼容旧格式**）；
+- **issue 任务走自动单任务队列**（决策 5）：「处理」= 建（或复用）一个 `autoCreated` 单任务队列、分支仍是 `fix/issue-N`/`feature/issue-N`、PR 语义与 v1 一致；「全部处理」= 每个 pending issue 各建一个单任务队列，串行依次跑；
+- git 进入分支改为**显式三步**（clean 检查 → `checkout <base>` → `pull --ff-only` → `checkout[-b]`），任一步失败即暂停队列（v1 把 checkout/pull 的失败吞掉）；
+- 队列级 PR：队内任务只 push，**队列最后一项完成时**才创建 PR，且先 `GET /pulls?head=` **复用已有 PR**（避免 422）；PR 建不出来不算任务失败；
+- 面板：`setupRunner(repoRoot:)` 载入 board → `reconcileAfterRestart` → 3s 定时 `step()`；issue 合并经 `runner.updateBoard`；表格渲染用指纹比对避免无谓重建；
+- UI **仍是 NSTableView**（行内展开详情），卡片列表（队列分区 + 未入队区）在第 6 步落地；
+- 测试：`tests/tasks-panel/run.sh`（模型 126 + 运行器/手动任务 154 = **280 项**，假 git + 假 dsh 驱动全流水线）。
+
+> 下面「关键实现」等章节仍是 v1 的实现描述，第 6 步完成后整页重写。
+
 ## 关键实现
 
 - `IssueRunnerPanelController`（`platforms/macos/src/IssueRunnerPanel.swift`，约 1410 行）：

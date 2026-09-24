@@ -243,7 +243,8 @@ struct Queue {
 - **入队即激活**：空闲时把任务加进队列会把该队列设为活动队列（这就是「加入队列 = 开始」）；重启后恢复的队列是 paused，那条路径不走 `enqueue`，所以不会自动开跑；
 - **启动失败也记录 sessionId**：会话已建、只是重命名/提示词失败时，卡片仍能看到该会话（可追溯）；
 - **issue 任务重试复用同一个自动队列**（不重复创建），失败的 issue 任务走 `retryAndResume` 回到 queued 再启动；
-- 失败原因以 **L10n 键**存进 `error` 字段（`TaskFailure` 的 rawValue，如 `tasks.errDirtyTree`），面板显示时 `L10n.tr(error)`。
+- 失败原因以 **L10n 键**存进 `error` 字段（`TaskFailure` 的 rawValue，如 `tasks.errDirtyTree`），面板显示时 `L10n.tr(error)`；
+- **面板接线（第 5 步）**：`setupRunner(repoRoot:)` 读四文件 → `reconcileAfterRestart`（上次 running 记为「已中断」、active 队列暂停）→ 建 `TasksRunner` 并起 3s 定时器（`step()`）；issue 拉取经 `runner.updateBoard` 合并进 board（新增 issue → pending，已存在的刷新 title/labels/body，不再 open 的标 closed，**不碰 running/queued**），索引写入仍逐条 `mergeIssueTask`；表格用**指纹比对**（任务状态 + PR + 队列状态）只在真正变化时重建，避免每 3s 刷新打断滚动。
 
 **修掉的既有缺陷**：v1 `gitCheckoutBranch` 里 `checkout main` 与 `pull --ff-only` 的失败被 `_ =` 吞掉，导致新分支可能从**上一个任务的分支**或陈旧提交切出（静默继承 / 静默偏离）。V2 改为显式三步（`checkout <base>` → `pull --ff-only` → `checkout -b <branch>` 或复用已存在分支），**任一步失败即判该任务 failed 并暂停队列**，绝不静默继续。
 
@@ -387,7 +388,7 @@ QA 钩子：`DSH_TASKS_TEST=1` 启动即开面板；`DSH_PANEL_TEST=` 全量核�
 
 ### V2-11 实施拆分（模型先行）
 
-> **进度**：第 1 步（token 只从文件读取）已完成 —— commit `0a8f535`；第 4 步（手动创建任务）已完成 —— `TaskDraft`（两个字段 + 校验，L10n 键 `tasks.errName` / `tasks.errBody`）/ `QueueChoice`（**只列用户队列**，issue 自动队列不是目的地）/ 运行器 `createManualTask` · `updateManualTask` · `deleteManualTask`（运行中拒绝删除，删除即退出所有队列并清掉本机 session），UI 表单留到第 6 步；第 2 步（队列模型 + 四文件持久化）已完成 —— `TasksCore.swift` / `TasksStore.swift` + `core/lib/tasks.js` 同步 + `tests/tasks-panel/`（126 项）；第 3 步（队列运行器）已完成 —— `TasksRunner.swift`（含 git 三步显式检查 / 全局串行 / 失败暂停 / 队列级 PR 复用 / 取消·重试·跳过 / 重启恢复）+ `runner-tests.swift`（108 项）。
+> **进度**：第 1 步（token 只从文件读取）已完成 —— commit `0a8f535`；第 5 步（issue 任务改走自动单任务队列 / 面板接运行器）已完成 —— 面板删除 `startTask`/`pollSession`/`openPR`/`finishCurrentTask`/`gitCheckoutBranch`/`gitBranchPushed`/`issueFixPrompt` 与 Swift 版 `TaskIndex`，行模型换成 `TaskItem`，执行全部经 `TasksRunner`（3s 定时 `step()`、`updateBoard` 合并 issues、`syncFromBoard` 渲染、`findExistingPR` 复用）；第 4 步（手动创建任务）已完成 —— `TaskDraft`（两个字段 + 校验，L10n 键 `tasks.errName` / `tasks.errBody`）/ `QueueChoice`（**只列用户队列**，issue 自动队列不是目的地）/ 运行器 `createManualTask` · `updateManualTask` · `deleteManualTask`（运行中拒绝删除，删除即退出所有队列并清掉本机 session），UI 表单留到第 6 步；第 2 步（队列模型 + 四文件持久化）已完成 —— `TasksCore.swift` / `TasksStore.swift` + `core/lib/tasks.js` 同步 + `tests/tasks-panel/`（126 项）；第 3 步（队列运行器）已完成 —— `TasksRunner.swift`（含 git 三步显式检查 / 全局串行 / 失败暂停 / 队列级 PR 复用 / 取消·重试·跳过 / 重启恢复）+ `runner-tests.swift`（108 项）。
 
 1. `refactor(tasks): GitHub token 只从文件读取（移除 Keychain 读写）` —— 独立、低风险，先落；含 L10n 文案与 README；
 2. `feat(tasks-core): 队列模型与四文件持久化` —— `TaskItem` / `Queue` / `QueueStore` / `TaskStore` + `core/lib/tasks.js` 同步 + 无头单测（**模型先行，跑通后再接执行器**）；

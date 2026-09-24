@@ -38,6 +38,19 @@ enum TaskState: String {
         case .queued, .running, .done, .closed: return false
         }
     }
+
+    /// One-glyph badge for the compact list (the cards get colored labels).
+    var badge: String {
+        switch self {
+        case .pending: return "·"
+        case .queued: return "≡"
+        case .running: return "…"
+        case .done: return "✓"
+        case .failed: return "✗"
+        case .cancelled: return "−"
+        case .closed: return "☑"
+        }
+    }
 }
 
 /// A queue's own state: active runs its tasks one at a time, paused waits for

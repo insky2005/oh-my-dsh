@@ -249,8 +249,16 @@ final class TasksRunner {
         }
     }
 
+    /// Mutate the board WITHOUT touching the run state — the panel uses it to
+    /// merge freshly fetched issues while a task may be running. Persists the
+    /// machine half; the committed index is written per task by the caller.
+    func updateBoard(_ transform: (inout TaskBoard) -> Void) {
+        transform(&board)
+        persist()
+    }
+
     /// Replace the board (after loading from disk). Nothing starts by itself: a
-    /// restart must be an explicit 开始.
+    /// restart must be an explicit 开始. Only meaningful while idle.
     func adopt(_ board: TaskBoard) {
         self.board = board
         phase = .idle

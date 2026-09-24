@@ -62,6 +62,11 @@ enum TasksStore {
         writeJSON(path(repoRoot, file: indexFile), ["version": 1, "tasks": entries])
     }
 
+    /// One committed index entry, or nil.
+    static func findIssueTask(_ repoRoot: String, issue: Int) -> [String: Any]? {
+        indexEntries(repoRoot).first { ($0["issue"] as? Int) == issue }
+    }
+
     /// Write a whole github task through to the committed index.
     static func saveIssueTask(_ repoRoot: String, _ task: TaskItem) {
         mergeIssueTask(repoRoot, issue: task.number ?? 0, update: task.indexDictionary())
