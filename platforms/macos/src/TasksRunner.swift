@@ -450,6 +450,54 @@ final class TasksRunner {
 
     // MARK: - Panel-facing mutations
 
+    /// 新建任务 (decision 6): a title and a description, nothing else. The task
+    /// lands in the 未入队 area — the queue is chosen later, from the card — and
+    /// creating it never starts anything.
+    @discardableResult
+    func createManualTask(_ draft: TaskDraft) -> TaskItem? {
+        guard draft.isValid else { return nil }
+        var task = TaskItem.manual(title: draft.normalizedTitle, body: draft.normalizedBody)
+        task.state = .pending
+        board.tasks.append(task)
+        persist()
+        env.log("tasks: created " + task.id + " (" + task.title + ")")
+        return task
+    }
+
+    /// Edit a manual task's title/description. Refused while it is running (the
+    /// session already has the old text) and for github tasks (their issue is
+    /// the source of truth).
+    @discardableResult
+    func updateManualTask(_ taskID: String, title: String, body: String) -> Bool {
+        let draft = TaskDraft(title: title, body: body)
+        guard draft.isValid, let i = board.index(ofTask: taskID),
+              board.tasks[i].source == .manual, board.tasks[i].state != .running else { return false }
+        board.tasks[i].title = draft.normalizedTitle
+        board.tasks[i].body = draft.normalizedBody
+        persist()
+        return true
+    }
+
+    /// Delete a manual task: it leaves every queue and its machine-local session
+    /// record goes with it. Refused while it is running — cancel first.
+    @discardableResult
+    func deleteManualTask(_ taskID: String) -> Bool {
+        guard let task = board.task(taskID), task.source == .manual, task.state != .running else { return false }
+        board.detach(taskID: taskID)
+        guard let i = board.index(ofTask: taskID) else { return false }
+        board.tasks.remove(at: i)
+        board.local.sessions[taskID] = nil
+        board.local.sessionUpdatedAt[taskID] = nil
+        persist()
+        env.log("tasks: deleted " + taskID)
+        return true
+    }
+
+    /// The queues offered by 加入队列 ▾ (user queues only).
+    func queueChoices() -> [QueueChoice] {
+        board.queueChoices()
+    }
+
     @discardableResult
     func createQueue(name: String,
                      branch: String? = nil,

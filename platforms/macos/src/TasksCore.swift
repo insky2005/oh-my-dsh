@@ -256,6 +256,44 @@ enum TaskBranch {
     }
 }
 
+// MARK: - Manual task draft
+
+/// What the user typed in 新建任务 — only TWO fields (decision 6): the queue is
+/// chosen later, from the card, so creating a task never forces a decision about
+/// branches or PRs.
+struct TaskDraft: Equatable {
+    var title: String
+    var body: String
+
+    init(title: String = "", body: String = "") {
+        self.title = title
+        self.body = body
+    }
+
+    var normalizedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var normalizedBody: String { body.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var isValid: Bool { problem == nil }
+
+    /// The first problem as an L10n key, or nil when the draft is fine. Both
+    /// fields are required: the description IS the prompt handed to the agent,
+    /// and the title names the card and the session.
+    var problem: String? {
+        if normalizedTitle.isEmpty { return "tasks.errName" }
+        if normalizedBody.isEmpty { return "tasks.errBody" }
+        return nil
+    }
+}
+
+/// One entry of the 加入队列 ▾ picker.
+struct QueueChoice: Equatable {
+    var id: String
+    var name: String
+    var branch: String?
+    var taskCount: Int
+    var state: QueueState
+}
+
 // MARK: - Queue
 
 /// A queue is a lane: every task in it shares ONE branch and runs strictly in
@@ -446,6 +484,15 @@ struct TaskBoard {
         queues.first { $0.autoCreated && $0.taskIds.contains(taskID) }?.id
     }
 
+    /// The queues offered by 加入队列 ▾. User queues only: an issue task's auto
+    /// single-task queue is never a destination for a manual task.
+    func queueChoices() -> [QueueChoice] {
+        queues.filter { !$0.autoCreated }.map { queue in
+            QueueChoice(id: queue.id, name: queue.name, branch: queue.branch,
+                        taskCount: queue.taskIds.count, state: queue.state)
+        }
+    }
+
     /// Counts for the summary strip: queues, queued, running, failed.
     /// Every queue counts, auto ones included (decision 8).
     func summary() -> (queues: Int, queued: Int, running: Int, failed: Int) {
@@ -482,6 +529,15 @@ struct TaskBoard {
         tasks[ti].queueId = nil
         tasks[ti].state = .pending
         return true
+    }
+
+    /// Remove a task from every queue regardless of its state — used when the
+    /// task itself is deleted. A waiting task goes back to 未入队.
+    mutating func detach(taskID: String) {
+        for i in queues.indices { queues[i].taskIds.removeAll { $0 == taskID } }
+        guard let ti = index(ofTask: taskID) else { return }
+        tasks[ti].queueId = nil
+        if tasks[ti].state == .queued { tasks[ti].state = .pending }
     }
 
     /// Delete a queue. Tasks that never started go back to 未入队; finished ones

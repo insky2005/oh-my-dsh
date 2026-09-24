@@ -598,6 +598,8 @@ enum L10n {
         "tasks.errTimeout": ("任务超时（30 分钟）", "Task timed out (30 minutes)"),
         "tasks.errNoPush": ("分支未推送到远端（代理未 push？）", "Branch was not pushed (agent didn't push?)"),
         "tasks.errPR": ("创建 PR 失败", "Failed to create PR"),
+        "tasks.errName": ("任务标题不能为空", "A task title is required"),
+        "tasks.errBody": ("任务描述不能为空（它就是发给代理的指令）", "A task description is required (it is the instruction handed to the agent)"),
         "tasks.errInterrupted": ("上次运行被中断（会话已随 App 退出结束）", "Interrupted: the session ended with the app"),
         "tasks.errNotGit": ("当前工作区不是 git 仓库（无法切分支 / 建会话）", "The current workspace is not a git repository (cannot switch branches or open a session)"),
         "tasks.errDirtyTree": ("工作区有未提交改动，已停止切换分支（请先 commit 或 stash）", "The worktree has uncommitted changes; branch switching stopped (commit or stash first)"),

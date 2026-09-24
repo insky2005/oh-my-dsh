@@ -486,6 +486,90 @@ do {
     check(h2.runner.runningTaskID == "issue-12", "the retried issue task runs")
 }
 
+
+// MARK: - Creating manual tasks (step 4)
+
+section("draft validation")
+do {
+    eq(TaskDraft(title: "", body: "x").problem, "tasks.errName", "an empty title reports the name key")
+    eq(TaskDraft(title: "   ", body: "x").problem, "tasks.errName", "a blank title is empty")
+    eq(TaskDraft(title: "x", body: "  ").problem, "tasks.errBody", "an empty description reports the body key")
+    check(TaskDraft(title: "x", body: "y").problem == nil, "a filled draft has no problem")
+    check(TaskDraft(title: "x", body: "y").isValid, "a filled draft is valid")
+    eq(TaskDraft(title: "  t  ", body: "  b  ").normalizedTitle, "t", "the title is trimmed")
+    eq(TaskDraft(title: "  t  ", body: "  b  ").normalizedBody, "b", "the body is trimmed")
+}
+
+section("creating, editing and deleting a manual task")
+do {
+    let h = Harness(board: TaskBoard())
+    check(h.runner.createManualTask(TaskDraft(title: "", body: "x")) == nil, "an invalid draft creates nothing")
+    check(h.runner.createManualTask(TaskDraft(title: "Do it", body: "")) == nil, "a description is required")
+    eq(h.board.tasks.count, 0, "nothing was added for an invalid draft")
+
+    let created = h.runner.createManualTask(TaskDraft(title: "  Polish README  ",
+                                                     body: "  tidy the install section  "))
+    check(created != nil, "a valid draft creates a task")
+    check(created?.source == .manual, "the task is manual")
+    check(created?.state == .pending, "a new task is not in any queue")
+    check(created?.queueId == nil, "it has no queue yet")
+    eq(created?.title ?? "", "Polish README", "the title is trimmed on the task")
+    eq(created?.body ?? "", "tidy the install section", "the body is trimmed on the task")
+    check(created?.id.hasPrefix("manual-") == true, "the id is a manual id")
+    eq(h.board.tasks.count, 1, "the task is on the board")
+    eq(h.board.unqueued.count, 1, "it shows up in the 未入队 area")
+    check(h.rec.persistCount > 0, "creating a task persists it")
+    check(h.runner.isBusy == false, "creating a task starts nothing")
+    check(h.dsh.sessions.isEmpty, "no session is created until it runs")
+
+    let id = created?.id ?? ""
+    check(h.runner.updateManualTask(id, title: "Better title", body: "and a better body"), "editing works")
+    check(h.board.task(id)?.title == "Better title", "the title changed")
+    check(h.board.task(id)?.body == "and a better body", "the body changed")
+    check(h.runner.updateManualTask(id, title: "", body: "x") == false, "an invalid edit is refused")
+    check(h.board.task(id)?.title == "Better title", "the refused edit left the task alone")
+    check(h.runner.updateManualTask("issue-1", title: "t", body: "b") == false, "a github task is not editable")
+}
+
+section("the queue picker and joining a queue")
+do {
+    let h = Harness(board: TaskBoard())
+    let task = h.runner.createManualTask(TaskDraft(title: "Docs", body: "tidy the docs"))
+    let id = task?.id ?? ""
+    let q1 = h.runner.createQueue(name: "Docs Cleanup")
+    _ = h.runner.createQueue(name: "Second lane", baseBranch: "develop", autoPR: true)
+
+    let choices = h.runner.queueChoices()
+    eq(choices.count, 2, "both user queues are offered")
+    eq(choices.first?.name, "Docs Cleanup", "choices keep the creation order")
+    eq(choices.first?.taskCount, 0, "an empty queue reports zero tasks")
+    check(choices.allSatisfy { $0.branch?.hasPrefix("feature/") == true }, "each choice carries its branch")
+
+    check(h.runner.enqueue(taskID: id, into: q1.id), "the task joins the chosen queue")
+    check(h.board.task(id)?.queueId == q1.id, "the membership is recorded")
+    check(h.board.task(id)?.state == .running, "it starts right away (the runner was idle)")
+    eq(h.runner.queueChoices().first?.taskCount, 1, "the choice count follows the queue")
+    check(h.runner.deleteManualTask(id) == false, "a running task cannot be deleted")
+    check(h.runner.cancelRunning(), "cancel it first")
+    check(h.board.task(id)?.state == .cancelled, "the task is cancelled")
+    check(h.runner.deleteManualTask(id), "a stopped task can be deleted")
+    check(h.board.task(id) == nil, "it is gone from the board")
+    check(h.board.queue(q1.id)?.taskIds.contains(id) == false, "its queue membership is gone")
+    check(h.board.local.sessions[id] == nil, "its session record is gone")
+    check(h.board.queue(q1.id)?.state == QueueState.paused, "the queue keeps running nothing")
+}
+
+section("an auto queue is never a destination")
+do {
+    var board = TaskBoard()
+    let issue = TaskItem.github(number: 3, title: "Issue three")
+    board.tasks = [issue]
+    board.queues = [TaskQueue.auto(for: issue)]
+    let h = Harness(board: board)
+    eq(h.runner.queueChoices().count, 0, "the auto queue is not offered by the picker")
+    check(h.board.queues.count == 1, "but it still counts as a queue on the board")
+}
+
 if failures == 0 {
     print("ok - \(checks) checks passed")
 } else {

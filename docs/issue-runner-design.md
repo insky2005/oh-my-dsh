@@ -274,6 +274,8 @@ struct Queue {
 
 表单**只有这两个字段**（决策 6）：创建后任务**一律进入「未入队」区**，队列归属完全由卡片上的操作决定 ——
 
+> 逻辑已落地（第 4 步）：`TaskDraft` 校验两个字段都非空，空值返回 L10n 键 `tasks.errName` / `tasks.errBody`，`normalizedTitle/Body` 统一去首尾空白；运行器 `createManualTask` / `updateManualTask`（运行中的任务与 github 任务都拒绝编辑）/ `deleteManualTask`（运行中拒绝删除；删除即退出所有队列并清掉本机 session 记录）；「加入队列 ▾」的候选来自 `TaskBoard.queueChoices()`——**只列用户队列**，issue 任务的自动单任务队列不是目的地。UI 表单在第 6 步接。
+
 1. 点卡片 **「加入队列 ▾」** → 选**已有队列**，或**新建队列…**（弹队列表单：**队列名** / **分支**（默认见 §V2-6，可改、可留空）/ **基于分支**（默认 `main`）/ **完成后创建 PR**（开关，属于队列属性，队内任务共享；工作区不是 GitHub 仓库时置灰关））；
 2. 入队后：全局空闲 → 立刻启动队首；否则排队（见 §V2-5）；
 3. 改主意：卡片「移出队列」→ 回到未入队区，或再点「加入队列 ▾」换到别的队列。
@@ -385,7 +387,7 @@ QA 钩子：`DSH_TASKS_TEST=1` 启动即开面板；`DSH_PANEL_TEST=` 全量核�
 
 ### V2-11 实施拆分（模型先行）
 
-> **进度**：第 1 步（token 只从文件读取）已完成 —— commit `0a8f535`；第 2 步（队列模型 + 四文件持久化）已完成 —— `TasksCore.swift` / `TasksStore.swift` + `core/lib/tasks.js` 同步 + `tests/tasks-panel/`（126 项）；第 3 步（队列运行器）已完成 —— `TasksRunner.swift`（含 git 三步显式检查 / 全局串行 / 失败暂停 / 队列级 PR 复用 / 取消·重试·跳过 / 重启恢复）+ `runner-tests.swift`（108 项）。
+> **进度**：第 1 步（token 只从文件读取）已完成 —— commit `0a8f535`；第 4 步（手动创建任务）已完成 —— `TaskDraft`（两个字段 + 校验，L10n 键 `tasks.errName` / `tasks.errBody`）/ `QueueChoice`（**只列用户队列**，issue 自动队列不是目的地）/ 运行器 `createManualTask` · `updateManualTask` · `deleteManualTask`（运行中拒绝删除，删除即退出所有队列并清掉本机 session），UI 表单留到第 6 步；第 2 步（队列模型 + 四文件持久化）已完成 —— `TasksCore.swift` / `TasksStore.swift` + `core/lib/tasks.js` 同步 + `tests/tasks-panel/`（126 项）；第 3 步（队列运行器）已完成 —— `TasksRunner.swift`（含 git 三步显式检查 / 全局串行 / 失败暂停 / 队列级 PR 复用 / 取消·重试·跳过 / 重启恢复）+ `runner-tests.swift`（108 项）。
 
 1. `refactor(tasks): GitHub token 只从文件读取（移除 Keychain 读写）` —— 独立、低风险，先落；含 L10n 文案与 README；
 2. `feat(tasks-core): 队列模型与四文件持久化` —— `TaskItem` / `Queue` / `QueueStore` / `TaskStore` + `core/lib/tasks.js` 同步 + 无头单测（**模型先行，跑通后再接执行器**）；
