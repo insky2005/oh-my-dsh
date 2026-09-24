@@ -70,6 +70,9 @@ final class IssueRunnerPanelController: NSObject {
     private var runner: TasksRunner?
     private var repo: (owner: String, repo: String)?
     private var repoRootPath: String?
+    /// Which directory the current board was loaded from (a repo switch — or a
+    /// switch to a non-GitHub workspace — must reload it).
+    private var boardPath: String?
     /// The task currently expanded inline (shows detail + action buttons).
     private var expandedTaskID: String?
     /// id -> open? Defaults differ per kind: user queues start open (they hold
@@ -108,8 +111,15 @@ final class IssueRunnerPanelController: NSObject {
         runAllButton.toolTip = L10n.tr("tasks.runAllHint")
         newTaskButton.toolTip = L10n.tr("tasks.new.hint")
         hideButton.toolTip = L10n.tr("preview.closePanel")
-        repoLabel.text = repo.map { "\($0.owner)/\($0.repo)" } ?? L10n.tr("tasks.noRepo")
-        emptyLabel.stringValue = repo == nil ? L10n.tr("tasks.noRepo") : L10n.tr("tasks.empty")
+        if let repo = repo {
+            repoLabel.text = repo.owner + "/" + repo.repo
+        } else if let path = repoRootPath {
+            // A workspace without a GitHub remote still has a board: show where
+            // we are instead of just "not a GitHub repo".
+            repoLabel.text = (path as NSString).lastPathComponent + " · " + L10n.tr("tasks.noRepoShort")
+        } else {
+            repoLabel.text = L10n.tr("tasks.noRepo")
+        }
         filterControl.segmentCount = 3
         filterControl.setLabel(L10n.tr("tasks.filter.all"), forSegment: 0)
         filterControl.setLabel(L10n.tr("tasks.filter.issues"), forSegment: 1)
@@ -127,7 +137,7 @@ final class IssueRunnerPanelController: NSObject {
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let actions = NSStackView(views: [refreshButton, runAllButton, configButton, hideButton])
+        let actions = NSStackView(views: [newTaskButton, refreshButton, runAllButton, configButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -311,6 +321,7 @@ final class IssueRunnerPanelController: NSObject {
         let recovered = board.reconcileAfterRestart(interruptedError: TaskFailure.interrupted.rawValue)
         TasksStore.saveLocalHalf(repoRoot, board)
         runner = TasksRunner(board: board, env: makeEnv(repoRoot: repoRoot))
+        boardPath = repoRoot
         expandedTaskID = nil
         syncFromBoard()
         startStepTimer()
@@ -373,6 +384,7 @@ final class IssueRunnerPanelController: NSObject {
     /// No GitHub repo here: drop the board and stop stepping.
     private func clearBoard() {
         runner = nil
+        boardPath = nil
         stepTimer?.invalidate()
         stepTimer = nil
         expandedTaskID = nil
@@ -431,29 +443,24 @@ final class IssueRunnerPanelController: NSObject {
     }
 
     private func resolveRepoOnce() {
-        // The shell's active project directory (follows the session the user
-        // is viewing) is authoritative: if it IS a GitHub repo, show its
-        // issues; if it is NOT (e.g. an Ungrouped / non-git session's cwd),
-        // show the honest "not a GitHub repo" empty state — do NOT substitute
-        // some other registered workspace.
+        // The shell's active project directory (follows the session the user is
+        // viewing) is authoritative: it decides which board we show — do NOT
+        // substitute some other registered workspace.
         if let path = workspacePath?(), !path.isEmpty {
-            if Self.detectGitHubRemote(path) != nil {
-                applyRepo(path: path)
-            } else {
-                repo = nil
-                clearBoard()
-            }
+            adoptWorkspace(path)
             return
         }
-        // ProjectDirectory not resolved yet (early launch): fall back to
-        // scanning registered workspaces for the first GitHub repo.
+        // ProjectDirectory not resolved yet (early launch): fall back to the
+        // registered workspaces, preferring one with a GitHub remote.
         let port = serverPortProvider?() ?? 3080
         let workspaces = Self.listWorkspacePaths(port: port)
-        for ws in workspaces {
-            if Self.detectGitHubRemote(ws) != nil {
-                applyRepo(path: ws)
-                return
-            }
+        if let github = workspaces.first(where: { Self.detectGitHubRemote($0) != nil }) {
+            adoptWorkspace(github)
+            return
+        }
+        if let git = workspaces.first(where: { Self.isGitRepo($0) }) {
+            adoptWorkspace(git)
+            return
         }
         // Server may not have the workspace list ready yet — retry briefly.
         if repoResolveRetries < 10 {
@@ -464,26 +471,34 @@ final class IssueRunnerPanelController: NSObject {
         } else {
             repo = nil
             clearBoard()
+            AppLog.shared.log("tasks: no workspace adopted — activeWorkspacePath is empty and no registered workspace resolved")
         }
     }
 
-    private func applyRepo(path: String) {
-        guard let detected = Self.detectGitHubRemote(path) else {
-            repo = nil
-            clearBoard()
-            return
-        }
-        // A DIFFERENT repo means a different board: issue numbers are per-repo,
-        // so the previous tasks/queues must not leak into this one.
-        let changedRepo = repo?.owner != detected.owner || repo?.repo != detected.repo
-        repo = (detected.owner, detected.repo)
+    /// Adopt a workspace as the panel's board root.
+    ///
+    /// A GitHub remote only adds the ISSUE features (list / process / PR /
+    /// comment & close). Manual tasks and queues work in ANY workspace: the
+    /// board lives in that directory's .dsh/tasks/, and a queue that asks for a
+    /// branch simply fails with tasks.errNotGit if the directory is not a git
+    /// repository (docs/issue-runner-design.md §V2-7).
+    private func adoptWorkspace(_ path: String) {
+        let detected = Self.detectGitHubRemote(path)
+        let sameBoard = (boardPath == path) && runner != nil
+        repo = detected
         repoRootPath = path
-        AppLog.shared.log("tasks repo resolved: \(detected.owner)/\(detected.repo) at \(path)")
+        let github = detected.map { $0.owner + "/" + $0.repo } ?? "-"
+        let git = Self.isGitRepo(path) ? "yes" : "no"
+        AppLog.shared.log("tasks: workspace adopted at \(path) (github=\(github) git=\(git))")
         updateLabels()
-        if changedRepo || runner == nil {
-            setupRunner(repoRoot: path)
-        }
+        if !sameBoard { setupRunner(repoRoot: path) }
         reloadIssues()
+        render()
+    }
+
+    /// True when the directory is inside a git work tree.
+    static func isGitRepo(_ path: String) -> Bool {
+        Self.runProcess("/usr/bin/git", ["-C", path, "rev-parse", "--is-inside-work-tree"]) == "true"
     }
 
     /// Parse `git remote -v` output for a github.com remote (prefers the
@@ -1022,8 +1037,15 @@ final class IssueRunnerPanelController: NSObject {
         }
 
         emptyLabel.isHidden = sections > 0
-        emptyLabel.stringValue = repo == nil ? L10n.tr("tasks.noRepo")
-            : (sourceFilter == .all ? L10n.tr("tasks.empty") : L10n.tr("tasks.emptyFiltered"))
+        if sourceFilter != .all {
+            emptyLabel.stringValue = L10n.tr("tasks.emptyFiltered")
+        } else if repo == nil {
+            // A workspace without a GitHub remote: manual tasks and queues still
+            // work, only the issue features are unavailable.
+            emptyLabel.stringValue = L10n.tr("tasks.emptyManualOnly")
+        } else {
+            emptyLabel.stringValue = L10n.tr("tasks.empty")
+        }
         summaryLabel.text = TasksSummaryModel.build(board).text
     }
 
@@ -1222,7 +1244,11 @@ final class IssueRunnerPanelController: NSObject {
 
     /// 新建任务 / 编辑任务 — a title and a description, nothing else (决策 6).
     private func presentTaskForm(editing task: TaskItem?) {
-        guard let runner = runner else { return }
+        guard let runner = runner else {
+            setStatus(L10n.tr("tasks.errNoWorkspace"), spin: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.hideStatus() }
+            return
+        }
         let alert = NSAlert()
         alert.messageText = L10n.tr(task == nil ? "tasks.new.title" : "tasks.new.editTitle")
         alert.informativeText = L10n.tr("tasks.new.info")
