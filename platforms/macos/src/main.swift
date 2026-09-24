@@ -2485,8 +2485,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityBar.translatesAutoresizingMaskIntoConstraints = false
 
         // 活动栏图标：tooltip 跟随系统语言（L10n 中英切换）；
-        // 顺序 = 项目、文件、终端、浏览器、Wiki、任务、通道、审查、技能
-        // （「项目」在首位，见设计 §5/D4）。
+        // 顺序 = 项目、文件、终端、Wiki、任务、通道、审查、浏览器、技能
+        // （「项目」在首位，见设计 §5/D4；「浏览器」改到末位「技能」之前，2026-09-24）。
         projectsBarButton = makeActivityButton(symbol: "folder",
                                                tooltip: L10n.tr("bar.projects"),
                                                action: #selector(projectsEntryTapped(_:)))
@@ -2496,9 +2496,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         terminalBarButton = makeActivityButton(symbol: "terminal",
                                                tooltip: L10n.tr("bar.terminal"),
                                                action: #selector(terminalEntryTapped(_:)))
-        browserBarButton = makeActivityButton(symbol: "globe",
-                                              tooltip: L10n.tr("bar.browser"),
-                                              action: #selector(browserEntryTapped(_:)))
         wikiBarButton = makeActivityButton(symbol: "book.closed",
                                            tooltip: L10n.tr("bar.wiki"),
                                            action: #selector(wikiEntryTapped(_:)))
@@ -2511,10 +2508,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reviewBarButton = makeActivityButton(symbol: "doc.text",
                                              tooltip: L10n.tr("bar.review"),
                                              action: #selector(reviewEntryTapped(_:)))
+        browserBarButton = makeActivityButton(symbol: "globe",
+                                              tooltip: L10n.tr("bar.browser"),
+                                              action: #selector(browserEntryTapped(_:)))
         skillsBarButton = makeActivityButton(symbol: "puzzlepiece",
                                              tooltip: L10n.tr("bar.skills"),
                                              action: #selector(skillsEntryTapped(_:)))
-        let barStack = NSStackView(views: [projectsBarButton, previewBarButton, terminalBarButton, browserBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton, skillsBarButton])
+        let barStack = NSStackView(views: [projectsBarButton, previewBarButton, terminalBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton, browserBarButton, skillsBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -4969,6 +4969,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         viewMenu.addItem(.separator())
         // 「项目」在首位（与活动栏一一对应，设计 §5/D4）；⌥⌘P 由「文件面板」
         // 让出（PR #57 已把文件面板改为 ⌥⌘F）。
+        // 其余各项顺序与活动栏保持一一对应：项目 / 文件 / 终端 / 知识库 / 任务 /
+        // 通道 / 审查 / 浏览器 / 技能（「浏览器」2026-09-24 移到末位「技能」之前）。
         let toggleProjects = viewMenu.addItem(withTitle: L10n.tr("menu.toggleProjects"), action: #selector(projectsEntryTapped(_:)), keyEquivalent: "p")
         toggleProjects.keyEquivalentModifierMask = [.command, .option]
         toggleProjects.target = self
@@ -4994,11 +4996,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleTasks.target = self
         toggleTasks.state = (rightPanel == .tasks) ? .on : .off
         tasksToggleMenuItem = toggleTasks
-        let toggleBrowser = viewMenu.addItem(withTitle: L10n.tr("menu.toggleBrowser"), action: #selector(browserEntryTapped(_:)), keyEquivalent: "b")
-        toggleBrowser.keyEquivalentModifierMask = [.command, .option]
-        toggleBrowser.target = self
-        toggleBrowser.state = (rightPanel == .browser) ? .on : .off
-        browserToggleMenuItem = toggleBrowser
         let toggleChannel = viewMenu.addItem(withTitle: L10n.tr("menu.toggleChannel"), action: #selector(channelEntryTapped(_:)), keyEquivalent: "h")
         toggleChannel.keyEquivalentModifierMask = [.command, .option]
         toggleChannel.target = self
@@ -5010,6 +5007,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleReview.state = (rightPanel == .review) ? .on : .off
         reviewToggleMenuItem = toggleReview
 
+        let toggleBrowser = viewMenu.addItem(withTitle: L10n.tr("menu.toggleBrowser"), action: #selector(browserEntryTapped(_:)), keyEquivalent: "b")
+        toggleBrowser.keyEquivalentModifierMask = [.command, .option]
+        toggleBrowser.target = self
+        toggleBrowser.state = (rightPanel == .browser) ? .on : .off
+        browserToggleMenuItem = toggleBrowser
         let toggleSkills = viewMenu.addItem(withTitle: L10n.tr("menu.toggleSkills"), action: #selector(skillsEntryTapped(_:)), keyEquivalent: "s")
         toggleSkills.keyEquivalentModifierMask = [.command, .option]
         toggleSkills.target = self

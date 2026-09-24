@@ -63,6 +63,8 @@ OSR 下 CEF 不知道宿主窗口位置，默认菜单弹错位：`OnBeforeConte
 
 **控制台抽屉与 JS 求值 UI 已移除**（console 切换按钮/日志视图/求值输入框全删）；CDP 事件（`Runtime.consoleAPICalled`/`exceptionThrown`、`Network.requestWillBeSent`/`responseReceived`/`loadingFailed`、`Log.entryAdded`）仍由 `BrowserCDPClient` 写入 per-tab `BrowserLogBuffer`（2000 条），只经 REST API `console` 端点读取；`eval`/`screenshot` API 仍走 CDP。target 发现：后台拉 `/json`（**绝不在主线程同步拉**——与 CEF 消息泵死锁），按创建顺序认领未占用 page target；CDP 端口 `DSH_CDP_PORT` 覆盖、默认 9333（与 CEFShim `remote_debugging_port` 一致）。
 
+**console 参数渲染不得直接喂 JSONSerialization（2026-09-24 崩溃修复）**：`Runtime.consoleAPICalled` 的 `args[].value` 对 JS 标量就是 String / NSNumber / NSNull，而 `JSONSerialization.data(withJSONObject:)` **只接受顶层容器**——传标量抛的是 ObjC 异常 `NSInvalidArgumentException`，Swift 的 `try?` 接不住，进程直接 SIGTRAP（崩溃线程标记 `DispatchQueue: oh-my-dsh.browser-cdp`；`main.swift` 里同样的 `try?` 写法就没事，差别只在顶层是不是容器）。触发条件低到「页面随便 `console.log(0)`」——CAS 登录页（`cas.dev2.supwisdom.com`）即如此。修复：新增 `BrowserCDPClient.consoleArgumentText(_:)`，先 `isValidJSONObject([value])` 预检（顺带挡掉 NaN / ±Infinity），再包成单元素数组序列化后剥掉外层方括号，兜底 `String(describing:)`；回归测试 `tests/browser-panel/browser-tests.swift` 的 `testConsoleArgumentText`（13 例）。
+
 ## BrowserAPI.swift（Agent 驱动 REST API）
 
 - POSIX socket 极简 HTTP/1.1（127.0.0.1，默认 3081，`DSH_BROWSER_PORT` 覆盖，占用递增 +5；生效端口写 `$DSH_HOME/browser-api.port`；App 启动即起）；CORS 头 + OPTIONS 预检；
@@ -80,7 +82,7 @@ OSR 下 CEF 不知道宿主窗口位置，默认菜单弹错位：`OnBeforeConte
 
 ## 测试
 
-`tests/browser-panel/run.sh`（71 例：日志缓冲/URL 规范化/HTTP 解析/REST 路由 + FakeDelegate；**OSR 帧落点与派发**——帧必须落在 `pageView` 层而非容器层、按 `browserId` 派发、DevTools 帧进 `devtoolsContent`、菜单锚点兜底；无窗口/CEF 实例化）。`tests/shell-config/run.sh`（13 例：旧 UserDefaults 一次性迁移进 `config.json` / 只做一次 / 显式值优先 / 不搬无关键）。注意：`tests/terminal-emulator/stubs.swift` 的 `CEFShim` 桩会记录最后一次注册的 paint/menu 回调并给 `createBrowser` 发递增 id（供帧派发用例触发）。
+`tests/browser-panel/run.sh`（84 例：日志缓冲/URL 规范化/HTTP 解析/REST 路由 + FakeDelegate；**OSR 帧落点与派发**——帧必须落在 `pageView` 层而非容器层、按 `browserId` 派发、DevTools 帧进 `devtoolsContent`、菜单锚点兜底、CDP console 参数渲染（标量/null/NaN 不许崩）；无窗口/CEF 实例化）。`tests/shell-config/run.sh`（13 例：旧 UserDefaults 一次性迁移进 `config.json` / 只做一次 / 显式值优先 / 不搬无关键）。注意：`tests/terminal-emulator/stubs.swift` 的 `CEFShim` 桩会记录最后一次注册的 paint/menu 回调并给 `createBrowser` 发递增 id（供帧派发用例触发）。
 
 ## 已知限制
 
