@@ -237,6 +237,14 @@ struct Queue {
 
 **重启恢复**：启动时读 `queues.json` 复原队列与顺序、`manual.json` + `index.json` 复原任务本身。上次退出时状态为 `running` 的任务 → 标记**已中断**（`failed` + 「上次运行被中断」，会话与分支保留），因为那个 dsh 会话已随进程结束 —— 这同时修掉了 v1 恢复后长期显示「运行中」的观感问题。**恢复后不自动开跑**：状态条提示「队列中有 N 个任务」，用户点队列头「开始」才继续，避免启动即消耗额度 / 擅自改仓库。
 
+**实现备注（2026-09-24，`TasksRunner.swift`）**：
+
+- 运行器是唯一的 board 变更入口（入队 / 启动 / 完成 / 取消 / 重试 / 重启恢复），面板只渲染与调用；阻塞工作（git / HTTP / RPC）交给注入的 `perform` 离开主线程执行，**board 的修改始终在同一个回调里完成**，`step()` 是唯一的定时入口；
+- **入队即激活**：空闲时把任务加进队列会把该队列设为活动队列（这就是「加入队列 = 开始」）；重启后恢复的队列是 paused，那条路径不走 `enqueue`，所以不会自动开跑；
+- **启动失败也记录 sessionId**：会话已建、只是重命名/提示词失败时，卡片仍能看到该会话（可追溯）；
+- **issue 任务重试复用同一个自动队列**（不重复创建），失败的 issue 任务走 `retryAndResume` 回到 queued 再启动；
+- 失败原因以 **L10n 键**存进 `error` 字段（`TaskFailure` 的 rawValue，如 `tasks.errDirtyTree`），面板显示时 `L10n.tr(error)`。
+
 **修掉的既有缺陷**：v1 `gitCheckoutBranch` 里 `checkout main` 与 `pull --ff-only` 的失败被 `_ =` 吞掉，导致新分支可能从**上一个任务的分支**或陈旧提交切出（静默继承 / 静默偏离）。V2 改为显式三步（`checkout <base>` → `pull --ff-only` → `checkout -b <branch>` 或复用已存在分支），**任一步失败即判该任务 failed 并暂停队列**，绝不静默继续。
 
 ### V2-6 分支与 PR 规则
@@ -363,12 +371,13 @@ struct Queue {
 
 ### V2-10 测试与 CI
 
-新增 `tests/tasks-panel/`（无头，体例照 `tests/projects-panel/`：`stubs.swift` + `run.sh` + 若干 `*-tests.swift`）。**第 2 步已落地第 1、2 项**（`tests/tasks-panel/model-tests.swift` + `run.sh`，**126 项断言全绿**，2026-09-24；已登记进 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`），其余随对应步骤补：
+新增 `tests/tasks-panel/`（无头，体例照 `tests/projects-panel/`：`stubs.swift` + `run.sh` + 若干 `*-tests.swift`）。**第 2、3 步已落地**（`tests/tasks-panel/model-tests.swift` 126 项 + `runner-tests.swift` 108 项 = **234 项断言全绿**，2026-09-24；已登记进 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`），其余随对应步骤补：
 
 1. **队列模型（本次重点，模型先行）**：入队顺序与 `order` 编号、重复入队幂等、移出后回 `pending`、队首推进、队列内失败 → 队列暂停（后续任务仍 queued）、跳过并继续、切队列的干净检查（脏工作区拒绝启动）、队列完成态与 `autoPR` 能力降级、自动单任务队列的创建与重试复用；
 2. **模型与持久化**：TaskItem / Queue 编解码往返；`index.json` 旧格式兼容（无 `source` 视为 github、无 id 用 `issue-N`）；`manual.json` 增删改查；`queues.json` 读写；**`local.json` sessions 换键兼容**（数字键 ↔ `issue-N`）；坏文件不崩溃且不删除；
 3. **token 解析**：临时 `DSH_HOME` 下「专属文件 → 通用文件 → nil」三级；保存写文件且权限 `0600`；空值删文件；断言实现里不再有钥匙串路径；
-4. **卡片视图模型**：给定 TaskItem / Queue → 断言标题、来源徽标、状态徽标、队列头文案与进度、主操作标题与可用性（把 `primaryActionTitle` 一类纯函数抽出来覆盖 queued / interrupted / manual / 队列暂停等新分支）。
+4. **卡片视图模型**：给定 TaskItem / Queue → 断言标题、来源徽标、状态徽标、队列头文案与进度、主操作标题与可用性（把 `primaryActionTitle` 一类纯函数抽出来覆盖 queued / interrupted / manual / 队列暂停等新分支）；
+5. **队列运行器**（已落地，`runner-tests.swift` 108 项）：假 git + 假 dsh 驱动全流水线 —— 分支进入（clean 检查 → checkout base → pull → checkout[-b]）、入队即激活队列、全局串行（第二个队列不许并发）、队内第二项不切分支、**队列级 PR 只在最后一项收尾且复用已有 PR**、失败各档（脏工作区 / checkout / pull / 建会话 / 提示词 / 未推送 / 超时）都暂停队列、取消 / 重试 / 跳过并继续、重启恢复不自动开跑、issue 任务自动单任务队列与重试复用。
 
 同步：扩展 `core/tests/tasks.test.js`（manual / queue / sessions 换键）；把 `tests/tasks-panel/run.sh` **同时**登记进 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`（两处清单必须一致）。
 
@@ -376,7 +385,7 @@ QA 钩子：`DSH_TASKS_TEST=1` 启动即开面板；`DSH_PANEL_TEST=` 全量核�
 
 ### V2-11 实施拆分（模型先行）
 
-> **进度**：第 1 步（token 只从文件读取）已完成 —— commit `0a8f535`；第 2 步（队列模型 + 四文件持久化）已完成 —— `TasksCore.swift` / `TasksStore.swift` + `core/lib/tasks.js` 同步 + `tests/tasks-panel/`（126 项）。
+> **进度**：第 1 步（token 只从文件读取）已完成 —— commit `0a8f535`；第 2 步（队列模型 + 四文件持久化）已完成 —— `TasksCore.swift` / `TasksStore.swift` + `core/lib/tasks.js` 同步 + `tests/tasks-panel/`（126 项）；第 3 步（队列运行器）已完成 —— `TasksRunner.swift`（含 git 三步显式检查 / 全局串行 / 失败暂停 / 队列级 PR 复用 / 取消·重试·跳过 / 重启恢复）+ `runner-tests.swift`（108 项）。
 
 1. `refactor(tasks): GitHub token 只从文件读取（移除 Keychain 读写）` —— 独立、低风险，先落；含 L10n 文案与 README；
 2. `feat(tasks-core): 队列模型与四文件持久化` —— `TaskItem` / `Queue` / `QueueStore` / `TaskStore` + `core/lib/tasks.js` 同步 + 无头单测（**模型先行，跑通后再接执行器**）；

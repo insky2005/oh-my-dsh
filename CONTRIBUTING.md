@@ -60,8 +60,11 @@ tests/snapshot-rollback/run.sh          # 会话快照 / 回退 CLI 端到端（
 tests/snapshot-panel/run.sh             # 会话快照窗口的数据模型（解析 list/plan-rollback、格式化、坏数据不崩）
 tests/projects-panel/run.sh             # 项目面板（根目录解析 / 命名规则 / 目录列举 / dsh 注册表合并
                                         #   + 控制器无头：建目录与注册请求 / 六个快捷入口 / 改根）
-tests/tasks-panel/run.sh                # 任务面板模型层（任务/队列模型：入队 · 移出 · 失败暂停队列 · 重启恢复
-                                        #   + .dsh/tasks 四文件持久化：index.json v1 兼容 / manual.json / queues.json / local.json 换键）
+tests/tasks-panel/run.sh                # 任务面板逻辑层（234 项）：
+                                        #   模型 126 项：入队 · 移出 · 失败暂停队列 · 重启恢复 + .dsh/tasks 四文件持久化
+                                        #     （index.json v1 兼容 / manual.json / queues.json / local.json 换键）
+                                        #   运行器 108 项：假 git + 假 dsh 驱动全流水线（分支进入 / 全局串行 /
+                                        #     失败暂停 / 队列级 PR 复用 / 取消 · 重试 · 跳过 / 重启恢复）
 tests/injected-scripts/run.sh           # 注入 dsh web 的 JS 守卫：脚本可解析（node --check）/ 每个 window.__dshX
                                         #   桥名都有脚本安装它 / 不含会被 Swift 吃掉的转义
 tests/l10n/run.sh                       # L10n 键名 lint（缺失键 / 重复键 / 中英缺一）

@@ -65,7 +65,7 @@ tests/shell-config/run.sh           # ShellConfig 旧 UserDefaults 一次性迁�
 tests/dsh-auth-cookies/run.sh       # dsh 认证 cookie 清理纯逻辑（22 项）
 tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
 tests/projects-panel/run.sh         # 项目面板：模型 45 项（projects 根 / 命名规则 / 列举 / 注册匹配）+ 控制器 49 项（无头，假 dsh 传输）
-tests/tasks-panel/run.sh            # 任务面板模型层：队列模型（入队 / 移出 / 失败暂停队列 / 跳过并继续 / 重启恢复）+ .dsh/tasks 四文件持久化（126 项）
+tests/tasks-panel/run.sh            # 任务面板逻辑层：队列模型 + .dsh/tasks 四文件持久化（126 项）+ 队列运行器（108 项）= 234 项
 tests/injected-scripts/run.sh       # 注入 dsh web 的 JS 片段守卫（JS 引擎可解析 + `window.__dsh*` 桥名对得上 + 不许出现会被 Swift 字符串吃掉的转义）
 tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到端（真实临时 $DSH_HOME：bootstrap → 升级 dsh → 回退 → 重启）+ tests/snapshot-panel/run.sh 窗口数据模型（SnapshotModel 解码 list/status/plan-rollback 的 JSON）
 ```
