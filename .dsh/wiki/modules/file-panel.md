@@ -1,14 +1,14 @@
 ---
 title: 模块：FilePanel.swift / CodeEditorView.swift（文件面板，预览+编辑+语法高亮）
 tags: [module, file-panel, preview, code-editor, syntax-highlight, highlightr, edit, line-numbers, tree-menu, image-zoom, composer-reference]
-updated: 2026-09-22T09:16:43Z
+updated: 2026-09-24T04:05:31Z
 sources: [platforms/macos/src/FilePanel.swift, platforms/macos/src/FilePanelTreeMenu.swift, platforms/macos/src/ComposerReference.swift, docs/file-panel-composer-reference.md, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImagePreviewView.swift, platforms/macos/src/ImageZoom.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/vendor/Highlightr/Highlightr.swift, platforms/macos/src/vendor/Highlightr/CodeAttributedString.swift, platforms/macos/src/vendor/Highlightr/Theme.swift, platforms/macos/build-app.sh, docs/ux-feedback.md, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/WorkspaceTabMemory.swift, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, tests/file-panel/]
 manual: false
 ---
 
 # 模块：FilePanel.swift + CodeEditorView.swift（文件面板）
 
-约 2358 + 500 行（2026-09-21 实测）。**右栏「预览」面板的现行实现**（`FilePanelController`）：在 PreviewPanel 的目录树 + 多标签页 + 图片/PDF/元数据预览基础上，新增**无后缀/点文件按文本预览、文件内编辑 + 行号、语法高亮、目录树右键菜单（新建/重命名/删除/在 Finder 中显示）、头部菜单按钮（打开项目 ▾ / 打开文件 ▾）、图片预览自适应 + 缩放、目录树宽度跨关闭恢复**。作为 PreviewPanel 的**强化分支**；PreviewPanel.swift 的**控制逻辑**零改动保留，仅作回滚对照（见 [preview-panel](preview-panel.md)），但其共享基件随全局配色统一与新控件一起演进（新增 `PanelMenuButton`）。
+约 2401 + 500 行（2026-09-24 实测）。**右栏「预览」面板的现行实现**（`FilePanelController`）：在 PreviewPanel 的目录树 + 多标签页 + 图片/PDF/元数据预览基础上，新增**无后缀/点文件按文本预览、文件内编辑 + 行号、语法高亮、目录树右键菜单（新建/重命名/删除/在 Finder 中显示）、头部菜单按钮（打开项目 ▾ / 打开文件 ▾）、图片预览自适应 + 缩放、目录树宽度跨关闭恢复**。作为 PreviewPanel 的**强化分支**；PreviewPanel.swift 的**控制逻辑**零改动保留，仅作回滚对照（见 [preview-panel](preview-panel.md)），但其共享基件随全局配色统一与新控件一起演进（新增 `PanelMenuButton`）。
 
 ## 与 PreviewPanel 的关系（可回滚优先）
 
@@ -38,7 +38,7 @@ manual: false
 
 | 组 | 条目 | 条件 |
 |---|---|---|
-| 加入对话 | 添加到对话 | 需 `hasRow` 且**能算出 `@` 引用**（`canReference`：非根、路径在工作区内、无引号/控制字符）且壳层已接线；**项目根**上置灰 |
+| 加入对话 | 添加到对话 | 需 `hasRow`（**空白处右键**没落在行上时整组不出现）且**能算出 `@` 引用**（`canReference`：非根、路径在工作区内、无引号/控制字符）且壳层已接线；**项目根**上置灰 |
 | 新建 | 新建文件夹 → 新建文件 | 仅点**文件夹**（含空白处右键）时出现；点在**文件**上不显示 |
 | 条目操作 | 重命名 → 删除 | 需 `hasRow`；**项目根目录**上置灰（不可改名/删除） |
 | 定位 | 在 Finder 中显示 | 单独成组（不改动该条目） |
@@ -54,7 +54,7 @@ manual: false
 - **语法/相对路径是纯模型** `ComposerReference.swift`（`ComposerReferenceFormatter.mention(path:root:isDirectory:)`）：引用相对**工作区根**（dsh 在会话 cwd 下解析 `@`），文件 `@src/foo.ts`、目录 **`@src/`（尾斜杠 = 目录）**、含空格走引号（目录是**不闭合**的 `@"my dir/`，dsh 的补全靠它继续下钻）；工作区根自己、工作区之外、名字含 `"`/控制字符 → **无引用**（菜单置灰，不编坏 token）；
 - **面板只决定「加哪一个」**：`onAddToConversation: ((ComposerReference) -> Void)?`（无监听方即置灰），壳层 `insertComposerReference()` 负责页面；
 - **壳层把 chip 节点直接写进 dsh web 的 Lexical 编辑器**（`composerReferenceScript` → `window.__dshInsertFileReference(mention,label,appearance)`）：取 `[data-composer-input].__lexicalEditor` → `editor._nodes.get('reference-chip').klass`（chip 类模块私有，只能从这里拿）→ 在 `editor.update()` 里 `root.selectEnd().insertNodes([可选空格, chip, 空格])`；**不伪造按键、不依赖焦点**。提交时由 source codec 序列化成 `ref` = `@path`，即模型读到的文本；
-- **失败都不静默**：桥接函数回 `{ok,reason}`（`bridge-unavailable` / `no-composer` / `no-editor`（启动页无会话）/ `unknown-composer` / `throw:…`），壳层弹非阻塞提示 + `app.log`；`DSH_UI_DEBUG=1` 的注入桥健康检查新增 `composer` / `composerEditor` 两个字段；
+- **失败都不静默**：桥接函数回 `{ok,reason}`（`bridge-unavailable` / `no-composer` / `no-editor`（启动页无会话）/ `unknown-composer` / `throw:…`），壳层弹非阻塞提示 + `app.log`；其中「还没打开会话」（WebView 未就绪，或桥回 `no-composer`/`no-editor`）**不是菜单置灰**，而是点击后提示 `files.addToConversationNoSession`「请先在对话中打开一个会话，再添加文件引用」，其余失败提示 `files.addToConversationFailed`；`DSH_UI_DEBUG=1` 的注入桥健康检查新增 `composer` / `composerEditor` 两个字段；
 - **QA 钩子**：`DSH_COMPOSER_TEST_PATH`（要引用的条目，绝对路径或相对项目目录）+ `DSH_COMPOSER_TEST_SESSION`（先打开的会话，因为新页面停在启动页没有 editor）——走的是**与右键同一条**格式化 + 注入路径，结果进 `app.log`；
 - **dsh 耦合**：输入框槽位标记、Lexical 实例挂载点、节点登记表、`reference-chip` 类型名与字段全部是 dsh 私有细节 —— 升级核对项见 `docs/dsh-version-impact.md` **B9** 与 `docs/file-panel-composer-reference.md`（含 WKWebView 实测记录）。
 
@@ -107,7 +107,7 @@ manual: false
 ## 与壳层 / 构建的数据流
 
 - 入口与 PreviewPanel 相同：main.swift 的 `previewInterceptorScript` 拦截 `/api/host.openPath` → `setRightPanel(.preview)` + `previewPanel.open(path:)`；
-- **菜单**：「文件 File」菜单（`menu.file`/`menu.save`）——`保存 Save`（⌘S）+「关闭页签」（⌘W，无页签时禁用）；`updateCloseTabMenuState()` 由 `onTabsChanged` 驱动；
+- **菜单**：「文件 File」菜单（`menu.file`/`menu.save`）——`保存 Save`（⌘S）+「关闭页签」（⌘W，无页签时禁用）；`updateCloseTabMenuState()` 由 `onTabsChanged` 驱动；**视图菜单**里本面板的入口是「显示/隐藏 文件面板」**⌥⌘F**（46e8e37 正名：L10n `menu.togglePreview`「预览面板」→ `menu.toggleFiles`，快捷键 `p`→`f`；⌥⌘P 已让给[项目面板](projects-panel.md)，选择器 `togglePreviewPanel(_:)` 作为纯内部标识未改）；
 - 编译清单由 `platforms/macos/swift-sources.sh` glob 自动收录（`src/*.swift`），新增文件无需登记；Highlightr 的 4 个 highlight.js 资源文件由 `build-app.sh` `cp` 到 `$APP/Contents/Resources/` **根**（Highlightr 按无子目录路径加载），缺失给 WARNING；
 - `Highlightr()` **初始化守卫**：显式构造并判 nil（`CodeAttributedString()` 会 force-unwrap），`highlightingAvailable()` 校验 4 个资源存在，缺失则退化为纯文本不崩溃。
 

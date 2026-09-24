@@ -1,8 +1,8 @@
 ---
 title: 模块：审查面板（Review / 变更审计）
 tags: [module, review, audit, session-log, zstd, read-only]
-updated: 2026-09-21T09:43:26Z
-sources: [platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, platforms/macos/src/main.swift, core/lib/review-log.js, core/bin/ohmy-core.js, core/index.js, core/tests/review-log.test.js, tests/review-panel/, docs/review-panel-design.md, platforms/macos/src/SkillsPanel.swift, scripts/local-ci.sh, .github/workflows/ci.yml, README.md, CHANGELOG.md]
+updated: 2026-09-24T04:04:23Z
+sources: [platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, platforms/macos/src/main.swift, core/lib/review-log.js, core/bin/ohmy-core.js, core/index.js, core/tests/review-log.test.js, tests/review-panel/, docs/review-panel-design.md, platforms/macos/src/SkillsPanel.swift, scripts/local-ci.sh, .github/workflows/ci.yml, README.md, CHANGELOG.md, docs/dsh-version-impact.md]
 manual: false
 ---
 
@@ -16,14 +16,14 @@ manual: false
 
 | 文件 | 规模 | 职责 |
 |---|---|---|
-| `core/lib/review-log.js` | 655 行 | 审计折叠：会话日志定位、Zstandard 多帧扫描/解码、三类记录合并、turn 归属、shell 启发式、诊断收集（经 `core/index.js` 导出） |
+| `core/lib/review-log.js` | 716 行 | 审计折叠：会话日志定位（**世代命名发现**）、Zstandard 多帧扫描/解码、三类记录合并、turn 归属、shell 启发式、诊断收集（经 `core/index.js` 导出） |
 | `core/bin/ohmy-core.js` | — | CLI 入口 `review sessions` / `review audit` / `review audit-file`（与面板共用同一 core 实现） |
 | `platforms/macos/src/ReviewLogModel.swift` | 390 行 | 纯 Foundation 展示模型：JSON 解码 + 文件分组 / turn 分组 / diff 折叠 / 过滤 / 标签 + **`ReviewLogStamp`（日志身份 = size + mtime）/ `auditNeedsRefresh(cached:onDisk:)`**（无 AppKit，可无头测试） |
-| `platforms/macos/src/ReviewPanel.swift` | 1122 行 | `ReviewPanelController`：右栏 UI、按需审计 + 缓存失效、可见时轮询、跟随 dsh web、主题与 L10n |
+| `platforms/macos/src/ReviewPanel.swift` | 1120 行 | `ReviewPanelController`：右栏 UI、按需审计 + 缓存失效、可见时轮询、跟随 dsh web、主题与 L10n |
 
 ## 数据来源：dsh 会话日志的三类记录
 
-日志位于 `$DSH_HOME/sessions/<workspace-slug>/<session-id>/session[.vN].jsonl[.zstd]`（一行一事件），审计只读其中三类（详见设计文档 §2–§3）：
+日志位于 `$DSH_HOME/sessions/<workspace-slug>/<session-id>/session[.vN].jsonl[.zstd]`（一行一事件），审计只读其中三类（世代命名与选档规则见下节，详见设计文档 §2–§3）：
 
 | # | 记录 | 提供什么 |
 |---|---|---|
@@ -32,6 +32,12 @@ manual: false
 | 3 | `tool/call name=bash`（含嵌套） | 仅命令文本（**没有**前后内容），按「可能写文件」启发式标记 |
 
 展示标签：`已应用`（结果 hunk）/`参数还原`（由参数还原，如 `run_code` 嵌套调用）/`全文写入`、`新建`（只记录写入内容）/`嵌套调用`；`bash` 直改与**失败/被拒调用**各自单列（不计入变更统计）。
+
+## 会话日志的世代命名与选档（v1.16.2 预先适配，ebaae9f）
+
+dsh 按 **Session 格式世代**给会话日志命名：世代 0 = `session.jsonl[.zstd]`，之后每代带小写 `.vN`（`session.v3.jsonl[.zstd]`）。dsh 0.1.5 起新建会话直接写 `session.v3.jsonl.zstd`；**被迁移过的老会话**会把原 `session.jsonl.zstd` 留成**冻结归档**、活日志换成新世代名（实测同一会话：归档 19 条事件 / 活日志 22 条，之后的新事件只进活日志）。只认世代 0 的旧逻辑在升级后会**静默**失灵——新会话一条都列不出来、老会话永远停在迁移前的内容（`app.log` 表现为 `review: listed 0/N sessions` + `review: audit FAILED`）。
+
+现在 `sessionLogCandidates(sessionDir)` 按**规范文件名** `^session(\.v[1-9][0-9]*)?\.jsonl(\.zstd)?$` 枚举（`.v0`/大写/前导零/临时后缀等非规范名一律拒绝），排序规则是**世代号最大者优先**（所以迁移会话读到的是活日志而非归档），**同代压缩优先**；`sessionLogFile()` 取候选首位，`parseSessionLogName()` / `sessionLogCandidates()` 经 `core/index.js` 导出暴露 `{generation, compressed}`。内置 dsh 仍钉 `0.1.2-rc.1`，因此这是为后续升级铺路的**预先适配**，日常行为不变。
 
 ## 为什么审计逻辑在 core（Node）而不是 Swift
 
@@ -65,6 +71,6 @@ node core/bin/ohmy-core.js review audit-file <path.jsonl[.zstd]> [--workspace <d
 
 ## 测试与 QA
 
-- `node --test core/tests/review-log.test.js`：**17 用例**（帧扫描、多帧解码、撕裂帧、三类记录合并、失败条目、shell 启发式、路径相对化、会话发现；无 zstd 的 Node 上相关 3 项自动 skip——本机 Node v20.19.6 实测 14 通过 / 3 跳过）；
+- `node --test core/tests/review-log.test.js`：**24 用例**（帧扫描、多帧解码、撕裂帧、三类记录合并、失败条目、shell 启发式、路径相对化、会话发现；ebaae9f 新增 6 条钉住世代命名契约：新世代会话可发现可审计、迁移会话读活日志、非规范名忽略、世代 0 向后兼容、压缩/非压缩两种新世代文件；无 zstd 的 Node 上相关 **4 项**自动 skip——本机 Node v20.19.6 实测 20 通过 / 4 跳过）；
 - `tests/review-panel/run.sh`（本机实测 **76 项 ok**）：① 模型层（64 项：JSON 解码 / 文件分组 / turn 分组 / diff 折叠 / 过滤 / 标签）；② **面板控制器无头回归**（`controller-tests.swift` + 假 core CLI stubs，12 项）——钉住「审计结果必须在日志变化后失效」：新建会话首次读出「0 文件」→ 日志增长后**无需任何操作**自动重读并列出文件 → 日志未变时**不重复**审计（对修复前代码实测 6 例 FAIL）；已接入 `.github/workflows/ci.yml` 与 `scripts/local-ci.sh`；
 - QA 钩子：`DSH_REVIEW_TEST=1` 启动即打开面板（**故意放最后**，`DSH_UI_DEBUG=1` 下也生效）；`DSH_REVIEW_TEST_PATH=<dir>` 固定审计的工作区；`--ui-debug` 下面板层级 dump 深度 8（与浏览器面板同级）+ 渲染完成后二次快照 `panel-review-loaded-debug.png`。

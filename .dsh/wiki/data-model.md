@@ -1,8 +1,8 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-09-21T08:45:10Z
-sources: [platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillInstaller.swift, docs/skills-manager-design.md, tests/skills-panel/, core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/DshWebCookieJanitor.swift, tests/shell-config/, tests/dsh-auth-cookies/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/TerminalWorkspaceTabs.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImageZoom.swift, docs/ux-feedback.md, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md]
+updated: 2026-09-24T04:04:53Z
+sources: [platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillInstaller.swift, docs/skills-manager-design.md, tests/skills-panel/, core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/DshWebCookieJanitor.swift, tests/shell-config/, tests/dsh-auth-cookies/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/TerminalWorkspaceTabs.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImageZoom.swift, docs/ux-feedback.md, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md, platforms/macos/src/ProjectsCore.swift, platforms/macos/src/ProjectsPanel.swift, docs/projects-panel-design.md, tests/projects-panel/, tests/dsh-rpc/, core/lib/snapshot.js, core/lib/snapshot-io.js, core/bin/ohmy-core.js, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, docs/session-snapshot-rollback-design.md, tests/snapshot-panel/, tests/snapshot-rollback/, platforms/macos/runtime-locks/]
 manual: false
 ---
 
@@ -34,6 +34,7 @@ manual: false
 | `wikiRootMode` | wiki 根模式（"in-repo" / "dsh-home"） | `WikiPaths` |
 | `wikiAutoRegenerate` | wiki 自动更新开关（默认关） | `WikiPaths` |
 | `wikiRegisterAgentsMd` | 写入 AGENTS.md 注册块开关（默认关） | `WikiPaths` |
+| `projectsRoot` | 项目面板的 projects 根目录（**绝对路径**；键缺失/空串/相对路径 = 用默认 `$DSH_HOME/oh-my-dsh/projects`，不改写文件） | `ProjectsCore.configKey` |
 
 > 凭据不走 UserDefaults：GitHub token 按仓库作用域存储，**读取优先文件**（免 Keychain 每次弹密码）、Keychain 兜底——解析顺序为 文件专属 `~/.dsh/tokens/<owner>-<repo>` → 文件通用 `~/.dsh/gh-token` → Keychain 专属（`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）→ Keychain 通用（`oh-my-dsh.issuerunner.github-token`）；面板保存时 Keychain 与文件**双写**（Keychain 条目设 `kSecAttrAccessibleAfterFirstUnlock`，文件 chmod 600，App 与外部工具/代理共用），见 [issue-runner-panel](modules/issue-runner-panel.md)。
 
@@ -56,8 +57,10 @@ manual: false
 
 ## 领域模型（代码内）
 
-- **`RightPanel` 枚举**（main.swift）：`none / preview / terminal / wiki / tasks / browser / channel / review / skills`——右栏插槽互斥状态（`rightPanelKind` 持久化，含 `"review"` / `"skills"`）；
-- **`ProjectDirectory`**（main.swift）：壳层共享的"活动项目目录"（`static var current`），跟随 dsh web 当前会话（见 `sessionTrackerScript` 数据流），`resolveProjectDirectory` 优先返回它；
+- **`RightPanel` 枚举**（main.swift）：`none / projects / preview / terminal / wiki / tasks / browser / channel / review / skills`——右栏插槽互斥状态（`rightPanelKind` 持久化，含 `"review"` / `"skills"` / `"projects"`；项目面板是活动栏首位、⌥⌘P）；
+- **`ProjectDirectory`**（main.swift）：壳层共享的"活动项目目录"（`static var current`），跟随 dsh web 当前会话（见 `sessionTrackerScript` 数据流），`resolveProjectDirectory` 优先返回它；写入收口在 `AppDelegate.adoptProjectDirectory(_:)`（`standardizingPath` + `fileExists` 守卫；变化时重根文件/终端/wiki/任务/通道/审查/项目七个面板），dshSession 跟随与项目面板快捷入口共用它；
+- **`ProjectWorkspace`**（ProjectsCore.swift，纯模型）：`{name, path, modifiedAt?, registered, workspaceId?, sessionCount}`——一个 projects 根下的直属子目录 + 《dsh 注册表怎么说它》；`ProjectsCore.resolvedRoot` 的有效根来源为 `RootSource`（`environment`(QA `DSH_PROJECTS_TEST_ROOT`) > `config`(`projectsRoot`) > `fallback` > `invalidConfig`），`validateName` 拒绝空/含 `/` 或 `:`/控制字符/`.`/`..`/以 `.` 开头/>64 字符；
+- **`DshWorkspaceOps`**（DshWebRPC.swift）：项目面板要的三条 dsh 操作——`register`（`workspace/create`，幂等，返回 `workspaceId`）、`createSession`（先 `workspaceId` 后退 `cwd`，**仅为兜底**）、`newestSessionId`（`session/list` 中 cwd 与目标 `canonical` 相等、**跳过 `blank == true`**、running 优先、再按 `updatedAt` 最大）；
 - **`L10n.table`**：`[String: (zh: String, en: String)]` 文案表，`L10n.tr(key)` 按 `lang` 取文案并填充 `%@/%d`；
 - **`WikiPage`**（WikiPanel.swift）：`path / title / tags / updated / sources / manual`，由 frontmatter 解析而来；
 - **`WikiScanner.Index`**：`pages`、`backlinks`（页面绝对路径 → 引用它的页面列表）、`repoRoot`、`signature`（路径 → mtime，用于变更检测）；
@@ -77,11 +80,32 @@ manual: false
 
 ## dsh 会话日志（审查面板数据源，只读）
 
-- **位置**：`$DSH_HOME/sessions/<workspace-slug>/<session-id>/session[.vN].jsonl`（压缩时 `.jsonl.zstd`），一行一事件；`.vN` 是 dsh 的 Session 格式世代（0.1.2 写 `session.jsonl`，0.1.5 写 `session.v3.jsonl`），读取器按规范名枚举并取**世代最大者**；
+- **位置**：`$DSH_HOME/sessions/<workspace-slug>/<session-id>/session[.vN].jsonl`（压缩时 `.jsonl.zstd`），一行一事件；`.vN` 是 dsh 的 Session 格式世代（0.1.2 写 `session.jsonl`，0.1.5 写 `session.v3.jsonl`），`core/lib/review-log.js` 的 `sessionLogCandidates()` 按规范名正则 `^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$` 枚举（`.v0` / 大写 / 临时后缀等非规范名一律忽略），按 **generation 降序、同代压缩优先** 排序取第一个（迁移会话因此读活日志而不是冻结归档）；
 - **格式要点**：dsh 的 Zstandard 后端把日志写成**多个独立可解压帧的拼接**（每批落盘一帧），一次性解压只拿得到**第一帧**（实测真实日志仅返回 214 字节的会话头）；`core/lib/review-log.js` 的 `scanZstdFrames()` 只走帧头/块头逐帧解码。Apple 的 Compression 框架在这套 SDK 上**没有 zstd 算法**，Swift 侧无法自行解码——这是审计逻辑放在 core、且必须用**内置** Node（v24，含 `zlib.zstdDecompressSync`）的原因（`CoreBridge.run(…, preferBundledNode: true)`）；
 - **审计读取的三类记录**：① `tool/result` → `data.meta.diffs`（已应用 hunk，**仅顶层** `write`/`edit`）；② 顶层 `tool/call` / 嵌套 `tool/code-dispatch-start` → `arguments`（参数还原，覆盖 `run_code` 嵌套调用与新建文件全文）；③ `tool/call name=bash` → 命令文本（无前后内容）。turn 归属来自 `turn/start` + `tool/call.turn`（嵌套派发**继承父调用**的 turn）；
 - **缓存身份 `ReviewLogStamp`（Swift，`ReviewLogModel.swift`）**：`{size, mtimeMs}`，由 `ReviewLogStamp.read(path)` 从文件属性取；`auditNeedsRefresh(cached:onDisk:)` 只在两者相等时复用缓存，`onDisk == nil`（路径未知/文件消失）判为「无法判断」保留缓存。因为日志**只增不减**，同一份日志上的审计结果永远有效——这是「新建会话不再只显示会话、看不到文件」的关键（PR #49）；
 - **输出契约**（`node core/bin/ohmy-core.js review sessions|audit|audit-file`）与每条 entry 的字段（`surface/status/category/path/hunks/added/removed/command/suspicion/note`）见 [review-panel](modules/review-panel.md) 与 docs/review-panel-design.md §5；读取失败（帧解压失败 / 尾部未完成帧 / 无法解析的 JSONL 行）一律进 `diagnostics` 显式报出，不静默丢数据。
+
+## 会话快照与回退（`$DSH_HOME/shell/`，v1.16.2）
+
+dsh 升级会把会话日志换成新世代且**上游没有降级通道**，故壳层在 App / 内置 dsh 版本组合变化前留一份可回退的数据快照。core 侧 `core/lib/snapshot.js`（纯决策/事务状态机，无 IO）+ `core/lib/snapshot-io.js`（落盘，全部经可注入的 `io`），壳层经 `CoreBridge` 调 CLI `ohmy-core snapshot launch|tree|create|plan-rollback|rollback|finish-rollback|delete`（`preferBundledNode: true`）。
+
+```
+$DSH_HOME/shell/
+  dsh-state.json                  # 唯一参与判断的状态文件
+  rollback-journal.json           # 回退事务日志（完成后删除）
+  snapshots/<id>/{meta.json,sessions/,storages/}   # id = <YYYYMMDD-HHMMSS>_app<A>_dsh<D>_<reason>
+  snapshots/trees/<dshVersion>/   # 树池：runtime/dsh 整树按 dsh 版本去重
+  snapshots/quarantine/<stamp>/{quarantine.json,sessions/}
+```
+
+- **进快照的内容只有 `sessions/` + `storages/`**（`SNAPSHOT_INCLUDES`）；`SNAPSHOT_EXCLUDES` 明确排除 `shell`（含 `dsh-web.json` 里的 launch token）、`credentials` / `credentials.yaml` / `.credentials.yaml` / `profiles` / `settings.yaml`（密钥与账号）、`tokens`、`channels`（通道绑定，回退会丢）、`browser` / `browser-dev`（CEF profile）、`skills`、`attachments`、`scaffold-stages`；
+- **落盘策略**：`cloneDir` 在 darwin 优先 APFS clonefile（`cp -cR`，实测 306 MB / 246 文件 0.124 s、几乎不占额外空间），其他平台递归 copy（Linux CI 走同一路径）；快照目录名带 `reason`（`bootstrap` / `combo-change` / `dsh-upgrade` / `pre-rollback`），`meta.json` 记 `fromCombo`/`forCombo`/`counts`/`logicalBytes`/`restoredFrom`，`dshTree` **只在 dsh 版本变化时非 null**；
+- **状态 `dsh-state.json`**：`version` / `dataCombo{app,dsh}`（当前会话数据所属的组合）/ `lastLaunch{combo,at}` / `rollback{snapshot,at,pending}` / `upgradePinned{dsh,at,reason}`（回退后钉住自动升级）/ `history[]`（只追加）。判断规则只有一条（`decideLaunch`）：状态不存在 → `bootstrap` 快照；`currentCombo != dataCombo` → `combo-change` 快照；一致 → 不打。跑完把 `dataCombo`/`lastLaunch` 写回；
+- **回退事务（原子性）**：脚本周转 `JOURNAL_STEPS = ['stop-server','snapshot-live','restore-data','quarantine','swap-tree','write-state']`，每步写 `rollback-journal.json`；目标快照里**不存在**的会话目录 rename 进 `quarantine/<stamp>/sessions/…` 并落 `quarantine.json` 清单（**不删除**）；目标快照里存在的老会话还原其文件并删除其新世代文件（防「世代分叉」）。回退必须 `--server-stopped`（活着的 dsh 会立刻把会话再迁移回去，所以回退后退出 App），完成后 `state.upgradePinned` + `rollback` + `history` 一起写、journal 清空；
+- **裁剪保护**（`pruneSnapshots`，默认 `keep = 3`）：保护 ① `state.rollback.snapshot`（最近一次回退目标）② `forCombo == 当前运行组合` 的那一份 ③ 回退正在用的目标；树池只留「被保留快照引用到的版本 + 当前安装版本」，隔离区不限额、只增不删；
+- **闭包校验**：抓树/换树都可用 `--expected-lock <package-lock.json>` 比对提交 lock 的指纹——不一致的树**拒绝入池 / 拒绝换入**（回报 `needsTreeInstall`），见 `platforms/macos/runtime-locks/<dsh-spec>/`（随 App 分发到 `Contents/Resources/runtime-locks/`）；
+- `snapshot.lock`（快照/回退互斥锁）只出现在设计稿 §4，当前代码中未见实现——**待确认**。
 
 ## RPC 信封（与 dsh web 通信）
 
@@ -93,11 +117,11 @@ POST /api/session.list
 → { "result": { "ok": true, "value": { "items": [ { "id": "...", "cwd": "...", "running": true, "updatedAt": 0, "blank": false } ] } } }
 ```
 
-已用到的 method：`session.list`（cwd 解析、wiki 轮询 running）、`session.create`（payload 可含 `workspaceId` 或 `cwd` 创建会话）、`session.prompt`（payload: sessionId + mode "queue" + content）、`session.cancel`（payload.sessionId 取消生成会话，`WikiRPC.cancel`）、`workspace.list`（`WikiRPC.resolveWorkspaceId` 按规范化路径匹配工作区）、`host.openPath`（被 JS 拦截，不走原生打开）。曾用 `workspace.insertSessionBefore` 的 `WikiRPC.attachOrphans`（把未分组会话归入工作区）已移除（修复 15，build 61→62）：RPC 无 attach 接口，`insertSessionBefore` 只能移动**已入账**会话。
+已用到的 method：`session.list`（cwd 解析、wiki 轮询 running）、`session.create`（payload 可含 `workspaceId` 或 `cwd` 创建会话）、`session.prompt`（payload: sessionId + mode "queue" + content）、`session.cancel`（payload.sessionId 取消生成会话，`WikiRPC.cancel`）、`workspace.list`（`WikiRPC.resolveWorkspaceId` 按规范化路径匹配工作区）、`workspace/create`（`DshWorkspaceOps.register` 把已存在的目录注册为 dsh 工作区，**幂等**（`{request:{path}}` → `{workspace:{workspaceId,…},created}`），端点常量 `DshWebRPC.workspaceCreate`）、`host.openPath`（被 JS 拦截，不走原生打开）。**`session/list` 的 `blank` 语义**：dsh web 只渲染「当前那一条」blank 会话，所以 `DshWorkspaceOps.newestSessionId`（「在 dsh 中打开」）跳过 blank，面板「新会话」改由注入桥 `window.__dshNewSession(工作区名)` 点 dsh 侧栏工作区行自带的 `+`（dsh 自己复用/新建 + open），壳层不自己建 blank 会话。曾用 `workspace.insertSessionBefore` 的 `WikiRPC.attachOrphans`（把未分组会话归入工作区）已移除（修复 15，build 61→62）：RPC 无 attach 接口，`insertSessionBefore` 只能移动**已入账**会话。
 
 - **dsh ≥ 0.1.2 的两种接口面**（core/lib/dsh-rpc.js）：一元 RPC 仍是 `POST /api/<endpoint>` + 同一 client-request 信封，但**端点改斜杠**且参数包在 `payload.args.<request|_request>`（session/list 用 `_request`；session/create、session/rename、session/prompt、session/cancel、session/page 用 `request`），并且 `/api` 只认 **cookie**——`GET /?token=<launch token>` 换 `dsh-auth-*` Cookie（token 每次进程随机，壳层从 dsh web 自报的入口地址取、经 `channel run --dsh-token` 传给 runner）。0.1.2 **没有 workspace.list**（改读 `$DSH_HOME/storages/workspace.json`）、没有 session.history/search（末条回复走 session/page，`throughSeq` 取 session/list 的 `projections.asOfSeq`）。传输层按端点记忆接口面，先试斜杠端点、404 再回退点号方法，两种版本通吃。
 
-- **持久化 workspace store 是 dsh 的私有域存储（2026-09-10 加护栏，R4）**：0.1.2 无 `workspace.list` 后，枚举工作区只能读 `$DSH_HOME/storages/workspace.json`——`unit: {name:"workspace", version:2}` + `global.workspaceIds`（顺序）+ `tables.workspaces`（`{path,title,sessionIds,createdAt,updatedAt}`），由 dsh 的 `defineDomain({name:'workspace',version:2})`（`@deepseek-ai/dsh-workspace/lib/invariant.js`）定义、带 zod 校验与 `pendingMutation` 中断恢复标记，**不是 API**，上游可随时改字段/搬文件/升版本。core（`core/lib/workspace-store.js`，导出 `SUPPORTED_DOMAIN`/`describeStore`）与 Swift（`DshWebRPC.swift` 的 `DshWorkspaceStore.readStore` → `StoreRead`）两侧读取器都校验域名与版本并给出原因：`ok` / `missing`（**安静**，0.1.1 本就正常没有该文件）/ `unreadable` / `unexpected`（无 `tables.workspaces` 或域名不符）/ `version`（版本不符，仍**尽力解析**）；非 ok 的原因经 `describeStore()`（core）/ `StoreRead.diagnostic`（Swift）报出——core 走频道 runner 日志（`channel-runner.js` 传 `log: m => console.log(m)`）、Swift 走 `AppLog`（`app.log`），形如 `[workspace-store] persisted workspace store … is domain workspace v3, this build understands v2 — read best-effort`。**只读不写**；`main.swift` 的 `persistedWorkspacePath` 已改为调用 `DshWorkspaceStore`（原先三份各自解析该私有格式的代码收口为 core + Swift 两份）。受影响的五个静默断裂点与升级验证命令见 docs/dsh-version-impact.md §6.2。
+- **持久化 workspace store 是 dsh 的私有域存储（2026-09-10 加护栏，R4）**：0.1.2 无 `workspace.list` 后，枚举工作区只能读 `$DSH_HOME/storages/workspace.json`——`unit: {name:"workspace", version:2}` + `global.workspaceIds`（顺序）+ `tables.workspaces`（`{path,title,sessionIds,createdAt,updatedAt}`），由 dsh 的 `defineDomain({name:'workspace',version:2})`（`@deepseek-ai/dsh-workspace/lib/invariant.js`）定义、带 zod 校验与 `pendingMutation` 中断恢复标记，**不是 API**，上游可随时改字段/搬文件/升版本。core（`core/lib/workspace-store.js`，导出 `SUPPORTED_DOMAIN`/`describeStore`）与 Swift（`DshWebRPC.swift` 的 `DshWorkspaceStore.readStore` → `StoreRead`）两侧读取器都校验域名与版本并给出原因：`ok` / `missing`（**安静**，0.1.1 本就正常没有该文件）/ `unreadable` / `unexpected`（无 `tables.workspaces` 或域名不符）/ `version`（版本不符，仍**尽力解析**）；非 ok 的原因经 `describeStore()`（core）/ `StoreRead.diagnostic`（Swift）报出——core 走频道 runner 日志（`channel-runner.js` 传 `log: m => console.log(m)`）、Swift 走 `AppLog`（`app.log`），形如 `[workspace-store] persisted workspace store … is domain workspace v3, this build understands v2 — read best-effort`。**只读不写**；`DshWorkspaceStore.canonical` 已改用 **`realpath(3)`**（而非 Foundation 的 `resolvingSymlinksInPath()`）——macOS 目录列举给出的 `/private/var/…` 与用户/dsh 存写的 `/var/…` 由此归一，路径不存在时回落 standardize 形式（否则项目面板会把已注册工作区标成「未注册」、`workspaceId(forPath:)` 也匹配不到）；`main.swift` 的 `persistedWorkspacePath` 已改为调用 `DshWorkspaceStore`（原先三份各自解析该私有格式的代码收口为 core + Swift 两份）。受影响的五个静默断裂点与升级验证命令见 docs/dsh-version-impact.md §6.2。
 
 **会话跟随**：`rebuildWebView` 注入 `sessionTrackerScript`，监听 web 客户端 RPC 请求体中的 `payload.sessionId`（`session.history/prompt/rename/selectModel`）与 `payload.parentSessionId`（`subagent.list`），id 变化时经 `dshSession` message handler 上报；壳层 `DSHSessionRPC.fetchSessionCwd(port:sessionId:)` 按 id 查 `session.list` 取 cwd 更新 `ProjectDirectory`，随后**无条件**触发 `tasksPanel.workspaceChanged()`（即使 fetch 失败 cwd 为 nil 也触发——面板解析器回退扫描 `workspace.list`）。
 

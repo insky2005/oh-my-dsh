@@ -1,14 +1,14 @@
 ---
 title: 模块：PreviewPanel.swift（预览面板，回滚基线）
 tags: [module, preview, file-tree, tabs, rollback]
-updated: 2026-09-21T09:43:26Z
-sources: [platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/SkillsPanel.swift, tests/skills-panel/, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, docs/ux-feedback.md, CHANGELOG.md]
+updated: 2026-09-24T04:05:31Z
+sources: [platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/ProjectsPanel.swift, tests/skills-panel/, tests/projects-panel/, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, docs/ux-feedback.md, CHANGELOG.md]
 manual: false
 ---
 
 # 模块：PreviewPanel.swift（预览面板，回滚基线）
 
-1765 行（2026-09-21 实测）。右栏预览面板的**回滚基线**：`feature/file-panel` 已把现行预览实现改为其强化分支 [FilePanel](file-panel.md)（`FilePanelController`），仅作回滚对照/兜底。面板**行为**未变，但其中的共享基件已随 2026-09-17 的面板配色统一一并修改（`DynamicFillView.Kind` 收敛为 `.panel`/`.custom`、`HoverButton`/`CustomIconButton` 改走 `PanelControl`、新增 `PanelTabButton`）——它不再是「逐字节未改」的代表，配色令牌见 `docs/ui-color-scheme.md`。本文档描述 PreviewPanel 原始能力（FilePanel 继承其大部分）：点击 dsh web 对话中的文件链接（工具产物）不再弹系统默认应用，而是在面板内预览；左侧为项目目录树。同时是**共享 UI 组件库**。
+1797 行（2026-09-24 实测）。右栏预览面板的**回滚基线**：`feature/file-panel` 已把现行预览实现改为其强化分支 [FilePanel](file-panel.md)（`FilePanelController`），仅作回滚对照/兜底。面板**行为**未变，但其中的共享基件已随 2026-09-17 的面板配色统一一并修改（`DynamicFillView.Kind` 收敛为 `.panel`/`.custom`、`HoverButton`/`CustomIconButton` 改走 `PanelControl`、新增 `PanelTabButton`）——它不再是「逐字节未改」的代表，配色令牌见 `docs/ui-color-scheme.md`。本文档描述 PreviewPanel 原始能力（FilePanel 继承其大部分）：点击 dsh web 对话中的文件链接（工具产物）不再弹系统默认应用，而是在面板内预览；左侧为项目目录树。同时是**共享 UI 组件库**。
 
 ## 共享 UI 组件（其他面板复用）
 
@@ -21,7 +21,7 @@ manual: false
 | `ActivityBarButton` | 活动栏图标按钮，图标颜色烘烤进图片（`BakedIconView`）保证深色可见 |
 | `PanelIconButton` | 面板头部图标按钮（按深浅色刷新 tint；样式继承 `CustomIconButton`，故常态即面板控件常态档） |
 | `HeaderLabel` | 自绘文本标签（深浅色自适应颜色） |
-| `CustomIconButton` | 自绘图标按钮（`onAction` 闭包、hover、enabled 态；`Glyph` 枚举：plus/close/folder/openInApp/reveal/play/stop + `symbol(String)`——b7c5407 起支持 SF Symbol 字形（tinted 系统图片，15pt 居中绘制，如任务面板刷新按钮 `arrow.clockwise`），refresh 手绘圆形箭头随之移除）；可配 `size`（默认 26）、`hoverColor`（hover 高亮色；仅页签关闭按钮用 `systemRed` 特例）；常态/高亮底色走 `PanelControl`（`showsBackground` 已删除） |
+| `CustomIconButton` | 自绘图标按钮（`onAction` 闭包、hover、enabled 态；`Glyph` 枚举：plus/close/folder/openInApp/reveal/play/stop/`folderPlus` + `symbol(String)`——b7c5407 起支持 SF Symbol 字形（tinted 系统图片，15pt 居中绘制，如任务面板刷新按钮 `arrow.clockwise`），refresh 手绘圆形箭头随之移除）；**`folderPlus`**（b0e1ca4 新增、9867365 按参考图 `pic/folder+.jpg` 重画）供[项目面板](projects-panel.md)的「添加工作区」按钮用——文件夹轮廓 + 右上**朴素大加号**（SF Symbols 的 `folder.badge.plus` 画的是圆圈角标，语义/观感都不对，故自绘）：几何写在 44×38 参照系里等比缩放、线宽 `max(2·scale, 1.2)`，体顶线与右壁在加号处**留断口**（不画背景色，深浅色/悬停底色上都正确）；可配 `size`（默认 26）、`hoverColor`（hover 高亮色；仅页签关闭按钮用 `systemRed` 特例）；常态/高亮底色走 `PanelControl`（`showsBackground` 已删除） |
 
 ## PreviewPanelController 职责
 
@@ -37,9 +37,9 @@ manual: false
 
 ## 与壳层的数据流
 
-- 入口是 main.swift 的 JS 拦截：`window.fetch` 拦截 `/api/host.openPath` → `postMessage` → AppDelegate `userContentController` → `setRightPanel(.preview)` + `previewPanel.open(path:)`；
+- 入口是 main.swift 的 JS 拦截：`window.fetch` 拦截 `/api/host.openPath` → `postMessage` → AppDelegate `userContentController` → `setRightPanel(.preview)` + `previewPanel.open(path:)`；拦截器同时认 dsh ≥0.1.2 的 `/api/session/openWorkspacePath`（三种载荷形状 `payload.args.request.path` / `args.path` / `payload.path` 都取，d41343f）；
 - 拦截器伪装成功响应（`{type:"server-response", result:{ok:true, value:{opened:true}}}`），页面不会打开系统应用，客户端 promise 正常 resolve；
-- 调试：`DSH_PREVIEW_DEBUG=1` 时探针（`previewDebugProbeJS`）验证拦截器安装/命中/伪响应；`DSH_PREVIEW_TEST_PATH` 启动自测。
+- 调试：`DSH_PREVIEW_DEBUG=1` 时探针（`previewDebugProbeJS`）验证拦截器安装/命中/伪响应，并**同时演练新旧两种请求形状**（`host.openPath` 与 `session/openWorkspacePath` + `payload.args.request.path`，0d0d4f1）——只认老形状的拦截器会当场失败，而不是在 UI 里静默；`DSH_PREVIEW_TEST_PATH` 启动自测。
 
 ## 已知行为/限制
 
