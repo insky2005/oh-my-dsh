@@ -37,4 +37,16 @@ swiftc -swift-version 5 -module-cache-path "$CACHE" \
 "$TMP/tasks-runner-tests"
 rm -rf "$TMP"
 
+echo "--- tasks list view models (badges / actions / queue header / summary) ---"
+TMP="$(mktemp -d)"
+cp "$SRC/TasksCore.swift" "$TMP/TasksCore.swift"
+cp "$SRC/TasksUI.swift" "$TMP/TasksUI.swift"
+cp stubs.swift "$TMP/stubs.swift"          # the L10n stand-in
+cp ui-tests.swift "$TMP/main.swift"        # top-level code needs the main.swift name
+swiftc -swift-version 5 -module-cache-path "$CACHE" \
+  -o "$TMP/tasks-ui-tests" "$TMP/TasksCore.swift" "$TMP/TasksUI.swift" \
+  "$TMP/stubs.swift" "$TMP/main.swift"
+"$TMP/tasks-ui-tests"
+rm -rf "$TMP"
+
 echo "tasks-panel tests passed"

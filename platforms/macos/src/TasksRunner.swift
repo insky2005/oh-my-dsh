@@ -516,17 +516,21 @@ final class TasksRunner {
         return queue
     }
 
+    /// Edit a queue's settings. A double-optional branch distinguishes "leave it
+    /// alone" (nil) from "no branch at all" (.some(nil)).
     @discardableResult
     func updateQueue(_ queueID: String,
                      name: String? = nil,
                      branch: String?? = nil,
                      baseBranch: String? = nil,
-                     autoPR: Bool? = nil) -> Bool {
+                     autoPR: Bool? = nil,
+                     prUrl: String? = nil) -> Bool {
         guard let qi = board.index(ofQueue: queueID) else { return false }
         if let name = name { board.queues[qi].name = name }
         if let branch = branch { board.queues[qi].branch = branch }
         if let baseBranch = baseBranch { board.queues[qi].baseBranch = baseBranch }
         if let autoPR = autoPR { board.queues[qi].autoPR = autoPR }
+        if let prUrl = prUrl { board.queues[qi].prUrl = prUrl }
         persist()
         return true
     }

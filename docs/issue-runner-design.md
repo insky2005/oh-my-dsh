@@ -327,6 +327,15 @@ struct Queue {
 
 **配色纪律**（`docs/ui-color-scheme.md`）：面板根 / header / toolbar / 状态条用 `DynamicFillView()`（`.panel`），卡片底与图标按钮用 `PanelControl.fill(dark:highlighted:)`，**不新写** `calibratedWhite` 灰阶；卡片在 `viewDidChangeEffectiveAppearance` 重绘取色。
 
+**实现备注（2026-09-24，第 6 步）**：
+
+- 分层：`TasksUI.swift` 只放**视图模型**（`TaskCardModel` / `QueueHeaderModel` / `TasksSummaryModel`，纯 Foundation，`tests/tasks-panel` 里 67 项断言钉住「徽标写什么、给哪个按钮、按钮是否可用」），`TaskCardView.swift` 只做渲染与转发点击，面板只做装配 —— UI 规则因此能在没有窗口的环境里回归；
+- 交互沿用 v1 手感：**点卡片（非按钮处）= 展开 / 收起**，展开区显示队列 / 会话 / 错误 / 正文与操作行；展开状态记在控制器（`expandedTaskID`），卡片每次重建都不丢；
+- **队列头**：`▸/▾` 折叠（用户队列默认展开，issue 自动队列默认折成一行）、名称、`分支 → 基线`、`n/m` 进度、状态徽标（活跃 / 暂停 / 已完成）、失败计数、`开始`/`暂停`/`打开 PR`、`⋯`（重命名 / 改分支 / 完成后自动开 PR 开关 / 删除）；
+- **来源筛选**（全部 / Issue / 手动）只影响渲染，不改任务；
+- 列表重建用**指纹比对**（任务状态 + PR + 队列状态），3 秒的步进定时器不会打断滚动或关掉已弹出的菜单；
+- 视图模型测试当场抓出两处真问题：`shortPR` 原先只认 REST 形式的 URL（web 形式 `github.com/o/r/pull/42` 会原样显示），以及队列**活跃时「开始」按钮仍置真**（视图靠 `canPause` 优先而侥幸掩盖）。
+
 ### V2-8a 队列总览与计数
 
 「有几个队列、每个队列什么状态、队列下哪些任务什么状态」由三层一起回答：
@@ -388,7 +397,7 @@ QA 钩子：`DSH_TASKS_TEST=1` 启动即开面板；`DSH_PANEL_TEST=` 全量核�
 
 ### V2-11 实施拆分（模型先行）
 
-> **进度**：第 1 步（token 只从文件读取）已完成 —— commit `0a8f535`；第 5 步（issue 任务改走自动单任务队列 / 面板接运行器）已完成 —— 面板删除 `startTask`/`pollSession`/`openPR`/`finishCurrentTask`/`gitCheckoutBranch`/`gitBranchPushed`/`issueFixPrompt` 与 Swift 版 `TaskIndex`，行模型换成 `TaskItem`，执行全部经 `TasksRunner`（3s 定时 `step()`、`updateBoard` 合并 issues、`syncFromBoard` 渲染、`findExistingPR` 复用）；第 4 步（手动创建任务）已完成 —— `TaskDraft`（两个字段 + 校验，L10n 键 `tasks.errName` / `tasks.errBody`）/ `QueueChoice`（**只列用户队列**，issue 自动队列不是目的地）/ 运行器 `createManualTask` · `updateManualTask` · `deleteManualTask`（运行中拒绝删除，删除即退出所有队列并清掉本机 session），UI 表单留到第 6 步；第 2 步（队列模型 + 四文件持久化）已完成 —— `TasksCore.swift` / `TasksStore.swift` + `core/lib/tasks.js` 同步 + `tests/tasks-panel/`（126 项）；第 3 步（队列运行器）已完成 —— `TasksRunner.swift`（含 git 三步显式检查 / 全局串行 / 失败暂停 / 队列级 PR 复用 / 取消·重试·跳过 / 重启恢复）+ `runner-tests.swift`（108 项）。
+> **进度**：第 1 步（token 只从文件读取）已完成 —— commit `0a8f535`；第 6 步（卡片式任务清单）已完成 —— `TasksUI.swift`（视图模型：徽标 / 元信息 / 主操作 / 队列头 / 摘要，**无头可断言**）+ `TaskCardView.swift`（卡片 + 队列头 + 徽标渲染）+ 面板列表（`NSScrollView + NSStackView`，队列分区、未入队区、来源筛选、新建/编辑任务表单、新建队列表单、「加入队列 ▾」菜单、队列 ⋯ 菜单）；第 5 步（issue 任务改走自动单任务队列 / 面板接运行器）已完成 —— 面板删除 `startTask`/`pollSession`/`openPR`/`finishCurrentTask`/`gitCheckoutBranch`/`gitBranchPushed`/`issueFixPrompt` 与 Swift 版 `TaskIndex`，行模型换成 `TaskItem`，执行全部经 `TasksRunner`（3s 定时 `step()`、`updateBoard` 合并 issues、`syncFromBoard` 渲染、`findExistingPR` 复用）；第 4 步（手动创建任务）已完成 —— `TaskDraft`（两个字段 + 校验，L10n 键 `tasks.errName` / `tasks.errBody`）/ `QueueChoice`（**只列用户队列**，issue 自动队列不是目的地）/ 运行器 `createManualTask` · `updateManualTask` · `deleteManualTask`（运行中拒绝删除，删除即退出所有队列并清掉本机 session），UI 表单留到第 6 步；第 2 步（队列模型 + 四文件持久化）已完成 —— `TasksCore.swift` / `TasksStore.swift` + `core/lib/tasks.js` 同步 + `tests/tasks-panel/`（126 项）；第 3 步（队列运行器）已完成 —— `TasksRunner.swift`（含 git 三步显式检查 / 全局串行 / 失败暂停 / 队列级 PR 复用 / 取消·重试·跳过 / 重启恢复）+ `runner-tests.swift`（108 项）。
 
 1. `refactor(tasks): GitHub token 只从文件读取（移除 Keychain 读写）` —— 独立、低风险，先落；含 L10n 文案与 README；
 2. `feat(tasks-core): 队列模型与四文件持久化` —— `TaskItem` / `Queue` / `QueueStore` / `TaskStore` + `core/lib/tasks.js` 同步 + 无头单测（**模型先行，跑通后再接执行器**）；

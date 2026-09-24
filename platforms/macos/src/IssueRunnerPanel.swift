@@ -18,7 +18,7 @@ final class IssueRunnerRootView: NSView {
 /// (step 6) renders manual tasks and queues from the same board.
 typealias IssueRunnerTask = TaskItem
 
-final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+final class IssueRunnerPanelController: NSObject {
 
     var onRequestHide: (() -> Void)?
     /// Provides the dsh web port (set by AppDelegate, like other panels).
@@ -30,31 +30,52 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
 
     let view = IssueRunnerRootView()
 
+    /// Which tasks the list shows (the segmented control in the toolbar).
+    enum SourceFilter: Int {
+        case all = 0, issues = 1, manual = 2
+
+        func matches(_ task: TaskItem) -> Bool {
+            switch self {
+            case .all: return true
+            case .issues: return task.source == .github
+            case .manual: return task.source == .manual
+            }
+        }
+
+        /// User queues only ever hold manual tasks, so the queue section gains
+        /// nothing from an issues filter; the auto queues are hidden for manual.
+        var showsUserQueues: Bool { self != .issues }
+        var showsAutoQueues: Bool { self != .manual }
+    }
+
     // UI
     private let headerTitle = HeaderLabel()
     private let configButton: CustomIconButton
     private let refreshButton: CustomIconButton
     private let runAllButton: CustomIconButton
+    private let newTaskButton: CustomIconButton
     private let hideButton: CustomIconButton
     private let repoLabel = HeaderLabel()
-    private let tableView = NSTableView()
-    private let tableScroll = NSScrollView()
+    private let summaryLabel = HeaderLabel()
+    private let filterControl = NSSegmentedControl()
+    private let listScroll = NSScrollView()
+    private let listStack = NSStackView()
+    private let emptyLabel = NSTextField(labelWithString: "")
     private let statusBar = DynamicFillView()
     private let statusLabel = HeaderLabel()
     private let statusSpinner = NSProgressIndicator()
 
     // State
-    /// Github-task VIEW of the runner's board (issue numbers are per repo, so a
-    /// workspace switch drops the whole board). Manual tasks and queues are on
-    /// the board too but not rendered until the card list lands (step 6).
-    private var tasks: [TaskItem] = []
-    /// The execution engine. Every state change goes through it; the panel only
-    /// renders and calls in.
+    /// The execution engine owns the board: the panel renders it and calls in.
     private var runner: TasksRunner?
     private var repo: (owner: String, repo: String)?
     private var repoRootPath: String?
     /// The task currently expanded inline (shows detail + action buttons).
     private var expandedTaskID: String?
+    /// id -> open? Defaults differ per kind: user queues start open (they hold
+    /// the work), issue tasks' auto queues start as one compact line.
+    private var queueToggle: [String: Bool] = [:]
+    private var sourceFilter: SourceFilter = .all
     /// Drives the runner: start the next queued task, advance the running one.
     private var stepTimer: Timer?
 
@@ -64,11 +85,13 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         configButton = CustomIconButton(glyph: .symbol("gearshape"), tooltip: "")
         refreshButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: "")
         runAllButton = CustomIconButton(glyph: .play, tooltip: "")
+        newTaskButton = CustomIconButton(glyph: .plus, tooltip: "")
         hideButton = CustomIconButton(glyph: .close, tooltip: "")
         super.init()
         buildUI()
         refreshButton.onAction = { [weak self] in self?.reloadIssues() }
         runAllButton.onAction = { [weak self] in self?.runAllTapped() }
+        newTaskButton.onAction = { [weak self] in self?.presentTaskForm(editing: nil) }
         configButton.onAction = { [weak self] in self?.configTapped() }
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
         updateLabels()
@@ -83,8 +106,16 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         configButton.toolTip = L10n.tr("tasks.configHint")
         refreshButton.toolTip = L10n.tr("tasks.refreshHint")
         runAllButton.toolTip = L10n.tr("tasks.runAllHint")
+        newTaskButton.toolTip = L10n.tr("tasks.new.hint")
         hideButton.toolTip = L10n.tr("preview.closePanel")
         repoLabel.text = repo.map { "\($0.owner)/\($0.repo)" } ?? L10n.tr("tasks.noRepo")
+        emptyLabel.stringValue = repo == nil ? L10n.tr("tasks.noRepo") : L10n.tr("tasks.empty")
+        filterControl.segmentCount = 3
+        filterControl.setLabel(L10n.tr("tasks.filter.all"), forSegment: 0)
+        filterControl.setLabel(L10n.tr("tasks.filter.issues"), forSegment: 1)
+        filterControl.setLabel(L10n.tr("tasks.filter.manual"), forSegment: 2)
+        filterControl.selectedSegment = sourceFilter.rawValue
+        if let runner = runner { summaryLabel.text = TasksSummaryModel.build(runner.board).text }
     }
 
     /// 语言切换后刷新头部按钮 tooltip（复用 updateLabels）。
@@ -117,40 +148,67 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
 
         // toolbar: repo + status info
         repoLabel.translatesAutoresizingMaskIntoConstraints = false
+        summaryLabel.translatesAutoresizingMaskIntoConstraints = false
+        summaryLabel.setContentHuggingPriority(.required, for: .horizontal)
+        summaryLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        filterControl.segmentStyle = .texturedRounded
+        filterControl.controlSize = .small
+        filterControl.translatesAutoresizingMaskIntoConstraints = false
+        filterControl.target = self
+        filterControl.action = #selector(filterChanged(_:))
         let toolbar = DynamicFillView()
         toolbar.kind = .panel
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true
         toolbar.addSubview(repoLabel)
+        toolbar.addSubview(summaryLabel)
+        toolbar.addSubview(filterControl)
         NSLayoutConstraint.activate([
             repoLabel.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 10),
             repoLabel.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-            repoLabel.trailingAnchor.constraint(lessThanOrEqualTo: toolbar.trailingAnchor, constant: -8),
-            toolbar.heightAnchor.constraint(equalToConstant: 28),
+            summaryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: repoLabel.trailingAnchor, constant: 8),
+            summaryLabel.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            filterControl.leadingAnchor.constraint(equalTo: summaryLabel.trailingAnchor, constant: 8),
+            filterControl.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -8),
+            filterControl.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            toolbar.heightAnchor.constraint(equalToConstant: 30),
         ])
 
         let toolbarUnderline = NSBox()
         toolbarUnderline.boxType = .separator
         toolbarUnderline.translatesAutoresizingMaskIntoConstraints = false
 
-        // task table
-        tableView.headerView = nil
-        let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("task"))
-        tableView.addTableColumn(col)
-        tableView.rowSizeStyle = .small
-        tableView.dataSource = self
-        tableView.delegate = self
-        tableView.allowsMultipleSelection = false
-        // 内容区 = 面板底色。NSTableView 默认画自己的 controlBackgroundColor
-        // （浅色白 / 深色近黑），会盖住面板根视图的 PanelSurface。
-        tableView.backgroundColor = PanelSurface.dynamic
+        // The list: a plain stack of cards inside a scroll view (the projects
+        // panel's体例). The stack is re-built from the board on every change;
+        // expansion state lives in the controller, never in the views.
+        listStack.orientation = .vertical
+        listStack.alignment = .leading
+        listStack.spacing = 8
+        listStack.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 10, right: 10)
+        listStack.translatesAutoresizingMaskIntoConstraints = false
+        listStack.setHuggingPriority(.defaultLow, for: .horizontal)
 
-        tableScroll.documentView = tableView
-        tableScroll.hasVerticalScroller = true
-        tableScroll.autohidesScrollers = true
-        tableScroll.drawsBackground = false
-        tableScroll.translatesAutoresizingMaskIntoConstraints = false
+        let listDocument = FlippedStackView()
+        listDocument.translatesAutoresizingMaskIntoConstraints = false
+        listDocument.orientation = .vertical
+        listDocument.alignment = .leading
+        listDocument.spacing = 0
+        listDocument.addSubview(listStack)
+
+        listScroll.documentView = listDocument
+        listScroll.hasVerticalScroller = true
+        listScroll.autohidesScrollers = true
+        listScroll.drawsBackground = false
+        listScroll.translatesAutoresizingMaskIntoConstraints = false
+
+        // Empty state: centred over the list.
+        emptyLabel.alignment = .center
+        emptyLabel.maximumNumberOfLines = 3
+        emptyLabel.font = .systemFont(ofSize: 12)
+        emptyLabel.textColor = .secondaryLabelColor
+        emptyLabel.lineBreakMode = .byWordWrapping
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
         // status bar
         statusBar.kind = .panel
@@ -178,10 +236,19 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         ])
         statusBar.isHidden = true
 
+        NSLayoutConstraint.activate([
+            listStack.leadingAnchor.constraint(equalTo: listDocument.leadingAnchor),
+            listStack.trailingAnchor.constraint(equalTo: listDocument.trailingAnchor),
+            listStack.topAnchor.constraint(equalTo: listDocument.topAnchor),
+            listStack.bottomAnchor.constraint(equalTo: listDocument.bottomAnchor),
+            listDocument.widthAnchor.constraint(equalTo: listScroll.contentView.widthAnchor),
+        ])
+
         view.addSubview(header)
         view.addSubview(toolbar)
         view.addSubview(toolbarUnderline)
-        view.addSubview(tableScroll)
+        view.addSubview(listScroll)
+        view.addSubview(emptyLabel)
         view.addSubview(statusBar)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: view.topAnchor),
@@ -196,10 +263,15 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
             toolbarUnderline.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             toolbarUnderline.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
-            tableScroll.topAnchor.constraint(equalTo: toolbarUnderline.bottomAnchor),
-            tableScroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableScroll.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+            listScroll.topAnchor.constraint(equalTo: toolbarUnderline.bottomAnchor),
+            listScroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            listScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            listScroll.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+
+            emptyLabel.centerXAnchor.constraint(equalTo: listScroll.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: listScroll.centerYAnchor),
+            emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
 
             statusBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             statusBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -301,26 +373,17 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     /// No GitHub repo here: drop the board and stop stepping.
     private func clearBoard() {
         runner = nil
-        tasks = []
         stepTimer?.invalidate()
         stepTimer = nil
         expandedTaskID = nil
-        tableView.reloadData()
+        queueToggle.removeAll()
+        render()
         updateLabels()
     }
 
-    /// Copy the board's github tasks into the table's view list.
-    private func syncFromBoard() {
-        tasks = (runner?.board.tasks ?? [])
-            .filter { $0.source == .github }
-            .sorted { ($0.number ?? 0) < ($1.number ?? 0) }
-        boardSignature = boardSignatureNow()
-        tableView.reloadData()
-    }
-
-    /// Cheap fingerprint of everything the table renders, so the 3-second step
-    /// timer does not rebuild the list (and fight the user's scrolling) while
-    /// nothing is moving.
+    /// Cheap fingerprint of everything the list renders, so the 3-second step
+    /// timer does not rebuild the cards (and fight the user's scrolling, or drop
+    /// an open menu) while nothing is moving.
     private var boardSignature = ""
 
     private func boardSignatureNow() -> String {
@@ -909,253 +972,401 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         statusSpinner.stopAnimation(nil)
     }
 
-    // MARK: - NSTableView
+    // MARK: - Card list
 
-    func numberOfRows(in tableView: NSTableView) -> Int { tasks.count }
-
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard row < tasks.count else { return nil }
-        let task = tasks[row]
-        let expanded = (task.id == expandedTaskID)
-        let id = NSUserInterfaceItemIdentifier(expanded ? "taskCellExpanded" : "taskCell")
-        let cell: NSTableCellView
-        if let reused = tableView.makeView(withIdentifier: id, owner: nil) as? NSTableCellView {
-            cell = reused
-        } else {
-            cell = NSTableCellView()
-            cell.identifier = id
-            buildCellContent(cell, expanded: expanded)
-        }
-        populateCell(cell, task: task, expanded: expanded)
-        return cell
+    /// Rebuild the list from the board. Cards are created fresh on every change
+    /// (the projects panel's体例): the state that must survive a rebuild — which
+    /// task is expanded, which queues are open — lives in the controller.
+    private func syncFromBoard() {
+        boardSignature = boardSignatureNow()
+        render()
     }
 
-    /// Build the cell's subviews once (collapsed: single line; expanded: title
-    /// line + detail block + action buttons). Buttons get tags so the action
-    /// closure can read which issue they belong to.
-    private func buildCellContent(_ cell: NSTableCellView, expanded: Bool) {
-        let title = NSTextField(labelWithString: "")
-        title.translatesAutoresizingMaskIntoConstraints = false
-        title.lineBreakMode = .byTruncatingTail
-        title.tag = 100
-        cell.addSubview(title)
-        if cell.textField == nil { cell.textField = title }
-
-        if expanded {
-            // Detail area is a scrollable NSTextView inside an NSScrollView so
-            // long issue bodies scroll instead of pushing the buttons away.
-            let detail = NSTextView()
-            detail.isEditable = false
-            detail.isSelectable = true
-            detail.drawsBackground = false
-            detail.font = .systemFont(ofSize: 11)
-            detail.textColor = .secondaryLabelColor
-            detail.textContainerInset = NSSize(width: 0, height: 2)
-            detail.isVerticallyResizable = true
-            detail.isHorizontallyResizable = false
-            detail.autoresizingMask = [.width]
-            detail.textContainer?.widthTracksTextView = true
-            detail.identifier = NSUserInterfaceItemIdentifier("taskDetail")
-
-            let scroll = NSScrollView()
-            scroll.translatesAutoresizingMaskIntoConstraints = false
-            scroll.hasVerticalScroller = true
-            scroll.autohidesScrollers = true
-            scroll.drawsBackground = false
-            scroll.borderType = .noBorder
-            scroll.documentView = detail
-            cell.addSubview(scroll)
-
-            let process = NSButton(title: "", target: self, action: #selector(cellButtonTapped(_:)))
-            process.tag = 200
-            process.controlSize = .small
-            process.bezelStyle = .rounded
-            process.translatesAutoresizingMaskIntoConstraints = false
-            cell.addSubview(process)
-
-            let secondary = NSButton(title: "", target: self, action: #selector(cellButtonTapped(_:)))
-            secondary.tag = 201
-            secondary.controlSize = .small
-            secondary.bezelStyle = .rounded
-            secondary.translatesAutoresizingMaskIntoConstraints = false
-            cell.addSubview(secondary)
-
-            let commentClose = NSButton(title: "", target: self, action: #selector(cellButtonTapped(_:)))
-            commentClose.tag = 202
-            commentClose.controlSize = .small
-            commentClose.bezelStyle = .rounded
-            commentClose.translatesAutoresizingMaskIntoConstraints = false
-            cell.addSubview(commentClose)
-
-            NSLayoutConstraint.activate([
-                title.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                title.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
-                title.topAnchor.constraint(equalTo: cell.topAnchor, constant: 4),
-                title.heightAnchor.constraint(equalToConstant: 16),
-
-                // Scroll view: fills the middle (title → buttons).
-                scroll.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                scroll.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
-                scroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
-                scroll.bottomAnchor.constraint(equalTo: process.topAnchor, constant: -6),
-
-                // Buttons pinned to the BOTTOM (never pushed out by content).
-                process.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                process.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -6),
-                process.heightAnchor.constraint(equalToConstant: 22),
-
-                secondary.leadingAnchor.constraint(equalTo: process.trailingAnchor, constant: 8),
-                secondary.centerYAnchor.constraint(equalTo: process.centerYAnchor),
-                secondary.heightAnchor.constraint(equalToConstant: 22),
-
-                commentClose.leadingAnchor.constraint(equalTo: secondary.trailingAnchor, constant: 8),
-                commentClose.centerYAnchor.constraint(equalTo: process.centerYAnchor),
-                commentClose.heightAnchor.constraint(equalToConstant: 22),
-            ])
-        } else {
-            NSLayoutConstraint.activate([
-                title.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                title.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
-                title.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            ])
+    private func render() {
+        for subview in listStack.arrangedSubviews { subview.removeFromSuperview() }
+        guard let runner = runner else {
+            summaryLabel.text = ""
+            emptyLabel.isHidden = false
+            return
         }
-    }
+        let board = runner.board
+        let githubRepo = repo != nil
+        var sections = 0
 
-    private func populateCell(_ cell: NSTableCellView, task: IssueRunnerTask, expanded: Bool) {
-        cell.objectValue = task.id   // buttons read this to know which task
-        let badge = task.state.badge
-        var prefix = "#\(task.number ?? 0) \(badge)"
-        if task.state == .running, task.sessionId != nil { prefix += " ⟳" }
-        if let title = cell.viewWithTag(100) as? NSTextField {
-            title.stringValue = "\(prefix) \(task.title)"
-            switch task.state {
-            case .failed: title.textColor = .systemRed
-            case .closed, .cancelled: title.textColor = .secondaryLabelColor
-            case .queued: title.textColor = .secondaryLabelColor
-            default: title.textColor = .labelColor
-            }
-        }
-        if expanded {
-            // The detail NSTextView lives inside the cell's NSScrollView.
-            if let scroll = cell.subviews.lazy.compactMap({ $0 as? NSScrollView }).first,
-               let detail = scroll.documentView as? NSTextView {
-                detail.string = Self.taskDetailText(task)
-            }
-            if let primary = cell.viewWithTag(200) as? NSButton {
-                primary.title = primaryActionTitle(for: task)
-                primary.isEnabled = primaryActionEnabled(for: task)
-            }
-            if let secondary = cell.viewWithTag(201) as? NSButton {
-                secondary.title = secondaryActionTitle(for: task)
-                secondary.isEnabled = secondaryActionEnabled(for: task)
-            }
-            if let commentClose = cell.viewWithTag(202) as? NSButton {
-                // Only show "comment & close" for finished tasks with a PR.
-                let visible = (task.state == .done && task.prUrl != nil)
-                commentClose.isHidden = !visible
-                if visible {
-                    commentClose.title = L10n.tr("tasks.detailCommentClose")
-                    commentClose.isEnabled = true
+        // 1. Queues. User queues first (they hold the user's own work), then the
+        //    issue tasks' single-task queues, which count and render like any
+        //    other queue but start as one compact line (决策 8).
+        let userQueues = sourceFilter.showsUserQueues ? board.queues.filter { !$0.autoCreated } : []
+        let autoQueues = sourceFilter.showsAutoQueues
+            ? board.queues.filter { $0.autoCreated }.sorted(by: { autoQueueNumber($0, board) < autoQueueNumber($1, board) })
+            : []
+        let queues = userQueues + autoQueues
+        if !queues.isEmpty {
+            listStack.addArrangedSubview(TaskSectionHeaderView(text: L10n.tr("tasks.section.queues", queues.count)))
+            for queue in queues {
+                let cards = board.tasks(inQueue: queue.id).filter { sourceFilter.matches($0) }
+                listStack.addArrangedSubview(queueHeader(queue, board: board, cardCount: cards.count))
+                if isQueueExpanded(queue) {
+                    for task in cards { listStack.addArrangedSubview(card(task, board: board, githubRepo: githubRepo)) }
                 }
             }
+            sections += 1
         }
+
+        // 2. Tasks that are in no queue at all — the 未入队 area.
+        let unqueued = board.tasks.filter { $0.queueId == nil && sourceFilter.matches($0) }
+        if !unqueued.isEmpty {
+            listStack.addArrangedSubview(TaskSectionHeaderView(text: L10n.tr("tasks.section.unqueued", unqueued.count)))
+            for task in unqueued { listStack.addArrangedSubview(card(task, board: board, githubRepo: githubRepo)) }
+            sections += 1
+        }
+
+        emptyLabel.isHidden = sections > 0
+        emptyLabel.stringValue = repo == nil ? L10n.tr("tasks.noRepo")
+            : (sourceFilter == .all ? L10n.tr("tasks.empty") : L10n.tr("tasks.emptyFiltered"))
+        summaryLabel.text = TasksSummaryModel.build(board).text
     }
 
-    private func primaryActionTitle(for task: IssueRunnerTask) -> String {
-        switch task.state {
-        case .pending: return L10n.tr("tasks.detailProcess")
-        case .queued: return L10n.tr("tasks.queue.remove")
-        case .running: return L10n.tr("tasks.detailCancelTask")
-        case .done: return L10n.tr("tasks.detailOpenPR")
-        case .failed, .cancelled: return L10n.tr("tasks.detailRetry")
-        case .closed: return L10n.tr("tasks.detailOpenIssue")
-        }
+    /// Issue numbers order the auto queues (they are per-repo and monotonic).
+    private func autoQueueNumber(_ queue: TaskQueue, _ board: TaskBoard) -> Int {
+        queue.taskIds.first.flatMap { board.task($0)?.number } ?? 0
     }
 
-    /// 处理 is always available now: with a queue, starting a task while another
-    /// one runs simply queues it (v1 disabled the button instead).
-    private func primaryActionEnabled(for task: IssueRunnerTask) -> Bool {
-        switch task.state {
-        case .pending, .running, .queued, .closed: return true
-        case .done: return task.prUrl != nil
-        case .failed, .cancelled: return true
-        }
+    /// Auto (issue) queues start collapsed: one line each, expanding on a click.
+    private func isQueueExpanded(_ queue: TaskQueue) -> Bool {
+        if let explicit = queueToggle[queue.id] { return explicit }
+        return !queue.autoCreated
     }
 
-    private func secondaryActionTitle(for task: IssueRunnerTask) -> String {
-        L10n.tr("tasks.detailClose")
+    private func card(_ task: TaskItem, board: TaskBoard, githubRepo: Bool) -> NSView {
+        let model = TaskCardModel.build(task, board: board,
+                                        expanded: expandedTaskID == task.id,
+                                        githubRepo: githubRepo)
+        let card = TaskCardView(model: model)
+        let taskID = task.id
+        card.onToggle = { [weak self] in self?.toggleTask(taskID) }
+        card.onPrimary = { [weak self] in self?.primaryAction(task) }
+        card.onQueue = { [weak self, weak card] in
+            guard let card = card else { return }
+            self?.presentQueuePicker(for: taskID, from: card)
+        }
+        card.onCommentClose = { [weak self] in self?.commentAndCloseTapped(number: task.number ?? 0) }
+        card.onEdit = { [weak self] in self?.presentTaskForm(editing: task) }
+        card.onDelete = { [weak self] in self?.confirmDelete(task) }
+        return card
     }
 
-    private func secondaryActionEnabled(for task: IssueRunnerTask) -> Bool { true }
-
-    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        guard row < tasks.count else { return 22 }
-        return tasks[row].id == expandedTaskID ? 168 : 22
+    private func queueHeader(_ queue: TaskQueue, board: TaskBoard, cardCount: Int) -> NSView {
+        let model = QueueHeaderModel.build(queue, board: board, collapsed: !isQueueExpanded(queue))
+        let header = TaskQueueHeaderView(model: model)
+        let queueID = queue.id
+        header.onToggle = { [weak self] in self?.toggleQueue(queueID) }
+        header.onStart = { [weak self] in
+            _ = self?.runner?.startQueue(queueID)
+            self?.syncFromBoard()
+        }
+        header.onPause = { [weak self] in
+            _ = self?.runner?.pauseQueue(queueID)
+            self?.syncFromBoard()
+        }
+        header.onOpenPR = { [weak self] in self?.openPR(for: queue) }
+        header.onRename = { [weak self] in self?.renameQueue(queue) }
+        header.onBranch = { [weak self] in self?.changeQueueBranch(queue) }
+        header.onTogglePR = { [weak self] in
+            _ = self?.runner?.updateQueue(queueID, autoPR: !queue.autoPR)
+            self?.syncFromBoard()
+        }
+        header.onDelete = { [weak self] in self?.confirmDeleteQueue(queue, cardCount: cardCount) }
+        return header
     }
 
-    func tableViewSelectionDidChange(_ notification: Notification) {
-        let row = tableView.selectedRow
-        guard row >= 0, row < tasks.count else { return }
-        let taskID = tasks[row].id
-        tableView.deselectAll(nil)
-        // Clicking a row toggles the inline detail (expand / collapse).
-        if expandedTaskID == taskID {
-            expandedTaskID = nil
-        } else {
-            expandedTaskID = taskID
-        }
-        tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<tasks.count))
-        tableView.reloadData()
+    private func toggleTask(_ taskID: String) {
+        expandedTaskID = (expandedTaskID == taskID) ? nil : taskID
+        render()
     }
 
-    /// Row button handler. The primary (tag 200), secondary (tag 201) and
-    /// comment/close (tag 202) buttons live inside an expanded cell; the
-    /// cell's objectValue carries the task ID. Actions are explicit — never
-    /// implicit row clicks.
-    @objc private func cellButtonTapped(_ sender: NSButton) {
-        guard let cell = sender.superview as? NSTableCellView,
-              let taskID = cell.objectValue as? String,
-              let task = tasks.first(where: { $0.id == taskID }) else { return }
-        let number = task.number ?? 0
-        if sender.tag == 201 {   // secondary = close / collapse
-            expandedTaskID = nil
-            tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<tasks.count))
-            tableView.reloadData()
-            return
-        }
-        if sender.tag == 202 {   // comment & close (user-initiated)
-            commentAndCloseTapped(number: number)
-            return
-        }
-        // Primary action depends on state; every state change goes to the runner.
+    private func toggleQueue(_ queueID: String) {
+        guard let queue = runner?.board.queue(queueID) else { return }
+        queueToggle[queueID] = !isQueueExpanded(queue)
+        render()
+    }
+
+    // MARK: - Card actions (all state changes go through the runner)
+
+    private func primaryAction(_ task: TaskItem) {
+        guard let runner = runner else { return }
         switch task.state {
         case .pending:
-            startIssueTask(taskID)
+            _ = runner.startIssueTask(task.id)
         case .queued:
-            _ = runner?.dequeue(taskID: taskID)
-            syncFromBoard()
+            _ = runner.dequeue(taskID: task.id)
         case .running:
-            cancelRunningTask()
+            _ = runner.cancelRunning()
+            hideStatus()
         case .done:
-            if let url = task.prUrl, let u = URL(string: url) { NSWorkspace.shared.open(u) }
+            if let url = task.prUrl, let link = URL(string: url) { NSWorkspace.shared.open(link) }
         case .closed:
-            if let repo = repo,
-               let u = URL(string: "https://github.com/\(repo.owner)/\(repo.repo)/issues/\(number)") {
-                NSWorkspace.shared.open(u)
-            }
+            openIssue(number: task.number ?? 0)
         case .failed, .cancelled:
-            retryTask(taskID)
+            _ = runner.retry(taskID: task.id)
         }
+        syncFromBoard()
+    }
+
+    private func openIssue(number: Int) {
+        guard let repo = repo,
+              let url = URL(string: "https://github.com/\(repo.owner)/\(repo.repo)/issues/\(number)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Queue PR, opened from the header once the queue finished. Reuses the
+    /// existing one when GitHub already has an open PR for the branch.
+    private func openPR(for queue: TaskQueue) {
+        if let url = queue.prUrl, let link = URL(string: url) { NSWorkspace.shared.open(link); return }
+        guard let repo = repo, let branch = queue.branch else { return }
+        setStatus(L10n.tr("tasks.queue.creatingPR", queue.name), spin: true)
+        let token = loadToken(for: repo)
+        let base = queue.baseBranch
+        let title = L10n.tr("tasks.queue.prTitle", queue.name)
+        let body = L10n.tr("tasks.queue.prBody", queue.name)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let existing = Self.findExistingPR(owner: repo.owner, repo: repo.repo, branch: branch, token: token)
+            let url = existing ?? Self.createPR(owner: repo.owner, repo: repo.repo, title: title,
+                                                head: branch, base: base, body: body, token: token)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.hideStatus()
+                guard let url = url else {
+                    self.setStatus(L10n.tr("tasks.errPR"), spin: false)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.hideStatus() }
+                    return
+                }
+                _ = self.runner?.updateQueue(queue.id, prUrl: url)
+                if let link = URL(string: url) { NSWorkspace.shared.open(link) }
+                self.syncFromBoard()
+            }
+        }
+    }
+
+    // MARK: - Queue picker (加入队列)
+
+    private func presentQueuePicker(for taskID: String, from view: NSView) {
+        guard let runner = runner else { return }
+        let menu = NSMenu()
+        for choice in runner.queueChoices() {
+            let suffix = choice.branch.map { "  " + $0 } ?? ""
+            let item = NSMenuItem(title: choice.name + suffix, action: #selector(queueChosen(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = [taskID, choice.id]
+            menu.addItem(item)
+        }
+        if !menu.items.isEmpty { menu.addItem(.separator()) }
+        let newItem = NSMenuItem(title: L10n.tr("tasks.queue.new"), action: #selector(newQueueForTask(_:)), keyEquivalent: "")
+        newItem.target = self
+        newItem.representedObject = taskID
+        menu.addItem(newItem)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height), in: view)
+    }
+
+    @objc private func queueChosen(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String], payload.count == 2 else { return }
+        _ = runner?.enqueue(taskID: payload[0], into: payload[1])
+        syncFromBoard()
+    }
+
+    @objc private func newQueueForTask(_ sender: NSMenuItem) {
+        guard let taskID = sender.representedObject as? String else { return }
+        presentQueueForm(forTask: taskID)
+    }
+
+    @objc private func filterChanged(_ sender: NSSegmentedControl) {
+        sourceFilter = SourceFilter(rawValue: sender.selectedSegment) ?? .all
+        render()
+    }
+
+    // MARK: - Forms
+
+    /// A labelled form row (caption above the control).
+    private func formRow(_ caption: String, _ control: NSView) -> NSStackView {
+        let label = NSTextField(labelWithString: caption)
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        control.translatesAutoresizingMaskIntoConstraints = false
+        let stack = NSStackView(views: [label, control])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        control.widthAnchor.constraint(equalToConstant: 380).isActive = true
+        return stack
+    }
+
+    private func formColumn(_ rows: [NSView]) -> NSStackView {
+        let column = NSStackView(views: rows)
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 8
+        column.translatesAutoresizingMaskIntoConstraints = false
+        column.frame = NSRect(origin: .zero, size: column.fittingSize)
+        return column
+    }
+
+    private func field(_ value: String, _ placeholder: String) -> NSTextField {
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
+        field.stringValue = value
+        field.placeholderString = placeholder
+        field.translatesAutoresizingMaskIntoConstraints = false
+        return field
+    }
+
+    /// 新建任务 / 编辑任务 — a title and a description, nothing else (决策 6).
+    private func presentTaskForm(editing task: TaskItem?) {
+        guard let runner = runner else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.tr(task == nil ? "tasks.new.title" : "tasks.new.editTitle")
+        alert.informativeText = L10n.tr("tasks.new.info")
+        alert.addButton(withTitle: L10n.tr(task == nil ? "tasks.new.create" : "tasks.new.save"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+
+        let titleField = field(task?.title ?? "", L10n.tr("tasks.new.name"))
+        let bodyView = NSTextView(frame: NSRect(x: 0, y: 0, width: 380, height: 90))
+        bodyView.isEditable = true
+        bodyView.isRichText = false
+        bodyView.font = .systemFont(ofSize: 12)
+        bodyView.string = task?.body ?? ""
+        bodyView.autoresizingMask = [.width]
+        let bodyScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 380, height: 90))
+        bodyScroll.documentView = bodyView
+        bodyScroll.hasVerticalScroller = true
+        bodyScroll.autohidesScrollers = true
+        bodyScroll.borderType = .bezelBorder
+        bodyScroll.translatesAutoresizingMaskIntoConstraints = false
+        bodyScroll.heightAnchor.constraint(equalToConstant: 90).isActive = true
+        let accessory = formColumn([formRow(L10n.tr("tasks.new.name"), titleField),
+                                    formRow(L10n.tr("tasks.new.body"), bodyScroll)])
+        alert.accessoryView = accessory
+        alert.window.initialFirstResponder = titleField
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let draft = TaskDraft(title: titleField.stringValue, body: bodyView.string)
+        if let problem = draft.problem {
+            setStatus(L10n.tr(problem), spin: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.hideStatus() }
+            return
+        }
+        if let task = task {
+            _ = runner.updateManualTask(task.id, title: draft.title, body: draft.body)
+            setStatus(L10n.tr("tasks.new.updated", draft.normalizedTitle), spin: false)
+        } else if let created = runner.createManualTask(draft) {
+            setStatus(L10n.tr("tasks.new.created", created.title), spin: false)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.hideStatus() }
+        syncFromBoard()
+    }
+
+    /// 新建队列 — name, branch (default derived from the name), base branch and
+    /// the queue's PR switch.
+    private func presentQueueForm(forTask taskID: String) {
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("tasks.queue.newTitle")
+        alert.informativeText = L10n.tr("tasks.queue.newInfo")
+        alert.addButton(withTitle: L10n.tr("tasks.queue.create"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+
+        let nameField = field("", L10n.tr("tasks.queue.name"))
+        let branchField = field("", L10n.tr("tasks.queue.branchHint"))
+        let baseField = field("main", L10n.tr("tasks.queue.base"))
+        let prSwitch = NSButton(checkboxWithTitle: L10n.tr("tasks.queue.createPR"), target: nil, action: nil)
+        prSwitch.translatesAutoresizingMaskIntoConstraints = false
+        prSwitch.state = repo != nil ? .on : .off
+        prSwitch.isEnabled = repo != nil
+        let accessory = formColumn([formRow(L10n.tr("tasks.queue.name"), nameField),
+                                    formRow(L10n.tr("tasks.queue.branch"), branchField),
+                                    formRow(L10n.tr("tasks.queue.base"), baseField),
+                                    prSwitch])
+        alert.accessoryView = accessory
+        alert.window.initialFirstResponder = nameField
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            setStatus(L10n.tr("tasks.errQueueName"), spin: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.hideStatus() }
+            return
+        }
+        let base = baseField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let branchValue = branchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let queue = runner?.createQueue(name: name,
+                                              branch: branchValue.isEmpty ? nil : branchValue,
+                                              baseBranch: base.isEmpty ? "main" : base,
+                                              autoPR: prSwitch.state == .on) else { return }
+        _ = runner?.enqueue(taskID: taskID, into: queue.id)
+        syncFromBoard()
+    }
+
+    private func renameQueue(_ queue: TaskQueue) {
+        guard let name = promptSingleField(title: L10n.tr("tasks.queue.rename"),
+                                           info: L10n.tr("tasks.queue.renameInfo"),
+                                           value: queue.name) else { return }
+        _ = runner?.updateQueue(queue.id, name: name)
+        syncFromBoard()
+    }
+
+    private func changeQueueBranch(_ queue: TaskQueue) {
+        guard let branch = promptSingleField(title: L10n.tr("tasks.queue.changeBranch"),
+                                             info: L10n.tr("tasks.queue.branchInfo"),
+                                             value: queue.branch ?? "") else { return }
+        // An empty answer means "do not switch branches at all".
+        _ = runner?.updateQueue(queue.id, branch: .some(branch.isEmpty ? nil : branch))
+        syncFromBoard()
+    }
+
+    private func promptSingleField(title: String, info: String, value: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = info
+        alert.addButton(withTitle: L10n.tr("btn.ok"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.stringValue = value
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func confirmDelete(_ task: TaskItem) {
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("tasks.deleteTaskTitle", task.title)
+        alert.informativeText = L10n.tr("tasks.deleteTaskInfo")
+        alert.addButton(withTitle: L10n.tr("tasks.card.delete"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        _ = runner?.deleteManualTask(task.id)
+        syncFromBoard()
+    }
+
+    private func confirmDeleteQueue(_ queue: TaskQueue, cardCount: Int) {
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("tasks.deleteQueueTitle", queue.name)
+        alert.informativeText = L10n.tr("tasks.deleteQueueInfo", cardCount)
+        alert.addButton(withTitle: L10n.tr("tasks.queue.delete"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        _ = runner?.removeQueue(queue.id)
+        queueToggle[queue.id] = nil
+        syncFromBoard()
     }
 
     /// User pressed "Comment & Close Issue": show a confirmation dialog with an
     /// editable comment (pre-filled with the PR reference), then act on GitHub.
     /// Explicitly user-initiated — never automatic.
     private func commentAndCloseTapped(number: Int) {
-        guard let idx = tasks.firstIndex(where: { $0.number == number }),
-              let repo = repo,
-              tasks[idx].state == .done else { return }
-        let prRef = tasks[idx].prUrl ?? ""
+        guard let repo = repo,
+              let task = runner?.board.tasks.first(where: { $0.number == number }),
+              task.state == .done else { return }
+        let prRef = task.prUrl ?? ""
 
         let alert = NSAlert()
         alert.messageText = L10n.tr("tasks.commentCloseTitle", number)
@@ -1263,35 +1474,5 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         t2.cancel()
         return closeOK
     }
-
-    /// Multi-line detail text shown in the expanded row's scrollable area:
-    /// metadata first, then the issue's description (body). The scroll view
-    /// handles long bodies, so no truncation is needed here.
-    private static func taskDetailText(_ task: IssueRunnerTask) -> String {
-        let stateName: String
-        switch task.state {
-        case .pending: stateName = L10n.tr("tasks.state.pending")
-        case .queued: stateName = L10n.tr("tasks.state.queued")
-        case .running: stateName = L10n.tr("tasks.state.running")
-        case .done: stateName = L10n.tr("tasks.state.done")
-        case .failed: stateName = L10n.tr("tasks.state.failed")
-        case .cancelled: stateName = L10n.tr("tasks.state.cancelled")
-        case .closed: stateName = L10n.tr("tasks.state.closed")
-        }
-        var lines = [L10n.tr("tasks.detailState", stateName)]
-        if !task.labels.isEmpty {
-            lines.append(L10n.tr("tasks.detailLabels", task.labels.joined(separator: ", ")))
-        }
-        if let b = task.branch { lines.append(L10n.tr("tasks.detailBranch", b)) }
-        if let pr = task.prUrl { lines.append(L10n.tr("tasks.detailPR", pr)) }
-        if let err = task.error { lines.append(err) }
-        if let body = task.body, !body.isEmpty {
-            let clean = body.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !clean.isEmpty {
-                lines.append("")
-                lines.append(clean)
-            }
-        }
-        return lines.joined(separator: "\n")
-    }
 }
+

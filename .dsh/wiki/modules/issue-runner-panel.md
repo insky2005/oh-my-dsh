@@ -29,7 +29,8 @@ manual: false
 - git 进入分支改为**显式三步**（clean 检查 → `checkout <base>` → `pull --ff-only` → `checkout[-b]`），任一步失败即暂停队列（v1 把 checkout/pull 的失败吞掉）；
 - 队列级 PR：队内任务只 push，**队列最后一项完成时**才创建 PR，且先 `GET /pulls?head=` **复用已有 PR**（避免 422）；PR 建不出来不算任务失败；
 - 面板：`setupRunner(repoRoot:)` 载入 board → `reconcileAfterRestart` → 3s 定时 `step()`；issue 合并经 `runner.updateBoard`；表格渲染用指纹比对避免无谓重建；
-- UI **仍是 NSTableView**（行内展开详情），卡片列表（队列分区 + 未入队区）在第 6 步落地；
+- **UI 已换成卡片列表**（第 6 步）：`NSScrollView + NSStackView`，按**队列分区**（队列头 = 名称 / `分支 → 基线` / `n/m` 进度 / 状态徽标 / 失败计数 / 开始·暂停·打开 PR·⋯，issue 自动队列默认折成一行）+ **未入队区**；卡片 = 来源徽标（`Issue #12` / `手动`）+ 状态徽标 + 标题 + 标签·分支·PR 元信息，**点卡片展开**详情与操作行；工具栏第二行是仓库名 + 队列总览（`队列 N · 排队 N · 运行 N · 失败 N`）+ 来源筛选（全部 / Issue / 手动）；
+- 视图与规则分离：`TasksUI.swift` 是**纯视图模型**（`TaskCardModel` / `QueueHeaderModel` / `TasksSummaryModel`），`TaskCardView.swift` 只渲染与转发点击 —— 因此徽标文案、按钮可用性、队列头进度都有无头断言（67 项）；
 - 测试：`tests/tasks-panel/run.sh`（模型 126 + 运行器/手动任务 154 = **280 项**，假 git + 假 dsh 驱动全流水线）。
 
 > 下面「关键实现」等章节仍是 v1 的实现描述，第 6 步完成后整页重写。

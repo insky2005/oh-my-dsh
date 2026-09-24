@@ -97,12 +97,16 @@
 
 ### 任务面板（`⌥⌘J` / 活动栏「任务」图标）
 
-由 **GitHub issue 驱动**的串行任务流水线：识别当前工作区仓库 → 列出 open issues → 点「处理」自动走完整闭环。
+任务台：**手动任务 + GitHub issue** 两种来源、**队列（泳道）** 串行执行，全部以**卡片**呈现。
 
-- **行内详情**：单击 issue 行展开（状态/标签/分支/PR/错误 + 正文，可滚动，底部固定操作按钮）；按仓库/标签自动切分支（feature → `feature/issue-N`，bug → `fix/issue-N`）；
-- **一键流水线**：`checkout main → pull → checkout -b <分支> → dsh 会话 → issue-resolve skill 修复 → 推送 → 开 PR`，全程**串行**（「全部处理」依次入队）、可追溯（会话/分支/PR 全保留）、**重启可恢复**（关联索引 `.dsh/tasks/index.json` + 本机 `local.json`）；
-- **评论并关闭 Issue**：任务完成后在展开区手动触发，预填 PR 引用，确认后 POST 评论 + 关闭 issue；
-- **失败处理**：会话失败/超时（30min）/分支未推送/PR 失败各有明确状态与错误提示，可 Retry；取消走 `session.cancel`；
+- **卡片列表**：左上角来源徽标（`Issue #12` / `手动`）+ 状态徽标（待处理 / 队列中 #n / 运行中 / 已完成 / 失败 / 已取消 / 已关闭），标题与「标签 · 分支 · PR」元信息；**点卡片展开**详情（队列名 / 会话 / 错误 / 任务正文）与操作按钮（处理 · 加入队列 ▾ · 移出队列 · 取消 · 重试 · 打开 PR · 评论并关闭 Issue · 编辑 · 删除）；工具栏第二行是仓库名 + 队列总览（`队列 N · 排队 N · 运行 N · 失败 N`）+ 来源筛选（全部 / Issue / 手动）；
+- **手动任务**：`+` 只填**标题 + 描述**（描述就是发给代理的指令），创建后落在**未入队**区；从卡片「加入队列 ▾」选已有队列或**新建队列**（队列名 / 分支（默认 `feature/<slug>`，中文名回退 `feature/queue-<id 前4位>`）/ 基于分支 / 队列完成后自动开 PR），**运行中/已执行的任务与 github 任务不可编辑删除**；
+- **队列 = 泳道**：同一队列的任务**共享一个分支、按 FIFO 顺序执行**（后一个任务看得到前一个的 commit —— 依赖关系由分支累积表达）；**全局严格串行**（一个工作树一次只能在一个分支上）；队内失败/取消**暂停该队列**，卡片给「重试 / 跳过并继续」；切到另一个队列前要求工作区干净（脏工作区拒绝启动并提示）；
+- **issue 任务**：点「处理」自动建一个**单任务队列**（分支仍是 label 判定的 `feature/issue-N` / `fix/issue-N`），保留 v1 的「一 issue 一分支一 PR」；「全部处理」给每个 pending issue 各建一个，串行依次跑；
+- **PR**：队内任务只推送，**队列最后一项完成时**才创建 PR（先查已有 PR 复用，避免 422）；PR 建不出来**不算任务失败**（分支已推送，可手动开）；工作区不是 GitHub 仓库（公司内部远端）时 PR 能力自动关闭，只切分支 + push；
+- **失败处理**：脏工作区 / checkout / pull / 建会话 / 提示词 / 未推送 / 超时（30min）各有明确原因（存的是 L10n 键，随界面语言显示），可重试；取消走 `session.cancel`；
+- **重启恢复**：读 `.dsh/tasks/` 四文件（`index.json` 提交的 issue 关联 / `manual.json` 手动任务 / `queues.json` 队列 / `local.json` 本机 task↔session，兼容 v1 的数字键），上次运行中的任务标为「已中断」、活跃队列暂停，**恢复后不自动开跑**；
+
 - **GitHub token（按仓库作用域，只走文件）**：面板「配置 GitHub Token」**只写文件** —— 有当前仓库时写文件专属 `~/.dsh/tokens/<owner>-<repo>`，否则写通用 `~/.dsh/gh-token`（均 chmod 600，App 与外部工具/代理共用）；解析优先级：文件专属 → 文件通用；**不再读写 macOS 钥匙串**（旧版写在钥匙串里的 token 需重新填写一次）；公开仓库无需 token，私有仓库拉取/开 PR/评论关闭需要；
 - 工作区非 GitHub 仓库时诚实显示空态（不替换为其他已注册工作区）；切换到不同仓库先清空旧列表再重载。
 
@@ -362,7 +366,12 @@ platforms/macos/src/                  原生壳（Swift）
   TerminalPanel.swift 终端面板（PTY 会话 + ANSI/VT 模拟器）
   TerminalWorkspaceTabs.swift 终端页签按工作区隔离与记忆（顺序/选中项/自动开启，纯逻辑）
   WikiPanel.swift      Repo Wiki 知识库面板（生成/维护/浏览 + 自动 git 提交）
-  IssueRunnerPanel.swift 任务面板（GitHub issues 串行流水线 + 关联索引 + 评论并关闭）
+  IssueRunnerPanel.swift 任务面板（卡片列表 + 队列分区 + 表单，装配层）
+  TasksCore.swift         任务/队列模型（状态机、分支命名、入队·移出·失败暂停·重启恢复，纯逻辑）
+  TasksStore.swift        .dsh/tasks 四文件持久化（index/manual/queues/local，v1 兼容）
+  TasksRunner.swift       队列运行器（git 三步显式检查、dsh 会话、队列级 PR、取消·重试·跳过）
+  TasksUI.swift           任务卡片视图模型（徽标/元信息/主操作/队列头/摘要，无头可断言）
+  TaskCardView.swift      卡片与队列头视图（渲染 + 点击转发）
   ChannelPanel.swift     通道面板（微信/钉钉接入：引导卡片/扫码向导/项目视图 + 启动自动拉起 listener）
   SkillsPanel.swift      技能面板（已安装/可安装/registry/调用开关/移除）
   SkillsCore.swift       技能模型（frontmatter 读写、四根扫描与级别、壳层技能记录）
@@ -396,7 +405,7 @@ docs/                设计/排查文档（productization.md、dsh-version-impac
 
 - **Bug / 功能请求**：使用仓库的 Issue 模板（bug / feature）提交；
 - **本地测试**：`node --test --test-timeout=60000 core/tests/*.test.js`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层 / review-log 变更审计；`--test-timeout` 保证任何泄漏定时器的用例快速失败而不是挂死）、
-  `tests/tasks-panel/run.sh`（任务面板逻辑层 280 项：队列模型 入队·移出·失败暂停·重启恢复 + `.dsh/tasks` 四文件持久化 + index.json v1 兼容 + 队列运行器 假 git/假 dsh 驱动全流水线 + 手动任务创建·编辑·删除与队列选择）、`tests/projects-panel/run.sh`（项目面板：根目录/命名规则/列举/注册合并 + 控制器无头：建目录、注册请求、快捷入口回调、改根）、`tests/injected-scripts/run.sh`（注入 dsh web 的 JS：脚本可解析 + 桥名与壳层调用对得上）、`tests/wiki-panel/run.sh`（Wiki 面板）、`tests/terminal-emulator/run.sh`（模拟器）、`tests/terminal-panel/run.sh`（终端面板头部）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/file-panel/run.sh`（文件面板：工作区页签记忆 / 未保存提示 / 切换语义）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/dsh-auth-cookies/run.sh`（dsh-auth cookie 清理与 NODE_OPTIONS）、`tests/shell-config/run.sh`（壳层设置与旧 UserDefaults 迁移）、`tests/l10n/run.sh`（L10n 键名 lint）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/skills-panel/run.sh`（技能面板：frontmatter 字节保真 / 四根级别与遮蔽 / 内置与共享级写操作拒绝 / 安装·移除 / registry 清单与搜索 + 面板控制器无头冒烟 + 离屏绘制回归）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠 + 控制器无头回归「日志变了必须重审、没变不许重审」）；`scripts/local-ci.sh` 一次跑全部；
+  `tests/tasks-panel/run.sh`（任务面板逻辑层 347 项：**模型 126**（入队·移出·失败暂停·重启恢复 + `.dsh/tasks` 四文件持久化 + index.json v1 兼容）+ **运行器 154**（假 git + 假 dsh 驱动全流水线：分支进入 / 全局串行 / 失败暂停 / 队列级 PR 复用 / 取消·重试·跳过 / 手动任务增删改与队列选择）+ **视图模型 67**（卡片徽标与按钮可用性 / 队列头进度与状态 / 摘要计数））、`tests/projects-panel/run.sh`（项目面板：根目录/命名规则/列举/注册合并 + 控制器无头：建目录、注册请求、快捷入口回调、改根）、`tests/injected-scripts/run.sh`（注入 dsh web 的 JS：脚本可解析 + 桥名与壳层调用对得上）、`tests/wiki-panel/run.sh`（Wiki 面板）、`tests/terminal-emulator/run.sh`（模拟器）、`tests/terminal-panel/run.sh`（终端面板头部）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/file-panel/run.sh`（文件面板：工作区页签记忆 / 未保存提示 / 切换语义）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/dsh-auth-cookies/run.sh`（dsh-auth cookie 清理与 NODE_OPTIONS）、`tests/shell-config/run.sh`（壳层设置与旧 UserDefaults 迁移）、`tests/l10n/run.sh`（L10n 键名 lint）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/skills-panel/run.sh`（技能面板：frontmatter 字节保真 / 四根级别与遮蔽 / 内置与共享级写操作拒绝 / 安装·移除 / registry 清单与搜索 + 面板控制器无头冒烟 + 离屏绘制回归）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠 + 控制器无头回归「日志变了必须重审、没变不许重审」）；`scripts/local-ci.sh` 一次跑全部；
 - **CI**：push/PR 自动跑 core 单测 + 壳层编译检查 + macOS arm64 构建（`.github/workflows/ci.yml`）；发布由 release 流程构建双架构。
 
 本项目遵循 [MIT License](LICENSE)，代码只封装、绝不修改 DeepSeek Harness 上游源码。
