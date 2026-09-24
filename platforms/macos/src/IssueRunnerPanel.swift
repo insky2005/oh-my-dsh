@@ -69,7 +69,6 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     private var tasks: [IssueRunnerTask] = []
     private var repo: (owner: String, repo: String)?
     private var repoRootPath: String?
-    private var token: String?   // from Keychain; nil for public repos
     /// The issue currently expanded inline (shows detail + action buttons).
     private var expandedIssue: Int?
     private var pollTimer: Timer?
@@ -891,10 +890,8 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         return prUrl
     }
 
-    // MARK: - GitHub token (per-repo scoped, Keychain primary + file fallback)
+    // MARK: - GitHub token (per-repo scoped, FILE ONLY)
 
-    /// Generic Keychain service (repo-agnostic fallback).
-    private static let genericTokenService = "oh-my-dsh.issuerunner.github-token"
     /// Shared generic token file: the single place a user can drop a token for
     /// BOTH the app shell and external tools/agents (`${DSH_HOME:-$HOME/.dsh}/gh-token`).
     /// Resolved dsh home ($DSH_HOME or ~/.dsh) — dev builds use ~/.dsh-dev.
@@ -909,28 +906,9 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
     /// Per-repo token dir for file-based tokens: `${DSH_HOME:-$HOME/.dsh}/tokens/<owner>-<repo>`.
     private static let tokenDir = dshHomePath + "/tokens"
 
-    /// Keychain service for a specific repo (owner/repo scoped).
-    private static func tokenService(for repo: (owner: String, repo: String)) -> String {
-        "oh-my-dsh.issuerunner.github-token.\(repo.owner)/\(repo.repo)"
-    }
-
     /// Per-repo token file path: ~/.dsh/tokens/<owner>-<repo>.
     private static func tokenFilePath(for repo: (owner: String, repo: String)) -> String {
         tokenDir + "/" + repo.owner + "-" + repo.repo
-    }
-
-    private func readKeychain(service: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let token = String(data: data, encoding: .utf8), !token.isEmpty else { return nil }
-        return token
     }
 
     private func readTokenFile(_ path: String) -> String? {
@@ -940,57 +918,33 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         return token
     }
 
-    /// Resolve the token for the CURRENT repo, with per-repo scoping so that
-    /// multiple workspaces/projects each use their own token.
-    /// File paths are read FIRST (no Keychain password prompt), Keychain is a
-    /// fallback for entries created by older builds or the command line:
-    ///   1. File      ~/.dsh/tokens/<owner>-<repo>
-    ///   2. File      ~/.dsh/gh-token (generic, shared with agents)
-    ///   3. Keychain  <owner>/<repo>
-    ///   4. Keychain  generic (legacy single-token)
+    /// Resolve the token for the CURRENT repo — **files only** (2026-09-24: the
+    /// Keychain is no longer read; the panel writes the very files external
+    /// tools/agents read, so there is exactly one place to look and no password
+    /// prompt can ever appear):
+    ///   1. File  ~/.dsh/tokens/<owner>-<repo>   (per-repo, written by the panel)
+    ///   2. File  ~/.dsh/gh-token                (generic, shared with agents)
     private func loadToken(for repo: (owner: String, repo: String)? = nil) -> String? {
-        if let repo = repo {
-            if let t = readTokenFile(Self.tokenFilePath(for: repo)) { return t }
-        }
-        if let t = readTokenFile(Self.genericTokenFilePath) { return t }
-        if let repo = repo {
-            if let t = readKeychain(service: Self.tokenService(for: repo)) { return t }
-        }
-        return readKeychain(service: Self.genericTokenService)
+        if let repo = repo, let t = readTokenFile(Self.tokenFilePath(for: repo)) { return t }
+        return readTokenFile(Self.genericTokenFilePath)
     }
 
-    /// Save a token scoped to the current repo. Writes BOTH the Keychain entry
-    /// (primary, secure) AND the per-repo file (~/.dsh/tokens/<owner>-<repo>)
-    /// so external tools/agents using the file see the same token. Clearing
-    /// (empty token) removes both.
+    /// Save a token scoped to the current repo — **writes only the file**
+    /// (~/.dsh/tokens/<owner>-<repo>, atomic + chmod 600), which is the very file
+    /// external tools and agents read. With no repo resolved (the panel is open
+    /// in a non-GitHub workspace) it writes the generic file instead.
+    /// Clearing (empty string) deletes that file.
     private func saveToken(_ token: String, for repo: (owner: String, repo: String)? = nil) {
-        let service = repo.map(Self.tokenService(for:)) ?? Self.genericTokenService
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-        ]
-        SecItemDelete(query as CFDictionary)
+        let file = repo.map(Self.tokenFilePath(for:)) ?? Self.genericTokenFilePath
+        let fm = FileManager.default
         if token.isEmpty {
-            // Clear the matching file too (per-repo or generic).
-            let file = repo.map(Self.tokenFilePath(for:)) ?? Self.genericTokenFilePath
-            try? FileManager.default.removeItem(atPath: file)
+            try? fm.removeItem(atPath: file)
             return
         }
-        var attrs = query
-        attrs[kSecValueData as String] = token.data(using: .utf8) ?? Data()
-        // Accessible after first unlock + no per-app ACL prompt: a token is a
-        // low-sensitivity credential; prompting on every read is unacceptable
-        // for a background shell. (File fallback is chmod 600.)
-        attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(attrs as CFDictionary, nil)
-        // Mirror to the file so agents / external tools share the same token.
-        if let repo = repo {
-            let dir = Self.tokenDir
-            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            let file = Self.tokenFilePath(for: repo)
-            try? token.data(using: .utf8)?.write(to: URL(fileURLWithPath: file), options: .atomic)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file)
-        }
+        try? fm.createDirectory(atPath: (file as NSString).deletingLastPathComponent,
+                                withIntermediateDirectories: true)
+        try? token.data(using: .utf8)?.write(to: URL(fileURLWithPath: file), options: .atomic)
+        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file)
     }
 
     // MARK: - Config
@@ -1008,7 +962,7 @@ final class IssueRunnerPanelController: NSObject, NSTableViewDataSource, NSTable
         alert.window.initialFirstResponder = field
         if alert.runModal() == .alertFirstButtonReturn {
             let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Empty → clear both Keychain and file; otherwise save both.
+            // Empty → delete the token file; otherwise write it (file only).
             saveToken(value, for: repo)
             reloadIssues()
         }

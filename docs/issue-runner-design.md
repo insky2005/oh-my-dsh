@@ -26,7 +26,7 @@
 IssueRunnerPanelController (macOS, Swift)
   ├── 任务列表（NSTableView）：issue 编号/标题/标签/状态徽标
   ├── 仓库识别：git remote → owner/repo（自动，工作区切换时）
-  ├── GitHub REST：拉 issues（过滤 PR）/ 创建 PR（token 走 Keychain）
+  ├── GitHub REST：拉 issues（过滤 PR）/ 创建 PR（token 走文件，见 §V2-1）
   ├── git 流水线（Process）：checkout main → pull → checkout -b fix/issue-N → 校验推送
   ├── dsh 会话：create(workspaceId) → rename("fix(#N): …") → prompt(issue-resolve) → 轮询 → cancel
   └── 串行队列：一次一个 running，完成自动启动下一个 pending
@@ -80,7 +80,7 @@ $DSH_HOME/skills/issue-resolve/SKILL.md —— 代理在任务会话中加载的
 | 场景 | 行为 |
 |---|---|
 | 工作区非 GitHub 仓库 | 面板空态「当前工作区不是 GitHub 仓库」 |
-| 公开仓库 | 匿名读 issues（60 req/h 限流）；私有需 token（Keychain） |
+| 公开仓库 | 匿名读 issues（60 req/h 限流）；私有需 token（文件，见 §V2-1） |
 | 分支已存在 | `git checkout -b` 失败 → 提示「分支已存在」，可续跑 |
 | 代理会话失败/超时（30min） | 标记失败，分支+会话保留（可追溯），可「继续新会话」 |
 | 分支未推送 | 标记「分支未推送」（代理未 push），可重试 |
@@ -107,7 +107,7 @@ $DSH_HOME/skills/issue-resolve/SKILL.md —— 代理在任务会话中加载的
 
 - **worktree**：等 dsh web 原生支持 worktree 后，把「切分支」步骤替换为「worktree + workspace.create + 任务结束清理」，队列与监控逻辑不变（`docs/` 本文件同步更新）；
 - **远程驱动**：JobSource 适配器（钉钉/微信）；
-- **token 管理**：多仓库多 token、Keychain 按仓库作用域。
+- **token 管理**：多仓库多 token、按仓库作用域（v2 已改为只走文件，见 §V2-1）。
 
 ---
 

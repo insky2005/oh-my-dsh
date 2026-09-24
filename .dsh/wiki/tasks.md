@@ -193,7 +193,7 @@ node core/bin/ohmy-core.js channel route <refsJson> <conversationId> <text> # �
 
 ## 配置 GitHub token（任务面板）
 
-- 面板「配置 GitHub Token」→ 确认后**双写** Keychain 专属（`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）与文件专属（`~/.dsh/tokens/<owner>-<repo>`，chmod 600）；清空则双清；也可手动写 `~/.dsh/gh-token`（通用，App 与外部工具/代理共用同一份）；解析优先级见 [issue-runner-panel](modules/issue-runner-panel.md)；公开仓库无需 token。
+- 面板「配置 GitHub Token」→ 确认后**只写文件**：有当前仓库时写专属 `~/.dsh/tokens/<owner>-<repo>`（chmod 600），否则写通用 `~/.dsh/gh-token`；清空即删文件；也可手动写 `~/.dsh/gh-token`（通用，App 与外部工具/代理共用同一份）；解析优先级：文件专属 → 文件通用，**不再读写 macOS 钥匙串**（旧版留在钥匙串里的 token 需重填一次）；公开仓库无需 token。
 
 CI 侧（`release.yml`）：push `v*` tag（主版本或 patch 均触发）自动在 macos-14 构建 arm64 / x86_64（-target 交叉编译）两份产物（.pkg/.dmg，不再出 universal），汇总后出 SHA-256SUMS 并以 **pre-release** 发布 GitHub Release（人工确认后改正式）；同一 tag 重复触发会取消旧 run（concurrency）；
 - **prepare 前置 job**（`ab1f0b0`/38f4605 起）：release 三个 build job 经 `needs: prepare` 依赖前置 job——它预编译双架构 CEF + 预下载 node/prefetch runtime，统一缓存到 `.cache/`；build 矩阵（arm64/x86_64 均跑 macos-14，x86_64 交叉编译）restore-key 回退到 arm64/prepare 的 `.cache/` 复用，避免各 job 冷启动重下/重编 CEF（build-cef.sh 产物缓存 `.cache/cef-built-<arch>`）；x86_64 不再依赖退役中的 macos-13 runner；

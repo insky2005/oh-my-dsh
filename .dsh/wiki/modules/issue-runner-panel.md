@@ -39,8 +39,10 @@ manual: false
 
 ## GitHub token（按仓库作用域）
 
-- **解析优先级**（`loadToken(for:)`，88f0255 起**文件优先**）：① 文件专属 `~/.dsh/tokens/<owner>-<repo>` → ② 文件通用 `~/.dsh/gh-token`（App 与外部工具/代理共用同一份）→ ③ Keychain 专属（service `oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）→ ④ Keychain 通用（`oh-my-dsh.issuerunner.github-token`，旧版单 token）；文件先读**免 Keychain 每次弹密码**，Keychain 仅作旧版构建/命令行写入条目的回退；多工作区各用各的 token；
-- **保存（双写，`saveToken(for:)`）**：面板「配置 GitHub Token」确认后**同时写** Keychain 专属条目和文件专属 `~/.dsh/tokens/<owner>-<repo>`（`chmod 600`，原子写）——外部工具/代理读同一文件即可用同一 token；Keychain 条目设 `kSecAttrAccessibleAfterFirstUnlock`（首次解锁后可用、不弹每次的 per-app ACL 密码，token 属低敏凭据；文件兜底 chmod 600）；清空（空值）时**双清**（删 Keychain 条目 + 删文件）；
+- **只走文件（2026-09-24 起，v2 第 1 步）**：Keychain 的读写代码已全部删除（`readKeychain` / `tokenService(for:)` / `SecItemAdd` / `SecItemDelete` 与两个 service 常量），`platforms/macos/src/` 下不再出现 `SecItem` / `kSecClass`；
+- **解析优先级**（`loadToken(for:)`）：① 文件专属 `~/.dsh/tokens/<owner>-<repo>` → ② 文件通用 `~/.dsh/gh-token`（App 与外部工具/代理共用同一份）；多工作区各用各的 token；
+- **保存**（`saveToken(for:)`）：只写文件 —— 有当前仓库写专属文件，无仓库（非 GitHub 工作区）写通用 `~/.dsh/gh-token`；原子写 + `chmod 600`；清空（空值）即删除该文件；
+- **兼容性**：旧版面板是「文件 + Keychain 双写」，因此通过面板保存过的 token 早已在文件里；仅更老构建或手工 `security add-generic-password` 写进钥匙串的条目不再被读取，需重填一次；
 - 不落 UserDefaults 明文；公开仓库无需 token；token 仅用于拉取 issues、创建 PR、评论关闭 issue。
 
 ## 集成点（main.swift）

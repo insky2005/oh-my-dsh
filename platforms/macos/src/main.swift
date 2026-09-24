@@ -602,7 +602,7 @@ enum L10n {
         "tasks.prTitle": ("fix(#%d)", "fix(#%d)"),
         "tasks.prBody": ("自动修复 GitHub issue #%d（由 oh-my-dsh 任务面板处理）", "Automated fix for GitHub issue #%d (processed by oh-my-dsh task panel)"),
         "tasks.configTitle": ("GitHub Token", "GitHub Token"),
-        "tasks.configInfo": ("GitHub token（按当前仓库保存：Keychain + ~/.dsh/tokens/<owner>-<repo> 文件双写，App 与外部工具共用）。仅用于拉取 issues、创建 PR、评论关闭 issue；公开仓库可留空。", "GitHub token (saved per repo: written to both Keychain and ~/.dsh/tokens/<owner>-<repo>, shared with external tools). Used only to fetch issues, create PRs, comment & close issues; public repos may leave empty."),
+        "tasks.configInfo": ("GitHub token（只写文件：有当前仓库时写 ~/.dsh/tokens/<owner>-<repo>，否则写通用 ~/.dsh/gh-token；chmod 600，App 与外部工具共用）。解析顺序：文件专属 → 文件通用；不再读取 macOS 钥匙串。仅用于拉取 issues、创建 PR、评论关闭 issue；公开仓库可留空。", "GitHub token (written to a FILE only: ~/.dsh/tokens/<owner>-<repo> when a repo is known, otherwise the generic ~/.dsh/gh-token; chmod 600, shared with external tools). Resolution: per-repo file → generic file; the macOS Keychain is no longer read. Used only to fetch issues, create PRs, comment & close issues; public repos may leave empty."),
         "tasks.tokenPlaceholder": ("ghp_xxx（可选）", "ghp_xxx (optional)"),
         "tasks.detailTitle": ("Issue #%d", "Issue #%d"),
         "tasks.detailLabels": ("标签：%@", "Labels: %@"),

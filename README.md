@@ -103,7 +103,7 @@
 - **一键流水线**：`checkout main → pull → checkout -b <分支> → dsh 会话 → issue-resolve skill 修复 → 推送 → 开 PR`，全程**串行**（「全部处理」依次入队）、可追溯（会话/分支/PR 全保留）、**重启可恢复**（关联索引 `.dsh/tasks/index.json` + 本机 `local.json`）；
 - **评论并关闭 Issue**：任务完成后在展开区手动触发，预填 PR 引用，确认后 POST 评论 + 关闭 issue；
 - **失败处理**：会话失败/超时（30min）/分支未推送/PR 失败各有明确状态与错误提示，可 Retry；取消走 `session.cancel`；
-- **GitHub token（按仓库作用域）**：面板「配置 GitHub Token」**同时写** Keychain 专属与文件专属 `~/.dsh/tokens/<owner>-<repo>`（chmod 600，App 与外部工具/代理共用）；解析优先级：文件专属 → 文件通用 `~/.dsh/gh-token` → Keychain 专属 → Keychain 通用；公开仓库无需 token，私有仓库拉取/开 PR/评论关闭需要；
+- **GitHub token（按仓库作用域，只走文件）**：面板「配置 GitHub Token」**只写文件** —— 有当前仓库时写文件专属 `~/.dsh/tokens/<owner>-<repo>`，否则写通用 `~/.dsh/gh-token`（均 chmod 600，App 与外部工具/代理共用）；解析优先级：文件专属 → 文件通用；**不再读写 macOS 钥匙串**（旧版写在钥匙串里的 token 需重新填写一次）；公开仓库无需 token，私有仓库拉取/开 PR/评论关闭需要；
 - 工作区非 GitHub 仓库时诚实显示空态（不替换为其他已注册工作区）；切换到不同仓库先清空旧列表再重载。
 
 ### 通道面板（`⌥⌘H` / 活动栏「通道」图标）
@@ -329,9 +329,9 @@ dsh 升级会**把会话日志换成新世代**（0.1.5 起新建会话写 `sess
 > （开发版 `~/.dsh-dev/shell/config.json`），可由外部工具 / 代理直接读写（写入经 core CLI 合并 + 原子落盘，壳层侧 0.3s 防抖异步）；
 > 仅系统级项（`AppleLanguages`、窗口位置）仍留在原生 UserDefaults。
 
-> **GitHub token（任务面板，按仓库作用域）**：面板「配置 GitHub Token」保存时**同时写入** Keychain 专属
-> （`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）和文件专属（`~/.dsh/tokens/<owner>-<repo>`，chmod 600）——
-> App 与外部工具/代理共享同一份。解析优先级：① 文件专属 ② 文件通用 `~/.dsh/gh-token` ③ Keychain 专属 ④ Keychain 通用。
+> **GitHub token（任务面板，按仓库作用域，只走文件）**：面板「配置 GitHub Token」保存时**只写文件** —— 有当前仓库时写
+> 专属 `~/.dsh/tokens/<owner>-<repo>`，否则写通用 `~/.dsh/gh-token`（均 chmod 600）——App 与外部工具/代理共享同一份。
+> 解析优先级：① 文件专属 ② 文件通用 `~/.dsh/gh-token`；**不再读写 macOS 钥匙串**（旧版写在钥匙串里的 token 需重新填写一次）。
 > 公开仓库无需 token；私有仓库拉取/开 PR/评论关闭 issue 需要。
 
 > 构建期变量 `DSH_NODE_VERSION`、`DSH_PACKAGE_SPEC`、`DSH_NODE_MIRROR`、`DSH_NPM_REGISTRY`、`DSH_CEF_VERSION`、`DSH_ARCH` 见上文「构建」。
