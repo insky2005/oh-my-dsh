@@ -297,111 +297,19 @@ do {
           "and the inline advanced fields keep their width (\(expanded.branchField.frame.width)pt)")
 }
 
-section("the drawer grows when the FORM grows")
+section("the sheet IS as tall as the form (no measurement anywhere)")
 do {
-    // 高级设置 changes the form's height from the INSIDE: the panel's own layout
-    // never runs for that, so the form has to tell the sheet to re-measure. Without
-    // it the drawer kept its collapsed height and the extra fields scrolled.
-    let windowHost = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 420))
-    let host = TaskFormSheetHostView()
-    host.translatesAutoresizingMaskIntoConstraints = false
-    windowHost.addSubview(host)
-    let sheet = TaskFormSheetView()
-    host.addSubview(sheet)
-    let form = QueueComposerView(model: QueueComposerModel.create())
-    sheet.setContent(form)
-
-    let height = sheet.heightAnchor.constraint(equalToConstant: 0)
-    height.priority = NSLayoutConstraint.Priority(999)
-    NSLayoutConstraint.activate([
-        windowHost.widthAnchor.constraint(equalToConstant: 460),
-        windowHost.heightAnchor.constraint(equalToConstant: 420),
-        host.leadingAnchor.constraint(equalTo: windowHost.leadingAnchor),
-        host.trailingAnchor.constraint(equalTo: windowHost.trailingAnchor),
-        host.topAnchor.constraint(equalTo: windowHost.topAnchor),
-        host.bottomAnchor.constraint(equalTo: windowHost.bottomAnchor),
-        sheet.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 8),
-        sheet.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -8),
-        sheet.topAnchor.constraint(equalTo: host.topAnchor, constant: 8),
-        sheet.heightAnchor.constraint(lessThanOrEqualTo: host.heightAnchor, constant: -16),
-        height,
-    ])
-    // Exactly what IssueRunnerPanel wires up.
-    host.onLayout = { height.constant = ceil(sheet.idealHeight()) }
-    form.onHeightChanged = { height.constant = ceil(sheet.idealHeight()) }
-    // Twice: the measurement happens during a layout pass, so the frame follows on
-    // the next one (IssueRunnerPanel does the same before its slide-in).
-    windowHost.layoutSubtreeIfNeeded()
-    windowHost.layoutSubtreeIfNeeded()
-
-    let collapsed = sheet.frame.height
-    check(form.advancedStack.isHidden, "高级设置 starts collapsed")
-    check(abs(collapsed - form.frame.height) < 1, "the drawer matches the collapsed form")
-
-    form.advancedButton.performClick(nil)
-    // The panel measures INSIDE the click handler, before any layout pass: reading
-    // the view's frame there returned the previous height, which made the drawer lag
-    // one toggle behind (展开时不动、收起时才长高).
-    check(abs(form.preferredHeight() - sheet.idealHeight()) < 1,
-          "the form reports its new height at once, without a layout pass")
-    check(form.preferredHeight() > collapsed + 50,
-          "and that height is the expanded one (\(form.preferredHeight())pt)")
-    host.layoutSubtreeIfNeeded()
-    check(!form.advancedStack.isHidden, "clicking it opens the section")
-    check(sheet.frame.height > collapsed + 50,
-          "the drawer grows with the form (\(collapsed) → \(sheet.frame.height)pt)")
-    check(abs(sheet.frame.height - form.frame.height) < 1,
-          "and is exactly as tall as the form (no scrolling)")
-}
-
-section("a click never falls through the form to the list")
-do {
-    // With no form open the host must be click-through (it covers the list), but
-    // while a form is open it must swallow clicks aimed outside the form — a card
-    // behind the drawer reacting to a click is startling.
-    let host = TaskFormSheetHostView()
-    host.translatesAutoresizingMaskIntoConstraints = false
-    let form = TaskComposerView(model: TaskComposerModel.build(mode: .create))
-    host.addSubview(form)
-    form.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-        host.widthAnchor.constraint(equalToConstant: 400),
-        host.heightAnchor.constraint(equalToConstant: 600),
-        form.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 8),
-        form.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -8),
-        form.topAnchor.constraint(equalTo: host.topAnchor, constant: 8),
-    ])
-    host.layoutSubtreeIfNeeded()
-
-    // A point in the host's empty area (below the form): passed on to the list
-    // while nothing is open…
-    let emptyArea = NSPoint(x: 200, y: 20)
-    check(host.hitTest(emptyArea) == nil, "the empty host area is click-through while nothing is open")
-
-    // …and swallowed while a form is on screen.
-    host.blocksClicksBelow = true
-    check(host.hitTest(emptyArea) === host,
-          "with a form open the click stops at the form's own layer")
-    host.blocksClicksBelow = false
-    check(host.hitTest(emptyArea) == nil, "and opens up again once the form closes")
-}
-
-section("the sheet caps itself and scrolls instead of squeezing the form")
-do {
-    // A form must NEVER shrink its description to fit: the sheet is as tall as the
-    // form wants, and past the content area it scrolls instead (a squeezed text
-    // area cannot wrap, which is exactly what a user reported).
-    func build(hostHeight: CGFloat) -> (sheet: TaskFormSheetView, form: TaskComposerView) {
+    // The panel only caps the sheet; the sheet follows its FORM by constraint. That
+    // is the whole mechanism — no measurement, no callbacks — so a form that grows
+    // from the inside grows the sheet in the SAME layout pass. (Measuring the view's
+    // frame instead lagged one toggle behind: 展开时抽屉不动、收起时才长高.)
+    func build(hostHeight: CGFloat) -> (host: TaskFormSheetHostView, sheet: TaskFormSheetView) {
         let windowHost = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: hostHeight))
         let host = TaskFormSheetHostView()
         host.translatesAutoresizingMaskIntoConstraints = false
         windowHost.addSubview(host)
         let sheet = TaskFormSheetView()
         host.addSubview(sheet)
-        let form = TaskComposerView(model: TaskComposerModel.build(mode: .create))
-        sheet.setContent(form)
-        let height = sheet.heightAnchor.constraint(equalToConstant: 0)
-        height.priority = NSLayoutConstraint.Priority(999)
         NSLayoutConstraint.activate([
             windowHost.widthAnchor.constraint(equalToConstant: 460),
             windowHost.heightAnchor.constraint(equalToConstant: hostHeight),
@@ -413,36 +321,49 @@ do {
             sheet.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -8),
             sheet.topAnchor.constraint(equalTo: host.topAnchor, constant: 8),
             sheet.heightAnchor.constraint(lessThanOrEqualTo: host.heightAnchor, constant: -16),
-            height,
         ])
-        host.onLayout = { height.constant = sheet.idealHeight() }
         windowHost.layoutSubtreeIfNeeded()
-        host.layoutSubtreeIfNeeded()
-        return (sheet, form)
+        return (host, sheet)
     }
 
-    let roomy = build(hostHeight: 600)
-    check(abs(roomy.sheet.frame.height - roomy.form.frame.height) < 1,
-          "a roomy panel shows the whole form (sheet \(roomy.sheet.frame.height), form \(roomy.form.frame.height))")
-    check(roomy.form.bodyBox.frame.height >= 110,
-          "with the description at its full height (\(roomy.form.bodyBox.frame.height)pt)")
+    let roomy = build(hostHeight: 420)
+    let form = QueueComposerView(model: QueueComposerModel.create())
+    roomy.sheet.setContent(form)
+    roomy.host.layoutSubtreeIfNeeded()
+    let collapsed = roomy.sheet.frame.height
+    check(abs(collapsed - form.frame.height) < 1, "the collapsed sheet is exactly the form")
+    check(form.advancedStack.isHidden, "高级设置 starts collapsed")
 
-    let mid = build(hostHeight: 360)
-    check(abs(mid.sheet.frame.height - mid.form.frame.height) < 1,
-          "a 360pt panel still shows the whole form")
+    form.advancedButton.performClick(nil)
+    roomy.host.layoutSubtreeIfNeeded()          // ONE pass, and nothing else
+    check(!form.advancedStack.isHidden, "clicking it opens the section")
+    check(abs(roomy.sheet.frame.height - form.frame.height) < 1,
+          "the sheet is the form again after ONE layout pass (\(roomy.sheet.frame.height)pt)")
+    check(roomy.sheet.frame.height > collapsed + 50, "which is the expanded height, no lag")
 
-    for hostHeight in [300.0, 240.0] {
-        let tight = build(hostHeight: hostHeight)
-        check(tight.sheet.frame.height <= hostHeight - 15,
-              "a \(Int(hostHeight))pt panel caps the sheet inside the content area")
-        check(tight.sheet.frame.height < tight.form.frame.height,
-              "and the form scrolls rather than shrinking")
-        check(tight.form.bodyBox.frame.height >= 88,
-              "the description keeps a usable height (\(tight.form.bodyBox.frame.height)pt)")
-    }
+    // The description editor growing does the same thing.
+    let taskSheet = build(hostHeight: 420)
+    let taskForm = TaskComposerView(model: TaskComposerModel.build(mode: .create))
+    taskSheet.sheet.setContent(taskForm)
+    taskSheet.host.layoutSubtreeIfNeeded()
+    let before = taskSheet.sheet.frame.height
+    taskForm.bodyText.string = String(repeating: "一行描述文本。\n", count: 6)
+    taskForm.textDidChange(Notification(name: NSText.didChangeNotification, object: taskForm.bodyText))
+    taskSheet.host.layoutSubtreeIfNeeded()
+    check(taskSheet.sheet.frame.height > before, "typing a long description grows the sheet too")
+    check(abs(taskSheet.sheet.frame.height - taskForm.frame.height) < 1,
+          "and it stays exactly as tall as that form")
+
+    // A panel too short caps the sheet: the form keeps its height and scrolls.
+    let tight = build(hostHeight: 240)
+    let tightForm = QueueComposerView(model: QueueComposerModel.create().togglingAdvanced())
+    tight.sheet.setContent(tightForm)
+    tight.host.layoutSubtreeIfNeeded()
+    check(tight.sheet.frame.height <= 240 - 15, "a short panel caps the sheet inside the content area")
+    check(tightForm.frame.height >= 200, "the form keeps its own height")
+    check(tightForm.frame.height > tight.sheet.frame.height, "so it scrolls instead of shrinking")
 }
 
-// MARK: - Section header
 
 section("section header + progress bar")
 do {

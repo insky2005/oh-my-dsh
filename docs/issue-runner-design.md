@@ -343,7 +343,8 @@ struct Queue {
 - **抽屉挂在内容区顶部、从上往下滑出**：此前挂在底部会遮住表单自己的按钮（面板一矮就没有余量）；现在宿主仍是透明 + 点击穿透 + `masksToBounds` 的图层（覆盖工具条以下到面板底部），抽屉顶部距内容区顶 8pt，从宿主上边界之外滑入，高度由内容决定并**硬上限 = 内容区高度 − 16**（超出时先压缩描述框：`TaskFormKit.textView` 的高度约束是 .defaultHigh，最小 56pt，再小就滚动——按钮因此永远留在可见区，测试 `form-tests` 用 420/300/260pt 三种面板高度钉住）；
 - **两个创建入口是图标按钮**：页签行右侧「＋」= 新建任务、「▣＋」= 新建队列（`CustomIconButton`，24pt，含 hover 与 tooltip），文字标签移到 tooltip；
 - **表单不缩小自己，矮面板靠滚动**（2026-09-25e）：抽屉（`TaskFormSheetView`）内嵌滚动视图，抽屉高度 = `idealHeight()` 测得的表单自然高度（宿主每次 `layout()` 重算），上限 = 内容区高度 − 16；超出即滚动，**描述框始终 120pt（最小 88pt）**，因为"表单压缩自己"就是上一版把描述框压到 54pt、无法换行的原因。**不要**用"抽屉高度 == 文档视图高度"的约束：AppKit 会让文档视图不低于 clip 高度，这条链会让上限静默失效（实测 240pt 内容区里塞进 304pt 表单）；
-- **测量按内容而非 frame**（2026-09-25j）：`TaskFormCardView.preferredHeight()` = 内部列栈 `fittingSize.height` + 上内边距 + 下内边距。读 `frame` 会滞后一拍（frame 反映上一次布局，点击后立刻测量得到旧高度 → 抽屉"展开不动、收起才长高"）；上下内边距都要加，否则抽屉比表单矮十几点又会冒滚动条；
+- **抽屉高度 = 纯约束跟随**（2026-09-25k，最终做法）：`TaskFormSheetView.setContent` 内建 `sheet.height == form.height`（@999），面板只负责加"不高于内容区"的上限（required）——没有测量、没有回调、没有常量，表单内部长高在同一个布局回合就撑开抽屉；表单过高时上限生效、表单保持自身高度并内部滚动。前两版（`idealHeight()` 量 frame / `preferredHeight()` + `onHeightChanged` 回调）都因为"frame 只反映上一次布局"而滞后一整拍，已删除；
+- **测量按内容而非 frame**（2026-09-25j，已被 25k 取代）：`TaskFormCardView.preferredHeight()` = 内部列栈 `fittingSize.height` + 上内边距 + 下内边距。读 `frame` 会滞后一拍（frame 反映上一次布局，点击后立刻测量得到旧高度 → 抽屉"展开不动、收起才长高"）；上下内边距都要加，否则抽屉比表单矮十几点又会冒滚动条；
 - **抽屉必须跟着表单长高**（2026-09-25i）：抽屉高度有两个来源 —— 面板改尺寸（宿主 `layout()` 重测）与**表单内部长高**（高级设置展开、描述框变高）。后者不触发面板布局，因此表单通过 `TaskFormCardView.onHeightChanged` 主动上报，面板重测并**带动画**（0.16s ease-out）撑开抽屉；`presentForm` 与测试都要补一次 `layoutSubtreeIfNeeded()`（测量发生在布局回调里，尺寸下一帧才生效，否则滑入动画会拿旧高度）；
 - **高级设置展开后不滚动**（2026-09-25h）：`TaskFormKit.inlineRow` 把分支 / 基于分支改成"标签在左、字段在右"（三行 caption 在上的排法让展开态高达 314pt，超过常见内容区就得滚动），高级设置内部间距 8 → 6，抽屉高度 `ceil` 取整；展开态 **274pt**，实测内容区 600/400/340/300pt 都整表单显示无滚动条，≤260pt 才回落到滚动；
 - **抽屉打开时不吃穿透**（2026-09-25g）：宿主（`TaskFormSheetHostView`）的点击策略随状态切换 —— 无表单时点击穿透（否则覆盖内容区的宿主会挡住整个列表），表单打开时整块吞掉（`blocksClicksBelow`，宿主自身收到 `mouseDown` 什么都不做），抽屉背后被点开的任务卡片因此不会再出现；
@@ -408,7 +409,7 @@ struct Queue {
 
 ### V2-10 测试与 CI
 
-新增 `tests/tasks-panel/`（无头，体例照 `tests/projects-panel/`：`stubs.swift` + `stubs-ui.swift` + `run.sh` + 若干 `*-tests.swift`）。**四个阶段全绿（2026-09-25：模型 126 + 运行器 154 + 视图模型 128 + 视图 103 = 514 项）**，已登记进 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`：
+新增 `tests/tasks-panel/`（无头，体例照 `tests/projects-panel/`：`stubs.swift` + `stubs-ui.swift` + `run.sh` + 若干 `*-tests.swift`）。**四个阶段全绿（2026-09-25：模型 126 + 运行器 154 + 视图模型 128 + 视图 94 = 502 项）**，已登记进 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`：
 
 1. **队列模型（本次重点，模型先行）**：入队顺序与 `order` 编号、重复入队幂等、移出后回 `pending`、队首推进、队列内失败 → 队列暂停（后续任务仍 queued）、跳过并继续、切队列的干净检查（脏工作区拒绝启动）、队列完成态与 `autoPR` 能力降级、自动单任务队列的创建与重试复用；
 2. **模型与持久化**：TaskItem / Queue 编解码往返；`index.json` 旧格式兼容（无 `source` 视为 github、无 id 用 `issue-N`）；`manual.json` 增删改查；`queues.json` 读写；**`local.json` sessions 换键兼容**（数字键 ↔ `issue-N`）；坏文件不崩溃且不删除；

@@ -22,34 +22,12 @@ import AppKit
 /// it.
 class TaskFormCardView: NSView {
 
-    /// Fired when the form's own height changes (高级设置 opening, the description
-    /// editor growing): the sheet around it has to re-measure itself, and a layout
-    /// pass of the PANEL does not happen for a change inside the form.
+    /// Fired when the form's own height changes. Kept for callers that want to know;
+    /// the sheet does NOT need it any more — it follows the form's height with a
+    /// constraint, so growing happens in the same layout pass.
     var onHeightChanged: (() -> Void)?
 
-    /// The column every form lays its rows out in (set by the composer's build()).
-    weak var formColumn: NSStackView?
-    /// The column's top / bottom inset inside the form (the composers pin the
-    /// column that way). Both halves count: missing one makes the sheet a few
-    /// points shorter than its form, which is a scrollbar for nothing.
-    var formPadding = (top: CGFloat(14), bottom: CGFloat(16))
-
     override var isOpaque: Bool { false }
-
-    /// Tell the sheet to re-measure (coalesced: the runloop decides when).
-    func heightChanged() { onHeightChanged?() }
-
-    /// The height this form WANTS, measured from its own contents.
-    ///
-    /// Deliberately not the view's frame: a frame is only as fresh as the last
-    /// layout pass, and this is asked immediately after a click changes the form —
-    /// before that pass. Measuring the frame there returned the PREVIOUS height, so
-    /// the sheet lagged one toggle behind (展开时抽屉不动，收起时才长高).
-    func preferredHeight() -> CGFloat {
-        guard let column = formColumn else { return fittingSize.height }
-        column.layoutSubtreeIfNeeded()
-        return column.fittingSize.height + formPadding.top + formPadding.bottom
-    }
 }
 
 /// The input chrome shared by every field of a form: a rounded, recessed box.
@@ -102,7 +80,16 @@ enum TaskFormKit {
         label.font = .systemFont(ofSize: 11, weight: .medium)
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
+        _ = requiredHeight(label)
         return label
+    }
+
+    /// A form never squashes its own contents: its height is what the sheet follows.
+    /// Without this, a panel too short for the form compressed a label (text got
+    /// clipped) instead of letting the sheet cap itself and scroll.
+    static func requiredHeight(_ view: NSView) -> NSView {
+        view.setContentCompressionResistancePriority(.required, for: .vertical)
+        return view
     }
 
     /// A caption BESIDE its control (the 高级设置 section): three stacked
@@ -119,6 +106,7 @@ enum TaskFormKit {
         stack.alignment = .centerY
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
+        _ = requiredHeight(stack)
         return stack
     }
 
@@ -131,6 +119,7 @@ enum TaskFormKit {
         stack.spacing = spacing
         stack.translatesAutoresizingMaskIntoConstraints = false
         control.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        _ = requiredHeight(stack)
         return stack
     }
 
@@ -139,6 +128,7 @@ enum TaskFormKit {
         let box = TaskFieldBox()
         box.translatesAutoresizingMaskIntoConstraints = false
         box.heightAnchor.constraint(equalToConstant: fieldHeight).isActive = true
+        _ = requiredHeight(box)
         let field = NSTextField(string: value)
         field.placeholderString = placeholder
         field.font = fieldFont
@@ -166,6 +156,7 @@ enum TaskFormKit {
                                               textHeight: NSLayoutConstraint) {
         let box = TaskFieldBox()
         box.translatesAutoresizingMaskIntoConstraints = false
+        _ = requiredHeight(box)
         let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: editorHeight))
         text.isEditable = true
         text.isRichText = false
@@ -276,6 +267,7 @@ enum TaskFormKit {
         label.maximumNumberOfLines = 3
         label.translatesAutoresizingMaskIntoConstraints = false
         label.isHidden = true
+        _ = requiredHeight(label)
         return label
     }
 
@@ -298,6 +290,7 @@ enum TaskFormKit {
         row.alignment = .centerY
         row.spacing = 6
         row.translatesAutoresizingMaskIntoConstraints = false
+        _ = requiredHeight(row)
         return row
     }
 
@@ -307,6 +300,7 @@ enum TaskFormKit {
         row.alignment = .centerY
         row.spacing = 8
         row.translatesAutoresizingMaskIntoConstraints = false
+        _ = requiredHeight(row)
         return row
     }
 
@@ -413,6 +407,7 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
         info.maximumNumberOfLines = 2
         info.lineBreakMode = .byTruncatingTail
         info.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(info)
         closeButton.onAction = { [weak self] in self?.onCancel?() }
         submitButton.target = self
         submitButton.action = #selector(submitTapped)
@@ -428,7 +423,8 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
         column.alignment = .leading
         column.spacing = 8
         column.translatesAutoresizingMaskIntoConstraints = false
-        formColumn = column
+        // The form's height is what the sheet follows: nothing inside may squash it.
+        _ = TaskFormKit.requiredHeight(column)
         addSubview(column)
         // Everything but the button row spans the form: the fields are as wide as
         // the sheet, not as wide as their caption.
@@ -457,11 +453,9 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
         let box = min(TaskFormKit.editorMaxHeight, max(TaskFormKit.editorMinHeight, needed))
         // Only touch the constraints when something actually changed: this runs on
         // every layout pass (the panel re-measures the sheet).
-        var changed = false
-        if abs(bodyBoxHeight.constant - box) > 0.5 { bodyBoxHeight.constant = box; changed = true }
+        if abs(bodyBoxHeight.constant - box) > 0.5 { bodyBoxHeight.constant = box }
         let text = max(box - 8, needed)
-        if abs(bodyTextHeight.constant - text) > 0.5 { bodyTextHeight.constant = text; changed = true }
-        if changed { heightChanged() }
+        if abs(bodyTextHeight.constant - text) > 0.5 { bodyTextHeight.constant = text }
     }
 
     /// Called once the field has its real width: edit mode then shows the whole
@@ -621,8 +615,11 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         info.maximumNumberOfLines = 2
         info.lineBreakMode = .byTruncatingTail
         info.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(info)
         branchHint.font = TaskFormKit.captionFont
         branchHint.textColor = .tertiaryLabelColor
+        _ = TaskFormKit.requiredHeight(branchHint)
+        _ = TaskFormKit.requiredHeight(prNote)
         prSwitch.font = .systemFont(ofSize: 12)
         prSwitch.translatesAutoresizingMaskIntoConstraints = false
         closeButton.onAction = { [weak self] in self?.onCancel?() }
@@ -649,11 +646,13 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         hintRow.alignment = .centerY
         hintRow.spacing = 6
         hintRow.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(hintRow)
 
         advancedStack.orientation = .vertical
         advancedStack.alignment = .leading
         advancedStack.spacing = 6
         advancedStack.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(advancedStack)
         for view in [branchRow, baseRow, prSwitch, prNote] { advancedStack.addArrangedSubview(view) }
         TaskFormKit.stretch([branchRow, baseRow, prNote], to: advancedStack)
 
@@ -663,7 +662,8 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         column.alignment = .leading
         column.spacing = 8
         column.translatesAutoresizingMaskIntoConstraints = false
-        formColumn = column
+        // The form's height is what the sheet follows: nothing inside may squash it.
+        _ = TaskFormKit.requiredHeight(column)
         addSubview(column)
         TaskFormKit.stretch([headingRow, info, nameRow, hintRow, advancedStack], to: column)
         NSLayoutConstraint.activate([
@@ -682,9 +682,9 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
     }
 
     @objc private func advancedTapped() {
+        // Hiding / showing the section changes the form's height, and the sheet
+        // follows that height by constraint — one layout pass, nothing to notify.
         apply(model.togglingAdvanced())
-        // The advanced section is a big height change: tell the sheet.
-        heightChanged()
     }
 
     /// The submit button's action; internal so the headless tests can press it.
@@ -741,6 +741,15 @@ final class TaskFormSheetView: NSView {
     /// The form currently installed (nil when the sheet was emptied).
     var content: NSView? { docHolder.subviews.first }
 
+    /// The sheet follows its form's own height, at .defaultHigh + 1 so the panel's
+    /// "no taller than the content area" cap can still win on a short panel (and
+    /// the form then scrolls inside).
+    ///
+    /// This is the whole mechanism: no measurement, no callbacks, no constants to
+    /// keep in sync — a form that grows from the inside (高级设置 opening, the
+    /// description editor growing) grows the sheet in the SAME layout pass.
+    private var followsContent: NSLayoutConstraint?
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
@@ -768,25 +777,11 @@ final class TaskFormSheetView: NSView {
 
     override var isOpaque: Bool { false }
 
-    /// The height the form WANTS right now.
-    ///
-    /// The sheet is sized from this measurement rather than by a constraint to the
-    /// document view: AppKit keeps a document view at least as tall as the clip
-    /// view, so chaining the sheet to the document view made the sheet
-    /// unshrinkable and the panel's height cap was silently dropped (measured: a
-    /// 304pt form inside a 240pt content area). The document view is pinned to the
-    /// form's height instead, which leaves the form free to be its natural size
-    /// while the sheet around it gets capped — and then it scrolls.
-    func idealHeight() -> CGFloat {
-        guard let content = content else { return 0 }
-        if let form = content as? TaskFormCardView { return form.preferredHeight() }
-        content.layoutSubtreeIfNeeded()
-        return content.frame.height
-    }
-
     /// Install a form (replacing whatever was there).
     func setContent(_ view: NSView) {
         for subview in docHolder.subviews { subview.removeFromSuperview() }
+        followsContent?.isActive = false
+        followsContent = nil
         view.translatesAutoresizingMaskIntoConstraints = false
         docHolder.addSubview(view)
         NSLayoutConstraint.activate([
@@ -797,6 +792,10 @@ final class TaskFormSheetView: NSView {
             // round): that is what lets the sheet be capped and scroll.
             docHolder.heightAnchor.constraint(equalTo: view.heightAnchor),
         ])
+        let follows = heightAnchor.constraint(equalTo: view.heightAnchor)
+        follows.priority = NSLayoutConstraint.Priority(999)
+        follows.isActive = true
+        followsContent = follows
     }
 
     override func viewDidChangeEffectiveAppearance() {
