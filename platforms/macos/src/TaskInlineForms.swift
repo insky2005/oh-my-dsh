@@ -21,7 +21,16 @@ import AppKit
 /// one form can be presented anywhere without a card fighting the surface behind
 /// it.
 class TaskFormCardView: NSView {
+
+    /// Fired when the form's own height changes (高级设置 opening, the description
+    /// editor growing): the sheet around it has to re-measure itself, and a layout
+    /// pass of the PANEL does not happen for a change inside the form.
+    var onHeightChanged: (() -> Void)?
+
     override var isOpaque: Bool { false }
+
+    /// Tell the sheet to re-measure (coalesced: the runloop decides when).
+    func heightChanged() { onHeightChanged?() }
 }
 
 /// The input chrome shared by every field of a form: a rounded, recessed box.
@@ -428,9 +437,11 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
         let box = min(TaskFormKit.editorMaxHeight, max(TaskFormKit.editorMinHeight, needed))
         // Only touch the constraints when something actually changed: this runs on
         // every layout pass (the panel re-measures the sheet).
-        if abs(bodyBoxHeight.constant - box) > 0.5 { bodyBoxHeight.constant = box }
+        var changed = false
+        if abs(bodyBoxHeight.constant - box) > 0.5 { bodyBoxHeight.constant = box; changed = true }
         let text = max(box - 8, needed)
-        if abs(bodyTextHeight.constant - text) > 0.5 { bodyTextHeight.constant = text }
+        if abs(bodyTextHeight.constant - text) > 0.5 { bodyTextHeight.constant = text; changed = true }
+        if changed { heightChanged() }
     }
 
     /// Called once the field has its real width: edit mode then shows the whole
@@ -649,7 +660,11 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
                     autoPR: prSwitch.state == .on)
     }
 
-    @objc private func advancedTapped() { apply(model.togglingAdvanced()) }
+    @objc private func advancedTapped() {
+        apply(model.togglingAdvanced())
+        // The advanced section is a big height change: tell the sheet.
+        heightChanged()
+    }
 
     /// The submit button's action; internal so the headless tests can press it.
     @objc func submitTapped() {

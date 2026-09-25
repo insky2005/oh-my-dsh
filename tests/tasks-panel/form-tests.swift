@@ -297,6 +297,56 @@ do {
           "and the inline advanced fields keep their width (\(expanded.branchField.frame.width)pt)")
 }
 
+section("the drawer grows when the FORM grows")
+do {
+    // 高级设置 changes the form's height from the INSIDE: the panel's own layout
+    // never runs for that, so the form has to tell the sheet to re-measure. Without
+    // it the drawer kept its collapsed height and the extra fields scrolled.
+    let windowHost = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 420))
+    let host = TaskFormSheetHostView()
+    host.translatesAutoresizingMaskIntoConstraints = false
+    windowHost.addSubview(host)
+    let sheet = TaskFormSheetView()
+    host.addSubview(sheet)
+    let form = QueueComposerView(model: QueueComposerModel.create())
+    sheet.setContent(form)
+
+    let height = sheet.heightAnchor.constraint(equalToConstant: 0)
+    height.priority = NSLayoutConstraint.Priority(999)
+    NSLayoutConstraint.activate([
+        windowHost.widthAnchor.constraint(equalToConstant: 460),
+        windowHost.heightAnchor.constraint(equalToConstant: 420),
+        host.leadingAnchor.constraint(equalTo: windowHost.leadingAnchor),
+        host.trailingAnchor.constraint(equalTo: windowHost.trailingAnchor),
+        host.topAnchor.constraint(equalTo: windowHost.topAnchor),
+        host.bottomAnchor.constraint(equalTo: windowHost.bottomAnchor),
+        sheet.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 8),
+        sheet.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -8),
+        sheet.topAnchor.constraint(equalTo: host.topAnchor, constant: 8),
+        sheet.heightAnchor.constraint(lessThanOrEqualTo: host.heightAnchor, constant: -16),
+        height,
+    ])
+    // Exactly what IssueRunnerPanel wires up.
+    host.onLayout = { height.constant = ceil(sheet.idealHeight()) }
+    form.onHeightChanged = { height.constant = ceil(sheet.idealHeight()) }
+    // Twice: the measurement happens during a layout pass, so the frame follows on
+    // the next one (IssueRunnerPanel does the same before its slide-in).
+    windowHost.layoutSubtreeIfNeeded()
+    windowHost.layoutSubtreeIfNeeded()
+
+    let collapsed = sheet.frame.height
+    check(form.advancedStack.isHidden, "高级设置 starts collapsed")
+    check(abs(collapsed - form.frame.height) < 1, "the drawer matches the collapsed form")
+
+    form.advancedButton.performClick(nil)
+    host.layoutSubtreeIfNeeded()
+    check(!form.advancedStack.isHidden, "clicking it opens the section")
+    check(sheet.frame.height > collapsed + 50,
+          "the drawer grows with the form (\(collapsed) → \(sheet.frame.height)pt)")
+    check(abs(sheet.frame.height - form.frame.height) < 1,
+          "and is exactly as tall as the form (no scrolling)")
+}
+
 section("a click never falls through the form to the list")
 do {
     // With no form open the host must be click-through (it covers the list), but

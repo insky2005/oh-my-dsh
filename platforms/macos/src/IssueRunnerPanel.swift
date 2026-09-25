@@ -1183,6 +1183,9 @@ final class IssueRunnerPanelController: NSObject {
         // The panel is in "form mode": clicks stay with the form.
         formSheetHost.blocksClicksBelow = true
         syncFormSheetHeight()
+        // The height was just set from inside a layout pass, so the frame follows
+        // on the NEXT one — and the slide-in needs the real height now.
+        view.layoutSubtreeIfNeeded()
         let wasVisible = !formSheet.isHidden
         view.layoutSubtreeIfNeeded()
         if wasVisible {
@@ -1230,9 +1233,13 @@ final class IssueRunnerPanelController: NSObject {
         })
     }
 
-    /// Keep the sheet exactly as tall as its form (the form's own height depends
-    /// on the width it was given, so this is re-measured after every layout).
-    private func syncFormSheetHeight() {
+    /// Keep the sheet exactly as tall as its form.
+    ///
+    /// Called from two places, because a form can change height for two different
+    /// reasons: the PANEL changed size (the host's layout) or the FORM changed from
+    /// the inside (高级设置 opening, the description editor growing). The second
+    /// case runs no layout on the panel at all — the form has to say so.
+    private func syncFormSheetHeight(animated: Bool = false) {
         guard let content = formSheetContent, formSheetHeight != nil else { return }
         // A resize changes the wrapping, so the editor re-measures first.
         (content as? TaskComposerView)?.layoutBody()
@@ -1240,7 +1247,16 @@ final class IssueRunnerPanelController: NSObject {
         // scrollbar for a fraction of a point.
         let wanted = ceil(formSheet.idealHeight())
         guard wanted > 0, abs(wanted - formSheetHeight.constant) > 0.5 else { return }
-        formSheetHeight.constant = wanted
+        guard animated, !formSheet.isHidden else {
+            formSheetHeight.constant = wanted
+            return
+        }
+        // Growing from the inside should read as a movement, not a jump.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            formSheetHeight.animator().constant = wanted
+        }
     }
 
     private func showTaskForm(_ model: TaskComposerModel) {
@@ -1248,6 +1264,10 @@ final class IssueRunnerPanelController: NSObject {
         let form = TaskComposerView(model: model)
         form.onSubmit = { [weak self] composer in self?.submitTaskComposer(composer) }
         form.onCancel = { [weak self] in self?.closeTaskComposer() }
+        // The description editor growing (or the queue form's 高级设置 opening)
+        // changes the form's height from the INSIDE — the panel's own layout does
+        // not run for that, so the form tells the sheet to re-measure.
+        form.onHeightChanged = { [weak self] in self?.syncFormSheetHeight(animated: true) }
         presentForm(form) { view in
             // The editor can only size itself to its text once it has its real
             // width: an edit must show the whole description, not its first line.
@@ -1262,6 +1282,7 @@ final class IssueRunnerPanelController: NSObject {
         let form = QueueComposerView(model: model)
         form.onSubmit = { [weak self] composer in self?.submitQueueComposer(composer) }
         form.onCancel = { [weak self] in self?.closeQueueComposer() }
+        form.onHeightChanged = { [weak self] in self?.syncFormSheetHeight(animated: true) }
         presentForm(form) { ($0 as? QueueComposerView)?.focusName() }
     }
 
