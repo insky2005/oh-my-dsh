@@ -289,7 +289,7 @@ do {
     // rather than promising a branch that cannot be derived.
     let chinese = QueueComposerModel.create().typed(name: "深色模式改造", branch: "", baseBranch: "main",
                                                     autoPR: false)
-    eq(chinese.effectiveBranchHint, "tasks.queue.branchHint",
+    eq(chinese.effectiveBranchHint, "tasks.queue.branchAuto",
        "a name with no slug keeps the generic hint")
 
     // A typed branch wins, and an explicit one is what the queue gets.

@@ -130,11 +130,11 @@ do {
     check(form.prSwitch.isHidden,
           "no dead PR switch without a GitHub repo (the reason is a sentence instead)")
     check(!form.prNote.isHidden, "and that sentence is on screen")
-    eq(form.branchHint.stringValue, "branchWillUse(branchHint)",
-       "with no name there is no derived branch to promise")
+    eq(form.branchHint.stringValue, "branchWillUse(branchAuto)",
+       "with no name there is no exact branch yet, only the auto wording")
     check(form.advancedStack.isHidden, "creating a queue only asks for a name: 高级设置 is collapsed")
-    eq(form.branchField.placeholderString, "branchHint",
-       "the branch field's placeholder is the branch that will be used")
+    eq(form.branchField.placeholderString, "branchPlaceholderCreate",
+       "creating says the empty field DERIVES a branch (it never means 不切分支)")
 
     form.nameField.stringValue = "Dark Mode"
     form.controlTextDidChange(typed(form.nameField))
@@ -172,6 +172,8 @@ do {
     form.controlTextDidChange(typed(form.branchField))
     eq(form.branchHint.stringValue, "branchWillUse(noBranch)",
        "an empty branch says it will not switch branches")
+    eq(form.branchField.placeholderString, "branchPlaceholderEdit",
+       "editing explains the empty field as 不切分支 — the opposite of creating")
     form.submitTapped()
     eq(submitted?.mode.queueID, "q-3333", "the edited queue is identified")
     eq(submitted?.branchValue, nil, "and the cleared branch is submitted as no branch")

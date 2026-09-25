@@ -421,14 +421,18 @@ struct QueueComposerModel: Equatable {
 
     var normalizedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-    /// The branch the queue will really use, as the hint under the field: the
-    /// typed one, else the derived default, else 不切分支.
+    /// The branch the queue will really use, as the hint next to the field.
+    ///
+    /// Creating never ends up without one: an empty field derives a branch from the
+    /// queue name (feature/<slug>, or feature/queue-<id4> when the name has no ASCII
+    /// slug at all). Editing takes an empty field literally — the queue stops
+    /// switching branches and its tasks run wherever the worktree already is.
     var effectiveBranchHint: String {
         let typed = branch.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.isEmpty { return typed }
         guard mode.isCreate else { return L10n.tr("tasks.queue.noBranch") }
         let slug = TaskBranch.slug(normalizedName)
-        return slug.isEmpty ? L10n.tr("tasks.queue.branchHint") : "feature/" + slug
+        return slug.isEmpty ? L10n.tr("tasks.queue.branchAuto") : "feature/" + slug
     }
 
     /// Strictly about validity — an untouched, empty form is still not
@@ -460,11 +464,15 @@ struct QueueComposerModel: Equatable {
         return copy
     }
 
-    /// The branch field's placeholder: the branch this queue will really use.
+    /// What the branch field shows while it is EMPTY. The two modes mean different
+    /// things here, so they say different things — the old single line ("留空 =
+    /// 自动生成（不带分支则不切分支）") mixed both and read as a contradiction.
     var branchPlaceholder: String {
         let typed = branch.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.isEmpty { return typed }
-        return mode.isCreate ? effectiveBranchHint : L10n.tr("tasks.queue.noBranchHint")
+        guard mode.isCreate else { return L10n.tr("tasks.queue.branchPlaceholderEdit") }
+        let slug = TaskBranch.slug(normalizedName)
+        return slug.isEmpty ? L10n.tr("tasks.queue.branchPlaceholderCreate") : "feature/" + slug
     }
 
     func attemptedSubmit() -> QueueComposerModel {
