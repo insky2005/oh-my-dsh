@@ -77,6 +77,23 @@ enum TaskFormKit {
         return label
     }
 
+    /// A caption BESIDE its control (the 高级设置 section): three stacked
+    /// caption-above-field rows made the expanded queue form taller than a short
+    /// panel's content area, so it scrolled — and a form that scrolls for three
+    /// short fields is a form that should have been shorter.
+    static func inlineRow(_ caption: NSTextField, _ control: NSView) -> NSStackView {
+        control.translatesAutoresizingMaskIntoConstraints = false
+        caption.setContentHuggingPriority(.required, for: .horizontal)
+        caption.setContentCompressionResistancePriority(.required, for: .horizontal)
+        caption.widthAnchor.constraint(equalToConstant: 62).isActive = true
+        let stack = NSStackView(views: [caption, control])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
+    }
+
     /// A caption above its control, both stretched to the column width.
     static func row(_ caption: NSTextField, _ control: NSView, spacing: CGFloat = 4) -> NSStackView {
         control.translatesAutoresizingMaskIntoConstraints = false
@@ -587,8 +604,8 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
 
         let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
         let nameRow = TaskFormKit.row(nameCaption, nameBox)
-        let branchRow = TaskFormKit.row(branchCaption, branchBox)
-        let baseRow = TaskFormKit.row(baseCaption, baseBox)
+        let branchRow = TaskFormKit.inlineRow(branchCaption, branchBox)
+        let baseRow = TaskFormKit.inlineRow(baseCaption, baseBox)
 
         // The branch this queue will use, and the way into the fields that can
         // change it — one line, so creating a queue asks for a name and nothing
@@ -604,7 +621,7 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
 
         advancedStack.orientation = .vertical
         advancedStack.alignment = .leading
-        advancedStack.spacing = 8
+        advancedStack.spacing = 6
         advancedStack.translatesAutoresizingMaskIntoConstraints = false
         for view in [branchRow, baseRow, prSwitch, prNote] { advancedStack.addArrangedSubview(view) }
         TaskFormKit.stretch([branchRow, baseRow, prNote], to: advancedStack)

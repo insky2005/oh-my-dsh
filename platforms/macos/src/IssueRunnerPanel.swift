@@ -1236,7 +1236,9 @@ final class IssueRunnerPanelController: NSObject {
         guard let content = formSheetContent, formSheetHeight != nil else { return }
         // A resize changes the wrapping, so the editor re-measures first.
         (content as? TaskComposerView)?.layoutBody()
-        let wanted = formSheet.idealHeight()
+        // Rounded UP: a sheet a fraction shorter than its form would flash a
+        // scrollbar for a fraction of a point.
+        let wanted = ceil(formSheet.idealHeight())
         guard wanted > 0, abs(wanted - formSheetHeight.constant) > 0.5 else { return }
         formSheetHeight.constant = wanted
     }

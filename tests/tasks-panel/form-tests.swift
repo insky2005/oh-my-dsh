@@ -230,9 +230,13 @@ do {
 
     let queueForm = QueueComposerView(model: QueueComposerModel.create())
     _ = layout(queueForm, width: 360)
-    for (name, field) in [("name", queueForm.nameField), ("branch", queueForm.branchField),
-                          ("base", queueForm.baseField)] {
-        check(field.frame.width > 300, "the \(name) field spans the form (got \(field.frame.width)pt)")
+    check(queueForm.nameField.frame.width > 300,
+          "the queue NAME field spans the form (got \(queueForm.nameField.frame.width)pt)")
+    // 分支 / 基于分支 sit in 高级设置 with their caption beside them (that is what
+    // keeps the expanded form short enough not to scroll), so they are narrower —
+    // still wide enough for a branch name.
+    for (name, field) in [("branch", queueForm.branchField), ("base", queueForm.baseField)] {
+        check(field.frame.width > 200, "the \(name) field stays usable (got \(field.frame.width)pt)")
     }
 
     // Widening the panel widens the fields with it.
@@ -275,6 +279,22 @@ do {
           "the box stops growing at its maximum")
     check(form.bodyText.frame.height > form.bodyBox.frame.height,
           "and the text view grows past it (the editor scrolls)")
+}
+
+section("the queue form stays short enough to fit without scrolling")
+do {
+    // 高级设置 opens three more controls; a form that then needs a scrollbar in a
+    // normal panel is a form that should have been shorter (the section's rows sit
+    // caption-BESIDE-field, and its spacing is tighter).
+    let collapsed = QueueComposerView(model: QueueComposerModel.create())
+    let collapsedSize = layout(collapsed, width: 400)
+    let expanded = QueueComposerView(model: QueueComposerModel.create().togglingAdvanced())
+    let expandedSize = layout(expanded, width: 400)
+    check(expandedSize.height > collapsedSize.height, "高级设置 makes the form taller")
+    check(expandedSize.height <= 290,
+          "but the expanded form still fits a normal content area (got \(expandedSize.height)pt)")
+    check(expanded.branchField.frame.width > 180,
+          "and the inline advanced fields keep their width (\(expanded.branchField.frame.width)pt)")
 }
 
 section("a click never falls through the form to the list")
