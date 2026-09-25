@@ -54,10 +54,12 @@ final class IssueRunnerPanelController: NSObject {
     private let refreshButton: CustomIconButton
     private let runAllButton: CustomIconButton
     private let hideButton: CustomIconButton
-    /// The two creation entries, flush right on the tabs row (the user's ask:
-    /// creating is a panel-level action, not a header icon).
-    private let newTaskRowButton = NSButton(title: "", target: nil, action: nil)
-    private let newQueueRowButton = NSButton(title: "", target: nil, action: nil)
+    /// The two creation entries, flush right on the tabs row as ICON buttons:
+    /// the labels live in their tooltips, so the row stays a strip of controls
+    /// instead of a sentence.
+    private let newTaskRowButton = CustomIconButton(glyph: .plus, tooltip: "", size: 24)
+    private let newQueueRowButton = CustomIconButton(glyph: .symbol("rectangle.stack.badge.plus"),
+                                                     tooltip: "", size: 24)
     private let repoLabel = HeaderLabel()
     /// The four counters as small pills (队列 / 排队 / 运行 / 失败).
     private let chipStrip = NSStackView()
@@ -74,7 +76,7 @@ final class IssueRunnerPanelController: NSObject {
     /// host that spans the panel's content area.
     private let formSheetHost = TaskFormSheetHostView()
     private let formSheet = TaskFormSheetView()
-    private var formSheetBottom: NSLayoutConstraint!
+    private var formSheetTop: NSLayoutConstraint!
     /// The form on screen, for focus and for the slide-out animation.
     private weak var formSheetContent: NSView?
     private let statusBar = DynamicFillView()
@@ -128,10 +130,8 @@ final class IssueRunnerPanelController: NSObject {
         refreshButton.toolTip = L10n.tr("tasks.refreshHint")
         runAllButton.toolTip = L10n.tr("tasks.runAllHint")
         hideButton.toolTip = L10n.tr("preview.closePanel")
-        newTaskRowButton.title = L10n.tr("tasks.new.hint")
-        newTaskRowButton.toolTip = L10n.tr("tasks.new.info")
-        newQueueRowButton.title = L10n.tr("tasks.queue.newButton")
-        newQueueRowButton.toolTip = L10n.tr("tasks.queue.newInfo")
+        newTaskRowButton.toolTip = L10n.tr("tasks.new.hint")
+        newQueueRowButton.toolTip = L10n.tr("tasks.queue.newButton")
         if let repo = repo {
             repoLabel.text = repo.owner + "/" + repo.repo
         } else if let path = repoRootPath {
@@ -211,18 +211,8 @@ final class IssueRunnerPanelController: NSObject {
         let tabRow = DynamicFillView()
         tabRow.kind = .panel
         tabRow.translatesAutoresizingMaskIntoConstraints = false
-        for button in [newTaskRowButton, newQueueRowButton] {
-            button.bezelStyle = .rounded
-            button.controlSize = .small
-            button.font = .systemFont(ofSize: 11)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.setContentCompressionResistancePriority(.required, for: .horizontal)
-        }
-        newTaskRowButton.bezelColor = .controlAccentColor
-        newTaskRowButton.target = self
-        newTaskRowButton.action = #selector(newTaskTapped)
-        newQueueRowButton.target = self
-        newQueueRowButton.action = #selector(newQueueTapped)
+        newTaskRowButton.onAction = { [weak self] in self?.newTaskTapped() }
+        newQueueRowButton.onAction = { [weak self] in self?.newQueueTapped() }
         let tabSpacer = NSView()
         tabSpacer.translatesAutoresizingMaskIntoConstraints = false
         tabSpacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
@@ -340,10 +330,12 @@ final class IssueRunnerPanelController: NSObject {
         formSheet.isHidden = true
         formSheet.alphaValue = 0
         formSheetHost.addSubview(formSheet)
-        // Final resting place: 8pt above the status bar (whose message must stay
-        // readable while a form is open).
-        formSheetBottom = formSheet.bottomAnchor.constraint(equalTo: formSheetHost.bottomAnchor,
-                                                            constant: TaskFormSheetHostView.restingBottom)
+        // Final resting place: 8pt below the top of the content area. The sheet
+        // pulls DOWN from there (the bottom of the panel belongs to the list and
+        // its status bar — a sheet resting there covers the form's own buttons on
+        // a short panel).
+        formSheetTop = formSheet.topAnchor.constraint(equalTo: formSheetHost.topAnchor,
+                                                      constant: TaskFormSheetHostView.restingTop)
         view.addSubview(header)
         view.addSubview(toolbar)
         view.addSubview(tabRow)
@@ -393,7 +385,11 @@ final class IssueRunnerPanelController: NSObject {
 
             formSheet.leadingAnchor.constraint(equalTo: formSheetHost.leadingAnchor, constant: 8),
             formSheet.trailingAnchor.constraint(equalTo: formSheetHost.trailingAnchor, constant: -8),
-            formSheetBottom,
+            // Never taller than the content area it drops into: the form inside
+            // gives way first (its description editor shrinks and scrolls).
+            formSheet.heightAnchor.constraint(lessThanOrEqualTo: formSheetHost.heightAnchor,
+                                              constant: -2 * TaskFormSheetHostView.restingTop),
+            formSheetTop,
         ])
     }
 
@@ -1184,20 +1180,20 @@ final class IssueRunnerPanelController: NSObject {
         let wasVisible = !formSheet.isHidden
         view.layoutSubtreeIfNeeded()
         if wasVisible {
-            // Already up (create → create again): swap the content in place.
-            formSheetBottom.constant = TaskFormSheetHostView.restingBottom
+            // Already down (create → create again): swap the content in place.
+            formSheetTop.constant = TaskFormSheetHostView.restingTop
             view.layoutSubtreeIfNeeded()
         } else {
-            // Start BELOW the host's edge (clipped away by it) and slide up: the
+            // Start ABOVE the host's edge (clipped away by it) and drop down: the
             // sheet is exactly as tall as its content, which the layout pass
             // above has just resolved.
-            formSheetBottom.constant = -formSheet.frame.height
+            formSheetTop.constant = -(formSheet.frame.height)
             view.layoutSubtreeIfNeeded()
             formSheet.isHidden = false
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.22
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                formSheetBottom.animator().constant = TaskFormSheetHostView.restingBottom
+                formSheetTop.animator().constant = TaskFormSheetHostView.restingTop
                 formSheet.animator().alphaValue = 1
             }
         }
@@ -1209,14 +1205,14 @@ final class IssueRunnerPanelController: NSObject {
         }
     }
 
-    /// Slide the sheet back down and drop its content.
+    /// Pull the sheet back up and drop its content.
     private func dismissForm() {
         guard !formSheet.isHidden else { return }
         let hidden = -formSheet.frame.height
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.16
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            self.formSheetBottom.animator().constant = hidden
+            self.formSheetTop.animator().constant = hidden
             self.formSheet.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             guard let self = self else { return }

@@ -29,12 +29,16 @@ class TaskFormCardView: NSView {
 enum TaskFormKit {
 
     static let captionFont = NSFont.systemFont(ofSize: 11)
-    static let fieldFont = NSFont.systemFont(ofSize: 12)
+    static let fieldFont = NSFont.systemFont(ofSize: 13)
     static let hintFont = NSFont.systemFont(ofSize: 11)
+    /// Roomier than a stock field: the form is the panel's main input surface.
+    static let fieldHeight: CGFloat = 30
+    static let editorHeight: CGFloat = 120
+    static let editorMinHeight: CGFloat = 56
 
     static func caption() -> NSTextField {
         let label = NSTextField(labelWithString: "")
-        label.font = captionFont
+        label.font = .systemFont(ofSize: 11, weight: .medium)
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
@@ -57,16 +61,18 @@ enum TaskFormKit {
         let field = NSTextField(string: value)
         field.placeholderString = placeholder
         field.font = fieldFont
-        field.controlSize = .regular
+        field.controlSize = .large
+        field.bezelStyle = .roundedBezel
         field.lineBreakMode = .byTruncatingTail
         field.translatesAutoresizingMaskIntoConstraints = false
-        field.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        field.heightAnchor.constraint(equalToConstant: fieldHeight).isActive = true
         return field
     }
 
     /// The multi-line description editor: an NSTextView in a scroll view — the
     /// same shape the old modal used, sized by the caller.
-    static func textView(_ value: String, height: CGFloat) -> (scroll: NSScrollView, text: NSTextView) {
+    static func textView(_ value: String, height: CGFloat) -> (scroll: NSScrollView, text: NSTextView,
+                                                              height: NSLayoutConstraint) {
         let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: height))
         text.isEditable = true
         text.isRichText = false
@@ -74,7 +80,7 @@ enum TaskFormKit {
         text.string = value
         text.drawsBackground = false
         text.backgroundColor = PanelSurface.dynamic
-        text.textContainerInset = NSSize(width: 4, height: 6)
+        text.textContainerInset = NSSize(width: 6, height: 8)
         text.isVerticallyResizable = true
         text.isHorizontallyResizable = false
         text.autoresizingMask = [.width]
@@ -86,8 +92,14 @@ enum TaskFormKit {
         scroll.borderType = .bezelBorder
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.heightAnchor.constraint(equalToConstant: height).isActive = true
-        return (scroll, text)
+        // The editor is the only flexible piece of a form: on a short panel the
+        // sheet's height cap wins and the editor shrinks (and scrolls) instead of
+        // pushing the buttons out of sight.
+        let heightConstraint = scroll.heightAnchor.constraint(equalToConstant: height)
+        heightConstraint.priority = .defaultHigh
+        heightConstraint.isActive = true
+        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: editorMinHeight).isActive = true
+        return (scroll, text, heightConstraint)
     }
 
     /// The footer's buttons: the primary action first, then the way out. The
@@ -178,7 +190,7 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
     init(model: TaskComposerModel) {
         self.model = model
         titleField = TaskFormKit.textField(model.title, placeholder: "")
-        let body = TaskFormKit.textView(model.body, height: 108)
+        let body = TaskFormKit.textView(model.body, height: TaskFormKit.editorHeight)
         bodyScroll = body.scroll
         bodyView = body.text
         hint = TaskFormKit.hintLabel()
@@ -218,6 +230,10 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
     private func build() {
         info.font = TaskFormKit.captionFont
         info.textColor = .secondaryLabelColor
+        // Two lines at most: the form's height must stay predictable so the
+        // sheet (and the buttons inside it) always fit a short panel.
+        info.maximumNumberOfLines = 2
+        info.lineBreakMode = .byTruncatingTail
         info.translatesAutoresizingMaskIntoConstraints = false
         closeButton.onAction = { [weak self] in self?.onCancel?() }
         submitButton.target = self
@@ -237,10 +253,10 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
         NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            column.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
             column.arrangedSubviews[0].widthAnchor.constraint(equalTo: column.widthAnchor),
             info.widthAnchor.constraint(equalTo: column.widthAnchor),
         ])
@@ -368,6 +384,8 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
     private func build() {
         info.font = TaskFormKit.captionFont
         info.textColor = .secondaryLabelColor
+        info.maximumNumberOfLines = 2
+        info.lineBreakMode = .byTruncatingTail
         info.translatesAutoresizingMaskIntoConstraints = false
         branchHint.font = TaskFormKit.captionFont
         branchHint.textColor = .tertiaryLabelColor
@@ -394,10 +412,10 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
         NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            column.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
             column.arrangedSubviews[0].widthAnchor.constraint(equalTo: column.widthAnchor),
             info.widthAnchor.constraint(equalTo: column.widthAnchor),
         ])
@@ -484,9 +502,10 @@ final class TaskFormSheetView: NSView {
 /// lands on the host rather than on the sheet is passed on.
 final class TaskFormSheetHostView: NSView {
 
-    /// Where the sheet rests: this far above the host's bottom edge, which
-    /// leaves the status bar (26pt) and its message visible.
-    static let restingBottom: CGFloat = 34
+    /// Where the sheet rests: this far below the TOP of the content area. The
+    /// sheet drops down from there, over the list — the bottom of the panel keeps
+    /// the status bar and the form's own buttons stay inside the sheet.
+    static let restingTop: CGFloat = 8
 
     override var isOpaque: Bool { false }
 

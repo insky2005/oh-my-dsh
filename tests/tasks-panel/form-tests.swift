@@ -202,6 +202,34 @@ do {
     check(oneLiner.height < headerSize.height, "a collapsed queue header is one line")
 }
 
+section("a form fits a short panel")
+do {
+    // The sheet caps its height to the content area, so the form must be able to
+    // GIVE WAY (the description editor shrinks and scrolls) instead of pushing
+    // its own buttons out of sight — the reported symptom of the bottom-anchored
+    // sheet on a short panel.
+    func fits(_ height: CGFloat, _ label: String) {
+        let form = TaskComposerView(model: TaskComposerModel.build(mode: .create))
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: height))
+        form.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(form)
+        NSLayoutConstraint.activate([
+            form.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            form.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            form.topAnchor.constraint(equalTo: host.topAnchor),
+            form.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        host.layoutSubtreeIfNeeded()
+        let button = form.submitButton.convert(form.submitButton.bounds, to: host)
+        check(host.bounds.contains(button), "the 创建 button stays inside a \(Int(height))pt panel: \(label)")
+        let field = form.titleField.convert(form.titleField.bounds, to: host)
+        check(field.height >= 24, "the title field keeps a usable height in a \(Int(height))pt panel")
+    }
+    fits(420, "a roomy panel")
+    fits(300, "a tight panel")
+    fits(260, "a very short panel")
+}
+
 // MARK: - Section header
 
 section("section header + progress bar")
