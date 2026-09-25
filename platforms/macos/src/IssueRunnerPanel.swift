@@ -77,6 +77,7 @@ final class IssueRunnerPanelController: NSObject {
     private let formSheetHost = TaskFormSheetHostView()
     private let formSheet = TaskFormSheetView()
     private var formSheetTop: NSLayoutConstraint!
+    private var formSheetHeight: NSLayoutConstraint!
     /// The form on screen, for focus and for the slide-out animation.
     private weak var formSheetContent: NSView?
     private let statusBar = DynamicFillView()
@@ -336,6 +337,14 @@ final class IssueRunnerPanelController: NSObject {
         // a short panel).
         formSheetTop = formSheet.topAnchor.constraint(equalTo: formSheetHost.topAnchor,
                                                       constant: TaskFormSheetHostView.restingTop)
+        // The sheet is as tall as its form WANTS (measured, see
+        // TaskFormSheetView.idealHeight) unless that exceeds the content area — in
+        // which case the form scrolls inside it. A constraint to the document view
+        // instead would make the sheet unshrinkable (AppKit keeps a document view
+        // at least as tall as the clip view).
+        formSheetHeight = formSheet.heightAnchor.constraint(equalToConstant: 0)
+        formSheetHeight.priority = NSLayoutConstraint.Priority(999)
+        formSheetHost.onLayout = { [weak self] in self?.syncFormSheetHeight() }
         view.addSubview(header)
         view.addSubview(toolbar)
         view.addSubview(tabRow)
@@ -385,10 +394,12 @@ final class IssueRunnerPanelController: NSObject {
 
             formSheet.leadingAnchor.constraint(equalTo: formSheetHost.leadingAnchor, constant: 8),
             formSheet.trailingAnchor.constraint(equalTo: formSheetHost.trailingAnchor, constant: -8),
-            // Never taller than the content area it drops into: the form inside
-            // gives way first (its description editor shrinks and scrolls).
+            // As tall as the form wants, but never taller than the content area:
+            // past that the form SCROLLS inside the sheet rather than shrinking
+            // itself (a squeezed description editor is not a text area).
             formSheet.heightAnchor.constraint(lessThanOrEqualTo: formSheetHost.heightAnchor,
                                               constant: -2 * TaskFormSheetHostView.restingTop),
+            formSheetHeight,
             formSheetTop,
         ])
     }
@@ -1167,16 +1178,9 @@ final class IssueRunnerPanelController: NSObject {
     /// Pull the form sheet up with this content (or swap its content while it is
     /// already up — a create-then-create-again round must not re-animate).
     private func presentForm(_ content: NSView, focus: @escaping (NSView) -> Void) {
-        for subview in formSheet.subviews { subview.removeFromSuperview() }
-        content.translatesAutoresizingMaskIntoConstraints = false
-        formSheet.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: formSheet.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: formSheet.trailingAnchor),
-            content.topAnchor.constraint(equalTo: formSheet.topAnchor),
-            content.bottomAnchor.constraint(equalTo: formSheet.bottomAnchor),
-        ])
+        formSheet.setContent(content)
         formSheetContent = content
+        syncFormSheetHeight()
         let wasVisible = !formSheet.isHidden
         view.layoutSubtreeIfNeeded()
         if wasVisible {
@@ -1217,9 +1221,18 @@ final class IssueRunnerPanelController: NSObject {
         }, completionHandler: { [weak self] in
             guard let self = self else { return }
             self.formSheet.isHidden = true
-            for subview in self.formSheet.subviews { subview.removeFromSuperview() }
+            self.formSheet.setContent(NSView())
             self.formSheetContent = nil
         })
+    }
+
+    /// Keep the sheet exactly as tall as its form (the form's own height depends
+    /// on the width it was given, so this is re-measured after every layout).
+    private func syncFormSheetHeight() {
+        guard formSheetContent != nil, formSheetHeight != nil else { return }
+        let wanted = formSheet.idealHeight()
+        guard wanted > 0, abs(wanted - formSheetHeight.constant) > 0.5 else { return }
+        formSheetHeight.constant = wanted
     }
 
     private func showTaskForm(_ model: TaskComposerModel) {

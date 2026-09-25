@@ -264,32 +264,60 @@ do {
           "the editor grows with its text (\(emptyHeight) → \(field.frame.height)pt)")
 }
 
-section("a form fits a short panel")
+section("the sheet caps itself and scrolls instead of squeezing the form")
 do {
-    // The sheet caps its height to the content area, so the form must be able to
-    // GIVE WAY (the description editor shrinks and scrolls) instead of pushing
-    // its own buttons out of sight — the reported symptom of the bottom-anchored
-    // sheet on a short panel.
-    func fits(_ height: CGFloat, _ label: String) {
+    // A form must NEVER shrink its description to fit: the sheet is as tall as the
+    // form wants, and past the content area it scrolls instead (a squeezed text
+    // area cannot wrap, which is exactly what a user reported).
+    func build(hostHeight: CGFloat) -> (sheet: TaskFormSheetView, form: TaskComposerView) {
+        let windowHost = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: hostHeight))
+        let host = TaskFormSheetHostView()
+        host.translatesAutoresizingMaskIntoConstraints = false
+        windowHost.addSubview(host)
+        let sheet = TaskFormSheetView()
+        host.addSubview(sheet)
         let form = TaskComposerView(model: TaskComposerModel.build(mode: .create))
-        let host = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: height))
-        form.translatesAutoresizingMaskIntoConstraints = false
-        host.addSubview(form)
+        sheet.setContent(form)
+        let height = sheet.heightAnchor.constraint(equalToConstant: 0)
+        height.priority = NSLayoutConstraint.Priority(999)
         NSLayoutConstraint.activate([
-            form.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-            form.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-            form.topAnchor.constraint(equalTo: host.topAnchor),
-            form.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            windowHost.widthAnchor.constraint(equalToConstant: 460),
+            windowHost.heightAnchor.constraint(equalToConstant: hostHeight),
+            host.leadingAnchor.constraint(equalTo: windowHost.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: windowHost.trailingAnchor),
+            host.topAnchor.constraint(equalTo: windowHost.topAnchor),
+            host.bottomAnchor.constraint(equalTo: windowHost.bottomAnchor),
+            sheet.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 8),
+            sheet.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -8),
+            sheet.topAnchor.constraint(equalTo: host.topAnchor, constant: 8),
+            sheet.heightAnchor.constraint(lessThanOrEqualTo: host.heightAnchor, constant: -16),
+            height,
         ])
+        host.onLayout = { height.constant = sheet.idealHeight() }
+        windowHost.layoutSubtreeIfNeeded()
         host.layoutSubtreeIfNeeded()
-        let button = form.submitButton.convert(form.submitButton.bounds, to: host)
-        check(host.bounds.contains(button), "the 创建 button stays inside a \(Int(height))pt panel: \(label)")
-        let field = form.titleField.convert(form.titleField.bounds, to: host)
-        check(field.height >= 24, "the title field keeps a usable height in a \(Int(height))pt panel")
+        return (sheet, form)
     }
-    fits(420, "a roomy panel")
-    fits(300, "a tight panel")
-    fits(260, "a very short panel")
+
+    let roomy = build(hostHeight: 600)
+    check(abs(roomy.sheet.frame.height - roomy.form.frame.height) < 1,
+          "a roomy panel shows the whole form (sheet \(roomy.sheet.frame.height), form \(roomy.form.frame.height))")
+    check(roomy.form.bodyField.frame.height >= 110,
+          "with the description at its full height (\(roomy.form.bodyField.frame.height)pt)")
+
+    let mid = build(hostHeight: 360)
+    check(abs(mid.sheet.frame.height - mid.form.frame.height) < 1,
+          "a 360pt panel still shows the whole form")
+
+    for hostHeight in [300.0, 240.0] {
+        let tight = build(hostHeight: hostHeight)
+        check(tight.sheet.frame.height <= hostHeight - 15,
+              "a \(Int(hostHeight))pt panel caps the sheet inside the content area")
+        check(tight.sheet.frame.height < tight.form.frame.height,
+              "and the form scrolls rather than shrinking")
+        check(tight.form.bodyField.frame.height >= 88,
+              "the description keeps a usable height (\(tight.form.bodyField.frame.height)pt)")
+    }
 }
 
 // MARK: - Section header

@@ -342,6 +342,7 @@ struct Queue {
 
 - **抽屉挂在内容区顶部、从上往下滑出**：此前挂在底部会遮住表单自己的按钮（面板一矮就没有余量）；现在宿主仍是透明 + 点击穿透 + `masksToBounds` 的图层（覆盖工具条以下到面板底部），抽屉顶部距内容区顶 8pt，从宿主上边界之外滑入，高度由内容决定并**硬上限 = 内容区高度 − 16**（超出时先压缩描述框：`TaskFormKit.textView` 的高度约束是 .defaultHigh，最小 56pt，再小就滚动——按钮因此永远留在可见区，测试 `form-tests` 用 420/300/260pt 三种面板高度钉住）；
 - **两个创建入口是图标按钮**：页签行右侧「＋」= 新建任务、「▣＋」= 新建队列（`CustomIconButton`，24pt，含 hover 与 tooltip），文字标签移到 tooltip；
+- **表单不缩小自己，矮面板靠滚动**（2026-09-25e）：抽屉（`TaskFormSheetView`）内嵌滚动视图，抽屉高度 = `idealHeight()` 测得的表单自然高度（宿主每次 `layout()` 重算），上限 = 内容区高度 − 16；超出即滚动，**描述框始终 120pt（最小 88pt）**，因为"表单压缩自己"就是上一版把描述框压到 54pt、无法换行的原因。**不要**用"抽屉高度 == 文档视图高度"的约束：AppKit 会让文档视图不低于 clip 高度，这条链会让上限静默失效（实测 240pt 内容区里塞进 304pt 表单）；
 - **描述框是同款多行框**（2026-09-25d）：`TaskFormKit.textArea` 用 `NSTextField`（`usesSingleLineMode = false` + `cell.wraps`），与单行框同 bezel / controlSize / 字号；默认 120pt，**随输入长高**（`TaskFormKit.textHeight` 按文本与宽度算出；高度约束优先级 999 —— 用 .defaultHigh 会被栈视图的 fitting 约束拉回最小高度，实测只有 56pt、只有第一行可点），面板矮时由抽屉的高度上限压到最小 56pt。**不要**换回 NSTextView；
 - **队列表单只问一件事**（2026-09-25d）：`QueueComposerModel.showsAdvanced` 决定「高级设置」（分支 / 基于分支 / PR 开关）是否展开 —— **新建默认折叠**（分支由队列名派生，折叠时用一行「将使用分支：…」说明），**队列设置默认展开**；PR 开关在工作区非 GitHub 仓库时**隐藏**并换成一行说明（`tasks.queue.prUnavailable`），不再给出灰掉点不动的勾选框；
 - **输入框放大 + 撑满表单**：单行框 `controlSize = .large` + `roundedBezel`、高度 30pt、字号 13pt；描述框默认 120pt（`textContainerInset` 6/8）、字号 13pt、**按可见宽度换行**；表单内边距 16、说明行最多两行（避免表单高度随文案膨胀）。**每一行都必须钉到表单宽度**（`TaskFormKit.stretch`，按钮行除外）：垂直栈 .leading 对齐下每行本来贴合自己的内容宽度，而**空文本框的固有宽度几乎为 0**，于是输入框塌到标题的宽度 —— 实测只有约 25pt、placeholder 被截成一个字。回归断言："输入框宽度 > 300pt（360pt 面板）"、"描述框与其同宽（±12pt）"、"面板变宽输入框跟着变宽"。
@@ -402,7 +403,7 @@ struct Queue {
 
 ### V2-10 测试与 CI
 
-新增 `tests/tasks-panel/`（无头，体例照 `tests/projects-panel/`：`stubs.swift` + `stubs-ui.swift` + `run.sh` + 若干 `*-tests.swift`）。**四个阶段全绿（2026-09-25：模型 126 + 运行器 154 + 视图模型 128 + 视图 85 = 493 项）**，已登记进 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`：
+新增 `tests/tasks-panel/`（无头，体例照 `tests/projects-panel/`：`stubs.swift` + `stubs-ui.swift` + `run.sh` + 若干 `*-tests.swift`）。**四个阶段全绿（2026-09-25：模型 126 + 运行器 154 + 视图模型 128 + 视图 88 = 496 项）**，已登记进 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`：
 
 1. **队列模型（本次重点，模型先行）**：入队顺序与 `order` 编号、重复入队幂等、移出后回 `pending`、队首推进、队列内失败 → 队列暂停（后续任务仍 queued）、跳过并继续、切队列的干净检查（脏工作区拒绝启动）、队列完成态与 `autoPR` 能力降级、自动单任务队列的创建与重试复用；
 2. **模型与持久化**：TaskItem / Queue 编解码往返；`index.json` 旧格式兼容（无 `source` 视为 github、无 id 用 `issue-N`）；`manual.json` 增删改查；`queues.json` 读写；**`local.json` sessions 换键兼容**（数字键 ↔ `issue-N`）；坏文件不崩溃且不删除；

@@ -34,7 +34,9 @@ enum TaskFormKit {
     /// Roomier than a stock field: the form is the panel's main input surface.
     static let fieldHeight: CGFloat = 30
     static let editorHeight: CGFloat = 120
-    static let editorMinHeight: CGFloat = 56
+    /// Never smaller than a few lines: the sheet scrolls rather than shrinking
+    /// the description down to a couple of lines.
+    static let editorMinHeight: CGFloat = 88
 
     static func caption() -> NSTextField {
         let label = NSTextField(labelWithString: "")
@@ -547,10 +549,88 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
 /// the pointer.
 ///
 /// Raised fill + radius 10 + an accent top edge (the "a form is open" signal) —
+
+/// The panel's form sheet. A form is presented HERE rather than inline in the
+/// list: creating a task is a deliberate act that deserves room, the sheet spans
+/// the whole panel (so the fields are as wide as the panel, not as wide as a
+/// card), and it can be dropped in and dismissed without the list reflowing
+/// under the pointer.
+///
+/// The form inside SCROLLS when it is taller than the space the panel leaves:
+/// a form that shrank itself to fit used to squeeze the description editor down
+/// to a couple of lines, which is not something a text area should do.
+///
+/// Raised fill + radius 10 + an accent top edge (the "a form is open" signal) —
 /// the same tokens the rest of the shell uses, no new greys.
 final class TaskFormSheetView: NSView {
 
+    /// A flipped holder so the form starts at the TOP of the scroll view.
+    private final class DocHolder: NSView {
+        override var isFlipped: Bool { true }
+    }
+
+    private let scroll = NSScrollView()
+    private let docHolder = DocHolder()
+
+    /// The form currently installed (nil when the sheet was emptied).
+    var content: NSView? { docHolder.subviews.first }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        docHolder.translatesAutoresizingMaskIntoConstraints = false
+        scroll.documentView = docHolder
+        addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            docHolder.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            docHolder.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            docHolder.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
     override var isOpaque: Bool { false }
+
+    /// The height the form WANTS right now.
+    ///
+    /// The sheet is sized from this measurement rather than by a constraint to the
+    /// document view: AppKit keeps a document view at least as tall as the clip
+    /// view, so chaining the sheet to the document view made the sheet
+    /// unshrinkable and the panel's height cap was silently dropped (measured: a
+    /// 304pt form inside a 240pt content area). The document view is pinned to the
+    /// form's height instead, which leaves the form free to be its natural size
+    /// while the sheet around it gets capped — and then it scrolls.
+    func idealHeight() -> CGFloat {
+        guard let content = content else { return 0 }
+        content.layoutSubtreeIfNeeded()
+        return content.frame.height
+    }
+
+    /// Install a form (replacing whatever was there).
+    func setContent(_ view: NSView) {
+        for subview in docHolder.subviews { subview.removeFromSuperview() }
+        view.translatesAutoresizingMaskIntoConstraints = false
+        docHolder.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: docHolder.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: docHolder.trailingAnchor),
+            view.topAnchor.constraint(equalTo: docHolder.topAnchor),
+            // The document view follows the form's OWN height (not the other way
+            // round): that is what lets the sheet be capped and scroll.
+            docHolder.heightAnchor.constraint(equalTo: view.heightAnchor),
+        ])
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -584,6 +664,15 @@ final class TaskFormSheetView: NSView {
 /// aimed at the list behind it (hitTest returns the view itself), so a hit that
 /// lands on the host rather than on the sheet is passed on.
 final class TaskFormSheetHostView: NSView {
+
+    /// Fired after every layout: the sheet's height follows its form, which
+    /// depends on the width the form was given.
+    var onLayout: (() -> Void)?
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
 
     /// Where the sheet rests: this far below the TOP of the content area. The
     /// sheet drops down from there, over the list — the bottom of the panel keeps
