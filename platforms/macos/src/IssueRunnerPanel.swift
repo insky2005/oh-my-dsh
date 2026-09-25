@@ -61,8 +61,6 @@ final class IssueRunnerPanelController: NSObject {
     private let newQueueRowButton = CustomIconButton(glyph: .symbol("rectangle.stack.badge.plus"),
                                                      tooltip: "", size: 24)
     private let repoLabel = HeaderLabel()
-    /// The four counters as small pills (队列 / 排队 / 运行 / 失败).
-    private let chipStrip = NSStackView()
     /// The source filter as flat tabs — the skills panel's strip, so the whole
     /// shell keeps one tab体例 instead of one control style per panel.
     private let filterTabs = SkillTabStrip()
@@ -146,7 +144,11 @@ final class IssueRunnerPanelController: NSObject {
                              L10n.tr("tasks.filter.manual")],
                             selected: sourceFilter.rawValue)
         emptyButton.title = L10n.tr("tasks.new.title")
-        rebuildStats()
+        // The toolbar labels above are replaced in place; everything the CONTENT
+        // says (the 统计信息 card, every card badge, the empty state) carries an
+        // L10n string baked in when it was built — so a language switch rebuilds
+        // the list. Re-rendering never touches the board, only its rendering.
+        if runner != nil { render() }
     }
 
     /// 语言切换后刷新头部按钮 tooltip（复用 updateLabels）。
@@ -177,27 +179,20 @@ final class IssueRunnerPanelController: NSObject {
             header.heightAnchor.constraint(equalToConstant: 40),
         ])
 
-        // toolbar row 1: where this board lives, and the four counters as pills.
+        // toolbar row 1: where this board lives. The four counters used to sit
+        // here as pills; they are the content area's first row now (统计信息),
+        // the way the review panel carries its own summary inside the content.
         repoLabel.translatesAutoresizingMaskIntoConstraints = false
-        chipStrip.orientation = .horizontal
-        chipStrip.alignment = .centerY
-        chipStrip.spacing = 5
-        chipStrip.translatesAutoresizingMaskIntoConstraints = false
-        chipStrip.setContentHuggingPriority(.required, for: .horizontal)
-        chipStrip.setContentCompressionResistancePriority(.required, for: .horizontal)
         let toolbar = DynamicFillView()
         toolbar.kind = .panel
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true
         toolbar.addSubview(repoLabel)
-        toolbar.addSubview(chipStrip)
         NSLayoutConstraint.activate([
             repoLabel.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 10),
             repoLabel.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-            repoLabel.trailingAnchor.constraint(lessThanOrEqualTo: chipStrip.leadingAnchor, constant: -8),
-            chipStrip.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -10),
-            chipStrip.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            repoLabel.trailingAnchor.constraint(lessThanOrEqualTo: toolbar.trailingAnchor, constant: -10),
             toolbar.heightAnchor.constraint(equalToConstant: 28),
         ])
 
@@ -1114,13 +1109,17 @@ final class IssueRunnerPanelController: NSObject {
     private func render() {
         for subview in listStack.arrangedSubviews { subview.removeFromSuperview() }
         guard let runner = runner else {
-            rebuildStats()
             emptyView.isHidden = false
             return
         }
         let board = runner.board
         let githubRepo = repo != nil
         var sections = 0
+
+        // 0. 统计信息 — the content's first row, exactly where the review panel
+        //    puts its own summary (the counts are no longer toolbar pills). It is
+        //    not a "section": the empty state below is about queues and tasks.
+        addCard(TaskSummaryCardView(model: TasksSummaryModel.build(board)))
 
         // 1. Queues. User queues first (they hold the user's own work), then the
         //    issue tasks' single-task queues, which count and render like any
@@ -1162,7 +1161,6 @@ final class IssueRunnerPanelController: NSObject {
         emptyLabel.stringValue = L10n.tr(empty.messageKey)
         emptyIcon.setSymbol(empty.symbol)
         emptyButton.isHidden = !empty.showsNewTask
-        rebuildStats()
     }
 
     /// Cards fill the list width: the stack is leading-aligned, so without this
@@ -1257,19 +1255,6 @@ final class IssueRunnerPanelController: NSObject {
         // The sheet follows this form's height by constraint: growing from the
         // inside needs nothing from the panel.
         presentForm(form) { ($0 as? QueueComposerView)?.focusName() }
-    }
-
-    /// The four counters, right-aligned in the toolbar. Nothing to report (a
-    /// brand-new board) leaves the strip empty instead of showing four zeros.
-    private func rebuildStats() {
-        for subview in chipStrip.arrangedSubviews { subview.removeFromSuperview() }
-        guard let runner = runner else { return }
-        let summary = TasksSummaryModel.build(runner.board)
-        guard summary.queues + summary.queued + summary.running + summary.failed > 0 else { return }
-        for chip in summary.chips {
-            chipStrip.addArrangedSubview(TaskBadgeView(text: L10n.tr(chip.key) + " " + String(chip.count),
-                                                       tone: chip.tone))
-        }
     }
 
     /// Issue numbers order the auto queues (they are per-repo and monotonic).

@@ -227,8 +227,10 @@ struct QueueHeaderModel: Equatable {
     }
 }
 
-/// One counter of the summary strip (队列 / 排队 / 运行 / 失败).
-struct TaskStatChip: Equatable {
+/// One counter of the summary card (队列 / 排队 / 运行 / 失败): its label, its
+/// number, and the tone the number reads in. The card joins the four into ONE
+/// line — the review panel's summary card体例 ("会话 3/12 · +120 −30").
+struct TaskSummaryPart: Equatable {
     var key: String
     var count: Int
     var tone: TaskTone
@@ -237,17 +239,21 @@ struct TaskStatChip: Equatable {
     static func tone(forCount count: Int, negativeWhenPositive: Bool) -> TaskTone {
         (negativeWhenPositive && count > 0) ? .negative : .neutral
     }
+
+    /// What the card prints for this counter ("队列 12").
+    var text: String { L10n.tr(key) + " " + String(count) }
 }
 
-/// The summary strip: how many queues there are and what they are doing.
+/// The board's counters: how many queues there are and what they are doing.
+/// Rendered as the content area's first row (任务面板 content 1「统计信息」),
+/// NOT as toolbar pills anymore.
 struct TasksSummaryModel: Equatable {
     var queues: Int
     var queued: Int
     var running: Int
     var failed: Int
-    var text: String
-    /// The same counts as one-chip-per-number, in reading order.
-    var chips: [TaskStatChip]
+    /// The four counters in reading order — the card's whole content.
+    var parts: [TaskSummaryPart]
 
     static func build(_ board: TaskBoard) -> TasksSummaryModel {
         let counts = board.summary()
@@ -256,17 +262,15 @@ struct TasksSummaryModel: Equatable {
             queued: counts.queued,
             running: counts.running,
             failed: counts.failed,
-            text: L10n.tr("tasks.summary", counts.queues, counts.queued,
-                          counts.running, counts.failed),
-            chips: [
-                TaskStatChip(key: "tasks.stat.queues", count: counts.queues, tone: .neutral),
-                TaskStatChip(key: "tasks.stat.queued", count: counts.queued, tone: .neutral),
-                TaskStatChip(key: "tasks.stat.running", count: counts.running,
-                             tone: TaskStatChip.tone(forCount: counts.running,
-                                                     negativeWhenPositive: false)),
-                TaskStatChip(key: "tasks.stat.failed", count: counts.failed,
-                             tone: TaskStatChip.tone(forCount: counts.failed,
-                                                     negativeWhenPositive: true)),
+            parts: [
+                TaskSummaryPart(key: "tasks.stat.queues", count: counts.queues, tone: .neutral),
+                TaskSummaryPart(key: "tasks.stat.queued", count: counts.queued, tone: .neutral),
+                TaskSummaryPart(key: "tasks.stat.running", count: counts.running,
+                                tone: TaskSummaryPart.tone(forCount: counts.running,
+                                                           negativeWhenPositive: false)),
+                TaskSummaryPart(key: "tasks.stat.failed", count: counts.failed,
+                                tone: TaskSummaryPart.tone(forCount: counts.failed,
+                                                           negativeWhenPositive: true)),
             ])
     }
 }

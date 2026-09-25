@@ -46,6 +46,15 @@ func layout(_ view: NSView, width: CGFloat) -> NSSize {
     return view.frame.size
 }
 
+/// Every descendant of `view` (depth-first) that is a `type` — the cards are
+/// stacks inside stacks, so their rows are reached by walking, not by index.
+func descendants<T>(_ view: NSView, of type: T.Type) -> [T] {
+    view.subviews.flatMap { subview -> [T] in
+        let match = (subview as? T).map { [$0] } ?? []
+        return match + descendants(subview, of: type)
+    }
+}
+
 /// What a text field's delegate receives while the user types.
 func typed(_ field: NSTextField) -> Notification {
     Notification(name: NSControl.textDidChangeNotification, object: field)
@@ -366,6 +375,100 @@ do {
     check(tightForm.frame.height > tight.sheet.frame.height, "so it scrolls instead of shrinking")
 }
 
+
+ section("标题与状态同一行（审查面板的方块体例）")
+do {
+    var board = TaskBoard()
+    let long = "A fairly long task title that has to wrap in a narrow panel"
+    let task = TaskItem.manual(title: long, body: "the description an agent receives",
+                               id: "manual-0062aaaa")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+
+    let model = TaskCardModel.build(board.task(task.id)!, board: board,
+                                    expanded: false, githubRepo: false)
+    let card = TaskCardView(model: model)
+    let size = layout(card, width: 320)
+    eq(size.width, 320, "a card still fills the list width")
+    // 来源徽标 + 状态徽标 no longer get a row of their own: they ride the
+    // title's first line — the source on its left, the state on its right.
+    let badges = descendants(card, of: TaskBadgeView.self)
+    eq(badges.count, 2, "来源与状态两枚徽标")
+    let source = badges.first { $0.text == model.sourceBadge }
+    let state = badges.first { $0.text == model.stateBadge }
+    let titleLabel = descendants(card, of: NSTextField.self).first { $0.stringValue == long }
+    if let titleLabel = titleLabel, let source = source, let state = state {
+        let titleFrame = titleLabel.convert(titleLabel.bounds, to: card)
+        let sourceFrame = source.convert(source.bounds, to: card)
+        let stateFrame = state.convert(state.bounds, to: card)
+        eq(titleLabel.toolTip, long, "标题被截断时 tooltip 给出全文")
+        check(sourceFrame.minX < titleFrame.minX, "来源徽标排在标题左边")
+        check(titleFrame.minX < stateFrame.minX, "状态徽标排在标题右边")
+        for frame in [sourceFrame, stateFrame] {
+            check(frame.maxY > titleFrame.maxY - 3, "徽标落在标题首行的高度带里")
+        }
+    } else {
+        check(false, "卡片里能找到标题标签与两枚徽标")
+    }
+}
+
+ section("统计信息卡（内容区首行）")
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "One", id: "manual-0060aaaa")
+    let t2 = TaskItem.manual(title: "Two", id: "manual-0061bbbb")
+    board.tasks = [t1, t2]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+    board.markRunning(t1.id)
+
+    let summary = TasksSummaryModel.build(board)
+    let card = TaskSummaryCardView(model: summary)
+    let size = layout(card, width: 320)
+    eq(size.width, 320, "统计卡跟任务卡一样撑满列表宽度")
+    check(size.height > 20, "统计卡有一行计数的高度")
+
+    let text = card.summaryText.string
+    eq(summary.parts.count, 4, "四个计数")
+    for part in summary.parts {
+        check(text.contains(part.text), "每一个计数都在卡里：\(part.text)")
+    }
+    check(!text.contains("\n"), "四个计数排在同一行")
+
+    // 失败 > 0 才变红，其余保持中性（审查面板摘要卡的体例）。
+    func color(of needle: String, in string: NSAttributedString) -> NSColor? {
+        let range = (string.string as NSString).range(of: needle)
+        guard range.location != NSNotFound else { return nil }
+        return string.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? NSColor
+    }
+    eq(color(of: summary.parts[3].text, in: card.summaryText), NSColor.secondaryLabelColor,
+       "零失败保持中性色")
+    eq(color(of: summary.parts[2].text, in: card.summaryText), NSColor.secondaryLabelColor,
+       "运行不是告警色")
+
+    _ = board.markFailed(t1.id, error: "tasks.errNoPush")
+    let failedSummary = TasksSummaryModel.build(board)
+    let failed = TaskSummaryCardView(model: failedSummary)
+    eq(color(of: failedSummary.parts[3].text, in: failed.summaryText), NSColor.systemRed,
+       "有失败时这一段变红")
+}
+section("徽标容得下自己的文字")
+do {
+    // 徽标的固有宽度少算了内边距（6pt × 2）时会截断文字 —— 实测「队列中 #2」只剩
+    // 「队列中 #」，在「标题与状态同一行」的排布里尤其明显。
+    for text in ["手动", "队列中 #2", "运行中", "0/2"] {
+        let badge = TaskBadgeView(text: text, tone: .neutral)
+        let label = descendants(badge, of: NSTextField.self).first
+        if let label = label {
+            eq(badge.intrinsicContentSize.width, label.intrinsicContentSize.width + 12,
+               "徽标固有宽度 = 标签 + 内边距（\(text)）")
+        } else {
+            check(false, "徽标里能找到标签（\(text)）")
+        }
+    }
+}
 
 section("section header + progress bar")
 do {

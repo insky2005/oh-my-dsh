@@ -632,7 +632,6 @@ enum L10n {
         "tasks.card.delete": ("删除", "Delete"),
         "tasks.detailQueue": ("队列：%@", "Queue: %@"),
         "tasks.detailSession": ("会话：%@", "Session: %@"),
-        "tasks.summary": ("队列 %d · 排队 %d · 运行 %d · 失败 %d", "Queues %d · Queued %d · Running %d · Failed %d"),
         "tasks.stat.queues": ("队列", "Queues"),
         "tasks.stat.queued": ("排队", "Queued"),
         "tasks.stat.running": ("运行", "Running"),

@@ -2,15 +2,35 @@ import AppKit
 
 // MARK: - Small shared pieces
 
+/// The two hairline greys the card family draws its 8pt outlines with: the card
+/// edge (matching SkillCardView's stroke) and the slightly darker one a queue
+/// lane uses so containment still reads on the recessed fill.
+enum TaskInk {
+    /// The card / summary-card outline.
+    static func hairline(dark: Bool) -> NSColor {
+        dark ? NSColor(calibratedWhite: 0.38, alpha: 0.7) : NSColor(calibratedWhite: 0.82, alpha: 1)
+    }
+
+    /// The queue lane's outline (a lane is the container, so it is a touch
+    /// heavier than the cards inside it).
+    static func laneHairline(dark: Bool) -> NSColor {
+        dark ? NSColor(calibratedWhite: 0.42, alpha: 0.9) : NSColor(calibratedWhite: 0.78, alpha: 1)
+    }
+}
+
 /// A pill-shaped badge (source / state / progress). The color comes from the
 /// view model's tone, so the card never decides semantics itself.
 final class TaskBadgeView: NSView {
 
+    /// What the pill says — kept so callers (and the layout tests) can tell one
+    /// badge from another without reaching into its label.
+    let text: String
     private let label = NSTextField(labelWithString: "")
     private var tone: TaskTone = .neutral
     private var filled = false
 
     init(text: String, tone: TaskTone, filled: Bool = false) {
+        self.text = text
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -38,8 +58,14 @@ final class TaskBadgeView: NSView {
         applyTone()
     }
 
-    /// Fixed width text (progress counters) must not stretch.
-    override var intrinsicContentSize: NSSize { label.intrinsicContentSize }
+    /// The pill is its label PLUS the pill's own padding (6pt each side), and it
+    /// must never stretch (progress counters are fixed text). Returning the bare
+    /// label size — 12pt too narrow — made Auto Layout clip the text the moment a
+    /// constrained row used it: "队列中 #2" rendered as "队列中 #".
+    override var intrinsicContentSize: NSSize {
+        let size = label.intrinsicContentSize
+        return NSSize(width: size.width + 12, height: size.height + 2 * 2)
+    }
 
     private func applyTone() {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -138,6 +164,84 @@ final class TaskSectionHeaderView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
+// MARK: - Summary card (统计信息)
+
+/// The content area's FIRST row: the board's four counters as one line inside a
+/// rounded block. This is the review panel's summary card, applied to tasks —
+/// the counts used to be pills up in the toolbar, where they competed with the
+/// workspace name for the same 28pt strip.
+///
+/// Counts are the only thing it says: like the review card, every number is
+/// labelled ("队列 12 · 排队 5 · …") and only 失败 ever turns red.
+final class TaskSummaryCardView: NSView {
+
+    let model: TasksSummaryModel
+
+    init(model: TasksSummaryModel) {
+        self.model = model
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        build()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var isOpaque: Bool { false }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        PanelControl.fill(dark: dark, highlighted: false).setFill()
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        path.fill()
+        TaskInk.hairline(dark: dark).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
+
+    /// The counters joined the way the review panel joins its summary
+    /// ("已审 3/12  ·  对话 8  ·  +120 −30"): one font, muted by default, with
+    /// the failing counter in red and everything else left to the tone map.
+    var summaryText: NSAttributedString {
+        let font = NSFont.systemFont(ofSize: 11)
+        let text = NSMutableAttributedString()
+        for (index, part) in model.parts.enumerated() {
+            if index > 0 {
+                text.append(NSAttributedString(string: "  ·  ", attributes: [
+                    .font: font,
+                    .foregroundColor: NSColor.tertiaryLabelColor,
+                ]))
+            }
+            text.append(NSAttributedString(string: part.text, attributes: [
+                .font: font,
+                .foregroundColor: TaskBadgeView.color(part.tone),
+            ]))
+        }
+        return text
+    }
+
+    private func build() {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.attributedStringValue = summaryText
+        label.maximumNumberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        // Padding matches a task card's own inset (12 / 10), so the summary line
+        // starts exactly where the card titles under it start.
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+        ])
+    }
+}
+
 // MARK: - Task card
 
 /// One task card. A pure renderer: it is handed a TaskCardModel (built by
@@ -206,7 +310,7 @@ final class TaskCardView: NSView {
         } else if model.isExpanded {
             NSColor.controlAccentColor.withAlphaComponent(dark ? 0.55 : 0.45).setStroke()
         } else {
-            (dark ? NSColor(calibratedWhite: 0.38, alpha: 0.7) : NSColor(calibratedWhite: 0.82, alpha: 1)).setStroke()
+            TaskInk.hairline(dark: dark).setStroke()
         }
         path.lineWidth = 1
         path.stroke()
@@ -229,26 +333,40 @@ final class TaskCardView: NSView {
     // MARK: layout
 
     private func build() {
+        // 标题与状态同一行 (the review panel's block体例: the block's identity on
+        // the left, its own status on the right). The badges never give way; the
+        // title does — and a long title still wraps, with the badges riding its
+        // FIRST line, which is what the .top alignment buys (a .centerY row would
+        // float them between two lines of text).
         let source = TaskBadgeView(text: model.sourceBadge, tone: .neutral)
         let state = TaskBadgeView(text: model.stateBadge, tone: model.tone, filled: model.state == .running)
+        for badge in [source, state] {
+            badge.setContentHuggingPriority(.required, for: .horizontal)
+            badge.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
         spacer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
-        let topRow = NSStackView(views: [source, state, spacer])
-        topRow.orientation = .horizontal
-        topRow.alignment = .centerY
-        topRow.spacing = 6
-        topRow.translatesAutoresizingMaskIntoConstraints = false
 
         let title = NSTextField(wrappingLabelWithString: model.title)
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.textColor = TaskBadgeView.bodyColor(model.tone)
         title.maximumNumberOfLines = model.isExpanded ? 0 : 2
+        // Long titles are truncated with a tooltip carrying the whole thing —
+        // the same deal the review panel's block titles make.
+        title.toolTip = model.title
         title.translatesAutoresizingMaskIntoConstraints = false
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        title.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        var rows: [NSView] = [topRow, title]
+        let titleRow = NSStackView(views: [source, title, spacer, state])
+        titleRow.orientation = .horizontal
+        titleRow.alignment = .top
+        titleRow.spacing = 6
+        titleRow.translatesAutoresizingMaskIntoConstraints = false
+
+        var rows: [NSView] = [titleRow]
 
         if !model.meta.isEmpty {
             let meta = NSTextField(labelWithString: model.meta.joined(separator: "  ·  "))
@@ -284,8 +402,7 @@ final class TaskCardView: NSView {
             column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             column.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-            topRow.widthAnchor.constraint(equalTo: column.widthAnchor),
-            title.widthAnchor.constraint(equalTo: column.widthAnchor),
+            titleRow.widthAnchor.constraint(equalTo: column.widthAnchor),
         ])
     }
 
@@ -587,7 +704,7 @@ final class TaskQueueBlockView: NSView {
         // Its own tone tints the outline, so an active or failed lane is
         // recognisable from the block itself, not only from its badge.
         let tint = model.tone == .neutral || model.tone == .warning
-            ? (dark ? NSColor(calibratedWhite: 0.42, alpha: 0.9) : NSColor(calibratedWhite: 0.78, alpha: 1))
+            ? TaskInk.laneHairline(dark: dark)
             : TaskBadgeView.color(model.tone).withAlphaComponent(dark ? 0.55 : 0.45)
         tint.setStroke()
         path.lineWidth = 1

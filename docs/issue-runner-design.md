@@ -305,11 +305,11 @@ struct Queue {
 
 ```
 ┌ 队列：深色模式改造 ────────────────────────────┐
-│ feature/dark-mode → main   ▸3/5   [开始][暂停][开 PR] │  ← 队列头（名称 + 分支 + 进度 + 操作）
+│ ▾ 深色模式改造   ▸3/5   ● 活跃    ▶  ⋯        │  ← 队列头第一行（名称 + 进度 + 状态 + 操作）
+│ feature/dark-mode → main        ▬▬▬▭▭  1 个失败 │  ← 队列头第二行（仅展开时：分支 → 基线 + 进度条）
 └────────────────────────────────────────────────┘
   ┌────────────────────────────────────────────┐
-  │ [手动]  [队列中 #1]              ⟳   ⊖      │  ← 来源徽标 + 状态徽标 + hover 图标操作
-  │ 重构终端面板标题栏的配色逻辑                  │  ← 标题（semibold，2 行截断）
+  │ [手动] 重构终端面板标题栏的配色逻辑  [队列中 #1] │  ← 标题与状态同一行（来源徽标在左、状态徽标在右）
   │ feature/dark-mode · 会话 session-… · 无 PR   │  ← 元信息（分支 / PR / 会话，可点）
   │ [移出队列] [取消]                            │  ← 主操作行（展开后显示）
   │ ┌ 详情：正文 / 错误 / 时间线 ────────────────┐ │  ← 点卡片 = 展开 / 收起（保留 v1 手感）
@@ -321,7 +321,7 @@ struct Queue {
   [手动] 整理 README 的安装章节   [加入队列 ▾]      ← 手动任务
 ```
 
-- **队列头**：名称、分支、进度 `n/m`、状态（活跃 / 暂停 / 完成）、操作按钮（开始 / 暂停 / 开 PR）；**所有队列（含 `autoCreated` 的自动单任务队列）都渲染队列头**，与计数口径一致 —— 自动队列因只含一个任务，默认以**紧凑形态**（队列头与卡片合一的一行）呈现，点开即展开为标准形态；
+- **队列头**：**第一行**名称 + 进度 `n/m` + 状态徽标（活跃 / 暂停 / 完成）+ 图标操作（开始 / 暂停 / 开 PR / ⋯），**第二行**（仅展开时）分支 → 基线 + 进度条 + 失败数；**所有队列（含 `autoCreated` 的自动单任务队列）都渲染队列头**，与计数口径一致 —— 自动队列因只含一个任务，默认以**紧凑形态**（队列头与卡片合一的一行）呈现，点开即展开为标准形态；
 - **来源徽标**：`Issue #N` 与 `手动` —— 需求「创建的任务和 github issue 任务分开标记」的落点之一；工具栏另有来源筛选段控件（全部 / Issue / 手动）；
 - **状态徽标**：待处理 / 队列中 #n / 运行中（配小 spinner）/ 已完成 / 失败 / 已取消 / 已关闭；失败 `systemRed`、完成 `systemGreen`（沿用现有语义色）；
 - **交互**：点卡片非按钮区域 = 展开 / 收起详情（正文可滚动，长正文不挤走按钮，保留 v1 的 NSTextView 方案）；hover 时卡片底色提亮（`PanelControl.fill(dark:highlighted:)`）并显示行内图标按钮；**移出队列 / 取消 / 重试都不弹模态**，结果回底部状态条（成功 5s 自动清空、失败留到下次操作）；只有「评论并关闭 Issue」保留确认框（会改 GitHub 远端状态）；
@@ -368,7 +368,7 @@ struct Queue {
 
 | 层 | 内容 |
 |---|---|
-| **摘要条**（工具栏第一行） | `honghe/order-service` + 四个计数胶囊（队列 12 / 排队 5 / 运行 1 / 失败 1；全为 0 时整条不显示，失败 > 0 才变红）；第二行是来源筛选**扁平页签**（全部 / Issue / 手动） |
+| **统计信息卡**（内容区第一行） | 一整行圆角卡片里的四个计数（队列 12 · 排队 5 · 运行 1 · 失败 1），**失败 > 0 时那一段才变红**（审查面板摘要卡的体例，见 V2-8m）；工具栏第一行只留工作区名，第二行是来源筛选**扁平页签**（全部 / Issue / 手动） |
 | **队列区块**（每个队列一块） | **队列头**：名称 + 分支（`feature/dark-mode → main`）+ 进度 `1/3` + 状态（活跃 / 暂停 / 已完成）+ 操作（开始 / 暂停 / 开 PR / ⋯ 改名·改分支·归档·删除）；**队内任务卡片**按 FIFO 排列，带队内序号 `#2` 与状态徽标 |
 | **未入队区** | 列表末尾，标题带计数 `未入队 (7)` |
 
@@ -394,6 +394,26 @@ struct Queue {
 - **失败两级可见**：队列头汇总 `1 个失败`，队内失败卡片自身标 `失败`；暂停的队列头给「开始 / 跳过」；
 - **空态**：一个队列都没有时显示引导「在任务卡片上点『加入队列 ▾ → 新建队列…』创建第一个队列」。
 
+### V2-8m 布局对齐审查面板（2026-09-25）
+
+任务面板的骨架**逐层照审查面板（`ReviewPanel.swift`）**重排，两处偏离被显式否掉：工具栏仍是**两行**（只把计数胶囊移出），统计信息是**纯文字卡**而不是彩色胶囊。
+
+| 位置 | 审查面板 | 任务面板（改后） |
+|---|---|---|
+| 顶 1 | `HeaderLabel` 标题 + 右侧图标按钮（刷新 / 关闭） | 不变：任务 + 刷新 / 全部运行 / 配置 / 关闭 |
+| 顶 2 | **单行**工具栏（28pt，控件靠左、筛选靠右，底部发丝线） | **两行**：28pt 工作区名（`honghe/order-service`）/ 32pt 来源页签 + 新建任务·新建队列图标按钮；底线保留 |
+| 内容 1 | `makeSummaryCard()`：整宽圆角卡 + 一行文字统计 | `TaskSummaryCardView`：同一体例（`PanelControl.fill` 抬起档 + 发丝描边 + 11pt 文字 + 12/9 内边距），一行 `队列 12 · 排队 5 · 运行 1 · 失败 1` |
+| 内容 2 | 树：块（标题 + 状态在**同一行**）→ 子块缩进 | 队列（泳道块）→ 任务卡（缩进）**标题与状态同一行** |
+
+- **计数从工具栏搬进内容区**：四枚胶囊不再占工具栏第一行，改由 `TaskSummaryCardView` 渲染，位置是 `listStack` 的**第一行**（`render()` 里第 0 步，先于「队列 (n)」分区头）——与审查面板的摘要卡一样随列表滚动。卡片**只要有 board 就显示**（全 0 也显示：它是"这个工作区有几条队列/几个任务"的答案），没有 runner（工作区解析为空）时整块不出现；
+- **失败徽标才变色**：文字按 `TaskSummaryPart.tone` 分段着色（中性 = `secondaryLabelColor`，失败 > 0 = `systemRed`），分隔符 `·` 用 `tertiaryLabelColor`；模型仍是纯 Foundation（`TasksSummaryModel.parts`），着色规则在视图层；
+- **标题与状态同一行**（`TaskCardView.build`）：`[来源徽标] 标题 [spacer] 状态徽标` 一行，栈对齐用 `.top` 而**不是** `.centerY` —— 标题允许折到 2 行（展开态不限），`.top` 让徽标贴在**首行**；`.centerY` 会把两枚徽标浮在两行文字中间（实测 2 行标题下徽标顶比标题顶低 8pt）。徽标压缩阻力置 `required`、标题降档，窄面板下先截断标题（tooltip 给全文）；
+- **队列头**：名称 + 进度 + 状态徽标本就在同一行（`.centerY`，名称单行截断），保持不动；只有分支 / 进度条 / 失败数在第二行且**仅展开时**出现——折叠态仍是一行；
+- **语言切换重建列表**：卡片与摘要卡的文案在构建时取 `L10n`，`refreshTooltips()` 现在除了刷新工具栏 tooltip，还会在**有 board 时重跑 `render()`**（此前只重建工具栏胶囊，卡片文案会停在旧语言）；
+- **徽标固有宽度修正**：`TaskBadgeView.intrinsicContentSize` 此前返回的是**裸标签**尺寸（少算 6pt × 2 内边距），任何按固有宽度排布的徽标都会被裁字 —— 实测「队列中 #2」渲染成「队列中 #」、`手动` 渲染成「手」。同一行排布下这尤其扎眼，因此一并修正（固有宽度 = 标签 + 12 / 4）；
+- 顺带清掉不再被引用的 `tasks.summary` 文案键（计数由 `tasks.stat.*` 逐段拼出），并把卡片/泳道/摘要卡共用的两条发丝灰度收进 `TaskInk`；
+- 回归断言（`tests/tasks-panel`，视图阶段 117 项、视图模型阶段 130 项）：摘要卡"撑满宽度 / 一行 / 每个计数都在 / 零失败中性、有失败变红"；任务卡"来源徽标在标题左、状态徽标在标题右、两枚徽标都落在标题首行的高度带里"（`descendants(_:of:)` 走查 + 坐标换算，`.centerY` 会被这条抓住）；徽标"固有宽度 = 标签 + 12pt 内边距"（截断回归）。
+
 ### V2-9 L10n（中英成对，`main.swift` 的 `L10n.table`）
 
 修改：`tasks.configInfo`（去掉钥匙串措辞，改为文件口径）。
@@ -402,9 +422,9 @@ struct Queue {
 
 - 来源与筛选：`tasks.source.github`、`tasks.source.manual`、`tasks.filter.all` / `.github` / `.manual`；
 - 队列：`tasks.queue.add`、`tasks.queue.addPick`、`tasks.queue.remove`、`tasks.queue.new`、`tasks.queue.name`、`tasks.queue.branch`、`tasks.queue.base`、`tasks.queue.start`、`tasks.queue.pause`、`tasks.queue.openPR`、`tasks.queue.progress`、`tasks.queue.idle`、`tasks.queue.pendingCount`、`tasks.queue.unnamed`；
-- 队列总览：`tasks.summary`（队列 %d · 排队 %d · 运行 %d · 失败 %d）、`tasks.queue.compact`、`tasks.queue.expand`、`tasks.queue.hideDone`、`tasks.queue.failedCount`、`tasks.queue.empty`、`tasks.queue.state.active` / `.paused` / `.finished`、`tasks.section.unqueued`（未入队 (%d)）；
+- 队列总览：`tasks.queue.compact`、`tasks.queue.expand`、`tasks.queue.hideDone`、`tasks.queue.failedCount`、`tasks.queue.empty`、`tasks.queue.state.active` / `.paused` / `.finished`、`tasks.section.unqueued`（未入队 (%d)）；
 - 状态：`tasks.state.queued`、`tasks.state.interrupted`、`tasks.sec.dirtyTree`（工作区有未提交改动）、`tasks.sec.noRemote`、`tasks.sec.prUnavailable`、`tasks.sec.branchPushedNoPR`；
-- 手动任务：`tasks.new.title`、`tasks.new.name`、`tasks.new.nameHint`、`tasks.new.body`、`tasks.new.create`、`tasks.new.save`、`tasks.new.done`、`tasks.new.editTitle`、`tasks.new.editInfo`、`tasks.errName`、`tasks.errBody`、`tasks.prompt.*`（通用提示词模板）；队列内联表单：`tasks.queue.settings`、`tasks.queue.editTitle`、`tasks.queue.editInfo`、`tasks.queue.nameHint`、`tasks.queue.baseHint`、`tasks.queue.branchWillUse`、`tasks.queue.prUnavailable`、`tasks.queue.createOnly`、`tasks.queue.created`、`tasks.queue.updated`；计数胶囊：`tasks.stat.queues` / `.queued` / `.running` / `.failed`。v1 遗留的 `tasks.queue.rename` / `.renameInfo` / `.changeBranch` / `.branchInfo` 被「队列设置」内联表单取代，已删除；
+- 手动任务：`tasks.new.title`、`tasks.new.name`、`tasks.new.nameHint`、`tasks.new.body`、`tasks.new.create`、`tasks.new.save`、`tasks.new.done`、`tasks.new.editTitle`、`tasks.new.editInfo`、`tasks.errName`、`tasks.errBody`、`tasks.prompt.*`（通用提示词模板）；队列内联表单：`tasks.queue.settings`、`tasks.queue.editTitle`、`tasks.queue.editInfo`、`tasks.queue.nameHint`、`tasks.queue.baseHint`、`tasks.queue.branchWillUse`、`tasks.queue.prUnavailable`、`tasks.queue.createOnly`、`tasks.queue.created`、`tasks.queue.updated`；统计卡逐段计数：`tasks.stat.queues` / `.queued` / `.running` / `.failed`（V2-8m 之前的合并键 `tasks.summary` 已删除）。v1 遗留的 `tasks.queue.rename` / `.renameInfo` / `.changeBranch` / `.branchInfo` 被「队列设置」内联表单取代，已删除；
 - 详情与错误：`tasks.detailSession`、`tasks.detailSource`、`tasks.detailQueue`、`tasks.errInterrupted`、`tasks.errNotGit`、`tasks.errCheckout`。
 
 ### V2-10 测试与 CI

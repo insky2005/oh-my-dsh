@@ -206,7 +206,7 @@ do {
 
 // MARK: - Summary
 
-section("summary strip")
+section("summary card (统计信息)")
 do {
     var board = TaskBoard()
     let t1 = TaskItem.manual(title: "One", id: "manual-0008aaaa")
@@ -223,7 +223,12 @@ do {
     eq(summary.queued, 1, "one task waits")
     eq(summary.running, 1, "one task runs")
     eq(summary.failed, 0, "nothing failed")
-    eq(summary.text, "tasks.summary(1,1,1,0)", "the strip text carries the counts")
+    // The card is ONE line of labelled counters, in reading order.
+    eq(summary.parts.map { $0.text },
+       ["tasks.stat.queues 1", "tasks.stat.queued 1", "tasks.stat.running 1", "tasks.stat.failed 0"],
+       "the card prints every counter with its label")
+    eq(summary.parts.map { $0.count }, [1, 1, 1, 0], "each part carries its count")
+    eq(summary.parts[3].tone, TaskTone.neutral, "zero failures stay quiet")
 }
 
 // MARK: - Inline forms (新建任务 / 新建队列)
@@ -363,18 +368,18 @@ do {
     let autoHeader = QueueHeaderModel.build(board.queue(auto.id)!, board: board, collapsed: true)
     check(autoHeader.isAutoCreated, "the issue lane is flagged as auto-created")
 
-    // The summary strip's chips mirror the counts, and only 失败 lights up.
+    // The summary card mirrors the counts, and only 失败 lights up.
     let summary = TasksSummaryModel.build(board)
-    eq(summary.chips.count, 4, "four counters")
-    eq(summary.chips.map { $0.key },
+    eq(summary.parts.count, 4, "four counters")
+    eq(summary.parts.map { $0.key },
        ["tasks.stat.queues", "tasks.stat.queued", "tasks.stat.running", "tasks.stat.failed"],
-       "chips read 队列 · 排队 · 运行 · 失败")
-    eq(summary.chips.map { $0.count }, [summary.queues, summary.queued, summary.running, summary.failed],
-       "every chip carries its count")
-    eq(summary.chips[3].tone, TaskTone.neutral, "zero failures stay quiet")
-    eq(TaskStatChip.tone(forCount: 2, negativeWhenPositive: true), TaskTone.negative,
+       "the card reads 队列 · 排队 · 运行 · 失败")
+    eq(summary.parts.map { $0.count }, [summary.queues, summary.queued, summary.running, summary.failed],
+       "every counter carries its count")
+    eq(summary.parts[3].tone, TaskTone.neutral, "zero failures stay quiet")
+    eq(TaskSummaryPart.tone(forCount: 2, negativeWhenPositive: true), TaskTone.negative,
        "failures light up")
-    eq(TaskStatChip.tone(forCount: 2, negativeWhenPositive: false), TaskTone.neutral,
+    eq(TaskSummaryPart.tone(forCount: 2, negativeWhenPositive: false), TaskTone.neutral,
        "running is an accent count, not an alarm")
 }
 
