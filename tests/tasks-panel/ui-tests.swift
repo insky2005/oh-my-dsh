@@ -226,6 +226,158 @@ do {
     eq(summary.text, "tasks.summary(1,1,1,0)", "the strip text carries the counts")
 }
 
+// MARK: - Inline forms (新建任务 / 新建队列)
+
+section("task composer (inline 新建任务)")
+do {
+    var composer = TaskComposerModel.build(mode: .create)
+    eq(composer.headingKey, "tasks.new.title", "a fresh composer is the 新建任务 form")
+    eq(composer.submitKey, "tasks.new.create", "its button creates")
+    check(composer.isPristine, "a fresh composer is pristine")
+    check(!composer.canSubmit, "an empty form cannot be submitted")
+    eq(composer.problemKey, nil, "a pristine form shows no problem")
+
+    // Typing half a task keeps the form quiet (no nagging) but the button
+    // follows the two fields; only Enter explains what is missing.
+    composer = composer.typed(title: "Polish README", body: "")
+    eq(composer.problemKey, nil, "typing does not nag about the empty description")
+    check(!composer.canSubmit, "but a title without a description is not submittable")
+    eq(composer.attemptedSubmit().problemKey, "tasks.errBody",
+       "an attempted submit names the missing description")
+
+    composer = composer.typed(title: "Polish README", body: "tidy it up")
+    eq(composer.problemKey, nil, "both fields filled clears the hint")
+    check(composer.canSubmit, "the form can be submitted")
+    eq(composer.draft.normalizedTitle, "Polish README", "the draft carries the title")
+
+    // Whitespace-only input is still empty.
+    let blank = TaskComposerModel.build(mode: .create, title: "  ", body: "  ")
+    check(!blank.canSubmit, "whitespace is not a task")
+    eq(blank.attemptedSubmit().problemKey, "tasks.errName",
+       "submitting an empty form points at the title")
+
+    // Editing an existing task prefills both fields and saves instead of creating.
+    let task = TaskItem.manual(title: "Old title", body: "old body", id: "manual-0010aaaa")
+    let editing = TaskComposerModel.edit(task)
+    eq(editing.mode, .edit(taskID: "manual-0010aaaa"), "edit mode carries the task id")
+    eq(editing.headingKey, "tasks.new.editTitle", "editing says so")
+    eq(editing.submitKey, "tasks.new.save", "editing saves")
+    eq(editing.title, "Old title", "the title is prefilled")
+    eq(editing.body, "old body", "the description is prefilled")
+    check(editing.canSubmit, "a prefilled form is submittable")
+}
+
+section("queue composer (inline 新建队列)")
+do {
+    var composer = QueueComposerModel.create(taskID: "manual-0011aaaa")
+    eq(composer.headingKey, "tasks.queue.newTitle", "a new queue uses the new-queue heading")
+    eq(composer.submitKey, "tasks.queue.create", "a queue created from a card joins the task")
+    eq(composer.mode.taskID, "manual-0011aaaa", "the waiting task is remembered")
+    check(!composer.canSubmit, "a nameless queue cannot be created")
+    eq(composer.problemKey, nil, "an untouched form shows no problem")
+    eq(composer.attemptedSubmit().problemKey, "tasks.errQueueName",
+       "submitting without a name names the missing field")
+
+    composer = composer.typed(name: "Dark Mode", branch: "", baseBranch: "", autoPR: false)
+    check(composer.canSubmit, "a named queue can be created")
+    eq(composer.effectiveBranchHint, "feature/dark-mode",
+       "an empty branch shows the derived default")
+    eq(composer.branchValue, nil, "an empty branch asks for the default")
+    eq(composer.normalizedBaseBranch, "main", "an empty base branch falls back to main")
+
+    // A pure-Chinese name has no slug, so the hint falls back to the wording
+    // rather than promising a branch that cannot be derived.
+    let chinese = QueueComposerModel.create().typed(name: "深色模式改造", branch: "", baseBranch: "main",
+                                                    autoPR: false)
+    eq(chinese.effectiveBranchHint, "tasks.queue.branchHint",
+       "a name with no slug keeps the generic hint")
+
+    // A typed branch wins, and an explicit one is what the queue gets.
+    let typed = chinese.typed(name: "深色模式改造", branch: "feature/dark", baseBranch: "develop",
+                              autoPR: true)
+    eq(typed.effectiveBranchHint, "feature/dark", "a typed branch is echoed back")
+    eq(typed.branchValue, "feature/dark", "and is the value the queue is created with")
+    eq(typed.normalizedBaseBranch, "develop", "the base branch is carried")
+
+    // Standalone creation (the queues section header button).
+    eq(QueueComposerModel.create().submitKey, "tasks.queue.createOnly",
+       "a queue created on its own just creates")
+
+    // The queue's own settings.
+    var queue = TaskQueue(id: "q-1111", name: "Lane", branch: "feature/lane", baseBranch: "main")
+    queue.autoPR = true
+    let settings = QueueComposerModel.edit(queue, prAvailable: true)
+    eq(settings.headingKey, "tasks.queue.editTitle", "editing a queue says so")
+    eq(settings.submitKey, "tasks.new.save", "editing saves")
+    eq(settings.mode.queueID, "q-1111", "the edited queue is remembered")
+    eq(settings.name, "Lane", "the name is prefilled")
+    eq(settings.branch, "feature/lane", "the branch is prefilled")
+    check(settings.autoPR, "the PR switch is prefilled")
+    check(settings.prAvailable, "a GitHub workspace can open a PR")
+    // Clearing the branch means "run on whatever is checked out".
+    let cleared = settings.typed(name: "Lane", branch: "", baseBranch: "main", autoPR: false)
+    eq(cleared.effectiveBranchHint, "tasks.queue.noBranch", "no branch says so while editing")
+    eq(cleared.branchValue, nil, "no branch really means no branch")
+}
+
+section("empty state")
+do {
+    let fresh = TasksEmptyStateModel.build(filtered: false, githubRepo: true)
+    eq(fresh.messageKey, "tasks.empty", "a fresh board points at the way in")
+    check(fresh.showsNewTask, "and offers the inline form")
+    eq(fresh.symbol, "checklist", "with the checklist symbol")
+
+    let noRepo = TasksEmptyStateModel.build(filtered: false, githubRepo: false)
+    eq(noRepo.messageKey, "tasks.emptyManualOnly",
+       "a non-GitHub workspace explains what still works")
+
+    let filtered = TasksEmptyStateModel.build(filtered: true, githubRepo: true)
+    eq(filtered.messageKey, "tasks.emptyFiltered", "an empty filter says which kind of empty")
+    check(!filtered.showsNewTask, "and does not offer to create a task")
+}
+
+section("counters, progress and the auto queue flag")
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "One", id: "manual-0012aaaa")
+    let t2 = TaskItem.manual(title: "Two", id: "manual-0013bbbb")
+    board.tasks = [t1, t2]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+    _ = board.enqueue(taskID: t2.id, into: queue.id)
+    board.markRunning(t1.id)
+
+    var header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(header.runningCount, 1, "the running task is counted for the header")
+    eq(header.progressFraction, 0, "nothing is finished yet")
+    check(!header.isAutoCreated, "a user queue is not an auto queue")
+
+    board.markDone(t1.id, prUrl: nil)
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(header.progressFraction, 0.5, "half the queue is done")
+    eq(header.runningCount, 0, "nothing runs now")
+
+    let issue = TaskItem.github(number: 7, title: "Seven")
+    let auto = board.createQueue(name: "Issue #7", autoCreated: true)
+    _ = board.enqueue(taskID: issue.id, into: auto.id)
+    let autoHeader = QueueHeaderModel.build(board.queue(auto.id)!, board: board, collapsed: true)
+    check(autoHeader.isAutoCreated, "the issue lane is flagged as auto-created")
+
+    // The summary strip's chips mirror the counts, and only 失败 lights up.
+    let summary = TasksSummaryModel.build(board)
+    eq(summary.chips.count, 4, "four counters")
+    eq(summary.chips.map { $0.key },
+       ["tasks.stat.queues", "tasks.stat.queued", "tasks.stat.running", "tasks.stat.failed"],
+       "chips read 队列 · 排队 · 运行 · 失败")
+    eq(summary.chips.map { $0.count }, [summary.queues, summary.queued, summary.running, summary.failed],
+       "every chip carries its count")
+    eq(summary.chips[3].tone, TaskTone.neutral, "zero failures stay quiet")
+    eq(TaskStatChip.tone(forCount: 2, negativeWhenPositive: true), TaskTone.negative,
+       "failures light up")
+    eq(TaskStatChip.tone(forCount: 2, negativeWhenPositive: false), TaskTone.neutral,
+       "running is an accent count, not an alarm")
+}
+
 if failures == 0 {
     print("ok - \(checks) checks passed")
 } else {

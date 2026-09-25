@@ -56,11 +56,19 @@ final class IssueRunnerPanelController: NSObject {
     private let newTaskButton: CustomIconButton
     private let hideButton: CustomIconButton
     private let repoLabel = HeaderLabel()
-    private let summaryLabel = HeaderLabel()
-    private let filterControl = NSSegmentedControl()
+    /// The four counters as small pills (队列 / 排队 / 运行 / 失败).
+    private let chipStrip = NSStackView()
+    /// The source filter as flat tabs — the skills panel's strip, so the whole
+    /// shell keeps one tab体例 instead of one control style per panel.
+    private let filterTabs = SkillTabStrip()
     private let listScroll = NSScrollView()
     private let listStack = NSStackView()
     private let emptyLabel = NSTextField(labelWithString: "")
+    private let emptyIcon = BakedIconView(symbol: "checklist")
+    private let emptyButton = NSButton(title: "", target: nil, action: nil)
+    private let emptyView = NSStackView()
+    /// The inline form currently on screen (needs no lookup on scroll/focus).
+    private weak var activeFormView: NSView?
     private let statusBar = DynamicFillView()
     private let statusLabel = HeaderLabel()
     private let statusSpinner = NSProgressIndicator()
@@ -79,6 +87,14 @@ final class IssueRunnerPanelController: NSObject {
     /// the work), issue tasks' auto queues start as one compact line.
     private var queueToggle: [String: Bool] = [:]
     private var sourceFilter: SourceFilter = .all
+    /// The inline 新建任务 / 编辑任务 form (nil = closed). Creating or editing a
+    /// task never raises a dialog: the form IS a card in this list.
+    private var taskComposer: TaskComposerModel?
+    /// The inline 新建队列 / 队列设置 form (nil = closed).
+    private var queueComposer: QueueComposerModel?
+    /// A just-opened (or just-submitted) form scrolls itself into view and takes
+    /// focus on the next render — the list is rebuilt from scratch every time.
+    private var pendingFormFocus = false
     /// Drives the runner: start the next queued task, advance the running one.
     private var stepTimer: Timer?
 
@@ -94,7 +110,7 @@ final class IssueRunnerPanelController: NSObject {
         buildUI()
         refreshButton.onAction = { [weak self] in self?.reloadIssues() }
         runAllButton.onAction = { [weak self] in self?.runAllTapped() }
-        newTaskButton.onAction = { [weak self] in self?.presentTaskForm(editing: nil) }
+        newTaskButton.onAction = { [weak self] in self?.openTaskComposer(.create) }
         configButton.onAction = { [weak self] in self?.configTapped() }
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
         updateLabels()
@@ -120,12 +136,12 @@ final class IssueRunnerPanelController: NSObject {
         } else {
             repoLabel.text = L10n.tr("tasks.noRepo")
         }
-        filterControl.segmentCount = 3
-        filterControl.setLabel(L10n.tr("tasks.filter.all"), forSegment: 0)
-        filterControl.setLabel(L10n.tr("tasks.filter.issues"), forSegment: 1)
-        filterControl.setLabel(L10n.tr("tasks.filter.manual"), forSegment: 2)
-        filterControl.selectedSegment = sourceFilter.rawValue
-        if let runner = runner { summaryLabel.text = TasksSummaryModel.build(runner.board).text }
+        filterTabs.setItems([L10n.tr("tasks.filter.all"),
+                             L10n.tr("tasks.filter.issues"),
+                             L10n.tr("tasks.filter.manual")],
+                            selected: sourceFilter.rawValue)
+        emptyButton.title = L10n.tr("tasks.new.title")
+        rebuildStats()
     }
 
     /// 语言切换后刷新头部按钮 tooltip（复用 updateLabels）。
@@ -156,33 +172,46 @@ final class IssueRunnerPanelController: NSObject {
             header.heightAnchor.constraint(equalToConstant: 40),
         ])
 
-        // toolbar: repo + status info
+        // toolbar row 1: where this board lives, and the four counters as pills.
         repoLabel.translatesAutoresizingMaskIntoConstraints = false
-        summaryLabel.translatesAutoresizingMaskIntoConstraints = false
-        summaryLabel.setContentHuggingPriority(.required, for: .horizontal)
-        summaryLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        filterControl.segmentStyle = .texturedRounded
-        filterControl.controlSize = .small
-        filterControl.translatesAutoresizingMaskIntoConstraints = false
-        filterControl.target = self
-        filterControl.action = #selector(filterChanged(_:))
+        chipStrip.orientation = .horizontal
+        chipStrip.alignment = .centerY
+        chipStrip.spacing = 5
+        chipStrip.translatesAutoresizingMaskIntoConstraints = false
+        chipStrip.setContentHuggingPriority(.required, for: .horizontal)
+        chipStrip.setContentCompressionResistancePriority(.required, for: .horizontal)
         let toolbar = DynamicFillView()
         toolbar.kind = .panel
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true
         toolbar.addSubview(repoLabel)
-        toolbar.addSubview(summaryLabel)
-        toolbar.addSubview(filterControl)
+        toolbar.addSubview(chipStrip)
         NSLayoutConstraint.activate([
             repoLabel.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 10),
             repoLabel.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-            summaryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: repoLabel.trailingAnchor, constant: 8),
-            summaryLabel.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-            filterControl.leadingAnchor.constraint(equalTo: summaryLabel.trailingAnchor, constant: 8),
-            filterControl.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -8),
-            filterControl.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-            toolbar.heightAnchor.constraint(equalToConstant: 30),
+            repoLabel.trailingAnchor.constraint(lessThanOrEqualTo: chipStrip.leadingAnchor, constant: -8),
+            chipStrip.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -10),
+            chipStrip.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            toolbar.heightAnchor.constraint(equalToConstant: 28),
+        ])
+
+        // toolbar row 2: the source filter as flat tabs (全部 / Issue / 手动).
+        filterTabs.translatesAutoresizingMaskIntoConstraints = false
+        filterTabs.onSelect = { [weak self] index in
+            guard let self = self else { return }
+            self.sourceFilter = Self.SourceFilter(rawValue: index) ?? .all
+            self.render()
+        }
+        let tabRow = DynamicFillView()
+        tabRow.kind = .panel
+        tabRow.translatesAutoresizingMaskIntoConstraints = false
+        tabRow.addSubview(filterTabs)
+        NSLayoutConstraint.activate([
+            filterTabs.leadingAnchor.constraint(equalTo: tabRow.leadingAnchor, constant: 8),
+            filterTabs.trailingAnchor.constraint(lessThanOrEqualTo: tabRow.trailingAnchor, constant: -8),
+            filterTabs.centerYAnchor.constraint(equalTo: tabRow.centerYAnchor),
+            tabRow.heightAnchor.constraint(equalToConstant: 30),
         ])
 
         let toolbarUnderline = NSBox()
@@ -195,7 +224,7 @@ final class IssueRunnerPanelController: NSObject {
         listStack.orientation = .vertical
         listStack.alignment = .leading
         listStack.spacing = 8
-        listStack.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 10, right: 10)
+        listStack.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 14, right: 10)
         listStack.translatesAutoresizingMaskIntoConstraints = false
         listStack.setHuggingPriority(.defaultLow, for: .horizontal)
 
@@ -212,13 +241,28 @@ final class IssueRunnerPanelController: NSObject {
         listScroll.drawsBackground = false
         listScroll.translatesAutoresizingMaskIntoConstraints = false
 
-        // Empty state: centred over the list.
+        // Empty state: an icon, the guidance line and the way in (the inline
+        // 新建任务 form) — centred over the list, the projects panel's体例.
         emptyLabel.alignment = .center
         emptyLabel.maximumNumberOfLines = 3
         emptyLabel.font = .systemFont(ofSize: 12)
         emptyLabel.textColor = .secondaryLabelColor
         emptyLabel.lineBreakMode = .byWordWrapping
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyIcon.translatesAutoresizingMaskIntoConstraints = false
+        emptyButton.bezelStyle = .rounded
+        emptyButton.controlSize = .regular
+        emptyButton.font = .systemFont(ofSize: 12)
+        emptyButton.target = self
+        emptyButton.action = #selector(newTaskTapped)
+        emptyButton.translatesAutoresizingMaskIntoConstraints = false
+        emptyView.orientation = .vertical
+        emptyView.alignment = .centerX
+        emptyView.spacing = 10
+        emptyView.translatesAutoresizingMaskIntoConstraints = false
+        emptyView.addArrangedSubview(emptyIcon)
+        emptyView.addArrangedSubview(emptyLabel)
+        emptyView.addArrangedSubview(emptyButton)
 
         // status bar
         statusBar.kind = .panel
@@ -246,19 +290,24 @@ final class IssueRunnerPanelController: NSObject {
         ])
         statusBar.isHidden = true
 
+        // The document view must be pinned on every side (ChannelPanel /
+        // ProjectsPanel体例): width alone lets the stack collapse into a corner.
         NSLayoutConstraint.activate([
             listStack.leadingAnchor.constraint(equalTo: listDocument.leadingAnchor),
             listStack.trailingAnchor.constraint(equalTo: listDocument.trailingAnchor),
             listStack.topAnchor.constraint(equalTo: listDocument.topAnchor),
             listStack.bottomAnchor.constraint(equalTo: listDocument.bottomAnchor),
+            listDocument.leadingAnchor.constraint(equalTo: listScroll.contentView.leadingAnchor),
+            listDocument.topAnchor.constraint(equalTo: listScroll.contentView.topAnchor),
             listDocument.widthAnchor.constraint(equalTo: listScroll.contentView.widthAnchor),
         ])
 
         view.addSubview(header)
         view.addSubview(toolbar)
+        view.addSubview(tabRow)
         view.addSubview(toolbarUnderline)
         view.addSubview(listScroll)
-        view.addSubview(emptyLabel)
+        view.addSubview(emptyView)
         view.addSubview(statusBar)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: view.topAnchor),
@@ -269,7 +318,11 @@ final class IssueRunnerPanelController: NSObject {
             toolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
-            toolbarUnderline.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            tabRow.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            tabRow.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tabRow.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+
+            toolbarUnderline.topAnchor.constraint(equalTo: tabRow.bottomAnchor),
             toolbarUnderline.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             toolbarUnderline.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
@@ -278,10 +331,13 @@ final class IssueRunnerPanelController: NSObject {
             listScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             listScroll.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
 
-            emptyLabel.centerXAnchor.constraint(equalTo: listScroll.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: listScroll.centerYAnchor),
-            emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
-            emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+            emptyView.centerXAnchor.constraint(equalTo: listScroll.centerXAnchor),
+            emptyView.centerYAnchor.constraint(equalTo: listScroll.centerYAnchor),
+            emptyView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            emptyView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+            emptyIcon.widthAnchor.constraint(equalToConstant: 38),
+            emptyIcon.heightAnchor.constraint(equalToConstant: 38),
+            emptyLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
 
             statusBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             statusBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -999,30 +1055,52 @@ final class IssueRunnerPanelController: NSObject {
 
     private func render() {
         for subview in listStack.arrangedSubviews { subview.removeFromSuperview() }
+        activeFormView = nil
         guard let runner = runner else {
-            summaryLabel.text = ""
-            emptyLabel.isHidden = false
+            rebuildStats()
+            emptyView.isHidden = false
             return
         }
         let board = runner.board
         let githubRepo = repo != nil
         var sections = 0
 
+        // 0. 新建任务 — the inline form sits above every section while it is open.
+        if let composer = taskComposer, composer.mode.isCreate {
+            addForm(taskComposerView(composer))
+        }
+
         // 1. Queues. User queues first (they hold the user's own work), then the
         //    issue tasks' single-task queues, which count and render like any
-        //    other queue but start as one compact line (决策 8).
+        //    other queue but start as one compact line (决策 8). The section
+        //    header carries 新建队列, so a queue can also be created on its own.
         let userQueues = sourceFilter.showsUserQueues ? board.queues.filter { !$0.autoCreated } : []
         let autoQueues = sourceFilter.showsAutoQueues
             ? board.queues.filter { $0.autoCreated }.sorted(by: { autoQueueNumber($0, board) < autoQueueNumber($1, board) })
             : []
         let queues = userQueues + autoQueues
-        if !queues.isEmpty {
-            listStack.addArrangedSubview(TaskSectionHeaderView(text: L10n.tr("tasks.section.queues", queues.count)))
+        if !queues.isEmpty || isCreatingStandaloneQueue {
+            addCard(TaskSectionHeaderView(text: L10n.tr("tasks.section.queues", queues.count),
+                                          actionTitle: L10n.tr("tasks.queue.new"),
+                                          onAction: { [weak self] in
+                                              self?.openQueueComposer(.create(taskID: nil))
+                                          }))
+            if isCreatingStandaloneQueue, let composer = queueComposer {
+                addForm(queueComposerView(composer))
+            }
             for queue in queues {
                 let cards = board.tasks(inQueue: queue.id).filter { sourceFilter.matches($0) }
-                listStack.addArrangedSubview(queueHeader(queue, board: board, cardCount: cards.count))
+                addCard(queueHeader(queue, board: board, cardCount: cards.count))
+                if let composer = queueComposer, composer.mode.queueID == queue.id {
+                    addForm(queueComposerView(composer))
+                }
                 if isQueueExpanded(queue) {
-                    for task in cards { listStack.addArrangedSubview(card(task, board: board, githubRepo: githubRepo)) }
+                    for task in cards {
+                        addCard(card(task, board: board, githubRepo: githubRepo))
+                        if let composer = taskComposer, composer.mode.taskID == task.id {
+                            addForm(taskComposerView(composer))
+                        }
+                    }
                 }
             }
             sections += 1
@@ -1031,22 +1109,82 @@ final class IssueRunnerPanelController: NSObject {
         // 2. Tasks that are in no queue at all — the 未入队 area.
         let unqueued = board.tasks.filter { $0.queueId == nil && sourceFilter.matches($0) }
         if !unqueued.isEmpty {
-            listStack.addArrangedSubview(TaskSectionHeaderView(text: L10n.tr("tasks.section.unqueued", unqueued.count)))
-            for task in unqueued { listStack.addArrangedSubview(card(task, board: board, githubRepo: githubRepo)) }
+            addCard(TaskSectionHeaderView(text: L10n.tr("tasks.section.unqueued", unqueued.count)))
+            for task in unqueued {
+                addCard(card(task, board: board, githubRepo: githubRepo))
+                if let composer = taskComposer, composer.mode.taskID == task.id {
+                    addForm(taskComposerView(composer))
+                }
+            }
             sections += 1
         }
 
-        emptyLabel.isHidden = sections > 0
-        if sourceFilter != .all {
-            emptyLabel.stringValue = L10n.tr("tasks.emptyFiltered")
-        } else if repo == nil {
-            // A workspace without a GitHub remote: manual tasks and queues still
-            // work, only the issue features are unavailable.
-            emptyLabel.stringValue = L10n.tr("tasks.emptyManualOnly")
-        } else {
-            emptyLabel.stringValue = L10n.tr("tasks.empty")
+        // 3. Empty state — never while a form is open (the form IS content).
+        let formVisible = taskComposer != nil || queueComposer != nil
+        let empty = TasksEmptyStateModel.build(filtered: sourceFilter != .all, githubRepo: repo != nil)
+        emptyView.isHidden = sections > 0 || formVisible
+        emptyLabel.stringValue = L10n.tr(empty.messageKey)
+        emptyIcon.setSymbol(empty.symbol)
+        emptyButton.isHidden = !empty.showsNewTask
+        rebuildStats()
+        if pendingFormFocus, formVisible {
+            pendingFormFocus = false
+            DispatchQueue.main.async { [weak self] in self?.focusActiveForm() }
         }
-        summaryLabel.text = TasksSummaryModel.build(board).text
+    }
+
+    /// Cards fill the list width: the stack is leading-aligned, so without this
+    /// every card would hug its own content instead (ProjectsPanel体例).
+    private func addCard(_ view: NSView) {
+        listStack.addArrangedSubview(view)
+        view.widthAnchor.constraint(equalTo: listStack.widthAnchor, constant: -20).isActive = true
+    }
+
+    /// An inline form is a card too — recorded so it can take focus/scroll.
+    private func addForm(_ view: NSView) {
+        addCard(view)
+        activeFormView = view
+    }
+
+    private var isCreatingStandaloneQueue: Bool {
+        guard case .create(let taskID)? = queueComposer?.mode else { return false }
+        return taskID == nil
+    }
+
+    private func taskComposerView(_ model: TaskComposerModel) -> TaskComposerView {
+        let form = TaskComposerView(model: model)
+        form.onSubmit = { [weak self] composer in self?.submitTaskComposer(composer) }
+        form.onCancel = { [weak self] in self?.closeTaskComposer() }
+        return form
+    }
+
+    private func queueComposerView(_ model: QueueComposerModel) -> QueueComposerView {
+        let form = QueueComposerView(model: model)
+        form.onSubmit = { [weak self] composer in self?.submitQueueComposer(composer) }
+        form.onCancel = { [weak self] in self?.closeQueueComposer() }
+        return form
+    }
+
+    /// Put the caret in the form that was just opened (or just submitted), and
+    /// make sure it is on screen — the list may be scrolled far down.
+    private func focusActiveForm() {
+        guard let form = activeFormView else { return }
+        form.scrollToVisible(form.bounds)
+        (form as? TaskComposerView)?.focusTitle()
+        (form as? QueueComposerView)?.focusName()
+    }
+
+    /// The four counters, right-aligned in the toolbar. Nothing to report (a
+    /// brand-new board) leaves the strip empty instead of showing four zeros.
+    private func rebuildStats() {
+        for subview in chipStrip.arrangedSubviews { subview.removeFromSuperview() }
+        guard let runner = runner else { return }
+        let summary = TasksSummaryModel.build(runner.board)
+        guard summary.queues + summary.queued + summary.running + summary.failed > 0 else { return }
+        for chip in summary.chips {
+            chipStrip.addArrangedSubview(TaskBadgeView(text: L10n.tr(chip.key) + " " + String(chip.count),
+                                                       tone: chip.tone))
+        }
     }
 
     /// Issue numbers order the auto queues (they are per-repo and monotonic).
@@ -1073,7 +1211,7 @@ final class IssueRunnerPanelController: NSObject {
             self?.presentQueuePicker(for: taskID, from: card)
         }
         card.onCommentClose = { [weak self] in self?.commentAndCloseTapped(number: task.number ?? 0) }
-        card.onEdit = { [weak self] in self?.presentTaskForm(editing: task) }
+        card.onEdit = { [weak self] in self?.openTaskComposer(.edit(taskID: taskID)) }
         card.onDelete = { [weak self] in self?.confirmDelete(task) }
         return card
     }
@@ -1092,8 +1230,8 @@ final class IssueRunnerPanelController: NSObject {
             self?.syncFromBoard()
         }
         header.onOpenPR = { [weak self] in self?.openPR(for: queue) }
-        header.onRename = { [weak self] in self?.renameQueue(queue) }
-        header.onBranch = { [weak self] in self?.changeQueueBranch(queue) }
+        // 重命名 / 改分支 / 基于分支 / PR 开关 are one inline form now.
+        header.onSettings = { [weak self] in self?.openQueueComposer(.edit(queueID: queueID)) }
         header.onTogglePR = { [weak self] in
             _ = self?.runner?.updateQueue(queueID, autoPR: !queue.autoPR)
             self?.syncFromBoard()
@@ -1196,170 +1334,122 @@ final class IssueRunnerPanelController: NSObject {
         syncFromBoard()
     }
 
+    /// 新建队列 from a card's 加入队列 ▾ menu: the form opens inline, anchored
+    /// under that card, and the task joins the queue once it is created.
     @objc private func newQueueForTask(_ sender: NSMenuItem) {
         guard let taskID = sender.representedObject as? String else { return }
-        presentQueueForm(forTask: taskID)
+        openQueueComposer(.create(taskID: taskID))
     }
 
-    @objc private func filterChanged(_ sender: NSSegmentedControl) {
-        sourceFilter = SourceFilter(rawValue: sender.selectedSegment) ?? .all
+    /// The empty state's own button: create the first task without hunting for
+    /// the header's + (same inline form).
+    @objc private func newTaskTapped() { openTaskComposer(.create) }
+
+    // MARK: - Inline forms (nothing here raises a dialog)
+
+    /// 新建任务 / 编辑任务 — the form is opened IN the panel (a card in the list,
+    /// anchored where the click came from); nothing here raises a dialog.
+    private func openTaskComposer(_ mode: TaskComposerModel.Mode) {
+        guard runner != nil else {
+            setStatus(L10n.tr("tasks.errNoWorkspace"), spin: false)
+            autoHideStatus(after: 4)
+            return
+        }
+        taskComposer = TaskComposerModel.build(mode: mode)
+        queueComposer = nil
+        pendingFormFocus = true
         render()
     }
 
-    // MARK: - Forms
-
-    /// A labelled form row (caption above the control).
-    private func formRow(_ caption: String, _ control: NSView) -> NSStackView {
-        let label = NSTextField(labelWithString: caption)
-        label.font = .systemFont(ofSize: 11)
-        label.textColor = .secondaryLabelColor
-        label.translatesAutoresizingMaskIntoConstraints = false
-        control.translatesAutoresizingMaskIntoConstraints = false
-        let stack = NSStackView(views: [label, control])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        control.widthAnchor.constraint(equalToConstant: 380).isActive = true
-        return stack
+    private func closeTaskComposer() {
+        taskComposer = nil
+        render()
     }
 
-    private func formColumn(_ rows: [NSView]) -> NSStackView {
-        let column = NSStackView(views: rows)
-        column.orientation = .vertical
-        column.alignment = .leading
-        column.spacing = 8
-        column.translatesAutoresizingMaskIntoConstraints = false
-        column.frame = NSRect(origin: .zero, size: column.fittingSize)
-        return column
+    /// Submit from the inline form. Creating keeps the form open with cleared
+    /// fields so several tasks can be added in a row (完成 / Esc closes it);
+    /// saving an edit closes it.
+    private func submitTaskComposer(_ composer: TaskComposerModel) {
+        guard let runner = runner else { return }
+        let draft = composer.draft
+        switch composer.mode {
+        case .create:
+            if let created = runner.createManualTask(draft) {
+                setStatus(L10n.tr("tasks.new.created", created.title), spin: false)
+                autoHideStatus(after: 4)
+            }
+            taskComposer = TaskComposerModel.build(mode: .create)
+            pendingFormFocus = true
+        case .edit(let taskID):
+            _ = runner.updateManualTask(taskID, title: draft.normalizedTitle, body: draft.normalizedBody)
+            setStatus(L10n.tr("tasks.new.updated", draft.normalizedTitle), spin: false)
+            autoHideStatus(after: 4)
+            taskComposer = nil
+        }
+        syncFromBoard()
     }
 
-    private func field(_ value: String, _ placeholder: String) -> NSTextField {
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
-        field.stringValue = value
-        field.placeholderString = placeholder
-        field.translatesAutoresizingMaskIntoConstraints = false
-        return field
+    private func autoHideStatus(after seconds: Double) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in self?.hideStatus() }
     }
 
-    /// 新建任务 / 编辑任务 — a title and a description, nothing else (决策 6).
-    private func presentTaskForm(editing task: TaskItem?) {
+    /// 新建队列 / 队列设置 — opened in the panel like the task form. A new queue
+    /// can take the task that asked for it (加入队列 ▾ → 新建队列) or stand alone
+    /// (the queues section header's 新建队列); the same form edits a queue's name,
+    /// branch, base branch and PR switch in place under its header.
+    private func openQueueComposer(_ mode: QueueComposerModel.Mode) {
         guard let runner = runner else {
             setStatus(L10n.tr("tasks.errNoWorkspace"), spin: false)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.hideStatus() }
+            autoHideStatus(after: 4)
             return
         }
-        let alert = NSAlert()
-        alert.messageText = L10n.tr(task == nil ? "tasks.new.title" : "tasks.new.editTitle")
-        alert.informativeText = L10n.tr("tasks.new.info")
-        alert.addButton(withTitle: L10n.tr(task == nil ? "tasks.new.create" : "tasks.new.save"))
-        alert.addButton(withTitle: L10n.tr("btn.cancel"))
-
-        let titleField = field(task?.title ?? "", L10n.tr("tasks.new.name"))
-        let bodyView = NSTextView(frame: NSRect(x: 0, y: 0, width: 380, height: 90))
-        bodyView.isEditable = true
-        bodyView.isRichText = false
-        bodyView.font = .systemFont(ofSize: 12)
-        bodyView.string = task?.body ?? ""
-        bodyView.autoresizingMask = [.width]
-        let bodyScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 380, height: 90))
-        bodyScroll.documentView = bodyView
-        bodyScroll.hasVerticalScroller = true
-        bodyScroll.autohidesScrollers = true
-        bodyScroll.borderType = .bezelBorder
-        bodyScroll.translatesAutoresizingMaskIntoConstraints = false
-        bodyScroll.heightAnchor.constraint(equalToConstant: 90).isActive = true
-        let accessory = formColumn([formRow(L10n.tr("tasks.new.name"), titleField),
-                                    formRow(L10n.tr("tasks.new.body"), bodyScroll)])
-        alert.accessoryView = accessory
-        alert.window.initialFirstResponder = titleField
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let draft = TaskDraft(title: titleField.stringValue, body: bodyView.string)
-        if let problem = draft.problem {
-            setStatus(L10n.tr(problem), spin: false)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.hideStatus() }
-            return
+        switch mode {
+        case .create(let taskID):
+            var model = taskID.map { QueueComposerModel.create(taskID: $0) } ?? QueueComposerModel.create()
+            model.prAvailable = repo != nil
+            // A default branch follows the queue name as it is typed, so the PR
+            // switch is only pre-armed where the repo can actually carry one.
+            model.autoPR = false
+            queueComposer = model
+        case .edit(let queueID):
+            guard let queue = runner.board.queue(queueID) else { return }
+            queueComposer = QueueComposerModel.edit(queue, prAvailable: repo != nil)
         }
-        if let task = task {
-            _ = runner.updateManualTask(task.id, title: draft.title, body: draft.body)
-            setStatus(L10n.tr("tasks.new.updated", draft.normalizedTitle), spin: false)
-        } else if let created = runner.createManualTask(draft) {
-            setStatus(L10n.tr("tasks.new.created", created.title), spin: false)
+        taskComposer = nil
+        pendingFormFocus = true
+        render()
+    }
+
+    private func closeQueueComposer() {
+        queueComposer = nil
+        render()
+    }
+
+    private func submitQueueComposer(_ composer: QueueComposerModel) {
+        guard let runner = runner else { return }
+        switch composer.mode {
+        case .create(let taskID):
+            let queue = runner.createQueue(name: composer.normalizedName,
+                                           branch: composer.branchValue,
+                                           baseBranch: composer.normalizedBaseBranch,
+                                           autoPR: composer.autoPR && repo != nil)
+            if let taskID = taskID { _ = runner.enqueue(taskID: taskID, into: queue.id) }
+            setStatus(L10n.tr("tasks.queue.created", queue.name), spin: false)
+            autoHideStatus(after: 4)
+            // Show the new queue open: its card list is what the user just built.
+            queueToggle[queue.id] = true
+            queueComposer = nil
+        case .edit(let queueID):
+            _ = runner.updateQueue(queueID,
+                                   name: composer.normalizedName,
+                                   branch: .some(composer.branchValue),
+                                   baseBranch: composer.normalizedBaseBranch,
+                                   autoPR: composer.autoPR && repo != nil)
+            setStatus(L10n.tr("tasks.queue.updated", composer.normalizedName), spin: false)
+            autoHideStatus(after: 4)
+            queueComposer = nil
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.hideStatus() }
         syncFromBoard()
-    }
-
-    /// 新建队列 — name, branch (default derived from the name), base branch and
-    /// the queue's PR switch.
-    private func presentQueueForm(forTask taskID: String) {
-        let alert = NSAlert()
-        alert.messageText = L10n.tr("tasks.queue.newTitle")
-        alert.informativeText = L10n.tr("tasks.queue.newInfo")
-        alert.addButton(withTitle: L10n.tr("tasks.queue.create"))
-        alert.addButton(withTitle: L10n.tr("btn.cancel"))
-
-        let nameField = field("", L10n.tr("tasks.queue.name"))
-        let branchField = field("", L10n.tr("tasks.queue.branchHint"))
-        let baseField = field("main", L10n.tr("tasks.queue.base"))
-        let prSwitch = NSButton(checkboxWithTitle: L10n.tr("tasks.queue.createPR"), target: nil, action: nil)
-        prSwitch.translatesAutoresizingMaskIntoConstraints = false
-        prSwitch.state = repo != nil ? .on : .off
-        prSwitch.isEnabled = repo != nil
-        let accessory = formColumn([formRow(L10n.tr("tasks.queue.name"), nameField),
-                                    formRow(L10n.tr("tasks.queue.branch"), branchField),
-                                    formRow(L10n.tr("tasks.queue.base"), baseField),
-                                    prSwitch])
-        alert.accessoryView = accessory
-        alert.window.initialFirstResponder = nameField
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else {
-            setStatus(L10n.tr("tasks.errQueueName"), spin: false)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.hideStatus() }
-            return
-        }
-        let base = baseField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let branchValue = branchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let queue = runner?.createQueue(name: name,
-                                              branch: branchValue.isEmpty ? nil : branchValue,
-                                              baseBranch: base.isEmpty ? "main" : base,
-                                              autoPR: prSwitch.state == .on) else { return }
-        _ = runner?.enqueue(taskID: taskID, into: queue.id)
-        syncFromBoard()
-    }
-
-    private func renameQueue(_ queue: TaskQueue) {
-        guard let name = promptSingleField(title: L10n.tr("tasks.queue.rename"),
-                                           info: L10n.tr("tasks.queue.renameInfo"),
-                                           value: queue.name) else { return }
-        _ = runner?.updateQueue(queue.id, name: name)
-        syncFromBoard()
-    }
-
-    private func changeQueueBranch(_ queue: TaskQueue) {
-        guard let branch = promptSingleField(title: L10n.tr("tasks.queue.changeBranch"),
-                                             info: L10n.tr("tasks.queue.branchInfo"),
-                                             value: queue.branch ?? "") else { return }
-        // An empty answer means "do not switch branches at all".
-        _ = runner?.updateQueue(queue.id, branch: .some(branch.isEmpty ? nil : branch))
-        syncFromBoard()
-    }
-
-    private func promptSingleField(title: String, info: String, value: String) -> String? {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = info
-        alert.addButton(withTitle: L10n.tr("btn.ok"))
-        alert.addButton(withTitle: L10n.tr("btn.cancel"))
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        field.stringValue = value
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func confirmDelete(_ task: TaskItem) {

@@ -1,8 +1,8 @@
 ---
 title: 模块：任务面板（Tasks / IssueRunner）
 tags: [module, tasks, github, issue, queue, index, manual-task]
-updated: 2026-09-24T09:55:46Z
-sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/DshWebRPC.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/issue-runner-design.md, docs/git-workflow.md, .dsh/skills/issue-resolve/SKILL.md]
+updated: 2026-09-25T00:00:00Z
+sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/issue-runner-design.md, docs/ui-color-scheme.md, docs/git-workflow.md, .dsh/skills/issue-resolve/SKILL.md]
 manual: false
 ---
 
@@ -10,18 +10,19 @@ manual: false
 
 ## 一句话
 
-任务台：**手动任务 + GitHub issue** 两种来源、**队列（泳道）** 严格串行执行，以**卡片列表**呈现。issue 任务点「处理」自动建一个**单任务队列**并跑完整闭环（切分支 → dsh 会话 → 提示词 → 推送 → 开 PR）；手动任务用「+」只填标题与描述，创建后落在**未入队**区，再从卡片上「加入队列 ▾」选已有队列或新建队列。
+任务台：**手动任务 + GitHub issue** 两种来源、**队列（泳道）** 严格串行执行，以**卡片列表**呈现。issue 任务点「处理」自动建一个**单任务队列**并跑完整闭环（切分支 → dsh 会话 → 提示词 → 推送 → 开 PR）；手动任务用「+」只填标题与描述（**面板内联表单，不弹对话框**），创建后落在**未入队**区，再从卡片上「加入队列 ▾」选已有队列或新建队列（同样是内联表单）。
 
 ## 文件与分层
 
 | 文件 | 职责 |
 |---|---|
-| `IssueRunnerPanel.swift` | 面板装配：卡片列表 / 队列头 / 表单 / 菜单 / 仓库识别 / issue 拉取 / GitHub REST / token |
+| `IssueRunnerPanel.swift` | 面板装配：卡片列表 / 队列头 / 内联表单接线 / 菜单 / 仓库识别 / issue 拉取 / GitHub REST / token |
 | `TasksCore.swift` | **纯模型**：`TaskItem` / `TaskQueue` / `TaskBoard` / `TaskDraft` / `QueueChoice` / 分支命名 / 状态机（无 I/O、无 AppKit） |
 | `TasksStore.swift` | `.dsh/tasks/` **四文件**读写（index / manual / queues / local），读侧容错、绝不删文件 |
 | `TasksRunner.swift` | **运行器**：git 三步进入分支、dsh 会话、提示词、推送校验、队列级 PR、取消 · 重试 · 跳过、重启恢复 |
-| `TasksUI.swift` | **视图模型**：`TaskCardModel` / `QueueHeaderModel` / `TasksSummaryModel`（纯 Foundation，可无头断言） |
-| `TaskCardView.swift` | 视图：卡片 / 队列头 / 徽标 / 分节标题（只渲染与转发点击） |
+| `TasksUI.swift` | **视图模型**：`TaskCardModel` / `QueueHeaderModel` / `TasksSummaryModel` / `TasksEmptyStateModel` / `TaskComposerModel` / `QueueComposerModel`（纯 Foundation，可无头断言） |
+| `TaskCardView.swift` | 视图：卡片 / 队列头 / 徽标 / 进度条 / 分节标题（只渲染与转发点击） |
+| `TaskInlineForms.swift` | 视图：两张**内联表单**（新建·编辑任务 / 新建·设置队列）——无模态，字段与按钮状态由视图模型决定 |
 
 分层意图：**规则在模型与视图模型里，视图只摆控件** —— 于是「徽标写什么、给哪个按钮、按钮是否可用」都能在没有窗口的环境里回归（tests/tasks-panel 第三段）。
 
@@ -61,9 +62,11 @@ manual: false
 ## UI（卡片列表）
 
 - 列表 = `NSScrollView + NSStackView`（项目面板体例），按**队列分区**：用户队列（队列头 + 队内卡片，默认展开）+ issue 任务的自动队列（默认折成**一行**，点开即展开）+ **未入队区**；
-- 工具栏第二行：仓库名 + 队列总览 `队列 N · 排队 N · 运行 N · 失败 N` + 来源筛选（全部 / Issue / 手动）；头部 `+` 新建任务 · `▶` 全部处理 · `⟳` 刷新 · `⚙` GitHub Token · `✕` 关闭；
-- 卡片：来源徽标（`Issue #12` / `手动`）+ 状态徽标（待处理 / 队列中 #n / 运行中 / 已完成 / 失败 / 已取消 / 已关闭）+ 标题 + 「标签 · 分支 · PR 短链」；**点卡片（非按钮处）展开 / 收起**详情（队列名 / 会话 / 错误 / 正文）与操作行；
-- 表单与菜单：新建 · 编辑任务（标题 + 描述，带字段标签）、新建队列（队列名 / 分支 / 基于分支 / 队列完成后自动开 PR）、「加入队列 ▾」菜单、队列头 `⋯` 菜单（重命名 / 改分支 / 完成后自动开 PR 开关 / 删除）；
+- 工具栏两行（2026-09-25 改版）：第一行 = 工作区名 + 四个**计数胶囊**（队列 / 排队 / 运行 / 失败，全 0 时整条不显示，失败 > 0 变红）；第二行 = 来源筛选**扁平页签**（全部 / Issue / 手动，复用技能面板的 `SkillTabStrip`）；头部 `+` 新建任务 · `▶` 全部处理 · `⟳` 刷新 · `⚙` GitHub Token · `✕` 关闭；
+- 卡片：来源徽标（`Issue #12` / `手动`）+ 状态徽标（待处理 / 队列中 #n / 运行中 / 已完成 / 失败 / 已取消 / 已关闭）+ 标题（13pt semibold）+ 「标签 · 分支 · PR 短链」；**点卡片（非按钮处）展开 / 收起**详情（队列名 / 会话 / 错误 / 正文）与操作行（主操作文字按钮 + 编辑/删除**图标按钮**）；圆角 8、hover 提亮、展开与运行各一档强调边框；
+- 队列头两行：名称 + 状态徽标 + **图标按钮**（开始 / 暂停 / 开 PR / `⋯`）／分支 `→` 基线 + **进度条** + `n/m` + 失败数；**不透明** highlighted 填充（`SessionTitleBar` 体例，不是半透明卡）；
+- **宽度纪律**：卡片与队列头一律 `widthAnchor == listStack.widthAnchor - 20`（撑满列表），内部控件不得反向撑宽（可截断），由 `tests/tasks-panel/form-tests.swift` 的无窗口布局断言钉住（320pt 宽 → 恰好 320pt）；
+- **表单全部内联（无 NSAlert，2026-09-25）**：新建任务 / 编辑任务、新建队列 / 队列设置都是列表里的**表单卡片**（`TaskInlineForms.swift` + `TasksUI.swift` 的 `TaskComposerModel` / `QueueComposerModel`），锚定在动作发生处（列表顶部 / 被编辑的卡片下方 / 队列头下方 / 队列分区头下方）；新建任务提交后保持打开并清空（连续录入，「完成」/ Esc 关闭），打开即滚动可见并获得焦点；问题提示只在按过提交后出现；**只剩破坏性确认框**（删除任务 / 删除队列 / 评论并关闭 issue）；菜单仍有「加入队列 ▾」与队列头 `⋯`（队列设置… / 完成后自动创建 PR / 删除队列…）；
 - 列表重建用**指纹比对**（任务状态 + PR + 队列状态），3 秒的步进定时器不会打断滚动或关掉已弹出的菜单；展开状态记在控制器（`expandedTaskID` / `queueToggle`），卡片每次重建都不丢。
 
 ## GitHub token（按仓库作用域，只走文件）

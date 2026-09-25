@@ -268,7 +268,7 @@ struct Queue {
 
 ### V2-7 手动创建任务
 
-**入口**：工具栏「+」→ 新建任务表单（NSAlert + accessoryView，体例与「配置 GitHub Token」一致）：
+**入口**：面板头「+」（或空态里的「新建任务」按钮）→ 列表顶部的**内联表单卡片**。
 
 1. **标题**（必填）：卡片主行、会话名；
 2. **描述 / 指令**（必填，多行 NSTextView）：发给代理的提示词正文。
@@ -277,7 +277,7 @@ struct Queue {
 
 > 逻辑已落地（第 4 步）：`TaskDraft` 校验两个字段都非空，空值返回 L10n 键 `tasks.errName` / `tasks.errBody`，`normalizedTitle/Body` 统一去首尾空白；运行器 `createManualTask` / `updateManualTask`（运行中的任务与 github 任务都拒绝编辑）/ `deleteManualTask`（运行中拒绝删除；删除即退出所有队列并清掉本机 session 记录）；「加入队列 ▾」的候选来自 `TaskBoard.queueChoices()`——**只列用户队列**，issue 任务的自动单任务队列不是目的地。UI 表单在第 6 步接。
 
-1. 点卡片 **「加入队列 ▾」** → 选**已有队列**，或**新建队列…**（弹队列表单：**队列名** / **分支**（默认见 §V2-6，可改、可留空）/ **基于分支**（默认 `main`）/ **完成后创建 PR**（开关，属于队列属性，队内任务共享；工作区不是 GitHub 仓库时置灰关））；
+1. 点卡片 **「加入队列 ▾」** → 选**已有队列**，或**新建队列…**（**内联表单**，就在该卡片下方：**队列名** / **分支**（默认见 §V2-6，可改、可留空；字段下方实时显示「将使用分支：feature/<slug>」，无 ASCII slug 的纯中文名回退通用文案）/ **基于分支**（默认 `main`）/ **完成后创建 PR**（开关，属于队列属性，队内任务共享；工作区不是 GitHub 仓库时置灰关））；队列也可**脱离任务单独创建**（队列分区头右侧的「新建队列」）；
 2. 入队后：全局空闲 → 立刻启动队首；否则排队（见 §V2-5）；
 3. 改主意：卡片「移出队列」→ 回到未入队区，或再点「加入队列 ▾」换到别的队列。
 
@@ -338,13 +338,19 @@ struct Queue {
 - 列表重建用**指纹比对**（任务状态 + PR + 队列状态），3 秒的步进定时器不会打断滚动或关掉已弹出的菜单；
 - 视图模型测试当场抓出两处真问题：`shortPR` 原先只认 REST 形式的 URL（web 形式 `github.com/o/r/pull/42` 会原样显示），以及队列**活跃时「开始」按钮仍置真**（视图靠 `canPause` 优先而侥幸掩盖）。
 
+**实现备注（2026-09-25：样式对齐 + 内联表单）**：
+
+- **创建/编辑一律内联**（决策 9）：表单是列表里的一张卡片（`TaskInlineForms.swift`），锚定在动作发生的位置 —— 新建任务在列表顶部第一条，编辑任务在被编辑的卡片下方，新建队列在触发它的卡片下方（无任务可入队时占队列分区首位），队列设置在该队列头下方。字段值、提示与可提交状态来自 `TaskComposerModel` / `QueueComposerModel`（`TasksUI.swift`，纯 Foundation）；视图只摆放控件、转发输入。新建任务**提交后表单保持打开并清空**（连续录入，「完成」/Esc 关闭），编辑保存后关闭；表单打开即滚入视野并取焦点；问题提示只在**按过提交**（按钮禁用时按 Enter）后出现，不边打字边报错。**只保留破坏性操作的确认框**（删除任务/队列、评论并关闭 issue）；
+- **列表宽度**：卡片/队列头此前**没有宽度约束**（垂直栈 leading 对齐 → 每个视图各自贴合自身固有宽度），`+` 之后才暴露；现在统一由 `addCard(_:)` 打上 `widthAnchor == listStack.widthAnchor - 20`（ProjectsPanel 体例），并保证**卡片内部不得反向撑宽列表**：动作行只在主操作上留文字按钮、编辑/删除改 22pt 图标按钮（`pencil` / `trash`），队列头的开始/暂停/开 PR/更多 同样改图标按钮，文本与徽标压缩阻力降档 —— 窄面板下截断而不是把列表撑宽（`tests/tasks-panel/form-tests.swift` 断言 320pt 宽下卡片与队列头都恰好等于该宽度）；
+- **样式**：卡片圆角 7→8、描边对齐 `SkillCardView`（深 0.38@0.7 / 浅 0.82）、展开态与运行态各一档强调边框、hover 提亮（tracking area）；标题 12→13 semibold、元信息 10→11；队列头改成 `SessionTitleBar` 体例（**不透明** highlighted 填充，去掉旧的「highlighted + alpha 0.55」半透明卡）、补 `viewDidChangeEffectiveAppearance`、两行结构（名称 + 状态徽标 + 图标按钮 / 分支 → 基线 + 进度条 + `n/m` + 失败数）；分区头 12pt bold + 右侧发丝线（队列分区头右侧带「新建队列」）；工具栏拆两行（28pt 工作区 + 计数胶囊 / 30pt 扁平页签筛选，复用技能面板的 `SkillTabStrip`）；空态改成图标 + 文案 + **「新建任务」按钮**（三态：无任务 / 筛选为空 / 非 GitHub 工作区）；`listDocument` 补齐 leading/top 钉接（此前只钉了宽度）。
+
 ### V2-8a 队列总览与计数
 
 「有几个队列、每个队列什么状态、队列下哪些任务什么状态」由三层一起回答：
 
 | 层 | 内容 |
 |---|---|
-| **摘要条**（工具栏第二行） | `honghe/order-service · 队列 12 · 排队 5 · 运行 1 · 失败 1` + 来源筛选段控件（全部 / Issue / 手动） |
+| **摘要条**（工具栏第一行） | `honghe/order-service` + 四个计数胶囊（队列 12 / 排队 5 / 运行 1 / 失败 1；全为 0 时整条不显示，失败 > 0 才变红）；第二行是来源筛选**扁平页签**（全部 / Issue / 手动） |
 | **队列区块**（每个队列一块） | **队列头**：名称 + 分支（`feature/dark-mode → main`）+ 进度 `1/3` + 状态（活跃 / 暂停 / 已完成）+ 操作（开始 / 暂停 / 开 PR / ⋯ 改名·改分支·归档·删除）；**队内任务卡片**按 FIFO 排列，带队内序号 `#2` 与状态徽标 |
 | **未入队区** | 列表末尾，标题带计数 `未入队 (7)` |
 
@@ -380,12 +386,12 @@ struct Queue {
 - 队列：`tasks.queue.add`、`tasks.queue.addPick`、`tasks.queue.remove`、`tasks.queue.new`、`tasks.queue.name`、`tasks.queue.branch`、`tasks.queue.base`、`tasks.queue.start`、`tasks.queue.pause`、`tasks.queue.openPR`、`tasks.queue.progress`、`tasks.queue.idle`、`tasks.queue.pendingCount`、`tasks.queue.unnamed`；
 - 队列总览：`tasks.summary`（队列 %d · 排队 %d · 运行 %d · 失败 %d）、`tasks.queue.compact`、`tasks.queue.expand`、`tasks.queue.hideDone`、`tasks.queue.failedCount`、`tasks.queue.empty`、`tasks.queue.state.active` / `.paused` / `.finished`、`tasks.section.unqueued`（未入队 (%d)）；
 - 状态：`tasks.state.queued`、`tasks.state.interrupted`、`tasks.sec.dirtyTree`（工作区有未提交改动）、`tasks.sec.noRemote`、`tasks.sec.prUnavailable`、`tasks.sec.branchPushedNoPR`；
-- 手动任务：`tasks.new.title`、`tasks.new.name`、`tasks.new.body`、`tasks.new.create`、`tasks.errName`、`tasks.errBody`、`tasks.prompt.*`（通用提示词模板）；
+- 手动任务：`tasks.new.title`、`tasks.new.name`、`tasks.new.nameHint`、`tasks.new.body`、`tasks.new.create`、`tasks.new.save`、`tasks.new.done`、`tasks.new.editTitle`、`tasks.new.editInfo`、`tasks.errName`、`tasks.errBody`、`tasks.prompt.*`（通用提示词模板）；队列内联表单：`tasks.queue.settings`、`tasks.queue.editTitle`、`tasks.queue.editInfo`、`tasks.queue.nameHint`、`tasks.queue.baseHint`、`tasks.queue.branchWillUse`、`tasks.queue.prUnavailable`、`tasks.queue.createOnly`、`tasks.queue.created`、`tasks.queue.updated`；计数胶囊：`tasks.stat.queues` / `.queued` / `.running` / `.failed`。v1 遗留的 `tasks.queue.rename` / `.renameInfo` / `.changeBranch` / `.branchInfo` 被「队列设置」内联表单取代，已删除；
 - 详情与错误：`tasks.detailSession`、`tasks.detailSource`、`tasks.detailQueue`、`tasks.errInterrupted`、`tasks.errNotGit`、`tasks.errCheckout`。
 
 ### V2-10 测试与 CI
 
-新增 `tests/tasks-panel/`（无头，体例照 `tests/projects-panel/`：`stubs.swift` + `run.sh` + 若干 `*-tests.swift`）。**第 2、3 步已落地**（`tests/tasks-panel/model-tests.swift` 126 项 + `runner-tests.swift` 108 项 = **234 项断言全绿**，2026-09-24；已登记进 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`），其余随对应步骤补：
+新增 `tests/tasks-panel/`（无头，体例照 `tests/projects-panel/`：`stubs.swift` + `stubs-ui.swift` + `run.sh` + 若干 `*-tests.swift`）。**四个阶段全绿（2026-09-25：模型 126 + 运行器 154 + 视图模型 128 + 视图 53 = 461 项）**，已登记进 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`：
 
 1. **队列模型（本次重点，模型先行）**：入队顺序与 `order` 编号、重复入队幂等、移出后回 `pending`、队首推进、队列内失败 → 队列暂停（后续任务仍 queued）、跳过并继续、切队列的干净检查（脏工作区拒绝启动）、队列完成态与 `autoPR` 能力降级、自动单任务队列的创建与重试复用；
 2. **模型与持久化**：TaskItem / Queue 编解码往返；`index.json` 旧格式兼容（无 `source` 视为 github、无 id 用 `issue-N`）；`manual.json` 增删改查；`queues.json` 读写；**`local.json` sessions 换键兼容**（数字键 ↔ `issue-N`）；坏文件不崩溃且不删除；
@@ -438,6 +444,11 @@ QA 钩子：`DSH_TASKS_TEST=1` 启动即开面板；`DSH_PANEL_TEST=` 全量核�
 6. **创建表单不带队列字段** —— 新建任务只有标题 + 描述，创建后一律进入「未入队」区；队列归属只由卡片上的「加入队列 ▾」决定（选已有队列 / 新建队列…）。队列表单才含 队列名 / 分支 / 基于分支 / 完成后创建 PR；
 7. **队列分支默认值** —— `feature/` + 队列名 slug；slug 为空（纯中文 / emoji 名）时回退 `feature/queue-<id 前 4 位>`；
 8. **队列计数包含自动队列** —— 摘要条与列表按同一口径统计所有队列（含 issue 任务的自动单任务队列）；自动队列默认以紧凑形态（队列头与卡片合一的一行）渲染，可展开。
+
+**本次已定（2026-09-25）**：
+
+9. **创建/编辑不走对话框** —— 新建任务、编辑任务、新建队列、队列设置全部是**面板内的表单卡片**（无 NSAlert）：覆盖列表、无法移动、关闭即丢值；且内联表单能和它作用的对象对齐（任务卡片下方 / 队列头下方）。**只保留破坏性确认框**（删除任务 / 删除队列 / 评论并关闭 issue，都会改本机记录或 GitHub 远端状态）；
+10. **卡片宽度由列决定，内部内容让位** —— 卡片/队列头一律撑满列表宽度；内部不许出现"至少要这么宽"的控件（多文字按钮 → 主操作文本 + 其余图标按钮，文本/徽标可截断）。这条是加 `+` 按钮后暴露的真实缺陷（卡片比列表宽），用无窗口布局断言钉住（320pt 宽下必须恰好 320pt）。
 
 **阶段 2 迭代预留**：
 

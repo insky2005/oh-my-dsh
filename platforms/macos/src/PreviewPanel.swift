@@ -190,7 +190,7 @@ final class ActivityBarButton: HoverButton {
 /// appearance change — no contentTintColor dependency, so it stays visible in
 /// both light and dark mode and follows runtime appearance switches.
 final class BakedIconView: NSImageView {
-    private let symbolName: String
+    private var symbolName: String
 
     init(symbol: String) {
         self.symbolName = symbol
@@ -205,6 +205,14 @@ final class BakedIconView: NSImageView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        refresh()
+    }
+
+    /// Swap the drawn symbol (the tasks panel's empty state follows the reason
+    /// the list is empty).
+    func setSymbol(_ name: String) {
+        guard name != symbolName else { return }
+        symbolName = name
         refresh()
     }
 

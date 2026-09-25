@@ -169,16 +169,20 @@ struct QueueHeaderModel: Equatable {
     var isCollapsed: Bool
     var branchText: String
     var progress: String
+    /// 0…1 for the progress bar (a queue with no tasks reads 0).
+    var progressFraction: Double
     var stateKey: String
     var tone: TaskTone
     var failedCount: Int
     var queuedCount: Int
+    var runningCount: Int
     var doneCount: Int
     var totalCount: Int
     var canStart: Bool
     var canPause: Bool
     var canOpenPR: Bool
     var autoPR: Bool
+    var isAutoCreated: Bool
     var prUrl: String?
 
     static func build(_ queue: TaskQueue, board: TaskBoard, collapsed: Bool) -> QueueHeaderModel {
@@ -186,8 +190,10 @@ struct QueueHeaderModel: Equatable {
         let doneCount = tasks.filter { $0.state == .done }.count
         let failedCount = tasks.filter { $0.state == .failed }.count
         let queuedCount = tasks.filter { $0.state == .queued }.count
+        let runningCount = tasks.filter { $0.state == .running }.count
 
-        let branchText = queue.branch.map { $0 + " → " + queue.baseBranch } ?? L10n.tr("tasks.queue.noBranch")
+        let branchText = queue.branch.map { $0 + " → " + queue.baseBranch }
+            ?? L10n.tr("tasks.queue.noBranch")
 
         let stateKey: String
         let tone: TaskTone
@@ -202,10 +208,13 @@ struct QueueHeaderModel: Equatable {
                                 isCollapsed: collapsed,
                                 branchText: branchText,
                                 progress: "\(doneCount)/\(tasks.count)",
+                                progressFraction: tasks.isEmpty
+                                    ? 0 : Double(doneCount) / Double(tasks.count),
                                 stateKey: stateKey,
                                 tone: tone,
                                 failedCount: failedCount,
                                 queuedCount: queuedCount,
+                                runningCount: runningCount,
                                 doneCount: doneCount,
                                 totalCount: tasks.count,
                                 canStart: queuedCount > 0 && queue.state != .active,
@@ -213,7 +222,20 @@ struct QueueHeaderModel: Equatable {
                                 canOpenPR: queue.autoPR && queue.prUrl == nil
                                     && queue.state == .done && queue.branch != nil,
                                 autoPR: queue.autoPR,
+                                isAutoCreated: queue.autoCreated,
                                 prUrl: queue.prUrl)
+    }
+}
+
+/// One counter of the summary strip (队列 / 排队 / 运行 / 失败).
+struct TaskStatChip: Equatable {
+    var key: String
+    var count: Int
+    var tone: TaskTone
+
+    /// A zero counter stays quiet; only 失败 lights up once it is not zero.
+    static func tone(forCount count: Int, negativeWhenPositive: Bool) -> TaskTone {
+        (negativeWhenPositive && count > 0) ? .negative : .neutral
     }
 }
 
@@ -224,14 +246,239 @@ struct TasksSummaryModel: Equatable {
     var running: Int
     var failed: Int
     var text: String
+    /// The same counts as one-chip-per-number, in reading order.
+    var chips: [TaskStatChip]
 
     static func build(_ board: TaskBoard) -> TasksSummaryModel {
         let counts = board.summary()
-        return TasksSummaryModel(queues: counts.queues,
-                                 queued: counts.queued,
-                                 running: counts.running,
-                                 failed: counts.failed,
-                                 text: L10n.tr("tasks.summary", counts.queues, counts.queued,
-                                               counts.running, counts.failed))
+        return TasksSummaryModel(
+            queues: counts.queues,
+            queued: counts.queued,
+            running: counts.running,
+            failed: counts.failed,
+            text: L10n.tr("tasks.summary", counts.queues, counts.queued,
+                          counts.running, counts.failed),
+            chips: [
+                TaskStatChip(key: "tasks.stat.queues", count: counts.queues, tone: .neutral),
+                TaskStatChip(key: "tasks.stat.queued", count: counts.queued, tone: .neutral),
+                TaskStatChip(key: "tasks.stat.running", count: counts.running,
+                             tone: TaskStatChip.tone(forCount: counts.running,
+                                                     negativeWhenPositive: false)),
+                TaskStatChip(key: "tasks.stat.failed", count: counts.failed,
+                             tone: TaskStatChip.tone(forCount: counts.failed,
+                                                     negativeWhenPositive: true)),
+            ])
+    }
+}
+
+/// The centred empty state: what it says, which symbol it shows, and whether it
+/// offers the inline 新建任务 button. A filter that matches nothing offers
+/// nothing — the way out there is to switch the filter back.
+struct TasksEmptyStateModel: Equatable {
+    var messageKey: String
+    var symbol: String
+    var showsNewTask: Bool
+
+    static func build(filtered: Bool, githubRepo: Bool) -> TasksEmptyStateModel {
+        if filtered {
+            return TasksEmptyStateModel(messageKey: "tasks.emptyFiltered",
+                                        symbol: "line.3.horizontal.decrease.circle",
+                                        showsNewTask: false)
+        }
+        return TasksEmptyStateModel(messageKey: githubRepo ? "tasks.empty" : "tasks.emptyManualOnly",
+                                    symbol: "checklist",
+                                    showsNewTask: true)
+    }
+}
+
+// MARK: - Inline forms (created in the panel, never in a dialog)
+//
+// 新建任务 / 新建队列 used to raise an NSAlert: it covered the list, it could
+// not be moved, and it forgot everything the moment it closed. Both are now
+// ordinary cards inside the panel — same widgets, same colors, same list — and
+// the two models below decide what a form shows and when it may be submitted.
+// The views own the text fields and forward typing; nothing else lives there.
+
+/// 新建任务 / 编辑任务 — the inline composer. Two fields, nothing else
+/// (决策 6); the queue is chosen later, from the card.
+struct TaskComposerModel: Equatable {
+
+    enum Mode: Equatable {
+        case create
+        case edit(taskID: String)
+
+        var isCreate: Bool { self == .create }
+
+        var taskID: String? {
+            if case .edit(let id) = self { return id }
+            return nil
+        }
+    }
+
+    var mode: Mode
+    var title: String
+    var body: String
+    /// Set once the submit button was pressed on an incomplete draft, so the
+    /// hint shows up when it is actually needed rather than while typing.
+    var attempted: Bool
+
+    var headingKey: String { mode.isCreate ? "tasks.new.title" : "tasks.new.editTitle" }
+    var submitKey: String { mode.isCreate ? "tasks.new.create" : "tasks.new.save" }
+    var infoKey: String { mode.isCreate ? "tasks.new.info" : "tasks.new.editInfo" }
+
+    /// What would be created / saved right now.
+    var draft: TaskDraft { TaskDraft(title: title, body: body) }
+    var canSubmit: Bool { draft.isValid }
+
+    /// The first problem as an L10n key — shown only after a submit attempt
+    /// (the button stays disabled until the draft is complete, so the form never
+    /// nags while it is being typed into).
+    var problemKey: String? {
+        attempted ? draft.problem : nil
+    }
+
+    var isPristine: Bool {
+        draft.normalizedTitle.isEmpty && draft.normalizedBody.isEmpty
+    }
+
+    /// The form as it is while the user types (live, so the submit button
+    /// follows what is actually in the two fields).
+    func typed(title: String, body: String) -> TaskComposerModel {
+        var copy = self
+        copy.title = title
+        copy.body = body
+        return copy
+    }
+
+    /// The form after a submit attempt (turns on the problem hint).
+    func attemptedSubmit() -> TaskComposerModel {
+        var copy = self
+        copy.attempted = true
+        return copy
+    }
+
+    static func build(mode: Mode, title: String = "", body: String = "") -> TaskComposerModel {
+        TaskComposerModel(mode: mode, title: title, body: body, attempted: false)
+    }
+
+    /// The composer for editing an existing task, prefilled from the board.
+    static func edit(_ task: TaskItem) -> TaskComposerModel {
+        build(mode: .edit(taskID: task.id), title: task.title, body: task.body ?? "")
+    }
+}
+
+/// 新建队列 / 队列设置 — the inline queue form. Its fields are the queue's own
+/// properties (决策 6): 队列名 / 分支 / 基于分支 / 完成后创建 PR.
+struct QueueComposerModel: Equatable {
+
+    enum Mode: Equatable {
+        /// A brand-new queue. A taskID (when present) joins it right after
+        /// creation — that is the 加入队列 ▾ → 新建队列 path.
+        case create(taskID: String?)
+        /// The queue's own settings, edited in place under its header.
+        case edit(queueID: String)
+
+        var isCreate: Bool {
+            if case .create = self { return true }
+            return false
+        }
+
+        var taskID: String? {
+            if case .create(let id) = self { return id }
+            return nil
+        }
+
+        var queueID: String? {
+            if case .edit(let id) = self { return id }
+            return nil
+        }
+    }
+
+    var mode: Mode
+    var name: String
+    /// What the user typed. Empty means 自动生成 while creating, and 不切分支
+    /// while editing — the two hints differ, see effectiveBranchHint.
+    var branch: String
+    var baseBranch: String
+    var autoPR: Bool
+    /// Whether GitHub is available in this workspace (the PR switch greys out
+    /// where there is no PR to open).
+    var prAvailable: Bool
+    var attempted: Bool
+
+    var headingKey: String { mode.isCreate ? "tasks.queue.newTitle" : "tasks.queue.editTitle" }
+    var infoKey: String { mode.isCreate ? "tasks.queue.newInfo" : "tasks.queue.editInfo" }
+
+    /// 创建并入队 (from a task) / 创建 (standalone) / 保存 (editing).
+    var submitKey: String {
+        guard mode.isCreate else { return "tasks.new.save" }
+        return mode.taskID == nil ? "tasks.queue.createOnly" : "tasks.queue.create"
+    }
+
+    var normalizedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// The branch the queue will really use, as the hint under the field: the
+    /// typed one, else the derived default, else 不切分支.
+    var effectiveBranchHint: String {
+        let typed = branch.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.isEmpty { return typed }
+        guard mode.isCreate else { return L10n.tr("tasks.queue.noBranch") }
+        let slug = TaskBranch.slug(normalizedName)
+        return slug.isEmpty ? L10n.tr("tasks.queue.branchHint") : "feature/" + slug
+    }
+
+    /// Strictly about validity — an untouched, empty form is still not
+    /// submittable (the hint only appears once the user tried, see problemKey).
+    var canSubmit: Bool { !normalizedName.isEmpty }
+
+    var problemKey: String? {
+        guard attempted, normalizedName.isEmpty else { return nil }
+        return "tasks.errQueueName"
+    }
+
+    /// nil = derive the default from the name; "" = do not switch branches.
+    var branchValue: String? {
+        let value = branch.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    var normalizedBaseBranch: String {
+        let value = baseBranch.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? "main" : value
+    }
+
+    func typed(name: String, branch: String, baseBranch: String, autoPR: Bool) -> QueueComposerModel {
+        var copy = self
+        copy.name = name
+        copy.branch = branch
+        copy.baseBranch = baseBranch
+        copy.autoPR = autoPR
+        return copy
+    }
+
+    func attemptedSubmit() -> QueueComposerModel {
+        var copy = self
+        copy.attempted = true
+        return copy
+    }
+
+    /// 新建队列 (standalone, no task to join).
+    static func create() -> QueueComposerModel {
+        QueueComposerModel(mode: .create(taskID: nil), name: "", branch: "", baseBranch: "main",
+                           autoPR: false, prAvailable: false, attempted: false)
+    }
+
+    /// 新建队列 from a task's 加入队列 ▾ menu: the new queue takes the task.
+    static func create(taskID: String) -> QueueComposerModel {
+        var model = create()
+        model.mode = .create(taskID: taskID)
+        return model
+    }
+
+    /// The queue's settings, prefilled.
+    static func edit(_ queue: TaskQueue, prAvailable: Bool) -> QueueComposerModel {
+        QueueComposerModel(mode: .edit(queueID: queue.id), name: queue.name,
+                           branch: queue.branch ?? "", baseBranch: queue.baseBranch,
+                           autoPR: queue.autoPR, prAvailable: prAvailable, attempted: false)
     }
 }
