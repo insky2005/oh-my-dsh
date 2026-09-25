@@ -339,6 +339,13 @@ do {
     check(abs(collapsed - form.frame.height) < 1, "the drawer matches the collapsed form")
 
     form.advancedButton.performClick(nil)
+    // The panel measures INSIDE the click handler, before any layout pass: reading
+    // the view's frame there returned the previous height, which made the drawer lag
+    // one toggle behind (展开时不动、收起时才长高).
+    check(abs(form.preferredHeight() - sheet.idealHeight()) < 1,
+          "the form reports its new height at once, without a layout pass")
+    check(form.preferredHeight() > collapsed + 50,
+          "and that height is the expanded one (\(form.preferredHeight())pt)")
     host.layoutSubtreeIfNeeded()
     check(!form.advancedStack.isHidden, "clicking it opens the section")
     check(sheet.frame.height > collapsed + 50,

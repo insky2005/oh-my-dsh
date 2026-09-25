@@ -27,10 +27,29 @@ class TaskFormCardView: NSView {
     /// pass of the PANEL does not happen for a change inside the form.
     var onHeightChanged: (() -> Void)?
 
+    /// The column every form lays its rows out in (set by the composer's build()).
+    weak var formColumn: NSStackView?
+    /// The column's top / bottom inset inside the form (the composers pin the
+    /// column that way). Both halves count: missing one makes the sheet a few
+    /// points shorter than its form, which is a scrollbar for nothing.
+    var formPadding = (top: CGFloat(14), bottom: CGFloat(16))
+
     override var isOpaque: Bool { false }
 
     /// Tell the sheet to re-measure (coalesced: the runloop decides when).
     func heightChanged() { onHeightChanged?() }
+
+    /// The height this form WANTS, measured from its own contents.
+    ///
+    /// Deliberately not the view's frame: a frame is only as fresh as the last
+    /// layout pass, and this is asked immediately after a click changes the form —
+    /// before that pass. Measuring the frame there returned the PREVIOUS height, so
+    /// the sheet lagged one toggle behind (展开时抽屉不动，收起时才长高).
+    func preferredHeight() -> CGFloat {
+        guard let column = formColumn else { return fittingSize.height }
+        column.layoutSubtreeIfNeeded()
+        return column.fittingSize.height + formPadding.top + formPadding.bottom
+    }
 }
 
 /// The input chrome shared by every field of a form: a rounded, recessed box.
@@ -409,6 +428,7 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
         column.alignment = .leading
         column.spacing = 8
         column.translatesAutoresizingMaskIntoConstraints = false
+        formColumn = column
         addSubview(column)
         // Everything but the button row spans the form: the fields are as wide as
         // the sheet, not as wide as their caption.
@@ -643,6 +663,7 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         column.alignment = .leading
         column.spacing = 8
         column.translatesAutoresizingMaskIntoConstraints = false
+        formColumn = column
         addSubview(column)
         TaskFormKit.stretch([headingRow, info, nameRow, hintRow, advancedStack], to: column)
         NSLayoutConstraint.activate([
@@ -758,6 +779,7 @@ final class TaskFormSheetView: NSView {
     /// while the sheet around it gets capped — and then it scrolls.
     func idealHeight() -> CGFloat {
         guard let content = content else { return 0 }
+        if let form = content as? TaskFormCardView { return form.preferredHeight() }
         content.layoutSubtreeIfNeeded()
         return content.frame.height
     }
