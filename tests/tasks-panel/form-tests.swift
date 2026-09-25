@@ -74,8 +74,8 @@ do {
     check(!form.submitButton.isEnabled, "a title without a description is not submittable")
     check(form.hint.isHidden, "and the form does not nag while it is being typed into")
 
-    form.bodyView.string = "tidy it up"
-    form.textDidChange(Notification(name: NSText.didChangeNotification, object: form.bodyView))
+    form.bodyField.stringValue = "tidy it up"
+    form.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: form.bodyField))
     check(form.submitButton.isEnabled, "both fields filled enables 创建")
 
     form.submitTapped()
@@ -100,7 +100,7 @@ do {
     _ = layout(form, width: 320)
 
     eq(form.titleField.stringValue, "Old title", "the title is prefilled")
-    eq(form.bodyView.string, "old body", "the description is prefilled")
+    eq(form.bodyField.stringValue, "old body", "the description is prefilled")
     eq(form.submitButton.title, "save", "编辑 saves")
     eq(form.closeActionButton.title, "cancel", "编辑 can be cancelled")
     check(form.submitButton.isEnabled, "a prefilled form can be saved")
@@ -122,12 +122,19 @@ do {
 
     let size = layout(form, width: 320)
     eq(size.width, 320, "the form fills the list width")
-    check(size.height > 180, "three labelled fields, the branch hint and the button row")
+    // Creating a queue asks for a NAME: 分支 / 基于分支 / PR live behind 高级设置,
+    // so the collapsed form is deliberately short.
+    check(size.height < 240, "a new queue's form asks for a name and little else")
     eq(form.submitButton.title, "create", "creating from a card joins that task")
     check(!form.submitButton.isEnabled, "a nameless queue cannot be created")
-    check(!form.prSwitch.isEnabled, "the PR switch is dead without a GitHub repo")
+    check(form.prSwitch.isHidden,
+          "no dead PR switch without a GitHub repo (the reason is a sentence instead)")
+    check(!form.prNote.isHidden, "and that sentence is on screen")
     eq(form.branchHint.stringValue, "branchWillUse(branchHint)",
        "with no name there is no derived branch to promise")
+    check(form.advancedStack.isHidden, "creating a queue only asks for a name: 高级设置 is collapsed")
+    eq(form.branchField.placeholderString, "branchHint",
+       "the branch field's placeholder is the branch that will be used")
 
     form.nameField.stringValue = "Dark Mode"
     form.controlTextDidChange(typed(form.nameField))
@@ -158,6 +165,7 @@ do {
     eq(form.baseField.stringValue, "main", "the base branch is prefilled")
     eq(form.prSwitch.state, .on, "the PR switch reflects the queue")
     check(form.prSwitch.isEnabled, "and stays live in a GitHub workspace")
+    check(!form.advancedStack.isHidden, "editing a queue opens 高级设置 (that is what the user came for)")
 
     // Clearing the branch means "run on whatever is checked out".
     form.branchField.stringValue = ""
@@ -215,7 +223,7 @@ do {
     // The editor is the form's other input surface, and it must WRAP at the same
     // width: an autoresizing document view used to keep a width 318pt wider than
     // the clip view, so long lines were clipped instead of wrapped.
-    let bodyWidth = taskForm.bodyView.frame.width
+    let bodyWidth = taskForm.bodyField.frame.width
     check(bodyWidth > 280, "the description editor spans the form (got \(bodyWidth)pt)")
     check(abs(bodyWidth - titleWidth) < 12,
           "the editor wraps at the fields' width (editor \(bodyWidth), field \(titleWidth))")
@@ -231,6 +239,29 @@ do {
     let wide = TaskComposerView(model: TaskComposerModel.build(mode: .create))
     _ = layout(wide, width: 520)
     check(wide.titleField.frame.width > titleWidth, "a wider panel gives wider fields")
+}
+
+section("the description editor is a real editor")
+do {
+    // It is a wrapping multi-line field, so the whole area is clickable and
+    // wrapped text stays visible — an NSTextView document view sized itself to one
+    // line (only the first line was clickable) and its bezel did not match.
+    let form = TaskComposerView(model: TaskComposerModel.build(mode: .create))
+    _ = layout(form, width: 430)
+    let field = form.bodyField
+    check(field.frame.height >= 100,
+          "the empty editor is a usable area, not one line (got \(field.frame.height)pt)")
+    check(!field.usesSingleLineMode, "and it is a multi-line field")
+    eq(field.bezelStyle, form.titleField.bezelStyle, "styled like the single-line fields")
+    eq(field.controlSize, form.titleField.controlSize, "with the same control size")
+    eq(field.font?.pointSize, form.titleField.font?.pointSize, "and the same font size")
+
+    let emptyHeight = field.frame.height
+    field.stringValue = String(repeating: "一行比较长的描述文本，用来看编辑器会不会长高。", count: 8)
+    form.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
+    _ = layout(form, width: 430)
+    check(field.frame.height > emptyHeight,
+          "the editor grows with its text (\(emptyHeight) → \(field.frame.height)pt)")
 }
 
 section("a form fits a short panel")

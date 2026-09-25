@@ -69,51 +69,53 @@ enum TaskFormKit {
         return field
     }
 
-    /// The multi-line description editor: an NSTextView in a scroll view — the
-    /// same shape the old modal used, sized by the caller.
-    static func textView(_ value: String, height: CGFloat) -> (scroll: NSScrollView, text: NSTextView,
-                                                              height: NSLayoutConstraint) {
-        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: height))
-        text.isEditable = true
-        text.isRichText = false
-        text.font = fieldFont
-        text.string = value
-        text.drawsBackground = false
-        text.backgroundColor = PanelSurface.dynamic
-        text.textContainerInset = NSSize(width: 6, height: 8)
-        text.isVerticallyResizable = true
-        text.isHorizontallyResizable = false
-        text.autoresizingMask = [.width]
-        text.minSize = NSSize(width: 0, height: 0)
-        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
-                              height: CGFloat.greatestFiniteMagnitude)
-        text.textContainer?.widthTracksTextView = true
-        let scroll = NSScrollView()
-        scroll.documentView = text
-        // Wrap at the VISIBLE width: an autoresizing document view keeps whatever
-        // width it was born with (measured: 318pt wider than the clip view, so
-        // long lines were clipped instead of wrapped).
-        text.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            text.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            text.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-            text.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-        ])
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.borderType = .bezelBorder
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        // The editor is the only flexible piece of a form: on a short panel the
-        // sheet's height cap wins and the editor shrinks (and scrolls) instead of
-        // pushing the buttons out of sight.
-        let heightConstraint = scroll.heightAnchor.constraint(equalToConstant: height)
-        heightConstraint.priority = .defaultHigh
-        heightConstraint.isActive = true
-        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: editorMinHeight).isActive = true
-        return (scroll, text, heightConstraint)
+    /// The description editor: a MULTI-LINE NSTextField, deliberately the SAME
+    /// control as the single-line fields (same bezel, size and font, so a form
+    /// looks like one form).
+    ///
+    /// It replaced an NSTextView in a scroll view, which had two problems: its
+    /// bezel did not match the other fields, and its document view sized itself —
+    /// an EMPTY text view shrinks to a single line, so only the first line was
+    /// clickable and wrapped text was invisible (measured on the panel).
+    ///
+    /// The height is driven by the caller (`TaskFormKit.textHeight`) so the field
+    /// grows with its text and shrinks on a short panel.
+    static func textArea(_ value: String) -> (field: NSTextField, height: NSLayoutConstraint) {
+        let field = NSTextField(string: value)
+        field.font = fieldFont
+        field.controlSize = .large
+        field.bezelStyle = .roundedBezel
+        field.isEditable = true
+        field.isSelectable = true
+        field.usesSingleLineMode = false
+        field.maximumNumberOfLines = 0
+        field.lineBreakMode = .byWordWrapping
+        field.cell?.wraps = true
+        field.cell?.isScrollable = false
+        field.translatesAutoresizingMaskIntoConstraints = false
+        let height = field.heightAnchor.constraint(equalToConstant: editorHeight)
+        // Nearly required — a stack view adds its own fitting-height constraints at
+        // .defaultHigh, and at equal priority the engine would keep the SMALLER
+        // height, which pinned the editor to one line. Only the sheet's own height
+        // cap (required) may shrink it on a short panel.
+        height.priority = NSLayoutConstraint.Priority(999)
+        height.isActive = true
+        field.heightAnchor.constraint(greaterThanOrEqualToConstant: editorMinHeight).isActive = true
+        return (field, height)
     }
 
+    /// How tall the text needs to be at this width, so the editor can grow with
+    /// what is typed into it (an editable wrapping field reports only one line of
+    /// intrinsic height, so the height is computed from the text itself).
+    static func textHeight(_ text: String, width: CGFloat) -> CGFloat {
+        let usable = max(40, width - 16)   // the bezel's own padding
+        guard !text.isEmpty else { return editorMinHeight }
+        let rect = (text as NSString).boundingRect(
+            with: NSSize(width: usable, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: fieldFont])
+        return ceil(rect.height) + 14
+    }
     /// The footer's buttons: the primary action first, then the way out. The
     /// primary carries the accent bezel so an open form has one obvious target.
     /// Target/action are wired by the form after construction.
@@ -124,6 +126,20 @@ enum TaskFormKit {
         button.font = .systemFont(ofSize: 12)
         button.translatesAutoresizingMaskIntoConstraints = false
         if primary { button.bezelColor = .controlAccentColor }
+        return button
+    }
+
+    /// A small flat button (the 高级设置 toggle): no bezel, accent ink.
+    /// Target/action are wired by the form after construction.
+    static func linkButton(_ title: String) -> NSButton {
+        let button = NSButton(title: title, target: nil, action: nil)
+        button.isBordered = false
+        button.controlSize = .small
+        button.font = .systemFont(ofSize: 11, weight: .medium)
+        button.contentTintColor = .controlAccentColor
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
         return button
     }
 
@@ -189,7 +205,7 @@ enum TaskFormKit {
 // MARK: - 新建任务 / 编辑任务
 
 /// The inline task composer: title, description, 创建 / 完成 (or 保存 / 取消).
-final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewDelegate {
+final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate {
 
     private(set) var model: TaskComposerModel
 
@@ -207,8 +223,10 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
     // and read the button/hint state the user sees — the same convention the
     // project cards use for their workspace.
     let titleField: NSTextField
-    private let bodyScroll: NSScrollView
-    let bodyView: NSTextView
+    /// The description editor (a wrapping multi-line field, styled like the
+    /// single-line ones).
+    let bodyField: NSTextField
+    private var bodyHeight: NSLayoutConstraint!
     let hint: NSTextField
     let submitButton: NSButton
     let closeActionButton: NSButton
@@ -216,16 +234,16 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
     init(model: TaskComposerModel) {
         self.model = model
         titleField = TaskFormKit.textField(model.title, placeholder: "")
-        let body = TaskFormKit.textView(model.body, height: TaskFormKit.editorHeight)
-        bodyScroll = body.scroll
-        bodyView = body.text
+        let body = TaskFormKit.textArea(model.body)
+        bodyField = body.field
+        bodyHeight = body.height
         hint = TaskFormKit.hintLabel()
         submitButton = TaskFormKit.button("", primary: true)
         closeActionButton = TaskFormKit.button("", primary: false)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         titleField.delegate = self
-        bodyView.delegate = self
+        bodyField.delegate = self
         build()
         apply(model)
     }
@@ -246,6 +264,7 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
         titleCaption.stringValue = L10n.tr("tasks.new.name")
         bodyCaption.stringValue = L10n.tr("tasks.new.body")
         titleField.placeholderString = L10n.tr("tasks.new.nameHint")
+        bodyField.placeholderString = L10n.tr("tasks.new.bodyHint")
         submitButton.title = L10n.tr(model.submitKey)
         closeActionButton.title = L10n.tr(model.mode.isCreate ? "tasks.new.done" : "btn.cancel")
         closeButton.toolTip = L10n.tr("tasks.new.done")
@@ -269,7 +288,7 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
 
         let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
         let titleRow = TaskFormKit.row(titleCaption, titleField)
-        let bodyRow = TaskFormKit.row(bodyCaption, bodyScroll)
+        let bodyRow = TaskFormKit.row(bodyCaption, bodyField)
         let buttons = TaskFormKit.buttonRow([submitButton, closeActionButton])
         let column = NSStackView(views: [headingRow, info, titleRow, bodyRow, hint, buttons])
         column.orientation = .vertical
@@ -289,8 +308,20 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
     }
 
     private var currentDraft: TaskComposerModel {
-        model.typed(title: titleField.stringValue, body: bodyView.string)
+        model.typed(title: titleField.stringValue, body: bodyField.stringValue)
     }
+
+    /// The editor grows with what is typed (and gives way on a short panel).
+    private func updateBodyHeight() {
+        let width = bodyField.bounds.width
+        guard width > 1 else { return }
+        bodyHeight.constant = max(TaskFormKit.editorMinHeight,
+                                 TaskFormKit.textHeight(bodyField.stringValue, width: width))
+    }
+
+    /// Called once the field has its real width: edit mode then shows the whole
+    /// description instead of the first line of it.
+    func layoutBody() { updateBodyHeight() }
 
     /// The submit button's action; internal so the headless tests can press it.
     @objc func submitTapped() {
@@ -308,25 +339,19 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
 
     // MARK: NSTextFieldDelegate / NSTextViewDelegate
 
-    func controlTextDidChange(_ obj: Notification) { apply(currentDraft) }
+    func controlTextDidChange(_ obj: Notification) {
+        // The description grows as it is typed.
+        if (obj.object as? NSTextField) === bodyField { updateBodyHeight() }
+        apply(currentDraft)
+    }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+        // Enter submits from the TITLE field; in the description it stays a
+        // newline (the text IS the prompt handed to the agent) — Esc closes.
+        if commandSelector == #selector(NSResponder.insertNewline(_:)), control === titleField {
             submitTapped()
             return true
         }
-        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-            onCancel?()
-            return true
-        }
-        return false
-    }
-
-    func textDidChange(_ notification: Notification) { apply(currentDraft) }
-
-    /// In the description a plain Enter stays a newline (the text IS the prompt
-    /// handed to the agent); only Esc closes the composer from there.
-    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             onCancel?()
             return true
@@ -357,6 +382,11 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
     let baseField: NSTextField
     let branchHint: NSTextField
     let prSwitch: NSButton
+    let prNote: NSTextField
+    let advancedButton: NSButton
+    /// The 高级设置 section (分支 / 基于分支 / PR): hidden while creating, open
+    /// while editing. Internal so the tests can assert the default.
+    let advancedStack: NSStackView
     let hint: NSTextField
     let submitButton: NSButton
     let cancelButton: NSButton
@@ -368,6 +398,9 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         baseField = TaskFormKit.textField(model.baseBranch, placeholder: "main")
         branchHint = TaskFormKit.hintLabel(.secondaryLabelColor)
         prSwitch = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+        prNote = TaskFormKit.hintLabel(.secondaryLabelColor)
+        advancedButton = TaskFormKit.linkButton("")
+        advancedStack = NSStackView()
         hint = TaskFormKit.hintLabel()
         submitButton = TaskFormKit.button("", primary: true)
         cancelButton = TaskFormKit.button("", primary: false)
@@ -392,14 +425,19 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         branchCaption.stringValue = L10n.tr("tasks.queue.branch")
         baseCaption.stringValue = L10n.tr("tasks.queue.base")
         nameField.placeholderString = L10n.tr("tasks.queue.nameHint")
-        branchField.placeholderString = L10n.tr("tasks.queue.branchHint")
+        branchField.placeholderString = model.branchPlaceholder
         baseField.placeholderString = L10n.tr("tasks.queue.baseHint")
         branchHint.stringValue = L10n.tr("tasks.queue.branchWillUse", model.effectiveBranchHint)
-        branchHint.isHidden = false
+        advancedButton.title = L10n.tr("tasks.queue.advanced") + (model.showsAdvanced ? "  ▴" : "  ▾")
+        advancedStack.isHidden = !model.showsAdvanced
+        // A PR switch that cannot be switched is worse than a sentence: the
+        // workspace simply has no PR to open.
         prSwitch.title = L10n.tr("tasks.queue.createPR")
         prSwitch.state = model.autoPR ? .on : .off
+        prSwitch.isHidden = !model.prAvailable
         prSwitch.isEnabled = model.prAvailable
-        prSwitch.toolTip = model.prAvailable ? "" : L10n.tr("tasks.queue.prUnavailable")
+        prNote.stringValue = L10n.tr("tasks.queue.prUnavailable")
+        prNote.isHidden = model.prAvailable
         submitButton.title = L10n.tr(model.submitKey)
         submitButton.isEnabled = model.canSubmit
         cancelButton.title = L10n.tr("btn.cancel")
@@ -418,6 +456,8 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         prSwitch.font = .systemFont(ofSize: 12)
         prSwitch.translatesAutoresizingMaskIntoConstraints = false
         closeButton.onAction = { [weak self] in self?.onCancel?() }
+        advancedButton.target = self
+        advancedButton.action = #selector(advancedTapped)
         submitButton.target = self
         submitButton.action = #selector(submitTapped)
         cancelButton.target = self
@@ -427,16 +467,34 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         let nameRow = TaskFormKit.row(nameCaption, nameField)
         let branchRow = TaskFormKit.row(branchCaption, branchField)
         let baseRow = TaskFormKit.row(baseCaption, baseField)
+
+        // The branch this queue will use, and the way into the fields that can
+        // change it — one line, so creating a queue asks for a name and nothing
+        // else unless the user opens the advanced section.
+        let hintSpacer = NSView()
+        hintSpacer.translatesAutoresizingMaskIntoConstraints = false
+        hintSpacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        let hintRow = NSStackView(views: [branchHint, hintSpacer, advancedButton])
+        hintRow.orientation = .horizontal
+        hintRow.alignment = .centerY
+        hintRow.spacing = 6
+        hintRow.translatesAutoresizingMaskIntoConstraints = false
+
+        advancedStack.orientation = .vertical
+        advancedStack.alignment = .leading
+        advancedStack.spacing = 8
+        advancedStack.translatesAutoresizingMaskIntoConstraints = false
+        for view in [branchRow, baseRow, prSwitch, prNote] { advancedStack.addArrangedSubview(view) }
+        TaskFormKit.stretch([branchRow, baseRow, prNote], to: advancedStack)
+
         let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
-        let column = NSStackView(views: [headingRow, info, nameRow, branchRow, branchHint, baseRow,
-                                         prSwitch, hint, buttons])
+        let column = NSStackView(views: [headingRow, info, nameRow, hintRow, advancedStack, hint, buttons])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 8
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
-        // Every field spans the form (see TaskFormKit.stretch).
-        TaskFormKit.stretch([headingRow, info, nameRow, branchRow, branchHint, baseRow], to: column)
+        TaskFormKit.stretch([headingRow, info, nameRow, hintRow, advancedStack], to: column)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
@@ -451,6 +509,8 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
                     baseBranch: baseField.stringValue,
                     autoPR: prSwitch.state == .on)
     }
+
+    @objc private func advancedTapped() { apply(model.togglingAdvanced()) }
 
     /// The submit button's action; internal so the headless tests can press it.
     @objc func submitTapped() {
@@ -478,7 +538,6 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         return false
     }
 }
-
 // MARK: - Form sheet (the surface a form slides up in)
 
 /// The panel's bottom sheet. A form is presented HERE rather than inline in the

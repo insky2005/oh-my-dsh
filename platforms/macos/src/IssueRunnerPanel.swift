@@ -1227,7 +1227,13 @@ final class IssueRunnerPanelController: NSObject {
         let form = TaskComposerView(model: model)
         form.onSubmit = { [weak self] composer in self?.submitTaskComposer(composer) }
         form.onCancel = { [weak self] in self?.closeTaskComposer() }
-        presentForm(form) { ($0 as? TaskComposerView)?.focusTitle() }
+        presentForm(form) { view in
+            // The editor can only size itself to its text once it has its real
+            // width: an edit must show the whole description, not its first line.
+            guard let composer = view as? TaskComposerView else { return }
+            composer.layoutBody()
+            composer.focusTitle()
+        }
     }
 
     private func showQueueForm(_ model: QueueComposerModel) {

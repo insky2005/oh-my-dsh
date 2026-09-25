@@ -401,9 +401,13 @@ struct QueueComposerModel: Equatable {
     var branch: String
     var baseBranch: String
     var autoPR: Bool
-    /// Whether GitHub is available in this workspace (the PR switch greys out
-    /// where there is no PR to open).
+    /// Whether GitHub is available in this workspace. Without it the form does
+    /// not offer a PR switch at all (a dead checkbox is worse than a sentence).
     var prAvailable: Bool
+    /// Whether the 高级设置 section (分支 / 基于分支 / PR 开关) is open. The branch
+    /// is derived from the name, so creating a queue only asks for a name; editing
+    /// a queue's settings opens everything, because that is what the user came for.
+    var showsAdvanced: Bool
     var attempted: Bool
 
     var headingKey: String { mode.isCreate ? "tasks.queue.newTitle" : "tasks.queue.editTitle" }
@@ -456,16 +460,30 @@ struct QueueComposerModel: Equatable {
         return copy
     }
 
+    /// The branch field's placeholder: the branch this queue will really use.
+    var branchPlaceholder: String {
+        let typed = branch.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.isEmpty { return typed }
+        return mode.isCreate ? effectiveBranchHint : L10n.tr("tasks.queue.noBranchHint")
+    }
+
     func attemptedSubmit() -> QueueComposerModel {
         var copy = self
         copy.attempted = true
         return copy
     }
 
+    /// Show / hide the 高级设置 section.
+    func togglingAdvanced() -> QueueComposerModel {
+        var copy = self
+        copy.showsAdvanced.toggle()
+        return copy
+    }
+
     /// 新建队列 (standalone, no task to join).
     static func create() -> QueueComposerModel {
         QueueComposerModel(mode: .create(taskID: nil), name: "", branch: "", baseBranch: "main",
-                           autoPR: false, prAvailable: false, attempted: false)
+                           autoPR: false, prAvailable: false, showsAdvanced: false, attempted: false)
     }
 
     /// 新建队列 from a task's 加入队列 ▾ menu: the new queue takes the task.
@@ -475,10 +493,12 @@ struct QueueComposerModel: Equatable {
         return model
     }
 
-    /// The queue's settings, prefilled.
+    /// The queue's settings, prefilled — with 高级设置 already open: editing a
+    /// queue IS editing its branch and PR switch.
     static func edit(_ queue: TaskQueue, prAvailable: Bool) -> QueueComposerModel {
         QueueComposerModel(mode: .edit(queueID: queue.id), name: queue.name,
                            branch: queue.branch ?? "", baseBranch: queue.baseBranch,
-                           autoPR: queue.autoPR, prAvailable: prAvailable, attempted: false)
+                           autoPR: queue.autoPR, prAvailable: prAvailable,
+                           showsAdvanced: true, attempted: false)
     }
 }
