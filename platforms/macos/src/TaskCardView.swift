@@ -108,9 +108,7 @@ final class TaskProgressBarView: NSView {
 /// without drawing a box around them.
 final class TaskSectionHeaderView: NSView {
 
-    /// Optional trailing action (the queues section's 新建队列), rendered as a
-    /// small flat button right after the rule.
-    init(text: String, actionTitle: String? = nil, onAction: (() -> Void)? = nil) {
+    init(text: String) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         let label = NSTextField(labelWithString: text)
@@ -127,44 +125,15 @@ final class TaskSectionHeaderView: NSView {
 
         addSubview(label)
         addSubview(rule)
-        var constraints = [
+        NSLayoutConstraint.activate([
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
             label.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
             rule.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 8),
+            rule.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
             rule.centerYAnchor.constraint(equalTo: label.centerYAnchor),
-        ]
-        if let actionTitle = actionTitle {
-            // NOTE: the designated initializer, never NSButton's convenience
-            // init(title:target:action:) through a subclass (that factory
-            // dispatches on the instance and crashes — see PanelIconButton).
-            let button = HoverButton(frame: .zero)
-            button.title = actionTitle
-            button.isBordered = false
-            button.controlSize = .small
-            button.font = .systemFont(ofSize: 11, weight: .medium)
-            button.contentTintColor = .controlAccentColor
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.target = self
-            button.action = #selector(actionTapped)
-            self.onAction = onAction
-            addSubview(button)
-            constraints.append(contentsOf: [
-                button.leadingAnchor.constraint(equalTo: rule.trailingAnchor, constant: 6),
-                button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
-                button.centerYAnchor.constraint(equalTo: label.centerYAnchor),
-                button.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 2),
-                button.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -2),
-            ])
-        } else {
-            constraints.append(rule.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2))
-        }
-        NSLayoutConstraint.activate(constraints)
+        ])
     }
-
-    private var onAction: (() -> Void)?
-
-    @objc private func actionTapped() { onAction?() }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
@@ -393,14 +362,10 @@ final class TaskQueueHeaderView: NSView {
     var onTogglePR: (() -> Void)?
     var onDelete: (() -> Void)?
 
-    private var isHovered = false
-    private var trackingArea: NSTrackingArea?
-
     init(model: QueueHeaderModel) {
         self.model = model
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
         build()
     }
 
@@ -408,38 +373,9 @@ final class TaskQueueHeaderView: NSView {
 
     override var isOpaque: Bool { false }
 
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        needsDisplay = true
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let area = trackingArea { removeTrackingArea(area) }
-        let area = NSTrackingArea(rect: .zero,
-                                  options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                  owner: self, userInfo: nil)
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { isHovered = true; needsDisplay = true }
-    override func mouseExited(with event: NSEvent) { isHovered = false; needsDisplay = true }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        // Opaque highlighted fill (SessionTitleBar's体例): the queue header is a
-        // bar, not another card, so it must not read as a translucent overlay.
-        PanelControl.fill(dark: dark, highlighted: true).setFill()
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
-        path.fill()
-        if isHovered {
-            (dark ? NSColor(calibratedWhite: 0.5, alpha: 0.5) : NSColor(calibratedWhite: 0.72, alpha: 0.9)).setStroke()
-            path.lineWidth = 1
-            path.stroke()
-        }
-    }
-
+    /// The header itself draws NOTHING: its queue's block (TaskQueueBlockView)
+    /// paints the lane the header and its task cards live in, which is what makes
+    /// the containment read. The header only owns the click that collapses it.
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let hit = super.hitTest(point) else { return nil }
         if hit is NSButton || hit is TaskBadgeView || hit is CustomIconButton { return hit }
@@ -601,4 +537,96 @@ final class TaskQueueHeaderView: NSView {
     @objc private func settingsTapped() { onSettings?() }
     @objc private func togglePRTapped() { onTogglePR?() }
     @objc private func deleteTapped() { onDelete?() }
+}
+
+// MARK: - Queue block (the lane a queue's tasks live in)
+
+/// One queue, drawn as a single CONTAINER: the lane surface plus its header and
+/// the task cards inside it (the review panel's tree体例 — an outer block holds
+/// a header and an indented stack of inner blocks, so "these cards belong to
+/// this queue" is a matter of geometry, not of reading two parallel cards).
+///
+/// The lane takes the recessed control fill while the cards inside keep the
+/// raised one: the nesting reads in both themes without inventing a colour.
+final class TaskQueueBlockView: NSView {
+
+    let model: QueueHeaderModel
+
+    private let header: TaskQueueHeaderView
+    private let cards: [NSView]
+    private let collapsed: Bool
+
+    init(header: TaskQueueHeaderView, cards: [NSView], collapsed: Bool) {
+        self.model = header.model
+        self.header = header
+        self.cards = cards
+        self.collapsed = collapsed
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        build()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var isOpaque: Bool { false }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        // The lane is the RECESSED level (highlight fill) and the cards inside it
+        // keep the raised one (PanelControl normal) — the same two levels the
+        // review tree uses, just ordered so the queue reads as the container.
+        PanelControl.fill(dark: dark, highlighted: true).setFill()
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        path.fill()
+        // Its own tone tints the outline, so an active or failed lane is
+        // recognisable from the block itself, not only from its badge.
+        let tint = model.tone == .neutral || model.tone == .warning
+            ? (dark ? NSColor(calibratedWhite: 0.42, alpha: 0.9) : NSColor(calibratedWhite: 0.78, alpha: 1))
+            : TaskBadgeView.color(model.tone).withAlphaComponent(dark ? 0.55 : 0.45)
+        tint.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
+
+    private func build() {
+        header.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(header)
+        // The header owns the lane's full width minus its padding...
+        NSLayoutConstraint.activate([
+            header.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+        ])
+        guard !cards.isEmpty else {
+            // Collapsed: the lane IS its header.
+            header.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8).isActive = true
+            return
+        }
+        // ...and the cards are stacked INSIDE it, indented past the header's own
+        // padding (review panel: children inset 12/10 under their container's 8).
+        // Two levels of inset plus two fill levels is what makes the queue read as
+        // the container instead of as a sibling card.
+        let children = NSStackView()
+        children.orientation = .vertical
+        children.alignment = .leading
+        children.spacing = 6
+        children.translatesAutoresizingMaskIntoConstraints = false
+        for card in cards {
+            children.addArrangedSubview(card)
+            card.widthAnchor.constraint(equalTo: children.widthAnchor).isActive = true
+        }
+        addSubview(children)
+        NSLayoutConstraint.activate([
+            children.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
+            children.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
+            children.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            children.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+        ])
+    }
 }

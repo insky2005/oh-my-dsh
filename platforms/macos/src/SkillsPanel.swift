@@ -162,6 +162,16 @@ final class SkillTabStrip: NSView {
         applySelection()
     }
 
+    /// Let the strip give way when something shares its row: the tasks panel
+    /// puts two creation buttons beside it, and a strip that insists on its full
+    /// intrinsic width would push the row past the panel edge.
+    func setCompressible(_ flag: Bool) {
+        for item in items {
+            item.setContentCompressionResistancePriority(flag ? .defaultLow : .required,
+                                                         for: .horizontal)
+        }
+    }
+
     func select(_ index: Int, notify: Bool = true) {
         guard index >= 0, index < items.count else { return }
         selectedIndex = index

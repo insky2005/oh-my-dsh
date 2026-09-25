@@ -53,8 +53,11 @@ final class IssueRunnerPanelController: NSObject {
     private let configButton: CustomIconButton
     private let refreshButton: CustomIconButton
     private let runAllButton: CustomIconButton
-    private let newTaskButton: CustomIconButton
     private let hideButton: CustomIconButton
+    /// The two creation entries, flush right on the tabs row (the user's ask:
+    /// creating is a panel-level action, not a header icon).
+    private let newTaskRowButton = NSButton(title: "", target: nil, action: nil)
+    private let newQueueRowButton = NSButton(title: "", target: nil, action: nil)
     private let repoLabel = HeaderLabel()
     /// The four counters as small pills (队列 / 排队 / 运行 / 失败).
     private let chipStrip = NSStackView()
@@ -67,8 +70,13 @@ final class IssueRunnerPanelController: NSObject {
     private let emptyIcon = BakedIconView(symbol: "checklist")
     private let emptyButton = NSButton(title: "", target: nil, action: nil)
     private let emptyView = NSStackView()
-    /// The inline form currently on screen (needs no lookup on scroll/focus).
-    private weak var activeFormView: NSView?
+    /// The bottom sheet a form slides up in, inside a clipping, click-through
+    /// host that spans the panel's content area.
+    private let formSheetHost = TaskFormSheetHostView()
+    private let formSheet = TaskFormSheetView()
+    private var formSheetBottom: NSLayoutConstraint!
+    /// The form on screen, for focus and for the slide-out animation.
+    private weak var formSheetContent: NSView?
     private let statusBar = DynamicFillView()
     private let statusLabel = HeaderLabel()
     private let statusSpinner = NSProgressIndicator()
@@ -87,14 +95,10 @@ final class IssueRunnerPanelController: NSObject {
     /// the work), issue tasks' auto queues start as one compact line.
     private var queueToggle: [String: Bool] = [:]
     private var sourceFilter: SourceFilter = .all
-    /// The inline 新建任务 / 编辑任务 form (nil = closed). Creating or editing a
-    /// task never raises a dialog: the form IS a card in this list.
+    /// Which form the sheet is currently showing (nil = no form). Creating or
+    /// editing a task never raises a dialog: the form slides up IN the panel.
     private var taskComposer: TaskComposerModel?
-    /// The inline 新建队列 / 队列设置 form (nil = closed).
     private var queueComposer: QueueComposerModel?
-    /// A just-opened (or just-submitted) form scrolls itself into view and takes
-    /// focus on the next render — the list is rebuilt from scratch every time.
-    private var pendingFormFocus = false
     /// Drives the runner: start the next queued task, advance the running one.
     private var stepTimer: Timer?
 
@@ -104,13 +108,11 @@ final class IssueRunnerPanelController: NSObject {
         configButton = CustomIconButton(glyph: .symbol("gearshape"), tooltip: "")
         refreshButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: "")
         runAllButton = CustomIconButton(glyph: .play, tooltip: "")
-        newTaskButton = CustomIconButton(glyph: .plus, tooltip: "")
         hideButton = CustomIconButton(glyph: .close, tooltip: "")
         super.init()
         buildUI()
         refreshButton.onAction = { [weak self] in self?.reloadIssues() }
         runAllButton.onAction = { [weak self] in self?.runAllTapped() }
-        newTaskButton.onAction = { [weak self] in self?.openTaskComposer(.create) }
         configButton.onAction = { [weak self] in self?.configTapped() }
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
         updateLabels()
@@ -125,8 +127,11 @@ final class IssueRunnerPanelController: NSObject {
         configButton.toolTip = L10n.tr("tasks.configHint")
         refreshButton.toolTip = L10n.tr("tasks.refreshHint")
         runAllButton.toolTip = L10n.tr("tasks.runAllHint")
-        newTaskButton.toolTip = L10n.tr("tasks.new.hint")
         hideButton.toolTip = L10n.tr("preview.closePanel")
+        newTaskRowButton.title = L10n.tr("tasks.new.hint")
+        newTaskRowButton.toolTip = L10n.tr("tasks.new.info")
+        newQueueRowButton.title = L10n.tr("tasks.queue.newButton")
+        newQueueRowButton.toolTip = L10n.tr("tasks.queue.newInfo")
         if let repo = repo {
             repoLabel.text = repo.owner + "/" + repo.repo
         } else if let path = repoRootPath {
@@ -153,7 +158,7 @@ final class IssueRunnerPanelController: NSObject {
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let actions = NSStackView(views: [newTaskButton, refreshButton, runAllButton, configButton, hideButton])
+        let actions = NSStackView(views: [refreshButton, runAllButton, configButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -206,12 +211,36 @@ final class IssueRunnerPanelController: NSObject {
         let tabRow = DynamicFillView()
         tabRow.kind = .panel
         tabRow.translatesAutoresizingMaskIntoConstraints = false
-        tabRow.addSubview(filterTabs)
+        for button in [newTaskRowButton, newQueueRowButton] {
+            button.bezelStyle = .rounded
+            button.controlSize = .small
+            button.font = .systemFont(ofSize: 11)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        newTaskRowButton.bezelColor = .controlAccentColor
+        newTaskRowButton.target = self
+        newTaskRowButton.action = #selector(newTaskTapped)
+        newQueueRowButton.target = self
+        newQueueRowButton.action = #selector(newQueueTapped)
+        let tabSpacer = NSView()
+        tabSpacer.translatesAutoresizingMaskIntoConstraints = false
+        tabSpacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        tabSpacer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        // The buttons keep their size; the tabs give way (a narrow panel must
+        // never push the row past its own edge).
+        filterTabs.setCompressible(true)
+        let tabStrip = NSStackView(views: [filterTabs, tabSpacer, newTaskRowButton, newQueueRowButton])
+        tabStrip.orientation = .horizontal
+        tabStrip.alignment = .centerY
+        tabStrip.spacing = 5
+        tabStrip.translatesAutoresizingMaskIntoConstraints = false
+        tabRow.addSubview(tabStrip)
         NSLayoutConstraint.activate([
-            filterTabs.leadingAnchor.constraint(equalTo: tabRow.leadingAnchor, constant: 8),
-            filterTabs.trailingAnchor.constraint(lessThanOrEqualTo: tabRow.trailingAnchor, constant: -8),
-            filterTabs.centerYAnchor.constraint(equalTo: tabRow.centerYAnchor),
-            tabRow.heightAnchor.constraint(equalToConstant: 30),
+            tabStrip.leadingAnchor.constraint(equalTo: tabRow.leadingAnchor, constant: 6),
+            tabStrip.trailingAnchor.constraint(equalTo: tabRow.trailingAnchor, constant: -6),
+            tabStrip.centerYAnchor.constraint(equalTo: tabRow.centerYAnchor),
+            tabRow.heightAnchor.constraint(equalToConstant: 32),
         ])
 
         let toolbarUnderline = NSBox()
@@ -302,6 +331,19 @@ final class IssueRunnerPanelController: NSObject {
             listDocument.widthAnchor.constraint(equalTo: listScroll.contentView.widthAnchor),
         ])
 
+        // The form sheet is added LAST (topmost) and starts hidden: it is pulled
+        // up over the list, never laid out inside it.
+        formSheetHost.translatesAutoresizingMaskIntoConstraints = false
+        formSheetHost.wantsLayer = true
+        formSheetHost.layer?.masksToBounds = true
+        formSheet.translatesAutoresizingMaskIntoConstraints = false
+        formSheet.isHidden = true
+        formSheet.alphaValue = 0
+        formSheetHost.addSubview(formSheet)
+        // Final resting place: 8pt above the status bar (whose message must stay
+        // readable while a form is open).
+        formSheetBottom = formSheet.bottomAnchor.constraint(equalTo: formSheetHost.bottomAnchor,
+                                                            constant: TaskFormSheetHostView.restingBottom)
         view.addSubview(header)
         view.addSubview(toolbar)
         view.addSubview(tabRow)
@@ -309,6 +351,7 @@ final class IssueRunnerPanelController: NSObject {
         view.addSubview(listScroll)
         view.addSubview(emptyView)
         view.addSubview(statusBar)
+        view.addSubview(formSheetHost)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: view.topAnchor),
             header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -342,6 +385,15 @@ final class IssueRunnerPanelController: NSObject {
             statusBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             statusBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             statusBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            formSheetHost.topAnchor.constraint(equalTo: toolbarUnderline.bottomAnchor),
+            formSheetHost.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            formSheetHost.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            formSheetHost.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            formSheet.leadingAnchor.constraint(equalTo: formSheetHost.leadingAnchor, constant: 8),
+            formSheet.trailingAnchor.constraint(equalTo: formSheetHost.trailingAnchor, constant: -8),
+            formSheetBottom,
         ])
     }
 
@@ -1055,7 +1107,6 @@ final class IssueRunnerPanelController: NSObject {
 
     private func render() {
         for subview in listStack.arrangedSubviews { subview.removeFromSuperview() }
-        activeFormView = nil
         guard let runner = runner else {
             rebuildStats()
             emptyView.isHidden = false
@@ -1065,43 +1116,27 @@ final class IssueRunnerPanelController: NSObject {
         let githubRepo = repo != nil
         var sections = 0
 
-        // 0. 新建任务 — the inline form sits above every section while it is open.
-        if let composer = taskComposer, composer.mode.isCreate {
-            addForm(taskComposerView(composer))
-        }
-
         // 1. Queues. User queues first (they hold the user's own work), then the
         //    issue tasks' single-task queues, which count and render like any
-        //    other queue but start as one compact line (决策 8). The section
-        //    header carries 新建队列, so a queue can also be created on its own.
+        //    other queue but start as one compact line (决策 8).
         let userQueues = sourceFilter.showsUserQueues ? board.queues.filter { !$0.autoCreated } : []
         let autoQueues = sourceFilter.showsAutoQueues
             ? board.queues.filter { $0.autoCreated }.sorted(by: { autoQueueNumber($0, board) < autoQueueNumber($1, board) })
             : []
         let queues = userQueues + autoQueues
-        if !queues.isEmpty || isCreatingStandaloneQueue {
-            addCard(TaskSectionHeaderView(text: L10n.tr("tasks.section.queues", queues.count),
-                                          actionTitle: L10n.tr("tasks.queue.new"),
-                                          onAction: { [weak self] in
-                                              self?.openQueueComposer(.create(taskID: nil))
-                                          }))
-            if isCreatingStandaloneQueue, let composer = queueComposer {
-                addForm(queueComposerView(composer))
-            }
+        if !queues.isEmpty {
+            addCard(TaskSectionHeaderView(text: L10n.tr("tasks.section.queues", queues.count)))
             for queue in queues {
+                // A queue is ONE block: the lane surface holds its header AND its
+                // cards, so the containment is geometric (review-panel体例)
+                // instead of two parallel stacks that only happen to be adjacent.
                 let cards = board.tasks(inQueue: queue.id).filter { sourceFilter.matches($0) }
-                addCard(queueHeader(queue, board: board, cardCount: cards.count))
-                if let composer = queueComposer, composer.mode.queueID == queue.id {
-                    addForm(queueComposerView(composer))
-                }
-                if isQueueExpanded(queue) {
-                    for task in cards {
-                        addCard(card(task, board: board, githubRepo: githubRepo))
-                        if let composer = taskComposer, composer.mode.taskID == task.id {
-                            addForm(taskComposerView(composer))
-                        }
-                    }
-                }
+                let header = queueHeader(queue, board: board, cardCount: cards.count)
+                let expanded = isQueueExpanded(queue)
+                let cardViews = expanded
+                    ? cards.map { card($0, board: board, githubRepo: githubRepo) }
+                    : []
+                addCard(TaskQueueBlockView(header: header, cards: cardViews, collapsed: !expanded))
             }
             sections += 1
         }
@@ -1110,27 +1145,18 @@ final class IssueRunnerPanelController: NSObject {
         let unqueued = board.tasks.filter { $0.queueId == nil && sourceFilter.matches($0) }
         if !unqueued.isEmpty {
             addCard(TaskSectionHeaderView(text: L10n.tr("tasks.section.unqueued", unqueued.count)))
-            for task in unqueued {
-                addCard(card(task, board: board, githubRepo: githubRepo))
-                if let composer = taskComposer, composer.mode.taskID == task.id {
-                    addForm(taskComposerView(composer))
-                }
-            }
+            for task in unqueued { addCard(card(task, board: board, githubRepo: githubRepo)) }
             sections += 1
         }
 
-        // 3. Empty state — never while a form is open (the form IS content).
-        let formVisible = taskComposer != nil || queueComposer != nil
+        // 3. Empty state — the form sheet overlays the list, so it does not
+        //    change what the list says about itself.
         let empty = TasksEmptyStateModel.build(filtered: sourceFilter != .all, githubRepo: repo != nil)
-        emptyView.isHidden = sections > 0 || formVisible
+        emptyView.isHidden = sections > 0
         emptyLabel.stringValue = L10n.tr(empty.messageKey)
         emptyIcon.setSymbol(empty.symbol)
         emptyButton.isHidden = !empty.showsNewTask
         rebuildStats()
-        if pendingFormFocus, formVisible {
-            pendingFormFocus = false
-            DispatchQueue.main.async { [weak self] in self?.focusActiveForm() }
-        }
     }
 
     /// Cards fill the list width: the stack is leading-aligned, so without this
@@ -1140,38 +1166,80 @@ final class IssueRunnerPanelController: NSObject {
         view.widthAnchor.constraint(equalTo: listStack.widthAnchor, constant: -20).isActive = true
     }
 
-    /// An inline form is a card too — recorded so it can take focus/scroll.
-    private func addForm(_ view: NSView) {
-        addCard(view)
-        activeFormView = view
+    // MARK: - Form sheet
+
+    /// Pull the form sheet up with this content (or swap its content while it is
+    /// already up — a create-then-create-again round must not re-animate).
+    private func presentForm(_ content: NSView, focus: @escaping (NSView) -> Void) {
+        for subview in formSheet.subviews { subview.removeFromSuperview() }
+        content.translatesAutoresizingMaskIntoConstraints = false
+        formSheet.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: formSheet.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: formSheet.trailingAnchor),
+            content.topAnchor.constraint(equalTo: formSheet.topAnchor),
+            content.bottomAnchor.constraint(equalTo: formSheet.bottomAnchor),
+        ])
+        formSheetContent = content
+        let wasVisible = !formSheet.isHidden
+        view.layoutSubtreeIfNeeded()
+        if wasVisible {
+            // Already up (create → create again): swap the content in place.
+            formSheetBottom.constant = TaskFormSheetHostView.restingBottom
+            view.layoutSubtreeIfNeeded()
+        } else {
+            // Start BELOW the host's edge (clipped away by it) and slide up: the
+            // sheet is exactly as tall as its content, which the layout pass
+            // above has just resolved.
+            formSheetBottom.constant = -formSheet.frame.height
+            view.layoutSubtreeIfNeeded()
+            formSheet.isHidden = false
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                formSheetBottom.animator().constant = TaskFormSheetHostView.restingBottom
+                formSheet.animator().alphaValue = 1
+            }
+        }
+        // Take focus once the sheet has arrived (the fields must be on screen
+        // before the caret lands in them).
+        DispatchQueue.main.asyncAfter(deadline: .now() + (wasVisible ? 0 : 0.22)) { [weak self] in
+            guard let self = self, let content = self.formSheetContent else { return }
+            focus(content)
+        }
     }
 
-    private var isCreatingStandaloneQueue: Bool {
-        guard case .create(let taskID)? = queueComposer?.mode else { return false }
-        return taskID == nil
+    /// Slide the sheet back down and drop its content.
+    private func dismissForm() {
+        guard !formSheet.isHidden else { return }
+        let hidden = -formSheet.frame.height
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            self.formSheetBottom.animator().constant = hidden
+            self.formSheet.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            guard let self = self else { return }
+            self.formSheet.isHidden = true
+            for subview in self.formSheet.subviews { subview.removeFromSuperview() }
+            self.formSheetContent = nil
+        })
     }
 
-    private func taskComposerView(_ model: TaskComposerModel) -> TaskComposerView {
+    private func showTaskForm(_ model: TaskComposerModel) {
+        taskComposer = model
         let form = TaskComposerView(model: model)
         form.onSubmit = { [weak self] composer in self?.submitTaskComposer(composer) }
         form.onCancel = { [weak self] in self?.closeTaskComposer() }
-        return form
+        presentForm(form) { ($0 as? TaskComposerView)?.focusTitle() }
     }
 
-    private func queueComposerView(_ model: QueueComposerModel) -> QueueComposerView {
+    private func showQueueForm(_ model: QueueComposerModel) {
+        queueComposer = model
         let form = QueueComposerView(model: model)
         form.onSubmit = { [weak self] composer in self?.submitQueueComposer(composer) }
         form.onCancel = { [weak self] in self?.closeQueueComposer() }
-        return form
-    }
-
-    /// Put the caret in the form that was just opened (or just submitted), and
-    /// make sure it is on screen — the list may be scrolled far down.
-    private func focusActiveForm() {
-        guard let form = activeFormView else { return }
-        form.scrollToVisible(form.bounds)
-        (form as? TaskComposerView)?.focusTitle()
-        (form as? QueueComposerView)?.focusName()
+        presentForm(form) { ($0 as? QueueComposerView)?.focusName() }
     }
 
     /// The four counters, right-aligned in the toolbar. Nothing to report (a
@@ -1216,7 +1284,7 @@ final class IssueRunnerPanelController: NSObject {
         return card
     }
 
-    private func queueHeader(_ queue: TaskQueue, board: TaskBoard, cardCount: Int) -> NSView {
+    private func queueHeader(_ queue: TaskQueue, board: TaskBoard, cardCount: Int) -> TaskQueueHeaderView {
         let model = QueueHeaderModel.build(queue, board: board, collapsed: !isQueueExpanded(queue))
         let header = TaskQueueHeaderView(model: model)
         let queueID = queue.id
@@ -1341,29 +1409,39 @@ final class IssueRunnerPanelController: NSObject {
         openQueueComposer(.create(taskID: taskID))
     }
 
-    /// The empty state's own button: create the first task without hunting for
-    /// the header's + (same inline form).
+    /// The tabs row's 新建任务 / 新建队列 buttons (empty state uses the same path).
     @objc private func newTaskTapped() { openTaskComposer(.create) }
+
+    /// A queue created from the tabs row has no task to take: it starts empty and
+    /// its cards get dragged in later from the cards' 加入队列 ▾.
+    @objc private func newQueueTapped() { openQueueComposer(.create(taskID: nil)) }
 
     // MARK: - Inline forms (nothing here raises a dialog)
 
-    /// 新建任务 / 编辑任务 — the form is opened IN the panel (a card in the list,
-    /// anchored where the click came from); nothing here raises a dialog.
+    /// 新建任务 / 编辑任务 — the form slides up from the bottom of the panel in
+    /// the shared sheet; nothing here raises a dialog and nothing is laid out
+    /// inside the list.
     private func openTaskComposer(_ mode: TaskComposerModel.Mode) {
-        guard runner != nil else {
+        guard let runner = runner else {
             setStatus(L10n.tr("tasks.errNoWorkspace"), spin: false)
             autoHideStatus(after: 4)
             return
         }
-        taskComposer = TaskComposerModel.build(mode: mode)
         queueComposer = nil
-        pendingFormFocus = true
-        render()
+        switch mode {
+        case .create:
+            showTaskForm(TaskComposerModel.build(mode: .create))
+        case .edit(let taskID):
+            // Prefilled from the board: the form must open on the task's own
+            // title and description, not on an empty draft.
+            guard let task = runner.board.task(taskID) else { return }
+            showTaskForm(TaskComposerModel.edit(task))
+        }
     }
 
     private func closeTaskComposer() {
         taskComposer = nil
-        render()
+        dismissForm()
     }
 
     /// Submit from the inline form. Creating keeps the form open with cleared
@@ -1378,13 +1456,14 @@ final class IssueRunnerPanelController: NSObject {
                 setStatus(L10n.tr("tasks.new.created", created.title), spin: false)
                 autoHideStatus(after: 4)
             }
-            taskComposer = TaskComposerModel.build(mode: .create)
-            pendingFormFocus = true
+            // Still open, cleared: 完成 / Esc closes it.
+            showTaskForm(TaskComposerModel.build(mode: .create))
         case .edit(let taskID):
             _ = runner.updateManualTask(taskID, title: draft.normalizedTitle, body: draft.normalizedBody)
             setStatus(L10n.tr("tasks.new.updated", draft.normalizedTitle), spin: false)
             autoHideStatus(after: 4)
             taskComposer = nil
+            dismissForm()
         }
         syncFromBoard()
     }
@@ -1403,26 +1482,23 @@ final class IssueRunnerPanelController: NSObject {
             autoHideStatus(after: 4)
             return
         }
+        taskComposer = nil
         switch mode {
         case .create(let taskID):
             var model = taskID.map { QueueComposerModel.create(taskID: $0) } ?? QueueComposerModel.create()
             model.prAvailable = repo != nil
-            // A default branch follows the queue name as it is typed, so the PR
-            // switch is only pre-armed where the repo can actually carry one.
+            // The PR switch is only pre-armed where the repo can carry one.
             model.autoPR = false
-            queueComposer = model
+            showQueueForm(model)
         case .edit(let queueID):
             guard let queue = runner.board.queue(queueID) else { return }
-            queueComposer = QueueComposerModel.edit(queue, prAvailable: repo != nil)
+            showQueueForm(QueueComposerModel.edit(queue, prAvailable: repo != nil))
         }
-        taskComposer = nil
-        pendingFormFocus = true
-        render()
     }
 
     private func closeQueueComposer() {
         queueComposer = nil
-        render()
+        dismissForm()
     }
 
     private func submitQueueComposer(_ composer: QueueComposerModel) {
@@ -1439,6 +1515,7 @@ final class IssueRunnerPanelController: NSObject {
             // Show the new queue open: its card list is what the user just built.
             queueToggle[queue.id] = true
             queueComposer = nil
+            dismissForm()
         case .edit(let queueID):
             _ = runner.updateQueue(queueID,
                                    name: composer.normalizedName,
@@ -1448,6 +1525,7 @@ final class IssueRunnerPanelController: NSObject {
             setStatus(L10n.tr("tasks.queue.updated", composer.normalizedName), spin: false)
             autoHideStatus(after: 4)
             queueComposer = nil
+            dismissForm()
         }
         syncFromBoard()
     }

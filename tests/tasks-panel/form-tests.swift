@@ -206,25 +206,58 @@ do {
 
 section("section header + progress bar")
 do {
-    // The section header's optional action button is built through the shared
-    // HoverButton subclass — constructing one through NSButton's convenience
-    // initializer crashes on a Swift subclass, so this is worth a check.
-    var fired = false
-    let header = TaskSectionHeaderView(text: "queues (2)", actionTitle: "new queue",
-                                       onAction: { fired = true })
+    let header = TaskSectionHeaderView(text: "queues (2)")
     let size = layout(header, width: 320)
     eq(size.width, 320, "the section header fills the list width")
     check(size.height > 20, "and keeps its caption line")
-
-    let plain = TaskSectionHeaderView(text: "not queued (1)")
-    _ = layout(plain, width: 320)
 
     let bar = TaskProgressBarView()
     bar.fraction = 0.5
     bar.tone = .positive
     let barSize = layout(bar, width: 72)
     check(barSize.height > 0, "the progress bar has a visible thickness")
-    check(!fired, "nothing fires until the button is pressed")
+}
+
+section("queue block containment")
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "One", body: "b1", id: "manual-0040aaaa")
+    let t2 = TaskItem.manual(title: "Two", body: "b2", id: "manual-0041bbbb")
+    board.tasks = [t1, t2]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+    _ = board.enqueue(taskID: t2.id, into: queue.id)
+
+    func block(collapsed: Bool) -> TaskQueueBlockView {
+        let model = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: collapsed)
+        let header = TaskQueueHeaderView(model: model)
+        let cards = collapsed ? [] : [t1, t2].map {
+            TaskCardView(model: TaskCardModel.build($0, board: board, expanded: false, githubRepo: false))
+        }
+        return TaskQueueBlockView(header: header, cards: cards, collapsed: collapsed)
+    }
+
+    let open = block(collapsed: false)
+    let openSize = layout(open, width: 320)
+    eq(openSize.width, 320, "the queue block fills the list width")
+    check(openSize.height > 150, "an open lane holds its header AND its cards")
+    // Every card sits strictly inside the lane — that is the containment the
+    // user asked for (queue and tasks were two parallel stacks before).
+    let headers = open.subviews.compactMap { $0 as? TaskQueueHeaderView }
+    eq(headers.count, 1, "the lane carries one queue header")
+    let headerInset = headers[0].frame.minX
+    let cards = open.subviews.flatMap { $0.subviews }.compactMap { $0 as? TaskCardView }
+    eq(cards.count, 2, "both tasks are laid out inside the lane")
+    for card in cards {
+        let frame = card.convert(card.bounds, to: open)
+        check(frame.minX > headerInset, "a card is indented past the lane header, not level with it")
+        check(frame.maxX < open.bounds.width, "and never spills out of the lane")
+    }
+
+    let closed = block(collapsed: true)
+    let closedSize = layout(closed, width: 320)
+    eq(closedSize.width, 320, "a collapsed lane still fills the list width")
+    check(closedSize.height < openSize.height, "and collapses to its header line")
 }
 
 if failures == 0 {

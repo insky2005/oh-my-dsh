@@ -15,27 +15,13 @@
 
 import AppKit
 
-/// The shared look of an inline form card: one step up from the panel surface
-/// with the accent border that marks an open form, radius 8 like every other
-/// card (SkillCardView / ProjectCardView).
+/// Base class of the two forms. It draws NOTHING on purpose: a form is presented
+/// in the panel's bottom sheet (IssueRunnerPanel's form sheet), and the sheet owns
+/// the surface, its accent edge and its shadow. Keeping the form itself
+/// transparent means one form can be presented anywhere without a card fighting
+/// the surface behind it.
 class TaskFormCardView: NSView {
-
     override var isOpaque: Bool { false }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        needsDisplay = true
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        PanelControl.fill(dark: dark, highlighted: false).setFill()
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
-        path.fill()
-        NSColor.controlAccentColor.withAlphaComponent(dark ? 0.55 : 0.45).setStroke()
-        path.lineWidth = 1
-        path.stroke()
-    }
 }
 
 /// Small builders shared by the two forms: captions above fields (the panel's
@@ -74,7 +60,7 @@ enum TaskFormKit {
         field.controlSize = .regular
         field.lineBreakMode = .byTruncatingTail
         field.translatesAutoresizingMaskIntoConstraints = false
-        field.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        field.heightAnchor.constraint(equalToConstant: 26).isActive = true
         return field
     }
 
@@ -192,7 +178,7 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
     init(model: TaskComposerModel) {
         self.model = model
         titleField = TaskFormKit.textField(model.title, placeholder: "")
-        let body = TaskFormKit.textView(model.body, height: 84)
+        let body = TaskFormKit.textView(model.body, height: 108)
         bodyScroll = body.scroll
         bodyView = body.text
         hint = TaskFormKit.hintLabel()
@@ -251,10 +237,10 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
         NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             column.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
             column.arrangedSubviews[0].widthAnchor.constraint(equalTo: column.widthAnchor),
             info.widthAnchor.constraint(equalTo: column.widthAnchor),
         ])
@@ -408,10 +394,10 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
         NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             column.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
             column.arrangedSubviews[0].widthAnchor.constraint(equalTo: column.widthAnchor),
             info.widthAnchor.constraint(equalTo: column.widthAnchor),
         ])
@@ -448,5 +434,64 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
             return true
         }
         return false
+    }
+}
+
+// MARK: - Form sheet (the surface a form slides up in)
+
+/// The panel's bottom sheet. A form is presented HERE rather than inline in the
+/// list: creating a task is a deliberate act that deserves room, the sheet spans
+/// the whole panel (so the fields are as wide as the panel, not as wide as a
+/// card), and it can be pulled up and dismissed without the list reflowing under
+/// the pointer.
+///
+/// Raised fill + radius 10 + an accent top edge (the "a form is open" signal) —
+/// the same tokens the rest of the shell uses, no new greys.
+final class TaskFormSheetView: NSView {
+
+    override var isOpaque: Bool { false }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        PanelControl.fill(dark: dark, highlighted: false).setFill()
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
+        path.fill()
+        (dark ? NSColor(calibratedWhite: 0.42, alpha: 0.9) : NSColor(calibratedWhite: 0.78, alpha: 1)).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+        // The accent edge across the top: this surface is an open form.
+        NSColor.controlAccentColor.withAlphaComponent(dark ? 0.75 : 0.65).setFill()
+        NSBezierPath(roundedRect: NSRect(x: bounds.minX + 1, y: bounds.maxY - 4,
+                                         width: bounds.width - 2, height: 3),
+                     xRadius: 1.5, yRadius: 1.5).fill()
+    }
+}
+
+/// The clipping host the form sheet slides inside.
+///
+/// AppKit does not clip a subview to its superview's bounds, so a sheet that
+/// starts BELOW the panel would paint over the neighbouring split pane while it
+/// animates. This host is transparent, layer-backed and masksToBounds, so the
+/// sheet is only ever visible inside the panel's content area.
+///
+/// It is transparent AND click-through: a plain NSView would swallow every click
+/// aimed at the list behind it (hitTest returns the view itself), so a hit that
+/// lands on the host rather than on the sheet is passed on.
+final class TaskFormSheetHostView: NSView {
+
+    /// Where the sheet rests: this far above the host's bottom edge, which
+    /// leaves the status bar (26pt) and its message visible.
+    static let restingBottom: CGFloat = 34
+
+    override var isOpaque: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === self ? nil : hit
     }
 }

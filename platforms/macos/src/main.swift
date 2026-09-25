@@ -644,6 +644,7 @@ enum L10n {
         "tasks.noRepoShort": ("非 GitHub 仓库", "not a GitHub repo"),
         "tasks.emptyFiltered": ("当前筛选下没有任务。", "No tasks match the current filter."),
         "tasks.queue.new": ("新建队列…", "New Queue…"),
+        "tasks.queue.newButton": ("新建队列", "New Queue"),
         "tasks.queue.newTitle": ("新建队列", "New Queue"),
         "tasks.queue.newInfo": ("任务加入该队列后按顺序执行；同一队列的任务共享一个分支。", "The task joins this queue and runs in order; every task in a queue shares one branch."),
         "tasks.queue.create": ("创建并入队", "Create & Join"),
