@@ -1229,7 +1229,9 @@ final class IssueRunnerPanelController: NSObject {
     /// Keep the sheet exactly as tall as its form (the form's own height depends
     /// on the width it was given, so this is re-measured after every layout).
     private func syncFormSheetHeight() {
-        guard formSheetContent != nil, formSheetHeight != nil else { return }
+        guard let content = formSheetContent, formSheetHeight != nil else { return }
+        // A resize changes the wrapping, so the editor re-measures first.
+        (content as? TaskComposerView)?.layoutBody()
         let wanted = formSheet.idealHeight()
         guard wanted > 0, abs(wanted - formSheetHeight.constant) > 0.5 else { return }
         formSheetHeight.constant = wanted

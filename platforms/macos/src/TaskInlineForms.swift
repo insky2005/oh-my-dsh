@@ -16,12 +16,40 @@
 import AppKit
 
 /// Base class of the two forms. It draws NOTHING on purpose: a form is presented
-/// in the panel's bottom sheet (IssueRunnerPanel's form sheet), and the sheet owns
-/// the surface, its accent edge and its shadow. Keeping the form itself
-/// transparent means one form can be presented anywhere without a card fighting
-/// the surface behind it.
+/// in the panel's form sheet (IssueRunnerPanel), and the sheet owns the surface,
+/// its accent edge and its scroll view. Keeping the form itself transparent means
+/// one form can be presented anywhere without a card fighting the surface behind
+/// it.
 class TaskFormCardView: NSView {
     override var isOpaque: Bool { false }
+}
+
+/// The input chrome shared by every field of a form: a rounded, recessed box.
+///
+/// Both inputs draw inside the SAME box — the single-line one is a bezel-less
+/// NSTextField, the description is a real NSTextView — so they cannot drift apart.
+/// The system's rounded bezel looked nothing like a multi-line editor, and an
+/// editable NSTextField turned out to be single-line whatever its height (its cell
+/// reports one line for any bounds, so a taller field was just a taller box).
+final class TaskFieldBox: NSView {
+
+    override var isOpaque: Bool { false }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        // One step below the sheet's raised surface: an input well.
+        PanelControl.fill(dark: dark, highlighted: true).setFill()
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
+        path.fill()
+        (dark ? NSColor(calibratedWhite: 0.4, alpha: 0.9) : NSColor(calibratedWhite: 0.8, alpha: 1)).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
 }
 
 /// Small builders shared by the two forms: captions above fields (the panel's
@@ -34,9 +62,12 @@ enum TaskFormKit {
     /// Roomier than a stock field: the form is the panel's main input surface.
     static let fieldHeight: CGFloat = 30
     static let editorHeight: CGFloat = 120
+    static let editorMaxHeight: CGFloat = 260
     /// Never smaller than a few lines: the sheet scrolls rather than shrinking
     /// the description down to a couple of lines.
     static let editorMinHeight: CGFloat = 88
+    /// Padding inside a field box (left/right for text, top/bottom for the box).
+    static let textInset: CGFloat = 9
 
     static func caption() -> NSTextField {
         let label = NSTextField(labelWithString: "")
@@ -58,66 +89,111 @@ enum TaskFormKit {
         return stack
     }
 
-    /// A single-line field.
-    static func textField(_ value: String, placeholder: String) -> NSTextField {
+    /// A single-line field in its box.
+    static func textField(_ value: String, placeholder: String) -> (box: TaskFieldBox, field: NSTextField) {
+        let box = TaskFieldBox()
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.heightAnchor.constraint(equalToConstant: fieldHeight).isActive = true
         let field = NSTextField(string: value)
         field.placeholderString = placeholder
         field.font = fieldFont
-        field.controlSize = .large
-        field.bezelStyle = .roundedBezel
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.usesSingleLineMode = true
         field.lineBreakMode = .byTruncatingTail
         field.translatesAutoresizingMaskIntoConstraints = false
-        field.heightAnchor.constraint(equalToConstant: fieldHeight).isActive = true
-        return field
+        box.addSubview(field)
+        NSLayoutConstraint.activate([
+            field.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: textInset),
+            field.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -textInset),
+            field.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+        ])
+        return (box, field)
     }
 
-    /// The description editor: a MULTI-LINE NSTextField, deliberately the SAME
-    /// control as the single-line fields (same bezel, size and font, so a form
-    /// looks like one form).
-    ///
-    /// It replaced an NSTextView in a scroll view, which had two problems: its
-    /// bezel did not match the other fields, and its document view sized itself —
-    /// an EMPTY text view shrinks to a single line, so only the first line was
-    /// clickable and wrapped text was invisible (measured on the panel).
-    ///
-    /// The height is driven by the caller (`TaskFormKit.textHeight`) so the field
-    /// grows with its text and shrinks on a short panel.
-    static func textArea(_ value: String) -> (field: NSTextField, height: NSLayoutConstraint) {
-        let field = NSTextField(string: value)
-        field.font = fieldFont
-        field.controlSize = .large
-        field.bezelStyle = .roundedBezel
-        field.isEditable = true
-        field.isSelectable = true
-        field.usesSingleLineMode = false
-        field.maximumNumberOfLines = 0
-        field.lineBreakMode = .byWordWrapping
-        field.cell?.wraps = true
-        field.cell?.isScrollable = false
-        field.translatesAutoresizingMaskIntoConstraints = false
-        let height = field.heightAnchor.constraint(equalToConstant: editorHeight)
-        // Nearly required — a stack view adds its own fitting-height constraints at
-        // .defaultHigh, and at equal priority the engine would keep the SMALLER
-        // height, which pinned the editor to one line. Only the sheet's own height
-        // cap (required) may shrink it on a short panel.
-        height.priority = NSLayoutConstraint.Priority(999)
-        height.isActive = true
-        field.heightAnchor.constraint(greaterThanOrEqualToConstant: editorMinHeight).isActive = true
-        return (field, height)
+    /// The description editor: a real multi-line NSTextView in the same box, with
+    /// the box growing with the text (the sheet around it scrolls when the panel
+    /// is short).
+    static func textArea(_ value: String) -> (box: TaskFieldBox, text: NSTextView,
+                                              placeholder: NSTextField,
+                                              boxHeight: NSLayoutConstraint,
+                                              textHeight: NSLayoutConstraint) {
+        let box = TaskFieldBox()
+        box.translatesAutoresizingMaskIntoConstraints = false
+        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: editorHeight))
+        text.isEditable = true
+        text.isRichText = false
+        text.font = fieldFont
+        text.string = value
+        text.drawsBackground = false
+        text.textContainerInset = NSSize(width: 4, height: 6)
+        text.isVerticallyResizable = true
+        text.isHorizontallyResizable = false
+        text.minSize = NSSize(width: 0, height: 0)
+        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                              height: CGFloat.greatestFiniteMagnitude)
+        text.textContainer?.widthTracksTextView = true
+        let scroll = NSScrollView()
+        scroll.documentView = text
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(scroll)
+        // A text view has no placeholder of its own; this label sits on top of the
+        // (empty) editor and the composer hides it as soon as there is text.
+        let placeholder = NSTextField(labelWithString: "")
+        placeholder.font = fieldFont
+        placeholder.textColor = .placeholderTextColor
+        placeholder.lineBreakMode = .byTruncatingTail
+        placeholder.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(placeholder)
+        NSLayoutConstraint.activate([
+            placeholder.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: textInset),
+            placeholder.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor,
+                                                  constant: -textInset),
+            placeholder.topAnchor.constraint(equalTo: box.topAnchor, constant: 7),
+            scroll.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 4),
+            scroll.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -4),
+            scroll.topAnchor.constraint(equalTo: box.topAnchor, constant: 4),
+            scroll.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -4),
+        ])
+        // The box is as tall as the text (within bounds); the sheet's own height
+        // cap is the only thing allowed to shrink it, and then the text scrolls.
+        let boxHeight = box.heightAnchor.constraint(equalToConstant: editorHeight)
+        boxHeight.priority = NSLayoutConstraint.Priority(999)
+        boxHeight.isActive = true
+        box.heightAnchor.constraint(greaterThanOrEqualToConstant: editorMinHeight).isActive = true
+        // The document view must WRAP at the visible width and be at least as tall
+        // as it: an auto-sizing document view used to stay one line tall (only that
+        // line was clickable) or 300pt too wide (long lines were clipped, not
+        // wrapped).
+        text.translatesAutoresizingMaskIntoConstraints = false
+        let textHeight = text.heightAnchor.constraint(greaterThanOrEqualToConstant: editorHeight)
+        textHeight.isActive = true
+        NSLayoutConstraint.activate([
+            text.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            text.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
+            text.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+        ])
+        return (box, text, placeholder, boxHeight, textHeight)
     }
 
     /// How tall the text needs to be at this width, so the editor can grow with
-    /// what is typed into it (an editable wrapping field reports only one line of
-    /// intrinsic height, so the height is computed from the text itself).
+    /// what is typed into it.
     static func textHeight(_ text: String, width: CGFloat) -> CGFloat {
-        let usable = max(40, width - 16)   // the bezel's own padding
+        let usable = max(40, width - 16)   // the box's own padding
         guard !text.isEmpty else { return editorMinHeight }
         let rect = (text as NSString).boundingRect(
             with: NSSize(width: usable, height: CGFloat.greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: fieldFont])
-        return ceil(rect.height) + 14
+        return ceil(rect.height) + 18
     }
+
     /// The footer's buttons: the primary action first, then the way out. The
     /// primary carries the accent bezel so an open form has one obvious target.
     /// Target/action are wired by the form after construction.
@@ -207,7 +283,7 @@ enum TaskFormKit {
 // MARK: - 新建任务 / 编辑任务
 
 /// The inline task composer: title, description, 创建 / 完成 (or 保存 / 取消).
-final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate {
+final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewDelegate {
 
     private(set) var model: TaskComposerModel
 
@@ -225,27 +301,36 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate {
     // and read the button/hint state the user sees — the same convention the
     // project cards use for their workspace.
     let titleField: NSTextField
-    /// The description editor (a wrapping multi-line field, styled like the
-    /// single-line ones).
-    let bodyField: NSTextField
-    private var bodyHeight: NSLayoutConstraint!
+    let titleBox: TaskFieldBox
+    /// The description editor (a real multi-line text view in the same kind of box
+    /// as the title field).
+    let bodyText: NSTextView
+    let bodyBox: TaskFieldBox
+    let bodyPlaceholder: NSTextField
+    private var bodyBoxHeight: NSLayoutConstraint!
+    private var bodyTextHeight: NSLayoutConstraint!
     let hint: NSTextField
     let submitButton: NSButton
     let closeActionButton: NSButton
 
     init(model: TaskComposerModel) {
         self.model = model
-        titleField = TaskFormKit.textField(model.title, placeholder: "")
+        let title = TaskFormKit.textField(model.title, placeholder: "")
+        titleBox = title.box
+        titleField = title.field
         let body = TaskFormKit.textArea(model.body)
-        bodyField = body.field
-        bodyHeight = body.height
+        bodyBox = body.box
+        bodyText = body.text
+        bodyPlaceholder = body.placeholder
+        bodyBoxHeight = body.boxHeight
+        bodyTextHeight = body.textHeight
         hint = TaskFormKit.hintLabel()
         submitButton = TaskFormKit.button("", primary: true)
         closeActionButton = TaskFormKit.button("", primary: false)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         titleField.delegate = self
-        bodyField.delegate = self
+        bodyText.delegate = self
         build()
         apply(model)
     }
@@ -266,7 +351,8 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate {
         titleCaption.stringValue = L10n.tr("tasks.new.name")
         bodyCaption.stringValue = L10n.tr("tasks.new.body")
         titleField.placeholderString = L10n.tr("tasks.new.nameHint")
-        bodyField.placeholderString = L10n.tr("tasks.new.bodyHint")
+        bodyPlaceholder.stringValue = L10n.tr("tasks.new.bodyHint")
+        bodyPlaceholder.isHidden = !bodyText.string.isEmpty
         submitButton.title = L10n.tr(model.submitKey)
         closeActionButton.title = L10n.tr(model.mode.isCreate ? "tasks.new.done" : "btn.cancel")
         closeButton.toolTip = L10n.tr("tasks.new.done")
@@ -289,8 +375,8 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate {
         closeActionButton.action = #selector(cancelTapped)
 
         let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
-        let titleRow = TaskFormKit.row(titleCaption, titleField)
-        let bodyRow = TaskFormKit.row(bodyCaption, bodyField)
+        let titleRow = TaskFormKit.row(titleCaption, titleBox)
+        let bodyRow = TaskFormKit.row(bodyCaption, bodyBox)
         let buttons = TaskFormKit.buttonRow([submitButton, closeActionButton])
         let column = NSStackView(views: [headingRow, info, titleRow, bodyRow, hint, buttons])
         column.orientation = .vertical
@@ -310,15 +396,24 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate {
     }
 
     private var currentDraft: TaskComposerModel {
-        model.typed(title: titleField.stringValue, body: bodyField.stringValue)
+        model.typed(title: titleField.stringValue, body: bodyText.string)
     }
 
-    /// The editor grows with what is typed (and gives way on a short panel).
+    /// The editor grows with what is typed.
+    ///
+    /// The BOX grows so the text is always visible while it fits the sheet; the
+    /// text view inside grows with it, and past the maximum box height it scrolls
+    /// under the caret instead.
     private func updateBodyHeight() {
-        let width = bodyField.bounds.width
+        let width = bodyBox.bounds.width
         guard width > 1 else { return }
-        bodyHeight.constant = max(TaskFormKit.editorMinHeight,
-                                 TaskFormKit.textHeight(bodyField.stringValue, width: width))
+        let needed = TaskFormKit.textHeight(bodyText.string, width: width)
+        let box = min(TaskFormKit.editorMaxHeight, max(TaskFormKit.editorMinHeight, needed))
+        // Only touch the constraints when something actually changed: this runs on
+        // every layout pass (the panel re-measures the sheet).
+        if abs(bodyBoxHeight.constant - box) > 0.5 { bodyBoxHeight.constant = box }
+        let text = max(box - 8, needed)
+        if abs(bodyTextHeight.constant - text) > 0.5 { bodyTextHeight.constant = text }
     }
 
     /// Called once the field has its real width: edit mode then shows the whole
@@ -341,10 +436,26 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate {
 
     // MARK: NSTextFieldDelegate / NSTextViewDelegate
 
-    func controlTextDidChange(_ obj: Notification) {
-        // The description grows as it is typed.
-        if (obj.object as? NSTextField) === bodyField { updateBodyHeight() }
+    func controlTextDidChange(_ obj: Notification) { apply(currentDraft) }
+
+    // MARK: NSTextViewDelegate (the description)
+
+    func textDidChange(_ notification: Notification) {
+        updateBodyHeight()
         apply(currentDraft)
+    }
+
+    func textDidBeginEditing(_ notification: Notification) { apply(currentDraft) }
+    func textDidEndEditing(_ notification: Notification) { apply(currentDraft) }
+
+    /// In the description a plain Enter stays a newline (the text IS the prompt
+    /// handed to the agent); Esc closes the form.
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            onCancel?()
+            return true
+        }
+        return false
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -380,8 +491,11 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
     private let closeButton = CustomIconButton(glyph: .close, tooltip: "", size: 22)
     // Internal for the headless form tests (see TaskComposerView).
     let nameField: NSTextField
+    let nameBox: TaskFieldBox
     let branchField: NSTextField
+    let branchBox: TaskFieldBox
     let baseField: NSTextField
+    let baseBox: TaskFieldBox
     let branchHint: NSTextField
     let prSwitch: NSButton
     let prNote: NSTextField
@@ -395,9 +509,15 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
 
     init(model: QueueComposerModel) {
         self.model = model
-        nameField = TaskFormKit.textField(model.name, placeholder: "")
-        branchField = TaskFormKit.textField(model.branch, placeholder: "")
-        baseField = TaskFormKit.textField(model.baseBranch, placeholder: "main")
+        let name = TaskFormKit.textField(model.name, placeholder: "")
+        nameBox = name.box
+        nameField = name.field
+        let branch = TaskFormKit.textField(model.branch, placeholder: "")
+        branchBox = branch.box
+        branchField = branch.field
+        let base = TaskFormKit.textField(model.baseBranch, placeholder: "main")
+        baseBox = base.box
+        baseField = base.field
         branchHint = TaskFormKit.hintLabel(.secondaryLabelColor)
         prSwitch = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         prNote = TaskFormKit.hintLabel(.secondaryLabelColor)
@@ -466,9 +586,9 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         cancelButton.action = #selector(cancelTapped)
 
         let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
-        let nameRow = TaskFormKit.row(nameCaption, nameField)
-        let branchRow = TaskFormKit.row(branchCaption, branchField)
-        let baseRow = TaskFormKit.row(baseCaption, baseField)
+        let nameRow = TaskFormKit.row(nameCaption, nameBox)
+        let branchRow = TaskFormKit.row(branchCaption, branchBox)
+        let baseRow = TaskFormKit.row(baseCaption, baseBox)
 
         // The branch this queue will use, and the way into the fields that can
         // change it — one line, so creating a queue asks for a name and nothing

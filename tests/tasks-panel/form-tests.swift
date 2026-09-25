@@ -74,8 +74,8 @@ do {
     check(!form.submitButton.isEnabled, "a title without a description is not submittable")
     check(form.hint.isHidden, "and the form does not nag while it is being typed into")
 
-    form.bodyField.stringValue = "tidy it up"
-    form.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: form.bodyField))
+    form.bodyText.string = "tidy it up"
+    form.textDidChange(Notification(name: NSText.didChangeNotification, object: form.bodyText))
     check(form.submitButton.isEnabled, "both fields filled enables 创建")
 
     form.submitTapped()
@@ -100,7 +100,7 @@ do {
     _ = layout(form, width: 320)
 
     eq(form.titleField.stringValue, "Old title", "the title is prefilled")
-    eq(form.bodyField.stringValue, "old body", "the description is prefilled")
+    eq(form.bodyText.string, "old body", "the description is prefilled")
     eq(form.submitButton.title, "save", "编辑 saves")
     eq(form.closeActionButton.title, "cancel", "编辑 can be cancelled")
     check(form.submitButton.isEnabled, "a prefilled form can be saved")
@@ -223,7 +223,7 @@ do {
     // The editor is the form's other input surface, and it must WRAP at the same
     // width: an autoresizing document view used to keep a width 318pt wider than
     // the clip view, so long lines were clipped instead of wrapped.
-    let bodyWidth = taskForm.bodyField.frame.width
+    let bodyWidth = taskForm.bodyText.frame.width
     check(bodyWidth > 280, "the description editor spans the form (got \(bodyWidth)pt)")
     check(abs(bodyWidth - titleWidth) < 12,
           "the editor wraps at the fields' width (editor \(bodyWidth), field \(titleWidth))")
@@ -248,20 +248,33 @@ do {
     // line (only the first line was clickable) and its bezel did not match.
     let form = TaskComposerView(model: TaskComposerModel.build(mode: .create))
     _ = layout(form, width: 430)
-    let field = form.bodyField
-    check(field.frame.height >= 100,
-          "the empty editor is a usable area, not one line (got \(field.frame.height)pt)")
-    check(!field.usesSingleLineMode, "and it is a multi-line field")
-    eq(field.bezelStyle, form.titleField.bezelStyle, "styled like the single-line fields")
-    eq(field.controlSize, form.titleField.controlSize, "with the same control size")
-    eq(field.font?.pointSize, form.titleField.font?.pointSize, "and the same font size")
+    // A real multi-line text VIEW, not a taller single-line field: an editable
+    // NSTextField reports one line for any bounds (measured), so a tall box around
+    // it was just a tall box.
+    check(form.bodyText.isVerticallyResizable, "the editor is a multi-line text view")
+    check(form.bodyBox is TaskFieldBox, "inside the same box as the single-line fields")
+    check(form.titleBox is TaskFieldBox, "which the title field uses too")
+    check(form.bodyBox.frame.height >= 100,
+          "the empty editor is a usable area, not one line (got \(form.bodyBox.frame.height)pt)")
+    check(abs(form.bodyText.frame.width - form.titleField.frame.width) <= 24,
+          "the text wraps at the same width the fields use")
 
-    let emptyHeight = field.frame.height
-    field.stringValue = String(repeating: "一行比较长的描述文本，用来看编辑器会不会长高。", count: 8)
-    form.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
+    let emptyHeight = form.bodyBox.frame.height
+    form.bodyText.string = String(repeating: "一行比较长的描述文本，用来看编辑器会不会长高。", count: 8)
+    form.textDidChange(Notification(name: NSText.didChangeNotification, object: form.bodyText))
     _ = layout(form, width: 430)
-    check(field.frame.height > emptyHeight,
-          "the editor grows with its text (\(emptyHeight) → \(field.frame.height)pt)")
+    check(form.bodyBox.frame.height > emptyHeight,
+          "the editor grows with its text (\(emptyHeight) → \(form.bodyBox.frame.height)pt)")
+
+    // Past the maximum box height the TEXT grows instead, so the rest scrolls
+    // under the caret rather than disappearing.
+    form.bodyText.string = String(repeating: "一行比较长的描述文本。\n", count: 40)
+    form.textDidChange(Notification(name: NSText.didChangeNotification, object: form.bodyText))
+    _ = layout(form, width: 430)
+    check(form.bodyBox.frame.height <= TaskFormKit.editorMaxHeight + 1,
+          "the box stops growing at its maximum")
+    check(form.bodyText.frame.height > form.bodyBox.frame.height,
+          "and the text view grows past it (the editor scrolls)")
 }
 
 section("the sheet caps itself and scrolls instead of squeezing the form")
@@ -302,8 +315,8 @@ do {
     let roomy = build(hostHeight: 600)
     check(abs(roomy.sheet.frame.height - roomy.form.frame.height) < 1,
           "a roomy panel shows the whole form (sheet \(roomy.sheet.frame.height), form \(roomy.form.frame.height))")
-    check(roomy.form.bodyField.frame.height >= 110,
-          "with the description at its full height (\(roomy.form.bodyField.frame.height)pt)")
+    check(roomy.form.bodyBox.frame.height >= 110,
+          "with the description at its full height (\(roomy.form.bodyBox.frame.height)pt)")
 
     let mid = build(hostHeight: 360)
     check(abs(mid.sheet.frame.height - mid.form.frame.height) < 1,
@@ -315,8 +328,8 @@ do {
               "a \(Int(hostHeight))pt panel caps the sheet inside the content area")
         check(tight.sheet.frame.height < tight.form.frame.height,
               "and the form scrolls rather than shrinking")
-        check(tight.form.bodyField.frame.height >= 88,
-              "the description keeps a usable height (\(tight.form.bodyField.frame.height)pt)")
+        check(tight.form.bodyBox.frame.height >= 88,
+              "the description keeps a usable height (\(tight.form.bodyBox.frame.height)pt)")
     }
 }
 
