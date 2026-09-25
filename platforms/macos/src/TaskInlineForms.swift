@@ -84,9 +84,21 @@ enum TaskFormKit {
         text.isVerticallyResizable = true
         text.isHorizontallyResizable = false
         text.autoresizingMask = [.width]
+        text.minSize = NSSize(width: 0, height: 0)
+        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                              height: CGFloat.greatestFiniteMagnitude)
         text.textContainer?.widthTracksTextView = true
         let scroll = NSScrollView()
         scroll.documentView = text
+        // Wrap at the VISIBLE width: an autoresizing document view keeps whatever
+        // width it was born with (measured: 318pt wider than the clip view, so
+        // long lines were clipped instead of wrapped).
+        text.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            text.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            text.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            text.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+        ])
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.borderType = .bezelBorder
@@ -157,6 +169,20 @@ enum TaskFormKit {
         row.spacing = 8
         row.translatesAutoresizingMaskIntoConstraints = false
         return row
+    }
+
+    /// Stretch a form's rows to the form's own width.
+    ///
+    /// A vertical NSStackView with .leading alignment sizes every arranged view to
+    /// its FITTING width, so a caption+field row would hug whichever of the two is
+    /// wider — and an EMPTY text field's intrinsic width is almost nothing, so the
+    /// field collapsed to the caption's width (measured: ~25pt wide, placeholder
+    /// clipped to a single character). Every row that is not a hugging control row
+    /// (the button row) must therefore be pinned to the column.
+    static func stretch(_ rows: [NSView], to column: NSStackView) {
+        for row in rows {
+            row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        }
     }
 }
 
@@ -241,24 +267,24 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
         closeActionButton.target = self
         closeActionButton.action = #selector(cancelTapped)
 
-        let column = NSStackView(views: [TaskFormKit.headingRow(title: heading, close: closeButton),
-                                         info,
-                                         TaskFormKit.row(titleCaption, titleField),
-                                         TaskFormKit.row(bodyCaption, bodyScroll),
-                                         hint,
-                                         TaskFormKit.buttonRow([submitButton, closeActionButton])])
+        let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
+        let titleRow = TaskFormKit.row(titleCaption, titleField)
+        let bodyRow = TaskFormKit.row(bodyCaption, bodyScroll)
+        let buttons = TaskFormKit.buttonRow([submitButton, closeActionButton])
+        let column = NSStackView(views: [headingRow, info, titleRow, bodyRow, hint, buttons])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 8
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
+        // Everything but the button row spans the form: the fields are as wide as
+        // the sheet, not as wide as their caption.
+        TaskFormKit.stretch([headingRow, info, titleRow, bodyRow, hint], to: column)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             column.topAnchor.constraint(equalTo: topAnchor, constant: 14),
             column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
-            column.arrangedSubviews[0].widthAnchor.constraint(equalTo: column.widthAnchor),
-            info.widthAnchor.constraint(equalTo: column.widthAnchor),
         ])
     }
 
@@ -397,27 +423,25 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         cancelButton.target = self
         cancelButton.action = #selector(cancelTapped)
 
-        let column = NSStackView(views: [TaskFormKit.headingRow(title: heading, close: closeButton),
-                                         info,
-                                         TaskFormKit.row(nameCaption, nameField),
-                                         TaskFormKit.row(branchCaption, branchField),
-                                         branchHint,
-                                         TaskFormKit.row(baseCaption, baseField),
-                                         prSwitch,
-                                         hint,
-                                         TaskFormKit.buttonRow([submitButton, cancelButton])])
+        let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
+        let nameRow = TaskFormKit.row(nameCaption, nameField)
+        let branchRow = TaskFormKit.row(branchCaption, branchField)
+        let baseRow = TaskFormKit.row(baseCaption, baseField)
+        let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
+        let column = NSStackView(views: [headingRow, info, nameRow, branchRow, branchHint, baseRow,
+                                         prSwitch, hint, buttons])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 8
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
+        // Every field spans the form (see TaskFormKit.stretch).
+        TaskFormKit.stretch([headingRow, info, nameRow, branchRow, branchHint, baseRow], to: column)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             column.topAnchor.constraint(equalTo: topAnchor, constant: 14),
             column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
-            column.arrangedSubviews[0].widthAnchor.constraint(equalTo: column.widthAnchor),
-            info.widthAnchor.constraint(equalTo: column.widthAnchor),
         ])
     }
 

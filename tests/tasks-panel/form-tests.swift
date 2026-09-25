@@ -202,6 +202,37 @@ do {
     check(oneLiner.height < headerSize.height, "a collapsed queue header is one line")
 }
 
+section("fields span the whole form")
+do {
+    // An EMPTY NSTextField's intrinsic width is almost nothing, and a .leading
+    // vertical stack hugs its widest arranged view — so a caption+field row used
+    // to collapse to the caption's width (measured on screen: ~25pt wide, the
+    // placeholder clipped to one character). The rows must be pinned to the form.
+    let taskForm = TaskComposerView(model: TaskComposerModel.build(mode: .create))
+    _ = layout(taskForm, width: 360)
+    let titleWidth = taskForm.titleField.frame.width
+    check(titleWidth > 300, "the title field spans the form (got \(titleWidth)pt)")
+    // The editor is the form's other input surface, and it must WRAP at the same
+    // width: an autoresizing document view used to keep a width 318pt wider than
+    // the clip view, so long lines were clipped instead of wrapped.
+    let bodyWidth = taskForm.bodyView.frame.width
+    check(bodyWidth > 280, "the description editor spans the form (got \(bodyWidth)pt)")
+    check(abs(bodyWidth - titleWidth) < 12,
+          "the editor wraps at the fields' width (editor \(bodyWidth), field \(titleWidth))")
+
+    let queueForm = QueueComposerView(model: QueueComposerModel.create())
+    _ = layout(queueForm, width: 360)
+    for (name, field) in [("name", queueForm.nameField), ("branch", queueForm.branchField),
+                          ("base", queueForm.baseField)] {
+        check(field.frame.width > 300, "the \(name) field spans the form (got \(field.frame.width)pt)")
+    }
+
+    // Widening the panel widens the fields with it.
+    let wide = TaskComposerView(model: TaskComposerModel.build(mode: .create))
+    _ = layout(wide, width: 520)
+    check(wide.titleField.frame.width > titleWidth, "a wider panel gives wider fields")
+}
+
 section("a form fits a short panel")
 do {
     // The sheet caps its height to the content area, so the form must be able to

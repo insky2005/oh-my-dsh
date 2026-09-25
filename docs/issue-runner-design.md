@@ -342,7 +342,7 @@ struct Queue {
 
 - **抽屉挂在内容区顶部、从上往下滑出**：此前挂在底部会遮住表单自己的按钮（面板一矮就没有余量）；现在宿主仍是透明 + 点击穿透 + `masksToBounds` 的图层（覆盖工具条以下到面板底部），抽屉顶部距内容区顶 8pt，从宿主上边界之外滑入，高度由内容决定并**硬上限 = 内容区高度 − 16**（超出时先压缩描述框：`TaskFormKit.textView` 的高度约束是 .defaultHigh，最小 56pt，再小就滚动——按钮因此永远留在可见区，测试 `form-tests` 用 420/300/260pt 三种面板高度钉住）；
 - **两个创建入口是图标按钮**：页签行右侧「＋」= 新建任务、「▣＋」= 新建队列（`CustomIconButton`，24pt，含 hover 与 tooltip），文字标签移到 tooltip；
-- **输入框放大**：单行框 `controlSize = .large` + `roundedBezel`、高度 30pt、字号 13pt；描述框默认 120pt（`textContainerInset` 6/8）、字号 13pt；表单内边距 16、说明行最多两行（避免表单高度随文案膨胀）。
+- **输入框放大 + 撑满表单**：单行框 `controlSize = .large` + `roundedBezel`、高度 30pt、字号 13pt；描述框默认 120pt（`textContainerInset` 6/8）、字号 13pt、**按可见宽度换行**；表单内边距 16、说明行最多两行（避免表单高度随文案膨胀）。**每一行都必须钉到表单宽度**（`TaskFormKit.stretch`，按钮行除外）：垂直栈 .leading 对齐下每行本来贴合自己的内容宽度，而**空文本框的固有宽度几乎为 0**，于是输入框塌到标题的宽度 —— 实测只有约 25pt、placeholder 被截成一个字。回归断言："输入框宽度 > 300pt（360pt 面板）"、"描述框与其同宽（±12pt）"、"面板变宽输入框跟着变宽"。
 
 **实现备注（2026-09-25b：抽屉 + 页签行按钮 + 队列容器）**：
 
@@ -400,7 +400,7 @@ struct Queue {
 
 ### V2-10 测试与 CI
 
-新增 `tests/tasks-panel/`（无头，体例照 `tests/projects-panel/`：`stubs.swift` + `stubs-ui.swift` + `run.sh` + 若干 `*-tests.swift`）。**四个阶段全绿（2026-09-25：模型 126 + 运行器 154 + 视图模型 128 + 视图 68 = 476 项）**，已登记进 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`：
+新增 `tests/tasks-panel/`（无头，体例照 `tests/projects-panel/`：`stubs.swift` + `stubs-ui.swift` + `run.sh` + 若干 `*-tests.swift`）。**四个阶段全绿（2026-09-25：模型 126 + 运行器 154 + 视图模型 128 + 视图 75 = 483 项）**，已登记进 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`：
 
 1. **队列模型（本次重点，模型先行）**：入队顺序与 `order` 编号、重复入队幂等、移出后回 `pending`、队首推进、队列内失败 → 队列暂停（后续任务仍 queued）、跳过并继续、切队列的干净检查（脏工作区拒绝启动）、队列完成态与 `autoPR` 能力降级、自动单任务队列的创建与重试复用；
 2. **模型与持久化**：TaskItem / Queue 编解码往返；`index.json` 旧格式兼容（无 `source` 视为 github、无 id 用 `issue-N`）；`manual.json` 增删改查；`queues.json` 读写；**`local.json` sessions 换键兼容**（数字键 ↔ `issue-N`）；坏文件不崩溃且不删除；
