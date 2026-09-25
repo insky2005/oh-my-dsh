@@ -277,6 +277,38 @@ do {
           "and the text view grows past it (the editor scrolls)")
 }
 
+section("a click never falls through the form to the list")
+do {
+    // With no form open the host must be click-through (it covers the list), but
+    // while a form is open it must swallow clicks aimed outside the form — a card
+    // behind the drawer reacting to a click is startling.
+    let host = TaskFormSheetHostView()
+    host.translatesAutoresizingMaskIntoConstraints = false
+    let form = TaskComposerView(model: TaskComposerModel.build(mode: .create))
+    host.addSubview(form)
+    form.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+        host.widthAnchor.constraint(equalToConstant: 400),
+        host.heightAnchor.constraint(equalToConstant: 600),
+        form.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 8),
+        form.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -8),
+        form.topAnchor.constraint(equalTo: host.topAnchor, constant: 8),
+    ])
+    host.layoutSubtreeIfNeeded()
+
+    // A point in the host's empty area (below the form): passed on to the list
+    // while nothing is open…
+    let emptyArea = NSPoint(x: 200, y: 20)
+    check(host.hitTest(emptyArea) == nil, "the empty host area is click-through while nothing is open")
+
+    // …and swallowed while a form is on screen.
+    host.blocksClicksBelow = true
+    check(host.hitTest(emptyArea) === host,
+          "with a form open the click stops at the form's own layer")
+    host.blocksClicksBelow = false
+    check(host.hitTest(emptyArea) == nil, "and opens up again once the form closes")
+}
+
 section("the sheet caps itself and scrolls instead of squeezing the form")
 do {
     // A form must NEVER shrink its description to fit: the sheet is as tall as the

@@ -1180,6 +1180,8 @@ final class IssueRunnerPanelController: NSObject {
     private func presentForm(_ content: NSView, focus: @escaping (NSView) -> Void) {
         formSheet.setContent(content)
         formSheetContent = content
+        // The panel is in "form mode": clicks stay with the form.
+        formSheetHost.blocksClicksBelow = true
         syncFormSheetHeight()
         let wasVisible = !formSheet.isHidden
         view.layoutSubtreeIfNeeded()
@@ -1223,6 +1225,8 @@ final class IssueRunnerPanelController: NSObject {
             self.formSheet.isHidden = true
             self.formSheet.setContent(NSView())
             self.formSheetContent = nil
+            // Back to a plain overlay: the list takes clicks again.
+            self.formSheetHost.blocksClicksBelow = false
         })
     }
 

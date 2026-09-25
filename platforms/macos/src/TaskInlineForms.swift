@@ -663,13 +663,6 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
 // MARK: - Form sheet (the surface a form slides up in)
 
 /// The panel's bottom sheet. A form is presented HERE rather than inline in the
-/// list: creating a task is a deliberate act that deserves room, the sheet spans
-/// the whole panel (so the fields are as wide as the panel, not as wide as a
-/// card), and it can be pulled up and dismissed without the list reflowing under
-/// the pointer.
-///
-/// Raised fill + radius 10 + an accent top edge (the "a form is open" signal) —
-
 /// The panel's form sheet. A form is presented HERE rather than inline in the
 /// list: creating a task is a deliberate act that deserves room, the sheet spans
 /// the whole panel (so the fields are as wide as the panel, not as wide as a
@@ -780,29 +773,48 @@ final class TaskFormSheetView: NSView {
 /// animates. This host is transparent, layer-backed and masksToBounds, so the
 /// sheet is only ever visible inside the panel's content area.
 ///
-/// It is transparent AND click-through: a plain NSView would swallow every click
-/// aimed at the list behind it (hitTest returns the view itself), so a hit that
-/// lands on the host rather than on the sheet is passed on.
+/// With no form open the host is transparent AND click-through: a plain NSView
+/// would swallow every click aimed at the list behind it (hitTest returns the view
+/// itself), so a hit that lands on the host rather than on the sheet is passed on.
+///
+/// With a form open the host behaves like a sheet instead and nothing reaches the
+/// list behind it: clicking a task card (or the list background) through an open
+/// form is startling — the form is what you are working in.
 final class TaskFormSheetHostView: NSView {
-
-    /// Fired after every layout: the sheet's height follows its form, which
-    /// depends on the width the form was given.
-    var onLayout: (() -> Void)?
-
-    override func layout() {
-        super.layout()
-        onLayout?()
-    }
 
     /// Where the sheet rests: this far below the TOP of the content area. The
     /// sheet drops down from there, over the list — the bottom of the panel keeps
     /// the status bar and the form's own buttons stay inside the sheet.
     static let restingTop: CGFloat = 8
 
+    /// Fired after every layout: the sheet's height follows its form, which
+    /// depends on the width the form was given.
+    var onLayout: (() -> Void)?
+
+    /// True while a form is on screen.
+    var blocksClicksBelow = false
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+
     override var isOpaque: Bool { false }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        let hit = super.hitTest(point)
-        return hit === self ? nil : hit
+        // A point inside the host but not on one of its controls (the form's own
+        // surroundings) is what this decides about.
+        // (No superview only happens in the headless tests, where the point already
+        // arrives in this view's own coordinates.)
+        let local = superview.map { convert(point, from: $0) } ?? point
+        guard bounds.contains(local) else { return super.hitTest(point) }
+        if let hit = super.hitTest(point), hit !== self { return hit }
+        // No form open: hand the click back to the list behind. Form open: swallow
+        // it, so a task card cannot react through the drawer.
+        return blocksClicksBelow ? self : nil
     }
+
+    /// A click that landed on the host itself (the area around the form) never
+    /// reaches the list behind.
+    override func mouseDown(with event: NSEvent) {}
 }
