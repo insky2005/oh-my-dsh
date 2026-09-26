@@ -1,5 +1,27 @@
 import Foundation
 
+// MARK: - Failure reasons
+
+/// Why a task failed. The raw value IS the L10n key stored in the board and
+/// shown on the card (the panel renders L10n.tr(error)), so a missing entry
+/// surfaces in tests/l10n rather than on screen.
+///
+/// It lives here with the board that persists it: the VIEW layer needs one of
+/// these keys too — a card whose task failed with .notGitRepo offers
+/// 「不切分支并重试」 and must recognize the failure without the runner
+/// (TasksUI.swift).
+enum TaskFailure: String {
+    case interrupted = "tasks.errInterrupted"
+    case notGitRepo = "tasks.errNotGit"
+    case dirtyWorktree = "tasks.errDirtyTree"
+    case checkout = "tasks.errBranch"
+    case pull = "tasks.errPull"
+    case session = "tasks.errSession"
+    case prompt = "tasks.errPrompt"
+    case timeout = "tasks.errTimeout"
+    case noPush = "tasks.errNoPush"
+}
+
 // MARK: - Source & state
 
 /// Where a task came from — drives the source badge on a task card

@@ -299,6 +299,14 @@ struct Queue {
 **非 GitHub 工作区**：手动任务与队列**仍然可用**（不依赖 issue 拉取），PR 相关全部隐藏或置灰；issue 区维持原有空态「当前工作区不是 GitHub 仓库」（文案改为只针对 issue 区）。
 
 > **实现（2026-09-24 修正）**：board 只绑定**工作区目录**，不绑定 GitHub —— `adoptWorkspace(_:)` 对任意已解析的工作区都建立 runner（`<dir>/.dsh/tasks/` 即该工作区的 board），GitHub 远程只是额外点亮 issue 功能；工作区解析为空时才 `clearBoard()`（并在 `app.log` 写 `tasks: no workspace adopted …`）。工具栏右侧显示 `目录名 · 非 GitHub 仓库`，空态文案在非 GitHub 工作区改为「还没有任务：点右上角 + 新建一个…」。**目录不是 git 仓库也能建任务**：队列只要不设分支（留空）就不碰 git；设了分支则在启动时报 `tasks.errNotGit`（原设计里「非 git 目录置灰 +」改为「按钮始终可见，点了给明确说明」）。
+>
+> **实现（2026-09-27 修正 · 非 git 工作区其实跑不了任务）**：上面那句「队列只要不设分支（留空）就不碰 git」在 UI 上**做不到** —— 新建队列表单里「留空」的语义是**按名字派生 `feature/<slug>`**（`QueueComposerModel.effectiveBranchHint`，见 §V2-6），只有**编辑**队列表单里留空才是「不切分支」。于是在非 git 目录里：新建任务 → 加入队列 ▾ → 新建队列…（默认折叠的高级设置里分支字段是空的）→ 队列拿到 `feature/<slug>` → 入队即启动 → 第一个任务以 `tasks.errNotGit` 失败；而卡片上只有「重试」，重试必然同样失败，唯一的出路是用户自己发现「队列设置 → 清空分支 → 重试」这条三步绕路。运行器与 board 从头到尾都支持非 git（`TaskGit.enter` 无分支时返回 `.noBranch`、失败判定里 `.noBranch` 不算失败、无 remote 跳过 push 校验），**卡住的是表单表达不了「不切分支」**。修正三处：
+>
+> 1. **面板记住工作区是不是 git**：`IssueRunnerPanel.workspaceIsGit`（此前 `isGitRepo` 算完只拼进日志）；
+> 2. **表单显式化**：`QueueComposerModel` 新增 `skipsBranch`（不切分支）与 `gitAvailable`，`forWorkspace(git:pr:)` 把新建表单收窄到工作区真能做的事 —— 非 git 目录里**默认就是 不切分支**、`branchValue` 提交显式空串、分支/基于分支字段退出使用、提示写「当前目录不是 git 仓库：队列不会切分支（任务照常运行）」；git 仓库里老行为一字不改（留空 = 派生），但多了一个**创建时就能勾的「不切分支」开关**（此前只有编辑模式能表达，这就是 §V2-6 那个二义性的根）。开关放在「将使用分支：… / 高级设置」那一行上，不新增行高（展开后的队列表单必须仍在 290pt 内）；
+> 3. **失败可救**：`TaskCardModel.clearsBranchOnRetry`（failed + `tasks.errNotGit` + 队列确实有分支）让卡片的「重试」变成**「不切分支并重试」**——点一下先把该队列的分支清掉（`updateQueue(branch: .some(nil))`）再 retry，并把 `tasks.errNotGit` 文案改成说清出路（原文案「无法切分支 / 建会话」是错的：会话一直建得出来）。
+>
+> 回归（`tests/tasks-panel`）：运行器新增「非 git 工作区：无分支队列照常跑完 + 有分支队列报 errNotGit 且不浪费会话」（假 git 全部命令失败）；视图模型新增「非 git 默认不切分支 / git 里派生不变 / 开关压过已填分支 / 编辑不静默丢分支」与「errNotGit 的卡片给一键修好、别的失败不给」；表单视图新增「非 git：开关开着且不可点、字段停用、提示说原因、提交显式空分支」「git：开关可点、勾上后提示改口」。
 
 ### V2-8 卡片式任务清单
 

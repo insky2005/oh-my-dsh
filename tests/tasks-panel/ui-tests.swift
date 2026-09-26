@@ -349,6 +349,80 @@ do {
 }
 
 
+section("非 git 工作区：队列表单不再许下一个兑现不了的分支")
+do {
+    // 创建：目录不是 git 仓库 → 默认就是 不切分支，且提交的是「显式不切分支」，
+    // 不是「留空 = 派生」—— 后者会让队列带着 feature/<slug> 建起来，然后第一个任务
+    // 就以 tasks.errNotGit 失败（这就是那个 bug）。
+    var form = QueueComposerModel.create().forWorkspace(git: false, pr: false)
+    check(form.skipsBranch, "creating in a non-git directory starts as 不切分支")
+    check(!form.gitAvailable, "and the form knows there is no repository")
+    form = form.typed(name: "Docs Cleanup", branch: "", baseBranch: "main", autoPR: false)
+    eq(form.branchValue, "", "the queue is created with an explicit no-branch")
+    eq(form.effectiveBranchHint, "tasks.queue.noBranch", "and the hint says so")
+
+    // 同样的表单在 git 仓库里：老行为一字不改（按名字派生分支）。
+    let inGit = QueueComposerModel.create().forWorkspace(git: true, pr: true)
+        .typed(name: "Docs Cleanup", branch: "", baseBranch: "main", autoPR: false)
+    check(!inGit.skipsBranch, "a git repository keeps deriving a branch")
+    eq(inGit.branchValue, nil, "an empty branch still asks for the derived default")
+    eq(inGit.effectiveBranchHint, "feature/docs-cleanup", "…which is still feature/<slug>")
+
+    // 显式勾选：在 git 仓库里也可以（「就在当前工作区干」），并且压过已填的分支。
+    let skipped = inGit.typed(name: "Docs Cleanup", branch: "feature/docs", baseBranch: "main",
+                              autoPR: false, skippingBranch: true)
+    check(skipped.skipsBranch, "the switch wins over a typed branch")
+    eq(skipped.branchValue, "", "and the queue really gets no branch")
+
+    // 编辑：没有分支的队列打开就是 不切分支…
+    let noBranch = QueueComposerModel.edit(TaskQueue(id: "q-0001", name: "Lane"),
+                                           prAvailable: false, gitAvailable: false)
+    check(noBranch.skipsBranch, "a branchless queue opens on 不切分支")
+    // …而有分支的队列保留自己的分支：打开设置不能悄悄把分支丢掉，
+    // 用户要清掉它是「清空分支字段 / 勾上开关」这个动作。
+    let withBranch = QueueComposerModel.edit(TaskQueue(id: "q-0002", name: "Lane", branch: "feature/lane"),
+                                             prAvailable: true, gitAvailable: false)
+    check(!withBranch.skipsBranch, "an existing branch is not dropped just by opening the form")
+    eq(withBranch.branch, "feature/lane", "it stays visible so the user can clear it")
+}
+
+section("非 git 的失败可以一键修好（卡片上的 不切分支并重试）")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "One", id: "manual-0090aaaa")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Docs Cleanup")      // 派生 feature/docs-cleanup
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    _ = board.markFailed(task.id, error: TaskFailure.notGitRepo.rawValue)
+
+    var card = TaskCardModel.build(board.task(task.id)!, board: board,
+                                   expanded: true, githubRepo: false)
+    check(card.clearsBranchOnRetry, "a branch that cannot be entered is fixable from the card")
+    eq(card.primaryKey, "tasks.detailRetryNoBranch", "so 重试 becomes 不切分支并重试")
+    check(card.canRetry, "and the card still offers the retry")
+
+    // 别的失败没有这个按钮：那些重试就是重试。
+    _ = board.markFailed(task.id, error: TaskFailure.dirtyWorktree.rawValue)
+    card = TaskCardModel.build(board.task(task.id)!, board: board,
+                               expanded: true, githubRepo: false)
+    check(!card.clearsBranchOnRetry, "a dirty worktree is not a branch problem")
+    eq(card.primaryKey, "tasks.detailRetry", "so the plain 重试 stays")
+
+    // 队列本来就没有分支：没有东西可清。
+    var bare = TaskBoard()
+    let bareTask = TaskItem.manual(title: "Two", id: "manual-0091bbbb")
+    bare.tasks = [bareTask]
+    let bareQueue = bare.createQueue(name: "Lane", branch: "")
+    _ = bare.enqueue(taskID: bareTask.id, into: bareQueue.id)
+    bare.markRunning(bareTask.id)
+    _ = bare.markFailed(bareTask.id, error: TaskFailure.notGitRepo.rawValue)
+    let bareCard = TaskCardModel.build(bare.task(bareTask.id)!, board: bare,
+                                       expanded: true, githubRepo: false)
+    check(!bareCard.clearsBranchOnRetry, "nothing to clear when the queue already has no branch")
+    eq(bareCard.primaryKey, "tasks.detailRetry", "the plain retry is the way out there")
+}
+
 section("队列头的三个操作与 PR 可用性")
 do {
     var board = TaskBoard()

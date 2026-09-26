@@ -521,6 +521,10 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
     let baseField: NSTextField
     let baseBox: TaskFieldBox
     let branchHint: NSTextField
+    /// 不切分支 — explicit, so creating a queue in a directory that is not a git
+    /// repository (and any user who simply wants the agent to work in place) can
+    /// say so instead of relying on 「留空」 meaning two different things.
+    let skipBranchSwitch: NSButton
     let prSwitch: NSButton
     let prNote: NSTextField
     let advancedButton: NSButton
@@ -543,6 +547,7 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         baseBox = base.box
         baseField = base.field
         branchHint = TaskFormKit.hintLabel(.secondaryLabelColor)
+        skipBranchSwitch = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         prSwitch = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         prNote = TaskFormKit.hintLabel(.secondaryLabelColor)
         advancedButton = TaskFormKit.linkButton("")
@@ -573,7 +578,27 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         nameField.placeholderString = L10n.tr("tasks.queue.nameHint")
         branchField.placeholderString = model.branchPlaceholder
         baseField.placeholderString = L10n.tr("tasks.queue.baseHint")
-        branchHint.stringValue = L10n.tr("tasks.queue.branchWillUse", model.effectiveBranchHint)
+        // 不切分支 takes the two branch fields out of play — nothing to type while
+        // the queue deliberately leaves git alone.
+        skipBranchSwitch.title = L10n.tr("tasks.queue.skipBranch")
+        skipBranchSwitch.state = model.skipsBranch ? .on : .off
+        // Where there is no repository there is no choice to make: the switch
+        // stays on and dead, with the reason written next to it.
+        skipBranchSwitch.isEnabled = model.gitAvailable
+        branchField.isEnabled = !model.skipsBranch
+        branchBox.alphaValue = model.skipsBranch ? 0.45 : 1
+        baseField.isEnabled = !model.skipsBranch
+        baseBox.alphaValue = model.skipsBranch ? 0.45 : 1
+        // A workspace without git gets the reason instead of a promise the
+        // runner cannot keep (this WAS the whole of the errNotGit bug: a form
+        // that happily derived feature/<slug> for a directory with no repo).
+        if !model.gitAvailable {
+            branchHint.stringValue = L10n.tr("tasks.queue.notGitRepo")
+        } else if model.skipsBranch {
+            branchHint.stringValue = L10n.tr("tasks.queue.branchSkipped")
+        } else {
+            branchHint.stringValue = L10n.tr("tasks.queue.branchWillUse", model.effectiveBranchHint)
+        }
         advancedButton.title = L10n.tr("tasks.queue.advanced") + (model.showsAdvanced ? "  ▴" : "  ▾")
         advancedStack.isHidden = !model.showsAdvanced
         // A PR switch that cannot be switched is worse than a sentence: the
@@ -602,8 +627,12 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         branchHint.textColor = .tertiaryLabelColor
         _ = TaskFormKit.requiredHeight(branchHint)
         _ = TaskFormKit.requiredHeight(prNote)
-        prSwitch.font = .systemFont(ofSize: 12)
-        prSwitch.translatesAutoresizingMaskIntoConstraints = false
+        for toggle in [skipBranchSwitch, prSwitch] {
+            toggle.font = .systemFont(ofSize: 12)
+            toggle.translatesAutoresizingMaskIntoConstraints = false
+        }
+        skipBranchSwitch.target = self
+        skipBranchSwitch.action = #selector(skipBranchTapped)
         closeButton.onAction = { [weak self] in self?.onCancel?() }
         advancedButton.target = self
         advancedButton.action = #selector(advancedTapped)
@@ -623,7 +652,11 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         let hintSpacer = NSView()
         hintSpacer.translatesAutoresizingMaskIntoConstraints = false
         hintSpacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
-        let hintRow = NSStackView(views: [branchHint, hintSpacer, advancedButton])
+        // 不切分支 sits on the hint line, next to the branch it is about and next
+        // to the way into the fields that set it: a policy switch, not a field,
+        // and one more stacked row would push the expanded form past the height
+        // a panel content area can show without scrolling.
+        let hintRow = NSStackView(views: [branchHint, hintSpacer, skipBranchSwitch, advancedButton])
         hintRow.orientation = .horizontal
         hintRow.alignment = .centerY
         hintRow.spacing = 6
@@ -660,7 +693,15 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         model.typed(name: nameField.stringValue,
                     branch: branchField.stringValue,
                     baseBranch: baseField.stringValue,
-                    autoPR: prSwitch.state == .on)
+                    autoPR: prSwitch.state == .on,
+                    skippingBranch: skipBranchSwitch.state == .on)
+    }
+
+    /// 不切分支 toggled: the fields follow it, and the hint stops promising a
+    /// branch (the queue will not touch git at all). Internal so the headless
+    /// form tests can flip it.
+    @objc func skipBranchTapped() {
+        apply(currentDraft)
     }
 
     @objc private func advancedTapped() {

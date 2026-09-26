@@ -1,22 +1,5 @@
 import Foundation
 
-// MARK: - Failure reasons
-
-/// Why a task failed. The raw value IS the L10n key stored in the board and
-/// shown on the card (the panel renders L10n.tr(error)), so a missing entry
-/// surfaces in tests/l10n rather than on screen.
-enum TaskFailure: String {
-    case interrupted = "tasks.errInterrupted"
-    case notGitRepo = "tasks.errNotGit"
-    case dirtyWorktree = "tasks.errDirtyTree"
-    case checkout = "tasks.errBranch"
-    case pull = "tasks.errPull"
-    case session = "tasks.errSession"
-    case prompt = "tasks.errPrompt"
-    case timeout = "tasks.errTimeout"
-    case noPush = "tasks.errNoPush"
-}
-
 // MARK: - git
 
 /// Where entering a queue's branch ended up.

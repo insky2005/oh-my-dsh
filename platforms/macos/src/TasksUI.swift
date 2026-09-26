@@ -31,6 +31,11 @@ struct TaskCardModel: Equatable {
 
     var primaryKey: String
     var primaryEnabled: Bool
+    /// The task failed because its queue asked for a branch in a directory that
+    /// is not a git repository. That failure is fixable in one click — drop the
+    /// queue's branch and run again — so the card's primary action does exactly
+    /// that instead of offering a 重试 that would fail the same way.
+    var clearsBranchOnRetry: Bool
     var canQueue: Bool
     var canDequeue: Bool
     var canCancel: Bool
@@ -102,6 +107,13 @@ struct TaskCardModel: Equatable {
             detailLines.append(body)
         }
 
+        // A queue branch that cannot be entered (the directory is not a git
+        // repository) is the ONE failure the card can fix by itself, so it is
+        // recognized here and not left to the panel's own state.
+        let clearsBranchOnRetry = task.state == .failed
+            && task.error == TaskFailure.notGitRepo.rawValue
+            && queue?.branch != nil
+
         var primaryKey = "tasks.detailProcess"
         var primaryEnabled = true
         var canQueue = false
@@ -127,7 +139,7 @@ struct TaskCardModel: Equatable {
             primaryKey = "tasks.detailOpenPR"
             primaryEnabled = task.prUrl != nil
         case .failed, .cancelled:
-            primaryKey = "tasks.detailRetry"
+            primaryKey = clearsBranchOnRetry ? "tasks.detailRetryNoBranch" : "tasks.detailRetry"
             canRetry = true
         case .closed:
             primaryKey = "tasks.detailOpenIssue"
@@ -143,6 +155,7 @@ struct TaskCardModel: Equatable {
                              detail: detailLines.joined(separator: "\n"),
                              primaryKey: primaryKey,
                              primaryEnabled: primaryEnabled,
+                             clearsBranchOnRetry: clearsBranchOnRetry,
                              canQueue: canQueue,
                              canDequeue: canDequeue,
                              canCancel: canCancel,
@@ -450,13 +463,26 @@ struct QueueComposerModel: Equatable {
     var mode: Mode
     var name: String
     /// What the user typed. Empty means 自动生成 while creating, and 不切分支
-    /// while editing — the two hints differ, see effectiveBranchHint.
+    /// while editing — the two hints differ, see effectiveBranchHint. The two
+    /// are not symmetrical on purpose: creating a queue in a git repository is
+    /// the common case and it wants a branch, while clearing the field of an
+    /// existing queue is the only way to say "run where it is".
     var branch: String
     var baseBranch: String
     var autoPR: Bool
+    /// 不切分支: the queue leaves git alone and its tasks run wherever the
+    /// worktree already is. Explicit, so 「留空」 no longer has to carry two
+    /// meanings — the old shape could not express "no branch" while creating,
+    /// which made every queue created in a non-git directory fail with
+    /// tasks.errNotGit (docs/issue-runner-design.md §V2-7).
+    var skipsBranch: Bool
     /// Whether GitHub is available in this workspace. Without it the form does
     /// not offer a PR switch at all (a dead checkbox is worse than a sentence).
     var prAvailable: Bool
+    /// Whether the workspace is a git repository at all. Without one the branch
+    /// fields are taken away and the form says why, instead of promising a
+    /// branch switch the runner can only fail on.
+    var gitAvailable: Bool
     /// Whether the 高级设置 section (分支 / 基于分支 / PR 开关) is open. The branch
     /// is derived from the name, so creating a queue only asks for a name; editing
     /// a queue's settings opens everything, because that is what the user came for.
@@ -481,6 +507,7 @@ struct QueueComposerModel: Equatable {
     /// slug at all). Editing takes an empty field literally — the queue stops
     /// switching branches and its tasks run wherever the worktree already is.
     var effectiveBranchHint: String {
+        if skipsBranch { return L10n.tr("tasks.queue.noBranch") }
         let typed = branch.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.isEmpty { return typed }
         guard mode.isCreate else { return L10n.tr("tasks.queue.noBranch") }
@@ -497,8 +524,10 @@ struct QueueComposerModel: Equatable {
         return "tasks.errQueueName"
     }
 
-    /// nil = derive the default from the name; "" = do not switch branches.
+    /// nil = derive the default from the name; "" = do not switch branches
+    /// (the board reads the empty string as nil — see TaskBoard.createQueue).
     var branchValue: String? {
+        if skipsBranch { return "" }
         let value = branch.trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
     }
@@ -508,12 +537,16 @@ struct QueueComposerModel: Equatable {
         return value.isEmpty ? "main" : value
     }
 
-    func typed(name: String, branch: String, baseBranch: String, autoPR: Bool) -> QueueComposerModel {
+    func typed(name: String, branch: String, baseBranch: String, autoPR: Bool,
+               skippingBranch: Bool? = nil) -> QueueComposerModel {
         var copy = self
         copy.name = name
         copy.branch = branch
         copy.baseBranch = baseBranch
         copy.autoPR = autoPR
+        // nil = the caller does not own this switch (the headless models that
+        // only drive the text fields); the view always passes it.
+        if let skippingBranch = skippingBranch { copy.skipsBranch = skippingBranch }
         return copy
     }
 
@@ -521,6 +554,9 @@ struct QueueComposerModel: Equatable {
     /// things here, so they say different things — the old single line ("留空 =
     /// 自动生成（不带分支则不切分支）") mixed both and read as a contradiction.
     var branchPlaceholder: String {
+        // 不切分支 already says what the field would hold: the two placeholders
+        // differ by mode, and the "no branch" state is the same in both.
+        if skipsBranch { return L10n.tr("tasks.queue.branchPlaceholderEdit") }
         let typed = branch.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.isEmpty { return typed }
         guard mode.isCreate else { return L10n.tr("tasks.queue.branchPlaceholderEdit") }
@@ -541,10 +577,13 @@ struct QueueComposerModel: Equatable {
         return copy
     }
 
-    /// 新建队列 (standalone, no task to join).
+    /// 新建队列 (standalone, no task to join). Defaults describe a git
+    /// repository that cannot open a PR; forWorkspace(git:pr:) narrows them to
+    /// the workspace the form is really being filled in for.
     static func create() -> QueueComposerModel {
         QueueComposerModel(mode: .create(taskID: nil), name: "", branch: "", baseBranch: "main",
-                           autoPR: false, prAvailable: false, showsAdvanced: false, attempted: false)
+                           autoPR: false, skipsBranch: false, prAvailable: false,
+                           gitAvailable: true, showsAdvanced: false, attempted: false)
     }
 
     /// 新建队列 from a task's 加入队列 ▾ menu: the new queue takes the task.
@@ -555,11 +594,32 @@ struct QueueComposerModel: Equatable {
     }
 
     /// The queue's settings, prefilled — with 高级设置 already open: editing a
-    /// queue IS editing its branch and PR switch.
-    static func edit(_ queue: TaskQueue, prAvailable: Bool) -> QueueComposerModel {
+    /// queue IS editing its branch and PR switch. A queue with no branch opens
+    /// on 不切分支, which is what its cards are already doing.
+    static func edit(_ queue: TaskQueue, prAvailable: Bool,
+                     gitAvailable: Bool = true) -> QueueComposerModel {
         QueueComposerModel(mode: .edit(queueID: queue.id), name: queue.name,
                            branch: queue.branch ?? "", baseBranch: queue.baseBranch,
-                           autoPR: queue.autoPR, prAvailable: prAvailable,
+                           autoPR: queue.autoPR, skipsBranch: queue.branch == nil,
+                           prAvailable: prAvailable, gitAvailable: gitAvailable,
                            showsAdvanced: true, attempted: false)
+    }
+
+    /// Narrow the form to what THIS workspace can actually do.
+    ///
+    /// A directory that is not a git repository cannot switch branches at all,
+    /// so a queue created there starts as 不切分支 — a queue that asks for a
+    /// branch would be created happily and then fail its first task with
+    /// tasks.errNotGit. Editing is left alone: an existing queue keeps its
+    /// branch visible (and clearable) rather than having it silently dropped.
+    func forWorkspace(git: Bool, pr: Bool) -> QueueComposerModel {
+        var copy = self
+        copy.gitAvailable = git
+        copy.prAvailable = pr
+        if !git, mode.isCreate {
+            copy.skipsBranch = true
+            copy.branch = ""
+        }
+        return copy
     }
 }

@@ -86,6 +86,11 @@ final class IssueRunnerPanelController: NSObject {
     private var runner: TasksRunner?
     private var repo: (owner: String, repo: String)?
     private var repoRootPath: String?
+    /// Whether the adopted workspace is a git repository at all. The runner does
+    /// not need it (a branchless queue never touches git), but the FORMS do:
+    /// a queue created in a non-git directory must not be handed a branch it
+    /// can never check out (docs/issue-runner-design.md §V2-7).
+    private var workspaceIsGit = true
     /// Which directory the current board was loaded from (a repo switch — or a
     /// switch to a non-GitHub workspace — must reload it).
     private var boardPath: String?
@@ -597,8 +602,8 @@ final class IssueRunnerPanelController: NSObject {
         repo = detected
         repoRootPath = path
         let github = detected.map { $0.owner + "/" + $0.repo } ?? "-"
-        let git = Self.isGitRepo(path) ? "yes" : "no"
-        AppLog.shared.log("tasks: workspace adopted at \(path) (github=\(github) git=\(git))")
+        workspaceIsGit = Self.isGitRepo(path)
+        AppLog.shared.log("tasks: workspace adopted at \(path) (github=\(github) git=\(workspaceIsGit ? "yes" : "no"))")
         updateLabels()
         if !sameBoard { setupRunner(repoRoot: path) }
         reloadIssues()
@@ -1283,7 +1288,9 @@ final class IssueRunnerPanelController: NSObject {
         let card = TaskCardView(model: model)
         let taskID = task.id
         card.onToggle = { [weak self] in self?.toggleTask(taskID) }
-        card.onPrimary = { [weak self] in self?.primaryAction(task) }
+        card.onPrimary = { [weak self] in
+            self?.primaryAction(task, clearsBranch: model.clearsBranchOnRetry)
+        }
         card.onQueue = { [weak self] anchor in
             self?.presentQueuePicker(for: taskID, from: anchor)
         }
@@ -1333,7 +1340,9 @@ final class IssueRunnerPanelController: NSObject {
 
     // MARK: - Card actions (all state changes go through the runner)
 
-    private func primaryAction(_ task: TaskItem) {
+    /// The card's primary action. `clearsBranch` comes from the card model: it is
+    /// true only for the one failure the card can repair itself.
+    private func primaryAction(_ task: TaskItem, clearsBranch: Bool = false) {
         guard let runner = runner else { return }
         switch task.state {
         case .pending:
@@ -1348,9 +1357,24 @@ final class IssueRunnerPanelController: NSObject {
         case .closed:
             openIssue(number: task.number ?? 0)
         case .failed, .cancelled:
+            if clearsBranch { dropQueueBranch(for: task) }
             _ = runner.retry(taskID: task.id)
         }
         syncFromBoard()
+    }
+
+    /// 不切分支并重试: the task failed with tasks.errNotGit — its queue asked for
+    /// a branch in a directory that is not a git repository. Clearing the queue's
+    /// branch IS the fix, and offering it here turns a dead end (重试 fails
+    /// identically) into one click, instead of the three-step detour through
+    /// 队列设置.
+    private func dropQueueBranch(for task: TaskItem) {
+        guard let runner = runner, let queueID = task.queueId else { return }
+        let name = runner.board.queue(queueID)?.name ?? ""
+        guard runner.updateQueue(queueID, branch: .some(nil)) else { return }
+        AppLog.shared.log("tasks: queue " + queueID + " set to 不切分支 to recover " + task.id)
+        setStatus(L10n.tr("tasks.queue.branchDropped", name), spin: false)
+        autoHideStatus(after: 5)
     }
 
     private func openIssue(number: Int) {
@@ -1511,14 +1535,16 @@ final class IssueRunnerPanelController: NSObject {
         taskComposer = nil
         switch mode {
         case .create(let taskID):
-            var model = taskID.map { QueueComposerModel.create(taskID: $0) } ?? QueueComposerModel.create()
-            model.prAvailable = repo != nil
-            // The PR switch is only pre-armed where the repo can carry one.
+            let base = taskID.map { QueueComposerModel.create(taskID: $0) } ?? QueueComposerModel.create()
+            // The PR switch is only pre-armed where the repo can carry one, and
+            // 不切分支 is decided by the workspace having no repo to switch in.
+            var model = base.forWorkspace(git: workspaceIsGit, pr: repo != nil)
             model.autoPR = false
             showQueueForm(model)
         case .edit(let queueID):
             guard let queue = runner.board.queue(queueID) else { return }
-            showQueueForm(QueueComposerModel.edit(queue, prAvailable: repo != nil))
+            showQueueForm(QueueComposerModel.edit(queue, prAvailable: repo != nil,
+                                                  gitAvailable: workspaceIsGit))
         }
     }
 

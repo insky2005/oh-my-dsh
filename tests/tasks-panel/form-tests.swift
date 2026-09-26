@@ -213,6 +213,62 @@ do {
     eq(submitted?.normalizedBaseBranch, "main", "the base branch survives")
 }
 
+section("非 git 工作区：新建队列表单直接说清「不切分支」")
+do {
+    // 目录不是 git 仓库：开关自己就是开的、且不可点（那是事实，不是选项），提示说明原因，
+    // 分支字段退出使用 —— 提交出来的是一个「显式不带分支」的队列，不是注定失败的队列。
+    var submitted: QueueComposerModel?
+    let model = QueueComposerModel.create(taskID: "manual-0034aaaa")
+        .forWorkspace(git: false, pr: false)
+    let form = QueueComposerView(model: model)
+    form.onSubmit = { submitted = $0 }
+    _ = layout(form, width: 320)
+
+    eq(form.skipBranchSwitch.state, .on, "没有仓库时开关就是开着的")
+    check(!form.skipBranchSwitch.isEnabled, "而且不可点：这里没有可选项")
+    eq(form.branchHint.stringValue, "notGitRepo", "提示说的是原因，不是承诺")
+    check(!form.branchField.isEnabled, "分支字段退出使用")
+    check(!form.baseField.isEnabled, "基于分支也是")
+    eq(form.branchField.placeholderString, "branchPlaceholderEdit",
+       "字段里写的是「不切分支」，不是「留空 = 自动生成」")
+
+    form.nameField.stringValue = "Docs Cleanup"
+    form.controlTextDidChange(typed(form.nameField))
+    form.submitTapped()
+    eq(submitted?.branchValue, "", "建出来的队列显式不带分支")
+    eq(submitted?.skipsBranch, true, "模型也这么说")
+
+    // 同样的表单在 git 仓库里：开关是一个真选项，默认关着，提示照旧给派生分支。
+    let gitForm = QueueComposerView(model: QueueComposerModel.create()
+        .forWorkspace(git: true, pr: true)
+        .typed(name: "Docs Cleanup", branch: "", baseBranch: "main", autoPR: false))
+    _ = layout(gitForm, width: 320)
+    check(gitForm.skipBranchSwitch.isEnabled, "git 仓库里这个开关是能点的")
+    eq(gitForm.skipBranchSwitch.state, .off, "默认不勾")
+    eq(gitForm.branchHint.stringValue, "branchWillUse(feature/docs-cleanup)", "照旧派生分支")
+    check(gitForm.branchField.isEnabled, "分支字段是活的")
+
+    // 勾上之后：字段静下来，提示不再承诺分支，提交就是「不切分支」。
+    var flipped: QueueComposerModel?
+    gitForm.onSubmit = { flipped = $0 }
+    gitForm.skipBranchSwitch.state = .on
+    gitForm.skipBranchTapped()
+    eq(gitForm.branchHint.stringValue, "branchSkipped", "勾上后提示改口")
+    check(!gitForm.branchField.isEnabled, "字段跟着静下来")
+    gitForm.submitTapped()
+    eq(flipped?.branchValue, "", "提交的也是不切分支")
+
+    // 开关住在「提示 / 高级设置」那一行上：最小面板宽度下这一行不得撑破表单
+    // （提示文字自己截断，开关与高级设置都得留在表单里面）。
+    let narrow = QueueComposerView(model: QueueComposerModel.create().forWorkspace(git: true, pr: true))
+    _ = layout(narrow, width: 300)
+    check(narrow.skipBranchSwitch.frame.width > 0, "开关有自己的宽度")
+    check(narrow.skipBranchSwitch.frame.maxX <= narrow.bounds.width,
+          "窄面板下开关不越出表单（(narrow.skipBranchSwitch.frame.maxX) > (narrow.bounds.width)）")
+    check(narrow.advancedButton.frame.maxX <= narrow.bounds.width,
+          "高级设置按钮也还在表单里")
+}
+
 // MARK: - Cards
 
 section("card and queue header layout")

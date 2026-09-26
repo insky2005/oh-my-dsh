@@ -26,6 +26,9 @@ func section(_ name: String) { print("--- \(name) ---") }
 // MARK: - Scripted git
 
 final class FakeRepo {
+    /// false = the directory is not a git repository: EVERY command fails, which
+    /// is exactly what /usr/bin/git does outside a work tree (exit 128).
+    var isRepo = true
     var current = "main"
     var worktreeClean = true
     var remote: String? = "origin"
@@ -43,6 +46,7 @@ final class FakeRepo {
     private func run(_ args: [String]) -> String? {
         let key = args.joined(separator: " ")
         calls.append(key)
+        if !isRepo { return nil }
         if failing.contains(key) { return nil }
         guard let first = args.first else { return nil }
         switch first {
@@ -132,7 +136,9 @@ final class Harness {
 
     init(board: TaskBoard,
          github: Bool = true,
+         gitRepo: Bool = true,
          timeout: TimeInterval = 30 * 60) {
+        repo.isRepo = gitRepo
         let repo = self.repo
         let dsh = self.dsh
         let rec = self.rec
@@ -225,6 +231,33 @@ do {
     check(h.runner.step() == false, "the task finishes without a push check")
     check(h.board.task(taskID)?.state == .done, "the task is done")
     check(h.rec.prCalls.isEmpty, "no PR without a branch")
+}
+
+section("non-git workspace: a branchless queue runs, a queue with a branch reports it")
+do {
+    // The directory is not a git repository at all: every git command fails.
+    // A queue that does not ask for a branch must still run its tasks — the
+    // session is created in the directory, git is simply never involved.
+    let (board, taskID, queueID) = singleTaskBoard(branch: "")
+    check(board.queue(queueID)?.branch == nil, "the queue asks for no branch")
+    let h = Harness(board: board, github: false, gitRepo: false)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    check(h.repo.calls.isEmpty, "no git command ran")
+    check(h.board.task(taskID)?.state == .running, "the task started anyway")
+    h.dsh.finishAll()
+    check(h.runner.step() == false, "it finishes without a push check")
+    check(h.board.task(taskID)?.state == .done, "the task is done in a non-git directory")
+    check(h.dsh.prompts["session-1"] != nil, "the agent was prompted with the task")
+
+    // The same directory with a queue that DOES ask for a branch: the only
+    // failure is the branch step, and the board says which one it was.
+    let (board2, task2, queueID2) = singleTaskBoard(branch: "feature/docs")
+    let h2 = Harness(board: board2, github: false, gitRepo: false)
+    _ = h2.runner.enqueue(taskID: task2, into: queueID2)
+    check(h2.board.task(task2)?.state == .failed, "a queue branch cannot be entered there")
+    eq(h2.board.task(task2)?.error, "tasks.errNotGit", "and the reason is the git one")
+    check(h2.dsh.sessions.isEmpty, "no session was wasted on it")
+    check(h2.rec.logged("tasks.errNotGit"), "the failure is in the log")
 }
 
 // MARK: - A queue shares one branch
