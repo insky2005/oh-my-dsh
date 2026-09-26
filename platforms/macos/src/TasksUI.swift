@@ -192,8 +192,20 @@ struct QueueHeaderModel: Equatable {
     var autoPR: Bool
     var isAutoCreated: Bool
     var prUrl: String?
+    /// Whether this workspace can carry a PR at all (it has a GitHub remote).
+    /// False hides the 自动开 PR switch — a dead control is worse than no control
+    /// (the queue form's switch obeys the same rule).
+    var prAvailable: Bool
 
-    static func build(_ queue: TaskQueue, board: TaskBoard, collapsed: Bool) -> QueueHeaderModel {
+    /// The 自动开 PR toggle is shown while PRs are possible; a queue that already
+    /// HAS autoPR on keeps showing it (disabled, explained) even in a workspace
+    /// that can no longer open one, so its state is never hidden.
+    var showsAutoPRToggle: Bool { prAvailable || autoPR }
+    /// …and it is only clickable where a PR is possible.
+    var autoPREnabled: Bool { prAvailable }
+
+    static func build(_ queue: TaskQueue, board: TaskBoard, collapsed: Bool,
+                      prAvailable: Bool = true) -> QueueHeaderModel {
         let tasks = queue.taskIds.compactMap { board.task($0) }
         let doneCount = tasks.filter { $0.state == .done }.count
         let failedCount = tasks.filter { $0.state == .failed }.count
@@ -227,11 +239,12 @@ struct QueueHeaderModel: Equatable {
                                 totalCount: tasks.count,
                                 canStart: queuedCount > 0 && queue.state != .active,
                                 canPause: queue.state == .active,
-                                canOpenPR: queue.autoPR && queue.prUrl == nil
+                                canOpenPR: prAvailable && queue.autoPR && queue.prUrl == nil
                                     && queue.state == .done && queue.branch != nil,
                                 autoPR: queue.autoPR,
                                 isAutoCreated: queue.autoCreated,
-                                prUrl: queue.prUrl)
+                                prUrl: queue.prUrl,
+                                prAvailable: prAvailable)
     }
 }
 

@@ -1286,7 +1286,10 @@ final class IssueRunnerPanelController: NSObject {
     }
 
     private func queueHeader(_ queue: TaskQueue, board: TaskBoard, cardCount: Int) -> TaskQueueHeaderView {
-        let model = QueueHeaderModel.build(queue, board: board, collapsed: !isQueueExpanded(queue))
+        // prAvailable: the queue's PR switch/toggle only exists where a PR can
+        // exist (the same rule the queue form follows).
+        let model = QueueHeaderModel.build(queue, board: board, collapsed: !isQueueExpanded(queue),
+                                           prAvailable: repo != nil)
         let header = TaskQueueHeaderView(model: model)
         let queueID = queue.id
         header.onToggle = { [weak self] in self?.toggleQueue(queueID) }

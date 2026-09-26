@@ -328,6 +328,11 @@ final class CustomIconButton: NSView {
     var hoverColor: NSColor? = nil {
         didSet { needsDisplay = true }
     }
+    /// 常驻的图标颜色：留给「开/关」型按钮（任务的「完成后自动开 PR」开着时用强调色）
+    /// —— nil 时沿用默认的黑/白图标色，等价于此前所有按钮的行为。
+    var tintColor: NSColor? = nil {
+        didSet { needsDisplay = true }
+    }
     private let glyph: Glyph
     private let size: CGFloat
     private var isHovered = false
@@ -384,7 +389,7 @@ final class CustomIconButton: NSView {
             NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 5, yRadius: 5).fill()
         }
         let base: NSColor = dark ? NSColor(white: 0.9, alpha: 1) : NSColor(white: 0.25, alpha: 1)
-        let color = isEnabled ? base : base.withAlphaComponent(0.35)
+        let color = isEnabled ? (tintColor ?? base) : base.withAlphaComponent(0.35)
 
         // SF Symbol glyphs render via a tinted system image (crisp, obvious).
         if case .symbol(let name) = glyph {

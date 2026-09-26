@@ -349,6 +349,47 @@ do {
 }
 
 
+section("队列头的三个操作与 PR 可用性")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "One", id: "manual-0080aaaa")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+
+    // GitHub 工作区：自动开 PR 的开关可用。
+    var header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                        prAvailable: true)
+    check(header.prAvailable, "a GitHub workspace can carry a PR")
+    check(header.showsAutoPRToggle, "so the 自动开 PR toggle is shown")
+    check(header.autoPREnabled, "and it is clickable")
+
+    // 非 GitHub 工作区：没有 PR 这回事 —— 开关整块不出现（不是点了没反应的死按钮）。
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: false)
+    check(!header.prAvailable, "a non-GitHub workspace cannot carry a PR")
+    check(!header.showsAutoPRToggle, "so the switch disappears instead of sitting there dead")
+    check(!header.autoPREnabled, "and it is not clickable")
+
+    // 已经是「自动开 PR」的队列（在 GitHub 工作区建的）换了工作区后：开关还在（状态不能被藏起来），
+    // 但不可点，tooltip 说明原因。
+    if let i = board.index(ofQueue: queue.id) { board.queues[i].autoPR = true }
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: false)
+    check(header.autoPR, "the queue still knows its switch is on")
+    check(header.showsAutoPRToggle, "so the toggle stays visible")
+    check(!header.autoPREnabled, "but it cannot be flipped where no PR can be opened")
+
+    // 完成 + autoPR + 有分支时才给「打开 PR」；没有 GitHub 就不给。
+    board.markRunning(task.id)
+    board.markDone(task.id, prUrl: nil)
+    var ready = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                       prAvailable: true)
+    check(ready.canOpenPR, "a finished queue with autoPR offers 打开 PR")
+    ready = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                   prAvailable: false)
+    check(!ready.canOpenPR, "…but never in a workspace without GitHub")
+}
 section("加入队列 dropdown: 新建队列 first")
 do {
     var board = TaskBoard()

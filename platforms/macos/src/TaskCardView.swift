@@ -595,7 +595,25 @@ final class TaskQueueHeaderView: NSView {
             link.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             trailing.append(link)
         }
-        trailing.append(iconButton("ellipsis", tooltipKey: "tasks.queue.more", action: #selector(moreTapped)))
+        // 自动开 PR / 队列设置 / 删除队列 were hidden behind a ⋯ menu; they are
+        // their own icon buttons now (the audit panel's blocks have no overflow
+        // menu either — every action is on the row). The PR toggle keeps its state
+        // visible: accent while on, and it disappears entirely in a workspace that
+        // cannot carry a PR (unless it is already on, then it says why).
+        if model.showsAutoPRToggle {
+            let toggle = iconButton(model.autoPR ? "checkmark.circle.fill" : "circle",
+                                    tooltipKey: model.autoPREnabled
+                                        ? (model.autoPR ? "tasks.queue.autoPROn" : "tasks.queue.autoPROff")
+                                        : "tasks.queue.prUnavailable",
+                                    action: #selector(togglePRTapped))
+            toggle.tintColor = model.autoPR ? .controlAccentColor : nil
+            toggle.isEnabled = model.autoPREnabled
+            trailing.append(toggle)
+        }
+        trailing.append(iconButton("gearshape", tooltipKey: "tasks.queue.settings",
+                                   action: #selector(settingsTapped)))
+        trailing.append(iconButton("trash", tooltipKey: "tasks.queue.delete",
+                                   action: #selector(deleteTapped)))
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -684,22 +702,6 @@ final class TaskQueueHeaderView: NSView {
     @objc private func startTapped() { onStart?() }
     @objc private func pauseTapped() { onPause?() }
     @objc private func openPRTapped() { onOpenPR?() }
-
-    /// The overflow menu: the queue's own settings (inline form), the PR switch
-    /// and delete.
-    @objc private func moreTapped() {
-        let menu = NSMenu()
-        menu.addItem(withTitle: L10n.tr("tasks.queue.settings"),
-                     action: #selector(settingsTapped), keyEquivalent: "").target = self
-        let prItem = menu.addItem(withTitle: L10n.tr("tasks.queue.autoPR"),
-                                  action: #selector(togglePRTapped), keyEquivalent: "")
-        prItem.target = self
-        prItem.state = model.autoPR ? .on : .off
-        menu.addItem(.separator())
-        menu.addItem(withTitle: L10n.tr("tasks.queue.delete"),
-                     action: #selector(deleteTapped), keyEquivalent: "").target = self
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.height), in: self)
-    }
 
     @objc private func settingsTapped() { onSettings?() }
     @objc private func togglePRTapped() { onTogglePR?() }

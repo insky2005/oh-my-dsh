@@ -376,6 +376,17 @@ struct Queue {
 
 回归：`tests/tasks-panel` 视图阶段断言「手动未入队卡片只有一个下拉控件、文案是 加入队列、onShowMenu 把按钮自己交给面板」与「已入队卡片的主操作是普通 NSButton、没有下拉」；视图模型阶段断言下拉顺序（新建队列第一 / 已有队列按创建顺序 / 空 board 只有一项）。
 
+### V2-7c 队列头：三个操作从 ⋯ 里放出来（2026-09-26）
+
+队列头此前把 **队列设置 / 完成后自动开 PR / 删除队列** 藏在一个 `⋯` 里，而且那个菜单在**非 GitHub 工作区**照样给出「完成后自动创建 PR」并可点 —— 建了也开不出 PR（队列表单里的 PR 开关本来就是「不是 GitHub 仓库就整块隐藏」，两处规则不一致）。
+
+- **三个操作各自成为行上的图标按钮**（顺序：开始/暂停 · 打开 PR · 自动开 PR · 设置 · 删除）：`gearshape` = 队列设置（内联表单）、`trash` = 删除队列（仍走确认框）、自动开 PR 是 `checkmark.circle.fill`（开，强调色）/ `circle`（关）。`⋯` 与其菜单整体删除，`tasks.queue.more` 文案键一并删掉 —— 审计面板的方块也没有溢出菜单，操作一律摆在行上；
+- **自动开 PR 的可用性跟着工作区走**：`QueueHeaderModel.prAvailable`（= 面板的 `repo != nil`，与队列表单同一个判据）。不可用时：**还没开**的队列整块不显示开关（死按钮比没有更糟）；**已经开着**的队列（在别的 GitHub 工作区建的）仍然显示，但**不可点**，tooltip 指向 `tasks.queue.prUnavailable` 说明原因 —— 状态不会被藏起来。`canOpenPR` 同样要求 `prAvailable`，非 GitHub 工作区不会再出现「打开 PR」；
+- 开关的"开着"用**常驻图标色**表达：`CustomIconButton` 新增 `tintColor: NSColor?`（nil = 原行为），开着时给 `controlAccentColor`；
+- tooltip 文案随之改成状态式：`tasks.queue.autoPROn`（已开启，点一下关闭）/ `tasks.queue.autoPROff`（已关闭，点一下开启）；`tasks.queue.settings` / `tasks.queue.delete` 从菜单标题改成 tooltip 措辞（去掉省略号）。
+
+回归：视图模型断言 `prAvailable` 三态（可点 / 不显示 / 显示但不可点）与 `canOpenPR` 的门槛；视图断言行上有 `gearshape` + `trash`、没有 `ellipsis`、开关图标随状态切换、非 GitHub 时开关不出现（已开则禁用），以及**面板最小宽度 300pt 下所有按钮仍在行内、队列名仍可用**。
+
 ### V2-8a 队列总览与计数
 
 「有几个队列、每个队列什么状态、队列下哪些任务什么状态」由三层一起回答：

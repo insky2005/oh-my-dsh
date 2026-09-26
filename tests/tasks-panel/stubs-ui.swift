@@ -38,6 +38,8 @@ final class CustomIconButton: NSView {
     var onAction: (() -> Void)?
     var isEnabled = true
     var hoverColor: NSColor?
+    /// 常驻图标色（真实控件里用来表示「开/关」；开关型按钮开着时是强调色）。
+    var tintColor: NSColor?
     let glyph: Glyph
 
     init(glyph: Glyph, tooltip: String, size: CGFloat = 26) {

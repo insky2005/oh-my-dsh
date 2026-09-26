@@ -467,6 +467,91 @@ do {
     check(descendants(queuedCard, of: NSButton.self).contains { $0.title == "remove" },
           "…and that button is a real NSButton")
 }
+
+section("队列头：三个操作都在明面上（不再藏在 更多 里）")
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "One", id: "manual-0090aaaa")
+    board.tasks = [t1]
+    let queue = board.createQueue(name: "Lane", autoPR: true)
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+
+    func setAutoPR(_ value: Bool) {
+        if let i = board.index(ofQueue: queue.id) { board.queues[i].autoPR = value }
+    }
+
+    func headerGlyphs(prAvailable: Bool, autoPR: Bool) -> [String] {
+        setAutoPR(autoPR)
+        let model = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                           prAvailable: prAvailable)
+        let header = TaskQueueHeaderView(model: model)
+        _ = layout(header, width: 360)
+        return descendants(header, of: CustomIconButton.self).compactMap {
+            if case .symbol(let name) = $0.glyph { return name }
+            return nil
+        }
+    }
+
+    // GitHub 工作区、自动开 PR 开着：设置 / 删除 / PR 开关三个图标按钮都在行上。
+    let on = headerGlyphs(prAvailable: true, autoPR: true)
+    check(on.contains("gearshape"), "队列设置有了自己的图标按钮")
+    check(on.contains("trash"), "删除队列也有了")
+    check(on.contains("checkmark.circle.fill"), "自动开 PR 开着时是实心对勾")
+    check(!on.contains("ellipsis"), "⋯ 更多菜单没有了")
+
+    let off = headerGlyphs(prAvailable: true, autoPR: false)
+    check(off.contains("circle"), "自动开 PR 关着时是空心圆")
+    check(!off.contains("checkmark.circle.fill"), "不再是实心对勾")
+
+    // 非 GitHub 工作区：开关不出现（不是点了没反应的死按钮）。
+    let noRepo = headerGlyphs(prAvailable: false, autoPR: false)
+    check(!noRepo.contains("circle") && !noRepo.contains("checkmark.circle.fill"),
+          "没有 GitHub 就不显示 PR 开关")
+    check(noRepo.contains("gearshape") && noRepo.contains("trash"),
+          "但队列设置与删除照常在明面上")
+
+    // 已经开着自动开 PR 的队列换了非 GitHub 工作区：开关留着（状态可见）但不可点。
+    setAutoPR(true)
+    let lockedModel = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                             prAvailable: false)
+    let locked = TaskQueueHeaderView(model: lockedModel)
+    _ = layout(locked, width: 360)
+    let lockedButtons = descendants(locked, of: CustomIconButton.self)
+    let toggle = lockedButtons.first { if case .symbol("checkmark.circle.fill") = $0.glyph { return true }; return false }
+    if let toggle = toggle {
+        check(!toggle.isEnabled, "状态还在，但点不动（tooltip 说明没有 GitHub）")
+        eq(toggle.toolTip, "prUnavailable", "tooltip 指向 prUnavailable")
+    } else {
+        check(false, "自动开 PR 开着时开关仍然可见")
+    }
+}
+
+
+section("队列头在最小宽度下不撑破")
+do {
+    var board = TaskBoard()
+    let longName = "A queue with a rather long name"
+    let t1 = TaskItem.manual(title: "One", id: "manual-0096aaaa")
+    board.tasks = [t1]
+    let queue = board.createQueue(name: longName, autoPR: true)
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+    board.markRunning(t1.id)
+    board.markDone(t1.id, prUrl: nil)
+
+    // 最坏情况：活跃态 + 可以开 PR + 自动开 PR 开着、三个操作全在行上。
+    let model = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                       prAvailable: true)
+    let header = TaskQueueHeaderView(model: model)
+    let size = layout(header, width: 300)      // 面板最小宽度
+    eq(size.width, 300, "the header fills the panel at its minimum width")
+    for button in descendants(header, of: CustomIconButton.self) {
+        let frame = button.convert(button.bounds, to: header)
+        check(frame.minX >= 0 && frame.maxX <= header.bounds.width + 0.5,
+              "an action button stays inside the header")
+    }
+    let name = descendants(header, of: NSTextField.self).first { $0.stringValue == longName }
+    check((name?.frame.width ?? 0) > 20, "the queue name keeps a usable width at 300pt")
+}
 section("统计信息卡（内容区首行）")
 do {
     var board = TaskBoard()
