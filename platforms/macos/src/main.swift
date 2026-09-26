@@ -621,6 +621,10 @@ enum L10n {
         "tasks.detailOpenPR": ("打开 PR", "Open PR"),
         "tasks.detailRetry": ("重试", "Retry"),
         "tasks.detailSkip": ("跳过并继续", "Skip & Continue"),
+        "tasks.detailOpenSession": ("在 dsh 中打开这个任务的会话", "Open this task's session in dsh"),
+        "tasks.detailReview": ("审查这个任务改了什么", "Review what this task changed"),
+        "tasks.card.runningFor": ("已运行 %@", "Running for %@"),
+        "tasks.queue.state.waiting": ("等待中", "Waiting"),
         "tasks.cancelDeferred": ("任务正在启动，已记住取消：会话一建好就取消", "The task is still starting — the cancel is queued and applied as soon as its session exists"),
         "tasks.cancelFinishing": ("任务已经在收尾（推送 / 开 PR），没有可取消的东西了", "The task is already finishing (push / PR) — there is nothing left to cancel"),
         "tasks.detailOpenPRNoPR": ("这次没有 PR（建 PR 失败，或这个队列没开自动 PR）", "No PR for this run (creation failed, or this queue does not open one)"),
@@ -672,6 +676,7 @@ enum L10n {
         "tasks.queue.autoPROff": ("完成后自动开 PR：已关闭（点一下开启）", "Open a PR when the queue finishes: OFF (click to turn on)"),
         "tasks.queue.start": ("开始", "Start"),
         "tasks.queue.continue": ("继续：跳过失败的任务，跑下一个", "Continue: skip the failed task and run the next one"),
+        "tasks.recovered": ("上次运行被中断：%d 个任务已标为失败、%d 个队列已暂停（不会自动重跑）", "Interrupted last run: %d task(s) marked failed, %d queue(s) paused (nothing restarts by itself)"),
         "tasks.queue.pause": ("暂停", "Pause"),
         "tasks.queue.openPR": ("打开 PR", "Open PR"),
         "tasks.queue.settings": ("队列设置：重命名 / 分支 / 基于分支 / PR 开关", "Queue settings: name, branch, base branch, PR switch"),
@@ -2453,6 +2458,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tasksPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
         tasksPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
         tasksPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
+        // The task panel's session actions: both land in machinery the shell has
+        // had all along — the dsh-web session bridge (ChannelPanel uses it) and the
+        // audit panel, which can be pointed at any session.
+        tasksPanel.onOpenSession = { [weak self] sessionId in
+            self?.openDSHSession(sessionId)
+        }
+        tasksPanel.onReviewSession = { [weak self] sessionId in
+            guard let self = self else { return }
+            self.setRightPanel(.review)
+            self.reviewPanel.setActiveSession(sessionId)
+        }
+        // Running tasks are invisible while the tasks panel is closed: the activity
+        // bar gets a dot, and a task that finishes while the app is in the
+        // background asks for attention (dock bounce + badge, no permission needed).
+        tasksPanel.onRunStateChanged = { [weak self] busy in
+            self?.tasksBarButton?.showsActivityDot = busy
+        }
+        tasksPanel.onTaskFinished = { [weak self] title, ok in
+            self?.taskFinished(title: title, ok: ok)
+        }
 
         browserPanel = BrowserPanelController()
         AppLog.shared.log("launch: browserPanel created")
@@ -5850,6 +5875,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// it (its own "更改…" button goes the other way — panel → setting).
     func projectsRootDidChange() {
         projectsPanel?.workRootChanged()
+    }
+
+    /// A task just finished. Only worth interrupting for when the user is looking
+    /// somewhere else: bounce the dock icon once and leave a badge until the app is
+    /// focused again (UNUserNotification would need a permission prompt for the
+    /// same effect).
+    private func taskFinished(title: String, ok: Bool) {
+        AppLog.shared.log("tasks: finished \(title) (\(ok ? "done" : "failed"))")
+        guard !NSApp.isActive else { return }
+        NSApp.requestUserAttention(.informationalRequest)
+        NSApp.dockTile.badgeLabel = ok ? "✓" : "!"
+        AppLog.shared.log("tasks: app is in the background — dock attention + badge")
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // The badge is a "you were away" marker, not a permanent state.
+        if NSApp.dockTile.badgeLabel != nil { NSApp.dockTile.badgeLabel = nil }
     }
 
     /// The workspace directory the task panel should operate on: the shell's

@@ -639,6 +639,95 @@ do {
     check(!loneHeader.canStart, "没有排队的任务：连按钮都没有")
 }
 
+section("运行中的卡片带一个时钟")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "Long one", id: "manual-00g0aaaa")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    board.markRunning(task.id, at: start)
+    var card = TaskCardModel.build(board.task(task.id)!, board: board, expanded: false, githubRepo: false,
+                                   now: start.addingTimeInterval(65))
+    eq(card.runningFor, "1:05", "已运行时长按 mm:ss")
+    eq(card.meta.first, "tasks.card.runningFor(1:05)", "而且排在最前面（「是不是卡住了」是运行时最想问的）")
+
+    // 过了一小时：hh:mm:ss（时长不是当地时间，不用本地化）
+    card = TaskCardModel.build(board.task(task.id)!, board: board, expanded: false, githubRepo: false,
+                               now: start.addingTimeInterval(3725))
+    eq(card.runningFor, "1:02:05", "超过一小时带小时")
+
+    // 跑完 / 没跑过的任务没有这个字段（也不该有）。
+    board.markDone(task.id, prUrl: nil)
+    card = TaskCardModel.build(board.task(task.id)!, board: board, expanded: false, githubRepo: false,
+                               now: start.addingTimeInterval(600))
+    eq(card.runningFor, nil, "已完成的任务没有运行时钟")
+    check(!card.meta.contains { $0.hasPrefix("tasks.card.runningFor") }, "meta 里也不留")
+}
+
+section("统计卡跟着来源筛选（不再跟列表打架）")
+do {
+    var board = TaskBoard()
+    let manual = TaskItem.manual(title: "Mine", id: "manual-00h0aaaa")
+    let issue = TaskItem.github(number: 4, title: "Issue four")
+    board.tasks = [manual, issue]
+    let userQueue = board.createQueue(name: "Lane")
+    let autoQueue = TaskQueue.auto(for: issue)
+    board.queues.append(autoQueue)
+    _ = board.enqueue(taskID: manual.id, into: userQueue.id)
+    _ = board.enqueue(taskID: issue.id, into: autoQueue.id)
+
+    var summary = TasksSummaryModel.build(board)
+    eq(summary.queues, 2, "全部：两个队列都算")
+    eq(summary.queued, 2, "两条任务都在排队")
+
+    summary = TasksSummaryModel.build(board, source: .manual)
+    eq(summary.queues, 1, "只看手动：issue 的自动队列不算")
+    eq(summary.queued, 1, "计数也只剩手动那条")
+
+    summary = TasksSummaryModel.build(board, source: .github)
+    eq(summary.queues, 1, "只看 Issue：用户队列不算")
+    eq(summary.queued, 1, "计数同样跟着走")
+
+    // 筛选下面一个都不剩时，计数是 0 而不是整张 board。
+    var empty = TaskBoard()
+    empty.tasks = [issue]
+    let solo = TasksSummaryModel.build(empty, source: .manual)
+    eq(solo.queues, 0, "没有可选的任务：队列数归零")
+    eq(solo.queued, 0, "排队数归零")
+}
+
+section("同时活跃的两个队列：只有一个在跑")
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "A", id: "manual-00i0aaaa")
+    let t2 = TaskItem.manual(title: "B", id: "manual-00i1bbbb")
+    board.tasks = [t1, t2]
+    let q1 = board.createQueue(name: "First")
+    let q2 = board.createQueue(name: "Second")
+    _ = board.enqueue(taskID: t1.id, into: q1.id)
+    _ = board.enqueue(taskID: t2.id, into: q2.id)
+    _ = board.resumeQueue(q1.id)
+    _ = board.resumeQueue(q2.id)          // 第二个「开始」把 activeQueueID 改成了它
+
+    let current = board.activeQueue()?.id
+    eq(current, q2.id, "当前队列是最后点了开始的那个")
+    let first = QueueHeaderModel.build(board.queue(q1.id)!, board: board, collapsed: false,
+                                       isCurrent: current == q1.id)
+    eq(first.stateKey, "tasks.queue.state.waiting", "另一个队列不能说自己在跑：等待中")
+    eq(first.tone, .warning, "语气也不是「运行中」")
+    let second = QueueHeaderModel.build(board.queue(q2.id)!, board: board, collapsed: false,
+                                        isCurrent: current == q2.id)
+    eq(second.stateKey, "tasks.queue.state.active", "当前那个才是活跃")
+    eq(second.tone, .running, "语气是运行中")
+
+    // 暂停 / 完成不受影响。
+    _ = board.pauseQueue(q1.id)
+    let paused = QueueHeaderModel.build(board.queue(q1.id)!, board: board, collapsed: false, isCurrent: false)
+    eq(paused.stateKey, "tasks.queue.state.paused", "暂停就是暂停，跟是不是当前无关")
+}
+
 section("队列头的三个操作与 PR 可用性")
 do {
     var board = TaskBoard()

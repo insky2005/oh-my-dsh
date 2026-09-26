@@ -650,6 +650,61 @@ do {
        "continue", "失败之后它其实是 继续（跳过失败项）")
 }
 
+section("卡片上的会话动作：打开会话 / 审查改动")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "Ran", id: "manual-00j0aaaa")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    board.local.sessions[task.id] = "session-42"
+    board.attachSessions(board.local.sessions)
+    board.markDone(task.id, prUrl: nil)
+
+    let card = TaskCardView(model: TaskCardModel.build(board.task(task.id)!, board: board,
+                                                      expanded: true, githubRepo: false))
+    _ = layout(card, width: 320)
+    let sessionButtons = descendants(card, of: CustomIconButton.self)
+    let openButton = sessionButtons.first { $0.toolTip == "detailOpenSession" }
+    let reviewButton = sessionButtons.first { $0.toolTip == "detailReview" }
+    check(openButton != nil, "跑过的任务带「打开会话」图标按钮")
+    check(reviewButton != nil, "也带「审查改动」")
+    var opened = false
+    var reviewed = false
+    card.onOpenSession = { opened = true }
+    card.onReview = { reviewed = true }
+    openButton?.onAction?()
+    reviewButton?.onAction?()
+    check(opened && reviewed, "点了分别回调面板（面板把它交给壳层的桥 / 审查面板）")
+
+    // 还没跑过的任务：没有会话，两个按钮都不出现。
+    var fresh = TaskBoard()
+    let pending = TaskItem.manual(title: "Not run", id: "manual-00j1bbbb")
+    fresh.tasks = [pending]
+    let freshCard = TaskCardView(model: TaskCardModel.build(fresh.task(pending.id)!, board: fresh,
+                                                           expanded: true, githubRepo: false))
+    _ = layout(freshCard, width: 320)
+    let freshIcons = descendants(freshCard, of: CustomIconButton.self)
+    check(!freshIcons.contains { $0.toolTip == "detailOpenSession" }, "没跑过就没有会话可打开")
+    check(!freshIcons.contains { $0.toolTip == "detailReview" }, "也没有改动可审")
+
+    // 运行中的卡片真的把时钟画在 meta 行上。
+    var running = TaskBoard()
+    let live = TaskItem.manual(title: "Live", id: "manual-00j2cccc")
+    running.tasks = [live]
+    let liveQueue = running.createQueue(name: "Lane")
+    _ = running.enqueue(taskID: live.id, into: liveQueue.id)
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    running.markRunning(live.id, at: start)
+    let liveCard = TaskCardView(model: TaskCardModel.build(running.task(live.id)!, board: running,
+                                                           expanded: false, githubRepo: false,
+                                                           now: start.addingTimeInterval(95)))
+    _ = layout(liveCard, width: 320)
+    check(descendants(liveCard, of: NSTextField.self).contains { $0.stringValue.contains("runningFor(1:35)") },
+          "运行中的卡片把 已运行 1:35 画出来了")
+}
+
 section("队列头：三个操作都在明面上（不再藏在 更多 里）")
 do {
     var board = TaskBoard()

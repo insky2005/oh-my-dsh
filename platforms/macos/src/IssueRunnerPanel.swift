@@ -37,6 +37,16 @@ typealias IssueRunnerTask = TaskItem
 final class IssueRunnerPanelController: NSObject {
 
     var onRequestHide: (() -> Void)?
+    /// The task's session, handed to the shell: show it in dsh web / audit it.
+    /// The shell has had these bridges all along (ChannelPanel uses the first).
+    var onOpenSession: ((String) -> Void)?
+    var onReviewSession: ((String) -> Void)?
+    /// The runner started/stopped working: the shell shows that on the activity bar
+    /// (a task panel that is closed has no other way to say "something is running").
+    var onRunStateChanged: ((Bool) -> Void)?
+    /// A task just finished (title, did it succeed): the shell may need to get the
+    /// user's attention when the app is in the background.
+    var onTaskFinished: ((String, Bool) -> Void)?
     /// Provides the dsh web port (set by AppDelegate, like other panels).
     var serverPortProvider: (() -> Int)?
     /// The main workspace directory (set by AppDelegate) — git/github root.
@@ -62,6 +72,16 @@ final class IssueRunnerPanelController: NSObject {
         /// nothing from an issues filter; the auto queues are hidden for manual.
         var showsUserQueues: Bool { self != .issues }
         var showsAutoQueues: Bool { self != .manual }
+
+        /// The same filter as the models want it (nil = everything): the summary
+        /// counters and the task cards must agree with the lanes on screen.
+        var source: TaskSource? {
+            switch self {
+            case .all: return nil
+            case .issues: return .github
+            case .manual: return .manual
+            }
+        }
     }
 
     // UI
@@ -454,6 +474,13 @@ final class IssueRunnerPanelController: NSObject {
         startStepTimer()
         let extra = recovered.interrupted.isEmpty ? "" : ", interrupted: " + recovered.interrupted.joined(separator: ",")
         AppLog.shared.log("tasks: board loaded at \(repoRoot) — \(board.tasks.count) tasks, \(board.queues.count) queues" + extra)
+        // Say it out loud: the tasks became 失败 and the queues 暂停, and nothing
+        // restarts by itself. Used to be log-only, so the panel just looked odd.
+        if !recovered.interrupted.isEmpty || !recovered.pausedQueues.isEmpty {
+            setStatus(L10n.tr("tasks.recovered", recovered.interrupted.count, recovered.pausedQueues.count),
+                      spin: false)
+            autoHideStatus(after: 10)
+        }
     }
 
     /// Everything the runner needs from the outside world: git in this repo, the
@@ -529,7 +556,12 @@ final class IssueRunnerPanelController: NSObject {
         guard let runner = runner else { return "" }
         let tasks = runner.board.tasks.map { $0.id + ":" + $0.state.rawValue + ":" + ($0.prUrl ?? "") }
         let queues = runner.board.queues.map { $0.id + ":" + $0.state.rawValue + ":" + String($0.taskIds.count) }
-        return (tasks + queues).joined(separator: "|")
+        // The running task's clock is part of what the cards SHOW, so the 3s timer
+        // has to redraw when its minute flips — otherwise "已运行 0:59" would sit
+        // there forever (the board itself has not changed at all).
+        let clock = runner.board.tasks.first { $0.state == .running }
+            .flatMap { $0.startedAt.map { TaskCardModel.duration(from: $0, to: Date()) } } ?? "-"
+        return (tasks + queues + [clock]).joined(separator: "|")
     }
 
     /// Resync only when the board actually changed.
@@ -549,8 +581,19 @@ final class IssueRunnerPanelController: NSObject {
     private func stepRunner() {
         guard let runner = runner else { return }
         let wasBusy = runner.isBusy
+        let runningID = runner.runningTaskID
         _ = runner.step()
         syncFromBoardIfChanged()
+        if wasBusy != runner.isBusy { onRunStateChanged?(runner.isBusy) }
+        if wasBusy, !runner.isBusy, let id = runningID {
+            // It just stopped: tell the shell so it can get the user's attention
+            // when the app is in the background. A cancel the user asked for is
+            // not news — only a DONE or FAILED task is.
+            let task = runner.board.task(id)
+            if let state = task?.state, state == .done || state == .failed {
+                onTaskFinished?(task?.title ?? id, state == .done)
+            }
+        }
         if runner.isBusy {
             let number = runner.runningTaskID.flatMap { runner.board.task($0)?.number } ?? 0
             setStatus(L10n.tr("tasks.running", number), spin: true)
@@ -1153,7 +1196,7 @@ final class IssueRunnerPanelController: NSObject {
         // 0. 统计信息 — the content's first row, exactly where the review panel
         //    puts its own summary (the counts are no longer toolbar pills). It is
         //    not a "section": the empty state below is about queues and tasks.
-        addCard(TaskSummaryCardView(model: TasksSummaryModel.build(board)))
+        addCard(TaskSummaryCardView(model: TasksSummaryModel.build(board, source: sourceFilter.source)))
 
         // 1. Queues. User queues first (they hold the user's own work), then the
         //    issue tasks' single-task queues, which count and render like any
@@ -1307,13 +1350,17 @@ final class IssueRunnerPanelController: NSObject {
     /// Auto (issue) queues start collapsed: one line each, expanding on a click.
     private func isQueueExpanded(_ queue: TaskQueue) -> Bool {
         if let explicit = queueToggle[queue.id] { return explicit }
+        // Finished lanes start as one line: the work is over, the list should not
+        // keep scrolling past its history (the auto queues already did this).
+        if queue.state == .done { return false }
         return !queue.autoCreated
     }
 
     private func card(_ task: TaskItem, board: TaskBoard, githubRepo: Bool) -> NSView {
         let model = TaskCardModel.build(task, board: board,
                                         expanded: expandedTaskID == task.id,
-                                        githubRepo: githubRepo)
+                                        githubRepo: githubRepo,
+                                        now: Date())
         let card = TaskCardView(model: model)
         let taskID = task.id
         card.onToggle = { [weak self] in self?.toggleTask(taskID) }
@@ -1330,6 +1377,14 @@ final class IssueRunnerPanelController: NSObject {
             _ = self?.runner?.skip(taskID: taskID)
             self?.syncFromBoard()
         }
+        card.onOpenSession = { [weak self] in
+            guard let session = task.sessionId else { return }
+            self?.onOpenSession?(session)
+        }
+        card.onReview = { [weak self] in
+            guard let session = task.sessionId else { return }
+            self?.onReviewSession?(session)
+        }
         card.onEdit = { [weak self] in self?.openTaskComposer(.edit(taskID: taskID)) }
         card.onDelete = { [weak self] in self?.confirmDelete(task) }
         return card
@@ -1338,8 +1393,12 @@ final class IssueRunnerPanelController: NSObject {
     private func queueHeader(_ queue: TaskQueue, board: TaskBoard, cardCount: Int) -> TaskQueueHeaderView {
         // prAvailable: the queue's PR switch/toggle only exists where a PR can
         // exist (the same rule the queue form follows).
+        // Only ONE queue is actually being worked on: several can be 活跃 (开始 on a
+        // second one just re-points the runner), and the others must not claim to
+        // be running anything.
+        let isCurrent = board.activeQueue()?.id == queue.id
         let model = QueueHeaderModel.build(queue, board: board, collapsed: !isQueueExpanded(queue),
-                                           prAvailable: repo != nil)
+                                           prAvailable: repo != nil, isCurrent: isCurrent)
         let header = TaskQueueHeaderView(model: model)
         let queueID = queue.id
         header.onToggle = { [weak self] in self?.toggleQueue(queueID) }

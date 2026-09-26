@@ -325,6 +325,17 @@ struct Queue {
 >
 > 一条贯穿的规矩：**面板里每一个 `_ = runner?.xxx(...)` 都要么不可能失败，要么把失败说出来**——放弃返回值就是放弃解释，而这四次全是「用户按了、界面当没发生」。
 
+> **实现（2026-09-27 补充 · 批次 2：跑起来之后看得见）**：批次 1 修的是「界面别骗人」，这一批修的是「跑起来之后你根本不知道」。
+>
+> 1. **活动栏 + Dock**：`ActivityBarButton.showsActivityDot`（角落 6pt 强调色小点，独立于 `setActive` 的「当前面板」高亮）由 `IssueRunnerPanelController.onRunStateChanged` 驱动 —— 面板关着也知道有任务在跑；任务**在后台结束**时 `NSApp.requestUserAttention(.informationalRequest)` 弹一下 Dock 并留角标（`✓` / `!`，聚焦即清），用户主动取消的不打扰。用系统通知要过一道授权，这个不需要。
+> 2. **卡片的两条出口**：展开卡片上的「会话：xxx」此前是死文本。现在它旁边是两个图标按钮 —— **打开会话**（`onOpenSession` → `AppDelegate.openDSHSession`，与通道面板同一个桥）与**审查改动**（`onReviewSession` → `setRightPanel(.review)` + `reviewPanel.setActiveSession`）。两者的机器壳层早就有，缺的只是这两个回调；也因此「派活 → 看它干 → 审查改动」这条主循环第一次闭环。
+> 3. **运行时钟**：`TaskCardModel` 新增 `runningFor`（`startedAt` 已在持久化里，重载不丢），meta 行第一项显示「已运行 1:05」（超一小时 `h:mm:ss`）。**3 秒定时器的重绘指纹里带上当前这一分钟** —— 否则 `0:59` 会永远停在那里（board 本身没有任何变化，指纹不变就不重绘）。
+> 4. **等待中的队列**：同时可以有多个队列是 `.active`（对第二个点「开始」只是把 runner 指过去），界面此前让它们全都显示「活跃」、同时藏起「开始」按钮 —— 一个永远不动的活跃队列。现在 `QueueHeaderModel.isCurrent`（取自 `board.activeQueue()`）决定：真正在跑的那个显示「活跃」，其余显示「等待中」。
+> 5. **统计卡跟着筛选走**：`TaskBoard.summary(source:)` / `TasksSummaryModel.build(_:source:)` 与页签用同一个筛选（队列数也只算「含有被显示任务」的队列）。
+> 6. **重启之后的说明**：`reconcileAfterRestart` 的结果此前只进 `app.log`，现在面板用状态行说一句「上次运行被中断：N 个任务已标为失败、M 个队列已暂停（不会自动重跑）」。
+>
+> 仍未做：设计文档 §V2-8 提到的「隐藏已完成队列」筛选（只做了「已完成队列默认折叠成一行」）。
+
 ### V2-8 卡片式任务清单
 
 列表改为 `NSScrollView + NSStackView`，体例照 `ProjectsPanel.swift`：`render()` 重建 `arrangedSubviews`，卡片 `widthAnchor == list.widthAnchor - 20`，卡片自身 `draw(_:)` 画圆角 + 描边、`hitTest` 把非按钮区域的点击交回卡片、`resetCursorRects` 设 `pointingHand`。

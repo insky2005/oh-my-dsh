@@ -280,6 +280,9 @@ final class TaskCardView: NSView {
     var onCommentClose: (() -> Void)?
     /// 跳过并继续: keep this failure's record and run the next queued task.
     var onSkip: (() -> Void)?
+    /// The task's dsh session: show it in dsh web / audit its changes.
+    var onOpenSession: (() -> Void)?
+    var onReview: (() -> Void)?
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
 
@@ -437,6 +440,15 @@ final class TaskCardView: NSView {
     /// panel, and they made the card demand more width than the list had.
     private func actionRow() -> NSView {
         var views: [NSView] = [primaryControl()]
+        // The session this task runs in: the two things the user wants right after
+        // a task ran — look at it, and see what it changed. The panel hands the id
+        // to the shell (openDSHSession / the audit panel), which needs nothing new.
+        if model.sessionId != nil {
+            views.append(iconButton("arrow.up.forward.app", tooltipKey: "tasks.detailOpenSession",
+                                    action: #selector(openSessionTapped)))
+            views.append(iconButton("doc.text.magnifyingglass", tooltipKey: "tasks.detailReview",
+                                    action: #selector(reviewTapped)))
+        }
         if model.canCommentClose {
             views.append(actionButton("tasks.detailCommentClose", #selector(commentCloseTapped)))
         }
@@ -510,6 +522,8 @@ final class TaskCardView: NSView {
 
     @objc private func commentCloseTapped() { onCommentClose?() }
     @objc private func skipTapped() { onSkip?() }
+    @objc private func openSessionTapped() { onOpenSession?() }
+    @objc private func reviewTapped() { onReview?() }
     @objc private func editTapped() { onEdit?() }
     @objc private func deleteTapped() { onDelete?() }
 }

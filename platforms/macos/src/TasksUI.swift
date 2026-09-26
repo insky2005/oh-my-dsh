@@ -72,6 +72,12 @@ struct TaskCardModel: Equatable {
     var canEdit: Bool
     var canDelete: Bool
 
+    /// The dsh session this task runs in (nil until it started): the card offers
+    /// 打开会话 / 审查改动 on it — the panel hands the id to the shell, which has
+    /// had the bridge all along (ChannelPanel uses the same one).
+    var sessionId: String?
+    /// How long a RUNNING task has been running ("12:03"), nil for everything else.
+    var runningFor: String?
     /// 1-based position inside its queue, when it is waiting.
     var queuePosition: Int?
     /// Whether the task sits INSIDE a queue lane (or is one of the 未入队 cards
@@ -87,7 +93,8 @@ struct TaskCardModel: Equatable {
     static func build(_ task: TaskItem,
                       board: TaskBoard,
                       expanded: Bool,
-                      githubRepo: Bool) -> TaskCardModel {
+                      githubRepo: Bool,
+                      now: Date = Date()) -> TaskCardModel {
         let queue = task.queueId.flatMap { board.queue($0) }
         let position = board.order(of: task.id)
 
@@ -117,7 +124,16 @@ struct TaskCardModel: Equatable {
             stateBadge = L10n.tr("tasks.state.closed"); tone = .neutral
         }
 
+        // A running task shows its clock FIRST: "is it stuck?" is the question the
+        // card is asked most while it runs.
+        let runningFor = task.startedAt.map { started in
+            task.state == .running ? TaskCardModel.duration(from: started, to: now) : nil
+        } ?? nil
+
         var meta: [String] = []
+        if let runningFor = runningFor {
+            meta.append(L10n.tr("tasks.card.runningFor", runningFor))
+        }
         if !task.labels.isEmpty { meta.append(task.labels.joined(separator: ", ")) }
         if let branch = task.branch ?? queue?.branch { meta.append(branch) }
         if let pr = task.prUrl { meta.append(L10n.tr("tasks.detailPR", Self.shortPR(pr))) }
@@ -240,10 +256,24 @@ struct TaskCardModel: Equatable {
                                  && task.state == .done,
                              canEdit: task.source == .manual && task.state != .running,
                              canDelete: task.source == .manual && task.state != .running,
+                             sessionId: task.sessionId,
+                             runningFor: runningFor,
                              queuePosition: position,
                              isNested: task.queueId != nil,
                              source: task.source,
                              state: task.state)
+    }
+
+    /// mm:ss (hh:mm:ss past an hour). Wall-clock, not locale: it is a duration,
+    /// and the card has no room for words.
+    static func duration(from start: Date, to end: Date) -> String {
+        let seconds = max(0, Int(end.timeIntervalSince(start).rounded(.down)))
+        let hours = seconds / 3600
+        let minutes = (seconds % 3600) / 60
+        let secs = seconds % 60
+        return hours > 0
+            ? String(format: "%d:%02d:%02d", hours, minutes, secs)
+            : String(format: "%d:%02d", minutes, secs)
     }
 
     /// Pull request URLs are long; the card shows owner/repo#123. Both shapes are
@@ -332,8 +362,11 @@ struct QueueHeaderModel: Equatable {
     /// …and it is only clickable where a PR is possible.
     var autoPREnabled: Bool { prAvailable }
 
+    /// `isCurrent` = this is the queue the runner is working on right now. Several
+    /// queues can be 活跃 at once (开始 on a second one just re-points the runner),
+    /// and the others used to show 活跃 while nothing whatsoever happened in them.
     static func build(_ queue: TaskQueue, board: TaskBoard, collapsed: Bool,
-                      prAvailable: Bool = true) -> QueueHeaderModel {
+                      prAvailable: Bool = true, isCurrent: Bool = true) -> QueueHeaderModel {
         let tasks = queue.taskIds.compactMap { board.task($0) }
         let doneCount = tasks.filter { $0.state == .done }.count
         let failedCount = tasks.filter { $0.state == .failed }.count
@@ -346,7 +379,12 @@ struct QueueHeaderModel: Equatable {
         let stateKey: String
         let tone: TaskTone
         switch queue.state {
-        case .active: stateKey = "tasks.queue.state.active"; tone = .running
+        case .active:
+            // 等待中: it IS active (the ▶ is gone, its tasks are queued), but the
+            // runner is busy with another queue — saying 活跃 there was a lie the
+            // user could not act on.
+            stateKey = isCurrent ? "tasks.queue.state.active" : "tasks.queue.state.waiting"
+            tone = isCurrent ? .running : .warning
         case .paused: stateKey = "tasks.queue.state.paused"; tone = failedCount > 0 ? .negative : .warning
         case .done: stateKey = "tasks.queue.state.finished"; tone = .positive
         }
@@ -406,8 +444,11 @@ struct TasksSummaryModel: Equatable {
     /// The four counters in reading order — the card's whole content.
     var parts: [TaskSummaryPart]
 
-    static func build(_ board: TaskBoard) -> TasksSummaryModel {
-        let counts = board.summary()
+    /// `source` narrows the counters to what the list is showing (nil = all):
+    /// the counts live in the same content area as the (filtered) lanes, so they
+    /// have to agree with them.
+    static func build(_ board: TaskBoard, source: TaskSource? = nil) -> TasksSummaryModel {
+        let counts = board.summary(source: source)
         return TasksSummaryModel(
             queues: counts.queues,
             queued: counts.queued,

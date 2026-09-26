@@ -560,11 +560,21 @@ struct TaskBoard {
 
     /// Counts for the summary strip: queues, queued, running, failed.
     /// Every queue counts, auto ones included (decision 8).
-    func summary() -> (queues: Int, queued: Int, running: Int, failed: Int) {
-        (queues.count,
-         tasks.filter { $0.state == .queued }.count,
-         tasks.filter { $0.state == .running }.count,
-         tasks.filter { $0.state == .failed }.count)
+    /// Counters for the summary card. `source` narrows them to the tasks the list
+    /// is currently showing (nil = everything): a filtered list whose header still
+    /// counts the hidden half reads as a bug.
+    func summary(source: TaskSource? = nil) -> (queues: Int, queued: Int, running: Int, failed: Int) {
+        let source = source
+        let shown = source.map { wanted in tasks.filter { $0.source == wanted } } ?? tasks
+        let shownIDs = Set(shown.map { $0.id })
+        // A queue counts when it holds at least one of the shown tasks: the issue
+        // task's auto queue disappears with the 手动 filter, exactly like its lane.
+        let shownQueues = source == nil ? queues.count
+            : queues.filter { queue in queue.taskIds.contains { shownIDs.contains($0) } }.count
+        return (shownQueues,
+                shown.filter { $0.state == .queued }.count,
+                shown.filter { $0.state == .running }.count,
+                shown.filter { $0.state == .failed }.count)
     }
 
     // MARK: queue membership

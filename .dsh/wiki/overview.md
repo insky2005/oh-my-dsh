@@ -120,13 +120,13 @@ tests/skills/run.sh                  # 内置 skill 安装器无头单测（Skil
 tests/channel-panel/run.sh            # 通道项目视图数据模型（ChannelStoreReader 读全局 store）
 tests/dsh-rpc/run.sh                  # 壳层原生 dsh RPC（信封形状 / 斜杠↔点号回退 / launch token 换 cookie；整套 54 项）
 tests/review-panel/run.sh             # 审查面板（展示模型 64 项 + 控制器日志新鲜度回归 12 项 = 76 项）
-tests/skills-panel/run.sh             # 技能面板（模型层 + 控制器冒烟 + 真实绘制回归，147 项；含 HeaderLabel 截断/不越界）
+tests/skills-panel/run.sh             # 技能面板（模型层 + 控制器冒烟 + 真实绘制回归，150 项；含 HeaderLabel 截断/不越界）
 tests/shell-config/run.sh             # ShellConfig 旧 UserDefaults 一次性迁移（13 例：旧值迁移 / 只做一次 / config.json 优先 / 不搬无关键）
 tests/dsh-auth-cookies/run.sh         # dsh 认证 cookie 清理纯逻辑（22 例：cookie 名派生向量 / 启动与退出清理选择 / NODE_OPTIONS 追加规则）
 tests/file-panel/run.sh              # 文件面板（workspace-tab 模型 28 例 + open-with / tree-menu / image-zoom / editor-load-policy + 真实 NSWindow 面板场景；2026-09-21 实测全绿）
 tests/terminal-panel/run.sh          # 终端面板（头部固定标题 + TerminalWorkspaceTabs 工作区隔离 + 选中即复制开关；2026-09-21 实测全绿）
 tests/projects-panel/run.sh          # 项目面板（纯模型 45 项 + 控制器无头 49 项 = 94 项）
-tests/tasks-panel/run.sh             # 任务面板逻辑层（模型 139 + 运行器 199 + 视图模型 223 + 视图 182 = 743 项）
+tests/tasks-panel/run.sh             # 任务面板逻辑层（模型 139 + 运行器 199 + 视图模型 242 + 视图 188 = 768 项）
 tests/injected-scripts/run.sh        # 注入 dsh web 的 JS 守卫（可解析 / `window.__dshX` 桥名对得上 / 不许出现会被 Swift 吃掉的转义）
 tests/snapshot-panel/run.sh          # 会话快照窗口数据模型
 tests/snapshot-rollback/run.sh       # 会话快照与回退 CLI 端到端（含升级路径与崩溃拒绝）

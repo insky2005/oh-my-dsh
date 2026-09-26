@@ -138,6 +138,14 @@ class DynamicFillView: NSView {
 final class ActivityBarButton: HoverButton {
     private let symbolName: String
     private var isActive = false
+    /// A small accent dot in the corner: "this panel is doing something right now"
+    /// (the tasks panel's runner, seen while the panel is closed). Independent of
+    /// setActive — a panel can be both the current one and busy.
+    private let activityDot = NSView()
+
+    var showsActivityDot = false {
+        didSet { activityDot.isHidden = !showsActivityDot }
+    }
 
     init(symbol: String, tooltip: String, action: Selector) {
         self.symbolName = symbol
@@ -152,6 +160,19 @@ final class ActivityBarButton: HoverButton {
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 40).isActive = true
         heightAnchor.constraint(equalToConstant: 34).isActive = true
+        // The dot sits in the button's top-right corner, on top of the icon.
+        activityDot.wantsLayer = true
+        activityDot.layer?.cornerRadius = 3
+        activityDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        activityDot.translatesAutoresizingMaskIntoConstraints = false
+        activityDot.isHidden = true
+        addSubview(activityDot)
+        NSLayoutConstraint.activate([
+            activityDot.widthAnchor.constraint(equalToConstant: 6),
+            activityDot.heightAnchor.constraint(equalToConstant: 6),
+            activityDot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            activityDot.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+        ])
         refreshIcon()
     }
 
@@ -172,6 +193,7 @@ final class ActivityBarButton: HoverButton {
 
     private func refreshIcon() {
         guard window != nil else { return }
+        activityDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let color: NSColor
         if isActive {

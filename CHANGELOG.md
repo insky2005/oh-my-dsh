@@ -9,6 +9,10 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **任务跑起来之后，看得见也追得上**（批次 2 —— 可见性）。四项：① **活动栏「任务」图标加一个角落小点**（`ActivityBarButton.showsActivityDot`，独立于 `setActive` 的「当前面板」高亮），面板关着也知道有任务在跑；② 任务**在后台结束**时弹一下 Dock 图标并留下角标 `✓` / `!`（`NSApp.requestUserAttention` + `dockTile.badgeLabel`，聚焦即清 —— 用系统通知要多一道授权，这个不需要），用户主动取消的不打扰；③ **卡片直接给两条出口**：「打开会话」（把这个任务的会话切到 dsh web）与「审查改动」（`reviewPanel.setActiveSession` 直接把这个会话交给审查面板），两者都只调用壳层早就有的机器（`openDSHSession` 桥 / 审查面板的会话跟随），此前卡片上的「会话：xxx」是死文本；④ **运行中的卡片带时钟**（meta 行第一项「已运行 1:05」，超过一小时 `h:mm:ss`），并且 3 秒定时器的重绘指纹里带上这一分钟 —— 否则 `0:59` 会永远停在那里。
+- **等待中的队列不再谎称「活跃」**：同时可以有好几个队列是 `.active`（对第二个点「开始」只是把 runner 指过去），而界面让它们全都显示「活跃」、同时又把「开始」按钮藏起来 —— 用户看到的是一个永远不动的活跃队列。现在只有**真正在被处理的**那个显示「活跃」，其余显示**「等待中」**（`QueueHeaderModel.isCurrent`，取自 `board.activeQueue()`）。
+- **统计卡跟着来源筛选走**：切到「手动」时它还在报整张 board 的「队列 N · 排队 N · 运行 · 失败」，跟下面列出的泳道对不上。现在 `TaskBoard.summary(source:)` 与 `TasksSummaryModel.build(_:source:)` 按同一个筛选计数（队列数也只算「含有被显示任务」的队列）。
+- **已完成的队列默认折叠成一行**（此前只有 issue 的自动队列这样），列表不再被历史泳道撑长。
 - **失败任务终于能「跳过并继续」，而不是只有「重试」**。`TasksRunner.skip` 一直是死代码（全仓零调用者），而 README 与设计文档一直承诺「卡片给「重试 / 跳过并继续」」：队内任务失败后队列被暂停，用户只剩「重试同一个」或删任务 / 队列两条路。现在失败 / 取消任务的卡片上多了**「跳过并继续」**（保留这条失败记录、唤醒队列、跑下一个），并且只在**队里确实还有排队任务**时出现 —— 跳过一个没有后续的队列只会唤醒一个没活干的队列。队列头的 ▶ 在「暂停 + 有失败 + 还有排队」时，tooltip 也从「开始」改为**「继续：跳过失败的任务，跑下一个」**，因为它做的事从来不是「开始」。
 - **灰掉的主按钮现在会解释自己**：已完成却没有 PR 的任务，主按钮「打开 PR」是灰的且此前没有任何说明，现在带 tooltip「这次没有 PR（建 PR 失败，或这个队列没开自动 PR）」。
 - **项目面板（Projects，`⌥⌘P`，活动栏首位「项目」图标）：把「工作区 = 一个目录」变成壳层里的一等公民**。面板以可配置的**项目根目录**（默认 `$DSH_HOME/oh-my-dsh/projects`，可改成任意绝对路径，存 `shell/config.json` 的 `projectsRoot`）为范围，每个直属子目录就是一张工作区卡片：
@@ -26,6 +30,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Changed
 
+- **重启之后的「刚才发生了什么」不再只写在日志里**：上次运行中被中断的任务会变成「失败 · 上次运行被中断」、活跃队列会被暂停 —— 这两件事此前只进 `app.log`，界面看上去就是莫名多了几条失败。现在面板开机会用状态行说一句「上次运行被中断：N 个任务已标为失败、M 个队列已暂停（不会自动重跑）」（10 秒后自动收起）。
 - **任务面板顶部：工作区信息并进标题行，非 git 与 非 GitHub 分开说，GitHub 专属按钮不可用时置灰**。此前「目录名 · 非 GitHub 仓库」独占一条 28pt 工具栏行（整行为一行短文案，而审查面板同一条行放的是控件），而且不管目录**根本不是 git 仓库**还是**只是没有 GitHub 远端**都只说「非 GitHub 仓库」。现在：① 工作区行并入标题行（头部 40pt → 46pt 两行，净省 22pt 给列表），三种说法分开 —— GitHub 仓库 `owner/repo`、git 仓库无 GitHub 远端 `目录名 · 非 GitHub 仓库`、非 git 目录 `目录名 · 非 Git 仓库`；② 新增纯模型 `TaskWorkspaceModel` 决定这行文案与三个 GitHub 专属按钮（**配置 GitHub Token** / 刷新 Issues / 全部处理）的可用性 —— 非 GitHub 工作区里它们本来就 guard 掉了 repo、点了什么都不会发生，现在置灰并给出原因 tooltip；③ 新增 `FittingHeaderLabel`（`PreviewPanel.swift`）：`HeaderLabel` 用 `NSString.draw(at:)` 画字，既不清除也不省略（实测 165pt 的文案在 90pt 的 frame 里会向右侧多画 1004 个像素点），长目录名会画到旁边按钮底下 —— 这个子类在每次布局时把文字按自身 frame 截断成「…」，tooltip 保留全文。回归：离屏渲染新增 10 项（框内有墨 / 框外 0 像素 / 朴素 HeaderLabel 确实越界这条前提 / 无宽度时先不画 / 重复 fit 收敛），视图模型新增 11 项（三种工作区说法 + 按钮可用性 + 没有工作区时的文案）。
 - **表单抽屉背后加了一层虚化背景（抽屉与内容区分层）**。抽屉和内容区用的是同一套面板底色，表单打开时只是"列表里多了一张卡"。现在 `TaskFormSheetHostView` 里有一层 `NSVisualEffectView`（`material = .hudWindow` + `blendingMode = .withinWindow` + `.active`）：模糊同一窗口里它背后的内容，并叠一层半透明暗色（即使模糊不生效也不会退化成看不见，列表照样被压到后面）。它铺满整个内容区、**在抽屉之下列表之上**，随抽屉一起淡入淡出（同一个动画组，0.22s easeOut；连续创建时不重播），没有表单时 `isHidden` 且宿主照旧点击穿透。回归断言：静止不出现 / 材质与混合方式 / 打开后铺满内容区 / 层级在抽屉之下 / 关闭后收起。离屏 `cacheDisplay` 渲染不出虚化，视觉以真机为准。
 - **队列头的三个操作从 ⋯ 菜单里放出来，成为行上的图标按钮；PR 相关项跟着工作区可用性走**。队列设置（`gearshape`）/ 完成后自动开 PR（`checkmark.circle.fill` 开 · `circle` 关，开着用强调色）/ 删除队列（`trash`，仍走确认框）现在都在队列头第一行上，`⋯` 与其菜单整个删除（`tasks.queue.more` 文案键随之删除）。**非 GitHub 工作区不再给一个点了也没用的「完成后自动创建 PR」**：`QueueHeaderModel.prAvailable`（= 面板的 `repo != nil`，与队列表单同一判据）为假时，还没开的队列整块不显示该开关，**已经开着**的队列仍显示但不可点、tooltip 说明原因（状态不隐藏）；`canOpenPR` 也要求 `prAvailable`。`CustomIconButton` 新增常驻图标色 `tintColor`（nil = 原行为），开关"开着"用它表达。回归：视图模型三态 + 视图断言（行上有 gear/trash、没有 ellipsis、开关随状态与工作区切换、300pt 最小宽度下不撑破）。

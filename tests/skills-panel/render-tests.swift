@@ -263,4 +263,48 @@ do {
     check("re-fitting settles on the same text", fresh.text == settled && !settled.isEmpty)
 }
 
+// 7. The activity bar's running dot: hidden until it is asked for, and it draws in
+//    the button's top-right corner (the tasks panel says "a task is running" here
+//    while its own panel is closed). The two renders are compared to each other —
+//    the accent colour is the user's, so no absolute colour can be asserted.
+do {
+    func renderDot(_ shows: Bool) -> [UInt8] {
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 40, height: 34))
+        let button = ActivityBarButton(symbol: "checkmark.circle", tooltip: "",
+                                       action: #selector(NSObject.description))
+        button.showsActivityDot = shows
+        button.translatesAutoresizingMaskIntoConstraints = true
+        button.frame = host.bounds
+        host.addSubview(button)
+        host.layoutSubtreeIfNeeded()
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds), let data = rep.bitmapData else { return [] }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        return Array(UnsafeBufferPointer(start: data, count: rep.bytesPerRow * rep.pixelsHigh))
+    }
+    /// Pixels that differ between two renders, split into "in the corner" and "anywhere".
+    func diff(_ a: [UInt8], _ b: [UInt8]) -> (total: Int, corner: Int) {
+        guard !a.isEmpty, a.count == b.count else { return (-1, -1) }
+        var total = 0
+        var corner = 0
+        // 40pt wide at 2x, 4 px per sample: the dot sits 6…12pt from the right edge,
+        // at most 12pt down from the top.
+        let bpr = 40 * 2 * 4
+        let width = 40 * 2
+        for i in stride(from: 0, to: a.count, by: 4) where a[i] != b[i] || a[i + 1] != b[i + 1] || a[i + 2] != b[i + 2] {
+            total += 1
+            let y = i / bpr
+            let x = (i % bpr) / 4
+            if x >= width - 28, y <= 24 { corner += 1 }
+        }
+        return (total, corner)
+    }
+    let off = renderDot(false)
+    check("an activity bar button renders without a dot by default",
+          diff(off, renderDot(false)).total == 0)
+    let withDot = renderDot(true)
+    let turnedOn = diff(off, withDot)
+    check("showsActivityDot paints something (\(turnedOn.total) px)", turnedOn.total > 20)
+    check("…and it is the corner dot, not the icon", turnedOn.corner == turnedOn.total)
+}
+
 print("done")
