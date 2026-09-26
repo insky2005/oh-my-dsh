@@ -761,29 +761,28 @@ do {
     eq(model.issueCount, 1, "一个 issue 待处理")
     eq(model.manualCount, 1, "一个手动任务待处理")
     check(model.enabled, "有待办就能点")
-    // 精确到渲染：提示必须是「计数(实参) + 换行 + PR 那句」。曾经把 [CVarArg] 数组
-    // 整个传给可变参的 L10n.tr()，于是 %d 打的是数组地址（「7935328 个手动任务」）。
-    eq(model.tooltip, "tasks.runAllMixed(1,1)\ntasks.runAllWithPR",
-       "提示 = 计数（真的数字）+ 换行 + PR 那句")
-    check(model.confirmationText.contains("runAllInfo(2)"), "确认框正文说的是「2 个任务各自一个队列与一条分支」")
+    // tooltip 只承担两件事：说清这个图标按钮做什么，或者它为什么不能点。
+    eq(model.tooltip, "tasks.runAllHint", "提示就是这个按钮的文案")
+    check(!model.tooltip.contains("runAllInfo"), "计数不进 tooltip —— 统计信息卡第一行已经有了")
+    check(!model.tooltip.contains("PR"), "PR 策略也不进 tooltip —— 那是确认框的事")
+    // 计数与策略都在用户真要下决定的那一刻：确认框。
+    check(model.confirmationText.contains("runAllInfo(2)"), "确认框正文带计数")
     check(model.confirmationText.contains("runAllInfoWithPR"), "并说明队列跑完会开 PR")
-    check(!model.confirmationText.contains("runAllWithPR(串行"), "不把 tooltip 那句括号话再抄一遍")
 
     // 非 GitHub 工作区：只有手动任务待办时「处理」依然可用 —— 这正是这次要改的点。
     var manualOnly = TaskBoard()
     manualOnly.tasks = [TaskItem.manual(title: "Mine", id: "manual-aa002222")]
     model = TasksRunAllModel.build(manualOnly, githubAvailable: false)
     check(model.enabled, "非 GitHub 工作区里「处理」仍然可用（手动任务不需要 GitHub）")
-    eq(model.tooltip, "tasks.runAllManual(1)\ntasks.runAllNoPR",
-       "计数 + 「（串行；不是 GitHub 仓库，只切分支不开 PR）」两行，不矛盾")
-    check(!model.tooltip.contains("runAllWithPR"), "不会同时说「开 PR」")
-    check(model.confirmationText.contains("runAllInfoNoPR"), "确认框也按非 GitHub 的说法")
+    eq(model.tooltip, "tasks.runAllHint",
+       "提示不变：它只说按钮做什么（工作区是不是 GitHub，头部那行已经写了）")
+    check(model.confirmationText.contains("runAllInfoNoPR"), "确认框按非 GitHub 的说法")
     check(!model.confirmationText.contains("runAllInfoWithPR"), "不会同时出现「会开 PR」")
 
     // 没有待办：禁用（顺带修掉「点了没反应」）。
     model = TasksRunAllModel.build(TaskBoard(), githubAvailable: true)
     check(!model.enabled, "没有待办就禁用")
-    eq(model.tooltip, "tasks.runAllNone", "提示就是「没有待办」那一句（不带 PR 那句）")
+    eq(model.tooltip, "tasks.runAllNone", "禁用时提示说明为什么不能点")
     eq(model.confirmationText, "tasks.runAllNone", "确认框正文同样只有这一句")
 
     // 跑过的、已关闭的都不算待办。

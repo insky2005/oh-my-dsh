@@ -305,7 +305,13 @@ struct TasksRunAllModel: Equatable {
     var issueCount: Int
     var manualCount: Int
     var enabled: Bool
-    /// Ready to show as the button's tooltip (counts and the PR caveat included).
+    /// The button's tooltip — and ONLY that: what the control does (it is an icon
+    /// button, so the tooltip is its label), or, when it is greyed out, why.
+    ///
+    /// Counts and policy deliberately do NOT live here: how many tasks are waiting
+    /// is visible in the content area's 统计信息 card, and what a batch will do to
+    /// branches/PRs belongs in the confirmation dialog — the moment the user
+    /// actually commits. A tooltip is not the place to narrate business rules.
     var tooltip: String
     /// The confirmation dialog's body: what pressing it will really do here.
     var confirmationText: String
@@ -317,36 +323,23 @@ struct TasksRunAllModel: Equatable {
         // 重试 / 加入队列处理：把失败历史一起自动重跑，风险比收益大）。
         let issueCount = board.tasks.filter { $0.source == .github && $0.state == .pending }.count
         let manualCount = board.tasks.filter { $0.source == .manual && $0.state == .pending }.count
-        // Each count shape gets its OWN L10n call: passing an [CVarArg] array to the
-        // variadic L10n.tr() types the ARRAY as the single argument, and %d then
-        // prints the array's address (「全部处理：7935328 个手动任务」).
-        let counting: String
-        switch (issueCount, manualCount) {
-        case (0, 0):
-            counting = L10n.tr("tasks.runAllNone")
-        case (let issues, 0):
-            counting = L10n.tr("tasks.runAllIssues", issues)
-        case (0, let manual):
-            counting = L10n.tr("tasks.runAllManual", manual)
-        default:
-            counting = L10n.tr("tasks.runAllMixed", issueCount, manualCount)
-        }
-        // …and the PR half is a separate sentence: saying 「一条分支与 PR」 and then
-        // 「不开 PR」 right below it (which is what the tooltip did) contradicts
-        // itself. The count line never mentions a PR; these lines decide it — with a
-        // different wording for the tooltip (a parenthetical) and the dialog body (a
-        // sentence), so 「串行执行」 is not said twice in the same paragraph.
-        let prLine = githubAvailable ? L10n.tr("tasks.runAllWithPR") : L10n.tr("tasks.runAllNoPR")
-        let detailLine = githubAvailable ? L10n.tr("tasks.runAllInfoWithPR") : L10n.tr("tasks.runAllInfoNoPR")
         let enabled = issueCount + manualCount > 0
+        // The body: the count (it is the fact the user is confirming) and what a
+        // batch really does on THIS workspace — one queue and branch per task, run
+        // one at a time, and whether a PR comes out of it. Each count shape gets its
+        // OWN L10n call: passing an [CVarArg] array to the variadic L10n.tr() types
+        // the ARRAY as the single argument and %d prints its address (that shipped
+        // once as 「全部处理：7935328 个手动任务」).
+        let detailLine = githubAvailable ? L10n.tr("tasks.runAllInfoWithPR") : L10n.tr("tasks.runAllInfoNoPR")
         return TasksRunAllModel(
             issueCount: issueCount,
             manualCount: manualCount,
             enabled: enabled,
-            tooltip: enabled ? counting + "\n" + prLine : counting,
+            // Tooltip = the control's label, or the reason it is dead.
+            tooltip: enabled ? L10n.tr("tasks.runAllHint") : L10n.tr("tasks.runAllNone"),
             confirmationText: enabled
                 ? L10n.tr("tasks.runAllInfo", issueCount + manualCount) + " " + detailLine
-                : counting)
+                : L10n.tr("tasks.runAllNone"))   // nothing to confirm when it is disabled
     }
 }
 
