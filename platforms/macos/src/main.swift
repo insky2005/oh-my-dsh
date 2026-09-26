@@ -594,6 +594,7 @@ enum L10n {
         "tasks.errSession": ("创建 dsh 会话失败", "Failed to create dsh session"),
         "tasks.errPrompt": ("向会话发送任务失败", "Failed to prompt the session"),
         "tasks.errTimeout": ("任务超时（30 分钟）", "Task timed out (30 minutes)"),
+        "tasks.errUnknown": ("未知原因", "unknown reason"),
         "tasks.errNoPush": ("代理没有把分支 push 到远端，这个队列开不出 PR（重试一次，或把队列的「自动开 PR」关掉）", "The agent did not push the branch, so this queue cannot open its PR (retry, or turn the queue's auto-PR off)"),
         "tasks.errSessionGone": ("任务的会话已经不在 dsh 里了（被删掉，或 dsh 重启过）——没人知道它做到哪一步", "The task's session is gone from dsh (deleted, or dsh was restarted) — nobody can say how far the work got"),
         "tasks.errPR": ("创建 PR 失败", "Failed to create PR"),

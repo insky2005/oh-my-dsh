@@ -545,7 +545,7 @@ final class IssueRunnerPanelController: NSObject {
                 let number = task.number ?? 0
                 return (title: L10n.tr("tasks.prTitle", number), body: L10n.tr("tasks.prBody", number))
             },
-            promptText: { task, queue in
+            promptText: { task, queue, brief in
                 if task.source == .github {
                     return TaskPrompts.issue(number: task.number ?? 0, title: task.title,
                                              branch: queue?.branch ?? task.branch ?? "")
@@ -555,8 +555,13 @@ final class IssueRunnerPanelController: NSObject {
                 // same thing, or the agent pushes out of habit.
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: queue?.name,
-                                          pushes: (queue?.autoPR ?? false) && repo != nil)
+                                          pushes: (queue?.autoPR ?? false) && repo != nil,
+                                          brief: brief)
             },
+            // The 交接简报: what the previous task in this queue last said. Read
+            // through the shell's core bridge (the same session logs the audit panel
+            // uses) — the runner calls it off the main thread.
+            sessionReport: { sessionId in Self.sessionReport(sessionId: sessionId, workspace: repoRoot) },
             persist: { board in TasksStore.saveLocalHalf(repoRoot, board) },
             persistIssueTask: { task in TasksStore.saveIssueTask(repoRoot, task) },
             log: { message in AppLog.shared.log(message) },
@@ -1108,6 +1113,22 @@ final class IssueRunnerPanelController: NSObject {
         // dsh >= 0.1.2 requires a client request id for idempotent delivery.
         return DshWebRPC.call(DshWebRPC.sessionPrompt, payload, port: port,
                               modernExtras: ["requestId": UUID().uuidString]) != nil
+    }
+
+    /// The agent's LAST text message in a session — its final report — for the
+    /// queue's 交接简报. Blocking (a subprocess over the session log), so the
+    /// runner only asks inside its background step. nil when the session has no
+    /// report (or could not be read) — the brief then says so.
+    static func sessionReport(sessionId: String, workspace: String?) -> String? {
+        var args = ["brief", "report", sessionId]
+        if let workspace = workspace, !workspace.isEmpty {
+            args.append(contentsOf: ["--workspace", workspace])
+        }
+        guard let json = CoreBridge.run(args, timeout: 30, preferBundledNode: true),
+              let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let text = object["text"] as? String
+        return (text?.isEmpty ?? true) ? nil : text
     }
 
     /// The session list of the current tick, shared by every tracked workspace.

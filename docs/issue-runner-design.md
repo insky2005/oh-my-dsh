@@ -350,6 +350,15 @@ struct Queue {
 >
 > 测试（无头，`tests/tasks-panel/runner-tests.swift` 的 `WorkspaceHarness`：按路径分发的假 repo / 假 dsh / 假磁盘）：切走的工作区 runner **原样保留**且任务仍是 running；在另一个工作区这一侧 tick 时它照常结束、`step()` 回报 `(path, title, ok)`；空转后放下，切回去从磁盘重建读到的是**完成态而不是「已中断」**；同一路径本次运行内 `reconcile` 恰好一次（`[true, false]`）；两个工作区并行（各自工作树各有自己的 checkout 与会话）。
 
+> **实现（2026-09-27 补充 · F4：一任务一会话 + 交接简报）**：队列里**每个任务各自一条 dsh 会话**是有意的 —— 上下文小、审查面板按会话审的改动正好对应一张卡片、取消/会话名/「打开会话」都是任务级的。代价是下一棒没有记忆（它只看得到分支上的 commit，看不到上一棒的对话），而把整条队列塞进一个会话会同时失掉上面那几样（审查跨任务、取消变整队、失败会话被下一棒继承）、并让上下文变成不可控变量。于是补的是**交接**，不是共享上下文：
+>
+> - **`TaskPrompts.QueueBrief`**（`TasksRunner.swift`）：队列名、位次（第 k/n）、前面每一棒的标题与结局（`.done` / `.failed`+失败原因 / `.cancelled`）、**它们在各自会话里的最后一段汇报**、分支上相对基线的提交列表；渲染成提示词里的 `## 队列上下文` 段，放在任务正文与「要求」之间，以「不要重做已完成的部分，只做本任务」收尾。
+> - **汇报不截断**：短摘要恰好会丢掉下一棒最需要的东西（决策理由、没做完的事、坑）。代价是简报长度随汇报线性增长 —— 因此 runner 把简报字符数写进 `app.log`（`tasks: brief for <task> is N chars`），长了看得见。
+> - **失败 / 被取消的一棒同样进简报**：否则「重试」就是从零重新探索一遍。没有会话记录时写明「它没有留下汇报」，而不是假装无事发生。
+> - **数据来源**：core 新增 `sessionReport()`（`core/lib/review-log.js`，取 `assistant/message` 事件里最后一条有文本的消息）+ CLI `ohmy-core brief report <sessionId> [--workspace <dir>] [--dsh-home <dir>]`；壳层通过既有的 `CoreBridge` 调它（与审查面板同一套会话日志解码，含 .zstd）。**简报在后台步骤里构建**（读日志 + 问 git 都是阻塞操作），不进主线程。
+> - **第一个任务**：没有「前面已经做过的」；但分支上已有的提交照旧告诉它（队列复用同一分支重跑时，那就是上一轮留下的状态）。issue 任务的自动队列是单任务队列，天然没有简报。
+> - 回归：core `core/tests/session-report.test.js`（5 例：取最后一条 / 忽略流式分片 / 没有汇报 / 会话不存在 / 不截断）；运行器新增 5 节用例（第一个任务无前情、第二位带上队列名位次标题汇报提交与「不要重做」、失败的一棒写清原因、超长汇报原样带上、无会话时写明没有汇报）。
+
 ### V2-8 卡片式任务清单
 
 列表改为 `NSScrollView + NSStackView`，体例照 `ProjectsPanel.swift`：`render()` 重建 `arrangedSubviews`，卡片 `widthAnchor == list.widthAnchor - 20`，卡片自身 `draw(_:)` 画圆角 + 描边、`hitTest` 把非按钮区域的点击交回卡片、`resetCursorRects` 设 `pointingHand`。

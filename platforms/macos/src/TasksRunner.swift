@@ -66,6 +66,15 @@ struct TaskGit {
         return out.contains(branch) ? .pushed : .notPushed
     }
 
+    /// The commits the branch carries on top of `base` ("a1b2c3 subject"), or nil
+    /// when git could not answer. This is the STRUCTURAL half of a 交接简报: what
+    /// the earlier tasks in the queue actually changed.
+    func commits(base: String) -> [String]? {
+        guard let out = run(["log", "--oneline", "--no-decorate", base + "..HEAD"]) else { return nil }
+        return out.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
     /// Put the worktree on the queue's branch:
     ///   clean check -> checkout <base> -> pull --ff-only -> checkout[-b] <branch>
     /// Every step must succeed; the pull is skipped when there is no remote
@@ -131,8 +140,13 @@ struct TaskRunnerEnv {
     var createPR: (_ branch: String, _ base: String, _ title: String, _ body: String) -> String?
     /// Title and body for the queue's pull request.
     var prText: (_ task: TaskItem, _ branch: String) -> (title: String, body: String)
-    /// The text handed to the agent.
-    var promptText: (_ task: TaskItem, _ queue: TaskQueue?) -> String
+    /// The text handed to the agent. `brief` is the 交接简报 for a task that has
+    /// work in front of it in its queue (nil when there is nothing to hand over).
+    var promptText: (_ task: TaskItem, _ queue: TaskQueue?, _ brief: String?) -> String
+    /// The agent's LAST text message of a session — its final report — or nil.
+    /// BLOCKING (it reads a session log through the shell's core bridge), so the
+    /// runner only calls it inside its background step.
+    var sessionReport: (_ sessionId: String) -> String? = { _ in nil }
     /// Persist the machine-scoped half of the board (manual.json / queues.json /
     /// local.json).
     var persist: (TaskBoard) -> Void
@@ -157,6 +171,68 @@ struct TaskRunnerEnv {
 /// run the tests, commit, push, never echo the token).
 enum TaskPrompts {
 
+    /// What the earlier tasks in a queue left behind — the 交接简报.
+    ///
+    /// One session per task keeps every context small (and keeps 审查/取消/会话名
+    /// per task), but then a task starts with no memory of the one before it. The
+    /// brief is how continuity travels: what the earlier tasks were, how they
+    /// ended, what the agent said at the end of each, and which commits the branch
+    /// already carries. Reports are NOT truncated — a shortened summary distorts
+    /// exactly what the next task needs.
+    struct QueueBrief: Equatable {
+        struct Earlier: Equatable {
+            var title: String
+            var state: TaskState
+            /// The failure's L10n key (its reason), for a task that did not finish.
+            var errorKey: String?
+            /// The agent's last words in that task's session, or nil.
+            var report: String?
+        }
+        var queueName: String
+        /// 1-based position of the task this brief is for.
+        var position: Int
+        var total: Int
+        var earlier: [Earlier]
+        var branch: String?
+        var base: String
+        var commits: [String]
+    }
+
+    /// The brief as prompt text, or nil when there is nothing to hand over.
+    static func briefSection(_ brief: QueueBrief?) -> String? {
+        guard let brief = brief else { return nil }
+        guard !brief.earlier.isEmpty || !brief.commits.isEmpty else { return nil }
+        var lines: [String] = []
+        lines.append("## 队列上下文（前面任务留下的状态）")
+        lines.append("本任务属于队列「\(brief.queueName)」，是第 \(brief.position)/\(brief.total) 个。")
+        if !brief.earlier.isEmpty {
+            lines.append("前面已经做过的：")
+            for (index, earlier) in brief.earlier.enumerated() {
+                var head = "\(index + 1). 「\(earlier.title)」"
+                switch earlier.state {
+                case .done: head += " —— 已完成"
+                case .failed: head += " —— 失败（\(L10n.tr(earlier.errorKey ?? "tasks.errUnknown"))）"
+                case .cancelled: head += " —— 被取消"
+                default: head += " —— \(earlier.state.rawValue)"
+                }
+                lines.append(head)
+                if let report = earlier.report, !report.isEmpty {
+                    lines.append("   它的汇报：")
+                    lines.append(report.split(separator: "\n").map { "   " + $0 }.joined(separator: "\n"))
+                } else {
+                    lines.append("   它没有留下汇报（会话里没有代理的最后文本）。")
+                }
+            }
+        }
+        if let branch = brief.branch, !brief.commits.isEmpty {
+            lines.append("分支 \(branch) 上已经有这些提交（基于 \(brief.base)）：")
+            for commit in brief.commits { lines.append("  " + commit) }
+        }
+        lines.append("上面是前面任务留下的状态：不要重做已完成的部分，只做本任务；")
+        lines.append("如果发现前面留下的问题，先说明再决定是否顺手修。")
+        return lines.joined(separator: "\n")
+    }
+
     static func issue(number: Int, title: String, branch: String) -> String {
         var lines: [String] = []
         lines.append("请加载 issue-resolve skill 并完成以下 GitHub issue 的修复：")
@@ -179,7 +255,7 @@ enum TaskPrompts {
     /// stays as local commits on the queue's branch (the agent is told so, or it
     /// pushes anyway out of habit).
     static func manual(title: String, body: String?, branch: String?, queueName: String?,
-                       pushes: Bool = true) -> String {
+                       pushes: Bool = true, brief: String? = nil) -> String {
         var lines: [String] = []
         lines.append("请完成以下任务：")
         lines.append("")
@@ -190,6 +266,12 @@ enum TaskPrompts {
            body != title.trimmingCharacters(in: .whitespacesAndNewlines) {
             lines.append("")
             lines.append(body)
+        }
+        // The 交接简报 goes between the task and the requirements: context first,
+        // then what to do with it.
+        if let brief = brief, !brief.isEmpty {
+            lines.append("")
+            lines.append(brief)
         }
         lines.append("")
         lines.append("要求：")
@@ -407,12 +489,14 @@ final class TasksRunner {
         let branch = queue?.branch
         let base = queue?.baseBranch ?? "main"
         let title = task.title
-        let prompt = env.promptText(task, queue)
         let git = env.git
         let repoRoot = env.repoRoot
         let createSession = env.createSession
         let renameSession = env.renameSession
         let promptSession = env.promptSession
+        let promptText = env.promptText
+        let sessionReport = env.sessionReport
+        let boardNow = board
         let log = env.log
 
         phase = .starting(taskID)
@@ -430,6 +514,16 @@ final class TasksRunner {
                 startResult = .failed(failure, nil)
                 return
             }
+            // The 交接简报 is built HERE, off the main thread: it reads the earlier
+            // tasks' session logs (a core-bridge call) and asks git for the commits
+            // the branch already carries.
+            let brief = TasksRunner.brief(taskID: taskID, queue: queue, board: boardNow,
+                                          git: git, sessionReport: sessionReport,
+                                          branch: branch, base: base, position: nil)
+            if let brief = brief, !brief.isEmpty {
+                log("tasks: brief for " + taskID + " is " + String(brief.count) + " chars")
+            }
+            let prompt = promptText(task, queue, brief)
             guard let sessionId = createSession(repoRoot) else {
                 startResult = .failed(.session, nil)
                 return
@@ -481,6 +575,34 @@ final class TasksRunner {
             persist()
             _ = pump(now: now)
         }
+    }
+
+    /// The 交接简报 for one task: the earlier tasks of its queue (how they ended and
+    /// what the agent said), plus the commits the queue's branch already carries.
+    ///
+    /// Returns the rendered prompt section, or nil when there is nothing to hand
+    /// over (the first task of a queue, or a task that is not in one). Static and
+    /// self-contained so it can run inside the background step.
+    static func brief(taskID: String, queue: TaskQueue?, board: TaskBoard, git: TaskGit,
+                      sessionReport: (String) -> String?, branch: String?, base: String,
+                      position: Int?) -> String? {
+        guard let queue = queue else { return nil }
+        let index = position ?? queue.taskIds.firstIndex(of: taskID).map { $0 + 1 } ?? 1
+        let earlier = queue.taskIds.prefix(max(0, index - 1)).compactMap { id -> TaskPrompts.QueueBrief.Earlier? in
+            guard let task = board.task(id) else { return nil }
+            // Everything that is BEHIND us counts, however it ended: a failed or
+            // cancelled task left work and a story the next task must know (else
+            // the retry re-explores from scratch).
+            guard task.state == .done || task.state == .failed || task.state == .cancelled else { return nil }
+            return TaskPrompts.QueueBrief.Earlier(title: task.title, state: task.state,
+                                                  errorKey: task.error,
+                                                  report: task.sessionId.flatMap { sessionReport($0) })
+        }
+        let commits = branch.map { _ in git.commits(base: base) ?? [] } ?? []
+        let heading = TaskPrompts.QueueBrief(queueName: queue.name, position: index,
+                                             total: queue.taskIds.count, earlier: earlier,
+                                             branch: branch, base: base, commits: commits)
+        return TaskPrompts.briefSection(heading)
     }
 
     private static func failure(for entered: GitEnterResult) -> TaskFailure? {

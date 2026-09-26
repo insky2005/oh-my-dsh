@@ -37,6 +37,9 @@ final class FakeRepo {
     var failing: Set<String> = []
     private(set) var calls: [String] = []
     private(set) var checkouts: [String] = []
+    /// What "git log --oneline base..HEAD" answers — the commits the queue's branch
+    /// already carries (the structural half of a 交接简报).
+    var commits: [String] = []
 
     func git() -> TaskGit {
         TaskGit(run: { [unowned self] args in self.run(args) },
@@ -67,6 +70,8 @@ final class FakeRepo {
             return "Switched to " + target
         case "pull":
             return "Already up to date."
+        case "log":
+            return commits.joined(separator: "\n")
         case "ls-remote":
             let branch = args.last ?? ""
             return pushed.contains(branch) ? "deadbeef\trefs/heads/" + branch : ""
@@ -84,6 +89,15 @@ final class FakeDsh {
     /// dsh could not answer (RPC failure) / does not list this session at all:
     /// both used to come back as "finished" (see SessionState).
     var stateOverride: [String: SessionState] = [:]
+    /// sessionId -> the agent's last words (the 交接简报's report).
+    var reports: [String: String] = [:]
+    /// Which sessions were asked for a report, in order.
+    private(set) var reportCalls: [String] = []
+
+    func report(_ id: String) -> String? {
+        reportCalls.append(id)
+        return reports[id]
+    }
 
     func sessionState(_ id: String) -> SessionState {
         if let forced = stateOverride[id] { return forced }
@@ -183,13 +197,15 @@ final class Harness {
             prText: { task, branch in
                 (title: "fix(#" + String(task.number ?? 0) + ")", body: branch)
             },
-            promptText: { task, queue in
+            promptText: { task, queue, brief in
                 // Same rule the panel uses: only a queue that will open a PR asks
                 // the agent to push.
                 TaskPrompts.manual(title: task.title, body: task.body,
                                    branch: queue?.branch, queueName: queue?.name,
-                                   pushes: (queue?.autoPR ?? false) && github)
+                                   pushes: (queue?.autoPR ?? false) && github,
+                                   brief: brief)
             },
+            sessionReport: { id in dsh.report(id) },
             persist: { board in rec.persistCount += 1; _ = board },
             persistIssueTask: { task in rec.issueWrites.append(task.id) },
             log: { message in rec.logs.append(message) },
@@ -828,8 +844,9 @@ final class WorkspaceHarness {
             findExistingPR: { _ in nil },
             createPR: { _, _, _, _ in nil },
             prText: { _, branch in (title: "t", body: branch) },
-            promptText: { task, _ in TaskPrompts.manual(title: task.title, body: task.body,
-                                                       branch: nil, queueName: nil, pushes: false) },
+            promptText: { task, _, brief in TaskPrompts.manual(title: task.title, body: task.body,
+                                                              branch: nil, queueName: nil, pushes: false,
+                                                              brief: brief) },
             persist: { board in self.boards[path] = board },
             persistIssueTask: { _ in },
             log: { _ in },
@@ -924,6 +941,90 @@ do {
     h.dsh("/tmp/ws-b").finishAll()
     let finished = h.registry.step()
     eq(finished.map { $0.path }, ["/tmp/ws-a", "/tmp/ws-b"], "两个都收尾了，顺序稳定")
+}
+
+section("交接简报：队列里后面那个任务知道前面发生了什么")
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "抽出 TokenStore", body: nil, id: "manual-cc001111")
+    let t2 = TaskItem.manual(title: "补测试", body: nil, id: "manual-cc002222")
+    board.tasks = [t1, t2]
+    let queue = board.createQueue(name: "认证重构", autoPR: false)
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+    _ = board.enqueue(taskID: t2.id, into: queue.id)
+    let h = Harness(board: board)
+    h.dsh.reports["session-1"] = "已完成：抽出了 TokenStore，测试通过。"
+    h.repo.commits = ["a1b2c3 refactor: extract TokenStore", "d4e5f6 test: cover refresh"]
+    _ = h.runner.startQueue(queue.id)
+
+    let first = h.dsh.prompts["session-1"] ?? ""
+    check(!first.contains("前面已经做过的"), "第一个任务前面没人：没有「前面已经做过的」")
+    check(h.dsh.reportCalls.isEmpty, "也不会去读谁的会话")
+    // …但分支上已经有的提交照旧告诉它：队列重跑（分支复用）时那就是上一轮留下的，
+    // 属于「这一棒开始前就该知道的状态」。
+    check(first.contains("a1b2c3 refactor: extract TokenStore"), "分支已有的提交仍然告诉第一个任务")
+
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    let second = h.dsh.prompts["session-2"] ?? ""
+    check(second.contains("## 队列上下文"), "第二个任务带上简报")
+    check(second.contains("队列「认证重构」"), "报队列名")
+    check(second.contains("第 2/2 个"), "报位次")
+    check(second.contains("「抽出 TokenStore」 —— 已完成"), "报上一棒的标题与结局")
+    check(second.contains("已完成：抽出了 TokenStore，测试通过。"), "上一棒的汇报原样带上")
+    check(second.contains("a1b2c3 refactor: extract TokenStore"), "带上分支已经有的提交")
+    check(second.contains("d4e5f6 test: cover refresh"), "而且是全部提交")
+    check(second.contains("不要重做已完成的部分"), "并明确要求本任务不要重做")
+    eq(h.dsh.reportCalls, ["session-1"], "只问了真有会话的那一棒")
+}
+
+section("交接简报：失败 / 取消过的一棒同样进简报，且汇报不截断")
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "改配置", body: nil, id: "manual-cc003333")
+    let t2 = TaskItem.manual(title: "接着改", body: nil, id: "manual-cc004444")
+    board.tasks = [t1, t2]
+    let queue = board.createQueue(name: "Lane", autoPR: false)
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+    _ = board.enqueue(taskID: t2.id, into: queue.id)
+    // 第一棒失败，但它留下过汇报（也可能没有）
+    board.markRunning(t1.id)
+    board.local.sessions[t1.id] = "session-old"
+    board.attachSessions(board.local.sessions)
+    _ = board.markFailed(t1.id, error: TaskFailure.timeout.rawValue)
+    let h = Harness(board: board)
+    let long = String(repeating: "很长的汇报。", count: 200)     // ~1200 字
+    h.dsh.reports["session-old"] = long
+    _ = h.runner.startQueue(queue.id)
+    // 这个 harness 里没有为第一棒建过会话，所以第二棒拿到的是 session-1。
+    let prompt = h.dsh.prompts["session-1"] ?? ""
+    check(prompt.contains("「改配置」 —— 失败（tasks.errTimeout）"), "失败的一棒写清结局与原因")
+    check(prompt.contains(long), "它的汇报一个字都不截（截断会失真）")
+    check(long.count > 1000, "测试用的汇报确实很长")
+}
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "第一棒", body: nil, id: "manual-cc005555")
+    let t2 = TaskItem.manual(title: "第二棒", body: nil, id: "manual-cc006666")
+    board.tasks = [t1, t2]
+    let queue = board.createQueue(name: "Lane", autoPR: false)
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+    _ = board.enqueue(taskID: t2.id, into: queue.id)
+    board.markRunning(t1.id)
+    board.markDone(t1.id, prUrl: nil)     // 没有 sessionId：会话记录丢了
+    let h = Harness(board: board)
+    _ = h.runner.startQueue(queue.id)
+    let prompt = h.dsh.prompts["session-1"] ?? ""
+    check(prompt.contains("没有留下汇报"), "读不到汇报时明说，而不是假装上一棒什么都没说")
+}
+do {
+    // 不在队列里的任务没有简报可言（issue 任务的自动队列也是单任务）。
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    let prompt = h.dsh.prompts["session-1"] ?? ""
+    check(!prompt.contains("队列上下文"), "单任务队列没有前一棒")
+    _ = taskID
 }
 
 if failures == 0 {
