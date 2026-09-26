@@ -616,6 +616,7 @@ enum L10n {
         "tasks.state.closed": ("已关闭", "Closed"),
         "tasks.detailProcess": ("处理", "Process"),
         "tasks.queue.add": ("加入队列", "Add to Queue"),
+        "tasks.queue.addHint": ("加入队列：点开选一个已有队列，或新建队列（新建在最上面）", "Add to Queue: pick an existing queue, or create one (New Queue is first)"),
         "tasks.queue.remove": ("移出队列", "Leave Queue"),
         "tasks.detailOpenPR": ("打开 PR", "Open PR"),
         "tasks.detailRetry": ("重试", "Retry"),

@@ -274,7 +274,9 @@ final class TaskCardView: NSView {
 
     var onToggle: (() -> Void)?
     var onPrimary: (() -> Void)?
-    var onQueue: (() -> Void)?
+    /// The 加入队列 dropdown: the panel opens the list under the view it is handed
+    /// (the menu button itself).
+    var onQueue: ((NSView) -> Void)?
     var onCommentClose: (() -> Void)?
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
@@ -322,7 +324,11 @@ final class TaskCardView: NSView {
     /// buttons keep working because AppKit hit-tests the deepest view first.
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let hit = super.hitTest(point) else { return nil }
-        if hit is NSButton || hit is TaskBadgeView || hit is NSTextView || hit is CustomIconButton { return hit }
+        if hit is NSButton || hit is TaskBadgeView || hit is NSTextView || hit is CustomIconButton {
+            return hit
+        }
+        // The 加入队列 dropdown owns its clicks (it is not an NSButton).
+        if hit is PanelMenuButton || hit.superview is PanelMenuButton { return hit }
         return self
     }
 
@@ -428,7 +434,7 @@ final class TaskCardView: NSView {
     /// is secondary as an icon button — three text buttons do not fit a narrow
     /// panel, and they made the card demand more width than the list had.
     private func actionRow() -> NSView {
-        var views: [NSView] = [actionButton(model.primaryKey, #selector(primaryTapped), enabled: model.primaryEnabled)]
+        var views: [NSView] = [primaryControl()]
         if model.canCommentClose {
             views.append(actionButton("tasks.detailCommentClose", #selector(commentCloseTapped)))
         }
@@ -450,6 +456,24 @@ final class TaskCardView: NSView {
         return row
     }
 
+    /// The card's primary action. 加入队列 is a DROPDOWN, so it is the shell's menu
+    /// button (icon + label + chevron + hover highlight) — the exact control the
+    /// files panel's 打开项目 button uses — and the list it opens drops right under
+    /// it. Every other primary action is a plain button that just fires.
+    private func primaryControl() -> NSView {
+        guard model.canQueue else {
+            return actionButton(model.primaryKey, #selector(primaryTapped), enabled: model.primaryEnabled)
+        }
+        let button = PanelMenuButton(glyph: .symbol("rectangle.stack.badge.plus"),
+                                     title: L10n.tr(model.primaryKey),
+                                     tooltip: L10n.tr("tasks.queue.addHint"))
+        button.onShowMenu = { [weak self, weak button] in
+            guard let button = button else { return }
+            self?.onQueue?(button)
+        }
+        return button
+    }
+
     private func iconButton(_ symbol: String, tooltipKey: String, action: Selector) -> CustomIconButton {
         let button = CustomIconButton(glyph: .symbol(symbol), tooltip: L10n.tr(tooltipKey), size: 22)
         button.onAction = { [weak self] in self?.perform(action, with: nil) }
@@ -469,9 +493,9 @@ final class TaskCardView: NSView {
         return button
     }
 
-    @objc private func primaryTapped() {
-        if model.canQueue { onQueue?() } else { onPrimary?() }
-    }
+    /// 加入队列 never lands here: it is the dropdown (primaryControl), which opens
+    /// the picker instead of firing an action.
+    @objc private func primaryTapped() { onPrimary?() }
 
     @objc private func commentCloseTapped() { onCommentClose?() }
     @objc private func editTapped() { onEdit?() }

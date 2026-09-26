@@ -434,7 +434,40 @@ do {
     }
 }
 
- section("统计信息卡（内容区首行）")
+ 
+section("加入队列 is the files panel's dropdown control")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "Mine", id: "manual-0070aaaa")
+    board.tasks = [task]
+    let card = TaskCardView(model: TaskCardModel.build(task, board: board, expanded: true, githubRepo: false))
+    _ = layout(card, width: 320)
+    // 手动未入队任务的主操作是一个下拉：用壳层的 PanelMenuButton（打开项目 同款），
+    // 而不是一个点了就执行的普通按钮。
+    let menus = descendants(card, of: PanelMenuButton.self)
+    eq(menus.count, 1, "the card carries one dropdown")
+    if let menuButton = menus.first {
+        eq(menuButton.title, "add", "labelled 加入队列")
+        var anchor: NSView?
+        card.onQueue = { anchor = $0 }
+        menuButton.showMenu()
+        check(anchor === menuButton, "opening it hands the panel the button itself (the menu drops under it)")
+    }
+
+    // 其它主操作仍是普通按钮（点一下就执行，没有下拉）。
+    var queuedBoard = TaskBoard()
+    queuedBoard.tasks = [task]
+    let queue = queuedBoard.createQueue(name: "Lane")
+    _ = queuedBoard.enqueue(taskID: task.id, into: queue.id)
+    let queuedCard = TaskCardView(model: TaskCardModel.build(queuedBoard.task(task.id)!, board: queuedBoard,
+                                                          expanded: true, githubRepo: false))
+    _ = layout(queuedCard, width: 320)
+    eq(descendants(queuedCard, of: PanelMenuButton.self).count, 0,
+       "a queued task offers 移出队列 as a plain button, not a dropdown")
+    check(descendants(queuedCard, of: NSButton.self).contains { $0.title == "remove" },
+          "…and that button is a real NSButton")
+}
+section("统计信息卡（内容区首行）")
 do {
     var board = TaskBoard()
     let t1 = TaskItem.manual(title: "One", id: "manual-0060aaaa")

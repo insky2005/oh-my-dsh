@@ -55,3 +55,32 @@ final class CustomIconButton: NSView {
         NSSize(width: frame.width, height: frame.height)
     }
 }
+/// Stand-in for the shell's menu button (PreviewPanel.swift). The real one draws an
+/// icon + label + chevron and opens a menu on click; the tests only need to know it
+/// IS the menu button (not a plain NSButton) and what it says.
+final class PanelMenuButton: NSView {
+    enum Glyph { case folder, openInApp, reveal, doc, symbol(String) }
+
+    var title: String
+    var onAction: (() -> Void)?
+    var onShowMenu: (() -> Void)?
+    var isEnabled = true
+    let glyph: Glyph
+
+    init(glyph: Glyph, title: String, tooltip: String) {
+        self.glyph = glyph
+        self.title = title
+        super.init(frame: .zero)
+        toolTip = tooltip
+        translatesAutoresizingMaskIntoConstraints = false
+        heightAnchor.constraint(equalToConstant: 26).isActive = true
+        widthAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 120, height: 26) }
+
+    /// What clicking the control does (the real one calls this from mouseDown).
+    func showMenu() { onShowMenu?() }
+}

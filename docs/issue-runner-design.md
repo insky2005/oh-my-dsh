@@ -365,6 +365,17 @@ struct Queue {
 - **列表宽度**：卡片/队列头此前**没有宽度约束**（垂直栈 leading 对齐 → 每个视图各自贴合自身固有宽度），`+` 之后才暴露；现在统一由 `addCard(_:)` 打上 `widthAnchor == listStack.widthAnchor - 20`（ProjectsPanel 体例），并保证**卡片内部不得反向撑宽列表**：动作行只在主操作上留文字按钮、编辑/删除改 22pt 图标按钮（`pencil` / `trash`），队列头的开始/暂停/开 PR/更多 同样改图标按钮，文本与徽标压缩阻力降档 —— 窄面板下截断而不是把列表撑宽（`tests/tasks-panel/form-tests.swift` 断言 320pt 宽下卡片与队列头都恰好等于该宽度）；
 - **样式**：卡片圆角 7→8、描边对齐 `SkillCardView`（深 0.38@0.7 / 浅 0.82）、展开态与运行态各一档强调边框、hover 提亮（tracking area）；标题 12→13 semibold、元信息 10→11；队列头改成 `SessionTitleBar` 体例（**不透明** highlighted 填充，去掉旧的「highlighted + alpha 0.55」半透明卡）、补 `viewDidChangeEffectiveAppearance`、两行结构（名称 + 状态徽标 + 图标按钮 / 分支 → 基线 + 进度条 + `n/m` + 失败数）；分区头 12pt bold + 右侧发丝线（队列分区头右侧带「新建队列」）；工具栏拆两行（28pt 工作区 + 计数胶囊 / 30pt 扁平页签筛选，复用技能面板的 `SkillTabStrip`）；空态改成图标 + 文案 + **「新建任务」按钮**（三态：无任务 / 筛选为空 / 非 GitHub 工作区）；`listDocument` 补齐 leading/top 钉接（此前只钉了宽度）。
 
+### V2-7b 「加入队列 ▾」下拉对齐文件面板（2026-09-26）
+
+卡片上的 加入队列 此前是一个**普通 NSButton**（点了就执行），菜单还用 `popUp(at: NSPoint(x: 0, y: view.bounds.height), in: card)` 锚在**卡片左上角** —— 列表弹出来正好盖住卡片自己，按钮上也看不出这里有个下拉。
+
+- **控件换成壳层的 `PanelMenuButton`**（`PreviewPanel.swift`，正是文件面板「打开项目 ▾」用的那一个）：图标 + 文案 + chevron，hover 与菜单打开时整块高亮，宽度不够时自动退化成「图标 + chevron」小片 —— 两个面板因此是**同一个下拉控件**，不是"看起来像"；
+- **菜单落在按钮正下方**：`popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: button)`（与 `FilePanel.popBelow` 同一写法），锚点是按钮而不是卡片；按钮在卡片底部、空间不够时由 AppKit 自行上翻；
+- **新建队列排第一**：下拉项由新的纯模型 `QueuePickerItem.build(choices)` 生成 —— 第一项固定是 `tasks.queue.new`（新建队列…），随后才是按创建顺序排的已有队列（行里带该队列的分支）；空 board 时下拉里就只有这一项。面板只负责把行变成 `NSMenuItem`（第一项后面补一条分隔线）。顺序规则因此在无头测试里钉住；
+- 顺带：卡片 `hitTest` 放行 `PanelMenuButton`（它不是 NSButton，否则点击会被卡片吞掉去展开/收起）；`primaryTapped` 不再需要 `canQueue` 分支。
+
+回归：`tests/tasks-panel` 视图阶段断言「手动未入队卡片只有一个下拉控件、文案是 加入队列、onShowMenu 把按钮自己交给面板」与「已入队卡片的主操作是普通 NSButton、没有下拉」；视图模型阶段断言下拉顺序（新建队列第一 / 已有队列按创建顺序 / 空 board 只有一项）。
+
 ### V2-8a 队列总览与计数
 
 「有几个队列、每个队列什么状态、队列下哪些任务什么状态」由三层一起回答：

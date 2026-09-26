@@ -1276,9 +1276,8 @@ final class IssueRunnerPanelController: NSObject {
         let taskID = task.id
         card.onToggle = { [weak self] in self?.toggleTask(taskID) }
         card.onPrimary = { [weak self] in self?.primaryAction(task) }
-        card.onQueue = { [weak self, weak card] in
-            guard let card = card else { return }
-            self?.presentQueuePicker(for: taskID, from: card)
+        card.onQueue = { [weak self] anchor in
+            self?.presentQueuePicker(for: taskID, from: anchor)
         }
         card.onCommentClose = { [weak self] in self?.commentAndCloseTapped(number: task.number ?? 0) }
         card.onEdit = { [weak self] in self?.openTaskComposer(.edit(taskID: taskID)) }
@@ -1380,22 +1379,36 @@ final class IssueRunnerPanelController: NSObject {
 
     // MARK: - Queue picker (加入队列)
 
-    private func presentQueuePicker(for taskID: String, from view: NSView) {
+    /// 加入队列 ▾ — the same dropdown the files panel's 打开项目 button opens: the
+    /// control is a menu button and the list drops just BELOW it (the menu used to
+    /// be anchored at the card's top-left corner, so it covered the card it
+    /// belonged to).
+    ///
+    /// 新建队列 comes FIRST: creating a lane is the step that most often comes
+    /// next, and it must never sit under a long list of existing queues.
+    private func presentQueuePicker(for taskID: String, from button: NSView) {
         guard let runner = runner else { return }
-        let menu = NSMenu()
-        for choice in runner.queueChoices() {
-            let suffix = choice.branch.map { "  " + $0 } ?? ""
-            let item = NSMenuItem(title: choice.name + suffix, action: #selector(queueChosen(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = [taskID, choice.id]
-            menu.addItem(item)
+        let menu = NSMenu(title: L10n.tr("tasks.queue.add"))
+        let items = QueuePickerItem.build(runner.queueChoices())
+        for row in items {
+            if row.isNewQueue {
+                let item = NSMenuItem(title: row.title, action: #selector(newQueueForTask(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = taskID
+                menu.addItem(item)
+                // The 新建队列 row is always first; separate it from the queues.
+                if items.count > 1 { menu.addItem(.separator()) }
+            } else {
+                let suffix = row.branch.map { "  " + $0 } ?? ""
+                let item = NSMenuItem(title: row.title + suffix, action: #selector(queueChosen(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = [taskID, row.queueID ?? ""]
+                menu.addItem(item)
+            }
         }
-        if !menu.items.isEmpty { menu.addItem(.separator()) }
-        let newItem = NSMenuItem(title: L10n.tr("tasks.queue.new"), action: #selector(newQueueForTask(_:)), keyEquivalent: "")
-        newItem.target = self
-        newItem.representedObject = taskID
-        menu.addItem(newItem)
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height), in: view)
+        // Drop below the button: the anchor is the menu's TOP-LEFT corner in the
+        // view's (non-flipped) coordinates (FilePanel.popBelow).
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: button)
     }
 
     @objc private func queueChosen(_ sender: NSMenuItem) {

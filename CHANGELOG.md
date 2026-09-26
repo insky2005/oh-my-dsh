@@ -24,6 +24,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Changed
 
+- **「加入队列 ▾」下拉换成文件面板「打开项目 ▾」那一个控件，并把新建队列排到第一项**。此前卡片上的 加入队列 是普通 NSButton（点了就执行），菜单锚在**卡片左上角**（盖住卡片自己），按钮上也看不出有下拉。现在：① 控件用壳层的 `PanelMenuButton`（图标 + 文案 + chevron + hover/打开高亮，窄了自动退化成图标 + chevron 小片）—— 与文件面板是同一个控件；② 菜单落在**按钮正下方**（`at: NSPoint(x: 0, y: -6), in: button`，与 `FilePanel.popBelow` 同写法），空间不够时 AppKit 自行上翻；③ 下拉项由新的纯模型 `QueuePickerItem.build(choices)` 生成，**第一项固定是「新建队列…」**，其后才是按创建顺序排的已有队列（行里带分支），空 board 时只有这一项；卡片 `hitTest` 放行 `PanelMenuButton`（否则点击会被卡片吞掉去展开/收起）。
+  回归：视图阶段断言「未入队卡片只有一个下拉、文案 加入队列、onShowMenu 把按钮自己交给面板」「已入队卡片是普通 NSButton、没有下拉」；视图模型阶段断言下拉顺序。
 - **任务创建改成一个框：首行是标题、其余行是描述（单行则两者都是）**。此前「新建任务 / 编辑任务」是标题 + 描述两个字段，描述还是必填项 —— 于是只想记一句话的任务也要把同一句话写两遍。现在只有一个内容框（多行编辑器，默认 160pt、随输入长高、上限 260pt 后内部滚动），切分与回落全在纯模型 `TaskDraft` 里：`composed(from:)` 把首行当标题、其余行当描述（非首行全空白 = 单行），单行时这一行**同时**是标题与描述；`combined(title:body:)` 是它的逆运算，编辑回填进同一个框（描述就是标题时回到单行，不会写两遍）；`effectiveBody` 让「没有独立描述」的草稿在存储层自动用标题兜底，所以 `createManualTask` / `updateManualTask` 落到 board 的任务永远带着一段可发给代理的正文。
 随之：**只有标题是必填的**（空框报 `tasks.errName`，`tasks.errBody` 删除）；单行任务的描述 == 标题，通用提示词与卡片详情都不再重复打印这句话；**Enter 改为换行**（首行/其余行都要靠它分行），**⌘↩ 提交**、Esc 关闭，信息行写明了规则；文案键 `tasks.new.name` / `nameHint` / `body` / `bodyHint` 删除，新增 `tasks.new.content`（任务内容）与 `tasks.new.contentHint`（占位文案）.
 回归：`tests/tasks-panel` 四阶段 **562 项**（拆行 / 往返 / 单行兜底 / 编辑回填单行 / 面板与提示词不重复 / 空框报错 / 单框尺寸与长高），表单阶段改用 `type()` 直接往那个框里输入。

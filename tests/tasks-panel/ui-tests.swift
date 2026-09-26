@@ -348,6 +348,29 @@ do {
     eq(cleared.branchValue, nil, "no branch really means no branch")
 }
 
+
+section("加入队列 dropdown: 新建队列 first")
+do {
+    var board = TaskBoard()
+    let q1 = board.createQueue(name: "Docs Cleanup")
+    let q2 = board.createQueue(name: "Second lane", baseBranch: "develop", autoPR: true)
+    _ = q1; _ = q2
+
+    let items = QueuePickerItem.build(board.queueChoices())
+    eq(items.count, 3, "新建队列 + 两个已有队列")
+    check(items.first?.isNewQueue == true, "新建队列排第一个")
+    eq(items.first?.title, "tasks.queue.new", "它用的是 新建队列 文案")
+    eq(items.dropFirst().map { $0.title }, ["Docs Cleanup", "Second lane"],
+       "已有队列按创建顺序排在后面")
+    eq(items.dropFirst().map { $0.queueID }, board.queueChoices().map { $0.id },
+       "每一行都带着它要入队的队列 id")
+    eq(items.dropFirst().first?.branch, "feature/docs-cleanup", "行里带上该队列的分支")
+
+    // 一个队列都没有时，下拉里只有 新建队列 —— 也就是第一个。
+    let fresh = QueuePickerItem.build(TaskBoard().queueChoices())
+    eq(fresh.count, 1, "空 board 只有一项")
+    check(fresh.first?.isNewQueue == true, "那一项就是 新建队列")
+}
 section("empty state")
 do {
     let fresh = TasksEmptyStateModel.build(filtered: false, githubRepo: true)

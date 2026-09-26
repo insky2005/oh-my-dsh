@@ -283,6 +283,27 @@ struct TasksSummaryModel: Equatable {
     }
 }
 
+/// One row of the 加入队列 dropdown. **新建队列 comes first** and the queues follow
+/// in creation order: creating a lane is the step that most often comes next, and
+/// it must not end up under a long list of existing queues. The panel turns these
+/// into menu items (this is the headlessly asserted half of the dropdown).
+struct QueuePickerItem: Equatable {
+    var title: String
+    /// nil = 新建队列…
+    var queueID: String?
+    var branch: String?
+
+    var isNewQueue: Bool { queueID == nil }
+
+    static func build(_ choices: [QueueChoice]) -> [QueuePickerItem] {
+        var items = [QueuePickerItem(title: L10n.tr("tasks.queue.new"), queueID: nil, branch: nil)]
+        items.append(contentsOf: choices.map {
+            QueuePickerItem(title: $0.name, queueID: $0.id, branch: $0.branch)
+        })
+        return items
+    }
+}
+
 /// The centred empty state: what it says, which symbol it shows, and whether it
 /// offers the inline 新建任务 button. A filter that matches nothing offers
 /// nothing — the way out there is to switch the filter back.
