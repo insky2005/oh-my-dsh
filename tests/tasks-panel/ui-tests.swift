@@ -761,21 +761,30 @@ do {
     eq(model.issueCount, 1, "一个 issue 待处理")
     eq(model.manualCount, 1, "一个手动任务待处理")
     check(model.enabled, "有待办就能点")
-    check(model.tooltip.contains("runAllMixed"), "提示把两种都点到")
-    check(!model.tooltip.contains("runAllNoPR"), "有 GitHub 时不提「不开 PR」")
+    // 精确到渲染：提示必须是「计数(实参) + 换行 + PR 那句」。曾经把 [CVarArg] 数组
+    // 整个传给可变参的 L10n.tr()，于是 %d 打的是数组地址（「7935328 个手动任务」）。
+    eq(model.tooltip, "tasks.runAllMixed(1,1)\ntasks.runAllWithPR",
+       "提示 = 计数（真的数字）+ 换行 + PR 那句")
+    check(model.confirmationText.contains("runAllInfo(2)"), "确认框正文说的是「2 个任务各自一个队列与一条分支」")
+    check(model.confirmationText.contains("runAllInfoWithPR"), "并说明队列跑完会开 PR")
+    check(!model.confirmationText.contains("runAllWithPR(串行"), "不把 tooltip 那句括号话再抄一遍")
 
     // 非 GitHub 工作区：只有手动任务待办时「处理」依然可用 —— 这正是这次要改的点。
     var manualOnly = TaskBoard()
     manualOnly.tasks = [TaskItem.manual(title: "Mine", id: "manual-aa002222")]
     model = TasksRunAllModel.build(manualOnly, githubAvailable: false)
     check(model.enabled, "非 GitHub 工作区里「处理」仍然可用（手动任务不需要 GitHub）")
-    check(model.tooltip.contains("runAllManual"), "提示说的是手动任务")
-    check(model.tooltip.contains("runAllNoPR"), "并且说明只切分支、不开 PR")
+    eq(model.tooltip, "tasks.runAllManual(1)\ntasks.runAllNoPR",
+       "计数 + 「（串行；不是 GitHub 仓库，只切分支不开 PR）」两行，不矛盾")
+    check(!model.tooltip.contains("runAllWithPR"), "不会同时说「开 PR」")
+    check(model.confirmationText.contains("runAllInfoNoPR"), "确认框也按非 GitHub 的说法")
+    check(!model.confirmationText.contains("runAllInfoWithPR"), "不会同时出现「会开 PR」")
 
     // 没有待办：禁用（顺带修掉「点了没反应」）。
     model = TasksRunAllModel.build(TaskBoard(), githubAvailable: true)
     check(!model.enabled, "没有待办就禁用")
-    check(model.tooltip.contains("runAllNone"), "提示说清为什么")
+    eq(model.tooltip, "tasks.runAllNone", "提示就是「没有待办」那一句（不带 PR 那句）")
+    eq(model.confirmationText, "tasks.runAllNone", "确认框正文同样只有这一句")
 
     // 跑过的、已关闭的都不算待办。
     var finished = TaskBoard()

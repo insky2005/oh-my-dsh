@@ -1062,7 +1062,7 @@ final class IssueRunnerPanelController: NSObject {
             // so a batch asks first — and says what it will do.
             let alert = NSAlert()
             alert.messageText = L10n.tr("tasks.runAllTitle", pending.count)
-            alert.informativeText = model.tooltip
+            alert.informativeText = model.confirmationText
             alert.addButton(withTitle: L10n.tr("tasks.runAllConfirm"))
             alert.addButton(withTitle: L10n.tr("btn.cancel"))
             guard alert.runModal() == .alertFirstButtonReturn else { return }

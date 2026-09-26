@@ -307,6 +307,8 @@ struct TasksRunAllModel: Equatable {
     var enabled: Bool
     /// Ready to show as the button's tooltip (counts and the PR caveat included).
     var tooltip: String
+    /// The confirmation dialog's body: what pressing it will really do here.
+    var confirmationText: String
 
     var total: Int { issueCount + manualCount }
 
@@ -315,24 +317,36 @@ struct TasksRunAllModel: Equatable {
         // 重试 / 加入队列处理：把失败历史一起自动重跑，风险比收益大）。
         let issueCount = board.tasks.filter { $0.source == .github && $0.state == .pending }.count
         let manualCount = board.tasks.filter { $0.source == .manual && $0.state == .pending }.count
-        let key: String
-        let args: [CVarArg]
+        // Each count shape gets its OWN L10n call: passing an [CVarArg] array to the
+        // variadic L10n.tr() types the ARRAY as the single argument, and %d then
+        // prints the array's address (「全部处理：7935328 个手动任务」).
+        let counting: String
         switch (issueCount, manualCount) {
         case (0, 0):
-            key = "tasks.runAllNone"; args = []
+            counting = L10n.tr("tasks.runAllNone")
         case (let issues, 0):
-            key = "tasks.runAllIssues"; args = [issues]
+            counting = L10n.tr("tasks.runAllIssues", issues)
         case (0, let manual):
-            key = "tasks.runAllManual"; args = [manual]
+            counting = L10n.tr("tasks.runAllManual", manual)
         default:
-            key = "tasks.runAllMixed"; args = [issueCount, manualCount]
+            counting = L10n.tr("tasks.runAllMixed", issueCount, manualCount)
         }
-        var tooltip = L10n.tr(key, args)
-        if issueCount + manualCount > 0, !githubAvailable {
-            tooltip += "\n" + L10n.tr("tasks.runAllNoPR")
-        }
-        return TasksRunAllModel(issueCount: issueCount, manualCount: manualCount,
-                                enabled: issueCount + manualCount > 0, tooltip: tooltip)
+        // …and the PR half is a separate sentence: saying 「一条分支与 PR」 and then
+        // 「不开 PR」 right below it (which is what the tooltip did) contradicts
+        // itself. The count line never mentions a PR; these lines decide it — with a
+        // different wording for the tooltip (a parenthetical) and the dialog body (a
+        // sentence), so 「串行执行」 is not said twice in the same paragraph.
+        let prLine = githubAvailable ? L10n.tr("tasks.runAllWithPR") : L10n.tr("tasks.runAllNoPR")
+        let detailLine = githubAvailable ? L10n.tr("tasks.runAllInfoWithPR") : L10n.tr("tasks.runAllInfoNoPR")
+        let enabled = issueCount + manualCount > 0
+        return TasksRunAllModel(
+            issueCount: issueCount,
+            manualCount: manualCount,
+            enabled: enabled,
+            tooltip: enabled ? counting + "\n" + prLine : counting,
+            confirmationText: enabled
+                ? L10n.tr("tasks.runAllInfo", issueCount + manualCount) + " " + detailLine
+                : counting)
     }
 }
 
