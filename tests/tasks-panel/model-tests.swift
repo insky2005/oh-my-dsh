@@ -216,6 +216,22 @@ _ = boardBusy.enqueue(taskID: bt.id, into: bq.id)
 boardBusy.markRunning(bt.id)
 check(boardBusy.removeQueue(bq.id) == false, "a queue with a running task is kept")
 
+// A FAILED task is not "running", so its queue can be deleted: the record (and its
+// failure) survives, only the membership goes — which is why the card can no longer
+// offer 重试 afterwards (nothing to retry into, see TaskCardModel).
+var boardDropped = TaskBoard()
+let droppedTask = TaskItem.manual(title: "Failed", id: "manual-eeee0003")
+boardDropped.tasks = [droppedTask]
+let droppedQueue = boardDropped.createQueue(name: "Failed lane")
+_ = boardDropped.enqueue(taskID: droppedTask.id, into: droppedQueue.id)
+boardDropped.markRunning(droppedTask.id)
+_ = boardDropped.markFailed(droppedTask.id, error: "tasks.errSession")
+check(boardDropped.removeQueue(droppedQueue.id), "a queue whose task failed can be deleted")
+check(boardDropped.task(droppedTask.id)?.state == .failed, "the failure record is kept")
+check(boardDropped.task(droppedTask.id)?.error == "tasks.errSession", "including WHY it failed")
+check(boardDropped.task(droppedTask.id)?.queueId == nil, "only the queue membership is cleared")
+check(boardDropped.nextStartable() == nil, "and nothing is left to start")
+
 // MARK: - local overlay
 
 section("local overlay and legacy session keys")

@@ -311,6 +311,10 @@ struct Queue {
 > **实现（2026-09-27 补充 · 头部的工作区行）**：这条 28pt 工具栏行只放一句短文案（审查面板同一条行放的是控件），于是它并进了标题行 —— 头部变成两行（40pt → 46pt：`任务` + 工作区行，净省 22pt 给列表），三种状态分开说：GitHub 仓库 `owner/repo`、git 仓库但没有 GitHub 远端 `目录名 · 非 GitHub 仓库`、**目录根本不是 git 仓库** `目录名 · 非 Git 仓库`（后者的队列连分支都切不了，见 §V2-7，两种说法混成一句正是用户看不懂的地方）。文案与按钮可用性都由纯模型 `TaskWorkspaceModel.build(owner:repo:workspacePath:isGitRepo:)` 决定：非 GitHub 工作区里 **配置 GitHub Token / 刷新 Issues / 全部处理** 三个按钮置灰（它们本来就 `guard repo != nil`，点了不会有任何反应），tooltip 说明原因。
 >
 > 头部的工作区行还要解决一个渲染陷阱：`HeaderLabel` 用 `NSString.draw(at:)` 画字，**既不清除也不省略**（实测 165pt 的文案塞进 90pt 的 frame 会向右多画 1004 个像素点，正落在旁边的按钮底下）。新的 `FittingHeaderLabel`（与 `HeaderLabel` 同处 `PreviewPanel.swift`）在每次布局时把文字按自身 frame 截成「…」，tooltip 保留全文；`tests/skills-panel/render-tests.swift` 用离屏渲染钉住「框内有墨 + 框外 0 像素」，并**同时钉住前提**（朴素 `HeaderLabel` 确实会越界 —— 若哪天 AppKit 开始裁剪，这条断言会提醒重新评估而不是静默失效）。
+>
+> **实现（2026-09-27 补充 · 队列被删之后的失败卡片）**：卡片的**主操作不再只看任务状态**。删掉队列后，失败任务回到「未入队」区但**状态仍是 failed**，旧规则于是继续给它「重试」——可 `TaskBoard.retryAndResume` 在没有队列时只能把状态改回 `pending`，也就是说这个「重试」什么也没重试，只是把卡片 reset 了一次、让用户再点一次「加入队列」。现在主操作由**队列成员关系 + 状态**共同决定：有队列 → 「重试」（含分支进不去时的「不切分支并重试」）；**没有队列** → 手动任务直接给「加入队列」（下拉，选一个队列即入队开跑），issue 任务给「处理」（`startIssueTask` 重建它的自动单任务队列）。
+>
+> 同一次改动把界面侧的执行方式也改了：面板**按卡片模型给出的 `TaskCardModel.PrimaryAction` 执行**（`.joinQueue` / `.processIssue` / `.dequeue` / `.cancel` / `.openPR` / `.openIssue` / `.retry(clearsBranch:)`），不再自己按 `task.state` 猜——状态区分不了「在队列里失败」和「队列被删后失败」这两种情形，模型可以。新增的界面动作若要再加一个入口，先看这张枚举。
 
 ### V2-8 卡片式任务清单
 

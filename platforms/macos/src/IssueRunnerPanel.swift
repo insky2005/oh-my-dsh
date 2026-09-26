@@ -1286,7 +1286,7 @@ final class IssueRunnerPanelController: NSObject {
         let taskID = task.id
         card.onToggle = { [weak self] in self?.toggleTask(taskID) }
         card.onPrimary = { [weak self] in
-            self?.primaryAction(task, clearsBranch: model.clearsBranchOnRetry)
+            self?.primaryAction(task, action: model.primaryAction)
         }
         card.onQueue = { [weak self] anchor in
             self?.presentQueuePicker(for: taskID, from: anchor)
@@ -1337,23 +1337,31 @@ final class IssueRunnerPanelController: NSObject {
 
     // MARK: - Card actions (all state changes go through the runner)
 
-    /// The card's primary action. `clearsBranch` comes from the card model: it is
-    /// true only for the one failure the card can repair itself.
-    private func primaryAction(_ task: TaskItem, clearsBranch: Bool = false) {
+    /// The card's primary action, as the CARD MODEL decided it (TasksUI.swift).
+    ///
+    /// The panel used to switch on the task's state, which cannot tell the two
+    /// cases apart: a failed task still in its queue is 重试, while a failed task
+    /// whose queue was DELETED is 加入队列 (manual) / 处理 (issue) — 重试 there would
+    /// only reset the card and ask again.
+    private func primaryAction(_ task: TaskItem, action: TaskCardModel.PrimaryAction) {
         guard let runner = runner else { return }
-        switch task.state {
-        case .pending:
+        switch action {
+        case .joinQueue:
+            // The control is the 加入队列 DROPDOWN: the card routes the click to
+            // onQueue (the queue picker), so this never fires for it.
+            break
+        case .processIssue:
             _ = runner.startIssueTask(task.id)
-        case .queued:
+        case .dequeue:
             _ = runner.dequeue(taskID: task.id)
-        case .running:
+        case .cancel:
             _ = runner.cancelRunning()
             hideStatus()
-        case .done:
+        case .openPR:
             if let url = task.prUrl, let link = URL(string: url) { NSWorkspace.shared.open(link) }
-        case .closed:
+        case .openIssue:
             openIssue(number: task.number ?? 0)
-        case .failed, .cancelled:
+        case .retry(let clearsBranch):
             if clearsBranch { dropQueueBranch(for: task) }
             _ = runner.retry(taskID: task.id)
         }

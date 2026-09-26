@@ -549,6 +549,26 @@ do {
        "a queued task offers 移出队列 as a plain button, not a dropdown")
     check(descendants(queuedCard, of: NSButton.self).contains { $0.title == "remove" },
           "…and that button is a real NSButton")
+    // 队列被删掉之后，失败的手动任务同样应该是下拉（见 TaskCardModel：状态还是
+    // 失败，但已经没有队列可以重试进去了 —— 一个「点了只是把卡片reset」的重试按钮
+    // 比直接给「加入队列」更糟）。
+    var orphanBoard = TaskBoard()
+    let goneTask = TaskItem.manual(title: "Orphan", id: "manual-0071bbbb")
+    orphanBoard.tasks = [goneTask]
+    let goneQueue = orphanBoard.createQueue(name: "Lane")
+    _ = orphanBoard.enqueue(taskID: goneTask.id, into: goneQueue.id)
+    orphanBoard.markRunning(goneTask.id)
+    _ = orphanBoard.markFailed(goneTask.id, error: TaskFailure.session.rawValue)
+    _ = orphanBoard.removeQueue(goneQueue.id)
+    let orphanCard = TaskCardView(model: TaskCardModel.build(orphanBoard.task(goneTask.id)!,
+                                                             board: orphanBoard, expanded: true,
+                                                             githubRepo: false))
+    _ = layout(orphanCard, width: 320)
+    let orphanMenus = descendants(orphanCard, of: PanelMenuButton.self)
+    eq(orphanMenus.count, 1, "队列没了的失败任务也带那个下拉")
+    eq(orphanMenus.first?.title, "add", "而且文案就是 加入队列（不再先显示重试）")
+    check(!descendants(orphanCard, of: NSButton.self).contains { $0.title == "retry" },
+          "没有那个点了只会 reset 的重试按钮")
 }
 
 section("队列头：三个操作都在明面上（不再藏在 更多 里）")

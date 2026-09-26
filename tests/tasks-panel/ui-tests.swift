@@ -452,6 +452,98 @@ do {
     eq(none.disabledHint, "tasks.errNoWorkspace", "原因指向「还没确定工作区」")
 }
 
+section("队列被删掉之后的失败任务：直接给 加入队列 / 处理，不再先给一次空重试")
+do {
+    // 手动任务 + 一个失败的队列：重试还在（它把任务放回队列并唤醒队列）。
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "One", id: "manual-00a0aaaa")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    _ = board.markFailed(task.id, error: TaskFailure.session.rawValue)
+    var card = TaskCardModel.build(board.task(task.id)!, board: board, expanded: true, githubRepo: false)
+    eq(card.primaryKey, "tasks.detailRetry", "队列还在：主操作是 重试")
+    eq(card.primaryAction, .retry(clearsBranch: false), "而它真的把任务放回那个队列")
+    check(card.canRetry, "canRetry 也说着重试")
+    check(!card.canQueue, "这时没有 加入队列")
+
+    // 队列被删除：任务回到未入队区、状态仍是失败 —— 此时 重试 什么也重试不了
+    // （retryAndResume 只会把它变回待处理），所以主操作直接是 加入队列。
+    _ = board.removeQueue(queue.id)
+    eq(board.task(task.id)?.state, .failed, "删队列不动任务的状态")
+    eq(board.task(task.id)?.queueId, nil, "只是不再是队列成员")
+    card = TaskCardModel.build(board.task(task.id)!, board: board, expanded: true, githubRepo: false)
+    eq(card.primaryKey, "tasks.queue.add", "没有队列可重试：主操作是 加入队列")
+    eq(card.primaryAction, .joinQueue, "并且面板会打开队列下拉（而不是执行 retry）")
+    check(card.canQueue, "下拉由 canQueue 决定")
+    check(!card.canRetry, "不再是 重试")
+
+    // 取消的任务同理（也是「可入队」状态之一）。
+    var cancelledBoard = TaskBoard()
+    let cancelled = TaskItem.manual(title: "Two", id: "manual-00a1bbbb")
+    cancelledBoard.tasks = [cancelled]
+    let q2 = cancelledBoard.createQueue(name: "Lane")
+    _ = cancelledBoard.enqueue(taskID: cancelled.id, into: q2.id)
+    cancelledBoard.markRunning(cancelled.id)
+    cancelledBoard.markCancelled(cancelled.id)
+    _ = cancelledBoard.removeQueue(q2.id)
+    let cancelledCard = TaskCardModel.build(cancelledBoard.task(cancelled.id)!, board: cancelledBoard,
+                                            expanded: true, githubRepo: false)
+    eq(cancelledCard.primaryAction, .joinQueue, "被取消 + 队列没了：同样直接 加入队列")
+
+    // issue 任务的自动单任务队列被删掉：主操作是 处理（会重建那个队列并开跑）。
+    var issueBoard = TaskBoard()
+    let issue = TaskItem.github(number: 7, title: "Issue seven")
+    issueBoard.tasks = [issue]
+    let auto = TaskQueue.auto(for: issue)
+    issueBoard.queues.append(auto)
+    _ = issueBoard.enqueue(taskID: issue.id, into: auto.id)
+    issueBoard.markRunning(issue.id)
+    _ = issueBoard.markFailed(issue.id, error: TaskFailure.timeout.rawValue)
+    var issueCard = TaskCardModel.build(issueBoard.task(issue.id)!, board: issueBoard,
+                                        expanded: true, githubRepo: true)
+    eq(issueCard.primaryAction, .retry(clearsBranch: false), "issue 任务的队列还在：重试")
+    _ = issueBoard.removeQueue(auto.id)
+    issueCard = TaskCardModel.build(issueBoard.task(issue.id)!, board: issueBoard,
+                                    expanded: true, githubRepo: true)
+    eq(issueCard.primaryKey, "tasks.detailProcess", "队列没了：主操作回到 处理")
+    eq(issueCard.primaryAction, .processIssue, "而 处理 会重建自动队列")
+}
+
+section("卡片主操作的动作枚举（面板按它执行，不再按状态猜）")
+do {
+    var board = TaskBoard()
+    let manual = TaskItem.manual(title: "Mine", id: "manual-00b0aaaa")
+    board.tasks = [manual]
+    var card = TaskCardModel.build(board.task(manual.id)!, board: board, expanded: true, githubRepo: false)
+    eq(card.primaryAction, .joinQueue, "未入队的手动任务：加入队列（下拉，面板不执行动作）")
+
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: manual.id, into: queue.id)
+    card = TaskCardModel.build(board.task(manual.id)!, board: board, expanded: true, githubRepo: false)
+    eq(card.primaryAction, .dequeue, "排队中：移出队列")
+
+    board.markRunning(manual.id)
+    card = TaskCardModel.build(board.task(manual.id)!, board: board, expanded: true, githubRepo: false)
+    eq(card.primaryAction, .cancel, "运行中：取消任务")
+
+    board.markDone(manual.id, prUrl: "https://github.com/o/r/pull/3")
+    card = TaskCardModel.build(board.task(manual.id)!, board: board, expanded: true, githubRepo: false)
+    eq(card.primaryAction, .openPR, "已完成：打开 PR")
+
+    var issueBoard = TaskBoard()
+    let issue = TaskItem.github(number: 9, title: "Nine")
+    issueBoard.tasks = [issue]
+    let pendingIssue = TaskCardModel.build(issueBoard.task(issue.id)!, board: issueBoard,
+                                           expanded: true, githubRepo: true)
+    eq(pendingIssue.primaryAction, .processIssue, "待处理的 issue：处理")
+    issueBoard.markClosed(issue.id)
+    let closedIssue = TaskCardModel.build(issueBoard.task(issue.id)!, board: issueBoard,
+                                          expanded: true, githubRepo: true)
+    eq(closedIssue.primaryAction, .openIssue, "已关闭的 issue：打开 Issue")
+}
+
 section("队列头的三个操作与 PR 可用性")
 do {
     var board = TaskBoard()

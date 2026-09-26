@@ -29,8 +29,29 @@ struct TaskCardModel: Equatable {
     /// Queue name, session id, error and the task body (the expanded area).
     var detail: String
 
+    /// What the card's primary control does when it is pressed.
+    enum PrimaryAction: Equatable {
+        /// 加入队列 — the control is the DROPDOWN, so the panel opens the queue
+        /// picker instead of acting on the task (see TaskCardView.primaryControl).
+        case joinQueue
+        /// 处理 an issue task: build (or reuse) its single-task queue and start.
+        case processIssue
+        case dequeue
+        case cancel
+        case openPR
+        case openIssue
+        /// 重试 — put the task back into ITS queue (and resume it). clearsBranch
+        /// additionally drops the queue's branch first (the not-a-git-repo repair).
+        case retry(clearsBranch: Bool)
+    }
+
     var primaryKey: String
     var primaryEnabled: Bool
+    /// What pressing the primary control DOES. The panel switches on this instead
+    /// of on the task's state: the state alone cannot tell 重试 (put it back into
+    /// its queue) from 加入队列 / 处理 (that queue is gone — deleted — so there is
+    /// nothing left to retry into).
+    var primaryAction: PrimaryAction
     /// The task failed because its queue asked for a branch in a directory that
     /// is not a git repository. That failure is fixable in one click — drop the
     /// queue's branch and run again — so the card's primary action does exactly
@@ -114,8 +135,18 @@ struct TaskCardModel: Equatable {
             && task.error == TaskFailure.notGitRepo.rawValue
             && queue?.branch != nil
 
+        // 加入队列 for a manual task with NO queue to run in: while creating (state
+        // .pending) and also after its queue was DELETED. The old rule keyed off the
+        // state alone, so a failed task whose queue was gone still said 重试 — which
+        // cannot retry anything: it flipped the card back to 待处理 and only THEN
+        // showed 加入队列, one click later.
+        let hasQueue = queue != nil
+        let joinQueue = task.source == .manual && !hasQueue
+            && (task.state == .pending || task.state == .failed || task.state == .cancelled)
+
         var primaryKey = "tasks.detailProcess"
         var primaryEnabled = true
+        var primaryAction = TaskCardModel.PrimaryAction.processIssue
         var canQueue = false
         var canDequeue = false
         var canCancel = false
@@ -123,26 +154,46 @@ struct TaskCardModel: Equatable {
         switch task.state {
         case .pending:
             // A manual task has no queue yet: the primary action IS 加入队列.
-            if task.source == .manual {
+            if joinQueue {
                 primaryKey = "tasks.queue.add"
+                primaryAction = .joinQueue
                 canQueue = true
             } else {
                 primaryKey = "tasks.detailProcess"
+                primaryAction = .processIssue
             }
         case .queued:
             primaryKey = "tasks.queue.remove"
+            primaryAction = .dequeue
             canDequeue = true
         case .running:
             primaryKey = "tasks.detailCancelTask"
+            primaryAction = .cancel
             canCancel = true
         case .done:
             primaryKey = "tasks.detailOpenPR"
+            primaryAction = .openPR
             primaryEnabled = task.prUrl != nil
         case .failed, .cancelled:
-            primaryKey = clearsBranchOnRetry ? "tasks.detailRetryNoBranch" : "tasks.detailRetry"
-            canRetry = true
+            if joinQueue {
+                // Its queue is gone: offer the honest next step instead of a 重试
+                // that only resets the card.
+                primaryKey = "tasks.queue.add"
+                primaryAction = .joinQueue
+                canQueue = true
+            } else if hasQueue {
+                primaryKey = clearsBranchOnRetry ? "tasks.detailRetryNoBranch" : "tasks.detailRetry"
+                primaryAction = .retry(clearsBranch: clearsBranchOnRetry)
+                canRetry = true
+            } else {
+                // An ISSUE task with no queue (its auto queue was deleted): 处理
+                // rebuilds that queue and starts — same as a pending issue task.
+                primaryKey = "tasks.detailProcess"
+                primaryAction = .processIssue
+            }
         case .closed:
             primaryKey = "tasks.detailOpenIssue"
+            primaryAction = .openIssue
         }
 
         return TaskCardModel(taskID: task.id,
@@ -155,6 +206,7 @@ struct TaskCardModel: Equatable {
                              detail: detailLines.joined(separator: "\n"),
                              primaryKey: primaryKey,
                              primaryEnabled: primaryEnabled,
+                             primaryAction: primaryAction,
                              clearsBranchOnRetry: clearsBranchOnRetry,
                              canQueue: canQueue,
                              canDequeue: canDequeue,
