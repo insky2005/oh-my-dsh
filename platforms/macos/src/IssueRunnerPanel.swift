@@ -147,6 +147,10 @@ final class IssueRunnerPanelController: NSObject {
     /// a queue created in a non-git directory must not be handed a branch it
     /// can never check out (docs/issue-runner-design.md §V2-7).
     private var workspaceIsGit = true
+    /// The current workspace's own default branch (origin/HEAD → main → master →
+    /// current → "main"): the base an issue task's queue is built on, and what the
+    /// queue form prefills.
+    private var workspaceDefaultBase = "main"
     /// Workspaces other than the current one that have a task in flight (their
     /// runners are alive). The header offers a way to jump to them — tracking work
     /// the user cannot see would just be a different way of hiding it.
@@ -496,7 +500,9 @@ final class IssueRunnerPanelController: NSObject {
             TasksStore.saveLocalHalf(path, board)
         }
         let detected = Self.detectGitHubRemote(path)
-        let runner = TasksRunner(board: board, env: makeEnv(repoRoot: path, repo: detected))
+        let timeout = Self.taskTimeout()
+        let runner = TasksRunner(board: board, env: makeEnv(repoRoot: path, repo: detected),
+                                 timeout: timeout)
         let extra = recovered.interrupted.isEmpty ? "" : ", interrupted: " + recovered.interrupted.joined(separator: ",")
         AppLog.shared.log("tasks: board loaded at \(path) — \(board.tasks.count) tasks, \(board.queues.count) queues"
                           + (reconcile ? " (reconciled)" : "") + extra)
@@ -530,6 +536,7 @@ final class IssueRunnerPanelController: NSObject {
             renameSession: { id, title in Self.renameSession(port: port, sessionId: id, title: title) },
             promptSession: { id, text in Self.promptSession(port: port, sessionId: id, text: text) },
             sessionState: { id in Self.sessionState(port: port, sessionId: id) },
+            defaultBaseBranch: Self.detectDefaultBaseBranch(path: repoRoot),
             canOpenPR: { repo != nil },
             cancelSession: { id in Self.cancelSession(port: port, sessionId: id) },
             findExistingPR: { branch in
@@ -708,7 +715,8 @@ final class IssueRunnerPanelController: NSObject {
         repoRootPath = path
         let github = detected.map { $0.owner + "/" + $0.repo } ?? "-"
         workspaceIsGit = Self.isGitRepo(path)
-        AppLog.shared.log("tasks: workspace adopted at \(path) (github=\(github) git=\(workspaceIsGit ? "yes" : "no"))")
+        workspaceDefaultBase = workspaceIsGit ? Self.detectDefaultBaseBranch(path: path) : "main"
+        AppLog.shared.log("tasks: workspace adopted at \(path) (github=\(github) git=\(workspaceIsGit ? "yes" : "no") base=\(workspaceDefaultBase))")
         updateLabels()
         if !sameBoard {
             // Switching workspaces does NOT stop tracking the one we leave: its
@@ -769,6 +777,42 @@ final class IssueRunnerPanelController: NSObject {
     @objc private func otherWorkspaceChosen(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
         onSelectWorkspace?(path)
+    }
+
+    /// The workspace's OWN default branch, asked of git (the decision chain lives
+    /// in TaskBranch.defaultBaseBranch, which is what the tests pin):
+    /// origin/HEAD → local main → local master → the checked-out branch → "main".
+    ///
+    /// Assuming "main" made a repo whose default branch is master/develop fail its
+    /// very first issue task with 「切换分支失败」.
+    static func detectDefaultBaseBranch(path: String) -> String {
+        // The remote the runner pushes to (github > origin > first — the codebase's
+        // own preference) is the one whose HEAD names the default branch. Asking for
+        // "origin" specifically misses a repo whose only remote is called "github".
+        let remote = pushRemoteName(path: path)
+        let remoteHead = remote.flatMap { name in
+            runProcess("/usr/bin/git", ["-C", path, "symbolic-ref", "--short",
+                                        "refs/remotes/\(name)/HEAD"])
+        }
+        let current = runProcess("/usr/bin/git", ["-C", path, "rev-parse", "--abbrev-ref", "HEAD"])
+        let hasMain = runProcess("/usr/bin/git",
+                                 ["-C", path, "rev-parse", "--verify", "--quiet", "main"]) != nil
+        let hasMaster = runProcess("/usr/bin/git",
+                                   ["-C", path, "rev-parse", "--verify", "--quiet", "master"]) != nil
+        return TaskBranch.defaultBaseBranch(symbolicRef: remoteHead, current: current,
+                                           hasMain: hasMain, hasMaster: hasMaster)
+    }
+
+    /// How long a task may run. 60 minutes by default; a shell-config override
+    /// ("tasksTimeoutMinutes", e.g. in ~/.dsh/shell/config.json or via
+    /// `defaults write`) wins when it is a sane number. The running card SHOWS the
+    /// limit, so it is never a surprise.
+    static func taskTimeout() -> TimeInterval {
+        if let minutes = ShellConfig.shared.object(forKey: "tasksTimeoutMinutes") as? Int,
+           minutes >= 5, minutes <= 24 * 60 {
+            return TimeInterval(minutes * 60)
+        }
+        return TasksRunner.defaultTimeout
     }
 
     /// True when the directory is inside a git work tree.
@@ -1500,7 +1544,8 @@ final class IssueRunnerPanelController: NSObject {
         let model = TaskCardModel.build(task, board: board,
                                         expanded: expandedTaskID == task.id,
                                         githubRepo: githubRepo,
-                                        now: Date())
+                                        now: Date(),
+                                        timeoutMinutes: runner?.timeoutMinutes ?? 60)
         let card = TaskCardView(model: model)
         let taskID = task.id
         card.onToggle = { [weak self] in self?.toggleTask(taskID) }
@@ -1789,13 +1834,15 @@ final class IssueRunnerPanelController: NSObject {
             let base = taskID.map { QueueComposerModel.create(taskID: $0) } ?? QueueComposerModel.create()
             // The PR switch is only pre-armed where the repo can carry one, and
             // 不切分支 is decided by the workspace having no repo to switch in.
-            var model = base.forWorkspace(git: workspaceIsGit, pr: repo != nil)
+            var model = base.forWorkspace(git: workspaceIsGit, pr: repo != nil,
+                                          defaultBase: workspaceDefaultBase)
             model.autoPR = false
             showQueueForm(model)
         case .edit(let queueID):
             guard let queue = runner.board.queue(queueID) else { return }
             showQueueForm(QueueComposerModel.edit(queue, prAvailable: repo != nil,
-                                                  gitAvailable: workspaceIsGit))
+                                                  gitAvailable: workspaceIsGit,
+                                                  defaultBaseBranch: workspaceDefaultBase))
         }
     }
 

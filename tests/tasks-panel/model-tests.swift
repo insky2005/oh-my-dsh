@@ -148,6 +148,33 @@ boardLone.markRunning(lonely.id)
 check(boardLone.markFailed(lonely.id, error: "nope") == nil, "a task with no queue pauses nothing")
 check(boardLone.task(lonely.id)?.state == .failed, "the task still fails")
 
+// MARK: - the default base branch chain
+
+section("默认基线分支：问 git，而不是假设 main")
+do {
+    eq(TaskBranch.defaultBaseBranch(symbolicRef: "origin/develop", current: "main",
+                                    hasMain: true, hasMaster: false), "develop",
+       "远端 HEAD 说了算")
+    eq(TaskBranch.defaultBaseBranch(symbolicRef: "origin/master", current: "main",
+                                    hasMain: true, hasMaster: true), "master",
+       "master 仓库拿到的是 master —— 这正是旧代码硬编码 main 会失败的那种仓库")
+    eq(TaskBranch.defaultBaseBranch(symbolicRef: "refs/remotes/origin/main", current: "dev",
+                                    hasMain: true, hasMaster: false), "main",
+       "完整 ref 形状也认")
+    eq(TaskBranch.defaultBaseBranch(symbolicRef: nil, current: "main",
+                                    hasMain: true, hasMaster: false), "main",
+       "没有远端 HEAD：退回本地 main")
+    eq(TaskBranch.defaultBaseBranch(symbolicRef: nil, current: "dev",
+                                    hasMain: false, hasMaster: false), "dev",
+       "本地既没有 main 也没有 master：就用当前分支")
+    eq(TaskBranch.defaultBaseBranch(symbolicRef: nil, current: "HEAD",
+                                    hasMain: false, hasMaster: false), "main",
+       "游离头：最后退回 main")
+    eq(TaskBranch.defaultBaseBranch(symbolicRef: "origin/HEAD", current: "dev",
+                                    hasMain: false, hasMaster: false), "dev",
+       "symbolic ref 只指着 HEAD 时不算数，继续往下找")
+}
+
 // MARK: - auto queue for issue tasks
 
 section("auto queue for issue tasks")

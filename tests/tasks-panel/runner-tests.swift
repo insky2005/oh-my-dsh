@@ -172,7 +172,8 @@ final class Harness {
          github: Bool = true,
          gitRepo: Bool = true,
          timeout: TimeInterval = 30 * 60,
-         asynchronous: Bool = false) {
+         asynchronous: Bool = false,
+         defaultBaseBranch: String = "main") {
         self.asynchronous = asynchronous
         let work = self.work
         let asynchronous = asynchronous        // captured by the perform closure
@@ -187,6 +188,7 @@ final class Harness {
             renameSession: { id, title in dsh.rename(id, title) },
             promptSession: { id, text in dsh.prompt(id, text) },
             sessionState: { id in dsh.sessionState(id) },
+            defaultBaseBranch: defaultBaseBranch,
             canOpenPR: { github },
             cancelSession: { id in dsh.cancel(id) },
             findExistingPR: { branch in github ? rec.existingPRs[branch] : nil },
@@ -1025,6 +1027,16 @@ do {
     let prompt = h.dsh.prompts["session-1"] ?? ""
     check(!prompt.contains("队列上下文"), "单任务队列没有前一棒")
     _ = taskID
+}
+
+section("issue 任务的自动队列用工作区自己的默认分支")
+do {
+    var board = TaskBoard()
+    board.tasks = [TaskItem.github(number: 12, title: "Fix dark mode", labels: ["bug"])]
+    let h = Harness(board: board, defaultBaseBranch: "develop")
+    let queueID = h.runner.startIssueTask("issue-12")
+    eq(h.board.queue(queueID!)?.baseBranch, "develop", "队列基于工作区的默认分支，不是硬编码的 main")
+    eq(h.repo.checkouts, ["develop", "fix/issue-12"], "流水线第一步 checkout 的也是它")
 }
 
 if failures == 0 {

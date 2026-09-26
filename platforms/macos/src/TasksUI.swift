@@ -94,7 +94,8 @@ struct TaskCardModel: Equatable {
                       board: TaskBoard,
                       expanded: Bool,
                       githubRepo: Bool,
-                      now: Date = Date()) -> TaskCardModel {
+                      now: Date = Date(),
+                      timeoutMinutes: Int = 60) -> TaskCardModel {
         let queue = task.queueId.flatMap { board.queue($0) }
         let position = board.order(of: task.id)
 
@@ -132,7 +133,9 @@ struct TaskCardModel: Equatable {
 
         var meta: [String] = []
         if let runningFor = runningFor {
-            meta.append(L10n.tr("tasks.card.runningFor", runningFor))
+            // The deadline is part of the clock: a task is cancelled at it, and
+            // finding that out from a failed card is too late.
+            meta.append(L10n.tr("tasks.card.runningFor", runningFor, timeoutMinutes))
         }
         if !task.labels.isEmpty { meta.append(task.labels.joined(separator: ", ")) }
         if let branch = task.branch ?? queue?.branch { meta.append(branch) }
@@ -641,6 +644,10 @@ struct QueueComposerModel: Equatable {
     /// fields are taken away and the form says why, instead of promising a
     /// branch switch the runner can only fail on.
     var gitAvailable: Bool
+    /// The workspace's OWN default branch (origin/HEAD, else main/master/current):
+    /// the placeholder of 基于分支 and the fallback when the field is left empty.
+    /// Assuming "main" made a master-based repo fail its first task.
+    var defaultBaseBranch: String
     /// Whether the 高级设置 section (分支 / 基于分支 / PR 开关) is open. The branch
     /// is derived from the name, so creating a queue only asks for a name; editing
     /// a queue's settings opens everything, because that is what the user came for.
@@ -692,7 +699,7 @@ struct QueueComposerModel: Equatable {
 
     var normalizedBaseBranch: String {
         let value = baseBranch.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? "main" : value
+        return value.isEmpty ? defaultBaseBranch : value
     }
 
     func typed(name: String, branch: String, baseBranch: String, autoPR: Bool,
@@ -741,7 +748,8 @@ struct QueueComposerModel: Equatable {
     static func create() -> QueueComposerModel {
         QueueComposerModel(mode: .create(taskID: nil), name: "", branch: "", baseBranch: "main",
                            autoPR: false, skipsBranch: false, prAvailable: false,
-                           gitAvailable: true, showsAdvanced: false, attempted: false)
+                           gitAvailable: true, defaultBaseBranch: "main",
+                           showsAdvanced: false, attempted: false)
     }
 
     /// 新建队列 from a task's 加入队列 ▾ menu: the new queue takes the task.
@@ -755,11 +763,13 @@ struct QueueComposerModel: Equatable {
     /// queue IS editing its branch and PR switch. A queue with no branch opens
     /// on 不切分支, which is what its cards are already doing.
     static func edit(_ queue: TaskQueue, prAvailable: Bool,
-                     gitAvailable: Bool = true) -> QueueComposerModel {
+                     gitAvailable: Bool = true,
+                     defaultBaseBranch: String = "main") -> QueueComposerModel {
         QueueComposerModel(mode: .edit(queueID: queue.id), name: queue.name,
                            branch: queue.branch ?? "", baseBranch: queue.baseBranch,
                            autoPR: queue.autoPR, skipsBranch: queue.branch == nil,
                            prAvailable: prAvailable, gitAvailable: gitAvailable,
+                           defaultBaseBranch: defaultBaseBranch,
                            showsAdvanced: true, attempted: false)
     }
 
@@ -770,10 +780,14 @@ struct QueueComposerModel: Equatable {
     /// branch would be created happily and then fail its first task with
     /// tasks.errNotGit. Editing is left alone: an existing queue keeps its
     /// branch visible (and clearable) rather than having it silently dropped.
-    func forWorkspace(git: Bool, pr: Bool) -> QueueComposerModel {
+    func forWorkspace(git: Bool, pr: Bool, defaultBase: String = "main") -> QueueComposerModel {
         var copy = self
         copy.gitAvailable = git
         copy.prAvailable = pr
+        copy.defaultBaseBranch = defaultBase
+        // Prefill the workspace's own default branch so the user sees what the
+        // queue will really be based on (it stays editable).
+        if mode.isCreate, baseBranch.isEmpty || baseBranch == "main" { copy.baseBranch = defaultBase }
         if !git, mode.isCreate {
             copy.skipsBranch = true
             copy.branch = ""

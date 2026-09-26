@@ -285,6 +285,42 @@ enum TaskBranch {
         return "feature/" + s
     }
 
+    /// The branch a queue should be based on — what the repo itself says, rather
+    /// than an assumed "main".
+    ///
+    /// A repo whose default branch is `master` (or `develop`) used to fail its
+    /// very first issue task: the pipeline starts with `git checkout main`
+    /// (TasksRunner.enter) and stops there with 「切换分支失败」.
+    ///
+    /// The caller digs the facts out of git; the decision chain lives here so it
+    /// can be asserted without a repo:
+    ///   1. the remote's HEAD (`origin/main` → `main`),
+    ///   2. a local `main`,
+    ///   3. a local `master`,
+    ///   4. whatever is checked out right now,
+    ///   5. "main" (nothing could be learned).
+    static func defaultBaseBranch(symbolicRef: String?, current: String?,
+                                  hasMain: Bool, hasMaster: Bool) -> String {
+        if let ref = symbolicRef?.trimmingCharacters(in: .whitespacesAndNewlines), !ref.isEmpty {
+            // "origin/main" / "refs/remotes/origin/main" → the branch name.
+            // "origin/HEAD" is an UNRESOLVED symref (dangling): it says nothing
+            // about a branch name, so the chain keeps looking.
+            if let slash = ref.lastIndex(of: "/") {
+                let tail = String(ref[ref.index(after: slash)...])
+                if !tail.isEmpty, tail != "HEAD" { return tail }
+            } else if ref != "HEAD" {
+                return ref
+            }
+        }
+        if hasMain { return "main" }
+        if hasMaster { return "master" }
+        if let current = current?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !current.isEmpty, current != "HEAD" {
+            return current
+        }
+        return "main"
+    }
+
     /// v1 rule kept intact (docs/git-workflow.md): feature-class issues get
     /// feature/issue-N, everything else fix/issue-N.
     static func issueBranch(number: Int, labels: [String]) -> String {
@@ -414,12 +450,12 @@ struct TaskQueue: Equatable {
     /// id here AS WELL made every issue task show up twice in its own lane
     /// (taskIds = ["issue-7","issue-7"] → two identical cards, progress 0/2, and
     /// 「队列内 2 个任务」 in the delete dialog).
-    static func auto(for task: TaskItem) -> TaskQueue {
+    static func auto(for task: TaskItem, baseBranch: String = "main") -> TaskQueue {
         let number = task.number ?? 0
         return TaskQueue(id: TaskQueue.newID(),
                          name: "Issue #\(number)",
                          branch: TaskBranch.issueBranch(number: number, labels: task.labels),
-                         baseBranch: "main",
+                         baseBranch: baseBranch,
                          taskIds: [],
                          state: .paused,
                          autoCreated: true,

@@ -359,6 +359,11 @@ struct Queue {
 > - **第一个任务**：没有「前面已经做过的」；但分支上已有的提交照旧告诉它（队列复用同一分支重跑时，那就是上一轮留下的状态）。issue 任务的自动队列是单任务队列，天然没有简报。
 > - 回归：core `core/tests/session-report.test.js`（5 例：取最后一条 / 忽略流式分片 / 没有汇报 / 会话不存在 / 不截断）；运行器新增 5 节用例（第一个任务无前情、第二位带上队列名位次标题汇报提交与「不要重做」、失败的一棒写清原因、超长汇报原样带上、无会话时写明没有汇报）。
 
+> **实现（2026-09-27 补充 · F5 + 超时）**：
+>
+> 1. **默认基线分支不再假设 `main`**：`TaskQueue.auto` 的 `baseBranch` 一直是 `"main"`（`TasksCore`），而流水线第一步就是 `git checkout <base>`（`TasksRunner.enter`）—— 默认分支是 `master` / `develop` 的仓库，**第一个 issue 任务必然以「切换分支失败」告终**。现在采纳工作区时探测一次（`IssueRunnerPanel.detectDefaultBaseBranch`，git 侧只负责取事实）：推送远端（`github` > `origin` > 首个，复用 `pushRemoteName` 的偏好）的 `HEAD` → 本地 `main` → 本地 `master` → 当前分支 → 兜底 `main`；决策链在 `TaskBranch.defaultBaseBranch(symbolicRef:current:hasMain:hasMaster:)`，**无头可测**（含「`origin/HEAD` 是未解析的悬挂 symref 时不算数」这种坑）。结果同时喂给 runner 的 `env.defaultBaseBranch`（自动队列）与队列表单的 `QueueComposerModel.defaultBaseBranch`（预填「基于分支」、留空回落、占位文案）。
+> 2. **超时 30 分钟 → 60 分钟，并且不再隐形**：`TasksRunner` 的默认超时改为 `defaultTimeout = 60 * 60`，面板用 `taskTimeout()` 读壳层设置 `tasksTimeoutMinutes`（5–1440 的整数）覆盖；运行中的卡片把上限写进那一行：「已运行 1:05（上限 60 分钟，到点会取消会话）」—— 到点被取消这件事，不该只能从一张失败卡片上事后得知。
+
 ### V2-8 卡片式任务清单
 
 列表改为 `NSScrollView + NSStackView`，体例照 `ProjectsPanel.swift`：`render()` 重建 `arrangedSubviews`，卡片 `widthAnchor == list.widthAnchor - 20`，卡片自身 `draw(_:)` 画圆角 + 描边、`hitTest` 把非按钮区域的点击交回卡片、`resetCursorRects` 设 `pointingHand`。

@@ -334,6 +334,20 @@ do {
     check(wide.editor.frame.width > editorWidth, "a wider panel gives a wider box")
 }
 
+section("队列表单：基于分支的占位跟着工作区走")
+do {
+    let masterForm = QueueComposerView(model: QueueComposerModel.create()
+        .forWorkspace(git: true, pr: true, defaultBase: "master"))
+    _ = layout(masterForm, width: 400)
+    eq(masterForm.baseField.placeholderString, "master", "占位是工作区自己的默认分支")
+    eq(masterForm.baseField.stringValue, "master", "而且已经预填好了（可改）")
+
+    // 默认（没有探测结果）时仍是 main。
+    let plain = QueueComposerView(model: QueueComposerModel.create())
+    _ = layout(plain, width: 400)
+    eq(plain.baseField.placeholderString, "main", "没有探测结果时还是 main")
+}
+
 section("the description editor is a real editor")
 do {
     // It is a wrapping multi-line field, so the whole area is clickable and
@@ -701,8 +715,8 @@ do {
                                                            expanded: false, githubRepo: false,
                                                            now: start.addingTimeInterval(95)))
     _ = layout(liveCard, width: 320)
-    check(descendants(liveCard, of: NSTextField.self).contains { $0.stringValue.contains("runningFor(1:35)") },
-          "运行中的卡片把 已运行 1:35 画出来了")
+    check(descendants(liveCard, of: NSTextField.self).contains { $0.stringValue.contains("runningFor(1:35,60)") },
+          "运行中的卡片把 已运行 1:35（上限 60 分钟）画出来了")
 }
 
 section("队列头：三个操作都在明面上（不再藏在 更多 里）")

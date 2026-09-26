@@ -577,7 +577,8 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         baseCaption.stringValue = L10n.tr("tasks.queue.base")
         nameField.placeholderString = L10n.tr("tasks.queue.nameHint")
         branchField.placeholderString = model.branchPlaceholder
-        baseField.placeholderString = L10n.tr("tasks.queue.baseHint")
+        // The workspace's own default branch, not a hard-coded "main".
+        baseField.placeholderString = model.defaultBaseBranch
         // 不切分支 takes the two branch fields out of play — nothing to type while
         // the queue deliberately leaves git alone.
         skipBranchSwitch.title = L10n.tr("tasks.queue.skipBranch")

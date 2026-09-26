@@ -651,7 +651,8 @@ do {
     var card = TaskCardModel.build(board.task(task.id)!, board: board, expanded: false, githubRepo: false,
                                    now: start.addingTimeInterval(65))
     eq(card.runningFor, "1:05", "已运行时长按 mm:ss")
-    eq(card.meta.first, "tasks.card.runningFor(1:05)", "而且排在最前面（「是不是卡住了」是运行时最想问的）")
+    eq(card.meta.first, "tasks.card.runningFor(1:05,60)",
+       "而且排在最前面（「是不是卡住了」是运行时最想问的），并带上超时上限")
 
     // 过了一小时：hh:mm:ss（时长不是当地时间，不用本地化）
     card = TaskCardModel.build(board.task(task.id)!, board: board, expanded: false, githubRepo: false,
@@ -726,6 +727,27 @@ do {
     _ = board.pauseQueue(q1.id)
     let paused = QueueHeaderModel.build(board.queue(q1.id)!, board: board, collapsed: false, isCurrent: false)
     eq(paused.stateKey, "tasks.queue.state.paused", "暂停就是暂停，跟是不是当前无关")
+}
+
+section("队列表单的「基于分支」跟着工作区自己的默认分支")
+do {
+    var form = QueueComposerModel.create().forWorkspace(git: true, pr: true, defaultBase: "develop")
+    eq(form.defaultBaseBranch, "develop", "表单知道工作区的默认分支")
+    eq(form.baseBranch, "develop", "并预填进去（看得见、可改）")
+
+    form = form.typed(name: "Lane", branch: "", baseBranch: "", autoPR: false)
+    eq(form.normalizedBaseBranch, "develop", "留空时回落到它，而不是硬编码 main")
+    eq(form.typed(name: "Lane", branch: "", baseBranch: "release", autoPR: false).normalizedBaseBranch,
+       "release", "手填的优先")
+
+    // 队列设置：仍然显示队列自己存的那个基线（不是工作区的默认分支）。
+    let queue = TaskQueue(id: "q-9001", name: "Lane", branch: "feature/lane", baseBranch: "release")
+    let settings = QueueComposerModel.edit(queue, prAvailable: true, gitAvailable: true,
+                                          defaultBaseBranch: "develop")
+    eq(settings.baseBranch, "release", "队列自己的基线原样预填")
+    eq(settings.defaultBaseBranch, "develop", "工作区默认分支仍然带着（清空字段时回落用）")
+    eq(settings.typed(name: "Lane", branch: "feature/lane", baseBranch: "", autoPR: false).normalizedBaseBranch,
+       "develop", "清空后就回落到工作区的默认分支")
 }
 
 section("队列头的三个操作与 PR 可用性")

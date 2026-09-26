@@ -130,6 +130,9 @@ struct TaskRunnerEnv {
     var promptSession: (_ sessionId: String, _ text: String) -> Bool
     /// What dsh says about the running task's session (see SessionState).
     var sessionState: (_ sessionId: String) -> SessionState
+    /// The branch an ISSUE task's queue is based on — the workspace's own default
+    /// branch (see TaskBranch.defaultBaseBranch), not an assumed "main".
+    var defaultBaseBranch: String = "main"
     /// Whether this workspace can open a pull request at all (a GitHub remote).
     /// It decides whether a task pushes at all — see the push policy in finish().
     var canOpenPR: () -> Bool = { true }
@@ -376,7 +379,18 @@ final class TasksRunner {
     /// as soon as there is a session to cancel. Cleared whenever a start begins.
     private var cancelRequested = false
 
-    init(board: TaskBoard, env: TaskRunnerEnv, timeout: TimeInterval = 30 * 60) {
+    /// How long a task may run before its session is cancelled.
+    ///
+    /// 30 minutes used to be hard-coded and quietly killed long work; 60 is the
+    /// default now and the panel reads an override from the shell config
+    /// ("tasksTimeoutMinutes"). Whatever it is, the running card SHOWS it, so the
+    /// deadline is never a surprise.
+    static let defaultTimeout: TimeInterval = 60 * 60
+
+    /// The limit in whole minutes (what the card prints).
+    var timeoutMinutes: Int { Int(timeout / 60) }
+
+    init(board: TaskBoard, env: TaskRunnerEnv, timeout: TimeInterval = TasksRunner.defaultTimeout) {
         self.board = board
         self.env = env
         self.timeout = timeout
@@ -843,7 +857,7 @@ final class TasksRunner {
             _ = pump()
             return existing
         }
-        let queue = TaskQueue.auto(for: task)
+        let queue = TaskQueue.auto(for: task, baseBranch: env.defaultBaseBranch)
         board.queues.append(queue)
         _ = board.enqueue(taskID: taskID, into: queue.id)
         _ = board.resumeQueue(queue.id)   // 处理 = 开始：issue 任务不等用户再点一次
