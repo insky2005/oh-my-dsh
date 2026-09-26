@@ -92,7 +92,9 @@ do {
     board.tasks = [done]
     let queue = TaskQueue.auto(for: done)
     board.queues = [queue]
-    board.reindexQueueMembership()
+    // The task joins its auto queue the way the runner does it: the queue no
+    // longer pre-loads the id (that double-add drew the same card twice).
+    _ = board.enqueue(taskID: done.id, into: queue.id)
     board.markRunning(done.id)
     board.markDone(done.id, prUrl: "https://github.com/o/r/pull/42")
 
@@ -542,6 +544,99 @@ do {
     let closedIssue = TaskCardModel.build(issueBoard.task(issue.id)!, board: issueBoard,
                                           expanded: true, githubRepo: true)
     eq(closedIssue.primaryAction, .openIssue, "已关闭的 issue：打开 Issue")
+}
+
+section("已完成但没有 PR：仍可评论并关闭；灰掉的主按钮说明原因")
+do {
+    var board = TaskBoard()
+    let issue = TaskItem.github(number: 8, title: "No PR")
+    board.tasks = [issue]
+    let queue = TaskQueue.auto(for: issue)
+    board.queues = [queue]
+    _ = board.enqueue(taskID: issue.id, into: queue.id)
+    board.markRunning(issue.id)
+    board.markDone(issue.id, prUrl: nil)
+    var card = TaskCardModel.build(board.task(issue.id)!, board: board, expanded: true, githubRepo: true)
+    eq(card.primaryKey, "tasks.detailOpenPR", "主操作还是 打开 PR")
+    check(!card.primaryEnabled, "但没有 PR，它是灰的")
+    eq(card.primaryDisabledHintKey, "tasks.detailOpenPRNoPR", "灰按钮带着原因（tooltip）")
+    check(card.canCommentClose, "评论并关闭仍然可用 —— 它并不需要 PR 链接")
+
+    // 有 PR 时：按钮可用，也就没有「为什么灰」这句话。
+    board.markDone(issue.id, prUrl: "https://github.com/o/r/pull/9")
+    card = TaskCardModel.build(board.task(issue.id)!, board: board, expanded: true, githubRepo: true)
+    check(card.primaryEnabled, "有 PR 时按钮是活的")
+    eq(card.primaryDisabledHintKey, nil, "活着的按钮不需要解释")
+    check(card.canCommentClose, "评论并关闭照样在")
+
+    // 非 GitHub 工作区：评论并关闭整条不出现（没有 issue 可关）。
+    let noRepo = TaskCardModel.build(board.task(issue.id)!, board: board, expanded: true, githubRepo: false)
+    check(!noRepo.canCommentClose, "没有 GitHub 就没有 评论并关闭")
+}
+
+section("跳过并继续：只有后面还有排队任务时才出现")
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "One", id: "manual-00c0aaaa")
+    let t2 = TaskItem.manual(title: "Two", id: "manual-00c1bbbb")
+    board.tasks = [t1, t2]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+    _ = board.enqueue(taskID: t2.id, into: queue.id)
+    board.markRunning(t1.id)
+    _ = board.markFailed(t1.id, error: TaskFailure.session.rawValue)
+    var card = TaskCardModel.build(board.task(t1.id)!, board: board, expanded: true, githubRepo: false)
+    check(card.canSkip, "后面还有排队的任务 → 给 跳过并继续")
+    eq(card.primaryKey, "tasks.detailRetry", "主操作还是 重试（跳过是第二个入口）")
+
+    // 队里只有它一个：跳过只会唤醒一个没活干的队列。
+    var loneBoard = TaskBoard()
+    let lone = TaskItem.manual(title: "Lone", id: "manual-00c2cccc")
+    loneBoard.tasks = [lone]
+    let loneQueue = loneBoard.createQueue(name: "Lane")
+    _ = loneBoard.enqueue(taskID: lone.id, into: loneQueue.id)
+    loneBoard.markRunning(lone.id)
+    _ = loneBoard.markFailed(lone.id, error: TaskFailure.session.rawValue)
+    let loneCard = TaskCardModel.build(loneBoard.task(lone.id)!, board: loneBoard, expanded: true, githubRepo: false)
+    check(!loneCard.canSkip, "队里没有下一个任务 → 不给 跳过并继续")
+
+    // 后面的任务已经跑完：也没有可跳过去的了。
+    _ = board.markDone(t2.id, prUrl: nil)
+    card = TaskCardModel.build(board.task(t1.id)!, board: board, expanded: true, githubRepo: false)
+    check(!card.canSkip, "后面那个已经跑完 → 不给 跳过并继续")
+
+    // 没有队列的失败任务（队列被删）：跳过无从谈起。
+    let orphan = TaskCardModel.build(board.task(t2.id)!, board: board, expanded: true, githubRepo: false)
+    check(!orphan.canSkip, "不在队列里的任务谈不上跳过")
+}
+
+section("队列头 ▶ 的文案跟着它真正做的事")
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "One", id: "manual-00d0aaaa")
+    let t2 = TaskItem.manual(title: "Two", id: "manual-00d1bbbb")
+    board.tasks = [t1, t2]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+    _ = board.enqueue(taskID: t2.id, into: queue.id)
+    var header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(header.startHintKey, "tasks.queue.start", "还没跑过：按钮就是 开始")
+
+    board.markRunning(t1.id)
+    _ = board.markFailed(t1.id, error: TaskFailure.session.rawValue)
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(header.startHintKey, "tasks.queue.continue", "失败之后它其实是 继续（跳过失败项）")
+
+    // 队里只剩失败的那条：没有下一个可跑，按钮本身也不出现（canStart 为假）。
+    var loneBoard = TaskBoard()
+    let lone = TaskItem.manual(title: "Lone", id: "manual-00d2cccc")
+    loneBoard.tasks = [lone]
+    let loneQueue = loneBoard.createQueue(name: "Lane")
+    _ = loneBoard.enqueue(taskID: lone.id, into: loneQueue.id)
+    loneBoard.markRunning(lone.id)
+    _ = loneBoard.markFailed(lone.id, error: TaskFailure.session.rawValue)
+    let loneHeader = QueueHeaderModel.build(loneBoard.queue(loneQueue.id)!, board: loneBoard, collapsed: false)
+    check(!loneHeader.canStart, "没有排队的任务：连按钮都没有")
 }
 
 section("队列头的三个操作与 PR 可用性")

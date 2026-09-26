@@ -156,8 +156,11 @@ let autoQueue = TaskQueue.auto(for: issue)
 check(autoQueue.autoCreated, "the auto queue is flagged")
 check(autoQueue.autoPR, "the auto queue opens a PR")
 check(autoQueue.branch == "fix/issue-12", "the auto branch follows the issue rule")
-eq(autoQueue.taskIds, [issue.id], "the auto queue holds exactly its task")
-check(autoQueue.order(of: issue.id) == 1, "the auto queue position is 1")
+// The queue starts EMPTY and the task joins through enqueue — the one writer of
+// membership. It used to pre-load the id AND enqueue it, so the lane drew the
+// same card twice (progress 0/2).
+eq(autoQueue.taskIds, [], "a brand-new auto queue holds nothing yet")
+check(autoQueue.order(of: issue.id) == nil, "so the task has no position in it yet")
 let featureIssue = TaskItem.github(number: 7, title: "Add X", labels: ["kind/feature"])
 check(TaskQueue.auto(for: featureIssue).branch == "feature/issue-7", "the auto branch for a feature issue")
 
@@ -165,8 +168,27 @@ var boardAuto = TaskBoard()
 boardAuto.tasks = [issue]
 boardAuto.queues = [autoQueue]
 boardAuto.reindexQueueMembership()
+check(boardAuto.autoQueueID(forTask: issue.id) == nil, "an empty queue holds no task")
+check(boardAuto.enqueue(taskID: issue.id, into: autoQueue.id), "the task joins it through enqueue")
+eq(boardAuto.queue(autoQueue.id)?.taskIds, [issue.id], "exactly once")
+eq(boardAuto.tasks(inQueue: autoQueue.id).count, 1, "one card in the lane, not two")
 check(boardAuto.autoQueueID(forTask: issue.id) == autoQueue.id, "the auto queue is found by task")
 check(boardAuto.task(issue.id)?.state == .queued, "membership made the issue task queued")
+check(boardAuto.enqueue(taskID: issue.id, into: autoQueue.id) == false,
+      "enqueueing the same task into the same queue again is refused")
+eq(boardAuto.queue(autoQueue.id)?.taskIds, [issue.id], "so the id can never be doubled")
+
+// A board written by the buggy version (the id listed twice) repairs itself when
+// it is loaded: reindexQueueMembership drops the repeat.
+var boardDup = TaskBoard()
+let dupIssue = TaskItem.github(number: 21, title: "Legacy")
+boardDup.tasks = [dupIssue]
+var dupQueue = TaskQueue.auto(for: dupIssue)
+dupQueue.taskIds = [dupIssue.id, dupIssue.id]
+boardDup.queues = [dupQueue]
+boardDup.reindexQueueMembership()
+eq(boardDup.queue(dupQueue.id)?.taskIds, [dupIssue.id], "a duplicated id is de-duplicated on load")
+eq(boardDup.tasks(inQueue: dupQueue.id).count, 1, "so the lane shows one card again")
 
 // MARK: - summary and restart recovery
 

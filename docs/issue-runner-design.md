@@ -316,6 +316,15 @@ struct Queue {
 >
 > 同一次改动把界面侧的执行方式也改了：面板**按卡片模型给出的 `TaskCardModel.PrimaryAction` 执行**（`.joinQueue` / `.processIssue` / `.dequeue` / `.cancel` / `.openPR` / `.openIssue` / `.retry(clearsBranch:)`），不再自己按 `task.state` 猜——状态区分不了「在队列里失败」和「队列被删后失败」这两种情形，模型可以。新增的界面动作若要再加一个入口，先看这张枚举。
 
+> **实现（2026-09-27 补充 · 派活之后的四次「说真话」）**：审计（三个独立探针 + 全量读码）发现了几处**界面在骗人**的地方，都收在这一次：
+>
+> 1. **自动队列把自己的任务装了两次**：`TaskQueue.auto` 预置了 `taskIds: [task.id]`，`startIssueTask` 又 `enqueue` 一次（enqueue 只防「已经在这个队列里」，而此刻任务的 `queueId` 还是 nil）→ `taskIds = ["issue-7","issue-7"]`。泳道从 `taskIds` 渲染，于是**同一张卡片出现两次**、进度 `0/2`、删除确认框说「2 个任务」。现在自动队列从空开始（**成员关系只有 `enqueue` 一个写者**），`enqueue` 自带去重防线，`reindexQueueMembership` 在加载时清掉历史重复项（旧 queues.json 自动修正，无需迁移）。回归：模型 8 项 + 运行器 2 项（含 `tasks(inQueue:).count == 1`）。
+> 2. **两处假成功**：任务在表单打开期间被拉起 → `updateManualTask` 拒绝 `.running`，面板却丢弃返回值、报「已更新任务」并关表单（用户输入静默丢失）。现在按返回值说话：失败报「任务已经开始运行，改动没有保存」且**表单保持打开**；队列设置表单同理（队列没了 → 「队列已经不存在，改动没有保存」）；删除任务 / 删除队列被拒也各有明确文案。
+> 3. **「取消任务」在两个窗口是死按钮**：任务的 `.running` 早于 `phase = .active`（`.starting` 要跑 git + 建会话 + 发提示词；`.finishing` 要推送 + 开 PR）。`cancelRunning()` 现在返回 `CancelOutcome`：`.starting` 期间**记住**取消请求、会话一建好立刻取消（`cancelRequested` → 在 `applyStart` 里生效）；`.finishing` 回答「已经在收尾，没有可取消的东西了」；两者都在状态行说出来。回归：运行器 +8（含用「异步 perform」新开的 `starting` 窗口与 `finishing` 窗口两个用例——同步 perform 观察不到这两个窗口）。
+> 4. **「跳过并继续」接上了界面**：`TasksRunner.skip` 此前是死代码（README / 设计文档却一直承诺它）。失败 / 取消任务的卡片现在带「跳过并继续」，且只在队伍里**还有排队任务**时出现；队列头的 ▶ 在「暂停 + 有失败 + 还有排队」时 tooltip 改为「继续：跳过失败的任务，跑下一个」。顺带：已完成但**没有 PR** 的 issue 任务不再丢掉「评论并关闭」（`canCommentClose` 不该要求 `prUrl != nil`），灰掉的主按钮也带上了原因 tooltip；「评论并关闭」的 OK 按钮在评论为空时禁用（此前是弹窗消失、什么都不做）。
+>
+> 一条贯穿的规矩：**面板里每一个 `_ = runner?.xxx(...)` 都要么不可能失败，要么把失败说出来**——放弃返回值就是放弃解释，而这四次全是「用户按了、界面当没发生」。
+
 ### V2-8 卡片式任务清单
 
 列表改为 `NSScrollView + NSStackView`，体例照 `ProjectsPanel.swift`：`render()` 重建 `arrangedSubviews`，卡片 `widthAnchor == list.widthAnchor - 20`，卡片自身 `draw(_:)` 画圆角 + 描边、`hitTest` 把非按钮区域的点击交回卡片、`resetCursorRects` 设 `pointingHand`。

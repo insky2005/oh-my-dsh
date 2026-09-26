@@ -127,6 +127,12 @@ final class Recorder {
 
 // MARK: - Harness
 
+/// Blocking work queued by the harness's asynchronous perform (a class, so the
+/// perform closure can capture it instead of the Harness itself).
+final class WorkQueue {
+    var items: [() -> Void] = []
+}
+
 final class Harness {
     let repo = FakeRepo()
     let dsh = FakeDsh()
@@ -134,10 +140,20 @@ final class Harness {
     let runner: TasksRunner
     var board: TaskBoard { runner.board }
 
+    /// Blocking work the runner handed to perform but nobody ran YET. The real
+    /// panel performs it on a background queue, and that is the only way to
+    /// observe the STARTING window (cancel clicked before the session exists).
+    private let work = WorkQueue()
+    private let asynchronous: Bool
+
     init(board: TaskBoard,
          github: Bool = true,
          gitRepo: Bool = true,
-         timeout: TimeInterval = 30 * 60) {
+         timeout: TimeInterval = 30 * 60,
+         asynchronous: Bool = false) {
+        self.asynchronous = asynchronous
+        let work = self.work
+        let asynchronous = asynchronous        // captured by the perform closure
         repo.isRepo = gitRepo
         let repo = self.repo
         let dsh = self.dsh
@@ -165,9 +181,21 @@ final class Harness {
             persist: { board in rec.persistCount += 1; _ = board },
             persistIssueTask: { task in rec.issueWrites.append(task.id) },
             log: { message in rec.logs.append(message) },
-            perform: { blocking, completion in blocking(); completion() }
+            perform: { blocking, completion in
+                if asynchronous {
+                    work.items.append { blocking(); completion() }
+                } else {
+                    blocking(); completion()
+                }
+            }
         )
         runner = TasksRunner(board: board, env: env, timeout: timeout)
+    }
+
+    /// Run the blocking work the runner queued (git, session, prompt…) and its
+    /// completion, the way its background queue would.
+    func flush() {
+        while !work.items.isEmpty { work.items.removeFirst()() }
     }
 }
 
@@ -415,12 +443,50 @@ do {
 
 // MARK: - Cancel / retry / skip
 
+section("取消任务 in the two windows where there is nothing to cancel yet/any more")
+do {
+    // The board says .running from before the git/session/prompt work is done, so
+    // the card offers 取消任务 exactly when the runner has no session yet. It used
+    // to return false and the panel hid the status line: a click that did nothing,
+    // silently. Now the request is remembered and applied.
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board, asynchronous: true)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    check(h.board.task(taskID)?.state == .running, "the card already says 运行中")
+    eq(h.runner.cancelRunning(), .deferred, "the cancel is remembered")
+    check(h.dsh.cancelled.isEmpty, "there is no session to cancel yet")
+    h.flush()
+    eq(h.dsh.cancelled, ["session-1"], "the session is cancelled the moment it exists")
+    check(h.board.task(taskID)?.state == .cancelled, "the task ends up cancelled")
+    eq(h.board.queue(queueID)?.state, QueueState.paused, "its queue is paused")
+    check(h.runner.isBusy == false, "nothing keeps running")
+}
+do {
+    // The FINISHING window: the agent is done, we are pushing / opening the PR.
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board, asynchronous: true)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.flush()
+    h.dsh.finishAll()
+    h.repo.pushed.insert("feature/docs-cleanup")     // the agent pushed, as it should
+    _ = h.runner.step()
+    eq(h.runner.cancelRunning(), .finishing, "there is nothing left to cancel — and it says so")
+    h.flush()
+    check(h.board.task(taskID)?.state == .done, "the task still finishes normally")
+}
+do {
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board)
+    eq(h.runner.cancelRunning(), .idle, "nothing is running → idle")
+    _ = taskID; _ = queueID
+}
+
 section("cancel, retry and skip")
 do {
     let (board, taskID, queueID) = singleTaskBoard()
     let h = Harness(board: board)
     _ = h.runner.enqueue(taskID: taskID, into: queueID)
-    check(h.runner.cancelRunning(), "cancel is accepted")
+    eq(h.runner.cancelRunning(), .cancelled, "cancel is accepted")
     eq(h.dsh.cancelled, ["session-1"], "the session was cancelled")
     check(h.board.task(taskID)?.state == .cancelled, "the task is cancelled")
     eq(h.board.queue(queueID)?.state, QueueState.paused, "the queue is paused")
@@ -500,6 +566,8 @@ do {
     check(queue?.autoCreated == true, "the queue is flagged as auto")
     check(queue?.branch == "fix/issue-12", "the auto branch follows the issue rule")
     check(queue?.autoPR == true, "the auto queue wants a PR")
+    eq(queue?.taskIds, ["issue-12"], "the task is in it exactly ONCE (the lane draws one card)")
+    eq(h.runner.board.tasks(inQueue: queueID!).count, 1, "…which is one card, not two")
     check(h.runner.runningTaskID == "issue-12", "the issue task started")
     eq(h.repo.checkouts, ["main", "fix/issue-12"], "the issue branch was created from main")
     h.dsh.finishAll()
@@ -640,7 +708,7 @@ do {
     check(h.board.task(id)?.state == .running, "it starts right away (the runner was idle)")
     eq(h.runner.queueChoices().first?.taskCount, 1, "the choice count follows the queue")
     check(h.runner.deleteManualTask(id) == false, "a running task cannot be deleted")
-    check(h.runner.cancelRunning(), "cancel it first")
+    eq(h.runner.cancelRunning(), .cancelled, "cancel it first")
     check(h.board.task(id)?.state == .cancelled, "the task is cancelled")
     check(h.runner.deleteManualTask(id), "a stopped task can be deleted")
     check(h.board.task(id) == nil, "it is gone from the board")

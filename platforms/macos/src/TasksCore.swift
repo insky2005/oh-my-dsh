@@ -405,13 +405,19 @@ struct TaskQueue: Equatable {
     /// The single-task queue an issue task runs in (decision 5): created on
     /// 处理, reused on retry, so v1's one-issue-one-branch-one-PR rule — and its
     /// fix/issue-N naming — survive untouched.
+    ///
+    /// It starts with NO tasks: the task joins through TaskBoard.enqueue, the one
+    /// place that owns membership (and writes the task's queueId). Pre-loading the
+    /// id here AS WELL made every issue task show up twice in its own lane
+    /// (taskIds = ["issue-7","issue-7"] → two identical cards, progress 0/2, and
+    /// 「队列内 2 个任务」 in the delete dialog).
     static func auto(for task: TaskItem) -> TaskQueue {
         let number = task.number ?? 0
         return TaskQueue(id: TaskQueue.newID(),
                          name: "Issue #\(number)",
                          branch: TaskBranch.issueBranch(number: number, labels: task.labels),
                          baseBranch: "main",
-                         taskIds: [task.id],
+                         taskIds: [],
                          state: .paused,
                          autoCreated: true,
                          autoPR: true,
@@ -574,7 +580,10 @@ struct TaskBoard {
         guard let qi = index(ofQueue: queueID) else { return false }
         tasks[ti].state = .queued
         tasks[ti].queueId = queueID
-        queues[qi].taskIds.append(taskID)
+        // One id per queue, ever: the lane renders from taskIds, so a duplicate
+        // would draw the same card twice (and inflate progress and every count
+        // derived from it).
+        if !queues[qi].taskIds.contains(taskID) { queues[qi].taskIds.append(taskID) }
         return true
     }
 
@@ -785,6 +794,14 @@ struct TaskBoard {
     /// never drift apart (and a task listed in a queue but still pending becomes
     /// queued again).
     mutating func reindexQueueMembership() {
+        // A duplicated id draws TWO cards in one lane, so the list is cleaned while
+        // it is read: every board written before that rule existed (each issue
+        // task's auto queue had its id added twice) repairs itself on the next
+        // load instead of needing a migration.
+        for qi in queues.indices {
+            var seen = Set<String>()
+            queues[qi].taskIds = queues[qi].taskIds.filter { seen.insert($0).inserted }
+        }
         for i in tasks.indices { tasks[i].queueId = nil }
         for queue in queues {
             for id in queue.taskIds {

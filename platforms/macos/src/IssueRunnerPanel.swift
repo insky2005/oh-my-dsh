@@ -13,6 +13,22 @@ final class IssueRunnerRootView: NSView {
     }
 }
 
+/// Keeps a dialog's default button in step with a text view: enabled only while
+/// there is something to submit. The 评论并关闭 dialog used to accept an empty
+/// comment, dismiss itself, and do nothing at all.
+final class CommentFieldWatcher: NSObject, NSTextViewDelegate {
+    weak var button: NSButton?
+
+    func apply(_ view: NSTextView) {
+        button?.isEnabled = !view.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    func textDidChange(_ notification: Notification) {
+        guard let view = notification.object as? NSTextView else { return }
+        apply(view)
+    }
+}
+
 /// Rows are the board's own model now (TasksCore.swift): the panel renders the
 /// github half of it and hands every state change to TasksRunner. The card list
 /// (step 6) renders manual tasks and queues from the same board.
@@ -847,9 +863,25 @@ final class IssueRunnerPanelController: NSObject {
     /// for traceability (v1 behaviour).
     func cancelRunningTask() {
         guard let runner = runner else { return }
-        _ = runner.cancelRunning()
+        report(runner.cancelRunning())
         syncFromBoard()
-        hideStatus()
+    }
+
+    /// Say what 取消任务 did. It used to do nothing at all while the task was
+    /// starting (git + session + prompt in flight) or finishing (push / PR), with
+    /// no feedback whatsoever — the card even hid the status line, so a click read
+    /// as a frozen panel.
+    private func report(_ outcome: CancelOutcome) {
+        switch outcome {
+        case .cancelled, .idle:
+            hideStatus()
+        case .deferred:
+            setStatus(L10n.tr("tasks.cancelDeferred"), spin: true)
+            autoHideStatus(after: 6)
+        case .finishing:
+            setStatus(L10n.tr("tasks.cancelFinishing"), spin: false)
+            autoHideStatus(after: 6)
+        }
     }
 
     /// 重试 a failed/cancelled task (back into its queue, resuming it).
@@ -1292,6 +1324,12 @@ final class IssueRunnerPanelController: NSObject {
             self?.presentQueuePicker(for: taskID, from: anchor)
         }
         card.onCommentClose = { [weak self] in self?.commentAndCloseTapped(number: task.number ?? 0) }
+        card.onSkip = { [weak self] in
+            // 跳过并继续: keep the failure's record, resume the queue, run the next
+            // queued task (the runner knows how — the UI never could reach it before).
+            _ = self?.runner?.skip(taskID: taskID)
+            self?.syncFromBoard()
+        }
         card.onEdit = { [weak self] in self?.openTaskComposer(.edit(taskID: taskID)) }
         card.onDelete = { [weak self] in self?.confirmDelete(task) }
         return card
@@ -1355,8 +1393,7 @@ final class IssueRunnerPanelController: NSObject {
         case .dequeue:
             _ = runner.dequeue(taskID: task.id)
         case .cancel:
-            _ = runner.cancelRunning()
-            hideStatus()
+            report(runner.cancelRunning())
         case .openPR:
             if let url = task.prUrl, let link = URL(string: url) { NSWorkspace.shared.open(link) }
         case .openIssue:
@@ -1514,7 +1551,17 @@ final class IssueRunnerPanelController: NSObject {
             // Still open, cleared: 完成 / Esc closes it.
             showTaskForm(TaskComposerModel.build(mode: .create))
         case .edit(let taskID):
-            _ = runner.updateManualTask(taskID, title: draft.normalizedTitle, body: draft.normalizedBody)
+            // The task may have started running while the form was open (the step
+            // timer starts the next queued one): its session already holds the old
+            // text, so the edit is refused. Reporting "已更新" anyway — which is
+            // what this did — silently threw the typing away.
+            guard runner.updateManualTask(taskID, title: draft.normalizedTitle,
+                                          body: draft.normalizedBody) else {
+                setStatus(L10n.tr("tasks.new.editRefused"), spin: false)
+                autoHideStatus(after: 6)
+                syncFromBoard()
+                return                       // the form stays: the typing is the only copy
+            }
             setStatus(L10n.tr("tasks.new.updated", draft.normalizedTitle), spin: false)
             autoHideStatus(after: 4)
             taskComposer = nil
@@ -1574,11 +1621,18 @@ final class IssueRunnerPanelController: NSObject {
             queueComposer = nil
             dismissForm()
         case .edit(let queueID):
-            _ = runner.updateQueue(queueID,
-                                   name: composer.normalizedName,
-                                   branch: .some(composer.branchValue),
-                                   baseBranch: composer.normalizedBaseBranch,
-                                   autoPR: composer.autoPR && repo != nil)
+            guard runner.updateQueue(queueID,
+                                     name: composer.normalizedName,
+                                     branch: .some(composer.branchValue),
+                                     baseBranch: composer.normalizedBaseBranch,
+                                     autoPR: composer.autoPR && repo != nil) else {
+                // The queue is gone (workspace switched under the open form): say
+                // so instead of reporting a save that never happened.
+                setStatus(L10n.tr("tasks.queue.updateFailed"), spin: false)
+                autoHideStatus(after: 6)
+                syncFromBoard()
+                return
+            }
             setStatus(L10n.tr("tasks.queue.updated", composer.normalizedName), spin: false)
             autoHideStatus(after: 4)
             queueComposer = nil
@@ -1594,7 +1648,13 @@ final class IssueRunnerPanelController: NSObject {
         alert.addButton(withTitle: L10n.tr("tasks.card.delete"))
         alert.addButton(withTitle: L10n.tr("btn.cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        _ = runner?.deleteManualTask(task.id)
+        guard runner?.deleteManualTask(task.id) == true else {
+            // It started running while the dialog was up: the delete is refused.
+            setStatus(L10n.tr("tasks.card.deleteRefused"), spin: false)
+            autoHideStatus(after: 6)
+            syncFromBoard()
+            return
+        }
         syncFromBoard()
     }
 
@@ -1605,7 +1665,14 @@ final class IssueRunnerPanelController: NSObject {
         alert.addButton(withTitle: L10n.tr("tasks.queue.delete"))
         alert.addButton(withTitle: L10n.tr("btn.cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        _ = runner?.removeQueue(queue.id)
+        guard runner?.removeQueue(queue.id) == true else {
+            // A task in it is running: the model refuses to delete the queue, and
+            // the panel used to say nothing at all about it.
+            setStatus(L10n.tr("tasks.queue.deleteRefused"), spin: false)
+            autoHideStatus(after: 6)
+            syncFromBoard()
+            return
+        }
         queueToggle[queue.id] = nil
         syncFromBoard()
     }
@@ -1617,7 +1684,10 @@ final class IssueRunnerPanelController: NSObject {
         guard let repo = repo,
               let task = runner?.board.tasks.first(where: { $0.number == number }),
               task.state == .done else { return }
-        let prRef = task.prUrl ?? ""
+        // A task with no PR (creation failed, or the queue never asked for one) is
+        // still commentable: the template just leaves the PR line out.
+        let template = task.prUrl.map { L10n.tr("tasks.commentTemplate", $0) }
+            ?? L10n.tr("tasks.commentTemplateNoPR")
 
         let alert = NSAlert()
         alert.messageText = L10n.tr("tasks.commentCloseTitle", number)
@@ -1627,7 +1697,7 @@ final class IssueRunnerPanelController: NSObject {
         let field = NSTextView(frame: NSRect(x: 0, y: 0, width: 420, height: 120))
         field.isEditable = true
         field.isSelectable = true
-        field.string = L10n.tr("tasks.commentTemplate", prRef)
+        field.string = template
         let scroll = NSScrollView(frame: field.bounds)
         scroll.documentView = field
         scroll.hasVerticalScroller = true
@@ -1636,10 +1706,21 @@ final class IssueRunnerPanelController: NSObject {
         scroll.frame = NSRect(x: 0, y: 0, width: 420, height: 120)
         alert.accessoryView = scroll
         alert.window.initialFirstResponder = field
+        // The OK button is dead while the comment is empty: pressing it used to
+        // dismiss the dialog and do nothing at all, with no explanation anywhere.
+        let watcher = CommentFieldWatcher()
+        watcher.button = alert.buttons.first
+        field.delegate = watcher
+        watcher.apply(field)
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let comment = field.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !comment.isEmpty else { return }
+        guard !comment.isEmpty else {
+            // Belt and braces (a programmatic close can still land here).
+            setStatus(L10n.tr("tasks.commentEmpty"), spin: false)
+            autoHideStatus(after: 4)
+            return
+        }
 
         guard let token = loadToken(for: repo) else {
             setStatus(L10n.tr("tasks.commentCloseFailed"), spin: false)

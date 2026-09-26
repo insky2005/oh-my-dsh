@@ -278,6 +278,8 @@ final class TaskCardView: NSView {
     /// (the menu button itself).
     var onQueue: ((NSView) -> Void)?
     var onCommentClose: (() -> Void)?
+    /// 跳过并继续: keep this failure's record and run the next queued task.
+    var onSkip: (() -> Void)?
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
 
@@ -438,6 +440,9 @@ final class TaskCardView: NSView {
         if model.canCommentClose {
             views.append(actionButton("tasks.detailCommentClose", #selector(commentCloseTapped)))
         }
+        if model.canSkip {
+            views.append(actionButton("tasks.detailSkip", #selector(skipTapped)))
+        }
         if model.canEdit {
             views.append(iconButton("pencil", tooltipKey: "tasks.card.edit", action: #selector(editTapped)))
         }
@@ -462,7 +467,9 @@ final class TaskCardView: NSView {
     /// it. Every other primary action is a plain button that just fires.
     private func primaryControl() -> NSView {
         guard model.canQueue else {
-            return actionButton(model.primaryKey, #selector(primaryTapped), enabled: model.primaryEnabled)
+            return actionButton(model.primaryKey, #selector(primaryTapped),
+                                enabled: model.primaryEnabled,
+                                disabledHintKey: model.primaryDisabledHintKey)
         }
         let button = PanelMenuButton(glyph: .symbol("rectangle.stack.badge.plus"),
                                      title: L10n.tr(model.primaryKey),
@@ -480,12 +487,16 @@ final class TaskCardView: NSView {
         return button
     }
 
-    private func actionButton(_ key: String, _ selector: Selector, enabled: Bool = true) -> NSButton {
+    /// A text action button. A DISABLED one carries the reason as its tooltip: a
+    /// grey button the user cannot explain is worse than a sentence.
+    private func actionButton(_ key: String, _ selector: Selector, enabled: Bool = true,
+                              disabledHintKey: String? = nil) -> NSButton {
         let button = NSButton(title: L10n.tr(key), target: self, action: selector)
         button.controlSize = .small
         button.bezelStyle = .rounded
         button.font = .systemFont(ofSize: 11)
         button.isEnabled = enabled
+        if !enabled, let hint = disabledHintKey { button.toolTip = L10n.tr(hint) }
         button.translatesAutoresizingMaskIntoConstraints = false
         // A narrow panel wins over the button's ideal width (the title
         // truncates); without this the card would push the list wider.
@@ -498,6 +509,7 @@ final class TaskCardView: NSView {
     @objc private func primaryTapped() { onPrimary?() }
 
     @objc private func commentCloseTapped() { onCommentClose?() }
+    @objc private func skipTapped() { onSkip?() }
     @objc private func editTapped() { onEdit?() }
     @objc private func deleteTapped() { onDelete?() }
 }
@@ -578,7 +590,8 @@ final class TaskQueueHeaderView: NSView {
         if model.canPause {
             trailing.append(iconButton("pause.fill", tooltipKey: "tasks.queue.pause", action: #selector(pauseTapped)))
         } else if model.canStart {
-            trailing.append(iconButton("play.fill", tooltipKey: "tasks.queue.start", action: #selector(startTapped)))
+            trailing.append(iconButton("play.fill", tooltipKey: model.startHintKey,
+                                       action: #selector(startTapped)))
         }
         if model.canOpenPR {
             trailing.append(iconButton("arrow.up.right.square", tooltipKey: "tasks.queue.openPR",

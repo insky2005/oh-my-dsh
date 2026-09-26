@@ -571,6 +571,85 @@ do {
           "没有那个点了只会 reset 的重试按钮")
 }
 
+section("失败卡片：跳过并继续 与 灰按钮的解释")
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "One", id: "manual-00e0aaaa")
+    let t2 = TaskItem.manual(title: "Two", id: "manual-00e1bbbb")
+    board.tasks = [t1, t2]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+    _ = board.enqueue(taskID: t2.id, into: queue.id)
+    board.markRunning(t1.id)
+    _ = board.markFailed(t1.id, error: TaskFailure.session.rawValue)
+
+    let card = TaskCardView(model: TaskCardModel.build(board.task(t1.id)!, board: board,
+                                                      expanded: true, githubRepo: false))
+    _ = layout(card, width: 320)
+    var skipped = false
+    card.onSkip = { skipped = true }
+    let skipButton = descendants(card, of: NSButton.self).first { $0.title == "detailSkip" }
+    check(skipButton != nil, "失败卡片上有 跳过并继续（在此之前它根本没有入口）")
+    skipButton?.performClick(nil)
+    check(skipped, "点它交给面板（面板调 runner.skip）")
+
+    // 队里只有它自己：不该出现这个按钮（跳过会唤醒一个没活干的队列）。
+    var loneBoard = TaskBoard()
+    let lone = TaskItem.manual(title: "Lone", id: "manual-00e2cccc")
+    loneBoard.tasks = [lone]
+    let loneQueue = loneBoard.createQueue(name: "Lane")
+    _ = loneBoard.enqueue(taskID: lone.id, into: loneQueue.id)
+    loneBoard.markRunning(lone.id)
+    _ = loneBoard.markFailed(lone.id, error: TaskFailure.session.rawValue)
+    let loneCard = TaskCardView(model: TaskCardModel.build(loneBoard.task(lone.id)!, board: loneBoard,
+                                                           expanded: true, githubRepo: false))
+    _ = layout(loneCard, width: 320)
+    check(!descendants(loneCard, of: NSButton.self).contains { $0.title == "detailSkip" },
+          "没有下一个任务就不给 跳过并继续")
+
+    // 已完成、没有 PR 的 issue 任务：主按钮灰着但带 tooltip 说明；评论并关闭仍在。
+    var doneBoard = TaskBoard()
+    let issue = TaskItem.github(number: 5, title: "No PR")
+    doneBoard.tasks = [issue]
+    let auto = TaskQueue.auto(for: issue)
+    doneBoard.queues = [auto]
+    _ = doneBoard.enqueue(taskID: issue.id, into: auto.id)
+    doneBoard.markRunning(issue.id)
+    doneBoard.markDone(issue.id, prUrl: nil)
+    let doneCard = TaskCardView(model: TaskCardModel.build(doneBoard.task(issue.id)!, board: doneBoard,
+                                                          expanded: true, githubRepo: true))
+    _ = layout(doneCard, width: 320)
+    let prButton = descendants(doneCard, of: NSButton.self).first { $0.title == "detailOpenPR" }
+    check(prButton != nil, "主按钮还是 打开 PR")
+    check(prButton?.isEnabled == false, "但它是灰的")
+    eq(prButton?.toolTip, "detailOpenPRNoPR", "灰按钮把原因写在 tooltip 里")
+    check(descendants(doneCard, of: NSButton.self).contains { $0.title == "detailCommentClose" },
+          "评论并关闭照样出现（它不需要 PR）")
+}
+
+section("队列头：失败之后的 ▶ 说的是「继续」")
+do {
+    func playTooltip(_ build: () -> QueueHeaderModel) -> String? {
+        let header = TaskQueueHeaderView(model: build())
+        _ = layout(header, width: 360)
+        return descendants(header, of: CustomIconButton.self).first { $0.toolTip == "start" || $0.toolTip == "continue" }?.toolTip
+    }
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "One", id: "manual-00f0aaaa")
+    let t2 = TaskItem.manual(title: "Two", id: "manual-00f1bbbb")
+    board.tasks = [t1, t2]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+    _ = board.enqueue(taskID: t2.id, into: queue.id)
+    eq(playTooltip { QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false) },
+       "start", "还没跑过：按钮就是 开始")
+
+    board.markRunning(t1.id)
+    _ = board.markFailed(t1.id, error: TaskFailure.session.rawValue)
+    eq(playTooltip { QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false) },
+       "continue", "失败之后它其实是 继续（跳过失败项）")
+}
+
 section("队列头：三个操作都在明面上（不再藏在 更多 里）")
 do {
     var board = TaskBoard()

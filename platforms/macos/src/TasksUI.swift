@@ -61,6 +61,13 @@ struct TaskCardModel: Equatable {
     var canDequeue: Bool
     var canCancel: Bool
     var canRetry: Bool
+    /// 跳过并继续: keep this failure's record and let the queue walk PAST it to the
+    /// next queued task (TasksRunner.skip). Offered only when there IS a next task
+    /// — skipping the last one would resume a queue with nothing left to do.
+    var canSkip: Bool
+    /// Why the primary control is greyed out (nil while it is live): a dead button
+    /// with no explanation is worse than a sentence.
+    var primaryDisabledHintKey: String?
     var canCommentClose: Bool
     var canEdit: Bool
     var canDelete: Bool
@@ -147,10 +154,17 @@ struct TaskCardModel: Equatable {
         var primaryKey = "tasks.detailProcess"
         var primaryEnabled = true
         var primaryAction = TaskCardModel.PrimaryAction.processIssue
+        // Is there anything to walk PAST this failure to?
+        let hasQueuedSibling = queue?.taskIds.contains { id in
+            id != task.id && board.task(id)?.state == .queued
+        } ?? false
+
         var canQueue = false
         var canDequeue = false
         var canCancel = false
         var canRetry = false
+        var canSkip = false
+        var primaryDisabledHintKey: String?
         switch task.state {
         case .pending:
             // A manual task has no queue yet: the primary action IS 加入队列.
@@ -174,6 +188,9 @@ struct TaskCardModel: Equatable {
             primaryKey = "tasks.detailOpenPR"
             primaryAction = .openPR
             primaryEnabled = task.prUrl != nil
+            // A finished task with no PR (creation failed, or the queue never asked
+            // for one) keeps the button — greyed, and now saying why.
+            if task.prUrl == nil { primaryDisabledHintKey = "tasks.detailOpenPRNoPR" }
         case .failed, .cancelled:
             if joinQueue {
                 // Its queue is gone: offer the honest next step instead of a 重试
@@ -185,6 +202,7 @@ struct TaskCardModel: Equatable {
                 primaryKey = clearsBranchOnRetry ? "tasks.detailRetryNoBranch" : "tasks.detailRetry"
                 primaryAction = .retry(clearsBranch: clearsBranchOnRetry)
                 canRetry = true
+                canSkip = hasQueuedSibling
             } else {
                 // An ISSUE task with no queue (its auto queue was deleted): 处理
                 // rebuilds that queue and starts — same as a pending issue task.
@@ -212,8 +230,14 @@ struct TaskCardModel: Equatable {
                              canDequeue: canDequeue,
                              canCancel: canCancel,
                              canRetry: canRetry,
+                             canSkip: canSkip,
+                             primaryDisabledHintKey: primaryDisabledHintKey,
+                             // A finished issue task is commentable whether or not a PR
+                             // came out of it: 评论并关闭 needs no PR link (it just mentions
+                             // one when there is one). Requiring one hid the whole action
+                             // exactly when the run had gone wrong.
                              canCommentClose: task.source == .github && githubRepo
-                                 && task.state == .done && task.prUrl != nil,
+                                 && task.state == .done,
                              canEdit: task.source == .manual && task.state != .running,
                              canDelete: task.source == .manual && task.state != .running,
                              queuePosition: position,
@@ -286,6 +310,11 @@ struct QueueHeaderModel: Equatable {
     var doneCount: Int
     var totalCount: Int
     var canStart: Bool
+    /// What the ▶ button really does here: 开始 (nothing has run yet / the user
+    /// paused it) or 继续 — walk PAST the failed entry and run the next task.
+    /// The tooltip used to say 开始 in both cases, which is not what the runner
+    /// does after a failure (TasksCore.resumeQueue).
+    var startHintKey: String
     var canPause: Bool
     var canOpenPR: Bool
     var autoPR: Bool
@@ -337,6 +366,8 @@ struct QueueHeaderModel: Equatable {
                                 doneCount: doneCount,
                                 totalCount: tasks.count,
                                 canStart: queuedCount > 0 && queue.state != .active,
+                                startHintKey: (queue.state == .paused && failedCount > 0 && queuedCount > 0)
+                                    ? "tasks.queue.continue" : "tasks.queue.start",
                                 canPause: queue.state == .active,
                                 canOpenPR: prAvailable && queue.autoPR && queue.prUrl == nil
                                     && queue.state == .done && queue.branch != nil,

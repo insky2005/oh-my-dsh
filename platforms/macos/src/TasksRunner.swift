@@ -168,6 +168,27 @@ enum TaskPrompts {
     }
 }
 
+// MARK: - Cancel
+
+/// What 取消任务 actually did.
+///
+/// A Bool could not say WHY it did nothing, and the card's 取消任务 did nothing at
+/// all during two windows the user cannot see: .starting (git status/checkout/pull
+/// + session + prompt are in flight) and .finishing (push check / PR). The panel
+/// uses this to explain instead of going quiet.
+enum CancelOutcome: Equatable {
+    /// The running session was cancelled and its queue paused.
+    case cancelled
+    /// The task is still STARTING: the request is remembered and applied the
+    /// moment its session exists.
+    case deferred
+    /// The task is already FINISHING (push / PR): its work is over, there is
+    /// nothing left to cancel.
+    case finishing
+    /// Nothing was running.
+    case idle
+}
+
 // MARK: - Runner
 
 /// Drives the board: one task at a time, always, and a whole queue in order.
@@ -214,6 +235,9 @@ final class TasksRunner {
     }
 
     private var phase: Phase = .idle
+    /// 取消 asked for while the task was still STARTING: honoured in applyStart,
+    /// as soon as there is a session to cancel. Cleared whenever a start begins.
+    private var cancelRequested = false
 
     init(board: TaskBoard, env: TaskRunnerEnv, timeout: TimeInterval = 30 * 60) {
         self.board = board
@@ -307,6 +331,7 @@ final class TasksRunner {
         let log = env.log
 
         phase = .starting(taskID)
+        cancelRequested = false
         board.markRunning(taskID, at: now)
         persist()
         log("tasks: starting " + taskID + " on " + (branch ?? "the current branch"))
@@ -338,6 +363,20 @@ final class TasksRunner {
         phase = .idle
         switch result {
         case .started(let sessionId, let branch):
+            if cancelRequested {
+                // The user asked to cancel while this was starting: the session
+                // exists now, so cancel it instead of letting the agent run on.
+                cancelRequested = false
+                _ = env.cancelSession(sessionId)
+                board.local.sessions[taskID] = sessionId
+                if let i = board.index(ofTask: taskID) { board.tasks[i].sessionId = sessionId }
+                board.markCancelled(taskID)
+                if let task = board.task(taskID), task.source == .github { env.persistIssueTask(task) }
+                persist()
+                env.log("tasks: " + taskID + " cancelled as soon as its session existed")
+                _ = pump(now: now)
+                return
+            }
             let queueID = board.task(taskID)?.queueId
             phase = .active(Active(taskID: taskID, queueID: queueID, branch: branch,
                                    sessionId: sessionId, startedAt: now))
@@ -624,17 +663,28 @@ final class TasksRunner {
     }
 
     /// 取消 the running task: cancel its session, keep the branch and session for
-    /// traceability, pause its queue.
+    /// traceability, pause its queue. See CancelOutcome for the two windows where
+    /// there is no session to cancel YET (starting) or any more (finishing).
     @discardableResult
-    func cancelRunning() -> Bool {
-        guard case .active(let active) = phase else { return false }
-        _ = env.cancelSession(active.sessionId)
-        phase = .idle
-        board.markCancelled(active.taskID)
-        if let task = board.task(active.taskID), task.source == .github { env.persistIssueTask(task) }
-        persist()
-        env.log("tasks: " + active.taskID + " cancelled")
-        _ = pump()
-        return true
+    func cancelRunning() -> CancelOutcome {
+        switch phase {
+        case .active(let active):
+            _ = env.cancelSession(active.sessionId)
+            phase = .idle
+            board.markCancelled(active.taskID)
+            if let task = board.task(active.taskID), task.source == .github { env.persistIssueTask(task) }
+            persist()
+            env.log("tasks: " + active.taskID + " cancelled")
+            _ = pump()
+            return .cancelled
+        case .starting(let taskID):
+            cancelRequested = true
+            env.log("tasks: cancel requested while " + taskID + " was starting — it will be cancelled as soon as its session exists")
+            return .deferred
+        case .finishing:
+            return .finishing
+        case .idle:
+            return .idle
+        }
     }
 }
