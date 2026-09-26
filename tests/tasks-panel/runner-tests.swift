@@ -800,6 +800,132 @@ do {
     check(h.board.queues.count == 1, "but it still counts as a queue on the board")
 }
 
+// MARK: - Several workspaces at once
+
+/// A registry wired to per-path fakes: each workspace gets its own repo, its own
+/// dsh and its own board, and every build is recorded (path + whether this was the
+/// first load, i.e. whether the board must be reconciled).
+final class WorkspaceHarness {
+    var boards: [String: TaskBoard] = [:]
+    var repos: [String: FakeRepo] = [:]
+    var dshs: [String: FakeDsh] = [:]
+    private(set) var built: [(path: String, reconcile: Bool)] = []
+    lazy var registry = TaskWorkspaceRegistry { [unowned self] path, reconcile in
+        self.built.append((path: path, reconcile: reconcile))
+        var board = self.boards[path] ?? TaskBoard()
+        if reconcile { _ = board.reconcileAfterRestart(interruptedError: TaskFailure.interrupted.rawValue) }
+        let repo = self.repo(path)
+        let dsh = self.dsh(path)
+        let env = TaskRunnerEnv(
+            git: repo.git(),
+            repoRoot: path,
+            createSession: { _ in dsh.create() },
+            renameSession: { id, title in dsh.rename(id, title) },
+            promptSession: { id, text in dsh.prompt(id, text) },
+            sessionState: { id in dsh.sessionState(id) },
+            canOpenPR: { false },
+            cancelSession: { id in dsh.cancel(id) },
+            findExistingPR: { _ in nil },
+            createPR: { _, _, _, _ in nil },
+            prText: { _, branch in (title: "t", body: branch) },
+            promptText: { task, _ in TaskPrompts.manual(title: task.title, body: task.body,
+                                                       branch: nil, queueName: nil, pushes: false) },
+            persist: { board in self.boards[path] = board },
+            persistIssueTask: { _ in },
+            log: { _ in },
+            perform: { blocking, completion in blocking(); completion() }
+        )
+        return TasksRunner(board: board, env: env)
+    }
+    func repo(_ path: String) -> FakeRepo {
+        if let existing = repos[path] { return existing }
+        let repo = FakeRepo()
+        repos[path] = repo
+        return repo
+    }
+    func dsh(_ path: String) -> FakeDsh {
+        if let existing = dshs[path] { return existing }
+        let dsh = FakeDsh()
+        dshs[path] = dsh
+        return dsh
+    }
+    /// A workspace with one manual task in one queue, not started yet.
+    func seed(_ path: String, task: String) -> (taskID: String, queueID: String) {
+        var board = TaskBoard()
+        let item = TaskItem.manual(title: task, body: nil, id: "manual-" + path.suffix(4) + "aa")
+        board.tasks = [item]
+        let queue = board.createQueue(name: "Lane", autoPR: false)
+        _ = board.enqueue(taskID: item.id, into: queue.id)
+        boards[path] = board
+        return (item.id, queue.id)
+    }
+}
+
+section("跨工作区：切走的工作区继续被跟踪，直到它的任务跑完")
+do {
+    let h = WorkspaceHarness()
+    let a = h.seed("/tmp/ws-a", task: "A task")
+    let b = h.seed("/tmp/ws-b", task: "B task")
+
+    // 在 A 派活：它开始跑。
+    let runnerA = h.registry.adopt("/tmp/ws-a")
+    _ = runnerA?.startQueue(a.queueID)
+    check(h.registry.currentRunner?.isBusy == true, "A 在跑")
+    eq(h.registry.busyPaths(), ["/tmp/ws-a"], "忙的是 A")
+
+    // 切到 B：A 的 runner 必须还活着（不能被重建、更不能被判成中断）。
+    let runnerB = h.registry.adopt("/tmp/ws-b")
+    check(runnerB !== runnerA, "B 有自己的 runner")
+    check(h.registry.trackedRunner(for: "/tmp/ws-a") === runnerA, "A 的 runner 原样保留")
+    check(h.boards["/tmp/ws-a"]?.task(a.taskID)?.state == .running, "A 的任务还是在跑（不是失败）")
+
+    // 在 B 这一侧，A 仍然被 tick：它的会话结束后任务照常收尾。
+    h.dsh("/tmp/ws-a").finishAll()
+    let finished = h.registry.step()
+    eq(finished.count, 1, "这一步有任务结束")
+    eq(finished.first?.path, "/tmp/ws-a", "结束的是另一个工作区的任务")
+    eq(finished.first?.title, "A task", "标题也带出来了")
+    check(finished.first?.ok == true, "成功")
+    check(h.boards["/tmp/ws-a"]?.task(a.taskID)?.state == .done, "A 的板子上它已完成")
+    check(h.registry.busyPaths().isEmpty, "现在没有忙的工作区了")
+    check(h.registry.trackedRunner(for: "/tmp/ws-a") == nil, "空转的 A 被放下（板子在磁盘上）")
+
+    // 回到 A：从磁盘重建，读取到的是完成态，而不是「上次运行被中断」。
+    _ = h.registry.adopt("/tmp/ws-a")
+    check(h.registry.currentRunner?.board.task(a.taskID)?.state == .done,
+          "回来看还是已完成 —— 不再谎报失败")
+    eq(h.built.filter { $0.path == "/tmp/ws-a" }.map { $0.reconcile }, [true, false],
+       "同一个工作区在一次运行里只 reconcile 一次（第二次重建不再判中断）")
+
+    // 换回 A 时，空转的 B 同样被放下：只有「当前 + 有活在跑」的工作区才占着 runner。
+    check(h.registry.trackedRunner(for: "/tmp/ws-b") == nil, "空转的 B 也被放下（切回去时从磁盘重建）")
+}
+
+section("跨工作区：并行与串行的边界")
+do {
+    let h = WorkspaceHarness()
+    let a = h.seed("/tmp/ws-a", task: "A task")
+    let b = h.seed("/tmp/ws-b", task: "B task")
+    _ = h.registry.adopt("/tmp/ws-a")
+    _ = h.registry.currentRunner?.startQueue(a.queueID)
+    _ = h.registry.adopt("/tmp/ws-b")
+    _ = h.registry.currentRunner?.startQueue(b.queueID)
+
+    eq(h.registry.busyPaths(), ["/tmp/ws-a", "/tmp/ws-b"], "两个工作区同时在跑（各自的工作树）")
+    check(h.registry.isBusy, "整体是忙的（活动栏小点据此点亮）")
+
+    // 每个工作区只在自己的工作树里做 git：B 的 checkout 不会出现在 A。
+    eq(h.repo("/tmp/ws-a").checkouts, ["main", "feature/lane"], "A 在自己的工作树里切了分支")
+    eq(h.repo("/tmp/ws-b").checkouts, ["main", "feature/lane"], "B 同样，互不干扰")
+    eq(h.dsh("/tmp/ws-a").sessions.count, 1, "A 一个会话")
+    eq(h.dsh("/tmp/ws-b").sessions.count, 1, "B 一个会话")
+
+    h.dsh("/tmp/ws-a").finishAll()
+    h.dsh("/tmp/ws-b").finishAll()
+    let finished = h.registry.step()
+    eq(finished.map { $0.path }, ["/tmp/ws-a", "/tmp/ws-b"], "两个都收尾了，顺序稳定")
+}
+
 if failures == 0 {
     print("ok - \(checks) checks passed")
 } else {

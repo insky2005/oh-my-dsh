@@ -677,6 +677,10 @@ enum L10n {
         "tasks.queue.autoPROff": ("完成后自动开 PR：已关闭（点一下开启）", "Open a PR when the queue finishes: OFF (click to turn on)"),
         "tasks.queue.start": ("开始", "Start"),
         "tasks.queue.continue": ("继续：跳过失败的任务，跑下一个", "Continue: skip the failed task and run the next one"),
+        "tasks.otherFinished": ("%@ 的任务「%@」已完成", "%@ finished “%@”"),
+        "tasks.otherFailed": ("%@ 的任务「%@」失败了", "%@ failed “%@”"),
+        "tasks.otherWorkspaces": ("其他工作区有 %d 个任务在跑", "%d task(s) running in other workspaces"),
+        "tasks.otherWorkspacesHint": ("其他工作区正在跑任务（点这里切过去）", "Tasks are running in other workspaces (click to switch)"),
         "tasks.recovered": ("上次运行被中断：%d 个任务已标为失败、%d 个队列已暂停（不会自动重跑）", "Interrupted last run: %d task(s) marked failed, %d queue(s) paused (nothing restarts by itself)"),
         "tasks.queue.pause": ("暂停", "Pause"),
         "tasks.queue.openPR": ("打开 PR", "Open PR"),
@@ -2476,8 +2480,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tasksPanel.onRunStateChanged = { [weak self] busy in
             self?.tasksBarButton?.showsActivityDot = busy
         }
-        tasksPanel.onTaskFinished = { [weak self] title, ok in
-            self?.taskFinished(title: title, ok: ok)
+        tasksPanel.onTaskFinished = { [weak self] workspace, title, ok in
+            self?.taskFinished(workspace: workspace, title: title, ok: ok)
+        }
+        // Another workspace is running a task: jump to it (the same re-root
+        // primitive the Projects panel's quick entries use).
+        tasksPanel.onSelectWorkspace = { [weak self] path in
+            guard let self = self else { return }
+            AppLog.shared.log("tasks: switching to the workspace running a task: " + path)
+            _ = self.adoptProjectDirectory(path)
         }
 
         browserPanel = BrowserPanelController()
@@ -5882,8 +5893,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// somewhere else: bounce the dock icon once and leave a badge until the app is
     /// focused again (UNUserNotification would need a permission prompt for the
     /// same effect).
-    private func taskFinished(title: String, ok: Bool) {
-        AppLog.shared.log("tasks: finished \(title) (\(ok ? "done" : "failed"))")
+    private func taskFinished(workspace: String, title: String, ok: Bool) {
+        // The workspace is named: several can be tracked at once, so "a task
+        // finished" alone would not tell the user where to look.
+        AppLog.shared.log("tasks: finished \(title) in \(workspace) (\(ok ? "done" : "failed"))")
         guard !NSApp.isActive else { return }
         NSApp.requestUserAttention(.informationalRequest)
         NSApp.dockTile.badgeLabel = ok ? "✓" : "!"

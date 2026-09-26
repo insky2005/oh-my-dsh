@@ -341,6 +341,15 @@ struct Queue {
 > 1. **推送策略**：`TaskQueue.auto`/手动队列一律 `push` 的旧行为（以及配套的推送校验）换成**只给会开 PR 的队列推送**：`queueWantsPR = queue.autoPR && env.canOpenPR()`，提示词与 `finish` 共用该判据（代理被明确告知「不要 push」或「要 push」），没开自动 PR 的队列**只本地 commit**、不做任何校验 —— 于是「私有远端没凭据 → 明明干完的活被判成未推送」这类误判在非 PR 队列里**结构上不可能**再发生；PR 队列的校验本身也改成三态（`BranchPushState`），`unknown` 只记日志。
 > 2. **会话状态三态**：`TaskBoard` 那边一个 Bool（`sessionRunning`）把「RPC 问不到」和「会话不在列表里」都表达成 false，而 `step()` 把 false 当「任务结束」→ **一次瞬时 RPC 失败就能把正在跑的任务判成已完成**（随后还可能踩上面那条推送误判）。现在 `SessionState { running, idle, unknown, missing }`：`unknown` **什么都不假设**（继续等，日志节流提示）；`missing` 要**连续 `TasksRunner.missingSessionPolls`（10 次 ≈ 30 秒）**才判失败，并且用新的 `tasks.errSessionGone`（「会话已经不在 dsh 里了（被删掉，或 dsh 重启过）——没人知道它做到哪一步」），而不是假装完成。
 
+> **实现（2026-09-27 补充 · 批次 3 / F1-B：跨工作区作业台）**：面板原本只有一个 runner（当前工作区），而每次换工作区都会重建它并跑 `reconcileAfterRestart` —— 于是「在 A 派了任务 → 切到 B → 回 A」看到的是一张「失败 · 上次运行被中断」的卡片，可那个 dsh 会话还在后台跑完、跑完也没人更新它。**「切到别的项目去等」正是任务台存在的意义**，所以这一条按「真的做成作业台」来改。
+>
+> 1. **`TaskWorkspaceRegistry`（`platforms/macos/src/TasksWorkspaces.swift`，无 AppKit）**：册子上同时有几个工作区 —— **当前的**（UI 显示它的板子）与**任何仍有任务在跑的**（非当前且忙的一直被 tick：会话结束后照常收尾、照常开 PR；空转的非当前工作区被放下，板子在 `.dsh/tasks/` 里，切回去重建）。`step()` 一次 tick 所有在册工作区，并返回「刚刚结束的任务」+ 它属于哪个工作区（供提醒使用）。git 只在工作树内串行，所以**不同工作区并行**是自然语义。
+> 2. **对账只做一次**：`makeRunner(path:reconcile:)` 里的 `reconcile` 由注册表给 —— 一个路径在**本次 App 运行里第一次**被加载时为真（此时「盘上写着 running 的任务不可能还在跑」成立），之后重建一律为假。这正是旧行为里「切走再回来 = 任务被判中断 + 队列被平白暂停」的根因。
+> 3. **可见性三件套**（跟踪看不见的活只是换一种方式把它藏起来）：活动栏小点 = **任意**工作区在跑（`onRunStateChanged` 用的是注册表的整体忙闲）；面板头部多一个只在「别的工作区有任务在跑」时出现的图标（`tasks.otherWorkspaces`），悬停列「工作区 — 任务标题」，点开是菜单，选中经 `onSelectWorkspace` → `AppDelegate.adoptProjectDirectory`（与项目面板快捷入口同一个重根原语）；任务结束提醒（Dock 弹跳 + 日志）带上工作区名（`onTaskFinished(path:title:ok:)`）。
+> 4. **每个工作区自己的一套 env**：`makeEnv(repoRoot:repo:)` 现在按路径探测自己的 GitHub 远端、token 与 `canOpenPR`（推送策略见批次 2.5），因此两个并行 runner 不会互相串味。
+>
+> 测试（无头，`tests/tasks-panel/runner-tests.swift` 的 `WorkspaceHarness`：按路径分发的假 repo / 假 dsh / 假磁盘）：切走的工作区 runner **原样保留**且任务仍是 running；在另一个工作区这一侧 tick 时它照常结束、`step()` 回报 `(path, title, ok)`；空转后放下，切回去从磁盘重建读到的是**完成态而不是「已中断」**；同一路径本次运行内 `reconcile` 恰好一次（`[true, false]`）；两个工作区并行（各自工作树各有自己的 checkout 与会话）。
+
 ### V2-8 卡片式任务清单
 
 列表改为 `NSScrollView + NSStackView`，体例照 `ProjectsPanel.swift`：`render()` 重建 `arrangedSubviews`，卡片 `widthAnchor == list.widthAnchor - 20`，卡片自身 `draw(_:)` 画圆角 + 描边、`hitTest` 把非按钮区域的点击交回卡片、`resetCursorRects` 设 `pointingHand`。

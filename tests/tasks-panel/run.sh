@@ -34,10 +34,11 @@ TMP="$(mktemp -d)"
 cp "$SRC/TasksCore.swift" "$TMP/TasksCore.swift"
 cp "$SRC/TasksStore.swift" "$TMP/TasksStore.swift"
 cp "$SRC/TasksRunner.swift" "$TMP/TasksRunner.swift"
+cp "$SRC/TasksWorkspaces.swift" "$TMP/TasksWorkspaces.swift"   # one runner per workspace
 cp runner-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
   -o "$TMP/tasks-runner-tests" "$TMP/TasksCore.swift" "$TMP/TasksStore.swift" \
-  "$TMP/TasksRunner.swift" "$TMP/main.swift"
+  "$TMP/TasksRunner.swift" "$TMP/TasksWorkspaces.swift" "$TMP/main.swift"
 "$TMP/tasks-runner-tests"
 rm -rf "$TMP"
 

@@ -37,6 +37,9 @@ typealias IssueRunnerTask = TaskItem
 final class IssueRunnerPanelController: NSObject {
 
     var onRequestHide: (() -> Void)?
+    /// The user picked another workspace that has a task running: the shell re-roots
+    /// to it (the same primitive the Projects panel uses).
+    var onSelectWorkspace: ((String) -> Void)?
     /// The task's session, handed to the shell: show it in dsh web / audit it.
     /// The shell has had these bridges all along (ChannelPanel uses the first).
     var onOpenSession: ((String) -> Void)?
@@ -44,9 +47,10 @@ final class IssueRunnerPanelController: NSObject {
     /// The runner started/stopped working: the shell shows that on the activity bar
     /// (a task panel that is closed has no other way to say "something is running").
     var onRunStateChanged: ((Bool) -> Void)?
-    /// A task just finished (title, did it succeed): the shell may need to get the
-    /// user's attention when the app is in the background.
-    var onTaskFinished: ((String, Bool) -> Void)?
+    /// A task just finished — (workspace path, task title, did it succeed). The
+    /// workspace is part of it: with several tracked at once, "a task finished"
+    /// alone is not actionable.
+    var onTaskFinished: ((String, String, Bool) -> Void)?
     /// Provides the dsh web port (set by AppDelegate, like other panels).
     var serverPortProvider: (() -> Int)?
     /// The main workspace directory (set by AppDelegate) — git/github root.
@@ -93,6 +97,11 @@ final class IssueRunnerPanelController: NSObject {
     /// The two creation entries, flush right on the tabs row as ICON buttons:
     /// the labels live in their tooltips, so the row stays a strip of controls
     /// instead of a sentence.
+    /// Shown only while ANOTHER workspace has a task running (see
+    /// updateOtherWorkspaces): tracking work the user cannot see would just be a
+    /// different way of hiding it.
+    private let otherWorkspacesButton = CustomIconButton(glyph: .symbol("square.stack.3d.up.fill"),
+                                                         tooltip: "", size: 24)
     private let newTaskRowButton = CustomIconButton(glyph: .plus, tooltip: "", size: 24)
     private let newQueueRowButton = CustomIconButton(glyph: .symbol("rectangle.stack.badge.plus"),
                                                      tooltip: "", size: 24)
@@ -121,8 +130,16 @@ final class IssueRunnerPanelController: NSObject {
     private let statusSpinner = NSProgressIndicator()
 
     // State
-    /// The execution engine owns the board: the panel renders it and calls in.
-    private var runner: TasksRunner?
+    /// Every workspace being tracked at once (TasksWorkspaces.swift). The board the
+    /// panel SHOWS is the current workspace's; a workspace whose task is still
+    /// running keeps its runner even after the user switches away, so the task is
+    /// still stepped, still finishes and still opens its PR.
+    private lazy var workspaces = TaskWorkspaceRegistry { [weak self] path, reconcile in
+        self?.makeRunner(path: path, reconcile: reconcile)
+    }
+    /// The execution engine of the CURRENT workspace: the panel renders its board
+    /// and calls into it.
+    private var runner: TasksRunner? { workspaces.currentRunner }
     private var repo: (owner: String, repo: String)?
     private var repoRootPath: String?
     /// Whether the adopted workspace is a git repository at all. The runner does
@@ -130,9 +147,10 @@ final class IssueRunnerPanelController: NSObject {
     /// a queue created in a non-git directory must not be handed a branch it
     /// can never check out (docs/issue-runner-design.md §V2-7).
     private var workspaceIsGit = true
-    /// Which directory the current board was loaded from (a repo switch — or a
-    /// switch to a non-GitHub workspace — must reload it).
-    private var boardPath: String?
+    /// Workspaces other than the current one that have a task in flight (their
+    /// runners are alive). The header offers a way to jump to them — tracking work
+    /// the user cannot see would just be a different way of hiding it.
+    private var otherBusyPaths: [(path: String, title: String)] = []
     /// The task currently expanded inline (shows detail + action buttons).
     private var expandedTaskID: String?
     /// id -> open? Defaults differ per kind: user queues start open (they hold
@@ -216,7 +234,10 @@ final class IssueRunnerPanelController: NSObject {
         repoLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         repoLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let actions = NSStackView(views: [refreshButton, runAllButton, configButton, hideButton])
+        otherWorkspacesButton.isHidden = true
+        otherWorkspacesButton.onAction = { [weak self] in self?.otherWorkspacesTapped() }
+        let actions = NSStackView(views: [otherWorkspacesButton, refreshButton, runAllButton,
+                                         configButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -459,37 +480,45 @@ final class IssueRunnerPanelController: NSObject {
 
     // MARK: - Board / runner wiring
 
-    /// Load the board for this repo, hand it to the runner and bring it in line
-    /// with reality after a restart: a task recorded as running cannot still be
-    /// running (its session died with the app) and an active queue is paused, so
-    /// NOTHING starts until the user says so.
-    private func setupRunner(repoRoot: String) {
-        var board = TasksStore.load(repoRoot)
-        let recovered = board.reconcileAfterRestart(interruptedError: TaskFailure.interrupted.rawValue)
-        TasksStore.saveLocalHalf(repoRoot, board)
-        runner = TasksRunner(board: board, env: makeEnv(repoRoot: repoRoot))
-        boardPath = repoRoot
-        expandedTaskID = nil
-        syncFromBoard()
-        startStepTimer()
+    /// Build one workspace's runner (the registry's factory).
+    ///
+    /// `reconcile` is true only the FIRST time a workspace is loaded in this app
+    /// run: then a task recorded as running cannot still be running (its session
+    /// died with the app) and an active queue is paused, so NOTHING starts until
+    /// the user says so. Re-adopting a workspace we have already seen in this run
+    /// must NOT reconcile again — that is exactly the bug that made "switch away
+    /// and come back" mark a running task as 失败.
+    private func makeRunner(path: String, reconcile: Bool) -> TasksRunner? {
+        var board = TasksStore.load(path)
+        var recovered: (interrupted: [String], pausedQueues: [String]) = ([], [])
+        if reconcile {
+            recovered = board.reconcileAfterRestart(interruptedError: TaskFailure.interrupted.rawValue)
+            TasksStore.saveLocalHalf(path, board)
+        }
+        let detected = Self.detectGitHubRemote(path)
+        let runner = TasksRunner(board: board, env: makeEnv(repoRoot: path, repo: detected))
         let extra = recovered.interrupted.isEmpty ? "" : ", interrupted: " + recovered.interrupted.joined(separator: ",")
-        AppLog.shared.log("tasks: board loaded at \(repoRoot) — \(board.tasks.count) tasks, \(board.queues.count) queues" + extra)
-        // Say it out loud: the tasks became 失败 and the queues 暂停, and nothing
-        // restarts by itself. Used to be log-only, so the panel just looked odd.
-        if !recovered.interrupted.isEmpty || !recovered.pausedQueues.isEmpty {
+        AppLog.shared.log("tasks: board loaded at \(path) — \(board.tasks.count) tasks, \(board.queues.count) queues"
+                          + (reconcile ? " (reconciled)" : "") + extra)
+        // Say it out loud — but only for the workspace the user is looking at, and
+        // only once per app run (see the reconcile note above).
+        if reconcile, path == workspaces.currentPath,
+           !recovered.interrupted.isEmpty || !recovered.pausedQueues.isEmpty {
             setStatus(L10n.tr("tasks.recovered", recovered.interrupted.count, recovered.pausedQueues.count),
                       spin: false)
             autoHideStatus(after: 10)
         }
+        return runner
     }
 
     /// Everything the runner needs from the outside world: git in this repo, the
     /// dsh session RPC on this port, GitHub REST with this repo's token, and the
     /// four-file persistence under .dsh/tasks/.
-    private func makeEnv(repoRoot: String) -> TaskRunnerEnv {
+    private func makeEnv(repoRoot: String, repo: (owner: String, repo: String)?) -> TaskRunnerEnv {
         let port = serverPortProvider?() ?? 3080
         let workspaceId = Self.resolveMainWorkspaceId(port: port, path: repoRoot)
-        let repo = self.repo
+        // Per workspace, not per panel: two runners can be alive at once, each with
+        // its own remote, token and PR policy.
         let token = repo.flatMap { loadToken(for: $0) }
         return TaskRunnerEnv(
             git: TaskGit(run: { args in
@@ -540,16 +569,16 @@ final class IssueRunnerPanelController: NSObject {
         )
     }
 
-    /// No GitHub repo here: drop the board and stop stepping.
+    /// No workspace resolved: show the empty state. Any OTHER workspace whose task
+    /// is running stays tracked (its board is not this panel's to drop) — only the
+    /// current board goes away.
     private func clearBoard() {
-        runner = nil
-        boardPath = nil
-        stepTimer?.invalidate()
-        stepTimer = nil
+        workspaces.clearCurrent()
         expandedTaskID = nil
         queueToggle.removeAll()
         render()
         updateLabels()
+        updateOtherWorkspaces()
     }
 
     /// Cheap fingerprint of everything the list renders, so the 3-second step
@@ -582,29 +611,39 @@ final class IssueRunnerPanelController: NSObject {
         stepTimer = timer
     }
 
-    /// One runner step: advance the running task, start the next queued one.
+    /// One tick for EVERY tracked workspace: the visible one, and any other one
+    /// whose task is still running (that is the whole point of tracking them at
+    /// once — see TaskWorkspaceRegistry).
     private func stepRunner() {
-        guard let runner = runner else { return }
-        let wasBusy = runner.isBusy
-        let runningID = runner.runningTaskID
-        _ = runner.step()
-        syncFromBoardIfChanged()
-        if wasBusy != runner.isBusy { onRunStateChanged?(runner.isBusy) }
-        if wasBusy, !runner.isBusy, let id = runningID {
-            // It just stopped: tell the shell so it can get the user's attention
-            // when the app is in the background. A cancel the user asked for is
-            // not news — only a DONE or FAILED task is.
-            let task = runner.board.task(id)
-            if let state = task?.state, state == .done || state == .failed {
-                onTaskFinished?(task?.title ?? id, state == .done)
+        let wasBusy = workspaces.isBusy
+        let currentWasBusy = runner?.isBusy ?? false
+        Self.beginSessionPoll()          // one session list for all of them
+        let finished = workspaces.step()
+        for done in finished {
+            // Tell the shell so it can get the user's attention when the app is in
+            // the background. A cancel the user asked for is not news (the runner
+            // filters those out), and the workspace is named so the message is
+            // actionable.
+            onTaskFinished?(done.path, done.title, done.ok)
+            // …and say it HERE too: with several workspaces tracked at once, a task
+            // that finishes while the user is looking at another one would otherwise
+            // only exist in the log.
+            if done.path != workspaces.currentPath {
+                let name = (done.path as NSString).lastPathComponent
+                setStatus(L10n.tr(done.ok ? "tasks.otherFinished" : "tasks.otherFailed", name, done.title),
+                          spin: false)
+                autoHideStatus(after: 8)
             }
         }
-        if runner.isBusy {
+        syncFromBoardIfChanged()
+        if wasBusy != workspaces.isBusy { onRunStateChanged?(workspaces.isBusy) }
+        if let runner = runner, runner.isBusy {
             let number = runner.runningTaskID.flatMap { runner.board.task($0)?.number } ?? 0
             setStatus(L10n.tr("tasks.running", number), spin: true)
-        } else if wasBusy {
+        } else if currentWasBusy {
             hideStatus()
         }
+        updateOtherWorkspaces()
     }
     // MARK: - Repo detection & issue loading
 
@@ -659,16 +698,72 @@ final class IssueRunnerPanelController: NSObject {
     /// repository (docs/issue-runner-design.md §V2-7).
     private func adoptWorkspace(_ path: String) {
         let detected = Self.detectGitHubRemote(path)
-        let sameBoard = (boardPath == path) && runner != nil
+        let sameBoard = (workspaces.currentPath == path) && runner != nil
         repo = detected
         repoRootPath = path
         let github = detected.map { $0.owner + "/" + $0.repo } ?? "-"
         workspaceIsGit = Self.isGitRepo(path)
         AppLog.shared.log("tasks: workspace adopted at \(path) (github=\(github) git=\(workspaceIsGit ? "yes" : "no"))")
         updateLabels()
-        if !sameBoard { setupRunner(repoRoot: path) }
+        if !sameBoard {
+            // Switching workspaces does NOT stop tracking the one we leave: its
+            // task keeps running (and keeps being stepped) until it is over. Only
+            // the first load of a workspace reconciles its board (see makeRunner).
+            workspaces.adopt(path)
+            expandedTaskID = nil
+            queueToggle.removeAll()
+            boardSignature = ""
+            startStepTimer()
+        }
         reloadIssues()
-        render()
+        syncFromBoard()
+        updateOtherWorkspaces()
+    }
+
+    // MARK: - Other workspaces with work in flight
+
+    /// Refresh the header's "other workspaces" entry: which ones are running
+    /// something right now, and what. Hidden when the answer is "none", which is
+    /// the normal case and must cost nothing on screen.
+    private func updateOtherWorkspaces() {
+        otherBusyPaths = workspaces.busyPaths()
+            .filter { $0 != workspaces.currentPath }
+            .map { path in
+                let runner = workspaces.trackedRunner(for: path)
+                let title = runner?.runningTaskID.flatMap { runner?.board.task($0)?.title } ?? ""
+                return (path: path, title: title)
+            }
+        otherWorkspacesButton.isHidden = otherBusyPaths.isEmpty
+        guard !otherBusyPaths.isEmpty else {
+            otherWorkspacesButton.toolTip = ""
+            return
+        }
+        otherWorkspacesButton.toolTip = L10n.tr("tasks.otherWorkspacesHint", otherBusyPaths.count) + "\n"
+            + otherBusyPaths.map { entry in
+                "• " + (entry.path as NSString).lastPathComponent
+                    + (entry.title.isEmpty ? "" : " — " + entry.title)
+            }.joined(separator: "\n")
+    }
+
+    /// The button drops a menu of those workspaces: picking one asks the shell to
+    /// re-root there (the same path the Projects panel's quick entries take).
+    @objc private func otherWorkspacesTapped() {
+        guard !otherBusyPaths.isEmpty else { return }
+        let menu = NSMenu(title: L10n.tr("tasks.otherWorkspaces", otherBusyPaths.count))
+        for entry in otherBusyPaths {
+            let title = (entry.path as NSString).lastPathComponent
+                + (entry.title.isEmpty ? "" : " — " + entry.title)
+            let item = NSMenuItem(title: title, action: #selector(otherWorkspaceChosen(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = entry.path
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: otherWorkspacesButton)
+    }
+
+    @objc private func otherWorkspaceChosen(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        onSelectWorkspace?(path)
     }
 
     /// True when the directory is inside a git work tree.
@@ -1015,12 +1110,29 @@ final class IssueRunnerPanelController: NSObject {
                               modernExtras: ["requestId": UUID().uuidString]) != nil
     }
 
+    /// The session list of the current tick, shared by every tracked workspace.
+    ///
+    /// With more than one workspace running (see TaskWorkspaceRegistry) a per-tick
+    /// per-runner fetch would ask dsh for the SAME list N times; the panel clears
+    /// this at the start of each tick, so N runners cost one RPC.
+    private static var sessionListSnapshot: (port: Int, items: [[String: Any]])?
+
+    /// Called at the start of every step tick (main thread, like the runners).
+    static func beginSessionPoll() { sessionListSnapshot = nil }
+
     /// What dsh says about a session — see SessionState. "The RPC failed" and "the
     /// session is not listed" are NOT "it finished": the first is unknown, the
     /// second is only believed after a while (the runner counts).
     static func sessionState(port: Int, sessionId: String) -> SessionState {
-        guard let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port),
-              let items = value["items"] as? [[String: Any]] else { return .unknown }
+        let items: [[String: Any]]
+        if let snapshot = sessionListSnapshot, snapshot.port == port {
+            items = snapshot.items
+        } else {
+            guard let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port),
+                  let fetched = value["items"] as? [[String: Any]] else { return .unknown }
+            sessionListSnapshot = (port: port, items: fetched)
+            items = fetched
+        }
         for item in items where (item["sessionId"] as? String) == sessionId {
             return ((item["running"] as? Bool) ?? false) ? .running : .idle
         }
