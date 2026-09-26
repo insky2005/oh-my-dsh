@@ -189,6 +189,7 @@ final class Harness {
             promptSession: { id, text in dsh.prompt(id, text) },
             sessionState: { id in dsh.sessionState(id) },
             defaultBaseBranch: defaultBaseBranch,
+            canSwitchBranches: gitRepo,
             canOpenPR: { github },
             cancelSession: { id in dsh.cancel(id) },
             findExistingPR: { branch in github ? rec.existingPRs[branch] : nil },
@@ -206,8 +207,9 @@ final class Harness {
                 let sharedName = queue.flatMap { $0.autoCreated ? nil : $0.name }
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: sharedName,
-                                   pushes: (queue?.autoPR ?? false) && github,
-                                   brief: brief)
+                                          pushes: (queue?.autoPR ?? false) && github,
+                                          brief: brief,
+                                          gitAvailable: gitRepo)
             },
             sessionReport: { id in dsh.report(id) },
             persist: { board in rec.persistCount += 1; _ = board },
@@ -850,7 +852,7 @@ final class WorkspaceHarness {
             prText: { _, branch in (title: "t", body: branch) },
             promptText: { task, _, brief in TaskPrompts.manual(title: task.title, body: task.body,
                                                               branch: nil, queueName: nil, pushes: false,
-                                                              brief: brief) },
+                                                              brief: brief, gitAvailable: false) },
             persist: { board in self.boards[path] = board },
             persistIssueTask: { _ in },
             log: { _ in },
@@ -1110,6 +1112,50 @@ do {
     check(alone.contains("本任务独立执行"), "单任务队列说「独立执行」，不说共享")
     check(!alone.contains("与其他任务共享"), "不会谎称有人和它同一条分支")
     check(alone.contains("当前分支应为 feature/alone"), "而是把它自己那条分支说清楚")
+}
+
+section("非 git 目录里「全部处理」：队列不带分支，任务照常跑（这里曾经必然失败）")
+do {
+    var board = TaskBoard()
+    let a = TaskItem.manual(title: "git 使用手册", body: nil, id: "manual-gg001111")
+    let b = TaskItem.manual(title: "hello-world 说明", body: nil, id: "manual-gg002222")
+    board.tasks = [a, b]
+    let h = Harness(board: board, github: false, gitRepo: false)
+
+    _ = h.runner.startManualTask(a.id)
+    let queue = h.board.queues.first
+    eq(h.board.queues.count, 1, "建了一个队列")
+    check(queue?.branch == nil, "非 git 目录：队列不设分支（此前会派生 feature/git，然后必然 errNotGit）")
+    check(h.repo.calls.isEmpty, "启动过程一条 git 命令都没跑")
+    check(h.board.task(a.id)?.state == .running, "任务照常跑起来了")
+
+    // 已经存在的坏队列（带着分支建出来的）会被就地修好，否则重试还是同样失败。
+    var legacy = TaskBoard()
+    let c = TaskItem.manual(title: "git 使用手册", body: nil, id: "manual-gg003333")
+    legacy.tasks = [c]
+    var oldQueue = TaskQueue.auto(forManual: c)      // 带分支的旧形状
+    oldQueue.taskIds = [c.id]
+    legacy.queues = [oldQueue]
+    legacy.markFailed(c.id, error: TaskFailure.notGitRepo.rawValue)
+    let h2 = Harness(board: legacy, github: false, gitRepo: false)
+    _ = h2.runner.startManualTask(c.id)
+    check(h2.board.queue(oldQueue.id)?.branch == nil, "重试时先把它那条切不了的分支去掉")
+    check(h2.rec.logged("no longer switches branches"), "并且写进日志")
+    check(h2.board.task(c.id)?.state != .failed, "这次没再因为 errNotGit 失败")
+}
+
+section("非 git 目录里的提示词：不要 commit、不要 push")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "写一份说明", body: nil, id: "manual-gg004444")
+    board.tasks = [task]
+    let h = Harness(board: board, github: false, gitRepo: false)
+    _ = h.runner.startManualTask(task.id)
+    let prompt = h.dsh.prompts["session-1"] ?? ""
+    check(prompt.contains("这不是 git 仓库"), "明说这里不是仓库")
+    check(prompt.contains("不要 git init"), "并且拦住 git init")
+    check(prompt.contains("不要 commit、不要 push"), "也不要 commit / push")
+    check(!prompt.contains("commit（建议 feat/fix"), "不会自相矛盾地要求 commit")
 }
 
 if failures == 0 {

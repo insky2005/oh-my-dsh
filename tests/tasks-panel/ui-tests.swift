@@ -779,6 +779,16 @@ do {
     check(model.confirmationText.contains("runAllInfoNoPR"), "确认框按非 GitHub 的说法")
     check(!model.confirmationText.contains("runAllInfoWithPR"), "不会同时出现「会开 PR」")
 
+    // 非 git 目录：队列根本不带分支，确认框也不能承诺分支 / PR。
+    var plain = TaskBoard()
+    plain.tasks = [TaskItem.manual(title: "Mine", id: "manual-aa004444")]
+    model = TasksRunAllModel.build(plain, githubAvailable: false, gitAvailable: false)
+    check(model.enabled, "非 git 目录里「处理」同样可用")
+    check(model.confirmationText.contains("runAllInfoNoGit"), "确认框说「不切分支、也不开 PR」")
+    check(!model.confirmationText.contains("runAllInfoWithPR"), "不会承诺 PR")
+    check(!model.confirmationText.contains("runAllInfoNoPR"), "也不会说「只切分支」")
+    eq(model.tooltip, "tasks.runAllHint", "tooltip 依旧只写按钮做什么")
+
     // 没有待办：禁用（顺带修掉「点了没反应」）。
     model = TasksRunAllModel.build(TaskBoard(), githubAvailable: true)
     check(!model.enabled, "没有待办就禁用")

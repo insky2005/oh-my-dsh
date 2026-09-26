@@ -318,7 +318,8 @@ struct TasksRunAllModel: Equatable {
 
     var total: Int { issueCount + manualCount }
 
-    static func build(_ board: TaskBoard, githubAvailable: Bool) -> TasksRunAllModel {
+    static func build(_ board: TaskBoard, githubAvailable: Bool,
+                      gitAvailable: Bool = true) -> TasksRunAllModel {
         // 待处理 = 未入队、还没跑过（失败/取消过的留在原处，由各自卡片的
         // 重试 / 加入队列处理：把失败历史一起自动重跑，风险比收益大）。
         let issueCount = board.tasks.filter { $0.source == .github && $0.state == .pending }.count
@@ -330,7 +331,16 @@ struct TasksRunAllModel: Equatable {
         // OWN L10n call: passing an [CVarArg] array to the variadic L10n.tr() types
         // the ARRAY as the single argument and %d prints its address (that shipped
         // once as 「全部处理：7935328 个手动任务」).
-        let detailLine = githubAvailable ? L10n.tr("tasks.runAllInfoWithPR") : L10n.tr("tasks.runAllInfoNoPR")
+        // Three shapes, because the promise differs: a git workspace with a GitHub
+        // remote opens PRs, one without only branches, and a directory that is not a
+        // repository does neither (its queues get no branch at all — §V2-7).
+        let body: String
+        if !gitAvailable {
+            body = L10n.tr("tasks.runAllInfoNoGit", issueCount + manualCount)
+        } else {
+            let detailLine = githubAvailable ? L10n.tr("tasks.runAllInfoWithPR") : L10n.tr("tasks.runAllInfoNoPR")
+            body = L10n.tr("tasks.runAllInfo", issueCount + manualCount) + " " + detailLine
+        }
         return TasksRunAllModel(
             issueCount: issueCount,
             manualCount: manualCount,
@@ -338,7 +348,7 @@ struct TasksRunAllModel: Equatable {
             // Tooltip = the control's label, or the reason it is dead.
             tooltip: enabled ? L10n.tr("tasks.runAllHint") : L10n.tr("tasks.runAllNone"),
             confirmationText: enabled
-                ? L10n.tr("tasks.runAllInfo", issueCount + manualCount) + " " + detailLine
+                ? body
                 : L10n.tr("tasks.runAllNone"))   // nothing to confirm when it is disabled
     }
 }

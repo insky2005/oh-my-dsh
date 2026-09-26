@@ -373,6 +373,14 @@ struct Queue {
 > - **提示词**：自动队列（issue 的、以及批量给手动任务建的）不再说「与其他任务共享同一分支与改动」—— 它永远不会再收第二个任务；用户自建的队列照旧报自己的名字。判据是 `queue.autoCreated`，不是任务数。
 > - **按钮**：`TasksRunAllModel`（纯模型，可无头断言）给出计数、启用条件与 tooltip（含非 GitHub 工作区「只切分支不开 PR」那句）；「处理」移到工具栏**第一位**，并在没有待办时禁用（顺带修掉死点击）。
 
+> **实现（2026-09-27 修正 · 非 git 目录里的「全部处理」）**：`TaskQueue.auto(forManual:)` 一开始无条件从标题派生分支，于是在 `git=no` 的工作区里，批量建的每个队列都带着 `feature/<slug>`，任务全部以 `tasks.errNotGit` 结束 —— 批次 1 定下的 §V2-7 规矩（非 git 目录的队列**不设分支**）被这条新路径绕过了。修正：
+>
+> - `TaskRunnerEnv.canSwitchBranches`（面板按 `isGitRepo(path)` 给），`TaskQueue.auto(forManual:baseBranch:switchesBranch:opensPR:)` 在不能切分支的目录里给出 `branch: nil`；`autoPR` 同样由 `canOpenPR()` 决定。
+> - **就地修复**：`startManualTask` 在非 git 目录里发现「自动队列带着分支」（旧版本建的、或从 git 工作区带过来的）时，先把那条分支去掉并记日志 —— 否则重试与第一次一样失败。
+> - **提示词**：非 git 目录里不再要求 commit / push（那是把代理往 `git init` 上引），改为「直接在当前目录修改、不要 git init、不要 commit / push」。
+> - **确认框**：`TasksRunAllModel` 现在收 `gitAvailable`，三种情形分开说 —— git + GitHub「队列跑完开 PR」／git 无 GitHub「只切分支，不开 PR」／非 git 目录「不切分支也不开 PR」。
+> - 回归：模型（`switchesBranch: false` → 无分支）、运行器（非 git 目录里批量启动：**一条 git 命令都不跑**、任务照常跑起来；已存在的带分支自动队列在重试时被修好；提示词断言「不要 git init / commit」）、视图模型（非 git 的确认框文案）。
+
 ### V2-8 卡片式任务清单
 
 列表改为 `NSScrollView + NSStackView`，体例照 `ProjectsPanel.swift`：`render()` 重建 `arrangedSubviews`，卡片 `widthAnchor == list.widthAnchor - 20`，卡片自身 `draw(_:)` 画圆角 + 描边、`hitTest` 把非按钮区域的点击交回卡片、`resetCursorRects` 设 `pointingHand`。

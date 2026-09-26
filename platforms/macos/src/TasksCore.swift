@@ -470,12 +470,21 @@ struct TaskQueue: Equatable {
     /// unrelated changes onto one branch.
     ///
     /// The branch follows the task's title (`feature/<slug>`), falling back to
-    /// `feature/manual-<id4>` when the title has no ASCII slug at all. Like the issue
-    /// queue it starts EMPTY: one writer owns membership (enqueue).
-    static func auto(forManual task: TaskItem, baseBranch: String = "main") -> TaskQueue {
+    /// `feature/manual-<id4>` when the title has no ASCII slug at all — **unless the
+    /// workspace cannot switch branches at all** (`switchesBranch: false`, i.e. the
+    /// directory is not a git repository): then the queue has NO branch, exactly like
+    /// a queue created from the form there (§V2-7). Handing such a queue a branch is
+    /// how 全部处理 made every task fail with tasks.errNotGit.
+    ///
+    /// Like the issue queue it starts EMPTY: one writer owns membership (enqueue).
+    static func auto(forManual task: TaskItem,
+                     baseBranch: String = "main",
+                     switchesBranch: Bool = true,
+                     opensPR: Bool = true) -> TaskQueue {
         let title = task.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let slug = TaskBranch.slug(title)
-        let branch = slug.isEmpty ? "feature/manual-" + String(task.id.suffix(4)) : "feature/" + slug
+        let derived = slug.isEmpty ? "feature/manual-" + String(task.id.suffix(4)) : "feature/" + slug
+        let branch: String? = switchesBranch ? derived : nil
         return TaskQueue(id: TaskQueue.newID(),
                          name: title,
                          branch: branch,
@@ -483,7 +492,7 @@ struct TaskQueue: Equatable {
                          taskIds: [],
                          state: .paused,
                          autoCreated: true,
-                         autoPR: true,
+                         autoPR: opensPR,
                          prUrl: nil,
                          createdAt: Date())
     }

@@ -133,6 +133,10 @@ struct TaskRunnerEnv {
     /// The branch an ISSUE task's queue is based on — the workspace's own default
     /// branch (see TaskBranch.defaultBaseBranch), not an assumed "main".
     var defaultBaseBranch: String = "main"
+    /// Whether this workspace is a git repository at all. A queue created where it
+    /// is false gets NO branch (the pipeline then never touches git — §V2-7), which
+    /// is exactly what 全部处理 has to honour when it builds one queue per task.
+    var canSwitchBranches: Bool = true
     /// Whether this workspace can open a pull request at all (a GitHub remote).
     /// It decides whether a task pushes at all — see the push policy in finish().
     var canOpenPR: () -> Bool = { true }
@@ -258,7 +262,8 @@ enum TaskPrompts {
     /// stays as local commits on the queue's branch (the agent is told so, or it
     /// pushes anyway out of habit).
     static func manual(title: String, body: String?, branch: String?, queueName: String?,
-                       pushes: Bool = true, brief: String? = nil) -> String {
+                       pushes: Bool = true, brief: String? = nil,
+                       gitAvailable: Bool = true) -> String {
         var lines: [String] = []
         lines.append("请完成以下任务：")
         lines.append("")
@@ -283,13 +288,20 @@ enum TaskPrompts {
         } else {
             lines.append("1. 本任务独立执行；")
         }
-        if let branch = branch, !branch.isEmpty {
+        if !gitAvailable {
+            // Not a repository at all (§V2-7): asking for a branch, a commit or a
+            // push would send the agent off to `git init`, which is not what the
+            // queue asked for. Say what this directory IS instead.
+            lines.append("2. 这不是 git 仓库：直接在当前目录修改文件，不要 git init、不要新建分支；")
+        } else if let branch = branch, !branch.isEmpty {
             lines.append("2. 当前分支应为 \(branch)，只在此分支上工作（不要新建分支）；")
         } else {
             lines.append("2. 在当前已检出的分支上工作（不要新建分支）；")
         }
         lines.append("3. 改完代码后跑相关测试，确保通过；")
-        if pushes {
+        if !gitAvailable {
+            lines.append("4. 不要 commit、不要 push（这里没有仓库）：改完把结果说清楚即可；")
+        } else if pushes {
             lines.append("4. commit（建议 feat/fix: 简述），并把当前分支 push 到远端（这个队列最后会开 PR，远端必须有这些提交）；")
         } else {
             lines.append("4. commit（建议 feat/fix: 简述）；**不要 push**：这个队列没有开自动 PR，改动只留在本地分支上；")
@@ -854,8 +866,20 @@ final class TasksRunner {
     @discardableResult
     func startManualTask(_ taskID: String) -> String? {
         guard let task = board.task(taskID), task.source == .manual else { return nil }
+        // A queue built before this rule existed (or built in a git workspace and
+        // then carried into this one) may still ask for a branch this directory
+        // cannot switch to: drop it first, or the retry fails with tasks.errNotGit
+        // exactly like the first attempt did.
+        if !env.canSwitchBranches, let existing = board.autoQueueID(forTask: taskID),
+           board.queue(existing)?.branch != nil {
+            updateQueue(existing, branch: .some(nil))
+            env.log("tasks: " + taskID + "'s queue no longer switches branches — this workspace is not a git repository")
+        }
         return startStandaloneTask(task, queue: {
-            TaskQueue.auto(forManual: task, baseBranch: env.defaultBaseBranch)
+            TaskQueue.auto(forManual: task,
+                           baseBranch: env.defaultBaseBranch,
+                           switchesBranch: env.canSwitchBranches,
+                           opensPR: env.canOpenPR())
         })
     }
 

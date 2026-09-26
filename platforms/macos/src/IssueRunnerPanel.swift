@@ -207,7 +207,8 @@ final class IssueRunnerPanelController: NSObject {
         // 处理 is NOT GitHub-only: it starts everything that is waiting, and manual
         // tasks work in any workspace (only the PR half needs a GitHub remote).
         let runAll = TasksRunAllModel.build(runner?.board ?? TaskBoard(),
-                                            githubAvailable: workspace.githubAvailable)
+                                            githubAvailable: workspace.githubAvailable,
+                                            gitAvailable: workspaceIsGit)
         runAllButton.isEnabled = runAll.enabled
         configButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.configHint") : workspace.disabledHint
         refreshButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.refreshHint") : workspace.disabledHint
@@ -506,8 +507,10 @@ final class IssueRunnerPanelController: NSObject {
             TasksStore.saveLocalHalf(path, board)
         }
         let detected = Self.detectGitHubRemote(path)
+        let isGit = Self.isGitRepo(path)
         let timeout = Self.taskTimeout()
-        let runner = TasksRunner(board: board, env: makeEnv(repoRoot: path, repo: detected),
+        let runner = TasksRunner(board: board,
+                                 env: makeEnv(repoRoot: path, repo: detected, isGit: isGit),
                                  timeout: timeout)
         let extra = recovered.interrupted.isEmpty ? "" : ", interrupted: " + recovered.interrupted.joined(separator: ",")
         AppLog.shared.log("tasks: board loaded at \(path) — \(board.tasks.count) tasks, \(board.queues.count) queues"
@@ -526,7 +529,8 @@ final class IssueRunnerPanelController: NSObject {
     /// Everything the runner needs from the outside world: git in this repo, the
     /// dsh session RPC on this port, GitHub REST with this repo's token, and the
     /// four-file persistence under .dsh/tasks/.
-    private func makeEnv(repoRoot: String, repo: (owner: String, repo: String)?) -> TaskRunnerEnv {
+    private func makeEnv(repoRoot: String, repo: (owner: String, repo: String)?,
+                         isGit: Bool) -> TaskRunnerEnv {
         let port = serverPortProvider?() ?? 3080
         let workspaceId = Self.resolveMainWorkspaceId(port: port, path: repoRoot)
         // Per workspace, not per panel: two runners can be alive at once, each with
@@ -543,6 +547,7 @@ final class IssueRunnerPanelController: NSObject {
             promptSession: { id, text in Self.promptSession(port: port, sessionId: id, text: text) },
             sessionState: { id in Self.sessionState(port: port, sessionId: id) },
             defaultBaseBranch: Self.detectDefaultBaseBranch(path: repoRoot),
+            canSwitchBranches: isGit,
             canOpenPR: { repo != nil },
             cancelSession: { id in Self.cancelSession(port: port, sessionId: id) },
             findExistingPR: { branch in
@@ -574,7 +579,8 @@ final class IssueRunnerPanelController: NSObject {
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: sharedQueueName,
                                           pushes: (queue?.autoPR ?? false) && repo != nil,
-                                          brief: brief)
+                                          brief: brief,
+                                          gitAvailable: isGit)
             },
             // The 交接简报: what the previous task in this queue last said. Read
             // through the shell's core bridge (the same session logs the audit panel
@@ -1051,7 +1057,8 @@ final class IssueRunnerPanelController: NSObject {
         // Board order: the committed issue index is read first, so issues go by
         // number and the user's own tasks follow in creation order.
         let pending = runner.board.tasks.filter { $0.state == .pending }
-        let model = TasksRunAllModel.build(runner.board, githubAvailable: repo != nil)
+        let model = TasksRunAllModel.build(runner.board, githubAvailable: repo != nil,
+                                           gitAvailable: workspaceIsGit)
         guard model.enabled else {
             setStatus(L10n.tr("tasks.runAllNone"), spin: false)
             autoHideStatus(after: 4)

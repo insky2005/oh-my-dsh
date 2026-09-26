@@ -588,6 +588,7 @@ enum L10n {
         "tasks.runAllHint": ("全部处理：把还在等着的任务排队跑起来（串行）", "Process all: queue up everything that is waiting and start it (one at a time)"),
         "tasks.runAllNone": ("没有待处理的任务", "Nothing is waiting"),
         "tasks.runAllInfo": ("%d 个任务各自一个队列与一条分支，串行执行（同一时刻只有一个在跑）。", "%d task(s) — each in its own queue and branch, run one after another (one at a time)."),
+        "tasks.runAllInfoNoGit": ("%d 个任务各自一个队列，串行执行（同一时刻只有一个在跑）；当前目录不是 git 仓库：不切分支、也不开 PR。", "%d task(s) — each in its own queue, run one after another (one at a time). This directory is not a git repository: no branch switching and no PRs."),
         "tasks.runAllInfoWithPR": ("队列跑完时会从它自己的分支开一个 PR。", "Each queue opens a PR from its own branch when it finishes."),
         "tasks.runAllInfoNoPR": ("当前工作区不是 GitHub 仓库：只切分支，不开 PR。", "Not a GitHub repo: branches only, no PRs."),
         "tasks.runAllTitle": ("把 %d 个待处理任务都跑起来？", "Start all %d waiting tasks?"),

@@ -126,7 +126,7 @@ tests/dsh-auth-cookies/run.sh         # dsh 认证 cookie 清理纯逻辑（22 �
 tests/file-panel/run.sh              # 文件面板（workspace-tab 模型 28 例 + open-with / tree-menu / image-zoom / editor-load-policy + 真实 NSWindow 面板场景；2026-09-21 实测全绿）
 tests/terminal-panel/run.sh          # 终端面板（头部固定标题 + TerminalWorkspaceTabs 工作区隔离 + 选中即复制开关；2026-09-21 实测全绿）
 tests/projects-panel/run.sh          # 项目面板（纯模型 45 项 + 控制器无头 49 项 = 94 项）
-tests/tasks-panel/run.sh             # 任务面板逻辑层（模型 158 + 运行器 274 + 视图模型 261 + 视图 191 = 884 项）
+tests/tasks-panel/run.sh             # 任务面板逻辑层（模型 158 + 运行器 285 + 视图模型 271 + 视图 191 = 905 项）
 tests/injected-scripts/run.sh        # 注入 dsh web 的 JS 守卫（可解析 / `window.__dshX` 桥名对得上 / 不许出现会被 Swift 吃掉的转义）
 tests/snapshot-panel/run.sh          # 会话快照窗口数据模型
 tests/snapshot-rollback/run.sh       # 会话快照与回退 CLI 端到端（含升级路径与崩溃拒绝）
