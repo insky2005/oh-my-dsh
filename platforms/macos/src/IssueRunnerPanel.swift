@@ -500,7 +500,8 @@ final class IssueRunnerPanelController: NSObject {
             createSession: { cwd in Self.createSession(port: port, workspaceId: workspaceId, cwd: cwd) },
             renameSession: { id, title in Self.renameSession(port: port, sessionId: id, title: title) },
             promptSession: { id, text in Self.promptSession(port: port, sessionId: id, text: text) },
-            sessionRunning: { id in Self.sessionRunning(port: port, sessionId: id) },
+            sessionState: { id in Self.sessionState(port: port, sessionId: id) },
+            canOpenPR: { repo != nil },
             cancelSession: { id in Self.cancelSession(port: port, sessionId: id) },
             findExistingPR: { branch in
                 guard let repo = repo else { return nil }
@@ -520,8 +521,12 @@ final class IssueRunnerPanelController: NSObject {
                     return TaskPrompts.issue(number: task.number ?? 0, title: task.title,
                                              branch: queue?.branch ?? task.branch ?? "")
                 }
+                // Push policy: only a queue that will open a PR asks the agent to
+                // push (see TasksRunner.finish) — and the prompt has to say the
+                // same thing, or the agent pushes out of habit.
                 return TaskPrompts.manual(title: task.title, body: task.body,
-                                          branch: queue?.branch, queueName: queue?.name)
+                                          branch: queue?.branch, queueName: queue?.name,
+                                          pushes: (queue?.autoPR ?? false) && repo != nil)
             },
             persist: { board in TasksStore.saveLocalHalf(repoRoot, board) },
             persistIssueTask: { task in TasksStore.saveIssueTask(repoRoot, task) },
@@ -1010,14 +1015,16 @@ final class IssueRunnerPanelController: NSObject {
                               modernExtras: ["requestId": UUID().uuidString]) != nil
     }
 
-    static func sessionRunning(port: Int, sessionId: String) -> Bool {
+    /// What dsh says about a session — see SessionState. "The RPC failed" and "the
+    /// session is not listed" are NOT "it finished": the first is unknown, the
+    /// second is only believed after a while (the runner counts).
+    static func sessionState(port: Int, sessionId: String) -> SessionState {
         guard let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port),
-              let items = value["items"] as? [[String: Any]] else { return false }
-        for item in items {
-            guard (item["sessionId"] as? String) == sessionId else { continue }
-            return (item["running"] as? Bool) ?? false
+              let items = value["items"] as? [[String: Any]] else { return .unknown }
+        for item in items where (item["sessionId"] as? String) == sessionId {
+            return ((item["running"] as? Bool) ?? false) ? .running : .idle
         }
-        return false
+        return .missing
     }
 
     static func cancelSession(port: Int, sessionId: String) -> Bool {

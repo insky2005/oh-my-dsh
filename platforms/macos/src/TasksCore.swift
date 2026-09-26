@@ -12,6 +12,9 @@ import Foundation
 /// (TasksUI.swift).
 enum TaskFailure: String {
     case interrupted = "tasks.errInterrupted"
+    /// The task's session disappeared from dsh (deleted in the sidebar, or the
+    /// server was restarted) — nobody can say what became of the work.
+    case sessionGone = "tasks.errSessionGone"
     case notGitRepo = "tasks.errNotGit"
     case dirtyWorktree = "tasks.errDirtyTree"
     case checkout = "tasks.errBranch"

@@ -81,6 +81,14 @@ final class FakeRepo {
 final class FakeDsh {
     private(set) var sessions: [String] = []
     var running: Set<String> = []
+    /// dsh could not answer (RPC failure) / does not list this session at all:
+    /// both used to come back as "finished" (see SessionState).
+    var stateOverride: [String: SessionState] = [:]
+
+    func sessionState(_ id: String) -> SessionState {
+        if let forced = stateOverride[id] { return forced }
+        return running.contains(id) ? .running : .idle
+    }
     private(set) var cancelled: [String] = []
     private(set) var titles: [String: String] = [:]
     private(set) var prompts: [String: String] = [:]
@@ -164,7 +172,8 @@ final class Harness {
             createSession: { _ in dsh.create() },
             renameSession: { id, title in dsh.rename(id, title) },
             promptSession: { id, text in dsh.prompt(id, text) },
-            sessionRunning: { id in dsh.running.contains(id) },
+            sessionState: { id in dsh.sessionState(id) },
+            canOpenPR: { github },
             cancelSession: { id in dsh.cancel(id) },
             findExistingPR: { branch in github ? rec.existingPRs[branch] : nil },
             createPR: { branch, base, _, _ in
@@ -175,8 +184,11 @@ final class Harness {
                 (title: "fix(#" + String(task.number ?? 0) + ")", body: branch)
             },
             promptText: { task, queue in
+                // Same rule the panel uses: only a queue that will open a PR asks
+                // the agent to push.
                 TaskPrompts.manual(title: task.title, body: task.body,
-                                   branch: queue?.branch, queueName: queue?.name)
+                                   branch: queue?.branch, queueName: queue?.name,
+                                   pushes: (queue?.autoPR ?? false) && github)
             },
             persist: { board in rec.persistCount += 1; _ = board },
             persistIssueTask: { task in rec.issueWrites.append(task.id) },
@@ -386,21 +398,27 @@ do {
     eq(h.board.queue(queueID)?.state, QueueState.paused, "the queue is paused")
 }
 do {
-    // A PR that cannot be opened (internal remote / no permission) is not a
-    // task failure: the branch is pushed and the user opens it by hand.
+    // No GitHub remote ⇒ this queue will never open a PR ⇒ the task does not push
+    // at all: commit-only, no push check, no PR attempt (push policy 2026-09-27).
     let (board, taskID, queueID) = singleTaskBoard()
     let h = Harness(board: board, github: false)
     _ = h.runner.enqueue(taskID: taskID, into: queueID)
     h.dsh.finishAll()
-    h.repo.pushed.insert("feature/docs-cleanup")
     _ = h.runner.step()
-    check(h.board.task(taskID)?.state == .done, "the task is done without a PR")
+    check(h.board.task(taskID)?.state == .done, "the task is done")
     check(h.board.task(taskID)?.prUrl == nil, "no PR url")
-    check(h.rec.logged("PR not created"), "the missing PR is logged")
+    check(h.rec.prCalls.isEmpty, "and no PR was even attempted")
+    check(h.repo.calls.contains { $0.hasPrefix("ls-remote") } == false,
+          "the push was never checked — nothing is going to be pushed")
+    check(h.dsh.prompts["session-1"]?.contains("不要 push") == true,
+          "the agent was told to commit only")
+    check(h.rec.logged("keeps its work local"), "and the log says why")
 }
 do {
+    // A queue that DOES want a PR, in a repo with no remote at all: the check is
+    // skipped with a log (there is nothing to push to).
     let (board, taskID, queueID) = singleTaskBoard()
-    let h = Harness(board: board, github: false)
+    let h = Harness(board: board, github: true)
     h.repo.remote = nil
     _ = h.runner.enqueue(taskID: taskID, into: queueID)
     check(h.repo.calls.contains("pull --ff-only") == false, "no pull without a remote")
@@ -408,6 +426,19 @@ do {
     _ = h.runner.step()
     check(h.board.task(taskID)?.state == .done, "a local-only repo still finishes")
     check(h.rec.logged("no remote"), "the missing remote is logged")
+}
+do {
+    // …and when the check itself cannot RUN (private remote, no credentials), that
+    // is unknown — NOT "the agent forgot to push". It used to fail the task.
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board, github: true)
+    h.repo.failing.insert("ls-remote --heads origin feature/docs-cleanup")
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    check(h.rec.logged("could not tell whether"), "the unknown answer is reported")
+    check(h.board.task(taskID)?.state == .done, "and it does NOT fail the task")
+    eq(h.rec.prCalls.count, 1, "the PR is still attempted")
 }
 
 // MARK: - Serial
@@ -481,6 +512,43 @@ do {
     _ = taskID; _ = queueID
 }
 
+section("dsh 说不清会话状态时，任务不许被提前判完成")
+do {
+    // .unknown = RPC 问不到（服务器忙 / 网络抖）。此前这被读成「没在跑」，于是
+    // 一次瞬时失败就把正在跑的任务判成已完成 —— 现在只能继续等。
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board, github: false)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.stateOverride["session-1"] = .unknown
+    for _ in 0..<5 { _ = h.runner.step() }
+    check(h.board.task(taskID)?.state == .running, "问不到就继续等，绝不判完成")
+    check(h.rec.logged("could not report on its session"), "并且日志说明自己在等")
+    h.dsh.stateOverride["session-1"] = .idle
+    _ = h.runner.step()
+    check(h.board.task(taskID)?.state == .done, "dsh 明确说结束了才结束")
+}
+do {
+    // .missing = dsh 的会话列表里根本没有它（被删掉 / 服务重启过）。一次不算数，
+    // 连续 N 次才判失败，而且原因要说「会话没了」，不是「已完成」。
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board, github: false)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.stateOverride["session-1"] = .missing
+    _ = h.runner.step()
+    check(h.board.task(taskID)?.state == .running, "偶尔一次不见：不动它")
+
+    h.dsh.stateOverride["session-1"] = .running
+    for _ in 0..<(TasksRunner.missingSessionPolls + 2) { _ = h.runner.step() }
+    check(h.board.task(taskID)?.state == .running, "中间又答上来一次，计数归零")
+
+    h.dsh.stateOverride["session-1"] = .missing
+    for _ in 0..<TasksRunner.missingSessionPolls { _ = h.runner.step() }
+    check(h.board.task(taskID)?.state == .failed, "连续 N 次都不见了：判失败")
+    eq(h.board.task(taskID)?.error, "tasks.errSessionGone", "原因是「会话没了」，不是「已完成」")
+    eq(h.board.queue(queueID)?.state, QueueState.paused, "队列暂停，等用户决定")
+    check(h.rec.logged("its session is gone from dsh"), "日志里写清发生了什么")
+}
+
 section("cancel, retry and skip")
 do {
     let (board, taskID, queueID) = singleTaskBoard()
@@ -502,7 +570,10 @@ do {
     let t1 = TaskItem.manual(title: "One", body: nil, id: "manual-cccc1111")
     let t2 = TaskItem.manual(title: "Two", body: nil, id: "manual-cccc2222")
     board.tasks = [t1, t2]
-    let queue = board.createQueue(name: "Lane", autoPR: false)
+    // autoPR ON: this queue will open a PR, so an unpushed branch at the END is a
+    // real failure (with autoPR off nothing is pushed and nothing is checked — see
+    // the push-policy tests).
+    let queue = board.createQueue(name: "Lane", autoPR: true)
     _ = board.enqueue(taskID: t1.id, into: queue.id)
     _ = board.enqueue(taskID: t2.id, into: queue.id)
     let h = Harness(board: board)
@@ -510,12 +581,13 @@ do {
     _ = h.runner.startQueue(queue.id)
     h.dsh.finishAll()
     _ = h.runner.step()
+    check(h.board.task(t1.id)?.state == .done, "the first task is done")
     check(h.runner.runningTaskID == t2.id, "the second task follows")
 
     h.dsh.finishAll()
     h.repo.pushed.removeAll()
     _ = h.runner.step()
-    check(h.board.task(t2.id)?.state == .failed, "the second task failed (unpushed)")
+    check(h.board.task(t2.id)?.state == .failed, "the LAST task fails when the branch was never pushed")
     check(h.runner.runningTaskID == nil, "the queue is paused")
     check(h.runner.skip(taskID: t2.id), "skip resumes the queue")
     check(h.board.queue(queue.id)?.state == QueueState.active, "the queue is active again")

@@ -16,6 +16,17 @@ enum GitEnterResult: Equatable {
     case createBranchFailed
 }
 
+/// Is the queue's branch on the remote? THREE answers, because "the question could
+/// not be asked" (no credentials for a private remote, network hiccup) is not the
+/// same as "it is not there": reading the first as the second marked finished work
+/// as failed with 「分支未推送到远端（代理未 push？）」.
+enum BranchPushState: Equatable {
+    case pushed
+    case notPushed
+    /// ls-remote itself failed — nobody knows.
+    case unknown
+}
+
 /// The git half of the runner. Every command goes through the injected closure,
 /// so a test can script a repository without touching the disk.
 ///
@@ -46,12 +57,13 @@ struct TaskGit {
         run(["rev-parse", "--verify", "--quiet", name]) != nil
     }
 
-    /// True when the branch exists on the push remote. A repo without a remote
-    /// counts as nothing-to-push here; the caller reports that case separately.
-    func isBranchPushed(_ branch: String) -> Bool {
-        guard let remote = remoteName() else { return true }
-        let out = run(["ls-remote", "--heads", remote, branch])
-        return out?.contains(branch) == true
+    /// Whether the branch exists on the push remote. A repo without a remote is
+    /// the caller's business (it logs that case separately); a FAILED ls-remote is
+    /// unknown, never "not pushed".
+    func branchPushState(_ branch: String) -> BranchPushState {
+        guard let remote = remoteName() else { return .pushed }
+        guard let out = run(["ls-remote", "--heads", remote, branch]) else { return .unknown }
+        return out.contains(branch) ? .pushed : .notPushed
     }
 
     /// Put the worktree on the queue's branch:
@@ -74,6 +86,27 @@ struct TaskGit {
     }
 }
 
+// MARK: - Session state
+
+/// What dsh says about a task's session right now.
+///
+/// A Bool could not tell these apart, and the difference matters: the old code
+/// read BOTH "the RPC failed" and "the session is not in the list" as "not
+/// running", i.e. as "the task is over" — one transient RPC hiccup declared a
+/// task finished while its agent was still working.
+enum SessionState: Equatable {
+    /// dsh says it is working right now.
+    case running
+    /// dsh lists it and says it is not working any more → the task is over.
+    case idle
+    /// The question could not be answered (RPC failed): assume nothing, ask again
+    /// on the next tick.
+    case unknown
+    /// dsh does not list the session at all (deleted from the sidebar, or the
+    /// server restarted). Counted; only a persistent absence becomes a failure.
+    case missing
+}
+
 // MARK: - Session / repo side effects (injected)
 
 /// Everything the runner needs from the outside world. The panel passes the real
@@ -86,7 +119,11 @@ struct TaskRunnerEnv {
     var createSession: (_ cwd: String) -> String?
     var renameSession: (_ sessionId: String, _ title: String) -> Bool
     var promptSession: (_ sessionId: String, _ text: String) -> Bool
-    var sessionRunning: (_ sessionId: String) -> Bool
+    /// What dsh says about the running task's session (see SessionState).
+    var sessionState: (_ sessionId: String) -> SessionState
+    /// Whether this workspace can open a pull request at all (a GitHub remote).
+    /// It decides whether a task pushes at all — see the push policy in finish().
+    var canOpenPR: () -> Bool = { true }
     var cancelSession: (_ sessionId: String) -> Bool
     /// Existing open PR for the head branch, or nil. Only called when the queue
     /// wants a PR (a GitHub workspace).
@@ -136,7 +173,13 @@ enum TaskPrompts {
     }
 
     /// Manual task: the user's own title and description plus the same rails.
-    static func manual(title: String, body: String?, branch: String?, queueName: String?) -> String {
+    ///
+    /// `pushes` follows the queue: a queue that will open a pull request needs the
+    /// branch on the remote, and a queue that will not must NOT push — its work
+    /// stays as local commits on the queue's branch (the agent is told so, or it
+    /// pushes anyway out of habit).
+    static func manual(title: String, body: String?, branch: String?, queueName: String?,
+                       pushes: Bool = true) -> String {
         var lines: [String] = []
         lines.append("请完成以下任务：")
         lines.append("")
@@ -161,7 +204,11 @@ enum TaskPrompts {
             lines.append("2. 在当前已检出的分支上工作（不要新建分支）；")
         }
         lines.append("3. 改完代码后跑相关测试，确保通过；")
-        lines.append("4. commit（建议 feat/fix: 简述）并把当前分支 push 到远端；")
+        if pushes {
+            lines.append("4. commit（建议 feat/fix: 简述），并把当前分支 push 到远端（这个队列最后会开 PR，远端必须有这些提交）；")
+        } else {
+            lines.append("4. commit（建议 feat/fix: 简述）；**不要 push**：这个队列没有开自动 PR，改动只留在本地分支上；")
+        }
         lines.append("5. 需要 GitHub 写操作时，token 在 $DSH_HOME/tokens/<owner>-<repo> 或 $DSH_HOME/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；")
         lines.append("6. 完成后简短汇报改动与测试结果。")
         return lines.joined(separator: "\n")
@@ -234,6 +281,14 @@ final class TasksRunner {
         case failed(TaskFailure)
     }
 
+    /// Polls that could not be answered / found nothing, since the last confirmed
+    /// answer. See SessionState.
+    private var unknownPolls = 0
+    private var missingPolls = 0
+    /// How many CONSECUTIVE polls must report a session as gone before the task is
+    /// failed for it (the panel polls every 3s, so this is ~30s of silence).
+    static let missingSessionPolls = 10
+
     private var phase: Phase = .idle
     /// 取消 asked for while the task was still STARTING: honoured in applyStart,
     /// as soon as there is a session to cancel. Cleared whenever a start begins.
@@ -295,7 +350,10 @@ final class TasksRunner {
             _ = pump(now: now)
             return isBusy
         case .active(let active):
-            if env.sessionRunning(active.sessionId) {
+            switch env.sessionState(active.sessionId) {
+            case .running:
+                unknownPolls = 0
+                missingPolls = 0
                 if now.timeIntervalSince(active.startedAt) > timeout {
                     env.log("tasks: " + active.taskID + " timed out after " + String(Int(timeout)) + "s")
                     _ = env.cancelSession(active.sessionId)
@@ -305,9 +363,36 @@ final class TasksRunner {
                     _ = pump(now: now)
                 }
                 return isBusy
+            case .idle:
+                // dsh lists the session and says it is done: the task is over.
+                finish(active: active, now: now)
+                return isBusy
+            case .unknown:
+                // dsh could not answer (RPC failed / server busy). Assume NOTHING:
+                // the task keeps running and we ask again next tick. This used to
+                // be read as "not running", i.e. as a finished task.
+                missingPolls = 0
+                if unknownPolls % 10 == 0 {
+                    env.log("tasks: " + active.taskID + " — dsh could not report on its session; still waiting")
+                }
+                unknownPolls += 1
+                return isBusy
+            case .missing:
+                // dsh does not list it at all: deleted from the sidebar, or the
+                // server was restarted. Only a PERSISTENT absence is a failure —
+                // one missing poll is not evidence (the list is fetched live).
+                unknownPolls = 0
+                missingPolls += 1
+                if missingPolls >= TasksRunner.missingSessionPolls {
+                    env.log("tasks: " + active.taskID + " — its session is gone from dsh after "
+                            + String(missingPolls) + " polls; nobody can say how the work ended")
+                    phase = .idle
+                    board.markFailed(active.taskID, error: TaskFailure.sessionGone.rawValue, at: now)
+                    persist()
+                    _ = pump(now: now)
+                }
+                return isBusy
             }
-            finish(active: active, now: now)
-            return isBusy
         }
     }
 
@@ -332,6 +417,8 @@ final class TasksRunner {
 
         phase = .starting(taskID)
         cancelRequested = false
+        unknownPolls = 0
+        missingPolls = 0
         board.markRunning(taskID, at: now)
         persist()
         log("tasks: starting " + taskID + " on " + (branch ?? "the current branch"))
@@ -417,23 +504,44 @@ final class TasksRunner {
         let queueHasMore = queue?.taskIds.contains { id in
             id != active.taskID && (board.task(id)?.state == .queued || board.task(id)?.state == .running)
         } ?? false
-        let wantsPR = (queue?.autoPR ?? false) && !queueHasMore
+        // PUSH POLICY (2026-09-27): a task pushes ONLY when its queue is about to
+        // open a pull request. Otherwise the work stays as local commits on the
+        // queue's branch — and there is no "did the agent push?" question to get
+        // wrong (that check used to fail finished work on private remotes whose
+        // credentials were not cached).
+        let queueWantsPR = (queue?.autoPR ?? false) && env.canOpenPR()
+        let wantsPR = queueWantsPR && !queueHasMore
         let prText = board.task(active.taskID).map { env.prText($0, branch ?? base) }
         let git = env.git
         let findExistingPR = env.findExistingPR
         let createPR = env.createPR
         let log = env.log
         let taskID = active.taskID
+        if !queueWantsPR, branch != nil {
+            log("tasks: " + taskID + " keeps its work local — this queue opens no PR (no push, commit only)")
+        }
 
         phase = .finishing(taskID)
         var outcome: FinishOutcome = .done(prUrl: nil)
         env.perform({
-            if let branch = branch {
+            if wantsPR, let branch = branch {
                 if git.remoteName() == nil {
                     log("tasks: " + taskID + " has no remote — skipping the push check")
-                } else if !git.isBranchPushed(branch) {
-                    outcome = .failed(.noPush)
-                    return
+                } else {
+                    switch git.branchPushState(branch) {
+                    case .pushed:
+                        break
+                    case .notPushed:
+                        // A real miss: the queue asked for a PR and the branch is
+                        // not on the remote, so no PR can be opened.
+                        outcome = .failed(.noPush)
+                        return
+                    case .unknown:
+                        // The question could not be asked (no credentials for a
+                        // private remote, network hiccup). That is NOT "the agent
+                        // forgot to push": report it and carry on to the PR.
+                        log("tasks: " + taskID + " could not tell whether " + branch + " is pushed — carrying on")
+                    }
                 }
             }
             guard wantsPR, let branch = branch, let prText = prText else {

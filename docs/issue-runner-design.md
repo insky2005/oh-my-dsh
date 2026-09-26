@@ -264,7 +264,7 @@ struct Queue {
 - 队列级 PR：同一 head 分支在 GitHub 只能有一个 open PR，因此**队内任务完成时只 push**，队列跑完才创建一次 PR；创建前先 `GET /pulls?head=<owner>:<branch>` **复用已有 PR**，避免第二个任务吃 422；
 - PR 创建失败（无权限、远端不支持、网络）**不判队列失败**：队列照常 `done`，卡片标注「分支已推送，PR 未创建」，并展示分支名 + 远端名供用户手动处理。
 
-**推送校验**：沿用 v1 的 `pushRemoteName`（github > origin > 首个 remote）与 `gitBranchPushed`；无远端时不校验推送，直接判完成并标注「无远端，未推送」。
+**推送校验（2026-09-27 改）**：推送**只在「这个队列会开 PR」时发生** —— `queueWantsPR = queue.autoPR && env.canOpenPR()`（`canOpenPR` = 工作区有 GitHub 远端）；提示词里的 push 要求与收尾的校验共用这一个判据，所以没开自动 PR 的队列**只做本地 commit、不 push、也不校验**（`finish` 里 `!queueWantsPR` 时只记一行「keeps its work local」）。要开 PR 的队列仍沿用 v1 的 `pushRemoteName`（github > origin > 首个 remote），但校验是**三态**的（`BranchPushState`：pushed / notPushed / unknown）——`ls-remote` 自己失败（私有远端没凭据、网络抖）算 `unknown`，只记日志并继续尝试开 PR，**不再把「问不到」当成「代理没推送」**（那会把已经干完的活判成失败）；无远端时跳过校验并记日志。真正「远端上没有这条分支」才判 `tasks.errNoPush`。
 
 ### V2-7 手动创建任务
 
@@ -335,6 +335,11 @@ struct Queue {
 > 6. **重启之后的说明**：`reconcileAfterRestart` 的结果此前只进 `app.log`，现在面板用状态行说一句「上次运行被中断：N 个任务已标为失败、M 个队列已暂停（不会自动重跑）」。
 >
 > 仍未做：设计文档 §V2-8 提到的「隐藏已完成队列」筛选（只做了「已完成队列默认折叠成一行」）。
+
+> **实现（2026-09-27 补充 · 批次 2.5：推送策略与会话状态）**：两条「界面在骗人」级别的问题。
+>
+> 1. **推送策略**：`TaskQueue.auto`/手动队列一律 `push` 的旧行为（以及配套的推送校验）换成**只给会开 PR 的队列推送**：`queueWantsPR = queue.autoPR && env.canOpenPR()`，提示词与 `finish` 共用该判据（代理被明确告知「不要 push」或「要 push」），没开自动 PR 的队列**只本地 commit**、不做任何校验 —— 于是「私有远端没凭据 → 明明干完的活被判成未推送」这类误判在非 PR 队列里**结构上不可能**再发生；PR 队列的校验本身也改成三态（`BranchPushState`），`unknown` 只记日志。
+> 2. **会话状态三态**：`TaskBoard` 那边一个 Bool（`sessionRunning`）把「RPC 问不到」和「会话不在列表里」都表达成 false，而 `step()` 把 false 当「任务结束」→ **一次瞬时 RPC 失败就能把正在跑的任务判成已完成**（随后还可能踩上面那条推送误判）。现在 `SessionState { running, idle, unknown, missing }`：`unknown` **什么都不假设**（继续等，日志节流提示）；`missing` 要**连续 `TasksRunner.missingSessionPolls`（10 次 ≈ 30 秒）**才判失败，并且用新的 `tasks.errSessionGone`（「会话已经不在 dsh 里了（被删掉，或 dsh 重启过）——没人知道它做到哪一步」），而不是假装完成。
 
 ### V2-8 卡片式任务清单
 
