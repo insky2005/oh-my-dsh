@@ -387,6 +387,19 @@ struct Queue {
 
 回归：视图模型断言 `prAvailable` 三态（可点 / 不显示 / 显示但不可点）与 `canOpenPR` 的门槛；视图断言行上有 `gearshape` + `trash`、没有 `ellipsis`、开关图标随状态切换、非 GitHub 时开关不出现（已开则禁用），以及**面板最小宽度 300pt 下所有按钮仍在行内、队列名仍可用**。
 
+### V2-7d 抽屉背后加一层虚化（2026-09-26）
+
+抽屉（表单）和内容区用的是**同一套面板底色**（`PanelControl` 的抬起档 + 发丝描边），所以表单打开时看起来只是"列表里多了一张卡"，层次分不出来。现在 `TaskFormSheetHostView` 里加了一层**虚化背景**：
+
+- `NSVisualEffectView`，`material = .hudWindow` + `blendingMode = .withinWindow` + `state = .active`：`.withinWindow` 模糊的是**同一窗口里它背后的内容**（不需要窗口透明），`.hudWindow` 再叠一层**半透明暗色** —— 即使某个环境下模糊不生效，列表也照样被压到后面（不会退化成"什么都看不见"）；
+- **铺满整个内容区**（钉住宿主的四边），**加在抽屉之下、列表之上**（构造时先 add，面板后挂的表单自然在它上面）；
+- **与抽屉同时进出**：`presentForm` 里 `showScrim()` 后与抽屉同一个 `NSAnimationContext` 组内把 alpha 淡入到 1（`easeOut 0.22s`），`dismissForm` 里跟着淡出、动画结束再 `hideScrim()`；连续创建（表单已开）时直接把 alpha 置 1，不重播；
+- **静止时不占位、不挡点击**：没有表单时 `isHidden = true`，宿主本来就点击穿透（`blocksClicksBelow == false` → `hitTest` 交回列表）；表单打开时宿主吞掉点击，虚化层也在宿主之内，所以点它不会落到背后的卡片上。
+
+回归：视图断言「静止时虚化层不出现」「材质/混合方式就是 `.hudWindow` + `.withinWindow`」「打开后铺满内容区」「虚化层在抽屉之下、抽屉在它之上」「关闭后收起并回到全透明」。
+
+注：虚化本身由窗口合成器绘制，**离屏 `cacheDisplay` 渲染不出来**（截图里这一层是透明的），所以视觉上以真机 App 为准；上面这些断言钉的是接线与层级。
+
 ### V2-8a 队列总览与计数
 
 「有几个队列、每个队列什么状态、队列下哪些任务什么状态」由三层一起回答：

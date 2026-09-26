@@ -829,6 +829,48 @@ final class TaskFormSheetHostView: NSView {
     /// True while a form is on screen.
     var blocksClicksBelow = false
 
+    /// The frosted layer BETWEEN the open form and the list behind it — the
+    /// drawer and the content area are drawn with the same panel fills, so an
+    /// open form used to read as one more card in the list.
+    ///
+    /// `.withinWindow` blurs what is drawn behind it IN THIS WINDOW (no window
+    /// transparency needed), and `.hudWindow` keeps a translucent dark tint even
+    /// where the blur itself is unavailable — so the list is always pushed back,
+    /// blur or not. The panel fades it in and out together with the sheet.
+    let scrim = NSVisualEffectView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // Added FIRST: the sheet the panel mounts later has to stay on top of it.
+        scrim.material = .hudWindow
+        scrim.blendingMode = .withinWindow
+        scrim.state = .active
+        scrim.isHidden = true
+        scrim.alphaValue = 0
+        scrim.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scrim)
+        NSLayoutConstraint.activate([
+            scrim.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrim.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrim.topAnchor.constraint(equalTo: topAnchor),
+            scrim.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// Put the frost on screen at alpha 0 — the panel then fades it in inside its
+    /// own animation group, so it moves exactly with the drawer.
+    func showScrim() {
+        scrim.isHidden = false
+    }
+
+    /// Take it off screen again (after the fade-out finished).
+    func hideScrim() {
+        scrim.isHidden = true
+        scrim.alphaValue = 0
+    }
+
     override func layout() {
         super.layout()
         onLayout?()

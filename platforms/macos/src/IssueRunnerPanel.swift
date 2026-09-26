@@ -1188,17 +1188,23 @@ final class IssueRunnerPanelController: NSObject {
             // Already down (create → create again): swap the content in place.
             formSheetTop.constant = TaskFormSheetHostView.restingTop
             view.layoutSubtreeIfNeeded()
+            formSheetHost.showScrim()
+            formSheetHost.scrim.alphaValue = 1
         } else {
             // Start ABOVE the host's edge (clipped away by it) and drop down. The
             // offset is the host's own height, so nothing has to be measured.
             formSheetTop.constant = -(formSheetHost.bounds.height)
             view.layoutSubtreeIfNeeded()
             formSheet.isHidden = false
+            // The frost comes in WITH the drawer, in the same animation group.
+            formSheetHost.showScrim()
+            formSheetHost.scrim.alphaValue = 0
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.22
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)
                 formSheetTop.animator().constant = TaskFormSheetHostView.restingTop
                 formSheet.animator().alphaValue = 1
+                formSheetHost.scrim.animator().alphaValue = 1
             }
         }
         // Take focus once the sheet has arrived (the fields must be on screen
@@ -1218,9 +1224,11 @@ final class IssueRunnerPanelController: NSObject {
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             self.formSheetTop.animator().constant = hidden
             self.formSheet.animator().alphaValue = 0
+            self.formSheetHost.scrim.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             guard let self = self else { return }
             self.formSheet.isHidden = true
+            self.formSheetHost.hideScrim()
             self.formSheet.setContent(NSView())
             self.formSheetContent = nil
             // Back to a plain overlay: the list takes clicks again.

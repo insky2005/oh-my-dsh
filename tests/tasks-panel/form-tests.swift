@@ -329,6 +329,33 @@ do {
           "and the inline advanced fields keep their width (\(expanded.branchField.frame.width)pt)")
 }
 
+section("抽屉背后有一层虚化（表单与内容区分层）")
+do {
+    // 抽屉与内容区用的是同一套面板底色，表单打开时曾经看起来像列表里多了一张卡。
+    // 虚化层（withinWindow 模糊 + HUD 半透明底）把列表压到后面去。
+    let host = TaskFormSheetHostView()
+    host.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    check(host.scrim.isHidden, "静止时虚化层不出现（列表点击照常穿透）")
+    eq(host.scrim.blendingMode, .withinWindow, "虚化的是同一窗口里抽屉背后的内容")
+    eq(host.scrim.material, .hudWindow, "HUD 材质：模糊之外还留一层暗色半透明")
+    eq(host.scrim.alphaValue, 0, "初始全透明")
+    check(host.subviews.first === host.scrim, "虚化层在抽屉之下")
+
+    host.showScrim()
+    check(!host.scrim.isHidden, "表单打开时虚化层出现")
+    host.layoutSubtreeIfNeeded()
+    eq(host.scrim.frame.size, host.bounds.size, "虚化层铺满整个内容区")
+
+    // 抽屉（表单）永远盖在虚化层上面 —— 顺序错了会把表单也糊掉。
+    let sheet = TaskFormSheetView()
+    host.addSubview(sheet)
+    check(host.subviews.first === host.scrim && host.subviews.last === sheet,
+          "抽屉盖在虚化层上面")
+
+    host.hideScrim()
+    check(host.scrim.isHidden, "关闭后收起")
+    eq(host.scrim.alphaValue, 0, "并回到全透明")
+}
 section("the sheet IS as tall as the form (no measurement anywhere)")
 do {
     // The panel only caps the sheet; the sheet follows its FORM by constraint. That
