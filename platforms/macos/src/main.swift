@@ -643,6 +643,8 @@ enum L10n {
         "tasks.empty": ("还没有任务：点下面的「新建任务」写一个，或刷新拉取 GitHub issues。", "No tasks yet: use New Task below, or refresh to fetch GitHub issues."),
         "tasks.emptyManualOnly": ("还没有任务：点下面的「新建任务」写一个。当前工作区不是 GitHub 仓库，issues 不可用，但手动任务与队列照常可用。", "No tasks yet: use New Task below. This workspace is not a GitHub repo, so issues are unavailable — manual tasks and queues still work."),
         "tasks.noRepoShort": ("非 GitHub 仓库", "not a GitHub repo"),
+        "tasks.noGitShort": ("非 Git 仓库", "not a git repository"),
+        "tasks.githubUnavailable": ("当前工作区不是 GitHub 仓库：GitHub Token 与 issues 都不可用（手动任务与队列照常可用）", "Not a GitHub repo: no GitHub token and no issues (manual tasks and queues still work)"),
         "tasks.emptyFiltered": ("当前筛选下没有任务。", "No tasks match the current filter."),
         "tasks.queue.new": ("新建队列…", "New Queue…"),
         "tasks.queue.newButton": ("新建队列", "New Queue"),

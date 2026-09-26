@@ -19,7 +19,7 @@ manual: false
 | `platforms/macos/src/SkillsPanel.swift` | 1667 行 | `SkillsPanelController` + 视图（`SkillsRootView`/`SkillCardView`/`SkillTabStrip`/`SkillRowView`/`SkillCandidateRowView`/`RegistryCardView`/`RegistryAddCardView`）+ 纯函数 `SkillHoverResolver` |
 | `platforms/macos/src/SkillsCore.swift` | 742 行 | 纯 Foundation 模型：`SkillFrontmatterIO`（frontmatter 读写）、`SkillRoots`/`SkillScanner`（四根扫描 + 级别 + rank 去重）、`SkillStore`（壳层记录 `skills.json`）、`SkillNameRule`、`BuiltinSkillNames` |
 | `platforms/macos/src/SkillSources.swift` | 919 行 | `SkillAddressParser`、`SkillTransport`（可注入假传输）、`SkillRegistryClient`（清单 / 搜索 / probe）、`SkillFetcher`（git clone / codeload tarball / well-known HTTP）、`SkillInstallService`（安装 / 移除 / 级别写权限） |
-| `tests/skills-panel/` | 4 文件 | 无头测试：模型层 + 控制器冒烟 + 真实绘制回归，`run.sh` 一次跑完（本机实测 **121 项 ok**） |
+| `tests/skills-panel/` | 4 文件 | 无头测试：模型层 + 控制器冒烟 + 真实绘制回归，`run.sh` 一次跑完（本机实测 **147 项 ok**） |
 
 **不改 `SkillInstaller.swift`**：内置技能由 App 启动时按内嵌内容同步，面板对内置级别只读，内嵌与已装文件的字节一致性（`tests/skills/`）不受影响。
 
@@ -84,7 +84,7 @@ installed.<name>:  {source, sourceType, sourceUrl, ref, path, level,
 
 ## 测试与 QA
 
-- `tests/skills-panel/run.sh`（三阶段，本机实测 121 项 ok）：① 模型层（地址解析、frontmatter 增删改保字节含 CRLF、四根扫描与级别/rank 去重、内置与共享级写拒绝、安装/移除/store、registry 存储与默认预置、searchURL 模板与编码、well-known 索引校验、catalog 分派、probe）；② 控制器冒烟（`NSApplication.shared` + 临时 fixture home：注入开关落盘、安装按钮 hover、卡片点击、hover 解析）；③ **真实绘制回归**（`PreviewPanel.swift` 的 `DynamicFillView`/`HeaderLabel` 离屏渲染，钉住 2119bb1 的越界填充修复）；
+- `tests/skills-panel/run.sh`（三阶段，本机实测 147 项 ok）：① 模型层（地址解析、frontmatter 增删改保字节含 CRLF、四根扫描与级别/rank 去重、内置与共享级写拒绝、安装/移除/store、registry 存储与默认预置、searchURL 模板与编码、well-known 索引校验、catalog 分派、probe）；② 控制器冒烟（`NSApplication.shared` + 临时 fixture home：注入开关落盘、安装按钮 hover、卡片点击、hover 解析）；③ **真实绘制回归**（`PreviewPanel.swift` 的 `DynamicFillView`/`HeaderLabel` 离屏渲染，钉住 2119bb1 的越界填充修复）；
 - 已接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`（swift job）；`tests/skills/` 的内置技能字节断言不变；
 - QA 钩子：`DSH_SKILLS_TEST=1` 启动即开面板（**放在 `DSH_REVIEW_TEST` 之后**，可压过 `DSH_UI_DEBUG` 的浏览器面板）；`DSH_SKILLS_TEST_ROOT=<dir>` 把用户根指向 fixture home（`SkillsPanel.swift` 内读）；`DSH_SKILLS_NO_NUDGE=1` 关闭缓存失效 nudge。
 

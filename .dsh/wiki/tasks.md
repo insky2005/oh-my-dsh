@@ -57,7 +57,7 @@ tests/browser-panel/run.sh          # 浏览器面板模型层（REST 路由 / �
 tests/channel-panel/run.sh          # 通道项目视图数据模型（ChannelStoreReader）
 tests/dsh-rpc/run.sh                # 壳层原生 dsh RPC（0.1.2 信封/斜杠端点、launch token 换 cookie、回退记忆）
 tests/review-panel/run.sh           # 审查面板（模型 64 项 + 控制器日志新鲜度 12 项 = 76 项）
-tests/skills-panel/run.sh           # 技能面板（模型层 + 控制器冒烟 + 真实绘制回归，121 项）
+tests/skills-panel/run.sh           # 技能面板（模型层 + 控制器冒烟 + 真实绘制回归，147 项）
 tests/file-panel/run.sh             # 文件面板：页签记忆模型 28 项 + open-with / tree-menu / image-zoom / editor-load-policy 模型 + 真实 NSWindow 面板场景
 tests/terminal-panel/run.sh         # 终端面板：头部固定标题 + 工作区页签隔离模型 + 选中即复制开关（不建 PTY）
 tests/l10n/run.sh                   # L10n 键名 lint（L10n.tr 字面量必须在 L10n.table 中且中英成对）
@@ -65,7 +65,7 @@ tests/shell-config/run.sh           # ShellConfig 旧 UserDefaults 一次性迁�
 tests/dsh-auth-cookies/run.sh       # dsh 认证 cookie 清理纯逻辑（22 项）
 tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
 tests/projects-panel/run.sh         # 项目面板：模型 45 项（projects 根 / 命名规则 / 列举 / 注册匹配）+ 控制器 49 项（无头，假 dsh 传输）
-tests/tasks-panel/run.sh            # 任务面板逻辑层四段：模型 126 + 运行器 187 + 视图模型 176 + 视图 170 = 659 项
+tests/tasks-panel/run.sh            # 任务面板逻辑层四段：模型 126 + 运行器 187 + 视图模型 187 + 视图 170 = 670 项
 tests/injected-scripts/run.sh       # 注入 dsh web 的 JS 片段守卫（JS 引擎可解析 + `window.__dsh*` 桥名对得上 + 不许出现会被 Swift 字符串吃掉的转义）
 tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到端（真实临时 $DSH_HOME：bootstrap → 升级 dsh → 回退 → 重启）+ tests/snapshot-panel/run.sh 窗口数据模型（SnapshotModel 解码 list/status/plan-rollback 的 JSON）
 ```
@@ -84,7 +84,7 @@ tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到�
 
 ## 改面板配色 / 新增面板底色
 
-- **只改一处**：`platforms/macos/src/PanelSurface.swift`（`PanelSurface` 面板底色 + `PanelControl` 控件两档）；取值、层级与「谁用哪个令牌」的映射见 `docs/ui-color-scheme.md`；改完跑 `tests/skills-panel/run.sh`（离屏渲染回归钉住 6 个令牌取值与实际像素）；
+- **只改一处**：`platforms/macos/src/PanelSurface.swift`（`PanelSurface` 面板底色 + `PanelControl` 控件两档）；取值、层级与「谁用哪个令牌」的映射见 `docs/ui-color-scheme.md`；改完跑 `tests/skills-panel/run.sh`（离屏渲染回归钉住 6 个令牌取值与实际像素，并钉住 `FittingHeaderLabel` 的截断：文字不越出自身 frame）；
 - 取色规则：面板根视图 / header / toolbar / status bar / 内容容器 → `DynamicFillView()`（默认 `.panel`）；`NSTextView`/`NSScrollView`/`PDFView` → `PanelSurface.dynamic`；**`NSTableView`/`NSOutlineView` 必须显式 `backgroundColor = PanelSurface.dynamic`**（默认 `controlBackgroundColor` 会盖住面板底色）；卡片 / 按钮 / 页签 → `PanelControl.fill(dark:highlighted:)`（CALayer 背景用 `.cgColor` 并在 `viewDidChangeEffectiveAppearance` 重设）；
 - 新增档位优先从 dsh 的 `--dsw-static-neutral-bluish-*` 灰阶里挑，不要新写 `calibratedWhite`；语义色（accent / 绿 / 橙 / 红 / 消息气泡 / 链接）不参与灰阶替换。
 
@@ -122,7 +122,7 @@ tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到�
 - 落点默认 **用户级** `$DSH_HOME/skills/<name>/`，可选 **项目级**（会写用户仓库，确认框提示）；
 - 改完无需手动刷新 dsh web：面板经 `nudgeDSHWebCaches()` 派发 offline→online 触发客户端重连，清掉技能目录缓存（1.5s 节流）；
 - 开关不生效排查：确认改的是**非内置**技能、`SKILL.md` 里只有规范键；记录与安装来源见 `$DSH_HOME/shell/skills.json`；dsh 侧契约（根 / 优先级 / 键名）见 `docs/dsh-version-impact.md` D2/D2b/D2c/D2d 与 `docs/skills-manager-design.md`；
-- 回归：`tests/skills-panel/run.sh`（121 项）。
+- 回归：`tests/skills-panel/run.sh`（147 项）。
 
 ## 管理项目 / 工作区（项目面板，`⌥⌘P`）
 
@@ -149,7 +149,7 @@ tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到�
 - **issue 任务**：点「处理」自动建一个**单任务队列**（分支 `fix/issue-N` / `feature/issue-N`，保留「一 issue 一分支一 PR」）；「全部处理」给每个 pending issue 各建一个，串行依次跑；
 - **PR**：队内任务只 push，**队列最后一项完成时**才开 PR（先查已有 PR 复用，避免 422）；PR 建不出来**不算失败**；不是 GitHub 仓库时 PR 能力自动关闭（只切分支 + push）；
 - **重启恢复**：读 `<repo>/.dsh/tasks/` 四文件（`index.json` 提交 / `manual.json`、`queues.json`、`local.json` 本机，**已在 .gitignore**）；上次运行中的任务标「已中断」、活跃队列暂停，**不自动开跑**；
-- 回归：`tests/tasks-panel/run.sh`（**659 项**：模型 126 + 运行器 187 + 视图模型 176 + 视图 170；运行器用假 git/假 dsh 驱动完整流水线，含**非 git 目录**：无分支队列照常跑完、有分支队列报 `errNotGit`）、`core/tests/tasks.test.js`（18 项）；细节见 [issue-runner-panel](modules/issue-runner-panel.md) 与 docs/issue-runner-design.md。
+- 回归：`tests/tasks-panel/run.sh`（**670 项**：模型 126 + 运行器 187 + 视图模型 187 + 视图 170；运行器用假 git/假 dsh 驱动完整流水线，含**非 git 目录**：无分支队列照常跑完、有分支队列报 `errNotGit`）、`core/tests/tasks.test.js`（18 项）；细节见 [issue-runner-panel](modules/issue-runner-panel.md) 与 docs/issue-runner-design.md。
 ## 排查问题
 
 1. 看日志：`~/Library/Logs/oh-my-dsh/app.log`（壳层）、`server.log`（服务输出）；设置菜单「打开日志文件夹」(⌘L) 直达；

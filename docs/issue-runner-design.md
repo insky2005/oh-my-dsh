@@ -308,6 +308,10 @@ struct Queue {
 >
 > 回归（`tests/tasks-panel`）：运行器新增「非 git 工作区：无分支队列照常跑完 + 有分支队列报 errNotGit 且不浪费会话」（假 git 全部命令失败）；视图模型新增「非 git 默认不切分支 / git 里派生不变 / 开关压过已填分支 / 编辑不静默丢分支」与「errNotGit 的卡片给一键修好、别的失败不给」；表单视图新增「非 git：开关开着且不可点、字段停用、提示说原因、提交显式空分支」「git：开关可点、勾上后提示改口」。
 
+> **实现（2026-09-27 补充 · 头部的工作区行）**：这条 28pt 工具栏行只放一句短文案（审查面板同一条行放的是控件），于是它并进了标题行 —— 头部变成两行（40pt → 46pt：`任务` + 工作区行，净省 22pt 给列表），三种状态分开说：GitHub 仓库 `owner/repo`、git 仓库但没有 GitHub 远端 `目录名 · 非 GitHub 仓库`、**目录根本不是 git 仓库** `目录名 · 非 Git 仓库`（后者的队列连分支都切不了，见 §V2-7，两种说法混成一句正是用户看不懂的地方）。文案与按钮可用性都由纯模型 `TaskWorkspaceModel.build(owner:repo:workspacePath:isGitRepo:)` 决定：非 GitHub 工作区里 **配置 GitHub Token / 刷新 Issues / 全部处理** 三个按钮置灰（它们本来就 `guard repo != nil`，点了不会有任何反应），tooltip 说明原因。
+>
+> 头部的工作区行还要解决一个渲染陷阱：`HeaderLabel` 用 `NSString.draw(at:)` 画字，**既不清除也不省略**（实测 165pt 的文案塞进 90pt 的 frame 会向右多画 1004 个像素点，正落在旁边的按钮底下）。新的 `FittingHeaderLabel`（与 `HeaderLabel` 同处 `PreviewPanel.swift`）在每次布局时把文字按自身 frame 截成「…」，tooltip 保留全文；`tests/skills-panel/render-tests.swift` 用离屏渲染钉住「框内有墨 + 框外 0 像素」，并**同时钉住前提**（朴素 `HeaderLabel` 确实会越界 —— 若哪天 AppKit 开始裁剪，这条断言会提醒重新评估而不是静默失效）。
+
 ### V2-8 卡片式任务清单
 
 列表改为 `NSScrollView + NSStackView`，体例照 `ProjectsPanel.swift`：`render()` 重建 `arrangedSubviews`，卡片 `widthAnchor == list.widthAnchor - 20`，卡片自身 `draw(_:)` 画圆角 + 描边、`hitTest` 把非按钮区域的点击交回卡片、`resetCursorRects` 设 `pointingHand`。

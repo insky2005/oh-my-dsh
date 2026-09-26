@@ -423,6 +423,35 @@ do {
     eq(bareCard.primaryKey, "tasks.detailRetry", "the plain retry is the way out there")
 }
 
+section("头部的工作区行：非 git / 非 GitHub 分开说，GitHub 专属按钮跟着可用性")
+do {
+    // GitHub 仓库：显示 owner/repo，三个 GitHub 专属按钮可用。
+    let gh = TaskWorkspaceModel.build(owner: "insky2005", repo: "oh-my-dsh",
+                                      workspacePath: "/tmp/oh-my-dsh", isGitRepo: true)
+    eq(gh.title, "insky2005/oh-my-dsh", "GitHub 仓库直接显示 owner/repo")
+    check(gh.githubAvailable, "三个 GitHub 专属按钮可用")
+    eq(gh.disabledHint, nil, "可用时没有禁用原因")
+
+    // git 仓库但没有 GitHub 远端：说的是 GitHub，不是 git。
+    let gitOnly = TaskWorkspaceModel.build(owner: nil, repo: nil,
+                                           workspacePath: "/Users/x/notes-repo", isGitRepo: true)
+    eq(gitOnly.title, "notes-repo · tasks.noRepoShort", "非 GitHub 仓库说 非 GitHub 仓库")
+    check(!gitOnly.githubAvailable, "没有 GitHub 远端：按钮不可用")
+    eq(gitOnly.disabledHint, "tasks.githubUnavailable", "并且说清原因")
+
+    // 目录根本不是 git 仓库：这句话必须不一样 —— 队列连分支都切不了（§V2-7）。
+    let noGit = TaskWorkspaceModel.build(owner: nil, repo: nil,
+                                         workspacePath: "/Users/x/plain-notes", isGitRepo: false)
+    eq(noGit.title, "plain-notes · tasks.noGitShort", "非 git 目录说 非 Git 仓库")
+    check(!noGit.githubAvailable, "同样没有 GitHub 可用性")
+
+    // 还没解析出工作区：不该假装知道是一个仓库。
+    let none = TaskWorkspaceModel.build(owner: nil, repo: nil, workspacePath: nil, isGitRepo: true)
+    eq(none.title, "tasks.noRepo", "没有工作区时用通用文案")
+    check(!none.githubAvailable, "按钮不可用")
+    eq(none.disabledHint, "tasks.errNoWorkspace", "原因指向「还没确定工作区」")
+}
+
 section("队列头的三个操作与 PR 可用性")
 do {
     var board = TaskBoard()

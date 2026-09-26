@@ -289,7 +289,10 @@ final class PanelIconButton: HoverButton {
 /// NSTextField cells were observed NOT rendering in some environments, so the
 /// panel headers avoid them. The color is resolved explicitly against the
 /// effective appearance.
-final class HeaderLabel: NSView {
+///
+/// Not final: FittingHeaderLabel narrows it to a variant that keeps its text
+/// inside its own frame (this one draws past it).
+class HeaderLabel: NSView {
     var text: String = "" {
         didSet {
             invalidateIntrinsicContentSize()
@@ -309,6 +312,47 @@ final class HeaderLabel: NSView {
         let size = (text as NSString).size(withAttributes: attrs)
         (text as NSString).draw(at: NSPoint(x: 0, y: max(0, (bounds.height - size.height) / 2)),
                                 withAttributes: attrs)
+    }
+}
+
+/// A header label that keeps its text INSIDE its own bounds.
+///
+/// HeaderLabel draws with NSString.draw(at:) — no clipping and no ellipsis — so an
+/// over-long text (a long workspace name in a narrow panel) would be painted UNDER
+/// whatever sits beside it in the header row. Auto Layout already clamps this
+/// label's frame in front of its neighbours; the label then truncates its own text
+/// to that frame on every layout pass, i.e. whenever the panel is resized.
+final class FittingHeaderLabel: HeaderLabel {
+    /// The text the caller asked for. What gets DRAWN is this, fitted to bounds.
+    var fullText: String = "" {
+        didSet {
+            toolTip = fullText.isEmpty ? nil : fullText
+            needsLayout = true
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        let fitted = FittingHeaderLabel.fitted(fullText, width: bounds.width)
+        if text != fitted { text = fitted }
+    }
+
+    /// `text` truncated with a trailing ellipsis so it fits `width`, measured in
+    /// the same 11pt system font HeaderLabel draws with. A zero width (before the
+    /// first layout pass) yields an empty label rather than a flash of over-long
+    /// text.
+    static func fitted(_ text: String, width: CGFloat) -> String {
+        guard !text.isEmpty, width > 0 else { return "" }
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11)]
+        let full = text as NSString
+        if full.size(withAttributes: attrs).width <= width { return text }
+        var cut = full
+        while cut.length > 1 {
+            cut = cut.substring(to: cut.length - 1) as NSString
+            let candidate = (cut as String) + "…"
+            if (candidate as NSString).size(withAttributes: attrs).width <= width { return candidate }
+        }
+        return "…"
     }
 }
 

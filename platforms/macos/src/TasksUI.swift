@@ -183,6 +183,40 @@ struct TaskCardModel: Equatable {
     }
 }
 
+/// Where this board lives, as the panel's header says it — plus whether the
+/// GitHub-only controls can do anything here.
+///
+/// 「非 git 目录」和「git 仓库但没有 GitHub 远端」是两件事：前者队列连分支都切不了
+/// （§V2-7），后者只是没有 issue / PR。头部把这两句**分开说**（这正是旧文案把两者
+/// 混成一句「非 GitHub 仓库」的地方），而三个 GitHub 专属按钮统一按「有没有 GitHub
+/// 远端」决定可用性 —— 在非 GitHub 工作区里它们点了什么都不会发生（reloadIssues /
+/// runAll 本来就 guard 掉了 repo），灰掉并说明原因，而不是留一个「点了没反应」的控件。
+struct TaskWorkspaceModel: Equatable {
+    /// The header's second line: owner/repo, 目录名 · 非 GitHub 仓库, …
+    var title: String
+    /// 配置 GitHub Token / 刷新 Issues / 全部处理 这三个 GitHub 专属按钮能不能用。
+    var githubAvailable: Bool
+    /// 不能用时按钮 tooltip 里的原因（能用时为 nil）。
+    var disabledHint: String?
+
+    static func build(owner: String?, repo: String?, workspacePath: String?,
+                      isGitRepo: Bool) -> TaskWorkspaceModel {
+        if let owner = owner, let repo = repo, !owner.isEmpty, !repo.isEmpty {
+            return TaskWorkspaceModel(title: owner + "/" + repo,
+                                      githubAvailable: true, disabledHint: nil)
+        }
+        // No workspace resolved at all: the panel has nothing to name.
+        guard let path = workspacePath, !path.isEmpty else {
+            return TaskWorkspaceModel(title: L10n.tr("tasks.noRepo"), githubAvailable: false,
+                                      disabledHint: L10n.tr("tasks.errNoWorkspace"))
+        }
+        let name = (path as NSString).lastPathComponent
+        let kind = isGitRepo ? L10n.tr("tasks.noRepoShort") : L10n.tr("tasks.noGitShort")
+        return TaskWorkspaceModel(title: name + " · " + kind, githubAvailable: false,
+                                  disabledHint: L10n.tr("tasks.githubUnavailable"))
+    }
+}
+
 /// Everything a queue header shows: how many queues exist and where each one is.
 struct QueueHeaderModel: Equatable {
     var queueID: String

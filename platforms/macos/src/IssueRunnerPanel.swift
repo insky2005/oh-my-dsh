@@ -60,7 +60,10 @@ final class IssueRunnerPanelController: NSObject {
     private let newTaskRowButton = CustomIconButton(glyph: .plus, tooltip: "", size: 24)
     private let newQueueRowButton = CustomIconButton(glyph: .symbol("rectangle.stack.badge.plus"),
                                                      tooltip: "", size: 24)
-    private let repoLabel = HeaderLabel()
+    /// The header's second line: where this board lives (owner/repo, or the
+    /// directory plus what it is not — 非 GitHub 仓库 / 非 Git 仓库). It fits its
+    /// own text to the room it has (see FittingHeaderLabel).
+    private let repoLabel = FittingHeaderLabel()
     /// The source filter as flat tabs — the skills panel's strip, so the whole
     /// shell keeps one tab体例 instead of one control style per panel.
     private let filterTabs = SkillTabStrip()
@@ -129,21 +132,24 @@ final class IssueRunnerPanelController: NSObject {
 
     private func updateLabels() {
         headerTitle.text = L10n.tr("tasks.title")
-        configButton.toolTip = L10n.tr("tasks.configHint")
-        refreshButton.toolTip = L10n.tr("tasks.refreshHint")
-        runAllButton.toolTip = L10n.tr("tasks.runAllHint")
+        // configButton / refreshButton / runAllButton tooltips are set with their
+        // enabled state below (they depend on the workspace).
         hideButton.toolTip = L10n.tr("preview.closePanel")
         newTaskRowButton.toolTip = L10n.tr("tasks.new.hint")
         newQueueRowButton.toolTip = L10n.tr("tasks.queue.newButton")
-        if let repo = repo {
-            repoLabel.text = repo.owner + "/" + repo.repo
-        } else if let path = repoRootPath {
-            // A workspace without a GitHub remote still has a board: show where
-            // we are instead of just "not a GitHub repo".
-            repoLabel.text = (path as NSString).lastPathComponent + " · " + L10n.tr("tasks.noRepoShort")
-        } else {
-            repoLabel.text = L10n.tr("tasks.noRepo")
-        }
+        // Where this board lives (header line 2) and what that means for the
+        // three GitHub-only buttons. A non-git directory and a git repository
+        // without a GitHub remote are different things and say so differently.
+        let workspace = TaskWorkspaceModel.build(owner: repo?.owner, repo: repo?.repo,
+                                                 workspacePath: repoRootPath,
+                                                 isGitRepo: workspaceIsGit)
+        repoLabel.fullText = workspace.title
+        configButton.isEnabled = workspace.githubAvailable
+        refreshButton.isEnabled = workspace.githubAvailable
+        runAllButton.isEnabled = workspace.githubAvailable
+        configButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.configHint") : workspace.disabledHint
+        refreshButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.refreshHint") : workspace.disabledHint
+        runAllButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.runAllHint") : workspace.disabledHint
         filterTabs.setItems([L10n.tr("tasks.filter.all"),
                              L10n.tr("tasks.filter.issues"),
                              L10n.tr("tasks.filter.manual")],
@@ -162,8 +168,17 @@ final class IssueRunnerPanelController: NSObject {
     }
 
     private func buildUI() {
+        // The header carries TWO lines: 任务, and where this board lives. The
+        // workspace line used to own a 28pt band of its own — a whole row of the
+        // panel for one short line (the review panel's band carries controls) —
+        // so it moved up here beside the title it belongs to.
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
-        headerTitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        headerTitle.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        repoLabel.translatesAutoresizingMaskIntoConstraints = false
+        // The workspace line gives way first: it truncates itself (see
+        // FittingHeaderLabel) while the title and the buttons keep their size.
+        repoLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        repoLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let actions = NSStackView(views: [refreshButton, runAllButton, configButton, hideButton])
         actions.orientation = .horizontal
@@ -174,34 +189,21 @@ final class IssueRunnerPanelController: NSObject {
         header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerTitle)
+        header.addSubview(repoLabel)
         header.addSubview(actions)
         NSLayoutConstraint.activate([
             headerTitle.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
-            headerTitle.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            headerTitle.topAnchor.constraint(equalTo: header.topAnchor, constant: 7),
             headerTitle.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor, constant: -8),
+            repoLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
+            repoLabel.topAnchor.constraint(equalTo: headerTitle.bottomAnchor, constant: 1),
+            repoLabel.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor, constant: -8),
             actions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
             actions.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            header.heightAnchor.constraint(equalToConstant: 40),
+            header.heightAnchor.constraint(equalToConstant: 46),
         ])
-
-        // toolbar row 1: where this board lives. The four counters used to sit
-        // here as pills; they are the content area's first row now (统计信息),
-        // the way the review panel carries its own summary inside the content.
-        repoLabel.translatesAutoresizingMaskIntoConstraints = false
-        let toolbar = DynamicFillView()
-        toolbar.kind = .panel
-        toolbar.translatesAutoresizingMaskIntoConstraints = false
-        toolbar.wantsLayer = true
-        toolbar.layer?.masksToBounds = true
-        toolbar.addSubview(repoLabel)
-        NSLayoutConstraint.activate([
-            repoLabel.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 10),
-            repoLabel.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-            repoLabel.trailingAnchor.constraint(lessThanOrEqualTo: toolbar.trailingAnchor, constant: -10),
-            toolbar.heightAnchor.constraint(equalToConstant: 28),
-        ])
-
-        // toolbar row 2: the source filter as flat tabs (全部 / Issue / 手动).
+        // the source filter as flat tabs (全部 / Issue / 手动) — the row that used
+        // to sit under the workspace band.
         filterTabs.translatesAutoresizingMaskIntoConstraints = false
         filterTabs.onSelect = { [weak self] index in
             guard let self = self else { return }
@@ -346,7 +348,6 @@ final class IssueRunnerPanelController: NSObject {
             (self?.formSheetContent as? TaskComposerView)?.layoutEditor()
         }
         view.addSubview(header)
-        view.addSubview(toolbar)
         view.addSubview(tabRow)
         view.addSubview(toolbarUnderline)
         view.addSubview(listScroll)
@@ -358,11 +359,7 @@ final class IssueRunnerPanelController: NSObject {
             header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
-            toolbar.topAnchor.constraint(equalTo: header.bottomAnchor),
-            toolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-
-            tabRow.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            tabRow.topAnchor.constraint(equalTo: header.bottomAnchor),
             tabRow.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tabRow.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 

@@ -177,4 +177,90 @@ for (name, dark) in [(NSAppearance.Name.aqua, false), (NSAppearance.Name.darkAqu
           button(state: .on) == reference(highlighted: true))
 }
 
+// 6. Header labels that must stay inside their own frame. HeaderLabel draws with
+//    NSString.draw(at:) — it neither clips nor ellipsizes — so a long text in a
+//    narrow header (the tasks panel's workspace line: "kylee-dsh-blog · 非 GitHub
+//    仓库" in a 300pt panel) would be painted UNDER the buttons beside it.
+//    FittingHeaderLabel truncates its own text to its frame instead.
+do {
+    let long = "kylee-dsh-blog · 非 GitHub 仓库"
+
+    // 6a. A text that FITS is drawn untouched, and the tooltip carries the whole
+    //     thing either way.
+    let wide = FittingHeaderLabel()
+    wide.fullText = "owner/repo"
+    wide.frame = NSRect(x: 0, y: 0, width: 150, height: 16)
+    wide.layoutSubtreeIfNeeded()
+    check("a fitting header text is left alone", wide.text == "owner/repo")
+    check("and its tooltip is the full text", wide.toolTip == "owner/repo")
+
+    // 6b. A text that does NOT fit is truncated with an ellipsis, and — the point
+    //     of the whole thing — no ink is painted past the label's right edge.
+    let host = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 16))
+    let narrow = FittingHeaderLabel()
+    narrow.fullText = long
+    narrow.frame = NSRect(x: 0, y: 0, width: 90, height: 16)
+    host.addSubview(narrow)
+    host.layoutSubtreeIfNeeded()
+    check("an over-long header text is truncated with an ellipsis",
+          narrow.text.hasSuffix("…") && narrow.text.count < long.count)
+    check("the fitted text really fits its frame",
+          (narrow.text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width
+          <= narrow.frame.width)
+    check("the tooltip still carries the full text", narrow.toolTip == long)
+    // Ink pixels inside the label's frame vs. past its right edge. (The render runs
+    // at 2x; "ink" = any pixel darker/lighter than an empty view — counting only
+    // BRIGHT pixels would miss the light appearance's grey ink.)
+    func ink(_ view: NSView, host: NSView, edge: CGFloat) -> (inside: Int, past: Int) {
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds), let data = rep.bitmapData else {
+            return (-1, -1)
+        }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        let scale = rep.pixelsWide / Int(host.bounds.width)
+        let edgePx = Int(edge) * scale
+        var inside = 0
+        var past = 0
+        for x in 0..<rep.pixelsWide {
+            for y in 0..<rep.pixelsHigh {
+                let o = y * rep.bytesPerRow + x * rep.samplesPerPixel
+                guard Int(data[o + 1]) > 0x20 || Int(data[o + 3]) > 0x40 else { continue }
+                if x < edgePx { inside += 1 } else { past += 1 }
+            }
+        }
+        return (inside, past)
+    }
+    let fitted = ink(narrow, host: host, edge: narrow.frame.maxX)
+    check("the fitted text really draws inside its frame (got \(fitted.inside) ink pixels)", fitted.inside > 20)
+    check("no ink is painted past the label's frame (got \(fitted.past) ink pixels)", fitted.past == 0)
+
+    // The premise, pinned: a PLAIN HeaderLabel with the same text and frame does
+    // paint past its own edge (it draws with NSString.draw(at:) and AppKit does not
+    // clip it), which is exactly what FittingHeaderLabel exists to prevent. If this
+    // ever stops being true the fitting label is harmless — but the reason for it
+    // would have changed, and this test should be re-read rather than deleted.
+    let plainHost = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 16))
+    let plain = HeaderLabel()
+    plain.text = long
+    plain.frame = NSRect(x: 0, y: 0, width: 90, height: 16)
+    plainHost.addSubview(plain)
+    plainHost.layoutSubtreeIfNeeded()
+    check("a plain HeaderLabel really does overdraw its own frame (that is the trap)",
+          ink(plain, host: plainHost, edge: plain.frame.maxX).past > 100)
+
+    // 6c. Before the first layout pass (width 0) the label draws NOTHING rather
+    //     than a flash of over-long text …
+    let fresh = FittingHeaderLabel()
+    fresh.fullText = long
+    check("a label with no width yet draws nothing",
+          FittingHeaderLabel.fitted(long, width: 0).isEmpty)
+    // … and once it has a width it settles on ONE text: re-fitting must not grow
+    // or shrink it again (an oscillating label would relayout forever).
+    fresh.frame = NSRect(x: 0, y: 0, width: 90, height: 16)
+    fresh.layoutSubtreeIfNeeded()
+    let settled = fresh.text
+    fresh.needsLayout = true
+    fresh.layoutSubtreeIfNeeded()
+    check("re-fitting settles on the same text", fresh.text == settled && !settled.isEmpty)
+}
+
 print("done")
