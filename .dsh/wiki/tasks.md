@@ -65,7 +65,7 @@ tests/shell-config/run.sh           # ShellConfig 旧 UserDefaults 一次性迁�
 tests/dsh-auth-cookies/run.sh       # dsh 认证 cookie 清理纯逻辑（22 项）
 tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
 tests/projects-panel/run.sh         # 项目面板：模型 45 项（projects 根 / 命名规则 / 列举 / 注册匹配）+ 控制器 49 项（无头，假 dsh 传输）
-tests/tasks-panel/run.sh            # 任务面板逻辑层四段：模型 158 + 运行器 285 + 视图模型 271 + 视图 191 = 905 项
+tests/tasks-panel/run.sh            # 任务面板逻辑层四段：模型 158 + 运行器 296 + 视图模型 276 + 视图 191 = 921 项
 tests/injected-scripts/run.sh       # 注入 dsh web 的 JS 片段守卫（JS 引擎可解析 + `window.__dsh*` 桥名对得上 + 不许出现会被 Swift 字符串吃掉的转义）
 tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到端（真实临时 $DSH_HOME：bootstrap → 升级 dsh → 回退 → 重启）+ tests/snapshot-panel/run.sh 窗口数据模型（SnapshotModel 解码 list/status/plan-rollback 的 JSON）
 ```
@@ -149,7 +149,7 @@ tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到�
 - **issue 任务**：点「处理」自动建一个**单任务队列**（分支 `fix/issue-N` / `feature/issue-N`，保留「一 issue 一分支一 PR」）；「全部处理」给每个 pending issue 各建一个，串行依次跑；
 - **PR**：队内任务只 push，**队列最后一项完成时**才开 PR（先查已有 PR 复用，避免 422）；PR 建不出来**不算失败**；不是 GitHub 仓库时 PR 能力自动关闭（只切分支 + push）；
 - **重启恢复**：读 `<repo>/.dsh/tasks/` 四文件（`index.json` 提交 / `manual.json`、`queues.json`、`local.json` 本机，**已在 .gitignore**）；上次运行中的任务标「已中断」、活跃队列暂停，**不自动开跑**；
-- 回归：`tests/tasks-panel/run.sh`（**905 项**：模型 158 + 运行器 285 + 视图模型 271 + 视图 191；运行器用假 git/假 dsh 驱动完整流水线，含**非 git 目录**：无分支队列照常跑完、有分支队列报 `errNotGit`）、`core/tests/tasks.test.js`（18 项）；细节见 [issue-runner-panel](modules/issue-runner-panel.md) 与 docs/issue-runner-design.md。
+- 回归：`tests/tasks-panel/run.sh`（**921 项**：模型 158 + 运行器 296 + 视图模型 276 + 视图 191；运行器用假 git/假 dsh 驱动完整流水线，含**非 git 目录**：无分支队列照常跑完、有分支队列报 `errNotGit`）、`core/tests/tasks.test.js`（18 项）；细节见 [issue-runner-panel](modules/issue-runner-panel.md) 与 docs/issue-runner-design.md。
 ## 排查问题
 
 1. 看日志：`~/Library/Logs/oh-my-dsh/app.log`（壳层）、`server.log`（服务输出）；设置菜单「打开日志文件夹」(⌘L) 直达；

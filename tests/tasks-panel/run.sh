@@ -35,11 +35,13 @@ cp "$SRC/TasksCore.swift" "$TMP/TasksCore.swift"
 cp "$SRC/TasksStore.swift" "$TMP/TasksStore.swift"
 cp "$SRC/TasksRunner.swift" "$TMP/TasksRunner.swift"
 cp "$SRC/TasksWorkspaces.swift" "$TMP/TasksWorkspaces.swift"   # one runner per workspace
+cp "$SRC/TasksUI.swift" "$TMP/TasksUI.swift"   # TasksRunAllModel decides what a batch runs
 cp stubs.swift "$TMP/stubs.swift"         # the L10n stand-in (the brief names failure reasons)
 cp runner-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
   -o "$TMP/tasks-runner-tests" "$TMP/TasksCore.swift" "$TMP/TasksStore.swift" \
-  "$TMP/TasksRunner.swift" "$TMP/TasksWorkspaces.swift" "$TMP/stubs.swift" "$TMP/main.swift"
+  "$TMP/TasksRunner.swift" "$TMP/TasksWorkspaces.swift" "$TMP/TasksUI.swift" \
+  "$TMP/stubs.swift" "$TMP/main.swift"
 "$TMP/tasks-runner-tests"
 rm -rf "$TMP"
 

@@ -1055,8 +1055,9 @@ final class IssueRunnerPanelController: NSObject {
     private func runAllTapped() {
         guard let runner = runner else { return }
         // Board order: the committed issue index is read first, so issues go by
-        // number and the user's own tasks follow in creation order.
-        let pending = runner.board.tasks.filter { $0.state == .pending }
+        // number and the user's own tasks follow in creation order. The selection
+        // lives in the model — the counts in the confirmation box come from it too.
+        let pending = TasksRunAllModel.startable(in: runner.board)
         let model = TasksRunAllModel.build(runner.board, githubAvailable: repo != nil,
                                            gitAvailable: workspaceIsGit)
         guard model.enabled else {

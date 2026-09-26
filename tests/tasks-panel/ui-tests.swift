@@ -795,6 +795,28 @@ do {
     eq(model.tooltip, "tasks.runAllNone", "禁用时提示说明为什么不能点")
     eq(model.confirmationText, "tasks.runAllNone", "确认框正文同样只有这一句")
 
+    // 队列被删掉之后的失败 / 已取消任务：它们已经「自己站着」，批量必须带上 ——
+    // 否则用户看到的是「失败的还在失败，而全部处理不认它们」。
+    var orphanBoard = TaskBoard()
+    let orphan = TaskItem.manual(title: "Failed one", id: "manual-aa005555")
+    let orphanCancelled = TaskItem.manual(title: "Cancelled one", id: "manual-aa006666")
+    orphanBoard.tasks = [orphan, orphanCancelled]
+    let goneQueue = orphanBoard.createQueue(name: "Lane")
+    _ = orphanBoard.enqueue(taskID: orphan.id, into: goneQueue.id)
+    _ = orphanBoard.enqueue(taskID: orphanCancelled.id, into: goneQueue.id)
+    orphanBoard.markRunning(orphan.id)
+    _ = orphanBoard.markFailed(orphan.id, error: TaskFailure.timeout.rawValue)
+    orphanBoard.markRunning(orphanCancelled.id)
+    orphanBoard.markCancelled(orphanCancelled.id)
+    model = TasksRunAllModel.build(orphanBoard, githubAvailable: false)
+    eq(model.manualCount, 0, "还在队列里 → 不归批量管（泳道自己的重试 / 跳过并继续）")
+    _ = orphanBoard.removeQueue(goneQueue.id)
+    model = TasksRunAllModel.build(orphanBoard, githubAvailable: false)
+    eq(model.manualCount, 2, "队列删掉之后，失败的与被取消的都归批量管")
+    check(model.enabled, "所以按钮亮着")
+    check(TasksRunAllModel.isStartable(orphan, board: orphanBoard), "isStartable 也这么说")
+    check(TasksRunAllModel.isStartable(orphan, board: TaskBoard()), "队列记录不在了同样算「自己站着」（陈旧 queueId 不会把它藏起来）")
+
     // 跑过的、已关闭的都不算待办。
     var finished = TaskBoard()
     let done = TaskItem.manual(title: "Done", id: "manual-aa003333")

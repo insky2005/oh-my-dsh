@@ -381,6 +381,14 @@ struct Queue {
 > - **确认框**：`TasksRunAllModel` 现在收 `gitAvailable`，三种情形分开说 —— git + GitHub「队列跑完开 PR」／git 无 GitHub「只切分支，不开 PR」／非 git 目录「不切分支也不开 PR」。
 > - 回归：模型（`switchesBranch: false` → 无分支）、运行器（非 git 目录里批量启动：**一条 git 命令都不跑**、任务照常跑起来；已存在的带分支自动队列在重试时被修好；提示词断言「不要 git init / commit」）、视图模型（非 git 的确认框文案）。
 
+> **实现（2026-09-27 修正 · 批量收哪些任务）**：`.pending` 起先被当成全部的「待处理」，于是**删除队列之后的失败 / 已取消任务**（它们回到未入队，卡片上只剩「加入队列」）落在批量之外 —— 用户的原话是「失败的还是失败状态，然后就不能通过全部处理来处理了」。现在判据是**归不归队列管**：
+>
+> - ✓ `.pending`；
+> - ✓ 队列已不存在的 `.failed` / `.cancelled`（`queueId` 指向的队列不在册也算：陈旧 id 不会把任务藏起来）—— 批量给它们各建一个新的单任务队列重新跑（`markRunning` 会清掉旧错误）；
+> - ✗ 仍在队列里的失败 / 取消任务：泳道自己的「重试 / 跳过并继续」管它们，全局批量不该悄悄复活一个被暂停的队列。
+>
+> 选择逻辑收在 `TasksRunAllModel.startable(in:)`：面板按它取任务，确认框的计数也来自它 —— 两者不会各说各话。回归：视图模型（队列里 0 个 / 删掉后 2 个、`isStartable` 对陈旧 `queueId` 的判定）+ 运行器（删队列→批量→两条任务各建一个新队列并依次跑完，旧错误被清掉）。
+
 ### V2-8 卡片式任务清单
 
 列表改为 `NSScrollView + NSStackView`，体例照 `ProjectsPanel.swift`：`render()` 重建 `arrangedSubviews`，卡片 `widthAnchor == list.widthAnchor - 20`，卡片自身 `draw(_:)` 画圆角 + 描边、`hitTest` 把非按钮区域的点击交回卡片、`resetCursorRects` 设 `pointingHand`。

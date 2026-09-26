@@ -1158,6 +1158,42 @@ do {
     check(!prompt.contains("commit（建议 feat/fix"), "不会自相矛盾地要求 commit")
 }
 
+section("删掉队列之后的失败任务：全部处理能把它们重新跑起来")
+do {
+    var board = TaskBoard()
+    let a = TaskItem.manual(title: "改 README", body: nil, id: "manual-hh001111")
+    let b = TaskItem.manual(title: "升级依赖", body: nil, id: "manual-hh002222")
+    board.tasks = [a, b]
+    let queue = board.createQueue(name: "Lane", autoPR: false)
+    _ = board.enqueue(taskID: a.id, into: queue.id)
+    _ = board.enqueue(taskID: b.id, into: queue.id)
+    board.markRunning(a.id)
+    _ = board.markFailed(a.id, error: TaskFailure.timeout.rawValue)
+    board.markRunning(b.id)
+    _ = board.markCancelled(b.id)
+    check(board.removeQueue(queue.id), "把队列删掉（任务回到未入队，状态保留）")
+    eq(board.task(a.id)?.state, .failed, "失败的那条还是失败")
+    eq(board.task(a.id)?.queueId, nil, "但已经不属于任何队列")
+
+    let h = Harness(board: board, github: false)
+    let startable = TasksRunAllModel.startable(in: h.board)
+    eq(startable.map { $0.id }, [a.id, b.id], "两条都归批量管（旧实现只认 pending，于是它们被漏掉）")
+
+    // 批量：各自一个新队列，重新跑起来。
+    for task in startable { _ = h.runner.startManualTask(task.id) }
+    eq(h.board.queues.count, 2, "各自建了一个队列")
+    check(h.board.queues.allSatisfy { $0.taskIds.count == 1 }, "每个队列一个任务")
+    check(h.board.task(a.id)?.state == .running, "失败过的那条重新跑起来了")
+    check(h.board.task(a.id)?.error == nil, "而且旧错误已经清掉")
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    check(h.board.task(a.id)?.state == .done, "跑完了")
+    eq(h.runner.runningTaskID, b.id, "被取消的那条接着跑")
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    check(h.board.task(b.id)?.state == .done, "两条都被批量救回来了")
+}
+
 if failures == 0 {
     print("ok - \(checks) checks passed")
 } else {

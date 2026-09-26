@@ -318,12 +318,37 @@ struct TasksRunAllModel: Equatable {
 
     var total: Int { issueCount + manualCount }
 
+    /// What 全部处理 starts: everything that is still waiting ON ITS OWN.
+    ///
+    /// - `.pending` — never ran;
+    /// - `.failed` / `.cancelled` **with no queue**: deleting a queue returns its
+    ///   tasks to 未入队 in exactly that state, and then the batch is the natural
+    ///   way to pick them all up again (their cards only offer 加入队列 one by one);
+    /// - NOT tasks that still sit in a queue, whatever their state: the lane owns
+    ///   them (重试 / 跳过并继续), and a global batch must not silently resurrect a
+    ///   paused queue.
+    static func isStartable(_ task: TaskItem, board: TaskBoard) -> Bool {
+        switch task.state {
+        case .pending:
+            return true
+        case .failed, .cancelled:
+            return task.queueId.flatMap { board.queue($0) } == nil
+        default:
+            return false
+        }
+    }
+
+    /// Those tasks in board order — the panel starts exactly this list, so the
+    /// counts below and what actually runs can never disagree.
+    static func startable(in board: TaskBoard) -> [TaskItem] {
+        board.tasks.filter { isStartable($0, board: board) }
+    }
+
     static func build(_ board: TaskBoard, githubAvailable: Bool,
                       gitAvailable: Bool = true) -> TasksRunAllModel {
-        // 待处理 = 未入队、还没跑过（失败/取消过的留在原处，由各自卡片的
-        // 重试 / 加入队列处理：把失败历史一起自动重跑，风险比收益大）。
-        let issueCount = board.tasks.filter { $0.source == .github && $0.state == .pending }.count
-        let manualCount = board.tasks.filter { $0.source == .manual && $0.state == .pending }.count
+        let startable = startable(in: board)
+        let issueCount = startable.filter { $0.source == .github }.count
+        let manualCount = startable.filter { $0.source == .manual }.count
         let enabled = issueCount + manualCount > 0
         // The body: the count (it is the fact the user is confirming) and what a
         // batch really does on THIS workspace — one queue and branch per task, run
