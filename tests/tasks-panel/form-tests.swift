@@ -503,10 +503,13 @@ do {
         return TaskQueueBlockView(header: header, cards: cards, collapsed: collapsed)
     }
 
+    let closed = block(collapsed: true)
+    let closedSize = layout(closed, width: 320)
     let open = block(collapsed: false)
     let openSize = layout(open, width: 320)
     eq(openSize.width, 320, "the queue block fills the list width")
-    check(openSize.height > 150, "an open lane holds its header AND its cards")
+    // 相对断言：展开的泳道比折叠态多出两张卡片的高度（不是随手写死的绝对值）。
+    check(openSize.height > closedSize.height + 80, "an open lane holds its header AND its cards")
     // Every card sits strictly inside the lane — that is the containment the
     // user asked for (queue and tasks were two parallel stacks before).
     let headers = open.subviews.compactMap { $0 as? TaskQueueHeaderView }
@@ -520,8 +523,6 @@ do {
         check(frame.maxX < open.bounds.width, "and never spills out of the lane")
     }
 
-    let closed = block(collapsed: true)
-    let closedSize = layout(closed, width: 320)
     eq(closedSize.width, 320, "a collapsed lane still fills the list width")
     check(closedSize.height < openSize.height, "and collapses to its header line")
 }

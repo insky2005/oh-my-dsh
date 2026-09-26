@@ -73,6 +73,11 @@ do {
     check(running.meta.contains("feature/lane"), "the queue's branch shows in the meta line")
     check(running.detail.contains("tasks.detailQueue"), "the queue name is in the details")
 
+    check(running.isNested, "a card inside a queue draws on the recessed level")
+    let unqueued = TaskCardModel.build(TaskItem.manual(title: "Loose", id: "manual-0063aaaa"),
+                                       board: board, expanded: false, githubRepo: false)
+    check(!unqueued.isNested, "a 未入队 card stands on the panel, so it keeps the raised level")
+
     let waiting = TaskCardModel.build(board.task(t2.id)!, board: board, expanded: false, githubRepo: false)
     eq(waiting.stateBadge, "tasks.card.queuedAt(2)", "a waiting card shows its position")
     eq(waiting.queuePosition, 2, "the position is exposed for assertions")

@@ -2,19 +2,37 @@ import AppKit
 
 // MARK: - Small shared pieces
 
-/// The two hairline greys the card family draws its 8pt outlines with: the card
-/// edge (matching SkillCardView's stroke) and the slightly darker one a queue
-/// lane uses so containment still reads on the recessed fill.
+/// The card family's palette — the AUDIT panel's (ReviewPanel) block grammar,
+/// verbatim, so a queue lane and a task card read exactly like a session block
+/// and a file block:
+///
+///   * ONE hairline outline for every block: no state-tinted borders (a state
+///     lives in its badge, the way the audit panel keeps it in its trailing
+///     summary). The only accent is the "current" one — see accentFill;
+///   * fills alternate BY NESTING LEVEL instead of by interaction state: the
+///     container sits on the raised fill (PanelControl normal), the blocks
+///     inside it on the recessed one (highlight) — the audit panel's
+///     session → turn → file ladder is white → white → grey.
 enum TaskInk {
-    /// The card / summary-card outline.
+    /// The audit panel's own hairline (ReviewInk.hairline).
     static func hairline(dark: Bool) -> NSColor {
-        dark ? NSColor(calibratedWhite: 0.38, alpha: 0.7) : NSColor(calibratedWhite: 0.82, alpha: 1)
+        dark ? NSColor(calibratedWhite: 0.38, alpha: 0.7) : NSColor(calibratedWhite: 0.80, alpha: 1)
     }
 
-    /// The queue lane's outline (a lane is the container, so it is a touch
-    /// heavier than the cards inside it).
-    static func laneHairline(dark: Bool) -> NSColor {
-        dark ? NSColor(calibratedWhite: 0.42, alpha: 0.9) : NSColor(calibratedWhite: 0.78, alpha: 1)
+    /// A block's fill by nesting level: recessed = INSIDE a container (a task
+    /// card in its queue lane), everything else = raised.
+    static func fill(dark: Bool, recessed: Bool) -> NSColor {
+        PanelControl.fill(dark: dark, highlighted: recessed)
+    }
+
+    /// The running task — this panel's "current" (the audit panel tints the
+    /// session dsh web is showing the same way).
+    static func accentFill(dark: Bool) -> NSColor {
+        NSColor.controlAccentColor.withAlphaComponent(dark ? 0.40 : 0.20)
+    }
+
+    static func accentBorder(dark: Bool) -> NSColor {
+        NSColor.controlAccentColor.withAlphaComponent(dark ? 0.55 : 0.45)
     }
 }
 
@@ -193,9 +211,10 @@ final class TaskSummaryCardView: NSView {
         needsDisplay = true
     }
 
+    /// The audit panel's summary card, block for block: raised fill, one hairline.
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        PanelControl.fill(dark: dark, highlighted: false).setFill()
+        TaskInk.fill(dark: dark, recessed: false).setFill()
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
         path.fill()
         TaskInk.hairline(dark: dark).setStroke()
@@ -231,13 +250,13 @@ final class TaskSummaryCardView: NSView {
         label.lineBreakMode = .byWordWrapping
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
-        // Padding matches a task card's own inset (12 / 10), so the summary line
-        // starts exactly where the card titles under it start.
+        // Padding matches a task card's own inset (8 / 7), so the summary line
+        // starts where the card titles under it start.
         NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 9),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
         ])
     }
 }
@@ -260,9 +279,6 @@ final class TaskCardView: NSView {
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
 
-    private var isHovered = false
-    private var trackingArea: NSTrackingArea?
-
     init(model: TaskCardModel) {
         self.model = model
         super.init(frame: .zero)
@@ -280,35 +296,21 @@ final class TaskCardView: NSView {
         needsDisplay = true
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let area = trackingArea { removeTrackingArea(area) }
-        let area = NSTrackingArea(rect: .zero,
-                                  options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                  owner: self, userInfo: nil)
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        isHovered = true
-        needsDisplay = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovered = false
-        needsDisplay = true
-    }
-
+    /// The audit panel's block: one rounded block, one hairline, and a fill that
+    /// says how DEEP in the tree it sits — never one that changes because the
+    /// block is open or hovered. Only the RUNNING task is accented (this panel's
+    /// "current").
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        PanelControl.fill(dark: dark, highlighted: model.isExpanded || isHovered).setFill()
+        if model.state == .running {
+            TaskInk.accentFill(dark: dark).setFill()
+        } else {
+            TaskInk.fill(dark: dark, recessed: model.isNested).setFill()
+        }
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
         path.fill()
         if model.state == .running {
-            TaskBadgeView.color(.running).withAlphaComponent(0.6).setStroke()
-        } else if model.isExpanded {
-            NSColor.controlAccentColor.withAlphaComponent(dark ? 0.55 : 0.45).setStroke()
+            TaskInk.accentBorder(dark: dark).setStroke()
         } else {
             TaskInk.hairline(dark: dark).setStroke()
         }
@@ -360,7 +362,20 @@ final class TaskCardView: NSView {
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         title.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let titleRow = NSStackView(views: [source, title, spacer, state])
+        // The disclosure chevron the audit panel's blocks carry: it (not a fill
+        // or a border) is what says whether the card is open.
+        let chevron = NSImageView()
+        if let image = NSImage(systemSymbolName: model.isExpanded ? "chevron.down" : "chevron.right",
+                               accessibilityDescription: nil) {
+            chevron.image = image
+            chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+            chevron.contentTintColor = .tertiaryLabelColor
+        }
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.widthAnchor.constraint(equalToConstant: 14).isActive = true
+        chevron.heightAnchor.constraint(equalToConstant: 14).isActive = true
+
+        let titleRow = NSStackView(views: [chevron, source, title, spacer, state])
         titleRow.orientation = .horizontal
         titleRow.alignment = .top
         titleRow.spacing = 6
@@ -369,9 +384,11 @@ final class TaskCardView: NSView {
         var rows: [NSView] = [titleRow]
 
         if !model.meta.isEmpty {
+            // Same slot, size and colour as the audit panel's detail/subtitle
+            // line under a block title (10pt, tertiary).
             let meta = NSTextField(labelWithString: model.meta.joined(separator: "  ·  "))
-            meta.font = .systemFont(ofSize: 11)
-            meta.textColor = .secondaryLabelColor
+            meta.font = .systemFont(ofSize: 10)
+            meta.textColor = .tertiaryLabelColor
             meta.lineBreakMode = .byTruncatingMiddle
             meta.toolTip = model.meta.joined(separator: "\n")
             meta.translatesAutoresizingMaskIntoConstraints = false
@@ -398,10 +415,11 @@ final class TaskCardView: NSView {
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
         NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            column.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            // The audit panel's header insets (8 / 7).
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
             titleRow.widthAnchor.constraint(equalTo: column.widthAnchor),
         ])
     }
@@ -504,10 +522,18 @@ final class TaskQueueHeaderView: NSView {
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 
     private func build() {
-        let disclosure = NSTextField(labelWithString: model.isCollapsed ? "▸" : "▾")
-        disclosure.font = .systemFont(ofSize: 11, weight: .semibold)
-        disclosure.textColor = .secondaryLabelColor
+        // The same disclosure glyph the audit panel's blocks use (a symbol, not
+        // a text arrow), so queue headers and task cards open the same way.
+        let disclosure = NSImageView()
+        if let image = NSImage(systemSymbolName: model.isCollapsed ? "chevron.right" : "chevron.down",
+                               accessibilityDescription: nil) {
+            disclosure.image = image
+            disclosure.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+            disclosure.contentTintColor = .tertiaryLabelColor
+        }
         disclosure.translatesAutoresizingMaskIntoConstraints = false
+        disclosure.widthAnchor.constraint(equalToConstant: 14).isActive = true
+        disclosure.heightAnchor.constraint(equalToConstant: 14).isActive = true
         disclosure.setContentHuggingPriority(.required, for: .horizontal)
 
         let name = NSTextField(labelWithString: model.name)
@@ -608,10 +634,10 @@ final class TaskQueueHeaderView: NSView {
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
         NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            column.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
         ])
         for row in rows {
             row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
@@ -693,20 +719,16 @@ final class TaskQueueBlockView: NSView {
         needsDisplay = true
     }
 
+    /// A lane is a CONTAINER block in the audit panel's sense: the raised fill
+    /// with one hairline — no tint of its own. What the queue is doing lives in
+    /// its badges, exactly the way a session block keeps its counts in the
+    /// trailing summary instead of colouring its outline.
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        // The lane is the RECESSED level (highlight fill) and the cards inside it
-        // keep the raised one (PanelControl normal) — the same two levels the
-        // review tree uses, just ordered so the queue reads as the container.
-        PanelControl.fill(dark: dark, highlighted: true).setFill()
+        TaskInk.fill(dark: dark, recessed: false).setFill()
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
         path.fill()
-        // Its own tone tints the outline, so an active or failed lane is
-        // recognisable from the block itself, not only from its badge.
-        let tint = model.tone == .neutral || model.tone == .warning
-            ? TaskInk.laneHairline(dark: dark)
-            : TaskBadgeView.color(model.tone).withAlphaComponent(dark ? 0.55 : 0.45)
-        tint.setStroke()
+        TaskInk.hairline(dark: dark).setStroke()
         path.lineWidth = 1
         path.stroke()
     }
@@ -716,19 +738,19 @@ final class TaskQueueBlockView: NSView {
         addSubview(header)
         // The header owns the lane's full width minus its padding...
         NSLayoutConstraint.activate([
-            header.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            header.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
         ])
         guard !cards.isEmpty else {
             // Collapsed: the lane IS its header.
-            header.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8).isActive = true
+            header.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7).isActive = true
             return
         }
-        // ...and the cards are stacked INSIDE it, indented past the header's own
-        // padding (review panel: children inset 12/10 under their container's 8).
-        // Two levels of inset plus two fill levels is what makes the queue read as
-        // the container instead of as a sibling card.
+        // ...and the cards are stacked INSIDE it, inset 12/10 under the
+        // container's own 8 — the audit panel's exact child geometry. Two inset
+        // levels plus two fill levels (raised lane → recessed cards) is what makes
+        // the queue read as the container.
         let children = NSStackView()
         children.orientation = .vertical
         children.alignment = .leading
@@ -740,10 +762,10 @@ final class TaskQueueBlockView: NSView {
         }
         addSubview(children)
         NSLayoutConstraint.activate([
-            children.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
-            children.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
-            children.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            children.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            children.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
+            children.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            children.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            children.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
         ])
     }
 }

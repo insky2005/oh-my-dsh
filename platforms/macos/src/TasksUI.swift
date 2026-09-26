@@ -41,6 +41,11 @@ struct TaskCardModel: Equatable {
 
     /// 1-based position inside its queue, when it is waiting.
     var queuePosition: Int?
+    /// Whether the task sits INSIDE a queue lane (or is one of the 未入队 cards
+    /// standing directly on the panel). The card's fill follows it: nested cards
+    /// take the recessed level, top-level ones the raised one — the audit
+    /// panel's nesting ladder (ReviewInk.sessionFill → ReviewInk.blockFill).
+    var isNested: Bool
     var source: TaskSource
     var state: TaskState
 
@@ -145,6 +150,7 @@ struct TaskCardModel: Equatable {
                              canEdit: task.source == .manual && task.state != .running,
                              canDelete: task.source == .manual && task.state != .running,
                              queuePosition: position,
+                             isNested: task.queueId != nil,
                              source: task.source,
                              state: task.state)
     }
