@@ -95,7 +95,9 @@ struct TaskCardModel: Equatable {
         }
         if let session = task.sessionId { detailLines.append(L10n.tr("tasks.detailSession", session)) }
         if let error = task.error { detailLines.append(L10n.tr(error)) }
-        if let body = task.body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty {
+        // 单行任务的描述就是标题：卡片标题已经说了，详情不再重复一遍。
+        if let body = task.body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty,
+           body != task.title.trimmingCharacters(in: .whitespacesAndNewlines) {
             detailLines.append("")
             detailLines.append(body)
         }
@@ -326,8 +328,9 @@ struct TaskComposerModel: Equatable {
     }
 
     var mode: Mode
-    var title: String
-    var body: String
+    /// The composer's ONE box, exactly as typed: first line = title, the lines
+    /// after it = description (a single line is both — see TaskDraft.composed).
+    var content: String
     /// Set once the submit button was pressed on an incomplete draft, so the
     /// hint shows up when it is actually needed rather than while typing.
     var attempted: Bool
@@ -336,8 +339,12 @@ struct TaskComposerModel: Equatable {
     var submitKey: String { mode.isCreate ? "tasks.new.create" : "tasks.new.save" }
     var infoKey: String { mode.isCreate ? "tasks.new.info" : "tasks.new.editInfo" }
 
-    /// What would be created / saved right now.
-    var draft: TaskDraft { TaskDraft(title: title, body: body) }
+    /// What would be created / saved right now — the box parsed into a title and
+    /// a description.
+    var draft: TaskDraft { TaskDraft.composed(from: content) }
+    /// The two things the box currently means (read-only views of the parse).
+    var title: String { draft.normalizedTitle }
+    var body: String { draft.normalizedBody }
     var canSubmit: Bool { draft.isValid }
 
     /// The first problem as an L10n key — shown only after a submit attempt
@@ -348,15 +355,14 @@ struct TaskComposerModel: Equatable {
     }
 
     var isPristine: Bool {
-        draft.normalizedTitle.isEmpty && draft.normalizedBody.isEmpty
+        content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// The form as it is while the user types (live, so the submit button
-    /// follows what is actually in the two fields).
-    func typed(title: String, body: String) -> TaskComposerModel {
+    /// The form as it is while the user types (live, so the submit button follows
+    /// what is actually in the box).
+    func typed(content: String) -> TaskComposerModel {
         var copy = self
-        copy.title = title
-        copy.body = body
+        copy.content = content
         return copy
     }
 
@@ -367,13 +373,16 @@ struct TaskComposerModel: Equatable {
         return copy
     }
 
-    static func build(mode: Mode, title: String = "", body: String = "") -> TaskComposerModel {
-        TaskComposerModel(mode: mode, title: title, body: body, attempted: false)
+    static func build(mode: Mode, content: String = "") -> TaskComposerModel {
+        TaskComposerModel(mode: mode, content: content, attempted: false)
     }
 
-    /// The composer for editing an existing task, prefilled from the board.
+    /// The composer for editing an existing task, prefilled from the board: its
+    /// title and description go back into the one box (and a one-line task comes
+    /// back as one line, not as the same sentence twice).
     static func edit(_ task: TaskItem) -> TaskComposerModel {
-        build(mode: .edit(taskID: task.id), title: task.title, body: task.body ?? "")
+        build(mode: .edit(taskID: task.id),
+              content: TaskDraft.combined(title: task.title, body: task.body))
     }
 }
 

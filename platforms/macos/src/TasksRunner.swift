@@ -159,7 +159,9 @@ enum TaskPrompts {
         lines.append("")
         lines.append("## 任务")
         lines.append(title)
-        if let body = body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty {
+        // 单行任务：描述就是标题本身 —— 那行已经在上面的「任务」里了，别重复。
+        if let body = body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty,
+           body != title.trimmingCharacters(in: .whitespacesAndNewlines) {
             lines.append("")
             lines.append(body)
         }
@@ -458,13 +460,14 @@ final class TasksRunner {
 
     // MARK: - Panel-facing mutations
 
-    /// 新建任务 (decision 6): a title and a description, nothing else. The task
-    /// lands in the 未入队 area — the queue is chosen later, from the card — and
-    /// creating it never starts anything.
+    /// 新建任务 (decision 6): one box, nothing else — its first line is the title
+    /// and the rest is the description (a single line is both, see
+    /// TaskDraft.effectiveBody). The task lands in the 未入队 area — the queue is
+    /// chosen later, from the card — and creating it never starts anything.
     @discardableResult
     func createManualTask(_ draft: TaskDraft) -> TaskItem? {
         guard draft.isValid else { return nil }
-        var task = TaskItem.manual(title: draft.normalizedTitle, body: draft.normalizedBody)
+        var task = TaskItem.manual(title: draft.normalizedTitle, body: draft.effectiveBody)
         task.state = .pending
         board.tasks.append(task)
         persist()
@@ -481,7 +484,7 @@ final class TasksRunner {
         guard draft.isValid, let i = board.index(ofTask: taskID),
               board.tasks[i].source == .manual, board.tasks[i].state != .running else { return false }
         board.tasks[i].title = draft.normalizedTitle
-        board.tasks[i].body = draft.normalizedBody
+        board.tasks[i].body = draft.effectiveBody
         persist()
         return true
     }

@@ -271,9 +271,10 @@ enum TaskBranch {
 
 // MARK: - Manual task draft
 
-/// What the user typed in 新建任务 — only TWO fields (decision 6): the queue is
-/// chosen later, from the card, so creating a task never forces a decision about
-/// branches or PRs.
+/// What the user typed in 新建任务 — ONE box (2026-09-26): the first line is the
+/// title, every line after it is the description, and a single line is BOTH. The
+/// queue is still chosen later, from the card, so creating a task never forces a
+/// decision about branches or PRs.
 struct TaskDraft: Equatable {
     var title: String
     var body: String
@@ -286,15 +287,38 @@ struct TaskDraft: Equatable {
     var normalizedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
     var normalizedBody: String { body.trimmingCharacters(in: .whitespacesAndNewlines) }
 
+    /// What actually gets stored: a draft that carries no description of its own
+    /// keeps the TITLE as its description too — a one-line task hands the agent
+    /// that line, and the line is also what names the card and the session.
+    var effectiveBody: String { normalizedBody.isEmpty ? normalizedTitle : normalizedBody }
+
     var isValid: Bool { problem == nil }
 
-    /// The first problem as an L10n key, or nil when the draft is fine. Both
-    /// fields are required: the description IS the prompt handed to the agent,
-    /// and the title names the card and the session.
-    var problem: String? {
-        if normalizedTitle.isEmpty { return "tasks.errName" }
-        if normalizedBody.isEmpty { return "tasks.errBody" }
-        return nil
+    /// The first problem as an L10n key, or nil when the draft is fine. Only the
+    /// TITLE is required now: the description can always fall back to it (see
+    /// effectiveBody), so a single line is a complete task.
+    var problem: String? { normalizedTitle.isEmpty ? "tasks.errName" : nil }
+
+    /// The composer's ONE box, split into the two things a task is made of:
+    /// first line = title, the lines after it = description.
+    static func composed(from content: String) -> TaskDraft {
+        let lines = content.components(separatedBy: .newlines)
+        let title = (lines.first ?? "").trimmingCharacters(in: .whitespaces)
+        let rest = lines.dropFirst().joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // 只有一行（或其余行都是空白）时，这一行同时作为标题与描述。
+        return TaskDraft(title: title, body: rest.isEmpty ? title : rest)
+    }
+
+    /// The inverse of composed(from:), for prefilling that box while editing: a
+    /// task whose description IS its title goes back to a single line instead of
+    /// showing the same sentence twice.
+    static func combined(title: String, body: String?) -> String {
+        let raw = body ?? ""
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return title }
+        if trimmed == title.trimmingCharacters(in: .whitespacesAndNewlines) { return title }
+        return title + "\n" + raw
     }
 }
 

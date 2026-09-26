@@ -493,18 +493,56 @@ section("draft validation")
 do {
     eq(TaskDraft(title: "", body: "x").problem, "tasks.errName", "an empty title reports the name key")
     eq(TaskDraft(title: "   ", body: "x").problem, "tasks.errName", "a blank title is empty")
-    eq(TaskDraft(title: "x", body: "  ").problem, "tasks.errBody", "an empty description reports the body key")
     check(TaskDraft(title: "x", body: "y").problem == nil, "a filled draft has no problem")
     check(TaskDraft(title: "x", body: "y").isValid, "a filled draft is valid")
     eq(TaskDraft(title: "  t  ", body: "  b  ").normalizedTitle, "t", "the title is trimmed")
     eq(TaskDraft(title: "  t  ", body: "  b  ").normalizedBody, "b", "the body is trimmed")
+
+    // 单行任务：这一行同时是标题和描述 —— 描述留空时回落到标题。
+    eq(TaskDraft(title: "One line", body: "").effectiveBody, "One line",
+       "a draft without its own description hands the title to the agent")
+    eq(TaskDraft(title: "One line", body: "  ").effectiveBody, "One line", "whitespace is still empty")
+    eq(TaskDraft(title: "T", body: "b").effectiveBody, "b", "a real description wins")
+}
+
+section("the composer box splits into a title and a description")
+do {
+    let single = TaskDraft.composed(from: "Polish README")
+    eq(single.title, "Polish README", "a single line is the title")
+    eq(single.body, "Polish README", "and it is the description too")
+
+    let multi = TaskDraft.composed(from: "Polish README\ntidy the install section\nand rerun the tests")
+    eq(multi.title, "Polish README", "the first line is the title")
+    eq(multi.body, "tidy the install section\nand rerun the tests",
+       "every line after it is the description, blank-line structure kept")
+
+    let spaced = TaskDraft.composed(from: "  Polish README  \n\n  tidy it  \n")
+    eq(spaced.title, "Polish README", "the title is trimmed")
+    eq(spaced.body, "tidy it", "and the description is trimmed too")
+
+    let blankTail = TaskDraft.composed(from: "Polish README\n\n   ")
+    eq(blankTail.body, "Polish README", "a box with only blank lines after the title is a single line")
+
+    let empty = TaskDraft.composed(from: "   ")
+    eq(empty.title, "", "an empty box has no title")
+    eq(empty.problem, "tasks.errName", "so it cannot be created")
+
+    // 编辑回填：标题与描述合成一个框；描述就是标题时回到单行。
+    eq(TaskDraft.combined(title: "T", body: "b"), "T\nb", "title and description go back into one box")
+    eq(TaskDraft.combined(title: "T", body: "T"), "T", "a one-line task comes back as one line")
+    eq(TaskDraft.combined(title: "T", body: ""), "T", "no description means one line")
+    eq(TaskDraft.combined(title: "T", body: nil), "T", "a nil description means one line")
+    eq(TaskDraft.combined(title: "T", body: "  T  "), "T", "whitespace around the same line does not duplicate it")
+    // 往返：合成再拆开，得到的还是同一个任务。
+    let round = TaskDraft.composed(from: TaskDraft.combined(title: "T", body: "b"))
+    eq(round.title, "T", "round trip keeps the title")
+    eq(round.body, "b", "round trip keeps the description")
 }
 
 section("creating, editing and deleting a manual task")
 do {
     let h = Harness(board: TaskBoard())
     check(h.runner.createManualTask(TaskDraft(title: "", body: "x")) == nil, "an invalid draft creates nothing")
-    check(h.runner.createManualTask(TaskDraft(title: "Do it", body: "")) == nil, "a description is required")
     eq(h.board.tasks.count, 0, "nothing was added for an invalid draft")
 
     let created = h.runner.createManualTask(TaskDraft(title: "  Polish README  ",
@@ -529,6 +567,25 @@ do {
     check(h.runner.updateManualTask(id, title: "", body: "x") == false, "an invalid edit is refused")
     check(h.board.task(id)?.title == "Better title", "the refused edit left the task alone")
     check(h.runner.updateManualTask("issue-1", title: "t", body: "b") == false, "a github task is not editable")
+}
+
+section("a one-line task is its own description")
+do {
+    let h = Harness(board: TaskBoard())
+    let one = h.runner.createManualTask(TaskDraft.composed(from: "Fix the header"))
+    eq(one?.title ?? "", "Fix the header", "the line becomes the title")
+    eq(one?.body ?? "", "Fix the header", "and the description handed to the agent")
+
+    // 多行：首行标题，其余行描述。
+    let multi = h.runner.createManualTask(TaskDraft.composed(from: "Fix the header\nand rerun the tests"))
+    eq(multi?.title ?? "", "Fix the header", "a multi-line box takes the first line as the title")
+    eq(multi?.body ?? "", "and rerun the tests", "and the rest as the description")
+
+    // 编辑回填用的是同一个框：单行任务回到一行。
+    let back = TaskDraft.combined(title: one?.title ?? "", body: one?.body)
+    eq(back, "Fix the header", "editing a one-line task shows one line")
+    let backMulti = TaskDraft.combined(title: multi?.title ?? "", body: multi?.body)
+    eq(backMulti, "Fix the header\nand rerun the tests", "a two-part task shows both parts")
 }
 
 section("the queue picker and joining a queue")

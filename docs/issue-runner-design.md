@@ -114,7 +114,7 @@ $DSH_HOME/skills/issue-resolve/SKILL.md —— 代理在任务会话中加载的
 ## V2 方案（2026-09-24 定稿，待实现）
 
 > 本章是本次迭代（分支 `feature/tasks-manual-queue`）的落地依据。上文 v1 章节保留作历史决策记录。
-> **模型决策已定稿**（详见 §V2-13 决策记录）：多队列模型先行；队列分支用户可填（默认由队列名生成 slug，中文名回退 `feature/queue-<id4>`）；队内失败暂停队列；PR 是**可选能力**；issue 任务保持 v1 逻辑、自动生成**单任务队列**；创建任务表单只填标题 + 描述（一律先进「未入队」区）；队列计数含自动队列。
+> **模型决策已定稿**（详见 §V2-13 决策记录）：多队列模型先行；队列分支用户可填（默认由队列名生成 slug，中文名回退 `feature/queue-<id4>`）；队内失败暂停队列；PR 是**可选能力**；issue 任务保持 v1 逻辑、自动生成**单任务队列**；创建任务表单只有一个框（首行标题 / 其余行描述，一律先进「未入队」区）；队列计数含自动队列。
 
 ### V2-0 需求与改动面
 
@@ -270,12 +270,15 @@ struct Queue {
 
 **入口**：页签行右侧的「＋」图标按钮（或空态里的「新建任务」按钮）→ **从内容区顶部下拉一张表单抽屉**（§V2-8 的实现备注 2026-09-25c）。
 
-1. **标题**（必填）：卡片主行、会话名；
-2. **描述 / 指令**（必填，多行 NSTextView）：发给代理的提示词正文。
+**只有一个输入框**（2026-09-26 起，取代原来的「标题 + 描述」两个字段）：
 
-表单**只有这两个字段**（决策 6）：创建后任务**一律进入「未入队」区**，队列归属完全由卡片上的操作决定 ——
+1. **首行 = 任务标题**：卡片主行、会话名；
+2. **其余行 = 任务描述**（发给代理的指令）；
+3. **只有一行时，这一行同时是标题和描述** —— 描述回落到标题，代理收到的就是这一行。
 
-> 逻辑已落地（第 4 步）：`TaskDraft` 校验两个字段都非空，空值返回 L10n 键 `tasks.errName` / `tasks.errBody`，`normalizedTitle/Body` 统一去首尾空白；运行器 `createManualTask` / `updateManualTask`（运行中的任务与 github 任务都拒绝编辑）/ `deleteManualTask`（运行中拒绝删除；删除即退出所有队列并清掉本机 session 记录）；「加入队列 ▾」的候选来自 `TaskBoard.queueChoices()`——**只列用户队列**，issue 任务的自动单任务队列不是目的地。UI 表单在第 6 步接。
+创建后任务**一律进入「未入队」区**（决策 6），队列归属完全由卡片上的操作决定 ——
+
+> 逻辑：`TaskDraft.composed(from:)` 负责拆行（首行去首尾空白作标题；其余行去掉首尾空白后作描述；若为空则回落到标题），`TaskDraft.combined(title:body:)` 是它的逆运算（编辑回填时把两部分合成一个框；描述就是标题时回到单行，不会出现同一句话写两遍）。校验**只看标题**（空框 → L10n 键 `tasks.errName`；`tasks.errBody` 随之删除：描述不再是必填项），`effectiveBody` 保证存储层永远拿到一段可发给代理的正文；运行器 `createManualTask` / `updateManualTask`（运行中的任务与 github 任务都拒绝编辑）/ `deleteManualTask`（运行中拒绝删除；删除即退出所有队列并清掉本机 session 记录）；「加入队列 ▾」的候选来自 `TaskBoard.queueChoices()`——**只列用户队列**，issue 任务的自动单任务队列不是目的地。
 
 1. 点卡片 **「加入队列 ▾」** → 选**已有队列**，或**新建队列…**（**同一张抽屉**，创建后顺手把这一个任务入队：**队列名** / **分支**（默认见 §V2-6，可改、可留空；字段下方实时显示「将使用分支：feature/<slug>」，无 ASCII slug 的纯中文名回退通用文案）/ **基于分支**（默认 `main`）/ **完成后创建 PR**（开关，属于队列属性，队内任务共享；工作区不是 GitHub 仓库时置灰关））；队列也可**脱离任务单独创建**（队列分区头右侧的「新建队列」）；
 2. 入队后：全局空闲 → 立刻启动队首；否则排队（见 §V2-5）；
@@ -394,6 +397,24 @@ struct Queue {
 - **失败两级可见**：队列头汇总 `1 个失败`，队内失败卡片自身标 `失败`；暂停的队列头给「开始 / 跳过」；
 - **空态**：一个队列都没有时显示引导「在任务卡片上点『加入队列 ▾ → 新建队列…』创建第一个队列」。
 
+### V2-7a 任务创建改成单框输入（2026-09-26）
+
+表单从「标题 + 描述」两个字段收成一个内容框，切分规则在**模型层**（`TaskDraft`，纯 Foundation，可无头回归）：
+
+| 输入 | 结果 |
+|---|---|
+| `Polish README` | 标题 = 描述 = `Polish README` |
+| `Polish README\ntidy it up\nrerun tests` | 标题 = `Polish README`；描述 = `tidy it up\nrerun tests` |
+| `Polish README\n\n  ` | 标题 = 描述 = `Polish README`（非首行全是空白 = 单行） |
+| `   ` | 报 `tasks.errName`（**只有标题是必填的**：描述总能回落到标题） |
+
+- `TaskDraft.composed(from:)` 拆框、`TaskDraft.combined(title:body:)` 是它的逆运算（编辑回填成同一个框；**描述 == 标题时回到单行**，不会出现同一句话写两遍）；`effectiveBody` 让「留空的描述」在存储层自动变成标题，于是 `createManualTask` / `updateManualTask` 写进 board 的任务永远带着一段可发给代理的正文；
+- **不重复**：单行任务的描述就是标题，通用提示词（`TaskRunnerEnv.manual`）与卡片详情都不再把同一句话打印两遍；
+- 视图：`TaskComposerView` 只剩一个多行编辑器（`TaskFormKit.textArea`，默认 160pt、随输入长高、上限 260pt 后内部滚动），占位文案即规则（`tasks.new.contentHint`），信息行给一句话摘要 + 快捷键；
+- **Enter 不再提交**（首行/其余行都靠它换行）——**⌘↩ 提交**、Esc 关闭；提交按钮的禁用/可用状态与提示行逻辑不变；
+- 删除的文案键：`tasks.new.name` / `tasks.new.nameHint` / `tasks.new.body` / `tasks.new.bodyHint` / `tasks.errBody`（描述不再是必填的独立字段）；
+- 回归：`tests/tasks-panel` 四阶段 **562 项**（新增 composed/combined/effectiveBody 的拆行与往返、单行任务的存储与提示词不重复、编辑回填单行、空框报错、`type()` 单框输入助手），视图阶段改成对同一个编辑器的尺寸/长高断言。
+
 ### V2-8m 布局对齐审查面板（2026-09-25）
 
 任务面板的骨架**逐层照审查面板（`ReviewPanel.swift`）**重排，两处偏离被显式否掉：工具栏仍是**两行**（只把计数胶囊移出），统计信息是**纯文字卡**而不是彩色胶囊。
@@ -447,7 +468,7 @@ V2-8m 对齐的是**布局**，这一版把**样式**也对齐到同一套方块
 - 队列：`tasks.queue.add`、`tasks.queue.addPick`、`tasks.queue.remove`、`tasks.queue.new`、`tasks.queue.name`、`tasks.queue.branch`、`tasks.queue.base`、`tasks.queue.start`、`tasks.queue.pause`、`tasks.queue.openPR`、`tasks.queue.progress`、`tasks.queue.idle`、`tasks.queue.pendingCount`、`tasks.queue.unnamed`；
 - 队列总览：`tasks.queue.compact`、`tasks.queue.expand`、`tasks.queue.hideDone`、`tasks.queue.failedCount`、`tasks.queue.empty`、`tasks.queue.state.active` / `.paused` / `.finished`、`tasks.section.unqueued`（未入队 (%d)）；
 - 状态：`tasks.state.queued`、`tasks.state.interrupted`、`tasks.sec.dirtyTree`（工作区有未提交改动）、`tasks.sec.noRemote`、`tasks.sec.prUnavailable`、`tasks.sec.branchPushedNoPR`；
-- 手动任务：`tasks.new.title`、`tasks.new.name`、`tasks.new.nameHint`、`tasks.new.body`、`tasks.new.create`、`tasks.new.save`、`tasks.new.done`、`tasks.new.editTitle`、`tasks.new.editInfo`、`tasks.errName`、`tasks.errBody`、`tasks.prompt.*`（通用提示词模板）；队列内联表单：`tasks.queue.settings`、`tasks.queue.editTitle`、`tasks.queue.editInfo`、`tasks.queue.nameHint`、`tasks.queue.baseHint`、`tasks.queue.branchWillUse`、`tasks.queue.prUnavailable`、`tasks.queue.createOnly`、`tasks.queue.created`、`tasks.queue.updated`；统计卡逐段计数：`tasks.stat.queues` / `.queued` / `.running` / `.failed`（V2-8m 之前的合并键 `tasks.summary` 已删除）。v1 遗留的 `tasks.queue.rename` / `.renameInfo` / `.changeBranch` / `.branchInfo` 被「队列设置」内联表单取代，已删除；
+- 手动任务：`tasks.new.title`、`tasks.new.content`（**任务内容**，唯一输入框的标题）、`tasks.new.contentHint`（占位文案说明「首行是标题、其余行是描述」）、`tasks.new.create`、`tasks.new.save`、`tasks.new.done`、`tasks.new.editTitle`、`tasks.new.editInfo`、`tasks.errName`（空框时唯一的报错）、`tasks.prompt.*`（通用提示词模板）；队列内联表单：`tasks.queue.settings`、`tasks.queue.editTitle`、`tasks.queue.editInfo`、`tasks.queue.nameHint`、`tasks.queue.baseHint`、`tasks.queue.branchWillUse`、`tasks.queue.prUnavailable`、`tasks.queue.createOnly`、`tasks.queue.created`、`tasks.queue.updated`；统计卡逐段计数：`tasks.stat.queues` / `.queued` / `.running` / `.failed`（V2-8m 之前的合并键 `tasks.summary` 已删除）。v1 遗留的 `tasks.queue.rename` / `.renameInfo` / `.changeBranch` / `.branchInfo` 被「队列设置」内联表单取代，已删除；
 - 详情与错误：`tasks.detailSession`、`tasks.detailSource`、`tasks.detailQueue`、`tasks.errInterrupted`、`tasks.errNotGit`、`tasks.errCheckout`。
 
 ### V2-10 测试与 CI
@@ -466,7 +487,7 @@ QA 钩子：`DSH_TASKS_TEST=1` 启动即开面板；`DSH_PANEL_TEST=` 全量核�
 
 ### V2-11 实施拆分（模型先行）
 
-> **进度**：第 1 步（token 只从文件读取）已完成 —— commit `0a8f535`；第 6 步（卡片式任务清单）已完成 —— `TasksUI.swift`（视图模型：徽标 / 元信息 / 主操作 / 队列头 / 摘要，**无头可断言**）+ `TaskCardView.swift`（卡片 + 队列头 + 徽标渲染）+ 面板列表（`NSScrollView + NSStackView`，队列分区、未入队区、来源筛选、新建/编辑任务表单、新建队列表单、「加入队列 ▾」菜单、队列 ⋯ 菜单）；第 5 步（issue 任务改走自动单任务队列 / 面板接运行器）已完成 —— 面板删除 `startTask`/`pollSession`/`openPR`/`finishCurrentTask`/`gitCheckoutBranch`/`gitBranchPushed`/`issueFixPrompt` 与 Swift 版 `TaskIndex`，行模型换成 `TaskItem`，执行全部经 `TasksRunner`（3s 定时 `step()`、`updateBoard` 合并 issues、`syncFromBoard` 渲染、`findExistingPR` 复用）；第 4 步（手动创建任务）已完成 —— `TaskDraft`（两个字段 + 校验，L10n 键 `tasks.errName` / `tasks.errBody`）/ `QueueChoice`（**只列用户队列**，issue 自动队列不是目的地）/ 运行器 `createManualTask` · `updateManualTask` · `deleteManualTask`（运行中拒绝删除，删除即退出所有队列并清掉本机 session），UI 表单留到第 6 步；第 2 步（队列模型 + 四文件持久化）已完成 —— `TasksCore.swift` / `TasksStore.swift` + `core/lib/tasks.js` 同步 + `tests/tasks-panel/`（126 项）；第 3 步（队列运行器）已完成 —— `TasksRunner.swift`（含 git 三步显式检查 / 全局串行 / 失败暂停 / 队列级 PR 复用 / 取消·重试·跳过 / 重启恢复）+ `runner-tests.swift`（108 项）。
+> **进度**：第 1 步（token 只从文件读取）已完成 —— commit `0a8f535`；第 6 步（卡片式任务清单）已完成 —— `TasksUI.swift`（视图模型：徽标 / 元信息 / 主操作 / 队列头 / 摘要，**无头可断言**）+ `TaskCardView.swift`（卡片 + 队列头 + 徽标渲染）+ 面板列表（`NSScrollView + NSStackView`，队列分区、未入队区、来源筛选、新建/编辑任务表单、新建队列表单、「加入队列 ▾」菜单、队列 ⋯ 菜单）；第 5 步（issue 任务改走自动单任务队列 / 面板接运行器）已完成 —— 面板删除 `startTask`/`pollSession`/`openPR`/`finishCurrentTask`/`gitCheckoutBranch`/`gitBranchPushed`/`issueFixPrompt` 与 Swift 版 `TaskIndex`，行模型换成 `TaskItem`，执行全部经 `TasksRunner`（3s 定时 `step()`、`updateBoard` 合并 issues、`syncFromBoard` 渲染、`findExistingPR` 复用）；第 4 步（手动创建任务）已完成 —— `TaskDraft`（校验，L10n 键 `tasks.errName`；**2026-09-26 起表单收成一个框**，见 §V2-7a）/ `QueueChoice`（**只列用户队列**，issue 自动队列不是目的地）/ 运行器 `createManualTask` · `updateManualTask` · `deleteManualTask`（运行中拒绝删除，删除即退出所有队列并清掉本机 session），UI 表单留到第 6 步；第 2 步（队列模型 + 四文件持久化）已完成 —— `TasksCore.swift` / `TasksStore.swift` + `core/lib/tasks.js` 同步 + `tests/tasks-panel/`（126 项）；第 3 步（队列运行器）已完成 —— `TasksRunner.swift`（含 git 三步显式检查 / 全局串行 / 失败暂停 / 队列级 PR 复用 / 取消·重试·跳过 / 重启恢复）+ `runner-tests.swift`（108 项）。
 
 1. `refactor(tasks): GitHub token 只从文件读取（移除 Keychain 读写）` —— 独立、低风险，先落；含 L10n 文案与 README；
 2. `feat(tasks-core): 队列模型与四文件持久化` —— `TaskItem` / `Queue` / `QueueStore` / `TaskStore` + `core/lib/tasks.js` 同步 + 无头单测（**模型先行，跑通后再接执行器**）；
@@ -502,7 +523,7 @@ QA 钩子：`DSH_TASKS_TEST=1` 启动即开面板；`DSH_PANEL_TEST=` 全量核�
 3. **队内失败暂停队列** —— 共享分支上有依赖，失败后必须停下来等用户决定，不自动跳过；
 4. **PR 是可选能力** —— GitHub issue 任务可用；公司内部仓库 / 无 PR 能力的远端下，手动任务与队列只做「分支 + commit + push」，PR 相关自动关闭，失败也不判队列失败；
 5. **issue 任务保持 v1 逻辑** —— 「处理」自动创建单任务队列，分支与 PR 语义不变。
-6. **创建表单不带队列字段** —— 新建任务只有标题 + 描述，创建后一律进入「未入队」区；队列归属只由卡片上的「加入队列 ▾」决定（选已有队列 / 新建队列…）。队列表单才含 队列名 / 分支 / 基于分支 / 完成后创建 PR；
+6. **创建表单不带队列字段** —— 新建任务只有一个内容框（首行标题、其余行描述、单行则两者），创建后一律进入「未入队」区；队列归属只由卡片上的「加入队列 ▾」决定（选已有队列 / 新建队列…）。队列表单才含 队列名 / 分支 / 基于分支 / 完成后创建 PR；
 7. **队列分支默认值** —— `feature/` + 队列名 slug；slug 为空（纯中文 / emoji 名）时回退 `feature/queue-<id 前 4 位>`；
 8. **队列计数包含自动队列** —— 摘要条与列表按同一口径统计所有队列（含 issue 任务的自动单任务队列）；自动队列默认以紧凑形态（队列头与卡片合一的一行）渲染，可展开。
 

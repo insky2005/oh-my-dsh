@@ -247,34 +247,52 @@ do {
     check(!composer.canSubmit, "an empty form cannot be submitted")
     eq(composer.problemKey, nil, "a pristine form shows no problem")
 
-    // Typing half a task keeps the form quiet (no nagging) but the button
-    // follows the two fields; only Enter explains what is missing.
-    composer = composer.typed(title: "Polish README", body: "")
-    eq(composer.problemKey, nil, "typing does not nag about the empty description")
-    check(!composer.canSubmit, "but a title without a description is not submittable")
-    eq(composer.attemptedSubmit().problemKey, "tasks.errBody",
-       "an attempted submit names the missing description")
+    // ONE box: 首行是标题，其余行是描述。单行 = 同时是标题和描述，因此立即可以创建。
+    composer = composer.typed(content: "Polish README")
+    eq(composer.problemKey, nil, "typing never nags")
+    check(composer.canSubmit, "a single line is a complete task")
+    eq(composer.draft.normalizedTitle, "Polish README", "the first line is the title")
+    eq(composer.draft.normalizedBody, "Polish README", "and it is the description too")
 
-    composer = composer.typed(title: "Polish README", body: "tidy it up")
-    eq(composer.problemKey, nil, "both fields filled clears the hint")
-    check(composer.canSubmit, "the form can be submitted")
+    composer = composer.typed(content: "Polish README\ntidy it up")
+    check(composer.canSubmit, "a multi-line box can be submitted")
     eq(composer.draft.normalizedTitle, "Polish README", "the draft carries the title")
+    eq(composer.draft.normalizedBody, "tidy it up", "and the description from the lines after it")
 
     // Whitespace-only input is still empty.
-    let blank = TaskComposerModel.build(mode: .create, title: "  ", body: "  ")
+    let blank = TaskComposerModel.build(mode: .create, content: "  \n  ")
     check(!blank.canSubmit, "whitespace is not a task")
     eq(blank.attemptedSubmit().problemKey, "tasks.errName",
        "submitting an empty form points at the title")
 
-    // Editing an existing task prefills both fields and saves instead of creating.
+    // Editing an existing task prefills the same box (title line + description
+    // lines) and saves instead of creating.
     let task = TaskItem.manual(title: "Old title", body: "old body", id: "manual-0010aaaa")
     let editing = TaskComposerModel.edit(task)
     eq(editing.mode, .edit(taskID: "manual-0010aaaa"), "edit mode carries the task id")
     eq(editing.headingKey, "tasks.new.editTitle", "editing says so")
     eq(editing.submitKey, "tasks.new.save", "editing saves")
+    eq(editing.content, "Old title\nold body", "title and description share the box")
     eq(editing.title, "Old title", "the title is prefilled")
     eq(editing.body, "old body", "the description is prefilled")
     check(editing.canSubmit, "a prefilled form is submittable")
+
+    // 单行任务回填成一行，而不是同一句话写两遍。
+    let oneLiner = TaskItem.manual(title: "One line", body: "One line", id: "manual-0064aaaa")
+    eq(TaskComposerModel.edit(oneLiner).content, "One line", "a one-line task opens as one line")
+    eq(TaskComposerModel.edit(oneLiner).draft.normalizedBody, "One line",
+       "and still describes itself with that line")
+
+    // 卡片详情不重复：单行任务的描述 == 标题，详情里不再重复一遍。
+    var singleBoard = TaskBoard()
+    singleBoard.tasks = [oneLiner]
+    let singleCard = TaskCardModel.build(oneLiner, board: singleBoard, expanded: true, githubRepo: false)
+    check(!singleCard.detail.contains("One line"), "the detail does not repeat a one-line title")
+    let twoLine = TaskItem.manual(title: "T", body: "b", id: "manual-0065aaaa")
+    var twoLineBoard = TaskBoard()
+    twoLineBoard.tasks = [twoLine]
+    let twoLineCard = TaskCardModel.build(twoLine, board: twoLineBoard, expanded: true, githubRepo: false)
+    check(twoLineCard.detail.contains("b"), "a real description still shows in the detail")
 }
 
 section("queue composer (inline 新建队列)")

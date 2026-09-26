@@ -338,7 +338,7 @@ final class IssueRunnerPanelController: NSObject {
         // the same layout pass.
         formSheetHost.onLayout = { [weak self] in
             // A resize changes the wrapping: the description editor re-measures.
-            (self?.formSheetContent as? TaskComposerView)?.layoutBody()
+            (self?.formSheetContent as? TaskComposerView)?.layoutEditor()
         }
         view.addSubview(header)
         view.addSubview(toolbar)
@@ -1242,8 +1242,8 @@ final class IssueRunnerPanelController: NSObject {
             // The editor can only size itself to its text once it has its real
             // width: an edit must show the whole description, not its first line.
             guard let composer = view as? TaskComposerView else { return }
-            composer.layoutBody()
-            composer.focusTitle()
+            composer.layoutEditor()
+            composer.focusEditor()
         }
     }
 

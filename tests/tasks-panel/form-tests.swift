@@ -60,6 +60,13 @@ func typed(_ field: NSTextField) -> Notification {
     Notification(name: NSControl.textDidChangeNotification, object: field)
 }
 
+/// Type into the task composer's ONE box — the same notification its
+/// NSTextViewDelegate gets from the real editor.
+func type(_ form: TaskComposerView, _ text: String) {
+    form.editor.string = text
+    form.textDidChange(Notification(name: NSText.didChangeNotification, object: form.editor))
+}
+
 // MARK: - 新建任务 / 编辑任务
 
 section("inline 新建任务 form")
@@ -72,32 +79,44 @@ do {
 
     let size = layout(form, width: 320)
     eq(size.width, 320, "the form fills the list width")
-    check(size.height > 140, "the form carries two fields and a button row")
+    check(size.height > 140, "the form carries its one box and a button row")
     eq(form.submitButton.title, "create", "the primary button creates")
     check(!form.submitButton.isEnabled, "an empty form cannot be submitted")
     check(form.hint.isHidden, "and shows no problem yet")
+    check(!form.editorPlaceholder.isHidden, "the empty box shows its placeholder")
 
-    // A title alone is not enough: the description IS the prompt.
-    form.titleField.stringValue = "Polish README"
-    form.controlTextDidChange(typed(form.titleField))
-    check(!form.submitButton.isEnabled, "a title without a description is not submittable")
+    // 只有一行也是完整的任务：这一行同时是标题和描述。
+    type(form, "Polish README")
+    check(form.submitButton.isEnabled, "a single line is enough to create")
     check(form.hint.isHidden, "and the form does not nag while it is being typed into")
+    check(form.editorPlaceholder.isHidden, "the placeholder goes away once there is text")
 
-    form.bodyText.string = "tidy it up"
-    form.textDidChange(Notification(name: NSText.didChangeNotification, object: form.bodyText))
-    check(form.submitButton.isEnabled, "both fields filled enables 创建")
-
+    type(form, "Polish README\ntidy it up")
     form.submitTapped()
-    eq(submitted?.draft.normalizedTitle, "Polish README", "submitting hands over the typed title")
-    eq(submitted?.draft.normalizedBody, "tidy it up", "and the typed description")
+    eq(submitted?.draft.normalizedTitle, "Polish README", "submitting hands over the first line as the title")
+    eq(submitted?.draft.normalizedBody, "tidy it up", "and the lines after it as the description")
     eq(submitted?.mode, .create, "in create mode")
     check(!cancelled, "submitting does not close the form (完成 / Esc does)")
 
-    // Enter on an incomplete draft explains what is missing.
+    // Submitting an EMPTY box explains what is missing.
     let empty = TaskComposerView(model: TaskComposerModel.build(mode: .create))
     empty.submitTapped()
     check(!empty.hint.isHidden, "an attempted submit shows the problem")
-    eq(empty.hint.stringValue, "errName", "and names the title field")
+    eq(empty.hint.stringValue, "errName", "and names the missing title")
+
+    // A plain Enter stays a newline (the lines ARE the task — first one is the
+    // title), Esc closes. (⌘↩ submits; it reads the current event, so the headless
+    // run leaves that path to manual QA.)
+    var escClosed = false
+    let keys = TaskComposerView(model: TaskComposerModel.build(mode: .create))
+    keys.onCancel = { escClosed = true }
+    _ = layout(keys, width: 320)
+    type(keys, "Only a title")
+    check(!keys.textView(keys.editor, doCommandBy: #selector(NSResponder.insertNewline(_:))),
+          "a plain Enter is handed to the editor (a newline)")
+    check(keys.textView(keys.editor, doCommandBy: #selector(NSResponder.cancelOperation(_:))),
+          "Esc is handled by the form")
+    check(escClosed, "…and Esc asks the panel to close it")
 }
 
 section("inline 编辑任务 form")
@@ -108,17 +127,22 @@ do {
     form.onSubmit = { submitted = $0 }
     _ = layout(form, width: 320)
 
-    eq(form.titleField.stringValue, "Old title", "the title is prefilled")
-    eq(form.bodyText.string, "old body", "the description is prefilled")
+    eq(form.editor.string, "Old title\nold body", "title and description are prefilled into the box")
     eq(form.submitButton.title, "save", "编辑 saves")
     eq(form.closeActionButton.title, "cancel", "编辑 can be cancelled")
     check(form.submitButton.isEnabled, "a prefilled form can be saved")
 
-    form.titleField.stringValue = "New title"
-    form.controlTextDidChange(typed(form.titleField))
+    // 单行任务：回填一行（不是同一句话写两遍）。
+    let oneLiner = TaskComposerView(model: TaskComposerModel.edit(
+        TaskItem.manual(title: "One line", body: "One line", id: "manual-0066aaaa")))
+    _ = layout(oneLiner, width: 320)
+    eq(oneLiner.editor.string, "One line", "a one-line task opens as one line")
+
+    type(form, "New title\nand a new description")
     form.submitTapped()
     eq(submitted?.mode, .edit(taskID: "manual-0030aaaa"), "saving keeps the task id")
     eq(submitted?.draft.normalizedTitle, "New title", "and carries the edited title")
+    eq(submitted?.draft.normalizedBody, "and a new description", "and the edited description")
 }
 
 // MARK: - 新建队列 / 队列设置
@@ -229,15 +253,13 @@ do {
     // placeholder clipped to one character). The rows must be pinned to the form.
     let taskForm = TaskComposerView(model: TaskComposerModel.build(mode: .create))
     _ = layout(taskForm, width: 360)
-    let titleWidth = taskForm.titleField.frame.width
-    check(titleWidth > 300, "the title field spans the form (got \(titleWidth)pt)")
-    // The editor is the form's other input surface, and it must WRAP at the same
+    // The box is the form's only input surface, and it must WRAP at the form's
     // width: an autoresizing document view used to keep a width 318pt wider than
     // the clip view, so long lines were clipped instead of wrapped.
-    let bodyWidth = taskForm.bodyText.frame.width
-    check(bodyWidth > 280, "the description editor spans the form (got \(bodyWidth)pt)")
-    check(abs(bodyWidth - titleWidth) < 12,
-          "the editor wraps at the fields' width (editor \(bodyWidth), field \(titleWidth))")
+    let editorWidth = taskForm.editor.frame.width
+    check(editorWidth > 280, "the editor spans the form (got \(editorWidth)pt)")
+    check(taskForm.editorBox.frame.width > 300,
+          "and its box spans the form (got \(taskForm.editorBox.frame.width)pt)")
 
     let queueForm = QueueComposerView(model: QueueComposerModel.create())
     _ = layout(queueForm, width: 360)
@@ -250,10 +272,10 @@ do {
         check(field.frame.width > 200, "the \(name) field stays usable (got \(field.frame.width)pt)")
     }
 
-    // Widening the panel widens the fields with it.
+    // Widening the panel widens the box with it.
     let wide = TaskComposerView(model: TaskComposerModel.build(mode: .create))
     _ = layout(wide, width: 520)
-    check(wide.titleField.frame.width > titleWidth, "a wider panel gives wider fields")
+    check(wide.editor.frame.width > editorWidth, "a wider panel gives a wider box")
 }
 
 section("the description editor is a real editor")
@@ -265,30 +287,29 @@ do {
     _ = layout(form, width: 430)
     // A real multi-line text VIEW, not a taller single-line field: an editable
     // NSTextField reports one line for any bounds (measured), so a tall box around
-    // it was just a tall box.
-    check(form.bodyText.isVerticallyResizable, "the editor is a multi-line text view")
-    check(form.bodyBox is TaskFieldBox, "inside the same box as the single-line fields")
-    check(form.titleBox is TaskFieldBox, "which the title field uses too")
-    check(form.bodyBox.frame.height >= 100,
-          "the empty editor is a usable area, not one line (got \(form.bodyBox.frame.height)pt)")
-    check(abs(form.bodyText.frame.width - form.titleField.frame.width) <= 24,
-          "the text wraps at the same width the fields use")
+    // it was just a tall box. The one box IS the whole form now.
+    check(form.editor.isVerticallyResizable, "the editor is a multi-line text view")
+    check(form.editorBox is TaskFieldBox, "inside the form's own field box")
+    check(form.editorBox.frame.height >= 100,
+          "the empty editor is a usable area, not one line (got \(form.editorBox.frame.height)pt)")
+    check(form.editorBox.frame.width > 300, "and it spans the form")
 
-    let emptyHeight = form.bodyBox.frame.height
-    form.bodyText.string = String(repeating: "一行比较长的描述文本，用来看编辑器会不会长高。", count: 8)
-    form.textDidChange(Notification(name: NSText.didChangeNotification, object: form.bodyText))
+    let emptyHeight = form.editorBox.frame.height
+    check(emptyHeight >= TaskFormKit.editorHeight,
+          "the empty box starts at its comfortable height (\(emptyHeight)pt)")
+    // 12 行：超过默认高度但不到上限 —— 框随文字长高。
+    type(form, String(repeating: "一行比较长的描述文本，用来看编辑器会不会长高。", count: 12))
     _ = layout(form, width: 430)
-    check(form.bodyBox.frame.height > emptyHeight,
-          "the editor grows with its text (\(emptyHeight) → \(form.bodyBox.frame.height)pt)")
+    check(form.editorBox.frame.height > emptyHeight,
+          "the editor grows with its text (\(emptyHeight) → \(form.editorBox.frame.height)pt)")
 
     // Past the maximum box height the TEXT grows instead, so the rest scrolls
     // under the caret rather than disappearing.
-    form.bodyText.string = String(repeating: "一行比较长的描述文本。\n", count: 40)
-    form.textDidChange(Notification(name: NSText.didChangeNotification, object: form.bodyText))
+    type(form, String(repeating: "一行比较长的描述文本。\n", count: 40))
     _ = layout(form, width: 430)
-    check(form.bodyBox.frame.height <= TaskFormKit.editorMaxHeight + 1,
+    check(form.editorBox.frame.height <= TaskFormKit.editorMaxHeight + 1,
           "the box stops growing at its maximum")
-    check(form.bodyText.frame.height > form.bodyBox.frame.height,
+    check(form.editor.frame.height > form.editorBox.frame.height,
           "and the text view grows past it (the editor scrolls)")
 }
 
@@ -358,10 +379,9 @@ do {
     taskSheet.sheet.setContent(taskForm)
     taskSheet.host.layoutSubtreeIfNeeded()
     let before = taskSheet.sheet.frame.height
-    taskForm.bodyText.string = String(repeating: "一行描述文本。\n", count: 6)
-    taskForm.textDidChange(Notification(name: NSText.didChangeNotification, object: taskForm.bodyText))
+    type(taskForm, String(repeating: "一行描述文本。\n", count: 16))
     taskSheet.host.layoutSubtreeIfNeeded()
-    check(taskSheet.sheet.frame.height > before, "typing a long description grows the sheet too")
+    check(taskSheet.sheet.frame.height > before, "typing a long task grows the sheet too")
     check(abs(taskSheet.sheet.frame.height - taskForm.frame.height) < 1,
           "and it stays exactly as tall as that form")
 

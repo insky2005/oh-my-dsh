@@ -67,7 +67,8 @@ enum TaskFormKit {
     static let hintFont = NSFont.systemFont(ofSize: 11)
     /// Roomier than a stock field: the form is the panel's main input surface.
     static let fieldHeight: CGFloat = 30
-    static let editorHeight: CGFloat = 120
+    /// The task composer's box is the form's ONLY input: give it room.
+    static let editorHeight: CGFloat = 160
     static let editorMaxHeight: CGFloat = 260
     /// Never smaller than a few lines: the sheet scrolls rather than shrinking
     /// the description down to a couple of lines.
@@ -321,8 +322,10 @@ enum TaskFormKit {
 
 // MARK: - 新建任务 / 编辑任务
 
-/// The inline task composer: title, description, 创建 / 完成 (or 保存 / 取消).
-final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewDelegate {
+/// The inline task composer: ONE box whose first line is the task's title and
+/// whose remaining lines are its description (a single line is both), plus
+/// 创建 / 完成 (or 保存 / 取消).
+final class TaskComposerView: TaskFormCardView, NSTextViewDelegate {
 
     private(set) var model: TaskComposerModel
 
@@ -333,52 +336,44 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
 
     private let heading = NSTextField(labelWithString: "")
     private let info = NSTextField(wrappingLabelWithString: "")
-    private let titleCaption = TaskFormKit.caption()
-    private let bodyCaption = TaskFormKit.caption()
+    private let contentCaption = TaskFormKit.caption()
     private let closeButton = CustomIconButton(glyph: .close, tooltip: "", size: 22)
-    // Internal (not private) so the headless form tests can type into the fields
-    // and read the button/hint state the user sees — the same convention the
-    // project cards use for their workspace.
-    let titleField: NSTextField
-    let titleBox: TaskFieldBox
-    /// The description editor (a real multi-line text view in the same kind of box
-    /// as the title field).
-    let bodyText: NSTextView
-    let bodyBox: TaskFieldBox
-    let bodyPlaceholder: NSTextField
-    private var bodyBoxHeight: NSLayoutConstraint!
-    private var bodyTextHeight: NSLayoutConstraint!
+    // Internal (not private) so the headless form tests can type into the box and
+    // read the button/hint state the user sees — the same convention the project
+    // cards use for their workspace.
+    /// The one input surface: a real multi-line text view in a TaskFieldBox.
+    let editor: NSTextView
+    let editorBox: TaskFieldBox
+    let editorPlaceholder: NSTextField
+    private var editorBoxHeight: NSLayoutConstraint!
+    private var editorTextHeight: NSLayoutConstraint!
     let hint: NSTextField
     let submitButton: NSButton
     let closeActionButton: NSButton
 
     init(model: TaskComposerModel) {
         self.model = model
-        let title = TaskFormKit.textField(model.title, placeholder: "")
-        titleBox = title.box
-        titleField = title.field
-        let body = TaskFormKit.textArea(model.body)
-        bodyBox = body.box
-        bodyText = body.text
-        bodyPlaceholder = body.placeholder
-        bodyBoxHeight = body.boxHeight
-        bodyTextHeight = body.textHeight
+        let content = TaskFormKit.textArea(model.content)
+        editorBox = content.box
+        editor = content.text
+        editorPlaceholder = content.placeholder
+        editorBoxHeight = content.boxHeight
+        editorTextHeight = content.textHeight
         hint = TaskFormKit.hintLabel()
         submitButton = TaskFormKit.button("", primary: true)
         closeActionButton = TaskFormKit.button("", primary: false)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        titleField.delegate = self
-        bodyText.delegate = self
+        editor.delegate = self
         build()
         apply(model)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// Focus the first field once the card is on screen.
-    func focusTitle() {
-        window?.makeFirstResponder(titleField)
+    /// Put the caret in the box once the card is on screen.
+    func focusEditor() {
+        window?.makeFirstResponder(editor)
     }
 
     /// Push a model into the (already built) views: labels, texts, values and
@@ -387,11 +382,9 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
         self.model = model
         heading.stringValue = L10n.tr(model.headingKey)
         info.stringValue = L10n.tr(model.infoKey)
-        titleCaption.stringValue = L10n.tr("tasks.new.name")
-        bodyCaption.stringValue = L10n.tr("tasks.new.body")
-        titleField.placeholderString = L10n.tr("tasks.new.nameHint")
-        bodyPlaceholder.stringValue = L10n.tr("tasks.new.bodyHint")
-        bodyPlaceholder.isHidden = !bodyText.string.isEmpty
+        contentCaption.stringValue = L10n.tr("tasks.new.content")
+        editorPlaceholder.stringValue = L10n.tr("tasks.new.contentHint")
+        editorPlaceholder.isHidden = !editor.string.isEmpty
         submitButton.title = L10n.tr(model.submitKey)
         closeActionButton.title = L10n.tr(model.mode.isCreate ? "tasks.new.done" : "btn.cancel")
         closeButton.toolTip = L10n.tr("tasks.new.done")
@@ -415,10 +408,9 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
         closeActionButton.action = #selector(cancelTapped)
 
         let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
-        let titleRow = TaskFormKit.row(titleCaption, titleBox)
-        let bodyRow = TaskFormKit.row(bodyCaption, bodyBox)
+        let contentRow = TaskFormKit.row(contentCaption, editorBox)
         let buttons = TaskFormKit.buttonRow([submitButton, closeActionButton])
-        let column = NSStackView(views: [headingRow, info, titleRow, bodyRow, hint, buttons])
+        let column = NSStackView(views: [headingRow, info, contentRow, hint, buttons])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 8
@@ -428,7 +420,7 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
         addSubview(column)
         // Everything but the button row spans the form: the fields are as wide as
         // the sheet, not as wide as their caption.
-        TaskFormKit.stretch([headingRow, info, titleRow, bodyRow, hint], to: column)
+        TaskFormKit.stretch([headingRow, info, contentRow, hint], to: column)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
@@ -438,7 +430,7 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
     }
 
     private var currentDraft: TaskComposerModel {
-        model.typed(title: titleField.stringValue, body: bodyText.string)
+        model.typed(content: editor.string)
     }
 
     /// The editor grows with what is typed.
@@ -446,21 +438,23 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
     /// The BOX grows so the text is always visible while it fits the sheet; the
     /// text view inside grows with it, and past the maximum box height it scrolls
     /// under the caret instead.
-    private func updateBodyHeight() {
-        let width = bodyBox.bounds.width
+    private func updateEditorHeight() {
+        let width = editorBox.bounds.width
         guard width > 1 else { return }
-        let needed = TaskFormKit.textHeight(bodyText.string, width: width)
-        let box = min(TaskFormKit.editorMaxHeight, max(TaskFormKit.editorMinHeight, needed))
+        let needed = TaskFormKit.textHeight(editor.string, width: width)
+        // The box never SHRINKS below its comfortable default (the one box IS the
+        // task composer) — it only grows with the text, up to the maximum.
+        let box = min(TaskFormKit.editorMaxHeight, max(TaskFormKit.editorHeight, needed))
         // Only touch the constraints when something actually changed: this runs on
         // every layout pass (the panel re-measures the sheet).
-        if abs(bodyBoxHeight.constant - box) > 0.5 { bodyBoxHeight.constant = box }
+        if abs(editorBoxHeight.constant - box) > 0.5 { editorBoxHeight.constant = box }
         let text = max(box - 8, needed)
-        if abs(bodyTextHeight.constant - text) > 0.5 { bodyTextHeight.constant = text }
+        if abs(editorTextHeight.constant - text) > 0.5 { editorTextHeight.constant = text }
     }
 
-    /// Called once the field has its real width: edit mode then shows the whole
-    /// description instead of the first line of it.
-    func layoutBody() { updateBodyHeight() }
+    /// Called once the box has its real width: edit mode then shows the whole task
+    /// instead of the first line of it.
+    func layoutEditor() { updateEditorHeight() }
 
     /// The submit button's action; internal so the headless tests can press it.
     @objc func submitTapped() {
@@ -476,39 +470,27 @@ final class TaskComposerView: TaskFormCardView, NSTextFieldDelegate, NSTextViewD
 
     @objc private func cancelTapped() { onCancel?() }
 
-    // MARK: NSTextFieldDelegate / NSTextViewDelegate
-
-    func controlTextDidChange(_ obj: Notification) { apply(currentDraft) }
-
-    // MARK: NSTextViewDelegate (the description)
+    // MARK: NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {
-        updateBodyHeight()
+        updateEditorHeight()
         apply(currentDraft)
     }
 
     func textDidBeginEditing(_ notification: Notification) { apply(currentDraft) }
     func textDidEndEditing(_ notification: Notification) { apply(currentDraft) }
 
-    /// In the description a plain Enter stays a newline (the text IS the prompt
-    /// handed to the agent); Esc closes the form.
+    /// A plain Enter stays a NEWLINE — the lines are the task (first one = title,
+    /// the rest = description), so they cannot also mean "submit". ⌘↩ submits and
+    /// Esc closes; the form says so in its info line.
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             onCancel?()
             return true
         }
-        return false
-    }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        // Enter submits from the TITLE field; in the description it stays a
-        // newline (the text IS the prompt handed to the agent) — Esc closes.
-        if commandSelector == #selector(NSResponder.insertNewline(_:)), control === titleField {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)),
+           NSApp.currentEvent?.modifierFlags.contains(.command) == true {
             submitTapped()
-            return true
-        }
-        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-            onCancel?()
             return true
         }
         return false
