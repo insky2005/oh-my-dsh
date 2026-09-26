@@ -200,10 +200,12 @@ final class Harness {
                 (title: "fix(#" + String(task.number ?? 0) + ")", body: branch)
             },
             promptText: { task, queue, brief in
-                // Same rule the panel uses: only a queue that will open a PR asks
-                // the agent to push.
-                TaskPrompts.manual(title: task.title, body: task.body,
-                                   branch: queue?.branch, queueName: queue?.name,
+                // Same rules the panel uses: only a queue that will open a PR asks
+                // the agent to push, and only a SHARED queue claims to share a
+                // branch (a single-task queue does not).
+                let sharedName = queue.flatMap { $0.autoCreated ? nil : $0.name }
+                return TaskPrompts.manual(title: task.title, body: task.body,
+                                          branch: queue?.branch, queueName: sharedName,
                                    pushes: (queue?.autoPR ?? false) && github,
                                    brief: brief)
             },
@@ -1037,6 +1039,77 @@ do {
     let queueID = h.runner.startIssueTask("issue-12")
     eq(h.board.queue(queueID!)?.baseBranch, "develop", "队列基于工作区的默认分支，不是硬编码的 main")
     eq(h.repo.checkouts, ["develop", "fix/issue-12"], "流水线第一步 checkout 的也是它")
+}
+
+section("全部处理：每个待处理任务各自一个单任务队列，按板面顺序依次跑")
+do {
+    var board = TaskBoard()
+    let issue = TaskItem.github(number: 3, title: "Fix dark mode")
+    let a = TaskItem.manual(title: "改 README", body: nil, id: "manual-ee001111")
+    let b = TaskItem.manual(title: "升级依赖", body: nil, id: "manual-ee002222")
+    board.tasks = [issue, a, b]
+    let h = Harness(board: board, defaultBaseBranch: "develop")
+
+    // 面板的批量动作：每个待处理任务各自入队，然后把 runner 指回第一个
+    var firstQueue: String?
+    for task in h.board.tasks where task.state == .pending {
+        let id = task.source == .github ? h.runner.startIssueTask(task.id) : h.runner.startManualTask(task.id)
+        if firstQueue == nil { firstQueue = id }
+    }
+    h.runner.focus(onQueue: firstQueue!)
+
+    eq(h.board.queues.count, 3, "三个待处理任务 → 三个单任务队列")
+    check(h.board.queues.allSatisfy { $0.autoCreated }, "都标记为自动队列")
+    check(h.board.queues.allSatisfy { $0.taskIds.count == 1 }, "每个队列恰好一个任务（各自一条分支）")
+    eq(h.board.queue(firstQueue!)?.branch, "fix/issue-3", "issue 任务用 issue 分支")
+    eq(h.board.queues.first { $0.name == "改 README" }?.branch, "feature/readme", "手动任务按标题派生分支")
+    check(h.board.queues.contains { $0.branch?.hasPrefix("feature/manual-") == true },
+          "纯中文标题退回 feature/manual-<id4>")
+    check(h.board.queues.allSatisfy { $0.baseBranch == "develop" }, "基线都是工作区默认分支")
+    eq(h.board.activeQueue()?.id, firstQueue, "runner 被指回第一个队列")
+    // 这三条队列都要 PR（issue 与「各自一个分支」的手动任务都一样），所以收尾时要
+    // 校验分支已在远端 —— 让假仓库说「都推上去了」。
+    h.repo.pushed.insert("fix/issue-3")
+    h.repo.pushed.insert("feature/readme")
+    if let manualBranch = h.board.queues.first(where: { $0.branch?.hasPrefix("feature/manual-") == true })?.branch {
+        h.repo.pushed.insert(manualBranch)
+    }
+    eq(h.runner.runningTaskID, issue.id, "板面顺序里的第一个（issue #3）立刻开跑")
+    eq(h.runner.runningQueueID, firstQueue, "runningQueueID 指向它自己的队列（面板据此标活跃）")
+
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.runner.runningTaskID, a.id, "第二个接着跑")
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.runner.runningTaskID, b.id, "第三个接着跑")
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    check(h.runner.runningTaskID == nil, "全部跑完，没有卡住")
+    check(h.board.queues.allSatisfy { $0.state == QueueState.done }, "三个队列都完成")
+}
+
+section("单任务队列的提示词不会谎称「和其他任务共享分支」")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "Solo", body: nil, id: "manual-ee003333")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = Harness(board: board)
+    _ = h.runner.startQueue(queue.id)
+    let solo = h.dsh.prompts["session-1"] ?? ""
+    check(solo.contains("本任务是队列「Lane」中的一项"), "多任务队列照旧说「共享同一分支」")
+
+    var singleBoard = TaskBoard()
+    let solo2 = TaskItem.manual(title: "Alone", body: nil, id: "manual-ee004444")
+    singleBoard.tasks = [solo2]
+    let h2 = Harness(board: singleBoard)
+    _ = h2.runner.startManualTask(solo2.id)
+    let alone = h2.dsh.prompts["session-1"] ?? ""
+    check(alone.contains("本任务独立执行"), "单任务队列说「独立执行」，不说共享")
+    check(!alone.contains("与其他任务共享"), "不会谎称有人和它同一条分支")
+    check(alone.contains("当前分支应为 feature/alone"), "而是把它自己那条分支说清楚")
 }
 
 if failures == 0 {

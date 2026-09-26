@@ -364,6 +364,15 @@ struct Queue {
 > 1. **默认基线分支不再假设 `main`**：`TaskQueue.auto` 的 `baseBranch` 一直是 `"main"`（`TasksCore`），而流水线第一步就是 `git checkout <base>`（`TasksRunner.enter`）—— 默认分支是 `master` / `develop` 的仓库，**第一个 issue 任务必然以「切换分支失败」告终**。现在采纳工作区时探测一次（`IssueRunnerPanel.detectDefaultBaseBranch`，git 侧只负责取事实）：推送远端（`github` > `origin` > 首个，复用 `pushRemoteName` 的偏好）的 `HEAD` → 本地 `main` → 本地 `master` → 当前分支 → 兜底 `main`；决策链在 `TaskBranch.defaultBaseBranch(symbolicRef:current:hasMain:hasMaster:)`，**无头可测**（含「`origin/HEAD` 是未解析的悬挂 symref 时不算数」这种坑）。结果同时喂给 runner 的 `env.defaultBaseBranch`（自动队列）与队列表单的 `QueueComposerModel.defaultBaseBranch`（预填「基于分支」、留空回落、占位文案）。
 > 2. **超时 30 分钟 → 60 分钟，并且不再隐形**：`TasksRunner` 的默认超时改为 `defaultTimeout = 60 * 60`，面板用 `taskTimeout()` 读壳层设置 `tasksTimeoutMinutes`（5–1440 的整数）覆盖；运行中的卡片把上限写进那一行：「已运行 1:05（上限 60 分钟，到点会取消会话）」—— 到点被取消这件事，不该只能从一张失败卡片上事后得知。
 
+> **实现（2026-09-27 补充 · 「全部处理」不再只管 issue）**：工具栏三个按钮里，「刷新」「配置 GitHub Token」确实是 GitHub 操作，它们在任何非 GitHub 工作区禁用是对的；**「处理」不是** —— 它的语义是「把所有还在等的任务跑起来」，只认 issue 纯属历史原因。现在：
+>
+> - **每个待处理任务各自一个单任务队列**（`TaskQueue.auto(forManual:)`，与 issue 任务同形：一条分支、一个 PR、`autoCreated`、默认折叠、不进「加入队列」候选）。理由：与 issue 语义对齐（决策 5），**批量不会把互不相干的任务捆到一条分支上**。分支按标题派生（`feature/<slug>`，纯中文标题退回 `feature/manual-<id4>` —— slug 算法只留 ASCII，中文标题因此拿不到拼音），基线用工作区默认分支（见 F5）。
+> - **顺序**：按板面顺序（issue 索引先读、手动任务随后）串行推进。每个队列创建时都会 `resumeQueue（→ activeQueueID = 它）`，所以新增 `TasksRunner.focus(onQueue:)` 在批量结束后把 runner 指回第一个 —— 否则「最后创建的那个」会先跑。
+> - **不可用当空转**：`nextStartable` 现在会先看 activeQueueID 指向的队列，没有可启动的任务时**落到下一个有活的活跃队列**。此前它会返回 nil 并卡住 —— 一批单任务队列里，除当前那条以外都会显示「活跃」却永远不动（审计里的 N4/U5）。面板侧新增 `TasksRunner.runningQueueID`，`isCurrent` 用它判断，因此真正在跑的那条才标「活跃」。
+> - **批量边界**：只收 `.pending`（未入队、从没跑过或回退过）。失败 / 已取消的任务留在原处由卡片的「重试 / 加入队列」处理 —— 把失败历史一起自动重跑，风险大于收益。>1 时先确认（每项都是一条真实会话，各自受队列超时约束），结果写进状态行与 `app.log`。
+> - **提示词**：自动队列（issue 的、以及批量给手动任务建的）不再说「与其他任务共享同一分支与改动」—— 它永远不会再收第二个任务；用户自建的队列照旧报自己的名字。判据是 `queue.autoCreated`，不是任务数。
+> - **按钮**：`TasksRunAllModel`（纯模型，可无头断言）给出计数、启用条件与 tooltip（含非 GitHub 工作区「只切分支不开 PR」那句）；「处理」移到工具栏**第一位**，并在没有待办时禁用（顺带修掉死点击）。
+
 ### V2-8 卡片式任务清单
 
 列表改为 `NSScrollView + NSStackView`，体例照 `ProjectsPanel.swift`：`render()` 重建 `arrangedSubviews`，卡片 `widthAnchor == list.widthAnchor - 20`，卡片自身 `draw(_:)` 画圆角 + 描边、`hitTest` 把非按钮区域的点击交回卡片、`resetCursorRects` 设 `pointingHand`。

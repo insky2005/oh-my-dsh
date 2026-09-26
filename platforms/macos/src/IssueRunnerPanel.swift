@@ -204,10 +204,14 @@ final class IssueRunnerPanelController: NSObject {
         repoLabel.fullText = workspace.title
         configButton.isEnabled = workspace.githubAvailable
         refreshButton.isEnabled = workspace.githubAvailable
-        runAllButton.isEnabled = workspace.githubAvailable
+        // 处理 is NOT GitHub-only: it starts everything that is waiting, and manual
+        // tasks work in any workspace (only the PR half needs a GitHub remote).
+        let runAll = TasksRunAllModel.build(runner?.board ?? TaskBoard(),
+                                            githubAvailable: workspace.githubAvailable)
+        runAllButton.isEnabled = runAll.enabled
         configButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.configHint") : workspace.disabledHint
         refreshButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.refreshHint") : workspace.disabledHint
-        runAllButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.runAllHint") : workspace.disabledHint
+        runAllButton.toolTip = runAll.tooltip
         filterTabs.setItems([L10n.tr("tasks.filter.all"),
                              L10n.tr("tasks.filter.issues"),
                              L10n.tr("tasks.filter.manual")],
@@ -240,7 +244,9 @@ final class IssueRunnerPanelController: NSObject {
 
         otherWorkspacesButton.isHidden = true
         otherWorkspacesButton.onAction = { [weak self] in self?.otherWorkspacesTapped() }
-        let actions = NSStackView(views: [otherWorkspacesButton, refreshButton, runAllButton,
+        // 处理 first: it is the primary action of the whole panel (start the work),
+        // and it is the one that works in any workspace.
+        let actions = NSStackView(views: [otherWorkspacesButton, runAllButton, refreshButton,
                                          configButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
@@ -560,8 +566,13 @@ final class IssueRunnerPanelController: NSObject {
                 // Push policy: only a queue that will open a PR asks the agent to
                 // push (see TasksRunner.finish) — and the prompt has to say the
                 // same thing, or the agent pushes out of habit.
+                // An AUTO queue (an issue task's, or the one 全部处理 makes for a
+                // single manual task) is not a shared lane: it will never hold
+                // another task, so 「与其他任务共享同一分支与改动」 would be false.
+                // A user-made lane always names itself, even while it holds one task.
+                let sharedQueueName = queue.flatMap { $0.autoCreated ? nil : $0.name }
                 return TaskPrompts.manual(title: task.title, body: task.body,
-                                          branch: queue?.branch, queueName: queue?.name,
+                                          branch: queue?.branch, queueName: sharedQueueName,
                                           pushes: (queue?.autoPR ?? false) && repo != nil,
                                           brief: brief)
             },
@@ -1037,10 +1048,46 @@ final class IssueRunnerPanelController: NSObject {
     /// away, the rest wait their turn — the runner is strictly serial.
     private func runAllTapped() {
         guard let runner = runner else { return }
-        let pending = runner.board.tasks
-            .filter { $0.source == .github && $0.state == .pending }
-            .sorted { ($0.number ?? 0) < ($1.number ?? 0) }
-        for task in pending { _ = runner.startIssueTask(task.id) }
+        // Board order: the committed issue index is read first, so issues go by
+        // number and the user's own tasks follow in creation order.
+        let pending = runner.board.tasks.filter { $0.state == .pending }
+        let model = TasksRunAllModel.build(runner.board, githubAvailable: repo != nil)
+        guard model.enabled else {
+            setStatus(L10n.tr("tasks.runAllNone"), spin: false)
+            autoHideStatus(after: 4)
+            return
+        }
+        if pending.count > 1 {
+            // Every task is a real agent session (up to the queue's timeout each),
+            // so a batch asks first — and says what it will do.
+            let alert = NSAlert()
+            alert.messageText = L10n.tr("tasks.runAllTitle", pending.count)
+            alert.informativeText = model.tooltip
+            alert.addButton(withTitle: L10n.tr("tasks.runAllConfirm"))
+            alert.addButton(withTitle: L10n.tr("btn.cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        var started = 0
+        var firstQueueID: String?
+        for task in pending {
+            // Each task runs in its OWN single-task queue: one branch, one PR —
+            // the same shape an issue task gets. Unrelated work never shares a
+            // branch just because it was batched.
+            let queueID = task.source == .github
+                ? runner.startIssueTask(task.id)
+                : runner.startManualTask(task.id)
+            if let queueID = queueID {
+                started += 1
+                if firstQueueID == nil { firstQueueID = queueID }
+            }
+        }
+        // …and work them in BOARD order: every creation resumed its own queue, so
+        // without this the runner would start with whichever was created last.
+        if let first = firstQueueID { runner.focus(onQueue: first) }
+        AppLog.shared.log("tasks: 全部处理 started \(started) task(s) "
+                          + "(issues \(model.issueCount), manual \(model.manualCount))")
+        setStatus(L10n.tr("tasks.runAllStarted", started), spin: false)
+        autoHideStatus(after: 5)
         syncFromBoard()
     }
 

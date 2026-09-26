@@ -109,7 +109,7 @@ manual: false
 
 ## 测试
 
-- `tests/tasks-panel/run.sh` **842 项**（四段：模型 146 + 运行器 256 + 视图模型 249 + 视图 191），运行器段用**假 git + 假 dsh** 驱动完整流水线（含非 git 目录两问：无分支队列照常跑完 / 有分支队列报 `errNotGit`）；
+- `tests/tasks-panel/run.sh` **884 项**（四段：模型 158 + 运行器 274 + 视图模型 261 + 视图 191），运行器段用**假 git + 假 dsh** 驱动完整流水线（含非 git 目录两问：无分支队列照常跑完 / 有分支队列报 `errNotGit`）；
 - `core/tests/tasks.test.js` **18 项**（四文件读写 + 会话键兼容 + 队列入队/移出）；
 - 已登记 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`（两处清单必须一致）。
 

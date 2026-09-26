@@ -217,6 +217,50 @@ boardDup.reindexQueueMembership()
 eq(boardDup.queue(dupQueue.id)?.taskIds, [dupIssue.id], "a duplicated id is de-duplicated on load")
 eq(boardDup.tasks(inQueue: dupQueue.id).count, 1, "so the lane shows one card again")
 
+// MARK: - manual single-task queues (全部处理)
+
+section("全部处理：手动任务也有自己的单任务队列")
+do {
+    let task = TaskItem.manual(title: "改 README", body: nil, id: "manual-ff001234")
+    let queue = TaskQueue.auto(forManual: task, baseBranch: "develop")
+    check(queue.autoCreated, "标记为自动队列（不进「加入队列」候选、默认折叠）")
+    check(queue.autoPR, "对齐 issue 的语义：完成时开 PR")
+    eq(queue.name, "改 README", "队列名就是任务标题")
+    eq(queue.branch, "feature/readme", "分支按标题派生")
+    eq(queue.baseBranch, "develop", "基线用工作区自己的默认分支")
+    eq(queue.taskIds, [], "从空开始：成员关系只有 enqueue 一个写者")
+
+    // 纯中文标题没有 ASCII slug：退回带 id 后缀的名字（唯一、可用）。
+    let chinese = TaskQueue.auto(forManual: TaskItem.manual(title: "升级依赖", id: "manual-ff00abcd"))
+    eq(chinese.branch, "feature/manual-abcd", "纯中文标题退回 feature/manual-<id4>")
+    eq(chinese.name, "升级依赖", "名字仍然是标题")
+}
+
+section("全部处理：多个单任务队列按顺序推进（不卡在空转的那个）")
+do {
+    var board = TaskBoard()
+    let a = TaskItem.manual(title: "A", id: "manual-ff01aaaa")
+    let b = TaskItem.manual(title: "B", id: "manual-ff02bbbb")
+    board.tasks = [a, b]
+    let qa = TaskQueue.auto(forManual: a)
+    let qb = TaskQueue.auto(forManual: b)
+    board.queues = [qa, qb]
+    _ = board.enqueue(taskID: a.id, into: qa.id)
+    _ = board.enqueue(taskID: b.id, into: qb.id)
+    _ = board.resumeQueue(qa.id)
+    _ = board.resumeQueue(qb.id)          // 批量时两个队列都是活跃的
+    eq(board.nextStartable(), b.id, "先跑 runner 被指到的那个（最后 resume 的）")
+
+    board.markRunning(a.id)
+    board.markDone(a.id, prUrl: nil)      // 第一个跑完 → 队列变 done
+    eq(board.queue(qa.id)?.state, QueueState.done, "完成的单任务队列变成 done")
+    eq(board.nextStartable(), b.id, "接着跑下一个活跃队列 —— 旧实现在这里会卡住")
+
+    board.markRunning(b.id)
+    board.markDone(b.id, prUrl: nil)
+    eq(board.nextStartable(), nil, "都跑完了：没有可启动的")
+}
+
 // MARK: - summary and restart recovery
 
 section("summary and restart recovery")

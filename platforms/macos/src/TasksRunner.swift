@@ -841,15 +841,33 @@ final class TasksRunner {
         return ok
     }
 
-    /// Create the single-task queue an issue task runs in (决策 5) and start it.
+    /// 处理 one issue task: create (or reuse) its single-task queue and start it.
     @discardableResult
     func startIssueTask(_ taskID: String) -> String? {
         guard let task = board.task(taskID), task.source == .github else { return nil }
-        if let existing = board.autoQueueID(forTask: taskID) {
-            // Reuse the queue; a failed/cancelled task goes through retry so it
-            // becomes queued again instead of being skipped as a finished entry.
+        return startStandaloneTask(task, queue: { TaskQueue.auto(for: task, baseBranch: env.defaultBaseBranch) })
+    }
+
+    /// 处理 one MANUAL task on its own: the same single-task queue shape as an
+    /// issue task — one branch, one PR (决策 5, applied to manual work). 全部处理
+    /// uses this so a batch never bundles unrelated changes onto one branch.
+    @discardableResult
+    func startManualTask(_ taskID: String) -> String? {
+        guard let task = board.task(taskID), task.source == .manual else { return nil }
+        return startStandaloneTask(task, queue: {
+            TaskQueue.auto(forManual: task, baseBranch: env.defaultBaseBranch)
+        })
+    }
+
+    /// Create-or-reuse the single-task queue of one task and start it. A finished
+    /// queue is reused too (a task whose queue still exists runs in place); a
+    /// failed/cancelled task goes through retry so it becomes queued again instead
+    /// of being skipped as a finished entry.
+    @discardableResult
+    private func startStandaloneTask(_ task: TaskItem, queue makeQueue: () -> TaskQueue) -> String? {
+        if let existing = board.autoQueueID(forTask: task.id) {
             if task.state == .failed || task.state == .cancelled {
-                _ = board.retryAndResume(taskID)
+                _ = board.retryAndResume(task.id)
             } else {
                 _ = board.resumeQueue(existing)
             }
@@ -857,13 +875,33 @@ final class TasksRunner {
             _ = pump()
             return existing
         }
-        let queue = TaskQueue.auto(for: task, baseBranch: env.defaultBaseBranch)
+        let queue = makeQueue()
         board.queues.append(queue)
-        _ = board.enqueue(taskID: taskID, into: queue.id)
-        _ = board.resumeQueue(queue.id)   // 处理 = 开始：issue 任务不等用户再点一次
+        _ = board.enqueue(taskID: task.id, into: queue.id)
+        _ = board.resumeQueue(queue.id)   // 处理 = 开始：不等用户再点一次
         persist()
         _ = pump()
         return queue.id
+    }
+
+    /// Point the runner at a specific queue: the one it works on NEXT.
+    ///
+    /// 全部处理 creates one queue per task, and every creation resumes its own
+    /// queue — so the last one created would otherwise win the runner's attention.
+    /// The panel focuses the FIRST queue after batching, which makes a batch run in
+    /// board order.
+    func focus(onQueue queueID: String) {
+        guard board.queue(queueID) != nil else { return }
+        board.local.activeQueueID = queueID
+        persist()
+    }
+
+    /// The queue of the task being worked on right now (nil when nothing runs):
+    /// what the panel marks 活跃 — the board alone cannot say it, because a batch
+    /// leaves several queues active at once.
+    var runningQueueID: String? {
+        guard let id = runningTaskID else { return nil }
+        return board.task(id)?.queueId
     }
 
     /// 开始队列.

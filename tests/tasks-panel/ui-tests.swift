@@ -750,6 +750,46 @@ do {
        "develop", "清空后就回落到工作区的默认分支")
 }
 
+section("处理按钮：看的是「有没有待办」，不是「有没有 GitHub」")
+do {
+    var board = TaskBoard()
+    let issue = TaskItem.github(number: 5, title: "Issue five")
+    let manual = TaskItem.manual(title: "Mine", id: "manual-aa001111")
+    board.tasks = [issue, manual]
+
+    var model = TasksRunAllModel.build(board, githubAvailable: true)
+    eq(model.issueCount, 1, "一个 issue 待处理")
+    eq(model.manualCount, 1, "一个手动任务待处理")
+    check(model.enabled, "有待办就能点")
+    check(model.tooltip.contains("runAllMixed"), "提示把两种都点到")
+    check(!model.tooltip.contains("runAllNoPR"), "有 GitHub 时不提「不开 PR」")
+
+    // 非 GitHub 工作区：只有手动任务待办时「处理」依然可用 —— 这正是这次要改的点。
+    var manualOnly = TaskBoard()
+    manualOnly.tasks = [TaskItem.manual(title: "Mine", id: "manual-aa002222")]
+    model = TasksRunAllModel.build(manualOnly, githubAvailable: false)
+    check(model.enabled, "非 GitHub 工作区里「处理」仍然可用（手动任务不需要 GitHub）")
+    check(model.tooltip.contains("runAllManual"), "提示说的是手动任务")
+    check(model.tooltip.contains("runAllNoPR"), "并且说明只切分支、不开 PR")
+
+    // 没有待办：禁用（顺带修掉「点了没反应」）。
+    model = TasksRunAllModel.build(TaskBoard(), githubAvailable: true)
+    check(!model.enabled, "没有待办就禁用")
+    check(model.tooltip.contains("runAllNone"), "提示说清为什么")
+
+    // 跑过的、已关闭的都不算待办。
+    var finished = TaskBoard()
+    let done = TaskItem.manual(title: "Done", id: "manual-aa003333")
+    let closedIssue = TaskItem.github(number: 9, title: "Closed")
+    finished.tasks = [done, closedIssue]
+    finished.markRunning(done.id)
+    finished.markDone(done.id, prUrl: nil)
+    finished.markClosed(closedIssue.id)
+    model = TasksRunAllModel.build(finished, githubAvailable: true)
+    eq(model.total, 0, "已完成 / 已关闭的都不算待办")
+    check(!model.enabled, "所以按钮是灰的")
+}
+
 section("队列头的三个操作与 PR 可用性")
 do {
     var board = TaskBoard()

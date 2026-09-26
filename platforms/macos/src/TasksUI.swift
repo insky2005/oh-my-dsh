@@ -292,6 +292,50 @@ struct TaskCardModel: Equatable {
     }
 }
 
+/// What the 处理 (全部处理) button is: how much is waiting, whether it can be
+/// pressed, and what pressing it would do.
+///
+/// It is NOT a GitHub-only action — its meaning is "start everything that is still
+/// waiting". Issue tasks run each in their own single-task queue (v1's
+/// one-issue-one-branch-one-PR rule) and so do MANUAL tasks, so a batch never
+/// silently bundles unrelated changes onto one branch. Only the PR *half* of it
+/// needs a GitHub remote: a non-GitHub workspace gets branches without PRs, which
+/// is exactly what its queues do.
+struct TasksRunAllModel: Equatable {
+    var issueCount: Int
+    var manualCount: Int
+    var enabled: Bool
+    /// Ready to show as the button's tooltip (counts and the PR caveat included).
+    var tooltip: String
+
+    var total: Int { issueCount + manualCount }
+
+    static func build(_ board: TaskBoard, githubAvailable: Bool) -> TasksRunAllModel {
+        // 待处理 = 未入队、还没跑过（失败/取消过的留在原处，由各自卡片的
+        // 重试 / 加入队列处理：把失败历史一起自动重跑，风险比收益大）。
+        let issueCount = board.tasks.filter { $0.source == .github && $0.state == .pending }.count
+        let manualCount = board.tasks.filter { $0.source == .manual && $0.state == .pending }.count
+        let key: String
+        let args: [CVarArg]
+        switch (issueCount, manualCount) {
+        case (0, 0):
+            key = "tasks.runAllNone"; args = []
+        case (let issues, 0):
+            key = "tasks.runAllIssues"; args = [issues]
+        case (0, let manual):
+            key = "tasks.runAllManual"; args = [manual]
+        default:
+            key = "tasks.runAllMixed"; args = [issueCount, manualCount]
+        }
+        var tooltip = L10n.tr(key, args)
+        if issueCount + manualCount > 0, !githubAvailable {
+            tooltip += "\n" + L10n.tr("tasks.runAllNoPR")
+        }
+        return TasksRunAllModel(issueCount: issueCount, manualCount: manualCount,
+                                enabled: issueCount + manualCount > 0, tooltip: tooltip)
+    }
+}
+
 /// Where this board lives, as the panel's header says it — plus whether the
 /// GitHub-only controls can do anything here.
 ///

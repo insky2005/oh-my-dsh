@@ -464,6 +464,30 @@ struct TaskQueue: Equatable {
                          createdAt: Date())
     }
 
+    /// The single-task queue a MANUAL task runs in when 全部处理 is asked to run it
+    /// on its own: one task, its own branch, its own PR — the same shape an issue
+    /// task gets (决策 5), so batching manual work can never silently bundle
+    /// unrelated changes onto one branch.
+    ///
+    /// The branch follows the task's title (`feature/<slug>`), falling back to
+    /// `feature/manual-<id4>` when the title has no ASCII slug at all. Like the issue
+    /// queue it starts EMPTY: one writer owns membership (enqueue).
+    static func auto(forManual task: TaskItem, baseBranch: String = "main") -> TaskQueue {
+        let title = task.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let slug = TaskBranch.slug(title)
+        let branch = slug.isEmpty ? "feature/manual-" + String(task.id.suffix(4)) : "feature/" + slug
+        return TaskQueue(id: TaskQueue.newID(),
+                         name: title,
+                         branch: branch,
+                         baseBranch: baseBranch,
+                         taskIds: [],
+                         state: .paused,
+                         autoCreated: true,
+                         autoPR: true,
+                         prUrl: nil,
+                         createdAt: Date())
+    }
+
     /// 1-based position inside the queue, nil when the task is not in it.
     func order(of taskID: String) -> Int? {
         guard let i = taskIds.firstIndex(of: taskID) else { return nil }
@@ -711,9 +735,21 @@ struct TaskBoard {
     func nextStartable() -> String? {
         if local.runningTaskID != nil { return nil }
         if tasks.contains(where: { $0.state == .running }) { return nil }
-        guard let queue = activeQueue() else { return nil }
-        for id in queue.taskIds where task(id)?.state == .queued { return id }
+        // The queue the user last pointed the runner at wins…
+        if let queue = activeQueue(), let id = firstQueued(in: queue) { return id }
+        // …but when it has nothing left to start, ANY other active queue with a
+        // queued task does. Without this the runner stalled: 全部处理 makes one
+        // single-task queue per task, and once the current one emptied, the runner
+        // sat there while other lanes showed 活跃 and never moved.
+        for queue in queues where queue.state == .active {
+            if let id = firstQueued(in: queue) { return id }
+        }
         return nil
+    }
+
+    /// The first task of a queue that is waiting for its turn.
+    private func firstQueued(in queue: TaskQueue) -> String? {
+        queue.taskIds.first { task($0)?.state == .queued }
     }
 
     /// 1-based position of a task inside its queue.
