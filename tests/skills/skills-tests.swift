@@ -29,10 +29,11 @@ func read(_ p: String) -> String? { try? String(contentsOfFile: p, encoding: .ut
 let mode = ProcessInfo.processInfo.environment["TEST_MODE"] ?? "install"
 
 if mode == "migrate" {
+    // issue-fix is deliberately NOT here any more: its skill (issue-resolve) retired
+    // 2026-09-27 — an app-managed copy is removed instead of renamed (step 3 below).
     let legacy: [(String, BuiltinSkill)] = [
         ("shell-browser", .webDevTools),
         ("repo-wiki", .repoKnowledge),
-        ("issue-fix", .issueResolve),
     ]
     // Seed legacy skill dirs (old per-repo/global names) on a fresh home.
     for (name, _) in legacy {
@@ -54,6 +55,27 @@ if mode == "migrate" {
     try? "keep".write(toFile: (l as NSString).appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
     _ = SkillInstaller.installBuiltinSkills()
     check(fm.fileExists(atPath: l), "legacy kept when new exists")
+
+    // 3. Retired skills. An app-managed copy (marker present) is DELETED; a copy the
+    // user touched (no marker, or a stranger's own skill of the same name) is kept.
+    let home = SkillInstaller.dshHomeDir()
+    let managed = (home as NSString).appendingPathComponent("skills/issue-resolve")
+    try? fm.createDirectory(atPath: managed, withIntermediateDirectories: true)
+    try? "old".write(toFile: (managed as NSString).appendingPathComponent("SKILL.md"),
+                     atomically: true, encoding: .utf8)
+    try? "managed".write(toFile: (managed as NSString).appendingPathComponent(SkillInstaller.managedMarker),
+                         atomically: true, encoding: .utf8)
+    let userOwned = (home as NSString).appendingPathComponent("skills/issue-fix")
+    try? fm.createDirectory(atPath: userOwned, withIntermediateDirectories: true)
+    try? "mine".write(toFile: (userOwned as NSString).appendingPathComponent("SKILL.md"),
+                      atomically: true, encoding: .utf8)
+    _ = SkillInstaller.installBuiltinSkills()
+    check(!fm.fileExists(atPath: managed), "retired managed skill removed")
+    check(fm.fileExists(atPath: userOwned), "retired user-managed copy kept")
+    check(read((userOwned as NSString).appendingPathComponent("SKILL.md")) == "mine",
+          "retired user copy untouched")
+    check(!BuiltinSkill.allCases.contains { $0.dirName == "issue-resolve" },
+          "issue-resolve is no longer a built-in")
 } else {
     // 1. Fresh install on an empty home.
     let results = SkillInstaller.installBuiltinSkills()
@@ -83,6 +105,23 @@ if mode == "migrate" {
     let r4 = SkillInstaller.installBuiltinSkills()
     check(r4.first(where: { $0.skill == .webDevTools })?.action == "skippedUserManaged", "skip user-managed action")
     check(read(p) == "user edit", "user edit preserved")
+    // 5. Retired skills (2026-09-27): the app-managed copy goes, a user's stays.
+    let home = SkillInstaller.dshHomeDir()
+    let retired = (home as NSString).appendingPathComponent("skills/issue-resolve")
+    try? fm.createDirectory(atPath: retired, withIntermediateDirectories: true)
+    try? "old".write(toFile: (retired as NSString).appendingPathComponent("SKILL.md"),
+                     atomically: true, encoding: .utf8)
+    try? "managed".write(toFile: (retired as NSString).appendingPathComponent(SkillInstaller.managedMarker),
+                         atomically: true, encoding: .utf8)
+    let owned = (home as NSString).appendingPathComponent("skills/issue-fix")
+    try? fm.createDirectory(atPath: owned, withIntermediateDirectories: true)
+    try? "mine".write(toFile: (owned as NSString).appendingPathComponent("SKILL.md"),
+                      atomically: true, encoding: .utf8)
+    _ = SkillInstaller.installBuiltinSkills()
+    check(!fm.fileExists(atPath: retired), "retired managed skill removed")
+    check(fm.fileExists(atPath: owned), "retired user-managed copy kept")
+    check(!BuiltinSkill.allCases.contains { $0.dirName == "issue-resolve" },
+          "issue-resolve is no longer a built-in")
 }
 
 if failures > 0 { print("\(failures) FAILURE(S)"); exit(1) }

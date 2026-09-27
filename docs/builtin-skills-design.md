@@ -157,3 +157,13 @@ dsh web 从多级根发现 Skill（`SKILL.md` 带 YAML frontmatter `name`/`descr
 
 与三个面板技能不同的是它的**调用方式**：那三个由面板在自己的流程里触发（`user-invocable: false` 表「仅 model 可调用」），`task-todo` 则是**用户在会话里明确要求**时才用，因此保留默认可用户调用。设计见 `docs/task-todo-skill-design.md`。
 
+## 8. 退役的 Skill（2026-09-27：`issue-resolve`）
+
+`issue-resolve` 随「issue 任务与手动任务对齐」一起退役（设计见 `docs/issue-runner-design.md` §V2-14）：两种任务来源现在共用同一份提示词要求（`TaskPrompts.requirements(...)`），issue 任务的正文/标签直接写进提示词，因此不再需要一个代理去加载的技能 —— 而那个技能还停在旧政策里（让任务自己 `git push`、说「PR 由面板创建」），留着就是**第二个、且是过期的事实来源**。
+
+退役机制沿用同一套托管语义：
+
+- `BuiltinSkill` 去掉该 case（`BuiltinSkill.allCases` 现在三个：`webDevTools` / `repoKnowledge` / `taskTodo`），仓库副本 `.dsh/skills/issue-resolve/` 删除；
+- `SkillInstaller.retiredSkills = ["issue-resolve", "issue-fix"]`（后者是它更早的名字，也不再迁移）——启动时：机器上带 `.ohmy-dsh-managed` 的副本**删除**，用户自己改过或自装的同名技能（无标记）**保留**并记日志；
+- `tests/skills` 两个模式都覆盖：受管副本被删、用户副本保留、`issue-resolve` 不再是内置技能。
+

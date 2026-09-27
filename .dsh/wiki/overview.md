@@ -81,7 +81,7 @@ tests/               无头单元测试（terminal-emulator/、wiki-panel/、bro
 .build/              构建中间产物 — git 忽略
 dist/                产物（.app / .pkg / .dmg）— git 忽略
 pic/                 QA 调试截图 — git 忽略
-.dsh/skills/         内置 skill 提交副本（web-dev-tools / repo-knowledge / issue-resolve / task-todo，App 启动经 SkillInstaller 安装到全局 $DSH_HOME/skills/）
+.dsh/skills/         内置 skill 提交副本（web-dev-tools / repo-knowledge / task-todo，App 启动经 SkillInstaller 安装到全局 $DSH_HOME/skills/；issue-resolve 已于 2026-09-27 退役，受管副本启动时删除）
 .dsh/wiki/           本知识库
 .dsh/tasks/          任务关联索引（index.json 提交 + local.json 本机覆盖，gitignore）
 ```

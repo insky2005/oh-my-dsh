@@ -677,14 +677,11 @@ final class IssueRunnerPanelController: NSObject {
                 return Self.findExistingPR(owner: repo.owner, repo: repo.repo, branch: branch, token: token)
             },
             promptText: { task, queue, brief in
-                if task.source == .github {
-                    return TaskPrompts.issue(number: task.number ?? 0, title: task.title,
-                                             branch: queue?.branch ?? "",
-                                             base: queue?.baseBranch ?? Self.detectDefaultBaseBranch(path: repoRoot))
-                }
-                // Push policy: only a queue that will open a PR asks the agent to
-                // push (see TasksRunner.finish) — and the prompt has to say the
-                // same thing, or the agent pushes out of habit.
+                // 两种来源共用同一套要求（TaskPrompts.requirements），**只有头不同**
+                // （issue 头 = 编号/标题/标签/正文；手动任务头 = 标题/描述）：2026-09-27
+                // 对齐。此前 issue 走一段写死的 5 条、还要求加载 issue-resolve 技能，
+                // 而那个技能停在「任务自己 push、PR 由面板开」的旧政策里 —— 同一个面板
+                // 于是有两种行为，issue 任务还会 push（手动任务只 commit）。
                 // An AUTO queue (an issue task's, or the one 全部处理 makes for a
                 // single manual task) is not a shared lane: it will never hold
                 // another task, so 「与其他任务共享同一分支与改动」 would be false.
@@ -702,6 +699,14 @@ final class IssueRunnerPanelController: NSObject {
                 // 队列自己的「基于分支」；不在队列里的任务用工作区的默认分支 —— 两条
                 // 分支 rail 都会点名它（「若无分支，须基于 X 新建」/「直接在主分支 X 上处理」）。
                 let base = queue?.baseBranch ?? Self.detectDefaultBaseBranch(path: repoRoot)
+                if task.source == .github {
+                    return TaskPrompts.issue(number: task.number ?? 0, title: task.title,
+                                             body: task.body, labels: task.labels,
+                                             branch: queue?.branch, queueName: sharedQueueName,
+                                             base: base,
+                                             brief: brief,
+                                             shape: shape)
+                }
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: sharedQueueName,
                                           base: base,

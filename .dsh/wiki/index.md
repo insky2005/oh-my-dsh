@@ -32,7 +32,7 @@ manual: false
 - [session-snapshot（会话快照与回退）](modules/session-snapshot.md) — **升级 dsh 的安全网**（v1.16.2）：升级/启动前自动留 `$DSH_HOME/sessions + storages` 快照（APFS clonefile，留 3 份）与按 dsh 版本去重的 `runtime/dsh` 树池，设置菜单「会话快照…」可预览/回退并退出/删除，回退把新世代会话**移入隔离区而非删除**、`rollback-journal.json` 支持续做/撤销；凭据/`shell/`/`channels/`/CEF profile 不进快照
 - [review-panel（审查面板）](modules/review-panel.md) — **只读**变更审计（PR #44）：读 dsh 会话日志（zstd 多帧）按 会话→对话→文件→变更内容 树展示，core `review-log` + 面板 `ReviewPanel/ReviewLogModel`
 - [skills-panel（技能面板）](modules/skills-panel.md) — **查找 / 安装 / 移除 agent 技能 + 调用开关**（PR #50）：扫 dsh 四个技能根并按 rank 去重标级别（内置只读 / 共享级可改开关不可移除 / 用户级·项目级可改可删），开关写回 `SKILL.md` frontmatter（切回默认即删键还原字节），registry 可配置（skills.sh 搜索 / well-known 清单 / GitHub 仓库清单），改完经 offline→online nudge 让 dsh web 立即生效
-- [skill-installer（内置 Skill 全局安装器）](modules/skill-installer.md) — App 启动安装内置 skill（四个：web-dev-tools / repo-knowledge / issue-resolve / **task-todo**——第四个是新增、非重命名）到全局 $DSH_HOME/skills/（缺失即装/受管更新/旧名迁移），配套测试 tests/skills/；`task-todo` 让代理在用户明确要求时把沟通结论批量写进任务面板（见 [issue-runner-panel](modules/issue-runner-panel.md)）
+- [skill-installer（内置 Skill 全局安装器）](modules/skill-installer.md) — App 启动安装内置 skill（现三个：web-dev-tools / repo-knowledge / **task-todo**）到全局 $DSH_HOME/skills/（缺失即装/受管更新/旧名迁移/**退役受管副本清理**），配套测试 tests/skills/；`task-todo` 让代理在用户明确要求时把沟通结论批量写进任务面板；`issue-resolve` 已于 2026-09-27 退役（issue 与手动任务共用同一份提示词，见 [issue-runner-panel](modules/issue-runner-panel.md)）
 - [build-scripts（构建与打包脚本）](modules/build-scripts.md) — platforms/macos/build-app.sh / platforms/macos/make-pkg.sh / MakeIcon.swift / build-cef.sh + release/CI 脚本（version.sh / local-release.sh / release-checksums.sh / github-publish.sh / Jenkinsfile）
 
 ## 统计

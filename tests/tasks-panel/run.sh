@@ -153,4 +153,20 @@ if ! grep -q 'case "bridge-error":' ../../platforms/macos/src/main.swift; then
 fi
 echo "ok - the session opener passes every argument and reports bridge errors"
 
+# 提示词只允许有**一份要求清单**：issue 与手动任务都走 TaskPrompts.requirements。
+# 各写一份的那段历史，正是 issue 任务被留在「会 push、PR 由面板开」旧政策里的原因
+# （2026-09-27 对齐前，issue 侧还要求加载 issue-resolve 技能）。
+SHARED_REQUIREMENTS=$(grep -cF 'requirements(branch: branch, queueName: queueName, base: base, shape: shape)' ../../platforms/macos/src/TasksRunner.swift)
+if [ "$SHARED_REQUIREMENTS" != "2" ]; then
+  echo "FAIL - issue 与手动任务的提示词必须共用 TaskPrompts.requirements（找到 $SHARED_REQUIREMENTS 处调用，期望 2）"
+  exit 1
+fi
+# 只查**提示词字符串**：注释里提它是解释历史，提示词里提它才是又把它请回来。
+if grep -qF '请加载 issue-resolve' ../../platforms/macos/src/TasksRunner.swift ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || grep -qF 'skills/issue-resolve' ../../platforms/macos/src/TasksRunner.swift ../../platforms/macos/src/IssueRunnerPanel.swift; then
+  echo "FAIL - 提示词不得再指向已退役的 issue-resolve 技能"
+  exit 1
+fi
+echo "ok - issue 与手动任务共用同一份要求清单，且不再引用退役技能"
+
 echo "tasks-panel tests passed"

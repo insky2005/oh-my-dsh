@@ -481,16 +481,28 @@ struct TaskQueue: Equatable {
     /// id here AS WELL made every issue task show up twice in its own lane
     /// (taskIds = ["issue-7","issue-7"] → two identical cards, progress 0/2, and
     /// 「队列内 2 个任务」 in the delete dialog).
-    static func auto(for task: TaskItem, baseBranch: String = "main") -> TaskQueue {
+    /// The single-task queue an ISSUE task runs in when 处理 is clicked. Its shape is
+    /// the manual one (2026-09-27): one task, its own branch, its own PR — **unless the
+    /// workspace says otherwise**. `switchesBranch` / `opensPR` come from the runner's
+    /// env (is this a git repository? does it have a GitHub remote?), exactly like
+    /// auto(forManual:): handing a branch to a queue in a plain directory is how every
+    /// task there failed with tasks.errNotGit — and issue tasks were no exception,
+    /// because this factory used to hard-code both flags.
+    static func auto(for task: TaskItem,
+                     baseBranch: String = "main",
+                     switchesBranch: Bool = true,
+                     opensPR: Bool = true) -> TaskQueue {
         let number = task.number ?? 0
         return TaskQueue(id: TaskQueue.newID(),
                          name: "Issue #\(number)",
-                         branch: TaskBranch.issueBranch(number: number, labels: task.labels),
+                         branch: switchesBranch
+                             ? TaskBranch.issueBranch(number: number, labels: task.labels)
+                             : nil,
                          baseBranch: baseBranch,
                          taskIds: [],
                          state: .paused,
                          autoCreated: true,
-                         autoPR: true,
+                         autoPR: opensPR,
                          prUrl: nil,
                          createdAt: Date())
     }

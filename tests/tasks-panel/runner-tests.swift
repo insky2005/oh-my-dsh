@@ -200,14 +200,21 @@ final class Harness {
             // prompt asks the agent to push and to write the title/body from the diff.
             findExistingPR: { branch in github ? rec.existingPRs[branch] : nil },
             promptText: { task, queue, brief in
-                // Same rules the panel uses: only a queue that will open a PR asks
-                // the agent to push, and only a SHARED queue claims to share a
-                // branch (a single-task queue does not).
                 // Same rules the panel uses — including the SHAPE of the workspace,
                 // which the panel probes at prompt time (a queue's first task can be
-                // the one that inits the repo or adds the GitHub remote).
+                // the one that inits the repo or adds the GitHub remote) and the
+                // SOURCE, which only changes the prompt's HEAD: issue tasks and
+                // manual tasks share one requirement list (2026-09-27 alignment).
                 let shape = TaskRepoShape.detect(isGit: gitRepo, hasGitHubRemote: github)
                 let sharedName = queue.flatMap { $0.autoCreated ? nil : $0.name }
+                if task.source == .github {
+                    return TaskPrompts.issue(number: task.number ?? 0, title: task.title,
+                                             body: task.body, labels: task.labels,
+                                             branch: queue?.branch, queueName: sharedName,
+                                             base: queue?.baseBranch ?? defaultBaseBranch,
+                                             brief: brief,
+                                             shape: shape)
+                }
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: sharedName,
                                           base: queue?.baseBranch ?? defaultBaseBranch,
@@ -730,6 +737,82 @@ do {
     check(h2.runner.runningTaskID == "issue-12", "the retried issue task runs")
 }
 
+
+
+// MARK: - issue 任务与手动任务对齐（2026-09-27）
+
+section("issue 任务与手动任务对齐：同一套要求，只有头不同")
+do {
+    /// The numbered requirement lines of a prompt, so the two sources can be compared
+    /// word for word instead of by eyeballing.
+    func requirementLines(_ text: String) -> [String] {
+        text.split(separator: "\n").map(String.init).filter {
+            $0.range(of: "^[0-9]+\\. ", options: .regularExpression) != nil
+        }
+    }
+
+    var board = TaskBoard()
+    let issue = TaskItem.github(number: 7, title: "深色模式闪一下",
+                                body: "复现：打开设置 → 主题 → 切深色。\n期望：不闪。",
+                                labels: ["bug", "ui"])
+    board.tasks = [issue]
+    let h = Harness(board: board, github: true, gitRepo: true)
+    _ = h.runner.startIssueTask("issue-7")
+    let prompt = h.dsh.prompts["session-1"] ?? ""
+
+    check(prompt.contains("## Issue #7"), "头是 issue 编号")
+    check(prompt.contains("标题：深色模式闪一下"), "头带标题")
+    check(prompt.contains("标签：bug, ui"), "头带标签")
+    check(prompt.contains("复现：打开设置 → 主题 → 切深色。"),
+          "issue 正文直接交给代理 —— 此前只给标题，正文还得它自己去 GitHub 拉")
+    check(!prompt.contains("issue-resolve"), "不再要求加载 issue-resolve（技能已退役）")
+    check(!prompt.contains("push"), "与手动任务一样不提 push")
+    check(prompt.contains("完成前 commit"), "commit 条与手动任务同款")
+    check(prompt.contains("token 在 $DSH_HOME/tokens/"), "GitHub 工作区才有的 token 条照旧")
+    check(prompt.contains("本任务独立执行"), "自动队列不算共享泳道（两种来源一致）")
+
+    let manualPrompt = TaskPrompts.manual(title: issue.title, body: issue.body,
+                                          branch: "fix/issue-7", queueName: nil, base: "main",
+                                          brief: "## 队列信息", shape: .github)
+    let issuePrompt = TaskPrompts.issue(number: 7, title: issue.title, body: issue.body,
+                                        labels: issue.labels, branch: "fix/issue-7",
+                                        queueName: nil, base: "main",
+                                        brief: "## 队列信息", shape: .github)
+    eq(requirementLines(issuePrompt), requirementLines(manualPrompt),
+       "issue 与手动任务的要求逐行逐字相同（同一份 requirements(...)）")
+    check(issuePrompt.hasSuffix("## 队列信息"), "交接简报落在所有要求之后（两种来源同一落点）")
+}
+
+section("非 git 目录里的 issue 任务：自动队列也不设分支（这里曾经必然 errNotGit）")
+do {
+    var board = TaskBoard()
+    board.tasks = [TaskItem.github(number: 9, title: "改文档", labels: ["docs"])]
+    let h = Harness(board: board, github: false, gitRepo: false)
+    _ = h.runner.startIssueTask("issue-9")
+    let queue = h.board.queues.first
+    check(queue?.branch == nil, "非 git 目录：issue 的自动队列也不派生 feature/issue-9")
+    check(queue?.autoPR == false, "不是 GitHub 工作区就不承诺 PR")
+    check(h.board.task("issue-9")?.state != .failed, "这次没再因为 errNotGit 失败")
+    let prompt = h.dsh.prompts["session-1"] ?? ""
+    check(!prompt.contains("本任务须在分支"), "非 git 目录没有分支条（与手动任务同一规则）")
+    check(!prompt.contains("GitHub token"), "没有 GitHub 远端就没有 token 条")
+}
+
+section("issue 任务的旧队列带着切不了的分支：先去掉分支再跑")
+do {
+    var board = TaskBoard()
+    let issue = TaskItem.github(number: 11, title: "旧队列", labels: ["bug"])
+    board.tasks = [issue]
+    let stale = TaskQueue.auto(for: issue, baseBranch: "main")   // built when this WAS a repo
+    board.queues = [stale]
+    _ = board.enqueue(taskID: issue.id, into: stale.id)
+    check(board.queue(stale.id)?.branch == "fix/issue-11", "前提：旧队列带着分支")
+    let h = Harness(board: board, github: false, gitRepo: false)
+    _ = h.runner.startIssueTask(issue.id)
+    check(h.board.queue(stale.id)?.branch == nil, "非 git 目录里启动前把分支去掉")
+    check(h.rec.logged("no longer switches branches"), "并在日志里说明")
+    check(h.board.task(issue.id)?.state != .failed, "任务没有因为切不了分支而失败")
+}
 
 // MARK: - Creating manual tasks (step 4)
 

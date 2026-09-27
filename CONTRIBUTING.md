@@ -19,7 +19,7 @@ oh-my-dsh/
 ├── tests/               # 面板模型层单测套件（wiki-panel / browser-panel / terminal-panel / terminal-emulator / channel-panel /
 │                        #   file-panel / review-panel / skills-panel / shell-config / dsh-rpc / dsh-auth-cookies / l10n / skills，均 headless run.sh）
 ├── docs/                # 设计/排查文档（productization.md、milestones/、channel-*.md、issue-runner-design.md 等）
-└── .dsh/                # wiki / skills（web-dev-tools / repo-knowledge / issue-resolve，随仓库提交）
+└── .dsh/                # wiki / skills（web-dev-tools / repo-knowledge / task-todo，随仓库提交）
 ```
 
 ## 环境要求（构建）

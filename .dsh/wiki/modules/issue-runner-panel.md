@@ -1,8 +1,8 @@
 ---
 title: 模块：任务面板（Tasks / IssueRunner）
 tags: [module, tasks, github, issue, queue, index, manual-task]
-updated: 2026-09-27T11:07:00Z
-sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/BrowserAPI.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/issue-runner-design.md, docs/ui-color-scheme.md, docs/git-workflow.md, docs/task-todo-skill-design.md, .dsh/skills/issue-resolve/SKILL.md, .dsh/skills/task-todo/SKILL.md]
+updated: 2026-09-27T13:05:00Z
+sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/BrowserAPI.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/issue-runner-design.md, docs/ui-color-scheme.md, docs/git-workflow.md, docs/task-todo-skill-design.md, .dsh/skills/task-todo/SKILL.md, docs/issue-runner-design.md]
 manual: false
 ---
 
@@ -38,6 +38,15 @@ manual: false
 - `focus` 默认 true：切到该工作区 board 并展开面板（`onShowPanel` → `setRightPanel(.tasks)`），状态行说一句「已由 Agent 创建 N 个任务」（L10n `tasks.apiCreated`）。
 
 配套**内置技能 `task-todo`**（App 启动安装到全局 `$DSH_HOME/skills/task-todo/SKILL.md`，见 [skill-installer](skill-installer.md)）规定：**只在用户明确要求时**执行、先 list 再建（避免重复）、一次请求提交全部任务、并写明「不启动任务 / 不建队列 / 不直接改 `.dsh/tasks/*.json`」；App 没运行就报错请用户打开。设计见 `docs/task-todo-skill-design.md`，回归 `tests/tasks-panel/api-tests.swift`（68 项）+ `tests/browser-panel`（把这块路由面一起编译）。
+
+## issue 任务与手动任务对齐（2026-09-27）
+
+两种来源**共用同一份提示词要求**（`TaskPrompts.requirements(branch:queueName:base:shape:)`），只有「头」不同：issue 头给**编号 + 标题 + 标签 + 正文**（此前只给编号与标题，正文还得代理自己去 GitHub 拉），手动任务头给标题 + 描述。于是 issue 任务同样**只 commit、不提 push/PR**、同样按工作区形状出条目、同样带队列交接简报。
+
+- **为什么对齐**：issue 侧此前走一段写死的 5 条并要求加载 `issue-resolve` 技能，而那个技能停在旧政策（任务自己 `git push`、「PR 由面板创建」）——同一个面板里两种行为；
+- **自动队列同形**：`TaskQueue.auto(for:baseBranch:switchesBranch:opensPR:)` 与 `auto(forManual:)` 同语义（非 git 目录里不再派生 `fix/issue-N`、不再承诺 PR）；两个入口共用 `dropUnswitchableBranch(ofTask:)`，旧队列带着切不了的分支时启动前先去掉；
+- **`issue-resolve` 退役**：见 [skill-installer](skill-installer.md) 的退役清理与 `docs/issue-runner-design.md` §V2-14；
+- **回归**：`tests/tasks-panel` 三节 —— 两种来源的要求逐行逐字相同、非 git 目录里的 issue 任务不派生分支且能跑完、旧队列的陈旧分支被去掉（运行器 362 项）。
 
 ## 任务模型与状态机
 
