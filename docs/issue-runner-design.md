@@ -264,6 +264,15 @@ struct Queue {
 - 队列级 PR：同一 head 分支在 GitHub 只能有一个 open PR，因此**队内任务完成时只 push**，队列跑完才创建一次 PR；创建前先 `GET /pulls?head=<owner>:<branch>` **复用已有 PR**，避免第二个任务吃 422；
 - PR 创建失败（无权限、远端不支持、网络）**不判队列失败**：队列照常 `done`，卡片标注「分支已推送，PR 未创建」，并展示分支名 + 远端名供用户手动处理。
 
+> ⚠️ **2026-09-27 第三轮：PR 改由一个专门的「开 PR 会话」做，任务只 commit（上面「队内任务完成时只 push」「推送校验」两段描述的是旧行为）**。用户的原话：**「所有的具体任务会话中，只须完成本地 git commit 即可；若队列中所有任务完成了、且队列开启了 PR，则进行 push 及 PR，这个操作可以发起一个新会话，由其总结变动后再发起 PR。」** 于是：
+>
+> - **任务会话只 commit**：提示词里不再出现 push、PR、「远端必须有这些提交」，也不再有「不要 push」这种话（说了就是让代理操心不属于它的事）；`finish()` 里那条 `ls-remote` 推送校验、`BranchPushState` 三态、`tasks.errNoPush` 的产生路径、`env.createPR` / `env.prText` 与面板的 REST `createPR` **一并删除**（`tasks.errNoPush` 的 L10n 键保留：老任务记录里还存着这个错误码）。
+> - **PR 会话**：队列最后一项完成 + `queue.autoPR` + 工作区有 GitHub 远端时，`TasksRunner.startQueuePR(queueID)` 在仓库目录里**新建一个 dsh 会话**（名字 `开 PR：<队列名>`，可像别的会话一样打开），把 `TaskPrompts.pullRequest(...)` 交给它：先读真实改动（`git log/diff`）、**自己写** PR 标题与正文（要的是总结，不是模板）、推送分支、开或复用 PR、最后一行必须给出 PR 链接、**不许改代码**。运行器的相位机多出 `.startingPR`（建会话中）与 `.openingPR`（会话在跑 / 结果在查），它们同样占用那个串行槽位（`isBusy` 为真、`runningTaskID` 为 nil、`openingPRQueueID` 指向队列），所以一次只有一个 PR 会话在飞。
+> - **结果回收**：会话结束后在后台步骤里取它的汇报 → 用 `TasksRunner.prURL(in:)` 搜出 `github.com/.../pull/N`；搜不到就用 `findExistingPR(branch)` 兜底（会话开了 PR 却没引用链接的情况）。都没有 → 队列记 `prError`（`tasks.errPR`）并写日志，**队列保持 done**。失败原因显示在队列头「开 PR」按钮的 tooltip 上（`tasks.errPR` / 无分支 / 无远端 / 会话起不来），按钮仍在，点一下就是再来一次。队列头的「开 PR」按钮走的也是 `startQueuePR`（不再是直接调 GitHub API）。
+> - **汇报回写**：任务结束（成功**或失败**）时在同一个后台步骤里取会话的最后一段文字，`markDone(report:)` / `markFailed(report:)` 写到 `TaskItem.report` + `local.json` 的 `reports`（**不进**随仓库走的 `manual.json`/`index.json`：汇报是这台机器的会话产物）；卡片详情多一行「汇报」；队列里下一棒的交接简报**优先用它**（会话被删也还在，读不到才回落到读会话日志）；`retryAndResume` 清掉上一轮的汇报（它不是这一轮的结局）。
+> - **提示词按需出条目**：`TaskPrompts.manual` 不再写死 1–6 条，而是按 `TaskRepoShape` 生成条目并连续编号 —— 非 git 目录**没有分支条**（第 4 条改为「不要求 commit；任务自己 `git init` 建了仓库就 commit」）；有仓库才有分支条（切分支点名分支，不切的写「就在当前已检出的分支上改」）与「完成前 commit」；**token 条只在 GitHub 仓库出现**；「改完自查」同时照顾代码与文档（没有可跑测试的就说明）；「汇报」一条每个任务都要（`**必须**`，并说明它会被写回卡片）；「独立执行」不再说「与其他任务共享」；**前置任务的汇报整段移到所有要求之后**（用户的第 1 条：补充在整个要求的后面）。`pushes` 参数随之从 `TaskPrompts.manual` 消失。
+> - **回归**：`tests/tasks-panel` 运行器 **337 项**（原 314 → 新增 PR 会话的完整链路：任务只 commit 的提示词断言、PR 会话被创建/命名/收到分支与 base、PR 链接从汇报回收、未自报的 PR 由分支查回、无分支/无远端时拒绝并记录原因、批次里「任务 + PR 会话」两段推进），模型 **176 项**（汇报落在任务与 local.json、不写进 manual/index、失败也留汇报、重试清空、空白不算汇报、往返与 `attachSessions`），视图模型 **296 项**（详情里的「汇报」一行、队列头 PR 失败原因的 tooltip）。`tests/l10n` 删掉 4 条随 REST createPR 一起失效的文案（`tasks.prTitle` / `tasks.prBody` / `tasks.queue.prTitle` / `tasks.queue.prBody`）。
+
 **推送校验（2026-09-27 改）**：推送**只在「这个队列会开 PR」时发生** —— `queueWantsPR = queue.autoPR && env.canOpenPR()`（`canOpenPR` = 工作区有 GitHub 远端）；提示词里的 push 要求与收尾的校验共用这一个判据，所以没开自动 PR 的队列**只做本地 commit、不 push、也不校验**（`finish` 里 `!queueWantsPR` 时只记一行「keeps its work local」）。要开 PR 的队列仍沿用 v1 的 `pushRemoteName`（github > origin > 首个 remote），但校验是**三态**的（`BranchPushState`：pushed / notPushed / unknown）——`ls-remote` 自己失败（私有远端没凭据、网络抖）算 `unknown`，只记日志并继续尝试开 PR，**不再把「问不到」当成「代理没推送」**（那会把已经干完的活判成失败）；无远端时跳过校验并记日志。真正「远端上没有这条分支」才判 `tasks.errNoPush`。
 
 ### V2-7 手动创建任务

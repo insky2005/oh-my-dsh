@@ -16,16 +16,6 @@ enum GitEnterResult: Equatable {
     case createBranchFailed
 }
 
-/// Is the queue's branch on the remote? THREE answers, because "the question could
-/// not be asked" (no credentials for a private remote, network hiccup) is not the
-/// same as "it is not there": reading the first as the second marked finished work
-/// as failed with 「分支未推送到远端（代理未 push？）」.
-enum BranchPushState: Equatable {
-    case pushed
-    case notPushed
-    /// ls-remote itself failed — nobody knows.
-    case unknown
-}
 
 /// The git half of the runner. Every command goes through the injected closure,
 /// so a test can script a repository without touching the disk.
@@ -63,14 +53,6 @@ struct TaskGit {
         run(["rev-parse", "--verify", "--quiet", "HEAD"]) != nil
     }
 
-    /// Whether the branch exists on the push remote. A repo without a remote is
-    /// the caller's business (it logs that case separately); a FAILED ls-remote is
-    /// unknown, never "not pushed".
-    func branchPushState(_ branch: String) -> BranchPushState {
-        guard let remote = remoteName() else { return .pushed }
-        guard let out = run(["ls-remote", "--heads", remote, branch]) else { return .unknown }
-        return out.contains(branch) ? .pushed : .notPushed
-    }
 
     /// The commits the branch carries on top of `base` ("a1b2c3 subject"), or nil
     /// when git could not answer. This is the STRUCTURAL half of a 交接简报: what
@@ -158,16 +140,16 @@ struct TaskRunnerEnv {
     /// is false gets NO branch (the pipeline then never touches git — §V2-7), which
     /// is exactly what 全部处理 has to honour when it builds one queue per task.
     var canSwitchBranches: Bool = true
-    /// Whether this workspace can open a pull request at all (a GitHub remote).
-    /// It decides whether a task pushes at all — see the push policy in finish().
+    /// Whether this workspace can open a pull request at all (a GitHub remote). It
+    /// decides whether a finished queue gets a 开 PR 会话 at all (see startQueuePR).
     var canOpenPR: () -> Bool = { true }
     var cancelSession: (_ sessionId: String) -> Bool
-    /// Existing open PR for the head branch, or nil. Only called when the queue
-    /// wants a PR (a GitHub workspace).
+    /// Existing open PR for the head branch, or nil — the FALLBACK used when a PR
+    /// session ends without naming the PR it opened (a session that opened the PR
+    /// through an API it did not quote back). There is deliberately no "createPR"
+    /// here any more: the PR is written by the session, from the real diff (its
+    /// title and body are a summary, not a template).
     var findExistingPR: (_ branch: String) -> String?
-    var createPR: (_ branch: String, _ base: String, _ title: String, _ body: String) -> String?
-    /// Title and body for the queue's pull request.
-    var prText: (_ task: TaskItem, _ branch: String) -> (title: String, body: String)
     /// The text handed to the agent. `brief` is the 交接简报 for a task that has
     /// work in front of it in its queue (nil when there is nothing to hand over).
     var promptText: (_ task: TaskItem, _ queue: TaskQueue?, _ brief: String?) -> String
@@ -292,6 +274,14 @@ enum TaskPrompts {
         return lines.joined(separator: "\n")
     }
 
+    /// 自查与汇报两条 rail，issue 任务与手动任务共用同一份措辞（用户的要求：
+    /// 测试那条要照顾「文档类没有测试可跑」，汇报那条是**必须**，且会被写回卡片）。
+    static let verifyRequirement =
+        "改完自查：代码类改动跑相关测试并确保通过；文档 / 配置类做能做的校验（命令能跑通、路径与链接存在、示例可执行），确实没有可跑的就说明「本次没有可跑的测试」；"
+
+    static let reportRequirement =
+        "**必须**在结束时汇报：改了什么、怎么验证的、结果如何（没做完或失败也要说清楚，不要沉默收尾）——这段文字会写回任务卡片，队列里后面的任务也会看到它；"
+
     static func issue(number: Int, title: String, branch: String) -> String {
         var lines: [String] = []
         lines.append("请加载 issue-resolve skill 并完成以下 GitHub issue 的修复：")
@@ -300,25 +290,22 @@ enum TaskPrompts {
         lines.append("标题：\(title)")
         lines.append("")
         lines.append("要求：")
-        lines.append("1. 加载全局 $DSH_HOME/skills/issue-resolve/SKILL.md（或内嵌说明）并严格按其流程执行（读 issue → 改代码 → 跑测试 → commit → push）；")
-        lines.append("2. 当前分支应为 \(branch)，只在此分支上工作；")
-        lines.append("3. 推送私有仓库/需要认证的 GitHub 调用时，token 在 $DSH_HOME/tokens/<owner>-<repo> 或 $DSH_HOME/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；")
-        lines.append("4. 完成后简短汇报改动与测试结果。")
+        lines.append("1. 加载全局 $DSH_HOME/skills/issue-resolve/SKILL.md（或内嵌说明）并严格按其流程执行（读 issue → 改代码 → 跑测试 → commit）；")
+        lines.append("2. 当前分支应为 \(branch)，只在此分支上工作（不要新建分支）；")
+        lines.append("3. \(verifyRequirement)")
+        lines.append("4. 推送私有仓库/需要认证的 GitHub 调用时，token 在 $DSH_HOME/tokens/<owner>-<repo> 或 $DSH_HOME/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；")
+        lines.append("5. \(reportRequirement)")
         return lines.joined(separator: "\n")
     }
 
     /// Manual task: the user's own title and description plus the same rails.
     ///
-    /// `pushes` follows the queue: a queue that will open a pull request needs the
-    /// branch on the remote, and a queue that will not must NOT push — its work
-    /// stays as local commits on the queue's branch (the agent is told so, or it
-    /// pushes anyway out of habit).
-    ///
-    /// `shape` follows the WORKSPACE (see TaskRepoShape): it decides what the rails
-    /// may even ask for, and it names the way out of the two states a task can
-    /// convert — `git init` and `git remote add origin <url>`.
+    /// `shape` follows the WORKSPACE (see TaskRepoShape): it decides which rails
+    /// exist at all (no branch rail without a repository, no token rail without a
+    /// GitHub remote). The push / PR policy is deliberately NOT here: that half is
+    /// the shell's, performed by a dedicated 开 PR 会话 once the queue is done.
     static func manual(title: String, body: String?, branch: String?, queueName: String?,
-                       pushes: Bool = true, brief: String? = nil,
+                       brief: String? = nil,
                        shape: TaskRepoShape = .github) -> String {
         var lines: [String] = []
         lines.append("请完成以下任务：")
@@ -331,49 +318,85 @@ enum TaskPrompts {
             lines.append("")
             lines.append(body)
         }
-        // The 交接简报 goes between the task and the requirements: context first,
-        // then what to do with it.
+        // 要求按「这个工作区现在是什么 + 这个队列会做什么」逐条生成，编号由顺序算出：
+        // 不适用的条目**不出现**，而不是留一句空话 —— 非 git 目录没有分支要求、非
+        // GitHub 工作区没有 token 要求、独立任务不说队列共享（用户的原话是「按需出现，
+        // 而不是每个任务都是一样的要求」）。写死 1..6 的旧版本做不到这件事。
+        var requirements: [String] = []
+        // 独立 / 队列中的一项。队列任务的「前置完成情况」不在这里，而是整段附在要求
+        // 之后（见下面 briefSection 的落点）：先把要求读完，再看上一棒留下什么。
+        if let queueName = queueName {
+            requirements.append("本任务是队列「\(queueName)」中的一项，与其他任务共享同一分支与改动；")
+        } else {
+            // 措辞避开「与其他任务共享」这几个字：独立任务不是在否定一件事，而是在
+            // 说明它的形状（队列里的任务才会共享分支与改动）。
+            requirements.append("本任务独立执行，不共享分支与改动；")
+        }
+        // 分支：只有存在仓库时才有这句话；切不切、切哪条，按队列说。
+        if shape != .plain {
+            if let branch = branch, !branch.isEmpty {
+                requirements.append("当前分支应为 \(branch)，只在此分支上工作（不要新建分支）；")
+            } else {
+                requirements.append("本队列不切分支：就在当前已检出的分支上改，不要新建分支；")
+            }
+        }
+        requirements.append(Self.verifyRequirement)
+        // commit：**有仓库就必须 commit**（含任务自己刚 git init 出来的仓库）。
+        //
+        // 这里**只说 commit**：push 与 PR 是壳层那一半，队列结束后另起一个 PR 会话
+        // 专门去做（§V2-6），所以「要 push」「不要 push」「这个队列会开 PR」「远端必须
+        // 有这些提交」这些话都不该出现在任务提示词里 —— 说了就是让代理操心不属于它的
+        // 事，还会把注意力从任务本身引开。
+        if shape == .plain {
+            requirements.append("这里还不是 git 仓库：不要求 commit；任务本身要你建仓库（git init）时，建好后把改动 commit 掉（建议 feat/fix: 简述）；")
+        } else {
+            requirements.append("完成前 commit（建议 feat/fix: 简述）；")
+        }
+        // token：只有 GitHub 工作区需要（不是 GitHub 仓库就整条不出现）。
+        if shape == .github {
+            requirements.append("需要 GitHub 写操作时，token 在 $DSH_HOME/tokens/<owner>-<repo> 或 $DSH_HOME/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；")
+        }
+        // 汇报：每个任务都必须，而且这份汇报会被写回任务卡片。
+        requirements.append(Self.reportRequirement)
+
+        lines.append("")
+        lines.append("要求：")
+        for (index, requirement) in requirements.enumerated() {
+            lines.append("\(index + 1). " + requirement)
+        }
+        // 队列里前面那些任务留下了什么（各自会话里的最后一段汇报 + 分支上已有的提交）
+        // —— 按用户的要求整段放在**所有要求之后**。
         if let brief = brief, !brief.isEmpty {
             lines.append("")
             lines.append(brief)
         }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The prompt of the dedicated 开 PR 会话（§V2-6）—— the ONLY place that pushes and
+    /// opens a pull request. Task sessions only commit; this one reads what the branch
+    /// actually did, writes the title and body itself, pushes, opens (or reuses) the PR
+    /// and says the URL out loud, because the runner reads it back off the report and
+    /// puts it on the queue's card.
+    static func pullRequest(queueName: String?, branch: String, base: String, commits: [String]) -> String {
+        var lines: [String] = []
+        lines.append("这个队列的任务都完成了，请你为它开一个 pull request：")
+        lines.append("")
+        lines.append("## 要发布的分支")
+        lines.append("分支：\(branch)（基于 \(base)）")
+        if let queueName = queueName, !queueName.isEmpty { lines.append("队列：\(queueName)") }
+        if !commits.isEmpty {
+            lines.append("分支上已有的提交：")
+            for commit in commits { lines.append("  " + commit) }
+        }
         lines.append("")
         lines.append("要求：")
-        if let queueName = queueName {
-            lines.append("1. 本任务是队列「\(queueName)」中的一项，与其他任务共享同一分支与改动；")
-        } else {
-            lines.append("1. 本任务独立执行；")
-        }
-        if shape == .plain {
-            // Not a repository at all (§V2-7): the PIPELINE will not touch git, so
-            // say that instead of asking for a branch/commit/push it can never honour.
-            //
-            // It must not read as a ban on the TASK, though: 「初始化 git 仓库」 is a
-            // perfectly reasonable task, and the old wording (「不要 git init」) told the
-            // agent to refuse exactly what the user asked for. The rail is "don't do
-            // git for the shell's sake", not "don't do git".
-            lines.append("2. 这不是 git 仓库：壳层不会切分支、不会提交、不会推送。默认直接在当前目录修改文件即可；任务本身要求初始化仓库或提交时，照任务做；")
-        } else if let branch = branch, !branch.isEmpty {
-            lines.append("2. 当前分支应为 \(branch)，只在此分支上工作（不要新建分支）；")
-        } else {
-            lines.append("2. 在当前已检出的分支上工作（不要新建分支）；")
-        }
-        lines.append("3. 改完代码后跑相关测试，确保通过；")
-        // 第 4 条按「这个工作区现在是什么」分四种说法。两处转换都写在里：目录不是仓库
-        // 时给出 git init → git remote add → push 这条路（任务很可能就是来建仓库的），
-        // 仓库没有 GitHub 远端时给出 git remote add → push 这条路，并说清「这个队列不开
-        // PR」的真正原因是**没有远端**，不是队列设置（旧文案错怪了队列设置）。
-        if shape == .plain {
-            lines.append("4. 默认不要 commit、不要 push（这里还没有仓库）；任务要求建立仓库／提交时才做，并把结果说清楚。要把它变成 GitHub 仓库就是三步：git init（若还没建）→ git remote add origin <GitHub 地址> → push（地址以任务里给的为准，没有就问，别自己编）；壳层随后会重新识别这个工作区，后面的任务就能用分支了；")
-        } else if shape == .git {
-            lines.append("4. commit（建议 feat/fix: 简述）；**不要 push**：这个仓库还没有 GitHub 远端，壳层不会开 PR，改动留在本地分支上即可；任务本身要求发布到 GitHub 时，先 git remote add origin <GitHub 地址> 再 push（地址以任务里给的为准，没有就问；之后壳层会重新识别这个工作区）；")
-        } else if pushes {
-            lines.append("4. commit（建议 feat/fix: 简述），并把当前分支 push 到远端（这个队列最后会开 PR，远端必须有这些提交）；")
-        } else {
-            lines.append("4. commit（建议 feat/fix: 简述）；**不要 push**：这个队列没有开自动 PR，改动只留在本地分支上；")
-        }
-        lines.append("5. 需要 GitHub 写操作时，token 在 $DSH_HOME/tokens/<owner>-<repo> 或 $DSH_HOME/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；")
-        lines.append("6. 完成后简短汇报改动与测试结果。")
+        lines.append("1. 先看清这个分支到底改了什么（git log \(base)..\(branch)、git diff \(base)...\(branch)，以及涉及的代码与文档），不要凭队列名字猜；")
+        lines.append("2. 把分支 push 到远端（远端名优先 github，其次 origin；分支还没推送过就 -u 推送）；")
+        lines.append("3. 用 GitHub token 开 PR：token 在 $DSH_HOME/tokens/<owner>-<repo> 或 $DSH_HOME/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；base = \(base)，head = \(branch)；GitHub 上已经有同一个 head 的 PR 就复用它，不要重复创建；")
+        lines.append("4. PR 标题与正文由你**按实际改动**写：标题一句话说清这次合并做了什么，正文分条列出改动要点、怎么验证的、需要注意的地方；不要只写队列名，也不要套模板；")
+        lines.append("5. 这个会话不要改任何代码：只做发布；")
+        lines.append("6. **必须**在最后一行给出 PR 的完整链接（https://github.com/<owner>/<repo>/pull/<编号>）；真开不出来就说清楚卡在哪一步（权限 / 网络 / token / 分支状态），不要沉默收尾。")
         return lines.joined(separator: "\n")
     }
 }
@@ -425,11 +448,25 @@ final class TasksRunner {
         var startedAt: Date
     }
 
+    /// The dedicated 开 PR 会话 of a finished queue (§V2-6): the session that pushes
+    /// the branch, summarizes the diff and opens the pull request.
+    struct PRRun {
+        var queueID: String
+        var branch: String
+        var base: String
+        var sessionId: String
+        var startedAt: Date
+    }
+
     private enum Phase {
         case idle
         case starting(String)
         case active(Active)
         case finishing(String)
+        /// The PR session is being created (dsh RPC is blocking).
+        case startingPR(String)
+        /// The PR session is running (or its result is being looked up).
+        case openingPR(PRRun)
     }
 
     private enum StartResult {
@@ -440,7 +477,9 @@ final class TasksRunner {
     }
 
     private enum FinishOutcome {
-        case done(prUrl: String?)
+        /// The session stopped. Its work is done; its PR (if its queue wants one) is
+        /// a separate session's business — see startQueuePR.
+        case done
         case failed(TaskFailure)
     }
 
@@ -453,6 +492,10 @@ final class TasksRunner {
     static let missingSessionPolls = 10
 
     private var phase: Phase = .idle
+    /// A PR run's result is being looked up (the session log + the GitHub API, both
+    /// blocking). The phase stays .openingPR while that happens, so this keeps the
+    /// next ticks from starting a second lookup.
+    private var prLookupInFlight = false
     /// 取消 asked for while the task was still STARTING: honoured in applyStart,
     /// as soon as there is a session to cancel. Cleared whenever a start begins.
     private var cancelRequested = false
@@ -483,7 +526,18 @@ final class TasksRunner {
         switch phase {
         case .starting(let id), .finishing(let id): return id
         case .active(let active): return active.taskID
-        case .idle: return nil
+        case .idle, .startingPR, .openingPR: return nil
+        }
+    }
+
+    /// The queue whose PR session is in flight right now, or nil. The panel shows it
+    /// instead of 「正在处理 #N」 — no task is running during a PR run (`isBusy` is
+    /// still true: the serial slot belongs to the PR session).
+    var openingPRQueueID: String? {
+        switch phase {
+        case .startingPR(let queueID): return queueID
+        case .openingPR(let run): return run.queueID
+        default: return nil
         }
     }
 
@@ -518,8 +572,10 @@ final class TasksRunner {
     @discardableResult
     func step(now: Date = Date()) -> Bool {
         switch phase {
-        case .starting, .finishing:
+        case .starting, .finishing, .startingPR:
             return true
+        case .openingPR(let run):
+            return stepPRRun(run, now: now)
         case .idle:
             _ = pump(now: now)
             return isBusy
@@ -686,9 +742,12 @@ final class TasksRunner {
             // cancelled task left work and a story the next task must know (else
             // the retry re-explores from scratch).
             guard task.state == .done || task.state == .failed || task.state == .cancelled else { return nil }
+            // The stored 汇报 first: the runner writes it back when a task ends (so it
+            // survives a deleted session), and only a task that ended before that
+            // existed has to be read out of the session log again.
             return TaskPrompts.QueueBrief.Earlier(title: task.title, state: task.state,
                                                   errorKey: task.error,
-                                                  report: task.sessionId.flatMap { sessionReport($0) })
+                                                  report: task.report ?? task.sessionId.flatMap { sessionReport($0) })
         }
         let commits = branch.map { _ in git.commits(base: base) ?? [] } ?? []
         let heading = TaskPrompts.QueueBrief(queueName: queue.name, position: index,
@@ -712,90 +771,219 @@ final class TasksRunner {
     private func finish(active: Active, now: Date) {
         let queue = active.queueID.flatMap { board.queue($0) }
         let branch = active.branch
-        let base = queue?.baseBranch ?? "main"
-        // The queue's PR is opened once, when its LAST task finishes: every task
-        // in a queue shares one branch, and GitHub allows one open PR per head.
+        // The queue's PR is opened once, when its LAST task finishes: every task in a
+        // queue shares one branch, and GitHub allows one open PR per head.
         let queueHasMore = queue?.taskIds.contains { id in
             id != active.taskID && (board.task(id)?.state == .queued || board.task(id)?.state == .running)
         } ?? false
-        // PUSH POLICY (2026-09-27): a task pushes ONLY when its queue is about to
-        // open a pull request. Otherwise the work stays as local commits on the
-        // queue's branch — and there is no "did the agent push?" question to get
-        // wrong (that check used to fail finished work on private remotes whose
-        // credentials were not cached).
-        let queueWantsPR = (queue?.autoPR ?? false) && env.canOpenPR()
-        let wantsPR = queueWantsPR && !queueHasMore
-        let prText = board.task(active.taskID).map { env.prText($0, branch ?? base) }
-        let git = env.git
-        let findExistingPR = env.findExistingPR
-        let createPR = env.createPR
+        // PUSH / PR POLICY (2026-09-27, second pass): a task session ONLY COMMITS.
+        // Pushing the branch and opening the PR are a job of their own, done by a
+        // dedicated 开 PR 会话 once the queue is done (startQueuePR) — which is also
+        // why nothing here asks the agent to push, checks whether it did, or talks to
+        // the GitHub API at all: the session reads the branch, writes the title and
+        // body from the real diff, pushes, opens the PR and reports the URL.
+        let wantsPR = (queue?.autoPR ?? false) && env.canOpenPR() && !queueHasMore
         let log = env.log
         let taskID = active.taskID
-        if !queueWantsPR, branch != nil {
-            log("tasks: " + taskID + " keeps its work local — this queue opens no PR (no push, commit only)")
+        let sessionReport = env.sessionReport
+        if !wantsPR, queue?.autoPR == true {
+            log("tasks: " + taskID + " finishes its own work — the queue's PR comes from its PR session later")
         }
 
         phase = .finishing(taskID)
-        var outcome: FinishOutcome = .done(prUrl: nil)
+        var outcome: FinishOutcome = .done
+        var report: String? = nil
         env.perform({
-            if wantsPR, let branch = branch {
-                if git.remoteName() == nil {
-                    log("tasks: " + taskID + " has no remote — skipping the push check")
-                } else {
-                    switch git.branchPushState(branch) {
-                    case .pushed:
-                        break
-                    case .notPushed:
-                        // A real miss: the queue asked for a PR and the branch is
-                        // not on the remote, so no PR can be opened.
-                        outcome = .failed(.noPush)
-                        return
-                    case .unknown:
-                        // The question could not be asked (no credentials for a
-                        // private remote, network hiccup). That is NOT "the agent
-                        // forgot to push": report it and carry on to the PR.
-                        log("tasks: " + taskID + " could not tell whether " + branch + " is pushed — carrying on")
-                    }
-                }
-            }
-            guard wantsPR, let branch = branch, let prText = prText else {
-                outcome = .done(prUrl: nil)
-                return
-            }
-            if let existing = findExistingPR(branch) {
-                log("tasks: reusing the open PR for " + branch)
-                outcome = .done(prUrl: existing)
-                return
-            }
-            if let url = createPR(branch, base, prText.title, prText.body) {
-                outcome = .done(prUrl: url)
-            } else {
-                // A PR that cannot be opened (internal remote, no permission) is
-                // NOT a task failure: the branch is pushed and the user can open
-                // it by hand.
-                log("tasks: PR not created for " + branch + " — the branch is pushed")
-                outcome = .done(prUrl: nil)
-            }
+            // The 汇报 is read HERE, while the session still exists, and written back
+            // onto the task: the card shows it, and the next task of the queue gets it
+            // as its 前置汇报 even if this session is deleted tomorrow.
+            report = sessionReport(active.sessionId)
         }, {
-            self.applyFinish(taskID: taskID, outcome: outcome, now: now)
+            self.applyFinish(taskID: taskID, outcome: outcome, now: now, report: report,
+                             prQueueID: wantsPR ? queue?.id : nil)
         })
     }
 
-    private func applyFinish(taskID: String, outcome: FinishOutcome, now: Date) {
+    private func applyFinish(taskID: String, outcome: FinishOutcome, now: Date,
+                             report: String? = nil, prQueueID: String? = nil) {
         phase = .idle
         let isIssue = board.task(taskID)?.source == .github
         switch outcome {
-        case .done(let prUrl):
-            board.markDone(taskID, prUrl: prUrl, at: now)
-            let suffix = prUrl.map { " (" + $0 + ")" } ?? ""
-            env.log("tasks: " + taskID + " done" + suffix)
+        case .done:
+            board.markDone(taskID, report: report, at: now)
+            env.log("tasks: " + taskID + " done")
         case .failed(let failure):
-            board.markFailed(taskID, error: failure.rawValue, at: now)
+            board.markFailed(taskID, error: failure.rawValue, report: report, at: now)
             env.log("tasks: " + taskID + " failed (" + failure.rawValue + ")")
         }
         if isIssue, let task = board.task(taskID) { env.persistIssueTask(task) }
         persist()
+        // Only a queue that ENDED WELL hands its branch over to a PR session: a failed
+        // task pauses the queue, and half-finished work is not what anyone wants merged.
+        if case .done = outcome, let queueID = prQueueID { startQueuePR(queueID) }
         _ = pump(now: now)
+    }
+
+    // MARK: - The queue PR session
+
+    /// Start the PR session of a queue — the ONE place that pushes a branch and opens
+    /// a pull request (§V2-6). Task sessions only commit; this session reads what the
+    /// branch actually did, writes the title and body from it, pushes, opens (or
+    /// reuses) the PR and says the URL out loud.
+    ///
+    /// Called automatically when a queue with 「完成后自动开 PR」 finishes its last task,
+    /// and by the queue header 开 PR button — which is why it does not care whether
+    /// autoPR is on. Refused (with a log line and a reason on the queue, never a
+    /// session that cannot succeed) when a PR run is already in flight, when the queue
+    /// has no branch to publish, or when the workspace has no GitHub remote.
+    @discardableResult
+    func startQueuePR(_ queueID: String) -> Bool {
+        guard case .idle = phase else {
+            env.log("tasks: a PR session is already in flight — not starting one for " + queueID)
+            return false
+        }
+        guard let queue = board.queue(queueID) else { return false }
+        guard let branch = queue.branch, !branch.isEmpty else {
+            env.log("tasks: queue " + queueID + " has no branch — there is nothing to open a PR from")
+            _ = board.setQueuePRError(queueID, "tasks.errPRNoBranch")
+            persist()
+            return false
+        }
+        guard env.canOpenPR() else {
+            env.log("tasks: queue " + queueID + " — this workspace has no GitHub remote, so there is no PR to open")
+            _ = board.setQueuePRError(queueID, "tasks.errPRNoRemote")
+            persist()
+            return false
+        }
+        let env = self.env
+        let base = queue.baseBranch
+        let name = queue.name
+        phase = .startingPR(queueID)
+        var run: PRRun?
+        env.perform({
+            run = TasksRunner.makePRRun(env: env, queueID: queueID, name: name,
+                                        branch: branch, base: base)
+        }, {
+            guard let run = run else {
+                self.phase = .idle
+                self.env.log("tasks: could not start a PR session for queue " + queueID)
+                _ = self.board.setQueuePRError(queueID, "tasks.errPRSession")
+                self.persist()
+                return
+            }
+            self.beginPRRun(run)
+        })
+        return true
+    }
+
+    /// Create the PR session itself: two blocking dsh RPCs (create + prompt), static so
+    /// it can run inside the background step. Returns nil when either fails — the caller
+    /// then records the reason on the queue instead of leaving a half-created session.
+    static func makePRRun(env: TaskRunnerEnv, queueID: String, name: String,
+                          branch: String, base: String) -> PRRun? {
+        // What the branch carries, for the session context: it still reads the diff
+        // itself (that is the point of the summary), but the commit list saves it from
+        // starting with 「what is this branch」.
+        let commits = env.git.commits(base: base) ?? []
+        let text = TaskPrompts.pullRequest(queueName: name, branch: branch, base: base, commits: commits)
+        guard let sessionId = env.createSession(env.repoRoot) else { return nil }
+        _ = env.renameSession(sessionId, L10n.tr("tasks.queue.prSessionName", name))
+        guard env.promptSession(sessionId, text) else {
+            _ = env.cancelSession(sessionId)
+            return nil
+        }
+        return PRRun(queueID: queueID, branch: branch, base: base, sessionId: sessionId,
+                     startedAt: Date())
+    }
+
+    private func beginPRRun(_ run: PRRun) {
+        phase = .openingPR(run)
+        _ = board.setQueuePRError(run.queueID, nil)
+        env.log("tasks: PR session " + run.sessionId + " is opening the PR for queue " + run.queueID)
+        persist()
+    }
+
+    /// One tick of a PR run: wait for the session, then ask what it produced.
+    private func stepPRRun(_ run: PRRun, now: Date) -> Bool {
+        guard !prLookupInFlight else { return true }
+        switch env.sessionState(run.sessionId) {
+        case .running:
+            unknownPolls = 0
+            missingPolls = 0
+            if now.timeIntervalSince(run.startedAt) > timeout {
+                env.log("tasks: PR session " + run.sessionId + " timed out after "
+                        + String(Int(timeout)) + "s; cancelling it")
+                _ = env.cancelSession(run.sessionId)
+                finishPRRun(run)
+            }
+            return isBusy
+        case .idle:
+            unknownPolls = 0
+            missingPolls = 0
+            finishPRRun(run)
+            return isBusy
+        case .unknown:
+            missingPolls = 0
+            if unknownPolls % 10 == 0 {
+                env.log("tasks: PR session " + run.sessionId + " — dsh could not report on it; still waiting")
+            }
+            unknownPolls += 1
+            return isBusy
+        case .missing:
+            unknownPolls = 0
+            missingPolls += 1
+            if missingPolls >= TasksRunner.missingSessionPolls {
+                env.log("tasks: PR session " + run.sessionId + " is gone from dsh — looking for the PR anyway")
+                finishPRRun(run)
+            }
+            return isBusy
+        }
+    }
+
+    /// Ask what the PR session produced: the URL it reported, else whatever PR GitHub
+    /// already has open for the branch.
+    private func finishPRRun(_ run: PRRun) {
+        prLookupInFlight = true
+        let findExistingPR = env.findExistingPR
+        let sessionReport = env.sessionReport
+        var prUrl: String?
+        var report: String?
+        env.perform({
+            report = sessionReport(run.sessionId)
+            prUrl = TasksRunner.prURL(in: report) ?? findExistingPR(run.branch)
+        }, {
+            self.applyPRRun(run, prUrl: prUrl, report: report)
+        })
+    }
+
+    private func applyPRRun(_ run: PRRun, prUrl: String?, report: String?) {
+        prLookupInFlight = false
+        phase = .idle
+        if let prUrl = prUrl {
+            _ = updateQueue(run.queueID, prUrl: prUrl)
+            env.log("tasks: queue " + run.queueID + " has its PR: " + prUrl)
+        } else {
+            // No URL in the report and no open PR for the branch. The session is the only
+            // place that knows why (it was asked to say so), so its first line goes to the
+            // log and the queue records the reason for the card.
+            let firstLine = report?.split(separator: "\n").first.map(String.init) ?? "(no report)"
+            env.log("tasks: no PR for queue " + run.queueID + " — session " + run.sessionId
+                    + " ended saying: " + String(firstLine.prefix(200)))
+            _ = board.setQueuePRError(run.queueID, "tasks.errPR")
+            persist()
+        }
+        _ = pump()
+    }
+
+    /// The PR URL inside a session report: the first github.com/<owner>/<repo>/pull/<n>
+    /// link. The report is the agent own words (TaskPrompts.pullRequest asks for the
+    /// full URL on the last line), so this is a search rather than a parse of a fixed
+    /// format — and a missing URL is not an error: findExistingPR answers next.
+    static func prURL(in report: String?) -> String? {
+        guard let report = report else { return nil }
+        guard let range = report.range(of: "https?://[^\\s]*github\\.com/[^\\s]*/pull/[0-9]+",
+                                       options: .regularExpression) else { return nil }
+        return String(report[range])
     }
 
     private func persist() {
@@ -1054,6 +1242,10 @@ final class TasksRunner {
             env.log("tasks: cancel requested while " + taskID + " was starting — it will be cancelled as soon as its session exists")
             return .deferred
         case .finishing:
+            return .finishing
+        case .startingPR, .openingPR:
+            // The PR session is already publishing this queue: there is no task to
+            // cancel (stop that session in dsh if it is going the wrong way).
             return .finishing
         case .idle:
             return .idle

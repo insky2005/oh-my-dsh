@@ -114,7 +114,7 @@ enum TasksStore {
         board.tasks.append(contentsOf: loadManual(repoRoot))
         board.queues = loadQueues(repoRoot)
         board.local = loadLocal(repoRoot)
-        board.attachSessions(board.local.sessions)
+        board.attachSessions(board.local.sessions, reports: board.local.reports)
         board.reindexQueueMembership()
         return board
     }

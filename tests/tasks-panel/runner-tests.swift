@@ -196,14 +196,9 @@ final class Harness {
             canSwitchBranches: gitRepo,
             canOpenPR: { github },
             cancelSession: { id in dsh.cancel(id) },
+            // No createPR/prText: the PR is opened by the queue's PR SESSION, whose
+            // prompt asks the agent to push and to write the title/body from the diff.
             findExistingPR: { branch in github ? rec.existingPRs[branch] : nil },
-            createPR: { branch, base, _, _ in
-                rec.prCalls.append((branch: branch, base: base))
-                return github ? "https://example.test/pull/" + String(rec.prCalls.count) : nil
-            },
-            prText: { task, branch in
-                (title: "fix(#" + String(task.number ?? 0) + ")", body: branch)
-            },
             promptText: { task, queue, brief in
                 // Same rules the panel uses: only a queue that will open a PR asks
                 // the agent to push, and only a SHARED queue claims to share a
@@ -215,7 +210,6 @@ final class Harness {
                 let sharedName = queue.flatMap { $0.autoCreated ? nil : $0.name }
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: sharedName,
-                                          pushes: (queue?.autoPR ?? false) && shape == .github,
                                           brief: brief,
                                           shape: shape)
             },
@@ -238,6 +232,19 @@ final class Harness {
     /// completion, the way its background queue would.
     func flush() {
         while !work.items.isEmpty { work.items.removeFirst()() }
+    }
+
+    /// Walk one task all the way out of its queue: finish its session, step (which
+    /// starts the queue's PR session), then finish THAT session and step again — a
+    /// finished queue owns the serial slot until its PR run answers. Tests that walk a
+    /// batch of queues have to do both halves, or the next queue looks stuck.
+    func settleTaskAndPR(_ limit: Int = 6) {
+        for _ in 0..<limit {
+            dsh.finishAll()
+            _ = runner.step()
+            if !runner.isBusy { return }
+            if runner.openingPRQueueID == nil { return }   // a real task is running: leave it
+        }
     }
 }
 
@@ -277,16 +284,31 @@ do {
     check(h.rec.persistCount > 0, "state was persisted while starting")
 
     check(h.runner.step() == true, "still busy while the session runs")
+    h.dsh.reports["session-1"] = "改完了 README 的安装段，用 markdownlint 校验过。"
     h.dsh.finishAll()
-    h.repo.pushed.insert("feature/docs-cleanup")
-    check(h.runner.step() == false, "the step finishes the task")
+    check(h.runner.step() == true, "the finished queue hands over to its PR session")
     check(h.board.task(taskID)?.state == .done, "the task is done")
-    check(h.board.task(taskID)?.prUrl == "https://example.test/pull/1", "the PR url is recorded")
-    eq(h.rec.prCalls.count, 1, "one PR was created")
-    eq(h.rec.prCalls.first?.branch, "feature/docs-cleanup", "PR head is the queue branch")
-    eq(h.rec.prCalls.first?.base, "main", "PR base is the queue base branch")
+    eq(h.board.task(taskID)?.report, "改完了 README 的安装段，用 markdownlint 校验过。",
+       "the agent report is written back onto the task")
     check(h.rec.issueWrites.isEmpty, "a manual task is not written to the committed index")
     check(h.board.queue(queueID)?.state == .done, "the finished queue is done")
+    eq(h.runner.openingPRQueueID, queueID, "the runner knows which queue is opening a PR")
+    // The task session was never asked to push; a SECOND session does the publishing.
+    let taskPrompt = h.dsh.prompts["session-1"] ?? ""
+    check(!taskPrompt.contains("push"), "the task prompt says nothing about push")
+    eq(h.dsh.sessions.count, 2, "a dedicated PR session was created")
+    let prSession = h.dsh.sessions[1]
+    check((h.dsh.titles[prSession] ?? "").contains("Docs Cleanup"), "the PR session is named for the queue")
+    let prPrompt = h.dsh.prompts[prSession] ?? ""
+    check(prPrompt.contains("feature/docs-cleanup"), "the PR session is told which branch to publish")
+    check(prPrompt.contains("base = main"), "and which base to open against")
+    check(prPrompt.contains("不要改任何代码"), "and that it must not touch the code")
+
+    h.dsh.reports[prSession] = "已推送分支并创建 PR：https://github.com/o/r/pull/12"
+    h.dsh.finishAll()
+    check(h.runner.step() == false, "the PR run ends")
+    eq(h.board.queue(queueID)?.prUrl, "https://github.com/o/r/pull/12",
+       "the PR url it reported lands on the queue")
     check(h.runner.isBusy == false, "nothing is in flight")
 }
 
@@ -298,9 +320,10 @@ do {
     _ = h.runner.enqueue(taskID: taskID, into: queueID)
     check(h.repo.calls.isEmpty, "no git command ran")
     h.dsh.finishAll()
-    check(h.runner.step() == false, "the task finishes without a push check")
+    check(h.runner.step() == false, "the task finishes (and there is no PR run to make)")
     check(h.board.task(taskID)?.state == .done, "the task is done")
-    check(h.rec.prCalls.isEmpty, "no PR without a branch")
+    eq(h.dsh.sessions.count, 1, "no PR session without a branch")
+    eq(h.board.queue(queueID)?.prError, "tasks.errPRNoBranch", "and the queue records why")
 }
 
 section("non-git workspace: a branchless queue runs, a queue with a branch reports it")
@@ -346,21 +369,26 @@ do {
     _ = h.runner.startQueue(queue.id)
     eq(h.repo.checkouts, ["main", "feature/dark-mode"], "the first task switches branch")
     h.dsh.finishAll()
-    h.repo.pushed.insert("feature/dark-mode")
     _ = h.runner.step()
     check(h.board.task(t1.id)?.state == .done, "the first task is done")
-    check(h.board.task(t1.id)?.prUrl == nil, "no PR while the queue still has work")
-    eq(h.rec.prCalls.count, 0, "the queue PR waits for the last task")
+    check(h.runner.openingPRQueueID == nil, "no PR run while the queue still has work")
+    check(h.board.queue(queue.id)?.prUrl == nil, "and no PR yet")
 
     check(h.board.task(t2.id)?.state == .running, "the second task started automatically")
     eq(h.repo.checkouts.count, 2, "the second task does not switch branch again")
     check(h.runner.runningTaskID == t2.id, "the second task owns the slot")
     h.dsh.finishAll()
-    h.rec.existingPRs["feature/dark-mode"] = "https://example.test/pull/7"
     _ = h.runner.step()
     check(h.board.task(t2.id)?.state == .done, "the second task is done")
-    check(h.board.task(t2.id)?.prUrl == "https://example.test/pull/7", "the existing PR is reused")
-    eq(h.rec.prCalls.count, 0, "no second PR is opened for the same head")
+    eq(h.dsh.sessions.count, 3, "the queue PR session starts once, after the LAST task")
+    // That session opened the PR without quoting the URL back: the runner finds it
+    // through the branch instead of leaving the queue without a PR.
+    h.rec.existingPRs["feature/dark-mode"] = "https://example.test/pull/7"
+    h.dsh.reports[h.dsh.sessions[2]] = "PR 已创建，请 review。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.queue(queue.id)?.prUrl, "https://example.test/pull/7",
+       "an unquoted PR is found for the branch")
     check(h.board.queue(queue.id)?.state == .done, "the queue is done")
 }
 
@@ -408,14 +436,18 @@ do {
     check(h.board.task(taskID)?.sessionId != nil, "the session id is still recorded for traceability")
 }
 do {
+    // The old behaviour — "the branch is not on the remote ⇒ the task FAILED with
+    // tasks.errNoPush" — is gone with the push check itself: a task commits and
+    // nothing else. Whether the branch ever reaches the remote is the PR session's
+    // business, and it reports its own failure. The queue stays done.
     let (board, taskID, queueID) = singleTaskBoard()
     let h = Harness(board: board)
     _ = h.runner.enqueue(taskID: taskID, into: queueID)
     h.dsh.finishAll()
     _ = h.runner.step()
-    check(h.board.task(taskID)?.error == "tasks.errNoPush", "an unpushed branch is reported")
-    eq(h.board.queue(queueID)?.state, QueueState.paused, "the queue is paused")
-    check(h.rec.prCalls.isEmpty, "no PR for an unpushed branch")
+    check(h.board.task(taskID)?.state == .done, "an unpushed branch no longer fails the task")
+    check(h.board.task(taskID)?.error == nil, "and no failure reason is recorded")
+    check(h.repo.calls.contains { $0.hasPrefix("ls-remote") } == false, "the remote was never asked about it")
 }
 do {
     let (board, taskID, queueID) = singleTaskBoard()
@@ -428,25 +460,26 @@ do {
     eq(h.board.queue(queueID)?.state, QueueState.paused, "the queue is paused")
 }
 do {
-    // No GitHub remote ⇒ this queue will never open a PR ⇒ the task does not push
-    // at all: commit-only, no push check, no PR attempt (push policy 2026-09-27).
+    // No GitHub remote ⇒ no PR session for this queue. The TASK is unaffected: it
+    // only ever commits, and nothing checks the remote on its behalf any more.
     let (board, taskID, queueID) = singleTaskBoard()
     let h = Harness(board: board, github: false)
     _ = h.runner.enqueue(taskID: taskID, into: queueID)
     h.dsh.finishAll()
     _ = h.runner.step()
     check(h.board.task(taskID)?.state == .done, "the task is done")
-    check(h.board.task(taskID)?.prUrl == nil, "no PR url")
-    check(h.rec.prCalls.isEmpty, "and no PR was even attempted")
+    check(h.board.queue(queueID)?.prUrl == nil, "no PR url")
+    eq(h.dsh.sessions.count, 1, "and no PR session without a GitHub remote")
     check(h.repo.calls.contains { $0.hasPrefix("ls-remote") } == false,
-          "the push was never checked — nothing is going to be pushed")
-    check(h.dsh.prompts["session-1"]?.contains("不要 push") == true,
-          "the agent was told to commit only")
-    check(h.rec.logged("keeps its work local"), "and the log says why")
+          "the push is never checked — nobody is going to push from here")
+    let prompt = h.dsh.prompts["session-1"] ?? ""
+    check(!prompt.contains("push"), "the agent is not told to push either")
+    check(!prompt.contains("GitHub token"), "and not handed a token it has no use for")
 }
 do {
-    // A queue that DOES want a PR, in a repo with no remote at all: the check is
-    // skipped with a log (there is nothing to push to).
+    // A local-only repo (no remote at all) is the same story for the task: it never
+    // pulls and never touches the remote. Its PR session is the one that has to
+    // deal with the world (and is told to).
     let (board, taskID, queueID) = singleTaskBoard()
     let h = Harness(board: board, github: true)
     h.repo.remote = nil
@@ -455,20 +488,24 @@ do {
     h.dsh.finishAll()
     _ = h.runner.step()
     check(h.board.task(taskID)?.state == .done, "a local-only repo still finishes")
-    check(h.rec.logged("no remote"), "the missing remote is logged")
+    eq(h.dsh.sessions.count, 2, "and the queue still hands over to its PR session")
 }
 do {
-    // …and when the check itself cannot RUN (private remote, no credentials), that
-    // is unknown — NOT "the agent forgot to push". It used to fail the task.
-    let (board, taskID, queueID) = singleTaskBoard()
-    let h = Harness(board: board, github: true)
-    h.repo.failing.insert("ls-remote --heads origin feature/docs-cleanup")
-    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    // The PR session is refused when there is no branch to publish — and the refusal
+    // is recorded on the queue instead of starting a session that cannot succeed.
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "Docs", body: nil, id: "manual-pp001111")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "No branch", branch: "", autoPR: true)
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = Harness(board: board)
+    _ = h.runner.startQueue(queue.id)
     h.dsh.finishAll()
     _ = h.runner.step()
-    check(h.rec.logged("could not tell whether"), "the unknown answer is reported")
-    check(h.board.task(taskID)?.state == .done, "and it does NOT fail the task")
-    eq(h.rec.prCalls.count, 1, "the PR is still attempted")
+    check(h.runner.startQueuePR(queue.id) == false, "a queue without a branch cannot open a PR")
+    eq(h.dsh.sessions.count, 1, "and no session is wasted on it")
+    eq(h.board.queue(queue.id)?.prError, "tasks.errPRNoBranch", "the reason is on the queue")
+    check(h.rec.logged("has no branch"), "and in the log")
 }
 
 // MARK: - Serial
@@ -607,17 +644,17 @@ do {
     _ = board.enqueue(taskID: t1.id, into: queue.id)
     _ = board.enqueue(taskID: t2.id, into: queue.id)
     let h = Harness(board: board)
-    h.repo.pushed.insert("feature/lane")
     _ = h.runner.startQueue(queue.id)
     h.dsh.finishAll()
     _ = h.runner.step()
     check(h.board.task(t1.id)?.state == .done, "the first task is done")
     check(h.runner.runningTaskID == t2.id, "the second task follows")
 
+    // The LAST task times out: the queue pauses, and 跳过并继续 moves past it.
     h.dsh.finishAll()
-    h.repo.pushed.removeAll()
-    _ = h.runner.step()
-    check(h.board.task(t2.id)?.state == .failed, "the LAST task fails when the branch was never pushed")
+    h.dsh.stateOverride["session-2"] = .missing
+    for _ in 0..<TasksRunner.missingSessionPolls { _ = h.runner.step() }
+    check(h.board.task(t2.id)?.state == .failed, "the LAST task fails on its own merits")
     check(h.runner.runningTaskID == nil, "the queue is paused")
     check(h.runner.skip(taskID: t2.id), "skip resumes the queue")
     check(h.board.queue(queue.id)?.state == QueueState.active, "the queue is active again")
@@ -673,11 +710,14 @@ do {
     check(h.runner.runningTaskID == "issue-12", "the issue task started")
     eq(h.repo.checkouts, ["main", "fix/issue-12"], "the issue branch was created from main")
     h.dsh.finishAll()
-    h.repo.pushed.insert("fix/issue-12")
     _ = h.runner.step()
     check(h.board.task("issue-12")?.state == .done, "the issue task is done")
-    eq(h.rec.prCalls.count, 1, "the issue task opened a PR")
     eq(h.rec.issueWrites, ["issue-12"], "the issue task is written to the committed index")
+    eq(h.dsh.sessions.count, 2, "…and its queue hands over to a PR session")
+    h.dsh.reports[h.dsh.sessions[1]] = "PR：https://github.com/o/r/pull/3"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.queue(queueID!)?.prUrl, "https://github.com/o/r/pull/3", "the issue queue gets its PR")
 
     // retry reuses the same auto queue instead of creating another one
     var failedBoard = h.board
@@ -856,10 +896,8 @@ final class WorkspaceHarness {
             canOpenPR: { false },
             cancelSession: { id in dsh.cancel(id) },
             findExistingPR: { _ in nil },
-            createPR: { _, _, _, _ in nil },
-            prText: { _, branch in (title: "t", body: branch) },
             promptText: { task, _, brief in TaskPrompts.manual(title: task.title, body: task.body,
-                                                              branch: nil, queueName: nil, pushes: false,
+                                                              branch: nil, queueName: nil,
                                                               brief: brief, shape: .plain) },
             persist: { board in self.boards[path] = board },
             persistIssueTask: { _ in },
@@ -1007,6 +1045,10 @@ do {
     check(second.contains("第 2/2 个"), "报位次")
     check(second.contains("「抽出 TokenStore」 —— 已完成"), "报上一棒的标题与结局")
     check(second.contains("已完成：抽出了 TokenStore，测试通过。"), "上一棒的汇报原样带上")
+    // 汇报在任务结束时就写回了任务（而不是每次现读会话日志）：会话被删掉也还在，
+    // 并且是 next 棒简报的第一来源。
+    check(h.board.task(t1.id)?.report == nil || h.board.task(t1.id)?.report?.isEmpty == false,
+          "已结束的任务带着它自己的汇报字段")
     check(second.contains("a1b2c3 refactor: extract TokenStore"), "带上分支已经有的提交")
     check(second.contains("d4e5f6 test: cover refresh"), "而且是全部提交")
     check(second.contains("不要重做已完成的部分"), "并明确要求本任务不要重做")
@@ -1108,14 +1150,11 @@ do {
     eq(h.runner.runningTaskID, issue.id, "板面顺序里的第一个（issue #3）立刻开跑")
     eq(h.runner.runningQueueID, firstQueue, "runningQueueID 指向它自己的队列（面板据此标活跃）")
 
-    h.dsh.finishAll()
-    _ = h.runner.step()
+    h.settleTaskAndPR()            // 第一个任务完成，它的队列把 PR 会话跑完
     eq(h.runner.runningTaskID, a.id, "第二个接着跑")
-    h.dsh.finishAll()
-    _ = h.runner.step()
+    h.settleTaskAndPR()
     eq(h.runner.runningTaskID, b.id, "第三个接着跑")
-    h.dsh.finishAll()
-    _ = h.runner.step()
+    h.settleTaskAndPR()
     check(h.runner.runningTaskID == nil, "全部跑完，没有卡住")
     check(h.board.queues.allSatisfy { $0.state == QueueState.done }, "三个队列都完成")
 }
@@ -1173,7 +1212,7 @@ do {
     check(h2.board.task(c.id)?.state != .failed, "这次没再因为 errNotGit 失败")
 }
 
-section("非 git 目录里的提示词：壳层不碰 git，但任务要求就照做")
+section("非 git 目录里的提示词：没有分支条、没有 token 条、也没有 push 的话")
 do {
     var board = TaskBoard()
     let task = TaskItem.manual(title: "初始化 git 仓库", body: nil, id: "manual-gg004444")
@@ -1181,20 +1220,22 @@ do {
     let h = Harness(board: board, github: false, gitRepo: false)
     _ = h.runner.startManualTask(task.id)
     let prompt = h.dsh.prompts["session-1"] ?? ""
-    check(prompt.contains("这不是 git 仓库"), "明说这里不是仓库")
-    check(prompt.contains("壳层不会切分支、不会提交、不会推送"), "说清壳层那一半：管线不碰 git")
-    check(prompt.contains("任务本身要求初始化仓库或提交时，照任务做"), "但任务自己要的事照做")
-    check(!prompt.contains("不要 git init"), "不再反过来禁止任务要的事")
-    check(prompt.contains("默认不要 commit、不要 push"), "默认仍然不 commit / push")
-    check(!prompt.contains("commit（建议 feat/fix"), "不会自相矛盾地要求 commit")
-    check(prompt.contains("git init（若还没建）→ git remote add origin"), "给出转换路径：init → remote add → push")
+    check(!prompt.contains("当前分支应为"), "非 git 目录没有分支要求")
+    check(!prompt.contains("本队列不切分支"), "也没有「不切分支」这种空话")
+    check(!prompt.contains("GitHub token"), "不是 GitHub 仓库就不提 token")
+    check(!prompt.contains("push") && !prompt.contains("PR"), "更不提 push / PR（那是 PR 会话的事）")
+    check(!prompt.contains("git remote add"), "不再往里塞「怎么变成 GitHub 仓库」的教程")
+    check(prompt.contains("这里还不是 git 仓库：不要求 commit"), "说清这一档的 commit 规则")
+    check(prompt.contains("任务本身要你建仓库（git init）时，建好后把改动 commit 掉"),
+          "任务自己建了仓库就要 commit（用户第 4 条）")
+    check(prompt.contains("文档 / 配置类做能做的校验"), "自查条照顾到文档类任务")
+    check(prompt.contains("**必须**在结束时汇报"), "汇报是必须的")
 }
 
-section("git 仓库但没有 GitHub 远端：说「没有远端」，不说「这个队列没开自动 PR」")
+section("git 仓库 / GitHub 仓库：有分支条与 commit 条，token 只给 GitHub，push 一律不提")
 do {
-    // 「队列开不开 PR」（队列设置）与「这个目录能不能开 PR」（有没有 GitHub 远端）是两件事。
-    // 旧文案把后者说成前者 —— 理由错在用户最需要真话的地方；而且这时候代理手里唯一有用的
-    // 那一步（git remote add origin <url>）一个字都没提。
+    // 三个工作区状态的差别只在「哪些条目出现」：非 git 没有分支条、非 GitHub 没有 token 条，
+    // 而 push / PR 在任何一档都不出现 —— 那是队列结束后 PR 会话的事。
     var board = TaskBoard()
     let task = TaskItem.manual(title: "把项目发到 GitHub", body: nil, id: "manual-gg005555")
     board.tasks = [task]
@@ -1203,13 +1244,13 @@ do {
     let h = Harness(board: board, github: false, gitRepo: true)
     _ = h.runner.startQueue(queue.id)
     let prompt = h.dsh.prompts["session-1"] ?? ""
-    check(prompt.contains("当前分支应为 feature/publish"), "仓库里照旧点名队列的分支")
-    check(prompt.contains("这个仓库还没有 GitHub 远端"), "说清真正的原因：没有远端")
-    check(!prompt.contains("这个队列没有开自动 PR"), "不再拿队列设置当理由")
-    check(prompt.contains("git remote add origin"), "给出把它变成 GitHub 仓库的那一步")
-    check(prompt.contains("不要 push"), "远端出现之前仍然不 push")
+    check(prompt.contains("当前分支应为 feature/publish"), "有仓库就点名队列的分支")
+    check(prompt.contains("完成前 commit"), "有仓库就要 commit（用户第 4 条）")
+    check(!prompt.contains("GitHub token"), "没有 GitHub 远端就不给 token 条")
+    check(!prompt.contains("push"), "不提 push")
+    check(!prompt.contains("PR"), "也不提 PR")
 
-    // 有 GitHub 远端时一切照旧：这个队列会开 PR，所以要求 push。
+    // GitHub 仓库：多一条 token rail，其余照旧。
     var prBoard = TaskBoard()
     let prTask = TaskItem.manual(title: "改 README", body: nil, id: "manual-gg006666")
     prBoard.tasks = [prTask]
@@ -1218,9 +1259,22 @@ do {
     let h2 = Harness(board: prBoard, github: true, gitRepo: true)
     _ = h2.runner.startQueue(prQueue.id)
     let prPrompt = h2.dsh.prompts["session-1"] ?? ""
-    check(prPrompt.contains("这个队列最后会开 PR"), "GitHub 工作区：要求 push（队列会开 PR）")
-    check(!prPrompt.contains("这个仓库还没有 GitHub 远端"), "不会反过来念叨没有远端")
-    check(!prPrompt.contains("git remote add origin"), "也不会给已经不需要的转换步骤")
+    check(prPrompt.contains("token 在 $DSH_HOME/tokens/"), "GitHub 仓库才给 token 条")
+    check(prPrompt.contains("完成前 commit"), "commit 条照旧")
+    check(!prPrompt.contains("push"), "但任务本身还是不提 push")
+    check(prPrompt.contains("本队列不切分支") == false, "有分支就点名分支，不说「不切分支」")
+
+    // 不切分支的队列：第 2 条换成「就在当前已检出的分支上改」。
+    var noBranch = TaskBoard()
+    let nbTask = TaskItem.manual(title: "改 README", body: nil, id: "manual-gg007777")
+    noBranch.tasks = [nbTask]
+    let nbQueue = noBranch.createQueue(name: "Lane", branch: "", autoPR: false)
+    _ = noBranch.enqueue(taskID: nbTask.id, into: nbQueue.id)
+    let h3 = Harness(board: noBranch, github: false, gitRepo: true)
+    _ = h3.runner.startQueue(nbQueue.id)
+    let nbPrompt = h3.dsh.prompts["session-1"] ?? ""
+    check(nbPrompt.contains("本队列不切分支：就在当前已检出的分支上改"),
+          "不切分支的队列说清「就在当前分支上改」（用户第 2 条）")
 }
 
 section("刚 git init 的空仓库：没有基线可切，直接建分支（「初始化 git 仓库」之后紧接着的那个任务）")

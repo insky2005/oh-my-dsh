@@ -608,7 +608,10 @@ final class TaskQueueHeaderView: NSView {
                                        action: #selector(startTapped)))
         }
         if model.canOpenPR {
-            trailing.append(iconButton("arrow.up.right.square", tooltipKey: "tasks.queue.openPR",
+            // A queue whose PR run came back empty keeps this button (there is still no
+            // PR) and says why in its tooltip: 「再开一次」 plus the reason.
+            trailing.append(iconButton("arrow.up.right.square",
+                                       tooltipKey: model.prErrorKey ?? "tasks.queue.openPR",
                                        action: #selector(openPRTapped)))
         }
         if let prUrl = model.prUrl {

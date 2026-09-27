@@ -387,6 +387,55 @@ check(dumpedLocal["runningTaskId"] as? String == "issue-6", "the running task is
 eq(TaskLocalState.taskID(fromStoredKey: "42"), "issue-42", "legacy key translation")
 eq(TaskLocalState.taskID(fromStoredKey: "issue-42"), "issue-42", "a task id key is untouched")
 
+// MARK: - 汇报写回
+
+section("汇报写回：落在任务上、落在 local.json 里、重试时清掉")
+do {
+    // The agent 汇报 is written back when its task ends (runner → markDone(report:)),
+    // kept in the MACHINE-scoped overlay (a report is the last text of a local
+    // session), and never in manual.json / index.json — those travel with the repo.
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "改 README", body: nil, id: "manual-rr001111")
+    board.tasks = [t1]
+    board.markRunning(t1.id)
+    board.markDone(t1.id, report: "改完了，用 markdownlint 校验过。")
+    eq(board.task(t1.id)?.report, "改完了，用 markdownlint 校验过。", "汇报落在任务上")
+    eq(board.local.reports[t1.id], "改完了，用 markdownlint 校验过。", "也落在 local.json 的状态里")
+    check(board.task(t1.id)?.manualDictionary()["report"] == nil,
+          "manual.json 不写汇报：它是这台机器的会话产物")
+    check(board.task(t1.id)?.indexDictionary()["report"] == nil, "committed index 同理")
+
+    // A failure keeps its last words too — that is what the next task needs.
+    board.markRunning(t1.id)
+    _ = board.markFailed(t1.id, error: "tasks.errTimeout", report: "做到一半，还差测试。")
+    eq(board.task(t1.id)?.report, "做到一半，还差测试。", "失败的汇报同样留下")
+
+    // …and a retry starts a NEW run: the old report must not read as this run outcome.
+    _ = board.retryAndResume(t1.id)
+    eq(board.task(t1.id)?.report, nil, "重试清掉上一轮的汇报")
+    check(board.local.reports[t1.id] == nil, "local 那份也清掉")
+
+    // An empty report is not a report.
+    board.markRunning(t1.id)
+    board.markDone(t1.id, report: "   ")
+    eq(board.task(t1.id)?.report, nil, "空白汇报不写")
+
+    // Round-trip through local.json, and through the loader that attaches it.
+    let repo = tempRepo("reports")
+    var store = TaskBoard()
+    let stored = TaskItem.manual(title: "带汇报的任务", body: nil, id: "manual-rr002222")
+    store.tasks = [stored]
+    store.markDone(stored.id, report: "存起来的汇报")
+    TasksStore.saveLocalHalf(repo, store)
+    let loaded = TasksStore.load(repo)
+    eq(loaded.task(stored.id)?.report, "存起来的汇报", "local.json 往返之后汇报还在")
+    var fresh = TaskBoard()
+    fresh.tasks = [stored]
+    fresh.attachSessions(["manual-rr002222": "session-x"],
+                         reports: ["manual-rr002222": "从 local.json 回来的汇报"])
+    eq(fresh.task(stored.id)?.report, "从 local.json 回来的汇报", "attachSessions 也带上汇报")
+}
+
 // MARK: - persistence
 
 section("persistence: four files")

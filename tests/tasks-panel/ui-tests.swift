@@ -172,6 +172,47 @@ do {
     check(card.detail.contains("do the thing"), "the task body is in the details")
 }
 
+section("详情里的汇报：任务结束后写回卡片（会话删了也还在）")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "改 README", body: nil, id: "manual-rr101010")
+    board.tasks = [task]
+    board.markRunning(task.id)
+    board.markDone(task.id, report: "重写了安装段；文档类没有可跑测试，用 markdownlint 校验过。")
+
+    let card = TaskCardModel.build(board.task(task.id)!, board: board, expanded: true, githubRepo: false)
+    check(card.detail.contains(L10n.tr("tasks.detailReport")), "详情里有「汇报」这一行")
+    check(card.detail.contains("重写了安装段"), "汇报正文也在")
+    check(board.task(task.id)?.sessionId == nil, "这里连会话都没有 —— 汇报仍然读得到")
+
+    // 没有汇报的任务不该凭空多出一行。
+    var bare = TaskBoard()
+    let quiet = TaskItem.manual(title: "没汇报", id: "manual-rr102020")
+    bare.tasks = [quiet]
+    let quietCard = TaskCardModel.build(bare.task(quiet.id)!, board: bare, expanded: true, githubRepo: false)
+    check(!quietCard.detail.contains(L10n.tr("tasks.detailReport")), "没有汇报就不显示这一行")
+}
+
+section("队列头：开 PR 失败时把原因写在按钮的 tooltip 上")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "One", id: "manual-rr103030")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane", branch: "feature/x", autoPR: true)
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    board.markDone(task.id)
+    let idle = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(idle.prErrorKey, nil, "没失败过就没有原因")
+    check(idle.canOpenPR, "完成的队列给「开 PR」按钮")
+
+    _ = board.setQueuePRError(queue.id, "tasks.errPR")
+    let failed = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(failed.prErrorKey, "tasks.errPR", "失败原因跟着队列走到卡片上")
+    check(failed.canOpenPR, "按钮还在：可以再开一次")
+    eq(failed.prUrl, nil, "失败时不会留下假的 PR 链接")
+}
+
 // MARK: - Queue header
 
 section("queue header")

@@ -155,6 +155,14 @@ struct TaskCardModel: Equatable {
             detailLines.append("")
             detailLines.append(body)
         }
+        // The agent 汇报, written back onto the task by the runner when it finished:
+        // last, because it is the newest thing about this task — and the reason the
+        // card still tells the story after the session is deleted.
+        if let report = task.report?.trimmingCharacters(in: .whitespacesAndNewlines), !report.isEmpty {
+            detailLines.append("")
+            detailLines.append(L10n.tr("tasks.detailReport"))
+            detailLines.append(report)
+        }
 
         // A queue branch that cannot be entered (the directory is not a git
         // repository) is the ONE failure the card can fix by itself, so it is
@@ -475,6 +483,9 @@ struct QueueHeaderModel: Equatable {
     var autoPR: Bool
     var isAutoCreated: Bool
     var prUrl: String?
+    /// Why the last PR attempt produced nothing (an L10n key), or nil. Shown as the
+    /// 开 PR button's tooltip, so the reason is on the card instead of only in the log.
+    var prErrorKey: String?
     /// Whether this workspace can carry a PR at all (it has a GitHub remote).
     /// False hides the 自动开 PR switch — a dead control is worse than no control
     /// (the queue form's switch obeys the same rule).
@@ -537,6 +548,7 @@ struct QueueHeaderModel: Equatable {
                                 autoPR: queue.autoPR,
                                 isAutoCreated: queue.autoCreated,
                                 prUrl: queue.prUrl,
+                                prErrorKey: queue.prError,
                                 prAvailable: prAvailable)
     }
 }

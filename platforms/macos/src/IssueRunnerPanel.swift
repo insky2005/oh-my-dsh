@@ -568,18 +568,13 @@ final class IssueRunnerPanelController: NSObject {
             canSwitchBranches: isGit,
             canOpenPR: { repo != nil },
             cancelSession: { id in Self.cancelSession(port: portOf(), sessionId: id) },
+            // Only a LOOKUP: the PR itself is created by the queue 开 PR 会话 (the
+            // runner startQueuePR), because its title and body have to summarize the
+            // real diff rather than fill a template — and because pushing the branch
+            // is that session job too.
             findExistingPR: { branch in
                 guard let repo = repo else { return nil }
                 return Self.findExistingPR(owner: repo.owner, repo: repo.repo, branch: branch, token: token)
-            },
-            createPR: { branch, base, title, body in
-                guard let repo = repo else { return nil }
-                return Self.createPR(owner: repo.owner, repo: repo.repo, title: title,
-                                     head: branch, base: base, body: body, token: token)
-            },
-            prText: { task, _ in
-                let number = task.number ?? 0
-                return (title: L10n.tr("tasks.prTitle", number), body: L10n.tr("tasks.prBody", number))
             },
             promptText: { task, queue, brief in
                 if task.source == .github {
@@ -605,7 +600,6 @@ final class IssueRunnerPanelController: NSObject {
                 let shape = Self.repoShape(path: repoRoot)
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: sharedQueueName,
-                                          pushes: (queue?.autoPR ?? false) && shape == .github,
                                           brief: brief,
                                           shape: shape)
             },
@@ -703,8 +697,14 @@ final class IssueRunnerPanelController: NSObject {
         syncFromBoardIfChanged()
         if wasBusy != workspaces.isBusy { onRunStateChanged?(workspaces.isBusy) }
         if let runner = runner, runner.isBusy {
-            let number = runner.runningTaskID.flatMap { runner.board.task($0)?.number } ?? 0
-            setStatus(L10n.tr("tasks.running", number), spin: true)
+            if let queueID = runner.openingPRQueueID {
+                // No task is running: the serial slot belongs to the queue's PR session.
+                let name = runner.board.queue(queueID)?.name ?? ""
+                setStatus(L10n.tr("tasks.prOpening", name), spin: true)
+            } else {
+                let number = runner.runningTaskID.flatMap { runner.board.task($0)?.number } ?? 0
+                setStatus(L10n.tr("tasks.running", number), spin: true)
+            }
         } else if currentWasBusy {
             hideStatus()
         }
@@ -1349,39 +1349,11 @@ final class IssueRunnerPanelController: NSObject {
         return DshWebRPC.call(DshWebRPC.sessionCancel, ["sessionId": sessionId], port: port) != nil
     }
 
-    // MARK: - PR creation (GitHub REST)
+    // MARK: - PR lookup (GitHub REST)
 
-    static func createPR(owner: String, repo: String, title: String, head: String, base: String, body: String, token: String?) -> String? {
-        let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/pulls")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "accept")
-        request.setValue("oh-my-dsh", forHTTPHeaderField: "user-agent")
-        if let token = token, !token.isEmpty {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "authorization")
-        }
-        let payload: [String: Any] = ["title": title, "head": head, "base": base, "body": body]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        let semaphore = DispatchSemaphore(value: 0)
-        var prUrl: String?
-        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
-            defer { semaphore.signal() }
-            guard let data = data,
-                  let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-            prUrl = json["html_url"] as? String
-        }
-        task.resume()
-        _ = semaphore.wait(timeout: .now() + 20)
-        task.cancel()
-        return prUrl
-    }
-
-    /// An OPEN pull request whose head is this branch, or nil. Queried before
-    /// creating a queue PR so that a second task on the same branch reuses the
-    /// existing one instead of hitting GitHub's "a pull request already exists"
-    /// (422) — every task in a queue shares one branch.
+    /// An OPEN pull request whose head is this branch, or nil. The runner asks before
+    /// it writes a queue's PR URL down, so a PR the session opened but did not quote
+    /// back is still found (every task in a queue shares one branch).
     static func findExistingPR(owner: String, repo: String, branch: String, token: String?) -> String? {
         let escaped = branch.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? branch
         guard let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/pulls?state=open&head=\(owner):\(escaped)") else { return nil }
@@ -1827,33 +1799,22 @@ final class IssueRunnerPanelController: NSObject {
         NSWorkspace.shared.open(url)
     }
 
-    /// Queue PR, opened from the header once the queue finished. Reuses the
-    /// existing one when GitHub already has an open PR for the branch.
+    /// Queue PR, from the header's 开 PR button. An existing PR simply opens;
+    /// otherwise the runner starts this queue's PR SESSION (startQueuePR) — the one
+    /// place that pushes the branch, summarizes the diff, opens the PR and reports the
+    /// URL back onto the queue. The panel no longer talks to the GitHub API itself:
+    /// pushing a branch needs credentials and judgement, which is exactly what a
+    /// session has and a URLSession call does not.
     private func openPR(for queue: TaskQueue) {
         if let url = queue.prUrl, let link = URL(string: url) { NSWorkspace.shared.open(link); return }
-        guard let repo = repo, let branch = queue.branch else { return }
-        setStatus(L10n.tr("tasks.queue.creatingPR", queue.name), spin: true)
-        let token = loadToken(for: repo)
-        let base = queue.baseBranch
-        let title = L10n.tr("tasks.queue.prTitle", queue.name)
-        let body = L10n.tr("tasks.queue.prBody", queue.name)
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let existing = Self.findExistingPR(owner: repo.owner, repo: repo.repo, branch: branch, token: token)
-            let url = existing ?? Self.createPR(owner: repo.owner, repo: repo.repo, title: title,
-                                                head: branch, base: base, body: body, token: token)
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.hideStatus()
-                guard let url = url else {
-                    self.setStatus(L10n.tr("tasks.errPR"), spin: false)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.hideStatus() }
-                    return
-                }
-                _ = self.runner?.updateQueue(queue.id, prUrl: url)
-                if let link = URL(string: url) { NSWorkspace.shared.open(link) }
-                self.syncFromBoard()
-            }
+        guard let runner = runner else { return }
+        guard runner.startQueuePR(queue.id) else {
+            setStatus(L10n.tr("tasks.errPRStart"), spin: false)
+            autoHideStatus(after: 6)
+            return
         }
+        setStatus(L10n.tr("tasks.queue.creatingPR", queue.name), spin: true)
+        syncFromBoard()
     }
 
     // MARK: - Queue picker (加入队列)

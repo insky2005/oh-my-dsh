@@ -109,6 +109,15 @@ struct TaskItem: Equatable {
     var error: String?
     var startedAt: Date?
     var finishedAt: Date?
+    /// What the agent said when it finished — its 汇报, written back onto the task by
+    /// the runner (see TasksRunner.finish) instead of living only inside the session
+    /// log. The card shows it, and the next task of the queue receives it as its
+    /// 前置汇报 (so the hand-over survives a deleted session).
+    ///
+    /// Machine-scoped like sessionId (a report is the last text of a session that
+    /// exists only on this machine): it belongs to local.json, never to manual.json /
+    /// index.json — the committed index keeps its v1 shape and stays shareable.
+    var report: String?
 
     init(id: String,
          source: TaskSource,
@@ -123,7 +132,8 @@ struct TaskItem: Equatable {
          sessionId: String? = nil,
          error: String? = nil,
          startedAt: Date? = nil,
-         finishedAt: Date? = nil) {
+         finishedAt: Date? = nil,
+         report: String? = nil) {
         self.id = id
         self.source = source
         self.number = number
@@ -138,6 +148,7 @@ struct TaskItem: Equatable {
         self.error = error
         self.startedAt = startedAt
         self.finishedAt = finishedAt
+        self.report = report
     }
 
     /// ISO-8601 in the exact shape v1 wrote (2026-08-20T15:26:43Z).
@@ -412,6 +423,10 @@ struct TaskQueue: Equatable {
     /// workspace; false everywhere else (an internal repo has no PR to open).
     var autoPR: Bool
     var prUrl: String?
+    /// Why the PR session did not produce a PR (an L10n key), or nil. The queue keeps
+    /// its 已完成 state — a PR that could not be opened is not failed work — but the
+    /// reason is shown instead of silently disappearing into the log.
+    var prError: String?
     var createdAt: Date?
 
     init(id: String,
@@ -423,6 +438,7 @@ struct TaskQueue: Equatable {
          autoCreated: Bool = false,
          autoPR: Bool = false,
          prUrl: String? = nil,
+         prError: String? = nil,
          createdAt: Date? = nil) {
         self.id = id
         self.name = name
@@ -433,6 +449,7 @@ struct TaskQueue: Equatable {
         self.autoCreated = autoCreated
         self.autoPR = autoPR
         self.prUrl = prUrl
+        self.prError = prError
         self.createdAt = createdAt
     }
 
@@ -515,6 +532,7 @@ struct TaskQueue: Equatable {
         ]
         if let branch = branch { d["branch"] = branch }
         if let prUrl = prUrl { d["prUrl"] = prUrl }
+        if let prError = prError { d["prError"] = prError }
         if let createdAt = createdAt { d["createdAt"] = TaskItem.iso8601.string(from: createdAt) }
         return d
     }
@@ -530,6 +548,7 @@ struct TaskQueue: Equatable {
                          autoCreated: (d["autoCreated"] as? Bool) ?? false,
                          autoPR: (d["autoPR"] as? Bool) ?? false,
                          prUrl: d["prUrl"] as? String,
+                         prError: d["prError"] as? String,
                          createdAt: (d["createdAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
     }
 }
@@ -544,6 +563,9 @@ struct TaskLocalState: Equatable {
     /// task id -> ISO-8601 stamp of the last write for that session, kept so
     /// rewriting the file does not invent new timestamps for old sessions.
     var sessionUpdatedAt: [String: String] = [:]
+    /// task id -> the agent's 汇报, written back when the task finished (see
+    /// TaskItem.report). Machine-scoped: it is the last text of a local session.
+    var reports: [String: String] = [:]
     var activeQueueID: String?
     var runningTaskID: String?
 
@@ -568,6 +590,9 @@ struct TaskLocalState: Equatable {
                 if let updatedAt = entry["updatedAt"] as? String { s.sessionUpdatedAt[id] = updatedAt }
             }
         }
+        if let raw = d["reports"] as? [String: String] {
+            for (key, text) in raw where !text.isEmpty { s.reports[taskID(fromStoredKey: key)] = text }
+        }
         s.activeQueueID = d["activeQueueId"] as? String
         s.runningTaskID = d["runningTaskId"] as? String
         return s
@@ -582,6 +607,7 @@ struct TaskLocalState: Equatable {
             ]
         }
         var d: [String: Any] = ["sessions": out]
+        if !reports.isEmpty { d["reports"] = reports }
         if let activeQueueID = activeQueueID { d["activeQueueId"] = activeQueueID }
         if let runningTaskID = runningTaskID { d["runningTaskId"] = runningTaskID }
         return d
@@ -791,24 +817,40 @@ struct TaskBoard {
         local.runningTaskID = taskID
     }
 
-    mutating func markDone(_ taskID: String, prUrl: String? = nil, at date: Date = Date()) {
+    mutating func markDone(_ taskID: String, prUrl: String? = nil, report: String? = nil,
+                           at date: Date = Date()) {
         guard let i = index(ofTask: taskID) else { return }
         tasks[i].state = .done
         tasks[i].finishedAt = date
         if let prUrl = prUrl { tasks[i].prUrl = prUrl }
+        recordReport(taskID, report)
         local.runningTaskID = nil
         refreshQueueCompletion()
+    }
+
+    /// Write the agent's 汇报 back onto the task (card + local.json), so it is not
+    /// locked inside a session log that may be deleted tomorrow. An empty report is
+    /// not a report: nothing is written, and a previous one stays.
+    mutating func recordReport(_ taskID: String, _ report: String?) {
+        guard let text = report?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty,
+              let i = index(ofTask: taskID) else { return }
+        tasks[i].report = text
+        local.reports[taskID] = text
     }
 
     /// Fail a task. A queue containing it is PAUSED and its id returned: inside
     /// a queue every task shares one branch, so running the next one would build
     /// on half-finished work. The user then chooses 重试 or 跳过并继续.
     @discardableResult
-    mutating func markFailed(_ taskID: String, error: String, at date: Date = Date()) -> String? {
+    mutating func markFailed(_ taskID: String, error: String, report: String? = nil,
+                             at date: Date = Date()) -> String? {
         guard let i = index(ofTask: taskID) else { return nil }
         tasks[i].state = .failed
         tasks[i].error = error
         tasks[i].finishedAt = date
+        // A failed run's last words matter MORE than a successful one's: they say how
+        // far it got (the next task in the queue receives them as its 前置汇报).
+        recordReport(taskID, report)
         local.runningTaskID = nil
         return pauseQueue(containing: tasks[i])
     }
@@ -831,6 +873,17 @@ struct TaskBoard {
         tasks[i].state = .closed
     }
 
+    /// Record why a queue PR session produced no PR (an L10n key), or clear it once
+    /// one did. The queue keeps its own state: a PR that could not be opened is not
+    /// failed work, but the reason belongs on the card rather than only in app.log.
+    @discardableResult
+    mutating func setQueuePRError(_ queueID: String, _ key: String?) -> Bool {
+        guard let i = index(ofQueue: queueID) else { return false }
+        queues[i].prError = key
+        if key != nil { queues[i].prUrl = nil }
+        return true
+    }
+
     /// Retry a failed/cancelled task and resume its queue (the card's 重试).
     /// A task with no queue simply returns to 未入队.
     @discardableResult
@@ -838,6 +891,10 @@ struct TaskBoard {
         guard let i = index(ofTask: taskID), tasks[i].state.isQueueable else { return false }
         tasks[i].error = nil
         tasks[i].finishedAt = nil
+        // The old report described the run being retried: it must not be handed to the
+        // next task in the queue as if it were this run's outcome.
+        tasks[i].report = nil
+        local.reports[taskID] = nil
         if let queueID = tasks[i].queueId, let qi = index(ofQueue: queueID) {
             tasks[i].state = .queued
             queues[qi].state = .active
@@ -912,10 +969,12 @@ struct TaskBoard {
         }
     }
 
-    /// Attach the session ids recorded on this machine.
-    mutating func attachSessions(_ sessions: [String: String]) {
+    /// Attach the machine-scoped half of a loaded board: the dsh session each task
+    /// ran in, and the 汇报 each one left behind.
+    mutating func attachSessions(_ sessions: [String: String], reports: [String: String] = [:]) {
         for i in tasks.indices {
             if let sessionId = sessions[tasks[i].id] { tasks[i].sessionId = sessionId }
+            if let report = reports[tasks[i].id] { tasks[i].report = report }
         }
     }
 
