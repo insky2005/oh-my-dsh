@@ -1,8 +1,8 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-09-24T04:05:41Z
-sources: [platforms/macos/src/ProjectsPanel.swift, platforms/macos/src/ProjectsCore.swift, docs/projects-panel-design.md, tests/projects-panel/, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, docs/skills-manager-design.md, tests/skills-panel/, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, docs/dsh-version-impact.md, tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, tests/terminal-panel/run.sh, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/FilePanelTreeMenu.swift, docs/ux-feedback.md, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, CONTRIBUTING.md, platforms/macos/runtime-locks/, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, core/lib/snapshot.js, core/lib/snapshot-io.js, tests/snapshot-panel/, tests/snapshot-rollback/, tests/injected-scripts/, docs/session-snapshot-rollback-design.md]
+updated: 2026-09-27T13:40:19Z
+sources: [platforms/macos/src/ProjectsPanel.swift, platforms/macos/src/ProjectsCore.swift, docs/projects-panel-design.md, tests/projects-panel/, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, docs/skills-manager-design.md, tests/skills-panel/, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, docs/dsh-version-impact.md, tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, tests/terminal-panel/run.sh, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/FilePanelTreeMenu.swift, docs/ux-feedback.md, docs/terminal-header-fix.md, docs/terminal-input-fix.md, docs/git-workflow.md, docs/release-process.md, docs/channel-commands.md, docs/channel-status.md, docs/channel-storage.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, CONTRIBUTING.md, platforms/macos/runtime-locks/, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, core/lib/snapshot.js, core/lib/snapshot-io.js, tests/snapshot-panel/, tests/snapshot-rollback/, tests/injected-scripts/, docs/session-snapshot-rollback-design.md, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/TasksAPI.swift, tests/tasks-panel/, docs/task-todo-skill-design.md]
 manual: false
 ---
 
@@ -15,8 +15,7 @@ manual: false
 ./platforms/macos/build-app.sh              # 全量构建 → dist/oh-my-dsh.app（复用 .cache 则无需网络）
 ```
 
-- 产物：`dist/oh-my-dsh.app`（arm64、ad-hoc 签名、含内置运行时 + `runtime/core` 共享核心）；
-- 常见失败：网络不可达 → 有缓存 tarball 会自动推导版本继续；`swiftc` 报错 → 检查新增文件是否登记进编译清单（第 3 步）；
+- 产物：`dist/oh-my-dsh.app`（arm64、ad-hoc 签名、含内置运行时 + `runtime/core` 共享核心）；常见失败：网络不可达 → 有缓存 tarball 会自动推导版本继续；`swiftc` 报错 → 检查新增文件是否登记进编译清单（第 3 步）；
 - **依赖闭包可复现（runtime-locks + `npm ci`）**：内置 dsh 的依赖树由提交的 lockfile 钉死——`platforms/macos/runtime-locks/<spec>/package-lock.json`（当前 `@deepseek-ai/dsh@0.1.2-rc.1` → `runtime-locks/dsh-0.1.2-rc.1/`，583 个包，从真能启动的生产树导出）；有 lock 走 `npm ci`，没配 lock 的 spec 退回 `npm install` 并打警告（dsh 用 caret 范围声明 cordis 工具链，不钉死可能装到从没启动过的组合）；lock 随 App 分发到 `Contents/Resources/runtime-locks/`，快照换树时按它的指纹校验；**启动冒烟 `smoke_runtime`**：装完 runtime 立刻用内置 node 起一次 `dsh web --no-open --port <n>`，40s 内必须打出 `dsh web: http` 且进程仍存活，否则**构建直接失败**（「构建成功但用户装起来是死的」比构建失败更贵）；跨架构 stage（arm64 主机上编 x86_64）自动跳过，临时跳过用 `DSH_SKIP_RUNTIME_SMOKE=1`；runtime 缓存键 = `Node 版本|spec|arch|lock 指纹（package-lock.json sha256 前 12 位）`，按架构分目录（`.cache/runtime/<arch>`）；**改了 lock 一定重建**——`./platforms/macos/build-app.sh --prefetch` 可先把 runtime 备进 `.cache/` 离线复用；
 - 重新构建会清掉旧包（`rm -rf "$BUILD_DIR" "$APP"`），`platforms/macos/make-pkg.sh` 依赖已构建的 `.app`。
 
@@ -27,15 +26,13 @@ DSH_DEV_BUILD=1 ./platforms/macos/build-app.sh     # Info.plist 写 DSHDevBuild=
 ./scripts/local-ci.sh dev                          # 等价 full，但 build 用 DSH_DEV_BUILD=1
 ```
 
-- 开发版运行时（`isDevBuild`）：CEF 用**独立 profile** `~/.dsh/browser-dev`（与正式版 `~/.dsh/browser` 隔离，不争抢）、**跳过单实例退出**——可与已安装正式版并存；
-- 未来需隔离端口 / channel runner 等资源时，在 `main.swift` 的 `isDevBuild` 覆盖处快速追加；单实例约束：正式版启动时若已有同 bundle id 实例在跑 → 聚焦它并立即退出（防双实例争抢 CEF profile 致 Chromium 异常退出「Chromium didn't shut down correctly.」）。
+- 开发版运行时（`isDevBuild`）：CEF 用**独立 profile** `~/.dsh/browser-dev`（与正式版 `~/.dsh/browser` 隔离，不争抢）、**跳过单实例退出**——可与已安装正式版并存；未来需隔离端口 / channel runner 等资源时，在 `main.swift` 的 `isDevBuild` 覆盖处快速追加；单实例约束：正式版启动时若已有同 bundle id 实例在跑 → 聚焦它并立即退出（防双实例争抢 CEF profile 致 Chromium 异常退出「Chromium didn't shut down correctly.」）。
 
 ## 打包安装包（.pkg / .dmg）
 
 ```bash
 ./platforms/macos/make-pkg.sh   # 需先 ./platforms/macos/build-app.sh
-# 产物：dist/oh-my-dsh-<version>-<arch>.pkg 与 .dmg（版本从 Info.plist 读取）
-# 安装：open "dist/oh-my-dsh-<version>-<arch>.pkg"（装到 /Applications，preinstall 自动删旧版）
+# 产物：dist/oh-my-dsh-<version>-<arch>.pkg 与 .dmg（版本从 Info.plist 读取）；安装：open "dist/oh-my-dsh-<version>-<arch>.pkg"（装到 /Applications，preinstall 自动删旧版）
 ```
 
 ## 运行与验证
@@ -65,13 +62,12 @@ tests/shell-config/run.sh           # ShellConfig 旧 UserDefaults 一次性迁�
 tests/dsh-auth-cookies/run.sh       # dsh 认证 cookie 清理纯逻辑（22 项）
 tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
 tests/projects-panel/run.sh         # 项目面板：模型 45 项（projects 根 / 命名规则 / 列举 / 注册匹配）+ 控制器 49 项（无头，假 dsh 传输）
-tests/tasks-panel/run.sh            # 任务面板逻辑层四段：模型 166 + 运行器 296 + 视图模型 279 + 视图 191 = 932 项
+tests/tasks-panel/run.sh            # 任务面板逻辑层五段：模型 176 + 运行器 362 + 视图模型 324 + 视图 199 + 本地 API 68 = 1129 项
 tests/injected-scripts/run.sh       # 注入 dsh web 的 JS 片段守卫（JS 引擎可解析 + `window.__dsh*` 桥名对得上 + 不许出现会被 Swift 字符串吃掉的转义）
 tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到端（真实临时 $DSH_HOME：bootstrap → 升级 dsh → 回退 → 重启）+ tests/snapshot-panel/run.sh 窗口数据模型（SnapshotModel 解码 list/status/plan-rollback 的 JSON）
 ```
 
-- 均无窗口依赖，可在纯命令行环境运行；失败即非零退出（`set -euo pipefail`）；`scripts/local-ci.sh` 按 ci.yml 三阶段跑同一组（core → swift 测试 + `swiftc` 编译检查 → arm64 构建，不打包）；**共 18 套无头套件**（`tests/*/run.sh` 现有 18 个，CI 登记其中 17 个 + `core/tests/ansi.test.js`；未登记的那个 `tests/terminal-emulator/run.sh` 只是 `core/tests/ansi.test.js` 的薄封装）；`scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml` 是两份**必须一致**的清单——新增测试目录要同时登记进这两处，漏一处 CI 就少跑一套；
-- `tests/wiki-panel/run.sh` 会先 `mkdir -p .build/module-cache` 再编译（干净环境/CI 无 `.build/` 时必需，见 `c2d626b`）。
+- 均无窗口依赖，可在纯命令行环境运行；失败即非零退出（`set -euo pipefail`）；`scripts/local-ci.sh` 按 ci.yml 三阶段跑同一组（core → swift 测试 + `swiftc` 编译检查 → arm64 构建，不打包）；**共 18 套无头套件**（`tests/*/run.sh` 现有 18 个，CI 登记其中 17 个 + `core/tests/ansi.test.js`；未登记的那个 `tests/terminal-emulator/run.sh` 只是 `core/tests/ansi.test.js` 的薄封装）；`scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml` 是两份**必须一致**的清单——新增测试目录要同时登记进这两处，漏一处 CI 就少跑一套； `tests/wiki-panel/run.sh` 会先 `mkdir -p .build/module-cache` 再编译（干净环境/CI 无 `.build/` 时必需，见 `c2d626b`）。
 
 ## 加一个新右栏面板（参照 v1.7.0 Wiki 面板）
 
@@ -90,13 +86,11 @@ tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到�
 
 ## 改文案 / 语言
 
-- 在 `main.swift` `L10n.table` 增改 `(zh, en)` 条目；菜单标题等直接调 `L10n.tr(...)`；
-- 语言规则：`DSH_LANG` > `appLanguage` > 系统语言；切换会重建菜单并重载 web 页面。
+- 在 `main.swift` `L10n.table` 增改 `(zh, en)` 条目；菜单标题等直接调 `L10n.tr(...)`；语言规则：`DSH_LANG` > `appLanguage` > 系统语言；切换会重建菜单并重载 web 页面。
 
 ## 升级内置 dsh（运行期）
 
-- 手动：设置菜单 →「检查并升级 dsh…」(⌘U)；自动：设置菜单 →「自动升级 dsh」（默认开，24h 节流）；
-- 只作用于内置运行时（路径含 `/Contents/Resources/runtime/`），不碰系统 dsh；
+- 手动：设置菜单 →「检查并升级 dsh…」(⌘U)；自动：设置菜单 →「自动升级 dsh」（默认开，24h 节流）；只作用于内置运行时（路径含 `/Contents/Resources/runtime/`），不碰系统 dsh；
 - 注意：升级会改写 App 包内文件导致 ad-hoc 签名失效（本地运行不受影响）；重新 `./platforms/macos/build-app.sh` 还原干净包；**升级前强制快照（v1.16.2）**：`performApply` 里 `snapshotBeforeUpgrade(...)` 跑在 `DSHUpdater.apply()` **之前**（升级会迁移会话日志格式、dsh 自己不可逆）；失败不阻塞升级，但日志写「这次升级不可回退」并在会话快照窗口提示（`snapshot.unavailable`）；升级成功后只记录新组合（`adoptComboAfterUpgrade`），不再重复打一份；快照与回退（v1.16.2，见 [session-snapshot](modules/session-snapshot.md)）：设置菜单「会话快照…」→「回退到此快照并退出…」（**先停 dsh web** 再跑 `snapshot rollback --server-stopped`，成功即退出 App）；等价 CLI `node core/bin/ohmy-core.js snapshot launch|tree|list|status|create|plan-rollback|rollback|finish-rollback|delete`；落盘在 `$DSH_HOME/shell/`（`dsh-state.json` / `snapshots/<id>/` / `snapshots/trees/<dsh 版本>` / `rollback-journal.json`）；回归 `tests/snapshot-rollback/run.sh` + `tests/snapshot-panel/run.sh` + `core/tests/snapshot.test.js`（14 例）/ `snapshot-io.test.js`（7 例）。
 
 ## 重新生成/更新仓库知识库（Repo Wiki）
@@ -109,8 +103,7 @@ tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到�
 
 - 打开：活动栏「审查」图标 / **⌥⌘R**（QA 钩子 `DSH_REVIEW_TEST=1` 启动即开，`DSH_REVIEW_TEST_PATH=<dir>` 固定审计的工作区）；
 - 树为 **会话 → 对话(turn) → 文件 → 变更内容**，每层可展开/收起；**按需审计**——会话列表只读日志头，某会话首次展开才跑 `review audit`；结果**按日志身份（size + mtime）缓存**，面板在屏上时每 5 s `stat` 一次，日志增长即自动重读（新建会话里刚改的文件会自己出现，无需重开面板或点刷新）；工具栏「全部展开 / 全部收起 / 只看可疑命令（默认开）」；
-- 每条改动标出**来源**：`已应用`（工具结果的 hunk）/ `参数还原`（如 `run_code` 嵌套调用）/ `全文写入`、`新建`；`shell 命令（无前后内容记录）` 与 `失败的调用（未改动）` 各自单列、不计入变更统计；
-- 等价 CLI（与面板同一 core 实现）：`node core/bin/ohmy-core.js review sessions [--workspace <dir>]` / `review audit <sessionId>` / `review audit-file <path.jsonl[.zstd]>`；
+- 每条改动标出**来源**：`已应用`（工具结果的 hunk）/ `参数还原`（如 `run_code` 嵌套调用）/ `全文写入`、`新建`；`shell 命令（无前后内容记录）` 与 `失败的调用（未改动）` 各自单列、不计入变更统计； 等价 CLI（与面板同一 core 实现）：`node core/bin/ohmy-core.js review sessions [--workspace <dir>]` / `review audit <sessionId>` / `review audit-file <path.jsonl[.zstd]>`；
 - **只读**：不写盘、不调写接口、不改 dsh；回滚/接受拒绝**不在范围**（只读数据里没有可回滚的完整信息），设计与覆盖矩阵见 docs/review-panel-design.md。
 
 ## 管理技能（技能面板，`⌥⌘S`）
@@ -119,10 +112,8 @@ tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到�
 - **已安装**：扫 dsh 四个技能根（`<工作区>/.dsh/skills` 100 / `<工作区>/.agents/skills` 200 / `$DSH_HOME/skills` 400 / `~/.agents/skills` 500），rank 小者同名优先、其余标「被遮蔽」，逐行标级别；**内置只读**（无开关、无移除）、共享级可改开关不可移除、用户级/项目级可改可删；
 - **调用开关**：`用户可调用` → 写 `user-invocable`、`模型可调用` → 写 `disable-model-invocation`（关闭即写 `true`）；**切回默认值会删掉该键**（字节还原），只动这两行、其余原样；只写规范键（旧驼峰键会让 dsh 忽略整个技能）；
 - **可安装**：选 registry → 有清单来源（GitHub 仓库 / well-known）直接列清单，只有搜索接口的（skills.sh）默认显示热门（按 installs 降序前 30）；**整卡点击 = 详情（系统浏览器）**，鼠标移入才显示「安装」按钮；「从地址安装…」支持 `owner/repo`、`owner/repo@skill`、GitHub/GitLab、well-known、本地路径；「手动导入…」选目录或单个 SKILL.md；
-- 落点默认 **用户级** `$DSH_HOME/skills/<name>/`，可选 **项目级**（会写用户仓库，确认框提示）；
-- 改完无需手动刷新 dsh web：面板经 `nudgeDSHWebCaches()` 派发 offline→online 触发客户端重连，清掉技能目录缓存（1.5s 节流）；
+- 落点默认 **用户级** `$DSH_HOME/skills/<name>/`，可选 **项目级**（会写用户仓库，确认框提示）；改完无需手动刷新 dsh web：面板经 `nudgeDSHWebCaches()` 派发 offline→online 触发客户端重连，清掉技能目录缓存（1.5s 节流）；
 - 开关不生效排查：确认改的是**非内置**技能、`SKILL.md` 里只有规范键；记录与安装来源见 `$DSH_HOME/shell/skills.json`；dsh 侧契约（根 / 优先级 / 键名）见 `docs/dsh-version-impact.md` D2/D2b/D2c/D2d 与 `docs/skills-manager-design.md`；
-- 回归：`tests/skills-panel/run.sh`（150 项）。
 
 ## 管理项目 / 工作区（项目面板，`⌥⌘P`）
 
@@ -137,19 +128,15 @@ tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到�
 - 未注册的目录**不联动** dsh web：卡片「新会话」禁用、点卡片只在状态行提示 `projects.needsWorkspace`；六个本地面板入口仍可用；卡片上的「创建 dsh 工作区」会调 `workspace/create`（幂等），成功后徽标翻「已注册」并解锁 dsh 动作；
 - 回归：`tests/projects-panel/run.sh`（模型 45 + 控制器 49 = **94 项**）、`tests/dsh-rpc/run.sh`（含 `DshWorkspaceOps` 的 register / createSession / newestSessionId **17 项**，其中 3 项是"blank 会话必须跳过"）、`tests/injected-scripts/run.sh`（注入桥：脚本可解析 + 桥名与壳层调用对得上）。
 
-
 ## 任务面板：队列工作流（手动任务 / 队列 / issue）
 
 - 打开：活动栏「任务」图标 / 视图菜单 / **⌥⌘J**（QA 钩子 `DSH_TASKS_TEST=1` 启动即开；`DSH_UI_DEBUG=1` 落 `~/Library/Logs/oh-my-dsh/panel-tasks-debug.png`）；
-- **两种来源**：`Issue #N`（GitHub issue 拉取）与 `手动`（自己建的任务）——卡片左上角来源徽标区分，工具栏第二行有来源筛选（全部 / Issue / 手动）；
-- **新建任务**（头部 `+`）：只填**标题 + 描述**（描述就是发给代理的指令）→ 任务落到**未入队**区；**从卡片上决定去哪里**：点「加入队列 ▾」选已有队列或「新建队列…」（队列名 / 分支 / 基于分支 / 队列完成后自动开 PR）；
-- **队列 = 泳道**：同一队列的任务**共享一个分支、按 FIFO 顺序执行**，后一个任务看得到前一个的 commit（依赖关系由分支累积表达）；**全局严格串行**（一个工作树只能在一个分支上），队列之间也不并行；
-- **队列头**：名称 · `分支 → 基线` · `n/m` 进度 · 状态徽标（活跃 / 暂停 / 已完成）· 失败计数 · `开始` / `暂停` / `打开 PR` / `⋯`（重命名 · 改分支 · 完成后自动开 PR 开关 · 删除）；issue 任务的自动队列默认折成**一行**，点开即展开；
-- **失败即暂停队列**（队内共享分支，继续跑等于基于半成品）：卡片给「重试 / 跳过并继续」；**切到另一队列前要求工作区干净**（脏工作区拒绝启动并提示）；
-- **issue 任务**：点「处理」自动建一个**单任务队列**（分支 `fix/issue-N` / `feature/issue-N`，保留「一 issue 一分支一 PR」）；「全部处理」给每个 pending issue 各建一个，串行依次跑；
-- **PR**：队内任务只 push，**队列最后一项完成时**才开 PR（先查已有 PR 复用，避免 422）；PR 建不出来**不算失败**；不是 GitHub 仓库时 PR 能力自动关闭（只切分支 + push）；
+- **两种来源与新建任务**：`Issue #N`（GitHub issue 拉取）与 `手动`（自己建的任务），卡片上的来源徽标区分（排在任务名后面），工具栏第二行有来源筛选（**全部 / 手动 / Issue**；顺序与判据只在 `TaskSourceFilter.allCases` 一处定义）；新建任务（页签行右侧 `＋`）只填**标题 + 描述**（描述就是发给代理的指令）→ 落到**未入队**区，再从卡片上「加入队列 ▾」选已有队列或「新建队列…」（队列名 / 分支 / 基于分支 / 队列完成后自动开 PR）；
+- **队列 = 泳道**：同一队列的任务**共享一个分支、按 FIFO 顺序执行**（后一个看得到前一个的 commit），**全局严格串行**（一个工作树只能在一个分支上，队列之间也不并行）；队列头 = 名称 · `分支 → 基线` · `n/m` 进度 · 状态徽标（活跃 / 等待中 / 暂停 / 已完成）· 失败计数 · 三个操作（`开始` / `暂停` / `打开 PR`——**`打开 PR` 排在这行最右**，`⋯` 里是重命名 · 改分支 · 完成后自动开 PR 开关 · 删除）；**已完成的队列不再显示设置与删除**，自动队列默认折成**一行**，点开即展开；
+- **失败即暂停队列**（队内共享分支，继续跑等于基于半成品）：卡片给「重试 / 跳过并继续」；**切到另一队列前要求工作区干净**（脏工作区拒绝启动并提示）；**可编辑性**：`TaskState.isEditable`（未入队 / 队列中 / 失败 / 已取消）之外（运行中、已完成、已关闭）不能改也不能删，手动任务的汇报写在卡片详情里；
+- **issue 任务与「全部处理」**：点「处理」自动建一个**单任务队列**（分支 `fix/issue-N` / `feature/issue-N`；**非 git 目录不派生分支**）；「全部处理」给**每个待办**各建一个单任务队列（**手动任务同样如此**），按板面顺序串行依次跑，>1 条先弹确认框；**任务会话只 commit**——提示词里不再有 push / PR、运行器也不校验远端；队列最后一项完成且开着「自动开 PR」、工作区是 GitHub 仓库时，运行器新建一个「**开 PR：<队列名>**」会话（`TasksRunner.startQueuePR`）去读改动、自己写标题正文、push、开或复用 PR 并给出链接；开不出来**不算失败**（队列保持已完成，原因记在队列头「开 PR」的 tooltip，点一下可再试）；
 - **重启恢复**：读 `<repo>/.dsh/tasks/` 四文件（`index.json` 提交 / `manual.json`、`queues.json`、`local.json` 本机，**已在 .gitignore**）；上次运行中的任务标「已中断」、活跃队列暂停，**不自动开跑**；
-- 回归：`tests/tasks-panel/run.sh`（**932 项**：模型 166 + 运行器 296 + 视图模型 279 + 视图 191；运行器用假 git/假 dsh 驱动完整流水线，含**非 git 目录**：无分支队列照常跑完、有分支队列报 `errNotGit`）、`core/tests/tasks.test.js`（18 项）；细节见 [issue-runner-panel](modules/issue-runner-panel.md) 与 docs/issue-runner-design.md。
+- 回归：`tests/tasks-panel/run.sh`（**1129 项**：模型 176 + 运行器 362 + 视图模型 324 + 视图 199 + 本地 API 68；运行器用假 git/假 dsh 驱动完整流水线，含**非 git 目录**：无分支队列照常跑完、有分支队列报 `errNotGit`）、`core/tests/tasks.test.js`（18 项）；细节见 [issue-runner-panel](modules/issue-runner-panel.md) 与 docs/issue-runner-design.md。
 ## 排查问题
 
 1. 看日志：`~/Library/Logs/oh-my-dsh/app.log`（壳层）、`server.log`（服务输出）；设置菜单「打开日志文件夹」(⌘L) 直达；
@@ -165,10 +152,9 @@ tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到�
 11. **刷新后 dsh web 打不开 / 显示 401 纯文本页**：壳层把刷新改成走 launch token（`server.entryURL`）并对主框架 401 自动重认证一次（见 [main](modules/main.md)）。先看 `app.log`：`page load request (…)` 的 `ourServerAlive/entryToken` 与 `logAuthCookieState` 的 cookie 状态、`page recovery (401|load failure)` 是否出现；若持续 401，说明 token 通道本身有问题（对照 §6 与 docs/dsh-version-impact.md §4.4）；自愈只做一次（`loadRecoveryAttempted`），不成功即落到带「重试」的错误态，不会打转；
 12. 面板点会话行不跳转 web / 切会话目录不跟随：`DSH_UI_DEBUG=1` 看 `dsh injected bridges: {tracker, opener, preview, rows}`（注入脚本是否装上）+ 页面 console 的 `[dsh-opener]` 日志，对照 docs/dsh-version-impact.md §6.1（R3：注入脚本依赖 dsh web 客户端内部实现，上游一改即静默失效）。
 
-## 发布清单（简版，分支规范见 docs/git-workflow.md）
+## 发布清单（简版；分支规范见 docs/git-workflow.md：feature/fix 回 main 一律走 PR，`main` 只合并、只打主版本 tag）
 
 **主版本（vX.Y.0）**：
-
 0. **更新发布文档**：`CHANGELOG.md`（必须用 `scripts/changelog.sh <上个tag>` 生成清单并 curate 进 `[Unreleased]`）+ **检查 `README.md`/`CONTRIBUTING.md` 覆盖本次发布内容**（新面板/特性/测试清单不遗漏）+ **主版本同步 `SECURITY.md` ## Supported Versions**（维护最近 2 个大版本：新版本进表、最老出表、EOL 边界上移；patch 版本支持表不变跳过）→ 同 commit（保证 tag 指向完整发布文档）；
 1. 版本确认：main 上 HEAD 打 git tag vX.Y.0（`scripts/version.sh` 输出 VERSION/BUILD；`local-release.sh`/CI 均要求 HEAD 恰在 tag 上，版本单一来源 git tag）；
 2. `./platforms/macos/build-app.sh` 全量构建 → `open dist/oh-my-dsh.app` 手工 QA（README 特性逐项过）；
@@ -182,7 +168,6 @@ tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到�
 
 **已发布版本的 patch 修复（vX.Y.Z）**：用 `scripts/release-fix.sh <base-tag> <patch-version> [branch]`（如 `scripts/release-fix.sh v1.9.0 1.9.1`）——从 base tag 切 `release/1.9` 维护分支 → 提交修复 → 打 patch tag 推送（触发 release.yml 发布）→ 手动 cherry-pick 到 `fix/sync-1.9.1` 分支并 **PR 回 main**（不直接 push main）；push 远端名由 `scripts/git-remote.sh` 检测（github > origin > 首个 remote）。
 
-**分支铁律**：feature/fix 分支回 main 一律走 PR；main 只合并、只打主版本 tag；面板（IssueRunner）处理 issue 时按 label 切 `feature/issue-N` 或 `fix/issue-N` 并自动开 PR。
 
 ## Channel 通道（微信远程驱动 dsh）
 
@@ -201,7 +186,7 @@ node core/bin/ohmy-core.js channel route <refsJson> <conversationId> <text> # �
 
 客户端内指令（微信里发）：全局 `/help` `/ping` `/status`；工作区指令 `/workspaces`(`/wks`)、`/sessions`(`/ses`)（无内容列出 / 有内容切换，等同 `#wN`/`#sN`）、`/new [内容]`（统一回 `创建新会话 #sN (sessionId)`，无内容建占位 `New Session`（dsh 标题由 dsh web 按首条消息自动命名）等首条消息激活、有内容 prompt=内容并回推答案）；纯代号 `#wN`/`#sN` 快捷切换当前工作区/会话；消息含 `#w1` 或 `#<workspace名>` 按 #tag 路由到对应项目（清单见 docs/channel-commands.md，改动须同步维护该文档）。
 
-验证：`node --test --test-timeout=60000 core/tests/*.test.js`，当前 **272 用例**（2026-09-24 实测 268 通过 / 4 跳过；2026-09-12 为 233 用例、230 通过 / 3 跳过——无 zstd 的 Node 20 下 review-log 的 zstd 用例自动 skip；2026-09-11 为 216；含 channel 相关 association/busy/重写后的 sessions/project-switch/dingtalk 等）；`tests/channel-panel/run.sh`（ChannelStoreReader）无头单测；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；钉钉 Stream 连接已跑通（SDK 语义：connected= socket 打开，4c7f44b）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
+验证：`node --test --test-timeout=60000 core/tests/*.test.js`，当前 **277 用例**（2026-09-27 实测 273 通过 / 4 跳过；2026-09-12 为 233 用例、230 通过 / 3 跳过——无 zstd 的 Node 20 下 review-log 的 zstd 用例自动 skip；2026-09-11 为 216；含 channel 相关 association/busy/重写后的 sessions/project-switch/dingtalk 等）；`tests/channel-panel/run.sh`（ChannelStoreReader）无头单测；真实微信端到端已跑通（扫码 → 收消息 → 回复确认收到）；钉钉 Stream 连接已跑通（SDK 语义：connected= socket 打开，4c7f44b）；重复回复回归见 docs/channel-issues.md（严格串行长轮询修复）。
 
 > ✅ 消息/会话存储**已全局化**（2026-08-22 落地）：会话映射与消息归档到全局 `~/.dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶，无会话入 system 桶），项目内仅剩引用配置 `.dsh/channels.json`；旧项目格式经 `channel migrate` CLI / 惰性迁移（见 [channel-panel](modules/channel-panel.md)）。**「项目开关」关联（PR #30，2026-08-23）**：通道↔项目启用关系存**全局** `~/.dsh/channels/<channelId>.workspaces.json`（project=workspace，出现即启用，见 [channel-panel](modules/channel-panel.md)「项目开关」与 docs/channel-project-switch.md），项目内 refs 文件不再作为启用来源。仍待办：引用配置落位 `.dsh/channels/channels.json` 并提交。
 

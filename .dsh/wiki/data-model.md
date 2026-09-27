@@ -1,8 +1,8 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-09-24T04:04:53Z
-sources: [platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillInstaller.swift, docs/skills-manager-design.md, tests/skills-panel/, core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/DshWebCookieJanitor.swift, tests/shell-config/, tests/dsh-auth-cookies/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/TerminalWorkspaceTabs.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImageZoom.swift, docs/ux-feedback.md, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md, platforms/macos/src/ProjectsCore.swift, platforms/macos/src/ProjectsPanel.swift, docs/projects-panel-design.md, tests/projects-panel/, tests/dsh-rpc/, core/lib/snapshot.js, core/lib/snapshot-io.js, core/bin/ohmy-core.js, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, docs/session-snapshot-rollback-design.md, tests/snapshot-panel/, tests/snapshot-rollback/, platforms/macos/runtime-locks/]
+updated: 2026-09-27T13:40:19Z
+sources: [platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillInstaller.swift, docs/skills-manager-design.md, tests/skills-panel/, core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/DshWebCookieJanitor.swift, tests/shell-config/, tests/dsh-auth-cookies/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/TerminalWorkspaceTabs.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImageZoom.swift, docs/ux-feedback.md, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md, platforms/macos/src/ProjectsCore.swift, platforms/macos/src/ProjectsPanel.swift, docs/projects-panel-design.md, tests/projects-panel/, tests/dsh-rpc/, core/lib/snapshot.js, core/lib/snapshot-io.js, core/bin/ohmy-core.js, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, docs/session-snapshot-rollback-design.md, tests/snapshot-panel/, tests/snapshot-rollback/, platforms/macos/runtime-locks/, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksAPI.swift]
 manual: false
 ---
 
@@ -36,7 +36,7 @@ manual: false
 | `wikiRegisterAgentsMd` | 写入 AGENTS.md 注册块开关（默认关） | `WikiPaths` |
 | `projectsRoot` | 项目面板的 projects 根目录（**绝对路径**；键缺失/空串/相对路径 = 用默认 `$DSH_HOME/oh-my-dsh/projects`，不改写文件） | `ProjectsCore.configKey` |
 
-> 凭据不走 UserDefaults：GitHub token 按仓库作用域存储，**读取优先文件**（免 Keychain 每次弹密码）、Keychain 兜底——解析顺序为 文件专属 `~/.dsh/tokens/<owner>-<repo>` → 文件通用 `~/.dsh/gh-token` → Keychain 专属（`oh-my-dsh.issuerunner.github-token.<owner>/<repo>`）→ Keychain 通用（`oh-my-dsh.issuerunner.github-token`）；面板保存时 Keychain 与文件**双写**（Keychain 条目设 `kSecAttrAccessibleAfterFirstUnlock`，文件 chmod 600，App 与外部工具/代理共用），见 [issue-runner-panel](modules/issue-runner-panel.md)。
+> 凭据不走 UserDefaults：GitHub token 按仓库作用域存储，**只走文件**（2026-09-24 起：Keychain 读写代码已从 `platforms/macos/src/` 全部删除，`SecItem` / `kSecClass` 不再出现）——解析顺序为 文件专属 `~/.dsh/tokens/<owner>-<repo>` → 文件通用 `~/.dsh/gh-token`（外部工具 / 代理共用同一份）；无仓库时写通用文件，原子写 + `chmod 600`，清空即删文件；更老构建写进钥匙串的条目不再被读取，需重填一次。见 [issue-runner-panel](modules/issue-runner-panel.md)。
 
 > 上表中仅 `AppleLanguages`（WebView 语言覆写，`UserDefaults.standard` 写入以影响系统组件）等系统级项仍走原生 UserDefaults；其余键均由 `ShellConfig` 落到 `$DSH_HOME/shell/config.json`（开发版 `~/.dsh-dev/shell/config.json`），对外与 UserDefaults 同形（`object/string/bool/double/data(forKey:)`、`set`、`removeObject`），便于跨语言工具读写。
 
@@ -143,14 +143,20 @@ manual: false                   # true = 用户手改，代理永不覆盖
 - 目录规范：`index.md / overview.md / architecture.md / modules/<name>.md / data-model.md / conventions.md / tasks.md`（+ `_meta/backlinks.json` 与 `_meta/lock`，设计稿；lock 未实现，v1.7.0 以面板内 generating 标志防重入）；
 - 上限：初始生成 ≤ 20 页、单页 ≤ 200 行 / 20 KB、wiki 总量 ≤ 2 MB（超出标「已截断」）。
 
-## 任务关联索引（`.dsh/tasks/`）
+## 任务面板数据（`.dsh/tasks/` 四文件 + localhost API）
 
-任务面板把 issue ↔ branch ↔ PR ↔ state 关联持久化到仓库根 `.dsh/tasks/`（`docs/issue-runner-design.md`「关联索引」章节），两文件分工：
+任务面板的任务、队列与会话全部落在仓库根 `.dsh/tasks/`（`TasksStore.swift`：读侧容错、**绝不删除或重写**文件；core 侧另有 `core/lib/tasks.js` 维护 v1 的 issue 关联索引）：
 
-- **`index.json`**（随仓库提交）：仓库级共享关联，`{"version": 1, "tasks": [{ "issue", "branch", "title"?, "prUrl"?, "state", "startedAt"?, "finishedAt"?, "error"? }]}`（按 issue 号升序，upsert 合并）；
-- **`local.json`**（`.gitignore` 忽略）：本机级覆盖，`{"sessions": { "<issue>": { "sessionId", "updatedAt" } }}`——dsh 会话 id 是本机实例特有的，不入共享索引。
+| 文件 | 作用域 | 内容 |
+|---|---|---|
+| `index.json` | **提交** | issue 任务 ↔ issue / 分支 / PR / 状态（v1 形状 `{"version": 1, "tasks": [...]}`） |
+| `manual.json` | 本机（gitignore） | 手动任务：标题 / 描述 / 状态 / 队列 / 分支 / 错误 / 时间戳 |
+| `queues.json` | 本机（gitignore） | 队列：名 / 分支 / 基线 / `taskIds`（FIFO）/ 状态 / `autoCreated` / `autoPR` / `prUrl` |
+| `local.json` | 本机（gitignore） | `sessions`（task id → sessionId）、`reports`（task id → 代理最后一段汇报）、`activeQueueId` / `runningTaskId` |
 
-定位规则：issue→branch 读 index.json（或按 label 约定 `feature/issue-N` / `fix/issue-N`，见 `docs/git-workflow.md`）；issue→session 运行中读内存、重启后读 local.json；issue→PR 读 index.json `prUrl`。App 重启后面板 `restoreFromIndex` 先按两文件重建任务列表与关联，再以 open issues 刷新标题。
+- **会话 id 与本机汇报只进 `local.json`**（都不是跨机器的事实，不进随仓库走的两个文件）；读侧兼容 v1 的纯数字 session 键（`"6"` 视为 `issue-6`），写侧一律 task id；
+- `queue.taskIds` 是队列成员的唯一真相，任务上的 `queueId` 是冗余副本，载入时 `reindexQueueMembership()` 重新导出，两者不会漂移；
+- 任务面板的 localhost API 与浏览器面板**共用同一个服务**：端口写 `$DSH_HOME/shell-api.port`（与 `browser-api.port` 同值），路由面 `GET /api/tasks/list` 与 `POST /api/tasks/create`（上限 50 条，返回 `created` / `rejected`），见 [issue-runner-panel](modules/issue-runner-panel.md)。
 
 ## Channel 数据与文件布局（通道 / 消息平台）
 
