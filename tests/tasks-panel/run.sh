@@ -126,4 +126,21 @@ if ! awk '/^    private func syncFromBoard\(\) \{$/,/^    \}$/' ../../platforms/
 fi
 echo "ok - the run-all button is re-derived from the board on every change"
 
+# callAsyncJavaScript turns the arguments into LOCAL VARIABLES of the body, so a body
+# that mentions an argument nobody passed throws a ReferenceError — the bridge reported
+# it as 「发生了JavaScript异常」. That is exactly what made 「打开会话」 a dead button from the
+# TASKS panel (which has no workspace name to offer) while the very same bridge worked
+# from the projects panel (which always has one). The app log said it plainly; the UI
+# said nothing at all. Both halves are pinned here: the argument is always passed, and
+# a bridge error is REPORTED instead of only logged.
+if ! grep -q 'args\["workspaceName"\] = ' ../../platforms/macos/src/main.swift; then
+  echo "FAIL - openDSHSession must always pass workspaceName (empty when unknown): a missing argument throws in the page"
+  exit 1
+fi
+if ! grep -q 'case "bridge-error":' ../../platforms/macos/src/main.swift; then
+  echo "FAIL - a bridge error must reach the user (reportOpenFailure reason bridge-error), not just the log"
+  exit 1
+fi
+echo "ok - the session opener passes every argument and reports bridge errors"
+
 echo "tasks-panel tests passed"

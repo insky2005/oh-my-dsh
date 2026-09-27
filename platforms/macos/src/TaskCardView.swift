@@ -414,7 +414,9 @@ final class TaskCardView: NSView {
         // 用户要求：卡片上的队列名与任务名前都加图标）。quiet 的第三档灰 —— 它是标记，
         // 不是状态（状态在右边那枚徽标上）。
         let glyph = taskRowGlyph("checklist", accessibility: "tasks.glyph.task")
-        let titleRow = NSStackView(views: [chevron, source, glyph, title, spacer, state])
+        // 顺序（2026-09-27，用户要求）：▸ 行标 任务名 [来源徽标] …… [状态徽标]。
+        // 来源（手动 / Issue #N）跟在名字后面：它是这条任务的注解，不该抢在名字前面。
+        let titleRow = NSStackView(views: [chevron, glyph, title, source, spacer, state])
         titleRow.orientation = .horizontal
         titleRow.alignment = .top
         titleRow.spacing = 6

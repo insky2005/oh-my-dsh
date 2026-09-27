@@ -530,8 +530,9 @@ do {
     let card = TaskCardView(model: model)
     let size = layout(card, width: 320)
     eq(size.width, 320, "a card still fills the list width")
-    // 来源徽标 + 状态徽标 no longer get a row of their own: they ride the
-    // title's first line — the source on its left, the state on its right.
+    // 来源徽标 + 状态徽标 no longer get a row of their own: they ride the title's
+    // first line — the source just AFTER the name (2026-09-27: 它是名字的注解), the
+    // state at the far right, and the row marker in front of the name.
     let badges = descendants(card, of: TaskBadgeView.self)
     eq(badges.count, 2, "来源与状态两枚徽标")
     let source = badges.first { $0.text == model.sourceBadge }
@@ -542,8 +543,8 @@ do {
         let sourceFrame = source.convert(source.bounds, to: card)
         let stateFrame = state.convert(state.bounds, to: card)
         eq(titleLabel.toolTip, long, "标题被截断时 tooltip 给出全文")
-        check(sourceFrame.minX < titleFrame.minX, "来源徽标排在标题左边")
-        check(titleFrame.minX < stateFrame.minX, "状态徽标排在标题右边")
+        check(sourceFrame.minX >= titleFrame.minX, "来源徽标排在标题右边（名字后面）")
+        check(sourceFrame.maxX <= stateFrame.minX, "状态徽标在最后一列，排在来源徽标右边")
         for frame in [sourceFrame, stateFrame] {
             check(frame.maxY > titleFrame.maxY - 3, "徽标落在标题首行的高度带里")
         }

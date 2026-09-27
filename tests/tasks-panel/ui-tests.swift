@@ -168,6 +168,45 @@ do {
     check(failed.canDelete, "…and deleted")
 }
 
+section("来源页签：泳道按「里面有没有匹配的任务」出现，不按 autoCreated")
+do {
+    // 全部处理给**手动任务**建的也是**自动队列**（autoCreated = true），而旧规则拿
+    // autoCreated 当「issue 队列」用：点 Issue 会列出一堆以手动任务命名的泳道（里面
+    // 的卡片全被过滤掉，只剩空泳道），点手动反而什么都没有。
+    var board = TaskBoard()
+    let issue = TaskItem.github(number: 7, title: "Fix dark mode")
+    let manual = TaskItem.manual(title: "改 README", id: "manual-ff900001")
+    board.tasks = [issue, manual]
+    let issueQueue = board.createQueue(name: "Issue #7", autoPR: true, autoCreated: true)
+    let manualAutoQueue = board.createQueue(name: "改 README", autoPR: false, autoCreated: true)
+    let userQueue = board.createQueue(name: "Docs")
+    _ = board.enqueue(taskID: issue.id, into: issueQueue.id)
+    _ = board.enqueue(taskID: manual.id, into: manualAutoQueue.id)
+
+    let all = TaskSourceFilter.all
+    check(all.shows(issueQueue, in: board) && all.shows(manualAutoQueue, in: board)
+          && all.shows(userQueue, in: board), "「全部」不落下任何泳道（空泳道也照画）")
+
+    let issues = TaskSourceFilter.issues
+    check(issues.shows(issueQueue, in: board), "Issue 页签：装着 issue 任务的自动队列要在")
+    check(!issues.shows(manualAutoQueue, in: board), "装着手动任务的自动队列不在（这条就是那个 bug）")
+    check(!issues.shows(userQueue, in: board), "空的用户队列也不在（这个页签下它没内容）")
+    eq(issues.cards(of: issueQueue, in: board).map { $0.id }, [issue.id], "里面的卡片就是 issue 那条")
+
+    let manualFilter = TaskSourceFilter.manual
+    check(manualFilter.shows(manualAutoQueue, in: board), "手动页签：装着手动任务的自动队列要在")
+    check(manualFilter.shows(userQueue, in: board),
+          "用户自建（空）队列也在：用户泳道就是手动这一侧（下一个手动任务要放进去）")
+    check(!TaskSourceFilter.issues.shows(userQueue, in: board), "同一个空泳道在 Issue 页签下不出现")
+    check(!manualFilter.shows(issueQueue, in: board), "issue 的队列不在")
+    eq(manualFilter.cards(of: manualAutoQueue, in: board).map { $0.id }, [manual.id], "卡片是手动那条")
+
+    // 未入队区用 matches，与这里同一份判据。
+    check(TaskSourceFilter.manual.matches(manual) && !TaskSourceFilter.manual.matches(issue),
+          "matches 与卡片筛选同源")
+    eq(TaskSourceFilter.issues.source, TaskSource.github, "汇总卡计数用的是同一个来源值")
+    eq(TaskSourceFilter.all.source, nil, "「全部」= 不过滤")
+}
 section("已完成的任务与队列：可编辑性各就各位")
 do {
     var board = TaskBoard()

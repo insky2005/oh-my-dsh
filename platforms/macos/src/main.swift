@@ -779,6 +779,7 @@ enum L10n {
         "projects.newSessionFallback": ("会话已创建，但没能在 dsh web 侧栏定位它：请在侧栏「%@」工作区行点「+」打开", "The session was created, but dsh web's sidebar has no row for it: click “+” on the “%@” workspace row to open it"),
         "projects.openFailed": ("未能在 dsh web 侧栏定位该会话（%@…）：请在侧栏点开对应工作区手动选择", "Could not find that session in dsh web's sidebar (%@…): open the workspace in the sidebar and pick it there"),
         "projects.openFailedNoSession": ("dsh web 还没有列出这条会话（%@…）：稍候片刻再点，或直接在侧栏选择", "dsh web does not list that session yet (%@…): retry in a moment, or pick it in the sidebar"),
+        "projects.openFailedBridge": ("打开会话失败（%@…）：dsh web 页面报错，详见应用日志", "Could not open that session (%@…): the dsh web page threw — see the app log"),
         "projects.settingsSection": ("项目", "Projects"),
         "projects.settingsRootHint": ("默认：%@（留空即用默认）", "Default: %@ (leave empty to use it)"),
         "projects.settingsPick": ("选择…", "Choose…"),
@@ -4378,16 +4379,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.openInFlight = nil
             AppLog.shared.log("openDSHSession " + inFlight + ": the bridge call never answered; the click is no longer blocked")
         }
+        // ALWAYS pass workspaceName, even when there is none: callAsyncJavaScript turns
+        // the arguments into local variables of the body, so a body that mentions an
+        // argument nobody passed throws a ReferenceError — and THAT is what made
+        // 「打开会话」 do nothing at all from the TASKS panel (it has no workspace name to
+        // offer) while the same bridge worked from the projects panel (which always has
+        // one). The app log said it plainly: "bridge error: 发生了JavaScript异常". An empty
+        // string means 「no workspace hint」 to the page script (it checks `if (workspaceName)`).
         var args: [String: Any] = ["sessionId": sessionId]
-        if let name = workspaceName, !name.isEmpty { args["workspaceName"] = name }
-        let body = "return await window.__dshOpenSession(sessionId, workspaceName);"
+        args["workspaceName"] = (workspaceName?.isEmpty == false) ? workspaceName! : ""
+        // …and the body stays defensive about it as well, so a future caller that forgets
+        // the argument gets a lookup without the workspace hint instead of an exception.
+        let body = "return await window.__dshOpenSession(sessionId, typeof workspaceName === 'undefined' ? '' : workspaceName);"
         webView.callAsyncJavaScript(body, arguments: args, in: nil, in: .page) { [weak self] result in
             guard let self = self else { return }
             guard self.openInFlight == sessionId else { return }
             self.openInFlight = nil
             switch result {
             case .failure(let error):
+                // A JS exception is a deterministic failure: retrying it changes nothing,
+                // and logging it silently is how this looked like a dead button.
                 AppLog.shared.log("openDSHSession \(sessionId) bridge error: \(error.localizedDescription)")
+                self.reportOpenFailure(sessionId: sessionId, reason: "bridge-error",
+                                       workspaceName: workspaceName, report: report)
             case .success(let value):
                 guard let dict = value as? [String: Any] else {
                     AppLog.shared.log("openDSHSession \(sessionId): unexpected bridge result")
@@ -4430,6 +4444,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         switch reason {
         case "no-session":
             message = L10n.tr("projects.openFailedNoSession", short)
+        case "bridge-error":
+            message = L10n.tr("projects.openFailedBridge", short)
         default:
             message = L10n.tr("projects.openFailed", short)
         }

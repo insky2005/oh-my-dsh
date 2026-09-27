@@ -562,6 +562,58 @@ struct QueueHeaderModel: Equatable {
     }
 }
 
+/// The toolbar's source tabs (全部 / Issue / 手动) as a PURE rule.
+///
+/// `matches` says which tasks a tab accepts; `cards(of:in:)` and `shows(_:in:)` say
+/// which lanes are worth drawing and what goes inside them. The lane half is the one
+/// that was wrong (2026-09-27): the panel used to decide lanes by `autoCreated` —
+/// 「auto queue = issue queue」 — but 全部处理 builds AUTO queues for MANUAL tasks too,
+/// so the Issue tab listed lanes named after manual tasks (with every card filtered
+/// away: an empty lane) while the 手动 tab, which showed only user queues, looked
+/// empty. A lane now shows while it HOLDS at least one accepted card.
+enum TaskSourceFilter: Int, CaseIterable {
+    case all = 0, issues = 1, manual = 2
+
+    func matches(_ task: TaskItem) -> Bool {
+        switch self {
+        case .all: return true
+        case .issues: return task.source == .github
+        case .manual: return task.source == .manual
+        }
+    }
+
+    /// The same filter as the models want it (nil = everything): the summary counters
+    /// and the task cards must agree with the lanes on screen.
+    var source: TaskSource? {
+        switch self {
+        case .all: return nil
+        case .issues: return .github
+        case .manual: return .manual
+        }
+    }
+
+    /// The cards this tab shows of one lane (in board order).
+    func cards(of queue: TaskQueue, in board: TaskBoard) -> [TaskItem] {
+        board.tasks(inQueue: queue.id).filter { matches($0) }
+    }
+
+    /// Is this lane worth drawing under this tab?
+    ///
+    /// - 「全部」: every lane, always (an empty lane the user made is still theirs).
+    /// - 手动: every USER lane (a lane the user built is the manual side of the board,
+    ///   empty or not — that is where the next manual task goes), plus the auto lanes
+    ///   that actually hold a manual task (全部处理 gives manual tasks auto lanes too).
+    /// - Issue: only lanes that HOLD an issue task — an auto lane named after a manual
+    ///   task, or an empty user lane, has nothing to show there.
+    func shows(_ queue: TaskQueue, in board: TaskBoard) -> Bool {
+        switch self {
+        case .all: return true
+        case .manual: return !queue.autoCreated || !cards(of: queue, in: board).isEmpty
+        case .issues: return !cards(of: queue, in: board).isEmpty
+        }
+    }
+}
+
 /// One counter of the summary card (队列 / 排队 / 运行 / 失败): its label, its
 /// number, and the tone the number reads in. The card joins the four into ONE
 /// line — the review panel's summary card体例 ("会话 3/12 · +120 −30").

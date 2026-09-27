@@ -60,33 +60,13 @@ final class IssueRunnerPanelController: NSObject {
 
     let view = IssueRunnerRootView()
 
-    /// Which tasks the list shows (the segmented control in the toolbar).
-    enum SourceFilter: Int {
-        case all = 0, issues = 1, manual = 2
-
-        func matches(_ task: TaskItem) -> Bool {
-            switch self {
-            case .all: return true
-            case .issues: return task.source == .github
-            case .manual: return task.source == .manual
-            }
-        }
-
-        /// User queues only ever hold manual tasks, so the queue section gains
-        /// nothing from an issues filter; the auto queues are hidden for manual.
-        var showsUserQueues: Bool { self != .issues }
-        var showsAutoQueues: Bool { self != .manual }
-
-        /// The same filter as the models want it (nil = everything): the summary
-        /// counters and the task cards must agree with the lanes on screen.
-        var source: TaskSource? {
-            switch self {
-            case .all: return nil
-            case .issues: return .github
-            case .manual: return .manual
-            }
-        }
-    }
+    /// Which tasks the list shows (the flat tabs in the toolbar). The RULES live in
+    /// TasksUI (TaskSourceFilter: which tasks match, which lanes are worth showing) so
+    /// the headless tests can pin them — the bug this replaces was a lane rule, not a
+    /// tab index: 全部处理 builds AUTO queues for MANUAL tasks too, and the old rule
+    /// decided lanes by `autoCreated`, so the Issue tab listed lanes named after manual
+    /// tasks and the 手动 tab looked empty.
+    typealias SourceFilter = TaskSourceFilter
 
     // UI
     private let headerTitle = HeaderLabel()
@@ -1530,10 +1510,13 @@ final class IssueRunnerPanelController: NSObject {
         // 1. Queues. User queues first (they hold the user's own work), then the
         //    issue tasks' single-task queues, which count and render like any
         //    other queue but start as one compact line (决策 8).
-        let userQueues = sourceFilter.showsUserQueues ? board.queues.filter { !$0.autoCreated } : []
-        let autoQueues = sourceFilter.showsAutoQueues
-            ? board.queues.filter { $0.autoCreated }.sorted(by: { autoQueueNumber($0, board) < autoQueueNumber($1, board) })
-            : []
+        // Which lanes to draw, and what is inside them: the rule lives in
+        // TaskSourceFilter (pure, headless-testable) — a lane shows while it HOLDS at
+        // least one card this tab accepts. Order is the panel's: the user's own lanes
+        // first, then the auto queues by issue number.
+        let userQueues = board.queues.filter { !$0.autoCreated && sourceFilter.shows($0, in: board) }
+        let autoQueues = board.queues.filter { $0.autoCreated && sourceFilter.shows($0, in: board) }
+            .sorted(by: { autoQueueNumber($0, board) < autoQueueNumber($1, board) })
         let queues = userQueues + autoQueues
         if !queues.isEmpty {
             addCard(TaskSectionHeaderView(text: L10n.tr("tasks.section.queues", queues.count)))
@@ -1541,7 +1524,7 @@ final class IssueRunnerPanelController: NSObject {
                 // A queue is ONE block: the lane surface holds its header AND its
                 // cards, so the containment is geometric (review-panel体例)
                 // instead of two parallel stacks that only happen to be adjacent.
-                let cards = board.tasks(inQueue: queue.id).filter { sourceFilter.matches($0) }
+                let cards = sourceFilter.cards(of: queue, in: board)
                 let header = queueHeader(queue, board: board, cardCount: cards.count)
                 let expanded = isQueueExpanded(queue)
                 let cardViews = expanded
