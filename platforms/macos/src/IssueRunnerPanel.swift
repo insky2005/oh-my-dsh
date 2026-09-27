@@ -206,13 +206,9 @@ final class IssueRunnerPanelController: NSObject {
         refreshButton.isEnabled = workspace.githubAvailable
         // 处理 is NOT GitHub-only: it starts everything that is waiting, and manual
         // tasks work in any workspace (only the PR half needs a GitHub remote).
-        let runAll = TasksRunAllModel.build(runner?.board ?? TaskBoard(),
-                                            githubAvailable: workspace.githubAvailable,
-                                            gitAvailable: workspaceIsGit)
-        runAllButton.isEnabled = runAll.enabled
+        updateRunAllButton(githubAvailable: workspace.githubAvailable)
         configButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.configHint") : workspace.disabledHint
         refreshButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.refreshHint") : workspace.disabledHint
-        runAllButton.toolTip = runAll.tooltip
         filterTabs.setItems([L10n.tr("tasks.filter.all"),
                              L10n.tr("tasks.filter.issues"),
                              L10n.tr("tasks.filter.manual")],
@@ -1509,7 +1505,24 @@ final class IssueRunnerPanelController: NSObject {
     /// task is expanded, which queues are open — lives in the controller.
     private func syncFromBoard() {
         boardSignature = boardSignatureNow()
+        // The header's 处理 button answers a BOARD question (「有待办吗」), so every
+        // board change re-derives it — creating a task used to leave it greyed out
+        // until the next workspace switch, because only updateLabels() ever set it.
+        updateRunAllButton(githubAvailable: repo != nil)
         render()
+    }
+
+    /// The 处理 button's enabled state and tooltip: what it would start RIGHT NOW,
+    /// or why there is nothing to start. Its enablement is 「有待办」 — a fact of the
+    /// board, not of the workspace — so it is derived wherever either can change:
+    /// `updateLabels()` (the workspace: git / GitHub availability) and
+    /// `syncFromBoard()` (the board: 新建 / 入队 / 开始 / 完成 / 删除).
+    private func updateRunAllButton(githubAvailable: Bool) {
+        let runAll = TasksRunAllModel.build(runner?.board ?? TaskBoard(),
+                                            githubAvailable: githubAvailable,
+                                            gitAvailable: workspaceIsGit)
+        runAllButton.isEnabled = runAll.enabled
+        runAllButton.toolTip = runAll.tooltip
     }
 
     private func render() {

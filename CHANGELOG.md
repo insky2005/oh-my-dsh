@@ -105,6 +105,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **「全部处理」按钮在建任务后不点亮（它的可用状态从来没人重算）**：按钮的可用状态是**「有没有待办」**——那是 **board** 的事实，可它只在 `updateLabels()` 里算过一次，而 `updateLabels()` 只在**工作区变化**（adopt / 语言切换）时跑；新建一个任务（正是让「有待办」成立的那件事）走的是 `syncFromBoard()` → `render()`，那里只重画列表，不碰按钮 —— 于是按钮一直灰着，直到用户切走再切回来。动作本身从来没坏（`runAllTapped` 自己会重新算 model，点了也能跑），坏的是按钮不肯说自己能用了。现在把这段收成一处 `updateRunAllButton(githubAvailable:)`，由**两个**入口调用：`updateLabels()`（工作区事实：git / GitHub 可用性）与 `syncFromBoard()`（board 事实：新建 / 入队 / 开始 / 完成 / 删除）—— 按钮亮灭与列表内容从同一个 board 推出，不会再各说各话。回归：`tests/tasks-panel/run.sh` 增加源码守卫，`syncFromBoard()` 里必须重新推导 处理 按钮。
 - **默认基线分支不再写死 `main`**：issue 任务的自动队列 `baseBranch` 一律 `main`，流水线第一步就是 `git checkout main` —— 默认分支是 `master` / `develop` 的仓库，**第一个 issue 任务必然失败**（「切换分支失败」）。现在采纳工作区时探测：推送远端（`github` > `origin` > 首个远端）的 `HEAD` → 本地 `main` → 本地 `master` → 当前分支 → 兜底 `main`（决策链在 `TaskBranch.defaultBaseBranch`，无头可测）；自动队列与队列表单的「基于分支」（预填 + 留空回落 + 占位）都用它。
 - **任务超时从硬编码 30 分钟改为 60 分钟，并且写在卡片上**：30 分钟曾静默掐掉长任务；现在默认 **60 分钟**（`TasksRunner.defaultTimeout`），运行中的卡片显示「已运行 1:05（上限 60 分钟，到点会取消会话）」，可在壳层设置里用 `tasksTimeoutMinutes`（5–1440 分钟）覆盖。
 - **推送策略改掉：「只有会开 PR 的队列才 push」**。此前每个任务收尾都要校验「分支是不是在远端」，而 `git ls-remote` 自己失败（私有 / 内部远端没缓存凭据、网络抖一下）被当成「代理没推送」→ **明明干完的活被判成「分支未推送到远端（代理未 push？）」**。现在判据只有一个：`queueWantsPR = 队列的自动开 PR && 工作区有 GitHub 远端`。为真 → 提示词要求 push、收尾校验分支确实在远端（校验仍是**三态**：`pushed` / `notPushed` / `unknown`，`unknown` 只记日志并继续尝试开 PR，绝不判失败）；为假 → **只做本地 commit、完全不 push**（提示词里明说「不要 push」），也不做任何推送校验，`finish` 只记一行「keeps its work local」。

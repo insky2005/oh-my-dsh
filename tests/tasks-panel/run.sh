@@ -114,4 +114,16 @@ if ! grep -q 'static func repoShape(path: String) -> TaskRepoShape' ../../platfo
 fi
 echo "ok - the task prompt probes the workspace shape per prompt"
 
+# The 处理 button answers a BOARD question (「有待办吗」), so it has to be re-derived
+# whenever the board changes — not only when the WORKSPACE does. It used to be set
+# only in updateLabels(), which runs on adopt / language switch: creating a task (the
+# one thing that makes 有待办 true) left the button greyed out, and it stayed grey until
+# the user switched workspace and back. The action itself was never broken (runAllTapped
+# re-derives the model) — the button just never said so.
+if ! awk '/^    private func syncFromBoard\(\) \{$/,/^    \}$/' ../../platforms/macos/src/IssueRunnerPanel.swift | grep -q 'updateRunAllButton('; then
+  echo "FAIL - syncFromBoard must re-derive the 处理 button (updateRunAllButton) on every board change"
+  exit 1
+fi
+echo "ok - the run-all button is re-derived from the board on every change"
+
 echo "tasks-panel tests passed"
