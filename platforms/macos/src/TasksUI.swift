@@ -138,7 +138,9 @@ struct TaskCardModel: Equatable {
             meta.append(L10n.tr("tasks.card.runningFor", runningFor, timeoutMinutes))
         }
         if !task.labels.isEmpty { meta.append(task.labels.joined(separator: ", ")) }
-        if let branch = task.branch ?? queue?.branch { meta.append(branch) }
+        // The branch a task is ABOUT to use is the queue's; task.branch is only a
+        // record of where it ran (and leaving a queue clears it — see dequeue).
+        if let branch = queue?.branch ?? task.branch { meta.append(branch) }
         if let pr = task.prUrl { meta.append(L10n.tr("tasks.detailPR", Self.shortPR(pr))) }
 
         var detailLines: [String] = []

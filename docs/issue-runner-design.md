@@ -389,6 +389,12 @@ struct Queue {
 >
 > 选择逻辑收在 `TasksRunAllModel.startable(in:)`：面板按它取任务，确认框的计数也来自它 —— 两者不会各说各话。回归：视图模型（队列里 0 个 / 删掉后 2 个、`isStartable` 对陈旧 `queueId` 的判定）+ 运行器（删队列→批量→两条任务各建一个新队列并依次跑完，旧错误被清掉）。
 
+> **实现（2026-09-27 修正 · 建会话与会话归属）**：两处都是「面板自己造了一套」。
+>
+> 1. **建会话必须走共享实现**：面板曾私有实现 `createSession`，只发 `{workspaceId}`（没有 cwd 回退）。而 `workspaceId` 来自 `DshWorkspaceStore`（持久化文件），**陈旧是常态**（工作区被移除/归档、store 由另一份 DSH_HOME 写过）→ dsh 回 `workspace/not-found` → 该工作区**每个任务**都以 `tasks.errSession` 失败，日志里除了 errSession 什么都没有。现在调用 `DshWorkspaceOps.createSession`（两步：先 workspaceId 让 dsh web 正确分组，被拒则退 cwd —— 与 §4.3 的记录一致，`tests/dsh-rpc` 有用例），并在失败/成功时各记一行 `app.log`。`tests/tasks-panel/run.sh` 加了源码守卫，禁止面板再直接拼 `DshWebRPC.sessionCreate`。
+>    实测证据（内置 dsh 0.1.2-rc.1 起在 3099 + `DshWebRPC.swift` 真件）：`{workspaceId:"ws-does-not-exist"}` → `workspace/not-found`；共享实现带同一个陈旧 id → 回退 cwd 成功；老的「只发 workspaceId」写法 → nil。
+> 2. **分支归队列所有**：`task.branch` 是开跑时从队列抄下来的记录；`dequeue` / `removeQueue` / `detach` 都不清它，于是「移出队列」后卡片继续显示 `feature/x`。现在离开队列即清（分支是队列的属性），卡片显示顺序改为 `queue?.branch ?? task.branch`（将要用的分支优先），issue 任务的提示词不再用 `task.branch` 兜底。
+
 ### V2-8 卡片式任务清单
 
 列表改为 `NSScrollView + NSStackView`，体例照 `ProjectsPanel.swift`：`render()` 重建 `arrangedSubviews`，卡片 `widthAnchor == list.widthAnchor - 20`，卡片自身 `draw(_:)` 画圆角 + 描边、`hitTest` 把非按钮区域的点击交回卡片、`resetCursorRects` 设 `pointingHand`。

@@ -678,6 +678,9 @@ struct TaskBoard {
         queues[qi].taskIds.removeAll { $0 == taskID }
         tasks[ti].queueId = nil
         tasks[ti].state = .pending
+        // 分支是队列的属性：离开队列就不再属于它。留着会让人以为这个任务还会跑在
+        // 那条分支上（而且它会被当成「这个任务要用的分支」传给下一个队列/提示词）。
+        tasks[ti].branch = nil
         return true
     }
 
@@ -687,6 +690,7 @@ struct TaskBoard {
         for i in queues.indices { queues[i].taskIds.removeAll { $0 == taskID } }
         guard let ti = index(ofTask: taskID) else { return }
         tasks[ti].queueId = nil
+        tasks[ti].branch = nil
         if tasks[ti].state == .queued { tasks[ti].state = .pending }
     }
 
@@ -702,6 +706,8 @@ struct TaskBoard {
             guard let ti = index(ofTask: id) else { continue }
             tasks[ti].queueId = nil
             if tasks[ti].state == .queued { tasks[ti].state = .pending }
+            // Same rule as 移出队列: the branch belonged to the queue.
+            tasks[ti].branch = nil
         }
         queues.remove(at: qi)
         if local.activeQueueID == queueID { local.activeQueueID = nil }

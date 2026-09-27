@@ -261,6 +261,44 @@ do {
     eq(board.nextStartable(), nil, "都跑完了：没有可启动的")
 }
 
+// MARK: - branch belongs to the queue
+
+section("离开队列之后不再保留那条分支（分支是队列的属性）")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "One", id: "manual-ii001111")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane")          // feature/lane
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    eq(board.task(task.id)?.branch, "feature/lane", "跑起来时把「跑在哪条分支上」记到任务上")
+    _ = board.markFailed(task.id, error: "tasks.errSession")
+    _ = board.retryAndResume(task.id)                    // 回到 queued，才能移出队列
+    check(board.dequeue(taskID: task.id), "移出队列")
+    eq(board.task(task.id)?.branch, nil, "分支不再保留 —— 它属于队列")
+    eq(board.task(task.id)?.state, .pending, "任务回到未入队")
+
+    // 删除队列同理：队内任务一起交还分支。
+    var removed = TaskBoard()
+    let a = TaskItem.manual(title: "A", id: "manual-ii002222")
+    let b = TaskItem.manual(title: "B", id: "manual-ii003333")
+    removed.tasks = [a, b]
+    let lane = removed.createQueue(name: "Lane")
+    _ = removed.enqueue(taskID: a.id, into: lane.id)
+    _ = removed.enqueue(taskID: b.id, into: lane.id)
+    removed.markRunning(a.id)
+    _ = removed.markFailed(a.id, error: "tasks.errSession")
+    if let i = removed.index(ofTask: b.id) { removed.tasks[i].branch = "feature/lane" }
+    check(removed.removeQueue(lane.id), "删除队列")
+    eq(removed.task(a.id)?.branch, nil, "失败的那条也交还分支")
+    eq(removed.task(b.id)?.branch, nil, "队内其余任务一样")
+
+    // 重新入队到另一条队列：下一次开跑时会换上那条队列的分支。
+    let other = removed.createQueue(name: "Other")        // feature/other
+    _ = removed.enqueue(taskID: a.id, into: other.id)
+    eq(removed.task(a.id)?.branch, nil, "入队本身不写分支（开跑时才记）")
+}
+
 // MARK: - summary and restart recovery
 
 section("summary and restart recovery")

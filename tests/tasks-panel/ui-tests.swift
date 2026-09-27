@@ -120,6 +120,25 @@ do {
     check(!failed.primaryEnabled == false, "the retry button is enabled")
 }
 
+section("卡片不再显示已经离开的那条分支")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "One", id: "manual-jj001111")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    _ = board.markFailed(task.id, error: "tasks.errSession")
+    var card = TaskCardModel.build(board.task(task.id)!, board: board, expanded: false, githubRepo: false)
+    check(card.meta.contains("feature/lane"), "还在队列里：卡片显示这条分支")
+
+    _ = board.retryAndResume(task.id)
+    _ = board.dequeue(taskID: task.id)
+    card = TaskCardModel.build(board.task(task.id)!, board: board, expanded: false, githubRepo: false)
+    check(!card.meta.contains("feature/lane"), "移出队列后卡片不再显示它")
+    check(!card.meta.contains { $0.hasPrefix("feature/") }, "也不显示任何别的分支")
+}
+
 section("manual task editing")
 do {
     var board = TaskBoard()

@@ -71,4 +71,15 @@ swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
 "$TMP/tasks-form-tests"
 rm -rf "$TMP"
 
+echo "--- tasks panel source guards ---"
+# The panel must NOT hand-roll session creation: the shared helper carries the
+# documented workspaceId→cwd fallback (and tests/dsh-rpc pins it). A private copy
+# shipped once and made EVERY task fail with tasks.errSession whenever the stored
+# workspaceId was stale (workspace/not-found, no fallback).
+if grep -q "DshWebRPC.sessionCreate" ../../platforms/macos/src/IssueRunnerPanel.swift; then
+  echo "FAIL - IssueRunnerPanel must use DshWorkspaceOps.createSession, not DshWebRPC.sessionCreate"
+  exit 1
+fi
+echo "ok - the tasks panel delegates session creation to DshWorkspaceOps"
+
 echo "tasks-panel tests passed"

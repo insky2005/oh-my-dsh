@@ -566,7 +566,7 @@ final class IssueRunnerPanelController: NSObject {
             promptText: { task, queue, brief in
                 if task.source == .github {
                     return TaskPrompts.issue(number: task.number ?? 0, title: task.title,
-                                             branch: queue?.branch ?? task.branch ?? "")
+                                             branch: queue?.branch ?? "")
                 }
                 // Push policy: only a queue that will open a PR asks the agent to
                 // push (see TasksRunner.finish) — and the prompt has to say the
@@ -1184,18 +1184,24 @@ final class IssueRunnerPanelController: NSObject {
         return nil
     }
 
+    /// Create the dsh session one task runs in.
+    ///
+    /// This used to be a private copy that sent `{workspaceId}` and stopped there:
+    /// when the persisted workspace store was stale (a workspace dsh no longer
+    /// knows — removed, archived, or written by another DSH_HOME), the server
+    /// answered `workspace/not-found` and EVERY task failed with `tasks.errSession`
+    /// — silently, because nothing logged the reason. The shared helper does the
+    /// documented two-step (workspaceId, then a plain `cwd` create) and is exercised
+    /// by tests/dsh-rpc + tests/projects-panel.
     static func createSession(port: Int, workspaceId: String?, cwd: String?) -> String? {
-        let payload: [String: Any]
-        if let workspaceId = workspaceId, !workspaceId.isEmpty {
-            payload = ["workspaceId": workspaceId]   // cwd auto = workspace path
-        } else if let cwd = cwd {
-            payload = ["cwd": cwd]
-        } else {
-            return nil
+        guard let cwd = cwd, !cwd.isEmpty else { return nil }
+        let session = DshWorkspaceOps.createSession(port: port, cwd: cwd, workspaceId: workspaceId)
+        if session == nil {
+            AppLog.shared.log("tasks: session/create failed (workspaceId=\(workspaceId ?? "-") cwd=\(cwd))")
+        } else if let workspaceId = workspaceId, !workspaceId.isEmpty {
+            AppLog.shared.log("tasks: session \(session ?? "-") created for workspace \(workspaceId)")
         }
-        guard let value = DshWebRPC.call(DshWebRPC.sessionCreate, payload, port: port),
-              let sid = value["sessionId"] as? String else { return nil }
-        return sid
+        return session
     }
 
     static func renameSession(port: Int, sessionId: String, title: String) -> Bool {
