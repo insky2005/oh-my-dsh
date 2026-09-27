@@ -268,7 +268,20 @@ do {
 //    while its own panel is closed). The two renders are compared to each other —
 //    the accent colour is the user's, so no absolute colour can be asserted.
 do {
-    func renderDot(_ shows: Bool) -> [UInt8] {
+    /// One rendered bitmap PLUS the geometry needed to read it. The geometry must come
+    /// from the bitmap itself: a headless CI runner renders at **1x** while a Retina Mac
+    /// renders at **2x**, and the old code hard-coded "40pt at 2x" (bpr = 320, width = 80).
+    /// At 1x (bpr = 160) that mis-reads every pixel — the dot's own pixels were then
+    /// measured at the wrong coordinates and the check failed with 「it is the corner dot,
+    /// not the icon」 on CI only (locally, at 2x, it passed).
+    struct Shot {
+        var pixels: [UInt8]
+        var bytesPerRow: Int
+        var pixelsWide: Int
+    }
+    /// - Parameter oneX: render through an explicit 1x bitmap, so the CI geometry is
+    ///   exercised on a Retina machine too (that is the whole point of the two passes).
+    func renderDot(_ shows: Bool, oneX: Bool = false) -> Shot? {
         let host = NSView(frame: NSRect(x: 0, y: 0, width: 40, height: 34))
         let button = ActivityBarButton(symbol: "checkmark.circle", tooltip: "",
                                        action: #selector(NSObject.description))
@@ -277,34 +290,53 @@ do {
         button.frame = host.bounds
         host.addSubview(button)
         host.layoutSubtreeIfNeeded()
-        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds), let data = rep.bitmapData else { return [] }
+        let rep: NSBitmapImageRep?
+        if oneX {
+            rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 40, pixelsHigh: 34,
+                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                   isPlanar: false, colorSpaceName: .deviceRGB,
+                                   bytesPerRow: 0, bitsPerPixel: 0)
+        } else {
+            rep = host.bitmapImageRepForCachingDisplay(in: host.bounds)
+        }
+        guard let rep = rep, let data = rep.bitmapData else { return nil }
         host.cacheDisplay(in: host.bounds, to: rep)
-        return Array(UnsafeBufferPointer(start: data, count: rep.bytesPerRow * rep.pixelsHigh))
+        return Shot(pixels: Array(UnsafeBufferPointer(start: data, count: rep.bytesPerRow * rep.pixelsHigh)),
+                    bytesPerRow: rep.bytesPerRow, pixelsWide: rep.pixelsWide)
     }
-    /// Pixels that differ between two renders, split into "in the corner" and "anywhere".
-    func diff(_ a: [UInt8], _ b: [UInt8]) -> (total: Int, corner: Int) {
-        guard !a.isEmpty, a.count == b.count else { return (-1, -1) }
+    /// Pixels that differ between two renders, split into "inside the dot's corner" and
+    /// "anywhere else". The box is the dot's own box in points, scaled to the bitmap:
+    /// 6pt wide, 6pt from the right edge, 4pt down from the top (ActivityBarButton) —
+    /// plus a couple of pixels of slack for antialiasing, so the check stays about WHERE
+    /// the dot is, not about how many of its edge pixels got blended.
+    func diff(_ a: Shot, _ b: Shot) -> (total: Int, corner: Int) {
+        guard a.pixels.count == b.pixels.count, a.bytesPerRow == b.bytesPerRow,
+              a.pixelsWide == b.pixelsWide, a.pixelsWide > 0, a.bytesPerRow > 0 else { return (-1, -1) }
+        let scale = Double(a.pixelsWide) / 40.0          // 40pt button: 1.0 at 1x, 2.0 at 2x
+        let leftEdge = Int((28.0 * scale).rounded())     // dot starts 12pt from the right
+        let bottomEdge = Int((10.0 * scale).rounded())   // dot ends 10pt down from the top
         var total = 0
         var corner = 0
-        // 40pt wide at 2x, 4 px per sample: the dot sits 6…12pt from the right edge,
-        // at most 12pt down from the top.
-        let bpr = 40 * 2 * 4
-        let width = 40 * 2
-        for i in stride(from: 0, to: a.count, by: 4) where a[i] != b[i] || a[i + 1] != b[i + 1] || a[i + 2] != b[i + 2] {
+        for i in stride(from: 0, to: a.pixels.count, by: 4)
+        where a.pixels[i] != b.pixels[i] || a.pixels[i + 1] != b.pixels[i + 1] || a.pixels[i + 2] != b.pixels[i + 2] {
             total += 1
-            let y = i / bpr
-            let x = (i % bpr) / 4
-            if x >= width - 28, y <= 24 { corner += 1 }
+            let y = i / a.bytesPerRow
+            let x = (i % a.bytesPerRow) / 4
+            if x >= leftEdge, y <= bottomEdge { corner += 1 }
         }
         return (total, corner)
     }
-    let off = renderDot(false)
-    check("an activity bar button renders without a dot by default",
-          diff(off, renderDot(false)).total == 0)
-    let withDot = renderDot(true)
-    let turnedOn = diff(off, withDot)
-    check("showsActivityDot paints something (\(turnedOn.total) px)", turnedOn.total > 20)
-    check("…and it is the corner dot, not the icon", turnedOn.corner == turnedOn.total)
+    for (label, oneX) in [("本机 backing", false), ("1x（CI 那种）", true)] {
+        guard let off = renderDot(false, oneX: oneX), let withDot = renderDot(true, oneX: oneX) else {
+            check("\(label)：活动栏按钮渲染出了位图", false)
+            continue
+        }
+        check("\(label)：默认没有圆点，两次渲染一模一样", diff(off, off).total == 0)
+        let turnedOn = diff(off, withDot)
+        check("\(label)：showsActivityDot 画了点东西（\(turnedOn.total) px）", turnedOn.total > 20)
+        check("\(label)：…而且它是右上角那个圆点，不是图标（\(turnedOn.corner)/\(turnedOn.total) px 在角上）",
+              turnedOn.corner >= turnedOn.total - 2)
+    }
 }
 
 print("done")
