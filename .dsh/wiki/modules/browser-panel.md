@@ -67,12 +67,12 @@ OSR 下 CEF 不知道宿主窗口位置，默认菜单弹错位：`OnBeforeConte
 
 ## BrowserAPI.swift（Agent 驱动 REST API）
 
-- POSIX socket 极简 HTTP/1.1（127.0.0.1，默认 3081，`DSH_BROWSER_PORT` 覆盖，占用递增 +5；生效端口写 `$DSH_HOME/browser-api.port`；App 启动即起）；CORS 头 + OPTIONS 预检；
+- POSIX socket 极简 HTTP/1.1（127.0.0.1，默认 3081，`DSH_BROWSER_PORT` 覆盖，占用递增 +5；生效端口写 `$DSH_HOME/browser-api.port` **与 `shell-api.port`**（同值，后者供技能 `task-todo` 发现；同一个服务上还挂着任务面板的 `/api/tasks/*`，见 [issue-runner-panel](issue-runner-panel.md)）；App 启动即起）；CORS 头 + OPTIONS 预检；
 - 路由：`status`/`open`（自动展开，`show:false` 抑制）/`tabs`/`back`/`forward`/`reload`/`stop`/`eval`/`console`/`console/clear`/`screenshot`(PNG)/`hide`，**新增 QA 端点**：
   - `POST /api/browser/debug`：触发视图层级 dump（AppLog + `panel-browser-debug.png`）+ 返回 OSR 渲染状态（`debugState`：containerInWindow/osrLayerContents（读 **pageView** 层，即帧的真实落点）/osrLayerScale/frameCount/lastFrameSize/avgAlpha/avgLum…）；可选 body `{"click":[x,y]}` 模拟点击（`simulateClick`，验证 OSR 点击链路）；
   - `POST /api/browser/hierarchy`：全窗口视图层级 JSON + 命中测试（面板/内容区中心 `hitTest`）+ 窗口/面板截图（写 `/tmp/window-shot.png`、`/tmp/panel-browser-shot.png`）——定位「内容区被盖住/事件被截」的遮挡视图；
 - 可单测纯模型：`HTTPRequest.parse`、`BrowserAPIRouter`（协议 `BrowserAPIDelegate` 抽象面板）、`BrowserLogBuffer`、`BrowserURL.normalize`；
-- 桥接 `BrowserAPIBridge`：异步操作（eval/screenshot）主线程派发 + 信号量同步等待（10s 超时），其余 `DispatchQueue.main.sync` 读快照；`debugDump`/`debugState`/`debugHierarchy` 闭包由 AppDelegate 接线（main.swift）。
+- 桥接 `BrowserAPIBridge`：异步操作（eval/screenshot）主线程派发 + 信号量同步等待（10s 超时），其余 `DispatchQueue.main.sync` 读快照；`debugDump`/`debugState`/`debugHierarchy` 闭包由 AppDelegate 接线（main.swift）。**任务面板路由的落地也在这里**（`extension BrowserAPIBridge: TasksAPIDelegate`，经 `tasksList`/`tasksCreate` 闭包注入面板控制器）——本文件因此不认识面板类型，`tests/browser-panel` 能无头编译它；`BrowserAPIRouter.route` 开头先跑 `TasksAPIRouter.route`（未命中返回 nil，继续原路由）。
 
 ## QA 调试
 

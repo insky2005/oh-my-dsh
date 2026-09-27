@@ -15,9 +15,15 @@ cp ../../platforms/macos/src/BrowserPanel.swift "$TMP/BrowserPanel.swift"
 cp ../../platforms/macos/src/BrowserAPI.swift "$TMP/BrowserAPI.swift"
 cp ../../platforms/macos/src/BrowserCDP.swift "$TMP/BrowserCDP.swift"
 cp ../../platforms/macos/src/PanelSurface.swift "$TMP/PanelSurface.swift"   # 面板底色 token
+# The same localhost service also carries the TASKS panel's routes (/api/tasks/*,
+# TasksAPI.swift). It is a pure model, but it needs the task/queue types, so the
+# task model comes along — that also pins the two路由面 sitting on one server.
+cp ../../platforms/macos/src/TasksAPI.swift "$TMP/TasksAPI.swift"
+cp ../../platforms/macos/src/TasksCore.swift "$TMP/TasksCore.swift"
 cp browser-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
   -o "$TMP/browser-tests" "$TMP/stubs.swift" "$TMP/PanelSurface.swift" "$TMP/BrowserPanel.swift" \
-  "$TMP/BrowserAPI.swift" "$TMP/BrowserCDP.swift" "$TMP/main.swift"
+  "$TMP/BrowserAPI.swift" "$TMP/TasksAPI.swift" "$TMP/TasksCore.swift" \
+  "$TMP/BrowserCDP.swift" "$TMP/main.swift"
 "$TMP/browser-tests"
 rm -rf "$TMP"

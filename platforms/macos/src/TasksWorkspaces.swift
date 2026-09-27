@@ -52,6 +52,11 @@ final class TaskWorkspaceRegistry {
         currentPath = nil
     }
 
+    /// Every workspace with a live runner right now, in a stable order. The tasks
+    /// API uses it as its candidate list when it resolves the workspace a request
+    /// belongs to (an agent's cwd may sit in a SUBDIRECTORY of a tracked board).
+    var trackedPaths: [String] { runners.keys.sorted() }
+
     /// The runner already tracked for a path, or nil — this does NOT build one.
     /// (The UI asks this to show "other workspaces are running", and building a
     /// runner just to answer that would read a board off disk for nothing.)

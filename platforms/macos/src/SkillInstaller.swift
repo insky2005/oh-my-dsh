@@ -11,18 +11,18 @@
 
 import Foundation
 
-/// The three built-in skills shipped by oh-my-dsh.
+/// The built-in skills shipped by oh-my-dsh.
 enum BuiltinSkill: CaseIterable {
 
     case webDevTools
     case repoKnowledge
-    case issueResolve
+    case taskTodo
 
     var dirName: String {
         switch self {
         case .webDevTools: return "web-dev-tools"
         case .repoKnowledge: return "repo-knowledge"
-        case .issueResolve: return "issue-resolve"
+        case .taskTodo: return "task-todo"
         }
     }
 
@@ -31,7 +31,7 @@ enum BuiltinSkill: CaseIterable {
         switch self {
         case .webDevTools: return "shell-browser"
         case .repoKnowledge: return "repo-wiki"
-        case .issueResolve: return "issue-fix"
+        case .taskTodo: return nil
         }
     }
 
@@ -39,7 +39,7 @@ enum BuiltinSkill: CaseIterable {
         switch self {
         case .webDevTools: return Self.webDevToolsMarkdown
         case .repoKnowledge: return Self.repoKnowledgeMarkdown
-        case .issueResolve: return Self.issueResolveMarkdown
+        case .taskTodo: return Self.taskTodoMarkdown
         }
     }
 
@@ -164,44 +164,102 @@ enum BuiltinSkill: CaseIterable {
     9. **汇报**：简短列出本次生成/更新的页面（含新增 / 失效 / 手动跳过），不超过几行，不粘贴正文。
     """
 
-    static let issueResolveMarkdown = """
+    static let taskTodoMarkdown = """
     ---
-    name: issue-resolve
-    description: 在当前会话中修复一个 GitHub issue（读 issue → 改代码 → 跑测试 → 提交推送 → 汇报）。Fix a GitHub issue in the current session (read issue → change code → run tests → commit & push → report).
-    user-invocable: false
+    name: task-todo
+    description: 把沟通好的需求/方案落成任务面板里的任务清单（批量创建手动任务，可一次多条）。Turn agreed requirements into a task list on the oh-my-dsh tasks panel (batch-create manual tasks).
     ---
     
-    # issue-resolve — 按 GitHub issue 完成修复并提交推送
+    # task-todo — 把沟通结论写进任务面板
     
-    面板（IssueRunner）为某个 issue 创建独立会话并加载本 skill 时使用。会话 cwd 是**主项目工作区**，当前 git 分支由面板提前切好：feature 类 issue 为 `feature/issue-<N>`，bug/其他为 `fix/issue-<N>`（按统一分支规范 `docs/git-workflow.md`）。
+    oh-my-dsh 壳层的**任务面板**（Tasks）通过 **localhost REST API** 驱动。用户在会话里和你
+    聊完需求与方案、并且**明确要求**「把这些建成任务 / 生成任务清单 / 写进任务面板」时，
+    用本技能一次把任务建到面板上：面板会自动切到对应工作区并展开，「手动」页签下就能看到
+    这些任务（待处理、未入队），用户接下来照常挑队列、按「处理」运行。
     
-    ## 执行方式（强制）
-    - **在当前会话内直接执行，绝不新建顶层会话**（不得 session.create / fork）；确需并行探索时可使用 subagent（子会话，不影响顶层会话归属）；
-    - **仓库根**：当前会话工作目录（`pwd`）；当前分支必须是 `feature/issue-<N>` 或 `fix/issue-<N>`（以面板会话提示为准）——若不是，先 `git status` 确认，异常则停下汇报；
-    - 只改当前分支上的代码，**绝不触碰 main/其他分支**，不 `git checkout` 别的分支。
+    ## 何时执行（硬规则）
     
-    ## 输入
-    会话提示语会给出 issue 的：编号 `<N>`、标题、标签、正文/复现步骤（如有）、验收要求（如有）。
+    - **只在用户明确要求时执行**。用户没说「建任务 / 任务清单 / 写进任务面板」，就**不要**建；
+      沟通还在进行、方案还没定，也不要抢跑。
+    - 用户要求了 → 一次性把任务建完（**一次请求多条**），不要一条一条调。
+    - 建任务**不等于开始干活**：不要替用户入队、建队列、切分支或启动运行。
     
-    ## 流程
-    1. **理解 issue**：读给出的 issue 内容；不清楚的地方在代码里找依据，不臆测；
-    2. **定位与修改**：找到相关代码，做**最小**修改解决 issue；遵守仓库 `.dsh/wiki/conventions.md` 的工程约定（L10n 中英、不改 dsh 上游源码、面板 UI 约定等）；需要时先读 `.dsh/wiki/` 了解模块结构；
-    3. **本地验证**：按 issue 影响面跑相关测试：
-       - 共享核心：`node --test core/tests/*.test.js`（node 用内置运行时：`Contents/Resources/runtime/node` 或 PATH 上的 node）；
-       - macOS 壳：`tests/*/run.sh`（swiftc 可用时）；
-       - 无法跑的（如缺工具链）明确说明，不假装通过；
-    4. **提交**：`git add` 相关文件 → `git commit -m "fix(#<N>): <标题简短>"`；一个 issue 一个 commit（或逻辑相关的少量 commit）。若修复关联 PR，commit 正文可附加 `Closes #<N>`（GitHub 在 PR 合并时自动关闭对应 issue），但**不要**在 commit 里写无关内容；
-    5. **推送**：先检测远端名（`git remote`；优先名为 `github`，其次 `origin`，否则第一个 remote），再 `git push -u <远端名> <当前分支名>`；
-    6. **汇报**：简短列出改动文件、测试结果、commit 号；PR 由面板创建，你**不负责开 PR**。
+    ## 端口发现（必做）
     
-    ## 规则（强制）
-    1. 只做 issue 要求的最小改动；不顺手重构无关代码；
-    2. 不提交无关文件（`git status` 里与本次修复无关的变更不要 add）；
-    3. 不改动 `.env*`/密钥/口令相关文件，不提交敏感信息；
-    4. 测试失败必须停下说明，不得静默跳过；
-    5. 推送失败（无远端/权限）时停下汇报，不伪造成功；
-    6. **GitHub 写操作需 token**：推送私有仓库 / 需要认证的调用时，从 `${DSH_HOME:-$HOME/.dsh}/tokens/<owner>-<repo>` 或 `${DSH_HOME:-$HOME/.dsh}/gh-token` 读取（`cat` 即得），**绝不打印/回显 token 内容，绝不在对话、汇报、日志、commit message 中泄露 token**；公开仓库推送通常无需 token；
-    7. 汇报简短（几行），不粘贴大段正文。
+    API 随 App 启动常驻，默认端口 **3081**，实际端口写在发现文件里：
+    
+    ```bash
+    PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/shell-api.port" 2>/dev/null \\
+         || cat "${DSH_HOME:-$HOME/.dsh}/browser-api.port" 2>/dev/null \\
+         || echo 3081)"
+    ```
+    
+    （首个可用者为准，两者同时存在时是同一个端口。App 没运行时**一个都连不上** —— 那就
+    停下来告诉用户「请先打开 oh-my-dsh」，**不要**去改 `.dsh/tasks/*.json` 绕过面板。）
+    
+    ## API 速查（`http://127.0.0.1:$PORT`）
+    
+    | 方法/路径 | 请求体 | 说明 |
+    |---|---|---|
+    | GET `/api/tasks/list` | `?workspace=<路径>`（可选） | 面板现有的任务与队列：`{ok, workspace, tasks:[{id,title,state,source,queueName}], queues:[...]}` |
+    | POST `/api/tasks/create` | `{"workspace":"…","focus":true,"tasks":[{"title":"…","body":"…"} \\| "标题"]}` | 批量创建；返回 `{ok, workspace, shown, created:[{id,title}], rejected:[{title,error}]}` |
+    
+    - `workspace`：Agent 会话的工作目录（`pwd`）。传到工作区根即可，面板按「最近祖先」
+      解析（`pwd` 在子目录里也对）。不传则用面板当前的工作区。
+    - `focus`：默认 `true` —— 切到该工作区并展开任务面板（用户刚要求建的东西要看得见）；
+      不想打扰就传 `false`。
+    - `tasks`：每条可写对象（`title` + `body`，**推荐**）或纯字符串（只有标题，描述回退为
+      标题）。一次上限 50 条；空标题等会被放进 `rejected` 而不影响其它条目。
+    - 任务一律以「**待处理、未入队**」落盘：队列与运行仍由用户在面板上决定。
+    
+    ## 工作流
+    
+    1. **先看面板有什么**（避免重复建：面板内新建任务不去重）：
+       ```bash
+       curl -sG --data-urlencode "workspace=$(pwd)" "http://127.0.0.1:$PORT/api/tasks/list"
+       ```
+    2. **组织任务**：把本轮沟通的结论拆成独立、可执行的任务，每条写清
+       - **标题**：一行，扫一眼就知道要做什么（不放编号前缀、不写「任务一」）；
+       - **描述**（`body`）：给执行者的上下文 —— 做什么、依据是什么（文件/接口/文档）、
+         怎么算完成（验收点）。**只写沟通里已经确认的内容**，不臆造需求、不加没谈过的
+         范围。标题已能自明的短任务，描述可省略。
+    3. **一次提交**：把 JSON 写成文件再 `--data-binary`（避免 shell 引号转义咬到中文/引号）：
+       ```bash
+       cat > /tmp/task-todo.json <<'JSON'
+       {
+         "workspace": "<pwd 的输出>",
+         "focus": true,
+         "tasks": [
+           {"title": "…", "body": "…"},
+           {"title": "…", "body": "…"}
+         ]
+       }
+       JSON
+       curl -s -X POST "http://127.0.0.1:$PORT/api/tasks/create" \\
+         -H 'Content-Type: application/json' --data-binary @/tmp/task-todo.json
+       ```
+       （`workspace` 用真实的 `pwd` 值；路径含空格时 JSON 里照写，不用转义。）
+    4. **核对**：看响应里的 `created`（id + 标题）与 `rejected`；必要时再 list 一次确认。
+       面板此时应已展开并显示这些卡片。
+    5. **汇报**：几行以内 —— 建了几条、标题清单、面板里在哪（哪个工作区/「手动」页签）；
+       有 `rejected` 就说明原因。不粘贴任务正文全文。
+    
+    ## 失败处理
+    
+    | 现象 | 处理 |
+    |---|---|
+    | curl 连不上（Connection refused） | App 没运行：请用户打开 oh-my-dsh，**不要**直接改盘上文件 |
+    | `503 panel-unavailable` | 壳层服务在，但任务面板还没就绪（刚启动）：稍后重试一次；仍失败就请用户打开任务面板看一眼 |
+    | `400 no-workspace` | 面板还没有工作区（或传的路径不存在）：让用户先在 oh-my-dsh 里选好项目 |
+    | `rejected` 里有条目 | 逐条说明原因（`empty-title` / `too-many` 等），把有效的部分如实汇报，不要谎报全部成功 |
+    
+    ## 不要做
+    
+    - 不直接改 `<workspace>/.dsh/tasks/*.json`（面板内存里有 board，外部改动会被覆盖，
+      用户也看不到反馈）；
+    - 不替用户建队列、入队、开跑、切分支、开 PR（那些是用户与面板的事）；
+    - 不在用户没要求时建任务，也不把本轮没确认的猜测写成任务。
+    
     """
 }
 
@@ -227,12 +285,24 @@ enum SkillInstaller {
         return (NSHomeDirectory() as NSString).appendingPathComponent(".dsh")
     }
 
+    /// Names oh-my-dsh USED to ship and no longer does. The app-managed copy under
+    /// $DSH_HOME/skills/ is deleted at startup; a copy the user edited (no managed
+    /// marker) is THEIR file now — kept, and logged.
+    ///
+    /// `issue-resolve` retired with the 2026-09-27 alignment: the issue task and the
+    /// manual task now share one prompt (TaskPrompts.requirements), so the skill had
+    /// become a second, stale source of truth — it still told the agent to `git push`,
+    /// which is the queue's 开 PR 会话 job now.
+    static let retiredSkills = ["issue-resolve", "issue-fix"]
+
     /// Ensure every built-in skill is present under $DSH_HOME/skills,
-    /// migrating legacy names first. Never throws; failures are logged/skipped.
+    /// migrating legacy names first and retiring what we no longer ship.
+    /// Never throws; failures are logged/skipped.
     @discardableResult
     static func installBuiltinSkills() -> [SkillInstallResult] {
         let home = dshHomeDir()
         migrateLegacyNames(home: home)
+        removeRetiredSkills(home: home)
         var results: [SkillInstallResult] = []
         for skill in BuiltinSkill.allCases {
             results.append(ensure(skill: skill, home: home))
@@ -240,8 +310,30 @@ enum SkillInstaller {
         return results
     }
 
-    /// Rename legacy skill dirs (shell-browser/repo-wiki/issue-fix) to the new
-    /// names when the target is absent. Only touches $DSH_HOME/skills.
+    /// Delete the app-managed copies of retired skills; leave user-managed ones alone.
+    private static func removeRetiredSkills(home: String) {
+        let fm = FileManager.default
+        for name in retiredSkills {
+            let dir = (home as NSString).appendingPathComponent("skills/" + name)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue else { continue }
+            let marker = (dir as NSString).appendingPathComponent(managedMarker)
+            guard fm.fileExists(atPath: marker) else {
+                AppLog.shared.log("skill retired: " + name + " kept (user-managed: no " + managedMarker + ")")
+                continue
+            }
+            do {
+                try fm.removeItem(atPath: dir)
+                AppLog.shared.log("skill retired: removed " + dir)
+            } catch {
+                AppLog.shared.log("skill retire failed " + name + ": " + error.localizedDescription)
+            }
+        }
+    }
+
+    /// Rename legacy skill dirs (shell-browser/repo-wiki) to the new names when the
+    /// target is absent. Only touches $DSH_HOME/skills. (issue-fix is NOT renamed any
+    /// more: its skill is retired — see retiredSkills.)
     private static func migrateLegacyNames(home: String) {
         let skillsDir = (home as NSString).appendingPathComponent("skills")
         let fm = FileManager.default

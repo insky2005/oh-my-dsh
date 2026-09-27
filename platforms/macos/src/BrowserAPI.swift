@@ -117,6 +117,13 @@ enum BrowserAPIRouter {
             return HTTPResponse(status: 204, contentType: "text/plain", body: Data())
         }
 
+        // /api/tasks/* 是任务面板的路由面，挂在同一个服务上（同一端口、同一信任
+        // 模型）。命中即返回；返回 nil 说明不是本服务的任务端点，继续走下面的
+        // 浏览器面板路由 —— 两边互不吞对方的路由与 404。
+        if let tasks = TasksAPIRouter.route(request, delegate: delegate as? TasksAPIDelegate) {
+            return tasks
+        }
+
         switch (request.method, request.path) {
         case ("GET", "/api/browser/status"):
             return .json(200, delegate.apiStatus())
@@ -226,6 +233,19 @@ enum BrowserAPIRouter {
 /// 异步操作（eval/screenshot）经主线程派发 + 信号量同步等待（带超时）。
 final class BrowserAPIBridge: BrowserAPIDelegate {
     weak var panel: BrowserPanelController?
+    /// 任务面板的路由面（/api/tasks/*，见 TasksAPI.swift）。面板控制器由 main.swift
+    /// 以闭包注入：本文件因此不认识面板类型，能在没有 AppKit 面板的无头测试里编译
+    /// （tests/browser-panel 正是这样跑的）。
+    var tasksList: (String?) -> [String: Any] = { _ in BrowserAPIBridge.tasksUnavailable }
+    var tasksCreate: (String?, Bool, [TaskCreateDraft]) -> [String: Any] = { _, _, _ in
+        BrowserAPIBridge.tasksUnavailable
+    }
+    /// 面板还没就绪（或已经没了）时任务 API 的回答。
+    static let tasksUnavailable: [String: Any] = [
+        "ok": false,
+        "error": "panel-unavailable",
+        "hint": "the tasks panel is not ready",
+    ]
     var showPanel: () -> Void = {}
     var hidePanel: () -> Void = {}
     var isPanelVisible: () -> Bool = { false }
@@ -533,3 +553,36 @@ final class BrowserAPIServer {
         }
     }
 }
+
+// MARK: - 任务面板路由的落地（面板控制器 → TasksAPIDelegate）
+
+/// /api/tasks/* 的桥接：把后台的 HTTP 线程搬到主线程上调用任务面板。
+///
+/// 与浏览器面板的 apiStatus / apiEval 同一形状：HTTP 服务在自己的并发队列上跑，
+/// 而 board 的读改写必须与面板的 step 定时器同一条线程 —— 否则两个写者会互相
+/// 覆盖（面板下一次 persist 会把 API 刚建的任务抹掉）。直接用 main.sync，但已经在
+/// 主线程时不再 sync（那会死锁；测试正是从主线程调用它）。
+///
+/// 放在本文件（而不是 TasksAPI.swift）是为了让 TasksAPI.swift 保持纯模型：
+/// tests/tasks-panel/api-tests.swift 直接编译它，不需要 AppKit 与面板类型。
+extension BrowserAPIBridge: TasksAPIDelegate {
+
+    func apiTaskList(workspace: String?) -> [String: Any] {
+        onMain(fallback: Self.tasksUnavailable) { self.tasksList(workspace) }
+    }
+
+    func apiTaskCreate(workspace: String?, focus: Bool, drafts: [TaskCreateDraft]) -> [String: Any] {
+        onMain(fallback: Self.tasksUnavailable) { self.tasksCreate(workspace, focus, drafts) }
+    }
+
+    /// Run the work on the main thread and hand back its result, or the fallback
+    /// when the panel is gone / not reachable.
+    private func onMain(fallback: [String: Any],
+                        _ work: @escaping () -> [String: Any]?) -> [String: Any] {
+        if Thread.isMainThread { return work() ?? fallback }
+        var result: [String: Any] = fallback
+        DispatchQueue.main.sync { result = work() ?? fallback }
+        return result
+    }
+}
+

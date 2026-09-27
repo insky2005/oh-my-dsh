@@ -37,6 +37,9 @@ typealias IssueRunnerTask = TaskItem
 final class IssueRunnerPanelController: NSObject {
 
     var onRequestHide: (() -> Void)?
+    /// Show this panel in the shell's right slot (set by AppDelegate). The tasks API
+    /// uses it when an agent creates tasks: 用户刚要求建的任务，就该在眼前。
+    var onShowPanel: (() -> Void)?
     /// The user picked another workspace that has a task running: the shell re-roots
     /// to it (the same primitive the Projects panel uses).
     var onSelectWorkspace: ((String) -> Void)?
@@ -475,6 +478,113 @@ final class IssueRunnerPanelController: NSObject {
         resolveRepoAndReload()
     }
 
+    // MARK: - Local API (task-todo skill / curl)
+
+    /// 本地 API 的工作区解析：请求里的路径 → 真正要写的 board 根。
+    ///
+    /// 候选 = 面板当前 board + 所有已跟踪的 board（不额外做一次 dsh RPC）：Agent
+    /// 的 cwd 常常是工作区的**子目录**，靠 TasksAPIWorkspace.resolve 的「最近祖先」
+    /// 规则落回真正的 board（设计见 docs/task-todo-skill-design.md §2.2）。
+    private func apiResolveWorkspace(_ requested: String?) -> String? {
+        var candidates: [String] = []
+        if let current = workspaces.currentPath { candidates.append(current) }
+        candidates.append(contentsOf: workspaces.trackedPaths)
+        return TasksAPIWorkspace.resolve(requested: requested, candidates: candidates)
+            ?? workspaces.currentPath
+    }
+
+    /// 任务面板的 board 根：请求指定的、面板当前正在看的，或 nil（还没 adopt 任何
+    /// 工作区 —— 早期启动或没有活动项目）。
+    ///
+    /// 必须在主线程调用（board 的读改写要与 step 定时器同一条线程；桥接层负责派发）。
+    private func apiRunner(for workspace: String?) -> (path: String, runner: TasksRunner)? {
+        guard let path = apiResolveWorkspace(workspace) else { return nil }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {
+            return nil
+        }
+        guard let runner = workspaces.runner(for: path) else { return nil }
+        return (path, runner)
+    }
+
+    private static func apiNoWorkspace(_ workspace: String?) -> [String: Any] {
+        var result: [String: Any] = [
+            "ok": false,
+            "error": "no-workspace",
+            "hint": "the tasks panel has no workspace yet — open a project in oh-my-dsh, or pass \"workspace\"",
+        ]
+        if let workspace = workspace, !workspace.isEmpty { result["requested"] = workspace }
+        return result
+    }
+
+    /// GET /api/tasks/list —— 面板里现在有什么（任务 + 队列）。
+    func apiTaskList(workspace: String?) -> [String: Any] {
+        guard let (path, runner) = apiRunner(for: workspace) else {
+            return Self.apiNoWorkspace(workspace)
+        }
+        let board = runner.board
+        let tasks = board.tasks.map { task in
+            TasksAPIRouter.taskDictionary(task, queueName: task.queueId.flatMap { board.queue($0)?.name })
+        }
+        return [
+            "ok": true,
+            "workspace": path,
+            "current": path == workspaces.currentPath,
+            "counts": ["tasks": board.tasks.count, "queues": board.queues.count],
+            "tasks": tasks,
+            "queues": board.queues.map { TasksAPIRouter.queueDictionary($0) },
+        ]
+    }
+
+    /// POST /api/tasks/create —— 批量创建手动任务。
+    ///
+    /// 与用户在面板里点「新建任务」走同一条路径（TasksRunner.createManualTask）：
+    /// 落盘、日志、重绘都由它负责。任务一律是「待处理、未入队」——**建任务不启动
+    /// 任何东西**；队列与运行仍由用户在面板上决定。
+    func apiTaskCreate(workspace: String?, focus: Bool, drafts: [TaskCreateDraft]) -> [String: Any] {
+        let requested = workspace
+        guard let (path, runner) = apiRunner(for: requested) else {
+            return Self.apiNoWorkspace(requested)
+        }
+
+        // focus：用户刚要求建的任务就该看得见 —— 切到那个 board 并展开面板。
+        // 非 focus：只落盘，用户切过去时 board 已经在磁盘上（面板会读）。
+        if focus {
+            if path != workspaces.currentPath { adoptWorkspace(path) }
+            onShowPanel?()
+        }
+
+        var created: [[String: Any]] = []
+        var rejected: [[String: Any]] = []
+        for draft in drafts {
+            let taskDraft = TaskDraft(title: draft.title, body: draft.body ?? "")
+            guard let task = runner.createManualTask(taskDraft) else {
+                rejected.append(["title": draft.title, "error": "invalid"])
+                continue
+            }
+            created.append(["id": task.id, "title": task.title])
+        }
+
+        if path == workspaces.currentPath {
+            syncFromBoard()
+            if !created.isEmpty {
+                setStatus(L10n.tr("tasks.apiCreated", created.count), spin: false)
+                autoHideStatus(after: 8)
+            }
+        }
+        AppLog.shared.log("tasks api: created \(created.count)/\(drafts.count) task(s) at \(path)"
+                          + (rejected.isEmpty ? "" : " (rejected \(rejected.count))"))
+
+        return [
+            "ok": !created.isEmpty,
+            "workspace": path,
+            "current": path == workspaces.currentPath,
+            "shown": focus,
+            "created": created,
+            "rejected": rejected,
+        ]
+    }
+
     // MARK: - Board / runner wiring
 
     /// Build one workspace's runner (the registry's factory).
@@ -567,14 +677,11 @@ final class IssueRunnerPanelController: NSObject {
                 return Self.findExistingPR(owner: repo.owner, repo: repo.repo, branch: branch, token: token)
             },
             promptText: { task, queue, brief in
-                if task.source == .github {
-                    return TaskPrompts.issue(number: task.number ?? 0, title: task.title,
-                                             branch: queue?.branch ?? "",
-                                             base: queue?.baseBranch ?? Self.detectDefaultBaseBranch(path: repoRoot))
-                }
-                // Push policy: only a queue that will open a PR asks the agent to
-                // push (see TasksRunner.finish) — and the prompt has to say the
-                // same thing, or the agent pushes out of habit.
+                // 两种来源共用同一套要求（TaskPrompts.requirements），**只有头不同**
+                // （issue 头 = 编号/标题/标签/正文；手动任务头 = 标题/描述）：2026-09-27
+                // 对齐。此前 issue 走一段写死的 5 条、还要求加载 issue-resolve 技能，
+                // 而那个技能停在「任务自己 push、PR 由面板开」的旧政策里 —— 同一个面板
+                // 于是有两种行为，issue 任务还会 push（手动任务只 commit）。
                 // An AUTO queue (an issue task's, or the one 全部处理 makes for a
                 // single manual task) is not a shared lane: it will never hold
                 // another task, so 「与其他任务共享同一分支与改动」 would be false.
@@ -592,6 +699,14 @@ final class IssueRunnerPanelController: NSObject {
                 // 队列自己的「基于分支」；不在队列里的任务用工作区的默认分支 —— 两条
                 // 分支 rail 都会点名它（「若无分支，须基于 X 新建」/「直接在主分支 X 上处理」）。
                 let base = queue?.baseBranch ?? Self.detectDefaultBaseBranch(path: repoRoot)
+                if task.source == .github {
+                    return TaskPrompts.issue(number: task.number ?? 0, title: task.title,
+                                             body: task.body, labels: task.labels,
+                                             branch: queue?.branch, queueName: sharedQueueName,
+                                             base: base,
+                                             brief: brief,
+                                             shape: shape)
+                }
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: sharedQueueName,
                                           base: base,

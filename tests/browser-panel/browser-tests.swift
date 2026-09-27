@@ -190,6 +190,80 @@ func testRouter() {
     eq(cors["Content-Type"], statusResp.contentType, "router: CORS content type")
 }
 
+// MARK: - 同一个服务上的第二块路由面（/api/tasks/*，技能 task-todo）
+
+/// A delegate that serves BOTH route faces — exactly what BrowserAPIBridge is in the
+/// app. The tasks panel's routes live on the same localhost server as the browser
+/// panel's, so the two must not swallow each other's paths (or each other's 404).
+final class FakeBothDelegate: BrowserAPIDelegate, TasksAPIDelegate {
+    var browserStatusCalls = 0
+    var taskLists: [String?] = []
+    var taskCreates: [(workspace: String?, focus: Bool, drafts: [TaskCreateDraft])] = []
+
+    var apiPanelVisible: Bool { false }
+    func apiShowPanel() {}
+    func apiHidePanel() {}
+    func apiStatus() -> [String: Any] {
+        browserStatusCalls += 1
+        return ["panelVisible": false, "tabs": [], "activeTabId": 0]
+    }
+    func apiOpenURL(_ url: String, tab: String?) -> [String: Any] { ["ok": true] }
+    func apiTabAction(_ action: String, tabId: Int64?) -> [String: Any] { ["ok": true] }
+    func apiNavigate(_ action: String, tabId: Int64?) -> [String: Any] { ["ok": true] }
+    func apiEval(_ expression: String) -> [String: Any] { ["ok": true] }
+    func apiConsole(level: String?, limit: Int?) -> [String: Any] { ["ok": true, "entries": []] }
+    func apiClearConsole() {}
+    func apiScreenshot() -> Data? { nil }
+
+    func apiTaskList(workspace: String?) -> [String: Any] {
+        taskLists.append(workspace)
+        return ["ok": true, "workspace": workspace ?? "-", "tasks": [], "queues": []]
+    }
+    func apiTaskCreate(workspace: String?, focus: Bool, drafts: [TaskCreateDraft]) -> [String: Any] {
+        taskCreates.append((workspace, focus, drafts))
+        return ["ok": true,
+                "workspace": workspace ?? "-",
+                "created": drafts.map { ["id": "manual-x", "title": $0.title] },
+                "rejected": []]
+    }
+}
+
+// MARK: - tasks routes on the shared server
+
+/// The same localhost service carries BOTH route faces — the browser panel's
+/// (/api/browser/*) and the tasks panel's (/api/tasks/*, the task-todo skill).
+/// These checks pin the seam: neither swallows the other's paths, and neither
+/// swallows the 404 the caller still owns.
+func testTasksRoutesShareTheServer() {
+    let both = FakeBothDelegate()
+
+    let body = "{\"workspace\":\"/repo\",\"tasks\":[\"t1\",\"t2\"]}"
+    let createReq = HTTPRequest(method: "POST", path: "/api/tasks/create", query: [:], headers: [:],
+                                body: Data(body.utf8))
+    eq(BrowserAPIRouter.route(createReq, delegate: both).status, 200, "tasks: create 200")
+    eq(both.taskCreates.count, 1, "tasks: create reached the tasks delegate")
+    eq(both.taskCreates.first?.workspace, "/repo", "tasks: workspace forwarded")
+    eq(both.taskCreates.first?.drafts.count, 2, "tasks: both tasks handed over in one call")
+    eq(both.browserStatusCalls, 0, "tasks: the browser half is untouched")
+
+    let listReq = HTTPRequest(method: "GET", path: "/api/tasks/list", query: ["workspace": "/repo"],
+                              headers: [:], body: Data())
+    eq(BrowserAPIRouter.route(listReq, delegate: both).status, 200, "tasks: list 200")
+    eq(both.taskLists.first ?? nil, "/repo", "tasks: list workspace forwarded")
+
+    // The browser half still answers on the same delegate…
+    let statusReq = HTTPRequest(method: "GET", path: "/api/browser/status", query: [:],
+                                headers: [:], body: Data())
+    eq(BrowserAPIRouter.route(statusReq, delegate: both).status, 200, "tasks: browser status still 200")
+    // …an unknown tasks path is still the router's 404…
+    let nopeReq = HTTPRequest(method: "GET", path: "/api/tasks/nope", query: [:],
+                              headers: [:], body: Data())
+    eq(BrowserAPIRouter.route(nopeReq, delegate: both).status, 404, "tasks: unknown tasks path 404")
+    // …and a delegate that is NOT a TasksAPIDelegate gets panel-unavailable, not a crash.
+    eq(BrowserAPIRouter.route(listReq, delegate: FakeDelegate()).status, 503,
+       "tasks: no tasks delegate 503")
+}
+
 
 // MARK: - OSR 帧落点（1.14.0 空白面板回归）
 
@@ -308,6 +382,7 @@ testConsoleArgumentText()
 testOSRFrameTargetsPageViewLayer()
 testOSRPaintRoutingUsesBrowserId()
 testContextMenuAnchorPrefersMouse()
+testTasksRoutesShareTheServer()
 
 print("== browser panel tests: \(passed) passed, \(failures) failed")
 if failures > 0 {

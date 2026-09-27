@@ -207,7 +207,8 @@ enum TaskRepoShape: Equatable {
     }
 }
 
-/// Texts handed to the agent: v1's issue-resolve instruction for issue tasks
+/// Texts handed to the agent. Both task sources share ONE requirement list
+/// (requirements below, 2026-09-27): the prompt's head is all that differs.
 /// plus a generic one for manual tasks, with the same safety rails (one branch,
 /// run the tests, commit, push, never echo the token).
 enum TaskPrompts {
@@ -296,54 +297,61 @@ enum TaskPrompts {
     static let reportRequirement =
         "**必须**在结束时汇报：改了什么、怎么验证的、结果如何（没做完或失败也要说清楚，不要沉默收尾）——这段文字会写回任务卡片，队列里后面的任务也会看到它；"
 
-    static func issue(number: Int, title: String, branch: String, base: String = "main") -> String {
+    /// The issue task's prompt: the issue itself, then **the same requirements a
+    /// manual task gets**.
+    ///
+    /// 2026-09-27 起 issue 与手动任务对齐。过去 issue 走的是一段写死的 5 条，第 1 条
+    /// 要求「加载 issue-resolve skill 并严格按其流程执行」—— 而那个技能停在旧世界：
+    /// 它让任务自己 `git push`、并说「PR 由面板创建」。同一个面板里于是有两种政策：
+    /// issue 任务 push、手动任务只 commit（后者才是壳层现在的政策 —— push 与 PR 由
+    /// 队列的「开 PR 会话」负责）。现在两者共用 requirements(...)：按工作区形状出条目、
+    /// 按队列说分支、都要自查与汇报、都带队列交接简报，只在 **头的部分**不同
+    /// （issue 头 = 编号/标题/标签/正文；手动任务头 = 标题/描述）。
+    static func issue(number: Int, title: String, body: String?, labels: [String],
+                      branch: String?, queueName: String?, base: String? = nil,
+                      brief: String? = nil, shape: TaskRepoShape = .github) -> String {
         var lines: [String] = []
-        lines.append("请加载 issue-resolve skill 并完成以下 GitHub issue 的修复：")
+        lines.append("请完成以下 GitHub issue 的修复：")
         lines.append("")
         lines.append("## Issue #\(number)")
         lines.append("标题：\(title)")
+        if !labels.isEmpty {
+            lines.append("标签：" + labels.joined(separator: ", "))
+        }
+        // The issue BODY is this task's description — the same place a manual task's
+        // description sits, and the same待遇: handed over directly. It used to be
+        // omitted, so an issue task had to go and fetch its own issue from GitHub
+        // while a manual task just read its description.
+        let issueBody = body?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let issueBody = issueBody, !issueBody.isEmpty,
+           issueBody != title.trimmingCharacters(in: .whitespacesAndNewlines) {
+            lines.append("")
+            lines.append(issueBody)
+        }
         lines.append("")
         lines.append("要求：")
-        lines.append("1. 加载全局 $DSH_HOME/skills/issue-resolve/SKILL.md（或内嵌说明）并严格按其流程执行（读 issue → 改代码 → 跑测试 → commit）；")
-        lines.append("2. 本任务须在分支 \(branch) 上处理（若该分支不存在，须基于 \(base) 分支新建）；")
-        lines.append("3. \(verifyRequirement)")
-        lines.append("4. 推送私有仓库/需要认证的 GitHub 调用时，token 在 $DSH_HOME/tokens/<owner>-<repo> 或 $DSH_HOME/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；")
-        lines.append("5. \(reportRequirement)")
+        let list = requirements(branch: branch, queueName: queueName, base: base, shape: shape)
+        for (index, requirement) in list.enumerated() {
+            lines.append("\(index + 1). " + requirement)
+        }
+        // 队列里前面那些任务留下了什么 —— 与手动任务同一段落、同一个落点（所有要求之后）。
+        if let brief = brief, !brief.isEmpty {
+            lines.append("")
+            lines.append(brief)
+        }
         return lines.joined(separator: "\n")
     }
 
-    /// Manual task: the user's own title and description plus the same rails.
+    /// The 要求 list BOTH task sources share (issue / manual) — one place, so the two
+    /// prompts cannot drift apart again.
     ///
-    /// `shape` follows the WORKSPACE (see TaskRepoShape): it decides which rails
-    /// exist at all (no branch rail without a repository, no token rail without a
-    /// GitHub remote). The push / PR policy is deliberately NOT here: that half is
-    /// the shell's, performed by a dedicated 开 PR 会话 once the queue is done.
-    /// `base` is the branch the queue treats as its base (queue.baseBranch, or the
-    /// workspace default for a task without a queue): it is what the branch rail names
-    /// when there is no branch yet, and what 「主分支」 means for a queue that does not
-    /// switch branches at all.
-    static func manual(title: String, body: String?, branch: String?, queueName: String?,
-                       base: String? = nil,
-                       brief: String? = nil,
-                       shape: TaskRepoShape = .github) -> String {
-        var lines: [String] = []
-        lines.append("请完成以下任务：")
-        lines.append("")
-        lines.append("## 任务")
-        lines.append(title)
-        // 单行任务：描述就是标题本身 —— 那行已经在上面的「任务」里了，别重复。
-        if let body = body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty,
-           body != title.trimmingCharacters(in: .whitespacesAndNewlines) {
-            lines.append("")
-            lines.append(body)
-        }
-        // 要求按「这个工作区现在是什么 + 这个队列会做什么」逐条生成，编号由顺序算出：
-        // 不适用的条目**不出现**，而不是留一句空话 —— 非 git 目录没有分支要求、非
-        // GitHub 工作区没有 token 要求、独立任务不说队列共享（用户的原话是「按需出现，
-        // 而不是每个任务都是一样的要求」）。写死 1..6 的旧版本做不到这件事。
+    /// 条目按「这个工作区现在是什么 + 这个队列会做什么」生成，编号由顺序算出：
+    /// 不适用的条目**不出现**（非 git 目录没有分支要求、非 GitHub 工作区没有 token
+    /// 要求）。push / PR 一律不在这里：那是壳层那一半，由队列结束后的「开 PR 会话」做 ——
+    /// 说了就是让代理操心不属于它的事。
+    static func requirements(branch: String?, queueName: String?, base: String?,
+                             shape: TaskRepoShape) -> [String] {
         var requirements: [String] = []
-        // 独立 / 队列中的一项。队列任务的「前置完成情况」不在这里，而是整段附在要求
-        // 之后（见下面 briefSection 的落点）：先把要求读完，再看上一棒留下什么。
         if let queueName = queueName {
             requirements.append("本任务是队列「\(queueName)」中的一项，与其他任务共享同一分支与改动；")
         } else {
@@ -372,11 +380,6 @@ enum TaskPrompts {
         }
         requirements.append(Self.verifyRequirement)
         // commit：**有仓库就必须 commit**（含任务自己刚 git init 出来的仓库）。
-        //
-        // 这里**只说 commit**：push 与 PR 是壳层那一半，队列结束后另起一个 PR 会话
-        // 专门去做（§V2-6），所以「要 push」「不要 push」「这个队列会开 PR」「远端必须
-        // 有这些提交」这些话都不该出现在任务提示词里 —— 说了就是让代理操心不属于它的
-        // 事，还会把注意力从任务本身引开。
         if shape == .plain {
             requirements.append("这里还不是 git 仓库：不要求 commit；任务本身要你建仓库（git init）时，建好后把改动 commit 掉（建议 feat/fix: 简述）；")
         } else {
@@ -388,10 +391,41 @@ enum TaskPrompts {
         }
         // 汇报：每个任务都必须，而且这份汇报会被写回任务卡片。
         requirements.append(Self.reportRequirement)
+        return requirements
+    }
 
+    /// Manual task: the user's own title and description plus the same rails.
+    ///
+    /// `shape` follows the WORKSPACE (see TaskRepoShape): it decides which rails
+    /// exist at all (no branch rail without a repository, no token rail without a
+    /// GitHub remote). The push / PR policy is deliberately NOT here: that half is
+    /// the shell's, performed by a dedicated 开 PR 会话 once the queue is done.
+    /// `base` is the branch the queue treats as its base (queue.baseBranch, or the
+    /// workspace default for a task without a queue): it is what the branch rail names
+    /// when there is no branch yet, and what 「主分支」 means for a queue that does not
+    /// switch branches at all.
+    static func manual(title: String, body: String?, branch: String?, queueName: String?,
+                       base: String? = nil,
+                       brief: String? = nil,
+                       shape: TaskRepoShape = .github) -> String {
+        var lines: [String] = []
+        lines.append("请完成以下任务：")
+        lines.append("")
+        lines.append("## 任务")
+        lines.append(title)
+        // 单行任务：描述就是标题本身 —— 那行已经在上面的「任务」里了，别重复。
+        if let body = body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty,
+           body != title.trimmingCharacters(in: .whitespacesAndNewlines) {
+            lines.append("")
+            lines.append(body)
+        }
+        // 要求与 issue 任务**完全共用**（TaskPrompts.requirements）：两种来源的提示词
+        // 只有头不同，规则必须一模一样 —— 各写一份的那段历史，正是 issue 任务被留在
+        // 「会 push、PR 由面板开」的旧政策里的原因。
         lines.append("")
         lines.append("要求：")
-        for (index, requirement) in requirements.enumerated() {
+        let list = requirements(branch: branch, queueName: queueName, base: base, shape: shape)
+        for (index, requirement) in list.enumerated() {
             lines.append("\(index + 1). " + requirement)
         }
         // 队列里前面那些任务留下了什么（各自会话里的最后一段汇报 + 分支上已有的提交）
@@ -1148,7 +1182,26 @@ final class TasksRunner {
     @discardableResult
     func startIssueTask(_ taskID: String) -> String? {
         guard let task = board.task(taskID), task.source == .github else { return nil }
-        return startStandaloneTask(task, queue: { TaskQueue.auto(for: task, baseBranch: env.defaultBaseBranch) })
+        dropUnswitchableBranch(ofTask: taskID)
+        return startStandaloneTask(task, queue: {
+            TaskQueue.auto(for: task,
+                           baseBranch: env.defaultBaseBranch,
+                           switchesBranch: env.canSwitchBranches,
+                           opensPR: env.canOpenPR())
+        })
+    }
+
+    /// A queue built before this rule existed (or built in a git workspace and then
+    /// carried into this one) may still ask for a branch this directory cannot switch
+    /// to: drop it first, or the retry fails with tasks.errNotGit exactly like the
+    /// first attempt did. Both task sources go through it — the issue half hard-coded
+    /// its branch and its PR flag until 2026-09-27, so a plain directory could not run
+    /// an issue task at all.
+    private func dropUnswitchableBranch(ofTask taskID: String) {
+        guard !env.canSwitchBranches, let existing = board.autoQueueID(forTask: taskID),
+              board.queue(existing)?.branch != nil else { return }
+        updateQueue(existing, branch: .some(nil))
+        env.log("tasks: " + taskID + "'s queue no longer switches branches — this workspace is not a git repository")
     }
 
     /// 处理 one MANUAL task on its own: the same single-task queue shape as an
@@ -1157,15 +1210,7 @@ final class TasksRunner {
     @discardableResult
     func startManualTask(_ taskID: String) -> String? {
         guard let task = board.task(taskID), task.source == .manual else { return nil }
-        // A queue built before this rule existed (or built in a git workspace and
-        // then carried into this one) may still ask for a branch this directory
-        // cannot switch to: drop it first, or the retry fails with tasks.errNotGit
-        // exactly like the first attempt did.
-        if !env.canSwitchBranches, let existing = board.autoQueueID(forTask: taskID),
-           board.queue(existing)?.branch != nil {
-            updateQueue(existing, branch: .some(nil))
-            env.log("tasks: " + taskID + "'s queue no longer switches branches — this workspace is not a git repository")
-        }
+        dropUnswitchableBranch(ofTask: taskID)
         return startStandaloneTask(task, queue: {
             TaskQueue.auto(forManual: task,
                            baseBranch: env.defaultBaseBranch,

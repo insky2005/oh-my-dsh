@@ -1,7 +1,7 @@
 # 任务面板设计（IssueRunner / Tasks）
 
 > 状态：**v1 已实现**（v1.8.0+，方案 E：branch-based 串行队列）；**v2 已实现**（2026-09-24：多队列泳道 + 手动任务 + 卡片式 UI + token 仅文件；决策记录见 §V2-13）。v1 章节保留为历史决策记录，实现现状以 §V2-* 与 `.dsh/wiki/modules/issue-runner-panel.md` 为准
-> 更新：2026-09-24
+> 更新：2026-09-27（§V2-14：issue 任务与手动任务对齐；`issue-resolve` 技能退役）
 > 关联：`docs/git-workflow.md`（分支规范）、`docs/ui-color-scheme.md`（配色令牌）、`docs/projects-panel-design.md`（卡片面板体例）、`docs/dsh-version-impact.md`（会话 RPC 耦合面）、`.dsh/wiki/modules/issue-runner-panel.md`
 
 ## 目标
@@ -697,3 +697,20 @@ QA 钩子：`DSH_TASKS_TEST=1` 启动即开面板；`DSH_PANEL_TEST=` 全量核�
 - **队列模板 / 归档**：预置常用队列（如 `feature/refactor`）与已完成队列的归档视图；
 - **跨驱动复用**：`core/lib/jobqueue.js` 与队列模型对齐，供「远程驱动」（钉钉 / 微信）适配器复用；
 - **手动任务 / 队列共享**：搬进 `index.json`（`version: 2`）随仓库提交，展示层无需改动。
+
+### V2-14 issue 任务与手动任务对齐（2026-09-27）
+
+**问题**：同一个面板里两种任务来源有两种行为。手动任务的提示词由 `TaskPrompts.requirements(...)` 按工作区形状生成（非 git 目录没有分支条、非 GitHub 没有 token 条），**只 commit、不提 push/PR**；issue 任务却走一段写死的 5 条，第 1 条要求「加载 `issue-resolve` skill 并严格按其流程执行」—— 而那个技能停在旧世界：它让任务自己 `git push`、还说「PR 由面板创建」。于是 issue 任务会 push、手动任务不会：同一个壳层两套政策。三处具体偏差：
+
+1. **提示词**：issue 只把编号与标题交给代理（正文/标签都不传，代理还得自己去 GitHub 拉），没有队列交接简报，也不随工作区形状变化；
+2. **自动队列形状**：`TaskQueue.auto(for:)` 把分支与 autoPR **写死为真**（`auto(forManual:)` 早已按 `canSwitchBranches` / `canOpenPR()` 决定）—— 非 git 目录里 issue 任务必然 `errNotGit`；
+3. **技能**：`issue-resolve` 与提示词互为事实来源，而技能是旧的那一份。
+
+**已定**：
+
+1. **一份要求清单**：`TaskPrompts.requirements(branch:queueName:base:shape:)` 两种来源共用，只允许**头**不同（issue 头 = 编号/标题/标签/正文；手动任务头 = 标题/描述）；
+2. **issue 正文与标签进提示词**：与手动任务的描述同一个位置、同一份待遇；
+3. **自动队列按工作区取形**：`TaskQueue.auto(for:baseBranch:switchesBranch:opensPR:)` 与 `auto(forManual:)` 同语义；`startIssueTask` 与 `startManualTask` 共用 `dropUnswitchableBranch(ofTask:)`（旧队列带着切不了的分支时先去掉再跑）；
+4. **`issue-resolve` 退役**：提示词不再引用它，`BuiltinSkill` 去掉该 case、仓库删 `.dsh/skills/issue-resolve/`；老用户机器上 App 装的副本（带 `.ohmy-dsh-managed`）由 `SkillInstaller.retiredSkills` 在启动时删除，用户自己改过的（无标记）保留并记日志；
+5. **回归**：`tests/tasks-panel` 新增三节 —— 两种来源的要求逐行逐字相同（含 issue 正文/标签、不再出现 issue-resolve/push）、非 git 目录里的 issue 任务不派生分支且不失败、旧队列的陈旧分支在启动前被去掉；`tests/skills` 覆盖退役副本的删除与用户副本的保留。
+
