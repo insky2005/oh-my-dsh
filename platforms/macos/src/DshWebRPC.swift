@@ -62,6 +62,20 @@ enum DshWebRPC {
         DshWebRPCTransport.shared.perform(request)
     }
 
+    /// Why the most recent call returned nil, in one line, for a log.
+    ///
+    /// The panels can only report "it failed", and a failed native RPC used to be
+    /// indistinguishable from a rejected payload: 401 (no cookie), the modern
+    /// endpoint missing, a business error (workspace/not-found), or a transport
+    /// error all ended as nil. One log line turns that into an answer.
+    private static var lastFailureStorage: String?
+
+    static var lastFailure: String? { lock.lock_run { lastFailureStorage } }
+
+    private static func noteFailure(_ reason: String) {
+        lock.lock_run { lastFailureStorage = reason }
+    }
+
     private static var authenticatedPorts: Set<Int> = []
     /// "port:modern endpoint" -> server speaks it (nil = not decided yet).
     private static var surface: [String: Bool] = [:]
@@ -77,6 +91,7 @@ enum DshWebRPC {
                      modernExtras: [String: Any] = [:]) -> [String: Any]? {
         let key = "\(port):\(endpoint.modern)"
         let known = lock.lock_run { surface[key] }
+        var modernWhy: String?
         if known != false {
             var args = payload
             for (k, v) in modernExtras { args[k] = v }
@@ -84,8 +99,10 @@ enum DshWebRPC {
                               port: port, timeout: timeout)
             if let value = modernValue(modern.json) {
                 lock.lock_run { surface[key] = true }
+                noteFailure("")      // a later failure must not inherit this one's story
                 return value
             }
+            modernWhy = describe(modern, method: endpoint.modern, token: token)
             // Only a genuinely ABSENT endpoint (404/405) means this server wants
             // the legacy dot method. Pinning on anything else was a trap: one
             // transient failure (401 while the launch token is still being
@@ -98,7 +115,28 @@ enum DshWebRPC {
             }
         }
         let legacy = post(method: endpoint.legacy, payload: payload, port: port, timeout: timeout)
-        return legacyValue(legacy.json)
+        if let value = legacyValue(legacy.json) {
+            noteFailure("")
+            return value
+        }
+        let legacyWhy = describe(legacy, method: endpoint.legacy, token: token)
+        noteFailure([modernWhy, "legacy " + legacyWhy].compactMap { $0 }.joined(separator: "; "))
+        return nil
+    }
+
+    /// One line about a failed POST — status, the server's error code/message when
+    /// it sent one, and the auth state that explains a 401.
+    private static func describe(_ res: (status: Int, json: [String: Any]?),
+                                 method: String, token: String?) -> String {
+        var parts = ["\(method) HTTP \(res.status)"]
+        if let error = (res.json?["result"] as? [String: Any])?["error"] as? [String: Any] {
+            if let code = error["code"] as? String { parts.append(code) }
+            if let message = error["message"] as? String { parts.append(message) }
+        }
+        if res.status == 401, token == nil || token?.isEmpty == true {
+            parts.append("no launch token — a token-fenced /api can never authenticate")
+        }
+        return parts.joined(separator: " ")
     }
 
     /// The client-request envelope (pure — unit tested).

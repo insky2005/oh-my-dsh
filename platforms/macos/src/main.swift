@@ -4003,6 +4003,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     // like a browser on dsh 0.1.2+: exchange the advertised launch
                     // token for its cookie once the server is up.
                     DshWebRPC.token = self.server.webToken
+                    // Every launch records whether the native RPC surface actually
+                    // authenticates: a fenced /api fails silently otherwise (401 →
+                    // nil → "it just did not work"), and the panels can only say
+                    // "failed". One line here answers it for good.
+                    Self.probeNativeRPC(port: self.server.port)
                     if DshWebRPC.token == nil {
                         // Without the launch token nothing on /api can authenticate:
                         // session/create and session/prompt answer 401, so wiki
@@ -5914,6 +5919,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func applicationDidBecomeActive(_ notification: Notification) {
         // The badge is a "you were away" marker, not a permanent state.
         if NSApp.dockTile.badgeLabel != nil { NSApp.dockTile.badgeLabel = nil }
+    }
+
+    /// One session/list on a background queue, logged WITH its reason when it
+    /// fails (see DshWebRPC.lastFailure). Called right after the launch token is
+    /// installed, so a broken native RPC is visible in app.log from the first
+    /// second instead of only as "the panel did nothing".
+    private static func probeNativeRPC(port: Int) {
+        DispatchQueue.global(qos: .utility).async {
+            let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port, timeout: 10)
+            if value != nil {
+                AppLog.shared.log("native RPC self-test: ok (port " + String(port) + ")")
+            } else {
+                AppLog.shared.log("native RPC self-test: FAILED — "
+                                  + (DshWebRPC.lastFailure ?? "no reason reported"))
+            }
+        }
     }
 
     /// The workspace directory the task panel should operate on: the shell's

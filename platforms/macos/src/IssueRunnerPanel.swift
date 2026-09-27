@@ -1197,7 +1197,8 @@ final class IssueRunnerPanelController: NSObject {
         guard let cwd = cwd, !cwd.isEmpty else { return nil }
         let session = DshWorkspaceOps.createSession(port: port, cwd: cwd, workspaceId: workspaceId)
         if session == nil {
-            AppLog.shared.log("tasks: session/create failed (workspaceId=\(workspaceId ?? "-") cwd=\(cwd))")
+            AppLog.shared.log("tasks: session/create failed (workspaceId=\(workspaceId ?? "-") cwd=\(cwd))"
+                              + " — " + (DshWebRPC.lastFailure ?? "no reason reported"))
         } else if let workspaceId = workspaceId, !workspaceId.isEmpty {
             AppLog.shared.log("tasks: session \(session ?? "-") created for workspace \(workspaceId)")
         }
