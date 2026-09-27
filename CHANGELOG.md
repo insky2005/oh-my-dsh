@@ -7,6 +7,10 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **内置技能 `task-todo`：把沟通结论批量写进任务面板（2026-09-27）**：用户和 Agent 在会话里聊完需求与方案，常常还要自己把结论一条条抄进任务面板——而 Agent 手里本来就有完整的任务描述。现在壳层的 localhost API 多了一组 **`/api/tasks/*`**（`GET list` / `POST create`，一次最多 50 条，返回 `created` 与逐条 `rejected` 原因），端口写 **`~/.dsh/shell-api.port`**（与 `browser-api.port` 同值——同一个服务、两块路由面：`/api/browser/*` 归浏览器面板，`/api/tasks/*` 归任务面板）；配套**第四个内置技能 `task-todo`**（`SkillInstaller` 内嵌常量 + 仓库 `.dsh/skills/task-todo/SKILL.md` 副本字节一致，App 启动安装到全局 `$DSH_HOME/skills/`），正文把边界写成硬规则：**只在用户明确要求时**执行、先 list 再建（面板内新建不去重）、**一次请求提交全部任务**（不逐条调）、**不启动任务 / 不建队列 / 不直接改 `.dsh/tasks/*.json`**，App 没运行就报错请用户打开。落盘复用面板自己的入口（`TasksRunner.createManualTask`，经 `BrowserAPIBridge` 派发到**主线程**——board 的读改写必须与 3 秒 step 定时器同一条线程，否则两个写者互相覆盖），任务一律「**待处理、未入队**」；`focus` 默认 true → 切到那个工作区并展开面板，状态行说一句「已由 Agent 创建 N 个任务」。工作区解析按「精确匹配 → **最近祖先**（Agent 的 cwd 常在 workspace 子目录里）→ 原样接受」三步，纯函数可无头测试；面板尚未 adopt 任何工作区时回 `400 no-workspace`，服务在而面板没接好回 `503 panel-unavailable`。回归：新增 `tests/tasks-panel/api-tests.swift`（**68 项**：路由命中与不吞 404、请求解析（字符串简写 / 对象 / 空标题 / 上限 50 / 部分成功）、工作区解析、响应形状），`tests/skills/run.sh` 自动覆盖第四个技能的安装/更新与字节一致断言，`tests/browser-panel/run.sh` 把同一服务上的任务路由面一起编译。设计见 `docs/task-todo-skill-design.md`。
+
 ### Changed
 
 - **卡片上不再有文字按钮「打开 PR」（2026-09-27）**：用户指出它没用 —— PR 是**队列**跑完之后由那个专门的会话开的（§V2-6），打开它自然也在**队列头**那一行（`arrow.up.right.justify` 图标 / PR 链接，且排在最右）。此前那张卡片上的按钮还常常是灰的：它要的 PR 属于队列，队列没开自动 PR、或那次开 PR 没成功时，卡片就只能灰着说「这次没有 PR」。现在：完成的 **issue 任务**主按钮是「打开 Issue」（与 `.closed` 同一个动作，那是这条任务自己的东西）；完成的**手动任务没有主按钮**（没有任何待办动作可做，汇报就在详情里）——`TaskCardModel.primaryKey/primaryAction` 因此变成可选，卡片行在没有主操作时从「打开会话 / 审查改动」开始，不留空槽。随之删掉 `PrimaryAction.openPR`、面板里的处理分支，以及两条失去引用的文案（`tasks.detailOpenPR` / `tasks.detailOpenPRNoPR`）。回归：视图模型（完成态主操作的新语义 ×2 处）、表单（已完成卡片里不再有「打开 PR」，主按钮是「打开 Issue」）。

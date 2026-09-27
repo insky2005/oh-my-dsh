@@ -71,6 +71,16 @@ swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
 "$TMP/tasks-form-tests"
 rm -rf "$TMP"
 
+echo "--- tasks panel local API (task-todo skill: /api/tasks/* routing + parsing) ---"
+TMP="$(mktemp -d)"
+cp "$SRC/TasksCore.swift" "$TMP/TasksCore.swift"
+cp "$SRC/TasksAPI.swift" "$TMP/TasksAPI.swift"   # pure model: routing, parsing, workspace resolution
+cp api-tests.swift "$TMP/main.swift"             # top-level code needs the main.swift name
+swiftc -swift-version 5 -module-cache-path "$CACHE" \
+  -o "$TMP/tasks-api-tests" "$TMP/TasksCore.swift" "$TMP/TasksAPI.swift" "$TMP/main.swift"
+"$TMP/tasks-api-tests"
+rm -rf "$TMP"
+
 echo "--- tasks panel source guards ---"
 # The panel must NOT hand-roll session creation: the shared helper carries the
 # documented workspaceId→cwd fallback (and tests/dsh-rpc pins it). A private copy

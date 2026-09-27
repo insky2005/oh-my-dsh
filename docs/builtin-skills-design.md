@@ -54,6 +54,7 @@ dsh web 从多级根发现 Skill（`SKILL.md` 带 YAML frontmatter `name`/`descr
 | Browser | `shell-browser` | `web-dev-tools` | 驱动内嵌浏览器排查网页问题（开页/console/network/eval/截图） |
 | Repo Wiki | `repo-wiki` | `repo-knowledge` | 生成/维护仓库知识库 `.dsh/wiki/` |
 | Tasks/IssueRunner | `issue-fix` | `issue-resolve` | 端到端解决 GitHub issue（读题→改→测→提交→推送） |
+| Tasks（新增，非重命名） | — | `task-todo` | 把沟通结论批量写进任务面板（见 §7） |
 
 命名统一为「领域词-能力词」双段 kebab 小写，符合 dsh 命名约束 `/^[a-z0-9]+(?:-[a-z0-9]+)*$/`。
 
@@ -149,4 +150,10 @@ dsh web 从多级根发现 Skill（`SKILL.md` 带 YAML frontmatter `name`/`descr
 4. **更新语义**：受管标记 + 内容比对，未修改覆盖、用户改过保留。
 5. **迁移范围**：仅 `$DSH_HOME/skills/` 旧→新 rename；不主动改用户项目目录。
 6. **不设 `DSH_BUNDLED_SKILL_DIR`**：全局安装已覆盖；bundled 根（rank600）最低、收益低，后续如需零写盘只读分发再评估。
+
+## 7. 后续新增的内置 Skill
+
+第 4 个内置技能 **`task-todo`**（把沟通结论批量写进任务面板，2026-09-27）沿用本设计的全部机制：加一个 `BuiltinSkill` case（`dirName = "task-todo"`、`legacyName = nil`）+ 内嵌 markdown 常量（与仓库 `.dsh/skills/task-todo/SKILL.md` 字节一致，`tests/skills` 的 `allCases` 循环自动覆盖安装/更新/字节断言）+ 启动时安装到 `$DSH_HOME/skills/`。
+
+与三个面板技能不同的是它的**调用方式**：那三个由面板在自己的流程里触发（`user-invocable: false` 表「仅 model 可调用」），`task-todo` 则是**用户在会话里明确要求**时才用，因此保留默认可用户调用。设计见 `docs/task-todo-skill-design.md`。
 

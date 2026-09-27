@@ -1,8 +1,8 @@
 ---
 title: 模块：任务面板（Tasks / IssueRunner）
 tags: [module, tasks, github, issue, queue, index, manual-task]
-updated: 2026-09-25T00:00:00Z
-sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/issue-runner-design.md, docs/ui-color-scheme.md, docs/git-workflow.md, .dsh/skills/issue-resolve/SKILL.md]
+updated: 2026-09-27T11:07:00Z
+sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/BrowserAPI.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/issue-runner-design.md, docs/ui-color-scheme.md, docs/git-workflow.md, docs/task-todo-skill-design.md, .dsh/skills/issue-resolve/SKILL.md, .dsh/skills/task-todo/SKILL.md]
 manual: false
 ---
 
@@ -23,8 +23,21 @@ manual: false
 | `TasksUI.swift` | **视图模型**：`TaskCardModel` / `QueueHeaderModel` / `TasksSummaryModel` / `TasksEmptyStateModel` / `TaskComposerModel` / `QueueComposerModel`（纯 Foundation，可无头断言） |
 | `TaskCardView.swift` | 视图：卡片 / 队列头 / 徽标 / 进度条 / 分节标题（只渲染与转发点击） |
 | `TaskInlineForms.swift` | 视图：两张**内联表单**（新建·编辑任务 / 新建·设置队列）——无模态，字段与按钮状态由视图模型决定 |
+| `TasksAPI.swift` | **纯模型**：任务面板的 localhost API 路由 `/api/tasks/list` 与 `/api/tasks/create`（请求解析、工作区解析、响应形状）；`BrowserAPIBridge` 的实现放在 `BrowserAPI.swift` |
 
 分层意图：**规则在模型与视图模型里，视图只摆控件** —— 于是「徽标写什么、给哪个按钮、按钮是否可用」都能在没有窗口的环境里回归（tests/tasks-panel 第三段）。
+
+## 本地 API（`/api/tasks/*`）与技能 `task-todo`（2026-09-27）
+
+壳层的 localhost REST 服务（`BrowserAPIServer`，127.0.0.1，端口写 `$DSH_HOME/shell-api.port` 与 `browser-api.port`——同一个端口）上多了**第二块路由面**：`/api/browser/*` 归浏览器面板，`/api/tasks/*` 归任务面板（`TasksAPIRouter` 命中即返回，未命中返回 nil，原路由与 404 都不受影响）。
+
+- `GET /api/tasks/list?workspace=<路径>` → 面板现有的任务与队列；
+- `POST /api/tasks/create` `{workspace?, focus?, tasks:[{title, body?} | "标题"]}` → 批量创建（上限 50 条），返回 `created`（逐条 id/标题）与 `rejected`（逐条原因：`empty-title`/`not-an-object`/`too-many`）；
+- **工作区解析**（`TasksAPIWorkspace.resolve`，纯函数）：请求路径与面板当前/已跟踪 board 精确匹配 → 用它；否则取**最近祖先**（代理的 cwd 常在 workspace 子目录里）；都不匹配则原样交给调用方判存在性；没传就用面板当前 board。面板尚未 adopt 工作区 → `400 no-workspace`；服务在而面板没接好 → `503 panel-unavailable`；
+- **落盘走面板自己的那条路**：`TasksRunner.createManualTask`（唯一入口，自带 persist 与日志），并且必须经 `BrowserAPIBridge` 派发到**主线程**——board 的读改写与 3 秒 step 定时器同一条线程，否则两个写者互相覆盖。任务一律「**待处理、未入队**」：建任务不启动任何东西；
+- `focus` 默认 true：切到该工作区 board 并展开面板（`onShowPanel` → `setRightPanel(.tasks)`），状态行说一句「已由 Agent 创建 N 个任务」（L10n `tasks.apiCreated`）。
+
+配套**内置技能 `task-todo`**（App 启动安装到全局 `$DSH_HOME/skills/task-todo/SKILL.md`，见 [skill-installer](skill-installer.md)）规定：**只在用户明确要求时**执行、先 list 再建（避免重复）、一次请求提交全部任务、并写明「不启动任务 / 不建队列 / 不直接改 `.dsh/tasks/*.json`」；App 没运行就报错请用户打开。设计见 `docs/task-todo-skill-design.md`，回归 `tests/tasks-panel/api-tests.swift`（68 项）+ `tests/browser-panel`（把这块路由面一起编译）。
 
 ## 任务模型与状态机
 

@@ -687,6 +687,9 @@ enum L10n {
         "tasks.otherFailed": ("%@ 的任务「%@」失败了", "%@ failed “%@”"),
         "tasks.otherWorkspaces": ("其他工作区有 %d 个任务在跑", "%d task(s) running in other workspaces"),
         "tasks.otherWorkspacesHint": ("其他工作区正在跑任务（点这里切过去）", "Tasks are running in other workspaces (click to switch)"),
+        // Agent 经本地 API（技能 task-todo）批量建的任务：面板报一句，用户知道
+        // 这些卡片从哪来的。
+        "tasks.apiCreated": ("已由 Agent 创建 %d 个任务（待处理、未入队）", "Created %d task(s) from the agent (pending, not queued)"),
         "tasks.recovered": ("上次运行被中断：%d 个任务已标为失败、%d 个队列已暂停（不会自动重跑）", "Interrupted last run: %d task(s) marked failed, %d queue(s) paused (nothing restarts by itself)"),
         "tasks.gitAppeared": ("这个目录现在是 git 仓库 —— 已重新识别工作区：新队列可以使用分支", "This directory is a git repository now — workspace re-detected: new queues can use a branch"),
         "tasks.remoteAppeared": ("这个工作区现在有 GitHub 远端 —— 已重新识别：PR 相关功能已启用", "This workspace has a GitHub remote now — re-detected: the PR features are available"),
@@ -2512,6 +2515,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             guard let self = self else { return }
             AppLog.shared.log("tasks: switching to the workspace running a task: " + path)
             _ = self.adoptProjectDirectory(path)
+        }
+        // 任务面板的本地 API（技能 task-todo / curl）建完任务时把面板亮出来：
+        // 用户刚要求建的任务，就落在眼前的那块面板上。
+        tasksPanel.onShowPanel = { [weak self] in
+            self?.setRightPanel(.tasks)
         }
 
         browserPanel = BrowserPanelController()
@@ -5919,6 +5927,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func startBrowserAPIServer() {
         let bridge = BrowserAPIBridge()
         bridge.panel = browserPanel
+        // 同一个服务上的第二块路由面：/api/tasks/*（技能 task-todo 批量建任务）。
+        // 闭包注入 + weak self：桥接层不认识也不拖住面板。
+        bridge.tasksList = { [weak self] workspace in
+            self?.tasksPanel?.apiTaskList(workspace: workspace) ?? BrowserAPIBridge.tasksUnavailable
+        }
+        bridge.tasksCreate = { [weak self] workspace, focus, drafts in
+            self?.tasksPanel?.apiTaskCreate(workspace: workspace, focus: focus, drafts: drafts)
+                ?? BrowserAPIBridge.tasksUnavailable
+        }
         bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
         bridge.hidePanel = { [weak self] in
             if self?.rightPanel == .browser { self?.setRightPanel(.none) }
@@ -5943,9 +5960,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let dshHome = ProcessInfo.processInfo.environment["DSH_HOME"] ?? (NSHomeDirectory() + "/.dsh")
         let portFile = dshHome + "/browser-api.port"
         let port = server.start(preferredPort: preferred, delegate: bridge, portFile: portFile)
+        // 同一份服务、同一个端口，第二个语义正确的发现文件：技能 task-todo 读
+        // $DSH_HOME/shell-api.port（浏览器面板的技能继续读 browser-api.port）。
+        // 两个文件写同一个数字，谁先被读到都一样。
+        let shellPortFile = dshHome + "/shell-api.port"
+        if port > 0 {
+            try? FileManager.default.createDirectory(atPath: dshHome, withIntermediateDirectories: true)
+            try? "\(port)\n".write(toFile: shellPortFile, atomically: true, encoding: .utf8)
+        }
         AppLog.shared.log(port > 0
-            ? "browser api server listening on 127.0.0.1:\(port) (port file \(portFile))"
-            : "browser api server failed to start (preferred \(preferred))")
+            ? "shell api server listening on 127.0.0.1:\(port) (port files \(portFile), \(shellPortFile))"
+            : "shell api server failed to start (preferred \(preferred))")
     }
 
     /// The settings window changed the projects root: the Projects panel re-reads

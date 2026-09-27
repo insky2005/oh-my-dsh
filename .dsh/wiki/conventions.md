@@ -78,9 +78,9 @@ manual: false
 
 ## 内置 Skill 与启动约束（v1.13.0）
 
-- **内置 Skill 全局化**（`SkillInstaller.swift`，设计 `docs/builtin-skills-design.md`）：三个面板配套 skill 改由 **App 启动时安装到全局 `$DSH_HOME/skills/`**（dsh user-dsh 根，rank 400），任何 workspace 可发现；缺失即装、受管（`.ohmy-dsh-managed` 标记）下内容不一致自动覆盖、用户改过不覆盖、旧名自动迁移；面板「按仓库安装」逻辑已移除（`WikiSkill.ensureInstalled` / `ensureIssueFixSkillInstalled` 删除），唯一事实来源是 `SkillInstaller.swift` 内嵌常量 + 仓库 `.dsh/skills/{web-dev-tools,repo-knowledge,issue-resolve}/SKILL.md`（字节一致，有测试断言）；
+- **内置 Skill 全局化**（`SkillInstaller.swift`，设计 `docs/builtin-skills-design.md`）：内置 skill（现四个：web-dev-tools / repo-knowledge / issue-resolve / **task-todo**）由 **App 启动时安装到全局 `$DSH_HOME/skills/`**（dsh user-dsh 根，rank 400），任何 workspace 可发现；缺失即装、受管（`.ohmy-dsh-managed` 标记）下内容不一致自动覆盖、用户改过不覆盖、旧名自动迁移（`task-todo` 是新增、非重命名，`legacyName` 为 nil）；面板「按仓库安装」逻辑已移除（`WikiSkill.ensureInstalled` / `ensureIssueFixSkillInstalled` 删除），唯一事实来源是 `SkillInstaller.swift` 内嵌常量 + 仓库 `.dsh/skills/<名>/SKILL.md`（字节一致，有测试断言）。**内嵌常量必须与仓库副本逐字节一致**：从 markdown 生成 Swift 多行字面量时，反斜杠要转义、闭合 `"""` 要带 4 空格缩进（缩进由它决定）、末尾多留一行空白行（文件末尾的换行）；
 - **skill frontmatter 用合法键**：省略弃用的驼峰键（`modelInvocable`/`userInvocable` 会导致 dsh 忽略该 skill），用 kebab 键 `user-invocable: false` 表「仅 model 可调用」；
-- **skill 命名**：统一「领域词-能力词」双段 kebab（如 `web-dev-tools`/`repo-knowledge`/`issue-resolve`），符合 dsh 命名约束；
+- **skill 命名**：统一「领域词-能力词」双段 kebab（如 `web-dev-tools`/`repo-knowledge`/`issue-resolve`/`task-todo`），符合 dsh 命名约束；**面板流程触发的技能**在 frontmatter 写 `user-invocable: false`（三个面板技能如此），**用户明确要求才用的技能**（如 `task-todo`）保留默认可用户调用；
 - **单实例约束**：App 启动按 bundle id 检测已有实例，有则聚焦并退出——两个副本共用 CEF profile（`~/.dsh/browser`）会互相异常终止（「Chromium didn't shut down correctly.」）；
 - **开发版构建（`main.swift` 的 `applyDevIsolation`，`isDevBuild` 为唯一入口）**：`DSH_DEV_BUILD=1`（或 `scripts/local-ci.sh dev`）打包 Info.plist 写 `DSHDevBuild=1` + 独立 bundle id `com.ohmydsh.app.dev`（独立 UserDefaults 域）——运行时① 独立 **dsh 实例**（强制 `DSH_NATIVE_FORCE_SPAWN=1` 不复用 3080，被占自动取空闲端口）；② 独立 `DSH_HOME` 默认 `~/.dsh-dev`（会话/配置/skills/channel 与正式 `~/.dsh` 完全隔离；用户显式 `DSH_HOME` 尊重覆盖）；③ 端口错开（CEF CDP 9333→9433、Browser API 3081→4081，尊重显式覆盖）；④ CEF profile `~/.dsh-dev/browser-dev`（旧 `~/.dsh/browser-dev` 幂等迁移过来）；⑤ 跳过单实例退出。可与已安装正式版并存测试；新增隔离资源在该方法内快速追加。
 
