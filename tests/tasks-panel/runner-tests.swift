@@ -210,6 +210,7 @@ final class Harness {
                 let sharedName = queue.flatMap { $0.autoCreated ? nil : $0.name }
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: sharedName,
+                                          base: queue?.baseBranch ?? defaultBaseBranch,
                                           brief: brief,
                                           shape: shape)
             },
@@ -1179,7 +1180,7 @@ do {
     let alone = h2.dsh.prompts["session-1"] ?? ""
     check(alone.contains("本任务独立执行"), "单任务队列说「独立执行」，不说共享")
     check(!alone.contains("与其他任务共享"), "不会谎称有人和它同一条分支")
-    check(alone.contains("当前分支应为 feature/alone"), "而是把它自己那条分支说清楚")
+    check(alone.contains("本任务须在分支 feature/alone 上处理"), "而是把它自己那条分支说清楚")
 }
 
 section("非 git 目录里「全部处理」：队列不带分支，任务照常跑（这里曾经必然失败）")
@@ -1244,7 +1245,8 @@ do {
     let h = Harness(board: board, github: false, gitRepo: true)
     _ = h.runner.startQueue(queue.id)
     let prompt = h.dsh.prompts["session-1"] ?? ""
-    check(prompt.contains("当前分支应为 feature/publish"), "有仓库就点名队列的分支")
+    check(prompt.contains("本任务须在分支 feature/publish 上处理（若该分支不存在，须基于 main 分支新建）"),
+          "有仓库就点名队列的分支，并说清它还没建立时的来路（用户第 2 条）")
     check(prompt.contains("完成前 commit"), "有仓库就要 commit（用户第 4 条）")
     check(!prompt.contains("GitHub token"), "没有 GitHub 远端就不给 token 条")
     check(!prompt.contains("push"), "不提 push")
@@ -1273,8 +1275,8 @@ do {
     let h3 = Harness(board: noBranch, github: false, gitRepo: true)
     _ = h3.runner.startQueue(nbQueue.id)
     let nbPrompt = h3.dsh.prompts["session-1"] ?? ""
-    check(nbPrompt.contains("本队列不切分支：就在当前已检出的分支上改"),
-          "不切分支的队列说清「就在当前分支上改」（用户第 2 条）")
+    check(nbPrompt.contains("本队列不切分支：直接在主分支 main 上处理（不要新建分支）"),
+          "不切分支的队列说清「直接在主分支上处理」（用户第 2 条）")
 }
 
 section("刚 git init 的空仓库：没有基线可切，直接建分支（「初始化 git 仓库」之后紧接着的那个任务）")

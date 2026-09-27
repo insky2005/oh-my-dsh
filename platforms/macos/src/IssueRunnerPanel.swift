@@ -598,8 +598,12 @@ final class IssueRunnerPanelController: NSObject {
                 // can still tell the truth, and it is written on the runner's background
                 // queue, so the probe costs the UI nothing.
                 let shape = Self.repoShape(path: repoRoot)
+                // 队列自己的「基于分支」；不在队列里的任务用工作区的默认分支 —— 两条
+                // 分支 rail 都会点名它（「若无分支，须基于 X 新建」/「直接在主分支 X 上处理」）。
+                let base = queue?.baseBranch ?? Self.detectDefaultBaseBranch(path: repoRoot)
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: sharedQueueName,
+                                          base: base,
                                           brief: brief,
                                           shape: shape)
             },

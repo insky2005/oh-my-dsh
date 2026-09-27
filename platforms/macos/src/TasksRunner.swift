@@ -304,7 +304,12 @@ enum TaskPrompts {
     /// exist at all (no branch rail without a repository, no token rail without a
     /// GitHub remote). The push / PR policy is deliberately NOT here: that half is
     /// the shell's, performed by a dedicated 开 PR 会话 once the queue is done.
+    /// `base` is the branch the queue treats as its base (queue.baseBranch, or the
+    /// workspace default for a task without a queue): it is what the branch rail names
+    /// when there is no branch yet, and what 「主分支」 means for a queue that does not
+    /// switch branches at all.
     static func manual(title: String, body: String?, branch: String?, queueName: String?,
+                       base: String? = nil,
                        brief: String? = nil,
                        shape: TaskRepoShape = .github) -> String {
         var lines: [String] = []
@@ -333,11 +338,22 @@ enum TaskPrompts {
             requirements.append("本任务独立执行，不共享分支与改动；")
         }
         // 分支：只有存在仓库时才有这句话；切不切、切哪条，按队列说。
+        //
+        // 有分支时点名分支，并给出它还没建立时的来路（基于 base 新建）；不切分支的队列
+        // 说清它就在主分支上做 —— 用户的原话是「本任务须在分支 X 上处理（若无分支，须基于
+        // xxx 分支新建）」与「本队列不切分支：直接在主分支 xxx 上处理（不要新建分支）」。
         if shape != .plain {
+            let baseName = base?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let branch = branch, !branch.isEmpty {
-                requirements.append("当前分支应为 \(branch)，只在此分支上工作（不要新建分支）；")
+                if let baseName = baseName, !baseName.isEmpty, baseName != branch {
+                    requirements.append("本任务须在分支 \(branch) 上处理（若该分支不存在，须基于 \(baseName) 分支新建）；")
+                } else {
+                    requirements.append("本任务须在分支 \(branch) 上处理（若该分支不存在，须新建它）；")
+                }
+            } else if let baseName = baseName, !baseName.isEmpty {
+                requirements.append("本队列不切分支：直接在主分支 \(baseName) 上处理（不要新建分支）；")
             } else {
-                requirements.append("本队列不切分支：就在当前已检出的分支上改，不要新建分支；")
+                requirements.append("本队列不切分支：就在当前已检出的分支上处理（不要新建分支）；")
             }
         }
         requirements.append(Self.verifyRequirement)
@@ -380,11 +396,15 @@ enum TaskPrompts {
     /// puts it on the queue's card.
     static func pullRequest(queueName: String?, branch: String, base: String, commits: [String]) -> String {
         var lines: [String] = []
-        lines.append("这个队列的任务都完成了，请你为它开一个 pull request：")
+        // 一句话说清「谁的、哪条分支、要做什么」—— 这条会话的来意就是它。
+        if let queueName = queueName, !queueName.isEmpty {
+            lines.append("队列「\(queueName)」的任务已完成，推送分支 \(branch)，并发起 pull request：")
+        } else {
+            lines.append("分支 \(branch) 的任务已完成，请推送它并发起 pull request：")
+        }
         lines.append("")
         lines.append("## 要发布的分支")
         lines.append("分支：\(branch)（基于 \(base)）")
-        if let queueName = queueName, !queueName.isEmpty { lines.append("队列：\(queueName)") }
         if !commits.isEmpty {
             lines.append("分支上已有的提交：")
             for commit in commits { lines.append("  " + commit) }
