@@ -3,9 +3,12 @@
 > 分支 `release/1.16`（v1.16.0 的补丁）。目标：把内置 dsh 从 `@deepseek-ai/dsh@0.1.2-rc.1` 升到
 > `@deepseek-ai/dsh@0.1.5-rc.2`，逐面复核五个耦合面（`docs/dsh-version-impact.md`），并在**开发版**
 > （`DSH_DEV_BUILD=1` + `DSH_HOME=~/.dsh-dev`，不碰 `~/.dsh`）上把八个面板跑一遍。
-> 状态：**审计完成、升级暂缓**（2026-09-23 实测）。本次把内置 dsh 升到 0.1.5-rc.2 跑通了全流程，定位到唯一断裂点
-> （会话日志世代命名，**修复已进 1.16.2 开发线**）；但 0.1.5 **会让会话日志换代、且无法回退到旧版 dsh**，
-> 因此**暂不推进内置版本**——待「会话快照 + 回退」功能上线后再执行本记录中的升级动作。
+> 状态：**已在 `release/1.16` 执行完毕**（2026-09-27）——内置 dsh 推进到 `0.1.5-rc.3` 并随附闭包锁
+> （下方 §一–§六 是 2026-09-23 针对 rc.2 的审计原文，作为历史留档；为何最终钉 rc.3 见 §七），
+> 执行与验证记录见 §七。原先「暂缓」的理由（0.1.5 **会让会话日志换代、且无法回退到旧版 dsh**）已由
+> **v1.16.2 的「会话快照 + 回退」**解除，因此本记录中的升级动作现已落地。
+> 审计本身（2026-09-23 实测）：把内置 dsh 升到 0.1.5-rc.2 跑通了全流程，定位到唯一断裂点
+> （会话日志世代命名，**修复已进 1.16.2 开发线**）。
 > （曾经据此发布过 v1.16.1，随后**撤回**：GitHub Release 与 tag 均已删除，分支留档。）
 > 前一次同类审计：`docs/plans/dsh-012rc1-compat-audit.md`（0.1.1 → 0.1.2-rc.1）。
 
@@ -122,3 +125,73 @@ node -e "const c=require('./core'); c.callRpc(c.SESSION_LIST,{},{port:<port>,tok
    dsh 升级无关。
 3. **channel 面板**在 dev 隔离目录里没有已配置通道，验到「引导卡片渲染」；通道→会话的 RPC 链路复用
    §二 C 的同一条 core 传输。
+
+## 七、执行记录（2026-09-27，`release/1.16`）
+
+原「暂缓」的唯一前提是**没有回退通道**（0.1.5 会让会话日志换代且上游只有升级链）。**会话快照 + 回退已在
+v1.16.2 上线**，前提解除，本次把审计中的升级动作落地。
+
+**改了什么**：`build-app.sh` 的 `DSH_PACKAGE_SPEC` 默认值（两处）与打印行 → `@deepseek-ai/dsh@0.1.5-rc.3`；
+新增闭包锁 `platforms/macos/runtime-locks/dsh-0.1.5-rc.3/{package.json,package-lock.json}`（锁内依赖写**精确版本**
+而非 caret）；README / `docs/productization.md` / `docs/dsh-version-impact.md` §4.5 与 `CHANGELOG` 同步。
+**壳层代码零改动**——本次唯一断裂面（会话日志世代命名）的修复已随 v1.16.2 落地。
+
+### 7.1 为什么最终钉 rc.3 而不是审计当时的 rc.2
+
+先按审计写的 `0.1.5-rc.2` 做了一轮（构建/冒烟/端到端都通过），但发现这个 spec 有两个实操坑：
+
+1. **闭包不自洽**：dsh 用**同族 caret 范围**声明自己的子包（`@deepseek-ai/dsh-*: ^0.1.5-rc.2`），所以顶层是 rc.2 时，
+   解出的闭包里 **230 个子包其实是 `0.1.5-rc.3`**（rc.3 发布于 2026-09-22，**早于**审计当日 09-23，故审计当时
+   走的就是同一条解析路径——现存 rc.2 树里的 `dsh-skill-filesystem` 确实已经写着 `0.1.5-rc.3`）。
+2. **留下一个永远消不掉的升级提示**：壳层的版本事实读**顶层** `package.json`（=`0.1.5-rc.2`），而 npm 的
+   `latest` 是 `0.1.5-rc.3` —— 实测 `nextStepTarget('0.1.5-rc.2') = '0.1.5-rc.3'`，于是站内升级助手会一直提示
+   「有新版可升级」，而那次升级几乎是个空操作（闭包本来就已经是 rc.3）。
+
+改用 **rc.3** 后闭包**完全自洽**（243 个 `@deepseek-ai/*` 里 231 个是 `0.1.5-rc.3`，其余是 cordis 工具链等
+非 dsh 包；**没有任何一个 `@deepseek-ai/dsh-*` 落在别的版本**），提示随之消失，而且**风险不升反降**：
+
+- rc.3 把 cordis 工具链**钉成精确版本**（`@deepseek-ai/cordis 4.0.2`、`@deepseek-ai/cordis-plugin-hmr 1.0.17`、
+  `cordis-plugin-include 1.0.7`、`cordis-plugin-loader 1.0.3`、`cordis-plugin-timer 1.1.4`、`schemastery 3.18.2`），
+  **rc.2 用的却是 caret**（`^4.0.2` / `^1.0.17` / …）——那正是 **R8「运行时闭包漂移」**（HMR 插件漂移导致 dsh
+  启动即抛）的成因。换句话说，rc.3 上游自己把 R8 这个坑堵上了。
+- **rc.3 不是"野生"版本**：上游仓库 `dsh-v0.1.5-rc.3` **有 tag**、npm 上它就是 `latest`，且 0.1.7-rc.1 的发行说明
+  以 `v0.1.5-rc.3` 作比较基线（`Full Changelog: dsh-v0.1.5-rc.3...dsh-v0.1.7-rc.1`）——**只是漏发了 GitHub
+  Release 页面**（Releases 列表从 `0.1.6-alpha.1` 直接跳到 `0.1.5-rc.2`，这一视觉差容易被误读成"rc.3 不存在/被撤回"）。
+
+### 7.1b rc.2 ⇄ rc.3 的逐项比对（结论：对壳层零影响）
+
+| 比对项 | 方法 | 结论 |
+|---|---|---|
+| RPC 端点集合 | 三棵树（rc.1 / rc.2 / rc.3）的 `typert.host.js` 全量提取 `id: '<pkg>#<service>/<method>'` | **rc.2 → rc.3：零增、零删**；rc.1 → rc.3 与审计记录一致（**0 删 / 10 增**：`workspaceFiles/*`、`fileUploads/upload`、`sessionFeedback/record`、`goals/get`） |
+| 参数包裹字段 | 逐端点读 `parameters[].name` | **rc.2 → rc.3：零变化**；壳层用到的每个端点都是老样子（`session/list`=`_request`、`create/rename/prompt/cancel/page/openWorkspacePath/selectModel/workspace/create`=`request`、`subagents/list`=`parentSessionId`） |
+| 六个耦合面所在的包 | 在两棵树间 `diff -rq` 整包目录 | **逐字节相同**：`dsh-client-connection`（鉴权 cookie + 客户端传输）、`dsh-web-app`（就绪自报行）、`dsh-workspace`（domain v2）、`dsh-session-format`（世代命名）、`dsh-skill-filesystem`（四根/rank/frontmatter）、`dsh-client-ui-sidebar`（侧栏 DOM）、`dsh-session-persistence-jsonl` |
+| 依赖闭包 | 版本直方图 | rc.3：自洽（见上）；rc.2：顶层 rc.2 + 230 个子包 rc.3（混合） |
+
+**所以本次从 rc.2 换到 rc.3 不需要任何壳层适配**——两者对壳层可见的行为是同一份代码。
+
+### 7.2 验证证据
+
+| 项 | 命令 / 做法 | 结果 |
+|---|---|---|
+| 运行时构建 | `DSH_ARCH=arm64 build-app.sh --prefetch` | `using committed runtime lock: platforms/macos/runtime-locks/dsh-0.1.5-rc.3` → `added 520 packages in 4s` → **`smoke: dsh web came up (kept the tree)`** |
+| App 构建 | `DSH_DEV_BUILD=1 build-app.sh` | 成功；bundle 内 `dsh/package.json → 0.1.5-rc.3`；`runtime-locks/` 同时嵌入 **rc.1 与 rc.3 两份**（回退仍可用）；锁指纹 `e4d8b1302508` |
+| core 单测 | `node --test core/tests/` | 261 tests / **257 pass / 0 fail** / 4 skipped |
+| swift + 面板套件 | `scripts/local-ci.sh swift` | **577 ok / 0 fail**（含 `tests/dsh-rpc`、`tests/review-panel`、`tests/snapshot-rollback`、全套面板 + swiftc 编译检查） |
+| A 启动 | 用 **App 内置运行时**起 `dsh web`（工作区内隔离 `DSH_HOME`） | `dsh web: http://127.0.0.1:<port>/?token=…`，进程存活 |
+| C 会话链路 | core `callRpc` 直连（token→cookie 由传输层完成） | `session/list` 200；`session/create` 90 ms；`rename → true`；`prompt → true`；`session/page` 游标 `asOfSeq=17`；`projections.values.title` 正确回读 |
+| **D 会话日志世代（本次唯一断裂面）** | 看真实新建会话目录 | 活日志 = **`session.v3.jsonl.zstd`**（世代 3） |
+| **D 壳层读取器** | `core.listSessionLogs({dshHome})` + `auditSession` | 该会话**被发现**：`file=session.v3.jsonl.zstd compressed=true size=19724`，`auditSession ok=true`（折叠出 turn 1 的真实 prompt，`diagnostics=[]`）——即 v1.16.2 的世代命名修复在 0.1.5 上**确实生效** |
+| D `workspace.json` | 读 `storages/workspace.json` | `{"name":"workspace","version":2}` —— **仍为 v2**，R4 护栏无需改动 |
+| 快照树池 | 开发版启动日志 | `snapshot tree: {"ok":true,"action":"cloned","dir":"…/trees/0.1.5-rc.3","lock":"e4d8b13025089771"}` —— 池收录的新树**指纹与提交的 lock 一致**（R8 的闭包校验按预期工作） |
+| 八面板扫描 | `DSH_PANEL_TEST="files,terminal,wiki,tasks,browser,channel,review,skills"` + `DSH_UI_DEBUG=1`，**且 `DSH_HOME` 里预置了上面那条 rc.3 新建的会话** | 八个面板**都被访问并发觉落图**（preview / terminal / wiki / tasks / browser / channel / review / skills，各自 `panel-<name>-debug.png`）。**review 面板这次真的渲染出了内容**（截图可见会话 "…verification"、19 KB、`sessions 1/1`）：日志 `review: listed 1/1 sessions workspace=… first=session-f6254729… diagnostics=0` + `review: audit session-… entries=0 files=0 turns=1 diagnostics=[]`——**0.1.5-rc.3 写出的 `session.v3.jsonl.zstd` 在真实 GUI 里被列出并审计**，即 v1.16.2 那条世代命名修复端到端成立 |
+| B 预览拦截 | 见 `DSH_PREVIEW_DEBUG=1` 的探针 + 文件面板截图 | 文件面板出现 **两个页签**（`dsh-preview-fetch-test.txt` / `dsh-preview-modern-test.txt`）= 新旧两种请求形状都被拦截（B7 两面都通） |
+
+### 7.3 本次未复跑的（与审计遗留一致）
+
+沿用 §六：模型回复仍端到端未复跑（隔离 home 无 provider 凭据，turn 以 `MISSING_CREDENTIAL` 结束）；
+tasks 面板的数据面是 GitHub API，与本升级无关；channel 面板验到引导卡片。
+
+八面板扫描第一次跑用了**空 home**，结果是 review 面板 `review: titles 0 of 0 sessions` 且它和 terminal 都不落图；
+**把一条真实会话预置进 `DSH_HOME/sessions/` 后重跑**，八个面板全部落图且 review 渲染出内容（见 7.2 末两行）。
+**教训（下次照做）**：跑升级 SOP 的八面板扫描前，先往 `DSH_HOME` 放至少一条真实会话——否则 review/terminal
+这类"没内容就没什么可截"的面板会静默缺席，看起来像回归。

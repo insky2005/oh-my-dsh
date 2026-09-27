@@ -7,7 +7,34 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
-- 暂无（v1.16.2 已发布；本条线下一个版本是 **1.16.3**，计划在会话快照/回退稳定后推进内置 dsh）。
+### Changed
+
+- **内置 dsh 版本推进到 `@deepseek-ai/dsh@0.1.5-rc.3`**（0.1.2-rc.1 → 0.1.5-rc.3；`build-app.sh` 的
+  `DSH_PACKAGE_SPEC` 默认值（两处）与打印行同步，构建期仍可用 `DSH_PACKAGE_SPEC` 覆盖），并随附该 spec 的
+  运行时闭包锁 `platforms/macos/runtime-locks/dsh-0.1.5-rc.3/`（584 个条目，构建据此走 `npm ci` 复现闭包，装完做启动冒烟）。
+  这次推进就是 2026-09-23 那份兼容审计（`docs/plans/dsh-015rc2-compat-audit.md`）中「已审计、暂缓执行」的动作：
+  当时的暂缓理由是**会话日志换代且上游没有降级通道**，而**会话快照 + 回退已在 v1.16.2 上线**，不可逆迁移的安全网就位。
+  - **为什么是 rc.3 而不是审计当时的 rc.2**：两者是**同一份代码**（见下「无冲突」证据），但 rc.2 有两个实操上的坏处——
+    ① 它只钉住顶层包：dsh 用 caret 声明同族子包，所以 `npm install @deepseek-ai/dsh@0.1.5-rc.2` 解出的闭包里
+    **230 个子包其实是 `0.1.5-rc.3`**，产物是「rc.2 顶层 + rc.3 子包」的混合体；② 壳层的版本事实读顶层
+    `package.json`，于是**站内升级助手会一直提示「有 0.1.5-rc.3 可升级」**（实测 `nextStepTarget('0.1.5-rc.2') = '0.1.5-rc.3'`），
+    而那个升级几乎是空操作。改用 rc.3 后闭包**完全自洽**（231 个 `@deepseek-ai/dsh-*` 全部 rc.3），提示也随之消失。
+  - **为什么可以放心用 rc.3（它不是"野生"版本）**：上游仓库里 `dsh-v0.1.5-rc.3` **有 tag**，npm 上 `latest` 就是它，
+    0.1.7-rc.1 的发行说明也把 `v0.1.5-rc.3` 当作比较基线（`Full Changelog: dsh-v0.1.5-rc.3...dsh-v0.1.7-rc.1`）——
+    只是它**漏发了 GitHub Release 页面**（Releases 列表从 `0.1.6-alpha.1` 直接跳到 `0.1.5-rc.2`）。
+  - **无冲突的证据（rc.2 与 rc.3 逐项对比）**：① RPC 端点集合**零增、零删**，参数包裹字段（`_request` /
+    `request` / `parentSessionId`）**零变化**（用 0.1.2-rc.1 / 0.1.5-rc.2 / 0.1.5-rc.3 三棵树做全量端点提取比对）；
+    ② 六个耦合面所在的包**逐字节相同**（`dsh-client-connection`、`dsh-web-app`、`dsh-workspace`、
+    `dsh-session-format`、`dsh-skill-filesystem`、`dsh-client-ui-sidebar`、`dsh-session-persistence-jsonl`）；
+    ③ 反而更安全：rc.3 把 cordis 工具链**钉成精确版本**（`@deepseek-ai/cordis 4.0.2`、`cordis-plugin-hmr 1.0.17`…），
+    而 rc.2 用的是 caret 范围——正是 R8「运行时闭包漂移」的成因。
+  - **兼容性结论（复核后仍成立）**：RPC 端点**只增不减**、参数包裹字段与 `dsh-auth-*` cookie、就绪自报行
+    `dsh web: <带 token 的 URL>`、`workspace.json` 的 domain `workspace` v2、技能四根与 rank、frontmatter 规范键
+    **均未变**；**唯一断裂面**是会话日志的**世代命名**（0.1.5 起新建会话写 `session.v3.jsonl.zstd`），其修复已在
+    v1.16.2 落地（`core/lib/review-log.js` 的 `parseSessionLogName` / `sessionLogCandidates`，按规范名枚举 +
+    世代最大者优先），因此本次升级**不需要新的壳层代码改动**。
+  - 验证：新运行时**启动冒烟通过**、core 单测与面板/swift 套件全绿，端到端实测新会话的活日志为
+    `session.v3.jsonl.zstd` 且壳层读取器能发现并审计它；执行与证据见 `docs/plans/dsh-015rc2-compat-audit.md` §七。
 
 ## [1.16.2] - 2026-09-23
 
