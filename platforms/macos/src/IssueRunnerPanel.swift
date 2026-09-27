@@ -226,6 +226,16 @@ final class IssueRunnerPanelController: NSObject {
         updateLabels()
     }
 
+    /// The shell reporting something the panel asked for but could not finish — an
+    /// 「打开会话」 click whose session is not in dsh web's sidebar, say. It goes HERE,
+    /// in the panel the user is looking at: the failure used to land on the PROJECTS
+    /// panel's status line, so clicking 打开会话 in the task list looked like nothing
+    /// happened at all.
+    func reportStatus(_ message: String) {
+        setStatus(message, spin: false)
+        autoHideStatus(after: 8)
+    }
+
     private func buildUI() {
         // The header carries TWO lines: 任务, and where this board lives. The
         // workspace line used to own a 28pt band of its own — a whole row of the
@@ -1699,6 +1709,12 @@ final class IssueRunnerPanelController: NSObject {
         }
         card.onOpenSession = { [weak self] in
             guard let session = task.sessionId else { return }
+            // Say something the moment it is clicked: the shell's lookup walks dsh web's
+            // sidebar (with a retry), so a second of silence is normal — and a click that
+            // showed nothing at all is what «点了没反应» actually was. The shell reports a
+            // real failure back through reportStatus(_:).
+            self?.setStatus(L10n.tr("tasks.openingSession"), spin: true)
+            self?.autoHideStatus(after: 8)
             self?.onOpenSession?(session)
         }
         card.onReview = { [weak self] in

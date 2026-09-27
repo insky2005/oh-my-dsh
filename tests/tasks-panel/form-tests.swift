@@ -55,6 +55,13 @@ func descendants<T>(_ view: NSView, of type: T.Type) -> [T] {
     }
 }
 
+/// Does this card/header carry the row marker for `symbol`? The glyph views are the
+/// only NSImageViews the two rows build themselves, and they are identified for exactly
+/// this question (a symbol cannot be read back out of an NSImageView).
+func hasGlyph(_ view: NSView, _ symbol: String) -> Bool {
+    descendants(view, of: NSImageView.self).contains { $0.identifier?.rawValue == "taskGlyph:" + symbol }
+}
+
 /// What a text field's delegate receives while the user types.
 func typed(_ field: NSTextField) -> Notification {
     Notification(name: NSControl.textDidChangeNotification, object: field)
@@ -299,6 +306,20 @@ do {
                                                                            collapsed: true))
     let oneLiner = layout(collapsedHeader, width: 320)
     check(oneLiner.height < headerSize.height, "a collapsed queue header is one line")
+
+    // 行标（用户 2026-09-27：队列名、任务名前都要有图标）：卡片是 checklist、
+    // 队列头是 rectangle.stack，都紧接着名字，窄面板下也不会把标题挤没。
+    check(hasGlyph(card, "checklist"), "任务卡片在任务名前有行标")
+    check(hasGlyph(expandedHeader, "rectangle.stack"), "队列头在队列名前有行标")
+    check(hasGlyph(collapsedHeader, "rectangle.stack"), "折叠的队列头也有")
+    let glyph = descendants(card, of: NSImageView.self)
+        .first { $0.identifier?.rawValue == "taskGlyph:checklist" }
+    if let glyph = glyph {
+        check(glyph.frame.width > 0 && glyph.frame.height > 0, "行标有实际尺寸")
+        check(glyph.frame.maxX < card.bounds.width, "行标在卡片里，不越界")
+    } else {
+        check(false, "行标视图应当存在")
+    }
 }
 
 section("fields span the whole form")

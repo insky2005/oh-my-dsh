@@ -152,6 +152,43 @@ do {
     let running = TaskCardModel.build(board.task(manual.id)!, board: board, expanded: true, githubRepo: false)
     check(!running.canEdit, "a running task cannot be edited")
     check(!running.canDelete, "a running task cannot be deleted")
+
+    // 已完成的任务是「记录」而不是「待办」：编辑与删除都不再给（用户 2026-09-27 的规则）。
+    board.markDone(manual.id, report: "做完了。")
+    let done = TaskCardModel.build(board.task(manual.id)!, board: board, expanded: true, githubRepo: false)
+    check(!done.canEdit, "a finished task cannot be edited")
+    check(!done.canDelete, "a finished task cannot be deleted")
+    check(done.detail.contains("做完了。"), "汇报照旧看得见（记录并没有被锁死内容）")
+
+    // 还会再跑的（失败 / 已取消）仍然可改可删 —— 重试前改标题正是编辑按钮的用处。
+    board.markRunning(manual.id)
+    _ = board.markFailed(manual.id, error: "tasks.errTimeout")
+    let failed = TaskCardModel.build(board.task(manual.id)!, board: board, expanded: true, githubRepo: false)
+    check(failed.canEdit, "a failed task can still be edited before a retry")
+    check(failed.canDelete, "…and deleted")
+}
+
+section("已完成的任务与队列：可编辑性各就各位")
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "One", id: "manual-gg201010")
+    let t2 = TaskItem.manual(title: "Two", id: "manual-gg202020")
+    board.tasks = [t1, t2]
+    let doneQueue = board.createQueue(name: "Lane", branch: "feature/x", autoPR: false)
+    _ = board.enqueue(taskID: t1.id, into: doneQueue.id)
+    board.markRunning(t1.id)
+    board.markDone(t1.id)
+    eq(board.queue(doneQueue.id)?.state, QueueState.done, "队列已完成")
+    let doneHeader = QueueHeaderModel.build(board.queue(doneQueue.id)!, board: board, collapsed: false)
+    check(!doneHeader.canEdit, "已完成的队列没有「设置」")
+    check(!doneHeader.canDelete, "也没有「删除」")
+
+    // 还有活在等的队列照旧：设置与删除都在（失败任务的清理就走这条路）。
+    let liveQueue = board.createQueue(name: "Busy", branch: "feature/y", autoPR: false)
+    _ = board.enqueue(taskID: t2.id, into: liveQueue.id)
+    let liveHeader = QueueHeaderModel.build(board.queue(liveQueue.id)!, board: board, collapsed: false)
+    check(liveHeader.canEdit, "还在排队的队列可以改设置")
+    check(liveHeader.canDelete, "也可以删除")
 }
 
 section("error text and detail body")

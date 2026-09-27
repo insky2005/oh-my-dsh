@@ -267,8 +267,11 @@ struct TaskCardModel: Equatable {
                              // exactly when the run had gone wrong.
                              canCommentClose: task.source == .github && githubRepo
                                  && task.state == .done,
-                             canEdit: task.source == .manual && task.state != .running,
-                             canDelete: task.source == .manual && task.state != .running,
+                             // 已完成的任务与 github 任务一样只是记录：不再可编辑、不可删除
+                             // （用户 2026-09-27 的规则，也终于与 README 里那句「运行中/已执行
+                             // 的任务与 github 任务不可编辑删除」一致）。
+                             canEdit: task.source == .manual && task.state.isEditable,
+                             canDelete: task.source == .manual && task.state.isEditable,
                              sessionId: task.sessionId,
                              runningFor: runningFor,
                              queuePosition: position,
@@ -479,6 +482,10 @@ struct QueueHeaderModel: Equatable {
     /// does after a failure (TasksCore.resumeQueue).
     var startHintKey: String
     var canPause: Bool
+    /// 队列设置（名字 / 分支 / 基线 / PR 开关）与 删除队列 —— 已完成的队列两者都没有：
+    /// 它是一条记录，改了设置也不会再跑（用户 2026-09-27 的规则）。
+    var canEdit: Bool
+    var canDelete: Bool
     var canOpenPR: Bool
     var autoPR: Bool
     var isAutoCreated: Bool
@@ -543,6 +550,8 @@ struct QueueHeaderModel: Equatable {
                                 startHintKey: (queue.state == .paused && failedCount > 0 && queuedCount > 0)
                                     ? "tasks.queue.continue" : "tasks.queue.start",
                                 canPause: queue.state == .active,
+                                canEdit: queue.state != .done,
+                                canDelete: queue.state != .done,
                                 canOpenPR: prAvailable && queue.autoPR && queue.prUrl == nil
                                     && queue.state == .done && queue.branch != nil,
                                 autoPR: queue.autoPR,

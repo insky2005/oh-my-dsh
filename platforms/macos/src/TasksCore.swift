@@ -64,6 +64,20 @@ enum TaskState: String {
         }
     }
 
+    /// Can this task still be edited or deleted from its card?
+    ///
+    /// The user's rule (2026-09-27): **a finished task is a record, not a todo** — its
+    /// 编辑 / 删除 buttons are gone. Running belongs to the agent, so it is out too; what
+    /// is left is exactly the states that may still run (or run again): 未入队 / 队列中 /
+    /// 失败 / 已取消 —— where fixing the wording before a retry is the whole point of
+    /// having an edit button.
+    var isEditable: Bool {
+        switch self {
+        case .pending, .queued, .failed, .cancelled: return true
+        case .running, .done, .closed: return false
+        }
+    }
+
     /// One-glyph badge for the compact list (the cards get colored labels).
     var badge: String {
         switch self {

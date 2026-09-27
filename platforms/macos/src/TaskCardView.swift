@@ -36,6 +36,30 @@ enum TaskInk {
     }
 }
 
+/// A row-kind marker: the small SF Symbol before a queue's name and before a task's
+/// title (泳道 / 任务). Quiet by design — tertiary, like the disclosure chevron —
+/// because the STATE lives in the badge on the other side of the row. A symbol the
+/// running macOS does not have degrades to a zero-width view: no hole, no crash.
+func taskRowGlyph(_ symbol: String, accessibility: String) -> NSView {
+    guard let image = NSImage(systemSymbolName: symbol,
+                              accessibilityDescription: L10n.tr(accessibility)) else {
+        let empty = NSView()
+        empty.translatesAutoresizingMaskIntoConstraints = false
+        return empty
+    }
+    let view = NSImageView(image: image)
+    // Testable identity (the layout tests cannot read a symbol out of an NSImageView).
+    view.identifier = NSUserInterfaceItemIdentifier("taskGlyph:" + symbol)
+    view.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
+    view.contentTintColor = .tertiaryLabelColor
+    view.translatesAutoresizingMaskIntoConstraints = false
+    view.widthAnchor.constraint(equalToConstant: 13).isActive = true
+    view.heightAnchor.constraint(equalToConstant: 13).isActive = true
+    view.setContentHuggingPriority(.required, for: .horizontal)
+    view.setContentCompressionResistancePriority(.required, for: .horizontal)
+    return view
+}
+
 /// A pill-shaped badge (source / state / progress). The color comes from the
 /// view model's tone, so the card never decides semantics itself.
 final class TaskBadgeView: NSView {
@@ -386,7 +410,11 @@ final class TaskCardView: NSView {
         chevron.widthAnchor.constraint(equalToConstant: 14).isActive = true
         chevron.heightAnchor.constraint(equalToConstant: 14).isActive = true
 
-        let titleRow = NSStackView(views: [chevron, source, title, spacer, state])
+        // 任务名前面一枚行标：这是「一条任务」，与队列头的泳道图标成对（2026-09-27，
+        // 用户要求：卡片上的队列名与任务名前都加图标）。quiet 的第三档灰 —— 它是标记，
+        // 不是状态（状态在右边那枚徽标上）。
+        let glyph = taskRowGlyph("checklist", accessibility: "tasks.glyph.task")
+        let titleRow = NSStackView(views: [chevron, source, glyph, title, spacer, state])
         titleRow.orientation = .horizontal
         titleRow.alignment = .top
         titleRow.spacing = 6
@@ -640,10 +668,15 @@ final class TaskQueueHeaderView: NSView {
             toggle.isEnabled = model.autoPREnabled
             trailing.append(toggle)
         }
-        trailing.append(iconButton("gearshape", tooltipKey: "tasks.queue.settings",
-                                   action: #selector(settingsTapped)))
-        trailing.append(iconButton("trash", tooltipKey: "tasks.queue.delete",
-                                   action: #selector(deleteTapped)))
+        // 已完成的队列没有 设置 / 删除（记录，不是待办）——见 QueueHeaderModel.canEdit。
+        if model.canEdit {
+            trailing.append(iconButton("gearshape", tooltipKey: "tasks.queue.settings",
+                                       action: #selector(settingsTapped)))
+        }
+        if model.canDelete {
+            trailing.append(iconButton("trash", tooltipKey: "tasks.queue.delete",
+                                       action: #selector(deleteTapped)))
+        }
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -669,7 +702,9 @@ final class TaskQueueHeaderView: NSView {
         bar.translatesAutoresizingMaskIntoConstraints = false
         bar.setContentHuggingPriority(.required, for: .horizontal)
 
-        let titleRow = NSStackView(views: [disclosure, name, spacer, actions])
+        // 队列名前面一枚行标：这是「一条队列（泳道）」——与任务卡片上的 checklist 成对。
+        let glyph = taskRowGlyph("rectangle.stack", accessibility: "tasks.glyph.queue")
+        let titleRow = NSStackView(views: [disclosure, glyph, name, spacer, actions])
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
         titleRow.spacing = 6

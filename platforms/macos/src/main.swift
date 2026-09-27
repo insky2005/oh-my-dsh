@@ -629,8 +629,9 @@ enum L10n {
         "tasks.detailOpenPR": ("打开 PR", "Open PR"),
         "tasks.detailRetry": ("重试", "Retry"),
         "tasks.detailSkip": ("跳过并继续", "Skip & Continue"),
-        "tasks.detailOpenSession": ("在 dsh 中打开这个任务的会话", "Open this task's session in dsh"),
-        "tasks.detailReview": ("审查这个任务改了什么", "Review what this task changed"),
+        "tasks.detailOpenSession": ("打开会话", "Open session"),
+        "tasks.detailReview": ("审查改动", "Review changes"),
+        "tasks.openingSession": ("正在打开会话…", "Opening the session…"),
         "tasks.card.runningFor": ("已运行 %@（上限 %d 分钟，到点会取消会话）", "Running for %@ (limit %d min — the session is cancelled at the deadline)"),
         "tasks.queue.state.waiting": ("等待中", "Waiting"),
         "tasks.cancelDeferred": ("任务正在启动，已记住取消：会话一建好就取消", "The task is still starting — the cancel is queued and applied as soon as its session exists"),
@@ -701,6 +702,9 @@ enum L10n {
         "tasks.errPRNoRemote": ("当前工作区不是 GitHub 仓库：没有可以开 PR 的远端", "This workspace is not a GitHub repo: there is no remote to open a PR against"),
         "tasks.errPRSession": ("没能启动开 PR 的会话（dsh 建会话/发提示词失败）——可以点这里再试一次", "Could not start the PR session (session creation or prompt failed) — click here to retry"),
         "tasks.detailReport": ("汇报", "Report"),
+        // 卡片上的行标（无障碍描述；图标本身是静默的第三档灰）
+        "tasks.glyph.task": ("任务", "Task"),
+        "tasks.glyph.queue": ("队列", "Queue"),
         "tasks.queue.settings": ("队列设置：重命名 / 分支 / 基于分支 / PR 开关", "Queue settings: name, branch, base branch, PR switch"),
         "tasks.queue.editTitle": ("队列设置", "Queue Settings"),
         "tasks.queue.editInfo": ("队列名、分支、基于分支与 PR 开关；队内任务按顺序共用这一条分支。", "Name, branch, base branch and the PR switch; every task in the queue shares this one branch."),
@@ -2483,7 +2487,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // had all along — the dsh-web session bridge (ChannelPanel uses it) and the
         // audit panel, which can be pointed at any session.
         tasksPanel.onOpenSession = { [weak self] sessionId in
-            self?.openDSHSession(sessionId)
+            // A failure comes back to the TASK panel's status line (see reportStatus):
+            // the click happened there, so the answer has to appear there.
+            self?.openDSHSession(sessionId, report: { [weak self] message in
+                self?.tasksPanel?.reportStatus(message)
+            })
         }
         tasksPanel.onReviewSession = { [weak self] sessionId in
             guard let self = self else { return }
@@ -4350,13 +4358,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// click into a page reload — and, because the reload replayed the request
     /// through webView(_:didFinish:), into an endless reload loop (~10 s apart)
     /// whenever the sidebar really had no row for that session id.
-    private func openDSHSession(_ sessionId: String, retry: Int = 1, workspaceName: String? = nil) {
+    /// - Parameter report: where a FAILURE should be shown. The caller knows which
+    ///   panel the user is looking at; without it the message went to the PROJECTS
+    ///   panel's status line, so an 「打开会话」 click in the task list looked like
+    ///   nothing had happened (2026-09-27).
+    private func openDSHSession(_ sessionId: String, retry: Int = 1, workspaceName: String? = nil,
+                                report: ((String) -> Void)? = nil) {
         guard let webView = webView else { return }
         guard !sessionId.isEmpty else { return }
         // One open per session at a time: overlapping chains (a fresh click racing
-        // a retry of the previous one) only produce confusing logs.
+        // a retry of the previous one) only produce confusing logs. The guard must not
+        // be permanent, though: a bridge call whose promise never settles would swallow
+        // every later click on the same session, silently — so it expires.
         if openInFlight == sessionId { return }
         openInFlight = sessionId
+        let inFlight = sessionId
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self = self, self.openInFlight == inFlight else { return }
+            self.openInFlight = nil
+            AppLog.shared.log("openDSHSession " + inFlight + ": the bridge call never answered; the click is no longer blocked")
+        }
         var args: [String: Any] = ["sessionId": sessionId]
         if let name = workspaceName, !name.isEmpty { args["workspaceName"] = name }
         let body = "return await window.__dshOpenSession(sessionId, workspaceName);"
@@ -4380,11 +4401,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 AppLog.shared.log("openDSHSession \(sessionId): \(reason) \(Self.sidebarProbe(dict))")
                 if retry > 0 {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                        self?.openDSHSession(sessionId, retry: retry - 1, workspaceName: workspaceName)
+                        self?.openDSHSession(sessionId, retry: retry - 1, workspaceName: workspaceName,
+                                             report: report)
                     }
                     return
                 }
-                self.reportOpenFailure(sessionId: sessionId, reason: reason, workspaceName: workspaceName)
+                self.reportOpenFailure(sessionId: sessionId, reason: reason,
+                                       workspaceName: workspaceName, report: report)
             }
         }
     }
@@ -4399,7 +4422,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     /// Give up (no page reload): say what happened where the user is looking.
-    private func reportOpenFailure(sessionId: String, reason: String, workspaceName: String?) {
+    private func reportOpenFailure(sessionId: String, reason: String, workspaceName: String?,
+                                   report: ((String) -> Void)? = nil) {
         let short = String(sessionId.prefix(18))
         AppLog.shared.log("openDSHSession \(sessionId): giving up (\(reason)); the session is not in dsh web's sidebar")
         let message: String
@@ -4409,7 +4433,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         default:
             message = L10n.tr("projects.openFailed", short)
         }
-        projectsPanel?.setStatus(message, isError: true)
+        // The panel that ASKED hears it (where the user is looking); the projects panel
+        // keeps its own message when nobody claimed the report.
+        if let report = report {
+            report(message)
+        } else {
+            projectsPanel?.setStatus(message, isError: true)
+        }
     }
 
     // MARK: - Projects panel actions (a workspace = a directory under the root)
