@@ -82,4 +82,18 @@ if grep -q "DshWebRPC.sessionCreate" ../../platforms/macos/src/IssueRunnerPanel.
 fi
 echo "ok - the tasks panel delegates session creation to DshWorkspaceOps"
 
+# The runner env must read the dsh web port AT CALL TIME, never freeze it.
+# The panel builds that env the moment it adopts a workspace — ~6s BEFORE
+# `dsh web` is up, when server.port is still the default 3080 — so a captured
+# `let port = serverPortProvider?() ?? 3080` pointed every session RPC of that
+# runner at a port nothing listens on: EVERY task failed with tasks.errSession
+# while the real server answered fine on its own port. The runner is rebuilt only
+# when the workspace PATH changes, so the dead port lasted the whole app run.
+if grep -qE 'Self\.(renameSession|promptSession|sessionState|cancelSession)\(port: port,' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -q 'let portOf: () -> Int = { \[weak self\] in' ../../platforms/macos/src/IssueRunnerPanel.swift; then
+  echo "FAIL - the runner env must resolve the dsh web port per call (portOf()), not freeze it"
+  exit 1
+fi
+echo "ok - the runner env resolves the dsh web port per call"
+
 echo "tasks-panel tests passed"

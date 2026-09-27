@@ -531,8 +531,21 @@ final class IssueRunnerPanelController: NSObject {
     /// four-file persistence under .dsh/tasks/.
     private func makeEnv(repoRoot: String, repo: (owner: String, repo: String)?,
                          isGit: Bool) -> TaskRunnerEnv {
-        let port = serverPortProvider?() ?? 3080
-        let workspaceId = Self.resolveMainWorkspaceId(port: port, path: repoRoot)
+        // The dsh web port is read AT CALL TIME, never frozen here.
+        //
+        // This env is built as soon as the panel adopts a workspace — which is
+        // ~6s BEFORE `dsh web` is up (app.log: "workspace adopted" 00:51:37 vs
+        // "dsh web is up on …:64679" 00:51:43). Until then `server.port` is still
+        // the default 3080, so capturing it in a `let` pointed every session RPC
+        // of that runner at a port nothing listens on: EVERY task failed with
+        // tasks.errSession while the real server was perfectly reachable (the same
+        // session/create answered fine over curl on 64679). The panel only rebuilds
+        // the runner when the PATH changes, so the runner kept the dead port for the
+        // rest of the app run.
+        // `[weak self]` so the env does not retain the panel (the panel owns the
+        // runner that owns this closure), and so a provider assigned later still
+        // counts — the panel works before the shell has finished wiring itself up.
+        let portOf: () -> Int = { [weak self] in self?.serverPortProvider?() ?? 3080 }
         // Per workspace, not per panel: two runners can be alive at once, each with
         // its own remote, token and PR policy.
         let token = repo.flatMap { loadToken(for: $0) }
@@ -542,14 +555,23 @@ final class IssueRunnerPanelController: NSObject {
                           },
                           remoteName: { Self.pushRemoteName(path: repoRoot) }),
             repoRoot: repoRoot,
-            createSession: { cwd in Self.createSession(port: port, workspaceId: workspaceId, cwd: cwd) },
-            renameSession: { id, title in Self.renameSession(port: port, sessionId: id, title: title) },
-            promptSession: { id, text in Self.promptSession(port: port, sessionId: id, text: text) },
-            sessionState: { id in Self.sessionState(port: port, sessionId: id) },
+            createSession: { cwd in
+                // Both the port and the workspaceId are resolved now, not when the
+                // runner was built: the workspace may have been registered with dsh
+                // after the board loaded (and `workspaceId` is read from the store
+                // dsh persists, which the shell does not own).
+                let port = portOf()
+                return Self.createSession(port: port,
+                                          workspaceId: Self.resolveMainWorkspaceId(port: port, path: repoRoot),
+                                          cwd: cwd)
+            },
+            renameSession: { id, title in Self.renameSession(port: portOf(), sessionId: id, title: title) },
+            promptSession: { id, text in Self.promptSession(port: portOf(), sessionId: id, text: text) },
+            sessionState: { id in Self.sessionState(port: portOf(), sessionId: id) },
             defaultBaseBranch: Self.detectDefaultBaseBranch(path: repoRoot),
             canSwitchBranches: isGit,
             canOpenPR: { repo != nil },
-            cancelSession: { id in Self.cancelSession(port: port, sessionId: id) },
+            cancelSession: { id in Self.cancelSession(port: portOf(), sessionId: id) },
             findExistingPR: { branch in
                 guard let repo = repo else { return nil }
                 return Self.findExistingPR(owner: repo.owner, repo: repo.repo, branch: branch, token: token)
