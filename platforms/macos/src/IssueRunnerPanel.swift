@@ -579,7 +579,8 @@ final class IssueRunnerPanelController: NSObject {
             promptText: { task, queue, brief in
                 if task.source == .github {
                     return TaskPrompts.issue(number: task.number ?? 0, title: task.title,
-                                             branch: queue?.branch ?? "")
+                                             branch: queue?.branch ?? "",
+                                             base: queue?.baseBranch ?? Self.detectDefaultBaseBranch(path: repoRoot))
                 }
                 // Push policy: only a queue that will open a PR asks the agent to
                 // push (see TasksRunner.finish) — and the prompt has to say the

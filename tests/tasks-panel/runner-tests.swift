@@ -1037,11 +1037,16 @@ do {
     // …但分支上已经有的提交照旧告诉它：队列重跑（分支复用）时那就是上一轮留下的，
     // 属于「这一棒开始前就该知道的状态」。
     check(first.contains("a1b2c3 refactor: extract TokenStore"), "分支已有的提交仍然告诉第一个任务")
+    check(first.contains("这些提交是这条分支上已有的改动"), "没有前一棒时不说「不要重做前面任务」")
+    check(!first.contains("不要重做已完成的部分"), "收尾句跟着有没有前一棒走")
 
     h.dsh.finishAll()
     _ = h.runner.step()
     let second = h.dsh.prompts["session-2"] ?? ""
-    check(second.contains("## 队列上下文"), "第二个任务带上简报")
+    check(second.contains("## 队列信息"), "第二个任务带上队列信息段（与开 PR 会话同一个抬头）")
+    check(second.contains("队列：认证重构（本任务是第 2/2 个）"), "队列与位次写在同一条里")
+    check(second.contains("分支：feature/queue-"), "分支也是同一条（纯中文队列名回退 feature/queue-<id4>）")
+    check(second.contains("（基于 main）"), "基线与分支写在一起")
     check(second.contains("队列「认证重构」"), "报队列名")
     check(second.contains("第 2/2 个"), "报位次")
     check(second.contains("「抽出 TokenStore」 —— 已完成"), "报上一棒的标题与结局")
@@ -1101,7 +1106,7 @@ do {
     let h = Harness(board: board)
     _ = h.runner.enqueue(taskID: taskID, into: queueID)
     let prompt = h.dsh.prompts["session-1"] ?? ""
-    check(!prompt.contains("队列上下文"), "单任务队列没有前一棒")
+    check(!prompt.contains("## 队列信息"), "单任务队列没有前一棒")
     _ = taskID
 }
 

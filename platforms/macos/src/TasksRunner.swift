@@ -244,10 +244,22 @@ enum TaskPrompts {
         guard let brief = brief else { return nil }
         guard !brief.earlier.isEmpty || !brief.commits.isEmpty else { return nil }
         var lines: [String] = []
-        lines.append("## 队列上下文（前面任务留下的状态）")
-        lines.append("本任务属于队列「\(brief.queueName)」，是第 \(brief.position)/\(brief.total) 个。")
+        // 与开 PR 会话的 `## 队列信息` 是同一套字段、同一个抬头（用户的要求：两处统一）：
+        // 队列 → 分支/基线 → 分支上已有的提交 → 前面任务的汇报。谁在哪个队列里、在哪条
+        // 分支上、前面干了什么，读到同一个段落就知道。
+        lines.append("## 队列信息")
+        lines.append("队列：\(brief.queueName)（本任务是第 \(brief.position)/\(brief.total) 个）")
+        if let branch = brief.branch, !branch.isEmpty {
+            lines.append("分支：\(branch)（基于 \(brief.base)）")
+        } else {
+            lines.append("基于：\(brief.base)")
+        }
+        if !brief.commits.isEmpty {
+            lines.append("分支上已有的提交：")
+            for commit in brief.commits { lines.append("  " + commit) }
+        }
         if !brief.earlier.isEmpty {
-            lines.append("前面已经做过的：")
+            lines.append("前面任务的汇报：")
             for (index, earlier) in brief.earlier.enumerated() {
                 var head = "\(index + 1). 「\(earlier.title)」"
                 switch earlier.state {
@@ -265,12 +277,14 @@ enum TaskPrompts {
                 }
             }
         }
-        if let branch = brief.branch, !brief.commits.isEmpty {
-            lines.append("分支 \(branch) 上已经有这些提交（基于 \(brief.base)）：")
-            for commit in brief.commits { lines.append("  " + commit) }
+        // 收尾这句只对「真有前一棒」成立：队列的第一个任务也可能拿到这一段（分支上已经
+        // 有提交），那时说「不要重做前面任务」就是无的放矢。
+        if brief.earlier.isEmpty {
+            lines.append("这些提交是这条分支上已有的改动（上一轮留下的）：不要重做它们，只做本任务。")
+        } else {
+            lines.append("不要重做已完成的部分，只做本任务；")
+            lines.append("如果发现前面留下的问题，先说明再决定是否顺手修。")
         }
-        lines.append("上面是前面任务留下的状态：不要重做已完成的部分，只做本任务；")
-        lines.append("如果发现前面留下的问题，先说明再决定是否顺手修。")
         return lines.joined(separator: "\n")
     }
 
@@ -282,7 +296,7 @@ enum TaskPrompts {
     static let reportRequirement =
         "**必须**在结束时汇报：改了什么、怎么验证的、结果如何（没做完或失败也要说清楚，不要沉默收尾）——这段文字会写回任务卡片，队列里后面的任务也会看到它；"
 
-    static func issue(number: Int, title: String, branch: String) -> String {
+    static func issue(number: Int, title: String, branch: String, base: String = "main") -> String {
         var lines: [String] = []
         lines.append("请加载 issue-resolve skill 并完成以下 GitHub issue 的修复：")
         lines.append("")
@@ -291,7 +305,7 @@ enum TaskPrompts {
         lines.append("")
         lines.append("要求：")
         lines.append("1. 加载全局 $DSH_HOME/skills/issue-resolve/SKILL.md（或内嵌说明）并严格按其流程执行（读 issue → 改代码 → 跑测试 → commit）；")
-        lines.append("2. 当前分支应为 \(branch)，只在此分支上工作（不要新建分支）；")
+        lines.append("2. 本任务须在分支 \(branch) 上处理（若该分支不存在，须基于 \(base) 分支新建）；")
         lines.append("3. \(verifyRequirement)")
         lines.append("4. 推送私有仓库/需要认证的 GitHub 调用时，token 在 $DSH_HOME/tokens/<owner>-<repo> 或 $DSH_HOME/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；")
         lines.append("5. \(reportRequirement)")
@@ -403,7 +417,10 @@ enum TaskPrompts {
             lines.append("分支 \(branch) 的任务已完成，请推送它并发起 pull request：")
         }
         lines.append("")
-        lines.append("## 要发布的分支")
+        // 与手里任务的 `## 队列信息` 同一套字段（队列 → 分支/基线 → 提交）：这条会话
+        // 要发布的就是那个队列的那条分支，抬头与字段一致，两边读起来是一回事。
+        lines.append("## 队列信息")
+        if let queueName = queueName, !queueName.isEmpty { lines.append("队列：\(queueName)") }
         lines.append("分支：\(branch)（基于 \(base)）")
         if !commits.isEmpty {
             lines.append("分支上已有的提交：")
