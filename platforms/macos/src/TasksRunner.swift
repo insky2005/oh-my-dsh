@@ -57,6 +57,12 @@ struct TaskGit {
         run(["rev-parse", "--verify", "--quiet", name]) != nil
     }
 
+    /// Whether this repository has any commit at all. False for a directory that was
+    /// just `git init`ed — HEAD is unborn there (`git rev-parse --verify HEAD` fails).
+    func hasCommits() -> Bool {
+        run(["rev-parse", "--verify", "--quiet", "HEAD"]) != nil
+    }
+
     /// Whether the branch exists on the push remote. A repo without a remote is
     /// the caller's business (it logs that case separately); a FAILED ls-remote is
     /// unknown, never "not pushed".
@@ -79,13 +85,28 @@ struct TaskGit {
     ///   clean check -> checkout <base> -> pull --ff-only -> checkout[-b] <branch>
     /// Every step must succeed; the pull is skipped when there is no remote
     /// (a local-only repo has nothing to fast-forward from).
+    ///
+    /// A repository with NO COMMITS YET is the one exception — see below. It is a
+    /// normal situation (「初始化 git 仓库」 is an entirely reasonable task, and the
+    /// shell may now be looking at the repository that task just created), and the
+    /// normal sequence cannot work in it.
     func enter(branch: String?, base: String) -> GitEnterResult {
         guard let branch = branch, !branch.isEmpty else { return .noBranch }
         guard let current = currentBranch() else { return .notGitRepo }
         if current == branch { return .alreadyOnBranch }
-        guard isWorktreeClean() else { return .dirtyWorktree }
-        guard run(["checkout", base]) != nil else { return .checkoutFailed }
-        if remoteName() != nil, run(["pull", "--ff-only"]) == nil { return .pullFailed }
+        // An UNBORN repository (fresh `git init`, no commits): HEAD points at nothing,
+        // so `git checkout <base>` fails with "pathspec … did not match" — the task
+        // right after 初始化 git 仓库 failed with tasks.errCheckout before it could do
+        // anything at all. Its files are all untracked too, so the worktree is "dirty"
+        // by definition and the clean check would stop it as well. Nothing can be lost
+        // in a repository that has no commit: the branch is created from the unborn
+        // HEAD, and the task's work simply becomes the first commit.
+        let empty = !hasCommits()
+        if !empty {
+            guard isWorktreeClean() else { return .dirtyWorktree }
+            guard run(["checkout", base]) != nil else { return .checkoutFailed }
+            if remoteName() != nil, run(["pull", "--ff-only"]) == nil { return .pullFailed }
+        }
         if branchExists(branch) {
             guard run(["checkout", branch]) != nil else { return .checkoutFailed }
         } else {
@@ -289,10 +310,14 @@ enum TaskPrompts {
             lines.append("1. 本任务独立执行；")
         }
         if !gitAvailable {
-            // Not a repository at all (§V2-7): asking for a branch, a commit or a
-            // push would send the agent off to `git init`, which is not what the
-            // queue asked for. Say what this directory IS instead.
-            lines.append("2. 这不是 git 仓库：直接在当前目录修改文件，不要 git init、不要新建分支；")
+            // Not a repository at all (§V2-7): the PIPELINE will not touch git, so
+            // say that instead of asking for a branch/commit/push it can never honour.
+            //
+            // It must not read as a ban on the TASK, though: 「初始化 git 仓库」 is a
+            // perfectly reasonable task, and the old wording (「不要 git init」) told the
+            // agent to refuse exactly what the user asked for. The rail is "don't do
+            // git for the shell's sake", not "don't do git".
+            lines.append("2. 这不是 git 仓库：壳层不会切分支、不会提交、不会推送。默认直接在当前目录修改文件即可；任务本身要求初始化仓库或提交时，照任务做；")
         } else if let branch = branch, !branch.isEmpty {
             lines.append("2. 当前分支应为 \(branch)，只在此分支上工作（不要新建分支）；")
         } else {
@@ -300,7 +325,7 @@ enum TaskPrompts {
         }
         lines.append("3. 改完代码后跑相关测试，确保通过；")
         if !gitAvailable {
-            lines.append("4. 不要 commit、不要 push（这里没有仓库）：改完把结果说清楚即可；")
+            lines.append("4. 默认不要 commit、不要 push（这里没有仓库）；任务要求建立仓库／提交时才做，并把结果说清楚即可；")
         } else if pushes {
             lines.append("4. commit（建议 feat/fix: 简述），并把当前分支 push 到远端（这个队列最后会开 PR，远端必须有这些提交）；")
         } else {

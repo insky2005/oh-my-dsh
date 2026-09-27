@@ -686,6 +686,15 @@ final class IssueRunnerPanelController: NSObject {
                 autoHideStatus(after: 8)
             }
         }
+        // A task can change the SHAPE of the workspace it ran in: 「初始化 git 仓库」
+        // is exactly that — the directory was not a repository when the panel adopted
+        // it, and everything decided back then (the header's 非 Git 仓库, whether the
+        // queue form may name a branch, whether 全部处理 asks for branches at all) is
+        // wrong now. Check when a task finished here, and again when the workspace goes
+        // idle: a queue starts its next task in the very tick its previous one finished.
+        if !finished.isEmpty || (currentWasBusy && !workspaces.isBusy) {
+            recheckWorkspaceShape()
+        }
         syncFromBoardIfChanged()
         if wasBusy != workspaces.isBusy { onRunStateChanged?(workspaces.isBusy) }
         if let runner = runner, runner.isBusy {
@@ -696,6 +705,38 @@ final class IssueRunnerPanelController: NSObject {
         }
         updateOtherWorkspaces()
     }
+    /// Re-detect a workspace whose SHAPE a finished task may have changed.
+    ///
+    /// The panel decides everything about a workspace when it ADOPTS it (is it a git
+    /// repository? which base branch? which remote?) and hands those same facts to the
+    /// runner's env. A task can make all of that stale — the plainest example being a
+    /// task whose whole point is `git init`. Nothing else in the app notices, so the
+    /// user is left with a header that says 非 Git 仓库 in a directory that is one.
+    private func recheckWorkspaceShape() {
+        guard let path = workspaces.currentPath else { return }
+        // Only ask git when the answer could have changed, so the steady state costs
+        // nothing: no repository → ask whether there is one now; a repository without a
+        // GitHub remote → ask whether there is one now.
+        let isGitNow = workspaceIsGit || Self.isGitRepo(path)
+        guard isGitNow else { return }
+        let hasRemoteNow = repo != nil || Self.detectGitHubRemote(path) != nil
+        guard let shape = TaskWorkspaceShape.change(wasGit: workspaceIsGit, hadRemote: repo != nil,
+                                                     isGitNow: isGitNow, hasRemoteNow: hasRemoteNow),
+              let messageKey = shape.messageKey else { return }
+        // The runner's env captured "there is no repository here" when it was built, so
+        // the runner has to be rebuilt — but only with NOTHING in flight in this
+        // workspace: two runners on one board would step the same task twice. (The next
+        // finish, or the go-idle call, tries again.)
+        guard workspaces.trackedRunner(for: path)?.isBusy != true else { return }
+        AppLog.shared.log("tasks: workspace re-detected at \(path)"
+                          + " (git=\(isGitNow ? "yes" : "no"), github=\(hasRemoteNow ? "yes" : "no"))"
+                          + " — runner rebuilt for the new shape")
+        workspaces.invalidate(path)
+        adoptWorkspace(path)
+        setStatus(L10n.tr(messageKey), spin: false)
+        autoHideStatus(after: 8)
+    }
+
     // MARK: - Repo detection & issue loading
 
     /// Number of deferred retries while waiting for the dsh workspace list to

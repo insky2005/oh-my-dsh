@@ -380,6 +380,40 @@ struct TasksRunAllModel: Equatable {
     }
 }
 
+/// What a finished task may have changed about the workspace it ran in.
+///
+/// The panel decides everything about a workspace when it ADOPTS it — is it a git
+/// repository at all, does it have a GitHub remote — and hands the same facts to the
+/// runner's env (a branchless queue in a non-git directory never touches git, §V2-7).
+/// A task can make all of that stale, and 「初始化 git 仓库」 is the plainest example:
+/// the user asks for a repository and gets a header that still says 非 Git 仓库.
+///
+/// This is the pure half of noticing: the panel supplies what it believed and what is
+/// true now, and gets back whether the workspace has to be re-adopted (the I/O half —
+/// `git rev-parse`, `git remote -v`, rebuilding the runner — stays in the panel).
+struct TaskWorkspaceShape: Equatable {
+    /// A workspace is a git repository now, and was not when it was adopted.
+    var becameGit = false
+    /// It has a GitHub remote now, and had none when it was adopted.
+    var becameRemote = false
+
+    var changed: Bool { becameGit || becameRemote }
+
+    /// The status line to show, or nil when nothing changed.
+    var messageKey: String? {
+        if becameGit { return "tasks.gitAppeared" }
+        if becameRemote { return "tasks.remoteAppeared" }
+        return nil
+    }
+
+    static func change(wasGit: Bool, hadRemote: Bool,
+                       isGitNow: Bool, hasRemoteNow: Bool) -> TaskWorkspaceShape? {
+        let shape = TaskWorkspaceShape(becameGit: !wasGit && isGitNow,
+                                       becameRemote: !hadRemote && hasRemoteNow)
+        return shape.changed ? shape : nil
+    }
+}
+
 /// Where this board lives, as the panel's header says it — plus whether the
 /// GitHub-only controls can do anything here.
 ///

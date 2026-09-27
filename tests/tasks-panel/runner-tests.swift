@@ -29,6 +29,9 @@ final class FakeRepo {
     /// false = the directory is not a git repository: EVERY command fails, which
     /// is exactly what /usr/bin/git does outside a work tree (exit 128).
     var isRepo = true
+    /// A fresh `git init` with nothing in it: HEAD is unborn, so
+    /// `rev-parse --verify HEAD` fails, exactly like real git.
+    var unborn = false
     var current = "main"
     var worktreeClean = true
     var remote: String? = "origin"
@@ -57,6 +60,7 @@ final class FakeRepo {
             if args.count >= 2, args[1] == "--abbrev-ref" { return current }
             if args.count >= 2, args[1] == "--verify" {
                 let name = args.last ?? ""
+                if name == "HEAD" { return unborn ? nil : "0f0f0f0f" }
                 return knownBranches.contains(name) ? "0f0f0f0f" : nil
             }
             return nil
@@ -924,6 +928,27 @@ do {
     check(h.registry.trackedRunner(for: "/tmp/ws-b") == nil, "空转的 B 也被放下（切回去时从磁盘重建）")
 }
 
+section("工作区的形状被任务改了：invalidate 之后带着新环境重建，且不重新对账")
+do {
+    let h = WorkspaceHarness()
+    let a = h.seed("/tmp/ws-shape", task: "初始化 git 仓库")
+    let first = h.registry.adopt("/tmp/ws-shape")
+    check(first != nil, "先有一个 runner")
+    eq(h.built.filter { $0.path == "/tmp/ws-shape" }.map { $0.reconcile }, [true],
+       "首次加载对账一次")
+
+    // 任务把目录变成 git 仓库之后，env 里那句「这里没有仓库」（canSwitchBranches）
+    // 必须能换掉 —— 否则这个工作区在本次启动里永远切不了分支。
+    h.registry.invalidate("/tmp/ws-shape")
+    check(h.registry.trackedRunner(for: "/tmp/ws-shape") == nil, "invalidate 放下 runner")
+    let rebuilt = h.registry.runner(for: "/tmp/ws-shape")
+    check(rebuilt !== first, "下一次取到的是新 runner（新 env）")
+    eq(h.built.filter { $0.path == "/tmp/ws-shape" }.map { $0.reconcile }, [true, false],
+       "重建不再对账：板子还是这次运行的板子，在跑的任务不能被判成中断")
+    check(h.registry.currentPath == "/tmp/ws-shape", "当前工作区不变")
+    check(!a.taskID.isEmpty, "原来的任务还在板子上")
+}
+
 section("跨工作区：并行与串行的边界")
 do {
     let h = WorkspaceHarness()
@@ -1144,20 +1169,48 @@ do {
     check(h2.board.task(c.id)?.state != .failed, "这次没再因为 errNotGit 失败")
 }
 
-section("非 git 目录里的提示词：不要 commit、不要 push")
+section("非 git 目录里的提示词：壳层不碰 git，但任务要求就照做")
 do {
     var board = TaskBoard()
-    let task = TaskItem.manual(title: "写一份说明", body: nil, id: "manual-gg004444")
+    let task = TaskItem.manual(title: "初始化 git 仓库", body: nil, id: "manual-gg004444")
     board.tasks = [task]
     let h = Harness(board: board, github: false, gitRepo: false)
     _ = h.runner.startManualTask(task.id)
     let prompt = h.dsh.prompts["session-1"] ?? ""
     check(prompt.contains("这不是 git 仓库"), "明说这里不是仓库")
-    check(prompt.contains("不要 git init"), "并且拦住 git init")
-    check(prompt.contains("不要 commit、不要 push"), "也不要 commit / push")
+    check(prompt.contains("壳层不会切分支、不会提交、不会推送"), "说清壳层那一半：管线不碰 git")
+    check(prompt.contains("任务本身要求初始化仓库或提交时，照任务做"), "但任务自己要的事照做")
+    check(!prompt.contains("不要 git init"), "不再反过来禁止任务要的事")
+    check(prompt.contains("默认不要 commit、不要 push"), "默认仍然不 commit / push")
     check(!prompt.contains("commit（建议 feat/fix"), "不会自相矛盾地要求 commit")
 }
 
+section("刚 git init 的空仓库：没有基线可切，直接建分支（「初始化 git 仓库」之后紧接着的那个任务）")
+do {
+    let empty = FakeRepo()
+    empty.unborn = true
+    empty.knownBranches = []          // 一条提交都没有：main 也不存在
+    empty.remote = nil                // 还没有远端
+    empty.worktreeClean = false       // git init 之后留下的文件全是未跟踪的
+    eq(empty.git().enter(branch: "feature/first", base: "main"), .switched,
+       "空仓库里照样进得了队列分支（此前必定 errCheckout）")
+    eq(empty.checkouts, ["feature/first"], "只做一次 checkout -b，没有去切不存在的 main")
+    check(!empty.calls.contains("status --porcelain"), "空仓库里「工作区脏」这条不适用：没有提交可以丢")
+    check(!empty.calls.contains("pull --ff-only"), "也没有远端可 pull")
+
+    // 有提交的普通仓库完全不变：先干净、先切基线、再 pull、再开分支。
+    let normal = FakeRepo()
+    eq(normal.git().enter(branch: "feature/x", base: "main"), .switched, "普通仓库照旧")
+    check(normal.calls.contains("status --porcelain"), "普通仓库仍然先查工作区")
+    check(normal.calls.contains("checkout main"), "先切基线")
+    check(normal.calls.contains("pull --ff-only"), "有远端就 pull")
+
+    // 脏工作区在普通仓库里依然拦住 —— 空仓库是唯一的例外。
+    let dirty = FakeRepo()
+    dirty.worktreeClean = false
+    eq(dirty.git().enter(branch: "feature/x", base: "main"), .dirtyWorktree,
+       "普通仓库脏了就停下，绝不覆盖用户的改动")
+}
 section("删掉队列之后的失败任务：全部处理能把它们重新跑起来")
 do {
     var board = TaskBoard()

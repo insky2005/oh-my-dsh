@@ -473,6 +473,38 @@ do {
     eq(none.disabledHint, "tasks.errNoWorkspace", "原因指向「还没确定工作区」")
 }
 
+section("任务改变了工作区的形状：重新识别（「初始化 git 仓库」曾经和提示词打架）")
+do {
+    // 之前不是仓库，现在是：头部那句话、队列表单的分支字段、全部处理的措辞全都作废。
+    let becameGit = TaskWorkspaceShape.change(wasGit: false, hadRemote: false,
+                                              isGitNow: true, hasRemoteNow: false)
+    eq(becameGit?.becameGit, true, "认出「现在是 git 仓库了」")
+    eq(becameGit?.messageKey, "tasks.gitAppeared", "并且有话说（状态行）")
+
+    // 仓库一直是仓库，只是多了个 GitHub 远端：只提远端这件事。
+    let becameRemote = TaskWorkspaceShape.change(wasGit: true, hadRemote: false,
+                                                 isGitNow: true, hasRemoteNow: true)
+    eq(becameRemote?.becameRemote, true, "认出「现在有 GitHub 远端的了」")
+    eq(becameRemote?.messageKey, "tasks.remoteAppeared", "说的是远端，不是仓库")
+
+    // 一次同时变化的（git init + git remote add）优先说仓库 —— 那是更根本的那条。
+    let both = TaskWorkspaceShape.change(wasGit: false, hadRemote: false,
+                                        isGitNow: true, hasRemoteNow: true)
+    eq(both?.messageKey, "tasks.gitAppeared", "两条同时成立时说仓库")
+
+    // 什么都没变：不该重建 runner，也不该在状态行上说话。
+    check(TaskWorkspaceShape.change(wasGit: true, hadRemote: true,
+                                    isGitNow: true, hasRemoteNow: true) == nil,
+          "一直是 GitHub 仓库：什么都不做")
+    check(TaskWorkspaceShape.change(wasGit: false, hadRemote: false,
+                                    isGitNow: false, hasRemoteNow: false) == nil,
+          "仍然不是仓库：什么都不做")
+    // 远端消失（或仓库被删）不是「形状变化」，不该把工作区重新识别一遍。
+    check(TaskWorkspaceShape.change(wasGit: true, hadRemote: true,
+                                    isGitNow: true, hasRemoteNow: false) == nil,
+          "远端没了不重新识别（那是另一个话题）")
+}
+
 section("队列被删掉之后的失败任务：直接给 加入队列 / 处理，不再先给一次空重试")
 do {
     // 手动任务 + 一个失败的队列：重试还在（它把任务放回队列并唤醒队列）。

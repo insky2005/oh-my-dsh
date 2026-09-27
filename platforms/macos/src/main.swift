@@ -691,6 +691,8 @@ enum L10n {
         "tasks.otherWorkspaces": ("其他工作区有 %d 个任务在跑", "%d task(s) running in other workspaces"),
         "tasks.otherWorkspacesHint": ("其他工作区正在跑任务（点这里切过去）", "Tasks are running in other workspaces (click to switch)"),
         "tasks.recovered": ("上次运行被中断：%d 个任务已标为失败、%d 个队列已暂停（不会自动重跑）", "Interrupted last run: %d task(s) marked failed, %d queue(s) paused (nothing restarts by itself)"),
+        "tasks.gitAppeared": ("这个目录现在是 git 仓库 —— 已重新识别工作区：新队列可以使用分支", "This directory is a git repository now — workspace re-detected: new queues can use a branch"),
+        "tasks.remoteAppeared": ("这个工作区现在有 GitHub 远端 —— 已重新识别：PR 相关功能已启用", "This workspace has a GitHub remote now — re-detected: the PR features are available"),
         "tasks.queue.pause": ("暂停", "Pause"),
         "tasks.queue.openPR": ("打开 PR", "Open PR"),
         "tasks.queue.settings": ("队列设置：重命名 / 分支 / 基于分支 / PR 开关", "Queue settings: name, branch, base branch, PR switch"),

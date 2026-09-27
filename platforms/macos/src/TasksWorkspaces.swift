@@ -67,6 +67,23 @@ final class TaskWorkspaceRegistry {
         return runner
     }
 
+    /// Forget the runner of `path` so the next `runner(for:)` builds it again with a
+    /// fresh environment.
+    ///
+    /// An env captures facts about the workspace DIRECTORY (is it a git repository?
+    /// which base branch? which remote?), and a task can change them: a task literally
+    /// called 「初始化 git 仓库」 turns a plain directory into a repository — after which
+    /// the runner that was built with `canSwitchBranches = false` can never use a
+    /// branch, and the panel keeps saying 非 Git 仓库.
+    ///
+    /// The path stays in `reconciled`: the board on disk is still this run's board,
+    /// and reconciling again would mark an in-flight task as 失败. The caller must only
+    /// do this with NOTHING in flight in that workspace — two runners on one board
+    /// would step the same task twice.
+    func invalidate(_ path: String) {
+        runners.removeValue(forKey: path)
+    }
+
     /// Forget every non-current runner with nothing in flight: a workspace is worth
     /// keeping alive exactly while it is working.
     func prune() {
