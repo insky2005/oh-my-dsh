@@ -138,6 +138,14 @@ class DynamicFillView: NSView {
 final class ActivityBarButton: HoverButton {
     private let symbolName: String
     private var isActive = false
+    /// A small accent dot in the corner: "this panel is doing something right now"
+    /// (the tasks panel's runner, seen while the panel is closed). Independent of
+    /// setActive — a panel can be both the current one and busy.
+    private let activityDot = NSView()
+
+    var showsActivityDot = false {
+        didSet { activityDot.isHidden = !showsActivityDot }
+    }
 
     init(symbol: String, tooltip: String, action: Selector) {
         self.symbolName = symbol
@@ -152,6 +160,19 @@ final class ActivityBarButton: HoverButton {
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 40).isActive = true
         heightAnchor.constraint(equalToConstant: 34).isActive = true
+        // The dot sits in the button's top-right corner, on top of the icon.
+        activityDot.wantsLayer = true
+        activityDot.layer?.cornerRadius = 3
+        activityDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        activityDot.translatesAutoresizingMaskIntoConstraints = false
+        activityDot.isHidden = true
+        addSubview(activityDot)
+        NSLayoutConstraint.activate([
+            activityDot.widthAnchor.constraint(equalToConstant: 6),
+            activityDot.heightAnchor.constraint(equalToConstant: 6),
+            activityDot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            activityDot.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+        ])
         refreshIcon()
     }
 
@@ -172,6 +193,7 @@ final class ActivityBarButton: HoverButton {
 
     private func refreshIcon() {
         guard window != nil else { return }
+        activityDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let color: NSColor
         if isActive {
@@ -190,7 +212,7 @@ final class ActivityBarButton: HoverButton {
 /// appearance change — no contentTintColor dependency, so it stays visible in
 /// both light and dark mode and follows runtime appearance switches.
 final class BakedIconView: NSImageView {
-    private let symbolName: String
+    private var symbolName: String
 
     init(symbol: String) {
         self.symbolName = symbol
@@ -205,6 +227,14 @@ final class BakedIconView: NSImageView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        refresh()
+    }
+
+    /// Swap the drawn symbol (the tasks panel's empty state follows the reason
+    /// the list is empty).
+    func setSymbol(_ name: String) {
+        guard name != symbolName else { return }
+        symbolName = name
         refresh()
     }
 
@@ -281,7 +311,10 @@ final class PanelIconButton: HoverButton {
 /// NSTextField cells were observed NOT rendering in some environments, so the
 /// panel headers avoid them. The color is resolved explicitly against the
 /// effective appearance.
-final class HeaderLabel: NSView {
+///
+/// Not final: FittingHeaderLabel narrows it to a variant that keeps its text
+/// inside its own frame (this one draws past it).
+class HeaderLabel: NSView {
     var text: String = "" {
         didSet {
             invalidateIntrinsicContentSize()
@@ -304,6 +337,47 @@ final class HeaderLabel: NSView {
     }
 }
 
+/// A header label that keeps its text INSIDE its own bounds.
+///
+/// HeaderLabel draws with NSString.draw(at:) — no clipping and no ellipsis — so an
+/// over-long text (a long workspace name in a narrow panel) would be painted UNDER
+/// whatever sits beside it in the header row. Auto Layout already clamps this
+/// label's frame in front of its neighbours; the label then truncates its own text
+/// to that frame on every layout pass, i.e. whenever the panel is resized.
+final class FittingHeaderLabel: HeaderLabel {
+    /// The text the caller asked for. What gets DRAWN is this, fitted to bounds.
+    var fullText: String = "" {
+        didSet {
+            toolTip = fullText.isEmpty ? nil : fullText
+            needsLayout = true
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        let fitted = FittingHeaderLabel.fitted(fullText, width: bounds.width)
+        if text != fitted { text = fitted }
+    }
+
+    /// `text` truncated with a trailing ellipsis so it fits `width`, measured in
+    /// the same 11pt system font HeaderLabel draws with. A zero width (before the
+    /// first layout pass) yields an empty label rather than a flash of over-long
+    /// text.
+    static func fitted(_ text: String, width: CGFloat) -> String {
+        guard !text.isEmpty, width > 0 else { return "" }
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11)]
+        let full = text as NSString
+        if full.size(withAttributes: attrs).width <= width { return text }
+        var cut = full
+        while cut.length > 1 {
+            cut = cut.substring(to: cut.length - 1) as NSString
+            let candidate = (cut as String) + "…"
+            if (candidate as NSString).size(withAttributes: attrs).width <= width { return candidate }
+        }
+        return "…"
+    }
+}
+
 /// A header icon button drawn ENTIRELY with Core Graphics paths — no cell, no
 /// NSImage, no contentTintColor — so it renders identically everywhere
 /// (bezier-path drawing is the same pipeline as the panel backgrounds and the
@@ -318,6 +392,11 @@ final class CustomIconButton: NSView {
     }
     /// hover 高亮色（默认走 PanelControl 的高亮档；页签关闭按钮用红色更明显）。
     var hoverColor: NSColor? = nil {
+        didSet { needsDisplay = true }
+    }
+    /// 常驻的图标颜色：留给「开/关」型按钮（任务的「完成后自动开 PR」开着时用强调色）
+    /// —— nil 时沿用默认的黑/白图标色，等价于此前所有按钮的行为。
+    var tintColor: NSColor? = nil {
         didSet { needsDisplay = true }
     }
     private let glyph: Glyph
@@ -376,7 +455,7 @@ final class CustomIconButton: NSView {
             NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 5, yRadius: 5).fill()
         }
         let base: NSColor = dark ? NSColor(white: 0.9, alpha: 1) : NSColor(white: 0.25, alpha: 1)
-        let color = isEnabled ? base : base.withAlphaComponent(0.35)
+        let color = isEnabled ? (tintColor ?? base) : base.withAlphaComponent(0.35)
 
         // SF Symbol glyphs render via a tinted system image (crisp, obvious).
         if case .symbol(let name) = glyph {

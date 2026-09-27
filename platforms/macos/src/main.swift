@@ -585,48 +585,170 @@ enum L10n {
                                         "tasks.title": ("任务", "Tasks"),
         "tasks.configHint": ("配置 GitHub Token", "Configure GitHub Token"),
         "tasks.refreshHint": ("刷新 Issues", "Refresh Issues"),
-        "tasks.runAllHint": ("全部处理（串行）", "Process All (serial)"),
+        "tasks.runAllHint": ("全部处理：把还在等着的任务排队跑起来（串行）", "Process all: queue up everything that is waiting and start it (one at a time)"),
+        "tasks.runAllNone": ("没有待处理的任务", "Nothing is waiting"),
+        "tasks.runAllInfo": ("%d 个任务各自一个队列与一条分支，串行执行（同一时刻只有一个在跑）。", "%d task(s) — each in its own queue and branch, run one after another (one at a time)."),
+        "tasks.runAllInfoNoGit": ("%d 个任务各自一个队列，串行执行（同一时刻只有一个在跑）；当前目录不是 git 仓库：不切分支、也不开 PR。", "%d task(s) — each in its own queue, run one after another (one at a time). This directory is not a git repository: no branch switching and no PRs."),
+        "tasks.runAllInfoWithPR": ("队列跑完时会从它自己的分支开一个 PR。", "Each queue opens a PR from its own branch when it finishes."),
+        "tasks.runAllInfoNoPR": ("当前工作区不是 GitHub 仓库：只切分支，不开 PR。", "Not a GitHub repo: branches only, no PRs."),
+        "tasks.runAllTitle": ("把 %d 个待处理任务都跑起来？", "Start all %d waiting tasks?"),
+        "tasks.runAllConfirm": ("全部处理", "Process All"),
+        "tasks.runAllStarted": ("已排队 %d 个任务（各自一个队列与分支，串行执行）", "Queued %d task(s) — each in its own queue and branch, run one after another"),
         "tasks.noRepo": ("当前工作区不是 GitHub 仓库", "Current workspace is not a GitHub repo"),
         "tasks.loading": ("加载 Issues…", "Loading issues…"),
         "tasks.loadFailed": ("加载 Issues 失败（网络/限流/Token？）", "Failed to load issues (network/rate-limit/token?)"),
         "tasks.running": ("正在处理 #%d…", "Processing #%d…"),
-        "tasks.creatingPr": ("正在创建 #%d 的 PR…", "Creating PR for #%d…"),
-        "tasks.sessionLabel": ("任务会话", "task session"),
         "tasks.errBranch": ("切换/创建分支失败（分支已存在或被占用？）", "Failed to create/checkout branch (exists or busy?)"),
         "tasks.errSession": ("创建 dsh 会话失败", "Failed to create dsh session"),
         "tasks.errPrompt": ("向会话发送任务失败", "Failed to prompt the session"),
         "tasks.errTimeout": ("任务超时（30 分钟）", "Task timed out (30 minutes)"),
-        "tasks.errNoPush": ("分支未推送到远端（代理未 push？）", "Branch was not pushed (agent didn't push?)"),
-        "tasks.errPR": ("创建 PR 失败", "Failed to create PR"),
-        "tasks.failTitle": ("任务失败", "Task Failed"),
-        "tasks.prTitle": ("fix(#%d)", "fix(#%d)"),
-        "tasks.prBody": ("自动修复 GitHub issue #%d（由 oh-my-dsh 任务面板处理）", "Automated fix for GitHub issue #%d (processed by oh-my-dsh task panel)"),
+        "tasks.errUnknown": ("未知原因", "unknown reason"),
+        "tasks.errNoPush": ("代理没有把分支 push 到远端，这个队列开不出 PR（重试一次，或把队列的「自动开 PR」关掉）", "The agent did not push the branch, so this queue cannot open its PR (retry, or turn the queue's auto-PR off)"),
+        "tasks.errSessionGone": ("任务的会话已经不在 dsh 里了（被删掉，或 dsh 重启过）——没人知道它做到哪一步", "The task's session is gone from dsh (deleted, or dsh was restarted) — nobody can say how far the work got"),
+        "tasks.errPR": ("上一次开 PR 没有成功（会话结束了却没给出 PR 链接）——点这里再开一次；详情看那个会话与日志", "The last PR attempt produced nothing (the session ended without a PR URL) — click to try again; see that session and the log"),
+        "tasks.errName": ("任务标题不能为空", "A task title is required"),
+        "tasks.errInterrupted": ("上次运行被中断（会话已随 App 退出结束）", "Interrupted: the session ended with the app"),
+        "tasks.errNotGit": ("当前工作区不是 git 仓库：切不到队列的分支（点卡片上的「不切分支并重试」，或清空该队列的分支即可运行）", "This workspace is not a git repository, so the queue's branch cannot be checked out — use “Retry without a branch” on the card, or clear the queue's branch"),
+        "tasks.errDirtyTree": ("工作区有未提交改动，已停止切换分支（请先 commit 或 stash）", "The worktree has uncommitted changes; branch switching stopped (commit or stash first)"),
+        "tasks.errPull": ("拉取基线分支失败（网络不通或分支已分叉？）", "Failed to pull the base branch (no network, or the branch diverged?)"),
         "tasks.configTitle": ("GitHub Token", "GitHub Token"),
-        "tasks.configInfo": ("GitHub token（按当前仓库保存：Keychain + ~/.dsh/tokens/<owner>-<repo> 文件双写，App 与外部工具共用）。仅用于拉取 issues、创建 PR、评论关闭 issue；公开仓库可留空。", "GitHub token (saved per repo: written to both Keychain and ~/.dsh/tokens/<owner>-<repo>, shared with external tools). Used only to fetch issues, create PRs, comment & close issues; public repos may leave empty."),
+        "tasks.configInfo": ("GitHub token（只写文件：有当前仓库时写 ~/.dsh/tokens/<owner>-<repo>，否则写通用 ~/.dsh/gh-token；chmod 600，App 与外部工具共用）。解析顺序：文件专属 → 文件通用；不再读取 macOS 钥匙串。仅用于拉取 issues、创建 PR、评论关闭 issue；公开仓库可留空。", "GitHub token (written to a FILE only: ~/.dsh/tokens/<owner>-<repo> when a repo is known, otherwise the generic ~/.dsh/gh-token; chmod 600, shared with external tools). Resolution: per-repo file → generic file; the macOS Keychain is no longer read. Used only to fetch issues, create PRs, comment & close issues; public repos may leave empty."),
         "tasks.tokenPlaceholder": ("ghp_xxx（可选）", "ghp_xxx (optional)"),
-        "tasks.detailTitle": ("Issue #%d", "Issue #%d"),
-        "tasks.detailLabels": ("标签：%@", "Labels: %@"),
-        "tasks.detailBranch": ("分支：%@", "Branch: %@"),
         "tasks.detailPR": ("PR：%@", "PR: %@"),
-        "tasks.detailState": ("状态：%@", "State: %@"),
         "tasks.state.pending": ("待处理", "Pending"),
+        "tasks.state.queued": ("队列中", "Queued"),
         "tasks.state.running": ("处理中", "Running"),
         "tasks.state.done": ("已完成", "Done"),
         "tasks.state.failed": ("失败", "Failed"),
         "tasks.state.cancelled": ("已取消", "Cancelled"),
         "tasks.state.closed": ("已关闭", "Closed"),
         "tasks.detailProcess": ("处理", "Process"),
-        "tasks.detailOpenPR": ("打开 PR", "Open PR"),
+        "tasks.queue.add": ("加入队列", "Add to Queue"),
+        "tasks.queue.addHint": ("加入队列：点开选一个已有队列，或新建队列（新建在最上面）", "Add to Queue: pick an existing queue, or create one (New Queue is first)"),
+        "tasks.queue.remove": ("移出队列", "Leave Queue"),
         "tasks.detailRetry": ("重试", "Retry"),
+        "tasks.detailSkip": ("跳过并继续", "Skip & Continue"),
+        "tasks.detailOpenSession": ("打开会话", "Open session"),
+        "tasks.detailReview": ("审查改动", "Review changes"),
+        "tasks.openingSession": ("正在打开会话…", "Opening the session…"),
+        "tasks.card.runningFor": ("已运行 %@（上限 %d 分钟，到点会取消会话）", "Running for %@ (limit %d min — the session is cancelled at the deadline)"),
+        "tasks.queue.state.waiting": ("等待中", "Waiting"),
+        "tasks.cancelDeferred": ("任务正在启动，已记住取消：会话一建好就取消", "The task is still starting — the cancel is queued and applied as soon as its session exists"),
+        "tasks.cancelFinishing": ("任务已经在收尾（推送 / 开 PR），没有可取消的东西了", "The task is already finishing (push / PR) — there is nothing left to cancel"),
+        "tasks.detailRetryNoBranch": ("不切分支并重试", "Retry without a branch"),
         "tasks.detailCancelTask": ("取消任务", "Cancel Task"),
-        "tasks.detailClose": ("关闭", "Close"),
         "tasks.detailCommentClose": ("评论并关闭 Issue", "Comment & Close Issue"),
         "tasks.detailOpenIssue": ("打开 Issue", "Open Issue"),
+        "tasks.filter.all": ("全部", "All"),
+        "tasks.filter.issues": ("Issue", "Issues"),
+        "tasks.filter.manual": ("手动", "Manual"),
+        "tasks.source.github": ("Issue #%d", "Issue #%d"),
+        "tasks.source.manual": ("手动", "Manual"),
+        "tasks.card.queuedAt": ("队列中 #%d", "Queued #%d"),
+        "tasks.card.edit": ("编辑", "Edit"),
+        "tasks.card.deleteRefused": ("任务已经开始运行，没有删除", "The task started running, so it was not deleted"),
+        "tasks.card.delete": ("删除", "Delete"),
+        "tasks.detailQueue": ("队列：%@", "Queue: %@"),
+        "tasks.detailSession": ("会话：%@", "Session: %@"),
+        "tasks.stat.queues": ("队列", "Queues"),
+        "tasks.stat.queued": ("排队", "Queued"),
+        "tasks.stat.running": ("运行", "Running"),
+        "tasks.stat.failed": ("失败", "Failed"),
+        "tasks.section.queues": ("队列 (%d)", "Queues (%d)"),
+        "tasks.section.unqueued": ("未入队 (%d)", "Not queued (%d)"),
+        "tasks.empty": ("还没有任务：点下面的「新建任务」写一个，或刷新拉取 GitHub issues。", "No tasks yet: use New Task below, or refresh to fetch GitHub issues."),
+        "tasks.emptyManualOnly": ("还没有任务：点下面的「新建任务」写一个。当前工作区不是 GitHub 仓库，issues 不可用，但手动任务与队列照常可用。", "No tasks yet: use New Task below. This workspace is not a GitHub repo, so issues are unavailable — manual tasks and queues still work."),
+        "tasks.noRepoShort": ("非 GitHub 仓库", "not a GitHub repo"),
+        "tasks.noGitShort": ("非 Git 仓库", "not a git repository"),
+        "tasks.githubUnavailable": ("当前工作区不是 GitHub 仓库：GitHub Token 与 issues 都不可用（手动任务与队列照常可用）", "Not a GitHub repo: no GitHub token and no issues (manual tasks and queues still work)"),
+        "tasks.emptyFiltered": ("当前筛选下没有任务。", "No tasks match the current filter."),
+        "tasks.queue.new": ("新建队列…", "New Queue…"),
+        "tasks.queue.newButton": ("新建队列", "New Queue"),
+        "tasks.queue.newTitle": ("新建队列", "New Queue"),
+        "tasks.queue.newInfo": ("任务加入该队列后按顺序执行；同一队列的任务共享一个分支。", "The task joins this queue and runs in order; every task in a queue shares one branch."),
+        "tasks.queue.create": ("创建并入队", "Create & Join"),
+        "tasks.queue.createOnly": ("创建队列", "Create Queue"),
+        "tasks.queue.name": ("队列名", "Queue name"),
+        "tasks.queue.branch": ("分支", "Branch"),
+        "tasks.queue.branchPlaceholderCreate": ("留空 = 按队列名自动生成", "Empty = derive it from the queue name"),
+        "tasks.queue.branchAuto": ("自动生成（如 feature/queue-1a2b）", "derived from the name (e.g. feature/queue-1a2b)"),
+        "tasks.queue.branchPlaceholderEdit": ("不切分支（在当前分支上跑）", "Stay on the current branch"),
+        "tasks.queue.skipBranch": ("不切分支：在当前分支 / 目录上跑", "Don't switch branches"),
+        "tasks.queue.notGitRepo": ("当前目录不是 git 仓库：队列不会切分支（任务照常运行）", "Not a git repository: this queue will not switch branches (tasks still run)"),
+        "tasks.queue.branchSkipped": ("队列不会切分支：任务在当前分支 / 目录上运行", "The queue will not switch branches — tasks run where they are now"),
+        "tasks.queue.base": ("基于分支", "Base branch"),
+        "tasks.queue.createPR": ("队列完成后自动创建 PR", "Open a PR when the queue finishes"),
+        "tasks.queue.autoPR": ("完成后自动创建 PR", "Open a PR when finished"),
+        "tasks.queue.autoPROn": ("完成后自动开 PR：已开启（点一下关闭）", "Open a PR when the queue finishes: ON (click to turn off)"),
+        "tasks.queue.autoPROff": ("完成后自动开 PR：已关闭（点一下开启）", "Open a PR when the queue finishes: OFF (click to turn on)"),
+        "tasks.queue.start": ("开始", "Start"),
+        "tasks.queue.continue": ("继续：跳过失败的任务，跑下一个", "Continue: skip the failed task and run the next one"),
+        "tasks.otherFinished": ("%@ 的任务「%@」已完成", "%@ finished “%@”"),
+        "tasks.otherFailed": ("%@ 的任务「%@」失败了", "%@ failed “%@”"),
+        "tasks.otherWorkspaces": ("其他工作区有 %d 个任务在跑", "%d task(s) running in other workspaces"),
+        "tasks.otherWorkspacesHint": ("其他工作区正在跑任务（点这里切过去）", "Tasks are running in other workspaces (click to switch)"),
+        "tasks.recovered": ("上次运行被中断：%d 个任务已标为失败、%d 个队列已暂停（不会自动重跑）", "Interrupted last run: %d task(s) marked failed, %d queue(s) paused (nothing restarts by itself)"),
+        "tasks.gitAppeared": ("这个目录现在是 git 仓库 —— 已重新识别工作区：新队列可以使用分支", "This directory is a git repository now — workspace re-detected: new queues can use a branch"),
+        "tasks.remoteAppeared": ("这个工作区现在有 GitHub 远端 —— 已重新识别：PR 相关功能已启用", "This workspace has a GitHub remote now — re-detected: the PR features are available"),
+        "tasks.queue.pause": ("暂停", "Pause"),
+        "tasks.queue.openPR": ("打开 PR", "Open PR"),
+        // PR 会话（§V2-6）：任务只 commit，push 与开 PR 由队列结束后单独一个会话负责
+        "tasks.queue.prSessionName": ("开 PR：%@", "Open PR: %@"),
+        "tasks.prOpening": ("正在开 PR（队列「%@」）：由单独的会话推送分支、总结改动并创建 PR…", "Opening the PR for %@ — a dedicated session pushes the branch, summarizes the changes and creates it…"),
+        "tasks.errPRStart": ("开不了 PR：这个队列没有分支、当前工作区没有 GitHub 远端，或已经有一个 PR 会话在跑（详见日志）", "Cannot open a PR: the queue has no branch, this workspace has no GitHub remote, or a PR session is already running (see the log)"),
+        "tasks.errPRNoBranch": ("这个队列不切分支：没有可以开 PR 的分支（在队列设置里给它一条分支）", "This queue does not switch branches, so there is no branch to open a PR from (give it one in the queue settings)"),
+        "tasks.errPRNoRemote": ("当前工作区不是 GitHub 仓库：没有可以开 PR 的远端", "This workspace is not a GitHub repo: there is no remote to open a PR against"),
+        "tasks.errPRSession": ("没能启动开 PR 的会话（dsh 建会话/发提示词失败）——可以点这里再试一次", "Could not start the PR session (session creation or prompt failed) — click here to retry"),
+        "tasks.detailReport": ("汇报", "Report"),
+        // 卡片上的行标（无障碍描述；图标本身是静默的第三档灰）
+        "tasks.glyph.task": ("任务", "Task"),
+        "tasks.glyph.queue": ("队列", "Queue"),
+        "tasks.queue.settings": ("队列设置：重命名 / 分支 / 基于分支 / PR 开关", "Queue settings: name, branch, base branch, PR switch"),
+        "tasks.queue.editTitle": ("队列设置", "Queue Settings"),
+        "tasks.queue.editInfo": ("队列名、分支、基于分支与 PR 开关；队内任务按顺序共用这一条分支。", "Name, branch, base branch and the PR switch; every task in the queue shares this one branch."),
+        "tasks.queue.nameHint": ("例如：深色模式改造", "e.g. Dark mode rework"),
+        "tasks.queue.branchWillUse": ("将使用分支：%@", "Branch: %@"),
+        "tasks.queue.prUnavailable": ("当前工作区不是 GitHub 仓库：队列只切分支 + 推送，不创建 PR", "Not a GitHub repo: the queue only switches branch and pushes — there is no PR to open"),
+        "tasks.queue.advanced": ("高级设置", "Advanced"),
+        "tasks.queue.created": ("已创建队列「%@」", "Created queue %@"),
+        "tasks.queue.updated": ("已更新队列「%@」", "Updated queue %@"),
+        "tasks.queue.branchDropped": ("队列「%@」已改为不切分支，正在重试", "Queue %@ no longer switches branches — retrying"),
+        "tasks.queue.deleteRefused": ("队列里有任务在运行：先取消它，再删队列", "A task in this queue is running — cancel it first, then delete the queue"),
+        "tasks.queue.updateFailed": ("队列已经不存在，改动没有保存", "The queue no longer exists, so the change was not saved"),
+        "tasks.queue.delete": ("删除队列", "Delete Queue"),
+        "tasks.queue.state.active": ("活跃", "Active"),
+        "tasks.queue.state.paused": ("已暂停", "Paused"),
+        "tasks.queue.state.finished": ("已完成", "Finished"),
+        "tasks.queue.noBranch": ("不切分支", "No branch"),
+        "tasks.queue.failedCount": ("%d 个失败", "%d failed"),
+        // PR 的标题与正文不再由壳层套模板：开 PR 的会话读完真实 diff 之后自己写
+        // （§V2-6），所以这两条旧文案随 REST createPR 一起删掉。
+        "tasks.queue.creatingPR": ("正在为队列「%@」创建 PR…", "Creating the PR for queue %@…"),
+        "tasks.new.title": ("新建任务", "New Task"),
+        "tasks.new.editTitle": ("编辑任务", "Edit Task"),
+        "tasks.new.info": ("第一行是任务标题，其余行是任务描述（单行 = 两者）；⌘↩ 创建。", "First line: the title. The rest: the description (one line = both). ⌘↩ creates."),
+        "tasks.new.editInfo": ("第一行是标题，其余行是描述；保存后立即写回任务列表（⌘↩ 保存，Esc 取消）。", "First line is the title, the rest is the description; saving writes it straight back to the list (⌘↩ saves, Esc cancels)."),
+        "tasks.new.done": ("完成", "Done"),
+        "tasks.new.content": ("任务内容", "Task"),
+        "tasks.new.contentHint": ("第一行是任务标题，其余行是任务描述", "First line: the task title — the rest: its description"),
+        "tasks.new.create": ("创建", "Create"),
+        "tasks.new.save": ("保存", "Save"),
+        "tasks.new.created": ("已创建任务「%@」（未入队）", "Created task %@ (not queued)"),
+        "tasks.new.editRefused": ("任务已经开始运行，改动没有保存（会话里已经是旧内容）", "The task already started running, so the edit was not saved (its session holds the old text)"),
+        "tasks.new.updated": ("已更新任务「%@」", "Updated task %@"),
+        "tasks.new.hint": ("新建任务", "New Task"),
+        "tasks.errQueueName": ("队列名不能为空", "A queue name is required"),
+        "tasks.errNoWorkspace": ("还没确定工作区，无法创建任务（切换到某个会话/工作区后再试）", "No workspace resolved yet, so a task cannot be created — switch to a session/workspace and try again"),
+        "tasks.deleteTaskTitle": ("删除任务「%@」？", "Delete task %@?"),
+        "tasks.deleteTaskInfo": ("任务记录会从本机移除；会话与分支保留，不会被删除。", "The task record is removed from this machine; its session and branch are kept."),
+        "tasks.deleteQueueTitle": ("删除队列「%@」？", "Delete queue %@?"),
+        "tasks.deleteQueueInfo": ("队列内 %d 个任务会回到「未入队」；已完成任务的记录保留。", "Its %d task(s) return to the not-queued area; finished records are kept."),
         "tasks.commentCloseTitle": ("评论并关闭 Issue #%d", "Comment & Close Issue #%d"),
         "tasks.commentCloseInfo": ("将发布一条评论并关闭该 issue（需 GitHub token）。可编辑下方评论内容：", "Posts a comment and closes the issue (needs a GitHub token). You can edit the comment below:"),
-        "tasks.commentCloseDone": ("已评论并关闭 issue #%d", "Commented & closed issue #%d"),
         "tasks.commentCloseFailed": ("评论/关闭失败（检查 token 与网络）", "Comment/close failed (check token & network)"),
         "tasks.commentTemplate": ("已由 oh-my-dsh 任务面板处理完成，对应 PR：#%@", "Processed by the oh-my-dsh task panel; PR: %@"),
+        "tasks.commentTemplateNoPR": ("已由 oh-my-dsh 任务面板处理完成。", "Processed by the oh-my-dsh task panel."),
+        "tasks.commentEmpty": ("评论是空的，没有提交（对话框在评论为空时不会执行）", "The comment is empty, so nothing was submitted (an empty comment is never posted)"),
         // Projects panel (a workspace = a directory under the projects root)
         "projects.title": ("项目", "Projects"),
         "projects.rootLabel": ("根目录：%@", "Root: %@"),
@@ -655,6 +777,7 @@ enum L10n {
         "projects.newSessionFallback": ("会话已创建，但没能在 dsh web 侧栏定位它：请在侧栏「%@」工作区行点「+」打开", "The session was created, but dsh web's sidebar has no row for it: click “+” on the “%@” workspace row to open it"),
         "projects.openFailed": ("未能在 dsh web 侧栏定位该会话（%@…）：请在侧栏点开对应工作区手动选择", "Could not find that session in dsh web's sidebar (%@…): open the workspace in the sidebar and pick it there"),
         "projects.openFailedNoSession": ("dsh web 还没有列出这条会话（%@…）：稍候片刻再点，或直接在侧栏选择", "dsh web does not list that session yet (%@…): retry in a moment, or pick it in the sidebar"),
+        "projects.openFailedBridge": ("打开会话失败（%@…）：dsh web 页面报错，详见应用日志", "Could not open that session (%@…): the dsh web page threw — see the app log"),
         "projects.settingsSection": ("项目", "Projects"),
         "projects.settingsRootHint": ("默认：%@（留空即用默认）", "Default: %@ (leave empty to use it)"),
         "projects.settingsPick": ("选择…", "Choose…"),
@@ -2271,6 +2394,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.projects)
             AppLog.shared.log("projects self-test enabled")
         }
+        // Tasks self-test hook (debugging / QA): opens the task panel. With
+        // DSH_TASKS_TEST_PATH=<repo> it loads that repo's .dsh/tasks/ board
+        // instead of waiting for the workspace to resolve (fixture QA).
+        if ProcessInfo.processInfo.environment["DSH_TASKS_TEST"] == "1" {
+            setRightPanel(.tasks)
+            AppLog.shared.log("tasks self-test enabled")
+        }
         // Panel sweep hook (QA only): DSH_PANEL_TEST="projects,files,terminal,wiki,
         // tasks,browser,channel,review,skills" shows every named panel in sequence,
         // so a dsh upgrade can be checked end to end (with DSH_UI_DEBUG=1 each one
@@ -2352,6 +2482,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tasksPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
         tasksPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
         tasksPanel.workspacePath = { [weak self] in self?.activeWorkspacePath() }
+        // The task panel's session actions: both land in machinery the shell has
+        // had all along — the dsh-web session bridge (ChannelPanel uses it) and the
+        // audit panel, which can be pointed at any session.
+        tasksPanel.onOpenSession = { [weak self] sessionId in
+            // A failure comes back to the TASK panel's status line (see reportStatus):
+            // the click happened there, so the answer has to appear there.
+            self?.openDSHSession(sessionId, report: { [weak self] message in
+                self?.tasksPanel?.reportStatus(message)
+            })
+        }
+        tasksPanel.onReviewSession = { [weak self] sessionId in
+            guard let self = self else { return }
+            self.setRightPanel(.review)
+            self.reviewPanel.setActiveSession(sessionId)
+        }
+        // Running tasks are invisible while the tasks panel is closed: the activity
+        // bar gets a dot, and a task that finishes while the app is in the
+        // background asks for attention (dock bounce + badge, no permission needed).
+        tasksPanel.onRunStateChanged = { [weak self] busy in
+            self?.tasksBarButton?.showsActivityDot = busy
+        }
+        tasksPanel.onTaskFinished = { [weak self] workspace, title, ok in
+            self?.taskFinished(workspace: workspace, title: title, ok: ok)
+        }
+        // Another workspace is running a task: jump to it (the same re-root
+        // primitive the Projects panel's quick entries use).
+        tasksPanel.onSelectWorkspace = { [weak self] path in
+            guard let self = self else { return }
+            AppLog.shared.log("tasks: switching to the workspace running a task: " + path)
+            _ = self.adoptProjectDirectory(path)
+        }
 
         browserPanel = BrowserPanelController()
         AppLog.shared.log("launch: browserPanel created")
@@ -3857,6 +4018,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     // like a browser on dsh 0.1.2+: exchange the advertised launch
                     // token for its cookie once the server is up.
                     DshWebRPC.token = self.server.webToken
+                    // Every launch records whether the native RPC surface actually
+                    // authenticates: a fenced /api fails silently otherwise (401 →
+                    // nil → "it just did not work"), and the panels can only say
+                    // "failed". One line here answers it for good.
+                    Self.probeNativeRPC(port: self.server.port)
                     if DshWebRPC.token == nil {
                         // Without the launch token nothing on /api can authenticate:
                         // session/create and session/prompt answer 401, so wiki
@@ -4191,23 +4357,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// click into a page reload — and, because the reload replayed the request
     /// through webView(_:didFinish:), into an endless reload loop (~10 s apart)
     /// whenever the sidebar really had no row for that session id.
-    private func openDSHSession(_ sessionId: String, retry: Int = 1, workspaceName: String? = nil) {
+    /// - Parameter report: where a FAILURE should be shown. The caller knows which
+    ///   panel the user is looking at; without it the message went to the PROJECTS
+    ///   panel's status line, so an 「打开会话」 click in the task list looked like
+    ///   nothing had happened (2026-09-27).
+    private func openDSHSession(_ sessionId: String, retry: Int = 1, workspaceName: String? = nil,
+                                report: ((String) -> Void)? = nil) {
         guard let webView = webView else { return }
         guard !sessionId.isEmpty else { return }
         // One open per session at a time: overlapping chains (a fresh click racing
-        // a retry of the previous one) only produce confusing logs.
+        // a retry of the previous one) only produce confusing logs. The guard must not
+        // be permanent, though: a bridge call whose promise never settles would swallow
+        // every later click on the same session, silently — so it expires.
         if openInFlight == sessionId { return }
         openInFlight = sessionId
+        let inFlight = sessionId
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self = self, self.openInFlight == inFlight else { return }
+            self.openInFlight = nil
+            AppLog.shared.log("openDSHSession " + inFlight + ": the bridge call never answered; the click is no longer blocked")
+        }
+        // ALWAYS pass workspaceName, even when there is none: callAsyncJavaScript turns
+        // the arguments into local variables of the body, so a body that mentions an
+        // argument nobody passed throws a ReferenceError — and THAT is what made
+        // 「打开会话」 do nothing at all from the TASKS panel (it has no workspace name to
+        // offer) while the same bridge worked from the projects panel (which always has
+        // one). The app log said it plainly: "bridge error: 发生了JavaScript异常". An empty
+        // string means 「no workspace hint」 to the page script (it checks `if (workspaceName)`).
         var args: [String: Any] = ["sessionId": sessionId]
-        if let name = workspaceName, !name.isEmpty { args["workspaceName"] = name }
-        let body = "return await window.__dshOpenSession(sessionId, workspaceName);"
+        args["workspaceName"] = (workspaceName?.isEmpty == false) ? workspaceName! : ""
+        // …and the body stays defensive about it as well, so a future caller that forgets
+        // the argument gets a lookup without the workspace hint instead of an exception.
+        let body = "return await window.__dshOpenSession(sessionId, typeof workspaceName === 'undefined' ? '' : workspaceName);"
         webView.callAsyncJavaScript(body, arguments: args, in: nil, in: .page) { [weak self] result in
             guard let self = self else { return }
             guard self.openInFlight == sessionId else { return }
             self.openInFlight = nil
             switch result {
             case .failure(let error):
+                // A JS exception is a deterministic failure: retrying it changes nothing,
+                // and logging it silently is how this looked like a dead button.
                 AppLog.shared.log("openDSHSession \(sessionId) bridge error: \(error.localizedDescription)")
+                self.reportOpenFailure(sessionId: sessionId, reason: "bridge-error",
+                                       workspaceName: workspaceName, report: report)
             case .success(let value):
                 guard let dict = value as? [String: Any] else {
                     AppLog.shared.log("openDSHSession \(sessionId): unexpected bridge result")
@@ -4221,11 +4413,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 AppLog.shared.log("openDSHSession \(sessionId): \(reason) \(Self.sidebarProbe(dict))")
                 if retry > 0 {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                        self?.openDSHSession(sessionId, retry: retry - 1, workspaceName: workspaceName)
+                        self?.openDSHSession(sessionId, retry: retry - 1, workspaceName: workspaceName,
+                                             report: report)
                     }
                     return
                 }
-                self.reportOpenFailure(sessionId: sessionId, reason: reason, workspaceName: workspaceName)
+                self.reportOpenFailure(sessionId: sessionId, reason: reason,
+                                       workspaceName: workspaceName, report: report)
             }
         }
     }
@@ -4240,17 +4434,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     /// Give up (no page reload): say what happened where the user is looking.
-    private func reportOpenFailure(sessionId: String, reason: String, workspaceName: String?) {
+    private func reportOpenFailure(sessionId: String, reason: String, workspaceName: String?,
+                                   report: ((String) -> Void)? = nil) {
         let short = String(sessionId.prefix(18))
         AppLog.shared.log("openDSHSession \(sessionId): giving up (\(reason)); the session is not in dsh web's sidebar")
         let message: String
         switch reason {
         case "no-session":
             message = L10n.tr("projects.openFailedNoSession", short)
+        case "bridge-error":
+            message = L10n.tr("projects.openFailedBridge", short)
         default:
             message = L10n.tr("projects.openFailed", short)
         }
-        projectsPanel?.setStatus(message, isError: true)
+        // The panel that ASKED hears it (where the user is looking); the projects panel
+        // keeps its own message when nobody claimed the report.
+        if let report = report {
+            report(message)
+        } else {
+            projectsPanel?.setStatus(message, isError: true)
+        }
     }
 
     // MARK: - Projects panel actions (a workspace = a directory under the root)
@@ -5749,6 +5952,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// it (its own "更改…" button goes the other way — panel → setting).
     func projectsRootDidChange() {
         projectsPanel?.workRootChanged()
+    }
+
+    /// A task just finished. Only worth interrupting for when the user is looking
+    /// somewhere else: bounce the dock icon once and leave a badge until the app is
+    /// focused again (UNUserNotification would need a permission prompt for the
+    /// same effect).
+    private func taskFinished(workspace: String, title: String, ok: Bool) {
+        // The workspace is named: several can be tracked at once, so "a task
+        // finished" alone would not tell the user where to look.
+        AppLog.shared.log("tasks: finished \(title) in \(workspace) (\(ok ? "done" : "failed"))")
+        guard !NSApp.isActive else { return }
+        NSApp.requestUserAttention(.informationalRequest)
+        NSApp.dockTile.badgeLabel = ok ? "✓" : "!"
+        AppLog.shared.log("tasks: app is in the background — dock attention + badge")
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // The badge is a "you were away" marker, not a permanent state.
+        if NSApp.dockTile.badgeLabel != nil { NSApp.dockTile.badgeLabel = nil }
+    }
+
+    /// One session/list on a background queue, logged WITH its reason when it
+    /// fails (see DshWebRPC.lastFailure). Called right after the launch token is
+    /// installed, so a broken native RPC is visible in app.log from the first
+    /// second instead of only as "the panel did nothing".
+    private static func probeNativeRPC(port: Int) {
+        DispatchQueue.global(qos: .utility).async {
+            let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port, timeout: 10)
+            if value != nil {
+                AppLog.shared.log("native RPC self-test: ok (port " + String(port) + ")")
+            } else {
+                AppLog.shared.log("native RPC self-test: FAILED — "
+                                  + (DshWebRPC.lastFailure ?? "no reason reported"))
+            }
+        }
     }
 
     /// The workspace directory the task panel should operate on: the shell's

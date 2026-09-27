@@ -179,6 +179,61 @@ eq(DshWebRPC.call(DshWebRPC.sessionCreate, ["cwd": "/tmp/x"], port: 6006)?["sess
    "workspace/not-found: the next call still uses the slash endpoint")
 DshWebRPC.perform = { fake.perform($0) }
 
+// MARK: - why a call failed (the log line that answers "it just did not work")
+
+DshWebRPC.resetForTests()
+
+// 1. A token-fenced /api answers 401 and we hold no launch token: the reason says
+//    exactly that (this is the shape that made every native RPC fail silently).
+DshWebRPC.token = nil
+DshWebRPC.perform = { request in
+    if requestKey(request).hasPrefix("GET ") { return (303, nil) }
+    return (401, nil)
+}
+check(DshWebRPC.call(DshWebRPC.sessionList, [:], port: 6020) == nil, "401 without a token: the call fails")
+let noToken = DshWebRPC.lastFailure ?? ""
+check(noToken.contains("session/list HTTP 401"), "the reason names the endpoint and the status (\(noToken))")
+check(noToken.contains("no launch token"), "and explains the 401: we never had a token")
+
+// 2. The server answered with a business error: its code and message are carried
+//    through (workspace/not-found was invisible before this).
+DshWebRPC.resetForTests()
+DshWebRPC.token = "tok"
+DshWebRPC.perform = { request in
+    if requestKey(request).hasPrefix("GET ") { return (303, nil) }
+    let err: [String: Any] = ["result": ["ok": false,
+                                         "error": ["code": "workspace/not-found", "message": "nope"]]]
+    return (200, try? JSONSerialization.data(withJSONObject: err))
+}
+check(DshWebRPC.call(DshWebRPC.sessionCreate, ["workspaceId": "w-x"], port: 6021) == nil, "the call fails")
+let business = DshWebRPC.lastFailure ?? ""
+check(business.contains("workspace/not-found"), "the reason carries the server code (\(business))")
+check(business.contains("nope"), "and its message")
+check(business.contains("legacy session.create"), "and that the legacy fallback failed too")
+
+// 3. A transport failure (no HTTP answer at all) is reported as such — status -1.
+DshWebRPC.resetForTests()
+DshWebRPC.token = "tok"
+DshWebRPC.perform = { request in
+    if requestKey(request).hasPrefix("GET ") { return (303, nil) }
+    return (-1, nil)
+}
+check(DshWebRPC.call(DshWebRPC.sessionList, [:], port: 6022) == nil, "no answer: the call fails")
+check((DshWebRPC.lastFailure ?? "").contains("HTTP -1"), "the reason says the request never got an HTTP answer")
+
+// 4. A successful call clears it: a later failure must not inherit an older story.
+DshWebRPC.resetForTests()
+DshWebRPC.perform = { request in
+    if requestKey(request).hasPrefix("GET ") { return (303, nil) }
+    guard let body = request.httpBody,
+          let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+          (obj["method"] as? String) == "session/list" else { return (401, nil) }
+    return (200, try? JSONSerialization.data(withJSONObject: okValue(["items": []])))
+}
+check(DshWebRPC.call(DshWebRPC.sessionList, [:], port: 6023) != nil, "the call succeeds")
+eq(DshWebRPC.lastFailure, "", "a success clears the reason")
+DshWebRPC.perform = { fake.perform($0) }
+
 // MARK: - Persisted workspace store (dsh >= 0.1.2 fallback)
 
 let home = NSTemporaryDirectory() + "dsh-rpc-test-" + UUID().uuidString

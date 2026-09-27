@@ -33,6 +33,10 @@
  *   node core/bin/ohmy-core.js review audit <sessionId> [--workspace <dir>] [--dsh-home <dir>] [--max-entries <n>]
  *   node core/bin/ohmy-core.js review audit-file <path.jsonl[.zstd]> [--workspace <dir>] [--max-entries <n>]
  *       -- READ-ONLY session-log change audit (Review panel; see docs/review-panel-design.md)
+ *   node core/bin/ohmy-core.js brief report <sessionId> [--workspace <dir>] [--dsh-home <dir>]
+ *       -- the agent's LAST text message of a session, used as the tasks panel's
+ *          交接简报 so the next task in a queue knows what the previous one did
+
  */
 
 const core = require('../index');
@@ -245,6 +249,28 @@ function println(s) {
         setInterval(() => {}, 1 << 30);
       } else {
         fail('usage: channel route <refsJson> <conversationId> <text> | normalize <eventJson> | state <current> <next> | login [--save <file>] | login-dingtalk [--save <file>] | listen <token> [--once] | reply <token> <to> <text> | run <channelId> <port> <refsJson> [--dsh-home <dir>] [--project-root <root>] [--dsh-token <token>]');
+      }
+      break;
+    case 'brief':
+      {
+        // The tasks panel's 交接简报: what the previous task in a queue last said.
+        // One session per task keeps each context small; this is how continuity is
+        // carried across them (docs/issue-runner-design.md §V2-6).
+        const flag = (name) => {
+          const i = rest.indexOf('--' + name);
+          return i >= 0 ? rest[i + 1] : undefined;
+        };
+        if (sub === 'report') {
+          const sessionId = rest[0];
+          if (!sessionId) fail('usage: brief report <sessionId> [--workspace <dir>] [--dsh-home <dir>]');
+          printJson(core.sessionReport({
+            sessionId,
+            workspace: flag('workspace'),
+            dshHome: flag('dsh-home'),
+          }));
+        } else {
+          fail('usage: brief report <sessionId> [--workspace <dir>] [--dsh-home <dir>]');
+        }
       }
       break;
     case 'review':
@@ -489,6 +515,6 @@ function println(s) {
       }
       break;
     default:
-      fail('usage: ohmy-core { ports | serving | upgrade | session | channel | snapshot | review } …');
+      fail('usage: ohmy-core { ports | serving | upgrade | session | channel | snapshot | review | brief } …');
   }
 })().catch((e) => { console.error(e); process.exit(1); });

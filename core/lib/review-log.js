@@ -696,6 +696,74 @@ function auditSession(options) {
   return auditSessionLog({ file: match.file, workspace: options.workspace || match.cwd });
 }
 
+/**
+ * Every text message the AGENT sent in an event list, in order.
+ *
+ * Assistant text lives in `assistant/message` events (`data.message.content[]`
+ * parts of type `text`). The streaming forms (`assistant/chunk`, `text-chunks`)
+ * carry the same text mid-flight and are deliberately ignored: the message event
+ * is the finished one.
+ *
+ * @param {Array<object>} events
+ * @returns {string[]}
+ */
+function assistantTexts(events) {
+  const out = [];
+  for (const event of events) {
+    if (!event || event.type !== 'assistant/message') continue;
+    const message = event.data && event.data.message;
+    if (!message || message.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    const text = message.content
+      .filter((p) => p && p.type === 'text' && typeof p.text === 'string')
+      .map((p) => p.text).join('\n').trim();
+    if (text) out.push(text);
+  }
+  return out;
+}
+
+/**
+ * The LAST thing the agent said in a session — its final report.
+ *
+ * One session per task (docs/issue-runner-design.md §V2-6) means the next task in
+ * a queue starts with no memory of the one before it, so the tasks panel hands it
+ * a 交接简报 built from this text plus the branch's commits. The report is NOT
+ * truncated: a shortened summary distorts exactly what the next task needs.
+ *
+ * @param {{sessionId: string, dshHome?: string, workspace?: string}} options
+ * @returns {{sessionId: string, file: string|null, cwd: string|null,
+ *            text: string|null, count: number, diagnostics: Array<object>}}
+ */
+function sessionReport(options) {
+  const diagnostics = [];
+  const none = (extra = {}) => ({
+    sessionId: options && options.sessionId, file: null, cwd: null, text: null, count: 0,
+    diagnostics, ...extra,
+  });
+  if (!options || !options.sessionId) {
+    diag(diagnostics, 'no-session-id', '[brief] 缺少 sessionId');
+    return none();
+  }
+  const listed = listSessionLogs({ dshHome: options.dshHome, workspace: options.workspace, limit: -1 });
+  const match = listed.sessions.filter((s) => s.id === options.sessionId)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0]
+    || listed.sessions.filter((s) => path.basename(s.dir) === options.sessionId)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+  if (!match) {
+    diag(diagnostics, 'session-not-found', '[brief] 未找到会话 ' + options.sessionId);
+    return none();
+  }
+  const events = parseEvents(decodeSessionLog(match.file, { diagnostics }), diagnostics);
+  const texts = assistantTexts(events);
+  return {
+    sessionId: match.id,
+    file: match.file,
+    cwd: match.cwd || null,
+    text: texts.length ? texts[texts.length - 1] : null,
+    count: texts.length,
+    diagnostics,
+  };
+}
+
 module.exports = {
   SESSION_LOG_FILES,
   parseSessionLogName,
@@ -711,6 +779,8 @@ module.exports = {
   buildAudit,
   auditSessionLog,
   auditSession,
+  assistantTexts,
+  sessionReport,
   relativize,
   bashLooksLikeWrite,
 };

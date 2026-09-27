@@ -7,6 +7,11 @@ button text — e.g. a "preview.switchDiscard" button after that key was renamed
 This lint makes the class of bug impossible:
 
   * FAIL: a literal `L10n.tr("…")` key that is not in the table;
+  * FAIL: a key handed to the UI AS DATA — the view models carry keys in
+    `primaryKey` / `stateKey` / `messageKey` / `headingKey` / `submitKey` /
+    `infoKey` / `problemKey` / `problem` / `key` and the views call `L10n.tr`
+    on them later, so the old check could not see a missing one. That is how
+    `tasks.queue.add` shipped as a raw key on the card's primary button;
   * FAIL: a duplicate key in the table;
   * FAIL: an entry whose Chinese or English string is empty (the table is meant
     to be bilingual, see AGENTS.md);
@@ -28,6 +33,15 @@ ENTRY = re.compile(r'("' + r'(?:[^"\\]|\\.)*' + r'")\s*:\s*\(\s*(' + STRING + r'
 KEY = re.compile(r'(' + STRING + r')\s*:\s*\(', re.S)
 TR_LITERAL = re.compile(r'L10n\.tr\(\s*(' + STRING + r')')
 ANY_LITERAL = re.compile(STRING)
+
+# 模型层里「值就是 L10n key」的槽位：视图只负责把模型里的 key 交给 L10n.tr()，
+# 因此这些槽位里的字面量同样是「必须存在于表里」的 key。
+NAMED_KEY_SLOTS = ("primaryKey", "stateKey", "messageKey", "headingKey", "submitKey",
+                   "infoKey", "problemKey", "problem", "key")
+NAMED_KEY = re.compile(r'\b(' + "|".join(NAMED_KEY_SLOTS) + r')\s*[:=]\s*(' + STRING + r')')
+# L10n key 的形状：全小写、点分（UserDefaults 的 "channel.global.list" 也长这样，
+# 但它不出现在上面这些槽位里；"terminal.autoCopy" 这类带大写的则直接排除）。
+L10N_SHAPE = re.compile(r'^[a-z][a-z0-9]*(\.[a-z0-9]+)+$')
 
 
 def unquote(text):
@@ -80,6 +94,21 @@ def main():
     missing = sorted(used - known)
     if missing:
         failures.append("L10n.tr keys missing from L10n.table: " + ", ".join(missing))
+
+    # Keys the models hand to the views as data (see NAMED_KEY above).
+    named_missing = {}
+    for path in sources:
+        text = path.read_text(encoding="utf-8")
+        if path == MAIN:
+            text = text.replace(region, "")
+        for slot, literal in NAMED_KEY.findall(text):
+            key = unquote(literal)
+            if L10N_SHAPE.match(key) and key not in known:
+                named_missing.setdefault(key, set()).add(path.name + ":" + slot)
+    if named_missing:
+        failures.append("keys carried by the view models but missing from L10n.table: "
+                        + ", ".join("%s (%s)" % (k, "; ".join(sorted(v)))
+                                    for k, v in sorted(named_missing.items())))
 
     seen = {}
     for k, _, _ in entries:
