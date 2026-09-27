@@ -101,8 +101,9 @@ do {
     let card = TaskCardModel.build(board.task(done.id)!, board: board, expanded: true, githubRepo: true)
     eq(card.stateBadge, "tasks.state.done", "a finished task is done")
     eq(card.tone, TaskTone.positive, "done is positive")
-    eq(card.primaryKey, "tasks.detailOpenPR", "a finished task offers the PR")
-    check(card.primaryEnabled, "the PR button is live when there is a PR")
+    eq(card.primaryKey, "tasks.detailOpenIssue", "完成的 issue 任务：主操作是 打开 Issue")
+    check(card.primaryAction == .openIssue, "…而它真的打开 issue")
+    check(!card.meta.isEmpty, "PR 仍然写在 meta 行里（小字），不是一枚按钮")
     check(card.canCommentClose, "a github task with a PR can be commented & closed")
     check(card.meta.contains("tasks.detailPR(o/r#42)"), "the PR is shortened in the meta line")
     check(!card.canEdit, "a github task is never edited from the card")
@@ -708,7 +709,9 @@ do {
 
     board.markDone(manual.id, prUrl: "https://github.com/o/r/pull/3")
     card = TaskCardModel.build(board.task(manual.id)!, board: board, expanded: true, githubRepo: false)
-    eq(card.primaryAction, .openPR, "已完成：打开 PR")
+    // 完成的手动任务没有主操作：PR 是队列的产物，队列头上有按钮（用户 2026-09-27）。
+    eq(card.primaryKey == nil, true, "已完成的手动任务：没有主按钮")
+    eq(card.primaryAction == nil, true, "也没有主操作可执行")
 
     var issueBoard = TaskBoard()
     let issue = TaskItem.github(number: 9, title: "Nine")
@@ -733,15 +736,15 @@ do {
     board.markRunning(issue.id)
     board.markDone(issue.id, prUrl: nil)
     var card = TaskCardModel.build(board.task(issue.id)!, board: board, expanded: true, githubRepo: true)
-    eq(card.primaryKey, "tasks.detailOpenPR", "主操作还是 打开 PR")
-    check(!card.primaryEnabled, "但没有 PR，它是灰的")
-    eq(card.primaryDisabledHintKey, "tasks.detailOpenPRNoPR", "灰按钮带着原因（tooltip）")
+    // 没有 PR 也一样：卡片的主操作是「打开 Issue」——有没有 PR 是队列的事（2026-09-27）。
+    eq(card.primaryKey, "tasks.detailOpenIssue", "主操作是 打开 Issue（与 PR 无关）")
+    check(card.primaryAction == .openIssue, "并且它真的打开 issue")
     check(card.canCommentClose, "评论并关闭仍然可用 —— 它并不需要 PR 链接")
 
-    // 有 PR 时：按钮可用，也就没有「为什么灰」这句话。
+    // 有 PR 时主操作不变：那一枚属于队列头，卡片这里不会因此多出/少掉什么。
     board.markDone(issue.id, prUrl: "https://github.com/o/r/pull/9")
     card = TaskCardModel.build(board.task(issue.id)!, board: board, expanded: true, githubRepo: true)
-    check(card.primaryEnabled, "有 PR 时按钮是活的")
+    eq(card.primaryKey, "tasks.detailOpenIssue", "有 PR 也不改主操作")
     eq(card.primaryDisabledHintKey, nil, "活着的按钮不需要解释")
     check(card.canCommentClose, "评论并关闭照样在")
 

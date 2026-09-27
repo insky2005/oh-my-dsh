@@ -1678,7 +1678,10 @@ final class IssueRunnerPanelController: NSObject {
         let taskID = task.id
         card.onToggle = { [weak self] in self?.toggleTask(taskID) }
         card.onPrimary = { [weak self] in
-            self?.primaryAction(task, action: model.primaryAction)
+            // A card with no primary never offers the button at all (finished manual
+            // task) — the guard is what keeps that state from reaching the switch.
+            guard let action = model.primaryAction else { return }
+            self?.primaryAction(task, action: action)
         }
         card.onQueue = { [weak self] anchor in
             self?.presentQueuePicker(for: taskID, from: anchor)
@@ -1772,8 +1775,7 @@ final class IssueRunnerPanelController: NSObject {
             _ = runner.dequeue(taskID: task.id)
         case .cancel:
             report(runner.cancelRunning())
-        case .openPR:
-            if let url = task.prUrl, let link = URL(string: url) { NSWorkspace.shared.open(link) }
+
         case .openIssue:
             openIssue(number: task.number ?? 0)
         case .retry(let clearsBranch):

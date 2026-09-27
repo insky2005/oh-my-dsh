@@ -468,8 +468,12 @@ final class TaskCardView: NSView {
     /// The expanded card's actions: the primary action as text, everything that
     /// is secondary as an icon button — three text buttons do not fit a narrow
     /// panel, and they made the card demand more width than the list had.
+    ///
+    /// A card WITHOUT a primary (a finished manual task: nothing left to do with it)
+    /// starts the row at the session/review icons — an empty leading slot, no gap.
     private func actionRow() -> NSView {
-        var views: [NSView] = [primaryControl()]
+        var views: [NSView] = []
+        if let primary = primaryControl() { views.append(primary) }
         // The session this task runs in: the two things the user wants right after
         // a task ran — look at it, and see what it changed. The panel hands the id
         // to the shell (openDSHSession / the audit panel), which needs nothing new.
@@ -507,14 +511,15 @@ final class TaskCardView: NSView {
     /// button (icon + label + chevron + hover highlight) — the exact control the
     /// files panel's 打开项目 button uses — and the list it opens drops right under
     /// it. Every other primary action is a plain button that just fires.
-    private func primaryControl() -> NSView {
+    private func primaryControl() -> NSView? {
+        guard let primaryKey = model.primaryKey else { return nil }   // 没有主操作（见 actionRow）
         guard model.canQueue else {
-            return actionButton(model.primaryKey, #selector(primaryTapped),
+            return actionButton(primaryKey, #selector(primaryTapped),
                                 enabled: model.primaryEnabled,
                                 disabledHintKey: model.primaryDisabledHintKey)
         }
         let button = PanelMenuButton(glyph: .symbol("rectangle.stack.badge.plus"),
-                                     title: L10n.tr(model.primaryKey),
+                                     title: L10n.tr(primaryKey),
                                      tooltip: L10n.tr("tasks.queue.addHint"))
         button.onShowMenu = { [weak self, weak button] in
             guard let button = button else { return }

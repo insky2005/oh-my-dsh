@@ -683,7 +683,7 @@ do {
     check(!descendants(loneCard, of: NSButton.self).contains { $0.title == "detailSkip" },
           "没有下一个任务就不给 跳过并继续")
 
-    // 已完成、没有 PR 的 issue 任务：主按钮灰着但带 tooltip 说明；评论并关闭仍在。
+    // 已完成、没有 PR 的 issue 任务：主按钮是「打开 Issue」（PR 归队列头管）；评论并关闭仍在。
     var doneBoard = TaskBoard()
     let issue = TaskItem.github(number: 5, title: "No PR")
     doneBoard.tasks = [issue]
@@ -695,10 +695,10 @@ do {
     let doneCard = TaskCardView(model: TaskCardModel.build(doneBoard.task(issue.id)!, board: doneBoard,
                                                           expanded: true, githubRepo: true))
     _ = layout(doneCard, width: 320)
-    let prButton = descendants(doneCard, of: NSButton.self).first { $0.title == "detailOpenPR" }
-    check(prButton != nil, "主按钮还是 打开 PR")
-    check(prButton?.isEnabled == false, "但它是灰的")
-    eq(prButton?.toolTip, "detailOpenPRNoPR", "灰按钮把原因写在 tooltip 里")
+    let openIssue = descendants(doneCard, of: NSButton.self).first { $0.title == "detailOpenIssue" }
+    check(openIssue != nil, "主按钮换成了 打开 Issue")
+    check(descendants(doneCard, of: NSButton.self).allSatisfy { $0.title != "detailOpenPR" },
+          "卡片上不再有「打开 PR」（那是队列头的按钮）")
     check(descendants(doneCard, of: NSButton.self).contains { $0.title == "detailCommentClose" },
           "评论并关闭照样出现（它不需要 PR）")
 }

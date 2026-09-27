@@ -38,20 +38,23 @@ struct TaskCardModel: Equatable {
         case processIssue
         case dequeue
         case cancel
-        case openPR
+        // 打开 PR 不再是卡片动作：队列头上那个按钮负责它（见 .done 分支的注释）。
         case openIssue
         /// 重试 — put the task back into ITS queue (and resume it). clearsBranch
         /// additionally drops the queue's branch first (the not-a-git-repo repair).
         case retry(clearsBranch: Bool)
     }
 
-    var primaryKey: String
+    /// The card's primary control. nil = this card has NO primary action (a finished
+    /// manual task: there is nothing left to do with it — its PR, if any, belongs to
+    /// the queue and is opened from the queue header).
+    var primaryKey: String?
     var primaryEnabled: Bool
     /// What pressing the primary control DOES. The panel switches on this instead
     /// of on the task's state: the state alone cannot tell 重试 (put it back into
     /// its queue) from 加入队列 / 处理 (that queue is gone — deleted — so there is
     /// nothing left to retry into).
-    var primaryAction: PrimaryAction
+    var primaryAction: PrimaryAction?
     /// The task failed because its queue asked for a branch in a directory that
     /// is not a git repository. That failure is fixable in one click — drop the
     /// queue's branch and run again — so the card's primary action does exactly
@@ -180,9 +183,10 @@ struct TaskCardModel: Equatable {
         let joinQueue = task.source == .manual && !hasQueue
             && (task.state == .pending || task.state == .failed || task.state == .cancelled)
 
-        var primaryKey = "tasks.detailProcess"
+        // nil = 这张卡片没有主操作（见下面 .done：完成的手动任务没什么可点的）。
+        var primaryKey: String? = "tasks.detailProcess"
         var primaryEnabled = true
-        var primaryAction = TaskCardModel.PrimaryAction.processIssue
+        var primaryAction: TaskCardModel.PrimaryAction? = .processIssue
         // Is there anything to walk PAST this failure to?
         let hasQueuedSibling = queue?.taskIds.contains { id in
             id != task.id && board.task(id)?.state == .queued
@@ -214,12 +218,18 @@ struct TaskCardModel: Equatable {
             primaryAction = .cancel
             canCancel = true
         case .done:
-            primaryKey = "tasks.detailOpenPR"
-            primaryAction = .openPR
-            primaryEnabled = task.prUrl != nil
-            // A finished task with no PR (creation failed, or the queue never asked
-            // for one) keeps the button — greyed, and now saying why.
-            if task.prUrl == nil { primaryDisabledHintKey = "tasks.detailOpenPRNoPR" }
+            // 卡片上没有「打开 PR」（用户 2026-09-27）：PR 是**队列**的产物（队列跑完后由
+            // 那个专门的会话开），打开它也在队列头上 —— 卡片再放一个按钮，只是在重复一件
+            // 别处已经说清楚的事（此前那个按钮还常常是灰的，因为它要求的 PR 属于队列）。
+            // issue 任务留着「打开 Issue」：那是这条任务自己的东西；手动任务完成之后没有
+            // 任何待办动作，于是**没有主按钮**（primaryKey == nil）。
+            if task.source == .github {
+                primaryKey = "tasks.detailOpenIssue"
+                primaryAction = .openIssue
+            } else {
+                primaryKey = nil
+                primaryAction = nil
+            }
         case .failed, .cancelled:
             if joinQueue {
                 // Its queue is gone: offer the honest next step instead of a 重试
