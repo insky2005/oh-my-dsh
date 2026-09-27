@@ -208,12 +208,16 @@ final class Harness {
                 // Same rules the panel uses: only a queue that will open a PR asks
                 // the agent to push, and only a SHARED queue claims to share a
                 // branch (a single-task queue does not).
+                // Same rules the panel uses — including the SHAPE of the workspace,
+                // which the panel probes at prompt time (a queue's first task can be
+                // the one that inits the repo or adds the GitHub remote).
+                let shape = TaskRepoShape.detect(isGit: gitRepo, hasGitHubRemote: github)
                 let sharedName = queue.flatMap { $0.autoCreated ? nil : $0.name }
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: sharedName,
-                                          pushes: (queue?.autoPR ?? false) && github,
+                                          pushes: (queue?.autoPR ?? false) && shape == .github,
                                           brief: brief,
-                                          gitAvailable: gitRepo)
+                                          shape: shape)
             },
             sessionReport: { id in dsh.report(id) },
             persist: { board in rec.persistCount += 1; _ = board },
@@ -856,7 +860,7 @@ final class WorkspaceHarness {
             prText: { _, branch in (title: "t", body: branch) },
             promptText: { task, _, brief in TaskPrompts.manual(title: task.title, body: task.body,
                                                               branch: nil, queueName: nil, pushes: false,
-                                                              brief: brief, gitAvailable: false) },
+                                                              brief: brief, shape: .plain) },
             persist: { board in self.boards[path] = board },
             persistIssueTask: { _ in },
             log: { _ in },
@@ -1183,6 +1187,40 @@ do {
     check(!prompt.contains("不要 git init"), "不再反过来禁止任务要的事")
     check(prompt.contains("默认不要 commit、不要 push"), "默认仍然不 commit / push")
     check(!prompt.contains("commit（建议 feat/fix"), "不会自相矛盾地要求 commit")
+    check(prompt.contains("git init（若还没建）→ git remote add origin"), "给出转换路径：init → remote add → push")
+}
+
+section("git 仓库但没有 GitHub 远端：说「没有远端」，不说「这个队列没开自动 PR」")
+do {
+    // 「队列开不开 PR」（队列设置）与「这个目录能不能开 PR」（有没有 GitHub 远端）是两件事。
+    // 旧文案把后者说成前者 —— 理由错在用户最需要真话的地方；而且这时候代理手里唯一有用的
+    // 那一步（git remote add origin <url>）一个字都没提。
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "把项目发到 GitHub", body: nil, id: "manual-gg005555")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane", branch: "feature/publish", autoPR: false)
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = Harness(board: board, github: false, gitRepo: true)
+    _ = h.runner.startQueue(queue.id)
+    let prompt = h.dsh.prompts["session-1"] ?? ""
+    check(prompt.contains("当前分支应为 feature/publish"), "仓库里照旧点名队列的分支")
+    check(prompt.contains("这个仓库还没有 GitHub 远端"), "说清真正的原因：没有远端")
+    check(!prompt.contains("这个队列没有开自动 PR"), "不再拿队列设置当理由")
+    check(prompt.contains("git remote add origin"), "给出把它变成 GitHub 仓库的那一步")
+    check(prompt.contains("不要 push"), "远端出现之前仍然不 push")
+
+    // 有 GitHub 远端时一切照旧：这个队列会开 PR，所以要求 push。
+    var prBoard = TaskBoard()
+    let prTask = TaskItem.manual(title: "改 README", body: nil, id: "manual-gg006666")
+    prBoard.tasks = [prTask]
+    let prQueue = prBoard.createQueue(name: "Lane", branch: "feature/docs", autoPR: true)
+    _ = prBoard.enqueue(taskID: prTask.id, into: prQueue.id)
+    let h2 = Harness(board: prBoard, github: true, gitRepo: true)
+    _ = h2.runner.startQueue(prQueue.id)
+    let prPrompt = h2.dsh.prompts["session-1"] ?? ""
+    check(prPrompt.contains("这个队列最后会开 PR"), "GitHub 工作区：要求 push（队列会开 PR）")
+    check(!prPrompt.contains("这个仓库还没有 GitHub 远端"), "不会反过来念叨没有远端")
+    check(!prPrompt.contains("git remote add origin"), "也不会给已经不需要的转换步骤")
 }
 
 section("刚 git init 的空仓库：没有基线可切，直接建分支（「初始化 git 仓库」之后紧接着的那个任务）")

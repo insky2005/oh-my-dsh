@@ -194,6 +194,37 @@ struct TaskRunnerEnv {
 
 // MARK: - Prompts
 
+/// What the workspace directory IS, as a task's prompt has to tell it apart.
+///
+/// Three states, not two, because the same rail says three different things — and
+/// because the states CONVERT, in both directions, by the user's own instructions:
+///
+/// 1. `.plain` — no repository at all. The shell's pipeline touches no git (§V2-7),
+///    and `git init` is exactly how a task turns this into the next state;
+/// 2. `.git` — a repository with no GitHub remote: branch and commit are real, a
+///    push has nowhere to go, and `git remote add origin <url>` is how it becomes
+///    the third. The reason a queue opens no PR here is the MISSING REMOTE, not a
+///    queue setting (the old wording blamed the queue);
+/// 3. `.github` — a GitHub remote: commit → push → PR is the real pipeline
+///    (§ push policy: only a queue that can open a PR asks for a push).
+///
+/// Probed when the PROMPT is written, never captured when the runner was built:
+/// the first task of a queue may be the one that inits the repository or adds the
+/// remote, and the task after it must not be told the old story (a queue never
+/// goes idle between its own tasks, so the panel's re-detection cannot step in).
+enum TaskRepoShape: Equatable {
+    case plain
+    case git
+    case github
+
+    /// "Not a repository" dominates: a directory with no work tree has no remote
+    /// either, whatever some probe says about one.
+    static func detect(isGit: Bool, hasGitHubRemote: Bool) -> TaskRepoShape {
+        guard isGit else { return .plain }
+        return hasGitHubRemote ? .github : .git
+    }
+}
+
 /// Texts handed to the agent: v1's issue-resolve instruction for issue tasks
 /// plus a generic one for manual tasks, with the same safety rails (one branch,
 /// run the tests, commit, push, never echo the token).
@@ -282,9 +313,13 @@ enum TaskPrompts {
     /// branch on the remote, and a queue that will not must NOT push — its work
     /// stays as local commits on the queue's branch (the agent is told so, or it
     /// pushes anyway out of habit).
+    ///
+    /// `shape` follows the WORKSPACE (see TaskRepoShape): it decides what the rails
+    /// may even ask for, and it names the way out of the two states a task can
+    /// convert — `git init` and `git remote add origin <url>`.
     static func manual(title: String, body: String?, branch: String?, queueName: String?,
                        pushes: Bool = true, brief: String? = nil,
-                       gitAvailable: Bool = true) -> String {
+                       shape: TaskRepoShape = .github) -> String {
         var lines: [String] = []
         lines.append("请完成以下任务：")
         lines.append("")
@@ -309,7 +344,7 @@ enum TaskPrompts {
         } else {
             lines.append("1. 本任务独立执行；")
         }
-        if !gitAvailable {
+        if shape == .plain {
             // Not a repository at all (§V2-7): the PIPELINE will not touch git, so
             // say that instead of asking for a branch/commit/push it can never honour.
             //
@@ -324,8 +359,14 @@ enum TaskPrompts {
             lines.append("2. 在当前已检出的分支上工作（不要新建分支）；")
         }
         lines.append("3. 改完代码后跑相关测试，确保通过；")
-        if !gitAvailable {
-            lines.append("4. 默认不要 commit、不要 push（这里没有仓库）；任务要求建立仓库／提交时才做，并把结果说清楚即可；")
+        // 第 4 条按「这个工作区现在是什么」分四种说法。两处转换都写在里：目录不是仓库
+        // 时给出 git init → git remote add → push 这条路（任务很可能就是来建仓库的），
+        // 仓库没有 GitHub 远端时给出 git remote add → push 这条路，并说清「这个队列不开
+        // PR」的真正原因是**没有远端**，不是队列设置（旧文案错怪了队列设置）。
+        if shape == .plain {
+            lines.append("4. 默认不要 commit、不要 push（这里还没有仓库）；任务要求建立仓库／提交时才做，并把结果说清楚。要把它变成 GitHub 仓库就是三步：git init（若还没建）→ git remote add origin <GitHub 地址> → push（地址以任务里给的为准，没有就问，别自己编）；壳层随后会重新识别这个工作区，后面的任务就能用分支了；")
+        } else if shape == .git {
+            lines.append("4. commit（建议 feat/fix: 简述）；**不要 push**：这个仓库还没有 GitHub 远端，壳层不会开 PR，改动留在本地分支上即可；任务本身要求发布到 GitHub 时，先 git remote add origin <GitHub 地址> 再 push（地址以任务里给的为准，没有就问；之后壳层会重新识别这个工作区）；")
         } else if pushes {
             lines.append("4. commit（建议 feat/fix: 简述），并把当前分支 push 到远端（这个队列最后会开 PR，远端必须有这些提交）；")
         } else {

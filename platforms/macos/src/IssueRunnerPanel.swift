@@ -598,11 +598,20 @@ final class IssueRunnerPanelController: NSObject {
                 // another task, so 「与其他任务共享同一分支与改动」 would be false.
                 // A user-made lane always names itself, even while it holds one task.
                 let sharedQueueName = queue.flatMap { $0.autoCreated ? nil : $0.name }
+                // What this workspace IS, asked AGAIN here rather than taken from the
+                // isGit/repo this env was built with: the workspace converts (git init,
+                // git remote add …), and the task that does the converting may be the one
+                // just before this one IN THE SAME QUEUE. A queue never goes idle between
+                // its own tasks, so the panel's re-detection (recheckWorkspaceShape)
+                // cannot rebuild the runner in time — the prompt is the one place that
+                // can still tell the truth, and it is written on the runner's background
+                // queue, so the probe costs the UI nothing.
+                let shape = Self.repoShape(path: repoRoot)
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: sharedQueueName,
-                                          pushes: (queue?.autoPR ?? false) && repo != nil,
+                                          pushes: (queue?.autoPR ?? false) && shape == .github,
                                           brief: brief,
-                                          gitAvailable: isGit)
+                                          shape: shape)
             },
             // The 交接简报: what the previous task in this queue last said. Read
             // through the shell's core bridge (the same session logs the audit panel
@@ -898,6 +907,17 @@ final class IssueRunnerPanelController: NSObject {
     /// True when the directory is inside a git work tree.
     static func isGitRepo(_ path: String) -> Bool {
         Self.runProcess("/usr/bin/git", ["-C", path, "rev-parse", "--is-inside-work-tree"]) == "true"
+    }
+
+    /// What this workspace IS, in the three states a task prompt tells apart
+    /// (TaskRepoShape) — the directory the prompt is written for, not the one the
+    /// panel adopted hours ago: 非 git 目录 → git 仓库 → GitHub 仓库 are conversions a
+    /// TASK performs (git init / git remote add origin <url>), and the task after it
+    /// has to be told the new story. One git rev-parse, and a git remote -v only when
+    /// there is a repository at all.
+    static func repoShape(path: String) -> TaskRepoShape {
+        guard Self.isGitRepo(path) else { return .plain }
+        return Self.detectGitHubRemote(path) != nil ? .github : .git
     }
 
     /// Parse `git remote -v` output for a github.com remote (prefers the

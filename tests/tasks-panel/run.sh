@@ -96,4 +96,22 @@ if grep -qE 'Self\.(renameSession|promptSession|sessionState|cancelSession)\(por
 fi
 echo "ok - the runner env resolves the dsh web port per call"
 
+# The prompt must describe the workspace AS IT IS WHEN THE TASK STARTS. A workspace
+# CONVERTS — git init turns a plain directory into a repository, git remote add turns
+# that into a GitHub one — and the first task of a queue may be the one doing the
+# converting: the task after it must not be told the old story. A queue never goes idle
+# between its own tasks, so the panel's re-detection (recheckWorkspaceShape → invalidate
+# → adoptWorkspace) cannot step in; probing again inside the promptText closure is the
+# only thing that can. Freezing it in makeEnv (the gitAvailable: isGit this replaced)
+# left task 2 of a converting queue claiming 「这不是 git 仓库」 for the rest of the queue.
+if ! grep -q 'let shape = Self.repoShape(path: repoRoot)' ../../platforms/macos/src/IssueRunnerPanel.swift; then
+  echo "FAIL - the task prompt must probe the workspace shape per prompt (Self.repoShape(path:)), not freeze it"
+  exit 1
+fi
+if ! grep -q 'static func repoShape(path: String) -> TaskRepoShape' ../../platforms/macos/src/IssueRunnerPanel.swift; then
+  echo "FAIL - the panel must keep the one probe that answers 非 git / git / GitHub for the prompt"
+  exit 1
+fi
+echo "ok - the task prompt probes the workspace shape per prompt"
+
 echo "tasks-panel tests passed"

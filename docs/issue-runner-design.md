@@ -290,7 +290,7 @@ struct Queue {
 |---|---|---|
 | 切分支 | 每任务一次：`checkout main → pull → checkout -b feature/issue-N 或 fix/issue-N` | 队列首个任务：`checkout <baseBranch> → pull → checkout -b <queue.branch>`；队内后续任务：**不切分支** |
 | 建会话 | `session.create(workspaceId)` + `session.rename(fix(#N): …)` | 同左，会话名 = 任务标题 |
-| 提示词 | issue-resolve skill + issue 正文 | **通用提示词**：工作目录 / 分支 / 队列内位置、任务描述、要求（改代码 → 跑测试 → commit → push）、token 文件位置（需要 GitHub 写操作时）；不复用 issue-resolve skill |
+| 提示词 | issue-resolve skill + issue 正文 | **通用提示词**：工作目录 / 分支 / 队列内位置、任务描述、要求（改代码 → 跑测试 → commit → push）、token 文件位置（需要 GitHub 写操作时）；**按工作区「现在的形状」写**（非 git / git 无 GitHub 远端 / GitHub 三态，见本节末两条修正），不复用 issue-resolve skill |
 | 收尾 | 校验分支已推送 → 开 PR → done(PR url) | 队列跑完才收尾（见 §V2-6）；单个任务完成只 push |
 | 评论并关闭 | 有（done 且有 PR 时） | **无**（没有 issue 可关） |
 
@@ -383,6 +383,13 @@ struct Queue {
 > - **空仓库（刚 `git init`）也要能进队列分支**：重新识别一旦生效，紧接着的那个任务就会走**正常**的分支进入序列 —— 而它在空仓库里**必然失败**：`git checkout main` 在 HEAD 未出生时报 `pathspec 'main' did not match`（`errCheckout`），而且 `git init` 之后留下的文件全是未跟踪的，「工作区脏」那条也会先拦住它。`TaskGit.enter` 现在先问一次 `hasCommits()`（`rev-parse --verify --quiet HEAD`）：**空仓库跳过「切基线 / pull / 干净检查」三步，直接用 `checkout -b` 从尚未出生的 HEAD 开分支** —— 空仓库里没有任何提交可以丢，任务的工作自然成为第一个提交。有提交的仓库**完全不变**（回归 6 项：空仓库只做一次 `checkout -b`、既不查 status 也不 pull；普通仓库照旧先查脏、先切基线、再 pull；脏仓库仍然被拦住）。
 > - **确认框**：`TasksRunAllModel` 现在收 `gitAvailable`，三种情形分开说 —— git + GitHub「队列跑完开 PR」／git 无 GitHub「只切分支，不开 PR」／非 git 目录「不切分支也不开 PR」。
 > - 回归：模型（`switchesBranch: false` → 无分支）、运行器（非 git 目录里批量启动：**一条 git 命令都不跑**、任务照常跑起来；已存在的带分支自动队列在重试时被修好；提示词断言「不要 git init / commit」）、视图模型（非 git 的确认框文案）。
+
+> **实现（2026-09-27 修正 · 提示词按工作区的形状写，并说清两条转换路径）**：`gitAvailable: Bool` 这种二态表达不了用户实际面对的三态 —— **非 git 目录 / git 仓库但没有 GitHub 远端 / GitHub 仓库** —— 而三种状态下同一句 rail 意思完全不同。两个真实症状：① 提示词里的形状是 `makeEnv` 时抄下的，于是一个队列里第一个任务跑了 `git init`（或 `git remote add origin …`）之后，**第二个任务的提示词还在说「这不是 git 仓库」**（队列在自己两项任务之间从不转入空闲，`recheckWorkspaceShape` 的重建被 `isBusy` 挡在门外）；② 「有仓库但没有 GitHub 远端」这一档，rail 4 把「不开 PR」的原因写成「**这个队列没有开自动 PR**」—— 那是队列设置，真因是没有远端，而这时代理唯一有用的那一步（`git remote add origin <url>`）一个字都没提。修正：
+>
+> - **纯模型 `TaskRepoShape`**（`TasksRunner.swift`，紧邻 `TaskPrompts`）：`.plain` / `.git` / `.github`，`detect(isGit:hasGitHubRemote:)` —— 「不是仓库」压过一切（没有工作树就无从谈远端）。
+> - **面板每次写提示词都重新探测**：`IssueRunnerPanel.repoShape(path:)`（一次 `rev-parse --is-inside-work-tree`，是仓库才再问一次 `git remote -v`）在 `promptText` 闭包里调用 —— 那个闭包跑在 runner 的后台队列上，代价不落在 UI 线程，也正是**唯一**能在同一队列的两项任务之间说真话的地方。`pushes` 也跟着改成 `queue.autoPR && shape == .github`（队列的 PR 承诺与工作区事实同时成立才要求 push）。
+> - **rail 2** 按 `shape`：`.plain` 只说壳层那一半（不切分支/不提交/不推送，任务要求就照做）；有仓库时照旧点名队列分支。**rail 4** 四种说法：`.plain`「默认不要 commit、不要 push（这里还没有仓库）……要把它变成 GitHub 仓库就是三步：`git init`（若还没建）→ `git remote add origin <GitHub 地址>` → `push`；壳层随后会重新识别这个工作区，后面的任务就能用分支了」；`.git`「commit，但**不要 push**：这个仓库还没有 GitHub 远端，壳层不会开 PR，改动留在本地分支上即可；任务本身要求发布到 GitHub 时，先 `git remote add origin <地址>` 再 push」；`.github && pushes` 与 `.github && !pushes` 两句一字不改（原样）。
+> - **回归**：运行器 **323 项**（+9）—— 新增一节「git 仓库但没有 GitHub 远端：说「没有远端」，不说「这个队列没开自动 PR」」（分支照旧点名、真因写成「还没有 GitHub 远端」、不再拿队列设置当理由、给出 `git remote add origin`、远端出现前仍不 push），并反向断言 GitHub 工作区不会念叨「还没有远端」、也不会给出已经不需要的转换步骤；既有「非 git 的提示词」一节补一条「给出转换路径：init → remote add → push」。`tests/tasks-panel/run.sh` 增加**源码守卫**：提示词必须在 `promptText` 闭包里以 `Self.repoShape(path: repoRoot)` 现场探测（禁止再退回 `makeEnv` 抄一份），并保留那个唯一的探测函数。
 
 > **实现（2026-09-27 修正 · 批量收哪些任务）**：`.pending` 起先被当成全部的「待处理」，于是**删除队列之后的失败 / 已取消任务**（它们回到未入队，卡片上只剩「加入队列」）落在批量之外 —— 用户的原话是「失败的还是失败状态，然后就不能通过全部处理来处理了」。现在判据是**归不归队列管**：
 >
