@@ -637,24 +637,9 @@ final class TaskQueueHeaderView: NSView {
             trailing.append(iconButton("play.fill", tooltipKey: model.startHintKey,
                                        action: #selector(startTapped)))
         }
-        if model.canOpenPR {
-            // A queue whose PR run came back empty keeps this button (there is still no
-            // PR) and says why in its tooltip: 「再开一次」 plus the reason.
-            trailing.append(iconButton("arrow.up.right.square",
-                                       tooltipKey: model.prErrorKey ?? "tasks.queue.openPR",
-                                       action: #selector(openPRTapped)))
-        }
-        if let prUrl = model.prUrl {
-            let link = NSButton(title: TaskCardModel.shortPR(prUrl), target: self, action: #selector(openPRTapped))
-            link.isBordered = false
-            link.controlSize = .small
-            link.contentTintColor = .controlAccentColor
-            link.font = .systemFont(ofSize: 11)
-            link.toolTip = prUrl
-            link.translatesAutoresizingMaskIntoConstraints = false
-            link.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            trailing.append(link)
-        }
+        // 打开 PR 排在**最后**（用户 2026-09-27：它是这一行的收尾动作，不是夹在中间的
+        // 一枚）。图标与 PR 链接互斥（有链接就说明 PR 已经在了），但都给同一件事留位置，
+        // 所以两者都在收尾处追加 —— 见下面 trailing.append(prControl)。
         // 自动开 PR / 队列设置 / 删除队列 were hidden behind a ⋯ menu; they are
         // their own icon buttons now (the audit panel's blocks have no overflow
         // menu either — every action is on the row). The PR toggle keeps its state
@@ -679,6 +664,8 @@ final class TaskQueueHeaderView: NSView {
             trailing.append(iconButton("trash", tooltipKey: "tasks.queue.delete",
                                        action: #selector(deleteTapped)))
         }
+        // 打开 PR —— 永远排在这一行的最后（图标；有 PR 链接时就是那条链接）。
+        if let prControl = openPRControl() { trailing.append(prControl) }
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -764,6 +751,28 @@ final class TaskQueueHeaderView: NSView {
     private func compressible(_ view: NSView) -> NSView {
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return view
+    }
+
+    /// 打开 PR: the icon while the queue has no PR yet (its tooltip carries the reason
+    /// when a PR run came back empty), the PR link once it has one. The LAST control of
+    /// the row — the queue's publishing step reads as the close of the line, not as one
+    /// icon among the settings.
+    private func openPRControl() -> NSView? {
+        if model.canOpenPR {
+            return iconButton("arrow.up.right.square",
+                              tooltipKey: model.prErrorKey ?? "tasks.queue.openPR",
+                              action: #selector(openPRTapped))
+        }
+        guard let prUrl = model.prUrl else { return nil }
+        let link = NSButton(title: TaskCardModel.shortPR(prUrl), target: self, action: #selector(openPRTapped))
+        link.isBordered = false
+        link.controlSize = .small
+        link.contentTintColor = .controlAccentColor
+        link.font = .systemFont(ofSize: 11)
+        link.toolTip = prUrl
+        link.translatesAutoresizingMaskIntoConstraints = false
+        link.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return link
     }
 
     @objc private func startTapped() { onStart?() }

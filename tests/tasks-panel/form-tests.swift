@@ -322,6 +322,46 @@ do {
     }
 }
 
+section("队列头：打开 PR 排在最后（图标与 PR 链接都是）")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "改 README", body: nil, id: "manual-hh301010")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane", branch: "feature/x", autoPR: true)
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    board.markDone(task.id)
+
+    // 还没有 PR：那一格是图标按钮，工具提示是「打开 PR」。
+    let openModel = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                           prAvailable: true)
+    check(openModel.canOpenPR, "完成的队列可以开 PR")
+    let openHeader = TaskQueueHeaderView(model: openModel)
+    _ = layout(openHeader, width: 320)
+    let buttons = descendants(openHeader, of: CustomIconButton.self)
+    check(buttons.contains { $0.toolTip == L10n.tr("tasks.queue.openPR") }, "行上有「打开 PR」")
+    if let pr = buttons.first(where: { $0.toolTip == L10n.tr("tasks.queue.openPR") }) {
+        let prFrame = pr.convert(pr.bounds, to: openHeader)
+        let others = buttons.filter { $0 !== pr }.map { $0.convert($0.bounds, to: openHeader) }
+        check(others.allSatisfy { $0.maxX <= prFrame.minX + 1 },
+              "它是这一行最右的按钮（其余按钮都在它左边）")
+        check(prFrame.maxX <= openHeader.bounds.width, "没有越出队列头")
+    }
+
+    // 已经有 PR：那一格变成 PR 链接，同样在最右。
+    _ = board.setQueuePRError(queue.id, nil)
+    var withPR = board
+    withPR.queues[0].prUrl = "https://github.com/o/r/pull/42"
+    let linkModel = QueueHeaderModel.build(withPR.queue(queue.id)!, board: withPR, collapsed: false,
+                                           prAvailable: true)
+    let linkHeader = TaskQueueHeaderView(model: linkModel)
+    _ = layout(linkHeader, width: 320)
+    let link = descendants(linkHeader, of: NSButton.self).first { $0.toolTip == withPR.queue(queue.id)?.prUrl }
+    check(link != nil, "PR 链接在行上")
+    if let link = link, let row = link.superview as? NSStackView {
+        check(row.arrangedSubviews.last === link, "链接是这一行的最后一个控件")
+    }
+}
 section("fields span the whole form")
 do {
     // An EMPTY NSTextField's intrinsic width is almost nothing, and a .leading

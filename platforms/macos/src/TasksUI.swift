@@ -572,7 +572,19 @@ struct QueueHeaderModel: Equatable {
 /// away: an empty lane) while the 手动 tab, which showed only user queues, looked
 /// empty. A lane now shows while it HOLDS at least one accepted card.
 enum TaskSourceFilter: Int, CaseIterable {
-    case all = 0, issues = 1, manual = 2
+    // 顺序 = 页签顺序（全部 / 手动 / Issue，用户 2026-09-27 把「手动」提到前面）。
+    // 页面标题由 allCases 生成，rawValue 与下标一一对应 —— 顺序只在这一处定义，
+    // 标题数组与它不可能再各说各话（上一版的 bug 就是「下标」与「含义」对不上）。
+    case all = 0, manual = 1, issues = 2
+
+    /// The tab's own label (the panel builds the strip from `allCases`).
+    var titleKey: String {
+        switch self {
+        case .all: return "tasks.filter.all"
+        case .manual: return "tasks.filter.manual"
+        case .issues: return "tasks.filter.issues"
+        }
+    }
 
     func matches(_ task: TaskItem) -> Bool {
         switch self {

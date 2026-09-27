@@ -189,9 +189,9 @@ final class IssueRunnerPanelController: NSObject {
         updateRunAllButton(githubAvailable: workspace.githubAvailable)
         configButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.configHint") : workspace.disabledHint
         refreshButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.refreshHint") : workspace.disabledHint
-        filterTabs.setItems([L10n.tr("tasks.filter.all"),
-                             L10n.tr("tasks.filter.issues"),
-                             L10n.tr("tasks.filter.manual")],
+        // The strip is built FROM the enum: title order, index and meaning come from one
+        // place (TaskSourceFilter.allCases), so a tab can never label the wrong filter.
+        filterTabs.setItems(TaskSourceFilter.allCases.map { L10n.tr($0.titleKey) },
                             selected: sourceFilter.rawValue)
         emptyButton.title = L10n.tr("tasks.new.title")
         // The toolbar labels above are replaced in place; everything the CONTENT

@@ -7,8 +7,10 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
-### Fixed
+### Changed
 
+- **来源页签顺序改成 全部 / 手动 / Issue（2026-09-27）**：用户要求把「手动」提到前面。顺带把顺序收进一处：页签标题由 `TaskSourceFilter.allCases` 生成（`titleKey` 就在枚举上），`rawValue` 与下标一一对应 —— 上一版那种「标题数组与枚举顺序各说各话」的错位从此不可能再发生。回归：视图模型 +4 项（标题顺序、每个 rawValue == 下标）。
+- **队列头的「打开 PR」挪到这一行的最右（2026-09-27）**：它此前夹在中间（暂停/开始 之后、自动开 PR 开关之前）。现在无论是最初的图标形式，还是已经有 PR 时的链接形式，都是这一行的**最后一个控件** —— 队列的发布动作读起来是收尾，而不是设置里的一枚。回归：表单 +6 项（图标在最右、链接是最后一个 arrangedSubview、不越界）。
 - **「打开会话」点了没反应的真正根因：bridge 调用漏了一个参数（2026-09-27）**。`callAsyncJavaScript` 会把参数变成**函数体里的局部变量**，而函数体写的是 `window.__dshOpenSession(sessionId, workspaceName)` —— 不带工作区名调用时（任务面板就是这种情况）`workspaceName` 根本没传进去，于是页面抛 **ReferenceError**，Apple 的桥把它报成「发生了JavaScript异常」。应用日志里写得明明白白，UI 上一片安静：`.failure` 分支只记日志，而且失败消息一律写进**项目面板**的状态行（项目面板每次都带工作区名，所以那条路一直是好的）。现在：`workspaceName` **永远传**（没有就传空串，页面脚本用 `if (workspaceName)` 判断），函数体本身也做了 `typeof` 兜底；bridge 异常**立即**走 `reportOpenFailure`（新增 `projects.openFailedBridge`：「打开会话失败（xxx…）：dsh web 页面报错，详见应用日志」），并且说给**请求它的那个面板**（任务面板新增 `reportStatus(_:)` 接住）。`tests/tasks-panel/run.sh` 增加两条源码守卫把这两半钉住。
 - **顶部来源页签点错了内容：Issue 页签列出以手动任务命名的空泳道，「手动」页签什么都不显示（2026-09-27）**。判据本是 `autoCreated`（自动队列 = issue 队列），可**全部处理给手动任务建的也是自动队列**：于是点 Issue 看到一堆以手动任务命名的泳道（里面的卡片全被过滤掉，只剩空壳），点手动反而什么都没有（它只显示用户自建队列，而用户的手动任务都在自动队列里）。规则移出面板、进了纯模型 `TaskSourceFilter`：`matches` 决定卡片，`cards(of:in:)` 决定泳道里画什么，`shows(_:in:)` 决定这条泳道出不出现在这个页签下 —— **「全部」不落下任何一条泳道；「手动」= 用户自建的泳道（空的也在，下一个手动任务就放这里）＋ 装着手动任务的自动队列；「Issue」= 只显示装着 issue 任务的泳道**。回归：视图模型 +13 项（这条 bug 的四个组合都钉住了）。
 - **来源徽标与任务名的顺序反了（2026-09-27）**：来源（`手动` / `Issue #12`）是任务名的注解，现在排在**任务名后面**；任务名前是行标，最右仍是状态徽标。布局断言同步改成「来源徽标 ≥ 标题左缘、且排在状态徽标左边」。

@@ -204,6 +204,14 @@ do {
     // 未入队区用 matches，与这里同一份判据。
     check(TaskSourceFilter.manual.matches(manual) && !TaskSourceFilter.manual.matches(issue),
           "matches 与卡片筛选同源")
+    // 页签顺序与含义由枚举一处定义：标题数组从 allCases 生成（面板如此），所以
+    // 「下标 → 含义」再也不可能对不上 —— 用户要求「手动」排在 Issue 前面。
+    eq(TaskSourceFilter.allCases.map { $0.titleKey },
+       ["tasks.filter.all", "tasks.filter.manual", "tasks.filter.issues"],
+       "页签顺序：全部 / 手动 / Issue")
+    for (index, filter) in TaskSourceFilter.allCases.enumerated() {
+        eq(filter.rawValue, index, "第 \(index) 个页签的 rawValue 就是它的下标")
+    }
     eq(TaskSourceFilter.issues.source, TaskSource.github, "汇总卡计数用的是同一个来源值")
     eq(TaskSourceFilter.all.source, nil, "「全部」= 不过滤")
 }
