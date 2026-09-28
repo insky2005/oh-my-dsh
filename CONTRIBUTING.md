@@ -17,7 +17,7 @@ oh-my-dsh/
 ├── scripts/             # 跨平台工具：version.sh（版本单一来源）/ changelog.sh / local-ci.sh（本机 CI）/ local-release.sh /
 │                        #   github-publish.sh / release-checksums.sh / release-fix.sh / git-remote.sh / migrate-platforms-macos.sh
 ├── tests/               # 面板模型层单测套件（wiki-panel / browser-panel / terminal-panel / terminal-emulator / channel-panel /
-│                        #   file-panel / review-panel / skills-panel / shell-config / dsh-rpc / dsh-auth-cookies / l10n / skills，均 headless run.sh）
+│                        #   file-panel / preview-interceptor / review-panel / skills-panel / shell-config / dsh-rpc / dsh-auth-cookies / l10n / skills，均 headless run.sh）
 ├── docs/                # 设计/排查文档（productization.md、milestones/、channel-*.md、issue-runner-design.md 等）
 └── .dsh/                # wiki / skills（web-dev-tools / repo-knowledge / task-todo，随仓库提交）
 ```
@@ -51,6 +51,7 @@ tests/terminal-panel/run.sh             # 终端面板（头部标题固定 / �
 tests/terminal-emulator/run.sh          # 模拟器测试（core/tests/ansi.test.js 的薄封装）
 tests/channel-panel/run.sh              # 通道面板项目视图数据模型
 tests/file-panel/run.sh                 # 文件面板（工作区页签记忆 / 未保存提示 / 切换语义 / 图片缩放数学 / 真窗口目录树宽度）
+tests/preview-interceptor/run.sh        # 注入的文件打开拦截脚本（dsh ≥0.1.5 点击捕获 + 旧版 host.openPath/session.openWorkspacePath fetch 形状）
 tests/review-panel/run.sh               # 审查（变更审计）面板展示模型：JSON 解码 / 文件分组 / diff 折叠 / 日志新鲜度
                                         #   + controller-tests.swift（真控制器：日志增长自动重读，不重复审计）
 tests/shell-config/run.sh               # 壳层设置文件与旧 UserDefaults 迁移
