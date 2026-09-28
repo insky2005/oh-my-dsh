@@ -407,6 +407,11 @@ test("a relative path with no known root stays relative (and fails to open)",
      FilePanelController.resolveIncomingPath("src/two.swift", projectRoot: nil) == "src/two.swift")
 test("a relative path is not opened when no root is known",
      !FilePanelController().open(path: FilePanelController.resolveIncomingPath("src/two.swift", projectRoot: nil)))
+// Tool rows abbreviate a home path to ~; standardizingPath expands it, so it
+// must win over the project-root join.
+let homePath = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/probe.md")
+test("a ~-abbreviated path expands to home, not the project root",
+     FilePanelController.resolveIncomingPath("~/.dsh/probe.md", projectRoot: wsA.path) == homePath)
 
 try? fm.removeItem(at: root)
 print("done")
