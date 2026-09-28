@@ -469,6 +469,20 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     // MARK: - Public API
 
+    /// Resolve a file-open path coming from dsh web into the absolute path the
+    /// panel's tabs require. Inline mentions and produced-file chips carry the
+    /// raw model-facing path, which may be workspace-relative; dsh's own client
+    /// used to resolve it against the session cwd before calling
+    /// `session/openWorkspacePath` (<= 0.1.4), but 0.1.5 hands the raw path to
+    /// its built-in panel, so the shell resolves it against the active project
+    /// directory here. A path that is already absolute is returned unchanged.
+    static func resolveIncomingPath(_ raw: String, projectRoot: String?) -> String {
+        let path = (raw as NSString).standardizingPath
+        if path.hasPrefix("/") { return path }
+        guard let root = projectRoot, !root.isEmpty else { return path }
+        return ((root as NSString).appendingPathComponent(path) as NSString).standardizingPath
+    }
+
     /// Open a path in the panel: activates the matching tab or creates a new one.
     @discardableResult
     func open(path rawPath: String) -> Bool {

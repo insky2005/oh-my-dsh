@@ -80,6 +80,8 @@ stage_swift() {
   tests/tasks-panel/run.sh
   echo "--- injected-script guard (dsh web bridges) ---"
   tests/injected-scripts/run.sh
+  echo "--- injected file-open interceptor tests ---"
+  tests/preview-interceptor/run.sh
   echo "--- L10n key lint ---"
   tests/l10n/run.sh
   echo "--- native dsh RPC helper tests ---"

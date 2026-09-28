@@ -391,5 +391,22 @@ test("the image is drawn unscaled (the box provides the margin)",
 test("the image is centred inside that box", imagePreview.focusView.imageAlignment == .alignCenter)
 test("a document smaller than the viewport is centred", imagePreview.centersContent)
 
+// --- incoming file-link paths (dsh >= 0.1.5) --------------------------------
+// dsh used to resolve a mention's workspace-relative path against the session
+// cwd before calling session/openWorkspacePath; from 0.1.5 it hands the raw
+// path to its own panel. The shell resolves it here against the active project
+// directory, so relative links still open in the native panel.
+
+test("an absolute incoming path is kept as-is",
+     FilePanelController.resolveIncomingPath(a1.path, projectRoot: wsA.path) == a1.path)
+test("a relative incoming path resolves against the project root",
+     FilePanelController.resolveIncomingPath("src/two.swift", projectRoot: wsA.path) == a2.path)
+test("a leading ./ is normalized",
+     FilePanelController.resolveIncomingPath("./one.md", projectRoot: wsA.path) == a1.path)
+test("a relative path with no known root stays relative (and fails to open)",
+     FilePanelController.resolveIncomingPath("src/two.swift", projectRoot: nil) == "src/two.swift")
+test("a relative path is not opened when no root is known",
+     !FilePanelController().open(path: FilePanelController.resolveIncomingPath("src/two.swift", projectRoot: nil)))
+
 try? fm.removeItem(at: root)
 print("done")

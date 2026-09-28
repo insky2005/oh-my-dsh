@@ -158,7 +158,7 @@ v1.16.2 上线**，前提解除，本次把审计中的升级动作落地。
   以 `v0.1.5-rc.3` 作比较基线（`Full Changelog: dsh-v0.1.5-rc.3...dsh-v0.1.7-rc.1`）——**只是漏发了 GitHub
   Release 页面**（Releases 列表从 `0.1.6-alpha.1` 直接跳到 `0.1.5-rc.2`，这一视觉差容易被误读成"rc.3 不存在/被撤回"）。
 
-### 7.1b rc.2 ⇄ rc.3 的逐项比对（结论：对壳层零影响）
+### 7.1b rc.2 ⇄ rc.3 的逐项比对（端点面：零影响；文件链接面见 7.1c 修正）
 
 | 比对项 | 方法 | 结论 |
 |---|---|---|
@@ -168,6 +168,31 @@ v1.16.2 上线**，前提解除，本次把审计中的升级动作落地。
 | 依赖闭包 | 版本直方图 | rc.3：自洽（见上）；rc.2：顶层 rc.2 + 230 个子包 rc.3（混合） |
 
 **所以本次从 rc.2 换到 rc.3 不需要任何壳层适配**——两者对壳层可见的行为是同一份代码。
+> ⚠️ **但「不需要任何壳层适配」这个整体结论已被 7.1c 推翻**：rc.2/rc.3 确实同码，可它们相对
+> **0.1.2-rc.1** 却换了文件链接的 UI 行为，而它落在上面六个包之外。
+
+### 7.1c 修正：rc.2/rc.3 相对 0.1.2 换掉了文件链接（2026-09-28，用户实测暴露）
+
+执行落地后收到实测反馈：**点会话里的文件链接不再在 oh-my-dsh 的文件面板打开。** 定位结论如下。
+
+- **行为差异**：0.1.2-rc.1 的 `dsh-client-ui-chat`：
+  `openFile = async (path) => remote.session.openWorkspacePath({ path: resolveWorkspacePath(cwd, path) })`
+  —— 走一元 RPC，壳层的 `window.fetch` 拦截脚本能抓到绝对路径。
+  0.1.5 的同一函数：
+  `openFile = async (path) => ctx.sidebarRight.openResource(fileAddressFor(sessionId, cwd, path))`
+  —— **dsh 自带文件面板，纯页面内动作，不发任何 HTTP 请求**，fetch 拦截脚本永远不触发；原生面板收不到路径。
+  内联文件链接与「Files changed」产出行的 DOM 都是 `<button title="<原样路径>">`。
+- **为什么静态审计没发现**：端点集合没变（`session/openWorkspacePath` 仍在，只是不再由这条 UI 路径调用），
+  六个耦合面包逐字节相同——但 `dsh-client-ui-chat` / `dsh-client-ui-deliverables` **不在那六个包里**，
+  7.1b 的比对根本没覆盖「点击链接的客户端行为」。
+- **为什么 7.2 的预览探针没发现**：探针自己构造两种 `fetch` 请求，验证拦截器**请求层**正确；
+  它没有模拟一次真实点击，因此对「点击路径根本不发请求」这一类回归完全无感。
+- **修法**：`previewInterceptorScript` 增加点击捕获层——在 document 捕获阶段识别内联文件链接
+  （`<code>` 内的 `button` 或 `class*=fileMention`）与产出行（`[data-produced-files-row] button[title]`），
+  把 `title` 发给原生面板并吞掉事件；相对路径由原生侧按当前项目目录解析（等价于 0.1.2 的
+  `resolveWorkspacePath(cwd, path)`）。回归用例见 `tests/preview-interceptor/`。
+- **教训（并入 §5 SOP）**：升级后必须**真的点一次会话里的文件链接**（绝对路径与相对路径各一次），
+  不能只看端点、DOM 探针或合成 RPC 探针。
 
 ### 7.2 验证证据
 
@@ -184,7 +209,7 @@ v1.16.2 上线**，前提解除，本次把审计中的升级动作落地。
 | D `workspace.json` | 读 `storages/workspace.json` | `{"name":"workspace","version":2}` —— **仍为 v2**，R4 护栏无需改动 |
 | 快照树池 | 开发版启动日志 | `snapshot tree: {"ok":true,"action":"cloned","dir":"…/trees/0.1.5-rc.3","lock":"e4d8b13025089771"}` —— 池收录的新树**指纹与提交的 lock 一致**（R8 的闭包校验按预期工作） |
 | 八面板扫描 | `DSH_PANEL_TEST="files,terminal,wiki,tasks,browser,channel,review,skills"` + `DSH_UI_DEBUG=1`，**且 `DSH_HOME` 里预置了上面那条 rc.3 新建的会话** | 八个面板**都被访问并发觉落图**（preview / terminal / wiki / tasks / browser / channel / review / skills，各自 `panel-<name>-debug.png`）。**review 面板这次真的渲染出了内容**（截图可见会话 "…verification"、19 KB、`sessions 1/1`）：日志 `review: listed 1/1 sessions workspace=… first=session-f6254729… diagnostics=0` + `review: audit session-… entries=0 files=0 turns=1 diagnostics=[]`——**0.1.5-rc.3 写出的 `session.v3.jsonl.zstd` 在真实 GUI 里被列出并审计**，即 v1.16.2 那条世代命名修复端到端成立 |
-| B 预览拦截 | 见 `DSH_PREVIEW_DEBUG=1` 的探针 + 文件面板截图 | 文件面板出现 **两个页签**（`dsh-preview-fetch-test.txt` / `dsh-preview-modern-test.txt`）= 新旧两种请求形状都被拦截（B7 两面都通） |
+| B 预览拦截 | 见 `DSH_PREVIEW_DEBUG=1` 的探针 + 文件面板截图 | 文件面板出现 **两个页签**（`dsh-preview-fetch-test.txt` / `dsh-preview-modern-test.txt`）= 新旧两种 **fetch 请求形状**都被拦截。**但这只证明 fetch 层可用，不等于用户点文件链接可用**：探针是脚本自己 `fetch()`，没触发真实点击；0.1.5 的链接已改走页面内面板（7.1c），所以探针全绿、真实点击仍失效 |
 
 ### 7.3 本次未复跑的（与审计遗留一致）
 
