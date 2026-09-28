@@ -175,7 +175,7 @@
 4. 判断鉴权实现：`dsh-client-connection/lib/index.js` 的 `requestRejection` / `BrowserAuth.isAuthenticated`（是否只认 cookie）。
 
 
-### 4.5 实例复盘：0.1.2-rc.1 → 0.1.5-rc.2（2026-09-23 完成审计；**升级暂缓**，等会话快照/回退功能上线后执行）
+### 4.5 实例复盘：0.1.2-rc.1 → 0.1.5-rc.2（2026-09-23 完成审计；2026-09-27 在 `release/1.16` **执行完毕**）
 
 **这次上游只动了一处会让壳层静默出错的地方：会话日志的文件名。**
 
@@ -191,6 +191,23 @@
 - **升级 SOP 增加两条核对项**：D 面「活日志文件名 + 审查面板能否列出并审计」、收尾「八面板全量扫描」
   （新增 QA 钩子 `DSH_PANEL_TEST`，一次跑完八个面板并各落一张截图）。
 - **逐面实测记录**（含命令与日志原样）：`docs/plans/dsh-015rc2-compat-audit.md`。
+- **执行（2026-09-27，`release/1.16`）**：`DSH_PACKAGE_SPEC` 默认值推进到 **`0.1.5-rc.3`**，并随附闭包锁
+  `platforms/macos/runtime-locks/dsh-0.1.5-rc.3/`（`npm ci` + 启动冒烟通过）。原来那条「暂缓」的前提是
+  **没有回退通道**（0.1.5 会让会话日志换代），该安全网已由 v1.16.2 的**会话快照 + 回退**补上，故本次执行。
+- **为什么最终钉 rc.3 而不是审计当时的 rc.2（重要口径）**：先按审计的 `0.1.5-rc.2` 做了一轮，发现它有两个坑——
+  ① **闭包不自洽**：dsh 用 caret 声明同族子包（`@deepseek-ai/dsh-*: ^0.1.5-rc.2`），所以顶层是 rc.2 时解出的
+  闭包里 **230 个子包其实是 rc.3**；② 壳层的版本事实读顶层 `package.json`，于是**站内升级助手会一直提示
+  「可升级到 0.1.5-rc.3」**（实测 `nextStepTarget('0.1.5-rc.2') = '0.1.5-rc.3'`），而那次升级几乎是空操作。
+  改用 **rc.3** 后闭包完全自洽（231 个 `@deepseek-ai/dsh-*` 全为 rc.3），提示消失，且**风险不升反降**：
+  rc.3 把 cordis 工具链**钉成精确版本**（`cordis 4.0.2` / `cordis-plugin-hmr 1.0.17` / …），rc.2 用的是 caret
+  范围——正是 **R8「运行时闭包漂移」** 的成因。rc.3 也不是「野生」版本：它**有 git tag**、是 npm 的 `latest`，
+  上游 0.1.7-rc.1 的发行说明还以 `v0.1.5-rc.3` 作比较基线，**只是漏发了 GitHub Release 页面**。
+- **rc.2 ⇄ rc.3 的逐项比对（结论：对壳层零影响）**：① RPC 端点集合**零增零删**、参数包裹字段
+  （`_request` / `request` / `parentSessionId`）**零变化**（用 rc.1 / rc.2 / rc.3 三棵树全量提取端点比对）；
+  ② 六个耦合面所在包**逐字节相同**（`dsh-client-connection`、`dsh-web-app`、`dsh-workspace`、
+  `dsh-session-format`、`dsh-skill-filesystem`、`dsh-client-ui-sidebar`、`dsh-session-persistence-jsonl`）。
+  所以**本次换版本不需要任何壳层适配**；要再换到别的 0.1.5 RC 时，仍应**重新生成锁并复跑本文 §5 的核对项**
+  （不是改一个版本号那么简单）。
 
 ## 5. 每次 dsh 升级的执行清单（SOP）
 

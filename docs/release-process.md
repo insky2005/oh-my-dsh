@@ -17,7 +17,7 @@
 ```
 1. 更新发布文档：CHANGELOG.md（必须用 scripts/changelog.sh）+ 检查 README/CONTRIBUTING 覆盖本次内容 + 主版本时 SECURITY.md ## Supported Versions → commit
 2. 打 tag vX.Y.Z + git push
-3. scripts/local-release.sh arm64 x86_64 构建并发布 GitHub Release
+3. scripts/local-release.sh arm64 x86_64 构建并发布 GitHub Release（**兜底**：步骤 2 推 tag 后 CI 会自动构建并发布，CI 失败时才用本地这条 —— 见「已知坑」）
 4. 推进版本号（version.sh FALLBACK + CHANGELOG [Unreleased] 占位）→ commit + push
 ```
 
@@ -103,11 +103,17 @@ scripts/local-release.sh arm64 x86_64                          # 两架构 pkg+d
 
 ## 已知坑与规避（v1.12.0 实战校准）
 
-- **tag 推送会触发 CI release.yml，而 CI 的 CEF prepare 当前是坏的**：`prepare` job 从
-  `cef-builds.spotifycdn.com` 下载 CEF 在 GitHub runner 上超时失败（v1.11.0 / v1.12.0
-  连续两代 Release run 都挂在「Pre-build CEF artifacts」），`publish release` job 被跳过。
-  → 发布以**本地 local-release 为准**；CI 那次失败 run 直接忽略。**CI 的 CEF prepare
-  暂不修复**（问题在 GitHub runner 侧，本地构建不受影响）。
+- ~~**tag 推送会触发 CI release.yml，而 CI 的 CEF prepare 当前是坏的**~~ —— **已恢复，首选改回 CI**
+  （2026-09-27 实测）：`prepare` job 从 `cef-builds.spotifycdn.com` 下载 CEF 曾在 GitHub runner 上
+  超时（v1.11.0 / v1.12.0 连续两代挂在「Pre-build CEF artifacts」，`publish release` 被跳过）。
+  但 **v1.16.0 / v1.16.1 / v1.16.2 / v1.16.3 四代 Release run 全部 `success`**（prepare + build×2 +
+  publish release 三段全绿，v1.16.3 见 run `36328465029`），所以当前流程是：
+  - **首选：只打 tag 并推送，由 CI 构建 + 发布**（步骤 2 之后什么都不用做）；
+  - **兜底：CI 失败再走步骤 3 的本地 `local-release.sh`**（⚠️ 仍需 `danger-full-access`）；
+  - 观察进度：`curl -s .../actions/runs/<id>`（`/jobs` 可看三段各自的结论）；v1.16.3 实测全程约
+    **80 分钟**（prepare ~14 min → build arm64/x86_64 并行 → 上传约 1.15 GB 资产）。
+  - CI 的 `publish release` 会 `gh release delete --cleanup-tag` 再用 `--target $GITHUB_SHA` **重建 tag**：
+    实测重新生成的 annotated tag 与本地 tag 对象**哈希完全一致**（同 commit 同 message），无需手工干预。
 - **上传约 1.1GB 资产在慢网下耗时 1–2h+，且脚本静默无进度**：资产按 pkg→dmg→
   SHA-256SUMS 顺序逐个上传。中途可用 API 观察进度（资产逐个出现）：
   `curl -s https://api.github.com/repos/insky2005/oh-my-dsh/releases/tags/vX.Y.Z`，
