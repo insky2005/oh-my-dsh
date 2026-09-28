@@ -7,7 +7,9 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
-- 暂无（v1.16.4 已发布；本条线下一个版本是 **1.16.5**）。
+### Fixed
+
+- **修复：文件打开点击层漏了工具调用（read / write / edit）里的文件链接**。v1.16.4 的点击捕获层只匹配了对话正文的内联文件链接（`<code>` 内按钮 / `class*=fileMention`）与「Files changed」产出文件行（`[data-produced-files-row] button[title]`）；但 `read` / `write` / `edit` 工具行渲染的是 `ToolRow` 的 `<button class="…fileLink…">`——**没有 `title`，路径只存在于按钮文本里**（工作区相对路径，主目录下缩成 `~`），所以这些链接仍会落入 dsh 自带文件面板。现在点击层把 `fileLink` 作为第三类文件链接处理：取按钮文本作为路径，原生侧按项目目录解析相对路径、`standardizingPath` 展开 `~`（因此 `~/.dsh/...` 也能打开）。回归：`tests/preview-interceptor` 新增 3 例（工具行文本 / `~` 保留 / 空文本放行，共 11 例），`tests/file-panel` 新增 `~` 展开 1 例；`DSH_PREVIEW_DEBUG=1` 探针也新增工具行合成点击自检。
 
 ## [1.16.4] - 2026-09-28
 
