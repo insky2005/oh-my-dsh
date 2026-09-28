@@ -5,6 +5,10 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
+## [Unreleased]
+
+- 暂无（v1.16.4 已发布；本条线下一个版本是 **1.16.5**）。
+
 ## [1.16.4] - 2026-09-28
 
 ### Fixed
