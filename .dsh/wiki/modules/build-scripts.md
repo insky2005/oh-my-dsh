@@ -1,8 +1,8 @@
 ---
 title: 模块：构建与打包脚本
 tags: [module, build, packaging, icon, release, ci]
-updated: 2026-09-24T04:04:23Z
-sources: [tests/skills-panel/, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, tests/review-panel/, core/lib/review-log.js, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, platforms/macos/src/MakeIcon.swift, platforms/macos/build-cef.sh, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, Jenkinsfile, .github/workflows/release.yml, .github/workflows/ci.yml, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/vendor/Highlightr/, tests/file-panel/, platforms/macos/runtime-locks/, docs/dsh-version-impact.md, tests/projects-panel/, tests/injected-scripts/, tests/snapshot-panel/, tests/snapshot-rollback/, CHANGELOG.md]
+updated: 2026-09-28T01:42:18Z
+sources: [tests/skills-panel/, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, tests/review-panel/, core/lib/review-log.js, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, platforms/macos/src/MakeIcon.swift, platforms/macos/build-cef.sh, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, Jenkinsfile, .github/workflows/release.yml, .github/workflows/ci.yml, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/vendor/Highlightr/, tests/file-panel/, platforms/macos/runtime-locks/, docs/dsh-version-impact.md, tests/projects-panel/, tests/injected-scripts/, tests/snapshot-panel/, tests/snapshot-rollback/, CHANGELOG.md, docs/release-process.md, docs/productization.md]
 manual: false
 ---
 
@@ -18,7 +18,7 @@ manual: false
 
 - `resolve_node_version`：`DSH_NODE_VERSION` 未设时查镜像 `index.json` 用 python3 选最新 LTS；网络不可用则从 `.cache/node` 缓存 tarball 推导；
 - `download_node`：下载 darwin-arm64 tarball（镜像失败换官方），用 `SHASUMS256.txt` + `shasum -a 256 -c` 校验；
-- `install_dsh`：`DSH_PACKAGE_SPEC`（默认 `@deepseek-ai/dsh@0.1.2-rc.1`，壳层与该版本同步适配）经 `locks_dir_for_spec()` 映射到 `runtime-locks/dsh-<版本>/`；**有 lock 时 `cp package.json + package-lock.json` 到目标目录后用 `npm ci` 复现依赖闭包**（老路是 `npm init -y` + `npm install <spec>`——只钉 dsh 版本会被 caret 范围漂移坑：hmr 1.0.19 会让 0.1.2 起不来，见 `docs/dsh-version-impact.md` E7 / R8），**无 lock 的 spec 走老路并大声警告**（caret 范围可能拉到起不来的插件）；两条路都是主 registry 失败自动重试官方源；
+- `install_dsh`：`DSH_PACKAGE_SPEC`（默认 `@deepseek-ai/dsh@0.1.5-rc.3`，壳层与该版本同步适配）经 `locks_dir_for_spec()` 映射到 `runtime-locks/dsh-<版本>/`；**有 lock 时 `cp package.json + package-lock.json` 到目标目录后用 `npm ci` 复现依赖闭包**（老路是 `npm init -y` + `npm install <spec>`——只钉 dsh 版本会被 caret 范围漂移坑：hmr 1.0.19 会让 0.1.2 起不来，见 `docs/dsh-version-impact.md` E7 / R8），**无 lock 的 spec 走老路并大声警告**（caret 范围可能拉到起不来的插件）；两条路都是主 registry 失败自动重试官方源；
 - `build_runtime`：`(Node版本|spec|arch|lock指纹)` 写入 `.runtime-info`，相同组合直接复用 `.cache/runtime/<arch>`（**lock 指纹进缓存键，改锁即重建**，指纹 = `package-lock.json` 的 sha256 前 12 位，无 lock 记 `none`）；
 - **启动冒烟 `smoke_runtime()`**：装完用刚装好的树起一次 `dsh web --no-open --port <40200+>`（独立 `.build/smoke-home`），**40 s 内必须打出 `dsh web: http` 且进程存活**，否则打印日志并**构建失败**（「构建成功」≠「产物能用」）；跨架构 stage（arm64 主机上编 x86_64）无本机 node、闭包与架构无关故自动跳过；`DSH_SKIP_RUNTIME_SMOKE=1` 可临时跳过；
 - **`--prefetch`**：只建 runtime 到 `.cache/runtime`，不产出 App（供离线全量构建）；
@@ -26,7 +26,7 @@ manual: false
 
 ## platforms/macos/runtime-locks/（运行时依赖闭包锁）
 
-- 每个受支持的 dsh spec 一份 `<spec>/{package.json,package-lock.json}`，目录名由 `locks_dir_for_spec()` 从 spec 推出（剥掉 `@scope/`、`@` 换 `-`：`@deepseek-ai/dsh@0.1.2-rc.1` → `dsh-0.1.2-rc.1/`）；0.1.2-rc.1 那份从**真能启动**的生产运行树导出（583 个包、`lockfileVersion: 3`）；
+- 每个受支持的 dsh spec 一份 `<spec>/{package.json,package-lock.json}`，目录名由 `locks_dir_for_spec()` 从 spec 推出（剥掉 `@scope/`、`@` 换 `-`：`@deepseek-ai/dsh@0.1.5-rc.3` → `dsh-0.1.5-rc.3/`）；0.1.5-rc.3 那份从**真能启动**的生产运行树导出（584 个包、`lockfileVersion: 3`），0.1.2-rc.1 那份 583 包保留供快照回退；
 - **随 App 分发**：构建第 ④ 步把整个目录 `ditto` 到 `Contents/Resources/runtime-locks/`——会话快照回退需要补装某个 dsh 版本时，`DSHUpdater.installVersion`（`main.swift`）按 `committedRuntimeLockPath(dshVersion:)` 找到该版本的 `package-lock.json` 并**改用 `npm ci`**（无 lock 才退回 `npm install @deepseek-ai/dsh@<v>`），同时作为「这棵树闭包是否正确」的比对基准（见 [session-snapshot](session-snapshot.md) 的 `--expected-lock` 守卫）；
 - **加新 dsh 版本 = 加一个 spec 目录**：直接从能启动的树导出 lock 提交，否则该 spec 的构建会打 `WARNING: no committed lock for <spec>` 并退回不可复现的 `npm install`。
 
@@ -47,7 +47,7 @@ manual: false
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `DSH_NODE_VERSION` | 自动检测最新 LTS | 指定 Node 版本（如 v22.23.2） |
-| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.2-rc.1` | 内置 dsh 的包说明，同时决定用哪份 `runtime-locks/<spec>/`（可覆盖为 `@latest` 等；无对应 lock 则退回 `npm install`） |
+| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.5-rc.3` | 内置 dsh 的包说明，同时决定用哪份 `runtime-locks/<spec>/`（可覆盖为 `@latest` 等；无对应 lock 则退回 `npm install`） |
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh） |
 | `DSH_SKIP_RUNTIME_SMOKE` | `0` | =1 跳过 runtime 装完后的启动冒烟（仅离线调试用；跳过即失去「产物能起」这一验收） |
@@ -63,12 +63,12 @@ manual: false
 
 ## scripts/version.sh（版本单一来源）
 
-- 输出两行 `VERSION`/`BUILD`：VERSION 仅当 HEAD 恰在 `vX.Y.Z` tag 上取该 tag，否则回退 `FALLBACK_VERSION`（当前 **1.17.0**，即 v1.16.2 发布后推进的开发线）；BUILD 取 CI 运行号（`GITHUB_RUN_NUMBER`/`CI_PIPELINE_IID`/`BUILD_NUMBER`），否则回退 **73**；
+- 输出两行 `VERSION`/`BUILD`：VERSION 仅当 HEAD 恰在 `vX.Y.Z` tag 上取该 tag，否则回退 `FALLBACK_VERSION`（当前 **1.17.0**，即 v1.16.3 发布后推进的开发线）；BUILD 取 CI 运行号（`GITHUB_RUN_NUMBER`/`CI_PIPELINE_IID`/`BUILD_NUMBER`），否则回退 **73**；
 - `build-app.sh`/`local-release.sh`/`github-publish.sh`/`release-checksums.sh` 统一读它，**版本不再由调用方传参**。
 
 ## scripts/local-release.sh（本机 Release，与 release.yml 对齐）
 
-- 三阶段：prepare（逐架构 `build-app.sh --prefetch` 命中 `.cache/`）→ build（逐架构 `build-app.sh` + `make-pkg.sh`）→ release（`release-checksums.sh` + `github-publish.sh`），不依赖 GitHub Actions；
+- 三阶段：prepare（逐架构 `build-app.sh --prefetch` 命中 `.cache/`）→ build（逐架构 `build-app.sh` + `make-pkg.sh`）→ release（`release-checksums.sh` + `github-publish.sh`），不依赖 GitHub Actions；**2026-09-27 起退为兜底**：打 tag 推 CI 由 release.yml 构建发布已是首选（v1.16.0/1/2/3 四代 run 均 success），CI 失败时才回退到本脚本；
 - 用法：`scripts/local-release.sh`（两架构发布）/ `scripts/local-release.sh <arch...>` / `scripts/local-release.sh pack [arch...]`（只打包不发布 GitHub）；
 - **版本不传参**（统一读 version.sh）；发布模式要求 HEAD 恰在 `vX.Y.Z` tag 上，否则阻断（防止把 fallback 版本发布到错误 commit）；pack 模式可用开发线版本临时打包；
 - 环境变量：`GH_TOKEN`（或已登录 gh CLI）、`GITHUB_REPOSITORY`（默认 insky2005/oh-my-dsh）、`IS_PRERELEASE`（默认 1=预发布）、`DSH_NPM_REGISTRY`。

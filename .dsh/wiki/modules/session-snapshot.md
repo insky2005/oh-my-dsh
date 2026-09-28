@@ -1,14 +1,14 @@
 ---
 title: 模块：会话快照与回退（Session Snapshots）
 tags: [module, snapshot, rollback, dsh-upgrade, tree-pool, session-log, clonefile]
-updated: 2026-09-24T04:04:23Z
+updated: 2026-09-28T01:42:18Z
 sources: [docs/session-snapshot-rollback-design.md, core/lib/snapshot.js, core/lib/snapshot-io.js, core/bin/ohmy-core.js, core/tests/snapshot.test.js, core/tests/snapshot-io.test.js, tests/snapshot-rollback/, tests/snapshot-panel/, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, platforms/macos/src/main.swift, platforms/macos/build-app.sh, platforms/macos/runtime-locks/, docs/dsh-version-impact.md, CHANGELOG.md]
 manual: false
 ---
 
 # 会话快照与回退（Session Snapshots）
 
-> 状态：**已实现并随 v1.16.2 发布**（`CHANGELOG [1.16.2] - 2026-09-23`；tag `v1.16.2` 已在 `main` 上，工作分支 `release/1.16` 已合回）。内置 dsh 保持 `0.1.2-rc.1`，本功能是"升级 dsh 前的安全网"。
+> 状态：**已实现并随 v1.16.2 发布**（`CHANGELOG [1.16.2] - 2026-09-23`；tag `v1.16.2` 已在 `main` 上，工作分支 `release/1.16` 已合回）。内置 dsh 于 v1.16.3（2026-09-27）起推进到 `0.1.5-rc.3`（v1.16.2 时仍为 `0.1.2-rc.1`），本功能是"升级 dsh 前的安全网"。
 > 设计文档：`docs/session-snapshot-rollback-design.md`（含九类场景演绎与成本实测）。
 
 ## 为什么需要
@@ -57,4 +57,4 @@ dsh 按 **Session 格式世代**命名会话日志（世代 0 = `session.jsonl`�
 ## 相关
 
 - `docs/dsh-version-impact.md` R7（会话日志世代命名）与 §4.5（0.1.5 升级复盘）；
-- `docs/plans/dsh-015rc2-compat-audit.md`（0.1.5-rc.2 兼容审计：审计完成、**内置 dsh 升级仍暂缓**——0.1.5 会让会话日志换代且无法回退到旧 dsh，唯一断裂点（世代命名）已修复并随 v1.16.2 发布）。
+- `docs/plans/dsh-015rc2-compat-audit.md`（0.1.5-rc.2 兼容审计：审计完成；**升级已于 2026-09-27 按 rc.3 随 v1.16.3 执行完毕**——0.1.5 会让会话日志换代，唯一断裂点（世代命名）已修复并随 v1.16.2 发布，会话快照/回退作为安全网就位）。
