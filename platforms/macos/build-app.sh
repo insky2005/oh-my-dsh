@@ -15,7 +15,7 @@
 #   2. runs `npm install <dsh>` (via that downloaded Node) in
 #      Contents/Resources/runtime/dsh, pulling @deepseek-ai/dsh and its whole
 #      dependency closure from the npm registry (default spec:
-#      @deepseek-ai/dsh@0.1.2-rc.1; override with DSH_PACKAGE_SPEC).
+#      @deepseek-ai/dsh@0.1.5-rc.3; override with DSH_PACKAGE_SPEC).
 #
 # China mirrors are used by default for speed (override with DSH_NODE_MIRROR /
 # DSH_NPM_REGISTRY). Downloads and the built runtime are cached in .cache/ so
@@ -187,7 +187,7 @@ lock_fingerprint() {
 # when the spec has one (reproducible), else a plain install + loud warning.
 install_dsh() {
   local target="$1"
-  local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.2-rc.1}"
+  local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.5-rc.3}"
   local lock_dir; lock_dir="$(locks_dir_for_spec "$spec")"
   mkdir -p "$target"
   if [ -f "$lock_dir/package-lock.json" ]; then
@@ -252,7 +252,7 @@ smoke_runtime() {
 
 # build_runtime: node bin + npm + dsh tree into $CACHE_DIR/runtime (cached)
 build_runtime() {
-  local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.2-rc.1}"
+  local spec="${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.5-rc.3}"
   # runtime 按架构分目录（$CACHE_DIR/runtime/<arch>）：双架构 release 的
   # arm64/x86_64 各自 node+dsh 树互不覆盖，缓存跨轮生效；旧单目录会让
   # 每轮 release 的每个架构都 rm -rf 重建（缓存形同虚设）。
@@ -318,7 +318,7 @@ if [ "$MODE" = "prefetch" ]; then
   build_runtime
   echo ""
   echo "Prefetched runtime ready: $CACHE_DIR/runtime/$ARCH"
-  echo "Node: $NODE_VERSION | dsh: ${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.2-rc.1}"
+  echo "Node: $NODE_VERSION | dsh: ${DSH_PACKAGE_SPEC:-@deepseek-ai/dsh@0.1.5-rc.3}"
   echo "A later './build-app.sh' will reuse it without network."
   exit 0
 fi
