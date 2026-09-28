@@ -132,7 +132,7 @@ tests/skills-panel/run.sh             # 技能面板（模型层 + 控制器冒�
 tests/shell-config/run.sh             # ShellConfig 旧 UserDefaults 一次性迁移（13 例：旧值迁移 / 只做一次 / config.json 优先 / 不搬无关键）
 tests/dsh-auth-cookies/run.sh         # dsh 认证 cookie 清理纯逻辑（22 例：cookie 名派生向量 / 启动与退出清理选择 / NODE_OPTIONS 追加规则）
 tests/file-panel/run.sh              # 文件面板（workspace-tab 模型 28 例 + open-with / tree-menu / image-zoom / editor-load-policy + 真实 NSWindow 面板场景；2026-09-21 实测全绿）
-tests/preview-interceptor/run.sh      # 注入的文件打开拦截脚本（从 main.swift 抽取 previewInterceptorScript，DOM stub：点击捕获 + host.openPath/session.openWorkspacePath fetch 形状，8 例）
+tests/preview-interceptor/run.sh      # 注入的文件打开拦截脚本（从 main.swift 抽取 previewInterceptorScript，DOM stub：三类点击捕获（内联 / 产出行 / 工具行 fileLink）+ host.openPath/session.openWorkspacePath fetch 形状，11 例）
 tests/terminal-panel/run.sh          # 终端面板（头部固定标题 + TerminalWorkspaceTabs 工作区隔离 + 选中即复制开关；2026-09-21 实测全绿）
 tests/projects-panel/run.sh          # 项目面板（纯模型 45 项 + 控制器无头 49 项 = 94 项）
 tests/tasks-panel/run.sh             # 任务面板逻辑层五段（模型 176 + 运行器 362 + 视图模型 324 + 视图 199 + 本地 API 68 = 1129 项）

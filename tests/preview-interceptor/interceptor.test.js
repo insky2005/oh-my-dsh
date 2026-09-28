@@ -40,11 +40,12 @@ function matchesSelector(el, selector) {
   return false;
 }
 
-function makeElement({ tag, attrs = {}, parent = null, className = '' }) {
+function makeElement({ tag, attrs = {}, parent = null, className = '', text = '' }) {
   const el = {
     tagName: tag.toUpperCase(),
     className,
     parentNode: parent,
+    textContent: text,
     getAttribute: (name) => (name in attrs ? attrs[name] : null),
     closest(selector) {
       let node = el;
@@ -163,6 +164,38 @@ test('an icon (non-button) target resolves to its file-link button', () => {
   dispatchClick(env.document, makeEvent(icon));
   assert.equal(env.posted.length, 1);
   assert.equal(env.posted[0].path, '/tmp/icon.txt');
+});
+
+// Tool rows (read / write / edit) have NO title: the path is the link text.
+test('a tool-row file link (class fileLink, no title) posts its text', () => {
+  const env = install();
+  const link = makeElement({
+    tag: 'button',
+    className: 'o3BgMG_fileLink',
+    text: 'platforms/macos/src/main.swift',
+  });
+  const event = makeEvent(link);
+  dispatchClick(env.document, event);
+  assert.deepEqual(env.posted, [{ path: 'platforms/macos/src/main.swift', source: 'click' }]);
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(event.propagationStopped, true);
+});
+
+test('a ~-abbreviated tool-row path is forwarded verbatim', () => {
+  const env = install();
+  const link = makeElement({ tag: 'button', className: 'o3BgMG_fileLink', text: '~/.dsh/settings.yaml' });
+  dispatchClick(env.document, makeEvent(link));
+  assert.equal(env.posted.length, 1);
+  assert.equal(env.posted[0].path, '~/.dsh/settings.yaml');
+});
+
+test('a fileLink with no text is left alone', () => {
+  const env = install();
+  const link = makeElement({ tag: 'button', className: 'o3BgMG_fileLink', text: '' });
+  const event = makeEvent(link);
+  dispatchClick(env.document, event);
+  assert.equal(env.posted.length, 0);
+  assert.equal(event.defaultPrevented, false);
 });
 
 // --- layer 2: legacy host-RPC fetch interception ---------------------------

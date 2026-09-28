@@ -3648,13 +3648,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     ///    panel). `openFile` now calls `ctx.sidebarRight.openResource(...)`
     ///    entirely in-page, so NO host RPC is issued and the fetch patch below
     ///    never fires. We catch the click at the document capture phase for the
-    ///    two file-link surfaces — inline mentions
-    ///    (`<code><button class="…fileMention…" title="<path>">`) and the
+    ///    three file-link surfaces — inline mentions
+    ///    (`<code><button class="…fileMention…" title="<path>">`), the
     ///    produced-files row (`[data-produced-files-row] button[title="<path>"]`)
-    ///    — post the raw path to the native preview panel, and swallow the event
-    ///    so dsh's own panel stays closed. Workspace-relative paths are resolved
-    ///    natively against the active project directory (dsh <= 0.1.4 resolved
-    ///    them against the session cwd before sending the RPC).
+    ///    and tool rows (`read` / `write` / `edit` render
+    ///    `<button class="…fileLink…">` whose text is the display path and which
+    ///    has no title) — post the path to the native preview panel, and swallow
+    ///    the event so dsh's own panel stays closed. Workspace-relative paths are
+    ///    resolved natively against the active project directory and a leading
+    ///    `~` against home (dsh <= 0.1.4 resolved relative paths against the
+    ///    session cwd before sending the RPC).
     ///
     /// 2. FETCH patch (dsh <= 0.1.4 and any future host-RPC surface). dsh web
     ///    opened files by calling the host RPC `host.openPath` (<= 0.1.1) or
@@ -3676,18 +3679,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       // 0.1.5 dsh ships its own file/document panel and `openFile` opens it
       // in-page via ctx.sidebarRight.openResource(...): no host RPC is issued,
       // so the fetch patch below never sees the path. The click is the last
-      // place it is visible. Only the two file-link surfaces are matched
-      // (inline mentions and the produced-files row); dsh's own file-tree rows
-      // also carry a path title and must keep their own behaviour.
+      // place it is visible. Three file-link surfaces exist:
+      //   * inline mentions  — <code><button class="…fileMention…" title="<path>">
+      //   * produced files   — [data-produced-files-row] button[title="<path>"]
+      //   * tool rows        — read/write/edit render <button class="…fileLink…">
+      //     whose TEXT is the workspace-relative (or `~`-abbreviated) path and
+      //     which carries no title at all.
+      // dsh's own file-tree rows also carry a path title and must keep their own
+      // behaviour, so only these three surfaces are matched.
       document.addEventListener('click', function (event) {
         var target = event.target;
-        var control = target && target.closest ? target.closest('button[title]') : null;
+        var control = target && target.closest ? target.closest('button') : null;
         if (!control) return;
         var className = String(control.className || '');
-        var isMention = control.closest('code') !== null || className.indexOf('fileMention') !== -1;
-        var isProduced = control.closest('[data-produced-files-row]') !== null;
-        if (!isMention && !isProduced) return;
-        var clickPath = control.getAttribute('title');
+        var clickPath = null;
+        if (control.closest('code') !== null || className.indexOf('fileMention') !== -1
+            || control.closest('[data-produced-files-row]') !== null) {
+          clickPath = control.getAttribute('title');
+        } else if (className.indexOf('fileLink') !== -1) {
+          // Tool row: the raw path lives only in the closure, not the DOM; the
+          // link text is its display form, which the native side resolves
+          // (relative → project dir, `~` → home).
+          clickPath = (control.textContent || '').trim();
+        }
         if (!clickPath) return;
         window.__dshPreviewClick = clickPath;
         try {
@@ -4996,9 +5010,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     ///     builds it: the interceptor must capture the path synchronously (the
     ///     hit flag is set before the promise resolves) and return a fake
     ///     success (read back via __dshProbeAsync);
-    ///   * the click shape (dsh >= 0.1.5, where dsh opens its own panel with no
-    ///     RPC): a synthesized produced-files chip must be captured and its event
-    ///     swallowed.
+    ///   * the click shapes (dsh >= 0.1.5, where dsh opens its own panel with no
+    ///     RPC): both a synthesized produced-files chip (path in `title`) and a
+    ///     synthesized tool-row link (path in the button text, no title) must be
+    ///     captured and their events swallowed.
     /// An interceptor that only knows one of these fails here instead of
     /// silently in the UI (see docs/dsh-version-impact.md B7).
     private static let previewDebugProbeJS = """
@@ -5066,6 +5081,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       out.clickHit = window.__dshPreviewClick || null;
       out.clickPrevented = clickEvent.defaultPrevented;
       clickRow.parentNode.removeChild(clickRow);
+      // Tool-row shape (read / write / edit): <button class="…fileLink…"> with
+      // no title, whose text is the display path.
+      window.__dshPreviewClick = null;
+      var toolProbe = document.createElement('button');
+      toolProbe.type = 'button';
+      toolProbe.className = '_fileLink_probe_1';
+      toolProbe.textContent = 'src/tool-probe.swift';
+      document.body.appendChild(toolProbe);
+      var toolEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+      toolProbe.dispatchEvent(toolEvent);
+      out.toolClickHit = window.__dshPreviewClick || null;
+      out.toolClickPrevented = toolEvent.defaultPrevented;
+      toolProbe.parentNode.removeChild(toolProbe);
       return JSON.stringify(out);
     })()
     """
