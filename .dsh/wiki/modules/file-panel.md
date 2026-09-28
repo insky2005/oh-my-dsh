@@ -94,7 +94,7 @@ manual: false
 
 ## 与壳层 / 构建的数据流
 
-- 入口与 PreviewPanel 相同：main.swift 的 `previewInterceptorScript` 拦截 `/api/host.openPath` → `setRightPanel(.preview)` + `previewPanel.open(path:)`；
+- 入口：main.swift 的 `previewInterceptorScript`（dsh ≤0.1.4 走 fetch 拦截 `/api/host.openPath` / `session/openWorkspacePath`；≥0.1.5 链接改走 dsh 自带面板、改为**点击捕获**）→ `setRightPanel(.preview)` + `previewPanel.open(path:)`；相对路径由 `FilePanelController.resolveIncomingPath` 按 `ProjectDirectory.current` 解析；
 - **菜单**：「文件 File」菜单（`menu.file`/`menu.save`）——`保存 Save`（⌘S）+「关闭页签」（⌘W，无页签时禁用）；`updateCloseTabMenuState()` 由 `onTabsChanged` 驱动；
 - 编译清单由 `platforms/macos/swift-sources.sh` glob 自动收录（`src/*.swift`），新增文件无需登记；Highlightr 的 4 个 highlight.js 资源文件由 `build-app.sh` `cp` 到 `$APP/Contents/Resources/` **根**（Highlightr 按无子目录路径加载），缺失给 WARNING；
 - `Highlightr()` **初始化守卫**：显式构造并判 nil（`CodeAttributedString()` 会 force-unwrap），`highlightingAvailable()` 校验 4 个资源存在，缺失则退化为纯文本不崩溃。

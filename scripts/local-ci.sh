@@ -74,6 +74,8 @@ stage_swift() {
   tests/review-panel/run.sh
   echo "--- file panel (workspace tab memory) tests ---"
   tests/file-panel/run.sh
+  echo "--- injected file-open interceptor tests ---"
+  tests/preview-interceptor/run.sh
   echo "--- L10n key lint ---"
   tests/l10n/run.sh
   echo "--- native dsh RPC helper tests ---"

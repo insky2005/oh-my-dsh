@@ -7,7 +7,20 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
-- 暂无（v1.16.3 已发布；本条线下一个版本是 **1.16.4**）。
+### Fixed
+
+- **修复：内置 dsh 推进到 0.1.5-rc.3 后，点会话里的文件链接不再在壳层文件面板打开**。0.1.5 给 dsh 加了自带文件面板，
+  `dsh-client-ui-chat` 的 `openFile` 从 0.1.2 的 `remote.session.openWorkspacePath({path: resolveWorkspacePath(cwd, path)})`
+  改成页面内的 `ctx.sidebarRight.openResource(fileAddressFor(sessionId, cwd, path))`——**不再发任何 HTTP 请求**，
+  壳层只 hook `window.fetch` 的 `previewInterceptorScript` 因此彻底失效（点链接改开 dsh 自带面板，原生面板收不到路径）。
+  修复：给拦截脚本加**点击捕获层**，在 document 捕获阶段识别内联文件链接（`<code>` 内的按钮 / `button[class*=fileMention]`）
+  与「Files changed」产出文件行（`[data-produced-files-row] button[title]`），把 `title`（原样路径）发给原生面板并吞掉事件；
+  原 `fetch` 层保留以兼容 ≤0.1.4 与未来的 host RPC 面。相对路径由原生侧按当前项目目录解析
+  （`FilePanelController.resolveIncomingPath`，等价于 0.1.2 客户端发送前做的 `resolveWorkspacePath(cwd, path)`），
+  因此**工作区相对路径的文件链接也能打开**（此前只会被 fetch 层按绝对路径过滤掉）。回归用例：`tests/preview-interceptor/`
+  （直接抽取注入脚本用 DOM stub 运行，覆盖点击 + 两种 fetch 形状）与 `tests/file-panel` 的路径解析用例；`DSH_PREVIEW_DEBUG=1`
+  探针也新增合成点击自检。根因与审计漏洞复盘见 `docs/dsh-version-impact.md` B7/R3 与
+  `docs/plans/dsh-015rc2-compat-audit.md` §7.1c。
 
 ## [1.16.3] - 2026-09-27
 
@@ -36,7 +49,9 @@ All notable changes to this project are documented in this file. Format follows
     `dsh web: <带 token 的 URL>`、`workspace.json` 的 domain `workspace` v2、技能四根与 rank、frontmatter 规范键
     **均未变**；**唯一断裂面**是会话日志的**世代命名**（0.1.5 起新建会话写 `session.v3.jsonl.zstd`），其修复已在
     v1.16.2 落地（`core/lib/review-log.js` 的 `parseSessionLogName` / `sessionLogCandidates`，按规范名枚举 +
-    世代最大者优先），因此本次升级**不需要新的壳层代码改动**。
+    世代最大者优先）。**（更正：这句「不需要新的壳层代码改动」不成立）**升级到 0.1.5-rc.3 实际需要一处壳层适配——
+    文件链接改走 dsh 自带面板、不再发 RPC，见 [Unreleased] 的修复；原结论错在只比对了端点集合与六个耦合包，
+    未覆盖 `dsh-client-ui-chat` 点击链接的客户端行为。
   - 验证：新运行时**启动冒烟通过**、core 单测与面板/swift 套件全绿，端到端实测新会话的活日志为
     `session.v3.jsonl.zstd` 且壳层读取器能发现并审计它；执行与证据见 `docs/plans/dsh-015rc2-compat-audit.md` §七。
 

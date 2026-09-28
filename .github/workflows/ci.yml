@@ -99,6 +99,8 @@ jobs:
         run: tests/review-panel/run.sh
       - name: File panel (workspace tab memory) tests
         run: tests/file-panel/run.sh
+      - name: Injected file-open interceptor tests
+        run: tests/preview-interceptor/run.sh
       - name: L10n key lint
         run: tests/l10n/run.sh
       - name: Build CEF integration artifacts (arm64)

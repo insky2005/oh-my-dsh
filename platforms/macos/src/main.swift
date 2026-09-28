@@ -3143,22 +3143,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     })()
     """
 
-    /// Interceptor for dsh web's file-open requests. dsh web opens files by
-    /// calling the host RPC `host.openPath`, which the client sends as an
-    /// HTTP POST to `/api/host.openPath` with body
-    /// `{type:"client-request", rpcId, method:"host.openPath", payload:{path}}`
-    /// (see @deepseek-ai/dsh-client-connection: callUnary → postJson → doFetch
-    /// → globalThis.fetch). Patching `window.fetch` catches EVERY file-open
-    /// attempt regardless of which UI element triggered it (produced-file
-    /// chips, inline mentions, "show in folder", future surfaces) and yields
-    /// the exact absolute path. The request is swallowed and replaced with a
-    /// fake successful `server-response`, so the page never opens the system
-    /// default app and the client promise resolves cleanly. All other API
-    /// calls pass through untouched. Diagnostic flags (DSH_PREVIEW_DEBUG=1)
-    /// record install + hits.
+    /// Interceptor for dsh web's file-open requests, in two layers because
+    /// dsh changed how its file links open:
+    ///
+    /// 1. CLICK capture (dsh >= 0.1.5, where dsh ships its own file/document
+    ///    panel). `openFile` now calls `ctx.sidebarRight.openResource(...)`
+    ///    entirely in-page, so NO host RPC is issued and the fetch patch below
+    ///    never fires. We catch the click at the document capture phase for the
+    ///    two file-link surfaces — inline mentions
+    ///    (`<code><button class="…fileMention…" title="<path>">`) and the
+    ///    produced-files row (`[data-produced-files-row] button[title="<path>"]`)
+    ///    — post the raw path to the native preview panel, and swallow the event
+    ///    so dsh's own panel stays closed. Workspace-relative paths are resolved
+    ///    natively against the active project directory (dsh <= 0.1.4 resolved
+    ///    them against the session cwd before sending the RPC).
+    ///
+    /// 2. FETCH patch (dsh <= 0.1.4 and any future host-RPC surface). dsh web
+    ///    opened files by calling the host RPC `host.openPath` (<= 0.1.1) or
+    ///    the session controller's `session/openWorkspacePath` (0.1.2 … 0.1.4),
+    ///    which the client sends as an HTTP POST to `/api/<method>` with body
+    ///    `{type:"client-request", rpcId, method, payload:{args:{request:{path}}}}`
+    ///    (see @deepseek-ai/dsh-client-connection: callUnary → postJson →
+    ///    doFetch → globalThis.fetch). The request is swallowed and replaced
+    ///    with a fake successful `server-response`, so the page never opens the
+    ///    system default app and the client promise resolves cleanly. All other
+    ///    API calls pass through untouched.
+    ///
+    /// Diagnostic flags (DSH_PREVIEW_DEBUG=1) record install + hits.
     private static let previewInterceptorScript = """
     (function () {
       window.__dshPreviewInstalled = true;
+
+      // Layer 1 — capture clicks on dsh's own file links (dsh >= 0.1.5). From
+      // 0.1.5 dsh ships its own file/document panel and `openFile` opens it
+      // in-page via ctx.sidebarRight.openResource(...): no host RPC is issued,
+      // so the fetch patch below never sees the path. The click is the last
+      // place it is visible. Only the two file-link surfaces are matched
+      // (inline mentions and the produced-files row); dsh's own file-tree rows
+      // also carry a path title and must keep their own behaviour.
+      document.addEventListener('click', function (event) {
+        var target = event.target;
+        var control = target && target.closest ? target.closest('button[title]') : null;
+        if (!control) return;
+        var className = String(control.className || '');
+        var isMention = control.closest('code') !== null || className.indexOf('fileMention') !== -1;
+        var isProduced = control.closest('[data-produced-files-row]') !== null;
+        if (!isMention && !isProduced) return;
+        var clickPath = control.getAttribute('title');
+        if (!clickPath) return;
+        window.__dshPreviewClick = clickPath;
+        try {
+          window.webkit.messageHandlers.dshPreview.postMessage({ path: clickPath, source: 'click' });
+        } catch (err) {}
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+      }, true);
+
+      // Layer 2 — swallow the legacy host RPC older dsh clients sent.
       var origFetch = window.fetch;
       window.fetch = function (input, init) {
         var url = typeof input === 'string' ? input : (input && (input.href || input.url)) || '';
@@ -4079,16 +4121,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         hideStatus()
     }
 
-    /// Probe evaluated in the page when DSH_PREVIEW_DEBUG=1: checks the
-    /// interceptor installed state, then fires BOTH file-open request shapes the
-    /// interceptor must swallow — the legacy `host.openPath` and the modern
-    /// (dsh >= 0.1.2) `session/openWorkspacePath` with `payload.args.request.path`
-    /// — each the way the dsh web client builds it, and verifies the interceptor
-    /// captured the path synchronously (the hit flag is set before the promise
-    /// resolves) and returned a fake success (read back via __dshProbeAsync).
-    /// The modern shape is the one the upgraded client actually sends, so an
-    /// interceptor that only knows the legacy one fails here instead of silently
-    /// in the UI (see docs/dsh-version-impact.md B7).
+    /// Probe evaluated in the page when DSH_PREVIEW_DEBUG=1. It checks the
+    /// interceptor installed state and exercises every file-open surface it
+    /// must handle:
+    ///   * the legacy `host.openPath` fetch shape, and the modern
+    ///     (dsh 0.1.2…0.1.4) `session/openWorkspacePath` fetch shape
+    ///     (`payload.args.request.path`), each the way the dsh web client
+    ///     builds it: the interceptor must capture the path synchronously (the
+    ///     hit flag is set before the promise resolves) and return a fake
+    ///     success (read back via __dshProbeAsync);
+    ///   * the click shape (dsh >= 0.1.5, where dsh opens its own panel with no
+    ///     RPC): a synthesized produced-files chip must be captured and its event
+    ///     swallowed.
+    /// An interceptor that only knows one of these fails here instead of
+    /// silently in the UI (see docs/dsh-version-impact.md B7).
     private static let previewDebugProbeJS = """
     (function () {
       var out = { installed: !!window.__dshPreviewInstalled, hit: window.__dshPreviewHit || null };
@@ -4137,6 +4183,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       out.hitSyncModern = window.__dshPreviewHit || null;
       window.__dshPreviewHitModern = out.hitSyncModern;
       window.__dshPreviewHit = out.hitSync;
+      // dsh >= 0.1.5 shape: file links open dsh's own panel in-page, so the
+      // interceptor catches the CLICK instead of an RPC. Synthesize a chip in a
+      // produced-files row and dispatch a bubbling click: it must be captured
+      // (posted to the native handler) and swallowed (default prevented).
+      window.__dshPreviewClick = null;
+      var clickProbe = document.createElement('button');
+      clickProbe.type = 'button';
+      clickProbe.title = '/tmp/dsh-preview-click-test.txt';
+      var clickRow = document.createElement('div');
+      clickRow.setAttribute('data-produced-files-row', '');
+      clickRow.appendChild(clickProbe);
+      document.body.appendChild(clickRow);
+      var clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+      clickProbe.dispatchEvent(clickEvent);
+      out.clickHit = window.__dshPreviewClick || null;
+      out.clickPrevented = clickEvent.defaultPrevented;
+      clickRow.parentNode.removeChild(clickRow);
       return JSON.stringify(out);
     })()
     """
@@ -4219,9 +4282,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "dshPreview" {
             guard let body = message.body as? [String: Any], let path = body["path"] as? String else { return }
-            AppLog.shared.log("preview request: \(path)")
+            // dsh >= 0.1.5 hands the raw (possibly workspace-relative) path to
+            // its own panel; resolve it against the active project directory so
+            // the native panel can open the same file (see resolveIncomingPath).
+            let root = ProjectDirectory.current ?? previewPanel?.projectRootPath
+            let resolved = FilePanelController.resolveIncomingPath(path, projectRoot: root)
+            AppLog.shared.log("preview request: \(path) (source=\(body["source"] ?? "rpc")) -> \(resolved)")
             if rightPanel != .preview { setRightPanel(.preview) }
-            previewPanel.open(path: path)
+            previewPanel.open(path: resolved)
             return
         }
         // The user switched to a different session in dsh web: resolve its
