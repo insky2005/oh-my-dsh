@@ -329,13 +329,13 @@ ShellConfig.shared.removeObject(forKey: ProjectsCore.configKey)
 panel.reload()
 test("the default root is <DSH_HOME>/oh-my-dsh/projects",
      waitUntil(3) { panel.rootPath == ProjectsCore.defaultRoot(dshHome: home) })
-test("a missing default root lists nothing and is not created",
+test("a missing default root is created on load",
+     waitUntil(3) { fm.fileExists(atPath: ProjectsCore.defaultRoot(dshHome: home)) })
+test("a freshly created root just lists nothing (no rootMissing message)",
      waitUntil(3) { panel.workspaces.isEmpty }
-        && !fm.fileExists(atPath: ProjectsCore.defaultRoot(dshHome: home)))
+        && !labels(panel.view).contains { $0.hasPrefix("projects.rootMissing") })
 test("the empty state is offered when there is no workspace",
      waitUntil(2) { panel.isEmptyStateVisible })
-test("a missing root is reported in the panel",
-     waitUntil(2) { labels(panel.view).contains { $0.hasPrefix("projects.rootMissing") } })
 
 // MARK: - Cleanup
 

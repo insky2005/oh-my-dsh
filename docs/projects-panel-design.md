@@ -55,7 +55,7 @@
 - **projects 根目录**：所有工作区的父目录。默认 `<DSH_HOME>/oh-my-dsh/projects`：
   - 正式版 `DSH_HOME=~/.dsh` → `~/.dsh/oh-my-dsh/projects`；
   - 开发版 `DSH_HOME=~/.dsh-dev`（`applyDevIsolation()` 注入，见 `docs/dsh-version-impact.md` D7）→ `~/.dsh-dev/oh-my-dsh/projects`，与正式版天然隔离；
-  - 该目录**不在启动时创建**：面板首次打开只读列举，只有「新建工作区」才 `mkdir -p`（连带建根）。
+  - 该目录**在面板每次加载时按需创建**（`reload()` 里后台调 `ProjectsCore.ensureDirectory`）：全新安装首次打开面板即可落一个真实、可写的根，而不是停在「根目录不存在」；创建失败（权限、卷未挂载）不报错，回落为空态提示。纯模型 `listDirectories` 自身仍只读、不写盘（§3.4）。
 - **路径语义**：根目录只接受**绝对路径**（`~` 会展开）；相对路径视为无效配置（设置窗口内联拒绝，面板侧回退默认值并记日志）。
 
 ---
@@ -107,7 +107,7 @@ struct ProjectWorkspace: Equatable {
 
 ### 3.4 列举与注册匹配
 
-- **列举**：`FileManager.contentsOfDirectory(atPath: root, includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey])`，只保留**目录**（含**指向目录的符号链接**——用户常把已有仓库 link 进 projects 根），跳过名字以 `.` 开头的项，按名（大小写不敏感）排序。根目录不存在 → 返回空数组（**不**报错、**不**创建）。
+- **列举**：`FileManager.contentsOfDirectory(atPath: root, includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey])`，只保留**目录**（含**指向目录的符号链接**——用户常把已有仓库 link 进 projects 根），跳过名字以 `.` 开头的项，按名（大小写不敏感）排序。根目录不存在 → 返回空数组（**不**报错、**不**创建；面板在调用前已用 `ensureDirectory` 尽力建根，见 §2）。
 - **注册表读取**：`DshWorkspaceStore.items(port:dshHome:log:)`（dsh ≤0.1.1 走活 RPC `workspace/list`；dsh ≥0.1.2 回退 `$DSH_HOME/storages/workspace.json`，域名 `workspace` / v2 校验 + 诊断日志，见影响清单 **C4 / R4**）。**必须在后台队列调用**（最坏阻塞 6s）。
 - **匹配**：两侧都用 `DshWorkspaceStore.canonical(path)`（standardize + 解析符号链接）归一，因此 `/r/abc`、`/r/abc/`、`/link/abc → /r/abc` 都能对上。
 
@@ -220,7 +220,7 @@ dsh 自己的「新会话」（工作区行悬停出现的 `+`，`aria-label = "
 | `⟳` 刷新 | 重读根 + 列举 + 注册表（后台） |
 | `⚙` 设置 | 打开壳层设置窗口（`openSettingsWindow`） |
 | `✕` 关闭 | `onRequestHide` → 收起右栏（沿用既有语义） |
-| 根目录行 | 次要色文本显示**有效**根路径（tooltip = 全路径）；「更改…」弹 `NSOpenPanel`（`canChooseDirectories`、`canCreateDirectories`），选中即写 `projectsRoot` 并刷新（改根**不**改当前工作区，只重列） |
+| 根目录行 | 次要色文本显示**有效**根路径（tooltip = 全路径）；「更改…」弹 `NSOpenPanel`（`canChooseDirectories`、`canCreateDirectories`），**起始目录 = 当前根**（不存在时退到最近的现存祖先，见 `ProjectsCore.existingDirectoryForPicker`），选中即写 `projectsRoot` 并刷新（改根**不**改当前工作区，只重列） |
 
 ### 5.2 卡片（三行）
 
@@ -248,7 +248,7 @@ dsh 自己的「新会话」（工作区行悬停出现的 `+`，`aria-label = "
 ### 5.3 空态与状态行
 
 - 根目录存在但无子目录：居中提示「还没有工作区…」+ 一个明显的「+ 新建工作区」按钮；
-- 根目录不存在：提示该根路径 + 同上按钮（点新建时 `mkdir -p` 连带建根）；
+- 根目录不存在：**正常不会出现**——每次加载已自动建根（§2）；只有建根失败（权限、卷未挂载）才提示该根路径 + 同上按钮（点新建时 `mkdir -p` 连带建根）；
 - 状态行（面板底部）显示最近一次操作结果：`已创建工作区 abc` / `该工作区已存在` / `已创建目录，尚未注册到 dsh（服务未就绪）` / `创建失败：<原因>` / `无法新建会话：<原因>`。成功类消息 5s 后自动清空，失败保留到下次操作。**不使用模态弹窗**报错（面板可能在窄窗口里，模态会打断阅读）。
 
 ### 5.4 新建工作区 sheet
@@ -361,7 +361,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 | dsh ≤0.1.1 或旧端点不认 `workspace/create` | 记「未注册」；建会话退回只传 `cwd`（进 Ungrouped，功能可用） | 同上 + `[dsh-opener]` |
 | 侧栏还没有新工作区/新会话的行 | 「新会话」直接点工作区行的「+」（桥内部重试 12×150ms，等 dsh 的工作区流把行送到）；「在 dsh 中打开」`openDSHSession` 重试一次后放弃并写状态行——**不重连、不重载页面** | `projects: dsh web could not start a session …` / `openDSHSession …: row-not-found` 日志 |
 | `$DSH_HOME/storages/workspace.json` 读不懂（上游改布局/升版本） | 注册状态与会话数退化为「未注册 / 0」，功能不受影响（只影响徽标）；诊断进日志 | `[workspace-store] …`（既有护栏，R4） |
-| 根目录不存在 | 空态 + 根路径提示；不自动写盘；首次新建时 `mkdir -p` 连带建根 | — |
+| 根目录不存在（建根失败） | 首次加载即 `mkdir -p` 建根；只有权限 / 卷未挂载等导致创建失败时，才回落空态 + 根路径提示（再点新建仍会 `mkdir -p` 重试） | `app.log` 的 `projects: created the projects root …`（成功建根时） |
 | 根目录在慢卷/网络卷 | 列举与注册表读取全在后台队列，主线程只渲染 | — |
 | **目录未注册**（dsh 侧没有该 workspace） | 不与 dsh web 联动：「新会话」禁用、点卡片只提示 `projects.needsWorkspace`；六个面板入口仍可用；卡片提供「创建 dsh 工作区」 | 徽标「未注册」+ 状态行 |
 | 名字与已有**目录**冲突 | 非错误：提示「已存在」，选中该卡片（重根 + 卡片高亮 + 滚进视野），仍做幂等注册 | 状态行 |
@@ -443,6 +443,8 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 - `validateName`：`abc` ✅；空串 / 纯空白 → empty；`a/b`、`a:b` → separator；`.`/`..` → dot；`.x` → hidden；65 字符 → tooLong；含 `\u0001` → illegalCharacter；两端空白被 trim；
 - `workspacePath(root:name:)`：拼接正确、不产生双斜杠；
 - `listDirectories`（临时 fixture）：普通子目录入选、普通文件跳过、隐藏目录跳过、指向目录的符号链接入选、指向文件的符号链接跳过、排序稳定、根不存在 → `[]`；
+- `ensureDirectory`：缺失根（含多级父目录）被创建、已存在时幂等、空路径拒绝、目标是普通文件时不误报成功；
+- `existingDirectoryForPicker`：已存在的根原样返回、缺失根退到最近现存祖先、传入文件时退回其父目录、空路径 → nil；
 - `merge`：注册项按 `canonical` 归一对上（含符号链接路径与尾斜杠两种写法）→ `registered=true`/`workspaceId`/`sessionCount`；匹配不到 → `registered=false`。
 
 ### 11.2 控制器无头冒烟（同一 `run.sh` 第二段，AppKit 无窗口）
@@ -454,7 +456,8 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 - 建两个工作区后列表渲染出两张卡片，徽标文案来自 fixture 注册表（`已注册 · 2 个会话` / `未注册`）；
 - 点六个入口 → 回调参数为 `(path, .terminal/.files/…)`；点「新会话」→ `onCreateSession(path)`；
 - `DshWorkspaceOps.createSession`：第一次请求带 `workspaceId`，服务端拒绝（fake 返回 ok:false）后第二次只带 `cwd`；
-- 配置根目录切换（写 `ShellConfig` 的 `projectsRoot`）→ `reload()` 后列表来自新根。
+- 配置根目录切换（写 `ShellConfig` 的 `projectsRoot`）→ `reload()` 后列表来自新根；
+- 默认根在磁盘上不存在时，`reload()` 会把它建出来，且**不**再渲染 `projects.rootMissing`（只显示 `projects.empty`）。
 
 ### 11.3 `tests/dsh-rpc/` 扩充
 
@@ -472,7 +475,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 
 ## 12. 手工验收清单
 
-1. 全新环境启动 → **活动栏最上面第一个图标是「项目」**（其后：文件、终端、知识库、任务、通道、审查、浏览器、技能；九个图标互斥切换，与「视图」菜单首项一致）→ 面板显示默认根 `<DSH_HOME>/oh-my-dsh/projects`，空态提示，且**此时磁盘上还没有该目录**。
+1. 全新环境启动 → **活动栏最上面第一个图标是「项目」**（其后：文件、终端、知识库、任务、通道、审查、浏览器、技能；九个图标互斥切换，与「视图」菜单首项一致）→ 面板显示默认根 `<DSH_HOME>/oh-my-dsh/projects`，**该目录已被自动创建**（`app.log` 有 `projects: created the projects root …`），空态提示「还没有工作区」；点「更改…」弹出的选择器**已定位到该根目录**。
 2. 点「+」输入 `abc` → 目录被创建、卡片出现并**立刻高亮为当前工作区**（卡片在视野外会自动滚进来；日志 `projects: selected the new workspace …`）、徽标「已注册 · 0 个会话」；**dsh web 随即也切到该工作区**（侧栏出现它的「新会话 / New Session」行并被选中、滚进视野；日志 `projects: workspace registered — opening it in dsh web: <path>` + `projects: dsh web started a session in <path> (via workspace-new-session)`；无重连）；`app.log` 有注册成功日志；**不需要任何重连/刷新**，dsh web 侧边栏一两秒内自己出现该工作区（工作区流推送；已实测）。
 3. 输入空串、`a/b`、`a:b`、`.x`、65 字符 → 提示规则且**不**建目录、**不**改变当前工作区；输入已存在的 `abc` → 提示已存在，并**选中**该卡片（高亮 + 滚进视野）。
 4. 卡片「新会话」→ dsh web 切到该工作区的会话（面板项目目录也随之变为该工作区），**页面不重连**（无 offline/online 痕迹），且**反复点不会堆空会话**：侧栏里该工作区下始终只有一条「新会话 / New Session」行，`session/list` 的总数不增长（dsh 复用 blank 会话）；日志为 `projects: dsh web started a session in … (via workspace-new-session)`。

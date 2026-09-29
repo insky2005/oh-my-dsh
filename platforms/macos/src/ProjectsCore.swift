@@ -137,6 +137,46 @@ enum ProjectsCore {
         (root as NSString).appendingPathComponent(name)
     }
 
+    // MARK: - Filesystem
+
+    /// Make sure a directory exists, creating it (and any missing parents) when
+    /// needed. Returns true when the path is a directory after the call.
+    ///
+    /// The panel calls this before every listing so a fresh install opens onto a
+    /// real, writable root instead of the "root folder does not exist" empty
+    /// state; a failed creation (permissions, unmounted volume) just leaves that
+    /// empty state in place.
+    static func ensureDirectory(_ path: String, fileManager: FileManager = .default) -> Bool {
+        guard !path.isEmpty else { return false }
+        var isDir: ObjCBool = false
+        if fileManager.fileExists(atPath: path, isDirectory: &isDir) { return isDir.boolValue }
+        do {
+            try fileManager.createDirectory(atPath: path, withIntermediateDirectories: true)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Where a folder picker should start for a configured root: the root itself
+    /// when it exists, otherwise its nearest existing ancestor, otherwise nil
+    /// (let AppKit pick its own default). NSOpenPanel will not navigate into a
+    /// path that does not exist, so handing it a missing root silently drops the
+    /// user into their home folder instead of next to where projects live.
+    static func existingDirectoryForPicker(_ path: String, fileManager: FileManager = .default) -> String? {
+        var candidate = path.trimmed
+        while !candidate.isEmpty {
+            var isDir: ObjCBool = false
+            if fileManager.fileExists(atPath: candidate, isDirectory: &isDir) {
+                return isDir.boolValue ? candidate : (candidate as NSString).deletingLastPathComponent
+            }
+            let parent = (candidate as NSString).deletingLastPathComponent
+            if parent == candidate { return nil }
+            candidate = parent
+        }
+        return nil
+    }
+
     // MARK: - Listing
 
     /// One direct subdirectory of the root.

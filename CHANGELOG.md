@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
+## [Unreleased]
+
+### Changed
+
+- **项目面板自动创建 projects 根目录，「更改…」定位到该根（2026-09-29）**：全新安装时面板显示「根目录不存在：<path>」，而「更改…」的文件夹选择器因为目标目录不存在也无法定位过去，等于第一次使用要先自己 `mkdir`。现在面板每次 `reload()` 都在后台调 `ProjectsCore.ensureDirectory(root)` 建根（`mkdir -p`，成功记 `app.log` 的 `projects: created the projects root …`；权限 / 卷未挂载导致失败时保持原来的空态提示），首次打开即是可写的根、`projects.rootMissing` 正常不再出现；面板头部「更改…」与设置窗口「选择…」两处选择器都改用 `ProjectsCore.existingDirectoryForPicker`，起始目录落在当前根（根仍不存在时退到最近的现存祖先，而不是掉进用户主目录）。回归：`tests/projects-panel` 模型 45 → **53**、控制器 **55**（合计 **108**）——新增建根与选择器起点各四例，原先「默认根不创建」的断言改为「加载即创建且不再出现 `rootMissing`」。设计文档 §2/§5/§8/§11/§12 与 `.dsh/wiki/modules/projects-panel.md` 同步。
+
 ## [1.17.2] - 2026-09-29
 
 ### Fixed

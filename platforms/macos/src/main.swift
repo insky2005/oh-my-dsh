@@ -6481,7 +6481,12 @@ final class SettingsWindowController {
         panel.message = L10n.tr("projects.changeRootTooltip")
         panel.prompt = L10n.tr("projects.settingsPick")
         let current = projectsField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let resolved = ProjectsCore.absolutePath(current) {
+        // An empty field means the default root; a configured path that does not
+        // exist yet starts at its nearest existing ancestor so the sheet still
+        // opens next to where projects live.
+        let wanted = ProjectsCore.absolutePath(current)
+            ?? ProjectsCore.absolutePath(projectsField.placeholderString ?? "")
+        if let resolved = wanted.flatMap({ ProjectsCore.existingDirectoryForPicker($0) }) {
             panel.directoryURL = URL(fileURLWithPath: resolved)
         }
         guard let window = window else { return }
