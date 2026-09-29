@@ -47,7 +47,7 @@
 | B4 | 「每次切会话必然触发 `subagents/list`（带 parentSessionId）」这一时序特性 | 客户端若改为幂等/懒加载 | 重复点开同一会话不通知 | `sessionTrackerScript` 设计依赖 | 反复点同一会话行 |
 | B5 | 侧栏会话行 DOM：`[role="treeitem"]` 可点行 + 标题文本 | DOM 改版 | 面板点会话行无法定位 web | `sessionOpenerScript`（含 8 次重试） | 面板点会话行 → web 侧栏跳转 |
 | B6 | 标题来源：`session/list` → `items[].projections.values.title`（dsh web 按首条消息自动命名） | 字段路径变化 | 面板/指令显示的会话名为空 | `sessionOpenerScript` / `sessionDriver` / ChannelStoreReader | `/ses` 回复里的标题 |
-| B7 | 文件打开：≤0.1.4 走 fetch 一元 RPC（旧 `/api/host.openPath`；0.1.2 起 `session/openWorkspacePath`，路径在 `payload.args.request.path`）；**0.1.5 起 dsh 自带文件面板，`openFile` 改成页面内 `ctx.sidebarRight.openResource`，不再发 RPC** | 0.1.2 迁移；**0.1.5 换面** | 预览面板不再拦截文件打开 → 弹系统默认应用；**0.1.5 下 fetch 层彻底拦不到 → 改开 dsh 自带面板、原生面板收不到路径** | `previewInterceptorScript`（fetch 双匹配 + **点击捕获**两层：内联链接 / 产出文件行 / 工具行 `fileLink`） | 消息流里点文件 → 是否在文件面板打开（含**工作区相对路径**与 `~` 路径、以及工具调用行里的链接） |
+| B7 | 文件打开：≤0.1.4 走 fetch 一元 RPC（旧 `/api/host.openPath`；0.1.2 起 `session/openWorkspacePath`，路径在 `payload.args.request.path`）；**0.1.5 起 dsh 自带文件面板，`openFile` 改成页面内 `ctx.sidebarRight.openResource`，不再发 RPC** | 0.1.2 迁移；**0.1.5 换面** | 预览面板不再拦截文件打开 → 弹系统默认应用；**0.1.5 下 fetch 层彻底拦不到 → 改开 dsh 自带面板、原生面板收不到路径** | `previewInterceptorScript`（fetch 双匹配 + **点击捕获**两层：内联链接 / 产出文件行 / 工具行 `fileLink` / 交付文件卡片） | 消息流里点文件 → 是否在文件面板打开（含**工作区相对路径**与 `~` 路径、以及工具调用行里的链接） |
 | B8 | 根页面注入 `window.__DSH_BOOT__` | 0.1.2 起仅鉴权后可读 | 仅影响旧版就绪判定（已由 A2 覆盖） | `isDSHServing()` | 同上 |
 | B9 | 输入框（composer）DOM + 节点登记表：`[data-composer-input]`（contenteditable）、`el.__lexicalEditor`（Lexical 挂在根元素上）、`editor._nodes[type].klass`、`editor._pendingEditorState._nodeMap["root"]`、chip 类型名 `reference-chip`（字段 `{source, ref, label, appearance, clipboardText}`） | 上游换编辑器（textarea / 另一套富文本）、改槽位标记、或改 chip 节点类型名与字段 | Files 面板右键「添加到对话」**不插入**（面板/日志报 `no-composer` / `no-editor` / `unknown-composer`，不静默） | `composerReferenceScript` + `insertComposerReference()` | 右键任一文件 → 输入框出现引用 chip（或 `app.log: composer reference inserted (chip)`）；自动化见 §5 的 B 面 |
 
@@ -126,7 +126,7 @@
 | A1/A2/A4 | 裸 GET 401 → App 判启动失败、WebView 白屏 | 读自报的带 token 地址做就绪判定 + 加载该地址 | 已修 |
 | A3 | 外部已启动的 0.1.2 实例判不可用 → 另起实例 | 按设计不复用（同 `DSH_HOME` ⇒ 同一份 workspace/会话/设置，复用只省一个进程） | 2026-09-12 升级为**彻底删除复用分支**（原实现仍会复用一个「探针被骗过」的实例，见 §4.4） |
 | B1–B3 | web 切会话不通知壳层 → 项目目录不跟随 | 注入脚本同时认点号/斜杠 method 与 `payload.args` | 已修 |
-| B7 | 点文件链接不再被拦截 | 0.1.2：拦截脚本加 `session/openWorkspacePath` + `args.request.path`；0.1.5：加**点击捕获层**（dsh 自带面板不发 RPC），覆盖内联链接 / 产出文件行 / **工具行 `fileLink`** | 已修（0.1.5 点击层 2026-09-28 补齐；工具行 2026-09-28 补第二版） |
+| B7 | 点文件链接不再被拦截 | 0.1.2：拦截脚本加 `session/openWorkspacePath` + `args.request.path`；0.1.5：加**点击捕获层**（dsh 自带面板不发 RPC），覆盖内联链接 / 产出文件行 / **工具行 `fileLink`** / **交付文件卡片 `[data-presented-files-row]`** | 已修（0.1.5 点击层 2026-09-28 补齐；工具行 2026-09-28 补第二版；交付文件卡片 2026-09-29 补第三版） |
 | B5 | 面板点开会话标题解析 404 | fetch 路径改 `/api/session/list` | 已修（DOM 点行本就可用） |
 | C1–C3 | **所有 native/子进程 RPC 401/404** | core 新增 `dsh-rpc.js`（双面 + cookie）；runner 用 `--dsh-token` | 已修 |
 | C4 | **微信 `/wks` 回「没有可用的 workspace」**（用户主诉） | 工作区列表读 `storages/workspace.json` 兜底 —— **无 token 也能列出** | 已修 |
@@ -226,7 +226,7 @@
 
 ### 升级后（逐面验证，失败即按 §3 定位）
 - [ ] A 启动：App 起得来、日志有 `using node=… port=<n>` + `dsh web is up on …/?token=…`、WebView 首屏正常（非 401）；**不应出现 `reusing existing dsh web`**（复用已删除），也不应出现 `advertised no launch token` 告警。
-- [ ] B 注入：切会话 → `ProjectDirectory` 跟随（终端/预览/wiki/tasks 目录变）；面板点会话行 → web 跳转；点文件链接 → 文件面板打开（**绝对路径与工作区相对路径各点一次**；0.1.5 起该链接由点击捕获层负责，fetch 层拦不到，别只看端点/DOM 探针）；**右键文件夹「添加到对话」→ 输入框出现引用 chip**（B9；无头复现见下）。
+- [ ] B 注入：切会话 → `ProjectDirectory` 跟随（终端/预览/wiki/tasks 目录变）；面板点会话行 → web 跳转；点文件链接 → 文件面板打开（**绝对路径与工作区相对路径各点一次**，并点一次 `present` 交付卡片；0.1.5 起该链接由点击捕获层负责，fetch 层拦不到，别只看端点/DOM 探针）；**右键文件夹「添加到对话」→ 输入框出现引用 chip**（B9；无头复现见下）。
 - [ ] C 频道：微信 `/help` `/ping` `/status` `/wks` `/ses` `/new …` + **发一句普通消息**看是否回推答案（覆盖 C5–C7）。
 - [ ] C 工作区：`/wks` 能列出**面板已启用**的 workspace（覆盖 C4）。
 - [ ] C 项目面板：在「项目」面板新建一个工作区 → **不做任何刷新/重连**，dsh web 侧边栏一两秒内自己出现该工作区（覆盖 **C10a**）；点「新会话」→ web 切到该工作区的新会话、**且不重连、反复点不堆空会话**（覆盖 **C10b / B10b**）；再点卡片名称「在 dsh 中打开」→ 复用刚建的那条会话（覆盖 **C10c / B10**）。
@@ -273,7 +273,7 @@
 |---|---|---|---|
 | `sessionTrackerScript`（B1–B4） | ① 一元 RPC 走 `window.fetch`；② 方法名白名单 `session.history/prompt/rename/selectModel` + `subagent(s).list`（点号与斜杠两套都认）；③ sessionId 在 `payload.args.*` 或 `payload.*`；④ **每次切会话必然发一次 `subagents/list`（带 parentSessionId）**这一非幂等时序 | web 里切会话 → 面板/终端/预览/wiki/tasks 的项目目录**不跟随** | ✅ 0.1.2 实测可用 |
 | `sessionOpenerScript`（B5/B6） | ① 会话列表 RPC 的**请求形状**（斜杠 vs 点号、是否 `args` 包裹）；② `projections.values.title`；③ 侧栏 DOM：`[role="treeitem"]` + `className` 含 `sessionRow` + 行文本等于标题 + `aria-expanded` 折叠组 | 面板点会话行 → 不跳转（`[dsh-opener] no-session / row-not-found`） | ⚠️ **0.1.2 下原本就是坏的**（见下），已于 2026-09-10 修 |
-| `previewInterceptorScript`（B7） | ① ≤0.1.4：文件打开走 fetch 的一元 RPC（`host.openPath` / `session/openWorkspacePath`），路径在 `payload.args.request.path` 等位置，能用 **假 `server-response`** 吞掉（客户端 promise 正常 resolve）；② ≥0.1.5：dsh 自带面板、`openFile` 页面内 `sidebarRight.openResource` **不发 RPC**，改为**捕获点击**——匹配三类：`<code>` 内按钮 / `button[class*=fileMention]`（内联链接，路径在 `title`）、`[data-produced-files-row] button[title]`（产出文件行，路径在 `title`）、`button[class*=fileLink]`（`read`/`write`/`edit` 工具行，**无 `title`，路径在按钮文本**，可相对或 `~`）；把路径发给原生面板（相对→项目目录、`~`→home）并吞掉事件 | 点消息里的文件 → 不由面板打开：≤0.1.4 弹系统默认应用；≥0.1.5 改开 dsh 自带面板、原生面板收不到 | ⚠️ **0.1.5-rc.3 曾静默失效**（fetch 层拦不到；2026-09-28 补点击层 + 相对路径解析）；≤0.1.4 ✅ |
+| `previewInterceptorScript`（B7） | ① ≤0.1.4：文件打开走 fetch 的一元 RPC（`host.openPath` / `session/openWorkspacePath`），路径在 `payload.args.request.path` 等位置，能用 **假 `server-response`** 吞掉（客户端 promise 正常 resolve）；② ≥0.1.5：dsh 自带面板、`openFile` 页面内 `sidebarRight.openResource` **不发 RPC**，改为**捕获点击**——匹配三类：`<code>` 内按钮 / `button[class*=fileMention]`（内联链接，路径在 `title`）、`[data-produced-files-row] button[title]`（产出文件行，路径在 `title`）、`button[class*=fileLink]`（`read`/`write`/`edit` 工具行，**无 `title`，路径在按钮文本**，可相对或 `~`）、`[data-presented-files-row]` 交付文件卡片（整卡遮罩按钮的 `title` 是绝对路径；无 `title` 的「打开」按钮从卡内带 `title` 的按钮取；卡片 chevron `aria-haspopup="menu"` 明确放行）；把路径发给原生面板（相对→项目目录、`~`→home）并吞掉事件 | 点消息里的文件 → 不由面板打开：≤0.1.4 弹系统默认应用；≥0.1.5 改开 dsh 自带面板、原生面板收不到 | ⚠️ **0.1.5-rc.3 曾静默失效**（fetch 层拦不到；2026-09-28 补点击层 + 相对路径解析）；≤0.1.4 ✅ |
 | `composerReferenceScript`（B9） | ⚠️ 实测踩过：脚本正文里**不能出现单反斜杠转义**（Swift 字符串字面量会先吃掉它），必须保持「零转义」并靠 `tests/file-panel/run.sh` 的 lint 钉住 —— 详见 `docs/file-panel-composer-reference.md` §4.5。依赖：① 输入框 contenteditable 的槽位标记 `[data-composer-input]`；② Lexical 把实例挂在根元素上（`el.__lexicalEditor`）；③ 节点类可从 `editor._nodes[type].klass` 取（chip 类**模块私有**，只能从这里拿）；④ 更新回调里能读到 `editor._pendingEditorState._nodeMap["root"]` | 右键「添加到对话」不插入；若 chip **类型名对不上**则整个输入框功能不受影响（我们只在自己那条路径上失败并报原因） | ✅ 0.1.2-rc.1 实测可用（WKWebView 内插入 `reference-chip`，状态 JSON 含 `ref`/label，装饰器渲染出 chip；见 `docs/file-panel-composer-reference.md`） |
 
 **已实测确认的坏点（0.1.2-rc.1，2026-09-10）**：`__dshOpenSession` 当时固定发 `POST /api/session/list` 但 body 里写 `method:"session.list"`、payload 也不包 `args`，服务端直接拒绝：
