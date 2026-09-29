@@ -74,8 +74,8 @@ createChannelSessions({ channelId, dshHome, defaultProjectRoot })
 
 - **惰性迁移（主力）**：`createChannelSessions` 构造时，若新位置文件缺失且旧路径（`<projectRoot>/.dsh/channels/<channelId>.sessions.json|.messages.json`）存在 → 读取 → 按 sessionId 分组写入新桶（null → system 桶）→ **新文件全部写成功后**删除旧文件；sessions 并入全局 `<channelId>.sessions.json`（按 conversationId 合并取新）。天然幂等：旧文件已删即跳过；崩溃重跑靠「目标桶内按 (conversationId, dir, text, ts) 去重」防重复。
 - **一次性 CLI**：`ohmy-core.js channel migrate [projectRoot] [--dsh-home <dir>]` 用于未再启动 runner 的旧 checkout 批量迁移。
-- **本仓库自迁移**：实现完成后对 helloharness 本身执行一次迁移（现状 17KB messages 文件 → 分桶至 `~/.dsh/oh-my-dsh/channels/`），确认旧文件删除、`.git status` 干净。
-- **channels.json 落位**：`git mv` 旧路径 `.dsh/channels.json` → `.dsh/channels/channels.json` 并提交（此前未跟踪，本次一并纳入版本库，符合设计文档 §4.2「引用配置随仓库提交」）。
+- **本仓库自迁移**：✅ 已完成 —— 旧的项目内 messages/sessions 已在全局化时迁入全局 store；本仓库残留的 `.dsh/channels/` 旧文件与 `.gitignore` 过时规则已于 2026-09-29 清理（`git status` 干净）。
+- **~~channels.json 落位~~（已取消）**：项目 refs 自 PR #30 起**不再作为启用来源**（docs/channel-project-switch.md），本仓库也从未有该文件；不再需要 `git mv` 或提交。
 
 ## 7. 边界与失败模式
 
@@ -94,7 +94,7 @@ createChannelSessions({ channelId, dshHome, defaultProjectRoot })
 1. `node --test core/tests/` 全绿（含新增/重写用例）；
 2. 任意 (channelId, projectRoot, dshHome) 组合，消息/会话只出现在 `~/.dsh/oh-my-dsh/channels/` 下正确文件名；项目目录不再产生 messages/sessions 文件；
 3. 预置旧格式文件 → store 构造/`channel migrate` → 旧文件消失、新桶按会话分好、sessions 合并一致、幂等（重跑不重复）；
-4. macOS 面板：项目视图会话列表从全局 sessions.json 过滤当前项目正常显示；开关写 `.dsh/channels/channels.json`（已提交）；
+4. macOS 面板：项目视图会话列表从全局 sessions.json 过滤当前项目正常显示；开关写**全局** `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`（不再有项目内 refs 文件）；
 5. `ohmy-core.js channel run`（mock token）实跑一条消息：落盘到全局分桶文件，项目目录零新增；
-6. `.gitignore` 更新后 `git status` 干净：本仓库旧 messages 文件已迁走，`channels.json` 已提交；
+6. `.gitignore` 更新后 `git status` 干净：本仓库旧 `.dsh/channels/` 文件与对应忽略规则已清理；
 7. 文档（设计/命令手册）与实现一致。
