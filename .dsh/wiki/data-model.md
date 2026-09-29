@@ -17,6 +17,7 @@ manual: false
 ```
 $DSH_HOME/oh-my-dsh/
   projects/           # 项目面板工作区根（默认值，可用 projectsRoot 覆盖，见下表）
+  ROLLBACK.md         # 迁移时生成的双语回退说明（本次迁移条目 + mv 回根目录脚本）；无新迁移不重写、可删除
   shell/              # 壳层设置与状态：config.json / skills.json / dsh-web.json / dsh-state.json / rollback-journal.json / snapshots/
   browser/            # CEF/Chromium profile（正式版与开发版统一；不再有 browser-dev —— 开发版靠独立 DSH_HOME 隔离）
   repo-wiki/          # Wiki 面板「DSH_HOME 私有」根（wikiRootMode=dsh-home 时按 <hash12> 分目录）
@@ -29,6 +30,7 @@ $DSH_HOME/oh-my-dsh/
 ```
 
 - **开发版隔离**：`DSH_DEV_BUILD=1` 时 `DSH_HOME=~/.dsh-dev`，工作数据因此落在 `~/.dsh-dev/oh-my-dsh/…`，与正式版天然隔离；**不再**使用 `~/.dsh/browser-dev` 之类的独立 profile。
+- **回退说明**：迁移完成时由 `ShellPaths.writeRollbackGuide`（core 同）在 `<root>/ROLLBACK.md` 写一份双语说明——本次实际迁移的 `旧 -> 新` 条目、生成时间 / App 版本，以及「退出 App 后把子目录 `mv` 回 `$DSH_HOME` 根目录」的 bash（目标已存在则跳过、不覆盖；开发版旧路径为 `browser-dev`）。迁移是同卷 `rename`、数据未复制；无新迁移且文件已存在时不重写（保留首次记录）。未引入软链垫片或 CLI 撤销命令。
 - **快照排除**：`core/lib/snapshot.js` 的 `SNAPSHOT_EXCLUDES` 新增 `oh-my-dsh`（壳层工作数据不进会话回退快照）；旧条目 `shell` / `browser` / `browser-dev` / `channels` / `tokens` 保留以兼容迁移前的 home。
 - **设计**：`docs/storage-layout-refactor.md`。
 
