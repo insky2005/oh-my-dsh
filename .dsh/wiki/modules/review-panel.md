@@ -1,7 +1,7 @@
 ---
 title: 模块：审查面板（Review / 变更审计）
 tags: [module, review, audit, session-log, zstd, read-only]
-updated: 2026-09-28T01:42:18Z
+updated: 2026-09-29T14:39:01Z
 sources: [platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, platforms/macos/src/main.swift, core/lib/review-log.js, core/bin/ohmy-core.js, core/index.js, core/tests/review-log.test.js, tests/review-panel/, docs/review-panel-design.md, platforms/macos/src/SkillsPanel.swift, scripts/local-ci.sh, .github/workflows/ci.yml, README.md, CHANGELOG.md, docs/dsh-version-impact.md]
 manual: false
 ---
@@ -37,7 +37,7 @@ manual: false
 
 dsh 按 **Session 格式世代**给会话日志命名：世代 0 = `session.jsonl[.zstd]`，之后每代带小写 `.vN`（`session.v3.jsonl[.zstd]`）。dsh 0.1.5 起新建会话直接写 `session.v3.jsonl.zstd`；**被迁移过的老会话**会把原 `session.jsonl.zstd` 留成**冻结归档**、活日志换成新世代名（实测同一会话：归档 19 条事件 / 活日志 22 条，之后的新事件只进活日志）。只认世代 0 的旧逻辑在升级后会**静默**失灵——新会话一条都列不出来、老会话永远停在迁移前的内容（`app.log` 表现为 `review: listed 0/N sessions` + `review: audit FAILED`）。
 
-现在 `sessionLogCandidates(sessionDir)` 按**规范文件名** `^session(\.v[1-9][0-9]*)?\.jsonl(\.zstd)?$` 枚举（`.v0`/大写/前导零/临时后缀等非规范名一律拒绝），排序规则是**世代号最大者优先**（所以迁移会话读到的是活日志而非归档），**同代压缩优先**；`sessionLogFile()` 取候选首位，`parseSessionLogName()` / `sessionLogCandidates()` 经 `core/index.js` 导出暴露 `{generation, compressed}`。内置 dsh 已于 v1.16.3（2026-09-27）推进到 `0.1.5-rc.3`，本适配遂成为现行路径（新建会话即读 `session.v3.jsonl.zstd`）。
+现在 `sessionLogCandidates(sessionDir)` 按**规范文件名** `^session(\.v[1-9][0-9]*)?\.jsonl(\.zstd)?$` 枚举（`.v0`/大写/前导零/临时后缀等非规范名一律拒绝），排序规则是**世代号最大者优先**（所以迁移会话读到的是活日志而非归档），**同代压缩优先**；`sessionLogFile()` 取候选首位，`parseSessionLogName()` / `sessionLogCandidates()` 经 `core/index.js` 导出暴露 `{generation, compressed}`。内置 dsh 已推进到 `0.1.5-rc.3`（2026-09-27，经 PR #61 回并 main），本适配遂成为现行路径（新建会话即读 `session.v3.jsonl.zstd`）。
 
 ## 为什么审计逻辑在 core（Node）而不是 Swift
 

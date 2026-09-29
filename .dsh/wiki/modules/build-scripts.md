@@ -1,7 +1,7 @@
 ---
 title: 模块：构建与打包脚本
 tags: [module, build, packaging, icon, release, ci]
-updated: 2026-09-28T01:42:18Z
+updated: 2026-09-29T14:39:01Z
 sources: [tests/skills-panel/, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, tests/review-panel/, core/lib/review-log.js, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, platforms/macos/src/MakeIcon.swift, platforms/macos/build-cef.sh, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, Jenkinsfile, .github/workflows/release.yml, .github/workflows/ci.yml, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/vendor/Highlightr/, tests/file-panel/, platforms/macos/runtime-locks/, docs/dsh-version-impact.md, tests/projects-panel/, tests/injected-scripts/, tests/snapshot-panel/, tests/snapshot-rollback/, CHANGELOG.md, docs/release-process.md, docs/productization.md]
 manual: false
 ---
@@ -63,7 +63,7 @@ manual: false
 
 ## scripts/version.sh（版本单一来源）
 
-- 输出两行 `VERSION`/`BUILD`：VERSION 仅当 HEAD 恰在 `vX.Y.Z` tag 上取该 tag，否则回退 `FALLBACK_VERSION`（当前 **1.17.0**，即 v1.16.3 发布后推进的开发线）；BUILD 取 CI 运行号（`GITHUB_RUN_NUMBER`/`CI_PIPELINE_IID`/`BUILD_NUMBER`），否则回退 **73**；
+- 输出两行 `VERSION`/`BUILD`：VERSION 仅当 HEAD 恰在 `vX.Y.Z` tag 上取该 tag，否则回退 `FALLBACK_VERSION`（当前 **1.18.0**，即 v1.17.0 发布后推进的开发线）；BUILD 取 CI 运行号（`GITHUB_RUN_NUMBER`/`CI_PIPELINE_IID`/`BUILD_NUMBER`），否则回退 **74**；
 - `build-app.sh`/`local-release.sh`/`github-publish.sh`/`release-checksums.sh` 统一读它，**版本不再由调用方传参**。
 
 ## scripts/local-release.sh（本机 Release，与 release.yml 对齐）

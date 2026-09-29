@@ -600,6 +600,7 @@ enum WikiPrompts {
             请加载 repo-knowledge skill 并执行【\(target)】。
             仓库根目录：\(repoRoot)
             知识库输出目录：\(wikiRoot)
+            （版本/发布/分支信息：只写当前分支可达的 tag，不得凭远端 tag 推断已发布）
 
             若 repo-knowledge skill 不可用，请按以下内嵌说明执行：
             \(fallbackInstructions(zh: true))
@@ -611,6 +612,7 @@ enum WikiPrompts {
         Load the repo-knowledge skill and run \(target).
         Repository root: \(repoRoot)
         Wiki output directory: \(wikiRoot)
+        (Version/release/branch info: only tags reachable from the current branch; never infer "released" from a remote tag.)
 
         If the repo-knowledge skill is unavailable, follow these inline instructions:
         \(fallbackInstructions(zh: false))
@@ -622,11 +624,12 @@ enum WikiPrompts {
     private static func fallbackInstructions(zh: Bool) -> String {
         if zh {
             return """
-            目标：在 \(WikiPaths.wikiRoot(for: "/")) 位置 生成/维护知识库（页面结构见下）。
+            目标：在仓库根的 .dsh/wiki/ 生成/维护知识库（页面结构见下）。
             - 页面：index.md / overview.md / architecture.md / data-model.md / conventions.md / tasks.md / modules/<模块>.md，≤ 20 页，单页 ≤ 200 行；
             - 每页带 frontmatter（title/tags/updated/sources/manual: false）；
             - 只写可证实的事实，禁止编造；脱敏（跳过 .env*/密钥/口令）；增量更新只重写受影响的页面，manual: true 不碰；最后更新 index.md；
-            - 完成后若仓库是 git：执行 `git add .dsh/wiki` 并 `git commit`（**不 push**），commit message 由你概括本次实际变更（如「docs(wiki): 同步 v1.8.0 发布流程与 IssueRunner 面板文档」），无变更则跳过。
+            - 只收录当前分支可达的内容：tag/分支/提交先用 `git merge-base --is-ancestor <commit> HEAD` 核实，不可达的一律不写；「已发布」只认 GitHub Releases（有 tag 且有资产），只有 tag 时写「tag 存在」；
+            - 完成后若仓库是 git：`git add .dsh/wiki` 并 commit（不 push），message 概括实际变更；无变更跳过。
             """
         }
         return """
@@ -634,6 +637,7 @@ enum WikiPrompts {
         - Pages: index.md, overview.md, architecture.md, data-model.md, conventions.md, tasks.md, modules/<name>.md (≤ 20 pages, ≤ 200 lines each);
         - Every page carries frontmatter (title/tags/updated/sources/manual: false);
         - Only write verifiable facts, never fabricate; redact secrets (.env*, credentials); incremental updates rewrite only affected pages and never touch manual: true pages; refresh index.md at the end;
+        - Only include content reachable from the current branch: verify tags/branches/commits with `git merge-base --is-ancestor <commit> HEAD`; anything unreachable is omitted; "released" only counts with a GitHub Release (tag + assets), otherwise write "tag exists";
         - When done, if the repo is a git repo: run `git add .dsh/wiki` and `git commit` (do NOT push), writing a commit message that summarizes the actual changes (e.g. "docs(wiki): sync v1.8.0 release flow and IssueRunner panel docs"); skip if there are no changes.
         """
     }

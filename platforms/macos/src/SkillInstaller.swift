@@ -132,7 +132,7 @@ enum BuiltinSkill: CaseIterable {
     - **仓库根**：取当前会话的工作目录（`pwd`）；wiki 输出到 `<repoRoot>/.dsh/wiki/`，目录不存在则创建；
     - **模式选择**：`.dsh/wiki/index.md` 存在 → 增量更新；不存在 → 初始生成。
     
-    ## 页面结构（初始生成 ≤ 20 页，单页 ≤ 200 行）
+    ## 页面结构（初始生成 ≤ 20 页，单页 ≤ 200 行；单行/单段不得过长，长列表与长说明必须换行）
     - `index.md`：总索引（一句话简介 + 分节页链接 + 统计 + 最后生成时间）
     - `overview.md`：技术栈、目录布局、构建/运行/测试方式
     - `architecture.md`：分层、模块依赖、关键数据流、部署形态
@@ -152,16 +152,23 @@ enum BuiltinSkill: CaseIterable {
     ---
     ```
     
+    ## 事实基线（强制）
+    1. **wiki 只收录当前分支可证实的内容**：工作树 + 当前分支（默认 `main`）的提交历史；
+    2. 任何 tag / 远端分支 / 提交，写入前先用 `git merge-base --is-ancestor <commit> HEAD`（或 `git branch --contains <commit>`）确认**在当前分支可达**；**不可达的一律不写入 wiki**（不标注、不列举、不引用）；
+    3. 版本信息：只有**当前分支可达**的 tag 才算本分支发布，「已发布」只认 GitHub Releases（`gh release list` 或 `https://api.github.com/repos/<owner>/<repo>/releases`，有 tag + 资产），只有 tag 时写「tag 存在」；**不得因远端存在某 tag 就写入**；
+    4. 记录版本/release 的页面，`sources` 至少列 `CHANGELOG.md`、`scripts/version.sh`；
+    5. 增量核查：`git status --short` + mtime 只发现**工作树**变更；tag/分支另按本节核查。
+
     ## 规则（强制）
-    1. 只写可从代码/文档证实的事实；不确定处标注「待确认」；禁止编造；
-    2. **增量更新**：先读 `index.md` 了解已有结构；用 `git status --short` + mtime 定位变更文件，只重写 `sources` 命中变更的页面；未变页面保持**字节不变**；git 不可用时退化为 mtime 扫描；
+    1. 只写可从代码/文档证实的事实；不确定处标注「待确认」；禁止编造；「已发布」按《事实基线》判定；
+    2. **增量更新**：先读 `index.md` 了解已有结构；用 `git status --short` + mtime 定位变更文件，只重写 `sources` 命中变更的页面；未变页面保持**字节不变**；git 不可用时退化为 mtime 扫描；tag/分支变更按《事实基线》单独核查；
     3. **sources 质量**：`sources` 列全该页依据的文件/目录（目录即可覆盖其子树）——它决定陈旧检测与后续增量更新的准确性，遗漏会导致页面无法被判定过期；
     4. `manual: true` 的页面绝不改写；
     5. 脱敏：跳过 .env*/密钥/口令/个人数据，示例一律占位符；
     6. **不删除页面**：源码删除后在该页标注「已失效」而非删文件，留给用户审阅；
-    7. 完成后更新 `index.md` 的统计与最后生成时间；
+    7. 完成后更新 `index.md` 的统计与最后生成时间；**发现既有页面与当前仓库不符时一并修正，并在汇报中列出**；
     8. **提交（若仓库是 git）**：更新完成后执行 `git add .dsh/wiki` 并 `git commit`，**绝不 push**。commit message **由你概括本次实际变更**（如 `docs(wiki): 同步 v1.8.0 发布流程与 IssueRunner 面板文档`），不要用固定文案、不要带「自动提交」等过程标注；若没有任何变更（无 diff）则跳过提交；
-    9. **汇报**：简短列出本次生成/更新的页面（含新增 / 失效 / 手动跳过），不超过几行，不粘贴正文。
+    9. **汇报**：简短列出本次生成/更新的页面（含新增 / 失效 / 手动跳过 / 修正），不超过几行，不粘贴正文。
     """
 
     static let taskTodoMarkdown = """

@@ -1,14 +1,14 @@
 ---
 title: 模块：项目面板（Projects Panel）
 tags: [module, projects, workspace, workspace-create, session-create, projects-root, panel]
-updated: 2026-09-23T13:03:27Z
+updated: 2026-09-29T14:39:01Z
 sources: [platforms/macos/src/ProjectsPanel.swift, platforms/macos/src/ProjectsCore.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/main.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/ShellConfig.swift, tests/projects-panel/, tests/projects-panel/controller-tests.swift, tests/dsh-rpc/run.sh, docs/projects-panel-design.md, docs/dsh-version-impact.md, scripts/local-ci.sh, .github/workflows/ci.yml, README.md]
 manual: false
 ---
 
 # 模块：项目面板（Projects Panel）
 
-把「工作区 = projects 根目录下的一个子目录」变成壳层一等公民：**在面板里建目录 + 幂等注册成 dsh 工作区，再用六个入口就地打开它**，不离开 App、不改 dsh 源码。分支 `feature/projects-panel`（设计文档 `docs/projects-panel-design.md`，PR #56）——**已实现、未发布**（CHANGELOG `[Unreleased]`，版本线 fallback `1.17.0`/BUILD 73）。实现提交：`b59ac97` 模型 → `f541f4d` RPC → `232d38c` 面板 + 控制器测试 → `6d8c327` main.swift 接线 → `206b577`（卡片命中测试修复）→ `0f1b7b2`（README/CONTRIBUTING/CHANGELOG/影响清单）→ `6af1206`+`ed989ac`（点项目切 dsh web：桥改 `callAsyncJavaScript`、去掉重载兜底）→ `041d1bd`（未注册目录不联动 + 标题行 folder+「添加工作区」）+ `1a3d8be`（文档同步）→ 按钮布局调整（「添加工作区」/「新会话」上移到标题行徽标之后，均为图标按钮，tooltip 与 dsh web 同词）。
+把「工作区 = projects 根目录下的一个子目录」变成壳层一等公民：**在面板里建目录 + 幂等注册成 dsh 工作区，再用六个入口就地打开它**，不离开 App、不改 dsh 源码。分支 `feature/projects-panel`（设计文档 `docs/projects-panel-design.md`，PR #56）——**已实现**：随 **v1.17.0**（2026-09-29）发布；`release/1.17` 线的三项修复（含项目面板默认创建 projects 根、首次打开宽度塌陷）经 PR #67（`844d9c7`）回并 main。实现提交：`b59ac97` 模型 → `f541f4d` RPC → `232d38c` 面板 + 控制器测试 → `6d8c327` main.swift 接线 → `206b577`（卡片命中测试修复）→ `0f1b7b2`（README/CONTRIBUTING/CHANGELOG/影响清单）→ `6af1206`+`ed989ac`（点项目切 dsh web：桥改 `callAsyncJavaScript`、去掉重载兜底）→ `041d1bd`（未注册目录不联动 + 标题行 folder+「添加工作区」）+ `1a3d8be`（文档同步）→ 按钮布局调整（「添加工作区」/「新会话」上移到标题行徽标之后，均为图标按钮，tooltip 与 dsh web 同词）。
 
 - 入口：活动栏**首位**「项目」图标（SF Symbol `folder`）/ 视图菜单**首项** / **⌥⌘P**；面板顶部：标题「项目」+ `folderPlus`（自定义字形：文件夹 + 朴素加号，见 `PreviewPanel.swift` 的 `CustomIconButton.Glyph.folderPlus`）「添加工作区 / Add workspace」/ 刷新 / 设置 / 关闭（文案与 tooltip 统一走 `updateLabels()`，语言切换时由 `AppDelegate.applyLanguage` 调 `refreshTooltips()` 重建）；右栏插槽第 9 个成员 `RightPanel.projects`，`rightPanelKind` 持久化 `"projects"`；`ProjectsPanelController.minWidth = 320`；
 - **⌥⌘P 是让位来的**：该键原属「预览面板」，PR #57（`0253b35`，`feature/menu-files-panel`）把视图菜单正名为「文件面板」并改用 **⌥⌘F**，空出的 ⌥⌘P 交给本项目面板（L10n 键 `menu.togglePreview` 同步改名 `menu.toggleFiles`）。
