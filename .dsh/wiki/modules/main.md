@@ -1,7 +1,7 @@
 ---
 title: 模块：main.swift（壳层核心）
 tags: [module, main, server, appdelegate, menu]
-updated: 2026-09-24T04:05:41Z
+updated: 2026-09-29T08:24:56Z
 sources: [platforms/macos/src/ProjectsPanel.swift, platforms/macos/src/ProjectsCore.swift, docs/projects-panel-design.md, tests/projects-panel/, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, docs/skills-manager-design.md, tests/skills-panel/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, core/lib/review-log.js, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/TerminalWorkspaceTabs.swift, tests/dsh-auth-cookies/, tests/shell-config/, tests/terminal-panel/, docs/ux-feedback.md, docs/builtin-skills-design.md, docs/channel-status.md, docs/channel-project-switch.md, docs/dsh-version-impact.md, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, core/lib/snapshot.js, core/lib/snapshot-io.js, platforms/macos/runtime-locks/, docs/session-snapshot-rollback-design.md]
 manual: false
 ---

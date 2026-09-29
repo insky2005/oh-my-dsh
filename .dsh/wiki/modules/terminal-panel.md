@@ -1,7 +1,7 @@
 ---
 title: 模块：TerminalPanel.swift（终端面板）
 tags: [module, terminal, pty, ansi, emulator, workspace-tabs, selection]
-updated: 2026-09-21T08:44:52Z
+updated: 2026-09-29T08:24:56Z
 sources: [platforms/macos/src/TerminalPanel.swift, platforms/macos/src/TerminalWorkspaceTabs.swift, platforms/macos/src/WorkspaceTabMemory.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/main.swift, docs/ui-color-scheme.md, docs/ux-feedback.md, docs/terminal-input-fix.md, docs/terminal-header-fix.md, tests/terminal-panel/, tests/terminal-emulator/]
 manual: false
 ---

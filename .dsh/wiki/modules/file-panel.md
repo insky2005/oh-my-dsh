@@ -1,7 +1,7 @@
 ---
 title: 模块：FilePanel.swift / CodeEditorView.swift（文件面板，预览+编辑+语法高亮）
 tags: [module, file-panel, preview, code-editor, syntax-highlight, highlightr, edit, line-numbers, tree-menu, image-zoom, composer-reference]
-updated: 2026-09-24T04:05:31Z
+updated: 2026-09-29T08:24:56Z
 sources: [platforms/macos/src/FilePanel.swift, platforms/macos/src/FilePanelTreeMenu.swift, platforms/macos/src/ComposerReference.swift, docs/file-panel-composer-reference.md, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImagePreviewView.swift, platforms/macos/src/ImageZoom.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/vendor/Highlightr/Highlightr.swift, platforms/macos/src/vendor/Highlightr/CodeAttributedString.swift, platforms/macos/src/vendor/Highlightr/Theme.swift, platforms/macos/build-app.sh, docs/ux-feedback.md, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/WorkspaceTabMemory.swift, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, tests/file-panel/]
 manual: false
 ---
