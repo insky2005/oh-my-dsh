@@ -342,8 +342,9 @@ dsh 升级会**把会话日志换成新世代**（0.1.5 起新建会话写 `sess
 > `DSH_PREVIEW_DEBUG`（fetch 拦截探针，同时演练 `host.openPath` 与 `session/openWorkspacePath` 两种形状）、`DSH_SESSION_DEBUG`（会话跟踪 dump）。
 
 > **壳层设置存放位置**：语言 / 主题 / 面板宽度 / 浏览器 / 通道 / wiki 等**壳层自有设置**存为 UTF-8 JSON `$DSH_HOME/oh-my-dsh/shell/config.json`
-> （开发版 `~/.dsh-dev/shell/config.json`），可由外部工具 / 代理直接读写（写入经 core CLI 合并 + 原子落盘，壳层侧 0.3s 防抖异步）；
+> （开发版 `~/.dsh-dev/oh-my-dsh/shell/config.json`），可由外部工具 / 代理直接读写（写入经 core CLI 合并 + 原子落盘，壳层侧 0.3s 防抖异步）；
 > 仅系统级项（`AppleLanguages`、窗口位置）仍留在原生 UserDefaults。
+> 壳层工作数据（本目录）从 `$DSH_HOME` 根迁移过来时，会在 `$DSH_HOME/oh-my-dsh/ROLLBACK.md` 落一份回退说明（含把子目录 `mv` 回根目录的脚本）。
 
 > **GitHub token（任务面板，按仓库作用域，只走文件）**：面板「配置 GitHub Token」保存时**只写文件** —— 有当前仓库时写
 > 专属 `~/.dsh/oh-my-dsh/tokens/<owner>-<repo>`，否则写通用 `~/.dsh/oh-my-dsh/gh-token`（均 chmod 600）——App 与外部工具/代理共享同一份。

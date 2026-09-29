@@ -72,3 +72,27 @@ test('shell-paths: canonical browser wins over stale browser-dev', () => {
   assert.equal(fs.readFileSync(path.join(h, 'oh-my-dsh', 'browser', 'p'), 'utf8'), 'release');
   assert.equal(fs.existsSync(path.join(h, 'browser-dev')), true, 'stale dev profile left untouched');
 });
+
+test('shell-paths: migration drops a human-readable rollback guide', () => {
+  const h = tmp();
+  fs.mkdirSync(path.join(h, 'shell'), { recursive: true });
+  fs.writeFileSync(path.join(h, 'shell', 'config.json'), '{}');
+  const moved = sp.migrateLegacyLayout(h, { appVersion: '1.2.3' });
+  assert.ok(moved.length >= 1);
+  const guide = fs.readFileSync(sp.rollbackGuidePath(h), 'utf8');
+  assert.match(guide, /回退/);
+  assert.match(guide, /shell -> shell/);
+  assert.match(guide, /1\.2\.3/);
+  assert.match(guide, /oh-my-dsh/);
+  assert.match(guide, /ROLLBACK/i.test(guide) ? /ROLLBACK/i : /migration/i);
+});
+
+test('shell-paths: a fresh home still gets the guide, and a no-op run keeps the first record', () => {
+  const h = tmp();
+  sp.migrateLegacyLayout(h);
+  const p = sp.rollbackGuidePath(h);
+  assert.ok(fs.existsSync(p), 'guide created even with nothing to move');
+  const first = fs.readFileSync(p, 'utf8');
+  sp.migrateLegacyLayout(h);
+  assert.equal(fs.readFileSync(p, 'utf8'), first, 'unchanged when nothing moved');
+});

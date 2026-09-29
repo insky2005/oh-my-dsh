@@ -14,6 +14,7 @@
 $DSH_HOME/                          # 正式 ~/.dsh；开发版 applyDevIsolation() 注入 ~/.dsh-dev
 ├── oh-my-dsh/                      # ★ 壳层工作数据根（本重构新增收敛）
 │   ├── projects/                   # 项目面板工作区（已就位）
+│   ├── ROLLBACK.md                 # 迁移/回退说明（迁移时生成，可安全删除）
 │   ├── shell/                      # config.json / skills.json / dsh-web.json / dsh-state.json / rollback-journal.json / snapshots/
 │   ├── browser/                    # CEF/Chromium profile（正式版与开发版统一，去掉 browser-dev）
 │   ├── repo-wiki/                  # Wiki 面板「DSH_HOME 私有」根（按仓库 hash 分目录）
@@ -49,16 +50,28 @@ $DSH_HOME/                          # 正式 ~/.dsh；开发版 applyDevIsolatio
 
 覆盖清单：`shell`、`browser`、`browser-dev`(→`browser`)、`repo-wiki`、`channel-runtime`、`channels`、`tokens`、`gh-token`、`browser-api.port`、`shell-api.port`。
 - 开发版额外：`~/.dsh/browser-dev`（隔离前的共享 legacy）→ `~/.dsh-dev/oh-my-dsh/browser`，目标已存在则跳过。
-- 触发点：Swift 启动（`applicationDidFinishLaunching`，且在任何 `ShellConfig` 读取之前，紧跟 `applyDevIsolation()`）；core CLI 入口 `core/bin/ohmy-core.js` 启动时调用一次（无头使用兜底）。
+- **回退说明**：迁移完成后在 `<root>/ROLLBACK.md` 落一份双语说明（本次实际迁移条目 + 时间/App 版本 + 「退出 App 后把子目录 `mv` 回根目录」的脚本）；无新条目且文件已存在时不重写（保留首次记录）。见 §4.1。
+- 触发点：Swift 启动（`applicationDidFinishLaunching`，且在任何 `ShellConfig` 读取之前，紧跟 `applyDevIsolation()`）；core CLI 入口在显式 `--home`/`--dsh-home` 时迁移一次（无头使用兜底）。
+
+### 4.1 回退说明（`ROLLBACK.md`）
+
+本次迁移是**同卷 `rename`，不是删除**：数据永远在盘上，只是换了位置。为了让旧版本 App（只认 `$DSH_HOME` 根路径）与用户都能自助回退，迁移时在壳层数据根落一份 `ROLLBACK.md`：
+
+- 记录**本次实际迁移的 `旧 -> 新` 条目**、生成时间与 App 版本；
+- 给出一段可复制的 bash：先退出 App，再把 `<root>/<name>` 逐个 `mv` 回 `$DSH_HOME/<name>`（目标已存在则跳过、不覆盖）；
+- 说明开发版旧路径是 `browser-dev`（非 `browser`），以及重新升级新版会再次自动归位；
+- 该文件由壳层生成、可安全删除；无新迁移时不重写，保留首次记录。
+
+不引入软链垫片、不新增 CLI 撤销命令（保持简单）；如后续需要自动兼容旧版本，再评估软链方案。
 
 ## 5. 改动面
 
 | 层 | 文件 | 改动 |
 |---|---|---|
-| core | `core/lib/shell-paths.js` | 新增：路径解析 + 迁移 |
+| core | `core/lib/shell-paths.js` | 新增：路径解析 + 迁移 + `ROLLBACK.md` 生成（`renderRollbackGuide`/`writeRollbackGuide`） |
 | core | `settings.js` / `snapshot-io.js` / `channel-store.js` / `channel-sessions.js` / `dingtalk-access.js` / `channel-runner.js` | shell/channels/channel-runtime 走新根 |
 | core | `core/bin/ohmy-core.js` | CLI 启动迁移一次 |
-| Swift | `ShellPaths.swift` | 新增 |
+| Swift | `ShellPaths.swift` | 新增：路径解析 + 迁移 + `ROLLBACK.md` 生成；`main.swift` 迁移时传入 App 版本 |
 | Swift | `ShellConfig` / `SkillsCore` / `SnapshotWindow` / `WikiPanel` / `IssueRunnerPanel` / `ChannelStoreReader` / `ChannelPanel` / `main.swift` | 各路径改走新根；启动迁移；去掉 browser-dev |
 | 技能 | `SkillInstaller.swift` 内嵌 SKILL.md + 仓库 `.dsh/skills/*/SKILL.md` | 端口/token 路径说明；两份保持字节一致 |
 | 测试 | `core/tests/*`、`tests/snapshot-rollback`、`tests/shell-config`、`tests/skills-panel`、`tests/wiki-panel`、`tests/tasks-panel` | 路径断言更新 |

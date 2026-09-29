@@ -2232,7 +2232,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         applyDevIsolation()
         // 壳层数据收敛：$DSH_HOME 根 -> $DSH_HOME/oh-my-dsh/（幂等，见
         // docs/storage-layout-refactor.md）。必须在任何 ShellConfig 读取之前完成。
-        let layoutMoved = ShellPaths.migrateLegacyLayout(home: dshDataHome)
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        let layoutMoved = ShellPaths.migrateLegacyLayout(home: dshDataHome, appVersion: appVersion)
         if !layoutMoved.isEmpty {
             AppLog.shared.log("shell data layout migrated: " + layoutMoved.joined(separator: ", "))
         }
