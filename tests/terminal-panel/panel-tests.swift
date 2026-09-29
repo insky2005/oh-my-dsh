@@ -226,4 +226,36 @@ cjkEmu.feed("\u{1B}[1;5H")
 test("a cursor on a narrow/blank cell spans one cell",
      cjkView.cursorGlyphSpan().col == 4 && cjkView.cursorGlyphSpan().width == 1)
 
+// MARK: - First terminal open must spawn exactly one session
+//
+// Regression: setRightPanel(.terminal) adopts the current workspace and then
+// calls ensureSession(). Both auto-spawned; because cwd resolution is
+// asynchronous (visibleTabs is still empty when ensureSession runs) the panel
+// opened with TWO shells. No PTY is opened here: the server is never marked
+// ready, so each spawn is merely queued in deferredSpawns.
+//
+// The guard is the FIRST workspace adoption: it must not auto-spawn — the
+// panel's own ensureSession() owns that first session. A LATER switch to a
+// terminal-less workspace still auto-spawns (#5).
+
+let firstOpen = TerminalPanelController()
+let firstOpenWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                               styleMask: [.titled], backing: .buffered, defer: false)
+firstOpenWindow.contentView?.addSubview(firstOpen.view)
+firstOpen.setWorkspaceDirectory("/repo/alpha")   // panel-open: adopt workspace…
+firstOpen.ensureSession()                        // …then ensure the first session
+test("first terminal open queues exactly one session", firstOpen.queuedSpawnCount == 1)
+firstOpen.closeAllSessions()
+
+let switchWs = TerminalPanelController()
+let switchWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                            styleMask: [.titled], backing: .buffered, defer: false)
+switchWindow.contentView?.addSubview(switchWs.view)
+switchWs.setWorkspaceDirectory("/repo/alpha")    // first adoption: no spawn
+switchWs.ensureSession()                         // one queued
+switchWs.setWorkspaceDirectory("/repo/beta")     // later switch to a tab-less ws
+test("a later switch to a terminal-less workspace still auto-spawns",
+     switchWs.queuedSpawnCount == 2)
+switchWs.closeAllSessions()
+
 print("done")

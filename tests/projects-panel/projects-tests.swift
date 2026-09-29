@@ -113,6 +113,32 @@ test("listing: mtime is reported when the file system offers it", listed.allSati
 eq(ProjectsCore.listDirectories(root: root + "/missing", fileManager: fm).count, 0,
    "listing: a missing root is an empty list, never an error")
 
+// MARK: - Root creation and picker start
+
+let freshRoot = (NSTemporaryDirectory() as NSString).appendingPathComponent("projects-ensure-" + UUID().uuidString)
+test("ensureDirectory creates a missing root, parents included",
+     ProjectsCore.ensureDirectory(freshRoot, fileManager: fm) && fm.fileExists(atPath: freshRoot))
+test("ensureDirectory is idempotent on an existing directory",
+     ProjectsCore.ensureDirectory(freshRoot, fileManager: fm) && fm.fileExists(atPath: freshRoot))
+test("ensureDirectory refuses an empty path", !ProjectsCore.ensureDirectory("", fileManager: fm))
+try? fm.removeItem(atPath: freshRoot)
+
+// A plain file where a directory is expected must not be reported as a root.
+let fileNotDir = (NSTemporaryDirectory() as NSString).appendingPathComponent("projects-notdir-" + UUID().uuidString)
+try! Data("x".utf8).write(to: URL(fileURLWithPath: fileNotDir))
+test("ensureDirectory does not claim a plain file is a directory",
+     !ProjectsCore.ensureDirectory(fileNotDir, fileManager: fm))
+try? fm.removeItem(atPath: fileNotDir)
+
+eq(ProjectsCore.existingDirectoryForPicker(root, fileManager: fm), root,
+   "picker: an existing root is used as the starting directory")
+eq(ProjectsCore.existingDirectoryForPicker(root + "/missing/deep", fileManager: fm), root,
+   "picker: a missing root falls back to its nearest existing ancestor")
+eq(ProjectsCore.existingDirectoryForPicker(root + "/notes.txt", fileManager: fm), root,
+   "picker: a file path falls back to its parent directory")
+eq(ProjectsCore.existingDirectoryForPicker("", fileManager: fm), nil,
+   "picker: an empty path has no starting directory")
+
 // MARK: - Registry merge
 
 let canonical: (String) -> String = { DshWorkspaceStore.canonical($0) }

@@ -534,7 +534,12 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
     // MARK: - Layout
 
     private func buildUI() {
-        view.translatesAutoresizingMaskIntoConstraints = false
+        // The panel root must stay frame-based (autoresizing translated): it is
+        // mounted directly as an NSSplitView pane, and a pane that opts out of
+        // autoresizing makes NSSplitView.setPosition a no-op — Auto Layout then
+        // sizes it to its fitting content width, so the panel opens ~190pt wide
+        // instead of the saved/default width. Every other panel root also
+        // leaves this at the default (true).
 
         // --- header: title + [+ 新建] [⟳] [⚙] [✕] ---
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
@@ -681,7 +686,12 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
         panel.canCreateDirectories = true
         panel.message = L10n.tr("projects.changeRootTooltip")
         panel.prompt = L10n.tr("projects.settingsPick")
-        if !rootPath.isEmpty { panel.directoryURL = URL(fileURLWithPath: rootPath) }
+        // Open the sheet right at the projects root so the user sees where their
+        // projects live. A root that still does not exist (creation was refused)
+        // falls back to its nearest existing ancestor rather than to home.
+        if let start = ProjectsCore.existingDirectoryForPicker(rootPath.isEmpty ? effectiveRoot() : rootPath) {
+            panel.directoryURL = URL(fileURLWithPath: start)
+        }
         guard let window = view.window else {
             AppLog.shared.log("projects: no window to pick a root folder in")
             return
@@ -713,6 +723,14 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
         let usablePort: Int? = port > 0 ? port : nil
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // A fresh install has no projects root yet. Create it here so the panel
+            // opens onto a real folder (and the "Change…" picker can navigate to
+            // it) instead of the "root folder does not exist" empty state. A
+            // failure is non-fatal: the listing below simply comes back empty.
+            if !FileManager.default.fileExists(atPath: resolution.path),
+               ProjectsCore.ensureDirectory(resolution.path) {
+                AppLog.shared.log("projects: created the projects root " + resolution.path)
+            }
             let entries = ProjectsCore.listDirectories(root: resolution.path)
             let registry = DshWorkspaceStore.items(port: usablePort, dshHome: dshHome,
                                                    log: { AppLog.shared.log($0) })

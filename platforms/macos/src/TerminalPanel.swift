@@ -1873,7 +1873,6 @@ final class TerminalPanelController: NSObject {
     private var tabs: [Tab] = []
     private var selectedId: Int?
     private var nextId = 1
-    private var startedOnce = false
     private var shuttingDown = false
 
     // MARK: - Per-workspace tabs (issue #5)
@@ -2039,7 +2038,6 @@ final class TerminalPanelController: NSObject {
         // 面板打开：若没有任何会话则自动开启一个新终端
         // （首次打开、或关闭面板清空会话后重开都适用）。
         guard !shuttingDown else { return }
-        startedOnce = true
         // Only the CURRENT workspace counts: switching to a workspace with no
         // terminal yet opens a fresh tab there (the other tabs keep running,
         // hidden — see syncTabVisibility).
@@ -2195,6 +2193,14 @@ final class TerminalPanelController: NSObject {
     /// selected tab re-selected.
     func setWorkspaceDirectory(_ path: String) {
         let key = TerminalWorkspaceTabs.key(for: path)
+        // Was a workspace already adopted before this call? The FIRST adoption
+        // is not a user switch: the panel-open path (setRightPanel(.terminal))
+        // runs setWorkspaceDirectory() and then ensureSession(), and both would
+        // otherwise decide "no session — spawn one". cwd resolution is
+        // asynchronous, so ensureSession() still sees visibleTabs.isEmpty when
+        // it runs and the panel opens with two terminals. ensureSession() owns
+        // the initial spawn; this method only auto-spawns on a later switch.
+        let wasKnown = workspaceKnown
         guard key != TerminalWorkspaceTabs.key(for: currentWorkspace) || !workspaceKnown else { return }
         AppLog.shared.log("terminal workspace: \(currentWorkspace) -> \(path) (\(tabs.count) session(s) total)")
         currentWorkspace = path
@@ -2204,7 +2210,7 @@ final class TerminalPanelController: NSObject {
         // opens one straight away, so the user never has to hit "+" after a
         // switch. Only while the panel is really on screen — spawning a PTY per
         // workspace the user merely passes through would waste shells.
-        if visibleTabs.isEmpty, isPanelOnScreen {
+        if wasKnown, visibleTabs.isEmpty, isPanelOnScreen {
             AppLog.shared.log("terminal workspace: no session for \(path) — starting one")
             newSession()
         }
@@ -2335,6 +2341,10 @@ final class TerminalPanelController: NSObject {
 
     /// The hover tooltip of the header title (the active session's title).
     var headerTooltipText: String? { headerTitle.toolTip }
+
+    /// Sessions queued while the server was not ready yet (test hook).
+    /// Panel-open must queue exactly ONE, never one per caller.
+    var queuedSpawnCount: Int { deferredSpawns }
 
     private func currentGridSize() -> (rows: Int, cols: Int) {
         let w = contentContainer.bounds.width
