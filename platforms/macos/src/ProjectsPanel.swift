@@ -534,7 +534,12 @@ final class ProjectsPanelController: NSObject, NSTextFieldDelegate {
     // MARK: - Layout
 
     private func buildUI() {
-        view.translatesAutoresizingMaskIntoConstraints = false
+        // The panel root must stay frame-based (autoresizing translated): it is
+        // mounted directly as an NSSplitView pane, and a pane that opts out of
+        // autoresizing makes NSSplitView.setPosition a no-op — Auto Layout then
+        // sizes it to its fitting content width, so the panel opens ~190pt wide
+        // instead of the saved/default width. Every other panel root also
+        // leaves this at the default (true).
 
         // --- header: title + [+ 新建] [⟳] [⚙] [✕] ---
         headerTitle.translatesAutoresizingMaskIntoConstraints = false

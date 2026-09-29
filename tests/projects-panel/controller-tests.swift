@@ -150,6 +150,14 @@ let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 700),
 window.contentView = panel.view
 window.contentView?.layoutSubtreeIfNeeded()
 test("panel is mounted", panel.view.window != nil && panel.view.frame.width > 1)
+// The panel root view is mounted DIRECTLY as an NSSplitView pane by main.swift.
+// A pane that opts out of autoresizing (translatesAutoresizingMaskIntoConstraints
+// = false) makes NSSplitView.setPosition a no-op, so the split sizes it to the
+// fitting content width (~190pt here) instead of the saved/default width —
+// that is why the projects panel opened ~260pt wide on first use. Guard the
+// frame-based contract every other panel root already keeps.
+test("the panel root stays frame-based for the split view",
+     panel.view.translatesAutoresizingMaskIntoConstraints)
 
 // MARK: - Listing
 

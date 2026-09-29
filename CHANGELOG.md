@@ -7,7 +7,9 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
-- 暂无（v1.17.0 已发布；开发线已推进到 1.18.0）。
+### Fixed
+
+- **项目面板首次打开时宽度塌成内容宽度**：项目面板的根视图被直接挂成 `NSSplitView` 右栏，却设置了 `translatesAutoresizingMaskIntoConstraints = false`。该栏因此退出 autoresizing 交给 Auto Layout，而它没有宽度约束，`NSSplitView.setPosition` 变成 no-op，面板被压到内容的 fitting 宽度（实测约 170–260pt），而不是记忆/默认宽度（示例：907 / 560pt）；其余八个面板的根视图都保持默认，只有项目面板漏了这一处。去掉该设置后，`setRightPanel(.projects)` 的 layout 日志从 `panel=170pt` 变为 `panel=907pt`，与文件面板一致。回归：项目面板单测新增「根视图保持 frame-based」守卫。
 
 ## [1.17.0] - 2026-09-29
 
