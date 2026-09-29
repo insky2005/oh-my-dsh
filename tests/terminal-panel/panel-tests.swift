@@ -124,4 +124,80 @@ test("firstRect degrades to zero without a window",
      term.firstRect(forCharacterRange: NSRange(location: 0, length: 0),
                     actualRange: nil) == .zero)
 
+
+// MARK: - DECSTBM scroll regions (vim/vi scroll their text area with one)
+//
+// Regression: vim sets a region that excludes the status line, then feeds LF
+// at the region's bottom row. Ignoring the region made the cursor walk into
+// the status line while the text never moved (arrow-key scrolling looked dead).
+
+let reg = TerminalEmulator(rows: 6, cols: 10)
+reg.feed("\u{1B}[1;4r")
+reg.feed("\u{1B}[1;1HA\u{1B}[2;1HB\u{1B}[3;1HC\u{1B}[4;1HD\u{1B}[6;1HSTATUS")
+reg.feed("\u{1B}[4;1H\n")
+test("decstbm: LF at region bottom scrolls only the region",
+     reg.screenCell(row: 0, col: 0).ch == "B" &&
+     reg.screenCell(row: 1, col: 0).ch == "C" &&
+     reg.screenCell(row: 2, col: 0).ch == "D" &&
+     reg.screenCell(row: 3, col: 0).ch == " ")
+test("decstbm: the status row is untouched", reg.screenCell(row: 5, col: 0).ch == "S")
+test("decstbm: a partial region adds no scrollback", reg.totalLineCount == reg.rows)
+
+let regRI = TerminalEmulator(rows: 6, cols: 10)
+regRI.feed("\u{1B}[1;4r")
+regRI.feed("\u{1B}[1;1HA\u{1B}[2;1HB\u{1B}[3;1HC\u{1B}[4;1HD\u{1B}[6;1HSTATUS")
+regRI.feed("\u{1B}[1;1H\u{1B}M")
+test("decstbm: RI at region top scrolls down inside the region",
+     regRI.screenCell(row: 0, col: 0).ch == " " &&
+     regRI.screenCell(row: 1, col: 0).ch == "A" &&
+     regRI.screenCell(row: 2, col: 0).ch == "B" &&
+     regRI.screenCell(row: 3, col: 0).ch == "C" &&
+     regRI.screenCell(row: 5, col: 0).ch == "S")
+
+let regIL = TerminalEmulator(rows: 6, cols: 10)
+regIL.feed("\u{1B}[1;4r")
+regIL.feed("\u{1B}[1;1HA\u{1B}[2;1HB\u{1B}[3;1HC\u{1B}[4;1HD\u{1B}[6;1HSTATUS")
+regIL.feed("\u{1B}[2;1H\u{1B}[L")
+test("decstbm: insert line stays inside the region",
+     regIL.screenCell(row: 0, col: 0).ch == "A" &&
+     regIL.screenCell(row: 1, col: 0).ch == " " &&
+     regIL.screenCell(row: 2, col: 0).ch == "B" &&
+     regIL.screenCell(row: 3, col: 0).ch == "C" &&
+     regIL.screenCell(row: 5, col: 0).ch == "S")
+
+let regDL = TerminalEmulator(rows: 6, cols: 10)
+regDL.feed("\u{1B}[1;4r")
+regDL.feed("\u{1B}[1;1HA\u{1B}[2;1HB\u{1B}[3;1HC\u{1B}[4;1HD\u{1B}[6;1HSTATUS")
+regDL.feed("\u{1B}[2;1H\u{1B}[M")
+test("decstbm: delete line stays inside the region",
+     regDL.screenCell(row: 0, col: 0).ch == "A" &&
+     regDL.screenCell(row: 1, col: 0).ch == "C" &&
+     regDL.screenCell(row: 2, col: 0).ch == "D" &&
+     regDL.screenCell(row: 3, col: 0).ch == " " &&
+     regDL.screenCell(row: 5, col: 0).ch == "S")
+
+let regSU = TerminalEmulator(rows: 6, cols: 10)
+regSU.feed("\u{1B}[1;4r")
+regSU.feed("\u{1B}[1;1HA\u{1B}[2;1HB\u{1B}[3;1HC\u{1B}[4;1HD\u{1B}[6;1HSTATUS")
+regSU.feed("\u{1B}[1S")
+test("decstbm: SU shifts only the region",
+     regSU.screenCell(row: 0, col: 0).ch == "B" &&
+     regSU.screenCell(row: 3, col: 0).ch == " " &&
+     regSU.screenCell(row: 5, col: 0).ch == "S")
+regSU.feed("\u{1B}[1T")
+test("decstbm: SD shifts the region back",
+     regSU.screenCell(row: 0, col: 0).ch == " " &&
+     regSU.screenCell(row: 1, col: 0).ch == "B" &&
+     regSU.screenCell(row: 2, col: 0).ch == "C" &&
+     regSU.screenCell(row: 5, col: 0).ch == "S")
+
+let regReset = TerminalEmulator(rows: 6, cols: 10)
+regReset.feed("\u{1B}[1;4r")
+regReset.feed("\u{1B}[1;1HTOP\u{1B}[6;1HBOT")
+regReset.feed("\u{1B}[r")
+regReset.feed("\u{1B}[6;1H\n")
+test("decstbm: CSI r restores the full-screen region",
+     regReset.screenCell(row: 4, col: 0).ch == "B" &&
+     regReset.line(at: 0).contains { $0.ch == "T" })
+
 print("done")

@@ -148,6 +148,6 @@ tests/snapshot-rollback/run.sh       # 会话快照与回退 CLI 端到端（含
 
 ## 已知限制（README 明示）
 
-- 终端 DECSTBM 滚动区未实现、会话不跨 App 重启保留（输入法直输已在 macOS 落地，见 [terminal-panel](modules/terminal-panel.md)）；
+- 终端会话不跨 App 重启保留（输入法直输与 DECSTBM 滚动区已在 macOS 落地，见 [terminal-panel](modules/terminal-panel.md)）；
 - Wiki 面板 v1 搜索为标题过滤（无正文/语义检索）；
 - 通道（channel）能力 README 已收录；设计/指令/状态/存储文档在 `docs/channel-*.md`；消息/会话存储**已全局化**（2026-08-22 落地于 `~/.dsh/channels/` 分桶，见 [channel-panel](modules/channel-panel.md)）；**「项目开关」关联（PR #30）存全局 `~/.dsh/channels/<channelId>.workspaces.json`**（project=workspace，见 [channel-panel](modules/channel-panel.md) 与 docs/channel-project-switch.md）；引用配置 `.dsh/channels.json` 旧路径文件仍未跟踪（迁移到 `.dsh/channels/channels.json` 并提交是待办）。

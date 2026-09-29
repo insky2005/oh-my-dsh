@@ -247,7 +247,7 @@ final class TerminalSession {
 /// Minimal ANSI/VT terminal: a scrollback + a `rows`-line screen of cells,
 /// cursor addressing, SGR colors (16/256/truecolor), erase, insert/delete,
 /// alternate screen (?1049h/l), cursor visibility (?25), OSC titles.
-/// DECSTBM scroll regions are parsed but ignored (documented limitation).
+/// DECSTBM scroll regions are honored (vim/vi scroll their text area with one).
 final class TerminalEmulator {
 
     struct Cell {
@@ -297,6 +297,12 @@ final class TerminalEmulator {
     private var inAltScreen = false
     private let maxScrollback = 10_000
 
+    /// DECSTBM scrolling region, inclusive 0-based rows. vim/vi set a region
+    /// that excludes the status line and then scroll at its bottom, so every
+    /// scrolling operation (LF/IND, RI, SU/SD, IL/DL) must stay inside it.
+    private var scrollTop = 0
+    private var scrollBottom = 0
+
     private enum ParserState { case ground, escape, swallow, csi, osc, oscST, dcs, dcsST }
     private var parserState: ParserState = .ground
     private var swallowNext = false
@@ -311,6 +317,7 @@ final class TerminalEmulator {
         self.rows = r
         self.cols = c
         self.screen = (0..<r).map { _ in Self.blankLine(cols: c) }
+        self.scrollBottom = r - 1
     }
 
     // MARK: - Model access (for the view)
@@ -498,7 +505,7 @@ final class TerminalEmulator {
         case "S": scrollScreen(up: param(0, 1))
         case "T": scrollScreen(up: -param(0, 1))
         case "h", "l": break // SM/RM without '?' — ignore
-        case "r": break      // DECSTBM scroll region — ignored (limitation)
+        case "r": setScrollRegion(top: param(0, 1), bottom: param(1, rows))
         default: break
         }
     }
@@ -535,27 +542,54 @@ final class TerminalEmulator {
         wrapPending = false
     }
 
-    private func lineFeed() {
-        if cursorRow == rows - 1 {
-            let top = screen.removeFirst()
-            if !inAltScreen {
+    /// DECSTBM: top/bottom are 1-based and inclusive; an all-default sequence
+    /// (CSI r) resets the region to the full screen. A valid region homes the
+    /// cursor, as the VT spec requires.
+    private func setScrollRegion(top: Int, bottom: Int) {
+        guard top >= 1, bottom <= rows, top < bottom else { return }
+        scrollTop = top - 1
+        scrollBottom = bottom - 1
+        cursorRow = 0
+        cursorCol = 0
+        wrapPending = false
+    }
+
+    /// Scroll the region up by n lines (content moves up; blank at the bottom).
+    /// The line leaving the top enters scrollback only for a full-screen region.
+    private func scrollRegionUp(_ n: Int) {
+        for _ in 0..<n {
+            let top = screen.remove(at: scrollTop)
+            if !inAltScreen && scrollTop == 0 && scrollBottom == rows - 1 {
                 scrollback.append(top)
                 if scrollback.count > maxScrollback {
                     scrollback.removeFirst(scrollback.count - maxScrollback)
                 }
             }
-            screen.append(blankLine())
-        } else {
+            screen.insert(blankLine(), at: scrollBottom)
+        }
+    }
+
+    /// Scroll the region down by n lines (content moves down; blank at the top).
+    private func scrollRegionDown(_ n: Int) {
+        for _ in 0..<n {
+            screen.remove(at: scrollBottom)
+            screen.insert(blankLine(), at: scrollTop)
+        }
+    }
+
+    private func lineFeed() {
+        if cursorRow == scrollBottom {
+            scrollRegionUp(1)
+        } else if cursorRow < rows - 1 {
             cursorRow += 1
         }
     }
 
     private func reverseIndex() {
-        if cursorRow > 0 {
+        if cursorRow == scrollTop {
+            scrollRegionDown(1)
+        } else if cursorRow > 0 {
             cursorRow -= 1
-        } else {
-            screen.removeLast()
-            screen.insert(blankLine(), at: 0)
         }
         wrapPending = false
     }
@@ -655,35 +689,27 @@ final class TerminalEmulator {
     }
 
     private func insertLines(n: Int) {
-        for _ in 0..<n {
-            guard cursorRow < rows - 1 || rows > 0 else { break }
-            if cursorRow == rows - 1 { break }
-            screen.removeLast()
+        // IL only applies when the cursor is inside the scrolling region.
+        guard cursorRow >= scrollTop, cursorRow <= scrollBottom else { return }
+        let count = min(n, scrollBottom - cursorRow + 1)
+        for _ in 0..<count {
+            screen.remove(at: scrollBottom)
             screen.insert(blankLine(), at: cursorRow)
         }
     }
 
     private func deleteLines(n: Int) {
-        for _ in 0..<n {
-            guard cursorRow < rows else { break }
+        guard cursorRow >= scrollTop, cursorRow <= scrollBottom else { return }
+        let count = min(n, scrollBottom - cursorRow + 1)
+        for _ in 0..<count {
             screen.remove(at: cursorRow)
-            screen.append(blankLine())
+            screen.insert(blankLine(), at: scrollBottom)
         }
     }
 
     private func scrollScreen(up: Int) {
-        guard up != 0 else { return }
-        if up > 0 {
-            for _ in 0..<up {
-                screen.removeFirst()
-                screen.append(blankLine())
-            }
-        } else {
-            for _ in 0..<(-up) {
-                screen.removeLast()
-                screen.insert(blankLine(), at: 0)
-            }
-        }
+        if up > 0 { scrollRegionUp(up) }
+        else if up < 0 { scrollRegionDown(-up) }
     }
 
     private func clearCell(_ r: Int, _ c: Int) {
@@ -756,6 +782,8 @@ final class TerminalEmulator {
         cursorRow = 0
         cursorCol = 0
         wrapPending = false
+        scrollTop = 0
+        scrollBottom = rows - 1
         selection = nil
     }
 
@@ -766,6 +794,8 @@ final class TerminalEmulator {
         scrollback = savedScrollback
         let sc = altSavedCursor ?? (0, 0)
         moveCursor(row: sc.row, col: sc.col)
+        scrollTop = 0
+        scrollBottom = rows - 1
         savedScreen = []
         savedScrollback = []
         altSavedCursor = nil
@@ -782,6 +812,8 @@ final class TerminalEmulator {
         applicationCursorKeys = false
         bracketedPaste = false
         inAltScreen = false
+        scrollTop = 0
+        scrollBottom = rows - 1
         savedScreen = []
         savedScrollback = []
         savedCursor = nil
@@ -819,6 +851,8 @@ final class TerminalEmulator {
         screen = newScreen
         rows = newRows
         cols = newCols
+        scrollTop = 0
+        scrollBottom = rows - 1
         cursorRow = min(cursorRow, rows - 1)
         cursorCol = min(cursorCol, cols - 1)
         wrapPending = false

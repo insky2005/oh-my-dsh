@@ -24,7 +24,7 @@ manual: false
 
 - 网格：`Cell { ch, fg, bg, bold, italic, underline, inverse, continuation }`；`screen` + `scrollback`；
 - 解析器：`ParserState { ground, escape, swallow, csi, osc, oscST, dcs, dcsST }`；`feed(_ text:)` 逐字符驱动；
-- 支持子集：光标寻址（CUU/CUD/CUF/CUB/CUP/CNL/CPL/CHA/VPA）、SGR 颜色（16/256/truecolor）、擦除（ED/EL/ECH）、删插（DCH/ICH/IL/DL）、滚动、**备用屏**、**OSC 标题**（`finishOSC` → `onTitle`）、DECAWM、RIS 复位；
+- 支持子集：光标寻址（CUU/CUD/CUF/CUB/CUP/CNL/CPL/CHA/VPA）、SGR 颜色（16/256/truecolor）、擦除（ED/EL/ECH）、删插（DCH/ICH/IL/DL）、**滚动区（DECSTBM：LF/RI/IL/DL/SU/SD 全部限制在区域内，vim/vi 文本区滚动依赖它）**、**备用屏**、**OSC 标题**（`finishOSC` → `onTitle`）、DECAWM、RIS 复位；
 - **模式跟踪**：`applicationCursorKeys`（`CSI ? 1 h/l`）与 `bracketedPaste`（`CSI ? 2004 h/l`）——决定方向键编码与粘贴包封；
 - 选择/复制：`Selection` 模型 + `selectedText`；`displayWidth` 处理宽字符/零宽连接符（近似宽度）。
 
@@ -66,14 +66,13 @@ manual: false
 
 ## 测试
 
-`tests/terminal-panel/run.sh`（无头，**不建 PTY**：只实例化 controller 断言头部与模型层状态）：
+`core/tests/ansi.test.js`（共享核心，JS 端口）含同一组 DECSTBM 断言 6 项；`tests/terminal-panel/run.sh`（无头，**不建 PTY**：只实例化 controller 断言头部与模型层状态）：
 
 - 编译清单 = `stubs.swift`（L10n/AppLog/ShellConfig/共享 UI 基件）+ `TerminalPanel.swift` + `PanelSurface.swift` + `TerminalWorkspaceTabs.swift` + `WorkspaceTabMemory.swift` + `panel-tests.swift`（改名 `main.swift`）；
-- 覆盖：头部固定标题（语言切换后仍固定、关会话后不被清空）+ `TerminalWorkspaceTabs` 的可见性/记忆规则（同 workspace 可见、尾斜杠等价、切换换页签、每页签独立 key、全局页签处处可见、切回恢复选中、已关闭不恢复）+ **选中即复制默认开且随设置变化** + **IME 协议状态机**（初始无组合、`setMarkedText` 建立预编辑、`selectedRange` 落在预编辑之后、`attributedSubstring` 的范围内/外、`unmarkText` 与空串都清空、提交清空、无窗口时 `firstRect` 退化为 0）；
+- 覆盖：头部固定标题（语言切换后仍固定、关会话后不被清空）+ `TerminalWorkspaceTabs` 的可见性/记忆规则（同 workspace 可见、尾斜杠等价、切换换页签、每页签独立 key、全局页签处处可见、切回恢复选中、已关闭不恢复）+ **选中即复制默认开且随设置变化** + **IME 协议状态机**（初始无组合、`setMarkedText` 建立预编辑、`selectedRange` 落在预编辑之后、`attributedSubstring` 的范围内/外、`unmarkText` 与空串都清空、提交清空、无窗口时 `firstRect` 退化为 0）+ **DECSTBM 滚动区**（LF 在区域底部只滚区域、状态行不动、部分区域不进 scrollback、RI/IL/DL/SU/SD 都限制在区域内、`CSI r` 恢复全屏区域）；
 - 会话路径（真实 shell 输入输出、滚动、选择）靠手动 QA，见 .dsh/wiki/tasks.md。
 
 ## 已知限制（README）
 
-- DECSTBM 滚动区未实现（个别全屏程序显示异常）；
 - 组合表情/零宽连接符按近似宽度渲染；
 - 会话不跨 App 重启保留；切走 workspace 时隐藏的会话仍在后台存活（无数量上限）。
