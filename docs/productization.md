@@ -146,12 +146,12 @@
 > 优先级：**P1** 近期（P1/P2 阶段内）· **P2** 中期（P2/P3 阶段内）· **P3** 远期（P4 起）。
 > 每项标注「现状 → 目标」与关联的产品化阶段。依据：README 已文档化的已知限制 + 上游 dsh 能力。
 
-### 3.1 终端体验（现状：v1 无 IME 直输、DECSTBM 未实现、会话不持久）
+### 3.1 终端体验（现状：macOS 已支持 IME 直输与 DECSTBM 滚动区；会话不持久）
 
 | 功能 | 现状 → 目标 | 优先级 | 关联阶段 |
 |---|---|---|---|
-| 输入法直接输入 | 中文等需 ⌘V 粘贴 → 原生 IME 直输（macOS `NSTextInputClient` / Windows ConPTY IME / GTK IM） | P1 | P1–P3 |
-| DECSTBM 滚动区 | 解析但忽略 → 实现（vim/top 等全屏程序兼容） | P2 | 任意 |
+| 输入法直接输入 | **macOS 已落地**（`NSTextInputClient`：候选窗跟随光标、预编辑内联显示）→ Windows / Linux 接入（ConPTY IME / GTK IM） | P1 | P1–P3 |
+| DECSTBM 滚动区 | **已实现**（区域内滚动：LF/RI/IL/DL/SU/SD，vim/vi 文本区滚动正常） | P2 | 任意 |
 | 会话持久化 | 跨重启丢失 → 会话记录/恢复 | P2 | P1 后 |
 | 字体与主题 | 固定等宽 13pt → 设置面板可配字体/字号/配色 | P2 | P1 设置窗口 |
 | 剪贴板增强 | 基础复制/粘贴 → 选区格式、多行粘贴安全策略细化 | P2 | 任意 |
@@ -649,7 +649,7 @@ WebKit（macOS/Linux）与 Chromium（WebView2）对 dsh web 的渲染差异、P
 | 签名 | ad-hoc（`codesign --force --deep --sign -`） | `build-app.sh` |
 | 平台 | 仅 macOS 13+ arm64 | Info.plist `LSMinimumSystemVersion` + 产物命名 |
 | 升级 | 仅 dsh 包（npm 原地升级，手动 ⌘U + 自动 24h 节流）；App 无自动升级 | README |
-| 已知限制 | 终端无 IME 直输 / DECSTBM 未实现 / 会话不持久；Wiki 仅标题搜索；预览无音视频/Office | README |
+| 已知限制 | 终端会话不持久；Wiki 仅标题搜索；预览无音视频/Office | README |
 | git | 本地 main，2 commits，无 remote/tag；无 LICENSE | git 实测 |
 | 测试 | `tests/terminal-emulator`、`tests/wiki-panel`（run.sh + swift 单测） | `tests/` |
 | 文档 | README、docs/plans/TERMINAL_PLAN-terminal-panel.md、`docs/`（repo-wiki-design 等）、`.dsh/wiki/`（代理维护） | 目录实测 |

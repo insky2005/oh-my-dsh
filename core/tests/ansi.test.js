@@ -293,6 +293,106 @@ test("dcs ignored", () => {
   check("dcs ignored", emu.screenCell(0, 0).ch === " ");
 });
 
+// --- DECSTBM scroll regions (vim/vi scroll their text area with one) ---
+//
+// The regression this pins: vim sets a region that excludes the status line
+// and then feeds LF at the region's bottom row. An emulator that ignores the
+// region just moves the cursor down one screen row, so the text stops moving
+// (arrow-key scrolling appears dead) while the cursor walks into the status
+// line.
+
+test("decstbm: LF at region bottom scrolls only the region", () => {
+  const v = new TerminalEmulator(6, 10);
+  v.feed("\u001b[1;4r"); // region = screen rows 1..4 (0-based 0..3)
+  v.feed("\u001b[1;1HA\u001b[2;1HB\u001b[3;1HC\u001b[4;1HD\u001b[6;1HSTATUS");
+  v.feed("\u001b[4;1H\n"); // cursor on the region bottom, line feed
+  check(
+    "decstbm: region shifts up",
+    v.screenCell(0, 0).ch === "B" &&
+      v.screenCell(1, 0).ch === "C" &&
+      v.screenCell(2, 0).ch === "D" &&
+      v.screenCell(3, 0).ch === " "
+  );
+  check("decstbm: status row untouched", v.screenCell(5, 0).ch === "S");
+  check("decstbm: partial region adds no scrollback", v.totalLineCount === v.rows);
+});
+
+test("decstbm: RI at region top scrolls down inside the region", () => {
+  const v = new TerminalEmulator(6, 10);
+  v.feed("\u001b[1;4r");
+  v.feed("\u001b[1;1HA\u001b[2;1HB\u001b[3;1HC\u001b[4;1HD\u001b[6;1HSTATUS");
+  v.feed("\u001b[1;1H\u001bM"); // reverse index at the region top
+  check(
+    "decstbm: region shifts down",
+    v.screenCell(0, 0).ch === " " &&
+      v.screenCell(1, 0).ch === "A" &&
+      v.screenCell(2, 0).ch === "B" &&
+      v.screenCell(3, 0).ch === "C"
+  );
+  check("decstbm: RI keeps the status row", v.screenCell(5, 0).ch === "S");
+});
+
+test("decstbm: insert line stays inside the region", () => {
+  const v = new TerminalEmulator(6, 10);
+  v.feed("\u001b[1;4r");
+  v.feed("\u001b[1;1HA\u001b[2;1HB\u001b[3;1HC\u001b[4;1HD\u001b[6;1HSTATUS");
+  v.feed("\u001b[2;1H\u001b[L"); // insert one line at region row 2
+  check(
+    "decstbm: IL pushes region lines down",
+    v.screenCell(0, 0).ch === "A" &&
+      v.screenCell(1, 0).ch === " " &&
+      v.screenCell(2, 0).ch === "B" &&
+      v.screenCell(3, 0).ch === "C"
+  );
+  check("decstbm: IL keeps the status row", v.screenCell(5, 0).ch === "S");
+});
+
+test("decstbm: delete line stays inside the region", () => {
+  const v = new TerminalEmulator(6, 10);
+  v.feed("\u001b[1;4r");
+  v.feed("\u001b[1;1HA\u001b[2;1HB\u001b[3;1HC\u001b[4;1HD\u001b[6;1HSTATUS");
+  v.feed("\u001b[2;1H\u001b[M"); // delete one line at region row 2
+  check(
+    "decstbm: DL pulls region lines up",
+    v.screenCell(0, 0).ch === "A" &&
+      v.screenCell(1, 0).ch === "C" &&
+      v.screenCell(2, 0).ch === "D" &&
+      v.screenCell(3, 0).ch === " "
+  );
+  check("decstbm: DL keeps the status row", v.screenCell(5, 0).ch === "S");
+});
+
+test("decstbm: SU/SD scroll only the region", () => {
+  const v = new TerminalEmulator(6, 10);
+  v.feed("\u001b[1;4r");
+  v.feed("\u001b[1;1HA\u001b[2;1HB\u001b[3;1HC\u001b[4;1HD\u001b[6;1HSTATUS");
+  v.feed("\u001b[1S"); // scroll up 1
+  check(
+    "decstbm: SU shifts the region",
+    v.screenCell(0, 0).ch === "B" && v.screenCell(3, 0).ch === " "
+  );
+  v.feed("\u001b[1T"); // scroll down 1
+  check(
+    "decstbm: SD shifts the region back",
+    v.screenCell(0, 0).ch === " " &&
+      v.screenCell(1, 0).ch === "B" &&
+      v.screenCell(2, 0).ch === "C"
+  );
+  check("decstbm: SU/SD keep the status row", v.screenCell(5, 0).ch === "S");
+});
+
+test("decstbm: CSI r restores the full-screen region", () => {
+  const v = new TerminalEmulator(6, 10);
+  v.feed("\u001b[1;4r");
+  v.feed("\u001b[1;1HTOP\u001b[6;1HBOT");
+  v.feed("\u001b[r"); // all-default DECSTBM = full screen
+  v.feed("\u001b[6;1H\n"); // LF at the real bottom scrolls everything
+  check(
+    "decstbm: reset region scrolls the whole screen",
+    v.screenCell(4, 0).ch === "B" && v.line(0).some((cell) => cell.ch === "T")
+  );
+});
+
 // --- realistic shell session ---
 test("session: README green", () => {
   const s = new TerminalEmulator(24, 80);

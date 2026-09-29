@@ -6,7 +6,7 @@
 // Model: a scrollback buffer + a `rows`-line screen of cells, cursor
 // addressing, SGR colors (16/256/truecolor), erase, insert/delete, alternate
 // screen (?1049h/l), cursor visibility (?25), OSC titles. DECSTBM scroll
-// regions are parsed but ignored (documented limitation, same as Swift).
+// regions are honored (same as Swift).
 //
 // Self-contained: no dependencies. Feed iterates by Unicode code point
 // (JS `for...of` over a string), which matches the Swift unicodeScalars
@@ -46,6 +46,13 @@ class TerminalEmulator {
     this.altSavedCursor = null;
     this.inAltScreen = false;
     this.maxScrollback = 10000;
+
+    // DECSTBM scrolling region, inclusive 0-based rows. Everything that
+    // scrolls (LF/IND, RI, SU/SD, IL/DL) must stay inside it: vim/vi set a
+    // region that excludes the status line and then scroll the region at its
+    // bottom, so an emulator that ignores the region gets a stuck screen.
+    this.scrollTop = 0;
+    this.scrollBottom = r - 1;
 
     this.parserState = "ground";
     this.csiParams = [];
@@ -382,7 +389,8 @@ class TerminalEmulator {
       case "h":
       case "l": // SM/RM without '?' — ignore
         break;
-      case "r": // DECSTBM scroll region — ignored (limitation)
+      case "r": // DECSTBM: set the scrolling region (1-based, inclusive)
+        this.setScrollRegion(param(0, 1), param(1, this._rows));
         break;
       default:
         break;
@@ -449,27 +457,56 @@ class TerminalEmulator {
     this.wrapPending = false;
   }
 
-  lineFeed() {
-    if (this.cursorRow === this._rows - 1) {
-      const top = this.screen.shift();
-      if (!this.inAltScreen) {
+  // DECSTBM: top/bottom are 1-based and inclusive; an all-default sequence
+  // (CSI r) resets the region to the full screen. A valid region homes the
+  // cursor, as the VT spec requires.
+  setScrollRegion(top, bottom) {
+    if (top < 1 || bottom > this._rows || top >= bottom) return;
+    this.scrollTop = top - 1;
+    this.scrollBottom = bottom - 1;
+    this.cursorRow = 0;
+    this.cursorCol = 0;
+    this.wrapPending = false;
+  }
+
+  // Scroll the region up by n lines (content moves up; blank at the bottom).
+  // The line leaving the top enters scrollback only for a full-screen region.
+  scrollRegionUp(n) {
+    for (let i = 0; i < n; i++) {
+      const top = this.screen.splice(this.scrollTop, 1)[0];
+      // Only a full-screen scroll enters scrollback; a partial region (vim's
+      // text area) is an editor redraw, not shell output.
+      if (!this.inAltScreen && this.scrollTop === 0 && this.scrollBottom === this._rows - 1) {
         this.scrollback.push(top);
         if (this.scrollback.length > this.maxScrollback) {
           this.scrollback.splice(0, this.scrollback.length - this.maxScrollback);
         }
       }
-      this.screen.push(this.blankLine());
-    } else {
+      this.screen.splice(this.scrollBottom, 0, this.blankLine());
+    }
+  }
+
+  // Scroll the region down by n lines (content moves down; blank at the top).
+  scrollRegionDown(n) {
+    for (let i = 0; i < n; i++) {
+      this.screen.splice(this.scrollBottom, 1);
+      this.screen.splice(this.scrollTop, 0, this.blankLine());
+    }
+  }
+
+  lineFeed() {
+    if (this.cursorRow === this.scrollBottom) {
+      this.scrollRegionUp(1);
+    } else if (this.cursorRow < this._rows - 1) {
       this.cursorRow += 1;
     }
   }
 
   reverseIndex() {
-    if (this.cursorRow > 0) {
+    if (this.cursorRow === this.scrollTop) {
+      this.scrollRegionDown(1);
+    } else if (this.cursorRow > 0) {
       this.cursorRow -= 1;
-    } else {
-      this.screen.pop();
-      this.screen.unshift(this.blankLine());
     }
     this.wrapPending = false;
   }
@@ -606,34 +643,27 @@ class TerminalEmulator {
   }
 
   insertLines(n) {
-    for (let i = 0; i < n; i++) {
-      if (this.cursorRow === this._rows - 1) break;
-      this.screen.pop();
+    // IL only applies when the cursor is inside the scrolling region.
+    if (this.cursorRow < this.scrollTop || this.cursorRow > this.scrollBottom) return;
+    const count = Math.min(n, this.scrollBottom - this.cursorRow + 1);
+    for (let i = 0; i < count; i++) {
+      this.screen.splice(this.scrollBottom, 1);
       this.screen.splice(this.cursorRow, 0, this.blankLine());
     }
   }
 
   deleteLines(n) {
-    for (let i = 0; i < n; i++) {
-      if (this.cursorRow >= this._rows) break;
+    if (this.cursorRow < this.scrollTop || this.cursorRow > this.scrollBottom) return;
+    const count = Math.min(n, this.scrollBottom - this.cursorRow + 1);
+    for (let i = 0; i < count; i++) {
       this.screen.splice(this.cursorRow, 1);
-      this.screen.push(this.blankLine());
+      this.screen.splice(this.scrollBottom, 0, this.blankLine());
     }
   }
 
   scrollScreen(up) {
-    if (up === 0) return;
-    if (up > 0) {
-      for (let i = 0; i < up; i++) {
-        this.screen.shift();
-        this.screen.push(this.blankLine());
-      }
-    } else {
-      for (let i = 0; i < -up; i++) {
-        this.screen.pop();
-        this.screen.unshift(this.blankLine());
-      }
-    }
+    if (up > 0) this.scrollRegionUp(up);
+    else if (up < 0) this.scrollRegionDown(-up);
   }
 
   clearCell(r, c) {
@@ -755,6 +785,8 @@ class TerminalEmulator {
     this.cursorRow = 0;
     this.cursorCol = 0;
     this.wrapPending = false;
+    this.scrollTop = 0;
+    this.scrollBottom = this._rows - 1;
     this.selection = null;
   }
 
@@ -768,6 +800,8 @@ class TerminalEmulator {
     this.scrollback = this.savedScrollback;
     const sc = this.altSavedCursor || { row: 0, col: 0 };
     this.moveCursor(sc.row, sc.col);
+    this.scrollTop = 0;
+    this.scrollBottom = this._rows - 1;
     this.savedScreen = [];
     this.savedScrollback = [];
     this.altSavedCursor = null;
@@ -792,6 +826,8 @@ class TerminalEmulator {
     this.applicationCursorKeys = false;
     this.bracketedPaste = false;
     this.inAltScreen = false;
+    this.scrollTop = 0;
+    this.scrollBottom = this._rows - 1;
     this.savedScreen = [];
     this.savedScrollback = [];
     this.savedCursor = null;
@@ -833,6 +869,8 @@ class TerminalEmulator {
     this.screen = newScreen;
     this._rows = newRows;
     this._cols = newCols;
+    this.scrollTop = 0;
+    this.scrollBottom = this._rows - 1;
     this.cursorRow = Math.min(this.cursorRow, this._rows - 1);
     this.cursorCol = Math.min(this.cursorCol, this._cols - 1);
     this.wrapPending = false;

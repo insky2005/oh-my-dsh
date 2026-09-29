@@ -30,7 +30,7 @@
 ## 现状基线
 
 - M1–M3 完成后：三平台产品稳定、CI / release 流程可用
-- 已知限制 backlog：终端 IME / 会话持久化、Wiki 语义检索、预览 Office 等（§3 各表）
+- 已知限制 backlog：终端 IME（macOS 已落地，Windows/Linux 待接入）/ 会话持久化、Wiki 语义检索、预览 Office 等（§3 各表）
 
 ## 实施步骤（任务分解）
 

@@ -24,18 +24,24 @@ manual: false
 
 - 网格：`Cell { ch, fg, bg, bold, italic, underline, inverse, continuation }`；`screen` + `scrollback`；
 - 解析器：`ParserState { ground, escape, swallow, csi, osc, oscST, dcs, dcsST }`；`feed(_ text:)` 逐字符驱动；
-- 支持子集：光标寻址（CUU/CUD/CUF/CUB/CUP/CNL/CPL/CHA/VPA）、SGR 颜色（16/256/truecolor）、擦除（ED/EL/ECH）、删插（DCH/ICH/IL/DL）、滚动、**备用屏**、**OSC 标题**（`finishOSC` → `onTitle`）、DECAWM、RIS 复位；
+- 支持子集：光标寻址（CUU/CUD/CUF/CUB/CUP/CNL/CPL/CHA/VPA）、SGR 颜色（16/256/truecolor）、擦除（ED/EL/ECH）、删插（DCH/ICH/IL/DL）、**滚动区（DECSTBM：LF/RI/IL/DL/SU/SD 全部限制在区域内，vim/vi 文本区滚动依赖它）**、**备用屏**、**OSC 标题**（`finishOSC` → `onTitle`）、DECAWM、RIS 复位；
 - **模式跟踪**：`applicationCursorKeys`（`CSI ? 1 h/l`）与 `bracketedPaste`（`CSI ? 2004 h/l`）——决定方向键编码与粘贴包封；
 - 选择/复制：`Selection` 模型 + `selectedText`；`displayWidth` 处理宽字符/零宽连接符（近似宽度）。
 
 ### `TerminalView`（绘制与输入）
 
 - `isOpaque = true` + `wantsLayer = true`（配合 `contentContainer.wantsLayer + masksToBounds` 修复 header 合成问题，见 `docs/terminal-header-fix.md`）；底色为 `PanelSurface.dynamic`（不再用 `.textBackgroundColor`）；
-- 绘制：按行画 run（字体/前景/背景/粗斜下划线）、光标（块）、选区高亮；
+- 绘制：按行画 run（字体/前景/背景/粗斜下划线）、光标（块）、选区高亮；**宽字符按整两格拉伸**（等宽字体的 CJK 回退 advance 只有约 1.6 格，`drawGlyph` 用 CTM 横向缩放把它对齐到两格，否则后续文本与光标会错位）；**光标跨整个宽字符**（`cursorGlyphSpan`：停在 continuation 格时回退到 lead 格、宽 2 格）；**组合期**改画 `markedText`（预编辑串带下划线 + 细光标，见下），不再画方块光标；
 - **滚动方向对齐面板语义（#3）**：`scrollWheel(with:)` 改为 NSScrollView 语义——正的 `scrollingDeltaY` → 显示**更早**的行（与文件树/网页一致）。灵敏度：触控板**精确 delta 4 点 = 1 行**（保留小数累加器），动量阶段的衰减 delta 自然表现为「先快后慢」的惯性；鼠标滚轮（非精确 delta）一格 = 一行；
 - **选择（#4）**：`mouseDown` 按 `event.clickCount` 分支——**双击选词**（词内字符含路径/URL 的 `/ - . _ :` 等，保证路径与参数完整）、**三击选整行**；**双击/三击后带着「选择单位」继续拖拽**按整词/整行扩选，普通拖拽仍逐格选择（`wordDragSelection(to:)`）；`mouseUp` 结束拖选时 `copySelectionIfAutoCopy()`；
 - **选中即复制（#4）**：开关 `TerminalView.autoCopyKey` = **`terminal.autoCopy`**（`ShellConfig`，默认**开**，「设置菜单 → 终端：选中文本即复制」`settings.terminalAutoCopy` 切换）；**无选区时 ⌘C 发 SIGINT 的既有语义不变**；
 - 输入：`keyDown` 映射特殊键（方向/功能键/退格等，`specialKey(for:)`）；`copy`/`paste`（多行走括号粘贴）/`selectAll`/⌘K 清屏。
+
+### IME 输入法直输（NSTextInputClient）
+
+- **为什么以前打不了中文**：终端是自绘 `NSView`，只看 `event.characters` 直写 PTY；AppKit 的 IME 整条链路以 `conformsToProtocol:`（`NSTextInputClient`）为准，不声明就拿不到 `inputContext`，输入法从不介入 → 拼音敲出来还是字母；
+- **接线**：`TerminalView: NSView, NSTextInputClient`。`keyDown` 里 `⌘`/`⌃`/`⌥` 组合与 `specialKey` 特殊键**先走原路径**（不让输入法截胡），**组合中（`hasMarkedText()`）与其余按键**交 `interpretKeyEvents([event])`；
+- **提交**：`insertText(_:replacementRange:)` 把上屏文本按 UTF-8 写进 shell —— 无输入法时与旧行为等价（兼容旧的单参 `insertText(_:)` 做兜底）；`setMarkedText`/`unmarkText` 维护预编辑（空串 = 结束组合），`firstRect(forCharacterRange:)` 把候选窗锚到光标（组合期锚到预编辑末尾），`doCommand(by:)` 兜住输入法放行的键（否则响应链会 beep）；`TerminalEmulator` 不感知 IME（预编辑只存在于视图层，shell 从未见过）。
 
 ### `TerminalPanelController`（多标签面板）
 
@@ -60,15 +66,13 @@ manual: false
 
 ## 测试
 
-`tests/terminal-panel/run.sh`（无头，**不建 PTY**：只实例化 controller 断言头部与模型层状态）：
+`core/tests/ansi.test.js`（共享核心，JS 端口）含同一组 DECSTBM 断言 6 项；`tests/terminal-panel/run.sh`（无头，**不建 PTY**：只实例化 controller 断言头部与模型层状态）：
 
 - 编译清单 = `stubs.swift`（L10n/AppLog/ShellConfig/共享 UI 基件）+ `TerminalPanel.swift` + `PanelSurface.swift` + `TerminalWorkspaceTabs.swift` + `WorkspaceTabMemory.swift` + `panel-tests.swift`（改名 `main.swift`）；
-- 覆盖：头部固定标题（语言切换后仍固定、关会话后不被清空）+ `TerminalWorkspaceTabs` 的可见性/记忆规则（同 workspace 可见、尾斜杠等价、切换换页签、每页签独立 key、全局页签处处可见、切回恢复选中、已关闭不恢复）+ **选中即复制默认开且随设置变化**；
+- 覆盖：头部固定标题（语言切换后仍固定、关会话后不被清空）+ `TerminalWorkspaceTabs` 的可见性/记忆规则（同 workspace 可见、尾斜杠等价、切换换页签、每页签独立 key、全局页签处处可见、切回恢复选中、已关闭不恢复）+ **选中即复制默认开且随设置变化** + **IME 协议状态机**（初始无组合、`setMarkedText` 建立预编辑、`selectedRange` 落在预编辑之后、`attributedSubstring` 的范围内/外、`unmarkText` 与空串都清空、提交清空、无窗口时 `firstRect` 退化为 0）+ **DECSTBM 滚动区**（LF 在区域底部只滚区域、状态行不动、部分区域不进 scrollback、RI/IL/DL/SU/SD 都限制在区域内、`CSI r` 恢复全屏区域）+ **宽字符光标跨度**（宽字前进两格、停在宽字/continuation 上时跨度回到 lead 格且宽 2 格、窄/空格宽 1 格）；
 - 会话路径（真实 shell 输入输出、滚动、选择）靠手动 QA，见 .dsh/wiki/tasks.md。
 
 ## 已知限制（README）
 
-- v1 不支持输入法直接打字（中文等经 ⌘V 粘贴输入）；
-- DECSTBM 滚动区未实现（个别全屏程序显示异常）；
 - 组合表情/零宽连接符按近似宽度渲染；
 - 会话不跨 App 重启保留；切走 workspace 时隐藏的会话仍在后台存活（无数量上限）。

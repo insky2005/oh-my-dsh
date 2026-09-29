@@ -247,7 +247,7 @@ final class TerminalSession {
 /// Minimal ANSI/VT terminal: a scrollback + a `rows`-line screen of cells,
 /// cursor addressing, SGR colors (16/256/truecolor), erase, insert/delete,
 /// alternate screen (?1049h/l), cursor visibility (?25), OSC titles.
-/// DECSTBM scroll regions are parsed but ignored (documented limitation).
+/// DECSTBM scroll regions are honored (vim/vi scroll their text area with one).
 final class TerminalEmulator {
 
     struct Cell {
@@ -297,6 +297,12 @@ final class TerminalEmulator {
     private var inAltScreen = false
     private let maxScrollback = 10_000
 
+    /// DECSTBM scrolling region, inclusive 0-based rows. vim/vi set a region
+    /// that excludes the status line and then scroll at its bottom, so every
+    /// scrolling operation (LF/IND, RI, SU/SD, IL/DL) must stay inside it.
+    private var scrollTop = 0
+    private var scrollBottom = 0
+
     private enum ParserState { case ground, escape, swallow, csi, osc, oscST, dcs, dcsST }
     private var parserState: ParserState = .ground
     private var swallowNext = false
@@ -311,6 +317,7 @@ final class TerminalEmulator {
         self.rows = r
         self.cols = c
         self.screen = (0..<r).map { _ in Self.blankLine(cols: c) }
+        self.scrollBottom = r - 1
     }
 
     // MARK: - Model access (for the view)
@@ -498,7 +505,7 @@ final class TerminalEmulator {
         case "S": scrollScreen(up: param(0, 1))
         case "T": scrollScreen(up: -param(0, 1))
         case "h", "l": break // SM/RM without '?' — ignore
-        case "r": break      // DECSTBM scroll region — ignored (limitation)
+        case "r": setScrollRegion(top: param(0, 1), bottom: param(1, rows))
         default: break
         }
     }
@@ -535,27 +542,54 @@ final class TerminalEmulator {
         wrapPending = false
     }
 
-    private func lineFeed() {
-        if cursorRow == rows - 1 {
-            let top = screen.removeFirst()
-            if !inAltScreen {
+    /// DECSTBM: top/bottom are 1-based and inclusive; an all-default sequence
+    /// (CSI r) resets the region to the full screen. A valid region homes the
+    /// cursor, as the VT spec requires.
+    private func setScrollRegion(top: Int, bottom: Int) {
+        guard top >= 1, bottom <= rows, top < bottom else { return }
+        scrollTop = top - 1
+        scrollBottom = bottom - 1
+        cursorRow = 0
+        cursorCol = 0
+        wrapPending = false
+    }
+
+    /// Scroll the region up by n lines (content moves up; blank at the bottom).
+    /// The line leaving the top enters scrollback only for a full-screen region.
+    private func scrollRegionUp(_ n: Int) {
+        for _ in 0..<n {
+            let top = screen.remove(at: scrollTop)
+            if !inAltScreen && scrollTop == 0 && scrollBottom == rows - 1 {
                 scrollback.append(top)
                 if scrollback.count > maxScrollback {
                     scrollback.removeFirst(scrollback.count - maxScrollback)
                 }
             }
-            screen.append(blankLine())
-        } else {
+            screen.insert(blankLine(), at: scrollBottom)
+        }
+    }
+
+    /// Scroll the region down by n lines (content moves down; blank at the top).
+    private func scrollRegionDown(_ n: Int) {
+        for _ in 0..<n {
+            screen.remove(at: scrollBottom)
+            screen.insert(blankLine(), at: scrollTop)
+        }
+    }
+
+    private func lineFeed() {
+        if cursorRow == scrollBottom {
+            scrollRegionUp(1)
+        } else if cursorRow < rows - 1 {
             cursorRow += 1
         }
     }
 
     private func reverseIndex() {
-        if cursorRow > 0 {
+        if cursorRow == scrollTop {
+            scrollRegionDown(1)
+        } else if cursorRow > 0 {
             cursorRow -= 1
-        } else {
-            screen.removeLast()
-            screen.insert(blankLine(), at: 0)
         }
         wrapPending = false
     }
@@ -655,35 +689,27 @@ final class TerminalEmulator {
     }
 
     private func insertLines(n: Int) {
-        for _ in 0..<n {
-            guard cursorRow < rows - 1 || rows > 0 else { break }
-            if cursorRow == rows - 1 { break }
-            screen.removeLast()
+        // IL only applies when the cursor is inside the scrolling region.
+        guard cursorRow >= scrollTop, cursorRow <= scrollBottom else { return }
+        let count = min(n, scrollBottom - cursorRow + 1)
+        for _ in 0..<count {
+            screen.remove(at: scrollBottom)
             screen.insert(blankLine(), at: cursorRow)
         }
     }
 
     private func deleteLines(n: Int) {
-        for _ in 0..<n {
-            guard cursorRow < rows else { break }
+        guard cursorRow >= scrollTop, cursorRow <= scrollBottom else { return }
+        let count = min(n, scrollBottom - cursorRow + 1)
+        for _ in 0..<count {
             screen.remove(at: cursorRow)
-            screen.append(blankLine())
+            screen.insert(blankLine(), at: scrollBottom)
         }
     }
 
     private func scrollScreen(up: Int) {
-        guard up != 0 else { return }
-        if up > 0 {
-            for _ in 0..<up {
-                screen.removeFirst()
-                screen.append(blankLine())
-            }
-        } else {
-            for _ in 0..<(-up) {
-                screen.removeLast()
-                screen.insert(blankLine(), at: 0)
-            }
-        }
+        if up > 0 { scrollRegionUp(up) }
+        else if up < 0 { scrollRegionDown(-up) }
     }
 
     private func clearCell(_ r: Int, _ c: Int) {
@@ -756,6 +782,8 @@ final class TerminalEmulator {
         cursorRow = 0
         cursorCol = 0
         wrapPending = false
+        scrollTop = 0
+        scrollBottom = rows - 1
         selection = nil
     }
 
@@ -766,6 +794,8 @@ final class TerminalEmulator {
         scrollback = savedScrollback
         let sc = altSavedCursor ?? (0, 0)
         moveCursor(row: sc.row, col: sc.col)
+        scrollTop = 0
+        scrollBottom = rows - 1
         savedScreen = []
         savedScrollback = []
         altSavedCursor = nil
@@ -782,6 +812,8 @@ final class TerminalEmulator {
         applicationCursorKeys = false
         bracketedPaste = false
         inAltScreen = false
+        scrollTop = 0
+        scrollBottom = rows - 1
         savedScreen = []
         savedScrollback = []
         savedCursor = nil
@@ -819,6 +851,8 @@ final class TerminalEmulator {
         screen = newScreen
         rows = newRows
         cols = newCols
+        scrollTop = 0
+        scrollBottom = rows - 1
         cursorRow = min(cursorRow, rows - 1)
         cursorCol = min(cursorCol, cols - 1)
         wrapPending = false
@@ -915,7 +949,7 @@ final class TerminalEmulator {
 /// Renders a TerminalEmulator grid and forwards keyboard/mouse input to the
 /// session. Cmd+C/V/A are served through the responder chain (Edit menu);
 /// Cmd+K clears the screen.
-final class TerminalView: NSView {
+final class TerminalView: NSView, NSTextInputClient {
 
     let emulator: TerminalEmulator
     weak var session: TerminalSession?
@@ -943,6 +977,12 @@ final class TerminalView: NSView {
     /// The word the double click landed on, kept as the fixed end of a word-wise
     /// drag.
     private var anchorWord: (line: Int, start: Int, end: Int)?
+
+    /// Input-method (IME) pre-edit text. While non-empty the user is composing
+    /// (e.g. typing pinyin before picking a Chinese candidate): the text has NOT
+    /// been sent to the shell yet. NSTextInputClient feeds it here and commits it
+    /// through insertText; draw() paints it inline at the cursor.
+    private var markedText = NSMutableAttributedString()
 
     /// Tab shortcuts: Cmd+1…9 selects a tab by index; Cmd+Shift+[ / ] cycles.
     var onCmdDigit: ((Int) -> Void)?
@@ -1020,7 +1060,14 @@ final class TerminalView: NSView {
             drawLine(idx, row: r, selection: selection)
         }
         if emulator.cursorVisible && followOutput {
-            drawCursor()
+            // While an IME composition is pending the pre-edit text replaces the
+            // block cursor (drawn below); otherwise the block cursor marks the
+            // shell's insertion point as before.
+            if markedText.length == 0 {
+                drawCursor()
+            } else {
+                drawMarkedText()
+            }
         }
     }
 
@@ -1053,7 +1100,18 @@ final class TerminalView: NSView {
             }
         }
 
-        // 2) text runs (wide chars span two cells; continuation cells skipped)
+        // 2) text (wide chars span two cells; continuation cells skipped)
+        func attrsFor(_ fg: NSColor?, _ bold: Bool, _ italic: Bool,
+                      _ underline: Bool) -> [NSAttributedString.Key: Any] {
+            var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.textColor]
+            if let f = fg { attrs[.foregroundColor] = f }
+            var f = font
+            if bold { f = NSFontManager.shared.convert(f, toHaveTrait: .boldFontMask) }
+            if italic { f = NSFontManager.shared.convert(f, toHaveTrait: .italicFontMask) }
+            if f != font { attrs[.font] = f }
+            if underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+            return attrs
+        }
         var runs: [(text: String, x: CGFloat, attrs: [NSAttributedString.Key: Any])] = []
         var runStart = -1
         var runText = ""
@@ -1062,23 +1120,27 @@ final class TerminalView: NSView {
         var runItalic = false
         var runUnderline = false
         func flushRun() {
-            if runStart >= 0 {
-                var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.textColor]
-                if let f = runFg { attrs[.foregroundColor] = f }
-                var f = font
-                if runBold { f = NSFontManager.shared.convert(f, toHaveTrait: .boldFontMask) }
-                if runItalic { f = NSFontManager.shared.convert(f, toHaveTrait: .italicFontMask) }
-                if f != font { attrs[.font] = f }
-                if runUnderline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-                runs.append((runText, CGFloat(runStart) * cellWidth, attrs))
-                runText = ""
-                runStart = -1
-            }
+            guard runStart >= 0 else { return }
+            runs.append((runText, CGFloat(runStart) * cellWidth,
+                         attrsFor(runFg, runBold, runItalic, runUnderline)))
+            runText = ""
+            runStart = -1
         }
         for c in 0..<cells.count {
             let cell = cells[c]
             if cell.continuation { continue }
             let (fg, _) = effectiveCell(cell)
+            if TerminalEmulator.displayWidth(cell.ch) == 2 {
+                // Pin the wide glyph to its exact two cells. Core Text falls
+                // back to a full-width face whose advance is only ~1.6 cells,
+                // so leaving it in a run would shrink it and drag the rest of
+                // the line (and the cell-based cursor) off the grid.
+                flushRun()
+                drawGlyph(cell.ch, atX: CGFloat(c) * cellWidth, y: y,
+                          targetWidth: cellWidth * 2,
+                          attrs: attrsFor(fg, cell.bold, cell.italic, cell.underline))
+                continue
+            }
             if runStart < 0 || fg != runFg || cell.bold != runBold
                 || cell.italic != runItalic || cell.underline != runUnderline {
                 flushRun()
@@ -1096,6 +1158,30 @@ final class TerminalView: NSView {
         }
     }
 
+    /// Draw one glyph stretched to exactly targetWidth points. The monospaced
+    /// system font has no CJK glyphs, so Core Text substitutes a full-width face
+    /// whose advance is ~1.6 cells rather than the 2 the grid reserves; without
+    /// this the glyph leaves a half-cell gap and the cursor looks misaligned.
+    private func drawGlyph(_ ch: Character, atX x: CGFloat, y: CGFloat,
+                           targetWidth: CGFloat, attrs: [NSAttributedString.Key: Any]) {
+        let text = String(ch)
+        let natural = (text as NSString).size(withAttributes: attrs).width
+        guard natural > 0 else { return }
+        if abs(natural - targetWidth) < 0.05 {
+            (text as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
+            return
+        }
+        guard let ctx = NSGraphicsContext.current?.cgContext else {
+            (text as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
+            return
+        }
+        ctx.saveGState()
+        ctx.translateBy(x: x, y: 0)
+        ctx.scaleBy(x: targetWidth / natural, y: 1)
+        (text as NSString).draw(at: NSPoint(x: 0, y: y), withAttributes: attrs)
+        ctx.restoreGState()
+    }
+
     private func isSelected(_ sel: TerminalEmulator.Selection, line: Int, col: Int) -> Bool {
         if line < sel.startLine || line > sel.endLine { return false }
         if line == sel.startLine && line == sel.endLine {
@@ -1110,16 +1196,71 @@ final class TerminalView: NSView {
         let r = emulator.cursorRow
         let c = emulator.cursorCol
         guard r >= 0, r < emulator.rows, c >= 0, c < emulator.cols else { return }
-        let rect = NSRect(x: CGFloat(c) * cellWidth,
+        // A wide glyph covers two cells: the block must span the whole glyph,
+        // not one half of it (vim parks the cursor on the second cell when it
+        // sits past the character).
+        let (col, span) = cursorGlyphSpan()
+        let rect = NSRect(x: CGFloat(col) * cellWidth,
                           y: bounds.height - CGFloat(r + 1) * lineHeight,
-                          width: cellWidth, height: lineHeight)
+                          width: cellWidth * CGFloat(span), height: lineHeight)
         NSColor.controlAccentColor.setFill()
         rect.fill()
-        let cell = emulator.screenCell(row: r, col: c)
-        if !cell.continuation, cell.ch != " " {
+        let lead = emulator.screenCell(row: r, col: col)
+        if lead.ch != " " {
             let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
-            (String(cell.ch) as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
+            if span == 2 {
+                drawGlyph(lead.ch, atX: rect.minX, y: rect.minY, targetWidth: rect.width, attrs: attrs)
+            } else if !lead.continuation {
+                (String(lead.ch) as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
+            }
         }
+    }
+
+    /// The cursor cell span: a wide glyph covers two cells, and a cursor parked
+    /// on the continuation cell must cover its leading cell too. Non-private so
+    /// the headless panel tests can pin the wide-character case.
+    func cursorGlyphSpan() -> (col: Int, width: Int) {
+        let r = emulator.cursorRow
+        let c = emulator.cursorCol
+        guard r >= 0, r < emulator.rows, c >= 0, c < emulator.cols else { return (c, 1) }
+        var col = c
+        if emulator.screenCell(row: r, col: c).continuation, c > 0 { col = c - 1 }
+        let lead = emulator.screenCell(row: r, col: col)
+        let width = TerminalEmulator.displayWidth(lead.ch) == 2 ? 2 : 1
+        return (col, width)
+    }
+
+    /// The view-space rect of the shell's cursor cell (the anchor for IME
+    /// pre-edit rendering and the candidate window).
+    private func cursorCellRect() -> NSRect {
+        let r = emulator.cursorRow
+        let c = emulator.cursorCol
+        return NSRect(x: CGFloat(c) * cellWidth,
+                      y: bounds.height - CGFloat(r + 1) * lineHeight,
+                      width: cellWidth, height: lineHeight)
+    }
+
+    /// Draw the pending IME pre-edit inline at the cursor with a caret after it.
+    /// The text is not in the emulator grid, so it is painted as an overlay — the
+    /// shell has not seen it and no column advance has happened.
+    private func drawMarkedText() {
+        let r = emulator.cursorRow
+        let c = emulator.cursorCol
+        guard r >= 0, r < emulator.rows, c >= 0, c < emulator.cols else { return }
+        let text = markedText.string
+        guard !text.isEmpty else { return }
+        let rect = cursorCellRect()
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.textColor,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ]
+        (text as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
+        let width = (text as NSString).size(withAttributes: [.font: font]).width
+        let caret = NSRect(x: rect.minX + width, y: rect.minY,
+                           width: max(1, cellWidth * 0.08), height: lineHeight)
+        NSColor.controlAccentColor.setFill()
+        caret.fill()
     }
 
     // MARK: - Scrolling & selection
@@ -1428,8 +1569,16 @@ final class TerminalView: NSView {
             return
         }
 
+        // An active IME composition owns every key: arrows walk the candidate
+        // list, Return commits, Escape cancels. Keep the keys inside the input
+        // context and never leak the pre-edit to the shell.
+        if hasMarkedText() {
+            interpretKeyEvents([event])
+            return
+        }
+
         // Special keys (arrows, home/end, function keys…) FIRST — their
-        // `characters` is empty, so the characters guard below would swallow
+        // `characters` is empty, so the input-context path below would swallow
         // them (e.g. ↑/↓ history recall would never reach the shell). Arrows
         // honor DECCKM application mode (zsh enables it: ESC O A…).
         if let special = specialKey(for: event.keyCode) {
@@ -1440,8 +1589,7 @@ final class TerminalView: NSView {
             return
         }
 
-        guard let chars = event.characters, !chars.isEmpty else { return }
-        let unmod = (event.charactersIgnoringModifiers ?? chars).lowercased()
+        let unmod = (event.charactersIgnoringModifiers ?? event.characters ?? "").lowercased()
 
         if mods.contains(.control), let c = unmod.unicodeScalars.first, c.isASCII {
             if ProcessInfo.processInfo.environment["DSH_TERMINAL_DEBUG"] == "1" {
@@ -1452,13 +1600,15 @@ final class TerminalView: NSView {
         }
         if mods.contains(.option) {
             // Meta: ESC + the unmodified key character (e.g. Option+→ = ESC+f).
-            session?.write("\u{1B}" + (event.charactersIgnoringModifiers ?? chars))
+            session?.write("\u{1B}" + (event.charactersIgnoringModifiers ?? event.characters ?? ""))
             return
         }
-        if ProcessInfo.processInfo.environment["DSH_TERMINAL_DEBUG"] == "1" {
-            AppLog.shared.log("term input: chars=\(chars.debugDescription)")
-        }
-        session?.write(chars)
+
+        // Everything else goes through the input context. With no IME active it
+        // simply delivers the key's characters to insertText() — identical to
+        // the old direct write — while an active IME gets to compose first
+        // (pinyin → 中文, dead keys, emoji picker, dictation…).
+        interpretKeyEvents([event])
     }
 
     private func specialKey(for keyCode: UInt16) -> String? {
@@ -1493,6 +1643,137 @@ final class TerminalView: NSView {
         case 103: return "\u{1B}[23~"         // F11
         case 111: return "\u{1B}[24~"         // F12
         default: return nil
+        }
+    }
+
+    // MARK: - NSTextInputClient (IME / input method)
+
+    // Conforming to NSTextInputClient is what lets macOS activate an input
+    // method for this view at all: without it the fields editor never engages
+    // and a Chinese/Japanese/Korean IME types raw pinyin into the shell. The
+    // protocol has no text buffer here — the terminal IS the buffer — so only
+    // the pending pre-edit is tracked locally; committed text is written
+    // straight to the PTY as UTF-8.
+
+    /// Legacy single-argument sink. With NSTextInputClient conformance the
+    /// two-argument method below is what the input context calls; this override
+    /// keeps the rarer paths (some palette/dictation callers) working too.
+    override func insertText(_ insertString: Any) {
+        insertText(insertString, replacementRange: NSRange(location: NSNotFound, length: 0))
+    }
+
+    func insertText(_ string: Any, replacementRange: NSRange) {
+        let text: String
+        switch string {
+        case let s as String: text = s
+        case let a as NSAttributedString: text = a.string
+        default: return
+        }
+        // A commit ends the composition, whether or not any text came with it.
+        markedText = NSMutableAttributedString()
+        needsDisplay = true
+        guard !text.isEmpty else { return }
+        if ProcessInfo.processInfo.environment["DSH_TERMINAL_DEBUG"] == "1" {
+            AppLog.shared.log("term input: insertText \(text.debugDescription)")
+        }
+        session?.write(text)
+    }
+
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        switch string {
+        case let a as NSAttributedString:
+            markedText = NSMutableAttributedString(attributedString: a)
+        case let s as String:
+            markedText = NSMutableAttributedString(string: s)
+        default:
+            return
+        }
+        needsDisplay = true
+    }
+
+    func unmarkText() {
+        markedText = NSMutableAttributedString()
+        needsDisplay = true
+    }
+
+    func selectedRange() -> NSRange {
+        // No selection model: report the insertion point just after the pre-edit.
+        return NSRange(location: markedText.length, length: 0)
+    }
+
+    func markedRange() -> NSRange {
+        guard hasMarkedText() else { return NSRange(location: NSNotFound, length: 0) }
+        return NSRange(location: 0, length: markedText.length)
+    }
+
+    func hasMarkedText() -> Bool {
+        return markedText.length > 0
+    }
+
+    func attributedSubstring(forProposedRange range: NSRange,
+                             actualRange: NSRangePointer?) -> NSAttributedString? {
+        // Only the pending pre-edit is addressable; the rest lives in the shell.
+        guard hasMarkedText(), range.location != NSNotFound,
+              range.location + range.length <= markedText.length else { return nil }
+        actualRange?.pointee = range
+        return markedText.attributedSubstring(from: range)
+    }
+
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] {
+        return [.underlineStyle, .foregroundColor]
+    }
+
+    /// Screen rect of the caret — the anchor the IME places its candidate
+    /// window at. During composition the caret sits after the pre-edit.
+    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        actualRange?.pointee = range
+        guard let window = window else { return .zero }
+        var rect = cursorCellRect()
+        if markedText.length > 0 {
+            rect.origin.x += (markedText.string as NSString)
+                .size(withAttributes: [.font: font]).width
+        }
+        return window.convertToScreen(convert(rect, to: nil))
+    }
+
+    func characterIndex(for point: NSPoint) -> Int {
+        return 0
+    }
+
+    override func doCommand(by selector: Selector) {
+        // Fallback for key bindings the input context did not consume. Special
+        // keys are normally intercepted in keyDown before interpretKeyEvents;
+        // this keeps the PTY sequences correct if the IME forwards one, and
+        // swallows the rest instead of letting the responder chain beep.
+        guard !hasMarkedText() else { return }
+        func arrow(_ letter: String) -> String {
+            emulator.applicationCursorKeys ? "\u{1B}O\(letter)" : "\u{1B}[\(letter)"
+        }
+        let sequence: String?
+        switch NSStringFromSelector(selector) {
+        case "insertNewline:": sequence = "\r"
+        case "insertTab:": sequence = "\t"
+        case "insertBacktab:": sequence = "\u{1B}[Z"
+        case "deleteBackward:": sequence = "\u{7F}"
+        case "deleteForward:": sequence = "\u{1B}[3~"
+        case "moveLeft:": sequence = arrow("D")
+        case "moveRight:": sequence = arrow("C")
+        case "moveUp:": sequence = arrow("A")
+        case "moveDown:": sequence = arrow("B")
+        case "moveToBeginningOfLine:", "moveToBeginningOfDocument:",
+             "scrollToBeginningOfDocument:": sequence = "\u{1B}[H"
+        case "moveToEndOfLine:", "moveToEndOfDocument:",
+             "scrollToEndOfDocument:": sequence = "\u{1B}[F"
+        case "pageUp:", "scrollPageUp:": sequence = "\u{1B}[5~"
+        case "pageDown:", "scrollPageDown:": sequence = "\u{1B}[6~"
+        case "cancelOperation:": sequence = "\u{1B}"
+        default: sequence = nil
+        }
+        if let sequence = sequence {
+            if ProcessInfo.processInfo.environment["DSH_TERMINAL_DEBUG"] == "1" {
+                AppLog.shared.log("term input: doCommand \(NSStringFromSelector(selector)) -> \(sequence.debugDescription)")
+            }
+            session?.write(sequence)
         }
     }
 }
