@@ -46,6 +46,7 @@ function makeElement({ tag, attrs = {}, parent = null, className = '', text = ''
     className,
     parentNode: parent,
     textContent: text,
+    childNodes: [],
     getAttribute: (name) => (name in attrs ? attrs[name] : null),
     closest(selector) {
       let node = el;
@@ -55,7 +56,16 @@ function makeElement({ tag, attrs = {}, parent = null, className = '', text = ''
       }
       return null;
     },
+    querySelector(selector) {
+      for (const child of el.childNodes) {
+        if (matchesSelector(child, selector)) return child;
+        const found = child.querySelector(selector);
+        if (found) return found;
+      }
+      return null;
+    },
   };
+  if (parent && parent.childNodes) parent.childNodes.push(el);
   return el;
 }
 
@@ -164,6 +174,59 @@ test('an icon (non-button) target resolves to its file-link button', () => {
   dispatchClick(env.document, makeEvent(icon));
   assert.equal(env.posted.length, 1);
   assert.equal(env.posted[0].path, '/tmp/icon.txt');
+});
+
+// Delivered-file cards (the `present` tool's turn-tail cards, dsh >= 0.1.5):
+// both the whole-card overlay and the "Open" button preview through dsh's own
+// sidebar, so both are redirected to the native file panel. The card's chevron
+// (aria-haspopup="menu") opens dsh's default-app / reveal menu and must keep it.
+test('a delivered-file card overlay click is posted and swallowed', () => {
+  const env = install();
+  const row = makeElement({ tag: 'div', attrs: { 'data-presented-files-row': '' } });
+  const card = makeElement({ tag: 'div', attrs: { 'data-presented-file': '' }, parent: row });
+  const overlay = makeElement({
+    tag: 'button', attrs: { title: '/tmp/delivered.md' }, parent: card, className: 'nyYjTG_cardPreview' });
+  const event = makeEvent(overlay);
+  dispatchClick(env.document, event);
+  assert.deepEqual(env.posted, [{ path: '/tmp/delivered.md', source: 'click' }]);
+  assert.equal(event.defaultPrevented, true, 'default action must be prevented');
+  assert.equal(event.propagationStopped, true, 'event must not reach dsh\'s own panel');
+});
+
+test('a delivered-file card "Open" button resolves the path from its card', () => {
+  const env = install();
+  const row = makeElement({ tag: 'div', attrs: { 'data-presented-files-row': '' } });
+  const card = makeElement({ tag: 'div', attrs: { 'data-presented-file': '' }, parent: row });
+  makeElement({ tag: 'button', attrs: { title: '/tmp/delivered.md' }, parent: card, className: 'nyYjTG_cardPreview' });
+  const open = makeElement({ tag: 'button', parent: card, className: 'nyYjTG_open', text: '打开' });
+  const event = makeEvent(open);
+  dispatchClick(env.document, event);
+  assert.deepEqual(env.posted, [{ path: '/tmp/delivered.md', source: 'click' }]);
+  assert.equal(event.defaultPrevented, true);
+});
+
+test('a delivered-file card chevron keeps dsh\'s own menu', () => {
+  const env = install();
+  const row = makeElement({ tag: 'div', attrs: { 'data-presented-files-row': '' } });
+  const card = makeElement({ tag: 'div', attrs: { 'data-presented-file': '' }, parent: row });
+  makeElement({ tag: 'button', attrs: { title: '/tmp/delivered.md' }, parent: card, className: 'nyYjTG_cardPreview' });
+  const chevron = makeElement({
+    tag: 'button', parent: card, className: 'nyYjTG_chevron', attrs: { 'aria-haspopup': 'menu' } });
+  const event = makeEvent(chevron);
+  dispatchClick(env.document, event);
+  assert.equal(env.posted.length, 0, 'the chevron must not be hijacked');
+  assert.equal(event.defaultPrevented, false);
+  assert.equal(event.propagationStopped, false);
+});
+
+test('a delivered-files host-status retry is left alone', () => {
+  const env = install();
+  const row = makeElement({ tag: 'div', attrs: { 'data-presented-files-row': '' } });
+  const retry = makeElement({ tag: 'button', parent: row, text: '重试' });
+  const event = makeEvent(retry);
+  dispatchClick(env.document, event);
+  assert.equal(env.posted.length, 0, 'a card-less row button has no path to open');
+  assert.equal(event.defaultPrevented, false);
 });
 
 // Tool rows (read / write / edit) have NO title: the path is the link text.

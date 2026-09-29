@@ -3243,12 +3243,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// The website data store stays shared, so localStorage/cookies/sessions
     /// are preserved across rebuilds.
     ///
-    /// A second user script intercepts clicks on dsh web's file links (tool
-    /// outputs rendered as `<button class="…fileMention…" title="<path>">`
-    /// and the produced-files row `<button title="<path>">` inside
-    /// `[data-produced-files-row]`). It blocks the click from reaching the
-    /// page's `host.openPath` RPC (which would open the file with the system
-    /// default app) and posts the path to the native preview panel instead.
+    /// A second user script intercepts clicks on dsh web's file links (inline
+    /// mentions, the produced-files row `[data-produced-files-row]`, the
+    /// read/write/edit tool rows, and the delivered-file cards
+    /// `[data-presented-files-row]`). It blocks the click from reaching the
+    /// page's sidebar preview / `host.openPath` RPC (which would open the file
+    /// with the system default app) and posts the path to the native preview
+    /// panel instead.
     private func rebuildWebView() {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
@@ -3679,21 +3680,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       // 0.1.5 dsh ships its own file/document panel and `openFile` opens it
       // in-page via ctx.sidebarRight.openResource(...): no host RPC is issued,
       // so the fetch patch below never sees the path. The click is the last
-      // place it is visible. Three file-link surfaces exist:
+      // place it is visible. Four file-link surfaces exist:
       //   * inline mentions  — <code><button class="…fileMention…" title="<path>">
       //   * produced files   — [data-produced-files-row] button[title="<path>"]
       //   * tool rows        — read/write/edit render <button class="…fileLink…">
       //     whose TEXT is the workspace-relative (or `~`-abbreviated) path and
       //     which carries no title at all.
+      //   * delivered files  — [data-presented-files-row] cards: the full-card
+      //     overlay and the "Open" button both preview through `openFile`; the
+      //     overlay carries the absolute path in `title`, the Open button none.
       // dsh's own file-tree rows also carry a path title and must keep their own
-      // behaviour, so only these three surfaces are matched.
+      // behaviour, so only these four surfaces are matched. A card's chevron
+      // (aria-haspopup="menu") opens its own default-app/reveal menu and is left
+      // to dsh.
       document.addEventListener('click', function (event) {
         var target = event.target;
         var control = target && target.closest ? target.closest('button') : null;
         if (!control) return;
+        if (control.getAttribute('aria-haspopup') === 'menu') return;
         var className = String(control.className || '');
         var clickPath = null;
-        if (control.closest('code') !== null || className.indexOf('fileMention') !== -1
+        if (control.closest('[data-presented-files-row]') !== null) {
+          // Delivered-file card: the overlay button holds the absolute path in
+          // its title; the "Open" button has no title, so read the card's.
+          var card = control.closest('[data-presented-file]');
+          var titled = card && card.querySelector ? card.querySelector('button[title]') : null;
+          clickPath = control.getAttribute('title') || (titled && titled.getAttribute('title')) || null;
+        } else if (control.closest('code') !== null || className.indexOf('fileMention') !== -1
             || control.closest('[data-produced-files-row]') !== null) {
           clickPath = control.getAttribute('title');
         } else if (className.indexOf('fileLink') !== -1) {
@@ -5011,9 +5024,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     ///     hit flag is set before the promise resolves) and return a fake
     ///     success (read back via __dshProbeAsync);
     ///   * the click shapes (dsh >= 0.1.5, where dsh opens its own panel with no
-    ///     RPC): both a synthesized produced-files chip (path in `title`) and a
-    ///     synthesized tool-row link (path in the button text, no title) must be
-    ///     captured and their events swallowed.
+    ///     RPC): a synthesized produced-files chip (path in `title`), a
+    ///     synthesized tool-row link (path in the button text, no title), and a
+    ///     synthesized delivered-file card overlay (path in the card's `title`
+    ///     button) must all be captured and their events swallowed, while the
+    ///     card chevron (aria-haspopup="menu") is left to dsh.
     /// An interceptor that only knows one of these fails here instead of
     /// silently in the UI (see docs/dsh-version-impact.md B7).
     private static let previewDebugProbeJS = """
@@ -5094,6 +5109,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       out.toolClickHit = window.__dshPreviewClick || null;
       out.toolClickPrevented = toolEvent.defaultPrevented;
       toolProbe.parentNode.removeChild(toolProbe);
+      // Delivered-file card shape (dsh >= 0.1.5 `present` tool): the card's
+      // overlay button carries the absolute path in `title` and the card's
+      // chevron (aria-haspopup="menu") opens dsh's own menu. A click on the
+      // overlay must be captured and swallowed; the chevron must stay with dsh.
+      window.__dshPreviewClick = null;
+      var cardRow = document.createElement('div');
+      cardRow.setAttribute('data-presented-files-row', '');
+      var card = document.createElement('div');
+      card.setAttribute('data-presented-file', '');
+      var cardOverlay = document.createElement('button');
+      cardOverlay.type = 'button';
+      cardOverlay.title = '/tmp/dsh-preview-card-test.txt';
+      card.appendChild(cardOverlay);
+      var cardChevron = document.createElement('button');
+      cardChevron.type = 'button';
+      cardChevron.setAttribute('aria-haspopup', 'menu');
+      card.appendChild(cardChevron);
+      cardRow.appendChild(card);
+      document.body.appendChild(cardRow);
+      var cardEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+      cardOverlay.dispatchEvent(cardEvent);
+      out.cardClickHit = window.__dshPreviewClick || null;
+      out.cardClickPrevented = cardEvent.defaultPrevented;
+      window.__dshPreviewClick = null;
+      var chevronEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+      cardChevron.dispatchEvent(chevronEvent);
+      out.cardChevronHit = window.__dshPreviewClick || null;
+      out.cardChevronPrevented = chevronEvent.defaultPrevented;
+      cardRow.parentNode.removeChild(cardRow);
       return JSON.stringify(out);
     })()
     """
