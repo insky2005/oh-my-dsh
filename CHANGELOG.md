@@ -125,6 +125,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **终端：中文/宽字符显示错位、光标只压住半个汉字**。等宽字体（SF Mono）没有 CJK 字形，Core Text 回退到一个全宽字面；字号 13pt 时它的 advance 实测只有 12.9pt，而终端网格给宽字符留的是两格 = 16.07pt（约 1.6 格）—— 汉字因此比自己的格子窄，后面的文本与光标又都按格子定位，看起来就是「错位」；光标块又固定一格宽，停在汉字上时只压住半个字。现在：① 宽字符从 run 里单独拿出来，用 CTM 横向缩放到正好两格（`drawGlyph`），后续 run 也固定在自己的格子上；② 光标块按 `cursorGlyphSpan` 跨整字（停在 continuation 格时回到 lead 格、宽 2 格），汉字以同样方式缩放画在光标底色上。回归：`tests/terminal-panel` 新增 5 项（宽字前进两格，光标在宽字 / continuation / 窄格上的跨度）。
+
 - **终端：vi/vim 里用方向键滚到底行时画面不动（DECSTBM 滚动区此前被丢弃）**。终端模拟器把 `CSI top;bottom r` 解析后**直接忽略**（旧文档化的 v1 限制），而 vim/vi 正是靠这个滚动区把文本区与状态行分开：它先设 `1;(rows-1)r`，再在区域底行用换行 / `ESC S` / `ESC L` 滚动。忽略区域时，区域底行的 `\n` 只把光标下移一格（于是落进状态行），文本却纹丝不动 —— 这正是「方向键移到最后一行、文件不整体移动」，而 PageDown/PageUp 因为整屏重绘看起来正常的原因。现在 Swift 实现与共享核心 JS 端口都实现 DECSTBM：LF/IND、RI、IL/DL、SU/SD **全部限制在 `[scrollTop, scrollBottom]` 内**滚动，区域外的行（状态行）不受影响；`CSI r`（全默认）恢复全屏区域、设置有效区域时按规范归位光标；只有**全屏**区域滚出的行才进 scrollback（vim 文本区回滚不污染历史）；RIS / resize / 备用屏进出时区域复位。回归：`core/tests/ansi.test.js` 新增 6 项、`tests/terminal-panel` 新增 9 项（区域只滚区域、状态行不动、部分区域不进 scrollback、RI/IL/DL/SU/SD、`CSI r` 复位），README「已知限制」移除 DECSTBM 并把它写进渲染能力，`docs/productization.md` §3.1 与总表同步。
 
 - **「全部处理」按钮在建任务后不点亮（它的可用状态从来没人重算）**：按钮的可用状态是**「有没有待办」**——那是 **board** 的事实，可它只在 `updateLabels()` 里算过一次，而 `updateLabels()` 只在**工作区变化**（adopt / 语言切换）时跑；新建一个任务（正是让「有待办」成立的那件事）走的是 `syncFromBoard()` → `render()`，那里只重画列表，不碰按钮 —— 于是按钮一直灰着，直到用户切走再切回来。动作本身从来没坏（`runAllTapped` 自己会重新算 model，点了也能跑），坏的是按钮不肯说自己能用了。现在把这段收成一处 `updateRunAllButton(githubAvailable:)`，由**两个**入口调用：`updateLabels()`（工作区事实：git / GitHub 可用性）与 `syncFromBoard()`（board 事实：新建 / 入队 / 开始 / 完成 / 删除）—— 按钮亮灭与列表内容从同一个 board 推出，不会再各说各话。回归：`tests/tasks-panel/run.sh` 增加源码守卫，`syncFromBoard()` 里必须重新推导 处理 按钮。

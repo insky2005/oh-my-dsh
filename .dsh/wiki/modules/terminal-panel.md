@@ -31,7 +31,7 @@ manual: false
 ### `TerminalView`（绘制与输入）
 
 - `isOpaque = true` + `wantsLayer = true`（配合 `contentContainer.wantsLayer + masksToBounds` 修复 header 合成问题，见 `docs/terminal-header-fix.md`）；底色为 `PanelSurface.dynamic`（不再用 `.textBackgroundColor`）；
-- 绘制：按行画 run（字体/前景/背景/粗斜下划线）、光标（块）、选区高亮；**组合期**改画 `markedText`（预编辑串带下划线 + 细光标，见下），不再画方块光标；
+- 绘制：按行画 run（字体/前景/背景/粗斜下划线）、光标（块）、选区高亮；**宽字符按整两格拉伸**（等宽字体的 CJK 回退 advance 只有约 1.6 格，`drawGlyph` 用 CTM 横向缩放把它对齐到两格，否则后续文本与光标会错位）；**光标跨整个宽字符**（`cursorGlyphSpan`：停在 continuation 格时回退到 lead 格、宽 2 格）；**组合期**改画 `markedText`（预编辑串带下划线 + 细光标，见下），不再画方块光标；
 - **滚动方向对齐面板语义（#3）**：`scrollWheel(with:)` 改为 NSScrollView 语义——正的 `scrollingDeltaY` → 显示**更早**的行（与文件树/网页一致）。灵敏度：触控板**精确 delta 4 点 = 1 行**（保留小数累加器），动量阶段的衰减 delta 自然表现为「先快后慢」的惯性；鼠标滚轮（非精确 delta）一格 = 一行；
 - **选择（#4）**：`mouseDown` 按 `event.clickCount` 分支——**双击选词**（词内字符含路径/URL 的 `/ - . _ :` 等，保证路径与参数完整）、**三击选整行**；**双击/三击后带着「选择单位」继续拖拽**按整词/整行扩选，普通拖拽仍逐格选择（`wordDragSelection(to:)`）；`mouseUp` 结束拖选时 `copySelectionIfAutoCopy()`；
 - **选中即复制（#4）**：开关 `TerminalView.autoCopyKey` = **`terminal.autoCopy`**（`ShellConfig`，默认**开**，「设置菜单 → 终端：选中文本即复制」`settings.terminalAutoCopy` 切换）；**无选区时 ⌘C 发 SIGINT 的既有语义不变**；
@@ -69,7 +69,7 @@ manual: false
 `core/tests/ansi.test.js`（共享核心，JS 端口）含同一组 DECSTBM 断言 6 项；`tests/terminal-panel/run.sh`（无头，**不建 PTY**：只实例化 controller 断言头部与模型层状态）：
 
 - 编译清单 = `stubs.swift`（L10n/AppLog/ShellConfig/共享 UI 基件）+ `TerminalPanel.swift` + `PanelSurface.swift` + `TerminalWorkspaceTabs.swift` + `WorkspaceTabMemory.swift` + `panel-tests.swift`（改名 `main.swift`）；
-- 覆盖：头部固定标题（语言切换后仍固定、关会话后不被清空）+ `TerminalWorkspaceTabs` 的可见性/记忆规则（同 workspace 可见、尾斜杠等价、切换换页签、每页签独立 key、全局页签处处可见、切回恢复选中、已关闭不恢复）+ **选中即复制默认开且随设置变化** + **IME 协议状态机**（初始无组合、`setMarkedText` 建立预编辑、`selectedRange` 落在预编辑之后、`attributedSubstring` 的范围内/外、`unmarkText` 与空串都清空、提交清空、无窗口时 `firstRect` 退化为 0）+ **DECSTBM 滚动区**（LF 在区域底部只滚区域、状态行不动、部分区域不进 scrollback、RI/IL/DL/SU/SD 都限制在区域内、`CSI r` 恢复全屏区域）；
+- 覆盖：头部固定标题（语言切换后仍固定、关会话后不被清空）+ `TerminalWorkspaceTabs` 的可见性/记忆规则（同 workspace 可见、尾斜杠等价、切换换页签、每页签独立 key、全局页签处处可见、切回恢复选中、已关闭不恢复）+ **选中即复制默认开且随设置变化** + **IME 协议状态机**（初始无组合、`setMarkedText` 建立预编辑、`selectedRange` 落在预编辑之后、`attributedSubstring` 的范围内/外、`unmarkText` 与空串都清空、提交清空、无窗口时 `firstRect` 退化为 0）+ **DECSTBM 滚动区**（LF 在区域底部只滚区域、状态行不动、部分区域不进 scrollback、RI/IL/DL/SU/SD 都限制在区域内、`CSI r` 恢复全屏区域）+ **宽字符光标跨度**（宽字前进两格、停在宽字/continuation 上时跨度回到 lead 格且宽 2 格、窄/空格宽 1 格）；
 - 会话路径（真实 shell 输入输出、滚动、选择）靠手动 QA，见 .dsh/wiki/tasks.md。
 
 ## 已知限制（README）

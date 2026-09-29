@@ -1100,7 +1100,18 @@ final class TerminalView: NSView, NSTextInputClient {
             }
         }
 
-        // 2) text runs (wide chars span two cells; continuation cells skipped)
+        // 2) text (wide chars span two cells; continuation cells skipped)
+        func attrsFor(_ fg: NSColor?, _ bold: Bool, _ italic: Bool,
+                      _ underline: Bool) -> [NSAttributedString.Key: Any] {
+            var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.textColor]
+            if let f = fg { attrs[.foregroundColor] = f }
+            var f = font
+            if bold { f = NSFontManager.shared.convert(f, toHaveTrait: .boldFontMask) }
+            if italic { f = NSFontManager.shared.convert(f, toHaveTrait: .italicFontMask) }
+            if f != font { attrs[.font] = f }
+            if underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+            return attrs
+        }
         var runs: [(text: String, x: CGFloat, attrs: [NSAttributedString.Key: Any])] = []
         var runStart = -1
         var runText = ""
@@ -1109,23 +1120,27 @@ final class TerminalView: NSView, NSTextInputClient {
         var runItalic = false
         var runUnderline = false
         func flushRun() {
-            if runStart >= 0 {
-                var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.textColor]
-                if let f = runFg { attrs[.foregroundColor] = f }
-                var f = font
-                if runBold { f = NSFontManager.shared.convert(f, toHaveTrait: .boldFontMask) }
-                if runItalic { f = NSFontManager.shared.convert(f, toHaveTrait: .italicFontMask) }
-                if f != font { attrs[.font] = f }
-                if runUnderline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-                runs.append((runText, CGFloat(runStart) * cellWidth, attrs))
-                runText = ""
-                runStart = -1
-            }
+            guard runStart >= 0 else { return }
+            runs.append((runText, CGFloat(runStart) * cellWidth,
+                         attrsFor(runFg, runBold, runItalic, runUnderline)))
+            runText = ""
+            runStart = -1
         }
         for c in 0..<cells.count {
             let cell = cells[c]
             if cell.continuation { continue }
             let (fg, _) = effectiveCell(cell)
+            if TerminalEmulator.displayWidth(cell.ch) == 2 {
+                // Pin the wide glyph to its exact two cells. Core Text falls
+                // back to a full-width face whose advance is only ~1.6 cells,
+                // so leaving it in a run would shrink it and drag the rest of
+                // the line (and the cell-based cursor) off the grid.
+                flushRun()
+                drawGlyph(cell.ch, atX: CGFloat(c) * cellWidth, y: y,
+                          targetWidth: cellWidth * 2,
+                          attrs: attrsFor(fg, cell.bold, cell.italic, cell.underline))
+                continue
+            }
             if runStart < 0 || fg != runFg || cell.bold != runBold
                 || cell.italic != runItalic || cell.underline != runUnderline {
                 flushRun()
@@ -1143,6 +1158,30 @@ final class TerminalView: NSView, NSTextInputClient {
         }
     }
 
+    /// Draw one glyph stretched to exactly targetWidth points. The monospaced
+    /// system font has no CJK glyphs, so Core Text substitutes a full-width face
+    /// whose advance is ~1.6 cells rather than the 2 the grid reserves; without
+    /// this the glyph leaves a half-cell gap and the cursor looks misaligned.
+    private func drawGlyph(_ ch: Character, atX x: CGFloat, y: CGFloat,
+                           targetWidth: CGFloat, attrs: [NSAttributedString.Key: Any]) {
+        let text = String(ch)
+        let natural = (text as NSString).size(withAttributes: attrs).width
+        guard natural > 0 else { return }
+        if abs(natural - targetWidth) < 0.05 {
+            (text as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
+            return
+        }
+        guard let ctx = NSGraphicsContext.current?.cgContext else {
+            (text as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
+            return
+        }
+        ctx.saveGState()
+        ctx.translateBy(x: x, y: 0)
+        ctx.scaleBy(x: targetWidth / natural, y: 1)
+        (text as NSString).draw(at: NSPoint(x: 0, y: y), withAttributes: attrs)
+        ctx.restoreGState()
+    }
+
     private func isSelected(_ sel: TerminalEmulator.Selection, line: Int, col: Int) -> Bool {
         if line < sel.startLine || line > sel.endLine { return false }
         if line == sel.startLine && line == sel.endLine {
@@ -1157,14 +1196,38 @@ final class TerminalView: NSView, NSTextInputClient {
         let r = emulator.cursorRow
         let c = emulator.cursorCol
         guard r >= 0, r < emulator.rows, c >= 0, c < emulator.cols else { return }
-        let rect = cursorCellRect()
+        // A wide glyph covers two cells: the block must span the whole glyph,
+        // not one half of it (vim parks the cursor on the second cell when it
+        // sits past the character).
+        let (col, span) = cursorGlyphSpan()
+        let rect = NSRect(x: CGFloat(col) * cellWidth,
+                          y: bounds.height - CGFloat(r + 1) * lineHeight,
+                          width: cellWidth * CGFloat(span), height: lineHeight)
         NSColor.controlAccentColor.setFill()
         rect.fill()
-        let cell = emulator.screenCell(row: r, col: c)
-        if !cell.continuation, cell.ch != " " {
+        let lead = emulator.screenCell(row: r, col: col)
+        if lead.ch != " " {
             let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
-            (String(cell.ch) as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
+            if span == 2 {
+                drawGlyph(lead.ch, atX: rect.minX, y: rect.minY, targetWidth: rect.width, attrs: attrs)
+            } else if !lead.continuation {
+                (String(lead.ch) as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
+            }
         }
+    }
+
+    /// The cursor cell span: a wide glyph covers two cells, and a cursor parked
+    /// on the continuation cell must cover its leading cell too. Non-private so
+    /// the headless panel tests can pin the wide-character case.
+    func cursorGlyphSpan() -> (col: Int, width: Int) {
+        let r = emulator.cursorRow
+        let c = emulator.cursorCol
+        guard r >= 0, r < emulator.rows, c >= 0, c < emulator.cols else { return (c, 1) }
+        var col = c
+        if emulator.screenCell(row: r, col: c).continuation, c > 0 { col = c - 1 }
+        let lead = emulator.screenCell(row: r, col: col)
+        let width = TerminalEmulator.displayWidth(lead.ch) == 2 ? 2 : 1
+        return (col, width)
     }
 
     /// The view-space rect of the shell's cursor cell (the anchor for IME

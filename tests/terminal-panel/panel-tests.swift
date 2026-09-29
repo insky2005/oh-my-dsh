@@ -200,4 +200,30 @@ test("decstbm: CSI r restores the full-screen region",
      regReset.screenCell(row: 4, col: 0).ch == "B" &&
      regReset.line(at: 0).contains { $0.ch == "T" })
 
+
+// MARK: - Wide-glyph cursor span (CJK is two cells; the cursor must match)
+//
+// The monospaced system font's CJK fallback advances ~1.6 cells, not 2, so the
+// glyph is now stretched to its two cells and the block cursor spans the pair.
+// Pinned here is the span math drawCursor() uses for that block.
+
+let cjkEmu = TerminalEmulator(rows: 4, cols: 20)
+let cjkView = TerminalView(emulator: cjkEmu, session: nil)
+cjkEmu.feed("\u{1B}[1;1H中")
+test("wide cursor advance is two cells", cjkEmu.cursorCol == 2)
+test("a cursor after a wide glyph stays one cell",
+     cjkView.cursorGlyphSpan().col == 2 && cjkView.cursorGlyphSpan().width == 1)
+
+cjkEmu.feed("\u{1B}[1;1H") // park the cursor on the wide glyph itself
+test("a cursor on a wide glyph spans two cells",
+     cjkView.cursorGlyphSpan().col == 0 && cjkView.cursorGlyphSpan().width == 2)
+
+cjkEmu.feed("\u{1B}[1;2H") // park it on the continuation cell
+test("a cursor on the continuation cell snaps back to the lead cell",
+     cjkView.cursorGlyphSpan().col == 0 && cjkView.cursorGlyphSpan().width == 2)
+
+cjkEmu.feed("\u{1B}[1;5H")
+test("a cursor on a narrow/blank cell spans one cell",
+     cjkView.cursorGlyphSpan().col == 4 && cjkView.cursorGlyphSpan().width == 1)
+
 print("done")
