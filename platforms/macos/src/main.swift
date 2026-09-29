@@ -130,6 +130,10 @@ enum L10n {
         "status.starting": ("正在启动 oh-my-dsh 服务…", "Starting oh-my-dsh service…"),
         "status.startFailed": ("无法启动 oh-my-dsh\n\n%@", "Failed to start oh-my-dsh\n\n%@"),
         "snapshot.unavailable": ("会话快照不可用（内置运行时缺失）", "Session snapshots unavailable (bundled runtime missing)"),
+        // shell data layout migration (shown once, only when something moved)
+        "storage.migrated.title": ("壳层数据目录已更新", "Shell data folder updated"),
+        "storage.migrated.info": ("oh-my-dsh 已把壳层工作数据从 $DSH_HOME 根目录迁移到 $DSH_HOME/oh-my-dsh/（本次 %d 项）。数据未复制也未丢失；如需回退到旧版本，请看回退说明：%@", "oh-my-dsh moved its shell work data from the $DSH_HOME root into $DSH_HOME/oh-my-dsh/ (%d entries). Nothing was copied or lost; to roll back to an older version see: %@"),
+        "storage.migrated.guide": ("查看回退说明", "Open Rollback Guide"),
         "snapshot.unfinished": ("上次回退未完成（停在「%@」）", "An earlier rollback is unfinished (stuck at \"%@\")"),
         "snapshot.title": ("会话快照", "Session Snapshots"),
         "snapshot.menu": ("会话快照…", "Session Snapshots…"),
@@ -2150,6 +2154,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// attention (unavailable runtime / an unfinished rollback). Surfaced by the
     /// snapshot UI; logged at launch either way.
     private var snapshotNotice: String?
+    /// Shell-data entries moved by the launch-time layout migration. Empty on a
+    /// fresh install or an already-migrated home, so the post-launch notice is
+    /// only shown when something actually moved.
+    private var storageMigrationEntries: [String] = []
     /// One post-boot tree capture per launch (see captureRuntimeTree).
     private var didCaptureRuntimeTree = false
     /// The session whose "open in dsh" is currently being attempted, so a retry
@@ -2235,6 +2243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
         let layoutMoved = ShellPaths.migrateLegacyLayout(home: dshDataHome, appVersion: appVersion)
         if !layoutMoved.isEmpty {
+            storageMigrationEntries = layoutMoved
             AppLog.shared.log("shell data layout migrated: " + layoutMoved.joined(separator: ", "))
         }
         if isDevBuild { migrateLegacyDevBrowserProfile(toHome: dshDataHome) }
@@ -2262,6 +2271,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // need its actual port and, on dsh 0.1.2+, its advertised launch token.
         showOnboardingIfNeeded()
         NSApp.activate(ignoringOtherApps: true)
+        // Post-launch, non-blocking notice only when the layout migration
+        // actually moved something (a fresh install moves nothing).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.presentStorageMigrationNoticeIfNeeded()
+        }
     }
 
     /// Route SIGTERM/SIGINT/SIGHUP (kill, logout, system shutdown) through the
@@ -3928,6 +3942,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         done.addButton(withTitle: L10n.tr("btn.ok"))
         done.runModal()
         NSApp.terminate(nil)
+    }
+
+    /// One-time notice after a real shell-data layout migration. Never shown on
+    /// a fresh install or an already-migrated home (they move nothing).
+    private func presentStorageMigrationNoticeIfNeeded() {
+        guard !storageMigrationEntries.isEmpty, let window = window else { return }
+        let guide = ShellPaths.rollbackGuidePath(home: dshDataHome)
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("storage.migrated.title")
+        alert.informativeText = L10n.tr("storage.migrated.info", storageMigrationEntries.count, guide)
+        alert.addButton(withTitle: L10n.tr("storage.migrated.guide"))
+        alert.addButton(withTitle: L10n.tr("btn.ok"))
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            NSWorkspace.shared.open(URL(fileURLWithPath: guide))
+        }
+        AppLog.shared.log("storage migration notice shown (\(storageMigrationEntries.count) entries)")
     }
 
     /// One-button informational alert.
