@@ -1,7 +1,7 @@
 ---
 title: 模块：BrowserPanel.swift / BrowserAPI.swift（浏览器面板，CEF/Chromium 内核）
 tags: [module, browser, cef, chromium, osr, rest-api, agent]
-updated: 2026-09-13T04:05:56Z
+updated: 2026-09-29T15:27:23Z
 sources: [platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/BrowserCDP.swift, platforms/macos/cef/CEFShim.h, platforms/macos/cef/CEFShim.mm, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, docs/plans/BROWSER_PLAN-browser-panel.md, docs/terminal-header-fix.md, docs/devtools-drag-fix.md]
 manual: false
 ---
@@ -20,7 +20,7 @@ manual: false
 
 ## 渲染模式：windowed（默认）/ OSR 回退
 
-- **默认窗口化**：CEF 自建 NSView（`SetAsChild`）原生绘制、零拷贝（`docs/plans/BROWSER_PLAN-browser-panel.md` 第十一节）；开关在 `$DSH_HOME/shell/config.json` 的 `browserRenderMode`（`ShellConfig`），**设 `osr` 才回退到离屏自绘**，且必须在 CEF `initialize` 之前设（`settings.windowless_rendering_enabled = !windowed`）；
+- **默认窗口化**：CEF 自建 NSView（`SetAsChild`）原生绘制、零拷贝（`docs/plans/BROWSER_PLAN-browser-panel.md` 第十一节）；开关在 `$DSH_HOME/oh-my-dsh/shell/config.json` 的 `browserRenderMode`（`ShellConfig`），**设 `osr` 才回退到离屏自绘**，且必须在 CEF `initialize` 之前设（`settings.windowless_rendering_enabled = !windowed`）；
 - **OSR 回退（windowless）**：Chromium 把每帧 BGRA 像素经 `CEFShim.setPaintHandler` 回调给壳层，`BrowserOSRView.presentFrame` 转成 `CGImage` 自绘到 **`pageView` 自己的 `CALayer.contents`**（字节序 BGRA：`premultipliedFirst` + `byteOrder32Little`；`contentsScale` 跟随窗口 backingScaleFactor）。⚠️ **不能画在 `BrowserOSRView`（容器）的 layer 上**：`pageView` 是它的子视图（层合成在父层 contents 之上）且垫着不透明背景，会把帧整块盖住 → 内容区一片空白而标题/地址栏照常更新（v1.14.0 事故，见 `docs/browser-blank-panel-fix.md`）；
 - **帧派发按 shim 的 `browserId`**（不是 `tab.id`；DevTools 子浏览器也吃同一计数器）：主浏览器 → `pageView`，DevTools 子浏览器 → `devtoolsContent`（`presentDevToolsFrame`）；
 - `GetViewRect`/`GetScreenInfo`（device_scale_factor=2.0）取自容器尺寸；容器尺寸变化 → `CEFShim.resizeBrowser`（`WasResized`）同步 OSR 视口。注意 OSR 下**输入事件坐标是点、`OnBeforeContextMenu` 的菜单参数是设备像素（2×）**，两套坐标系并不统一。
@@ -37,7 +37,7 @@ manual: false
 
 - **布局**：40pt 头部 + 33pt 页签栏 + 分隔线 + 36pt 地址栏 + 内容区钉底；**地址栏位于页签下方**；头部/工具栏/内容容器全部 `wantsLayer + masksToBounds` layer 隔离（`docs/terminal-header-fix.md` 同源合成陷阱），根视图 `BrowserRootView` layer-backed + `isOpaque=false` 自绘背景；
 - **页签**：`BrowserTabItemView`（圆角胶囊背景、标题+关闭按钮一体、活动页签加粗、关闭按钮 hover 红色 `hoverColor=systemRed`）；`+` 按钮带常显背景（`CustomIconButton.showsBackground`）紧跟页签；页签最大 200pt、数量多时均分缩小；上限 `maxTabs = 8`（每 tab 一个渲染进程）；
-- **新标签**：`about:blank` 时聚焦地址栏并全选（Chrome 式直接输入覆盖）；API 带 URL 新建不抢焦点；`BrowserURL.normalize` 支持 `about:blank`/`file://`/`data:`/`devtools://`/带 scheme+host，否则补 `https://`；`browserLastURL`（壳层设置 `$DSH_HOME/shell/config.json`，经 `ShellConfig`；旧 UserDefaults 值由启动时一次性迁移补位）启动恢复；
+- **新标签**：`about:blank` 时聚焦地址栏并全选（Chrome 式直接输入覆盖）；API 带 URL 新建不抢焦点；`BrowserURL.normalize` 支持 `about:blank`/`file://`/`data:`/`devtools://`/带 scheme+host，否则补 `https://`；`browserLastURL`（壳层设置 `$DSH_HOME/oh-my-dsh/shell/config.json`，经 `ShellConfig`；旧 UserDefaults 值由启动时一次性迁移补位）启动恢复；
 - **右上角 ✕ = 彻底关闭浏览器**：`closeAllTabs()`（逐页签 `closeTab`）+ 收起面板；页签 ✕ 只关单页签。
 
 ## 生命周期与退出（防重入/防误退出）
@@ -67,7 +67,7 @@ OSR 下 CEF 不知道宿主窗口位置，默认菜单弹错位：`OnBeforeConte
 
 ## BrowserAPI.swift（Agent 驱动 REST API）
 
-- POSIX socket 极简 HTTP/1.1（127.0.0.1，默认 3081，`DSH_BROWSER_PORT` 覆盖，占用递增 +5；生效端口写 `$DSH_HOME/browser-api.port` **与 `shell-api.port`**（同值，后者供技能 `task-todo` 发现；同一个服务上还挂着任务面板的 `/api/tasks/*`，见 [issue-runner-panel](issue-runner-panel.md)）；App 启动即起）；CORS 头 + OPTIONS 预检；
+- POSIX socket 极简 HTTP/1.1（127.0.0.1，默认 3081，`DSH_BROWSER_PORT` 覆盖，占用递增 +5；生效端口写 `$DSH_HOME/oh-my-dsh/browser-api.port` **与 `$DSH_HOME/oh-my-dsh/shell-api.port`**（同值，后者供技能 `task-todo` 发现；同一个服务上还挂着任务面板的 `/api/tasks/*`，见 [issue-runner-panel](issue-runner-panel.md)）；App 启动即起）；CORS 头 + OPTIONS 预检；
 - 路由：`status`/`open`（自动展开，`show:false` 抑制）/`tabs`/`back`/`forward`/`reload`/`stop`/`eval`/`console`/`console/clear`/`screenshot`(PNG)/`hide`，**新增 QA 端点**：
   - `POST /api/browser/debug`：触发视图层级 dump（AppLog + `panel-browser-debug.png`）+ 返回 OSR 渲染状态（`debugState`：containerInWindow/osrLayerContents（读 **pageView** 层，即帧的真实落点）/osrLayerScale/frameCount/lastFrameSize/avgAlpha/avgLum…）；可选 body `{"click":[x,y]}` 模拟点击（`simulateClick`，验证 OSR 点击链路）；
   - `POST /api/browser/hierarchy`：全窗口视图层级 JSON + 命中测试（面板/内容区中心 `hitTest`）+ 窗口/面板截图（写 `/tmp/window-shot.png`、`/tmp/panel-browser-shot.png`）——定位「内容区被盖住/事件被截」的遮挡视图；

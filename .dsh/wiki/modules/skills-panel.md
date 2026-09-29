@@ -1,7 +1,7 @@
 ---
 title: 模块：技能面板（Skills Manager）
 tags: [module, skills, skill-md, registry, frontmatter, panel]
-updated: 2026-09-21T09:43:26Z
+updated: 2026-09-29T15:27:23Z
 sources: [platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/main.swift, platforms/macos/src/PreviewPanel.swift, tests/skills-panel/, tests/skills/, docs/skills-manager-design.md, docs/dsh-version-impact.md, docs/builtin-skills-design.md, scripts/local-ci.sh, .github/workflows/ci.yml, README.md, CHANGELOG.md]
 manual: false
 ---
@@ -52,7 +52,7 @@ dsh 客户端按会话缓存技能目录，只在 `connection/reset` 或切换 a
 
 ## registry 模型与「可安装」页签
 
-`SkillRegistryRecord { id, label, enabled, searchURL?, catalog: {kind: none|wellKnown|githubRepo, url}, popularQueries }`，存 `$DSH_HOME/shell/skills.json` 的 `registries`（默认预置一条 skills.sh，base 可被 `SKILLS_API_URL` 覆盖）。
+`SkillRegistryRecord { id, label, enabled, searchURL?, catalog: {kind: none|wellKnown|githubRepo, url}, popularQueries }`，存 `$DSH_HOME/oh-my-dsh/shell/skills.json` 的 `registries`（默认预置一条 skills.sh，base 可被 `SKILLS_API_URL` 覆盖）。
 
 - `wellKnown` → 拉 `<base>/.well-known/skills/index.json`；`githubRepo` → `git clone --depth 1` 后本地扫描（避开 GitHub API 限流）；`none` → 提示「未配置清单来源」并转为关键字搜索；
 - 添加 registry 自动探测：`owner/repo` 或 GitHub 地址 → `githubRepo`；well-known 索引可达 → `wellKnown`；其余视为 skills.sh 兼容搜索接口（`{q}`/`{limit}` 模板）；
@@ -65,7 +65,7 @@ dsh 客户端按会话缓存技能目录，只在 `connection/reset` 或切换 a
 
 `owner/repo`、`owner/repo/<subpath>`、`owner/repo@skill`、GitHub/GitLab 地址、`*.git`、well-known 地址（`…/SKILL.md`）、本地目录或 `SKILL.md`。取回优先 `/usr/bin/git clone --depth 1`（禁用凭据提示：GUI 无 tty，私有仓库应快速失败并提示改用 SSH 或 CLI）；git 不可用且源是 github.com 时退化为 `codeload.github.com` tarball + `/usr/bin/tar`；well-known 逐文件 HTTP。技能目录**整目录复制**（SKILL.md + references/scripts 等），跳过隐藏文件与 `node_modules/.git/dist/build/__pycache__`，单文件 ≤ 2 MB、总数 ≤ 400，拒绝绝对路径与 `..`。
 
-## 磁盘布局（壳层自有，`$DSH_HOME/shell/skills.json`）
+## 磁盘布局（壳层自有，`$DSH_HOME/oh-my-dsh/shell/skills.json`）
 
 ```
 registries: [{id,label,enabled,searchURL?,catalog:{kind,url},popularQueries}]
@@ -76,7 +76,7 @@ installed.<name>:  {source, sourceType, sourceUrl, ref, path, level,
                     contentHash, installedAt, updatedAt}
 ```
 
-与 `shell/config.json` 同目录但不走 `ShellConfig`（值是结构化对象、成批变更，独立文件避免每个键一次 node 子进程）；缺失/损坏按空配置处理（不抛错）。
+与 `oh-my-dsh/shell/config.json` 同目录但不走 `ShellConfig`（值是结构化对象、成批变更，独立文件避免每个键一次 node 子进程）；缺失/损坏按空配置处理（不抛错）。
 
 ## 边界与失败模式
 

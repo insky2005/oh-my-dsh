@@ -1,7 +1,7 @@
 ---
 title: 模块：项目面板（Projects Panel）
 tags: [module, projects, workspace, workspace-create, session-create, projects-root, panel]
-updated: 2026-09-29T14:39:01Z
+updated: 2026-09-29T15:27:23Z
 sources: [platforms/macos/src/ProjectsPanel.swift, platforms/macos/src/ProjectsCore.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/main.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/ShellConfig.swift, tests/projects-panel/, tests/projects-panel/controller-tests.swift, tests/dsh-rpc/run.sh, docs/projects-panel-design.md, docs/dsh-version-impact.md, scripts/local-ci.sh, .github/workflows/ci.yml, README.md]
 manual: false
 ---
@@ -28,7 +28,7 @@ manual: false
 | 优先级 | 来源 | 说明 |
 |---|---|---|
 | 1 | `DSH_PROJECTS_TEST_ROOT` | 仅 QA（`ProjectsCore.envRootKey`），必须是绝对路径才生效 |
-| 2 | `projectsRoot`（`$DSH_HOME/shell/config.json`） | 键缺失 / 空串 = 用默认值；**相对路径拒绝**（`RootSource.invalidConfig` → 回默认值 + `app.log` 记一行） |
+| 2 | `projectsRoot`（`$DSH_HOME/oh-my-dsh/shell/config.json`） | 键缺失 / 空串 = 用默认值；**相对路径拒绝**（`RootSource.invalidConfig` → 回默认值 + `app.log` 记一行） |
 | 3 | `$DSH_HOME/oh-my-dsh/projects` | 正式版 `~/.dsh/oh-my-dsh/projects`；开发版 `~/.dsh-dev/…`（`applyDevIsolation` 天然隔离） |
 
 - `projectsRoot` 是**新键**，故意不进 `ShellConfig.legacyUserDefaultsKeys`（没有 1.14 前的 UserDefaults 值可搬）；core `settings.js` 对键名无白名单，新增键无需改 core；
@@ -128,7 +128,7 @@ manual: false
 - 测试基建注意点：上面「注册被拒」那条用例会让 `DshWebRPC` 把该端点的**面钉到 legacy**（既有设计：只有 404/405 才降级），而假传输只实现 modern 形状 —— 所以注册用例前必须 `DshWebRPC.resetForTests()`（并重设 `token`）。这是测试管线，不是产品行为；
 - `tests/dsh-rpc/run.sh`（整套 54 项）新增 `DshWorkspaceOps` **14 条断言**：`register` 5（解析 `workspaceId`、`args.request.path`、`created:false` 仍解析、端点缺失 → nil、返回体无 id → nil）、`createSession` 6（先带 `workspaceId`、被拒退回 `cwd`、**恰好两次**请求、无 `workspaceId` 时一次请求）、`newestSessionId` 3（running 优先于 updatedAt、无 running 取最新、无会话 → nil）；
 - 已接入 `scripts/local-ci.sh`（swift 阶段）与 `.github/workflows/ci.yml` 的 swift job；`tests/l10n/run.sh` 自动覆盖新增的 `projects.*` / `menu.toggleProjects` 键；
-- QA 钩子：`DSH_PROJECTS_TEST=1` 启动即开项目面板（**放在 `DSH_SKILLS_TEST` 之后**）；`DSH_PROJECTS_TEST_ROOT=<dir>` 覆盖根目录（仅 QA，不写 `shell/config.json`）；`DSH_UI_DEBUG=1` 落 `~/Library/Logs/oh-my-dsh/panel-projects-debug.png`（`setRightPanel` 通用路径）与渲染后的 `panel-projects-loaded-debug.png`（`onDidRender`）；`DSH_PANEL_TEST="projects,…"` 全量扫描钩子已认 `case "projects", "项目"`（九个面板，8s 起每个 5s 一切）。
+- QA 钩子：`DSH_PROJECTS_TEST=1` 启动即开项目面板（**放在 `DSH_SKILLS_TEST` 之后**）；`DSH_PROJECTS_TEST_ROOT=<dir>` 覆盖根目录（仅 QA，不写 `oh-my-dsh/shell/config.json`）；`DSH_UI_DEBUG=1` 落 `~/Library/Logs/oh-my-dsh/panel-projects-debug.png`（`setRightPanel` 通用路径）与渲染后的 `panel-projects-loaded-debug.png`（`onDidRender`）；`DSH_PANEL_TEST="projects,…"` 全量扫描钩子已认 `case "projects", "项目"`（九个面板，8s 起每个 5s 一切）。
 
 ## 明确不做（本次范围）
 

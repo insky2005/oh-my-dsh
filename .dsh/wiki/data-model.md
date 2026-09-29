@@ -1,18 +1,40 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-09-27T13:40:19Z
-sources: [platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillInstaller.swift, docs/skills-manager-design.md, tests/skills-panel/, core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/DshWebCookieJanitor.swift, tests/shell-config/, tests/dsh-auth-cookies/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/TerminalWorkspaceTabs.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImageZoom.swift, docs/ux-feedback.md, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md, platforms/macos/src/ProjectsCore.swift, platforms/macos/src/ProjectsPanel.swift, docs/projects-panel-design.md, tests/projects-panel/, tests/dsh-rpc/, core/lib/snapshot.js, core/lib/snapshot-io.js, core/bin/ohmy-core.js, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, docs/session-snapshot-rollback-design.md, tests/snapshot-panel/, tests/snapshot-rollback/, platforms/macos/runtime-locks/, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksAPI.swift]
+updated: 2026-09-29T15:27:23Z
+sources: [platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillInstaller.swift, docs/skills-manager-design.md, tests/skills-panel/, core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/DshWebCookieJanitor.swift, tests/shell-config/, tests/dsh-auth-cookies/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/TerminalWorkspaceTabs.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImageZoom.swift, docs/ux-feedback.md, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md, platforms/macos/src/ProjectsCore.swift, platforms/macos/src/ProjectsPanel.swift, docs/projects-panel-design.md, tests/projects-panel/, tests/dsh-rpc/, core/lib/snapshot.js, core/lib/snapshot-io.js, core/bin/ohmy-core.js, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, docs/session-snapshot-rollback-design.md, tests/snapshot-panel/, tests/snapshot-rollback/, platforms/macos/runtime-locks/, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/ShellPaths.swift, core/lib/shell-paths.js, docs/storage-layout-refactor.md]
 manual: false
 ---
 
 # 数据模型
 
-本仓库无数据库：壳层设置以 **`$DSH_HOME/shell/config.json`**（JSON，`ShellConfig` / `core/lib/settings.js`）持久化（少量系统级项仍在 **UserDefaults**），进程间/代理间通信走 **HTTP RPC 信封**，磁盘上的"数据文件"是 wiki markdown 页（含 frontmatter）、任务关联索引（`.dsh/tasks/`）、技能记录（`$DSH_HOME/shell/skills.json`）与日志。
+本仓库无数据库：壳层设置以 **`$DSH_HOME/oh-my-dsh/shell/config.json`**（JSON，`ShellConfig` / `core/lib/settings.js`）持久化（少量系统级项仍在 **UserDefaults**），进程间/代理间通信走 **HTTP RPC 信封**，磁盘上的"数据文件"是 wiki markdown 页（含 frontmatter）、任务关联索引（`.dsh/tasks/`）、技能记录（`$DSH_HOME/oh-my-dsh/shell/skills.json`）与日志。
 
-## 壳层设置键（`$DSH_HOME/shell/config.json`，`ShellConfig`）
+## 壳层数据目录（`$DSH_HOME/oh-my-dsh/`，2026-09 存储重构）
 
-语言无关的 JSON 键值（可由外部工具/代理直接读写：写入经 core CLI `ohmy-core settings set|unset|list` 合并 + 原子落盘，壳层侧 0.3s 防抖异步、退出前 `flushNow()`；读取直读 JSON）；开发版用 `~/.dsh-dev/shell/config.json`（独立 `DSH_HOME`）。
+壳层自己的工作数据统一收敛到 **`$DSH_HOME/oh-my-dsh/`**，与 dsh 自有的 `sessions/`、`storages/`、`settings.yaml`、`$DSH_HOME/skills/` 分开存放。路径解析的**单一事实来源**：Swift `platforms/macos/src/ShellPaths.swift`、core `core/lib/shell-paths.js`（`ohmy-core … --home <dir>` 走同一解析）；旧根路径位置的数据由启动与显式 `--home` CLI 做**一次性幂等迁移**（目标缺失且旧路径存在时搬迁，可安全重复运行）。
+
+```
+$DSH_HOME/oh-my-dsh/
+  projects/           # 项目面板工作区根（默认值，可用 projectsRoot 覆盖，见下表）
+  shell/              # 壳层设置与状态：config.json / skills.json / dsh-web.json / dsh-state.json / rollback-journal.json / snapshots/
+  browser/            # CEF/Chromium profile（正式版与开发版统一；不再有 browser-dev —— 开发版靠独立 DSH_HOME 隔离）
+  repo-wiki/          # Wiki 面板「DSH_HOME 私有」根（wikiRootMode=dsh-home 时按 <hash12> 分目录）
+  channel-runtime/    # channel runner 运行目录
+  channels/           # 通道凭据/会话映射/消息分桶/state/workspaces/binding
+  tokens/             # GitHub 按仓库作用域 token（<owner>-<repo>）
+  gh-token            # GitHub 通用 token
+  browser-api.port    # 浏览器面板 REST API 端口文件
+  shell-api.port      # 任务面板 /api/tasks/* 端口文件（与上面同值）
+```
+
+- **开发版隔离**：`DSH_DEV_BUILD=1` 时 `DSH_HOME=~/.dsh-dev`，工作数据因此落在 `~/.dsh-dev/oh-my-dsh/…`，与正式版天然隔离；**不再**使用 `~/.dsh/browser-dev` 之类的独立 profile。
+- **快照排除**：`core/lib/snapshot.js` 的 `SNAPSHOT_EXCLUDES` 新增 `oh-my-dsh`（壳层工作数据不进会话回退快照）；旧条目 `shell` / `browser` / `browser-dev` / `channels` / `tokens` 保留以兼容迁移前的 home。
+- **设计**：`docs/storage-layout-refactor.md`。
+
+## 壳层设置键（`$DSH_HOME/oh-my-dsh/shell/config.json`，`ShellConfig`）
+
+语言无关的 JSON 键值（可由外部工具/代理直接读写：写入经 core CLI `ohmy-core settings set|unset|list` 合并 + 原子落盘，壳层侧 0.3s 防抖异步、退出前 `flushNow()`；读取直读 JSON）；开发版用 `~/.dsh-dev/oh-my-dsh/shell/config.json`（独立 `DSH_HOME`）。
 
 | 键 | 含义 | 出处 |
 |---|---|---|
@@ -36,15 +58,15 @@ manual: false
 | `wikiRegisterAgentsMd` | 写入 AGENTS.md 注册块开关（默认关） | `WikiPaths` |
 | `projectsRoot` | 项目面板的 projects 根目录（**绝对路径**；键缺失/空串/相对路径 = 用默认 `$DSH_HOME/oh-my-dsh/projects`，不改写文件） | `ProjectsCore.configKey` |
 
-> 凭据不走 UserDefaults：GitHub token 按仓库作用域存储，**只走文件**（2026-09-24 起：Keychain 读写代码已从 `platforms/macos/src/` 全部删除，`SecItem` / `kSecClass` 不再出现）——解析顺序为 文件专属 `~/.dsh/tokens/<owner>-<repo>` → 文件通用 `~/.dsh/gh-token`（外部工具 / 代理共用同一份）；无仓库时写通用文件，原子写 + `chmod 600`，清空即删文件；更老构建写进钥匙串的条目不再被读取，需重填一次。见 [issue-runner-panel](modules/issue-runner-panel.md)。
+> 凭据不走 UserDefaults：GitHub token 按仓库作用域存储，**只走文件**（2026-09-24 起：Keychain 读写代码已从 `platforms/macos/src/` 全部删除，`SecItem` / `kSecClass` 不再出现）——解析顺序为 文件专属 `~/.dsh/oh-my-dsh/tokens/<owner>-<repo>` → 文件通用 `~/.dsh/oh-my-dsh/gh-token`（外部工具 / 代理共用同一份）；无仓库时写通用文件，原子写 + `chmod 600`，清空即删文件；更老构建写进钥匙串的条目不再被读取，需重填一次。见 [issue-runner-panel](modules/issue-runner-panel.md)。
 
-> 上表中仅 `AppleLanguages`（WebView 语言覆写，`UserDefaults.standard` 写入以影响系统组件）等系统级项仍走原生 UserDefaults；其余键均由 `ShellConfig` 落到 `$DSH_HOME/shell/config.json`（开发版 `~/.dsh-dev/shell/config.json`），对外与 UserDefaults 同形（`object/string/bool/double/data(forKey:)`、`set`、`removeObject`），便于跨语言工具读写。
+> 上表中仅 `AppleLanguages`（WebView 语言覆写，`UserDefaults.standard` 写入以影响系统组件）等系统级项仍走原生 UserDefaults；其余键均由 `ShellConfig` 落到 `$DSH_HOME/oh-my-dsh/shell/config.json`（开发版 `~/.dsh-dev/oh-my-dsh/shell/config.json`），对外与 UserDefaults 同形（`object/string/bool/double/data(forKey:)`、`set`、`removeObject`），便于跨语言工具读写。
 
 > **旧 UserDefaults 取值一次性迁移（2026-09-13，407ccb1）**：1.14 把这些键从 `UserDefaults` 搬进 `config.json` 时**没有搬运已有取值**——用户显式设过的值留在 plist 里再没人读，壳层静默回落到代码默认（这正是 v1.14.0「浏览器面板一片空白」的一半根因：`browserRenderMode=windowed` 丢失后回落到当时损坏的 OSR 路径）。现在 `ShellConfig.loadIfNeeded()`（持锁）内做一次合并：`legacyUserDefaultsKeys` 列出的 16 个壳层自有键（`appLanguage`/`appTheme`/`dshRegistry`/`browserRenderMode`/`browserLastURL`/`previewPanelState`/`previewPanelWidth`/`previewLastDirectory`/`rightPanelKind`/`hasCompletedOnboarding`/`autoUpgradeDsh`/`nextAutoUpgradeCheck`/`channel.global.list`/`wikiRootMode`/`wikiAutoRegenerate`/`wikiRegisterAgentsMd`）**只搬本文件尚无取值的键**（显式值永远优先），写完在文件里落 `legacyUserDefaultsMigratedAt` 标记保证只做一次；迁移直接原子写文件而不走 `flush()`（在锁内，避免自锁），并记日志 `shellconfig: legacy UserDefaults merge (moved N: …) -> <path>`。回归测试 `tests/shell-config/`（13 例）。
 
 ## 技能数据（skills.json + SKILL.md frontmatter）
 
-- **壳层技能记录** `$DSH_HOME/shell/skills.json`（版本化 JSON，原子写，`SkillStore`；与 `shell/config.json` 同目录但**不走 `ShellConfig`**——值是结构化对象、成批变更，独立文件避免每个键一次 node 子进程；缺失/损坏按空配置处理不抛错）：
+- **壳层技能记录** `$DSH_HOME/oh-my-dsh/shell/skills.json`（版本化 JSON，原子写，`SkillStore`；与 `oh-my-dsh/shell/config.json` 同目录但**不走 `ShellConfig`**——值是结构化对象、成批变更，独立文件避免每个键一次 node 子进程；缺失/损坏按空配置处理不抛错）：
   `registries`（`[{id,label,enabled,searchURL?,catalog:{kind:none|wellKnown|githubRepo,url},popularQueries}]`，默认预置 skills.sh）、`invocation.<name>`（`baselineUserInvocable` / `baselineDisableModelInvocation` / `userInvocable` / `disableModelInvocation` / `updatedAt`）、`installed.<name>`（`source` / `sourceType` / `sourceUrl` / `ref` / `path` / `level` / `baseUserInvocable` / `baseDisableModelInvocation` / `contentHash` / `installedAt` / `updatedAt`）；
 - **技能的持久态在 SKILL.md 本身**：调用开关只认 frontmatter 键 `user-invocable`（默认 true）与 `disable-model-invocation`（默认 false），面板改开关是**只增删改这两行**的文本编辑（切回基线值即删键、字节还原），不是 YAML 往返；旧驼峰键（`userInvocable` 等）会让 dsh **抛错并忽略整个技能**；
 - **发现的四个根与优先级**（rank 小者同名优先）：`<工作区>/.dsh/skills`(100) > `<工作区>/.agents/skills`(200) > `$DSH_HOME/skills`(400，跳过 `.system`) > `$DSH_AGENTS_HOME`/`~/.agents/skills`(500)；见 [skills-panel](modules/skills-panel.md) 与 `docs/dsh-version-impact.md` D2/D2b/D2c/D2d。
@@ -86,12 +108,12 @@ manual: false
 - **缓存身份 `ReviewLogStamp`（Swift，`ReviewLogModel.swift`）**：`{size, mtimeMs}`，由 `ReviewLogStamp.read(path)` 从文件属性取；`auditNeedsRefresh(cached:onDisk:)` 只在两者相等时复用缓存，`onDisk == nil`（路径未知/文件消失）判为「无法判断」保留缓存。因为日志**只增不减**，同一份日志上的审计结果永远有效——这是「新建会话不再只显示会话、看不到文件」的关键（PR #49）；
 - **输出契约**（`node core/bin/ohmy-core.js review sessions|audit|audit-file`）与每条 entry 的字段（`surface/status/category/path/hunks/added/removed/command/suspicion/note`）见 [review-panel](modules/review-panel.md) 与 docs/review-panel-design.md §5；读取失败（帧解压失败 / 尾部未完成帧 / 无法解析的 JSONL 行）一律进 `diagnostics` 显式报出，不静默丢数据。
 
-## 会话快照与回退（`$DSH_HOME/shell/`，v1.16.2）
+## 会话快照与回退（`$DSH_HOME/oh-my-dsh/shell/`，v1.16.2）
 
 dsh 升级会把会话日志换成新世代且**上游没有降级通道**，故壳层在 App / 内置 dsh 版本组合变化前留一份可回退的数据快照。core 侧 `core/lib/snapshot.js`（纯决策/事务状态机，无 IO）+ `core/lib/snapshot-io.js`（落盘，全部经可注入的 `io`），壳层经 `CoreBridge` 调 CLI `ohmy-core snapshot launch|tree|create|plan-rollback|rollback|finish-rollback|delete`（`preferBundledNode: true`）。
 
 ```
-$DSH_HOME/shell/
+$DSH_HOME/oh-my-dsh/shell/
   dsh-state.json                  # 唯一参与判断的状态文件
   rollback-journal.json           # 回退事务日志（完成后删除）
   snapshots/<id>/{meta.json,sessions/,storages/}   # id = <YYYYMMDD-HHMMSS>_app<A>_dsh<D>_<reason>
@@ -99,7 +121,7 @@ $DSH_HOME/shell/
   snapshots/quarantine/<stamp>/{quarantine.json,sessions/}
 ```
 
-- **进快照的内容只有 `sessions/` + `storages/`**（`SNAPSHOT_INCLUDES`）；`SNAPSHOT_EXCLUDES` 明确排除 `shell`（含 `dsh-web.json` 里的 launch token）、`credentials` / `credentials.yaml` / `.credentials.yaml` / `profiles` / `settings.yaml`（密钥与账号）、`tokens`、`channels`（通道绑定，回退会丢）、`browser` / `browser-dev`（CEF profile）、`skills`、`attachments`、`scaffold-stages`；
+- **进快照的内容只有 `sessions/` + `storages/`**（`SNAPSHOT_INCLUDES`）；`SNAPSHOT_EXCLUDES` 新增 `oh-my-dsh`（壳层全部工作数据：设置/快照/CEF profile/通道/token 等，回退不应带走）——旧条目 `shell` / `browser` / `browser-dev` / `channels` / `tokens` 保留以兼容迁移前的 home；另排除 `credentials` / `credentials.yaml` / `.credentials.yaml` / `profiles` / `settings.yaml`（密钥与账号）、`skills`、`attachments`、`scaffold-stages`；
 - **落盘策略**：`cloneDir` 在 darwin 优先 APFS clonefile（`cp -cR`，实测 306 MB / 246 文件 0.124 s、几乎不占额外空间），其他平台递归 copy（Linux CI 走同一路径）；快照目录名带 `reason`（`bootstrap` / `combo-change` / `dsh-upgrade` / `pre-rollback`），`meta.json` 记 `fromCombo`/`forCombo`/`counts`/`logicalBytes`/`restoredFrom`，`dshTree` **只在 dsh 版本变化时非 null**；
 - **状态 `dsh-state.json`**：`version` / `dataCombo{app,dsh}`（当前会话数据所属的组合）/ `lastLaunch{combo,at}` / `rollback{snapshot,at,pending}` / `upgradePinned{dsh,at,reason}`（回退后钉住自动升级）/ `history[]`（只追加）。判断规则只有一条（`decideLaunch`）：状态不存在 → `bootstrap` 快照；`currentCombo != dataCombo` → `combo-change` 快照；一致 → 不打。跑完把 `dataCombo`/`lastLaunch` 写回；
 - **回退事务（原子性）**：脚本周转 `JOURNAL_STEPS = ['stop-server','snapshot-live','restore-data','quarantine','swap-tree','write-state']`，每步写 `rollback-journal.json`；目标快照里**不存在**的会话目录 rename 进 `quarantine/<stamp>/sessions/…` 并落 `quarantine.json` 清单（**不删除**）；目标快照里存在的老会话还原其文件并删除其新世代文件（防「世代分叉」）。回退必须 `--server-stopped`（活着的 dsh 会立刻把会话再迁移回去，所以回退后退出 App），完成后 `state.upgradePinned` + `rollback` + `history` 一起写、journal 清空；
@@ -156,7 +178,7 @@ manual: false                   # true = 用户手改，代理永不覆盖
 
 - **会话 id 与本机汇报只进 `local.json`**（都不是跨机器的事实，不进随仓库走的两个文件）；读侧兼容 v1 的纯数字 session 键（`"6"` 视为 `issue-6`），写侧一律 task id；
 - `queue.taskIds` 是队列成员的唯一真相，任务上的 `queueId` 是冗余副本，载入时 `reindexQueueMembership()` 重新导出，两者不会漂移；
-- 任务面板的 localhost API 与浏览器面板**共用同一个服务**：端口写 `$DSH_HOME/shell-api.port`（与 `browser-api.port` 同值），路由面 `GET /api/tasks/list` 与 `POST /api/tasks/create`（上限 50 条，返回 `created` / `rejected`），见 [issue-runner-panel](modules/issue-runner-panel.md)。
+- 任务面板的 localhost API 与浏览器面板**共用同一个服务**：端口写 `$DSH_HOME/oh-my-dsh/shell-api.port`（与 `$DSH_HOME/oh-my-dsh/browser-api.port` 同值），路由面 `GET /api/tasks/list` 与 `POST /api/tasks/create`（上限 50 条，返回 `created` / `rejected`），见 [issue-runner-panel](modules/issue-runner-panel.md)。
 
 ## Channel 数据与文件布局（通道 / 消息平台）
 
@@ -164,13 +186,13 @@ manual: false                   # true = 用户手改，代理永不覆盖
 
 | 数据 | 路径 | 写入方 | 说明 |
 |---|---|---|---|
-| 凭据/账号 | `~/.dsh/channels/<channelId>.json`（chmod 600） | `channel-store.js`（saveChannelAccount） | 文件优先读、Keychain 兜底（零弹窗）；含 botToken/accountId/userId/baseUrl |
-| 通道级状态 | `~/.dsh/channels/<channelId>.state.json` | `channel-runner.js` | lastWorkspace / 会话映射 / activeSession，重启可恢复；面板读它显示连接徽标（不轮询） |
-| 会话映射（全局） | `~/.dsh/channels/<channelId>.sessions.json` | `channel-sessions.js`（setSession） | **channel 作用域全局**（2026-08-22 起）；按 sessionId 保留全部会话，`/new` 重绑定 conversation 不删历史；记录含 conversationId/sessionId/projectRoot/workspaceKey/name/updatedAt |
-| 会话消息归档（全局） | `~/.dsh/channels/<channelId>.<workspaceKey>.<sessionId>.messages.json`（sessionId 缺省入 `system` 桶） | `channel-sessions.js`（appendMessage） | 分桶记录 `{channelId, conversationId, sessionId, dir: in\|out, text, ts, projectRoot}`，MAX_MESSAGES=1000 滚动；`<channelId>.workspaces.json` 登记 workspaceKey ↔ projectRoot（同名加 6 位路径哈希消歧）；**项目目录不再产生消息/会话文件** |
-| 项目开关/启用关联 | `~/.dsh/channels/<channelId>.workspaces.json` | ChannelPanel `setChannelEnabled` / channel-sessions `setWorkspaceEnabled` | **全局**（2026-08-23 随 PR #30 落地，docs/channel-project-switch.md）：`{"<workspaceKey>":"<projectRoot>"}`（chmod 600，key 用 `ChannelStoreReader.workspaceKey(for:)` 派生）；某 projectRoot 出现 = 该工作区启用了该通道（「项目开关」ON）；旧 `<项目>/.dsh/channels.json` refs 不再作为启用来源（仅 ChannelPanel 一次性惰性迁移播种）；`registerProjectRoot` 只作消息桶 key 推导 |
-| 钉钉管理员绑定 | `~/.dsh/channels/<channelId>.binding.json`（chmod 600） | `dingtalk-access.js`（runChannel 的 owner-binding 安全门） | 存 /bind 绑定状态：未绑定管理员前**拒绝所有**消息，仅绑定管理员可驱动本机 dsh；见 docs/channel-dingtalk-stream.md |
-| 钉钉应用凭据 | `~/.dsh/channels/<channelId>.json`（chmod 600，含 AppKey/AppSecret） | `dingtalk-device.js`（device-code 扫码注册）/ 手动填写 | 与微信共用 channel-store.js 凭据文件；扫码创建应用走 `channel login-dingtalk`（init/begin → poll 得 AppKey/AppSecret） |
+| 凭据/账号 | `~/.dsh/oh-my-dsh/channels/<channelId>.json`（chmod 600） | `channel-store.js`（saveChannelAccount） | 文件优先读、Keychain 兜底（零弹窗）；含 botToken/accountId/userId/baseUrl |
+| 通道级状态 | `~/.dsh/oh-my-dsh/channels/<channelId>.state.json` | `channel-runner.js` | lastWorkspace / 会话映射 / activeSession，重启可恢复；面板读它显示连接徽标（不轮询） |
+| 会话映射（全局） | `~/.dsh/oh-my-dsh/channels/<channelId>.sessions.json` | `channel-sessions.js`（setSession） | **channel 作用域全局**（2026-08-22 起）；按 sessionId 保留全部会话，`/new` 重绑定 conversation 不删历史；记录含 conversationId/sessionId/projectRoot/workspaceKey/name/updatedAt |
+| 会话消息归档（全局） | `~/.dsh/oh-my-dsh/channels/<channelId>.<workspaceKey>.<sessionId>.messages.json`（sessionId 缺省入 `system` 桶） | `channel-sessions.js`（appendMessage） | 分桶记录 `{channelId, conversationId, sessionId, dir: in\|out, text, ts, projectRoot}`，MAX_MESSAGES=1000 滚动；`<channelId>.workspaces.json` 登记 workspaceKey ↔ projectRoot（同名加 6 位路径哈希消歧）；**项目目录不再产生消息/会话文件** |
+| 项目开关/启用关联 | `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json` | ChannelPanel `setChannelEnabled` / channel-sessions `setWorkspaceEnabled` | **全局**（2026-08-23 随 PR #30 落地，docs/channel-project-switch.md）：`{"<workspaceKey>":"<projectRoot>"}`（chmod 600，key 用 `ChannelStoreReader.workspaceKey(for:)` 派生）；某 projectRoot 出现 = 该工作区启用了该通道（「项目开关」ON）；旧 `<项目>/.dsh/channels.json` refs 不再作为启用来源（仅 ChannelPanel 一次性惰性迁移播种）；`registerProjectRoot` 只作消息桶 key 推导 |
+| 钉钉管理员绑定 | `~/.dsh/oh-my-dsh/channels/<channelId>.binding.json`（chmod 600） | `dingtalk-access.js`（runChannel 的 owner-binding 安全门） | 存 /bind 绑定状态：未绑定管理员前**拒绝所有**消息，仅绑定管理员可驱动本机 dsh；见 docs/channel-dingtalk-stream.md |
+| 钉钉应用凭据 | `~/.dsh/oh-my-dsh/channels/<channelId>.json`（chmod 600，含 AppKey/AppSecret） | `dingtalk-device.js`（device-code 扫码注册）/ 手动填写 | 与微信共用 channel-store.js 凭据文件；扫码创建应用走 `channel login-dingtalk`（init/begin → poll 得 AppKey/AppSecret） |
 
 ## Channel 关联模型（channel ↔ message ↔ session，2026-08-22 落地）
 
@@ -186,5 +208,5 @@ manual: false                   # true = 用户手改，代理永不覆盖
 - `~/Library/Logs/oh-my-dsh/app.log` — 壳层行为（`AppLog`，串行队列写盘，ISO8601 时间戳）；
 - `~/Library/Logs/oh-my-dsh/server.log` — 自拉起的 `dsh web` 进程 stdout/stderr；
 - `~/Library/Logs/oh-my-dsh/channel-runner-<channelId>.log` — channel runner（core/Node，`channel run`）的 stdout/stderr（含 `[weixin-clawbot]` getConfig/sendTyping、`[dingtalk]` 等日志；main.swift startChannelRunner 路由到文件而非丢弃）；
-- `$HOME/.dsh`（默认 `DSH_HOME`）— 传给 `dsh web`，首次使用自动初始化 web profile；其下另有 `~/.dsh/gh-token`（通用 token 文件）与 `~/.dsh/tokens/<owner>-<repo>`（按仓库作用域的 token 文件，chmod 600）——均**不**在仓库内，不入 git；
+- `$HOME/.dsh`（默认 `DSH_HOME`）— 传给 `dsh web`，首次使用自动初始化 web profile；其下另有 `~/.dsh/oh-my-dsh/gh-token`（通用 token 文件）与 `~/.dsh/oh-my-dsh/tokens/<owner>-<repo>`（按仓库作用域的 token 文件，chmod 600）——均**不**在仓库内，不入 git；
 - 调试面板截图：`~/Library/Logs/oh-my-dsh/panel-<label>-debug.png`（`DSH_UI_DEBUG=1` 时产出）。
