@@ -21,7 +21,7 @@ manual: false
 | `platforms/macos/src/ProjectsPanel.swift` | 776 行 | `ProjectsPanelController`（含 `registerWorkspace(path:)` / `warnNeedsWorkspace()`）+ `ProjectCardView`（三行卡片：标题行 = 名称 + 徽标 + 该卡唯一的 dsh 动作按钮，按 `workspace.registered` 在 `folderPlus`「添加工作区」与 `plus`「新会话」之间切换）+ `ProjectsRootView`（`PanelSurface` 底色）+ `ProjectTargetPanel`（六个入口枚举，rawValue 即 `DSH_PANEL_TEST` 的面板名） |
 | `platforms/macos/src/DshWebRPC.swift` | 431 行（`DshWorkspaceOps` 约 70 行） | `register` / `createSession` / `newestSessionId` + 端点 `DshWebRPC.workspaceCreate = Endpoint("workspace/create", "workspace.create")` |
 | `platforms/macos/src/main.swift` | 6209 行 | 接线：活动栏首位 / 视图菜单 ⌥⌘P / `adoptProjectDirectory` 重根原语 / `openWorkspace` / `openWorkspaceInDsh` / `createSessionInWorkspace` / 设置窗口「项目」区块 / QA 钩子 |
-| `tests/projects-panel/` | 4 文件 | 无头测试：模型 45 项 + 控制器 49 项，`run.sh` 一次跑完（本机实测 **94 项 ok / EXIT=0**） |
+| `tests/projects-panel/` | 4 文件 | 无头测试：模型 53 项 + 控制器 55 项，`run.sh` 一次跑完（本机实测 **108 项 ok / EXIT=0**） |
 
 ## projects 根目录（唯一可配置项）
 
@@ -32,8 +32,8 @@ manual: false
 | 3 | `$DSH_HOME/oh-my-dsh/projects` | 正式版 `~/.dsh/oh-my-dsh/projects`；开发版 `~/.dsh-dev/…`（`applyDevIsolation` 天然隔离） |
 
 - `projectsRoot` 是**新键**，故意不进 `ShellConfig.legacyUserDefaultsKeys`（没有 1.14 前的 UserDefaults 值可搬）；core `settings.js` 对键名无白名单，新增键无需改 core；
-- **打开面板不写盘**：只读列举；`mkdir -p` 只在「新建工作区」时发生（连带建根），根不存在时面板给空态 `projects.rootMissing`；
-- 改根两条路：面板头部「更改…」（`NSOpenPanel`，`canChooseDirectories` + `canCreateDirectories` → `ShellConfig.set` → `reload()`）与设置窗口「项目」区块（选择… / 保存 / 恢复默认；`~` 会展开，非绝对路径内联报错不写盘）；设置窗口保存后 `AppDelegate.projectsRootDidChange()` → `projectsPanel.workRootChanged()`，两处写的是**同一个键**。
+- **打开面板按需建根**：每次 `reload()` 后台先 `ProjectsCore.ensureDirectory(root)`——根不存在就 `mkdir -p` 建出来（`app.log` 记 `projects: created the projects root …`），成功时不再出现 `projects.rootMissing`；建根失败（权限 / 卷未挂载）才回落空态提示。`listDirectories` 自身仍只读、不写盘；
+- 改根两条路：面板头部「更改…」（`NSOpenPanel`，`canChooseDirectories` + `canCreateDirectories`，**起始目录 = 当前根**，不存在时退到最近现存祖先 `ProjectsCore.existingDirectoryForPicker` → `ShellConfig.set` → `reload()`）与设置窗口「项目」区块（选择… / 保存 / 恢复默认；`~` 会展开，非绝对路径内联报错不写盘）；设置窗口保存后 `AppDelegate.projectsRootDidChange()` → `projectsPanel.workRootChanged()`，两处写的是**同一个键**。
 
 ## 卡片与三条流程
 
@@ -113,7 +113,7 @@ manual: false
 | 未注册目录上触发 dsh 动作（点卡片 / 「新会话」） | 不发任何请求、不重载：按钮已禁用，闭包内再判一次 `registered`，只写状态行 `projects.needsWorkspace`；六个本地面板入口照常工作 | 面板状态行 |
 | 未注册目录点「添加工作区」而 dsh 未起 / 端点被拒 | 状态行 `projects.registerFailed`；目录保留、不改磁盘、不弹模态（成功时 `app.log` 有 `projects: registered …` 可核对） | 面板状态行 + `app.log` |
 | `storages/workspace.json` 读不懂（上游改布局 / 升版本） | 注册状态与会话数退化为「未注册 / 0」，功能不受影响 | `[workspace-store] …`（既有 R4 护栏） |
-| 根目录不存在 / 无子目录 | 空态 `projects.rootMissing` / `projects.empty` +「添加工作区 / Add workspace」按钮（头部右上角同图标 `folderPlus`、同文案）；不自动写盘 | 面板 |
+| 根目录不存在（建根失败）/ 无子目录 | 正常情况下加载即自动建根，不出现 `projects.rootMissing`；只有权限 / 卷未挂载等建根失败时才空态 `projects.rootMissing`，无子目录时 `projects.empty` +「添加工作区 / Add workspace」按钮 | `app.log` 的 `projects: created the projects root …` / 面板 |
 | 名字非法（空 / 含 `/` 或 `:` / 控制字符 / `.`·`..` / 以 `.` 开头 / > 64 字符） | 创建前拦截 + 规则提示，**不创建任何东西**、不发请求 | sheet 内联 + 状态行 |
 | 根目录里的符号链接指向目录 | 视为工作区；canonical 归一后仍能与注册表匹配（链接进已有仓库是正常用法） | 面板徽标 |
 | 慢卷 / 网络卷 | 列举 + 注册表读取全在后台队列（注册表最坏阻塞 6s），主线程只渲染；`loadToken` 保证慢的那次结果不会覆盖新的 | — |
@@ -121,9 +121,9 @@ manual: false
 
 ## 测试与 QA
 
-- `tests/projects-panel/run.sh`（两段，本机实测 EXIT=0，**94 项 ok** = 模型 45 + 控制器 49）：
-  1. **模型层** `projects-tests.swift`（**45 项**）：默认根 / `resolvedRoot` 的四类来源（无配置、空白配置、绝对路径、`~` 展开、相对路径拒绝并标 `invalidConfig`、env 覆盖优先）/ `validateName` 十例（含 64 与 65 字符边界、trim）/ `workspacePath`（不产生双斜杠）/ `listDirectories`（普通目录入选、普通文件跳过、隐藏项跳过、**目录符号链接入选**、文件符号链接跳过、排序大小写不敏感、根不存在 → `[]`、mtime）/ `merge` 九例（canonical 匹配、尾斜杠、符号链接、空注册表、`sessionCount = sessionIds.count`）；
-  2. **控制器无头冒烟** `controller-tests.swift`（**49 项**）：`NSApplication.shared` + 临时 `DSH_HOME` + 真实 `PanelSurface`/`ProjectsCore`/`ProjectsPanel`/`ShellConfig`/`DshWebRPC` + **假传输**（`DshWebRPC.perform`）——列表与徽标文案、非法名不建目录也不发请求、建目录真的落盘且请求体为 `workspace/create` 的 `payload.args.request.path`、无服务时目录保留 + 「尚未注册」、六个入口回调 `(path, target)`（含逐个 target）、新会话回调、点卡片 = 在 dsh 中打开、当前工作区标记落在哪张卡、配置换根后重列；
+- `tests/projects-panel/run.sh`（两段，本机实测 EXIT=0，**108 项 ok** = 模型 53 + 控制器 55）：
+  1. **模型层** `projects-tests.swift`（**53 项**）：默认根 / `resolvedRoot` 的四类来源（无配置、空白配置、绝对路径、`~` 展开、相对路径拒绝并标 `invalidConfig`、env 覆盖优先）/ `validateName` 十例（含 64 与 65 字符边界、trim）/ `workspacePath`（不产生双斜杠）/ `listDirectories`（普通目录入选、普通文件跳过、隐藏项跳过、**目录符号链接入选**、文件符号链接跳过、排序大小写不敏感、根不存在 → `[]`、mtime）/ `merge` 九例（canonical 匹配、尾斜杠、符号链接、空注册表、`sessionCount = sessionIds.count`）/ `ensureDirectory` 四例（建多级缺失根、幂等、空路径拒绝、普通文件不误报）/ `existingDirectoryForPicker` 四例（现存根原样、缺失根退最近祖先、文件退父目录、空路径 → nil）；
+  2. **控制器无头冒烟** `controller-tests.swift`（**55 项**）：`NSApplication.shared` + 临时 `DSH_HOME` + 真实 `PanelSurface`/`ProjectsCore`/`ProjectsPanel`/`ShellConfig`/`DshWebRPC` + **假传输**（`DshWebRPC.perform`）——列表与徽标文案、非法名不建目录也不发请求、建目录真的落盘且请求体为 `workspace/create` 的 `payload.args.request.path`、无服务时目录保留 + 「尚未注册」、六个入口回调 `(path, target)`（含逐个 target）、新会话回调、点卡片 = 在 dsh 中打开、当前工作区标记落在哪张卡、配置换根后重列、默认根缺失时 `reload()` 建根且不再渲染 `projects.rootMissing`；
      `041d1bd` 新增的 10 项：未注册卡片 `canUseDshActions == false`、点卡片与「新会话」**都不触达壳层**（回调计数不变）且状态行是 `projects.needsWorkspace`、六个入口里未注册目录**仍然转发**、注册动作向假传输发出 `<root>/beta` 的 `workspace/create`、状态行 `projects.registerDone`、用 `writeStore()` 模拟 dsh 侧落盘后 `reload()` 即翻「已注册」且 `canUseDshActions == true`、「新会话」随之可用；
 - 测试基建注意点：上面「注册被拒」那条用例会让 `DshWebRPC` 把该端点的**面钉到 legacy**（既有设计：只有 404/405 才降级），而假传输只实现 modern 形状 —— 所以注册用例前必须 `DshWebRPC.resetForTests()`（并重设 `token`）。这是测试管线，不是产品行为；
 - `tests/dsh-rpc/run.sh`（整套 54 项）新增 `DshWorkspaceOps` **14 条断言**：`register` 5（解析 `workspaceId`、`args.request.path`、`created:false` 仍解析、端点缺失 → nil、返回体无 id → nil）、`createSession` 6（先带 `workspaceId`、被拒退回 `cwd`、**恰好两次**请求、无 `workspaceId` 时一次请求）、`newestSessionId` 3（running 优先于 updatedAt、无 running 取最新、无会话 → nil）；

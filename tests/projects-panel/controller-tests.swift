@@ -150,6 +150,14 @@ let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 700),
 window.contentView = panel.view
 window.contentView?.layoutSubtreeIfNeeded()
 test("panel is mounted", panel.view.window != nil && panel.view.frame.width > 1)
+// The panel root view is mounted DIRECTLY as an NSSplitView pane by main.swift.
+// A pane that opts out of autoresizing (translatesAutoresizingMaskIntoConstraints
+// = false) makes NSSplitView.setPosition a no-op, so the split sizes it to the
+// fitting content width (~190pt here) instead of the saved/default width —
+// that is why the projects panel opened ~260pt wide on first use. Guard the
+// frame-based contract every other panel root already keeps.
+test("the panel root stays frame-based for the split view",
+     panel.view.translatesAutoresizingMaskIntoConstraints)
 
 // MARK: - Listing
 
@@ -321,13 +329,13 @@ ShellConfig.shared.removeObject(forKey: ProjectsCore.configKey)
 panel.reload()
 test("the default root is <DSH_HOME>/oh-my-dsh/projects",
      waitUntil(3) { panel.rootPath == ProjectsCore.defaultRoot(dshHome: home) })
-test("a missing default root lists nothing and is not created",
+test("a missing default root is created on load",
+     waitUntil(3) { fm.fileExists(atPath: ProjectsCore.defaultRoot(dshHome: home)) })
+test("a freshly created root just lists nothing (no rootMissing message)",
      waitUntil(3) { panel.workspaces.isEmpty }
-        && !fm.fileExists(atPath: ProjectsCore.defaultRoot(dshHome: home)))
+        && !labels(panel.view).contains { $0.hasPrefix("projects.rootMissing") })
 test("the empty state is offered when there is no workspace",
      waitUntil(2) { panel.isEmptyStateVisible })
-test("a missing root is reported in the panel",
-     waitUntil(2) { labels(panel.view).contains { $0.hasPrefix("projects.rootMissing") } })
 
 // MARK: - Cleanup
 
