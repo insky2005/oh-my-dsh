@@ -76,4 +76,52 @@ test("terminal auto-copy defaults to on", TerminalView.autoCopyEnabled)
 ShellConfig.shared.set(false, forKey: TerminalView.autoCopyKey)
 test("terminal auto-copy follows the setting", !TerminalView.autoCopyEnabled)
 
+// MARK: - IME / input-method pre-edit (NSTextInputClient)
+//
+// The terminal IS the text buffer, so the only composer state the view keeps is
+// the pending pre-edit. These tests pin the NSTextInputClient bookkeeping that
+// lets macOS keep the input method engaged; none of them opens a PTY (session is
+// nil, so a commit is a no-op write).
+
+let term = TerminalView(emulator: TerminalEmulator(rows: 24, cols: 80), session: nil)
+
+test("no composition initially",
+     !term.hasMarkedText() && term.markedRange().location == NSNotFound)
+
+term.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0),
+                   replacementRange: NSRange(location: NSNotFound, length: 0))
+test("a pre-edit becomes marked text",
+     term.hasMarkedText() && term.markedRange() == NSRange(location: 0, length: 2))
+test("the insertion point sits after the pre-edit",
+     term.selectedRange() == NSRange(location: 2, length: 0))
+test("the pre-edit is addressable as the attributed substring",
+     term.attributedSubstring(forProposedRange: NSRange(location: 0, length: 2),
+                              actualRange: nil)?.string == "ni")
+test("a range outside the pre-edit has no substring",
+     term.attributedSubstring(forProposedRange: NSRange(location: 5, length: 2),
+                              actualRange: nil) == nil)
+test("marked-text attributes advertise the underline",
+     term.validAttributesForMarkedText().contains(.underlineStyle))
+
+term.insertText("你", replacementRange: NSRange(location: NSNotFound, length: 0))
+test("committing clears the composition",
+     !term.hasMarkedText() && term.markedRange().location == NSNotFound)
+
+term.setMarkedText("hao", selectedRange: NSRange(location: 3, length: 0),
+                   replacementRange: NSRange(location: NSNotFound, length: 0))
+term.unmarkText()
+test("cancelling clears the composition", !term.hasMarkedText())
+
+// An empty marked string unmarks per the protocol docs.
+term.setMarkedText("x", selectedRange: NSRange(location: 1, length: 0),
+                   replacementRange: NSRange(location: NSNotFound, length: 0))
+term.setMarkedText("", selectedRange: NSRange(location: 0, length: 0),
+                   replacementRange: NSRange(location: NSNotFound, length: 0))
+test("an empty marked string unmarks", !term.hasMarkedText())
+
+// Without a window the candidate-window anchor degrades to the origin.
+test("firstRect degrades to zero without a window",
+     term.firstRect(forCharacterRange: NSRange(location: 0, length: 0),
+                    actualRange: nil) == .zero)
+
 print("done")
