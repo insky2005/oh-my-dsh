@@ -47,7 +47,7 @@ async function runOrdinarySequence(texts, { projectRoot = '/Users/loie/repo/alph
   const dshHome = fs.mkdtempSync(path.join(os.tmpdir(), 'chan-orb-'));
   saveChannelAccount('wx-o', { botToken: 'bt', baseUrl: 'https://x' }, dshHome);
   // project switch ON for the sequence's project
-  const cw = path.join(dshHome, 'channels');
+  const cw = path.join(dshHome, 'oh-my-dsh', 'channels');
   fs.mkdirSync(cw, { recursive: true });
   fs.writeFileSync(path.join(cw, 'wx-o.workspaces.json'), JSON.stringify({ ws: projectRoot }), 'utf8');
   let sent = []; let first = true; let queued = [];

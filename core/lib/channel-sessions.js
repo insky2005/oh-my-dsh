@@ -21,14 +21,14 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const crypto = require('node:crypto');
+const shellPaths = require('./shell-paths');
 
 /** Max messages kept per bucket file (decision E). */
 const MAX_MESSAGES = 1000;
 
 function channelsDir(dshHome) {
-  return path.join(dshHome || process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'channels');
+  return shellPaths.channelsDir(dshHome);
 }
 
 /** Workspace key from a project root basename: keep A-Za-z0-9._- + CJK, else '-' (channel-storage.md §4). */

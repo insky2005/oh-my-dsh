@@ -133,8 +133,8 @@ $DSH_HOME/skills/issue-resolve/SKILL.md —— 代理在任务会话中加载的
 
 **改后的解析顺序（只剩文件两级）**：
 
-1. 文件专属：`$DSH_HOME/tokens/<owner>-<repo>`（默认 `~/.dsh/tokens/<owner>-<repo>`）；
-2. 文件通用：`$DSH_HOME/gh-token`（App 与外部工具 / 代理共用同一份）。
+1. 文件专属：`$DSH_HOME/oh-my-dsh/tokens/<owner>-<repo>`（默认 `~/.dsh/oh-my-dsh/tokens/<owner>-<repo>`）；
+2. 文件通用：`$DSH_HOME/oh-my-dsh/gh-token`（App 与外部工具 / 代理共用同一份）。
 
 **保存**：只写文件专属（原子写 + `chmod 600`）；输入留空 = 删除该文件。面板提示同步改为文件口径。
 

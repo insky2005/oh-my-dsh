@@ -29,7 +29,7 @@ func freshHome(_ tag: String) -> String {
     return dir
 }
 
-func configPath(_ home: String) -> String { home + "/shell/config.json" }
+func configPath(_ home: String) -> String { home + "/oh-my-dsh/shell/config.json" }
 
 func json(_ home: String) -> [String: Any] {
     guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath(home))),
@@ -91,7 +91,7 @@ func testMigrationRunsOnce() {
 func testExistingConfigWins() {
     let home = freshHome("existing")
     clearLegacyDefaults(ShellConfig.legacyUserDefaultsKeys)
-    try? FileManager.default.createDirectory(atPath: home + "/shell", withIntermediateDirectories: true)
+    try? FileManager.default.createDirectory(atPath: home + "/oh-my-dsh/shell", withIntermediateDirectories: true)
     try? Data("{\"browserRenderMode\": \"osr\"}".utf8).write(to: URL(fileURLWithPath: configPath(home)))
     UserDefaults.standard.set("windowed", forKey: "browserRenderMode")
     UserDefaults.standard.synchronize()

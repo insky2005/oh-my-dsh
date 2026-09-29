@@ -1491,22 +1491,25 @@ final class IssueRunnerPanelController: NSObject {
     // MARK: - GitHub token (per-repo scoped, FILE ONLY)
 
     /// Shared generic token file: the single place a user can drop a token for
-    /// BOTH the app shell and external tools/agents (`${DSH_HOME:-$HOME/.dsh}/gh-token`).
+    /// BOTH the app shell and external tools/agents
+    /// (`${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/gh-token`).
     /// Resolved dsh home ($DSH_HOME or ~/.dsh) — dev builds use ~/.dsh-dev.
-    private static let dshHomePath: String = {
-        if let h = ProcessInfo.processInfo.environment["DSH_HOME"],
-           !h.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return h.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return NSHomeDirectory() + "/.dsh"
-    }()
-    private static let genericTokenFilePath = dshHomePath + "/gh-token"
-    /// Per-repo token dir for file-based tokens: `${DSH_HOME:-$HOME/.dsh}/tokens/<owner>-<repo>`.
-    private static let tokenDir = dshHomePath + "/tokens"
+    private static let dshHomePath: String = { ShellPaths.home() }()
+    private static let genericTokenFilePath = ShellPaths.ghTokenPath(home: dshHomePath)
+    /// Per-repo token dir: `${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/tokens/<owner>-<repo>`.
+    private static let tokenDir = ShellPaths.tokensDir(home: dshHomePath)
+    /// Pre-refactor locations, read-only fallback for one transition release
+    /// (the startup migration normally already moved them).
+    private static let legacyGenericTokenFilePath = dshHomePath + "/gh-token"
+    private static let legacyTokenDir = dshHomePath + "/tokens"
 
-    /// Per-repo token file path: ~/.dsh/tokens/<owner>-<repo>.
+    /// Per-repo token file path: .../oh-my-dsh/tokens/<owner>-<repo>.
     private static func tokenFilePath(for repo: (owner: String, repo: String)) -> String {
-        tokenDir + "/" + repo.owner + "-" + repo.repo
+        (tokenDir as NSString).appendingPathComponent(repo.owner + "-" + repo.repo)
+    }
+
+    private static func legacyTokenFilePath(for repo: (owner: String, repo: String)) -> String {
+        (legacyTokenDir as NSString).appendingPathComponent(repo.owner + "-" + repo.repo)
     }
 
     private func readTokenFile(_ path: String) -> String? {
@@ -1520,15 +1523,20 @@ final class IssueRunnerPanelController: NSObject {
     /// Keychain is no longer read; the panel writes the very files external
     /// tools/agents read, so there is exactly one place to look and no password
     /// prompt can ever appear):
-    ///   1. File  ~/.dsh/tokens/<owner>-<repo>   (per-repo, written by the panel)
-    ///   2. File  ~/.dsh/gh-token                (generic, shared with agents)
+    ///   1. File  ~/.dsh/oh-my-dsh/tokens/<owner>-<repo>   (per-repo, written by the panel)
+    ///   2. File  ~/.dsh/oh-my-dsh/gh-token                (generic, shared with agents)
+    ///   3. Legacy ~/.dsh/tokens/… and ~/.dsh/gh-token      (read-only fallback)
     private func loadToken(for repo: (owner: String, repo: String)? = nil) -> String? {
-        if let repo = repo, let t = readTokenFile(Self.tokenFilePath(for: repo)) { return t }
+        if let repo = repo {
+            if let t = readTokenFile(Self.tokenFilePath(for: repo)) { return t }
+            if let t = readTokenFile(Self.legacyTokenFilePath(for: repo)) { return t }
+        }
         return readTokenFile(Self.genericTokenFilePath)
+            ?? readTokenFile(Self.legacyGenericTokenFilePath)
     }
 
     /// Save a token scoped to the current repo — **writes only the file**
-    /// (~/.dsh/tokens/<owner>-<repo>, atomic + chmod 600), which is the very file
+    /// (~/.dsh/oh-my-dsh/tokens/<owner>-<repo>, atomic + chmod 600), which is the very file
     /// external tools and agents read. With no repo resolved (the panel is open
     /// in a non-GitHub workspace) it writes the generic file instead.
     /// Clearing (empty string) deletes that file.

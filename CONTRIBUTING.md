@@ -106,7 +106,7 @@ test(core): migrate emulator tests into core/      # 测试
 - macOS 源码清单以 `platforms/macos/swift-sources.sh` 为**单一事实来源**（glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，`build-app.sh` / `scripts/local-ci.sh` / `.github/workflows/ci.yml` 三方共用，新增文件无需逐个登记）；仅当新文件是**独立工具**（含顶层代码，如 `MakeIcon.swift`）时才需在 `swift_sources()` 里显式排除；
 - 新增面板需配套模型层单测（`tests/<name>/run.sh` 模式；平台无关逻辑放 `core/tests/*.test.js`，随 `node --test core/tests/` 跑）；
 - **文档与实现同步**：改动 Channel 指令时同步更新 `docs/channel-commands.md`（维护说明见该文档文末）；面板/核心行为变更同步 `docs/channel-status.md`；
-- **GitHub token 不外泄**：需要 GitHub 写操作（开 PR、评论/关闭 issue、推私有仓库）时读取 `~/.dsh/tokens/<owner>-<repo>`（通用兜底 `~/.dsh/gh-token`），**绝不打印/回显/写入 commit message**。
+- **GitHub token 不外泄**：需要 GitHub 写操作（开 PR、评论/关闭 issue、推私有仓库）时读取 `~/.dsh/oh-my-dsh/tokens/<owner>-<repo>`（通用兜底 `~/.dsh/oh-my-dsh/gh-token`），**绝不打印/回显/写入 commit message**。
 
 ## PR 流程
 

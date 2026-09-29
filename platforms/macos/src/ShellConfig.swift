@@ -1,7 +1,7 @@
 import Foundation
 
 /// Language-agnostic shell settings, persisted as plain JSON at
-/// `$DSH_HOME/shell/config.json` (canonical implementation + CLI live in the
+/// `$DSH_HOME/oh-my-dsh/shell/config.json` (canonical implementation + CLI live in the
 /// shared core: core/lib/settings.js / `ohmy-core settings …`).
 ///
 /// Any language can read that file. To keep a single implementation of the
@@ -38,7 +38,7 @@ final class ShellConfig {
     }
 
     var filePath: String {
-        ((home as NSString).appendingPathComponent("shell") as NSString).appendingPathComponent("config.json")
+        (ShellPaths.shellDir(home: home) as NSString).appendingPathComponent("config.json")
     }
 
     /// Legacy UserDefaults keys the shell owns. Before 1.14 every one of these

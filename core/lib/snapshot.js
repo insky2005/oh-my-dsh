@@ -29,7 +29,8 @@ const REASONS = ['bootstrap', 'combo-change', 'dsh-upgrade', 'pre-rollback'];
 
 /** $DSH_HOME entries a data snapshot must NEVER copy (see design doc §3). */
 const SNAPSHOT_EXCLUDES = [
-  'shell',            // our own state — includes dsh-web.json with the launch token
+  'oh-my-dsh',        // the shell data root (settings/state/snapshots/browser/channels/tokens)
+  'shell',            // legacy location of our own state — includes dsh-web.json with the launch token
   'credentials',
   'credentials.yaml',
   '.credentials.yaml',

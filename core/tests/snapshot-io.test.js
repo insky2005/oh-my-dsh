@@ -27,12 +27,12 @@ function makeHome() {
   seedSession(home, '--work-a--', 'session-new', ['session.v3.jsonl.zstd']);
   fs.mkdirSync(path.join(home, 'storages'), { recursive: true });
   fs.writeFileSync(path.join(home, 'storages', 'workspace.json'), '{"unit":{"name":"workspace","version":2}}');
-  fs.mkdirSync(path.join(home, 'shell'), { recursive: true });
-  fs.writeFileSync(path.join(home, 'shell', 'dsh-web.json'), '{"token":"SECRET"}');
+  fs.mkdirSync(path.join(home, 'oh-my-dsh', 'shell'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'oh-my-dsh', 'shell', 'dsh-web.json'), '{"token":"SECRET"}');
   fs.mkdirSync(path.join(home, 'credentials'), { recursive: true });
   fs.writeFileSync(path.join(home, 'credentials', 'key'), 'secret');
-  fs.mkdirSync(path.join(home, 'browser'), { recursive: true });
-  fs.writeFileSync(path.join(home, 'browser', 'big'), 'x');
+  fs.mkdirSync(path.join(home, 'oh-my-dsh', 'browser'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'oh-my-dsh', 'browser', 'big'), 'x');
   return home;
 }
 
@@ -60,7 +60,7 @@ test('snapshot-io: a snapshot copies sessions + storages and nothing else', () =
   assert.equal(made.meta.dshTree, null);
   assert.ok(fs.existsSync(path.join(made.dir, 'sessions', '--work-a--', 'session-old', 'session.jsonl.zstd')));
   assert.ok(fs.existsSync(path.join(made.dir, 'storages', 'workspace.json')));
-  for (const forbidden of ['shell', 'credentials', 'browser']) {
+  for (const forbidden of ['oh-my-dsh', 'shell', 'credentials', 'browser']) {
     assert.equal(fs.existsSync(path.join(made.dir, forbidden)), false, forbidden + ' must not be copied');
   }
   assert.equal(fs.readdirSync(path.join(made.dir)).filter((n) => n.startsWith('.tmp-')).length, 0);

@@ -10,8 +10,9 @@ CACHE="$(cd ../../.build/module-cache && pwd)"
 TMP="$(mktemp -d)"
 cp stubs.swift "$TMP/stubs.swift"
 cp ../../platforms/macos/src/ShellConfig.swift "$TMP/ShellConfig.swift"
+cp ../../platforms/macos/src/ShellPaths.swift "$TMP/ShellPaths.swift"
 cp shell-config-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" -framework Foundation \
-  -o "$TMP/shell-config-tests" "$TMP/stubs.swift" "$TMP/ShellConfig.swift" "$TMP/main.swift"
+  -o "$TMP/shell-config-tests" "$TMP/stubs.swift" "$TMP/ShellConfig.swift" "$TMP/ShellPaths.swift" "$TMP/main.swift"
 "$TMP/shell-config-tests"
 rm -rf "$TMP"

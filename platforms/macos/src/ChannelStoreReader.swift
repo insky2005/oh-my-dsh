@@ -30,11 +30,9 @@ struct ChannelSessionVM {
 
 enum ChannelStoreReader {
 
-    /// The global channels dir: DSH_HOME (default ~/.dsh)/channels.
+    /// The global channels dir: DSH_HOME (default ~/.dsh)/oh-my-dsh/channels.
     static func channelsDir(dshHome: String? = nil) -> String {
-        let env = ProcessInfo.processInfo.environment["DSH_HOME"]
-        let home = dshHome ?? env ?? (NSHomeDirectory() + "/.dsh")
-        return (home as NSString).appendingPathComponent("channels")
+        return ShellPaths.channelsDir(home: dshHome)
     }
 
     /// Workspace key derivation mirroring core/lib/channel-sessions.js workspaceKey().

@@ -39,20 +39,21 @@
 
 | 资源 | 内容 | 位置 | 生成时机 | 实测成本 |
 |---|---|---|---|---|
-| **数据快照** | `sessions/` + `storages/` | `$DSH_HOME/shell/snapshots/<id>/` | 启动前（组合变化）、升级事务、回退前现场 | 306 MB / 246 文件 → clonefile **0.124 s**、实占≈0 |
-| **树池** | `runtime/dsh` 整棵树，**按 dsh 版本去重** | `$DSH_HOME/shell/snapshots/trees/<dshVersion>/` | 每次启动自查：当前版本不在池里则 clone | 256 MB / 24,872 文件 → **5–6 s**、实占 ~14 MB（**每个版本只一次**） |
+| **数据快照** | `sessions/` + `storages/` | `$DSH_HOME/oh-my-dsh/shell/snapshots/<id>/` | 启动前（组合变化）、升级事务、回退前现场 | 306 MB / 246 文件 → clonefile **0.124 s**、实占≈0 |
+| **树池** | `runtime/dsh` 整棵树，**按 dsh 版本去重** | `$DSH_HOME/oh-my-dsh/shell/snapshots/trees/<dshVersion>/` | 每次启动自查：当前版本不在池里则 clone | 256 MB / 24,872 文件 → **5–6 s**、实占 ~14 MB（**每个版本只一次**） |
 | **回退现场** | 回退前的 `sessions/storages`（使回退可撤销） | 同数据快照，reason=pre-rollback | 回退事务第 ② 步（rename，瞬时） | 0 |
-| **隔离区** | 快照里不存在的会话目录（新世代新建的） | `$DSH_HOME/shell/snapshots/quarantine/<ts>/sessions/…` | 回退事务第 ③ 步 | 0（rename） |
-| **状态** | dataCombo / history / rollback | `$DSH_HOME/shell/dsh-state.json` | 每次快照/回退 | 几十字节 |
+| **隔离区** | 快照里不存在的会话目录（新世代新建的） | `$DSH_HOME/oh-my-dsh/shell/snapshots/quarantine/<ts>/sessions/…` | 回退事务第 ③ 步 | 0（rename） |
+| **状态** | dataCombo / history / rollback | `$DSH_HOME/oh-my-dsh/shell/dsh-state.json` | 每次快照/回退 | 几十字节 |
 
-**明确排除**（不进快照、不回退）：`shell/`（我们自己的配置，含 `dsh-web.json` 里的 **launch token**，绝不复制）、
+**明确排除**（不进快照、不回退）：`oh-my-dsh/`（壳层数据根：shell 配置/状态/快照、browser profile、channels、tokens 全部在此，含 `dsh-web.json` 里的 **launch token**，绝不复制）、
 `credentials*` / `profiles` / `settings.yaml`（密钥与账号）、`channels/`（通道绑定与消息状态，回退会丢绑定）、
-`browser/`、`browser-dev/`（CEF profile，约 292 MB 且与世代无关）、`skills/`（无世代耦合）、`attachments/`、`tokens/`。
+`browser/`（CEF profile，约 292 MB 且与世代无关）、`skills/`（无世代耦合）、`attachments/`、`tokens/`。
+（旧布局的 `shell/`、`browser-dev/`、`channels/`、`tokens/` 仍留在 `core/lib/snapshot.js` 的排除表里，兼容尚未迁移的 home；新 `SNAPSHOT_INCLUDES` 只含 `sessions/`、`storages/`。）
 
 ## 4. 文件布局与结构
 
 ```
-$DSH_HOME/shell/
+$DSH_HOME/oh-my-dsh/shell/
   dsh-state.json                      # 唯一参与判断的状态文件
   snapshot.lock                       # 快照/回退互斥锁
   rollback-journal.json               # 回退事务日志（完成后删除）

@@ -25,15 +25,15 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 | 组件 | 状态 | 实现位置 | 说明 |
 |---|---|---|---|
 | 统一抽象层（ChannelEvent / ChannelReply / 状态机 / Router / 管理编排） | ✅ | core/lib/channel.js | 5 态状态机、路由优先级（显式绑定 > 关键词 > 默认）、createChannelManager 编排、jobqueue.source="remote" 串行 |
-| 凭据/配置存储 | ✅ | core/lib/channel-store.js | `~/.dsh/channels/<id>.json`（文件优先，chmod 600），App 与 CLI/代理共用；面板元数据存 UserDefaults |
+| 凭据/配置存储 | ✅ | core/lib/channel-store.js | `~/.dsh/oh-my-dsh/channels/<id>.json`（文件优先，chmod 600），App 与 CLI/代理共用；面板元数据存 UserDefaults |
 | 微信 ClawBot 适配器（M2） | ✅ | core/lib/weixin-clawbot.js + weixin-clawbot-transport.js | 纯官方 iLink 协议（@tencent-weixin/openclaw-weixin 2.4.6 官方源码推导）；**严格串行长轮询**（修复 setInterval 破坏游标导致重复回复，见 channel-issues.md） |
 | 消息分发 Router + 会话驱动（M3） | ✅ | core/lib/channel.js（router）+ core/lib/session-driver.js + core/lib/channel-runner.js | 已在真实 dsh web 端到端验证 |
 | dsh API 传输层（0.1.1 点号 ⇄ 0.1.2 斜杠端点 + token cookie） | ✅ | core/lib/dsh-rpc.js + core/lib/workspace-store.js | 一元 RPC 双面兼容：先试 0.1.2 斜杠端点/`payload.args` 信封，404 再回退老点号方法；0.1.2 的 /api 用 `GET /?token=…` 换来的 cookie 鉴权（壳层经 `--dsh-token` 传入）；**0.1.2 无 workspace.list**，工作区列表回退 dsh 持久化的 `$DSH_HOME/storages/workspace.json`；连接会话列表走 session/list、回复走 session/page。见 docs/plans/dsh-012rc1-compat-audit.md §九 |
 | workspace 代号 + #tag 路由 | ✅ | core/lib/channel-workspaces.js | /wks 分配 #wN、#tag 路由（代号精确 > workspace 名）、回退规则（最近 → 第一个） |
 | 指令解析与执行 v2 | ✅ | core/lib/channel-commands.js + core/lib/channel-runner.js | /help /ping /status /workspaces(/wks) /sessions(/ses) /new，快捷 #wN/#sN；清单见 channel-commands.md |
 | 异步应答 + 忙门 + sendTyping | ✅ | core/lib/channel-runner.js、weixin-clawbot-transport.js | sendTyping 替代「处理中」文字（微信原生「正在输入…」）+ 后台生成 + 结果回推；同 conversation 在途时后续消息回「请等待」不入队（见 channel-association-model.md §8） |
-| 快捷指令 #wN / #sN | ✅ | core/lib/channel-runner.js | 纯代号快捷切换；通道级状态持久化 `~/.dsh/channels/<id>.state.json`（lastWorkspace / 会话映射 / activeSession，重启可恢复） |
-| 会话映射 + 消息持久化（决策 E，channel 作用域） | ✅ | core/lib/channel-sessions.js | **已全局化**：`~/.dsh/channels/<id>.sessions.json` + `<id>.workspaces.json` + `<id>.<workspaceKey>.<sessionId>.messages.json` 分桶（无会话入 system 桶）；项目目录不再产生消息/会话文件；MAX_MESSAGES=1000 滚动 |
+| 快捷指令 #wN / #sN | ✅ | core/lib/channel-runner.js | 纯代号快捷切换；通道级状态持久化 `~/.dsh/oh-my-dsh/channels/<id>.state.json`（lastWorkspace / 会话映射 / activeSession，重启可恢复） |
+| 会话映射 + 消息持久化（决策 E，channel 作用域） | ✅ | core/lib/channel-sessions.js | **已全局化**：`~/.dsh/oh-my-dsh/channels/<id>.sessions.json` + `<id>.workspaces.json` + `<id>.<workspaceKey>.<sessionId>.messages.json` 分桶（无会话入 system 桶）；项目目录不再产生消息/会话文件；MAX_MESSAGES=1000 滚动 |
 | 会话复用（A）+ 工作区归属（C）+ 路由统一（B） | ✅ | session-driver.js、channel-runner.js、channel.js | sessionDriver.run 复用 event.sessionId；普通消息以 workspaceId 归属工作区；resolveRefBinding 先 refs 绑定后 workspace-tag 兜底（见 channel-association-model.md §7） |
 | 第二优先级指令（/commit /test /issue /repo /clear /route /pwd） | 📋 | — | 后续（channel-ui-commands.md §3.3） |
 
@@ -43,7 +43,7 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 |---|---|---|
 | 面板插槽（右栏 `rightPanelKind=channel` + 菜单显示/隐藏） | ✅ | main.swift 集成 |
 | v2 状态机（引导页 ↔ 全局配置 ↔ 项目视图，顶部「全局配置」重开） | ✅ | ChannelPanelController |
-| 引导卡片（微信 ClawBot / 钉钉 / 飞书 + 状态徽标） | ✅ | ChannelCardView（全宽卡片、SF 图标、外观自适应背景）；徽标打开视图时读 `~/.dsh/channels/<id>.state.json`，不轮询 |
+| 引导卡片（微信 ClawBot / 钉钉 / 飞书 + 状态徽标） | ✅ | ChannelCardView（全宽卡片、SF 图标、外观自适应背景）；徽标打开视图时读 `~/.dsh/oh-my-dsh/channels/<id>.state.json`，不轮询 |
 | 扫码登录向导（提示 → 二维码 → 绑定成功） | ✅ | CIQRCodeGenerator **面板内渲染二维码**（不弹浏览器）；调 core `channel login --save`；成功后自动拉起 runner |
 | 项目视图（Channel 行 + NSSwitch 开关 + 可展开会话 + 消息列表） | ✅ | ProjectRowView + ChannelSessionRow；开关写 `.dsh/channels.json` 引用；会话/消息读全局 store（ChannelStoreReader，D） |
 | 启动自动拉起 / 退出关闭 runner | ✅ | applicationDidFinishLaunching → startConfiguredChannelRunners()（已启用全局 channel 逐个拉起）；退出 terminate 清理；同 channelId 去重 |

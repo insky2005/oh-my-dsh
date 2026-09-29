@@ -30,11 +30,10 @@ enum WikiPaths {
     }
 
     /// Default in-repo wiki root: <repoRoot>/.dsh/wiki/
-    /// Configurable alternative: $DSH_HOME/repo-wiki/<stable-hash-of-repo>/
+    /// Configurable alternative: $DSH_HOME/oh-my-dsh/repo-wiki/<stable-hash-of-repo>/
     static func wikiRoot(for repoRoot: String) -> String {
         if rootMode == "dsh-home" {
-            let home = ProcessInfo.processInfo.environment["DSH_HOME"] ?? (NSHomeDirectory() + "/.dsh")
-            return (home as NSString).appendingPathComponent("repo-wiki/\(stableHash(repoRoot))")
+            return (ShellPaths.repoWikiDir() as NSString).appendingPathComponent(stableHash(repoRoot))
         }
         return (repoRoot as NSString).appendingPathComponent(".dsh/wiki")
     }

@@ -612,7 +612,7 @@ enum L10n {
         "tasks.errDirtyTree": ("工作区有未提交改动，已停止切换分支（请先 commit 或 stash）", "The worktree has uncommitted changes; branch switching stopped (commit or stash first)"),
         "tasks.errPull": ("拉取基线分支失败（网络不通或分支已分叉？）", "Failed to pull the base branch (no network, or the branch diverged?)"),
         "tasks.configTitle": ("GitHub Token", "GitHub Token"),
-        "tasks.configInfo": ("GitHub token（只写文件：有当前仓库时写 ~/.dsh/tokens/<owner>-<repo>，否则写通用 ~/.dsh/gh-token；chmod 600，App 与外部工具共用）。解析顺序：文件专属 → 文件通用；不再读取 macOS 钥匙串。仅用于拉取 issues、创建 PR、评论关闭 issue；公开仓库可留空。", "GitHub token (written to a FILE only: ~/.dsh/tokens/<owner>-<repo> when a repo is known, otherwise the generic ~/.dsh/gh-token; chmod 600, shared with external tools). Resolution: per-repo file → generic file; the macOS Keychain is no longer read. Used only to fetch issues, create PRs, comment & close issues; public repos may leave empty."),
+        "tasks.configInfo": ("GitHub token（只写文件：有当前仓库时写 ~/.dsh/oh-my-dsh/tokens/<owner>-<repo>，否则写通用 ~/.dsh/oh-my-dsh/gh-token；chmod 600，App 与外部工具共用）。解析顺序：文件专属 → 文件通用；不再读取 macOS 钥匙串。仅用于拉取 issues、创建 PR、评论关闭 issue；公开仓库可留空。", "GitHub token (written to a FILE only: ~/.dsh/oh-my-dsh/tokens/<owner>-<repo> when a repo is known, otherwise the generic ~/.dsh/oh-my-dsh/gh-token; chmod 600, shared with external tools). Resolution: per-repo file → generic file; the macOS Keychain is no longer read. Used only to fetch issues, create PRs, comment & close issues; public repos may leave empty."),
         "tasks.tokenPlaceholder": ("ghp_xxx（可选）", "ghp_xxx (optional)"),
         "tasks.detailPR": ("PR：%@", "PR: %@"),
         "tasks.state.pending": ("待处理", "Pending"),
@@ -1818,14 +1818,11 @@ final class ServerManager {
         var appPid: Int32?
     }
 
-    /// `$DSH_HOME/shell/dsh-web.json` — the instance this shell spawned last.
+    /// `$DSH_HOME/oh-my-dsh/shell/dsh-web.json` — the instance this shell spawned last.
     private static func recordPath() -> String {
-        let env = ProcessInfo.processInfo.environment["DSH_HOME"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let home = env.isEmpty ? (NSHomeDirectory() + "/.dsh") : env
-        let dir = home + "/shell"
+        let dir = ShellPaths.shellDir()
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        return dir + "/dsh-web.json"
+        return (dir as NSString).appendingPathComponent("dsh-web.json")
     }
 
     private static func writeRecord(pid: Int32, port: Int, token: String?) {
@@ -2230,9 +2227,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         NSApp.setActivationPolicy(.regular)
         // 开发版隔离（独立实例 + 独立 DSH_HOME + 错开端口）必须在任何配置读取
-        // （L10n/AppTheme/Registry 走 ShellConfig = $DSH_HOME/shell/config.json）与
+        // （L10n/AppTheme/Registry 走 ShellConfig = $DSH_HOME/oh-my-dsh/shell/config.json）与
         // dsh web / CEF / skills / channel 启动之前注入环境变量。
         applyDevIsolation()
+        // 壳层数据收敛：$DSH_HOME 根 -> $DSH_HOME/oh-my-dsh/（幂等，见
+        // docs/storage-layout-refactor.md）。必须在任何 ShellConfig 读取之前完成。
+        let layoutMoved = ShellPaths.migrateLegacyLayout(home: dshDataHome)
+        if !layoutMoved.isEmpty {
+            AppLog.shared.log("shell data layout migrated: " + layoutMoved.joined(separator: ", "))
+        }
+        if isDevBuild { migrateLegacyDevBrowserProfile(toHome: dshDataHome) }
         // Snapshot the real system language BEFORE overriding AppleLanguages.
         L10n.captureSystemLang()
         // Make the WebView's navigator.language follow the shell language so
@@ -3897,7 +3901,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             // is on the registry — then let the CLI finish the transaction
             // (swap the tree, write the state file, clear the journal).
             AppLog.shared.log("snapshot rollback: data rolled back; filling the tree pool with dsh " + needed)
-            let poolDir = dshDataHome + "/shell/snapshots/trees/" + needed
+            let poolDir = (ShellPaths.shellDir(home: dshDataHome) as NSString)
+                .appendingPathComponent("snapshots/trees/" + needed)
             // Install from the committed lock when the app ships one for that
             // version (reproducible closure — see docs/dsh-version-impact.md R8).
             guard updater.installVersion(needed, into: poolDir, registry: RegistryConfig.current,
@@ -5749,16 +5754,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setRightPanel(rightPanel == .skills ? .none : .skills)
     }
     /// Run QR login for a channel via the core CLI, open the QR URL in the
-    /// browser, and save the token to ~/.dsh/channels/<channelId>.json.
+    /// browser, and save the token to ~/.dsh/oh-my-dsh/channels/<channelId>.json.
     /// completion(true) when login confirmed.
     private func runChannelLogin(channelId: String, onQRUrl: @escaping (String?) -> Void, completion: @escaping (Bool) -> Void) {
         guard let cli = CoreBridge.coreCLIPath, let node = ServerManager().resolveNode() else {
             completion(false)
             return
         }
-        let dshHome = dshDataHome
-        let savePath = ((dshHome as NSString).appendingPathComponent("channels") as NSString).appendingPathComponent(channelId + ".json")
-        try? FileManager.default.createDirectory(atPath: (dshHome as NSString).appendingPathComponent("channels"), withIntermediateDirectories: true)
+        let saveDir = ShellPaths.channelsDir(home: dshDataHome)
+        let savePath = (saveDir as NSString).appendingPathComponent(channelId + ".json")
+        try? FileManager.default.createDirectory(atPath: saveDir, withIntermediateDirectories: true)
 
         // DingTalk uses the device-code app-registration flow (channel login-dingtalk);
         // WeChat uses the ClawBot QR login (channel login). Dispatch by channel id prefix.
@@ -5903,7 +5908,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Unbind a channel: stop its runner and remove its local channel files.
     private func unbindChannel(channelId: String) {
         stopChannelRunner(channelId: channelId)
-        let dir = (dshDataHome as NSString).appendingPathComponent("channels")
+        let dir = ShellPaths.channelsDir(home: dshDataHome)
         let fm = FileManager.default
         if let files = try? fm.contentsOfDirectory(atPath: dir) {
             for f in files where f.hasPrefix(channelId) {
@@ -5937,8 +5942,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if explicitHome.isEmpty {
             let devHome = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh-dev")
             setenv("DSH_HOME", devHome, 1)
-            // 旧开发版把 CEF profile 放在 ~/.dsh/browser-dev；迁到新隔离目录保留数据。
-            migrateLegacyDevBrowserProfile(toHome: devHome)
         }
         // 2) 错开 CEF CDP / Browser API 端口（尊重显式覆盖）
         if env["DSH_CDP_PORT"].flatMap({ Int($0) }) == nil {
@@ -5952,24 +5955,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     /// 迁移旧开发版（隔离前）在共享 ~/.dsh 下创建的 CEF profile（~/.dsh/browser-dev）
-    /// 到新的开发隔离目录 ~/.dsh-dev/browser-dev，保留既有浏览器数据。幂等：
-    /// 源不存在或目标已存在（已迁过/已有新数据）则跳过，避免覆盖。
+    /// 到开发隔离目录的统一下落 <devHome>/oh-my-dsh/browser，保留既有浏览器数据。
+    /// 幂等：源不存在或目标已存在（已迁过/已有新数据）则跳过，避免覆盖。
     private func migrateLegacyDevBrowserProfile(toHome devHome: String) {
-        let fm = FileManager.default
-        let legacy = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh/browser-dev")
-        let dest = (devHome as NSString).appendingPathComponent("browser-dev")
-        guard fm.fileExists(atPath: legacy) else { return }
-        guard !fm.fileExists(atPath: dest) else {
-            AppLog.shared.log("dev isolation: legacy ~/.dsh/browser-dev exists, target \(dest) present — skip migrate")
-            return
-        }
-        try? fm.createDirectory(atPath: devHome, withIntermediateDirectories: true)
-        do {
-            try fm.moveItem(atPath: legacy, toPath: dest)
-            AppLog.shared.log("dev isolation: migrated \(legacy) -> \(dest)")
-        } catch {
-            AppLog.shared.log("dev isolation: browser-dev migrate failed: \(error.localizedDescription)")
-        }
+        let shared = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh")
+        guard ShellPaths.migrateLegacyDevBrowserProfile(sharedHome: shared, devHome: devHome) else { return }
+        AppLog.shared.log("dev isolation: migrated ~/.dsh/browser-dev -> " + ShellPaths.browserDir(home: devHome))
     }
 
     /// 本 App（shell 侧）读写 dsh 数据目录的实际路径：优先 $DSH_HOME（开发版已由
@@ -5987,15 +5978,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// CDP 端口：DSH_CDP_PORT 覆盖，默认 9333（与 BrowserCDP.port 一致）。
     private func startCEF() {
         let dshHome = ProcessInfo.processInfo.environment["DSH_HOME"] ?? (NSHomeDirectory() + "/.dsh")
-        // Chromium 数据全部收进 ~/.dsh/browser/ 专用子树：
-        //   root_cache_path = ~/.dsh/browser（单例锁/组件缓存）
-        //   cache_path      = ~/.dsh/browser/profile（profile 数据）
-        // 绝不把 root 指向 ~/.dsh 本身（会把 Chromium 文件洒进 dsh 主目录，
+        // Chromium 数据全部收进 $DSH_HOME/oh-my-dsh/browser/ 专用子树：
+        //   root_cache_path = .../oh-my-dsh/browser（单例锁/组件缓存）
+        //   cache_path      = .../oh-my-dsh/browser/profile（profile 数据）
+        // 绝不把 root 指向 $DSH_HOME 本身（会把 Chromium 文件洒进 dsh 主目录，
         // 曾因 cachePath=~/.dsh/browser-profile 导致 root=~/.dsh 污染）。
         // 调试钩子：--browser-cache-dir=<dir> 指定全新 profile。
-        // 开发版用独立 profile（~/.dsh/browser-dev），与正式版 ~/.dsh/browser 隔离，
-        // 可与正式版并存而不争抢（等价于追加 --browser-cache-dir=<dev profile>）。
-        let browserRoot = dshHome + (isDevBuild ? "/browser-dev" : "/browser")
+        // 开发版已由 applyDevIsolation() 使用独立 DSH_HOME（~/.dsh-dev），故正式版
+        // 与开发版本就隔离，无需再追加 browser-dev 后缀。
+        let browserRoot = ShellPaths.browserDir(home: dshHome)
         var cachePath = browserRoot + "/profile"
         if let idx = CommandLine.arguments.firstIndex(of: "--browser-cache-dir"),
            CommandLine.arguments.count > idx + 1 {
@@ -6063,7 +6054,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     /// Start the browser panel's localhost REST API (Agent / user curl).
     /// 端口：DSH_BROWSER_PORT 覆盖，默认 3081；被占用自动递增；生效端口写
-    /// $DSH_HOME/browser-api.port 供 web-dev-tools 技能发现。
+    /// $DSH_HOME/oh-my-dsh/browser-api.port 供 web-dev-tools 技能发现。
     private func startBrowserAPIServer() {
         let bridge = BrowserAPIBridge()
         bridge.panel = browserPanel
@@ -6098,14 +6089,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let envPort = ProcessInfo.processInfo.environment["DSH_BROWSER_PORT"].flatMap { Int($0) }
         let preferred = envPort ?? 3081
         let dshHome = ProcessInfo.processInfo.environment["DSH_HOME"] ?? (NSHomeDirectory() + "/.dsh")
-        let portFile = dshHome + "/browser-api.port"
+        let rootDir = ShellPaths.root(home: dshHome)
+        try? FileManager.default.createDirectory(atPath: rootDir, withIntermediateDirectories: true)
+        let portFile = ShellPaths.browserPortPath(home: dshHome)
         let port = server.start(preferredPort: preferred, delegate: bridge, portFile: portFile)
         // 同一份服务、同一个端口，第二个语义正确的发现文件：技能 task-todo 读
-        // $DSH_HOME/shell-api.port（浏览器面板的技能继续读 browser-api.port）。
+        // $DSH_HOME/oh-my-dsh/shell-api.port（浏览器面板的技能继续读 browser-api.port）。
         // 两个文件写同一个数字，谁先被读到都一样。
-        let shellPortFile = dshHome + "/shell-api.port"
+        let shellPortFile = ShellPaths.shellPortPath(home: dshHome)
         if port > 0 {
-            try? FileManager.default.createDirectory(atPath: dshHome, withIntermediateDirectories: true)
             try? "\(port)\n".write(toFile: shellPortFile, atomically: true, encoding: .utf8)
         }
         AppLog.shared.log(port > 0

@@ -6,7 +6,7 @@ func test(_ name: String, _ cond: Bool) {
 }
 
 let home = NSTemporaryDirectory() + "/chanpanel-" + UUID().uuidString
-let dir = (home as NSString).appendingPathComponent("channels")
+let dir = (home as NSString).appendingPathComponent("oh-my-dsh/channels")
 try! FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
 let projectA = "/Users/loie/repo/alpha"
 let projectB = "/Users/loie/repo/beta"

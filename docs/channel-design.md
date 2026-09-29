@@ -113,17 +113,17 @@
     }
 
 - 元数据（id/platform/name/enabled/state）存 UserDefaults（键形如 channel.global.<id>）。
-- **连接凭据不落 UserDefaults 明文**：沿用 GitHub token 模式——Keychain 专属 + 文件（~/.dsh/channels/<channelId>，chmod 600）双写，App 与外部工具/代理共用；读取优先文件、Keychain 兜底。
+- **连接凭据不落 UserDefaults 明文**：沿用 GitHub token 模式——Keychain 专属 + 文件（~/.dsh/oh-my-dsh/channels/<channelId>，chmod 600）双写，App 与外部工具/代理共用；读取优先文件、Keychain 兜底。
 
 **凭据读写决策（2026-08-21 记录，沿用既有 GitHub token 实现）：**
-- **读取硬性约束：绝不因读取弹密码/授权框。** 运行时一律**文件优先**（`~/.dsh/channels/<channelId>`），仅在文件缺失时兜底读 Keychain。正常路径全程零弹窗。
+- **读取硬性约束：绝不因读取弹密码/授权框。** 运行时一律**文件优先**（`~/.dsh/oh-my-dsh/channels/<channelId>`），仅在文件缺失时兜底读 Keychain。正常路径全程零弹窗。
 - **写入双写**（Keychain + 文件 chmod 600）。Keychain 条目用 `kSecAttrAccessibleAfterFirstUnlock` **且不设 per-app ACL**（对应 `IssueRunnerPanel.swift` 既有 `saveToken` 注释：token 为低敏感凭据，每次读取弹 ACL 提示对后台 shell 不可接受）——因此写入不弹「App 想要访问钥匙串」授权框。
 - **为何保留 Keychain（而非纯文件）**：① 兼容存量（老版本/命令行 `security` / 外部代理写入的条目）；② 文件被删/损坏时的恢复备份；③ 系统托管、防文件篡改。文件仍是唯一读取权威，Keychain 仅为兜底备份，不影响零弹窗体验。
-- **简化候选（后续可按需采纳）**：若弹窗问题复现，可改为**纯文件方案**（仅 `~/.dsh/channels/<channelId>`，chmod 600，完全不碰 Keychain），读取=写读同一份，零双写；代价是失去系统级备份。
+- **简化候选（后续可按需采纳）**：若弹窗问题复现，可改为**纯文件方案**（仅 `~/.dsh/oh-my-dsh/channels/<channelId>`，chmod 600，完全不碰 Keychain），读取=写读同一份，零双写；代价是失去系统级备份。
 
 ### 4.2 项目引用（.dsh/channels/channels.json）
 
-> ⚠️ **已更新决策**（见 docs/channel-project-switch.md）：项目级引用迁到**全局** `~/.dsh/channels/<channelId>.workspaces.json`（project = workspace，出现即启用该通道；不再写项目内 .dsh/channels.json）。下文 §4.2/§5/§6 为历史实现基线，落地后以新模型为准。
+> ⚠️ **已更新决策**（见 docs/channel-project-switch.md）：项目级引用迁到**全局** `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`（project = workspace，出现即启用该通道；不再写项目内 .dsh/channels.json）。下文 §4.2/§5/§6 为历史实现基线，落地后以新模型为准。
 
 项目目录下（跟随仓库提交）的 .dsh/channels/channels.json（原 .dsh/channels.json，全局化改造后移入 .dsh/channels/，见 docs/channel-storage.md），引用全局 Channel + 该项目专属路由/会话约定：
 
@@ -148,7 +148,7 @@
 
 - 作为右栏新面板（沿用 PanelController 基件、rightPanelKind 插槽、build-app.sh 编译清单、L10n.table 中英成对文案）。
 - **全局视图**：Channel 列表（平台/名称/启停/连接状态徽标），新增/编辑/删除；「连接/登录」表单由当前 platform 适配器驱动（扫码/输入凭证/webhook 地址/回填事件地址）。
-- **项目视图**：展示该项目启用的全局 Channel（启用状态来自全局 `~/.dsh/channels/<channelId>.workspaces.json`，见 docs/channel-project-switch.md），可增删引用、配置路由。
+- **项目视图**：展示该项目启用的全局 Channel（启用状态来自全局 `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`，见 docs/channel-project-switch.md），可增删引用、配置路由。
 - 面板不感知平台细节——只渲染平台无关列表 + 委托适配器渲染连接表单，保证新平台接入后面板一致。
 
 ## 6. 消息分发（收到的消息 → 不同项目）
@@ -237,7 +237,7 @@
 
 - **M0**：本文档（设计稿）。✅
 - **M1**：统一抽象层（ChannelEvent/Reply/状态机 + ChannelAdapter 接口）+ 消息分发 Router 骨架，**全部落入 `core/`（Node，平台无关）** + 配置面板（全局 + 项目引用）+ 全局配置模型与凭据存储。
-- **M2**：微信 ClawBot 适配器（`core/` 内首个实现，验证抽象）。✅——适配器 weixin-clawbot.js + transport weixin-clawbot-transport.js，**纯官方 iLink Bot 协议**（@tencent-weixin/openclaw-weixin 2.4.6 官方源码直接推导：ilinkai.weixin.qq.com、登录/收/发/媒体/通知全部按官方实现，不参考任何非官方逆向）。 面板「扫码登录」按钮调 core channel login，token 落 ~/.dsh/channels/<id>.json（ChannelPanel + AppDelegate.runChannelLogin）。
+- **M2**：微信 ClawBot 适配器（`core/` 内首个实现，验证抽象）。✅——适配器 weixin-clawbot.js + transport weixin-clawbot-transport.js，**纯官方 iLink Bot 协议**（@tencent-weixin/openclaw-weixin 2.4.6 官方源码直接推导：ilinkai.weixin.qq.com、登录/收/发/媒体/通知全部按官方实现，不参考任何非官方逆向）。 面板「扫码登录」按钮调 core channel login，token 落 ~/.dsh/oh-my-dsh/channels/<id>.json（ChannelPanel + AppDelegate.runChannelLogin）。
 - **M3**：消息分发路由（项目引用匹配 + 会话驱动 + 回复回传，`core/`）。✅——Router + SessionDriver 已在**真实 dsh web** 上端到端验证（见 §11）。channel-runner 编排 token→adapter→manager→Router→dsh 会话→context_token 回复，已在**真实微信+真实 dsh** 跑通。
 - **M4**：钉钉/飞书适配器（复用统一抽象，验证一致性与扩展性）。📋 待实现。
 - **跨平台**：Windows（M2 里程碑）/ Linux（M3 里程碑）壳层仅实现配置面板 UI + 凭据文件层，直接复用 `core/` 全部 channel 核心（见 §3.4）。

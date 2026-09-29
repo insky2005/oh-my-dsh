@@ -13,7 +13,7 @@
 
 **核心架构决策：钉钉 = core/ 适配器（dingtalk-stream），非插件托管。**
 - 在 core/lib/ 内实现 dingtalk-stream-transport.js + dingtalk.js 适配器，复用 channel.js 的统一抽象（ChannelEvent/Reply/状态机/Router）。
-- 由 channel-runner.js 的 runDingTalkChannel 编排成独立子进程（与 runWeixinChannel 同构），写入**同一个 channel store**（~/.dsh/channels/<id>.sessions.json + 消息分桶 + state.json）。
+- 由 channel-runner.js 的 runDingTalkChannel 编排成独立子进程（与 runWeixinChannel 同构），写入**同一个 channel store**（~/.dsh/oh-my-dsh/channels/<id>.sessions.json + 消息分桶 + state.json）。
 - 面板复用微信的**扫码向导** + **项目视图**，零语义分歧。
 
 > 与 docs/channel-dingtalk-plugin.md（官方插件托管）二选一，本文档为「原生适配器」路线；二者**接入体验一致**（都可扫码自动创建应用，复用钉钉 device-code 注册接口，见 §4），区别在运行时与工作区/路由能力（见 §7）。
@@ -47,7 +47,7 @@ core/lib/channel-runner.js（runDingTalkChannel，仿 runWeixinChannel）
   ├─ createCommandRunner（/help /new /sessions /wks #wN/#sN，复用）
   └─ jobqueue（串行，复用）
   ▼
-~/.dsh/channels/<id>.sessions.json + 消息分桶 + state.json（channel store，复用）
+~/.dsh/oh-my-dsh/channels/<id>.sessions.json + 消息分桶 + state.json（channel store，复用）
   ▼
 ChannelPanel.swift 项目视图（ChannelStoreReader，与微信完全一致）
 ```

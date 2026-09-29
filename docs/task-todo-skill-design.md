@@ -37,8 +37,8 @@
 - 服务：App 启动时起的同一个 HTTP 服务（`BrowserAPIServer`，127.0.0.1、无鉴权、
   与 dsh web 同一信任模型），路由面按前缀分工：
   `/api/browser/*` 归浏览器面板，`/api/tasks/*` 归任务面板。
-- 端口发现：沿用 `$DSH_HOME/browser-api.port`（默认 3081、占用自增），
-  **并额外写一份同值的 `$DSH_HOME/shell-api.port`** 供本 Skill 语义正确地发现；
+- 端口发现：沿用 `$DSH_HOME/oh-my-dsh/browser-api.port`（默认 3081、占用自增），
+  **并额外写一份同值的 `$DSH_HOME/oh-my-dsh/shell-api.port`** 供本 Skill 语义正确地发现；
   Skill 读取顺序：`shell-api.port` → `browser-api.port` → 3081。
 
 ### 2.1 端点

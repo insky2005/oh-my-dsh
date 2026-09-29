@@ -13,8 +13,8 @@ function tmpHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ohmy-settings-'));
 }
 
-test('settingsPath: <DSH_HOME>/shell/config.json', () => {
-  assert.equal(settingsPath('/tmp/x'), '/tmp/x/shell/config.json');
+test('settingsPath: <DSH_HOME>/oh-my-dsh/shell/config.json', () => {
+  assert.equal(settingsPath('/tmp/x'), '/tmp/x/oh-my-dsh/shell/config.json');
 });
 
 test('dshHome: explicit > env > ~/.dsh', () => {
@@ -54,7 +54,7 @@ test('set/get/unset round-trip (string, bool, number, object)', () => {
 test('writes are atomic (no tmp left) and file is valid JSON', () => {
   const h = tmpHome();
   settingsSet('a', 1, h);
-  const dir = path.join(h, 'shell');
+  const dir = path.join(h, 'oh-my-dsh', 'shell');
   const leftovers = fs.readdirSync(dir).filter((f) => f.includes('.tmp-'));
   assert.deepEqual(leftovers, []);
   const parsed = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));

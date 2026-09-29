@@ -12,12 +12,13 @@ CACHE="$(cd ../../.build/module-cache && pwd)"
 TMP="$(mktemp -d)"
 cp ../terminal-emulator/stubs.swift "$TMP/stubs.swift"
 cp ../../platforms/macos/src/SkillsCore.swift "$TMP/SkillsCore.swift"
+cp ../../platforms/macos/src/ShellPaths.swift "$TMP/ShellPaths.swift"
 cp ../../platforms/macos/src/SkillSources.swift "$TMP/SkillSources.swift"
 cp ../../platforms/macos/src/SkillInstaller.swift "$TMP/SkillInstaller.swift"
 cp skills-panel-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
   -o "$TMP/skills-panel-tests" "$TMP/stubs.swift" "$TMP/SkillsCore.swift" \
-  "$TMP/SkillSources.swift" "$TMP/SkillInstaller.swift" "$TMP/main.swift"
+  "$TMP/SkillSources.swift" "$TMP/SkillInstaller.swift" "$TMP/ShellPaths.swift" "$TMP/main.swift"
 mkdir -p "$TMP/fixture/home"
 DSH_HOME="$TMP/fixture/home" DSH_AGENTS_HOME="$TMP/fixture/agents" \
   TEST_ROOT="$TMP/fixture" "$TMP/skills-panel-tests"
@@ -26,7 +27,7 @@ echo "--- skills panel controller (headless smoke) ---"
 # Separate build dir: top-level code must live in a file named main.swift, and
 # the model-layer binary above already owns the outer one.
 mkdir -p "$TMP/panel"
-cp "$TMP/stubs.swift" "$TMP/SkillsCore.swift" "$TMP/SkillSources.swift" "$TMP/SkillInstaller.swift" "$TMP/panel/"
+cp "$TMP/stubs.swift" "$TMP/SkillsCore.swift" "$TMP/SkillSources.swift" "$TMP/SkillInstaller.swift" "$TMP/ShellPaths.swift" "$TMP/panel/"
 cp ../../platforms/macos/src/SkillsPanel.swift "$TMP/panel/SkillsPanel.swift"
 cp ../../platforms/macos/src/PanelSurface.swift "$TMP/panel/PanelSurface.swift"   # 面板底色 token
 cp panel-tests.swift "$TMP/panel/main.swift"

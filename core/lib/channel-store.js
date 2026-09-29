@@ -13,10 +13,10 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
+const shellPaths = require('./shell-paths');
 
 function channelsDir(dshHome) {
-  return path.join(dshHome || process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'channels');
+  return shellPaths.channelsDir(dshHome);
 }
 
 /** The file path for a channel's persisted account/token. */

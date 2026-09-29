@@ -24,7 +24,7 @@
 - `CefSettings.root_cache_path` 必须显式设置（不设落到默认 `~/Library/Application Support/CEF`，与其他 CEF 应用/异常残留互相干扰 → "Failed to create a ProcessSingleton" exit 21）；异常退出（kill -9）残留的 `SingletonLock/SingletonSocket/SingletonCookie` 需在启动时清理（仅清理连接被拒的陈旧锁，避免双实例损坏 profile）；
 - **CDP /json 拉取绝不能在主线程同步执行**（CDP 响应依赖主线程驱动 CEF 消息泵 `CefDoMessageLoopWork`，同步等待互相死锁 → API/UI 全挂）——后台队列 + 3s 超时；
 - **钥匙串密码弹窗**：Chromium 默认访问登录钥匙串存网页密码 → 系统弹密码框。修复：`OnBeforeCommandLineProcessing` 追加 `use-mock-keychain`（模拟钥匙串，本 App 不存网页密码），日志中 `Encryption is not available` 随之消失；
-- **~/.dsh 污染**：`root_cache_path` 不能指向 `~/.dsh` 本身（Chromium 组件缓存/单例锁会洒进 dsh 主目录）。profile 收进 `~/.dsh/browser/profile`（root=`~/.dsh/browser`），含单例锁清理；
+- **~/.dsh 污染**：`root_cache_path` 不能指向 `~/.dsh` 本身（Chromium 组件缓存/单例锁会洒进 dsh 主目录）。profile 收进 `~/.dsh/oh-my-dsh/browser/profile`（root=`~/.dsh/oh-my-dsh/browser`），含单例锁清理；
 - 调试钩子 `--browser-cache-dir=<dir>` 可指定全新 profile（排查 profile 问题）。
 
 
@@ -118,7 +118,7 @@
 
 ### 子系统 2：`platforms/macos/src/BrowserAPI.swift`（新增）
 
-POSIX socket 极简 HTTP/1.1 服务（127.0.0.1，默认 **3081**，`DSH_BROWSER_PORT` 覆盖，占用则 3082-3086 递增；生效端口写 `$DSH_HOME/browser-api.port` + 启动日志；App 启动即起）。CORS 头 + OPTIONS 放行。
+POSIX socket 极简 HTTP/1.1 服务（127.0.0.1，默认 **3081**，`DSH_BROWSER_PORT` 覆盖，占用则 3082-3086 递增；生效端口写 `$DSH_HOME/oh-my-dsh/browser-api.port` + 启动日志；App 启动即起）。CORS 头 + OPTIONS 放行。
 
 **可单测的纯模型**：`HTTPRequest.parse(data:)`（请求行/头/Content-Length）、`BrowserURL.normalize(_:)`（补 `https://`、about:blank、非法输入）、`BrowserLogBuffer`、`BrowserAPIRouter`（协议 `BrowserAPIDelegate` 抽象面板，路由 → (status, headers, body)）。
 
@@ -152,7 +152,7 @@ POSIX socket 极简 HTTP/1.1 服务（127.0.0.1，默认 **3081**，`DSH_BROWSER
 
 ### 子系统 5：Agent 技能（`web-dev-tools`，App 启动时安装到全局 `$DSH_HOME/skills/web-dev-tools/SKILL.md`）
 
-仿 `issue-resolve` 技能格式（frontmatter: name/description；model 默认可调用，web-dev-tools 同时 user 可调用）：端口发现（读 `~/.dsh/browser-api.port` 或默认 3081）；标准排查工作流：`open` 页面 → 轮询 `status` 直到 `!loading`（带超时）→ 读 `console`/`network`（failedOnly 过滤）→ `eval` 取 DOM/JS 状态 → `screenshot` 存工作区 → 视觉读图 → 汇报；明确可用性前提与安全边界（仅本机、eval 可读页面）。
+仿 `issue-resolve` 技能格式（frontmatter: name/description；model 默认可调用，web-dev-tools 同时 user 可调用）：端口发现（读 `~/.dsh/oh-my-dsh/browser-api.port` 或默认 3081）；标准排查工作流：`open` 页面 → 轮询 `status` 直到 `!loading`（带超时）→ 读 `console`/`network`（failedOnly 过滤）→ `eval` 取 DOM/JS 状态 → `screenshot` 存工作区 → 视觉读图 → 汇报；明确可用性前提与安全边界（仅本机、eval 可读页面）。
 
 ### 子系统 6：测试（新增 `tests/browser-panel/`，仿 wiki-panel 无头模式）
 

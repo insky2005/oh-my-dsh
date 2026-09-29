@@ -1,7 +1,7 @@
 // TasksAPI.swift — 任务面板的 localhost REST API（Agent / 用户 curl 驱动）。
 //
 // 与浏览器面板共用同一个壳层 HTTP 服务（BrowserAPIServer，127.0.0.1，端口见
-// $DSH_HOME/shell-api.port 与 browser-api.port），按前缀分工：/api/browser/* 归
+// $DSH_HOME/oh-my-dsh/shell-api.port 与 browser-api.port），按前缀分工：/api/browser/* 归
 // 浏览器面板，/api/tasks/* 归任务面板。
 //
 // 设计：docs/task-todo-skill-design.md。配套技能 task-todo 在用户明确要求时

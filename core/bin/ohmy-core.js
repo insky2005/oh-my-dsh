@@ -219,6 +219,9 @@ function println(s) {
         const dshIdx = rest.indexOf('--dsh-home');
         const dshHome = dshIdx >= 0 ? rest[dshIdx + 1]
           : (process.env.DSH_HOME || (require('node:os').homedir() + '/.dsh'));
+        // One-time shell-data layout move for this explicit home (the app does
+        // the same at launch; here for headless CLI use).
+        core.shellPaths.migrateLegacyLayout(dshHome);
         // dsh >= 0.1.2 fences its /api RPC behind a per-instance cookie minted
         // from the launch token in the URL dsh web prints; the shell passes it.
         const tokIdx = rest.indexOf('--dsh-token');
@@ -314,6 +317,7 @@ function println(s) {
         };
         const home = flag('home');
         const dshHome = IO.dshHomeDir(home);
+        core.shellPaths.migrateLegacyLayout(dshHome);
         const flagNum = (name, dflt) => {
           const raw = flag(name);
           const n = raw === undefined ? NaN : parseInt(raw, 10);

@@ -21,6 +21,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const snapshot = require('./snapshot');
+const shellPaths = require('./shell-paths');
 
 // --- default io ------------------------------------------------------------
 
@@ -88,7 +89,7 @@ const defaultIO = {
 
 // --- paths -----------------------------------------------------------------
 
-function shellDir(home) { return path.join(home, 'shell'); }
+function shellDir(home) { return shellPaths.shellDir(home); }
 function statePath(home) { return path.join(shellDir(home), 'dsh-state.json'); }
 function journalPath(home) { return path.join(shellDir(home), 'rollback-journal.json'); }
 function snapshotsDir(home) { return path.join(shellDir(home), 'snapshots'); }
@@ -98,8 +99,7 @@ function quarantineDir(home, stamp) { return path.join(snapshotsDir(home), 'quar
 
 /** `$DSH_HOME` (env DSH_HOME, else ~/.dsh) — same rule as review-log/workspace-store. */
 function dshHomeDir(home) {
-  const h = home || process.env.DSH_HOME;
-  return h && String(h).trim() ? String(h).trim() : path.join(require('node:os').homedir(), '.dsh');
+  return shellPaths.dshHome(home);
 }
 
 // --- state / journal -------------------------------------------------------

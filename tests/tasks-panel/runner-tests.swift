@@ -768,7 +768,7 @@ do {
     check(!prompt.contains("issue-resolve"), "不再要求加载 issue-resolve（技能已退役）")
     check(!prompt.contains("push"), "与手动任务一样不提 push")
     check(prompt.contains("完成前 commit"), "commit 条与手动任务同款")
-    check(prompt.contains("token 在 $DSH_HOME/tokens/"), "GitHub 工作区才有的 token 条照旧")
+    check(prompt.contains("token 在 $DSH_HOME/oh-my-dsh/tokens/"), "GitHub 工作区才有的 token 条照旧")
     check(prompt.contains("本任务独立执行"), "自动队列不算共享泳道（两种来源一致）")
 
     let manualPrompt = TaskPrompts.manual(title: issue.title, body: issue.body,
@@ -1349,7 +1349,7 @@ do {
     let h2 = Harness(board: prBoard, github: true, gitRepo: true)
     _ = h2.runner.startQueue(prQueue.id)
     let prPrompt = h2.dsh.prompts["session-1"] ?? ""
-    check(prPrompt.contains("token 在 $DSH_HOME/tokens/"), "GitHub 仓库才给 token 条")
+    check(prPrompt.contains("token 在 $DSH_HOME/oh-my-dsh/tokens/"), "GitHub 仓库才给 token 条")
     check(prPrompt.contains("完成前 commit"), "commit 条照旧")
     check(!prPrompt.contains("push"), "但任务本身还是不提 push")
     check(prPrompt.contains("本队列不切分支") == false, "有分支就点名分支，不说「不切分支」")

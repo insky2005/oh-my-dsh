@@ -31,7 +31,7 @@
 
 把「工作区 = 一个目录」变成壳层里的一等公民：**在面板里建目录、再用六个面板就地打开它**。
 
-- **项目根目录可配置**：默认 `$DSH_HOME/oh-my-dsh/projects`（开发版 `~/.dsh-dev/…`），面板头部「更改…」或设置窗口的「项目」区块都能改（存 `shell/config.json` 的 `projectsRoot`）；**只有新建工作区时才会创建目录**，单纯打开面板不写盘；
+- **项目根目录可配置**：默认 `$DSH_HOME/oh-my-dsh/projects`（开发版 `~/.dsh-dev/…`），面板头部「更改…」或设置窗口的「项目」区块都能改（存 `oh-my-dsh/shell/config.json` 的 `projectsRoot`）；**只有新建工作区时才会创建目录**，单纯打开面板不写盘；
 - **新建工作区**：只输入目录名（如 `abc`），面板 `mkdir` 后调 dsh 的 `workspace/create` **幂等注册**——注册失败（dsh 未起来 / 旧版本）只标「未注册」，目录保留，之后在卡片上点「创建 dsh 工作区」重试即可；
 - **每个工作区一张卡片**：名称 + 徽标（已注册 · N 个会话 / 未注册）+ 标题行右侧的**那一个 dsh 动作按钮**；第二行是路径紧跟着「在 Finder 中显示 / 复制路径」两个小按钮（贴路径文本，不右对齐）；第三行是六个面板入口。面板右上角的 `folder+` 同样是「添加工作区 / Add workspace」（输入目录名即建目录并注册）。**未注册的目录不与 dsh web 联动**（点卡片/「新会话」都不可用，只在状态行提示），徽标后面显示 **folder+ 图标 =「添加工作区 / Add workspace」**（与 dsh web 同词），点它把该目录注册进 dsh；**已注册**的徽标后面则是 **+ 图标 =「新会话 / New Session」**。两种状态下**六个本地面板入口都照常可用**。已注册的卡片：
   - **文件 / 终端 / 知识库 / 任务 / 通道 / 审查** 六个快捷入口：点一下就把壳层当前工作区切到它并打开对应面板（终端 cwd、文件树根、wiki 根、任务/通道/审查的工作区一起跟着走）；
@@ -78,11 +78,11 @@
 **多标签嵌入式 Chromium 浏览器**（CEF/Chromium 内核，每标签一个渲染进程），面向开发调试 web 页面与 Agent 排查网页问题。
 
 - **多标签**：`+` 新建 / `✕` 关闭 / `⌘1-9` 切换，上限 8 个；地址栏导航（无 scheme 自动补 `https://`）、后退/前进/刷新·停止、标签标题随页面更新；启动恢复上次 URL；
-- **渲染**：默认 **窗口化渲染**（CEF 视图原生合成；曾误设为 OSR，1.15.0 已改回）；如确需 **OSR 离屏渲染**（每帧像素自绘），在 `$DSH_HOME/shell/config.json` 里设 `"browserRenderMode": "osr"`；
+- **渲染**：默认 **窗口化渲染**（CEF 视图原生合成；曾误设为 OSR，1.15.0 已改回）；如确需 **OSR 离屏渲染**（每帧像素自绘），在 `$DSH_HOME/oh-my-dsh/shell/config.json` 里设 `"browserRenderMode": "osr"`；
 - **Chromium 原生 DevTools**：头部「DevTools」按钮弹出独立窗口的完整调试器（Elements/Network/Console/Sources）；
 - **控制台/网络日志**：经 CDP 捕获页面 console、异常与网络请求，供 REST API 读取（`eval`/`screenshot` 也走 CDP；CDP 端口默认 `9333`，`DSH_CDP_PORT` 覆盖）；
-- **Agent 驱动（curl 即用）**：壳层常驻 localhost REST API（默认 `127.0.0.1:3081`，端口文件 `~/.dsh/browser-api.port`）——`status` / `open` / `tabs` / `back` / `forward` / `reload` / `stop` / `eval` / `console` / `console/clear` / `screenshot`(PNG) / `hide`，外加 QA 端点 `debug` / `hierarchy`；Agent 驱动时面板自动展开，截图可存工作区供读图/分享；配套技能 `web-dev-tools`（App 启动时安装到全局 `$DSH_HOME/skills/web-dev-tools/SKILL.md`，model+user 可调用）开箱即用；
-- **说明**：CEF 构建体积约 +320MB/架构；Chromium 使用模拟钥匙串（`use-mock-keychain`，不弹密码框、不存网页密码）；profile 数据收在 `~/.dsh/browser/`；随包分发 5 个 helper app（base/Alerts/GPU/Plugin/Renderer）；集成细节见 `docs/plans/BROWSER_PLAN-browser-panel.md`。
+- **Agent 驱动（curl 即用）**：壳层常驻 localhost REST API（默认 `127.0.0.1:3081`，端口文件 `~/.dsh/oh-my-dsh/browser-api.port`）——`status` / `open` / `tabs` / `back` / `forward` / `reload` / `stop` / `eval` / `console` / `console/clear` / `screenshot`(PNG) / `hide`，外加 QA 端点 `debug` / `hierarchy`；Agent 驱动时面板自动展开，截图可存工作区供读图/分享；配套技能 `web-dev-tools`（App 启动时安装到全局 `$DSH_HOME/skills/web-dev-tools/SKILL.md`，model+user 可调用）开箱即用；
+- **说明**：CEF 构建体积约 +320MB/架构；Chromium 使用模拟钥匙串（`use-mock-keychain`，不弹密码框、不存网页密码）；profile 数据收在 `~/.dsh/oh-my-dsh/browser/`；随包分发 5 个 helper app（base/Alerts/GPU/Plugin/Renderer）；集成细节见 `docs/plans/BROWSER_PLAN-browser-panel.md`。
 
 ![browser](./docs/screenshots/browser.png)
 
@@ -116,26 +116,26 @@
 - **提示词按工作区的「形状」按需出条目（2026-09-27 起）**：面板把工作区分成**三态**（`TaskRepoShape`：非 git 目录 / git 仓库但没有 GitHub 远端 / GitHub 仓库），并在**写提示词的那一刻**重新探测（不是 adopt 时抄下来的那份）——同一个队列里第一个任务跑了 `git init` 或 `git remote add`，第二个任务的提示词说的就是新状态。要求列表不再是写死的 1–6 条，而是**按状态决定哪些条目出现、编号连续**：非 git 目录**没有分支条**（`git init` 建了仓库才 commit）；有仓库才有「完成前 commit」与分支条（有分支的写「本任务须在分支 X 上处理（若该分支不存在，须基于 base 分支新建）」，不切分支的写「本队列不切分支：直接在主分支 base 上处理」——两条都点名分支，`TaskPrompts.manual` 因此多了个 `base` 参数）；**token 条只在 GitHub 仓库出现**；「改完自查」一条同时照顾代码与文档（没有可跑测试的就说明）；「汇报」一条每个任务都要。
 - **PR**：**队列最后一项完成时**由它的「开 PR 会话」创建（先查该分支已有的 PR 复用，避免 422）；开不出来**不算任务失败**——原因落在队列上、按钮 tooltip 里说清楚，可以点「开 PR」再来一次；工作区不是 GitHub 仓库（公司内部远端）时 PR 能力自动关闭，那个队列也就不开 PR 会话（见上两条）。
 - **失败处理**：脏工作区 / checkout / pull / 建会话 / 提示词 / 超时（60min）各有明确原因（存的是 L10n 键，随界面语言显示），可重试；取消走 `session.cancel`；**目录不是 git 仓库时也能跑任务**——不切分支的队列全程不碰 git，在非 git 工作区新建队列默认就是「不切分支」；万一队列设了分支而目录没有仓库，任务以「当前工作区不是 git 仓库」失败，卡片主按钮同时变成**「不切分支并重试」**（点一下清掉该队列的分支再重跑），不用自己去队列设置里绕；
-- **Agent 也能建任务（技能 `task-todo`，2026-09-27 起）**：壳层常驻的 localhost REST API 上多了一组 **`/api/tasks/*`**（`GET list` / `POST create`，一次可建多条），端口发现文件 **`~/.dsh/shell-api.port`**（与 `browser-api.port` 同值、同一个服务）；配套**内置技能 `task-todo`**（App 启动安装到全局 `$DSH_HOME/skills/task-todo/SKILL.md`）让代理在**用户明确要求**时把沟通好的需求与方案**批量**落成手动任务（每条 = 标题 + 给执行者的描述）。落盘走的是面板自己的那条路（`TasksRunner.createManualTask`，经主线程串行），任务一律「**待处理、未入队**」——**建任务不启动任何东西**，队列与运行仍由用户决定；默认 `focus: true` 让面板切到那个工作区并展开，用户立刻看见卡片（状态行同时说明「已由 Agent 创建 N 个任务」）。任务面板的技能只做「创建 + 查询」，不建队列、不入队、不启动；
+- **Agent 也能建任务（技能 `task-todo`，2026-09-27 起）**：壳层常驻的 localhost REST API 上多了一组 **`/api/tasks/*`**（`GET list` / `POST create`，一次可建多条），端口发现文件 **`~/.dsh/oh-my-dsh/shell-api.port`**（与 `browser-api.port` 同值、同一个服务）；配套**内置技能 `task-todo`**（App 启动安装到全局 `$DSH_HOME/skills/task-todo/SKILL.md`）让代理在**用户明确要求**时把沟通好的需求与方案**批量**落成手动任务（每条 = 标题 + 给执行者的描述）。落盘走的是面板自己的那条路（`TasksRunner.createManualTask`，经主线程串行），任务一律「**待处理、未入队**」——**建任务不启动任何东西**，队列与运行仍由用户决定；默认 `focus: true` 让面板切到那个工作区并展开，用户立刻看见卡片（状态行同时说明「已由 Agent 创建 N 个任务」）。任务面板的技能只做「创建 + 查询」，不建队列、不入队、不启动；
 - **重启恢复**：读 `.dsh/tasks/` 四文件（`index.json` 提交的 issue 关联 / `manual.json` 手动任务 / `queues.json` 队列 / `local.json` 本机 task↔session，兼容 v1 的数字键），上次运行中的任务标为「已中断」、活跃队列暂停，**恢复后不自动开跑**；
 
-- **GitHub token（按仓库作用域，只走文件）**：面板「配置 GitHub Token」**只写文件** —— 有当前仓库时写文件专属 `~/.dsh/tokens/<owner>-<repo>`，否则写通用 `~/.dsh/gh-token`（均 chmod 600，App 与外部工具/代理共用）；解析优先级：文件专属 → 文件通用；**不再读写 macOS 钥匙串**（旧版写在钥匙串里的 token 需重新填写一次）；公开仓库无需 token，私有仓库拉取/开 PR/评论关闭需要；
+- **GitHub token（按仓库作用域，只走文件）**：面板「配置 GitHub Token」**只写文件** —— 有当前仓库时写文件专属 `~/.dsh/oh-my-dsh/tokens/<owner>-<repo>`，否则写通用 `~/.dsh/oh-my-dsh/gh-token`（均 chmod 600，App 与外部工具/代理共用）；解析优先级：文件专属 → 文件通用；**不再读写 macOS 钥匙串**（旧版写在钥匙串里的 token 需重新填写一次）；公开仓库无需 token，私有仓库拉取/开 PR/评论关闭需要；
 - 工作区非 GitHub 仓库时诚实显示空态（不替换为其他已注册工作区）；切换到不同仓库先清空旧列表再重载。
 
 ### 通道面板（`⌥⌘H` / 活动栏「通道」图标）
 
 把微信个人号或钉钉机器人接入 dsh，**在微信/钉钉里远程驱动 dsh 干活**：发消息 → 路由到项目会话 → 结果回复回原平台。微信走官方 iLink 协议、钉钉走 dingtalk-stream 原生适配器，两平台与微信共享同一套面板模型（扫码向导 / 连接状态 / 项目视图会话消息 / 每会话跨项目路由）。
 
-- **接入向导**：内置平台卡片（微信 ClawBot / 钉钉 / 飞书，带实时连接状态徽标）；微信扫码登录**在面板内渲染二维码**（不弹浏览器），登录态落 `~/.dsh/channels/<id>.json`（文件优先，chmod 600），微信绑定页展示**已配置状态 + 显式「重新登录」**（避免误替换已绑定的 token）；钉钉走 **device-code 扫码向导**（`init/begin` 得二维码 → 面板内渲染 → 手机钉钉扫码自动创建企业内部应用+机器人 → 本地轮询 `poll` 拿 AppKey/AppSecret 写入 store，chmod 600），已配置通道不重复扫码、重开向导自动恢复 `/bind` 口令；
-- **项目视图**：当前项目可用通道开关（启用状态存全局 `~/.dsh/channels/<channelId>.workspaces.json`，project=workspace，见 `docs/channel-project-switch.md`）。开关**真正门控路由**：普通消息 / `/new` 路由到未启用该通道的 workspace → 回「该项目未启用该通道」、不建会话；`/workspaces` 只列已启用项。会话列表：通道标题行展示「图标 + 平台名 (channelId) + 会话数」、启用开关靠右，整行独立背景；每条会话独立区块，标题可点开/收起，消息按对话气泡展示（提问靠右、回复靠左）；顶部「全局配置」随时重开；
+- **接入向导**：内置平台卡片（微信 ClawBot / 钉钉 / 飞书，带实时连接状态徽标）；微信扫码登录**在面板内渲染二维码**（不弹浏览器），登录态落 `~/.dsh/oh-my-dsh/channels/<id>.json`（文件优先，chmod 600），微信绑定页展示**已配置状态 + 显式「重新登录」**（避免误替换已绑定的 token）；钉钉走 **device-code 扫码向导**（`init/begin` 得二维码 → 面板内渲染 → 手机钉钉扫码自动创建企业内部应用+机器人 → 本地轮询 `poll` 拿 AppKey/AppSecret 写入 store，chmod 600），已配置通道不重复扫码、重开向导自动恢复 `/bind` 口令；
+- **项目视图**：当前项目可用通道开关（启用状态存全局 `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`，project=workspace，见 `docs/channel-project-switch.md`）。开关**真正门控路由**：普通消息 / `/new` 路由到未启用该通道的 workspace → 回「该项目未启用该通道」、不建会话；`/workspaces` 只列已启用项。会话列表：通道标题行展示「图标 + 平台名 (channelId) + 会话数」、启用开关靠右，整行独立背景；每条会话独立区块，标题可点开/收起，消息按对话气泡展示（提问靠右、回复靠左）；顶部「全局配置」随时重开；
 - **通道内斜杠指令**（微信 / 钉钉共用）：`/help` `/ping` `/status`（全局）；工作区指令 `/workspaces`(`/wks`)、`/sessions`(`/ses`)（无内容列出 / 有内容切换，等同 `#wN`/`#sN`）、`/new [内容]`（统一回 `创建新会话 #sN (sessionId)`，无内容建占位 `New Session`（dsh 标题由 dsh web 按首条消息自动命名）等首条消息激活、有内容 prompt=内容并回推答案）；快捷指令 `#w1`/`#s1…`（切项目/会话，均按目标/当前 workspace 是否启用该通道**门控**：未启用回「该项目未启用该通道」）与 #tag 路由（如 `#w1 帮我看看`）；
 - **消息分发**：路由优先级（显式会话绑定 > 关键词 > 默认兜底），未绑定项目回复提示不静默；同会话串行、跨会话可并发（jobqueue）；
-- **钉钉专属（owner-binding 安全门）**：`/bind <口令>`（口令本机生成、见面板或运行日志）——未绑定管理员前**拒绝所有人**，仅绑定管理员可驱动本机 dsh（防任何组织成员经机器人操作本地 bash/文件/token）；绑定成功回两条消息（确认 + 完整 `/help` 输出）；绑定状态存 `~/.dsh/channels/<channelId>.binding.json`（chmod 600）；钉钉无「正在输入」，以文字 ack 代替 sendTyping；
+- **钉钉专属（owner-binding 安全门）**：`/bind <口令>`（口令本机生成、见面板或运行日志）——未绑定管理员前**拒绝所有人**，仅绑定管理员可驱动本机 dsh（防任何组织成员经机器人操作本地 bash/文件/token）；绑定成功回两条消息（确认 + 完整 `/help` 输出）；绑定状态存 `~/.dsh/oh-my-dsh/channels/<channelId>.binding.json`（chmod 600）；钉钉无「正在输入」，以文字 ack 代替 sendTyping；
 - **会话驱动**：conversationId → dsh 会话映射（多轮对话续接，`/new` 另起），`/new` 后绑定会话到 conversation、下一条普通消息复用而非新建；经 `session.create` + `session.prompt`（queue）驱动，**生成时回原生「正在输入…」(微信 sendTyping / 钉钉文字 ack)，完成后回推答案**；
 - **可靠性**：官方 iLink 协议**严格串行长轮询**（修复重复回复）；断线/鉴权失效（-14）归一到统一状态机，受控重连/重新扫码；启动自动拉起 listener、退出清理、同通道去重；
 - **实时刷新**：项目视图在对话回复后 **~1.5s 内自动更新**——轻量重读全局 store，仅当内容签名变化时全量重建（保留折叠/展开状态），不随轮询抖动；
 - **与 dsh web 会话双向联动**：点击项目视图会话行（单一手势）同时展开/收起其消息并**定位到 dsh web 对应会话**（经注入的 `sessionOpenerScript` 驱动）；反过来在 dsh web 切换会话时，面板自动展开对应会话、其余行收起（无对应则会话列表保持可见、仅全部收起）。**以 sessionId 对应、不用 name**（name 会因 `/new` 重绑/标题变化失配）；设计见 `docs/channel-web-session-link.md`；
-- **全局存储**：会话映射与消息日志归档到全局 `~/.dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶）；「项目开关」关联存全局 `~/.dsh/channels/<channelId>.workspaces.json`（见 `docs/channel-storage.md`、`docs/channel-project-switch.md`）；
+- **全局存储**：会话映射与消息日志归档到全局 `~/.dsh/oh-my-dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶）；「项目开关」关联存全局 `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`（见 `docs/channel-storage.md`、`docs/channel-project-switch.md`）；
 - **当前限制**：飞书仅展示卡片（适配器待实现）；钉钉富特性（AI Card 流式 / 互动审批卡 / 图片 / DWS）留作后续增强，v1 以文本/Markdown 回复为主；
 - 设计与指令清单：`docs/channel-design.md`、`docs/channel-dingtalk-stream.md`、`docs/channel-commands.md`、`docs/channel-status.md`、`docs/channel-project-switch.md`。
 
@@ -154,7 +154,7 @@
 
 **可安装**：顶部选 registry，列表就是该 registry 的技能清单；**进入即有内容** —— 有清单来源的 registry（GitHub 仓库 / well-known）直接列出清单，只有搜索接口的（skills.sh）默认显示**热门列表（按安装量降序，前 30）**，输入关键字即切换为搜索结果。
 
-- **registry 可配置**（`$DSH_HOME/shell/skills.json`）：`owner/repo` 或 GitHub 地址 → 列该仓库的技能清单；well-known 地址 → 读 `/.well-known/skills/index.json`；其他 URL → 视为 skills.sh 兼容的搜索接口（默认预置 skills.sh，仅有搜索，无全量清单，故无清单来源时列表区会提示「按关键字搜索」）；
+- **registry 可配置**（`$DSH_HOME/oh-my-dsh/shell/skills.json`）：`owner/repo` 或 GitHub 地址 → 列该仓库的技能清单；well-known 地址 → 读 `/.well-known/skills/index.json`；其他 URL → 视为 skills.sh 兼容的搜索接口（默认预置 skills.sh，仅有搜索，无全量清单，故无清单来源时列表区会提示「按关键字搜索」）；
 - **交互**：**整张卡片可点 = 看详情**（用系统默认浏览器打开该技能的页面：skills.sh 型 registry → `https://www.skills.sh/<source>/<skill>`；GitHub → 仓库内技能目录；well-known → 该技能的 SKILL.md；本地路径 → 在 Finder 中显示），悬停时整卡有 accent 底色提示可点；**「安装」按钮只在鼠标移入卡片时出现**，移出即隐藏；
 - **安装方式**：清单勾选安装 / 「从地址安装…」（`owner/repo`、`owner/repo@skill`、GitHub·GitLab 地址、well-known 地址、本地路径）/ 「手动导入…」（本地目录含 SKILL.md，或单个 SKILL.md，附件一并复制）；
 - **落点**：默认 **用户级** `$DSH_HOME/skills/<name>/`（所有工作区通用），可选 **项目级** `<工作区>/.dsh/skills/<name>/`（优先级最高）；同名已存在会先确认，内置同名技能拒绝覆盖；
@@ -315,7 +315,7 @@ dsh 升级会**把会话日志换成新世代**（0.1.5 起新建会话写 `sess
 | 场景 | 行为 |
 |---|---|
 | App 自己拉起了服务 | 退出时**关闭**（SIGTERM → 3 秒后 SIGKILL 兜底） |
-| 上次异常退出（崩溃 / 强杀）残留的服务 | 下次启动时按 `$DSH_HOME/shell/dsh-web.json` 的记录（pid + 端口 + launch token）**回收**：token 每进程随机，用它探活即证明还是自己那台，绝不误杀别的进程 |
+| 上次异常退出（崩溃 / 强杀）残留的服务 | 下次启动时按 `$DSH_HOME/oh-my-dsh/shell/dsh-web.json` 的记录（pid + 端口 + launch token）**回收**：token 每进程随机，用它探活即证明还是自己那台，绝不误杀别的进程 |
 
 ## 环境变量（可选）
 
@@ -330,7 +330,7 @@ dsh 升级会**把会话日志换成新世代**（0.1.5 起新建会话写 `sess
 | `DSH_AUTO_UPGRADE=0` | 本次运行关闭自动升级 |
 | `DSH_AUTO_UPGRADE_NOW=1` | 测试钩子：忽略 24h 节流，每次启动都跑一遍自动升级流程 |
 | `DSH_LANG=zh|en` | 强制界面语言（优先于「设置」→「语言」的选择；默认跟随系统） |
-| `DSH_BROWSER_PORT` | 浏览器面板 REST API 端口（默认 3081，占用自动递增；生效端口写 `~/.dsh/browser-api.port`） |
+| `DSH_BROWSER_PORT` | 浏览器面板 REST API 端口（默认 3081，占用自动递增；生效端口写 `~/.dsh/oh-my-dsh/browser-api.port`） |
 | `DSH_CDP_PORT` | 浏览器面板 CDP 端口（默认 9333） |
 | `DSH_BROWSER_TEST=1` | 启动即打开浏览器面板（QA/调试钩子） |
 | `DSH_REVIEW_TEST=1` | 启动即打开审计面板（QA/调试钩子） |
@@ -341,13 +341,13 @@ dsh 升级会**把会话日志换成新世代**（0.1.5 起新建会话写 `sess
 > `DSH_PANEL_TEST="files,terminal,wiki,tasks,browser,channel,review,skills"`（**按序开全部面板**，配 `DSH_UI_DEBUG=1` 每个面板各落一张 `panel-<name>-debug.png` ——dsh 升级后的面板全量核对就靠它）、
 > `DSH_PREVIEW_DEBUG`（fetch 拦截探针，同时演练 `host.openPath` 与 `session/openWorkspacePath` 两种形状）、`DSH_SESSION_DEBUG`（会话跟踪 dump）。
 
-> **壳层设置存放位置**：语言 / 主题 / 面板宽度 / 浏览器 / 通道 / wiki 等**壳层自有设置**存为 UTF-8 JSON `$DSH_HOME/shell/config.json`
+> **壳层设置存放位置**：语言 / 主题 / 面板宽度 / 浏览器 / 通道 / wiki 等**壳层自有设置**存为 UTF-8 JSON `$DSH_HOME/oh-my-dsh/shell/config.json`
 > （开发版 `~/.dsh-dev/shell/config.json`），可由外部工具 / 代理直接读写（写入经 core CLI 合并 + 原子落盘，壳层侧 0.3s 防抖异步）；
 > 仅系统级项（`AppleLanguages`、窗口位置）仍留在原生 UserDefaults。
 
 > **GitHub token（任务面板，按仓库作用域，只走文件）**：面板「配置 GitHub Token」保存时**只写文件** —— 有当前仓库时写
-> 专属 `~/.dsh/tokens/<owner>-<repo>`，否则写通用 `~/.dsh/gh-token`（均 chmod 600）——App 与外部工具/代理共享同一份。
-> 解析优先级：① 文件专属 ② 文件通用 `~/.dsh/gh-token`；**不再读写 macOS 钥匙串**（旧版写在钥匙串里的 token 需重新填写一次）。
+> 专属 `~/.dsh/oh-my-dsh/tokens/<owner>-<repo>`，否则写通用 `~/.dsh/oh-my-dsh/gh-token`（均 chmod 600）——App 与外部工具/代理共享同一份。
+> 解析优先级：① 文件专属 ② 文件通用 `~/.dsh/oh-my-dsh/gh-token`；**不再读写 macOS 钥匙串**（旧版写在钥匙串里的 token 需重新填写一次）。
 > 公开仓库无需 token；私有仓库拉取/开 PR/评论关闭 issue 需要。
 
 > 构建期变量 `DSH_NODE_VERSION`、`DSH_PACKAGE_SPEC`、`DSH_NODE_MIRROR`、`DSH_NPM_REGISTRY`、`DSH_CEF_VERSION`、`DSH_ARCH` 见上文「构建」。
@@ -396,7 +396,7 @@ platforms/macos/src/                  原生壳（Swift）
   BrowserPanel.swift / BrowserAPI.swift / BrowserCDP.swift  浏览器面板（CEF 渲染 + REST API + CDP）
   DshWebRPC.swift      壳层原生 dsh RPC（0.1.2 斜杠端点 + launch token 换 cookie，wiki/任务/会话共用）
   DshWebCookieJanitor.swift 启动/退出清理非本次 authority 的 dsh-auth-* cookie + 回收上次残留实例
-  ShellConfig.swift    壳层设置门面（读 $DSH_HOME/shell/config.json，写委托 core CLI，含旧 UserDefaults 迁移）
+  ShellConfig.swift    壳层设置门面（读 $DSH_HOME/oh-my-dsh/shell/config.json，写委托 core CLI，含旧 UserDefaults 迁移）
   MakeIcon.swift     App 图标生成器（渲染 → iconset → icns）
 platforms/macos/cef/                   CEFShim.h/.mm（ObjC++ 桥：OSR 渲染/输入转发/DevTools）+ helper
 platforms/macos/build-app.sh           一键构建脚本（编译、打包、镜像下载 Node、npm 装 dsh、预下载模式、签名）

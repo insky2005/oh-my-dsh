@@ -102,8 +102,8 @@ panel.showPage(.available)
 panel.showPage(.installed)
 
 // Instantiating the panel seeds the default registry into the shell store.
-let storeFile = (home as NSString).appendingPathComponent("shell/skills.json")
-test("shell store seeded at $DSH_HOME/shell/skills.json", FileManager.default.fileExists(atPath: storeFile))
+let storeFile = (home as NSString).appendingPathComponent("oh-my-dsh/shell/skills.json")
+test("shell store seeded at $DSH_HOME/oh-my-dsh/shell/skills.json", FileManager.default.fileExists(atPath: storeFile))
 if let raw = try? String(contentsOfFile: storeFile, encoding: .utf8) {
     // NOTE: JSONEncoder escapes forward slashes ("api\/search"), so match on
     // markers without slashes.

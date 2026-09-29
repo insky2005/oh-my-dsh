@@ -58,7 +58,7 @@ enum BuiltinSkill: CaseIterable {
     API 服务随 App 启动常驻，默认端口 **3081**。按顺序取：
     
     ```bash
-    PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/browser-api.port" 2>/dev/null || echo 3081)"
+    PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/browser-api.port" 2>/dev/null || echo 3081)"
     ```
     
     （若设置了 `DSH_BROWSER_PORT` 环境变量则端口不同；port 文件由 App 写入。App 未运行时 API 不可用——先请用户打开 oh-my-dsh。）
@@ -196,8 +196,8 @@ enum BuiltinSkill: CaseIterable {
     API 随 App 启动常驻，默认端口 **3081**，实际端口写在发现文件里：
     
     ```bash
-    PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/shell-api.port" 2>/dev/null \\
-         || cat "${DSH_HOME:-$HOME/.dsh}/browser-api.port" 2>/dev/null \\
+    PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/shell-api.port" 2>/dev/null \\
+         || cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/browser-api.port" 2>/dev/null \\
          || echo 3081)"
     ```
     

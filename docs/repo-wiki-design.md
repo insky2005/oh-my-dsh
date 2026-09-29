@@ -163,7 +163,7 @@ POST http://127.0.0.1:<port>/api/session.prompt
 默认（随仓库，可版本化/共享，与 AGENTS.md 同类）:
   <repoRoot>/.dsh/wiki/
 可配置（仓库外，私有）:
-  $DSH_HOME/repo-wiki/<sha256(repoRoot 规范化路径)前 12 位>/
+  $DSH_HOME/oh-my-dsh/repo-wiki/<sha256(repoRoot 规范化路径)前 12 位>/
 ```
 
 - 默认「随仓库」：方便 git 提交、团队共享、CI 复用；缺点是有可能被误提交进发布物（`.gitignore` 由用户自行决定，壳层**不修改**用户 `.gitignore`）；
@@ -341,7 +341,7 @@ user-invocable: false
 | 键 | 默认 | 含义 |
 |---|---|---|
 | `wikiEnabled` | true | 活动栏是否显示 Wiki 入口 |
-| `wikiRootMode` | `in-repo` | `.dsh/wiki/` 或 `$DSH_HOME/repo-wiki/<hash>/` |
+| `wikiRootMode` | `in-repo` | `.dsh/wiki/` 或 `$DSH_HOME/oh-my-dsh/repo-wiki/<hash>/` |
 | `wikiAutoRegenerate` | false | 文件变更阈值触发自动更新（见 5.3） |
 | `wikiAutoInjectIndex` | false | 生成流程是否在 AGENTS.md 注册块中附 index 摘要（见 6.3） |
 | `wikiRegisterAgentsMd` | false | 是否向项目根 AGENTS.md 追加注册块（见 6.2） |
@@ -428,7 +428,7 @@ user-invocable: false
 3. 不修改任何 DeepSeek Harness 源码；不修改用户已有 `AGENTS.md`/`CLAUDE.md`（注册块为显式开关且幂等）；
 4. v1 壳层不做向量检索；搜索 = 标题过滤 + `session.search`（FTS5），正文子串扫描为 v2 备选；QMD 语义检索**暂不整合**（见 13）；
 5. `session.create` / `session.prompt`（`mode: queue`）为已核实可用的 dsh web API；若后续版本接口变化，触发链路按新 schema 适配；
-6. 默认 wiki 根为 `<repoRoot>/.dsh/wiki/`，可配置迁移到 `$DSH_HOME/repo-wiki/`；
+6. 默认 wiki 根为 `<repoRoot>/.dsh/wiki/`，可配置迁移到 `$DSH_HOME/oh-my-dsh/repo-wiki/`；
 7. 本文档只产出设计，M1-M3 按评审结果另行排期实施；
 8. QMD（`@tobilu/qmd`）**暂不整合**（见第 13 节）：不捆绑、不接入，v1 检索以标题过滤 + `session.search` 为准；第 13 节仅记录候选方案与触发条件，供后续「检索能力增强」立项时参考。
 
