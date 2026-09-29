@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
+## [1.17.2] - 2026-09-29
+
+### Fixed
+
+- **终端面板首次打开会同时开出两个终端（2026-09-29）**：`setRightPanel(.terminal)` 在打开面板时先 `setWorkspaceDirectory(dir)` 采纳当前工作区、再 `ensureSession()` 兜底首个会话，而**两条路径都会**在「当前工作区没有可见会话」时各开一个：工作区切换的自动开启（#5 后续）与首次打开兜底。新建会话要先经 `DSHSessionRPC.resolveProjectDirectory` 异步解析 cwd，`ensureSession()` 运行时第一个页签还没进 `tabs`，`visibleTabs.isEmpty` 仍为真 → 同一帧内发出两次 spawn，两个 PTY（应用日志实测：`session 1` / `session 2` 相隔 8ms、cwd 相同）。触发条件是「预览/会话先把 `ProjectDirectory.current` 定好、终端的 `workspaceKnown` 仍为 false」，正是首次打开终端的情形。修复：`setWorkspaceDirectory` 只在实际的工作区**切换**（此前已采纳过工作区）时自动开启；**首次采纳不 spawn**，首个会话交给 `ensureSession()` 独有，`#5` 的「切到无终端工作区自动开启」保持不变。顺带删除该处遗留的、只赋值不读取的 `startedOnce`。回归：`tests/terminal-panel` 新增两项（首次打开只排队一个会话；后续切到无终端工作区仍自动开启 —— 在服务器未就绪时数 `deferredSpawns`，无需 PTY）。
+
 ## [1.17.1] - 2026-09-29
 
 ### Fixed
