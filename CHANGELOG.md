@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
+## [Unreleased]
+
+### Fixed
+
+- **审查面板看不到文件变更（dsh 0.1.5-rc.3，2026-09-30）**：升级后审查面板能**列出**会话却显示「没有改动」——根因是 `run_code` 的**嵌套派发事件名换代**：dsh ≤0.1.2 写 `tool/code-dispatch[-start]`，0.1.5-rc.3 改写 `tool/ptc-dispatch[-start]`，而审计只认老名字，于是嵌套的 `write`/`edit`/`bash` 全被丢弃，`review audit` 的 `mutations`/`files`/`added`/`removed` 恒为 0（正常返回 JSON、不报错、不弹窗）。现在 `core/lib/review-log.js` 用 `DISPATCH_START_TYPES`/`DISPATCH_END_TYPES` 同时认两代事件名，老的 `code-dispatch` 日志不受影响。回归：`core/tests/review-log.test.js` 新增 2 项（ptc 嵌套 `write`/`edit` 能审计出 hunks 与统计；失败的 ptc dispatch 丢弃 pending content）；用内置 node 实测 0.1.5-rc.3 真实会话从 0 恢复为 4–13 个文件变更。影响清单见 `docs/dsh-version-impact.md` §4.5 / R7b。
+
 ## [1.17.1] - 2026-09-29
 
 ### Fixed

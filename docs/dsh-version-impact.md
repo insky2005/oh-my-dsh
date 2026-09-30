@@ -187,9 +187,10 @@
   侧栏仍是 `[role="treeitem"]` + `sessionRow`。**但文件打开这句当初判错了**：0.1.5 的浏览器文件链接改成
   dsh 自带文件面板（页面内 `ctx.sidebarRight.openResource`），不再发 `session/openWorkspacePath`——端点虽在，
   点链接的路径却不经过它；只比端点集合与六个耦合包看不出来（见下条修正）。
-- **唯一断裂**：会话日志按 **Session 格式世代**命名（`session.jsonl` → `session.v3.jsonl`，`.zstd` 叠加），
+- **第一处断裂**：会话日志按 **Session 格式世代**命名（`session.jsonl` → `session.v3.jsonl`，`.zstd` 叠加），
   0.1.5 新建会话直接写**世代 3**，迁移过的老会话把原来的文件留成冻结归档。审查面板只认世代 0 ⇒ 新会话
   列不出来（`review: listed 0/N sessions` + `audit FAILED`），老会话停旧。修法与用例见 §6.4 / R7。
+- **第二处断裂（0.1.5-rc.3 实测暴露，2026-09-30）**：审查面板能**列出**会话，却**看不到任何文件变更**。根因是 `run_code` 的**嵌套派发事件名换代**：dsh ≤0.1.2 写 `tool/code-dispatch[-start]`（子调用 id `…:code:N`），0.1.5-rc.3 改写 **`tool/ptc-dispatch[-start]`**（`…:ptc:N`）。审计只认老名字 ⇒ 嵌套的 `write`/`edit`/`bash` 全部被丢弃，`review audit` 的 `mutations`/`files`/`added`/`removed` 恒为 0（`entries` 里只剩未分类的顶层 `run_code`），同样**不报错、不弹窗**。修法与用例见 R7b。教训：**「会话能列出」≠「审计有内容」**，D 面核对必须真的读出一条改动。
 - **升级 SOP 增加两条核对项**：D 面「活日志文件名 + 审查面板能否列出并审计」、收尾「八面板全量扫描」
   （新增 QA 钩子 `DSH_PANEL_TEST`，一次跑完八个面板并各落一张截图）。
 - **逐面实测记录**（含命令与日志原样）：`docs/plans/dsh-015rc2-compat-audit.md`。
@@ -230,7 +231,7 @@
 - [ ] C 频道：微信 `/help` `/ping` `/status` `/wks` `/ses` `/new …` + **发一句普通消息**看是否回推答案（覆盖 C5–C7）。
 - [ ] C 工作区：`/wks` 能列出**面板已启用**的 workspace（覆盖 C4）。
 - [ ] C 项目面板：在「项目」面板新建一个工作区 → **不做任何刷新/重连**，dsh web 侧边栏一两秒内自己出现该工作区（覆盖 **C10a**）；点「新会话」→ web 切到该工作区的新会话、**且不重连、反复点不堆空会话**（覆盖 **C10b / B10b**）；再点卡片名称「在 dsh 中打开」→ 复用刚建的那条会话（覆盖 **C10c / B10**）。
-- [ ] D 会话日志：新建一个会话，看 `$DSH_HOME/sessions/<slug>/<id>/` 里**活日志的文件名**（世代名）是否仍是壳层认识的那一种；再看审查面板能否**列出**它、能否审计出一条真实会话的改动（R7；命令见 §6.4）。老会话被迁移后会同时存在冻结归档与活日志，面板必须读活的那份。
+- [ ] D 会话日志：新建一个会话，看 `$DSH_HOME/sessions/<slug>/<id>/` 里**活日志的文件名**（世代名）是否仍是壳层认识的那一种；再看审查面板能否**列出**它、能否审计出一条真实会话的改动（R7；命令见 §6.4）。老会话被迁移后会同时存在冻结归档与活日志，面板必须读活的那份。**只看到会话列表不算过**：审计结果里必须有 `mutations > 0`、至少一个 `path` 与真实 `hunks`；空审计多半是嵌套派发事件名换代（R7b）。
 - [ ] D 布局：`storages/workspace.json` 仍在、`unit.version` 仍为 **2**、工作区数量与面板一致（R4；命令见 §6.2）——变了就要同时改 `core/lib/workspace-store.js` 与 `platforms/macos/src/DshWebRPC.swift` 的读取器并补用例。
 - [ ] E 升级链路本身：`ohmy-core upgrade` 能判定「下一步」；升级后服务重启、版本事实刷新。
 - [ ] 其它面板回归：wiki 生成、issue-runner 跑一条、浏览器面板、终端、文件预览。
@@ -259,7 +260,7 @@
 | ~~R2 复用外部实例~~（**2026-09-12 复用逻辑已整体删除**） | 外部实例的 token 只存在于它自己的 stdout，无法获取；复用必然 `webToken == nil` ⇒ 原生 RPC 全 401（§4.4 实战踩过）。现在 **永远自拉起**，并回收自己上次残留的实例（`$DSH_HOME/shell/dsh-web.json` + token 探活）| 只有出现「必须与某个已启动实例共享**内存态**（未落盘状态、正在跑的 turn 视图）」的需求时才重估 |
 | **R3 注入脚本依赖 fetch + DOM**（**仍在**，且已实测出过坏点） | 三个注入脚本直接依赖 dsh web 客户端实现：fetch 形态与信封、方法名白名单、sessionId 位置、侧栏 `[role=treeitem].sessionRow` DOM、文件打开 RPC 端点。上游改传输（已有 WebSocket mux）或改 DOM 就**静默失效**。2026-09-10 实测发现 `sessionOpenerScript` 在 0.1.2 下一直是坏的（写死点号 method 打到斜杠端点，服务端 \`method does not match endpoint\`），已修为运行时双面 —— 详见 §6.1 | 升级后 B 面三项验证任一失败即命中 |
 | **R4 `workspace.json` 兜底是私有布局**（**仍在**，已加护栏） | 兜底读的是 dsh 内部带 schema/版本号的私有域存储（`defineDomain({name:'workspace',version:2})`，还有 `pendingMutation` 恢复标记），上游可随时改字段/搬文件/升版本；读不懂 = 上述五处**静默变空**。现已加域名+版本校验、诊断日志、单一实现收口（见 §6.2） | 升级后 `unit.version` 变化，或工作区列表突然为空而接口没变 |
-| **R7 会话日志「世代命名」**（0.1.5 实测踩过，已修） | 审查面板直接读 dsh 落盘的会话日志，而**文件名里编码了 Session 格式世代**（0.1.2 = `session.jsonl`，0.1.5 = `session.v3.jsonl`，压缩加 `.zstd`）；迁移过的会话还会把老文件留成冻结归档。只认世代 0 的名字 ⇒ 新会话一条都列不出来、老会话永远停旧，**不报错**。已改为按规范名枚举 + 世代最大者优先（见 §6.4） | 上游再提世代（出现 `session.v4.jsonl`）时**不需要改代码**（规则是「取最大世代」），但若换成非 `session*.jsonl` 的容器/目录名就要重估 |
+| **R7 会话日志「世代命名」**（0.1.5 实测踩过，已修） | 审查面板直接读 dsh 落盘的会话日志，而**文件名里编码了 Session 格式世代**（0.1.2 = `session.jsonl`，0.1.5 = `session.v3.jsonl`，压缩加 `.zstd`）；迁移过的会话还会把老文件留成冻结归档。只认世代 0 的名字 ⇒ 新会话一条都列不出来、老会话永远停旧，**不报错**。已改为按规范名枚举 + 世代最大者优先（见 §6.4）；**嵌套派发事件名**是同一面板的第二个世代点（见 R7b） | 上游再提世代（出现 `session.v4.jsonl`）时**不需要改代码**（规则是「取最大世代」），但若换成非 `session*.jsonl` 的容器/目录名就要重估 |
 | **R8 运行时闭包漂移**（2026-09-23 实测踩到，已修） | 只钉 `DSH_PACKAGE_SPEC` **不够**：dsh 的 cordis 工具链是 caret 范围，`npm install` 会随上游发版改闭包。实测重建 0.1.2-rc.1 得到 `cordis-plugin-hmr 1.0.19`（生产包是 1.0.17）后，**dsh 自己启动就抛** `user patch-layer watching requires the Cordis HMR service`（profile 的 `patchReload: "live"` 需要 HMR 服务，而新插件在旧 loader 下起不来）。已改为**提交 lockfile + `npm ci` + 构建期启动冒烟**（见 §6.5） | 每次新增/变更 dsh spec（要配一份新 lock）；上游换掉 cordis 工具链或改 profile 机制时重估 |
 | R5 单一版本策略 | 只为「内置版本」做适配，老版本兼容靠回退（C1）；回退在两侧都失效时会静默出空结果 | 引入第二个受支持版本时重估 |
 | **R6 `dsh-auth-*` cookie 按 authority 命名、无限累积**（2026-09-13 已修） | dsh 0.1.2+ 的浏览器 cookie 名 = `"dsh-auth-" + base64url(sha256(authority))`，authority 是**该实例的 host:port**；cookie 又不区分端口 ⇒ 每次自拉起一个新端口就多留一只（~226 B / 30 天 TTL），只增不减。累积 Cookie 头一旦把 **~2.1 KB 的插件 batch URL** 顶过 node 的 16 KiB 头上限（第 63 只）即 **431** → 界面「Failed to load plugins」。壳层已按「退出清理 + 启动清理 + node 头上限保险带」处置（见 §6.3） | 上游改 cookie 命名/鉴权载体（不再按 authority 派生），或 dsh 把插件 batch 换成多条更短 URL 后重估 |
@@ -414,6 +415,19 @@ node -e "const c=require('./core'); const l=c.listSessionLogs({dshHome:process.e
 
 **未来触发**：上游再提世代（`session.v4.jsonl`）**不需要改代码**——规则是「取最大世代」；但若把日志换成
 非 `session*.jsonl` 的容器名/目录结构，本条与 §3 D6/D8 要一起重估。
+
+### R7b 详解：嵌套派发事件名的「世代命名」（审查面板的审计数据）
+
+**我们依赖的是什么**：审计把 `run_code` 里嵌套调用的工具归到「哪个文件被改了、怎么改的」。这一层在日志里由一对事件描述——`…-dispatch-start`（携带 `arguments`）与 `…-dispatch`（`isError`）。**事件名本身就是世代标记**：
+
+- dsh ≤0.1.2（含旧 `run_code` 桥）：`tool/code-dispatch-start` / `tool/code-dispatch`，`subCallId` 形如 `<root>:code:N`；
+- **dsh 0.1.5-rc.3（programmatic tool calling）：`tool/ptc-dispatch-start` / `tool/ptc-dispatch`，`subCallId` 形如 `<root>:ptc:N`**。
+
+顶层 `tool/call` 不受影响（0.1.5 下顶层几乎只有 `run_code`），但真正的 `write`/`edit`/`bash` 全在嵌套层，所以只认老名字的审计会「有会话、没改动」。
+
+**为什么难发现**：`review audit` 正常返回 JSON、`status` 全部 `ok`、`diagnostics` 为空，只是 `mutations`/`nested`/`bashCalls` 都是 0；面板因此显示一个「没有改动」的空树，而非报错。静态比对 RPC 端点也发现不了——它不是 RPC，是**会话日志事件名**。
+
+**修法**（`core/lib/review-log.js`）：`DISPATCH_START_TYPES` / `DISPATCH_END_TYPES` 两个集合同时收录 `code-dispatch` 与 `ptc-dispatch` 两代名字，`buildAudit()` 只看集合成员；两代日志同一条代码路径。用例 2 条钉住契约（`core/tests/review-log.test.js`）：`ptc-dispatch` 的嵌套 `write`/`edit` 能审计出 hunks 与统计、失败的 `ptc-dispatch` 会丢弃 pending content。验证命令见 §6.4，判据：`review audit <id>` 的 `stats.mutations > 0`。
 
 ### R8 详解：运行时依赖闭包漂移（只钉 dsh 版本不够）
 

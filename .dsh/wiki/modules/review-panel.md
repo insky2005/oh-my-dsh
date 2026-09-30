@@ -28,7 +28,7 @@ manual: false
 | # | 记录 | 提供什么 |
 |---|---|---|
 | 1 | `tool/result` → `data.meta.diffs` | 已应用 hunk（`{path, oldText, newText}`，3 行上下文）——**仅顶层** `write`/`edit` |
-| 2 | 顶层 `tool/call` / 嵌套 `tool/code-dispatch-start` → `arguments` | 精确请求参数（`edit` 的 old/new string、`write` 全文），覆盖顶层 + 嵌套 |
+| 2 | 顶层 `tool/call` / 嵌套 `tool/code-dispatch-start` / `tool/ptc-dispatch-start` → `arguments` | 精确请求参数（`edit` 的 old/new string、`write` 全文），覆盖顶层 + 嵌套 |
 | 3 | `tool/call name=bash`（含嵌套） | 仅命令文本（**没有**前后内容），按「可能写文件」启发式标记 |
 
 展示标签：`已应用`（结果 hunk）/`参数还原`（由参数还原，如 `run_code` 嵌套调用）/`全文写入`、`新建`（只记录写入内容）/`嵌套调用`；`bash` 直改与**失败/被拒调用**各自单列（不计入变更统计）。
