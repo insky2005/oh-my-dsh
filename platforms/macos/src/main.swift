@@ -126,6 +126,7 @@ enum L10n {
         "menu.setRegistry": ("设置 dsh registry…", "Set dsh Registry…"),
         "menu.resetRegistry": ("恢复默认 registry", "Reset Registry"),
         "menu.openLogs": ("打开日志文件夹", "Open Logs Folder"),
+        "menu.openDataFolder": ("打开数据文件夹", "Open Data Folder"),
         // status
         "status.starting": ("正在启动 oh-my-dsh 服务…", "Starting oh-my-dsh service…"),
         "status.startFailed": ("无法启动 oh-my-dsh\n\n%@", "Failed to start oh-my-dsh\n\n%@"),
@@ -5461,6 +5462,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let snapshots = settingsMenu.addItem(withTitle: L10n.tr("snapshot.menu"), action: #selector(openSessionSnapshots(_:)), keyEquivalent: "")
         snapshots.target = self
         settingsMenu.addItem(.separator())
+        let dataFolder = settingsMenu.addItem(withTitle: L10n.tr("menu.openDataFolder"), action: #selector(openDataFolder), keyEquivalent: "d")
+        dataFolder.target = self
         let logs = settingsMenu.addItem(withTitle: L10n.tr("menu.openLogs"), action: #selector(openLogs), keyEquivalent: "l")
         logs.target = self
         settingsMenu.addItem(.separator())
@@ -6343,6 +6346,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    @objc private func openDataFolder() {
+        let dir = URL(fileURLWithPath: ShellPaths.root(home: dshDataHome))
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(dir)
+    }
+
     @objc private func openLogs() {
         let dir = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/oh-my-dsh")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -6372,6 +6381,7 @@ final class SettingsWindowController {
     /// (label key, key equivalent) pairs for the read-only Shortcuts list.
     private let shortcutRows: [(key: String, shortcut: String)] = [
         ("menu.checkUpgrade", "⌘U"),
+        ("menu.openDataFolder", "⌘D"),
         ("menu.openLogs", "⌘L"),
         ("menu.toggleProjects", "⌥⌘P"),
         ("menu.toggleFiles", "⌥⌘F"),
