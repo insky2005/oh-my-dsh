@@ -22,6 +22,28 @@ struct TaskCreateDraft: Equatable {
     let body: String?
 }
 
+/// POST /api/tasks/queue/create：一个「等待态」队列 + 加入它的任务。session 是发起
+/// 请求的 dsh 会话 —— 队列到达 .done 时把完成情况回传给它（缺省不回传）。
+struct TaskQueueCreateRequest: Equatable {
+    var workspace: String?
+    var session: String?
+    var focus: Bool
+    var name: String
+    /// nil = 按队列名派生默认分支；"" = 完全不切分支。
+    var branch: String?
+    var baseBranch: String?
+    /// nil = 按工作区能力决定（有 GitHub 远端才自动开 PR）。
+    var autoPR: Bool?
+    var drafts: [TaskCreateDraft]
+}
+
+/// POST /api/tasks/queue/start：按 id 启动，或在 id 缺省时启动「本会话创建的那个等待队列」。
+struct TaskQueueStartRequest: Equatable {
+    var workspace: String?
+    var session: String?
+    var queueId: String?
+}
+
 /// 任务面板 API 的实现方（IssueRunnerPanelController）。
 ///
 /// 两个方法都在**主线程**上被调用：board 的读改写必须与面板的 step 定时器同一条
@@ -31,6 +53,10 @@ protocol TasksAPIDelegate: AnyObject {
     func apiTaskList(workspace: String?) -> [String: Any]
     /// 批量创建手动任务（待处理、未入队）。focus 为真时切到该工作区并展开面板。
     func apiTaskCreate(workspace: String?, focus: Bool, drafts: [TaskCreateDraft]) -> [String: Any]
+    /// 建一个「等待态」队列（.draft）并把任务批量入队；不启动任何东西。
+    func apiTaskQueueCreate(_ request: TaskQueueCreateRequest) -> [String: Any]
+    /// 启动一个队列（.draft / .paused → .active）；queueId 可缺省，按 session 定位。
+    func apiTaskQueueStart(_ request: TaskQueueStartRequest) -> [String: Any]
 }
 
 // MARK: - 工作区解析（纯函数）
@@ -91,6 +117,20 @@ enum TasksAPIRouter {
         var tasksProvided: Bool = false
     }
 
+    /// queue/create 的解析结果。
+    struct ParsedQueueCreate {
+        var workspace: String?
+        var session: String?
+        var focus: Bool = true
+        var name: String = ""
+        var branch: String?
+        var baseBranch: String?
+        var autoPR: Bool?
+        var drafts: [TaskCreateDraft] = []
+        var rejected: [[String: Any]] = []
+        var tasksProvided: Bool = false
+    }
+
     /// 命中 /api/tasks/* 时返回响应；不是本面板的路径返回 nil（调用方继续走原
     /// 来的路由 —— 任务面板不吞浏览器面板的端点，也不吞 404）。
     static func route(_ request: HTTPRequest, delegate: TasksAPIDelegate?) -> HTTPResponse? {
@@ -127,9 +167,53 @@ enum TasksAPIRouter {
             }
             return .json((result["ok"] as? Bool) == true ? 200 : 400, result)
 
+        case ("POST", "/api/tasks/queue/create"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            let parsed = parseQueueCreate(body)
+            guard !parsed.drafts.isEmpty else {
+                return .json(400, ["ok": false,
+                                   "error": parsed.tasksProvided ? "no-tasks" : "missing-tasks",
+                                   "rejected": parsed.rejected])
+            }
+            guard !parsed.name.isEmpty else {
+                return .json(400, ["ok": false, "error": "missing-name",
+                                   "hint": "give the queue a name, or at least one task whose title can name it"])
+            }
+            guard let delegate = delegate else { return unavailable() }
+            var result = delegate.apiTaskQueueCreate(TaskQueueCreateRequest(
+                workspace: parsed.workspace, session: parsed.session, focus: parsed.focus,
+                name: parsed.name, branch: parsed.branch, baseBranch: parsed.baseBranch,
+                autoPR: parsed.autoPR, drafts: parsed.drafts))
+            let queueRejected = result["rejected"] as? [[String: Any]] ?? []
+            result["rejected"] = parsed.rejected + queueRejected
+            if result["ok"] == nil { result["ok"] = !((result["created"] as? [Any]) ?? []).isEmpty }
+            return .json((result["ok"] as? Bool) == true ? 200 : 400, result)
+
+        case ("POST", "/api/tasks/queue/start"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            guard let delegate = delegate else { return unavailable() }
+            let result = delegate.apiTaskQueueStart(parseQueueStart(body))
+            return .json(startStatus(result), result)
+
         default:
             return nil
         }
+    }
+
+    /// /api/tasks/queue/start 的 HTTP 状态：启动了 200，队列名有歧义 409（调用方补
+    /// queueId 再来），找不到 404，其余 400。
+    static func startStatus(_ result: [String: Any]) -> Int {
+        if (result["ok"] as? Bool) == true { return 200 }
+        switch result["error"] as? String {
+        case "ambiguous-queue": return 409
+        case "no-queue": return 404
+        default: return 400
+        }
+    }
+
+    static func missingBody() -> HTTPResponse {
+        .json(400, ["ok": false, "error": "missing-body",
+                    "hint": "expected a JSON object like {\"name\": \"…\", \"tasks\": [\"标题\"]}"])
     }
 
     static func unavailable() -> HTTPResponse {
@@ -184,6 +268,46 @@ enum TasksAPIRouter {
         return parsed
     }
 
+    /// 解析 queue/create 请求体（纯函数）。任务部分复用 create 的规则（字符串简写、
+    /// 对象、空标题、50 条上限）；队列名缺省时用第一条任务的标题兜底。
+    static func parseQueueCreate(_ body: [String: Any]) -> ParsedQueueCreate {
+        var parsed = ParsedQueueCreate()
+        parsed.workspace = TasksAPIWorkspace.normalize(body["workspace"] as? String)
+        parsed.session = normalizeSession(body["session"] as? String)
+        parsed.focus = (body["focus"] as? Bool) ?? true
+        parsed.name = ((body["name"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if let raw = body["branch"] as? String {
+            parsed.branch = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let base = (body["baseBranch"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        parsed.baseBranch = (base?.isEmpty ?? true) ? nil : base
+        parsed.autoPR = body["autoPR"] as? Bool
+
+        guard let raw = body["tasks"] as? [Any] else {
+            parsed.rejected.append(["title": "", "error": "missing-tasks"])
+            return parsed
+        }
+        parsed.tasksProvided = true
+        let tasks = parseCreate(["tasks": raw])
+        parsed.drafts = tasks.drafts
+        parsed.rejected.append(contentsOf: tasks.rejected)
+        if parsed.name.isEmpty { parsed.name = parsed.drafts.first?.title ?? "" }
+        return parsed
+    }
+
+    static func parseQueueStart(_ body: [String: Any]) -> TaskQueueStartRequest {
+        let raw = (body["queueId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return TaskQueueStartRequest(workspace: TasksAPIWorkspace.normalize(body["workspace"] as? String),
+                                     session: normalizeSession(body["session"] as? String),
+                                     queueId: (raw?.isEmpty ?? true) ? nil : raw)
+    }
+
+    /// 来源会话 id，缺省 / 空白 → nil（队列照建，只是不回传）。
+    static func normalizeSession(_ raw: String?) -> String? {
+        guard let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
+    }
+
     // MARK: 响应里的一条任务 / 一个队列（形状单点定义）
 
     static func taskDictionary(_ task: TaskItem, queueName: String?) -> [String: Any] {
@@ -202,13 +326,16 @@ enum TasksAPIRouter {
         return d
     }
 
-    static func queueDictionary(_ queue: TaskQueue) -> [String: Any] {
+    static func queueDictionary(_ queue: TaskQueue, reportsToSession: Bool = false) -> [String: Any] {
         var d: [String: Any] = ["id": queue.id,
                                 "name": queue.name,
                                 "state": queue.state.rawValue,
                                 "tasks": queue.taskIds.count]
         if let branch = queue.branch { d["branch"] = branch }
         if !queue.autoCreated { d["userQueue"] = true }
+        // The session id itself stays machine-private; the caller only says WHETHER a
+        // report will go back, so a UI / agent can show it without leaking the id.
+        if reportsToSession { d["reportsToSession"] = true }
         return d
     }
 }

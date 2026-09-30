@@ -75,7 +75,7 @@ board.tasks = [a, b]
 let queue = board.createQueue(name: "Dark Mode")
 
 eq(queue.branch, "feature/dark-mode", "queue branch default")
-eq(queue.state, QueueState.paused, "a new queue is paused")
+eq(queue.state, QueueState.draft, "a new queue is draft (等待启动), not paused")
 eq(queue.autoPR, false, "autoPR is off by default")
 check(queue.autoCreated == false, "a user queue is not auto")
 check(board.enqueue(taskID: a.id, into: queue.id), "enqueue A")
@@ -107,6 +107,35 @@ board.markDone(a.id, prUrl: "https://example.test/pull/1")
 check(board.task(a.id)?.state == .done, "A is done")
 check(board.task(a.id)?.prUrl == "https://example.test/pull/1", "the PR is recorded")
 eq(board.queue(queue.id)?.state, QueueState.done, "an empty queue becomes done")
+
+// MARK: - a new queue waits (draft)
+
+section("新建队列是等待态（draft），不会自己开跑")
+do {
+    var b = TaskBoard()
+    let t1 = TaskItem.manual(title: "D1", id: "manual-aa000001")
+    let t2 = TaskItem.manual(title: "D2", id: "manual-aa000002")
+    b.tasks = [t1, t2]
+    let q = b.createQueue(name: "Waiting")
+    eq(b.queue(q.id)?.state, QueueState.draft, "a new queue is draft, not paused")
+    // Board-level enqueue alone does NOT activate (the queue API path uses it).
+    _ = b.enqueue(taskID: t1.id, into: q.id)
+    _ = b.enqueue(taskID: t2.id, into: q.id)
+    check(b.task(t1.id)?.state == .queued, "the task is queued")
+    eq(b.queue(q.id)?.state, QueueState.draft, "enqueue alone does not activate a draft queue")
+    check(b.nextStartable() == nil, "a draft queue starts nothing")
+    // 启动 = resume；之后才可跑。
+    _ = b.resumeQueue(q.id)
+    eq(b.queue(q.id)?.state, QueueState.active, "start makes it active")
+    eq(b.nextStartable(), t1.id, "the first task becomes startable after start")
+
+    // 重启：active → paused；从未启动过的 draft 保持 draft。
+    var draft2 = TaskBoard()
+    let q2 = draft2.createQueue(name: "Untouched")
+    check(draft2.queue(q2.id)?.state == QueueState.draft, "a fresh queue is draft")
+    _ = draft2.reconcileAfterRestart(interruptedError: "tasks.errInterrupted")
+    eq(draft2.queue(q2.id)?.state, QueueState.draft, "a draft queue survives a restart as draft")
+}
 
 // MARK: - failure pauses the queue
 
@@ -386,6 +415,17 @@ check(dumpedLocal["activeQueueId"] as? String == "q-1234", "the active queue is 
 check(dumpedLocal["runningTaskId"] as? String == "issue-6", "the running task is persisted")
 eq(TaskLocalState.taskID(fromStoredKey: "42"), "issue-42", "legacy key translation")
 eq(TaskLocalState.taskID(fromStoredKey: "issue-42"), "issue-42", "a task id key is untouched")
+
+// The queue → session link and the notified stamp live in the same machine overlay.
+local.queueSessions["q-1"] = "session-x"
+local.queueNotified["q-1"] = "2026-09-30T00:00:00Z"
+let dumpedQueue = local.dictionary()
+eq((dumpedQueue["queueSessions"] as? [String: String])?["q-1"], "session-x", "queue → session is persisted")
+eq((dumpedQueue["queueNotified"] as? [String: String])?["q-1"],
+   "2026-09-30T00:00:00Z", "the notified stamp is persisted")
+let queueRoundTrip = TaskLocalState.from(dumpedQueue)
+eq(queueRoundTrip.queueSessions["q-1"], "session-x", "queue → session round-trips")
+eq(queueRoundTrip.queueNotified["q-1"], "2026-09-30T00:00:00Z", "the notified stamp round-trips")
 
 // MARK: - 汇报写回
 

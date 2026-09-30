@@ -132,6 +132,14 @@ final class FakeDsh {
         return true
     }
 
+    /// Completion reports sent back to the session that created a queue.
+    private(set) var notifications: [(session: String, text: String)] = []
+    var notifyFails = false
+    func notify(_ id: String, _ text: String) -> Bool {
+        notifications.append((id, text))
+        return !notifyFails
+    }
+
     func cancel(_ id: String) -> Bool {
         cancelled.append(id)
         running.remove(id)
@@ -222,6 +230,7 @@ final class Harness {
                                           shape: shape)
             },
             sessionReport: { id in dsh.report(id) },
+            notifySession: { id, text in dsh.notify(id, text) },
             persist: { board in rec.persistCount += 1; _ = board },
             persistIssueTask: { task in rec.issueWrites.append(task.id) },
             log: { message in rec.logs.append(message) },
@@ -1427,6 +1436,108 @@ do {
     h.dsh.finishAll()
     _ = h.runner.step()
     check(h.board.task(b.id)?.state == .done, "两条都被批量救回来了")
+}
+
+section("queue API: 建「等待态」队列 + 批量入队，不启动")
+do {
+    let h = Harness(board: TaskBoard(), github: true, gitRepo: true)
+    let result = h.runner.createQueueWithTasks(name: "Dark Mode",
+                                               branch: nil, baseBranch: nil, autoPR: nil,
+                                               originSession: "session-origin",
+                                               drafts: [TaskDraft(title: "深色模式", body: "改主题"),
+                                                        TaskDraft(title: "跟随系统", body: "")])
+    eq(result.queue.state, QueueState.draft, "新队列是 draft（等待启动）")
+    eq(result.queue.branch, "feature/dark-mode", "分支从名字派生")
+    eq(result.created.count, 2, "两条任务都建了")
+    check(h.board.task(result.created[0].id)?.state == .queued, "任务在队列里等待")
+    eq(h.board.queue(result.queue.id)?.state, QueueState.draft, "没有启动任何东西")
+    eq(h.board.local.queueSessions[result.queue.id], "session-origin", "记录了来源会话")
+    check(h.runner.runningTaskID == nil, "runner 是空闲的")
+    check(h.dsh.prompts.isEmpty, "连提示词都没发过")
+    check(h.dsh.notifications.isEmpty, "也没有回传")
+}
+
+section("队列到达 .done：回传完成情况到来源会话（一次，幂等）")
+do {
+    let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
+    let r = h.runner.createQueueWithTasks(name: "Dark Mode", branch: "", autoPR: false,
+                                          originSession: "session-origin",
+                                          drafts: [TaskDraft(title: "A", body: "做 A"),
+                                                   TaskDraft(title: "B", body: "做 B")])
+    _ = h.runner.startQueue(r.queue.id)
+    h.dsh.reports["session-1"] = "A 完成，改了 a.swift"
+    h.dsh.finish("session-1")
+    _ = h.runner.step()
+    check(h.dsh.notifications.isEmpty, "队列没跑完就不回传")
+    check(h.board.task(r.created[0].id)?.state == .done, "第一条完成")
+
+    h.dsh.reports["session-2"] = "B 完成"
+    h.dsh.finish("session-2")
+    _ = h.runner.step()
+    eq(h.dsh.notifications.count, 1, "整队完成后回传一次")
+    eq(h.dsh.notifications.first?.session, "session-origin", "回传到来源会话")
+    let text = h.dsh.notifications.first?.text ?? ""
+    check(text.contains("Dark Mode"), "报告点名队列")
+    check(text.contains("✓ A：A 完成，改了 a.swift"), "报告用第一条的汇报首行")
+    check(text.contains("✓ B：B 完成"), "报告列出第二条")
+    check(text.contains("确认收到"), "要求 agent 简短确认")
+    check(h.board.local.queueNotified[r.queue.id] != nil, "记下已回传")
+    _ = h.runner.step()
+    eq(h.dsh.notifications.count, 1, "幂等：不会重复回传")
+}
+
+section("手动取消 / 暂停：不回传")
+do {
+    let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
+    let r = h.runner.createQueueWithTasks(name: "Lane", branch: "", autoPR: false,
+                                          originSession: "session-origin",
+                                          drafts: [TaskDraft(title: "A", body: ""),
+                                                   TaskDraft(title: "B", body: "")])
+    _ = h.runner.startQueue(r.queue.id)
+    _ = h.runner.cancelRunning()
+    _ = h.runner.step()
+    eq(h.board.queue(r.queue.id)?.state, QueueState.paused, "取消让队列暂停")
+    check(h.dsh.notifications.isEmpty, "取消不回传（只有 done 才回传）")
+}
+
+section("重启补发：done 且未回传的队列在下一次 step 发出")
+do {
+    var board = TaskBoard()
+    let t = TaskItem.manual(title: "A", body: nil, id: "manual-zz000001")
+    board.tasks = [t]
+    let q = board.createQueue(name: "Lane", branch: "", autoPR: false)
+    _ = board.enqueue(taskID: t.id, into: q.id)
+    _ = board.resumeQueue(q.id)
+    board.markRunning(t.id)
+    board.markDone(t.id)
+    eq(board.queue(q.id)?.state, QueueState.done, "队列已完成")
+    // 关联在盘上，但 app 在回传前退出了。
+    board.local.queueSessions[q.id] = "session-origin"
+    let h = Harness(board: board, github: false, gitRepo: true)
+    _ = h.runner.step()
+    eq(h.dsh.notifications.count, 1, "空闲的 step 补发一次")
+    eq(h.dsh.notifications.first?.session, "session-origin", "补发到来源会话")
+    check(h.board.local.queueNotified[q.id] != nil, "补发后记下标记")
+}
+
+section("queueFinishedSummary 文案：首行汇报 + 失败原因 + 简短确认")
+do {
+    var board = TaskBoard()
+    let a = TaskItem.manual(title: "A", body: nil, id: "manual-zz000002")
+    let b = TaskItem.manual(title: "B", body: nil, id: "manual-zz000003")
+    board.tasks = [a, b]
+    let q = board.createQueue(name: "外观", branch: "feature/ui", autoPR: true)
+    board.markRunning(a.id)
+    board.markDone(a.id, report: "改完了\n第二行", at: Date())
+    board.markRunning(b.id)
+    _ = board.markFailed(b.id, error: "tasks.errNotGit")
+    let text = TaskPrompts.queueFinishedSummary(queue: board.queue(q.id)!,
+                                                tasks: [board.task(a.id)!, board.task(b.id)!])
+    check(text.contains("队列「外观」"), "点名队列")
+    check(text.contains("✓ A：改完了"), "汇报取首行")
+    check(!text.contains("第二行"), "不粘贴汇报全文")
+    check(text.contains("✗ B：tasks.errNotGit"), "失败项列出原因")
+    check(text.contains("确认收到"), "要求简短确认")
 }
 
 if failures == 0 {

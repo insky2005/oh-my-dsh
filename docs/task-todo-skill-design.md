@@ -47,6 +47,8 @@
 |---|---|---|
 | GET `/api/tasks/list` | `?workspace=<path>`（可选） | `{ok, workspace, tasks:[{id,title,state,source,queueId,queueName}], queues:[{id,name,branch,state}]}` |
 | POST `/api/tasks/create` | `{workspace?, focus?, tasks:[{title, body?} \| "标题"]}` | `{ok, workspace, shown, created:[{id,title}], rejected:[{title,error}]}` |
+| POST `/api/tasks/queue/create` | `{workspace?, session?, focus?, name, branch?, baseBranch?, autoPR?, tasks:[…]}` | 建 `.draft` 队列 + 批量入队；`{ok, queue:{id,name,state,branch}, created:[…], rejected:[…]}` |
+| POST `/api/tasks/queue/start` | `{workspace?, session?, queueId?}` | 启动队列；`{ok, started:[id]}` / `409 ambiguous-queue` / `404 no-queue` |
 
 - `tasks` 每项可以是对象（推荐，带描述）或字符串（只有标题，描述回退为标题，与面板
   单行创建一致：`TaskDraft.effectiveBody`）。
@@ -133,6 +135,10 @@ Agent 的 cwd 是**会话工作区**，但可能落在子目录（`pwd` ≠ work
 1. **通道**：壳层本地 API（不用「直接写 .dsh/tasks/*.json」——面板内存态会覆盖，且无反馈）。
 2. **Skill 名**：`task-todo`（领域词 + 面板名，与 web-dev-tools / repo-knowledge / issue-resolve 同一体例）。
 3. **能力边界**：只创建（+ 查询）；建队列、入队、启动一律留给用户与面板。
+   —— 2026-09-30 扩展：新增 `POST /api/tasks/queue/create`（等待态队列 + 批量入队）与
+   `POST /api/tasks/queue/start`。技能在用户明确要求建队列时可用前者，在用户说「启动队列」
+   时用后者；仍不自动启动、不绕过 API。队列跑到 `.done` 时完成情况回传创建会话。
+   见 `docs/tasks-queue-session-loop-design.md`。
 4. **默认 focus**：true（用户刚要求的东西要看得见）。
 5. **批量**：一次请求多条，上限 50。
 6. **用户显式要求**：写进 Skill 正文硬规则；Skill 不主动建任务。

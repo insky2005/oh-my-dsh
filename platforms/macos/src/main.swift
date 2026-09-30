@@ -695,6 +695,7 @@ enum L10n {
         // Agent 经本地 API（技能 task-todo）批量建的任务：面板报一句，用户知道
         // 这些卡片从哪来的。
         "tasks.apiCreated": ("已由 Agent 创建 %d 个任务（待处理、未入队）", "Created %d task(s) from the agent (pending, not queued)"),
+        "tasks.apiQueueCreated": ("已由 Agent 创建队列「%@」（%d 个任务，待启动）", "Created queue %@ from the agent (%d task(s), draft)"),
         "tasks.recovered": ("上次运行被中断：%d 个任务已标为失败、%d 个队列已暂停（不会自动重跑）", "Interrupted last run: %d task(s) marked failed, %d queue(s) paused (nothing restarts by itself)"),
         "tasks.gitAppeared": ("这个目录现在是 git 仓库 —— 已重新识别工作区：新队列可以使用分支", "This directory is a git repository now — workspace re-detected: new queues can use a branch"),
         "tasks.remoteAppeared": ("这个工作区现在有 GitHub 远端 —— 已重新识别：PR 相关功能已启用", "This workspace has a GitHub remote now — re-detected: the PR features are available"),
@@ -725,6 +726,7 @@ enum L10n {
         "tasks.queue.updateFailed": ("队列已经不存在，改动没有保存", "The queue no longer exists, so the change was not saved"),
         "tasks.queue.delete": ("删除队列", "Delete Queue"),
         "tasks.queue.state.active": ("活跃", "Active"),
+        "tasks.queue.state.draft": ("待启动", "Draft"),
         "tasks.queue.state.paused": ("已暂停", "Paused"),
         "tasks.queue.state.finished": ("已完成", "Finished"),
         "tasks.queue.noBranch": ("不切分支", "No branch"),
@@ -6101,6 +6103,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         bridge.tasksCreate = { [weak self] workspace, focus, drafts in
             self?.tasksPanel?.apiTaskCreate(workspace: workspace, focus: focus, drafts: drafts)
                 ?? BrowserAPIBridge.tasksUnavailable
+        }
+        bridge.tasksQueueCreate = { [weak self] request in
+            self?.tasksPanel?.apiTaskQueueCreate(request) ?? BrowserAPIBridge.tasksUnavailable
+        }
+        bridge.tasksQueueStart = { [weak self] request in
+            self?.tasksPanel?.apiTaskQueueStart(request) ?? BrowserAPIBridge.tasksUnavailable
         }
         bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
         bridge.hidePanel = { [weak self] in

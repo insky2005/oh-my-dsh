@@ -11,6 +11,14 @@ All notable changes to this project are documented in this file. Format follows
 
 - **设置菜单新增「打开数据文件夹」（⌘D，位于「打开日志文件夹」之前，2026-09-29）**：直接打开 `$DSH_HOME/oh-my-dsh/`（不存在则创建），方便查看 / 备份壳层工作数据与迁移回退说明 `ROLLBACK.md`；开发版打开的是 `~/.dsh-dev/oh-my-dsh/`。
 
+- **任务队列的会话闭环（2026-09-30）**：`task-todo` 现在能把一次沟通落成「**等待态队列 + 批量任务**」，并可按用户指令启动；队列**跑到完成（`.done`）时把各任务的完成情况回传创建它的会话**（`session.prompt`），用户在同一个会话里验收、要求调整。要点：
+  - 队列新增独立状态 **`.draft`（待启动）**——与「启动过但停了」的 `.paused` 分开；`.draft` 不会自己开跑，App 重启后也保持 `.draft`（只有 `.active` 会转 `.paused`）；
+  - 新端点 **`POST /api/tasks/queue/create`**（建 `.draft` 队列 + 批量入队，`session` 记录来源会话）与 **`POST /api/tasks/queue/start`**（按 `queueId` 启动；缺省时启动「本会话创建的那个等待队列」，多个则返回 `409 ambiguous-queue` 让调用方消歧）；
+  - 队列↔会话关联与「已回传」标记存在 `local.json`（`queueSessions` / `queueNotified`，机器私有）；**只有进入 `.done` 才回传**，失败 / 手动取消停在 `.paused` 不回传；回传失败也记标记（避免死循环），App 重启后在空闲 step 补发一次；
+  - 回传文案要求收到它的 agent **只做简短确认**、不主动改代码；
+  - 技能正文（内嵌常量 + 仓库副本字节一致）同步两种落法与启动话术；设计见 `docs/tasks-queue-session-loop-design.md`。
+  回归：`tests/tasks-panel` 1129 → **1202** 项（模型 188 / 运行器 392 / 视图模型 326 / 视图 199 / 本地 API 97）。
+
 ### Changed
 
 - **壳层工作数据收敛到 `$DSH_HOME/oh-my-dsh/`（2026-09-29）**：把壳层自己的工作数据从 `$DSH_HOME` 根迁到与 `projects/` 并列的新根 —— `shell/`（设置 / 状态 / 快照）、`browser/`（CEF profile；**去掉开发版 `browser-dev` 后缀**，正式版与开发版统一 `<DSH_HOME>/oh-my-dsh/browser`）、`repo-wiki/`、`channel-runtime/`、`channels/`、`tokens/` + `gh-token`、`browser-api.port` / `shell-api.port`。dsh 自有数据（`sessions/`、`storages/`、`settings.yaml` 等）与上游契约路径 `$DSH_HOME/skills/` 保持不动；`~/Library/{Logs,Caches}` 与 Application Support 运行时也不动。路径的单一事实来源为 Swift `ShellPaths` / core `shell-paths.js`；启动（以及显式 `--home` 的 CLI）做一次**幂等迁移**：源不存在或目标已存在即跳过、失败保留源并记 `app.log`，正式 home 与开发版 `~/.dsh-dev` 都覆盖；GitHub token 读取链保留旧路径只读兜底；迁移时在 `$DSH_HOME/oh-my-dsh/ROLLBACK.md` 落一份双语回退说明（实际迁移条目 + 时间/App 版本 + 退出后把子目录 `mv` 回根目录的脚本），供降级旧版或快速撤销时自助使用；本次确有搬迁时启动后弹一次**非模态提示**（说明 + 「查看回退说明」按钮打开 `ROLLBACK.md`），**全新安装不提示**。回滚快照排除表新增 `oh-my-dsh`（`core/lib/snapshot.js`）。设计见 `docs/storage-layout-refactor.md`；回归：`core` 289 项（新增 `core/tests/shell-paths.test.js` 6 项）与 `tests/{shell-config,channel-panel,skills-panel,wiki-panel,snapshot-rollback,projects-panel,tasks-panel,skills,browser-panel}` 全绿。

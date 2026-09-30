@@ -92,10 +92,19 @@ enum TaskState: String {
     }
 }
 
-/// A queue's own state: active runs its tasks one at a time, paused waits for
-/// the user (a task failed, the worktree was dirty, or the app restarted),
-/// done has nothing left to run.
+/// A queue's own state.
+///
+/// - draft: created but never started — the 等待态 a session-created queue sits in
+///   until the user (or the originating session) says 启动队列;
+/// - active: runs its tasks one at a time;
+/// - paused: was started and stopped (a task failed, it was cancelled, or the app
+///   restarted) — the user CONTINUES rather than starts;
+/// - done: nothing left to run.
+///
+/// draft is deliberately NOT paused: 「从未启动」与「启动过但停了」是两种状态、两种
+/// 动作（开始 vs 继续），而完成回传只挂在 done 上。
 enum QueueState: String {
+    case draft
     case active
     case paused
     case done
@@ -500,7 +509,7 @@ struct TaskQueue: Equatable {
                              : nil,
                          baseBranch: baseBranch,
                          taskIds: [],
-                         state: .paused,
+                         state: .draft,
                          autoCreated: true,
                          autoPR: opensPR,
                          prUrl: nil,
@@ -533,7 +542,7 @@ struct TaskQueue: Equatable {
                          branch: branch,
                          baseBranch: baseBranch,
                          taskIds: [],
-                         state: .paused,
+                         state: .draft,
                          autoCreated: true,
                          autoPR: opensPR,
                          prUrl: nil,
@@ -594,6 +603,13 @@ struct TaskLocalState: Equatable {
     var reports: [String: String] = [:]
     var activeQueueID: String?
     var runningTaskID: String?
+    /// queue id -> the dsh session that CREATED it (the task-todo skill passes its
+    /// $DSH_SESSION_ID). Machine-scoped like `sessions` — the session exists only on
+    /// this machine — and the queue's completion report is sent back to it.
+    var queueSessions: [String: String] = [:]
+    /// queue id -> ISO-8601 stamp of the completion report already sent. Keeps the
+    /// report idempotent and lets a restart pick up one the app never got to send.
+    var queueNotified: [String: String] = [:]
 
     /// v1 keyed sessions by ISSUE NUMBER ("6"); v2 keys them by task id
     /// ("issue-6"). Reading accepts both and rewrites nothing on load.
@@ -621,6 +637,8 @@ struct TaskLocalState: Equatable {
         }
         s.activeQueueID = d["activeQueueId"] as? String
         s.runningTaskID = d["runningTaskId"] as? String
+        if let raw = d["queueSessions"] as? [String: String] { s.queueSessions = raw }
+        if let raw = d["queueNotified"] as? [String: String] { s.queueNotified = raw }
         return s
     }
 
@@ -634,6 +652,8 @@ struct TaskLocalState: Equatable {
         }
         var d: [String: Any] = ["sessions": out]
         if !reports.isEmpty { d["reports"] = reports }
+        if !queueSessions.isEmpty { d["queueSessions"] = queueSessions }
+        if !queueNotified.isEmpty { d["queueNotified"] = queueNotified }
         if let activeQueueID = activeQueueID { d["activeQueueId"] = activeQueueID }
         if let runningTaskID = runningTaskID { d["runningTaskId"] = runningTaskID }
         return d
@@ -782,7 +802,7 @@ struct TaskBoard {
             resolved = TaskBranch.defaultBranch(queueName: name, queueID: queueID)
         }
         let queue = TaskQueue(id: queueID, name: name, branch: resolved, baseBranch: baseBranch,
-                              taskIds: [], state: .paused, autoCreated: autoCreated,
+                              taskIds: [], state: .draft, autoCreated: autoCreated,
                               autoPR: autoPR, prUrl: nil, createdAt: Date())
         queues.append(queue)
         return queue

@@ -226,6 +226,16 @@ final class FakeBothDelegate: BrowserAPIDelegate, TasksAPIDelegate {
                 "created": drafts.map { ["id": "manual-x", "title": $0.title] },
                 "rejected": []]
     }
+    var queueCreateCalls = 0
+    var queueStartCalls = 0
+    func apiTaskQueueCreate(_ request: TaskQueueCreateRequest) -> [String: Any] {
+        queueCreateCalls += 1
+        return ["ok": true, "queue": ["id": "q-x", "state": "draft"], "created": [], "rejected": []]
+    }
+    func apiTaskQueueStart(_ request: TaskQueueStartRequest) -> [String: Any] {
+        queueStartCalls += 1
+        return ["ok": true, "started": ["q-x"]]
+    }
 }
 
 // MARK: - tasks routes on the shared server
@@ -250,6 +260,16 @@ func testTasksRoutesShareTheServer() {
                               headers: [:], body: Data())
     eq(BrowserAPIRouter.route(listReq, delegate: both).status, 200, "tasks: list 200")
     eq(both.taskLists.first ?? nil, "/repo", "tasks: list workspace forwarded")
+
+    // The queue half of the task routes shares the same seam.
+    let qCreateReq = HTTPRequest(method: "POST", path: "/api/tasks/queue/create", query: [:],
+                                 headers: [:], body: Data("{\"name\":\"q\",\"tasks\":[\"t\"]}".utf8))
+    eq(BrowserAPIRouter.route(qCreateReq, delegate: both).status, 200, "tasks: queue/create 200")
+    eq(both.queueCreateCalls, 1, "tasks: queue/create reached the tasks delegate")
+    let qStartReq = HTTPRequest(method: "POST", path: "/api/tasks/queue/start", query: [:],
+                                headers: [:], body: Data("{\"queueId\":\"q-x\"}".utf8))
+    eq(BrowserAPIRouter.route(qStartReq, delegate: both).status, 200, "tasks: queue/start 200")
+    eq(both.queueStartCalls, 1, "tasks: queue/start reached the tasks delegate")
 
     // The browser half still answers on the same delegate…
     let statusReq = HTTPRequest(method: "GET", path: "/api/browser/status", query: [:],

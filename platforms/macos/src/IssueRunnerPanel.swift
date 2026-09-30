@@ -585,6 +585,83 @@ final class IssueRunnerPanelController: NSObject {
         ]
     }
 
+    /// POST /api/tasks/queue/create —— 建一个「等待态」队列（.draft）并批量入队。
+    ///
+    /// 与面板内「新建队列」走同一条落盘路径（TasksRunner.createQueueWithTasks），但
+    /// 任务直接入队且**不激活队列**：等用户 / 会话说「启动队列」。带 session 时记录
+    /// 来源会话，队列跑到 .done 时把完成情况回传给它。
+    func apiTaskQueueCreate(_ request: TaskQueueCreateRequest) -> [String: Any] {
+        guard let (path, runner) = apiRunner(for: request.workspace) else {
+            return Self.apiNoWorkspace(request.workspace)
+        }
+        if request.focus {
+            if path != workspaces.currentPath { adoptWorkspace(path) }
+            onShowPanel?()
+        }
+        let drafts = request.drafts.map { TaskDraft(title: $0.title, body: $0.body ?? "") }
+        let result = runner.createQueueWithTasks(name: request.name,
+                                                 branch: request.branch,
+                                                 baseBranch: request.baseBranch,
+                                                 autoPR: request.autoPR,
+                                                 originSession: request.session,
+                                                 drafts: drafts)
+        if path == workspaces.currentPath {
+            syncFromBoard()
+            if !result.created.isEmpty {
+                setStatus(L10n.tr("tasks.apiQueueCreated", result.queue.name, result.created.count), spin: false)
+                autoHideStatus(after: 8)
+            }
+        }
+        AppLog.shared.log("tasks api: created queue \(result.queue.id) with \(result.created.count) task(s) at \(path)"
+                          + (request.session.map { " (reports to \($0))" } ?? ""))
+        return [
+            "ok": !result.created.isEmpty,
+            "workspace": path,
+            "current": path == workspaces.currentPath,
+            "shown": request.focus,
+            "queue": TasksAPIRouter.queueDictionary(result.queue, reportsToSession: request.session != nil),
+            "created": result.created.map { ["id": $0.id, "title": $0.title, "state": $0.state.rawValue] },
+            "rejected": [[String: Any]](),
+        ]
+    }
+
+    /// POST /api/tasks/queue/start —— 启动等待态（或暂停）的队列。
+    ///
+    /// 有 queueId 就启动它；没有则用 session 找「本会话创建、仍在 .draft」的队列 ——
+    /// 恰好一个才启动，多个返回 ambiguous-queue 让会话 / 用户点名。
+    func apiTaskQueueStart(_ request: TaskQueueStartRequest) -> [String: Any] {
+        guard let (path, runner) = apiRunner(for: request.workspace) else {
+            return Self.apiNoWorkspace(request.workspace)
+        }
+        let board = runner.board
+        if let queueId = request.queueId {
+            guard let queue = board.queue(queueId) else {
+                return ["ok": false, "error": "no-queue", "queueId": queueId]
+            }
+            guard queue.state == .draft || queue.state == .paused else {
+                return ["ok": false, "error": "not-startable",
+                        "queueId": queueId, "state": queue.state.rawValue]
+            }
+            _ = runner.startQueue(queueId)
+            return ["ok": true, "workspace": path, "started": [queueId]]
+        }
+        guard let session = request.session, !session.isEmpty else {
+            return ["ok": false, "error": "need-session",
+                    "hint": "pass queueId, or session to start the draft queue that session created"]
+        }
+        let candidates = board.queues.filter {
+            $0.state == .draft && board.local.queueSessions[$0.id] == session
+        }
+        if candidates.isEmpty { return ["ok": false, "error": "no-queue"] }
+        if candidates.count > 1 {
+            return ["ok": false, "error": "ambiguous-queue",
+                    "queues": candidates.map { TasksAPIRouter.queueDictionary($0, reportsToSession: true) }]
+        }
+        let queueId = candidates[0].id
+        _ = runner.startQueue(queueId)
+        return ["ok": true, "workspace": path, "started": [queueId]]
+    }
+
     // MARK: - Board / runner wiring
 
     /// Build one workspace's runner (the registry's factory).
@@ -717,6 +794,11 @@ final class IssueRunnerPanelController: NSObject {
             // through the shell's core bridge (the same session logs the audit panel
             // uses) — the runner calls it off the main thread.
             sessionReport: { sessionId in Self.sessionReport(sessionId: sessionId, workspace: repoRoot) },
+            // 队列完成回传：把报告投给创建队列的那个会话（同样是 session.prompt，
+            // mode=queue）—— 这就是「做完把完成情况发回 dsh 会话 X」的落点。
+            notifySession: { sessionId, text in
+                Self.promptSession(port: portOf(), sessionId: sessionId, text: text)
+            },
             persist: { board in TasksStore.saveLocalHalf(repoRoot, board) },
             persistIssueTask: { task in TasksStore.saveIssueTask(repoRoot, task) },
             log: { message in AppLog.shared.log(message) },

@@ -538,6 +538,10 @@ struct QueueHeaderModel: Equatable {
             // user could not act on.
             stateKey = isCurrent ? "tasks.queue.state.active" : "tasks.queue.state.waiting"
             tone = isCurrent ? .running : .warning
+        case .draft:
+            // 从未启动：动作是「开始」，不是「继续」——paused 才是启动过但停了。
+            stateKey = "tasks.queue.state.draft"
+            tone = .warning
         case .paused: stateKey = "tasks.queue.state.paused"; tone = failedCount > 0 ? .negative : .warning
         case .done: stateKey = "tasks.queue.state.finished"; tone = .positive
         }

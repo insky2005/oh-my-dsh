@@ -157,6 +157,10 @@ struct TaskRunnerEnv {
     /// BLOCKING (it reads a session log through the shell's core bridge), so the
     /// runner only calls it inside its background step.
     var sessionReport: (_ sessionId: String) -> String? = { _ in nil }
+    /// Deliver the queue-completion report to the session that CREATED the queue.
+    /// The runner calls it inside env.perform (never on the main thread). Defaults to
+    /// "nothing delivered" so every existing test that does not care still compiles.
+    var notifySession: (_ sessionId: String, _ text: String) -> Bool = { _, _ in false }
     /// Persist the machine-scoped half of the board (manual.json / queues.json /
     /// local.json).
     var persist: (TaskBoard) -> Void
@@ -470,6 +474,39 @@ enum TaskPrompts {
         lines.append("6. **必须**在最后一行给出 PR 的完整链接（https://github.com/<owner>/<repo>/pull/<编号>）；真开不出来就说清楚卡在哪一步（权限 / 网络 / token / 分支状态），不要沉默收尾。")
         return lines.joined(separator: "\n")
     }
+
+    /// The completion report handed back to the session that created a queue — sent
+    /// when the queue reaches .done (see TasksRunner.notifyFinishedQueues).
+    ///
+    /// Deliberately asks the receiving agent to do NOTHING but acknowledge: the report
+    /// lands in a normal conversation as a user turn, and nobody asked for more work.
+    static func queueFinishedSummary(queue: TaskQueue, tasks: [TaskItem]) -> String {
+        let done = tasks.filter { $0.state == .done }.count
+        var lines: [String] = ["【任务面板】队列「\(queue.name)」已全部完成（\(done)/\(tasks.count)）"]
+        for task in tasks {
+            switch task.state {
+            case .done:
+                let first = (task.report ?? "").split(separator: "\n").first.map(String.init) ?? ""
+                let note = first.isEmpty ? "已完成" : String(first.prefix(200))
+                lines.append("- ✓ \(task.title)：\(note)" + (task.prUrl.map { " — \($0)" } ?? ""))
+            case .failed:
+                lines.append("- ✗ \(task.title)：\(task.error ?? "失败")")
+            case .cancelled:
+                lines.append("- − \(task.title)：已取消")
+            default:
+                lines.append("- · \(task.title)：\(task.state.rawValue)")
+            }
+        }
+        if let prUrl = queue.prUrl {
+            lines.append("队列 PR：\(prUrl)")
+        } else if let prError = queue.prError {
+            lines.append("队列 PR：未开（\(prError)）")
+        } else {
+            lines.append("队列 PR：无")
+        }
+        lines.append("这是任务面板的完成通知；请用一两句话确认收到并等待用户验收，不要主动改代码或新建任务。")
+        return lines.joined(separator: "\n")
+    }
 }
 
 // MARK: - Cancel
@@ -648,6 +685,8 @@ final class TasksRunner {
         case .openingPR(let run):
             return stepPRRun(run, now: now)
         case .idle:
+            // A restart between 「已完成」 and its report: pick the report up here.
+            notifyFinishedQueues(now: now)
             _ = pump(now: now)
             return isBusy
         case .active(let active):
@@ -889,6 +928,10 @@ final class TasksRunner {
         }
         if isIssue, let task = board.task(taskID) { env.persistIssueTask(task) }
         persist()
+        // A queue that just reached .done reports back to the session that created it.
+        // This is deliberately BEFORE the PR run and does NOT wait for it (decision:
+        // 「任务全做完立刻回传，PR 会话不阻塞」).
+        notifyFinishedQueues(now: now)
         // Only a queue that ENDED WELL hands its branch over to a PR session: a failed
         // task pauses the queue, and half-finished work is not what anyone wants merged.
         if case .done = outcome, let queueID = prQueueID { startQueuePR(queueID) }
@@ -1120,6 +1163,83 @@ final class TasksRunner {
         let queue = board.createQueue(name: name, branch: branch, baseBranch: baseBranch, autoPR: autoPR)
         persist()
         return queue
+    }
+
+    /// Create a queue in the 等待态 (.draft) and put the given drafts in it — the ONE
+    /// entry point the tasks API (task-todo skill) uses for 「建队列 + 批量入队」.
+    ///
+    /// Membership is written through TaskBoard.enqueue DIRECTLY, not runner.enqueue:
+    /// the latter ACTIVATES a queue when the runner is idle (「加入队列」=「开始」 for
+    /// the panel), which would start a queue that must wait for 启动队列. Nothing here
+    /// starts anything — the caller or the user starts it later.
+    ///
+    /// `branch`: nil derives the default from the name; "" means no branch at all (a
+    /// non-git workspace is forced to no branch, exactly like the panel's form).
+    /// `autoPR`: nil means "whatever this workspace can do".`originSession`, when
+    /// present, is remembered so the queue can report back to it when it reaches .done.
+    @discardableResult
+    func createQueueWithTasks(name: String,
+                              branch: String? = nil,
+                              baseBranch: String? = nil,
+                              autoPR: Bool? = nil,
+                              originSession: String? = nil,
+                              drafts: [TaskDraft]) -> (queue: TaskQueue, created: [TaskItem]) {
+        let branchArg: String?
+        if let branch = branch {
+            branchArg = branch
+        } else if env.canSwitchBranches {
+            branchArg = nil
+        } else {
+            branchArg = ""
+        }
+        let queue = board.createQueue(name: name,
+                                      branch: branchArg,
+                                      baseBranch: baseBranch ?? env.defaultBaseBranch,
+                                      autoPR: autoPR ?? env.canOpenPR())
+        var created: [TaskItem] = []
+        for draft in drafts where draft.isValid {
+            let task = TaskItem.manual(title: draft.normalizedTitle, body: draft.effectiveBody)
+            board.tasks.append(task)
+            board.enqueue(taskID: task.id, into: queue.id)
+            created.append(task)
+        }
+        if let originSession = originSession, !originSession.isEmpty {
+            board.local.queueSessions[queue.id] = originSession
+        }
+        persist()
+        env.log("tasks: created queue " + queue.id + " (" + queue.name + ") with "
+                + String(created.count) + " task(s)"
+                + (originSession.map { " — reports back to " + $0 } ?? ""))
+        return (board.queue(queue.id) ?? queue, created)
+    }
+
+    /// Send the completion report of every 已完成 queue that has an originating session
+    /// and has not reported yet, then mark it reported.
+    ///
+    /// Idempotent and cheap (a filter over queues), so it runs both right after a task
+    /// finishes (the transition into .done) and on an idle step (a restart between
+    /// 「已完成」 and the report). A delivery failure still marks the queue reported:
+    /// the report is information, and retrying forever is worse than losing it.
+    func notifyFinishedQueues(now: Date = Date()) {
+        let pending = board.queues.filter { queue in
+            queue.state == .done
+                && board.local.queueSessions[queue.id] != nil
+                && board.local.queueNotified[queue.id] == nil
+        }
+        guard !pending.isEmpty else { return }
+        for queue in pending {
+            guard let session = board.local.queueSessions[queue.id] else { continue }
+            let tasks = queue.taskIds.compactMap { board.task($0) }
+            let text = TaskPrompts.queueFinishedSummary(queue: queue, tasks: tasks)
+            // Mark BEFORE the RPC: a second step must never queue the same report twice.
+            board.local.queueNotified[queue.id] = TaskItem.iso8601.string(from: now)
+            let notify = env.notifySession
+            let log = env.log
+            env.perform({ _ = notify(session, text) }, {
+                log("tasks: queue " + queue.id + " finished — reported to " + session)
+            })
+        }
+        persist()
     }
 
     /// Edit a queue's settings. A double-optional branch distinguishes "leave it

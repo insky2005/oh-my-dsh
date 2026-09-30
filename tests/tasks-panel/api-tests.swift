@@ -78,6 +78,21 @@ final class FakeTasksAPI: TasksAPIDelegate {
         createCalls.append((workspace, focus, drafts))
         return createResult
     }
+
+    var queueCreateResult: [String: Any] = ["ok": true, "created": [], "rejected": []]
+    var queueStartResult: [String: Any] = ["ok": true, "started": []]
+    private(set) var queueCreates: [TaskQueueCreateRequest] = []
+    private(set) var queueStarts: [TaskQueueStartRequest] = []
+
+    func apiTaskQueueCreate(_ request: TaskQueueCreateRequest) -> [String: Any] {
+        queueCreates.append(request)
+        return queueCreateResult
+    }
+
+    func apiTaskQueueStart(_ request: TaskQueueStartRequest) -> [String: Any] {
+        queueStarts.append(request)
+        return queueStartResult
+    }
 }
 
 func topLevel(_ body: [String: Any]) -> HTTPRequest {
@@ -96,6 +111,10 @@ check(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/list"),
       "list is GET-only")
 check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/create"), delegate: fake) == nil,
       "create is POST-only")
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/queue/create"), delegate: fake) == nil,
+      "queue/create is POST-only")
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/queue/start"), delegate: fake) == nil,
+      "queue/start is POST-only")
 
 section("no delegate yet (the panel is not wired up)")
 let unavailable = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/create",
@@ -198,6 +217,67 @@ nothing.createResult = ["created": [], "rejected": []]
 eq(TasksAPIRouter.route(topLevel(["tasks": ["t"]]), delegate: nothing)?.status, 400,
    "no created task → 400")
 
+// MARK: - POST /api/tasks/queue/create — 建「等待态」队列 + 批量入队
+
+section("POST /api/tasks/queue/create")
+let qc = FakeTasksAPI()
+qc.queueCreateResult = ["ok": true, "workspace": "/repo",
+                        "queue": ["id": "q-1", "name": "外观", "state": "draft"],
+                        "created": [["id": "manual-1", "title": "t1"]]]
+let qCreated = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/create",
+    json: ["workspace": "/repo", "session": "session-x", "focus": false,
+           "name": "外观", "branch": "feature/x", "autoPR": true,
+           "tasks": [["title": "t1", "body": "b1"], "t2"]]), delegate: qc)
+eq(qCreated?.status, 200, "queue create 200")
+eq(qc.queueCreates.count, 1, "queue create delegates once")
+eq(qc.queueCreates.first?.session, "session-x", "session forwarded")
+eq(qc.queueCreates.first?.name, "外观", "name forwarded")
+eq(qc.queueCreates.first?.branch, "feature/x", "branch forwarded")
+eq(qc.queueCreates.first?.autoPR, true, "autoPR forwarded")
+eq(qc.queueCreates.first?.focus, false, "focus forwarded")
+eq(qc.queueCreates.first?.drafts.count, 2, "both drafts forwarded in one call")
+eq((qCreated?.json["queue"] as? [String: Any])?["state"] as? String, "draft", "queue state passthrough")
+
+let noUsable = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/create",
+    json: ["tasks": ["", "  "]]), delegate: FakeTasksAPI())
+eq(noUsable?.status, 400, "no usable tasks → 400")
+eq(noUsable?.json["error"] as? String, "no-tasks", "no usable tasks error")
+let noBodyQ = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/create"), delegate: FakeTasksAPI())
+eq(noBodyQ?.json["error"] as? String, "missing-body", "queue create missing body")
+
+section("parseQueueCreate")
+let parsedQ = TasksAPIRouter.parseQueueCreate(["name": "  ", "tasks": ["由标题命名"], "session": "  s-1 "])
+eq(parsedQ.name, "由标题命名", "empty name falls back to the first task title")
+eq(parsedQ.session, "s-1", "session is trimmed")
+eq(TasksAPIRouter.parseQueueCreate(["session": "   ", "tasks": ["t"]]).session, nil, "blank session → nil")
+eq(TasksAPIRouter.parseQueueCreate(["name": "q"]).rejected.first?["error"] as? String, "missing-tasks",
+   "missing tasks rejected")
+check(TasksAPIRouter.parseQueueCreate(["tasks": ["t"]]).branch == nil, "absent branch stays nil (derive)")
+eq(TasksAPIRouter.parseQueueCreate(["tasks": ["t"], "branch": ""]).branch, "", "explicit empty branch means no branch")
+
+// MARK: - POST /api/tasks/queue/start
+
+section("POST /api/tasks/queue/start")
+let qs = FakeTasksAPI()
+qs.queueStartResult = ["ok": true, "started": ["q-1"]]
+let started = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/start",
+    json: ["workspace": "/repo", "session": "s-1"]), delegate: qs)
+eq(started?.status, 200, "start 200")
+eq(qs.queueStarts.first?.session, "s-1", "start session forwarded")
+check(qs.queueStarts.first?.queueId == nil, "start queueId is nil when omitted")
+
+let ambiguous = FakeTasksAPI()
+ambiguous.queueStartResult = ["ok": false, "error": "ambiguous-queue", "queues": []]
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/start", json: [:]), delegate: ambiguous)?.status,
+   409, "ambiguous queue → 409")
+let noQueue = FakeTasksAPI()
+noQueue.queueStartResult = ["ok": false, "error": "no-queue"]
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/start", json: [:]), delegate: noQueue)?.status,
+   404, "no queue → 404")
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/start", json: ["queueId": " q-1 "]), delegate: qs)?.status,
+   200, "queueId with whitespace still starts")
+eq(qs.queueStarts.last?.queueId, "q-1", "queueId is trimmed")
+
 // MARK: - workspace resolution
 
 section("workspace resolution")
@@ -242,6 +322,9 @@ let queueDict = TasksAPIRouter.queueDictionary(queue)
 eq(queueDict["name"] as? String, "队列一", "queue name")
 eq(queueDict["branch"] as? String, "feature/x", "queue branch")
 eq(queueDict["tasks"] as? Int, 1, "queue size")
+check(queueDict["reportsToSession"] == nil, "no report flag by default")
+check(TasksAPIRouter.queueDictionary(queue, reportsToSession: true)["reportsToSession"] as? Bool == true,
+      "the report flag appears when asked")
 
 print("api tests: \(checks) checks, \(failures) failure(s)")
 exit(failures == 0 ? 0 : 1)
