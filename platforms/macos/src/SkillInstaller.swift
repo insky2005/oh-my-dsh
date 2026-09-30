@@ -174,17 +174,18 @@ enum BuiltinSkill: CaseIterable {
     static let taskTodoMarkdown = """
     ---
     name: task-todo
-    description: 把沟通好的需求/方案落成任务面板里的任务清单；要一起跑就建「等待态队列 + 批量任务」，并可按用户指令启动队列。Turn agreed requirements into tasks or a waiting queue on the oh-my-dsh tasks panel (batch), and start the queue on request.
+    description: 把沟通好的需求/方案落成任务面板：默认建「等待态队列 + 批量任务」并可启动队列；只有用户明确要求时才只建任务。Turn agreed requirements into a waiting queue with tasks by default (or bare tasks on request) on the oh-my-dsh tasks panel, and start the queue on request.
     ---
     
     # task-todo — 把沟通结论写进任务面板（任务 / 队列）
     
     oh-my-dsh 壳层的**任务面板**（Tasks）通过 **localhost REST API** 驱动。用户在会话里和你
-    聊完需求与方案、并且**明确要求**时，用本技能把结论落进面板。两种落法，按用户的话选：
+    聊完需求与方案、并且**明确要求**时，用本技能把结论落进面板：
     
-    - **只建任务**（默认）：批量创建「待处理、未入队」的手动任务，用户之后自己在面板挑队列；
-    - **建队列 + 入队**：建一个**等待态**队列（`draft`），把任务一次性批量入队；队列不会自己
-      开跑，等用户（或会话）说「启动队列」。
+    - **默认：建「等待态队列 + 入队」** —— 建一个 `draft` 队列，把任务一次性批量入队；队列
+      不会自己开跑，等用户（或会话）说「启动队列」；
+    - **只建任务**（**仅当**用户明确说「只建任务 / 先别入队 / 不要队列」时）：批量创建
+      「待处理、未入队」的手动任务，用户之后自己在面板挑队列。
     
     ## 何时执行（硬规则）
     
@@ -235,10 +236,10 @@ enum BuiltinSkill: CaseIterable {
        ```
     2. **组织任务**：标题（一行，扫一眼就知道做什么）+ 描述（做什么 / 依据什么 / 怎么算完成）。
        只写沟通里已经确认的内容。
-    3. **按用户的话选端点**（把 JSON 写成文件再 `--data-binary`，避免引号转义咬到中文）：
-       - 只说「建任务 / 任务清单」→ `/api/tasks/create`；
-       - 说「建个队列 / 拆成队列 / 一起跑」→ `/api/tasks/queue/create`（带上 `session`），
-         并从响应里记下 `queue.id`。
+    3. **选端点**（把 JSON 写成文件再 `--data-binary`，避免引号转义咬到中文）：
+       - **默认** → `/api/tasks/queue/create`（带上 `session`），并从响应里记下 `queue.id`；
+         队列名用户没给就按本轮主题起一个（响应里会回 `queue.name`）；
+       - **仅当**用户明确说「只建任务 / 先别入队 / 不要队列」→ `/api/tasks/create`。
        ```bash
        cat > /tmp/task-todo.json <<'JSON'
        {

@@ -138,7 +138,8 @@ Agent 的 cwd 是**会话工作区**，但可能落在子目录（`pwd` ≠ work
    —— 2026-09-30 扩展：新增 `POST /api/tasks/queue/create`（等待态队列 + 批量入队）与
    `POST /api/tasks/queue/start`。技能在用户明确要求建队列时可用前者，在用户说「启动队列」
    时用后者；仍不自动启动、不绕过 API。队列跑到 `.done` 时完成情况回传创建会话。
-   见 `docs/tasks-queue-session-loop-design.md`。
+   见 `docs/tasks-queue-session-loop-design.md`。技能被要求落成任务时**默认**建
+   「等待态队列（`.draft`）+ 批量入队」，只有用户明确说「只建任务 / 先别入队」才只建裸任务。
 4. **默认 focus**：true（用户刚要求的东西要看得见）。
 5. **批量**：一次请求多条，上限 50。
 6. **用户显式要求**：写进 Skill 正文硬规则；Skill 不主动建任务。

@@ -17,7 +17,7 @@ All notable changes to this project are documented in this file. Format follows
   - 队列↔会话关联与「已回传」标记存在 `local.json`（`queueSessions` / `queueNotified`，机器私有）；**只有进入 `.done` 才回传**，失败 / 手动取消停在 `.paused` 不回传；回传失败也记标记（避免死循环），App 重启后在空闲 step 补发一次；
   - 回传文案要求收到它的 agent **只做简短确认**、不主动改代码；
   - 面板队列头在「有来源会话」时显示一枚 ↺（tooltip：完成后回传发起会话）；`queue/start` 也支持按 `name` 消歧；
-  - 技能正文（内嵌常量 + 仓库副本字节一致）同步两种落法与启动话术；设计见 `docs/tasks-queue-session-loop-design.md`。
+  - 技能正文（内嵌常量 + 仓库副本字节一致）**默认**建「等待态队列 + 入队」，只有用户明确说「只建任务 / 先别入队 / 不要队列」时才只建裸任务，并补充启动话术；设计见 `docs/tasks-queue-session-loop-design.md`。
   回归：`tests/tasks-panel` 1129 → **1208** 项（模型 188 / 运行器 392 / 视图模型 328 / 视图 199 / 本地 API 101）。
 
 ### Changed
