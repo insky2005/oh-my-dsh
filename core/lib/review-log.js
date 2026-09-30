@@ -13,11 +13,18 @@
  * Three record families are merged (see docs/review-panel-design.md):
  *   1. `tool/result` → `data.meta.diffs` — the applied contextual hunks of a
  *      TOP-LEVEL `write`/`edit` call (what the Web GUI's diff card renders);
- *   2. `tool/call` (top-level) / `tool/code-dispatch-start` (nested in run_code)
+ *   2. `tool/call` (top-level) / the nested dispatch pair (inside run_code)
  *      → `arguments` — the exact requested change (old_string/new_string, or
  *      the whole content of a create);
  *   3. `bash` calls → the command text, flagged when it looks like a write so
  *      the reader knows the file change is NOT structurally recorded.
+ *
+ * The nested dispatch event names are generation-dependent: dsh ≤0.1.2 (and the
+ * older `run_code` bridge) emit `tool/code-dispatch[-start]`, while dsh
+ * 0.1.5-rc.3 (programmatic tool calling, `...:ptc:N` sub-call ids) emits
+ * `tool/ptc-dispatch[-start]`. Recognising only the old name silently dropped
+ * every nested write/edit/bash from the audit — the Review panel then showed
+ * sessions with no changes. Both pairs are handled; see DISPATCH_START_TYPES.
  *
  * The session log container is a concatenation of independently decodable
  * Zstandard frames (one per durable batch), so a plain one-shot decode returns
@@ -90,6 +97,18 @@ const MUTATION_TOOLS = new Set(['write', 'edit', 'str_replace_editor']);
 
 /** Tools whose command text is worth auditing even without structure. */
 const SHELL_TOOLS = new Set(['bash', 'pwsh']);
+
+/**
+ * Nested-dispatch event names, by dsh generation.
+ *
+ * The pair carries one tool call made from inside the `run_code` bridge:
+ * `…-dispatch-start` opens it (arguments), `…-dispatch` closes it (result).
+ * dsh ≤0.1.2 / the older bridge wrote `tool/code-dispatch-start`
+ * (`…:code:N` sub-call ids); dsh 0.1.5-rc.3 writes `tool/ptc-dispatch-start`
+ * (`…:ptc:N`). Both must be recognised or nested writes vanish from the audit.
+ */
+const DISPATCH_START_TYPES = new Set(['tool/code-dispatch-start', 'tool/ptc-dispatch-start']);
+const DISPATCH_END_TYPES = new Set(['tool/code-dispatch', 'tool/ptc-dispatch']);
 
 // --- diagnostics -----------------------------------------------------------
 
@@ -515,7 +534,7 @@ function buildAudit(events, options = {}) {
       }
       continue;
     }
-    if (event.type === 'tool/code-dispatch-start') {
+    if (DISPATCH_START_TYPES.has(event.type)) {
       const inherited = contextByCallId.get(String(data.parentCallId))
         || contextByCallId.get(String(data.rootCallId))
         || { turn: null, step: null };
@@ -562,7 +581,7 @@ function buildAudit(events, options = {}) {
       }
       continue;
     }
-    if (event.type === 'tool/code-dispatch') {
+    if (DISPATCH_END_TYPES.has(event.type)) {
       const entry = pending.get(String(data.subCallId));
       if (entry) {
         entry.status = data.isError ? 'error' : 'ok';

@@ -26,11 +26,11 @@
 | # | 记录 | 提供什么 | 覆盖范围 |
 |---|---|---|---|
 | 1 | `tool/result` → `data.meta.diffs` | 已应用的 hunk（`{path, oldText, newText}`，3 行上下文） | **仅顶层** `write`/`edit`（`dsh-tools/lib/index.js` 的 `exec.parent === undefined` 判断） |
-| 2 | `tool/call`（顶层）/`tool/code-dispatch-start`（`run_code` 嵌套）→ `arguments` | 精确的请求参数：`edit` 的 `old_string`/`new_string`、`write` 的全文 `content` | 顶层 + 嵌套的 `write`/`edit`/`str_replace_editor` |
-| 3 | `tool/call name=bash`（+ 嵌套 `tool/code-dispatch-start name=bash`） | 命令文本（**没有**前后内容） | 所有 shell 调用，按「可能写文件」启发式标记 |
+| 2 | `tool/call`（顶层）/`tool/code-dispatch-start`｜`tool/ptc-dispatch-start`（`run_code` 嵌套）→ `arguments` | 精确的请求参数：`edit` 的 `old_string`/`new_string`、`write` 的全文 `content` | 顶层 + 嵌套的 `write`/`edit`/`str_replace_editor` |
+| 3 | `tool/call name=bash`（+ 嵌套 `tool/code-dispatch-start` / `tool/ptc-dispatch-start`，`name=bash`） | 命令文本（**没有**前后内容） | 所有 shell 调用，按「可能写文件」启发式标记 |
 
-补充：嵌套调用的结果在 `tool/code-dispatch`（`isError` + `content`），顶层结果在 `tool/result`；两者都用于把
-条目从「已发起」收敛为「成功 / 失败」。
+补充：嵌套调用的结果在 `tool/code-dispatch` / `tool/ptc-dispatch`（`isError` + `content`），顶层结果在 `tool/result`；两者都用于把
+条目从「已发起」收敛为「成功 / 失败」。事件名随 dsh 世代变：≤0.1.2 用 `tool/code-dispatch[-start]`，0.1.5-rc.3（programmatic tool calling）用 `tool/ptc-dispatch[-start]`；审计两代都认（见 `docs/dsh-version-impact.md` R7b）。
 
 ## 3. 覆盖矩阵（面板实际能看到什么）
 

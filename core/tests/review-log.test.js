@@ -5,7 +5,8 @@
  *
  * The three merged record families are exercised here with synthetic events:
  * applied hunks from `tool/result.meta.diffs`, call arguments from `tool/call`
- * and `tool/code-dispatch-start`, and bash command text. The Zstandard container
+ * and the nested dispatch pair (dsh <=0.1.2 `tool/code-dispatch-start`, dsh 0.1.5-rc.3
+ * `tool/ptc-dispatch-start`), and bash command text. The Zstandard container
  * is covered only when the running Node exposes zstd (v22.15+/v23.8+) — the
  * audit path itself must stay testable on the CI Node without it.
  */
@@ -122,6 +123,41 @@ test('review-log: nested run_code dispatches are audited from their arguments', 
   assert.equal(nested[1].note, 'nested-args');
   assert.deepEqual(nested[1].hunks, [{ oldText: 'one', newText: 'one!' }]);
   assert.equal(audit.stats.nested, 2); // one entry per dispatch (the run_code call itself is top-level)
+});
+
+test('review-log: dsh 0.1.5 ptc-dispatch nesting is audited like code-dispatch', () => {
+  const events = [
+    HEADER,
+    { type: 'tool/call', seq: 40, data: { turn: 1, step: 1, callId: 'root', name: 'run_code', arguments: '{}' } },
+    { type: 'tool/ptc-dispatch-start', seq: 41, data: { rootCallId: 'root', parentCallId: 'root', subCallId: 'root:ptc:1', name: 'write', arguments: { file_path: '/work/proj/core/x.js', content: 'one\ntwo' } } },
+    { type: 'tool/ptc-dispatch', seq: 42, data: { rootCallId: 'root', parentCallId: 'root', subCallId: 'root:ptc:1', name: 'write', arguments: { file_path: '/work/proj/core/x.js', content: 'one\ntwo' }, isError: false, content: [] } },
+    { type: 'tool/ptc-dispatch-start', seq: 43, data: { rootCallId: 'root', parentCallId: 'root', subCallId: 'root:ptc:2', name: 'edit', arguments: { file_path: '/work/proj/core/x.js', old_string: 'one', new_string: 'one!' } } },
+    { type: 'tool/ptc-dispatch', seq: 44, data: { rootCallId: 'root', parentCallId: 'root', subCallId: 'root:ptc:2', name: 'edit', arguments: { file_path: '/work/proj/core/x.js', old_string: 'one', new_string: 'one!' }, isError: false, content: [] } },
+  ];
+  const audit = review.buildAudit(events, { workspace: '/work/proj' });
+  const nested = audit.entries.filter((e) => e.surface === 'nested' && e.category !== 'bash');
+  assert.equal(nested.length, 2, 'both nested calls are recorded');
+  assert.equal(nested[0].category, 'content');
+  assert.equal(nested[0].status, 'ok');
+  assert.equal(nested[0].added, 2);
+  assert.deepEqual(nested[1].hunks, [{ oldText: 'one', newText: 'one!' }]);
+  assert.equal(audit.stats.mutations, 2);
+  assert.equal(audit.stats.nested, 2);
+});
+
+test('review-log: a failed ptc dispatch drops its pending write', () => {
+  const events = [
+    HEADER,
+    { type: 'tool/call', seq: 40, data: { turn: 1, step: 1, callId: 'root', name: 'run_code', arguments: '{}' } },
+    { type: 'tool/ptc-dispatch-start', seq: 41, data: { rootCallId: 'root', parentCallId: 'root', subCallId: 'root:ptc:1', name: 'write', arguments: { file_path: '/work/proj/core/x.js', content: 'one' } } },
+    { type: 'tool/ptc-dispatch', seq: 42, data: { rootCallId: 'root', parentCallId: 'root', subCallId: 'root:ptc:1', name: 'write', arguments: { file_path: '/work/proj/core/x.js', content: 'one' }, isError: true, content: [{ type: 'text', text: 'denied' }] } },
+  ];
+  const audit = review.buildAudit(events, { workspace: '/work/proj' });
+  const nested = audit.entries.filter((e) => e.surface === 'nested');
+  assert.equal(nested.length, 1);
+  assert.equal(nested[0].status, 'error');
+  assert.deepEqual(nested[0].hunks, []);
+  assert.equal(audit.stats.failed, 1);
 });
 
 test('review-log: turns are labelled by the user message and inherited by nested calls', () => {
