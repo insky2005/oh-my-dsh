@@ -139,7 +139,7 @@ tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到�
 - 回归：`tests/tasks-panel/run.sh`（**1129 项**：模型 176 + 运行器 362 + 视图模型 324 + 视图 199 + 本地 API 68；运行器用假 git/假 dsh 驱动完整流水线，含**非 git 目录**：无分支队列照常跑完、有分支队列报 `errNotGit`）、`core/tests/tasks.test.js`（18 项）；细节见 [issue-runner-panel](modules/issue-runner-panel.md) 与 docs/issue-runner-design.md。
 ## 排查问题
 
-1. 看日志：`~/Library/Logs/oh-my-dsh/app.log`（壳层）、`server.log`（服务输出）；设置菜单「打开日志文件夹」(⌘L) 直达；
+1. 看日志：`~/Library/Logs/oh-my-dsh/app.log`（壳层）、`server.log`（服务输出）；设置菜单「打开日志文件夹」(⌘L) 直达；设置菜单「打开数据文件夹」(⌘D) 直达 `$DSH_HOME/oh-my-dsh/`（壳层工作数据 / 迁移回退说明 `ROLLBACK.md`）；
 2. 面板渲染异常（白屏/按钮不可见）：`DSH_UI_DEBUG=1` 启动，读层级 dump 与 `panel-<label>-debug.png` 截图；对照 `docs/terminal-header-fix.md` 的合成陷阱检查 `wantsLayer`/`masksToBounds`；
 3. 终端输入异常（粘贴乱码/方向键失效）：`DSH_TERMINAL_DEBUG=1` 看字节级 I/O；对照 `docs/terminal-input-fix.md`（写入 API 用 `withUnsafeBytes`；DECCKM/括号粘贴模式跟踪；强制 UTF-8 locale）；
 4. 服务起不来：日志 `err.noNode`/`err.noDSH` → 设 `DSH_NODE`/`DSH_CLI` 指向本机安装；超时 90s → 看 server.log 尾部；
