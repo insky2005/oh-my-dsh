@@ -36,6 +36,7 @@ const { loadChannelAccount, createChannelRuntimeStore } = require('./channel-sto
 const { createQueue } = require('./jobqueue');
 const os = require('node:os');
 const path = require('node:path');
+const shellPaths = require('./shell-paths');
 
 /**
  * Build the WeChat ClawBot adapters map for a set of project refs. Each
@@ -178,7 +179,7 @@ async function runChannel(opts = {}) {
   const resolvedHome = opts.dshHome || process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
   const projectRoot = opts.projectRoot
     || (opts.refs && opts.refs[0] && opts.refs[0].workspaceRoot)
-    || path.join(resolvedHome, 'channel-runtime', channelId);
+    || path.join(shellPaths.channelRuntimeDir(resolvedHome), channelId);
   const store = opts.sessions || createChannelSessions({ channelId, dshHome: opts.dshHome, defaultProjectRoot: projectRoot });
 
   let enabledCache = { roots: null, at: 0 };

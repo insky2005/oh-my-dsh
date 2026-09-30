@@ -8,8 +8,9 @@ mkdir -p ../../.build/module-cache
 CACHE="$(cd ../../.build/module-cache && pwd)"
 TMP="$(mktemp -d)"
 cp ../../platforms/macos/src/ChannelStoreReader.swift "$TMP/ChannelStoreReader.swift"
+cp ../../platforms/macos/src/ShellPaths.swift "$TMP/ShellPaths.swift"
 cp channel-tests.swift "$TMP/main.swift"
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
-  -o "$TMP/channel-tests" "$TMP/ChannelStoreReader.swift" "$TMP/main.swift"
+  -o "$TMP/channel-tests" "$TMP/ChannelStoreReader.swift" "$TMP/ShellPaths.swift" "$TMP/main.swift"
 "$TMP/channel-tests"
 rm -rf "$TMP"

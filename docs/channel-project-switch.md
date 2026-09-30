@@ -21,7 +21,7 @@ Channel 面板项目视图里每个通道有一个「项目开关」，但目前
 
 ### 3.1 存储：全局 workspaces.json（Q1）
 
-- 通道↔workspace 的启用关联存到**全局** `~/.dsh/channels/<channelId>.workspaces.json`，不再读写项目内 `.dsh/channels.json`。
+- 通道↔workspace 的启用关联存到**全局** `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`，不再读写项目内 `.dsh/channels.json`。
 - 格式沿用现有 `{ "<workspaceKey>": "<projectRoot>" }`（每通道一个文件，chmod 600）。
 - **语义**：某 projectRoot 出现在该通道的 workspaces.json = 该工作区启用了该通道（「项目开关」ON）；不出现 = 关闭。
 - 与消息归档的 `registerProjectRoot` 自增保持一致：路由被门控后，只有启用的 workspace 会被路由/归档，自动登记只会加入启用项；关闭时删除该项。
@@ -48,7 +48,7 @@ Channel 面板项目视图里每个通道有一个「项目开关」，但目前
 2. **core/lib/channel-runner.js**：新增 `isEnabledForRoot(root)`（读该通道全局 workspaces.json，启用集合缓存约 1s）；在**普通文本路由点**与 **`/new`** 处对目标 workspace 做门控并回提示；导航（`#wN`/`#sN`）、`/sessions`/`/switch` 与信息命令放行；移除对 per-project refs 的路由依赖（adapter 由 `ensureChannelId` 保证，通道保持连接、重开无需重登）。
 3. **core/bin/ohmy-core.js**：`channel run` 支持 `--project-root <root>`，透传 `projectRoot`。
 4. **platforms/macos/src/main.swift**：`startChannelRunner` 删除读/写项目 refs 与「强制补 ref」逻辑，追加 `--project-root`；新增 L10n `channel.notEnabledInProject`。
-5. **platforms/macos/src/ChannelPanel.swift**：移除 `loadRefs`/`saveRefs`/`ProjectRefsFile`/`ProjectChannelRef`；新增读/写 `~/.dsh/channels/<id>.workspaces.json` 的助手（enable 判断 = 任一 value == currentRoot；key 用 `ChannelStoreReader.workspaceKey(for:)` 派生）；`rebuildProjectRows` 中 `sessions = enabled ? loadSessions(...) : []`、未启用时折叠 + 标题行显示「未在项目启用」。
+5. **platforms/macos/src/ChannelPanel.swift**：移除 `loadRefs`/`saveRefs`/`ProjectRefsFile`/`ProjectChannelRef`；新增读/写 `~/.dsh/oh-my-dsh/channels/<id>.workspaces.json` 的助手（enable 判断 = 任一 value == currentRoot；key 用 `ChannelStoreReader.workspaceKey(for:)` 派生）；`rebuildProjectRows` 中 `sessions = enabled ? loadSessions(...) : []`、未启用时折叠 + 标题行显示「未在项目启用」。
 
 ## 5. 兼容 / 迁移
 

@@ -14,7 +14,7 @@
 
 会话对应一律以 **dsh 会话 id（sessionId）** 为键，**不用 name**：
 
-- 面板会话记录（ChannelStoreReader 读取 `~/.dsh/channels/<id>.sessions.json`）自带 `sessionId`（即 dsh 会话 id）；
+- 面板会话记录（ChannelStoreReader 读取 `~/.dsh/oh-my-dsh/channels/<id>.sessions.json`）自带 `sessionId`（即 dsh 会话 id）；
 - dsh web 当前会话经 `sessionTrackerScript` 以 sessionId 上报（`dshSession` message handler）；
 - name 会因 /new 重绑、标题变化而失配，**不作为对应依据**。
 

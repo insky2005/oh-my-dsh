@@ -1,7 +1,7 @@
 ---
 title: 模块：构建与打包脚本
 tags: [module, build, packaging, icon, release, ci]
-updated: 2026-09-29T14:39:01Z
+updated: 2026-09-29T15:27:23Z
 sources: [tests/skills-panel/, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, tests/review-panel/, core/lib/review-log.js, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, platforms/macos/src/MakeIcon.swift, platforms/macos/build-cef.sh, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, Jenkinsfile, .github/workflows/release.yml, .github/workflows/ci.yml, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/vendor/Highlightr/, tests/file-panel/, platforms/macos/runtime-locks/, docs/dsh-version-impact.md, tests/projects-panel/, tests/injected-scripts/, tests/snapshot-panel/, tests/snapshot-rollback/, CHANGELOG.md, docs/release-process.md, docs/productization.md]
 manual: false
 ---
@@ -51,7 +51,7 @@ manual: false
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh） |
 | `DSH_SKIP_RUNTIME_SMOKE` | `0` | =1 跳过 runtime 装完后的启动冒烟（仅离线调试用；跳过即失去「产物能起」这一验收） |
-| `DSH_DEV_BUILD` | `0` | =1 打开发版：Info.plist 写 `DSHDevBuild=1` + 独立 bundle id `com.ohmydsh.app.dev`（独立 UserDefaults 域）；运行时 `isDevBuild`（`applyDevIsolation`）：强制自拉起独立 dsh 实例、独立 `DSH_HOME` 默认 `~/.dsh-dev`、CEF profile `~/.dsh-dev/browser-dev`（旧 `~/.dsh/browser-dev` 幂等迁移）、CDP 9333→9433 / Browser API 3081→4081 错开、跳过单实例退出 |
+| `DSH_DEV_BUILD` | `0` | =1 打开发版：Info.plist 写 `DSHDevBuild=1` + 独立 bundle id `com.ohmydsh.app.dev`（独立 UserDefaults 域）；运行时 `isDevBuild`（`applyDevIsolation`）：强制自拉起独立 dsh 实例、独立 `DSH_HOME` 默认 `~/.dsh-dev`、CEF profile 统一 `<DSH_HOME>/oh-my-dsh/browser`（开发版即 `~/.dsh-dev/oh-my-dsh/browser`；不再有 `browser-dev`）、CDP 9333→9433 / Browser API 3081→4081 错开、跳过单实例退出 |
 
 缓存位置：`.cache/`（node tarball、npm-cache、已构建 runtime），持久且不随 `.build/` 清除；**runtime 缓存按架构分目录（`.cache/runtime/<arch>`）**——双架构 release 的 arm64/x86_64 各自 node+dsh 树互不覆盖、缓存跨轮生效；构建中间产物在 `.build/`（含 `module-cache`，swiftc 沙箱规避用）。
 

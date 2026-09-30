@@ -22,8 +22,8 @@ oh-my-dsh 壳层的**任务面板**（Tasks）通过 **localhost REST API** 驱�
 API 随 App 启动常驻，默认端口 **3081**，实际端口写在发现文件里：
 
 ```bash
-PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/shell-api.port" 2>/dev/null \
-     || cat "${DSH_HOME:-$HOME/.dsh}/browser-api.port" 2>/dev/null \
+PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/shell-api.port" 2>/dev/null \
+     || cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/browser-api.port" 2>/dev/null \
      || echo 3081)"
 ```
 

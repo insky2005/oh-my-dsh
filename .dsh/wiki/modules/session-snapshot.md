@@ -1,7 +1,7 @@
 ---
 title: 模块：会话快照与回退（Session Snapshots）
 tags: [module, snapshot, rollback, dsh-upgrade, tree-pool, session-log, clonefile]
-updated: 2026-09-29T14:39:01Z
+updated: 2026-09-29T15:27:23Z
 sources: [docs/session-snapshot-rollback-design.md, core/lib/snapshot.js, core/lib/snapshot-io.js, core/bin/ohmy-core.js, core/tests/snapshot.test.js, core/tests/snapshot-io.test.js, tests/snapshot-rollback/, tests/snapshot-panel/, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, platforms/macos/src/main.swift, platforms/macos/build-app.sh, platforms/macos/runtime-locks/, docs/dsh-version-impact.md, CHANGELOG.md]
 manual: false
 ---
@@ -22,13 +22,13 @@ dsh 按 **Session 格式世代**命名会话日志（世代 0 = `session.jsonl`�
 
 | 位置 | 内容 |
 |---|---|
-| `$DSH_HOME/shell/snapshots/<id>/` | 数据快照：`sessions/ + storages/` + `meta.json`（id = `<utc>_app<A>_dsh<D>_<reason>`） |
-| `$DSH_HOME/shell/snapshots/trees/<dshVersion>/` | 树池：`runtime/dsh` 整树，按 dsh 版本去重（**入池/换入都要过 `--expected-lock` 闭包校验**，见下节） |
-| `$DSH_HOME/shell/snapshots/quarantine/<stamp>/` | 回退时移出的"新世代"会话 + `quarantine.json` 清单（不删除） |
-| `$DSH_HOME/shell/dsh-state.json` | `dataCombo`（唯一判断字段）+ 只追加 `history` + `rollback` + `upgradePinned` |
-| `$DSH_HOME/shell/rollback-journal.json` | 回退事务日志（六步，完成后清除；崩溃后可续做/撤销） |
+| `$DSH_HOME/oh-my-dsh/shell/snapshots/<id>/` | 数据快照：`sessions/ + storages/` + `meta.json`（id = `<utc>_app<A>_dsh<D>_<reason>`） |
+| `$DSH_HOME/oh-my-dsh/shell/snapshots/trees/<dshVersion>/` | 树池：`runtime/dsh` 整树，按 dsh 版本去重（**入池/换入都要过 `--expected-lock` 闭包校验**，见下节） |
+| `$DSH_HOME/oh-my-dsh/shell/snapshots/quarantine/<stamp>/` | 回退时移出的"新世代"会话 + `quarantine.json` 清单（不删除） |
+| `$DSH_HOME/oh-my-dsh/shell/dsh-state.json` | `dataCombo`（唯一判断字段）+ 只追加 `history` + `rollback` + `upgradePinned` |
+| `$DSH_HOME/oh-my-dsh/shell/rollback-journal.json` | 回退事务日志（六步，完成后清除；崩溃后可续做/撤销） |
 
-`shell/`、`credentials*`、`channels/`、`browser*/`、`skills/` 等**不进快照**。
+`oh-my-dsh/`（壳层工作数据：设置/快照/CEF profile/通道/token 等）、`credentials*`、`skills/` 等**不进快照**（旧 `shell/` / `browser*/` / `channels/` 路径保留兼容）。
 
 
 ## 踩坑与守卫（2026-09-23 实测，都是"一次污染 = 永久失效"型）

@@ -26,13 +26,13 @@
 
 | 需求点 | 实现 | 出处 |
 |---|---|---|
-| Channel 实例（一账号一通道，channelId 唯一） | `GlobalChannel`，UserDefaults `channel.global.list`；凭据 `~/.dsh/channels/<id>.json` | ChannelPanel.swift:17,585；channel-store.js:54 |
+| Channel 实例（一账号一通道，channelId 唯一） | `GlobalChannel`，UserDefaults `channel.global.list`；凭据 `~/.dsh/oh-my-dsh/channels/<id>.json` | ChannelPanel.swift:17,585；channel-store.js:54 |
 | 入站消息事件（channelId/conversationId/…） | `ChannelEvent{channelId, platform, conversationId, sender, text?, media?, ts}` | core/lib/channel.js:37 |
 | channelId↔conversationId↔sessionId 关联映射 | runner 用 `runtime.setSession(conversationId, {sessionId, projectRoot})` | channel-runner.js:320；channel-store.js:145,152 |
 | 消息作 prompt 转发进 dsh 会话 | session.create/rename/prompt(queue)/轮询/lastMessage | session-driver.js:151 |
 | 消息归档（关联 channel/conversation/session） | `{channelId, conversationId, sessionId, dir, text, ts}`，`<root>/.dsh/channels/<id>.messages.json` | channel-sessions.js:104 |
 | 按「当前工作区」路由（#tag > last > first） | `resolveWorkspaceTag` | channel-workspaces.js:93 |
-| 通道级「当前会话/工作区」状态 | `~/.dsh/channels/<id>.state.json`（lastWorkspace/activeSessionId/连接态） | channel-store.js:125 |
+| 通道级「当前会话/工作区」状态 | `~/.dsh/oh-my-dsh/channels/<id>.state.json`（lastWorkspace/activeSessionId/连接态） | channel-store.js:125 |
 
 ### 2.2 偏差 / 缺口（需调整）
 
@@ -41,7 +41,7 @@
 | G1 | 消息转发到「当前/关联会话」、**多轮复用同一会话** | **已修复（A）**：sessionDriver.run 尊重 `event.sessionId`，有则复用、无则 create；runner 先按 store 映射/复用再 enqueue | ✅ | session-driver.js run()；channel-runner.js |
 | G2 | 按「当前工作区+当前会话」路由 | **已修复（B）**：refs 显式绑定（conversation/keyword）优先，否则 workspace-tag（#tag>last>first）兜底；handleEvent 对已绑定事件的合成 ref 兜底 | ✅ | channel.js resolveRefBinding；channel-runner.js |
 | G3 | session 归属 workspace | **已修复（C）**：普通消息路由到 workspace 后以 `workspaceId` 创建/复用会话（无 workspace 才回退 cwd） | ✅ | channel-runner.js；session-driver.js createSession |
-| G4 | 关联存储单一事实来源 | **已修复（D）**：createChannelSessions 改按 channel 作用域（全局 `~/.dsh/channels/`：sessions.json + workspaces.json + `channelId.workspaceKey.sessionId.messages.json` 分桶）；runner 会话映射与消息归档都走同一全局 store；项目目录不再产生消息/会话文件 | ✅ | channel-sessions.js；channel-runner.js |
+| G4 | 关联存储单一事实来源 | **已修复（D）**：createChannelSessions 改按 channel 作用域（全局 `~/.dsh/oh-my-dsh/channels/`：sessions.json + workspaces.json + `channelId.workspaceKey.sessionId.messages.json` 分桶）；runner 会话映射与消息归档都走同一全局 store；项目目录不再产生消息/会话文件 | ✅ | channel-sessions.js；channel-runner.js |
 | G5 | 面板项目视图展示 Channel▸Session(+Message) 关联 | 项目视图 `loadSessionNames` 读项目 `.dsh/channels/<id>.sessions.json`（G4 的死文件 → 恒空），不读消息、不读 state.json 映射 | **不满足** | ChannelPanel.swift:502 |
 
 ## 3. 需要做的调整（对应 §2.2）
@@ -59,10 +59,10 @@
 - 改动点：`core/lib/session-driver.js`（支持按 workspaceId 复用）+ `core/lib/channel-runner.js` 普通路径；新增断言「会话出现在 workspace.sessionIds」。
 
 ### D. 关联存储单一事实来源（G4，数据一致性 P1）
-落地 `docs/channel-storage.md`：消息/会话迁至全局 `~/.dsh/channels/`，按 `channelId.workspaceKey.sessionId.messages.json` 分桶（无会话入 `system` 桶）；`createChannelSessions` 改按 channel 作用域；停用/删除项目 sessions.json 死路径；含惰性迁移 + `channel migrate` CLI + 本仓库自迁移。
+落地 `docs/channel-storage.md`：消息/会话迁至全局 `~/.dsh/oh-my-dsh/channels/`，按 `channelId.workspaceKey.sessionId.messages.json` 分桶（无会话入 `system` 桶）；`createChannelSessions` 改按 channel 作用域；停用/删除项目 sessions.json 死路径；含惰性迁移 + `channel migrate` CLI + 本仓库自迁移。
 
 ### E. 面板项目视图（G5，UI P2）
-项目视图改从 **channel 作用域存储**（全局化后 `~/.dsh/channels/<id>.sessions.json` + 分桶消息）取会话与消息，展示 **Channel ▸ Session ▸ Message** 列表；数据源与 D 保持一致。
+项目视图改从 **channel 作用域存储**（全局化后 `~/.dsh/oh-my-dsh/channels/<id>.sessions.json` + 分桶消息）取会话与消息，展示 **Channel ▸ Session ▸ Message** 列表；数据源与 D 保持一致。
 - 改动点：`platforms/macos/src/ChannelPanel.swift`（loadSessionNames → 全局存储；新增消息列表 UI）；与 channel-status.md §3.2「会话/消息分组 UI 📋 待办」衔接。
 
 ### F. 模型定义补全（文档）

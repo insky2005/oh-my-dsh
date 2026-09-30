@@ -16,12 +16,12 @@
 
 ### 一、触发点：1.14.0 设置搬家丢了用户取值
 
-v1.14.0 把壳层设置从 `UserDefaults` 搬进 `$DSH_HOME/shell/config.json`（`ShellConfig`，日志与 CLI 可读），但**没有迁移已有取值**：
+v1.14.0 把壳层设置从 `UserDefaults` 搬进 `$DSH_HOME/oh-my-dsh/shell/config.json`（`ShellConfig`，日志与 CLI 可读），但**没有迁移已有取值**：
 
 | 位置 | 内容 |
 |------|------|
 | `defaults read com.ohmydsh.app` | `browserRenderMode = windowed`（用户显式设过，1.14.0 之前一直生效） |
-| `~/.dsh/shell/config.json` | 无 `browserRenderMode` → 代码落到默认分支 |
+| `~/.dsh/oh-my-dsh/shell/config.json` | 无 `browserRenderMode` → 代码落到默认分支 |
 
 `main.swift` 当时写的是 `ShellConfig.shared.string(forKey: "browserRenderMode") == "windowed"`，键缺失即 **OSR（离屏帧自绘）**。于是升级到 1.14.0 的用户（以及任何没设过这个键的人）**静默换到了另一条渲染路径**——而这条路径是坏的（见下），日志里只有一行 `CEF render mode: osr`。
 

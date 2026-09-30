@@ -55,7 +55,7 @@ RegistryEntry { id, label, enabled,
                 catalog: { kind: none | wellKnown | githubRepo, url } }
 ```
 
-- 存储于 `$DSH_HOME/shell/skills.json` 的 `registries`；**默认预置一条 skills.sh**（`catalog.kind = none`；base 可被 `SKILLS_API_URL` 覆盖）；
+- 存储于 `$DSH_HOME/oh-my-dsh/shell/skills.json` 的 `registries`；**默认预置一条 skills.sh**（`catalog.kind = none`；base 可被 `SKILLS_API_URL` 覆盖）；
 - 两个工具栏都用**扁平标签**（`SkillTabStrip`）而不是下拉：registry 标签在左、级别筛选在左（顺序：全部 / 共享级 / 内置 / 用户级 / 项目级），搜索框统一右对齐；
 - **「可安装」列表 = 当前 registry 的清单**：`wellKnown` → 拉 `<base>/.well-known/skills/index.json` 列出；`githubRepo` → `git clone --depth 1` 后本地扫描列出（避免 GitHub API 限流）；`none` → 提示「未配置清单来源」并转为关键字搜索；
 - 添加 registry 时自动探测：`owner/repo` 或 GitHub 地址 → `githubRepo`；以 `/.well-known/skills/index.json` 结尾或该索引可访问 → `wellKnown`；其余 URL → 视为 skills.sh 兼容的搜索接口（`<base>/api/search?q={q}&limit={limit}`）；
@@ -113,7 +113,7 @@ dsh 只认 frontmatter，所以开关必然写进 SKILL.md；为了**可逆**（
 - 目标值 == **基线** → **删除该键**；否则写入 `key: true|false`；
 - 基线 = 面板安装时源文件的取值（随安装记录保存），或外部技能首次改动前的取值（随 invocation 记录保存）；
 - 只增删改这两行：键序、注释、引号、CRLF/LF、正文全部原样保留（不是 YAML 往返）；
-- 记录写入 `$DSH_HOME/shell/skills.json` 的 `invocation`；面板重装/更新同一技能时按记录重放，用户的开关不会被源文件覆盖；
+- 记录写入 `$DSH_HOME/oh-my-dsh/shell/skills.json` 的 `invocation`；面板重装/更新同一技能时按记录重放，用户的开关不会被源文件覆盖；
 - 外部技能（共享级、仓库自带项目级）只改文件不记覆盖；其被外部工具重新拉取可能重置开关（UI 已注明）。
 
 ## 6.1 让 dsh web 立刻看到改动（客户端缓存失效）
@@ -133,7 +133,7 @@ dsh 只认 frontmatter，所以开关必然写进 SKILL.md；为了**可逆**（
 ## 7. 磁盘布局（壳层自有）
 
 ```
-$DSH_HOME/shell/skills.json        # 版本化 JSON，原子写
+$DSH_HOME/oh-my-dsh/shell/skills.json        # 版本化 JSON，原子写
   registries: [{id,label,enabled,searchURL?,catalog:{kind,url}}]
   invocation.<name>: {baselineUserInvocable, baselineDisableModelInvocation,
                       userInvocable, disableModelInvocation, updatedAt}

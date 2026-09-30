@@ -387,7 +387,7 @@ enum TaskPrompts {
         }
         // token：只有 GitHub 工作区需要（不是 GitHub 仓库就整条不出现）。
         if shape == .github {
-            requirements.append("需要 GitHub 写操作时，token 在 $DSH_HOME/tokens/<owner>-<repo> 或 $DSH_HOME/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；")
+            requirements.append("需要 GitHub 写操作时，token 在 $DSH_HOME/oh-my-dsh/tokens/<owner>-<repo> 或 $DSH_HOME/oh-my-dsh/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；")
         }
         // 汇报：每个任务都必须，而且这份汇报会被写回任务卡片。
         requirements.append(Self.reportRequirement)
@@ -464,7 +464,7 @@ enum TaskPrompts {
         lines.append("要求：")
         lines.append("1. 先看清这个分支到底改了什么（git log \(base)..\(branch)、git diff \(base)...\(branch)，以及涉及的代码与文档），不要凭队列名字猜；")
         lines.append("2. 把分支 push 到远端（远端名优先 github，其次 origin；分支还没推送过就 -u 推送）；")
-        lines.append("3. 用 GitHub token 开 PR：token 在 $DSH_HOME/tokens/<owner>-<repo> 或 $DSH_HOME/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；base = \(base)，head = \(branch)；GitHub 上已经有同一个 head 的 PR 就复用它，不要重复创建；")
+        lines.append("3. 用 GitHub token 开 PR：token 在 $DSH_HOME/oh-my-dsh/tokens/<owner>-<repo> 或 $DSH_HOME/oh-my-dsh/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；base = \(base)，head = \(branch)；GitHub 上已经有同一个 head 的 PR 就复用它，不要重复创建；")
         lines.append("4. PR 标题与正文由你**按实际改动**写：标题一句话说清这次合并做了什么，正文分条列出改动要点、怎么验证的、需要注意的地方；不要只写队列名，也不要套模板；")
         lines.append("5. 这个会话不要改任何代码：只做发布；")
         lines.append("6. **必须**在最后一行给出 PR 的完整链接（https://github.com/<owner>/<repo>/pull/<编号>）；真开不出来就说清楚卡在哪一步（权限 / 网络 / token / 分支状态），不要沉默收尾。")

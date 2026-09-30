@@ -221,7 +221,7 @@ test('snapshot: the journal advances strictly in order and reports resumability'
 // --- exclusions ------------------------------------------------------------
 
 test('snapshot: secrets, our own state and the browser profile are never snapshotted', () => {
-  for (const name of ['shell', 'credentials', '.credentials.yaml', 'profiles', 'settings.yaml',
+  for (const name of ['oh-my-dsh', 'shell', 'credentials', '.credentials.yaml', 'profiles', 'settings.yaml',
     'channels', 'browser', 'browser-dev', 'skills', 'attachments', 'tokens']) {
     assert.equal(s.isExcluded(name), true, name + ' must be excluded');
   }

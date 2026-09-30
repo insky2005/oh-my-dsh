@@ -79,13 +79,13 @@
 | D2 | `skills/<name>/SKILL.md` | dsh 发现，我们写入 | 启动时安装内置 skill（缺失即装、托管标记、用户改过不覆盖、**已退役技能删除受管副本**）；技能面板在**非内置**技能上改写 `user-invocable` / `disable-model-invocation` 两行 | 内置 skill（web-dev-tools / repo-knowledge / task-todo）不被 dsh 发现；开关写了但 dsh 不认 | `SkillInstaller.swift`（安装 / 退役清理）、`SkillsCore.swift`（frontmatter 读写/扫描）、`SkillSources.swift`（安装/移除） |
 | D2b | 技能调用 frontmatter 键名：`user-invocable`（默认 true）、`disable-model-invocation`（默认 false）；**旧驼峰键会让 dsh 忽略整个技能** | 键名若改（或默认值反转），面板开关的语义/写出的键会失配 | 开关看似生效但技能可见性不变；写错键还会让技能整个消失 | `SkillsCore.swift` `SkillFrontmatterIO`（只写规范键、切回默认即删键）；`tests/skills-panel/run.sh` | 改一个技能的两个开关 → dsh 新会话里模型目录/用户技能列表随之变化 |
 | D2c | 技能根与优先级：`<ws>/.dsh/skills`(100) > `<ws>/.agents/skills`(200) > `$DSH_HOME/skills`(400) > `~/.agents/skills`(500) | 新增/调整根会让面板的级别标注与去重判断失准 | 面板标错级别、或把被遮蔽的技能当成生效技能 | `SkillsCore.swift` `SkillRoots` / `SkillScanner`（rank 升序 + `shadowedBy`） | 面板「已安装」列表中同名技能的级别与被遮蔽标记 |
-| D2d | `shell/skills.json`（我们自己的）：registries / invocation / installed | 与 dsh 无关（壳层自有） | 面板设置丢失（registry、开关记录） | `SkillsCore.swift` `SkillStore`；缺失即按空配置处理 | 改一个 registry 或开关后重启 App，设置仍在 |
-| D3 | `channels/*` | **我们**（放在 dsh home 下） | 凭据/会话映射/消息归档/workspace 启用/state | 通道配置丢失 | core `channel-store/sessions/runner` |
-| D4 | `shell/config.json` | **我们** | 壳层设置（语言/主题/面板宽度/registry…） | 面板宽度、语言回默认 | core `settings.js` + `ShellConfig.swift` |
-| D5 | `browser-api.port` | **我们** | 浏览器面板 REST 端口文件的约定位置，供 web-dev-tools 技能发现 | Agent 技能找不到浏览器面板 API | main.swift 启动段 + `SkillInstaller` 文案 |
+| D2d | `oh-my-dsh/shell/skills.json`（我们自己的）：registries / invocation / installed | 与 dsh 无关（壳层自有） | 面板设置丢失（registry、开关记录） | `SkillsCore.swift` `SkillStore`；缺失即按空配置处理 | 改一个 registry 或开关后重启 App，设置仍在 |
+| D3 | `oh-my-dsh/channels/*` | **我们**（放在 dsh home 下） | 凭据/会话映射/消息归档/workspace 启用/state | 通道配置丢失 | core `channel-store/sessions/runner` |
+| D4 | `oh-my-dsh/shell/config.json` | **我们** | 壳层设置（语言/主题/面板宽度/registry…） | 面板宽度、语言回默认 | core `settings.js` + `ShellConfig.swift` |
+| D5 | `oh-my-dsh/browser-api.port` | **我们** | 浏览器面板 REST 端口文件的约定位置，供 web-dev-tools 技能发现 | Agent 技能找不到浏览器面板 API | main.swift 启动段 + `SkillInstaller` 文案 |
 | D6 | `sessions/<workspace-slug>/<session-id>/`：**会话日志文件名是「世代命名」**（世代 0 = `session.jsonl`，之后 `session.v<N>.jsonl`；压缩再加 `.zstd`） | dsh | **读**（审查面板的审计数据源，见 D8） | 新会话列不出来（空面板）、迁移过的会话读到**冻结归档**而停旧 | `core/lib/review-log.js` `sessionLogCandidates()` |
 | D8 | `sessions/` 里的当前世代：0.1.2 写 `session.jsonl`，**0.1.5 写 `session.v3.jsonl`** | dsh | **读**：按规范名枚举 + **世代最大者优先**（同代压缩优先） | `review: listed 0/N sessions` / `audit FAILED`（不报错、只是空） | `core/lib/review-log.js` `parseSessionLogName` / `sessionLogCandidates`；`core/tests/review-log.test.js` |
-| D7 | dev 隔离：`~/.dsh-dev`（+ `browser-dev` 迁移） | 我们 | 开发版独立 home，避免污染正式版 | dev 读到正式版数据 | main.swift `applyDevIsolation()` |
+| D7 | dev 隔离：`~/.dsh-dev`（壳层数据在 `~/.dsh-dev/oh-my-dsh/`） | 我们 | 开发版独立 home，避免污染正式版；browser 不再用 `browser-dev` 后缀，与正式版同为 `<home>/oh-my-dsh/browser`（`ShellPaths`） | dev 读到正式版数据 | main.swift `applyDevIsolation()` + `ShellPaths.migrateLegacyLayout` |
 | D9 | `credentials`、`profiles` | dsh | 目前**不直接读**（仅 dsh 自己用） | — | — |
 
 ### E. 分发、升级与运行时
@@ -157,7 +157,7 @@
 
 - `ServerManager.start()`：**删除复用分支**，永远自拉起（`DSH_NATIVE_FORCE_SPAWN` 一并移除）；
 - 探针改为**专用 session**（`httpCookieStorage = nil`、`httpShouldSetCookies = false`、`.reloadIgnoringLocalCacheData`、`urlCache = nil`），不再被持久 cookie / 磁盘缓存欺骗；
-- 新增 `reapRecordedOrphan()`：拉起时把 `{pid, port, token}` 记到 `$DSH_HOME/shell/dsh-web.json`，下次启动若该实例仍在（用 token 探活证明是自己的）→ 先回收再拉起，杜绝「上次没关干净」累积；
+- 新增 `reapRecordedOrphan()`：拉起时把 `{pid, port, token}` 记到 `$DSH_HOME/oh-my-dsh/shell/dsh-web.json`，下次启动若该实例仍在（用 token 探活证明是自己的）→ 先回收再拉起，杜绝「上次没关干净」累积；
 - `app.log` 在 `webToken == nil` 时明确告警（原生 RPC 将 401），不再静默；
 - Wiki 面板在「会话压根没起来」时状态条显示「生成失败（详见日志）」并写日志（不再是一次无效点击）；
 - `DshWebRPC`：只有端点真的不存在（404/405）才降级到点号方法，超时/401/业务错误不再把该端点永久钉死；cookie 换成功才记为已认证；`WikiRPC.createSession` 在 workspaceId 被拒时回退 `cwd` 建会话（保证「能在对应 workspace 起出会话」）。
@@ -257,7 +257,7 @@
 | 风险 | 说明 | 触发再评估 |
 |---|---|---|
 | ~~R1 Swift 原生 RPC 无 cookie~~（2026-09-10 已修） | `WikiRPC`、`IssueRunnerPanel`、`DSHSessionRPC` 现统一走 `DshWebRPC.swift`：先试 0.1.2 斜杠端点（`payload.args.<request\|_request>`）再回退点号方法，按**端点**记忆所选面；token 由壳层 `ServerManager.webToken` 注入，经一个**独立 ephemeral URLSession** 访问 `/?token=…` 种下 `dsh-auth-*` cookie（WebView 的 cookie 在 WebKit 数据存储里、与 URLSession 的 `HTTPCookieStorage` 互不共享，故必须自行换取），401 时自动重换一次；`workspace.list` 在 0.1.2 不存在，回退读 `$DSH_HOME/storages/workspace.json`（`DshWorkspaceStore`，与 core 同一份契约） | 已修；2026-09-12 追加：只有 404/405 才降级（超时/401/业务错误不再把端点永久钉死）、cookie 换成功才记为已认证、workspaceId 被拒回落 `cwd` 建会话（§4.4） |
-| ~~R2 复用外部实例~~（**2026-09-12 复用逻辑已整体删除**） | 外部实例的 token 只存在于它自己的 stdout，无法获取；复用必然 `webToken == nil` ⇒ 原生 RPC 全 401（§4.4 实战踩过）。现在 **永远自拉起**，并回收自己上次残留的实例（`$DSH_HOME/shell/dsh-web.json` + token 探活）| 只有出现「必须与某个已启动实例共享**内存态**（未落盘状态、正在跑的 turn 视图）」的需求时才重估 |
+| ~~R2 复用外部实例~~（**2026-09-12 复用逻辑已整体删除**） | 外部实例的 token 只存在于它自己的 stdout，无法获取；复用必然 `webToken == nil` ⇒ 原生 RPC 全 401（§4.4 实战踩过）。现在 **永远自拉起**，并回收自己上次残留的实例（`$DSH_HOME/oh-my-dsh/shell/dsh-web.json` + token 探活）| 只有出现「必须与某个已启动实例共享**内存态**（未落盘状态、正在跑的 turn 视图）」的需求时才重估 |
 | **R3 注入脚本依赖 fetch + DOM**（**仍在**，且已实测出过坏点） | 三个注入脚本直接依赖 dsh web 客户端实现：fetch 形态与信封、方法名白名单、sessionId 位置、侧栏 `[role=treeitem].sessionRow` DOM、文件打开 RPC 端点。上游改传输（已有 WebSocket mux）或改 DOM 就**静默失效**。2026-09-10 实测发现 `sessionOpenerScript` 在 0.1.2 下一直是坏的（写死点号 method 打到斜杠端点，服务端 \`method does not match endpoint\`），已修为运行时双面 —— 详见 §6.1 | 升级后 B 面三项验证任一失败即命中 |
 | **R4 `workspace.json` 兜底是私有布局**（**仍在**，已加护栏） | 兜底读的是 dsh 内部带 schema/版本号的私有域存储（`defineDomain({name:'workspace',version:2})`，还有 `pendingMutation` 恢复标记），上游可随时改字段/搬文件/升版本；读不懂 = 上述五处**静默变空**。现已加域名+版本校验、诊断日志、单一实现收口（见 §6.2） | 升级后 `unit.version` 变化，或工作区列表突然为空而接口没变 |
 | **R7 会话日志「世代命名」**（0.1.5 实测踩过，已修） | 审查面板直接读 dsh 落盘的会话日志，而**文件名里编码了 Session 格式世代**（0.1.2 = `session.jsonl`，0.1.5 = `session.v3.jsonl`，压缩加 `.zstd`）；迁移过的会话还会把老文件留成冻结归档。只认世代 0 的名字 ⇒ 新会话一条都列不出来、老会话永远停旧，**不报错**。已改为按规范名枚举 + 世代最大者优先（见 §6.4）；**嵌套派发事件名**是同一面板的第二个世代点（见 R7b） | 上游再提世代（出现 `session.v4.jsonl`）时**不需要改代码**（规则是「取最大世代」），但若换成非 `session*.jsonl` 的容器/目录名就要重估 |
@@ -370,7 +370,7 @@ sessionCookie(...)     = "<name>=<value>; Max-Age=2592000; Path=/; Expires=…; 
 
 阈值扫描：62 只 = 14,134 B → 200；**63 只 = 14,362 B → 431**。旁证：WebKit 磁盘缓存里每次**失败**启动只有 bootstrap 落盘、batch 从不落盘（431 不进缓存）；换一个全新 cookie 存储（同二进制、同 dsh、同 `DSH_HOME`、同 URL）立刻抓到 3.7 MB bundle；`~/Library/HTTPStorages/com.ohmydsh.app.dev.binarycookies` 实测 **68 只未过期** cookie、69 个端口，正式版当时 2 只（同一个坑，只是还没到）。
 
-**处置**（`platforms/macos/src/DshWebCookieJanitor.swift`，测试 `tests/dsh-auth-cookies/run.sh`）：**启动**加载入口 URL 之前清掉所有非本次 authority 的 `dsh-auth-*`（保留当前那只，中途重载无 token 的 `webView.url` 不掉凭据）；**退出**清掉本次留下的（`applicationWillTerminate`，异步 + 泵 run loop 有界等待 1.5 s，best effort——真正的保证是启动清理）；spawn dsh web 时给 `NODE_OPTIONS` 追加 `--max-http-header-size=65536` 作保险带（环境已显式设置则原样保留）。清理**只碰 `dsh-auth-*`**：UI 偏好在 localStorage、会话/工作区在 `$DSH_HOME`、壳层配置在 `$DSH_HOME/shell/config.json`、Browser 面板（CEF）另有自己的 cookie 存储。
+**处置**（`platforms/macos/src/DshWebCookieJanitor.swift`，测试 `tests/dsh-auth-cookies/run.sh`）：**启动**加载入口 URL 之前清掉所有非本次 authority 的 `dsh-auth-*`（保留当前那只，中途重载无 token 的 `webView.url` 不掉凭据）；**退出**清掉本次留下的（`applicationWillTerminate`，异步 + 泵 run loop 有界等待 1.5 s，best effort——真正的保证是启动清理）；spawn dsh web 时给 `NODE_OPTIONS` 追加 `--max-http-header-size=65536` 作保险带（环境已显式设置则原样保留）。清理**只碰 `dsh-auth-*`**：UI 偏好在 localStorage、会话/工作区在 `$DSH_HOME`、壳层配置在 `$DSH_HOME/oh-my-dsh/shell/config.json`、Browser 面板（CEF）另有自己的 cookie 存储。
 
 **升级时怎么验**（并进 §5 的 A 面）：① 启动后 `app.log` 有 `dsh cookies: purged N stale …`；② `~/Library/HTTPStorages/<bundleid>.binarycookies` 的 cookie 数稳定在 1（不再随启动次数增长）；③ `curl -H "Cookie: <造一堆>" "<batch URL>"` 回 200 而非 431（保险带生效）。若上游改了 cookie 命名规则或鉴权载体（例如换成 header），本清理只会「清不掉」（不再有害），但护栏同时失效——按上表重估。
 

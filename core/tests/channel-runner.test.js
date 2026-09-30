@@ -20,7 +20,7 @@ function closeServer(srv) {
 }
 
 function enableForProject(dshHome, channelId, projectRoot) {
-  const dir = path.join(dshHome, 'channels');
+  const dir = path.join(dshHome, 'oh-my-dsh', 'channels');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, channelId + '.workspaces.json'), JSON.stringify({ ws: projectRoot }), 'utf8');
 }
@@ -133,7 +133,7 @@ async function runQuickCommand({ text, sessions = [], workspaces = [{ workspaceI
   saveChannelAccount('wx-q', { botToken: 'bt', baseUrl: 'https://x' }, dshHome);
   const projectRoot = storeProjectRoot || fs.mkdtempSync(path.join(os.tmpdir(), 'chan-pr-'));
   {
-    const dir = path.join(dshHome, 'channels');
+    const dir = path.join(dshHome, 'oh-my-dsh', 'channels');
     fs.mkdirSync(dir, { recursive: true });
     const roots = [projectRoot, ...workspaces.map((w) => w.path)].filter(Boolean);
     const reg = {};

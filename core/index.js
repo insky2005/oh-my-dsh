@@ -60,8 +60,10 @@ module.exports = {
   ...require('./lib/channel-sessions'),
   // Channel end-to-end runner (token->adapter->manager->session->reply)
   ...require('./lib/channel-runner'),
-  // Language-agnostic shell settings store ($DSH_HOME/shell/config.json)
+  // Language-agnostic shell settings store ($DSH_HOME/oh-my-dsh/shell/config.json)
   ...require('./lib/settings'),
+  // Shell work-data layout + one-time migration ($DSH_HOME/oh-my-dsh/*)
+  shellPaths: require('./lib/shell-paths'),
   // Read-only session-log change audit (Review panel; docs/review-panel-design.md)
   ...require('./lib/review-log'),
 };

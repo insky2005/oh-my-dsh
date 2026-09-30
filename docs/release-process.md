@@ -10,7 +10,7 @@
 - 在 `main` 上，工作区干净，`github/main` 与本地同步；
 - 已确定下一个版本号：`scripts/version.sh` 的 `FALLBACK_VERSION` 即「下一个主版本」；
 - 已装 Xcode Command Line Tools（swiftc / pkgbuild / hdiutil / curl / python3）；
-- 发布需写权限：`GH_TOKEN`（`~/.dsh/tokens/<owner>-<repo>`；当前统一走 curl API，暂不使用 `gh` CLI）。
+- 发布需写权限：`GH_TOKEN`（`~/.dsh/oh-my-dsh/tokens/<owner>-<repo>`；当前统一走 curl API，暂不使用 `gh` CLI）。
 
 ## 4 步总览
 
@@ -62,7 +62,7 @@
 ### 步骤 3：本地构建并发布（scripts/local-release.sh）
 
 ```bash
-export GH_TOKEN="$(cat ~/.dsh/tokens/insky2005-oh-my-dsh)"   # 不打印/回显 token
+export GH_TOKEN="$(cat ~/.dsh/oh-my-dsh/tokens/insky2005-oh-my-dsh)"   # 不打印/回显 token
 export IS_PRERELEASE=1                                        # 默认预发布；正式版用 0
 scripts/local-release.sh arm64 x86_64                          # 两架构 pkg+dmg
 ```

@@ -1,7 +1,7 @@
 ---
 title: 模块：任务面板（Tasks / IssueRunner）
 tags: [module, tasks, github, issue, queue, index, manual-task]
-updated: 2026-09-27T13:40:19Z
+updated: 2026-09-29T15:27:23Z
 sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksWorkspaces.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/BrowserAPI.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/issue-runner-design.md, docs/ui-color-scheme.md, docs/git-workflow.md, docs/task-todo-skill-design.md, .dsh/skills/task-todo/SKILL.md, docs/issue-runner-design.md]
 manual: false
 ---
@@ -29,7 +29,7 @@ manual: false
 
 ## 本地 API（`/api/tasks/*`）与技能 `task-todo`（2026-09-27）
 
-壳层的 localhost REST 服务（`BrowserAPIServer`，127.0.0.1，端口写 `$DSH_HOME/shell-api.port` 与 `browser-api.port`——同一个端口）上多了**第二块路由面**：`/api/browser/*` 归浏览器面板，`/api/tasks/*` 归任务面板（`TasksAPIRouter` 命中即返回，未命中返回 nil，原路由与 404 都不受影响）。
+壳层的 localhost REST 服务（`BrowserAPIServer`，127.0.0.1，端口写 `$DSH_HOME/oh-my-dsh/shell-api.port` 与 `$DSH_HOME/oh-my-dsh/browser-api.port`——同一个端口）上多了**第二块路由面**：`/api/browser/*` 归浏览器面板，`/api/tasks/*` 归任务面板（`TasksAPIRouter` 命中即返回，未命中返回 nil，原路由与 404 都不受影响）。
 
 - `GET /api/tasks/list?workspace=<路径>` → 面板现有的任务与队列；
 - `POST /api/tasks/create` `{workspace?, focus?, tasks:[{title, body?} | "标题"]}` → 批量创建（上限 50 条），返回 `created`（逐条 id/标题）与 `rejected`（逐条原因：`empty-title`/`not-an-object`/`too-many`）；
@@ -110,7 +110,7 @@ manual: false
 ## GitHub token（按仓库作用域，只走文件）
 
 - **只走文件（2026-09-24 起）**：Keychain 的读写代码已全部删除（`readKeychain` / `tokenService(for:)` / `SecItemAdd` / `SecItemDelete` 与两个 service 常量），`platforms/macos/src/` 下不再出现 `SecItem` / `kSecClass`；
-- **解析顺序**：① 文件专属 `$DSH_HOME/tokens/<owner>-<repo>` → ② 文件通用 `$DSH_HOME/gh-token`；多工作区各用各的 token；
+- **解析顺序**：① 文件专属 `$DSH_HOME/oh-my-dsh/tokens/<owner>-<repo>` → ② 文件通用 `$DSH_HOME/oh-my-dsh/gh-token`；多工作区各用各的 token；
 - **保存**：只写文件 —— 有当前仓库写专属文件，无仓库（非 GitHub 工作区）写通用文件；原子写 + `chmod 600`；清空即删文件；
 - **兼容性**：旧版面板是「文件 + Keychain 双写」，通过面板保存过的 token 早已在文件里；仅更老构建或手工 `security add-generic-password` 写进钥匙串的条目不再被读取，需重填一次。
 

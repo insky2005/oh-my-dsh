@@ -104,7 +104,8 @@ final class SnapshotWindowController: NSObject, NSTableViewDataSource, NSTableVi
 
     @objc private func revealTapped(_ sender: Any?) {
         guard let entry = selectedEntry() else { return }
-        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dshHome() + "/shell/snapshots/" + entry.id)
+        let snapshots = (ShellPaths.shellDir(home: dshHome()) as NSString).appendingPathComponent("snapshots")
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: (snapshots as NSString).appendingPathComponent(entry.id))
     }
 
     @objc private func deleteTapped(_ sender: Any?) {

@@ -50,7 +50,7 @@
 当前工作区：#w1 (helloharness), ~/c/work.ai/deepseek-harness/helloharness
 当前会话：#s1 (sess-abc), 会话甲
 ```
-> 通道 = channelId；连接取 adapter 状态；当前工作区 = 通道级 lastWorkspace（代号/名称/~路径）；当前会话 = active 会话（代号/#id/标题）；两者都存于 `~/.dsh/channels/<channelId>.state.json`，重启可恢复。
+> 通道 = channelId；连接取 adapter 状态；当前工作区 = 通道级 lastWorkspace（代号/名称/~路径）；当前会话 = active 会话（代号/#id/标题）；两者都存于 `~/.dsh/oh-my-dsh/channels/<channelId>.state.json`，重启可恢复。
 
 ---
 

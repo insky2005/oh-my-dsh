@@ -30,6 +30,7 @@ cp "$SRC/PanelSurface.swift" "$TMP/PanelSurface.swift"   # panel surface / contr
 cp "$SRC/ProjectsCore.swift" "$TMP/ProjectsCore.swift"
 cp "$SRC/ProjectsPanel.swift" "$TMP/ProjectsPanel.swift"
 cp "$SRC/ShellConfig.swift" "$TMP/ShellConfig.swift"     # the root setting is real
+cp "$SRC/ShellPaths.swift" "$TMP/ShellPaths.swift"       # ShellConfig resolves through ShellPaths
 cp "$SRC/DshWebRPC.swift" "$TMP/DshWebRPC.swift"         # the RPC layer is real (fake transport)
 cp controller-tests.swift "$TMP/main.swift"
 swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \

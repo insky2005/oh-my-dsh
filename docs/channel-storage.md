@@ -2,7 +2,7 @@
 
 > 状态：✅ 已实现（2026-08-22：全局 channel 作用域 store 落地于 core/lib/channel-sessions.js；按需求忽略历史数据迁移）
 > 更新：2026-08-22
-> ⚠️ 补充决策（docs/channel-project-switch.md，2026-08-23）：「项目开关」的通道↔项目关联改存**全局** `~/.dsh/channels/<channelId>.workspaces.json`（project = workspace，出现即启用该通道）；项目内 refs 文件不再作为启用来源。
+> ⚠️ 补充决策（docs/channel-project-switch.md，2026-08-23）：「项目开关」的通道↔项目关联改存**全局** `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`（project = workspace，出现即启用该通道）；项目内 refs 文件不再作为启用来源。
 > 关联：docs/channel-design.md（§4 配置模型）、docs/channel-ui-commands.md（§2.4 决策 E / §3.8）、core/lib/channel-sessions.js、core/lib/channel-store.js、core/lib/channel-runner.js、platforms/macos/src/ChannelPanel.swift、platforms/macos/src/main.swift
 
 ## 1. 背景与问题
@@ -11,7 +11,7 @@
 
 | 数据 | 现状路径 | 写入方 |
 |---|---|---|
-| 凭据/账号 | `~/.dsh/channels/<channelId>.json`（chmod 600） | `core/lib/channel-store.js` ✅ 已全局 |
+| 凭据/账号 | `~/.dsh/oh-my-dsh/channels/<channelId>.json`（chmod 600） | `core/lib/channel-store.js` ✅ 已全局 |
 | 项目引用配置（开启的 channel） | `<项目>/.dsh/channels.json`（未提交） | ChannelPanel / main.swift |
 | 会话映射 | `<项目>/.dsh/channels/<channelId>.sessions.json` | `core/lib/channel-sessions.js` |
 | 消息日志 | `<项目>/.dsh/channels/<channelId>.messages.json` | `channel-sessions.js`（appendMessage） |
@@ -20,14 +20,14 @@
 
 ## 2. 目标
 
-- 消息 + 会话映射 → **全局 `~/.dsh/channels/`**；项目内只保留**引用配置**；
+- 消息 + 会话映射 → **全局 `~/.dsh/oh-my-dsh/channels/`**；项目内只保留**引用配置**；
 - 消息按 **`channelName.workspaceName.sessionId.messages.json`** 分桶存放；
 - 项目内可反向定位：`channels.json` 的 refs（channelId + workspaceRoot）→ 全局文件名可确定推导。
 
 ## 3. 新存储布局
 
 ```
-~/.dsh/channels/
+~/.dsh/oh-my-dsh/channels/
   <channelId>.json                                    # 凭据/账号（不变）
   <channelId>.sessions.json                           # 会话映射（从项目迁来；记录含 projectRoot）
   <channelId>.workspaces.json                         # workspaceKey ↔ projectRoot 注册表（新增）
@@ -40,11 +40,11 @@
 示例（channelId=`weixin-clawbot-E68A6BA2`、项目=`~/c/work.ai/deepseek-harness/helloharness`、会话=`session-97e994b0-…`）：
 
 ```
-~/.dsh/channels/weixin-clawbot-E68A6BA2.json
-~/.dsh/channels/weixin-clawbot-E68A6BA2.sessions.json
-~/.dsh/channels/weixin-clawbot-E68A6BA2.workspaces.json
-~/.dsh/channels/weixin-clawbot-E68A6BA2.helloharness.session-97e994b0-….messages.json
-~/.dsh/channels/weixin-clawbot-E68A6BA2.helloharness.system.messages.json
+~/.dsh/oh-my-dsh/channels/weixin-clawbot-E68A6BA2.json
+~/.dsh/oh-my-dsh/channels/weixin-clawbot-E68A6BA2.sessions.json
+~/.dsh/oh-my-dsh/channels/weixin-clawbot-E68A6BA2.workspaces.json
+~/.dsh/oh-my-dsh/channels/weixin-clawbot-E68A6BA2.helloharness.session-97e994b0-….messages.json
+~/.dsh/oh-my-dsh/channels/weixin-clawbot-E68A6BA2.helloharness.system.messages.json
 helloharness/.dsh/channels/channels.json
 ```
 
@@ -74,8 +74,8 @@ createChannelSessions({ channelId, dshHome, defaultProjectRoot })
 
 - **惰性迁移（主力）**：`createChannelSessions` 构造时，若新位置文件缺失且旧路径（`<projectRoot>/.dsh/channels/<channelId>.sessions.json|.messages.json`）存在 → 读取 → 按 sessionId 分组写入新桶（null → system 桶）→ **新文件全部写成功后**删除旧文件；sessions 并入全局 `<channelId>.sessions.json`（按 conversationId 合并取新）。天然幂等：旧文件已删即跳过；崩溃重跑靠「目标桶内按 (conversationId, dir, text, ts) 去重」防重复。
 - **一次性 CLI**：`ohmy-core.js channel migrate [projectRoot] [--dsh-home <dir>]` 用于未再启动 runner 的旧 checkout 批量迁移。
-- **本仓库自迁移**：实现完成后对 helloharness 本身执行一次迁移（现状 17KB messages 文件 → 分桶至 `~/.dsh/channels/`），确认旧文件删除、`.git status` 干净。
-- **channels.json 落位**：`git mv` 旧路径 `.dsh/channels.json` → `.dsh/channels/channels.json` 并提交（此前未跟踪，本次一并纳入版本库，符合设计文档 §4.2「引用配置随仓库提交」）。
+- **本仓库自迁移**：✅ 已完成 —— 旧的项目内 messages/sessions 已在全局化时迁入全局 store；本仓库残留的 `.dsh/channels/` 旧文件与 `.gitignore` 过时规则已于 2026-09-29 清理（`git status` 干净）。
+- **~~channels.json 落位~~（已取消）**：项目 refs 自 PR #30 起**不再作为启用来源**（docs/channel-project-switch.md），本仓库也从未有该文件；不再需要 `git mv` 或提交。
 
 ## 7. 边界与失败模式
 
@@ -92,9 +92,9 @@ createChannelSessions({ channelId, dshHome, defaultProjectRoot })
 ## 8. 验收标准
 
 1. `node --test core/tests/` 全绿（含新增/重写用例）；
-2. 任意 (channelId, projectRoot, dshHome) 组合，消息/会话只出现在 `~/.dsh/channels/` 下正确文件名；项目目录不再产生 messages/sessions 文件；
+2. 任意 (channelId, projectRoot, dshHome) 组合，消息/会话只出现在 `~/.dsh/oh-my-dsh/channels/` 下正确文件名；项目目录不再产生 messages/sessions 文件；
 3. 预置旧格式文件 → store 构造/`channel migrate` → 旧文件消失、新桶按会话分好、sessions 合并一致、幂等（重跑不重复）；
-4. macOS 面板：项目视图会话列表从全局 sessions.json 过滤当前项目正常显示；开关写 `.dsh/channels/channels.json`（已提交）；
+4. macOS 面板：项目视图会话列表从全局 sessions.json 过滤当前项目正常显示；开关写**全局** `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`（不再有项目内 refs 文件）；
 5. `ohmy-core.js channel run`（mock token）实跑一条消息：落盘到全局分桶文件，项目目录零新增；
-6. `.gitignore` 更新后 `git status` 干净：本仓库旧 messages 文件已迁走，`channels.json` 已提交；
+6. `.gitignore` 更新后 `git status` 干净：本仓库旧 `.dsh/channels/` 文件与对应忽略规则已清理；
 7. 文档（设计/命令手册）与实现一致。

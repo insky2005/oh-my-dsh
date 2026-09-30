@@ -631,7 +631,7 @@ struct SkillStoreFile: Codable {
 }
 
 /// Shell-owned metadata for the Skills panel, kept in
-/// $DSH_HOME/shell/skills.json next to shell/config.json.
+/// $DSH_HOME/oh-my-dsh/shell/skills.json next to shell/config.json.
 ///
 /// Deliberately a plain, app-owned JSON file (not ShellConfig): values are
 /// structured, mutated in bursts, and must stay readable/writable without the
@@ -641,11 +641,11 @@ final class SkillStore {
     let home: String
     private(set) var data: SkillStoreFile
 
-    var filePath: String { SkillRoots.join(home, "shell/skills.json") }
+    private var filePath: String { (ShellPaths.shellDir(home: home) as NSString).appendingPathComponent("skills.json") }
 
     init(home: String = SkillRoots.dshHome()) {
         self.home = home
-        self.data = SkillStore.read(file: SkillRoots.join(home, "shell/skills.json"))
+        self.data = SkillStore.read(file: (ShellPaths.shellDir(home: home) as NSString).appendingPathComponent("skills.json"))
     }
 
     static func read(file: String) -> SkillStoreFile {

@@ -18,11 +18,11 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const { helpText } = require('./channel-commands');
+const shellPaths = require('./shell-paths');
 
 function channelsDir(dshHome) {
-  return path.join(dshHome || process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'channels');
+  return shellPaths.channelsDir(dshHome);
 }
 
 function bindingFile(channelId, dshHome) {

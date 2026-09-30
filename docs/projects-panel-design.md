@@ -66,7 +66,7 @@
 
 | 项 | 值 |
 |---|---|
-| 存储位置 | `$DSH_HOME/shell/config.json`（`ShellConfig`，见影响清单 **D4**） |
+| 存储位置 | `$DSH_HOME/oh-my-dsh/shell/config.json`（`ShellConfig`，见影响清单 **D4**） |
 | 键 | `projectsRoot` |
 | 值 | 绝对路径字符串；**键缺失/空串 = 用默认值**（不改写文件） |
 | 默认值 | `$DSH_HOME/oh-my-dsh/projects` |

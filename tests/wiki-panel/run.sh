@@ -16,13 +16,14 @@ echo "--- wiki model ---"
 TMP="$(mktemp -d)"
 cp ../terminal-emulator/stubs.swift "$TMP/stubs.swift"
 cp ../../platforms/macos/src/WikiPanel.swift "$TMP/WikiPanel.swift"
+cp ../../platforms/macos/src/ShellPaths.swift "$TMP/ShellPaths.swift"
 cp ../../platforms/macos/src/PanelSurface.swift "$TMP/PanelSurface.swift"   # 面板底色 token
 # WikiRPC talks to dsh through the shared, version-agnostic helper (DshWebRPC).
 cp ../../platforms/macos/src/DshWebRPC.swift "$TMP/DshWebRPC.swift"
 cp wiki-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
   -o "$TMP/wiki-tests" "$TMP/stubs.swift" "$TMP/PanelSurface.swift" "$TMP/WikiPanel.swift" \
-  "$TMP/DshWebRPC.swift" "$TMP/main.swift"
+  "$TMP/ShellPaths.swift" "$TMP/DshWebRPC.swift" "$TMP/main.swift"
 "$TMP/wiki-tests"
 rm -rf "$TMP"
 
@@ -30,11 +31,12 @@ echo "--- wiki panel header (fixed title) ---"
 TMP="$(mktemp -d)"
 cp ../terminal-emulator/stubs.swift "$TMP/stubs.swift"
 cp ../../platforms/macos/src/WikiPanel.swift "$TMP/WikiPanel.swift"
+cp ../../platforms/macos/src/ShellPaths.swift "$TMP/ShellPaths.swift"
 cp ../../platforms/macos/src/PanelSurface.swift "$TMP/PanelSurface.swift"
 cp ../../platforms/macos/src/DshWebRPC.swift "$TMP/DshWebRPC.swift"
 cp panel-header-tests.swift "$TMP/main.swift"
 swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
   -o "$TMP/wiki-panel-header-tests" "$TMP/stubs.swift" "$TMP/PanelSurface.swift" "$TMP/WikiPanel.swift" \
-  "$TMP/DshWebRPC.swift" "$TMP/main.swift"
+  "$TMP/ShellPaths.swift" "$TMP/DshWebRPC.swift" "$TMP/main.swift"
 "$TMP/wiki-panel-header-tests"
 rm -rf "$TMP"

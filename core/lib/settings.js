@@ -8,26 +8,23 @@
  * shell (macOS Swift / future Windows / Linux). Backed by a plain UTF-8 JSON
  * file so ANY language can read it:
  *
- *   $DSH_HOME/shell/config.json      (DSH_HOME defaults to ~/.dsh)
+ *   $DSH_HOME/oh-my-dsh/shell/config.json   (DSH_HOME defaults to ~/.dsh)
  *
  * Keys are flat strings; values are arbitrary JSON values. The dsh daemon's own
  * $DSH_HOME/settings.yaml is separate and never touched here.
  */
 
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
+const shellPaths = require('./shell-paths');
 
 /** Resolve the dsh data home: explicit arg > $DSH_HOME > ~/.dsh. */
 function dshHome(explicit) {
-  const env = process.env.DSH_HOME;
-  if (explicit && String(explicit).trim()) return String(explicit).trim();
-  if (env && env.trim()) return env.trim();
-  return path.join(os.homedir(), '.dsh');
+  return shellPaths.dshHome(explicit);
 }
 
 function settingsDir(explicit) {
-  return path.join(dshHome(explicit), 'shell');
+  return shellPaths.shellDir(explicit);
 }
 
 function settingsPath(explicit) {

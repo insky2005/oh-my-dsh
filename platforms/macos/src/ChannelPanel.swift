@@ -763,7 +763,7 @@ final class ChannelPanelController: NSObject {
     }
 
     /// Read the channel runner's live connection state from
-    /// ~/.dsh/channels/<channelId>.state.json. Called when the global-config view
+    /// ~/.dsh/oh-my-dsh/channels/<channelId>.state.json. Called when the global-config view
     /// is opened (no polling).
     private func liveState(for channelId: String) -> GlobalChannel.State {
         let dir = ChannelStoreReader.channelsDir()
@@ -845,7 +845,7 @@ final class ChannelPanelController: NSObject {
     }
 
     // MARK: - Global project association (the "project switch") — stored in
-    // ~/.dsh/channels/<channelId>.workspaces.json; a project root present there
+    // ~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json; a project root present there
     // = that workspace has this channel enabled (docs/channel-project-switch.md).
 
     private func channelWorkspacesPath(_ channelId: String) -> String {

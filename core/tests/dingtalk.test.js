@@ -169,7 +169,7 @@ test('dingtalk runner: end-to-end via injected client + fetch', async () => {
   saveChannelAccount('dt-c', { clientId: 'appkey', clientSecret: 'appsecret' }, dshHome);
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dt-pr-'))
   {
-    const dir = path.join(dshHome, 'channels');
+    const dir = path.join(dshHome, 'oh-my-dsh', 'channels');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'dt-c.workspaces.json'), JSON.stringify({ ws: projectRoot }), 'utf8');
   }

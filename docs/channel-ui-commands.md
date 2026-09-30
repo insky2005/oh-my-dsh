@@ -29,11 +29,11 @@
 ### 2.2 ① 引导页（无全局配置时）
 
 - **卡片列表**：内置平台卡片（微信 ClawBot / 钉钉 / 飞书），每张卡：图标 + 名称 + 一句话说明 + 状态徽标。
-- **状态徽标（打开视图时读取，不轮询）**：卡片右侧圆点反映该通道的实时连接状态——绿色=已连接、蓝色=连接中、橙色=重连中、红色=token失效、灰色=未配置/未连接；状态来自 channel runner 写入的 `~/.dsh/channels/<channelId>.state.json`，打开「全局配置」视图时读取一次。
+- **状态徽标（打开视图时读取，不轮询）**：卡片右侧圆点反映该通道的实时连接状态——绿色=已连接、蓝色=连接中、橙色=重连中、红色=token失效、灰色=未配置/未连接；状态来自 channel runner 写入的 `~/.dsh/oh-my-dsh/channels/<channelId>.state.json`，打开「全局配置」视图时读取一次。
 - **点微信卡片 → 配置向导（分步）**：
   1. **提示页**：「打开微信，准备扫码」+「继续」按钮；
   2. **扫码页**：显示二维码 + 状态「等待扫码…」；
-  3. **成功页**：拿到 token → 存储到 `~/.dsh/channels/<id>.json` → 提示「绑定成功 ✅」。
+  3. **成功页**：拿到 token → 存储到 `~/.dsh/oh-my-dsh/channels/<id>.json` → 提示「绑定成功 ✅」。
 
 ### 2.3 ② 项目视图（有全局配置后，默认显示）
 
@@ -49,7 +49,7 @@
 | B | 二维码显示 | 面板内渲染二维码（vendor qrcode-terminal 画到 NSImage） |
 | C | /new 语义 | /new 新建独立会话；其余在当前会话继续（conversationId→sessionId 映射持久化） |
 | D | 即时「收到」应答 | 低优先，放 TODO |
-| E | 消息持久化 | **v1 已实现：落盘到项目下 .dsh 文件**（.dsh/channels/<channelId>.messages.json）；**改造中（见 docs/channel-storage.md）：迁至全局 ~/.dsh/channels/，按 channel.workspace.sessionId 分桶**，按 Channel/Session 分组，重启保留 |
+| E | 消息持久化 | **v1 已实现：落盘到项目下 .dsh 文件**（.dsh/channels/<channelId>.messages.json）；**改造中（见 docs/channel-storage.md）：迁至全局 ~/.dsh/oh-my-dsh/channels/，按 channel.workspace.sessionId 分桶**，按 Channel/Session 分组，重启保留 |
 
 ## 3. 消息路由到项目（设计细节）
 
@@ -60,7 +60,7 @@
 ### 3.2 路由输入
 
 - `ChannelEvent`：`{ channelId, conversationId(会话/群聊 id), sender, text, media?, contextToken }`；
-- 全局 Channel 配置（`~/.dsh/channels/<id>.json`，含 token/状态）；
+- 全局 Channel 配置（`~/.dsh/oh-my-dsh/channels/<id>.json`，含 token/状态）；
 - **项目引用表**（各项目 `.dsh/channels.json` 的 `refs`）：`{ channelId, workspaceRoot, routing: { conversations[], keywords[], default } }`。
 
 ### 3.3 路由匹配优先级（确定性，一次命中）
@@ -77,7 +77,7 @@
 ### 3.4 会话归属（conversationId → sessionId 映射）
 
 - 每个（channelId, conversationId）在路由到的项目里维护一个「当前 dsh 会话」；
-- 映射持久化：`~/.dsh/channels/<id>.sessions.json`（`{ version, sessions: [{ conversationId, channelId, sessionId, projectRoot, name, createdAt, updatedAt }] }`），重启可恢复，跨平台；
+- 映射持久化：`~/.dsh/oh-my-dsh/channels/<id>.sessions.json`（`{ version, sessions: [{ conversationId, channelId, sessionId, projectRoot, name, createdAt, updatedAt }] }`），重启可恢复，跨平台；
 - `/new` → 新建会话并**更新映射**（该 conversationId 改指向新会话）；`/sessions <内容>` / `/ses <内容>`（等同 `#sN`）→ 切换当前会话（改映射）；
 - 无映射 → 首次消息自动建会话并记映射。
 
@@ -121,7 +121,7 @@
 
 ### 3.8 消息持久化（决策 E：落盘项目 .dsh）
 
-> ⚠️ **存储全局化改造已定稿（docs/channel-storage.md，2026-08-22）**：消息/会话将迁至全局 `~/.dsh/channels/`，文件名 `channelId.workspaceKey.sessionId.messages.json`（无会话消息入 `system` 桶），项目内仅保留 `.dsh/channels/channels.json` 引用配置。以下为 v1 实现描述，改造落地后以此设计为准。
+> ⚠️ **存储全局化改造已定稿（docs/channel-storage.md，2026-08-22）**：消息/会话将迁至全局 `~/.dsh/oh-my-dsh/channels/`，文件名 `channelId.workspaceKey.sessionId.messages.json`（无会话消息入 `system` 桶），项目内仅保留 `.dsh/channels/channels.json` 引用配置。以下为 v1 实现描述，改造落地后以此设计为准。
 
 - 路径：<projectRoot>/.dsh/channels/<channelId>.messages.json（{ version, messages: [{ channelId, conversationId, sessionId, dir: "in"|"out", text, ts }] }）；
 - 每收/发一条消息追加一条记录（追加写，控制文件上限：单文件 ≤ 2 MB / 最多保留最近 N=1000 条，超出滚动丢弃最旧）；
