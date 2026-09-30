@@ -507,6 +507,9 @@ struct QueueHeaderModel: Equatable {
     /// False hides the 自动开 PR switch — a dead control is worse than no control
     /// (the queue form's switch obeys the same rule).
     var prAvailable: Bool
+    /// Whether this queue was created by a dsh session (board.local.queueSessions), so
+    /// its completion will be reported back there. The header shows a small ↺ glyph.
+    var reportsToSession: Bool
 
     /// The 自动开 PR toggle is shown while PRs are possible; a queue that already
     /// HAS autoPR on keeps showing it (disabled, explained) even in a workspace
@@ -572,7 +575,8 @@ struct QueueHeaderModel: Equatable {
                                 isAutoCreated: queue.autoCreated,
                                 prUrl: queue.prUrl,
                                 prErrorKey: queue.prError,
-                                prAvailable: prAvailable)
+                                prAvailable: prAvailable,
+                                reportsToSession: board.local.queueSessions[queue.id] != nil)
     }
 }
 

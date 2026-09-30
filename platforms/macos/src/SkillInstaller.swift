@@ -214,7 +214,7 @@ enum BuiltinSkill: CaseIterable {
     | GET `/api/tasks/list` | `?workspace=<路径>`（可选） | 面板现有的任务与队列：`{ok, workspace, tasks:[...], queues:[{id,name,state,...}]}` |
     | POST `/api/tasks/create` | `{"workspace":"…","focus":true,"tasks":[{"title":"…","body":"…"} 或 "标题"]}` | 只建任务（待处理、未入队）；返回 `{ok, created:[{id,title}], rejected:[…]}` |
     | POST `/api/tasks/queue/create` | `{"workspace":"…","session":"$DSH_SESSION_ID","focus":true,"name":"队列名","branch":"…","autoPR":true,"tasks":[…]}` | 建**等待态**队列 + 批量入队；不启动；返回 `{ok, queue:{id,name,state:"draft",…}, created:[…]}` |
-    | POST `/api/tasks/queue/start` | `{"workspace":"…","session":"$DSH_SESSION_ID","queueId":"q-…（可选）"}` | 启动队列（draft/paused → active）；`queueId` 缺省时启动本会话创建的那个等待队列 |
+    | POST `/api/tasks/queue/start` | `{"workspace":"…","session":"$DSH_SESSION_ID","queueId":"q-…"}`（`queueId` 也可换成 `name`） | 启动队列（draft/paused → active）；按 id / 名字定位，缺省时启动本会话创建的那个等待队列 |
     
     - `workspace`：Agent 会话的工作目录（`pwd`）。传工作区根即可，面板按「最近祖先」解析
       （`pwd` 在子目录里也对）。不传则用面板当前工作区。
@@ -224,8 +224,8 @@ enum BuiltinSkill: CaseIterable {
     - `autoPR`：缺省按工作区能力（有 GitHub 远端才「完成后自动开 PR」）。
     - `tasks`：每条可写对象（`title` + `body`，**推荐**）或纯字符串。一次上限 50 条；空标题等
       进 `rejected`，不影响其它条目。
-    - `queue/start` 的 `queueId`：若本会话创建过多个等待队列，先 `list` 看名字，再补 `queueId`
-      消歧（否则 409 `ambiguous-queue`）。
+    - `queue/start` 可以按 `queueId` 或 `name` 启动；若本会话创建过多个等待队列又没说名字，先
+      `list` 再点名（否则 409 `ambiguous-queue`）。
     
     ## 工作流
     
@@ -272,7 +272,7 @@ enum BuiltinSkill: CaseIterable {
     | `503 panel-unavailable` | 壳层服务在，但任务面板还没就绪：稍后重试一次；仍失败就请用户打开面板看一眼 |
     | `400 no-workspace` | 面板还没有工作区（或路径不存在）：让用户先选好项目 |
     | `400 missing-name` | 建队列既没给 `name`、任务标题也兜不住：补一个队列名 |
-    | `409 ambiguous-queue` | 本会话有多个等待队列：从 `queues` 里挑一个，带 `queueId` 重试 |
+    | `409 ambiguous-queue` | 有多个同名 / 本会话的等待队列：从 `queues` 里挑一个，带 `queueId`（或更具体的 `name`）重试 |
     | `404 no-queue` | 没有可启动的等待队列：先 `list` 确认 id，或它已经启动过 |
     | `rejected` 里有条目 | 逐条说明原因，把有效的部分如实汇报，不要谎报全部成功 |
     

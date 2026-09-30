@@ -687,6 +687,7 @@ enum L10n {
         "tasks.queue.autoPROn": ("完成后自动开 PR：已开启（点一下关闭）", "Open a PR when the queue finishes: ON (click to turn off)"),
         "tasks.queue.autoPROff": ("完成后自动开 PR：已关闭（点一下开启）", "Open a PR when the queue finishes: OFF (click to turn on)"),
         "tasks.queue.start": ("开始", "Start"),
+        "tasks.queue.reportsToSession": ("完成后回传发起会话", "Reports back to the session that created it"),
         "tasks.queue.continue": ("继续：跳过失败的任务，跑下一个", "Continue: skip the failed task and run the next one"),
         "tasks.otherFinished": ("%@ 的任务「%@」已完成", "%@ finished “%@”"),
         "tasks.otherFailed": ("%@ 的任务「%@」失败了", "%@ failed “%@”"),

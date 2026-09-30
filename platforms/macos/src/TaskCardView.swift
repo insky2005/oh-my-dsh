@@ -698,7 +698,13 @@ final class TaskQueueHeaderView: NSView {
 
         // 队列名前面一枚行标：这是「一条队列（泳道）」——与任务卡片上的 checklist 成对。
         let glyph = taskRowGlyph("rectangle.stack", accessibility: "tasks.glyph.queue")
-        let titleRow = NSStackView(views: [disclosure, glyph, name, spacer, actions])
+        // 队列有来源会话（由会话 / task-todo 创建）时，名字后带一枚 ↺：完成情况会回传
+        // 那个会话。信息性标记，不可点，tooltip 说清楚。
+        var titleViews: [NSView] = [disclosure, glyph, name]
+        if model.reportsToSession { titleViews.append(reportGlyph()) }
+        titleViews.append(spacer)
+        titleViews.append(actions)
+        let titleRow = NSStackView(views: titleViews)
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
         titleRow.spacing = 6
@@ -744,6 +750,22 @@ final class TaskQueueHeaderView: NSView {
             row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
         }
         bar.widthAnchor.constraint(equalToConstant: 72).isActive = true
+    }
+
+    /// A small ↺ after the queue name when its completion reports back to the session
+    /// that created it (board.local.queueSessions). Informational, not a control.
+    private func reportGlyph() -> NSView {
+        let view = NSImageView()
+        if let image = NSImage(systemSymbolName: "arrow.uturn.backward",
+                               accessibilityDescription: L10n.tr("tasks.queue.reportsToSession")) {
+            view.image = image
+            view.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+            view.contentTintColor = .secondaryLabelColor
+        }
+        view.toolTip = L10n.tr("tasks.queue.reportsToSession")
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.setContentHuggingPriority(.required, for: .horizontal)
+        return view
     }
 
     private func iconButton(_ symbol: String, tooltipKey: String, action: Selector) -> CustomIconButton {

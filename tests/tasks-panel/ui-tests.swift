@@ -319,6 +319,10 @@ do {
     eq(header.queuedCount, 2, "two tasks are waiting")
     eq(header.startHintKey, "tasks.queue.start", "draft offers 开始, not 继续")
     check(header.canStart, "开始 is offered while tasks wait")
+    check(!header.reportsToSession, "no originating session → no report marker")
+    board.local.queueSessions[queue.id] = "session-x"
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    check(header.reportsToSession, "a queue created by a session shows the 回传 marker")
     check(!header.canPause, "暂停 is not offered while paused")
     check(!header.canOpenPR, "no PR button before the queue finishes")
     eq(header.failedCount, 0, "no failures yet")

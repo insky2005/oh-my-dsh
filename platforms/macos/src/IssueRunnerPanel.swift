@@ -532,7 +532,9 @@ final class IssueRunnerPanelController: NSObject {
             "current": path == workspaces.currentPath,
             "counts": ["tasks": board.tasks.count, "queues": board.queues.count],
             "tasks": tasks,
-            "queues": board.queues.map { TasksAPIRouter.queueDictionary($0) },
+            "queues": board.queues.map {
+                TasksAPIRouter.queueDictionary($0, reportsToSession: board.local.queueSessions[$0.id] != nil)
+            },
         ]
     }
 
@@ -645,9 +647,27 @@ final class IssueRunnerPanelController: NSObject {
             _ = runner.startQueue(queueId)
             return ["ok": true, "workspace": path, "started": [queueId]]
         }
+        // 按名字启动：比 session 更直接（同名多个时返回候选，让调用方消歧）。
+        if let name = request.name, !name.isEmpty {
+            let matches = board.queues.filter { $0.name == name }
+            if matches.isEmpty { return ["ok": false, "error": "no-queue", "name": name] }
+            if matches.count > 1 {
+                return ["ok": false, "error": "ambiguous-queue",
+                        "queues": matches.map {
+                            TasksAPIRouter.queueDictionary($0, reportsToSession: board.local.queueSessions[$0.id] != nil)
+                        }]
+            }
+            let queue = matches[0]
+            guard queue.state == .draft || queue.state == .paused else {
+                return ["ok": false, "error": "not-startable",
+                        "queueId": queue.id, "state": queue.state.rawValue]
+            }
+            _ = runner.startQueue(queue.id)
+            return ["ok": true, "workspace": path, "started": [queue.id]]
+        }
         guard let session = request.session, !session.isEmpty else {
             return ["ok": false, "error": "need-session",
-                    "hint": "pass queueId, or session to start the draft queue that session created"]
+                    "hint": "pass queueId, name, or session to start the draft queue that session created"]
         }
         let candidates = board.queues.filter {
             $0.state == .draft && board.local.queueSessions[$0.id] == session

@@ -41,6 +41,8 @@ struct TaskQueueCreateRequest: Equatable {
 struct TaskQueueStartRequest: Equatable {
     var workspace: String?
     var session: String?
+    /// 队列名：比 session 更直接的一种消歧（同名多个仍返回 ambiguous-queue）。
+    var name: String?
     var queueId: String?
 }
 
@@ -296,10 +298,12 @@ enum TasksAPIRouter {
     }
 
     static func parseQueueStart(_ body: [String: Any]) -> TaskQueueStartRequest {
-        let raw = (body["queueId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawId = (body["queueId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawName = (body["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         return TaskQueueStartRequest(workspace: TasksAPIWorkspace.normalize(body["workspace"] as? String),
                                      session: normalizeSession(body["session"] as? String),
-                                     queueId: (raw?.isEmpty ?? true) ? nil : raw)
+                                     name: (rawName?.isEmpty ?? true) ? nil : rawName,
+                                     queueId: (rawId?.isEmpty ?? true) ? nil : rawId)
     }
 
     /// 来源会话 id，缺省 / 空白 → nil（队列照建，只是不回传）。

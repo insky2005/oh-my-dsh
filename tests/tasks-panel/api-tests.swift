@@ -278,6 +278,14 @@ eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/star
    200, "queueId with whitespace still starts")
 eq(qs.queueStarts.last?.queueId, "q-1", "queueId is trimmed")
 
+// start by NAME: the disambiguation the skill can use without listing first.
+let namedStart = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/start",
+    json: ["name": "  外观  "]), delegate: qs)
+eq(namedStart?.status, 200, "start by name")
+eq(qs.queueStarts.last?.name, "外观", "name is trimmed and forwarded")
+eq(TasksAPIRouter.parseQueueStart(["name": "  "]).name, nil, "blank name → nil")
+check(TasksAPIRouter.parseQueueStart(["name": "外观"]).queueId == nil, "name alone leaves queueId nil")
+
 // MARK: - workspace resolution
 
 section("workspace resolution")
