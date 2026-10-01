@@ -1,8 +1,8 @@
 ---
 title: 模块：任务面板（Tasks / IssueRunner）
 tags: [module, tasks, github, issue, queue, index, manual-task]
-updated: 2026-09-29T15:27:23Z
-sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksWorkspaces.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/BrowserAPI.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/issue-runner-design.md, docs/ui-color-scheme.md, docs/git-workflow.md, docs/task-todo-skill-design.md, .dsh/skills/task-todo/SKILL.md, docs/issue-runner-design.md]
+updated: 2026-10-01T15:57:16Z
+sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksWorkspaces.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/BrowserAPI.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/issue-runner-design.md, docs/ui-color-scheme.md, docs/git-workflow.md, docs/task-todo-skill-design.md, .dsh/skills/task-todo/SKILL.md, docs/issue-runner-design.md, CHANGELOG.md, README.md, docs/dsh-version-impact.md]
 manual: false
 ---
 
@@ -113,6 +113,21 @@ manual: false
 - **解析顺序**：① 文件专属 `$DSH_HOME/oh-my-dsh/tokens/<owner>-<repo>` → ② 文件通用 `$DSH_HOME/oh-my-dsh/gh-token`；多工作区各用各的 token；
 - **保存**：只写文件 —— 有当前仓库写专属文件，无仓库（非 GitHub 工作区）写通用文件；原子写 + `chmod 600`；清空即删文件；
 - **兼容性**：旧版面板是「文件 + Keychain 双写」，通过面板保存过的 token 早已在文件里；仅更老构建或手工 `security add-generic-password` 写进钥匙串的条目不再被读取，需重填一次。
+
+## 面板设置（全部按工作区隔离，2026-10-01）
+
+面板的「⚙ 面板设置」抽屉把三类设置收在一处（L10n `tasks.settings.*`），**每一项都按工作区存**——同一个面板同时服务差异很大的目录（GitHub 仓库想要 PR、临时目录要直接推送、演示仓库绝不能自动关闭），一份全局值不可能都对。GitHub token 是唯一例外：它按**仓库**（同一仓库即同一凭据）。
+
+| 设置 | 键（ShellConfig `config.json`） | 作用域 |
+|---|---|---|
+| 工作流默认（队列自身未覆盖时用它交付） | `tasksIntegrationByWorkspace`（工作区路径 → `QueueIntegration`） | 按工作区；队列自身的 `integration` 仍优先 |
+| 交付成功后自动关闭队列 | `tasksAutoCloseOnPublishByWorkspace`（工作区路径 → Bool，未设置默认关） | 按工作区；旧全局键 `tasksAutoCloseOnPublish` 已弃用、不再读取（该开关未发布，无需迁移） |
+| GitHub Token | `$DSH_HOME/oh-my-dsh/tokens/<owner>-<repo>` / `gh-token`（只走文件） | 按**仓库** |
+
+- 路径键统一经 `workspaceSettingsKey(_:)` 归一化（`standardizingPath` + 去尾斜杠），带尾斜杠 / `..` 的写法不会生出第二条记录；
+- `submitSettings` 保存时除落盘外还显式 `runner?.setDefaultIntegration` / `runner?.setAutoCloseOnPublish`——运行器的 env 在 adopt 工作区时快照，须告知本工作区的新值；因此改动只影响**当前工作区**，不泄漏到别的工作区；
+- 抽屉说明与开关 tooltip 均写明「按工作区 / 只对当前工作区生效」（`tasks.settings.info` / `tasks.settings.hint` / `tasks.settings.autoCloseHint`）；
+- 回归：`tests/tasks-panel/run.sh` 新增**源码守卫**——`IssueRunnerPanel.swift` 必须含 `tasksAutoCloseOnPublishByWorkspace` / `storedAutoCloseOnPublish(forWorkspace` / `workspaceSettingsKey`，且不得再出现全局键 `tasksAutoCloseOnPublish`，杜绝设置项退回全局。
 
 ## 集成点（main.swift）
 

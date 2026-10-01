@@ -1,7 +1,7 @@
 ---
 title: 模块：FilePanel.swift / CodeEditorView.swift（文件面板，预览+编辑+语法高亮）
 tags: [module, file-panel, preview, code-editor, syntax-highlight, highlightr, edit, line-numbers, tree-menu, image-zoom, composer-reference]
-updated: 2026-09-29T08:24:56Z
+updated: 2026-10-01T15:57:16Z
 sources: [platforms/macos/src/FilePanel.swift, platforms/macos/src/FilePanelTreeMenu.swift, platforms/macos/src/ComposerReference.swift, docs/file-panel-composer-reference.md, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImagePreviewView.swift, platforms/macos/src/ImageZoom.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/vendor/Highlightr/Highlightr.swift, platforms/macos/src/vendor/Highlightr/CodeAttributedString.swift, platforms/macos/src/vendor/Highlightr/Theme.swift, platforms/macos/build-app.sh, docs/ux-feedback.md, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/WorkspaceTabMemory.swift, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, tests/file-panel/]
 manual: false
 ---
@@ -106,7 +106,7 @@ manual: false
 
 ## 与壳层 / 构建的数据流
 
-- 入口：main.swift 的 `previewInterceptorScript`（dsh ≤0.1.4 走 fetch 拦截 `/api/host.openPath` / `session/openWorkspacePath`；≥0.1.5 链接改走 dsh 自带面板、改为**点击捕获**，覆盖内联链接 / 产出文件行 / 工具行 `fileLink` / 交付文件卡片）→ `setRightPanel(.preview)` + `previewPanel.open(path:)`；相对路径由 `FilePanelController.resolveIncomingPath` 按 `ProjectDirectory.current` 解析、`~` 用 `standardizingPath` 展开；
+- 入口：main.swift 的 `previewInterceptorScript`（dsh ≤0.1.4 走 fetch 拦截 `/api/host.openPath` / `session/openWorkspacePath`；≥0.1.5 链接改走 dsh 自带面板、改为**点击捕获**，覆盖内联链接 / 产出文件行 / 工具行 `fileLink` / 交付文件卡片；dsh 0.1.7 起再放行交付卡「用系统应用打开」split 控件并接住改动审阅卡）→ `setRightPanel(.preview)` + `previewPanel.open(path:)`；相对路径由 `FilePanelController.resolveIncomingPath` 按 `ProjectDirectory.current` 解析、`~` 用 `standardizingPath` 展开；
 - **菜单**：「文件 File」菜单（`menu.file`/`menu.save`）——`保存 Save`（⌘S）+「关闭页签」（⌘W，无页签时禁用）；`updateCloseTabMenuState()` 由 `onTabsChanged` 驱动；**视图菜单**里本面板的入口是「显示/隐藏 文件面板」**⌥⌘F**（46e8e37 正名：L10n `menu.togglePreview`「预览面板」→ `menu.toggleFiles`，快捷键 `p`→`f`；⌥⌘P 已让给[项目面板](projects-panel.md)，选择器 `togglePreviewPanel(_:)` 作为纯内部标识未改）；
 - 编译清单由 `platforms/macos/swift-sources.sh` glob 自动收录（`src/*.swift`），新增文件无需登记；Highlightr 的 4 个 highlight.js 资源文件由 `build-app.sh` `cp` 到 `$APP/Contents/Resources/` **根**（Highlightr 按无子目录路径加载），缺失给 WARNING；
 - `Highlightr()` **初始化守卫**：显式构造并判 nil（`CodeAttributedString()` 会 force-unwrap），`highlightingAvailable()` 校验 4 个资源存在，缺失则退化为纯文本不崩溃。

@@ -1,7 +1,7 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-09-29T15:27:23Z
+updated: 2026-10-01T15:57:16Z
 sources: [platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillInstaller.swift, docs/skills-manager-design.md, tests/skills-panel/, core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/DshWebCookieJanitor.swift, tests/shell-config/, tests/dsh-auth-cookies/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/TerminalWorkspaceTabs.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImageZoom.swift, docs/ux-feedback.md, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/repo-wiki-design.md, docs/issue-runner-design.md, docs/channel-design.md, docs/channel-storage.md, docs/channel-status.md, docs/channel-association-model.md, docs/channel-project-switch.md, docs/channel-dingtalk-stream.md, docs/git-workflow.md, docs/dsh-version-impact.md, platforms/macos/src/ProjectsCore.swift, platforms/macos/src/ProjectsPanel.swift, docs/projects-panel-design.md, tests/projects-panel/, tests/dsh-rpc/, core/lib/snapshot.js, core/lib/snapshot-io.js, core/bin/ohmy-core.js, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, docs/session-snapshot-rollback-design.md, tests/snapshot-panel/, tests/snapshot-rollback/, platforms/macos/runtime-locks/, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/ShellPaths.swift, core/lib/shell-paths.js, docs/storage-layout-refactor.md]
 manual: false
 ---
@@ -59,6 +59,8 @@ $DSH_HOME/oh-my-dsh/
 | `wikiAutoRegenerate` | wiki 自动更新开关（默认关） | `WikiPaths` |
 | `wikiRegisterAgentsMd` | 写入 AGENTS.md 注册块开关（默认关） | `WikiPaths` |
 | `projectsRoot` | 项目面板的 projects 根目录（**绝对路径**；键缺失/空串/相对路径 = 用默认 `$DSH_HOME/oh-my-dsh/projects`，不改写文件） | `ProjectsCore.configKey` |
+| `tasksIntegrationByWorkspace` | 任务面板「工作流默认」，**按工作区**（工作区路径 → `QueueIntegration` raw；队列自身的 `integration` 仍覆盖它） | `IssueRunnerPanelController.integrationByWorkspaceKey` |
+| `tasksAutoCloseOnPublishByWorkspace` | 任务面板「交付成功后自动关闭队列」，**按工作区**（工作区路径 → Bool，未设置默认关；旧全局键 `tasksAutoCloseOnPublish` 已弃用、不再读取） | `IssueRunnerPanelController.autoCloseByWorkspaceKey` |
 
 > 凭据不走 UserDefaults：GitHub token 按仓库作用域存储，**只走文件**（2026-09-24 起：Keychain 读写代码已从 `platforms/macos/src/` 全部删除，`SecItem` / `kSecClass` 不再出现）——解析顺序为 文件专属 `~/.dsh/oh-my-dsh/tokens/<owner>-<repo>` → 文件通用 `~/.dsh/oh-my-dsh/gh-token`（外部工具 / 代理共用同一份）；无仓库时写通用文件，原子写 + `chmod 600`，清空即删文件；更老构建写进钥匙串的条目不再被读取，需重填一次。见 [issue-runner-panel](modules/issue-runner-panel.md)。
 
