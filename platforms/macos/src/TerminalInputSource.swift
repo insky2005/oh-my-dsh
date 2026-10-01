@@ -46,12 +46,15 @@ final class TerminalInputSourceGuard {
 
     /// The shared instance TerminalView talks to. Only one view can hold the
     /// keyboard at a time, so one save slot is enough.
-    static let shared = TerminalInputSourceGuard(sources: TextInputSources())
+    static let shared = TerminalInputSourceGuard(sources: TextInputSources(),
+                                                 log: { AppLog.shared.log($0) })
 
     private let sources: InputSourceControlling
     private let restoreDelay: TimeInterval
     /// Schedules `body` after `delay`. Injectable so tests can run it inline.
     private let schedule: (TimeInterval, @escaping () -> Void) -> Void
+    /// Diagnostic sink (app.log). No-op in tests.
+    private let log: (String) -> Void
     private var savedID: String?
     /// Bumped on every focus; a scheduled restore whose generation no longer
     /// matches is stale and must not run.
@@ -59,11 +62,13 @@ final class TerminalInputSourceGuard {
 
     init(sources: InputSourceControlling,
          restoreDelay: TimeInterval = 0.12,
+         log: @escaping (String) -> Void = { _ in },
          schedule: @escaping (TimeInterval, @escaping () -> Void) -> Void = { delay, body in
              DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: body)
          }) {
         self.sources = sources
         self.restoreDelay = restoreDelay
+        self.log = log
         self.schedule = schedule
     }
 
@@ -73,33 +78,53 @@ final class TerminalInputSourceGuard {
         restoreGeneration += 1              // cancel any restore a blur scheduled
         // Write-once: while an original is remembered, a repeated focus must not
         // replace it with the English source we selected ourselves.
-        guard savedID == nil else { return }
+        guard savedID == nil else {
+            log("terminal ime: focus ignored (already tracking \(savedID ?? "?"))")
+            return
+        }
         guard let ascii = sources.asciiInputSourceID(),
-              let current = sources.currentInputSourceID() else { return }
+              let current = sources.currentInputSourceID() else {
+            log("terminal ime: focus: no input-source info")
+            return
+        }
         // Already on English: nothing to remember and nothing to change, so a
         // later manual switch (to Chinese, say) is the user's to keep.
-        guard current != ascii else { return }
+        guard current != ascii else {
+            log("terminal ime: focus: already \(current)")
+            return
+        }
         savedID = current
-        sources.selectInputSource(id: ascii)
+        let ok = sources.selectInputSource(id: ascii)
+        log("terminal ime: focus \(current) -> \(ascii) ok=\(ok)")
     }
 
     /// Terminal resigned first responder: schedule the remembered source to be
     /// put back. A focus before the delay elapses cancels it.
     func terminalDidBlur() {
-        guard let saved = savedID else { return }
+        guard let saved = savedID else {
+            log("terminal ime: blur ignored (nothing tracked)")
+            return
+        }
         let generation = restoreGeneration
+        log("terminal ime: blur, scheduling restore to \(saved)")
         schedule(restoreDelay) { [weak self] in
-            guard let self = self,
-                  self.restoreGeneration == generation,
-                  self.savedID == saved else { return }
+            guard let self = self else { return }
+            guard self.restoreGeneration == generation, self.savedID == saved else {
+                self.log("terminal ime: restore \(saved) cancelled (stale)")
+                return
+            }
             if self.sources.currentInputSourceID() == saved {
                 self.savedID = nil                       // nothing moved
+                self.log("terminal ime: restore \(saved) already selected")
             } else if self.sources.selectInputSource(id: saved) {
                 // Only forget the original once it is actually back. If the
-                // system refuses the switch (secure input, IME not ready), keep
-                // it so the next focus can not mistake the forced English for
-                // the user's original.
+                // system refuses (secure input, IME not ready), keep it so the
+                // next focus can not mistake the forced English for the user's
+                // original.
                 self.savedID = nil
+                self.log("terminal ime: restore \(saved) ok")
+            } else {
+                self.log("terminal ime: restore \(saved) failed, keeping original")
             }
         }
     }

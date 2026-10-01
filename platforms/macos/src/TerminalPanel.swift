@@ -1026,10 +1026,23 @@ final class TerminalView: NSView, NSTextInputClient {
 
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
+        AppLog.shared.log("terminal focus: mouse entered (isFirstResponder=\(window?.firstResponder === self))")
         // 鼠标移入终端即取得输入焦点，省掉「先点一下」再输入。
         if let win = window, win.firstResponder !== self {
             win.makeFirstResponder(self)
         }
+        // Re-assert English on every entry: mouseExited below restores the user's
+        // IME while keyboard focus stays on the terminal, so hovering back in has
+        // to switch again even though becomeFirstResponder does not re-fire.
+        TerminalInputSourceGuard.shared.terminalDidFocus()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        AppLog.shared.log("terminal focus: mouse exited")
+        // 鼠标移出即还原用户原来的输入法（键盘焦点仍留在终端）。防抖会把
+        // 「只是路过」造成的短暂移入/移出合并成一次切换。
+        TerminalInputSourceGuard.shared.terminalDidBlur()
     }
 
     /// Whether the terminal currently owns the keyboard (and its window is key).
@@ -1043,6 +1056,7 @@ final class TerminalView: NSView, NSTextInputClient {
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
         if ok {
+            AppLog.shared.log("terminal focus: became first responder")
             setFocused(true)
             TerminalInputSourceGuard.shared.terminalDidFocus()
         }
@@ -1052,6 +1066,7 @@ final class TerminalView: NSView, NSTextInputClient {
     override func resignFirstResponder() -> Bool {
         let ok = super.resignFirstResponder()
         if ok {
+            AppLog.shared.log("terminal focus: resigned first responder")
             setFocused(false)
             TerminalInputSourceGuard.shared.terminalDidBlur()
         }

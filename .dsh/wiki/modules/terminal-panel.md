@@ -46,9 +46,10 @@ manual: false
 
 ### 聚焦切英文输入法 / 失焦还原（`TerminalInputSource.swift`）
 
-- **策略（纯状态机 `TerminalInputSourceGuard`，无头可测）**：`becomeFirstResponder` → `terminalDidFocus()`（记当前输入源 → 非英文则 `TISSelectInputSource` 切到 ASCII 源）；`resignFirstResponder` → `terminalDidBlur()`（还原）。**原本就是英文则不接管**（不记、不切），手动切的中文在失焦后保留。
+- **策略（纯状态机 `TerminalInputSourceGuard`，无头可测）**：`mouseEntered` / `becomeFirstResponder` → `terminalDidFocus()`（记当前输入源 → 非英文则 `TISSelectInputSource` 切到 ASCII 源）；`mouseExited` / `resignFirstResponder` → `terminalDidBlur()`（还原）。**键盘焦点不跟鼠标走**：移出只还原输入法，终端仍是第一响应者；移回来时 `mouseEntered` 会在键盘焦点没变的情况下再切一次英文。**原本就是英文则不接管**（不记、不切），手动切的中文在失焦后保留。
 - **最初状态不被覆盖（关键不变量）**：`savedID` **写一次**——已记住原始输入源时重复 `focus()` 直接返回，绝不会把被迫切成的英文当成用户原始输入法；只有还原成功（或当前就等于原始）才清空；还原被系统拒绝（安全输入/输入法未就绪）时保留，下次失焦再试。AppKit 的 `makeFirstResponder` 本身幂等，所以「移入 → 点击」共只触发一次 `becomeFirstResponder`。
 - **还原防抖（防止输入法连闪）**：输入源切换本身会扰动响应链，加上鼠标进出终端，`resignFirstResponder` 会成串到来——若每次失焦都立刻还原、每次聚焦再切英文，输入法会闪好几次。现在 `terminalDidBlur()` 只**登记**一次还原（`schedule` + `restoreGeneration` 计数，默认 0.12s），期间若 `terminalDidFocus()` 就取消；`schedule` 可注入，测试用同步/捕获版驱动。
+- **诊断**：`mouseEntered` / `mouseExited` / `becomeFirstResponder` / `resignFirstResponder` 与 guard 的切/还原/取消都各写一行 `terminal focus:` / `terminal ime:` 到 `app.log`，定位连闪或不还原时直接看这串。
 - **系统层（`TextInputSources: InputSourceControlling`）**：Carbon TIS —— `TISCopyCurrentKeyboardInputSource` / `TISCopyCurrentASCIICapableKeyboardInputSource`（本机实测返回 `com.apple.keylayout.ABC`）/ `TISCreateInputSourceList` + `TISSelectInputSource`；实测「百度拼音 → ABC → 百度拼音」往返成功。协议隔离使状态机可用假实现单测，真实切换只在 App 内手动 QA。
 
 ### `TerminalPanelController`（多标签面板）

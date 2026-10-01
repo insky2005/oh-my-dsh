@@ -288,6 +288,13 @@ test("terminal blur restores the original input source",
                                  "com.baidu.inputmethod.BaiduIM.pinyin"])
 test("the remembered original is cleared after restore", !inputGuard.hasSavedSource)
 
+// A later focus (the pointer hovering back in after a mouse-out) starts a fresh
+// cycle: remember the restored source and switch to English again.
+inputGuard.terminalDidFocus()
+test("a new focus after a restore switches to English again",
+     fakeSources.current == "com.apple.keylayout.ABC" && inputGuard.hasSavedSource)
+inputGuard.terminalDidBlur()
+
 // Already on English: nothing to switch, and a manual mid-session switch to
 // Chinese is left alone when focus leaves.
 let alreadyEnglish = FakeInputSources()

@@ -52,6 +52,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **终端鼠标移出后输入法不还原（2026-10-01）**：上一版只在「终端失去键盘焦点」时还原输入法，完全没有处理鼠标移出——而终端是**鼠标移入即聚焦**的，用户移出后看到输入法仍是英文、以为坏了。现在补上 `mouseExited` → 还原（键盘焦点仍留在终端，鼠标移回来时 `mouseEntered` 再切英文），并复用 0.12s 防抖把「只是路过」合并成一次切换。同时给聚焦链路加诊断日志：`mouseEntered/mouseExited/become/resignFirstResponder` 与 guard 的切/还原/取消都写一行 `terminal focus:` / `terminal ime:` 到 `app.log`。
+
 - **终端聚焦时输入法来回闪（2026-10-01）**：上一版在 `become/resignFirstResponder` 上直接切/还原输入法，但输入源切换本身会扰动响应链、加上鼠标进出终端，`resignFirstResponder` 会成串到来——每次失焦都还原、每次聚焦又切英文，输入法连闪好几次。现在**还原带 0.12s 防抖**：`terminalDidBlur()` 只登记一次还原（generation 计数），期间若又 `terminalDidFocus()` 就取消，一串抖动收敛成一次切换；鼠标 tracking area 也改为**只安装一次**（`.inVisibleRect` 自动跟随），不再在每次 `updateTrackingAreas` 时 remove/add 反复补发 `mouseEntered`。回归：`tests/terminal-panel` 新增 3 项防抖断言。
 
 - **发布后队列卡不刷新 / 结果只有一行 / 状态行总说「开 PR」（2026-10-01）**：点发布后卡片像卡住了——错误提示还在、结果不出来；会话回写的结果只显示一行；运行状态行不论什么工作流都写「正在开 PR」。三处都修了：
