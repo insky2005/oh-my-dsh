@@ -122,6 +122,18 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
   多个 → 409 + `queues` 候选列表，让 agent 消歧。
 - 响应：`{ ok, workspace, started: ["q-xxxx"] }`。
 
+### POST /api/tasks/queue/append
+
+```jsonc
+{ "workspace": "/abs/path", "session": "session-...",
+  "queueId": "q-xxxx",            // 或 "name": "队列名"
+  "tasks": [ {"title": "…", "body": "…"} ] }
+```
+
+- 目标队列按 `queueId` → `name` → `session`（本会话创建的非关闭队列）解析；多个候选 → 409 `ambiguous-queue`。
+- 只入队、不启动。追加到 `.done` 队列会**回到 `.draft` 并重臂回传**；`.paused` 保持 `.paused`；
+  `.closed` 拒绝（`queue-closed`）。响应同 queue/create：`{ok, queue, created, rejected}`。
+
 `GET /api/tasks/list` 的 queue 项可选增加 `"reportsToSession": true`（不暴露 session id）。
 
 ## 7. Runner
@@ -185,6 +197,8 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
   不直接改盘上文件」。
 - **默认走队列**：用户要求把需求落成任务时，默认 `POST /api/tasks/queue/create`（等待态 +
   批量入队）；只有用户明确说「只建任务 / 先别入队 / 不要队列」才用 `/api/tasks/create`。
+- **追加**：用户说「加到队列 X / 再补几条 / 继续那个队列」时，用 `POST /api/tasks/queue/append`
+  （按 `name` / `queueId` 定位），**不新建队列**——这是「验收 → 再补几条 → 再跑」循环的入口。
 
 ## 10. 面板
 

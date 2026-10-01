@@ -1251,6 +1251,26 @@ final class TasksRunner {
         return (board.queue(queue.id) ?? queue, created)
     }
 
+    /// Append tasks to an EXISTING queue — the conversational loop's 「再补几条」.
+    ///
+    /// Membership goes through TaskBoard.enqueue, so a `.done` queue returns to
+    /// `.draft` and re-arms its completion report (the next finish reports again),
+    /// while a `.paused` queue stays paused. Nothing starts here: the caller / the
+    /// user starts the queue when ready.
+    @discardableResult
+    func appendTasks(toQueueID queueID: String, drafts: [TaskDraft]) -> [TaskItem] {
+        guard let queue = board.queue(queueID), queue.state != .closed else { return [] }
+        var created: [TaskItem] = []
+        for draft in drafts where draft.isValid {
+            let task = TaskItem.manual(title: draft.normalizedTitle, body: draft.effectiveBody)
+            board.tasks.append(task)
+            if board.enqueue(taskID: task.id, into: queueID) { created.append(task) }
+        }
+        persist()
+        env.log("tasks: appended " + String(created.count) + " task(s) to queue " + queueID)
+        return created
+    }
+
     /// Send the completion report of every 已完成 queue that has an originating session
     /// and has not reported yet, then mark it reported.
     ///

@@ -693,6 +693,61 @@ final class IssueRunnerPanelController: NSObject {
         return ["ok": true, "workspace": path, "started": [queueId]]
     }
 
+    /// POST /api/tasks/queue/append —— 向**已有**队列追加任务（会话里「再补几条」）。
+    /// 目标按 queueId → name → session（本会话创建的非关闭队列）解析；不启动。
+    func apiTaskQueueAppend(_ request: TaskQueueAppendRequest) -> [String: Any] {
+        guard let (path, runner) = apiRunner(for: request.workspace) else {
+            return Self.apiNoWorkspace(request.workspace)
+        }
+        let board = runner.board
+        let target: TaskQueue?
+        if let queueId = request.queueId {
+            target = board.queue(queueId)
+        } else if let name = request.name {
+            let matches = board.queues.filter { $0.name == name && $0.state != .closed }
+            if matches.count > 1 {
+                return ["ok": false, "error": "ambiguous-queue",
+                        "queues": matches.map {
+                            TasksAPIRouter.queueDictionary($0, reportsToSession: board.local.queueSessions[$0.id] != nil)
+                        }]
+            }
+            target = matches.first
+        } else if let session = request.session {
+            let matches = board.queues.filter {
+                $0.state != .closed && board.local.queueSessions[$0.id] == session
+            }
+            if matches.count > 1 {
+                return ["ok": false, "error": "ambiguous-queue",
+                        "queues": matches.map { TasksAPIRouter.queueDictionary($0, reportsToSession: true) }]
+            }
+            target = matches.first
+        } else {
+            target = nil
+        }
+        guard let queue = target else { return ["ok": false, "error": "no-queue"] }
+        guard queue.state != .closed else {
+            return ["ok": false, "error": "queue-closed", "queueId": queue.id]
+        }
+        let drafts = request.drafts.map { TaskDraft(title: $0.title, body: $0.body ?? "") }
+        let created = runner.appendTasks(toQueueID: queue.id, drafts: drafts)
+        if path == workspaces.currentPath {
+            syncFromBoard()
+            if !created.isEmpty {
+                setStatus(L10n.tr("tasks.apiQueueAppended", queue.name, created.count), spin: false)
+                autoHideStatus(after: 8)
+            }
+        }
+        AppLog.shared.log("tasks api: appended \(created.count) task(s) to queue \(queue.id) at \(path)")
+        return [
+            "ok": !created.isEmpty,
+            "workspace": path,
+            "queue": TasksAPIRouter.queueDictionary(runner.board.queue(queue.id) ?? queue,
+                                                    reportsToSession: board.local.queueSessions[queue.id] != nil),
+            "created": created.map { ["id": $0.id, "title": $0.title, "state": $0.state.rawValue] },
+            "rejected": [[String: Any]](),
+        ]
+    }
+
     // MARK: - Board / runner wiring
 
     /// Build one workspace's runner (the registry's factory).

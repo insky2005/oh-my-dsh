@@ -93,6 +93,13 @@ final class FakeTasksAPI: TasksAPIDelegate {
         queueStarts.append(request)
         return queueStartResult
     }
+
+    var queueAppendResult: [String: Any] = ["ok": true, "created": [], "rejected": []]
+    private(set) var queueAppends: [TaskQueueAppendRequest] = []
+    func apiTaskQueueAppend(_ request: TaskQueueAppendRequest) -> [String: Any] {
+        queueAppends.append(request)
+        return queueAppendResult
+    }
 }
 
 func topLevel(_ body: [String: Any]) -> HTTPRequest {
@@ -285,6 +292,34 @@ eq(namedStart?.status, 200, "start by name")
 eq(qs.queueStarts.last?.name, "外观", "name is trimmed and forwarded")
 eq(TasksAPIRouter.parseQueueStart(["name": "  "]).name, nil, "blank name → nil")
 check(TasksAPIRouter.parseQueueStart(["name": "外观"]).queueId == nil, "name alone leaves queueId nil")
+
+section("POST /api/tasks/queue/append")
+let qa = FakeTasksAPI()
+qa.queueAppendResult = ["ok": true, "workspace": "/repo",
+                        "queue": ["id": "q-1", "name": "外观", "state": "draft"],
+                        "created": [["id": "manual-9", "title": "t9"]]]
+let appended = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/append",
+    json: ["workspace": "/repo", "session": "s-1", "name": "外观",
+           "tasks": [["title": "再补一条", "body": "b"]]]), delegate: qa)
+eq(appended?.status, 200, "append 200")
+eq(qa.queueAppends.count, 1, "append delegates once")
+eq(qa.queueAppends.first?.name, "外观", "append name forwarded")
+eq(qa.queueAppends.first?.session, "s-1", "append session forwarded")
+eq(qa.queueAppends.first?.drafts.count, 1, "append drafts forwarded")
+eq((appended?.json["queue"] as? [String: Any])?["state"] as? String, "draft", "append queue state passthrough")
+
+let noTarget = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/append",
+    json: ["tasks": ["t"]]), delegate: FakeTasksAPI())
+eq(noTarget?.json["error"] as? String, "no-queue-target", "append without a target is rejected")
+let noTasksAppend = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/append",
+    json: ["queueId": "q-1"]), delegate: FakeTasksAPI())
+eq(noTasksAppend?.json["error"] as? String, "missing-tasks", "append without tasks is rejected")
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/queue/append"), delegate: qa) == nil,
+      "queue/append is POST-only")
+let parsedAppend = TasksAPIRouter.parseQueueAppend(["queueId": " q-1 ", "name": " ", "session": " s ", "tasks": ["t"]])
+eq(parsedAppend.queueId, "q-1", "append queueId trimmed")
+check(parsedAppend.name == nil, "append blank name -> nil")
+eq(parsedAppend.session, "s", "append session trimmed")
 
 // MARK: - workspace resolution
 

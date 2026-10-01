@@ -33,8 +33,10 @@ All notable changes to this project are documented in this file. Format follows
     `.paused`（有失败）追加保持 `.paused`；向已有队列追加任务**不再自动启动**（新建空队列的「加入即开始」不变）；
   - **PR/push 改为手动**：`autoPR` 成为队列配置、**默认关闭**（技能建的队列也不再默认自动开 PR）；
     队列头「发布」= push + 开/更新 PR（PR 已存在时是「更新」，PR 链接另行保留，可随时打开）；**merge 不在壳层**；
-  - 面板：`.closed` 状态文案与按钮；`.done` 增加「关闭」入口；发布与 PR 链接拆成两个控件。
-  回归：`tests/tasks-panel` 1129 → **1256** 项。
+  - 面板：`.closed` 状态文案与按钮；`.done` 增加「关闭」入口；发布与 PR 链接拆成两个控件；
+  - **新增 `POST /api/tasks/queue/append`**：会话里「加到队列 X / 再补几条」直接追加，不新建队列
+    （目标按 `queueId` / `name` / `session` 解析）；`task-todo` 技能同步话术。
+  回归：`tests/tasks-panel` 1129 → **1270** 项。
 
 - **壳层工作数据收敛到 `$DSH_HOME/oh-my-dsh/`（2026-09-29）**：把壳层自己的工作数据从 `$DSH_HOME` 根迁到与 `projects/` 并列的新根 —— `shell/`（设置 / 状态 / 快照）、`browser/`（CEF profile；**去掉开发版 `browser-dev` 后缀**，正式版与开发版统一 `<DSH_HOME>/oh-my-dsh/browser`）、`repo-wiki/`、`channel-runtime/`、`channels/`、`tokens/` + `gh-token`、`browser-api.port` / `shell-api.port`。dsh 自有数据（`sessions/`、`storages/`、`settings.yaml` 等）与上游契约路径 `$DSH_HOME/skills/` 保持不动；`~/Library/{Logs,Caches}` 与 Application Support 运行时也不动。路径的单一事实来源为 Swift `ShellPaths` / core `shell-paths.js`；启动（以及显式 `--home` 的 CLI）做一次**幂等迁移**：源不存在或目标已存在即跳过、失败保留源并记 `app.log`，正式 home 与开发版 `~/.dsh-dev` 都覆盖；GitHub token 读取链保留旧路径只读兜底；迁移时在 `$DSH_HOME/oh-my-dsh/ROLLBACK.md` 落一份双语回退说明（实际迁移条目 + 时间/App 版本 + 退出后把子目录 `mv` 回根目录的脚本），供降级旧版或快速撤销时自助使用；本次确有搬迁时启动后弹一次**非模态提示**（说明 + 「查看回退说明」按钮打开 `ROLLBACK.md`），**全新安装不提示**。回滚快照排除表新增 `oh-my-dsh`（`core/lib/snapshot.js`）。设计见 `docs/storage-layout-refactor.md`；回归：`core` 289 项（新增 `core/tests/shell-paths.test.js` 6 项）与 `tests/{shell-config,channel-panel,skills-panel,wiki-panel,snapshot-rollback,projects-panel,tasks-panel,skills,browser-panel}` 全绿。
 

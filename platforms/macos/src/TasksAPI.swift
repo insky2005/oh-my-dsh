@@ -46,6 +46,16 @@ struct TaskQueueStartRequest: Equatable {
     var queueId: String?
 }
 
+/// POST /api/tasks/queue/append：向**已有**队列追加任务（会话里「再补几条」）。
+/// 目标队列按 queueId → name → session（本会话创建的非关闭队列）解析。
+struct TaskQueueAppendRequest: Equatable {
+    var workspace: String?
+    var session: String?
+    var queueId: String?
+    var name: String?
+    var drafts: [TaskCreateDraft]
+}
+
 /// 任务面板 API 的实现方（IssueRunnerPanelController）。
 ///
 /// 两个方法都在**主线程**上被调用：board 的读改写必须与面板的 step 定时器同一条
@@ -59,6 +69,8 @@ protocol TasksAPIDelegate: AnyObject {
     func apiTaskQueueCreate(_ request: TaskQueueCreateRequest) -> [String: Any]
     /// 启动一个队列（.draft / .paused → .active）；queueId 可缺省，按 session 定位。
     func apiTaskQueueStart(_ request: TaskQueueStartRequest) -> [String: Any]
+    /// 向已有队列追加任务（不启动；.done 会回到 .draft 并重臂回传）。
+    func apiTaskQueueAppend(_ request: TaskQueueAppendRequest) -> [String: Any]
 }
 
 // MARK: - 工作区解析（纯函数）
@@ -116,6 +128,17 @@ enum TasksAPIRouter {
         var drafts: [TaskCreateDraft] = []
         var rejected: [[String: Any]] = []
         /// 请求体里到底有没有 tasks 键（区分 missing-tasks 与 no-tasks）。
+        var tasksProvided: Bool = false
+    }
+
+    /// queue/append 的解析结果。
+    struct ParsedQueueAppend {
+        var workspace: String?
+        var session: String?
+        var queueId: String?
+        var name: String?
+        var drafts: [TaskCreateDraft] = []
+        var rejected: [[String: Any]] = []
         var tasksProvided: Bool = false
     }
 
@@ -196,6 +219,27 @@ enum TasksAPIRouter {
             guard let delegate = delegate else { return unavailable() }
             let result = delegate.apiTaskQueueStart(parseQueueStart(body))
             return .json(startStatus(result), result)
+
+        case ("POST", "/api/tasks/queue/append"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            let parsed = parseQueueAppend(body)
+            guard !parsed.drafts.isEmpty else {
+                return .json(400, ["ok": false,
+                                   "error": parsed.tasksProvided ? "no-tasks" : "missing-tasks",
+                                   "rejected": parsed.rejected])
+            }
+            guard parsed.queueId != nil || parsed.name != nil || parsed.session != nil else {
+                return .json(400, ["ok": false, "error": "no-queue-target",
+                                   "hint": "pass queueId, name, or session to pick the queue to append to"])
+            }
+            guard let delegate = delegate else { return unavailable() }
+            var result = delegate.apiTaskQueueAppend(TaskQueueAppendRequest(
+                workspace: parsed.workspace, session: parsed.session, queueId: parsed.queueId,
+                name: parsed.name, drafts: parsed.drafts))
+            let appendedRejected = result["rejected"] as? [[String: Any]] ?? []
+            result["rejected"] = parsed.rejected + appendedRejected
+            if result["ok"] == nil { result["ok"] = !((result["created"] as? [Any]) ?? []).isEmpty }
+            return .json((result["ok"] as? Bool) == true ? 200 : 400, result)
 
         default:
             return nil
@@ -294,6 +338,26 @@ enum TasksAPIRouter {
         parsed.drafts = tasks.drafts
         parsed.rejected.append(contentsOf: tasks.rejected)
         if parsed.name.isEmpty { parsed.name = parsed.drafts.first?.title ?? "" }
+        return parsed
+    }
+
+    /// 解析 queue/append 请求体（纯函数）：任务规则同 create；目标队列按 id/name/session。
+    static func parseQueueAppend(_ body: [String: Any]) -> ParsedQueueAppend {
+        var parsed = ParsedQueueAppend()
+        parsed.workspace = TasksAPIWorkspace.normalize(body["workspace"] as? String)
+        parsed.session = normalizeSession(body["session"] as? String)
+        let rawId = (body["queueId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        parsed.queueId = (rawId?.isEmpty ?? true) ? nil : rawId
+        let rawName = (body["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        parsed.name = (rawName?.isEmpty ?? true) ? nil : rawName
+        guard let raw = body["tasks"] as? [Any] else {
+            parsed.rejected.append(["title": "", "error": "missing-tasks"])
+            return parsed
+        }
+        parsed.tasksProvided = true
+        let tasks = parseCreate(["tasks": raw])
+        parsed.drafts = tasks.drafts
+        parsed.rejected.append(contentsOf: tasks.rejected)
         return parsed
     }
 

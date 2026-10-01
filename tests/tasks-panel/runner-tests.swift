@@ -1489,6 +1489,11 @@ do {
     eq(h.board.queue(r.queue.id)?.state, QueueState.draft, "追加后回到 draft")
     check(h.runner.runningTaskID == nil, "追加不自动启动")
 
+    // API 路径（appendTasks）同样：入队、回 draft、不启动。
+    let more = h.runner.appendTasks(toQueueID: r.queue.id, drafts: [TaskDraft(title: "D", body: "")])
+    eq(more.count, 1, "appendTasks 建了 1 条")
+    eq(h.board.queue(r.queue.id)?.state, QueueState.draft, "appendTasks 后仍是 draft")
+
     // 关闭：手动终态。
     check(h.runner.closeQueue(r.queue.id), "关闭队列")
     eq(h.board.queue(r.queue.id)?.state, QueueState.closed, "状态 closed")

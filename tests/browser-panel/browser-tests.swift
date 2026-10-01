@@ -236,6 +236,11 @@ final class FakeBothDelegate: BrowserAPIDelegate, TasksAPIDelegate {
         queueStartCalls += 1
         return ["ok": true, "started": ["q-x"]]
     }
+    var queueAppendCalls = 0
+    func apiTaskQueueAppend(_ request: TaskQueueAppendRequest) -> [String: Any] {
+        queueAppendCalls += 1
+        return ["ok": true, "queue": ["id": "q-x", "state": "draft"], "created": [], "rejected": []]
+    }
 }
 
 // MARK: - tasks routes on the shared server
