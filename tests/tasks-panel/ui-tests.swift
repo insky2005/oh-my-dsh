@@ -1122,6 +1122,36 @@ do {
                                    prAvailable: false)
     check(!ready.canOpenPR, "…but never in a workspace without GitHub")
 }
+section("队列默认展开：终态（已完成 / 已关闭）与自动队列默认折起")
+do {
+    // 这是「每次启动都默认展开已关闭队列」的回归点：终态必须和「已完成」一样折起。
+    var board = TaskBoard()
+    let user = board.createQueue(name: "Lane", branch: "feature/lane")
+    var closed = user
+    closed.state = .closed
+    check(!TaskQueue.startsExpanded(closed), "用户队列：已关闭默认折起")
+    var done = user
+    done.state = .done
+    check(!TaskQueue.startsExpanded(done), "用户队列：已完成默认折起")
+    var active = user
+    active.state = .active
+    check(TaskQueue.startsExpanded(active), "用户队列：进行中默认展开")
+    var paused = user
+    paused.state = .paused
+    check(TaskQueue.startsExpanded(paused), "用户队列：已暂停默认展开")
+    var draft = user
+    draft.state = .draft
+    check(TaskQueue.startsExpanded(draft), "用户队列：待启动默认展开")
+
+    let auto = board.createQueue(name: "Issue 12", branch: "fix/issue-12", autoCreated: true)
+    var autoClosed = auto
+    autoClosed.state = .closed
+    check(!TaskQueue.startsExpanded(autoClosed), "自动队列：已关闭默认折起")
+    var autoActive = auto
+    autoActive.state = .active
+    check(!TaskQueue.startsExpanded(autoActive), "自动队列：进行中也默认折起")
+}
+
 section("工作流：交付按钮与可用性跟着队列的模式走")
 do {
     // The workspace's usual mode is a RECOMMENDATION, never enforced.

@@ -2176,12 +2176,10 @@ final class IssueRunnerPanelController: NSObject {
     }
 
     /// Auto (issue) queues start collapsed: one line each, expanding on a click.
+    /// Terminal lanes (已完成 / 已关闭) too — see TaskQueue.startsExpanded.
     private func isQueueExpanded(_ queue: TaskQueue) -> Bool {
         if let explicit = queueToggle[queue.id] { return explicit }
-        // Finished lanes start as one line: the work is over, the list should not
-        // keep scrolling past its history (the auto queues already did this).
-        if queue.state == .done { return false }
-        return !queue.autoCreated
+        return TaskQueue.startsExpanded(queue)
     }
 
     private func card(_ task: TaskItem, board: TaskBoard, githubRepo: Bool) -> NSView {

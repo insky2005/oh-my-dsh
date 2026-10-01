@@ -513,6 +513,19 @@ extension QueueIntegration {
     }
 }
 
+extension TaskQueue {
+    /// Whether a lane starts EXPANDED the first time the panel shows it, before the
+    /// user has clicked it. A TERMINAL lane — 已完成 or 已关闭 — starts as one line:
+    /// the work is over and the list should not keep scrolling past its history. An
+    /// auto (issue) queue also starts collapsed; a live user lane starts open.
+    static func startsExpanded(_ queue: TaskQueue) -> Bool {
+        switch queue.state {
+        case .done, .closed: return false
+        case .draft, .active, .paused: return !queue.autoCreated
+        }
+    }
+}
+
 struct QueueHeaderModel: Equatable {
     var queueID: String
     var name: String
