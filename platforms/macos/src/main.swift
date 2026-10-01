@@ -676,7 +676,7 @@ enum L10n {
         "tasks.help.queue.heading": ("队列", "Queues"),
         "tasks.help.queue.body": ("任务加入队列后按顺序执行；队列完成后可再追加任务（回到待启动）；「处理」会给每个待办各建一个队列依次跑。", "Tasks in a queue run in order; append more after it finishes (it returns to draft); Process builds one queue per pending task and runs them in turn."),
         "tasks.help.workflow.heading": ("Git 工作流", "Git workflow"),
-        "tasks.help.workflow.body": ("齿轮里按工作区设默认（Pull Request / 合并到基线 / 直接推送 / 无），队列可单独覆盖；它决定「发布」把代码送出去的方式，非 git 项目选「无」。", "Set a per-workspace default in the gear (Pull Request / Merge into base / Push directly / None); a queue can override it. It decides what Publish does — pick None for a non-git project."),
+        "tasks.help.workflow.body": ("齿轮里按工作区设默认（无 / 直接推送 / 合并到基线 / Pull Request，跑不了的会灰掉），队列可单独覆盖；它决定「发布」把代码送出去的方式，非 git 项目选「无」。", "Set a per-workspace default in the gear (None / Push directly / Merge into base / Pull request — the ones that cannot run are greyed out); a queue can override it. It decides what Publish does — pick None for a non-git project."),
         "tasks.help.session.heading": ("会话回传", "Report back"),
         "tasks.help.session.body": ("由会话建的队列（名字后带 ↺）完成时，会把每条任务的汇报回传那个会话，你在同一会话里验收、再追加。", "A queue created from a session (marked ↺) reports every task's result back there, so you review and append in the same conversation."),
         "tasks.queue.new": ("新建队列…", "New Queue…"),

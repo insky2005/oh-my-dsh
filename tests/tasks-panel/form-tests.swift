@@ -571,27 +571,32 @@ do {
               "radio「\(radio.title)」不被截断 (frame \(radio.frame.width) >= intrinsic \(radio.intrinsicContentSize.width))")
     }
 
-    // 工作区跑不了的工作流灰掉（索引：0 跟随 / 1 无 / 2 PR / 3 合并 / 4 推送）。
-    check(form.integrationRadios[2].isEnabled, "GitHub 工作区：PR 可选")
+    // 选项顺序：无 / 直接推送 / 合并到基线 / Pull Request（索引 1/2/3/4，0 是跟随）。
+    eq(form.integrationRadios[2].title, "push", "直接推送排在「无」之后")
+    eq(form.integrationRadios[3].title, "merge", "合并到基线其后")
+    eq(form.integrationRadios[4].title, "pr", "Pull Request 最后")
+
+    // 工作区跑不了的工作流灰掉（索引：0 跟随 / 1 无 / 2 推送 / 3 合并 / 4 PR）。
+    check(form.integrationRadios[4].isEnabled, "GitHub 工作区：PR 可选")
     check(form.integrationRadios[3].isEnabled, "git 工作区：合并可选")
-    check(form.integrationRadios[4].isEnabled, "有远端：直接推送可选")
+    check(form.integrationRadios[2].isEnabled, "有远端：直接推送可选")
 
     let gitOnly = QueueComposerView(model: QueueComposerModel.create()
         .forWorkspace(git: true, pr: false, hasRemote: false).togglingAdvanced())
     _ = layout(gitOnly, width: 400)
-    check(!gitOnly.integrationRadios[2].isEnabled, "没有 GitHub 远端：PR 灰掉")
-    eq(gitOnly.integrationRadios[2].toolTip, "unavailablePr", "并说明原因")
+    check(!gitOnly.integrationRadios[4].isEnabled, "没有 GitHub 远端：PR 灰掉")
+    eq(gitOnly.integrationRadios[4].toolTip, "unavailablePr", "并说明原因")
     check(gitOnly.integrationRadios[3].isEnabled, "git 仓库仍可合并")
-    check(!gitOnly.integrationRadios[4].isEnabled, "没有远端：直接推送灰掉")
-    eq(gitOnly.integrationRadios[4].toolTip, "unavailablePush", "推送也说明原因")
+    check(!gitOnly.integrationRadios[2].isEnabled, "没有远端：直接推送灰掉")
+    eq(gitOnly.integrationRadios[2].toolTip, "unavailablePush", "推送也说明原因")
 
     let plain = QueueComposerView(model: QueueComposerModel.create()
         .forWorkspace(git: false, pr: false, hasRemote: false).togglingAdvanced())
     _ = layout(plain, width: 400)
-    check(!plain.integrationRadios[2].isEnabled, "非 git：PR 不可选")
+    check(!plain.integrationRadios[4].isEnabled, "非 git：PR 不可选")
     check(!plain.integrationRadios[3].isEnabled, "非 git：合并不可选")
     eq(plain.integrationRadios[3].toolTip, "unavailableMerge", "合并说明原因")
-    check(!plain.integrationRadios[4].isEnabled, "非 git：推送不可选")
+    check(!plain.integrationRadios[2].isEnabled, "非 git：推送不可选")
     check(plain.integrationRadios[1].isEnabled, "「无」永远可选")
 
     // 选中 merge：模型与提交都带上队列自己的覆盖。名字要填，否则表单不可提交。
@@ -634,13 +639,16 @@ do {
     // 单选按钮组，不是下拉：四个 Git 工作流同时可见，推荐项带标记。
     eq(form.integrationRadios.count, 4, "四个 Git 工作流各一个单选按钮")
     eq(form.integrationRadios[0].title, "none", "「无」排第一（用户 2026-10-01）")
+    eq(form.integrationRadios[1].title, "push", "直接推送其后")
+    eq(form.integrationRadios[2].title, "merge", "合并到基线其后")
+    check(form.integrationRadios[3].title.contains("pr"), "Pull Request 最后（推荐项带后缀）")
     eq(form.selectedIntegration, .merge, "默认选中当前默认值 merge")
-    check(form.integrationRadios[2].state == .on, "merge 那一个是选中态（无/pr/merge/push → 2）")
-    check(form.integrationRadios[1].title.contains("recommendedSuffix"),
-          "推荐项（这里是 pr，第 2 个）带标记")
+    check(form.integrationRadios[2].state == .on, "merge 那一个是选中态（无/push/merge/pr → 2）")
+    check(form.integrationRadios[3].title.contains("recommendedSuffix"),
+          "推荐项（这里是 pr，最后一个）带标记")
     check(!form.integrationNote.isHidden, "推荐说明是可见信息，不是校验 hint")
     check(form.submitButton.isEnabled, "保存总是可点：设置没有非法值")
-    // 发布成功后自动关闭队列：一个复选框，说明在 tooltip 里（不额外占一行高度）。
+    // 发布成功后自动关闭队列：复选框 + 直接显示的完整说明（不再只藏在 tooltip）。
     check(form.autoCloseCheck.state == .on, "自动关闭开关按模型预填")
     eq(form.autoCloseCheck.title, "autoClose", "开关文案来自 tasks.settings.autoClose")
 
@@ -667,14 +675,14 @@ do {
     form.submitTapped()
     eq(submitted?.autoCloseOnPublish, false, "提交带上自动关闭开关")
 
-    // 面板设置同样遵守工作区能力：跑不了的工作流灰掉（索引 0 无 / 1 PR / 2 合并 / 3 推送）。
+    // 面板设置同样遵守工作区能力：跑不了的工作流灰掉（索引 0 无 / 1 推送 / 2 合并 / 3 PR）。
     let gitOnlySettings = TaskSettingsView(model: TaskSettingsModel(
         token: "", defaultIntegration: .merge, recommendedIntegration: .merge,
         prAvailable: false, gitAvailable: true, remoteAvailable: false))
-    check(!gitOnlySettings.integrationRadios[1].isEnabled, "没有 GitHub 远端：PR 不可选")
-    eq(gitOnlySettings.integrationRadios[1].toolTip, "unavailablePr", "并说明原因")
+    check(!gitOnlySettings.integrationRadios[3].isEnabled, "没有 GitHub 远端：PR 不可选")
+    eq(gitOnlySettings.integrationRadios[3].toolTip, "unavailablePr", "并说明原因")
     check(gitOnlySettings.integrationRadios[2].isEnabled, "git 仓库：合并可选")
-    check(!gitOnlySettings.integrationRadios[3].isEnabled, "没有远端：推送不可选")
+    check(!gitOnlySettings.integrationRadios[1].isEnabled, "没有远端：推送不可选")
 }
 
 section("使用说明视图：抽屉与内联共用一个正文")

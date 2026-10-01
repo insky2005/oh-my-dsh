@@ -478,8 +478,9 @@ extension QueueIntegration {
     var label: String { L10n.tr(labelKey) }
 
     /// The order every picker shows them in: 「无」FIRST (user 2026-10-01), then the
-    /// three publishing workflows. A display order, not the enum's storage order.
-    static var displayOrder: [QueueIntegration] { [.none, .pr, .merge, .push] }
+    /// publishing workflows 由浅入深 —— 直接推送 → 合并到基线 → Pull Request (user
+    /// 2026-10-01). A display order, not the enum's storage order.
+    static var displayOrder: [QueueIntegration] { [.none, .push, .merge, .pr] }
     /// The icon the queue header's publish button carries for this mode.
     var publishSymbol: String {
         switch self {
