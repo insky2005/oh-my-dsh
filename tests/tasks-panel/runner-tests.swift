@@ -112,6 +112,8 @@ final class FakeDsh {
     private(set) var prompts: [String: String] = [:]
     var createFails = false
     var promptFails = false
+    /// Fail the NEXT N prompts, then succeed (lets a test make only one prompt fail).
+    var promptFailuresRemaining = 0
 
     func create() -> String? {
         if createFails { return nil }
@@ -128,6 +130,10 @@ final class FakeDsh {
 
     func prompt(_ id: String, _ text: String) -> Bool {
         if promptFails { return false }
+        if promptFailuresRemaining > 0 {
+            promptFailuresRemaining -= 1
+            return false
+        }
         prompts[id] = text
         return true
     }
@@ -1583,6 +1589,58 @@ do {
     eq(h2.dsh.sessions.count, 1, "只有任务会话，没有收尾会话")
     check(h2.board.queue(queue2)?.prError == nil, "「无」是明确选择，不记错误")
     check(!h2.runner.startQueueIntegration(queue2), "手动发布同样被拒")
+}
+
+section("收尾复用来源会话（有则用；完成标记保证不读错回合）")
+do {
+    // 用来源会话收尾：不再新建会话，提示词带唯一完成标记。
+    let (board, taskID, queueID) = singleTaskBoard()
+    var b = board
+    b.local.queueSessions[queueID] = "origin-session"
+    let h = Harness(board: b)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.dsh.sessions.count, 1, "复用来源会话：没有新建收尾会话")
+    eq(h.runner.openingPRQueueID, queueID, "收尾跑在来源会话上")
+    let originPrompt = h.dsh.prompts["origin-session"] ?? ""
+    check(originPrompt.contains("DSH-FINALIZE-"), "提示词要求回一个完成标记")
+    let markerRange = originPrompt.range(of: "DSH-FINALIZE-[0-9A-F]+", options: .regularExpression)
+    check(markerRange != nil, "提示词里能取到完成标记")
+    let marker = markerRange.map { String(originPrompt[$0]) } ?? "DSH-FINALIZE-NONE"
+
+    // 来源会话里先有一段**不相干**的汇报：没有标记时不能被当成收尾结果。
+    h.dsh.reports["origin-session"] = "用户闲聊，和收尾无关"
+    _ = h.runner.step()
+    check(h.board.queue(queueID)?.integrationNote == nil, "没有标记就继续等，不采用这段汇报")
+    check(h.runner.openingPRQueueID == queueID, "收尾仍未结束")
+
+    // 标记回来：采用这次汇报，并把标记从结果里去掉。
+    h.dsh.reports["origin-session"] = "已合并到 main（无远端，未推送）\n" + marker
+    _ = h.runner.step()
+    eq(h.board.queue(queueID)?.integrationNote, "已合并到 main（无远端，未推送）",
+       "只采用带标记的汇报，并去掉标记")
+    check(h.runner.openingPRQueueID == nil, "收尾结束")
+}
+
+section("来源会话用不了时回退新会话")
+do {
+    let (board, taskID, queueID) = singleTaskBoard()
+    var b = board
+    b.local.queueSessions[queueID] = "origin-session"
+    let h = Harness(board: b)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    // 任务会话已经建好；让**下一次** prompt（给来源会话的收尾指令）失败。
+    h.dsh.promptFailuresRemaining = 1
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    check(h.dsh.prompts["origin-session"] == nil, "来源会话没有收到收尾指令")
+    eq(h.dsh.sessions.count, 2, "回退：新建了一个专门的收尾会话")
+    let fresh = h.dsh.sessions[1]
+    check((h.dsh.prompts[fresh] ?? "").contains("收尾") || (h.dsh.prompts[fresh] ?? "").contains("PR"),
+          "新会话收到了收尾指令")
+    check(!(h.dsh.prompts[fresh] ?? "").contains("DSH-FINALIZE-"),
+          "新会话不需要完成标记（它是专用的）")
 }
 
 section("队列到达 .done：回传完成情况到来源会话（一次，幂等）")

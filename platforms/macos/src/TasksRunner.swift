@@ -481,19 +481,25 @@ enum TaskPrompts {
     /// 收尾会话的提示词：队列干完的活**怎么落地**。三种模式由队列 / 全局默认选择，
     /// 会话负责执行（凭据与判断都在它这边），壳层只记录它汇报的结果。
     static func integration(mode: QueueIntegration, queueName: String?, branch: String?, base: String,
-                            commits: [String], hasRemote: Bool = true) -> String {
+                            commits: [String], hasRemote: Bool = true,
+                            marker: String? = nil) -> String {
+        let text: String
         switch mode {
         case .pr:
-            return pullRequest(queueName: queueName, branch: branch ?? base, base: base, commits: commits)
+            text = pullRequest(queueName: queueName, branch: branch ?? base, base: base, commits: commits)
         case .merge:
-            return mergeAndPush(queueName: queueName, branch: branch ?? base, base: base,
+            text = mergeAndPush(queueName: queueName, branch: branch ?? base, base: base,
                                 commits: commits, hasRemote: hasRemote)
         case .push:
-            return pushOnly(queueName: queueName, branch: branch, base: base)
+            text = pushOnly(queueName: queueName, branch: branch, base: base)
         case .none:
             // Unreachable: startQueueIntegration refuses .none before a session exists.
-            return "队列「\(queueName ?? branch ?? "")」的工作流是「无」——不需要任何收尾动作。"
+            text = "队列「\(queueName ?? branch ?? "")」的工作流是「无」——不需要任何收尾动作。"
         }
+        // A reused ORIGINATING session is a real conversation: require this marker so
+        // the shell adopts only OUR turn's report.
+        guard let marker = marker else { return text }
+        return text + "\n\n最后**单独一行**原样输出完成标记（供壳层确认本次收尾结束）：" + marker
     }
 
     /// 本地合并进 base（有远端才推送）。冲突尽量现场解；超出确定范围就停下请用户介入；
@@ -673,6 +679,12 @@ final class TasksRunner {
         var base: String
         var sessionId: String
         var startedAt: Date
+        /// Set when this run went to the queue's ORIGINATING session: the prompt ends
+        /// with this marker and only a report carrying it is adopted — that session is
+        /// a real conversation, so its last report may belong to another turn.
+        var marker: String?
+        /// Whether sessionId is the originating session. We never cancel it.
+        var reused: Bool
     }
 
     private enum Phase {
@@ -1115,11 +1127,14 @@ final class TasksRunner {
         let env = self.env
         let base = queue.baseBranch
         let name = queue.name
+        // The session that created this queue (nil for a manually created queue).
+        let origin = board.local.queueSessions[queueID]
         phase = .startingPR(queueID)
         var run: PRRun?
         env.perform({
             run = TasksRunner.makeFinalizeRun(env: env, queueID: queueID, mode: mode, name: name,
-                                              branch: queue.branch, base: base)
+                                              branch: queue.branch, base: base,
+                                              originSession: origin)
         }, {
             guard let run = run else {
                 self.phase = .idle
@@ -1137,13 +1152,31 @@ final class TasksRunner {
     /// it can run inside the background step. Returns nil when either fails — the caller
     /// then records the reason on the queue instead of leaving a half-created session.
     static func makeFinalizeRun(env: TaskRunnerEnv, queueID: String, mode: QueueIntegration,
-                                name: String, branch: String?, base: String) -> PRRun? {
+                                name: String, branch: String?, base: String,
+                                originSession: String? = nil) -> PRRun? {
         // What the branch carries, for the session context: it still reads the diff
         // itself (that is the point), but the commit list saves it from starting with
         // 「what is this branch」.
         let commits = branch.flatMap { _ in env.git.commits(base: base) } ?? []
+        let hasRemote = env.git.remoteName() != nil
+        // Prefer the queue's ORIGINATING session (user 2026-10-01): the queue was
+        // created there and its completion is reported there, so finalize in the same
+        // conversation. A unique MARKER is required back, because that session is a
+        // real conversation — its last report may be an unrelated turn.
+        if let origin = originSession, !origin.isEmpty {
+            let marker = TasksRunner.makeMarker()
+            let text = TaskPrompts.integration(mode: mode, queueName: name, branch: branch,
+                                               base: base, commits: commits, hasRemote: hasRemote,
+                                               marker: marker)
+            if env.promptSession(origin, text) {
+                return PRRun(queueID: queueID, mode: mode, branch: branch ?? base, base: base,
+                             sessionId: origin, startedAt: Date(), marker: marker, reused: true)
+            }
+            env.log("tasks: could not prompt the originating session " + origin
+                    + " — falling back to a fresh finalize session")
+        }
         let text = TaskPrompts.integration(mode: mode, queueName: name, branch: branch, base: base,
-                                           commits: commits, hasRemote: env.git.remoteName() != nil)
+                                           commits: commits, hasRemote: hasRemote)
         guard let sessionId = env.createSession(env.repoRoot) else { return nil }
         let sessionNameKey = mode == .pr ? "tasks.queue.prSessionName" : "tasks.queue.finalizeSessionName"
         _ = env.renameSession(sessionId, L10n.tr(sessionNameKey, name))
@@ -1152,13 +1185,19 @@ final class TasksRunner {
             return nil
         }
         return PRRun(queueID: queueID, mode: mode, branch: branch ?? base, base: base,
-                     sessionId: sessionId, startedAt: Date())
+                     sessionId: sessionId, startedAt: Date(), marker: nil, reused: false)
+    }
+
+    /// A marker the finalize session must echo back verbatim on its own last line.
+    static func makeMarker() -> String {
+        "DSH-FINALIZE-" + UUID().uuidString.prefix(8).uppercased()
     }
 
     private func beginPRRun(_ run: PRRun) {
         phase = .openingPR(run)
         _ = board.setQueuePRError(run.queueID, nil)
-        env.log("tasks: finalize session " + run.sessionId + " (" + run.mode.rawValue + ") for queue " + run.queueID)
+        env.log("tasks: finalize session " + run.sessionId + " (" + run.mode.rawValue
+                + (run.reused ? ", origin" : ", fresh") + ") for queue " + run.queueID)
         persist()
     }
 
@@ -1170,10 +1209,15 @@ final class TasksRunner {
             unknownPolls = 0
             missingPolls = 0
             if now.timeIntervalSince(run.startedAt) > timeout {
-                env.log("tasks: PR session " + run.sessionId + " timed out after "
-                        + String(Int(timeout)) + "s; cancelling it")
-                _ = env.cancelSession(run.sessionId)
-                finishPRRun(run)
+                if run.reused {
+                    // Never cancel the user's conversation.
+                    fallbackToNewSession(run)
+                } else {
+                    env.log("tasks: PR session " + run.sessionId + " timed out after "
+                            + String(Int(timeout)) + "s; cancelling it")
+                    _ = env.cancelSession(run.sessionId)
+                    finishPRRun(run)
+                }
             }
             return isBusy
         case .idle:
@@ -1192,8 +1236,12 @@ final class TasksRunner {
             unknownPolls = 0
             missingPolls += 1
             if missingPolls >= TasksRunner.missingSessionPolls {
-                env.log("tasks: PR session " + run.sessionId + " is gone from dsh — looking for the PR anyway")
-                finishPRRun(run)
+                if run.reused {
+                    fallbackToNewSession(run)
+                } else {
+                    env.log("tasks: PR session " + run.sessionId + " is gone from dsh — looking for the PR anyway")
+                    finishPRRun(run)
+                }
             }
             return isBusy
         }
@@ -1211,7 +1259,44 @@ final class TasksRunner {
             report = sessionReport(run.sessionId)
             prUrl = TasksRunner.prURL(in: report) ?? findExistingPR(run.branch)
         }, {
+            // A reused ORIGINATING session only counts when OUR turn's marker came
+            // back: its last report may otherwise belong to the user's conversation.
+            if let marker = run.marker, report?.contains(marker) != true {
+                self.prLookupInFlight = false
+                return
+            }
             self.applyPRRun(run, prUrl: prUrl, report: report)
+        })
+    }
+
+    /// The originating session did not run the queued finalize in time (or is gone
+    /// from dsh). It is the USER's conversation — never cancel it; hand the work to a
+    /// dedicated session instead. (The prompts inspect the repo first, so a re-run
+    /// after the work already happened is a no-op rather than a duplicate.)
+    private func fallbackToNewSession(_ run: PRRun) {
+        env.log("tasks: originating session " + run.sessionId
+                + " did not run the finalize — using a fresh session for queue " + run.queueID)
+        let queueID = run.queueID
+        let mode = run.mode
+        let name = board.queue(queueID)?.name ?? queueID
+        let branch = run.branch
+        let base = run.base
+        let env = self.env
+        phase = .startingPR(queueID)
+        var fresh: PRRun?
+        env.perform({
+            fresh = TasksRunner.makeFinalizeRun(env: env, queueID: queueID, mode: mode,
+                                                name: name, branch: branch, base: base,
+                                                originSession: nil)
+        }, {
+            guard let fresh = fresh else {
+                self.phase = .idle
+                self.env.log("tasks: could not start a fallback finalize session for queue " + queueID)
+                _ = self.board.setQueuePRError(queueID, "tasks.errPRSession")
+                self.persist()
+                return
+            }
+            self.beginPRRun(fresh)
         })
     }
 
@@ -1221,7 +1306,12 @@ final class TasksRunner {
         // The card shows the session's report; the FIRST line is what a collapsed card
         // reads, the rest is available by expanding (user 2026-10-01). Keep the whole
         // report (capped), not just the first line.
-        let full = report?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var full = report?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // A reused session's marker is shell-internal plumbing, not part of the result.
+        if let marker = run.marker {
+            full = full.replacingOccurrences(of: marker, with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         let firstLine = full.split(separator: "\n").first.map(String.init) ?? ""
         let note = full.isEmpty ? nil : String(full.prefix(4000))
         _ = board.setQueueIntegrationNote(run.queueID, note)
