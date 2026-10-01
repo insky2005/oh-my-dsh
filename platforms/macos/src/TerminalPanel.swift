@@ -1028,6 +1028,22 @@ final class TerminalView: NSView, NSTextInputClient {
         }
     }
 
+    // Focus also drives the keyboard input source: terminals want English, and
+    // the user's original IME is put back when focus leaves (see
+    // TerminalInputSourceGuard). makeFirstResponder is idempotent, so the
+    // hover-to-focus above plus a subsequent click still only arrive here once.
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok { TerminalInputSourceGuard.shared.terminalDidFocus() }
+        return ok
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let ok = super.resignFirstResponder()
+        if ok { TerminalInputSourceGuard.shared.terminalDidBlur() }
+        return ok
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         needsDisplay = true

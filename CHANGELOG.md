@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **终端面板聚焦时自动切英文输入法、失焦还原（2026-10-01）**：终端想要拉丁键盘，否则中文/日文输入法会截走最初的按键。现在 `TerminalView.becomeFirstResponder/resignFirstResponder` 驱动一个纯状态机 `TerminalInputSourceGuard`：聚焦时记住当前输入法并切到 ASCII 源（`TISCopyCurrentASCIICapableKeyboardInputSource`），失焦时还原；使用中可随时手动切回中文，策略只在聚焦那一次切、不会反复拉回。**最初状态绝不被覆盖**：`savedID` 写一次，重复聚焦（鼠标移入即聚焦 + 点击）直接返回，还原被系统拒绝时也保留原始、下次再试；原本就是英文则不接管。系统层用 Carbon TIS 实现并隔离在 `InputSourceControlling` 协议后（本机实测「百度拼音 → ABC → 百度拼音」往返成功）。回归：`tests/terminal-panel` 新增 11 项，README/本文件/wiki 同步。
+
 - **队列收尾优先复用来源会话（2026-10-01）**：队列在哪个会话里创建，就尽量在哪个会话里收尾——创建 / 验收 / 收尾同一条对话，不用在侧栏里另找一个「收尾：…」会话。手动创建的队列没有来源会话，才新建专门的收尾会话。来源会话是真实对话，所以提示词要求最后回一个**唯一完成标记**，壳层只采用带标记的那次汇报（避免把用户别的回合当成收尾结果）；来源会话不可用 / 忙到超时 / 已从 dsh 消失时**回退新建**，且**绝不取消**用户的会话。设计见 §14 决策 12。
   回归：tests/tasks-panel **1393 → 1405** 项（运行器 442→**454**）。
 

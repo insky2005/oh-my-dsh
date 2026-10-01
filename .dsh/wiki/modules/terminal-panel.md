@@ -44,6 +44,12 @@ manual: false
 - **接线**：`TerminalView: NSView, NSTextInputClient`。`keyDown` 里 `⌘`/`⌃`/`⌥` 组合与 `specialKey` 特殊键**先走原路径**（不让输入法截胡），**组合中（`hasMarkedText()`）与其余按键**交 `interpretKeyEvents([event])`；
 - **提交**：`insertText(_:replacementRange:)` 把上屏文本按 UTF-8 写进 shell —— 无输入法时与旧行为等价（兼容旧的单参 `insertText(_:)` 做兜底）；`setMarkedText`/`unmarkText` 维护预编辑（空串 = 结束组合），`firstRect(forCharacterRange:)` 把候选窗锚到光标（组合期锚到预编辑末尾），`doCommand(by:)` 兜住输入法放行的键（否则响应链会 beep）；`TerminalEmulator` 不感知 IME（预编辑只存在于视图层，shell 从未见过）。
 
+### 聚焦切英文输入法 / 失焦还原（`TerminalInputSource.swift`）
+
+- **策略（纯状态机 `TerminalInputSourceGuard`，无头可测）**：`becomeFirstResponder` → `terminalDidFocus()`（记当前输入源 → 非英文则 `TISSelectInputSource` 切到 ASCII 源）；`resignFirstResponder` → `terminalDidBlur()`（还原）。**原本就是英文则不接管**（不记、不切），手动切的中文在失焦后保留。
+- **最初状态不被覆盖（关键不变量）**：`savedID` **写一次**——已记住原始输入源时重复 `focus()` 直接返回，绝不会把被迫切成的英文当成用户原始输入法；只有还原成功（或当前就等于原始）才清空；还原被系统拒绝（安全输入/输入法未就绪）时保留，下次失焦再试。AppKit 的 `makeFirstResponder` 本身幂等，所以「移入 → 点击」共只触发一次 `becomeFirstResponder`。
+- **系统层（`TextInputSources: InputSourceControlling`）**：Carbon TIS —— `TISCopyCurrentKeyboardInputSource` / `TISCopyCurrentASCIICapableKeyboardInputSource`（本机实测返回 `com.apple.keylayout.ABC`）/ `TISCreateInputSourceList` + `TISSelectInputSource`；实测「百度拼音 → ABC → 百度拼音」往返成功。协议隔离使状态机可用假实现单测，真实切换只在 App 内手动 QA。
+
 ### `TerminalPanelController`（多标签面板）
 
 - **头部固定标题**：「终端 / Terminal」（复用活动栏键 `bar.terminal`），**不跟随会话**；会话标题（OSC 标题 / 已结束状态）留在页签与头部 tooltip；
@@ -69,8 +75,8 @@ manual: false
 
 `core/tests/ansi.test.js`（共享核心，JS 端口）含同一组 DECSTBM 断言 6 项；`tests/terminal-panel/run.sh`（无头，**不建 PTY**：只实例化 controller 断言头部与模型层状态）：
 
-- 编译清单 = `stubs.swift`（L10n/AppLog/ShellConfig/共享 UI 基件）+ `TerminalPanel.swift` + `PanelSurface.swift` + `TerminalWorkspaceTabs.swift` + `WorkspaceTabMemory.swift` + `panel-tests.swift`（改名 `main.swift`）；
-- 覆盖：头部固定标题（语言切换后仍固定、关会话后不被清空）+ `TerminalWorkspaceTabs` 的可见性/记忆规则（同 workspace 可见、尾斜杠等价、切换换页签、每页签独立 key、全局页签处处可见、切回恢复选中、已关闭不恢复）+ **选中即复制默认开且随设置变化** + **IME 协议状态机**（初始无组合、`setMarkedText` 建立预编辑、`selectedRange` 落在预编辑之后、`attributedSubstring` 的范围内/外、`unmarkText` 与空串都清空、提交清空、无窗口时 `firstRect` 退化为 0）+ **DECSTBM 滚动区**（LF 在区域底部只滚区域、状态行不动、部分区域不进 scrollback、RI/IL/DL/SU/SD 都限制在区域内、`CSI r` 恢复全屏区域）+ **宽字符光标跨度**（宽字前进两格、停在宽字/continuation 上时跨度回到 lead 格且宽 2 格、窄/空格宽 1 格）+ **移入即聚焦 tracking area**（`TerminalView` 装上 `.mouseEnteredAndExited` 的 `NSTrackingArea`）+ **宽字形恰好两格**（`。，！（中国` 六个字形的 `wideGlyphFontForTesting` natural advance == `2 × cellWidthForTesting`，即不再横向拉伸）；
+- 编译清单 = `stubs.swift`（L10n/AppLog/ShellConfig/共享 UI 基件）+ `TerminalPanel.swift` + `PanelSurface.swift` + `TerminalWorkspaceTabs.swift` + `WorkspaceTabMemory.swift` + `TerminalInputSource.swift` + `panel-tests.swift`（改名 `main.swift`）；
+- 覆盖：头部固定标题（语言切换后仍固定、关会话后不被清空）+ `TerminalWorkspaceTabs` 的可见性/记忆规则（同 workspace 可见、尾斜杠等价、切换换页签、每页签独立 key、全局页签处处可见、切回恢复选中、已关闭不恢复）+ **选中即复制默认开且随设置变化** + **IME 协议状态机**（初始无组合、`setMarkedText` 建立预编辑、`selectedRange` 落在预编辑之后、`attributedSubstring` 的范围内/外、`unmarkText` 与空串都清空、提交清空、无窗口时 `firstRect` 退化为 0）+ **DECSTBM 滚动区**（LF 在区域底部只滚区域、状态行不动、部分区域不进 scrollback、RI/IL/DL/SU/SD 都限制在区域内、`CSI r` 恢复全屏区域）+ **宽字符光标跨度**（宽字前进两格、停在宽字/continuation 上时跨度回到 lead 格且宽 2 格、窄/空格宽 1 格）+ **移入即聚焦 tracking area**（`TerminalView` 装上 `.mouseEnteredAndExited` 的 `NSTrackingArea`）+ **宽字形恰好两格**（`。，！（中国` 六个字形的 `wideGlyphFontForTesting` natural advance == `2 × cellWidthForTesting`，即不再横向拉伸）+ **输入法自动切换状态机**（聚焦记原始并切英文、重复聚焦不覆盖原始、失焦还原、原本英文不接管、无 ASCII 源不动、还原失败保留原始待下次重试）；
 - 会话路径（真实 shell 输入输出、滚动、选择）靠手动 QA，见 .dsh/wiki/tasks.md。
 
 ## 已知限制（README）

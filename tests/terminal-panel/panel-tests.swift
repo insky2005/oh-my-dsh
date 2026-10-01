@@ -239,6 +239,97 @@ test("the terminal installs a hover-to-focus tracking area",
          $0.owner === hoverView && $0.options.contains(.mouseEnteredAndExited)
      })
 
+// MARK: - Keyboard input source (IME) on focus / blur
+//
+// On focus the terminal switches to an ASCII-capable source and remembers the
+// user's; on blur it restores it. The remembered original is write-once: a
+// repeated focus (hover-then-click both route through makeFirstResponder) must
+// not overwrite it with the forced English.
+
+final class FakeInputSources: InputSourceControlling {
+    var current: String?
+    var ascii: String?
+    var selectCalls: [String] = []
+    var selectSucceeds = true
+    func currentInputSourceID() -> String? { current }
+    func asciiInputSourceID() -> String? { ascii }
+    @discardableResult
+    func selectInputSource(id: String) -> Bool {
+        selectCalls.append(id)
+        if selectSucceeds { current = id }
+        return selectSucceeds
+    }
+}
+
+let fakeSources = FakeInputSources()
+fakeSources.current = "com.baidu.inputmethod.BaiduIM.pinyin"
+fakeSources.ascii = "com.apple.keylayout.ABC"
+let inputGuard = TerminalInputSourceGuard(sources: fakeSources)
+
+inputGuard.terminalDidFocus()
+test("terminal focus switches to the ASCII input source",
+     fakeSources.current == "com.apple.keylayout.ABC" &&
+     fakeSources.selectCalls == ["com.apple.keylayout.ABC"])
+test("the original input source is remembered", inputGuard.hasSavedSource)
+
+// A second focus must not overwrite the remembered original with English.
+inputGuard.terminalDidFocus()
+test("a repeated focus does not overwrite the original",
+     fakeSources.selectCalls == ["com.apple.keylayout.ABC"] && inputGuard.hasSavedSource)
+
+inputGuard.terminalDidBlur()
+test("terminal blur restores the original input source",
+     fakeSources.current == "com.baidu.inputmethod.BaiduIM.pinyin" &&
+     fakeSources.selectCalls == ["com.apple.keylayout.ABC",
+                                 "com.baidu.inputmethod.BaiduIM.pinyin"])
+test("the remembered original is cleared after restore", !inputGuard.hasSavedSource)
+
+// Already on English: nothing to switch, and a manual mid-session switch to
+// Chinese is left alone when focus leaves.
+let alreadyEnglish = FakeInputSources()
+alreadyEnglish.current = "com.apple.keylayout.ABC"
+alreadyEnglish.ascii = "com.apple.keylayout.ABC"
+let englishGuard = TerminalInputSourceGuard(sources: alreadyEnglish)
+englishGuard.terminalDidFocus()
+test("focusing from English does not select anything",
+     alreadyEnglish.selectCalls.isEmpty && !englishGuard.hasSavedSource)
+alreadyEnglish.current = "com.baidu.inputmethod.BaiduIM.pinyin"   // user switches
+englishGuard.terminalDidBlur()
+test("a manual switch is kept when the terminal never changed the source",
+     alreadyEnglish.current == "com.baidu.inputmethod.BaiduIM.pinyin" &&
+     alreadyEnglish.selectCalls.isEmpty)
+
+// No ASCII-capable source: stay out of the user's way.
+let noAscii = FakeInputSources()
+noAscii.current = "com.baidu.inputmethod.BaiduIM.pinyin"
+noAscii.ascii = nil
+let noAsciiGuard = TerminalInputSourceGuard(sources: noAscii)
+noAsciiGuard.terminalDidFocus()
+noAsciiGuard.terminalDidBlur()
+test("no ASCII source: nothing is changed or remembered",
+     noAscii.current == "com.baidu.inputmethod.BaiduIM.pinyin" &&
+     noAscii.selectCalls.isEmpty && !noAsciiGuard.hasSavedSource)
+
+// If the system refuses the restore, the original must survive for the next
+// attempt instead of being replaced by the forced English.
+let failing = FakeInputSources()
+failing.current = "com.baidu.inputmethod.BaiduIM.pinyin"
+failing.ascii = "com.apple.keylayout.ABC"
+let failingGuard = TerminalInputSourceGuard(sources: failing)
+failingGuard.terminalDidFocus()
+failing.selectSucceeds = false
+failingGuard.terminalDidBlur()
+test("a failed restore keeps the original remembered",
+     failing.current == "com.apple.keylayout.ABC" && failingGuard.hasSavedSource)
+failingGuard.terminalDidFocus()   // must not overwrite the original
+test("focus after a failed restore does not overwrite the original",
+     failing.selectCalls == ["com.apple.keylayout.ABC",
+                             "com.baidu.inputmethod.BaiduIM.pinyin"])
+failing.selectSucceeds = true
+failingGuard.terminalDidBlur()
+test("the original is restored once the system accepts it",
+     failing.current == "com.baidu.inputmethod.BaiduIM.pinyin" && !failingGuard.hasSavedSource)
+
 // MARK: - Wide-glyph font (no horizontal stretch distortion)
 //
 // The monospaced system font has no CJK glyphs; its default fallback renders
