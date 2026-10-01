@@ -25,7 +25,7 @@
 所有原生面板**共用一套灰阶配色**（面板底色一档 + 控件常态/高亮两档，全部取自 dsh web 的 `neutral bluish` 设计令牌），深浅两套主题一一对应；**单一事实来源为 `PanelSurface.swift`——改色只改这一个文件**，方案见 [`docs/ui-color-scheme.md`](./docs/ui-color-scheme.md)。
 「视图」菜单提供九面板的显示/隐藏快捷键（首项即「项目」）。
 
-活动栏图标自上而下依次为下列九个面板，**每个面板的完整说明（特性、边界、已知限制、设计文档）见 [`docs/panels.md`](./docs/panels.md)**。
+活动栏图标自上而下依次为下列九个面板，**每个面板的完整说明（特性、边界、已知限制、设计文档）见 [`docs/panels/index.md`](./docs/panels/index.md)**。
 
 ### 项目面板（`⌥⌘P` / 活动栏首位「项目」图标）
 
@@ -300,7 +300,7 @@ scripts/             跨平台工具（version.sh 版本单一来源 / changelog
 .dsh/skills/         web-dev-tools / repo-knowledge / task-todo 等面板配套 skill（App 启动时同步安装到全局 $DSH_HOME/skills/；issue-resolve 已于 2026-09-27 退役）
 .cache/              构建缓存（node tarball、npm 缓存、已构建运行时/CEF，按架构分目录）
 dist/                构建产物（.app / .pkg / .dmg）
-docs/                设计/排查文档（productization.md、dsh-version-impact.md、git-workflow.md、release-process.md、**ui-color-scheme.md（面板配色方案）**、repo-wiki-design.md、review-panel-design.md、browser-blank-panel-fix.md、issue-runner-design.md、milestones/、plans/ 等）
+docs/                设计/排查文档（productization.md、dsh-version-impact.md、git-workflow.md、release-process.md、**ui-color-scheme.md（面板配色方案）**、repo-wiki-design.md、review-panel-design.md、browser-blank-panel-fix.md、issue-runner-design.md、milestones/、plans/、panels/（右栏面板详细说明）等）
 ```
 
 ## 如何贡献

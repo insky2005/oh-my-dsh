@@ -5,7 +5,7 @@
 
 **项目 → 文件 → 终端 → Repo Wiki 知识库 → 任务 → 通道 → 审查 → 浏览器 → 技能**
 
-简要说明与截图见 [README 的「右栏面板」](../README.md#右栏面板)；面板配色方案见 [`ui-color-scheme.md`](./ui-color-scheme.md)。
+简要说明与截图见 [README 的「右栏面板」](../../README.md#右栏面板)；面板配色方案见 [`../ui-color-scheme.md`](../ui-color-scheme.md)。
 
 ## 项目面板（`⌥⌘P` / 活动栏首位「项目」图标）
 
@@ -37,7 +37,7 @@
 - 面板宽度可拖拽并记住，且**自动保证 WebView 宽度 ≥1100pt**（dsh web 低于 1024pt 会自动收起左侧会话栏）；
 - 纯 WebView 侧注入实现，不改任何 DeepSeek Harness 源码。
 
-![files](screenshots/files.png)
+![files](../screenshots/files.png)
 
 ## 终端面板（`⌥⌘T` / 活动栏「终端」图标）
 
@@ -52,7 +52,7 @@
 - 新会话默认在**当前 dsh 会话的项目目录**启动（服务就绪后解析，失败回退用户主目录）；退出 App 自动终止所有会话；
 - **已知限制**：组合表情/零宽连接符按近似宽度渲染、会话不跨 App 重启保留。
 
-![terminal](screenshots/terminal.png)
+![terminal](../screenshots/terminal.png)
 
 ## Repo Wiki 知识库面板（`⌥⌘W` / 活动栏「知识库」图标）
 
@@ -91,7 +91,7 @@
 - **GitHub token（按仓库作用域，只走文件）**：面板「配置 GitHub Token」**只写文件** —— 有当前仓库时写文件专属 `~/.dsh/oh-my-dsh/tokens/<owner>-<repo>`，否则写通用 `~/.dsh/oh-my-dsh/gh-token`（均 chmod 600，App 与外部工具/代理共用）；解析优先级：文件专属 → 文件通用；**不再读写 macOS 钥匙串**（旧版写在钥匙串里的 token 需重新填写一次）；公开仓库无需 token，私有仓库拉取/开 PR/评论关闭需要；
 - 工作区非 GitHub 仓库时诚实显示空态（不替换为其他已注册工作区）；切换到不同仓库先清空旧列表再重载。
 
-![tasks](screenshots/tasks.jpg)
+![tasks](../screenshots/tasks.jpg)
 
 ## 通道面板（`⌥⌘H` / 活动栏「通道」图标）
 
@@ -110,7 +110,7 @@
 - **当前限制**：飞书仅展示卡片（适配器待实现）；钉钉富特性（AI Card 流式 / 互动审批卡 / 图片 / DWS）留作后续增强，v1 以文本/Markdown 回复为主；
 - 设计与指令清单：`docs/channel-design.md`、`docs/channel-dingtalk-stream.md`、`docs/channel-commands.md`、`docs/channel-status.md`、`docs/channel-project-switch.md`。
 
-![channel](screenshots/channel.png)
+![channel](../screenshots/channel.png)
 
 ## 审查面板（`⌥⌘R` / 活动栏「审查」图标）
 
@@ -144,7 +144,7 @@
 - **Agent 驱动（curl 即用）**：壳层常驻 localhost REST API（默认 `127.0.0.1:3081`，端口文件 `~/.dsh/oh-my-dsh/browser-api.port`）——`status` / `open` / `tabs` / `back` / `forward` / `reload` / `stop` / `eval` / `console` / `console/clear` / `screenshot`(PNG) / `hide`，外加 QA 端点 `debug` / `hierarchy`；Agent 驱动时面板自动展开，截图可存工作区供读图/分享；配套技能 `web-dev-tools`（App 启动时安装到全局 `$DSH_HOME/skills/web-dev-tools/SKILL.md`，model+user 可调用）开箱即用；
 - **说明**：CEF 构建体积约 +320MB/架构；Chromium 使用模拟钥匙串（`use-mock-keychain`，不弹密码框、不存网页密码）；profile 数据收在 `~/.dsh/oh-my-dsh/browser/`；随包分发 5 个 helper app（base/Alerts/GPU/Plugin/Renderer）；集成细节见 `docs/plans/BROWSER_PLAN-browser-panel.md`。
 
-![browser](screenshots/browser.png)
+![browser](../screenshots/browser.png)
 
 ## 技能面板（`⌥⌘S` / 活动栏「技能」图标）
 
