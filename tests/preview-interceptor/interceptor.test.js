@@ -219,6 +219,26 @@ test('a delivered-file card chevron keeps dsh\'s own menu', () => {
   assert.equal(event.propagationStopped, false);
 });
 
+// dsh >= 0.1.7 adds an "open in app" split control ([data-open-target]) inside
+// the delivered-file card: the primary button opens the OS default app / reveals
+// in Finder and the chevron opens the app menu. Both belong to dsh, so the shell
+// must not redirect their clicks to the native preview panel.
+test('an open-in-app control in a delivered-file card is left to dsh', () => {
+  const env = install();
+  const row = makeElement({ tag: 'div', attrs: { 'data-presented-files-row': '' } });
+  const card = makeElement({ tag: 'div', attrs: { 'data-presented-file': '' }, parent: row });
+  makeElement({ tag: 'button', attrs: { title: '/tmp/delivered.md' }, parent: card, className: 'nyYjTG_cardPreview' });
+  const split = makeElement({ tag: 'div', attrs: { 'data-open-target': 'file' }, parent: card });
+  const open = makeElement({
+    tag: 'button', attrs: { 'data-open-path-open': '', 'aria-label': 'Show file location' },
+    parent: split, className: 'OMoRSG_main' });
+  const event = makeEvent(open);
+  dispatchClick(env.document, event);
+  assert.equal(env.posted.length, 0, 'the open-in-app button must not be hijacked');
+  assert.equal(event.defaultPrevented, false);
+  assert.equal(event.propagationStopped, false);
+});
+
 test('a delivered-files host-status retry is left alone', () => {
   const env = install();
   const row = makeElement({ tag: 'div', attrs: { 'data-presented-files-row': '' } });

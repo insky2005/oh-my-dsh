@@ -203,5 +203,5 @@ npm `dist-tags`：`latest = 0.2.0-rc.2`、`next = 0.2.0-rc.2`、`alpha = 0.1.7-a
 ### 6.4 未复跑 / 后续
 
 - **v4 下真实文件改动审计**：隔离 home 无 provider 凭据，agent turn 以 `MISSING_CREDENTIAL` 结束，故未产生 v4 的 write/edit 记录。已核：v4 与 v3 的 `tool/call|result|ptc-dispatch` 事件类型一致、`dsh-session-format` 两版逐字节相同、v4 解析与 turn 提取实测可用——**风险低**，但发布前建议在带凭据的 home 里走一条真实会话，确认 `mutations > 0`。
-- **文件链接点击（B7）**：本轮未做真实点击（GUI 沙箱限制）；静态已核 `fileMention`/`fileLink`/`[data-presented-files-row]` 仍在、`openFile` 仍走 `sidebarRight.openResource`，仅 `[data-produced-files-row]` 被内联 mention 取代。发布前按 §五 B 面真实点一次。
+- **文件链接点击（B7）**：已在 **dev 版真实 DOM** 上核对并验证。0.1.7 的交付卡片新增「用系统应用打开 / 在 Finder 中显示」split 控件（`[data-open-target]`，主按钮 `data-open-path-open`、chevron `aria-haspopup=menu`），原 presented 分支会劫持主按钮；已放行该控件。用注入脚本对真实 DOM 验证：点击 open-in-app 主按钮 **不** 产生 `dshPreview` 消息，点击卡片遮罩仍发出 `{path:"/…/sm4_demo.py",source:"click"}`。回归 `tests/preview-interceptor` 16 项全绿。**遗留**：0.1.7 的「改动审阅」卡（`[data-changed-files]`，行 `button[class*=hz8-rW_row]`）仍交给 dsh 自己的 diff 审阅面板（壳层不拦截）；如需它也打开原生面板再评估。
 - **归档会话**：未构造归档数据；`DshWorkspaceOps.newestSessionId` 是否可能挑到归档会话待真实数据核对。

@@ -236,7 +236,10 @@
    「按规范名枚举 + 最大世代优先」天然覆盖。**但 D 面仍须实测审出一条真实改动**（见 R7/R7b 的教训）。
 3. **文件打开的点击面（B7）**：`[data-produced-files-row]` 被移除，产出文件改为内联 `fileMention`（带
    `title`）；`fileLink` 工具行与 `[data-presented-files-row]` 交付卡片仍在，`openFile` 仍走页面内
-   `sidebarRight.openResource`。需真实点一次四类链接确认（审计见 §五）。
+   `sidebarRight.openResource`。**另有一处必须放行**：0.1.7 在交付卡片内新增「用系统应用打开 / 在 Finder
+   中显示」的 split 控件（`[data-open-target]`，主按钮 `data-open-path-open` + chevron）；壳层原来的 presented
+   分支会把卡片内任何 button 都吞掉，从而劫持该控件。已加 `closest('[data-open-target]')` 放行（`tests/preview-interceptor`
+   第 16 项钉住，并在 dev 版真实 DOM 上注入脚本验证：主按钮不拦截、卡片遮罩仍打开原生面板）。
 
 **产品注意**：npm `dist-tags.latest = 0.2.0-rc.2`，故站内升级助手按 stepwise 会提示下一档 `0.2.0-rc.1`
 （预期行为，见 `nextStepTarget`）。

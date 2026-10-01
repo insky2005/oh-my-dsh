@@ -3998,17 +3998,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       // 0.1.5 dsh ships its own file/document panel and `openFile` opens it
       // in-page via ctx.sidebarRight.openResource(...): no host RPC is issued,
       // so the fetch patch below never sees the path. The click is the last
-      // place it is visible. Four file-link surfaces exist:
+      // place it is visible. File-link surfaces, by dsh generation:
       //   * inline mentions  — <code><button class="…fileMention…" title="<path>">
-      //   * produced files   — [data-produced-files-row] button[title="<path>"]
+      //   * markdown file links — <button class="…fileMention …fileLink…" title="<path>">
+      //   * produced files   — 0.1.5/0.1.6 [data-produced-files-row] button[title];
+      //     0.1.7 dropped that row and renders produced files as inline mentions.
       //   * tool rows        — read/write/edit render <button class="…fileLink…">
       //     whose TEXT is the workspace-relative (or `~`-abbreviated) path and
       //     which carries no title at all.
       //   * delivered files  — [data-presented-files-row] cards: the full-card
-      //     overlay and the "Open" button both preview through `openFile`; the
-      //     overlay carries the absolute path in `title`, the Open button none.
+      //     overlay previews through `openFile`; the overlay carries the absolute
+      //     path in `title`. dsh >= 0.1.7 also adds an "open in app" split
+      //     control ([data-open-target], primary + chevron) inside the card that
+      //     launches the OS default app / reveals in Finder — that belongs to dsh
+      //     and is NEVER hijacked (see the guard below).
       // dsh's own file-tree rows also carry a path title and must keep their own
-      // behaviour, so only these four surfaces are matched. A card's chevron
+      // behaviour, so only these surfaces are matched. A card's chevron
       // (aria-haspopup="menu") opens its own default-app/reveal menu and is left
       // to dsh.
       document.addEventListener('click', function (event) {
@@ -4016,6 +4021,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         var control = target && target.closest ? target.closest('button') : null;
         if (!control) return;
         if (control.getAttribute('aria-haspopup') === 'menu') return;
+        // dsh >= 0.1.7 delivered-file cards (and sidebars) grow an "open in app"
+        // split control ([data-open-target]): its primary button opens the OS
+        // default app and its chevron opens the app/reveal menu. Both belong to
+        // dsh and the OS — never redirect them to the native preview panel.
+        if (control.closest('[data-open-target]') !== null) return;
         var className = String(control.className || '');
         var clickPath = null;
         if (control.closest('[data-presented-files-row]') !== null) {
