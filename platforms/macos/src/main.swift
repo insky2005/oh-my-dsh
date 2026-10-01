@@ -3296,6 +3296,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             WKUserScript(source: Self.sessionTrackerScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController.add(self, name: "dshSession")
 
+        // dsh 0.1.5-rc.3 的客户端在展开 assistant-stream 的「打开快照」时，遇到一个非
+        // 对象的 chunk 会抛 unhandled rejection，会话视图就停在加载态（实测再点一次即恢复）。
+        // 捕获这条 rejection 自动重开当前会话；有界重试，绝不改 dsh 源码。
+        config.userContentController.addUserScript(
+            WKUserScript(source: Self.assistantStreamRetryScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+
         // Panel → web session link: exposes window.__dshOpenSession(sessionId)
         // so the Channel panel can switch dsh web to a specific session.
         config.userContentController.addUserScript(
@@ -3333,6 +3339,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         split.addSubview(webView, positioned: .below, relativeTo: split.subviews.first)
     }
 
+    /// Workaround for a dsh 0.1.5-rc.3 client defect (dsh's own source is never
+    /// patched): opening a RUNNING session can reject while expanding the
+    /// assistant-stream opening snapshot (`Assistant stream raw chunk must be a
+    /// lossless JSON object`), leaving the session view stuck on its loading state.
+    /// A second click recovers — the bad frame exists only in that instant's live
+    /// snapshot — so re-open the session once on that rejection. Bounded, and only
+    /// for the assistant-stream family.
+    private static let assistantStreamRetryScript = """
+    (function () {
+      if (window.__dshStreamRetryInstalled) return;
+      window.__dshStreamRetryInstalled = true;
+      var tries = 0;
+      var resetAt = 0;
+      function retry() {
+        var row = document.querySelector('[role="treeitem"][aria-selected="true"]');
+        if (row && row.click) { row.click(); return; }
+        var sid = window.__dshLastTrackedSession;
+        if (sid && typeof window.__dshOpenSession === 'function') {
+          try { window.__dshOpenSession(sid, null); } catch (e) {}
+        }
+      }
+      window.addEventListener('unhandledrejection', function (event) {
+        var reason = event.reason;
+        var message = String((reason && (reason.message || reason)) || reason);
+        if (message.indexOf('Assistant stream') === -1) return;
+        var now = Date.now();
+        if (now > resetAt) { tries = 0; }
+        if (tries >= 3) return;
+        tries += 1;
+        resetAt = now + 3000;
+        setTimeout(retry, 500);
+      });
+    })()
+    """
+
     /// Dev-only WebView diagnostics (see rebuildWebView): forwards what the native
     /// side cannot see — uncaught errors, unhandled rejections, long tasks (>=200ms)
     /// and click targets — through the `dshPerf` message handler into app.log.
@@ -3342,14 +3383,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       window.__dshPerfInstalled = true;
       function post(kind, detail) {
         try {
-          window.webkit.messageHandlers.dshPerf.postMessage({ kind: kind, detail: String(detail).slice(0, 300) });
+          window.webkit.messageHandlers.dshPerf.postMessage({ kind: kind, detail: String(detail).slice(0, 900) });
         } catch (e) {}
       }
       window.addEventListener('error', function (e) {
         post('error', (e.message || '') + ' @ ' + (e.filename || '') + ':' + (e.lineno || 0));
       });
       window.addEventListener('unhandledrejection', function (e) {
-        var r = e.reason; post('rejection', (r && (r.message || r)) || 'unknown');
+        var r = e.reason;
+        var cause = r && r.cause ? String((r.cause && (r.cause.message || r.cause)) || '') : '';
+        var stack = r && r.stack ? String(r.stack).split(String.fromCharCode(10)).slice(0, 6).join(' > ') : '';
+        post('rejection', ((r && (r.message || r)) || 'unknown') + ' | cause=' + cause + ' | ' + stack);
       });
       try {
         var po = new PerformanceObserver(function (list) {
