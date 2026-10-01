@@ -481,12 +481,13 @@ enum TaskPrompts {
     /// 收尾会话的提示词：队列干完的活**怎么落地**。三种模式由队列 / 全局默认选择，
     /// 会话负责执行（凭据与判断都在它这边），壳层只记录它汇报的结果。
     static func integration(mode: QueueIntegration, queueName: String?, branch: String?, base: String,
-                            commits: [String]) -> String {
+                            commits: [String], hasRemote: Bool = true) -> String {
         switch mode {
         case .pr:
             return pullRequest(queueName: queueName, branch: branch ?? base, base: base, commits: commits)
         case .merge:
-            return mergeAndPush(queueName: queueName, branch: branch ?? base, base: base, commits: commits)
+            return mergeAndPush(queueName: queueName, branch: branch ?? base, base: base,
+                                commits: commits, hasRemote: hasRemote)
         case .push:
             return pushOnly(queueName: queueName, branch: branch, base: base)
         case .none:
@@ -495,11 +496,14 @@ enum TaskPrompts {
         }
     }
 
-    /// 本地合并进 base 再推送 base。冲突尽量现场解；超出确定范围就停下请用户介入；
+    /// 本地合并进 base（有远端才推送）。冲突尽量现场解；超出确定范围就停下请用户介入；
     /// base 被保护时如实报错（用户自己处理，比如改仓库设置或改用 PR）。
-    static func mergeAndPush(queueName: String?, branch: String, base: String, commits: [String]) -> String {
+    /// hasRemote == false：只做本地合并，明确不推送——本地仓库也能收尾。
+    static func mergeAndPush(queueName: String?, branch: String, base: String, commits: [String],
+                             hasRemote: Bool = true) -> String {
         var lines: [String] = []
-        lines.append("队列「\(queueName ?? branch)」的任务已完成。请把它**本地合并进 \(base)，并推送 \(base)**（不开 PR）：")
+        let head = "队列「\(queueName ?? branch)」的任务已完成。请把它**本地合并进 \(base)"
+        lines.append(hasRemote ? head + "，并推送 \(base)**（不开 PR）：" : head + "**（不开 PR）：")
         lines.append("")
         lines.append("步骤：")
         lines.append("1. 先看清分支 \(branch) 到底改了什么（git log \(base)..\(branch)、git diff \(base)...\(branch)）；")
@@ -512,9 +516,14 @@ enum TaskPrompts {
             for commit in commits { lines.append("  " + commit) }
         }
         lines.append("")
-        lines.append("4. 把 \(base) 推送到远端（远端名优先 github，其次 origin）；被分支保护 / non-fast-forward / 需要 PR 拒绝时，")
-        lines.append("   **如实报错**并把服务端原文贴出来，提示用户可改用 PR 模式或调整仓库设置——**不要强推**；")
-        lines.append("5. 最后一行给出结果：成功则写「已合并并推送 \(base)」+ merge 后的短 hash；失败则写清卡在哪一步。")
+        if hasRemote {
+            lines.append("4. 把 \(base) 推送到远端（远端名优先 github，其次 origin）；被分支保护 / non-fast-forward / 需要 PR 拒绝时，")
+            lines.append("   **如实报错**并把服务端原文贴出来，提示用户可改用 PR 模式或调整仓库设置——**不要强推**；")
+            lines.append("5. 最后一行给出结果：成功则写「已合并并推送 \(base)」+ merge 后的短 hash；失败则写清卡在哪一步。")
+        } else {
+            lines.append("4. 这个工作区**没有远端**：不要尝试推送，本地合并完成即可；")
+            lines.append("5. 最后一行给出结果：写「已合并到 \(base)（无远端，未推送）」+ merge 后的短 hash；失败则写清卡在哪一步。")
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -1062,11 +1071,14 @@ final class TasksRunner {
     /// has no branch to publish, or when the workspace has no GitHub remote.
     @discardableResult
     func startQueueIntegration(_ queueID: String) -> Bool {
+        guard let queue = board.queue(queueID) else { return false }
+        // Resolve the queue FIRST so a refusal can always leave its reason on the card.
         guard case .idle = phase else {
             env.log("tasks: a finalize session is already in flight — not starting one for " + queueID)
+            _ = board.setQueuePRError(queueID, "tasks.errPRBusy")
+            persist()
             return false
         }
-        guard let queue = board.queue(queueID) else { return false }
         let mode = board.integration(forQueue: queueID, default: env.defaultIntegration)
         // 「无」是明确的选择，不是失败：什么都不做，也不在队列上记错误。
         if mode == .none {
@@ -1091,7 +1103,8 @@ final class TasksRunner {
                 return false
             }
         }
-        if mode == .merge || mode == .push {
+        if mode == .push {
+            // 「直接推送」必须有地方可推；merge 是本地操作，没远端就只合并、不推送。
             guard env.git.remoteName() != nil else {
                 env.log("tasks: queue " + queueID + " — this workspace has no git remote to push to")
                 _ = board.setQueuePRError(queueID, "tasks.errPRNoRemote")
@@ -1129,7 +1142,8 @@ final class TasksRunner {
         // itself (that is the point), but the commit list saves it from starting with
         // 「what is this branch」.
         let commits = branch.flatMap { _ in env.git.commits(base: base) } ?? []
-        let text = TaskPrompts.integration(mode: mode, queueName: name, branch: branch, base: base, commits: commits)
+        let text = TaskPrompts.integration(mode: mode, queueName: name, branch: branch, base: base,
+                                           commits: commits, hasRemote: env.git.remoteName() != nil)
         guard let sessionId = env.createSession(env.repoRoot) else { return nil }
         let sessionNameKey = mode == .pr ? "tasks.queue.prSessionName" : "tasks.queue.finalizeSessionName"
         _ = env.renameSession(sessionId, L10n.tr(sessionNameKey, name))

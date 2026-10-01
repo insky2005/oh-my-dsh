@@ -261,12 +261,15 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 8. Git 工作流四选一：pr / merge / push / none（无 = 不收尾），**队列级覆盖 + 按工作区的默认**（设置抽屉里配）；
    autoPR 决定「完成后是否自动收尾」（队列配置、**默认关**），手动「发布」按钮同样按解析出的模式执行；
    工作流为「无」时 autoPR 也收尾无动作、发布按钮不出现。
+   **merge 是本地操作**：不需要任何远端，有远端才顺带推送（没有就在提示词里明确「不要尝试推送」）；
+   **push 必须有可推送的远端**；pr 需要 GitHub 远端。
    merge 由**收尾会话**在本地完成（冲突尽量现场解，拿不准就停下请用户介入；base 受保护如实报错）——
    壳层自身**从不**直接 merge / push。
 9. `.done` 是活泳道：追加任务 → `.draft` 并重臂回传；`.paused` 追加保持 `.paused`；追加不自动启动。
 10. `.closed` 是**手动**终态（保留记录，不再接收任务/启动/发布）。
-11. Git 工作流的可选值：pr（要 GitHub 远端）/ merge（要分支 + git 远端）/ push（要分支）/ none（无需任何条件）；
-    工作区推荐只作提示，从不强制（GitHub → pr、普通 git → merge、非 git → 无）。
+11. Git 工作流的可选值：pr（要分支 + GitHub 远端）/ merge（要分支，**不需要远端**）/ push（要分支 + 可推送的远端）
+    / none（无需任何条件）；工作区推荐只作提示，从不强制（GitHub → pr、普通 git → merge、非 git → 无）。
+    面板据此决定发布按钮是否出现（merge 只看分支；push 还要有远端），发布被拒时显示具体原因。
 
 ## 15. Git 工作流（integration）的 UI 与数据
 
@@ -283,4 +286,6 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
   收尾会话的结果（成功摘要首行或失败原因）写在队列卡的 meta 行下方（integrationNote）。
 - `QueueIntegration.recommended(isGit:hasGitHubRemote:)` 是**纯函数**，UI 与测试共用。
 - 解析入口：`TaskBoard.integration(forQueue:default:)`；runner 在 startQueueIntegration 里按模式校验
-  （pr 要 canOpenPR，merge/push 要 git 远端）并生成对应提示词（TaskPrompts.integration）。
+  （pr 要 canOpenPR，push 要 git 远端，merge 只做本地合并）并生成对应提示词（TaskPrompts.integration，
+  merge 的推送步骤按有无远端分支）。发布被拒的原因写在队列上（errPRNoBranch / errPRNoRemote / errPRBusy），
+  面板优先显示它而不是通用文案。

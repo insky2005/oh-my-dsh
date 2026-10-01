@@ -1109,6 +1109,19 @@ do {
                                     prAvailable: false, integration: .pr)
     check(!header.canOpenPR, "pr 模式没有 GitHub 远端就不能发布")
 
+    // merge 没有远端也能发布：本地合并，推送能推则推（不需要 GitHub 远端）。
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: false, integration: .merge, hasRemote: false)
+    check(header.canOpenPR, "merge 连 git 远端都不需要：本地合并不依赖远端")
+
+    // push 必须有一个可推送的远端。
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: false, integration: .push, hasRemote: true)
+    check(header.canOpenPR, "push 有远端就能发布")
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: false, integration: .push, hasRemote: false)
+    check(!header.canOpenPR, "push 没有远端就不给发布按钮")
+
     // 「无」：明确不收尾，即使有分支也不给发布按钮。
     header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
                                     prAvailable: true, integration: .none)

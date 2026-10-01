@@ -1528,6 +1528,39 @@ do {
     check((h1.dsh.prompts[finalizeSession] ?? "").contains("合并"),
           "提示词说的是合并，不是开 PR")
 
+    // 收尾会话还在跑时再点发布：拒绝，并把「忙」这个具体原因写到队列上
+    // （面板过去只会报通用的「开不了 PR」，用户不知道卡在哪）。
+    check(!h1.runner.startQueueIntegration(queue1), "已经有一个收尾会话在跑：拒绝再起一个")
+    eq(h1.board.queue(queue1)?.prError, "tasks.errPRBusy", "原因是「忙」，带具体文案键")
+
+    // merge 没有远端也能收尾：本地合并，推送跳过（用户 2026-10-01）。
+    let (board3, task3, queue3) = singleTaskBoard()
+    var b3 = board3
+    if let i = b3.index(ofQueue: queue3) { b3.queues[i].integration = .merge }
+    let h3 = Harness(board: b3, github: false, gitRepo: true)
+    h3.repo.remote = nil
+    _ = h3.runner.enqueue(taskID: task3, into: queue3)
+    h3.dsh.finishAll()
+    _ = h3.runner.step()
+    eq(h3.runner.openingPRQueueID, queue3, "merge 没有远端也能收尾（本地合并）")
+    let mergeSession = h3.dsh.sessions[1]
+    let mergePrompt = h3.dsh.prompts[mergeSession] ?? ""
+    check(mergePrompt.contains("没有远端"), "提示词说明这个工作区没有远端")
+    check(mergePrompt.contains("不要尝试推送"), "并要求不要推送")
+    check(!mergePrompt.contains("推送到远端"), "不再要求推送到远端")
+
+    // push 没有远端：拒绝，并把原因写在队列上。
+    let (board4, task4, queue4) = singleTaskBoard()
+    var b4 = board4
+    if let i = b4.index(ofQueue: queue4) { b4.queues[i].integration = .push }
+    let h4 = Harness(board: b4, github: false, gitRepo: true)
+    h4.repo.remote = nil
+    _ = h4.runner.enqueue(taskID: task4, into: queue4)
+    h4.dsh.finishAll()
+    _ = h4.runner.step()
+    check(h4.runner.openingPRQueueID == nil, "push 没有远端：拒绝收尾")
+    eq(h4.board.queue(queue4)?.prError, "tasks.errPRNoRemote", "原因是「没有可推送的远端」")
+
     // 「无」：即使 autoPR 开着、工作区能开 PR，也不起收尾会话；这不是失败。
     let (board2, task2, queue2) = singleTaskBoard()
     var b2 = board2

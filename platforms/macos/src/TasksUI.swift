@@ -562,7 +562,8 @@ struct QueueHeaderModel: Equatable {
     /// and the others used to show 活跃 while nothing whatsoever happened in them.
     static func build(_ queue: TaskQueue, board: TaskBoard, collapsed: Bool,
                       prAvailable: Bool = true, isCurrent: Bool = true,
-                      integration: QueueIntegration = .pr) -> QueueHeaderModel {
+                      integration: QueueIntegration = .pr,
+                      hasRemote: Bool = true) -> QueueHeaderModel {
         let tasks = queue.taskIds.compactMap { board.task($0) }
         let doneCount = tasks.filter { $0.state == .done }.count
         let failedCount = tasks.filter { $0.state == .failed }.count
@@ -615,11 +616,12 @@ struct QueueHeaderModel: Equatable {
                                 canClose: queue.state == .done || queue.state == .paused,
                                 // 发布与 autoPR 解耦：只要工作区能承担这种工作流、队列有分支、
                                 // 任务已收尾，就能手动收尾（prUrl 已存在时是「更新」）。pr 需要 GitHub
-                                // 远端；merge/push 只需要能切分支（远端缺失由 runner 给出原因）；
+                                // 远端；merge 只做本地合并，不需要远端；push 必须有一个可推送的远端；
                                 // 「无」是明确的不收尾，没有发布按钮。
                                 canOpenPR: queue.state == .done && queue.branch != nil
                                     && integration != .none
-                                    && (integration != .pr || prAvailable),
+                                    && (integration == .pr ? prAvailable
+                                        : integration == .push ? hasRemote : true),
                                 autoPR: queue.autoPR,
                                 isAutoCreated: queue.autoCreated,
                                 prUrl: queue.prUrl,

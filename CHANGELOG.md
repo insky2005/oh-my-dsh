@@ -45,6 +45,11 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **非 GitHub 的 git 仓库：合并被误判成「开 PR」，且本地仓库根本发不出去（2026-10-01）**：测试一个 git 仓库（没有 GitHub 远端）时，点队列「发布」只看到泛泛的「开不了 PR」，还以为是代码去开 PR 了。两处都修了：
+  - 「合并到基线」是**本地操作**，不再要求任何远端——没远端就只合并、不推送（提示词明确「不要尝试推送」，并让会话报「已合并到 X（无远端，未推送）」）；只有「直接推送」才必须有可推送的远端。merge 的发布按钮在本地仓库也会出现且能用；
+  - 发布被拒时把**具体原因**显示出来（没分支 / 没有可推送的远端 / **已经有一个收尾会话在跑**——后者以前既不写错误也不说明，只报通用文案）；tasks.errPRStart / tasks.errPRNoRemote 改成「发布 / 远端」口径，不再一律说 PR；队列卡的发布 tooltip 也同步刷新。
+  回归：tests/tasks-panel **1363 → 1374** 项（运行器 433→**441** / 视图模型 371→**374**）。
+
 - **切换 dsh 会话卡顿（2026-10-01）**：在 dsh web 里每切一次会话，壳层就对当前工作区**重新 adopt**——`IssueRunnerPanel.adoptWorkspace` 在**主线程**同步 spawn `/usr/bin/git`（`detectGitHubRemote` / `isGitRepo` / `detectDefaultBaseBranch`），而 dsh web 就跑在同一线程的 WKWebView 里，于是切会话瞬间整窗口冻结（app.log 每次切换都有 `tasks: workspace adopted …`，即使路径没变）。现在 `workspaceChanged()` 走纯函数 `TaskWorkspaceRegistry.needsReadopt`：**同一（标准化后）工作区 + 有 runner 直接短路**，不再重探；真正的跨工作区切换照旧，工作区**形状变化**（任务跑了 `git init`）仍由 step 定时器上的 `recheckWorkspaceShape` 负责重建。回归：`tests/tasks-panel` 新增 5 项（同路径/尾斜杠/换路径/无 runner/无路径）。
 
 ### Changed

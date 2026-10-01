@@ -728,7 +728,7 @@ enum L10n {
         "tasks.integration.none": ("无", "None"),
         "tasks.integration.recommend": ("本工作区推荐：%@", "Recommended here: %@"),
         "tasks.integration.recommendedSuffix": ("（推荐）", " (recommended)"),
-        "tasks.queue.mergePush": ("发布：合并到基线并推送", "Publish: merge into the base branch and push"),
+        "tasks.queue.mergePush": ("发布：合并到基线（有远端则一并推送）", "Publish: merge into the base branch (and push when there is a remote)"),
         "tasks.queue.pushOnly": ("发布：直接推送", "Publish: push directly"),
         "tasks.settings.title": ("面板设置", "Panel Settings"),
         // 两段分别对应下面的两个区块（工作流在前、Token 在后）；\n 让标签按段落断行。
@@ -743,9 +743,10 @@ enum L10n {
         "tasks.queue.prSessionName": ("开 PR：%@", "Open PR: %@"),
         "tasks.queue.finalizeSessionName": ("收尾：%@", "Finalize: %@"),
         "tasks.prOpening": ("正在开 PR（队列「%@」）：由单独的会话推送分支、总结改动并创建 PR…", "Opening the PR for %@ — a dedicated session pushes the branch, summarizes the changes and creates it…"),
-        "tasks.errPRStart": ("开不了 PR：这个队列没有分支、当前工作区没有 GitHub 远端，或已经有一个 PR 会话在跑（详见日志）", "Cannot open a PR: the queue has no branch, this workspace has no GitHub remote, or a PR session is already running (see the log)"),
+        "tasks.errPRStart": ("发布失败：这个队列没有分支、当前工作区没有可用的远端，或已经有一个收尾会话在跑（详见日志）", "Cannot publish: the queue has no branch, this workspace has no usable remote, or a finalize session is already running (see the log)"),
+        "tasks.errPRBusy": ("已经有一个收尾会话在跑：等它结束，或先去那个会话把它处理完，再发布", "A finalize session is already running — wait for it to finish, or handle it in that session, then publish again"),
         "tasks.errPRNoBranch": ("这个队列不切分支：没有可以开 PR 的分支（在队列设置里给它一条分支）", "This queue does not switch branches, so there is no branch to open a PR from (give it one in the queue settings)"),
-        "tasks.errPRNoRemote": ("当前工作区不是 GitHub 仓库：没有可以开 PR 的远端", "This workspace is not a GitHub repo: there is no remote to open a PR against"),
+        "tasks.errPRNoRemote": ("当前工作区没有可推送的远端（GitHub 远端才能开 PR）", "This workspace has no remote to push to (a GitHub remote is required to open a PR)"),
         "tasks.errPRSession": ("没能启动开 PR 的会话（dsh 建会话/发提示词失败）——可以点这里再试一次", "Could not start the PR session (session creation or prompt failed) — click here to retry"),
         "tasks.detailReport": ("汇报", "Report"),
         // 卡片上的行标（无障碍描述；图标本身是静默的第三档灰）

@@ -449,8 +449,9 @@ enum QueueIntegration: String, CaseIterable {
     case none
 
     /// The mode a workspace like this usually wants — a UI RECOMMENDATION, never
-    /// enforced: a GitHub remote points at review (pr); another git repo at a local
-    /// merge; a plain directory has nothing to publish at all (none).
+    /// enforced: a GitHub remote points at review (pr); another git repo at a LOCAL
+    /// merge (no remote required — the merge happens in the worktree and the push is
+    /// best-effort); a plain directory has nothing to publish at all → none.
     static func recommended(isGit: Bool, hasGitHubRemote: Bool) -> QueueIntegration {
         if hasGitHubRemote { return .pr }
         if isGit { return .merge }

@@ -135,6 +135,9 @@ final class IssueRunnerPanelController: NSObject {
     /// a queue created in a non-git directory must not be handed a branch it
     /// can never check out (docs/issue-runner-design.md §V2-7).
     private var workspaceIsGit = true
+    /// Whether this workspace has ANY git remote to push to (merge/push publish).
+    /// A local-only repo has none — the honest default there is 「无」.
+    private var workspaceHasRemote = false
     /// The current workspace's own default branch (origin/HEAD → main → master →
     /// current → "main"): the base an issue task's queue is built on, and what the
     /// queue form prefills.
@@ -1098,6 +1101,9 @@ final class IssueRunnerPanelController: NSObject {
         let github = detected.map { $0.owner + "/" + $0.repo } ?? "-"
         workspaceIsGit = Self.isGitRepo(path)
         workspaceDefaultBase = workspaceIsGit ? Self.detectDefaultBaseBranch(path: path) : "main"
+        // Any remote (not only GitHub) counts — push needs somewhere to push to.
+        // Merge does not: it is a local operation.
+        workspaceHasRemote = workspaceIsGit && Self.pushRemoteName(path: path) != nil
         AppLog.shared.log("tasks: workspace adopted at \(path) (github=\(github) git=\(workspaceIsGit ? "yes" : "no") base=\(workspaceDefaultBase))")
         updateLabels()
         if !sameBoard {
@@ -2111,7 +2117,8 @@ final class IssueRunnerPanelController: NSObject {
         let integration = board.integration(forQueue: queue.id, default: workspaceIntegration)
         let model = QueueHeaderModel.build(queue, board: board, collapsed: !isQueueExpanded(queue),
                                            prAvailable: repo != nil, isCurrent: isCurrent,
-                                           integration: integration)
+                                           integration: integration,
+                                           hasRemote: workspaceHasRemote)
         let header = TaskQueueHeaderView(model: model)
         let queueID = queue.id
         header.onToggle = { [weak self] in self?.toggleQueue(queueID) }
@@ -2207,8 +2214,14 @@ final class IssueRunnerPanelController: NSObject {
     private func publishPR(for queue: TaskQueue) {
         guard let runner = runner else { return }
         guard runner.startQueueIntegration(queue.id) else {
-            setStatus(L10n.tr("tasks.errPRStart"), spin: false)
-            autoHideStatus(after: 6)
+            // Say WHY: the runner records the concrete reason on the queue (no branch /
+            // no remote / another finalize session is already running). The generic
+            // 「开不了 PR」 is only the fallback when there is nothing specific.
+            let key = runner.board.queue(queue.id)?.prError ?? "tasks.errPRStart"
+            setStatus(L10n.tr(key), spin: false)
+            autoHideStatus(after: 8)
+            // Re-render so the publish button's tooltip carries the same reason.
+            syncFromBoard()
             return
         }
         setStatus(L10n.tr("tasks.queue.creatingPR", queue.name), spin: true)
