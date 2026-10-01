@@ -139,8 +139,8 @@ struct TaskRunnerEnv {
     /// The workspace's default integration mode (the tasks-panel setting), used for a
     /// queue that has no per-queue override.
     var defaultIntegration: QueueIntegration = .pr
-    /// 发布成功后自动关闭队列 (a panel-level switch): when true, a queue whose finalize
-    /// session publishes successfully is moved to .closed. Off by default so nothing
+    /// 交付成功后自动关闭队列 (a panel-level switch): when true, a queue whose delivery
+    /// session succeeds is moved to .closed. Off by default so nothing
     /// closes a queue behind the user's back.
     var autoCloseOnPublish: Bool = false
     /// Whether this workspace is a git repository at all. A queue created where it
@@ -306,7 +306,7 @@ enum TaskPrompts {
         "改完自查：代码类改动跑相关测试并确保通过；文档 / 配置类做能做的校验（命令能跑通、路径与链接存在、示例可执行），确实没有可跑的就说明「本次没有可跑的测试」；"
 
     static let reportRequirement =
-        "**必须**在结束时汇报：改了什么、怎么验证的、结果如何（没做完或失败也要说清楚，不要沉默收尾）——这段文字会写回任务卡片，队列里后面的任务也会看到它；"
+        "**必须**在结束时汇报：改了什么、怎么验证的、结果如何（没做完或失败也要说清楚，不要沉默结束）——这段文字会写回任务卡片，队列里后面的任务也会看到它；"
 
     /// The issue task's prompt: the issue itself, then **the same requirements a
     /// manual task gets**.
@@ -463,7 +463,7 @@ enum TaskPrompts {
         }
         lines.append("")
         // 与手里任务的 `## 队列信息` 同一套字段（队列 → 分支/基线 → 提交）：这条会话
-        // 要发布的就是那个队列的那条分支，抬头与字段一致，两边读起来是一回事。
+        // 要交付的就是那个队列的那条分支，抬头与字段一致，两边读起来是一回事。
         lines.append("## 队列信息")
         if let queueName = queueName, !queueName.isEmpty { lines.append("队列：\(queueName)") }
         lines.append("分支：\(branch)（基于 \(base)）")
@@ -477,12 +477,12 @@ enum TaskPrompts {
         lines.append("2. 把分支 push 到远端（远端名优先 github，其次 origin；分支还没推送过就 -u 推送）；")
         lines.append("3. 用 GitHub token 开 PR：token 在 $DSH_HOME/oh-my-dsh/tokens/<owner>-<repo> 或 $DSH_HOME/oh-my-dsh/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；base = \(base)，head = \(branch)；GitHub 上已经有同一个 head 的 PR 就复用它，不要重复创建；")
         lines.append("4. PR 标题与正文由你**按实际改动**写：标题一句话说清这次合并做了什么，正文分条列出改动要点、怎么验证的、需要注意的地方；不要只写队列名，也不要套模板；")
-        lines.append("5. 这个会话不要改任何代码：只做发布；")
-        lines.append("6. **必须**在最后一行给出 PR 的完整链接（https://github.com/<owner>/<repo>/pull/<编号>）；真开不出来就说清楚卡在哪一步（权限 / 网络 / token / 分支状态），不要沉默收尾。")
+        lines.append("5. 这个会话不要改任何代码：只做交付；")
+        lines.append("6. **必须**在最后一行给出 PR 的完整链接（https://github.com/<owner>/<repo>/pull/<编号>）；真开不出来就说清楚卡在哪一步（权限 / 网络 / token / 分支状态），不要沉默结束。")
         return lines.joined(separator: "\n")
     }
 
-    /// 收尾会话的提示词：队列干完的活**怎么落地**。三种模式由队列 / 全局默认选择，
+    /// 交付会话的提示词：队列干完的活**怎么交付**。三种模式由队列 / 全局默认选择，
     /// 会话负责执行（凭据与判断都在它这边），壳层只记录它汇报的结果。
     static func integration(mode: QueueIntegration, queueName: String?, branch: String?, base: String,
                             commits: [String], hasRemote: Bool = true,
@@ -498,17 +498,17 @@ enum TaskPrompts {
             text = pushOnly(queueName: queueName, branch: branch, base: base)
         case .none:
             // Unreachable: startQueueIntegration refuses .none before a session exists.
-            text = "队列「\(queueName ?? branch ?? "")」的工作流是「无」——不需要任何收尾动作。"
+            text = "队列「\(queueName ?? branch ?? "")」的工作流是「无」——不需要任何交付动作。"
         }
         // A reused ORIGINATING session is a real conversation: require this marker so
         // the shell adopts only OUR turn's report.
         guard let marker = marker else { return text }
-        return text + "\n\n最后**单独一行**原样输出完成标记（供壳层确认本次收尾结束）：" + marker
+        return text + "\n\n最后**单独一行**原样输出完成标记（供壳层确认本次交付结束）：" + marker
     }
 
     /// 本地合并进 base（有远端才推送）。冲突尽量现场解；超出确定范围就停下请用户介入；
     /// base 被保护时如实报错（用户自己处理，比如改仓库设置或改用 PR）。
-    /// hasRemote == false：只做本地合并，明确不推送——本地仓库也能收尾。
+    /// hasRemote == false：只做本地合并，明确不推送——本地仓库也能交付。
     static func mergeAndPush(queueName: String?, branch: String, base: String, commits: [String],
                              hasRemote: Bool = true) -> String {
         var lines: [String] = []
@@ -666,7 +666,7 @@ final class TasksRunner {
     /// rebuilt — a rebuild would drop the current phase (and a running task).
     func setDefaultIntegration(_ mode: QueueIntegration) { env.defaultIntegration = mode }
 
-    /// 发布成功后自动关闭队列 can change while this board is loaded (the same drawer
+    /// 交付成功后自动关闭队列 can change while this board is loaded (the same drawer
     /// as the workflow default), so the runner is told here.
     func setAutoCloseOnPublish(_ on: Bool) { env.autoCloseOnPublish = on }
 
@@ -1020,10 +1020,10 @@ final class TasksRunner {
             id != active.taskID && (board.task(id)?.state == .queued || board.task(id)?.state == .running)
         } ?? false
         // LANDING POLICY: a task session ONLY COMMITS. Pushing / merging / opening a
-        // PR is a job of its own, done by a dedicated 收尾会话 once the queue is done
+        // Delivery is a job of its own, done by a dedicated 交付会话 once the queue is done
         // (startQueueIntegration) — which is why nothing here asks the agent to push,
         // checks whether it did, or talks to the GitHub API at all.
-        // 工作流「无」= 明确不收尾，所以即使 autoPR 开着也不起收尾会话。
+        // 工作流「无」= 明确不交付，所以即使 autoPR 开着也不起交付会话。
         let resolvedMode = active.queueID.map {
             board.integration(forQueue: $0, default: env.defaultIntegration)
         }
@@ -1102,7 +1102,7 @@ final class TasksRunner {
         let mode = board.integration(forQueue: queueID, default: env.defaultIntegration)
         // 「无」是明确的选择，不是失败：什么都不做，也不在队列上记错误。
         if mode == .none {
-            env.log("tasks: queue " + queueID + " 的工作流是「无」——不收尾")
+            env.log("tasks: queue " + queueID + " 的工作流是「无」——不交付")
             return false
         }
         // Mode-specific requirements: refuse with a reason on the queue rather than
@@ -1186,8 +1186,8 @@ final class TasksRunner {
         let text = TaskPrompts.integration(mode: mode, queueName: name, branch: branch, base: base,
                                            commits: commits, hasRemote: hasRemote)
         guard let sessionId = env.createSession(env.repoRoot) else { return nil }
-        let sessionNameKey = mode == .pr ? "tasks.queue.prSessionName" : "tasks.queue.finalizeSessionName"
-        _ = env.renameSession(sessionId, L10n.tr(sessionNameKey, name))
+        // 交付会话的名字：三种工作流统一叫「交付：<队列名>」（具体动作由提示词说）。
+        _ = env.renameSession(sessionId, L10n.tr("tasks.queue.finalizeSessionName", name))
         guard env.promptSession(sessionId, text) else {
             _ = env.cancelSession(sessionId)
             return nil
@@ -1342,7 +1342,7 @@ final class TasksRunner {
                     + (note ?? "(no report)"))
             published = Self.finalizeSucceeded(mode: run.mode, report: full)
         }
-        // 发布成功后自动关闭队列 (the panel setting): close only after a publish the shell
+        // 交付成功后自动关闭队列 (the panel setting): close only after a delivery the shell
         // can actually see succeeded, and only while the queue is still .done.
         if published { autoCloseAfterPublish(run.queueID) }
         persist()
@@ -1364,7 +1364,7 @@ final class TasksRunner {
         }
     }
 
-    /// 发布成功后自动关闭队列: close the queue a finalize session just published — but
+    /// 交付成功后自动关闭队列: close the queue a delivery session just delivered — but
     /// ONLY when it is .done. A paused queue still holds a failed task, and closing it
     /// would hide the failure behind a neutral 「已关闭」 badge.
     private func autoCloseAfterPublish(_ queueID: String) {

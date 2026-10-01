@@ -745,7 +745,7 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         integrationBlock.spacing = 4
         integrationBlock.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(integrationBlock)
-        // 自动收尾 switch + its 不可用 note on ONE line: the note already said what
+        // 自动交付 switch + its 不可用 note on ONE line: the note already said what
         // the integration picker now says for a non-GitHub workspace, so a whole
         // stacked row for it cost height the expanded form does not have.
         prNote.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -863,7 +863,7 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
 /// 决策（2026-10-01）：工作流默认是**按工作区**的，与 GitHub token 合并进同一个抽屉
 /// （不是两个入口）。需要「全局一份」的话，那属于壳层设置，不属于这个面板。
 ///
-///   1. 本工作区的工作流默认值（队列没有自己的覆盖时用它收尾）
+///   1. 本工作区的工作流默认值（队列没有自己的覆盖时用它交付）
 ///   2. GitHub token（按仓库文件 / 通用兜底，只写文件、chmod 600）
 ///
 /// Pure, so the form tests can drive it headlessly (like QueueComposerModel).
@@ -878,8 +878,8 @@ struct TaskSettingsModel: Equatable {
     var gitAvailable: Bool = true
     /// Whether the workspace has any remote to push to (直接推送 needs one).
     var remoteAvailable: Bool = true
-    /// 发布成功后自动关闭队列（面板级开关，默认关）。Whether a queue is closed
-    /// automatically once its finalize session publishes successfully.
+    /// 交付成功后自动关闭队列（面板级开关，默认关）。Whether a queue is closed
+    /// automatically once its delivery session succeeds.
     var autoCloseOnPublish: Bool = false
 }
 
@@ -908,7 +908,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     /// marked) is the point of a settings default.
     let integrationRadios: [NSButton]
     let integrationNote = TaskFormKit.hintLabel(.secondaryLabelColor)
-    /// 发布成功后自动关闭队列 —— a checkbox with its explanation shown in full
+    /// 交付成功后自动关闭队列 —— a checkbox with its explanation shown in full
     /// underneath (the drawer grew for it, see the form test's height budget).
     let autoCloseCheck: NSButton
     /// Internal for the headless form tests (they check the full-wrapping setup).
@@ -1108,7 +1108,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         apply(currentDraft)
     }
 
-    /// 发布成功后自动关闭队列 was toggled — re-apply so the model (and submit)
+    /// 交付成功后自动关闭队列 was toggled — re-apply so the model (and submit)
     /// sees the choice.
     @objc func autoCloseTapped() { apply(currentDraft) }
 

@@ -639,7 +639,7 @@ enum L10n {
         "tasks.card.runningFor": ("已运行 %@（上限 %d 分钟，到点会取消会话）", "Running for %@ (limit %d min — the session is cancelled at the deadline)"),
         "tasks.queue.state.waiting": ("等待中", "Waiting"),
         "tasks.cancelDeferred": ("任务正在启动，已记住取消：会话一建好就取消", "The task is still starting — the cancel is queued and applied as soon as its session exists"),
-        "tasks.cancelFinishing": ("任务已经在收尾（推送 / 开 PR），没有可取消的东西了", "The task is already finishing (push / PR) — there is nothing left to cancel"),
+        "tasks.cancelFinishing": ("任务已经在交付（推送 / 开 PR），没有可取消的东西了", "The task is already being delivered (push / PR) — there is nothing left to cancel"),
         "tasks.detailRetryNoBranch": ("不切分支并重试", "Retry without a branch"),
         "tasks.detailCancelTask": ("取消任务", "Cancel Task"),
         "tasks.detailCommentClose": ("评论并关闭 Issue", "Comment & Close Issue"),
@@ -676,7 +676,7 @@ enum L10n {
         "tasks.help.queue.heading": ("队列", "Queues"),
         "tasks.help.queue.body": ("任务加入队列后按顺序执行；队列完成后可再追加任务（回到待启动）；「处理」会给每个待办各建一个队列依次跑。", "Tasks in a queue run in order; append more after it finishes (it returns to draft); Process builds one queue per pending task and runs them in turn."),
         "tasks.help.workflow.heading": ("Git 工作流", "Git workflow"),
-        "tasks.help.workflow.body": ("齿轮里按工作区设默认（无 / 直接推送 / 合并到基线 / Pull Request，跑不了的会灰掉），队列可单独覆盖；它决定「发布」把代码送出去的方式，非 git 项目选「无」。", "Set a per-workspace default in the gear (None / Push directly / Merge into base / Pull request — the ones that cannot run are greyed out); a queue can override it. It decides what Publish does — pick None for a non-git project."),
+        "tasks.help.workflow.body": ("齿轮里按工作区设默认（无 / 直接推送 / 合并到基线 / Pull Request，跑不了的会灰掉），队列可单独覆盖；它决定「交付」把代码送出去的方式，非 git 项目选「无」。", "Set a per-workspace default in the gear (None / Push directly / Merge into base / Pull request — the ones that cannot run are greyed out); a queue can override it. It decides what Deliver does — pick None for a non-git project."),
         "tasks.help.session.heading": ("会话回传", "Report back"),
         "tasks.help.session.body": ("由会话建的队列（名字后带 ↺）完成时，会把每条任务的汇报回传那个会话，你在同一会话里验收、再追加。", "A queue created from a session (marked ↺) reports every task's result back there, so you review and append in the same conversation."),
         "tasks.queue.new": ("新建队列…", "New Queue…"),
@@ -694,7 +694,7 @@ enum L10n {
         "tasks.queue.notGitRepo": ("当前目录不是 git 仓库：队列不会切分支（任务照常运行）", "Not a git repository: this queue will not switch branches (tasks still run)"),
         "tasks.queue.branchSkipped": ("队列不会切分支：任务在当前分支 / 目录上运行", "The queue will not switch branches — tasks run where they are now"),
         "tasks.queue.base": ("基于分支", "Base branch"),
-        "tasks.queue.createPR": ("完成后自动收尾（按 Git 工作流）", "Finalize automatically when the queue finishes (per Git workflow)"),
+        "tasks.queue.createPR": ("完成后自动交付（按 Git 工作流）", "Deliver automatically when the queue finishes (per Git workflow)"),
         "tasks.queue.autoPR": ("完成后自动创建 PR", "Open a PR when finished"),
         "tasks.queue.autoPROn": ("完成后自动开 PR：已开启（点一下关闭）", "Open a PR when the queue finishes: ON (click to turn off)"),
         "tasks.queue.autoPROff": ("完成后自动开 PR：已关闭（点一下开启）", "Open a PR when the queue finishes: OFF (click to turn on)"),
@@ -714,7 +714,7 @@ enum L10n {
         "tasks.gitAppeared": ("这个目录现在是 git 仓库 —— 已重新识别工作区：新队列可以使用分支", "This directory is a git repository now — workspace re-detected: new queues can use a branch"),
         "tasks.remoteAppeared": ("这个工作区现在有 GitHub 远端 —— 已重新识别：PR 相关功能已启用", "This workspace has a GitHub remote now — re-detected: the PR features are available"),
         "tasks.queue.pause": ("暂停", "Pause"),
-        "tasks.queue.openPR": ("发布：推送分支并开 / 更新 PR", "Publish: push the branch and open/update the PR"),
+        "tasks.queue.openPR": ("交付：推送分支并开 / 更新 PR", "Deliver: push the branch and open/update the PR"),
         // 工作流（Git workflow：pr / merge / push）—— 用户可见名称集中在 tasks.integration.*，
         // 改名只动这里；枚举 rawValue 与代码标识仍是 integration（API 词汇）。
         "tasks.integration.label": ("Git 工作流", "Git workflow"),
@@ -724,7 +724,7 @@ enum L10n {
         "tasks.integration.pr": ("Pull Request", "Pull request"),
         "tasks.integration.merge": ("合并到基线", "Merge into base"),
         "tasks.integration.push": ("直接推送", "Push directly"),
-        // 「无」：不是 git 仓库的项目（或不想让它碰远端）选这个，收尾什么都不做。
+        // 「无」：不是 git 仓库的项目（或不想让它碰远端）选这个，交付什么都不做。
         "tasks.integration.none": ("无", "None"),
         "tasks.integration.recommend": ("本工作区推荐：%@", "Recommended here: %@"),
         "tasks.integration.recommendedSuffix": ("（推荐）", " (recommended)"),
@@ -732,37 +732,37 @@ enum L10n {
         "tasks.integration.unavailablePr": ("当前工作区没有 GitHub 远端，不能开 PR", "No GitHub remote here, so a PR cannot be opened"),
         "tasks.integration.unavailableMerge": ("当前工作区不是 git 仓库，不能合并", "Not a git repository here, so nothing can be merged"),
         "tasks.integration.unavailablePush": ("当前工作区没有可推送的远端", "No remote to push to here"),
-        "tasks.queue.mergePush": ("发布：合并到基线（有远端则一并推送）", "Publish: merge into the base branch (and push when there is a remote)"),
-        "tasks.queue.pushOnly": ("发布：直接推送", "Publish: push directly"),
+        "tasks.queue.mergePush": ("交付：合并到基线（有远端则一并推送）", "Deliver: merge into the base branch (and push when there is a remote)"),
+        "tasks.queue.pushOnly": ("交付：直接推送", "Deliver: push directly"),
         "tasks.settings.title": ("面板设置", "Panel Settings"),
         // 两段对应下面的工作流 / Token 区块（自动关闭的说明在开关自己的 tooltip）；\n 让标签按段落断行。
-        "tasks.settings.info": ("Git 工作流，决定队列收尾时用哪种 Git 方式把代码送进远端（不是 git 仓库可选「无」）。\nGitHub Token，让面板能拉取 issues、创建 PR、评论关闭 issue。", "The Git workflow decides how a finished queue puts its code on the remote (pick None for a non-git project).\nA GitHub token lets the panel fetch issues, open PRs, and comment on & close them."),
-        "tasks.settings.hint": ("面板设置：Git 工作流、发布后自动关闭与 GitHub Token", "Panel settings: Git workflow, auto-close after publishing and GitHub token"),
+        "tasks.settings.info": ("Git 工作流，决定队列交付时用哪种 Git 方式把代码送进远端（不是 git 仓库可选「无」）。\nGitHub Token，让面板能拉取 issues、创建 PR、评论关闭 issue。", "The Git workflow decides how a finished queue delivers its code to the remote (pick None for a non-git project).\nA GitHub token lets the panel fetch issues, open PRs, and comment on & close them."),
+        "tasks.settings.hint": ("面板设置：Git 工作流、交付后自动关闭与 GitHub Token", "Panel settings: Git workflow, auto-close after delivery and GitHub token"),
         "tasks.settings.saved": ("设置已保存", "Settings saved"),
-        // 发布成功后自动关闭：开启后，队列的收尾会话成功发布（PR / 合并 / 推送）时，
+        // 交付成功后自动关闭：开启后，队列的交付会话成功交付（PR / 合并 / 推送）时，
         // 队列自动进入「已关闭」（仍保留任务 / 分支 / PR 记录）。
-        "tasks.settings.autoClose": ("发布成功后自动关闭队列", "Auto-close the queue after publishing"),
-        "tasks.settings.autoCloseHint": ("开启后，队列的收尾会话成功发布（PR / 合并 / 推送）时，队列自动进入「已关闭」：不再接收任务，也不能启动或发布，但保留任务、分支与 PR 记录。", "When on, a queue closes itself once its finalize session publishes successfully (PR / merge / push): it accepts no more tasks and cannot be started or published, but keeps its tasks, branch and PR record."),
+        "tasks.settings.autoClose": ("交付成功后自动关闭队列", "Auto-close the queue after delivery"),
+        "tasks.settings.autoCloseHint": ("开启后，队列的交付会话成功交付（PR / 合并 / 推送）时，队列自动进入「已关闭」：不再接收任务，也不能启动或交付，但保留任务、分支与 PR 记录。", "When on, a queue closes itself once its delivery session delivers successfully (PR / merge / push): it accepts no more tasks and cannot be started or delivered, but keeps its tasks, branch and PR record."),
         "tasks.queue.close": ("关闭队列", "Close Queue"),
         "tasks.closeQueueTitle": ("关闭队列「%@」？", "Close queue %@?"),
-        "tasks.closeQueueInfo": ("关闭后仍保留任务、分支与 PR 记录，但不再接收任务，也不能启动或发布。", "Closing keeps the task, branch and PR record, but the queue accepts no more tasks and cannot be started or published."),
+        "tasks.closeQueueInfo": ("关闭后仍保留任务、分支与 PR 记录，但不再接收任务，也不能启动或交付。", "Closing keeps the task, branch and PR record, but the queue accepts no more tasks and cannot be started or delivered."),
         "tasks.queue.closeRefused": ("队列里有任务在运行：先取消它，再关闭队列", "A task in this queue is running — cancel it first, then close the queue"),
         // PR 会话（§V2-6）：任务只 commit，push 与开 PR 由队列结束后单独一个会话负责
-        "tasks.queue.prSessionName": ("开 PR：%@", "Open PR: %@"),
-        "tasks.queue.finalizeSessionName": ("收尾：%@", "Finalize: %@"),
-        "tasks.prOpening": ("正在开 PR（队列「%@」）：由单独的会话推送分支、总结改动并创建 PR…", "Opening the PR for %@ — a dedicated session pushes the branch, summarizes the changes and creates it…"),
-        "tasks.errPRStart": ("发布失败：这个队列没有分支、当前工作区没有可用的远端，或已经有一个收尾会话在跑（详见日志）", "Cannot publish: the queue has no branch, this workspace has no usable remote, or a finalize session is already running (see the log)"),
-        "tasks.errPRBusy": ("已经有一个收尾会话在跑：等它结束，或先去那个会话把它处理完，再发布", "A finalize session is already running — wait for it to finish, or handle it in that session, then publish again"),
+        // 交付会话的名字：三种工作流统一叫「交付：<队列名>」——具体动作由按钮 tooltip 与状态行说。
+        "tasks.queue.finalizeSessionName": ("交付：%@", "Deliver: %@"),
+        "tasks.prOpening": ("正在交付（队列「%@」）：交付会话推送分支、总结改动并创建 PR…", "Delivering %@ — the delivery session pushes the branch, summarizes the changes and creates the PR…"),
+        "tasks.errPRStart": ("交付失败：这个队列没有分支、当前工作区没有可用的远端，或已经有一个交付会话在跑（详见日志）", "Cannot deliver: the queue has no branch, this workspace has no usable remote, or a delivery session is already running (see the log)"),
+        "tasks.errPRBusy": ("已经有一个交付会话在跑：等它结束，或先去那个会话把它处理完，再交付", "A delivery session is already running — wait for it to finish, or handle it in that session, then deliver again"),
         "tasks.errPRNoBranch": ("这个队列不切分支：没有可以开 PR 的分支（在队列设置里给它一条分支）", "This queue does not switch branches, so there is no branch to open a PR from (give it one in the queue settings)"),
         "tasks.errPRNoRemote": ("当前工作区没有可推送的远端（GitHub 远端才能开 PR）", "This workspace has no remote to push to (a GitHub remote is required to open a PR)"),
-        "tasks.errPRSession": ("没能启动开 PR 的会话（dsh 建会话/发提示词失败）——可以点这里再试一次", "Could not start the PR session (session creation or prompt failed) — click here to retry"),
+        "tasks.errPRSession": ("没能启动交付会话（dsh 建会话/发提示词失败）——可以点这里再试一次", "Could not start the delivery session (session creation or prompt failed) — click here to retry"),
         "tasks.detailReport": ("汇报", "Report"),
         // 卡片上的行标（无障碍描述；图标本身是静默的第三档灰）
         "tasks.glyph.task": ("任务", "Task"),
         "tasks.glyph.queue": ("队列", "Queue"),
-        "tasks.queue.settings": ("队列设置：重命名 / 分支 / 基于分支 / Git 工作流 / 自动收尾", "Queue settings: name, branch, base branch, Git workflow, auto-finalize"),
+        "tasks.queue.settings": ("队列设置：重命名 / 分支 / 基于分支 / Git 工作流 / 自动交付", "Queue settings: name, branch, base branch, Git workflow, auto-deliver"),
         "tasks.queue.editTitle": ("队列设置", "Queue Settings"),
-        "tasks.queue.editInfo": ("队列名、分支、基于分支、Git 工作流与自动收尾；队内任务按顺序共用这一条分支。", "Name, branch, base branch, Git workflow and auto-finalize; every task in the queue shares this one branch."),
+        "tasks.queue.editInfo": ("队列名、分支、基于分支、Git 工作流与自动交付；队内任务按顺序共用这一条分支。", "Name, branch, base branch, Git workflow and auto-deliver; every task in the queue shares this one branch."),
         "tasks.queue.nameHint": ("例如：深色模式改造", "e.g. Dark mode rework"),
         "tasks.queue.branchWillUse": ("将使用分支：%@", "Branch: %@"),
         "tasks.queue.prUnavailable": ("当前工作区不是 GitHub 仓库：队列只切分支 + 推送，不创建 PR", "Not a GitHub repo: the queue only switches branch and pushes — there is no PR to open"),
@@ -782,10 +782,10 @@ enum L10n {
         "tasks.queue.failedCount": ("%d 个失败", "%d failed"),
         // PR 的标题与正文不再由壳层套模板：开 PR 的会话读完真实 diff 之后自己写
         // （§V2-6），所以这两条旧文案随 REST createPR 一起删掉。
-        // 收尾会话运行时的状态行，按工作流分（不再一律说「开 PR」）。
-        "tasks.queue.merging": ("正在合并到基线（队列「%@」）：由单独的收尾会话在本地合并，有远端则一并推送…", "Merging into the base for %@ — a dedicated session merges locally and pushes when there is a remote…"),
-        "tasks.queue.pushing": ("正在推送（队列「%@」）：由单独的收尾会话直接推送…", "Pushing %@ — a dedicated session pushes the branch directly…"),
-        // 队列卡上的收尾结果默认只显示第一行，可展开看全文。
+        // 交付会话运行时的状态行，按工作流分（不再一律说「开 PR」）。
+        "tasks.queue.merging": ("正在合并到基线（队列「%@」）：由交付会话在本地合并，有远端则一并推送…", "Merging into the base for %@ — the delivery session merges locally and pushes when there is a remote…"),
+        "tasks.queue.pushing": ("正在推送（队列「%@」）：由交付会话直接推送…", "Pushing %@ — the delivery session pushes the branch directly…"),
+        // 队列卡上的交付结果默认只显示第一行，可展开看全文。
         "tasks.queue.note.expand": ("展开", "More"),
         "tasks.queue.note.collapse": ("收起", "Less"),
         "tasks.new.title": ("新建任务", "New Task"),

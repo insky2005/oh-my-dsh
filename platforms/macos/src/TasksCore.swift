@@ -101,7 +101,7 @@ enum TaskState: String {
 ///   restarted) — the user CONTINUES rather than starts;
 /// - done: every current task finished. **Not a record**: the lane is still open —
 ///   appending a task moves it back to .draft (and re-arms the completion report),
-///   and 发布/关闭 stay available;
+///   and 交付/关闭 stay available;
 /// - closed: the user's MANUAL terminal state. The lane keeps its record (tasks,
 ///   branch, PR) but accepts nothing more: no start, no append, no publish.
 ///
@@ -434,7 +434,7 @@ struct QueueChoice: Equatable {
 // MARK: - Queue
 
 /// How a queue's finished work LANDS. Chosen per queue, or by the workspace default
-/// in the tasks-panel settings; always performed by the finalize session (never by
+/// in the tasks-panel settings; always performed by the delivery session (never by
 /// the shell directly — pushing / merging needs credentials and judgement).
 enum QueueIntegration: String, CaseIterable {
     /// Push the queue's branch and open/update its pull request; review and merge
@@ -444,7 +444,7 @@ enum QueueIntegration: String, CaseIterable {
     case merge
     /// Push the current branch itself (develop-on-main workflows).
     case push
-    /// 不收尾：队列跑完就结束，代码留在原地，由用户自己处理。非 git 目录的默认，
+    /// 不交付：队列跑完就结束，代码留在原地，由用户自己处理。非 git 目录的默认，
     /// 也是「别让它自动碰远端」的明确选择。
     case none
 

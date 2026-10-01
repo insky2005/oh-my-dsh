@@ -151,7 +151,7 @@ final class IssueRunnerPanelController: NSObject {
     /// id -> open? Defaults differ per kind: user queues start open (they hold
     /// the work), issue tasks' auto queues start as one compact line.
     private var queueToggle: [String: Bool] = [:]
-    /// Queues whose 收尾结果 is expanded to the full report (per queue, panel state).
+    /// Queues whose 交付结果 is expanded to the full report (per queue, panel state).
     private var expandedQueueNotes: Set<String> = []
     private var sourceFilter: SourceFilter = .all
     /// Which form the sheet is currently showing (nil = no form). Creating or
@@ -852,7 +852,7 @@ final class IssueRunnerPanelController: NSObject {
             // 队列没写自己的 integration 时用它（面板设置里可改；**按工作区**存）。
             defaultIntegration: Self.resolvedIntegration(forWorkspace: repoRoot, isGit: isGit,
                                                          hasGitHubRemote: repo != nil),
-            // 发布成功后自动关闭队列（面板级开关；**全局**存）。
+            // 交付成功后自动关闭队列（面板级开关；**全局**存）。
             autoCloseOnPublish: Self.storedAutoCloseOnPublish(),
             canSwitchBranches: isGit,
             canOpenPR: { repo != nil },
@@ -1264,7 +1264,7 @@ final class IssueRunnerPanelController: NSObject {
                                         hasGitHubRemote: repo != nil)
     }
 
-    /// 发布成功后自动关闭队列 —— a PANEL-level switch (not per workspace): the user
+    /// 交付成功后自动关闭队列 —— a PANEL-level switch (not per workspace): the user
     /// asked for one switch in 面板设置. Stored in the shell config (false until set).
     private static let autoCloseOnPublishKey = "tasksAutoCloseOnPublish"
 
@@ -1868,7 +1868,7 @@ final class IssueRunnerPanelController: NSObject {
             Self.setStoredIntegration(settings.defaultIntegration, forWorkspace: path)
             runner?.setDefaultIntegration(settings.defaultIntegration)
         }
-        // PANEL-LEVEL: 发布成功后自动关闭队列 —— saved globally (not per workspace) and
+        // PANEL-LEVEL: 交付成功后自动关闭队列 —— saved globally (not per workspace) and
         // pushed to the live runner so the next finalize honours it.
         Self.setStoredAutoCloseOnPublish(settings.autoCloseOnPublish)
         runner?.setAutoCloseOnPublish(settings.autoCloseOnPublish)
@@ -2289,7 +2289,7 @@ final class IssueRunnerPanelController: NSObject {
         }
     }
 
-    /// 打开已有 PR 的链接 —— 与「发布」分开：PR 已存在时仍要能再次发布去更新它。
+    /// 打开已有 PR 的链接 —— 与「交付」分开：PR 已存在时仍要能再次交付去更新它。
     private func openPRURL(_ queue: TaskQueue) {
         guard let url = queue.prUrl, let link = URL(string: url) else { return }
         NSWorkspace.shared.open(link)

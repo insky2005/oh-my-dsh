@@ -577,16 +577,16 @@ final class TaskQueueHeaderView: NSView {
     var onToggle: (() -> Void)?
     var onStart: (() -> Void)?
     var onPause: (() -> Void)?
-    /// 发布：push 分支 + 开/更新 PR（独立的发布会话）。
+    /// 交付：push 分支 + 开/更新 PR（独立的交付会话）。
     var onOpenPR: (() -> Void)?
-    /// 打开已有 PR 的链接（与「发布」分开：PR 已存在时仍要能再次发布以更新它）。
+    /// 打开已有 PR 的链接（与「交付」分开：PR 已存在时仍要能再次交付以更新它）。
     var onOpenPRLink: (() -> Void)?
     var onSettings: (() -> Void)?
     var onTogglePR: (() -> Void)?
     var onDelete: (() -> Void)?
     /// 关闭队列（手动终态，保留记录）。
     var onClose: (() -> Void)?
-    /// 展开 / 收起收尾结果（会话回写的那段文字）。
+    /// 展开 / 收起交付结果（会话回写的那段文字）。
     var onToggleNote: (() -> Void)?
 
     init(model: QueueHeaderModel) {
@@ -649,9 +649,9 @@ final class TaskQueueHeaderView: NSView {
             trailing.append(iconButton("play.fill", tooltipKey: model.startHintKey,
                                        action: #selector(startTapped)))
         }
-        // 打开 PR 排在**最后**（用户 2026-09-27：它是这一行的收尾动作，不是夹在中间的
+        // 打开 PR 排在**最后**（用户 2026-09-27：它是这一行的交付动作，不是夹在中间的
         // 一枚）。图标与 PR 链接互斥（有链接就说明 PR 已经在了），但都给同一件事留位置，
-        // 所以两者都在收尾处追加 —— 见下面 trailing.append(prControl)。
+        // 所以两者都在交付处追加 —— 见下面 trailing.append(prControl)。
         // 自动开 PR / 队列设置 / 删除队列 were hidden behind a ⋯ menu; they are
         // their own icon buttons now (the audit panel's blocks have no overflow
         // menu either — every action is on the row). The PR toggle keeps its state
@@ -667,7 +667,7 @@ final class TaskQueueHeaderView: NSView {
             toggle.isEnabled = model.autoPREnabled
             trailing.append(toggle)
         }
-        // 已完成不再是「记录」：设置/删除/发布/关闭都还在（见 QueueHeaderModel.canEdit）。
+        // 已完成不再是「记录」：设置/删除/交付/关闭都还在（见 QueueHeaderModel.canEdit）。
         if model.canEdit {
             trailing.append(iconButton("gearshape", tooltipKey: "tasks.queue.settings",
                                        action: #selector(settingsTapped)))
@@ -676,13 +676,13 @@ final class TaskQueueHeaderView: NSView {
             trailing.append(iconButton("trash", tooltipKey: "tasks.queue.delete",
                                        action: #selector(deleteTapped)))
         }
-        // 发布排在关闭之前（用户 2026-10-01）：先看到「把活送出去」，再是「结束这条泳道」。
+        // 交付排在关闭之前（用户 2026-10-01）：先看到「把活送出去」，再是「结束这条泳道」。
         if let prControl = openPRControl() { trailing.append(prControl) }
         if model.canClose {
             trailing.append(iconButton("archivebox", tooltipKey: "tasks.queue.close",
                                        action: #selector(closeTapped)))
         }
-        // PR 链接 —— 仍在最右：它是「已经发布过」的快捷入口。
+        // PR 链接 —— 仍在最右：它是「已经交付过」的快捷入口。
         if let link = prLinkControl() { trailing.append(link) }
 
         let spacer = NSView()
@@ -746,13 +746,13 @@ final class TaskQueueHeaderView: NSView {
         } else {
             rows.append(metaRow)
         }
-        // The last finalize session's outcome (its report's first line, or the
+        // The last delivery session's outcome (its report's first line, or the
         // failure reason) — on the card, not only in the log. A failure is worth the
         // extra line even when the queue is collapsed; a success summary is not.
         if !model.isCollapsed, let noteRow = noteRow() {
             rows.append(noteRow)
         }
-        // Why the last publish did not even start (no branch / no remote / busy).
+        // Why the last delivery did not even start (no branch / no remote / busy).
         if let key = model.prErrorKey {
             rows.append(errorRow(L10n.tr(key)))
         }
@@ -775,7 +775,7 @@ final class TaskQueueHeaderView: NSView {
         bar.widthAnchor.constraint(equalToConstant: 72).isActive = true
     }
 
-    /// What the last finalize session reported, under the meta row. Collapsed: its
+    /// What the last delivery session reported, under the meta row. Collapsed: its
     /// first line, truncated. Expanded: the whole report, wrapped. A 展开/收起 link
     /// appears when there is more to read (user 2026-10-01).
     private func noteRow() -> NSView? {
@@ -867,7 +867,7 @@ final class TaskQueueHeaderView: NSView {
         return view
     }
 
-    /// 发布（按 Git 工作流推出去）。图标只在队列可发布时出现。
+    /// 交付（按 Git 工作流推出去）。图标只在队列可交付时出现。
     /// The tooltip always says what the BUTTON DOES — a past failure is a fact about
     /// the queue, not about this control, so it is shown on the card (see errorRow).
     /// (It used to take over the tooltip, which made the button read as if it had
@@ -880,7 +880,7 @@ final class TaskQueueHeaderView: NSView {
                           action: #selector(openPRTapped))
     }
 
-    /// The PR link, once a PR exists — kept separate from 发布 so a queue that has
+    /// The PR link, once a PR exists — kept separate from 交付 so a queue that has
     /// one can still be published again (push the new commits, reuse the PR).
     private func prLinkControl() -> NSView? {
         guard let prUrl = model.prUrl else { return nil }

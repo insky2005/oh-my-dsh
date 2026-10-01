@@ -547,7 +547,7 @@ struct QueueHeaderModel: Equatable {
     var prUrl: String?
     /// Why the last publish attempt did not even START (no branch / no remote /
     /// another finalize session running; an L10n key), or nil. Shown as a warning ROW
-    /// on the card — never as the 发布 button's tooltip, which always says what the
+    /// on the card — never as the 交付 button's tooltip, which always says what the
     /// button does (user 2026-10-01).
     var prErrorKey: String?
     /// Whether this workspace can carry a PR at all (it has a GitHub remote).
@@ -642,15 +642,15 @@ struct QueueHeaderModel: Equatable {
                                 startHintKey: (queue.state == .paused && failedCount > 0 && queuedCount > 0)
                                     ? "tasks.queue.continue" : "tasks.queue.start",
                                 canPause: queue.state == .active,
-                                // .done 仍是「收尾」：设置/删除不回到行上（避免把名字挤没），
-                                // 但可以继续追加任务、发布、或手动关闭。
+                                // .done 仍是「交付」：设置/删除不回到行上（避免把名字挤没），
+                                // 但可以继续追加任务、交付、或手动关闭。
                                 canEdit: queue.state != .done && queue.state != .closed,
                                 canDelete: queue.state != .done,
                                 canClose: queue.state == .done || queue.state == .paused,
-                                // 发布与 autoPR 解耦：只要工作区能承担这种工作流、队列有分支、
-                                // 任务已收尾，就能手动收尾（prUrl 已存在时是「更新」）。pr 需要 GitHub
+                                // 交付与 autoPR 解耦：只要工作区能承担这种工作流、队列有分支、
+                                // 任务已交付，就能手动交付（prUrl 已存在时是「更新」）。pr 需要 GitHub
                                 // 远端；merge 只做本地合并，不需要远端；push 必须有一个可推送的远端；
-                                // 「无」是明确的不收尾，没有发布按钮。
+                                // 「无」是明确的不交付，没有交付按钮。
                                 canOpenPR: queue.state == .done && queue.branch != nil
                                     && integration != .none
                                     && (integration == .pr ? prAvailable
@@ -998,7 +998,7 @@ struct QueueComposerModel: Equatable {
     /// the placeholder of 基于分支 and the fallback when the field is left empty.
     /// Assuming "main" made a master-based repo fail its first task.
     var defaultBaseBranch: String
-    /// Whether the 高级设置 section (分支 / 基于分支 / 工作流 / 自动收尾) is open. The
+    /// Whether the 高级设置 section (分支 / 基于分支 / 工作流 / 自动交付) is open. The
     /// branch is derived from the name, so creating a queue only asks for a name;
     /// editing a queue's settings opens everything, because that is what the user
     /// came for.

@@ -1514,7 +1514,7 @@ do {
     check(!h.runner.enqueue(taskID: extra.id, into: r.queue.id), "关闭后追加被拒")
 }
 
-section("工作流：队列级覆盖决定收尾会话（merge 不需要 GitHub）")
+section("工作流：队列级覆盖决定交付会话（merge 不需要 GitHub）")
 do {
     // 默认（.pr）在非 GitHub 工作区拒绝收尾：只建任务会话。
     let (board0, task0, queue0) = singleTaskBoard()
@@ -1593,7 +1593,7 @@ do {
     check(!h2.runner.startQueueIntegration(queue2), "手动发布同样被拒")
 }
 
-section("收尾复用来源会话（有则用；完成标记保证不读错回合）")
+section("交付复用来源会话（有则用；完成标记保证不读错回合）")
 do {
     // 用来源会话收尾：不再新建会话，提示词带唯一完成标记。
     let (board, taskID, queueID) = singleTaskBoard()
@@ -1639,8 +1639,8 @@ do {
     check(h.dsh.prompts["origin-session"] == nil, "来源会话没有收到收尾指令")
     eq(h.dsh.sessions.count, 2, "回退：新建了一个专门的收尾会话")
     let fresh = h.dsh.sessions[1]
-    check((h.dsh.prompts[fresh] ?? "").contains("收尾") || (h.dsh.prompts[fresh] ?? "").contains("PR"),
-          "新会话收到了收尾指令")
+    check((h.dsh.prompts[fresh] ?? "").contains("交付") || (h.dsh.prompts[fresh] ?? "").contains("PR"),
+          "新会话收到了交付指令")
     check(!(h.dsh.prompts[fresh] ?? "").contains("DSH-FINALIZE-"),
           "新会话不需要完成标记（它是专用的）")
 }
@@ -1769,7 +1769,7 @@ do {
     check(text.contains("abc123 深色模式：主题令牌"), "提交内容")
 }
 
-section("发布成功后自动关闭队列（成功才关；失败/关时不关）")
+section("交付成功后自动关闭队列（成功才关；失败/关时不关）")
 do {
     // 纯判定：PR 由调用方用链接判定；merge / push 读提示词要求的「已合并 / 已推送」行。
     check(TasksRunner.finalizeSucceeded(mode: .merge, report: "完成。\n已合并并推送 main abc123"),

@@ -326,7 +326,7 @@ do {
     }
 }
 
-section("队列头：发布排在关闭之前，PR 链接仍在最后")
+section("队列头：交付排在关闭之前，PR 链接仍在最后")
 do {
     var board = TaskBoard()
     let task = TaskItem.manual(title: "改 README", body: nil, id: "manual-hh301010")
@@ -369,7 +369,7 @@ do {
     }
 }
 
-section("发布失败：原因写在队列卡上，按钮 tooltip 仍是动作说明")
+section("交付失败：原因写在队列卡上，按钮 tooltip 仍是动作说明")
 do {
     var board = TaskBoard()
     let task = TaskItem.manual(title: "改 README", body: nil, id: "manual-hh302020")
@@ -401,7 +401,7 @@ do {
     let collapsedLabels = descendants(collapsedHeader, of: NSTextField.self).map { $0.stringValue }
     check(collapsedLabels.contains(L10n.tr("tasks.errPRNoBranch")), "折叠的队列也显示失败原因")
 }
-section("收尾结果：默认一行，可展开全文")
+section("交付结果：默认一行，可展开全文")
 do {
     var board = TaskBoard()
     let task = TaskItem.manual(title: "改 README", body: nil, id: "manual-hh303030")
@@ -648,7 +648,7 @@ do {
           "推荐项（这里是 pr，最后一个）带标记")
     check(!form.integrationNote.isHidden, "推荐说明是可见信息，不是校验 hint")
     check(form.submitButton.isEnabled, "保存总是可点：设置没有非法值")
-    // 发布成功后自动关闭队列：复选框 + 直接显示的完整说明（不再只藏在 tooltip）。
+    // 交付成功后自动关闭队列：复选框 + 直接显示的完整说明（不再只藏在 tooltip）。
     check(form.autoCloseCheck.state == .on, "自动关闭开关按模型预填")
     eq(form.autoCloseCheck.title, "autoClose", "开关文案来自 tasks.settings.autoClose")
 

@@ -1122,7 +1122,7 @@ do {
                                    prAvailable: false)
     check(!ready.canOpenPR, "…but never in a workspace without GitHub")
 }
-section("工作流：发布按钮与可用性跟着队列的模式走")
+section("工作流：交付按钮与可用性跟着队列的模式走")
 do {
     // The workspace's usual mode is a RECOMMENDATION, never enforced.
     eq(QueueIntegration.recommended(isGit: true, hasGitHubRemote: true), .pr,
@@ -1177,7 +1177,7 @@ do {
                                     prAvailable: true, integration: .merge)
     check(!header.canOpenPR, "关闭的队列不能发布")
 }
-section("收尾结果写在队列卡上")
+section("交付结果写在队列卡上")
 do {
     var board = TaskBoard()
     let task = TaskItem.manual(title: "One", id: "manual-0091abcd")
