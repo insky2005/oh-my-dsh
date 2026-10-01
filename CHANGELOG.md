@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
-## [Unreleased]
+## [1.18.0] - 2026-10-02
 
 ### Added
 
@@ -50,27 +50,7 @@ All notable changes to this project are documented in this file. Format follows
   - 技能正文（内嵌常量 + 仓库副本字节一致）**默认**建「等待态队列 + 入队」，只有用户明确说「只建任务 / 先别入队 / 不要队列」时才只建裸任务，并补充启动话术；设计见 `docs/design/panels/tasks-queue-session-loop-design.md`。
   回归：`tests/tasks-panel` 1129 → **1226** 项（模型 188 / 运行器 410 / 视图模型 328 / 视图 199 / 本地 API 101）。
 
-### Fixed
-
-- **任务面板设置全部按工作区隔离（2026-10-01）**：此前抽屉里只有「工作流默认」按工作区存，而「交付成功后自动关闭队列」写的是**全局键** `tasksAutoCloseOnPublish` —— 在一个工作区勾上，其余所有工作区打开设置也都是勾上的（用户反馈：几个从没设置过的项目里看到它默认就是开的）。现在该开关改存「工作区路径 → 布尔」映射 `tasksAutoCloseOnPublishByWorkspace`，未设置过的工作区默认关，且**只影响当前工作区**；抽屉说明与开关说明都明确「按工作区 / 只对当前工作区生效」。旧的全局键不再读取（该开关尚未发布，无需迁移）。回归：`tests/tasks-panel/run.sh` 新增源守卫，杜绝设置项再退回全局键。
-
-- **终端输入法、焦点光标统一由键盘焦点驱动（2026-10-01）**：两者用同一个 `hasFocus` 信号——`becomeFirstResponder` / `resignFirstResponder` 与窗口 key 变化（⌘-Tab 切走/切回）→ 聚焦画实心块 + 切英文，失焦画空心框 + 还原原始输入法。鼠标移入即聚焦（切英文），移出不失焦所以维持不变；上一轮误加在 `mouseExited` 上的还原已移除（移出只保留诊断日志）。一次焦点变化只切一次，残留抖动由 0.12s 防抖兜底；`terminal focus:` / `terminal ime:` 日志写进 `app.log`。
-
-- **终端聚焦时输入法来回闪（2026-10-01）**：上一版在 `become/resignFirstResponder` 上直接切/还原输入法，但输入源切换本身会扰动响应链、加上鼠标进出终端，`resignFirstResponder` 会成串到来——每次失焦都还原、每次聚焦又切英文，输入法连闪好几次。现在**还原带 0.12s 防抖**：`terminalDidBlur()` 只登记一次还原（generation 计数），期间若又 `terminalDidFocus()` 就取消，一串抖动收敛成一次切换；鼠标 tracking area 也改为**只安装一次**（`.inVisibleRect` 自动跟随），不再在每次 `updateTrackingAreas` 时 remove/add 反复补发 `mouseEntered`。回归：`tests/terminal-panel` 新增 3 项防抖断言。
-
-- **发布后队列卡不刷新 / 结果只有一行 / 状态行总说「开 PR」（2026-10-01）**：点发布后卡片像卡住了——错误提示还在、结果不出来；会话回写的结果只显示一行；运行状态行不论什么工作流都写「正在开 PR」。三处都修了：
-  - 3 秒刷新的看板指纹（boardSignatureNow）现在包含队列的 prError / prUrl / integrationNote——发布恰好只改这几个字段，以前定时器判定「没变化」就不重绘；
-  - 收尾会话的**整段汇报**（上限 4000 字）回写到 integrationNote；卡片默认显示第一行，多出「展开 / 收起」，展开后完整换行显示（折叠的队列仍会显示失败原因）；
-  - 运行状态行按解析出的工作流说：正在合并到基线 / 正在推送 / 正在开 PR。
-  回归：tests/tasks-panel **1378 → 1393** 项（运行器 441→**442** / 视图模型 374→**381** / 视图 247→**254**）。
-
-- **非 GitHub 的 git 仓库：合并被误判成「开 PR」，且本地仓库根本发不出去（2026-10-01）**：测试一个 git 仓库（没有 GitHub 远端）时，点队列「发布」只看到泛泛的「开不了 PR」，还以为是代码去开 PR 了。两处都修了：
-  - 「合并到基线」是**本地操作**，不再要求任何远端——没远端就只合并、不推送（提示词明确「不要尝试推送」，并让会话报「已合并到 X（无远端，未推送）」）；只有「直接推送」才必须有可推送的远端。merge 的发布按钮在本地仓库也会出现且能用；
-  - 发布被拒时把**具体原因**显示出来（没分支 / 没有可推送的远端 / **已经有一个收尾会话在跑**——后者以前既不写错误也不说明，只报通用文案）；tasks.errPRStart / tasks.errPRNoRemote 改成「发布 / 远端」口径，不再一律说 PR；
-  - 失败原因显示在**队列卡**上（红色警示行，折叠时也显示），**不再占用发布按钮的 tooltip**——按钮的 tooltip 永远只说明它做什么；新的一轮任务开始时会清掉上一轮的结果与失败原因。
-  回归：tests/tasks-panel **1363 → 1378** 项（运行器 433→**441** / 视图模型 371→**374** / 视图 243→**247**）。
-
-- **切换 dsh 会话卡顿（2026-10-01）**：在 dsh web 里每切一次会话，壳层就对当前工作区**重新 adopt**——`IssueRunnerPanel.adoptWorkspace` 在**主线程**同步 spawn `/usr/bin/git`（`detectGitHubRemote` / `isGitRepo` / `detectDefaultBaseBranch`），而 dsh web 就跑在同一线程的 WKWebView 里，于是切会话瞬间整窗口冻结（app.log 每次切换都有 `tasks: workspace adopted …`，即使路径没变）。现在 `workspaceChanged()` 走纯函数 `TaskWorkspaceRegistry.needsReadopt`：**同一（标准化后）工作区 + 有 runner 直接短路**，不再重探；真正的跨工作区切换照旧，工作区**形状变化**（任务跑了 `git init`）仍由 step 定时器上的 `recheckWorkspaceShape` 负责重建。回归：`tests/tasks-panel` 新增 5 项（同路径/尾斜杠/换路径/无 runner/无路径）。
+- **`task-todo` 可发起队列交付 + 任务 API 路径规范化（2026-10-01）**：任务 API 的资源段显式化——任务列表 / 创建改为 `POST /api/tasks/task/list` 与 `/api/tasks/task/create`（旧的 `/api/tasks/list`、`/create` 保留为 alias），队列仍在 `/api/tasks/queue/*`；新增 **`POST /api/tasks/queue/deliver`**，对**已完成**队列按 Git 工作流发起交付（与队列头「交付」按钮同一条 `startQueueIntegration` 路径；缺队列定位字段返回 `400 no-queue-target`，其余错误码 `not-deliverable` / `workflow-none` / `busy` / `no-branch` / `no-remote` / `session-failed` / `ambiguous-queue` / `no-queue`）。`task-todo` 技能文档加入交付能力与硬规则「仅用户明确要求且队列已完成时才交付」，仓库技能副本按内嵌字符串重新生成（byte-identical）。
 
 ### Changed
 
@@ -106,9 +86,41 @@ All notable changes to this project are documented in this file. Format follows
 
 - **壳层工作数据收敛到 `$DSH_HOME/oh-my-dsh/`（2026-09-29）**：把壳层自己的工作数据从 `$DSH_HOME` 根迁到与 `projects/` 并列的新根 —— `shell/`（设置 / 状态 / 快照）、`browser/`（CEF profile；**去掉开发版 `browser-dev` 后缀**，正式版与开发版统一 `<DSH_HOME>/oh-my-dsh/browser`）、`repo-wiki/`、`channel-runtime/`、`channels/`、`tokens/` + `gh-token`、`browser-api.port` / `shell-api.port`。dsh 自有数据（`sessions/`、`storages/`、`settings.yaml` 等）与上游契约路径 `$DSH_HOME/skills/` 保持不动；`~/Library/{Logs,Caches}` 与 Application Support 运行时也不动。路径的单一事实来源为 Swift `ShellPaths` / core `shell-paths.js`；启动（以及显式 `--home` 的 CLI）做一次**幂等迁移**：源不存在或目标已存在即跳过、失败保留源并记 `app.log`，正式 home 与开发版 `~/.dsh-dev` 都覆盖；GitHub token 读取链保留旧路径只读兜底；迁移时在 `$DSH_HOME/oh-my-dsh/ROLLBACK.md` 落一份双语回退说明（实际迁移条目 + 时间/App 版本 + 退出后把子目录 `mv` 回根目录的脚本），供降级旧版或快速撤销时自助使用；本次确有搬迁时启动后弹一次**非模态提示**（说明 + 「查看回退说明」按钮打开 `ROLLBACK.md`），**全新安装不提示**。回滚快照排除表新增 `oh-my-dsh`（`core/lib/snapshot.js`）。设计见 `docs/design/shell/storage-layout-refactor.md`；回归：`core` 289 项（新增 `core/tests/shell-paths.test.js` 6 项）与 `tests/{shell-config,channel-panel,skills-panel,wiki-panel,snapshot-rollback,projects-panel,tasks-panel,skills,browser-panel}` 全绿。
 
+- **队列「发布 / 收尾」统一改称「交付」（Deliver，2026-10-01）**：「发布」容易被理解成发版 / Release，又把推送 / 合并 / 开 PR 三种动作压成一个词，「收尾」不说明结果去哪。按钮 tooltip、会话名（统一「交付：<队列名>」）、状态行、错误、设置开关与说明、提示词全部对齐；代码标识（`QueueIntegration` / `finalize*`）不动。
+
 ### Fixed
 
+- **任务面板设置全部按工作区隔离（2026-10-01）**：此前抽屉里只有「工作流默认」按工作区存，而「交付成功后自动关闭队列」写的是**全局键** `tasksAutoCloseOnPublish` —— 在一个工作区勾上，其余所有工作区打开设置也都是勾上的（用户反馈：几个从没设置过的项目里看到它默认就是开的）。现在该开关改存「工作区路径 → 布尔」映射 `tasksAutoCloseOnPublishByWorkspace`，未设置过的工作区默认关，且**只影响当前工作区**；抽屉说明与开关说明都明确「按工作区 / 只对当前工作区生效」。旧的全局键不再读取（该开关尚未发布，无需迁移）。回归：`tests/tasks-panel/run.sh` 新增源守卫，杜绝设置项再退回全局键。
+
+- **终端输入法、焦点光标统一由键盘焦点驱动（2026-10-01）**：两者用同一个 `hasFocus` 信号——`becomeFirstResponder` / `resignFirstResponder` 与窗口 key 变化（⌘-Tab 切走/切回）→ 聚焦画实心块 + 切英文，失焦画空心框 + 还原原始输入法。鼠标移入即聚焦（切英文），移出不失焦所以维持不变；上一轮误加在 `mouseExited` 上的还原已移除（移出只保留诊断日志）。一次焦点变化只切一次，残留抖动由 0.12s 防抖兜底；`terminal focus:` / `terminal ime:` 日志写进 `app.log`。
+
+- **终端聚焦时输入法来回闪（2026-10-01）**：上一版在 `become/resignFirstResponder` 上直接切/还原输入法，但输入源切换本身会扰动响应链、加上鼠标进出终端，`resignFirstResponder` 会成串到来——每次失焦都还原、每次聚焦又切英文，输入法连闪好几次。现在**还原带 0.12s 防抖**：`terminalDidBlur()` 只登记一次还原（generation 计数），期间若又 `terminalDidFocus()` 就取消，一串抖动收敛成一次切换；鼠标 tracking area 也改为**只安装一次**（`.inVisibleRect` 自动跟随），不再在每次 `updateTrackingAreas` 时 remove/add 反复补发 `mouseEntered`。回归：`tests/terminal-panel` 新增 3 项防抖断言。
+
+- **发布后队列卡不刷新 / 结果只有一行 / 状态行总说「开 PR」（2026-10-01）**：点发布后卡片像卡住了——错误提示还在、结果不出来；会话回写的结果只显示一行；运行状态行不论什么工作流都写「正在开 PR」。三处都修了：
+  - 3 秒刷新的看板指纹（boardSignatureNow）现在包含队列的 prError / prUrl / integrationNote——发布恰好只改这几个字段，以前定时器判定「没变化」就不重绘；
+  - 收尾会话的**整段汇报**（上限 4000 字）回写到 integrationNote；卡片默认显示第一行，多出「展开 / 收起」，展开后完整换行显示（折叠的队列仍会显示失败原因）；
+  - 运行状态行按解析出的工作流说：正在合并到基线 / 正在推送 / 正在开 PR。
+  回归：tests/tasks-panel **1378 → 1393** 项（运行器 441→**442** / 视图模型 374→**381** / 视图 247→**254**）。
+
+- **非 GitHub 的 git 仓库：合并被误判成「开 PR」，且本地仓库根本发不出去（2026-10-01）**：测试一个 git 仓库（没有 GitHub 远端）时，点队列「发布」只看到泛泛的「开不了 PR」，还以为是代码去开 PR 了。两处都修了：
+  - 「合并到基线」是**本地操作**，不再要求任何远端——没远端就只合并、不推送（提示词明确「不要尝试推送」，并让会话报「已合并到 X（无远端，未推送）」）；只有「直接推送」才必须有可推送的远端。merge 的发布按钮在本地仓库也会出现且能用；
+  - 发布被拒时把**具体原因**显示出来（没分支 / 没有可推送的远端 / **已经有一个收尾会话在跑**——后者以前既不写错误也不说明，只报通用文案）；tasks.errPRStart / tasks.errPRNoRemote 改成「发布 / 远端」口径，不再一律说 PR；
+  - 失败原因显示在**队列卡**上（红色警示行，折叠时也显示），**不再占用发布按钮的 tooltip**——按钮的 tooltip 永远只说明它做什么；新的一轮任务开始时会清掉上一轮的结果与失败原因。
+  回归：tests/tasks-panel **1363 → 1378** 项（运行器 433→**441** / 视图模型 371→**374** / 视图 243→**247**）。
+
+- **切换 dsh 会话卡顿（2026-10-01）**：在 dsh web 里每切一次会话，壳层就对当前工作区**重新 adopt**——`IssueRunnerPanel.adoptWorkspace` 在**主线程**同步 spawn `/usr/bin/git`（`detectGitHubRemote` / `isGitRepo` / `detectDefaultBaseBranch`），而 dsh web 就跑在同一线程的 WKWebView 里，于是切会话瞬间整窗口冻结（app.log 每次切换都有 `tasks: workspace adopted …`，即使路径没变）。现在 `workspaceChanged()` 走纯函数 `TaskWorkspaceRegistry.needsReadopt`：**同一（标准化后）工作区 + 有 runner 直接短路**，不再重探；真正的跨工作区切换照旧，工作区**形状变化**（任务跑了 `git init`）仍由 step 定时器上的 `recheckWorkspaceShape` 负责重建。回归：`tests/tasks-panel` 新增 5 项（同路径/尾斜杠/换路径/无 runner/无路径）。
+
 - **终端面板：鼠标移入即取得输入焦点 + 中文标点不再被拉伸变形（2026-10-01）**：两处体验问题。① 终端内容视图此前只在 `mouseDown` 时 `makeFirstResponder`，移入后直接敲键盘没有反应，必须先点一下；现在 `TerminalView` 挂 `NSTrackingArea`（`.mouseEnteredAndExited` + `.activeInKeyWindow` + `.inVisibleRect`），`mouseEntered` 即把第一响应者设为自己（点击面板 chrome 聚焦的 `installClickMonitor` 保留）。② 宽字符渲染过去把每个宽字的自然字宽横向缩放到两格：等宽系统字体没有 CJK 字形，Core Text 默认回退对全角标点只给约 0.8 格、汉字约 1.6 格，于是标点被横向拉约 2.4 倍（`。`/`，`/`、` 变成扁椭圆）。现在 `drawWideGlyph` 改用真实全角字体（PingFang SC）并按 `2 × 单元格宽` 反推字号，使字形自然字宽正好两格（Hangul / 生僻字 / emoji 走级联回退后同样按实测字宽取字号），再按两字体 descender 差补偿基线，彻底不做横向缩放；字体按 (字符, 粗, 斜) 缓存。回归：`tests/terminal-panel` 新增 7 项（移入聚焦的 tracking area + `。，！（中国` 六个字形 natural advance 恰好两格），README「终端面板」一节同步。
+
+- **预览拦截适配 dsh 0.1.7（2026-10-01）**：0.1.7 的 `[data-changed-files]` 卡与 `[data-presented-files-row]` 交付卡片交互变了——现在改动审阅卡按 `aria-describedby` 读取隐藏 span 的绝对路径并路由到壳层**原生预览面板**（不再弹 dsh 侧边栏，toggle 放行），交付卡片内 dsh 自带的「用应用打开 / 在 Finder 中显示」控件**不再被劫持**。`tests/preview-interceptor` 新增两项（第 17/18 项）。
+
+- **运行中会话打不开的修复与自愈（2026-10-01）**：根因是实时 `$events` 打开帧里的 `assistantStream.activeAttempt.stream` 经 typert 解码后某个 chunk 不再是无损 JSON，客户端因此拒绝**整个会话**的打开（跑完没有这段快照，所以正常）。现在壳层在进页面之前用一个 `WebSocket` 包装脚本清空 `activeAttempt.stream`（保留 `attemptId` / `nextIndex`，后续实时帧照常接上），**第一次点即可正常加载**（不改 dsh 源码；生效时写 `app.log: webview: sanitize`）。另保留自动重开兜底（有界 3 次 / 3 秒窗口），dev 诊断的 rejection 记录补充 `cause` 与 `stack`。
+
+- **队列终态与交付细节（2026-10-01）**：已关闭队列默认折起（与已完成一致）；关闭的队列不再作为「加入队列」的目标。
+
+### Docs
+
+- **文档按开发环节分类 + 面板说明独立成册（2026-10-02）**：`docs/` 从平铺改为按环节分目录——`process/`（流程 / 发布 / 升级）、`research/`（调研 / 产品化总纲）、`design/{shell,panels,channels}/`（壳层 / 面板 / 通道设计）、`fixes/`（排查记录）、`plans/`（实施计划）、`milestones/`（里程碑）、`usage/`（面向用户的使用说明）、`feedback/`、`raw/`、`screenshots/`，根目录只留 `README.md` 索引。面板使用说明并入 `docs/usage/panels.md`；README 的「特性一览」拆为**壳（全局）**与**面板**两节、面板按活动栏实际顺序排列，面板详述与截图同步更新；全部源码注释 / 文档交叉引用与 `.dsh/wiki/` 一同刷新。
 
 ## [1.17.2] - 2026-09-30
 
