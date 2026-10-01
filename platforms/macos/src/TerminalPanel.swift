@@ -1012,7 +1012,11 @@ final class TerminalView: NSView, NSTextInputClient {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let area = hoverTrackingArea { removeTrackingArea(area) }
+        // Install the area once: `.inVisibleRect` keeps it in sync with the view
+        // automatically. Removing and re-adding it on every update re-posted
+        // enter events while the pointer moved inside, which is exactly the
+        // repeated handling we want to avoid.
+        guard hoverTrackingArea == nil else { return }
         let area = NSTrackingArea(rect: .zero,
                                   options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
                                   owner: self, userInfo: nil)

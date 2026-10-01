@@ -261,10 +261,14 @@ final class FakeInputSources: InputSourceControlling {
     }
 }
 
+/// Runs scheduled work inline so the policy tests stay synchronous; the
+/// debounce-specific test below captures the closure instead.
+let inlineSchedule: (TimeInterval, @escaping () -> Void) -> Void = { _, body in body() }
+
 let fakeSources = FakeInputSources()
 fakeSources.current = "com.baidu.inputmethod.BaiduIM.pinyin"
 fakeSources.ascii = "com.apple.keylayout.ABC"
-let inputGuard = TerminalInputSourceGuard(sources: fakeSources)
+let inputGuard = TerminalInputSourceGuard(sources: fakeSources, schedule: inlineSchedule)
 
 inputGuard.terminalDidFocus()
 test("terminal focus switches to the ASCII input source",
@@ -289,7 +293,7 @@ test("the remembered original is cleared after restore", !inputGuard.hasSavedSou
 let alreadyEnglish = FakeInputSources()
 alreadyEnglish.current = "com.apple.keylayout.ABC"
 alreadyEnglish.ascii = "com.apple.keylayout.ABC"
-let englishGuard = TerminalInputSourceGuard(sources: alreadyEnglish)
+let englishGuard = TerminalInputSourceGuard(sources: alreadyEnglish, schedule: inlineSchedule)
 englishGuard.terminalDidFocus()
 test("focusing from English does not select anything",
      alreadyEnglish.selectCalls.isEmpty && !englishGuard.hasSavedSource)
@@ -303,7 +307,7 @@ test("a manual switch is kept when the terminal never changed the source",
 let noAscii = FakeInputSources()
 noAscii.current = "com.baidu.inputmethod.BaiduIM.pinyin"
 noAscii.ascii = nil
-let noAsciiGuard = TerminalInputSourceGuard(sources: noAscii)
+let noAsciiGuard = TerminalInputSourceGuard(sources: noAscii, schedule: inlineSchedule)
 noAsciiGuard.terminalDidFocus()
 noAsciiGuard.terminalDidBlur()
 test("no ASCII source: nothing is changed or remembered",
@@ -315,7 +319,7 @@ test("no ASCII source: nothing is changed or remembered",
 let failing = FakeInputSources()
 failing.current = "com.baidu.inputmethod.BaiduIM.pinyin"
 failing.ascii = "com.apple.keylayout.ABC"
-let failingGuard = TerminalInputSourceGuard(sources: failing)
+let failingGuard = TerminalInputSourceGuard(sources: failing, schedule: inlineSchedule)
 failingGuard.terminalDidFocus()
 failing.selectSucceeds = false
 failingGuard.terminalDidBlur()
@@ -329,6 +333,28 @@ failing.selectSucceeds = true
 failingGuard.terminalDidBlur()
 test("the original is restored once the system accepts it",
      failing.current == "com.baidu.inputmethod.BaiduIM.pinyin" && !failingGuard.hasSavedSource)
+
+// A burst of blur/focus around the switch (the pointer moving through the
+// terminal) must not oscillate the input source: the blur's restore is
+// scheduled, and a refocus before it runs cancels it.
+let flappy = FakeInputSources()
+flappy.current = "com.baidu.inputmethod.BaiduIM.pinyin"
+flappy.ascii = "com.apple.keylayout.ABC"
+var pendingRestore: (() -> Void)?
+let flapGuard = TerminalInputSourceGuard(sources: flappy,
+                                         schedule: { _, body in pendingRestore = body })
+flapGuard.terminalDidFocus()
+test("debounce: focus switches to English once",
+     flappy.selectCalls == ["com.apple.keylayout.ABC"])
+flapGuard.terminalDidBlur()          // transient blur schedules a restore
+flapGuard.terminalDidFocus()         // refocus cancels it
+pendingRestore?()                    // the stale restore must be a no-op
+test("debounce: a transient blur does not restore",
+     flappy.current == "com.apple.keylayout.ABC" && flapGuard.hasSavedSource)
+flapGuard.terminalDidBlur()          // a real blur
+pendingRestore?()
+test("debounce: a real blur still restores",
+     flappy.current == "com.baidu.inputmethod.BaiduIM.pinyin" && !flapGuard.hasSavedSource)
 
 // MARK: - Focus cursor (solid when focused, hollow when not)
 //

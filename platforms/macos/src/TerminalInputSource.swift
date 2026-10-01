@@ -35,6 +35,13 @@ protocol InputSourceControlling: AnyObject {
 
 /// Focus/blur policy: remember the input source on focus, switch to English,
 /// restore on blur.
+///
+/// The restore is **debounced**: moving focus around a terminal (or the input
+/// source switch itself nudging the responder chain) can deliver a burst of
+/// blur/focus pairs, and restoring on every blur made the input source flicker
+/// several times. A blur only schedules a restore; a focus before the delay
+/// elapses cancels it, so a burst collapses into a single switch and a single
+/// (late) restore.
 final class TerminalInputSourceGuard {
 
     /// The shared instance TerminalView talks to. Only one view can hold the
@@ -42,15 +49,28 @@ final class TerminalInputSourceGuard {
     static let shared = TerminalInputSourceGuard(sources: TextInputSources())
 
     private let sources: InputSourceControlling
+    private let restoreDelay: TimeInterval
+    /// Schedules `body` after `delay`. Injectable so tests can run it inline.
+    private let schedule: (TimeInterval, @escaping () -> Void) -> Void
     private var savedID: String?
+    /// Bumped on every focus; a scheduled restore whose generation no longer
+    /// matches is stale and must not run.
+    private var restoreGeneration = 0
 
-    init(sources: InputSourceControlling) {
+    init(sources: InputSourceControlling,
+         restoreDelay: TimeInterval = 0.12,
+         schedule: @escaping (TimeInterval, @escaping () -> Void) -> Void = { delay, body in
+             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: body)
+         }) {
         self.sources = sources
+        self.restoreDelay = restoreDelay
+        self.schedule = schedule
     }
 
     /// Terminal became first responder: remember the user's input source and
     /// switch to English.
     func terminalDidFocus() {
+        restoreGeneration += 1              // cancel any restore a blur scheduled
         // Write-once: while an original is remembered, a repeated focus must not
         // replace it with the English source we selected ourselves.
         guard savedID == nil else { return }
@@ -63,18 +83,24 @@ final class TerminalInputSourceGuard {
         sources.selectInputSource(id: ascii)
     }
 
-    /// Terminal resigned first responder: put the remembered source back.
+    /// Terminal resigned first responder: schedule the remembered source to be
+    /// put back. A focus before the delay elapses cancels it.
     func terminalDidBlur() {
         guard let saved = savedID else { return }
-        if sources.currentInputSourceID() == saved {
-            savedID = nil                       // nothing moved (or select failed)
-            return
-        }
-        // Only forget the original once it is actually back. If the system
-        // refuses the switch (secure input, IME not ready), keep it so the next
-        // focus can not mistake the forced English for the user's original.
-        if sources.selectInputSource(id: saved) {
-            savedID = nil
+        let generation = restoreGeneration
+        schedule(restoreDelay) { [weak self] in
+            guard let self = self,
+                  self.restoreGeneration == generation,
+                  self.savedID == saved else { return }
+            if self.sources.currentInputSourceID() == saved {
+                self.savedID = nil                       // nothing moved
+            } else if self.sources.selectInputSource(id: saved) {
+                // Only forget the original once it is actually back. If the
+                // system refuses the switch (secure input, IME not ready), keep
+                // it so the next focus can not mistake the forced English for
+                // the user's original.
+                self.savedID = nil
+            }
         }
     }
 

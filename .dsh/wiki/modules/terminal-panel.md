@@ -31,7 +31,7 @@ manual: false
 ### `TerminalView`（绘制与输入）
 
 - `isOpaque = true` + `wantsLayer = true`（配合 `contentContainer.wantsLayer + masksToBounds` 修复 header 合成问题，见 `docs/terminal-header-fix.md`）；底色为 `PanelSurface.dynamic`（不再用 `.textBackgroundColor`）；
-- **移入即聚焦**：`updateTrackingAreas` 挂 `NSTrackingArea`（`.mouseEnteredAndExited` + `.activeInKeyWindow` + `.inVisibleRect`），`mouseEntered` 把第一响应者设为自己 —— 鼠标移入终端就能直接打字，不必先点一下（点击整个面板 chrome 聚焦的 `installClickMonitor` 仍在）；
+- **移入即聚焦**：`updateTrackingAreas` 挂 `NSTrackingArea`（`.mouseEnteredAndExited` + `.activeInKeyWindow` + `.inVisibleRect`），`mouseEntered` 把第一响应者设为自己 —— 鼠标移入终端就能直接打字，不必先点一下（点击整个面板 chrome 聚焦的 `installClickMonitor` 仍在）；tracking area **只安装一次**（`.inVisibleRect` 自动跟随视图，重复 remove/add 会在指针移动时反复补发 `mouseEntered`）；
 - 绘制：按行画 run（字体/前景/背景/粗斜下划线）、光标（块）、选区高亮；**宽字符按整两格排版且不横向缩放**（等宽系统字体无 CJK 字形，Core Text 默认回退对全角标点只给约 0.8 格、汉字约 1.6 格；`drawWideGlyph` 改用真实全角字体 PingFang SC，按 `2 × cellWidth` 反推字号使自然字宽正好两格，并按两字体 descender 差补偿基线；字体按 (字符, 粗, 斜) 缓存；取不到全角字体时才回退旧的 `drawGlyph` CTM 横向缩放）；**光标跨整个宽字符**（`cursorGlyphSpan`：停在 continuation 格时回退到 lead 格、宽 2 格）；**组合期**改画 `markedText`（预编辑串带下划线 + 细光标，见下），不再画方块光标；**焦点光标聚焦实心 / 失焦空心**（`hasFocus` 由 `become/resignFirstResponder` 与窗口 key 通知维护；`drawCursor` 聚焦时画 accent 实心块并把字符重绘为白色，失焦时改画 accent 空心描边框、字符保留原色）；
 - **滚动方向对齐面板语义（#3）**：`scrollWheel(with:)` 改为 NSScrollView 语义——正的 `scrollingDeltaY` → 显示**更早**的行（与文件树/网页一致）。灵敏度：触控板**精确 delta 4 点 = 1 行**（保留小数累加器），动量阶段的衰减 delta 自然表现为「先快后慢」的惯性；鼠标滚轮（非精确 delta）一格 = 一行；
 - **选择（#4）**：`mouseDown` 按 `event.clickCount` 分支——**双击选词**（词内字符含路径/URL 的 `/ - . _ :` 等，保证路径与参数完整）、**三击选整行**；**双击/三击后带着「选择单位」继续拖拽**按整词/整行扩选，普通拖拽仍逐格选择（`wordDragSelection(to:)`）；`mouseUp` 结束拖选时 `copySelectionIfAutoCopy()`；
@@ -48,6 +48,7 @@ manual: false
 
 - **策略（纯状态机 `TerminalInputSourceGuard`，无头可测）**：`becomeFirstResponder` → `terminalDidFocus()`（记当前输入源 → 非英文则 `TISSelectInputSource` 切到 ASCII 源）；`resignFirstResponder` → `terminalDidBlur()`（还原）。**原本就是英文则不接管**（不记、不切），手动切的中文在失焦后保留。
 - **最初状态不被覆盖（关键不变量）**：`savedID` **写一次**——已记住原始输入源时重复 `focus()` 直接返回，绝不会把被迫切成的英文当成用户原始输入法；只有还原成功（或当前就等于原始）才清空；还原被系统拒绝（安全输入/输入法未就绪）时保留，下次失焦再试。AppKit 的 `makeFirstResponder` 本身幂等，所以「移入 → 点击」共只触发一次 `becomeFirstResponder`。
+- **还原防抖（防止输入法连闪）**：输入源切换本身会扰动响应链，加上鼠标进出终端，`resignFirstResponder` 会成串到来——若每次失焦都立刻还原、每次聚焦再切英文，输入法会闪好几次。现在 `terminalDidBlur()` 只**登记**一次还原（`schedule` + `restoreGeneration` 计数，默认 0.12s），期间若 `terminalDidFocus()` 就取消；`schedule` 可注入，测试用同步/捕获版驱动。
 - **系统层（`TextInputSources: InputSourceControlling`）**：Carbon TIS —— `TISCopyCurrentKeyboardInputSource` / `TISCopyCurrentASCIICapableKeyboardInputSource`（本机实测返回 `com.apple.keylayout.ABC`）/ `TISCreateInputSourceList` + `TISSelectInputSource`；实测「百度拼音 → ABC → 百度拼音」往返成功。协议隔离使状态机可用假实现单测，真实切换只在 App 内手动 QA。
 
 ### `TerminalPanelController`（多标签面板）
@@ -76,7 +77,7 @@ manual: false
 `core/tests/ansi.test.js`（共享核心，JS 端口）含同一组 DECSTBM 断言 6 项；`tests/terminal-panel/run.sh`（无头，**不建 PTY**：只实例化 controller 断言头部与模型层状态）：
 
 - 编译清单 = `stubs.swift`（L10n/AppLog/ShellConfig/共享 UI 基件）+ `TerminalPanel.swift` + `PanelSurface.swift` + `TerminalWorkspaceTabs.swift` + `WorkspaceTabMemory.swift` + `TerminalInputSource.swift` + `panel-tests.swift`（改名 `main.swift`）；
-- 覆盖：头部固定标题（语言切换后仍固定、关会话后不被清空）+ `TerminalWorkspaceTabs` 的可见性/记忆规则（同 workspace 可见、尾斜杠等价、切换换页签、每页签独立 key、全局页签处处可见、切回恢复选中、已关闭不恢复）+ **选中即复制默认开且随设置变化** + **IME 协议状态机**（初始无组合、`setMarkedText` 建立预编辑、`selectedRange` 落在预编辑之后、`attributedSubstring` 的范围内/外、`unmarkText` 与空串都清空、提交清空、无窗口时 `firstRect` 退化为 0）+ **DECSTBM 滚动区**（LF 在区域底部只滚区域、状态行不动、部分区域不进 scrollback、RI/IL/DL/SU/SD 都限制在区域内、`CSI r` 恢复全屏区域）+ **宽字符光标跨度**（宽字前进两格、停在宽字/continuation 上时跨度回到 lead 格且宽 2 格、窄/空格宽 1 格）+ **移入即聚焦 tracking area**（`TerminalView` 装上 `.mouseEnteredAndExited` 的 `NSTrackingArea`）+ **宽字形恰好两格**（`。，！（中国` 六个字形的 `wideGlyphFontForTesting` natural advance == `2 × cellWidthForTesting`，即不再横向拉伸）+ **输入法自动切换状态机**（聚焦记原始并切英文、重复聚焦不覆盖原始、失焦还原、原本英文不接管、无 ASCII 源不动、还原失败保留原始待下次重试）+ **焦点光标实心/空心**（初始空心、聚焦实心、失焦回空心，`setFocusedForTesting` 驱动）；
+- 覆盖：头部固定标题（语言切换后仍固定、关会话后不被清空）+ `TerminalWorkspaceTabs` 的可见性/记忆规则（同 workspace 可见、尾斜杠等价、切换换页签、每页签独立 key、全局页签处处可见、切回恢复选中、已关闭不恢复）+ **选中即复制默认开且随设置变化** + **IME 协议状态机**（初始无组合、`setMarkedText` 建立预编辑、`selectedRange` 落在预编辑之后、`attributedSubstring` 的范围内/外、`unmarkText` 与空串都清空、提交清空、无窗口时 `firstRect` 退化为 0）+ **DECSTBM 滚动区**（LF 在区域底部只滚区域、状态行不动、部分区域不进 scrollback、RI/IL/DL/SU/SD 都限制在区域内、`CSI r` 恢复全屏区域）+ **宽字符光标跨度**（宽字前进两格、停在宽字/continuation 上时跨度回到 lead 格且宽 2 格、窄/空格宽 1 格）+ **移入即聚焦 tracking area**（`TerminalView` 装上 `.mouseEnteredAndExited` 的 `NSTrackingArea`）+ **宽字形恰好两格**（`。，！（中国` 六个字形的 `wideGlyphFontForTesting` natural advance == `2 × cellWidthForTesting`，即不再横向拉伸）+ **输入法自动切换状态机**（聚焦记原始并切英文、重复聚焦不覆盖原始、失焦还原、原本英文不接管、无 ASCII 源不动、还原失败保留原始待下次重试）+ **还原防抖**（暂时 blur 不还原、真 blur 仍还原、聚焦只切一次）+ **焦点光标实心/空心**（初始空心、聚焦实心、失焦回空心，`setFocusedForTesting` 驱动）；
 - 会话路径（真实 shell 输入输出、滚动、选择）靠手动 QA，见 .dsh/wiki/tasks.md。
 
 ## 已知限制（README）
