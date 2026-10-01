@@ -489,6 +489,9 @@ enum TaskPrompts {
             return mergeAndPush(queueName: queueName, branch: branch ?? base, base: base, commits: commits)
         case .push:
             return pushOnly(queueName: queueName, branch: branch, base: base)
+        case .none:
+            // Unreachable: startQueueIntegration refuses .none before a session exists.
+            return "队列「\(queueName ?? branch ?? "")」的工作流是「无」——不需要任何收尾动作。"
         }
     }
 
@@ -991,7 +994,15 @@ final class TasksRunner {
         // PR is a job of its own, done by a dedicated 收尾会话 once the queue is done
         // (startQueueIntegration) — which is why nothing here asks the agent to push,
         // checks whether it did, or talks to the GitHub API at all.
+        // 工作流「无」= 明确不收尾，所以即使 autoPR 开着也不起收尾会话。
+        let resolvedMode = active.queueID.map {
+            board.integration(forQueue: $0, default: env.defaultIntegration)
+        }
+        // NOTE: resolvedMode is Optional — write QueueIntegration.none in full, or
+        // Swift binds ".none" to Optional.none and this becomes "is non-nil" (true
+        // for every queue), silently ignoring the 无 setting.
         let wantsFinalize = (queue?.autoPR ?? false) && !queueHasMore
+            && resolvedMode != QueueIntegration.none
         let log = env.log
         let taskID = active.taskID
         let sessionReport = env.sessionReport
@@ -1057,6 +1068,11 @@ final class TasksRunner {
         }
         guard let queue = board.queue(queueID) else { return false }
         let mode = board.integration(forQueue: queueID, default: env.defaultIntegration)
+        // 「无」是明确的选择，不是失败：什么都不做，也不在队列上记错误。
+        if mode == .none {
+            env.log("tasks: queue " + queueID + " 的工作流是「无」——不收尾")
+            return false
+        }
         // Mode-specific requirements: refuse with a reason on the queue rather than
         // starting a session that cannot succeed.
         if mode == .pr || mode == .merge {

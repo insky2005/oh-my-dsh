@@ -444,14 +444,17 @@ enum QueueIntegration: String, CaseIterable {
     case merge
     /// Push the current branch itself (develop-on-main workflows).
     case push
+    /// 不收尾：队列跑完就结束，代码留在原地，由用户自己处理。非 git 目录的默认，
+    /// 也是「别让它自动碰远端」的明确选择。
+    case none
 
     /// The mode a workspace like this usually wants — a UI RECOMMENDATION, never
     /// enforced: a GitHub remote points at review (pr); another git repo at a local
-    /// merge; a plain directory has no branch to publish.
+    /// merge; a plain directory has nothing to publish at all (none).
     static func recommended(isGit: Bool, hasGitHubRemote: Bool) -> QueueIntegration {
         if hasGitHubRemote { return .pr }
         if isGit { return .merge }
-        return .push
+        return .none
     }
 }
 

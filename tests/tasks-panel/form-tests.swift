@@ -464,15 +464,15 @@ do {
           "and the inline advanced fields keep their width (\(expanded.branchField.frame.width)pt)")
 }
 
-section("队列表单：工作流单选组（跟随设置 + 三档）")
+section("队列表单：Git 工作流单选组（跟随设置 + 四档）")
 do {
     // The recommendation follows the WORKSPACE, never the global default.
     eq(QueueComposerModel.create().forWorkspace(git: true, pr: true).recommendedIntegration, .pr,
        "GitHub 工作区推荐 PR")
     eq(QueueComposerModel.create().forWorkspace(git: true, pr: false).recommendedIntegration, .merge,
        "普通 git 仓库推荐合并并推送")
-    eq(QueueComposerModel.create().forWorkspace(git: false, pr: false).recommendedIntegration, .push,
-       "非 git 目录推荐仅推送")
+    eq(QueueComposerModel.create().forWorkspace(git: false, pr: false).recommendedIntegration, .none,
+       "非 git 目录推荐「无」（没什么可发布的）")
 
     let model = QueueComposerModel.create()
         .forWorkspace(git: true, pr: true, defaultBase: "main", defaultIntegration: .pr)
@@ -482,14 +482,15 @@ do {
     form.onSubmit = { submitted = $0 }
     _ = layout(form, width: 400)
 
-    eq(form.integrationRadios.count, 4, "跟随设置 + 三个模式各一个单选按钮")
+    eq(form.integrationRadios.count, 5, "跟随设置 + 四个模式各一个单选按钮")
     eq(form.integrationRadios[0].title, "followShort", "第一个是跟随设置（短标签）")
+    eq(form.integrationRadios[4].title, "none", "最后一个是「无」")
     eq(form.selectedIntegration, nil, "默认就是跟随设置")
     check(form.integrationRadios[0].state == .on, "跟随设置那个是选中态")
     check(!form.integrationNote.isHidden, "本工作区推荐在 caption 行上，可见")
     check(form.integrationNote.stringValue.contains("recommend"),
           "推荐文案来自 integration.recommend")
-    // 四个 radio 必须放得下（不被截断），否则单选框反而看不清。
+    // 五个 radio 必须放得下（不被截断），否则单选框反而看不清。
     for radio in form.integrationRadios {
         check(radio.frame.width >= radio.intrinsicContentSize.width - 1,
               "radio「\(radio.title)」不被截断 (frame \(radio.frame.width) >= intrinsic \(radio.intrinsicContentSize.width))")
@@ -497,13 +498,12 @@ do {
 
     // 选中 merge：模型与提交都带上队列自己的覆盖。名字要填，否则表单不可提交。
     form.nameField.stringValue = "Lane"
-    form.integrationRadios[2].state = .on
-    form.integrationChanged()
+    form.selectIntegration(.merge)
     eq(form.selectedIntegration, .merge, "选中项映射回模型（2 = merge）")
     check(form.integrationRadios[0].state == .off, "单选：跟随设置被关掉")
     form.submitTapped()
     eq(submitted?.integration, .merge, "提交时带上队列自己的工作流")
-    eq(submitted?.integrationChoices.count, 4, "选项集合包含跟随设置")
+    eq(submitted?.integrationChoices.count, 5, "选项集合包含跟随设置与「无」")
 }
 
 section("面板设置抽屉：token + 工作流默认值")
@@ -519,8 +519,8 @@ do {
 
     eq(form.tokenField.stringValue, "ghp_x", "token 预填")
     check(form.tokenField.frame.width > 300, "token 字段撑满抽屉 (got \(form.tokenField.frame.width)pt)")
-    // 单选按钮组，不是下拉：三个工作流同时可见，推荐项带标记。
-    eq(form.integrationRadios.count, 3, "三个工作流各一个单选按钮")
+    // 单选按钮组，不是下拉：四个 Git 工作流同时可见，推荐项带标记。
+    eq(form.integrationRadios.count, 4, "四个 Git 工作流各一个单选按钮（pr/merge/push/无）")
     eq(form.selectedIntegration, .merge, "默认选中当前默认值 merge")
     check(form.integrationRadios[1].state == .on, "merge 那一个是选中态")
     check(form.integrationRadios[0].title.contains("recommendedSuffix"),
@@ -535,8 +535,10 @@ do {
     check(workflowMidY > tokenMidY,
           "工作流区块排在 GitHub Token 之上 (workflow \(workflowMidY) > token \(tokenMidY))")
 
-    form.integrationRadios[2].state = .on
-    form.integrationChanged()
+    form.selectIntegration(QueueIntegration.none)
+    eq(form.selectedIntegration, QueueIntegration.none, "第四档是「无」——非 git 项目不收尾")
+
+    form.selectIntegration(.push)
     eq(form.selectedIntegration, .push, "点选直接推送")
     check(form.integrationRadios[1].state == .off, "单选：前一个被关掉")
     form.tokenField.stringValue = "ghp_y"

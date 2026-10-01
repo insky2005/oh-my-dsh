@@ -694,9 +694,8 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         advancedStack.spacing = 3
         advancedStack.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(advancedStack)
-        // 工作流: caption + recommendation on one line, the four radios on the next.
-        // (Four radios do not fit beside a caption, so the caption moves up — this
-        // costs one text line, not a whole stacked row.)
+        // Git 工作流: 跟随设置 rides the caption line (with the recommendation), the
+        // four modes sit on the next — five radios do not fit on one row.
         integrationCaption.setContentHuggingPriority(.required, for: .horizontal)
         integrationCaption.setContentCompressionResistancePriority(.required, for: .horizontal)
         integrationNote.font = TaskFormKit.captionFont
@@ -708,19 +707,21 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         let integrationSpacer = NSView()
         integrationSpacer.translatesAutoresizingMaskIntoConstraints = false
         integrationSpacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
-        let captionRow = NSStackView(views: [integrationCaption, integrationNote, integrationSpacer])
+        for radio in integrationRadios {
+            radio.font = .systemFont(ofSize: 12)
+            radio.translatesAutoresizingMaskIntoConstraints = false
+            radio.target = self
+            radio.action = #selector(integrationChanged(_:))
+        }
+        let followRadio = integrationRadios[0]
+        let captionRow = NSStackView(views: [integrationCaption, followRadio,
+                                             integrationSpacer, integrationNote])
         captionRow.orientation = .horizontal
         captionRow.alignment = .centerY
         captionRow.spacing = 8
         captionRow.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(captionRow)
-        for radio in integrationRadios {
-            radio.font = .systemFont(ofSize: 12)
-            radio.translatesAutoresizingMaskIntoConstraints = false
-            radio.target = self
-            radio.action = #selector(integrationChanged)
-        }
-        let radioRow = NSStackView(views: integrationRadios)
+        let radioRow = NSStackView(views: Array(integrationRadios.dropFirst()))
         radioRow.orientation = .horizontal
         radioRow.alignment = .centerY
         radioRow.spacing = 10
@@ -787,8 +788,22 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         return model.integration
     }
 
-    /// A 工作流 radio was clicked: re-apply so the model (and submit) sees it.
-    @objc func integrationChanged() { apply(currentDraft) }
+    /// A Git 工作流 radio was clicked. The radios live in TWO rows (跟随设置 rides
+    /// the caption line), so AppKit's same-superview auto-exclusion does not apply —
+    /// turn the siblings off explicitly.
+    @objc func integrationChanged(_ sender: NSButton) {
+        for radio in integrationRadios where radio !== sender { radio.state = .off }
+        sender.state = .on
+        apply(currentDraft)
+    }
+
+    /// Programmatic exclusive selection (headless tests / any non-click path).
+    func selectIntegration(_ mode: QueueIntegration?) {
+        for (index, option) in model.integrationChoices.enumerated() {
+            integrationRadios[index].state = (option == mode) ? .on : .off
+        }
+        apply(currentDraft)
+    }
 
     /// 不切分支 toggled: the fields follow it, and the hint stops promising a
     /// branch (the queue will not touch git at all). Internal so the headless
@@ -952,7 +967,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
             radio.font = .systemFont(ofSize: 12)
             radio.translatesAutoresizingMaskIntoConstraints = false
             radio.target = self
-            radio.action = #selector(integrationChanged)
+            radio.action = #selector(integrationChanged(_:))
         }
         closeButton.onAction = { [weak self] in self?.onCancel?() }
         submitButton.target = self
@@ -1012,9 +1027,21 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
                           prAvailable: model.prAvailable)
     }
 
-    /// A radio was clicked: AppKit keeps the group exclusive; re-apply so the model
-    /// (and submit) sees the choice.
-    @objc func integrationChanged() { apply(currentDraft) }
+    /// A radio was clicked: keep the group exclusive explicitly, then re-apply so the
+    /// model (and submit) sees the choice.
+    @objc func integrationChanged(_ sender: NSButton) {
+        for radio in integrationRadios where radio !== sender { radio.state = .off }
+        sender.state = .on
+        apply(currentDraft)
+    }
+
+    /// Programmatic exclusive selection (headless tests).
+    func selectIntegration(_ mode: QueueIntegration) {
+        for (index, option) in QueueIntegration.allCases.enumerated() {
+            integrationRadios[index].state = (option == mode) ? .on : .off
+        }
+        apply(currentDraft)
+    }
 
     /// The submit button's action; internal so the headless tests can press it.
     @objc func submitTapped() { onSubmit?(currentDraft) }

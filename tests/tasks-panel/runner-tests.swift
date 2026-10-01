@@ -1527,6 +1527,24 @@ do {
     let finalizeSession = h1.dsh.sessions[1]
     check((h1.dsh.prompts[finalizeSession] ?? "").contains("合并"),
           "提示词说的是合并，不是开 PR")
+
+    // 「无」：即使 autoPR 开着、工作区能开 PR，也不起收尾会话；这不是失败。
+    let (board2, task2, queue2) = singleTaskBoard()
+    var b2 = board2
+    if let i = b2.index(ofQueue: queue2) { b2.queues[i].integration = QueueIntegration.none }
+    let h2 = Harness(board: b2, github: true, gitRepo: true)
+    // NOTE: write QueueIntegration.none in full — ".none" on an Optional VAR means
+    // Optional.none (nil), which would silently CLEAR the override instead.
+    eq(h2.board.integration(forQueue: queue2, default: .pr), QueueIntegration.none,
+       "队列覆盖解析为「无」")
+    _ = h2.runner.enqueue(taskID: task2, into: queue2)
+    h2.dsh.finishAll()
+    _ = h2.runner.step()
+    eq(h2.board.queue(queue2)?.state, QueueState.done, "任务完成，队列 done")
+    check(h2.runner.openingPRQueueID == nil, "工作流「无」不起收尾会话（autoPR 也不管用）")
+    eq(h2.dsh.sessions.count, 1, "只有任务会话，没有收尾会话")
+    check(h2.board.queue(queue2)?.prError == nil, "「无」是明确选择，不记错误")
+    check(!h2.runner.startQueueIntegration(queue2), "手动发布同样被拒")
 }
 
 section("队列到达 .done：回传完成情况到来源会话（一次，幂等）")

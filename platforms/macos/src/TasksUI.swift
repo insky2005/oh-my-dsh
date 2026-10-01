@@ -482,6 +482,8 @@ extension QueueIntegration {
         case .pr: return "arrow.up.right.square"
         case .merge: return "arrow.triangle.merge"
         case .push: return "arrow.up.circle"
+        // Unreachable: .none hides the publish control (canOpenPR is false).
+        case .none: return "nosign"
         }
     }
     /// The publish button's tooltip key for this mode.
@@ -490,6 +492,7 @@ extension QueueIntegration {
         case .pr: return "tasks.queue.openPR"
         case .merge: return "tasks.queue.mergePush"
         case .push: return "tasks.queue.pushOnly"
+        case .none: return "tasks.integration.none"
         }
     }
 }
@@ -606,12 +609,12 @@ struct QueueHeaderModel: Equatable {
                                 canEdit: queue.state != .done && queue.state != .closed,
                                 canDelete: queue.state != .done,
                                 canClose: queue.state == .done || queue.state == .paused,
-                                // 发布与 autoPR 解耦：只要工作区能开 PR、队列有分支、任务已收尾，
-                                // 就能手动 push+开/更新 PR（prUrl 已存在时是「更新」）。
                                 // 发布与 autoPR 解耦：只要工作区能承担这种工作流、队列有分支、
                                 // 任务已收尾，就能手动收尾（prUrl 已存在时是「更新」）。pr 需要 GitHub
-                                // 远端；merge/push 只需要能切分支，远端缺失由 runner 给出原因。
+                                // 远端；merge/push 只需要能切分支（远端缺失由 runner 给出原因）；
+                                // 「无」是明确的不收尾，没有发布按钮。
                                 canOpenPR: queue.state == .done && queue.branch != nil
+                                    && integration != .none
                                     && (integration != .pr || prAvailable),
                                 autoPR: queue.autoPR,
                                 isAutoCreated: queue.autoCreated,

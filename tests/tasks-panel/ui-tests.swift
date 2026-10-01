@@ -1085,8 +1085,8 @@ do {
        "GitHub 远端推荐 PR")
     eq(QueueIntegration.recommended(isGit: true, hasGitHubRemote: false), .merge,
        "普通 git 仓库推荐合并并推送")
-    eq(QueueIntegration.recommended(isGit: false, hasGitHubRemote: false), .push,
-       "非 git 目录推荐仅推送")
+    eq(QueueIntegration.recommended(isGit: false, hasGitHubRemote: false), .none,
+       "非 git 目录推荐「无」（没什么可发布的）")
 
     var board = TaskBoard()
     let task = TaskItem.manual(title: "One", id: "manual-0090abcd")
@@ -1108,6 +1108,11 @@ do {
     header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
                                     prAvailable: false, integration: .pr)
     check(!header.canOpenPR, "pr 模式没有 GitHub 远端就不能发布")
+
+    // 「无」：明确不收尾，即使有分支也不给发布按钮。
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: true, integration: .none)
+    check(!header.canOpenPR, "工作流「无」时没有发布按钮")
 
     // 关闭的队列是手动终态：不能再发布。
     _ = board.closeQueue(queue.id)
