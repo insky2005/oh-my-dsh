@@ -35,6 +35,8 @@
 
 | 目录 | 放什么 |
 |---|---|
+| `docs/raw/` | 原始素材 |
+| `docs/screenshots/` | 文档配图 |
 | `docs/research/` | 调研、选型、产品化总纲等策略文档 |
 | `docs/design/shell/` | 壳层共性设计（服务生命周期、数据目录、配色令牌…） |
 | `docs/design/panels/` | 面板的设计与实现约定 |
@@ -44,12 +46,11 @@
 | `docs/feedback/` | 持续跟踪的使用反馈 |
 | `docs/plans/` | 实施计划（`<TOPIC>_PLAN-*.md`、`dsh-*-compat-audit.md`） |
 | `docs/milestones/` | 里程碑目标（`M<n>-*.md`） |
-| `docs/panels/` | 面向用户的面板说明（`index.md`） |
-| `docs/raw/`、`docs/screenshots/` | 原始素材、文档配图 |
+| `docs/usage/` | 面向用户的使用说明（`panels.md` 右栏面板说明） |
 
 - **`docs/` 根目录只放 `README.md` 索引**，新文档一律进上表子目录，不再往根目录堆；新增后必须在 `docs/README.md` 登记；
 - 文件名用 kebab-case；设计文档以 `-design.md` 结尾、修复记录以 `-fix.md` 结尾；
-- 面板相关优先 `docs/design/panels/`（设计）或 `docs/panels/`（用户说明）。
+- 面板相关优先 `docs/design/panels/`（设计）或 `docs/usage/`（用户说明）。
 
 **编写要求：**
 

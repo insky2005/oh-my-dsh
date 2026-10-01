@@ -5,7 +5,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 
 ## 常用入口
 
-- [右栏面板详细说明](panels/index.md) — 九个原生面板的功能、边界与截图
+- [右栏面板详细说明](usage/panels.md) — 九个原生面板的功能、边界与截图
 - [产品化总纲](research/productization.md) — 路线图 / 分发 / 升级 / 多平台 / 开源治理
 - [dsh 升级影响清单](process/dsh-version-impact.md) — 五个耦合面 + 每次升级的执行 SOP
 - [发布流程](process/release-process.md) · [分支与提交规范](process/git-workflow.md)
@@ -78,9 +78,9 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 - [M2-windows.md](milestones/M2-windows.md) · [M3-linux.md](milestones/M3-linux.md)
 - [M4-ecosystem-growth.md](milestones/M4-ecosystem-growth.md) · [M5-apple-ecosystem.md](milestones/M5-apple-ecosystem.md)
 
-## panels/ — 面板使用说明
+## usage/ — 使用说明
 
-- [index.md](panels/index.md) — 右栏九个面板的完整说明
+- [panels.md](usage/panels.md) — 右栏九个面板的完整说明
 
 ## raw/ — 素材
 
@@ -88,6 +88,6 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 
 ## screenshots/ — 截图
 
-- 文档配图（README 与 `panels/index.md` 引用）
+- 文档配图（README 与 `usage/panels.md` 引用）
 
-> 新增文档请按开发环节放入对应目录，并在此索引登记；面板相关文档优先归入 `panels/` 或 `design/panels/`。
+> 新增文档请按开发环节放入对应目录，并在此索引登记；使用说明类归入 `usage/`，面板设计类归入 `design/panels/`。
