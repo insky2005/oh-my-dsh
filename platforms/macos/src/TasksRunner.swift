@@ -139,6 +139,10 @@ struct TaskRunnerEnv {
     /// The workspace's default integration mode (the tasks-panel setting), used for a
     /// queue that has no per-queue override.
     var defaultIntegration: QueueIntegration = .pr
+    /// 发布成功后自动关闭队列 (a panel-level switch): when true, a queue whose finalize
+    /// session publishes successfully is moved to .closed. Off by default so nothing
+    /// closes a queue behind the user's back.
+    var autoCloseOnPublish: Bool = false
     /// Whether this workspace is a git repository at all. A queue created where it
     /// is false gets NO branch (the pipeline then never touches git — §V2-7), which
     /// is exactly what 全部处理 has to honour when it builds one queue per task.
@@ -661,6 +665,10 @@ final class TasksRunner {
     /// was snapshotted at adopt time, so the runner is told here instead of being
     /// rebuilt — a rebuild would drop the current phase (and a running task).
     func setDefaultIntegration(_ mode: QueueIntegration) { env.defaultIntegration = mode }
+
+    /// 发布成功后自动关闭队列 can change while this board is loaded (the same drawer
+    /// as the workflow default), so the runner is told here.
+    func setAutoCloseOnPublish(_ on: Bool) { env.autoCloseOnPublish = on }
 
     private struct Active {
         var taskID: String
@@ -1315,11 +1323,13 @@ final class TasksRunner {
         let firstLine = full.split(separator: "\n").first.map(String.init) ?? ""
         let note = full.isEmpty ? nil : String(full.prefix(4000))
         _ = board.setQueueIntegrationNote(run.queueID, note)
+        var published = false
         if run.mode == .pr {
             if let prUrl = prUrl {
                 _ = updateQueue(run.queueID, prUrl: prUrl)
                 _ = board.setQueuePRError(run.queueID, nil)
                 env.log("tasks: queue " + run.queueID + " has its PR: " + prUrl)
+                published = true
             } else {
                 // No URL in the report and no open PR for the branch. The session is the
                 // only place that knows why (it was asked to say so).
@@ -1330,9 +1340,38 @@ final class TasksRunner {
         } else {
             env.log("tasks: queue " + run.queueID + " finalized (" + run.mode.rawValue + "): "
                     + (note ?? "(no report)"))
+            published = Self.finalizeSucceeded(mode: run.mode, report: full)
         }
+        // 发布成功后自动关闭队列 (the panel setting): close only after a publish the shell
+        // can actually see succeeded, and only while the queue is still .done.
+        if published { autoCloseAfterPublish(run.queueID) }
         persist()
         _ = pump()
+    }
+
+    /// Whether a finalize run counts as a successful publish, from what the shell can
+    /// observe. .pr has a definitive signal (a PR URL, checked by the caller); merge
+    /// and push have none in the API, so the shell looks for the result wording the
+    /// finalize prompt explicitly asks the agent for (「已合并…」 / 「已推送…」). A
+    /// report it cannot read is NOT a success: better to leave the queue open than to
+    /// close it over a failure.
+    static func finalizeSucceeded(mode: QueueIntegration, report: String?) -> Bool {
+        let text = report ?? ""
+        switch mode {
+        case .merge: return text.contains("已合并")
+        case .push: return text.contains("已推送")
+        case .pr, .none: return false
+        }
+    }
+
+    /// 发布成功后自动关闭队列: close the queue a finalize session just published — but
+    /// ONLY when it is .done. A paused queue still holds a failed task, and closing it
+    /// would hide the failure behind a neutral 「已关闭」 badge.
+    private func autoCloseAfterPublish(_ queueID: String) {
+        guard env.autoCloseOnPublish, board.queue(queueID)?.state == .done else { return }
+        if closeQueue(queueID) {
+            env.log("tasks: queue " + queueID + " auto-closed after a successful publish")
+        }
     }
 
     /// The PR URL inside a session report: the first github.com/<owner>/<repo>/pull/<n>

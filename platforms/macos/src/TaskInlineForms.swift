@@ -862,6 +862,9 @@ struct TaskSettingsModel: Equatable {
     var recommendedIntegration: QueueIntegration
     /// Whether the workspace can open a PR at all (a GitHub remote).
     var prAvailable: Bool
+    /// 发布成功后自动关闭队列（面板级开关，默认关）。Whether a queue is closed
+    /// automatically once its finalize session publishes successfully.
+    var autoCloseOnPublish: Bool = false
 }
 
 /// 面板设置 — a DRAWER (the same formSheet as 新建任务 / 新建队列), NOT a modal
@@ -888,6 +891,9 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     /// marked) is the point of a settings default.
     let integrationRadios: [NSButton]
     let integrationNote = TaskFormKit.hintLabel(.secondaryLabelColor)
+    /// 发布成功后自动关闭队列 —— a single checkbox, its explanation in the tooltip
+    /// (a whole hint row would cost height the shared content area does not have).
+    let autoCloseCheck: NSButton
     let submitButton: NSButton
     let cancelButton: NSButton
 
@@ -901,6 +907,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         integrationRadios = QueueIntegration.displayOrder.map { _ in
             NSButton(radioButtonWithTitle: "", target: nil, action: nil)
         }
+        autoCloseCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         tokenField.delegate = self
@@ -933,6 +940,9 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         integrationNote.stringValue = L10n.tr("tasks.integration.recommend",
                                               model.recommendedIntegration.label)
         integrationNote.isHidden = false
+        autoCloseCheck.title = L10n.tr("tasks.settings.autoClose")
+        autoCloseCheck.toolTip = L10n.tr("tasks.settings.autoCloseHint")
+        autoCloseCheck.state = model.autoCloseOnPublish ? .on : .off
         submitButton.title = L10n.tr("tasks.new.save")
         submitButton.isEnabled = true
         cancelButton.title = L10n.tr("btn.cancel")
@@ -969,6 +979,11 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
             radio.target = self
             radio.action = #selector(integrationChanged(_:))
         }
+        autoCloseCheck.font = .systemFont(ofSize: 12)
+        autoCloseCheck.translatesAutoresizingMaskIntoConstraints = false
+        autoCloseCheck.target = self
+        autoCloseCheck.action = #selector(autoCloseTapped)
+        _ = TaskFormKit.requiredHeight(autoCloseCheck)
         closeButton.onAction = { [weak self] in self?.onCancel?() }
         submitButton.target = self
         submitButton.action = #selector(submitTapped)
@@ -991,16 +1006,17 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         workflowBlock.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(workflowBlock)
         let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
-        // 工作流在前、GitHub Token 在后 —— 与 intro 的两段顺序一致。
+        // 工作流在前、自动关闭其次、GitHub Token 最后 —— 与 intro 的两段顺序一致。
         let column = NSStackView(views: [headingRow, info, workflowBlock,
-                                         tokenRow, tokenHint, buttons])
+                                         autoCloseCheck, tokenRow, tokenHint, buttons])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 8
         column.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(column)
         addSubview(column)
-        TaskFormKit.stretch([headingRow, info, workflowBlock, tokenRow, tokenHint], to: column)
+        TaskFormKit.stretch([headingRow, info, workflowBlock, autoCloseCheck,
+                             tokenRow, tokenHint], to: column)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
@@ -1024,7 +1040,8 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         TaskSettingsModel(token: tokenField.stringValue,
                           defaultIntegration: selectedIntegration,
                           recommendedIntegration: model.recommendedIntegration,
-                          prAvailable: model.prAvailable)
+                          prAvailable: model.prAvailable,
+                          autoCloseOnPublish: autoCloseCheck.state == .on)
     }
 
     /// A radio was clicked: keep the group exclusive explicitly, then re-apply so the
@@ -1032,6 +1049,16 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     @objc func integrationChanged(_ sender: NSButton) {
         for radio in integrationRadios where radio !== sender { radio.state = .off }
         sender.state = .on
+        apply(currentDraft)
+    }
+
+    /// 发布成功后自动关闭队列 was toggled — re-apply so the model (and submit)
+    /// sees the choice.
+    @objc func autoCloseTapped() { apply(currentDraft) }
+
+    /// Programmatic toggle (headless tests).
+    func setAutoCloseOnPublish(_ on: Bool) {
+        autoCloseCheck.state = on ? .on : .off
         apply(currentDraft)
     }
 

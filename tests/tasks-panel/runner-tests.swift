@@ -191,7 +191,8 @@ final class Harness {
          gitRepo: Bool = true,
          timeout: TimeInterval = 30 * 60,
          asynchronous: Bool = false,
-         defaultBaseBranch: String = "main") {
+         defaultBaseBranch: String = "main",
+         autoCloseOnPublish: Bool = false) {
         self.asynchronous = asynchronous
         let work = self.work
         let asynchronous = asynchronous        // captured by the perform closure
@@ -207,6 +208,7 @@ final class Harness {
             promptSession: { id, text in dsh.prompt(id, text) },
             sessionState: { id in dsh.sessionState(id) },
             defaultBaseBranch: defaultBaseBranch,
+            autoCloseOnPublish: autoCloseOnPublish,
             canSwitchBranches: gitRepo,
             canOpenPR: { github },
             cancelSession: { id in dsh.cancel(id) },
@@ -1765,6 +1767,101 @@ do {
     check(text.contains("分支：feature/x → main"), "分支行")
     check(text.contains("分支上相对 main 的提交："), "提交段")
     check(text.contains("abc123 深色模式：主题令牌"), "提交内容")
+}
+
+section("发布成功后自动关闭队列（成功才关；失败/关时不关）")
+do {
+    // 纯判定：PR 由调用方用链接判定；merge / push 读提示词要求的「已合并 / 已推送」行。
+    check(TasksRunner.finalizeSucceeded(mode: .merge, report: "完成。\n已合并并推送 main abc123"),
+          "merge 成功行判定为成功")
+    check(!TasksRunner.finalizeSucceeded(mode: .merge, report: "完成。\n合并失败：冲突"),
+          "merge 失败不判成功")
+    check(TasksRunner.finalizeSucceeded(mode: .push, report: "已推送 main abc123"),
+          "push 成功行判定为成功")
+    check(!TasksRunner.finalizeSucceeded(mode: .push, report: "推送被拒绝"), "push 失败不判成功")
+    check(!TasksRunner.finalizeSucceeded(mode: .pr, report: "whatever"), "PR 由链接判定，不读报告")
+
+    // PR 成功：拿到链接 → 队列自动关闭，记录保留。
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board, autoCloseOnPublish: true)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    let prSession = h.dsh.sessions[1]
+    h.dsh.reports[prSession] = "已推送分支并创建 PR：https://github.com/o/r/pull/7"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.queue(queueID)?.state, QueueState.closed, "PR 成功后队列自动关闭")
+    eq(h.board.queue(queueID)?.prUrl, "https://github.com/o/r/pull/7", "PR 记录保留")
+
+    // PR 失败：没有链接 → 不关，并保留失败原因。
+    let (board2, task2, queue2) = singleTaskBoard()
+    let h2 = Harness(board: board2, autoCloseOnPublish: true)
+    _ = h2.runner.enqueue(taskID: task2, into: queue2)
+    h2.dsh.finishAll()
+    _ = h2.runner.step()
+    let prSession2 = h2.dsh.sessions[1]
+    h2.dsh.reports[prSession2] = "开 PR 失败：token 无效"
+    h2.dsh.finishAll()
+    _ = h2.runner.step()
+    eq(h2.board.queue(queue2)?.state, QueueState.done, "PR 失败：队列保持 done")
+    eq(h2.board.queue(queue2)?.prError, "tasks.errPR", "并记下失败原因")
+
+    // 开关关闭：成功也不关。
+    let (board3, task3, queue3) = singleTaskBoard()
+    let h3 = Harness(board: board3, autoCloseOnPublish: false)
+    _ = h3.runner.enqueue(taskID: task3, into: queue3)
+    h3.dsh.finishAll()
+    _ = h3.runner.step()
+    let prSession3 = h3.dsh.sessions[1]
+    h3.dsh.reports[prSession3] = "已推送分支并创建 PR：https://github.com/o/r/pull/9"
+    h3.dsh.finishAll()
+    _ = h3.runner.step()
+    eq(h3.board.queue(queue3)?.state, QueueState.done, "开关关闭：成功后队列仍是 done")
+
+    // merge 成功：结果行说明已合并 → 自动关闭。
+    let (board4, task4, queue4) = singleTaskBoard()
+    var b4 = board4
+    if let i = b4.index(ofQueue: queue4) { b4.queues[i].integration = .merge }
+    let h4 = Harness(board: b4, autoCloseOnPublish: true)
+    _ = h4.runner.enqueue(taskID: task4, into: queue4)
+    h4.dsh.finishAll()
+    _ = h4.runner.step()
+    let mergeSession = h4.dsh.sessions[1]
+    h4.dsh.reports[mergeSession] = "已合并并推送 main\nabc123"
+    h4.dsh.finishAll()
+    _ = h4.runner.step()
+    eq(h4.board.queue(queue4)?.state, QueueState.closed, "merge 成功后队列自动关闭")
+
+    // merge 失败：结果行不是成功 → 不关。
+    let (board5, task5, queue5) = singleTaskBoard()
+    var b5 = board5
+    if let i = b5.index(ofQueue: queue5) { b5.queues[i].integration = .merge }
+    let h5 = Harness(board: b5, autoCloseOnPublish: true)
+    _ = h5.runner.enqueue(taskID: task5, into: queue5)
+    h5.dsh.finishAll()
+    _ = h5.runner.step()
+    let mergeSession2 = h5.dsh.sessions[1]
+    h5.dsh.reports[mergeSession2] = "合并失败：与 main 冲突，请用户介入"
+    h5.dsh.finishAll()
+    _ = h5.runner.step()
+    eq(h5.board.queue(queue5)?.state, QueueState.done, "merge 失败：队列保持 done")
+
+    // 失败的队列（paused）即使发布成功也不自动关闭：关掉会把失败藏起来。
+    // 手动发布一个 paused 队列（有失败任务时用户仍可点发布）。
+    let (board6, _, queue6) = singleTaskBoard()
+    var b6 = board6
+    if let i = b6.index(ofQueue: queue6) {
+        b6.queues[i].integration = .merge
+        b6.queues[i].state = .paused
+    }
+    let h6 = Harness(board: b6, autoCloseOnPublish: true)
+    check(h6.runner.startQueueIntegration(queue6), "paused 队列也能手动发布")
+    let mergeSession3 = h6.dsh.sessions[0]
+    h6.dsh.reports[mergeSession3] = "已合并 main\nabc123"
+    h6.dsh.finishAll()
+    _ = h6.runner.step()
+    eq(h6.board.queue(queue6)?.state, QueueState.paused, "paused 队列不自动关闭")
 }
 
 if failures == 0 {

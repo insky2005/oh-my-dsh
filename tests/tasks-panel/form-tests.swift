@@ -579,7 +579,8 @@ do {
 section("面板设置抽屉：token + 工作流默认值")
 do {
     let model = TaskSettingsModel(token: "ghp_x", defaultIntegration: .merge,
-                                  recommendedIntegration: .pr, prAvailable: true)
+                                  recommendedIntegration: .pr, prAvailable: true,
+                                  autoCloseOnPublish: true)
     let form = TaskSettingsView(model: model)
     var submitted: TaskSettingsModel?
     form.onSubmit = { submitted = $0 }
@@ -598,6 +599,9 @@ do {
           "推荐项（这里是 pr，第 2 个）带标记")
     check(!form.integrationNote.isHidden, "推荐说明是可见信息，不是校验 hint")
     check(form.submitButton.isEnabled, "保存总是可点：设置没有非法值")
+    // 发布成功后自动关闭队列：一个复选框，说明在 tooltip 里（不额外占一行高度）。
+    check(form.autoCloseCheck.state == .on, "自动关闭开关按模型预填")
+    eq(form.autoCloseCheck.title, "autoClose", "开关文案来自 tasks.settings.autoClose")
 
     // 区块顺序：工作流在上、GitHub Token 在下（与 intro 的两段顺序一致）。
     let workflowMidY = form.integrationRadios[0].convert(form.integrationRadios[0].bounds,
@@ -616,6 +620,11 @@ do {
     form.submitTapped()
     eq(submitted?.defaultIntegration, .push, "提交带上新选的默认工作流")
     eq(submitted?.token, "ghp_y", "以及新填的 token")
+
+    form.setAutoCloseOnPublish(false)
+    check(form.autoCloseCheck.state == .off, "可以关掉自动关闭开关")
+    form.submitTapped()
+    eq(submitted?.autoCloseOnPublish, false, "提交带上自动关闭开关")
 }
 
 section("使用说明视图：抽屉与内联共用一个正文")

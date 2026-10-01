@@ -731,10 +731,14 @@ enum L10n {
         "tasks.queue.mergePush": ("发布：合并到基线（有远端则一并推送）", "Publish: merge into the base branch (and push when there is a remote)"),
         "tasks.queue.pushOnly": ("发布：直接推送", "Publish: push directly"),
         "tasks.settings.title": ("面板设置", "Panel Settings"),
-        // 两段分别对应下面的两个区块（工作流在前、Token 在后）；\n 让标签按段落断行。
+        // 两段对应下面的工作流 / Token 区块（自动关闭的说明在开关自己的 tooltip）；\n 让标签按段落断行。
         "tasks.settings.info": ("Git 工作流，决定队列收尾时用哪种 Git 方式把代码送进远端（不是 git 仓库可选「无」）。\nGitHub Token，让面板能拉取 issues、创建 PR、评论关闭 issue。", "The Git workflow decides how a finished queue puts its code on the remote (pick None for a non-git project).\nA GitHub token lets the panel fetch issues, open PRs, and comment on & close them."),
-        "tasks.settings.hint": ("面板设置：Git 工作流与 GitHub Token", "Panel settings: Git workflow and GitHub token"),
+        "tasks.settings.hint": ("面板设置：Git 工作流、发布后自动关闭与 GitHub Token", "Panel settings: Git workflow, auto-close after publishing and GitHub token"),
         "tasks.settings.saved": ("设置已保存", "Settings saved"),
+        // 发布成功后自动关闭：开启后，队列的收尾会话成功发布（PR / 合并 / 推送）时，
+        // 队列自动进入「已关闭」（仍保留任务 / 分支 / PR 记录）。
+        "tasks.settings.autoClose": ("发布成功后自动关闭队列", "Auto-close the queue after publishing"),
+        "tasks.settings.autoCloseHint": ("开启后，队列的收尾会话成功发布（PR / 合并 / 推送）时，队列自动进入「已关闭」：不再接收任务，也不能启动或发布，但保留任务、分支与 PR 记录。", "When on, a queue closes itself once its finalize session publishes successfully (PR / merge / push): it accepts no more tasks and cannot be started or published, but keeps its tasks, branch and PR record."),
         "tasks.queue.close": ("关闭队列", "Close Queue"),
         "tasks.closeQueueTitle": ("关闭队列「%@」？", "Close queue %@?"),
         "tasks.closeQueueInfo": ("关闭后仍保留任务、分支与 PR 记录，但不再接收任务，也不能启动或发布。", "Closing keeps the task, branch and PR record, but the queue accepts no more tasks and cannot be started or published."),

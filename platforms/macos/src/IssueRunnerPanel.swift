@@ -852,6 +852,8 @@ final class IssueRunnerPanelController: NSObject {
             // 队列没写自己的 integration 时用它（面板设置里可改；**按工作区**存）。
             defaultIntegration: Self.resolvedIntegration(forWorkspace: repoRoot, isGit: isGit,
                                                          hasGitHubRemote: repo != nil),
+            // 发布成功后自动关闭队列（面板级开关；**全局**存）。
+            autoCloseOnPublish: Self.storedAutoCloseOnPublish(),
             canSwitchBranches: isGit,
             canOpenPR: { repo != nil },
             cancelSession: { id in Self.cancelSession(port: portOf(), sessionId: id) },
@@ -1260,6 +1262,18 @@ final class IssueRunnerPanelController: NSObject {
         guard let path = repoRootPath else { return .pr }
         return Self.resolvedIntegration(forWorkspace: path, isGit: workspaceIsGit,
                                         hasGitHubRemote: repo != nil)
+    }
+
+    /// 发布成功后自动关闭队列 —— a PANEL-level switch (not per workspace): the user
+    /// asked for one switch in 面板设置. Stored in the shell config (false until set).
+    private static let autoCloseOnPublishKey = "tasksAutoCloseOnPublish"
+
+    static func storedAutoCloseOnPublish() -> Bool {
+        ShellConfig.shared.bool(forKey: autoCloseOnPublishKey)
+    }
+
+    static func setStoredAutoCloseOnPublish(_ on: Bool) {
+        ShellConfig.shared.set(on, forKey: autoCloseOnPublishKey)
     }
 
     static func taskTimeout() -> TimeInterval {
@@ -1825,7 +1839,8 @@ final class IssueRunnerPanelController: NSObject {
             defaultIntegration: workspaceIntegration,
             recommendedIntegration: QueueIntegration.recommended(isGit: workspaceIsGit,
                                                                  hasGitHubRemote: repo != nil),
-            prAvailable: repo != nil)
+            prAvailable: repo != nil,
+            autoCloseOnPublish: Self.storedAutoCloseOnPublish())
         let form = TaskSettingsView(model: model)
         form.onSubmit = { [weak self] settings in self?.submitSettings(settings) }
         form.onCancel = { [weak self] in self?.dismissForm() }
@@ -1851,6 +1866,10 @@ final class IssueRunnerPanelController: NSObject {
             Self.setStoredIntegration(settings.defaultIntegration, forWorkspace: path)
             runner?.setDefaultIntegration(settings.defaultIntegration)
         }
+        // PANEL-LEVEL: 发布成功后自动关闭队列 —— saved globally (not per workspace) and
+        // pushed to the live runner so the next finalize honours it.
+        Self.setStoredAutoCloseOnPublish(settings.autoCloseOnPublish)
+        runner?.setAutoCloseOnPublish(settings.autoCloseOnPublish)
         dismissForm()
         setStatus(L10n.tr("tasks.settings.saved"), spin: false)
         autoHideStatus(after: 4)
