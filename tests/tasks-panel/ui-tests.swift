@@ -1078,6 +1078,54 @@ do {
                                    prAvailable: false)
     check(!ready.canOpenPR, "…but never in a workspace without GitHub")
 }
+section("工作流：发布按钮与可用性跟着队列的模式走")
+do {
+    // The workspace's usual mode is a RECOMMENDATION, never enforced.
+    eq(QueueIntegration.recommended(isGit: true, hasGitHubRemote: true), .pr,
+       "GitHub 远端推荐 PR")
+    eq(QueueIntegration.recommended(isGit: true, hasGitHubRemote: false), .merge,
+       "普通 git 仓库推荐合并并推送")
+    eq(QueueIntegration.recommended(isGit: false, hasGitHubRemote: false), .push,
+       "非 git 目录推荐仅推送")
+
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "One", id: "manual-0090abcd")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane", integration: .merge)
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    board.markDone(task.id, prUrl: nil)
+
+    // merge 覆盖：不需要 GitHub 远端，有分支就能发布。
+    var header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                        prAvailable: false, integration: .merge)
+    eq(header.integration, .merge, "header 记住解析后的工作流")
+    check(header.canOpenPR, "merge 只需要分支：非 GitHub 工作区也能发布")
+    eq(header.integration.publishSymbol, "arrow.triangle.merge", "发布图标跟着模式")
+    eq(header.integration.publishHintKey, "tasks.queue.mergePush", "发布文案跟着模式")
+
+    // pr 模式仍然要 GitHub。
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: false, integration: .pr)
+    check(!header.canOpenPR, "pr 模式没有 GitHub 远端就不能发布")
+
+    // 关闭的队列是手动终态：不能再发布。
+    _ = board.closeQueue(queue.id)
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: true, integration: .merge)
+    check(!header.canOpenPR, "关闭的队列不能发布")
+}
+section("收尾结果写在队列卡上")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "One", id: "manual-0091abcd")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    _ = board.setQueueIntegrationNote(queue.id, "已合并并推送到 origin/main")
+    let header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(header.integrationNote, "已合并并推送到 origin/main", "收尾结果带到卡上")
+}
 section("加入队列 dropdown: 新建队列 first")
 do {
     var board = TaskBoard()

@@ -876,7 +876,8 @@ struct TaskBoard {
                               branch: String? = nil,
                               baseBranch: String = "main",
                               autoPR: Bool = false,
-                              autoCreated: Bool = false) -> TaskQueue {
+                              autoCreated: Bool = false,
+                              integration: QueueIntegration? = nil) -> TaskQueue {
         let queueID = TaskQueue.newID()
         let resolved: String?
         if let branch = branch {
@@ -886,7 +887,8 @@ struct TaskBoard {
         }
         let queue = TaskQueue(id: queueID, name: name, branch: resolved, baseBranch: baseBranch,
                               taskIds: [], state: .draft, autoCreated: autoCreated,
-                              autoPR: autoPR, prUrl: nil, createdAt: Date())
+                              autoPR: autoPR, prUrl: nil, integration: integration,
+                              createdAt: Date())
         queues.append(queue)
         return queue
     }

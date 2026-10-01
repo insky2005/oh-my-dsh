@@ -460,6 +460,68 @@ do {
           "and the inline advanced fields keep their width (\(expanded.branchField.frame.width)pt)")
 }
 
+section("队列表单：工作流 picker（跟随设置 + 三档，推荐项带标记）")
+do {
+    // The recommendation follows the WORKSPACE, never the global default.
+    eq(QueueComposerModel.create().forWorkspace(git: true, pr: true).recommendedIntegration, .pr,
+       "GitHub 工作区推荐 PR")
+    eq(QueueComposerModel.create().forWorkspace(git: true, pr: false).recommendedIntegration, .merge,
+       "普通 git 仓库推荐合并并推送")
+    eq(QueueComposerModel.create().forWorkspace(git: false, pr: false).recommendedIntegration, .push,
+       "非 git 目录推荐仅推送")
+
+    let model = QueueComposerModel.create()
+        .forWorkspace(git: true, pr: true, defaultBase: "main", defaultIntegration: .pr)
+        .togglingAdvanced()
+    let form = QueueComposerView(model: model)
+    var submitted: QueueComposerModel?
+    form.onSubmit = { submitted = $0 }
+    _ = layout(form, width: 400)
+
+    eq(form.integrationPopup.numberOfItems, 4, "跟随设置 + 三个模式")
+    check(form.integrationPopup.itemTitle(at: 0).contains("follow"), "第一项是跟随设置")
+    eq(form.selectedIntegration, nil, "默认就是跟随设置")
+    check(form.integrationPopup.itemTitle(at: 0).contains("recommendedSuffix"),
+          "推荐项带（推荐）标记")
+    check(form.integrationPopup.itemTitle(at: 1).contains("recommendedSuffix"),
+          "推荐的是 pr —— 标记落在 pr 那一项上（1 = pr）")
+
+    // 选中 merge：模型与提交都带上队列自己的覆盖。名字要填，否则表单不可提交。
+    form.nameField.stringValue = "Lane"
+    form.integrationPopup.selectItem(at: 2)
+    form.integrationChanged()
+    eq(form.selectedIntegration, .merge, "选中项映射回模型（2 = merge）")
+    form.submitTapped()
+    eq(submitted?.integration, .merge, "提交时带上队列自己的工作流")
+    eq(submitted?.integrationChoices.count, 4, "选项集合包含跟随设置")
+}
+
+section("面板设置抽屉：token + 工作流默认值")
+do {
+    let model = TaskSettingsModel(token: "ghp_x", defaultIntegration: .merge,
+                                  recommendedIntegration: .pr, prAvailable: true)
+    let form = TaskSettingsView(model: model)
+    var submitted: TaskSettingsModel?
+    form.onSubmit = { submitted = $0 }
+    let settingsSize = layout(form, width: 440)
+    check(settingsSize.height <= 290,
+          "设置抽屉与两张表单共用同一个内容区，不能更高 (got \(settingsSize.height)pt)")
+
+    eq(form.tokenField.stringValue, "ghp_x", "token 预填")
+    check(form.tokenField.frame.width > 300, "token 字段撑满抽屉 (got \(form.tokenField.frame.width)pt)")
+    eq(form.integrationPopup.numberOfItems, 3, "三档（这里就是默认值，没有跟随设置）")
+    eq(form.integrationPopup.indexOfSelectedItem, 1, "选中的是当前默认值 merge")
+    check(!form.integrationNote.isHidden, "推荐说明是可见信息，不是校验 hint")
+    check(form.submitButton.isEnabled, "保存总是可点：设置没有非法值")
+
+    form.integrationPopup.selectItem(at: 2)
+    form.integrationChanged()
+    form.tokenField.stringValue = "ghp_y"
+    form.submitTapped()
+    eq(submitted?.defaultIntegration, .push, "提交带上新选的默认工作流")
+    eq(submitted?.token, "ghp_y", "以及新填的 token")
+}
+
 section("抽屉背后有一层虚化（表单与内容区分层）")
 do {
     // 抽屉与内容区用的是同一套面板底色，表单打开时曾经看起来像列表里多了一张卡。

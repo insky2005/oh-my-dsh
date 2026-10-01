@@ -527,6 +527,10 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
     let skipBranchSwitch: NSButton
     let prSwitch: NSButton
     let prNote: NSTextField
+    /// 工作流 picker: 跟随设置 (default) + the three modes, the recommended one
+    /// marked. Internal for the headless form tests.
+    let integrationCaption = TaskFormKit.caption()
+    let integrationPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let advancedButton: NSButton
     /// The 高级设置 section (分支 / 基于分支 / PR): hidden while creating, open
     /// while editing. Internal so the tests can assert the default.
@@ -604,6 +608,25 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         advancedStack.isHidden = !model.showsAdvanced
         // A PR switch that cannot be switched is worse than a sentence: the
         // workspace simply has no PR to open.
+        integrationCaption.stringValue = L10n.tr("tasks.integration.label")
+        let choices = model.integrationChoices
+        // The recommendation rides ON the item it recommends — a separate note row
+        // cost the expanded form height it does not have (see inlineRow).
+        let recommended = model.recommendedIntegration
+        let mark = L10n.tr("tasks.integration.recommendedSuffix")
+        integrationPopup.removeAllItems()
+        for choice in choices {
+            if let choice = choice {
+                integrationPopup.addItem(withTitle: choice.label
+                    + (choice == recommended ? mark : ""))
+            } else {
+                integrationPopup.addItem(withTitle:
+                    L10n.tr("tasks.integration.follow", model.defaultIntegration.label)
+                    + (model.defaultIntegration == recommended ? mark : ""))
+            }
+        }
+        let selected = choices.firstIndex(of: model.integration) ?? 0
+        integrationPopup.selectItem(at: selected)
         prSwitch.title = L10n.tr("tasks.queue.createPR")
         prSwitch.state = model.autoPR ? .on : .off
         prSwitch.isHidden = !model.prAvailable
@@ -632,6 +655,11 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
             toggle.font = .systemFont(ofSize: 12)
             toggle.translatesAutoresizingMaskIntoConstraints = false
         }
+        integrationPopup.font = .systemFont(ofSize: 12)
+        integrationPopup.controlSize = .small
+        integrationPopup.translatesAutoresizingMaskIntoConstraints = false
+        integrationPopup.target = self
+        integrationPopup.action = #selector(integrationChanged)
         skipBranchSwitch.target = self
         skipBranchSwitch.action = #selector(skipBranchTapped)
         closeButton.onAction = { [weak self] in self?.onCancel?() }
@@ -666,11 +694,46 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
 
         advancedStack.orientation = .vertical
         advancedStack.alignment = .leading
-        advancedStack.spacing = 6
+        // 3pt: the integration picker added a fourth row to 高级设置, and the whole
+        // point of this section is that the expanded form does NOT need a scrollbar.
+        advancedStack.spacing = 3
         advancedStack.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(advancedStack)
-        for view in [branchRow, baseRow, prSwitch, prNote] { advancedStack.addArrangedSubview(view) }
-        TaskFormKit.stretch([branchRow, baseRow, prNote], to: advancedStack)
+        // 工作流 sits caption-BESIDE-picker, with the recommendation on the same
+        // line: a fourth stacked row would push the expanded form past a short
+        // panel's content area (the very mistake inlineRow was introduced to fix).
+        integrationCaption.setContentHuggingPriority(.required, for: .horizontal)
+        integrationCaption.setContentCompressionResistancePriority(.required, for: .horizontal)
+        integrationCaption.widthAnchor.constraint(equalToConstant: 62).isActive = true
+        integrationPopup.setContentHuggingPriority(.required, for: .horizontal)
+        let integrationSpacer = NSView()
+        integrationSpacer.translatesAutoresizingMaskIntoConstraints = false
+        integrationSpacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        let integrationRow = NSStackView(views: [integrationCaption, integrationPopup,
+                                                 integrationSpacer])
+        integrationRow.orientation = .horizontal
+        integrationRow.alignment = .centerY
+        integrationRow.spacing = 8
+        integrationRow.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(integrationRow)
+        // 自动收尾 switch + its 不可用 note on ONE line: the note already said what
+        // the integration picker now says for a non-GitHub workspace, so a whole
+        // stacked row for it cost height the expanded form does not have.
+        prNote.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        prNote.lineBreakMode = .byTruncatingTail
+        let prSpacer = NSView()
+        prSpacer.translatesAutoresizingMaskIntoConstraints = false
+        prSpacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        let prRow = NSStackView(views: [prSwitch, prNote, prSpacer])
+        prRow.orientation = .horizontal
+        prRow.alignment = .centerY
+        prRow.spacing = 8
+        prRow.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(prRow)
+        for view in [branchRow, baseRow, integrationRow, prRow] {
+            advancedStack.addArrangedSubview(view)
+        }
+        TaskFormKit.stretch([branchRow, baseRow, integrationRow, prRow], to: advancedStack)
 
         let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
         let column = NSStackView(views: [headingRow, info, nameRow, hintRow, advancedStack, hint, buttons])
@@ -696,7 +759,18 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
                     baseBranch: baseField.stringValue,
                     autoPR: prSwitch.state == .on,
                     skippingBranch: skipBranchSwitch.state == .on)
+            .typedIntegration(selectedIntegration)
     }
+
+    /// The picker's current choice (nil = 跟随设置). Internal for the form tests.
+    var selectedIntegration: QueueIntegration? {
+        let choices = model.integrationChoices
+        let index = integrationPopup.indexOfSelectedItem
+        return (index >= 0 && index < choices.count) ? choices[index] : nil
+    }
+
+    /// The 工作流 picker changed: re-apply so the model (and submit) sees it.
+    @objc func integrationChanged() { apply(currentDraft) }
 
     /// 不切分支 toggled: the fields follow it, and the hint stops promising a
     /// branch (the queue will not touch git at all). Internal so the headless
@@ -737,6 +811,168 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         return false
     }
 }
+
+// MARK: - Tasks settings (token + 工作流)
+
+/// The panel's global settings — the two things it stores for the WHOLE shell.
+/// 决策: 工作流全局默认与 GitHub token 合并进同一个抽屉（不是两个入口）。
+///
+///   1. GitHub token（按仓库文件 / 通用兜底，只写文件、chmod 600）
+///   2. 工作流默认值（队列没有自己的覆盖时用它收尾）
+///
+/// Pure, so the form tests can drive it headlessly (like QueueComposerModel).
+struct TaskSettingsModel: Equatable {
+    var token: String
+    var defaultIntegration: QueueIntegration
+    /// This workspace's suggestion — shown, never enforced.
+    var recommendedIntegration: QueueIntegration
+    /// Whether the workspace can open a PR at all (a GitHub remote).
+    var prAvailable: Bool
+}
+
+/// 面板设置 — a DRAWER (the same formSheet as 新建任务 / 新建队列), NOT a modal
+/// alert: one surface for the token and the 工作流 default. The user asked for a
+/// drawer explicitly (2026-10-01): an NSAlert next to an inline form is two idioms
+/// for the same act.
+final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
+
+    private(set) var model: TaskSettingsModel
+    var onSubmit: ((TaskSettingsModel) -> Void)?
+    var onCancel: (() -> Void)?
+
+    private let heading = NSTextField(labelWithString: "")
+    private let info = NSTextField(wrappingLabelWithString: "")
+    private let tokenCaption = TaskFormKit.caption()
+    private let tokenHint = NSTextField(wrappingLabelWithString: "")
+    private let closeButton = CustomIconButton(glyph: .close, tooltip: "", size: 22)
+    // Internal for the headless form tests (see TaskComposerView).
+    let tokenField: NSTextField
+    let tokenBox: TaskFieldBox
+    let integrationCaption = TaskFormKit.caption()
+    let integrationPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    let integrationNote = TaskFormKit.hintLabel(.secondaryLabelColor)
+    let submitButton: NSButton
+    let cancelButton: NSButton
+
+    init(model: TaskSettingsModel) {
+        self.model = model
+        let token = TaskFormKit.textField(model.token, placeholder: "")
+        tokenBox = token.box
+        tokenField = token.field
+        submitButton = TaskFormKit.button("", primary: true)
+        cancelButton = TaskFormKit.button("", primary: false)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        tokenField.delegate = self
+        build()
+        apply(model)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func focusToken() { window?.makeFirstResponder(tokenField) }
+
+    func apply(_ model: TaskSettingsModel) {
+        self.model = model
+        heading.stringValue = L10n.tr("tasks.settings.title")
+        info.stringValue = L10n.tr("tasks.settings.info")
+        tokenCaption.stringValue = L10n.tr("tasks.configTitle")
+        tokenField.placeholderString = L10n.tr("tasks.tokenPlaceholder")
+        tokenHint.stringValue = L10n.tr("tasks.configInfo")
+        integrationCaption.stringValue = L10n.tr("tasks.integration.defaultLabel")
+        let choices = QueueIntegration.allCases
+        integrationPopup.removeAllItems()
+        for choice in choices { integrationPopup.addItem(withTitle: choice.label) }
+        integrationPopup.selectItem(at: choices.firstIndex(of: model.defaultIntegration) ?? 0)
+        // hintLabel starts hidden (it is a VALIDATION hint elsewhere); this one is
+        // always-visible information, so it is shown explicitly.
+        integrationNote.stringValue = L10n.tr("tasks.integration.recommend",
+                                              model.recommendedIntegration.label)
+        integrationNote.isHidden = false
+        submitButton.title = L10n.tr("tasks.new.save")
+        submitButton.isEnabled = true
+        cancelButton.title = L10n.tr("btn.cancel")
+        closeButton.toolTip = L10n.tr("btn.cancel")
+    }
+
+    private func build() {
+        // The drawer shares the panel's form sheet with 新建任务 / 新建队列, so it
+        // must fit the same short content area: both long explanations are capped
+        // at two lines and truncated (full text in the tooltip) instead of
+        // letting the sheet push its own buttons out of view.
+        info.font = TaskFormKit.captionFont
+        info.textColor = .secondaryLabelColor
+        info.maximumNumberOfLines = 2
+        info.lineBreakMode = .byTruncatingTail
+        info.translatesAutoresizingMaskIntoConstraints = false
+        info.toolTip = L10n.tr("tasks.settings.info")
+        _ = TaskFormKit.requiredHeight(info)
+        tokenHint.font = TaskFormKit.captionFont
+        tokenHint.textColor = .tertiaryLabelColor
+        tokenHint.maximumNumberOfLines = 2
+        tokenHint.lineBreakMode = .byTruncatingTail
+        tokenHint.translatesAutoresizingMaskIntoConstraints = false
+        tokenHint.toolTip = L10n.tr("tasks.configInfo")
+        _ = TaskFormKit.requiredHeight(tokenHint)
+        integrationNote.font = TaskFormKit.captionFont
+        integrationNote.textColor = .tertiaryLabelColor
+        integrationNote.maximumNumberOfLines = 2
+        integrationNote.lineBreakMode = .byTruncatingTail
+        _ = TaskFormKit.requiredHeight(integrationNote)
+        integrationPopup.font = .systemFont(ofSize: 12)
+        integrationPopup.controlSize = .small
+        integrationPopup.translatesAutoresizingMaskIntoConstraints = false
+        integrationPopup.target = self
+        integrationPopup.action = #selector(integrationChanged)
+        closeButton.onAction = { [weak self] in self?.onCancel?() }
+        submitButton.target = self
+        submitButton.action = #selector(submitTapped)
+        cancelButton.target = self
+        cancelButton.action = #selector(cancelTapped)
+
+        let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
+        let tokenRow = TaskFormKit.row(tokenCaption, tokenBox)
+        let integrationRow = TaskFormKit.inlineRow(integrationCaption, integrationPopup)
+        let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
+        let column = NSStackView(views: [headingRow, info, tokenRow, tokenHint,
+                                         integrationRow, integrationNote, buttons])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 8
+        column.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(column)
+        addSubview(column)
+        TaskFormKit.stretch([headingRow, info, tokenRow, tokenHint, integrationRow, integrationNote],
+                            to: column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+        ])
+    }
+
+    /// The settings as currently typed.
+    var currentDraft: TaskSettingsModel {
+        let choices = QueueIntegration.allCases
+        let index = integrationPopup.indexOfSelectedItem
+        return TaskSettingsModel(token: tokenField.stringValue,
+                                 defaultIntegration: (index >= 0 && index < choices.count)
+                                     ? choices[index] : model.defaultIntegration,
+                                 recommendedIntegration: model.recommendedIntegration,
+                                 prAvailable: model.prAvailable)
+    }
+
+    @objc func integrationChanged() { apply(currentDraft) }
+
+    /// The submit button's action; internal so the headless tests can press it.
+    @objc func submitTapped() { onSubmit?(currentDraft) }
+
+    @objc private func cancelTapped() { onCancel?() }
+
+    func controlTextDidChange(_ obj: Notification) {}
+}
+
 // MARK: - Form sheet (the surface a form slides up in)
 
 /// The panel's bottom sheet. A form is presented HERE rather than inline in the

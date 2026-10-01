@@ -1277,8 +1277,10 @@ final class TasksRunner {
     func createQueue(name: String,
                      branch: String? = nil,
                      baseBranch: String = "main",
-                     autoPR: Bool = false) -> TaskQueue {
-        let queue = board.createQueue(name: name, branch: branch, baseBranch: baseBranch, autoPR: autoPR)
+                     autoPR: Bool = false,
+                     integration: QueueIntegration? = nil) -> TaskQueue {
+        let queue = board.createQueue(name: name, branch: branch, baseBranch: baseBranch,
+                                      autoPR: autoPR, integration: integration)
         persist()
         return queue
     }
@@ -1300,6 +1302,7 @@ final class TasksRunner {
                               branch: String? = nil,
                               baseBranch: String? = nil,
                               autoPR: Bool? = nil,
+                              integration: QueueIntegration? = nil,
                               originSession: String? = nil,
                               drafts: [TaskDraft]) -> (queue: TaskQueue, created: [TaskItem]) {
         let branchArg: String?
@@ -1313,7 +1316,8 @@ final class TasksRunner {
         let queue = board.createQueue(name: name,
                                       branch: branchArg,
                                       baseBranch: baseBranch ?? env.defaultBaseBranch,
-                                      autoPR: autoPR ?? false)
+                                      autoPR: autoPR ?? false,
+                                      integration: integration)
         var created: [TaskItem] = []
         for draft in drafts where draft.isValid {
             let task = TaskItem.manual(title: draft.normalizedTitle, body: draft.effectiveBody)
@@ -1396,13 +1400,15 @@ final class TasksRunner {
                      branch: String?? = nil,
                      baseBranch: String? = nil,
                      autoPR: Bool? = nil,
-                     prUrl: String? = nil) -> Bool {
+                     prUrl: String? = nil,
+                     integration: QueueIntegration?? = nil) -> Bool {
         guard let qi = board.index(ofQueue: queueID) else { return false }
         if let name = name { board.queues[qi].name = name }
         if let branch = branch { board.queues[qi].branch = branch }
         if let baseBranch = baseBranch { board.queues[qi].baseBranch = baseBranch }
         if let autoPR = autoPR { board.queues[qi].autoPR = autoPR }
         if let prUrl = prUrl { board.queues[qi].prUrl = prUrl }
+        if let integration = integration { board.queues[qi].integration = integration }
         persist()
         return true
     }

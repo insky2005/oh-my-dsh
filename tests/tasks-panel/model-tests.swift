@@ -541,7 +541,7 @@ let repo = tempRepo("store")
 var boardS = TaskBoard()
 let m1 = TaskItem.manual(title: "Polish README", body: "tidy the install section")
 boardS.tasks = [m1]
-let sq = boardS.createQueue(name: "Docs Cleanup")
+let sq = boardS.createQueue(name: "Docs Cleanup", integration: .merge)
 _ = boardS.enqueue(taskID: m1.id, into: sq.id)
 boardS.local.sessions[m1.id] = "session-manual-1"
 TasksStore.saveLocalHalf(repo, boardS)
@@ -557,6 +557,8 @@ check(queuesJSON.contains("Docs Cleanup"), "queues.json holds the name")
 // present in the file bytes).
 let queueEntries = TasksStore.readJSON(TasksStore.path(repo, file: "queues.json"))["queues"] as? [[String: Any]] ?? []
 check(queueEntries.first?["branch"] as? String == "feature/docs-cleanup", "queues.json holds the derived branch")
+check(queueEntries.first?["integration"] as? String == "merge",
+      "queues.json holds the per-queue integration override")
 let localJSON = text(at: TasksStore.path(repo, file: "local.json"))
 check(localJSON.contains("session-manual-1"), "local.json holds the session")
 check(!FileManager.default.fileExists(atPath: TasksStore.path(repo, file: "index.json")),
@@ -568,6 +570,7 @@ eq(reloaded.tasks(inQueue: sq.id).count, 1, "the membership reloads")
 check(reloaded.task(m1.id)?.sessionId == "session-manual-1", "the session is re-attached")
 check(reloaded.task(m1.id)?.body == "tidy the install section", "the body round-trips")
 check(reloaded.queue(sq.id)?.branch == "feature/docs-cleanup", "the queue branch round-trips")
+eq(reloaded.queue(sq.id)?.integration, .merge, "the integration override round-trips")
 check(reloaded.task(m1.id)?.state == .queued, "the queued state round-trips")
 
 // MARK: - index.json compatibility

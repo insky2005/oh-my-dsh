@@ -743,6 +743,11 @@ final class TaskQueueHeaderView: NSView {
             branch.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         } else {
             rows.append(metaRow)
+            // The last finalize session's outcome (its report's first line, or the
+            // failure reason) — on the card, not only in the log.
+            if let note = model.integrationNote, !note.isEmpty {
+                rows.append(resultRow(note))
+            }
         }
 
         let column = NSStackView(views: rows)
@@ -761,6 +766,20 @@ final class TaskQueueHeaderView: NSView {
             row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
         }
         bar.widthAnchor.constraint(equalToConstant: 72).isActive = true
+    }
+
+    /// One line under the meta row: what the last finalize session reported (a
+    /// success summary, or why it could not finish). Truncating, with the full text
+    /// in the tooltip.
+    private func resultRow(_ note: String) -> NSView {
+        let label = NSTextField(labelWithString: note)
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.toolTip = note
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return label
     }
 
     /// A small ↺ after the queue name when its completion reports back to the session
@@ -798,8 +817,9 @@ final class TaskQueueHeaderView: NSView {
     /// 发布（push + 开/更新 PR）。图标只在队列可发布时出现；已有 PR 时它就是「更新」。
     private func openPRControl() -> NSView? {
         guard model.canOpenPR else { return nil }
-        return iconButton("arrow.up.right.square",
-                          tooltipKey: model.prErrorKey ?? "tasks.queue.openPR",
+        // The mode decides both the icon and the sentence: 开 PR / 合并并推送 / 推送.
+        return iconButton(model.integration.publishSymbol,
+                          tooltipKey: model.prErrorKey ?? model.integration.publishHintKey,
                           action: #selector(openPRTapped))
     }
 

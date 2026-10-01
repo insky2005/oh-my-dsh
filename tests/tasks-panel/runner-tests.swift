@@ -1501,6 +1501,34 @@ do {
     check(!h.runner.enqueue(taskID: extra.id, into: r.queue.id), "关闭后追加被拒")
 }
 
+section("工作流：队列级覆盖决定收尾会话（merge 不需要 GitHub）")
+do {
+    // 默认（.pr）在非 GitHub 工作区拒绝收尾：只建任务会话。
+    let (board0, task0, queue0) = singleTaskBoard()
+    let h0 = Harness(board: board0, github: false, gitRepo: true)
+    _ = h0.runner.enqueue(taskID: task0, into: queue0)
+    h0.dsh.finishAll()
+    _ = h0.runner.step()
+    eq(h0.board.queue(queue0)?.state, QueueState.done, "任务完成，队列 done")
+    check(h0.runner.openingPRQueueID == nil, "默认 pr 在非 GitHub 工作区不收尾")
+    eq(h0.dsh.sessions.count, 1, "只建了任务会话，没有收尾会话")
+
+    // 覆盖为 .merge：同样的工作区就能收尾（只要 git 远端在）。
+    let (board1, task1, queue1) = singleTaskBoard()
+    var b1 = board1
+    if let i = b1.index(ofQueue: queue1) { b1.queues[i].integration = .merge }
+    let h1 = Harness(board: b1, github: false, gitRepo: true)
+    eq(h1.board.integration(forQueue: queue1, default: .pr), .merge, "队列覆盖优先于全局默认")
+    _ = h1.runner.enqueue(taskID: task1, into: queue1)
+    h1.dsh.finishAll()
+    _ = h1.runner.step()
+    eq(h1.runner.openingPRQueueID, queue1, "merge 模式下收尾会话照常启动")
+    eq(h1.dsh.sessions.count, 2, "多了一个收尾会话")
+    let finalizeSession = h1.dsh.sessions[1]
+    check((h1.dsh.prompts[finalizeSession] ?? "").contains("合并"),
+          "提示词说的是合并，不是开 PR")
+}
+
 section("队列到达 .done：回传完成情况到来源会话（一次，幂等）")
 do {
     let h = Harness(board: TaskBoard(), github: false, gitRepo: true)

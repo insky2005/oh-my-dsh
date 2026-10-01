@@ -1,6 +1,6 @@
 # 任务队列 × 会话回传 设计（task-queue-session-loop）
 
-> 状态：已实现（P0/P1 2026-09-30；P2 活泳道 + 手动发布 2026-10-01）
+> 状态：已实现（P0/P1 2026-09-30；P2 活泳道 + 手动发布 2026-10-01；工作流 2026-10-01）
 > 关联面板：任务（Tasks / IssueRunner）
 > 关联文档：docs/task-todo-skill-design.md、docs/issue-runner-design.md、docs/builtin-skills-design.md、docs/git-workflow.md
 > 决策来源：2026-09-30 会话讨论定稿
@@ -239,8 +239,10 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 - **P2（2026-10-01 实现）**：队列改为**可追加的活泳道**——`.done` 只是「当前一批任务都结束」，
   追加任务回到 `.draft` 并**重臂回传**（`.paused` 追加保持 paused）；PR/push 改为**手动发布**
   （`autoPR` 是队列配置、默认关）；新增手动终态 **`.closed`**（保留记录，之后不再接收任务/启动/发布）。
-  「面板手建队列选择回传会话」**不做**（用户 2026-10-01 决定）。merge 属于流程，壳层不做：
-  发布只 push + 开/更新 PR，评审与合并都在壳层之外。
+  「面板手建队列选择回传会话」**不做**（用户 2026-10-01 决定）。
+- **P2+（2026-10-01 实现）**：**工作流（integration）** 三选一 —— pr（推送分支 + 开/更新 PR，评审与合并在壳层之外）、
+  merge（本地合并进基线并推送基线）、push（直推当前分支）。由**队列级覆盖 + 全局默认**解析，
+  具体动作一律交给**收尾会话**执行（凭据与判断都在会话侧），壳层只记录它汇报的结果。
 
 ## 14. 已定决策
 
@@ -251,7 +253,23 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 5. 启动入口：会话说「启动队列」或面板点开始；两者都不改变创建时建立的队列↔会话关联。
 6. PR：不等待 PR 会话；队列 done 即回传。
 7. 技能默认：落成任务默认建「等待态队列 + 入队」；task-only 仅在用户明确要求时。
-8. PR/push/merge：全部手动。`autoPR` 为队列配置、**默认关**；「发布」= push + 开/更新 PR；
-   merge 由用户在本地/评审后处理，壳层不碰。
+8. 收尾（集成）方式三选一：pr / merge / push，**队列级覆盖 + 全局默认**（设置抽屉里配）；
+   autoPR 决定「完成后是否自动收尾」（队列配置、**默认关**），手动「发布」按钮同样按解析出的模式执行。
+   merge 由**收尾会话**在本地完成（冲突尽量现场解，拿不准就停下请用户介入；base 受保护如实报错）——
+   壳层自身**从不**直接 merge / push。
 9. `.done` 是活泳道：追加任务 → `.draft` 并重臂回传；`.paused` 追加保持 `.paused`；追加不自动启动。
 10. `.closed` 是**手动**终态（保留记录，不再接收任务/启动/发布）。
+11. 工作流的可选值：pr（要 GitHub 远端）/ merge（要分支 + git 远端）/ push（要分支）；
+    工作区推荐只作提示，从不强制（GitHub → pr、普通 git → merge、非 git → push）。
+
+## 15. 工作流（integration）的 UI 与数据
+
+- **全局默认**存在 ShellConfig 键 tasksIntegration（默认 pr），与 GitHub token 合并进同一个**设置抽屉**
+  （面板右上齿轮；用户明确要求是抽屉，不是 NSAlert）——抽屉里同时给出**本工作区推荐**。
+- **队列级覆盖** `TaskQueue.integration`（nil = 跟随全局）；队列表单的「高级设置」里是
+  「跟随设置（当前：X）」+ 三档，推荐项带「（推荐）」标记。
+- 卡片：发布按钮的图标与 tooltip 跟着解析出的模式（开 PR / 合并并推送 / 仅推送）；
+  收尾会话的结果（成功摘要首行或失败原因）写在队列卡的 meta 行下方（integrationNote）。
+- `QueueIntegration.recommended(isGit:hasGitHubRemote:)` 是**纯函数**，UI 与测试共用。
+- 解析入口：`TaskBoard.integration(forQueue:default:)`；runner 在 startQueueIntegration 里按模式校验
+  （pr 要 canOpenPR，merge/push 要 git 远端）并生成对应提示词（TaskPrompts.integration）。

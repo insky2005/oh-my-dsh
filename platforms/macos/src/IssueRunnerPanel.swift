@@ -185,12 +185,14 @@ final class IssueRunnerPanelController: NSObject {
                                                  workspacePath: repoRootPath,
                                                  isGitRepo: workspaceIsGit)
         repoLabel.fullText = workspace.title
-        configButton.isEnabled = workspace.githubAvailable
+        // The gear opens 面板设置 (token + 工作流). The integration default applies
+        // to every workspace, so the gear is NOT GitHub-gated any more.
+        configButton.isEnabled = true
         refreshButton.isEnabled = workspace.githubAvailable
         // 处理 is NOT GitHub-only: it starts everything that is waiting, and manual
         // tasks work in any workspace (only the PR half needs a GitHub remote).
         updateRunAllButton(githubAvailable: workspace.githubAvailable)
-        configButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.configHint") : workspace.disabledHint
+        configButton.toolTip = L10n.tr("tasks.settings.hint")
         refreshButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.refreshHint") : workspace.disabledHint
         // The strip is built FROM the enum: title order, index and meaning come from one
         // place (TaskSourceFilter.allCases), so a tab can never label the wrong filter.
@@ -1732,23 +1734,34 @@ final class IssueRunnerPanelController: NSObject {
 
     // MARK: - Config
 
+    /// 面板设置 — a DRAWER (the same formSheet as 新建任务 / 新建队列), not an NSAlert:
+    /// the token and the 工作流 default are the two settings the panel stores for
+    /// the whole shell, so they share one surface.
     private func configTapped() {
-        let alert = NSAlert()
-        alert.messageText = L10n.tr("tasks.configTitle")
-        alert.informativeText = L10n.tr("tasks.configInfo")
-        alert.addButton(withTitle: L10n.tr("btn.ok"))
-        alert.addButton(withTitle: L10n.tr("btn.cancel"))
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        field.placeholderString = L10n.tr("tasks.tokenPlaceholder")
-        field.stringValue = loadToken(for: repo) ?? ""
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        if alert.runModal() == .alertFirstButtonReturn {
-            let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Empty → delete the token file; otherwise write it (file only).
-            saveToken(value, for: repo)
-            reloadIssues()
-        }
+        let model = TaskSettingsModel(
+            token: loadToken(for: repo) ?? "",
+            defaultIntegration: Self.defaultIntegration,
+            recommendedIntegration: QueueIntegration.recommended(isGit: workspaceIsGit,
+                                                                hasGitHubRemote: repo != nil),
+            prAvailable: repo != nil)
+        let form = TaskSettingsView(model: model)
+        form.onSubmit = { [weak self] settings in self?.submitSettings(settings) }
+        form.onCancel = { [weak self] in self?.dismissForm() }
+        presentForm(form) { ($0 as? TaskSettingsView)?.focusToken() }
+    }
+
+    private func submitSettings(_ settings: TaskSettingsModel) {
+        let value = settings.token.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Empty → delete the token file; otherwise write it (file only).
+        saveToken(value, for: repo)
+        // The global 工作流 default takes effect for every queue without its own
+        // override, so the board is re-rendered as well as the issue list reloaded.
+        Self.defaultIntegration = settings.defaultIntegration
+        dismissForm()
+        setStatus(L10n.tr("tasks.settings.saved"), spin: false)
+        autoHideStatus(after: 4)
+        reloadIssues()
+        syncFromBoard()
     }
 
     // MARK: - Status
@@ -2021,8 +2034,10 @@ final class IssueRunnerPanelController: NSObject {
         // second one just re-points the runner), and the others must not claim to
         // be running anything.
         let isCurrent = board.activeQueue()?.id == queue.id
+        let integration = board.integration(forQueue: queue.id, default: Self.defaultIntegration)
         let model = QueueHeaderModel.build(queue, board: board, collapsed: !isQueueExpanded(queue),
-                                           prAvailable: repo != nil, isCurrent: isCurrent)
+                                           prAvailable: repo != nil, isCurrent: isCurrent,
+                                           integration: integration)
         let header = TaskQueueHeaderView(model: model)
         let queueID = queue.id
         header.onToggle = { [weak self] in self?.toggleQueue(queueID) }
@@ -2269,14 +2284,16 @@ final class IssueRunnerPanelController: NSObject {
             // The PR switch is only pre-armed where the repo can carry one, and
             // 不切分支 is decided by the workspace having no repo to switch in.
             var model = base.forWorkspace(git: workspaceIsGit, pr: repo != nil,
-                                          defaultBase: workspaceDefaultBase)
+                                          defaultBase: workspaceDefaultBase,
+                                          defaultIntegration: Self.defaultIntegration)
             model.autoPR = false
             showQueueForm(model)
         case .edit(let queueID):
             guard let queue = runner.board.queue(queueID) else { return }
             showQueueForm(QueueComposerModel.edit(queue, prAvailable: repo != nil,
                                                   gitAvailable: workspaceIsGit,
-                                                  defaultBaseBranch: workspaceDefaultBase))
+                                                  defaultBaseBranch: workspaceDefaultBase,
+                                                  defaultIntegration: Self.defaultIntegration))
         }
     }
 
@@ -2292,7 +2309,8 @@ final class IssueRunnerPanelController: NSObject {
             let queue = runner.createQueue(name: composer.normalizedName,
                                            branch: composer.branchValue,
                                            baseBranch: composer.normalizedBaseBranch,
-                                           autoPR: composer.autoPR && repo != nil)
+                                           autoPR: composer.autoPR && repo != nil,
+                                           integration: composer.integration)
             if let taskID = taskID { _ = runner.enqueue(taskID: taskID, into: queue.id) }
             setStatus(L10n.tr("tasks.queue.created", queue.name), spin: false)
             autoHideStatus(after: 4)
@@ -2305,7 +2323,8 @@ final class IssueRunnerPanelController: NSObject {
                                      name: composer.normalizedName,
                                      branch: .some(composer.branchValue),
                                      baseBranch: composer.normalizedBaseBranch,
-                                     autoPR: composer.autoPR && repo != nil) else {
+                                     autoPR: composer.autoPR && repo != nil,
+                                     integration: .some(composer.integration)) else {
                 // The queue is gone (workspace switched under the open form): say
                 // so instead of reporting a save that never happened.
                 setStatus(L10n.tr("tasks.queue.updateFailed"), spin: false)
