@@ -36,16 +36,16 @@
 | 目录 | 放什么 |
 |---|---|
 | `docs/raw/` | 原始素材 |
-| `docs/screenshots/` | 文档配图 |
+| `docs/process/` | 工程流程：分支规范、发布流程、dsh 升级影响清单 |
 | `docs/research/` | 调研、选型、产品化总纲等策略文档 |
+| `docs/milestones/` | 里程碑目标（`M<n>-*.md`） |
 | `docs/design/shell/` | 壳层共性设计（服务生命周期、数据目录、配色令牌…） |
 | `docs/design/panels/` | 面板的设计与实现约定 |
 | `docs/design/channels/` | 通道（微信 / 钉钉）的抽象、指令、存储、项目开关 |
-| `docs/fixes/` | 问题排查与修复记录（现象 → 根因 → 修复 → 验证） |
-| `docs/process/` | 工程流程：分支规范、发布流程、dsh 升级影响清单 |
-| `docs/feedback/` | 持续跟踪的使用反馈 |
 | `docs/plans/` | 实施计划（`<TOPIC>_PLAN-*.md`、`dsh-*-compat-audit.md`） |
-| `docs/milestones/` | 里程碑目标（`M<n>-*.md`） |
+| `docs/feedback/` | 持续跟踪的使用反馈 |
+| `docs/fixes/` | 问题排查与修复记录（现象 → 根因 → 修复 → 验证） |
+| `docs/screenshots/` | 文档配图 |
 | `docs/usage/` | 面向用户的使用说明（`panels.md` 右栏面板说明） |
 
 - **`docs/` 根目录只放 `README.md` 索引**，新文档一律进上表子目录，不再往根目录堆；新增后必须在 `docs/README.md` 登记；
