@@ -363,22 +363,26 @@ check(TasksAPIRouter.parseQueueDeliver(["queueId": "  "]).queueId == nil, "blank
 // HTTP 状态：已有交付会话在跑 / 队列名歧义 → 409；找不到队列 → 404；其余 400。
 let busy = FakeTasksAPI()
 busy.queueDeliverResult = ["ok": false, "error": "busy"]
-eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: [:]), delegate: busy)?.status,
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: ["queueId": "q-1"]), delegate: busy)?.status,
    409, "busy delivery -> 409")
 let deliverAmbiguous = FakeTasksAPI()
 deliverAmbiguous.queueDeliverResult = ["ok": false, "error": "ambiguous-queue", "queues": []]
-eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: [:]), delegate: deliverAmbiguous)?.status,
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: ["queueId": "q-1"]), delegate: deliverAmbiguous)?.status,
    409, "ambiguous queue -> 409")
 let deliverNoQueue = FakeTasksAPI()
 deliverNoQueue.queueDeliverResult = ["ok": false, "error": "no-queue"]
-eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: [:]), delegate: deliverNoQueue)?.status,
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: ["queueId": "q-1"]), delegate: deliverNoQueue)?.status,
    404, "no queue -> 404")
 let notDone = FakeTasksAPI()
 notDone.queueDeliverResult = ["ok": false, "error": "not-deliverable", "state": "active"]
-eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: [:]), delegate: notDone)?.status,
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: ["queueId": "q-1"]), delegate: notDone)?.status,
    400, "not finished -> 400")
 let noBodyDeliver = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver"), delegate: FakeTasksAPI())
 eq(noBodyDeliver?.json["error"] as? String, "missing-body", "deliver missing body")
+let noTargetDeliver = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver",
+    json: ["workspace": "/repo"]), delegate: FakeTasksAPI())
+eq(noTargetDeliver?.status, 400, "deliver without a queue target → 400")
+eq(noTargetDeliver?.json["error"] as? String, "no-queue-target", "deliver without a target is rejected")
 
 // MARK: - workspace resolution
 

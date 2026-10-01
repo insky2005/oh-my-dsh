@@ -258,8 +258,15 @@ enum TasksAPIRouter {
 
         case ("POST", "/api/tasks/queue/deliver"):
             guard let body = request.jsonBody() else { return missingBody() }
+            // workspace 可以缺省（用面板当前工作区），但**必须**有一个定位队列的字段：
+            // queueId / name / session 三选一，否则连找谁都不知道（与 append 同一规则）。
+            let parsed = parseQueueDeliver(body)
+            guard parsed.queueId != nil || parsed.name != nil || parsed.session != nil else {
+                return .json(400, ["ok": false, "error": "no-queue-target",
+                                   "hint": "pass queueId, name, or session to pick the queue to deliver"])
+            }
             guard let delegate = delegate else { return unavailable() }
-            let result = delegate.apiTaskQueueDeliver(parseQueueDeliver(body))
+            let result = delegate.apiTaskQueueDeliver(parsed)
             return .json(deliverStatus(result), result)
 
         default:

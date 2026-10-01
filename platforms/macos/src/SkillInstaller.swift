@@ -238,7 +238,7 @@ enum BuiltinSkill: CaseIterable {
       `task/list` 再点名（否则 409 `ambiguous-queue`）。
     - `queue/append` 的目标队列按 `queueId` → `name` → `session`（本会话创建的非关闭队列）解析；
       追加到 `.done` 队列会把它变回 **`draft`（待启动）**，要再 `queue/start` 才会跑。
-    - `queue/deliver` 的目标队列同样按 `queueId` → `name` → `session` 解析；只接受 **`done`** 队列，
+    - `queue/deliver` 的目标队列同样按 `queueId` → `name` → `session` 解析（三者**必选其一**）；只接受 **`done`** 队列，
       工作流是「无」或还没有分支 / 远端时会被拒绝（错误码见下）。
     
     ## 工作流
@@ -296,7 +296,7 @@ enum BuiltinSkill: CaseIterable {
     | `400 missing-name` | 建队列既没给 `name`、任务标题也兜不住：补一个队列名 |
     | `409 ambiguous-queue` | 有多个同名 / 本会话的等待队列：从 `queues` 里挑一个，带 `queueId`（或更具体的 `name`）重试 |
     | `404 no-queue` | 没有可启动的等待队列：先 `task/list` 确认 id，或它已经启动过 |
-    | `400 no-queue-target` | 追加没给目标队列：带 `queueId` / `name`，或用本会话定位 |
+    | `400 no-queue-target` | 追加 / 交付没给目标队列：带 `queueId` / `name`，或用本会话定位 |
     | `400 queue-closed` | 目标队列已关闭（终态）：别翻它，明确新建一条队列 |
     | `400 not-deliverable` | 交付要求队列**已完成**（done）：还没跑完 / 已关闭都不能交付；先 `task/list` 看状态 |
     | `400 workflow-none` | 该队列的 Git 工作流是「无」：没有要交付的动作；让用户先去队列设置选一个工作流 |

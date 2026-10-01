@@ -50,7 +50,7 @@
 | POST `/api/tasks/queue/create` | `{workspace?, session?, focus?, name, branch?, baseBranch?, autoPR?, tasks:[…]}` | 建 `.draft` 队列 + 批量入队；`{ok, queue:{id,name,state,branch}, created:[…], rejected:[…]}` |
 | POST `/api/tasks/queue/start` | `{workspace?, session?, queueId?}` | 启动队列；`{ok, started:[id]}` / `409 ambiguous-queue` / `404 no-queue` |
 | POST `/api/tasks/queue/append` | `{workspace?, session?, queueId?（或 name?）, tasks:[…]}` | 向已有队列追加任务（不启动）；`{ok, queue:{…}, created:[…]}` |
-| POST `/api/tasks/queue/deliver` | `{workspace?, session?, queueId?（或 name?）}` | 对**已完成**队列发起交付（PR / 合并 / 推送）；`{ok, delivering:[id]}` / `400 not-deliverable` / `400 workflow-none` / `409 busy` |
+| POST `/api/tasks/queue/deliver` | `{workspace?, session?, queueId?（或 name?）}`（`queueId`/`name`/`session` **必选其一**） | 对**已完成**队列发起交付（PR / 合并 / 推送）；`{ok, delivering:[id]}` / `400 no-queue-target` / `400 not-deliverable` / `400 workflow-none` / `409 busy` |
 
 - `tasks` 每项可以是对象（推荐，带描述）或字符串（只有标题，描述回退为标题，与面板
   单行创建一致：`TaskDraft.effectiveBody`）。

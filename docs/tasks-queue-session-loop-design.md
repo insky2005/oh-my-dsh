@@ -145,7 +145,7 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 - 对一条**已完成（`.done`）**的队列发起**交付**（与队列头「交付」按钮同一条 runner 路径
   `startQueueIntegration`：按队列 Git 工作流开 PR / 合并 / 推送）。只发起、不等待，结果由交付
   会话回写队列卡片。
-- 目标解析同 append（`queueId` → `name` → `session`）。
+- 目标解析同 append（`queueId` → `name` → `session`，三者必选其一；都没有 → 400 `no-queue-target`）。
 - 只接受 `.done`：其余状态 → 400 `not-deliverable`；工作流「无」→ 400 `workflow-none`；
   已有交付会话在跑 → 409 `busy`；没有分支 / 远端 → 400 `no-branch` / `no-remote`。
 - 响应：`{ ok, workspace, queue, delivering: ["q-xxxx"] }`。
