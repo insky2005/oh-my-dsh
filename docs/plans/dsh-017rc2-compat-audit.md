@@ -170,10 +170,38 @@ npm `dist-tags`：`latest = 0.2.0-rc.2`、`next = 0.2.0-rc.2`、`alpha = 0.1.7-a
 （`nextStepTarget` 取"严格更新的最小 rc"）会提示下一档 **`0.2.0-rc.1`**。
 这是预期行为；若产品上要"停留 0.1.x"，需另做版本线策略（本审计不涉及）。
 
-## 六、执行记录（施工中，逐步追加）
+## 六、执行记录（本次，分支 `feature/dsh-017rc2-upgrade`）
 
-- [ ] 修 `sessionTrackerScript`（WS 钩子 + fetch 白名单/地址提取）+ 回归用例
-- [ ] `build-app.sh` 的 `DSH_PACKAGE_SPEC`（三处）→ `@deepseek-ai/dsh@0.1.7-rc.2`
-- [ ] 新增闭包锁 `platforms/macos/runtime-locks/dsh-0.1.7-rc.2/`（`npm ci` + 启动冒烟）
-- [ ] 开发版实测五个面 + 八面板扫描
-- [ ] README / `docs/productization.md` / `docs/dsh-version-impact.md` §3§4 / CHANGELOG 同步
+### 6.1 已完成
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| 静态比对 | 端点 84 → 135（删 10 / 增 61），壳层用到的端点除 `subagents/list` 外全部仍在 | `.tmp/dsh017/extract_endpoints.py` + `.tmp/dsh017/endpoints.json` |
+| tracker 修复 | 新增 `WebSocket.prototype.send` 观察层 + fetch 白名单/`address` 提取 | `platforms/macos/src/main.swift`；`tests/session-tracker/run.sh` **12/12** |
+| 注入脚本守卫 | 7 个脚本全部 parse、16 个 bridge 齐全 | `tests/injected-scripts/run.sh` 通过 |
+| 闭包锁 | `runtime-locks/dsh-0.1.7-rc.2/`：611 包、**273 个 `@deepseek-ai/dsh-*` 全 0.1.7-rc.2** | `npm ci → added 521 packages`；`smoke: dsh web came up (kept the tree)` |
+| Dev 版构建 | 成功；bundle 内 dsh 0.1.7-rc.2；嵌入 3 份 runtime-locks（rc.1/rc.3/rc.2） | `DSH_DEV_BUILD=1 build-app.sh` |
+| core 单测 | **291 tests / 287 pass / 0 fail / 4 skipped** | `node --test core/tests/*.test.js` |
+| 文档同步 | README / productization / version-impact（§3 B1/B2/B4、D8，新增 §4.6，§5 SOP，§7）/ CHANGELOG | 同分支提交 |
+
+### 6.2 dsh 侧实测（A/C/D 面，工作区本地 home：真实会话从 `~/.dsh-dev` 拷入 + 新建会话）
+
+运行时：构建产物内置 `node v24.21.0` + `dsh 0.1.7-rc.2`，`dsh web --no-open --port 50123`。
+
+- **A 启动/鉴权**：就绪行 `dsh web: http://127.0.0.1:50123/?token=…`；core `callRpc(SESSION_LIST, token)` 直接 200（内部完成 token→cookie）。
+- **C 读**：`session/list` 返回 31 项；新建会话的 `projections.kind='sequenced'`、`asOfSeq=17`、`values.title='dsh017 probe'`；`session/page`（`address` + `throughSeq`）返回 18 条记录。
+- **C 写**：`session/create → rename → prompt` 全部 `ok`；`requestId+mode+content[]` 未变。
+- **D 会话日志世代**：新建会话落盘 `session.v4.jsonl.zstd`（**v4**）；`listSessionLogs` 找到它；`auditSession` 能解析（`turns=[1:probe]`、`diagnostics=[]`）。
+- **D 审计内容（v3 存量）**：对拷入的真实会话 `session-0c9e6fbf-…`（227 KB `session.v3.jsonl.zstd`）`auditSession` → `entries=39, mutations=14, files=3, added=709, removed=289, bashCalls=13`，`diagnostics=[]`。
+- **D 布局**：`storages/workspace.json` 仍 `{"name":"workspace","version":2}`，3 个工作区。
+
+### 6.3 八面板扫描与环境限制
+
+- Dev 版带 `DSH_PANEL_TEST="files,terminal,wiki,tasks,browser,channel,review,skills"` 启动，**八个面板都被访问并产生 view-hierarchy dump**（`terminal/browser/review/skills/tasks/wiki/channel/preview`，其中 `review-loaded` 603 行）。
+- **但 PNG 截图与 app.log 未落盘**：该 App 继承了工具侧的文件沙箱（workspace-write），写入 `~/Library/Logs/oh-my-dsh` 与 `~/.dsh-dev` 被拒（日志里是 `EPERM / Operation not permitted`）。因此本轮面板“是否渲染出内容”的判据退化为 **view-hierarchy dump + 6.2 的 RPC 实测**（会话列表 / 审计 / 工作区均真的读过数据）。无沙箱（正常 `open` App 或用户本机）下应复跑 §五 的八面板截图。
+
+### 6.4 未复跑 / 后续
+
+- **v4 下真实文件改动审计**：隔离 home 无 provider 凭据，agent turn 以 `MISSING_CREDENTIAL` 结束，故未产生 v4 的 write/edit 记录。已核：v4 与 v3 的 `tool/call|result|ptc-dispatch` 事件类型一致、`dsh-session-format` 两版逐字节相同、v4 解析与 turn 提取实测可用——**风险低**，但发布前建议在带凭据的 home 里走一条真实会话，确认 `mutations > 0`。
+- **文件链接点击（B7）**：本轮未做真实点击（GUI 沙箱限制）；静态已核 `fileMention`/`fileLink`/`[data-presented-files-row]` 仍在、`openFile` 仍走 `sidebarRight.openResource`，仅 `[data-produced-files-row]` 被内联 mention 取代。发布前按 §五 B 面真实点一次。
+- **归档会话**：未构造归档数据；`DshWorkspaceOps.newestSessionId` 是否可能挑到归档会话待真实数据核对。
