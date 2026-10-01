@@ -1006,6 +1006,28 @@ final class TerminalView: NSView, NSTextInputClient {
     override var isOpaque: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// Tracking area behind hover-to-focus. Entering the terminal grabs the
+    /// keyboard so the user can start typing without clicking first.
+    private var hoverTrackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area = hoverTrackingArea { removeTrackingArea(area) }
+        let area = NSTrackingArea(rect: .zero,
+                                  options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        // 鼠标移入终端即取得输入焦点，省掉「先点一下」再输入。
+        if let win = window, win.firstResponder !== self {
+            win.makeFirstResponder(self)
+        }
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         needsDisplay = true
@@ -1131,14 +1153,12 @@ final class TerminalView: NSView, NSTextInputClient {
             if cell.continuation { continue }
             let (fg, _) = effectiveCell(cell)
             if TerminalEmulator.displayWidth(cell.ch) == 2 {
-                // Pin the wide glyph to its exact two cells. Core Text falls
-                // back to a full-width face whose advance is only ~1.6 cells,
-                // so leaving it in a run would shrink it and drag the rest of
-                // the line (and the cell-based cursor) off the grid.
+                // Wide glyphs are flushed out of the run and drawn one at a
+                // time at their exact two-cell origin (a batched run would let
+                // their fallback advance drag the rest of the line off grid).
                 flushRun()
-                drawGlyph(cell.ch, atX: CGFloat(c) * cellWidth, y: y,
-                          targetWidth: cellWidth * 2,
-                          attrs: attrsFor(fg, cell.bold, cell.italic, cell.underline))
+                drawWideGlyph(cell.ch, atX: CGFloat(c) * cellWidth, y: y, fg: fg,
+                              bold: cell.bold, italic: cell.italic, underline: cell.underline)
                 continue
             }
             if runStart < 0 || fg != runFg || cell.bold != runBold
@@ -1158,10 +1178,68 @@ final class TerminalView: NSView, NSTextInputClient {
         }
     }
 
-    /// Draw one glyph stretched to exactly targetWidth points. The monospaced
-    /// system font has no CJK glyphs, so Core Text substitutes a full-width face
-    /// whose advance is ~1.6 cells rather than the 2 the grid reserves; without
-    /// this the glyph leaves a half-cell gap and the cursor looks misaligned.
+    /// Draw a wide (two-cell) glyph without horizontal distortion. The
+    /// monospaced system font has no CJK glyphs; Core Text's default fallback
+    /// renders full-width punctuation at only ~0.8 cell and Han at ~1.6 cells.
+    /// Stretching those to the two reserved cells mutated their shapes (Chinese
+    /// punctuation looked visibly deformed — 。/，/、 became wide ellipses).
+    /// Instead, size a real full-width face (PingFang SC) so the glyph's natural
+    /// advance is exactly two cells, and shift it so its baseline matches the
+    /// monospaced runs.
+    private func drawWideGlyph(_ ch: Character, atX x: CGFloat, y: CGFloat, fg: NSColor?,
+                               bold: Bool, italic: Bool, underline: Bool) {
+        var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.textColor]
+        if let fg = fg { attrs[.foregroundColor] = fg }
+        if underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        guard let wide = wideGlyphFont(for: ch, bold: bold, italic: italic) else {
+            // No full-width face available: keep the old stretch so the glyph
+            // still lands on the two-cell grid.
+            drawGlyph(ch, atX: x, y: y, targetWidth: cellWidth * 2, attrs: attrs)
+            return
+        }
+        attrs[.font] = wide
+        // draw(at:) anchors the line box, not the baseline: offset by the two
+        // fonts' descender difference so the CJK baseline stays on the Latin one.
+        let baselineY = y + wide.descender - font.descender
+        (String(ch) as NSString).draw(at: NSPoint(x: x, y: baselineY), withAttributes: attrs)
+    }
+
+    /// Test surface for the wide-glyph font (tests/terminal-panel): its natural
+    /// advance must be exactly two cells so the glyph is never stretched.
+    func wideGlyphFontForTesting(_ ch: Character) -> NSFont? {
+        wideGlyphFont(for: ch, bold: false, italic: false)
+    }
+    var cellWidthForTesting: CGFloat { cellWidth }
+
+    private struct WideGlyphKey: Hashable {
+        let ch: Character
+        let bold: Bool
+        let italic: Bool
+    }
+    private var wideGlyphFontCache: [WideGlyphKey: NSFont] = [:]
+
+    /// A font whose natural advance for `ch` is exactly `cellWidth * 2`. A
+    /// full-width CJK face is preferred; scripts it lacks (Hangul, rare Han,
+    /// emoji) fall through Core Text's cascade and are measured at their real
+    /// advance, so the width still lands on the two-cell grid.
+    private func wideGlyphFont(for ch: Character, bold: Bool, italic: Bool) -> NSFont? {
+        let key = WideGlyphKey(ch: ch, bold: bold, italic: italic)
+        if let cached = wideGlyphFontCache[key] { return cached }
+        let refSize: CGFloat = 13
+        var ref = NSFont(name: "PingFang SC", size: refSize) ?? font
+        if bold { ref = NSFontManager.shared.convert(ref, toHaveTrait: .boldFontMask) }
+        if italic { ref = NSFontManager.shared.convert(ref, toHaveTrait: .italicFontMask) }
+        let natural = (String(ch) as NSString).size(withAttributes: [.font: ref]).width
+        guard natural > 0 else { return nil }
+        let sized = refSize * (cellWidth * 2) / natural
+        guard let resolved = NSFont(descriptor: ref.fontDescriptor, size: sized)
+            ?? NSFont(name: ref.fontName, size: sized) else { return nil }
+        wideGlyphFontCache[key] = resolved
+        return resolved
+    }
+
+    /// Draw one glyph stretched to exactly targetWidth points (fallback path for
+    /// scripts with no usable full-width face).
     private func drawGlyph(_ ch: Character, atX x: CGFloat, y: CGFloat,
                            targetWidth: CGFloat, attrs: [NSAttributedString.Key: Any]) {
         let text = String(ch)
@@ -1209,7 +1287,8 @@ final class TerminalView: NSView, NSTextInputClient {
         if lead.ch != " " {
             let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
             if span == 2 {
-                drawGlyph(lead.ch, atX: rect.minX, y: rect.minY, targetWidth: rect.width, attrs: attrs)
+                drawWideGlyph(lead.ch, atX: rect.minX, y: rect.minY,
+                              fg: NSColor.white, bold: false, italic: false, underline: false)
             } else if !lead.continuation {
                 (String(lead.ch) as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
             }

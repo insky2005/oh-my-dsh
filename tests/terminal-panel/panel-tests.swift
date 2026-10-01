@@ -203,8 +203,8 @@ test("decstbm: CSI r restores the full-screen region",
 
 // MARK: - Wide-glyph cursor span (CJK is two cells; the cursor must match)
 //
-// The monospaced system font's CJK fallback advances ~1.6 cells, not 2, so the
-// glyph is now stretched to its two cells and the block cursor spans the pair.
+// A wide glyph occupies exactly two cells via the full-width font (see the
+// "Wide-glyph font" section below), and the block cursor spans the pair.
 // Pinned here is the span math drawCursor() uses for that block.
 
 let cjkEmu = TerminalEmulator(rows: 4, cols: 20)
@@ -225,6 +225,38 @@ test("a cursor on the continuation cell snaps back to the lead cell",
 cjkEmu.feed("\u{1B}[1;5H")
 test("a cursor on a narrow/blank cell spans one cell",
      cjkView.cursorGlyphSpan().col == 4 && cjkView.cursorGlyphSpan().width == 1)
+
+// MARK: - Hover-to-focus
+//
+// Entering the terminal grabs the keyboard so the user can type without
+// clicking first. The tracking area is what makes that possible; mouseEntered
+// then calls makeFirstResponder.
+
+let hoverView = TerminalView(emulator: TerminalEmulator(rows: 4, cols: 20), session: nil)
+hoverView.updateTrackingAreas()
+test("the terminal installs a hover-to-focus tracking area",
+     hoverView.trackingAreas.contains {
+         $0.owner === hoverView && $0.options.contains(.mouseEnteredAndExited)
+     })
+
+// MARK: - Wide-glyph font (no horizontal stretch distortion)
+//
+// The monospaced system font has no CJK glyphs; its default fallback renders
+// full-width punctuation at only ~0.8 cell and Han at ~1.6 cells, and the old
+// code stretched those to two cells (Chinese punctuation looked deformed). The
+// wide path now sizes a real full-width face so its natural advance is exactly
+// two cells — no horizontal stretch at all.
+
+for ch in ["。" as Character, "，" as Character, "！" as Character,
+           "（" as Character, "中" as Character, "国" as Character] {
+    if let f = cjkView.wideGlyphFontForTesting(ch) {
+        let advance = (String(ch) as NSString).size(withAttributes: [.font: f]).width
+        test("wide glyph \(ch) advances exactly two cells",
+             abs(advance - cjkView.cellWidthForTesting * 2) < 0.1)
+    } else {
+        test("wide glyph \(ch) resolves to a sized full-width font", false)
+    }
+}
 
 // MARK: - First terminal open must spawn exactly one session
 //
