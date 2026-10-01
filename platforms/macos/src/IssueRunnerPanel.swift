@@ -1968,7 +1968,9 @@ final class IssueRunnerPanelController: NSObject {
             _ = self?.runner?.pauseQueue(queueID)
             self?.syncFromBoard()
         }
-        header.onOpenPR = { [weak self] in self?.openPR(for: queue) }
+        header.onOpenPR = { [weak self] in self?.publishPR(for: queue) }
+        header.onOpenPRLink = { [weak self] in self?.openPRURL(queue) }
+        header.onClose = { [weak self] in self?.confirmCloseQueue(queue) }
         // 重命名 / 改分支 / 基于分支 / PR 开关 are one inline form now.
         header.onSettings = { [weak self] in self?.openQueueComposer(.edit(queueID: queueID)) }
         header.onTogglePR = { [weak self] in
@@ -2047,8 +2049,7 @@ final class IssueRunnerPanelController: NSObject {
     /// URL back onto the queue. The panel no longer talks to the GitHub API itself:
     /// pushing a branch needs credentials and judgement, which is exactly what a
     /// session has and a URLSession call does not.
-    private func openPR(for queue: TaskQueue) {
-        if let url = queue.prUrl, let link = URL(string: url) { NSWorkspace.shared.open(link); return }
+    private func publishPR(for queue: TaskQueue) {
         guard let runner = runner else { return }
         guard runner.startQueuePR(queue.id) else {
             setStatus(L10n.tr("tasks.errPRStart"), spin: false)
@@ -2057,6 +2058,12 @@ final class IssueRunnerPanelController: NSObject {
         }
         setStatus(L10n.tr("tasks.queue.creatingPR", queue.name), spin: true)
         syncFromBoard()
+    }
+
+    /// 打开已有 PR 的链接 —— 与「发布」分开：PR 已存在时仍要能再次发布去更新它。
+    private func openPRURL(_ queue: TaskQueue) {
+        guard let url = queue.prUrl, let link = URL(string: url) else { return }
+        NSWorkspace.shared.open(link)
     }
 
     // MARK: - Queue picker (加入队列)
@@ -2281,6 +2288,22 @@ final class IssueRunnerPanelController: NSObject {
             return
         }
         queueToggle[queue.id] = nil
+        syncFromBoard()
+    }
+
+    private func confirmCloseQueue(_ queue: TaskQueue) {
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("tasks.closeQueueTitle", queue.name)
+        alert.informativeText = L10n.tr("tasks.closeQueueInfo")
+        alert.addButton(withTitle: L10n.tr("tasks.queue.close"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard runner?.closeQueue(queue.id) == true else {
+            setStatus(L10n.tr("tasks.queue.closeRefused"), spin: false)
+            autoHideStatus(after: 6)
+            syncFromBoard()
+            return
+        }
         syncFromBoard()
     }
 

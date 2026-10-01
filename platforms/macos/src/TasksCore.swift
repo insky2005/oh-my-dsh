@@ -99,7 +99,11 @@ enum TaskState: String {
 /// - active: runs its tasks one at a time;
 /// - paused: was started and stopped (a task failed, it was cancelled, or the app
 ///   restarted) — the user CONTINUES rather than starts;
-/// - done: nothing left to run.
+/// - done: every current task finished. **Not a record**: the lane is still open —
+///   appending a task moves it back to .draft (and re-arms the completion report),
+///   and 发布/关闭 stay available;
+/// - closed: the user's MANUAL terminal state. The lane keeps its record (tasks,
+///   branch, PR) but accepts nothing more: no start, no append, no publish.
 ///
 /// draft is deliberately NOT paused: 「从未启动」与「启动过但停了」是两种状态、两种
 /// 动作（开始 vs 继续），而完成回传只挂在 done 上。
@@ -108,6 +112,7 @@ enum QueueState: String {
     case active
     case paused
     case done
+    case closed
 }
 
 // MARK: - Task
@@ -727,17 +732,24 @@ struct TaskBoard {
     /// different queue moves it out first. Idempotent for the same queue.
     @discardableResult
     mutating func enqueue(taskID: String, into queueID: String) -> Bool {
-        guard let ti = index(ofTask: taskID), index(ofQueue: queueID) != nil else { return false }
+        guard let ti = index(ofTask: taskID) else { return false }
+        guard let qi = index(ofQueue: queueID), queues[qi].state != .closed else { return false }
         guard tasks[ti].state.isQueueable else { return false }
         if tasks[ti].queueId == queueID { return false }
         if tasks[ti].queueId != nil { _ = dequeue(taskID: taskID) }
-        guard let qi = index(ofQueue: queueID) else { return false }
         tasks[ti].state = .queued
         tasks[ti].queueId = queueID
         // One id per queue, ever: the lane renders from taskIds, so a duplicate
         // would draw the same card twice (and inflate progress and every count
         // derived from it).
         if !queues[qi].taskIds.contains(taskID) { queues[qi].taskIds.append(taskID) }
+        // 追加到已完成的队列：它回到「待启动」的活泳道（用户再启动），并重臂完成
+        // 回传 —— 否则第二轮完成会被 queueNotified 当成「已回传过」而跳过。
+        // .paused 保持暂停（有失败要处理，不能被追加悄悄复活）。
+        if queues[qi].state == .done {
+            queues[qi].state = .draft
+            local.queueNotified[queueID] = nil
+        }
         return true
     }
 
@@ -782,6 +794,18 @@ struct TaskBoard {
             tasks[ti].branch = nil
         }
         queues.remove(at: qi)
+        if local.activeQueueID == queueID { local.activeQueueID = nil }
+        return true
+    }
+
+    /// Close a queue: the user's MANUAL terminal state. It keeps its record (tasks,
+    /// branch, PR) but accepts nothing more — no start, no append, no publish.
+    /// Refused while one of its tasks is running, exactly like removeQueue.
+    @discardableResult
+    mutating func closeQueue(_ queueID: String) -> Bool {
+        guard let qi = index(ofQueue: queueID), queues[qi].state != .closed else { return false }
+        if queues[qi].taskIds.contains(where: { task($0)?.state == .running }) { return false }
+        queues[qi].state = .closed
         if local.activeQueueID == queueID { local.activeQueueID = nil }
         return true
     }
@@ -955,7 +979,7 @@ struct TaskBoard {
     /// walks past the failed entry and takes the next queued task.
     @discardableResult
     mutating func resumeQueue(_ queueID: String) -> Bool {
-        guard let qi = index(ofQueue: queueID) else { return false }
+        guard let qi = index(ofQueue: queueID), queues[qi].state != .closed else { return false }
         queues[qi].state = .active
         local.activeQueueID = queueID
         return true
@@ -975,7 +999,8 @@ struct TaskBoard {
                 guard let state = task(id)?.state else { return false }
                 return state == .queued || state == .running
             }
-            if !open && !queues[i].taskIds.isEmpty && queues[i].state != .done {
+            if !open && !queues[i].taskIds.isEmpty
+                && queues[i].state != .done && queues[i].state != .closed {
                 queues[i].state = .done
             }
         }

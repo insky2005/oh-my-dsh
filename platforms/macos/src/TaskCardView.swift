@@ -577,10 +577,15 @@ final class TaskQueueHeaderView: NSView {
     var onToggle: (() -> Void)?
     var onStart: (() -> Void)?
     var onPause: (() -> Void)?
+    /// 发布：push 分支 + 开/更新 PR（独立的发布会话）。
     var onOpenPR: (() -> Void)?
+    /// 打开已有 PR 的链接（与「发布」分开：PR 已存在时仍要能再次发布以更新它）。
+    var onOpenPRLink: (() -> Void)?
     var onSettings: (() -> Void)?
     var onTogglePR: (() -> Void)?
     var onDelete: (() -> Void)?
+    /// 关闭队列（手动终态，保留记录）。
+    var onClose: (() -> Void)?
 
     init(model: QueueHeaderModel) {
         self.model = model
@@ -660,7 +665,7 @@ final class TaskQueueHeaderView: NSView {
             toggle.isEnabled = model.autoPREnabled
             trailing.append(toggle)
         }
-        // 已完成的队列没有 设置 / 删除（记录，不是待办）——见 QueueHeaderModel.canEdit。
+        // 已完成不再是「记录」：设置/删除/发布/关闭都还在（见 QueueHeaderModel.canEdit）。
         if model.canEdit {
             trailing.append(iconButton("gearshape", tooltipKey: "tasks.queue.settings",
                                        action: #selector(settingsTapped)))
@@ -669,8 +674,14 @@ final class TaskQueueHeaderView: NSView {
             trailing.append(iconButton("trash", tooltipKey: "tasks.queue.delete",
                                        action: #selector(deleteTapped)))
         }
-        // 打开 PR —— 永远排在这一行的最后（图标；有 PR 链接时就是那条链接）。
+        // 关闭排在发布前，保持「PR 永远在这一行最右」的既有约定。
+        if model.canClose {
+            trailing.append(iconButton("archivebox", tooltipKey: "tasks.queue.close",
+                                       action: #selector(closeTapped)))
+        }
+        // 发布 / PR 链接 —— 收尾动作，排在这一行最后。
         if let prControl = openPRControl() { trailing.append(prControl) }
+        if let link = prLinkControl() { trailing.append(link) }
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -784,14 +795,19 @@ final class TaskQueueHeaderView: NSView {
     /// when a PR run came back empty), the PR link once it has one. The LAST control of
     /// the row — the queue's publishing step reads as the close of the line, not as one
     /// icon among the settings.
+    /// 发布（push + 开/更新 PR）。图标只在队列可发布时出现；已有 PR 时它就是「更新」。
     private func openPRControl() -> NSView? {
-        if model.canOpenPR {
-            return iconButton("arrow.up.right.square",
-                              tooltipKey: model.prErrorKey ?? "tasks.queue.openPR",
-                              action: #selector(openPRTapped))
-        }
+        guard model.canOpenPR else { return nil }
+        return iconButton("arrow.up.right.square",
+                          tooltipKey: model.prErrorKey ?? "tasks.queue.openPR",
+                          action: #selector(openPRTapped))
+    }
+
+    /// The PR link, once a PR exists — kept separate from 发布 so a queue that has
+    /// one can still be published again (push the new commits, reuse the PR).
+    private func prLinkControl() -> NSView? {
         guard let prUrl = model.prUrl else { return nil }
-        let link = NSButton(title: TaskCardModel.shortPR(prUrl), target: self, action: #selector(openPRTapped))
+        let link = NSButton(title: TaskCardModel.shortPR(prUrl), target: self, action: #selector(prLinkTapped))
         link.isBordered = false
         link.controlSize = .small
         link.contentTintColor = .controlAccentColor
@@ -805,6 +821,8 @@ final class TaskQueueHeaderView: NSView {
     @objc private func startTapped() { onStart?() }
     @objc private func pauseTapped() { onPause?() }
     @objc private func openPRTapped() { onOpenPR?() }
+    @objc private func prLinkTapped() { onOpenPRLink?() }
+    @objc private func closeTapped() { onClose?() }
 
     @objc private func settingsTapped() { onSettings?() }
     @objc private func togglePRTapped() { onTogglePR?() }

@@ -701,7 +701,11 @@ enum L10n {
         "tasks.gitAppeared": ("这个目录现在是 git 仓库 —— 已重新识别工作区：新队列可以使用分支", "This directory is a git repository now — workspace re-detected: new queues can use a branch"),
         "tasks.remoteAppeared": ("这个工作区现在有 GitHub 远端 —— 已重新识别：PR 相关功能已启用", "This workspace has a GitHub remote now — re-detected: the PR features are available"),
         "tasks.queue.pause": ("暂停", "Pause"),
-        "tasks.queue.openPR": ("打开 PR", "Open PR"),
+        "tasks.queue.openPR": ("发布：推送分支并开 / 更新 PR", "Publish: push the branch and open/update the PR"),
+        "tasks.queue.close": ("关闭队列", "Close Queue"),
+        "tasks.closeQueueTitle": ("关闭队列「%@」？", "Close queue %@?"),
+        "tasks.closeQueueInfo": ("关闭后仍保留任务、分支与 PR 记录，但不再接收任务，也不能启动或发布。", "Closing keeps the task, branch and PR record, but the queue accepts no more tasks and cannot be started or published."),
+        "tasks.queue.closeRefused": ("队列里有任务在运行：先取消它，再关闭队列", "A task in this queue is running — cancel it first, then close the queue"),
         // PR 会话（§V2-6）：任务只 commit，push 与开 PR 由队列结束后单独一个会话负责
         "tasks.queue.prSessionName": ("开 PR：%@", "Open PR: %@"),
         "tasks.prOpening": ("正在开 PR（队列「%@」）：由单独的会话推送分支、总结改动并创建 PR…", "Opening the PR for %@ — a dedicated session pushes the branch, summarizes the changes and creates it…"),
@@ -730,6 +734,7 @@ enum L10n {
         "tasks.queue.state.draft": ("待启动", "Draft"),
         "tasks.queue.state.paused": ("已暂停", "Paused"),
         "tasks.queue.state.finished": ("已完成", "Finished"),
+        "tasks.queue.state.closed": ("已关闭", "Closed"),
         "tasks.queue.noBranch": ("不切分支", "No branch"),
         "tasks.queue.failedCount": ("%d 个失败", "%d failed"),
         // PR 的标题与正文不再由壳层套模板：开 PR 的会话读完真实 diff 之后自己写

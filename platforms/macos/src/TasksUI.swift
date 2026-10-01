@@ -496,6 +496,8 @@ struct QueueHeaderModel: Equatable {
     /// 它是一条记录，改了设置也不会再跑（用户 2026-09-27 的规则）。
     var canEdit: Bool
     var canDelete: Bool
+    /// 关闭队列（手动终态）——已关闭的队列没有这个动作。
+    var canClose: Bool
     var canOpenPR: Bool
     var autoPR: Bool
     var isAutoCreated: Bool
@@ -547,6 +549,7 @@ struct QueueHeaderModel: Equatable {
             tone = .warning
         case .paused: stateKey = "tasks.queue.state.paused"; tone = failedCount > 0 ? .negative : .warning
         case .done: stateKey = "tasks.queue.state.finished"; tone = .positive
+        case .closed: stateKey = "tasks.queue.state.closed"; tone = .warning
         }
 
         return QueueHeaderModel(queueID: queue.id,
@@ -563,14 +566,18 @@ struct QueueHeaderModel: Equatable {
                                 runningCount: runningCount,
                                 doneCount: doneCount,
                                 totalCount: tasks.count,
-                                canStart: queuedCount > 0 && queue.state != .active,
+                                canStart: queuedCount > 0 && queue.state != .active && queue.state != .closed,
                                 startHintKey: (queue.state == .paused && failedCount > 0 && queuedCount > 0)
                                     ? "tasks.queue.continue" : "tasks.queue.start",
                                 canPause: queue.state == .active,
-                                canEdit: queue.state != .done,
+                                // .done 仍是「收尾」：设置/删除不回到行上（避免把名字挤没），
+                                // 但可以继续追加任务、发布、或手动关闭。
+                                canEdit: queue.state != .done && queue.state != .closed,
                                 canDelete: queue.state != .done,
-                                canOpenPR: prAvailable && queue.autoPR && queue.prUrl == nil
-                                    && queue.state == .done && queue.branch != nil,
+                                canClose: queue.state == .done || queue.state == .paused,
+                                // 发布与 autoPR 解耦：只要工作区能开 PR、队列有分支、任务已收尾，
+                                // 就能手动 push+开/更新 PR（prUrl 已存在时是「更新」）。
+                                canOpenPR: prAvailable && queue.branch != nil && queue.state == .done,
                                 autoPR: queue.autoPR,
                                 isAutoCreated: queue.autoCreated,
                                 prUrl: queue.prUrl,

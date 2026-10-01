@@ -137,6 +137,53 @@ do {
     eq(draft2.queue(q2.id)?.state, QueueState.draft, "a draft queue survives a restart as draft")
 }
 
+section("追加任务与关闭队列")
+do {
+    // .done 是活泳道：追加任务 → .draft，并重臂完成回传。
+    var b = TaskBoard()
+    let a = TaskItem.manual(title: "A", id: "manual-ap000001")
+    let c = TaskItem.manual(title: "C", id: "manual-ap000002")
+    b.tasks = [a, c]
+    let q = b.createQueue(name: "Lane")
+    _ = b.enqueue(taskID: a.id, into: q.id)
+    b.markRunning(a.id)
+    b.markDone(a.id)
+    eq(b.queue(q.id)?.state, QueueState.done, "全部完成 → done")
+    b.local.queueNotified[q.id] = "2026-09-30T00:00:00Z"
+    _ = b.enqueue(taskID: c.id, into: q.id)
+    eq(b.queue(q.id)?.state, QueueState.draft, "向 done 追加任务 → 回到 draft（活泳道）")
+    check(b.local.queueNotified[q.id] == nil, "重臂完成回传")
+
+    // .paused 追加：保持 paused（有失败要处理，不能被追加悄悄复活）。
+    var p = TaskBoard()
+    let pa = TaskItem.manual(title: "PA", id: "manual-ap000003")
+    let pb = TaskItem.manual(title: "PB", id: "manual-ap000004")
+    p.tasks = [pa, pb]
+    let pq = p.createQueue(name: "Paused lane")
+    _ = p.enqueue(taskID: pa.id, into: pq.id)
+    p.markRunning(pa.id)
+    _ = p.markFailed(pa.id, error: "boom")
+    eq(p.queue(pq.id)?.state, QueueState.paused, "失败 → paused")
+    _ = p.enqueue(taskID: pb.id, into: pq.id)
+    eq(p.queue(pq.id)?.state, QueueState.paused, "向 paused 追加任务仍保持 paused")
+
+    // 关闭：手动终态。
+    var cb = TaskBoard()
+    let ca = TaskItem.manual(title: "CA", id: "manual-ap000005")
+    cb.tasks = [ca]
+    let cq = cb.createQueue(name: "Close me")
+    _ = cb.enqueue(taskID: ca.id, into: cq.id)
+    cb.markRunning(ca.id)
+    check(!cb.closeQueue(cq.id), "有任务在跑时拒绝关闭")
+    cb.markDone(ca.id)
+    check(cb.closeQueue(cq.id), "任务结束后可以关闭")
+    eq(cb.queue(cq.id)?.state, QueueState.closed, "关闭 → closed")
+    check(!cb.resumeQueue(cq.id), "关闭后不能启动")
+    let cd = TaskItem.manual(title: "CD", id: "manual-ap000006")
+    cb.tasks.append(cd)
+    check(!cb.enqueue(taskID: cd.id, into: cq.id), "关闭后不能追加")
+}
+
 // MARK: - failure pauses the queue
 
 section("failure pauses the queue")

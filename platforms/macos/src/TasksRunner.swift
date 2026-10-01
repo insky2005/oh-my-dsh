@@ -1233,7 +1233,7 @@ final class TasksRunner {
         let queue = board.createQueue(name: name,
                                       branch: branchArg,
                                       baseBranch: baseBranch ?? env.defaultBaseBranch,
-                                      autoPR: autoPR ?? env.canOpenPR())
+                                      autoPR: autoPR ?? false)
         var created: [TaskItem] = []
         for draft in drafts where draft.isValid {
             let task = TaskItem.manual(title: draft.normalizedTitle, body: draft.effectiveBody)
@@ -1314,6 +1314,19 @@ final class TasksRunner {
         return removed
     }
 
+    /// 关闭队列: the user's MANUAL terminal state. Keeps the record (tasks / branch /
+    /// PR); afterwards it accepts no start, no append and no publish. Refused while
+    /// a task is running (cancel first), exactly like removeQueue.
+    @discardableResult
+    func closeQueue(_ queueID: String) -> Bool {
+        let ok = board.closeQueue(queueID)
+        if ok {
+            persist()
+            env.log("tasks: queue " + queueID + " closed")
+        }
+        return ok
+    }
+
     /// Put a task into a queue and start it when nothing else is running.
     ///
     /// A task added while NO queue is active makes its own queue the active one:
@@ -1322,9 +1335,12 @@ final class TasksRunner {
     /// that path loads the board instead of calling enqueue.
     @discardableResult
     func enqueue(taskID: String, into queueID: String) -> Bool {
+        // 新建的空队列被加入任务时照旧「加入即开始」；向**已有**队列追加任务则不
+        // 自动启动 —— 用户先验收再显式开始（`.done` 追加后回到 `.draft` 就是这个意思）。
+        let wasEmpty = board.queue(queueID)?.taskIds.isEmpty ?? true
         let ok = board.enqueue(taskID: taskID, into: queueID)
         guard ok else { return false }
-        activateQueueIfIdle(queueID)
+        if wasEmpty { activateQueueIfIdle(queueID) }
         persist()
         _ = pump()
         return true

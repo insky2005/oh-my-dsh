@@ -1462,6 +1462,7 @@ do {
                                                         TaskDraft(title: "跟随系统", body: "")])
     eq(result.queue.state, QueueState.draft, "新队列是 draft（等待启动）")
     eq(result.queue.branch, "feature/dark-mode", "分支从名字派生")
+    check(result.queue.autoPR == false, "autoPR 默认关闭（PR 走手动发布）")
     eq(result.created.count, 2, "两条任务都建了")
     check(h.board.task(result.created[0].id)?.state == .queued, "任务在队列里等待")
     eq(h.board.queue(result.queue.id)?.state, QueueState.draft, "没有启动任何东西")
@@ -1469,6 +1470,30 @@ do {
     check(h.runner.runningTaskID == nil, "runner 是空闲的")
     check(h.dsh.prompts.isEmpty, "连提示词都没发过")
     check(h.dsh.notifications.isEmpty, "也没有回传")
+}
+
+section("追加任务不自动启动；关闭队列是手动终态")
+do {
+    let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
+    let r = h.runner.createQueueWithTasks(name: "Lane", branch: "", autoPR: false,
+                                          originSession: "session-origin",
+                                          drafts: [TaskDraft(title: "A", body: "")])
+    _ = h.runner.startQueue(r.queue.id)
+    h.dsh.finish("session-1")
+    _ = h.runner.step()
+    eq(h.board.queue(r.queue.id)?.state, QueueState.done, "第一个任务完成 → done")
+
+    // 追加：任务入队，但队列回到 draft，不自动开跑。
+    let extra = h.runner.createManualTask(TaskDraft(title: "B", body: "do B"))!
+    _ = h.runner.enqueue(taskID: extra.id, into: r.queue.id)
+    eq(h.board.queue(r.queue.id)?.state, QueueState.draft, "追加后回到 draft")
+    check(h.runner.runningTaskID == nil, "追加不自动启动")
+
+    // 关闭：手动终态。
+    check(h.runner.closeQueue(r.queue.id), "关闭队列")
+    eq(h.board.queue(r.queue.id)?.state, QueueState.closed, "状态 closed")
+    check(!h.runner.startQueue(r.queue.id), "关闭后启动被拒")
+    check(!h.runner.enqueue(taskID: extra.id, into: r.queue.id), "关闭后追加被拒")
 }
 
 section("队列到达 .done：回传完成情况到来源会话（一次，幂等）")

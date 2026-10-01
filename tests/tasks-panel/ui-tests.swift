@@ -230,6 +230,28 @@ do {
     let doneHeader = QueueHeaderModel.build(board.queue(doneQueue.id)!, board: board, collapsed: false)
     check(!doneHeader.canEdit, "已完成的队列没有「设置」")
     check(!doneHeader.canDelete, "也没有「删除」")
+    check(doneHeader.canClose, "但可以手动关闭")
+    check(doneHeader.canOpenPR, "已完成 + 有分支 → 可以发布（不再要求 autoPR）")
+
+    // .closed = 手动终态：保留记录，但什么都不能做。
+    var closedBoard = TaskBoard()
+    let ct = TaskItem.manual(title: "CT", id: "manual-gg203030")
+    closedBoard.tasks = [ct]
+    let cq = closedBoard.createQueue(name: "Closed lane", branch: "feature/c")
+    _ = closedBoard.enqueue(taskID: ct.id, into: cq.id)
+    closedBoard.markRunning(ct.id)
+    closedBoard.markDone(ct.id)
+    check(closedBoard.closeQueue(cq.id), "关闭队列")
+    eq(closedBoard.queue(cq.id)?.state, QueueState.closed, "状态是 closed")
+    let closedHeader = QueueHeaderModel.build(closedBoard.queue(cq.id)!, board: closedBoard, collapsed: false)
+    eq(closedHeader.stateKey, "tasks.queue.state.closed", "关闭态文案")
+    check(!closedHeader.canStart, "关闭后不能启动")
+    check(!closedHeader.canEdit, "关闭后不能改设置")
+    check(!closedHeader.canClose, "不能重复关闭")
+    check(!closedHeader.canOpenPR, "关闭后不能发布")
+    let extra = TaskItem.manual(title: "Extra", id: "manual-gg204040")
+    closedBoard.tasks.append(extra)
+    check(!closedBoard.enqueue(taskID: extra.id, into: cq.id), "关闭后不能追加任务")
 
     // 还有活在等的队列照旧：设置与删除都在（失败任务的清理就走这条路）。
     let liveQueue = board.createQueue(name: "Busy", branch: "feature/y", autoPR: false)

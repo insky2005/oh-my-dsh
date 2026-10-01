@@ -1,6 +1,6 @@
 # 任务队列 × 会话回传 设计（task-queue-session-loop）
 
-> 状态：已实现（P0，2026-09-30）
+> 状态：已实现（P0/P1 2026-09-30；P2 活泳道 + 手动发布 2026-10-01）
 > 关联面板：任务（Tasks / IssueRunner）
 > 关联文档：docs/task-todo-skill-design.md、docs/issue-runner-design.md、docs/builtin-skills-design.md、docs/git-workflow.md
 > 决策来源：2026-09-30 会话讨论定稿
@@ -50,17 +50,20 @@ enum QueueState: String { case draft, active, paused, done }
 | `.draft` | 建好但**从未启动** | 开始处理队列 |
 | `.active` | 已启动，runner 可取任务 | 活跃 / 等待中 |
 | `.paused` | **启动过但停了**（失败 / 取消 / 重启） | 继续处理队列 |
-| `.done` | 队内无 queued/running | 已完成 |
+| `.done` | 当前一批任务都结束了；**活泳道**，可继续追加 / 发布 / 关闭 | — |
+| `.closed` | **用户手动关闭**的终态：保留记录，不再接收任务 / 启动 / 发布 | — |
 
 迁移：
 
-| 事件 | draft | active | paused | done |
-|---|---|---|---|---|
-| `createQueue`（面板 / API） | 新队列 | — | — | — |
-| `queue/start` / 面板开始 | → active | — | → active | — |
-| 任务全部 done | — | → done | — | — |
-| 任务 failed / cancelled | — | → paused | — | — |
-| App 重启 | 保持 draft | → paused | 保持 | 保持 |
+| 事件 | draft | active | paused | done | closed |
+|---|---|---|---|---|---|
+| `createQueue`（面板 / API） | 新队列 | — | — | — | — |
+| `queue/start` / 面板开始 | → active | — | → active | — | 拒绝 |
+| 任务全部 done | — | → done | — | — | — |
+| 任务 failed / cancelled | — | → paused | — | — | — |
+| **追加任务** | 保持 | 保持 | **保持 paused** | **→ draft（并重臂回传）** | 拒绝 |
+| 手动关闭 | → closed | → closed | → closed | → closed | — |
+| App 重启 | 保持 draft | → paused | 保持 | 保持 | 保持 |
 
 影响点：
 
@@ -83,7 +86,8 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 ```
 
 - 关联在**创建时**建立，与「谁启动」解耦：会话启动、面板启动都不改写它。
-- 面板手建队列没有 origin → 不回传（P2 可加「回传会话」选择器）。
+- 面板手建队列没有 origin → 不回传（**不做**「回传会话」选择器，用户 2026-10-01 决定）。
+- 追加任务到 `.done` 队列会**重臂** `queueNotified`：下一轮完成照常回传。
 - 默认回传到创建会话；`queue/start` 不接受改写 origin（将来如需重绑再单独设计）。
 
 ## 6. API
@@ -215,7 +219,11 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 - **P0**：`.draft` 状态；`queue/create` + `queue/start`；`queueSessions` / `queueNotified`；
   done 回传；技能改造。
 - **P1**：面板「回传会话」标记；start 按队列名消歧；重启补发（可与 P0 同批）。
-- **P2**：面板手建队列选择回传会话；「验收发现问题 → 直接生成新队列」再闭环。
+- **P2（2026-10-01 实现）**：队列改为**可追加的活泳道**——`.done` 只是「当前一批任务都结束」，
+  追加任务回到 `.draft` 并**重臂回传**（`.paused` 追加保持 paused）；PR/push 改为**手动发布**
+  （`autoPR` 是队列配置、默认关）；新增手动终态 **`.closed`**（保留记录，之后不再接收任务/启动/发布）。
+  「面板手建队列选择回传会话」**不做**（用户 2026-10-01 决定）。merge 属于流程，壳层不做：
+  发布只 push + 开/更新 PR，评审与合并都在壳层之外。
 
 ## 14. 已定决策
 
@@ -226,3 +234,7 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 5. 启动入口：会话说「启动队列」或面板点开始；两者都不改变创建时建立的队列↔会话关联。
 6. PR：不等待 PR 会话；队列 done 即回传。
 7. 技能默认：落成任务默认建「等待态队列 + 入队」；task-only 仅在用户明确要求时。
+8. PR/push/merge：全部手动。`autoPR` 为队列配置、**默认关**；「发布」= push + 开/更新 PR；
+   merge 由用户在本地/评审后处理，壳层不碰。
+9. `.done` 是活泳道：追加任务 → `.draft` 并重臂回传；`.paused` 追加保持 `.paused`；追加不自动启动。
+10. `.closed` 是**手动**终态（保留记录，不再接收任务/启动/发布）。
