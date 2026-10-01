@@ -29,6 +29,36 @@
 5. macOS 源码清单单一事实来源为 `platforms/macos/swift-sources.sh`（glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，`build-app.sh` / `local-ci.sh` / `ci.yml` 共用，新增文件无需逐个登记）；仅当新文件是独立工具（如 `MakeIcon.swift`，含顶层代码）时需在 `swift_sources()` 显式排除；
 6. 面板 UI 遵循 `PreviewPanel.swift` 基件约定；layer-backed 合成陷阱见 `docs/fixes/terminal-header-fix.md`；**配色令牌见 `docs/design/shell/ui-color-scheme.md`（面板底色 + 控件两档，改色只改 `PanelSurface.swift`）**。
 
+## 文档规范（`docs/`）
+
+**分类存放（按开发环节，完整索引见 [`docs/README.md`](docs/README.md)）：**
+
+| 目录 | 放什么 |
+|---|---|
+| `docs/research/` | 调研、选型、产品化总纲等策略文档 |
+| `docs/design/shell/` | 壳层共性设计（服务生命周期、数据目录、配色令牌…） |
+| `docs/design/panels/` | 面板的设计与实现约定 |
+| `docs/design/channels/` | 通道（微信 / 钉钉）的抽象、指令、存储、项目开关 |
+| `docs/fixes/` | 问题排查与修复记录（现象 → 根因 → 修复 → 验证） |
+| `docs/process/` | 工程流程：分支规范、发布流程、dsh 升级影响清单 |
+| `docs/feedback/` | 持续跟踪的使用反馈 |
+| `docs/plans/` | 实施计划（`<TOPIC>_PLAN-*.md`、`dsh-*-compat-audit.md`） |
+| `docs/milestones/` | 里程碑目标（`M<n>-*.md`） |
+| `docs/panels/` | 面向用户的面板说明（`index.md`） |
+| `docs/raw/`、`docs/screenshots/` | 原始素材、文档配图 |
+
+- **`docs/` 根目录只放 `README.md` 索引**，新文档一律进上表子目录，不再往根目录堆；新增后必须在 `docs/README.md` 登记；
+- 文件名用 kebab-case；设计文档以 `-design.md` 结尾、修复记录以 `-fix.md` 结尾；
+- 面板相关优先 `docs/design/panels/`（设计）或 `docs/panels/`（用户说明）。
+
+**编写要求：**
+
+- 正文用中文；文首用引用块写元信息，与现有文档保持一致——设计文档 `> 状态：… · 日期：… · 关联：docs/…`，修复文档 `> 日期 / 状态 / 现象版本`，调研文档 `> 调研日期 / 场景 / 证据原则`；
+- **文档间引用统一写仓库根相对路径**（如 `` `docs/process/git-workflow.md` ``），便于全文 grep；只有同目录的 markdown 链接才用 `./` / `../`；配图放 `docs/screenshots/` 并相对引用；
+- **移动 / 重命名文档时必须全量更新引用**（源码注释、`.dsh/wiki/` 的 `sources`、AGENTS / README / CHANGELOG、tests），提交前用 grep 校验无残留旧路径；`.dsh/wiki/` 与 `docs/` 保持同步；
+- 未提交的在途草案在索引里用代码路径标注、不建链，避免死链；
+- 文档改动用 `docs(…): …` 提交；README 更新按「分支与提交」的特例直接在当前分支提交。
+
 ## 分支与提交（强制，见 docs/process/git-workflow.md）
 
 - **开发前必须先切分支**，禁止直接在 `main` 上改代码：
