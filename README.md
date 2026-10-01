@@ -51,7 +51,7 @@
 
 任务台：**手动任务 + GitHub issue** 两种来源、**队列（泳道）** 串行执行，全部以**卡片**呈现。
 
-![tasks](./docs/screenshots/tasks.jpg)
+![tasks](./docs/screenshots/tasks.png)
 
 ### 通道面板（`⌥⌘H` / 活动栏「通道」图标）
 
@@ -62,6 +62,8 @@
 ### 审查面板（`⌥⌘R` / 活动栏「审查」图标）
 
 **只读**回答「这个会话里代理到底改了哪些文件、改成什么」——直接读 dsh 自己落盘的会话日志（`$DSH_HOME/sessions/<workspace>/<session>/session[.vN].jsonl[.zstd]`；日志文件名里的 `.vN` 是 dsh 的 **Session 格式世代**，dsh 0.1.5 的新会话是 `session.v3.jsonl`，面板按规范名枚举并**取世代最大的那一份**），不写任何文件、不发任何请求、不改 dsh。
+
+![review](./docs/screenshots/review.png)
 
 ### 浏览器面板（`⌥⌘B` / 活动栏「浏览器」图标）
 

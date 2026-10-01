@@ -91,7 +91,7 @@
 - **GitHub token（按仓库作用域，只走文件）**：面板「配置 GitHub Token」**只写文件** —— 有当前仓库时写文件专属 `~/.dsh/oh-my-dsh/tokens/<owner>-<repo>`，否则写通用 `~/.dsh/oh-my-dsh/gh-token`（均 chmod 600，App 与外部工具/代理共用）；解析优先级：文件专属 → 文件通用；**不再读写 macOS 钥匙串**（旧版写在钥匙串里的 token 需重新填写一次）；公开仓库无需 token，私有仓库拉取/开 PR/评论关闭需要；
 - 工作区非 GitHub 仓库时诚实显示空态（不替换为其他已注册工作区）；切换到不同仓库先清空旧列表再重载。
 
-![tasks](../screenshots/tasks.jpg)
+![tasks](../screenshots/tasks.png)
 
 ## 通道面板（`⌥⌘H` / 活动栏「通道」图标）
 
@@ -132,6 +132,8 @@
 - **读取诊断**：Zstandard 尾部未完成帧、无法解析的行等一律显式列出（不静默丢数据）；
 - **只读边界**：日志里没有的东西不会显示——`bash` 直改、以及日志**尚未落盘**的部分只标注「需人工核对」（落盘后会自动读到，见上）；
 - 设计与覆盖矩阵：`docs/review-panel-design.md`。
+
+![review](../screenshots/review.png)
 
 ## 浏览器面板（`⌥⌘B` / 活动栏「浏览器」图标）
 
