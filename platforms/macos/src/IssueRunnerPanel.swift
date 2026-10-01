@@ -473,8 +473,19 @@ final class IssueRunnerPanelController: NSObject {
         }
     }
 
-    /// The active workspace changed: re-detect the GitHub repo and reload.
+    /// The workspace the user is viewing changed (a dsh web session switch).
+    ///
+    /// Switching between sessions of the SAME workspace must NOT re-adopt it: every
+    /// adopt spawns blocking `/usr/bin/git` probes (detectGitHubRemote / isGitRepo /
+    /// detectDefaultBaseBranch) on the MAIN thread — the same thread the dsh web
+    /// WKWebView renders on — so re-adopting on every switch froze the page while it
+    /// loaded a session. A genuine switch still goes through resolveRepoAndReload; a
+    /// workspace SHAPE change (a task ran `git init`) is re-detected by
+    /// recheckWorkspaceShape on the step timer, which rebuilds through adoptWorkspace.
     func workspaceChanged() {
+        guard TaskWorkspaceRegistry.needsReadopt(resolved: workspacePath?(),
+                                                 adopted: workspaces.currentPath,
+                                                 hasRunner: runner != nil) else { return }
         resolveRepoAndReload()
     }
 

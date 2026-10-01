@@ -89,6 +89,20 @@ final class TaskWorkspaceRegistry {
         runners.removeValue(forKey: path)
     }
 
+    /// Whether a workspace-change notification actually needs a re-adopt.
+    ///
+    /// Switching between sessions of the SAME workspace must NOT re-adopt it: every
+    /// adopt spawns blocking `/usr/bin/git` probes on the MAIN thread — the same
+    /// thread the dsh web WKWebView renders on — so re-adopting on every session
+    /// switch froze the page while it was loading a session. Same standardized path
+    /// + a live runner means there is nothing to do; a workspace SHAPE change is
+    /// owned by recheckWorkspaceShape (the panel's step timer).
+    static func needsReadopt(resolved: String?, adopted: String?, hasRunner: Bool) -> Bool {
+        guard let resolved = resolved, !resolved.isEmpty else { return true }
+        guard let adopted = adopted, hasRunner else { return true }
+        return (resolved as NSString).standardizingPath != (adopted as NSString).standardizingPath
+    }
+
     /// Forget every non-current runner with nothing in flight: a workspace is worth
     /// keeping alive exactly while it is working.
     func prune() {

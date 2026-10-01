@@ -18,7 +18,11 @@ All notable changes to this project are documented in this file. Format follows
   - 回传文案要求收到它的 agent **只做简短确认**、不主动改代码；回传内容给每条任务的**完整汇报**（单条上限 1500 字，超出标注「已截断」）与失败前的汇报，队列分支 + 分支提交列表（非 git 仓库不显示）、耗时与 PR，**不含会话标识**；
   - 面板队列头在「有来源会话」时显示一枚 ↺（tooltip：完成后回传发起会话）；`queue/start` 也支持按 `name` 消歧；
   - 技能正文（内嵌常量 + 仓库副本字节一致）**默认**建「等待态队列 + 入队」，只有用户明确说「只建任务 / 先别入队 / 不要队列」时才只建裸任务，并补充启动话术；设计见 `docs/tasks-queue-session-loop-design.md`。
-  回归：`tests/tasks-panel` 1129 → **1221** 项（模型 188 / 运行器 405 / 视图模型 328 / 视图 199 / 本地 API 101）。
+  回归：`tests/tasks-panel` 1129 → **1226** 项（模型 188 / 运行器 410 / 视图模型 328 / 视图 199 / 本地 API 101）。
+
+### Fixed
+
+- **切换 dsh 会话卡顿（2026-10-01）**：在 dsh web 里每切一次会话，壳层就对当前工作区**重新 adopt**——`IssueRunnerPanel.adoptWorkspace` 在**主线程**同步 spawn `/usr/bin/git`（`detectGitHubRemote` / `isGitRepo` / `detectDefaultBaseBranch`），而 dsh web 就跑在同一线程的 WKWebView 里，于是切会话瞬间整窗口冻结（app.log 每次切换都有 `tasks: workspace adopted …`，即使路径没变）。现在 `workspaceChanged()` 走纯函数 `TaskWorkspaceRegistry.needsReadopt`：**同一（标准化后）工作区 + 有 runner 直接短路**，不再重探；真正的跨工作区切换照旧，工作区**形状变化**（任务跑了 `git init`）仍由 step 定时器上的 `recheckWorkspaceShape` 负责重建。回归：`tests/tasks-panel` 新增 5 项（同路径/尾斜杠/换路径/无 runner/无路径）。
 
 ### Changed
 

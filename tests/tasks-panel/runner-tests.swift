@@ -1438,6 +1438,20 @@ do {
     check(h.board.task(b.id)?.state == .done, "两条都被批量救回来了")
 }
 
+section("切会话：同一工作区不重新 adopt（主线程 git 探测不再每次跑）")
+do {
+    check(!TaskWorkspaceRegistry.needsReadopt(resolved: "/repo/a", adopted: "/repo/a", hasRunner: true),
+          "同一路径 + 有 runner → 不需要重新 adopt")
+    check(!TaskWorkspaceRegistry.needsReadopt(resolved: "/repo/a/", adopted: "/repo/a", hasRunner: true),
+          "尾斜杠也算同一路径")
+    check(TaskWorkspaceRegistry.needsReadopt(resolved: "/repo/b", adopted: "/repo/a", hasRunner: true),
+          "换了路径 → 需要重新 adopt")
+    check(TaskWorkspaceRegistry.needsReadopt(resolved: "/repo/a", adopted: "/repo/a", hasRunner: false),
+          "当前工作区没有 runner → 仍需 adopt")
+    check(TaskWorkspaceRegistry.needsReadopt(resolved: nil, adopted: "/repo/a", hasRunner: true),
+          "拿不到路径 → 仍需 adopt")
+}
+
 section("queue API: 建「等待态」队列 + 批量入队，不启动")
 do {
     let h = Harness(board: TaskBoard(), github: true, gitRepo: true)
