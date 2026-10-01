@@ -296,7 +296,7 @@ do {
     eq(h.repo.current, "feature/docs-cleanup", "the worktree is on the queue branch")
     eq(h.repo.checkouts, ["main", "feature/docs-cleanup"], "checkout base then create the branch")
     check(h.repo.calls.contains("status --porcelain"), "the clean check ran before switching")
-    check(h.dsh.titles["session-1"] == "Polish README", "the session was renamed")
+    check(h.dsh.titles["session-1"] == "TASK: Polish README", "the session was renamed with the TASK prefix")
     check((h.dsh.prompts["session-1"] ?? "").contains("Docs Cleanup"), "the prompt names the queue")
     check(h.rec.persistCount > 0, "state was persisted while starting")
 

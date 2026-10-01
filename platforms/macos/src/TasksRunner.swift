@@ -654,6 +654,10 @@ final class TasksRunner {
     /// deadline is never a surprise.
     static let defaultTimeout: TimeInterval = 60 * 60
 
+    /// The sidebar prefix every task session's title carries, so a queue-spawned
+    /// session is recognizable in dsh web at a glance ("TASK: 改 README").
+    static let taskSessionTitlePrefix = "TASK: "
+
     /// The limit in whole minutes (what the card prints).
     var timeoutMinutes: Int { Int(timeout / 60) }
 
@@ -824,7 +828,7 @@ final class TasksRunner {
                 startResult = .failed(.session, nil)
                 return
             }
-            _ = renameSession(sessionId, title)
+            _ = renameSession(sessionId, TasksRunner.taskSessionTitlePrefix + title)
             guard promptSession(sessionId, prompt) else {
                 startResult = .failed(.prompt, sessionId)
                 return

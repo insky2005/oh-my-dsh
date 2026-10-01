@@ -33,6 +33,7 @@ All notable changes to this project are documented in this file. Format follows
     `.paused`（有失败）追加保持 `.paused`；向已有队列追加任务**不再自动启动**（新建空队列的「加入即开始」不变）；
   - **PR/push 改为手动**：`autoPR` 成为队列配置、**默认关闭**（技能建的队列也不再默认自动开 PR）；
     队列头「发布」= push + 开/更新 PR（PR 已存在时是「更新」，PR 链接另行保留，可随时打开）；**merge 不在壳层**；
+  - 任务会话在 dsh web 侧栏加前缀 **「TASK: 」**（如「TASK: 改 README」），一眼认出这是队列起的会话；
   - 面板：`.closed` 状态文案与按钮；`.done` 增加「关闭」入口；发布与 PR 链接拆成两个控件；
   - **新增 `POST /api/tasks/queue/append`**：`task-todo` 技能**默认**把新任务**追加到本会话已有的队列**
     （没有才新建；目标按 `queueId` / `name` / `session` 解析），不再要求用户明说「追加」——

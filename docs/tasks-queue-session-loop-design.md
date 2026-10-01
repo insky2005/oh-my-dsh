@@ -145,6 +145,8 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
   3. `board.local.queueSessions[queue.id] = originSession`；
   4. 一次 `persist()`。不启动任何东西。
 - 启动：复用 `startQueue(queueID:)`；按 `session` 消歧在 API 层做，runner 只收 queueId。
+- 任务会话的标题带前缀 **`TASK: `**（`TasksRunner.taskSessionTitlePrefix + task.title`），
+  在 dsh web 侧栏一眼可辨；PR 会话保持自己的「开 PR：<队列>」前缀。
 - 回传触发：`QueueState` 进入 `.done` 的唯一路径是 `TaskBoard.markDone` → `refreshQueueCompletion()`。
   在 `TasksRunner.applyFinish` 的 `.done` 分支后调用 `notifyFinishedQueues()`：
   - 遍历 `state == .done`、`local.queueSessions[id] != nil`、`local.queueNotified[id] == nil` 的队列；
