@@ -230,6 +230,28 @@ do {
     let doneHeader = QueueHeaderModel.build(board.queue(doneQueue.id)!, board: board, collapsed: false)
     check(!doneHeader.canEdit, "已完成的队列没有「设置」")
     check(!doneHeader.canDelete, "也没有「删除」")
+    check(doneHeader.canClose, "但可以手动关闭")
+    check(doneHeader.canOpenPR, "已完成 + 有分支 → 可以发布（不再要求 autoPR）")
+
+    // .closed = 手动终态：保留记录，但什么都不能做。
+    var closedBoard = TaskBoard()
+    let ct = TaskItem.manual(title: "CT", id: "manual-gg203030")
+    closedBoard.tasks = [ct]
+    let cq = closedBoard.createQueue(name: "Closed lane", branch: "feature/c")
+    _ = closedBoard.enqueue(taskID: ct.id, into: cq.id)
+    closedBoard.markRunning(ct.id)
+    closedBoard.markDone(ct.id)
+    check(closedBoard.closeQueue(cq.id), "关闭队列")
+    eq(closedBoard.queue(cq.id)?.state, QueueState.closed, "状态是 closed")
+    let closedHeader = QueueHeaderModel.build(closedBoard.queue(cq.id)!, board: closedBoard, collapsed: false)
+    eq(closedHeader.stateKey, "tasks.queue.state.closed", "关闭态文案")
+    check(!closedHeader.canStart, "关闭后不能启动")
+    check(!closedHeader.canEdit, "关闭后不能改设置")
+    check(!closedHeader.canClose, "不能重复关闭")
+    check(!closedHeader.canOpenPR, "关闭后不能发布")
+    let extra = TaskItem.manual(title: "Extra", id: "manual-gg204040")
+    closedBoard.tasks.append(extra)
+    check(!closedBoard.enqueue(taskID: extra.id, into: cq.id), "关闭后不能追加任务")
 
     // 还有活在等的队列照旧：设置与删除都在（失败任务的清理就走这条路）。
     let liveQueue = board.createQueue(name: "Busy", branch: "feature/y", autoPR: false)
@@ -314,9 +336,15 @@ do {
     eq(header.name, "Dark Mode", "the queue name is shown")
     eq(header.branchText, "feature/dark-mode → main", "the branch and its base are shown")
     eq(header.progress, "0/2", "progress counts finished over total")
-    eq(header.stateKey, "tasks.queue.state.paused", "a fresh queue is paused")
+    eq(header.stateKey, "tasks.queue.state.draft", "a fresh queue is draft (等待启动), not paused")
+    eq(header.tone, TaskTone.warning, "a waiting queue reads as actionable")
     eq(header.queuedCount, 2, "two tasks are waiting")
+    eq(header.startHintKey, "tasks.queue.start", "draft offers 开始, not 继续")
     check(header.canStart, "开始 is offered while tasks wait")
+    check(!header.reportsToSession, "no originating session → no report marker")
+    board.local.queueSessions[queue.id] = "session-x"
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    check(header.reportsToSession, "a queue created by a session shows the 回传 marker")
     check(!header.canPause, "暂停 is not offered while paused")
     check(!header.canOpenPR, "no PR button before the queue finishes")
     eq(header.failedCount, 0, "no failures yet")
@@ -354,6 +382,50 @@ do {
     eq(header.stateKey, "tasks.queue.state.paused", "a failed queue is paused")
     eq(header.tone, TaskTone.negative, "a paused queue with failures reads negative")
     check(!header.canOpenPR, "autoPR is off for this queue")
+}
+
+section("队列状态标签的语气（颜色）")
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "One", id: "manual-0008aaaa")
+    board.tasks = [t1]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+
+    var header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(header.stateKey, "tasks.queue.state.draft", "待启动")
+    eq(header.tone, .warning, "待启动 = 橙（可行动）")
+
+    board.markRunning(t1.id)
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(header.stateKey, "tasks.queue.state.active", "进行中")
+    eq(header.tone, .running, "进行中 = 蓝")
+
+    _ = board.markFailed(t1.id, error: "tasks.errNoPush")
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(header.stateKey, "tasks.queue.state.paused", "失败使队列暂停")
+    eq(header.tone, .negative, "失败 / 错误 = 红")
+
+    var paused = TaskBoard()
+    let t2 = TaskItem.manual(title: "Two", id: "manual-0008bbbb")
+    paused.tasks = [t2]
+    let q2 = paused.createQueue(name: "Lane 2")
+    _ = paused.enqueue(taskID: t2.id, into: q2.id)
+    paused.markRunning(t2.id)
+    _ = paused.pauseQueue(q2.id)
+    header = QueueHeaderModel.build(paused.queue(q2.id)!, board: paused, collapsed: false)
+    eq(header.stateKey, "tasks.queue.state.paused", "手动暂停")
+    eq(header.tone, .warning, "暂停 = 橙")
+
+    paused.markDone(t2.id, prUrl: nil)
+    header = QueueHeaderModel.build(paused.queue(q2.id)!, board: paused, collapsed: false)
+    eq(header.stateKey, "tasks.queue.state.finished", "完成")
+    eq(header.tone, .positive, "完成 = 绿")
+
+    _ = paused.closeQueue(q2.id)
+    header = QueueHeaderModel.build(paused.queue(q2.id)!, board: paused, collapsed: false)
+    eq(header.stateKey, "tasks.queue.state.closed", "关闭")
+    eq(header.tone, .neutral, "关闭 = 灰（不再是橙）")
 }
 
 // MARK: - Summary
@@ -1050,6 +1122,115 @@ do {
                                    prAvailable: false)
     check(!ready.canOpenPR, "…but never in a workspace without GitHub")
 }
+section("队列默认展开：终态（已完成 / 已关闭）与自动队列默认折起")
+do {
+    // 这是「每次启动都默认展开已关闭队列」的回归点：终态必须和「已完成」一样折起。
+    var board = TaskBoard()
+    let user = board.createQueue(name: "Lane", branch: "feature/lane")
+    var closed = user
+    closed.state = .closed
+    check(!TaskQueue.startsExpanded(closed), "用户队列：已关闭默认折起")
+    var done = user
+    done.state = .done
+    check(!TaskQueue.startsExpanded(done), "用户队列：已完成默认折起")
+    var active = user
+    active.state = .active
+    check(TaskQueue.startsExpanded(active), "用户队列：进行中默认展开")
+    var paused = user
+    paused.state = .paused
+    check(TaskQueue.startsExpanded(paused), "用户队列：已暂停默认展开")
+    var draft = user
+    draft.state = .draft
+    check(TaskQueue.startsExpanded(draft), "用户队列：待启动默认展开")
+
+    let auto = board.createQueue(name: "Issue 12", branch: "fix/issue-12", autoCreated: true)
+    var autoClosed = auto
+    autoClosed.state = .closed
+    check(!TaskQueue.startsExpanded(autoClosed), "自动队列：已关闭默认折起")
+    var autoActive = auto
+    autoActive.state = .active
+    check(!TaskQueue.startsExpanded(autoActive), "自动队列：进行中也默认折起")
+}
+
+section("工作流：交付按钮与可用性跟着队列的模式走")
+do {
+    // The workspace's usual mode is a RECOMMENDATION, never enforced.
+    eq(QueueIntegration.recommended(isGit: true, hasGitHubRemote: true), .pr,
+       "GitHub 远端推荐 PR")
+    eq(QueueIntegration.recommended(isGit: true, hasGitHubRemote: false), .merge,
+       "普通 git 仓库推荐合并并推送")
+    eq(QueueIntegration.recommended(isGit: false, hasGitHubRemote: false), .none,
+       "非 git 目录推荐「无」（没什么可发布的）")
+
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "One", id: "manual-0090abcd")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane", integration: .merge)
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    board.markDone(task.id, prUrl: nil)
+
+    // merge 覆盖：不需要 GitHub 远端，有分支就能发布。
+    var header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                        prAvailable: false, integration: .merge)
+    eq(header.integration, .merge, "header 记住解析后的工作流")
+    check(header.canOpenPR, "merge 只需要分支：非 GitHub 工作区也能发布")
+    eq(header.integration.publishSymbol, "arrow.triangle.merge", "发布图标跟着模式")
+    eq(header.integration.publishHintKey, "tasks.queue.mergePush", "发布文案跟着模式")
+
+    // pr 模式仍然要 GitHub。
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: false, integration: .pr)
+    check(!header.canOpenPR, "pr 模式没有 GitHub 远端就不能发布")
+
+    // merge 没有远端也能发布：本地合并，推送能推则推（不需要 GitHub 远端）。
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: false, integration: .merge, hasRemote: false)
+    check(header.canOpenPR, "merge 连 git 远端都不需要：本地合并不依赖远端")
+
+    // push 必须有一个可推送的远端。
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: false, integration: .push, hasRemote: true)
+    check(header.canOpenPR, "push 有远端就能发布")
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: false, integration: .push, hasRemote: false)
+    check(!header.canOpenPR, "push 没有远端就不给发布按钮")
+
+    // 「无」：明确不收尾，即使有分支也不给发布按钮。
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: true, integration: .none)
+    check(!header.canOpenPR, "工作流「无」时没有发布按钮")
+
+    // 关闭的队列是手动终态：不能再发布。
+    _ = board.closeQueue(queue.id)
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                    prAvailable: true, integration: .merge)
+    check(!header.canOpenPR, "关闭的队列不能发布")
+}
+section("交付结果写在队列卡上")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "One", id: "manual-0091abcd")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    _ = board.setQueueIntegrationNote(queue.id, "已合并并推送到 origin/main")
+    let header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(header.integrationNote, "已合并并推送到 origin/main", "收尾结果带到卡上")
+    eq(header.integrationNoteFirstLine, "已合并并推送到 origin/main", "单行结果就是第一行")
+    check(!header.integrationNoteExpanded, "默认折叠")
+
+    // 多行结果：折叠只看第一行，可以展开。
+    _ = board.setQueueIntegrationNote(queue.id, "第一行：已合并到 main\n第二行：细节\n第三行：更多")
+    let multi = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(multi.integrationNoteFirstLine, "第一行：已合并到 main", "折叠时取第一行")
+    check(multi.canExpandIntegrationNote, "多行结果可以展开")
+    check(!multi.integrationNoteExpanded, "默认还是不展开")
+    let opened = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                        noteExpanded: true)
+    check(opened.integrationNoteExpanded, "展开态传进模型")
+    check(opened.canExpandIntegrationNote, "展开后依然有收起入口")
+}
 section("加入队列 dropdown: 新建队列 first")
 do {
     var board = TaskBoard()
@@ -1061,11 +1242,11 @@ do {
     eq(items.count, 3, "新建队列 + 两个已有队列")
     check(items.first?.isNewQueue == true, "新建队列排第一个")
     eq(items.first?.title, "tasks.queue.new", "它用的是 新建队列 文案")
-    eq(items.dropFirst().map { $0.title }, ["Docs Cleanup", "Second lane"],
-       "已有队列按创建顺序排在后面")
+    eq(items.dropFirst().map { $0.title }, ["Second lane", "Docs Cleanup"],
+       "已有队列按创建时间倒序（最新在前）排在后面")
     eq(items.dropFirst().map { $0.queueID }, board.queueChoices().map { $0.id },
        "每一行都带着它要入队的队列 id")
-    eq(items.dropFirst().first?.branch, "feature/docs-cleanup", "行里带上该队列的分支")
+    eq(items.dropFirst().first?.branch, "feature/second-lane", "行里带上该队列的分支")
 
     // 一个队列都没有时，下拉里只有 新建队列 —— 也就是第一个。
     let fresh = QueuePickerItem.build(TaskBoard().queueChoices())
@@ -1077,15 +1258,40 @@ do {
     let fresh = TasksEmptyStateModel.build(filtered: false, githubRepo: true)
     eq(fresh.messageKey, "tasks.empty", "a fresh board points at the way in")
     check(fresh.showsNewTask, "and offers the inline form")
+    check(fresh.showsHelp, "and shows the 使用说明 inline (no queues / no tasks)")
     eq(fresh.symbol, "checklist", "with the checklist symbol")
 
     let noRepo = TasksEmptyStateModel.build(filtered: false, githubRepo: false)
     eq(noRepo.messageKey, "tasks.emptyManualOnly",
        "a non-GitHub workspace explains what still works")
+    check(noRepo.showsHelp, "a non-GitHub empty board teaches the panel too")
 
     let filtered = TasksEmptyStateModel.build(filtered: true, githubRepo: true)
     eq(filtered.messageKey, "tasks.emptyFiltered", "an empty filter says which kind of empty")
     check(!filtered.showsNewTask, "and does not offer to create a task")
+    check(!filtered.showsHelp, "and does NOT dump the help where the way out is the filter")
+}
+
+section("使用说明 model")
+do {
+    let help = TasksHelpModel.build()
+    eq(help.titleKey, "tasks.help.title", "标题来自 L10n")
+    eq(help.introKey, "tasks.help.intro", "开篇一句")
+    check(help.sections.count >= 3, "至少三节：建任务 / 队列 / 工作流…")
+    // Every key is namespaced, so a new section cannot ship without its bilingual
+    // strings (tests/l10n lints the pairs).
+    check(help.titleKey.hasPrefix("tasks.help."), "标题键在 tasks.help. 命名空间下")
+    check(help.introKey.hasPrefix("tasks.help."), "开篇键在命名空间下")
+    for section in help.sections {
+        check(section.headingKey.hasPrefix("tasks.help."), "小节标题键在命名空间下")
+        check(!section.lineKeys.isEmpty, "每个小节至少一行")
+        for key in section.lineKeys {
+            check(key.hasPrefix("tasks.help."), "正文键在命名空间下")
+        }
+    }
+    let headings = help.sections.map { $0.headingKey }
+    check(headings.contains("tasks.help.workflow.heading"), "有一节讲 Git 工作流")
+    check(headings.contains("tasks.help.session.heading"), "有一节讲会话回传")
 }
 
 section("counters, progress and the auto queue flag")

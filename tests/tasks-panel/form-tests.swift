@@ -42,6 +42,10 @@ func layout(_ view: NSView, width: CGFloat) -> NSSize {
         view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
         view.topAnchor.constraint(equalTo: host.topAnchor),
     ])
+    // Two passes: a wrapping label only learns its width once the form has been
+    // laid out, so the first pass settles the width and the second measures the
+    // wrapped height (AppKit does the same in the running app).
+    host.layoutSubtreeIfNeeded()
     host.layoutSubtreeIfNeeded()
     return view.frame.size
 }
@@ -322,7 +326,7 @@ do {
     }
 }
 
-section("队列头：打开 PR 排在最后（图标与 PR 链接都是）")
+section("队列头：交付排在关闭之前，PR 链接仍在最后")
 do {
     var board = TaskBoard()
     let task = TaskItem.manual(title: "改 README", body: nil, id: "manual-hh301010")
@@ -339,13 +343,15 @@ do {
     let openHeader = TaskQueueHeaderView(model: openModel)
     _ = layout(openHeader, width: 320)
     let buttons = descendants(openHeader, of: CustomIconButton.self)
-    check(buttons.contains { $0.toolTip == L10n.tr("tasks.queue.openPR") }, "行上有「打开 PR」")
-    if let pr = buttons.first(where: { $0.toolTip == L10n.tr("tasks.queue.openPR") }) {
-        let prFrame = pr.convert(pr.bounds, to: openHeader)
-        let others = buttons.filter { $0 !== pr }.map { $0.convert($0.bounds, to: openHeader) }
-        check(others.allSatisfy { $0.maxX <= prFrame.minX + 1 },
-              "它是这一行最右的按钮（其余按钮都在它左边）")
-        check(prFrame.maxX <= openHeader.bounds.width, "没有越出队列头")
+    let publish = buttons.first { $0.toolTip == L10n.tr("tasks.queue.openPR") }
+    let close = buttons.first { $0.toolTip == L10n.tr("tasks.queue.close") }
+    check(publish != nil, "行上有「打开 PR」（发布）")
+    check(close != nil, "行上有「关闭队列」")
+    if let publish = publish, let close = close {
+        let publishFrame = publish.convert(publish.bounds, to: openHeader)
+        let closeFrame = close.convert(close.bounds, to: openHeader)
+        check(publishFrame.maxX <= closeFrame.minX + 1, "发布排在关闭之前")
+        check(publishFrame.maxX <= openHeader.bounds.width, "没有越出队列头")
     }
 
     // 已经有 PR：那一格变成 PR 链接，同样在最右。
@@ -361,6 +367,76 @@ do {
     if let link = link, let row = link.superview as? NSStackView {
         check(row.arrangedSubviews.last === link, "链接是这一行的最后一个控件")
     }
+}
+
+section("交付失败：原因写在队列卡上，按钮 tooltip 仍是动作说明")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "改 README", body: nil, id: "manual-hh302020")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane", branch: "feature/x", autoPR: true)
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    board.markDone(task.id)
+    _ = board.setQueuePRError(queue.id, "tasks.errPRNoBranch")
+
+    let model = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                       prAvailable: true)
+    eq(model.prErrorKey, "tasks.errPRNoBranch", "失败原因跟着队列到模型")
+    let header = TaskQueueHeaderView(model: model)
+    _ = layout(header, width: 320)
+    // 按钮永远说它做什么——失败不会把 tooltip 顶掉。
+    let publish = descendants(header, of: CustomIconButton.self)
+        .first { $0.toolTip == L10n.tr("tasks.queue.openPR") }
+    check(publish != nil, "发布按钮的 tooltip 仍是动作说明")
+    // 失败原因在卡片上。
+    let labels = descendants(header, of: NSTextField.self).map { $0.stringValue }
+    check(labels.contains(L10n.tr("tasks.errPRNoBranch")), "失败原因显示在队列卡上")
+
+    // 折叠时失败也要露出来（成功摘要才随折叠隐藏）。
+    let collapsed = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: true,
+                                           prAvailable: true)
+    let collapsedHeader = TaskQueueHeaderView(model: collapsed)
+    _ = layout(collapsedHeader, width: 320)
+    let collapsedLabels = descendants(collapsedHeader, of: NSTextField.self).map { $0.stringValue }
+    check(collapsedLabels.contains(L10n.tr("tasks.errPRNoBranch")), "折叠的队列也显示失败原因")
+}
+section("交付结果：默认一行，可展开全文")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "改 README", body: nil, id: "manual-hh303030")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane", branch: "feature/x")
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    board.markDone(task.id)
+    _ = board.setQueueIntegrationNote(queue.id, "第一行：已合并到 main\n第二行：细节\n第三行：更多")
+
+    let model = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    check(model.canExpandIntegrationNote, "多行结果可以展开")
+    let header = TaskQueueHeaderView(model: model)
+    var toggled = false
+    header.onToggleNote = { toggled = true }
+    _ = layout(header, width: 320)
+    let labels = descendants(header, of: NSTextField.self).map { $0.stringValue }
+    check(labels.contains("第一行：已合并到 main"), "折叠时显示第一行")
+    check(!labels.contains(where: { $0.contains("第三行") }), "折叠时不显示后面的内容")
+    let toggle = descendants(header, of: NSButton.self)
+        .first { $0.title == L10n.tr("tasks.queue.note.expand") }
+    check(toggle != nil, "有「展开」入口")
+    toggle?.performClick(nil)
+    check(toggled, "点击展开会通知面板")
+
+    // 展开态：整段都在卡片上。
+    let expandedModel = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                               noteExpanded: true)
+    let expandedHeader = TaskQueueHeaderView(model: expandedModel)
+    _ = layout(expandedHeader, width: 320)
+    let expandedLabels = descendants(expandedHeader, of: NSTextField.self).map { $0.stringValue }
+    check(expandedLabels.contains(where: { $0.contains("第三行") }), "展开后显示全文")
+    let collapse = descendants(expandedHeader, of: NSButton.self)
+        .first { $0.title == L10n.tr("tasks.queue.note.collapse") }
+    check(collapse != nil, "展开后给「收起」入口")
 }
 section("fields span the whole form")
 do {
@@ -446,18 +522,190 @@ do {
 
 section("the queue form stays short enough to fit without scrolling")
 do {
-    // 高级设置 opens three more controls; a form that then needs a scrollbar in a
+    // 高级设置 opens more controls; a form that then needs a scrollbar in a
     // normal panel is a form that should have been shorter (the section's rows sit
-    // caption-BESIDE-field, and its spacing is tighter).
+    // caption-BESIDE-field, and its spacing is tighter). 工作流 is a RADIO group now
+    // (跟随设置 + 三档, a deliberate requirement), which costs one caption line plus
+    // one row — the sheet still scrolls only in a very short panel.
     let collapsed = QueueComposerView(model: QueueComposerModel.create())
     let collapsedSize = layout(collapsed, width: 400)
     let expanded = QueueComposerView(model: QueueComposerModel.create().togglingAdvanced())
     let expandedSize = layout(expanded, width: 400)
     check(expandedSize.height > collapsedSize.height, "高级设置 makes the form taller")
-    check(expandedSize.height <= 290,
+    check(expandedSize.height <= 310,
           "but the expanded form still fits a normal content area (got \(expandedSize.height)pt)")
     check(expanded.branchField.frame.width > 180,
           "and the inline advanced fields keep their width (\(expanded.branchField.frame.width)pt)")
+}
+
+section("队列表单：Git 工作流单选组（跟随工作区设置 + 四档）")
+do {
+    // The recommendation follows the WORKSPACE, never the global default.
+    eq(QueueComposerModel.create().forWorkspace(git: true, pr: true).recommendedIntegration, .pr,
+       "GitHub 工作区推荐 PR")
+    eq(QueueComposerModel.create().forWorkspace(git: true, pr: false).recommendedIntegration, .merge,
+       "普通 git 仓库推荐合并并推送")
+    eq(QueueComposerModel.create().forWorkspace(git: false, pr: false).recommendedIntegration, .none,
+       "非 git 目录推荐「无」（没什么可发布的）")
+
+    let model = QueueComposerModel.create()
+        .forWorkspace(git: true, pr: true, defaultBase: "main", defaultIntegration: .pr)
+        .togglingAdvanced()
+    let form = QueueComposerView(model: model)
+    var submitted: QueueComposerModel?
+    form.onSubmit = { submitted = $0 }
+    _ = layout(form, width: 400)
+
+    eq(form.integrationRadios.count, 5, "跟随设置 + 四个模式各一个单选按钮")
+    check(form.integrationRadios[0].title.contains("follow"),
+          "第一个是跟随工作区设置，括号里带当前默认值")
+    eq(form.integrationRadios[1].title, "none", "「无」排在跟随设置之后（第一档）")
+    eq(form.selectedIntegration, nil, "默认就是跟随设置")
+    check(form.integrationRadios[0].state == .on, "跟随设置那个是选中态")
+    check(!form.integrationNote.isHidden, "本工作区推荐在 caption 行上，可见")
+    check(form.integrationNote.stringValue.contains("recommend"),
+          "推荐文案来自 integration.recommend")
+    // 五个 radio 必须放得下（不被截断），否则单选框反而看不清。
+    for radio in form.integrationRadios {
+        check(radio.frame.width >= radio.intrinsicContentSize.width - 1,
+              "radio「\(radio.title)」不被截断 (frame \(radio.frame.width) >= intrinsic \(radio.intrinsicContentSize.width))")
+    }
+
+    // 选项顺序：无 / 直接推送 / 合并到基线 / Pull Request（索引 1/2/3/4，0 是跟随）。
+    eq(form.integrationRadios[2].title, "push", "直接推送排在「无」之后")
+    eq(form.integrationRadios[3].title, "merge", "合并到基线其后")
+    eq(form.integrationRadios[4].title, "pr", "Pull Request 最后")
+
+    // 工作区跑不了的工作流灰掉（索引：0 跟随 / 1 无 / 2 推送 / 3 合并 / 4 PR）。
+    check(form.integrationRadios[4].isEnabled, "GitHub 工作区：PR 可选")
+    check(form.integrationRadios[3].isEnabled, "git 工作区：合并可选")
+    check(form.integrationRadios[2].isEnabled, "有远端：直接推送可选")
+
+    let gitOnly = QueueComposerView(model: QueueComposerModel.create()
+        .forWorkspace(git: true, pr: false, hasRemote: false).togglingAdvanced())
+    _ = layout(gitOnly, width: 400)
+    check(!gitOnly.integrationRadios[4].isEnabled, "没有 GitHub 远端：PR 灰掉")
+    eq(gitOnly.integrationRadios[4].toolTip, "unavailablePr", "并说明原因")
+    check(gitOnly.integrationRadios[3].isEnabled, "git 仓库仍可合并")
+    check(!gitOnly.integrationRadios[2].isEnabled, "没有远端：直接推送灰掉")
+    eq(gitOnly.integrationRadios[2].toolTip, "unavailablePush", "推送也说明原因")
+
+    let plain = QueueComposerView(model: QueueComposerModel.create()
+        .forWorkspace(git: false, pr: false, hasRemote: false).togglingAdvanced())
+    _ = layout(plain, width: 400)
+    check(!plain.integrationRadios[4].isEnabled, "非 git：PR 不可选")
+    check(!plain.integrationRadios[3].isEnabled, "非 git：合并不可选")
+    eq(plain.integrationRadios[3].toolTip, "unavailableMerge", "合并说明原因")
+    check(!plain.integrationRadios[2].isEnabled, "非 git：推送不可选")
+    check(plain.integrationRadios[1].isEnabled, "「无」永远可选")
+
+    // 选中 merge：模型与提交都带上队列自己的覆盖。名字要填，否则表单不可提交。
+    form.nameField.stringValue = "Lane"
+    form.selectIntegration(.merge)
+    eq(form.selectedIntegration, .merge, "选中项映射回模型（2 = merge）")
+    check(form.integrationRadios[0].state == .off, "单选：跟随设置被关掉")
+    form.submitTapped()
+    eq(submitted?.integration, .merge, "提交时带上队列自己的工作流")
+    eq(submitted?.integrationChoices.count, 5, "选项集合包含跟随设置与「无」")
+}
+
+section("面板设置抽屉：token + 工作流默认值")
+do {
+    let model = TaskSettingsModel(token: "ghp_x", defaultIntegration: .merge,
+                                  recommendedIntegration: .pr, prAvailable: true,
+                                  autoCloseOnPublish: true)
+    let form = TaskSettingsView(model: model)
+    var submitted: TaskSettingsModel?
+    form.onSubmit = { submitted = $0 }
+    let settingsSize = layout(form, width: 440)
+    // 两条说明都完整显示：不截断（maximumNumberOfLines = 0）且按词换行。
+    eq(form.tokenHint.maximumNumberOfLines, 0, "GitHub Token 说明不截断")
+    eq(form.tokenHint.lineBreakMode, .byWordWrapping, "GitHub Token 说明按词换行")
+    eq(form.autoCloseHint.maximumNumberOfLines, 0, "自动关闭说明不截断")
+    check(!form.autoCloseHint.isHidden, "自动关闭说明直接显示（不只是 tooltip）")
+    eq(form.autoCloseHint.stringValue, "autoCloseHint", "说明文字来自 settings.autoCloseHint")
+    check(settingsSize.height <= 620,
+          "设置抽屉已为完整说明加高（短文案下远低于上限）(got \(settingsSize.height)pt)")
+    // 短文案（L10n stub）验证不了换行：喂一段长文本，确认说明真的换行并把抽屉撑高。
+    form.tokenHint.stringValue = String(repeating: "这是一段很长的说明文字，用来验证换行。", count: 6)
+    let grown = layout(form, width: 440)
+    check(form.tokenHint.frame.height > 20,
+          "长说明换行成多行 (got \(form.tokenHint.frame.height)pt)")
+    check(grown.height > settingsSize.height,
+          "说明换行把抽屉撑高 (\(settingsSize.height) → \(grown.height)pt)")
+
+    eq(form.tokenField.stringValue, "ghp_x", "token 预填")
+    check(form.tokenField.frame.width > 300, "token 字段撑满抽屉 (got \(form.tokenField.frame.width)pt)")
+    // 单选按钮组，不是下拉：四个 Git 工作流同时可见，推荐项带标记。
+    eq(form.integrationRadios.count, 4, "四个 Git 工作流各一个单选按钮")
+    eq(form.integrationRadios[0].title, "none", "「无」排第一（用户 2026-10-01）")
+    eq(form.integrationRadios[1].title, "push", "直接推送其后")
+    eq(form.integrationRadios[2].title, "merge", "合并到基线其后")
+    check(form.integrationRadios[3].title.contains("pr"), "Pull Request 最后（推荐项带后缀）")
+    eq(form.selectedIntegration, .merge, "默认选中当前默认值 merge")
+    check(form.integrationRadios[2].state == .on, "merge 那一个是选中态（无/push/merge/pr → 2）")
+    check(form.integrationRadios[3].title.contains("recommendedSuffix"),
+          "推荐项（这里是 pr，最后一个）带标记")
+    check(!form.integrationNote.isHidden, "推荐说明是可见信息，不是校验 hint")
+    check(form.submitButton.isEnabled, "保存总是可点：设置没有非法值")
+    // 交付成功后自动关闭队列：复选框 + 直接显示的完整说明（不再只藏在 tooltip）。
+    check(form.autoCloseCheck.state == .on, "自动关闭开关按模型预填")
+    eq(form.autoCloseCheck.title, "autoClose", "开关文案来自 tasks.settings.autoClose")
+
+    // 区块顺序：工作流在上、GitHub Token 在下（与 intro 的两段顺序一致）。
+    let workflowMidY = form.integrationRadios[0].convert(form.integrationRadios[0].bounds,
+                                                         to: form).midY
+    let tokenMidY = form.tokenField.convert(form.tokenField.bounds, to: form).midY
+    check(workflowMidY > tokenMidY,
+          "工作流区块排在 GitHub Token 之上 (workflow \(workflowMidY) > token \(tokenMidY))")
+
+    form.selectIntegration(QueueIntegration.none)
+    eq(form.selectedIntegration, QueueIntegration.none, "选「无」——非 git 项目不收尾")
+
+    form.selectIntegration(.push)
+    eq(form.selectedIntegration, .push, "点选直接推送")
+    check(form.integrationRadios[0].state == .off, "单选：前一个（无）被关掉")
+    form.tokenField.stringValue = "ghp_y"
+    form.submitTapped()
+    eq(submitted?.defaultIntegration, .push, "提交带上新选的默认工作流")
+    eq(submitted?.token, "ghp_y", "以及新填的 token")
+
+    form.setAutoCloseOnPublish(false)
+    check(form.autoCloseCheck.state == .off, "可以关掉自动关闭开关")
+    form.submitTapped()
+    eq(submitted?.autoCloseOnPublish, false, "提交带上自动关闭开关")
+
+    // 面板设置同样遵守工作区能力：跑不了的工作流灰掉（索引 0 无 / 1 推送 / 2 合并 / 3 PR）。
+    let gitOnlySettings = TaskSettingsView(model: TaskSettingsModel(
+        token: "", defaultIntegration: .merge, recommendedIntegration: .merge,
+        prAvailable: false, gitAvailable: true, remoteAvailable: false))
+    check(!gitOnlySettings.integrationRadios[3].isEnabled, "没有 GitHub 远端：PR 不可选")
+    eq(gitOnlySettings.integrationRadios[3].toolTip, "unavailablePr", "并说明原因")
+    check(gitOnlySettings.integrationRadios[2].isEnabled, "git 仓库：合并可选")
+    check(!gitOnlySettings.integrationRadios[1].isEnabled, "没有远端：推送不可选")
+}
+
+section("使用说明视图：抽屉与内联共用一个正文")
+do {
+    let model = TasksHelpModel.build()
+    let drawer = TasksHelpView(model: model)
+    var closed = false
+    drawer.onCancel = { closed = true }
+    let size = layout(drawer, width: 440)
+    check(size.height > 60, "抽屉有正文高度 (got \(size.height)pt)")
+    check(size.width <= 441, "不超过给定宽度 (got \(size.width)pt)")
+    check(!drawer.body.subviews.isEmpty, "正文里渲染了内容")
+    let controls = descendants(drawer, of: CustomIconButton.self)
+    check(!controls.isEmpty, "抽屉里有关闭按钮")
+    check(!closed, "还没有人按关闭")
+
+    // 内联版：同一正文、窄列，供空板的内容区使用。
+    let inline = TasksHelpTextView()
+    inline.contentWidth = 300
+    inline.apply(model)
+    let inlineSize = layout(inline, width: 300)
+    check(inlineSize.height > 40, "内联正文也有高度 (got \(inlineSize.height)pt)")
+    check(!inline.subviews.isEmpty, "内联正文同样渲染了内容")
 }
 
 section("抽屉背后有一层虚化（表单与内容区分层）")

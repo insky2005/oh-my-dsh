@@ -92,13 +92,27 @@ enum TaskState: String {
     }
 }
 
-/// A queue's own state: active runs its tasks one at a time, paused waits for
-/// the user (a task failed, the worktree was dirty, or the app restarted),
-/// done has nothing left to run.
+/// A queue's own state.
+///
+/// - draft: created but never started — the 等待态 a session-created queue sits in
+///   until the user (or the originating session) says 启动队列;
+/// - active: runs its tasks one at a time;
+/// - paused: was started and stopped (a task failed, it was cancelled, or the app
+///   restarted) — the user CONTINUES rather than starts;
+/// - done: every current task finished. **Not a record**: the lane is still open —
+///   appending a task moves it back to .draft (and re-arms the completion report),
+///   and 交付/关闭 stay available;
+/// - closed: the user's MANUAL terminal state. The lane keeps its record (tasks,
+///   branch, PR) but accepts nothing more: no start, no append, no publish.
+///
+/// draft is deliberately NOT paused: 「从未启动」与「启动过但停了」是两种状态、两种
+/// 动作（开始 vs 继续），而完成回传只挂在 done 上。
 enum QueueState: String {
+    case draft
     case active
     case paused
     case done
+    case closed
 }
 
 // MARK: - Task
@@ -419,6 +433,52 @@ struct QueueChoice: Equatable {
 
 // MARK: - Queue
 
+/// How a queue's finished work LANDS. Chosen per queue, or by the workspace default
+/// in the tasks-panel settings; always performed by the delivery session (never by
+/// the shell directly — pushing / merging needs credentials and judgement).
+enum QueueIntegration: String, CaseIterable {
+    /// Push the queue's branch and open/update its pull request; review and merge
+    /// happen outside the shell.
+    case pr
+    /// Merge the queue's branch into its base locally, then push the base branch.
+    case merge
+    /// Push the current branch itself (develop-on-main workflows).
+    case push
+    /// 不交付：队列跑完就结束，代码留在原地，由用户自己处理。非 git 目录的默认，
+    /// 也是「别让它自动碰远端」的明确选择。
+    case none
+
+    /// The mode a workspace like this usually wants — a UI RECOMMENDATION, never
+    /// enforced: a GitHub remote points at review (pr); another git repo at a LOCAL
+    /// merge (no remote required — the merge happens in the worktree and the push is
+    /// best-effort); a plain directory has nothing to publish at all → none.
+    static func recommended(isGit: Bool, hasGitHubRemote: Bool) -> QueueIntegration {
+        if hasGitHubRemote { return .pr }
+        if isGit { return .merge }
+        return .none
+    }
+
+    /// Whether this workflow can actually run in a workspace with these capabilities.
+    /// It mirrors the runner's own refusals (TasksRunner.startQueueIntegration): PR
+    /// needs a GitHub remote, merge needs a repository (it merges locally, so no
+    /// remote is required), push needs a remote to push to, and 无 always works.
+    /// The pickers grey out the modes that cannot run instead of letting the user
+    /// choose a guaranteed failure.
+    static func available(_ mode: QueueIntegration, isGit: Bool, hasGitHubRemote: Bool,
+                          hasRemote: Bool) -> Bool {
+        switch mode {
+        case .none: return true
+        case .pr: return hasGitHubRemote
+        case .merge: return isGit
+        case .push: return isGit && hasRemote
+        }
+    }
+
+    func isAvailable(isGit: Bool, hasGitHubRemote: Bool, hasRemote: Bool) -> Bool {
+        Self.available(self, isGit: isGit, hasGitHubRemote: hasGitHubRemote, hasRemote: hasRemote)
+    }
+}
+
 /// A queue is a lane: every task in it shares ONE branch and runs strictly in
 /// order, so a later task sees the earlier task's commits.
 struct TaskQueue: Equatable {
@@ -441,6 +501,12 @@ struct TaskQueue: Equatable {
     /// its 已完成 state — a PR that could not be opened is not failed work — but the
     /// reason is shown instead of silently disappearing into the log.
     var prError: String?
+    /// Per-queue override of the workspace's integration default; nil = follow the
+    /// tasks-panel setting.
+    var integration: QueueIntegration?
+    /// The last finalize session's result shown on the card: its report's first line
+    /// on success, the failure reason otherwise. nil = never finalized.
+    var integrationNote: String?
     var createdAt: Date?
 
     init(id: String,
@@ -453,6 +519,8 @@ struct TaskQueue: Equatable {
          autoPR: Bool = false,
          prUrl: String? = nil,
          prError: String? = nil,
+         integration: QueueIntegration? = nil,
+         integrationNote: String? = nil,
          createdAt: Date? = nil) {
         self.id = id
         self.name = name
@@ -464,6 +532,8 @@ struct TaskQueue: Equatable {
         self.autoPR = autoPR
         self.prUrl = prUrl
         self.prError = prError
+        self.integration = integration
+        self.integrationNote = integrationNote
         self.createdAt = createdAt
     }
 
@@ -500,7 +570,7 @@ struct TaskQueue: Equatable {
                              : nil,
                          baseBranch: baseBranch,
                          taskIds: [],
-                         state: .paused,
+                         state: .draft,
                          autoCreated: true,
                          autoPR: opensPR,
                          prUrl: nil,
@@ -533,11 +603,26 @@ struct TaskQueue: Equatable {
                          branch: branch,
                          baseBranch: baseBranch,
                          taskIds: [],
-                         state: .paused,
+                         state: .draft,
                          autoCreated: true,
                          autoPR: opensPR,
                          prUrl: nil,
                          createdAt: Date())
+    }
+
+    /// Queues newest-first for DISPLAY: the lane just created is at the top. A
+    /// queue without a stamp (written before createdAt existed) sorts last; equal
+    /// stamps keep their existing order (stable by index). Storage order is never
+    /// changed — this is only what the panel and the picker render.
+    static func newestFirst(_ queues: [TaskQueue]) -> [TaskQueue] {
+        queues.enumerated()
+            .sorted { lhs, rhs in
+                let left = lhs.element.createdAt ?? .distantPast
+                let right = rhs.element.createdAt ?? .distantPast
+                if left != right { return left > right }
+                return lhs.offset < rhs.offset
+            }
+            .map { $0.element }
     }
 
     /// 1-based position inside the queue, nil when the task is not in it.
@@ -559,6 +644,8 @@ struct TaskQueue: Equatable {
         if let branch = branch { d["branch"] = branch }
         if let prUrl = prUrl { d["prUrl"] = prUrl }
         if let prError = prError { d["prError"] = prError }
+        if let integration = integration { d["integration"] = integration.rawValue }
+        if let integrationNote = integrationNote { d["integrationNote"] = integrationNote }
         if let createdAt = createdAt { d["createdAt"] = TaskItem.iso8601.string(from: createdAt) }
         return d
     }
@@ -575,6 +662,8 @@ struct TaskQueue: Equatable {
                          autoPR: (d["autoPR"] as? Bool) ?? false,
                          prUrl: d["prUrl"] as? String,
                          prError: d["prError"] as? String,
+                         integration: (d["integration"] as? String).flatMap { QueueIntegration(rawValue: $0) },
+                         integrationNote: d["integrationNote"] as? String,
                          createdAt: (d["createdAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
     }
 }
@@ -594,6 +683,13 @@ struct TaskLocalState: Equatable {
     var reports: [String: String] = [:]
     var activeQueueID: String?
     var runningTaskID: String?
+    /// queue id -> the dsh session that CREATED it (the task-todo skill passes its
+    /// $DSH_SESSION_ID). Machine-scoped like `sessions` — the session exists only on
+    /// this machine — and the queue's completion report is sent back to it.
+    var queueSessions: [String: String] = [:]
+    /// queue id -> ISO-8601 stamp of the completion report already sent. Keeps the
+    /// report idempotent and lets a restart pick up one the app never got to send.
+    var queueNotified: [String: String] = [:]
 
     /// v1 keyed sessions by ISSUE NUMBER ("6"); v2 keys them by task id
     /// ("issue-6"). Reading accepts both and rewrites nothing on load.
@@ -621,6 +717,8 @@ struct TaskLocalState: Equatable {
         }
         s.activeQueueID = d["activeQueueId"] as? String
         s.runningTaskID = d["runningTaskId"] as? String
+        if let raw = d["queueSessions"] as? [String: String] { s.queueSessions = raw }
+        if let raw = d["queueNotified"] as? [String: String] { s.queueNotified = raw }
         return s
     }
 
@@ -634,6 +732,8 @@ struct TaskLocalState: Equatable {
         }
         var d: [String: Any] = ["sessions": out]
         if !reports.isEmpty { d["reports"] = reports }
+        if !queueSessions.isEmpty { d["queueSessions"] = queueSessions }
+        if !queueNotified.isEmpty { d["queueNotified"] = queueNotified }
         if let activeQueueID = activeQueueID { d["activeQueueId"] = activeQueueID }
         if let runningTaskID = runningTaskID { d["runningTaskId"] = runningTaskID }
         return d
@@ -676,7 +776,9 @@ struct TaskBoard {
     /// The queues offered by 加入队列 ▾. User queues only: an issue task's auto
     /// single-task queue is never a destination for a manual task.
     func queueChoices() -> [QueueChoice] {
-        queues.filter { !$0.autoCreated }.map { queue in
+        // Closed lanes are terminal: they must not be offered as an append target.
+        // Newest-first, so the lane the user just created is the first row.
+        TaskQueue.newestFirst(queues.filter { !$0.autoCreated && $0.state != .closed }).map { queue in
             QueueChoice(id: queue.id, name: queue.name, branch: queue.branch,
                         taskCount: queue.taskIds.count, state: queue.state)
         }
@@ -707,17 +809,24 @@ struct TaskBoard {
     /// different queue moves it out first. Idempotent for the same queue.
     @discardableResult
     mutating func enqueue(taskID: String, into queueID: String) -> Bool {
-        guard let ti = index(ofTask: taskID), index(ofQueue: queueID) != nil else { return false }
+        guard let ti = index(ofTask: taskID) else { return false }
+        guard let qi = index(ofQueue: queueID), queues[qi].state != .closed else { return false }
         guard tasks[ti].state.isQueueable else { return false }
         if tasks[ti].queueId == queueID { return false }
         if tasks[ti].queueId != nil { _ = dequeue(taskID: taskID) }
-        guard let qi = index(ofQueue: queueID) else { return false }
         tasks[ti].state = .queued
         tasks[ti].queueId = queueID
         // One id per queue, ever: the lane renders from taskIds, so a duplicate
         // would draw the same card twice (and inflate progress and every count
         // derived from it).
         if !queues[qi].taskIds.contains(taskID) { queues[qi].taskIds.append(taskID) }
+        // 追加到已完成的队列：它回到「待启动」的活泳道（用户再启动），并重臂完成
+        // 回传 —— 否则第二轮完成会被 queueNotified 当成「已回传过」而跳过。
+        // .paused 保持暂停（有失败要处理，不能被追加悄悄复活）。
+        if queues[qi].state == .done {
+            queues[qi].state = .draft
+            local.queueNotified[queueID] = nil
+        }
         return true
     }
 
@@ -766,6 +875,24 @@ struct TaskBoard {
         return true
     }
 
+    /// Close a queue: the user's MANUAL terminal state. It keeps its record (tasks,
+    /// branch, PR) but accepts nothing more — no start, no append, no publish.
+    /// Refused while one of its tasks is running, exactly like removeQueue.
+    @discardableResult
+    mutating func closeQueue(_ queueID: String) -> Bool {
+        guard let qi = index(ofQueue: queueID), queues[qi].state != .closed else { return false }
+        if queues[qi].taskIds.contains(where: { task($0)?.state == .running }) { return false }
+        queues[qi].state = .closed
+        if local.activeQueueID == queueID { local.activeQueueID = nil }
+        return true
+    }
+
+    /// The integration mode a queue should use: its own override, else the workspace
+    /// default the caller passes down (the tasks-panel setting).
+    func integration(forQueue queueID: String, default fallback: QueueIntegration) -> QueueIntegration {
+        queue(queueID)?.integration ?? fallback
+    }
+
     /// Create a user queue. A nil branch derives the default from the name; an
     /// explicit empty string means "do not switch branches at all".
     @discardableResult
@@ -773,7 +900,8 @@ struct TaskBoard {
                               branch: String? = nil,
                               baseBranch: String = "main",
                               autoPR: Bool = false,
-                              autoCreated: Bool = false) -> TaskQueue {
+                              autoCreated: Bool = false,
+                              integration: QueueIntegration? = nil) -> TaskQueue {
         let queueID = TaskQueue.newID()
         let resolved: String?
         if let branch = branch {
@@ -782,8 +910,9 @@ struct TaskBoard {
             resolved = TaskBranch.defaultBranch(queueName: name, queueID: queueID)
         }
         let queue = TaskQueue(id: queueID, name: name, branch: resolved, baseBranch: baseBranch,
-                              taskIds: [], state: .paused, autoCreated: autoCreated,
-                              autoPR: autoPR, prUrl: nil, createdAt: Date())
+                              taskIds: [], state: .draft, autoCreated: autoCreated,
+                              autoPR: autoPR, prUrl: nil, integration: integration,
+                              createdAt: Date())
         queues.append(queue)
         return queue
     }
@@ -838,6 +967,10 @@ struct TaskBoard {
         if let queueID = tasks[i].queueId, let qi = index(ofQueue: queueID) {
             queues[qi].state = .active
             local.activeQueueID = queueID
+            // A new run invalidates the previous finalize result shown on the card —
+            // both the success summary and the publish-failure reason.
+            queues[qi].integrationNote = nil
+            queues[qi].prError = nil
             if let branch = queues[qi].branch { tasks[i].branch = branch }
         }
         local.runningTaskID = taskID
@@ -902,6 +1035,15 @@ struct TaskBoard {
     /// Record why a queue PR session produced no PR (an L10n key), or clear it once
     /// one did. The queue keeps its own state: a PR that could not be opened is not
     /// failed work, but the reason belongs on the card rather than only in app.log.
+    /// Record the last finalize session's result (its report first line / failure).
+    /// Shown on the queue card; a new run clears it (see markRunning).
+    @discardableResult
+    mutating func setQueueIntegrationNote(_ queueID: String, _ note: String?) -> Bool {
+        guard let i = index(ofQueue: queueID) else { return false }
+        queues[i].integrationNote = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return true
+    }
+
     @discardableResult
     mutating func setQueuePRError(_ queueID: String, _ key: String?) -> Bool {
         guard let i = index(ofQueue: queueID) else { return false }
@@ -935,7 +1077,7 @@ struct TaskBoard {
     /// walks past the failed entry and takes the next queued task.
     @discardableResult
     mutating func resumeQueue(_ queueID: String) -> Bool {
-        guard let qi = index(ofQueue: queueID) else { return false }
+        guard let qi = index(ofQueue: queueID), queues[qi].state != .closed else { return false }
         queues[qi].state = .active
         local.activeQueueID = queueID
         return true
@@ -955,7 +1097,8 @@ struct TaskBoard {
                 guard let state = task(id)?.state else { return false }
                 return state == .queued || state == .running
             }
-            if !open && !queues[i].taskIds.isEmpty && queues[i].state != .done {
+            if !open && !queues[i].taskIds.isEmpty
+                && queues[i].state != .done && queues[i].state != .closed {
                 queues[i].state = .done
             }
         }

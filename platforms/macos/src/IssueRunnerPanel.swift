@@ -77,6 +77,9 @@ final class IssueRunnerPanelController: NSObject {
     private let refreshButton: CustomIconButton
     private let runAllButton: CustomIconButton
     private let hideButton: CustomIconButton
+    /// 使用说明 —— ALWAYS in the toolbar (user 2026-10-01). An empty board ALSO
+    /// shows the same help inline in the content area (see render()).
+    private let helpButton: CustomIconButton
     /// The two creation entries, flush right on the tabs row as ICON buttons:
     /// the labels live in their tooltips, so the row stays a strip of controls
     /// instead of a sentence.
@@ -101,6 +104,8 @@ final class IssueRunnerPanelController: NSObject {
     private let emptyIcon = BakedIconView(symbol: "checklist")
     private let emptyButton = NSButton(title: "", target: nil, action: nil)
     private let emptyView = NSStackView()
+    /// The 使用说明 body shown inline while the board is empty.
+    private let helpTextView = TasksHelpTextView()
     /// The bottom sheet a form slides up in, inside a clipping, click-through
     /// host that spans the panel's content area.
     private let formSheetHost = TaskFormSheetHostView()
@@ -130,6 +135,9 @@ final class IssueRunnerPanelController: NSObject {
     /// a queue created in a non-git directory must not be handed a branch it
     /// can never check out (docs/issue-runner-design.md §V2-7).
     private var workspaceIsGit = true
+    /// Whether this workspace has ANY git remote to push to (merge/push publish).
+    /// A local-only repo has none — the honest default there is 「无」.
+    private var workspaceHasRemote = false
     /// The current workspace's own default branch (origin/HEAD → main → master →
     /// current → "main"): the base an issue task's queue is built on, and what the
     /// queue form prefills.
@@ -143,6 +151,8 @@ final class IssueRunnerPanelController: NSObject {
     /// id -> open? Defaults differ per kind: user queues start open (they hold
     /// the work), issue tasks' auto queues start as one compact line.
     private var queueToggle: [String: Bool] = [:]
+    /// Queues whose 交付结果 is expanded to the full report (per queue, panel state).
+    private var expandedQueueNotes: Set<String> = []
     private var sourceFilter: SourceFilter = .all
     /// Which form the sheet is currently showing (nil = no form). Creating or
     /// editing a task never raises a dialog: the form slides up IN the panel.
@@ -158,11 +168,13 @@ final class IssueRunnerPanelController: NSObject {
         refreshButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: "")
         runAllButton = CustomIconButton(glyph: .play, tooltip: "")
         hideButton = CustomIconButton(glyph: .close, tooltip: "")
+        helpButton = CustomIconButton(glyph: .symbol("questionmark.circle"), tooltip: "")
         super.init()
         buildUI()
         refreshButton.onAction = { [weak self] in self?.reloadIssues() }
         runAllButton.onAction = { [weak self] in self?.runAllTapped() }
         configButton.onAction = { [weak self] in self?.configTapped() }
+        helpButton.onAction = { [weak self] in self?.helpTapped() }
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
         updateLabels()
     }
@@ -176,6 +188,7 @@ final class IssueRunnerPanelController: NSObject {
         // configButton / refreshButton / runAllButton tooltips are set with their
         // enabled state below (they depend on the workspace).
         hideButton.toolTip = L10n.tr("preview.closePanel")
+        helpButton.toolTip = L10n.tr("tasks.help.hint")
         newTaskRowButton.toolTip = L10n.tr("tasks.new.hint")
         newQueueRowButton.toolTip = L10n.tr("tasks.queue.newButton")
         // Where this board lives (header line 2) and what that means for the
@@ -185,12 +198,14 @@ final class IssueRunnerPanelController: NSObject {
                                                  workspacePath: repoRootPath,
                                                  isGitRepo: workspaceIsGit)
         repoLabel.fullText = workspace.title
-        configButton.isEnabled = workspace.githubAvailable
+        // The gear opens 面板设置 (token + 工作流). The integration default applies
+        // to every workspace, so the gear is NOT GitHub-gated any more.
+        configButton.isEnabled = true
         refreshButton.isEnabled = workspace.githubAvailable
         // 处理 is NOT GitHub-only: it starts everything that is waiting, and manual
         // tasks work in any workspace (only the PR half needs a GitHub remote).
         updateRunAllButton(githubAvailable: workspace.githubAvailable)
-        configButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.configHint") : workspace.disabledHint
+        configButton.toolTip = L10n.tr("tasks.settings.hint")
         refreshButton.toolTip = workspace.githubAvailable ? L10n.tr("tasks.refreshHint") : workspace.disabledHint
         // The strip is built FROM the enum: title order, index and meaning come from one
         // place (TaskSourceFilter.allCases), so a tab can never label the wrong filter.
@@ -236,8 +251,9 @@ final class IssueRunnerPanelController: NSObject {
         otherWorkspacesButton.onAction = { [weak self] in self?.otherWorkspacesTapped() }
         // 处理 first: it is the primary action of the whole panel (start the work),
         // and it is the one that works in any workspace.
+        // 帮助在设置之后、关闭之前（用户 2026-10-01）。
         let actions = NSStackView(views: [otherWorkspacesButton, runAllButton, refreshButton,
-                                         configButton, hideButton])
+                                         configButton, helpButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -341,6 +357,10 @@ final class IssueRunnerPanelController: NSObject {
         emptyView.addArrangedSubview(emptyIcon)
         emptyView.addArrangedSubview(emptyLabel)
         emptyView.addArrangedSubview(emptyButton)
+        // 使用说明 inline, under the way in: an empty board teaches the panel.
+        helpTextView.contentWidth = 300
+        helpTextView.apply(TasksHelpModel.build())
+        emptyView.addArrangedSubview(helpTextView)
 
         // status bar
         statusBar.kind = .panel
@@ -436,6 +456,7 @@ final class IssueRunnerPanelController: NSObject {
             emptyIcon.widthAnchor.constraint(equalToConstant: 38),
             emptyIcon.heightAnchor.constraint(equalToConstant: 38),
             emptyLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
+            helpTextView.widthAnchor.constraint(equalToConstant: 300),
 
             statusBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             statusBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -473,8 +494,19 @@ final class IssueRunnerPanelController: NSObject {
         }
     }
 
-    /// The active workspace changed: re-detect the GitHub repo and reload.
+    /// The workspace the user is viewing changed (a dsh web session switch).
+    ///
+    /// Switching between sessions of the SAME workspace must NOT re-adopt it: every
+    /// adopt spawns blocking `/usr/bin/git` probes (detectGitHubRemote / isGitRepo /
+    /// detectDefaultBaseBranch) on the MAIN thread — the same thread the dsh web
+    /// WKWebView renders on — so re-adopting on every switch froze the page while it
+    /// loaded a session. A genuine switch still goes through resolveRepoAndReload; a
+    /// workspace SHAPE change (a task ran `git init`) is re-detected by
+    /// recheckWorkspaceShape on the step timer, which rebuilds through adoptWorkspace.
     func workspaceChanged() {
+        guard TaskWorkspaceRegistry.needsReadopt(resolved: workspacePath?(),
+                                                 adopted: workspaces.currentPath,
+                                                 hasRunner: runner != nil) else { return }
         resolveRepoAndReload()
     }
 
@@ -517,7 +549,7 @@ final class IssueRunnerPanelController: NSObject {
         return result
     }
 
-    /// GET /api/tasks/list —— 面板里现在有什么（任务 + 队列）。
+    /// GET /api/tasks/task/list —— 面板里现在有什么（任务 + 队列）。
     func apiTaskList(workspace: String?) -> [String: Any] {
         guard let (path, runner) = apiRunner(for: workspace) else {
             return Self.apiNoWorkspace(workspace)
@@ -532,11 +564,13 @@ final class IssueRunnerPanelController: NSObject {
             "current": path == workspaces.currentPath,
             "counts": ["tasks": board.tasks.count, "queues": board.queues.count],
             "tasks": tasks,
-            "queues": board.queues.map { TasksAPIRouter.queueDictionary($0) },
+            "queues": board.queues.map {
+                TasksAPIRouter.queueDictionary($0, reportsToSession: board.local.queueSessions[$0.id] != nil)
+            },
         ]
     }
 
-    /// POST /api/tasks/create —— 批量创建手动任务。
+    /// POST /api/tasks/task/create —— 批量创建手动任务。
     ///
     /// 与用户在面板里点「新建任务」走同一条路径（TasksRunner.createManualTask）：
     /// 落盘、日志、重绘都由它负责。任务一律是「待处理、未入队」——**建任务不启动
@@ -583,6 +617,238 @@ final class IssueRunnerPanelController: NSObject {
             "created": created,
             "rejected": rejected,
         ]
+    }
+
+    /// POST /api/tasks/queue/create —— 建一个「等待态」队列（.draft）并批量入队。
+    ///
+    /// 与面板内「新建队列」走同一条落盘路径（TasksRunner.createQueueWithTasks），但
+    /// 任务直接入队且**不激活队列**：等用户 / 会话说「启动队列」。带 session 时记录
+    /// 来源会话，队列跑到 .done 时把完成情况回传给它。
+    func apiTaskQueueCreate(_ request: TaskQueueCreateRequest) -> [String: Any] {
+        guard let (path, runner) = apiRunner(for: request.workspace) else {
+            return Self.apiNoWorkspace(request.workspace)
+        }
+        if request.focus {
+            if path != workspaces.currentPath { adoptWorkspace(path) }
+            onShowPanel?()
+        }
+        let drafts = request.drafts.map { TaskDraft(title: $0.title, body: $0.body ?? "") }
+        let result = runner.createQueueWithTasks(name: request.name,
+                                                 branch: request.branch,
+                                                 baseBranch: request.baseBranch,
+                                                 autoPR: request.autoPR,
+                                                 originSession: request.session,
+                                                 drafts: drafts)
+        if path == workspaces.currentPath {
+            syncFromBoard()
+            if !result.created.isEmpty {
+                setStatus(L10n.tr("tasks.apiQueueCreated", result.queue.name, result.created.count), spin: false)
+                autoHideStatus(after: 8)
+            }
+        }
+        AppLog.shared.log("tasks api: created queue \(result.queue.id) with \(result.created.count) task(s) at \(path)"
+                          + (request.session.map { " (reports to \($0))" } ?? ""))
+        return [
+            "ok": !result.created.isEmpty,
+            "workspace": path,
+            "current": path == workspaces.currentPath,
+            "shown": request.focus,
+            "queue": TasksAPIRouter.queueDictionary(result.queue, reportsToSession: request.session != nil),
+            "created": result.created.map { ["id": $0.id, "title": $0.title, "state": $0.state.rawValue] },
+            "rejected": [[String: Any]](),
+        ]
+    }
+
+    /// POST /api/tasks/queue/start —— 启动等待态（或暂停）的队列。
+    ///
+    /// 有 queueId 就启动它；没有则用 session 找「本会话创建、仍在 .draft」的队列 ——
+    /// 恰好一个才启动，多个返回 ambiguous-queue 让会话 / 用户点名。
+    func apiTaskQueueStart(_ request: TaskQueueStartRequest) -> [String: Any] {
+        guard let (path, runner) = apiRunner(for: request.workspace) else {
+            return Self.apiNoWorkspace(request.workspace)
+        }
+        let board = runner.board
+        if let queueId = request.queueId {
+            guard let queue = board.queue(queueId) else {
+                return ["ok": false, "error": "no-queue", "queueId": queueId]
+            }
+            guard queue.state == .draft || queue.state == .paused else {
+                return ["ok": false, "error": "not-startable",
+                        "queueId": queueId, "state": queue.state.rawValue]
+            }
+            _ = runner.startQueue(queueId)
+            return ["ok": true, "workspace": path, "started": [queueId]]
+        }
+        // 按名字启动：比 session 更直接（同名多个时返回候选，让调用方消歧）。
+        if let name = request.name, !name.isEmpty {
+            let matches = board.queues.filter { $0.name == name }
+            if matches.isEmpty { return ["ok": false, "error": "no-queue", "name": name] }
+            if matches.count > 1 {
+                return ["ok": false, "error": "ambiguous-queue",
+                        "queues": matches.map {
+                            TasksAPIRouter.queueDictionary($0, reportsToSession: board.local.queueSessions[$0.id] != nil)
+                        }]
+            }
+            let queue = matches[0]
+            guard queue.state == .draft || queue.state == .paused else {
+                return ["ok": false, "error": "not-startable",
+                        "queueId": queue.id, "state": queue.state.rawValue]
+            }
+            _ = runner.startQueue(queue.id)
+            return ["ok": true, "workspace": path, "started": [queue.id]]
+        }
+        guard let session = request.session, !session.isEmpty else {
+            return ["ok": false, "error": "need-session",
+                    "hint": "pass queueId, name, or session to start the draft queue that session created"]
+        }
+        let candidates = board.queues.filter {
+            $0.state == .draft && board.local.queueSessions[$0.id] == session
+        }
+        if candidates.isEmpty { return ["ok": false, "error": "no-queue"] }
+        if candidates.count > 1 {
+            return ["ok": false, "error": "ambiguous-queue",
+                    "queues": candidates.map { TasksAPIRouter.queueDictionary($0, reportsToSession: true) }]
+        }
+        let queueId = candidates[0].id
+        _ = runner.startQueue(queueId)
+        return ["ok": true, "workspace": path, "started": [queueId]]
+    }
+
+    /// POST /api/tasks/queue/append —— 向**已有**队列追加任务（会话里「再补几条」）。
+    /// 目标按 queueId → name → session（本会话创建的非关闭队列）解析；不启动。
+    func apiTaskQueueAppend(_ request: TaskQueueAppendRequest) -> [String: Any] {
+        guard let (path, runner) = apiRunner(for: request.workspace) else {
+            return Self.apiNoWorkspace(request.workspace)
+        }
+        let board = runner.board
+        let target: TaskQueue?
+        if let queueId = request.queueId {
+            target = board.queue(queueId)
+        } else if let name = request.name {
+            let matches = board.queues.filter { $0.name == name && $0.state != .closed }
+            if matches.count > 1 {
+                return ["ok": false, "error": "ambiguous-queue",
+                        "queues": matches.map {
+                            TasksAPIRouter.queueDictionary($0, reportsToSession: board.local.queueSessions[$0.id] != nil)
+                        }]
+            }
+            target = matches.first
+        } else if let session = request.session {
+            let matches = board.queues.filter {
+                $0.state != .closed && board.local.queueSessions[$0.id] == session
+            }
+            if matches.count > 1 {
+                return ["ok": false, "error": "ambiguous-queue",
+                        "queues": matches.map { TasksAPIRouter.queueDictionary($0, reportsToSession: true) }]
+            }
+            target = matches.first
+        } else {
+            target = nil
+        }
+        guard let queue = target else { return ["ok": false, "error": "no-queue"] }
+        guard queue.state != .closed else {
+            return ["ok": false, "error": "queue-closed", "queueId": queue.id]
+        }
+        let drafts = request.drafts.map { TaskDraft(title: $0.title, body: $0.body ?? "") }
+        let created = runner.appendTasks(toQueueID: queue.id, drafts: drafts)
+        if path == workspaces.currentPath {
+            syncFromBoard()
+            if !created.isEmpty {
+                setStatus(L10n.tr("tasks.apiQueueAppended", queue.name, created.count), spin: false)
+                autoHideStatus(after: 8)
+            }
+        }
+        AppLog.shared.log("tasks api: appended \(created.count) task(s) to queue \(queue.id) at \(path)")
+        return [
+            "ok": !created.isEmpty,
+            "workspace": path,
+            "queue": TasksAPIRouter.queueDictionary(runner.board.queue(queue.id) ?? queue,
+                                                    reportsToSession: board.local.queueSessions[queue.id] != nil),
+            "created": created.map { ["id": $0.id, "title": $0.title, "state": $0.state.rawValue] },
+            "rejected": [[String: Any]](),
+        ]
+    }
+
+    /// POST /api/tasks/queue/deliver —— 发起一条**已完成**队列的交付。
+    ///
+    /// 与队列头的「交付」按钮走同一条路径（TasksRunner.startQueueIntegration）：按该
+    /// 队列的 Git 工作流开 PR / 合并到基线 / 直接推送。只发起、不等待，结果由交付会话
+    /// 回写到队列卡片。目标按 queueId → name → session（本会话的非关闭队列）解析；
+    /// 只接受 .done（与按钮的可见条件一致），工作流「无」直接拒绝。
+    func apiTaskQueueDeliver(_ request: TaskQueueDeliverRequest) -> [String: Any] {
+        guard let (path, runner) = apiRunner(for: request.workspace) else {
+            return Self.apiNoWorkspace(request.workspace)
+        }
+        let board = runner.board
+        let target: TaskQueue?
+        if let queueId = request.queueId {
+            target = board.queue(queueId)
+        } else if let name = request.name {
+            let matches = board.queues.filter { $0.name == name && $0.state != .closed }
+            if matches.count > 1 {
+                return ["ok": false, "error": "ambiguous-queue",
+                        "queues": matches.map {
+                            TasksAPIRouter.queueDictionary($0, reportsToSession: board.local.queueSessions[$0.id] != nil)
+                        }]
+            }
+            target = matches.first
+        } else if let session = request.session {
+            let matches = board.queues.filter {
+                $0.state != .closed && board.local.queueSessions[$0.id] == session
+            }
+            if matches.count > 1 {
+                return ["ok": false, "error": "ambiguous-queue",
+                        "queues": matches.map { TasksAPIRouter.queueDictionary($0, reportsToSession: true) }]
+            }
+            target = matches.first
+        } else {
+            target = nil
+        }
+        guard let queue = target else { return ["ok": false, "error": "no-queue"] }
+        guard queue.state == .done else {
+            return ["ok": false, "error": "not-deliverable",
+                    "queueId": queue.id, "state": queue.state.rawValue,
+                    "hint": "only a finished (done) queue can be delivered"]
+        }
+        let mode = runner.resolvedIntegration(forQueue: queue.id)
+        guard mode != QueueIntegration.none else {
+            return ["ok": false, "error": "workflow-none", "queueId": queue.id,
+                    "hint": "this queue's Git workflow is None — there is nothing to deliver"]
+        }
+        guard runner.startQueueIntegration(queue.id) else {
+            // The runner recorded WHY on the queue (busy / no branch / no remote); a nil
+            // reason here means 无, which the guard above already handled.
+            let reason = runner.board.queue(queue.id)?.prError
+            return ["ok": false, "error": Self.deliverErrorCode(reason),
+                    "queueId": queue.id, "reason": reason ?? "",
+                    "queue": TasksAPIRouter.queueDictionary(runner.board.queue(queue.id) ?? queue,
+                                                            reportsToSession: board.local.queueSessions[queue.id] != nil)]
+        }
+        if path == workspaces.currentPath {
+            syncFromBoard()
+            setStatus(L10n.tr(Self.finalizeStatusKey(mode: mode), queue.name), spin: true)
+        }
+        AppLog.shared.log("tasks api: delivering queue \(queue.id) at \(path) (mode \(mode.rawValue))")
+        return [
+            "ok": true,
+            "workspace": path,
+            "current": path == workspaces.currentPath,
+            "queue": TasksAPIRouter.queueDictionary(runner.board.queue(queue.id) ?? queue,
+                                                    reportsToSession: board.local.queueSessions[queue.id] != nil),
+            "delivering": [queue.id],
+        ]
+    }
+
+    /// 把 runner 记录在队列上的拒绝对因（L10n 键）翻译成 API 的稳定错误码，让技能不用
+    /// 认识面板的文案键也能转述原因。
+    static func deliverErrorCode(_ reason: String?) -> String {
+        switch reason {
+        case "tasks.errPRBusy": return "busy"
+        case "tasks.errPRNoBranch": return "no-branch"
+        case "tasks.errPRNoRemote": return "no-remote"
+        case "tasks.errPRSession": return "session-failed"
+        default: return "deliver-failed"
+        }
     }
 
     // MARK: - Board / runner wiring
@@ -665,6 +931,11 @@ final class IssueRunnerPanelController: NSObject {
             promptSession: { id, text in Self.promptSession(port: portOf(), sessionId: id, text: text) },
             sessionState: { id in Self.sessionState(port: portOf(), sessionId: id) },
             defaultBaseBranch: Self.detectDefaultBaseBranch(path: repoRoot),
+            // 队列没写自己的 integration 时用它（面板设置里可改；**按工作区**存）。
+            defaultIntegration: Self.resolvedIntegration(forWorkspace: repoRoot, isGit: isGit,
+                                                         hasGitHubRemote: repo != nil),
+            // 交付成功后自动关闭队列（面板级开关；**全局**存）。
+            autoCloseOnPublish: Self.storedAutoCloseOnPublish(),
             canSwitchBranches: isGit,
             canOpenPR: { repo != nil },
             cancelSession: { id in Self.cancelSession(port: portOf(), sessionId: id) },
@@ -717,6 +988,11 @@ final class IssueRunnerPanelController: NSObject {
             // through the shell's core bridge (the same session logs the audit panel
             // uses) — the runner calls it off the main thread.
             sessionReport: { sessionId in Self.sessionReport(sessionId: sessionId, workspace: repoRoot) },
+            // 队列完成回传：把报告投给创建队列的那个会话（同样是 session.prompt，
+            // mode=queue）—— 这就是「做完把完成情况发回 dsh 会话 X」的落点。
+            notifySession: { sessionId, text in
+                Self.promptSession(port: portOf(), sessionId: sessionId, text: text)
+            },
             persist: { board in TasksStore.saveLocalHalf(repoRoot, board) },
             persistIssueTask: { task in TasksStore.saveIssueTask(repoRoot, task) },
             log: { message in AppLog.shared.log(message) },
@@ -736,6 +1012,7 @@ final class IssueRunnerPanelController: NSObject {
         workspaces.clearCurrent()
         expandedTaskID = nil
         queueToggle.removeAll()
+        expandedQueueNotes.removeAll()
         render()
         updateLabels()
         updateOtherWorkspaces()
@@ -749,7 +1026,19 @@ final class IssueRunnerPanelController: NSObject {
     private func boardSignatureNow() -> String {
         guard let runner = runner else { return "" }
         let tasks = runner.board.tasks.map { $0.id + ":" + $0.state.rawValue + ":" + ($0.prUrl ?? "") }
-        let queues = runner.board.queues.map { $0.id + ":" + $0.state.rawValue + ":" + String($0.taskIds.count) }
+        // The queue's own RESULT fields are part of what the card shows: a publish
+        // that clears prError or writes integrationNote/prUrl changes only these, so
+        // without them the 3s timer saw "nothing changed" and the card kept showing
+        // the old error / no result (user 2026-10-01).
+        let queues: [String] = runner.board.queues.map { queue -> String in
+            let id = queue.id
+            let state = queue.state.rawValue
+            let count = String(queue.taskIds.count)
+            let error = queue.prError ?? ""
+            let url = queue.prUrl ?? ""
+            let note = queue.integrationNote ?? ""
+            return id + ":" + state + ":" + count + ":" + error + ":" + url + ":" + note
+        }
         // The running task's clock is part of what the cards SHOW, so the 3s timer
         // has to redraw when its minute flips — otherwise "已运行 0:59" would sit
         // there forever (the board itself has not changed at all).
@@ -808,9 +1097,11 @@ final class IssueRunnerPanelController: NSObject {
         if wasBusy != workspaces.isBusy { onRunStateChanged?(workspaces.isBusy) }
         if let runner = runner, runner.isBusy {
             if let queueID = runner.openingPRQueueID {
-                // No task is running: the serial slot belongs to the queue's PR session.
+                // No task is running: the serial slot belongs to the queue's finalize
+                // session — say which workflow it is running.
                 let name = runner.board.queue(queueID)?.name ?? ""
-                setStatus(L10n.tr("tasks.prOpening", name), spin: true)
+                let mode = runner.board.integration(forQueue: queueID, default: workspaceIntegration)
+                setStatus(L10n.tr(Self.finalizeStatusKey(mode: mode), name), spin: true)
             } else {
                 let number = runner.runningTaskID.flatMap { runner.board.task($0)?.number } ?? 0
                 setStatus(L10n.tr("tasks.running", number), spin: true)
@@ -911,6 +1202,9 @@ final class IssueRunnerPanelController: NSObject {
         let github = detected.map { $0.owner + "/" + $0.repo } ?? "-"
         workspaceIsGit = Self.isGitRepo(path)
         workspaceDefaultBase = workspaceIsGit ? Self.detectDefaultBaseBranch(path: path) : "main"
+        // Any remote (not only GitHub) counts — push needs somewhere to push to.
+        // Merge does not: it is a local operation.
+        workspaceHasRemote = workspaceIsGit && Self.pushRemoteName(path: path) != nil
         AppLog.shared.log("tasks: workspace adopted at \(path) (github=\(github) git=\(workspaceIsGit ? "yes" : "no") base=\(workspaceDefaultBase))")
         updateLabels()
         if !sameBoard {
@@ -920,6 +1214,7 @@ final class IssueRunnerPanelController: NSObject {
             workspaces.adopt(path)
             expandedTaskID = nil
             queueToggle.removeAll()
+            expandedQueueNotes.removeAll()
             boardSignature = ""
             startStepTimer()
         }
@@ -1002,6 +1297,67 @@ final class IssueRunnerPanelController: NSObject {
     /// ("tasksTimeoutMinutes", e.g. in ~/.dsh/shell/config.json or via
     /// `defaults write`) wins when it is a sane number. The running card SHOWS the
     /// limit, so it is never a surprise.
+    // MARK: - 工作流 default (PER WORKSPACE)
+
+    /// The tasks-panel 工作流 default is **per workspace** (决策 2026-10-01): a GitHub
+    /// repo usually wants a PR, a scratch directory a direct push, and one value for
+    /// the whole shell cannot be both. Stored in ShellConfig as a path → mode map
+    /// (the shell's own config store, NOT inside the user's repository). A queue's
+    /// own `integration` still overrides it. If a GLOBAL default is ever wanted, it
+    /// belongs in the shell's settings, not in this panel.
+    private static let integrationByWorkspaceKey = "tasksIntegrationByWorkspace"
+
+    /// Standardized key, so a trailing slash / `..` does not create a second entry
+    /// (the same normalization TaskWorkspaceRegistry.needsReadopt uses).
+    static func workspaceIntegrationKey(_ path: String) -> String {
+        let standardized = (path as NSString).standardizingPath
+        if standardized.count > 1, standardized.hasSuffix("/") {
+            return String(standardized.dropLast())
+        }
+        return standardized
+    }
+
+    /// The mode saved for this workspace, or nil when it was never set.
+    static func storedIntegration(forWorkspace path: String) -> QueueIntegration? {
+        guard let map = ShellConfig.shared.object(forKey: integrationByWorkspaceKey) as? [String: Any],
+              let raw = map[workspaceIntegrationKey(path)] as? String else { return nil }
+        return QueueIntegration(rawValue: raw)
+    }
+
+    static func setStoredIntegration(_ mode: QueueIntegration, forWorkspace path: String) {
+        var map = (ShellConfig.shared.object(forKey: integrationByWorkspaceKey) as? [String: Any]) ?? [:]
+        map[workspaceIntegrationKey(path)] = mode.rawValue
+        ShellConfig.shared.set(map, forKey: integrationByWorkspaceKey)
+    }
+
+    /// What a queue without its own override uses here: the saved value, else this
+    /// workspace's RECOMMENDATION — so the panel is sensible before anyone sets it,
+    /// and 首次打开设置时默认选中的就是这一档.
+    static func resolvedIntegration(forWorkspace path: String, isGit: Bool,
+                                    hasGitHubRemote: Bool) -> QueueIntegration {
+        storedIntegration(forWorkspace: path)
+            ?? QueueIntegration.recommended(isGit: isGit, hasGitHubRemote: hasGitHubRemote)
+    }
+
+    /// This workspace's resolved 工作流 default (设置抽屉 / 队列头的 fallback).
+    private var workspaceIntegration: QueueIntegration {
+        guard let path = repoRootPath else { return .pr }
+        return Self.resolvedIntegration(forWorkspace: path, isGit: workspaceIsGit,
+                                        hasGitHubRemote: repo != nil)
+    }
+
+    /// 交付成功后自动关闭队列 —— a PANEL-level switch (not per workspace): the user
+    /// asked for one switch in 面板设置. Stored in the shell config (false until set).
+    private static let autoCloseOnPublishKey = "tasksAutoCloseOnPublish"
+
+    static func storedAutoCloseOnPublish() -> Bool {
+        ShellConfig.shared.bool(forKey: autoCloseOnPublishKey)
+    }
+
+    static func setStoredAutoCloseOnPublish(_ on: Bool) {
+        ShellConfig.shared.set(on, forKey: autoCloseOnPublishKey)
+    }
+
     static func taskTimeout() -> TimeInterval {
         if let minutes = ShellConfig.shared.object(forKey: "tasksTimeoutMinutes") as? Int,
            minutes >= 5, minutes <= 24 * 60 {
@@ -1555,23 +1911,54 @@ final class IssueRunnerPanelController: NSObject {
 
     // MARK: - Config
 
+    /// 面板设置 — a DRAWER (the same formSheet as 新建任务 / 新建队列), not an NSAlert:
+    /// the GitHub token and THIS workspace's 工作流 default share one surface.
     private func configTapped() {
-        let alert = NSAlert()
-        alert.messageText = L10n.tr("tasks.configTitle")
-        alert.informativeText = L10n.tr("tasks.configInfo")
-        alert.addButton(withTitle: L10n.tr("btn.ok"))
-        alert.addButton(withTitle: L10n.tr("btn.cancel"))
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        field.placeholderString = L10n.tr("tasks.tokenPlaceholder")
-        field.stringValue = loadToken(for: repo) ?? ""
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        if alert.runModal() == .alertFirstButtonReturn {
-            let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Empty → delete the token file; otherwise write it (file only).
-            saveToken(value, for: repo)
-            reloadIssues()
+        let model = TaskSettingsModel(
+            token: loadToken(for: repo) ?? "",
+            // 没保存过时它就是本工作区的推荐（见 resolvedIntegration），所以首次
+            // 打开抽屉默认选中的正是推荐那一档。
+            defaultIntegration: workspaceIntegration,
+            recommendedIntegration: QueueIntegration.recommended(isGit: workspaceIsGit,
+                                                                 hasGitHubRemote: repo != nil),
+            prAvailable: repo != nil,
+            gitAvailable: workspaceIsGit,
+            remoteAvailable: workspaceHasRemote,
+            autoCloseOnPublish: Self.storedAutoCloseOnPublish())
+        let form = TaskSettingsView(model: model)
+        form.onSubmit = { [weak self] settings in self?.submitSettings(settings) }
+        form.onCancel = { [weak self] in self?.dismissForm() }
+        presentForm(form) { ($0 as? TaskSettingsView)?.focusToken() }
+    }
+
+    /// 使用说明 —— the toolbar button. The empty board shows the same content inline,
+    /// so the button is hidden there (see render()).
+    private func helpTapped() {
+        let form = TasksHelpView(model: TasksHelpModel.build())
+        form.onCancel = { [weak self] in self?.dismissForm() }
+        presentForm(form) { _ in }
+    }
+
+    private func submitSettings(_ settings: TaskSettingsModel) {
+        let value = settings.token.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Empty → delete the token file; otherwise write it (file only).
+        saveToken(value, for: repo)
+        // PER WORKSPACE: save under this workspace's path, then tell the live runner
+        // (its env was snapshotted at adopt time) so the next finalize uses it. Other
+        // workspaces keep their own value.
+        if let path = repoRootPath {
+            Self.setStoredIntegration(settings.defaultIntegration, forWorkspace: path)
+            runner?.setDefaultIntegration(settings.defaultIntegration)
         }
+        // PANEL-LEVEL: 交付成功后自动关闭队列 —— saved globally (not per workspace) and
+        // pushed to the live runner so the next finalize honours it.
+        Self.setStoredAutoCloseOnPublish(settings.autoCloseOnPublish)
+        runner?.setAutoCloseOnPublish(settings.autoCloseOnPublish)
+        dismissForm()
+        setStatus(L10n.tr("tasks.settings.saved"), spin: false)
+        autoHideStatus(after: 4)
+        reloadIssues()
+        syncFromBoard()
     }
 
     // MARK: - Status
@@ -1637,7 +2024,9 @@ final class IssueRunnerPanelController: NSObject {
         // TaskSourceFilter (pure, headless-testable) — a lane shows while it HOLDS at
         // least one card this tab accepts. Order is the panel's: the user's own lanes
         // first, then the auto queues by issue number.
-        let userQueues = board.queues.filter { !$0.autoCreated && sourceFilter.shows($0, in: board) }
+        // Newest user lane first: the queue just created is what the user looks for.
+        let userQueues = TaskQueue.newestFirst(
+            board.queues.filter { !$0.autoCreated && sourceFilter.shows($0, in: board) })
         let autoQueues = board.queues.filter { $0.autoCreated && sourceFilter.shows($0, in: board) }
             .sorted(by: { autoQueueNumber($0, board) < autoQueueNumber($1, board) })
         let queues = userQueues + autoQueues
@@ -1673,6 +2062,10 @@ final class IssueRunnerPanelController: NSObject {
         emptyLabel.stringValue = L10n.tr(empty.messageKey)
         emptyIcon.setSymbol(empty.symbol)
         emptyButton.isHidden = !empty.showsNewTask
+        // An empty board ALSO shows the help inline, in the content area; the
+        // toolbar button is ALWAYS there (user 2026-10-01), so the same drawer can
+        // be opened at any time.
+        helpTextView.isHidden = !empty.showsHelp
     }
 
     /// Cards fill the list width: the stack is leading-aligned, so without this
@@ -1783,12 +2176,10 @@ final class IssueRunnerPanelController: NSObject {
     }
 
     /// Auto (issue) queues start collapsed: one line each, expanding on a click.
+    /// Terminal lanes (已完成 / 已关闭) too — see TaskQueue.startsExpanded.
     private func isQueueExpanded(_ queue: TaskQueue) -> Bool {
         if let explicit = queueToggle[queue.id] { return explicit }
-        // Finished lanes start as one line: the work is over, the list should not
-        // keep scrolling past its history (the auto queues already did this).
-        if queue.state == .done { return false }
-        return !queue.autoCreated
+        return TaskQueue.startsExpanded(queue)
     }
 
     private func card(_ task: TaskItem, board: TaskBoard, githubRepo: Bool) -> NSView {
@@ -1842,8 +2233,12 @@ final class IssueRunnerPanelController: NSObject {
         // second one just re-points the runner), and the others must not claim to
         // be running anything.
         let isCurrent = board.activeQueue()?.id == queue.id
+        let integration = board.integration(forQueue: queue.id, default: workspaceIntegration)
         let model = QueueHeaderModel.build(queue, board: board, collapsed: !isQueueExpanded(queue),
-                                           prAvailable: repo != nil, isCurrent: isCurrent)
+                                           prAvailable: repo != nil, isCurrent: isCurrent,
+                                           integration: integration,
+                                           hasRemote: workspaceHasRemote,
+                                           noteExpanded: expandedQueueNotes.contains(queue.id))
         let header = TaskQueueHeaderView(model: model)
         let queueID = queue.id
         header.onToggle = { [weak self] in self?.toggleQueue(queueID) }
@@ -1855,7 +2250,9 @@ final class IssueRunnerPanelController: NSObject {
             _ = self?.runner?.pauseQueue(queueID)
             self?.syncFromBoard()
         }
-        header.onOpenPR = { [weak self] in self?.openPR(for: queue) }
+        header.onOpenPR = { [weak self] in self?.publishPR(for: queue) }
+        header.onOpenPRLink = { [weak self] in self?.openPRURL(queue) }
+        header.onClose = { [weak self] in self?.confirmCloseQueue(queue) }
         // 重命名 / 改分支 / 基于分支 / PR 开关 are one inline form now.
         header.onSettings = { [weak self] in self?.openQueueComposer(.edit(queueID: queueID)) }
         header.onTogglePR = { [weak self] in
@@ -1863,6 +2260,15 @@ final class IssueRunnerPanelController: NSObject {
             self?.syncFromBoard()
         }
         header.onDelete = { [weak self] in self?.confirmDeleteQueue(queue, cardCount: cardCount) }
+        header.onToggleNote = { [weak self] in
+            guard let self = self else { return }
+            if self.expandedQueueNotes.contains(queueID) {
+                self.expandedQueueNotes.remove(queueID)
+            } else {
+                self.expandedQueueNotes.insert(queueID)
+            }
+            self.render()
+        }
         return header
     }
 
@@ -1934,16 +2340,39 @@ final class IssueRunnerPanelController: NSObject {
     /// URL back onto the queue. The panel no longer talks to the GitHub API itself:
     /// pushing a branch needs credentials and judgement, which is exactly what a
     /// session has and a URLSession call does not.
-    private func openPR(for queue: TaskQueue) {
-        if let url = queue.prUrl, let link = URL(string: url) { NSWorkspace.shared.open(link); return }
+    private func publishPR(for queue: TaskQueue) {
         guard let runner = runner else { return }
-        guard runner.startQueuePR(queue.id) else {
-            setStatus(L10n.tr("tasks.errPRStart"), spin: false)
-            autoHideStatus(after: 6)
+        guard runner.startQueueIntegration(queue.id) else {
+            // Say WHY: the runner records the concrete reason on the queue (no branch /
+            // no remote / another finalize session is already running). The generic
+            // 「开不了 PR」 is only the fallback when there is nothing specific.
+            let key = runner.board.queue(queue.id)?.prError ?? "tasks.errPRStart"
+            setStatus(L10n.tr(key), spin: false)
+            autoHideStatus(after: 8)
+            // Re-render so the publish button's tooltip carries the same reason.
+            syncFromBoard()
             return
         }
-        setStatus(L10n.tr("tasks.queue.creatingPR", queue.name), spin: true)
+        // The status line says what THIS queue's workflow does — not always 「开 PR」.
+        setStatus(L10n.tr(Self.finalizeStatusKey(mode: runner.board.integration(
+            forQueue: queue.id, default: workspaceIntegration)), queue.name), spin: true)
         syncFromBoard()
+    }
+
+    /// The status line for a queue whose finalize session is (or is about to be)
+    /// running — by the mode it will actually execute.
+    static func finalizeStatusKey(mode: QueueIntegration) -> String {
+        switch mode {
+        case .merge: return "tasks.queue.merging"
+        case .push: return "tasks.queue.pushing"
+        case .pr, .none: return "tasks.prOpening"
+        }
+    }
+
+    /// 打开已有 PR 的链接 —— 与「交付」分开：PR 已存在时仍要能再次交付去更新它。
+    private func openPRURL(_ queue: TaskQueue) {
+        guard let url = queue.prUrl, let link = URL(string: url) else { return }
+        NSWorkspace.shared.open(link)
     }
 
     // MARK: - Queue picker (加入队列)
@@ -2083,14 +2512,18 @@ final class IssueRunnerPanelController: NSObject {
             // The PR switch is only pre-armed where the repo can carry one, and
             // 不切分支 is decided by the workspace having no repo to switch in.
             var model = base.forWorkspace(git: workspaceIsGit, pr: repo != nil,
-                                          defaultBase: workspaceDefaultBase)
+                                          hasRemote: workspaceHasRemote,
+                                          defaultBase: workspaceDefaultBase,
+                                          defaultIntegration: workspaceIntegration)
             model.autoPR = false
             showQueueForm(model)
         case .edit(let queueID):
             guard let queue = runner.board.queue(queueID) else { return }
             showQueueForm(QueueComposerModel.edit(queue, prAvailable: repo != nil,
                                                   gitAvailable: workspaceIsGit,
-                                                  defaultBaseBranch: workspaceDefaultBase))
+                                                  hasRemote: workspaceHasRemote,
+                                                  defaultBaseBranch: workspaceDefaultBase,
+                                                  defaultIntegration: workspaceIntegration))
         }
     }
 
@@ -2106,7 +2539,8 @@ final class IssueRunnerPanelController: NSObject {
             let queue = runner.createQueue(name: composer.normalizedName,
                                            branch: composer.branchValue,
                                            baseBranch: composer.normalizedBaseBranch,
-                                           autoPR: composer.autoPR && repo != nil)
+                                           autoPR: composer.autoPR && repo != nil,
+                                           integration: composer.integration)
             if let taskID = taskID { _ = runner.enqueue(taskID: taskID, into: queue.id) }
             setStatus(L10n.tr("tasks.queue.created", queue.name), spin: false)
             autoHideStatus(after: 4)
@@ -2119,7 +2553,8 @@ final class IssueRunnerPanelController: NSObject {
                                      name: composer.normalizedName,
                                      branch: .some(composer.branchValue),
                                      baseBranch: composer.normalizedBaseBranch,
-                                     autoPR: composer.autoPR && repo != nil) else {
+                                     autoPR: composer.autoPR && repo != nil,
+                                     integration: .some(composer.integration)) else {
                 // The queue is gone (workspace switched under the open form): say
                 // so instead of reporting a save that never happened.
                 setStatus(L10n.tr("tasks.queue.updateFailed"), spin: false)
@@ -2168,6 +2603,22 @@ final class IssueRunnerPanelController: NSObject {
             return
         }
         queueToggle[queue.id] = nil
+        syncFromBoard()
+    }
+
+    private func confirmCloseQueue(_ queue: TaskQueue) {
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("tasks.closeQueueTitle", queue.name)
+        alert.informativeText = L10n.tr("tasks.closeQueueInfo")
+        alert.addButton(withTitle: L10n.tr("tasks.queue.close"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard runner?.closeQueue(queue.id) == true else {
+            setStatus(L10n.tr("tasks.queue.closeRefused"), spin: false)
+            autoHideStatus(after: 6)
+            syncFromBoard()
+            return
+        }
         syncFromBoard()
     }
 

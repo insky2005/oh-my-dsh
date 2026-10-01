@@ -22,6 +22,50 @@ struct TaskCreateDraft: Equatable {
     let body: String?
 }
 
+/// POST /api/tasks/queue/create：一个「等待态」队列 + 加入它的任务。session 是发起
+/// 请求的 dsh 会话 —— 队列到达 .done 时把完成情况回传给它（缺省不回传）。
+struct TaskQueueCreateRequest: Equatable {
+    var workspace: String?
+    var session: String?
+    var focus: Bool
+    var name: String
+    /// nil = 按队列名派生默认分支；"" = 完全不切分支。
+    var branch: String?
+    var baseBranch: String?
+    /// nil = 按工作区能力决定（有 GitHub 远端才自动开 PR）。
+    var autoPR: Bool?
+    var drafts: [TaskCreateDraft]
+}
+
+/// POST /api/tasks/queue/start：按 id 启动，或在 id 缺省时启动「本会话创建的那个等待队列」。
+struct TaskQueueStartRequest: Equatable {
+    var workspace: String?
+    var session: String?
+    /// 队列名：比 session 更直接的一种消歧（同名多个仍返回 ambiguous-queue）。
+    var name: String?
+    var queueId: String?
+}
+
+/// POST /api/tasks/queue/append：向**已有**队列追加任务（会话里「再补几条」）。
+/// 目标队列按 queueId → name → session（本会话创建的非关闭队列）解析。
+struct TaskQueueAppendRequest: Equatable {
+    var workspace: String?
+    var session: String?
+    var queueId: String?
+    var name: String?
+    var drafts: [TaskCreateDraft]
+}
+
+/// POST /api/tasks/queue/deliver：对一条**已完成**（.done）队列发起交付（PR / 合并 /
+/// 推送），与队列头的「交付」按钮同一条路径。只发起、不等待，结果由交付会话回写。
+/// 目标按 queueId → name → session 解析（同 start / append）。
+struct TaskQueueDeliverRequest: Equatable {
+    var workspace: String?
+    var session: String?
+    var queueId: String?
+    var name: String?
+}
+
 /// 任务面板 API 的实现方（IssueRunnerPanelController）。
 ///
 /// 两个方法都在**主线程**上被调用：board 的读改写必须与面板的 step 定时器同一条
@@ -31,6 +75,14 @@ protocol TasksAPIDelegate: AnyObject {
     func apiTaskList(workspace: String?) -> [String: Any]
     /// 批量创建手动任务（待处理、未入队）。focus 为真时切到该工作区并展开面板。
     func apiTaskCreate(workspace: String?, focus: Bool, drafts: [TaskCreateDraft]) -> [String: Any]
+    /// 建一个「等待态」队列（.draft）并把任务批量入队；不启动任何东西。
+    func apiTaskQueueCreate(_ request: TaskQueueCreateRequest) -> [String: Any]
+    /// 启动一个队列（.draft / .paused → .active）；queueId 可缺省，按 session 定位。
+    func apiTaskQueueStart(_ request: TaskQueueStartRequest) -> [String: Any]
+    /// 向已有队列追加任务（不启动；.done 会回到 .draft 并重臂回传）。
+    func apiTaskQueueAppend(_ request: TaskQueueAppendRequest) -> [String: Any]
+    /// 对一条已完成队列发起交付（PR / 合并 / 推送）；只发起，结果由交付会话回写。
+    func apiTaskQueueDeliver(_ request: TaskQueueDeliverRequest) -> [String: Any]
 }
 
 // MARK: - 工作区解析（纯函数）
@@ -91,17 +143,45 @@ enum TasksAPIRouter {
         var tasksProvided: Bool = false
     }
 
+    /// queue/append 的解析结果。
+    struct ParsedQueueAppend {
+        var workspace: String?
+        var session: String?
+        var queueId: String?
+        var name: String?
+        var drafts: [TaskCreateDraft] = []
+        var rejected: [[String: Any]] = []
+        var tasksProvided: Bool = false
+    }
+
+    /// queue/create 的解析结果。
+    struct ParsedQueueCreate {
+        var workspace: String?
+        var session: String?
+        var focus: Bool = true
+        var name: String = ""
+        var branch: String?
+        var baseBranch: String?
+        var autoPR: Bool?
+        var drafts: [TaskCreateDraft] = []
+        var rejected: [[String: Any]] = []
+        var tasksProvided: Bool = false
+    }
+
     /// 命中 /api/tasks/* 时返回响应；不是本面板的路径返回 nil（调用方继续走原
     /// 来的路由 —— 任务面板不吞浏览器面板的端点，也不吞 404）。
     static func route(_ request: HTTPRequest, delegate: TasksAPIDelegate?) -> HTTPResponse? {
         switch (request.method, request.path) {
 
-        case ("GET", "/api/tasks/list"):
+        // 规范路径 = /api/tasks/<资源>/<动词>（/tasks 是面板命名空间）：任务在 task/ 下，
+        // 队列在 queue/ 下。旧的无资源段路径（/api/tasks/list、/create）保留为 alias，
+        // 装了旧版技能的用户机器不会断。
+        case ("GET", "/api/tasks/task/list"), ("GET", "/api/tasks/list"):
             guard let delegate = delegate else { return unavailable() }
             let result = delegate.apiTaskList(workspace: request.query["workspace"])
             return .json((result["ok"] as? Bool) == true ? 200 : 400, result)
 
-        case ("POST", "/api/tasks/create"):
+        case ("POST", "/api/tasks/task/create"), ("POST", "/api/tasks/create"):
             guard let body = request.jsonBody() else {
                 return .json(400, ["ok": false,
                                    "error": "missing-body",
@@ -127,9 +207,98 @@ enum TasksAPIRouter {
             }
             return .json((result["ok"] as? Bool) == true ? 200 : 400, result)
 
+        case ("POST", "/api/tasks/queue/create"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            let parsed = parseQueueCreate(body)
+            guard !parsed.drafts.isEmpty else {
+                return .json(400, ["ok": false,
+                                   "error": parsed.tasksProvided ? "no-tasks" : "missing-tasks",
+                                   "rejected": parsed.rejected])
+            }
+            guard !parsed.name.isEmpty else {
+                return .json(400, ["ok": false, "error": "missing-name",
+                                   "hint": "give the queue a name, or at least one task whose title can name it"])
+            }
+            guard let delegate = delegate else { return unavailable() }
+            var result = delegate.apiTaskQueueCreate(TaskQueueCreateRequest(
+                workspace: parsed.workspace, session: parsed.session, focus: parsed.focus,
+                name: parsed.name, branch: parsed.branch, baseBranch: parsed.baseBranch,
+                autoPR: parsed.autoPR, drafts: parsed.drafts))
+            let queueRejected = result["rejected"] as? [[String: Any]] ?? []
+            result["rejected"] = parsed.rejected + queueRejected
+            if result["ok"] == nil { result["ok"] = !((result["created"] as? [Any]) ?? []).isEmpty }
+            return .json((result["ok"] as? Bool) == true ? 200 : 400, result)
+
+        case ("POST", "/api/tasks/queue/start"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            guard let delegate = delegate else { return unavailable() }
+            let result = delegate.apiTaskQueueStart(parseQueueStart(body))
+            return .json(startStatus(result), result)
+
+        case ("POST", "/api/tasks/queue/append"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            let parsed = parseQueueAppend(body)
+            guard !parsed.drafts.isEmpty else {
+                return .json(400, ["ok": false,
+                                   "error": parsed.tasksProvided ? "no-tasks" : "missing-tasks",
+                                   "rejected": parsed.rejected])
+            }
+            guard parsed.queueId != nil || parsed.name != nil || parsed.session != nil else {
+                return .json(400, ["ok": false, "error": "no-queue-target",
+                                   "hint": "pass queueId, name, or session to pick the queue to append to"])
+            }
+            guard let delegate = delegate else { return unavailable() }
+            var result = delegate.apiTaskQueueAppend(TaskQueueAppendRequest(
+                workspace: parsed.workspace, session: parsed.session, queueId: parsed.queueId,
+                name: parsed.name, drafts: parsed.drafts))
+            let appendedRejected = result["rejected"] as? [[String: Any]] ?? []
+            result["rejected"] = parsed.rejected + appendedRejected
+            if result["ok"] == nil { result["ok"] = !((result["created"] as? [Any]) ?? []).isEmpty }
+            return .json((result["ok"] as? Bool) == true ? 200 : 400, result)
+
+        case ("POST", "/api/tasks/queue/deliver"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            // workspace 可以缺省（用面板当前工作区），但**必须**有一个定位队列的字段：
+            // queueId / name / session 三选一，否则连找谁都不知道（与 append 同一规则）。
+            let parsed = parseQueueDeliver(body)
+            guard parsed.queueId != nil || parsed.name != nil || parsed.session != nil else {
+                return .json(400, ["ok": false, "error": "no-queue-target",
+                                   "hint": "pass queueId, name, or session to pick the queue to deliver"])
+            }
+            guard let delegate = delegate else { return unavailable() }
+            let result = delegate.apiTaskQueueDeliver(parsed)
+            return .json(deliverStatus(result), result)
+
         default:
             return nil
         }
+    }
+
+    /// /api/tasks/queue/start 的 HTTP 状态：启动了 200，队列名有歧义 409（调用方补
+    /// queueId 再来），找不到 404，其余 400。
+    static func startStatus(_ result: [String: Any]) -> Int {
+        if (result["ok"] as? Bool) == true { return 200 }
+        switch result["error"] as? String {
+        case "ambiguous-queue": return 409
+        case "no-queue": return 404
+        default: return 400
+        }
+    }
+
+    /// /api/tasks/queue/deliver 的 HTTP 状态：发起了 200，队列定位有歧义或已有交付会话
+    /// 在跑 409，找不到队列 404，其余（还没跑完 / 工作流「无」/ 没有分支或远端）400。
+    static func deliverStatus(_ result: [String: Any]) -> Int {
+        if (result["ok"] as? Bool) == true { return 200 }
+        switch result["error"] as? String {
+        case "ambiguous-queue", "busy": return 409
+        case "no-queue": return 404
+        default: return 400
+        }
+    }
+
+    static func missingBody() -> HTTPResponse {
+        .json(400, ["ok": false, "error": "missing-body",
+                    "hint": "expected a JSON object like {\"name\": \"…\", \"tasks\": [\"标题\"]}"])
     }
 
     static func unavailable() -> HTTPResponse {
@@ -184,6 +353,75 @@ enum TasksAPIRouter {
         return parsed
     }
 
+    /// 解析 queue/create 请求体（纯函数）。任务部分复用 create 的规则（字符串简写、
+    /// 对象、空标题、50 条上限）；队列名缺省时用第一条任务的标题兜底。
+    static func parseQueueCreate(_ body: [String: Any]) -> ParsedQueueCreate {
+        var parsed = ParsedQueueCreate()
+        parsed.workspace = TasksAPIWorkspace.normalize(body["workspace"] as? String)
+        parsed.session = normalizeSession(body["session"] as? String)
+        parsed.focus = (body["focus"] as? Bool) ?? true
+        parsed.name = ((body["name"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if let raw = body["branch"] as? String {
+            parsed.branch = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let base = (body["baseBranch"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        parsed.baseBranch = (base?.isEmpty ?? true) ? nil : base
+        parsed.autoPR = body["autoPR"] as? Bool
+
+        guard let raw = body["tasks"] as? [Any] else {
+            parsed.rejected.append(["title": "", "error": "missing-tasks"])
+            return parsed
+        }
+        parsed.tasksProvided = true
+        let tasks = parseCreate(["tasks": raw])
+        parsed.drafts = tasks.drafts
+        parsed.rejected.append(contentsOf: tasks.rejected)
+        if parsed.name.isEmpty { parsed.name = parsed.drafts.first?.title ?? "" }
+        return parsed
+    }
+
+    /// 解析 queue/append 请求体（纯函数）：任务规则同 create；目标队列按 id/name/session。
+    static func parseQueueAppend(_ body: [String: Any]) -> ParsedQueueAppend {
+        var parsed = ParsedQueueAppend()
+        parsed.workspace = TasksAPIWorkspace.normalize(body["workspace"] as? String)
+        parsed.session = normalizeSession(body["session"] as? String)
+        let rawId = (body["queueId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        parsed.queueId = (rawId?.isEmpty ?? true) ? nil : rawId
+        let rawName = (body["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        parsed.name = (rawName?.isEmpty ?? true) ? nil : rawName
+        guard let raw = body["tasks"] as? [Any] else {
+            parsed.rejected.append(["title": "", "error": "missing-tasks"])
+            return parsed
+        }
+        parsed.tasksProvided = true
+        let tasks = parseCreate(["tasks": raw])
+        parsed.drafts = tasks.drafts
+        parsed.rejected.append(contentsOf: tasks.rejected)
+        return parsed
+    }
+
+    static func parseQueueStart(_ body: [String: Any]) -> TaskQueueStartRequest {
+        let rawId = (body["queueId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawName = (body["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return TaskQueueStartRequest(workspace: TasksAPIWorkspace.normalize(body["workspace"] as? String),
+                                     session: normalizeSession(body["session"] as? String),
+                                     name: (rawName?.isEmpty ?? true) ? nil : rawName,
+                                     queueId: (rawId?.isEmpty ?? true) ? nil : rawId)
+    }
+
+    /// 解析 queue/deliver 请求体（纯函数）：目标定位与 start 相同（queueId / name / session）。
+    static func parseQueueDeliver(_ body: [String: Any]) -> TaskQueueDeliverRequest {
+        let target = parseQueueStart(body)
+        return TaskQueueDeliverRequest(workspace: target.workspace, session: target.session,
+                                       queueId: target.queueId, name: target.name)
+    }
+
+    /// 来源会话 id，缺省 / 空白 → nil（队列照建，只是不回传）。
+    static func normalizeSession(_ raw: String?) -> String? {
+        guard let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
+    }
+
     // MARK: 响应里的一条任务 / 一个队列（形状单点定义）
 
     static func taskDictionary(_ task: TaskItem, queueName: String?) -> [String: Any] {
@@ -202,13 +440,16 @@ enum TasksAPIRouter {
         return d
     }
 
-    static func queueDictionary(_ queue: TaskQueue) -> [String: Any] {
+    static func queueDictionary(_ queue: TaskQueue, reportsToSession: Bool = false) -> [String: Any] {
         var d: [String: Any] = ["id": queue.id,
                                 "name": queue.name,
                                 "state": queue.state.rawValue,
                                 "tasks": queue.taskIds.count]
         if let branch = queue.branch { d["branch"] = branch }
         if !queue.autoCreated { d["userQueue"] = true }
+        // The session id itself stays machine-private; the caller only says WHETHER a
+        // report will go back, so a UI / agent can show it without leaking the id.
+        if reportsToSession { d["reportsToSession"] = true }
         return d
     }
 }

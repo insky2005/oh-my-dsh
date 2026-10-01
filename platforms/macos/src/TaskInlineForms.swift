@@ -527,6 +527,13 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
     let skipBranchSwitch: NSButton
     let prSwitch: NSButton
     let prNote: NSTextField
+    /// 工作流: a RADIO group here too (跟随设置 + the three modes) — the user asked
+    /// for radios, not a dropdown, so all four are visible at once. Internal for the
+    /// headless form tests.
+    let integrationCaption = TaskFormKit.caption()
+    let integrationRadios: [NSButton]
+    /// 本工作区推荐，与 caption 同行（不额外占一行）。
+    let integrationNote = TaskFormKit.hintLabel(.secondaryLabelColor)
     let advancedButton: NSButton
     /// The 高级设置 section (分支 / 基于分支 / PR): hidden while creating, open
     /// while editing. Internal so the tests can assert the default.
@@ -552,6 +559,10 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         prNote = TaskFormKit.hintLabel(.secondaryLabelColor)
         advancedButton = TaskFormKit.linkButton("")
         advancedStack = NSStackView()
+        // 跟随设置 + pr/merge/push = one radio each.
+        integrationRadios = (0..<(QueueIntegration.displayOrder.count + 1)).map { _ in
+            NSButton(radioButtonWithTitle: "", target: nil, action: nil)
+        }
         hint = TaskFormKit.hintLabel()
         submitButton = TaskFormKit.button("", primary: true)
         cancelButton = TaskFormKit.button("", primary: false)
@@ -604,6 +615,30 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         advancedStack.isHidden = !model.showsAdvanced
         // A PR switch that cannot be switched is worse than a sentence: the
         // workspace simply has no PR to open.
+        integrationCaption.stringValue = L10n.tr("tasks.integration.label")
+        // 跟随工作区设置 + the modes as radios; the recommendation is on the caption
+        // line (a suffix on a radio would not fit four of them across the panel width).
+        let options = model.integrationChoices
+        for (index, choice) in options.enumerated() {
+            let radio = integrationRadios[index]
+            if let mode = choice {
+                radio.title = mode.label
+                // A mode this workspace cannot run is greyed out with the reason — the
+                // runner refuses it anyway, so offering it would be a guaranteed failure.
+                let available = model.isIntegrationAvailable(mode)
+                radio.isEnabled = available
+                radio.toolTip = available ? nil : L10n.tr(mode.unavailableHintKey)
+            } else {
+                radio.title = L10n.tr("tasks.integration.follow",
+                                      model.defaultIntegration.label)
+                radio.isEnabled = true
+                radio.toolTip = nil
+            }
+            radio.state = (choice == model.integration) ? .on : .off
+        }
+        integrationNote.stringValue = L10n.tr("tasks.integration.recommend",
+                                              model.recommendedIntegration.label)
+        integrationNote.isHidden = false
         prSwitch.title = L10n.tr("tasks.queue.createPR")
         prSwitch.state = model.autoPR ? .on : .off
         prSwitch.isHidden = !model.prAvailable
@@ -666,11 +701,68 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
 
         advancedStack.orientation = .vertical
         advancedStack.alignment = .leading
-        advancedStack.spacing = 6
+        // 3pt: the integration picker added a fourth row to 高级设置, and the whole
+        // point of this section is that the expanded form does NOT need a scrollbar.
+        advancedStack.spacing = 3
         advancedStack.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(advancedStack)
-        for view in [branchRow, baseRow, prSwitch, prNote] { advancedStack.addArrangedSubview(view) }
-        TaskFormKit.stretch([branchRow, baseRow, prNote], to: advancedStack)
+        // Git 工作流: 跟随设置 rides the caption line (with the recommendation), the
+        // four modes sit on the next — five radios do not fit on one row.
+        integrationCaption.setContentHuggingPriority(.required, for: .horizontal)
+        integrationCaption.setContentCompressionResistancePriority(.required, for: .horizontal)
+        integrationNote.font = TaskFormKit.captionFont
+        integrationNote.textColor = .tertiaryLabelColor
+        integrationNote.maximumNumberOfLines = 1
+        integrationNote.lineBreakMode = .byTruncatingTail
+        integrationNote.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        _ = TaskFormKit.requiredHeight(integrationNote)
+        let integrationSpacer = NSView()
+        integrationSpacer.translatesAutoresizingMaskIntoConstraints = false
+        integrationSpacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        for radio in integrationRadios {
+            radio.font = .systemFont(ofSize: 12)
+            radio.translatesAutoresizingMaskIntoConstraints = false
+            radio.target = self
+            radio.action = #selector(integrationChanged(_:))
+        }
+        let followRadio = integrationRadios[0]
+        let captionRow = NSStackView(views: [integrationCaption, followRadio,
+                                             integrationSpacer, integrationNote])
+        captionRow.orientation = .horizontal
+        captionRow.alignment = .centerY
+        captionRow.spacing = 8
+        captionRow.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(captionRow)
+        let radioRow = NSStackView(views: Array(integrationRadios.dropFirst()))
+        radioRow.orientation = .horizontal
+        radioRow.alignment = .centerY
+        radioRow.spacing = 10
+        radioRow.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(radioRow)
+        let integrationBlock = NSStackView(views: [captionRow, radioRow])
+        integrationBlock.orientation = .vertical
+        integrationBlock.alignment = .leading
+        integrationBlock.spacing = 4
+        integrationBlock.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(integrationBlock)
+        // 自动交付 switch + its 不可用 note on ONE line: the note already said what
+        // the integration picker now says for a non-GitHub workspace, so a whole
+        // stacked row for it cost height the expanded form does not have.
+        prNote.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        prNote.lineBreakMode = .byTruncatingTail
+        let prSpacer = NSView()
+        prSpacer.translatesAutoresizingMaskIntoConstraints = false
+        prSpacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        let prRow = NSStackView(views: [prSwitch, prNote, prSpacer])
+        prRow.orientation = .horizontal
+        prRow.alignment = .centerY
+        prRow.spacing = 8
+        prRow.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(prRow)
+        for view in [branchRow, baseRow, integrationBlock, prRow] {
+            advancedStack.addArrangedSubview(view)
+        }
+        TaskFormKit.stretch([branchRow, baseRow, integrationBlock, prRow], to: advancedStack)
 
         let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
         let column = NSStackView(views: [headingRow, info, nameRow, hintRow, advancedStack, hint, buttons])
@@ -696,6 +788,33 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
                     baseBranch: baseField.stringValue,
                     autoPR: prSwitch.state == .on,
                     skippingBranch: skipBranchSwitch.state == .on)
+            .typedIntegration(selectedIntegration)
+    }
+
+    /// The radio that is ON (nil = 跟随设置). Internal for the form tests.
+    var selectedIntegration: QueueIntegration? {
+        let options = model.integrationChoices
+        for (index, option) in options.enumerated() where integrationRadios[index].state == .on {
+            return option
+        }
+        return model.integration
+    }
+
+    /// A Git 工作流 radio was clicked. The radios live in TWO rows (跟随设置 rides
+    /// the caption line), so AppKit's same-superview auto-exclusion does not apply —
+    /// turn the siblings off explicitly.
+    @objc func integrationChanged(_ sender: NSButton) {
+        for radio in integrationRadios where radio !== sender { radio.state = .off }
+        sender.state = .on
+        apply(currentDraft)
+    }
+
+    /// Programmatic exclusive selection (headless tests / any non-click path).
+    func selectIntegration(_ mode: QueueIntegration?) {
+        for (index, option) in model.integrationChoices.enumerated() {
+            integrationRadios[index].state = (option == mode) ? .on : .off
+        }
+        apply(currentDraft)
     }
 
     /// 不切分支 toggled: the fields follow it, and the hint stops promising a
@@ -737,6 +856,390 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         return false
     }
 }
+
+// MARK: - Tasks settings (token + 工作流)
+
+/// The tasks panel's settings — the two things it can configure.
+/// 决策（2026-10-01）：工作流默认是**按工作区**的，与 GitHub token 合并进同一个抽屉
+/// （不是两个入口）。需要「全局一份」的话，那属于壳层设置，不属于这个面板。
+///
+///   1. 本工作区的工作流默认值（队列没有自己的覆盖时用它交付）
+///   2. GitHub token（按仓库文件 / 通用兜底，只写文件、chmod 600）
+///
+/// Pure, so the form tests can drive it headlessly (like QueueComposerModel).
+struct TaskSettingsModel: Equatable {
+    var token: String
+    var defaultIntegration: QueueIntegration
+    /// This workspace's suggestion — shown, never enforced.
+    var recommendedIntegration: QueueIntegration
+    /// Whether the workspace can open a PR at all (a GitHub remote).
+    var prAvailable: Bool
+    /// Whether the workspace is a git repository (合并到基线 needs one).
+    var gitAvailable: Bool = true
+    /// Whether the workspace has any remote to push to (直接推送 needs one).
+    var remoteAvailable: Bool = true
+    /// 交付成功后自动关闭队列（面板级开关，默认关）。Whether a queue is closed
+    /// automatically once its delivery session succeeds.
+    var autoCloseOnPublish: Bool = false
+}
+
+/// 面板设置 — a DRAWER (the same formSheet as 新建任务 / 新建队列), NOT a modal
+/// alert: one surface for the token and the 工作流 default. The user asked for a
+/// drawer explicitly (2026-10-01): an NSAlert next to an inline form is two idioms
+/// for the same act.
+final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
+
+    private(set) var model: TaskSettingsModel
+    var onSubmit: ((TaskSettingsModel) -> Void)?
+    var onCancel: (() -> Void)?
+
+    private let heading = NSTextField(labelWithString: "")
+    private let info = NSTextField(wrappingLabelWithString: "")
+    private let tokenCaption = TaskFormKit.caption()
+    /// Internal for the headless form tests (they check the full-wrapping setup).
+    let tokenHint = NSTextField(wrappingLabelWithString: "")
+    private let closeButton = CustomIconButton(glyph: .close, tooltip: "", size: 22)
+    // Internal for the headless form tests (see TaskComposerView).
+    let tokenField: NSTextField
+    let tokenBox: TaskFieldBox
+    let integrationCaption = TaskFormKit.caption()
+    /// One RADIO per workflow — the user asked for a radio group, not a dropdown:
+    /// there are only three, and seeing all of them (with the recommendation
+    /// marked) is the point of a settings default.
+    let integrationRadios: [NSButton]
+    let integrationNote = TaskFormKit.hintLabel(.secondaryLabelColor)
+    /// 交付成功后自动关闭队列 —— a checkbox with its explanation shown in full
+    /// underneath (the drawer grew for it, see the form test's height budget).
+    let autoCloseCheck: NSButton
+    /// Internal for the headless form tests (they check the full-wrapping setup).
+    let autoCloseHint = NSTextField(wrappingLabelWithString: "")
+    let submitButton: NSButton
+    let cancelButton: NSButton
+
+    init(model: TaskSettingsModel) {
+        self.model = model
+        let token = TaskFormKit.textField(model.token, placeholder: "")
+        tokenBox = token.box
+        tokenField = token.field
+        submitButton = TaskFormKit.button("", primary: true)
+        cancelButton = TaskFormKit.button("", primary: false)
+        integrationRadios = QueueIntegration.displayOrder.map { _ in
+            NSButton(radioButtonWithTitle: "", target: nil, action: nil)
+        }
+        autoCloseCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        tokenField.delegate = self
+        build()
+        apply(model)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func focusToken() { window?.makeFirstResponder(tokenField) }
+
+    /// The full-width explanations wrap, so they need their max width to report the
+    /// right height — and the drawer's width is only known at layout time. The guard
+    /// makes it idempotent, so this cannot loop.
+    override func layout() {
+        super.layout()
+        let width = max(160, bounds.width - 32)
+        for label in [info, tokenHint, autoCloseHint] {
+            guard abs(label.preferredMaxLayoutWidth - width) > 0.5 else { continue }
+            label.preferredMaxLayoutWidth = width
+            label.invalidateIntrinsicContentSize()
+        }
+    }
+
+    func apply(_ model: TaskSettingsModel) {
+        self.model = model
+        heading.stringValue = L10n.tr("tasks.settings.title")
+        info.stringValue = L10n.tr("tasks.settings.info")
+        tokenCaption.stringValue = L10n.tr("tasks.configTitle")
+        tokenField.placeholderString = L10n.tr("tasks.tokenPlaceholder")
+        tokenHint.stringValue = L10n.tr("tasks.configInfo")
+        integrationCaption.stringValue = L10n.tr("tasks.integration.defaultLabel")
+        // The recommendation is marked on the radio itself; the 首次设置 preselection
+        // happens in configTapped (nothing stored yet → the recommended one).
+        for (index, mode) in QueueIntegration.displayOrder.enumerated() {
+            let radio = integrationRadios[index]
+            radio.title = mode.label + (mode == model.recommendedIntegration
+                                        ? L10n.tr("tasks.integration.recommendedSuffix") : "")
+            radio.state = (mode == model.defaultIntegration) ? .on : .off
+            // Grey out a workflow this workspace cannot run, with the reason in the
+            // tooltip (the runner would refuse it — a dead choice is not a choice).
+            let available = QueueIntegration.available(mode, isGit: model.gitAvailable,
+                                                       hasGitHubRemote: model.prAvailable,
+                                                       hasRemote: model.remoteAvailable)
+            radio.isEnabled = available
+            radio.toolTip = available ? nil : L10n.tr(mode.unavailableHintKey)
+        }
+        // hintLabel starts hidden (it is a VALIDATION hint elsewhere); this one is
+        // always-visible information, so it is shown explicitly.
+        integrationNote.stringValue = L10n.tr("tasks.integration.recommend",
+                                              model.recommendedIntegration.label)
+        integrationNote.isHidden = false
+        autoCloseCheck.title = L10n.tr("tasks.settings.autoClose")
+        autoCloseCheck.toolTip = L10n.tr("tasks.settings.autoCloseHint")
+        autoCloseCheck.state = model.autoCloseOnPublish ? .on : .off
+        autoCloseHint.stringValue = L10n.tr("tasks.settings.autoCloseHint")
+        submitButton.title = L10n.tr("tasks.new.save")
+        submitButton.isEnabled = true
+        cancelButton.title = L10n.tr("btn.cancel")
+        closeButton.toolTip = L10n.tr("btn.cancel")
+    }
+
+    private func build() {
+        // 设置抽屉现在把说明**完整显示**出来（自动关闭与 GitHub Token），抽屉因此
+        // 比别的表单高；只有面板太矮时表单才滚动。The intro stays short; the two
+        // explanations below it wrap in full.
+        info.font = TaskFormKit.captionFont
+        info.textColor = .secondaryLabelColor
+        info.maximumNumberOfLines = 0
+        info.lineBreakMode = .byWordWrapping
+        info.translatesAutoresizingMaskIntoConstraints = false
+        info.toolTip = L10n.tr("tasks.settings.info")
+        _ = TaskFormKit.requiredHeight(info)
+        tokenHint.font = TaskFormKit.captionFont
+        tokenHint.textColor = .tertiaryLabelColor
+        tokenHint.maximumNumberOfLines = 0
+        tokenHint.lineBreakMode = .byWordWrapping
+        tokenHint.translatesAutoresizingMaskIntoConstraints = false
+        tokenHint.toolTip = L10n.tr("tasks.configInfo")
+        _ = TaskFormKit.requiredHeight(tokenHint)
+        autoCloseHint.font = TaskFormKit.captionFont
+        autoCloseHint.textColor = .tertiaryLabelColor
+        autoCloseHint.maximumNumberOfLines = 0
+        autoCloseHint.lineBreakMode = .byWordWrapping
+        autoCloseHint.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(autoCloseHint)
+        integrationNote.font = TaskFormKit.captionFont
+        integrationNote.textColor = .tertiaryLabelColor
+        integrationNote.maximumNumberOfLines = 2
+        integrationNote.lineBreakMode = .byTruncatingTail
+        _ = TaskFormKit.requiredHeight(integrationNote)
+        for radio in integrationRadios {
+            radio.font = .systemFont(ofSize: 12)
+            radio.translatesAutoresizingMaskIntoConstraints = false
+            radio.target = self
+            radio.action = #selector(integrationChanged(_:))
+        }
+        autoCloseCheck.font = .systemFont(ofSize: 12)
+        autoCloseCheck.translatesAutoresizingMaskIntoConstraints = false
+        autoCloseCheck.target = self
+        autoCloseCheck.action = #selector(autoCloseTapped)
+        _ = TaskFormKit.requiredHeight(autoCloseCheck)
+        closeButton.onAction = { [weak self] in self?.onCancel?() }
+        submitButton.target = self
+        submitButton.action = #selector(submitTapped)
+        cancelButton.target = self
+        cancelButton.action = #selector(cancelTapped)
+
+        let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
+        let tokenRow = TaskFormKit.row(tokenCaption, tokenBox)
+        // 默认工作流: a caption + a radio row + the recommendation, as one block.
+        let radioRow = NSStackView(views: integrationRadios)
+        radioRow.orientation = .horizontal
+        radioRow.alignment = .centerY
+        radioRow.spacing = 14
+        radioRow.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(radioRow)
+        let workflowBlock = NSStackView(views: [integrationCaption, radioRow, integrationNote])
+        workflowBlock.orientation = .vertical
+        workflowBlock.alignment = .leading
+        workflowBlock.spacing = 5
+        workflowBlock.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(workflowBlock)
+        // 自动关闭：复选框 + 完整说明，作为一个块；说明的宽度跟随块（也就是列宽），
+        // 否则 wrapping label 报告不出正确高度。
+        let autoCloseBlock = NSStackView(views: [autoCloseCheck, autoCloseHint])
+        autoCloseBlock.orientation = .vertical
+        autoCloseBlock.alignment = .leading
+        autoCloseBlock.spacing = 3
+        autoCloseBlock.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(autoCloseBlock)
+        autoCloseHint.widthAnchor.constraint(equalTo: autoCloseBlock.widthAnchor).isActive = true
+        let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
+        // 工作流在前、自动关闭其次、GitHub Token 最后 —— 与 intro 的两段顺序一致。
+        let column = NSStackView(views: [headingRow, info, workflowBlock,
+                                         autoCloseBlock, tokenRow, tokenHint, buttons])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 8
+        column.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(column)
+        addSubview(column)
+        TaskFormKit.stretch([headingRow, info, workflowBlock, autoCloseBlock,
+                             tokenRow, tokenHint], to: column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+        ])
+    }
+
+    /// The settings as currently typed.
+    /// The workflow radio that is ON (the model's value while none is selected yet).
+    /// Internal for the headless form tests.
+    var selectedIntegration: QueueIntegration {
+        for (index, mode) in QueueIntegration.displayOrder.enumerated()
+        where integrationRadios[index].state == .on {
+            return mode
+        }
+        return model.defaultIntegration
+    }
+
+    var currentDraft: TaskSettingsModel {
+        TaskSettingsModel(token: tokenField.stringValue,
+                          defaultIntegration: selectedIntegration,
+                          recommendedIntegration: model.recommendedIntegration,
+                          prAvailable: model.prAvailable,
+                          gitAvailable: model.gitAvailable,
+                          remoteAvailable: model.remoteAvailable,
+                          autoCloseOnPublish: autoCloseCheck.state == .on)
+    }
+
+    /// A radio was clicked: keep the group exclusive explicitly, then re-apply so the
+    /// model (and submit) sees the choice.
+    @objc func integrationChanged(_ sender: NSButton) {
+        for radio in integrationRadios where radio !== sender { radio.state = .off }
+        sender.state = .on
+        apply(currentDraft)
+    }
+
+    /// 交付成功后自动关闭队列 was toggled — re-apply so the model (and submit)
+    /// sees the choice.
+    @objc func autoCloseTapped() { apply(currentDraft) }
+
+    /// Programmatic toggle (headless tests).
+    func setAutoCloseOnPublish(_ on: Bool) {
+        autoCloseCheck.state = on ? .on : .off
+        apply(currentDraft)
+    }
+
+    /// Programmatic exclusive selection (headless tests).
+    func selectIntegration(_ mode: QueueIntegration) {
+        for (index, option) in QueueIntegration.displayOrder.enumerated() {
+            integrationRadios[index].state = (option == mode) ? .on : .off
+        }
+        apply(currentDraft)
+    }
+
+    /// The submit button's action; internal so the headless tests can press it.
+    @objc func submitTapped() { onSubmit?(currentDraft) }
+
+    @objc private func cancelTapped() { onCancel?() }
+
+    func controlTextDidChange(_ obj: Notification) {}
+}
+
+// MARK: - 使用说明 (help)
+
+/// The 使用说明 body: ONE wrapping label with the whole text (section headings bold,
+/// bullets secondary). It is used in two places — inline in the empty content area
+/// and in the 帮助 drawer — so one self-sizing label is simpler and more predictable
+/// than a stack of per-line labels.
+final class TasksHelpTextView: NSView {
+
+    private let label = NSTextField(labelWithString: "")
+    /// The width the text is laid out for. Set by the caller (~300 inline, wider in
+    /// the drawer). Explicit because a wrapping label needs a max width to report
+    /// the right intrinsic HEIGHT.
+    var contentWidth: CGFloat = 300 {
+        didSet {
+            label.preferredMaxLayoutWidth = max(160, contentWidth - 4)
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.isEditable = false
+        label.isSelectable = false
+        label.isBezeled = false
+        label.drawsBackground = false
+        label.maximumNumberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.preferredMaxLayoutWidth = max(160, contentWidth - 4)
+        label.setContentCompressionResistancePriority(.required, for: .vertical)
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            label.topAnchor.constraint(equalTo: topAnchor),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func apply(_ model: TasksHelpModel) {
+        let text = NSMutableAttributedString()
+        let bodyStyle = NSMutableParagraphStyle()
+        bodyStyle.paragraphSpacing = 3
+        let headingStyle = NSMutableParagraphStyle()
+        headingStyle.paragraphSpacing = 3
+        headingStyle.paragraphSpacingBefore = 7
+        func add(_ string: String, font: NSFont, color: NSColor, style: NSParagraphStyle) {
+            text.append(NSAttributedString(string: string + "\n",
+                                           attributes: [.font: font,
+                                                        .foregroundColor: color,
+                                                        .paragraphStyle: style]))
+        }
+        add(L10n.tr(model.introKey), font: .systemFont(ofSize: 11),
+            color: .secondaryLabelColor, style: bodyStyle)
+        for section in model.sections {
+            add(L10n.tr(section.headingKey), font: .systemFont(ofSize: 11, weight: .semibold),
+                color: .labelColor, style: headingStyle)
+            for key in section.lineKeys {
+                add("• " + L10n.tr(key), font: .systemFont(ofSize: 11),
+                    color: .secondaryLabelColor, style: bodyStyle)
+            }
+        }
+        label.attributedStringValue = text
+        invalidateIntrinsicContentSize()
+    }
+}
+
+/// 使用说明 in the form drawer: heading + close + the help body.
+final class TasksHelpView: TaskFormCardView {
+
+    var onCancel: (() -> Void)?
+
+    private let heading = NSTextField(labelWithString: "")
+    private let closeButton = CustomIconButton(glyph: .close, tooltip: "", size: 22)
+    let body = TasksHelpTextView()
+
+    init(model: TasksHelpModel) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        heading.stringValue = L10n.tr(model.titleKey)
+        body.contentWidth = 380
+        body.apply(model)
+        closeButton.onAction = { [weak self] in self?.onCancel?() }
+        let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
+        let column = NSStackView(views: [headingRow, body])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 8
+        column.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(column)
+        addSubview(column)
+        TaskFormKit.stretch([headingRow, body], to: column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
 // MARK: - Form sheet (the surface a form slides up in)
 
 /// The panel's bottom sheet. A form is presented HERE rather than inline in the

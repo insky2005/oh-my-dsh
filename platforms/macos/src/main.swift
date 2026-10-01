@@ -639,7 +639,7 @@ enum L10n {
         "tasks.card.runningFor": ("已运行 %@（上限 %d 分钟，到点会取消会话）", "Running for %@ (limit %d min — the session is cancelled at the deadline)"),
         "tasks.queue.state.waiting": ("等待中", "Waiting"),
         "tasks.cancelDeferred": ("任务正在启动，已记住取消：会话一建好就取消", "The task is still starting — the cancel is queued and applied as soon as its session exists"),
-        "tasks.cancelFinishing": ("任务已经在收尾（推送 / 开 PR），没有可取消的东西了", "The task is already finishing (push / PR) — there is nothing left to cancel"),
+        "tasks.cancelFinishing": ("任务已经在交付（推送 / 开 PR），没有可取消的东西了", "The task is already being delivered (push / PR) — there is nothing left to cancel"),
         "tasks.detailRetryNoBranch": ("不切分支并重试", "Retry without a branch"),
         "tasks.detailCancelTask": ("取消任务", "Cancel Task"),
         "tasks.detailCommentClose": ("评论并关闭 Issue", "Comment & Close Issue"),
@@ -667,6 +667,18 @@ enum L10n {
         "tasks.noGitShort": ("非 Git 仓库", "not a git repository"),
         "tasks.githubUnavailable": ("当前工作区不是 GitHub 仓库：GitHub Token 与 issues 都不可用（手动任务与队列照常可用）", "Not a GitHub repo: no GitHub token and no issues (manual tasks and queues still work)"),
         "tasks.emptyFiltered": ("当前筛选下没有任务。", "No tasks match the current filter."),
+        // 使用说明：空板时直接铺在内容区，有内容时收进右上角的帮助按钮。
+        "tasks.help.hint": ("使用说明", "How it works"),
+        "tasks.help.title": ("使用说明", "How it works"),
+        "tasks.help.intro": ("任务面板把工作拆成任务，按队列串行执行。", "The tasks panel turns work into tasks; a queue runs them in order."),
+        "tasks.help.create.heading": ("新建任务", "Create tasks"),
+        "tasks.help.create.body": ("点 + 建任务，填标题与描述即可；GitHub 仓库点 刷新 可拉取 issue 直接派给 agent。", "Click + and give it a title and description; on a GitHub repo, Refresh pulls issues you can hand to the agent."),
+        "tasks.help.queue.heading": ("队列", "Queues"),
+        "tasks.help.queue.body": ("任务加入队列后按顺序执行；队列完成后可再追加任务（回到待启动）；「处理」会给每个待办各建一个队列依次跑。", "Tasks in a queue run in order; append more after it finishes (it returns to draft); Process builds one queue per pending task and runs them in turn."),
+        "tasks.help.workflow.heading": ("Git 工作流", "Git workflow"),
+        "tasks.help.workflow.body": ("齿轮里按工作区设默认（无 / 直接推送 / 合并到基线 / Pull Request，跑不了的会灰掉），队列可单独覆盖；它决定「交付」把代码送出去的方式，非 git 项目选「无」。", "Set a per-workspace default in the gear (None / Push directly / Merge into base / Pull request — the ones that cannot run are greyed out); a queue can override it. It decides what Deliver does — pick None for a non-git project."),
+        "tasks.help.session.heading": ("会话回传", "Report back"),
+        "tasks.help.session.body": ("由会话建的队列（名字后带 ↺）完成时，会把每条任务的汇报回传那个会话，你在同一会话里验收、再追加。", "A queue created from a session (marked ↺) reports every task's result back there, so you review and append in the same conversation."),
         "tasks.queue.new": ("新建队列…", "New Queue…"),
         "tasks.queue.newButton": ("新建队列", "New Queue"),
         "tasks.queue.newTitle": ("新建队列", "New Queue"),
@@ -682,11 +694,12 @@ enum L10n {
         "tasks.queue.notGitRepo": ("当前目录不是 git 仓库：队列不会切分支（任务照常运行）", "Not a git repository: this queue will not switch branches (tasks still run)"),
         "tasks.queue.branchSkipped": ("队列不会切分支：任务在当前分支 / 目录上运行", "The queue will not switch branches — tasks run where they are now"),
         "tasks.queue.base": ("基于分支", "Base branch"),
-        "tasks.queue.createPR": ("队列完成后自动创建 PR", "Open a PR when the queue finishes"),
+        "tasks.queue.createPR": ("完成后自动交付（按 Git 工作流）", "Deliver automatically when the queue finishes (per Git workflow)"),
         "tasks.queue.autoPR": ("完成后自动创建 PR", "Open a PR when finished"),
         "tasks.queue.autoPROn": ("完成后自动开 PR：已开启（点一下关闭）", "Open a PR when the queue finishes: ON (click to turn off)"),
         "tasks.queue.autoPROff": ("完成后自动开 PR：已关闭（点一下开启）", "Open a PR when the queue finishes: OFF (click to turn on)"),
         "tasks.queue.start": ("开始", "Start"),
+        "tasks.queue.reportsToSession": ("完成后回传发起会话", "Reports back to the session that created it"),
         "tasks.queue.continue": ("继续：跳过失败的任务，跑下一个", "Continue: skip the failed task and run the next one"),
         "tasks.otherFinished": ("%@ 的任务「%@」已完成", "%@ finished “%@”"),
         "tasks.otherFailed": ("%@ 的任务「%@」失败了", "%@ failed “%@”"),
@@ -695,25 +708,61 @@ enum L10n {
         // Agent 经本地 API（技能 task-todo）批量建的任务：面板报一句，用户知道
         // 这些卡片从哪来的。
         "tasks.apiCreated": ("已由 Agent 创建 %d 个任务（待处理、未入队）", "Created %d task(s) from the agent (pending, not queued)"),
+        "tasks.apiQueueCreated": ("已由 Agent 创建队列「%@」（%d 个任务，待启动）", "Created queue %@ from the agent (%d task(s), draft)"),
+        "tasks.apiQueueAppended": ("已由 Agent 向队列「%@」追加 %d 个任务（待启动）", "Appended %d task(s) to queue %@ from the agent (draft)"),
         "tasks.recovered": ("上次运行被中断：%d 个任务已标为失败、%d 个队列已暂停（不会自动重跑）", "Interrupted last run: %d task(s) marked failed, %d queue(s) paused (nothing restarts by itself)"),
         "tasks.gitAppeared": ("这个目录现在是 git 仓库 —— 已重新识别工作区：新队列可以使用分支", "This directory is a git repository now — workspace re-detected: new queues can use a branch"),
         "tasks.remoteAppeared": ("这个工作区现在有 GitHub 远端 —— 已重新识别：PR 相关功能已启用", "This workspace has a GitHub remote now — re-detected: the PR features are available"),
         "tasks.queue.pause": ("暂停", "Pause"),
-        "tasks.queue.openPR": ("打开 PR", "Open PR"),
+        "tasks.queue.openPR": ("交付：推送分支并开 / 更新 PR", "Deliver: push the branch and open/update the PR"),
+        // 工作流（Git workflow：pr / merge / push）—— 用户可见名称集中在 tasks.integration.*，
+        // 改名只动这里；枚举 rawValue 与代码标识仍是 integration（API 词汇）。
+        "tasks.integration.label": ("Git 工作流", "Git workflow"),
+        "tasks.integration.defaultLabel": ("默认 Git 工作流", "Default Git workflow"),
+        // 队列设置里的「跟随工作区设置（当前默认）」—— 括号里是面板设置给本工作区的默认值。
+        "tasks.integration.follow": ("跟随工作区设置（%@）", "Follow the workspace setting (%@)"),
+        "tasks.integration.pr": ("Pull Request", "Pull request"),
+        "tasks.integration.merge": ("合并到基线", "Merge into base"),
+        "tasks.integration.push": ("直接推送", "Push directly"),
+        // 「无」：不是 git 仓库的项目（或不想让它碰远端）选这个，交付什么都不做。
+        "tasks.integration.none": ("无", "None"),
+        "tasks.integration.recommend": ("本工作区推荐：%@", "Recommended here: %@"),
+        "tasks.integration.recommendedSuffix": ("（推荐）", " (recommended)"),
+        // 工作区跑不了的工作流在单选组里灰掉，tooltip 说明原因（不让用户选一个注定失败的项）。
+        "tasks.integration.unavailablePr": ("当前工作区没有 GitHub 远端，不能开 PR", "No GitHub remote here, so a PR cannot be opened"),
+        "tasks.integration.unavailableMerge": ("当前工作区不是 git 仓库，不能合并", "Not a git repository here, so nothing can be merged"),
+        "tasks.integration.unavailablePush": ("当前工作区没有可推送的远端", "No remote to push to here"),
+        "tasks.queue.mergePush": ("交付：合并到基线（有远端则一并推送）", "Deliver: merge into the base branch (and push when there is a remote)"),
+        "tasks.queue.pushOnly": ("交付：直接推送", "Deliver: push directly"),
+        "tasks.settings.title": ("面板设置", "Panel Settings"),
+        // 两段对应下面的工作流 / Token 区块（自动关闭的说明在开关自己的 tooltip）；\n 让标签按段落断行。
+        "tasks.settings.info": ("Git 工作流，决定队列交付时用哪种 Git 方式把代码送进远端（不是 git 仓库可选「无」）。\nGitHub Token，让面板能拉取 issues、创建 PR、评论关闭 issue。", "The Git workflow decides how a finished queue delivers its code to the remote (pick None for a non-git project).\nA GitHub token lets the panel fetch issues, open PRs, and comment on & close them."),
+        "tasks.settings.hint": ("面板设置：Git 工作流、交付后自动关闭与 GitHub Token", "Panel settings: Git workflow, auto-close after delivery and GitHub token"),
+        "tasks.settings.saved": ("设置已保存", "Settings saved"),
+        // 交付成功后自动关闭：开启后，队列的交付会话成功交付（PR / 合并 / 推送）时，
+        // 队列自动进入「已关闭」（仍保留任务 / 分支 / PR 记录）。
+        "tasks.settings.autoClose": ("交付成功后自动关闭队列", "Auto-close the queue after delivery"),
+        "tasks.settings.autoCloseHint": ("开启后，队列的交付会话成功交付（PR / 合并 / 推送）时，队列自动进入「已关闭」：不再接收任务，也不能启动或交付，但保留任务、分支与 PR 记录。", "When on, a queue closes itself once its delivery session delivers successfully (PR / merge / push): it accepts no more tasks and cannot be started or delivered, but keeps its tasks, branch and PR record."),
+        "tasks.queue.close": ("关闭队列", "Close Queue"),
+        "tasks.closeQueueTitle": ("关闭队列「%@」？", "Close queue %@?"),
+        "tasks.closeQueueInfo": ("关闭后仍保留任务、分支与 PR 记录，但不再接收任务，也不能启动或交付。", "Closing keeps the task, branch and PR record, but the queue accepts no more tasks and cannot be started or delivered."),
+        "tasks.queue.closeRefused": ("队列里有任务在运行：先取消它，再关闭队列", "A task in this queue is running — cancel it first, then close the queue"),
         // PR 会话（§V2-6）：任务只 commit，push 与开 PR 由队列结束后单独一个会话负责
-        "tasks.queue.prSessionName": ("开 PR：%@", "Open PR: %@"),
-        "tasks.prOpening": ("正在开 PR（队列「%@」）：由单独的会话推送分支、总结改动并创建 PR…", "Opening the PR for %@ — a dedicated session pushes the branch, summarizes the changes and creates it…"),
-        "tasks.errPRStart": ("开不了 PR：这个队列没有分支、当前工作区没有 GitHub 远端，或已经有一个 PR 会话在跑（详见日志）", "Cannot open a PR: the queue has no branch, this workspace has no GitHub remote, or a PR session is already running (see the log)"),
+        // 交付会话的名字：三种工作流统一叫「交付：<队列名>」——具体动作由按钮 tooltip 与状态行说。
+        "tasks.queue.finalizeSessionName": ("交付：%@", "Deliver: %@"),
+        "tasks.prOpening": ("正在交付（队列「%@」）：交付会话推送分支、总结改动并创建 PR…", "Delivering %@ — the delivery session pushes the branch, summarizes the changes and creates the PR…"),
+        "tasks.errPRStart": ("交付失败：这个队列没有分支、当前工作区没有可用的远端，或已经有一个交付会话在跑（详见日志）", "Cannot deliver: the queue has no branch, this workspace has no usable remote, or a delivery session is already running (see the log)"),
+        "tasks.errPRBusy": ("已经有一个交付会话在跑：等它结束，或先去那个会话把它处理完，再交付", "A delivery session is already running — wait for it to finish, or handle it in that session, then deliver again"),
         "tasks.errPRNoBranch": ("这个队列不切分支：没有可以开 PR 的分支（在队列设置里给它一条分支）", "This queue does not switch branches, so there is no branch to open a PR from (give it one in the queue settings)"),
-        "tasks.errPRNoRemote": ("当前工作区不是 GitHub 仓库：没有可以开 PR 的远端", "This workspace is not a GitHub repo: there is no remote to open a PR against"),
-        "tasks.errPRSession": ("没能启动开 PR 的会话（dsh 建会话/发提示词失败）——可以点这里再试一次", "Could not start the PR session (session creation or prompt failed) — click here to retry"),
+        "tasks.errPRNoRemote": ("当前工作区没有可推送的远端（GitHub 远端才能开 PR）", "This workspace has no remote to push to (a GitHub remote is required to open a PR)"),
+        "tasks.errPRSession": ("没能启动交付会话（dsh 建会话/发提示词失败）——可以点这里再试一次", "Could not start the delivery session (session creation or prompt failed) — click here to retry"),
         "tasks.detailReport": ("汇报", "Report"),
         // 卡片上的行标（无障碍描述；图标本身是静默的第三档灰）
         "tasks.glyph.task": ("任务", "Task"),
         "tasks.glyph.queue": ("队列", "Queue"),
-        "tasks.queue.settings": ("队列设置：重命名 / 分支 / 基于分支 / PR 开关", "Queue settings: name, branch, base branch, PR switch"),
+        "tasks.queue.settings": ("队列设置：重命名 / 分支 / 基于分支 / Git 工作流 / 自动交付", "Queue settings: name, branch, base branch, Git workflow, auto-deliver"),
         "tasks.queue.editTitle": ("队列设置", "Queue Settings"),
-        "tasks.queue.editInfo": ("队列名、分支、基于分支与 PR 开关；队内任务按顺序共用这一条分支。", "Name, branch, base branch and the PR switch; every task in the queue shares this one branch."),
+        "tasks.queue.editInfo": ("队列名、分支、基于分支、Git 工作流与自动交付；队内任务按顺序共用这一条分支。", "Name, branch, base branch, Git workflow and auto-deliver; every task in the queue shares this one branch."),
         "tasks.queue.nameHint": ("例如：深色模式改造", "e.g. Dark mode rework"),
         "tasks.queue.branchWillUse": ("将使用分支：%@", "Branch: %@"),
         "tasks.queue.prUnavailable": ("当前工作区不是 GitHub 仓库：队列只切分支 + 推送，不创建 PR", "Not a GitHub repo: the queue only switches branch and pushes — there is no PR to open"),
@@ -725,13 +774,20 @@ enum L10n {
         "tasks.queue.updateFailed": ("队列已经不存在，改动没有保存", "The queue no longer exists, so the change was not saved"),
         "tasks.queue.delete": ("删除队列", "Delete Queue"),
         "tasks.queue.state.active": ("活跃", "Active"),
+        "tasks.queue.state.draft": ("待启动", "Draft"),
         "tasks.queue.state.paused": ("已暂停", "Paused"),
         "tasks.queue.state.finished": ("已完成", "Finished"),
+        "tasks.queue.state.closed": ("已关闭", "Closed"),
         "tasks.queue.noBranch": ("不切分支", "No branch"),
         "tasks.queue.failedCount": ("%d 个失败", "%d failed"),
         // PR 的标题与正文不再由壳层套模板：开 PR 的会话读完真实 diff 之后自己写
         // （§V2-6），所以这两条旧文案随 REST createPR 一起删掉。
-        "tasks.queue.creatingPR": ("正在为队列「%@」创建 PR…", "Creating the PR for queue %@…"),
+        // 交付会话运行时的状态行，按工作流分（不再一律说「开 PR」）。
+        "tasks.queue.merging": ("正在合并到基线（队列「%@」）：由交付会话在本地合并，有远端则一并推送…", "Merging into the base for %@ — the delivery session merges locally and pushes when there is a remote…"),
+        "tasks.queue.pushing": ("正在推送（队列「%@」）：由交付会话直接推送…", "Pushing %@ — the delivery session pushes the branch directly…"),
+        // 队列卡上的交付结果默认只显示第一行，可展开看全文。
+        "tasks.queue.note.expand": ("展开", "More"),
+        "tasks.queue.note.collapse": ("收起", "Less"),
         "tasks.new.title": ("新建任务", "New Task"),
         "tasks.new.editTitle": ("编辑任务", "Edit Task"),
         "tasks.new.info": ("第一行是任务标题，其余行是任务描述（单行 = 两者）；⌘↩ 创建。", "First line: the title. The rest: the description (one line = both). ⌘↩ creates."),
@@ -3282,6 +3338,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         config.userContentController.addUserScript(
             WKUserScript(source: langScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
 
+        // dsh 0.1.5-rc.3 的实时 assistant-stream「打开快照」里，某些 chunk 经 typert 解码
+        // 后不再是无损 JSON，客户端 expandAssistantStream 会抛 unhandled rejection，运行中
+        // 的会话于是打不开（跑完再打开没有这段快照，所以正常）。这里在 WebSocket 文本帧
+        // 进页面之前把 activeAttempt.stream 清空：保留 attemptId / nextIndex（后续实时帧
+        // 照常接上），只丢掉「打开前那几段」——第一次点即可正常加载，且不改 dsh 源码。
+        config.userContentController.addUserScript(
+            WKUserScript(source: Self.assistantStreamSanitizeScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+
         config.userContentController.addUserScript(
             WKUserScript(source: Self.previewInterceptorScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController.add(self, name: "dshPreview")
@@ -3293,6 +3357,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             WKUserScript(source: Self.sessionTrackerScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController.add(self, name: "dshSession")
 
+        // dsh 0.1.5-rc.3 的客户端在展开 assistant-stream 的「打开快照」时，遇到一个非
+        // 对象的 chunk 会抛 unhandled rejection，会话视图就停在加载态（实测再点一次即恢复）。
+        // 捕获这条 rejection 自动重开当前会话；有界重试，绝不改 dsh 源码。
+        config.userContentController.addUserScript(
+            WKUserScript(source: Self.assistantStreamRetryScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+
         // Panel → web session link: exposes window.__dshOpenSession(sessionId)
         // so the Channel panel can switch dsh web to a specific session.
         config.userContentController.addUserScript(
@@ -3303,6 +3373,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         config.userContentController.addUserScript(
             WKUserScript(source: Self.composerReferenceScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
 
+        // 开发版诊断：WKWebView 的 JS console 壳层看不到，客户端卡住时没有证据。
+        // 开发版把页面 error / unhandledrejection / 长任务(>=200ms) / 点击目标经
+        // `dshPerf` message 落到 app.log，并允许 Safari Web Inspector 附加（13.3+）。
+        if isDevBuild {
+            config.userContentController.addUserScript(
+                WKUserScript(source: Self.webViewDiagnosticsScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            config.userContentController.add(self, name: "dshPerf")
+        }
+
         webView?.removeFromSuperview()
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
@@ -3311,6 +3390,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // The split view manages the pane frames; plain autoresizing is enough.
         webView.translatesAutoresizingMaskIntoConstraints = true
         webView.autoresizingMask = [.width, .height]
+        if isDevBuild, #available(macOS 13.3, *) { webView.isInspectable = true }
 
         guard let split = splitView else { return }
         if split.subviews.first is WKWebView {
@@ -3319,6 +3399,162 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Keep the web view as the left pane (insert below the existing pane).
         split.addSubview(webView, positioned: .below, relativeTo: split.subviews.first)
     }
+
+    /// Drop the undecodable part of dsh's live assistant-stream opening baseline.
+    ///
+    /// dsh 0.1.5-rc.3: the live follow/\$events opening carries
+    /// `assistantStream.activeAttempt.stream` — a compact snapshot of the chunks already
+    /// streamed. A chunk in it fails the client's lossless-JSON check after the typert
+    /// decode (`Assistant stream raw chunk must be a lossless JSON object`), which
+    /// rejects the session open and leaves the view stuck on loading. A finished session
+    /// has no active attempt, which is why opening one only fails while it RUNS.
+    ///
+    /// The frame arrives as a WebSocket text message and is JSON-parsed by the client,
+    /// so clearing `activeAttempt.stream` before it is parsed is safe: the empty array
+    /// expands to nothing, while attemptId / nextIndex stay, so live frames after the
+    /// open keep flowing. Only the chunks streamed before the user opened the session
+    /// are dropped from the transient view (they arrive again in the durable settle).
+    private static let assistantStreamSanitizeScript = """
+    (function () {
+      if (window.__dshWsSanitize) return;
+      window.__dshWsSanitize = true;
+      function scrub(text) {
+        if (typeof text !== 'string' || text.indexOf('activeAttempt') === -1) return text;
+        var parsed;
+        try { parsed = JSON.parse(text); } catch (e) { return text; }
+        var changed = false;
+        var stack = [parsed];
+        while (stack.length > 0) {
+          var node = stack.pop();
+          if (node === null || typeof node !== 'object') continue;
+          if (Array.isArray(node)) {
+            for (var i = 0; i < node.length; i += 1) stack.push(node[i]);
+            continue;
+          }
+          var attempt = node.activeAttempt;
+          if (attempt && typeof attempt === 'object' && Array.isArray(attempt.stream) && attempt.stream.length > 0) {
+            attempt.stream = [];
+            changed = true;
+          }
+          for (var key in node) {
+            if (Object.prototype.hasOwnProperty.call(node, key)) stack.push(node[key]);
+          }
+        }
+        if (changed) {
+          try {
+            var perf = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.dshPerf;
+            if (perf) perf.postMessage({ kind: 'sanitize', detail: 'cleared the live assistant-stream baseline' });
+          } catch (e) {}
+          return JSON.stringify(parsed);
+        }
+        return text;
+      }
+      function wrap(handler) {
+        return function (event) {
+          try {
+            var data = event && event.data;
+            var fixed = scrub(data);
+            if (fixed !== data) event = { data: fixed };
+          } catch (e) {}
+          return handler.call(this, event);
+        };
+      }
+      var proto = WebSocket.prototype;
+      var addEventListener = proto.addEventListener;
+      proto.addEventListener = function (type, listener, options) {
+        if (type === 'message' && typeof listener === 'function') {
+          return addEventListener.call(this, type, wrap(listener), options);
+        }
+        return addEventListener.apply(this, arguments);
+      };
+      var descriptor = Object.getOwnPropertyDescriptor(proto, 'onmessage');
+      if (descriptor && descriptor.set) {
+        Object.defineProperty(proto, 'onmessage', {
+          configurable: true,
+          enumerable: descriptor.enumerable,
+          get: descriptor.get,
+          set: function (handler) {
+            descriptor.set.call(this, handler === null || handler === undefined ? handler : wrap(handler));
+          }
+        });
+      }
+    })()
+    """
+
+    /// Workaround for a dsh 0.1.5-rc.3 client defect (dsh's own source is never
+    /// patched): opening a RUNNING session can reject while expanding the
+    /// assistant-stream opening snapshot (`Assistant stream raw chunk must be a
+    /// lossless JSON object`), leaving the session view stuck on its loading state.
+    /// A second click recovers — the bad frame exists only in that instant's live
+    /// snapshot — so re-open the session once on that rejection. Bounded, and only
+    /// for the assistant-stream family.
+    private static let assistantStreamRetryScript = """
+    (function () {
+      if (window.__dshStreamRetryInstalled) return;
+      window.__dshStreamRetryInstalled = true;
+      var tries = 0;
+      var resetAt = 0;
+      function retry() {
+        var row = document.querySelector('[role="treeitem"][aria-selected="true"]');
+        if (row && row.click) { row.click(); return; }
+        var sid = window.__dshLastTrackedSession;
+        if (sid && typeof window.__dshOpenSession === 'function') {
+          try { window.__dshOpenSession(sid, null); } catch (e) {}
+        }
+      }
+      window.addEventListener('unhandledrejection', function (event) {
+        var reason = event.reason;
+        var message = String((reason && (reason.message || reason)) || reason);
+        if (message.indexOf('Assistant stream') === -1) return;
+        var now = Date.now();
+        if (now > resetAt) { tries = 0; }
+        if (tries >= 3) return;
+        tries += 1;
+        resetAt = now + 3000;
+        setTimeout(retry, 500);
+      });
+    })()
+    """
+
+    /// Dev-only WebView diagnostics (see rebuildWebView): forwards what the native
+    /// side cannot see — uncaught errors, unhandled rejections, long tasks (>=200ms)
+    /// and click targets — through the `dshPerf` message handler into app.log.
+    private static let webViewDiagnosticsScript = """
+    (function () {
+      if (window.__dshPerfInstalled) return;
+      window.__dshPerfInstalled = true;
+      function post(kind, detail) {
+        try {
+          window.webkit.messageHandlers.dshPerf.postMessage({ kind: kind, detail: String(detail).slice(0, 900) });
+        } catch (e) {}
+      }
+      window.addEventListener('error', function (e) {
+        post('error', (e.message || '') + ' @ ' + (e.filename || '') + ':' + (e.lineno || 0));
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason;
+        var cause = r && r.cause ? String((r.cause && (r.cause.message || r.cause)) || '') : '';
+        var stack = r && r.stack ? String(r.stack).split(String.fromCharCode(10)).slice(0, 6).join(' > ') : '';
+        post('rejection', ((r && (r.message || r)) || 'unknown') + ' | cause=' + cause + ' | ' + stack);
+      });
+      try {
+        var po = new PerformanceObserver(function (list) {
+          list.getEntries().forEach(function (entry) {
+            if (entry.duration >= 200) post('longtask', Math.round(entry.duration) + 'ms');
+          });
+        });
+        po.observe({ entryTypes: ['longtask'] });
+      } catch (e) {}
+      document.addEventListener('click', function (e) {
+        var t = e.target; var label = '';
+        try {
+          label = (t && t.getAttribute && (t.getAttribute('aria-label') || t.getAttribute('title')))
+                  || (t && (t.textContent || '').trim().slice(0, 60)) || '';
+        } catch (err) {}
+        post('click', label + ' @' + Math.round(performance.now()) + 'ms');
+      }, true);
+    })()
+    """
 
     /// Tracks which dsh session the user is currently viewing / interacting
     /// with. Opening a session or sending a message makes the dsh web client
@@ -5256,6 +5492,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // MARK: WKScriptMessageHandler (file preview bridge)
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        // 开发版诊断（仅 dev 注入）：把主 WebView 的页面错误 / 长任务写进 app.log。
+        if message.name == "dshPerf" {
+            if let body = message.body as? [String: Any] {
+                AppLog.shared.log("webview: \(body["kind"] ?? "?") \(body["detail"] ?? "")")
+            }
+            return
+        }
         if message.name == "dshPreview" {
             guard let body = message.body as? [String: Any], let path = body["path"] as? String else { return }
             // dsh >= 0.1.5 hands the raw (possibly workspace-relative) path to
@@ -6101,6 +6344,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         bridge.tasksCreate = { [weak self] workspace, focus, drafts in
             self?.tasksPanel?.apiTaskCreate(workspace: workspace, focus: focus, drafts: drafts)
                 ?? BrowserAPIBridge.tasksUnavailable
+        }
+        bridge.tasksQueueCreate = { [weak self] request in
+            self?.tasksPanel?.apiTaskQueueCreate(request) ?? BrowserAPIBridge.tasksUnavailable
+        }
+        bridge.tasksQueueStart = { [weak self] request in
+            self?.tasksPanel?.apiTaskQueueStart(request) ?? BrowserAPIBridge.tasksUnavailable
+        }
+        bridge.tasksQueueAppend = { [weak self] request in
+            self?.tasksPanel?.apiTaskQueueAppend(request) ?? BrowserAPIBridge.tasksUnavailable
+        }
+        bridge.tasksQueueDeliver = { [weak self] request in
+            self?.tasksPanel?.apiTaskQueueDeliver(request) ?? BrowserAPIBridge.tasksUnavailable
         }
         bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
         bridge.hidePanel = { [weak self] in

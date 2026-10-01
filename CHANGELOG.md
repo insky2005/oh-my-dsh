@@ -9,9 +9,79 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **队列收尾优先复用来源会话（2026-10-01）**：队列在哪个会话里创建，就尽量在哪个会话里收尾——创建 / 验收 / 收尾同一条对话，不用在侧栏里另找一个「收尾：…」会话。手动创建的队列没有来源会话，才新建专门的收尾会话。来源会话是真实对话，所以提示词要求最后回一个**唯一完成标记**，壳层只采用带标记的那次汇报（避免把用户别的回合当成收尾结果）；来源会话不可用 / 忙到超时 / 已从 dsh 消失时**回退新建**，且**绝不取消**用户的会话。设计见 §14 决策 12。
+  回归：tests/tasks-panel **1393 → 1405** 项（运行器 442→**454**）。
+
+- **任务面板新增「使用说明」（2026-10-01）**：右上角**始终**有问号帮助按钮，点开是与「新建队列」同款的抽屉；没有任何队列 / 任务时，说明**还会直接铺在内容区**（跟空态一起）。内容由纯模型 TasksHelpModel 按 L10n 键生成——新建任务 / 队列 / Git 工作流 / 会话回传四节，中英成对，语言切换即时重渲染。空态只在**未筛选**时展示说明：筛选下没有匹配，出路是切回筛选，不该再铺一段说明。
+  回归：tests/tasks-panel **1333 → 1363** 项（视图模型 349→**371** / 视图 235→**243**）。
+
+- **任务队列的 Git 工作流可配置（2026-10-01）**：队列干完的活如何「落地」现在是一个显式设置，
+  而不是写死的「开 PR」。四种模式：**pr**（推送分支 + 开/更新 PR）、**merge**（本地把队列分支合并进基线并推送基线）、
+  **push**（直推当前分支）、**无**（不做任何收尾——非 git 项目，或明确不让它自动碰远端）；动作仍全部交给**收尾会话**执行（凭据与判断在会话侧，壳层不直接 merge/push），
+  冲突尽量现场解决、拿不准就停下请用户介入、base 受保护如实报错。要点：
+  - **默认工作流是按工作区的**，与 GitHub token 合并进同一个**设置抽屉**（面板右上齿轮；原来 token 是个 NSAlert，
+    现在是和「新建队列」同款的抽屉），抽屉里给出**本工作区推荐**（GitHub → pr、普通 git → merge、非 git → 无，
+    仅提示不强制），默认工作流是**单选按钮组**（不是下拉，四档同时可见）；
+    存 ShellConfig 的「工作区路径 → 模式」映射（`tasksIntegrationByWorkspace`，不往用户仓库写文件），
+    未设置过时用该工作区的推荐——所以首次打开抽屉默认选中的就是推荐那一档。
+    需要「全局一份」的话属于**壳层设置**，不在任务面板；
+  - **队列级覆盖**：队列表单「高级设置」里是**单选组**（跟随设置 + 四档），推荐工作区标在 caption 行上；
+    `TaskQueue.integration` 存队列自己的选择（null = 跟随本工作区的默认）；
+  - 队列卡「发布」按钮的**图标与文案跟着模式走**（开 PR / 合并到基线 / 直接推送；「无」时没有发布按钮）；
+    收尾会话的结果（成功摘要首行或失败原因）写在队列卡上；`autoPR` 语义收敛为「完成后自动收尾（按 Git 工作流）」，
+    而「无」会让 autoPR 也收尾无动作；
+  - 新增 `QueueIntegration.recommended(isGit:hasGitHubRemote:)` 纯函数，以及 `TaskBoard.createQueue(integration:)` /
+    `TasksRunner.createQueue(integration:)` / `createQueueWithTasks(integration:)` / `updateQueue(integration:)`。
+  回归：`tests/tasks-panel` **1272 → 1333** 项（模型 201→**203** / 运行器 420→**433** / 视图模型 338→**349** /
+  视图 200→**235** / 本地 API 113）。设计见 `docs/tasks-queue-session-loop-design.md` §14 决策 8/11、§15。
+
 - **设置菜单新增「打开数据文件夹」（⌘D，位于「打开日志文件夹」之前，2026-09-29）**：直接打开 `$DSH_HOME/oh-my-dsh/`（不存在则创建），方便查看 / 备份壳层工作数据与迁移回退说明 `ROLLBACK.md`；开发版打开的是 `~/.dsh-dev/oh-my-dsh/`。
 
+- **任务队列的会话闭环（2026-09-30）**：`task-todo` 现在能把一次沟通落成「**等待态队列 + 批量任务**」，并可按用户指令启动；队列**跑到完成（`.done`）时把各任务的完成情况回传创建它的会话**（`session.prompt`），用户在同一个会话里验收、要求调整。要点：
+  - 队列新增独立状态 **`.draft`（待启动）**——与「启动过但停了」的 `.paused` 分开；`.draft` 不会自己开跑，App 重启后也保持 `.draft`（只有 `.active` 会转 `.paused`）；
+  - 新端点 **`POST /api/tasks/queue/create`**（建 `.draft` 队列 + 批量入队，`session` 记录来源会话）与 **`POST /api/tasks/queue/start`**（按 `queueId` 启动；缺省时启动「本会话创建的那个等待队列」，多个则返回 `409 ambiguous-queue` 让调用方消歧）；
+  - 队列↔会话关联与「已回传」标记存在 `local.json`（`queueSessions` / `queueNotified`，机器私有）；**只有进入 `.done` 才回传**，失败 / 手动取消停在 `.paused` 不回传；回传失败也记标记（避免死循环），App 重启后在空闲 step 补发一次；
+  - 回传文案要求收到它的 agent **只做简短确认**、不主动改代码；回传内容给每条任务的**完整汇报**（单条上限 1500 字，超出标注「已截断」）与失败前的汇报，队列分支 + 分支提交列表（非 git 仓库不显示）、耗时与 PR，**不含会话标识**；
+  - 面板队列头在「有来源会话」时显示一枚 ↺（tooltip：完成后回传发起会话）；`queue/start` 也支持按 `name` 消歧；
+  - 技能正文（内嵌常量 + 仓库副本字节一致）**默认**建「等待态队列 + 入队」，只有用户明确说「只建任务 / 先别入队 / 不要队列」时才只建裸任务，并补充启动话术；设计见 `docs/tasks-queue-session-loop-design.md`。
+  回归：`tests/tasks-panel` 1129 → **1226** 项（模型 188 / 运行器 410 / 视图模型 328 / 视图 199 / 本地 API 101）。
+
+### Fixed
+
+- **发布后队列卡不刷新 / 结果只有一行 / 状态行总说「开 PR」（2026-10-01）**：点发布后卡片像卡住了——错误提示还在、结果不出来；会话回写的结果只显示一行；运行状态行不论什么工作流都写「正在开 PR」。三处都修了：
+  - 3 秒刷新的看板指纹（boardSignatureNow）现在包含队列的 prError / prUrl / integrationNote——发布恰好只改这几个字段，以前定时器判定「没变化」就不重绘；
+  - 收尾会话的**整段汇报**（上限 4000 字）回写到 integrationNote；卡片默认显示第一行，多出「展开 / 收起」，展开后完整换行显示（折叠的队列仍会显示失败原因）；
+  - 运行状态行按解析出的工作流说：正在合并到基线 / 正在推送 / 正在开 PR。
+  回归：tests/tasks-panel **1378 → 1393** 项（运行器 441→**442** / 视图模型 374→**381** / 视图 247→**254**）。
+
+- **非 GitHub 的 git 仓库：合并被误判成「开 PR」，且本地仓库根本发不出去（2026-10-01）**：测试一个 git 仓库（没有 GitHub 远端）时，点队列「发布」只看到泛泛的「开不了 PR」，还以为是代码去开 PR 了。两处都修了：
+  - 「合并到基线」是**本地操作**，不再要求任何远端——没远端就只合并、不推送（提示词明确「不要尝试推送」，并让会话报「已合并到 X（无远端，未推送）」）；只有「直接推送」才必须有可推送的远端。merge 的发布按钮在本地仓库也会出现且能用；
+  - 发布被拒时把**具体原因**显示出来（没分支 / 没有可推送的远端 / **已经有一个收尾会话在跑**——后者以前既不写错误也不说明，只报通用文案）；tasks.errPRStart / tasks.errPRNoRemote 改成「发布 / 远端」口径，不再一律说 PR；
+  - 失败原因显示在**队列卡**上（红色警示行，折叠时也显示），**不再占用发布按钮的 tooltip**——按钮的 tooltip 永远只说明它做什么；新的一轮任务开始时会清掉上一轮的结果与失败原因。
+  回归：tests/tasks-panel **1363 → 1378** 项（运行器 433→**441** / 视图模型 371→**374** / 视图 243→**247**）。
+
+- **切换 dsh 会话卡顿（2026-10-01）**：在 dsh web 里每切一次会话，壳层就对当前工作区**重新 adopt**——`IssueRunnerPanel.adoptWorkspace` 在**主线程**同步 spawn `/usr/bin/git`（`detectGitHubRemote` / `isGitRepo` / `detectDefaultBaseBranch`），而 dsh web 就跑在同一线程的 WKWebView 里，于是切会话瞬间整窗口冻结（app.log 每次切换都有 `tasks: workspace adopted …`，即使路径没变）。现在 `workspaceChanged()` 走纯函数 `TaskWorkspaceRegistry.needsReadopt`：**同一（标准化后）工作区 + 有 runner 直接短路**，不再重探；真正的跨工作区切换照旧，工作区**形状变化**（任务跑了 `git init`）仍由 step 定时器上的 `recheckWorkspaceShape` 负责重建。回归：`tests/tasks-panel` 新增 5 项（同路径/尾斜杠/换路径/无 runner/无路径）。
+
 ### Changed
+
+- **队列状态标签配色（2026-10-01）**：进行中 = 蓝、暂停 = 橙、完成 = 绿、失败 / 错误 = 红、**关闭 = 灰**（此前关闭是橙，和暂停/待启动混在一起）。待启动与「等待中」仍是橙（可行动的语气）。
+
+- **队列改为「可追加的活泳道」+ 手动发布（2026-10-01）**：把队列从「一次性任务批」调整为可迭代的
+  工作泳道，配合「主 Agent 拆任务 → 队列执行 → 回传验收 → 再追加」的循环：
+  - 新增手动终态 **`.closed`**：队列头「关闭队列」（保留任务/分支/PR 记录，之后不再接收任务、不能启动或发布）；
+  - **`.done` 只是「当前一批任务都结束」**：追加任务回到 `.draft` 并**重臂回传**（下一轮完成照常回传源会话）；
+    `.paused`（有失败）追加保持 `.paused`；向已有队列追加任务**不再自动启动**（新建空队列的「加入即开始」不变）；
+  - **PR/push 改为手动**：`autoPR` 成为队列配置、**默认关闭**（技能建的队列也不再默认自动开 PR）；
+    队列头「发布」按解析出的 Git 工作流执行（PR 已存在时是「更新」，PR 链接另行保留，可随时打开）；
+    **merge/push 都由收尾会话执行**，壳层不直接碰；
+  - 队列区与「加入队列 ▾」改为**最新在前**（按 `createdAt` 倒序；老队列 / 无时间戳的排最后），
+    新建的队列不再沉到最下面；
+  - 任务会话在 dsh web 侧栏加前缀 **「TASK: 」**（如「TASK: 改 README」），一眼认出这是队列起的会话；
+  - 面板：`.closed` 状态文案与按钮；`.done` 增加「关闭」入口；发布与 PR 链接拆成两个控件；
+  - **新增 `POST /api/tasks/queue/append`**：`task-todo` 技能**默认**把新任务**追加到本会话已有的队列**
+    （没有才新建；目标按 `queueId` / `name` / `session` 解析），不再要求用户明说「追加」——
+    用户明确说「新建队列 / 另起一个」时才直接 create。
+  回归：`tests/tasks-panel` 1129 → **1272** 项。
 
 - **壳层工作数据收敛到 `$DSH_HOME/oh-my-dsh/`（2026-09-29）**：把壳层自己的工作数据从 `$DSH_HOME` 根迁到与 `projects/` 并列的新根 —— `shell/`（设置 / 状态 / 快照）、`browser/`（CEF profile；**去掉开发版 `browser-dev` 后缀**，正式版与开发版统一 `<DSH_HOME>/oh-my-dsh/browser`）、`repo-wiki/`、`channel-runtime/`、`channels/`、`tokens/` + `gh-token`、`browser-api.port` / `shell-api.port`。dsh 自有数据（`sessions/`、`storages/`、`settings.yaml` 等）与上游契约路径 `$DSH_HOME/skills/` 保持不动；`~/Library/{Logs,Caches}` 与 Application Support 运行时也不动。路径的单一事实来源为 Swift `ShellPaths` / core `shell-paths.js`；启动（以及显式 `--home` 的 CLI）做一次**幂等迁移**：源不存在或目标已存在即跳过、失败保留源并记 `app.log`，正式 home 与开发版 `~/.dsh-dev` 都覆盖；GitHub token 读取链保留旧路径只读兜底；迁移时在 `$DSH_HOME/oh-my-dsh/ROLLBACK.md` 落一份双语回退说明（实际迁移条目 + 时间/App 版本 + 退出后把子目录 `mv` 回根目录的脚本），供降级旧版或快速撤销时自助使用；本次确有搬迁时启动后弹一次**非模态提示**（说明 + 「查看回退说明」按钮打开 `ROLLBACK.md`），**全新安装不提示**。回滚快照排除表新增 `oh-my-dsh`（`core/lib/snapshot.js`）。设计见 `docs/storage-layout-refactor.md`；回归：`core` 289 项（新增 `core/tests/shell-paths.test.js` 6 项）与 `tests/{shell-config,channel-panel,skills-panel,wiki-panel,snapshot-rollback,projects-panel,tasks-panel,skills,browser-panel}` 全绿。
 

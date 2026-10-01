@@ -112,6 +112,8 @@ final class FakeDsh {
     private(set) var prompts: [String: String] = [:]
     var createFails = false
     var promptFails = false
+    /// Fail the NEXT N prompts, then succeed (lets a test make only one prompt fail).
+    var promptFailuresRemaining = 0
 
     func create() -> String? {
         if createFails { return nil }
@@ -128,8 +130,20 @@ final class FakeDsh {
 
     func prompt(_ id: String, _ text: String) -> Bool {
         if promptFails { return false }
+        if promptFailuresRemaining > 0 {
+            promptFailuresRemaining -= 1
+            return false
+        }
         prompts[id] = text
         return true
+    }
+
+    /// Completion reports sent back to the session that created a queue.
+    private(set) var notifications: [(session: String, text: String)] = []
+    var notifyFails = false
+    func notify(_ id: String, _ text: String) -> Bool {
+        notifications.append((id, text))
+        return !notifyFails
     }
 
     func cancel(_ id: String) -> Bool {
@@ -177,7 +191,8 @@ final class Harness {
          gitRepo: Bool = true,
          timeout: TimeInterval = 30 * 60,
          asynchronous: Bool = false,
-         defaultBaseBranch: String = "main") {
+         defaultBaseBranch: String = "main",
+         autoCloseOnPublish: Bool = false) {
         self.asynchronous = asynchronous
         let work = self.work
         let asynchronous = asynchronous        // captured by the perform closure
@@ -193,6 +208,7 @@ final class Harness {
             promptSession: { id, text in dsh.prompt(id, text) },
             sessionState: { id in dsh.sessionState(id) },
             defaultBaseBranch: defaultBaseBranch,
+            autoCloseOnPublish: autoCloseOnPublish,
             canSwitchBranches: gitRepo,
             canOpenPR: { github },
             cancelSession: { id in dsh.cancel(id) },
@@ -222,6 +238,7 @@ final class Harness {
                                           shape: shape)
             },
             sessionReport: { id in dsh.report(id) },
+            notifySession: { id, text in dsh.notify(id, text) },
             persist: { board in rec.persistCount += 1; _ = board },
             persistIssueTask: { task in rec.issueWrites.append(task.id) },
             log: { message in rec.logs.append(message) },
@@ -287,7 +304,7 @@ do {
     eq(h.repo.current, "feature/docs-cleanup", "the worktree is on the queue branch")
     eq(h.repo.checkouts, ["main", "feature/docs-cleanup"], "checkout base then create the branch")
     check(h.repo.calls.contains("status --porcelain"), "the clean check ran before switching")
-    check(h.dsh.titles["session-1"] == "Polish README", "the session was renamed")
+    check(h.dsh.titles["session-1"] == "TASK: Polish README", "the session was renamed with the TASK prefix")
     check((h.dsh.prompts["session-1"] ?? "").contains("Docs Cleanup"), "the prompt names the queue")
     check(h.rec.persistCount > 0, "state was persisted while starting")
 
@@ -312,11 +329,16 @@ do {
     check(prPrompt.contains("base = main"), "and which base to open against")
     check(prPrompt.contains("不要改任何代码"), "and that it must not touch the code")
 
-    h.dsh.reports[prSession] = "已推送分支并创建 PR：https://github.com/o/r/pull/12"
+    // A multi-line report: the card shows the first line collapsed, but the WHOLE
+    // report is what gets written back (user 2026-10-01).
+    h.dsh.reports[prSession] = "已推送分支并创建 PR：https://github.com/o/r/pull/12\n改动摘要：安装段重写\n校验：markdownlint 通过"
     h.dsh.finishAll()
     check(h.runner.step() == false, "the PR run ends")
     eq(h.board.queue(queueID)?.prUrl, "https://github.com/o/r/pull/12",
        "the PR url it reported lands on the queue")
+    eq(h.board.queue(queueID)?.integrationNote,
+       "已推送分支并创建 PR：https://github.com/o/r/pull/12\n改动摘要：安装段重写\n校验：markdownlint 通过",
+       "整段汇报都回写到队列（不只第一行）")
     check(h.runner.isBusy == false, "nothing is in flight")
 }
 
@@ -510,7 +532,7 @@ do {
     _ = h.runner.startQueue(queue.id)
     h.dsh.finishAll()
     _ = h.runner.step()
-    check(h.runner.startQueuePR(queue.id) == false, "a queue without a branch cannot open a PR")
+    check(h.runner.startQueueIntegration(queue.id) == false, "a queue without a branch cannot finalize")
     eq(h.dsh.sessions.count, 1, "and no session is wasted on it")
     eq(h.board.queue(queue.id)?.prError, "tasks.errPRNoBranch", "the reason is on the queue")
     check(h.rec.logged("has no branch"), "and in the log")
@@ -925,14 +947,14 @@ do {
 
     let choices = h.runner.queueChoices()
     eq(choices.count, 2, "both user queues are offered")
-    eq(choices.first?.name, "Docs Cleanup", "choices keep the creation order")
+    eq(choices.first?.name, "Second lane", "choices are newest-first")
     eq(choices.first?.taskCount, 0, "an empty queue reports zero tasks")
     check(choices.allSatisfy { $0.branch?.hasPrefix("feature/") == true }, "each choice carries its branch")
 
     check(h.runner.enqueue(taskID: id, into: q1.id), "the task joins the chosen queue")
     check(h.board.task(id)?.queueId == q1.id, "the membership is recorded")
     check(h.board.task(id)?.state == .running, "it starts right away (the runner was idle)")
-    eq(h.runner.queueChoices().first?.taskCount, 1, "the choice count follows the queue")
+    eq(h.runner.queueChoices().first { $0.id == q1.id }?.taskCount, 1, "the choice count follows the queue")
     check(h.runner.deleteManualTask(id) == false, "a running task cannot be deleted")
     eq(h.runner.cancelRunning(), .cancelled, "cancel it first")
     check(h.board.task(id)?.state == .cancelled, "the task is cancelled")
@@ -1427,6 +1449,419 @@ do {
     h.dsh.finishAll()
     _ = h.runner.step()
     check(h.board.task(b.id)?.state == .done, "两条都被批量救回来了")
+}
+
+section("切会话：同一工作区不重新 adopt（主线程 git 探测不再每次跑）")
+do {
+    check(!TaskWorkspaceRegistry.needsReadopt(resolved: "/repo/a", adopted: "/repo/a", hasRunner: true),
+          "同一路径 + 有 runner → 不需要重新 adopt")
+    check(!TaskWorkspaceRegistry.needsReadopt(resolved: "/repo/a/", adopted: "/repo/a", hasRunner: true),
+          "尾斜杠也算同一路径")
+    check(TaskWorkspaceRegistry.needsReadopt(resolved: "/repo/b", adopted: "/repo/a", hasRunner: true),
+          "换了路径 → 需要重新 adopt")
+    check(TaskWorkspaceRegistry.needsReadopt(resolved: "/repo/a", adopted: "/repo/a", hasRunner: false),
+          "当前工作区没有 runner → 仍需 adopt")
+    check(TaskWorkspaceRegistry.needsReadopt(resolved: nil, adopted: "/repo/a", hasRunner: true),
+          "拿不到路径 → 仍需 adopt")
+}
+
+section("queue API: 建「等待态」队列 + 批量入队，不启动")
+do {
+    let h = Harness(board: TaskBoard(), github: true, gitRepo: true)
+    let result = h.runner.createQueueWithTasks(name: "Dark Mode",
+                                               branch: nil, baseBranch: nil, autoPR: nil,
+                                               originSession: "session-origin",
+                                               drafts: [TaskDraft(title: "深色模式", body: "改主题"),
+                                                        TaskDraft(title: "跟随系统", body: "")])
+    eq(result.queue.state, QueueState.draft, "新队列是 draft（等待启动）")
+    eq(result.queue.branch, "feature/dark-mode", "分支从名字派生")
+    check(result.queue.autoPR == false, "autoPR 默认关闭（PR 走手动发布）")
+    eq(result.created.count, 2, "两条任务都建了")
+    check(h.board.task(result.created[0].id)?.state == .queued, "任务在队列里等待")
+    eq(h.board.queue(result.queue.id)?.state, QueueState.draft, "没有启动任何东西")
+    eq(h.board.local.queueSessions[result.queue.id], "session-origin", "记录了来源会话")
+    check(h.runner.runningTaskID == nil, "runner 是空闲的")
+    check(h.dsh.prompts.isEmpty, "连提示词都没发过")
+    check(h.dsh.notifications.isEmpty, "也没有回传")
+}
+
+section("追加任务不自动启动；关闭队列是手动终态")
+do {
+    let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
+    let r = h.runner.createQueueWithTasks(name: "Lane", branch: "", autoPR: false,
+                                          originSession: "session-origin",
+                                          drafts: [TaskDraft(title: "A", body: "")])
+    _ = h.runner.startQueue(r.queue.id)
+    h.dsh.finish("session-1")
+    _ = h.runner.step()
+    eq(h.board.queue(r.queue.id)?.state, QueueState.done, "第一个任务完成 → done")
+
+    // 追加：任务入队，但队列回到 draft，不自动开跑。
+    let extra = h.runner.createManualTask(TaskDraft(title: "B", body: "do B"))!
+    _ = h.runner.enqueue(taskID: extra.id, into: r.queue.id)
+    eq(h.board.queue(r.queue.id)?.state, QueueState.draft, "追加后回到 draft")
+    check(h.runner.runningTaskID == nil, "追加不自动启动")
+
+    // API 路径（appendTasks）同样：入队、回 draft、不启动。
+    let more = h.runner.appendTasks(toQueueID: r.queue.id, drafts: [TaskDraft(title: "D", body: "")])
+    eq(more.count, 1, "appendTasks 建了 1 条")
+    eq(h.board.queue(r.queue.id)?.state, QueueState.draft, "appendTasks 后仍是 draft")
+
+    // 关闭：手动终态。
+    check(h.runner.closeQueue(r.queue.id), "关闭队列")
+    eq(h.board.queue(r.queue.id)?.state, QueueState.closed, "状态 closed")
+    check(!h.runner.startQueue(r.queue.id), "关闭后启动被拒")
+    check(!h.runner.enqueue(taskID: extra.id, into: r.queue.id), "关闭后追加被拒")
+}
+
+section("工作流：队列级覆盖决定交付会话（merge 不需要 GitHub）")
+do {
+    // 默认（.pr）在非 GitHub 工作区拒绝收尾：只建任务会话。
+    let (board0, task0, queue0) = singleTaskBoard()
+    let h0 = Harness(board: board0, github: false, gitRepo: true)
+    _ = h0.runner.enqueue(taskID: task0, into: queue0)
+    h0.dsh.finishAll()
+    _ = h0.runner.step()
+    eq(h0.board.queue(queue0)?.state, QueueState.done, "任务完成，队列 done")
+    check(h0.runner.openingPRQueueID == nil, "默认 pr 在非 GitHub 工作区不收尾")
+    eq(h0.dsh.sessions.count, 1, "只建了任务会话，没有收尾会话")
+
+    // 覆盖为 .merge：同样的工作区就能收尾（只要 git 远端在）。
+    let (board1, task1, queue1) = singleTaskBoard()
+    var b1 = board1
+    if let i = b1.index(ofQueue: queue1) { b1.queues[i].integration = .merge }
+    let h1 = Harness(board: b1, github: false, gitRepo: true)
+    eq(h1.board.integration(forQueue: queue1, default: .pr), .merge, "队列覆盖优先于全局默认")
+    _ = h1.runner.enqueue(taskID: task1, into: queue1)
+    h1.dsh.finishAll()
+    _ = h1.runner.step()
+    eq(h1.runner.openingPRQueueID, queue1, "merge 模式下收尾会话照常启动")
+    eq(h1.dsh.sessions.count, 2, "多了一个收尾会话")
+    let finalizeSession = h1.dsh.sessions[1]
+    check((h1.dsh.prompts[finalizeSession] ?? "").contains("合并"),
+          "提示词说的是合并，不是开 PR")
+
+    // 收尾会话还在跑时再点发布：拒绝，并把「忙」这个具体原因写到队列上
+    // （面板过去只会报通用的「开不了 PR」，用户不知道卡在哪）。
+    check(!h1.runner.startQueueIntegration(queue1), "已经有一个收尾会话在跑：拒绝再起一个")
+    eq(h1.board.queue(queue1)?.prError, "tasks.errPRBusy", "原因是「忙」，带具体文案键")
+
+    // merge 没有远端也能收尾：本地合并，推送跳过（用户 2026-10-01）。
+    let (board3, task3, queue3) = singleTaskBoard()
+    var b3 = board3
+    if let i = b3.index(ofQueue: queue3) { b3.queues[i].integration = .merge }
+    let h3 = Harness(board: b3, github: false, gitRepo: true)
+    h3.repo.remote = nil
+    _ = h3.runner.enqueue(taskID: task3, into: queue3)
+    h3.dsh.finishAll()
+    _ = h3.runner.step()
+    eq(h3.runner.openingPRQueueID, queue3, "merge 没有远端也能收尾（本地合并）")
+    let mergeSession = h3.dsh.sessions[1]
+    let mergePrompt = h3.dsh.prompts[mergeSession] ?? ""
+    check(mergePrompt.contains("没有远端"), "提示词说明这个工作区没有远端")
+    check(mergePrompt.contains("不要尝试推送"), "并要求不要推送")
+    check(!mergePrompt.contains("推送到远端"), "不再要求推送到远端")
+
+    // push 没有远端：拒绝，并把原因写在队列上。
+    let (board4, task4, queue4) = singleTaskBoard()
+    var b4 = board4
+    if let i = b4.index(ofQueue: queue4) { b4.queues[i].integration = .push }
+    let h4 = Harness(board: b4, github: false, gitRepo: true)
+    h4.repo.remote = nil
+    _ = h4.runner.enqueue(taskID: task4, into: queue4)
+    h4.dsh.finishAll()
+    _ = h4.runner.step()
+    check(h4.runner.openingPRQueueID == nil, "push 没有远端：拒绝收尾")
+    eq(h4.board.queue(queue4)?.prError, "tasks.errPRNoRemote", "原因是「没有可推送的远端」")
+
+    // 「无」：即使 autoPR 开着、工作区能开 PR，也不起收尾会话；这不是失败。
+    let (board2, task2, queue2) = singleTaskBoard()
+    var b2 = board2
+    if let i = b2.index(ofQueue: queue2) { b2.queues[i].integration = QueueIntegration.none }
+    let h2 = Harness(board: b2, github: true, gitRepo: true)
+    // NOTE: write QueueIntegration.none in full — ".none" on an Optional VAR means
+    // Optional.none (nil), which would silently CLEAR the override instead.
+    eq(h2.board.integration(forQueue: queue2, default: .pr), QueueIntegration.none,
+       "队列覆盖解析为「无」")
+    _ = h2.runner.enqueue(taskID: task2, into: queue2)
+    h2.dsh.finishAll()
+    _ = h2.runner.step()
+    eq(h2.board.queue(queue2)?.state, QueueState.done, "任务完成，队列 done")
+    check(h2.runner.openingPRQueueID == nil, "工作流「无」不起收尾会话（autoPR 也不管用）")
+    eq(h2.dsh.sessions.count, 1, "只有任务会话，没有收尾会话")
+    check(h2.board.queue(queue2)?.prError == nil, "「无」是明确选择，不记错误")
+    check(!h2.runner.startQueueIntegration(queue2), "手动发布同样被拒")
+}
+
+section("交付复用来源会话（有则用；完成标记保证不读错回合）")
+do {
+    // 用来源会话收尾：不再新建会话，提示词带唯一完成标记。
+    let (board, taskID, queueID) = singleTaskBoard()
+    var b = board
+    b.local.queueSessions[queueID] = "origin-session"
+    let h = Harness(board: b)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.dsh.sessions.count, 1, "复用来源会话：没有新建收尾会话")
+    eq(h.runner.openingPRQueueID, queueID, "收尾跑在来源会话上")
+    let originPrompt = h.dsh.prompts["origin-session"] ?? ""
+    check(originPrompt.contains("DSH-FINALIZE-"), "提示词要求回一个完成标记")
+    let markerRange = originPrompt.range(of: "DSH-FINALIZE-[0-9A-F]+", options: .regularExpression)
+    check(markerRange != nil, "提示词里能取到完成标记")
+    let marker = markerRange.map { String(originPrompt[$0]) } ?? "DSH-FINALIZE-NONE"
+
+    // 来源会话里先有一段**不相干**的汇报：没有标记时不能被当成收尾结果。
+    h.dsh.reports["origin-session"] = "用户闲聊，和收尾无关"
+    _ = h.runner.step()
+    check(h.board.queue(queueID)?.integrationNote == nil, "没有标记就继续等，不采用这段汇报")
+    check(h.runner.openingPRQueueID == queueID, "收尾仍未结束")
+
+    // 标记回来：采用这次汇报，并把标记从结果里去掉。
+    h.dsh.reports["origin-session"] = "已合并到 main（无远端，未推送）\n" + marker
+    _ = h.runner.step()
+    eq(h.board.queue(queueID)?.integrationNote, "已合并到 main（无远端，未推送）",
+       "只采用带标记的汇报，并去掉标记")
+    check(h.runner.openingPRQueueID == nil, "收尾结束")
+}
+
+section("来源会话用不了时回退新会话")
+do {
+    let (board, taskID, queueID) = singleTaskBoard()
+    var b = board
+    b.local.queueSessions[queueID] = "origin-session"
+    let h = Harness(board: b)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    // 任务会话已经建好；让**下一次** prompt（给来源会话的收尾指令）失败。
+    h.dsh.promptFailuresRemaining = 1
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    check(h.dsh.prompts["origin-session"] == nil, "来源会话没有收到收尾指令")
+    eq(h.dsh.sessions.count, 2, "回退：新建了一个专门的收尾会话")
+    let fresh = h.dsh.sessions[1]
+    check((h.dsh.prompts[fresh] ?? "").contains("交付") || (h.dsh.prompts[fresh] ?? "").contains("PR"),
+          "新会话收到了交付指令")
+    check(!(h.dsh.prompts[fresh] ?? "").contains("DSH-FINALIZE-"),
+          "新会话不需要完成标记（它是专用的）")
+}
+
+section("队列到达 .done：回传完成情况到来源会话（一次，幂等）")
+do {
+    let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
+    let r = h.runner.createQueueWithTasks(name: "Dark Mode", branch: "", autoPR: false,
+                                          originSession: "session-origin",
+                                          drafts: [TaskDraft(title: "A", body: "做 A"),
+                                                   TaskDraft(title: "B", body: "做 B")])
+    _ = h.runner.startQueue(r.queue.id)
+    h.dsh.reports["session-1"] = "A 完成，改了 a.swift"
+    h.dsh.finish("session-1")
+    _ = h.runner.step()
+    check(h.dsh.notifications.isEmpty, "队列没跑完就不回传")
+    check(h.board.task(r.created[0].id)?.state == .done, "第一条完成")
+
+    h.dsh.reports["session-2"] = "B 完成"
+    h.dsh.finish("session-2")
+    _ = h.runner.step()
+    eq(h.dsh.notifications.count, 1, "整队完成后回传一次")
+    eq(h.dsh.notifications.first?.session, "session-origin", "回传到来源会话")
+    let text = h.dsh.notifications.first?.text ?? ""
+    check(text.contains("队列「Dark Mode」"), "报告点名队列")
+    check(text.contains("1. ✓ A"), "第一条带标号与状态")
+    check(text.contains("A 完成，改了 a.swift"), "第一条的完整汇报保留")
+    check(text.contains("2. ✓ B"), "报告列出第二条")
+    check(text.contains("B 完成"), "第二条的汇报也在")
+    check(!text.contains("session-"), "不回传会话标识（用户不要）")
+    check(text.contains("确认收到"), "要求 agent 简短确认")
+    check(h.board.local.queueNotified[r.queue.id] != nil, "记下已回传")
+    _ = h.runner.step()
+    eq(h.dsh.notifications.count, 1, "幂等：不会重复回传")
+}
+
+section("手动取消 / 暂停：不回传")
+do {
+    let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
+    let r = h.runner.createQueueWithTasks(name: "Lane", branch: "", autoPR: false,
+                                          originSession: "session-origin",
+                                          drafts: [TaskDraft(title: "A", body: ""),
+                                                   TaskDraft(title: "B", body: "")])
+    _ = h.runner.startQueue(r.queue.id)
+    _ = h.runner.cancelRunning()
+    _ = h.runner.step()
+    eq(h.board.queue(r.queue.id)?.state, QueueState.paused, "取消让队列暂停")
+    check(h.dsh.notifications.isEmpty, "取消不回传（只有 done 才回传）")
+}
+
+section("重启补发：done 且未回传的队列在下一次 step 发出")
+do {
+    var board = TaskBoard()
+    let t = TaskItem.manual(title: "A", body: nil, id: "manual-zz000001")
+    board.tasks = [t]
+    let q = board.createQueue(name: "Lane", branch: "", autoPR: false)
+    _ = board.enqueue(taskID: t.id, into: q.id)
+    _ = board.resumeQueue(q.id)
+    board.markRunning(t.id)
+    board.markDone(t.id)
+    eq(board.queue(q.id)?.state, QueueState.done, "队列已完成")
+    // 关联在盘上，但 app 在回传前退出了。
+    board.local.queueSessions[q.id] = "session-origin"
+    let h = Harness(board: board, github: false, gitRepo: true)
+    _ = h.runner.step()
+    eq(h.dsh.notifications.count, 1, "空闲的 step 补发一次")
+    eq(h.dsh.notifications.first?.session, "session-origin", "补发到来源会话")
+    check(h.board.local.queueNotified[q.id] != nil, "补发后记下标记")
+}
+
+section("queueFinishedSummary 文案：首行汇报 + 失败原因 + 简短确认")
+do {
+    var board = TaskBoard()
+    let a = TaskItem.manual(title: "A", body: nil, id: "manual-zz000002")
+    let b = TaskItem.manual(title: "B", body: nil, id: "manual-zz000003")
+    board.tasks = [a, b]
+    let q = board.createQueue(name: "外观", branch: "feature/ui", autoPR: true)
+    board.markRunning(a.id)
+    board.markDone(a.id, report: "改完了\n第二行", at: Date())
+    board.markRunning(b.id)
+    _ = board.markFailed(b.id, error: "tasks.errNotGit")
+    let tasks = [board.task(a.id)!, board.task(b.id)!]
+    let text = TaskPrompts.queueFinishedSummary(queue: board.queue(q.id)!, tasks: tasks)
+    check(text.contains("队列「外观」"), "点名队列")
+    check(text.contains("分支：feature/ui → main"), "有分支就点名分支")
+    check(text.contains("1. ✓ A"), "第一条带标号")
+    check(text.contains("改完了") && text.contains("第二行"), "完整汇报保留（不再只取首行）")
+    check(text.contains("2. ✗ B"), "失败项带标号")
+    check(text.contains("失败：tasks.errNotGit"), "失败项列出原因")
+    check(text.contains("确认收到"), "要求简短确认")
+
+    // 提交列表：有则列出，空则不出现；无分支的队列不出现。
+    let withCommits = TaskPrompts.queueFinishedSummary(queue: board.queue(q.id)!, tasks: tasks,
+                                                       commits: ["abc123 深色模式：主题令牌",
+                                                                 "def456 跟随系统：监听外观"])
+    check(withCommits.contains("分支上相对 main 的提交："), "提交段的抬头")
+    check(withCommits.contains("abc123 深色模式：主题令牌"), "提交逐条列出")
+    check(!text.contains("提交："), "没有提交就不出现提交段")
+
+    var branchless = TaskBoard()
+    let bt2 = TaskItem.manual(title: "X", body: nil, id: "manual-zz000004")
+    branchless.tasks = [bt2]
+    let bq = branchless.createQueue(name: "NoBranch", branch: "", autoPR: false)
+    branchless.markRunning(bt2.id)
+    branchless.markDone(bt2.id, report: "done")
+    let branchlessText = TaskPrompts.queueFinishedSummary(queue: branchless.queue(bq.id)!,
+                                                          tasks: [branchless.task(bt2.id)!],
+                                                          commits: ["should-not-show"])
+    check(!branchlessText.contains("分支："), "无分支队列不显示分支行")
+    check(!branchlessText.contains("提交："), "无分支队列不显示提交段")
+}
+
+section("回传带上队列分支的提交（git 仓库；非 git 不显示）")
+do {
+    let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
+    h.repo.commits = ["abc123 深色模式：主题令牌"]
+    let r = h.runner.createQueueWithTasks(name: "Lane", branch: "feature/x", autoPR: false,
+                                          originSession: "session-origin",
+                                          drafts: [TaskDraft(title: "A", body: "")])
+    _ = h.runner.startQueue(r.queue.id)
+    h.dsh.finish("session-1")
+    _ = h.runner.step()
+    let text = h.dsh.notifications.first?.text ?? ""
+    check(text.contains("分支：feature/x → main"), "分支行")
+    check(text.contains("分支上相对 main 的提交："), "提交段")
+    check(text.contains("abc123 深色模式：主题令牌"), "提交内容")
+}
+
+section("交付成功后自动关闭队列（成功才关；失败/关时不关）")
+do {
+    // 纯判定：PR 由调用方用链接判定；merge / push 读提示词要求的「已合并 / 已推送」行。
+    check(TasksRunner.finalizeSucceeded(mode: .merge, report: "完成。\n已合并并推送 main abc123"),
+          "merge 成功行判定为成功")
+    check(!TasksRunner.finalizeSucceeded(mode: .merge, report: "完成。\n合并失败：冲突"),
+          "merge 失败不判成功")
+    check(TasksRunner.finalizeSucceeded(mode: .push, report: "已推送 main abc123"),
+          "push 成功行判定为成功")
+    check(!TasksRunner.finalizeSucceeded(mode: .push, report: "推送被拒绝"), "push 失败不判成功")
+    check(!TasksRunner.finalizeSucceeded(mode: .pr, report: "whatever"), "PR 由链接判定，不读报告")
+
+    // PR 成功：拿到链接 → 队列自动关闭，记录保留。
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board, autoCloseOnPublish: true)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    let prSession = h.dsh.sessions[1]
+    h.dsh.reports[prSession] = "已推送分支并创建 PR：https://github.com/o/r/pull/7"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.queue(queueID)?.state, QueueState.closed, "PR 成功后队列自动关闭")
+    eq(h.board.queue(queueID)?.prUrl, "https://github.com/o/r/pull/7", "PR 记录保留")
+
+    // PR 失败：没有链接 → 不关，并保留失败原因。
+    let (board2, task2, queue2) = singleTaskBoard()
+    let h2 = Harness(board: board2, autoCloseOnPublish: true)
+    _ = h2.runner.enqueue(taskID: task2, into: queue2)
+    h2.dsh.finishAll()
+    _ = h2.runner.step()
+    let prSession2 = h2.dsh.sessions[1]
+    h2.dsh.reports[prSession2] = "开 PR 失败：token 无效"
+    h2.dsh.finishAll()
+    _ = h2.runner.step()
+    eq(h2.board.queue(queue2)?.state, QueueState.done, "PR 失败：队列保持 done")
+    eq(h2.board.queue(queue2)?.prError, "tasks.errPR", "并记下失败原因")
+
+    // 开关关闭：成功也不关。
+    let (board3, task3, queue3) = singleTaskBoard()
+    let h3 = Harness(board: board3, autoCloseOnPublish: false)
+    _ = h3.runner.enqueue(taskID: task3, into: queue3)
+    h3.dsh.finishAll()
+    _ = h3.runner.step()
+    let prSession3 = h3.dsh.sessions[1]
+    h3.dsh.reports[prSession3] = "已推送分支并创建 PR：https://github.com/o/r/pull/9"
+    h3.dsh.finishAll()
+    _ = h3.runner.step()
+    eq(h3.board.queue(queue3)?.state, QueueState.done, "开关关闭：成功后队列仍是 done")
+
+    // merge 成功：结果行说明已合并 → 自动关闭。
+    let (board4, task4, queue4) = singleTaskBoard()
+    var b4 = board4
+    if let i = b4.index(ofQueue: queue4) { b4.queues[i].integration = .merge }
+    let h4 = Harness(board: b4, autoCloseOnPublish: true)
+    _ = h4.runner.enqueue(taskID: task4, into: queue4)
+    h4.dsh.finishAll()
+    _ = h4.runner.step()
+    let mergeSession = h4.dsh.sessions[1]
+    h4.dsh.reports[mergeSession] = "已合并并推送 main\nabc123"
+    h4.dsh.finishAll()
+    _ = h4.runner.step()
+    eq(h4.board.queue(queue4)?.state, QueueState.closed, "merge 成功后队列自动关闭")
+
+    // merge 失败：结果行不是成功 → 不关。
+    let (board5, task5, queue5) = singleTaskBoard()
+    var b5 = board5
+    if let i = b5.index(ofQueue: queue5) { b5.queues[i].integration = .merge }
+    let h5 = Harness(board: b5, autoCloseOnPublish: true)
+    _ = h5.runner.enqueue(taskID: task5, into: queue5)
+    h5.dsh.finishAll()
+    _ = h5.runner.step()
+    let mergeSession2 = h5.dsh.sessions[1]
+    h5.dsh.reports[mergeSession2] = "合并失败：与 main 冲突，请用户介入"
+    h5.dsh.finishAll()
+    _ = h5.runner.step()
+    eq(h5.board.queue(queue5)?.state, QueueState.done, "merge 失败：队列保持 done")
+
+    // 失败的队列（paused）即使发布成功也不自动关闭：关掉会把失败藏起来。
+    // 手动发布一个 paused 队列（有失败任务时用户仍可点发布）。
+    let (board6, _, queue6) = singleTaskBoard()
+    var b6 = board6
+    if let i = b6.index(ofQueue: queue6) {
+        b6.queues[i].integration = .merge
+        b6.queues[i].state = .paused
+    }
+    let h6 = Harness(board: b6, autoCloseOnPublish: true)
+    check(h6.runner.startQueueIntegration(queue6), "paused 队列也能手动发布")
+    let mergeSession3 = h6.dsh.sessions[0]
+    h6.dsh.reports[mergeSession3] = "已合并 main\nabc123"
+    h6.dsh.finishAll()
+    _ = h6.runner.step()
+    eq(h6.board.queue(queue6)?.state, QueueState.paused, "paused 队列不自动关闭")
 }
 
 if failures == 0 {

@@ -78,10 +78,39 @@ final class FakeTasksAPI: TasksAPIDelegate {
         createCalls.append((workspace, focus, drafts))
         return createResult
     }
+
+    var queueCreateResult: [String: Any] = ["ok": true, "created": [], "rejected": []]
+    var queueStartResult: [String: Any] = ["ok": true, "started": []]
+    private(set) var queueCreates: [TaskQueueCreateRequest] = []
+    private(set) var queueStarts: [TaskQueueStartRequest] = []
+
+    func apiTaskQueueCreate(_ request: TaskQueueCreateRequest) -> [String: Any] {
+        queueCreates.append(request)
+        return queueCreateResult
+    }
+
+    func apiTaskQueueStart(_ request: TaskQueueStartRequest) -> [String: Any] {
+        queueStarts.append(request)
+        return queueStartResult
+    }
+
+    var queueAppendResult: [String: Any] = ["ok": true, "created": [], "rejected": []]
+    private(set) var queueAppends: [TaskQueueAppendRequest] = []
+    func apiTaskQueueAppend(_ request: TaskQueueAppendRequest) -> [String: Any] {
+        queueAppends.append(request)
+        return queueAppendResult
+    }
+
+    var queueDeliverResult: [String: Any] = ["ok": true, "delivering": ["q-1"]]
+    private(set) var queueDelivers: [TaskQueueDeliverRequest] = []
+    func apiTaskQueueDeliver(_ request: TaskQueueDeliverRequest) -> [String: Any] {
+        queueDelivers.append(request)
+        return queueDeliverResult
+    }
 }
 
 func topLevel(_ body: [String: Any]) -> HTTPRequest {
-    HTTPRequest(method: "POST", path: "/api/tasks/create", json: body)
+    HTTPRequest(method: "POST", path: "/api/tasks/task/create", json: body)
 }
 
 // MARK: - routing
@@ -92,29 +121,43 @@ check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/browser/status
       "browser routes are left to the browser panel")
 check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/nope"), delegate: fake) == nil,
       "unknown paths return nil (the caller still owns the 404)")
-check(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/list"), delegate: fake) == nil,
+check(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/task/list"), delegate: fake) == nil,
       "list is GET-only")
-check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/create"), delegate: fake) == nil,
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/task/create"), delegate: fake) == nil,
       "create is POST-only")
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/queue/create"), delegate: fake) == nil,
+      "queue/create is POST-only")
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/queue/start"), delegate: fake) == nil,
+      "queue/start is POST-only")
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/queue/deliver"), delegate: fake) == nil,
+      "queue/deliver is POST-only")
+// 旧的无资源段路径（/api/tasks/list、/create）保留为 alias：装了旧版技能的用户机器不会断。
+// 用独立的 delegate，避免污染上面 fake 的调用记录。
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/list"),
+                           delegate: FakeTasksAPI()) != nil,
+      "old /api/tasks/list alias still routes")
+check(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/create",
+                                       json: ["tasks": ["t"]]), delegate: FakeTasksAPI()) != nil,
+      "old /api/tasks/create alias still routes")
 
 section("no delegate yet (the panel is not wired up)")
-let unavailable = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/create",
+let unavailable = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/task/create",
                                                    json: ["tasks": ["t"]]), delegate: nil)
 eq(unavailable?.status, 503, "panel-unavailable status")
 eq(unavailable?.json["error"] as? String, "panel-unavailable", "panel-unavailable error")
-check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/list"), delegate: nil)?.status == 503,
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/task/list"), delegate: nil)?.status == 503,
       "list says panel-unavailable too")
 
-section("GET /api/tasks/list")
-let list = TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/list",
+section("GET /api/tasks/task/list")
+let list = TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/task/list",
                                             query: ["workspace": "~/repo"]), delegate: fake)
 eq(list?.status, 200, "list status")
 eq(fake.listWorkspaces.count, 1, "the delegate is asked once")
 eq(fake.listWorkspaces.first ?? nil, "~/repo", "the workspace query is forwarded verbatim")
 eq(list?.json["ok"] as? Bool, true, "list body passthrough")
 
-section("POST /api/tasks/create — request shapes")
-let noBody = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/create"), delegate: fake)
+section("POST /api/tasks/task/create — request shapes")
+let noBody = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/task/create"), delegate: fake)
 eq(noBody?.status, 400, "missing body status")
 eq(noBody?.json["error"] as? String, "missing-body", "missing body error")
 
@@ -162,9 +205,9 @@ eq(many.drafts.count, TasksAPIRouter.maxTasksPerCall, "the per-call cap is enfor
 eq(many.rejected.count, 60 - TasksAPIRouter.maxTasksPerCall, "the overflow is rejected")
 eq(many.rejected.first?["error"] as? String, "too-many", "overflow reason")
 
-// MARK: - POST /api/tasks/create — what the panel receives
+// MARK: - POST /api/tasks/task/create — what the panel receives
 
-section("POST /api/tasks/create — delegation and response")
+section("POST /api/tasks/task/create — delegation and response")
 let callFake = FakeTasksAPI()
 callFake.createResult = ["ok": true,
                          "workspace": "/tmp/repo",
@@ -197,6 +240,149 @@ let nothing = FakeTasksAPI()
 nothing.createResult = ["created": [], "rejected": []]
 eq(TasksAPIRouter.route(topLevel(["tasks": ["t"]]), delegate: nothing)?.status, 400,
    "no created task → 400")
+
+// MARK: - POST /api/tasks/queue/create — 建「等待态」队列 + 批量入队
+
+section("POST /api/tasks/queue/create")
+let qc = FakeTasksAPI()
+qc.queueCreateResult = ["ok": true, "workspace": "/repo",
+                        "queue": ["id": "q-1", "name": "外观", "state": "draft"],
+                        "created": [["id": "manual-1", "title": "t1"]]]
+let qCreated = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/create",
+    json: ["workspace": "/repo", "session": "session-x", "focus": false,
+           "name": "外观", "branch": "feature/x", "autoPR": true,
+           "tasks": [["title": "t1", "body": "b1"], "t2"]]), delegate: qc)
+eq(qCreated?.status, 200, "queue create 200")
+eq(qc.queueCreates.count, 1, "queue create delegates once")
+eq(qc.queueCreates.first?.session, "session-x", "session forwarded")
+eq(qc.queueCreates.first?.name, "外观", "name forwarded")
+eq(qc.queueCreates.first?.branch, "feature/x", "branch forwarded")
+eq(qc.queueCreates.first?.autoPR, true, "autoPR forwarded")
+eq(qc.queueCreates.first?.focus, false, "focus forwarded")
+eq(qc.queueCreates.first?.drafts.count, 2, "both drafts forwarded in one call")
+eq((qCreated?.json["queue"] as? [String: Any])?["state"] as? String, "draft", "queue state passthrough")
+
+let noUsable = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/create",
+    json: ["tasks": ["", "  "]]), delegate: FakeTasksAPI())
+eq(noUsable?.status, 400, "no usable tasks → 400")
+eq(noUsable?.json["error"] as? String, "no-tasks", "no usable tasks error")
+let noBodyQ = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/create"), delegate: FakeTasksAPI())
+eq(noBodyQ?.json["error"] as? String, "missing-body", "queue create missing body")
+
+section("parseQueueCreate")
+let parsedQ = TasksAPIRouter.parseQueueCreate(["name": "  ", "tasks": ["由标题命名"], "session": "  s-1 "])
+eq(parsedQ.name, "由标题命名", "empty name falls back to the first task title")
+eq(parsedQ.session, "s-1", "session is trimmed")
+eq(TasksAPIRouter.parseQueueCreate(["session": "   ", "tasks": ["t"]]).session, nil, "blank session → nil")
+eq(TasksAPIRouter.parseQueueCreate(["name": "q"]).rejected.first?["error"] as? String, "missing-tasks",
+   "missing tasks rejected")
+check(TasksAPIRouter.parseQueueCreate(["tasks": ["t"]]).branch == nil, "absent branch stays nil (derive)")
+eq(TasksAPIRouter.parseQueueCreate(["tasks": ["t"], "branch": ""]).branch, "", "explicit empty branch means no branch")
+
+// MARK: - POST /api/tasks/queue/start
+
+section("POST /api/tasks/queue/start")
+let qs = FakeTasksAPI()
+qs.queueStartResult = ["ok": true, "started": ["q-1"]]
+let started = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/start",
+    json: ["workspace": "/repo", "session": "s-1"]), delegate: qs)
+eq(started?.status, 200, "start 200")
+eq(qs.queueStarts.first?.session, "s-1", "start session forwarded")
+check(qs.queueStarts.first?.queueId == nil, "start queueId is nil when omitted")
+
+let ambiguous = FakeTasksAPI()
+ambiguous.queueStartResult = ["ok": false, "error": "ambiguous-queue", "queues": []]
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/start", json: [:]), delegate: ambiguous)?.status,
+   409, "ambiguous queue → 409")
+let noQueue = FakeTasksAPI()
+noQueue.queueStartResult = ["ok": false, "error": "no-queue"]
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/start", json: [:]), delegate: noQueue)?.status,
+   404, "no queue → 404")
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/start", json: ["queueId": " q-1 "]), delegate: qs)?.status,
+   200, "queueId with whitespace still starts")
+eq(qs.queueStarts.last?.queueId, "q-1", "queueId is trimmed")
+
+// start by NAME: the disambiguation the skill can use without listing first.
+let namedStart = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/start",
+    json: ["name": "  外观  "]), delegate: qs)
+eq(namedStart?.status, 200, "start by name")
+eq(qs.queueStarts.last?.name, "外观", "name is trimmed and forwarded")
+eq(TasksAPIRouter.parseQueueStart(["name": "  "]).name, nil, "blank name → nil")
+check(TasksAPIRouter.parseQueueStart(["name": "外观"]).queueId == nil, "name alone leaves queueId nil")
+
+section("POST /api/tasks/queue/append")
+let qa = FakeTasksAPI()
+qa.queueAppendResult = ["ok": true, "workspace": "/repo",
+                        "queue": ["id": "q-1", "name": "外观", "state": "draft"],
+                        "created": [["id": "manual-9", "title": "t9"]]]
+let appended = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/append",
+    json: ["workspace": "/repo", "session": "s-1", "name": "外观",
+           "tasks": [["title": "再补一条", "body": "b"]]]), delegate: qa)
+eq(appended?.status, 200, "append 200")
+eq(qa.queueAppends.count, 1, "append delegates once")
+eq(qa.queueAppends.first?.name, "外观", "append name forwarded")
+eq(qa.queueAppends.first?.session, "s-1", "append session forwarded")
+eq(qa.queueAppends.first?.drafts.count, 1, "append drafts forwarded")
+eq((appended?.json["queue"] as? [String: Any])?["state"] as? String, "draft", "append queue state passthrough")
+
+let noTarget = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/append",
+    json: ["tasks": ["t"]]), delegate: FakeTasksAPI())
+eq(noTarget?.json["error"] as? String, "no-queue-target", "append without a target is rejected")
+let noTasksAppend = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/append",
+    json: ["queueId": "q-1"]), delegate: FakeTasksAPI())
+eq(noTasksAppend?.json["error"] as? String, "missing-tasks", "append without tasks is rejected")
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/queue/append"), delegate: qa) == nil,
+      "queue/append is POST-only")
+let parsedAppend = TasksAPIRouter.parseQueueAppend(["queueId": " q-1 ", "name": " ", "session": " s ", "tasks": ["t"]])
+eq(parsedAppend.queueId, "q-1", "append queueId trimmed")
+check(parsedAppend.name == nil, "append blank name -> nil")
+eq(parsedAppend.session, "s", "append session trimmed")
+
+// MARK: - POST /api/tasks/queue/deliver
+
+section("POST /api/tasks/queue/deliver")
+let qd = FakeTasksAPI()
+qd.queueDeliverResult = ["ok": true, "workspace": "/repo",
+                         "queue": ["id": "q-1", "name": "外观", "state": "done"],
+                         "delivering": ["q-1"]]
+let delivered = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver",
+    json: ["workspace": "/repo", "session": "s-1", "name": "外观"]), delegate: qd)
+eq(delivered?.status, 200, "deliver 200")
+eq(qd.queueDelivers.count, 1, "deliver delegates once")
+eq(qd.queueDelivers.first?.session, "s-1", "deliver session forwarded")
+eq(qd.queueDelivers.first?.name, "外观", "deliver name forwarded")
+eq(delivered?.json["delivering"] as? [String], ["q-1"], "delivering passthrough")
+
+// 目标定位与 start 同一套解析（queueId 优先、name 次之、session 最后）。
+let parsedDeliver = TasksAPIRouter.parseQueueDeliver(["queueId": " q-1 ", "name": "外观", "session": " s "])
+eq(parsedDeliver.queueId, "q-1", "deliver queueId trimmed")
+eq(parsedDeliver.name, "外观", "deliver name kept")
+eq(parsedDeliver.session, "s", "deliver session trimmed")
+check(TasksAPIRouter.parseQueueDeliver(["queueId": "  "]).queueId == nil, "blank queueId -> nil")
+
+// HTTP 状态：已有交付会话在跑 / 队列名歧义 → 409；找不到队列 → 404；其余 400。
+let busy = FakeTasksAPI()
+busy.queueDeliverResult = ["ok": false, "error": "busy"]
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: ["queueId": "q-1"]), delegate: busy)?.status,
+   409, "busy delivery -> 409")
+let deliverAmbiguous = FakeTasksAPI()
+deliverAmbiguous.queueDeliverResult = ["ok": false, "error": "ambiguous-queue", "queues": []]
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: ["queueId": "q-1"]), delegate: deliverAmbiguous)?.status,
+   409, "ambiguous queue -> 409")
+let deliverNoQueue = FakeTasksAPI()
+deliverNoQueue.queueDeliverResult = ["ok": false, "error": "no-queue"]
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: ["queueId": "q-1"]), delegate: deliverNoQueue)?.status,
+   404, "no queue -> 404")
+let notDone = FakeTasksAPI()
+notDone.queueDeliverResult = ["ok": false, "error": "not-deliverable", "state": "active"]
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: ["queueId": "q-1"]), delegate: notDone)?.status,
+   400, "not finished -> 400")
+let noBodyDeliver = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver"), delegate: FakeTasksAPI())
+eq(noBodyDeliver?.json["error"] as? String, "missing-body", "deliver missing body")
+let noTargetDeliver = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver",
+    json: ["workspace": "/repo"]), delegate: FakeTasksAPI())
+eq(noTargetDeliver?.status, 400, "deliver without a queue target → 400")
+eq(noTargetDeliver?.json["error"] as? String, "no-queue-target", "deliver without a target is rejected")
 
 // MARK: - workspace resolution
 
@@ -242,6 +428,9 @@ let queueDict = TasksAPIRouter.queueDictionary(queue)
 eq(queueDict["name"] as? String, "队列一", "queue name")
 eq(queueDict["branch"] as? String, "feature/x", "queue branch")
 eq(queueDict["tasks"] as? Int, 1, "queue size")
+check(queueDict["reportsToSession"] == nil, "no report flag by default")
+check(TasksAPIRouter.queueDictionary(queue, reportsToSession: true)["reportsToSession"] as? Bool == true,
+      "the report flag appears when asked")
 
 print("api tests: \(checks) checks, \(failures) failure(s)")
 exit(failures == 0 ? 0 : 1)

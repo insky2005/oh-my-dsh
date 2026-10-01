@@ -75,7 +75,7 @@ board.tasks = [a, b]
 let queue = board.createQueue(name: "Dark Mode")
 
 eq(queue.branch, "feature/dark-mode", "queue branch default")
-eq(queue.state, QueueState.paused, "a new queue is paused")
+eq(queue.state, QueueState.draft, "a new queue is draft (等待启动), not paused")
 eq(queue.autoPR, false, "autoPR is off by default")
 check(queue.autoCreated == false, "a user queue is not auto")
 check(board.enqueue(taskID: a.id, into: queue.id), "enqueue A")
@@ -107,6 +107,93 @@ board.markDone(a.id, prUrl: "https://example.test/pull/1")
 check(board.task(a.id)?.state == .done, "A is done")
 check(board.task(a.id)?.prUrl == "https://example.test/pull/1", "the PR is recorded")
 eq(board.queue(queue.id)?.state, QueueState.done, "an empty queue becomes done")
+
+// MARK: - a new queue waits (draft)
+
+section("新建队列是等待态（draft），不会自己开跑")
+do {
+    var b = TaskBoard()
+    let t1 = TaskItem.manual(title: "D1", id: "manual-aa000001")
+    let t2 = TaskItem.manual(title: "D2", id: "manual-aa000002")
+    b.tasks = [t1, t2]
+    let q = b.createQueue(name: "Waiting")
+    eq(b.queue(q.id)?.state, QueueState.draft, "a new queue is draft, not paused")
+    // Board-level enqueue alone does NOT activate (the queue API path uses it).
+    _ = b.enqueue(taskID: t1.id, into: q.id)
+    _ = b.enqueue(taskID: t2.id, into: q.id)
+    check(b.task(t1.id)?.state == .queued, "the task is queued")
+    eq(b.queue(q.id)?.state, QueueState.draft, "enqueue alone does not activate a draft queue")
+    check(b.nextStartable() == nil, "a draft queue starts nothing")
+    // 启动 = resume；之后才可跑。
+    _ = b.resumeQueue(q.id)
+    eq(b.queue(q.id)?.state, QueueState.active, "start makes it active")
+    eq(b.nextStartable(), t1.id, "the first task becomes startable after start")
+
+    // 重启：active → paused；从未启动过的 draft 保持 draft。
+    var draft2 = TaskBoard()
+    let q2 = draft2.createQueue(name: "Untouched")
+    check(draft2.queue(q2.id)?.state == QueueState.draft, "a fresh queue is draft")
+    _ = draft2.reconcileAfterRestart(interruptedError: "tasks.errInterrupted")
+    eq(draft2.queue(q2.id)?.state, QueueState.draft, "a draft queue survives a restart as draft")
+}
+
+section("追加任务与关闭队列")
+do {
+    // .done 是活泳道：追加任务 → .draft，并重臂完成回传。
+    var b = TaskBoard()
+    let a = TaskItem.manual(title: "A", id: "manual-ap000001")
+    let c = TaskItem.manual(title: "C", id: "manual-ap000002")
+    b.tasks = [a, c]
+    let q = b.createQueue(name: "Lane")
+    _ = b.enqueue(taskID: a.id, into: q.id)
+    b.markRunning(a.id)
+    b.markDone(a.id)
+    eq(b.queue(q.id)?.state, QueueState.done, "全部完成 → done")
+    b.local.queueNotified[q.id] = "2026-09-30T00:00:00Z"
+    _ = b.enqueue(taskID: c.id, into: q.id)
+    eq(b.queue(q.id)?.state, QueueState.draft, "向 done 追加任务 → 回到 draft（活泳道）")
+    check(b.local.queueNotified[q.id] == nil, "重臂完成回传")
+
+    // .paused 追加：保持 paused（有失败要处理，不能被追加悄悄复活）。
+    var p = TaskBoard()
+    let pa = TaskItem.manual(title: "PA", id: "manual-ap000003")
+    let pb = TaskItem.manual(title: "PB", id: "manual-ap000004")
+    p.tasks = [pa, pb]
+    let pq = p.createQueue(name: "Paused lane")
+    _ = p.enqueue(taskID: pa.id, into: pq.id)
+    p.markRunning(pa.id)
+    _ = p.markFailed(pa.id, error: "boom")
+    eq(p.queue(pq.id)?.state, QueueState.paused, "失败 → paused")
+    _ = p.enqueue(taskID: pb.id, into: pq.id)
+    eq(p.queue(pq.id)?.state, QueueState.paused, "向 paused 追加任务仍保持 paused")
+
+    // 关闭：手动终态。
+    var cb = TaskBoard()
+    let ca = TaskItem.manual(title: "CA", id: "manual-ap000005")
+    cb.tasks = [ca]
+    let cq = cb.createQueue(name: "Close me")
+    _ = cb.enqueue(taskID: ca.id, into: cq.id)
+    cb.markRunning(ca.id)
+    check(!cb.closeQueue(cq.id), "有任务在跑时拒绝关闭")
+    cb.markDone(ca.id)
+    check(cb.closeQueue(cq.id), "任务结束后可以关闭")
+    eq(cb.queue(cq.id)?.state, QueueState.closed, "关闭 → closed")
+    check(!cb.resumeQueue(cq.id), "关闭后不能启动")
+    let cd = TaskItem.manual(title: "CD", id: "manual-ap000006")
+    cb.tasks.append(cd)
+    check(!cb.enqueue(taskID: cd.id, into: cq.id), "关闭后不能追加")
+    check(!cb.queueChoices().contains { $0.id == cq.id }, "关闭的队列不再出现在「加入队列」里")
+}
+
+section("队列排序：最新在前（显示用，不改存储顺序）")
+do {
+    let old = TaskQueue(id: "q-old", name: "Old", createdAt: Date(timeIntervalSince1970: 100))
+    let new = TaskQueue(id: "q-new", name: "New", createdAt: Date(timeIntervalSince1970: 200))
+    let none = TaskQueue(id: "q-none", name: "None", createdAt: nil)
+    eq(TaskQueue.newestFirst([old, new, none]).map { $0.id }, ["q-new", "q-old", "q-none"],
+       "createdAt 倒序；无时间戳的老队列排最后")
+    eq(TaskQueue.newestFirst([new, old]).map { $0.id }, ["q-new", "q-old"], "最新的排第一")
+}
 
 // MARK: - failure pauses the queue
 
@@ -387,6 +474,17 @@ check(dumpedLocal["runningTaskId"] as? String == "issue-6", "the running task is
 eq(TaskLocalState.taskID(fromStoredKey: "42"), "issue-42", "legacy key translation")
 eq(TaskLocalState.taskID(fromStoredKey: "issue-42"), "issue-42", "a task id key is untouched")
 
+// The queue → session link and the notified stamp live in the same machine overlay.
+local.queueSessions["q-1"] = "session-x"
+local.queueNotified["q-1"] = "2026-09-30T00:00:00Z"
+let dumpedQueue = local.dictionary()
+eq((dumpedQueue["queueSessions"] as? [String: String])?["q-1"], "session-x", "queue → session is persisted")
+eq((dumpedQueue["queueNotified"] as? [String: String])?["q-1"],
+   "2026-09-30T00:00:00Z", "the notified stamp is persisted")
+let queueRoundTrip = TaskLocalState.from(dumpedQueue)
+eq(queueRoundTrip.queueSessions["q-1"], "session-x", "queue → session round-trips")
+eq(queueRoundTrip.queueNotified["q-1"], "2026-09-30T00:00:00Z", "the notified stamp round-trips")
+
 // MARK: - 汇报写回
 
 section("汇报写回：落在任务上、落在 local.json 里、重试时清掉")
@@ -443,7 +541,7 @@ let repo = tempRepo("store")
 var boardS = TaskBoard()
 let m1 = TaskItem.manual(title: "Polish README", body: "tidy the install section")
 boardS.tasks = [m1]
-let sq = boardS.createQueue(name: "Docs Cleanup")
+let sq = boardS.createQueue(name: "Docs Cleanup", integration: .merge)
 _ = boardS.enqueue(taskID: m1.id, into: sq.id)
 boardS.local.sessions[m1.id] = "session-manual-1"
 TasksStore.saveLocalHalf(repo, boardS)
@@ -459,6 +557,8 @@ check(queuesJSON.contains("Docs Cleanup"), "queues.json holds the name")
 // present in the file bytes).
 let queueEntries = TasksStore.readJSON(TasksStore.path(repo, file: "queues.json"))["queues"] as? [[String: Any]] ?? []
 check(queueEntries.first?["branch"] as? String == "feature/docs-cleanup", "queues.json holds the derived branch")
+check(queueEntries.first?["integration"] as? String == "merge",
+      "queues.json holds the per-queue integration override")
 let localJSON = text(at: TasksStore.path(repo, file: "local.json"))
 check(localJSON.contains("session-manual-1"), "local.json holds the session")
 check(!FileManager.default.fileExists(atPath: TasksStore.path(repo, file: "index.json")),
@@ -470,6 +570,7 @@ eq(reloaded.tasks(inQueue: sq.id).count, 1, "the membership reloads")
 check(reloaded.task(m1.id)?.sessionId == "session-manual-1", "the session is re-attached")
 check(reloaded.task(m1.id)?.body == "tidy the install section", "the body round-trips")
 check(reloaded.queue(sq.id)?.branch == "feature/docs-cleanup", "the queue branch round-trips")
+eq(reloaded.queue(sq.id)?.integration, .merge, "the integration override round-trips")
 check(reloaded.task(m1.id)?.state == .queued, "the queued state round-trips")
 
 // MARK: - index.json compatibility

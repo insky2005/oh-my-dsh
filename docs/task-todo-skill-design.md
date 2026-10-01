@@ -45,8 +45,12 @@
 
 | 方法/路径 | 请求 | 响应 |
 |---|---|---|
-| GET `/api/tasks/list` | `?workspace=<path>`（可选） | `{ok, workspace, tasks:[{id,title,state,source,queueId,queueName}], queues:[{id,name,branch,state}]}` |
-| POST `/api/tasks/create` | `{workspace?, focus?, tasks:[{title, body?} \| "标题"]}` | `{ok, workspace, shown, created:[{id,title}], rejected:[{title,error}]}` |
+| GET `/api/tasks/task/list` | `?workspace=<path>`（可选） | `{ok, workspace, tasks:[{id,title,state,source,queueId,queueName}], queues:[{id,name,branch,state}]}` |
+| POST `/api/tasks/task/create` | `{workspace?, focus?, tasks:[{title, body?} \| "标题"]}` | `{ok, workspace, shown, created:[{id,title}], rejected:[{title,error}]}` |
+| POST `/api/tasks/queue/create` | `{workspace?, session?, focus?, name, branch?, baseBranch?, autoPR?, tasks:[…]}` | 建 `.draft` 队列 + 批量入队；`{ok, queue:{id,name,state,branch}, created:[…], rejected:[…]}` |
+| POST `/api/tasks/queue/start` | `{workspace?, session?, queueId?}` | 启动队列；`{ok, started:[id]}` / `409 ambiguous-queue` / `404 no-queue` |
+| POST `/api/tasks/queue/append` | `{workspace?, session?, queueId?（或 name?）, tasks:[…]}` | 向已有队列追加任务（不启动）；`{ok, queue:{…}, created:[…]}` |
+| POST `/api/tasks/queue/deliver` | `{workspace?, session?, queueId?（或 name?）}`（`queueId`/`name`/`session` **必选其一**） | 对**已完成**队列发起交付（PR / 合并 / 推送）；`{ok, delivering:[id]}` / `400 no-queue-target` / `400 not-deliverable` / `400 workflow-none` / `409 busy` |
 
 - `tasks` 每项可以是对象（推荐，带描述）或字符串（只有标题，描述回退为标题，与面板
   单行创建一致：`TaskDraft.effectiveBody`）。
@@ -102,7 +106,7 @@ Agent 的 cwd 是**会话工作区**，但可能落在子目录（`pwd` ≠ work
   用户没点头，不建。
 - 输入：本轮对话里已确认的需求与方案；每条任务 = 标题（可扫的行）+ 描述（给执行者的
   上下文与验收点，写清「做什么/依据什么/怎么算完成」，不臆造）。
-- 动作：先 `GET /api/tasks/list` 看面板里已有什么（避免重复建），再 `POST /api/tasks/create`
+- 动作：先 `GET /api/tasks/task/list` 看面板里已有什么（避免重复建），再 `POST /api/tasks/task/create`
   一次提交全部任务；不逐条调用。
 - 边界：**不启动任务、不建队列、不改分支**（那是用户/面板的事）；不直接改
   `.dsh/tasks/*.json`；端口不通就报错并请用户打开 oh-my-dsh。
@@ -133,6 +137,14 @@ Agent 的 cwd 是**会话工作区**，但可能落在子目录（`pwd` ≠ work
 1. **通道**：壳层本地 API（不用「直接写 .dsh/tasks/*.json」——面板内存态会覆盖，且无反馈）。
 2. **Skill 名**：`task-todo`（领域词 + 面板名，与 web-dev-tools / repo-knowledge / issue-resolve 同一体例）。
 3. **能力边界**：只创建（+ 查询）；建队列、入队、启动一律留给用户与面板。
+   —— 2026-09-30 扩展：新增 `POST /api/tasks/queue/create`（等待态队列 + 批量入队）与
+   `POST /api/tasks/queue/start`。技能在用户明确要求建队列时可用前者，在用户说「启动队列」
+   时用后者；仍不自动启动、不绕过 API。队列跑到 `.done` 时完成情况回传创建会话。
+   —— 2026-10-01 扩展：新增 `POST /api/tasks/queue/deliver`，对**已完成**队列发起交付
+   （按 Git 工作流开 PR / 合并 / 推送）；技能**仅当用户明确要求交付**且队列已 `.done` 时调用。
+   另：任务端点的规范路径为 `/api/tasks/task/{list,create}`，旧的 `/api/tasks/{list,create}` 保留为 alias。
+   见 `docs/tasks-queue-session-loop-design.md`。技能被要求落成任务时**默认**建
+   「等待态队列（`.draft`）+ 批量入队」，只有用户明确说「只建任务 / 先别入队」才只建裸任务。
 4. **默认 focus**：true（用户刚要求的东西要看得见）。
 5. **批量**：一次请求多条，上限 50。
 6. **用户显式要求**：写进 Skill 正文硬规则；Skill 不主动建任务。

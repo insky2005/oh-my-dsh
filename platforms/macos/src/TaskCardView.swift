@@ -577,10 +577,17 @@ final class TaskQueueHeaderView: NSView {
     var onToggle: (() -> Void)?
     var onStart: (() -> Void)?
     var onPause: (() -> Void)?
+    /// 交付：push 分支 + 开/更新 PR（独立的交付会话）。
     var onOpenPR: (() -> Void)?
+    /// 打开已有 PR 的链接（与「交付」分开：PR 已存在时仍要能再次交付以更新它）。
+    var onOpenPRLink: (() -> Void)?
     var onSettings: (() -> Void)?
     var onTogglePR: (() -> Void)?
     var onDelete: (() -> Void)?
+    /// 关闭队列（手动终态，保留记录）。
+    var onClose: (() -> Void)?
+    /// 展开 / 收起交付结果（会话回写的那段文字）。
+    var onToggleNote: (() -> Void)?
 
     init(model: QueueHeaderModel) {
         self.model = model
@@ -642,9 +649,9 @@ final class TaskQueueHeaderView: NSView {
             trailing.append(iconButton("play.fill", tooltipKey: model.startHintKey,
                                        action: #selector(startTapped)))
         }
-        // 打开 PR 排在**最后**（用户 2026-09-27：它是这一行的收尾动作，不是夹在中间的
+        // 打开 PR 排在**最后**（用户 2026-09-27：它是这一行的交付动作，不是夹在中间的
         // 一枚）。图标与 PR 链接互斥（有链接就说明 PR 已经在了），但都给同一件事留位置，
-        // 所以两者都在收尾处追加 —— 见下面 trailing.append(prControl)。
+        // 所以两者都在交付处追加 —— 见下面 trailing.append(prControl)。
         // 自动开 PR / 队列设置 / 删除队列 were hidden behind a ⋯ menu; they are
         // their own icon buttons now (the audit panel's blocks have no overflow
         // menu either — every action is on the row). The PR toggle keeps its state
@@ -660,7 +667,7 @@ final class TaskQueueHeaderView: NSView {
             toggle.isEnabled = model.autoPREnabled
             trailing.append(toggle)
         }
-        // 已完成的队列没有 设置 / 删除（记录，不是待办）——见 QueueHeaderModel.canEdit。
+        // 已完成不再是「记录」：设置/删除/交付/关闭都还在（见 QueueHeaderModel.canEdit）。
         if model.canEdit {
             trailing.append(iconButton("gearshape", tooltipKey: "tasks.queue.settings",
                                        action: #selector(settingsTapped)))
@@ -669,8 +676,14 @@ final class TaskQueueHeaderView: NSView {
             trailing.append(iconButton("trash", tooltipKey: "tasks.queue.delete",
                                        action: #selector(deleteTapped)))
         }
-        // 打开 PR —— 永远排在这一行的最后（图标；有 PR 链接时就是那条链接）。
+        // 交付排在关闭之前（用户 2026-10-01）：先看到「把活送出去」，再是「结束这条泳道」。
         if let prControl = openPRControl() { trailing.append(prControl) }
+        if model.canClose {
+            trailing.append(iconButton("archivebox", tooltipKey: "tasks.queue.close",
+                                       action: #selector(closeTapped)))
+        }
+        // PR 链接 —— 仍在最右：它是「已经交付过」的快捷入口。
+        if let link = prLinkControl() { trailing.append(link) }
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -698,7 +711,13 @@ final class TaskQueueHeaderView: NSView {
 
         // 队列名前面一枚行标：这是「一条队列（泳道）」——与任务卡片上的 checklist 成对。
         let glyph = taskRowGlyph("rectangle.stack", accessibility: "tasks.glyph.queue")
-        let titleRow = NSStackView(views: [disclosure, glyph, name, spacer, actions])
+        // 队列有来源会话（由会话 / task-todo 创建）时，名字后带一枚 ↺：完成情况会回传
+        // 那个会话。信息性标记，不可点，tooltip 说清楚。
+        var titleViews: [NSView] = [disclosure, glyph, name]
+        if model.reportsToSession { titleViews.append(reportGlyph()) }
+        titleViews.append(spacer)
+        titleViews.append(actions)
+        let titleRow = NSStackView(views: titleViews)
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
         titleRow.spacing = 6
@@ -727,6 +746,16 @@ final class TaskQueueHeaderView: NSView {
         } else {
             rows.append(metaRow)
         }
+        // The last delivery session's outcome (its report's first line, or the
+        // failure reason) — on the card, not only in the log. A failure is worth the
+        // extra line even when the queue is collapsed; a success summary is not.
+        if !model.isCollapsed, let noteRow = noteRow() {
+            rows.append(noteRow)
+        }
+        // Why the last delivery did not even start (no branch / no remote / busy).
+        if let key = model.prErrorKey {
+            rows.append(errorRow(L10n.tr(key)))
+        }
 
         let column = NSStackView(views: rows)
         column.orientation = .vertical
@@ -746,6 +775,86 @@ final class TaskQueueHeaderView: NSView {
         bar.widthAnchor.constraint(equalToConstant: 72).isActive = true
     }
 
+    /// What the last delivery session reported, under the meta row. Collapsed: its
+    /// first line, truncated. Expanded: the whole report, wrapped. A 展开/收起 link
+    /// appears when there is more to read (user 2026-10-01).
+    private func noteRow() -> NSView? {
+        guard let note = model.integrationNote, !note.isEmpty else { return nil }
+        let expanded = model.integrationNoteExpanded
+        let shown = expanded ? note : (model.integrationNoteFirstLine ?? note)
+        let label = NSTextField(wrappingLabelWithString: shown)
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        label.maximumNumberOfLines = expanded ? 0 : 1
+        label.lineBreakMode = expanded ? .byWordWrapping : .byTruncatingTail
+        label.toolTip = note
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        guard model.canExpandIntegrationNote else { return label }
+        let title = L10n.tr(expanded ? "tasks.queue.note.collapse" : "tasks.queue.note.expand")
+        let toggle = NSButton(title: title, target: self, action: #selector(toggleNoteTapped))
+        toggle.isBordered = false
+        toggle.controlSize = .small
+        toggle.font = .systemFont(ofSize: 11)
+        toggle.contentTintColor = .controlAccentColor
+        toggle.translatesAutoresizingMaskIntoConstraints = false
+        toggle.setContentHuggingPriority(.required, for: .horizontal)
+        toggle.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let row = NSStackView(views: [label, toggle])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = 6
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
+
+    @objc private func toggleNoteTapped() { onToggleNote?() }
+
+    /// Why a publish could not start (an L10n key on the queue): a warning-tinted
+    /// line under the meta row, so the button keeps saying what it does.
+    private func errorRow(_ text: String) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 4
+        row.translatesAutoresizingMaskIntoConstraints = false
+        if let image = NSImage(systemSymbolName: "exclamationmark.triangle.fill",
+                               accessibilityDescription: nil) {
+            let icon = NSImageView()
+            icon.image = image
+            icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
+            icon.contentTintColor = .systemRed
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            icon.setContentHuggingPriority(.required, for: .horizontal)
+            row.addArrangedSubview(icon)
+        }
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .systemRed
+        label.lineBreakMode = .byTruncatingTail
+        label.toolTip = text
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        row.addArrangedSubview(label)
+        return row
+    }
+
+    /// A small ↺ after the queue name when its completion reports back to the session
+    /// that created it (board.local.queueSessions). Informational, not a control.
+    private func reportGlyph() -> NSView {
+        let view = NSImageView()
+        if let image = NSImage(systemSymbolName: "arrow.uturn.backward",
+                               accessibilityDescription: L10n.tr("tasks.queue.reportsToSession")) {
+            view.image = image
+            view.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+            view.contentTintColor = .secondaryLabelColor
+        }
+        view.toolTip = L10n.tr("tasks.queue.reportsToSession")
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.setContentHuggingPriority(.required, for: .horizontal)
+        return view
+    }
+
     private func iconButton(_ symbol: String, tooltipKey: String, action: Selector) -> CustomIconButton {
         let button = CustomIconButton(glyph: .symbol(symbol), tooltip: L10n.tr(tooltipKey), size: 22)
         button.onAction = { [weak self] in self?.perform(action, with: nil) }
@@ -758,18 +867,24 @@ final class TaskQueueHeaderView: NSView {
         return view
     }
 
-    /// 打开 PR: the icon while the queue has no PR yet (its tooltip carries the reason
-    /// when a PR run came back empty), the PR link once it has one. The LAST control of
-    /// the row — the queue's publishing step reads as the close of the line, not as one
-    /// icon among the settings.
+    /// 交付（按 Git 工作流推出去）。图标只在队列可交付时出现。
+    /// The tooltip always says what the BUTTON DOES — a past failure is a fact about
+    /// the queue, not about this control, so it is shown on the card (see errorRow).
+    /// (It used to take over the tooltip, which made the button read as if it had
+    /// changed meaning after a failed attempt.)
     private func openPRControl() -> NSView? {
-        if model.canOpenPR {
-            return iconButton("arrow.up.right.square",
-                              tooltipKey: model.prErrorKey ?? "tasks.queue.openPR",
-                              action: #selector(openPRTapped))
-        }
+        guard model.canOpenPR else { return nil }
+        // The mode decides both the icon and the sentence: 开 PR / 合并到基线 / 推.
+        return iconButton(model.integration.publishSymbol,
+                          tooltipKey: model.integration.publishHintKey,
+                          action: #selector(openPRTapped))
+    }
+
+    /// The PR link, once a PR exists — kept separate from 交付 so a queue that has
+    /// one can still be published again (push the new commits, reuse the PR).
+    private func prLinkControl() -> NSView? {
         guard let prUrl = model.prUrl else { return nil }
-        let link = NSButton(title: TaskCardModel.shortPR(prUrl), target: self, action: #selector(openPRTapped))
+        let link = NSButton(title: TaskCardModel.shortPR(prUrl), target: self, action: #selector(prLinkTapped))
         link.isBordered = false
         link.controlSize = .small
         link.contentTintColor = .controlAccentColor
@@ -783,6 +898,8 @@ final class TaskQueueHeaderView: NSView {
     @objc private func startTapped() { onStart?() }
     @objc private func pauseTapped() { onPause?() }
     @objc private func openPRTapped() { onOpenPR?() }
+    @objc private func prLinkTapped() { onOpenPRLink?() }
+    @objc private func closeTapped() { onClose?() }
 
     @objc private func settingsTapped() { onSettings?() }
     @objc private func togglePRTapped() { onTogglePR?() }

@@ -470,6 +470,62 @@ struct TaskWorkspaceModel: Equatable {
 }
 
 /// Everything a queue header shows: how many queues exist and where each one is.
+/// Display name and icon of an 工作流. The keys live under `tasks.integration.*`
+/// so the user-facing wording can change without touching the model — the enum raw
+/// values stay the API's vocabulary.
+extension QueueIntegration {
+    var labelKey: String { "tasks.integration." + rawValue }
+    var label: String { L10n.tr(labelKey) }
+
+    /// The order every picker shows them in: 「无」FIRST (user 2026-10-01), then the
+    /// publishing workflows 由浅入深 —— 直接推送 → 合并到基线 → Pull Request (user
+    /// 2026-10-01). A display order, not the enum's storage order.
+    static var displayOrder: [QueueIntegration] { [.none, .push, .merge, .pr] }
+    /// The icon the queue header's publish button carries for this mode.
+    var publishSymbol: String {
+        switch self {
+        case .pr: return "arrow.up.right.square"
+        case .merge: return "arrow.triangle.merge"
+        case .push: return "arrow.up.circle"
+        // Unreachable: .none hides the publish control (canOpenPR is false).
+        case .none: return "nosign"
+        }
+    }
+    /// The publish button's tooltip key for this mode.
+    var publishHintKey: String {
+        switch self {
+        case .pr: return "tasks.queue.openPR"
+        case .merge: return "tasks.queue.mergePush"
+        case .push: return "tasks.queue.pushOnly"
+        case .none: return "tasks.integration.none"
+        }
+    }
+
+    /// Why a picker greys this mode out in the current workspace (nil-reachable keys:
+    /// .none is never disabled, so its key is unused).
+    var unavailableHintKey: String {
+        switch self {
+        case .pr: return "tasks.integration.unavailablePr"
+        case .merge: return "tasks.integration.unavailableMerge"
+        case .push: return "tasks.integration.unavailablePush"
+        case .none: return "tasks.integration.none"
+        }
+    }
+}
+
+extension TaskQueue {
+    /// Whether a lane starts EXPANDED the first time the panel shows it, before the
+    /// user has clicked it. A TERMINAL lane — 已完成 or 已关闭 — starts as one line:
+    /// the work is over and the list should not keep scrolling past its history. An
+    /// auto (issue) queue also starts collapsed; a live user lane starts open.
+    static func startsExpanded(_ queue: TaskQueue) -> Bool {
+        switch queue.state {
+        case .done, .closed: return false
+        case .draft, .active, .paused: return !queue.autoCreated
+        }
+    }
+}
+
 struct QueueHeaderModel: Equatable {
     var queueID: String
     var name: String
@@ -496,17 +552,47 @@ struct QueueHeaderModel: Equatable {
     /// 它是一条记录，改了设置也不会再跑（用户 2026-09-27 的规则）。
     var canEdit: Bool
     var canDelete: Bool
+    /// 关闭队列（手动终态）——已关闭的队列没有这个动作。
+    var canClose: Bool
     var canOpenPR: Bool
     var autoPR: Bool
     var isAutoCreated: Bool
     var prUrl: String?
-    /// Why the last PR attempt produced nothing (an L10n key), or nil. Shown as the
-    /// 开 PR button's tooltip, so the reason is on the card instead of only in the log.
+    /// Why the last publish attempt did not even START (no branch / no remote /
+    /// another finalize session running; an L10n key), or nil. Shown as a warning ROW
+    /// on the card — never as the 交付 button's tooltip, which always says what the
+    /// button does (user 2026-10-01).
     var prErrorKey: String?
     /// Whether this workspace can carry a PR at all (it has a GitHub remote).
     /// False hides the 自动开 PR switch — a dead control is worse than no control
     /// (the queue form's switch obeys the same rule).
     var prAvailable: Bool
+    /// Whether this queue was created by a dsh session (board.local.queueSessions), so
+    /// its completion will be reported back there. The header shows a small ↺ glyph.
+    var reportsToSession: Bool
+    /// The 工作流 resolved for THIS queue (its own override, else the panel default).
+    /// Decides the publish button's icon/label and whether a PR is required.
+    var integration: QueueIntegration
+    /// The last finalize session's report (the whole thing, capped by the runner):
+    /// nil = never finalized. A collapsed card shows its first line; 展开 shows the
+    /// rest (user 2026-10-01).
+    var integrationNote: String?
+    /// Whether the result row is currently expanded (panel state, per queue).
+    var integrationNoteExpanded: Bool
+
+    /// The note split into lines (empty lines kept: a report may have blank lines).
+    var integrationNoteLines: [String] {
+        (integrationNote ?? "").components(separatedBy: "\n")
+    }
+    /// What a collapsed card shows: the first non-empty line.
+    var integrationNoteFirstLine: String? {
+        integrationNoteLines.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+    /// Whether there is more to the note than that first line (a long single line
+    /// counts too — expanding lets it wrap).
+    var canExpandIntegrationNote: Bool {
+        integrationNoteLines.count > 1 || (integrationNote ?? "").count > 80
+    }
 
     /// The 自动开 PR toggle is shown while PRs are possible; a queue that already
     /// HAS autoPR on keeps showing it (disabled, explained) even in a workspace
@@ -519,7 +605,10 @@ struct QueueHeaderModel: Equatable {
     /// queues can be 活跃 at once (开始 on a second one just re-points the runner),
     /// and the others used to show 活跃 while nothing whatsoever happened in them.
     static func build(_ queue: TaskQueue, board: TaskBoard, collapsed: Bool,
-                      prAvailable: Bool = true, isCurrent: Bool = true) -> QueueHeaderModel {
+                      prAvailable: Bool = true, isCurrent: Bool = true,
+                      integration: QueueIntegration = .pr,
+                      hasRemote: Bool = true,
+                      noteExpanded: Bool = false) -> QueueHeaderModel {
         let tasks = queue.taskIds.compactMap { board.task($0) }
         let doneCount = tasks.filter { $0.state == .done }.count
         let failedCount = tasks.filter { $0.state == .failed }.count
@@ -538,8 +627,14 @@ struct QueueHeaderModel: Equatable {
             // user could not act on.
             stateKey = isCurrent ? "tasks.queue.state.active" : "tasks.queue.state.waiting"
             tone = isCurrent ? .running : .warning
+        case .draft:
+            // 从未启动：动作是「开始」，不是「继续」——paused 才是启动过但停了。
+            stateKey = "tasks.queue.state.draft"
+            tone = .warning
         case .paused: stateKey = "tasks.queue.state.paused"; tone = failedCount > 0 ? .negative : .warning
         case .done: stateKey = "tasks.queue.state.finished"; tone = .positive
+        // 关闭 = 手动终态：中性灰，与「暂停（橙）」「失败（红）」区分开（用户 2026-10-01）。
+        case .closed: stateKey = "tasks.queue.state.closed"; tone = .neutral
         }
 
         return QueueHeaderModel(queueID: queue.id,
@@ -556,19 +651,32 @@ struct QueueHeaderModel: Equatable {
                                 runningCount: runningCount,
                                 doneCount: doneCount,
                                 totalCount: tasks.count,
-                                canStart: queuedCount > 0 && queue.state != .active,
+                                canStart: queuedCount > 0 && queue.state != .active && queue.state != .closed,
                                 startHintKey: (queue.state == .paused && failedCount > 0 && queuedCount > 0)
                                     ? "tasks.queue.continue" : "tasks.queue.start",
                                 canPause: queue.state == .active,
-                                canEdit: queue.state != .done,
+                                // .done 仍是「交付」：设置/删除不回到行上（避免把名字挤没），
+                                // 但可以继续追加任务、交付、或手动关闭。
+                                canEdit: queue.state != .done && queue.state != .closed,
                                 canDelete: queue.state != .done,
-                                canOpenPR: prAvailable && queue.autoPR && queue.prUrl == nil
-                                    && queue.state == .done && queue.branch != nil,
+                                canClose: queue.state == .done || queue.state == .paused,
+                                // 交付与 autoPR 解耦：只要工作区能承担这种工作流、队列有分支、
+                                // 任务已交付，就能手动交付（prUrl 已存在时是「更新」）。pr 需要 GitHub
+                                // 远端；merge 只做本地合并，不需要远端；push 必须有一个可推送的远端；
+                                // 「无」是明确的不交付，没有交付按钮。
+                                canOpenPR: queue.state == .done && queue.branch != nil
+                                    && integration != .none
+                                    && (integration == .pr ? prAvailable
+                                        : integration == .push ? hasRemote : true),
                                 autoPR: queue.autoPR,
                                 isAutoCreated: queue.autoCreated,
                                 prUrl: queue.prUrl,
                                 prErrorKey: queue.prError,
-                                prAvailable: prAvailable)
+                                prAvailable: prAvailable,
+                                reportsToSession: board.local.queueSessions[queue.id] != nil,
+                                integration: integration,
+                                integrationNote: queue.integrationNote,
+                                integrationNoteExpanded: noteExpanded)
     }
 }
 
@@ -715,16 +823,50 @@ struct TasksEmptyStateModel: Equatable {
     var messageKey: String
     var symbol: String
     var showsNewTask: Bool
+    /// The unfiltered empty board ALSO shows the 使用说明 inline (the user's request:
+    /// no queues / no tasks → the content area teaches the panel). A filter that
+    /// matches nothing must NOT: the way out there is to switch the filter back.
+    var showsHelp: Bool
 
     static func build(filtered: Bool, githubRepo: Bool) -> TasksEmptyStateModel {
         if filtered {
             return TasksEmptyStateModel(messageKey: "tasks.emptyFiltered",
                                         symbol: "line.3.horizontal.decrease.circle",
-                                        showsNewTask: false)
+                                        showsNewTask: false, showsHelp: false)
         }
         return TasksEmptyStateModel(messageKey: githubRepo ? "tasks.empty" : "tasks.emptyManualOnly",
                                     symbol: "checklist",
-                                    showsNewTask: true)
+                                    showsNewTask: true, showsHelp: true)
+    }
+}
+
+/// 使用说明 —— shown INLINE while the board is empty, and in the 帮助 drawer once it
+/// has content. Keys only, so a language switch just re-renders it.
+struct TasksHelpModel: Equatable {
+    struct Section: Equatable {
+        var headingKey: String
+        var lineKeys: [String]
+    }
+    var titleKey: String
+    var introKey: String
+    var sections: [Section]
+
+    /// Every key is prefixed `tasks.help.` — asserted by the ui tests, so a new
+    /// section cannot ship without its bilingual strings (tests/l10n also lints them).
+    static func build() -> TasksHelpModel {
+        TasksHelpModel(
+            titleKey: "tasks.help.title",
+            introKey: "tasks.help.intro",
+            sections: [
+                Section(headingKey: "tasks.help.create.heading",
+                        lineKeys: ["tasks.help.create.body"]),
+                Section(headingKey: "tasks.help.queue.heading",
+                        lineKeys: ["tasks.help.queue.body"]),
+                Section(headingKey: "tasks.help.workflow.heading",
+                        lineKeys: ["tasks.help.workflow.body"]),
+                Section(headingKey: "tasks.help.session.heading",
+                        lineKeys: ["tasks.help.session.body"])
+            ])
     }
 }
 
@@ -861,15 +1003,47 @@ struct QueueComposerModel: Equatable {
     /// fields are taken away and the form says why, instead of promising a
     /// branch switch the runner can only fail on.
     var gitAvailable: Bool
+    /// Whether the workspace has ANY remote to push to (GitHub or an internal one).
+    /// 直接推送 needs it; 合并到基线 does not (it merges locally). Defaults true so a
+    /// model that only drives the text fields is not accidentally restricted.
+    var remoteAvailable: Bool = true
     /// The workspace's OWN default branch (origin/HEAD, else main/master/current):
     /// the placeholder of 基于分支 and the fallback when the field is left empty.
     /// Assuming "main" made a master-based repo fail its first task.
     var defaultBaseBranch: String
-    /// Whether the 高级设置 section (分支 / 基于分支 / PR 开关) is open. The branch
-    /// is derived from the name, so creating a queue only asks for a name; editing
-    /// a queue's settings opens everything, because that is what the user came for.
+    /// Whether the 高级设置 section (分支 / 基于分支 / 工作流 / 自动交付) is open. The
+    /// branch is derived from the name, so creating a queue only asks for a name;
+    /// editing a queue's settings opens everything, because that is what the user
+    /// came for.
     var showsAdvanced: Bool
     var attempted: Bool
+    /// This queue's own 工作流 (决策: 全局默认 + 队列级覆盖). nil = 跟随设置.
+    var integration: QueueIntegration?
+    /// The panel's global default, shown by the 跟随设置 item as 「当前」.
+    var defaultIntegration: QueueIntegration = .pr
+    /// What THIS workspace usually wants — a recommendation shown in the picker,
+    /// never enforced (github→pr / git→merge / 普通目录→push).
+    var recommendedIntegration: QueueIntegration = .pr
+
+    /// The mode this queue will really use: its own override, else the panel default.
+    var effectiveIntegration: QueueIntegration { integration ?? defaultIntegration }
+
+    /// The picker's items, in order: 跟随工作区设置 first (the default), then the modes.
+    var integrationChoices: [QueueIntegration?] { [nil] + QueueIntegration.displayOrder }
+
+    /// Whether a mode can actually run in THIS workspace: the picker greys out the
+    /// rest and says why (the runner would refuse them anyway).
+    func isIntegrationAvailable(_ mode: QueueIntegration) -> Bool {
+        QueueIntegration.available(mode, isGit: gitAvailable, hasGitHubRemote: prAvailable,
+                                   hasRemote: remoteAvailable)
+    }
+
+    /// Follow the panel setting, or pin this queue to one mode.
+    func typedIntegration(_ mode: QueueIntegration?) -> QueueComposerModel {
+        var copy = self
+        copy.integration = mode
+        return copy
+    }
 
     var headingKey: String { mode.isCreate ? "tasks.queue.newTitle" : "tasks.queue.editTitle" }
     var infoKey: String { mode.isCreate ? "tasks.queue.newInfo" : "tasks.queue.editInfo" }
@@ -981,13 +1155,21 @@ struct QueueComposerModel: Equatable {
     /// on 不切分支, which is what its cards are already doing.
     static func edit(_ queue: TaskQueue, prAvailable: Bool,
                      gitAvailable: Bool = true,
-                     defaultBaseBranch: String = "main") -> QueueComposerModel {
-        QueueComposerModel(mode: .edit(queueID: queue.id), name: queue.name,
-                           branch: queue.branch ?? "", baseBranch: queue.baseBranch,
-                           autoPR: queue.autoPR, skipsBranch: queue.branch == nil,
-                           prAvailable: prAvailable, gitAvailable: gitAvailable,
-                           defaultBaseBranch: defaultBaseBranch,
-                           showsAdvanced: true, attempted: false)
+                     hasRemote: Bool = true,
+                     defaultBaseBranch: String = "main",
+                     defaultIntegration: QueueIntegration = .pr) -> QueueComposerModel {
+        var model = QueueComposerModel(mode: .edit(queueID: queue.id), name: queue.name,
+                                       branch: queue.branch ?? "", baseBranch: queue.baseBranch,
+                                       autoPR: queue.autoPR, skipsBranch: queue.branch == nil,
+                                       prAvailable: prAvailable, gitAvailable: gitAvailable,
+                                       remoteAvailable: hasRemote,
+                                       defaultBaseBranch: defaultBaseBranch,
+                                       showsAdvanced: true, attempted: false)
+        model.integration = queue.integration
+        model.defaultIntegration = defaultIntegration
+        model.recommendedIntegration = QueueIntegration.recommended(isGit: gitAvailable,
+                                                                    hasGitHubRemote: prAvailable)
+        return model
     }
 
     /// Narrow the form to what THIS workspace can actually do.
@@ -997,11 +1179,19 @@ struct QueueComposerModel: Equatable {
     /// branch would be created happily and then fail its first task with
     /// tasks.errNotGit. Editing is left alone: an existing queue keeps its
     /// branch visible (and clearable) rather than having it silently dropped.
-    func forWorkspace(git: Bool, pr: Bool, defaultBase: String = "main") -> QueueComposerModel {
+    func forWorkspace(git: Bool, pr: Bool, hasRemote: Bool = true,
+                      defaultBase: String = "main",
+                      defaultIntegration: QueueIntegration = .pr) -> QueueComposerModel {
         var copy = self
         copy.gitAvailable = git
         copy.prAvailable = pr
+        copy.remoteAvailable = hasRemote
         copy.defaultBaseBranch = defaultBase
+        copy.defaultIntegration = defaultIntegration
+        // The recommendation follows the workspace, not the global default: a
+        // GitHub repo suggests pr, another git repo a local merge, a plain folder
+        // a plain push. It is only ever a suggestion.
+        copy.recommendedIntegration = QueueIntegration.recommended(isGit: git, hasGitHubRemote: pr)
         // Prefill the workspace's own default branch so the user sees what the
         // queue will really be based on (it stays editable).
         if mode.isCreate, baseBranch.isEmpty || baseBranch == "main" { copy.baseBranch = defaultBase }
