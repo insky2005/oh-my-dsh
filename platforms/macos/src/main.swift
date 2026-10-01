@@ -736,13 +736,13 @@ enum L10n {
         "tasks.queue.pushOnly": ("交付：直接推送", "Deliver: push directly"),
         "tasks.settings.title": ("面板设置", "Panel Settings"),
         // 两段对应下面的工作流 / Token 区块（自动关闭的说明在开关自己的 tooltip）；\n 让标签按段落断行。
-        "tasks.settings.info": ("Git 工作流，决定队列交付时用哪种 Git 方式把代码送进远端（不是 git 仓库可选「无」）。\nGitHub Token，让面板能拉取 issues、创建 PR、评论关闭 issue。", "The Git workflow decides how a finished queue delivers its code to the remote (pick None for a non-git project).\nA GitHub token lets the panel fetch issues, open PRs, and comment on & close them."),
-        "tasks.settings.hint": ("面板设置：Git 工作流、交付后自动关闭与 GitHub Token", "Panel settings: Git workflow, auto-close after delivery and GitHub token"),
+        "tasks.settings.info": ("Git 工作流，决定队列交付时用哪种 Git 方式把代码送进远端（不是 git 仓库可选「无」）。\nGitHub Token，让面板能拉取 issues、创建 PR、评论关闭 issue。\n以上设置都只对当前工作区生效（GitHub Token 按仓库）。", "The Git workflow decides how a finished queue delivers its code to the remote (pick None for a non-git project).\nA GitHub token lets the panel fetch issues, open PRs, and comment on & close them.\nAll of these apply to THIS workspace only (the GitHub token is per-repo)."),
+        "tasks.settings.hint": ("面板设置（仅当前工作区）：Git 工作流、交付后自动关闭与 GitHub Token", "Panel settings (THIS workspace only): Git workflow, auto-close after delivery and GitHub token"),
         "tasks.settings.saved": ("设置已保存", "Settings saved"),
         // 交付成功后自动关闭：开启后，队列的交付会话成功交付（PR / 合并 / 推送）时，
         // 队列自动进入「已关闭」（仍保留任务 / 分支 / PR 记录）。
         "tasks.settings.autoClose": ("交付成功后自动关闭队列", "Auto-close the queue after delivery"),
-        "tasks.settings.autoCloseHint": ("开启后，队列的交付会话成功交付（PR / 合并 / 推送）时，队列自动进入「已关闭」：不再接收任务，也不能启动或交付，但保留任务、分支与 PR 记录。", "When on, a queue closes itself once its delivery session delivers successfully (PR / merge / push): it accepts no more tasks and cannot be started or delivered, but keeps its tasks, branch and PR record."),
+        "tasks.settings.autoCloseHint": ("开启后，队列的交付会话成功交付（PR / 合并 / 推送）时，队列自动进入「已关闭」：不再接收任务，也不能启动或交付，但保留任务、分支与 PR 记录。按工作区保存：只影响当前工作区，与其他工作区互不影响。", "When on, a queue closes itself once its delivery session delivers successfully (PR / merge / push): it accepts no more tasks and cannot be started or delivered, but keeps its tasks, branch and PR record. Saved per workspace: it affects THIS workspace only and never leaks into another."),
         "tasks.queue.close": ("关闭队列", "Close Queue"),
         "tasks.closeQueueTitle": ("关闭队列「%@」？", "Close queue %@?"),
         "tasks.closeQueueInfo": ("关闭后仍保留任务、分支与 PR 记录，但不再接收任务，也不能启动或交付。", "Closing keeps the task, branch and PR record, but the queue accepts no more tasks and cannot be started or delivered."),

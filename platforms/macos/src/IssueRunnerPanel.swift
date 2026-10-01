@@ -934,8 +934,8 @@ final class IssueRunnerPanelController: NSObject {
             // 队列没写自己的 integration 时用它（面板设置里可改；**按工作区**存）。
             defaultIntegration: Self.resolvedIntegration(forWorkspace: repoRoot, isGit: isGit,
                                                          hasGitHubRemote: repo != nil),
-            // 交付成功后自动关闭队列（面板级开关；**全局**存）。
-            autoCloseOnPublish: Self.storedAutoCloseOnPublish(),
+            // 交付成功后自动关闭队列（面板设置；**按工作区**存 —— 和其他设置项一样）。
+            autoCloseOnPublish: Self.storedAutoCloseOnPublish(forWorkspace: repoRoot),
             canSwitchBranches: isGit,
             canOpenPR: { repo != nil },
             cancelSession: { id in Self.cancelSession(port: portOf(), sessionId: id) },
@@ -1297,19 +1297,19 @@ final class IssueRunnerPanelController: NSObject {
     /// ("tasksTimeoutMinutes", e.g. in ~/.dsh/shell/config.json or via
     /// `defaults write`) wins when it is a sane number. The running card SHOWS the
     /// limit, so it is never a surprise.
-    // MARK: - 工作流 default (PER WORKSPACE)
+    // MARK: - 面板设置 (EVERYTHING PER WORKSPACE)
 
-    /// The tasks-panel 工作流 default is **per workspace** (决策 2026-10-01): a GitHub
-    /// repo usually wants a PR, a scratch directory a direct push, and one value for
-    /// the whole shell cannot be both. Stored in ShellConfig as a path → mode map
-    /// (the shell's own config store, NOT inside the user's repository). A queue's
-    /// own `integration` still overrides it. If a GLOBAL default is ever wanted, it
-    /// belongs in the shell's settings, not in this panel.
-    private static let integrationByWorkspaceKey = "tasksIntegrationByWorkspace"
-
+    /// **Every** 面板设置 item is **per workspace** (决策 2026-10-01): one panel serves
+    /// very different directories at once (a GitHub repo wanting a PR, a scratch dir a
+    /// direct push, a demo repo that must never auto-close), so a single shell-wide
+    /// value cannot be right for all of them. Stored in ShellConfig as a path → value
+    /// map (the shell's own config store, NOT inside the user's repository). The GitHub
+    /// token is the one exception: it is per-REPO (see loadToken), because the same
+    /// repo is the same credential.
+    ///
     /// Standardized key, so a trailing slash / `..` does not create a second entry
     /// (the same normalization TaskWorkspaceRegistry.needsReadopt uses).
-    static func workspaceIntegrationKey(_ path: String) -> String {
+    static func workspaceSettingsKey(_ path: String) -> String {
         let standardized = (path as NSString).standardizingPath
         if standardized.count > 1, standardized.hasSuffix("/") {
             return String(standardized.dropLast())
@@ -1317,16 +1317,25 @@ final class IssueRunnerPanelController: NSObject {
         return standardized
     }
 
+    // MARK: - 工作流 default (PER WORKSPACE)
+
+    /// The tasks-panel 工作流 default is **per workspace** (see the panel-settings note
+    /// above): a GitHub repo usually wants a PR, a scratch directory a direct push, and
+    /// one value for the whole shell cannot be both. A queue's own `integration` still
+    /// overrides it. If a GLOBAL default is ever wanted, it belongs in the shell's
+    /// settings, not in this panel.
+    private static let integrationByWorkspaceKey = "tasksIntegrationByWorkspace"
+
     /// The mode saved for this workspace, or nil when it was never set.
     static func storedIntegration(forWorkspace path: String) -> QueueIntegration? {
         guard let map = ShellConfig.shared.object(forKey: integrationByWorkspaceKey) as? [String: Any],
-              let raw = map[workspaceIntegrationKey(path)] as? String else { return nil }
+              let raw = map[workspaceSettingsKey(path)] as? String else { return nil }
         return QueueIntegration(rawValue: raw)
     }
 
     static func setStoredIntegration(_ mode: QueueIntegration, forWorkspace path: String) {
         var map = (ShellConfig.shared.object(forKey: integrationByWorkspaceKey) as? [String: Any]) ?? [:]
-        map[workspaceIntegrationKey(path)] = mode.rawValue
+        map[workspaceSettingsKey(path)] = mode.rawValue
         ShellConfig.shared.set(map, forKey: integrationByWorkspaceKey)
     }
 
@@ -1346,16 +1355,26 @@ final class IssueRunnerPanelController: NSObject {
                                         hasGitHubRemote: repo != nil)
     }
 
-    /// 交付成功后自动关闭队列 —— a PANEL-level switch (not per workspace): the user
-    /// asked for one switch in 面板设置. Stored in the shell config (false until set).
-    private static let autoCloseOnPublishKey = "tasksAutoCloseOnPublish"
+    // MARK: - 交付成功后自动关闭队列 (PER WORKSPACE)
 
-    static func storedAutoCloseOnPublish() -> Bool {
-        ShellConfig.shared.bool(forKey: autoCloseOnPublishKey)
+    /// 交付成功后自动关闭队列 —— **per workspace**, like every other 面板设置 item
+    /// (决策 2026-10-01: the user asked the whole settings drawer to be workspace-
+    /// isolated). A path → Bool map; **off until THIS workspace is set**, so one
+    /// workspace's choice never leaks into another. The runner env snapshots this value
+    /// when the workspace is adopted, so a change here affects this workspace's next
+    /// finalize only.
+    private static let autoCloseByWorkspaceKey = "tasksAutoCloseOnPublishByWorkspace"
+
+    static func storedAutoCloseOnPublish(forWorkspace path: String) -> Bool {
+        guard let map = ShellConfig.shared.object(forKey: autoCloseByWorkspaceKey) as? [String: Any],
+              let on = map[workspaceSettingsKey(path)] as? Bool else { return false }
+        return on
     }
 
-    static func setStoredAutoCloseOnPublish(_ on: Bool) {
-        ShellConfig.shared.set(on, forKey: autoCloseOnPublishKey)
+    static func setStoredAutoCloseOnPublish(_ on: Bool, forWorkspace path: String) {
+        var map = (ShellConfig.shared.object(forKey: autoCloseByWorkspaceKey) as? [String: Any]) ?? [:]
+        map[workspaceSettingsKey(path)] = on
+        ShellConfig.shared.set(map, forKey: autoCloseByWorkspaceKey)
     }
 
     static func taskTimeout() -> TimeInterval {
@@ -1924,7 +1943,7 @@ final class IssueRunnerPanelController: NSObject {
             prAvailable: repo != nil,
             gitAvailable: workspaceIsGit,
             remoteAvailable: workspaceHasRemote,
-            autoCloseOnPublish: Self.storedAutoCloseOnPublish())
+            autoCloseOnPublish: repoRootPath.map { Self.storedAutoCloseOnPublish(forWorkspace: $0) } ?? false)
         let form = TaskSettingsView(model: model)
         form.onSubmit = { [weak self] settings in self?.submitSettings(settings) }
         form.onCancel = { [weak self] in self?.dismissForm() }
@@ -1943,17 +1962,15 @@ final class IssueRunnerPanelController: NSObject {
         let value = settings.token.trimmingCharacters(in: .whitespacesAndNewlines)
         // Empty → delete the token file; otherwise write it (file only).
         saveToken(value, for: repo)
-        // PER WORKSPACE: save under this workspace's path, then tell the live runner
-        // (its env was snapshotted at adopt time) so the next finalize uses it. Other
-        // workspaces keep their own value.
+        // PER WORKSPACE (every 面板设置 item): save under this workspace's path, then
+        // tell the live runner (its env was snapshotted at adopt time) so the next
+        // finalize uses it. Other workspaces keep their own value.
         if let path = repoRootPath {
             Self.setStoredIntegration(settings.defaultIntegration, forWorkspace: path)
             runner?.setDefaultIntegration(settings.defaultIntegration)
+            Self.setStoredAutoCloseOnPublish(settings.autoCloseOnPublish, forWorkspace: path)
+            runner?.setAutoCloseOnPublish(settings.autoCloseOnPublish)
         }
-        // PANEL-LEVEL: 交付成功后自动关闭队列 —— saved globally (not per workspace) and
-        // pushed to the live runner so the next finalize honours it.
-        Self.setStoredAutoCloseOnPublish(settings.autoCloseOnPublish)
-        runner?.setAutoCloseOnPublish(settings.autoCloseOnPublish)
         dismissForm()
         setStatus(L10n.tr("tasks.settings.saved"), spin: false)
         autoHideStatus(after: 4)

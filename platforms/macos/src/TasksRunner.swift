@@ -139,9 +139,9 @@ struct TaskRunnerEnv {
     /// The workspace's default integration mode (the tasks-panel setting), used for a
     /// queue that has no per-queue override.
     var defaultIntegration: QueueIntegration = .pr
-    /// 交付成功后自动关闭队列 (a panel-level switch): when true, a queue whose delivery
-    /// session succeeds is moved to .closed. Off by default so nothing
-    /// closes a queue behind the user's back.
+    /// 交付成功后自动关闭队列 (a PER-WORKSPACE panel setting): when true, a queue in
+    /// THIS workspace whose delivery session succeeds is moved to .closed. Off by
+    /// default so nothing closes a queue behind the user's back.
     var autoCloseOnPublish: Bool = false
     /// Whether this workspace is a git repository at all. A queue created where it
     /// is false gets NO branch (the pipeline then never touches git — §V2-7), which
@@ -666,8 +666,8 @@ final class TasksRunner {
     /// rebuilt — a rebuild would drop the current phase (and a running task).
     func setDefaultIntegration(_ mode: QueueIntegration) { env.defaultIntegration = mode }
 
-    /// 交付成功后自动关闭队列 can change while this board is loaded (the same drawer
-    /// as the workflow default), so the runner is told here.
+    /// 交付成功后自动关闭队列 (this workspace's value) can change while this board is
+    /// loaded (the same drawer as the workflow default), so the runner is told here.
     func setAutoCloseOnPublish(_ on: Bool) { env.autoCloseOnPublish = on }
 
     /// The workflow a queue will actually use in THIS workspace: its own override,
