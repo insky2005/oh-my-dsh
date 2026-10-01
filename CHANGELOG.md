@@ -15,15 +15,16 @@ All notable changes to this project are documented in this file. Format follows
   冲突尽量现场解决、拿不准就停下请用户介入、base 受保护如实报错。要点：
   - **全局默认**与 GitHub token 合并进同一个**设置抽屉**（面板右上齿轮；原来 token 是个 NSAlert，
     现在是和「新建队列」同款的抽屉），抽屉里给出**本工作区推荐**（GitHub → pr、普通 git → merge、非 git → push，
-    仅提示不强制）；默认值存 ShellConfig 键 `tasksIntegration`（默认 `pr`）；
+    仅提示不强制），默认工作流是**单选按钮组**（不是下拉，三档同时可见），**首次设置**默认选中本工作区推荐；
+    默认值存 ShellConfig 键 `tasksIntegration`（默认 `pr`），**全局一份**（不是每个工作区各一份）；
   - **队列级覆盖**：队列表单「高级设置」里有「跟随设置（当前：X）」+ 三档，推荐项带「（推荐）」标记；
     `TaskQueue.integration` 存队列自己的选择（null = 跟随全局）；
   - 队列卡「发布」按钮的**图标与文案跟着模式走**（开 PR / 合并并推送 / 仅推送）；收尾会话的结果
     （成功摘要首行或失败原因）写在队列卡上；`autoPR` 语义收敛为「完成后自动收尾（按工作流）」；
   - 新增 `QueueIntegration.recommended(isGit:hasGitHubRemote:)` 纯函数，以及 `TaskBoard.createQueue(integration:)` /
     `TasksRunner.createQueue(integration:)` / `createQueueWithTasks(integration:)` / `updateQueue(integration:)`。
-  回归：`tests/tasks-panel` **1272 → 1311** 项（模型 201→**203** / 运行器 420→**427** / 视图模型 338→**348** /
-  视图 200→**220** / 本地 API 113）。设计见 `docs/tasks-queue-session-loop-design.md` §14 决策 8/11、§15。
+  回归：`tests/tasks-panel` **1272 → 1315** 项（模型 201→**203** / 运行器 420→**427** / 视图模型 338→**348** /
+  视图 200→**224** / 本地 API 113）。设计见 `docs/tasks-queue-session-loop-design.md` §14 决策 8/11、§15。
 
 - **设置菜单新增「打开数据文件夹」（⌘D，位于「打开日志文件夹」之前，2026-09-29）**：直接打开 `$DSH_HOME/oh-my-dsh/`（不存在则创建），方便查看 / 备份壳层工作数据与迁移回退说明 `ROLLBACK.md`；开发版打开的是 `~/.dsh-dev/oh-my-dsh/`。
 

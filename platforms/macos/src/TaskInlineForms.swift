@@ -849,7 +849,10 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     let tokenField: NSTextField
     let tokenBox: TaskFieldBox
     let integrationCaption = TaskFormKit.caption()
-    let integrationPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    /// One RADIO per workflow — the user asked for a radio group, not a dropdown:
+    /// there are only three, and seeing all of them (with the recommendation
+    /// marked) is the point of a settings default.
+    let integrationRadios: [NSButton]
     let integrationNote = TaskFormKit.hintLabel(.secondaryLabelColor)
     let submitButton: NSButton
     let cancelButton: NSButton
@@ -861,6 +864,9 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         tokenField = token.field
         submitButton = TaskFormKit.button("", primary: true)
         cancelButton = TaskFormKit.button("", primary: false)
+        integrationRadios = QueueIntegration.allCases.map { _ in
+            NSButton(radioButtonWithTitle: "", target: nil, action: nil)
+        }
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         tokenField.delegate = self
@@ -880,10 +886,14 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         tokenField.placeholderString = L10n.tr("tasks.tokenPlaceholder")
         tokenHint.stringValue = L10n.tr("tasks.configInfo")
         integrationCaption.stringValue = L10n.tr("tasks.integration.defaultLabel")
-        let choices = QueueIntegration.allCases
-        integrationPopup.removeAllItems()
-        for choice in choices { integrationPopup.addItem(withTitle: choice.label) }
-        integrationPopup.selectItem(at: choices.firstIndex(of: model.defaultIntegration) ?? 0)
+        // The recommendation is marked on the radio itself; the 首次设置 preselection
+        // happens in configTapped (nothing stored yet → the recommended one).
+        for (index, mode) in QueueIntegration.allCases.enumerated() {
+            let radio = integrationRadios[index]
+            radio.title = mode.label + (mode == model.recommendedIntegration
+                                        ? L10n.tr("tasks.integration.recommendedSuffix") : "")
+            radio.state = (mode == model.defaultIntegration) ? .on : .off
+        }
         // hintLabel starts hidden (it is a VALIDATION hint elsewhere); this one is
         // always-visible information, so it is shown explicitly.
         integrationNote.stringValue = L10n.tr("tasks.integration.recommend",
@@ -919,11 +929,12 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         integrationNote.maximumNumberOfLines = 2
         integrationNote.lineBreakMode = .byTruncatingTail
         _ = TaskFormKit.requiredHeight(integrationNote)
-        integrationPopup.font = .systemFont(ofSize: 12)
-        integrationPopup.controlSize = .small
-        integrationPopup.translatesAutoresizingMaskIntoConstraints = false
-        integrationPopup.target = self
-        integrationPopup.action = #selector(integrationChanged)
+        for radio in integrationRadios {
+            radio.font = .systemFont(ofSize: 12)
+            radio.translatesAutoresizingMaskIntoConstraints = false
+            radio.target = self
+            radio.action = #selector(integrationChanged)
+        }
         closeButton.onAction = { [weak self] in self?.onCancel?() }
         submitButton.target = self
         submitButton.action = #selector(submitTapped)
@@ -932,18 +943,29 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
 
         let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
         let tokenRow = TaskFormKit.row(tokenCaption, tokenBox)
-        let integrationRow = TaskFormKit.inlineRow(integrationCaption, integrationPopup)
+        // 默认工作流: a caption + a radio row + the recommendation, as one block.
+        let radioRow = NSStackView(views: integrationRadios)
+        radioRow.orientation = .horizontal
+        radioRow.alignment = .centerY
+        radioRow.spacing = 14
+        radioRow.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(radioRow)
+        let workflowBlock = NSStackView(views: [integrationCaption, radioRow, integrationNote])
+        workflowBlock.orientation = .vertical
+        workflowBlock.alignment = .leading
+        workflowBlock.spacing = 5
+        workflowBlock.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(workflowBlock)
         let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
         let column = NSStackView(views: [headingRow, info, tokenRow, tokenHint,
-                                         integrationRow, integrationNote, buttons])
+                                         workflowBlock, buttons])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 8
         column.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(column)
         addSubview(column)
-        TaskFormKit.stretch([headingRow, info, tokenRow, tokenHint, integrationRow, integrationNote],
-                            to: column)
+        TaskFormKit.stretch([headingRow, info, tokenRow, tokenHint, workflowBlock], to: column)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
@@ -953,16 +975,25 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     }
 
     /// The settings as currently typed.
-    var currentDraft: TaskSettingsModel {
-        let choices = QueueIntegration.allCases
-        let index = integrationPopup.indexOfSelectedItem
-        return TaskSettingsModel(token: tokenField.stringValue,
-                                 defaultIntegration: (index >= 0 && index < choices.count)
-                                     ? choices[index] : model.defaultIntegration,
-                                 recommendedIntegration: model.recommendedIntegration,
-                                 prAvailable: model.prAvailable)
+    /// The workflow radio that is ON (the model's value while none is selected yet).
+    /// Internal for the headless form tests.
+    var selectedIntegration: QueueIntegration {
+        for (index, mode) in QueueIntegration.allCases.enumerated()
+        where integrationRadios[index].state == .on {
+            return mode
+        }
+        return model.defaultIntegration
     }
 
+    var currentDraft: TaskSettingsModel {
+        TaskSettingsModel(token: tokenField.stringValue,
+                          defaultIntegration: selectedIntegration,
+                          recommendedIntegration: model.recommendedIntegration,
+                          prAvailable: model.prAvailable)
+    }
+
+    /// A radio was clicked: AppKit keeps the group exclusive; re-apply so the model
+    /// (and submit) sees the choice.
     @objc func integrationChanged() { apply(currentDraft) }
 
     /// The submit button's action; internal so the headless tests can press it.

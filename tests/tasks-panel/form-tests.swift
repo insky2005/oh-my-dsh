@@ -509,13 +509,19 @@ do {
 
     eq(form.tokenField.stringValue, "ghp_x", "token 预填")
     check(form.tokenField.frame.width > 300, "token 字段撑满抽屉 (got \(form.tokenField.frame.width)pt)")
-    eq(form.integrationPopup.numberOfItems, 3, "三档（这里就是默认值，没有跟随设置）")
-    eq(form.integrationPopup.indexOfSelectedItem, 1, "选中的是当前默认值 merge")
+    // 单选按钮组，不是下拉：三个工作流同时可见，推荐项带标记。
+    eq(form.integrationRadios.count, 3, "三个工作流各一个单选按钮")
+    eq(form.selectedIntegration, .merge, "默认选中当前默认值 merge")
+    check(form.integrationRadios[1].state == .on, "merge 那一个是选中态")
+    check(form.integrationRadios[0].title.contains("recommendedSuffix"),
+          "推荐项（这里是 pr）带标记")
     check(!form.integrationNote.isHidden, "推荐说明是可见信息，不是校验 hint")
     check(form.submitButton.isEnabled, "保存总是可点：设置没有非法值")
 
-    form.integrationPopup.selectItem(at: 2)
+    form.integrationRadios[2].state = .on
     form.integrationChanged()
+    eq(form.selectedIntegration, .push, "点选直接推送")
+    check(form.integrationRadios[1].state == .off, "单选：前一个被关掉")
     form.tokenField.stringValue = "ghp_y"
     form.submitTapped()
     eq(submitted?.defaultIntegration, .push, "提交带上新选的默认工作流")

@@ -1174,11 +1174,20 @@ final class IssueRunnerPanelController: NSObject {
     /// ("tasksTimeoutMinutes", e.g. in ~/.dsh/shell/config.json or via
     /// `defaults write`) wins when it is a sane number. The running card SHOWS the
     /// limit, so it is never a surprise.
-    /// The tasks-panel setting: which integration mode a queue WITHOUT its own
-    /// override uses. Stored in ShellConfig, edited by the settings drawer.
+    /// The tasks-panel setting: which 工作流 a queue WITHOUT its own override uses.
+    /// Stored in ShellConfig — ONE value for the whole shell (every workspace shares
+    /// it, unlike the GitHub token which is per-repo) — edited by the settings drawer.
     static var defaultIntegration: QueueIntegration {
         get { QueueIntegration(rawValue: ShellConfig.shared.string(forKey: "tasksIntegration") ?? "") ?? .pr }
         set { ShellConfig.shared.set(newValue.rawValue, forKey: "tasksIntegration") }
+    }
+
+    /// Whether the 工作流 default was ever saved. 首次设置 (nothing stored yet) opens the
+    /// drawer on this workspace's RECOMMENDATION instead of the built-in fallback.
+    /// A value that is present but unparseable counts as "not set".
+    static var hasStoredIntegration: Bool {
+        guard let raw = ShellConfig.shared.string(forKey: "tasksIntegration") else { return false }
+        return QueueIntegration(rawValue: raw) != nil
     }
 
     static func taskTimeout() -> TimeInterval {
@@ -1738,11 +1747,14 @@ final class IssueRunnerPanelController: NSObject {
     /// the token and the 工作流 default are the two settings the panel stores for
     /// the whole shell, so they share one surface.
     private func configTapped() {
+        let recommended = QueueIntegration.recommended(isGit: workspaceIsGit,
+                                                       hasGitHubRemote: repo != nil)
         let model = TaskSettingsModel(
             token: loadToken(for: repo) ?? "",
-            defaultIntegration: Self.defaultIntegration,
-            recommendedIntegration: QueueIntegration.recommended(isGit: workspaceIsGit,
-                                                                hasGitHubRemote: repo != nil),
+            // 首次设置：nothing has ever been saved, so open on the recommendation for
+            // this workspace rather than the built-in .pr fallback.
+            defaultIntegration: Self.hasStoredIntegration ? Self.defaultIntegration : recommended,
+            recommendedIntegration: recommended,
             prAvailable: repo != nil)
         let form = TaskSettingsView(model: model)
         form.onSubmit = { [weak self] settings in self?.submitSettings(settings) }
