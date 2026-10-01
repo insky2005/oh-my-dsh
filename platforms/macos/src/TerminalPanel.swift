@@ -1028,21 +1028,58 @@ final class TerminalView: NSView, NSTextInputClient {
         }
     }
 
+    /// Whether the terminal currently owns the keyboard (and its window is key).
+    /// Drives the solid/hollow cursor and the input-source policy together.
+    private var hasFocus = false
+
     // Focus also drives the keyboard input source: terminals want English, and
     // the user's original IME is put back when focus leaves (see
     // TerminalInputSourceGuard). makeFirstResponder is idempotent, so the
     // hover-to-focus above plus a subsequent click still only arrive here once.
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
-        if ok { TerminalInputSourceGuard.shared.terminalDidFocus() }
+        if ok {
+            setFocused(true)
+            TerminalInputSourceGuard.shared.terminalDidFocus()
+        }
         return ok
     }
 
     override func resignFirstResponder() -> Bool {
         let ok = super.resignFirstResponder()
-        if ok { TerminalInputSourceGuard.shared.terminalDidBlur() }
+        if ok {
+            setFocused(false)
+            TerminalInputSourceGuard.shared.terminalDidBlur()
+        }
         return ok
     }
+
+    /// Track the window's key state too: leaving the app (⌘-Tab) does not always
+    /// resign first responder, but the cursor should still read as inactive.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        let center = NotificationCenter.default
+        center.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
+        center.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
+        guard let win = window else { return }
+        center.addObserver(self, selector: #selector(windowDidResignKey),
+                           name: NSWindow.didResignKeyNotification, object: win)
+        center.addObserver(self, selector: #selector(windowDidBecomeKey),
+                           name: NSWindow.didBecomeKeyNotification, object: win)
+    }
+
+    @objc private func windowDidResignKey() { setFocused(false) }
+    @objc private func windowDidBecomeKey() { setFocused(window?.firstResponder === self) }
+
+    private func setFocused(_ focused: Bool) {
+        guard hasFocus != focused else { return }
+        hasFocus = focused
+        needsDisplay = true
+    }
+
+    /// Test surface: an unfocused terminal draws a hollow cursor.
+    var cursorIsHollowForTesting: Bool { !hasFocus }
+    func setFocusedForTesting(_ focused: Bool) { setFocused(focused) }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -1297,15 +1334,26 @@ final class TerminalView: NSView, NSTextInputClient {
         let rect = NSRect(x: CGFloat(col) * cellWidth,
                           y: bounds.height - CGFloat(r + 1) * lineHeight,
                           width: cellWidth * CGFloat(span), height: lineHeight)
+        guard hasFocus else {
+            // Unfocused: a hollow outline instead of a solid block, so the caret
+            // stays visible without the terminal looking active.
+            let lineWidth: CGFloat = 1.5
+            let outline = NSBezierPath(rect: rect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2))
+            outline.lineWidth = lineWidth
+            NSColor.controlAccentColor.setStroke()
+            outline.stroke()
+            return
+        }
         NSColor.controlAccentColor.setFill()
         rect.fill()
+        // Redraw the glyph over the filled block so it stays legible.
         let lead = emulator.screenCell(row: r, col: col)
         if lead.ch != " " {
-            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
             if span == 2 {
                 drawWideGlyph(lead.ch, atX: rect.minX, y: rect.minY,
                               fg: NSColor.white, bold: false, italic: false, underline: false)
             } else if !lead.continuation {
+                let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
                 (String(lead.ch) as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
             }
         }

@@ -330,6 +330,19 @@ failingGuard.terminalDidBlur()
 test("the original is restored once the system accepts it",
      failing.current == "com.baidu.inputmethod.BaiduIM.pinyin" && !failingGuard.hasSavedSource)
 
+// MARK: - Focus cursor (solid when focused, hollow when not)
+//
+// The block cursor is filled while the terminal owns the keyboard and turns
+// into an outline once it does not, so an inactive pane still shows where the
+// caret is without looking active.
+
+let cursorView = TerminalView(emulator: TerminalEmulator(rows: 4, cols: 20), session: nil)
+test("the cursor starts hollow while unfocused", cursorView.cursorIsHollowForTesting)
+cursorView.setFocusedForTesting(true)
+test("a focused terminal shows the solid cursor", !cursorView.cursorIsHollowForTesting)
+cursorView.setFocusedForTesting(false)
+test("losing focus makes the cursor hollow again", cursorView.cursorIsHollowForTesting)
+
 // MARK: - Wide-glyph font (no horizontal stretch distortion)
 //
 // The monospaced system font has no CJK glyphs; its default fallback renders
