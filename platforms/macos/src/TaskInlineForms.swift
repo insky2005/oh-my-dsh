@@ -896,7 +896,8 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     private let heading = NSTextField(labelWithString: "")
     private let info = NSTextField(wrappingLabelWithString: "")
     private let tokenCaption = TaskFormKit.caption()
-    private let tokenHint = NSTextField(wrappingLabelWithString: "")
+    /// Internal for the headless form tests (they check the full-wrapping setup).
+    let tokenHint = NSTextField(wrappingLabelWithString: "")
     private let closeButton = CustomIconButton(glyph: .close, tooltip: "", size: 22)
     // Internal for the headless form tests (see TaskComposerView).
     let tokenField: NSTextField
@@ -907,9 +908,11 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     /// marked) is the point of a settings default.
     let integrationRadios: [NSButton]
     let integrationNote = TaskFormKit.hintLabel(.secondaryLabelColor)
-    /// 发布成功后自动关闭队列 —— a single checkbox, its explanation in the tooltip
-    /// (a whole hint row would cost height the shared content area does not have).
+    /// 发布成功后自动关闭队列 —— a checkbox with its explanation shown in full
+    /// underneath (the drawer grew for it, see the form test's height budget).
     let autoCloseCheck: NSButton
+    /// Internal for the headless form tests (they check the full-wrapping setup).
+    let autoCloseHint = NSTextField(wrappingLabelWithString: "")
     let submitButton: NSButton
     let cancelButton: NSButton
 
@@ -934,6 +937,19 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func focusToken() { window?.makeFirstResponder(tokenField) }
+
+    /// The full-width explanations wrap, so they need their max width to report the
+    /// right height — and the drawer's width is only known at layout time. The guard
+    /// makes it idempotent, so this cannot loop.
+    override func layout() {
+        super.layout()
+        let width = max(160, bounds.width - 32)
+        for label in [info, tokenHint, autoCloseHint] {
+            guard abs(label.preferredMaxLayoutWidth - width) > 0.5 else { continue }
+            label.preferredMaxLayoutWidth = width
+            label.invalidateIntrinsicContentSize()
+        }
+    }
 
     func apply(_ model: TaskSettingsModel) {
         self.model = model
@@ -966,6 +982,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         autoCloseCheck.title = L10n.tr("tasks.settings.autoClose")
         autoCloseCheck.toolTip = L10n.tr("tasks.settings.autoCloseHint")
         autoCloseCheck.state = model.autoCloseOnPublish ? .on : .off
+        autoCloseHint.stringValue = L10n.tr("tasks.settings.autoCloseHint")
         submitButton.title = L10n.tr("tasks.new.save")
         submitButton.isEnabled = true
         cancelButton.title = L10n.tr("btn.cancel")
@@ -973,24 +990,29 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     }
 
     private func build() {
-        // The drawer shares the panel's form sheet with 新建任务 / 新建队列, so it
-        // must fit the same short content area: explanations are capped and
-        // truncated (full text in the tooltip) instead of letting the sheet push
-        // its own buttons out of view. The intro is TWO paragraphs (工作流 / Token).
+        // 设置抽屉现在把说明**完整显示**出来（自动关闭与 GitHub Token），抽屉因此
+        // 比别的表单高；只有面板太矮时表单才滚动。The intro stays short; the two
+        // explanations below it wrap in full.
         info.font = TaskFormKit.captionFont
         info.textColor = .secondaryLabelColor
-        info.maximumNumberOfLines = 3
-        info.lineBreakMode = .byTruncatingTail
+        info.maximumNumberOfLines = 0
+        info.lineBreakMode = .byWordWrapping
         info.translatesAutoresizingMaskIntoConstraints = false
         info.toolTip = L10n.tr("tasks.settings.info")
         _ = TaskFormKit.requiredHeight(info)
         tokenHint.font = TaskFormKit.captionFont
         tokenHint.textColor = .tertiaryLabelColor
-        tokenHint.maximumNumberOfLines = 2
-        tokenHint.lineBreakMode = .byTruncatingTail
+        tokenHint.maximumNumberOfLines = 0
+        tokenHint.lineBreakMode = .byWordWrapping
         tokenHint.translatesAutoresizingMaskIntoConstraints = false
         tokenHint.toolTip = L10n.tr("tasks.configInfo")
         _ = TaskFormKit.requiredHeight(tokenHint)
+        autoCloseHint.font = TaskFormKit.captionFont
+        autoCloseHint.textColor = .tertiaryLabelColor
+        autoCloseHint.maximumNumberOfLines = 0
+        autoCloseHint.lineBreakMode = .byWordWrapping
+        autoCloseHint.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(autoCloseHint)
         integrationNote.font = TaskFormKit.captionFont
         integrationNote.textColor = .tertiaryLabelColor
         integrationNote.maximumNumberOfLines = 2
@@ -1028,17 +1050,26 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         workflowBlock.spacing = 5
         workflowBlock.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(workflowBlock)
+        // 自动关闭：复选框 + 完整说明，作为一个块；说明的宽度跟随块（也就是列宽），
+        // 否则 wrapping label 报告不出正确高度。
+        let autoCloseBlock = NSStackView(views: [autoCloseCheck, autoCloseHint])
+        autoCloseBlock.orientation = .vertical
+        autoCloseBlock.alignment = .leading
+        autoCloseBlock.spacing = 3
+        autoCloseBlock.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(autoCloseBlock)
+        autoCloseHint.widthAnchor.constraint(equalTo: autoCloseBlock.widthAnchor).isActive = true
         let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
         // 工作流在前、自动关闭其次、GitHub Token 最后 —— 与 intro 的两段顺序一致。
         let column = NSStackView(views: [headingRow, info, workflowBlock,
-                                         autoCloseCheck, tokenRow, tokenHint, buttons])
+                                         autoCloseBlock, tokenRow, tokenHint, buttons])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 8
         column.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(column)
         addSubview(column)
-        TaskFormKit.stretch([headingRow, info, workflowBlock, autoCloseCheck,
+        TaskFormKit.stretch([headingRow, info, workflowBlock, autoCloseBlock,
                              tokenRow, tokenHint], to: column)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),

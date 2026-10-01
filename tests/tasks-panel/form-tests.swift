@@ -42,6 +42,10 @@ func layout(_ view: NSView, width: CGFloat) -> NSSize {
         view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
         view.topAnchor.constraint(equalTo: host.topAnchor),
     ])
+    // Two passes: a wrapping label only learns its width once the form has been
+    // laid out, so the first pass settles the width and the second measures the
+    // wrapped height (AppKit does the same in the running app).
+    host.layoutSubtreeIfNeeded()
     host.layoutSubtreeIfNeeded()
     return view.frame.size
 }
@@ -609,8 +613,21 @@ do {
     var submitted: TaskSettingsModel?
     form.onSubmit = { submitted = $0 }
     let settingsSize = layout(form, width: 440)
-    check(settingsSize.height <= 290,
-          "设置抽屉与两张表单共用同一个内容区，不能更高 (got \(settingsSize.height)pt)")
+    // 两条说明都完整显示：不截断（maximumNumberOfLines = 0）且按词换行。
+    eq(form.tokenHint.maximumNumberOfLines, 0, "GitHub Token 说明不截断")
+    eq(form.tokenHint.lineBreakMode, .byWordWrapping, "GitHub Token 说明按词换行")
+    eq(form.autoCloseHint.maximumNumberOfLines, 0, "自动关闭说明不截断")
+    check(!form.autoCloseHint.isHidden, "自动关闭说明直接显示（不只是 tooltip）")
+    eq(form.autoCloseHint.stringValue, "autoCloseHint", "说明文字来自 settings.autoCloseHint")
+    check(settingsSize.height <= 620,
+          "设置抽屉已为完整说明加高（短文案下远低于上限）(got \(settingsSize.height)pt)")
+    // 短文案（L10n stub）验证不了换行：喂一段长文本，确认说明真的换行并把抽屉撑高。
+    form.tokenHint.stringValue = String(repeating: "这是一段很长的说明文字，用来验证换行。", count: 6)
+    let grown = layout(form, width: 440)
+    check(form.tokenHint.frame.height > 20,
+          "长说明换行成多行 (got \(form.tokenHint.frame.height)pt)")
+    check(grown.height > settingsSize.height,
+          "说明换行把抽屉撑高 (\(settingsSize.height) → \(grown.height)pt)")
 
     eq(form.tokenField.stringValue, "ghp_x", "token 预填")
     check(form.tokenField.frame.width > 300, "token 字段撑满抽屉 (got \(form.tokenField.frame.width)pt)")
