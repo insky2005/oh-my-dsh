@@ -19,14 +19,14 @@ All notable changes to this project are documented in this file. Format follows
     存 ShellConfig 的「工作区路径 → 模式」映射（`tasksIntegrationByWorkspace`，不往用户仓库写文件），
     未设置过时用该工作区的推荐——所以首次打开抽屉默认选中的就是推荐那一档。
     需要「全局一份」的话属于**壳层设置**，不在任务面板；
-  - **队列级覆盖**：队列表单「高级设置」里有「跟随设置（当前：X）」+ 三档，推荐项带「（推荐）」标记；
-    `TaskQueue.integration` 存队列自己的选择（null = 跟随全局）；
+  - **队列级覆盖**：队列表单「高级设置」里是**单选组**（跟随设置 + 三档），推荐工作区标在 caption 行上；
+    `TaskQueue.integration` 存队列自己的选择（null = 跟随本工作区的默认）；
   - 队列卡「发布」按钮的**图标与文案跟着模式走**（开 PR / 合并并推送 / 仅推送）；收尾会话的结果
     （成功摘要首行或失败原因）写在队列卡上；`autoPR` 语义收敛为「完成后自动收尾（按工作流）」；
   - 新增 `QueueIntegration.recommended(isGit:hasGitHubRemote:)` 纯函数，以及 `TaskBoard.createQueue(integration:)` /
     `TasksRunner.createQueue(integration:)` / `createQueueWithTasks(integration:)` / `updateQueue(integration:)`。
-  回归：`tests/tasks-panel` **1272 → 1316** 项（模型 201→**203** / 运行器 420→**427** / 视图模型 338→**348** /
-  视图 200→**225** / 本地 API 113）。设计见 `docs/tasks-queue-session-loop-design.md` §14 决策 8/11、§15。
+  回归：`tests/tasks-panel` **1272 → 1322** 项（模型 201→**203** / 运行器 420→**427** / 视图模型 338→**348** /
+  视图 200→**231** / 本地 API 113）。设计见 `docs/tasks-queue-session-loop-design.md` §14 决策 8/11、§15。
 
 - **设置菜单新增「打开数据文件夹」（⌘D，位于「打开日志文件夹」之前，2026-09-29）**：直接打开 `$DSH_HOME/oh-my-dsh/`（不存在则创建），方便查看 / 备份壳层工作数据与迁移回退说明 `ROLLBACK.md`；开发版打开的是 `~/.dsh-dev/oh-my-dsh/`。
 

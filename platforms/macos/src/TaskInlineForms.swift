@@ -527,10 +527,13 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
     let skipBranchSwitch: NSButton
     let prSwitch: NSButton
     let prNote: NSTextField
-    /// 工作流 picker: 跟随设置 (default) + the three modes, the recommended one
-    /// marked. Internal for the headless form tests.
+    /// 工作流: a RADIO group here too (跟随设置 + the three modes) — the user asked
+    /// for radios, not a dropdown, so all four are visible at once. Internal for the
+    /// headless form tests.
     let integrationCaption = TaskFormKit.caption()
-    let integrationPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    let integrationRadios: [NSButton]
+    /// 本工作区推荐，与 caption 同行（不额外占一行）。
+    let integrationNote = TaskFormKit.hintLabel(.secondaryLabelColor)
     let advancedButton: NSButton
     /// The 高级设置 section (分支 / 基于分支 / PR): hidden while creating, open
     /// while editing. Internal so the tests can assert the default.
@@ -556,6 +559,10 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         prNote = TaskFormKit.hintLabel(.secondaryLabelColor)
         advancedButton = TaskFormKit.linkButton("")
         advancedStack = NSStackView()
+        // 跟随设置 + pr/merge/push = one radio each.
+        integrationRadios = (0..<(QueueIntegration.allCases.count + 1)).map { _ in
+            NSButton(radioButtonWithTitle: "", target: nil, action: nil)
+        }
         hint = TaskFormKit.hintLabel()
         submitButton = TaskFormKit.button("", primary: true)
         cancelButton = TaskFormKit.button("", primary: false)
@@ -609,24 +616,17 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         // A PR switch that cannot be switched is worse than a sentence: the
         // workspace simply has no PR to open.
         integrationCaption.stringValue = L10n.tr("tasks.integration.label")
-        let choices = model.integrationChoices
-        // The recommendation rides ON the item it recommends — a separate note row
-        // cost the expanded form height it does not have (see inlineRow).
-        let recommended = model.recommendedIntegration
-        let mark = L10n.tr("tasks.integration.recommendedSuffix")
-        integrationPopup.removeAllItems()
-        for choice in choices {
-            if let choice = choice {
-                integrationPopup.addItem(withTitle: choice.label
-                    + (choice == recommended ? mark : ""))
-            } else {
-                integrationPopup.addItem(withTitle:
-                    L10n.tr("tasks.integration.follow", model.defaultIntegration.label)
-                    + (model.defaultIntegration == recommended ? mark : ""))
-            }
+        // 跟随设置 + 三档 as radios; the recommendation is on the caption line (a
+        // suffix on a radio would not fit four of them across the panel width).
+        let options = model.integrationChoices
+        for (index, choice) in options.enumerated() {
+            let radio = integrationRadios[index]
+            radio.title = choice?.label ?? L10n.tr("tasks.integration.followShort")
+            radio.state = (choice == model.integration) ? .on : .off
         }
-        let selected = choices.firstIndex(of: model.integration) ?? 0
-        integrationPopup.selectItem(at: selected)
+        integrationNote.stringValue = L10n.tr("tasks.integration.recommend",
+                                              model.recommendedIntegration.label)
+        integrationNote.isHidden = false
         prSwitch.title = L10n.tr("tasks.queue.createPR")
         prSwitch.state = model.autoPR ? .on : .off
         prSwitch.isHidden = !model.prAvailable
@@ -655,11 +655,6 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
             toggle.font = .systemFont(ofSize: 12)
             toggle.translatesAutoresizingMaskIntoConstraints = false
         }
-        integrationPopup.font = .systemFont(ofSize: 12)
-        integrationPopup.controlSize = .small
-        integrationPopup.translatesAutoresizingMaskIntoConstraints = false
-        integrationPopup.target = self
-        integrationPopup.action = #selector(integrationChanged)
         skipBranchSwitch.target = self
         skipBranchSwitch.action = #selector(skipBranchTapped)
         closeButton.onAction = { [weak self] in self?.onCancel?() }
@@ -699,23 +694,44 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         advancedStack.spacing = 3
         advancedStack.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(advancedStack)
-        // 工作流 sits caption-BESIDE-picker, with the recommendation on the same
-        // line: a fourth stacked row would push the expanded form past a short
-        // panel's content area (the very mistake inlineRow was introduced to fix).
+        // 工作流: caption + recommendation on one line, the four radios on the next.
+        // (Four radios do not fit beside a caption, so the caption moves up — this
+        // costs one text line, not a whole stacked row.)
         integrationCaption.setContentHuggingPriority(.required, for: .horizontal)
         integrationCaption.setContentCompressionResistancePriority(.required, for: .horizontal)
-        integrationCaption.widthAnchor.constraint(equalToConstant: 62).isActive = true
-        integrationPopup.setContentHuggingPriority(.required, for: .horizontal)
+        integrationNote.font = TaskFormKit.captionFont
+        integrationNote.textColor = .tertiaryLabelColor
+        integrationNote.maximumNumberOfLines = 1
+        integrationNote.lineBreakMode = .byTruncatingTail
+        integrationNote.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        _ = TaskFormKit.requiredHeight(integrationNote)
         let integrationSpacer = NSView()
         integrationSpacer.translatesAutoresizingMaskIntoConstraints = false
         integrationSpacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
-        let integrationRow = NSStackView(views: [integrationCaption, integrationPopup,
-                                                 integrationSpacer])
-        integrationRow.orientation = .horizontal
-        integrationRow.alignment = .centerY
-        integrationRow.spacing = 8
-        integrationRow.translatesAutoresizingMaskIntoConstraints = false
-        _ = TaskFormKit.requiredHeight(integrationRow)
+        let captionRow = NSStackView(views: [integrationCaption, integrationNote, integrationSpacer])
+        captionRow.orientation = .horizontal
+        captionRow.alignment = .centerY
+        captionRow.spacing = 8
+        captionRow.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(captionRow)
+        for radio in integrationRadios {
+            radio.font = .systemFont(ofSize: 12)
+            radio.translatesAutoresizingMaskIntoConstraints = false
+            radio.target = self
+            radio.action = #selector(integrationChanged)
+        }
+        let radioRow = NSStackView(views: integrationRadios)
+        radioRow.orientation = .horizontal
+        radioRow.alignment = .centerY
+        radioRow.spacing = 10
+        radioRow.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(radioRow)
+        let integrationBlock = NSStackView(views: [captionRow, radioRow])
+        integrationBlock.orientation = .vertical
+        integrationBlock.alignment = .leading
+        integrationBlock.spacing = 4
+        integrationBlock.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(integrationBlock)
         // 自动收尾 switch + its 不可用 note on ONE line: the note already said what
         // the integration picker now says for a non-GitHub workspace, so a whole
         // stacked row for it cost height the expanded form does not have.
@@ -730,10 +746,10 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         prRow.spacing = 8
         prRow.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(prRow)
-        for view in [branchRow, baseRow, integrationRow, prRow] {
+        for view in [branchRow, baseRow, integrationBlock, prRow] {
             advancedStack.addArrangedSubview(view)
         }
-        TaskFormKit.stretch([branchRow, baseRow, integrationRow, prRow], to: advancedStack)
+        TaskFormKit.stretch([branchRow, baseRow, integrationBlock, prRow], to: advancedStack)
 
         let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
         let column = NSStackView(views: [headingRow, info, nameRow, hintRow, advancedStack, hint, buttons])
@@ -762,14 +778,16 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
             .typedIntegration(selectedIntegration)
     }
 
-    /// The picker's current choice (nil = 跟随设置). Internal for the form tests.
+    /// The radio that is ON (nil = 跟随设置). Internal for the form tests.
     var selectedIntegration: QueueIntegration? {
-        let choices = model.integrationChoices
-        let index = integrationPopup.indexOfSelectedItem
-        return (index >= 0 && index < choices.count) ? choices[index] : nil
+        let options = model.integrationChoices
+        for (index, option) in options.enumerated() where integrationRadios[index].state == .on {
+            return option
+        }
+        return model.integration
     }
 
-    /// The 工作流 picker changed: re-apply so the model (and submit) sees it.
+    /// A 工作流 radio was clicked: re-apply so the model (and submit) sees it.
     @objc func integrationChanged() { apply(currentDraft) }
 
     /// 不切分支 toggled: the fields follow it, and the hint stops promising a

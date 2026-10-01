@@ -446,21 +446,23 @@ do {
 
 section("the queue form stays short enough to fit without scrolling")
 do {
-    // 高级设置 opens three more controls; a form that then needs a scrollbar in a
+    // 高级设置 opens more controls; a form that then needs a scrollbar in a
     // normal panel is a form that should have been shorter (the section's rows sit
-    // caption-BESIDE-field, and its spacing is tighter).
+    // caption-BESIDE-field, and its spacing is tighter). 工作流 is a RADIO group now
+    // (跟随设置 + 三档, a deliberate requirement), which costs one caption line plus
+    // one row — the sheet still scrolls only in a very short panel.
     let collapsed = QueueComposerView(model: QueueComposerModel.create())
     let collapsedSize = layout(collapsed, width: 400)
     let expanded = QueueComposerView(model: QueueComposerModel.create().togglingAdvanced())
     let expandedSize = layout(expanded, width: 400)
     check(expandedSize.height > collapsedSize.height, "高级设置 makes the form taller")
-    check(expandedSize.height <= 290,
+    check(expandedSize.height <= 310,
           "but the expanded form still fits a normal content area (got \(expandedSize.height)pt)")
     check(expanded.branchField.frame.width > 180,
           "and the inline advanced fields keep their width (\(expanded.branchField.frame.width)pt)")
 }
 
-section("队列表单：工作流 picker（跟随设置 + 三档，推荐项带标记）")
+section("队列表单：工作流单选组（跟随设置 + 三档）")
 do {
     // The recommendation follows the WORKSPACE, never the global default.
     eq(QueueComposerModel.create().forWorkspace(git: true, pr: true).recommendedIntegration, .pr,
@@ -478,19 +480,25 @@ do {
     form.onSubmit = { submitted = $0 }
     _ = layout(form, width: 400)
 
-    eq(form.integrationPopup.numberOfItems, 4, "跟随设置 + 三个模式")
-    check(form.integrationPopup.itemTitle(at: 0).contains("follow"), "第一项是跟随设置")
+    eq(form.integrationRadios.count, 4, "跟随设置 + 三个模式各一个单选按钮")
+    eq(form.integrationRadios[0].title, "followShort", "第一个是跟随设置（短标签）")
     eq(form.selectedIntegration, nil, "默认就是跟随设置")
-    check(form.integrationPopup.itemTitle(at: 0).contains("recommendedSuffix"),
-          "推荐项带（推荐）标记")
-    check(form.integrationPopup.itemTitle(at: 1).contains("recommendedSuffix"),
-          "推荐的是 pr —— 标记落在 pr 那一项上（1 = pr）")
+    check(form.integrationRadios[0].state == .on, "跟随设置那个是选中态")
+    check(!form.integrationNote.isHidden, "本工作区推荐在 caption 行上，可见")
+    check(form.integrationNote.stringValue.contains("recommend"),
+          "推荐文案来自 integration.recommend")
+    // 四个 radio 必须放得下（不被截断），否则单选框反而看不清。
+    for radio in form.integrationRadios {
+        check(radio.frame.width >= radio.intrinsicContentSize.width - 1,
+              "radio「\(radio.title)」不被截断 (frame \(radio.frame.width) >= intrinsic \(radio.intrinsicContentSize.width))")
+    }
 
     // 选中 merge：模型与提交都带上队列自己的覆盖。名字要填，否则表单不可提交。
     form.nameField.stringValue = "Lane"
-    form.integrationPopup.selectItem(at: 2)
+    form.integrationRadios[2].state = .on
     form.integrationChanged()
     eq(form.selectedIntegration, .merge, "选中项映射回模型（2 = merge）")
+    check(form.integrationRadios[0].state == .off, "单选：跟随设置被关掉")
     form.submitTapped()
     eq(submitted?.integration, .merge, "提交时带上队列自己的工作流")
     eq(submitted?.integrationChoices.count, 4, "选项集合包含跟随设置")

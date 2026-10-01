@@ -708,6 +708,7 @@ enum L10n {
         "tasks.integration.label": ("工作流", "Workflow"),
         "tasks.integration.defaultLabel": ("默认工作流", "Default workflow"),
         "tasks.integration.follow": ("跟随设置（当前：%@）", "Follow settings (%@)"),
+        "tasks.integration.followShort": ("跟随设置", "Follow settings"),
         "tasks.integration.pr": ("Pull Request", "Pull request"),
         "tasks.integration.merge": ("合并到基线", "Merge into base"),
         "tasks.integration.push": ("直接推送", "Push directly"),
