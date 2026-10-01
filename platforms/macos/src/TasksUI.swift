@@ -533,8 +533,10 @@ struct QueueHeaderModel: Equatable {
     var autoPR: Bool
     var isAutoCreated: Bool
     var prUrl: String?
-    /// Why the last PR attempt produced nothing (an L10n key), or nil. Shown as the
-    /// 开 PR button's tooltip, so the reason is on the card instead of only in the log.
+    /// Why the last publish attempt did not even START (no branch / no remote /
+    /// another finalize session running; an L10n key), or nil. Shown as a warning ROW
+    /// on the card — never as the 发布 button's tooltip, which always says what the
+    /// button does (user 2026-10-01).
     var prErrorKey: String?
     /// Whether this workspace can carry a PR at all (it has a GitHub remote).
     /// False hides the 自动开 PR switch — a dead control is worse than no control

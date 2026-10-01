@@ -743,11 +743,16 @@ final class TaskQueueHeaderView: NSView {
             branch.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         } else {
             rows.append(metaRow)
-            // The last finalize session's outcome (its report's first line, or the
-            // failure reason) — on the card, not only in the log.
-            if let note = model.integrationNote, !note.isEmpty {
-                rows.append(resultRow(note))
-            }
+        }
+        // The last finalize session's outcome (its report's first line, or the
+        // failure reason) — on the card, not only in the log. A failure is worth the
+        // extra line even when the queue is collapsed; a success summary is not.
+        if !model.isCollapsed, let note = model.integrationNote, !note.isEmpty {
+            rows.append(resultRow(note))
+        }
+        // Why the last publish did not even start (no branch / no remote / busy).
+        if let key = model.prErrorKey {
+            rows.append(errorRow(L10n.tr(key)))
         }
 
         let column = NSStackView(views: rows)
@@ -782,6 +787,35 @@ final class TaskQueueHeaderView: NSView {
         return label
     }
 
+    /// Why a publish could not start (an L10n key on the queue): a warning-tinted
+    /// line under the meta row, so the button keeps saying what it does.
+    private func errorRow(_ text: String) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 4
+        row.translatesAutoresizingMaskIntoConstraints = false
+        if let image = NSImage(systemSymbolName: "exclamationmark.triangle.fill",
+                               accessibilityDescription: nil) {
+            let icon = NSImageView()
+            icon.image = image
+            icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
+            icon.contentTintColor = .systemRed
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            icon.setContentHuggingPriority(.required, for: .horizontal)
+            row.addArrangedSubview(icon)
+        }
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .systemRed
+        label.lineBreakMode = .byTruncatingTail
+        label.toolTip = text
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        row.addArrangedSubview(label)
+        return row
+    }
+
     /// A small ↺ after the queue name when its completion reports back to the session
     /// that created it (board.local.queueSessions). Informational, not a control.
     private func reportGlyph() -> NSView {
@@ -810,16 +844,16 @@ final class TaskQueueHeaderView: NSView {
         return view
     }
 
-    /// 打开 PR: the icon while the queue has no PR yet (its tooltip carries the reason
-    /// when a PR run came back empty), the PR link once it has one. The LAST control of
-    /// the row — the queue's publishing step reads as the close of the line, not as one
-    /// icon among the settings.
-    /// 发布（push + 开/更新 PR）。图标只在队列可发布时出现；已有 PR 时它就是「更新」。
+    /// 发布（按 Git 工作流推出去）。图标只在队列可发布时出现。
+    /// The tooltip always says what the BUTTON DOES — a past failure is a fact about
+    /// the queue, not about this control, so it is shown on the card (see errorRow).
+    /// (It used to take over the tooltip, which made the button read as if it had
+    /// changed meaning after a failed attempt.)
     private func openPRControl() -> NSView? {
         guard model.canOpenPR else { return nil }
-        // The mode decides both the icon and the sentence: 开 PR / 合并并推送 / 推送.
+        // The mode decides both the icon and the sentence: 开 PR / 合并到基线 / 推.
         return iconButton(model.integration.publishSymbol,
-                          tooltipKey: model.prErrorKey ?? model.integration.publishHintKey,
+                          tooltipKey: model.integration.publishHintKey,
                           action: #selector(openPRTapped))
     }
 

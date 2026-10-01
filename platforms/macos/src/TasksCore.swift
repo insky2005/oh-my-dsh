@@ -947,8 +947,10 @@ struct TaskBoard {
         if let queueID = tasks[i].queueId, let qi = index(ofQueue: queueID) {
             queues[qi].state = .active
             local.activeQueueID = queueID
-            // A new run invalidates the previous finalize result shown on the card.
+            // A new run invalidates the previous finalize result shown on the card —
+            // both the success summary and the publish-failure reason.
             queues[qi].integrationNote = nil
+            queues[qi].prError = nil
             if let branch = queues[qi].branch { tasks[i].branch = branch }
         }
         local.runningTaskID = taskID

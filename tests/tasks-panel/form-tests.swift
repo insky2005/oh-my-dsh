@@ -364,6 +364,39 @@ do {
         check(row.arrangedSubviews.last === link, "链接是这一行的最后一个控件")
     }
 }
+
+section("发布失败：原因写在队列卡上，按钮 tooltip 仍是动作说明")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "改 README", body: nil, id: "manual-hh302020")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane", branch: "feature/x", autoPR: true)
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    board.markDone(task.id)
+    _ = board.setQueuePRError(queue.id, "tasks.errPRNoBranch")
+
+    let model = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                       prAvailable: true)
+    eq(model.prErrorKey, "tasks.errPRNoBranch", "失败原因跟着队列到模型")
+    let header = TaskQueueHeaderView(model: model)
+    _ = layout(header, width: 320)
+    // 按钮永远说它做什么——失败不会把 tooltip 顶掉。
+    let publish = descendants(header, of: CustomIconButton.self)
+        .first { $0.toolTip == L10n.tr("tasks.queue.openPR") }
+    check(publish != nil, "发布按钮的 tooltip 仍是动作说明")
+    // 失败原因在卡片上。
+    let labels = descendants(header, of: NSTextField.self).map { $0.stringValue }
+    check(labels.contains(L10n.tr("tasks.errPRNoBranch")), "失败原因显示在队列卡上")
+
+    // 折叠时失败也要露出来（成功摘要才随折叠隐藏）。
+    let collapsed = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: true,
+                                           prAvailable: true)
+    let collapsedHeader = TaskQueueHeaderView(model: collapsed)
+    _ = layout(collapsedHeader, width: 320)
+    let collapsedLabels = descendants(collapsedHeader, of: NSTextField.self).map { $0.stringValue }
+    check(collapsedLabels.contains(L10n.tr("tasks.errPRNoBranch")), "折叠的队列也显示失败原因")
+}
 section("fields span the whole form")
 do {
     // An EMPTY NSTextField's intrinsic width is almost nothing, and a .leading
