@@ -182,6 +182,7 @@ do {
     let cd = TaskItem.manual(title: "CD", id: "manual-ap000006")
     cb.tasks.append(cd)
     check(!cb.enqueue(taskID: cd.id, into: cq.id), "关闭后不能追加")
+    check(!cb.queueChoices().contains { $0.id == cq.id }, "关闭的队列不再出现在「加入队列」里")
 }
 
 // MARK: - failure pauses the queue

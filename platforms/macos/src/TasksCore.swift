@@ -701,7 +701,8 @@ struct TaskBoard {
     /// The queues offered by 加入队列 ▾. User queues only: an issue task's auto
     /// single-task queue is never a destination for a manual task.
     func queueChoices() -> [QueueChoice] {
-        queues.filter { !$0.autoCreated }.map { queue in
+        // Closed lanes are terminal: they must not be offered as an append target.
+        queues.filter { !$0.autoCreated && $0.state != .closed }.map { queue in
             QueueChoice(id: queue.id, name: queue.name, branch: queue.branch,
                         taskCount: queue.taskIds.count, state: queue.state)
         }
