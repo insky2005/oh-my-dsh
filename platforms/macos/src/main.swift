@@ -716,8 +716,9 @@ enum L10n {
         "tasks.queue.mergePush": ("发布：合并到基线并推送", "Publish: merge into the base branch and push"),
         "tasks.queue.pushOnly": ("发布：直接推送", "Publish: push directly"),
         "tasks.settings.title": ("面板设置", "Panel Settings"),
-        "tasks.settings.info": ("GitHub Token 与工作流：token 让面板能拉取 issues、创建 PR、评论关闭 issue；工作流决定队列收尾时用哪种 Git 方式把代码送进远端。", "GitHub token and workflow: the token lets the panel fetch issues, open PRs and comment & close them; the workflow decides how a finished queue puts its code on the remote."),
-        "tasks.settings.hint": ("面板设置：GitHub Token 与工作流", "Panel settings: GitHub token and workflow"),
+        // 两段分别对应下面的两个区块（工作流在前、Token 在后）；\n 让标签按段落断行。
+        "tasks.settings.info": ("工作流，决定队列收尾时用哪种 Git 方式把代码送进远端。\nGitHub Token，让面板能拉取 issues、创建 PR、评论关闭 issue。", "Workflow decides how a finished queue puts its code on the remote.\nA GitHub token lets the panel fetch issues, open PRs, and comment on & close them."),
+        "tasks.settings.hint": ("面板设置：工作流与 GitHub Token", "Panel settings: workflow and GitHub token"),
         "tasks.settings.saved": ("设置已保存", "Settings saved"),
         "tasks.queue.close": ("关闭队列", "Close Queue"),
         "tasks.closeQueueTitle": ("关闭队列「%@」？", "Close queue %@?"),

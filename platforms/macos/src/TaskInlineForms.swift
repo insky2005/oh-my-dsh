@@ -818,8 +818,8 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
 /// 决策（2026-10-01）：工作流默认是**按工作区**的，与 GitHub token 合并进同一个抽屉
 /// （不是两个入口）。需要「全局一份」的话，那属于壳层设置，不属于这个面板。
 ///
-///   1. GitHub token（按仓库文件 / 通用兜底，只写文件、chmod 600）
-///   2. 本工作区的工作流默认值（队列没有自己的覆盖时用它收尾）
+///   1. 本工作区的工作流默认值（队列没有自己的覆盖时用它收尾）
+///   2. GitHub token（按仓库文件 / 通用兜底，只写文件、chmod 600）
 ///
 /// Pure, so the form tests can drive it headlessly (like QueueComposerModel).
 struct TaskSettingsModel: Equatable {
@@ -908,12 +908,12 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
 
     private func build() {
         // The drawer shares the panel's form sheet with 新建任务 / 新建队列, so it
-        // must fit the same short content area: both long explanations are capped
-        // at two lines and truncated (full text in the tooltip) instead of
-        // letting the sheet push its own buttons out of view.
+        // must fit the same short content area: explanations are capped and
+        // truncated (full text in the tooltip) instead of letting the sheet push
+        // its own buttons out of view. The intro is TWO paragraphs (工作流 / Token).
         info.font = TaskFormKit.captionFont
         info.textColor = .secondaryLabelColor
-        info.maximumNumberOfLines = 2
+        info.maximumNumberOfLines = 3
         info.lineBreakMode = .byTruncatingTail
         info.translatesAutoresizingMaskIntoConstraints = false
         info.toolTip = L10n.tr("tasks.settings.info")
@@ -958,15 +958,16 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         workflowBlock.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(workflowBlock)
         let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
-        let column = NSStackView(views: [headingRow, info, tokenRow, tokenHint,
-                                         workflowBlock, buttons])
+        // 工作流在前、GitHub Token 在后 —— 与 intro 的两段顺序一致。
+        let column = NSStackView(views: [headingRow, info, workflowBlock,
+                                         tokenRow, tokenHint, buttons])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 8
         column.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(column)
         addSubview(column)
-        TaskFormKit.stretch([headingRow, info, tokenRow, tokenHint, workflowBlock], to: column)
+        TaskFormKit.stretch([headingRow, info, workflowBlock, tokenRow, tokenHint], to: column)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),

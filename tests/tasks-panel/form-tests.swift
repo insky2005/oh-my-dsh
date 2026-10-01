@@ -518,6 +518,13 @@ do {
     check(!form.integrationNote.isHidden, "推荐说明是可见信息，不是校验 hint")
     check(form.submitButton.isEnabled, "保存总是可点：设置没有非法值")
 
+    // 区块顺序：工作流在上、GitHub Token 在下（与 intro 的两段顺序一致）。
+    let workflowMidY = form.integrationRadios[0].convert(form.integrationRadios[0].bounds,
+                                                         to: form).midY
+    let tokenMidY = form.tokenField.convert(form.tokenField.bounds, to: form).midY
+    check(workflowMidY > tokenMidY,
+          "工作流区块排在 GitHub Token 之上 (workflow \(workflowMidY) > token \(tokenMidY))")
+
     form.integrationRadios[2].state = .on
     form.integrationChanged()
     eq(form.selectedIntegration, .push, "点选直接推送")
