@@ -457,6 +457,26 @@ enum QueueIntegration: String, CaseIterable {
         if isGit { return .merge }
         return .none
     }
+
+    /// Whether this workflow can actually run in a workspace with these capabilities.
+    /// It mirrors the runner's own refusals (TasksRunner.startQueueIntegration): PR
+    /// needs a GitHub remote, merge needs a repository (it merges locally, so no
+    /// remote is required), push needs a remote to push to, and 无 always works.
+    /// The pickers grey out the modes that cannot run instead of letting the user
+    /// choose a guaranteed failure.
+    static func available(_ mode: QueueIntegration, isGit: Bool, hasGitHubRemote: Bool,
+                          hasRemote: Bool) -> Bool {
+        switch mode {
+        case .none: return true
+        case .pr: return hasGitHubRemote
+        case .merge: return isGit
+        case .push: return isGit && hasRemote
+        }
+    }
+
+    func isAvailable(isGit: Bool, hasGitHubRemote: Bool, hasRemote: Bool) -> Bool {
+        Self.available(self, isGit: isGit, hasGitHubRemote: hasGitHubRemote, hasRemote: hasRemote)
+    }
 }
 
 /// A queue is a lane: every task in it shares ONE branch and runs strictly in

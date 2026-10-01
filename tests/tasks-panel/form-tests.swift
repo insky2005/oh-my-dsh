@@ -534,7 +534,7 @@ do {
           "and the inline advanced fields keep their width (\(expanded.branchField.frame.width)pt)")
 }
 
-section("队列表单：Git 工作流单选组（跟随设置 + 四档）")
+section("队列表单：Git 工作流单选组（跟随工作区设置 + 四档）")
 do {
     // The recommendation follows the WORKSPACE, never the global default.
     eq(QueueComposerModel.create().forWorkspace(git: true, pr: true).recommendedIntegration, .pr,
@@ -553,7 +553,8 @@ do {
     _ = layout(form, width: 400)
 
     eq(form.integrationRadios.count, 5, "跟随设置 + 四个模式各一个单选按钮")
-    eq(form.integrationRadios[0].title, "followShort", "第一个是跟随设置（短标签）")
+    check(form.integrationRadios[0].title.contains("follow"),
+          "第一个是跟随工作区设置，括号里带当前默认值")
     eq(form.integrationRadios[1].title, "none", "「无」排在跟随设置之后（第一档）")
     eq(form.selectedIntegration, nil, "默认就是跟随设置")
     check(form.integrationRadios[0].state == .on, "跟随设置那个是选中态")
@@ -565,6 +566,29 @@ do {
         check(radio.frame.width >= radio.intrinsicContentSize.width - 1,
               "radio「\(radio.title)」不被截断 (frame \(radio.frame.width) >= intrinsic \(radio.intrinsicContentSize.width))")
     }
+
+    // 工作区跑不了的工作流灰掉（索引：0 跟随 / 1 无 / 2 PR / 3 合并 / 4 推送）。
+    check(form.integrationRadios[2].isEnabled, "GitHub 工作区：PR 可选")
+    check(form.integrationRadios[3].isEnabled, "git 工作区：合并可选")
+    check(form.integrationRadios[4].isEnabled, "有远端：直接推送可选")
+
+    let gitOnly = QueueComposerView(model: QueueComposerModel.create()
+        .forWorkspace(git: true, pr: false, hasRemote: false).togglingAdvanced())
+    _ = layout(gitOnly, width: 400)
+    check(!gitOnly.integrationRadios[2].isEnabled, "没有 GitHub 远端：PR 灰掉")
+    eq(gitOnly.integrationRadios[2].toolTip, "unavailablePr", "并说明原因")
+    check(gitOnly.integrationRadios[3].isEnabled, "git 仓库仍可合并")
+    check(!gitOnly.integrationRadios[4].isEnabled, "没有远端：直接推送灰掉")
+    eq(gitOnly.integrationRadios[4].toolTip, "unavailablePush", "推送也说明原因")
+
+    let plain = QueueComposerView(model: QueueComposerModel.create()
+        .forWorkspace(git: false, pr: false, hasRemote: false).togglingAdvanced())
+    _ = layout(plain, width: 400)
+    check(!plain.integrationRadios[2].isEnabled, "非 git：PR 不可选")
+    check(!plain.integrationRadios[3].isEnabled, "非 git：合并不可选")
+    eq(plain.integrationRadios[3].toolTip, "unavailableMerge", "合并说明原因")
+    check(!plain.integrationRadios[4].isEnabled, "非 git：推送不可选")
+    check(plain.integrationRadios[1].isEnabled, "「无」永远可选")
 
     // 选中 merge：模型与提交都带上队列自己的覆盖。名字要填，否则表单不可提交。
     form.nameField.stringValue = "Lane"
@@ -625,6 +649,15 @@ do {
     check(form.autoCloseCheck.state == .off, "可以关掉自动关闭开关")
     form.submitTapped()
     eq(submitted?.autoCloseOnPublish, false, "提交带上自动关闭开关")
+
+    // 面板设置同样遵守工作区能力：跑不了的工作流灰掉（索引 0 无 / 1 PR / 2 合并 / 3 推送）。
+    let gitOnlySettings = TaskSettingsView(model: TaskSettingsModel(
+        token: "", defaultIntegration: .merge, recommendedIntegration: .merge,
+        prAvailable: false, gitAvailable: true, remoteAvailable: false))
+    check(!gitOnlySettings.integrationRadios[1].isEnabled, "没有 GitHub 远端：PR 不可选")
+    eq(gitOnlySettings.integrationRadios[1].toolTip, "unavailablePr", "并说明原因")
+    check(gitOnlySettings.integrationRadios[2].isEnabled, "git 仓库：合并可选")
+    check(!gitOnlySettings.integrationRadios[3].isEnabled, "没有远端：推送不可选")
 }
 
 section("使用说明视图：抽屉与内联共用一个正文")

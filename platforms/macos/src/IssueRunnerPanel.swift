@@ -1840,6 +1840,8 @@ final class IssueRunnerPanelController: NSObject {
             recommendedIntegration: QueueIntegration.recommended(isGit: workspaceIsGit,
                                                                  hasGitHubRemote: repo != nil),
             prAvailable: repo != nil,
+            gitAvailable: workspaceIsGit,
+            remoteAvailable: workspaceHasRemote,
             autoCloseOnPublish: Self.storedAutoCloseOnPublish())
         let form = TaskSettingsView(model: model)
         form.onSubmit = { [weak self] settings in self?.submitSettings(settings) }
@@ -2430,6 +2432,7 @@ final class IssueRunnerPanelController: NSObject {
             // The PR switch is only pre-armed where the repo can carry one, and
             // 不切分支 is decided by the workspace having no repo to switch in.
             var model = base.forWorkspace(git: workspaceIsGit, pr: repo != nil,
+                                          hasRemote: workspaceHasRemote,
                                           defaultBase: workspaceDefaultBase,
                                           defaultIntegration: workspaceIntegration)
             model.autoPR = false
@@ -2438,6 +2441,7 @@ final class IssueRunnerPanelController: NSObject {
             guard let queue = runner.board.queue(queueID) else { return }
             showQueueForm(QueueComposerModel.edit(queue, prAvailable: repo != nil,
                                                   gitAvailable: workspaceIsGit,
+                                                  hasRemote: workspaceHasRemote,
                                                   defaultBaseBranch: workspaceDefaultBase,
                                                   defaultIntegration: workspaceIntegration))
         }

@@ -719,8 +719,8 @@ enum L10n {
         // 改名只动这里；枚举 rawValue 与代码标识仍是 integration（API 词汇）。
         "tasks.integration.label": ("Git 工作流", "Git workflow"),
         "tasks.integration.defaultLabel": ("默认 Git 工作流", "Default Git workflow"),
-        "tasks.integration.follow": ("跟随设置（当前：%@）", "Follow settings (%@)"),
-        "tasks.integration.followShort": ("跟随设置", "Follow settings"),
+        // 队列设置里的「跟随工作区设置（当前默认）」—— 括号里是面板设置给本工作区的默认值。
+        "tasks.integration.follow": ("跟随工作区设置（%@）", "Follow the workspace setting (%@)"),
         "tasks.integration.pr": ("Pull Request", "Pull request"),
         "tasks.integration.merge": ("合并到基线", "Merge into base"),
         "tasks.integration.push": ("直接推送", "Push directly"),
@@ -728,6 +728,10 @@ enum L10n {
         "tasks.integration.none": ("无", "None"),
         "tasks.integration.recommend": ("本工作区推荐：%@", "Recommended here: %@"),
         "tasks.integration.recommendedSuffix": ("（推荐）", " (recommended)"),
+        // 工作区跑不了的工作流在单选组里灰掉，tooltip 说明原因（不让用户选一个注定失败的项）。
+        "tasks.integration.unavailablePr": ("当前工作区没有 GitHub 远端，不能开 PR", "No GitHub remote here, so a PR cannot be opened"),
+        "tasks.integration.unavailableMerge": ("当前工作区不是 git 仓库，不能合并", "Not a git repository here, so nothing can be merged"),
+        "tasks.integration.unavailablePush": ("当前工作区没有可推送的远端", "No remote to push to here"),
         "tasks.queue.mergePush": ("发布：合并到基线（有远端则一并推送）", "Publish: merge into the base branch (and push when there is a remote)"),
         "tasks.queue.pushOnly": ("发布：直接推送", "Publish: push directly"),
         "tasks.settings.title": ("面板设置", "Panel Settings"),

@@ -499,6 +499,17 @@ extension QueueIntegration {
         case .none: return "tasks.integration.none"
         }
     }
+
+    /// Why a picker greys this mode out in the current workspace (nil-reachable keys:
+    /// .none is never disabled, so its key is unused).
+    var unavailableHintKey: String {
+        switch self {
+        case .pr: return "tasks.integration.unavailablePr"
+        case .merge: return "tasks.integration.unavailableMerge"
+        case .push: return "tasks.integration.unavailablePush"
+        case .none: return "tasks.integration.none"
+        }
+    }
 }
 
 struct QueueHeaderModel: Equatable {
@@ -978,6 +989,10 @@ struct QueueComposerModel: Equatable {
     /// fields are taken away and the form says why, instead of promising a
     /// branch switch the runner can only fail on.
     var gitAvailable: Bool
+    /// Whether the workspace has ANY remote to push to (GitHub or an internal one).
+    /// 直接推送 needs it; 合并到基线 does not (it merges locally). Defaults true so a
+    /// model that only drives the text fields is not accidentally restricted.
+    var remoteAvailable: Bool = true
     /// The workspace's OWN default branch (origin/HEAD, else main/master/current):
     /// the placeholder of 基于分支 and the fallback when the field is left empty.
     /// Assuming "main" made a master-based repo fail its first task.
@@ -999,8 +1014,15 @@ struct QueueComposerModel: Equatable {
     /// The mode this queue will really use: its own override, else the panel default.
     var effectiveIntegration: QueueIntegration { integration ?? defaultIntegration }
 
-    /// The picker's items, in order: 跟随设置 first (the default), then the three modes.
+    /// The picker's items, in order: 跟随工作区设置 first (the default), then the modes.
     var integrationChoices: [QueueIntegration?] { [nil] + QueueIntegration.displayOrder }
+
+    /// Whether a mode can actually run in THIS workspace: the picker greys out the
+    /// rest and says why (the runner would refuse them anyway).
+    func isIntegrationAvailable(_ mode: QueueIntegration) -> Bool {
+        QueueIntegration.available(mode, isGit: gitAvailable, hasGitHubRemote: prAvailable,
+                                   hasRemote: remoteAvailable)
+    }
 
     /// Follow the panel setting, or pin this queue to one mode.
     func typedIntegration(_ mode: QueueIntegration?) -> QueueComposerModel {
@@ -1119,12 +1141,14 @@ struct QueueComposerModel: Equatable {
     /// on 不切分支, which is what its cards are already doing.
     static func edit(_ queue: TaskQueue, prAvailable: Bool,
                      gitAvailable: Bool = true,
+                     hasRemote: Bool = true,
                      defaultBaseBranch: String = "main",
                      defaultIntegration: QueueIntegration = .pr) -> QueueComposerModel {
         var model = QueueComposerModel(mode: .edit(queueID: queue.id), name: queue.name,
                                        branch: queue.branch ?? "", baseBranch: queue.baseBranch,
                                        autoPR: queue.autoPR, skipsBranch: queue.branch == nil,
                                        prAvailable: prAvailable, gitAvailable: gitAvailable,
+                                       remoteAvailable: hasRemote,
                                        defaultBaseBranch: defaultBaseBranch,
                                        showsAdvanced: true, attempted: false)
         model.integration = queue.integration
@@ -1141,11 +1165,13 @@ struct QueueComposerModel: Equatable {
     /// branch would be created happily and then fail its first task with
     /// tasks.errNotGit. Editing is left alone: an existing queue keeps its
     /// branch visible (and clearable) rather than having it silently dropped.
-    func forWorkspace(git: Bool, pr: Bool, defaultBase: String = "main",
+    func forWorkspace(git: Bool, pr: Bool, hasRemote: Bool = true,
+                      defaultBase: String = "main",
                       defaultIntegration: QueueIntegration = .pr) -> QueueComposerModel {
         var copy = self
         copy.gitAvailable = git
         copy.prAvailable = pr
+        copy.remoteAvailable = hasRemote
         copy.defaultBaseBranch = defaultBase
         copy.defaultIntegration = defaultIntegration
         // The recommendation follows the workspace, not the global default: a

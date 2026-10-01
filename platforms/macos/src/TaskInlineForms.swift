@@ -616,12 +616,24 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         // A PR switch that cannot be switched is worse than a sentence: the
         // workspace simply has no PR to open.
         integrationCaption.stringValue = L10n.tr("tasks.integration.label")
-        // 跟随设置 + 三档 as radios; the recommendation is on the caption line (a
-        // suffix on a radio would not fit four of them across the panel width).
+        // 跟随工作区设置 + the modes as radios; the recommendation is on the caption
+        // line (a suffix on a radio would not fit four of them across the panel width).
         let options = model.integrationChoices
         for (index, choice) in options.enumerated() {
             let radio = integrationRadios[index]
-            radio.title = choice?.label ?? L10n.tr("tasks.integration.followShort")
+            if let mode = choice {
+                radio.title = mode.label
+                // A mode this workspace cannot run is greyed out with the reason — the
+                // runner refuses it anyway, so offering it would be a guaranteed failure.
+                let available = model.isIntegrationAvailable(mode)
+                radio.isEnabled = available
+                radio.toolTip = available ? nil : L10n.tr(mode.unavailableHintKey)
+            } else {
+                radio.title = L10n.tr("tasks.integration.follow",
+                                      model.defaultIntegration.label)
+                radio.isEnabled = true
+                radio.toolTip = nil
+            }
             radio.state = (choice == model.integration) ? .on : .off
         }
         integrationNote.stringValue = L10n.tr("tasks.integration.recommend",
@@ -862,6 +874,10 @@ struct TaskSettingsModel: Equatable {
     var recommendedIntegration: QueueIntegration
     /// Whether the workspace can open a PR at all (a GitHub remote).
     var prAvailable: Bool
+    /// Whether the workspace is a git repository (合并到基线 needs one).
+    var gitAvailable: Bool = true
+    /// Whether the workspace has any remote to push to (直接推送 needs one).
+    var remoteAvailable: Bool = true
     /// 发布成功后自动关闭队列（面板级开关，默认关）。Whether a queue is closed
     /// automatically once its finalize session publishes successfully.
     var autoCloseOnPublish: Bool = false
@@ -934,6 +950,13 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
             radio.title = mode.label + (mode == model.recommendedIntegration
                                         ? L10n.tr("tasks.integration.recommendedSuffix") : "")
             radio.state = (mode == model.defaultIntegration) ? .on : .off
+            // Grey out a workflow this workspace cannot run, with the reason in the
+            // tooltip (the runner would refuse it — a dead choice is not a choice).
+            let available = QueueIntegration.available(mode, isGit: model.gitAvailable,
+                                                       hasGitHubRemote: model.prAvailable,
+                                                       hasRemote: model.remoteAvailable)
+            radio.isEnabled = available
+            radio.toolTip = available ? nil : L10n.tr(mode.unavailableHintKey)
         }
         // hintLabel starts hidden (it is a VALIDATION hint elsewhere); this one is
         // always-visible information, so it is shown explicitly.
@@ -1041,6 +1064,8 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
                           defaultIntegration: selectedIntegration,
                           recommendedIntegration: model.recommendedIntegration,
                           prAvailable: model.prAvailable,
+                          gitAvailable: model.gitAvailable,
+                          remoteAvailable: model.remoteAvailable,
                           autoCloseOnPublish: autoCloseCheck.state == .on)
     }
 
