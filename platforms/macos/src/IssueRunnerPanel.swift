@@ -77,8 +77,8 @@ final class IssueRunnerPanelController: NSObject {
     private let refreshButton: CustomIconButton
     private let runAllButton: CustomIconButton
     private let hideButton: CustomIconButton
-    /// 使用说明 —— in the toolbar once the board has content. An EMPTY board shows
-    /// the same help inline in the content area instead (see render()).
+    /// 使用说明 —— ALWAYS in the toolbar (user 2026-10-01). An empty board ALSO
+    /// shows the same help inline in the content area (see render()).
     private let helpButton: CustomIconButton
     /// The two creation entries, flush right on the tabs row as ICON buttons:
     /// the labels live in their tooltips, so the row stays a strip of controls
@@ -1879,7 +1879,6 @@ final class IssueRunnerPanelController: NSObject {
         for subview in listStack.arrangedSubviews { subview.removeFromSuperview() }
         guard let runner = runner else {
             emptyView.isHidden = false
-            helpButton.isHidden = true
             return
         }
         let board = runner.board
@@ -1936,10 +1935,10 @@ final class IssueRunnerPanelController: NSObject {
         emptyLabel.stringValue = L10n.tr(empty.messageKey)
         emptyIcon.setSymbol(empty.symbol)
         emptyButton.isHidden = !empty.showsNewTask
-        // No queues and no tasks: the help lives in the CONTENT AREA. Once there is
-        // content it moves to the toolbar button instead (never both).
+        // An empty board ALSO shows the help inline, in the content area; the
+        // toolbar button is ALWAYS there (user 2026-10-01), so the same drawer can
+        // be opened at any time.
         helpTextView.isHidden = !empty.showsHelp
-        helpButton.isHidden = sections == 0
     }
 
     /// Cards fill the list width: the stack is leading-aligned, so without this
