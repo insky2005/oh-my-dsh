@@ -859,12 +859,13 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
 
 // MARK: - Tasks settings (token + 工作流)
 
-/// The tasks panel's settings — the two things it can configure.
-/// 决策（2026-10-01）：工作流默认是**按工作区**的，与 GitHub token 合并进同一个抽屉
-/// （不是两个入口）。需要「全局一份」的话，那属于壳层设置，不属于这个面板。
+/// 决策（2026-10-01）：这里的设置项**都按工作区隔离** —— 同一个抽屉服务多个差异很大的
+/// 目录，一份全局值不可能都对。GitHub token 是唯一例外：它按**仓库**（同一个仓库就是
+/// 同一个凭据）。需要「全局一份」的话，那属于壳层设置，不属于这个面板。
 ///
 ///   1. 本工作区的工作流默认值（队列没有自己的覆盖时用它交付）
-///   2. GitHub token（按仓库文件 / 通用兜底，只写文件、chmod 600）
+///   2. 本工作区的「交付成功后自动关闭队列」开关
+///   3. GitHub token（按仓库文件 / 通用兜底，只写文件、chmod 600）
 ///
 /// Pure, so the form tests can drive it headlessly (like QueueComposerModel).
 struct TaskSettingsModel: Equatable {
@@ -878,8 +879,8 @@ struct TaskSettingsModel: Equatable {
     var gitAvailable: Bool = true
     /// Whether the workspace has any remote to push to (直接推送 needs one).
     var remoteAvailable: Bool = true
-    /// 交付成功后自动关闭队列（面板级开关，默认关）。Whether a queue is closed
-    /// automatically once its delivery session succeeds.
+    /// 交付成功后自动关闭队列（**按工作区**保存，默认关）。Whether a queue in THIS
+    /// workspace is closed automatically once its delivery session succeeds.
     var autoCloseOnPublish: Bool = false
 }
 

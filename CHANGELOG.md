@@ -52,6 +52,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **任务面板设置全部按工作区隔离（2026-10-01）**：此前抽屉里只有「工作流默认」按工作区存，而「交付成功后自动关闭队列」写的是**全局键** `tasksAutoCloseOnPublish` —— 在一个工作区勾上，其余所有工作区打开设置也都是勾上的（用户反馈：几个从没设置过的项目里看到它默认就是开的）。现在该开关改存「工作区路径 → 布尔」映射 `tasksAutoCloseOnPublishByWorkspace`，未设置过的工作区默认关，且**只影响当前工作区**；抽屉说明与开关说明都明确「按工作区 / 只对当前工作区生效」。旧的全局键不再读取（该开关尚未发布，无需迁移）。回归：`tests/tasks-panel/run.sh` 新增源守卫，杜绝设置项再退回全局键。
+
 - **终端输入法、焦点光标统一由键盘焦点驱动（2026-10-01）**：两者用同一个 `hasFocus` 信号——`becomeFirstResponder` / `resignFirstResponder` 与窗口 key 变化（⌘-Tab 切走/切回）→ 聚焦画实心块 + 切英文，失焦画空心框 + 还原原始输入法。鼠标移入即聚焦（切英文），移出不失焦所以维持不变；上一轮误加在 `mouseExited` 上的还原已移除（移出只保留诊断日志）。一次焦点变化只切一次，残留抖动由 0.12s 防抖兜底；`terminal focus:` / `terminal ime:` 日志写进 `app.log`。
 
 - **终端聚焦时输入法来回闪（2026-10-01）**：上一版在 `become/resignFirstResponder` 上直接切/还原输入法，但输入源切换本身会扰动响应链、加上鼠标进出终端，`resignFirstResponder` 会成串到来——每次失焦都还原、每次聚焦又切英文，输入法连闪好几次。现在**还原带 0.12s 防抖**：`terminalDidBlur()` 只登记一次还原（generation 计数），期间若又 `terminalDidFocus()` 就取消，一串抖动收敛成一次切换；鼠标 tracking area 也改为**只安装一次**（`.inVisibleRect` 自动跟随），不再在每次 `updateTrackingAreas` 时 remove/add 反复补发 `mouseEntered`。回归：`tests/terminal-panel` 新增 3 项防抖断言。

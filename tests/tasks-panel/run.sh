@@ -169,4 +169,17 @@ if grep -qF '请加载 issue-resolve' ../../platforms/macos/src/TasksRunner.swif
 fi
 echo "ok - issue 与手动任务共用同一份要求清单，且不再引用退役技能"
 
+# 任务面板的每一项设置都必须按工作区存：一个全局键会把某个工作区的选择泄进所有工作区
+# （「交付成功后自动关闭队列」曾写全局 tasksAutoCloseOnPublish，于是每个工作区都显示勾上）。
+IP=../../platforms/macos/src/IssueRunnerPanel.swift
+if ! grep -q 'tasksAutoCloseOnPublishByWorkspace' "$IP" \
+   || grep -q 'forKey: autoCloseOnPublishKey\|"tasksAutoCloseOnPublish"' "$IP" \
+   || ! grep -q 'storedAutoCloseOnPublish(forWorkspace' "$IP" \
+   || ! grep -q 'workspaceSettingsKey' "$IP" \
+   || ! grep -q 'setStoredAutoCloseOnPublish(settings.autoCloseOnPublish, forWorkspace: path)' "$IP"; then
+  echo "FAIL - 面板设置必须全部按工作区隔离（自动关闭开关不得再用全局键）"
+  exit 1
+fi
+echo "ok - 面板设置按工作区隔离（autoCloseOnPublish 用工作区映射）"
+
 echo "tasks-panel tests passed"
