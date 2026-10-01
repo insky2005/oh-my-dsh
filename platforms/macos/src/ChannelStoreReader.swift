@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Channel project-view data model (pure Foundation, headless-testable)
 //
 // Reads the GLOBAL channel-scoped store written by core/lib/channel-sessions.js
-// (docs/channel-storage.md, implemented for D):
+// (docs/design/channels/channel-storage.md, implemented for D):
 //   ~/.dsh/channels/<channelId>.sessions.json
 //   ~/.dsh/channels/<channelId>.<workspaceKey>.<sessionId>.messages.json
 //   ~/.dsh/channels/<channelId>.<workspaceKey>.system.messages.json

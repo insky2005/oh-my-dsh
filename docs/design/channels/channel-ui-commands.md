@@ -1,9 +1,9 @@
 # Channel 面板 UI 交互 + 指令体系设计
 
-> 状态：✅ 指令解析 v1 已实现（core）+ 会话/消息持久化已实现 + **面板 v2 UI 已实现**（引导卡片/扫码向导/项目视图，见 ChannelPanel.swift）；⏳ 存储全局化改造设计已定稿（见 docs/channel-storage.md，待实现）
-> 完成状态总览：**docs/channel-status.md**
+> 状态：✅ 指令解析 v1 已实现（core）+ 会话/消息持久化已实现 + **面板 v2 UI 已实现**（引导卡片/扫码向导/项目视图，见 ChannelPanel.swift）；⏳ 存储全局化改造设计已定稿（见 docs/design/channels/channel-storage.md，待实现）
+> 完成状态总览：**docs/design/channels/channel-status.md**
 > 更新：2026-08-22
-> 关联：docs/channel-design.md（M2/M3 已实现）、docs/channel-storage.md（消息/会话存储全局化设计）、**docs/channel-commands.md（已实现指令清单，新增/改动指令时维护）**、**docs/channel-status.md（完成状态总览）**、platforms/macos/src/ChannelPanel.swift、core/lib/channel-runner.js
+> 关联：docs/design/channels/channel-design.md（M2/M3 已实现）、docs/design/channels/channel-storage.md（消息/会话存储全局化设计）、**docs/design/channels/channel-commands.md（已实现指令清单，新增/改动指令时维护）**、**docs/design/channels/channel-status.md（完成状态总览）**、platforms/macos/src/ChannelPanel.swift、core/lib/channel-runner.js
 
 ## 1. 目标
 
@@ -49,7 +49,7 @@
 | B | 二维码显示 | 面板内渲染二维码（vendor qrcode-terminal 画到 NSImage） |
 | C | /new 语义 | /new 新建独立会话；其余在当前会话继续（conversationId→sessionId 映射持久化） |
 | D | 即时「收到」应答 | 低优先，放 TODO |
-| E | 消息持久化 | **v1 已实现：落盘到项目下 .dsh 文件**（.dsh/channels/<channelId>.messages.json）；**改造中（见 docs/channel-storage.md）：迁至全局 ~/.dsh/oh-my-dsh/channels/，按 channel.workspace.sessionId 分桶**，按 Channel/Session 分组，重启保留 |
+| E | 消息持久化 | **v1 已实现：落盘到项目下 .dsh 文件**（.dsh/channels/<channelId>.messages.json）；**改造中（见 docs/design/channels/channel-storage.md）：迁至全局 ~/.dsh/oh-my-dsh/channels/，按 channel.workspace.sessionId 分桶**，按 Channel/Session 分组，重启保留 |
 
 ## 3. 消息路由到项目（设计细节）
 
@@ -121,7 +121,7 @@
 
 ### 3.8 消息持久化（决策 E：落盘项目 .dsh）
 
-> ⚠️ **存储全局化改造已定稿（docs/channel-storage.md，2026-08-22）**：消息/会话将迁至全局 `~/.dsh/oh-my-dsh/channels/`，文件名 `channelId.workspaceKey.sessionId.messages.json`（无会话消息入 `system` 桶），项目内仅保留 `.dsh/channels/channels.json` 引用配置。以下为 v1 实现描述，改造落地后以此设计为准。
+> ⚠️ **存储全局化改造已定稿（docs/design/channels/channel-storage.md，2026-08-22）**：消息/会话将迁至全局 `~/.dsh/oh-my-dsh/channels/`，文件名 `channelId.workspaceKey.sessionId.messages.json`（无会话消息入 `system` 桶），项目内仅保留 `.dsh/channels/channels.json` 引用配置。以下为 v1 实现描述，改造落地后以此设计为准。
 
 - 路径：<projectRoot>/.dsh/channels/<channelId>.messages.json（{ version, messages: [{ channelId, conversationId, sessionId, dir: "in"|"out", text, ts }] }）；
 - 每收/发一条消息追加一条记录（追加写，控制文件上限：单文件 ≤ 2 MB / 最多保留最近 N=1000 条，超出滚动丢弃最旧）；
@@ -220,7 +220,7 @@ createCommandRunner({ getSessions, createSession, switchSession, switchWorkspace
 2. **core：channel-commands.js** + 单测（✅ 本轮）。
 3. **core：channel-runner 接入指令**（✅ 本轮，含指令优先路由）。
 4. **core：channel-sessions.js**（会话映射 + 消息持久化，落项目 .dsh，决策 E）（✅ 本轮）。
-5. **macOS 面板 v2 状态机**（引导卡片 + 项目视图 + 全局配置重开）——✅ 已实现（751a933 起，见 docs/channel-status.md §3.2）。
+5. **macOS 面板 v2 状态机**（引导卡片 + 项目视图 + 全局配置重开）——✅ 已实现（751a933 起，见 docs/design/channels/channel-status.md §3.2）。
 6. 即时「收到」应答、会话消息分组 UI 展示——后续。
 
 ## 7. 明确不在本轮

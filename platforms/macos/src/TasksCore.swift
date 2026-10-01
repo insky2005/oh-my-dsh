@@ -360,7 +360,7 @@ enum TaskBranch {
         return "main"
     }
 
-    /// v1 rule kept intact (docs/git-workflow.md): feature-class issues get
+    /// v1 rule kept intact (docs/process/git-workflow.md): feature-class issues get
     /// feature/issue-N, everything else fix/issue-N.
     static func issueBranch(number: Int, labels: [String]) -> String {
         let lowered = labels.map { $0.lowercased() }

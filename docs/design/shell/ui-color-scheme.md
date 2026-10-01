@@ -20,7 +20,7 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
 3. **显式分档，不用动态系统色做自绘填充**：自绘 `draw(_:)` 一律用
    `PanelSurface.color(dark:)` / `PanelControl.fill(dark:highlighted:)` 按
    `effectiveAppearance` 显式取色——动态色在 layer-backed 窗口里解析不稳
-   （见 [terminal-header-fix](terminal-header-fix.md)）；只有 `NSTextView` /
+   （见 [terminal-header-fix](../fixes/terminal-header-fix.md)）；只有 `NSTextView` /
    `NSScrollView` / `PDFView` 这类系统视图才用 `*.dynamic` 动态色。
 4. **CALayer 背景不吃动态色**：`layer.backgroundColor` 是 CGColor 快照，必须用
    `fill(dark:highlighted:)` 显式解析，并在 `viewDidChangeEffectiveAppearance` 里重设。
@@ -194,7 +194,7 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
    bounds 更大的 dirtyRect，直接 fill 会盖住 z 序更低的兄弟视图（技能面板 header
    消失过，见 `tests/skills-panel/render-tests.swift`）；
 7. opaque 且无独立 layer 的视图，绘制会溢出到父视图 layer（见
-   [terminal-header-fix](terminal-header-fix.md)：contentContainer 需
+   [terminal-header-fix](../fixes/terminal-header-fix.md)：contentContainer 需
    `wantsLayer + masksToBounds`）；
 8. 新增令牌一律加在 `PanelSurface.swift`，不要在面板里写死灰度。
 

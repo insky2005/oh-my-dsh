@@ -4,7 +4,7 @@
  * core/lib/shell-paths.js — the single source of truth for where oh-my-dsh
  * SHELL work data lives, plus the one-time layout migration.
  *
- * Layout (docs/storage-layout-refactor.md):
+ * Layout (docs/design/shell/storage-layout-refactor.md):
  *
  *   $DSH_HOME/oh-my-dsh/
  *     projects/         projects panel workspaces (ProjectsCore.defaultSubpath)

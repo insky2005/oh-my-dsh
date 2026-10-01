@@ -105,12 +105,12 @@ test(core): migrate emulator tests into core/      # 测试
 - 新增面向用户的文案必须中英双语成对（见 `.dsh/wiki/conventions.md` 的 L10n 约定；新增 Swift 文案登记进 `main.swift` 的 `L10n.table`）；
 - macOS 源码清单以 `platforms/macos/swift-sources.sh` 为**单一事实来源**（glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，`build-app.sh` / `scripts/local-ci.sh` / `.github/workflows/ci.yml` 三方共用，新增文件无需逐个登记）；仅当新文件是**独立工具**（含顶层代码，如 `MakeIcon.swift`）时才需在 `swift_sources()` 里显式排除；
 - 新增面板需配套模型层单测（`tests/<name>/run.sh` 模式；平台无关逻辑放 `core/tests/*.test.js`，随 `node --test core/tests/` 跑）；
-- **文档与实现同步**：改动 Channel 指令时同步更新 `docs/channel-commands.md`（维护说明见该文档文末）；面板/核心行为变更同步 `docs/channel-status.md`；
+- **文档与实现同步**：改动 Channel 指令时同步更新 `docs/design/channels/channel-commands.md`（维护说明见该文档文末）；面板/核心行为变更同步 `docs/design/channels/channel-status.md`；
 - **GitHub token 不外泄**：需要 GitHub 写操作（开 PR、评论/关闭 issue、推私有仓库）时读取 `~/.dsh/oh-my-dsh/tokens/<owner>-<repo>`（通用兜底 `~/.dsh/oh-my-dsh/gh-token`），**绝不打印/回显/写入 commit message**。
 
 ## PR 流程
 
-统一分支规范见 [docs/git-workflow.md](docs/git-workflow.md)（main 只合并、只打主版本）：
+统一分支规范见 [docs/process/git-workflow.md](docs/process/git-workflow.md)（main 只合并、只打主版本）：
 
 1. **功能开发**：从 `main` 拉 `feature/<slug>` 分支 → 开发 → PR 到 `main` → 合并后随主版本发布；
 2. **bug 修复（未发布）**：从 `main` 拉 `fix/<slug>` 分支 → 修复 → PR 到 `main` → 随主版本发布；
@@ -126,10 +126,10 @@ test(core): migrate emulator tests into core/      # 测试
 
 ## 资源
 
-- 设计总纲：`docs/productization.md`
+- 设计总纲：`docs/research/productization.md`
 - 里程碑：`docs/milestones/`
 - 工程约定：`.dsh/wiki/conventions.md`
-- 分支与提交规范：`docs/git-workflow.md`
-- 发布流程：`docs/release-process.md`（CHANGELOG → tag → local-release → 版本推进）
-- Channel 面板：`docs/channel-design.md` / `docs/channel-commands.md` / `docs/channel-status.md`（钉钉接入见 `docs/channel-dingtalk-stream.md`；问题排查见 `docs/channel-issues.md`）
-- dsh 上游升级：`docs/dsh-version-impact.md`（五个耦合面 + 升级执行 SOP + 版本复盘；动 dsh 相关代码前先读）
+- 分支与提交规范：`docs/process/git-workflow.md`
+- 发布流程：`docs/process/release-process.md`（CHANGELOG → tag → local-release → 版本推进）
+- Channel 面板：`docs/design/channels/channel-design.md` / `docs/design/channels/channel-commands.md` / `docs/design/channels/channel-status.md`（钉钉接入见 `docs/design/channels/channel-dingtalk-stream.md`；问题排查见 `docs/fixes/channel-issues.md`）
+- dsh 上游升级：`docs/process/dsh-version-impact.md`（五个耦合面 + 升级执行 SOP + 版本复盘；动 dsh 相关代码前先读）

@@ -2,7 +2,7 @@
 
 > 状态：设计定稿（2026-09-23）。按「保命线」节奏实施——**1.16.2 只做安全网，内置 dsh 保持 0.1.2-rc.1**；
 > 内置 dsh 的升级（0.1.2 → 0.1.5）推迟到快照/回退上线之后再执行（审计见 `docs/plans/dsh-015rc2-compat-audit.md`）。
-> 关联：`docs/dsh-version-impact.md`（R7 会话日志世代命名、§4.5 复盘）、`docs/release-process.md`。
+> 关联：`docs/process/dsh-version-impact.md`（R7 会话日志世代命名、§4.5 复盘）、`docs/process/release-process.md`。
 
 ## 1. 为什么需要它（问题陈述）
 
@@ -134,7 +134,7 @@ $DSH_HOME/oh-my-dsh/shell/
   （`platforms/macos/runtime-locks/<spec>/package-lock.json`，随 App 分发到 `Contents/Resources/runtime-locks/`）。
   抓树时：与提交 lock 指纹不一致的树**拒绝入池**，池里已有的不一致副本会被替换；
   换树时：池中那棵若与提交 lock 不一致则**拒绝换入**，回报 `needsTreeInstall`，让壳层用 lock 重新 `npm ci`。
-  根因是 dsh 用 caret 范围声明 cordis 工具链（见 `docs/dsh-version-impact.md` R8）。
+  根因是 dsh 用 caret 范围声明 cordis 工具链（见 `docs/process/dsh-version-impact.md` R8）。
 - **补齐（针对跳版本用户）**：升级/回退事务里若目标版本不在池里（例如用户从 1.16.0 直跳带 0.1.5 的版本），
   用 `npm ci` 从提交的 lock 装一份进池（联网约 20 s；没有 lock 的版本退回 `npm install`）；失败则该快照标「仅可回退数据」。
 

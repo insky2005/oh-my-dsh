@@ -401,7 +401,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         treeOutline.dataSource = self
         treeOutline.delegate = self
         treeOutline.autoresizesOutlineColumn = true
-        // 目录树右键菜单（docs/ux-feedback.md #1）：条目与顺序随「点到了什么」变化，
+        // 目录树右键菜单（docs/feedback/ux-feedback.md #1）：条目与顺序随「点到了什么」变化，
         // 由 TreeMenuModel 决定（纯模型，tests/file-panel 覆盖），这里只负责建菜单。
         // NSOutlineView 的 clickedRow 在 menuNeedsUpdate 之前已更新。
         let treeMenu = NSMenu()
@@ -859,7 +859,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
             }
         }
     }
-    // MARK: - Open the project directory with… (docs/ux-feedback.md #2)
+    // MARK: - Open the project directory with… (docs/feedback/ux-feedback.md #2)
 
     /// ShellConfig key holding the remembered target id ("panel" / "finder" /
     /// a bundle identifier / "path:<app path>").
@@ -1056,7 +1056,7 @@ final class FilePanelController: NSObject, NSTableViewDataSource, NSTableViewDel
         }
     }
 
-    // MARK: - New file / new folder in the tree (docs/ux-feedback.md #1)
+    // MARK: - New file / new folder in the tree (docs/feedback/ux-feedback.md #1)
 
     /// The directory a create action applies to: the clicked folder, the clicked
     /// file’s parent, or the tree root when the click was on empty space.

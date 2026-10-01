@@ -21,7 +21,7 @@ import Foundation
 // same session. WebView cookies are NOT visible here (WKWebView keeps them in
 // its own data store), which is why the token is passed in explicitly.
 //
-// Docs: docs/dsh-version-impact.md (R1), docs/plans/dsh-012rc1-compat-audit.md.
+// Docs: docs/process/dsh-version-impact.md (R1), docs/plans/dsh-012rc1-compat-audit.md.
 
 enum DshWebRPC {
 
@@ -50,7 +50,7 @@ enum DshWebRPC {
     /// `workspace/create { request: { path } }` -> `{workspace:{workspaceId,…},created}`.
     /// Idempotent — an already-registered path returns the existing workspace
     /// (`created:false`), and the verb carries no capability gate (only
-    /// `directoryPicker/*` does). See docs/projects-panel-design.md §4.2 / C10a.
+    /// `directoryPicker/*` does). See docs/design/panels/projects-panel-design.md §4.2 / C10a.
     static let workspaceCreate = Endpoint("workspace/create", "workspace.create")
 
     /// Launch token from the URL dsh web advertises (nil on dsh <= 0.1.1).

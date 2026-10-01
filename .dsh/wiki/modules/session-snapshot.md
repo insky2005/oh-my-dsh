@@ -2,14 +2,14 @@
 title: 模块：会话快照与回退（Session Snapshots）
 tags: [module, snapshot, rollback, dsh-upgrade, tree-pool, session-log, clonefile]
 updated: 2026-09-29T15:27:23Z
-sources: [docs/session-snapshot-rollback-design.md, core/lib/snapshot.js, core/lib/snapshot-io.js, core/bin/ohmy-core.js, core/tests/snapshot.test.js, core/tests/snapshot-io.test.js, tests/snapshot-rollback/, tests/snapshot-panel/, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, platforms/macos/src/main.swift, platforms/macos/build-app.sh, platforms/macos/runtime-locks/, docs/dsh-version-impact.md, CHANGELOG.md]
+sources: [docs/design/shell/session-snapshot-rollback-design.md, core/lib/snapshot.js, core/lib/snapshot-io.js, core/bin/ohmy-core.js, core/tests/snapshot.test.js, core/tests/snapshot-io.test.js, tests/snapshot-rollback/, tests/snapshot-panel/, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, platforms/macos/src/main.swift, platforms/macos/build-app.sh, platforms/macos/runtime-locks/, docs/process/dsh-version-impact.md, CHANGELOG.md]
 manual: false
 ---
 
 # 会话快照与回退（Session Snapshots）
 
 > 状态：**已实现并随 v1.16.2 发布**（`CHANGELOG [1.16.2] - 2026-09-23`；tag `v1.16.2` 已在 `main` 上，工作分支 `release/1.16` 已合回）。内置 dsh 于 2026-10 推进到 `0.1.7-rc.2`（此前 0.1.5-rc.3 经 PR #61 回并 main；v1.16.2 时仍为 `0.1.2-rc.1`），本功能是"升级 dsh 前的安全网"。
-> 设计文档：`docs/session-snapshot-rollback-design.md`（含九类场景演绎与成本实测）。
+> 设计文档：`docs/design/shell/session-snapshot-rollback-design.md`（含九类场景演绎与成本实测）。
 
 ## 为什么需要
 
@@ -39,7 +39,7 @@ dsh 按 **Session 格式世代**命名会话日志（世代 0 = `session.jsonl`�
 2. **闭包校验（`--expected-lock`）**：新增 `snapshot tree --dsh-version <D> --dsh-dir <path> [--expected-lock <path>] [--force]` 子命令。仓库为每个受支持 spec 提交一份已知可启动的闭包锁
    `platforms/macos/runtime-locks/<spec>/package-lock.json`（随 App 分发）；抓树/换树时与它比对指纹：
    比对不一致的树**拒绝入池**（`captureTree` 返回 `reason: closure-mismatch`；池里已有的不一致副本会先被删掉再重抓，除非加 `--force`），回退时**拒绝换入**并回报 `reason: pooled-tree-closure-mismatch` + `needsTreeInstall`（壳层改用 lock `npm ci` 补装后再 `finish-rollback`）。
-   根因是 dsh 用 caret 范围声明 cordis 工具链（`docs/dsh-version-impact.md` R8：hmr 1.0.19 会让 0.1.2-rc.1 起不来）。
+   根因是 dsh 用 caret 范围声明 cordis 工具链（`docs/process/dsh-version-impact.md` R8：hmr 1.0.19 会让 0.1.2-rc.1 起不来）。
 3. **构建期启动冒烟**：`build-app.sh` 的 `smoke_runtime()` 装完树就起一次 `dsh web`，失败即构建失败——「构建成功」不等于「产物能用」。
 
 ## 代码锚点
@@ -56,5 +56,5 @@ dsh 按 **Session 格式世代**命名会话日志（世代 0 = `session.jsonl`�
 
 ## 相关
 
-- `docs/dsh-version-impact.md` R7（会话日志世代命名）与 §4.5（0.1.5 升级复盘）；
+- `docs/process/dsh-version-impact.md` R7（会话日志世代命名）与 §4.5（0.1.5 升级复盘）；
 - `docs/plans/dsh-015rc2-compat-audit.md`（0.1.5-rc.2 兼容审计：审计完成；**升级已于 2026-09-27 按 rc.3 执行完毕**（该推进已回并 main）——0.1.5 会让会话日志换代，唯一断裂点（世代命名）已修复并随 v1.16.2 发布，会话快照/回退作为安全网就位）。

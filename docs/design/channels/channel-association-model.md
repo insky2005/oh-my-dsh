@@ -2,7 +2,7 @@
 
 > 状态：✅ 核查+实施（A/B/C/D 已于 2026-08-22 在 core 落地，见 §7 实施记录）
 > 更新：2026-08-22
-> 关联：docs/channel-design.md（统一抽象/配置模型）、docs/channel-storage.md（存储全局化）、docs/channel-status.md（完成状态）、docs/channel-commands.md（指令）、.dsh/wiki/modules/channel-panel.md、core/lib/channel-runner.js、core/lib/channel.js、core/lib/session-driver.js、core/lib/channel-sessions.js、core/lib/channel-store.js、core/lib/channel-workspaces.js、platforms/macos/src/ChannelPanel.swift
+> 关联：docs/design/channels/channel-design.md（统一抽象/配置模型）、docs/design/channels/channel-storage.md（存储全局化）、docs/design/channels/channel-status.md（完成状态）、docs/design/channels/channel-commands.md（指令）、.dsh/wiki/modules/channel-panel.md、core/lib/channel-runner.js、core/lib/channel.js、core/lib/session-driver.js、core/lib/channel-sessions.js、core/lib/channel-store.js、core/lib/channel-workspaces.js、platforms/macos/src/ChannelPanel.swift
 > 说明：基于需求「Channel（通道）↔ Message ↔ Session（含 Workspace）关联模型」对现有设计逐项核查，列出需要做的调整。**本文档只做核查与方案，不实现代码**；调整项见 §5 落地优先级，供后续单独 feature/fix 分支实施。
 
 ## 1. 需求模型（规范化）
@@ -59,7 +59,7 @@
 - 改动点：`core/lib/session-driver.js`（支持按 workspaceId 复用）+ `core/lib/channel-runner.js` 普通路径；新增断言「会话出现在 workspace.sessionIds」。
 
 ### D. 关联存储单一事实来源（G4，数据一致性 P1）
-落地 `docs/channel-storage.md`：消息/会话迁至全局 `~/.dsh/oh-my-dsh/channels/`，按 `channelId.workspaceKey.sessionId.messages.json` 分桶（无会话入 `system` 桶）；`createChannelSessions` 改按 channel 作用域；停用/删除项目 sessions.json 死路径；含惰性迁移 + `channel migrate` CLI + 本仓库自迁移。
+落地 `docs/design/channels/channel-storage.md`：消息/会话迁至全局 `~/.dsh/oh-my-dsh/channels/`，按 `channelId.workspaceKey.sessionId.messages.json` 分桶（无会话入 `system` 桶）；`createChannelSessions` 改按 channel 作用域；停用/删除项目 sessions.json 死路径；含惰性迁移 + `channel migrate` CLI + 本仓库自迁移。
 
 ### E. 面板项目视图（G5，UI P2）
 项目视图改从 **channel 作用域存储**（全局化后 `~/.dsh/oh-my-dsh/channels/<id>.sessions.json` + 分桶消息）取会话与消息，展示 **Channel ▸ Session ▸ Message** 列表；数据源与 D 保持一致。
@@ -94,7 +94,7 @@
 | P1 | D 存储全局化 | channel-sessions.js、channel-store.js、CLI | channel-storage.md 验收标准 |
 | P2 | E 面板项目视图 | ChannelPanel.swift | 手动 QA |
 
-> 与 docs/channel-status.md §5 待办衔接：A/B/C 为「会话驱动/路由」行为正确性，D 即已列「存储全局化改造」，E 即已列「面板消息分组 UI」。
+> 与 docs/design/channels/channel-status.md §5 待办衔接：A/B/C 为「会话驱动/路由」行为正确性，D 即已列「存储全局化改造」，E 即已列「面板消息分组 UI」。
 
 ## 6. 明确不在本文档范围
 

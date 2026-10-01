@@ -4,7 +4,7 @@
 // $DSH_HOME/oh-my-dsh/shell-api.port 与 browser-api.port），按前缀分工：/api/browser/* 归
 // 浏览器面板，/api/tasks/* 归任务面板。
 //
-// 设计：docs/task-todo-skill-design.md。配套技能 task-todo 在用户明确要求时
+// 设计：docs/design/panels/task-todo-skill-design.md。配套技能 task-todo 在用户明确要求时
 // 把沟通结论批量写进任务面板。
 //
 // 本文件只放**纯模型**（路由 + 请求解析 + 工作区解析 + 响应形状），不含 AppKit、

@@ -1,7 +1,7 @@
 # Channel 消息重复回复问题排查记录
 
 > 状态：✅ 已修复（2026-08-21）
-> 关联：docs/channel-design.md、docs/channel-ui-commands.md、core/lib/weixin-clawbot.js、core/lib/weixin-clawbot-transport.js
+> 关联：docs/design/channels/channel-design.md、docs/design/channels/channel-ui-commands.md、core/lib/weixin-clawbot.js、core/lib/weixin-clawbot-transport.js
 
 ## 1. 问题现象
 

@@ -1,7 +1,7 @@
 # Channel「项目视图」↔ dsh web 会话双向联动
 
 > 状态：✅ 已落地实现（2026-08-24）
-> 关联：docs/channel-status.md、docs/channel-association-model.md、platforms/macos/src/ChannelPanel.swift、platforms/macos/src/main.swift（sessionTrackerScript / sessionOpenerScript / dshSession handler）
+> 关联：docs/design/channels/channel-status.md、docs/design/channels/channel-association-model.md、platforms/macos/src/ChannelPanel.swift、platforms/macos/src/main.swift（sessionTrackerScript / sessionOpenerScript / dshSession handler）
 
 ## 1. 目标
 

@@ -8,7 +8,7 @@ import AppKit
 // (`core/lib/review-log.js`) because dsh session logs are Zstandard frames; this
 // panel runs the core CLI and renders its JSON.
 //
-// Design + coverage notes: docs/review-panel-design.md
+// Design + coverage notes: docs/design/panels/review-panel-design.md
 
 /// Content surface: the paper the tree is drawn on. Follows the system
 /// appearance (white in light mode, a dark surface in dark mode) — the visual

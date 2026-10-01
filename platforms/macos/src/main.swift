@@ -210,7 +210,7 @@ enum L10n {
         "preview.binary": ("二进制文件，无法预览文本内容", "Binary file — text preview unavailable"),
         "preview.openProject": ("项目目录", "Project Folder"),
         "preview.openProjectHint": ("在面板中打开当前项目目录", "Open the current project folder in the panel"),
-        // Files 面板：项目目录「用外部应用打开」（docs/ux-feedback.md #2）。
+        // Files 面板：项目目录「用外部应用打开」（docs/feedback/ux-feedback.md #2）。
         "files.openWithHint": ("打开项目目录：点击选择方式（⌥点击用上次的方式）", "Open the project directory: click to choose how (⌥-click repeats the last choice)"),
         "files.openProjectButton": ("打开项目", "Open Project"),
         "files.fileMenuButton": ("打开文件", "Open File"),
@@ -223,7 +223,7 @@ enum L10n {
         "files.openWithOther": ("选择其它应用…", "Choose Another App…"),
         "files.openWithOtherMessage": ("选择用于打开项目目录的应用", "Choose the app to open the project directory with"),
         "files.openWithFailed": ("打开失败：%@", "Open failed: %@"),
-        // Files 面板：目录树新建文件 / 文件夹 + 右键菜单（docs/ux-feedback.md #1）。
+        // Files 面板：目录树新建文件 / 文件夹 + 右键菜单（docs/feedback/ux-feedback.md #1）。
         "files.newFile": ("新建文件", "New File"),
         "files.newFolder": ("新建文件夹", "New Folder"),
         "files.newItemLocation": ("位置：%@", "Location: %@"),
@@ -282,7 +282,7 @@ enum L10n {
         "wiki.searchPlaceholder": ("搜索页面标题…", "Search page titles…"),
         "wiki.backlinks": ("反向链接", "Backlinks"),
         "wiki.settingsAuto": ("自动更新知识库", "Auto-update Wiki"),
-        // 终端：选中即复制（docs/ux-feedback.md #4）。
+        // 终端：选中即复制（docs/feedback/ux-feedback.md #4）。
         "settings.terminalAutoCopy": ("终端：选中文本即复制", "Terminal: copy on select"),
         "wiki.settingsRegister": ("写入 AGENTS.md 注册块", "Register in AGENTS.md"),
         "wiki.settingsRoot": ("知识库根目录", "Wiki Root"),
@@ -1198,7 +1198,7 @@ final class DSHUpdater {
         if let lock = lockPath, fm.fileExists(atPath: lock) {
             // Reproducible closure: dsh declares its cordis tooling with caret
             // ranges, so a plain install may pull a plugin release the old dsh
-            // cannot even boot with (see docs/dsh-version-impact.md R8).
+            // cannot even boot with (see docs/process/dsh-version-impact.md R8).
             let dir = (lock as NSString).deletingLastPathComponent
             try? fm.removeItem(atPath: dest + "/package.json")
             try? fm.removeItem(atPath: dest + "/package-lock.json")
@@ -1302,7 +1302,7 @@ final class ServerManager {
     /// True while the dsh web process this shell spawned is still alive.
     /// The refresh path uses it to tell "our auth is stale" (reload through the
     /// launch token) from "our server is gone" (respawn it) — issue #6 in
-    /// docs/ux-feedback.md.
+    /// docs/feedback/ux-feedback.md.
     var isRunning: Bool { process?.isRunning ?? false }
 
     /// The launch token from the entry URL, nil when dsh advertises none.
@@ -1326,7 +1326,7 @@ final class ServerManager {
     /// and a `dsh-auth-*` cookie (minted once per authority, 30-day lifetime) made
     /// a bare GET to an authenticated dsh >= 0.1.2 answer 200 + the real page,
     /// which contains `__DSH_BOOT__` — so "is a legacy dsh serving here?" said yes
-    /// for a server that actually demands a launch token (docs/dsh-version-impact.md
+    /// for a server that actually demands a launch token (docs/process/dsh-version-impact.md
     /// §4.4). A cached copy of that page could do the same.
     private static let probeSession: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -1734,7 +1734,7 @@ final class ServerManager {
         //    That is exactly what happened: a leftover instance held 3080, a stale
         //    persisted dsh-auth cookie made the readiness probe read 200 +
         //    __DSH_BOOT__ from it, the shell adopted it, and "Generate wiki"
-        //    silently did nothing (docs/dsh-version-impact.md §4.4).
+        //    silently did nothing (docs/process/dsh-version-impact.md §4.4).
         //    Adopting also leaked the server: an adopted one is never stopped on
         //    quit (spawned == false), so it held 3080 across runs.
         //    Same DSH_HOME ⇒ the spawned instance shares workspaces/sessions/
@@ -2296,7 +2296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // dsh web / CEF / skills / channel 启动之前注入环境变量。
         applyDevIsolation()
         // 壳层数据收敛：$DSH_HOME 根 -> $DSH_HOME/oh-my-dsh/（幂等，见
-        // docs/storage-layout-refactor.md）。必须在任何 ShellConfig 读取之前完成。
+        // docs/design/shell/storage-layout-refactor.md）。必须在任何 ShellConfig 读取之前完成。
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
         let layoutMoved = ShellPaths.migrateLegacyLayout(home: dshDataHome, appVersion: appVersion)
         if !layoutMoved.isEmpty {
@@ -3696,7 +3696,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     ///      an untitled, just-created session reachable at all.
     /// Resolves to {ok, via} or {ok:false, reason}; main.swift awaits it through
     /// callAsyncJavaScript because evaluateJavaScript cannot return a promise
-    /// (docs/dsh-version-impact.md B10).
+    /// (docs/process/dsh-version-impact.md B10).
     private static let sessionOpenerScript = """
     (function () {
       if (window.__dshSessionOpener) return;
@@ -3899,7 +3899,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// the node beats faking keystrokes: it does not depend on which element
     /// holds focus, and it cannot half-type a token the user then sends.
     ///
-    /// Coupling surface (docs/dsh-version-impact.md — "composer DOM + node
+    /// Coupling surface (docs/process/dsh-version-impact.md — "composer DOM + node
     /// registry"). Every hop is a dsh-private detail, so every hop is guarded
     /// and reports WHY it failed instead of throwing into the void:
     ///   [data-composer-input]        the composer's contenteditable (slot mark)
@@ -4249,7 +4249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let poolDir = (ShellPaths.shellDir(home: dshDataHome) as NSString)
                 .appendingPathComponent("snapshots/trees/" + needed)
             // Install from the committed lock when the app ships one for that
-            // version (reproducible closure — see docs/dsh-version-impact.md R8).
+            // version (reproducible closure — see docs/process/dsh-version-impact.md R8).
             guard updater.installVersion(needed, into: poolDir, registry: RegistryConfig.current,
                                          lockPath: committedRuntimeLockPath(dshVersion: needed)) != nil else {
                 presentSimpleAlert(L10n.tr("snapshot.title"), L10n.tr("snapshot.rollback.needsTree", needed))
@@ -4304,7 +4304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Capture the running dsh tree into the version pool — called only once the
     /// page has finished loading, i.e. this tree has PROVEN it boots. A tree
     /// captured any earlier can be one that never started, and a rollback would
-    /// then reinstall that broken tree (see docs/dsh-version-impact.md R8).
+    /// then reinstall that broken tree (see docs/process/dsh-version-impact.md R8).
     private func captureRuntimeTree() {
         guard !didCaptureRuntimeTree else { return }
         guard let updater = currentUpdater(), let dshVersion = updater.currentVersion else { return }
@@ -4375,7 +4375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                           : "snapshot after upgrade: recorded dsh " + dshVersion)
     }
 
-    // MARK: session snapshots (docs/session-snapshot-rollback-design.md)
+    // MARK: session snapshots (docs/design/shell/session-snapshot-rollback-design.md)
 
     /// The pre-spawn half of the snapshot feature (called from startServer on a
     /// background queue): capture the running dsh tree into the version pool,
@@ -4697,7 +4697,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             // Snapshot FIRST: upgrading dsh migrates every session it opens and
             // that migration cannot be undone by dsh itself, so the pre-upgrade
             // state (data + the tree being replaced) must be on disk before a
-            // single new-dsh byte runs. See docs/session-snapshot-rollback-design.md §5.
+            // single new-dsh byte runs. See docs/design/shell/session-snapshot-rollback-design.md §5.
             self.snapshotBeforeUpgrade(from: current, to: target, updater: updater)
             do {
                 let new = try updater.apply(registry: RegistryConfig.current, version: target)
@@ -5030,7 +5030,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     /// Fallback for a sidebar whose DOM no longer answers (it is a private detail
-    /// of dsh web — docs/dsh-version-impact.md B10). Create the session over the
+    /// of dsh web — docs/process/dsh-version-impact.md B10). Create the session over the
     /// host RPC so the click still leaves a usable session in dsh's registry, and
     /// say why dsh web did not switch: a session created this way is blank, and
     /// it appears the moment the user clicks that workspace's "+" in the sidebar
@@ -5279,7 +5279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // dsh answers an unauthenticated page load with 401 + a plain-text body
         // ("dsh web authentication required…"). WebKit would happily render that
         // text, which is how a stale browser cookie turned a reload into "the
-        // page won't open" (docs/ux-feedback.md #6). Re-authenticate through the
+        // page won't open" (docs/feedback/ux-feedback.md #6). Re-authenticate through the
         // launch token instead — the same exchange the first load performs.
         if navigationResponse.isForMainFrame,
            let http = navigationResponse.response as? HTTPURLResponse,
@@ -5354,7 +5354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             // click, no directory follow, no preview intercept, no composer
             // reference). Report installed flags — plus whether the composer is
             // the expected Lexical editor — so a broken bridge is visible in the
-            // log (docs/dsh-version-impact.md B9).
+            // log (docs/process/dsh-version-impact.md B9).
             webView.evaluateJavaScript("""
             JSON.stringify({
               tracker: !!window.__dshSessionTracked,
@@ -5397,7 +5397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     ///     button) must all be captured and their events swallowed, while the
     ///     card chevron (aria-haspopup="menu") is left to dsh.
     /// An interceptor that only knows one of these fails here instead of
-    /// silently in the UI (see docs/dsh-version-impact.md B7).
+    /// silently in the UI (see docs/process/dsh-version-impact.md B7).
     private static let previewDebugProbeJS = """
     (function () {
       var out = { installed: !!window.__dshPreviewInstalled, hit: window.__dshPreviewHit || null };
@@ -5687,7 +5687,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // ⌘R reloads the dsh web page — the same thing (and more) as WebKit's
         // context-menu "Reload": it goes through the launch token, so a stale
         // browser cookie is repaired instead of showing dsh's 401 page
-        // (docs/ux-feedback.md #6).
+        // (docs/feedback/ux-feedback.md #6).
         let reloadItem = viewMenu.addItem(withTitle: L10n.tr("menu.reloadPage"), action: #selector(reloadPage), keyEquivalent: "r")
         reloadItem.keyEquivalentModifierMask = [.command]
         reloadItem.target = self
@@ -6199,7 +6199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let port = server.port
         // The runner's "project" = the active workspace root; it re-reads the
         // channel's global workspaces.json to decide whether this project has the
-        // channel enabled (docs/channel-project-switch.md). Per-project refs are no
+        // channel enabled (docs/design/channels/channel-project-switch.md). Per-project refs are no
         // longer read/force-added here.
         let activeRoot = activeWorkspacePath() ?? ""
 
@@ -6613,7 +6613,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// View ▸ Reload Page (⌘R). Kept identical in effect to WebKit's own
     /// context-menu "Reload" — both end up reloading through the launch-token
     /// entry URL, because a bare reload of the tokenless `/` depends on a
-    /// browser cookie that can go stale (docs/ux-feedback.md #6).
+    /// browser cookie that can go stale (docs/feedback/ux-feedback.md #6).
     @objc private func reloadPage() {
         reloadPageReauthenticating(reason: "menu")
     }

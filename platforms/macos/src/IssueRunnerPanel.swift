@@ -3,7 +3,7 @@ import AppKit
 // MARK: - IssueRunner panel (issue-driven tasks)
 
 /// Root view. Mirrors WikiRootView's compositing fix
-/// (docs/terminal-header-fix.md): isOpaque=false so header/toolbar/content
+/// (docs/fixes/terminal-header-fix.md): isOpaque=false so header/toolbar/content
 /// composite correctly in the layer-backed window.
 final class IssueRunnerRootView: NSView {
     override var isOpaque: Bool { false }
@@ -133,7 +133,7 @@ final class IssueRunnerPanelController: NSObject {
     /// Whether the adopted workspace is a git repository at all. The runner does
     /// not need it (a branchless queue never touches git), but the FORMS do:
     /// a queue created in a non-git directory must not be handed a branch it
-    /// can never check out (docs/issue-runner-design.md §V2-7).
+    /// can never check out (docs/design/panels/issue-runner-design.md §V2-7).
     private var workspaceIsGit = true
     /// Whether this workspace has ANY git remote to push to (merge/push publish).
     /// A local-only repo has none — the honest default there is 「无」.
@@ -373,7 +373,7 @@ final class IssueRunnerPanelController: NSObject {
         statusBar.addSubview(statusSpinner)
         statusBar.addSubview(statusLabel)
         // Compositing trap: opaque bottom strip must be layer-isolated
-        // (docs/terminal-header-fix.md), same as wiki/terminal panels.
+        // (docs/fixes/terminal-header-fix.md), same as wiki/terminal panels.
         statusBar.wantsLayer = true
         statusBar.layer?.masksToBounds = true
         NSLayoutConstraint.activate([
@@ -516,7 +516,7 @@ final class IssueRunnerPanelController: NSObject {
     ///
     /// 候选 = 面板当前 board + 所有已跟踪的 board（不额外做一次 dsh RPC）：Agent
     /// 的 cwd 常常是工作区的**子目录**，靠 TasksAPIWorkspace.resolve 的「最近祖先」
-    /// 规则落回真正的 board（设计见 docs/task-todo-skill-design.md §2.2）。
+    /// 规则落回真正的 board（设计见 docs/design/panels/task-todo-skill-design.md §2.2）。
     private func apiResolveWorkspace(_ requested: String?) -> String? {
         var candidates: [String] = []
         if let current = workspaces.currentPath { candidates.append(current) }
@@ -1193,7 +1193,7 @@ final class IssueRunnerPanelController: NSObject {
     /// comment & close). Manual tasks and queues work in ANY workspace: the
     /// board lives in that directory's .dsh/tasks/, and a queue that asks for a
     /// branch simply fails with tasks.errNotGit if the directory is not a git
-    /// repository (docs/issue-runner-design.md §V2-7).
+    /// repository (docs/design/panels/issue-runner-design.md §V2-7).
     private func adoptWorkspace(_ path: String) {
         let detected = Self.detectGitHubRemote(path)
         let sameBoard = (workspaces.currentPath == path) && runner != nil

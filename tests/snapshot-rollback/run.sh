@@ -1,6 +1,6 @@
 #!/bin/bash
 # Headless end-to-end test for the session snapshot / rollback CLI
-# (docs/session-snapshot-rollback-design.md): bootstrap -> dsh upgrade ->
+# (docs/design/shell/session-snapshot-rollback-design.md): bootstrap -> dsh upgrade ->
 # rollback -> relaunch, on a real temp $DSH_HOME with real files. No dsh runs.
 # Usage: tests/snapshot-rollback/run.sh
 set -euo pipefail

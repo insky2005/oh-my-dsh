@@ -160,7 +160,7 @@
 
 | 功能 | 现状 → 目标 | 优先级 | 关联阶段 |
 |---|---|---|---|
-| 正文/语义检索 | 标题过滤 → QMD 检索落地（`docs/repo-wiki-design.md` 已列为候选） | P1 | P1 |
+| 正文/语义检索 | 标题过滤 → QMD 检索落地（`docs/design/panels/repo-wiki-design.md` 已列为候选） | P1 | P1 |
 | 页面编辑 | 只读浏览 → 手动编辑/新建页（`manual: true` 页保护机制已有） | P2 | P1 后 |
 | 跨项目/团队共享 | 单仓库 `.dsh/wiki/` → 多项目视图、共享只读知识库 | P3 | P4 |
 | 生成质量评测 | 依赖 dsh 代理 → 抽样评测集 + 页面间链接校验 | P3 | P4 |
@@ -222,7 +222,7 @@
 
 ### 4.2 分支与发布模型
 
-- **统一分支规范**（自 2026-08-16 生效）：main 只接受合并、只打主版本 `vX.Y.0`；功能走 `feature/<slug>`、bug 修复走 `fix/<slug>`（未发布）或 `release/X.Y`（已发布版本，打 patch tag 发布后 cherry-pick 回 main）。完整流程与命令见 **`docs/git-workflow.md`**；
+- **统一分支规范**（自 2026-08-16 生效）：main 只接受合并、只打主版本 `vX.Y.0`；功能走 `feature/<slug>`、bug 修复走 `fix/<slug>`（未发布）或 `release/X.Y`（已发布版本，打 patch tag 发布后 cherry-pick 回 main）。完整流程与命令见 **`docs/process/git-workflow.md`**；
 - 每个发布打 tag：`v<major>.<minor>.<patch>`，tag 驱动 CI 发布（→ §5.3）；
 - 提交规范：沿用 conventional commits（`feat(wiki): …`）；CHANGELOG 由发布脚本按 tag 区间生成（或手动维护 + 发布前校验）。
 

@@ -34,7 +34,7 @@ struct GlobalChannel {
 }
 
 // Legacy project-refs file — kept only to read it for one-time migration to the
-// global workspaces.json association (docs/channel-project-switch.md §5).
+// global workspaces.json association (docs/design/channels/channel-project-switch.md §5).
 struct ProjectChannelRef: Codable {
     var channelId: String
     var workspaceRoot: String
@@ -126,7 +126,7 @@ final class ChannelPanelController: NSObject {
     private var mode: Mode = .onboarding
     private var collapsedChannelIds: Set<String> = []
     private var collapsedSessionIds: Set<String> = []
-    // live refresh (docs/channel-status.md §3.x): a lightweight repeating timer
+    // live refresh (docs/design/channels/channel-status.md §3.x): a lightweight repeating timer
     // re-reads the global channel store while in project mode and rebuilds the
     // project view only when the current project's data actually changed.
     private var refreshTimer: Timer?
@@ -695,7 +695,7 @@ final class ChannelPanelController: NSObject {
     }
 
     /// Sessions for a channel that belong to the CURRENT project, each with its
-    /// message history — read from the GLOBAL channel-scoped store (docs/channel-storage.md, D).
+    /// message history — read from the GLOBAL channel-scoped store (docs/design/channels/channel-storage.md, D).
     private func loadSessions(for channelId: String) -> [ChannelSessionVM] {
         guard let root = currentRoot else { return [] }
         return ChannelStoreReader.loadSessions(channelId: channelId, projectRoot: root)
@@ -828,7 +828,7 @@ final class ChannelPanelController: NSObject {
 
     /// One-time migration from the legacy per-project .dsh/channels.json refs:
     /// seed the global workspaces.json association for each referenced channel so
-    /// existing switches aren't lost (docs/channel-project-switch.md §5).
+    /// existing switches aren't lost (docs/design/channels/channel-project-switch.md §5).
     private func migrateLegacyRefsIfNeeded(_ root: String?) {
         guard let root = root else { return }
         let path = (root as NSString).appendingPathComponent(".dsh/channels.json")
@@ -846,7 +846,7 @@ final class ChannelPanelController: NSObject {
 
     // MARK: - Global project association (the "project switch") — stored in
     // ~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json; a project root present there
-    // = that workspace has this channel enabled (docs/channel-project-switch.md).
+    // = that workspace has this channel enabled (docs/design/channels/channel-project-switch.md).
 
     private func channelWorkspacesPath(_ channelId: String) -> String {
         let dir = ChannelStoreReader.channelsDir()

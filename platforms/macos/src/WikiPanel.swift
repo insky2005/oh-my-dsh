@@ -1,7 +1,7 @@
 //
 //  WikiPanel.swift — Repo Wiki panel for oh-my-dsh.
 //
-//  Implements the "Repo Wiki" design (docs/repo-wiki-design.md):
+//  Implements the "Repo Wiki" design (docs/design/panels/repo-wiki-design.md):
 //    - Model: frontmatter parsing, page scanning, stale detection, backlinks
 //    - Renderer: lightweight Markdown -> NSAttributedString (headings, bold /
 //      italic, inline + fenced code, lists, links, quotes, hr; soft newlines
@@ -781,7 +781,7 @@ enum WikiAgentsMD {
 // MARK: - Wiki panel
 
 /// Panel root. Mirrors TerminalPanel's `TerminalRootView` fix
-/// (docs/terminal-header-fix.md): `isOpaque = false` forces Core Animation to
+/// (docs/fixes/terminal-header-fix.md): `isOpaque = false` forces Core Animation to
 /// composite every child (header / toolbar / content / status bar) correctly,
 /// so an opaque content view's drawing can never bleed over the header's
 /// buttons in the layer-backed window. The background is drawn here instead.
@@ -830,7 +830,7 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
     /// Root view mounted directly as the right pane of the main split view.
     /// WikiRootView = DynamicFillView with isOpaque=false so the header and
     /// its buttons are properly composited in the layer-backed window (same
-    /// fix as TerminalRootView, see docs/terminal-header-fix.md).
+    /// fix as TerminalRootView, see docs/fixes/terminal-header-fix.md).
     let view = WikiRootView()
     /// Invoked when the user hits the panel's "Close" button.
     var onRequestHide: (() -> Void)?
@@ -1057,7 +1057,7 @@ final class WikiPanelController: NSObject, NSOutlineViewDataSource, NSOutlineVie
         statusSpinner.translatesAutoresizingMaskIntoConstraints = false
         statusBar.addSubview(statusSpinner)
         statusBar.addSubview(statusLabel)
-        // Compositing trap (docs/terminal-header-fix.md): this bottom strip is
+        // Compositing trap (docs/fixes/terminal-header-fix.md): this bottom strip is
         // an OPAQUE DynamicFillView with no backing layer. When it becomes
         // visible (isHidden=false during generation) its fill is composited
         // into the panel root's layer and BLANKS every sibling (header,

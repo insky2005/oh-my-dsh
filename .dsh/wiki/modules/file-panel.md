@@ -2,7 +2,7 @@
 title: 模块：FilePanel.swift / CodeEditorView.swift（文件面板，预览+编辑+语法高亮）
 tags: [module, file-panel, preview, code-editor, syntax-highlight, highlightr, edit, line-numbers, tree-menu, image-zoom, composer-reference]
 updated: 2026-10-01T15:57:16Z
-sources: [platforms/macos/src/FilePanel.swift, platforms/macos/src/FilePanelTreeMenu.swift, platforms/macos/src/ComposerReference.swift, docs/file-panel-composer-reference.md, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImagePreviewView.swift, platforms/macos/src/ImageZoom.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/vendor/Highlightr/Highlightr.swift, platforms/macos/src/vendor/Highlightr/CodeAttributedString.swift, platforms/macos/src/vendor/Highlightr/Theme.swift, platforms/macos/build-app.sh, docs/ux-feedback.md, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/WorkspaceTabMemory.swift, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, tests/file-panel/]
+sources: [platforms/macos/src/FilePanel.swift, platforms/macos/src/FilePanelTreeMenu.swift, platforms/macos/src/ComposerReference.swift, docs/design/panels/file-panel-composer-reference.md, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImagePreviewView.swift, platforms/macos/src/ImageZoom.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/vendor/Highlightr/Highlightr.swift, platforms/macos/src/vendor/Highlightr/CodeAttributedString.swift, platforms/macos/src/vendor/Highlightr/Theme.swift, platforms/macos/build-app.sh, docs/feedback/ux-feedback.md, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/WorkspaceTabMemory.swift, platforms/macos/src/PanelSurface.swift, docs/design/shell/ui-color-scheme.md, tests/file-panel/]
 manual: false
 ---
 
@@ -22,10 +22,10 @@ manual: false
 1. **无后缀 / 点文件按文本预览**：`looksLikeText(_:)` 启发式——可 UTF-8 解码、无 NUL 字节、控制字符占比低（排除 \n/\r/\t，阈值 <8）即视为文本，与扩展名无关（`LICENSE`、`Makefile`、`.gitignore`、`.env`、`.npmrc` 均以文本显示）；
 2. **文件内编辑 + 行号 + 保存**：文本/代码文件可在面板内编辑，左侧 `LineNumberGutterView` 行号栏（随滚动/行数刷新，宽随最大行号位数自适应），头部「保存」按钮 + **⌘S**，未保存标记（页签标题尾部 `*`），`Data.write(to:.atomic)` 原子写回；
 3. **头部固定标题**：「文件 / Files」（复用活动栏键 `bar.preview`，语言切换经 `refreshTooltips()` 刷新），**不跟随当前文件路径**；路径放进页签 tooltip；
-4. **面板配色**：页签标题走 `PanelTabButton`（`PanelControl` 两档），目录树 `NSOutlineView`、目录列表 `NSTableView` 与文本 / 图片 / PDF 预览的 `NSScrollView` 显式设 `backgroundColor = PanelSurface.dynamic`，见 `docs/ui-color-scheme.md`；
+4. **面板配色**：页签标题走 `PanelTabButton`（`PanelControl` 两档），目录树 `NSOutlineView`、目录列表 `NSTableView` 与文本 / 图片 / PDF 预览的 `NSScrollView` 显式设 `backgroundColor = PanelSurface.dynamic`，见 `docs/design/shell/ui-color-scheme.md`；
 5. **语法高亮**：vendored **Highlightr**（MIT v2.3.0）+ highlight.js（180+ 语言）；`CodeEditorView.language(forExtension:)` 映射扩展名，未知回退纯文本；主题明暗跟随（xcode 浅 / atom-one-dark 深）。
 
-## 头部菜单按钮（docs/ux-feedback.md #2 两轮返工后）
+## 头部菜单按钮（docs/feedback/ux-feedback.md #2 两轮返工后）
 
 - 头部两个按钮改为共享控件 **`PanelMenuButton`**（PreviewPanel.swift，Core Graphics 自绘「图标 + 文字 + ▾」，hover/菜单打开期间高亮，窄面板自动退化为「图标 + ▾」chip）：**「打开项目 ▾」**（`files.openProjectButton`）与 **「打开文件 ▾」**（`files.fileMenuButton`）；
 - **点击整颗按钮就是打开菜单**（不做「主区=上次选择 / chevron=菜单」的分裂按钮）；**⌥ 点击**才走 `onAction` 快捷动作（打开项目＝上次记住的方式 / 默认应用；打开文件＝默认应用打开）；菜单统一从按钮**下方**弹出（`popBelow(_:_:)`）；
@@ -56,7 +56,7 @@ manual: false
 - **壳层把 chip 节点直接写进 dsh web 的 Lexical 编辑器**（`composerReferenceScript` → `window.__dshInsertFileReference(mention,label,appearance)`）：取 `[data-composer-input].__lexicalEditor` → `editor._nodes.get('reference-chip').klass`（chip 类模块私有，只能从这里拿）→ 在 `editor.update()` 里 `root.selectEnd().insertNodes([可选空格, chip, 空格])`；**不伪造按键、不依赖焦点**。提交时由 source codec 序列化成 `ref` = `@path`，即模型读到的文本；
 - **失败都不静默**：桥接函数回 `{ok,reason}`（`bridge-unavailable` / `no-composer` / `no-editor`（启动页无会话）/ `unknown-composer` / `throw:…`），壳层弹非阻塞提示 + `app.log`；其中「还没打开会话」（WebView 未就绪，或桥回 `no-composer`/`no-editor`）**不是菜单置灰**，而是点击后提示 `files.addToConversationNoSession`「请先在对话中打开一个会话，再添加文件引用」，其余失败提示 `files.addToConversationFailed`；`DSH_UI_DEBUG=1` 的注入桥健康检查新增 `composer` / `composerEditor` 两个字段；
 - **QA 钩子**：`DSH_COMPOSER_TEST_PATH`（要引用的条目，绝对路径或相对项目目录）+ `DSH_COMPOSER_TEST_SESSION`（先打开的会话，因为新页面停在启动页没有 editor）——走的是**与右键同一条**格式化 + 注入路径，结果进 `app.log`；
-- **dsh 耦合**：输入框槽位标记、Lexical 实例挂载点、节点登记表、`reference-chip` 类型名与字段全部是 dsh 私有细节 —— 升级核对项见 `docs/dsh-version-impact.md` **B9** 与 `docs/file-panel-composer-reference.md`（含 WKWebView 实测记录）。
+- **dsh 耦合**：输入框槽位标记、Lexical 实例挂载点、节点登记表、`reference-chip` 类型名与字段全部是 dsh 私有细节 —— 升级核对项见 `docs/process/dsh-version-impact.md` **B9** 与 `docs/design/panels/file-panel-composer-reference.md`（含 WKWebView 实测记录）。
 
 ## 图片预览（自适应 + 手动缩放，#8）
 
@@ -121,7 +121,7 @@ manual: false
 | `open-with-tests.swift` | `OpenWithCatalog` 目录与记忆规则（未装应用不命中 / `path:` 形态） |
 | `tree-menu-tests.swift` | `TreeMenuModel.entries` 分组、顺序、置灰与「文件不显示新建」、`canReference` 与根/无监听方禁用 |
 | `composer-reference-tests.swift` | `ComposerReferenceFormatter` 19 项（引号与目录尾斜杠 / `..` 归一 / 工作区外与非法字符拒绝 / label 与 appearance） |
-| （`run.sh` 内联 lint）| `composerReferenceScript` 必须**零反斜杠转义**——Swift 字面量会吃掉单反斜杠，整段 JS 解析失败 → 桥接函数不存在 → `bridge-unavailable`（`docs/file-panel-composer-reference.md` §4.5） |
+| （`run.sh` 内联 lint）| `composerReferenceScript` 必须**零反斜杠转义**——Swift 字面量会吃掉单反斜杠，整段 JS 解析失败 → 桥接函数不存在 → `bridge-unavailable`（`docs/design/panels/file-panel-composer-reference.md` §4.5） |
 | `image-zoom-tests.swift` | `ImageZoom` 17 项（适应比例 / 夹取 / 单步 / 边界收敛） |
 | `editor-load-policy-tests.swift` | `EditorLoadPolicy` 23 项（行数 / 分块不重不漏不切行 / 安全阀边界 / 稳定性窗口） |
 | `panel-switch-tests.swift` | 真实 `FilePanelController` + **真实 NSWindow / split view**：页签交接、头部按钮启用态、宽度夹取、角标固定尺寸、图片居中盒子 |

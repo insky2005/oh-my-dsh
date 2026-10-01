@@ -2,7 +2,7 @@
 
 > 状态：已实现（P0/P1 2026-09-30；P2 活泳道 + 手动发布 2026-10-01；工作流 2026-10-01）
 > 关联面板：任务（Tasks / IssueRunner）
-> 关联文档：docs/task-todo-skill-design.md、docs/issue-runner-design.md、docs/builtin-skills-design.md、docs/git-workflow.md
+> 关联文档：docs/design/panels/task-todo-skill-design.md、docs/design/panels/issue-runner-design.md、docs/design/panels/builtin-skills-design.md、docs/process/git-workflow.md
 > 决策来源：2026-09-30 会话讨论定稿
 
 ## 1. 背景与目标

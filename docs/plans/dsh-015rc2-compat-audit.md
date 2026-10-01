@@ -1,7 +1,7 @@
 # dsh 0.1.5-rc.2 升级兼容审计与实测（壳层 ↔ dsh web）
 
 > 分支 `release/1.16`（v1.16.0 的补丁）。目标：把内置 dsh 从 `@deepseek-ai/dsh@0.1.2-rc.1` 升到
-> `@deepseek-ai/dsh@0.1.5-rc.2`，逐面复核五个耦合面（`docs/dsh-version-impact.md`），并在**开发版**
+> `@deepseek-ai/dsh@0.1.5-rc.2`，逐面复核五个耦合面（`docs/process/dsh-version-impact.md`），并在**开发版**
 > （`DSH_DEV_BUILD=1` + `DSH_HOME=~/.dsh-dev`，不碰 `~/.dsh`）上把八个面板跑一遍。
 > 状态：**已在 `release/1.16` 执行完毕**（2026-09-27）——内置 dsh 推进到 `0.1.5-rc.3` 并随附闭包锁
 > （下方 §一–§六 是 2026-09-23 针对 rc.2 的审计原文，作为历史留档；为何最终钉 rc.3 见 §七），
@@ -133,7 +133,7 @@ v1.16.2 上线**，前提解除，本次把审计中的升级动作落地。
 
 **改了什么**：`build-app.sh` 的 `DSH_PACKAGE_SPEC` 默认值（两处）与打印行 → `@deepseek-ai/dsh@0.1.5-rc.3`；
 新增闭包锁 `platforms/macos/runtime-locks/dsh-0.1.5-rc.3/{package.json,package-lock.json}`（锁内依赖写**精确版本**
-而非 caret）；README / `docs/productization.md` / `docs/dsh-version-impact.md` §4.5 与 `CHANGELOG` 同步。
+而非 caret）；README / `docs/research/productization.md` / `docs/process/dsh-version-impact.md` §4.5 与 `CHANGELOG` 同步。
 **壳层代码零改动**——本次唯一断裂面（会话日志世代命名）的修复已随 v1.16.2 落地。
 
 ### 7.1 为什么最终钉 rc.3 而不是审计当时的 rc.2

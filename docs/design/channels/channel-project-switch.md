@@ -1,7 +1,7 @@
 # Channel「项目开关」设计（全局 workspace 关联 + 未启用门控）
 
 > 状态：✅ 决策已定（2026-08-23，待落地实现）
-> 关联：docs/channel-design.md（配置模型/路由）、docs/channel-storage.md（存储）、docs/channel-association-model.md（关联模型）、core/lib/channel-runner.js、core/lib/channel-sessions.js、platforms/macos/src/ChannelPanel.swift、platforms/macos/src/main.swift
+> 关联：docs/design/channels/channel-design.md（配置模型/路由）、docs/design/channels/channel-storage.md（存储）、docs/design/channels/channel-association-model.md（关联模型）、core/lib/channel-runner.js、core/lib/channel-sessions.js、platforms/macos/src/ChannelPanel.swift、platforms/macos/src/main.swift
 
 ## 1. 问题
 

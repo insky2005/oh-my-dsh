@@ -3,7 +3,7 @@
 /**
  * core/lib/channel-sessions.js — channel-scoped session mapping + message log.
  *
- * Docs: docs/channel-storage.md (globalization, 2026-08-22), docs/channel-ui-commands.md §3.4/§3.8.
+ * Docs: docs/design/channels/channel-storage.md (globalization, 2026-08-22), docs/design/channels/channel-ui-commands.md §3.4/§3.8.
  *
  * Persisted under the GLOBAL channel dir (survives runner restarts, does NOT
  * pollute a project checkout — message content is not committed anywhere):
@@ -89,10 +89,10 @@ function createChannelSessions({ channelId, dshHome, defaultProjectRoot }) {
   /** Resolve AND persist the key (explicit enable / registration). */
   function registerProjectRoot(projectRoot) { return resolveKey(projectRoot, true); }
   /** Resolve the key WITHOUT persisting. Archiving must NOT auto-enable a project
-   *  (enable is controlled only by the project-view toggle, docs/channel-project-switch.md). */
+   *  (enable is controlled only by the project-view toggle, docs/design/channels/channel-project-switch.md). */
   function resolveWorkspaceKey(projectRoot) { return resolveKey(projectRoot, false); }
 
-  // ----- project enable (the "project switch"; docs/channel-project-switch.md) -----
+  // ----- project enable (the "project switch"; docs/design/channels/channel-project-switch.md) -----
   // A project root present in this channel's workspaces.json = that workspace has
   // the channel enabled. Membership is by VALUE (projectRoot), not by key.
   function listEnabledWorkspaces() {

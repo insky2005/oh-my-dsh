@@ -2,7 +2,7 @@ import Foundation
 
 // Headless tests for the "open the project directory with…" catalog
 // (OpenWithApps.swift) — the model behind the Files panel project button
-// (docs/ux-feedback.md #2). No AppKit here: installation probing is injected.
+// (docs/feedback/ux-feedback.md #2). No AppKit here: installation probing is injected.
 // Usage: tests/file-panel/run.sh
 
 func test(_ name: String, _ cond: Bool) {

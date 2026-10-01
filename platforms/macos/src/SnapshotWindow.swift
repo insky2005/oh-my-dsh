@@ -1,7 +1,7 @@
 import AppKit
 
 /// The「会话快照…」window: lists session snapshots and offers roll back /
-/// reveal / delete (docs/session-snapshot-rollback-design.md §12).
+/// reveal / delete (docs/design/shell/session-snapshot-rollback-design.md §12).
 ///
 /// Presentation only: data comes from the `ohmy-core snapshot` CLI (CoreBridge)
 /// and the actual rollback — which must stop dsh web first and then quit the

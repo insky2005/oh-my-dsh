@@ -35,7 +35,7 @@
 ## 右栏面板
 
 窗口**最右侧是活动栏**（图标入口，九个面板互斥切换，**首位是「项目」**），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
-所有原生面板**共用一套灰阶配色**（面板底色一档 + 控件常态/高亮两档，全部取自 dsh web 的 `neutral bluish` 设计令牌），深浅两套主题一一对应；**单一事实来源为 `PanelSurface.swift`——改色只改这一个文件**，方案见 [`docs/ui-color-scheme.md`](./docs/ui-color-scheme.md)。
+所有原生面板**共用一套灰阶配色**（面板底色一档 + 控件常态/高亮两档，全部取自 dsh web 的 `neutral bluish` 设计令牌），深浅两套主题一一对应；**单一事实来源为 `PanelSurface.swift`——改色只改这一个文件**，方案见 [`docs/design/shell/ui-color-scheme.md`](./docs/design/shell/ui-color-scheme.md)。
 「视图」菜单提供九面板的显示/隐藏快捷键（首项即「项目」）。
 
 活动栏图标自上而下依次为下列九个面板，**每个面板的完整说明（特性、边界、已知限制、设计文档）见 [`docs/panels/index.md`](./docs/panels/index.md)**。
@@ -147,7 +147,7 @@ open "dist/oh-my-dsh-<version>-arm64.dmg"
    `Contents/Resources/runtime-locks/`）。**只改 `DSH_PACKAGE_SPEC` 而不配 lock 是不行的**——dsh 用 caret 范围声明
    它的 cordis 工具链，裸 `npm install` 会装当天最新的 1.x，可能让这个 dsh 版本**启动即崩**
    （实测：`cordis-plugin-hmr` 1.0.19 装进 0.1.2-rc.1 → `user patch-layer watching requires the Cordis HMR service`，见
-   `docs/dsh-version-impact.md` R8）。装完还会跑一次**启动冒烟**（`smoke_runtime`：起一次 `dsh web`，40 秒内必须打出入口 URL
+   `docs/process/dsh-version-impact.md` R8）。装完还会跑一次**启动冒烟**（`smoke_runtime`：起一次 `dsh web`，40 秒内必须打出入口 URL
    且进程存活，否则构建失败；跨架构 stage 自动跳过，`DSH_SKIP_RUNTIME_SMOKE=1` 可临时跳过）。
 
 **Node 选择策略（运行期）**：`DSH_NODE` 显式指定 > 系统 node（PATH→nvm current→nvm default→nvm 最新→Homebrew，
@@ -213,7 +213,7 @@ dsh 升级会**把会话日志换成新世代**（0.1.5 起新建会话写 `sess
 
 **边界**：这是数据回退，不是 App 回退——pkg 装不了旧版本，所以「问题出在 App 本身」时要选「只回退数据 + 重装旧版 App」
 （快照 meta 里记着当时的 App 版本，界面会据此提示装哪一版）。凭据（`credentials*`）、壳层自身状态与 token（`shell/`）、
-通道绑定（`channels/`）、CEF profile（`browser*/`）**一律不进快照、不回退**。设计与场景演绎：`docs/session-snapshot-rollback-design.md`。
+通道绑定（`channels/`）、CEF profile（`browser*/`）**一律不进快照、不回退**。设计与场景演绎：`docs/design/shell/session-snapshot-rollback-design.md`。
 
 ## 退出行为说明
 
@@ -298,7 +298,7 @@ platforms/macos/src/                  原生壳（Swift）
   SkillSources.swift     技能来源（地址解析、registry 清单与搜索、拉取/安装/移除）
   ReviewPanel.swift      审计面板（只读：会话日志变更/嵌套调用/shell 可疑命令）
   ReviewLogModel.swift   审计面板数据模型（核心 JSON 解码 + 文件分组/diff 折叠 + 日志新鲜度打戳，纯 Foundation 可无头测试）
-  PanelSurface.swift    面板配色单一事实来源（面板底色 + 控件常态/高亮两档，见 docs/ui-color-scheme.md）
+  PanelSurface.swift    面板配色单一事实来源（面板底色 + 控件常态/高亮两档，见 docs/design/shell/ui-color-scheme.md）
   BrowserPanel.swift / BrowserAPI.swift / BrowserCDP.swift  浏览器面板（CEF 渲染 + REST API + CDP）
   DshWebRPC.swift      壳层原生 dsh RPC（0.1.2 斜杠端点 + launch token 换 cookie，wiki/任务/会话共用）
   DshWebCookieJanitor.swift 启动/退出清理非本次 authority 的 dsh-auth-* cookie + 回收上次残留实例
@@ -315,7 +315,7 @@ scripts/             跨平台工具（version.sh 版本单一来源 / changelog
 .dsh/skills/         web-dev-tools / repo-knowledge / task-todo 等面板配套 skill（App 启动时同步安装到全局 $DSH_HOME/skills/；issue-resolve 已于 2026-09-27 退役）
 .cache/              构建缓存（node tarball、npm 缓存、已构建运行时/CEF，按架构分目录）
 dist/                构建产物（.app / .pkg / .dmg）
-docs/                设计/排查文档（productization.md、dsh-version-impact.md、git-workflow.md、release-process.md、**ui-color-scheme.md（面板配色方案）**、repo-wiki-design.md、review-panel-design.md、browser-blank-panel-fix.md、issue-runner-design.md、milestones/、plans/、panels/（右栏面板详细说明）等）
+docs/                文档中心（索引见 docs/README.md）：research/ 调研、design/{shell,panels,channels} 方案设计、fixes/ 排查与修复、process/ 流程·发布·升级、feedback/ 使用反馈、plans/ 计划、milestones/ 里程碑、panels/ 右栏面板说明、raw/、screenshots/
 ```
 
 ## 如何贡献

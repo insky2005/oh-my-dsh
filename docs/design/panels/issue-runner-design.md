@@ -2,7 +2,7 @@
 
 > 状态：**v1 已实现**（v1.8.0+，方案 E：branch-based 串行队列）；**v2 已实现**（2026-09-24：多队列泳道 + 手动任务 + 卡片式 UI + token 仅文件；决策记录见 §V2-13）。v1 章节保留为历史决策记录，实现现状以 §V2-* 与 `.dsh/wiki/modules/issue-runner-panel.md` 为准
 > 更新：2026-09-27（§V2-14：issue 任务与手动任务对齐；`issue-resolve` 技能退役）
-> 关联：`docs/git-workflow.md`（分支规范）、`docs/ui-color-scheme.md`（配色令牌）、`docs/projects-panel-design.md`（卡片面板体例）、`docs/dsh-version-impact.md`（会话 RPC 耦合面）、`.dsh/wiki/modules/issue-runner-panel.md`
+> 关联：`docs/process/git-workflow.md`（分支规范）、`docs/design/shell/ui-color-scheme.md`（配色令牌）、`docs/design/panels/projects-panel-design.md`（卡片面板体例）、`docs/process/dsh-version-impact.md`（会话 RPC 耦合面）、`.dsh/wiki/modules/issue-runner-panel.md`
 
 ## 目标
 
@@ -205,7 +205,7 @@ struct Queue {
 - **同一时刻只有一个「活动队列」**：它连续跑完队内任务；点另一个队列的「开始」= 在当前任务结束后切换为活动队列；
 - **显式队列**由用户创建（可含多个手动任务）；**自动队列**由 issue 任务的「处理」自动创建（单任务、`autoCreated = true`），保留 v1 的分支与 PR 语义；重试时按 task id 复用同一个自动队列，不重复创建。
 
-**issue 任务不进共享队列**：为保持 `docs/git-workflow.md` 的「一 issue 一分支一 PR」，issue 任务的卡片只有「处理」（= 自动单任务队列），没有「加入队列 ▾」。放开这条留给阶段 2 迭代。
+**issue 任务不进共享队列**：为保持 `docs/process/git-workflow.md` 的「一 issue 一分支一 PR」，issue 任务的卡片只有「处理」（= 自动单任务队列），没有「加入队列 ▾」。放开这条留给阶段 2 迭代。
 
 ### V2-4 持久化布局（`.dsh/tasks/`，各文件单一职责）
 
@@ -254,7 +254,7 @@ struct Queue {
 
 | 任务 | 分支 | 说明 |
 |---|---|---|
-| issue 任务（自动单任务队列） | `feature/issue-N` 或 `fix/issue-N` | 沿用 `branchForIssue` 的 label 判定与 `docs/git-workflow.md` 规范，行为与 v1 完全一致 |
+| issue 任务（自动单任务队列） | `feature/issue-N` 或 `fix/issue-N` | 沿用 `branchForIssue` 的 label 判定与 `docs/process/git-workflow.md` 规范，行为与 v1 完全一致 |
 | 手动任务（用户队列） | 队列的 `branch` | 队列分支默认 = `feature/` + 队列名 slug（小写、非字母数字换 `-`、去首尾、截断 40）；**slug 为空（纯中文 / emoji 名）时回退为 `feature/queue-<id 前 4 位>`**（例 `feature/queue-7f3a`）；**用户可改**；留空 = 不切分支，在当前分支上执行 |
 
 **PR 是可选能力，不是硬依赖**（决策 4）：
@@ -450,7 +450,7 @@ struct Queue {
 - **交互**：点卡片非按钮区域 = 展开 / 收起详情（正文可滚动，长正文不挤走按钮，保留 v1 的 NSTextView 方案）；hover 时卡片底色提亮（`PanelControl.fill(dark:highlighted:)`）并显示行内图标按钮；**移出队列 / 取消 / 重试都不弹模态**，结果回底部状态条（成功 5s 自动清空、失败留到下次操作）；只有「评论并关闭 Issue」保留确认框（会改 GitHub 远端状态）；
 - **底部状态条保留**（加载中 / 队列 n/m / 错误回显），compositing trap 的 `wantsLayer + masksToBounds` 写法不变。
 
-**配色纪律**（`docs/ui-color-scheme.md`）：面板根 / header / toolbar / 状态条用 `DynamicFillView()`（`.panel`），卡片底与图标按钮用 `PanelControl.fill(dark:highlighted:)`，**不新写** `calibratedWhite` 灰阶；卡片在 `viewDidChangeEffectiveAppearance` 重绘取色。
+**配色纪律**（`docs/design/shell/ui-color-scheme.md`）：面板根 / header / toolbar / 状态条用 `DynamicFillView()`（`.panel`），卡片底与图标按钮用 `PanelControl.fill(dark:highlighted:)`，**不新写** `calibratedWhite` 灰阶；卡片在 `viewDidChangeEffectiveAppearance` 重绘取色。
 
 **实现备注（2026-09-24，第 6 步）**：
 
@@ -692,7 +692,7 @@ QA 钩子：`DSH_TASKS_TEST=1` 启动即开面板；`DSH_PANEL_TEST=` 全量核�
 **阶段 2 迭代预留**：
 
 - **队列级并行**：worktree + 每队列一个工作树（依赖 dsh web 原生支持 worktree 后评估）；
-- **issue 任务进共享队列**：放开「一 issue 一分支」约束，让多个 issue 在同一分支上串行修（需同步改 `docs/git-workflow.md`）；
+- **issue 任务进共享队列**：放开「一 issue 一分支」约束，让多个 issue 在同一分支上串行修（需同步改 `docs/process/git-workflow.md`）；
 - **PR 复用增强**：复用已有 PR 时把本次任务摘要作为评论追加；
 - **队列模板 / 归档**：预置常用队列（如 `feature/refactor`）与已完成队列的归档视图；
 - **跨驱动复用**：`core/lib/jobqueue.js` 与队列模型对齐，供「远程驱动」（钉钉 / 微信）适配器复用；

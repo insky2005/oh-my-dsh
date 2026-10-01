@@ -2,7 +2,7 @@
 
 > 状态：📋 待启动（依赖 M1）
 > 周期：≈2–3 个月（单人维护口径，MVP 裁剪）
-> 来源：`docs/productization.md` —— §2 P2、§7、§8.4、§9（9.1 / 9.3 / 9.5 / 9.6）、§11.3、§14 M2
+> 来源：`docs/research/productization.md` —— §2 P2、§7、§8.4、§9（9.1 / 9.3 / 9.5 / 9.6）、§11.3、§14 M2
 > 更新：2026-08-15
 
 ## 目标
@@ -71,6 +71,6 @@
 
 ## 关联文档
 
-- `docs/productization.md`：§2 P2、§7、§8.4、§9、§11.3
+- `docs/research/productization.md`：§2 P2、§7、§8.4、§9、§11.3
 - `docs/milestones/M1-productization-foundation.md`（core/ 契约与骨架）
 - 上游：`@deepseek-ai/dsh`（dsh-pwsh-local / dsh web）

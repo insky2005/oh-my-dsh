@@ -1,7 +1,7 @@
 import Foundation
 
 /// ShellPaths — the single source of truth for where oh-my-dsh SHELL work data
-/// lives, plus the one-time layout migration (docs/storage-layout-refactor.md).
+/// lives, plus the one-time layout migration (docs/design/shell/storage-layout-refactor.md).
 ///
 ///   $DSH_HOME/oh-my-dsh/
 ///     projects/         projects panel workspaces (ProjectsCore.defaultSubpath)

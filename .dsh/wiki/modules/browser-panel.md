@@ -2,7 +2,7 @@
 title: 模块：BrowserPanel.swift / BrowserAPI.swift（浏览器面板，CEF/Chromium 内核）
 tags: [module, browser, cef, chromium, osr, rest-api, agent]
 updated: 2026-09-29T15:27:23Z
-sources: [platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/BrowserCDP.swift, platforms/macos/cef/CEFShim.h, platforms/macos/cef/CEFShim.mm, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, docs/plans/BROWSER_PLAN-browser-panel.md, docs/terminal-header-fix.md, docs/devtools-drag-fix.md]
+sources: [platforms/macos/src/BrowserPanel.swift, platforms/macos/src/BrowserAPI.swift, platforms/macos/src/BrowserCDP.swift, platforms/macos/cef/CEFShim.h, platforms/macos/cef/CEFShim.mm, platforms/macos/build-cef.sh, platforms/macos/src/main.swift, docs/plans/BROWSER_PLAN-browser-panel.md, docs/fixes/terminal-header-fix.md, docs/fixes/devtools-drag-fix.md]
 manual: false
 ---
 
@@ -10,7 +10,7 @@ manual: false
 
 右栏浏览器面板：多标签 **CEF 嵌入式 Chromium** 浏览器，面向「开发调试 web 页面」与「Agent 排查网页问题」两个目标。Agent 经 localhost REST API（curl 即用）驱动，配套技能 `.dsh/skills/web-dev-tools/SKILL.md`（v1.13.0 由 `shell-browser` 更名，经 SkillInstaller 全局安装到 `$DSH_HOME/skills/web-dev-tools/`）。
 
-> ⚠️ v1.14.0 事故（已修，见 `docs/browser-blank-panel-fix.md`）：面板内容区一片空白 + 右键菜单弹错位。两层根因——① 1.14 设置搬家（UserDefaults → `config.json`）没迁移旧值，用户设的 `browserRenderMode=windowed` 失效、静默回落到 OSR；② OSR 自绘帧画在容器层上、被 `pageView` 的不透明子层盖住。**当前默认已是 windowed，且 `ShellConfig` 首次加载会把旧 UserDefaults 取值一次性迁移过来。**
+> ⚠️ v1.14.0 事故（已修，见 `docs/fixes/browser-blank-panel-fix.md`）：面板内容区一片空白 + 右键菜单弹错位。两层根因——① 1.14 设置搬家（UserDefaults → `config.json`）没迁移旧值，用户设的 `browserRenderMode=windowed` 失效、静默回落到 OSR；② OSR 自绘帧画在容器层上、被 `pageView` 的不透明子层盖住。**当前默认已是 windowed，且 `ShellConfig` 首次加载会把旧 UserDefaults 取值一次性迁移过来。**
 
 ## 背景：Chromium 内核 + 根因修正 + 版本 pin
 
@@ -21,7 +21,7 @@ manual: false
 ## 渲染模式：windowed（默认）/ OSR 回退
 
 - **默认窗口化**：CEF 自建 NSView（`SetAsChild`）原生绘制、零拷贝（`docs/plans/BROWSER_PLAN-browser-panel.md` 第十一节）；开关在 `$DSH_HOME/oh-my-dsh/shell/config.json` 的 `browserRenderMode`（`ShellConfig`），**设 `osr` 才回退到离屏自绘**，且必须在 CEF `initialize` 之前设（`settings.windowless_rendering_enabled = !windowed`）；
-- **OSR 回退（windowless）**：Chromium 把每帧 BGRA 像素经 `CEFShim.setPaintHandler` 回调给壳层，`BrowserOSRView.presentFrame` 转成 `CGImage` 自绘到 **`pageView` 自己的 `CALayer.contents`**（字节序 BGRA：`premultipliedFirst` + `byteOrder32Little`；`contentsScale` 跟随窗口 backingScaleFactor）。⚠️ **不能画在 `BrowserOSRView`（容器）的 layer 上**：`pageView` 是它的子视图（层合成在父层 contents 之上）且垫着不透明背景，会把帧整块盖住 → 内容区一片空白而标题/地址栏照常更新（v1.14.0 事故，见 `docs/browser-blank-panel-fix.md`）；
+- **OSR 回退（windowless）**：Chromium 把每帧 BGRA 像素经 `CEFShim.setPaintHandler` 回调给壳层，`BrowserOSRView.presentFrame` 转成 `CGImage` 自绘到 **`pageView` 自己的 `CALayer.contents`**（字节序 BGRA：`premultipliedFirst` + `byteOrder32Little`；`contentsScale` 跟随窗口 backingScaleFactor）。⚠️ **不能画在 `BrowserOSRView`（容器）的 layer 上**：`pageView` 是它的子视图（层合成在父层 contents 之上）且垫着不透明背景，会把帧整块盖住 → 内容区一片空白而标题/地址栏照常更新（v1.14.0 事故，见 `docs/fixes/browser-blank-panel-fix.md`）；
 - **帧派发按 shim 的 `browserId`**（不是 `tab.id`；DevTools 子浏览器也吃同一计数器）：主浏览器 → `pageView`，DevTools 子浏览器 → `devtoolsContent`（`presentDevToolsFrame`）；
 - `GetViewRect`/`GetScreenInfo`（device_scale_factor=2.0）取自容器尺寸；容器尺寸变化 → `CEFShim.resizeBrowser`（`WasResized`）同步 OSR 视口。注意 OSR 下**输入事件坐标是点、`OnBeforeContextMenu` 的菜单参数是设备像素（2×）**，两套坐标系并不统一。
 
@@ -35,7 +35,7 @@ manual: false
 
 ## BrowserPanel.swift UI（Chrome 式）
 
-- **布局**：40pt 头部 + 33pt 页签栏 + 分隔线 + 36pt 地址栏 + 内容区钉底；**地址栏位于页签下方**；头部/工具栏/内容容器全部 `wantsLayer + masksToBounds` layer 隔离（`docs/terminal-header-fix.md` 同源合成陷阱），根视图 `BrowserRootView` layer-backed + `isOpaque=false` 自绘背景；
+- **布局**：40pt 头部 + 33pt 页签栏 + 分隔线 + 36pt 地址栏 + 内容区钉底；**地址栏位于页签下方**；头部/工具栏/内容容器全部 `wantsLayer + masksToBounds` layer 隔离（`docs/fixes/terminal-header-fix.md` 同源合成陷阱），根视图 `BrowserRootView` layer-backed + `isOpaque=false` 自绘背景；
 - **页签**：`BrowserTabItemView`（圆角胶囊背景、标题+关闭按钮一体、活动页签加粗、关闭按钮 hover 红色 `hoverColor=systemRed`）；`+` 按钮带常显背景（`CustomIconButton.showsBackground`）紧跟页签；页签最大 200pt、数量多时均分缩小；上限 `maxTabs = 8`（每 tab 一个渲染进程）；
 - **新标签**：`about:blank` 时聚焦地址栏并全选（Chrome 式直接输入覆盖）；API 带 URL 新建不抢焦点；`BrowserURL.normalize` 支持 `about:blank`/`file://`/`data:`/`devtools://`/带 scheme+host，否则补 `https://`；`browserLastURL`（壳层设置 `$DSH_HOME/oh-my-dsh/shell/config.json`，经 `ShellConfig`；旧 UserDefaults 值由启动时一次性迁移补位）启动恢复；
 - **右上角 ✕ = 彻底关闭浏览器**：`closeAllTabs()`（逐页签 `closeTab`）+ 收起面板；页签 ✕ 只关单页签。
@@ -57,7 +57,7 @@ OSR 下 CEF 不知道宿主窗口位置，默认菜单弹错位：`OnBeforeConte
 
 「DevTools」按钮 → `CEFShim.showDevTools`：CEF 原生 ShowDevTools（Chromium 自带完整调试器），CEF 150 mac 无 `SetAsPopup` → 自建独立 NSWindow（960×640，`g_devtoolsWindow` 强引用防释放）`SetAsChild` 挂载。此前用 `inspector.html?ws=…` 在系统浏览器打开，CDP WebSocket 连接不稳且挤占面板页签，已废弃。
 
-**DevTools 拖动修复**（`docs/devtools-drag-fix.md`）：拖动 DevTools 标题条调两个窗口高度时，`onDrag` 每 80ms 触发 `notifyResize()`→`WasResized()` 会让 Chromium 重新布局页面、渲染像素内容发生不可控上移（frame 正确但视觉在动）。修复思路：**拖动期间不动 CEF 视图**——首次拖动设 `pageView.autoresizesSubviews = false`、只改 devtoolsArea 高度约束 + `layoutSubtreeIfNeeded()`，不调 `notifyResize()`/`WasResized()`，devtoolsArea z-order 更高盖住 CEF 溢出；拖动结束恢复 autoresize、一次性更新 CEF 视图 frame 并只调一次 `WasResized()`。另：覆盖式切换后把主 CEF 视图钉回顶部全高（Chromium 会把 CEF 底部对齐致顶部空白）+ 视口一次 resize；覆盖式约束用 `activate` 数组激活（init 里 `isActive=true` 曾致启动卡 buildWindow/Starting）。
+**DevTools 拖动修复**（`docs/fixes/devtools-drag-fix.md`）：拖动 DevTools 标题条调两个窗口高度时，`onDrag` 每 80ms 触发 `notifyResize()`→`WasResized()` 会让 Chromium 重新布局页面、渲染像素内容发生不可控上移（frame 正确但视觉在动）。修复思路：**拖动期间不动 CEF 视图**——首次拖动设 `pageView.autoresizesSubviews = false`、只改 devtoolsArea 高度约束 + `layoutSubtreeIfNeeded()`，不调 `notifyResize()`/`WasResized()`，devtoolsArea z-order 更高盖住 CEF 溢出；拖动结束恢复 autoresize、一次性更新 CEF 视图 frame 并只调一次 `WasResized()`。另：覆盖式切换后把主 CEF 视图钉回顶部全高（Chromium 会把 CEF 底部对齐致顶部空白）+ 视口一次 resize；覆盖式约束用 `activate` 数组激活（init 里 `isActive=true` 曾致启动卡 buildWindow/Starting）。
 
 ## 控制台/网络日志（供 REST API 读取）
 

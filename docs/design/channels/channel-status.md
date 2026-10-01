@@ -2,7 +2,7 @@
 
 > 状态：✅ 总览文档（随 `feature/channel` 分支核对，2026-08-22）
 > 更新：2026-08-22
-> 关联：docs/channel-design.md（设计）、docs/channel-ui-commands.md（面板 UI + 指令设计）、docs/channel-commands.md（已实现指令清单）、docs/channel-storage.md（存储全局化设计）、docs/channel-issues.md（重复回复问题排查）
+> 关联：docs/design/channels/channel-design.md（设计）、docs/design/channels/channel-ui-commands.md（面板 UI + 指令设计）、docs/design/channels/channel-commands.md（已实现指令清单）、docs/design/channels/channel-storage.md（存储全局化设计）、docs/fixes/channel-issues.md（重复回复问题排查）
 > 说明：汇总 Channel 面板（含 core 支撑层）的完成情况；每项标注状态并给出实现位置与验证证据。
 
 ## 1. 状态图例
@@ -50,7 +50,7 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 | 钉钉 / 飞书卡片点击 | 🚧 | 卡片已渲染（说明标注「待实现」），点击仅 NSSound.beep，未接适配器 |
 | 会话/消息分组 UI 展示（按 Channel ▸ Session 的消息列表） | ✅ | ChannelSessionRow 展开显示该会话消息（读全局分桶 messages） |
 | 项目视图实时刷新（对话回复后自动更新） | ✅ | ChannelPanelController live-refresh：project 模式 ~1.5s 轻量重读全局 store，**内容签名变化才全量重建**（保留折叠/展开状态），视图不随轮询抖动 |
-| **与 dsh web 会话双向联动**（面板↔web） | ✅ | 面板会话行「在 dsh 中打开」经 `sessionOpenerScript` 驱动 web 切换；web 切会话经 `setActiveSession` 自动展开对应行、其余收起（channel 列表仍显示；**以 sessionId 对应，不用 name**）。详见 docs/channel-web-session-link.md |
+| **与 dsh web 会话双向联动**（面板↔web） | ✅ | 面板会话行「在 dsh 中打开」经 `sessionOpenerScript` 驱动 web 切换；web 切会话经 `setActiveSession` 自动展开对应行、其余收起（channel 列表仍显示；**以 sessionId 对应，不用 name**）。详见 docs/design/channels/channel-web-session-link.md |
 | 即时「收到」应答 | 📋 | 低优先 TODO |
 
 ### 3.3 测试与验证
@@ -86,8 +86,8 @@ Channel 能力已跑通「微信扫码登录 → 长轮询收消息 → 指令/�
 
 | 文档 | 问题 | 处理 |
 |---|---|---|
-| docs/channel-ui-commands.md | 状态行与 §6 第 5 步、§7 均写「面板 v2 UI 待实现」，实际已实现（751a933 起多轮提交） | ✅ 本次已修正 |
-| docs/channel-design.md §10 | M1 未标状态（实际已完成） | 以本总览 §4 为准 |
+| docs/design/channels/channel-ui-commands.md | 状态行与 §6 第 5 步、§7 均写「面板 v2 UI 待实现」，实际已实现（751a933 起多轮提交） | ✅ 本次已修正 |
+| docs/design/channels/channel-design.md §10 | M1 未标状态（实际已完成） | 以本总览 §4 为准 |
 | main.swift L10n | `channel.wizard.scanning` 文案「二维码已在新标签页打开」与面板内渲染实现不符 | 小问题，待更新文案 |
 
 ## 7. 关键提交（feature/channel 分支）

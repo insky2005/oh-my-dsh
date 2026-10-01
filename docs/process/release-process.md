@@ -1,7 +1,7 @@
 # 发布流程（Release Process）
 
 > 状态：✅ 生效（2026-08-21 起，v1.11.0 实战校准）
-> 目标：把「从主干发布一个新版本」固化为可照抄的步骤，与 `docs/git-workflow.md`、
+> 目标：把「从主干发布一个新版本」固化为可照抄的步骤，与 `docs/process/git-workflow.md`、
 >   `scripts/local-release.sh`、`scripts/version.sh`、`scripts/changelog.sh` 对齐。
 > 适用：主版本 `vX.Y.0`（main 打 tag）；patch 版本从 `release/X.Y` 分支发布，流程一致。
 
@@ -139,6 +139,6 @@ scripts/local-release.sh arm64 x86_64                          # 两架构 pkg+d
 
 ## 参考
 
-- `docs/git-workflow.md`：分支 / tag / PR 合并规范
+- `docs/process/git-workflow.md`：分支 / tag / PR 合并规范
 - `scripts/local-release.sh`、`scripts/version.sh`、`scripts/changelog.sh`、`scripts/github-publish.sh`
 - `.github/workflows/release.yml`（CI 打 tag 自动发布路径）

@@ -9,7 +9,7 @@
  *     -> reply via adapter.send
  *
  * Inbound messages are first checked against the slash-command table
- * (docs/channel-ui-commands.md §4): commands are handled by
+ * (docs/design/channels/channel-ui-commands.md §4): commands are handled by
  * createCommandRunner (no project session); ordinary text is routed to the
  * project via Router -> dsh session, with a persistent conversationId ->
  * sessionId mapping (createChannelSessions, decision E).

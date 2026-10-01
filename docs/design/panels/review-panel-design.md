@@ -30,7 +30,7 @@
 | 3 | `tool/call name=bash`（+ 嵌套 `tool/code-dispatch-start` / `tool/ptc-dispatch-start`，`name=bash`） | 命令文本（**没有**前后内容） | 所有 shell 调用，按「可能写文件」启发式标记 |
 
 补充：嵌套调用的结果在 `tool/code-dispatch` / `tool/ptc-dispatch`（`isError` + `content`），顶层结果在 `tool/result`；两者都用于把
-条目从「已发起」收敛为「成功 / 失败」。事件名随 dsh 世代变：≤0.1.2 用 `tool/code-dispatch[-start]`，0.1.5-rc.3（programmatic tool calling）用 `tool/ptc-dispatch[-start]`；审计两代都认（见 `docs/dsh-version-impact.md` R7b）。
+条目从「已发起」收敛为「成功 / 失败」。事件名随 dsh 世代变：≤0.1.2 用 `tool/code-dispatch[-start]`，0.1.5-rc.3（programmatic tool calling）用 `tool/ptc-dispatch[-start]`；审计两代都认（见 `docs/process/dsh-version-impact.md` R7b）。
 
 ## 3. 覆盖矩阵（面板实际能看到什么）
 

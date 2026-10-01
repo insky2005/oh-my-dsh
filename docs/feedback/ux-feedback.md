@@ -321,7 +321,7 @@
 - **文法 / 相对路径的纯模型** `platforms/macos/src/ComposerReference.swift`：引用相对**工作区根**（dsh 在会话 cwd 下解析 `@`）；文件 `@src/foo.ts`、目录 **`@src/`**（尾斜杠 = 目录）；含空格走 dsh 的引号文法（目录是**不闭合**的 `@"my dir/`，其补全靠它继续下钻）；工作区根自己 / 工作区之外 / 名字含 `"` 或控制字符 → **无引用**（菜单置灰，不编坏 token）。
 - **菜单**：`TreeMenuItem.addToConversation` 作为「加入对话」组排在目录树右键菜单**最前**（对文件、文件夹都给，落在**项目根**上置灰；空白处不显示）；面板只负责算出「加哪一个」并回调 `onAddToConversation`（没接线就置灰）。
 - **壳层**：注入 `composerReferenceScript` 暴露 `window.__dshInsertFileReference(mention,label,appearance)`——把**引用 chip 节点**直接写进 dsh web 的 Lexical 编辑器（`[data-composer-input].__lexicalEditor` → `editor._nodes.get('reference-chip').klass` → `editor.update()` 里 `root.selectEnd().insertNodes()`），**不伪造按键、不依赖焦点**，插入结果与用户手选是同一种节点；失败回 `{ok,reason}` 并给非阻塞提示（`no-editor` = 还没打开会话时提示先开会话）。
-- **不改 dsh 源码**；dsh 私有耦合面（槽位标记 / Lexical 挂载点 / 节点登记表 / chip 类型名）已登记进 `docs/dsh-version-impact.md` **B9**，实现与实测量法见 `docs/file-panel-composer-reference.md`。
+- **不改 dsh 源码**；dsh 私有耦合面（槽位标记 / Lexical 挂载点 / 节点登记表 / chip 类型名）已登记进 `docs/process/dsh-version-impact.md` **B9**，实现与实测量法见 `docs/design/panels/file-panel-composer-reference.md`。
 
 **验证**：`tests/file-panel`（`tree-menu-tests` 菜单规则 + 新增 `composer-reference-tests` 19 项文法/相对路径）全绿；真 WKWebView 实测（与壳层同引擎）载入**从 `main.swift` 抽出的同一份桥接脚本**：`{ok:true,mode:"chip"}`、编辑器状态里 `reference-chip.ref = "@platforms/macos/src/FilePanel.swift"`、装饰器渲染出 chip；App 内无头复现钩子 `DSH_COMPOSER_TEST_PATH` + `DSH_COMPOSER_TEST_SESSION`。
 
@@ -329,5 +329,5 @@
 
 ## 备注
 
-- 本文件仅记录问题清单，**未改代码、未开分支**；开始实现时按 `docs/git-workflow.md` 先切 `feature/*` 或 `fix/*` 分支。
+- 本文件仅记录问题清单，**未改代码、未开分支**；开始实现时按 `docs/process/git-workflow.md` 先切 `feature/*` 或 `fix/*` 分支。
 - 每项完成后把状态改为 ✅，并在该条目下补一行实现位置（文件 + 函数）与验证结论。

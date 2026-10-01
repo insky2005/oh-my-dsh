@@ -5,7 +5,7 @@
 
 **项目 → 文件 → 终端 → Repo Wiki 知识库 → 任务 → 通道 → 审查 → 浏览器 → 技能**
 
-简要说明与截图见 [README 的「右栏面板」](../../README.md#右栏面板)；面板配色方案见 [`../ui-color-scheme.md`](../ui-color-scheme.md)。
+简要说明与截图见 [README 的「右栏面板」](../../README.md#右栏面板)；面板配色方案见 [`docs/design/shell/ui-color-scheme.md`](../design/shell/ui-color-scheme.md)。
 
 ## 项目面板（`⌥⌘P` / 活动栏首位「项目」图标）
 
@@ -62,7 +62,7 @@
 - **浏览**：左侧页面树（分组、过期/手动徽标）+ 右侧渲染后的 markdown（标题/粗斜体/代码/列表/链接，软换行保真）+ 反向链接区 + `dshwiki://` 页内跳转；标题过滤搜索；
 - **维护**：陈旧检测（页面 `sources` 比 `updated` 新 → 标 ⚠）；`manual: true` 页面代理绝不覆盖（标 ✎）；可选写入项目根 `AGENTS.md` 注册块（设置开关，默认关）；「自动更新知识库」（默认关，≥3 页过期且 index 超 1 小时才触发，每小时最多一次）；wiki 根目录可选「仓库内 `.dsh/wiki`」或「`DSH_HOME` 私有」；
 - **提交**：生成更新完成后自动 `git add .dsh/wiki` + commit（不 push；维护代理主提交，`WikiAutoCommit` 兜底）；
-- 设计文档：`docs/repo-wiki-design.md`。**已知限制**：v1 搜索为标题过滤（无正文/语义检索）；知识由代理生成，质量取决于 dsh 代理能力。
+- 设计文档：`docs/design/panels/repo-wiki-design.md`。**已知限制**：v1 搜索为标题过滤（无正文/语义检索）；知识由代理生成，质量取决于 dsh 代理能力。
 
 ## 任务面板（`⌥⌘J` / 活动栏「任务」图标）
 
@@ -98,17 +98,17 @@
 把微信个人号或钉钉机器人接入 dsh，**在微信/钉钉里远程驱动 dsh 干活**：发消息 → 路由到项目会话 → 结果回复回原平台。微信走官方 iLink 协议、钉钉走 dingtalk-stream 原生适配器，两平台与微信共享同一套面板模型（扫码向导 / 连接状态 / 项目视图会话消息 / 每会话跨项目路由）。
 
 - **接入向导**：内置平台卡片（微信 ClawBot / 钉钉 / 飞书，带实时连接状态徽标）；微信扫码登录**在面板内渲染二维码**（不弹浏览器），登录态落 `~/.dsh/oh-my-dsh/channels/<id>.json`（文件优先，chmod 600），微信绑定页展示**已配置状态 + 显式「重新登录」**（避免误替换已绑定的 token）；钉钉走 **device-code 扫码向导**（`init/begin` 得二维码 → 面板内渲染 → 手机钉钉扫码自动创建企业内部应用+机器人 → 本地轮询 `poll` 拿 AppKey/AppSecret 写入 store，chmod 600），已配置通道不重复扫码、重开向导自动恢复 `/bind` 口令；
-- **项目视图**：当前项目可用通道开关（启用状态存全局 `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`，project=workspace，见 `docs/channel-project-switch.md`）。开关**真正门控路由**：普通消息 / `/new` 路由到未启用该通道的 workspace → 回「该项目未启用该通道」、不建会话；`/workspaces` 只列已启用项。会话列表：通道标题行展示「图标 + 平台名 (channelId) + 会话数」、启用开关靠右，整行独立背景；每条会话独立区块，标题可点开/收起，消息按对话气泡展示（提问靠右、回复靠左）；顶部「全局配置」随时重开；
+- **项目视图**：当前项目可用通道开关（启用状态存全局 `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`，project=workspace，见 `docs/design/channels/channel-project-switch.md`）。开关**真正门控路由**：普通消息 / `/new` 路由到未启用该通道的 workspace → 回「该项目未启用该通道」、不建会话；`/workspaces` 只列已启用项。会话列表：通道标题行展示「图标 + 平台名 (channelId) + 会话数」、启用开关靠右，整行独立背景；每条会话独立区块，标题可点开/收起，消息按对话气泡展示（提问靠右、回复靠左）；顶部「全局配置」随时重开；
 - **通道内斜杠指令**（微信 / 钉钉共用）：`/help` `/ping` `/status`（全局）；工作区指令 `/workspaces`(`/wks`)、`/sessions`(`/ses`)（无内容列出 / 有内容切换，等同 `#wN`/`#sN`）、`/new [内容]`（统一回 `创建新会话 #sN (sessionId)`，无内容建占位 `New Session`（dsh 标题由 dsh web 按首条消息自动命名）等首条消息激活、有内容 prompt=内容并回推答案）；快捷指令 `#w1`/`#s1…`（切项目/会话，均按目标/当前 workspace 是否启用该通道**门控**：未启用回「该项目未启用该通道」）与 #tag 路由（如 `#w1 帮我看看`）；
 - **消息分发**：路由优先级（显式会话绑定 > 关键词 > 默认兜底），未绑定项目回复提示不静默；同会话串行、跨会话可并发（jobqueue）；
 - **钉钉专属（owner-binding 安全门）**：`/bind <口令>`（口令本机生成、见面板或运行日志）——未绑定管理员前**拒绝所有人**，仅绑定管理员可驱动本机 dsh（防任何组织成员经机器人操作本地 bash/文件/token）；绑定成功回两条消息（确认 + 完整 `/help` 输出）；绑定状态存 `~/.dsh/oh-my-dsh/channels/<channelId>.binding.json`（chmod 600）；钉钉无「正在输入」，以文字 ack 代替 sendTyping；
 - **会话驱动**：conversationId → dsh 会话映射（多轮对话续接，`/new` 另起），`/new` 后绑定会话到 conversation、下一条普通消息复用而非新建；经 `session.create` + `session.prompt`（queue）驱动，**生成时回原生「正在输入…」(微信 sendTyping / 钉钉文字 ack)，完成后回推答案**；
 - **可靠性**：官方 iLink 协议**严格串行长轮询**（修复重复回复）；断线/鉴权失效（-14）归一到统一状态机，受控重连/重新扫码；启动自动拉起 listener、退出清理、同通道去重；
 - **实时刷新**：项目视图在对话回复后 **~1.5s 内自动更新**——轻量重读全局 store，仅当内容签名变化时全量重建（保留折叠/展开状态），不随轮询抖动；
-- **与 dsh web 会话双向联动**：点击项目视图会话行（单一手势）同时展开/收起其消息并**定位到 dsh web 对应会话**（经注入的 `sessionOpenerScript` 驱动）；反过来在 dsh web 切换会话时，面板自动展开对应会话、其余行收起（无对应则会话列表保持可见、仅全部收起）。**以 sessionId 对应、不用 name**（name 会因 `/new` 重绑/标题变化失配）；设计见 `docs/channel-web-session-link.md`；
-- **全局存储**：会话映射与消息日志归档到全局 `~/.dsh/oh-my-dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶）；「项目开关」关联存全局 `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`（见 `docs/channel-storage.md`、`docs/channel-project-switch.md`）；
+- **与 dsh web 会话双向联动**：点击项目视图会话行（单一手势）同时展开/收起其消息并**定位到 dsh web 对应会话**（经注入的 `sessionOpenerScript` 驱动）；反过来在 dsh web 切换会话时，面板自动展开对应会话、其余行收起（无对应则会话列表保持可见、仅全部收起）。**以 sessionId 对应、不用 name**（name 会因 `/new` 重绑/标题变化失配）；设计见 `docs/design/channels/channel-web-session-link.md`；
+- **全局存储**：会话映射与消息日志归档到全局 `~/.dsh/oh-my-dsh/channels/`（按 channelId/workspaceKey/sessionId 分桶）；「项目开关」关联存全局 `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`（见 `docs/design/channels/channel-storage.md`、`docs/design/channels/channel-project-switch.md`）；
 - **当前限制**：飞书仅展示卡片（适配器待实现）；钉钉富特性（AI Card 流式 / 互动审批卡 / 图片 / DWS）留作后续增强，v1 以文本/Markdown 回复为主；
-- 设计与指令清单：`docs/channel-design.md`、`docs/channel-dingtalk-stream.md`、`docs/channel-commands.md`、`docs/channel-status.md`、`docs/channel-project-switch.md`。
+- 设计与指令清单：`docs/design/channels/channel-design.md`、`docs/design/channels/channel-dingtalk-stream.md`、`docs/design/channels/channel-commands.md`、`docs/design/channels/channel-status.md`、`docs/design/channels/channel-project-switch.md`。
 
 ![channel](../screenshots/channel.png)
 
@@ -131,7 +131,7 @@
 - **跟随 dsh web**：在 dsh web 切换会话时，面板展开同一 sessionId（按 id 解析，跨工作区也能定位），并标为「当前会话」；工作区切换只重列会话、不清审计缓存；
 - **读取诊断**：Zstandard 尾部未完成帧、无法解析的行等一律显式列出（不静默丢数据）；
 - **只读边界**：日志里没有的东西不会显示——`bash` 直改、以及日志**尚未落盘**的部分只标注「需人工核对」（落盘后会自动读到，见上）；
-- 设计与覆盖矩阵：`docs/review-panel-design.md`。
+- 设计与覆盖矩阵：`docs/design/panels/review-panel-design.md`。
 
 ![review](../screenshots/review.png)
 
@@ -167,4 +167,4 @@
 - **落点**：默认 **用户级** `$DSH_HOME/skills/<name>/`（所有工作区通用），可选 **项目级** `<工作区>/.dsh/skills/<name>/`（优先级最高）；同名已存在会先确认，内置同名技能拒绝覆盖；
 - **安全**：技能以完整代理权限运行，安装确认处固定提示；仅接受 https 地址，路径穿越被拒绝，失败不留半成品。
 
-设计与机制（四档级别判定、registry 模型、开关的可逆写法）：`docs/skills-manager-design.md`。
+设计与机制（四档级别判定、registry 模型、开关的可逆写法）：`docs/design/panels/skills-manager-design.md`。

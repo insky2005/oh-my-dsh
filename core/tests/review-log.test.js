@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * review-log: READ-ONLY audit of dsh session logs (docs/review-panel-design.md).
+ * review-log: READ-ONLY audit of dsh session logs (docs/design/panels/review-panel-design.md).
  *
  * The three merged record families are exercised here with synthetic events:
  * applied hunks from `tool/result.meta.diffs`, call arguments from `tool/call`

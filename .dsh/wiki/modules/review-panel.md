@@ -2,13 +2,13 @@
 title: 模块：审查面板（Review / 变更审计）
 tags: [module, review, audit, session-log, zstd, read-only]
 updated: 2026-09-29T14:39:01Z
-sources: [platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, platforms/macos/src/main.swift, core/lib/review-log.js, core/bin/ohmy-core.js, core/index.js, core/tests/review-log.test.js, tests/review-panel/, docs/review-panel-design.md, platforms/macos/src/SkillsPanel.swift, scripts/local-ci.sh, .github/workflows/ci.yml, README.md, CHANGELOG.md, docs/dsh-version-impact.md]
+sources: [platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, platforms/macos/src/main.swift, core/lib/review-log.js, core/bin/ohmy-core.js, core/index.js, core/tests/review-log.test.js, tests/review-panel/, docs/design/panels/review-panel-design.md, platforms/macos/src/SkillsPanel.swift, scripts/local-ci.sh, .github/workflows/ci.yml, README.md, CHANGELOG.md, docs/process/dsh-version-impact.md]
 manual: false
 ---
 
 # 模块：审查面板（Review / 变更审计）
 
-**完全只读**，回答「这个会话里代理到底改了哪些文件、改成什么」：直接读 dsh 自己落盘的会话日志，**不写任何文件、不调写接口、不改 dsh 源码**。按 **会话 → 对话(turn) → 文件 → 变更内容** 树展示，每层可展开/收起。合并自 PR #44 `feature/review-panel`（2026-09-12，随 **v1.15.0** 发布）；审计结果随会话日志增量刷新由 **PR #49 `fix/review-audit-staleness`**（2026-09-17）补上。设计与覆盖矩阵见 `docs/review-panel-design.md`。
+**完全只读**，回答「这个会话里代理到底改了哪些文件、改成什么」：直接读 dsh 自己落盘的会话日志，**不写任何文件、不调写接口、不改 dsh 源码**。按 **会话 → 对话(turn) → 文件 → 变更内容** 树展示，每层可展开/收起。合并自 PR #44 `feature/review-panel`（2026-09-12，随 **v1.15.0** 发布）；审计结果随会话日志增量刷新由 **PR #49 `fix/review-audit-staleness`**（2026-09-17）补上。设计与覆盖矩阵见 `docs/design/panels/review-panel-design.md`。
 
 不做回滚/接受拒绝：只读数据里没有可回滚的完整信息（顶层 `write`/`edit` 的工具结果只留「Updated file」，落盘的 `meta.diffs` 是带 3 行上下文的 hunk，新建文件更是空数组）。
 

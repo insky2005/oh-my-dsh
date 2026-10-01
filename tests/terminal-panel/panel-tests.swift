@@ -29,7 +29,7 @@ test("a language switch keeps the fixed title", panel.headerTitleText == "bar.te
 panel.closeAllSessions()
 test("closing sessions keeps the fixed title", panel.headerTitleText == "bar.terminal")
 
-// MARK: - Per-workspace tabs (issue #5 in docs/ux-feedback.md)
+// MARK: - Per-workspace tabs (issue #5 in docs/feedback/ux-feedback.md)
 //
 // The panel hides the tabs of the workspace being left and brings them back on
 // return; the sessions themselves keep running, so this is pure bookkeeping and

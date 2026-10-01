@@ -10,7 +10,7 @@ const { createChannelManager, normalizeEvent } = require('../lib/channel');
 const { runWeixinChannel } = require('../lib/channel-runner');
 
 // Enable a channel for a project in the (temp) global store, as the panel's
-// "project switch" does (docs/channel-project-switch.md). Presence of the root
+// "project switch" does (docs/design/channels/channel-project-switch.md). Presence of the root
 // in <channelId>.workspaces.json = enabled for that workspace.
 /// Close a mock server AND destroy its sockets (Node keeps connections alive by
 /// default, so server.close() alone can leave the test process hanging).
@@ -351,7 +351,7 @@ test('channel-store: runtime store restores lastWorkspace + active session + con
   assert.equal(b.listSessions().length, 1);
 });
 
-// ---- project switch (docs/channel-project-switch.md §3.2) ----
+// ---- project switch (docs/design/channels/channel-project-switch.md §3.2) ----
 // Run one message through the runner with the project switch ON or OFF and
 // return what the adapter sent + how many session.create happened.
 async function runProjectGate({ projectRoot = '/Users/loie/repo/alpha', channelId = 'wx-g', enabled = true, text }) {

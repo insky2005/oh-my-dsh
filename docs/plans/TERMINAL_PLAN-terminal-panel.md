@@ -125,7 +125,7 @@
 - 1.6.4：所有面板顶部统一 —— 新增共享 `DynamicFillView`（动态背景色，随明暗重解析），预览/终端面板头部改为显式 `windowBackgroundColor` 背景条（40pt 布局一致），头部图标按钮统一改用 `.secondaryLabelColor`（与活动栏一致、深浅色均可见）并显式 `isTemplate`；活动栏背景由固定 `cgColor` 改为动态填充；`setRightPanel` 显示面板时强制 `needsDisplay`（防隐藏/显示后图层残留）。附带在离屏渲染下验证了按钮在深色模式为白色可见（截图分析确认用户侧为头部按钮深色不可见）。
 - 1.6.5：多标签页增强 —— 标签默认编号「终端 1/2/3…」（OSC 标题仍可覆盖），`⌘1-9` 直接切标签、`⌘⇧[`/`⌘⇧]` 循环切换；`exit`/`⌃D` 正常退出后自动关闭该标签页（最后一个标签页退出则收起面板），异常退出（信号/exec 失败 127）保留「会话已结束 + 重启」态。
 
-**最终修复：终端顶部被遮住（根因与解决）—— 详见 `docs/terminal-header-fix.md`**
+**最终修复：终端顶部被遮住（根因与解决）—— 详见 `docs/fixes/terminal-header-fix.md`**
 
 - 根因：layer-backed 窗口中，`TerminalView` 的 `isOpaque = true` 且无独立 backing layer，其背景绘制被合成进父（contentContainer 无 layer）进而溢出到面板根 layer，盖住了同级的 header。
 - 修复：`contentContainer.wantsLayer = true` + `layer?.masksToBounds = true` 隔离绘制区域；`TerminalView.wantsLayer = true` 辅助；面板根改为 `TerminalRootView`（`isOpaque = false`，绘制灰色背景）。预览面板本就正常（内容区用 NSSplitView，自带 layer 隔离）。
@@ -139,4 +139,4 @@
 - 辅助：emulator 跟踪 DECCKM（`?1h` → 方向键 `\x1bOA`）与括号粘贴（`?2004h` → 粘贴加 `\x1b[200~…\x1b[201~`）；PTY 强制 `LANG/LC_ALL=en_US.UTF-8`。
 - 验证通过后已打包 **1.6.28**：`dist/oh-my-dsh-1.6.28-arm64.pkg` / `.dmg`（DMG 校验 VALID）。
 
-**详细总结文档：`docs/terminal-input-fix.md`** —— 终端粘贴混乱 & 方向键失效的完整排查过程、Pipe 往返十六进制证据、三层修复思路（写入 API 修正 + 模式跟踪 + UTF-8 locale）与经验教训。
+**详细总结文档：`docs/fixes/terminal-input-fix.md`** —— 终端粘贴混乱 & 方向键失效的完整排查过程、Pipe 往返十六进制证据、三层修复思路（写入 API 修正 + 模式跟踪 + UTF-8 locale）与经验教训。

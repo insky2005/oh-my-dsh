@@ -3,7 +3,7 @@
 /**
  * core/lib/channel-commands.js — slash-command parsing & execution for channels.
  *
- * Docs: docs/channel-ui-commands.md §4. Platform-independent Node module so any
+ * Docs: docs/design/channels/channel-ui-commands.md §4. Platform-independent Node module so any
  * shell (macOS/Windows/Linux) reuses the exact same command semantics.
  *
  * Commands are grouped so that /help stays readable and so the runner can treat

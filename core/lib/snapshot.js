@@ -19,7 +19,7 @@
  *   s.decideLaunch({ state, currentCombo })   // -> take a snapshot?
  *   s.planRollback({ ... })                   // -> restore/quarantine/swap plan
  *
- * Design: docs/session-snapshot-rollback-design.md
+ * Design: docs/design/shell/session-snapshot-rollback-design.md
  */
 
 const { compareSemver } = require('./upgrade');

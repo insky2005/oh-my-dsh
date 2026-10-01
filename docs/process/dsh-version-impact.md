@@ -2,7 +2,7 @@
 
 > 目的：oh-my-dsh **不修改 dsh 源码**，只做「壳 + core + 运行时」封装，因此 dsh 每次升级都可能从**接口、鉴权、文件布局、启动参数、分发方式**五个方向把壳层打断。
 > 本文是**升级前/升级后逐项核对的单一清单**：先看 §2 总览，再按 §3 明细表定位「依赖了 dsh 的什么契约」，最后走 §5 的执行清单。
-> 关联文档：`docs/plans/dsh-012rc1-compat-audit.md`（0.1.2 实战审计）、`docs/productization.md` §8（升级策略）、`docs/release-process.md`。
+> 关联文档：`docs/plans/dsh-012rc1-compat-audit.md`（0.1.2 实战审计）、`docs/research/productization.md` §8（升级策略）、`docs/process/release-process.md`。
 > 维护方式：每次 dsh 升级后，把新踩到的断裂点补进 §3 对应行 + §4 复盘一节。
 
 ## 1. 结论（先看这三条）
@@ -279,7 +279,7 @@
 - [ ] `core/tests/` 全绿 + 面板测试套件（`scripts/local-ci.sh swift`）。
 - [ ] 更新 `docs/plans/` 下最新的那份审计（本次：`docs/plans/dsh-015rc2-compat-audit.md`）与本清单 §3/§4。
 - [ ] `CHANGELOG.md` 的 `[Unreleased]` 记录「适配点 + 修复点」，注明受影响面板。
-- [ ] 版本推进：`scripts/version.sh` 的 `FALLBACK_VERSION/BUILD`、`build-app.sh` 的 `DSH_PACKAGE_SPEC`（两处 + 打印行）、README/`docs/productization.md` 的版本矩阵。
+- [ ] 版本推进：`scripts/version.sh` 的 `FALLBACK_VERSION/BUILD`、`build-app.sh` 的 `DSH_PACKAGE_SPEC`（两处 + 打印行）、README/`docs/research/productization.md` 的版本矩阵。
 
 
 ## 6. 遗留风险与再评估触发条件
@@ -305,7 +305,7 @@
 | `sessionTrackerScript`（B1–B4） | ① 一元 RPC 走 `window.fetch`（**0.1.7 起会话流改走 WebSocket**）；② 方法名白名单（点号/斜杠两套 + `session/follow\|page\|projections`）；③ sessionId 在 `payload.args.*` / `payload.*` / **`request.address.{sessionId,parentSessionId}`**；④ 旧版靠非幂等的 `subagent(s).list`，**0.1.7 靠 WS `session/follow` 打开帧** | web 里切会话 → 面板/终端/预览/wiki/tasks 的项目目录**不跟随** | ✅ 0.1.2 实测可用；**0.1.7-rc.2 删除 `subagents/list` + 流改 WS → 已加 WebSocket 观察层（见 §4.6）** |
 | `sessionOpenerScript`（B5/B6） | ① 会话列表 RPC 的**请求形状**（斜杠 vs 点号、是否 `args` 包裹）；② `projections.values.title`；③ 侧栏 DOM：`[role="treeitem"]` + `className` 含 `sessionRow` + 行文本等于标题 + `aria-expanded` 折叠组 | 面板点会话行 → 不跳转（`[dsh-opener] no-session / row-not-found`） | ⚠️ **0.1.2 下原本就是坏的**（见下），已于 2026-09-10 修 |
 | `previewInterceptorScript`（B7） | ① ≤0.1.4：文件打开走 fetch 的一元 RPC（`host.openPath` / `session/openWorkspacePath`），路径在 `payload.args.request.path` 等位置，能用 **假 `server-response`** 吞掉（客户端 promise 正常 resolve）；② ≥0.1.5：dsh 自带面板、`openFile` 页面内 `sidebarRight.openResource` **不发 RPC**，改为**捕获点击**——匹配三类：`<code>` 内按钮 / `button[class*=fileMention]`（内联链接，路径在 `title`）、`[data-produced-files-row] button[title]`（产出文件行，路径在 `title`）、`button[class*=fileLink]`（`read`/`write`/`edit` 工具行，**无 `title`，路径在按钮文本**，可相对或 `~`）、`[data-presented-files-row]` 交付文件卡片（整卡遮罩按钮的 `title` 是绝对路径；无 `title` 的「打开」按钮从卡内带 `title` 的按钮取；卡片 chevron `aria-haspopup="menu"` 明确放行）；把路径发给原生面板（相对→项目目录、`~`→home）并吞掉事件 | 点消息里的文件 → 不由面板打开：≤0.1.4 弹系统默认应用；≥0.1.5 改开 dsh 自带面板、原生面板收不到 | ⚠️ **0.1.5-rc.3 曾静默失效**（fetch 层拦不到；2026-09-28 补点击层 + 相对路径解析）；≤0.1.4 ✅ |
-| `composerReferenceScript`（B9） | ⚠️ 实测踩过：脚本正文里**不能出现单反斜杠转义**（Swift 字符串字面量会先吃掉它），必须保持「零转义」并靠 `tests/file-panel/run.sh` 的 lint 钉住 —— 详见 `docs/file-panel-composer-reference.md` §4.5。依赖：① 输入框 contenteditable 的槽位标记 `[data-composer-input]`；② Lexical 把实例挂在根元素上（`el.__lexicalEditor`）；③ 节点类可从 `editor._nodes[type].klass` 取（chip 类**模块私有**，只能从这里拿）；④ 更新回调里能读到 `editor._pendingEditorState._nodeMap["root"]` | 右键「添加到对话」不插入；若 chip **类型名对不上**则整个输入框功能不受影响（我们只在自己那条路径上失败并报原因） | ✅ 0.1.2-rc.1 实测可用（WKWebView 内插入 `reference-chip`，状态 JSON 含 `ref`/label，装饰器渲染出 chip；见 `docs/file-panel-composer-reference.md`） |
+| `composerReferenceScript`（B9） | ⚠️ 实测踩过：脚本正文里**不能出现单反斜杠转义**（Swift 字符串字面量会先吃掉它），必须保持「零转义」并靠 `tests/file-panel/run.sh` 的 lint 钉住 —— 详见 `docs/design/panels/file-panel-composer-reference.md` §4.5。依赖：① 输入框 contenteditable 的槽位标记 `[data-composer-input]`；② Lexical 把实例挂在根元素上（`el.__lexicalEditor`）；③ 节点类可从 `editor._nodes[type].klass` 取（chip 类**模块私有**，只能从这里拿）；④ 更新回调里能读到 `editor._pendingEditorState._nodeMap["root"]` | 右键「添加到对话」不插入；若 chip **类型名对不上**则整个输入框功能不受影响（我们只在自己那条路径上失败并报原因） | ✅ 0.1.2-rc.1 实测可用（WKWebView 内插入 `reference-chip`，状态 JSON 含 `ref`/label，装饰器渲染出 chip；见 `docs/design/panels/file-panel-composer-reference.md`） |
 
 **已实测确认的坏点（0.1.2-rc.1，2026-09-10）**：`__dshOpenSession` 当时固定发 `POST /api/session/list` 但 body 里写 `method:"session.list"`、payload 也不包 `args`，服务端直接拒绝：
 
@@ -408,7 +408,7 @@ sessionCookie(...)     = "<name>=<value>; Max-Age=2592000; Path=/; Expires=…; 
 
 **我们依赖的是什么**：审查面板的审计数据来自 dsh 自己落盘的会话日志
 `$DSH_HOME/sessions/<workspace-slug>/<session-id>/\<logfile\>`，容器是「多条独立可解码的 Zstandard 帧」的
-JSONL（见 `docs/review-panel-design.md`）。**文件名本身带版本语义**（`@deepseek-ai/dsh-session-format`）：
+JSONL（见 `docs/design/panels/review-panel-design.md`）。**文件名本身带版本语义**（`@deepseek-ai/dsh-session-format`）：
 
 ```js
 sessionFormatLogFilename(v) = v === 0 ? "session.jsonl" : \`session.v${v}.jsonl\`;   // 压缩存贮再加 ".zstd"
@@ -493,7 +493,7 @@ dsh 的 `package.json` 用 caret 声明这些插件（`^1.0.17`），所以 `npm
 
 **升级时怎么验**：构建日志必须出现 `using committed runtime lock: …` 与 `smoke: dsh web came up`；若出现 `WARNING: no committed lock for <spec>`，说明这个 spec 还没配锁，先补一份再发。
 
-**同源教训（快照树池）**：抓树必须**只在"这棵树已经启动成功"之后**（壳层挂在页面加载完成时抓，见 `docs/session-snapshot-rollback-design.md` §6）——否则"构建坏了但 App 起来了"会把一棵从没启动成功的树存进池，回退时又把坏树换回来（2026-09-23 用户实测踩到）。
+**同源教训（快照树池）**：抓树必须**只在"这棵树已经启动成功"之后**（壳层挂在页面加载完成时抓，见 `docs/design/shell/session-snapshot-rollback-design.md` §6）——否则"构建坏了但 App 起来了"会把一棵从没启动成功的树存进池，回退时又把坏树换回来（2026-09-23 用户实测踩到）。
 
 **教训**：① 「钉版本」要钉到**闭包**（lockfile），只钉顶层包等于没钉；② 构建"成功"不等于产物能用——**能启动**才是验收标准，所以把冒烟放进构建；③ 这类漂移**只影响旧版本**（新 dsh 与新插件自洽），正是"长期停在一个旧 dsh 上"的隐性代价。
 
@@ -502,9 +502,9 @@ dsh 的 `package.json` 用 caret 声明这些插件（`^1.0.17`），所以 `npm
 - 实战审计（0.1.2 逐项状态与实测契约）：`docs/plans/dsh-012rc1-compat-audit.md`
 - 实战审计（0.1.2-rc.1 → 0.1.5-rc.2，含八面板全量验证）：`docs/plans/dsh-015rc2-compat-audit.md`
 - 实战审计（0.1.5-rc.3 → 0.1.7-rc.2，含 WebSocket 会话跟踪修复）：`docs/plans/dsh-017rc2-compat-audit.md`
-- Files 面板 → 输入框引用（B9 的实现与实测）：`docs/file-panel-composer-reference.md`
-- 频道侧实现与状态：`docs/channel-status.md`、`docs/channel-commands.md`、`docs/channel-project-switch.md`
-- 产品化与版本策略：`docs/productization.md` §8；发布流程：`docs/release-process.md`
+- Files 面板 → 输入框引用（B9 的实现与实测）：`docs/design/panels/file-panel-composer-reference.md`
+- 频道侧实现与状态：`docs/design/channels/channel-status.md`、`docs/design/channels/channel-commands.md`、`docs/design/channels/channel-project-switch.md`
+- 产品化与版本策略：`docs/research/productization.md` §8；发布流程：`docs/process/release-process.md`
 - 代码锚点：`platforms/macos/src/main.swift`（ServerManager / DSHSessionRPC / 注入脚本 / 升级）、`platforms/macos/src/WikiPanel.swift`（WikiRPC）、`platforms/macos/src/IssueRunnerPanel.swift`、`platforms/macos/src/DshWebCookieJanitor.swift`、`core/lib/dsh-rpc.js`、`core/lib/workspace-store.js`、`core/lib/session-driver.js`、`core/lib/channel-runner.js`、`core/lib/upgrade.js`、`platforms/macos/build-app.sh`
 - 仓库知识库：`.dsh/wiki/modules/main.md`、`.dsh/wiki/modules/channel-panel.md`、`.dsh/wiki/data-model.md`（RPC 信封）
 

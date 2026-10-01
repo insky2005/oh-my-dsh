@@ -2,13 +2,13 @@
 title: 模块：PreviewPanel.swift（预览面板，回滚基线）
 tags: [module, preview, file-tree, tabs, rollback]
 updated: 2026-09-24T04:05:31Z
-sources: [platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/ProjectsPanel.swift, tests/skills-panel/, tests/projects-panel/, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/PanelSurface.swift, docs/ui-color-scheme.md, docs/ux-feedback.md, CHANGELOG.md]
+sources: [platforms/macos/src/PreviewPanel.swift, platforms/macos/src/main.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/ProjectsPanel.swift, tests/skills-panel/, tests/projects-panel/, docs/plans/PREVIEW_PLAN-file-panel.md, platforms/macos/src/PanelSurface.swift, docs/design/shell/ui-color-scheme.md, docs/feedback/ux-feedback.md, CHANGELOG.md]
 manual: false
 ---
 
 # 模块：PreviewPanel.swift（预览面板，回滚基线）
 
-1797 行（2026-09-24 实测）。右栏预览面板的**回滚基线**：`feature/file-panel` 已把现行预览实现改为其强化分支 [FilePanel](file-panel.md)（`FilePanelController`），仅作回滚对照/兜底。面板**行为**未变，但其中的共享基件已随 2026-09-17 的面板配色统一一并修改（`DynamicFillView.Kind` 收敛为 `.panel`/`.custom`、`HoverButton`/`CustomIconButton` 改走 `PanelControl`、新增 `PanelTabButton`）——它不再是「逐字节未改」的代表，配色令牌见 `docs/ui-color-scheme.md`。本文档描述 PreviewPanel 原始能力（FilePanel 继承其大部分）：点击 dsh web 对话中的文件链接（工具产物）不再弹系统默认应用，而是在面板内预览；左侧为项目目录树。同时是**共享 UI 组件库**。
+1797 行（2026-09-24 实测）。右栏预览面板的**回滚基线**：`feature/file-panel` 已把现行预览实现改为其强化分支 [FilePanel](file-panel.md)（`FilePanelController`），仅作回滚对照/兜底。面板**行为**未变，但其中的共享基件已随 2026-09-17 的面板配色统一一并修改（`DynamicFillView.Kind` 收敛为 `.panel`/`.custom`、`HoverButton`/`CustomIconButton` 改走 `PanelControl`、新增 `PanelTabButton`）——它不再是「逐字节未改」的代表，配色令牌见 `docs/design/shell/ui-color-scheme.md`。本文档描述 PreviewPanel 原始能力（FilePanel 继承其大部分）：点击 dsh web 对话中的文件链接（工具产物）不再弹系统默认应用，而是在面板内预览；左侧为项目目录树。同时是**共享 UI 组件库**。
 
 ## 共享 UI 组件（其他面板复用）
 
@@ -46,6 +46,6 @@ manual: false
 - 文本解码失败（非 UTF-8）→ `preview.unreadable` 提示；文件过大 → 截断提示；
 - 树变更轮询为 2s 间隔（轻量 mtime 比对），非 FSEvents；
 - 目录树根失败时提供手动选文件夹兜底（RPC 失败场景）；
-- **不透明自绘视图的绘制契约**：内容容器要放到**最底层/最先添加**，头部条最后添加；即使如此也不能依赖「脏矩形不会越界」——见上表 `DynamicFillView` 与 `docs/terminal-header-fix.md` 的合成陷阱（同源问题的另一面）；
+- **不透明自绘视图的绘制契约**：内容容器要放到**最底层/最先添加**，头部条最后添加；即使如此也不能依赖「脏矩形不会越界」——见上表 `DynamicFillView` 与 `docs/fixes/terminal-header-fix.md` 的合成陷阱（同源问题的另一面）；
 - 当前实际接入壳层的是 FilePanel（`previewPanel` 类型为 `FilePanelController`），本文件不再被实例化，仅保留作为回滚基线与共享 UI 组件来源；
 - **分叉提示**：FilePanel 已进一步演进——本文件的 `setProjectDirectory` 仍是「只重设树根、不动已开页签」，而 FilePanel 会在换根时按工作区**记忆并关闭 / 重开页签**；本文件的头部仍是纯图标按钮（功能靠 tooltip），「打开项目 ▾ / 打开文件 ▾」菜单按钮与 `OpenWithCatalog` 只接在 FilePanel 上（见 [file-panel](modules/file-panel.md)）；回滚到大基线时这些能力随之消失。

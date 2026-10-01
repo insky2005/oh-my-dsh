@@ -3,7 +3,7 @@
 /**
  * core/lib/channel.js — platform-independent Channel abstraction.
  *
- * The unified contract from docs/channel-design.md §3/§4/§6. Pure logic, no
+ * The unified contract from docs/design/channels/channel-design.md §3/§4/§6. Pure logic, no
  * timers, no OS APIs — a platform shell (macOS/Windows/Linux) wires the real
  * adapters, session driver and persistence into this module so the dispatch
  * rules, state machine and config model are identical everywhere.
@@ -164,7 +164,7 @@ function createRouter() {
 
 /**
  * Resolve an explicit ref binding for an event WITHOUT the default fallback
- * (docs/channel-association-model.md §B): a ref that declares this
+ * (docs/design/channels/channel-association-model.md §B): a ref that declares this
  * conversationId in routing.conversations, or whose routing.keywords match the
  * text. Returns the first matching ref, or null. Callers fall back to
  * workspace-tag routing when this returns null (so "current workspace" stays
@@ -239,7 +239,7 @@ function createChannelManager({ adapters, refsByChannel, sessionDriver, jobQueue
       throw new Error(`channel: no adapter for channel ${chId}`);
     }
     if (!routed) {
-      // docs/channel-association-model.md §B: the caller (runner) already
+      // docs/design/channels/channel-association-model.md §B: the caller (runner) already
       // resolved a workspace/session for this event via workspace-tag routing.
       // Synthesize a ref so the session driver runs against that project
       // instead of emitting the "未绑定" hint.

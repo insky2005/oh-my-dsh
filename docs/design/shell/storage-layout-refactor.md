@@ -1,7 +1,7 @@
 # 壳层数据目录重构（收敛到 `$DSH_HOME/oh-my-dsh/`）
 
 > 状态：✅ 已实现（2026-09-29，feature/storage-refactor）
-> 关联：docs/projects-panel-design.md（projects 默认根的既有先例）、docs/dsh-version-impact.md（D3/D5/D6/D7）、docs/session-snapshot-rollback-design.md、docs/channel-storage.md
+> 关联：docs/design/panels/projects-panel-design.md（projects 默认根的既有先例）、docs/process/dsh-version-impact.md（D3/D5/D6/D7）、docs/design/shell/session-snapshot-rollback-design.md、docs/design/channels/channel-storage.md
 > 目标：把 **oh-my-dsh 壳层自己产生的工作数据** 从 `$DSH_HOME` 根目录收敛到 `$DSH_HOME/oh-my-dsh/` 下，和 `projects/` 并列；dsh 自有数据与上游契约路径保持不动。
 
 ## 1. 背景

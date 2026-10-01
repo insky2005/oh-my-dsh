@@ -2,9 +2,9 @@
 
 > 状态：📝 设计稿（尚未实现）
 > 更新：2026-08-21
-> 关联：docs/issue-runner-design.md（「远程驱动预留」章节）、.dsh/wiki/data-model.md、.dsh/wiki/modules/main.md、docs/milestones/M2-windows.md、docs/milestones/M3-linux.md、core/（共享核心）、docs/channel-storage.md（消息/会话存储全局化设计）
+> 关联：docs/design/panels/issue-runner-design.md（「远程驱动预留」章节）、.dsh/wiki/data-model.md、.dsh/wiki/modules/main.md、docs/milestones/M2-windows.md、docs/milestones/M3-linux.md、core/（共享核心）、docs/design/channels/channel-storage.md（消息/会话存储全局化设计）
 >
-> 注：消息/会话持久化布局以 docs/channel-storage.md 为准（全局化改造，2026-08-22 定稿）。
+> 注：消息/会话持久化布局以 docs/design/channels/channel-storage.md 为准（全局化改造，2026-08-22 定稿）。
 
 ## 1. 目标与范围
 
@@ -123,9 +123,9 @@
 
 ### 4.2 项目引用（.dsh/channels/channels.json）
 
-> ⚠️ **已更新决策**（见 docs/channel-project-switch.md）：项目级引用迁到**全局** `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`（project = workspace，出现即启用该通道；不再写项目内 .dsh/channels.json）。下文 §4.2/§5/§6 为历史实现基线，落地后以新模型为准。
+> ⚠️ **已更新决策**（见 docs/design/channels/channel-project-switch.md）：项目级引用迁到**全局** `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`（project = workspace，出现即启用该通道；不再写项目内 .dsh/channels.json）。下文 §4.2/§5/§6 为历史实现基线，落地后以新模型为准。
 
-项目目录下（跟随仓库提交）的 .dsh/channels/channels.json（原 .dsh/channels.json，全局化改造后移入 .dsh/channels/，见 docs/channel-storage.md），引用全局 Channel + 该项目专属路由/会话约定：
+项目目录下（跟随仓库提交）的 .dsh/channels/channels.json（原 .dsh/channels.json，全局化改造后移入 .dsh/channels/，见 docs/design/channels/channel-storage.md），引用全局 Channel + 该项目专属路由/会话约定：
 
     {
       "version": 1,
@@ -148,12 +148,12 @@
 
 - 作为右栏新面板（沿用 PanelController 基件、rightPanelKind 插槽、build-app.sh 编译清单、L10n.table 中英成对文案）。
 - **全局视图**：Channel 列表（平台/名称/启停/连接状态徽标），新增/编辑/删除；「连接/登录」表单由当前 platform 适配器驱动（扫码/输入凭证/webhook 地址/回填事件地址）。
-- **项目视图**：展示该项目启用的全局 Channel（启用状态来自全局 `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`，见 docs/channel-project-switch.md），可增删引用、配置路由。
+- **项目视图**：展示该项目启用的全局 Channel（启用状态来自全局 `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`，见 docs/design/channels/channel-project-switch.md），可增删引用、配置路由。
 - 面板不感知平台细节——只渲染平台无关列表 + 委托适配器渲染连接表单，保证新平台接入后面板一致。
 
 ## 6. 消息分发（收到的消息 → 不同项目）
 
-> ⚠️ **已更新决策**（见 docs/channel-project-switch.md）：未在本项目启用时，普通消息与 `#wN/#sN` 等直接回「该项目未启用该通道…」，信息命令放行；启用后按当前活动 workspace 路由。下文为历史实现基线。
+> ⚠️ **已更新决策**（见 docs/design/channels/channel-project-switch.md）：未在本项目启用时，普通消息与 `#wN/#sN` 等直接回「该项目未启用该通道…」，信息命令放行；启用后按当前活动 workspace 路由。下文为历史实现基线。
 
 路由是**平台无关**的，统一作用于 ChannelEvent：
 

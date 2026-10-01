@@ -25,7 +25,7 @@
 #   IS_PRERELEASE       1=预发布（默认）| 0=正式发布
 #   DSH_NPM_REGISTRY    npm registry（默认 npmmirror；GitHub 构建显式走官方 npmjs）
 #
-# 发布规范（docs/git-workflow.md）：版本单一来源是 git tag。
+# 发布规范（docs/process/git-workflow.md）：版本单一来源是 git tag。
 #   发布前请先 'git tag v<ver>' 且让 HEAD 落在其上；否则发布模式会阻断。
 #   主版本 vX.Y.0 在 main 打 tag；patch 从 release/X.Y 分支打 tag。
 set -euo pipefail

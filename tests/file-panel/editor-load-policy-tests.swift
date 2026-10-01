@@ -2,7 +2,7 @@ import Foundation
 
 // Headless tests for EditorLoadPolicy: when a text file is large enough that
 // syntax highlighting / reloading must back off, and when a written file counts
-// as "quiet" (docs/ux-feedback.md — the 3000+ line reload freeze).
+// as "quiet" (docs/feedback/ux-feedback.md — the 3000+ line reload freeze).
 // Usage: tests/file-panel/run.sh
 
 func test(_ name: String, _ cond: Bool) {

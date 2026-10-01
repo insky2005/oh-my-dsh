@@ -37,7 +37,7 @@ All notable changes to this project are documented in this file. Format follows
   - 新增 `QueueIntegration.recommended(isGit:hasGitHubRemote:)` 纯函数，以及 `TaskBoard.createQueue(integration:)` /
     `TasksRunner.createQueue(integration:)` / `createQueueWithTasks(integration:)` / `updateQueue(integration:)`。
   回归：`tests/tasks-panel` **1272 → 1333** 项（模型 201→**203** / 运行器 420→**433** / 视图模型 338→**349** /
-  视图 200→**235** / 本地 API 113）。设计见 `docs/tasks-queue-session-loop-design.md` §14 决策 8/11、§15。
+  视图 200→**235** / 本地 API 113）。设计见 `docs/design/panels/tasks-queue-session-loop-design.md` §14 决策 8/11、§15。
 
 - **设置菜单新增「打开数据文件夹」（⌘D，位于「打开日志文件夹」之前，2026-09-29）**：直接打开 `$DSH_HOME/oh-my-dsh/`（不存在则创建），方便查看 / 备份壳层工作数据与迁移回退说明 `ROLLBACK.md`；开发版打开的是 `~/.dsh-dev/oh-my-dsh/`。
 
@@ -47,7 +47,7 @@ All notable changes to this project are documented in this file. Format follows
   - 队列↔会话关联与「已回传」标记存在 `local.json`（`queueSessions` / `queueNotified`，机器私有）；**只有进入 `.done` 才回传**，失败 / 手动取消停在 `.paused` 不回传；回传失败也记标记（避免死循环），App 重启后在空闲 step 补发一次；
   - 回传文案要求收到它的 agent **只做简短确认**、不主动改代码；回传内容给每条任务的**完整汇报**（单条上限 1500 字，超出标注「已截断」）与失败前的汇报，队列分支 + 分支提交列表（非 git 仓库不显示）、耗时与 PR，**不含会话标识**；
   - 面板队列头在「有来源会话」时显示一枚 ↺（tooltip：完成后回传发起会话）；`queue/start` 也支持按 `name` 消歧；
-  - 技能正文（内嵌常量 + 仓库副本字节一致）**默认**建「等待态队列 + 入队」，只有用户明确说「只建任务 / 先别入队 / 不要队列」时才只建裸任务，并补充启动话术；设计见 `docs/tasks-queue-session-loop-design.md`。
+  - 技能正文（内嵌常量 + 仓库副本字节一致）**默认**建「等待态队列 + 入队」，只有用户明确说「只建任务 / 先别入队 / 不要队列」时才只建裸任务，并补充启动话术；设计见 `docs/design/panels/tasks-queue-session-loop-design.md`。
   回归：`tests/tasks-panel` 1129 → **1226** 项（模型 188 / 运行器 410 / 视图模型 328 / 视图 199 / 本地 API 101）。
 
 ### Fixed
@@ -104,7 +104,7 @@ All notable changes to this project are documented in this file. Format follows
     用户明确说「新建队列 / 另起一个」时才直接 create。
   回归：`tests/tasks-panel` 1129 → **1272** 项。
 
-- **壳层工作数据收敛到 `$DSH_HOME/oh-my-dsh/`（2026-09-29）**：把壳层自己的工作数据从 `$DSH_HOME` 根迁到与 `projects/` 并列的新根 —— `shell/`（设置 / 状态 / 快照）、`browser/`（CEF profile；**去掉开发版 `browser-dev` 后缀**，正式版与开发版统一 `<DSH_HOME>/oh-my-dsh/browser`）、`repo-wiki/`、`channel-runtime/`、`channels/`、`tokens/` + `gh-token`、`browser-api.port` / `shell-api.port`。dsh 自有数据（`sessions/`、`storages/`、`settings.yaml` 等）与上游契约路径 `$DSH_HOME/skills/` 保持不动；`~/Library/{Logs,Caches}` 与 Application Support 运行时也不动。路径的单一事实来源为 Swift `ShellPaths` / core `shell-paths.js`；启动（以及显式 `--home` 的 CLI）做一次**幂等迁移**：源不存在或目标已存在即跳过、失败保留源并记 `app.log`，正式 home 与开发版 `~/.dsh-dev` 都覆盖；GitHub token 读取链保留旧路径只读兜底；迁移时在 `$DSH_HOME/oh-my-dsh/ROLLBACK.md` 落一份双语回退说明（实际迁移条目 + 时间/App 版本 + 退出后把子目录 `mv` 回根目录的脚本），供降级旧版或快速撤销时自助使用；本次确有搬迁时启动后弹一次**非模态提示**（说明 + 「查看回退说明」按钮打开 `ROLLBACK.md`），**全新安装不提示**。回滚快照排除表新增 `oh-my-dsh`（`core/lib/snapshot.js`）。设计见 `docs/storage-layout-refactor.md`；回归：`core` 289 项（新增 `core/tests/shell-paths.test.js` 6 项）与 `tests/{shell-config,channel-panel,skills-panel,wiki-panel,snapshot-rollback,projects-panel,tasks-panel,skills,browser-panel}` 全绿。
+- **壳层工作数据收敛到 `$DSH_HOME/oh-my-dsh/`（2026-09-29）**：把壳层自己的工作数据从 `$DSH_HOME` 根迁到与 `projects/` 并列的新根 —— `shell/`（设置 / 状态 / 快照）、`browser/`（CEF profile；**去掉开发版 `browser-dev` 后缀**，正式版与开发版统一 `<DSH_HOME>/oh-my-dsh/browser`）、`repo-wiki/`、`channel-runtime/`、`channels/`、`tokens/` + `gh-token`、`browser-api.port` / `shell-api.port`。dsh 自有数据（`sessions/`、`storages/`、`settings.yaml` 等）与上游契约路径 `$DSH_HOME/skills/` 保持不动；`~/Library/{Logs,Caches}` 与 Application Support 运行时也不动。路径的单一事实来源为 Swift `ShellPaths` / core `shell-paths.js`；启动（以及显式 `--home` 的 CLI）做一次**幂等迁移**：源不存在或目标已存在即跳过、失败保留源并记 `app.log`，正式 home 与开发版 `~/.dsh-dev` 都覆盖；GitHub token 读取链保留旧路径只读兜底；迁移时在 `$DSH_HOME/oh-my-dsh/ROLLBACK.md` 落一份双语回退说明（实际迁移条目 + 时间/App 版本 + 退出后把子目录 `mv` 回根目录的脚本），供降级旧版或快速撤销时自助使用；本次确有搬迁时启动后弹一次**非模态提示**（说明 + 「查看回退说明」按钮打开 `ROLLBACK.md`），**全新安装不提示**。回滚快照排除表新增 `oh-my-dsh`（`core/lib/snapshot.js`）。设计见 `docs/design/shell/storage-layout-refactor.md`；回归：`core` 289 项（新增 `core/tests/shell-paths.test.js` 6 项）与 `tests/{shell-config,channel-panel,skills-panel,wiki-panel,snapshot-rollback,projects-panel,tasks-panel,skills,browser-panel}` 全绿。
 
 ### Fixed
 
@@ -114,7 +114,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
-- **审查面板看不到文件变更（dsh 0.1.5-rc.3，2026-09-30）**：升级后审查面板能**列出**会话却显示「没有改动」——根因是 `run_code` 的**嵌套派发事件名换代**：dsh ≤0.1.2 写 `tool/code-dispatch[-start]`，0.1.5-rc.3 改写 `tool/ptc-dispatch[-start]`，而审计只认老名字，于是嵌套的 `write`/`edit`/`bash` 全被丢弃，`review audit` 的 `mutations`/`files`/`added`/`removed` 恒为 0（正常返回 JSON、不报错、不弹窗）。现在 `core/lib/review-log.js` 用 `DISPATCH_START_TYPES`/`DISPATCH_END_TYPES` 同时认两代事件名，老的 `code-dispatch` 日志不受影响。回归：`core/tests/review-log.test.js` 新增 2 项（ptc 嵌套 `write`/`edit` 能审计出 hunks 与统计；失败的 ptc dispatch 丢弃 pending content）；用内置 node 实测 0.1.5-rc.3 真实会话从 0 恢复为 4–13 个文件变更。影响清单见 `docs/dsh-version-impact.md` §4.5 / R7b。
+- **审查面板看不到文件变更（dsh 0.1.5-rc.3，2026-09-30）**：升级后审查面板能**列出**会话却显示「没有改动」——根因是 `run_code` 的**嵌套派发事件名换代**：dsh ≤0.1.2 写 `tool/code-dispatch[-start]`，0.1.5-rc.3 改写 `tool/ptc-dispatch[-start]`，而审计只认老名字，于是嵌套的 `write`/`edit`/`bash` 全被丢弃，`review audit` 的 `mutations`/`files`/`added`/`removed` 恒为 0（正常返回 JSON、不报错、不弹窗）。现在 `core/lib/review-log.js` 用 `DISPATCH_START_TYPES`/`DISPATCH_END_TYPES` 同时认两代事件名，老的 `code-dispatch` 日志不受影响。回归：`core/tests/review-log.test.js` 新增 2 项（ptc 嵌套 `write`/`edit` 能审计出 hunks 与统计；失败的 ptc dispatch 丢弃 pending content）；用内置 node 实测 0.1.5-rc.3 真实会话从 0 恢复为 4–13 个文件变更。影响清单见 `docs/process/dsh-version-impact.md` §4.5 / R7b。
 
 ## [1.17.1] - 2026-09-29
 
@@ -130,13 +130,13 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
-- **终端面板支持输入法直输（macOS IME，中文/日文/韩文等，2026-09-29）**：这是 README 里挂了很久的 v1 已知限制 —— 终端是一个自绘的 `NSView`，只覆写了 `keyDown` 把 `event.characters` 直接写进 PTY，既没有声明 `NSTextInputClient` 也就拿不到 input context（AppKit 的 IME 整条链路都以 `conformsToProtocol:` 为准），输入法因此从不介入，切换成拼音后敲出来的还是字母，中文只能 `⌘V` 粘贴。现在 `TerminalView` 正式遵循 `NSTextInputClient`：`keyDown` 里 `⌘`/`⌃`/`⌥` 组合与方向键等特殊键照旧先走原来的直写路径（不被输入法截胡），其余按键与**候选期内的所有按键**交给 `interpretKeyEvents`；`insertText` 把上屏文本按 UTF-8 写进 shell（无输入法时与旧行为逐字节等价），`setMarkedText`/`unmarkText` 维护预编辑状态，`firstRectForCharacterRange` 把候选窗锚在光标处（组合期锚在预编辑文本末尾），`doCommandBySelector` 兜住输入法放行的键。预编辑文本（拼音串）在光标处**内联显示**并带下划线 + 细光标，组合期间不画原来的方块光标。回归：`tests/terminal-panel` 新增 10 项（`markedRange`/`selectedRange`/`hasMarkedText`、空串 unmark、`attributedSubstring` 的边界、无窗口时 `firstRect` 退化为 0、提交/取消清空组合），README「已知限制」移除 IME 一条并新增「输入法直输」说明，`docs/productization.md` §3.1 与总表同步。
+- **终端面板支持输入法直输（macOS IME，中文/日文/韩文等，2026-09-29）**：这是 README 里挂了很久的 v1 已知限制 —— 终端是一个自绘的 `NSView`，只覆写了 `keyDown` 把 `event.characters` 直接写进 PTY，既没有声明 `NSTextInputClient` 也就拿不到 input context（AppKit 的 IME 整条链路都以 `conformsToProtocol:` 为准），输入法因此从不介入，切换成拼音后敲出来的还是字母，中文只能 `⌘V` 粘贴。现在 `TerminalView` 正式遵循 `NSTextInputClient`：`keyDown` 里 `⌘`/`⌃`/`⌥` 组合与方向键等特殊键照旧先走原来的直写路径（不被输入法截胡），其余按键与**候选期内的所有按键**交给 `interpretKeyEvents`；`insertText` 把上屏文本按 UTF-8 写进 shell（无输入法时与旧行为逐字节等价），`setMarkedText`/`unmarkText` 维护预编辑状态，`firstRectForCharacterRange` 把候选窗锚在光标处（组合期锚在预编辑文本末尾），`doCommandBySelector` 兜住输入法放行的键。预编辑文本（拼音串）在光标处**内联显示**并带下划线 + 细光标，组合期间不画原来的方块光标。回归：`tests/terminal-panel` 新增 10 项（`markedRange`/`selectedRange`/`hasMarkedText`、空串 unmark、`attributedSubstring` 的边界、无窗口时 `firstRect` 退化为 0、提交/取消清空组合），README「已知限制」移除 IME 一条并新增「输入法直输」说明，`docs/research/productization.md` §3.1 与总表同步。
 
-- **内置技能 `task-todo`：把沟通结论批量写进任务面板（2026-09-27）**：用户和 Agent 在会话里聊完需求与方案，常常还要自己把结论一条条抄进任务面板——而 Agent 手里本来就有完整的任务描述。现在壳层的 localhost API 多了一组 **`/api/tasks/*`**（`GET list` / `POST create`，一次最多 50 条，返回 `created` 与逐条 `rejected` 原因），端口写 **`~/.dsh/shell-api.port`**（与 `browser-api.port` 同值——同一个服务、两块路由面：`/api/browser/*` 归浏览器面板，`/api/tasks/*` 归任务面板）；配套**第四个内置技能 `task-todo`**（`SkillInstaller` 内嵌常量 + 仓库 `.dsh/skills/task-todo/SKILL.md` 副本字节一致，App 启动安装到全局 `$DSH_HOME/skills/`），正文把边界写成硬规则：**只在用户明确要求时**执行、先 list 再建（面板内新建不去重）、**一次请求提交全部任务**（不逐条调）、**不启动任务 / 不建队列 / 不直接改 `.dsh/tasks/*.json`**，App 没运行就报错请用户打开。落盘复用面板自己的入口（`TasksRunner.createManualTask`，经 `BrowserAPIBridge` 派发到**主线程**——board 的读改写必须与 3 秒 step 定时器同一条线程，否则两个写者互相覆盖），任务一律「**待处理、未入队**」；`focus` 默认 true → 切到那个工作区并展开面板，状态行说一句「已由 Agent 创建 N 个任务」。工作区解析按「精确匹配 → **最近祖先**（Agent 的 cwd 常在 workspace 子目录里）→ 原样接受」三步，纯函数可无头测试；面板尚未 adopt 任何工作区时回 `400 no-workspace`，服务在而面板没接好回 `503 panel-unavailable`。回归：新增 `tests/tasks-panel/api-tests.swift`（**68 项**：路由命中与不吞 404、请求解析（字符串简写 / 对象 / 空标题 / 上限 50 / 部分成功）、工作区解析、响应形状），`tests/skills/run.sh` 自动覆盖第四个技能的安装/更新与字节一致断言，`tests/browser-panel/run.sh` 把同一服务上的任务路由面一起编译。设计见 `docs/task-todo-skill-design.md`。
+- **内置技能 `task-todo`：把沟通结论批量写进任务面板（2026-09-27）**：用户和 Agent 在会话里聊完需求与方案，常常还要自己把结论一条条抄进任务面板——而 Agent 手里本来就有完整的任务描述。现在壳层的 localhost API 多了一组 **`/api/tasks/*`**（`GET list` / `POST create`，一次最多 50 条，返回 `created` 与逐条 `rejected` 原因），端口写 **`~/.dsh/shell-api.port`**（与 `browser-api.port` 同值——同一个服务、两块路由面：`/api/browser/*` 归浏览器面板，`/api/tasks/*` 归任务面板）；配套**第四个内置技能 `task-todo`**（`SkillInstaller` 内嵌常量 + 仓库 `.dsh/skills/task-todo/SKILL.md` 副本字节一致，App 启动安装到全局 `$DSH_HOME/skills/`），正文把边界写成硬规则：**只在用户明确要求时**执行、先 list 再建（面板内新建不去重）、**一次请求提交全部任务**（不逐条调）、**不启动任务 / 不建队列 / 不直接改 `.dsh/tasks/*.json`**，App 没运行就报错请用户打开。落盘复用面板自己的入口（`TasksRunner.createManualTask`，经 `BrowserAPIBridge` 派发到**主线程**——board 的读改写必须与 3 秒 step 定时器同一条线程，否则两个写者互相覆盖），任务一律「**待处理、未入队**」；`focus` 默认 true → 切到那个工作区并展开面板，状态行说一句「已由 Agent 创建 N 个任务」。工作区解析按「精确匹配 → **最近祖先**（Agent 的 cwd 常在 workspace 子目录里）→ 原样接受」三步，纯函数可无头测试；面板尚未 adopt 任何工作区时回 `400 no-workspace`，服务在而面板没接好回 `503 panel-unavailable`。回归：新增 `tests/tasks-panel/api-tests.swift`（**68 项**：路由命中与不吞 404、请求解析（字符串简写 / 对象 / 空标题 / 上限 50 / 部分成功）、工作区解析、响应形状），`tests/skills/run.sh` 自动覆盖第四个技能的安装/更新与字节一致断言，`tests/browser-panel/run.sh` 把同一服务上的任务路由面一起编译。设计见 `docs/design/panels/task-todo-skill-design.md`。
 
 ### Changed
 
-- **issue 任务与手动任务对齐：一套要求、一份提示词（2026-09-27）**。同一个面板里两种来源此前有两种行为：手动任务的提示词由 `TaskPrompts.requirements(...)` 按工作区形状生成（非 git 目录没有分支条、非 GitHub 没有 token 条），**只 commit、不提 push/PR**；issue 任务却走一段写死的 5 条，第 1 条要求「加载 `issue-resolve` skill 并严格按其流程执行」—— 而那个技能停在旧世界：它让任务自己 `git push`、还说「PR 由面板创建」（PR 现在由队列结束后专门的「开 PR 会话」做）。于是 issue 任务会 push、手动任务不会。现在两种来源**共用同一份要求清单**，只有「头」不同：issue 头给**编号 + 标题 + 标签 + 正文**（此前只给编号与标题，正文还得代理自己去 GitHub 拉），手动任务头给标题 + 描述；要求条目按工作区形状逐条生成、都要自查与汇报、都带队列交接简报。自动队列的形状也统一：`TaskQueue.auto(for:baseBranch:switchesBranch:opensPR:)` 与 `auto(forManual:)` 同语义，非 git 目录里 issue 任务的单任务队列**不再派生 `fix/issue-N`**（此前写死分支与 autoPR，任务必然 `errNotGit`），两个入口共用 `dropUnswitchableBranch(ofTask:)`（旧队列带着切不了的分支，启动前先去掉再跑）。`issue-resolve` 技能随之**退役**：`BuiltinSkill` 去掉该 case，仓库删 `.dsh/skills/issue-resolve/`，`SkillInstaller.retiredSkills` 在启动时删除老用户机器上**受管**的旧副本（`.ohmy-dsh-managed`），用户自己改过或自装的同名技能保留并记日志（`issue-fix` 这个更早的名字也不再迁移）。回归：`tests/tasks-panel` 新增三节（两种来源的要求逐行逐字相同、非 git 目录里的 issue 任务不派生分支且能正常跑完、旧队列的陈旧分支在启动前被去掉；运行器 296 → **362** 项），`tests/skills` 覆盖退役副本的删除与用户副本的保留；设计决策见 `docs/issue-runner-design.md` §V2-14。
+- **issue 任务与手动任务对齐：一套要求、一份提示词（2026-09-27）**。同一个面板里两种来源此前有两种行为：手动任务的提示词由 `TaskPrompts.requirements(...)` 按工作区形状生成（非 git 目录没有分支条、非 GitHub 没有 token 条），**只 commit、不提 push/PR**；issue 任务却走一段写死的 5 条，第 1 条要求「加载 `issue-resolve` skill 并严格按其流程执行」—— 而那个技能停在旧世界：它让任务自己 `git push`、还说「PR 由面板创建」（PR 现在由队列结束后专门的「开 PR 会话」做）。于是 issue 任务会 push、手动任务不会。现在两种来源**共用同一份要求清单**，只有「头」不同：issue 头给**编号 + 标题 + 标签 + 正文**（此前只给编号与标题，正文还得代理自己去 GitHub 拉），手动任务头给标题 + 描述；要求条目按工作区形状逐条生成、都要自查与汇报、都带队列交接简报。自动队列的形状也统一：`TaskQueue.auto(for:baseBranch:switchesBranch:opensPR:)` 与 `auto(forManual:)` 同语义，非 git 目录里 issue 任务的单任务队列**不再派生 `fix/issue-N`**（此前写死分支与 autoPR，任务必然 `errNotGit`），两个入口共用 `dropUnswitchableBranch(ofTask:)`（旧队列带着切不了的分支，启动前先去掉再跑）。`issue-resolve` 技能随之**退役**：`BuiltinSkill` 去掉该 case，仓库删 `.dsh/skills/issue-resolve/`，`SkillInstaller.retiredSkills` 在启动时删除老用户机器上**受管**的旧副本（`.ohmy-dsh-managed`），用户自己改过或自装的同名技能保留并记日志（`issue-fix` 这个更早的名字也不再迁移）。回归：`tests/tasks-panel` 新增三节（两种来源的要求逐行逐字相同、非 git 目录里的 issue 任务不派生分支且能正常跑完、旧队列的陈旧分支在启动前被去掉；运行器 296 → **362** 项），`tests/skills` 覆盖退役副本的删除与用户副本的保留；设计决策见 `docs/design/panels/issue-runner-design.md` §V2-14。
 - **卡片上不再有文字按钮「打开 PR」（2026-09-27）**：用户指出它没用 —— PR 是**队列**跑完之后由那个专门的会话开的（§V2-6），打开它自然也在**队列头**那一行（`arrow.up.right.justify` 图标 / PR 链接，且排在最右）。此前那张卡片上的按钮还常常是灰的：它要的 PR 属于队列，队列没开自动 PR、或那次开 PR 没成功时，卡片就只能灰着说「这次没有 PR」。现在：完成的 **issue 任务**主按钮是「打开 Issue」（与 `.closed` 同一个动作，那是这条任务自己的东西）；完成的**手动任务没有主按钮**（没有任何待办动作可做，汇报就在详情里）——`TaskCardModel.primaryKey/primaryAction` 因此变成可选，卡片行在没有主操作时从「打开会话 / 审查改动」开始，不留空槽。随之删掉 `PrimaryAction.openPR`、面板里的处理分支，以及两条失去引用的文案（`tasks.detailOpenPR` / `tasks.detailOpenPRNoPR`）。回归：视图模型（完成态主操作的新语义 ×2 处）、表单（已完成卡片里不再有「打开 PR」，主按钮是「打开 Issue」）。
 - **来源页签顺序改成 全部 / 手动 / Issue（2026-09-27）**：用户要求把「手动」提到前面。顺带把顺序收进一处：页签标题由 `TaskSourceFilter.allCases` 生成（`titleKey` 就在枚举上），`rawValue` 与下标一一对应 —— 上一版那种「标题数组与枚举顺序各说各话」的错位从此不可能再发生。回归：视图模型 +4 项（标题顺序、每个 rawValue == 下标）。
 - **队列头的「打开 PR」挪到这一行的最右（2026-09-27）**：它此前夹在中间（暂停/开始 之后、自动开 PR 开关之前）。现在无论是最初的图标形式，还是已经有 PR 时的链接形式，都是这一行的**最后一个控件** —— 队列的发布动作读起来是收尾，而不是设置里的一枚。回归：表单 +6 项（图标在最右、链接是最后一个 arrangedSubview、不越界）。
@@ -178,10 +178,10 @@ All notable changes to this project are documented in this file. Format follows
   - **单一真相**：当前工作区始终是壳层的 `ProjectDirectory`，重根收口到新抽出的 `AppDelegate.adoptProjectDirectory(_:)`（`dshSession` 跟随、面板快捷入口与新建工作区共用同一个原语，面板只做高亮——**不引入第二个"面板内选中项"**）；该原语带 `fileExists` 守卫，拒绝把面板重根到已消失的目录（旧代码会照常重根）；
   - **侧边栏延迟**：刚注册的工作区由 dsh 自己的**工作区流**送达客户端侧栏（实测 **~0.17 秒**出现在侧栏 DOM，**不需要刷新、更不需要重连**）；「新会话」的桥内部重试 12×150ms 等工作区行出现，「在 dsh 中打开」失败后 1.5s 再试一次，仍失败就**放弃**并写面板状态行——**永不自动重载页面**（旧版的失败重载 + `didFinish` 重放会形成每 ~10s 一轮的死循环刷新，已在 `ed989ac` 删除）；
   - **未注册的目录不联动**：项目根目录下某个目录若不在 dsh web 的 workspace 里，卡片就不提供 dsh 动作（「新会话」禁用、点卡片只在状态行提示），六个**本地**面板入口（文件/终端/知识库/任务/通道/审查）照常可用，并在徽标后面多出一个 **folder+ 图标按钮「添加工作区 / Add workspace」**（与 dsh web 同词；幂等注册 → 徽标翻「已注册」、dsh 动作解锁）；**已注册**的卡片则在徽标后面显示 **`+` 图标「新会话 / New Session」**（两个按钮互斥，都在标题行）；
-  - 实现：`platforms/macos/src/ProjectsCore.swift`（纯模型：根目录解析 / 命名规则 / 目录列举 / 与 dsh 注册表按 canonical 路径合并）、`ProjectsPanel.swift`（面板：卡片三行 + 头部 + 根目录行 + 空态 + 结果行 + 取名 sheet）、`DshWebRPC.swift` 新增 `workspaceCreate` 端点与 `DshWorkspaceOps`（注册 / 建会话 / 按工作区挑会话）、`main.swift` 接线与设置窗口「项目」区块（路径字段 + 选择…/保存/恢复默认）；测试 `tests/projects-panel/`（模型 45 项 + 控制器无头 49 项 = **94 项**）与 `tests/dsh-rpc/` 新增 14 项（整套 54 项），均已接入 CI 与 `scripts/local-ci.sh`；设计见 `docs/projects-panel-design.md`。
+  - 实现：`platforms/macos/src/ProjectsCore.swift`（纯模型：根目录解析 / 命名规则 / 目录列举 / 与 dsh 注册表按 canonical 路径合并）、`ProjectsPanel.swift`（面板：卡片三行 + 头部 + 根目录行 + 空态 + 结果行 + 取名 sheet）、`DshWebRPC.swift` 新增 `workspaceCreate` 端点与 `DshWorkspaceOps`（注册 / 建会话 / 按工作区挑会话）、`main.swift` 接线与设置窗口「项目」区块（路径字段 + 选择…/保存/恢复默认）；测试 `tests/projects-panel/`（模型 45 项 + 控制器无头 49 项 = **94 项**）与 `tests/dsh-rpc/` 新增 14 项（整套 54 项），均已接入 CI 与 `scripts/local-ci.sh`；设计见 `docs/design/panels/projects-panel-design.md`。
   - 顺带修正 `DshWorkspaceStore.canonical`：改用 `realpath(3)`，让 macOS 目录列举给出的 `/private/var/...` 与用户/dsh 存写的 `/var/...` 归一到同一条工作区（此前两种写法互不相等，面板会把已注册工作区标成「未注册」）。
 
-- **Files 面板：目录树右键「添加到对话」把文件/文件夹作为 `@` 引用插进 dsh web 的输入框**：在文件或文件夹上右键 → **添加到对话** → 输入框末尾出现该条目（文件夹带尾斜杠，含空格的路径走 dsh 的 `@"…"` 引号语法）的引用 chip —— 与用户自己敲 `@` 从候选里选出来的是**同一种节点**，提交时序列化成同一段 `@相对路径` 文本。项目根与空白处不提供（没有「相对的自己」）；未打开会话时条目禁用并提示。**不改 dsh 源码**：壳层把 chip 节点直接写进 dsh web 的 Lexical 编辑器（`window.__dshInsertFileReference`），不伪造按键也不依赖焦点。新增纯模型 `platforms/macos/src/ComposerReference.swift`（引用语法 + 相对路径，无头单测 `tests/file-panel/composer-reference-tests.swift`）与目录树菜单规则/用例更新；真 WKWebView 实测与 dsh 升级核对项见 `docs/dsh-version-impact.md` B9 与 `docs/file-panel-composer-reference.md`；QA 钩子 `DSH_COMPOSER_TEST_PATH` / `DSH_COMPOSER_TEST_SESSION`。
+- **Files 面板：目录树右键「添加到对话」把文件/文件夹作为 `@` 引用插进 dsh web 的输入框**：在文件或文件夹上右键 → **添加到对话** → 输入框末尾出现该条目（文件夹带尾斜杠，含空格的路径走 dsh 的 `@"…"` 引号语法）的引用 chip —— 与用户自己敲 `@` 从候选里选出来的是**同一种节点**，提交时序列化成同一段 `@相对路径` 文本。项目根与空白处不提供（没有「相对的自己」）；未打开会话时条目禁用并提示。**不改 dsh 源码**：壳层把 chip 节点直接写进 dsh web 的 Lexical 编辑器（`window.__dshInsertFileReference`），不伪造按键也不依赖焦点。新增纯模型 `platforms/macos/src/ComposerReference.swift`（引用语法 + 相对路径，无头单测 `tests/file-panel/composer-reference-tests.swift`）与目录树菜单规则/用例更新；真 WKWebView 实测与 dsh 升级核对项见 `docs/process/dsh-version-impact.md` B9 与 `docs/design/panels/file-panel-composer-reference.md`；QA 钩子 `DSH_COMPOSER_TEST_PATH` / `DSH_COMPOSER_TEST_SESSION`。
 
 ### Changed
 
@@ -234,7 +234,7 @@ All notable changes to this project are documented in this file. Format follows
 
 **输入框宽度修复**：表单每行此前是"贴合内容宽度"的（垂直栈 .leading 对齐 + 空文本框固有宽度几乎为 0），实测输入框只有约 25pt 宽、placeholder 被截成一个字；现在除按钮行外的每一行都钉到表单宽度，输入框 = 面板宽度 − 48（430pt 面板 → 398pt），描述框同时改为按可见宽度换行（原来它的文档视图比可视区宽 318pt，长行被裁掉而不是折行）。
 提交按钮跟随字段的合法性，Enter 提交、Esc /「完成」收起并卸载；**新建任务提交后抽屉保持打开并清空**（连续录入），编辑保存后关闭；面板头的 `+` 与队列分区头的「新建队列」删除（同一动作只留一个入口）；**只剩破坏性确认框**（删除任务 / 删除队列 / 评论并关闭 issue）。
-样式同时按 `docs/ui-color-scheme.md` 与其它面板重做：卡片圆角 8 + 与技能卡一致的描边、hover 提亮、展开态与运行态各一档强调边框、标题 13pt semibold、元信息 11pt；
+样式同时按 `docs/design/shell/ui-color-scheme.md` 与其它面板重做：卡片圆角 8 + 与技能卡一致的描边、hover 提亮、展开态与运行态各一档强调边框、标题 13pt semibold、元信息 11pt；
 **队列改画成容器**（审计面板的树体例）：泳道底色比卡片暗一档、边框随队列状态着色，队列头与队内卡片同处一块、队内卡片**再向内缩进一层**且保持抬起底色 —— 队列与任务的包含关系一眼可辨；队列头两行（名称 + 状态徽标 + **图标按钮** 开始/暂停/开 PR/⋯ ／ 分支 → 基线 + **进度条** + n/m + 失败数）；
 工具栏拆两行（工作区／来源筛选**扁平页签**，页签在窄面板下让位、按钮不压缩）；分节标题 12pt bold + 发丝线；空态 = 图标 + 文案 + 动作按钮。（四个计数胶囊 2026-09-25 起搬进内容区第一行，见上方条目。）
 顺带修掉两个真实缺陷：卡片/队列头**此前没有宽度约束**（各自贴合固有内容宽度，不撑满列表），以及列表 documentView 只钉了宽度、缺 leading/top 钉接。
@@ -246,11 +246,11 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
-- **对话末尾的「交付文件」卡片点击不再进 dsh 自带侧栏，改在壳层文件面板打开（2026-09-29）**。dsh ≥ 0.1.5 的 turn tail 有两组文件 UI：`read`/`write`/`edit` 工具行与「Files changed」产出文件行此前已被点击捕获层覆盖，但 `present` 工具的**交付文件卡片**（`[data-presented-files-row]` 里的 60pt 圆角卡片）漏了：整卡遮罩按钮与卡上的「打开」按钮都走 `openFile` → dsh 自带侧栏。现在点击捕获层把这类卡片也纳入——路径取卡内带 `title` 的遮罩按钮（「打开」按钮没有 `title`，从卡内取）；卡片右侧的 chevron（`aria-haspopup="menu"` = 用默认应用打开 / 在 Finder 中显示）明确放行给 dsh。回归：`tests/preview-interceptor` +4 例（遮罩点击、无 `title` 的「打开」按钮从卡内取路径、chevron 放行、host 状态重试按钮放行；共 15 例），`DSH_PREVIEW_DEBUG=1` 探针新增合成交付卡片的命中/吞事件自检，README 文件面板小节与 `docs/dsh-version-impact.md` B7 同步。
+- **对话末尾的「交付文件」卡片点击不再进 dsh 自带侧栏，改在壳层文件面板打开（2026-09-29）**。dsh ≥ 0.1.5 的 turn tail 有两组文件 UI：`read`/`write`/`edit` 工具行与「Files changed」产出文件行此前已被点击捕获层覆盖，但 `present` 工具的**交付文件卡片**（`[data-presented-files-row]` 里的 60pt 圆角卡片）漏了：整卡遮罩按钮与卡上的「打开」按钮都走 `openFile` → dsh 自带侧栏。现在点击捕获层把这类卡片也纳入——路径取卡内带 `title` 的遮罩按钮（「打开」按钮没有 `title`，从卡内取）；卡片右侧的 chevron（`aria-haspopup="menu"` = 用默认应用打开 / 在 Finder 中显示）明确放行给 dsh。回归：`tests/preview-interceptor` +4 例（遮罩点击、无 `title` 的「打开」按钮从卡内取路径、chevron 放行、host 状态重试按钮放行；共 15 例），`DSH_PREVIEW_DEBUG=1` 探针新增合成交付卡片的命中/吞事件自检，README 文件面板小节与 `docs/process/dsh-version-impact.md` B7 同步。
 
 - **终端：中文/宽字符显示错位、光标只压住半个汉字**。等宽字体（SF Mono）没有 CJK 字形，Core Text 回退到一个全宽字面；字号 13pt 时它的 advance 实测只有 12.9pt，而终端网格给宽字符留的是两格 = 16.07pt（约 1.6 格）—— 汉字因此比自己的格子窄，后面的文本与光标又都按格子定位，看起来就是「错位」；光标块又固定一格宽，停在汉字上时只压住半个字。现在：① 宽字符从 run 里单独拿出来，用 CTM 横向缩放到正好两格（`drawGlyph`），后续 run 也固定在自己的格子上；② 光标块按 `cursorGlyphSpan` 跨整字（停在 continuation 格时回到 lead 格、宽 2 格），汉字以同样方式缩放画在光标底色上。回归：`tests/terminal-panel` 新增 5 项（宽字前进两格，光标在宽字 / continuation / 窄格上的跨度）。
 
-- **终端：vi/vim 里用方向键滚到底行时画面不动（DECSTBM 滚动区此前被丢弃）**。终端模拟器把 `CSI top;bottom r` 解析后**直接忽略**（旧文档化的 v1 限制），而 vim/vi 正是靠这个滚动区把文本区与状态行分开：它先设 `1;(rows-1)r`，再在区域底行用换行 / `ESC S` / `ESC L` 滚动。忽略区域时，区域底行的 `\n` 只把光标下移一格（于是落进状态行），文本却纹丝不动 —— 这正是「方向键移到最后一行、文件不整体移动」，而 PageDown/PageUp 因为整屏重绘看起来正常的原因。现在 Swift 实现与共享核心 JS 端口都实现 DECSTBM：LF/IND、RI、IL/DL、SU/SD **全部限制在 `[scrollTop, scrollBottom]` 内**滚动，区域外的行（状态行）不受影响；`CSI r`（全默认）恢复全屏区域、设置有效区域时按规范归位光标；只有**全屏**区域滚出的行才进 scrollback（vim 文本区回滚不污染历史）；RIS / resize / 备用屏进出时区域复位。回归：`core/tests/ansi.test.js` 新增 6 项、`tests/terminal-panel` 新增 9 项（区域只滚区域、状态行不动、部分区域不进 scrollback、RI/IL/DL/SU/SD、`CSI r` 复位），README「已知限制」移除 DECSTBM 并把它写进渲染能力，`docs/productization.md` §3.1 与总表同步。
+- **终端：vi/vim 里用方向键滚到底行时画面不动（DECSTBM 滚动区此前被丢弃）**。终端模拟器把 `CSI top;bottom r` 解析后**直接忽略**（旧文档化的 v1 限制），而 vim/vi 正是靠这个滚动区把文本区与状态行分开：它先设 `1;(rows-1)r`，再在区域底行用换行 / `ESC S` / `ESC L` 滚动。忽略区域时，区域底行的 `\n` 只把光标下移一格（于是落进状态行），文本却纹丝不动 —— 这正是「方向键移到最后一行、文件不整体移动」，而 PageDown/PageUp 因为整屏重绘看起来正常的原因。现在 Swift 实现与共享核心 JS 端口都实现 DECSTBM：LF/IND、RI、IL/DL、SU/SD **全部限制在 `[scrollTop, scrollBottom]` 内**滚动，区域外的行（状态行）不受影响；`CSI r`（全默认）恢复全屏区域、设置有效区域时按规范归位光标；只有**全屏**区域滚出的行才进 scrollback（vim 文本区回滚不污染历史）；RIS / resize / 备用屏进出时区域复位。回归：`core/tests/ansi.test.js` 新增 6 项、`tests/terminal-panel` 新增 9 项（区域只滚区域、状态行不动、部分区域不进 scrollback、RI/IL/DL/SU/SD、`CSI r` 复位），README「已知限制」移除 DECSTBM 并把它写进渲染能力，`docs/research/productization.md` §3.1 与总表同步。
 
 - **「全部处理」按钮在建任务后不点亮（它的可用状态从来没人重算）**：按钮的可用状态是**「有没有待办」**——那是 **board** 的事实，可它只在 `updateLabels()` 里算过一次，而 `updateLabels()` 只在**工作区变化**（adopt / 语言切换）时跑；新建一个任务（正是让「有待办」成立的那件事）走的是 `syncFromBoard()` → `render()`，那里只重画列表，不碰按钮 —— 于是按钮一直灰着，直到用户切走再切回来。动作本身从来没坏（`runAllTapped` 自己会重新算 model，点了也能跑），坏的是按钮不肯说自己能用了。现在把这段收成一处 `updateRunAllButton(githubAvailable:)`，由**两个**入口调用：`updateLabels()`（工作区事实：git / GitHub 可用性）与 `syncFromBoard()`（board 事实：新建 / 入队 / 开始 / 完成 / 删除）—— 按钮亮灭与列表内容从同一个 board 推出，不会再各说各话。回归：`tests/tasks-panel/run.sh` 增加源码守卫，`syncFromBoard()` 里必须重新推导 处理 按钮。
 - **默认基线分支不再写死 `main`**：issue 任务的自动队列 `baseBranch` 一律 `main`，流水线第一步就是 `git checkout main` —— 默认分支是 `master` / `develop` 的仓库，**第一个 issue 任务必然失败**（「切换分支失败」）。现在采纳工作区时探测：推送远端（`github` > `origin` > 首个远端）的 `HEAD` → 本地 `main` → 本地 `master` → 当前分支 → 兜底 `main`（决策链在 `TaskBranch.defaultBaseBranch`，无头可测）；自动队列与队列表单的「基于分支」（预填 + 留空回落 + 占位）都用它。
@@ -264,7 +264,7 @@ All notable changes to this project are documented in this file. Format follows
 - **删除队列后，失败的任务卡片先给「重试」——点了却什么也没重试（只是把任务变回待处理），要再点一次才出现「加入队列」**。根因是卡片主操作只看**任务状态**：`failed` 一律给重试，而 `TaskBoard.retryAndResume` 在任务没有队列时只能把它改回 `pending` —— 于是「重试」实际是「先 reset、再让用户点第二次」。现在主操作由**队列成员关系 + 状态**一起决定：队列还在 → 重试（`retry(clearsBranch:)`，分支进不去的那条老路仍在）；队列没了（被删）→ 手动任务直接给 **加入队列**（下拉，选一个队列即入队开跑），issue 任务给 **处理**（重建它的自动单任务队列）。顺带把「面板按状态猜动作」改成**按卡片模型给出的 `TaskCardModel.PrimaryAction` 执行**：状态区分不了这两种情形，模型可以。回归：视图模型 +20（失败任务在队列里 vs 队列被删的对照、取消任务同理、issue 自动队列被删、各状态的动作枚举）、表单 +3（队列没了的失败卡片带的是那个下拉，且没有只会 reset 的重试按钮）、模型 +5（失败任务的队列可删、失败记录与原因保留、只解除队列归属）。
 - **非 git 工作区其实跑不了任务：新建队列的「留空」是派生分支，不是在说「不切分支」**。运行器和 board 一直支持非 git 目录（无分支的队列从不碰 git、无 remote 时跳过推送校验，设计见 §V2-7），但**表单表达不了「不切分支」**：新建队列时分支字段留空的语义是「按队列名派生 `feature/<slug>`」（只有**队列设置**里留空才是「不切分支」）。于是非 git 目录里：新建任务 → 加入队列 → 新建队列（高级设置默认折叠、分支字段是空的）→ 队列拿到 `feature/<slug>` → 入队即启动 → 第一个任务必定以 `tasks.errNotGit` 失败；卡片上只有「重试」，而重试必然同样失败，出路是用户自己发现「队列设置 → 清空分支 → 重试」这条三步绕路。修正三处：① 面板记住工作区是不是 git（此前 `isGitRepo` 算完只写日志）；② `QueueComposerModel` 新增 `skipsBranch` / `gitAvailable`，非 git 工作区的新建表单**默认就是「不切分支」**、分支字段停用、提示写明原因，git 仓库里老行为不变但多了一个**创建时就能勾的「不切分支」开关**（此前只有编辑模式能表达）；③ 因非 git 失败的任务，卡片主按钮变成**「不切分支并重试」**——点一下先清掉该队列的分支再 retry，并把 `tasks.errNotGit` 文案从「无法切分支 / 建会话」（会话其实一直建得出来）改成说清出路。回归：`tests/tasks-panel` 新增运行器「非 git 目录无分支队列照常跑完 / 有分支队列报 errNotGit 且不浪费会话」、视图模型「默认不切分支 / git 里派生不变 / 开关压过已填分支 / 编辑不静默丢分支 / errNotGit 卡片给一键修好」、表单「非 git 开关开着且不可点 + 提交显式空分支」。
 - **修复任务卡片主按钮显示原始 key：`tasks.queue.add` 从未加进 `L10n.table`**。手动任务卡片的「加入队列」按钮文案由 `TaskCardModel.primaryKey` **当数据**传给视图，再经 `L10n.tr()` 取词 —— 旧 lint 只扫字面量 `L10n.tr(…)`，看不到模型里携带的 key，于是这个键漏配后一路以 `tasks.queue.add` 的形态显示出来。现在补上中英文（加入队列 / Add to Queue），并给 `tests/l10n/lint.py` 加了同一类检查：`primaryKey` / `stateKey` / `messageKey` / `headingKey` / `submitKey` / `infoKey` / `problemKey` / `problem` / `key` 这些槽位里的字面量必须存在于表里（形状过滤成小写点分，避免误伤 `channel.global.list` 这类 UserDefaults 键，也避开 `forKey:` / `NSLocalizedDescriptionKey`）。**反向验证过**：把新键删掉，lint 立刻以 `keys carried by the view models but missing from L10n.table: tasks.queue.add (TasksUI.swift:primaryKey)` 失败；
-  同时把 `docs/issue-runner-design.md` §V2-9 里那份**规划期**的键清单换成实际存在的键（`tasks.queue.addPick` / `.progress` / `.idle` / `.pendingCount` / `.unnamed` 等从未落地 —— 正是这份清单让漏配看起来像是已经做过了）。
+  同时把 `docs/design/panels/issue-runner-design.md` §V2-9 里那份**规划期**的键清单换成实际存在的键（`tasks.queue.addPick` / `.progress` / `.idle` / `.pendingCount` / `.unnamed` 等从未落地 —— 正是这份清单让漏配看起来像是已经做过了）。
 - **浏览器面板打开某些页面直接崩掉 App（`EXC_BREAKPOINT`，线程 `DispatchQueue: oh-my-dsh.browser-cdp`）**。复现：打开 `https://cas.dev2.supwisdom.com/cas/login`——页面一发 console 日志就崩。根因是 CDP 事件里的**控制台参数渲染直接喂了 `JSONSerialization`**：`Runtime.consoleAPICalled` 的 `args[].value` 对 JS 标量就是 String / NSNumber / NSNull，而 `data(withJSONObject:)` **只接受顶层容器**，传标量抛的是 ObjC 异常 `NSInvalidArgumentException`——Swift 的 `try?` 接不住 ObjC 异常，进程遂 SIGTRAP（`main.swift` 里同样写法的 `try?` 不崩，差别只在顶层是不是容器，所以此前没暴露）。也就是说**任何页面一句 `console.log(0)` / `console.log(null)` 都能崩掉 App**。修复：把参数渲染收口到新的 `BrowserCDPClient.consoleArgumentText(_:)`——先用 `isValidJSONObject([value])` 预检（顺带挡掉 NaN / ±Infinity 这类同样会抛异常的取值），再包成单元素数组序列化、剥掉外层方括号，兜底 `String(describing:)`，任何取值都不可能再走到抛异常的路径；回归测试 `tests/browser-panel/browser-tests.swift` 增 `testConsoleArgumentText`（13 例：字符串/数字/布尔/null/数组/对象/嵌套/空对象/NaN/Infinity）。
 
 - **项目面板「新会话」每次都要 dsh web 重连，而且新会话根本不出现（实际已经建了）**。根因有两层，都在"壳层替 dsh web 建会话"这个做法上：① dsh web 侧栏对会话有一条**可见性规则**——*Ordinary sessions are visible; among blank sessions, only the current one is visible*（`dsh-client-ui-workspace/lib/client.js` 的 `sessionVisible`；`blank` = 从未发过消息的会话）。壳层用 `session/create` 建的正是 blank 会话，而它不是页面的当前会话，于是**侧栏里连这一行都没有**；壳层切页面的唯一手段是点行，于是「新会话」永远切不过去，还每点一次就多留一条谁也打不开的空会话（`app.log` 里 `workspaceRow=yes` + `sessionRows` 不增长、`session/list` 里空会话越积越多）。② 为了掩盖①，旧代码每次先 `nudgeDSHWebCaches()`——派发合成的浏览器 `offline`→`online` 让客户端重连，这就是用户看到的**每次点都重连**。现在「新会话」改走 dsh 自己的入口：注入桥新增 `window.__dshNewSession(工作区名)`（`sessionOpenerScript`），在侧栏找到该工作区行并点它行内自带的 `+`（`dsh-client-ui-workspace` 的 `ProjectRowItem`；行内按钮固定 [工作区菜单, 新建会话]，取最后一枚；hover 才显示但 `click()` 有效，实测可用），于是 dsh 自己执行 `connectWorkspace` 的语义——**复用该工作区已有的 blank 会话，没有才建，然后 open**（会话成为当前会话，blank 行随之以本地化的「新会话 / New Session」出现在侧栏）。结果：不重连、不堆空会话、完全复用 dsh 的语义；壳层经 `dshSession` 追踪器跟随页面切过去的会话。侧栏 DOM 变样时（B10）保留兜底：走 RPC 建会话 + 状态行 `projects.newSessionFallback` 提示去侧栏该工作区行点「+」（那一步会复用这条空会话），**不再 nudge、也不再点行**。配套：`DshWorkspaceOps.newestSessionId` 跳过 `blank == true` 的会话（「在 dsh 中打开」不会再选中一条打不开的空会话，只剩空会话时改为走「新会话」由 dsh 复用）；`onWorkspaceRegistered` 不再 nudge（实测新工作区经 dsh 的工作区流 1–2 秒内自己出现在侧栏）。新增无头套件 `tests/injected-scripts/`（注入 dsh web 的所有 JS 必须可解析、每个 `window.__dshX` 桥名都必须有脚本安装它、不许出现会被 Swift 吃掉的转义——历史上这类错误的表现就是"按钮点了没反应"），`tests/dsh-rpc/` 补 3 例守 blank 跳过；两套均已接入 `scripts/local-ci.sh` 与 CI。
@@ -290,7 +290,7 @@ All notable changes to this project are documented in this file. Format follows
   （`FilePanelController.resolveIncomingPath`，等价于 0.1.2 客户端发送前做的 `resolveWorkspacePath(cwd, path)`），
   因此**工作区相对路径的文件链接也能打开**（此前只会被 fetch 层按绝对路径过滤掉）。回归用例：`tests/preview-interceptor/`
   （直接抽取注入脚本用 DOM stub 运行，覆盖点击 + 两种 fetch 形状）与 `tests/file-panel` 的路径解析用例；`DSH_PREVIEW_DEBUG=1`
-  探针也新增合成点击自检。根因与审计漏洞复盘见 `docs/dsh-version-impact.md` B7/R3 与
+  探针也新增合成点击自检。根因与审计漏洞复盘见 `docs/process/dsh-version-impact.md` B7/R3 与
   `docs/plans/dsh-015rc2-compat-audit.md` §7.1c。
 
 ## [1.16.3] - 2026-09-27
@@ -336,15 +336,15 @@ All notable changes to this project are documented in this file. Format follows
   - **触发时机**：① 功能首次启用（`bootstrap` 基线）② App/dsh 组合变化 ③ **App 内升级 dsh 之前（强制，`performApply` 里接线）** ④ 用户点回退时的现场快照（`pre-rollback`，使回退可撤销）。顺序铁律是**先快照、再起 dsh**——dsh 一打开会话就会补写 `session/end-seed`，晚一步就抓不到干净状态；组合未变时启动只读一次状态文件（实测 **0.059 s**）；
   - **回退并退出**：预览「将恢复 N 条（并移除其新世代日志）/ 将隔离 M 条 / 内置 dsh 换回 X」→ 二次确认 → 停自拉起的 dsh web → 现场整体停放到 pre-rollback 快照 → 恢复目标数据 → 快照之后新建的会话**移入隔离区而不是删除**（带清单） → 换回旧 dsh 树（池内 rename，**离线瞬时**；缺则提示联网补装或改重装旧 App） → 写回 `dataCombo` 并**钉住自动升级** → 退出 App（活着的 dsh 会立刻把会话再迁移回去，所以必须退出）。事务带 `rollback-journal.json`：中途崩溃或「数据与树版本不一致」会在下次启动给出提示，可**续做/撤销**；
   - **边界**：这是数据回退，不是 App 回退（pkg 装不了旧版本）——「问题出在 App 本身」时走「只回退数据 + 提示安装旧版 App」，快照 meta 记着当时的 App 版本供提示使用；凭据（`credentials*`）、壳层自身状态与 token（`shell/`，含 `dsh-web.json` 里那把 launch token）、通道绑定（`channels/`）、CEF profile（`browser*/`）**一律不进快照、不回退**；
-  - 实现：`core/lib/snapshot.js`（纯决策：触发判定 / 回退计划 / 裁剪保护 / 事务状态机）、`core/lib/snapshot-io.js`（落盘：clonefile、树池、隔离、裁剪）、`ohmy-core snapshot …` CLI、`platforms/macos/src/SnapshotModel.swift` + `SnapshotWindow.swift` 与启动前钩子；测试 `core/tests/snapshot*.test.js`（21 例）、`tests/snapshot-rollback/run.sh`（端到端，含升级路径与崩溃拒绝）、`tests/snapshot-panel/run.sh`（窗口模型），均已接入 CI。设计与九类场景演绎：`docs/session-snapshot-rollback-design.md`。
+  - 实现：`core/lib/snapshot.js`（纯决策：触发判定 / 回退计划 / 裁剪保护 / 事务状态机）、`core/lib/snapshot-io.js`（落盘：clonefile、树池、隔离、裁剪）、`ohmy-core snapshot …` CLI、`platforms/macos/src/SnapshotModel.swift` + `SnapshotWindow.swift` 与启动前钩子；测试 `core/tests/snapshot*.test.js`（21 例）、`tests/snapshot-rollback/run.sh`（端到端，含升级路径与崩溃拒绝）、`tests/snapshot-panel/run.sh`（窗口模型），均已接入 CI。设计与九类场景演绎：`docs/design/shell/session-snapshot-rollback-design.md`。
 - **升级核对专用 QA 钩子（仅开发/QA）**：`DSH_PANEL_TEST="files,terminal,wiki,tasks,browser,channel,review,skills"` 在启动后按序切到每个面板（配 `DSH_UI_DEBUG=1` 每个面板各落一张 `panel-<name>-debug.png`）——此前只有六个单面板钩子，且缺的恰是**没有菜单快捷键、脚本点不到**的 tasks 与 channel；`DSH_PREVIEW_DEBUG=1` 的文件打开探针同时演练**新旧两种请求形状**（`host.openPath` 与 `session/openWorkspacePath` + `payload.args.request.path`），拦截器只认老形状时会当场失败，而不是在 UI 里静默。
 
 ### Fixed
 
 - **修复：快照的树池会收下「从没启动成功过」的树，回退时把坏树换回来**（用户实测踩到：升级到 0.1.5 正常 → 回退到升级前快照后启动即报同一个 HMR 错）。原因：启动钩子在 **spawn dsh web 之前**就抓树，于是"构建坏了但 App 起来了"的状态下，池里存下的是漂移闭包（`cordis-plugin-hmr 1.0.19`）；回退把这份坏树换回 bundle → 再次启动失败。三处修复：① **抓树改到页面加载完成之后**（`captureRuntimeTree()` 挂在 `didFinish`，一次/启动）——只有**已经证明能启动**的树才进池；`snapshot launch` 增加 `--no-tree`（启动前的数据快照不变）；② **闭包校验**：新增 `snapshot tree` 子命令与 `captureTree` 的 `--expected-lock` 守卫——与提交的 lock 指纹不一致的树**拒绝入池**，池里已有的不一致副本会被替换；回退换树前同样校验，不一致则**拒绝换入**并回报 `needsTreeInstall`（让壳层用 lock 重新 `npm ci`）；③ **补装走 lock**：`DSHUpdater.installVersion` 在 App 带着该版本的提交 lock 时改用 `npm ci`，`runtime-locks/` 随 App 一起分发。
-- **修复：新构建的 App 因运行时依赖漂移而无法启动（`dsh: user patch-layer watching requires the Cordis HMR service`）**。只钉 `DSH_PACKAGE_SPEC` **不够**——dsh 用 caret 范围声明它的 cordis 工具链（`^1.0.17` 等），所以 `npm install @deepseek-ai/dsh@0.1.2-rc.1` 会装上**当天最新的 1.x**：实测重建得到 `cordis-plugin-hmr 1.0.19`（已安装的生产包是 1.0.17），而新版 HMR 插件在 0.1.2-rc.1 的 loader 下无法实例化 → profile 的 `patchReload: "live"` 走到 `watchUserPatches` 直接抛错、`dsh web` 打印入口 URL 后立刻退出（App 表现为启动失败/白屏）。单独把 `hmr` 钉回 1.0.17 仍报错——漂移是整组的。现在：① 仓库为每个受支持的 spec 提交一份**已知可启动**的闭包锁 `platforms/macos/runtime-locks/<spec>/{package.json,package-lock.json}`（0.1.2-rc.1 那份从真能启动的生产运行树导出，583 个包），构建改用 **`npm ci`** 复现闭包；② 没有 lock 的 spec 走老路并打印警告；③ 装完做**启动冒烟**（`smoke_runtime`：起一次 `dsh web`，40 秒内必须打出入口 URL 且进程存活，否则**构建失败**并打印日志；跨架构 stage 自动跳过；可用 `DSH_SKIP_RUNTIME_SMOKE=1` 临时跳过）；④ runtime 缓存键加入 lock 指纹，改锁即重建。排查与结论记入 `docs/dsh-version-impact.md` E7 / R8 详解。
+- **修复：新构建的 App 因运行时依赖漂移而无法启动（`dsh: user patch-layer watching requires the Cordis HMR service`）**。只钉 `DSH_PACKAGE_SPEC` **不够**——dsh 用 caret 范围声明它的 cordis 工具链（`^1.0.17` 等），所以 `npm install @deepseek-ai/dsh@0.1.2-rc.1` 会装上**当天最新的 1.x**：实测重建得到 `cordis-plugin-hmr 1.0.19`（已安装的生产包是 1.0.17），而新版 HMR 插件在 0.1.2-rc.1 的 loader 下无法实例化 → profile 的 `patchReload: "live"` 走到 `watchUserPatches` 直接抛错、`dsh web` 打印入口 URL 后立刻退出（App 表现为启动失败/白屏）。单独把 `hmr` 钉回 1.0.17 仍报错——漂移是整组的。现在：① 仓库为每个受支持的 spec 提交一份**已知可启动**的闭包锁 `platforms/macos/runtime-locks/<spec>/{package.json,package-lock.json}`（0.1.2-rc.1 那份从真能启动的生产运行树导出，583 个包），构建改用 **`npm ci`** 复现闭包；② 没有 lock 的 spec 走老路并打印警告；③ 装完做**启动冒烟**（`smoke_runtime`：起一次 `dsh web`，40 秒内必须打出入口 URL 且进程存活，否则**构建失败**并打印日志；跨架构 stage 自动跳过；可用 `DSH_SKIP_RUNTIME_SMOKE=1` 临时跳过）；④ runtime 缓存键加入 lock 指纹，改锁即重建。排查与结论记入 `docs/process/dsh-version-impact.md` E7 / R8 详解。
 - **审查面板预先适配 dsh 的「会话日志世代命名」（为后续 dsh 升级铺路；当前内置 dsh 仍是 0.1.2-rc.1，日常行为不变）**：dsh 按 **Session 格式世代**给会话日志命名——世代 0 是 `session.jsonl`，之后每代带 `.vN`（`session.v3.jsonl`），压缩存储再加 `.zstd`。**dsh 0.1.5 起新建会话直接写 `session.v3.jsonl.zstd`**；被迁移过的老会话则把原来的 `session.jsonl.zstd` 留作冻结归档、活日志换成新世代名（实测同一会话：归档 19 条事件、活日志 22 条，之后的新事件只进活日志）。壳层读取器原先只认世代 0 的两个文件名，一旦内置 dsh 升级就会**新会话一条都列不出来、老会话永远停在迁移前的旧内容**——面板不报错，只是空或旧（`app.log` 里表现为 `review: listed 0/N sessions` + `review: audit FAILED`）。现在 `core/lib/review-log.js` 按**规范文件名**枚举（`^session(\.v[1-9][0-9]*)?\.jsonl(\.zstd)?$`，`.v0`/大写/前导零/临时后缀等非规范名一律拒绝），**取世代号最大的那一份**（迁移会话因此读活日志而不是归档），同代压缩优先；新增 `sessionLogCandidates()` 暴露完整候选顺序。`core/tests/review-log.test.js` 增 6 条用例（新世代会话可被发现并审计、迁移会话读活日志、非规范名忽略、世代 0 向后兼容、压缩与非压缩两种新世代文件）。
-  - 内置 dsh 的版本推进（0.1.2-rc.1 → 0.1.5-rc.2）**兼容审计已完成、暂缓执行**：五个耦合面的逐项实测记录见 `docs/plans/dsh-015rc2-compat-audit.md`（端点只增不减、参数包裹字段与鉴权 cookie 未变，唯一断裂点就是上面这条），通用清单 `docs/dsh-version-impact.md` 已补 D6/D8/D9、R7 详解与两条 SOP 核对项。**待「会话快照 + 回退」功能上线后再推进**——那次升级会让会话日志换代且无法回退到旧版 dsh，必须先有安全网。
+  - 内置 dsh 的版本推进（0.1.2-rc.1 → 0.1.5-rc.2）**兼容审计已完成、暂缓执行**：五个耦合面的逐项实测记录见 `docs/plans/dsh-015rc2-compat-audit.md`（端点只增不减、参数包裹字段与鉴权 cookie 未变，唯一断裂点就是上面这条），通用清单 `docs/process/dsh-version-impact.md` 已补 D6/D8/D9、R7 详解与两条 SOP 核对项。**待「会话快照 + 回退」功能上线后再推进**——那次升级会让会话日志换代且无法回退到旧版 dsh，必须先有安全网。
 
 ## [1.16.0] - 2026-09-21
 
@@ -355,16 +355,16 @@ All notable changes to this project are documented in this file. Format follows
   - **安装目标**：默认 **用户级** `$DSH_HOME/skills/<name>/`（所有工作区通用），可选 **项目级** `<工作区>/.dsh/skills/<name>/`（rank 100、优先级最高，写用户仓库前会提示 git diff）；同名已存在先确认，目标是内置同名技能则拒绝；技能目录**整目录复制**（SKILL.md + 附件），拒绝路径穿越、仅接受 https、失败不留半成品。
   - **registry 是可配置项**（`shell/skills.json` 的 `registries`，默认预置 skills.sh）：`owner/repo` 或 GitHub 地址 → **列出该仓库的技能清单**（浅克隆后本地扫描，避开 GitHub API 限流）；well-known 地址 → 读 `/.well-known/skills/index.json` 清单；其他 URL → 视为 skills.sh 兼容的搜索接口（模板 `{q}`/`{limit}`）。**skills.sh 只提供关键字搜索、没有全量清单接口**（实测 `/api/leaderboard`、`/api/skills` 均 404，站点榜单是 HTML）——因此该 registry 未配清单来源时，列表区明确提示「按关键字搜索」，不做 HTML 抓取。
   - 新增 `platforms/macos/src/SkillsPanel.swift`（右栏面板）、`SkillsCore.swift`（纯 Foundation 模型：frontmatter 读写、四根扫描与级别判定、壳层技能记录 `shell/skills.json`）、`SkillSources.swift`（地址解析、registry 清单与搜索、拉取/安装/移除，传输可注入）与 `tests/skills-panel/`（无头模型单测，已接入 `scripts/local-ci.sh` 与 CI swift job）；`tests/skills/` 的内置技能字节断言保持不变。
-  - 设计、四档级别判定与 registry 模型：`docs/skills-manager-design.md`；dsh 升级核对项见 `docs/dsh-version-impact.md` D2/D2b/D2c/D2d。
+  - 设计、四档级别判定与 registry 模型：`docs/design/panels/skills-manager-design.md`；dsh 升级核对项见 `docs/process/dsh-version-impact.md` D2/D2b/D2c/D2d。
 - **技能面板的「可安装」列表：整张卡片可点看详情 + 悬停才出现安装按钮**：点击卡片用**系统默认浏览器**打开该技能的页面（只接受 http(s)，不用内置浏览器面板）——skills.sh 型 registry 打开 `https://www.skills.sh/<source>/<skill>`，GitHub 清单打开仓库内技能目录，well-known 打开该技能的 `SKILL.md`，裸 git 打开远端，本地路径改为在 Finder 中显示；**「安装」按钮改为鼠标移入卡片时才出现**，移出即隐藏，平时列表保持干净；「可安装」页签进入即默认显示**热门列表（按安装量降序，前 30）**，输入关键字切换为搜索结果。
 - **文件面板：目录树右键菜单与头部菜单按钮（#1 #2 UI 返工）**：目录树右键菜单按对象给项 —— 目录上「新建文件夹 → 新建文件 ｜ 重命名 → 删除 → 在 Finder 中显示」，**文件上不提供新建项**，「在 Finder 中显示」单独分组；新建在当前目录下创建并进入命名，重命名 / 删除（移到**废纸篓**，可恢复）后页签跟随改名或关闭。面板头部改为「**打开项目 ▾ / 当前文件 ▾**」两个菜单按钮（点击总是打开菜单，不再出现「点了没反应」），「打开文件」按钮**仅在选中文件时可用**；项目目录可用外部应用打开。
 - **文件面板：图片预览自适应窗口 + 手动缩放（#8）**：打开图片时按比例**适应窗口**（等比、以较紧的一边为准、不放大超过 100%），支持触控板**捏合**、`⌘+` / `⌘−` / `⌘0`、`⌘`+滚轮、**双击**（适应窗口 ↔ 100%）与放大后拖拽平移，缩放范围 5%–1600%、单步 ×1.25，右下角浮动百分比角标；新增 `ImagePreviewView.swift` 与纯模型 `ImageZoom.swift`（缩放数学可无头测试）。
 - **终端面板：滚动方向 / 选中即复制 / 页签按 workspace 隔离（#3 #4 #5）**：滚动方向对齐其余面板的语义；**双击选词**、**选中文本即复制**（新增设置项「终端：选中文本即复制」可关）；终端页签**按 workspace 隔离并记忆**，在 dsh web 切换工作区时同步联动、切到没有终端的工作区自动开启；并恢复触控板滚动惯性。
-- **壳层：页面刷新自愈 + 「视图 → 重新加载页面」`⌘R`（#6）**：长时运行后 WebView 手里那份 cookie 可能不再被接受（页面只显示纯文本 `dsh web authentication required…`，而面板照常可用），此前的右键「重新载入」走的是 WebKit 默认菜单、等价于裸 `reload()`，救不回来。现在：① 视图菜单新增**「重新加载页面 `⌘R`」**，刷新改走 `server.entryURL`（带启动 token 的入口地址，303 重新落一份 cookie）而不是裸 reload；② **主框架 401 / 加载失败自动自愈一次**——自己拉起的 dsh web 若已死则重拉；③ `ServerManager.stop()` 清空 `entryURL`/`process` 并新增 `isRunning`，补刷新与 cookie 诊断日志（此前的刷新不留任何日志，复现过也查不到）。成因收敛过程见 `docs/ux-feedback.md` #6。
+- **壳层：页面刷新自愈 + 「视图 → 重新加载页面」`⌘R`（#6）**：长时运行后 WebView 手里那份 cookie 可能不再被接受（页面只显示纯文本 `dsh web authentication required…`，而面板照常可用），此前的右键「重新载入」走的是 WebKit 默认菜单、等价于裸 `reload()`，救不回来。现在：① 视图菜单新增**「重新加载页面 `⌘R`」**，刷新改走 `server.entryURL`（带启动 token 的入口地址，303 重新落一份 cookie）而不是裸 reload；② **主框架 401 / 加载失败自动自愈一次**——自己拉起的 dsh web 若已死则重拉；③ `ServerManager.stop()` 清空 `entryURL`/`process` 并新增 `isRunning`，补刷新与 cookie 诊断日志（此前的刷新不留任何日志，复现过也查不到）。成因收敛过程见 `docs/feedback/ux-feedback.md` #6。
 
 ### Changed
 
-- **面板配色统一为单一灰阶令牌**：面板顶部/内容区底色统一为 `#1B1B1C`（浅色 `#F9FAFB`），卡片 / 按钮 / 页签底色统一为控件两档 `#43454A` / `#353638`（浅色 `#FFFFFF` / `#F1F3F5`）——六色全部取自 dsh web 的 `neutral bluish` 设计令牌，壳层与 web 界面天然同调，取代「每个面板各写一档灰」的历史局面。**单一事实来源 `platforms/macos/src/PanelSurface.swift`，改色只改这一个文件**；方案见 `docs/ui-color-scheme.md`（含两套取色 API、CALayer 不吃动态色的注意事项、语义色与系统绘制控件的边界）。
+- **面板配色统一为单一灰阶令牌**：面板顶部/内容区底色统一为 `#1B1B1C`（浅色 `#F9FAFB`），卡片 / 按钮 / 页签底色统一为控件两档 `#43454A` / `#353638`（浅色 `#FFFFFF` / `#F1F3F5`）——六色全部取自 dsh web 的 `neutral bluish` 设计令牌，壳层与 web 界面天然同调，取代「每个面板各写一档灰」的历史局面。**单一事实来源 `platforms/macos/src/PanelSurface.swift`，改色只改这一个文件**；方案见 `docs/design/shell/ui-color-scheme.md`（含两套取色 API、CALayer 不吃动态色的注意事项、语义色与系统绘制控件的边界）。
 - **文件面板：大文件保留语法高亮（分块着色）**：不再按行数 / 大小关闭高亮，改为**分块着色**，3000+ 行的文件打开后依然有高亮且不卡 UI。
 - README 面板数量文案与目录树同步为八个面板。
 
@@ -392,8 +392,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Docs
 
-- 新增 `docs/ui-color-scheme.md`（面板配色方案：六色令牌表、两套取色 API、CALayer 与动态色的坑、语义色边界）。
-- `docs/ux-feedback.md`：记录 9 条使用问题（Files 新建/外部打开、目录树宽度、大文件重载、图片缩放；Terminal 滚动/选词/页签；WebView 刷新 401），逐条补实现位置与验证结论；#6 收敛到「面板正常 → 仅 WebView 那份 cookie 被拒」并给出 ⌘R 与右键 Reload 一致化方案。
+- 新增 `docs/design/shell/ui-color-scheme.md`（面板配色方案：六色令牌表、两套取色 API、CALayer 与动态色的坑、语义色边界）。
+- `docs/feedback/ux-feedback.md`：记录 9 条使用问题（Files 新建/外部打开、目录树宽度、大文件重载、图片缩放；Terminal 滚动/选词/页签；WebView 刷新 401），逐条补实现位置与验证结论；#6 收敛到「面板正常 → 仅 WebView 那份 cookie 被拒」并给出 ⌘R 与右键 Reload 一致化方案。
 - `.dsh/wiki/` 同步：技能面板（Skills Manager）、审查面板日志新鲜度、面板配色统一、UX 反馈修复。
 
 ### Tests
@@ -407,7 +407,7 @@ All notable changes to this project are documented in this file. Format follows
 - **审查面板（Review / `⌥⌘R`，活动栏「审查」）：只读回答「这个会话里代理到底改了哪些文件、改成什么」**：直接读 dsh 自己落盘的会话日志（`$DSH_HOME/sessions/<workspace>/<session>/session.jsonl[.zstd]`），**不写任何文件、不发任何请求、不改 dsh**。面板按 **会话 → 对话（turn）→ 文件 → 变更内容** 的树展示，每层可展开/收起，对话用该轮的用户消息做摘要；会话只在**第一次展开**时才真正审计（列表只读日志头，展开才解码全量日志并缓存）。每个文件的**逐次改动都标出来源**：`已应用`（顶层 `write`/`edit` 工具结果里的 hunk，与 dsh web 的 diff 卡片同源）、`参数还原`（由调用参数还原——`run_code` 嵌套调用没有 hunk 元数据）、`全文写入`/`新建`（日志只记了写入内容），嵌套调用另标 `嵌套调用`；`bash` 直改（`sed -i`、`>`、`rm`、`git checkout` …）没有结构化的前后内容记录，单列为「shell 命令」并按「可能写文件」启发式打标（默认只显示可疑项，可关掉过滤看全部）；失败/被拒的调用单列「失败的调用（未改动）」，不计入变更统计；读取诊断（Zstandard 尾部未完成帧、无法解析的行）一律显式列出，**不静默丢数据**。**跟随 dsh web**：在 web 里切换会话时面板展开同一 sessionId（按 id 解析，跨工作区也能定位）并标为「当前会话」；工作区切换只重列会话、不清审计缓存。**只读边界**：日志里没有的东西不会显示——`bash` 直改与尚未落盘的部分只标注「需人工核对」。
   - 审计折叠逻辑放在 **core**（`core/lib/review-log.js`）：dsh 的 JSONL 后端把日志写成**多个独立可解压的 Zstandard 帧的拼接**（每次落盘一批一帧），一次性解压只能拿到第一帧；Apple 的 Compression 框架在这套 SDK 上**没有 zstd 算法**，Swift 侧无法自行解码。因此 core 自带 `scanZstdFrames()` 逐帧解码，壳层经 `CoreBridge.run(…, preferBundledNode: true)` 调用（**必须用内置 Node**，用户自装的 Node 18/20 没有 zstd），且**不依赖 dsh 的私有模块**——不新增升级耦合面；
   - 新增 `platforms/macos/src/ReviewPanel.swift`（右栏面板）、`ReviewLogModel.swift`（展示模型：JSON 解码 + 文件分组 / diff 折叠，纯 Foundation，可无头测试）、`core/bin/ohmy-core.js review sessions|audit|audit-file`（CLI 契约）与 `tests/review-panel/`（模型层单测），已接入 `scripts/local-ci.sh` 与 CI swift job；
-  - 覆盖矩阵（哪些改动能被看到、哪些只能「需人工核对」、为什么不做回滚）见 `docs/review-panel-design.md`。
+  - 覆盖矩阵（哪些改动能被看到、哪些只能「需人工核对」、为什么不做回滚）见 `docs/design/panels/review-panel-design.md`。
 - **文件面板（Files）页签按工作区记忆与恢复**：切换工作区（在 dsh web 切到另一工作区的会话）时，先把原工作区的已打开页签（顺序 + 当前选中项）记入内存并**关闭全部页签**——释放编辑器 / 语法高亮 / 预览内容，不再把旧工作区的文件挂在新工作区上；切回原工作区时按原顺序重开并还原选中项，磁盘上已消失的文件自动跳过。**未保存修改先询问**：保存并切换 / 不保存——**面板始终跟随工作区**（dsh web 已经切过去了，不存在「留在原工作区」这个答案，否则两边显示不一致）；保存失败的页签**保留在页签栏**（既不静默丢弃改动、也不掉队），面板不可见（无人可问）时同样保留并照常跟随。点面板右上角「关闭」按钮 = 关闭全部页签**并清空全部工作区的记忆**（彻底回收）；切到其它面板不算关闭。**关闭时若还有未保存修改会先问**（页签 ✕ / ⌘W 与面板 ✕ 同一套提示：保存并关闭 / 不保存 / 取消，取消 = 不关；保存失败则中止关闭并保留缓冲）。记忆仅存在于本次进程，不落盘。新增 `platforms/macos/src/WorkspaceTabMemory.swift`（纯逻辑）与 `tests/file-panel/run.sh`（模型 28 例 + 真面板 38 例），已接入 `scripts/local-ci.sh` 与 CI swift job。
 
 ### Changed
@@ -425,7 +425,7 @@ All notable changes to this project are documented in this file. Format follows
   - （`applicationWillTerminate`，异步 + 泵 run loop 有界等待，超时 1.5 s，best effort——真正的保证是启动清理）；
   - spawn dsh web 时给 `NODE_OPTIONS` 追加 `--max-http-header-size=65536` 作保险带（用户/环境已显式设置则原样保留，不覆盖不重复）；
   - 清理**只碰 `dsh-auth-*`**：UI 偏好在 localStorage、会话/工作区在 `$DSH_HOME`、壳层配置在 `$DSH_HOME/shell/config.json`、Browser 面板（CEF）另有自己的 cookie 存储，均不受影响；
-  - 新增 `tests/dsh-auth-cookies/run.sh`（无头，纯逻辑 22 例：用**真实抓到的 cookie 名**做向量钉住派生规则、启动/退出清理选择、68 只堆积必须清空、NODE_OPTIONS 追加规则），已接入 `scripts/local-ci.sh` 与 CI swift job。详见 docs/dsh-version-impact.md §6.3（R6）。
+  - 新增 `tests/dsh-auth-cookies/run.sh`（无头，纯逻辑 22 例：用**真实抓到的 cookie 名**做向量钉住派生规则、启动/退出清理选择、68 只堆积必须清空、NODE_OPTIONS 追加规则），已接入 `scripts/local-ci.sh` 与 CI swift job。详见 docs/process/dsh-version-impact.md §6.3（R6）。
 
 - **修复「未保存提示点取消后，反复切换工作区 Files 面板再无反应」**：页签记忆首次落地时用一个「已拒绝的目标」标记（`declinedSwitchTarget`）避免同一目标重复询问，但该标记只在**另一个**工作区到来时才清除——取消后面板仍停在原工作区（树根没变），于是对同一工作区的后续每次切换请求都被**静默吞掉**，面板永久卡在不再跟随的工作区上（`app.log` 实测：`cancelled by user` 之后每次都是 `stays declined`）。现在取消/中止**只延迟、不拉黑**：不再记标记，下一次请求（= dsh web 里真实的会话切换）照常询问；同时把「已有询问在途」由「忽略新请求」改为**最新请求优先**（`supersedePendingSwitchPrompt` 结束旧 sheet，杜绝卡死）。回归测试见 `tests/file-panel/panel-switch-tests.swift`（`a later switch to the same workspace is attempted again`，对修复前的 `FilePanel.swift` 实测失败）。
 
@@ -441,19 +441,19 @@ All notable changes to this project are documented in this file. Format follows
   - 新增 **`reapRecordedOrphan()`**：拉起时把 `{pid, port, token}` 记到 `$DSH_HOME/shell/dsh-web.json`，下次启动若该实例仍在（用 token 探活证明还是自己那台，绝不误杀别的进程）就先回收再拉起——「上次没关干净」不再累积；正常退出时清除记录；
   - `app.log` 在 `webToken == nil` 时明确告警「native RPC cannot authenticate (401)」，不再静默；
   - Wiki 面板：会话压根没起来时状态条显示「生成失败（详见日志）」并写 `app.log`（端口/仓库/workspaceId），不再是一次无效点击；
-  - `DshWebRPC`：只有端点真的不存在（HTTP 404/405）才降级为点号方法——此前**任何**失败（超时/401/业务错误）都会把该端点永久钉成 legacy，一次抖动就让本次运行内所有后续调用打到 0.1.2 根本没有的端点；cookie 换成功才记为已认证；`WikiRPC.createSession` 在 workspaceId 被拒时回退 `cwd` 建会话（保证「能在对应 workspace 起出会话」），create/prompt 超时 6s→15s。详见 docs/dsh-version-impact.md §4.4（含完整证据链）。
+  - `DshWebRPC`：只有端点真的不存在（HTTP 404/405）才降级为点号方法——此前**任何**失败（超时/401/业务错误）都会把该端点永久钉成 legacy，一次抖动就让本次运行内所有后续调用打到 0.1.2 根本没有的端点；cookie 换成功才记为已认证；`WikiRPC.createSession` 在 workspaceId 被拒时回退 `cwd` 建会话（保证「能在对应 workspace 起出会话」），create/prompt 超时 6s→15s。详见 docs/process/dsh-version-impact.md §4.4（含完整证据链）。
 
 - **修复「内置浏览器面板一片空白（页签/地址栏照常更新）+ 右键菜单弹错位」**：两处根因叠加，都落在 **OSR（离屏帧自绘）渲染路径**上。
   - **触发（1.14.0 设置搬家丢了用户取值）**：1.14.0 把壳层设置从 `UserDefaults` 搬进 `$DSH_HOME/shell/config.json`（`ShellConfig`）时**没有迁移已有取值**——用户显式设过的 `browserRenderMode = windowed`（窗口化渲染，见 docs/plans/BROWSER_PLAN-browser-panel.md §十一的既定默认）留在 plist 里再没人读，于是回落到代码里的 `osr` 分支，而 OSR 路径（下述）本身是坏的。现在 `ShellConfig` **首次加载时一次性把旧 UserDefaults 里壳层自有键搬进 config.json**（只搬本文件尚无取值的键，`legacyUserDefaultsMigratedAt` 标记保证只做一次、显式值永远优先；browserRenderMode / appTheme / previewPanelWidth / channel.global.list 等一并保住），并把**代码默认改回文档记载的 `windowed`**（要 OSR 需显式设 `osr`）。
-  - **OSR 自绘帧画在被盖住的层上（空白的直接原因）**：帧原来写进 `BrowserOSRView`（容器，父层）的 `layer.contents`，而容器的子视图 `pageView`（页面区，铺满容器且垫着不透明黑/白背景）的 layer 画在父层 contents **之上**，整帧被盖住 → 内容区永远只剩背景色。CEF 本身没问题：标题、地址栏、console、CDP 截图全部正常，所以只靠 REST API 排查发现不了。现在帧**画在 `pageView` 自己的 layer 上**（同层：背景色在 contents 之下做兜底，窗口化模式不受影响）。详见 docs/browser-blank-panel-fix.md。
+  - **OSR 自绘帧画在被盖住的层上（空白的直接原因）**：帧原来写进 `BrowserOSRView`（容器，父层）的 `layer.contents`，而容器的子视图 `pageView`（页面区，铺满容器且垫着不透明黑/白背景）的 layer 画在父层 contents **之上**，整帧被盖住 → 内容区永远只剩背景色。CEF 本身没问题：标题、地址栏、console、CDP 截图全部正常，所以只靠 REST API 排查发现不了。现在帧**画在 `pageView` 自己的 layer 上**（同层：背景色在 contents 之下做兜底，窗口化模式不受影响）。详见 docs/fixes/browser-blank-panel-fix.md。
   - **右键菜单位置（“点右键，左边有反应”）**：OSR 下 CEF 给的菜单坐标与宿主视图坐标系不一致（视口按 `GetScreenInfo.device_scale_factor` 走设备像素：帧回调 1814×2174 对应 907×1087 点），按视图坐标换算得到的点落到窗口右下之外，AppKit 只能把它塞回屏幕边缘 → 表现为“点下面弹上面、点右边跑到左边”。现在**以当前鼠标的屏幕坐标为准**（右键必来自鼠标），CEF 参数只作键盘唤起菜单时的兜底，两者差异写 `app.log`。
   - **OSR 帧派发错配**：帧回调原来按 `tab.id` 找页签，而 CEF 给的是 shim 的 `browserId`（DevTools 子浏览器同吃同一计数器，开过 DevTools / 关过页签后必然错位）→ 改为按 `browserId` 认页签，DevTools 子浏览器的帧进 `devtoolsContent`（不再画进主页面区）。
   - 回归测试：`tests/browser-panel/` 新增帧落点（pageView 而非容器）、按 browserId 派发、DevTools 帧进 DevTools 区、菜单锚点（共 71 例，对修复前的代码实测 4 例 FAIL）；新增 `tests/shell-config/`（旧 UserDefaults 迁移 / 只做一次 / config.json 优先 / 不搬无关键，13 例）。两套均已接入 `scripts/local-ci.sh` 与 CI。
 
 ### Docs
 
-- **审查面板**：新增 `docs/review-panel-design.md`（目标 / 非目标、数据来源的三类记录、覆盖矩阵、为什么审计逻辑在 core 而不在 Swift、CLI 契约），并在 `.dsh/wiki/modules/` 下新增模块页 `review-panel.md`。
-- **浏览器面板空白事故**：新增 `docs/browser-blank-panel-fix.md`（OSR 帧落点、菜单锚点、帧派发的根因与排查手段、回归测试）；`docs/dsh-version-impact.md` 补写 **§6.3「R6 详解」**（dsh-auth cookie 累积：cookie 名派生规则、431 的 ~14 KB 阈值实测、启动/退出清理时机与升级时的验证命令）。
+- **审查面板**：新增 `docs/design/panels/review-panel-design.md`（目标 / 非目标、数据来源的三类记录、覆盖矩阵、为什么审计逻辑在 core 而不在 Swift、CLI 契约），并在 `.dsh/wiki/modules/` 下新增模块页 `review-panel.md`。
+- **浏览器面板空白事故**：新增 `docs/fixes/browser-blank-panel-fix.md`（OSR 帧落点、菜单锚点、帧派发的根因与排查手段、回归测试）；`docs/process/dsh-version-impact.md` 补写 **§6.3「R6 详解」**（dsh-auth cookie 累积：cookie 名派生规则、431 的 ~14 KB 阈值实测、启动/退出清理时机与升级时的验证命令）。
 - **wiki 增量同步**：审查面板模块页、文件面板工作区页签记忆、工作区切换的取消语义、dsh 认证 cookie 清理与 ShellConfig 旧设置迁移、浏览器面板渲染默认（windowed）与 1.14.0 空白事故、v1.15.0 版本线与用例基线。
 - **README / CONTRIBUTING 同步本次发布**：README 修正浏览器面板渲染**默认已改回 windowed**（原文写「默认 OSR」，与代码不符）、WebView 最小宽度（1050 → 1100pt）与「右侧六个面板」（→ 七个）的表述，并在「特性一览」补审查面板、在「目录」补 `ShellConfig.swift` / `DshWebRPC.swift` / `DshWebCookieJanitor.swift` / `WorkspaceTabMemory.swift`；CONTRIBUTING 补齐本次新增与既有但漏列的测试套件（`review-panel` / `file-panel` / `l10n` / `shell-config` / `dsh-auth-cookies` / `terminal-panel` / `terminal-emulator`）与 `tests/` 结构说明。
 
@@ -461,7 +461,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
-- **钉钉原生适配器（`dingtalk-stream`）**：通道面板新增**钉钉自建应用机器人**接入，走官方 Stream 模式长连接（无需公网回调 / 内网穿透），与微信共享同一套面板模型（接入向导 / 连接状态 / 项目视图会话消息 / 每会话跨项目路由）。core 新增独立适配器模块（`core/lib/dingtalk.js`、`dingtalk-stream-transport.js`、`dingtalk-device.js`、`dingtalk-access.js`）与配套单测（`core/tests/dingtalk*.test.js`），面板侧完成向导接线与生命周期（启动拉起 runner、退出关闭）；设计与边界见 `docs/channel-dingtalk-stream.md`。
+- **钉钉原生适配器（`dingtalk-stream`）**：通道面板新增**钉钉自建应用机器人**接入，走官方 Stream 模式长连接（无需公网回调 / 内网穿透），与微信共享同一套面板模型（接入向导 / 连接状态 / 项目视图会话消息 / 每会话跨项目路由）。core 新增独立适配器模块（`core/lib/dingtalk.js`、`dingtalk-stream-transport.js`、`dingtalk-device.js`、`dingtalk-access.js`）与配套单测（`core/tests/dingtalk*.test.js`），面板侧完成向导接线与生命周期（启动拉起 runner、退出关闭）；设计与边界见 `docs/design/channels/channel-dingtalk-stream.md`。
 - **钉钉绑定向导（device-code 扫码）+ owner-binding 安全门**：向导内完成 device-code 绑定——`init/begin` 得二维码 → 面板内渲染 → 手机钉钉扫码**自动创建企业内部应用 + 机器人** → 本地 `poll` 拿 AppKey/AppSecret 写入 store（chmod 600）；不便于扫码时提供「在浏览器中打开」链接。绑定完成后**只有本机管理员能驱动 dsh**：未绑定前机器人**拒绝所有人**（防任何组织成员经机器人操作本机 bash/文件/token），用 `/bind <口令>` 绑定（口令本机生成、见面板与运行日志），且**串行化处理——只有第一个发送正确口令的人能绑定**（修掉并发 last-writer-wins）；绑定成功回两条消息（确认 + 完整 `/help`）。绑定状态落 `~/.dsh/channels/<channelId>.binding.json`（chmod 600）；已配置的钉钉通道重开向导**不再重复扫码**（否则会重复创建应用），并自动恢复 `/bind` 口令；向导任一步「返回」都会取消在途 login 子进程。
 - **通道面板交互增强**：全局配置新增**解绑**（清空该通道配置并停掉 runner）；平台卡片状态点支持**悬浮提示**（不再只靠颜色传达状态，对色觉障碍友好）；微信绑定页展示「**已配置**」状态 + 显式「重新登录」（避免误替换已绑定 token）；钉钉无「正在输入」能力，以文字 ack 代替 sendTyping。
 - **dsh 升级改为「分步 + 分阶段 + 二次确认」**：不再一步升到 dist-tags.latest，每次只升到**紧邻的下一个发布候选**（stable/rc，排除 alpha/beta/dev；从 registry versions 取号，选步逻辑入共享 core 的 nextStepTarget，Swift 与 core 同一规则）。手动「检查并升级」为三段式：① 检测并提示「当前 vA → 可升 vB」→ 用户确认；② 后台把 vB 预热进共享 npm 缓存（不改动线上 dsh 树、可取消）；③ 下载完成**再次确认**后才原地安装 + 重启。自动升级（启用时）**先起服务不再阻塞启动**，24h 节流到达后在后台检测并下载，下载完成后弹窗请用户确认才正式升级（prefetch / apply 拆分见 core/lib/upgrade.js 与 main.swift 的 DSHUpdater）。
@@ -469,7 +469,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Changed
 
-- **内置 dsh 版本推进到 `@deepseek-ai/dsh@0.1.2-rc.1`**（0.1.1 → 0.1.1-rc.2 → 0.1.2-rc.1，`build-app.sh` 的 `DSH_PACKAGE_SPEC` 默认值与打印行同步；构建期可用 `DSH_PACKAGE_SPEC` 覆盖）。壳层与内置 dsh **同步移动**：0.1.2 改了 `/api` 的鉴权（每实例 launch token → cookie）与 RPC 形状（斜杠端点 + `payload.args`），并移除了 `workspace.list` / `session.list` 的旧形态，本版全部兼容改动都围绕这些变化（见下方 Fixed）；升级影响清单、五个耦合面与执行 SOP 见 `docs/dsh-version-impact.md`，逐项兼容审计与验证记录见 `docs/plans/` 下的 0.1.2 文档。
+- **内置 dsh 版本推进到 `@deepseek-ai/dsh@0.1.2-rc.1`**（0.1.1 → 0.1.1-rc.2 → 0.1.2-rc.1，`build-app.sh` 的 `DSH_PACKAGE_SPEC` 默认值与打印行同步；构建期可用 `DSH_PACKAGE_SPEC` 覆盖）。壳层与内置 dsh **同步移动**：0.1.2 改了 `/api` 的鉴权（每实例 launch token → cookie）与 RPC 形状（斜杠端点 + `payload.args`），并移除了 `workspace.list` / `session.list` 的旧形态，本版全部兼容改动都围绕这些变化（见下方 Fixed）；升级影响清单、五个耦合面与执行 SOP 见 `docs/process/dsh-version-impact.md`，逐项兼容审计与验证记录见 `docs/plans/` 下的 0.1.2 文档。
 
 ### Fixed
 
@@ -478,9 +478,9 @@ All notable changes to this project are documented in this file. Format follows
   - 日志出口：core → 频道 runner 日志，Swift → `app.log`；
   - **单一实现收口**：原先有三份各自解析该私有格式的代码（core `workspace-store.js`、Swift `DshWorkspaceStore`、`main.swift` 的 `persistedWorkspacePath`），现在 `main.swift` 改为调用 `DshWorkspaceStore`，只剩 core 与 Swift 两处；
   - 只读不写；补 core 4 条 + Swift 4 条用例（版本不匹配/形状意外/缺失安静 + 解析顺序与字段）。
-  - docs/dsh-version-impact.md 新增 §6.2「R4 详解」（依赖的具体结构、五个静默断裂点、三个次要坑、升级时的验证命令）。
-- **修复「面板点会话行定位到 dsh web」在 dsh 0.1.2 下静默失效（R3 实测坏点）**：注入的 `sessionOpenerScript` 固定发 `POST /api/session/list`，但 body 里仍是点号 `method:"session.list"` 且 payload 未包 `args`，0.1.2 服务端直接拒绝（`gateway/bad-request: method "session.list" does not match endpoint "session/list"`）；0.1.1 上该斜杠路径又不存在，等于**写死单版本形状、两个世代各坏一次**。改为运行时双面：先按 0.1.2 形状（`session/list` + `payload.args._request`）请求，失败再回退点号（`/api/session.list` + `payload`），失败原因打 `[dsh-opener]` 日志。另外 `DSH_UI_DEBUG=1` 新增页面加载后的注入桥自检（`dsh injected bridges: {tracker, opener, preview, rows}`），让这类「成功时无感、失败时无声」的脚本至少有可观测信号；docs/dsh-version-impact.md 新增 §6.1 详解 R3 的三个脚本各自依赖什么、坏了什么症状、升级时怎么验。
-- **外部已启动的 dsh 0.1.2 实例不再「悄悄」被忽略**：0.1.2 起的实例会用 401 + `authentication required` 回应裸请求，壳层因此判为不可复用而另起一个实例——这是**按设计**的：token 每进程随机且只存在于该进程 stdout，拿不到；而只要 `DSH_HOME` 相同，壳层自拉起的实例与外部实例就是同一份数据（workspaces / 会话 / settings / channels 全在 `$DSH_HOME` 下），复用只省一个进程。现在这个判断会写进 `app.log`（`existing dsh web on 3080 wants its launch token … not adopting`），不再出现「怎么又起了一个实例」无从解释的情况；唯一的注意点是同一个 `DSH_HOME` 不要长期并行跑两个 dsh web（两者持久化同一批文件）。见 docs/dsh-version-impact.md A3/R2。
+  - docs/process/dsh-version-impact.md 新增 §6.2「R4 详解」（依赖的具体结构、五个静默断裂点、三个次要坑、升级时的验证命令）。
+- **修复「面板点会话行定位到 dsh web」在 dsh 0.1.2 下静默失效（R3 实测坏点）**：注入的 `sessionOpenerScript` 固定发 `POST /api/session/list`，但 body 里仍是点号 `method:"session.list"` 且 payload 未包 `args`，0.1.2 服务端直接拒绝（`gateway/bad-request: method "session.list" does not match endpoint "session/list"`）；0.1.1 上该斜杠路径又不存在，等于**写死单版本形状、两个世代各坏一次**。改为运行时双面：先按 0.1.2 形状（`session/list` + `payload.args._request`）请求，失败再回退点号（`/api/session.list` + `payload`），失败原因打 `[dsh-opener]` 日志。另外 `DSH_UI_DEBUG=1` 新增页面加载后的注入桥自检（`dsh injected bridges: {tracker, opener, preview, rows}`），让这类「成功时无感、失败时无声」的脚本至少有可观测信号；docs/process/dsh-version-impact.md 新增 §6.1 详解 R3 的三个脚本各自依赖什么、坏了什么症状、升级时怎么验。
+- **外部已启动的 dsh 0.1.2 实例不再「悄悄」被忽略**：0.1.2 起的实例会用 401 + `authentication required` 回应裸请求，壳层因此判为不可复用而另起一个实例——这是**按设计**的：token 每进程随机且只存在于该进程 stdout，拿不到；而只要 `DSH_HOME` 相同，壳层自拉起的实例与外部实例就是同一份数据（workspaces / 会话 / settings / channels 全在 `$DSH_HOME` 下），复用只省一个进程。现在这个判断会写进 `app.log`（`existing dsh web on 3080 wants its launch token … not adopting`），不再出现「怎么又起了一个实例」无从解释的情况；唯一的注意点是同一个 `DSH_HOME` 不要长期并行跑两个 dsh web（两者持久化同一批文件）。见 docs/process/dsh-version-impact.md A3/R2。
 - **修复内置 dsh 0.1.2 下壳层原生 RPC 全部失效（wiki 生成、issue-runner 流水线、会话目录跟随）**：`WikiRPC`（WikiPanel）、`IssueRunnerPanel` 的会话/工作区调用与 `DSHSessionRPC`（main.swift）此前只会讲 dsh ≤0.1.1 的老接口——点号方法名、payload 直接是参数、且**不带任何鉴权**；0.1.2 起 `/api` 只认 launch token 换来的 cookie、端点改斜杠、参数包进 `payload.args.<request|_request>`，于是这些原生调用全部 401/404（wiki 点「生成」拿不到 sessionId、issue-runner 建会话/发消息失败、workspace.list 扫描为空；只有 `DSHSessionRPC` 有磁盘兜底不至于完全失灵）。修复为新增共享的 `platforms/macos/src/DshWebRPC.swift`：
   - **双面调用**：先按 0.1.2 斜杠端点 + `payload.args.<request|_request>` 试，失败再回退点号方法，并**按端点**记忆所选接口面（同一服务有 `session/list` 却没有 `workspace/list`，按服务记忆会互相污染）；`modernExtras` 只在 0.1.2 面注入（如 session/prompt 必填的 requestId）；
   - **鉴权**：用一个独立 **ephemeral URLSession** 访问 dsh web 自报的 `/?token=…` 种下 `dsh-auth-*` cookie（WebView 的 cookie 在 WebKit 自己的数据存储里、与 URLSession 的 `HTTPCookieStorage` 互不共享，只能自行换取），每端口只换一次，401 时自动重换一次并重试；
@@ -525,8 +525,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Docs
 
-- **dsh 升级影响清单**：新增 `docs/dsh-version-impact.md`（五个耦合面 A–F + 每次升级的执行 SOP + 0.1.1 → 0.1.2-rc.1 实例复盘），并补写 §6 的 **R3 详解（注入脚本）** 与 **R4 详解（`workspace.json` 私有存储兜底）**，明确「当前唯一还在静默失效风险里」的面与升级时的验证命令。
-- **钉钉**：新增 `docs/channel-dingtalk-stream.md`（原生适配器设计：独立于微信、device-code 绑定、owner-binding 门控、Stream 长连接语义），并更新 `docs/channel-status.md` / 通道面板文档（绑定 / 解绑 / 指令状态）；allowlist 与群聊拒绝配额等留作后续迭代。
+- **dsh 升级影响清单**：新增 `docs/process/dsh-version-impact.md`（五个耦合面 A–F + 每次升级的执行 SOP + 0.1.1 → 0.1.2-rc.1 实例复盘），并补写 §6 的 **R3 详解（注入脚本）** 与 **R4 详解（`workspace.json` 私有存储兜底）**，明确「当前唯一还在静默失效风险里」的面与升级时的验证命令。
+- **钉钉**：新增 `docs/design/channels/channel-dingtalk-stream.md`（原生适配器设计：独立于微信、device-code 绑定、owner-binding 门控、Stream 长连接语义），并更新 `docs/design/channels/channel-status.md` / 通道面板文档（绑定 / 解绑 / 指令状态）；allowlist 与群聊拒绝配额等留作后续迭代。
 - **README / CONTRIBUTING 同步本次发布**：README 更新「内置 dsh 版本 = 0.1.2-rc.1」、dsh 升级改为「分步 + 二次确认 + 备份回滚/自动升级后台化」、开发版隔离（独立实例 / 独立 `DSH_HOME` / 独立 bundle id / 端口错开）、壳层设置改存 `$DSH_HOME/shell/config.json` 与 `DSH_AUTO_UPGRADE_NOW`；CONTRIBUTING 补 `tests/dsh-rpc` 套件、core 模块说明与 `swift-sources.sh` 单一来源约定。
 - **Wiki 同步**：dsh 0.1.2 兼容收尾（R4 存储护栏 / R3 注入脚本双面 / 外部 0.1.2 实例不复用）与钉钉原生适配器、通道绑定 / 解绑文档刷新，并记录 216 用例测试基线。
 
@@ -534,7 +534,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
-- **Channel 面板 ↔ dsh web 会话双向联动**：点击面板项目视图会话行（单一手势）同时展开/收起其消息并定位到 dsh web 对应会话（经注入的 `sessionOpenerScript` 驱动）；反过来 dsh web 切换会话时面板自动展开对应会话、其余行收起（无对应则会话列表仍显示、仅行收起）。**以 sessionId 对应，不用 name**。设计见 `docs/channel-web-session-link.md`。
+- **Channel 面板 ↔ dsh web 会话双向联动**：点击面板项目视图会话行（单一手势）同时展开/收起其消息并定位到 dsh web 对应会话（经注入的 `sessionOpenerScript` 驱动）；反过来 dsh web 切换会话时面板自动展开对应会话、其余行收起（无对应则会话列表仍显示、仅行收起）。**以 sessionId 对应，不用 name**。设计见 `docs/design/channels/channel-web-session-link.md`。
 - **Channel 指令体系 v2**：`/workspaces`(`/wks`) 与 `/sessions`(`/ses`) 支持**带内容切换**（无内容只列出、有内容即切到对应项，等同 `#wN`/`#sN`）、`/new` **统一回复**（无内容建占位 `New Session` 等首条消息激活、有内容 prompt=内容并回推答案）、移除 `/switch`；`/new` 无内容不再固定 dsh 会话标题（交由 dsh web 自动命名）。
 - **Channel 项目开关落地（门控路由）**：全局 workspace 关联存 `~/.dsh/channels/<channelId>.workspaces.json`（project=workspace），开关**真正门控**——普通消息/`/new` 路由到未启用该通道的 workspace 回「该项目未启用该通道」、不建会话；`/workspaces` 只列已启用项；`#wN`/`#sN` 按目标/当前 workspace 是否启用门控（导航放行、仅拦截实际路由）。
 - **Channel 异步应答 + 官方 sendTyping**：先 ack「处理中」、后台生成、结果回推；在途时后续消息回「请等待」不入队；用官方 `sendTyping`（getConfig 拿 typing_ticket）替换「处理中」文字 ack，生成时回微信原生「正在输入…」。
@@ -558,7 +558,7 @@ All notable changes to this project are documented in this file. Format follows
 
 - **README**：Channel 面板章节补充「项目开关门控语义 + sendTyping 异步应答」与「dsh web 会话双向联动」；文件面板补「打开文件实时刷新」；AGENTS.md 增补「README 更新直接在当前分支提交，不切分支/不开 PR」。
 - **Wiki 同步**：Channel 项目开关 / Channel-Message-Session 关联模型 / v1.13.0 内置 Skill 全局化与 swift-sources 单一来源等页面刷新。
-- **发布决策固化**：`docs/release-process.md` 增补「CI CEF prepare 暂不修复」「暂不使用 gh CLI（发布统一走 curl API）」与已知坑；`docs/channel-*` 设计/实施记录更新（E 里程碑完成、Channel-Message-Session 关联模型核查）。
+- **发布决策固化**：`docs/process/release-process.md` 增补「CI CEF prepare 暂不修复」「暂不使用 gh CLI（发布统一走 curl API）」与已知坑；`docs/channel-*` 设计/实施记录更新（E 里程碑完成、Channel-Message-Session 关联模型核查）。
 
 ## [1.12.0] - 2026-08-22
 
@@ -576,7 +576,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
-- **通道消息重复回复**：轮询改**严格串行 while 长轮询**（对齐官方 monitor）——setInterval 破坏 `get_updates_buf` 游标推进导致同一消息被反复处理/重复回复（根因与验证见 `docs/channel-issues.md`）。
+- **通道消息重复回复**：轮询改**严格串行 while 长轮询**（对齐官方 monitor）——setInterval 破坏 `get_updates_buf` 游标推进导致同一消息被反复处理/重复回复（根因与验证见 `docs/fixes/channel-issues.md`）。
 - **通道路由/状态**：通道级状态写入加内存缓存，避免 onState 与 setActiveSession 并发写 state 文件互相覆盖；`/new` 创建后立即用 /new 文本 prompt（会话非 blank、dsh web 可见）；快捷指令未找到提示更新（`#wN` → 未找到工作区、`#sN` → 未找到会话）；`/wks` 显示 workspace title + `~` 缩短路径不泄露用户目录；加载全局通道过滤历史坏 id；`channel run` 默认 dshHome=~/.dsh 使 CLI 可用。
 - **面板 v2 UI**：分隔线位置修正（去掉标题/工具条之间、保留工具条/内容区之间）；工具条清空（无文字无线）+ 引导标题/卡片改纯 Auto Layout 左对齐；项目视图从内容区顶部渲染（FlippedStackView）、行占满整宽、展开手势移回 Channel 名（不再吞开关点击）。
 - **代码编辑器**：Highlightr() init 崩溃防护；行号栏滚动去同步/末行缺失/越界/首布局漂移——按每行实际字形基线绘制、布局稳定后重绘。
@@ -585,9 +585,9 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Docs
 
-- **通道文档**：`docs/channel-design.md`（能力设计：统一抽象 + 微信/钉钉/飞书多平台扩展 + ClawBot 可行性）、`docs/channel-commands.md`（指令清单）、`docs/channel-status.md`（完成状态总览）、`docs/channel-storage.md`（存储全局化设计）、`docs/channel-issues.md`（重复回复根因排查）。
+- **通道文档**：`docs/design/channels/channel-design.md`（能力设计：统一抽象 + 微信/钉钉/飞书多平台扩展 + ClawBot 可行性）、`docs/design/channels/channel-commands.md`（指令清单）、`docs/design/channels/channel-status.md`（完成状态总览）、`docs/design/channels/channel-storage.md`（存储全局化设计）、`docs/fixes/channel-issues.md`（重复回复根因排查）。
 - **文件面板**：`docs/plans/PREVIEW_PLAN-file-panel.md` 设计文档（预览增强，rollback-first）；README「预览面板」小节改为「文件面板」（预览 + 编辑 + 高亮）。
-- **发布流程固化**：`docs/release-process.md`（四步发布：CHANGELOG → tag → local-release → 版本推进）；AGENTS.md 增补发布指引与 GitHub token 位置；SECURITY.md Supported Versions 同步步骤。
+- **发布流程固化**：`docs/process/release-process.md`（四步发布：CHANGELOG → tag → local-release → 版本推进）；AGENTS.md 增补发布指引与 GitHub token 位置；SECURITY.md Supported Versions 同步步骤。
 - **README / CONTRIBUTING 覆盖本次发布内容**：新增 Channel 面板介绍（右栏面板 + 特性一览 + 截图）；项目结构/测试清单补 channel 模块与文件面板组件；wiki 同步（channel-panel / file-panel 模块页、架构/数据模型/任务/构建脚本刷新）；README 增加 app 截图。
 
 ## [1.11.0] - 2026-08-21
@@ -596,7 +596,7 @@ All notable changes to this project are documented in this file. Format follows
 
 - **浏览器面板（Chromium/CEF 内核）**（活动栏 globe / `⌥⌘B`）：多标签浏览器，每标签一个 Chromium 渲染进程（五 helper app：base/Alerts/GPU/Plugin/Renderer，名字承重）；地址栏导航（无 scheme 自动补 `https://`）、后退/前进/刷新·停止；控制台抽屉（CDP 捕获 console/异常/全部网络请求 + JS 求值 + 清空）；DevTools 按钮在系统浏览器打开完整 Chromium DevTools；`use-mock-keychain` 不弹钥匙串密码框；profile 收在 `~/.dsh/browser/`。
 - **浏览器 REST API**（`127.0.0.1:3081`，`DSH_BROWSER_PORT` 覆盖，端口文件 `~/.dsh/browser-api.port`）：`status`/`open`/`tabs`/`back`/`forward`/`reload`/`stop`/`eval`/`console`/`console/clear`/`screenshot`/`hide`，CORS 放行；Agent 驱动自动展开面板；配套技能 `.dsh/skills/shell-browser/SKILL.md`（modelInvocable）。
-- **DevTools 工具条可拖动调高**（150–700pt，主窗口联动压缩）：拖动条悬停显示上下拖拽光标；拖动中主页面/DevTools 两 CEF 视图完全静止（frame/视口不动）、全程禁用 autoresizing、跳过 layout 钩子、抑制逐帧 notifyResize，松手统一对齐并恢复页面滚动位置（CDP 记录 scrollY、松手 scrollTo）；80ms resize 节流消除逐帧重排导致的页面抖动上移（详见 `docs/devtools-drag-fix.md`）。
+- **DevTools 工具条可拖动调高**（150–700pt，主窗口联动压缩）：拖动条悬停显示上下拖拽光标；拖动中主页面/DevTools 两 CEF 视图完全静止（frame/视口不动）、全程禁用 autoresizing、跳过 layout 钩子、抑制逐帧 notifyResize，松手统一对齐并恢复页面滚动位置（CDP 记录 scrollY、松手 scrollTo）；80ms resize 节流消除逐帧重排导致的页面抖动上移（详见 `docs/fixes/devtools-drag-fix.md`）。
 - **视图菜单「外观」切换**（`feat(#6)`）：浅色/深色/系统三态，与设置窗口外观双向同步。
 - **App 体积精简**（约减 ~138M）：slim app bundle（移除重复 node ~116M、node-pty win32 prebuilds），见 `docs/plans/APP_SLIM-app-size.md`。
 - **活动栏图标顺序与文案调整**：Files(重叠文件图标)/Terminal/Browser/Wiki/Tasks，tooltip 固定英文。
@@ -618,7 +618,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Docs
 
-- `docs/devtools-drag-fix.md`：DevTools 拖动条导致 CEF 视图上移问题分析与修复方案。
+- `docs/fixes/devtools-drag-fix.md`：DevTools 拖动条导致 CEF 视图上移问题分析与修复方案。
 - `docs/plans/BROWSER_PLAN-browser-panel.md`：浏览器面板设计（含 CEF 五 helper 根因修正）。
 - wiki 同步：浏览器面板 OSR/Chromium 演进、五面板结构、发布/CI 工具链、per-arch 缓存。
 - 合并规范：PR 合并一律用 `--no-ff`（merge commit）。
@@ -636,7 +636,7 @@ All notable changes to this project are documented in this file. Format follows
 - **issue 处理按统一分支规范**：feature 类 issue 切 `feature/issue-N`，bug/其他切 `fix/issue-N`（按 label 判定）；issue-fix skill 分支说明同步。
 - **issue-fix skill 自动安装**：任务开始时 `ensureIssueFixSkillInstalled` 写入 `<repoRoot>/.dsh/skills/issue-fix/`（内嵌副本与仓库字节一致、幂等），全新工作区也能处理 issue。
 - **`scripts/git-remote.sh`**：push 前检测 remote 名（github 优先，origin 兜底），`release-fix.sh` 不再硬编码 origin。
-- **文档**：`docs/git-workflow.md`（统一分支与发布规范：main 只合并/只打主版本，feature/fix/release 分支模型，patch 版本同步回 main 走 PR）；AGENTS.md 补充分支提交强制规范与 GitHub token 位置；`.dsh/wiki` 知识库同步刷新。
+- **文档**：`docs/process/git-workflow.md`（统一分支与发布规范：main 只合并/只打主版本，feature/fix/release 分支模型，patch 版本同步回 main 走 PR）；AGENTS.md 补充分支提交强制规范与 GitHub token 位置；`.dsh/wiki` 知识库同步刷新。
 
 ### Changed
 
@@ -701,14 +701,14 @@ All notable changes to this project are documented in this file. Format follows
 ### Added
 
 - Repo Wiki 知识库面板：生成/维护/浏览 + 多工作区跟随（`feat(wiki)`）；
-- `docs/productization.md` 产品化方案与里程碑目标文档；
+- `docs/research/productization.md` 产品化方案与里程碑目标文档；
 - 知识库增量更新流程与 `.dsh/wiki/` 结构。
 
 ### Fixed
 
-- 终端多字节输入乱码（`docs/terminal-input-fix.md`：`Darwin.write` 传数组缓冲区必须用
+- 终端多字节输入乱码（`docs/fixes/terminal-input-fix.md`：`Darwin.write` 传数组缓冲区必须用
   `withUnsafeBytes`）；
-- 终端/Wiki 面板 header 合成溢出（`docs/terminal-header-fix.md`：父容器 `wantsLayer` +
+- 终端/Wiki 面板 header 合成溢出（`docs/fixes/terminal-header-fix.md`：父容器 `wantsLayer` +
   `masksToBounds`）。
 
 ## [1.6.28] - 2026-08-14

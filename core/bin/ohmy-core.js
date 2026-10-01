@@ -32,7 +32,7 @@
  *   node core/bin/ohmy-core.js review sessions [--workspace <dir>] [--limit <n>] [--dsh-home <dir>]
  *   node core/bin/ohmy-core.js review audit <sessionId> [--workspace <dir>] [--dsh-home <dir>] [--max-entries <n>]
  *   node core/bin/ohmy-core.js review audit-file <path.jsonl[.zstd]> [--workspace <dir>] [--max-entries <n>]
- *       -- READ-ONLY session-log change audit (Review panel; see docs/review-panel-design.md)
+ *       -- READ-ONLY session-log change audit (Review panel; see docs/design/panels/review-panel-design.md)
  *   node core/bin/ohmy-core.js brief report <sessionId> [--workspace <dir>] [--dsh-home <dir>]
  *       -- the agent's LAST text message of a session, used as the tasks panel's
  *          交接简报 so the next task in a queue knows what the previous one did
@@ -258,7 +258,7 @@ function println(s) {
       {
         // The tasks panel's 交接简报: what the previous task in a queue last said.
         // One session per task keeps each context small; this is how continuity is
-        // carried across them (docs/issue-runner-design.md §V2-6).
+        // carried across them (docs/design/panels/issue-runner-design.md §V2-6).
         const flag = (name) => {
           const i = rest.indexOf('--' + name);
           return i >= 0 ? rest[i + 1] : undefined;

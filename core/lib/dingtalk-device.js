@@ -4,7 +4,7 @@
  * core/lib/dingtalk-device.js — DingTalk device-code app registration.
  *
  * Reuses the open-platform device-code flow (init/begin/poll) to auto-create a
- * DingTalk app + robot by scanning a QR (docs/channel-dingtalk-stream.md §4).
+ * DingTalk app + robot by scanning a QR (docs/design/channels/channel-dingtalk-stream.md §4).
  * The endpoint accepts any source; source is an optional attribution tag.
  *
  *   const { beginRegistration, waitForCredentials } = require('@oh-my-dsh/core');

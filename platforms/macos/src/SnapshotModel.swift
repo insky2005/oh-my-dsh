@@ -1,7 +1,7 @@
 import Foundation
 
 /// SnapshotModel — pure decoding of the `ohmy-core snapshot …` JSON for the
-/// shell UI (docs/session-snapshot-rollback-design.md). No AppKit, no I/O, so
+/// shell UI (docs/design/shell/session-snapshot-rollback-design.md). No AppKit, no I/O, so
 /// every rule here is testable headlessly (tests/snapshot-panel/run.sh).
 ///
 /// Shapes decoded:

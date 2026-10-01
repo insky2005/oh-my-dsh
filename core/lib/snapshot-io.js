@@ -6,7 +6,7 @@
  * Every mutation goes through an injectable `io` object (default: real fs), so
  * the transaction can be tested headless and the shell can substitute a fake.
  *
- * Layout (docs/session-snapshot-rollback-design.md §4):
+ * Layout (docs/design/shell/session-snapshot-rollback-design.md §4):
  *   $DSH_HOME/shell/dsh-state.json
  *   $DSH_HOME/shell/rollback-journal.json
  *   $DSH_HOME/shell/snapshots/<id>/{meta.json,sessions/,storages/}

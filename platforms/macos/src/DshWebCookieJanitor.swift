@@ -41,7 +41,7 @@ import CryptoKit
 // in $DSH_HOME, the shell's own settings in $DSH_HOME/shell/config.json, and the
 // CEF browser panel has a cookie store of its own — none of it is affected.
 //
-// Docs: docs/dsh-version-impact.md (R6).
+// Docs: docs/process/dsh-version-impact.md (R6).
 
 enum DshWebCookieJanitor {
 

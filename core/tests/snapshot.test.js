@@ -3,7 +3,7 @@
 /**
  * snapshot: session snapshot / rollback planning (PURE).
  *
- * Covers docs/session-snapshot-rollback-design.md items 1-7 of the test list:
+ * Covers docs/design/shell/session-snapshot-rollback-design.md items 1-7 of the test list:
  * naming/meta, the launch decision, the rollback plan, retention protection,
  * the transaction journal, the exclusion list and the tree-pool decision.
  */

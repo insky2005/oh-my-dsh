@@ -14,10 +14,10 @@
 ## 先读什么
 
 - `.dsh/wiki/index.md` 与 `.dsh/wiki/conventions.md` —— 工程约定（L10n / 构建 / 测试 / 日志）；
-- `docs/productization.md` —— 产品化总纲（路线图 / 分发 / 升级 / 多平台 / 开源治理）；
-- `docs/dsh-version-impact.md` —— **dsh 升级影响清单**（五个耦合面 + 每次升级的执行 SOP + 0.1.2 复盘；动 dsh 相关代码前先读）；
+- `docs/research/productization.md` —— 产品化总纲（路线图 / 分发 / 升级 / 多平台 / 开源治理）；
+- `docs/process/dsh-version-impact.md` —— **dsh 升级影响清单**（五个耦合面 + 每次升级的执行 SOP + 0.1.2 复盘；动 dsh 相关代码前先读）；
 - `docs/milestones/` —— 各里程碑目标（M1 产品化基础 … M5 Apple 生态）；
-- `docs/release-process.md` —— **发布流程**（CHANGELOG → tag → local-release → 版本推进）；
+- `docs/process/release-process.md` —— **发布流程**（CHANGELOG → tag → local-release → 版本推进）；
 - `README.md` —— 安装 / 构建 / 环境变量。
 
 ## 关键约束
@@ -27,9 +27,9 @@
 3. 版本号单一来源：`build-app.sh` 从 git tag 读取 VERSION，BUILD 由 CI 注入；
 4. 新增文案必须中英双语成对（`main.swift` 的 `L10n.table`）；
 5. macOS 源码清单单一事实来源为 `platforms/macos/swift-sources.sh`（glob 自动收录 `src/*.swift` + `vendor/Highlightr/*`，`build-app.sh` / `local-ci.sh` / `ci.yml` 共用，新增文件无需逐个登记）；仅当新文件是独立工具（如 `MakeIcon.swift`，含顶层代码）时需在 `swift_sources()` 显式排除；
-6. 面板 UI 遵循 `PreviewPanel.swift` 基件约定；layer-backed 合成陷阱见 `docs/terminal-header-fix.md`；**配色令牌见 `docs/ui-color-scheme.md`（面板底色 + 控件两档，改色只改 `PanelSurface.swift`）**。
+6. 面板 UI 遵循 `PreviewPanel.swift` 基件约定；layer-backed 合成陷阱见 `docs/fixes/terminal-header-fix.md`；**配色令牌见 `docs/design/shell/ui-color-scheme.md`（面板底色 + 控件两档，改色只改 `PanelSurface.swift`）**。
 
-## 分支与提交（强制，见 docs/git-workflow.md）
+## 分支与提交（强制，见 docs/process/git-workflow.md）
 
 - **开发前必须先切分支**，禁止直接在 `main` 上改代码：
   - 新功能/重构 → `feature/<slug>`（如 `feature/issue-runner`）；
@@ -41,7 +41,7 @@
 - 提交前 `git status` 确认只含本次改动，**不顺手提交无关文件**（其他会话/代理的在途改动不要碰）；
 - **更新 README 时，直接在「当前分支」修改并提交，不切分支、不开 PR**——README 为仓库说明文档，随当前工作一起落地（特例：仅当 README 需配合独立发布时，可随该发布分支）。
 
-## 发布流程（见 docs/release-process.md）
+## 发布流程（见 docs/process/release-process.md）
 
 主版本发布四步（v1.11.0 实战校准）：
 

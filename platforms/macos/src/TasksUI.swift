@@ -994,7 +994,7 @@ struct QueueComposerModel: Equatable {
     /// worktree already is. Explicit, so 「留空」 no longer has to carry two
     /// meanings — the old shape could not express "no branch" while creating,
     /// which made every queue created in a non-git directory fail with
-    /// tasks.errNotGit (docs/issue-runner-design.md §V2-7).
+    /// tasks.errNotGit (docs/design/panels/issue-runner-design.md §V2-7).
     var skipsBranch: Bool
     /// Whether GitHub is available in this workspace. Without it the form does
     /// not offer a PR switch at all (a dead checkbox is worse than a sentence).

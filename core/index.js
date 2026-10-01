@@ -22,7 +22,7 @@ module.exports = {
   ...require('./lib/dsh-rpc'),
   // dsh workspace list (live workspace.list RPC + persisted workspace.json store)
   ...require('./lib/workspace-store'),
-  // Session snapshot / rollback planning (pure decisions; docs/session-snapshot-rollback-design.md)
+  // Session snapshot / rollback planning (pure decisions; docs/design/shell/session-snapshot-rollback-design.md)
   snapshot: require('./lib/snapshot'),
   // Session snapshot / rollback filesystem layer (injectable IO)
   snapshotIO: require('./lib/snapshot-io'),
@@ -52,7 +52,7 @@ module.exports = {
   ...require('./lib/weixin-clawbot-transport'),
   // Channel account/token persistence (~/.dsh/channels/<id>.json, file-first)
   ...require('./lib/channel-store'),
-  // Channel slash commands (docs/channel-ui-commands.md §4)
+  // Channel slash commands (docs/design/channels/channel-ui-commands.md §4)
   ...require('./lib/channel-commands'),
   // Channel workspace codes / #tag routing
   ...require('./lib/channel-workspaces'),
@@ -64,6 +64,6 @@ module.exports = {
   ...require('./lib/settings'),
   // Shell work-data layout + one-time migration ($DSH_HOME/oh-my-dsh/*)
   shellPaths: require('./lib/shell-paths'),
-  // Read-only session-log change audit (Review panel; docs/review-panel-design.md)
+  // Read-only session-log change audit (Review panel; docs/design/panels/review-panel-design.md)
   ...require('./lib/review-log'),
 };

@@ -1,7 +1,7 @@
 # dsh 0.1.7-rc.2 升级兼容审计（壳层 ↔ dsh web）
 
 > 分支 `feature/dsh-017rc2-upgrade`。目标：把内置 dsh 从 `@deepseek-ai/dsh@0.1.5-rc.3` 升到
-> `@deepseek-ai/dsh@0.1.7-rc.2`，逐面复核五个耦合面（`docs/dsh-version-impact.md`）。
+> `@deepseek-ai/dsh@0.1.7-rc.2`，逐面复核五个耦合面（`docs/process/dsh-version-impact.md`）。
 > 本文件是**开工前的静态审计**，实测记录随执行追加到 §六。
 > 前序同类审计：`docs/plans/dsh-015rc2-compat-audit.md`（0.1.2-rc.1 → 0.1.5-rc.3）。
 

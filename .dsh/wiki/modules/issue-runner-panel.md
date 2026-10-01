@@ -2,7 +2,7 @@
 title: 模块：任务面板（Tasks / IssueRunner）
 tags: [module, tasks, github, issue, queue, index, manual-task]
 updated: 2026-10-01T15:57:16Z
-sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksWorkspaces.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/BrowserAPI.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/issue-runner-design.md, docs/ui-color-scheme.md, docs/git-workflow.md, docs/task-todo-skill-design.md, .dsh/skills/task-todo/SKILL.md, docs/issue-runner-design.md, CHANGELOG.md, README.md, docs/dsh-version-impact.md]
+sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksWorkspaces.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/BrowserAPI.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/design/panels/issue-runner-design.md, docs/design/shell/ui-color-scheme.md, docs/process/git-workflow.md, docs/design/panels/task-todo-skill-design.md, .dsh/skills/task-todo/SKILL.md, docs/design/panels/issue-runner-design.md, CHANGELOG.md, README.md, docs/process/dsh-version-impact.md]
 manual: false
 ---
 
@@ -37,7 +37,7 @@ manual: false
 - **落盘走面板自己的那条路**：`TasksRunner.createManualTask`（唯一入口，自带 persist 与日志），并且必须经 `BrowserAPIBridge` 派发到**主线程**——board 的读改写与 3 秒 step 定时器同一条线程，否则两个写者互相覆盖。任务一律「**待处理、未入队**」：建任务不启动任何东西；
 - `focus` 默认 true：切到该工作区 board 并展开面板（`onShowPanel` → `setRightPanel(.tasks)`），状态行说一句「已由 Agent 创建 N 个任务」（L10n `tasks.apiCreated`）。
 
-配套**内置技能 `task-todo`**（App 启动安装到全局 `$DSH_HOME/skills/task-todo/SKILL.md`，见 [skill-installer](skill-installer.md)）规定：**只在用户明确要求时**执行、先 list 再建（避免重复）、一次请求提交全部任务、并写明「不启动任务 / 不建队列 / 不直接改 `.dsh/tasks/*.json`」；App 没运行就报错请用户打开。设计见 `docs/task-todo-skill-design.md`，回归 `tests/tasks-panel/api-tests.swift`（68 项）+ `tests/browser-panel`（把这块路由面一起编译）。
+配套**内置技能 `task-todo`**（App 启动安装到全局 `$DSH_HOME/skills/task-todo/SKILL.md`，见 [skill-installer](skill-installer.md)）规定：**只在用户明确要求时**执行、先 list 再建（避免重复）、一次请求提交全部任务、并写明「不启动任务 / 不建队列 / 不直接改 `.dsh/tasks/*.json`」；App 没运行就报错请用户打开。设计见 `docs/design/panels/task-todo-skill-design.md`，回归 `tests/tasks-panel/api-tests.swift`（68 项）+ `tests/browser-panel`（把这块路由面一起编译）。
 
 ## issue 任务与手动任务对齐（2026-09-27）
 
@@ -45,7 +45,7 @@ manual: false
 
 - **为什么对齐**：issue 侧此前走一段写死的 5 条并要求加载 `issue-resolve` 技能，而那个技能停在旧政策（任务自己 `git push`、「PR 由面板创建」）——同一个面板里两种行为；
 - **自动队列同形**：`TaskQueue.auto(for:baseBranch:switchesBranch:opensPR:)` 与 `auto(forManual:)` 同语义（非 git 目录里不再派生 `fix/issue-N`、不再承诺 PR）；两个入口共用 `dropUnswitchableBranch(ofTask:)`，旧队列带着切不了的分支时启动前先去掉；
-- **`issue-resolve` 退役**：见 [skill-installer](skill-installer.md) 的退役清理与 `docs/issue-runner-design.md` §V2-14；
+- **`issue-resolve` 退役**：见 [skill-installer](skill-installer.md) 的退役清理与 `docs/design/panels/issue-runner-design.md` §V2-14；
 - **回归**：`tests/tasks-panel` 三节 —— 两种来源的要求逐行逐字相同、非 git 目录里的 issue 任务不派生分支且能跑完、旧队列的陈旧分支被去掉（运行器 362 项）。
 
 ## 任务会话的收尾与卡片细节（2026-09-27 批次，PR #59 / #60）
@@ -160,8 +160,8 @@ manual: false
 ## 已知问题 / 待办
 
 - `.gitignore` 需含 `.dsh/tasks/manual.json` 与 `.dsh/tasks/queues.json`（本机文件，不应提交）；
-- 阶段 2 预留：已完成队列归档 / 隐藏、队列模板、issue 任务进共享队列、PR 复用后追加评论、跨机器共享手动任务与队列（见 docs/issue-runner-design.md §V2-13）。
+- 阶段 2 预留：已完成队列归档 / 隐藏、队列模板、issue 任务进共享队列、PR 复用后追加评论、跨机器共享手动任务与队列（见 docs/design/panels/issue-runner-design.md §V2-13）。
 
 ## 历史（v1，v1.8.0+，方案 E）
 
-issue 一行内展开、面板自己 `startTask` 切分支 / 建会话 / 轮询 / 开 PR、Swift 版 `TaskIndex` 写 index + local 两文件、token 曾「文件 + Keychain 双写」、列表是 `NSTableView`。决策过程见 docs/issue-runner-design.md 的前半章（保留作历史记录）。
+issue 一行内展开、面板自己 `startTask` 切分支 / 建会话 / 轮询 / 开 PR、Swift 版 `TaskIndex` 写 index + local 两文件、token 曾「文件 + Keychain 双写」、列表是 `NSTableView`。决策过程见 docs/design/panels/issue-runner-design.md 的前半章（保留作历史记录）。

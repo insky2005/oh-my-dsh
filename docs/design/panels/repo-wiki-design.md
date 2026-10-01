@@ -505,7 +505,7 @@ user-invocable: false
 
 **验证**：全量 `swiftc` 编译零错误（仅既有 WebKit Sendable 警告）；39/39 wiki 单测、终端模拟器 46 项回归全过；`./build-app.sh` 产出 `dist/oh-my-dsh.app`（1.7.0 build 45）。
 
-**v1.7.0 修复：Wiki 面板顶部按钮被遮住（合成问题）** —— 与终端面板同源（见 `docs/terminal-header-fix.md`）：
+**v1.7.0 修复：Wiki 面板顶部按钮被遮住（合成问题）** —— 与终端面板同源（见 `docs/fixes/terminal-header-fix.md`）：
 - 根因：面板根视图 `DynamicFillView` 为 `isOpaque = true` 且无独立 layer，内容区 opaque 视图（工具行/滚动视图）的绘制被合成进根 layer，覆盖了同级 header 的按钮；
 - 修复（结合 Preview/Terminal 两面板既有模式）：
   1. 根视图改为 `WikiRootView`（`isOpaque = false`，自绘灰色背景，镜像 `TerminalRootView`）；
@@ -567,7 +567,7 @@ user-invocable: false
 - 修复：`showGenerating` **不再清空任何内容**，改为在阅读区之上**叠加半透明浮层**（`WikiOverlayView`，随明暗的 0.82 透明度背景，非 opaque，背景绘制失败时自动退化为透明）+ 居中的 `NSTextField`「Generating…」（空态同款已验证渲染）。生成期间：页面与树全程可见，布局永不消失；完成/失败后 `scanAndReload` 清空子视图时浮层自动移除。诊断提醒：请以「关于」面板的 build 号为准（≥58 才含此修复）。
 
 **v1.7.0 修复 12：真正根因——底部状态条的合成溢出（build 58 → 59）**
-- 问题：历次「生成时整个面板内容消失、只剩底部 Generating…」——换提示实现均无效。对照 `docs/terminal-header-fix.md` 定位到真正元凶：**底部状态条 `statusBar` 是 opaque 的 `DynamicFillView` 且无独立 layer**，平时 `isHidden=true` 不绘制；一旦 `setStatus` 把它显示出来，其填充被合成进面板根 layer，**盖掉同级的 header/工具行/树/阅读区**（z 序最后添加、合成顺序最上），观感即「整个 Panel 内容都没了」；
+- 问题：历次「生成时整个面板内容消失、只剩底部 Generating…」——换提示实现均无效。对照 `docs/fixes/terminal-header-fix.md` 定位到真正元凶：**底部状态条 `statusBar` 是 opaque 的 `DynamicFillView` 且无独立 layer**，平时 `isHidden=true` 不绘制；一旦 `setStatus` 把它显示出来，其填充被合成进面板根 layer，**盖掉同级的 header/工具行/树/阅读区**（z 序最后添加、合成顺序最上），观感即「整个 Panel 内容都没了」；
 - 修复：`statusBar.wantsLayer = true` + `layer?.masksToBounds = true`（终端修复同款：给 opaque 视图自身做 layer 隔离）；`showGenerating` 浮层本就非 opaque 且在已隔离的 `contentContainer` 内，不受影响。经验更新：**任何「平时隐藏、生成时显示」的 opaque 无 layer 视图都可能触发同类合成溢出**。
 
 **v1.7.0 修复 13：生成状态按工作区目录关联（build 59 → 60）**

@@ -9,7 +9,7 @@
 // UI 结构遵循 TerminalPanel/WikiPanel 的成熟模式（头部 40pt + 标签栏 33pt
 // + 地址栏 36pt + 内容区钉底）；第二行及内容区均做 layer 隔离
 // （wantsLayer + masksToBounds），避免 opaque 视图合成溢出盖住头部按钮
-// （docs/terminal-header-fix.md 同源问题）。
+// （docs/fixes/terminal-header-fix.md 同源问题）。
 //
 // 背景：CEF 148+ 在 macOS 要求五个 helper app（base/Alerts/GPU/Plugin/
 // Renderer，名字承重）——缺 Helper (Renderer).app 会导致 renderer 静默失败
@@ -328,7 +328,7 @@ final class BrowserOSRView: NSView {
         // 主窗口底部固定为占据：pageView.bottom = devtoolsArea.top
         // （DevTools 占空间，pageView 随 devtoolsArea 高度联动压缩/伸展）。
         // 拖动中 CEF 视图 frame 保持静止、不调 WasResized，靠 pageView 的
-        // masksToBounds 裁剪到当前裁剪区（见 docs/devtools-drag-fix.md）。
+        // masksToBounds 裁剪到当前裁剪区（见 docs/fixes/devtools-drag-fix.md）。
         pageViewBottomToArea = pageView.bottomAnchor.constraint(equalTo: devtoolsArea.topAnchor)
 
         addSubview(pageView)
@@ -357,7 +357,7 @@ final class BrowserOSRView: NSView {
     /// about:blank 等透明页面时可见。
     /// devtoolsContent 也垫不透明背景：拖动中 CEF 视图保持静止、pageView
     /// 裁剪区变化，若 devtoolsContent 无背景，DevTools 区下方会透出主页面
-    /// 内容（串窗口）。见 docs/devtools-drag-fix.md「唯一注意点」。
+    /// 内容（串窗口）。见 docs/fixes/devtools-drag-fix.md「唯一注意点」。
     private func updatePageBackground() {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let bg = PanelSurface.color(dark: dark).cgColor
@@ -1020,7 +1020,7 @@ final class BrowserPanelController: NSObject {
         let header = DynamicFillView()
         header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
-        // layer 隔离（docs/terminal-header-fix.md）：opaque 无独立 layer 的
+        // layer 隔离（docs/fixes/terminal-header-fix.md）：opaque 无独立 layer 的
         // 视图绘制会溢出盖住垫底的内容区（实测 header 移除后内容区即恢复）。
         // 与 toolbar 同款修复：wantsLayer + masksToBounds 收住合成。
         header.wantsLayer = true
@@ -1073,7 +1073,7 @@ final class BrowserPanelController: NSObject {
         toolbar.kind = .panel
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         // layer 隔离：opaque 无 layer 视图的绘制会溢出盖住上方头部按钮
-        // （docs/terminal-header-fix.md 同源问题；wiki 面板工具行同款处理）。
+        // （docs/fixes/terminal-header-fix.md 同源问题；wiki 面板工具行同款处理）。
         toolbar.wantsLayer = true
         toolbar.layer?.masksToBounds = true
         let toolbarStack = NSStackView(views: [backButton, forwardButton, reloadButton, addressField, devToolsButton])
@@ -1087,7 +1087,7 @@ final class BrowserPanelController: NSObject {
         // 见 BrowserOSRView；切页签时整个容器一起隐藏/显示）。
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.wantsLayer = true
-        // 合成隔离（docs/terminal-header-fix.md）：必须 masksToBounds，
+        // 合成隔离（docs/fixes/terminal-header-fix.md）：必须 masksToBounds，
         // 否则 OSR 帧 layer 内容可溢出容器沿合成树盖住上方头部/工具栏。
         contentContainer.layer?.masksToBounds = true
 

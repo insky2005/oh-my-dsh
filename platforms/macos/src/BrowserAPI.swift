@@ -500,7 +500,7 @@ final class BrowserAPIServer {
             if pr < 0 { return nil }
             if pr == 0 { continue }  // 超时继续（整体 5s 上限）
             // 注意：向 C API 传 Swift 数组缓冲区必须用 withUnsafeMutableBytes
-            // （&array 传的是数组结构头，不是元素字节，见 docs/terminal-input-fix.md）。
+            // （&array 传的是数组结构头，不是元素字节，见 docs/fixes/terminal-input-fix.md）。
             let n = chunk.withUnsafeMutableBytes { raw -> Int in
                 read(fd, raw.baseAddress, raw.count)
             }

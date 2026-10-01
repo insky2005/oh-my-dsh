@@ -2,8 +2,8 @@
 
 > 状态：✅ 已实现（2026-08-22：全局 channel 作用域 store 落地于 core/lib/channel-sessions.js；按需求忽略历史数据迁移）
 > 更新：2026-08-22
-> ⚠️ 补充决策（docs/channel-project-switch.md，2026-08-23）：「项目开关」的通道↔项目关联改存**全局** `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`（project = workspace，出现即启用该通道）；项目内 refs 文件不再作为启用来源。
-> 关联：docs/channel-design.md（§4 配置模型）、docs/channel-ui-commands.md（§2.4 决策 E / §3.8）、core/lib/channel-sessions.js、core/lib/channel-store.js、core/lib/channel-runner.js、platforms/macos/src/ChannelPanel.swift、platforms/macos/src/main.swift
+> ⚠️ 补充决策（docs/design/channels/channel-project-switch.md，2026-08-23）：「项目开关」的通道↔项目关联改存**全局** `~/.dsh/oh-my-dsh/channels/<channelId>.workspaces.json`（project = workspace，出现即启用该通道）；项目内 refs 文件不再作为启用来源。
+> 关联：docs/design/channels/channel-design.md（§4 配置模型）、docs/design/channels/channel-ui-commands.md（§2.4 决策 E / §3.8）、core/lib/channel-sessions.js、core/lib/channel-store.js、core/lib/channel-runner.js、platforms/macos/src/ChannelPanel.swift、platforms/macos/src/main.swift
 
 ## 1. 背景与问题
 
@@ -34,7 +34,7 @@
   <channelId>.<workspaceKey>.<sessionId>.messages.json    # 会话消息归档
   <channelId>.<workspaceKey>.system.messages.json     # 无会话消息（/help 等指令，sessionId=null）
 
-<项目根>/.dsh/channels/channels.json                  # （历史）项目 channel 引用/路由配置；"项目开关"启用来源已改为全局 workspaces.json（见 docs/channel-project-switch.md）
+<项目根>/.dsh/channels/channels.json                  # （历史）项目 channel 引用/路由配置；"项目开关"启用来源已改为全局 workspaces.json（见 docs/design/channels/channel-project-switch.md）
 ```
 
 示例（channelId=`weixin-clawbot-E68A6BA2`、项目=`~/c/work.ai/deepseek-harness/helloharness`、会话=`session-97e994b0-…`）：
@@ -75,7 +75,7 @@ createChannelSessions({ channelId, dshHome, defaultProjectRoot })
 - **惰性迁移（主力）**：`createChannelSessions` 构造时，若新位置文件缺失且旧路径（`<projectRoot>/.dsh/channels/<channelId>.sessions.json|.messages.json`）存在 → 读取 → 按 sessionId 分组写入新桶（null → system 桶）→ **新文件全部写成功后**删除旧文件；sessions 并入全局 `<channelId>.sessions.json`（按 conversationId 合并取新）。天然幂等：旧文件已删即跳过；崩溃重跑靠「目标桶内按 (conversationId, dir, text, ts) 去重」防重复。
 - **一次性 CLI**：`ohmy-core.js channel migrate [projectRoot] [--dsh-home <dir>]` 用于未再启动 runner 的旧 checkout 批量迁移。
 - **本仓库自迁移**：✅ 已完成 —— 旧的项目内 messages/sessions 已在全局化时迁入全局 store；本仓库残留的 `.dsh/channels/` 旧文件与 `.gitignore` 过时规则已于 2026-09-29 清理（`git status` 干净）。
-- **~~channels.json 落位~~（已取消）**：项目 refs 自 PR #30 起**不再作为启用来源**（docs/channel-project-switch.md），本仓库也从未有该文件；不再需要 `git mv` 或提交。
+- **~~channels.json 落位~~（已取消）**：项目 refs 自 PR #30 起**不再作为启用来源**（docs/design/channels/channel-project-switch.md），本仓库也从未有该文件；不再需要 `git mv` 或提交。
 
 ## 7. 边界与失败模式
 

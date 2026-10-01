@@ -10,7 +10,7 @@
  * as `session.v3.jsonl` — see sessionLogCandidates) and folds the recorded tool
  * traffic into an audit model.
  *
- * Three record families are merged (see docs/review-panel-design.md):
+ * Three record families are merged (see docs/design/panels/review-panel-design.md):
  *   1. `tool/result` → `data.meta.diffs` — the applied contextual hunks of a
  *      TOP-LEVEL `write`/`edit` call (what the Web GUI's diff card renders);
  *   2. `tool/call` (top-level) / the nested dispatch pair (inside run_code)
@@ -743,7 +743,7 @@ function assistantTexts(events) {
 /**
  * The LAST thing the agent said in a session — its final report.
  *
- * One session per task (docs/issue-runner-design.md §V2-6) means the next task in
+ * One session per task (docs/design/panels/issue-runner-design.md §V2-6) means the next task in
  * a queue starts with no memory of the one before it, so the tasks panel hands it
  * a 交接简报 built from this text plus the branch's commits. The report is NOT
  * truncated: a shortened summary distorts exactly what the next task needs.

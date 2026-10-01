@@ -3,7 +3,7 @@
 /**
  * core/lib/dingtalk.js — DingTalk channel adapter.
  *
- * Second implementation of the ChannelAdapter contract (docs/channel-design.md §3.3),
+ * Second implementation of the ChannelAdapter contract (docs/design/channels/channel-design.md §3.3),
  * mirroring weixin-clawbot.js but push-based (DingTalk Stream delivers messages via
  * callback, not a poll loop).
  *

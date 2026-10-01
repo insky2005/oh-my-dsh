@@ -12,7 +12,7 @@
 //  Two flavours, because call sites differ:
 //    - color(dark:) / color(for:) — explicit per-mode shades for draw(_:) code,
 //      where resolving a dynamic color at draw time proved unreliable in the
-//      layer-backed window (see docs/terminal-header-fix.md);
+//      layer-backed window (see docs/fixes/terminal-header-fix.md);
 //    - dynamic — a dynamic color for stock AppKit views (NSTextView /
 //      NSScrollView / PDFView / …), which re-resolves on appearance changes
 //      exactly like the system color it replaces.

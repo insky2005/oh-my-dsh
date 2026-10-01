@@ -1,8 +1,8 @@
 # 里程碑 M5 · Apple 生态（暂缓，F）
 
-> 状态：⏸️ **暂缓**（决策 2026-08-15，见 `docs/productization.md` §2 F）
+> 状态：⏸️ **暂缓**（决策 2026-08-15，见 `docs/research/productization.md` §2 F）
 > 周期：待定（触发时启动）
-> 来源：`docs/productization.md` —— §2 F、§6、§7.2、§8.2 / §8.5、§14 M5
+> 来源：`docs/research/productization.md` —— §2 F、§6、§7.2、§8.2 / §8.5、§14 M5
 > 更新：2026-08-15
 > 注意：本里程碑**不阻塞 M1–M4**；仅在产品需要时启动。
 
@@ -66,5 +66,5 @@
 
 ## 关联文档
 
-- `docs/productization.md`：§2 F、§6、§7.2、§8、§11.2
+- `docs/research/productization.md`：§2 F、§6、§7.2、§8、§11.2
 - `docs/milestones/M1-productization-foundation.md`（CI / release 钩子预留）

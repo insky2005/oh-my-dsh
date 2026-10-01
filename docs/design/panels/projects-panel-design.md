@@ -2,7 +2,7 @@
 
 > 状态：**已实现**（`feature/projects-panel`）。实现落在 `platforms/macos/src/ProjectsCore.swift`（纯模型）、`ProjectsPanel.swift`（面板 UI）、`DshWebRPC.swift`（`workspaceCreate` + `DshWorkspaceOps`）、`main.swift`（接线 / 重根原语 / 设置窗口「项目」区块 / QA 钩子）；测试 `tests/projects-panel/`（模型 45 项 + 控制器 49 项 = **94 项**）与 `tests/dsh-rpc/`（+14 项，整套 54 项）。
 > 提交：`b59ac97` 模型 → `f541f4d` RPC → `232d38c` 面板+控制器测试 → `6d8c327` main.swift 接线；文档为 `28435f1`…`b581cab`。
-> 关联：`docs/dsh-version-impact.md`（本次新增耦合面：C10 工作区注册与建会话、B10 侧栏行点击桥；沿用 C4/R4 的 workspace.json 兜底）、`docs/skills-manager-design.md` / `docs/review-panel-design.md`（面板体例参照）、`docs/ui-color-scheme.md`（配色令牌）、`.dsh/wiki/tasks.md`（加面板清单）
+> 关联：`docs/process/dsh-version-impact.md`（本次新增耦合面：C10 工作区注册与建会话、B10 侧栏行点击桥；沿用 C4/R4 的 workspace.json 兜底）、`docs/design/panels/skills-manager-design.md` / `docs/design/panels/review-panel-design.md`（面板体例参照）、`docs/design/shell/ui-color-scheme.md`（配色令牌）、`.dsh/wiki/tasks.md`（加面板清单）
 > 实现（规划）：`platforms/macos/src/ProjectsCore.swift`（纯模型）、`ProjectsPanel.swift`（面板）、`DshWebRPC.swift`（新增 `DshWorkspaceOps`）、`main.swift`（接线）；测试 `tests/projects-panel/`、`tests/dsh-rpc/`
 
 ---
@@ -54,7 +54,7 @@
 - **工作区（Workspace）**：一个**目录**。壳层的「工作区」与 dsh 的 Workspace（`workspaceId` + `path`）是同一件事的两种视角：壳层关心路径，dsh 关心注册身份。本面板保证「目录存在」与「dsh 侧已注册」尽量一致（注册失败不阻塞创建，见 §8）。
 - **projects 根目录**：所有工作区的父目录。默认 `<DSH_HOME>/oh-my-dsh/projects`：
   - 正式版 `DSH_HOME=~/.dsh` → `~/.dsh/oh-my-dsh/projects`；
-  - 开发版 `DSH_HOME=~/.dsh-dev`（`applyDevIsolation()` 注入，见 `docs/dsh-version-impact.md` D7）→ `~/.dsh-dev/oh-my-dsh/projects`，与正式版天然隔离；
+  - 开发版 `DSH_HOME=~/.dsh-dev`（`applyDevIsolation()` 注入，见 `docs/process/dsh-version-impact.md` D7）→ `~/.dsh-dev/oh-my-dsh/projects`，与正式版天然隔离；
   - 该目录**在面板每次加载时按需创建**（`reload()` 里后台调 `ProjectsCore.ensureDirectory`）：全新安装首次打开面板即可落一个真实、可写的根，而不是停在「根目录不存在」；创建失败（权限、卷未挂载）不报错，回落为空态提示。纯模型 `listDirectories` 自身仍只读、不写盘（§3.4）。
 - **路径语义**：根目录只接受**绝对路径**（`~` 会展开）；相对路径视为无效配置（设置窗口内联拒绝，面板侧回退默认值并记日志）。
 
@@ -243,7 +243,7 @@ dsh 自己的「新会话」（工作区行悬停出现的 `+`，`aria-label = "
 
 **强调色出现在两处**：卡片左侧 accent 细边（或描边）= 这是**当前工作区**（`ProjectDirectory.current` 归一后相等）；标题行的 dsh 动作按钮（`+ / folder+`）。
 
-**文案随语言切换**：面板所有静态文案与 tooltip 集中在 `updateLabels()`，卡片文案在每次 `render()` 时重建；`AppDelegate.applyLanguage` 通过与其它面板一致的 `refreshTooltips()`（= `updateLabels() + render()`）刷新它们。其余配色一律取自 `PanelSurface`（面板底色）与 `PanelControl`（卡片/按钮两档），**不新增颜色令牌**（见 `docs/ui-color-scheme.md`）。
+**文案随语言切换**：面板所有静态文案与 tooltip 集中在 `updateLabels()`，卡片文案在每次 `render()` 时重建；`AppDelegate.applyLanguage` 通过与其它面板一致的 `refreshTooltips()`（= `updateLabels() + render()`）刷新它们。其余配色一律取自 `PanelSurface`（面板底色）与 `PanelControl`（卡片/按钮两档），**不新增颜色令牌**（见 `docs/design/shell/ui-color-scheme.md`）。
 
 ### 5.3 空态与状态行
 
@@ -506,7 +506,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 - 工作区重命名（目录改名 + 重新注册，需处理旧注册残留）；
 - 创建工作区时的可勾选脚手架（`git init` / `AGENTS.md` / `.dsh/wiki`）；
 - 列出并管理根目录之外的 dsh 工作区（跨根目录视图）；
-- 与 Composer @ 引用（`docs/file-panel-composer-reference.md`）联动：把整个工作区作为会话引用；
+- 与 Composer @ 引用（`docs/design/panels/file-panel-composer-reference.md`）联动：把整个工作区作为会话引用；
 - 工作区级「最近会话」列表（当前只提供「打开最近一条」，不做内嵌会话列表）。
 
 ### E. 配套的既有改动（**已落地**）
@@ -537,7 +537,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 
 ## 14. 升级耦合面登记（与影响清单的对应）
 
-本设计新增/强化的耦合面，需在 `docs/dsh-version-impact.md` 落地时同步登记（本文件只登记对应关系，不改动该文档）：
+本设计新增/强化的耦合面，需在 `docs/process/dsh-version-impact.md` 落地时同步登记（本文件只登记对应关系，不改动该文档）：
 
 | 面 | 条目 | 内容 | 失效表现 | 防御 |
 |---|---|---|---|---|
@@ -578,7 +578,7 @@ private func adoptProjectDirectory(_ path: String) -> Bool {
 
 | 位置 | 需要改什么 |
 |---|---|
-| `docs/dsh-version-impact.md` | §3C 增 **C10a/C10b/C10c**、§3B 增 **B10**；§5 SOP 增两条核对项（内容见 §14）；与既有 C4/R4、R3 互引 |
+| `docs/process/dsh-version-impact.md` | §3C 增 **C10a/C10b/C10c**、§3B 增 **B10**；§5 SOP 增两条核对项（内容见 §14）；与既有 C4/R4、R3 互引 |
 | `README.md` | ① 「「视图」菜单提供**八**面板的显示/隐藏快捷键」→ **九**；② 面板章节列表新增「### 项目面板（`⌥⌘P` / 活动栏首位「项目」图标）」；③ 测试清单补 `tests/projects-panel/run.sh`（README 按 AGENTS.md **在当前分支直接改**，不另开 PR） |
 | `CONTRIBUTING.md` | 测试清单补一行 `tests/projects-panel/run.sh` |
 | `CHANGELOG.md` | `[Unreleased]` 的 `### Added` 增一条（项目面板 + 工作区快捷入口）；发布时按 `scripts/changelog.sh` 复核重排 |

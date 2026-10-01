@@ -8,7 +8,7 @@
  * (no external ws/axios/dingtalk-stream dependency — same principle as the
  * WeChat ClawBot transport, which reimplements the protocol).
  *
- * Docs: docs/channel-dingtalk-stream.md §2/§3/§5.1.
+ * Docs: docs/design/channels/channel-dingtalk-stream.md §2/§3/§5.1.
  *
  *   const { createDingTalkTransport, createDingTalkStreamClient } = require('@oh-my-dsh/core');
  *

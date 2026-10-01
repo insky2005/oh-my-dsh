@@ -16,7 +16,7 @@
 //  The controller only wires those three together, which is why it can be driven
 //  headlessly (tests/projects-panel/).
 //
-//  Design: docs/projects-panel-design.md (§5).
+//  Design: docs/design/panels/projects-panel-design.md (§5).
 //
 
 import AppKit

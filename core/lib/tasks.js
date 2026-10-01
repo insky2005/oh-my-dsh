@@ -4,7 +4,7 @@
  * core/lib/tasks.js — issue-task association index persisted under
  * `<repoRoot>/.dsh/tasks/`.
  *
- * Four files, one job each (docs/issue-runner-design.md §V2-4):
+ * Four files, one job each (docs/design/panels/issue-runner-design.md §V2-4):
  *   index.json   — repo-scoped, COMMITTED: issue → branch → PR → state
  *                  (shared across machines / teammates; the v1 shape, kept).
  *   manual.json  — machine-scoped, GITIGNORED: the user's own tasks.

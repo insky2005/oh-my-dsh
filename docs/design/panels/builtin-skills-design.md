@@ -2,7 +2,7 @@
 
 > 状态：已实现（v1.13.0 开发线，feature/builtin-skills-global）
 > 关联面板：Browser / Repo Wiki / Tasks（IssueRunner）
-> 关联：docs/plans/BROWSER_PLAN-browser-panel.md、docs/repo-wiki-design.md、docs/issue-runner-design.md、docs/productization.md
+> 关联：docs/plans/BROWSER_PLAN-browser-panel.md、docs/design/panels/repo-wiki-design.md、docs/design/panels/issue-runner-design.md、docs/research/productization.md
 
 ## 1. 背景与目标
 
@@ -155,11 +155,11 @@ dsh web 从多级根发现 Skill（`SKILL.md` 带 YAML frontmatter `name`/`descr
 
 第 4 个内置技能 **`task-todo`**（把沟通结论批量写进任务面板，2026-09-27）沿用本设计的全部机制：加一个 `BuiltinSkill` case（`dirName = "task-todo"`、`legacyName = nil`）+ 内嵌 markdown 常量（与仓库 `.dsh/skills/task-todo/SKILL.md` 字节一致，`tests/skills` 的 `allCases` 循环自动覆盖安装/更新/字节断言）+ 启动时安装到 `$DSH_HOME/skills/`。
 
-与三个面板技能不同的是它的**调用方式**：那三个由面板在自己的流程里触发（`user-invocable: false` 表「仅 model 可调用」），`task-todo` 则是**用户在会话里明确要求**时才用，因此保留默认可用户调用。设计见 `docs/task-todo-skill-design.md`。
+与三个面板技能不同的是它的**调用方式**：那三个由面板在自己的流程里触发（`user-invocable: false` 表「仅 model 可调用」），`task-todo` 则是**用户在会话里明确要求**时才用，因此保留默认可用户调用。设计见 `docs/design/panels/task-todo-skill-design.md`。
 
 ## 8. 退役的 Skill（2026-09-27：`issue-resolve`）
 
-`issue-resolve` 随「issue 任务与手动任务对齐」一起退役（设计见 `docs/issue-runner-design.md` §V2-14）：两种任务来源现在共用同一份提示词要求（`TaskPrompts.requirements(...)`），issue 任务的正文/标签直接写进提示词，因此不再需要一个代理去加载的技能 —— 而那个技能还停在旧政策里（让任务自己 `git push`、说「PR 由面板创建」），留着就是**第二个、且是过期的事实来源**。
+`issue-resolve` 随「issue 任务与手动任务对齐」一起退役（设计见 `docs/design/panels/issue-runner-design.md` §V2-14）：两种任务来源现在共用同一份提示词要求（`TaskPrompts.requirements(...)`），issue 任务的正文/标签直接写进提示词，因此不再需要一个代理去加载的技能 —— 而那个技能还停在旧政策里（让任务自己 `git push`、说「PR 由面板创建」），留着就是**第二个、且是过期的事实来源**。
 
 退役机制沿用同一套托管语义：
 

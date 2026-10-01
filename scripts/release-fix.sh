@@ -3,7 +3,7 @@
 # scripts/release-fix.sh — 已发布版本的 bug 修复 + patch 发布辅助脚本。
 #
 # 场景：已发布版本（如 v1.9.0）有 bug，需要在独立维护线上修复并发布 patch
-# 版本（如 v1.9.1），再把修复同步回 main。规范详见 docs/git-workflow.md。
+# 版本（如 v1.9.1），再把修复同步回 main。规范详见 docs/process/git-workflow.md。
 #
 # 用法：
 #   scripts/release-fix.sh <base-tag> <patch-version> [branch]
@@ -75,4 +75,4 @@ echo "    git checkout -b fix/sync-$PATCH_VER main"
 echo "    git cherry-pick \$FIX_COMMIT && git push -u $REMOTE fix/sync-$PATCH_VER"
 echo "    开 PR：fix/sync-$PATCH_VER → main（CI 绿 + review 后合并）"
 echo ""
-echo "规范见 docs/git-workflow.md"
+echo "规范见 docs/process/git-workflow.md"

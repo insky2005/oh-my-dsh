@@ -1,7 +1,7 @@
 # 技能面板（Skills Manager）设计
 
 > 状态：开发线（feature/skills-manager）
-> 关联：`docs/builtin-skills-design.md`（内置技能全局安装）、`docs/dsh-version-impact.md`（D2 磁盘布局耦合面）
+> 关联：`docs/design/panels/builtin-skills-design.md`（内置技能全局安装）、`docs/process/dsh-version-impact.md`（D2 磁盘布局耦合面）
 > 实现：`platforms/macos/src/SkillsCore.swift`（模型）、`SkillSources.swift`（网络/安装）、`SkillsPanel.swift`（UI）
 
 ## 1. 目标

@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Task persistence (.dsh/tasks/)
 
 /// Disk layout under <repoRoot>/.dsh/tasks/ — one file, one job
-/// (docs/issue-runner-design.md §V2-4):
+/// (docs/design/panels/issue-runner-design.md §V2-4):
 ///
 ///   index.json   COMMITTED  github task to branch/PR/state, the v1 shape
 ///   manual.json  local      the user's own tasks

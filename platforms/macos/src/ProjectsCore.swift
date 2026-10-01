@@ -15,7 +15,7 @@
 //  headlessly (tests/projects-panel/run.sh). The panel (ProjectsPanel.swift) and
 //  main.swift own everything else.
 //
-//  Design: docs/projects-panel-design.md (§2/§3).
+//  Design: docs/design/panels/projects-panel-design.md (§2/§3).
 //
 
 import Foundation
@@ -108,7 +108,7 @@ enum ProjectsCore {
     // MARK: - Name rules
 
     /// Why a typed workspace name was rejected. The panel maps each case onto one
-    /// bilingual message (docs/projects-panel-design.md §10).
+    /// bilingual message (docs/design/panels/projects-panel-design.md §10).
     enum NameError: Error, Equatable {
         case empty
         case separator            // "/" or ":" — not a single path segment

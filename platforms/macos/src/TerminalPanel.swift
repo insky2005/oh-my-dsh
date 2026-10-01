@@ -971,7 +971,7 @@ final class TerminalView: NSView, NSTextInputClient {
     private var isSelecting = false
     /// Selection granularity of the current drag: a plain drag selects cells, a
     /// drag that started with a double click extends by whole words, a triple
-    /// click by whole lines (docs/ux-feedback.md #4 follow-up).
+    /// click by whole lines (docs/feedback/ux-feedback.md #4 follow-up).
     private enum DragUnit { case character, word, line }
     private var dragUnit: DragUnit = .character
     /// The word the double click landed on, kept as the fixed end of a word-wise
@@ -1452,7 +1452,7 @@ final class TerminalView: NSView, NSTextInputClient {
         // scrollingDeltaY is the "natural" two-finger swipe DOWN (content moves
         // down = the viewport shows EARLIER lines); the previous version added
         // the delta, which scrolled the opposite way from every other pane
-        // (docs/ux-feedback.md #3). The terminal draws its own viewport, so it
+        // (docs/feedback/ux-feedback.md #3). The terminal draws its own viewport, so it
         // has to apply that sign itself. scrollingDeltaY already accounts for
         // the system "natural scrolling" preference, so no extra flip is needed
         // — if QA ever sees it inverted with natural scrolling OFF, this is the

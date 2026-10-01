@@ -8,7 +8,7 @@
  * workspaces are persisted to $DSH_HOME/storages/workspace.json — the file the
  * shell already reads — so that store is the fallback.
  *
- * ⚠️ That file is NOT an API contract (see docs/dsh-version-impact.md §6.2):
+ * ⚠️ That file is NOT an API contract (see docs/process/dsh-version-impact.md §6.2):
  * dsh owns it as a private, schema-validated domain store
  * (defineDomain({ name: 'workspace', version: 2, global: {…}, tables: { workspaces } }))
  * and may rename fields, move the file or bump the version without notice —

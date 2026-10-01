@@ -2,7 +2,7 @@
 
 > 状态：✅ 已实现（v1 核心 + 面板；见 §12 开发状态）
 > 更新：2026-08-26
-> 关联：docs/channel-design.md（Channel 统一抽象）、docs/channel-dingtalk-plugin.md（对照：官方插件托管方案）、core/lib/channel.js、core/lib/channel-runner.js、platforms/macos/src/ChannelPanel.swift
+> 关联：docs/design/channels/channel-design.md（Channel 统一抽象）、docs/channel-dingtalk-plugin.md（对照：官方插件托管方案）、core/lib/channel.js、core/lib/channel-runner.js、platforms/macos/src/ChannelPanel.swift
 > 依据：钉钉官方 Stream SDK open-dingtalk/dingtalk-stream-sdk-nodejs（npm dingtalk-stream，v2.1.x）源码 + 钉钉开放平台 device-code 应用注册接口
 >
 > 本文档描述**独立于官方 dsh-dingtalk 插件**的实现方案：直接用 dingtalk-stream SDK 在 core/ 内实现钉钉适配器，走与微信（weixin-clawbot）**完全同构**的「core 适配器 + channel-runner 子进程 + channel store」路线。方案已落地实现（见 §12 开发状态）。
@@ -142,7 +142,7 @@ ChannelPanel.swift 项目视图（ChannelStoreReader，与微信完全一致）
 ### 5.5 L10n / 文档 / 构建
 - L10n：更新 channel.card.dingtalkDesc（「待实现」→ Stream 连接器描述）+ 扫码向导文案（中英成对）。
 - 构建：dingtalk-stream 依赖打入 runtime npm（swift-sources.sh 不涉及，仅 npm 打包）。
-- 文档：更新 docs/channel-design.md §7 矩阵钉钉行（Stream 连接、AppKey/AppSecret、dingtalk-stream SDK）；本方案与 channel-dingtalk-plugin.md 并列，注明二选一。
+- 文档：更新 docs/design/channels/channel-design.md §7 矩阵钉钉行（Stream 连接、AppKey/AppSecret、dingtalk-stream SDK）；本方案与 channel-dingtalk-plugin.md 并列，注明二选一。
 
 ## 6. 数据流（入站 → 分发 → 会话 → 回复）
 

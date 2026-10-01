@@ -2,7 +2,7 @@ import Foundation
 
 // Headless tests for the Files panel tree context menu (FilePanelTreeMenu.swift):
 // order, which entries appear, and which are enabled — the rules the panel turns
-// into NSMenuItems (docs/ux-feedback.md #1). Usage: tests/file-panel/run.sh
+// into NSMenuItems (docs/feedback/ux-feedback.md #1). Usage: tests/file-panel/run.sh
 
 func test(_ name: String, _ cond: Bool) {
     print((cond ? "ok" : "FAIL") + " - " + name)

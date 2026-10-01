@@ -2,7 +2,7 @@
 
 > 状态：实现中（v1.1x 开发线，feature/task-todo-skill）
 > 关联面板：任务（Tasks / IssueRunner）
-> 关联：docs/builtin-skills-design.md、docs/issue-runner-design.md、docs/multi-agent-host-design.md
+> 关联：docs/design/panels/builtin-skills-design.md、docs/design/panels/issue-runner-design.md、docs/research/multi-agent-host-design.md
 > 基线：自动任务面板（TasksCore / TasksStore / TasksRunner / TasksWorkspaces）所在的
 > feature/tasks-manual-queue 线——main 上还没有手动任务与任务面板的模型层。
 
@@ -143,7 +143,7 @@ Agent 的 cwd 是**会话工作区**，但可能落在子目录（`pwd` ≠ work
    —— 2026-10-01 扩展：新增 `POST /api/tasks/queue/deliver`，对**已完成**队列发起交付
    （按 Git 工作流开 PR / 合并 / 推送）；技能**仅当用户明确要求交付**且队列已 `.done` 时调用。
    另：任务端点的规范路径为 `/api/tasks/task/{list,create}`，旧的 `/api/tasks/{list,create}` 保留为 alias。
-   见 `docs/tasks-queue-session-loop-design.md`。技能被要求落成任务时**默认**建
+   见 `docs/design/panels/tasks-queue-session-loop-design.md`。技能被要求落成任务时**默认**建
    「等待态队列（`.draft`）+ 批量入队」，只有用户明确说「只建任务 / 先别入队」才只建裸任务。
 4. **默认 focus**：true（用户刚要求的东西要看得见）。
 5. **批量**：一次请求多条，上限 50。

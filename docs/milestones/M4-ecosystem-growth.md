@@ -2,7 +2,7 @@
 
 > 状态：📋 待启动（依赖 M1–M3 产品稳定）
 > 周期：持续
-> 来源：`docs/productization.md` —— §2 P4、§3（功能路线图 backlog）、§7.2 / §7.3、§10.3 / §10.4、§14 M4
+> 来源：`docs/research/productization.md` —— §2 P4、§3（功能路线图 backlog）、§7.2 / §7.3、§10.3 / §10.4、§14 M4
 > 更新：2026-08-15
 
 ## 目标
@@ -66,5 +66,5 @@
 
 ## 关联文档
 
-- `docs/productization.md`：§2 P4、§3、§7、§10、§12
+- `docs/research/productization.md`：§2 P4、§3、§7、§10、§12
 - `docs/milestones/M1-productization-foundation.md`（CI / release 基础）

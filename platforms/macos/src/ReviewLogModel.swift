@@ -8,7 +8,7 @@ import Foundation
 // bundled Node runtime does). This file only decodes the JSON the core CLI
 // emits and folds it for display — no AppKit, so it is unit-testable headless.
 //
-// Contract (docs/review-panel-design.md):
+// Contract (docs/design/panels/review-panel-design.md):
 //   core/bin/ohmy-core.js review sessions --workspace <dir>
 //   core/bin/ohmy-core.js review audit <sessionId> --workspace <dir>
 //

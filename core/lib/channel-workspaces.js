@@ -3,7 +3,7 @@
 /**
  * core/lib/channel-workspaces.js — workspace code assignment + #tag routing.
  *
- * Docs: docs/channel-ui-commands.md §3.9. Platform-independent Node module.
+ * Docs: docs/design/channels/channel-ui-commands.md §3.9. Platform-independent Node module.
  *
  * Two layers:
  *   1. assignCodes(workspaces) — sort by path, assign w1/w2… codes (case-insensitive).

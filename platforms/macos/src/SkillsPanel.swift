@@ -1026,7 +1026,7 @@ final class SkillsPanelController: NSObject, NSSearchFieldDelegate {
 
     /// Tab order in the installed toolbar: All / Shared / Built-in / User /
     /// Project (shared first, since that is the level external tools install
-    /// into — see docs/skills-manager-design.md).
+    /// into — see docs/design/panels/skills-manager-design.md).
     private static var levelEntries: [(String, SkillLevel?)] {
         [(L10n.tr("skills.filter.all"), nil),
          (L10n.tr("skills.badge.shared"), .shared),

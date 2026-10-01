@@ -22,7 +22,7 @@ enum GitEnterResult: Equatable {
 ///
 /// v1 ran checkout and pull with their exit codes IGNORED, which let a task
 /// start from the previous task's branch or from a stale commit — the exact
-/// problem docs/issue-runner-design.md §V2-5 fixes. Here every step is checked
+/// problem docs/design/panels/issue-runner-design.md §V2-5 fixes. Here every step is checked
 /// and every failure is reported.
 struct TaskGit {
     /// git with these arguments in the repo root; nil when the command failed or

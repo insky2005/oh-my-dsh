@@ -4,7 +4,7 @@ import Foundation
 //
 // The Files panel's project button used to have exactly one behaviour: open the
 // active project directory inside the panel. Developers usually want it in their
-// editor / IDE / terminal instead (issue #2 in docs/ux-feedback.md), so the
+// editor / IDE / terminal instead (issue #2 in docs/feedback/ux-feedback.md), so the
 // button now offers a menu and remembers the chosen app.
 //
 // This file holds ONLY the catalog and the selection rules — no AppKit — so the
