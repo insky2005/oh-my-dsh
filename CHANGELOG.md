@@ -72,6 +72,17 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Changed
 
+- **内置 dsh 升级到 `@deepseek-ai/dsh@0.1.7-rc.2`（2026-10）**：0.1.5-rc.3 → 0.1.7-rc.2。随附闭包锁
+  `platforms/macos/runtime-locks/dsh-0.1.7-rc.2/`（`npm ci` + 构建期启动冒烟通过；273 个
+  `@deepseek-ai/dsh-*` 全为该版本，闭包自洽）。**一处壳层适配**：0.1.7 删除了 `subagents/list` 端点，并把
+  `session/follow` 等 Remote 流改由一条 WebSocket 承载，只 hook `window.fetch` 的
+  `sessionTrackerScript` 会静默失效（切会话后终端/预览/wiki/tasks 的项目目录不跟随）——现同时 hook
+  `WebSocket.prototype.send`（仅观察 `{type:"open"}` 帧、从 `SessionAddress` 取会话身份）并给 fetch 白名单
+  补 `session/follow|page|projections`；新增 `tests/session-tracker/`（12 项）钉住两代传输。
+  会话日志世代 v3 → v4（`session.v4.jsonl`）由 `review-log` 的「最大世代优先」天然覆盖；工作区存储仍 v2、
+  技能四根/rank/frontmatter 键未变。npm `latest` 已是 `0.2.0-rc.2`，站内升级助手按 stepwise 会提示
+  `0.2.0-rc.1`（预期）。完整审计：`docs/plans/dsh-017rc2-compat-audit.md`。
+
 - **队列状态标签配色（2026-10-01）**：进行中 = 蓝、暂停 = 橙、完成 = 绿、失败 / 错误 = 红、**关闭 = 灰**（此前关闭是橙，和暂停/待启动混在一起）。待启动与「等待中」仍是橙（可行动的语气）。
 
 - **队列改为「可追加的活泳道」+ 手动发布（2026-10-01）**：把队列从「一次性任务批」调整为可迭代的

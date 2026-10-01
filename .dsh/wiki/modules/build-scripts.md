@@ -18,7 +18,7 @@ manual: false
 
 - `resolve_node_version`：`DSH_NODE_VERSION` 未设时查镜像 `index.json` 用 python3 选最新 LTS；网络不可用则从 `.cache/node` 缓存 tarball 推导；
 - `download_node`：下载 darwin-arm64 tarball（镜像失败换官方），用 `SHASUMS256.txt` + `shasum -a 256 -c` 校验；
-- `install_dsh`：`DSH_PACKAGE_SPEC`（默认 `@deepseek-ai/dsh@0.1.5-rc.3`，壳层与该版本同步适配）经 `locks_dir_for_spec()` 映射到 `runtime-locks/dsh-<版本>/`；**有 lock 时 `cp package.json + package-lock.json` 到目标目录后用 `npm ci` 复现依赖闭包**（老路是 `npm init -y` + `npm install <spec>`——只钉 dsh 版本会被 caret 范围漂移坑：hmr 1.0.19 会让 0.1.2 起不来，见 `docs/dsh-version-impact.md` E7 / R8），**无 lock 的 spec 走老路并大声警告**（caret 范围可能拉到起不来的插件）；两条路都是主 registry 失败自动重试官方源；
+- `install_dsh`：`DSH_PACKAGE_SPEC`（默认 `@deepseek-ai/dsh@0.1.7-rc.2`，壳层与该版本同步适配）经 `locks_dir_for_spec()` 映射到 `runtime-locks/dsh-<版本>/`；**有 lock 时 `cp package.json + package-lock.json` 到目标目录后用 `npm ci` 复现依赖闭包**（老路是 `npm init -y` + `npm install <spec>`——只钉 dsh 版本会被 caret 范围漂移坑：hmr 1.0.19 会让 0.1.2 起不来，见 `docs/dsh-version-impact.md` E7 / R8），**无 lock 的 spec 走老路并大声警告**（caret 范围可能拉到起不来的插件）；两条路都是主 registry 失败自动重试官方源；
 - `build_runtime`：`(Node版本|spec|arch|lock指纹)` 写入 `.runtime-info`，相同组合直接复用 `.cache/runtime/<arch>`（**lock 指纹进缓存键，改锁即重建**，指纹 = `package-lock.json` 的 sha256 前 12 位，无 lock 记 `none`）；
 - **启动冒烟 `smoke_runtime()`**：装完用刚装好的树起一次 `dsh web --no-open --port <40200+>`（独立 `.build/smoke-home`），**40 s 内必须打出 `dsh web: http` 且进程存活**，否则打印日志并**构建失败**（「构建成功」≠「产物能用」）；跨架构 stage（arm64 主机上编 x86_64）无本机 node、闭包与架构无关故自动跳过；`DSH_SKIP_RUNTIME_SMOKE=1` 可临时跳过；
 - **`--prefetch`**：只建 runtime 到 `.cache/runtime`，不产出 App（供离线全量构建）；
@@ -26,7 +26,7 @@ manual: false
 
 ## platforms/macos/runtime-locks/（运行时依赖闭包锁）
 
-- 每个受支持的 dsh spec 一份 `<spec>/{package.json,package-lock.json}`，目录名由 `locks_dir_for_spec()` 从 spec 推出（剥掉 `@scope/`、`@` 换 `-`：`@deepseek-ai/dsh@0.1.5-rc.3` → `dsh-0.1.5-rc.3/`）；0.1.5-rc.3 那份从**真能启动**的生产运行树导出（584 个包、`lockfileVersion: 3`），0.1.2-rc.1 那份 583 包保留供快照回退；
+- 每个受支持的 dsh spec 一份 `<spec>/{package.json,package-lock.json}`，目录名由 `locks_dir_for_spec()` 从 spec 推出（剥掉 `@scope/`、`@` 换 `-`：`@deepseek-ai/dsh@0.1.7-rc.2` → `dsh-0.1.7-rc.2/`）；0.1.7-rc.2 那份 611 个包（`lockfileVersion: 3`、273 个 `@deepseek-ai/dsh-*` 全自洽），0.1.5-rc.3 那份 584 包、0.1.2-rc.1 那份 583 包保留供快照回退；
 - **随 App 分发**：构建第 ④ 步把整个目录 `ditto` 到 `Contents/Resources/runtime-locks/`——会话快照回退需要补装某个 dsh 版本时，`DSHUpdater.installVersion`（`main.swift`）按 `committedRuntimeLockPath(dshVersion:)` 找到该版本的 `package-lock.json` 并**改用 `npm ci`**（无 lock 才退回 `npm install @deepseek-ai/dsh@<v>`），同时作为「这棵树闭包是否正确」的比对基准（见 [session-snapshot](session-snapshot.md) 的 `--expected-lock` 守卫）；
 - **加新 dsh 版本 = 加一个 spec 目录**：直接从能启动的树导出 lock 提交，否则该 spec 的构建会打 `WARNING: no committed lock for <spec>` 并退回不可复现的 `npm install`。
 
@@ -47,7 +47,7 @@ manual: false
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `DSH_NODE_VERSION` | 自动检测最新 LTS | 指定 Node 版本（如 v22.23.2） |
-| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.5-rc.3` | 内置 dsh 的包说明，同时决定用哪份 `runtime-locks/<spec>/`（可覆盖为 `@latest` 等；无对应 lock 则退回 `npm install`） |
+| `DSH_PACKAGE_SPEC` | `@deepseek-ai/dsh@0.1.7-rc.2` | 内置 dsh 的包说明，同时决定用哪份 `runtime-locks/<spec>/`（可覆盖为 `@latest` 等；无对应 lock 则退回 `npm install`） |
 | `DSH_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | Node 下载镜像 |
 | `DSH_NPM_REGISTRY` | `https://registry.npmmirror.com` | npm registry（构建期装 dsh） |
 | `DSH_SKIP_RUNTIME_SMOKE` | `0` | =1 跳过 runtime 装完后的启动冒烟（仅离线调试用；跳过即失去「产物能起」这一验收） |

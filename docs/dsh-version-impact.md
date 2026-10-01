@@ -41,10 +41,10 @@
 
 | # | 依赖的 dsh 契约 | 版本变化/风险 | 断裂表现 | 代码位置 | 验证方式 |
 |---|---|---|---|---|---|
-| B1 | 客户端走 `window.fetch` + `POST /api/*` + `{type:"client-request", method, payload}` 信封 | 若改 WebSocket/其他传输则拦不到 | 会话跟踪失效、预览不拦截文件打开 | `sessionTrackerScript` / `previewInterceptorScript` | 注入 `DSH_PREVIEW_DEBUG=1` 看日志命中 |
-| B2 | 方法名集合：`session.history/prompt/rename/selectModel`、`subagent.list`；0.1.2 变 `session/history`…`subagents/list` | 0.1.2 点号→斜杠 | web 切会话不再通知壳层 → 项目目录不跟随 | 同上（已同时认两套名字） | 手工切会话，看 `app.log: project directory followed session` |
+| B1 | 客户端一元 RPC 走 `window.fetch` + `POST /api/*` + `{type:"client-request", method, payload}` 信封；**0.1.7-rc.2 起所有 Typert Remote 流（含 `session/follow`）改由一条 WebSocket 承载**（帧 `{type:"open",streamId,endpoint,payload}`） | 传输换代 | 只 hook `window.fetch` 会漏掉会话打开（跟踪失效）；预览拦截仍有 `session/openWorkspacePath` fetch 层 | `sessionTrackerScript`（已同时 hook `window.fetch` 与 `WebSocket.prototype.send`）/ `previewInterceptorScript` | 注入 `DSH_PREVIEW_DEBUG=1` 看日志命中；切会话看 `app.log: project directory followed session` |
+| B2 | 方法名集合：`session.history/prompt/rename/selectModel`、`subagent.list`；0.1.2 变斜杠；**0.1.7 会话打开改 `session/follow`（WS 流）** | 0.1.2 点号→斜杠；0.1.7 端点删除 + 传输换代 | web 切会话不再通知壳层 → 项目目录不跟随 | 同上（同时认两套名字 + `session/follow`/`page`/`projections`） | 手工切会话，看 `app.log: project directory followed session` |
 | B3 | sessionId 位置：旧 `payload.sessionId/parentSessionId`；0.1.2 `payload.args.*` / `args.request.sessionId` | 0.1.2 移位 | 同上 | 同上（多路取值） | 同上 |
-| B4 | 「每次切会话必然触发 `subagents/list`（带 parentSessionId）」这一时序特性 | 客户端若改为幂等/懒加载 | 重复点开同一会话不通知 | `sessionTrackerScript` 设计依赖 | 反复点同一会话行 |
+| B4 | 「每次切会话必然触发 `subagents/list`（带 parentSessionId）」这一时序特性 | **0.1.7-rc.2 删除该端点**，把会话打开改为 WS 上的 `session/follow`（身份在 `request.address`） | 切会话不再通知壳层 → 项目目录不跟随（静默失效） | `sessionTrackerScript`（改为 hook `WebSocket.prototype.send`，从 `SessionAddress` 取 id）；见 `docs/plans/dsh-017rc2-compat-audit.md` | 反复点会话行，看 `app.log: project directory followed session` |
 | B5 | 侧栏会话行 DOM：`[role="treeitem"]` 可点行 + 标题文本 | DOM 改版 | 面板点会话行无法定位 web | `sessionOpenerScript`（含 8 次重试） | 面板点会话行 → web 侧栏跳转 |
 | B6 | 标题来源：`session/list` → `items[].projections.values.title`（dsh web 按首条消息自动命名） | 字段路径变化 | 面板/指令显示的会话名为空 | `sessionOpenerScript` / `sessionDriver` / ChannelStoreReader | `/ses` 回复里的标题 |
 | B7 | 文件打开：≤0.1.4 走 fetch 一元 RPC（旧 `/api/host.openPath`；0.1.2 起 `session/openWorkspacePath`，路径在 `payload.args.request.path`）；**0.1.5 起 dsh 自带文件面板，`openFile` 改成页面内 `ctx.sidebarRight.openResource`，不再发 RPC** | 0.1.2 迁移；**0.1.5 换面** | 预览面板不再拦截文件打开 → 弹系统默认应用；**0.1.5 下 fetch 层彻底拦不到 → 改开 dsh 自带面板、原生面板收不到路径** | `previewInterceptorScript`（fetch 双匹配 + **点击捕获**两层：内联链接 / 产出文件行 / 工具行 `fileLink` / 交付文件卡片） | 消息流里点文件 → 是否在文件面板打开（含**工作区相对路径**与 `~` 路径、以及工具调用行里的链接） |
@@ -84,7 +84,7 @@
 | D4 | `oh-my-dsh/shell/config.json` | **我们** | 壳层设置（语言/主题/面板宽度/registry…） | 面板宽度、语言回默认 | core `settings.js` + `ShellConfig.swift` |
 | D5 | `oh-my-dsh/browser-api.port` | **我们** | 浏览器面板 REST 端口文件的约定位置，供 web-dev-tools 技能发现 | Agent 技能找不到浏览器面板 API | main.swift 启动段 + `SkillInstaller` 文案 |
 | D6 | `sessions/<workspace-slug>/<session-id>/`：**会话日志文件名是「世代命名」**（世代 0 = `session.jsonl`，之后 `session.v<N>.jsonl`；压缩再加 `.zstd`） | dsh | **读**（审查面板的审计数据源，见 D8） | 新会话列不出来（空面板）、迁移过的会话读到**冻结归档**而停旧 | `core/lib/review-log.js` `sessionLogCandidates()` |
-| D8 | `sessions/` 里的当前世代：0.1.2 写 `session.jsonl`，**0.1.5 写 `session.v3.jsonl`** | dsh | **读**：按规范名枚举 + **世代最大者优先**（同代压缩优先） | `review: listed 0/N sessions` / `audit FAILED`（不报错、只是空） | `core/lib/review-log.js` `parseSessionLogName` / `sessionLogCandidates`；`core/tests/review-log.test.js` |
+| D8 | `sessions/` 里的当前世代：0.1.2 写 `session.jsonl`，0.1.5 写 `session.v3.jsonl`，**0.1.7-rc.2 写 `session.v4.jsonl`**（`SESSION_FORMAT_VERSION=4`） | dsh | **读**：按规范名枚举 + **世代最大者优先**（同代压缩优先）——**再提世代无需改代码** | `review: listed 0/N sessions` / `audit FAILED`（不报错、只是空） | `core/lib/review-log.js` `parseSessionLogName` / `sessionLogCandidates`；`core/tests/review-log.test.js` |
 | D7 | dev 隔离：`~/.dsh-dev`（壳层数据在 `~/.dsh-dev/oh-my-dsh/`） | 我们 | 开发版独立 home，避免污染正式版；browser 不再用 `browser-dev` 后缀，与正式版同为 `<home>/oh-my-dsh/browser`（`ShellPaths`） | dev 读到正式版数据 | main.swift `applyDevIsolation()` + `ShellPaths.migrateLegacyLayout` |
 | D9 | `credentials`、`profiles` | dsh | 目前**不直接读**（仅 dsh 自己用） | — | — |
 
@@ -218,6 +218,36 @@
   结论：**换 0.1.5 需要一处壳层适配，不能只改版本号**；再换别的 0.1.5 RC / 0.1.x 时，除了重新生成锁，
   还必须复跑本文 §5 的 B 面核对项，且**必须真的点一次文件链接（含相对路径）**，不能只看端点。
 
+### 4.6 实例复盘：0.1.5-rc.3 → 0.1.7-rc.2（2026-10，审计见 `docs/plans/dsh-017rc2-compat-audit.md`）
+
+**上游变了什么**（静态比对 0.1.5-rc.3 vs 0.1.7-rc.2）：RPC 端点 **84 → 135**（删 10 / 增 61）；会话格式
+**v3 → v4**；**所有 Typert Remote 流改由一条 WebSocket 承载**（`dsh-api-gateway`）；工作区存储仍 v2；
+技能四根/rank/frontmatter 键未变；闭包自洽（273 个 `@deepseek-ai/dsh-*` 全 `0.1.7-rc.2`）。
+
+**两处必须适配 / 核对的行为变化**：
+
+1. **会话切换跟踪（B1–B4，确定断裂）**：0.1.7 删除了 `subagents/list`（旧实现里"每次切会话必然触发"的
+   非幂等信号），并把会话打开改为 WS 流 `session/follow`（`payload.args.request.address` 是
+   `SessionAddress`）。只 hook `window.fetch` 的 `sessionTrackerScript` 因此**静默失效**（切会话不再
+   通知壳层 → 项目目录不跟随）。修法：加 `WebSocket.prototype.send` 观察层（仅解析 `{type:"open"}` 帧、
+   不改帧、不换构造函数），并给 fetch 白名单补 `session/follow|page|projections` 与 `address` 提取。
+   回归：`tests/session-tracker/run.sh`（12 项）。
+2. **会话格式 v4（D6/D8，读取侧无需改）**：新会话写 `session.v4.jsonl[.zstd]`；`review-log` 的
+   「按规范名枚举 + 最大世代优先」天然覆盖。**但 D 面仍须实测审出一条真实改动**（见 R7/R7b 的教训）。
+3. **文件打开的点击面（B7）**：`[data-produced-files-row]` 被移除，产出文件改为内联 `fileMention`（带
+   `title`）；`fileLink` 工具行与 `[data-presented-files-row]` 交付卡片仍在，`openFile` 仍走页面内
+   `sidebarRight.openResource`。**另有一处必须放行**：0.1.7 在交付卡片内新增「用系统应用打开 / 在 Finder
+   中显示」的 split 控件（`[data-open-target]`，主按钮 `data-open-path-open` + chevron）；壳层原来的 presented
+   分支会把卡片内任何 button 都吞掉，从而劫持该控件。已加 `closest('[data-open-target]')` 放行（`tests/preview-interceptor`
+   第 16 项钉住，并在 dev 版真实 DOM 上注入脚本验证：主按钮不拦截、卡片遮罩仍打开原生面板）。
+   **改动审阅卡**（`[data-changed-files]`，0.1.7 新增）：其 header/文件行点击会打开 dsh 侧边栏 diff 页签，现已改为路由到原生预览面板（读 `aria-describedby` 指向的隐藏 span 里的绝对路径；展开/收起 toggle
+   放行给 dsh），`tests/preview-interceptor` 第 17/18 项钉住并在真实页面 DOM 上注入验证。注意该卡**依赖主机
+   内存里的 `changes.summary`**（`/api/changes.summary`）：会话重开后 summary 服务端已不可用（实测 404），
+   卡片自然消失——这是 dsh 行为，壳层的持久 diff 视图是「审查」面板（读 v4 日志）。
+
+**产品注意**：npm `dist-tags.latest = 0.2.0-rc.2`，故站内升级助手按 stepwise 会提示下一档 `0.2.0-rc.1`
+（预期行为，见 `nextStepTarget`）。
+
 ## 5. 每次 dsh 升级的执行清单（SOP）
 
 ### 升级前
@@ -227,11 +257,11 @@
 
 ### 升级后（逐面验证，失败即按 §3 定位）
 - [ ] A 启动：App 起得来、日志有 `using node=… port=<n>` + `dsh web is up on …/?token=…`、WebView 首屏正常（非 401）；**不应出现 `reusing existing dsh web`**（复用已删除），也不应出现 `advertised no launch token` 告警。
-- [ ] B 注入：切会话 → `ProjectDirectory` 跟随（终端/预览/wiki/tasks 目录变）；面板点会话行 → web 跳转；点文件链接 → 文件面板打开（**绝对路径与工作区相对路径各点一次**，并点一次 `present` 交付卡片；0.1.5 起该链接由点击捕获层负责，fetch 层拦不到，别只看端点/DOM 探针）；**右键文件夹「添加到对话」→ 输入框出现引用 chip**（B9；无头复现见下）。
+- [ ] B 注入：**切会话 → `ProjectDirectory` 跟随**（终端/预览/wiki/tasks 目录变）——0.1.7 起会话流走 WebSocket，必须确认 `sessionTrackerScript` 的 WS 观察层真的抓到（`app.log: project directory followed session`；无头回归 `tests/session-tracker/run.sh`）；面板点会话行 → web 跳转；点文件链接 → 文件面板打开（**绝对路径与工作区相对路径各点一次**，并点一次 `present` 交付卡片；0.1.5 起该链接由点击捕获层负责，fetch 层拦不到，别只看端点/DOM 探针；0.1.7 移除了 `[data-produced-files-row]`，产出文件改内联 `fileMention`）；**右键文件夹「添加到对话」→ 输入框出现引用 chip**（B9；无头复现见下）。
 - [ ] C 频道：微信 `/help` `/ping` `/status` `/wks` `/ses` `/new …` + **发一句普通消息**看是否回推答案（覆盖 C5–C7）。
 - [ ] C 工作区：`/wks` 能列出**面板已启用**的 workspace（覆盖 C4）。
 - [ ] C 项目面板：在「项目」面板新建一个工作区 → **不做任何刷新/重连**，dsh web 侧边栏一两秒内自己出现该工作区（覆盖 **C10a**）；点「新会话」→ web 切到该工作区的新会话、**且不重连、反复点不堆空会话**（覆盖 **C10b / B10b**）；再点卡片名称「在 dsh 中打开」→ 复用刚建的那条会话（覆盖 **C10c / B10**）。
-- [ ] D 会话日志：新建一个会话，看 `$DSH_HOME/sessions/<slug>/<id>/` 里**活日志的文件名**（世代名）是否仍是壳层认识的那一种；再看审查面板能否**列出**它、能否审计出一条真实会话的改动（R7；命令见 §6.4）。老会话被迁移后会同时存在冻结归档与活日志，面板必须读活的那份。**只看到会话列表不算过**：审计结果里必须有 `mutations > 0`、至少一个 `path` 与真实 `hunks`；空审计多半是嵌套派发事件名换代（R7b）。
+- [ ] D 会话日志：新建一个会话，看 `$DSH_HOME/sessions/<slug>/<id>/` 里**活日志的文件名**（世代名；0.1.7 = `session.v4.jsonl[.zstd]`）是否仍是壳层认识的那一种；再看审查面板能否**列出**它、能否审计出一条真实会话的改动（R7；命令见 §6.4）。老会话被迁移后会同时存在冻结归档与活日志，面板必须读活的那份。**只看到会话列表不算过**：审计结果里必须有 `mutations > 0`、至少一个 `path` 与真实 `hunks`；空审计多半是嵌套派发事件名换代（R7b）。
 - [ ] D 布局：`storages/workspace.json` 仍在、`unit.version` 仍为 **2**、工作区数量与面板一致（R4；命令见 §6.2）——变了就要同时改 `core/lib/workspace-store.js` 与 `platforms/macos/src/DshWebRPC.swift` 的读取器并补用例。
 - [ ] E 升级链路本身：`ohmy-core upgrade` 能判定「下一步」；升级后服务重启、版本事实刷新。
 - [ ] 其它面板回归：wiki 生成、issue-runner 跑一条、浏览器面板、终端、文件预览。
@@ -272,7 +302,7 @@
 
 | 脚本 | 依赖的 dsh web 细节 | 失效后的症状 | 现状 |
 |---|---|---|---|
-| `sessionTrackerScript`（B1–B4） | ① 一元 RPC 走 `window.fetch`；② 方法名白名单 `session.history/prompt/rename/selectModel` + `subagent(s).list`（点号与斜杠两套都认）；③ sessionId 在 `payload.args.*` 或 `payload.*`；④ **每次切会话必然发一次 `subagents/list`（带 parentSessionId）**这一非幂等时序 | web 里切会话 → 面板/终端/预览/wiki/tasks 的项目目录**不跟随** | ✅ 0.1.2 实测可用 |
+| `sessionTrackerScript`（B1–B4） | ① 一元 RPC 走 `window.fetch`（**0.1.7 起会话流改走 WebSocket**）；② 方法名白名单（点号/斜杠两套 + `session/follow\|page\|projections`）；③ sessionId 在 `payload.args.*` / `payload.*` / **`request.address.{sessionId,parentSessionId}`**；④ 旧版靠非幂等的 `subagent(s).list`，**0.1.7 靠 WS `session/follow` 打开帧** | web 里切会话 → 面板/终端/预览/wiki/tasks 的项目目录**不跟随** | ✅ 0.1.2 实测可用；**0.1.7-rc.2 删除 `subagents/list` + 流改 WS → 已加 WebSocket 观察层（见 §4.6）** |
 | `sessionOpenerScript`（B5/B6） | ① 会话列表 RPC 的**请求形状**（斜杠 vs 点号、是否 `args` 包裹）；② `projections.values.title`；③ 侧栏 DOM：`[role="treeitem"]` + `className` 含 `sessionRow` + 行文本等于标题 + `aria-expanded` 折叠组 | 面板点会话行 → 不跳转（`[dsh-opener] no-session / row-not-found`） | ⚠️ **0.1.2 下原本就是坏的**（见下），已于 2026-09-10 修 |
 | `previewInterceptorScript`（B7） | ① ≤0.1.4：文件打开走 fetch 的一元 RPC（`host.openPath` / `session/openWorkspacePath`），路径在 `payload.args.request.path` 等位置，能用 **假 `server-response`** 吞掉（客户端 promise 正常 resolve）；② ≥0.1.5：dsh 自带面板、`openFile` 页面内 `sidebarRight.openResource` **不发 RPC**，改为**捕获点击**——匹配三类：`<code>` 内按钮 / `button[class*=fileMention]`（内联链接，路径在 `title`）、`[data-produced-files-row] button[title]`（产出文件行，路径在 `title`）、`button[class*=fileLink]`（`read`/`write`/`edit` 工具行，**无 `title`，路径在按钮文本**，可相对或 `~`）、`[data-presented-files-row]` 交付文件卡片（整卡遮罩按钮的 `title` 是绝对路径；无 `title` 的「打开」按钮从卡内带 `title` 的按钮取；卡片 chevron `aria-haspopup="menu"` 明确放行）；把路径发给原生面板（相对→项目目录、`~`→home）并吞掉事件 | 点消息里的文件 → 不由面板打开：≤0.1.4 弹系统默认应用；≥0.1.5 改开 dsh 自带面板、原生面板收不到 | ⚠️ **0.1.5-rc.3 曾静默失效**（fetch 层拦不到；2026-09-28 补点击层 + 相对路径解析）；≤0.1.4 ✅ |
 | `composerReferenceScript`（B9） | ⚠️ 实测踩过：脚本正文里**不能出现单反斜杠转义**（Swift 字符串字面量会先吃掉它），必须保持「零转义」并靠 `tests/file-panel/run.sh` 的 lint 钉住 —— 详见 `docs/file-panel-composer-reference.md` §4.5。依赖：① 输入框 contenteditable 的槽位标记 `[data-composer-input]`；② Lexical 把实例挂在根元素上（`el.__lexicalEditor`）；③ 节点类可从 `editor._nodes[type].klass` 取（chip 类**模块私有**，只能从这里拿）；④ 更新回调里能读到 `editor._pendingEditorState._nodeMap["root"]` | 右键「添加到对话」不插入；若 chip **类型名对不上**则整个输入框功能不受影响（我们只在自己那条路径上失败并报原因） | ✅ 0.1.2-rc.1 实测可用（WKWebView 内插入 `reference-chip`，状态 JSON 含 `ref`/label，装饰器渲染出 chip；见 `docs/file-panel-composer-reference.md`） |
@@ -471,6 +501,7 @@ dsh 的 `package.json` 用 caret 声明这些插件（`^1.0.17`），所以 `npm
 
 - 实战审计（0.1.2 逐项状态与实测契约）：`docs/plans/dsh-012rc1-compat-audit.md`
 - 实战审计（0.1.2-rc.1 → 0.1.5-rc.2，含八面板全量验证）：`docs/plans/dsh-015rc2-compat-audit.md`
+- 实战审计（0.1.5-rc.3 → 0.1.7-rc.2，含 WebSocket 会话跟踪修复）：`docs/plans/dsh-017rc2-compat-audit.md`
 - Files 面板 → 输入框引用（B9 的实现与实测）：`docs/file-panel-composer-reference.md`
 - 频道侧实现与状态：`docs/channel-status.md`、`docs/channel-commands.md`、`docs/channel-project-switch.md`
 - 产品化与版本策略：`docs/productization.md` §8；发布流程：`docs/release-process.md`

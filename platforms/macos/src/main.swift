@@ -3557,60 +3557,122 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     """
 
     /// Tracks which dsh session the user is currently viewing / interacting
-    /// with. Opening a session or sending a message makes the dsh web client
-    /// POST RPCs (callUnary → postJson → window.fetch, same path the preview
-    /// interceptor hooks). We parse the request body and post the sessionId
-    /// to the shell via the `dshSession` message handler, so the project
-    /// directory (preview tree / terminal cwd / wiki root) can follow
-    /// workspace switches in dsh web.
+    /// with and posts its id to the shell (the `dshSession` handler), so the
+    /// project directory (preview tree / terminal cwd / wiki root / tasks)
+    /// follows switches in dsh web.
     ///
-    /// session.history alone is NOT enough: the client's session open() is
-    /// idempotent, so revisiting an already-loaded session does not refetch
-    /// history. Every session switch DOES run followCurrent →
-    /// refreshSubagents(current) → subagent.list { parentSessionId }, which
-    /// is non-idempotent — so subagent.list is the reliable per-switch
-    /// signal (history/prompt/rename/selectModel are bonus signals).
+    /// Two generations of transport must be hooked:
+    ///   * **dsh <= 0.1.5** — session open/message RPCs are unary
+    ///     `window.fetch` posts (`callUnary → postJson`). `session.history` is
+    ///     idempotent, so merely revisiting a loaded session emits nothing;
+    ///     the reliable per-switch signal was the non-idempotent
+    ///     `subagent(s).list {parentSessionId}`.
+    ///   * **dsh >= 0.1.7** — `subagents/list` was removed, and every Typert
+    ///     Remote stream (incl. `session/follow`, the real session-open path)
+    ///     moved onto ONE WebSocket: `{type:'open', streamId, endpoint,
+    ///     payload}` (see `@deepseek-ai/dsh-api-gateway`). Fetch never sees it,
+    ///     so the WebSocket `send` is hooked as well. The session identity now
+    ///     rides a `SessionAddress` (`request.address`), not a flat
+    ///     `sessionId`; a subagent child is owned by its parent.
+    ///
     /// Only posts when the id changes, to avoid noise.
     private static let sessionTrackerScript = """
     (function () {
       if (window.__dshSessionTracked) return;
       window.__dshSessionTracked = true;
-      var origFetch = window.fetch;
-      // dsh 0.1.2+ uses slash method names (e.g. subagents/list) and carries
-      // the session id under payload.args; keep the legacy dot names/shape too
-      // so both client generations are tracked.
+
+      function postSession(sid) {
+        if (!sid || window.__dshLastTrackedSession === sid) return;
+        window.__dshLastTrackedSession = sid;
+        try {
+          if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.dshSession) {
+            window.webkit.messageHandlers.dshSession.postMessage({ sessionId: sid });
+          }
+        } catch (e) {}
+      }
+
+      function remember(method, sid) {
+        if (!window.__dshSessionSeen) window.__dshSessionSeen = [];
+        if (window.__dshSessionSeen.length < 100) {
+          window.__dshSessionSeen.push(method + ':' + (sid || ''));
+        }
+      }
+
+      // SessionAddress (0.1.7) is a discriminated union. A direct subagent
+      // child belongs to its parent's project directory, so prefer the parent.
+      function addressSession(address) {
+        if (!address || typeof address !== 'object') return null;
+        if (address.kind === 'subagent') return address.parentSessionId || null;
+        return address.sessionId || address.parentSessionId || address.childSessionId || null;
+      }
+
+      // One request object, across both generations of field naming.
+      function requestSession(req) {
+        if (!req || typeof req !== 'object') return null;
+        if (req.address !== undefined) return addressSession(req.address);
+        return req.sessionId || req.parentSessionId || req.agentId || null;
+      }
+
+      // Emit one observed request: the id may sit at several depths, depending
+      // on the generation (payload.args.request.address, payload.args.sessionId,
+      // or the legacy flat payload.parentSessionId).
+      function observe(method, payload) {
+        if (!payload || typeof payload !== 'object') return;
+        var a = payload.args || {};
+        var req = a.request || a._request || {};
+        var sid = requestSession(req) || a.parentSessionId || a.agentId || a.sessionId
+                  || payload.sessionId || payload.parentSessionId || null;
+        remember(method, sid);
+        postSession(sid);
+      }
+
+      // dsh 0.1.2+ uses slash method names; keep the legacy dot names/shape so
+      // older clients stay tracked. subagent(s).list is retained for dsh <=
+      // 0.1.5, where it was the per-switch signal.
       var tracked = {
         'session.history': 1, 'session.prompt': 1, 'session.rename': 1,
         'session.selectModel': 1, 'subagent.list': 1, 'subagents.list': 1,
         'session/history': 1, 'session/prompt': 1, 'session/rename': 1,
-        'session/selectModel': 1, 'subagent/list': 1, 'subagents/list': 1
+        'session/selectModel': 1, 'subagent/list': 1, 'subagents/list': 1,
+        // dsh 0.1.7 moves session open onto these Remote streams.
+        'session/follow': 1, 'session/control': 0, 'session/page': 1,
+        'session/projections': 1
       };
+
+      // Layer 1 — unary RPCs (still window.fetch on every generation).
+      var origFetch = window.fetch;
       window.fetch = function (input, init) {
         var url = typeof input === 'string' ? input : (input && (input.href || input.url)) || '';
         if (url.indexOf('/api/') !== -1 && init && init.body) {
           try {
             var body = typeof init.body === 'string' ? JSON.parse(init.body) : null;
-            if (body && body.type === 'client-request' && tracked[body.method]
-                && body.payload) {
-              var a = body.payload.args || {};
-              var req = a.request || {};
-              var sid = a.parentSessionId || a.agentId || a.sessionId || req.sessionId
-                        || body.payload.sessionId || body.payload.parentSessionId;
-              if (!window.__dshSessionSeen) window.__dshSessionSeen = [];
-              if (window.__dshSessionSeen.length < 100) {
-                window.__dshSessionSeen.push(body.method + ':' + (sid || ''));
-              }
-              if (sid && window.__dshLastTrackedSession !== sid) {
-                window.__dshLastTrackedSession = sid;
-                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.dshSession) {
-                  window.webkit.messageHandlers.dshSession.postMessage({ sessionId: sid });
-                }
-              }
+            if (body && body.type === 'client-request' && tracked[body.method] && body.payload) {
+              observe(body.method, body.payload);
             }
           } catch (e) {}
         }
         return origFetch.apply(this, arguments);
       };
+
+      // Layer 2 — dsh 0.1.7+ carries every Remote stream on one WebSocket; a
+      // session-open frame is the non-idempotent per-switch signal that
+      // subagent(s).list used to provide. Observe only, never alter the frame,
+      // and never replace the constructor (WebSocket.OPEN and friends are read
+      // off it by the client).
+      try {
+        var origSend = WebSocket.prototype.send;
+        WebSocket.prototype.send = function (data) {
+          try {
+            if (typeof data === 'string') {
+              var frame = JSON.parse(data);
+              if (frame && frame.type === 'open' && tracked[frame.endpoint] && frame.payload) {
+                observe(frame.endpoint, frame.payload);
+              }
+            }
+          } catch (e) {}
+          return origSend.apply(this, arguments);
+        };
+      } catch (e) {}
     })()
     """
 
@@ -3936,17 +3998,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       // 0.1.5 dsh ships its own file/document panel and `openFile` opens it
       // in-page via ctx.sidebarRight.openResource(...): no host RPC is issued,
       // so the fetch patch below never sees the path. The click is the last
-      // place it is visible. Four file-link surfaces exist:
+      // place it is visible. File-link surfaces, by dsh generation:
       //   * inline mentions  — <code><button class="…fileMention…" title="<path>">
-      //   * produced files   — [data-produced-files-row] button[title="<path>"]
+      //   * markdown file links — <button class="…fileMention …fileLink…" title="<path>">
+      //   * produced files   — 0.1.5/0.1.6 [data-produced-files-row] button[title];
+      //     0.1.7 dropped that row and renders produced files as inline mentions.
       //   * tool rows        — read/write/edit render <button class="…fileLink…">
       //     whose TEXT is the workspace-relative (or `~`-abbreviated) path and
       //     which carries no title at all.
       //   * delivered files  — [data-presented-files-row] cards: the full-card
-      //     overlay and the "Open" button both preview through `openFile`; the
-      //     overlay carries the absolute path in `title`, the Open button none.
+      //     overlay previews through `openFile`; the overlay carries the absolute
+      //     path in `title`. dsh >= 0.1.7 also adds an "open in app" split
+      //     control ([data-open-target], primary + chevron) inside the card that
+      //     launches the OS default app / reveals in Finder — that belongs to dsh
+      //     and is NEVER hijacked (see the guard below).
+      //   * changes review   — 0.1.7 [data-changed-files] card: its header / file
+      //     rows open dsh's sidebar diff tab; we route them to the native preview
+      //     panel instead (the old produced-files behaviour), reading the absolute
+      //     path from the hidden span named by the control's aria-describedby.
       // dsh's own file-tree rows also carry a path title and must keep their own
-      // behaviour, so only these four surfaces are matched. A card's chevron
+      // behaviour, so only these surfaces are matched. A card's chevron
       // (aria-haspopup="menu") opens its own default-app/reveal menu and is left
       // to dsh.
       document.addEventListener('click', function (event) {
@@ -3954,9 +4025,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         var control = target && target.closest ? target.closest('button') : null;
         if (!control) return;
         if (control.getAttribute('aria-haspopup') === 'menu') return;
+        // dsh >= 0.1.7 delivered-file cards (and sidebars) grow an "open in app"
+        // split control ([data-open-target]): its primary button opens the OS
+        // default app and its chevron opens the app/reveal menu. Both belong to
+        // dsh and the OS — never redirect them to the native preview panel.
+        if (control.closest('[data-open-target]') !== null) return;
         var className = String(control.className || '');
         var clickPath = null;
-        if (control.closest('[data-presented-files-row]') !== null) {
+        if (control.closest('[data-changed-files]') !== null) {
+          // dsh 0.1.7 "changes review" card: the header / a file row opens dsh's
+          // sidebar diff tab. Route it to the native preview panel instead (what
+          // the old produced-files row did). The hidden span named by the
+          // control's aria-describedby carries the absolute path; a multi-file
+          // header falls back to its first row. The expand/collapse toggle is
+          // left to dsh (no path, so nothing is swallowed below).
+          if (className.indexOf('toggle') === -1) {
+            var describedId = control.getAttribute('aria-describedby');
+            var holder = describedId !== null ? document.getElementById(describedId) : null;
+            if (!holder || !holder.textContent) {
+              var firstRow = control.closest('[data-changed-files]').querySelector('button[aria-describedby]');
+              var firstId = firstRow !== null ? firstRow.getAttribute('aria-describedby') : null;
+              holder = firstId !== null ? document.getElementById(firstId) : null;
+            }
+            clickPath = holder && holder.textContent ? holder.textContent.trim() : null;
+          }
+        } else if (control.closest('[data-presented-files-row]') !== null) {
           // Delivered-file card: the overlay button holds the absolute path in
           // its title; the "Open" button has no title, so read the card's.
           var card = control.closest('[data-presented-file]');
