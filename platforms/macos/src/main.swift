@@ -709,6 +709,7 @@ enum L10n {
         "tasks.queue.closeRefused": ("队列里有任务在运行：先取消它，再关闭队列", "A task in this queue is running — cancel it first, then close the queue"),
         // PR 会话（§V2-6）：任务只 commit，push 与开 PR 由队列结束后单独一个会话负责
         "tasks.queue.prSessionName": ("开 PR：%@", "Open PR: %@"),
+        "tasks.queue.finalizeSessionName": ("收尾：%@", "Finalize: %@"),
         "tasks.prOpening": ("正在开 PR（队列「%@」）：由单独的会话推送分支、总结改动并创建 PR…", "Opening the PR for %@ — a dedicated session pushes the branch, summarizes the changes and creates it…"),
         "tasks.errPRStart": ("开不了 PR：这个队列没有分支、当前工作区没有 GitHub 远端，或已经有一个 PR 会话在跑（详见日志）", "Cannot open a PR: the queue has no branch, this workspace has no GitHub remote, or a PR session is already running (see the log)"),
         "tasks.errPRNoBranch": ("这个队列不切分支：没有可以开 PR 的分支（在队列设置里给它一条分支）", "This queue does not switch branches, so there is no branch to open a PR from (give it one in the queue settings)"),

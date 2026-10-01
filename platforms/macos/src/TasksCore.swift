@@ -433,6 +433,28 @@ struct QueueChoice: Equatable {
 
 // MARK: - Queue
 
+/// How a queue's finished work LANDS. Chosen per queue, or by the workspace default
+/// in the tasks-panel settings; always performed by the finalize session (never by
+/// the shell directly — pushing / merging needs credentials and judgement).
+enum QueueIntegration: String, CaseIterable {
+    /// Push the queue's branch and open/update its pull request; review and merge
+    /// happen outside the shell.
+    case pr
+    /// Merge the queue's branch into its base locally, then push the base branch.
+    case merge
+    /// Push the current branch itself (develop-on-main workflows).
+    case push
+
+    /// The mode a workspace like this usually wants — a UI RECOMMENDATION, never
+    /// enforced: a GitHub remote points at review (pr); another git repo at a local
+    /// merge; a plain directory has no branch to publish.
+    static func recommended(isGit: Bool, hasGitHubRemote: Bool) -> QueueIntegration {
+        if hasGitHubRemote { return .pr }
+        if isGit { return .merge }
+        return .push
+    }
+}
+
 /// A queue is a lane: every task in it shares ONE branch and runs strictly in
 /// order, so a later task sees the earlier task's commits.
 struct TaskQueue: Equatable {
@@ -455,6 +477,12 @@ struct TaskQueue: Equatable {
     /// its 已完成 state — a PR that could not be opened is not failed work — but the
     /// reason is shown instead of silently disappearing into the log.
     var prError: String?
+    /// Per-queue override of the workspace's integration default; nil = follow the
+    /// tasks-panel setting.
+    var integration: QueueIntegration?
+    /// The last finalize session's result shown on the card: its report's first line
+    /// on success, the failure reason otherwise. nil = never finalized.
+    var integrationNote: String?
     var createdAt: Date?
 
     init(id: String,
@@ -467,6 +495,8 @@ struct TaskQueue: Equatable {
          autoPR: Bool = false,
          prUrl: String? = nil,
          prError: String? = nil,
+         integration: QueueIntegration? = nil,
+         integrationNote: String? = nil,
          createdAt: Date? = nil) {
         self.id = id
         self.name = name
@@ -478,6 +508,8 @@ struct TaskQueue: Equatable {
         self.autoPR = autoPR
         self.prUrl = prUrl
         self.prError = prError
+        self.integration = integration
+        self.integrationNote = integrationNote
         self.createdAt = createdAt
     }
 
@@ -588,6 +620,8 @@ struct TaskQueue: Equatable {
         if let branch = branch { d["branch"] = branch }
         if let prUrl = prUrl { d["prUrl"] = prUrl }
         if let prError = prError { d["prError"] = prError }
+        if let integration = integration { d["integration"] = integration.rawValue }
+        if let integrationNote = integrationNote { d["integrationNote"] = integrationNote }
         if let createdAt = createdAt { d["createdAt"] = TaskItem.iso8601.string(from: createdAt) }
         return d
     }
@@ -604,6 +638,8 @@ struct TaskQueue: Equatable {
                          autoPR: (d["autoPR"] as? Bool) ?? false,
                          prUrl: d["prUrl"] as? String,
                          prError: d["prError"] as? String,
+                         integration: (d["integration"] as? String).flatMap { QueueIntegration(rawValue: $0) },
+                         integrationNote: d["integrationNote"] as? String,
                          createdAt: (d["createdAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
     }
 }
@@ -827,6 +863,12 @@ struct TaskBoard {
         return true
     }
 
+    /// The integration mode a queue should use: its own override, else the workspace
+    /// default the caller passes down (the tasks-panel setting).
+    func integration(forQueue queueID: String, default fallback: QueueIntegration) -> QueueIntegration {
+        queue(queueID)?.integration ?? fallback
+    }
+
     /// Create a user queue. A nil branch derives the default from the name; an
     /// explicit empty string means "do not switch branches at all".
     @discardableResult
@@ -899,6 +941,8 @@ struct TaskBoard {
         if let queueID = tasks[i].queueId, let qi = index(ofQueue: queueID) {
             queues[qi].state = .active
             local.activeQueueID = queueID
+            // A new run invalidates the previous finalize result shown on the card.
+            queues[qi].integrationNote = nil
             if let branch = queues[qi].branch { tasks[i].branch = branch }
         }
         local.runningTaskID = taskID
@@ -963,6 +1007,15 @@ struct TaskBoard {
     /// Record why a queue PR session produced no PR (an L10n key), or clear it once
     /// one did. The queue keeps its own state: a PR that could not be opened is not
     /// failed work, but the reason belongs on the card rather than only in app.log.
+    /// Record the last finalize session's result (its report first line / failure).
+    /// Shown on the queue card; a new run clears it (see markRunning).
+    @discardableResult
+    mutating func setQueueIntegrationNote(_ queueID: String, _ note: String?) -> Bool {
+        guard let i = index(ofQueue: queueID) else { return false }
+        queues[i].integrationNote = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return true
+    }
+
     @discardableResult
     mutating func setQueuePRError(_ queueID: String, _ key: String?) -> Bool {
         guard let i = index(ofQueue: queueID) else { return false }

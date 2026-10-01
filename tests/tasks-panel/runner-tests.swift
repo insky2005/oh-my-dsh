@@ -519,7 +519,7 @@ do {
     _ = h.runner.startQueue(queue.id)
     h.dsh.finishAll()
     _ = h.runner.step()
-    check(h.runner.startQueuePR(queue.id) == false, "a queue without a branch cannot open a PR")
+    check(h.runner.startQueueIntegration(queue.id) == false, "a queue without a branch cannot finalize")
     eq(h.dsh.sessions.count, 1, "and no session is wasted on it")
     eq(h.board.queue(queue.id)?.prError, "tasks.errPRNoBranch", "the reason is on the queue")
     check(h.rec.logged("has no branch"), "and in the log")

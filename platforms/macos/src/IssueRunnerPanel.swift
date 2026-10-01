@@ -828,6 +828,8 @@ final class IssueRunnerPanelController: NSObject {
             promptSession: { id, text in Self.promptSession(port: portOf(), sessionId: id, text: text) },
             sessionState: { id in Self.sessionState(port: portOf(), sessionId: id) },
             defaultBaseBranch: Self.detectDefaultBaseBranch(path: repoRoot),
+            // 队列没写自己的 integration 时用它（设置抽屉里可改）。
+            defaultIntegration: Self.defaultIntegration,
             canSwitchBranches: isGit,
             canOpenPR: { repo != nil },
             cancelSession: { id in Self.cancelSession(port: portOf(), sessionId: id) },
@@ -1170,6 +1172,13 @@ final class IssueRunnerPanelController: NSObject {
     /// ("tasksTimeoutMinutes", e.g. in ~/.dsh/shell/config.json or via
     /// `defaults write`) wins when it is a sane number. The running card SHOWS the
     /// limit, so it is never a surprise.
+    /// The tasks-panel setting: which integration mode a queue WITHOUT its own
+    /// override uses. Stored in ShellConfig, edited by the settings drawer.
+    static var defaultIntegration: QueueIntegration {
+        get { QueueIntegration(rawValue: ShellConfig.shared.string(forKey: "tasksIntegration") ?? "") ?? .pr }
+        set { ShellConfig.shared.set(newValue.rawValue, forKey: "tasksIntegration") }
+    }
+
     static func taskTimeout() -> TimeInterval {
         if let minutes = ShellConfig.shared.object(forKey: "tasksTimeoutMinutes") as? Int,
            minutes >= 5, minutes <= 24 * 60 {
@@ -2108,7 +2117,7 @@ final class IssueRunnerPanelController: NSObject {
     /// session has and a URLSession call does not.
     private func publishPR(for queue: TaskQueue) {
         guard let runner = runner else { return }
-        guard runner.startQueuePR(queue.id) else {
+        guard runner.startQueueIntegration(queue.id) else {
             setStatus(L10n.tr("tasks.errPRStart"), spin: false)
             autoHideStatus(after: 6)
             return

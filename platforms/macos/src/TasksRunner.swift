@@ -136,6 +136,9 @@ struct TaskRunnerEnv {
     /// The branch an ISSUE task's queue is based on — the workspace's own default
     /// branch (see TaskBranch.defaultBaseBranch), not an assumed "main".
     var defaultBaseBranch: String = "main"
+    /// The workspace's default integration mode (the tasks-panel setting), used for a
+    /// queue that has no per-queue override.
+    var defaultIntegration: QueueIntegration = .pr
     /// Whether this workspace is a git repository at all. A queue created where it
     /// is false gets NO branch (the pipeline then never touches git — §V2-7), which
     /// is exactly what 全部处理 has to honour when it builds one queue per task.
@@ -475,6 +478,56 @@ enum TaskPrompts {
         return lines.joined(separator: "\n")
     }
 
+    /// 收尾会话的提示词：队列干完的活**怎么落地**。三种模式由队列 / 全局默认选择，
+    /// 会话负责执行（凭据与判断都在它这边），壳层只记录它汇报的结果。
+    static func integration(mode: QueueIntegration, queueName: String?, branch: String?, base: String,
+                            commits: [String]) -> String {
+        switch mode {
+        case .pr:
+            return pullRequest(queueName: queueName, branch: branch ?? base, base: base, commits: commits)
+        case .merge:
+            return mergeAndPush(queueName: queueName, branch: branch ?? base, base: base, commits: commits)
+        case .push:
+            return pushOnly(queueName: queueName, branch: branch, base: base)
+        }
+    }
+
+    /// 本地合并进 base 再推送 base。冲突尽量现场解；超出确定范围就停下请用户介入；
+    /// base 被保护时如实报错（用户自己处理，比如改仓库设置或改用 PR）。
+    static func mergeAndPush(queueName: String?, branch: String, base: String, commits: [String]) -> String {
+        var lines: [String] = []
+        lines.append("队列「\(queueName ?? branch)」的任务已完成。请把它**本地合并进 \(base)，并推送 \(base)**（不开 PR）：")
+        lines.append("")
+        lines.append("步骤：")
+        lines.append("1. 先看清分支 \(branch) 到底改了什么（git log \(base)..\(branch)、git diff \(base)...\(branch)）；")
+        lines.append("2. git checkout \(base)，并确认工作区干净（有未提交改动就先停下说明）；")
+        lines.append("3. git merge \(branch)。**产生冲突时尽你所能现场解决**，解完说明你改了什么；")
+        lines.append("   如果冲突范围超出你能确定的范围，**停下来**把冲突文件与取舍点列清楚、请用户介入，不要猜；")
+        if !commits.isEmpty {
+            lines.append("")
+            lines.append("分支上已有的提交：")
+            for commit in commits { lines.append("  " + commit) }
+        }
+        lines.append("")
+        lines.append("4. 把 \(base) 推送到远端（远端名优先 github，其次 origin）；被分支保护 / non-fast-forward / 需要 PR 拒绝时，")
+        lines.append("   **如实报错**并把服务端原文贴出来，提示用户可改用 PR 模式或调整仓库设置——**不要强推**；")
+        lines.append("5. 最后一行给出结果：成功则写「已合并并推送 \(base)」+ merge 后的短 hash；失败则写清卡在哪一步。")
+        return lines.joined(separator: "\n")
+    }
+
+    /// 直接推送当前分支（主分支直推的工作流）：不合并、不开 PR。
+    static func pushOnly(queueName: String?, branch: String?, base: String) -> String {
+        let target = branch ?? "当前分支"
+        var lines: [String] = []
+        lines.append("队列「\(queueName ?? target)」的任务已完成。请**直接推送 \(target)**（不合并、不开 PR）：")
+        lines.append("")
+        lines.append("1. 确认当前就在 \(target)、工作区干净；")
+        lines.append("2. 推送到远端（远端名优先 github，其次 origin）；被分支保护拒绝时**如实报错**并贴出服务端原文，")
+        lines.append("   提示用户调整仓库设置或改用 PR 模式；")
+        lines.append("3. 最后一行给出结果：成功则写「已推送 \(target)」+ 短 hash；失败则写清原因。")
+        return lines.joined(separator: "\n")
+    }
+
     /// The completion report handed back to the session that created a queue — sent
     /// when the queue reaches .done (see TasksRunner.notifyFinishedQueues).
     ///
@@ -598,6 +651,7 @@ final class TasksRunner {
     /// the branch, summarizes the diff and opens the pull request.
     struct PRRun {
         var queueID: String
+        var mode: QueueIntegration
         var branch: String
         var base: String
         var sessionId: String
@@ -928,18 +982,16 @@ final class TasksRunner {
         let queueHasMore = queue?.taskIds.contains { id in
             id != active.taskID && (board.task(id)?.state == .queued || board.task(id)?.state == .running)
         } ?? false
-        // PUSH / PR POLICY (2026-09-27, second pass): a task session ONLY COMMITS.
-        // Pushing the branch and opening the PR are a job of their own, done by a
-        // dedicated 开 PR 会话 once the queue is done (startQueuePR) — which is also
-        // why nothing here asks the agent to push, checks whether it did, or talks to
-        // the GitHub API at all: the session reads the branch, writes the title and
-        // body from the real diff, pushes, opens the PR and reports the URL.
-        let wantsPR = (queue?.autoPR ?? false) && env.canOpenPR() && !queueHasMore
+        // LANDING POLICY: a task session ONLY COMMITS. Pushing / merging / opening a
+        // PR is a job of its own, done by a dedicated 收尾会话 once the queue is done
+        // (startQueueIntegration) — which is why nothing here asks the agent to push,
+        // checks whether it did, or talks to the GitHub API at all.
+        let wantsFinalize = (queue?.autoPR ?? false) && !queueHasMore
         let log = env.log
         let taskID = active.taskID
         let sessionReport = env.sessionReport
-        if !wantsPR, queue?.autoPR == true {
-            log("tasks: " + taskID + " finishes its own work — the queue's PR comes from its PR session later")
+        if !wantsFinalize, queue?.autoPR == true {
+            log("tasks: " + taskID + " finishes its own work — the queue's finalize session runs later")
         }
 
         phase = .finishing(taskID)
@@ -952,12 +1004,12 @@ final class TasksRunner {
             report = sessionReport(active.sessionId)
         }, {
             self.applyFinish(taskID: taskID, outcome: outcome, now: now, report: report,
-                             prQueueID: wantsPR ? queue?.id : nil)
+                             finalizeQueueID: wantsFinalize ? queue?.id : nil)
         })
     }
 
     private func applyFinish(taskID: String, outcome: FinishOutcome, now: Date,
-                             report: String? = nil, prQueueID: String? = nil) {
+                             report: String? = nil, finalizeQueueID: String? = nil) {
         phase = .idle
         let isIssue = board.task(taskID)?.source == .github
         switch outcome {
@@ -976,7 +1028,7 @@ final class TasksRunner {
         notifyFinishedQueues(now: now)
         // Only a queue that ENDED WELL hands its branch over to a PR session: a failed
         // task pauses the queue, and half-finished work is not what anyone wants merged.
-        if case .done = outcome, let queueID = prQueueID { startQueuePR(queueID) }
+        if case .done = outcome, let queueID = finalizeQueueID { startQueueIntegration(queueID) }
         _ = pump(now: now)
     }
 
@@ -993,23 +1045,38 @@ final class TasksRunner {
     /// session that cannot succeed) when a PR run is already in flight, when the queue
     /// has no branch to publish, or when the workspace has no GitHub remote.
     @discardableResult
-    func startQueuePR(_ queueID: String) -> Bool {
+    func startQueueIntegration(_ queueID: String) -> Bool {
         guard case .idle = phase else {
-            env.log("tasks: a PR session is already in flight — not starting one for " + queueID)
+            env.log("tasks: a finalize session is already in flight — not starting one for " + queueID)
             return false
         }
         guard let queue = board.queue(queueID) else { return false }
-        guard let branch = queue.branch, !branch.isEmpty else {
-            env.log("tasks: queue " + queueID + " has no branch — there is nothing to open a PR from")
-            _ = board.setQueuePRError(queueID, "tasks.errPRNoBranch")
-            persist()
-            return false
+        let mode = board.integration(forQueue: queueID, default: env.defaultIntegration)
+        // Mode-specific requirements: refuse with a reason on the queue rather than
+        // starting a session that cannot succeed.
+        if mode == .pr || mode == .merge {
+            guard let branch = queue.branch, !branch.isEmpty else {
+                env.log("tasks: queue " + queueID + " has no branch — nothing to " + mode.rawValue)
+                _ = board.setQueuePRError(queueID, "tasks.errPRNoBranch")
+                persist()
+                return false
+            }
         }
-        guard env.canOpenPR() else {
-            env.log("tasks: queue " + queueID + " — this workspace has no GitHub remote, so there is no PR to open")
-            _ = board.setQueuePRError(queueID, "tasks.errPRNoRemote")
-            persist()
-            return false
+        if mode == .pr {
+            guard env.canOpenPR() else {
+                env.log("tasks: queue " + queueID + " — this workspace has no GitHub remote, so there is no PR to open")
+                _ = board.setQueuePRError(queueID, "tasks.errPRNoRemote")
+                persist()
+                return false
+            }
+        }
+        if mode == .merge || mode == .push {
+            guard env.git.remoteName() != nil else {
+                env.log("tasks: queue " + queueID + " — this workspace has no git remote to push to")
+                _ = board.setQueuePRError(queueID, "tasks.errPRNoRemote")
+                persist()
+                return false
+            }
         }
         let env = self.env
         let base = queue.baseBranch
@@ -1017,12 +1084,12 @@ final class TasksRunner {
         phase = .startingPR(queueID)
         var run: PRRun?
         env.perform({
-            run = TasksRunner.makePRRun(env: env, queueID: queueID, name: name,
-                                        branch: branch, base: base)
+            run = TasksRunner.makeFinalizeRun(env: env, queueID: queueID, mode: mode, name: name,
+                                              branch: queue.branch, base: base)
         }, {
             guard let run = run else {
                 self.phase = .idle
-                self.env.log("tasks: could not start a PR session for queue " + queueID)
+                self.env.log("tasks: could not start a finalize session for queue " + queueID)
                 _ = self.board.setQueuePRError(queueID, "tasks.errPRSession")
                 self.persist()
                 return
@@ -1035,27 +1102,28 @@ final class TasksRunner {
     /// Create the PR session itself: two blocking dsh RPCs (create + prompt), static so
     /// it can run inside the background step. Returns nil when either fails — the caller
     /// then records the reason on the queue instead of leaving a half-created session.
-    static func makePRRun(env: TaskRunnerEnv, queueID: String, name: String,
-                          branch: String, base: String) -> PRRun? {
+    static func makeFinalizeRun(env: TaskRunnerEnv, queueID: String, mode: QueueIntegration,
+                                name: String, branch: String?, base: String) -> PRRun? {
         // What the branch carries, for the session context: it still reads the diff
-        // itself (that is the point of the summary), but the commit list saves it from
-        // starting with 「what is this branch」.
-        let commits = env.git.commits(base: base) ?? []
-        let text = TaskPrompts.pullRequest(queueName: name, branch: branch, base: base, commits: commits)
+        // itself (that is the point), but the commit list saves it from starting with
+        // 「what is this branch」.
+        let commits = branch.flatMap { _ in env.git.commits(base: base) } ?? []
+        let text = TaskPrompts.integration(mode: mode, queueName: name, branch: branch, base: base, commits: commits)
         guard let sessionId = env.createSession(env.repoRoot) else { return nil }
-        _ = env.renameSession(sessionId, L10n.tr("tasks.queue.prSessionName", name))
+        let sessionNameKey = mode == .pr ? "tasks.queue.prSessionName" : "tasks.queue.finalizeSessionName"
+        _ = env.renameSession(sessionId, L10n.tr(sessionNameKey, name))
         guard env.promptSession(sessionId, text) else {
             _ = env.cancelSession(sessionId)
             return nil
         }
-        return PRRun(queueID: queueID, branch: branch, base: base, sessionId: sessionId,
-                     startedAt: Date())
+        return PRRun(queueID: queueID, mode: mode, branch: branch ?? base, base: base,
+                     sessionId: sessionId, startedAt: Date())
     }
 
     private func beginPRRun(_ run: PRRun) {
         phase = .openingPR(run)
         _ = board.setQueuePRError(run.queueID, nil)
-        env.log("tasks: PR session " + run.sessionId + " is opening the PR for queue " + run.queueID)
+        env.log("tasks: finalize session " + run.sessionId + " (" + run.mode.rawValue + ") for queue " + run.queueID)
         persist()
     }
 
@@ -1115,19 +1183,27 @@ final class TasksRunner {
     private func applyPRRun(_ run: PRRun, prUrl: String?, report: String?) {
         prLookupInFlight = false
         phase = .idle
-        if let prUrl = prUrl {
-            _ = updateQueue(run.queueID, prUrl: prUrl)
-            env.log("tasks: queue " + run.queueID + " has its PR: " + prUrl)
+        // The session's own first line is the result shown on the card, whatever the mode.
+        let firstLine = report?.split(separator: "\n").first.map(String.init) ?? ""
+        let note = firstLine.isEmpty ? nil : String(firstLine.prefix(200))
+        _ = board.setQueueIntegrationNote(run.queueID, note)
+        if run.mode == .pr {
+            if let prUrl = prUrl {
+                _ = updateQueue(run.queueID, prUrl: prUrl)
+                _ = board.setQueuePRError(run.queueID, nil)
+                env.log("tasks: queue " + run.queueID + " has its PR: " + prUrl)
+            } else {
+                // No URL in the report and no open PR for the branch. The session is the
+                // only place that knows why (it was asked to say so).
+                env.log("tasks: no PR for queue " + run.queueID + " — session " + run.sessionId
+                        + " ended saying: " + String((note ?? "(no report)").prefix(200)))
+                _ = board.setQueuePRError(run.queueID, "tasks.errPR")
+            }
         } else {
-            // No URL in the report and no open PR for the branch. The session is the only
-            // place that knows why (it was asked to say so), so its first line goes to the
-            // log and the queue records the reason for the card.
-            let firstLine = report?.split(separator: "\n").first.map(String.init) ?? "(no report)"
-            env.log("tasks: no PR for queue " + run.queueID + " — session " + run.sessionId
-                    + " ended saying: " + String(firstLine.prefix(200)))
-            _ = board.setQueuePRError(run.queueID, "tasks.errPR")
-            persist()
+            env.log("tasks: queue " + run.queueID + " finalized (" + run.mode.rawValue + "): "
+                    + (note ?? "(no report)"))
         }
+        persist()
         _ = pump()
     }
 
