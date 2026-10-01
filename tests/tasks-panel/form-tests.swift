@@ -322,7 +322,7 @@ do {
     }
 }
 
-section("队列头：打开 PR 排在最后（图标与 PR 链接都是）")
+section("队列头：发布排在关闭之前，PR 链接仍在最后")
 do {
     var board = TaskBoard()
     let task = TaskItem.manual(title: "改 README", body: nil, id: "manual-hh301010")
@@ -339,13 +339,15 @@ do {
     let openHeader = TaskQueueHeaderView(model: openModel)
     _ = layout(openHeader, width: 320)
     let buttons = descendants(openHeader, of: CustomIconButton.self)
-    check(buttons.contains { $0.toolTip == L10n.tr("tasks.queue.openPR") }, "行上有「打开 PR」")
-    if let pr = buttons.first(where: { $0.toolTip == L10n.tr("tasks.queue.openPR") }) {
-        let prFrame = pr.convert(pr.bounds, to: openHeader)
-        let others = buttons.filter { $0 !== pr }.map { $0.convert($0.bounds, to: openHeader) }
-        check(others.allSatisfy { $0.maxX <= prFrame.minX + 1 },
-              "它是这一行最右的按钮（其余按钮都在它左边）")
-        check(prFrame.maxX <= openHeader.bounds.width, "没有越出队列头")
+    let publish = buttons.first { $0.toolTip == L10n.tr("tasks.queue.openPR") }
+    let close = buttons.first { $0.toolTip == L10n.tr("tasks.queue.close") }
+    check(publish != nil, "行上有「打开 PR」（发布）")
+    check(close != nil, "行上有「关闭队列」")
+    if let publish = publish, let close = close {
+        let publishFrame = publish.convert(publish.bounds, to: openHeader)
+        let closeFrame = close.convert(close.bounds, to: openHeader)
+        check(publishFrame.maxX <= closeFrame.minX + 1, "发布排在关闭之前")
+        check(publishFrame.maxX <= openHeader.bounds.width, "没有越出队列头")
     }
 
     // 已经有 PR：那一格变成 PR 链接，同样在最右。

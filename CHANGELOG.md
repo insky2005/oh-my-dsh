@@ -25,8 +25,8 @@ All notable changes to this project are documented in this file. Format follows
     （成功摘要首行或失败原因）写在队列卡上；`autoPR` 语义收敛为「完成后自动收尾（按工作流）」；
   - 新增 `QueueIntegration.recommended(isGit:hasGitHubRemote:)` 纯函数，以及 `TaskBoard.createQueue(integration:)` /
     `TasksRunner.createQueue(integration:)` / `createQueueWithTasks(integration:)` / `updateQueue(integration:)`。
-  回归：`tests/tasks-panel` **1272 → 1322** 项（模型 201→**203** / 运行器 420→**427** / 视图模型 338→**348** /
-  视图 200→**231** / 本地 API 113）。设计见 `docs/tasks-queue-session-loop-design.md` §14 决策 8/11、§15。
+  回归：`tests/tasks-panel` **1272 → 1323** 项（模型 201→**203** / 运行器 420→**427** / 视图模型 338→**348** /
+  视图 200→**232** / 本地 API 113）。设计见 `docs/tasks-queue-session-loop-design.md` §14 决策 8/11、§15。
 
 - **设置菜单新增「打开数据文件夹」（⌘D，位于「打开日志文件夹」之前，2026-09-29）**：直接打开 `$DSH_HOME/oh-my-dsh/`（不存在则创建），方便查看 / 备份壳层工作数据与迁移回退说明 `ROLLBACK.md`；开发版打开的是 `~/.dsh-dev/oh-my-dsh/`。
 

@@ -674,13 +674,13 @@ final class TaskQueueHeaderView: NSView {
             trailing.append(iconButton("trash", tooltipKey: "tasks.queue.delete",
                                        action: #selector(deleteTapped)))
         }
-        // 关闭排在发布前，保持「PR 永远在这一行最右」的既有约定。
+        // 发布排在关闭之前（用户 2026-10-01）：先看到「把活送出去」，再是「结束这条泳道」。
+        if let prControl = openPRControl() { trailing.append(prControl) }
         if model.canClose {
             trailing.append(iconButton("archivebox", tooltipKey: "tasks.queue.close",
                                        action: #selector(closeTapped)))
         }
-        // 发布 / PR 链接 —— 收尾动作，排在这一行最后。
-        if let prControl = openPRControl() { trailing.append(prControl) }
+        // PR 链接 —— 仍在最右：它是「已经发布过」的快捷入口。
         if let link = prLinkControl() { trailing.append(link) }
 
         let spacer = NSView()
