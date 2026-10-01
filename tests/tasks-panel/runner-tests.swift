@@ -934,14 +934,14 @@ do {
 
     let choices = h.runner.queueChoices()
     eq(choices.count, 2, "both user queues are offered")
-    eq(choices.first?.name, "Docs Cleanup", "choices keep the creation order")
+    eq(choices.first?.name, "Second lane", "choices are newest-first")
     eq(choices.first?.taskCount, 0, "an empty queue reports zero tasks")
     check(choices.allSatisfy { $0.branch?.hasPrefix("feature/") == true }, "each choice carries its branch")
 
     check(h.runner.enqueue(taskID: id, into: q1.id), "the task joins the chosen queue")
     check(h.board.task(id)?.queueId == q1.id, "the membership is recorded")
     check(h.board.task(id)?.state == .running, "it starts right away (the runner was idle)")
-    eq(h.runner.queueChoices().first?.taskCount, 1, "the choice count follows the queue")
+    eq(h.runner.queueChoices().first { $0.id == q1.id }?.taskCount, 1, "the choice count follows the queue")
     check(h.runner.deleteManualTask(id) == false, "a running task cannot be deleted")
     eq(h.runner.cancelRunning(), .cancelled, "cancel it first")
     check(h.board.task(id)?.state == .cancelled, "the task is cancelled")

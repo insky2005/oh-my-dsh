@@ -1805,7 +1805,9 @@ final class IssueRunnerPanelController: NSObject {
         // TaskSourceFilter (pure, headless-testable) — a lane shows while it HOLDS at
         // least one card this tab accepts. Order is the panel's: the user's own lanes
         // first, then the auto queues by issue number.
-        let userQueues = board.queues.filter { !$0.autoCreated && sourceFilter.shows($0, in: board) }
+        // Newest user lane first: the queue just created is what the user looks for.
+        let userQueues = TaskQueue.newestFirst(
+            board.queues.filter { !$0.autoCreated && sourceFilter.shows($0, in: board) })
         let autoQueues = board.queues.filter { $0.autoCreated && sourceFilter.shows($0, in: board) }
             .sorted(by: { autoQueueNumber($0, board) < autoQueueNumber($1, board) })
         let queues = userQueues + autoQueues

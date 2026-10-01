@@ -554,6 +554,21 @@ struct TaskQueue: Equatable {
                          createdAt: Date())
     }
 
+    /// Queues newest-first for DISPLAY: the lane just created is at the top. A
+    /// queue without a stamp (written before createdAt existed) sorts last; equal
+    /// stamps keep their existing order (stable by index). Storage order is never
+    /// changed — this is only what the panel and the picker render.
+    static func newestFirst(_ queues: [TaskQueue]) -> [TaskQueue] {
+        queues.enumerated()
+            .sorted { lhs, rhs in
+                let left = lhs.element.createdAt ?? .distantPast
+                let right = rhs.element.createdAt ?? .distantPast
+                if left != right { return left > right }
+                return lhs.offset < rhs.offset
+            }
+            .map { $0.element }
+    }
+
     /// 1-based position inside the queue, nil when the task is not in it.
     func order(of taskID: String) -> Int? {
         guard let i = taskIds.firstIndex(of: taskID) else { return nil }
@@ -702,7 +717,8 @@ struct TaskBoard {
     /// single-task queue is never a destination for a manual task.
     func queueChoices() -> [QueueChoice] {
         // Closed lanes are terminal: they must not be offered as an append target.
-        queues.filter { !$0.autoCreated && $0.state != .closed }.map { queue in
+        // Newest-first, so the lane the user just created is the first row.
+        TaskQueue.newestFirst(queues.filter { !$0.autoCreated && $0.state != .closed }).map { queue in
             QueueChoice(id: queue.id, name: queue.name, branch: queue.branch,
                         taskCount: queue.taskIds.count, state: queue.state)
         }

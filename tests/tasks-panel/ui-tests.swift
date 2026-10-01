@@ -1089,11 +1089,11 @@ do {
     eq(items.count, 3, "新建队列 + 两个已有队列")
     check(items.first?.isNewQueue == true, "新建队列排第一个")
     eq(items.first?.title, "tasks.queue.new", "它用的是 新建队列 文案")
-    eq(items.dropFirst().map { $0.title }, ["Docs Cleanup", "Second lane"],
-       "已有队列按创建顺序排在后面")
+    eq(items.dropFirst().map { $0.title }, ["Second lane", "Docs Cleanup"],
+       "已有队列按创建时间倒序（最新在前）排在后面")
     eq(items.dropFirst().map { $0.queueID }, board.queueChoices().map { $0.id },
        "每一行都带着它要入队的队列 id")
-    eq(items.dropFirst().first?.branch, "feature/docs-cleanup", "行里带上该队列的分支")
+    eq(items.dropFirst().first?.branch, "feature/second-lane", "行里带上该队列的分支")
 
     // 一个队列都没有时，下拉里只有 新建队列 —— 也就是第一个。
     let fresh = QueuePickerItem.build(TaskBoard().queueChoices())

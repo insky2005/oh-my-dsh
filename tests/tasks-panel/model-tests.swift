@@ -185,6 +185,16 @@ do {
     check(!cb.queueChoices().contains { $0.id == cq.id }, "关闭的队列不再出现在「加入队列」里")
 }
 
+section("队列排序：最新在前（显示用，不改存储顺序）")
+do {
+    let old = TaskQueue(id: "q-old", name: "Old", createdAt: Date(timeIntervalSince1970: 100))
+    let new = TaskQueue(id: "q-new", name: "New", createdAt: Date(timeIntervalSince1970: 200))
+    let none = TaskQueue(id: "q-none", name: "None", createdAt: nil)
+    eq(TaskQueue.newestFirst([old, new, none]).map { $0.id }, ["q-new", "q-old", "q-none"],
+       "createdAt 倒序；无时间戳的老队列排最后")
+    eq(TaskQueue.newestFirst([new, old]).map { $0.id }, ["q-new", "q-old"], "最新的排第一")
+}
+
 // MARK: - failure pauses the queue
 
 section("failure pauses the queue")
