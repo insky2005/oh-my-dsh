@@ -321,11 +321,16 @@ do {
     check(prPrompt.contains("base = main"), "and which base to open against")
     check(prPrompt.contains("不要改任何代码"), "and that it must not touch the code")
 
-    h.dsh.reports[prSession] = "已推送分支并创建 PR：https://github.com/o/r/pull/12"
+    // A multi-line report: the card shows the first line collapsed, but the WHOLE
+    // report is what gets written back (user 2026-10-01).
+    h.dsh.reports[prSession] = "已推送分支并创建 PR：https://github.com/o/r/pull/12\n改动摘要：安装段重写\n校验：markdownlint 通过"
     h.dsh.finishAll()
     check(h.runner.step() == false, "the PR run ends")
     eq(h.board.queue(queueID)?.prUrl, "https://github.com/o/r/pull/12",
        "the PR url it reported lands on the queue")
+    eq(h.board.queue(queueID)?.integrationNote,
+       "已推送分支并创建 PR：https://github.com/o/r/pull/12\n改动摘要：安装段重写\n校验：markdownlint 通过",
+       "整段汇报都回写到队列（不只第一行）")
     check(h.runner.isBusy == false, "nothing is in flight")
 }
 

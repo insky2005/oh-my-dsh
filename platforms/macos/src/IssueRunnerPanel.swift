@@ -151,6 +151,8 @@ final class IssueRunnerPanelController: NSObject {
     /// id -> open? Defaults differ per kind: user queues start open (they hold
     /// the work), issue tasks' auto queues start as one compact line.
     private var queueToggle: [String: Bool] = [:]
+    /// Queues whose 收尾结果 is expanded to the full report (per queue, panel state).
+    private var expandedQueueNotes: Set<String> = []
     private var sourceFilter: SourceFilter = .all
     /// Which form the sheet is currently showing (nil = no form). Creating or
     /// editing a task never raises a dialog: the form slides up IN the panel.
@@ -926,6 +928,7 @@ final class IssueRunnerPanelController: NSObject {
         workspaces.clearCurrent()
         expandedTaskID = nil
         queueToggle.removeAll()
+        expandedQueueNotes.removeAll()
         render()
         updateLabels()
         updateOtherWorkspaces()
@@ -939,7 +942,19 @@ final class IssueRunnerPanelController: NSObject {
     private func boardSignatureNow() -> String {
         guard let runner = runner else { return "" }
         let tasks = runner.board.tasks.map { $0.id + ":" + $0.state.rawValue + ":" + ($0.prUrl ?? "") }
-        let queues = runner.board.queues.map { $0.id + ":" + $0.state.rawValue + ":" + String($0.taskIds.count) }
+        // The queue's own RESULT fields are part of what the card shows: a publish
+        // that clears prError or writes integrationNote/prUrl changes only these, so
+        // without them the 3s timer saw "nothing changed" and the card kept showing
+        // the old error / no result (user 2026-10-01).
+        let queues: [String] = runner.board.queues.map { queue -> String in
+            let id = queue.id
+            let state = queue.state.rawValue
+            let count = String(queue.taskIds.count)
+            let error = queue.prError ?? ""
+            let url = queue.prUrl ?? ""
+            let note = queue.integrationNote ?? ""
+            return id + ":" + state + ":" + count + ":" + error + ":" + url + ":" + note
+        }
         // The running task's clock is part of what the cards SHOW, so the 3s timer
         // has to redraw when its minute flips — otherwise "已运行 0:59" would sit
         // there forever (the board itself has not changed at all).
@@ -998,9 +1013,11 @@ final class IssueRunnerPanelController: NSObject {
         if wasBusy != workspaces.isBusy { onRunStateChanged?(workspaces.isBusy) }
         if let runner = runner, runner.isBusy {
             if let queueID = runner.openingPRQueueID {
-                // No task is running: the serial slot belongs to the queue's PR session.
+                // No task is running: the serial slot belongs to the queue's finalize
+                // session — say which workflow it is running.
                 let name = runner.board.queue(queueID)?.name ?? ""
-                setStatus(L10n.tr("tasks.prOpening", name), spin: true)
+                let mode = runner.board.integration(forQueue: queueID, default: workspaceIntegration)
+                setStatus(L10n.tr(Self.finalizeStatusKey(mode: mode), name), spin: true)
             } else {
                 let number = runner.runningTaskID.flatMap { runner.board.task($0)?.number } ?? 0
                 setStatus(L10n.tr("tasks.running", number), spin: true)
@@ -1113,6 +1130,7 @@ final class IssueRunnerPanelController: NSObject {
             workspaces.adopt(path)
             expandedTaskID = nil
             queueToggle.removeAll()
+            expandedQueueNotes.removeAll()
             boardSignature = ""
             startStepTimer()
         }
@@ -2118,7 +2136,8 @@ final class IssueRunnerPanelController: NSObject {
         let model = QueueHeaderModel.build(queue, board: board, collapsed: !isQueueExpanded(queue),
                                            prAvailable: repo != nil, isCurrent: isCurrent,
                                            integration: integration,
-                                           hasRemote: workspaceHasRemote)
+                                           hasRemote: workspaceHasRemote,
+                                           noteExpanded: expandedQueueNotes.contains(queue.id))
         let header = TaskQueueHeaderView(model: model)
         let queueID = queue.id
         header.onToggle = { [weak self] in self?.toggleQueue(queueID) }
@@ -2140,6 +2159,15 @@ final class IssueRunnerPanelController: NSObject {
             self?.syncFromBoard()
         }
         header.onDelete = { [weak self] in self?.confirmDeleteQueue(queue, cardCount: cardCount) }
+        header.onToggleNote = { [weak self] in
+            guard let self = self else { return }
+            if self.expandedQueueNotes.contains(queueID) {
+                self.expandedQueueNotes.remove(queueID)
+            } else {
+                self.expandedQueueNotes.insert(queueID)
+            }
+            self.render()
+        }
         return header
     }
 
@@ -2224,8 +2252,20 @@ final class IssueRunnerPanelController: NSObject {
             syncFromBoard()
             return
         }
-        setStatus(L10n.tr("tasks.queue.creatingPR", queue.name), spin: true)
+        // The status line says what THIS queue's workflow does — not always 「开 PR」.
+        setStatus(L10n.tr(Self.finalizeStatusKey(mode: runner.board.integration(
+            forQueue: queue.id, default: workspaceIntegration)), queue.name), spin: true)
         syncFromBoard()
+    }
+
+    /// The status line for a queue whose finalize session is (or is about to be)
+    /// running — by the mode it will actually execute.
+    static func finalizeStatusKey(mode: QueueIntegration) -> String {
+        switch mode {
+        case .merge: return "tasks.queue.merging"
+        case .push: return "tasks.queue.pushing"
+        case .pr, .none: return "tasks.prOpening"
+        }
     }
 
     /// 打开已有 PR 的链接 —— 与「发布」分开：PR 已存在时仍要能再次发布去更新它。

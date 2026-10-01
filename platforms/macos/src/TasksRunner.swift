@@ -1218,9 +1218,12 @@ final class TasksRunner {
     private func applyPRRun(_ run: PRRun, prUrl: String?, report: String?) {
         prLookupInFlight = false
         phase = .idle
-        // The session's own first line is the result shown on the card, whatever the mode.
-        let firstLine = report?.split(separator: "\n").first.map(String.init) ?? ""
-        let note = firstLine.isEmpty ? nil : String(firstLine.prefix(200))
+        // The card shows the session's report; the FIRST line is what a collapsed card
+        // reads, the rest is available by expanding (user 2026-10-01). Keep the whole
+        // report (capped), not just the first line.
+        let full = report?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let firstLine = full.split(separator: "\n").first.map(String.init) ?? ""
+        let note = full.isEmpty ? nil : String(full.prefix(4000))
         _ = board.setQueueIntegrationNote(run.queueID, note)
         if run.mode == .pr {
             if let prUrl = prUrl {

@@ -1143,6 +1143,19 @@ do {
     _ = board.setQueueIntegrationNote(queue.id, "已合并并推送到 origin/main")
     let header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
     eq(header.integrationNote, "已合并并推送到 origin/main", "收尾结果带到卡上")
+    eq(header.integrationNoteFirstLine, "已合并并推送到 origin/main", "单行结果就是第一行")
+    check(!header.integrationNoteExpanded, "默认折叠")
+
+    // 多行结果：折叠只看第一行，可以展开。
+    _ = board.setQueueIntegrationNote(queue.id, "第一行：已合并到 main\n第二行：细节\n第三行：更多")
+    let multi = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(multi.integrationNoteFirstLine, "第一行：已合并到 main", "折叠时取第一行")
+    check(multi.canExpandIntegrationNote, "多行结果可以展开")
+    check(!multi.integrationNoteExpanded, "默认还是不展开")
+    let opened = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                        noteExpanded: true)
+    check(opened.integrationNoteExpanded, "展开态传进模型")
+    check(opened.canExpandIntegrationNote, "展开后依然有收起入口")
 }
 section("加入队列 dropdown: 新建队列 first")
 do {

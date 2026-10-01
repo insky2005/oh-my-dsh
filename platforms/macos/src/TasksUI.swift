@@ -548,9 +548,26 @@ struct QueueHeaderModel: Equatable {
     /// The 工作流 resolved for THIS queue (its own override, else the panel default).
     /// Decides the publish button's icon/label and whether a PR is required.
     var integration: QueueIntegration
-    /// The last finalize session's result line: the report's first line on success, the
-    /// failure reason otherwise. nil = never finalized. Shown under the queue meta row.
+    /// The last finalize session's report (the whole thing, capped by the runner):
+    /// nil = never finalized. A collapsed card shows its first line; 展开 shows the
+    /// rest (user 2026-10-01).
     var integrationNote: String?
+    /// Whether the result row is currently expanded (panel state, per queue).
+    var integrationNoteExpanded: Bool
+
+    /// The note split into lines (empty lines kept: a report may have blank lines).
+    var integrationNoteLines: [String] {
+        (integrationNote ?? "").components(separatedBy: "\n")
+    }
+    /// What a collapsed card shows: the first non-empty line.
+    var integrationNoteFirstLine: String? {
+        integrationNoteLines.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+    /// Whether there is more to the note than that first line (a long single line
+    /// counts too — expanding lets it wrap).
+    var canExpandIntegrationNote: Bool {
+        integrationNoteLines.count > 1 || (integrationNote ?? "").count > 80
+    }
 
     /// The 自动开 PR toggle is shown while PRs are possible; a queue that already
     /// HAS autoPR on keeps showing it (disabled, explained) even in a workspace
@@ -565,7 +582,8 @@ struct QueueHeaderModel: Equatable {
     static func build(_ queue: TaskQueue, board: TaskBoard, collapsed: Bool,
                       prAvailable: Bool = true, isCurrent: Bool = true,
                       integration: QueueIntegration = .pr,
-                      hasRemote: Bool = true) -> QueueHeaderModel {
+                      hasRemote: Bool = true,
+                      noteExpanded: Bool = false) -> QueueHeaderModel {
         let tasks = queue.taskIds.compactMap { board.task($0) }
         let doneCount = tasks.filter { $0.state == .done }.count
         let failedCount = tasks.filter { $0.state == .failed }.count
@@ -631,7 +649,8 @@ struct QueueHeaderModel: Equatable {
                                 prAvailable: prAvailable,
                                 reportsToSession: board.local.queueSessions[queue.id] != nil,
                                 integration: integration,
-                                integrationNote: queue.integrationNote)
+                                integrationNote: queue.integrationNote,
+                                integrationNoteExpanded: noteExpanded)
     }
 }
 

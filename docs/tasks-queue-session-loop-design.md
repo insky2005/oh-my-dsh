@@ -283,7 +283,7 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 - **队列级覆盖** `TaskQueue.integration`（nil = 跟随本工作区默认）；队列表单的「高级设置」里是**单选组**
   （跟随设置 + 四档，跟随设置与推荐标注同 caption 行），推荐项在 caption 行上标注。
 - 卡片：发布按钮的图标与 tooltip 跟着解析出的模式（开 PR / 合并到基线 / 直接推送；「无」不出现）；
-  收尾会话的结果（成功摘要首行或失败原因）写在队列卡的 meta 行下方（integrationNote）。
+  收尾会话的**整段汇报**（上限 4000 字）回写到队列卡的 meta 行下方（integrationNote）：默认只显示第一行，多出「展开 / 收起」，展开后换行显示全文；发布被拒的具体原因另起一条红色警示行（prError）。
 - `QueueIntegration.recommended(isGit:hasGitHubRemote:)` 是**纯函数**，UI 与测试共用。
 - 解析入口：`TaskBoard.integration(forQueue:default:)`；runner 在 startQueueIntegration 里按模式校验
   （pr 要 canOpenPR，push 要 git 远端，merge 只做本地合并）并生成对应提示词（TaskPrompts.integration，

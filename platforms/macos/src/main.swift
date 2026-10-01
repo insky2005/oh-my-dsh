@@ -774,7 +774,12 @@ enum L10n {
         "tasks.queue.failedCount": ("%d 个失败", "%d failed"),
         // PR 的标题与正文不再由壳层套模板：开 PR 的会话读完真实 diff 之后自己写
         // （§V2-6），所以这两条旧文案随 REST createPR 一起删掉。
-        "tasks.queue.creatingPR": ("正在为队列「%@」创建 PR…", "Creating the PR for queue %@…"),
+        // 收尾会话运行时的状态行，按工作流分（不再一律说「开 PR」）。
+        "tasks.queue.merging": ("正在合并到基线（队列「%@」）：由单独的收尾会话在本地合并，有远端则一并推送…", "Merging into the base for %@ — a dedicated session merges locally and pushes when there is a remote…"),
+        "tasks.queue.pushing": ("正在推送（队列「%@」）：由单独的收尾会话直接推送…", "Pushing %@ — a dedicated session pushes the branch directly…"),
+        // 队列卡上的收尾结果默认只显示第一行，可展开看全文。
+        "tasks.queue.note.expand": ("展开", "More"),
+        "tasks.queue.note.collapse": ("收起", "Less"),
         "tasks.new.title": ("新建任务", "New Task"),
         "tasks.new.editTitle": ("编辑任务", "Edit Task"),
         "tasks.new.info": ("第一行是任务标题，其余行是任务描述（单行 = 两者）；⌘↩ 创建。", "First line: the title. The rest: the description (one line = both). ⌘↩ creates."),

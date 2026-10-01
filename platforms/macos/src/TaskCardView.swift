@@ -586,6 +586,8 @@ final class TaskQueueHeaderView: NSView {
     var onDelete: (() -> Void)?
     /// 关闭队列（手动终态，保留记录）。
     var onClose: (() -> Void)?
+    /// 展开 / 收起收尾结果（会话回写的那段文字）。
+    var onToggleNote: (() -> Void)?
 
     init(model: QueueHeaderModel) {
         self.model = model
@@ -747,8 +749,8 @@ final class TaskQueueHeaderView: NSView {
         // The last finalize session's outcome (its report's first line, or the
         // failure reason) — on the card, not only in the log. A failure is worth the
         // extra line even when the queue is collapsed; a success summary is not.
-        if !model.isCollapsed, let note = model.integrationNote, !note.isEmpty {
-            rows.append(resultRow(note))
+        if !model.isCollapsed, let noteRow = noteRow() {
+            rows.append(noteRow)
         }
         // Why the last publish did not even start (no branch / no remote / busy).
         if let key = model.prErrorKey {
@@ -773,19 +775,40 @@ final class TaskQueueHeaderView: NSView {
         bar.widthAnchor.constraint(equalToConstant: 72).isActive = true
     }
 
-    /// One line under the meta row: what the last finalize session reported (a
-    /// success summary, or why it could not finish). Truncating, with the full text
-    /// in the tooltip.
-    private func resultRow(_ note: String) -> NSView {
-        let label = NSTextField(labelWithString: note)
+    /// What the last finalize session reported, under the meta row. Collapsed: its
+    /// first line, truncated. Expanded: the whole report, wrapped. A 展开/收起 link
+    /// appears when there is more to read (user 2026-10-01).
+    private func noteRow() -> NSView? {
+        guard let note = model.integrationNote, !note.isEmpty else { return nil }
+        let expanded = model.integrationNoteExpanded
+        let shown = expanded ? note : (model.integrationNoteFirstLine ?? note)
+        let label = NSTextField(wrappingLabelWithString: shown)
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
-        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = expanded ? 0 : 1
+        label.lineBreakMode = expanded ? .byWordWrapping : .byTruncatingTail
         label.toolTip = note
         label.translatesAutoresizingMaskIntoConstraints = false
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return label
+        guard model.canExpandIntegrationNote else { return label }
+        let title = L10n.tr(expanded ? "tasks.queue.note.collapse" : "tasks.queue.note.expand")
+        let toggle = NSButton(title: title, target: self, action: #selector(toggleNoteTapped))
+        toggle.isBordered = false
+        toggle.controlSize = .small
+        toggle.font = .systemFont(ofSize: 11)
+        toggle.contentTintColor = .controlAccentColor
+        toggle.translatesAutoresizingMaskIntoConstraints = false
+        toggle.setContentHuggingPriority(.required, for: .horizontal)
+        toggle.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let row = NSStackView(views: [label, toggle])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = 6
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
     }
+
+    @objc private func toggleNoteTapped() { onToggleNote?() }
 
     /// Why a publish could not start (an L10n key on the queue): a warning-tinted
     /// line under the meta row, so the button keeps saying what it does.

@@ -397,6 +397,43 @@ do {
     let collapsedLabels = descendants(collapsedHeader, of: NSTextField.self).map { $0.stringValue }
     check(collapsedLabels.contains(L10n.tr("tasks.errPRNoBranch")), "折叠的队列也显示失败原因")
 }
+section("收尾结果：默认一行，可展开全文")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "改 README", body: nil, id: "manual-hh303030")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Lane", branch: "feature/x")
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    board.markDone(task.id)
+    _ = board.setQueueIntegrationNote(queue.id, "第一行：已合并到 main\n第二行：细节\n第三行：更多")
+
+    let model = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    check(model.canExpandIntegrationNote, "多行结果可以展开")
+    let header = TaskQueueHeaderView(model: model)
+    var toggled = false
+    header.onToggleNote = { toggled = true }
+    _ = layout(header, width: 320)
+    let labels = descendants(header, of: NSTextField.self).map { $0.stringValue }
+    check(labels.contains("第一行：已合并到 main"), "折叠时显示第一行")
+    check(!labels.contains(where: { $0.contains("第三行") }), "折叠时不显示后面的内容")
+    let toggle = descendants(header, of: NSButton.self)
+        .first { $0.title == L10n.tr("tasks.queue.note.expand") }
+    check(toggle != nil, "有「展开」入口")
+    toggle?.performClick(nil)
+    check(toggled, "点击展开会通知面板")
+
+    // 展开态：整段都在卡片上。
+    let expandedModel = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false,
+                                               noteExpanded: true)
+    let expandedHeader = TaskQueueHeaderView(model: expandedModel)
+    _ = layout(expandedHeader, width: 320)
+    let expandedLabels = descendants(expandedHeader, of: NSTextField.self).map { $0.stringValue }
+    check(expandedLabels.contains(where: { $0.contains("第三行") }), "展开后显示全文")
+    let collapse = descendants(expandedHeader, of: NSButton.self)
+        .first { $0.title == L10n.tr("tasks.queue.note.collapse") }
+    check(collapse != nil, "展开后给「收起」入口")
+}
 section("fields span the whole form")
 do {
     // An EMPTY NSTextField's intrinsic width is almost nothing, and a .leading
