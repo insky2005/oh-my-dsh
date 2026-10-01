@@ -1477,9 +1477,12 @@ do {
     eq(h.dsh.notifications.count, 1, "整队完成后回传一次")
     eq(h.dsh.notifications.first?.session, "session-origin", "回传到来源会话")
     let text = h.dsh.notifications.first?.text ?? ""
-    check(text.contains("Dark Mode"), "报告点名队列")
-    check(text.contains("✓ A：A 完成，改了 a.swift"), "报告用第一条的汇报首行")
-    check(text.contains("✓ B：B 完成"), "报告列出第二条")
+    check(text.contains("队列「Dark Mode」"), "报告点名队列")
+    check(text.contains("1. ✓ A"), "第一条带标号与状态")
+    check(text.contains("A 完成，改了 a.swift"), "第一条的完整汇报保留")
+    check(text.contains("2. ✓ B"), "报告列出第二条")
+    check(text.contains("B 完成"), "第二条的汇报也在")
+    check(!text.contains("session-"), "不回传会话标识（用户不要）")
     check(text.contains("确认收到"), "要求 agent 简短确认")
     check(h.board.local.queueNotified[r.queue.id] != nil, "记下已回传")
     _ = h.runner.step()
@@ -1531,13 +1534,51 @@ do {
     board.markDone(a.id, report: "改完了\n第二行", at: Date())
     board.markRunning(b.id)
     _ = board.markFailed(b.id, error: "tasks.errNotGit")
-    let text = TaskPrompts.queueFinishedSummary(queue: board.queue(q.id)!,
-                                                tasks: [board.task(a.id)!, board.task(b.id)!])
+    let tasks = [board.task(a.id)!, board.task(b.id)!]
+    let text = TaskPrompts.queueFinishedSummary(queue: board.queue(q.id)!, tasks: tasks)
     check(text.contains("队列「外观」"), "点名队列")
-    check(text.contains("✓ A：改完了"), "汇报取首行")
-    check(!text.contains("第二行"), "不粘贴汇报全文")
-    check(text.contains("✗ B：tasks.errNotGit"), "失败项列出原因")
+    check(text.contains("分支：feature/ui → main"), "有分支就点名分支")
+    check(text.contains("1. ✓ A"), "第一条带标号")
+    check(text.contains("改完了") && text.contains("第二行"), "完整汇报保留（不再只取首行）")
+    check(text.contains("2. ✗ B"), "失败项带标号")
+    check(text.contains("失败：tasks.errNotGit"), "失败项列出原因")
     check(text.contains("确认收到"), "要求简短确认")
+
+    // 提交列表：有则列出，空则不出现；无分支的队列不出现。
+    let withCommits = TaskPrompts.queueFinishedSummary(queue: board.queue(q.id)!, tasks: tasks,
+                                                       commits: ["abc123 深色模式：主题令牌",
+                                                                 "def456 跟随系统：监听外观"])
+    check(withCommits.contains("分支上相对 main 的提交："), "提交段的抬头")
+    check(withCommits.contains("abc123 深色模式：主题令牌"), "提交逐条列出")
+    check(!text.contains("提交："), "没有提交就不出现提交段")
+
+    var branchless = TaskBoard()
+    let bt2 = TaskItem.manual(title: "X", body: nil, id: "manual-zz000004")
+    branchless.tasks = [bt2]
+    let bq = branchless.createQueue(name: "NoBranch", branch: "", autoPR: false)
+    branchless.markRunning(bt2.id)
+    branchless.markDone(bt2.id, report: "done")
+    let branchlessText = TaskPrompts.queueFinishedSummary(queue: branchless.queue(bq.id)!,
+                                                          tasks: [branchless.task(bt2.id)!],
+                                                          commits: ["should-not-show"])
+    check(!branchlessText.contains("分支："), "无分支队列不显示分支行")
+    check(!branchlessText.contains("提交："), "无分支队列不显示提交段")
+}
+
+section("回传带上队列分支的提交（git 仓库；非 git 不显示）")
+do {
+    let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
+    h.repo.commits = ["abc123 深色模式：主题令牌"]
+    let r = h.runner.createQueueWithTasks(name: "Lane", branch: "feature/x", autoPR: false,
+                                          originSession: "session-origin",
+                                          drafts: [TaskDraft(title: "A", body: "")])
+    _ = h.runner.startQueue(r.queue.id)
+    h.dsh.finish("session-1")
+    _ = h.runner.step()
+    let text = h.dsh.notifications.first?.text ?? ""
+    check(text.contains("分支：feature/x → main"), "分支行")
+    check(text.contains("分支上相对 main 的提交："), "提交段")
+    check(text.contains("abc123 深色模式：主题令牌"), "提交内容")
 }
 
 if failures == 0 {

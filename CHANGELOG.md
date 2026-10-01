@@ -15,10 +15,10 @@ All notable changes to this project are documented in this file. Format follows
   - 队列新增独立状态 **`.draft`（待启动）**——与「启动过但停了」的 `.paused` 分开；`.draft` 不会自己开跑，App 重启后也保持 `.draft`（只有 `.active` 会转 `.paused`）；
   - 新端点 **`POST /api/tasks/queue/create`**（建 `.draft` 队列 + 批量入队，`session` 记录来源会话）与 **`POST /api/tasks/queue/start`**（按 `queueId` 启动；缺省时启动「本会话创建的那个等待队列」，多个则返回 `409 ambiguous-queue` 让调用方消歧）；
   - 队列↔会话关联与「已回传」标记存在 `local.json`（`queueSessions` / `queueNotified`，机器私有）；**只有进入 `.done` 才回传**，失败 / 手动取消停在 `.paused` 不回传；回传失败也记标记（避免死循环），App 重启后在空闲 step 补发一次；
-  - 回传文案要求收到它的 agent **只做简短确认**、不主动改代码；
+  - 回传文案要求收到它的 agent **只做简短确认**、不主动改代码；回传内容给每条任务的**完整汇报**（单条上限 1500 字，超出标注「已截断」）与失败前的汇报，队列分支 + 分支提交列表（非 git 仓库不显示）、耗时与 PR，**不含会话标识**；
   - 面板队列头在「有来源会话」时显示一枚 ↺（tooltip：完成后回传发起会话）；`queue/start` 也支持按 `name` 消歧；
   - 技能正文（内嵌常量 + 仓库副本字节一致）**默认**建「等待态队列 + 入队」，只有用户明确说「只建任务 / 先别入队 / 不要队列」时才只建裸任务，并补充启动话术；设计见 `docs/tasks-queue-session-loop-design.md`。
-  回归：`tests/tasks-panel` 1129 → **1208** 项（模型 188 / 运行器 392 / 视图模型 328 / 视图 199 / 本地 API 101）。
+  回归：`tests/tasks-panel` 1129 → **1221** 项（模型 188 / 运行器 405 / 视图模型 328 / 视图 199 / 本地 API 101）。
 
 ### Changed
 

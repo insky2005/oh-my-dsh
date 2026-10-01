@@ -478,34 +478,72 @@ enum TaskPrompts {
     /// The completion report handed back to the session that created a queue — sent
     /// when the queue reaches .done (see TasksRunner.notifyFinishedQueues).
     ///
-    /// Deliberately asks the receiving agent to do NOTHING but acknowledge: the report
-    /// lands in a normal conversation as a user turn, and nobody asked for more work.
-    static func queueFinishedSummary(queue: TaskQueue, tasks: [TaskItem]) -> String {
+    /// It carries each task's FULL 汇报 (and a failed task's reason), the queue branch,
+    /// the commits it carries and the PR, so the user can actually 验收. It deliberately
+    /// asks the receiving agent to do NOTHING but acknowledge: the report lands in a
+    /// conversation as a user turn, and nobody asked for more work.
+    ///
+    /// `commits` is the queue branch's `git log --oneline base..HEAD`; empty, or a
+    /// branchless queue (a non-git workspace), drops the section entirely.
+    static func queueFinishedSummary(queue: TaskQueue, tasks: [TaskItem], commits: [String] = []) -> String {
         let done = tasks.filter { $0.state == .done }.count
         var lines: [String] = ["【任务面板】队列「\(queue.name)」已全部完成（\(done)/\(tasks.count)）"]
-        for task in tasks {
+        if let branch = queue.branch, !branch.isEmpty {
+            lines.append("分支：\(branch) → \(queue.baseBranch)")
+        }
+        lines.append(contentsOf: Self.timingLine(tasks))
+        lines.append("")
+        for (index, task) in tasks.enumerated() {
+            let mark: String
             switch task.state {
-            case .done:
-                let first = (task.report ?? "").split(separator: "\n").first.map(String.init) ?? ""
-                let note = first.isEmpty ? "已完成" : String(first.prefix(200))
-                lines.append("- ✓ \(task.title)：\(note)" + (task.prUrl.map { " — \($0)" } ?? ""))
-            case .failed:
-                lines.append("- ✗ \(task.title)：\(task.error ?? "失败")")
-            case .cancelled:
-                lines.append("- − \(task.title)：已取消")
-            default:
-                lines.append("- · \(task.title)：\(task.state.rawValue)")
+            case .done: mark = "✓"
+            case .failed: mark = "✗"
+            case .cancelled: mark = "−"
+            default: mark = "·"
             }
+            lines.append("\(index + 1). \(mark) \(task.title)")
+            if task.state == .failed {
+                lines.append("   失败：\(task.error ?? "失败")")
+            } else if task.state == .cancelled {
+                lines.append("   已取消")
+            }
+            if let report = task.report?.trimmingCharacters(in: .whitespacesAndNewlines), !report.isEmpty {
+                let text = report.count > 1500
+                    ? String(report.prefix(1500)) + "\n…（汇报过长，已截断）"
+                    : report
+                lines.append("   汇报：")
+                for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+                    lines.append("     " + String(line))
+                }
+            }
+            if let prUrl = task.prUrl { lines.append("   PR：\(prUrl)") }
         }
         if let prUrl = queue.prUrl {
+            lines.append("")
             lines.append("队列 PR：\(prUrl)")
         } else if let prError = queue.prError {
+            lines.append("")
             lines.append("队列 PR：未开（\(prError)）")
-        } else {
-            lines.append("队列 PR：无")
         }
-        lines.append("这是任务面板的完成通知；请用一两句话确认收到并等待用户验收，不要主动改代码或新建任务。")
+        if queue.branch != nil, !commits.isEmpty {
+            lines.append("")
+            lines.append("分支上相对 \(queue.baseBranch) 的提交：")
+            for commit in commits { lines.append("  " + commit) }
+        }
+        lines.append("")
+        lines.append("这是任务面板的完成通知。请用一两句话确认收到并等待用户验收，不要主动改代码或新建任务。")
         return lines.joined(separator: "\n")
+    }
+
+    /// "耗时：14:03 → 14:25（22 分钟）", or nothing when the board has no timestamps.
+    private static func timingLine(_ tasks: [TaskItem]) -> [String] {
+        let starts = tasks.compactMap { $0.startedAt }
+        let finishes = tasks.compactMap { $0.finishedAt }
+        guard let start = starts.min(), let finish = finishes.max(), finish >= start else { return [] }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        let minutes = Int(finish.timeIntervalSince(start) / 60)
+        return ["耗时：\(formatter.string(from: start)) → \(formatter.string(from: finish))（\(minutes) 分钟）"]
     }
 }
 
@@ -1230,12 +1268,20 @@ final class TasksRunner {
         for queue in pending {
             guard let session = board.local.queueSessions[queue.id] else { continue }
             let tasks = queue.taskIds.compactMap { board.task($0) }
-            let text = TaskPrompts.queueFinishedSummary(queue: queue, tasks: tasks)
             // Mark BEFORE the RPC: a second step must never queue the same report twice.
             board.local.queueNotified[queue.id] = TaskItem.iso8601.string(from: now)
             let notify = env.notifySession
             let log = env.log
-            env.perform({ _ = notify(session, text) }, {
+            let git = env.git
+            let branch = queue.branch
+            env.perform({
+                // The commit list is a blocking git call, so it lives in the background
+                // half. A branchless queue (non-git workspace / 不切分支) has none.
+                let commits = (branch?.isEmpty == false)
+                    ? (git.commits(base: queue.baseBranch) ?? []) : []
+                let text = TaskPrompts.queueFinishedSummary(queue: queue, tasks: tasks, commits: commits)
+                _ = notify(session, text)
+            }, {
                 log("tasks: queue " + queue.id + " finished — reported to " + session)
             })
         }
