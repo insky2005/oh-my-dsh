@@ -46,7 +46,7 @@ manual: false
 
 ### 聚焦切英文输入法 / 失焦还原（`TerminalInputSource.swift`）
 
-- **策略（纯状态机 `TerminalInputSourceGuard`，无头可测）**：`mouseEntered` / `becomeFirstResponder` → `terminalDidFocus()`（记当前输入源 → 非英文则 `TISSelectInputSource` 切到 ASCII 源）；`mouseExited` / `resignFirstResponder` → `terminalDidBlur()`（还原）。**键盘焦点不跟鼠标走**：移出只还原输入法，终端仍是第一响应者；移回来时 `mouseEntered` 会在键盘焦点没变的情况下再切一次英文。**原本就是英文则不接管**（不记、不切），手动切的中文在失焦后保留。
+- **策略（纯状态机 `TerminalInputSourceGuard`，无头可测）**：`becomeFirstResponder` → `terminalDidFocus()`（记当前输入源 → 非英文则 `TISSelectInputSource` 切到 ASCII 源）；`resignFirstResponder` → `terminalDidBlur()`（还原）。**与焦点光标同一信号**：窗口 key 变化（⌘-Tab 切走/切回）也走同一条（失 key → 空心 + 还原，得 key 且第一响应者是终端 → 实心 + 切英文）。鼠标移入/移出本身不切输入法（移入通常就是「获得焦点」，移出不失焦所以维持不变），一次焦点变化只切一次。**原本就是英文则不接管**（不记、不切），手动切的中文在失焦后保留。
 - **最初状态不被覆盖（关键不变量）**：`savedID` **写一次**——已记住原始输入源时重复 `focus()` 直接返回，绝不会把被迫切成的英文当成用户原始输入法；只有还原成功（或当前就等于原始）才清空；还原被系统拒绝（安全输入/输入法未就绪）时保留，下次失焦再试。AppKit 的 `makeFirstResponder` 本身幂等，所以「移入 → 点击」共只触发一次 `becomeFirstResponder`。
 - **还原防抖（防止输入法连闪）**：输入源切换本身会扰动响应链，加上鼠标进出终端，`resignFirstResponder` 会成串到来——若每次失焦都立刻还原、每次聚焦再切英文，输入法会闪好几次。现在 `terminalDidBlur()` 只**登记**一次还原（`schedule` + `restoreGeneration` 计数，默认 0.12s），期间若 `terminalDidFocus()` 就取消；`schedule` 可注入，测试用同步/捕获版驱动。
 - **诊断**：`mouseEntered` / `mouseExited` / `becomeFirstResponder` / `resignFirstResponder` 与 guard 的切/还原/取消都各写一行 `terminal focus:` / `terminal ime:` 到 `app.log`，定位连闪或不还原时直接看这串。

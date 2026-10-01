@@ -1027,22 +1027,17 @@ final class TerminalView: NSView, NSTextInputClient {
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
         AppLog.shared.log("terminal focus: mouse entered (isFirstResponder=\(window?.firstResponder === self))")
-        // 鼠标移入终端即取得输入焦点，省掉「先点一下」再输入。
+        // 鼠标移入终端即取得输入焦点，省掉「先点一下」再输入。输入法只在
+        // becomeFirstResponder 里切换，所以焦点没变时鼠标来回移动不会反复切。
         if let win = window, win.firstResponder !== self {
             win.makeFirstResponder(self)
         }
-        // Re-assert English on every entry: mouseExited below restores the user's
-        // IME while keyboard focus stays on the terminal, so hovering back in has
-        // to switch again even though becomeFirstResponder does not re-fire.
-        TerminalInputSourceGuard.shared.terminalDidFocus()
     }
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
+        // 仅记录：移出不失焦，键盘焦点与输入法都维持不变（失焦时才还原）。
         AppLog.shared.log("terminal focus: mouse exited")
-        // 鼠标移出即还原用户原来的输入法（键盘焦点仍留在终端）。防抖会把
-        // 「只是路过」造成的短暂移入/移出合并成一次切换。
-        TerminalInputSourceGuard.shared.terminalDidBlur()
     }
 
     /// Whether the terminal currently owns the keyboard (and its window is key).
@@ -1087,8 +1082,21 @@ final class TerminalView: NSView, NSTextInputClient {
                            name: NSWindow.didBecomeKeyNotification, object: win)
     }
 
-    @objc private func windowDidResignKey() { setFocused(false) }
-    @objc private func windowDidBecomeKey() { setFocused(window?.firstResponder === self) }
+    // The cursor and the input source follow the SAME focus signal, so they can
+    // never disagree: solid + English while focused, hollow + original IME while
+    // not. This also covers ⌘-Tab, which does not resign first responder.
+    @objc private func windowDidResignKey() {
+        AppLog.shared.log("terminal focus: window resigned key")
+        setFocused(false)
+        TerminalInputSourceGuard.shared.terminalDidBlur()
+    }
+
+    @objc private func windowDidBecomeKey() {
+        let focused = window?.firstResponder === self
+        AppLog.shared.log("terminal focus: window became key (isFirstResponder=\(focused))")
+        setFocused(focused)
+        if focused { TerminalInputSourceGuard.shared.terminalDidFocus() }
+    }
 
     private func setFocused(_ focused: Bool) {
         guard hasFocus != focused else { return }
