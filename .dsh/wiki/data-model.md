@@ -1,7 +1,7 @@
 ---
 title: 数据模型
 tags: [data-model, userdefaults, rpc, frontmatter, state]
-updated: 2026-10-01T15:57:16Z
+updated: 2026-10-01T17:00:35Z
 sources: [platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillInstaller.swift, docs/design/panels/skills-manager-design.md, tests/skills-panel/, core/lib/review-log.js, core/lib/settings.js, platforms/macos/src/ShellConfig.swift, platforms/macos/src/DshWebCookieJanitor.swift, tests/shell-config/, tests/dsh-auth-cookies/, platforms/macos/src/ReviewPanel.swift, platforms/macos/src/ReviewLogModel.swift, docs/design/panels/review-panel-design.md, platforms/macos/src/main.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/WikiPanel.swift, platforms/macos/src/TerminalPanel.swift, platforms/macos/src/TerminalWorkspaceTabs.swift, platforms/macos/src/FilePanel.swift, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/EditorLoadPolicy.swift, platforms/macos/src/ImageZoom.swift, docs/feedback/ux-feedback.md, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/BrowserPanel.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/ChannelStoreReader.swift, core/lib/issues.js, core/lib/tasks.js, core/lib/channel.js, core/lib/channel-store.js, core/lib/channel-runner.js, core/lib/channel-sessions.js, core/lib/dingtalk-access.js, core/lib/dingtalk-device.js, core/lib/dsh-rpc.js, core/lib/workspace-store.js, docs/design/panels/repo-wiki-design.md, docs/design/panels/issue-runner-design.md, docs/design/channels/channel-design.md, docs/design/channels/channel-storage.md, docs/design/channels/channel-status.md, docs/design/channels/channel-association-model.md, docs/design/channels/channel-project-switch.md, docs/design/channels/channel-dingtalk-stream.md, docs/process/git-workflow.md, docs/process/dsh-version-impact.md, platforms/macos/src/ProjectsCore.swift, platforms/macos/src/ProjectsPanel.swift, docs/design/panels/projects-panel-design.md, tests/projects-panel/, tests/dsh-rpc/, core/lib/snapshot.js, core/lib/snapshot-io.js, core/bin/ohmy-core.js, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, docs/design/shell/session-snapshot-rollback-design.md, tests/snapshot-panel/, tests/snapshot-rollback/, platforms/macos/runtime-locks/, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/ShellPaths.swift, core/lib/shell-paths.js, docs/design/shell/storage-layout-refactor.md]
 manual: false
 ---
@@ -178,11 +178,11 @@ manual: false                   # true = 用户手改，代理永不覆盖
 | `index.json` | **提交** | issue 任务 ↔ issue / 分支 / PR / 状态（v1 形状 `{"version": 1, "tasks": [...]}`） |
 | `manual.json` | 本机（gitignore） | 手动任务：标题 / 描述 / 状态 / 队列 / 分支 / 错误 / 时间戳 |
 | `queues.json` | 本机（gitignore） | 队列：名 / 分支 / 基线 / `taskIds`（FIFO）/ 状态 / `autoCreated` / `autoPR` / `prUrl` |
-| `local.json` | 本机（gitignore） | `sessions`（task id → sessionId）、`reports`（task id → 代理最后一段汇报）、`activeQueueId` / `runningTaskId` |
+| `local.json` | 本机（gitignore） | `sessions`（task id → sessionId）、`reports`（task id → 代理最后一段汇报）、`activeQueueId` / `runningTaskId`、`queueSessions`（队列 id → 发起会话）/ `queueNotified`（已回传标记） |
 
 - **会话 id 与本机汇报只进 `local.json`**（都不是跨机器的事实，不进随仓库走的两个文件）；读侧兼容 v1 的纯数字 session 键（`"6"` 视为 `issue-6`），写侧一律 task id；
 - `queue.taskIds` 是队列成员的唯一真相，任务上的 `queueId` 是冗余副本，载入时 `reindexQueueMembership()` 重新导出，两者不会漂移；
-- 任务面板的 localhost API 与浏览器面板**共用同一个服务**：端口写 `$DSH_HOME/oh-my-dsh/shell-api.port`（与 `$DSH_HOME/oh-my-dsh/browser-api.port` 同值），路由面 `GET /api/tasks/list` 与 `POST /api/tasks/create`（上限 50 条，返回 `created` / `rejected`），见 [issue-runner-panel](modules/issue-runner-panel.md)。
+- 任务面板的 localhost API 与浏览器面板**共用同一个服务**：端口写 `$DSH_HOME/oh-my-dsh/shell-api.port`（与 `$DSH_HOME/oh-my-dsh/browser-api.port` 同值），路由面 `GET /api/tasks/list`、`POST /api/tasks/create`（上限 50 条，返回 `created` / `rejected`）与 `POST /api/tasks/queue/create` / `POST /api/tasks/queue/start`，见 [issue-runner-panel](modules/issue-runner-panel.md)。
 
 ## Channel 数据与文件布局（通道 / 消息平台）
 

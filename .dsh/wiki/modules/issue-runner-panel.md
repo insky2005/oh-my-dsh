@@ -1,7 +1,7 @@
 ---
 title: 模块：任务面板（Tasks / IssueRunner）
 tags: [module, tasks, github, issue, queue, index, manual-task]
-updated: 2026-10-01T15:57:16Z
+updated: 2026-10-01T17:00:35Z
 sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksWorkspaces.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/BrowserAPI.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/design/panels/issue-runner-design.md, docs/design/shell/ui-color-scheme.md, docs/process/git-workflow.md, docs/design/panels/task-todo-skill-design.md, .dsh/skills/task-todo/SKILL.md, docs/design/panels/issue-runner-design.md, CHANGELOG.md, README.md, docs/process/dsh-version-impact.md]
 manual: false
 ---
@@ -129,6 +129,15 @@ manual: false
 - 抽屉说明与开关 tooltip 均写明「按工作区 / 只对当前工作区生效」（`tasks.settings.info` / `tasks.settings.hint` / `tasks.settings.autoCloseHint`）；
 - 回归：`tests/tasks-panel/run.sh` 新增**源码守卫**——`IssueRunnerPanel.swift` 必须含 `tasksAutoCloseOnPublishByWorkspace` / `storedAutoCloseOnPublish(forWorkspace` / `workspaceSettingsKey`，且不得再出现全局键 `tasksAutoCloseOnPublish`，杜绝设置项退回全局。
 
+## 队列的会话闭环与收尾（2026-09-30 ~ 10-01）
+
+- **`.draft`（待启动）**：`task-todo` 默认把一次沟通落成「等待态队列 + 批量任务」——`.draft` 与「启动过但停了」的 `.paused` 分开，自己不开跑、App 重启也保持；端点 `POST /api/tasks/queue/create`（建 `.draft` + 批量入队 + 记 `session`）与 `POST /api/tasks/queue/start`（按 `queueId`；缺省启动本会话创建的那个，多个返回 `409 ambiguous-queue`）；
+- **完成回传**：队列进入 `.done` 才把各任务完整汇报（单条上限 1500 字）回传发起会话（`session.prompt`），失败 / 手动取消停在 `.paused` 不回传；回传失败也记标记避免死循环、重启后在空闲 step 补发；关联与标记存 `local.json` 的 `queueSessions` / `queueNotified`（机器私有）；
+- **收尾优先复用来源会话（2026-10-01）**：队列在哪条会话创建就在哪条会话收尾，手动队列没有来源才新建收尾会话；来源会话是真实对话，故提示词要求回**唯一完成标记**、壳层只采用带标记的汇报；来源不可用 / 忙到超时 / 已消失则**回退新建**，且**绝不取消**用户的会话；
+- **「使用说明」抽屉（2026-10-01）**：右上角常驻问号按钮，内容由纯模型 `TasksHelpModel` 按 L10n 键生成（新建任务 / 队列 / Git 工作流 / 会话回传四节），无任务时也铺在空态内容区（仅在未筛选时）；
+- **Git 工作流可配置（2026-10-01）**：`QueueIntegration`（pr / merge / push / 无）作为「队列如何落地」的显式设置，默认按工作区（`tasksIntegrationByWorkspace`）、队列自身 `integration` 覆盖；动作全部交给收尾会话（壳层不直接 merge/push），merge 是本地操作、无远端也能用，失败原因显示在队列卡而非按钮 tooltip；
+- 回归：`tests/tasks-panel/run.sh` **1405 项**。
+
 ## 集成点（main.swift）
 
 - `RightPanel.tasks`（活动栏第 4 个图标 `checkmark.circle`、视图菜单 ⌥⌘J、`rightPanelKind` 持久化 `tasks`）；
@@ -153,7 +162,7 @@ manual: false
 
 ## 测试
 
-- `tests/tasks-panel/run.sh` **1129 项**（五段：模型 176 + 运行器 362 + 视图模型 324 + 视图 199 + **本地 API 68**，2026-09-27 本机实测全绿），运行器段用**假 git + 假 dsh** 驱动完整流水线（含非 git 目录两问：无分支队列照常跑完 / 有分支队列报 `errNotGit`）；`run.sh` 另有**源码守卫**：建会话必须走 `DshWorkspaceOps`、运行器环境不许冻结端口、提示词必须现场探测工作区形状、两种来源共用同一份要求清单、开 PR 会话的参数写全；
+- `tests/tasks-panel/run.sh` **1405 项**（五段：模型 203 + 运行器 454 + 视图模型 381 + 视图 254 + **本地 API 113**，2026-10-01 本机实测全绿），运行器段用**假 git + 假 dsh** 驱动完整流水线（含非 git 目录两问：无分支队列照常跑完 / 有分支队列报 `errNotGit`）；`run.sh` 另有**源码守卫**：建会话必须走 `DshWorkspaceOps`、运行器环境不许冻结端口、提示词必须现场探测工作区形状、两种来源共用同一份要求清单、开 PR 会话的参数写全；
 - `core/tests/tasks.test.js` **18 项**（四文件读写 + 会话键兼容 + 队列入队/移出）；
 - 已登记 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`（两处清单必须一致）。
 

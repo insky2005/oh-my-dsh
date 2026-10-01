@@ -1,7 +1,7 @@
 ---
 title: 常见任务手册
 tags: [tasks, build, package, test, debug, release]
-updated: 2026-09-29T15:27:23Z
+updated: 2026-10-01T17:00:35Z
 sources: [platforms/macos/src/ProjectsPanel.swift, platforms/macos/src/ProjectsCore.swift, docs/design/panels/projects-panel-design.md, tests/projects-panel/, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, docs/design/panels/skills-manager-design.md, tests/skills-panel/, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, docs/process/dsh-version-impact.md, tests/review-panel/, core/lib/review-log.js, core/tests/review-log.test.js, platforms/macos/src/ReviewPanel.swift, docs/design/panels/review-panel-design.md, README.md, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, tests/terminal-emulator/run.sh, tests/wiki-panel/run.sh, tests/skills/run.sh, tests/file-panel/run.sh, tests/terminal-panel/run.sh, platforms/macos/src/OpenWithApps.swift, platforms/macos/src/FilePanelTreeMenu.swift, docs/feedback/ux-feedback.md, docs/fixes/terminal-header-fix.md, docs/fixes/terminal-input-fix.md, docs/process/git-workflow.md, docs/process/release-process.md, docs/design/channels/channel-commands.md, docs/design/channels/channel-status.md, docs/design/channels/channel-storage.md, docs/design/channels/channel-project-switch.md, docs/design/channels/channel-dingtalk-stream.md, scripts/version.sh, scripts/git-remote.sh, scripts/release-fix.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, core/bin/ohmy-core.js, Jenkinsfile, .github/workflows/, core/tests/, platforms/macos/src/PanelSurface.swift, docs/design/shell/ui-color-scheme.md, CONTRIBUTING.md, platforms/macos/runtime-locks/, platforms/macos/src/SnapshotModel.swift, platforms/macos/src/SnapshotWindow.swift, core/lib/snapshot.js, core/lib/snapshot-io.js, tests/snapshot-panel/, tests/snapshot-rollback/, tests/injected-scripts/, docs/design/shell/session-snapshot-rollback-design.md, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/TasksAPI.swift, tests/tasks-panel/, docs/design/panels/task-todo-skill-design.md]
 manual: false
 ---
@@ -62,7 +62,7 @@ tests/shell-config/run.sh           # ShellConfig 旧 UserDefaults 一次性迁�
 tests/dsh-auth-cookies/run.sh       # dsh 认证 cookie 清理纯逻辑（22 项）
 tests/skills/run.sh                # 内置 skill 安装器（SkillInstaller：缺失即装/更新/跳过/迁移/字节一致）
 tests/projects-panel/run.sh         # 项目面板：模型 45 项（projects 根 / 命名规则 / 列举 / 注册匹配）+ 控制器 49 项（无头，假 dsh 传输）
-tests/tasks-panel/run.sh            # 任务面板逻辑层五段：模型 176 + 运行器 362 + 视图模型 324 + 视图 199 + 本地 API 68 = 1129 项
+tests/tasks-panel/run.sh            # 任务面板逻辑层五段：模型 203 + 运行器 454 + 视图模型 381 + 视图 254 + 本地 API 113 = 1405 项
 tests/injected-scripts/run.sh       # 注入 dsh web 的 JS 片段守卫（JS 引擎可解析 + `window.__dsh*` 桥名对得上 + 不许出现会被 Swift 字符串吃掉的转义）
 tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到端（真实临时 $DSH_HOME：bootstrap → 升级 dsh → 回退 → 重启）+ tests/snapshot-panel/run.sh 窗口数据模型（SnapshotModel 解码 list/status/plan-rollback 的 JSON）
 ```
@@ -136,7 +136,7 @@ tests/snapshot-rollback/run.sh      # 快照 / 回退无头套件：CLI 端到�
 - **失败即暂停队列**（队内共享分支，继续跑等于基于半成品）：卡片给「重试 / 跳过并继续」；**切到另一队列前要求工作区干净**（脏工作区拒绝启动并提示）；**可编辑性**：`TaskState.isEditable`（未入队 / 队列中 / 失败 / 已取消）之外（运行中、已完成、已关闭）不能改也不能删，手动任务的汇报写在卡片详情里；
 - **issue 任务与「全部处理」**：点「处理」自动建一个**单任务队列**（分支 `fix/issue-N` / `feature/issue-N`；**非 git 目录不派生分支**）；「全部处理」给**每个待办**各建一个单任务队列（**手动任务同样如此**），按板面顺序串行依次跑，>1 条先弹确认框；**任务会话只 commit**——提示词里不再有 push / PR、运行器也不校验远端；队列最后一项完成且开着「自动开 PR」、工作区是 GitHub 仓库时，运行器新建一个「**开 PR：<队列名>**」会话（`TasksRunner.startQueuePR`）去读改动、自己写标题正文、push、开或复用 PR 并给出链接；开不出来**不算失败**（队列保持已完成，原因记在队列头「开 PR」的 tooltip，点一下可再试）；
 - **重启恢复**：读 `<repo>/.dsh/tasks/` 四文件（`index.json` 提交 / `manual.json`、`queues.json`、`local.json` 本机，**已在 .gitignore**）；上次运行中的任务标「已中断」、活跃队列暂停，**不自动开跑**；
-- 回归：`tests/tasks-panel/run.sh`（**1129 项**：模型 176 + 运行器 362 + 视图模型 324 + 视图 199 + 本地 API 68；运行器用假 git/假 dsh 驱动完整流水线，含**非 git 目录**：无分支队列照常跑完、有分支队列报 `errNotGit`）、`core/tests/tasks.test.js`（18 项）；细节见 [issue-runner-panel](modules/issue-runner-panel.md) 与 docs/design/panels/issue-runner-design.md。
+- 回归：`tests/tasks-panel/run.sh`（**1405 项**：模型 203 + 运行器 454 + 视图模型 381 + 视图 254 + 本地 API 113；运行器用假 git/假 dsh 驱动完整流水线，含**非 git 目录**：无分支队列照常跑完、有分支队列报 `errNotGit`）、`core/tests/tasks.test.js`（18 项）；细节见 [issue-runner-panel](modules/issue-runner-panel.md) 与 docs/design/panels/issue-runner-design.md；**队列的会话闭环与可配置工作流（2026-09-30 ~ 10-01）**：队列新增 `.draft`（待启动）状态与 `POST /api/tasks/queue/create|start`；进入 `.done` 才把各任务汇报回传发起会话（`local.json` 的 `queueSessions`/`queueNotified`）；收尾**优先复用来源会话**（唯一完成标记，来源不可用回退新建、绝不取消）；「如何落地」是显式设置 `QueueIntegration`（pr / merge / push / 无），默认按工作区、队列级覆盖，动作交给收尾会话；面板右上「使用说明」抽屉由 `TasksHelpModel` 生成。
 ## 排查问题
 
 1. 看日志：`~/Library/Logs/oh-my-dsh/app.log`（壳层）、`server.log`（服务输出）；设置菜单「打开日志文件夹」(⌘L) 直达；设置菜单「打开数据文件夹」(⌘D) 直达 `$DSH_HOME/oh-my-dsh/`（壳层工作数据 / 迁移回退说明 `ROLLBACK.md`）；
