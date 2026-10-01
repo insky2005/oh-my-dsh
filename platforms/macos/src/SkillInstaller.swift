@@ -174,7 +174,7 @@ enum BuiltinSkill: CaseIterable {
     static let taskTodoMarkdown = """
     ---
     name: task-todo
-    description: 把沟通好的需求/方案落成任务面板：默认建「等待态队列 + 批量任务」并可启动队列；只有用户明确要求时才只建任务。Turn agreed requirements into a waiting queue with tasks by default (or bare tasks on request) on the oh-my-dsh tasks panel, and start the queue on request.
+    description: 把沟通好的需求/方案落成任务面板：默认追加到本会话已有的队列（没有才新建），并可启动队列；只有用户明确要求时才只建任务。Append to this session's existing queue by default (create one if none) on the oh-my-dsh tasks panel, and start the queue on request.
     ---
     
     # task-todo — 把沟通结论写进任务面板（任务 / 队列）
@@ -182,18 +182,20 @@ enum BuiltinSkill: CaseIterable {
     oh-my-dsh 壳层的**任务面板**（Tasks）通过 **localhost REST API** 驱动。用户在会话里和你
     聊完需求与方案、并且**明确要求**时，用本技能把结论落进面板：
     
-    - **默认：建「等待态队列 + 入队」** —— 建一个 `draft` 队列，把任务一次性批量入队；队列
-      不会自己开跑，等用户（或会话）说「启动队列」；
+    - **默认：追加到本会话已有的队列** —— 带上 `session` 调 `/api/tasks/queue/append`；只有本会话
+      还没有队列（`404 no-queue`）时，才新建「等待态队列 + 批量入队」（`queue/create`）。
+      **同一个会话里默认沿用同一条泳道，不要每轮新建队列**；只有用户明确说「新建队列 / 另起一个」才新建。
     - **只建任务**（**仅当**用户明确说「只建任务 / 先别入队 / 不要队列」时）：批量创建
-      「待处理、未入队」的手动任务，用户之后自己在面板挑队列；
-    - **追加到已有队列**（用户说「加到队列 X / 再补几条 / 继续那个队列」时）：往该队列
-      `/api/tasks/queue/append` 追加任务，**不新建队列**；追加到已完成的队列会让它回到**待启动**。
+      「待处理、未入队」的手动任务，用户之后自己在面板挑队列。
+    - 追加到**已完成**的队列会让它回到**待启动**（要再 `queue/start` 才跑）；追加到**暂停**的队列保持暂停。
     
     ## 何时执行（硬规则）
     
     - **只在用户明确要求时执行**。用户没说「建任务 / 建队列 / 启动队列」，就**不要**建、不要
       启动；沟通还在进行、方案还没定，也不要抢跑。
     - 用户要求了 → 一次性建完（**一次请求多条**），不要一条一条调。
+    - **默认沿用已有泳道**：本会话已经有队列时，把新任务**追加**进去（`queue/append`），不要新建队列；
+      只有用户明确要求新建、或本会话确实还没有队列时，才用 `queue/create`。
     - **建任务 / 建队列 / 追加任务都不等于开始干活**：只有用户明确说「启动队列 / 开始处理队列」时
       才调 `/api/tasks/queue/start`，其余情况绝不替用户启动。
     - 建队列时带上本会话的 `$DSH_SESSION_ID`：队列跑完（进入 `done`）后，面板会把完成情况
@@ -241,26 +243,28 @@ enum BuiltinSkill: CaseIterable {
        ```
     2. **组织任务**：标题（一行，扫一眼就知道做什么）+ 描述（做什么 / 依据什么 / 怎么算完成）。
        只写沟通里已经确认的内容。
-    3. **选端点**（把 JSON 写成文件再 `--data-binary`，避免引号转义咬到中文）：
-       - **默认** → `/api/tasks/queue/create`（带上 `session`），并从响应里记下 `queue.id`；
-         队列名用户没给就按本轮主题起一个（响应里会回 `queue.name`）；
+    3. **落进面板**（把 JSON 写成文件再 `--data-binary`，避免引号转义咬到中文）：
+       - **默认：先追加到本会话的队列** —— `POST /api/tasks/queue/append`，带 `session`（知道 `queueId`/`name` 更好）：
+         - 成功 → 追加完成；
+         - `404 no-queue` → 本会话还没有队列 → 改用 `POST /api/tasks/queue/create`（带 `session`，
+           队列名用户没给就按本轮主题起一个），并记下响应里的 `queue.id`；
+         - `409 ambiguous-queue` → 本会话有多条队列：`GET /list` 看名字，按主题选一条再带 `queueId` 追加
+           （真分不清就问用户一句）。
        - **仅当**用户明确说「只建任务 / 先别入队 / 不要队列」→ `/api/tasks/create`；
-       - **追加到已有队列**（「加到队列 X / 再补几条 / 继续那个队列」）→ `/api/tasks/queue/append`，
-         带队列的 `queueId` 或 `name`（拿不准就先 `list` 找）。
+       - **仅当**用户明确说「新建队列 / 另起一个队列」→ 直接 `queue/create`（即使已有队列也新建）。
        ```bash
+       # 默认：追加到本会话已有的队列
        cat > /tmp/task-todo.json <<'JSON'
        {
          "workspace": "<pwd 的输出>",
          "session": "<$DSH_SESSION_ID 的值>",
-         "focus": true,
-         "name": "外观切换",
          "tasks": [
-           {"title": "深色模式适配", "body": "改主题令牌与面板底色；验收：深浅切换无残留"},
-           {"title": "跟随系统", "body": "监听系统外观变化"}
+           {"title": "深色模式适配", "body": "改主题令牌与面板底色；验收：深浅切换无残留"}
          ]
        }
        JSON
-       curl -s -X POST "http://127.0.0.1:$PORT/api/tasks/queue/create" -H 'Content-Type: application/json' --data-binary @/tmp/task-todo.json
+       curl -s -X POST "http://127.0.0.1:$PORT/api/tasks/queue/append" -H 'Content-Type: application/json' --data-binary @/tmp/task-todo.json
+       # 若返回 404 no-queue：改用 /api/tasks/queue/create（可带 "name": "<本轮主题>"）
        ```
     4. **启动**（仅当用户明确要求）：`POST /api/tasks/queue/start`，带 `session`（和必要的 `queueId`）。
     5. **核对与汇报**：几行以内 —— 建了什么（队列名 / 几条任务 / 是否待启动）、面板在哪、有没有
