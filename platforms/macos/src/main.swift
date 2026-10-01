@@ -3285,6 +3285,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         config.userContentController.addUserScript(
             WKUserScript(source: langScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
 
+        // dsh 0.1.5-rc.3 的实时 assistant-stream「打开快照」里，某些 chunk 经 typert 解码
+        // 后不再是无损 JSON，客户端 expandAssistantStream 会抛 unhandled rejection，运行中
+        // 的会话于是打不开（跑完再打开没有这段快照，所以正常）。这里在 WebSocket 文本帧
+        // 进页面之前把 activeAttempt.stream 清空：保留 attemptId / nextIndex（后续实时帧
+        // 照常接上），只丢掉「打开前那几段」——第一次点即可正常加载，且不改 dsh 源码。
+        config.userContentController.addUserScript(
+            WKUserScript(source: Self.assistantStreamSanitizeScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+
         config.userContentController.addUserScript(
             WKUserScript(source: Self.previewInterceptorScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController.add(self, name: "dshPreview")
@@ -3338,6 +3346,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Keep the web view as the left pane (insert below the existing pane).
         split.addSubview(webView, positioned: .below, relativeTo: split.subviews.first)
     }
+
+    /// Drop the undecodable part of dsh's live assistant-stream opening baseline.
+    ///
+    /// dsh 0.1.5-rc.3: the live follow/\$events opening carries
+    /// `assistantStream.activeAttempt.stream` — a compact snapshot of the chunks already
+    /// streamed. A chunk in it fails the client's lossless-JSON check after the typert
+    /// decode (`Assistant stream raw chunk must be a lossless JSON object`), which
+    /// rejects the session open and leaves the view stuck on loading. A finished session
+    /// has no active attempt, which is why opening one only fails while it RUNS.
+    ///
+    /// The frame arrives as a WebSocket text message and is JSON-parsed by the client,
+    /// so clearing `activeAttempt.stream` before it is parsed is safe: the empty array
+    /// expands to nothing, while attemptId / nextIndex stay, so live frames after the
+    /// open keep flowing. Only the chunks streamed before the user opened the session
+    /// are dropped from the transient view (they arrive again in the durable settle).
+    private static let assistantStreamSanitizeScript = """
+    (function () {
+      if (window.__dshWsSanitize) return;
+      window.__dshWsSanitize = true;
+      function scrub(text) {
+        if (typeof text !== 'string' || text.indexOf('activeAttempt') === -1) return text;
+        var parsed;
+        try { parsed = JSON.parse(text); } catch (e) { return text; }
+        var changed = false;
+        var stack = [parsed];
+        while (stack.length > 0) {
+          var node = stack.pop();
+          if (node === null || typeof node !== 'object') continue;
+          if (Array.isArray(node)) {
+            for (var i = 0; i < node.length; i += 1) stack.push(node[i]);
+            continue;
+          }
+          var attempt = node.activeAttempt;
+          if (attempt && typeof attempt === 'object' && Array.isArray(attempt.stream) && attempt.stream.length > 0) {
+            attempt.stream = [];
+            changed = true;
+          }
+          for (var key in node) {
+            if (Object.prototype.hasOwnProperty.call(node, key)) stack.push(node[key]);
+          }
+        }
+        if (changed) {
+          try {
+            var perf = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.dshPerf;
+            if (perf) perf.postMessage({ kind: 'sanitize', detail: 'cleared the live assistant-stream baseline' });
+          } catch (e) {}
+          return JSON.stringify(parsed);
+        }
+        return text;
+      }
+      function wrap(handler) {
+        return function (event) {
+          try {
+            var data = event && event.data;
+            var fixed = scrub(data);
+            if (fixed !== data) event = { data: fixed };
+          } catch (e) {}
+          return handler.call(this, event);
+        };
+      }
+      var proto = WebSocket.prototype;
+      var addEventListener = proto.addEventListener;
+      proto.addEventListener = function (type, listener, options) {
+        if (type === 'message' && typeof listener === 'function') {
+          return addEventListener.call(this, type, wrap(listener), options);
+        }
+        return addEventListener.apply(this, arguments);
+      };
+      var descriptor = Object.getOwnPropertyDescriptor(proto, 'onmessage');
+      if (descriptor && descriptor.set) {
+        Object.defineProperty(proto, 'onmessage', {
+          configurable: true,
+          enumerable: descriptor.enumerable,
+          get: descriptor.get,
+          set: function (handler) {
+            descriptor.set.call(this, handler === null || handler === undefined ? handler : wrap(handler));
+          }
+        });
+      }
+    })()
+    """
 
     /// Workaround for a dsh 0.1.5-rc.3 client defect (dsh's own source is never
     /// patched): opening a RUNNING session can reject while expanding the
