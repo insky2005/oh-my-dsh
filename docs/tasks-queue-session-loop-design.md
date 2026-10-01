@@ -208,6 +208,10 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 - 队列头 `.draft` 文案「待启动」+ tone；`canStart` 对 draft 生效；
   `startHintKey` 区分 draft（开始）/ paused（继续）。
 - 可选（P1）：队列头显示「结果回传会话」标记。
+- **使用说明（2026-10-01）**：没有任何队列 / 任务时，说明**内联显示在内容区**（与空态同屏，
+  `TasksEmptyStateModel.showsHelp`）；一旦有内容，改由**右上角帮助按钮**打开同一个抽屉
+  （`TasksHelpView`）。内容来自纯模型 `TasksHelpModel`（键：`tasks.help.*`，中英成对），
+  语言切换即时重渲染。筛选下无匹配时**不**显示说明（出路是切回筛选）。
 
 ## 11. 边界与失败模式
 

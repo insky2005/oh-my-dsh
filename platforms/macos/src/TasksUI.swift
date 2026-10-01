@@ -770,16 +770,50 @@ struct TasksEmptyStateModel: Equatable {
     var messageKey: String
     var symbol: String
     var showsNewTask: Bool
+    /// The unfiltered empty board ALSO shows the 使用说明 inline (the user's request:
+    /// no queues / no tasks → the content area teaches the panel). A filter that
+    /// matches nothing must NOT: the way out there is to switch the filter back.
+    var showsHelp: Bool
 
     static func build(filtered: Bool, githubRepo: Bool) -> TasksEmptyStateModel {
         if filtered {
             return TasksEmptyStateModel(messageKey: "tasks.emptyFiltered",
                                         symbol: "line.3.horizontal.decrease.circle",
-                                        showsNewTask: false)
+                                        showsNewTask: false, showsHelp: false)
         }
         return TasksEmptyStateModel(messageKey: githubRepo ? "tasks.empty" : "tasks.emptyManualOnly",
                                     symbol: "checklist",
-                                    showsNewTask: true)
+                                    showsNewTask: true, showsHelp: true)
+    }
+}
+
+/// 使用说明 —— shown INLINE while the board is empty, and in the 帮助 drawer once it
+/// has content. Keys only, so a language switch just re-renders it.
+struct TasksHelpModel: Equatable {
+    struct Section: Equatable {
+        var headingKey: String
+        var lineKeys: [String]
+    }
+    var titleKey: String
+    var introKey: String
+    var sections: [Section]
+
+    /// Every key is prefixed `tasks.help.` — asserted by the ui tests, so a new
+    /// section cannot ship without its bilingual strings (tests/l10n also lints them).
+    static func build() -> TasksHelpModel {
+        TasksHelpModel(
+            titleKey: "tasks.help.title",
+            introKey: "tasks.help.intro",
+            sections: [
+                Section(headingKey: "tasks.help.create.heading",
+                        lineKeys: ["tasks.help.create.body"]),
+                Section(headingKey: "tasks.help.queue.heading",
+                        lineKeys: ["tasks.help.queue.body"]),
+                Section(headingKey: "tasks.help.workflow.heading",
+                        lineKeys: ["tasks.help.workflow.body"]),
+                Section(headingKey: "tasks.help.session.heading",
+                        lineKeys: ["tasks.help.session.body"])
+            ])
     }
 }
 

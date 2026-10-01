@@ -77,6 +77,9 @@ final class IssueRunnerPanelController: NSObject {
     private let refreshButton: CustomIconButton
     private let runAllButton: CustomIconButton
     private let hideButton: CustomIconButton
+    /// 使用说明 —— in the toolbar once the board has content. An EMPTY board shows
+    /// the same help inline in the content area instead (see render()).
+    private let helpButton: CustomIconButton
     /// The two creation entries, flush right on the tabs row as ICON buttons:
     /// the labels live in their tooltips, so the row stays a strip of controls
     /// instead of a sentence.
@@ -101,6 +104,8 @@ final class IssueRunnerPanelController: NSObject {
     private let emptyIcon = BakedIconView(symbol: "checklist")
     private let emptyButton = NSButton(title: "", target: nil, action: nil)
     private let emptyView = NSStackView()
+    /// The 使用说明 body shown inline while the board is empty.
+    private let helpTextView = TasksHelpTextView()
     /// The bottom sheet a form slides up in, inside a clipping, click-through
     /// host that spans the panel's content area.
     private let formSheetHost = TaskFormSheetHostView()
@@ -158,11 +163,13 @@ final class IssueRunnerPanelController: NSObject {
         refreshButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: "")
         runAllButton = CustomIconButton(glyph: .play, tooltip: "")
         hideButton = CustomIconButton(glyph: .close, tooltip: "")
+        helpButton = CustomIconButton(glyph: .symbol("questionmark.circle"), tooltip: "")
         super.init()
         buildUI()
         refreshButton.onAction = { [weak self] in self?.reloadIssues() }
         runAllButton.onAction = { [weak self] in self?.runAllTapped() }
         configButton.onAction = { [weak self] in self?.configTapped() }
+        helpButton.onAction = { [weak self] in self?.helpTapped() }
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
         updateLabels()
     }
@@ -176,6 +183,7 @@ final class IssueRunnerPanelController: NSObject {
         // configButton / refreshButton / runAllButton tooltips are set with their
         // enabled state below (they depend on the workspace).
         hideButton.toolTip = L10n.tr("preview.closePanel")
+        helpButton.toolTip = L10n.tr("tasks.help.hint")
         newTaskRowButton.toolTip = L10n.tr("tasks.new.hint")
         newQueueRowButton.toolTip = L10n.tr("tasks.queue.newButton")
         // Where this board lives (header line 2) and what that means for the
@@ -239,7 +247,7 @@ final class IssueRunnerPanelController: NSObject {
         // 处理 first: it is the primary action of the whole panel (start the work),
         // and it is the one that works in any workspace.
         let actions = NSStackView(views: [otherWorkspacesButton, runAllButton, refreshButton,
-                                         configButton, hideButton])
+                                         helpButton, configButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -343,6 +351,10 @@ final class IssueRunnerPanelController: NSObject {
         emptyView.addArrangedSubview(emptyIcon)
         emptyView.addArrangedSubview(emptyLabel)
         emptyView.addArrangedSubview(emptyButton)
+        // 使用说明 inline, under the way in: an empty board teaches the panel.
+        helpTextView.contentWidth = 300
+        helpTextView.apply(TasksHelpModel.build())
+        emptyView.addArrangedSubview(helpTextView)
 
         // status bar
         statusBar.kind = .panel
@@ -438,6 +450,7 @@ final class IssueRunnerPanelController: NSObject {
             emptyIcon.widthAnchor.constraint(equalToConstant: 38),
             emptyIcon.heightAnchor.constraint(equalToConstant: 38),
             emptyLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
+            helpTextView.widthAnchor.constraint(equalToConstant: 300),
 
             statusBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             statusBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -1794,6 +1807,14 @@ final class IssueRunnerPanelController: NSObject {
         presentForm(form) { ($0 as? TaskSettingsView)?.focusToken() }
     }
 
+    /// 使用说明 —— the toolbar button. The empty board shows the same content inline,
+    /// so the button is hidden there (see render()).
+    private func helpTapped() {
+        let form = TasksHelpView(model: TasksHelpModel.build())
+        form.onCancel = { [weak self] in self?.dismissForm() }
+        presentForm(form) { _ in }
+    }
+
     private func submitSettings(_ settings: TaskSettingsModel) {
         let value = settings.token.trimmingCharacters(in: .whitespacesAndNewlines)
         // Empty → delete the token file; otherwise write it (file only).
@@ -1857,6 +1878,7 @@ final class IssueRunnerPanelController: NSObject {
         for subview in listStack.arrangedSubviews { subview.removeFromSuperview() }
         guard let runner = runner else {
             emptyView.isHidden = false
+            helpButton.isHidden = true
             return
         }
         let board = runner.board
@@ -1913,6 +1935,10 @@ final class IssueRunnerPanelController: NSObject {
         emptyLabel.stringValue = L10n.tr(empty.messageKey)
         emptyIcon.setSymbol(empty.symbol)
         emptyButton.isHidden = !empty.showsNewTask
+        // No queues and no tasks: the help lives in the CONTENT AREA. Once there is
+        // content it moves to the toolbar button instead (never both).
+        helpTextView.isHidden = !empty.showsHelp
+        helpButton.isHidden = sections == 0
     }
 
     /// Cards fill the list width: the stack is leading-aligned, so without this

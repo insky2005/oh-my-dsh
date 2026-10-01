@@ -547,6 +547,29 @@ do {
     eq(submitted?.token, "ghp_y", "以及新填的 token")
 }
 
+section("使用说明视图：抽屉与内联共用一个正文")
+do {
+    let model = TasksHelpModel.build()
+    let drawer = TasksHelpView(model: model)
+    var closed = false
+    drawer.onCancel = { closed = true }
+    let size = layout(drawer, width: 440)
+    check(size.height > 60, "抽屉有正文高度 (got \(size.height)pt)")
+    check(size.width <= 441, "不超过给定宽度 (got \(size.width)pt)")
+    check(!drawer.body.subviews.isEmpty, "正文里渲染了内容")
+    let controls = descendants(drawer, of: CustomIconButton.self)
+    check(!controls.isEmpty, "抽屉里有关闭按钮")
+    check(!closed, "还没有人按关闭")
+
+    // 内联版：同一正文、窄列，供空板的内容区使用。
+    let inline = TasksHelpTextView()
+    inline.contentWidth = 300
+    inline.apply(model)
+    let inlineSize = layout(inline, width: 300)
+    check(inlineSize.height > 40, "内联正文也有高度 (got \(inlineSize.height)pt)")
+    check(!inline.subviews.isEmpty, "内联正文同样渲染了内容")
+}
+
 section("抽屉背后有一层虚化（表单与内容区分层）")
 do {
     // 抽屉与内容区用的是同一套面板底色，表单打开时曾经看起来像列表里多了一张卡。

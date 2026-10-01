@@ -1051,6 +1051,112 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {}
 }
 
+// MARK: - 使用说明 (help)
+
+/// The 使用说明 body: ONE wrapping label with the whole text (section headings bold,
+/// bullets secondary). It is used in two places — inline in the empty content area
+/// and in the 帮助 drawer — so one self-sizing label is simpler and more predictable
+/// than a stack of per-line labels.
+final class TasksHelpTextView: NSView {
+
+    private let label = NSTextField(labelWithString: "")
+    /// The width the text is laid out for. Set by the caller (~300 inline, wider in
+    /// the drawer). Explicit because a wrapping label needs a max width to report
+    /// the right intrinsic HEIGHT.
+    var contentWidth: CGFloat = 300 {
+        didSet {
+            label.preferredMaxLayoutWidth = max(160, contentWidth - 4)
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.isEditable = false
+        label.isSelectable = false
+        label.isBezeled = false
+        label.drawsBackground = false
+        label.maximumNumberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.preferredMaxLayoutWidth = max(160, contentWidth - 4)
+        label.setContentCompressionResistancePriority(.required, for: .vertical)
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            label.topAnchor.constraint(equalTo: topAnchor),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func apply(_ model: TasksHelpModel) {
+        let text = NSMutableAttributedString()
+        let bodyStyle = NSMutableParagraphStyle()
+        bodyStyle.paragraphSpacing = 3
+        let headingStyle = NSMutableParagraphStyle()
+        headingStyle.paragraphSpacing = 3
+        headingStyle.paragraphSpacingBefore = 7
+        func add(_ string: String, font: NSFont, color: NSColor, style: NSParagraphStyle) {
+            text.append(NSAttributedString(string: string + "\n",
+                                           attributes: [.font: font,
+                                                        .foregroundColor: color,
+                                                        .paragraphStyle: style]))
+        }
+        add(L10n.tr(model.introKey), font: .systemFont(ofSize: 11),
+            color: .secondaryLabelColor, style: bodyStyle)
+        for section in model.sections {
+            add(L10n.tr(section.headingKey), font: .systemFont(ofSize: 11, weight: .semibold),
+                color: .labelColor, style: headingStyle)
+            for key in section.lineKeys {
+                add("• " + L10n.tr(key), font: .systemFont(ofSize: 11),
+                    color: .secondaryLabelColor, style: bodyStyle)
+            }
+        }
+        label.attributedStringValue = text
+        invalidateIntrinsicContentSize()
+    }
+}
+
+/// 使用说明 in the form drawer: heading + close + the help body.
+final class TasksHelpView: TaskFormCardView {
+
+    var onCancel: (() -> Void)?
+
+    private let heading = NSTextField(labelWithString: "")
+    private let closeButton = CustomIconButton(glyph: .close, tooltip: "", size: 22)
+    let body = TasksHelpTextView()
+
+    init(model: TasksHelpModel) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        heading.stringValue = L10n.tr(model.titleKey)
+        body.contentWidth = 380
+        body.apply(model)
+        closeButton.onAction = { [weak self] in self?.onCancel?() }
+        let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
+        let column = NSStackView(views: [headingRow, body])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 8
+        column.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(column)
+        addSubview(column)
+        TaskFormKit.stretch([headingRow, body], to: column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
 // MARK: - Form sheet (the surface a form slides up in)
 
 /// The panel's bottom sheet. A form is presented HERE rather than inline in the

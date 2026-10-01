@@ -1158,15 +1158,40 @@ do {
     let fresh = TasksEmptyStateModel.build(filtered: false, githubRepo: true)
     eq(fresh.messageKey, "tasks.empty", "a fresh board points at the way in")
     check(fresh.showsNewTask, "and offers the inline form")
+    check(fresh.showsHelp, "and shows the 使用说明 inline (no queues / no tasks)")
     eq(fresh.symbol, "checklist", "with the checklist symbol")
 
     let noRepo = TasksEmptyStateModel.build(filtered: false, githubRepo: false)
     eq(noRepo.messageKey, "tasks.emptyManualOnly",
        "a non-GitHub workspace explains what still works")
+    check(noRepo.showsHelp, "a non-GitHub empty board teaches the panel too")
 
     let filtered = TasksEmptyStateModel.build(filtered: true, githubRepo: true)
     eq(filtered.messageKey, "tasks.emptyFiltered", "an empty filter says which kind of empty")
     check(!filtered.showsNewTask, "and does not offer to create a task")
+    check(!filtered.showsHelp, "and does NOT dump the help where the way out is the filter")
+}
+
+section("使用说明 model")
+do {
+    let help = TasksHelpModel.build()
+    eq(help.titleKey, "tasks.help.title", "标题来自 L10n")
+    eq(help.introKey, "tasks.help.intro", "开篇一句")
+    check(help.sections.count >= 3, "至少三节：建任务 / 队列 / 工作流…")
+    // Every key is namespaced, so a new section cannot ship without its bilingual
+    // strings (tests/l10n lints the pairs).
+    check(help.titleKey.hasPrefix("tasks.help."), "标题键在 tasks.help. 命名空间下")
+    check(help.introKey.hasPrefix("tasks.help."), "开篇键在命名空间下")
+    for section in help.sections {
+        check(section.headingKey.hasPrefix("tasks.help."), "小节标题键在命名空间下")
+        check(!section.lineKeys.isEmpty, "每个小节至少一行")
+        for key in section.lineKeys {
+            check(key.hasPrefix("tasks.help."), "正文键在命名空间下")
+        }
+    }
+    let headings = help.sections.map { $0.headingKey }
+    check(headings.contains("tasks.help.workflow.heading"), "有一节讲 Git 工作流")
+    check(headings.contains("tasks.help.session.heading"), "有一节讲会话回传")
 }
 
 section("counters, progress and the auto queue flag")
