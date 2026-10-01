@@ -384,6 +384,50 @@ do {
     check(!header.canOpenPR, "autoPR is off for this queue")
 }
 
+section("队列状态标签的语气（颜色）")
+do {
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "One", id: "manual-0008aaaa")
+    board.tasks = [t1]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+
+    var header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(header.stateKey, "tasks.queue.state.draft", "待启动")
+    eq(header.tone, .warning, "待启动 = 橙（可行动）")
+
+    board.markRunning(t1.id)
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(header.stateKey, "tasks.queue.state.active", "进行中")
+    eq(header.tone, .running, "进行中 = 蓝")
+
+    _ = board.markFailed(t1.id, error: "tasks.errNoPush")
+    header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(header.stateKey, "tasks.queue.state.paused", "失败使队列暂停")
+    eq(header.tone, .negative, "失败 / 错误 = 红")
+
+    var paused = TaskBoard()
+    let t2 = TaskItem.manual(title: "Two", id: "manual-0008bbbb")
+    paused.tasks = [t2]
+    let q2 = paused.createQueue(name: "Lane 2")
+    _ = paused.enqueue(taskID: t2.id, into: q2.id)
+    paused.markRunning(t2.id)
+    _ = paused.pauseQueue(q2.id)
+    header = QueueHeaderModel.build(paused.queue(q2.id)!, board: paused, collapsed: false)
+    eq(header.stateKey, "tasks.queue.state.paused", "手动暂停")
+    eq(header.tone, .warning, "暂停 = 橙")
+
+    paused.markDone(t2.id, prUrl: nil)
+    header = QueueHeaderModel.build(paused.queue(q2.id)!, board: paused, collapsed: false)
+    eq(header.stateKey, "tasks.queue.state.finished", "完成")
+    eq(header.tone, .positive, "完成 = 绿")
+
+    _ = paused.closeQueue(q2.id)
+    header = QueueHeaderModel.build(paused.queue(q2.id)!, board: paused, collapsed: false)
+    eq(header.stateKey, "tasks.queue.state.closed", "关闭")
+    eq(header.tone, .neutral, "关闭 = 灰（不再是橙）")
+}
+
 // MARK: - Summary
 
 section("summary card (统计信息)")

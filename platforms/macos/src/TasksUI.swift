@@ -608,7 +608,8 @@ struct QueueHeaderModel: Equatable {
             tone = .warning
         case .paused: stateKey = "tasks.queue.state.paused"; tone = failedCount > 0 ? .negative : .warning
         case .done: stateKey = "tasks.queue.state.finished"; tone = .positive
-        case .closed: stateKey = "tasks.queue.state.closed"; tone = .warning
+        // 关闭 = 手动终态：中性灰，与「暂停（橙）」「失败（红）」区分开（用户 2026-10-01）。
+        case .closed: stateKey = "tasks.queue.state.closed"; tone = .neutral
         }
 
         return QueueHeaderModel(queueID: queue.id,
