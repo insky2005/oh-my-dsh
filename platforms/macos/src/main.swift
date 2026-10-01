@@ -4012,6 +4012,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       //     control ([data-open-target], primary + chevron) inside the card that
       //     launches the OS default app / reveals in Finder — that belongs to dsh
       //     and is NEVER hijacked (see the guard below).
+      //   * changes review   — 0.1.7 [data-changed-files] card: its header / file
+      //     rows open dsh's sidebar diff tab; we route them to the native preview
+      //     panel instead (the old produced-files behaviour), reading the absolute
+      //     path from the hidden span named by the control's aria-describedby.
       // dsh's own file-tree rows also carry a path title and must keep their own
       // behaviour, so only these surfaces are matched. A card's chevron
       // (aria-haspopup="menu") opens its own default-app/reveal menu and is left
@@ -4028,7 +4032,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if (control.closest('[data-open-target]') !== null) return;
         var className = String(control.className || '');
         var clickPath = null;
-        if (control.closest('[data-presented-files-row]') !== null) {
+        if (control.closest('[data-changed-files]') !== null) {
+          // dsh 0.1.7 "changes review" card: the header / a file row opens dsh's
+          // sidebar diff tab. Route it to the native preview panel instead (what
+          // the old produced-files row did). The hidden span named by the
+          // control's aria-describedby carries the absolute path; a multi-file
+          // header falls back to its first row. The expand/collapse toggle is
+          // left to dsh (no path, so nothing is swallowed below).
+          if (className.indexOf('toggle') === -1) {
+            var describedId = control.getAttribute('aria-describedby');
+            var holder = describedId !== null ? document.getElementById(describedId) : null;
+            if (!holder || !holder.textContent) {
+              var firstRow = control.closest('[data-changed-files]').querySelector('button[aria-describedby]');
+              var firstId = firstRow !== null ? firstRow.getAttribute('aria-describedby') : null;
+              holder = firstId !== null ? document.getElementById(firstId) : null;
+            }
+            clickPath = holder && holder.textContent ? holder.textContent.trim() : null;
+          }
+        } else if (control.closest('[data-presented-files-row]') !== null) {
           // Delivered-file card: the overlay button holds the absolute path in
           // its title; the "Open" button has no title, so read the card's.
           var card = control.closest('[data-presented-file]');

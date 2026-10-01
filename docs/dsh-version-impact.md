@@ -240,6 +240,10 @@
    中显示」的 split 控件（`[data-open-target]`，主按钮 `data-open-path-open` + chevron）；壳层原来的 presented
    分支会把卡片内任何 button 都吞掉，从而劫持该控件。已加 `closest('[data-open-target]')` 放行（`tests/preview-interceptor`
    第 16 项钉住，并在 dev 版真实 DOM 上注入脚本验证：主按钮不拦截、卡片遮罩仍打开原生面板）。
+   **改动审阅卡**（`[data-changed-files]`，0.1.7 新增）：其 header/文件行点击会打开 dsh 侧边栏 diff 页签，现已改为路由到原生预览面板（读 `aria-describedby` 指向的隐藏 span 里的绝对路径；展开/收起 toggle
+   放行给 dsh），`tests/preview-interceptor` 第 17/18 项钉住并在真实页面 DOM 上注入验证。注意该卡**依赖主机
+   内存里的 `changes.summary`**（`/api/changes.summary`）：会话重开后 summary 服务端已不可用（实测 404），
+   卡片自然消失——这是 dsh 行为，壳层的持久 diff 视图是「审查」面板（读 v4 日志）。
 
 **产品注意**：npm `dist-tags.latest = 0.2.0-rc.2`，故站内升级助手按 stepwise 会提示下一档 `0.2.0-rc.1`
 （预期行为，见 `nextStepTarget`）。

@@ -71,8 +71,11 @@ function makeElement({ tag, attrs = {}, parent = null, className = '', text = ''
 
 function makeDocument() {
   const listeners = { click: [] };
+  const byId = new Map();
   return {
     listeners,
+    byId,
+    getElementById(id) { return byId.get(id) || null; },
     addEventListener(type, handler, capture) {
       (listeners[type] ||= []).push({ handler, capture });
     },
@@ -235,6 +238,40 @@ test('an open-in-app control in a delivered-file card is left to dsh', () => {
   const event = makeEvent(open);
   dispatchClick(env.document, event);
   assert.equal(env.posted.length, 0, 'the open-in-app button must not be hijacked');
+  assert.equal(event.defaultPrevented, false);
+  assert.equal(event.propagationStopped, false);
+});
+
+// dsh 0.1.7's "changes review" card (data-changed-files) opens the sidebar diff
+// tab from its header / file rows. The shell routes those clicks to its own
+// preview panel instead: the absolute path sits in the hidden span named by the
+// control's aria-describedby.
+test('a changed-files card file row is routed to the native preview panel', () => {
+  const env = install();
+  const card = makeElement({ tag: 'div', attrs: { 'data-changed-files': '' } });
+  const list = makeElement({ tag: 'ul', parent: card });
+  const item = makeElement({ tag: 'li', parent: list });
+  const row = makeElement({
+    tag: 'button', attrs: { 'aria-describedby': 'cf-0' }, parent: item, className: 'hz8-rW_row',
+    text: 'sm4_demo.py' });
+  const hidden = makeElement({ tag: 'span', attrs: { id: 'cf-0' }, parent: item, text: '/abs/sm4_demo.py' });
+  env.document.byId.set('cf-0', hidden);
+  const event = makeEvent(row);
+  dispatchClick(env.document, event);
+  assert.deepEqual(env.posted, [{ path: '/abs/sm4_demo.py', source: 'click' }]);
+  assert.equal(event.defaultPrevented, true, 'dsh sidebar must not open');
+  assert.equal(event.propagationStopped, true);
+});
+
+test('a changed-files card expand toggle is left to dsh', () => {
+  const env = install();
+  const card = makeElement({ tag: 'div', attrs: { 'data-changed-files': '' } });
+  const toggle = makeElement({
+    tag: 'button', attrs: { 'aria-expanded': 'false' }, parent: card, className: 'hz8-rW_toggle',
+    text: '全部 3 个' });
+  const event = makeEvent(toggle);
+  dispatchClick(env.document, event);
+  assert.equal(env.posted.length, 0);
   assert.equal(event.defaultPrevented, false);
   assert.equal(event.propagationStopped, false);
 });
