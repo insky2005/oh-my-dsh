@@ -100,10 +100,17 @@ final class FakeTasksAPI: TasksAPIDelegate {
         queueAppends.append(request)
         return queueAppendResult
     }
+
+    var queueDeliverResult: [String: Any] = ["ok": true, "delivering": ["q-1"]]
+    private(set) var queueDelivers: [TaskQueueDeliverRequest] = []
+    func apiTaskQueueDeliver(_ request: TaskQueueDeliverRequest) -> [String: Any] {
+        queueDelivers.append(request)
+        return queueDeliverResult
+    }
 }
 
 func topLevel(_ body: [String: Any]) -> HTTPRequest {
-    HTTPRequest(method: "POST", path: "/api/tasks/create", json: body)
+    HTTPRequest(method: "POST", path: "/api/tasks/task/create", json: body)
 }
 
 // MARK: - routing
@@ -114,33 +121,43 @@ check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/browser/status
       "browser routes are left to the browser panel")
 check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/nope"), delegate: fake) == nil,
       "unknown paths return nil (the caller still owns the 404)")
-check(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/list"), delegate: fake) == nil,
+check(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/task/list"), delegate: fake) == nil,
       "list is GET-only")
-check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/create"), delegate: fake) == nil,
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/task/create"), delegate: fake) == nil,
       "create is POST-only")
 check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/queue/create"), delegate: fake) == nil,
       "queue/create is POST-only")
 check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/queue/start"), delegate: fake) == nil,
       "queue/start is POST-only")
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/queue/deliver"), delegate: fake) == nil,
+      "queue/deliver is POST-only")
+// 旧的无资源段路径（/api/tasks/list、/create）保留为 alias：装了旧版技能的用户机器不会断。
+// 用独立的 delegate，避免污染上面 fake 的调用记录。
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/list"),
+                           delegate: FakeTasksAPI()) != nil,
+      "old /api/tasks/list alias still routes")
+check(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/create",
+                                       json: ["tasks": ["t"]]), delegate: FakeTasksAPI()) != nil,
+      "old /api/tasks/create alias still routes")
 
 section("no delegate yet (the panel is not wired up)")
-let unavailable = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/create",
+let unavailable = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/task/create",
                                                    json: ["tasks": ["t"]]), delegate: nil)
 eq(unavailable?.status, 503, "panel-unavailable status")
 eq(unavailable?.json["error"] as? String, "panel-unavailable", "panel-unavailable error")
-check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/list"), delegate: nil)?.status == 503,
+check(TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/task/list"), delegate: nil)?.status == 503,
       "list says panel-unavailable too")
 
-section("GET /api/tasks/list")
-let list = TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/list",
+section("GET /api/tasks/task/list")
+let list = TasksAPIRouter.route(HTTPRequest(method: "GET", path: "/api/tasks/task/list",
                                             query: ["workspace": "~/repo"]), delegate: fake)
 eq(list?.status, 200, "list status")
 eq(fake.listWorkspaces.count, 1, "the delegate is asked once")
 eq(fake.listWorkspaces.first ?? nil, "~/repo", "the workspace query is forwarded verbatim")
 eq(list?.json["ok"] as? Bool, true, "list body passthrough")
 
-section("POST /api/tasks/create — request shapes")
-let noBody = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/create"), delegate: fake)
+section("POST /api/tasks/task/create — request shapes")
+let noBody = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/task/create"), delegate: fake)
 eq(noBody?.status, 400, "missing body status")
 eq(noBody?.json["error"] as? String, "missing-body", "missing body error")
 
@@ -188,9 +205,9 @@ eq(many.drafts.count, TasksAPIRouter.maxTasksPerCall, "the per-call cap is enfor
 eq(many.rejected.count, 60 - TasksAPIRouter.maxTasksPerCall, "the overflow is rejected")
 eq(many.rejected.first?["error"] as? String, "too-many", "overflow reason")
 
-// MARK: - POST /api/tasks/create — what the panel receives
+// MARK: - POST /api/tasks/task/create — what the panel receives
 
-section("POST /api/tasks/create — delegation and response")
+section("POST /api/tasks/task/create — delegation and response")
 let callFake = FakeTasksAPI()
 callFake.createResult = ["ok": true,
                          "workspace": "/tmp/repo",
@@ -320,6 +337,48 @@ let parsedAppend = TasksAPIRouter.parseQueueAppend(["queueId": " q-1 ", "name": 
 eq(parsedAppend.queueId, "q-1", "append queueId trimmed")
 check(parsedAppend.name == nil, "append blank name -> nil")
 eq(parsedAppend.session, "s", "append session trimmed")
+
+// MARK: - POST /api/tasks/queue/deliver
+
+section("POST /api/tasks/queue/deliver")
+let qd = FakeTasksAPI()
+qd.queueDeliverResult = ["ok": true, "workspace": "/repo",
+                         "queue": ["id": "q-1", "name": "外观", "state": "done"],
+                         "delivering": ["q-1"]]
+let delivered = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver",
+    json: ["workspace": "/repo", "session": "s-1", "name": "外观"]), delegate: qd)
+eq(delivered?.status, 200, "deliver 200")
+eq(qd.queueDelivers.count, 1, "deliver delegates once")
+eq(qd.queueDelivers.first?.session, "s-1", "deliver session forwarded")
+eq(qd.queueDelivers.first?.name, "外观", "deliver name forwarded")
+eq(delivered?.json["delivering"] as? [String], ["q-1"], "delivering passthrough")
+
+// 目标定位与 start 同一套解析（queueId 优先、name 次之、session 最后）。
+let parsedDeliver = TasksAPIRouter.parseQueueDeliver(["queueId": " q-1 ", "name": "外观", "session": " s "])
+eq(parsedDeliver.queueId, "q-1", "deliver queueId trimmed")
+eq(parsedDeliver.name, "外观", "deliver name kept")
+eq(parsedDeliver.session, "s", "deliver session trimmed")
+check(TasksAPIRouter.parseQueueDeliver(["queueId": "  "]).queueId == nil, "blank queueId -> nil")
+
+// HTTP 状态：已有交付会话在跑 / 队列名歧义 → 409；找不到队列 → 404；其余 400。
+let busy = FakeTasksAPI()
+busy.queueDeliverResult = ["ok": false, "error": "busy"]
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: [:]), delegate: busy)?.status,
+   409, "busy delivery -> 409")
+let deliverAmbiguous = FakeTasksAPI()
+deliverAmbiguous.queueDeliverResult = ["ok": false, "error": "ambiguous-queue", "queues": []]
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: [:]), delegate: deliverAmbiguous)?.status,
+   409, "ambiguous queue -> 409")
+let deliverNoQueue = FakeTasksAPI()
+deliverNoQueue.queueDeliverResult = ["ok": false, "error": "no-queue"]
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: [:]), delegate: deliverNoQueue)?.status,
+   404, "no queue -> 404")
+let notDone = FakeTasksAPI()
+notDone.queueDeliverResult = ["ok": false, "error": "not-deliverable", "state": "active"]
+eq(TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver", json: [:]), delegate: notDone)?.status,
+   400, "not finished -> 400")
+let noBodyDeliver = TasksAPIRouter.route(HTTPRequest(method: "POST", path: "/api/tasks/queue/deliver"), delegate: FakeTasksAPI())
+eq(noBodyDeliver?.json["error"] as? String, "missing-body", "deliver missing body")
 
 // MARK: - workspace resolution
 

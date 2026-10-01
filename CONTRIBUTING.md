@@ -71,7 +71,7 @@ tests/tasks-panel/run.sh                # 任务面板逻辑层（五段：模�
                                         #     摘要计数 · 来源筛选 · 对话来源与手动任务对齐
                                         #   视图 199 项（TaskCardView / TaskInlineForms.swift）：卡片与队列头布局 ·
                                         #     两张内联表单（新建任务 / 新建队列及其编辑态）
-                                        #   本地 API 68 项（TasksAPI.swift）：/api/tasks/* 路由 · 请求解析 · 工作区解析
+                                        #   本地 API 130 项（TasksAPI.swift）：/api/tasks/task 与 /api/tasks/queue 路由 · 请求解析 · 工作区解析
                                         #   + 源码守卫（会话走 DshWorkspaceOps / 端口按调用求值 / 提示词现场探测）
 tests/injected-scripts/run.sh           # 注入 dsh web 的 JS 守卫：脚本可解析（node --check）/ 每个 window.__dshX
                                         #   桥名都有脚本安装它 / 不含会被 Swift 吃掉的转义

@@ -549,7 +549,7 @@ final class IssueRunnerPanelController: NSObject {
         return result
     }
 
-    /// GET /api/tasks/list —— 面板里现在有什么（任务 + 队列）。
+    /// GET /api/tasks/task/list —— 面板里现在有什么（任务 + 队列）。
     func apiTaskList(workspace: String?) -> [String: Any] {
         guard let (path, runner) = apiRunner(for: workspace) else {
             return Self.apiNoWorkspace(workspace)
@@ -570,7 +570,7 @@ final class IssueRunnerPanelController: NSObject {
         ]
     }
 
-    /// POST /api/tasks/create —— 批量创建手动任务。
+    /// POST /api/tasks/task/create —— 批量创建手动任务。
     ///
     /// 与用户在面板里点「新建任务」走同一条路径（TasksRunner.createManualTask）：
     /// 落盘、日志、重绘都由它负责。任务一律是「待处理、未入队」——**建任务不启动
@@ -767,6 +767,88 @@ final class IssueRunnerPanelController: NSObject {
             "created": created.map { ["id": $0.id, "title": $0.title, "state": $0.state.rawValue] },
             "rejected": [[String: Any]](),
         ]
+    }
+
+    /// POST /api/tasks/queue/deliver —— 发起一条**已完成**队列的交付。
+    ///
+    /// 与队列头的「交付」按钮走同一条路径（TasksRunner.startQueueIntegration）：按该
+    /// 队列的 Git 工作流开 PR / 合并到基线 / 直接推送。只发起、不等待，结果由交付会话
+    /// 回写到队列卡片。目标按 queueId → name → session（本会话的非关闭队列）解析；
+    /// 只接受 .done（与按钮的可见条件一致），工作流「无」直接拒绝。
+    func apiTaskQueueDeliver(_ request: TaskQueueDeliverRequest) -> [String: Any] {
+        guard let (path, runner) = apiRunner(for: request.workspace) else {
+            return Self.apiNoWorkspace(request.workspace)
+        }
+        let board = runner.board
+        let target: TaskQueue?
+        if let queueId = request.queueId {
+            target = board.queue(queueId)
+        } else if let name = request.name {
+            let matches = board.queues.filter { $0.name == name && $0.state != .closed }
+            if matches.count > 1 {
+                return ["ok": false, "error": "ambiguous-queue",
+                        "queues": matches.map {
+                            TasksAPIRouter.queueDictionary($0, reportsToSession: board.local.queueSessions[$0.id] != nil)
+                        }]
+            }
+            target = matches.first
+        } else if let session = request.session {
+            let matches = board.queues.filter {
+                $0.state != .closed && board.local.queueSessions[$0.id] == session
+            }
+            if matches.count > 1 {
+                return ["ok": false, "error": "ambiguous-queue",
+                        "queues": matches.map { TasksAPIRouter.queueDictionary($0, reportsToSession: true) }]
+            }
+            target = matches.first
+        } else {
+            target = nil
+        }
+        guard let queue = target else { return ["ok": false, "error": "no-queue"] }
+        guard queue.state == .done else {
+            return ["ok": false, "error": "not-deliverable",
+                    "queueId": queue.id, "state": queue.state.rawValue,
+                    "hint": "only a finished (done) queue can be delivered"]
+        }
+        let mode = runner.resolvedIntegration(forQueue: queue.id)
+        guard mode != QueueIntegration.none else {
+            return ["ok": false, "error": "workflow-none", "queueId": queue.id,
+                    "hint": "this queue's Git workflow is None — there is nothing to deliver"]
+        }
+        guard runner.startQueueIntegration(queue.id) else {
+            // The runner recorded WHY on the queue (busy / no branch / no remote); a nil
+            // reason here means 无, which the guard above already handled.
+            let reason = runner.board.queue(queue.id)?.prError
+            return ["ok": false, "error": Self.deliverErrorCode(reason),
+                    "queueId": queue.id, "reason": reason ?? "",
+                    "queue": TasksAPIRouter.queueDictionary(runner.board.queue(queue.id) ?? queue,
+                                                            reportsToSession: board.local.queueSessions[queue.id] != nil)]
+        }
+        if path == workspaces.currentPath {
+            syncFromBoard()
+            setStatus(L10n.tr(Self.finalizeStatusKey(mode: mode), queue.name), spin: true)
+        }
+        AppLog.shared.log("tasks api: delivering queue \(queue.id) at \(path) (mode \(mode.rawValue))")
+        return [
+            "ok": true,
+            "workspace": path,
+            "current": path == workspaces.currentPath,
+            "queue": TasksAPIRouter.queueDictionary(runner.board.queue(queue.id) ?? queue,
+                                                    reportsToSession: board.local.queueSessions[queue.id] != nil),
+            "delivering": [queue.id],
+        ]
+    }
+
+    /// 把 runner 记录在队列上的拒绝对因（L10n 键）翻译成 API 的稳定错误码，让技能不用
+    /// 认识面板的文案键也能转述原因。
+    static func deliverErrorCode(_ reason: String?) -> String {
+        switch reason {
+        case "tasks.errPRBusy": return "busy"
+        case "tasks.errPRNoBranch": return "no-branch"
+        case "tasks.errPRNoRemote": return "no-remote"
+        case "tasks.errPRSession": return "session-failed"
+        default: return "deliver-failed"
+        }
     }
 
     // MARK: - Board / runner wiring

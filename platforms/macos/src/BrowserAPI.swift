@@ -246,6 +246,8 @@ final class BrowserAPIBridge: BrowserAPIDelegate {
     var tasksQueueStart: (TaskQueueStartRequest) -> [String: Any] = { _ in BrowserAPIBridge.tasksUnavailable }
     /// 追加任务到已有队列（/api/tasks/queue/append）。
     var tasksQueueAppend: (TaskQueueAppendRequest) -> [String: Any] = { _ in BrowserAPIBridge.tasksUnavailable }
+    /// 发起已完成队列的交付（/api/tasks/queue/deliver）。
+    var tasksQueueDeliver: (TaskQueueDeliverRequest) -> [String: Any] = { _ in BrowserAPIBridge.tasksUnavailable }
     /// 面板还没就绪（或已经没了）时任务 API 的回答。
     static let tasksUnavailable: [String: Any] = [
         "ok": false,
@@ -591,6 +593,10 @@ extension BrowserAPIBridge: TasksAPIDelegate {
 
     func apiTaskQueueAppend(_ request: TaskQueueAppendRequest) -> [String: Any] {
         onMain(fallback: Self.tasksUnavailable) { self.tasksQueueAppend(request) }
+    }
+
+    func apiTaskQueueDeliver(_ request: TaskQueueDeliverRequest) -> [String: Any] {
+        onMain(fallback: Self.tasksUnavailable) { self.tasksQueueDeliver(request) }
     }
 
     /// Run the work on the main thread and hand back its result, or the fallback

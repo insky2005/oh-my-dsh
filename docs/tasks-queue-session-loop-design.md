@@ -134,7 +134,23 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 - 只入队、不启动。追加到 `.done` 队列会**回到 `.draft` 并重臂回传**；`.paused` 保持 `.paused`；
   `.closed` 拒绝（`queue-closed`）。响应同 queue/create：`{ok, queue, created, rejected}`。
 
-`GET /api/tasks/list` 的 queue 项可选增加 `"reportsToSession": true`（不暴露 session id）。
+### POST /api/tasks/queue/deliver
+
+```jsonc
+{ "workspace": "/abs/path", "session": "session-...",
+  "queueId": "q-xxxx",            // 或 "name": "队列名"
+}
+```
+
+- 对一条**已完成（`.done`）**的队列发起**交付**（与队列头「交付」按钮同一条 runner 路径
+  `startQueueIntegration`：按队列 Git 工作流开 PR / 合并 / 推送）。只发起、不等待，结果由交付
+  会话回写队列卡片。
+- 目标解析同 append（`queueId` → `name` → `session`）。
+- 只接受 `.done`：其余状态 → 400 `not-deliverable`；工作流「无」→ 400 `workflow-none`；
+  已有交付会话在跑 → 409 `busy`；没有分支 / 远端 → 400 `no-branch` / `no-remote`。
+- 响应：`{ ok, workspace, queue, delivering: ["q-xxxx"] }`。
+
+`GET /api/tasks/task/list` 的 queue 项可选增加 `"reportsToSession": true`（不暴露 session id）。
 
 ## 7. Runner
 
@@ -193,13 +209,13 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 
 - 建队列 + 批量入队：`POST /api/tasks/queue/create`，带 `session: $DSH_SESSION_ID`；
   队列名可由沟通主题派生；仍遵守「用户没要求就不建」。
-- 启动：用户说「启动队列 / 开始处理队列」时，`GET /api/tasks/list` 找到该队列（或按 session 定位）
+- 启动：用户说「启动队列 / 开始处理队列」时，`GET /api/tasks/task/list` 找到该队列（或按 session 定位）
   → `POST /api/tasks/queue/start`。
 - 边界更新：不再是「绝不建队列/入队」——改为「只有用户明确要求，且走队列 API；不绕过 API、
   不直接改盘上文件」。
 - **默认沿用已有泳道**：用户要求把需求落成任务时，默认 `POST /api/tasks/queue/append`（带 `session`）——
   本会话已有队列就追加进去；`404 no-queue` 才 `queue/create`（等待态 + 批量入队）。
-  只有用户明确说「只建任务 / 先别入队 / 不要队列」才用 `/api/tasks/create`；明确说
+  只有用户明确说「只建任务 / 先别入队 / 不要队列」才用 `/api/tasks/task/create`；明确说
   「新建队列 / 另起一个」才直接 create——这是「验收 → 再补几条 → 再跑」循环的入口，
   **不需要用户每次都说「追加」**。
 

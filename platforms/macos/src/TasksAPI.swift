@@ -56,6 +56,16 @@ struct TaskQueueAppendRequest: Equatable {
     var drafts: [TaskCreateDraft]
 }
 
+/// POST /api/tasks/queue/deliver：对一条**已完成**（.done）队列发起交付（PR / 合并 /
+/// 推送），与队列头的「交付」按钮同一条路径。只发起、不等待，结果由交付会话回写。
+/// 目标按 queueId → name → session 解析（同 start / append）。
+struct TaskQueueDeliverRequest: Equatable {
+    var workspace: String?
+    var session: String?
+    var queueId: String?
+    var name: String?
+}
+
 /// 任务面板 API 的实现方（IssueRunnerPanelController）。
 ///
 /// 两个方法都在**主线程**上被调用：board 的读改写必须与面板的 step 定时器同一条
@@ -71,6 +81,8 @@ protocol TasksAPIDelegate: AnyObject {
     func apiTaskQueueStart(_ request: TaskQueueStartRequest) -> [String: Any]
     /// 向已有队列追加任务（不启动；.done 会回到 .draft 并重臂回传）。
     func apiTaskQueueAppend(_ request: TaskQueueAppendRequest) -> [String: Any]
+    /// 对一条已完成队列发起交付（PR / 合并 / 推送）；只发起，结果由交付会话回写。
+    func apiTaskQueueDeliver(_ request: TaskQueueDeliverRequest) -> [String: Any]
 }
 
 // MARK: - 工作区解析（纯函数）
@@ -161,12 +173,15 @@ enum TasksAPIRouter {
     static func route(_ request: HTTPRequest, delegate: TasksAPIDelegate?) -> HTTPResponse? {
         switch (request.method, request.path) {
 
-        case ("GET", "/api/tasks/list"):
+        // 规范路径 = /api/tasks/<资源>/<动词>（/tasks 是面板命名空间）：任务在 task/ 下，
+        // 队列在 queue/ 下。旧的无资源段路径（/api/tasks/list、/create）保留为 alias，
+        // 装了旧版技能的用户机器不会断。
+        case ("GET", "/api/tasks/task/list"), ("GET", "/api/tasks/list"):
             guard let delegate = delegate else { return unavailable() }
             let result = delegate.apiTaskList(workspace: request.query["workspace"])
             return .json((result["ok"] as? Bool) == true ? 200 : 400, result)
 
-        case ("POST", "/api/tasks/create"):
+        case ("POST", "/api/tasks/task/create"), ("POST", "/api/tasks/create"):
             guard let body = request.jsonBody() else {
                 return .json(400, ["ok": false,
                                    "error": "missing-body",
@@ -241,6 +256,12 @@ enum TasksAPIRouter {
             if result["ok"] == nil { result["ok"] = !((result["created"] as? [Any]) ?? []).isEmpty }
             return .json((result["ok"] as? Bool) == true ? 200 : 400, result)
 
+        case ("POST", "/api/tasks/queue/deliver"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            guard let delegate = delegate else { return unavailable() }
+            let result = delegate.apiTaskQueueDeliver(parseQueueDeliver(body))
+            return .json(deliverStatus(result), result)
+
         default:
             return nil
         }
@@ -252,6 +273,17 @@ enum TasksAPIRouter {
         if (result["ok"] as? Bool) == true { return 200 }
         switch result["error"] as? String {
         case "ambiguous-queue": return 409
+        case "no-queue": return 404
+        default: return 400
+        }
+    }
+
+    /// /api/tasks/queue/deliver 的 HTTP 状态：发起了 200，队列定位有歧义或已有交付会话
+    /// 在跑 409，找不到队列 404，其余（还没跑完 / 工作流「无」/ 没有分支或远端）400。
+    static func deliverStatus(_ result: [String: Any]) -> Int {
+        if (result["ok"] as? Bool) == true { return 200 }
+        switch result["error"] as? String {
+        case "ambiguous-queue", "busy": return 409
         case "no-queue": return 404
         default: return 400
         }
@@ -368,6 +400,13 @@ enum TasksAPIRouter {
                                      session: normalizeSession(body["session"] as? String),
                                      name: (rawName?.isEmpty ?? true) ? nil : rawName,
                                      queueId: (rawId?.isEmpty ?? true) ? nil : rawId)
+    }
+
+    /// 解析 queue/deliver 请求体（纯函数）：目标定位与 start 相同（queueId / name / session）。
+    static func parseQueueDeliver(_ body: [String: Any]) -> TaskQueueDeliverRequest {
+        let target = parseQueueStart(body)
+        return TaskQueueDeliverRequest(workspace: target.workspace, session: target.session,
+                                       queueId: target.queueId, name: target.name)
     }
 
     /// 来源会话 id，缺省 / 空白 → nil（队列照建，只是不回传）。

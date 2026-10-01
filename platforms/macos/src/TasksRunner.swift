@@ -670,6 +670,13 @@ final class TasksRunner {
     /// as the workflow default), so the runner is told here.
     func setAutoCloseOnPublish(_ on: Bool) { env.autoCloseOnPublish = on }
 
+    /// The workflow a queue will actually use in THIS workspace: its own override,
+    /// else the workspace default the runner was built with. The API's deliver
+    /// endpoint answers 「能不能交付」 from it before starting anything.
+    func resolvedIntegration(forQueue queueID: String) -> QueueIntegration {
+        board.integration(forQueue: queueID, default: env.defaultIntegration)
+    }
+
     private struct Active {
         var taskID: String
         var queueID: String?

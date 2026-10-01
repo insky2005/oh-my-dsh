@@ -6354,6 +6354,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         bridge.tasksQueueAppend = { [weak self] request in
             self?.tasksPanel?.apiTaskQueueAppend(request) ?? BrowserAPIBridge.tasksUnavailable
         }
+        bridge.tasksQueueDeliver = { [weak self] request in
+            self?.tasksPanel?.apiTaskQueueDeliver(request) ?? BrowserAPIBridge.tasksUnavailable
+        }
         bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
         bridge.hidePanel = { [weak self] in
             if self?.rightPanel == .browser { self?.setRightPanel(.none) }
