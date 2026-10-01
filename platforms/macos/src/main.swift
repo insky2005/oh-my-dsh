@@ -3306,6 +3306,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         config.userContentController.addUserScript(
             WKUserScript(source: Self.composerReferenceScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
 
+        // 开发版诊断：WKWebView 的 JS console 壳层看不到，客户端卡住时没有证据。
+        // 开发版把页面 error / unhandledrejection / 长任务(>=200ms) / 点击目标经
+        // `dshPerf` message 落到 app.log，并允许 Safari Web Inspector 附加（13.3+）。
+        if isDevBuild {
+            config.userContentController.addUserScript(
+                WKUserScript(source: Self.webViewDiagnosticsScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            config.userContentController.add(self, name: "dshPerf")
+        }
+
         webView?.removeFromSuperview()
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
@@ -3314,6 +3323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // The split view manages the pane frames; plain autoresizing is enough.
         webView.translatesAutoresizingMaskIntoConstraints = true
         webView.autoresizingMask = [.width, .height]
+        if isDevBuild, #available(macOS 13.3, *) { webView.isInspectable = true }
 
         guard let split = splitView else { return }
         if split.subviews.first is WKWebView {
@@ -3322,6 +3332,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Keep the web view as the left pane (insert below the existing pane).
         split.addSubview(webView, positioned: .below, relativeTo: split.subviews.first)
     }
+
+    /// Dev-only WebView diagnostics (see rebuildWebView): forwards what the native
+    /// side cannot see — uncaught errors, unhandled rejections, long tasks (>=200ms)
+    /// and click targets — through the `dshPerf` message handler into app.log.
+    private static let webViewDiagnosticsScript = """
+    (function () {
+      if (window.__dshPerfInstalled) return;
+      window.__dshPerfInstalled = true;
+      function post(kind, detail) {
+        try {
+          window.webkit.messageHandlers.dshPerf.postMessage({ kind: kind, detail: String(detail).slice(0, 300) });
+        } catch (e) {}
+      }
+      window.addEventListener('error', function (e) {
+        post('error', (e.message || '') + ' @ ' + (e.filename || '') + ':' + (e.lineno || 0));
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason; post('rejection', (r && (r.message || r)) || 'unknown');
+      });
+      try {
+        var po = new PerformanceObserver(function (list) {
+          list.getEntries().forEach(function (entry) {
+            if (entry.duration >= 200) post('longtask', Math.round(entry.duration) + 'ms');
+          });
+        });
+        po.observe({ entryTypes: ['longtask'] });
+      } catch (e) {}
+      document.addEventListener('click', function (e) {
+        var t = e.target; var label = '';
+        try {
+          label = (t && t.getAttribute && (t.getAttribute('aria-label') || t.getAttribute('title')))
+                  || (t && (t.textContent || '').trim().slice(0, 60)) || '';
+        } catch (err) {}
+        post('click', label + ' @' + Math.round(performance.now()) + 'ms');
+      }, true);
+    })()
+    """
 
     /// Tracks which dsh session the user is currently viewing / interacting
     /// with. Opening a session or sending a message makes the dsh web client
@@ -5259,6 +5306,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // MARK: WKScriptMessageHandler (file preview bridge)
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        // 开发版诊断（仅 dev 注入）：把主 WebView 的页面错误 / 长任务写进 app.log。
+        if message.name == "dshPerf" {
+            if let body = message.body as? [String: Any] {
+                AppLog.shared.log("webview: \(body["kind"] ?? "?") \(body["detail"] ?? "")")
+            }
+            return
+        }
         if message.name == "dshPreview" {
             guard let body = message.body as? [String: Any], let path = body["path"] as? String else { return }
             // dsh >= 0.1.5 hands the raw (possibly workspace-relative) path to
