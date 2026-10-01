@@ -82,6 +82,8 @@ stage_swift() {
   tests/injected-scripts/run.sh
   echo "--- injected file-open interceptor tests ---"
   tests/preview-interceptor/run.sh
+  echo "--- injected session tracker tests ---"
+  tests/session-tracker/run.sh
   echo "--- L10n key lint ---"
   tests/l10n/run.sh
   echo "--- native dsh RPC helper tests ---"
