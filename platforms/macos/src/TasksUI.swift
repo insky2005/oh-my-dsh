@@ -476,6 +476,10 @@ struct TaskWorkspaceModel: Equatable {
 extension QueueIntegration {
     var labelKey: String { "tasks.integration." + rawValue }
     var label: String { L10n.tr(labelKey) }
+
+    /// The order every picker shows them in: 「无」FIRST (user 2026-10-01), then the
+    /// three publishing workflows. A display order, not the enum's storage order.
+    static var displayOrder: [QueueIntegration] { [.none, .pr, .merge, .push] }
     /// The icon the queue header's publish button carries for this mode.
     var publishSymbol: String {
         switch self {
@@ -972,7 +976,7 @@ struct QueueComposerModel: Equatable {
     var effectiveIntegration: QueueIntegration { integration ?? defaultIntegration }
 
     /// The picker's items, in order: 跟随设置 first (the default), then the three modes.
-    var integrationChoices: [QueueIntegration?] { [nil] + QueueIntegration.allCases }
+    var integrationChoices: [QueueIntegration?] { [nil] + QueueIntegration.displayOrder }
 
     /// Follow the panel setting, or pin this queue to one mode.
     func typedIntegration(_ mode: QueueIntegration?) -> QueueComposerModel {

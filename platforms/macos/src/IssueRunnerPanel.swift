@@ -246,8 +246,9 @@ final class IssueRunnerPanelController: NSObject {
         otherWorkspacesButton.onAction = { [weak self] in self?.otherWorkspacesTapped() }
         // 处理 first: it is the primary action of the whole panel (start the work),
         // and it is the one that works in any workspace.
+        // 帮助在设置之后、关闭之前（用户 2026-10-01）。
         let actions = NSStackView(views: [otherWorkspacesButton, runAllButton, refreshButton,
-                                         helpButton, configButton, hideButton])
+                                         configButton, helpButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false

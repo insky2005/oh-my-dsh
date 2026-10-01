@@ -560,7 +560,7 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         advancedButton = TaskFormKit.linkButton("")
         advancedStack = NSStackView()
         // 跟随设置 + pr/merge/push = one radio each.
-        integrationRadios = (0..<(QueueIntegration.allCases.count + 1)).map { _ in
+        integrationRadios = (0..<(QueueIntegration.displayOrder.count + 1)).map { _ in
             NSButton(radioButtonWithTitle: "", target: nil, action: nil)
         }
         hint = TaskFormKit.hintLabel()
@@ -898,7 +898,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         tokenField = token.field
         submitButton = TaskFormKit.button("", primary: true)
         cancelButton = TaskFormKit.button("", primary: false)
-        integrationRadios = QueueIntegration.allCases.map { _ in
+        integrationRadios = QueueIntegration.displayOrder.map { _ in
             NSButton(radioButtonWithTitle: "", target: nil, action: nil)
         }
         super.init(frame: .zero)
@@ -922,7 +922,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         integrationCaption.stringValue = L10n.tr("tasks.integration.defaultLabel")
         // The recommendation is marked on the radio itself; the 首次设置 preselection
         // happens in configTapped (nothing stored yet → the recommended one).
-        for (index, mode) in QueueIntegration.allCases.enumerated() {
+        for (index, mode) in QueueIntegration.displayOrder.enumerated() {
             let radio = integrationRadios[index]
             radio.title = mode.label + (mode == model.recommendedIntegration
                                         ? L10n.tr("tasks.integration.recommendedSuffix") : "")
@@ -1013,7 +1013,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     /// The workflow radio that is ON (the model's value while none is selected yet).
     /// Internal for the headless form tests.
     var selectedIntegration: QueueIntegration {
-        for (index, mode) in QueueIntegration.allCases.enumerated()
+        for (index, mode) in QueueIntegration.displayOrder.enumerated()
         where integrationRadios[index].state == .on {
             return mode
         }
@@ -1037,7 +1037,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
 
     /// Programmatic exclusive selection (headless tests).
     func selectIntegration(_ mode: QueueIntegration) {
-        for (index, option) in QueueIntegration.allCases.enumerated() {
+        for (index, option) in QueueIntegration.displayOrder.enumerated() {
             integrationRadios[index].state = (option == mode) ? .on : .off
         }
         apply(currentDraft)

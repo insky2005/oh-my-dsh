@@ -484,7 +484,7 @@ do {
 
     eq(form.integrationRadios.count, 5, "跟随设置 + 四个模式各一个单选按钮")
     eq(form.integrationRadios[0].title, "followShort", "第一个是跟随设置（短标签）")
-    eq(form.integrationRadios[4].title, "none", "最后一个是「无」")
+    eq(form.integrationRadios[1].title, "none", "「无」排在跟随设置之后（第一档）")
     eq(form.selectedIntegration, nil, "默认就是跟随设置")
     check(form.integrationRadios[0].state == .on, "跟随设置那个是选中态")
     check(!form.integrationNote.isHidden, "本工作区推荐在 caption 行上，可见")
@@ -520,11 +520,12 @@ do {
     eq(form.tokenField.stringValue, "ghp_x", "token 预填")
     check(form.tokenField.frame.width > 300, "token 字段撑满抽屉 (got \(form.tokenField.frame.width)pt)")
     // 单选按钮组，不是下拉：四个 Git 工作流同时可见，推荐项带标记。
-    eq(form.integrationRadios.count, 4, "四个 Git 工作流各一个单选按钮（pr/merge/push/无）")
+    eq(form.integrationRadios.count, 4, "四个 Git 工作流各一个单选按钮")
+    eq(form.integrationRadios[0].title, "none", "「无」排第一（用户 2026-10-01）")
     eq(form.selectedIntegration, .merge, "默认选中当前默认值 merge")
-    check(form.integrationRadios[1].state == .on, "merge 那一个是选中态")
-    check(form.integrationRadios[0].title.contains("recommendedSuffix"),
-          "推荐项（这里是 pr）带标记")
+    check(form.integrationRadios[2].state == .on, "merge 那一个是选中态（无/pr/merge/push → 2）")
+    check(form.integrationRadios[1].title.contains("recommendedSuffix"),
+          "推荐项（这里是 pr，第 2 个）带标记")
     check(!form.integrationNote.isHidden, "推荐说明是可见信息，不是校验 hint")
     check(form.submitButton.isEnabled, "保存总是可点：设置没有非法值")
 
@@ -536,11 +537,11 @@ do {
           "工作流区块排在 GitHub Token 之上 (workflow \(workflowMidY) > token \(tokenMidY))")
 
     form.selectIntegration(QueueIntegration.none)
-    eq(form.selectedIntegration, QueueIntegration.none, "第四档是「无」——非 git 项目不收尾")
+    eq(form.selectedIntegration, QueueIntegration.none, "选「无」——非 git 项目不收尾")
 
     form.selectIntegration(.push)
     eq(form.selectedIntegration, .push, "点选直接推送")
-    check(form.integrationRadios[1].state == .off, "单选：前一个被关掉")
+    check(form.integrationRadios[0].state == .off, "单选：前一个（无）被关掉")
     form.tokenField.stringValue = "ghp_y"
     form.submitTapped()
     eq(submitted?.defaultIntegration, .push, "提交带上新选的默认工作流")
