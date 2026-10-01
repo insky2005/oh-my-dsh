@@ -14,11 +14,12 @@ cp "$SRC/TerminalPanel.swift" "$TMP/TerminalPanel.swift"
 cp "$SRC/PanelSurface.swift" "$TMP/PanelSurface.swift"   # 面板底色 token（#1B1B1C / #F9FAFB）
 cp "$SRC/TerminalWorkspaceTabs.swift" "$TMP/TerminalWorkspaceTabs.swift"   # 每 workspace 页签模型（#5）
 cp "$SRC/WorkspaceTabMemory.swift" "$TMP/WorkspaceTabMemory.swift"         # 复用其 workspace key 归一化
+cp "$SRC/TerminalInputSource.swift" "$TMP/TerminalInputSource.swift"     # 聚焦切英文输入法 / 失焦还原（纯状态机）
 cp panel-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
   -framework AppKit -framework PDFKit \
   -o "$TMP/terminal-panel-tests" "$TMP/stubs.swift" "$TMP/PanelSurface.swift" \
   "$TMP/TerminalPanel.swift" "$TMP/TerminalWorkspaceTabs.swift" \
-  "$TMP/WorkspaceTabMemory.swift" "$TMP/main.swift"
+  "$TMP/WorkspaceTabMemory.swift" "$TMP/TerminalInputSource.swift" "$TMP/main.swift"
 "$TMP/terminal-panel-tests"
 rm -rf "$TMP"

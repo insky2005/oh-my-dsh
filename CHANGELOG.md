@@ -9,6 +9,10 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **终端面板聚焦时自动切英文输入法、失焦还原（2026-10-01）**：终端想要拉丁键盘，否则中文/日文输入法会截走最初的按键。现在 `TerminalView.becomeFirstResponder/resignFirstResponder` 驱动一个纯状态机 `TerminalInputSourceGuard`：聚焦时记住当前输入法并切到 ASCII 源（`TISCopyCurrentASCIICapableKeyboardInputSource`），失焦时还原；使用中可随时手动切回中文，策略只在聚焦那一次切、不会反复拉回。**最初状态绝不被覆盖**：`savedID` 写一次，重复聚焦（鼠标移入即聚焦 + 点击）直接返回，还原被系统拒绝时也保留原始、下次再试；原本就是英文则不接管。系统层用 Carbon TIS 实现并隔离在 `InputSourceControlling` 协议后（本机实测「百度拼音 → ABC → 百度拼音」往返成功）。回归：`tests/terminal-panel` 新增 11 项，README/本文件/wiki 同步。
+
+- **终端焦点光标：聚焦蓝色实心、失焦蓝色空心（2026-10-01）**：失焦后终端仍画蓝色实心块，看起来还像激活状态。现在 `TerminalView` 维护 `hasFocus`（`become/resignFirstResponder` + `NSWindow` key 通知，覆盖 Cmd-Tab 切走 App 的情形），`drawCursor` 聚焦时保持原来的 accent 实心块并在块上把字符重绘为白色，失焦时改画同色**空心描边框**、字符保留原色。回归：`tests/terminal-panel` 新增 3 项。
+
 - **队列收尾优先复用来源会话（2026-10-01）**：队列在哪个会话里创建，就尽量在哪个会话里收尾——创建 / 验收 / 收尾同一条对话，不用在侧栏里另找一个「收尾：…」会话。手动创建的队列没有来源会话，才新建专门的收尾会话。来源会话是真实对话，所以提示词要求最后回一个**唯一完成标记**，壳层只采用带标记的那次汇报（避免把用户别的回合当成收尾结果）；来源会话不可用 / 忙到超时 / 已从 dsh 消失时**回退新建**，且**绝不取消**用户的会话。设计见 §14 决策 12。
   回归：tests/tasks-panel **1393 → 1405** 项（运行器 442→**454**）。
 
@@ -48,6 +52,10 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **终端输入法、焦点光标统一由键盘焦点驱动（2026-10-01）**：两者用同一个 `hasFocus` 信号——`becomeFirstResponder` / `resignFirstResponder` 与窗口 key 变化（⌘-Tab 切走/切回）→ 聚焦画实心块 + 切英文，失焦画空心框 + 还原原始输入法。鼠标移入即聚焦（切英文），移出不失焦所以维持不变；上一轮误加在 `mouseExited` 上的还原已移除（移出只保留诊断日志）。一次焦点变化只切一次，残留抖动由 0.12s 防抖兜底；`terminal focus:` / `terminal ime:` 日志写进 `app.log`。
+
+- **终端聚焦时输入法来回闪（2026-10-01）**：上一版在 `become/resignFirstResponder` 上直接切/还原输入法，但输入源切换本身会扰动响应链、加上鼠标进出终端，`resignFirstResponder` 会成串到来——每次失焦都还原、每次聚焦又切英文，输入法连闪好几次。现在**还原带 0.12s 防抖**：`terminalDidBlur()` 只登记一次还原（generation 计数），期间若又 `terminalDidFocus()` 就取消，一串抖动收敛成一次切换；鼠标 tracking area 也改为**只安装一次**（`.inVisibleRect` 自动跟随），不再在每次 `updateTrackingAreas` 时 remove/add 反复补发 `mouseEntered`。回归：`tests/terminal-panel` 新增 3 项防抖断言。
+
 - **发布后队列卡不刷新 / 结果只有一行 / 状态行总说「开 PR」（2026-10-01）**：点发布后卡片像卡住了——错误提示还在、结果不出来；会话回写的结果只显示一行；运行状态行不论什么工作流都写「正在开 PR」。三处都修了：
   - 3 秒刷新的看板指纹（boardSignatureNow）现在包含队列的 prError / prUrl / integrationNote——发布恰好只改这几个字段，以前定时器判定「没变化」就不重绘；
   - 收尾会话的**整段汇报**（上限 4000 字）回写到 integrationNote；卡片默认显示第一行，多出「展开 / 收起」，展开后完整换行显示（折叠的队列仍会显示失败原因）；
@@ -84,6 +92,10 @@ All notable changes to this project are documented in this file. Format follows
   回归：`tests/tasks-panel` 1129 → **1272** 项。
 
 - **壳层工作数据收敛到 `$DSH_HOME/oh-my-dsh/`（2026-09-29）**：把壳层自己的工作数据从 `$DSH_HOME` 根迁到与 `projects/` 并列的新根 —— `shell/`（设置 / 状态 / 快照）、`browser/`（CEF profile；**去掉开发版 `browser-dev` 后缀**，正式版与开发版统一 `<DSH_HOME>/oh-my-dsh/browser`）、`repo-wiki/`、`channel-runtime/`、`channels/`、`tokens/` + `gh-token`、`browser-api.port` / `shell-api.port`。dsh 自有数据（`sessions/`、`storages/`、`settings.yaml` 等）与上游契约路径 `$DSH_HOME/skills/` 保持不动；`~/Library/{Logs,Caches}` 与 Application Support 运行时也不动。路径的单一事实来源为 Swift `ShellPaths` / core `shell-paths.js`；启动（以及显式 `--home` 的 CLI）做一次**幂等迁移**：源不存在或目标已存在即跳过、失败保留源并记 `app.log`，正式 home 与开发版 `~/.dsh-dev` 都覆盖；GitHub token 读取链保留旧路径只读兜底；迁移时在 `$DSH_HOME/oh-my-dsh/ROLLBACK.md` 落一份双语回退说明（实际迁移条目 + 时间/App 版本 + 退出后把子目录 `mv` 回根目录的脚本），供降级旧版或快速撤销时自助使用；本次确有搬迁时启动后弹一次**非模态提示**（说明 + 「查看回退说明」按钮打开 `ROLLBACK.md`），**全新安装不提示**。回滚快照排除表新增 `oh-my-dsh`（`core/lib/snapshot.js`）。设计见 `docs/storage-layout-refactor.md`；回归：`core` 289 项（新增 `core/tests/shell-paths.test.js` 6 项）与 `tests/{shell-config,channel-panel,skills-panel,wiki-panel,snapshot-rollback,projects-panel,tasks-panel,skills,browser-panel}` 全绿。
+
+### Fixed
+
+- **终端面板：鼠标移入即取得输入焦点 + 中文标点不再被拉伸变形（2026-10-01）**：两处体验问题。① 终端内容视图此前只在 `mouseDown` 时 `makeFirstResponder`，移入后直接敲键盘没有反应，必须先点一下；现在 `TerminalView` 挂 `NSTrackingArea`（`.mouseEnteredAndExited` + `.activeInKeyWindow` + `.inVisibleRect`），`mouseEntered` 即把第一响应者设为自己（点击面板 chrome 聚焦的 `installClickMonitor` 保留）。② 宽字符渲染过去把每个宽字的自然字宽横向缩放到两格：等宽系统字体没有 CJK 字形，Core Text 默认回退对全角标点只给约 0.8 格、汉字约 1.6 格，于是标点被横向拉约 2.4 倍（`。`/`，`/`、` 变成扁椭圆）。现在 `drawWideGlyph` 改用真实全角字体（PingFang SC）并按 `2 × 单元格宽` 反推字号，使字形自然字宽正好两格（Hangul / 生僻字 / emoji 走级联回退后同样按实测字宽取字号），再按两字体 descender 差补偿基线，彻底不做横向缩放；字体按 (字符, 粗, 斜) 缓存。回归：`tests/terminal-panel` 新增 7 项（移入聚焦的 tracking area + `。，！（中国` 六个字形 natural advance 恰好两格），README「终端面板」一节同步。
 
 ## [1.17.2] - 2026-09-30
 

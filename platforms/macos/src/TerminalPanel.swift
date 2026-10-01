@@ -1006,6 +1006,108 @@ final class TerminalView: NSView, NSTextInputClient {
     override var isOpaque: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// Tracking area behind hover-to-focus. Entering the terminal grabs the
+    /// keyboard so the user can start typing without clicking first.
+    private var hoverTrackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        // Install the area once: `.inVisibleRect` keeps it in sync with the view
+        // automatically. Removing and re-adding it on every update re-posted
+        // enter events while the pointer moved inside, which is exactly the
+        // repeated handling we want to avoid.
+        guard hoverTrackingArea == nil else { return }
+        let area = NSTrackingArea(rect: .zero,
+                                  options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        AppLog.shared.log("terminal focus: mouse entered (isFirstResponder=\(window?.firstResponder === self))")
+        // 鼠标移入终端即取得输入焦点，省掉「先点一下」再输入。输入法只在
+        // becomeFirstResponder 里切换，所以焦点没变时鼠标来回移动不会反复切。
+        if let win = window, win.firstResponder !== self {
+            win.makeFirstResponder(self)
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        // 仅记录：移出不失焦，键盘焦点与输入法都维持不变（失焦时才还原）。
+        AppLog.shared.log("terminal focus: mouse exited")
+    }
+
+    /// Whether the terminal currently owns the keyboard (and its window is key).
+    /// Drives the solid/hollow cursor and the input-source policy together.
+    private var hasFocus = false
+
+    // Focus also drives the keyboard input source: terminals want English, and
+    // the user's original IME is put back when focus leaves (see
+    // TerminalInputSourceGuard). makeFirstResponder is idempotent, so the
+    // hover-to-focus above plus a subsequent click still only arrive here once.
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok {
+            AppLog.shared.log("terminal focus: became first responder")
+            setFocused(true)
+            TerminalInputSourceGuard.shared.terminalDidFocus()
+        }
+        return ok
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let ok = super.resignFirstResponder()
+        if ok {
+            AppLog.shared.log("terminal focus: resigned first responder")
+            setFocused(false)
+            TerminalInputSourceGuard.shared.terminalDidBlur()
+        }
+        return ok
+    }
+
+    /// Track the window's key state too: leaving the app (⌘-Tab) does not always
+    /// resign first responder, but the cursor should still read as inactive.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        let center = NotificationCenter.default
+        center.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
+        center.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
+        guard let win = window else { return }
+        center.addObserver(self, selector: #selector(windowDidResignKey),
+                           name: NSWindow.didResignKeyNotification, object: win)
+        center.addObserver(self, selector: #selector(windowDidBecomeKey),
+                           name: NSWindow.didBecomeKeyNotification, object: win)
+    }
+
+    // The cursor and the input source follow the SAME focus signal, so they can
+    // never disagree: solid + English while focused, hollow + original IME while
+    // not. This also covers ⌘-Tab, which does not resign first responder.
+    @objc private func windowDidResignKey() {
+        AppLog.shared.log("terminal focus: window resigned key")
+        setFocused(false)
+        TerminalInputSourceGuard.shared.terminalDidBlur()
+    }
+
+    @objc private func windowDidBecomeKey() {
+        let focused = window?.firstResponder === self
+        AppLog.shared.log("terminal focus: window became key (isFirstResponder=\(focused))")
+        setFocused(focused)
+        if focused { TerminalInputSourceGuard.shared.terminalDidFocus() }
+    }
+
+    private func setFocused(_ focused: Bool) {
+        guard hasFocus != focused else { return }
+        hasFocus = focused
+        needsDisplay = true
+    }
+
+    /// Test surface: an unfocused terminal draws a hollow cursor.
+    var cursorIsHollowForTesting: Bool { !hasFocus }
+    func setFocusedForTesting(_ focused: Bool) { setFocused(focused) }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         needsDisplay = true
@@ -1131,14 +1233,12 @@ final class TerminalView: NSView, NSTextInputClient {
             if cell.continuation { continue }
             let (fg, _) = effectiveCell(cell)
             if TerminalEmulator.displayWidth(cell.ch) == 2 {
-                // Pin the wide glyph to its exact two cells. Core Text falls
-                // back to a full-width face whose advance is only ~1.6 cells,
-                // so leaving it in a run would shrink it and drag the rest of
-                // the line (and the cell-based cursor) off the grid.
+                // Wide glyphs are flushed out of the run and drawn one at a
+                // time at their exact two-cell origin (a batched run would let
+                // their fallback advance drag the rest of the line off grid).
                 flushRun()
-                drawGlyph(cell.ch, atX: CGFloat(c) * cellWidth, y: y,
-                          targetWidth: cellWidth * 2,
-                          attrs: attrsFor(fg, cell.bold, cell.italic, cell.underline))
+                drawWideGlyph(cell.ch, atX: CGFloat(c) * cellWidth, y: y, fg: fg,
+                              bold: cell.bold, italic: cell.italic, underline: cell.underline)
                 continue
             }
             if runStart < 0 || fg != runFg || cell.bold != runBold
@@ -1158,10 +1258,68 @@ final class TerminalView: NSView, NSTextInputClient {
         }
     }
 
-    /// Draw one glyph stretched to exactly targetWidth points. The monospaced
-    /// system font has no CJK glyphs, so Core Text substitutes a full-width face
-    /// whose advance is ~1.6 cells rather than the 2 the grid reserves; without
-    /// this the glyph leaves a half-cell gap and the cursor looks misaligned.
+    /// Draw a wide (two-cell) glyph without horizontal distortion. The
+    /// monospaced system font has no CJK glyphs; Core Text's default fallback
+    /// renders full-width punctuation at only ~0.8 cell and Han at ~1.6 cells.
+    /// Stretching those to the two reserved cells mutated their shapes (Chinese
+    /// punctuation looked visibly deformed — 。/，/、 became wide ellipses).
+    /// Instead, size a real full-width face (PingFang SC) so the glyph's natural
+    /// advance is exactly two cells, and shift it so its baseline matches the
+    /// monospaced runs.
+    private func drawWideGlyph(_ ch: Character, atX x: CGFloat, y: CGFloat, fg: NSColor?,
+                               bold: Bool, italic: Bool, underline: Bool) {
+        var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.textColor]
+        if let fg = fg { attrs[.foregroundColor] = fg }
+        if underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        guard let wide = wideGlyphFont(for: ch, bold: bold, italic: italic) else {
+            // No full-width face available: keep the old stretch so the glyph
+            // still lands on the two-cell grid.
+            drawGlyph(ch, atX: x, y: y, targetWidth: cellWidth * 2, attrs: attrs)
+            return
+        }
+        attrs[.font] = wide
+        // draw(at:) anchors the line box, not the baseline: offset by the two
+        // fonts' descender difference so the CJK baseline stays on the Latin one.
+        let baselineY = y + wide.descender - font.descender
+        (String(ch) as NSString).draw(at: NSPoint(x: x, y: baselineY), withAttributes: attrs)
+    }
+
+    /// Test surface for the wide-glyph font (tests/terminal-panel): its natural
+    /// advance must be exactly two cells so the glyph is never stretched.
+    func wideGlyphFontForTesting(_ ch: Character) -> NSFont? {
+        wideGlyphFont(for: ch, bold: false, italic: false)
+    }
+    var cellWidthForTesting: CGFloat { cellWidth }
+
+    private struct WideGlyphKey: Hashable {
+        let ch: Character
+        let bold: Bool
+        let italic: Bool
+    }
+    private var wideGlyphFontCache: [WideGlyphKey: NSFont] = [:]
+
+    /// A font whose natural advance for `ch` is exactly `cellWidth * 2`. A
+    /// full-width CJK face is preferred; scripts it lacks (Hangul, rare Han,
+    /// emoji) fall through Core Text's cascade and are measured at their real
+    /// advance, so the width still lands on the two-cell grid.
+    private func wideGlyphFont(for ch: Character, bold: Bool, italic: Bool) -> NSFont? {
+        let key = WideGlyphKey(ch: ch, bold: bold, italic: italic)
+        if let cached = wideGlyphFontCache[key] { return cached }
+        let refSize: CGFloat = 13
+        var ref = NSFont(name: "PingFang SC", size: refSize) ?? font
+        if bold { ref = NSFontManager.shared.convert(ref, toHaveTrait: .boldFontMask) }
+        if italic { ref = NSFontManager.shared.convert(ref, toHaveTrait: .italicFontMask) }
+        let natural = (String(ch) as NSString).size(withAttributes: [.font: ref]).width
+        guard natural > 0 else { return nil }
+        let sized = refSize * (cellWidth * 2) / natural
+        guard let resolved = NSFont(descriptor: ref.fontDescriptor, size: sized)
+            ?? NSFont(name: ref.fontName, size: sized) else { return nil }
+        wideGlyphFontCache[key] = resolved
+        return resolved
+    }
+
+    /// Draw one glyph stretched to exactly targetWidth points (fallback path for
+    /// scripts with no usable full-width face).
     private func drawGlyph(_ ch: Character, atX x: CGFloat, y: CGFloat,
                            targetWidth: CGFloat, attrs: [NSAttributedString.Key: Any]) {
         let text = String(ch)
@@ -1203,14 +1361,26 @@ final class TerminalView: NSView, NSTextInputClient {
         let rect = NSRect(x: CGFloat(col) * cellWidth,
                           y: bounds.height - CGFloat(r + 1) * lineHeight,
                           width: cellWidth * CGFloat(span), height: lineHeight)
+        guard hasFocus else {
+            // Unfocused: a hollow outline instead of a solid block, so the caret
+            // stays visible without the terminal looking active.
+            let lineWidth: CGFloat = 1.5
+            let outline = NSBezierPath(rect: rect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2))
+            outline.lineWidth = lineWidth
+            NSColor.controlAccentColor.setStroke()
+            outline.stroke()
+            return
+        }
         NSColor.controlAccentColor.setFill()
         rect.fill()
+        // Redraw the glyph over the filled block so it stays legible.
         let lead = emulator.screenCell(row: r, col: col)
         if lead.ch != " " {
-            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
             if span == 2 {
-                drawGlyph(lead.ch, atX: rect.minX, y: rect.minY, targetWidth: rect.width, attrs: attrs)
+                drawWideGlyph(lead.ch, atX: rect.minX, y: rect.minY,
+                              fg: NSColor.white, bold: false, italic: false, underline: false)
             } else if !lead.continuation {
+                let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
                 (String(lead.ch) as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
             }
         }

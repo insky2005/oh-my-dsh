@@ -203,8 +203,8 @@ test("decstbm: CSI r restores the full-screen region",
 
 // MARK: - Wide-glyph cursor span (CJK is two cells; the cursor must match)
 //
-// The monospaced system font's CJK fallback advances ~1.6 cells, not 2, so the
-// glyph is now stretched to its two cells and the block cursor spans the pair.
+// A wide glyph occupies exactly two cells via the full-width font (see the
+// "Wide-glyph font" section below), and the block cursor spans the pair.
 // Pinned here is the span math drawCursor() uses for that block.
 
 let cjkEmu = TerminalEmulator(rows: 4, cols: 20)
@@ -225,6 +225,175 @@ test("a cursor on the continuation cell snaps back to the lead cell",
 cjkEmu.feed("\u{1B}[1;5H")
 test("a cursor on a narrow/blank cell spans one cell",
      cjkView.cursorGlyphSpan().col == 4 && cjkView.cursorGlyphSpan().width == 1)
+
+// MARK: - Hover-to-focus
+//
+// Entering the terminal grabs the keyboard so the user can type without
+// clicking first. The tracking area is what makes that possible; mouseEntered
+// then calls makeFirstResponder.
+
+let hoverView = TerminalView(emulator: TerminalEmulator(rows: 4, cols: 20), session: nil)
+hoverView.updateTrackingAreas()
+test("the terminal installs a hover-to-focus tracking area",
+     hoverView.trackingAreas.contains {
+         $0.owner === hoverView && $0.options.contains(.mouseEnteredAndExited)
+     })
+
+// MARK: - Keyboard input source (IME) on focus / blur
+//
+// On focus the terminal switches to an ASCII-capable source and remembers the
+// user's; on blur it restores it. The remembered original is write-once: a
+// repeated focus (hover-then-click both route through makeFirstResponder) must
+// not overwrite it with the forced English.
+
+final class FakeInputSources: InputSourceControlling {
+    var current: String?
+    var ascii: String?
+    var selectCalls: [String] = []
+    var selectSucceeds = true
+    func currentInputSourceID() -> String? { current }
+    func asciiInputSourceID() -> String? { ascii }
+    @discardableResult
+    func selectInputSource(id: String) -> Bool {
+        selectCalls.append(id)
+        if selectSucceeds { current = id }
+        return selectSucceeds
+    }
+}
+
+/// Runs scheduled work inline so the policy tests stay synchronous; the
+/// debounce-specific test below captures the closure instead.
+let inlineSchedule: (TimeInterval, @escaping () -> Void) -> Void = { _, body in body() }
+
+let fakeSources = FakeInputSources()
+fakeSources.current = "com.baidu.inputmethod.BaiduIM.pinyin"
+fakeSources.ascii = "com.apple.keylayout.ABC"
+let inputGuard = TerminalInputSourceGuard(sources: fakeSources, schedule: inlineSchedule)
+
+inputGuard.terminalDidFocus()
+test("terminal focus switches to the ASCII input source",
+     fakeSources.current == "com.apple.keylayout.ABC" &&
+     fakeSources.selectCalls == ["com.apple.keylayout.ABC"])
+test("the original input source is remembered", inputGuard.hasSavedSource)
+
+// A second focus must not overwrite the remembered original with English.
+inputGuard.terminalDidFocus()
+test("a repeated focus does not overwrite the original",
+     fakeSources.selectCalls == ["com.apple.keylayout.ABC"] && inputGuard.hasSavedSource)
+
+inputGuard.terminalDidBlur()
+test("terminal blur restores the original input source",
+     fakeSources.current == "com.baidu.inputmethod.BaiduIM.pinyin" &&
+     fakeSources.selectCalls == ["com.apple.keylayout.ABC",
+                                 "com.baidu.inputmethod.BaiduIM.pinyin"])
+test("the remembered original is cleared after restore", !inputGuard.hasSavedSource)
+
+// A later focus (the pointer hovering back in after a mouse-out) starts a fresh
+// cycle: remember the restored source and switch to English again.
+inputGuard.terminalDidFocus()
+test("a new focus after a restore switches to English again",
+     fakeSources.current == "com.apple.keylayout.ABC" && inputGuard.hasSavedSource)
+inputGuard.terminalDidBlur()
+
+// Already on English: nothing to switch, and a manual mid-session switch to
+// Chinese is left alone when focus leaves.
+let alreadyEnglish = FakeInputSources()
+alreadyEnglish.current = "com.apple.keylayout.ABC"
+alreadyEnglish.ascii = "com.apple.keylayout.ABC"
+let englishGuard = TerminalInputSourceGuard(sources: alreadyEnglish, schedule: inlineSchedule)
+englishGuard.terminalDidFocus()
+test("focusing from English does not select anything",
+     alreadyEnglish.selectCalls.isEmpty && !englishGuard.hasSavedSource)
+alreadyEnglish.current = "com.baidu.inputmethod.BaiduIM.pinyin"   // user switches
+englishGuard.terminalDidBlur()
+test("a manual switch is kept when the terminal never changed the source",
+     alreadyEnglish.current == "com.baidu.inputmethod.BaiduIM.pinyin" &&
+     alreadyEnglish.selectCalls.isEmpty)
+
+// No ASCII-capable source: stay out of the user's way.
+let noAscii = FakeInputSources()
+noAscii.current = "com.baidu.inputmethod.BaiduIM.pinyin"
+noAscii.ascii = nil
+let noAsciiGuard = TerminalInputSourceGuard(sources: noAscii, schedule: inlineSchedule)
+noAsciiGuard.terminalDidFocus()
+noAsciiGuard.terminalDidBlur()
+test("no ASCII source: nothing is changed or remembered",
+     noAscii.current == "com.baidu.inputmethod.BaiduIM.pinyin" &&
+     noAscii.selectCalls.isEmpty && !noAsciiGuard.hasSavedSource)
+
+// If the system refuses the restore, the original must survive for the next
+// attempt instead of being replaced by the forced English.
+let failing = FakeInputSources()
+failing.current = "com.baidu.inputmethod.BaiduIM.pinyin"
+failing.ascii = "com.apple.keylayout.ABC"
+let failingGuard = TerminalInputSourceGuard(sources: failing, schedule: inlineSchedule)
+failingGuard.terminalDidFocus()
+failing.selectSucceeds = false
+failingGuard.terminalDidBlur()
+test("a failed restore keeps the original remembered",
+     failing.current == "com.apple.keylayout.ABC" && failingGuard.hasSavedSource)
+failingGuard.terminalDidFocus()   // must not overwrite the original
+test("focus after a failed restore does not overwrite the original",
+     failing.selectCalls == ["com.apple.keylayout.ABC",
+                             "com.baidu.inputmethod.BaiduIM.pinyin"])
+failing.selectSucceeds = true
+failingGuard.terminalDidBlur()
+test("the original is restored once the system accepts it",
+     failing.current == "com.baidu.inputmethod.BaiduIM.pinyin" && !failingGuard.hasSavedSource)
+
+// A burst of blur/focus around the switch (the pointer moving through the
+// terminal) must not oscillate the input source: the blur's restore is
+// scheduled, and a refocus before it runs cancels it.
+let flappy = FakeInputSources()
+flappy.current = "com.baidu.inputmethod.BaiduIM.pinyin"
+flappy.ascii = "com.apple.keylayout.ABC"
+var pendingRestore: (() -> Void)?
+let flapGuard = TerminalInputSourceGuard(sources: flappy,
+                                         schedule: { _, body in pendingRestore = body })
+flapGuard.terminalDidFocus()
+test("debounce: focus switches to English once",
+     flappy.selectCalls == ["com.apple.keylayout.ABC"])
+flapGuard.terminalDidBlur()          // transient blur schedules a restore
+flapGuard.terminalDidFocus()         // refocus cancels it
+pendingRestore?()                    // the stale restore must be a no-op
+test("debounce: a transient blur does not restore",
+     flappy.current == "com.apple.keylayout.ABC" && flapGuard.hasSavedSource)
+flapGuard.terminalDidBlur()          // a real blur
+pendingRestore?()
+test("debounce: a real blur still restores",
+     flappy.current == "com.baidu.inputmethod.BaiduIM.pinyin" && !flapGuard.hasSavedSource)
+
+// MARK: - Focus cursor (solid when focused, hollow when not)
+//
+// The block cursor is filled while the terminal owns the keyboard and turns
+// into an outline once it does not, so an inactive pane still shows where the
+// caret is without looking active.
+
+let cursorView = TerminalView(emulator: TerminalEmulator(rows: 4, cols: 20), session: nil)
+test("the cursor starts hollow while unfocused", cursorView.cursorIsHollowForTesting)
+cursorView.setFocusedForTesting(true)
+test("a focused terminal shows the solid cursor", !cursorView.cursorIsHollowForTesting)
+cursorView.setFocusedForTesting(false)
+test("losing focus makes the cursor hollow again", cursorView.cursorIsHollowForTesting)
+
+// MARK: - Wide-glyph font (no horizontal stretch distortion)
+//
+// The monospaced system font has no CJK glyphs; its default fallback renders
+// full-width punctuation at only ~0.8 cell and Han at ~1.6 cells, and the old
+// code stretched those to two cells (Chinese punctuation looked deformed). The
+// wide path now sizes a real full-width face so its natural advance is exactly
+// two cells — no horizontal stretch at all.
+
+for ch in ["。" as Character, "，" as Character, "！" as Character,
+           "（" as Character, "中" as Character, "国" as Character] {
+    if let f = cjkView.wideGlyphFontForTesting(ch) {
+        let advance = (String(ch) as NSString).size(withAttributes: [.font: f]).width
+        test("wide glyph \(ch) advances exactly two cells",
+             abs(advance - cjkView.cellWidthForTesting * 2) < 0.1)
+    } else {
+        test("wide glyph \(ch) resolves to a sized full-width font", false)
+    }
+}
 
 // MARK: - First terminal open must spawn exactly one session
 //
