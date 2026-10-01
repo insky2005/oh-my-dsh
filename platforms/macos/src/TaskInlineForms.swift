@@ -814,11 +814,12 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
 
 // MARK: - Tasks settings (token + 工作流)
 
-/// The panel's global settings — the two things it stores for the WHOLE shell.
-/// 决策: 工作流全局默认与 GitHub token 合并进同一个抽屉（不是两个入口）。
+/// The tasks panel's settings — the two things it can configure.
+/// 决策（2026-10-01）：工作流默认是**按工作区**的，与 GitHub token 合并进同一个抽屉
+/// （不是两个入口）。需要「全局一份」的话，那属于壳层设置，不属于这个面板。
 ///
 ///   1. GitHub token（按仓库文件 / 通用兜底，只写文件、chmod 600）
-///   2. 工作流默认值（队列没有自己的覆盖时用它收尾）
+///   2. 本工作区的工作流默认值（队列没有自己的覆盖时用它收尾）
 ///
 /// Pure, so the form tests can drive it headlessly (like QueueComposerModel).
 struct TaskSettingsModel: Equatable {

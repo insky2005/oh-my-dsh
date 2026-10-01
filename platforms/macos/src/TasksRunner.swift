@@ -639,6 +639,11 @@ final class TasksRunner {
     private var env: TaskRunnerEnv
     private let timeout: TimeInterval
 
+    /// The panel's 默认工作流 can change while this board is loaded (设置抽屉). The env
+    /// was snapshotted at adopt time, so the runner is told here instead of being
+    /// rebuilt — a rebuild would drop the current phase (and a running task).
+    func setDefaultIntegration(_ mode: QueueIntegration) { env.defaultIntegration = mode }
+
     private struct Active {
         var taskID: String
         var queueID: String?

@@ -830,8 +830,9 @@ final class IssueRunnerPanelController: NSObject {
             promptSession: { id, text in Self.promptSession(port: portOf(), sessionId: id, text: text) },
             sessionState: { id in Self.sessionState(port: portOf(), sessionId: id) },
             defaultBaseBranch: Self.detectDefaultBaseBranch(path: repoRoot),
-            // 队列没写自己的 integration 时用它（设置抽屉里可改）。
-            defaultIntegration: Self.defaultIntegration,
+            // 队列没写自己的 integration 时用它（面板设置里可改；**按工作区**存）。
+            defaultIntegration: Self.resolvedIntegration(forWorkspace: repoRoot, isGit: isGit,
+                                                         hasGitHubRemote: repo != nil),
             canSwitchBranches: isGit,
             canOpenPR: { repo != nil },
             cancelSession: { id in Self.cancelSession(port: portOf(), sessionId: id) },
@@ -1174,20 +1175,53 @@ final class IssueRunnerPanelController: NSObject {
     /// ("tasksTimeoutMinutes", e.g. in ~/.dsh/shell/config.json or via
     /// `defaults write`) wins when it is a sane number. The running card SHOWS the
     /// limit, so it is never a surprise.
-    /// The tasks-panel setting: which 工作流 a queue WITHOUT its own override uses.
-    /// Stored in ShellConfig — ONE value for the whole shell (every workspace shares
-    /// it, unlike the GitHub token which is per-repo) — edited by the settings drawer.
-    static var defaultIntegration: QueueIntegration {
-        get { QueueIntegration(rawValue: ShellConfig.shared.string(forKey: "tasksIntegration") ?? "") ?? .pr }
-        set { ShellConfig.shared.set(newValue.rawValue, forKey: "tasksIntegration") }
+    // MARK: - 工作流 default (PER WORKSPACE)
+
+    /// The tasks-panel 工作流 default is **per workspace** (决策 2026-10-01): a GitHub
+    /// repo usually wants a PR, a scratch directory a direct push, and one value for
+    /// the whole shell cannot be both. Stored in ShellConfig as a path → mode map
+    /// (the shell's own config store, NOT inside the user's repository). A queue's
+    /// own `integration` still overrides it. If a GLOBAL default is ever wanted, it
+    /// belongs in the shell's settings, not in this panel.
+    private static let integrationByWorkspaceKey = "tasksIntegrationByWorkspace"
+
+    /// Standardized key, so a trailing slash / `..` does not create a second entry
+    /// (the same normalization TaskWorkspaceRegistry.needsReadopt uses).
+    static func workspaceIntegrationKey(_ path: String) -> String {
+        let standardized = (path as NSString).standardizingPath
+        if standardized.count > 1, standardized.hasSuffix("/") {
+            return String(standardized.dropLast())
+        }
+        return standardized
     }
 
-    /// Whether the 工作流 default was ever saved. 首次设置 (nothing stored yet) opens the
-    /// drawer on this workspace's RECOMMENDATION instead of the built-in fallback.
-    /// A value that is present but unparseable counts as "not set".
-    static var hasStoredIntegration: Bool {
-        guard let raw = ShellConfig.shared.string(forKey: "tasksIntegration") else { return false }
-        return QueueIntegration(rawValue: raw) != nil
+    /// The mode saved for this workspace, or nil when it was never set.
+    static func storedIntegration(forWorkspace path: String) -> QueueIntegration? {
+        guard let map = ShellConfig.shared.object(forKey: integrationByWorkspaceKey) as? [String: Any],
+              let raw = map[workspaceIntegrationKey(path)] as? String else { return nil }
+        return QueueIntegration(rawValue: raw)
+    }
+
+    static func setStoredIntegration(_ mode: QueueIntegration, forWorkspace path: String) {
+        var map = (ShellConfig.shared.object(forKey: integrationByWorkspaceKey) as? [String: Any]) ?? [:]
+        map[workspaceIntegrationKey(path)] = mode.rawValue
+        ShellConfig.shared.set(map, forKey: integrationByWorkspaceKey)
+    }
+
+    /// What a queue without its own override uses here: the saved value, else this
+    /// workspace's RECOMMENDATION — so the panel is sensible before anyone sets it,
+    /// and 首次打开设置时默认选中的就是这一档.
+    static func resolvedIntegration(forWorkspace path: String, isGit: Bool,
+                                    hasGitHubRemote: Bool) -> QueueIntegration {
+        storedIntegration(forWorkspace: path)
+            ?? QueueIntegration.recommended(isGit: isGit, hasGitHubRemote: hasGitHubRemote)
+    }
+
+    /// This workspace's resolved 工作流 default (设置抽屉 / 队列头的 fallback).
+    private var workspaceIntegration: QueueIntegration {
+        guard let path = repoRootPath else { return .pr }
+        return Self.resolvedIntegration(forWorkspace: path, isGit: workspaceIsGit,
+                                        hasGitHubRemote: repo != nil)
     }
 
     static func taskTimeout() -> TimeInterval {
@@ -1744,17 +1778,15 @@ final class IssueRunnerPanelController: NSObject {
     // MARK: - Config
 
     /// 面板设置 — a DRAWER (the same formSheet as 新建任务 / 新建队列), not an NSAlert:
-    /// the token and the 工作流 default are the two settings the panel stores for
-    /// the whole shell, so they share one surface.
+    /// the GitHub token and THIS workspace's 工作流 default share one surface.
     private func configTapped() {
-        let recommended = QueueIntegration.recommended(isGit: workspaceIsGit,
-                                                       hasGitHubRemote: repo != nil)
         let model = TaskSettingsModel(
             token: loadToken(for: repo) ?? "",
-            // 首次设置：nothing has ever been saved, so open on the recommendation for
-            // this workspace rather than the built-in .pr fallback.
-            defaultIntegration: Self.hasStoredIntegration ? Self.defaultIntegration : recommended,
-            recommendedIntegration: recommended,
+            // 没保存过时它就是本工作区的推荐（见 resolvedIntegration），所以首次
+            // 打开抽屉默认选中的正是推荐那一档。
+            defaultIntegration: workspaceIntegration,
+            recommendedIntegration: QueueIntegration.recommended(isGit: workspaceIsGit,
+                                                                 hasGitHubRemote: repo != nil),
             prAvailable: repo != nil)
         let form = TaskSettingsView(model: model)
         form.onSubmit = { [weak self] settings in self?.submitSettings(settings) }
@@ -1766,9 +1798,13 @@ final class IssueRunnerPanelController: NSObject {
         let value = settings.token.trimmingCharacters(in: .whitespacesAndNewlines)
         // Empty → delete the token file; otherwise write it (file only).
         saveToken(value, for: repo)
-        // The global 工作流 default takes effect for every queue without its own
-        // override, so the board is re-rendered as well as the issue list reloaded.
-        Self.defaultIntegration = settings.defaultIntegration
+        // PER WORKSPACE: save under this workspace's path, then tell the live runner
+        // (its env was snapshotted at adopt time) so the next finalize uses it. Other
+        // workspaces keep their own value.
+        if let path = repoRootPath {
+            Self.setStoredIntegration(settings.defaultIntegration, forWorkspace: path)
+            runner?.setDefaultIntegration(settings.defaultIntegration)
+        }
         dismissForm()
         setStatus(L10n.tr("tasks.settings.saved"), spin: false)
         autoHideStatus(after: 4)
@@ -2046,7 +2082,7 @@ final class IssueRunnerPanelController: NSObject {
         // second one just re-points the runner), and the others must not claim to
         // be running anything.
         let isCurrent = board.activeQueue()?.id == queue.id
-        let integration = board.integration(forQueue: queue.id, default: Self.defaultIntegration)
+        let integration = board.integration(forQueue: queue.id, default: workspaceIntegration)
         let model = QueueHeaderModel.build(queue, board: board, collapsed: !isQueueExpanded(queue),
                                            prAvailable: repo != nil, isCurrent: isCurrent,
                                            integration: integration)
@@ -2297,7 +2333,7 @@ final class IssueRunnerPanelController: NSObject {
             // 不切分支 is decided by the workspace having no repo to switch in.
             var model = base.forWorkspace(git: workspaceIsGit, pr: repo != nil,
                                           defaultBase: workspaceDefaultBase,
-                                          defaultIntegration: Self.defaultIntegration)
+                                          defaultIntegration: workspaceIntegration)
             model.autoPR = false
             showQueueForm(model)
         case .edit(let queueID):
@@ -2305,7 +2341,7 @@ final class IssueRunnerPanelController: NSObject {
             showQueueForm(QueueComposerModel.edit(queue, prAvailable: repo != nil,
                                                   gitAvailable: workspaceIsGit,
                                                   defaultBaseBranch: workspaceDefaultBase,
-                                                  defaultIntegration: Self.defaultIntegration))
+                                                  defaultIntegration: workspaceIntegration))
         }
     }
 
