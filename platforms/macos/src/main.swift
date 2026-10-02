@@ -749,6 +749,11 @@ enum L10n {
         // 队列自动进入「已关闭」（仍保留任务 / 分支 / PR 记录）。
         "tasks.settings.autoClose": ("交付成功后自动关闭队列", "Auto-close the queue after delivery"),
         "tasks.settings.autoCloseHint": ("开启后，队列的交付会话成功交付（PR / 合并 / 推送）时，队列自动进入「已关闭」：不再接收任务，也不能启动或交付，但保留任务、分支与 PR 记录。按工作区保存：只影响当前工作区，与其他工作区互不影响。", "When on, a queue closes itself once its delivery session delivers successfully (PR / merge / push): it accepts no more tasks and cannot be started or delivered, but keeps its tasks, branch and PR record. Saved per workspace: it affects THIS workspace only and never leaks into another."),
+        // 多仓库工作区：设置抽屉顶部的仓库选择 + 主仓库继承（设计 §8.1）。
+        "tasks.settings.repos": ("仓库", "Repositories"),
+        "tasks.settings.reposInfo": ("本工作区有 %d 个仓库；主仓库固定排第一，其余仓库默认跟随主仓库配置。", "This workspace has %d repositories; the primary is listed first and the others follow its settings by default."),
+        "tasks.settings.followPrimary": ("跟随主仓库配置", "Follow the primary repository's settings"),
+        "tasks.settings.setPrimary": ("设为主仓库", "Set as primary"),
         "tasks.queue.close": ("关闭队列", "Close Queue"),
         "tasks.closeQueueTitle": ("关闭队列「%@」？", "Close queue %@?"),
         "tasks.closeQueueInfo": ("关闭后仍保留任务、分支与 PR 记录，但不再接收任务，也不能启动或交付。", "Closing keeps the task, branch and PR record, but the queue accepts no more tasks and cannot be started or delivered."),

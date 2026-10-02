@@ -769,6 +769,102 @@ do {
     }
 }
 
+section("多仓库工作区：按仓库设置 / 主仓库继承解析链")
+do {
+    let ws = "/tmp/ws-repo-settings////"
+    let canonical = "/tmp/ws-repo-settings"
+    eq(RepoSettings.workspaceKey(ws), canonical, "尾斜杠被规范化（同一个工作区只有一个键）")
+    eq(RepoSettings.workspaceKey("/tmp/ws-repo-settings/../ws-repo-settings"), canonical,
+       ".. 也被规范化")
+    eq(RepoSettings.scopedKey(path: canonical, repoID: "a"),
+       canonical + RepoSettings.keySeparator + "a", "按仓库键 = 工作区 + 分隔符 + repoID")
+
+    var store = RepoSettings()
+
+    // 写入：只写显式值，缺失即「跟随主仓库」。
+    store.setIntegration(.pr, forWorkspace: ws, repoID: "a")
+    store.setAutoClose(true, forWorkspace: ws, repoID: "a")
+    eq(store.explicitIntegration(forWorkspace: ws, repoID: "a"), .pr, "显式工作流写进按仓库键")
+    eq(store.explicitAutoClose(forWorkspace: ws, repoID: "a"), true, "显式自动关闭写进按仓库键")
+    eq(store.explicitIntegration(forWorkspace: ws, repoID: "b"), nil, "没写过的仓库没有显式值")
+    check(store.integrationByRepo.count == 1 && store.autoCloseByRepo.count == 1,
+          "一次写入只落一条记录")
+
+    // 解析链第 1 步：显式值优先于一切。
+    eq(store.resolvedIntegration(forWorkspace: ws, repoID: "a", primaryID: "a", recommended: .push),
+       .pr, "有显式值 → 用它（压过 recommended）")
+    eq(store.resolvedAutoClose(forWorkspace: ws, repoID: "a", primaryID: "a"), true,
+       "自动关闭同样先看显式值")
+
+    // 解析链第 2 步：非主仓库未显式 → 跟随主仓库的解析结果。
+    eq(store.resolvedIntegration(forWorkspace: ws, repoID: "b", primaryID: "a", recommended: .push),
+       .pr, "非主仓库 b 未显式 → 跟随主仓库 a 的 pr")
+    eq(store.resolvedAutoClose(forWorkspace: ws, repoID: "b", primaryID: "a"), true,
+       "自动关闭也跟随")
+
+    // 解析链第 3 步：主仓库未显式 → 旧工作区值 → recommended。
+    var legacy = RepoSettings()
+    legacy.setLegacyIntegration(.merge, forWorkspace: ws)
+    legacy.setLegacyAutoClose(true, forWorkspace: ws)
+    eq(legacy.explicitIntegration(forWorkspace: ws, repoID: "a"), nil, "旧值不写进按仓库键")
+    eq(legacy.resolvedIntegration(forWorkspace: ws, repoID: "a", primaryID: "a", recommended: .push),
+       .merge, "主仓库没有按仓库值 → 回退旧工作区值")
+    eq(legacy.resolvedAutoClose(forWorkspace: ws, repoID: "a", primaryID: "a"), true,
+       "自动关闭同样回退旧工作区值")
+    eq(legacy.resolvedIntegration(forWorkspace: ws, repoID: "b", primaryID: "a", recommended: .push),
+       .merge, "跟随主仓库时继承的是主仓库解析后的旧工作区值")
+
+    var bare = RepoSettings()
+    eq(bare.resolvedIntegration(forWorkspace: ws, repoID: "a", primaryID: "a", recommended: .push),
+       .push, "全都没有 → recommended")
+    eq(bare.resolvedAutoClose(forWorkspace: ws, repoID: "a", primaryID: "a"), false,
+       "自动关闭的最终兜底是关")
+
+    // 跟随判定：只有非主仓库且无显式值才跟随；主仓库永不跟随。
+    check(bare.followsPrimary(forWorkspace: ws, repoID: "b", primaryID: "a"), "b 默认跟随主仓库")
+    check(!bare.followsPrimary(forWorkspace: ws, repoID: "a", primaryID: "a"), "主仓库不跟随")
+    eq(store.followsPrimary(forWorkspace: ws, repoID: "b", primaryID: "a"), true,
+       "b 没有显式值 → 仍跟随（跟随与 a 是否有值无关）")
+
+    // 独立存储：给 b 写显式值后 a 不受影响，b 不再跟随。
+    store.setIntegration(QueueIntegration.none, forWorkspace: ws, repoID: "b")
+    store.setAutoClose(false, forWorkspace: ws, repoID: "b")
+    eq(store.explicitIntegration(forWorkspace: ws, repoID: "a"), .pr, "b 的写入没有动 a")
+    eq(store.explicitIntegration(forWorkspace: ws, repoID: "b"), QueueIntegration.none, "b 独立存储自己的值")
+    eq(store.resolvedIntegration(forWorkspace: ws, repoID: "b", primaryID: "a", recommended: .push),
+       .none, "b 独立后不再跟随 a")
+    eq(store.followsPrimary(forWorkspace: ws, repoID: "b", primaryID: "a"), false,
+       "有显式值 → 不跟随")
+
+    // 关掉「跟随」再打开：删除显式值即回到跟随。
+    store.setIntegration(nil, forWorkspace: ws, repoID: "b")
+    store.setAutoClose(nil, forWorkspace: ws, repoID: "b")
+    eq(store.explicitIntegration(forWorkspace: ws, repoID: "b"), nil, "nil 删除显式值")
+    check(store.integrationByRepo.count == 1, "删除后 map 里不再留空键")
+    eq(store.resolvedIntegration(forWorkspace: ws, repoID: "b", primaryID: "a", recommended: .push),
+       .pr, "重新跟随主仓库")
+    check(store.followsPrimary(forWorkspace: ws, repoID: "b", primaryID: "a"), "回到跟随")
+
+    // 主仓库指定与失效回退（存储层只负责存 / 取；失效回退在 detect）。
+    check(store.storedPrimaryRepoID(forWorkspace: ws) == nil, "没有指定时返回 nil")
+    store.setPrimaryRepoID("b", forWorkspace: ws)
+    eq(store.storedPrimaryRepoID(forWorkspace: ws), "b", "存下用户指定的主仓库")
+    eq(store.storedPrimaryRepoID(forWorkspace: canonical), "b", "尾斜杠路径读到同一个键")
+    store.setPrimaryRepoID(nil, forWorkspace: ws)
+    check(store.storedPrimaryRepoID(forWorkspace: ws) == nil, "nil = 取消指定")
+
+    // 换主仓库后的继承：显式值在谁身上就归谁，跟随者跟着新的主仓库。
+    var swap = RepoSettings()
+    swap.setIntegration(.merge, forWorkspace: ws, repoID: "old")
+    swap.setLegacyIntegration(.pr, forWorkspace: ws)
+    eq(swap.resolvedIntegration(forWorkspace: ws, repoID: "new", primaryID: "old", recommended: .none),
+       .merge, "换主之前跟随者继承旧主仓库")
+    eq(swap.resolvedIntegration(forWorkspace: ws, repoID: "new", primaryID: "new", recommended: .none),
+       .pr, "换主之后跟随者继承新主仓库（新主回退旧工作区值 pr）")
+    eq(swap.resolvedIntegration(forWorkspace: ws, repoID: "old", primaryID: "new", recommended: .none),
+       .merge, "旧主仓库自己的显式值仍归它自己（降级为非主后不跟随）")
+}
+
 for dir in [repo, repoLegacy, repoBroken, repoDrift] {
     try? FileManager.default.removeItem(atPath: dir)
 }

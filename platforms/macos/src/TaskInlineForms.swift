@@ -971,6 +971,153 @@ struct TaskSettingsModel: Equatable {
     /// 交付成功后自动关闭队列（**按工作区**保存，默认关）。Whether a queue in THIS
     /// workspace is closed automatically once its delivery session succeeds.
     var autoCloseOnPublish: Bool = false
+
+    // MARK: 多仓库模式（设计 §8.1）
+
+    /// All repositories in DISPLAY ORDER — 主仓库固定排第一，其余随后。Empty =
+    /// 单仓库 / 普通目录：抽屉就是今天的样子。非空（即使只有一个仓库）才显示
+    /// 仓库选择区（N==1 只读锁定）。
+    var repos: [TaskSettingsRepoModel] = []
+    var selectedRepoID: String? = nil
+
+    var isMultiRepo: Bool { !repos.isEmpty }
+    var selectedRepoIndex: Int? { repos.firstIndex { $0.id == selectedRepoID } }
+    var selectedRepo: TaskSettingsRepoModel? {
+        guard let index = selectedRepoIndex else { return nil }
+        return repos[index]
+    }
+    var primaryRepo: TaskSettingsRepoModel? { repos.first { $0.isPrimary } }
+    var primaryRepoID: String? { primaryRepo?.id }
+    var followsPrimary: Bool { selectedRepo?.followsPrimary ?? false }
+    var repoCount: Int { repos.count }
+
+    // The active repo's values (or the single-repo fields when there is no repo).
+    var activeToken: String { selectedRepo?.token ?? token }
+    var activeIntegration: QueueIntegration { selectedRepo?.integration ?? defaultIntegration }
+    var activeAutoClose: Bool { selectedRepo?.autoCloseOnPublish ?? autoCloseOnPublish }
+    var activeRecommended: QueueIntegration { selectedRepo?.recommendedIntegration ?? recommendedIntegration }
+    var activePRAvailable: Bool { selectedRepo?.prAvailable ?? prAvailable }
+    var activeGitAvailable: Bool { selectedRepo?.gitAvailable ?? gitAvailable }
+    var activeRemoteAvailable: Bool { selectedRepo?.remoteAvailable ?? remoteAvailable }
+    var activeHasGitHub: Bool { selectedRepo.map { $0.github != nil } ?? prAvailable }
+
+    /// Fold the drawer's controls back into the model. The active repo keeps its
+    /// draft (design §8.1: 草稿按仓库缓存，不丢未提交输入); a repo that follows
+    /// stores no explicit values, one that does stores both.
+    func updatingActive(token: String, integration: QueueIntegration, autoClose: Bool) -> TaskSettingsModel {
+        var copy = self
+        if let index = copy.selectedRepoIndex {
+            if copy.repos[index].token != token { copy.repos[index].tokenChanged = true }
+            copy.repos[index].token = token
+            copy.repos[index].integration = integration
+            copy.repos[index].autoCloseOnPublish = autoClose
+            if copy.repos[index].followsPrimary {
+                copy.repos[index].explicitIntegration = nil
+                copy.repos[index].explicitAutoClose = nil
+            } else {
+                copy.repos[index].explicitIntegration = integration
+                copy.repos[index].explicitAutoClose = autoClose
+            }
+        } else {
+            copy.token = token
+            copy.defaultIntegration = integration
+            copy.autoCloseOnPublish = autoClose
+        }
+        return copy
+    }
+
+    /// Switch which repository the drawer edits.
+    func selectingRepo(_ id: String) -> TaskSettingsModel {
+        var copy = self
+        guard copy.repos.contains(where: { $0.id == id }) else { return copy }
+        copy.selectedRepoID = id
+        return copy
+    }
+
+    /// Turn 「跟随主仓库配置」 on/off for the selected (non-primary) repo. OFF
+    /// prefills with the primary's CURRENT values and makes them explicit; ON
+    /// drops the explicit values and shows the inherited ones.
+    func followsPrimaryToggled(_ on: Bool) -> TaskSettingsModel {
+        var copy = self
+        guard let index = copy.selectedRepoIndex, !copy.repos[index].isPrimary else { return copy }
+        let source = copy.primaryRepo
+        if on {
+            copy.repos[index].explicitIntegration = nil
+            copy.repos[index].explicitAutoClose = nil
+            copy.repos[index].integration = source?.integration ?? copy.defaultIntegration
+            copy.repos[index].autoCloseOnPublish = source?.autoCloseOnPublish ?? copy.autoCloseOnPublish
+        } else {
+            let inherited = source?.integration ?? copy.defaultIntegration
+            let inheritedClose = source?.autoCloseOnPublish ?? copy.autoCloseOnPublish
+            copy.repos[index].integration = inherited
+            copy.repos[index].autoCloseOnPublish = inheritedClose
+            copy.repos[index].explicitIntegration = inherited
+            copy.repos[index].explicitAutoClose = inheritedClose
+        }
+        return copy
+    }
+
+    /// Promote the selected repo to primary. It keeps the value it was showing —
+    /// now its own explicit value, so becoming the source never shifts it — the
+    /// list reorders (primary first) and every follower re-inherits from the NEW
+    /// primary (design §8.1「改主仓库后的重排与继承」).
+    func promotingSelectedRepo() -> TaskSettingsModel {
+        var copy = self
+        guard let index = copy.selectedRepoIndex, !copy.repos[index].isPrimary else { return copy }
+        copy.repos[index].isPrimary = true
+        copy.repos[index].explicitIntegration = copy.repos[index].integration
+        copy.repos[index].explicitAutoClose = copy.repos[index].autoCloseOnPublish
+        for i in copy.repos.indices where i != index { copy.repos[i].isPrimary = false }
+        if let primaryIndex = copy.repos.firstIndex(where: { $0.isPrimary }) {
+            let primary = copy.repos.remove(at: primaryIndex)
+            copy.repos.insert(primary, at: 0)
+        }
+        copy.selectedRepoID = copy.repos.first(where: { $0.isPrimary })?.id
+        copy.reinheritFollowers()
+        return copy
+    }
+
+    private mutating func reinheritFollowers() {
+        guard let primary = repos.first(where: { $0.isPrimary }) else { return }
+        for i in repos.indices where repos[i].followsPrimary {
+            repos[i].integration = primary.integration
+            repos[i].autoCloseOnPublish = primary.autoCloseOnPublish
+            repos[i].recommendedIntegration = primary.recommendedIntegration
+        }
+    }
+}
+
+/// One repository's editable 面板设置 in the multi-repo drawer (design §8.1).
+struct TaskSettingsRepoModel: Equatable {
+    var id: String
+    var displayName: String
+    var isPrimary: Bool
+    var gitAvailable: Bool
+    var prAvailable: Bool
+    var remoteAvailable: Bool
+    /// Non-nil when this repo has a GitHub remote — only then is a token editable.
+    var github: GitHubRepo?
+    /// The token loaded for this repo (or the generic file when nil).
+    var token: String = ""
+    /// True once the user typed in this repo's token field; only edited tokens are
+    /// written back, so opening the drawer never copies the generic token onto
+    /// every repo's file.
+    var tokenChanged: Bool = false
+    /// What the fields show while this repo is selected. For a follower this is
+    /// the inherited primary value.
+    var integration: QueueIntegration
+    /// Explicit per-repo value; nil = 跟随主仓库 (nothing stored).
+    var explicitIntegration: QueueIntegration?
+    var autoCloseOnPublish: Bool
+    var explicitAutoClose: Bool?
+    /// This repo's own recommendation (shown, never enforced).
+    var recommendedIntegration: QueueIntegration
+
+    /// 「跟随主仓库」applies only to a NON-primary repo with no explicit values;
+    /// the primary is the source itself and never follows.
+    var followsPrimary: Bool {
+        !isPrimary && explicitIntegration == nil && explicitAutoClose == nil
+    }
 }
 
 /// 面板设置 — a DRAWER (the same formSheet as 新建任务 / 新建队列), NOT a modal
@@ -992,6 +1139,24 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     // Internal for the headless form tests (see TaskComposerView).
     let tokenField: NSTextField
     let tokenBox: TaskFieldBox
+    /// 多仓库模式：仓库选择区（主仓库固定排第一）+「跟随主仓库配置」开关 +
+    /// 「设为主仓库」按钮。单仓库 / 普通目录整块隐藏，抽屉与今天一致（设计 §8.1）。
+    /// Internal for the headless form tests.
+    let repoBlock = NSStackView()
+    let repoCaption = TaskFormKit.caption()
+    var repoButtons: [NSButton] = []
+    let repoNote = TaskFormKit.hintLabel(.secondaryLabelColor)
+    let followCheck: NSButton
+    let primaryButton: NSButton
+    private let repoStack = NSStackView()
+    /// The repo ids the buttons were last built for; the view is only rebuilt when
+    /// the set (or its order) changes, so switching repos does not thrash it.
+    private var configuredRepoIDs: [String] = []
+    /// The token row, kept so a non-GitHub repo can hide it (没有 token 框).
+    private var tokenRow: NSStackView!
+    /// The workflow + auto-close blocks, disabled while following the primary.
+    private var workflowBlock: NSStackView!
+    private var autoCloseBlock: NSStackView!
     let integrationCaption = TaskFormKit.caption()
     /// One RADIO per workflow — the user asked for a radio group, not a dropdown:
     /// there are only three, and seeing all of them (with the recommendation
@@ -1008,7 +1173,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
 
     init(model: TaskSettingsModel) {
         self.model = model
-        let token = TaskFormKit.textField(model.token, placeholder: "")
+        let token = TaskFormKit.textField(model.activeToken, placeholder: "")
         tokenBox = token.box
         tokenField = token.field
         submitButton = TaskFormKit.button("", primary: true)
@@ -1017,6 +1182,8 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
             NSButton(radioButtonWithTitle: "", target: nil, action: nil)
         }
         autoCloseCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+        followCheck = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+        primaryButton = TaskFormKit.linkButton("")
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         tokenField.delegate = self
@@ -1046,37 +1213,93 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         heading.stringValue = L10n.tr("tasks.settings.title")
         info.stringValue = L10n.tr("tasks.settings.info")
         tokenCaption.stringValue = L10n.tr("tasks.configTitle")
+        tokenField.stringValue = model.activeToken
         tokenField.placeholderString = L10n.tr("tasks.tokenPlaceholder")
         tokenHint.stringValue = L10n.tr("tasks.configInfo")
         integrationCaption.stringValue = L10n.tr("tasks.integration.defaultLabel")
         // The recommendation is marked on the radio itself; the 首次设置 preselection
         // happens in configTapped (nothing stored yet → the recommended one).
+        // Following the primary disables the whole block and shows the inherited
+        // value (design §8.1).
+        let follows = model.followsPrimary
         for (index, mode) in QueueIntegration.displayOrder.enumerated() {
             let radio = integrationRadios[index]
-            radio.title = mode.label + (mode == model.recommendedIntegration
+            radio.title = mode.label + (mode == model.activeRecommended
                                         ? L10n.tr("tasks.integration.recommendedSuffix") : "")
-            radio.state = (mode == model.defaultIntegration) ? .on : .off
-            // Grey out a workflow this workspace cannot run, with the reason in the
+            radio.state = (mode == model.activeIntegration) ? .on : .off
+            // Grey out a workflow this repo cannot run, with the reason in the
             // tooltip (the runner would refuse it — a dead choice is not a choice).
-            let available = QueueIntegration.available(mode, isGit: model.gitAvailable,
-                                                       hasGitHubRemote: model.prAvailable,
-                                                       hasRemote: model.remoteAvailable)
-            radio.isEnabled = available
+            let available = QueueIntegration.available(mode, isGit: model.activeGitAvailable,
+                                                       hasGitHubRemote: model.activePRAvailable,
+                                                       hasRemote: model.activeRemoteAvailable)
+            radio.isEnabled = available && !follows
             radio.toolTip = available ? nil : L10n.tr(mode.unavailableHintKey)
         }
         // hintLabel starts hidden (it is a VALIDATION hint elsewhere); this one is
         // always-visible information, so it is shown explicitly.
         integrationNote.stringValue = L10n.tr("tasks.integration.recommend",
-                                              model.recommendedIntegration.label)
+                                              model.activeRecommended.label)
         integrationNote.isHidden = false
         autoCloseCheck.title = L10n.tr("tasks.settings.autoClose")
         autoCloseCheck.toolTip = L10n.tr("tasks.settings.autoCloseHint")
-        autoCloseCheck.state = model.autoCloseOnPublish ? .on : .off
+        autoCloseCheck.state = model.activeAutoClose ? .on : .off
+        autoCloseCheck.isEnabled = !follows
         autoCloseHint.stringValue = L10n.tr("tasks.settings.autoCloseHint")
+        // 非 GitHub 仓库没有 token 框：它没有 owner/repo 可存（token 不跟随主仓库）。
+        let showsToken = !model.isMultiRepo || model.activeHasGitHub
+        tokenRow.isHidden = !showsToken
+        tokenHint.isHidden = !showsToken
+        tokenField.isEnabled = showsToken
+        tokenBox.alphaValue = showsToken ? 1 : 0.45
         submitButton.title = L10n.tr("tasks.new.save")
         submitButton.isEnabled = true
         cancelButton.title = L10n.tr("btn.cancel")
         closeButton.toolTip = L10n.tr("btn.cancel")
+        syncRepoPicker(model)
+    }
+
+    /// Show / hide and populate the multi-repo 仓库 selector + the 跟随主仓库
+    /// switch. In the single-repo / plain shapes repos is empty, so the whole block
+    /// stays hidden and the drawer is byte-for-byte today's form.
+    private func syncRepoPicker(_ model: TaskSettingsModel) {
+        repoBlock.isHidden = !model.isMultiRepo
+        // A hidden arranged subview is dropped from NSStackView layout, so the
+        // legacy drawer does not grow by these rows.
+        guard model.isMultiRepo else { return }
+        repoCaption.stringValue = L10n.tr("tasks.settings.repos")
+        let ids = model.repos.map { $0.id }
+        if ids != configuredRepoIDs {
+            configuredRepoIDs = ids
+            for view in repoStack.arrangedSubviews {
+                repoStack.removeArrangedSubview(view)
+                view.removeFromSuperview()
+            }
+            repoButtons = model.repos.enumerated().map { index, repo in
+                let button = NSButton(radioButtonWithTitle: repo.displayName, target: self,
+                                      action: #selector(repoTapped(_:)))
+                button.tag = index
+                button.font = .systemFont(ofSize: 12)
+                button.translatesAutoresizingMaskIntoConstraints = false
+                repoStack.addArrangedSubview(button)
+                return button
+            }
+        }
+        for (index, repo) in model.repos.enumerated() where index < repoButtons.count {
+            let button = repoButtons[index]
+            button.tag = index
+            button.title = repo.isPrimary
+                ? repo.displayName + L10n.tr("tasks.repoPrimarySuffix")
+                : repo.displayName
+            button.state = (repo.id == model.selectedRepoID) ? .on : .off
+            // N==1（根非 git + 唯一子仓库）没有可选的，只读锁定。
+            button.isEnabled = model.repos.count > 1
+        }
+        repoNote.stringValue = L10n.tr("tasks.settings.reposInfo", model.repoCount)
+        let selectedIsPrimary = model.selectedRepo?.isPrimary ?? true
+        let canFollow = model.isMultiRepo && !selectedIsPrimary
+        followCheck.isHidden = !canFollow
+        followCheck.state = model.followsPrimary ? .on : .off
+        primaryButton.isHidden = !canFollow
     }
 
     private func build() {
@@ -1119,6 +1342,24 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         autoCloseCheck.target = self
         autoCloseCheck.action = #selector(autoCloseTapped)
         _ = TaskFormKit.requiredHeight(autoCloseCheck)
+        followCheck.title = L10n.tr("tasks.settings.followPrimary")
+        followCheck.font = .systemFont(ofSize: 12)
+        followCheck.translatesAutoresizingMaskIntoConstraints = false
+        followCheck.target = self
+        followCheck.action = #selector(followTapped)
+        _ = TaskFormKit.requiredHeight(followCheck)
+        primaryButton.title = L10n.tr("tasks.settings.setPrimary")
+        primaryButton.target = self
+        primaryButton.action = #selector(primaryTapped)
+        repoNote.font = TaskFormKit.captionFont
+        repoNote.textColor = .tertiaryLabelColor
+        repoNote.lineBreakMode = .byTruncatingTail
+        _ = TaskFormKit.requiredHeight(repoNote)
+        repoStack.orientation = .horizontal
+        repoStack.alignment = .centerY
+        repoStack.spacing = 12
+        repoStack.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(repoStack)
         closeButton.onAction = { [weak self] in self?.onCancel?() }
         submitButton.target = self
         submitButton.action = #selector(submitTapped)
@@ -1126,7 +1367,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         cancelButton.action = #selector(cancelTapped)
 
         let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
-        let tokenRow = TaskFormKit.row(tokenCaption, tokenBox)
+        tokenRow = TaskFormKit.row(tokenCaption, tokenBox)
         // 默认工作流: a caption + a radio row + the recommendation, as one block.
         let radioRow = NSStackView(views: integrationRadios)
         radioRow.orientation = .horizontal
@@ -1134,7 +1375,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         radioRow.spacing = 14
         radioRow.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(radioRow)
-        let workflowBlock = NSStackView(views: [integrationCaption, radioRow, integrationNote])
+        workflowBlock = NSStackView(views: [integrationCaption, radioRow, integrationNote])
         workflowBlock.orientation = .vertical
         workflowBlock.alignment = .leading
         workflowBlock.spacing = 5
@@ -1142,16 +1383,33 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         _ = TaskFormKit.requiredHeight(workflowBlock)
         // 自动关闭：复选框 + 完整说明，作为一个块；说明的宽度跟随块（也就是列宽），
         // 否则 wrapping label 报告不出正确高度。
-        let autoCloseBlock = NSStackView(views: [autoCloseCheck, autoCloseHint])
+        autoCloseBlock = NSStackView(views: [autoCloseCheck, autoCloseHint])
         autoCloseBlock.orientation = .vertical
         autoCloseBlock.alignment = .leading
         autoCloseBlock.spacing = 3
         autoCloseBlock.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(autoCloseBlock)
         autoCloseHint.widthAnchor.constraint(equalTo: autoCloseBlock.widthAnchor).isActive = true
+        // 多仓库：抽屉顶部的仓库选择区（主仓库固定排第一）+ 跟随主仓库开关。
+        let repoActions = NSStackView(views: [followCheck, primaryButton])
+        repoActions.orientation = .horizontal
+        repoActions.alignment = .centerY
+        repoActions.spacing = 10
+        repoActions.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(repoActions)
+        repoBlock.orientation = .vertical
+        repoBlock.alignment = .leading
+        repoBlock.spacing = 4
+        repoBlock.translatesAutoresizingMaskIntoConstraints = false
+        repoBlock.addArrangedSubview(repoCaption)
+        repoBlock.addArrangedSubview(repoStack)
+        repoBlock.addArrangedSubview(repoNote)
+        repoBlock.addArrangedSubview(repoActions)
+        _ = TaskFormKit.requiredHeight(repoBlock)
         let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
-        // 工作流在前、自动关闭其次、GitHub Token 最后 —— 与 intro 的两段顺序一致。
-        let column = NSStackView(views: [headingRow, info, workflowBlock,
+        // 仓库选择在最上（多仓库时），随后 工作流、自动关闭、GitHub Token —— 与
+        // intro 的两段顺序一致；单仓库时 repoBlock 隐藏，顺序与今天不变。
+        let column = NSStackView(views: [headingRow, info, repoBlock, workflowBlock,
                                          autoCloseBlock, tokenRow, tokenHint, buttons])
         column.orientation = .vertical
         column.alignment = .leading
@@ -1159,7 +1417,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         column.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(column)
         addSubview(column)
-        TaskFormKit.stretch([headingRow, info, workflowBlock, autoCloseBlock,
+        TaskFormKit.stretch([headingRow, info, repoBlock, workflowBlock, autoCloseBlock,
                              tokenRow, tokenHint], to: column)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -1177,17 +1435,34 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         where integrationRadios[index].state == .on {
             return mode
         }
-        return model.defaultIntegration
+        return model.activeIntegration
     }
 
+    /// The drawer's current state: the active repo's controls folded back into the
+    /// model, so switching repos / 主仓库 never loses uncommitted input and submit
+    /// carries every repo's draft (design §8.1).
     var currentDraft: TaskSettingsModel {
-        TaskSettingsModel(token: tokenField.stringValue,
-                          defaultIntegration: selectedIntegration,
-                          recommendedIntegration: model.recommendedIntegration,
-                          prAvailable: model.prAvailable,
-                          gitAvailable: model.gitAvailable,
-                          remoteAvailable: model.remoteAvailable,
-                          autoCloseOnPublish: autoCloseCheck.state == .on)
+        model.updatingActive(token: tokenField.stringValue,
+                             integration: selectedIntegration,
+                             autoClose: autoCloseCheck.state == .on)
+    }
+
+    /// A repository was clicked: fold the current draft first (its controls may
+    /// hold uncommitted input), then switch.
+    @objc func repoTapped(_ sender: NSButton) {
+        guard sender.tag >= 0, sender.tag < model.repos.count else { return }
+        apply(currentDraft.selectingRepo(model.repos[sender.tag].id))
+    }
+
+    /// 「跟随主仓库配置」was toggled: ON drops the explicit values, OFF prefills
+    /// with the primary's current values and stores them independently.
+    @objc func followTapped() {
+        apply(currentDraft.followsPrimaryToggled(followCheck.state == .on))
+    }
+
+    /// 「设为主仓库」: reorder (primary first) and re-inherit the followers.
+    @objc func primaryTapped() {
+        apply(currentDraft.promotingSelectedRepo())
     }
 
     /// A radio was clicked: keep the group exclusive explicitly, then re-apply so the

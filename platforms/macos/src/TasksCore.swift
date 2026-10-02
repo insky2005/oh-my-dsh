@@ -1427,3 +1427,143 @@ struct TaskBoard {
         return (interrupted, paused)
     }
 }
+
+// MARK: - Per-repo panel settings (design §8.1)
+
+/// 面板设置的「按仓库」存储与解析链（多仓库工作区）。
+///
+/// 四张映射与 ShellConfig 的键一一对应，IssueRunnerPanel 只做
+/// [String: Any] ⇄ 类型化字典的转换；这里是纯值类型，所以 model-tests 能直接驱动
+/// 「写入 / 旧值回退 / 跟随主仓库 / 独立存储」而不需要真的配置文件。
+///
+/// 两层并存是刻意为之：
+///   - 旧的**按工作区**值（tasksIntegrationByWorkspace /
+///     tasksAutoCloseOnPublishByWorkspace）仍是主仓库的兜底，既有安装无需迁移；
+///   - 新的**按仓库**值**只在显式设置时写入** —— 缺失 = 「跟随主仓库」。
+struct RepoSettings: Equatable {
+
+    // 旧的按工作区值（兼容既有数据）。
+    var integrationByWorkspace: [String: String] = [:]
+    var autoCloseByWorkspace: [String: Bool] = [:]
+
+    // 新的按仓库值。缺失 = 跟随主仓库，不存任何默认值。
+    var integrationByRepo: [String: String] = [:]
+    var autoCloseByRepo: [String: Bool] = [:]
+
+    // 工作区 → 用户指定的主仓库 repoID。
+    var primaryByWorkspace: [String: String] = [:]
+
+    /// 路径 → repoID 的分隔符：换行不会出现在文件路径或 repoID 里，两半永不混淆。
+    static let keySeparator = "\n"
+
+    /// 与 IssueRunnerPanel.workspaceSettingsKey 同一套规范化：尾斜杠 / .. 不会
+    /// 造出第二个键。
+    static func workspaceKey(_ path: String) -> String {
+        let standardized = (path as NSString).standardizingPath
+        if standardized.count > 1, standardized.hasSuffix("/") {
+            return String(standardized.dropLast())
+        }
+        return standardized
+    }
+
+    static func scopedKey(path: String, repoID: String) -> String {
+        workspaceKey(path) + keySeparator + repoID
+    }
+
+    // MARK: - 显式读取
+
+    /// 该仓库是否自己显式存过值。nil = 没存 = 跟随主仓库。
+    func explicitIntegration(forWorkspace path: String, repoID: String) -> QueueIntegration? {
+        guard let raw = integrationByRepo[Self.scopedKey(path: path, repoID: repoID)] else { return nil }
+        return QueueIntegration(rawValue: raw)
+    }
+
+    func explicitAutoClose(forWorkspace path: String, repoID: String) -> Bool? {
+        autoCloseByRepo[Self.scopedKey(path: path, repoID: repoID)]
+    }
+
+    /// 旧的工作区值（主仓库兜底用）。
+    func legacyIntegration(forWorkspace path: String) -> QueueIntegration? {
+        guard let raw = integrationByWorkspace[Self.workspaceKey(path)] else { return nil }
+        return QueueIntegration(rawValue: raw)
+    }
+
+    func legacyAutoClose(forWorkspace path: String) -> Bool {
+        autoCloseByWorkspace[Self.workspaceKey(path)] ?? false
+    }
+
+    /// 用户指定的主仓库 repoID，或 nil（未指定 / 已失效由调用方的 detect 回退）。
+    func storedPrimaryRepoID(forWorkspace path: String) -> String? {
+        guard let id = primaryByWorkspace[Self.workspaceKey(path)], !id.isEmpty else { return nil }
+        return id
+    }
+
+    // MARK: - 显式写入（nil = 删除 → 回到「跟随主仓库」）
+
+    mutating func setIntegration(_ mode: QueueIntegration?, forWorkspace path: String, repoID: String) {
+        let key = Self.scopedKey(path: path, repoID: repoID)
+        if let mode = mode {
+            integrationByRepo[key] = mode.rawValue
+        } else {
+            integrationByRepo.removeValue(forKey: key)
+        }
+    }
+
+    mutating func setAutoClose(_ on: Bool?, forWorkspace path: String, repoID: String) {
+        let key = Self.scopedKey(path: path, repoID: repoID)
+        if let on = on {
+            autoCloseByRepo[key] = on
+        } else {
+            autoCloseByRepo.removeValue(forKey: key)
+        }
+    }
+
+    mutating func setLegacyIntegration(_ mode: QueueIntegration, forWorkspace path: String) {
+        integrationByWorkspace[Self.workspaceKey(path)] = mode.rawValue
+    }
+
+    mutating func setLegacyAutoClose(_ on: Bool, forWorkspace path: String) {
+        autoCloseByWorkspace[Self.workspaceKey(path)] = on
+    }
+
+    mutating func setPrimaryRepoID(_ id: String?, forWorkspace path: String) {
+        let key = Self.workspaceKey(path)
+        if let id = id, !id.isEmpty {
+            primaryByWorkspace[key] = id
+        } else {
+            primaryByWorkspace.removeValue(forKey: key)
+        }
+    }
+
+    // MARK: - 解析链
+
+    /// 1. 该仓库的显式按仓库值 → 用它；
+    /// 2. 非主仓库且未显式设置（默认跟随）→ 用主仓库的解析结果；
+    /// 3. 主仓库未显式设置 → 旧的工作区值（兼容）→ recommended。
+    func resolvedIntegration(forWorkspace path: String, repoID: String, primaryID: String?,
+                             recommended: QueueIntegration) -> QueueIntegration {
+        if let explicit = explicitIntegration(forWorkspace: path, repoID: repoID) { return explicit }
+        if let primaryID = primaryID, primaryID != repoID {
+            return resolvedIntegration(forWorkspace: path, repoID: primaryID,
+                                       primaryID: primaryID, recommended: recommended)
+        }
+        return legacyIntegration(forWorkspace: path) ?? recommended
+    }
+
+    /// 同一解析链；主仓库的兜底是旧工作区值，最终 false（自动关闭默认关）。
+    func resolvedAutoClose(forWorkspace path: String, repoID: String, primaryID: String?) -> Bool {
+        if let explicit = explicitAutoClose(forWorkspace: path, repoID: repoID) { return explicit }
+        if let primaryID = primaryID, primaryID != repoID {
+            return resolvedAutoClose(forWorkspace: path, repoID: primaryID, primaryID: primaryID)
+        }
+        return legacyAutoClose(forWorkspace: path)
+    }
+
+    /// 当前是否「跟随主仓库」：只有**非主仓库**且没有任何显式值时才跟随；
+    /// 主仓库本身就是来源，永不跟随。
+    func followsPrimary(forWorkspace path: String, repoID: String, primaryID: String?) -> Bool {
+        guard let primaryID = primaryID, primaryID != repoID else { return false }
+        return explicitIntegration(forWorkspace: path, repoID: repoID) == nil
+            && explicitAutoClose(forWorkspace: path, repoID: repoID) == nil
+    }
+}

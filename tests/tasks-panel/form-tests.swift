@@ -725,6 +725,143 @@ do {
     check(!gitOnlySettings.integrationRadios[1].isEnabled, "没有远端：推送不可选")
 }
 
+section("多仓库设置抽屉：主仓库排第一 / 跟随开关 / 独立存储 / 换主重排")
+do {
+    func repo(_ id: String, _ name: String, primary: Bool,
+              github: GitHubRepo? = nil, token: String = "",
+              integration: QueueIntegration, explicit: QueueIntegration?,
+              autoClose: Bool, explicitClose: Bool?) -> TaskSettingsRepoModel {
+        TaskSettingsRepoModel(id: id, displayName: name, isPrimary: primary,
+                              gitAvailable: true, prAvailable: github != nil,
+                              remoteAvailable: github != nil, github: github, token: token,
+                              integration: integration, explicitIntegration: explicit,
+                              autoCloseOnPublish: autoClose, explicitAutoClose: explicitClose,
+                              recommendedIntegration: .merge)
+    }
+    let primary = repo(".", "ws", primary: true, integration: .merge, explicit: .merge,
+                       autoClose: true, explicitClose: true)
+    let followerB = repo("repo-b", "repo-b", primary: false, integration: .merge, explicit: nil,
+                         autoClose: true, explicitClose: nil)
+    var model = TaskSettingsModel(token: "", defaultIntegration: .merge,
+                                  recommendedIntegration: .merge, prAvailable: false,
+                                  autoCloseOnPublish: true)
+    model.repos = [primary, followerB]
+    model.selectedRepoID = "."
+    let form = TaskSettingsView(model: model)
+    var submitted: TaskSettingsModel?
+    form.onSubmit = { submitted = $0 }
+    _ = layout(form, width: 460)
+    check(!form.repoBlock.isHidden, "多仓库显示仓库选择区")
+    eq(form.repoButtons.map { $0.title }, ["wsrepoPrimarySuffix", "repo-b"], "主仓库固定排第一并带主仓库标记")
+    check(form.repoButtons[0].state == .on, "默认编辑主仓库")
+    check(form.followCheck.isHidden, "主仓库没有「跟随」开关")
+    check(form.primaryButton.isHidden, "主仓库没有「设为主仓库」按钮")
+
+    // 选中非主仓库 b：默认跟随，字段禁用并显示继承值。
+    form.repoTapped(form.repoButtons[1])
+    check(form.repoButtons[1].state == .on, "选中 b")
+    check(!form.followCheck.isHidden, "非主仓库有「跟随」开关")
+    check(form.followCheck.state == .on, "跟随默认开启")
+    check(!form.integrationRadios[2].isEnabled, "跟随时工作流字段禁用")
+    check(!form.autoCloseCheck.isEnabled, "跟随时自动关闭禁用")
+    eq(form.selectedIntegration, .merge, "显示继承自主仓库的工作流")
+    check(form.autoCloseCheck.state == .on, "显示继承自主仓库的自动关闭")
+    check(!form.tokenField.isEnabled, "非 GitHub 仓库没有 token 框")
+
+    // 关闭跟随：用主仓库当前值预填，从此独立存储。
+    form.followCheck.state = .off
+    form.followTapped()
+    check(form.followCheck.state == .off, "跟随已关闭")
+    check(form.integrationRadios[2].isEnabled, "关闭后工作流字段可用")
+    eq(form.selectedIntegration, .merge, "关闭后用主仓库当前值预填")
+    form.selectIntegration(QueueIntegration.none)
+    form.setAutoCloseOnPublish(false)
+    form.submitTapped()
+    let savedB = submitted?.repos.first { $0.id == "repo-b" }
+    eq(savedB?.explicitIntegration, QueueIntegration.none, "b 独立存储自己的工作流")
+    eq(savedB?.explicitAutoClose, false, "b 独立存储自己的自动关闭")
+    eq(savedB?.followsPrimary, false, "b 不再跟随")
+    eq(submitted?.repos.first { $0.id == "." }?.explicitIntegration, .merge, "主仓库的值不受 b 影响")
+
+    // N==1 多仓库（根非 git + 唯一子仓库）：选择区只读锁定。
+    var one = TaskSettingsModel(token: "", defaultIntegration: .merge,
+                                recommendedIntegration: .merge, prAvailable: false)
+    one.repos = [repo("only", "only", primary: true, integration: .merge, explicit: nil,
+                      autoClose: false, explicitClose: nil)]
+    one.selectedRepoID = "only"
+    let lockedForm = TaskSettingsView(model: one)
+    _ = layout(lockedForm, width: 460)
+    check(lockedForm.repoButtons.count == 1, "唯一仓库也列出来（N==1 仍是多仓库模式）")
+    check(!lockedForm.repoButtons[0].isEnabled, "N==1 锁定不可点")
+
+    // 单仓库 / 普通目录：整块隐藏，抽屉与今天一致。
+    var single = TaskSettingsModel(token: "", defaultIntegration: .merge,
+                                   recommendedIntegration: .merge, prAvailable: false)
+    single.repos = []
+    let legacy = TaskSettingsView(model: single)
+    _ = layout(legacy, width: 440)
+    check(legacy.repoButtons.isEmpty, "单仓库没有仓库按钮")
+    check(legacy.repoBlock.isHidden, "单仓库隐藏仓库选择区")
+}
+
+section("多仓库设置抽屉：改主仓库后的重排与继承")
+do {
+    func repo(_ id: String, _ name: String, primary: Bool,
+              integration: QueueIntegration, explicit: QueueIntegration?,
+              autoClose: Bool, explicitClose: Bool?) -> TaskSettingsRepoModel {
+        TaskSettingsRepoModel(id: id, displayName: name, isPrimary: primary,
+                              gitAvailable: true, prAvailable: false, remoteAvailable: false,
+                              github: nil, token: "",
+                              integration: integration, explicitIntegration: explicit,
+                              autoCloseOnPublish: autoClose, explicitAutoClose: explicitClose,
+                              recommendedIntegration: .merge)
+    }
+    let primary = repo(".", "ws", primary: true, integration: .merge, explicit: nil,
+                       autoClose: false, explicitClose: nil)
+    let b = repo("repo-b", "repo-b", primary: false, integration: .merge, explicit: nil,
+                 autoClose: false, explicitClose: nil)
+    let c = repo("repo-c", "repo-c", primary: false, integration: .merge, explicit: nil,
+                 autoClose: false, explicitClose: nil)
+    var model = TaskSettingsModel(token: "", defaultIntegration: .merge,
+                                  recommendedIntegration: .merge, prAvailable: false,
+                                  autoCloseOnPublish: false)
+    model.repos = [primary, b, c]
+    model.selectedRepoID = "."
+    let form = TaskSettingsView(model: model)
+    var submitted: TaskSettingsModel?
+    form.onSubmit = { submitted = $0 }
+    _ = layout(form, width: 460)
+    eq(form.repoButtons.map { $0.title }, ["wsrepoPrimarySuffix", "repo-b", "repo-c"], "初始顺序：主仓库在前")
+
+    // 选中 c，关掉跟随并给它一组独立值，然后设为主仓库。
+    form.repoTapped(form.repoButtons[2])
+    form.followCheck.state = .off
+    form.followTapped()
+    form.selectIntegration(QueueIntegration.none)
+    form.setAutoCloseOnPublish(true)
+    form.primaryTapped()
+    eq(form.repoButtons.map { $0.title }, ["repo-crepoPrimarySuffix", "ws", "repo-b"],
+       "改主仓库后重排：新的主仓库排第一，其余保持原相对顺序")
+    check(form.followCheck.isHidden, "新主仓库没有跟随开关")
+    check(form.primaryButton.isHidden, "新主仓库没有设为主仓库按钮")
+
+    // 其余非主仓库（b）跟随新的主仓库：继承它的 none / 自动关闭 on。
+    form.repoTapped(form.repoButtons[2])            // repo-b
+    check(form.followCheck.state == .on, "b 跟随新主仓库")
+    eq(form.selectedIntegration, QueueIntegration.none, "继承新主仓库的工作流 none")
+    check(form.autoCloseCheck.state == .on, "继承新主仓库的自动关闭 on")
+
+    form.submitTapped()
+    eq(submitted?.repos.first?.id, "repo-c", "提交时新主仓库排第一")
+    eq(submitted?.primaryRepoID, "repo-c", "提交带上新的主仓库指定")
+    eq(submitted?.repos.first { $0.id == "repo-b" }?.explicitIntegration, nil,
+       "跟随者不存显式值（缺失 = 跟随）")
+    eq(submitted?.repos.first { $0.id == "repo-c" }?.explicitIntegration, QueueIntegration.none,
+       "新主仓库保留它被提升时的值")
+    eq(submitted?.repos.first { $0.id == "." }?.explicitIntegration, .merge,
+       "旧主仓库自己的值仍归它自己，不会被 b 覆盖")
+}
+
 section("使用说明视图：抽屉与内联共用一个正文")
 do {
     let model = TasksHelpModel.build()

@@ -957,10 +957,11 @@ final class IssueRunnerPanelController: NSObject {
             sessionState: { id in Self.sessionState(port: portOf(), sessionId: id) },
             defaultBaseBranch: Self.detectDefaultBaseBranch(path: repoRoot),
             // 队列没写自己的 integration 时用它（面板设置里可改；**按工作区**存）。
-            defaultIntegration: Self.resolvedIntegration(forWorkspace: repoRoot, isGit: isGit,
-                                                         hasGitHubRemote: repo != nil),
-            // 交付成功后自动关闭队列（面板设置；**按工作区**存 —— 和其他设置项一样）。
-            autoCloseOnPublish: Self.storedAutoCloseOnPublish(forWorkspace: repoRoot),
+            defaultIntegration: Self.resolvedIntegration(forWorkspace: repoRoot, repoSet: repoSet,
+                                                         recommended: QueueIntegration.recommended(isGit: isGit,
+                                                                                                   hasGitHubRemote: repo != nil)),
+            // 交付成功后自动关闭队列（面板设置；多仓库下按仓库，主仓库兜底旧工作区值）。
+            autoCloseOnPublish: Self.resolvedAutoCloseOnPublish(forWorkspace: repoRoot, repoSet: repoSet),
             canSwitchBranches: isGit,
             canOpenPR: { repo != nil },
             cancelSession: { id in Self.cancelSession(port: portOf(), sessionId: id) },
@@ -1375,11 +1376,9 @@ final class IssueRunnerPanelController: NSObject {
     /// Standardized key, so a trailing slash / `..` does not create a second entry
     /// (the same normalization TaskWorkspaceRegistry.needsReadopt uses).
     static func workspaceSettingsKey(_ path: String) -> String {
-        let standardized = (path as NSString).standardizingPath
-        if standardized.count > 1, standardized.hasSuffix("/") {
-            return String(standardized.dropLast())
-        }
-        return standardized
+        // One normalization for the legacy workspace keys and the new per-repo
+        // scoped keys, so they can never drift apart (design §8.1).
+        RepoSettings.workspaceKey(path)
     }
 
     // MARK: - 工作流 default (PER WORKSPACE)
@@ -1390,6 +1389,12 @@ final class IssueRunnerPanelController: NSObject {
     /// overrides it. If a GLOBAL default is ever wanted, it belongs in the shell's
     /// settings, not in this panel.
     private static let integrationByWorkspaceKey = "tasksIntegrationByWorkspace"
+    /// 新的按仓库键（设计 §8.1）：键 = 工作区路径 + 分隔符 + repoID；只存显式值，
+    /// 缺失 = 「跟随主仓库」。
+    private static let integrationByRepoKey = "tasksIntegrationByRepo"
+    private static let autoCloseByRepoKey = "tasksAutoCloseOnPublishByRepo"
+    /// 工作区级的主仓库指定（值 = repoID）。
+    private static let primaryRepoByWorkspaceKey = "tasksPrimaryRepoByWorkspace"
 
     /// The mode saved for this workspace, or nil when it was never set.
     static func storedIntegration(forWorkspace path: String) -> QueueIntegration? {
@@ -1404,6 +1409,61 @@ final class IssueRunnerPanelController: NSObject {
         ShellConfig.shared.set(map, forKey: integrationByWorkspaceKey)
     }
 
+    // MARK: - 按仓库设置 / 主仓库（多仓库工作区，设计 §8.1）
+
+    /// All per-repo panel settings as one pure value: the four ShellConfig maps
+    /// plus the primary pick. Reads go straight to the shell's (cached) config.
+    static func repoSettings() -> RepoSettings {
+        var settings = RepoSettings()
+        settings.integrationByWorkspace = stringMap(ShellConfig.shared.object(forKey: integrationByWorkspaceKey))
+        settings.autoCloseByWorkspace = boolMap(ShellConfig.shared.object(forKey: autoCloseByWorkspaceKey))
+        settings.integrationByRepo = stringMap(ShellConfig.shared.object(forKey: integrationByRepoKey))
+        settings.autoCloseByRepo = boolMap(ShellConfig.shared.object(forKey: autoCloseByRepoKey))
+        settings.primaryByWorkspace = stringMap(ShellConfig.shared.object(forKey: primaryRepoByWorkspaceKey))
+        return settings
+    }
+
+    static func saveRepoSettings(_ settings: RepoSettings) {
+        ShellConfig.shared.set(settings.integrationByWorkspace, forKey: integrationByWorkspaceKey)
+        ShellConfig.shared.set(settings.autoCloseByWorkspace, forKey: autoCloseByWorkspaceKey)
+        ShellConfig.shared.set(settings.integrationByRepo, forKey: integrationByRepoKey)
+        ShellConfig.shared.set(settings.autoCloseByRepo, forKey: autoCloseByRepoKey)
+        ShellConfig.shared.set(settings.primaryByWorkspace, forKey: primaryRepoByWorkspaceKey)
+    }
+
+    private static func stringMap(_ value: Any?) -> [String: String] {
+        guard let map = value as? [String: Any] else { return [:] }
+        return map.compactMapValues { $0 as? String }
+    }
+
+    private static func boolMap(_ value: Any?) -> [String: Bool] {
+        guard let map = value as? [String: Any] else { return [:] }
+        return map.compactMapValues { $0 as? Bool }
+    }
+
+    /// Write the workspace-level primary pick (nil = remove → auto rule).
+    static func setStoredPrimaryRepoID(_ id: String?, forWorkspace path: String) {
+        var settings = repoSettings()
+        settings.setPrimaryRepoID(id, forWorkspace: path)
+        saveRepoSettings(settings)
+    }
+
+    /// The primary's resolved default, honoring the full chain (explicit repo
+    /// value → the primary's legacy workspace value → the recommendation). The
+    /// runner env and the queue forms use this.
+    static func resolvedIntegration(forWorkspace path: String, repoSet: WorkspaceRepoSet,
+                                    recommended: QueueIntegration) -> QueueIntegration {
+        let primaryID = repoSet.primary?.id
+        return repoSettings().resolvedIntegration(forWorkspace: path, repoID: primaryID ?? ".",
+                                                  primaryID: primaryID, recommended: recommended)
+    }
+
+    static func resolvedAutoCloseOnPublish(forWorkspace path: String, repoSet: WorkspaceRepoSet) -> Bool {
+        let primaryID = repoSet.primary?.id
+        return repoSettings().resolvedAutoClose(forWorkspace: path, repoID: primaryID ?? ".",
+                                                primaryID: primaryID)
+    }
+
     /// What a queue without its own override uses here: the saved value, else this
     /// workspace's RECOMMENDATION — so the panel is sensible before anyone sets it,
     /// and 首次打开设置时默认选中的就是这一档.
@@ -1416,8 +1476,9 @@ final class IssueRunnerPanelController: NSObject {
     /// This workspace's resolved 工作流 default (设置抽屉 / 队列头的 fallback).
     private var workspaceIntegration: QueueIntegration {
         guard let path = repoRootPath else { return .pr }
-        return Self.resolvedIntegration(forWorkspace: path, isGit: workspaceIsGit,
-                                        hasGitHubRemote: repo != nil)
+        return Self.resolvedIntegration(forWorkspace: path, repoSet: workspaceRepoSet,
+                                        recommended: QueueIntegration.recommended(isGit: workspaceIsGit,
+                                                                                  hasGitHubRemote: repo != nil))
     }
 
     /// The repos a queue form may pick from: the whole set in multi-repo mode,
@@ -1480,9 +1541,7 @@ final class IssueRunnerPanelController: NSObject {
 
     /// The user's explicit primary-repo pick for a workspace, or nil.
     static func storedPrimaryRepoID(forWorkspace path: String) -> String? {
-        guard let map = ShellConfig.shared.object(forKey: "tasksPrimaryRepoByWorkspace") as? [String: Any],
-              let id = map[workspaceSettingsKey(path)] as? String, !id.isEmpty else { return nil }
-        return id
+        repoSettings().storedPrimaryRepoID(forWorkspace: path)
     }
 
     /// The repo ISSUES belong to: the root's GitHub remote, else the primary's
@@ -2041,21 +2100,75 @@ final class IssueRunnerPanelController: NSObject {
     /// 面板设置 — a DRAWER (the same formSheet as 新建任务 / 新建队列), not an NSAlert:
     /// the GitHub token and THIS workspace's 工作流 default share one surface.
     private func configTapped() {
-        let model = TaskSettingsModel(
-            token: loadToken(for: repo) ?? "",
-            // 没保存过时它就是本工作区的推荐（见 resolvedIntegration），所以首次
-            // 打开抽屉默认选中的正是推荐那一档。
-            defaultIntegration: workspaceIntegration,
-            recommendedIntegration: QueueIntegration.recommended(isGit: workspaceIsGit,
-                                                                 hasGitHubRemote: repo != nil),
-            prAvailable: repo != nil,
-            gitAvailable: workspaceIsGit,
-            remoteAvailable: workspaceHasRemote,
-            autoCloseOnPublish: repoRootPath.map { Self.storedAutoCloseOnPublish(forWorkspace: $0) } ?? false)
+        let model = makeSettingsModel()
         let form = TaskSettingsView(model: model)
         form.onSubmit = { [weak self] settings in self?.submitSettings(settings) }
         form.onCancel = { [weak self] in self?.dismissForm() }
         presentForm(form) { ($0 as? TaskSettingsView)?.focusToken() }
+    }
+
+    /// Build the settings drawer model. 多仓库模式 gives every repository (主仓库
+    /// 固定排第一) with its explicit values / 跟随主仓库 state; 单仓库 / 普通目录
+    /// keeps today's one-workspace form unchanged (design §8.1).
+    private func makeSettingsModel() -> TaskSettingsModel {
+        let recommended = QueueIntegration.recommended(isGit: workspaceIsGit,
+                                                       hasGitHubRemote: repo != nil)
+        guard let path = repoRootPath else {
+            return TaskSettingsModel(token: loadToken(for: repo) ?? "",
+                                     defaultIntegration: .pr,
+                                     recommendedIntegration: recommended,
+                                     prAvailable: repo != nil)
+        }
+        guard workspaceRepoSet.isMultiRepo else {
+            // 单仓库模式：与今天完全一致（一个 token 框 + 一组 radio + 一个勾选）。
+            return TaskSettingsModel(
+                token: loadToken(for: repo) ?? "",
+                defaultIntegration: Self.resolvedIntegration(forWorkspace: path, repoSet: workspaceRepoSet,
+                                                             recommended: recommended),
+                recommendedIntegration: recommended,
+                prAvailable: repo != nil,
+                gitAvailable: workspaceIsGit,
+                remoteAvailable: workspaceHasRemote,
+                autoCloseOnPublish: Self.resolvedAutoCloseOnPublish(forWorkspace: path, repoSet: workspaceRepoSet))
+        }
+        let store = Self.repoSettings()
+        let primaryID = workspaceRepoSet.primary?.id
+        // 主仓库固定排第一，其余保持探测顺序。
+        var ordered: [WorkspaceRepo] = []
+        if let primary = workspaceRepoSet.primary { ordered.append(primary) }
+        ordered += workspaceRepoSet.repos.filter { $0.id != primaryID }
+        let repos = ordered.map { repo -> TaskSettingsRepoModel in
+            let repoRecommended = QueueIntegration.recommended(isGit: repo.isGit,
+                                                                hasGitHubRemote: repo.github != nil)
+            let github = repo.github
+            return TaskSettingsRepoModel(
+                id: repo.id,
+                displayName: repo.displayName,
+                isPrimary: repo.id == primaryID,
+                gitAvailable: repo.isGit,
+                prAvailable: github != nil,
+                remoteAvailable: repo.remoteName != nil,
+                github: github,
+                token: github.flatMap { loadToken(for: ($0.owner, $0.name)) } ?? "",
+                integration: store.resolvedIntegration(forWorkspace: path, repoID: repo.id,
+                                                       primaryID: primaryID, recommended: repoRecommended),
+                explicitIntegration: store.explicitIntegration(forWorkspace: path, repoID: repo.id),
+                autoCloseOnPublish: store.resolvedAutoClose(forWorkspace: path, repoID: repo.id,
+                                                            primaryID: primaryID),
+                explicitAutoClose: store.explicitAutoClose(forWorkspace: path, repoID: repo.id),
+                recommendedIntegration: repoRecommended)
+        }
+        var model = TaskSettingsModel(
+            token: "",
+            defaultIntegration: repos.first(where: { $0.isPrimary })?.integration ?? recommended,
+            recommendedIntegration: recommended,
+            prAvailable: workspaceRepoSet.prAvailable,
+            gitAvailable: workspaceRepoSet.gitAvailable,
+            remoteAvailable: workspaceHasRemote,
+            autoCloseOnPublish: repos.first(where: { $0.isPrimary })?.autoCloseOnPublish ?? false)
+        model.repos = repos
+        model.selectedRepoID = primaryID
+        return model
     }
 
     /// 使用说明 —— the toolbar button. The empty board shows the same content inline,
@@ -2067,17 +2180,53 @@ final class IssueRunnerPanelController: NSObject {
     }
 
     private func submitSettings(_ settings: TaskSettingsModel) {
-        let value = settings.token.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Empty → delete the token file; otherwise write it (file only).
-        saveToken(value, for: repo)
-        // PER WORKSPACE (every 面板设置 item): save under this workspace's path, then
-        // tell the live runner (its env was snapshotted at adopt time) so the next
-        // finalize uses it. Other workspaces keep their own value.
-        if let path = repoRootPath {
-            Self.setStoredIntegration(settings.defaultIntegration, forWorkspace: path)
-            runner?.setDefaultIntegration(settings.defaultIntegration)
-            Self.setStoredAutoCloseOnPublish(settings.autoCloseOnPublish, forWorkspace: path)
-            runner?.setAutoCloseOnPublish(settings.autoCloseOnPublish)
+        if settings.isMultiRepo, let path = repoRootPath {
+            let oldPrimary = Self.storedPrimaryRepoID(forWorkspace: path)
+            Self.setStoredPrimaryRepoID(settings.primaryRepoID, forWorkspace: path)
+            // Per-repo explicit values. A follower stores NOTHING (missing = 跟随);
+            // a repo that does not follow stores both fields independently.
+            var store = Self.repoSettings()
+            for repo in settings.repos {
+                // token 不参与跟随：每个 GitHub 仓库各自保存；只写用户改过的，
+                // 免得打开一次抽屉就把通用 token 复制到每个仓库文件。
+                if let github = repo.github, repo.tokenChanged {
+                    let value = repo.token.trimmingCharacters(in: .whitespacesAndNewlines)
+                    saveToken(value, for: (owner: github.owner, repo: github.name))
+                }
+                if let explicit = repo.explicitIntegration, let explicitClose = repo.explicitAutoClose {
+                    store.setIntegration(explicit, forWorkspace: path, repoID: repo.id)
+                    store.setAutoClose(explicitClose, forWorkspace: path, repoID: repo.id)
+                } else {
+                    store.setIntegration(nil, forWorkspace: path, repoID: repo.id)
+                    store.setAutoClose(nil, forWorkspace: path, repoID: repo.id)
+                }
+            }
+            Self.saveRepoSettings(store)
+            if let primary = settings.primaryRepo {
+                runner?.setDefaultIntegration(primary.integration)
+                runner?.setAutoCloseOnPublish(primary.autoCloseOnPublish)
+            }
+            // 改主仓库 = 换了 git 落点 / 默认基线：没在跑任务时重建这一工作区的
+            // runner，让新的 primary 立即生效（跑着的话保持现状，避免两个 runner
+            // 同时步进同一个任务）。
+            if oldPrimary != Self.storedPrimaryRepoID(forWorkspace: path),
+               workspaces.trackedRunner(for: path)?.isBusy != true {
+                workspaces.invalidate(path)
+                adoptWorkspace(path)
+            }
+        } else {
+            let value = settings.token.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Empty → delete the token file; otherwise write it (file only).
+            saveToken(value, for: repo)
+            // PER WORKSPACE (every 面板设置 item): save under this workspace's path, then
+            // tell the live runner (its env was snapshotted at adopt time) so the next
+            // finalize uses it. Other workspaces keep their own value.
+            if let path = repoRootPath {
+                Self.setStoredIntegration(settings.defaultIntegration, forWorkspace: path)
+                runner?.setDefaultIntegration(settings.defaultIntegration)
+                Self.setStoredAutoCloseOnPublish(settings.autoCloseOnPublish, forWorkspace: path)
+                runner?.setAutoCloseOnPublish(settings.autoCloseOnPublish)
+            }
         }
         dismissForm()
         setStatus(L10n.tr("tasks.settings.saved"), spin: false)
