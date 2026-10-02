@@ -15,6 +15,9 @@ This lint makes the class of bug impossible:
   * FAIL: a duplicate key in the table;
   * FAIL: an entry whose Chinese or English string is empty (the table is meant
     to be bilingual, see AGENTS.md);
+  * FAIL: Chinese and English format arguments that disagree — a reordered `%@`
+    / `%d` (or a wrong type) makes `String(format:)` read the wrong CVarArg and
+    can crash the shell (see tasks.apiQueueAppended);
   * WARN: a table key no source literal ever references (keys may be assembled
     at runtime, e.g. ChannelPanel's wizardL10n appends ".dingtalk", so this is
     informational only).
@@ -46,6 +49,32 @@ L10N_SHAPE = re.compile(r'^[a-z][a-z0-9]*(\.[a-z0-9]+)+$')
 
 def unquote(text):
     return text[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+
+
+FORMAT_SPEC = re.compile(r'%(?:(\d+)\$)?([@dD])')
+
+
+def format_slots(text):
+    """Map each format argument (1-based) to its conversion letter.
+
+    `%@` is an object and `%d` an integer. L10n.tr() forwards ONE shared
+    `arguments:` list to whichever language string is active, so both
+    languages must agree on the type of every argument slot. Reordering is
+    safe only with explicit positions (`%1$@` / `%2$d`); mixing positional and
+    implicit specifiers is undefined, so return None for that.
+    """
+    slots, next_slot = {}, 1
+    positional = implicit = False
+    for m in FORMAT_SPEC.finditer(text):
+        explicit, conv = m.group(1), m.group(2)
+        if explicit is not None:
+            slot, positional = int(explicit), True
+        else:
+            slot, next_slot, implicit = next_slot, next_slot + 1, True
+        slots[slot] = "?" if slots.get(slot, conv) != conv else conv
+    if positional and implicit:
+        return None
+    return slots
 
 
 def table_region(text):
@@ -120,6 +149,22 @@ def main():
     empty = sorted(k for k, zh, en in entries if not zh or not en)
     if empty:
         failures.append("entries missing a Chinese or English string: " + ", ".join(empty))
+
+    format_mismatch = []
+    mixed_positions = []
+    for k, zh, en in entries:
+        zh_slots, en_slots = format_slots(zh), format_slots(en)
+        if zh_slots is None or en_slots is None:
+            mixed_positions.append(k)
+        elif zh_slots != en_slots:
+            format_mismatch.append(k)
+    if mixed_positions:
+        failures.append("entries mixing positional and implicit format specifiers: "
+                        + ", ".join(sorted(mixed_positions)))
+    if format_mismatch:
+        failures.append("Chinese/English format arguments disagree (order or type) — "
+                        "String(format:) reads the wrong CVarArg and can crash: "
+                        + ", ".join(sorted(format_mismatch)))
 
     unparsed = sorted(loose_keys - keys)
     if unparsed:
