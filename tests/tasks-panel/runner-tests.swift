@@ -273,6 +273,54 @@ final class Harness {
     }
 }
 
+/// A runner env over SEVERAL scripted repositories (design §5): every git call is
+/// dispatched through `gitFor(repo)`, and the prompt text is the brief itself so a
+/// test can read exactly which commits the next task would be handed.
+final class MultiRepoHarness {
+    let repos: [WorkspaceRepo]
+    let gits: [String: FakeRepo]
+    let dsh = FakeDsh()
+    let rec = Recorder()
+    let runner: TasksRunner
+    var board: TaskBoard { runner.board }
+
+    init(board: TaskBoard, repos: [WorkspaceRepo], primaryRepoID: String? = nil,
+         repoSetProvider: (() -> WorkspaceRepoSet)? = nil) {
+        self.repos = repos
+        var table: [String: FakeRepo] = [:]
+        for repo in repos { table[repo.id] = FakeRepo() }
+        self.gits = table
+        let dsh = self.dsh
+        let rec = self.rec
+        let primary = primaryRepoID ?? repos.first?.id
+        let fallback = TaskGit(run: { _ in nil }, remoteName: { nil })
+        let env = TaskRunnerEnv(
+            git: primary.flatMap { table[$0]?.git() } ?? fallback,
+            repoRoot: "/tmp/ws",
+            createSession: { _ in dsh.create() },
+            renameSession: { id, title in dsh.rename(id, title) },
+            promptSession: { id, text in dsh.prompt(id, text) },
+            sessionState: { id in dsh.sessionState(id) },
+            cancelSession: { id in dsh.cancel(id) },
+            findExistingPR: { branch in rec.existingPRs[branch] },
+            promptText: { _, _, brief in brief ?? "" },
+            sessionReport: { id in dsh.report(id) },
+            notifySession: { id, text in dsh.notify(id, text) },
+            persist: { board in rec.persistCount += 1; _ = board },
+            persistIssueTask: { task in rec.issueWrites.append(task.id) },
+            log: { message in rec.logs.append(message) },
+            perform: TaskRunnerEnv.synchronous,
+            repos: repos,
+            gitFor: { repo in table[repo.id]!.git() },
+            primaryRepoID: primary,
+            repoSetProvider: repoSetProvider
+        )
+        runner = TasksRunner(board: board, env: env, timeout: 30 * 60)
+    }
+
+    func git(_ id: String) -> FakeRepo { gits[id]! }
+}
+
 /// A board with one manual task and one user queue. The task is NOT enqueued:
 /// tests drive the real path (runner.enqueue), which is also what activates the
 /// queue while the runner is idle.
@@ -911,6 +959,199 @@ do {
     _ = legacyEnv.gitHandle(for: childRepo).run(["branch"])
     eq(calls.last, "root:branch", "没有 gitFor 时回落到 git 字段")
     check(legacyEnv.repos.count == 1, "legacy env 的 repos 仍是显式给的那一份")
+}
+
+// MARK: - 多仓库目标解析与两段式切分支
+
+section("resolveTargets：队列指定按 id 解析，未指定用 primary，失效回退 primary")
+do {
+    let repos = [
+        WorkspaceRepo(id: ".", absolutePath: "/ws", isGit: true, displayName: "ws"),
+        WorkspaceRepo(id: "repo-a", absolutePath: "/ws/repo-a", isGit: true, displayName: "repo-a"),
+        WorkspaceRepo(id: "repo-b", absolutePath: "/ws/repo-b", isGit: true, displayName: "repo-b"),
+    ]
+    let named = TaskQueue(id: "q-1", name: "N", repos: ["repo-b", "repo-a"])
+    eq(TasksRunner.resolveTargets(queue: named, repos: repos).map { $0.id }, ["repo-b", "repo-a"],
+       "队列指定：顺序保留")
+    let auto = TaskQueue(id: "q-2", name: "A")
+    eq(TasksRunner.resolveTargets(queue: auto, repos: repos, primaryRepoID: "repo-b").map { $0.id }, ["repo-b"],
+       "未指定：用 primary")
+    let stale = TaskQueue(id: "q-3", name: "S", repos: ["gone"])
+    eq(TasksRunner.resolveTargets(queue: stale, repos: repos, primaryRepoID: "repo-b").map { $0.id }, ["repo-b"],
+       "指定的仓库已移除：回退 primary")
+    eq(TasksRunner.resolveTargets(queue: auto, repos: []).count, 0, "legacy env（无 repos）→ 空")
+}
+
+section("多仓库 pump：预检全过后逐个 gitFor(repo).enter（跨仓库同名分支、各自基线）")
+do {
+    let repos = [
+        WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                      defaultBase: "main", displayName: "repo-a"),
+        WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                      defaultBase: "master", displayName: "repo-b"),
+    ]
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "多仓库改动", body: nil, id: "manual-mr000001")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Multi", autoPR: false, repos: ["repo-a", "repo-b"])
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: repos, primaryRepoID: "repo-a")
+    h.git("repo-a").knownBranches = ["main"]
+    h.git("repo-b").current = "master"
+    h.git("repo-b").knownBranches = ["master"]
+
+    _ = h.runner.startQueue(queue.id)
+    check(h.board.task(task.id)?.state == .running, "两个仓库都过预检后任务开始")
+    eq(h.git("repo-a").checkouts, ["main", "feature/multi"], "repo-a 基于 main 切分支")
+    eq(h.git("repo-b").checkouts, ["master", "feature/multi"], "repo-b 基于 master 切同名分支")
+    eq(h.dsh.sessions.count, 1, "只建一个会话（会话仍在工作区根）")
+}
+
+section("多仓库 pump：repoSetProvider 运行期重探覆盖 adopt 快照")
+do {
+    let root = WorkspaceRepo(id: ".", absolutePath: "/tmp/ws", isGit: true, displayName: "ws")
+    let a = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                          defaultBase: "main", displayName: "repo-a")
+    let b = WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                          defaultBase: "master", displayName: "repo-b")
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "重探", body: nil, id: "manual-mr300001")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Reprobe", autoPR: false)   // 未指定 targets
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    // adopt 快照以 root 为 primary；provider 说现在是 a + b、primary = a。
+    let h = MultiRepoHarness(board: board, repos: [root, a, b], primaryRepoID: ".",
+                             repoSetProvider: { WorkspaceRepoSet(repos: [a, b], primary: a) })
+    h.git("repo-a").knownBranches = ["main"]
+    h.git("repo-b").current = "master"
+    h.git("repo-b").knownBranches = ["master"]
+
+    _ = h.runner.startQueue(queue.id)
+    check(h.board.task(task.id)?.state == .running, "按 provider 重探后任务开始")
+    check(!h.git("repo-a").checkouts.isEmpty, "重探后的 primary（repo-a）被切了分支")
+    check(h.git(".").checkouts.isEmpty, "adopt 快照里的 root 没有被切")
+}
+
+section("多仓库 pump：一个仓库脏 → 预检失败，且不切任何仓库")
+do {
+    let repos = [
+        WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                      defaultBase: "main", displayName: "repo-a"),
+        WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                      defaultBase: "master", displayName: "repo-b"),
+    ]
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "多仓库改动", body: nil, id: "manual-mr000002")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Multi", autoPR: false, repos: ["repo-a", "repo-b"])
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: repos, primaryRepoID: "repo-a")
+    h.git("repo-a").knownBranches = ["main"]
+    h.git("repo-b").current = "master"
+    h.git("repo-b").knownBranches = ["master"]
+    h.git("repo-b").worktreeClean = false
+
+    _ = h.runner.startQueue(queue.id)
+    check(h.board.task(task.id)?.state == .failed, "脏仓库让任务失败")
+    eq(h.board.task(task.id)?.error, "tasks.errRepoDirty", "原因是预检发现脏工作区")
+    eq(h.board.task(task.id)?.errorDetail, "repo-b", "错误点名脏的是 repo-b")
+    check(h.git("repo-a").checkouts.isEmpty, "预检失败：repo-a 没有被切走")
+    check(h.git("repo-b").checkouts.isEmpty, "repo-b 也没有")
+    check(h.dsh.sessions.isEmpty, "预检失败不建会话")
+    check(h.rec.logged("tasks.errRepoDirty"), "日志里记了预检失败")
+}
+
+section("单目标多仓库 env：脏仓库仍用 legacy 错误键（不写「多仓库」）")
+do {
+    let root = WorkspaceRepo(id: ".", absolutePath: "/tmp/ws", isGit: true, displayName: "ws")
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "单仓库", body: nil, id: "manual-mr200001")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Solo", autoPR: false)
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: [root], primaryRepoID: ".")
+    h.git(".").knownBranches = ["main"]
+    h.git(".").worktreeClean = false
+
+    _ = h.runner.startQueue(queue.id)
+    eq(h.board.task(task.id)?.error, "tasks.errDirtyTree", "单目标保持 legacy 错误键")
+    eq(h.board.task(task.id)?.errorDetail, nil, "单目标不带仓库 detail")
+    check(h.git(".").checkouts.isEmpty, "脏仓库没有被切走")
+}
+
+section("单目标子仓库：base 用子仓库自己的 defaultBase，而不是队列的")
+do {
+    let child = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                              defaultBase: "trunk", displayName: "repo-a")
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "子仓库", body: nil, id: "manual-mr200002")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Child", baseBranch: "main", autoPR: false, repos: ["repo-a"])
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: [child], primaryRepoID: "repo-a")
+    h.git("repo-a").current = "trunk"
+    h.git("repo-a").knownBranches = ["trunk"]
+
+    _ = h.runner.startQueue(queue.id)
+    eq(h.git("repo-a").checkouts, ["trunk", "feature/child"], "子仓库基于自己的 defaultBase 切分支")
+}
+
+section("多仓库 pump：中途 enter 失败不回滚，错误说明已切的仓库")
+do {
+    let repos = [
+        WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                      defaultBase: "main", displayName: "repo-a"),
+        WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                      defaultBase: "master", displayName: "repo-b"),
+    ]
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "多仓库改动", body: nil, id: "manual-mr000003")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Multi", autoPR: false, repos: ["repo-a", "repo-b"])
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: repos, primaryRepoID: "repo-a")
+    h.git("repo-a").knownBranches = ["main"]
+    h.git("repo-b").current = "master"
+    h.git("repo-b").knownBranches = ["master"]
+    h.git("repo-b").failing = ["checkout -b feature/multi"]
+
+    _ = h.runner.startQueue(queue.id)
+    check(h.board.task(task.id)?.state == .failed, "第二个仓库切换失败，任务失败")
+    eq(h.board.task(task.id)?.error, "tasks.errRepoBranch", "原因是多仓库切分支失败")
+    eq(h.board.task(task.id)?.errorDetail, "repo-b（已切换：repo-a）", "错误说明哪些仓库已切")
+    eq(h.git("repo-a").checkouts, ["main", "feature/multi"], "已切的仓库保持不动，不回滚")
+    check(h.dsh.sessions.isEmpty, "失败发生在建会话之前")
+}
+
+section("多仓库交接简报：分支上的提交按仓库分组")
+do {
+    let repos = [
+        WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                      defaultBase: "main", displayName: "repo-a"),
+        WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                      defaultBase: "master", displayName: "repo-b"),
+    ]
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "第一棒", body: nil, id: "manual-mr100001")
+    let t2 = TaskItem.manual(title: "第二棒", body: nil, id: "manual-mr100002")
+    board.tasks = [t1, t2]
+    let queue = board.createQueue(name: "Multi Brief", autoPR: false, repos: ["repo-a", "repo-b"])
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+    _ = board.enqueue(taskID: t2.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: repos, primaryRepoID: "repo-a")
+    h.git("repo-a").knownBranches = ["main"]
+    h.git("repo-b").current = "master"
+    h.git("repo-b").knownBranches = ["master"]
+    h.git("repo-a").commits = ["aaa111 repo-a 的改动"]
+    h.git("repo-b").commits = ["bbb222 repo-b 的改动"]
+
+    _ = h.runner.startQueue(queue.id)
+    let first = h.dsh.prompts["session-1"] ?? ""
+    check(first.contains("分支上已有的提交"), "简报有提交段")
+    check(first.contains("repo-a/"), "提交按仓库分组：列出 repo-a")
+    check(first.contains("repo-b/"), "提交按仓库分组：列出 repo-b")
+    check(first.contains("aaa111 repo-a 的改动"), "repo-a 的提交在它自己的分组里")
+    check(first.contains("bbb222 repo-b 的改动"), "repo-b 的提交在它自己的分组里")
 }
 
 section("非 git 目录里的 issue 任务：自动队列也不设分支（这里曾经必然 errNotGit）")

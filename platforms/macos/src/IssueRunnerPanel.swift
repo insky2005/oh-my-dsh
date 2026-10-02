@@ -994,18 +994,22 @@ final class IssueRunnerPanelController: NSObject {
                 // queue, so the probe costs the UI nothing.
                 let shape = Self.repoShape(path: repoRoot)
                 // Prompt targets follow the LIVE repo set (design §5): a workspace
-                // can gain or lose repositories between tasks. P1's default target
-                // is the primary; a queue-level target set arrives with delivery (P3).
+                // can gain or lose repositories between tasks. The SAME resolution the
+                // runner uses (queue.repos else primary) is applied here, so the text the
+                // agent reads always describes the repositories pump will actually enter.
                 let liveSet = Self.detectRepoSet(repoRoot)
+                let resolvedRepos = TasksRunner.resolveTargets(queue: queue, repos: liveSet.repos,
+                                                               primaryRepoID: liveSet.primary?.id)
                 let targets: [TaskPromptTarget]
-                if let primary = liveSet.primary {
-                    targets = [TaskPromptTarget(
-                        repoID: primary.id,
-                        shape: TaskRepoShape.detect(isGit: primary.isGit,
-                                                    hasGitHubRemote: primary.github != nil),
-                        defaultBase: primary.defaultBase)]
-                } else {
+                if resolvedRepos.isEmpty {
                     targets = [TaskPromptTarget(repoID: ".", shape: shape)]
+                } else {
+                    targets = resolvedRepos.map { repo in
+                        TaskPromptTarget(repoID: repo.id,
+                                         shape: TaskRepoShape.detect(isGit: repo.isGit,
+                                                                     hasGitHubRemote: repo.github != nil),
+                                         defaultBase: repo.defaultBase)
+                    }
                 }
                 // 队列自己的「基于分支」；不在队列里的任务用工作区的默认分支 —— 两条
                 // 分支 rail 都会点名它（「若无分支，须基于 X 新建」/「直接在主分支 X 上处理」）。
@@ -1044,9 +1048,9 @@ final class IssueRunnerPanelController: NSObject {
                     DispatchQueue.main.async { completion() }
                 }
             },
-            // The workspace repo set and one git handle per repo (design §5.1) —
-            // the per-repo pipeline (pre-flight / branch / brief) is P2; today the
-            // legacy `git` field above already points at the primary.
+            // The workspace repo set and one git handle per repo (design §5.1) — the
+            // per-repo pipeline (pre-flight / branch / brief) is P2; the legacy `git`
+            // field above still points at the primary.
             repos: repoSet.repos,
             gitFor: { repo in
                 TaskGit(run: { args in
@@ -1054,7 +1058,12 @@ final class IssueRunnerPanelController: NSObject {
                                              cwd: repo.absolutePath)
                          },
                          remoteName: { Self.pushRemoteName(path: repo.absolutePath) })
-            }
+            },
+            // The queue's default target when it names none (design §5.2 / Q2).
+            primaryRepoID: repoSet.primary?.id,
+            // Runtime re-probe for pump (design §5.1): the same detection the prompt
+            // does, so a task that adds / removes a repository is followed by the next.
+            repoSetProvider: { Self.detectRepoSet(repoRoot) }
         )
     }
 

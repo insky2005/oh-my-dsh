@@ -17,6 +17,12 @@ enum TaskFailure: String {
     case sessionGone = "tasks.errSessionGone"
     case notGitRepo = "tasks.errNotGit"
     case dirtyWorktree = "tasks.errDirtyTree"
+    /// 多仓库预检：目标仓库的工作区不干净（design §5.2）。detail 带上仓库 id。
+    case repoDirty = "tasks.errRepoDirty"
+    /// 多仓库预检：目标仓库的基线分支解析不出来（本地与远端追踪都没有）。
+    case repoNoBase = "tasks.errRepoNoBase"
+    /// 多仓库进入分支：前面的仓库已经切好，某个仓库失败（不回滚）。
+    case repoBranch = "tasks.errRepoBranch"
     case checkout = "tasks.errBranch"
     case pull = "tasks.errPull"
     case session = "tasks.errSession"
@@ -135,6 +141,10 @@ struct TaskItem: Equatable {
     var prUrl: String?
     var sessionId: String?
     var error: String?
+    /// 失败时补充给用户的细节（多仓库失败点名具体仓库，见 design §5.2）。它跟着
+    /// `error` 一起持久化，卡片渲染为 `L10n.tr(error, errorDetail)`；nil = 今天的
+    /// 单值错误文案。
+    var errorDetail: String?
     var startedAt: Date?
     var finishedAt: Date?
     /// What the agent said when it finished — its 汇报, written back onto the task by
@@ -159,6 +169,7 @@ struct TaskItem: Equatable {
          prUrl: String? = nil,
          sessionId: String? = nil,
          error: String? = nil,
+         errorDetail: String? = nil,
          startedAt: Date? = nil,
          finishedAt: Date? = nil,
          report: String? = nil) {
@@ -174,6 +185,7 @@ struct TaskItem: Equatable {
         self.prUrl = prUrl
         self.sessionId = sessionId
         self.error = error
+        self.errorDetail = errorDetail
         self.startedAt = startedAt
         self.finishedAt = finishedAt
         self.report = report
@@ -227,6 +239,7 @@ struct TaskItem: Equatable {
         if let branch = branch { d["branch"] = branch }
         if let prUrl = prUrl { d["prUrl"] = prUrl }
         if let error = error { d["error"] = error }
+        if let errorDetail = errorDetail { d["errorDetail"] = errorDetail }
         if let startedAt = startedAt { d["startedAt"] = TaskItem.iso8601.string(from: startedAt) }
         if let finishedAt = finishedAt { d["finishedAt"] = TaskItem.iso8601.string(from: finishedAt) }
         return d
@@ -246,6 +259,7 @@ struct TaskItem: Equatable {
                         prUrl: d["prUrl"] as? String,
                         sessionId: nil,
                         error: d["error"] as? String,
+                        errorDetail: d["errorDetail"] as? String,
                         startedAt: (d["startedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) },
                         finishedAt: (d["finishedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
     }
@@ -266,6 +280,7 @@ struct TaskItem: Equatable {
         if let branch = branch { d["branch"] = branch }
         if let prUrl = prUrl { d["prUrl"] = prUrl }
         if let error = error { d["error"] = error }
+        if let errorDetail = errorDetail { d["errorDetail"] = errorDetail }
         if let startedAt = startedAt { d["startedAt"] = TaskItem.iso8601.string(from: startedAt) }
         if let finishedAt = finishedAt { d["finishedAt"] = TaskItem.iso8601.string(from: finishedAt) }
         return d
@@ -285,6 +300,7 @@ struct TaskItem: Equatable {
                         prUrl: d["prUrl"] as? String,
                         sessionId: nil,
                         error: d["error"] as? String,
+                        errorDetail: d["errorDetail"] as? String,
                         startedAt: (d["startedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) },
                         finishedAt: (d["finishedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
     }
@@ -760,6 +776,10 @@ struct TaskQueue: Equatable {
     /// its 已完成 state — a PR that could not be opened is not failed work — but the
     /// reason is shown instead of silently disappearing into the log.
     var prError: String?
+    /// 本队列的目标仓库（WorkspaceRepo.id 列表；"." = 工作区根）。nil / 空 =
+    /// 默认主仓库 primary（design §7.1 / §5.2）。P2 用它做「按仓库预检 + 切分支」，
+    /// 交付阶段（P3）在此基础上按仓库记录 repoRuns。
+    var repos: [String]?
     /// Per-queue override of the workspace's integration default; nil = follow the
     /// tasks-panel setting.
     var integration: QueueIntegration?
@@ -778,6 +798,7 @@ struct TaskQueue: Equatable {
          autoPR: Bool = false,
          prUrl: String? = nil,
          prError: String? = nil,
+         repos: [String]? = nil,
          integration: QueueIntegration? = nil,
          integrationNote: String? = nil,
          createdAt: Date? = nil) {
@@ -791,6 +812,7 @@ struct TaskQueue: Equatable {
         self.autoPR = autoPR
         self.prUrl = prUrl
         self.prError = prError
+        self.repos = repos
         self.integration = integration
         self.integrationNote = integrationNote
         self.createdAt = createdAt
@@ -903,6 +925,7 @@ struct TaskQueue: Equatable {
         if let branch = branch { d["branch"] = branch }
         if let prUrl = prUrl { d["prUrl"] = prUrl }
         if let prError = prError { d["prError"] = prError }
+        if let repos = repos { d["repos"] = repos }
         if let integration = integration { d["integration"] = integration.rawValue }
         if let integrationNote = integrationNote { d["integrationNote"] = integrationNote }
         if let createdAt = createdAt { d["createdAt"] = TaskItem.iso8601.string(from: createdAt) }
@@ -921,6 +944,7 @@ struct TaskQueue: Equatable {
                          autoPR: (d["autoPR"] as? Bool) ?? false,
                          prUrl: d["prUrl"] as? String,
                          prError: d["prError"] as? String,
+                         repos: d["repos"] as? [String],
                          integration: (d["integration"] as? String).flatMap { QueueIntegration(rawValue: $0) },
                          integrationNote: d["integrationNote"] as? String,
                          createdAt: (d["createdAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
@@ -1160,6 +1184,7 @@ struct TaskBoard {
                               baseBranch: String = "main",
                               autoPR: Bool = false,
                               autoCreated: Bool = false,
+                              repos: [String]? = nil,
                               integration: QueueIntegration? = nil) -> TaskQueue {
         let queueID = TaskQueue.newID()
         let resolved: String?
@@ -1170,8 +1195,8 @@ struct TaskBoard {
         }
         let queue = TaskQueue(id: queueID, name: name, branch: resolved, baseBranch: baseBranch,
                               taskIds: [], state: .draft, autoCreated: autoCreated,
-                              autoPR: autoPR, prUrl: nil, integration: integration,
-                              createdAt: Date())
+                              autoPR: autoPR, prUrl: nil, repos: repos,
+                              integration: integration, createdAt: Date())
         queues.append(queue)
         return queue
     }
@@ -1223,6 +1248,7 @@ struct TaskBoard {
         tasks[i].state = .running
         tasks[i].startedAt = date
         tasks[i].error = nil
+        tasks[i].errorDetail = nil
         if let queueID = tasks[i].queueId, let qi = index(ofQueue: queueID) {
             queues[qi].state = .active
             local.activeQueueID = queueID
@@ -1261,10 +1287,12 @@ struct TaskBoard {
     /// on half-finished work. The user then chooses 重试 or 跳过并继续.
     @discardableResult
     mutating func markFailed(_ taskID: String, error: String, report: String? = nil,
+                             errorDetail: String? = nil,
                              at date: Date = Date()) -> String? {
         guard let i = index(ofTask: taskID) else { return nil }
         tasks[i].state = .failed
         tasks[i].error = error
+        tasks[i].errorDetail = errorDetail
         tasks[i].finishedAt = date
         // A failed run's last words matter MORE than a successful one's: they say how
         // far it got (the next task in the queue receives them as its 前置汇报).
@@ -1317,6 +1345,7 @@ struct TaskBoard {
     mutating func retryAndResume(_ taskID: String) -> Bool {
         guard let i = index(ofTask: taskID), tasks[i].state.isQueueable else { return false }
         tasks[i].error = nil
+        tasks[i].errorDetail = nil
         tasks[i].finishedAt = nil
         // The old report described the run being retried: it must not be handed to the
         // next task in the queue as if it were this run's outcome.

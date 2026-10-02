@@ -124,6 +124,21 @@ if ! grep -q 'static func repoShape(path: String) -> TaskRepoShape' ../../platfo
 fi
 echo "ok - the task prompt probes the workspace shape per prompt"
 
+# 目标仓库集合必须运行期重探测，禁止从 makeEnv 的 env 抄一份：工作区会加/减仓库，
+# 提示词必须描述 runner 真正会进入的那组仓库。promptText 现场 detectRepoSet +
+# TasksRunner.resolveTargets（queue.repos 优先、否则 primary），两处共用一个解析入口。
+if ! grep -q 'TasksRunner.resolveTargets(queue: queue, repos: liveSet.repos' ../../platforms/macos/src/IssueRunnerPanel.swift; then
+  echo "FAIL - 提示词的目标仓库必须运行期重探测（detectRepoSet + TasksRunner.resolveTargets），不能从 env 抄一份"
+  exit 1
+fi
+# runner 侧同理：pump 必须用 env.repoSetProvider 现场重探，不能只吃 adopt 时的快照。
+if ! grep -q 'let live = repoSetProvider?()' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'repoSetProvider: { Self.detectRepoSet(repoRoot) }' ../../platforms/macos/src/IssueRunnerPanel.swift; then
+  echo "FAIL - pump 的目标仓库必须经 env.repoSetProvider 运行期重探（design §5.1）"
+  exit 1
+fi
+echo "ok - 目标仓库集合在提示词与 pump 里运行期重探测"
+
 # The 处理 button answers a BOARD question (「有待办吗」), so it has to be re-derived
 # whenever the board changes — not only when the WORKSPACE does. It used to be set
 # only in updateLabels(), which runs on adopt / language switch: creating a task (the

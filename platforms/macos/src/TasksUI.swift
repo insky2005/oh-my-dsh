@@ -151,7 +151,15 @@ struct TaskCardModel: Equatable {
             detailLines.append(L10n.tr("tasks.detailQueue", queue.name))
         }
         if let session = task.sessionId { detailLines.append(L10n.tr("tasks.detailSession", session)) }
-        if let error = task.error { detailLines.append(L10n.tr(error)) }
+        // 多仓库失败会带上仓库细节（design §5.2）：`error` 仍是 L10n 键，detail
+        // 作为它的 %@ 参数；单值错误（detail 为 nil）保持今天逐字不变。
+        if let error = task.error {
+            if let detail = task.errorDetail, !detail.isEmpty {
+                detailLines.append(L10n.tr(error, detail))
+            } else {
+                detailLines.append(L10n.tr(error))
+            }
+        }
         // 单行任务的描述就是标题：卡片标题已经说了，详情不再重复一遍。
         if let body = task.body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty,
            body != task.title.trimmingCharacters(in: .whitespacesAndNewlines) {

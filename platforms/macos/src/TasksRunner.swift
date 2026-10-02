@@ -47,6 +47,18 @@ struct TaskGit {
         run(["rev-parse", "--verify", "--quiet", name]) != nil
     }
 
+    /// Whether `base` can be resolved for a checkout: the local branch, or — when
+    /// there is a remote — its remote-tracking branch (a fresh clone may only have
+    /// `origin/main`; `git checkout main` would create it, but a bare
+    /// `rev-parse --verify main` would not). Used by the multi-repo pre-flight
+    /// (design §5.2), which must not reject a base that `enter` could actually use.
+    func baseIsResolvable(_ base: String) -> Bool {
+        guard !base.isEmpty else { return false }
+        if branchExists(base) { return true }
+        guard let remote = remoteName(), !remote.isEmpty else { return false }
+        return run(["rev-parse", "--verify", "--quiet", remote + "/" + base]) != nil
+    }
+
     /// Whether this repository has any commit at all. False for a directory that was
     /// just `git init`ed — HEAD is unborn there (`git rev-parse --verify HEAD` fails).
     func hasCommits() -> Bool {
@@ -184,6 +196,16 @@ struct TaskRunnerEnv {
     /// Per-repo git handle (design §5.1). nil = fall back to `git` (the root /
     /// primary handle), so a legacy single-repo env needs nothing new.
     var gitFor: ((WorkspaceRepo) -> TaskGit)?
+    /// The primary repository's id when `repos` is present (design §5.1 / Q2): the
+    /// default target for a queue that names none. nil = fall back to the root /
+    /// first-GitHub / first-git rule inside `resolveTargets`.
+    var primaryRepoID: String?
+    /// Runtime re-probe (design §5.1): the workspace's repositories AS THEY ARE when a
+    /// task starts, plus the resolved primary. A queue task may add or remove a
+    /// repository, so the set is asked for again on the runner's background queue
+    /// inside `pump` (the same philosophy as the prompt's live shape probe).
+    /// nil = use the `repos` / `primaryRepoID` snapshot (a legacy / headless env).
+    var repoSetProvider: (() -> WorkspaceRepoSet)?
 
     /// The git handle for a target repo: its own when the env carries one, else
     /// the single legacy handle. This is what the per-repo pipeline will use (P2);
@@ -194,6 +216,84 @@ struct TaskRunnerEnv {
     static func synchronous(_ blocking: () -> Void, _ completion: () -> Void) {
         blocking()
         completion()
+    }
+}
+
+// MARK: - Multi-repo targets (design §5)
+
+extension TasksRunner {
+    /// The repositories THIS queue works on: its own list when it names one, else
+    /// the primary (design §5.2 / Q2). Unknown ids (a repository that was removed)
+    /// are dropped; if none of them resolves, fall back to the primary. An empty
+    /// `repos` is a legacy env: return [] and the caller keeps the single `git`.
+    static func resolveTargets(queue: TaskQueue?, repos: [WorkspaceRepo],
+                               primaryRepoID: String? = nil) -> [WorkspaceRepo] {
+        guard !repos.isEmpty else { return [] }
+        if let ids = queue?.repos, !ids.isEmpty {
+            let chosen = ids.compactMap { id in repos.first { $0.id == id } }
+            if !chosen.isEmpty { return chosen }
+        }
+        let primary = primaryRepoID.flatMap { id in repos.first { $0.id == id } }
+            ?? repos.first { $0.id == "." }
+            ?? repos.first { $0.github != nil }
+            ?? repos.first { $0.isGit }
+        return primary.map { [$0] } ?? []
+    }
+
+    /// The two-phase branch entry (design §5.2).
+    ///
+    /// Phase 1 pre-flights EVERY target (`isGit` / clean worktree / resolvable base):
+    /// one failure aborts before anything is touched. Phase 2 enters them one by one;
+    /// a mid-way failure does NOT roll back (checking out a branch is non-destructive)
+    /// and its detail names the repositories that already switched.
+    ///
+    /// An UNBORN repository (fresh `git init`, no commit) is skipped by the base and
+    /// clean checks, exactly like `TaskGit.enter`: there is no committed state to
+    /// lose and no base to resolve.
+    static func enterTargets(_ targets: [WorkspaceRepo], branch: String?, base: String?,
+                             gitFor: (WorkspaceRepo) -> TaskGit) -> (failure: TaskFailure?, detail: String?) {
+        let single = targets.count == 1
+        let queueBase = base?.trimmingCharacters(in: .whitespacesAndNewlines)
+        func repoBase(_ repo: WorkspaceRepo) -> String {
+            // The legacy single ROOT repo keeps the queue's own 基于分支 (today's
+            // behavior); a child repo — or any target of a multi-repo queue — uses
+            // its own defaultBase (design §4.3 / §5.2).
+            if single, repo.id == ".", let queueBase = queueBase, !queueBase.isEmpty { return queueBase }
+            return repo.defaultBase
+        }
+        // One target is the LEGACY path: it must keep today's error keys (no 「多仓库」
+        // wording for a workspace that has exactly one repository), so a single target
+        // maps the pre-flight failures back onto the old reasons and carries no detail.
+        // Several targets get the explicit multi-repo reasons + the failing repo id.
+        // Phase 1: pre-flight. A failure here leaves every repository where it was.
+        for repo in targets {
+            guard repo.isGit else { return (.notGitRepo, single ? nil : repo.id) }
+            let git = gitFor(repo)
+            guard git.hasCommits() else { continue }
+            guard git.isWorktreeClean() else {
+                return (single ? .dirtyWorktree : .repoDirty, single ? nil : repo.id)
+            }
+            guard git.baseIsResolvable(repoBase(repo)) else {
+                return (single ? .checkout : .repoNoBase,
+                        single ? nil : repo.id + "（" + repoBase(repo) + "）")
+            }
+        }
+        // Phase 2: enter. No rollback — the detail says what already switched.
+        var switched: [String] = []
+        for repo in targets {
+            let entered = gitFor(repo).enter(branch: branch, base: repoBase(repo))
+            if let failure = failure(for: entered) {
+                // First failure: the specific reason (checkout / branch / pull). A
+                // failure AFTER another repo switched: the explicitly non-rolling-back
+                // reason, whose detail names what already moved.
+                guard switched.isEmpty else {
+                    return (.repoBranch, repo.id + "（已切换：" + switched.joined(separator: "、") + "）")
+                }
+                return (failure, single ? nil : repo.id)
+            }
+            if entered == .switched || entered == .alreadyOnBranch { switched.append(repo.id) }
+        }
+        return (nil, nil)
     }
 }
 
@@ -239,6 +339,14 @@ struct TaskPromptTarget: Equatable {
     var defaultBase: String = "main"
 }
 
+/// The commits ONE repository carries on top of its base — the per-repo group of a
+/// 交接简报 (design §5.3). One group keeps today's flat rendering; several groups
+/// are rendered under a per-repo heading.
+struct RepoCommits: Equatable {
+    var repoID: String
+    var commits: [String]
+}
+
 /// Texts handed to the agent. Both task sources share ONE requirement list
 /// (requirements below, 2026-09-27): the prompt's head is all that differs.
 /// plus a generic one for manual tasks, with the same safety rails (one branch,
@@ -269,7 +377,8 @@ enum TaskPrompts {
         var earlier: [Earlier]
         var branch: String?
         var base: String
-        var commits: [String]
+        /// 每个目标仓库在分支上已有的提交（单仓库时只有一个分组，渲染与今天一致）。
+        var commits: [RepoCommits]
     }
 
     /// The brief as prompt text, or nil when there is nothing to hand over.
@@ -289,7 +398,17 @@ enum TaskPrompts {
         }
         if !brief.commits.isEmpty {
             lines.append("分支上已有的提交：")
-            for commit in brief.commits { lines.append("  " + commit) }
+            if brief.commits.count == 1 {
+                // 单目标（根或子仓库）：与今天逐字一致 —— 只有一组，不打仓库抬头。
+                for commit in brief.commits[0].commits { lines.append("  " + commit) }
+            } else {
+                // 多仓库：按仓库分组（design §5.3）。
+                for group in brief.commits {
+                    let name = group.repoID == "." ? "（工作区根）" : group.repoID + "/"
+                    lines.append("  " + name + "：")
+                    for commit in group.commits { lines.append("    " + commit) }
+                }
+            }
         }
         if !brief.earlier.isEmpty {
             lines.append("前面任务的汇报：")
@@ -677,7 +796,8 @@ enum TaskPrompts {
             }
             lines.append("\(index + 1). \(mark) \(task.title)")
             if task.state == .failed {
-                lines.append("   失败：\(task.error ?? "失败")")
+                let detail = task.errorDetail.map { "：" + $0 } ?? ""
+                lines.append("   失败：\(task.error ?? "失败")\(detail)")
             } else if task.state == .cancelled {
                 lines.append("   已取消")
             }
@@ -816,7 +936,9 @@ final class TasksRunner {
         case started(sessionId: String, branch: String?)
         /// The session id is carried along when one was created before the
         /// failure (a started-but-unnamed session is still findable in dsh web).
-        case failed(TaskFailure, String?)
+        /// The third value is the per-repo detail the card appends to the reason
+        /// (a multi-repo pre-flight names the repository that failed).
+        case failed(TaskFailure, String?, String?)
     }
 
     private enum FinishOutcome {
@@ -995,6 +1117,13 @@ final class TasksRunner {
         let sessionReport = env.sessionReport
         let boardNow = board
         let log = env.log
+        // Target repositories are resolved for THIS task (design §5.2). The live
+        // re-probe happens inside env.perform below; the snapshot is the fallback for
+        // a legacy / headless env.
+        let gitFor = env.gitFor
+        let reposSnapshot = env.repos
+        let primarySnapshot = env.primaryRepoID
+        let repoSetProvider = env.repoSetProvider
 
         phase = .starting(taskID)
         cancelRequested = false
@@ -1004,30 +1133,58 @@ final class TasksRunner {
         persist()
         log("tasks: starting " + taskID + " on " + (branch ?? "the current branch"))
 
-        var startResult: StartResult = .failed(.session, nil)
+        var startResult: StartResult = .failed(.session, nil, nil)
         env.perform({
-            let entered = git.enter(branch: branch, base: base)
-            if let failure = TasksRunner.failure(for: entered) {
-                startResult = .failed(failure, nil)
-                return
+            // Re-probe the workspace's repositories HERE, on the runner's background
+            // queue (design §5.1): a workspace can gain or lose repositories between
+            // two tasks. resolveTargets then applies the queue's own list (or the
+            // primary default). Empty on a legacy env → the old single-git path below.
+            let liveRepos: [WorkspaceRepo]
+            let livePrimaryID: String?
+            if let live = repoSetProvider?() {
+                liveRepos = live.repos
+                livePrimaryID = live.primary?.id
+            } else {
+                liveRepos = reposSnapshot
+                livePrimaryID = primarySnapshot
+            }
+            let targets = TasksRunner.resolveTargets(queue: queue, repos: liveRepos,
+                                                     primaryRepoID: livePrimaryID)
+            if targets.isEmpty {
+                let entered = git.enter(branch: branch, base: base)
+                if let failure = TasksRunner.failure(for: entered) {
+                    startResult = .failed(failure, nil, nil)
+                    return
+                }
+            } else {
+                // Two-phase: pre-flight every target, THEN enter them (design §5.2).
+                let entered = TasksRunner.enterTargets(targets, branch: branch, base: base,
+                                                       gitFor: { gitFor?($0) ?? git })
+                if let failure = entered.failure {
+                    log("tasks: " + taskID + " 预检/切分支失败（" + failure.rawValue + "）"
+                        + (entered.detail.map { "：" + $0 } ?? ""))
+                    startResult = .failed(failure, nil, entered.detail)
+                    return
+                }
             }
             // The 交接简报 is built HERE, off the main thread: it reads the earlier
-            // tasks' session logs (a core-bridge call) and asks git for the commits
-            // the branch already carries.
+            // tasks' session logs (a core-bridge call) and asks each target repo for
+            // the commits the branch already carries (grouped per repo, design §5.3).
             let brief = TasksRunner.brief(taskID: taskID, queue: queue, board: boardNow,
                                           git: git, sessionReport: sessionReport,
-                                          branch: branch, base: base, position: nil)
+                                          branch: branch, base: base, position: nil,
+                                          targets: targets, gitFor: gitFor)
             if let brief = brief, !brief.isEmpty {
                 log("tasks: brief for " + taskID + " is " + String(brief.count) + " chars")
             }
             let prompt = promptText(task, queue, brief)
             guard let sessionId = createSession(repoRoot) else {
-                startResult = .failed(.session, nil)
+                startResult = .failed(.session, nil, nil)
                 return
             }
             _ = renameSession(sessionId, TasksRunner.taskSessionTitlePrefix + title)
             guard promptSession(sessionId, prompt) else {
-                startResult = .failed(.prompt, sessionId)
+                startResult = .failed(.prompt, sessionId, nil)
                 return
             }
             startResult = .started(sessionId: sessionId, branch: branch)
@@ -1062,13 +1219,13 @@ final class TasksRunner {
             if let i = board.index(ofTask: taskID) { board.tasks[i].sessionId = sessionId }
             env.log("tasks: " + taskID + " running in " + sessionId)
             persist()
-        case .failed(let failure, let sessionId):
+        case .failed(let failure, let sessionId, let errorDetail):
             if let sessionId = sessionId {
                 board.local.sessions[taskID] = sessionId
                 if let i = board.index(ofTask: taskID) { board.tasks[i].sessionId = sessionId }
             }
             env.log("tasks: " + taskID + " could not start (" + failure.rawValue + ")")
-            board.markFailed(taskID, error: failure.rawValue, at: now)
+            board.markFailed(taskID, error: failure.rawValue, errorDetail: errorDetail, at: now)
             persist()
             _ = pump(now: now)
         }
@@ -1082,7 +1239,9 @@ final class TasksRunner {
     /// self-contained so it can run inside the background step.
     static func brief(taskID: String, queue: TaskQueue?, board: TaskBoard, git: TaskGit,
                       sessionReport: (String) -> String?, branch: String?, base: String,
-                      position: Int?) -> String? {
+                      position: Int?,
+                      targets: [WorkspaceRepo] = [],
+                      gitFor: ((WorkspaceRepo) -> TaskGit)? = nil) -> String? {
         guard let queue = queue else { return nil }
         let index = position ?? queue.taskIds.firstIndex(of: taskID).map { $0 + 1 } ?? 1
         let earlier = queue.taskIds.prefix(max(0, index - 1)).compactMap { id -> TaskPrompts.QueueBrief.Earlier? in
@@ -1098,7 +1257,25 @@ final class TasksRunner {
                                                   errorKey: task.error,
                                                   report: task.report ?? task.sessionId.flatMap { sessionReport($0) })
         }
-        let commits = branch.map { _ in git.commits(base: base) ?? [] } ?? []
+        // The commits the branch already carries, GROUPED per target repository
+        // (design §5.3). A legacy env (no targets) keeps the single unlabeled group;
+        // one target also renders flat, so今天 的单仓库文本逐字不变.
+        let commits: [RepoCommits]
+        if let branch = branch, !branch.isEmpty {
+            if targets.isEmpty {
+                commits = [RepoCommits(repoID: ".", commits: git.commits(base: base) ?? [])]
+                    .filter { !$0.commits.isEmpty }
+            } else {
+                let single = targets.count == 1
+                commits = targets.map { repo -> RepoCommits in
+                    let handle = gitFor?(repo) ?? git
+                    let repoBase = single && repo.id == "." && !base.isEmpty ? base : repo.defaultBase
+                    return RepoCommits(repoID: repo.id, commits: handle.commits(base: repoBase) ?? [])
+                }.filter { !$0.commits.isEmpty }
+            }
+        } else {
+            commits = []
+        }
         let heading = TaskPrompts.QueueBrief(queueName: queue.name, position: index,
                                              total: queue.taskIds.count, earlier: earlier,
                                              branch: branch, base: base, commits: commits)

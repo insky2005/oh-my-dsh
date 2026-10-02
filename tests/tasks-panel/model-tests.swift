@@ -573,6 +573,20 @@ check(reloaded.queue(sq.id)?.branch == "feature/docs-cleanup", "the queue branch
 eq(reloaded.queue(sq.id)?.integration, .merge, "the integration override round-trips")
 check(reloaded.task(m1.id)?.state == .queued, "the queued state round-trips")
 
+section("多仓库队列字段：repos / errorDetail 往返，旧文件缺省为 nil")
+let repoMR = tempRepo("multi-repo-fields")
+var boardMR = TaskBoard()
+let taskMR = TaskItem.manual(title: "多仓库", body: nil, id: "manual-mr900001")
+boardMR.tasks = [taskMR]
+let queueMR = boardMR.createQueue(name: "Multi", autoPR: false, repos: ["repo-a", "repo-b"])
+_ = boardMR.enqueue(taskID: taskMR.id, into: queueMR.id)
+_ = boardMR.markFailed(taskMR.id, error: "tasks.errRepoDirty", errorDetail: "repo-b")
+TasksStore.saveLocalHalf(repoMR, boardMR)
+let reloadedMR = TasksStore.load(repoMR)
+eq(reloadedMR.queue(queueMR.id)?.repos, ["repo-a", "repo-b"], "queues.json 里 repos 往返")
+eq(reloadedMR.task(taskMR.id)?.errorDetail, "repo-b", "manual.json 里 errorDetail 往返")
+eq(TaskQueue.from(["id": "q-old", "name": "old"])?.repos, nil, "旧 queues.json 无 repos → nil")
+
 // MARK: - index.json compatibility
 
 section("index.json v1 compatibility")
