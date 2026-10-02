@@ -709,7 +709,7 @@ enum L10n {
         // 这些卡片从哪来的。
         "tasks.apiCreated": ("已由 Agent 创建 %d 个任务（待处理、未入队）", "Created %d task(s) from the agent (pending, not queued)"),
         "tasks.apiQueueCreated": ("已由 Agent 创建队列「%@」（%d 个任务，待启动）", "Created queue %@ from the agent (%d task(s), draft)"),
-        "tasks.apiQueueAppended": ("已由 Agent 向队列「%@」追加 %d 个任务（待启动）", "Appended %d task(s) to queue %@ from the agent (draft)"),
+        "tasks.apiQueueAppended": ("已由 Agent 向队列「%1$@」追加 %2$d 个任务（待启动）", "Appended %2$d task(s) to queue %1$@ from the agent (draft)"),
         "tasks.recovered": ("上次运行被中断：%d 个任务已标为失败、%d 个队列已暂停（不会自动重跑）", "Interrupted last run: %d task(s) marked failed, %d queue(s) paused (nothing restarts by itself)"),
         "tasks.gitAppeared": ("这个目录现在是 git 仓库 —— 已重新识别工作区：新队列可以使用分支", "This directory is a git repository now — workspace re-detected: new queues can use a branch"),
         "tasks.remoteAppeared": ("这个工作区现在有 GitHub 远端 —— 已重新识别：PR 相关功能已启用", "This workspace has a GitHub remote now — re-detected: the PR features are available"),
