@@ -952,7 +952,8 @@ struct TaskQueue: Equatable {
     static func auto(for task: TaskItem,
                      baseBranch: String = "main",
                      switchesBranch: Bool = true,
-                     opensPR: Bool = true) -> TaskQueue {
+                     opensPR: Bool = true,
+                     repos: [String]? = nil) -> TaskQueue {
         let number = task.number ?? 0
         return TaskQueue(id: TaskQueue.newID(),
                          name: "Issue #\(number)",
@@ -965,6 +966,7 @@ struct TaskQueue: Equatable {
                          autoCreated: true,
                          autoPR: opensPR,
                          prUrl: nil,
+                         repos: repos,
                          createdAt: Date())
     }
 
@@ -1603,6 +1605,10 @@ struct RepoSettings: Equatable {
     // 工作区 → 用户指定的主仓库 repoID。
     var primaryByWorkspace: [String: String] = [:]
 
+    // 工作区 → issue 归属仓库 repoID（design §9）。缺失 = 跟随主仓库；用户切换后
+    // 才写入，此后即为显式指定，不再跟随。
+    var issueRepoByWorkspace: [String: String] = [:]
+
     /// 路径 → repoID 的分隔符：换行不会出现在文件路径或 repoID 里，两半永不混淆。
     static let keySeparator = "\n"
 
@@ -1683,6 +1689,41 @@ struct RepoSettings: Equatable {
         } else {
             primaryByWorkspace.removeValue(forKey: key)
         }
+    }
+
+    // MARK: - issue 归属仓库（design §9）
+
+    /// 用户显式切换过的 issue 归属仓库（nil = 从未切换 / 已失效，跟随主仓库）。
+    func storedIssueRepoID(forWorkspace path: String) -> String? {
+        guard let id = issueRepoByWorkspace[Self.workspaceKey(path)], !id.isEmpty else { return nil }
+        return id
+    }
+
+    /// 写入 issue 归属（nil = 删除 → 回到「跟随主仓库」）。用户在 issue 区切过一次
+    /// 之后这就是显式指定，不再跟随。
+    mutating func setIssueRepoID(_ id: String?, forWorkspace path: String) {
+        let key = Self.workspaceKey(path)
+        if let id = id, !id.isEmpty {
+            issueRepoByWorkspace[key] = id
+        } else {
+            issueRepoByWorkspace.removeValue(forKey: key)
+        }
+    }
+
+    /// 解析 issue 归属：显式指定且该仓库仍存在 → 用它；否则跟随主仓库（primary）。
+    /// 两者都没有时 nil（plain 工作区）。
+    func resolvedIssueRepoID(forWorkspace path: String, repoSet: WorkspaceRepoSet) -> String? {
+        if let id = storedIssueRepoID(forWorkspace: path),
+           repoSet.repos.contains(where: { $0.id == id }) {
+            return id
+        }
+        return repoSet.primary?.id
+    }
+
+    /// 是否处于「显式指定」状态（用户切换过且该仓库仍存在）。
+    func isIssueRepoExplicit(forWorkspace path: String, repoSet: WorkspaceRepoSet) -> Bool {
+        guard let id = storedIssueRepoID(forWorkspace: path) else { return false }
+        return repoSet.repos.contains(where: { $0.id == id })
     }
 
     // MARK: - 解析链

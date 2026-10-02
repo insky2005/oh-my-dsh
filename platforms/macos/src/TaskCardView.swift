@@ -574,6 +574,12 @@ final class RepoPRButton: NSButton {
     var url: String = ""
 }
 
+/// A per-repo retry button that carries the repository it retries (P4: 失败仓库
+/// 单独重试 —— the row needs to name one repo, not the whole queue).
+final class RepoRetryButton: NSButton {
+    var repoID: String = ""
+}
+
 /// Shape follows the channel panel's SessionTitleBar: an opaque highlighted fill
 /// (never a translucent card), one line while collapsed, two while expanded.
 final class TaskQueueHeaderView: NSView {
@@ -596,6 +602,8 @@ final class TaskQueueHeaderView: NSView {
     var onToggleNote: (() -> Void)?
     /// 打开某个仓库交付结果的 PR 链接（多仓库交付卡片用）。
     var onOpenRepoPR: ((String) -> Void)?
+    /// 单独重试一个交付失败的仓库（P4）。
+    var onRetryRepo: ((String) -> Void)?
 
     init(model: QueueHeaderModel) {
         self.model = model
@@ -876,6 +884,20 @@ final class TaskQueueHeaderView: NSView {
                 noteLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
                 row.addArrangedSubview(noteLabel)
             }
+            // 失败的仓库可以单独重试（P4），已成功的仓库不动。
+            if run.status == .failed, model.canRetryRepos {
+                let retry = RepoRetryButton(title: L10n.tr("tasks.repoRun.retry"), target: self,
+                                            action: #selector(repoRetryTapped(_:)))
+                retry.repoID = run.repoID
+                retry.isBordered = false
+                retry.controlSize = .small
+                retry.contentTintColor = .controlAccentColor
+                retry.font = .systemFont(ofSize: 11)
+                retry.toolTip = L10n.tr("tasks.repoRun.retryHint",
+                                        QueueHeaderModel.repoDisplayName(run.repoID))
+                retry.translatesAutoresizingMaskIntoConstraints = false
+                row.addArrangedSubview(retry)
+            }
             column.addArrangedSubview(row)
         }
         return column
@@ -884,6 +906,11 @@ final class TaskQueueHeaderView: NSView {
     @objc private func repoPRLinkTapped(_ sender: NSButton) {
         guard let button = sender as? RepoPRButton, !button.url.isEmpty else { return }
         onOpenRepoPR?(button.url)
+    }
+
+    @objc private func repoRetryTapped(_ sender: NSButton) {
+        guard let button = sender as? RepoRetryButton, !button.repoID.isEmpty else { return }
+        onRetryRepo?(button.repoID)
     }
 
     @objc private func toggleNoteTapped() { onToggleNote?() }

@@ -745,6 +745,57 @@ do {
     check(one.repoListTooltip?.contains("repo-a") == true, "tooltip 列出唯一仓库")
 }
 
+section("issue 归属模型：默认跟随主仓库 / 切换后显式 / 主仓库非 GitHub 提示")
+do {
+    let root = WorkspaceRepo(id: ".", absolutePath: "/tmp/ws", isGit: true, displayName: "ws")
+    let a = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                          displayName: "repo-a")
+    let gh = WorkspaceRepo(id: "repo-gh", absolutePath: "/tmp/ws/repo-gh", isGit: true,
+                           github: GitHubRepo(owner: "o", name: "gh"), displayName: "repo-gh")
+    let multi = WorkspaceRepoSet(repos: [a, gh], primary: a)
+
+    // 默认跟随主仓库（不是「第一个 GitHub 仓库」）。
+    let follow = IssueRepoTargetModel.build(repoSet: multi, explicitID: nil)
+    eq(follow.selectedRepoID, "repo-a", "默认归属主仓库")
+    check(!follow.isExplicit, "默认不是显式指定")
+    check(follow.showsPicker, "N>=2 可切换")
+    check(follow.needsChoice, "主仓库不是 GitHub → 需要用户选择")
+    eq(follow.hintKey, "tasks.issueRepo.notGitHub", "给出显式提示键")
+    eq(follow.selectedGithub, nil, "非 GitHub 归属没有 owner/repo")
+
+    // 用户切换 → 显式指定，不再跟随，且归属那个 GitHub 仓库。
+    let explicit = IssueRepoTargetModel.build(repoSet: multi, explicitID: "repo-gh")
+    eq(explicit.selectedRepoID, "repo-gh", "切换后归属该仓库")
+    check(explicit.isExplicit, "切换后是显式指定")
+    eq(explicit.selectedGithub, GitHubRepo(owner: "o", name: "gh"), "拿到 owner/repo")
+    check(!explicit.needsChoice, "选到 GitHub 仓库后不再提示")
+    eq(explicit.hintKey, nil, "没有提示键")
+
+    // 显式仓库失效 → 回到跟随主仓库。
+    let stale = IssueRepoTargetModel.build(repoSet: multi, explicitID: "gone")
+    eq(stale.selectedRepoID, "repo-a", "失效显式 → 回退主仓库")
+    check(!stale.isExplicit, "失效后不算显式")
+
+    // N==1：归属存在但只读锁定。
+    let one = IssueRepoTargetModel.build(repoSet: WorkspaceRepoSet(repos: [gh], primary: gh),
+                                         explicitID: nil)
+    check(!one.showsPicker, "N==1 不给出切换入口")
+    check(one.isLocked, "N==1 只读锁定")
+    check(!one.needsChoice, "唯一仓库是 GitHub")
+
+    // N==1 且不是 GitHub：没有别的可选，但依然显式提示，不装作无事发生。
+    let lockedNonGh = IssueRepoTargetModel.build(
+        repoSet: WorkspaceRepoSet(repos: [a], primary: a), explicitID: nil)
+    check(lockedNonGh.needsChoice, "N==1 非 GitHub 仍提示")
+    eq(lockedNonGh.title, L10n.tr("tasks.issueRepo.notGitHub"), "锁定但给出显式提示")
+
+    // 单仓库（legacy）维持今天形态：不是多仓库，没有选择区。
+    let single = IssueRepoTargetModel.build(repoSet: WorkspaceRepoSet(repos: [root], primary: root),
+                                            explicitID: nil)
+    check(!single.isMultiRepo, "单仓库模式不算多仓库")
+    check(!single.showsPicker, "单仓库没有选择区")
+}
+
 section("仓库集合变化也算工作区形状变化（新增 / 删除仓库）")
 do {
     let added = TaskWorkspaceShape.change(wasRepoIDs: [], repoIDsNow: ["repo-a"],

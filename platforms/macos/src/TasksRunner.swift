@@ -779,8 +779,11 @@ enum TaskPrompts {
     /// 逐字节相同的单仓库交付文本。
     static func integration(queueName: String?, branch: String?, base: String,
                             runs: [QueueRepoRun], commits: [String] = [],
-                            marker: String? = nil) -> String {
-        if runs.count <= 1 {
+                            marker: String? = nil,
+                            forceGrouped: Bool = false) -> String {
+        // forceGrouped：单独重试一个仓库时即使只有一个目标，也用逐行格式要求会话
+        // 输出 `<repoID>: <action> <结果>`，结果才能被逐仓库解析（design §7.4）。
+        if !forceGrouped, runs.count <= 1 {
             let run = runs.first
             let text: String
             if let run = run, run.repoID != "." {
@@ -1054,6 +1057,9 @@ final class TasksRunner {
         var targets: [WorkspaceRepo] = []
         /// 每个目标仓库的交付计划（含 effective）；空 = legacy 单仓库路径。
         var runs: [QueueRepoRun] = []
+        /// 单独重试失败仓库（design §7.3 / P4）时，只替换这些 repoID 的旧结果，
+        /// 已成功仓库的记录原样保留。空 = 整队列交付（覆盖全部）。
+        var replacesRepoIDs: [String] = []
     }
 
     private enum Phase {
@@ -1574,6 +1580,83 @@ final class TasksRunner {
         return true
     }
 
+    /// 单独重试一个交付失败的仓库（design §7.3 / P4）：只对这一个仓库重开一次交付
+    /// 会话，结果并回 queue.repoRuns —— 已成功的仓库记录原样保留，不整队列重跑。
+    @discardableResult
+    func retryFailedRepo(queueID: String, repoID: String) -> Bool {
+        guard let queue = board.queue(queueID),
+              let existing = queue.repoRuns.first(where: { $0.repoID == repoID && $0.status == .failed })
+        else { return false }
+        guard case .idle = phase else {
+            env.log("tasks: a finalize session is already in flight — not retrying " + repoID)
+            _ = board.setQueuePRError(queueID, "tasks.errPRBusy")
+            persist()
+            return false
+        }
+        // 目标仓库运行期重探测（与 startQueueIntegration 同一入口）。
+        let liveSet = env.repoSetProvider?()
+        let repos = liveSet?.repos ?? env.repos
+        let primaryID = liveSet?.primary?.id ?? env.primaryRepoID
+        let targets = TasksRunner.resolveTargets(queue: queue, repos: repos, primaryRepoID: primaryID)
+        guard let target = targets.first(where: { $0.id == repoID }) else {
+            env.log("tasks: cannot retry " + repoID + " — it is no longer a target of queue " + queueID)
+            return false
+        }
+        let env = self.env
+        let hasRemote = target.remoteName != nil || env.gitHandle(for: target).remoteName() != nil
+        let effective = QueueIntegration.effective(existing.intent, repo: target, hasRemote: hasRemote)
+        guard effective != .none else {
+            // 该仓库本就无可交付动作：把旧失败记录改为「已跳过」，不再开会话。
+            var runs = queue.repoRuns
+            if let idx = runs.firstIndex(where: { $0.repoID == repoID }) {
+                runs[idx].status = .skipped
+                runs[idx].effective = .none
+                _ = board.setQueueRepoRuns(queueID, runs)
+            }
+            persist()
+            return true
+        }
+        let plan = QueueRepoRun(repoID: target.id, branch: existing.branch, base: existing.base,
+                                intent: existing.intent, effective: effective, status: .pending)
+        // 卡片上先显示「交付中」。
+        var runs = queue.repoRuns
+        if let idx = runs.firstIndex(where: { $0.repoID == repoID }) {
+            runs[idx].status = .running
+            runs[idx].note = nil
+            _ = board.setQueueRepoRuns(queueID, runs)
+        }
+        let name = queue.name
+        let branch = queue.branch
+        let base = queue.baseBranch
+        let origin = board.local.queueSessions[queueID]
+        phase = .startingPR(queueID)
+        var run: PRRun?
+        env.perform({
+            run = TasksRunner.makeFinalizeRun(env: env, queueID: queueID, mode: effective,
+                                              name: name, branch: branch, base: base,
+                                              originSession: origin,
+                                              targets: [target], runs: [plan],
+                                              replacesRepoIDs: [repoID])
+        }, {
+            guard let run = run else {
+                self.phase = .idle
+                self.env.log("tasks: could not start a retry session for " + repoID)
+                _ = self.board.setQueuePRError(queueID, "tasks.errPRSession")
+                // 恢复为失败，别让它停在「交付中」。
+                var restore = self.board.queue(queueID)?.repoRuns ?? []
+                if let idx = restore.firstIndex(where: { $0.repoID == repoID }) {
+                    restore[idx].status = .failed
+                    _ = self.board.setQueueRepoRuns(queueID, restore)
+                }
+                self.persist()
+                return
+            }
+            self.beginPRRun(run)
+        })
+        persist()
+        return true
+    }
+
     /// 单仓库（或 legacy）交付：与今天逐字节相同的守卫与路径。
     private func startLegacyIntegration(_ queue: TaskQueue) -> Bool {
         let queueID = queue.id
@@ -1637,7 +1720,8 @@ final class TasksRunner {
                                 name: String, branch: String?, base: String,
                                 originSession: String? = nil,
                                 targets: [WorkspaceRepo] = [],
-                                runs: [QueueRepoRun] = []) -> PRRun? {
+                                runs: [QueueRepoRun] = [],
+                                replacesRepoIDs: [String] = []) -> PRRun? {
         // What the branch carries, for the session context: it still reads the diff
         // itself (that is the point), but the commit list saves it from starting with
         // 「what is this branch」.
@@ -1651,7 +1735,8 @@ final class TasksRunner {
                                                marker: marker)
             }
             return TaskPrompts.integration(queueName: name, branch: branch, base: base,
-                                           runs: runs, commits: commits, marker: marker)
+                                           runs: runs, commits: commits, marker: marker,
+                                           forceGrouped: !replacesRepoIDs.isEmpty)
         }
         // Prefer the queue's ORIGINATING session (user 2026-10-01): the queue was
         // created there and its completion is reported there, so finalize in the same
@@ -1662,7 +1747,7 @@ final class TasksRunner {
             if env.promptSession(origin, prompt(marker)) {
                 return PRRun(queueID: queueID, mode: mode, branch: branch ?? base, base: base,
                              sessionId: origin, startedAt: Date(), marker: marker, reused: true,
-                             targets: targets, runs: runs)
+                             targets: targets, runs: runs, replacesRepoIDs: replacesRepoIDs)
             }
             env.log("tasks: could not prompt the originating session " + origin
                     + " — falling back to a fresh finalize session")
@@ -1677,7 +1762,7 @@ final class TasksRunner {
         }
         return PRRun(queueID: queueID, mode: mode, branch: branch ?? base, base: base,
                      sessionId: sessionId, startedAt: Date(), marker: nil, reused: false,
-                     targets: targets, runs: runs)
+                     targets: targets, runs: runs, replacesRepoIDs: replacesRepoIDs)
     }
 
     /// A marker the finalize session must echo back verbatim on its own last line.
@@ -1787,6 +1872,7 @@ final class TasksRunner {
         let base = run.base
         let targets = run.targets
         let runs = run.runs
+        let replaces = run.replacesRepoIDs
         let env = self.env
         phase = .startingPR(queueID)
         var fresh: PRRun?
@@ -1794,7 +1880,8 @@ final class TasksRunner {
             fresh = TasksRunner.makeFinalizeRun(env: env, queueID: queueID, mode: mode,
                                                 name: name, branch: branch, base: base,
                                                 originSession: nil,
-                                                targets: targets, runs: runs)
+                                                targets: targets, runs: runs,
+                                                replacesRepoIDs: replaces)
         }, {
             guard let fresh = fresh else {
                 self.phase = .idle
@@ -1826,7 +1913,23 @@ final class TasksRunner {
         // 多仓库：各仓库独立记账（design §7.3）。某个失败不丢弃已成功的仓库；队列仍
         // 进入 done，卡片按仓库逐行展示 N 成功 / M 失败。
         if !run.runs.isEmpty {
-            let runs = repoRuns.isEmpty ? run.runs : repoRuns
+            let resolved = repoRuns.isEmpty ? run.runs : repoRuns
+            // 单独重试失败仓库（P4）：只替换这些仓库的旧记录，已成功仓库原样保留。
+            let runs: [QueueRepoRun]
+            if run.replacesRepoIDs.isEmpty {
+                runs = resolved
+            } else {
+                let incoming = run.replacesRepoIDs
+                var merged = board.queue(run.queueID)?.repoRuns ?? run.runs
+                for result in resolved where incoming.contains(result.repoID) {
+                    if let idx = merged.firstIndex(where: { $0.repoID == result.repoID }) {
+                        merged[idx] = result
+                    } else {
+                        merged.append(result)
+                    }
+                }
+                runs = merged
+            }
             _ = board.setQueueRepoRuns(run.queueID, runs)
             let successes = runs.filter { $0.status == .done }
             let failures = runs.filter { $0.status == .failed }
@@ -2253,14 +2356,15 @@ final class TasksRunner {
 
     /// 处理 one issue task: create (or reuse) its single-task queue and start it.
     @discardableResult
-    func startIssueTask(_ taskID: String) -> String? {
+    func startIssueTask(_ taskID: String, repos: [String]? = nil) -> String? {
         guard let task = board.task(taskID), task.source == .github else { return nil }
         dropUnswitchableBranch(ofTask: taskID)
         return startStandaloneTask(task, queue: {
             TaskQueue.auto(for: task,
                            baseBranch: env.defaultBaseBranch,
                            switchesBranch: env.canSwitchBranches,
-                           opensPR: env.canOpenPR())
+                           opensPR: env.canOpenPR(),
+                           repos: repos)
         })
     }
 

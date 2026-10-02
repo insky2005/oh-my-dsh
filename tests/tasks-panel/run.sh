@@ -208,4 +208,14 @@ if ! grep -q 'tasksAutoCloseOnPublishByWorkspace' "$IP" \
 fi
 echo "ok - 面板设置按工作区隔离（autoCloseOnPublish 用工作区映射）"
 
+# issue 归属仓库（design §9）：必须按工作区存（默认跟随主仓库），并且真实写进
+# issue 任务的 auto queue —— 只画提示、不落 repos 的话，队列仍然按 primary 跑。
+if ! grep -q 'tasksIssueRepoByWorkspace' "$IP" \
+   || ! grep -q 'runner.startIssueTask(task.id, repos:' "$IP" \
+   || ! grep -q 'repos: repos)' ../../platforms/macos/src/TasksRunner.swift; then
+  echo "FAIL - issue 归属仓库必须按工作区存并写进 issue 任务的 auto queue（queue.repos）"
+  exit 1
+fi
+echo "ok - issue 归属仓库按工作区存并写进 issue 任务的 auto queue"
+
 echo "tasks-panel tests passed"

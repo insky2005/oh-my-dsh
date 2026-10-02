@@ -481,6 +481,18 @@ do {
     link?.performClick(nil)
     eq(opened, "https://github.com/o/r/pull/7", "点击逐仓库链接把 URL 交给面板")
 
+    // 失败仓库可单独重试：只有失败行有按钮，点击把该仓库 id 交给面板。
+    check(model.canRetryRepos, "队列可交付且有失败仓库 → 可重试")
+    let retries = descendants(header, of: RepoRetryButton.self)
+    eq(retries.map { $0.repoID }, ["repo-b"], "只有失败的仓库有重试按钮")
+    var retried: String?
+    header.onRetryRepo = { retried = $0 }
+    retries.first?.performClick(nil)
+    eq(retried, "repo-b", "点击重试把仓库 id 交给面板")
+
+    // 成功仓库的记录不会被重试覆盖（模型层：队列仍标 done）。
+    eq(model.repoRuns.first { $0.repoID == "." }?.status, .done, "成功仓库仍是已交付")
+
     // 折叠：逐仓库结果区不出现（与交付结果同规则）。
     let collapsedModel = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: true)
     let collapsedHeader = TaskQueueHeaderView(model: collapsedModel)

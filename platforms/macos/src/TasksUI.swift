@@ -527,6 +527,71 @@ struct TaskWorkspaceModel: Equatable {
     }
 }
 
+/// issue 区的仓库归属模型（design §9）。
+///
+/// issue 天然属于一个 owner/repo：多仓库工作区下默认**跟随主仓库**，用户在 issue 区
+/// 切换后即成为**显式指定**，不再跟随。主仓库不是 GitHub 仓库时显式给出「请选择仓库」
+/// 的提示，绝不静默回退到别的仓库（Q12）。N≥2 可切换，N==1 只读锁定；单仓库模式
+/// 维持今天的形态（无选择区）。
+struct IssueRepoTargetModel: Equatable {
+    struct Choice: Equatable {
+        var id: String
+        var displayName: String
+        var github: GitHubRepo?
+        var isPrimary: Bool
+        var isSelected: Bool
+
+        /// 菜单里的名称：GitHub 用 owner/repo，否则目录名；主仓库带后缀。
+        var label: String {
+            let base = github.map { $0.owner + "/" + $0.name } ?? displayName
+            return isPrimary ? base + L10n.tr("tasks.repoPrimarySuffix") : base
+        }
+    }
+
+    var choices: [Choice] = []
+    var selectedRepoID: String?
+    /// 多仓库模式才可能有选择区（legacy 单仓库维持今天形态）。
+    var isMultiRepo: Bool = false
+    /// 用户已显式切换过（不再跟随主仓库）。
+    var isExplicit: Bool = false
+
+    var selected: Choice? { choices.first { $0.isSelected } }
+    var selectedGithub: GitHubRepo? { selected?.github }
+    /// 多仓库且不止一个仓库时才给出切换入口。
+    var showsPicker: Bool { isMultiRepo && choices.count > 1 }
+    /// N==1：归属存在但只读锁定。
+    var isLocked: Bool { isMultiRepo && choices.count <= 1 }
+    /// 归属仓库不是 GitHub 仓库（无法拉 issues）→ 显式提示，不静默换一个。
+    var needsChoice: Bool { isMultiRepo && selectedGithub == nil }
+    var hintKey: String? { needsChoice ? "tasks.issueRepo.notGitHub" : nil }
+    /// 选择入口的标题。
+    var title: String {
+        if let github = selectedGithub {
+            return L10n.tr("tasks.issueRepo.label", github.owner + "/" + github.name)
+        }
+        // 归属不是 GitHub 仓库时优先给出「请选择仓库」的显式提示（哪怕 N==1 没有
+        // 别的可选，也不能让 issue 区看起来什么都没发生）。
+        if needsChoice { return L10n.tr("tasks.issueRepo.notGitHub") }
+        if isLocked { return L10n.tr("tasks.issueRepo.locked") }
+        return L10n.tr("tasks.issueRepo.choose")
+    }
+
+    /// 显式指定优先（该仓库仍存在时）；否则跟随主仓库（primary）。
+    static func build(repoSet: WorkspaceRepoSet, explicitID: String?) -> IssueRepoTargetModel {
+        let validExplicit = explicitID.flatMap { id in
+            repoSet.repos.contains { $0.id == id } ? id : nil
+        }
+        let selectedID = validExplicit ?? repoSet.primary?.id
+        let choices = repoSet.repos.map { repo in
+            Choice(id: repo.id, displayName: repo.displayName, github: repo.github,
+                   isPrimary: repo.id == repoSet.primary?.id, isSelected: repo.id == selectedID)
+        }
+        return IssueRepoTargetModel(choices: choices, selectedRepoID: selectedID,
+                                    isMultiRepo: repoSet.isMultiRepo,
+                                    isExplicit: validExplicit != nil)
+    }
+}
+
 /// Everything a queue header shows: how many queues exist and where each one is.
 /// Display name and icon of an 工作流. The keys live under `tasks.integration.*`
 /// so the user-facing wording can change without touching the model — the enum raw
@@ -642,6 +707,9 @@ struct QueueHeaderModel: Equatable {
 
     /// 是否展示逐仓库结果区（有交付记录才展示）。
     var showsRepoRuns: Bool { !repoRuns.isEmpty }
+
+    /// 失败仓库可单独重试（design §7.3 / P4）：队列本身可交付，且至少一个仓库失败。
+    var canRetryRepos: Bool { canOpenPR && repoRuns.contains { $0.status == .failed } }
 
     /// 一个仓库结果行的动作名。
     static func repoActionLabel(_ mode: QueueIntegration) -> String {

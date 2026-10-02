@@ -733,6 +733,18 @@ enum L10n {
         "tasks.repoRun.status.done": ("已交付", "Delivered"),
         "tasks.repoRun.status.failed": ("失败", "Failed"),
         "tasks.repoRun.status.skipped": ("已跳过", "Skipped"),
+        // 失败仓库单独重试（P4）。
+        "tasks.repoRun.retry": ("重试", "Retry"),
+        "tasks.repoRun.retryHint": ("重试该仓库的交付：%@", "Retry delivery for %@"),
+        "tasks.repoRun.retrying": ("正在重试交付 %@…", "Retrying delivery for %@…"),
+        "tasks.repoRun.retryFailed": ("无法重试：队列不可交付，或已有交付会话在跑", "Cannot retry: the queue is not deliverable, or a delivery session is already running"),
+        // issue 仓库归属（design §9）：默认跟随主仓库，切换后即显式指定；主仓库不是
+        // GitHub 仓库时显式提示，不静默回退（Q12）。
+        "tasks.issueRepo.label": ("Issue：%@", "Issue: %@"),
+        "tasks.issueRepo.choose": ("选择 Issue 仓库", "Choose issue repository"),
+        "tasks.issueRepo.notGitHub": ("当前 issue 归属仓库不是 GitHub 仓库，请在这里选择仓库", "The current issue repository is not a GitHub repository — choose one here"),
+        "tasks.issueRepo.locked": ("本工作区只有一个仓库", "Single repository in this workspace"),
+        "tasks.issueRepo.switched": ("已切换 issue 归属仓库", "Issue repository switched"),
         "tasks.queue.pause": ("暂停", "Pause"),
         "tasks.queue.openPR": ("交付：推送分支并开 / 更新 PR", "Deliver: push the branch and open/update the PR"),
         // 工作流（Git workflow：pr / merge / push）—— 用户可见名称集中在 tasks.integration.*，

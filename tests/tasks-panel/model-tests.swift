@@ -880,6 +880,59 @@ do {
 }
 
 
+// MARK: - issue 归属仓库（design §9）
+
+section("issue 归属：默认跟随主仓库 / 切换后显式 / 失效回退")
+do {
+    let ws = "/tmp/ws-issue-repo"
+    let a = WorkspaceRepo(id: "a", absolutePath: ws + "/a", isGit: true,
+                          github: GitHubRepo(owner: "o", name: "a"), displayName: "a")
+    let b = WorkspaceRepo(id: "b", absolutePath: ws + "/b", isGit: true,
+                          github: GitHubRepo(owner: "o", name: "b"), displayName: "b")
+    let c = WorkspaceRepo(id: "c", absolutePath: ws + "/c", isGit: true, displayName: "c")
+    let multi = WorkspaceRepoSet(repos: [a, b, c], primary: a)
+    let plain = WorkspaceRepoSet()
+
+    // 默认跟随主仓库。
+    var store = RepoSettings()
+    check(store.storedIssueRepoID(forWorkspace: ws) == nil, "没切换过 → 没有显式记录")
+    eq(store.resolvedIssueRepoID(forWorkspace: ws, repoSet: multi), "a",
+       "默认跟随主仓库（primary）")
+    check(!store.isIssueRepoExplicit(forWorkspace: ws, repoSet: multi), "默认不是显式指定")
+
+    // 用户切换 → 显式指定，不再跟随。
+    store.setIssueRepoID("b", forWorkspace: ws)
+    eq(store.storedIssueRepoID(forWorkspace: ws), "b", "切换写进显式设置")
+    eq(store.resolvedIssueRepoID(forWorkspace: ws, repoSet: multi), "b", "切换后归属该仓库")
+    check(store.isIssueRepoExplicit(forWorkspace: ws, repoSet: multi), "切换后是显式指定")
+    // 换主仓库不影响显式归属。
+    let swapped = WorkspaceRepoSet(repos: [a, b, c], primary: b)
+    eq(store.resolvedIssueRepoID(forWorkspace: ws, repoSet: swapped), "b",
+       "显式指定不受主仓库变化影响（仍指向 b）")
+
+    // 显式仓库被移除 → 回到跟随主仓库，不静默停在一个不存在的仓库上。
+    var stale = RepoSettings()
+    stale.setIssueRepoID("gone", forWorkspace: ws)
+    eq(stale.resolvedIssueRepoID(forWorkspace: ws, repoSet: multi), "a",
+       "指定的仓库已不存在 → 回退主仓库")
+    check(!stale.isIssueRepoExplicit(forWorkspace: ws, repoSet: multi), "失效后不算显式")
+
+    // plain 工作区没有归属。
+    check(store.resolvedIssueRepoID(forWorkspace: ws, repoSet: plain) == nil,
+          "没有任何仓库 → 没有 issue 归属")
+
+    // 取消显式 → 回到跟随。
+    store.setIssueRepoID(nil, forWorkspace: ws)
+    check(store.storedIssueRepoID(forWorkspace: ws) == nil, "nil = 取消显式指定")
+    eq(store.resolvedIssueRepoID(forWorkspace: ws, repoSet: multi), "a", "重新跟随主仓库")
+
+    // issue 任务 auto queue 的 repos 固定为 [issueRepoID]。
+    let issue = TaskItem.github(number: 9, title: "x")
+    let auto = TaskQueue.auto(for: issue, repos: ["b"])
+    eq(auto.repos, ["b"], "issue auto queue 的目标仓库就是 issue 归属仓库")
+    check(TaskQueue.auto(for: issue).repos == nil, "不传 repos 时仍是旧行为")
+}
+
 // MARK: - 多仓库交付：按仓库降级链 / repoRuns（design §7.2）
 
 section("多仓库交付：supports / effective 逐仓库降级链 / available / intent")

@@ -2422,6 +2422,75 @@ do {
     eq(h2.board.queue(queue2.id)?.prError, "tasks.errPRNoRemote", "拒绝原因记在队列上")
 }
 
+section("issue auto queue 的 repos 固定为 [issueRepoID]（design §9）")
+do {
+    let gh = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                           remoteName: "github", github: GitHubRepo(owner: "o", name: "a"),
+                           displayName: "repo-a")
+    let b = WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                          remoteName: "origin", github: GitHubRepo(owner: "o", name: "b"),
+                          displayName: "repo-b")
+    var board = TaskBoard()
+    board.tasks = [TaskItem.github(number: 5, title: "fix me")]
+    let h = MultiRepoHarness(board: board, repos: [gh, b], primaryRepoID: "repo-a")
+    let qid = h.runner.startIssueTask("issue-5", repos: ["repo-b"])
+    check(qid != nil, "issue 任务照常启动")
+    eq(h.board.queue(qid ?? "")?.repos, ["repo-b"], "auto queue 的目标仓库 = issueRepoID")
+    eq(h.board.queue(qid ?? "")?.repos?.count, 1, "固定为一个仓库")
+}
+
+section("失败仓库单独重试：只重试该仓库，已成功仓库保留（P4）")
+do {
+    let gh = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                           defaultBase: "main", remoteName: "github",
+                           github: GitHubRepo(owner: "o", name: "a"), displayName: "repo-a")
+    let b = WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                          defaultBase: "master", remoteName: "origin",
+                          github: GitHubRepo(owner: "o", name: "b"), displayName: "repo-b")
+    var board = TaskBoard()
+    let queue = board.createQueue(name: "Multi", autoPR: false, repos: ["repo-a", "repo-b"])
+    // 原始交付：repo-a 成功、repo-b 失败（先写进 board，再交给 runner）。
+    _ = board.setQueueRepoRuns(queue.id, [
+        QueueRepoRun(repoID: "repo-a", branch: "feature/multi", base: "main",
+                     intent: .pr, effective: .pr, status: .done,
+                     prUrl: "https://github.com/o/a/pull/1"),
+        QueueRepoRun(repoID: "repo-b", branch: "feature/multi", base: "master",
+                     intent: .pr, effective: .pr, status: .failed, note: "boom"),
+    ])
+    let h = MultiRepoHarness(board: board, repos: [gh, b], primaryRepoID: "repo-a",
+                             defaultIntegrationFor: { _ in .pr })
+    eq(h.board.queue(queue.id)?.repoRuns.count, 2, "前提：交付记录已就位")
+    check(h.runner.retryFailedRepo(queueID: queue.id, repoID: "repo-b"),
+          "可以单独重试失败仓库")
+    eq(h.dsh.sessions.count, 1, "只开一个交付会话")
+    eq(h.board.queue(queue.id)?.repoRuns.first { $0.repoID == "repo-b" }?.status, .running,
+       "重试中的仓库标记为交付中")
+    eq(h.board.queue(queue.id)?.repoRuns.first { $0.repoID == "repo-a" }?.status, .done,
+       "已成功的仓库不动")
+    let prompt = h.dsh.prompts[h.dsh.sessions[0]] ?? ""
+    check(prompt.contains("repo-b/"), "提示词点名失败仓库")
+    check(!prompt.contains("repo-a/"), "提示词不包含已成功仓库")
+    // 单独重试即使只有一个仓库也要求逐行输出，结果才能被解析。
+    check(prompt.contains("repo-b") && prompt.contains("pull/<编号>"),
+          "提示词要求逐行可解析结果")
+    h.dsh.reports[h.dsh.sessions[0]] = "repo-b: pr https://github.com/o/b/pull/7"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    let runs = h.board.queue(queue.id)?.repoRuns ?? []
+    eq(runs.first { $0.repoID == "repo-b" }?.status, .done, "重试成功")
+    eq(runs.first { $0.repoID == "repo-b" }?.prUrl, "https://github.com/o/b/pull/7",
+       "重试的 PR 落到该仓库")
+    eq(runs.first { $0.repoID == "repo-a" }?.status, .done, "已成功的仓库原样保留")
+    eq(runs.first { $0.repoID == "repo-a" }?.prUrl, "https://github.com/o/a/pull/1",
+       "已成功仓库的 PR 没被覆盖")
+
+    // 不是失败状态、仓库不存在 → 拒绝重试。
+    check(!h.runner.retryFailedRepo(queueID: queue.id, repoID: "repo-a"),
+          "已成功的仓库不重试")
+    check(!h.runner.retryFailedRepo(queueID: queue.id, repoID: "gone"),
+          "不存在的仓库不重试")
+}
+
 if failures == 0 {
     print("ok - \(checks) checks passed")
 } else {
