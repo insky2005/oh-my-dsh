@@ -620,7 +620,7 @@ enum L10n {
         "tasks.errRepoBranch": ("多仓库切分支失败：%@；已切换的仓库不会回滚", "Multi-repo branch entry failed: %@; repositories already switched are not rolled back"),
         "tasks.errPull": ("拉取基线分支失败（网络不通或分支已分叉？）", "Failed to pull the base branch (no network, or the branch diverged?)"),
         "tasks.configTitle": ("GitHub Token", "GitHub Token"),
-        "tasks.configInfo": ("GitHub token（只写文件：有当前仓库时写 ~/.dsh/oh-my-dsh/tokens/<owner>-<repo>，否则写通用 ~/.dsh/oh-my-dsh/gh-token；chmod 600，App 与外部工具共用）。解析顺序：文件专属 → 文件通用；不再读取 macOS 钥匙串。仅用于拉取 issues、创建 PR、评论关闭 issue；公开仓库可留空。", "GitHub token (written to a FILE only: ~/.dsh/oh-my-dsh/tokens/<owner>-<repo> when a repo is known, otherwise the generic ~/.dsh/oh-my-dsh/gh-token; chmod 600, shared with external tools). Resolution: per-repo file → generic file; the macOS Keychain is no longer read. Used only to fetch issues, create PRs, comment & close issues; public repos may leave empty."),
+        "tasks.configInfo": ("GitHub token（只写文件：~/.dsh/oh-my-dsh/tokens/<owner>-<repo>；chmod 600，App 与外部工具共用）。没有 GitHub 远端的仓库不显示此配置，也不会写通用文件。解析顺序：文件专属 → 文件通用；不再读取 macOS 钥匙串。仅用于拉取 issues、创建 PR、评论关闭 issue；公开仓库可留空。", "GitHub token (written to a FILE only: ~/.dsh/oh-my-dsh/tokens/<owner>-<repo>; chmod 600, shared with external tools). Repositories without a GitHub remote do not show this setting and never write the generic file. Resolution: per-repo file → generic file; the macOS Keychain is no longer read. Used only to fetch issues, create PRs, comment & close issues; public repos may leave empty."),
         "tasks.tokenPlaceholder": ("ghp_xxx（可选）", "ghp_xxx (optional)"),
         "tasks.detailPR": ("PR：%@", "PR: %@"),
         "tasks.state.pending": ("待处理", "Pending"),

@@ -1266,12 +1266,13 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         autoCloseCheck.state = model.activeAutoClose ? .on : .off
         autoCloseCheck.isEnabled = !follows
         autoCloseHint.stringValue = L10n.tr("tasks.settings.autoCloseHint")
-        // token 框**常显**（与单仓库模式一致）：选中仓库是 GitHub 时写它的
-        // owner/repo，否则写通用 token（非 GitHub 仓库没有 owner/repo 可存）。
-        tokenRow.isHidden = false
-        tokenHint.isHidden = false
-        tokenField.isEnabled = true
-        tokenBox.alphaValue = 1
+        // token 只对 GitHub 仓库有意义：单仓库看工作区是否有 GitHub 远端，多仓库看
+        // 选中仓库是否有。非 GitHub 一律不显示，也不写通用 token 文件。
+        let showsToken = model.activePRAvailable
+        tokenRow.isHidden = !showsToken
+        tokenHint.isHidden = !showsToken
+        tokenField.isEnabled = showsToken
+        tokenBox.alphaValue = showsToken ? 1 : 0.45
         submitButton.title = L10n.tr("tasks.new.save")
         submitButton.isEnabled = true
         cancelButton.title = L10n.tr("btn.cancel")

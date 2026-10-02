@@ -2195,7 +2195,7 @@ final class IssueRunnerPanelController: NSObject {
         let recommended = QueueIntegration.recommended(isGit: workspaceIsGit,
                                                        hasGitHubRemote: repo != nil)
         guard let path = repoRootPath else {
-            return TaskSettingsModel(token: loadToken(for: repo) ?? "",
+            return TaskSettingsModel(token: repo.flatMap { loadToken(for: $0) } ?? "",
                                      defaultIntegration: .pr,
                                      recommendedIntegration: recommended,
                                      prAvailable: repo != nil)
@@ -2203,7 +2203,7 @@ final class IssueRunnerPanelController: NSObject {
         guard workspaceRepoSet.isMultiRepo else {
             // 单仓库模式：与今天完全一致（一个 token 框 + 一组 radio + 一个勾选）。
             return TaskSettingsModel(
-                token: loadToken(for: repo) ?? "",
+                token: repo.flatMap { loadToken(for: $0) } ?? "",
                 defaultIntegration: Self.resolvedIntegration(forWorkspace: path, repoSet: workspaceRepoSet,
                                                              recommended: recommended),
                 recommendedIntegration: recommended,
@@ -2230,8 +2230,7 @@ final class IssueRunnerPanelController: NSObject {
                 prAvailable: github != nil,
                 remoteAvailable: repo.remoteName != nil,
                 github: github,
-                token: github.flatMap { loadToken(for: ($0.owner, $0.name)) }
-                    ?? (loadToken(for: nil) ?? ""),
+                token: github.flatMap { loadToken(for: ($0.owner, $0.name)) } ?? "",
                 integration: store.resolvedIntegration(forWorkspace: path, repoID: repo.id,
                                                        primaryID: primaryID, recommended: repoRecommended),
                 explicitIntegration: store.explicitIntegration(forWorkspace: path, repoID: repo.id),
@@ -2273,16 +2272,11 @@ final class IssueRunnerPanelController: NSObject {
             // a repo that does not follow stores both fields independently.
             var store = Self.repoSettings()
             for repo in settings.repos {
-                // token 不参与跟随：只写用户改过的，免得打开一次抽屉就复制。
-                // GitHub 仓库写它自己的 owner/repo 文件；非 GitHub 仓库没有 owner/repo，
-                // 写通用 token 文件（token 框在两种模式下都常显）。
-                if repo.tokenChanged {
+                // token 不参与跟随：只写用户改过的，免得打开一次抽屉就复制；只有
+                // GitHub 仓库有 token（按 owner/repo 存文件），非 GitHub 写入被跳过。
+                if let github = repo.github, repo.tokenChanged {
                     let value = repo.token.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if let github = repo.github {
-                        saveToken(value, for: (owner: github.owner, repo: github.name))
-                    } else {
-                        saveToken(value, for: nil)
-                    }
+                    saveToken(value, for: (owner: github.owner, repo: github.name))
                 }
                 if let explicit = repo.explicitIntegration, let explicitClose = repo.explicitAutoClose {
                     store.setIntegration(explicit, forWorkspace: path, repoID: repo.id)
@@ -2310,9 +2304,12 @@ final class IssueRunnerPanelController: NSObject {
                 adoptWorkspace(path)
             }
         } else {
-            let value = settings.token.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Empty → delete the token file; otherwise write it (file only).
-            saveToken(value, for: repo)
+            // token 只对 GitHub 仓库有意义：没有 owner/repo 时不写通用文件。
+            if let repo = repo {
+                let value = settings.token.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Empty → delete the token file; otherwise write it (file only).
+                saveToken(value, for: repo)
+            }
             // PER WORKSPACE (every 面板设置 item): save under this workspace's path, then
             // tell the live runner (its env was snapshotted at adopt time) so the next
             // finalize uses it. Other workspaces keep their own value.
