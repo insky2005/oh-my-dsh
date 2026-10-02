@@ -825,6 +825,7 @@ do {
     form.onSubmit = { submitted = $0 }
     _ = layout(form, width: 460)
     check(!form.repoBlock.isHidden, "多仓库显示仓库选择区")
+    check(!form.repoNote.isHidden, "多仓库显示下拉下方的说明信息")
     eq(repoPopupTitles(form), ["ws", "repo-b"], "主仓库固定排第一")
     check(form.repoPopUp.indexOfSelectedItem == 0, "默认编辑主仓库")
     check(!form.primaryBadge.isHidden, "主仓库在下拉后显示主仓库标识")

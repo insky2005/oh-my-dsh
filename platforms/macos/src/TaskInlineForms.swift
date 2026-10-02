@@ -1204,7 +1204,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     override func layout() {
         super.layout()
         let width = max(160, bounds.width - 32)
-        for label in [info, tokenHint, autoCloseHint] {
+        for label in [info, tokenHint, autoCloseHint, repoNote] {
             guard abs(label.preferredMaxLayoutWidth - width) > 0.5 else { continue }
             label.preferredMaxLayoutWidth = width
             label.invalidateIntrinsicContentSize()
@@ -1293,7 +1293,9 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         // 下拉**下面**：非主仓库多一个「跟随主仓库配置」勾选；说明信息两者都显示。
         followCheck.isHidden = selectedIsPrimary
         followCheck.state = model.followsPrimary ? .on : .off
+        // hintLabel 默认隐藏（它是别处的校验提示），这一条是常显信息，必须显式打开。
         repoNote.stringValue = L10n.tr("tasks.settings.reposInfo", model.repoCount)
+        repoNote.isHidden = false
     }
 
     private func build() {
@@ -1351,7 +1353,8 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         _ = TaskFormKit.requiredHeight(primaryBadge)
         repoNote.font = TaskFormKit.captionFont
         repoNote.textColor = .tertiaryLabelColor
-        repoNote.lineBreakMode = .byTruncatingTail
+        repoNote.lineBreakMode = .byWordWrapping
+        repoNote.maximumNumberOfLines = 0
         _ = TaskFormKit.requiredHeight(repoNote)
         repoPopUp.font = .systemFont(ofSize: 12)
         repoPopUp.translatesAutoresizingMaskIntoConstraints = false
@@ -1404,6 +1407,8 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         // 下拉下面：非主仓库的「跟随」勾选 + 说明信息（主仓库只有说明信息）。
         repoBlock.addArrangedSubview(followCheck)
         repoBlock.addArrangedSubview(repoNote)
+        // 说明信息的换行宽度跟随 block（此时已有共同祖先，约束才能激活）。
+        repoNote.widthAnchor.constraint(equalTo: repoBlock.widthAnchor).isActive = true
         _ = TaskFormKit.requiredHeight(repoBlock)
         let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
         // 仓库选择在最上（多仓库时），随后 工作流、自动关闭、GitHub Token —— 与
