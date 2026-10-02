@@ -369,6 +369,265 @@ enum TaskBranch {
     }
 }
 
+// MARK: - Workspace repositories (multi-repo workspace)
+
+/// A GitHub remote, split into the two halves every GitHub API call needs.
+struct GitHubRepo: Equatable {
+    var owner: String
+    var name: String
+}
+
+/// One directory inside a workspace that can be used as a git target.
+struct WorkspaceRepo: Equatable {
+    /// Workspace-relative path; "." is the root itself. Stable id for persistence.
+    var id: String
+    var absolutePath: String
+    var isGit: Bool
+    /// This repo's own default branch (main / master differ per repo).
+    var defaultBase: String = "main"
+    /// Preferred push remote (github > origin > first), or nil for a local-only repo.
+    var remoteName: String?
+    /// Set when a github.com remote exists.
+    var github: GitHubRepo?
+    /// "." → the root directory's last path component; otherwise the relative path.
+    var displayName: String
+}
+
+/// How a workspace's repository layout is classified — the compatibility matrix of
+/// docs/design/panels/multi-repo-workspace-design.md §4.3.
+enum WorkspaceRepoMode: Equatable {
+    /// No repository at all — today's 非 Git 目录.
+    case plain
+    /// Root is a repository and no participating child repo exists — today's shape.
+    case single
+    /// Anything else with at least one repository (root + children, or children only).
+    /// One child repo is already multi: adding/removing a repo never flips the paradigm.
+    case multi
+}
+
+/// The repositories a workspace contains. Pure value type; detection reads the
+/// outside world through an injectable `WorkspaceRepoProbe`.
+struct WorkspaceRepoSet: Equatable {
+    var repos: [WorkspaceRepo] = []
+    /// The user's explicit pick when it still exists, else root, else the first
+    /// GitHub repo, else the first git repo, else nil.
+    var primary: WorkspaceRepo?
+
+    var gitRepos: [WorkspaceRepo] { repos.filter(\.isGit) }
+    var gitAvailable: Bool { !gitRepos.isEmpty }
+    /// Any repo can open a PR (issue-area availability).
+    var prAvailable: Bool { repos.contains { $0.github != nil } }
+    /// Whether EVERY target repo can open a PR (the PR delivery mode).
+    func allCanOpenPR(_ targets: [WorkspaceRepo]) -> Bool {
+        !targets.isEmpty && targets.allSatisfy { $0.github != nil }
+    }
+
+    /// Only「root is a repo and no participating child」is the legacy single-repo
+    /// shape; everything else with a repo is multi, even a lone child repo.
+    var mode: WorkspaceRepoMode {
+        if repos.isEmpty { return .plain }
+        if repos.count == 1, repos[0].id == "." { return .single }
+        return .multi
+    }
+
+    var isSingleRepo: Bool { mode == .single }
+    var isMultiRepo: Bool { mode == .multi }
+}
+
+/// The outside-world facts `WorkspaceRepoSet.detect` needs, injected so a test can
+/// describe a directory tree without running git. The filesystem defaults are real;
+/// the git answers default to "nothing is a repository", so a test overrides only
+/// what it cares about. `.live` is the real thing (Process + the real .gitmodules).
+struct WorkspaceRepoProbe {
+    var isDirectory: (String) -> Bool
+    var directoryEntries: (String) -> [String]
+    var hasGitEntry: (String) -> Bool
+    /// True only when the directory is itself a work-tree top level (not a subdir).
+    var isGitRepoRoot: (String) -> Bool
+    /// Submodule paths declared by the root .gitmodules (workspace-relative).
+    var submodulePaths: (String) -> [String]
+    var defaultBase: (String) -> String
+    var remoteName: (String) -> String?
+    var github: (String) -> GitHubRepo?
+
+    init(isDirectory: @escaping (String) -> Bool = { path in
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else { return false }
+            return isDir.boolValue
+        },
+        directoryEntries: @escaping (String) -> [String] = { path in
+            (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? []
+        },
+        hasGitEntry: @escaping (String) -> Bool = { path in
+            FileManager.default.fileExists(atPath: path + "/.git")
+        },
+        isGitRepoRoot: @escaping (String) -> Bool = { _ in false },
+        submodulePaths: @escaping (String) -> [String] = { root in
+            guard let text = try? String(contentsOfFile: root + "/.gitmodules", encoding: .utf8) else { return [] }
+            return WorkspaceRepoProbe.parseGitmodules(text)
+        },
+        defaultBase: @escaping (String) -> String = { _ in "main" },
+        remoteName: @escaping (String) -> String? = { _ in nil },
+        github: @escaping (String) -> GitHubRepo? = { _ in nil }) {
+        self.isDirectory = isDirectory
+        self.directoryEntries = directoryEntries
+        self.hasGitEntry = hasGitEntry
+        self.isGitRepoRoot = isGitRepoRoot
+        self.submodulePaths = submodulePaths
+        self.defaultBase = defaultBase
+        self.remoteName = remoteName
+        self.github = github
+    }
+
+    /// The real probe: git through `/usr/bin/git`, the tree through FileManager.
+    /// Everything here is BLOCKING, so callers run detection on a background queue.
+    static let live = WorkspaceRepoProbe(
+        isGitRepoRoot: { path in
+            guard runGit(path, ["rev-parse", "--is-inside-work-tree"]) == "true",
+                  let top = runGit(path, ["rev-parse", "--show-toplevel"]) else { return false }
+            return (top as NSString).standardizingPath == (path as NSString).standardizingPath
+        },
+        submodulePaths: { root in
+            guard let text = try? String(contentsOfFile: root + "/.gitmodules", encoding: .utf8) else { return [] }
+            return parseGitmodules(text)
+        },
+        defaultBase: { path in
+            let remote = pushRemoteName(path)
+            let remoteHead = remote.flatMap { name in
+                runGit(path, ["symbolic-ref", "--short", "refs/remotes/\(name)/HEAD"])
+            }
+            let current = runGit(path, ["rev-parse", "--abbrev-ref", "HEAD"])
+            let hasMain = runGit(path, ["rev-parse", "--verify", "--quiet", "main"]) != nil
+            let hasMaster = runGit(path, ["rev-parse", "--verify", "--quiet", "master"]) != nil
+            return TaskBranch.defaultBaseBranch(symbolicRef: remoteHead, current: current,
+                                                hasMain: hasMain, hasMaster: hasMaster)
+        },
+        remoteName: { path in pushRemoteName(path) },
+        github: { path in
+            guard let out = runGit(path, ["remote", "-v"]) else { return nil }
+            return githubRepo(fromRemotes: parseGitRemotes(out))
+        })
+
+    /// The `path = …` lines of a .gitmodules file, in order.
+    static func parseGitmodules(_ text: String) -> [String] {
+        var paths: [String] = []
+        for line in text.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard let eq = trimmed.firstIndex(of: "=") else { continue }
+            guard trimmed[..<eq].trimmingCharacters(in: .whitespaces) == "path" else { continue }
+            let value = trimmed[trimmed.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+            if !value.isEmpty { paths.append(value) }
+        }
+        return paths
+    }
+
+    /// `git remote -v` → one (name, url) per remote, first line wins.
+    static func parseGitRemotes(_ output: String) -> [(name: String, url: String)] {
+        var seen: Set<String> = []
+        var remotes: [(name: String, url: String)] = []
+        for line in output.split(separator: "\n") {
+            let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            guard parts.count >= 2 else { continue }
+            let name = String(parts[0])
+            guard !seen.contains(name) else { continue }
+            seen.insert(name)
+            remotes.append((name, String(parts[1])))
+        }
+        return remotes
+    }
+
+    /// The github.com remote, preferring the one literally named "github".
+    static func githubRepo(fromRemotes remotes: [(name: String, url: String)]) -> GitHubRepo? {
+        let url = remotes.first { $0.name == "github" && $0.url.contains("github.com") }?.url
+            ?? remotes.first { $0.url.contains("github.com") }?.url
+        guard let url = url,
+              let range = url.range(of: "github.com[/:]", options: .regularExpression) else { return nil }
+        let tail = String(url[range.upperBound...])
+        let parts = tail.split(separator: "/")
+        guard parts.count >= 2 else { return nil }
+        let owner = String(parts[0])
+        let name = String(parts[1]).replacingOccurrences(of: ".git", with: "")
+        guard !owner.isEmpty, !name.isEmpty else { return nil }
+        return GitHubRepo(owner: owner, name: name)
+    }
+
+    /// The remote used to push: "github", else "origin", else the first one.
+    static func pushRemoteName(_ path: String) -> String? {
+        guard let out = runGit(path, ["remote"]) else { return nil }
+        let names = out.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" }).map(String.init)
+        if names.contains("github") { return "github" }
+        if names.contains("origin") { return "origin" }
+        return names.first
+    }
+
+    /// git with these arguments in `path`; nil when it fails or cannot launch.
+    static func runGit(_ path: String, _ args: [String]) -> String? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        proc.arguments = ["-C", path] + args
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        do { try proc.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        guard proc.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+extension WorkspaceRepoSet {
+
+    /// Directories never scanned for repositories: heavy build leaves (the hidden
+    /// ones are already covered by the dot rule, but the list documents intent).
+    static let excludedDirectoryNames: Set<String> = ["node_modules", ".build", ".cache", "dist"]
+
+    /// Detect the workspace's repositories (design §4.1): the root when it IS a
+    /// work-tree top level (id "."), plus every direct child directory carrying a
+    /// .git entry, minus hidden / excluded directories and the root .
+    /// gitmodules submodules. `primaryRepoID` is the user's
+    /// `tasksPrimaryRepoByWorkspace` pick; a stale one falls back to the auto rule.
+    static func detect(root: String,
+                       primaryRepoID: String? = nil,
+                       probe: WorkspaceRepoProbe = .live) -> WorkspaceRepoSet {
+        var repos: [WorkspaceRepo] = []
+        if probe.isGitRepoRoot(root) {
+            repos.append(makeRepo(id: ".", path: root, root: root, probe: probe))
+        }
+        let submodules = Set(probe.submodulePaths(root))
+        for name in probe.directoryEntries(root).sorted() {
+            guard !name.hasPrefix("."), !excludedDirectoryNames.contains(name) else { continue }
+            let path = root + "/" + name
+            guard probe.isDirectory(path) else { continue }
+            // A submodule is managed by the parent repo: not an independent target.
+            let isSubmodule = submodules.contains(name)
+                || submodules.contains { $0.hasPrefix(name + "/") }
+            guard !isSubmodule, probe.hasGitEntry(path) else { continue }
+            repos.append(makeRepo(id: name, path: path, root: root, probe: probe))
+        }
+        return WorkspaceRepoSet(repos: repos, primary: resolvePrimary(repos, specifiedID: primaryRepoID))
+    }
+
+    /// User pick (when it still exists) → root → first GitHub repo → first git repo.
+    static func resolvePrimary(_ repos: [WorkspaceRepo], specifiedID: String?) -> WorkspaceRepo? {
+        if let id = specifiedID, let picked = repos.first(where: { $0.id == id }) { return picked }
+        if let root = repos.first(where: { $0.id == "." }) { return root }
+        if let github = repos.first(where: { $0.github != nil }) { return github }
+        return repos.first(where: { $0.isGit })
+    }
+
+    private static func makeRepo(id: String, path: String, root: String,
+                                 probe: WorkspaceRepoProbe) -> WorkspaceRepo {
+        WorkspaceRepo(id: id,
+                      absolutePath: path,
+                      isGit: true,
+                      defaultBase: probe.defaultBase(path),
+                      remoteName: probe.remoteName(path),
+                      github: probe.github(path),
+                      displayName: id == "." ? (root as NSString).lastPathComponent : id)
+    }
+}
+
 // MARK: - Manual task draft
 
 /// What the user typed in 新建任务 — ONE box (2026-09-26): the first line is the

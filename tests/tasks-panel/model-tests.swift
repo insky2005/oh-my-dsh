@@ -643,6 +643,132 @@ check(repaired.task("manual-ffff0001")?.queueId == "q-drift1", "the queue id is 
 check(repaired.task("manual-ffff0001")?.state == .queued, "a listed pending task becomes queued")
 check(repaired.task("manual-ffff0001")?.title == "Drifted", "the rest of the task is untouched")
 
+// MARK: - multi-repo workspace (detect / mode / primary)
+
+section("多仓库工作区：探测 / 兼容矩阵 / 主仓库")
+do {
+    func mkdir(_ path: String) {
+        try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+    }
+    func makeGit(_ path: String) { mkdir(path + "/.git") }
+    func gitmodules(_ root: String, _ paths: [String]) {
+        write(paths.map { "[submodule \"\($0)\"]\n\tpath = \($0)\n\turl = https://example.test/x.git\n" }.joined(),
+              to: root + "/.gitmodules")
+    }
+    // The directory tree is real; the git answers are scripted per path.
+    func probe(gitRoots: Set<String> = [],
+               bases: [String: String] = [:],
+               remotes: [String: String] = [:],
+               githubs: [String: GitHubRepo] = [:]) -> WorkspaceRepoProbe {
+        var p = WorkspaceRepoProbe()
+        p.isGitRepoRoot = { gitRoots.contains(($0 as NSString).standardizingPath) }
+        p.defaultBase = { bases[$0] ?? "main" }
+        p.remoteName = { remotes[$0] }
+        p.github = { githubs[$0] }
+        return p
+    }
+
+    // 矩阵 1：根是仓库且无参与子仓库 → legacy 单仓库。
+    let rootSingle = tempRepo("ws-single")
+    makeGit(rootSingle)
+    mkdir(rootSingle + "/docs")                       // 普通目录，不是仓库
+    let single = WorkspaceRepoSet.detect(root: rootSingle, probe: probe(gitRoots: [rootSingle]))
+    eq(single.repos.map { $0.id }, ["."], "根是仓库、没有子仓库：集合里只有根")
+    eq(single.mode, .single, "根是仓库且无参与子仓库 → legacy 单仓库")
+    check(single.isSingleRepo && !single.isMultiRepo, "single 模式标志")
+    check(single.primary?.id == ".", "primary 是根")
+    eq(single.repos.first?.displayName, (rootSingle as NSString).lastPathComponent, "根的展示名是目录末级名")
+    check(single.gitAvailable, "根仓库让 git 可用")
+    check(!single.allCanOpenPR(single.repos), "根没有 GitHub 远端时不能开 PR")
+
+    // 矩阵 2：根是仓库且有参与子仓库 → 多仓库，根为主。
+    let rootChild = tempRepo("ws-rootchild")
+    makeGit(rootChild)
+    makeGit(rootChild + "/lib")
+    let rootChildSet = WorkspaceRepoSet.detect(root: rootChild, probe: probe(gitRoots: [rootChild]))
+    eq(rootChildSet.repos.map { $0.id }, [".", "lib"], "根 + 子都参与，根排最前")
+    eq(rootChildSet.mode, .multi, "根是仓库且有参与子仓库 → 多仓库")
+    check(rootChildSet.primary?.id == ".", "根 + 子共存时根仍是 primary")
+
+    // 矩阵 3：根非 git + 恰好一个子仓库 → 仍是多仓库（不按数量切范式）。
+    let rootOne = tempRepo("ws-onechild")
+    makeGit(rootOne + "/only")
+    let oneChild = WorkspaceRepoSet.detect(root: rootOne, probe: probe())
+    eq(oneChild.repos.map { $0.id }, ["only"], "根不是仓库：只收子仓库")
+    eq(oneChild.mode, .multi, "根非 git + 恰好一个子仓库 → 多仓库（N==1 也是）")
+    check(oneChild.primary?.id == "only", "primary 是唯一的子仓库")
+
+    // 矩阵 4：根非 git 且无子仓库 → plain。
+    let rootPlain = tempRepo("ws-plain")
+    mkdir(rootPlain + "/notes")
+    let plain = WorkspaceRepoSet.detect(root: rootPlain, probe: probe())
+    eq(plain.repos.count, 0, "没有仓库")
+    eq(plain.mode, .plain, "没有仓库 → plain")
+    check(plain.primary == nil, "plain 没有 primary")
+    check(!plain.gitAvailable, "plain 的 git 不可用")
+
+    // 扫描纪律：隐藏目录 + node_modules/.build/.cache/dist + 普通文件全部跳过。
+    let rootSkip = tempRepo("ws-exclude")
+    makeGit(rootSkip + "/keep")
+    for name in [".hidden", "node_modules", ".build", ".cache", "dist"] { makeGit(rootSkip + "/" + name) }
+    write("not a dir", to: rootSkip + "/plainfile")
+    let skipped = WorkspaceRepoSet.detect(root: rootSkip, probe: probe())
+    eq(skipped.repos.map { $0.id }, ["keep"], "隐藏目录与 node_modules/.build/.cache/dist 被排除")
+
+    // submodule 排除：根 .gitmodules 里列出的直接子目录不算独立目标，普通子仓库照常加入。
+    let rootSub = tempRepo("ws-submodule")
+    makeGit(rootSub)
+    makeGit(rootSub + "/sub")
+    makeGit(rootSub + "/plain")
+    gitmodules(rootSub, ["sub"])
+    let subSet = WorkspaceRepoSet.detect(root: rootSub, probe: probe(gitRoots: [rootSub]))
+    eq(subSet.repos.map { $0.id }, [".", "plain"], "submodule 被排除，普通子仓库加入")
+    eq(subSet.mode, .multi, "根 + 普通子仓库 → 多仓库")
+    eq(WorkspaceRepoProbe.parseGitmodules("[submodule \"nested\"]\n\tpath = a/b\n\turl = x\n"),
+       ["a/b"], "gitmodules 只取 path 行；嵌套路径也认")
+
+    // primary 自动规则：根 > 第一个 GitHub 远端 > 第一个 git。
+    let rootPrimary = tempRepo("ws-primary")
+    for name in ["a", "b", "c"] { makeGit(rootPrimary + "/" + name) }
+    let ghB = GitHubRepo(owner: "owner", name: "b")
+    let multi = WorkspaceRepoSet.detect(root: rootPrimary,
+        probe: probe(remotes: [rootPrimary + "/a": "origin", rootPrimary + "/c": "origin"],
+                     githubs: [rootPrimary + "/b": ghB]))
+    eq(multi.repos.map { $0.id }, ["a", "b", "c"], "子仓库按名字排序")
+    eq(multi.primary?.id, "b", "根不是仓库时：第一个有 GitHub 远端的子仓库当 primary")
+    eq(multi.repos.first { $0.id == "b" }?.github, ghB, "仓库自己的 GitHub 被记录")
+    eq(multi.repos.first { $0.id == "a" }?.remoteName, "origin", "仓库自己的远端被记录")
+    eq(multi.repos.first { $0.id == "a" }?.displayName, "a", "子仓库的展示名是相对路径")
+    check(multi.prAvailable, "任一个 GitHub 仓库让 PR 可用")
+    check(multi.allCanOpenPR([multi.repos[1]]), "目标仓库有 GitHub 时可开 PR")
+    check(!multi.allCanOpenPR([multi.repos[0], multi.repos[1]]), "混合能力时不是所有目标都能开 PR")
+    check(!multi.allCanOpenPR([]), "空目标集合不能开 PR")
+
+    // 根参与时压过「第一个 GitHub」。
+    let withRoot = WorkspaceRepoSet.detect(root: rootPrimary,
+        probe: probe(gitRoots: [rootPrimary], githubs: [rootPrimary + "/a": GitHubRepo(owner: "o", name: "a")]))
+    check(withRoot.primary?.id == ".", "根参与时根优先，即使子仓库有 GitHub 远端")
+
+    // primary 解析：用户指定生效；指定仓库已不存在 → 回退自动规则。
+    let picked = WorkspaceRepoSet.detect(root: rootPrimary, primaryRepoID: "c", probe: probe(githubs: [rootPrimary + "/b": ghB]))
+    eq(picked.primary?.id, "c", "用户指定的主仓库生效")
+    let stale = WorkspaceRepoSet.detect(root: rootPrimary, primaryRepoID: "removed", probe: probe(githubs: [rootPrimary + "/b": ghB]))
+    eq(stale.primary?.id, "b", "指定的仓库已不存在 → 回退自动规则")
+
+    // 每个仓库自己的默认分支不同（main / master）。
+    let rootBase = tempRepo("ws-base")
+    makeGit(rootBase + "/x")
+    makeGit(rootBase + "/y")
+    let based = WorkspaceRepoSet.detect(root: rootBase,
+        probe: probe(bases: [rootBase + "/x": "main", rootBase + "/y": "master"]))
+    eq(based.repos.first { $0.id == "x" }?.defaultBase, "main", "x 的默认分支")
+    eq(based.repos.first { $0.id == "y" }?.defaultBase, "master", "y 的默认分支（master 仓库）")
+
+    for dir in [rootSingle, rootChild, rootOne, rootPlain, rootSkip, rootSub, rootPrimary, rootBase] {
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+}
+
 for dir in [repo, repoLegacy, repoBroken, repoDrift] {
     try? FileManager.default.removeItem(atPath: dir)
 }
