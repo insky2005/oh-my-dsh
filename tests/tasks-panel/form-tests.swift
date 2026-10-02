@@ -825,14 +825,17 @@ do {
     form.onSubmit = { submitted = $0 }
     _ = layout(form, width: 460)
     check(!form.repoBlock.isHidden, "多仓库显示仓库选择区")
-    eq(repoPopupTitles(form), ["wsrepoPrimarySuffix", "repo-b"], "主仓库固定排第一并带主仓库标记")
+    eq(repoPopupTitles(form), ["ws", "repo-b"], "主仓库固定排第一")
     check(form.repoPopUp.indexOfSelectedItem == 0, "默认编辑主仓库")
-    check(form.followCheck.isHidden, "主仓库没有「跟随」开关")
+    check(!form.primaryBadge.isHidden, "主仓库在下拉后显示主仓库标识")
     check(form.primaryButton.isHidden, "主仓库没有「设为主仓库」按钮")
+    check(form.followCheck.isHidden, "主仓库没有「跟随」开关")
 
     // 选中非主仓库 b：默认跟随，字段禁用并显示继承值。
     selectRepo(form, 1)
     check(form.repoPopUp.indexOfSelectedItem == 1, "选中 b")
+    check(form.primaryBadge.isHidden, "非主仓库不显示主仓库标识")
+    check(!form.primaryButton.isHidden, "非主仓库显示「设为主仓库」")
     check(!form.followCheck.isHidden, "非主仓库有「跟随」开关")
     check(form.followCheck.state == .on, "跟随默认开启")
     check(!form.integrationRadios[2].isEnabled, "跟随时工作流字段禁用")
@@ -904,7 +907,8 @@ do {
     var submitted: TaskSettingsModel?
     form.onSubmit = { submitted = $0 }
     _ = layout(form, width: 460)
-    eq(repoPopupTitles(form), ["wsrepoPrimarySuffix", "repo-b", "repo-c"], "初始顺序：主仓库在前")
+    eq(repoPopupTitles(form), ["ws", "repo-b", "repo-c"], "初始顺序：主仓库在前")
+    check(!form.primaryBadge.isHidden, "初始选中主仓库，显示标识")
 
     // 选中 c，关掉跟随并给它一组独立值，然后设为主仓库。
     selectRepo(form, 2)
@@ -913,13 +917,16 @@ do {
     form.selectIntegration(QueueIntegration.none)
     form.setAutoCloseOnPublish(true)
     form.primaryTapped()
-    eq(repoPopupTitles(form), ["repo-crepoPrimarySuffix", "ws", "repo-b"],
+    eq(repoPopupTitles(form), ["repo-c", "ws", "repo-b"],
        "改主仓库后重排：新的主仓库排第一，其余保持原相对顺序")
+    check(!form.primaryBadge.isHidden, "新主仓库显示标识")
     check(form.followCheck.isHidden, "新主仓库没有跟随开关")
     check(form.primaryButton.isHidden, "新主仓库没有设为主仓库按钮")
 
     // 其余非主仓库（b）跟随新的主仓库：继承它的 none / 自动关闭 on。
     selectRepo(form, 2)            // repo-b
+    check(form.primaryBadge.isHidden, "非主仓库不显示标识")
+    check(!form.primaryButton.isHidden, "非主仓库显示设为主仓库")
     check(form.followCheck.state == .on, "b 跟随新主仓库")
     eq(form.selectedIntegration, QueueIntegration.none, "继承新主仓库的工作流 none")
     check(form.autoCloseCheck.state == .on, "继承新主仓库的自动关闭 on")

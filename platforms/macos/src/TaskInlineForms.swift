@@ -1145,8 +1145,10 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     let repoBlock = NSStackView()
     let repoCaption = TaskFormKit.caption()
     /// 仓库切换用**下拉**而不是 radio（用户 2026-10-02）：radio 会让人误以为
-    /// 「这一排是选主仓库」。主仓库只由标题后缀 +「设为主仓库」按钮表达（设计 §8.1）。
+    /// 「这一排是选主仓库」。主仓库标识与「设为主仓库」都放在下拉**后面**。
     let repoPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    /// 选中项是主仓库时显示的标识；非主仓库时隐藏（改由「设为主仓库」按钮表达）。
+    let primaryBadge = TaskFormKit.caption()
     let repoNote = TaskFormKit.hintLabel(.secondaryLabelColor)
     let followCheck: NSButton
     let primaryButton: NSButton
@@ -1275,9 +1277,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
             for repo in model.repos { repoPopUp.addItem(withTitle: repo.displayName) }
         }
         for (index, repo) in model.repos.enumerated() where index < repoPopUp.numberOfItems {
-            repoPopUp.item(at: index)?.title = repo.isPrimary
-                ? repo.displayName + L10n.tr("tasks.repoPrimarySuffix")
-                : repo.displayName
+            repoPopUp.item(at: index)?.title = repo.displayName
         }
         if let index = model.repos.firstIndex(where: { $0.id == model.selectedRepoID }) {
             repoPopUp.selectItem(at: index)
@@ -1285,12 +1285,15 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         // N==1（根非 git + 唯一子仓库）没有可选的，只读锁定。
         repoPopUp.isEnabled = model.repos.count > 1
         repoPopUp.toolTip = L10n.tr("tasks.settings.reposInfo", model.repoCount)
-        repoNote.stringValue = L10n.tr("tasks.settings.reposInfo", model.repoCount)
         let selectedIsPrimary = model.selectedRepo?.isPrimary ?? true
-        let canFollow = model.isMultiRepo && !selectedIsPrimary
-        followCheck.isHidden = !canFollow
+        // 下拉**后面**：主仓库显示标识；非主仓库显示「设为主仓库」。
+        primaryBadge.stringValue = L10n.tr("tasks.repoPrimarySuffix")
+        primaryBadge.isHidden = !selectedIsPrimary
+        primaryButton.isHidden = selectedIsPrimary
+        // 下拉**下面**：非主仓库多一个「跟随主仓库配置」勾选；说明信息两者都显示。
+        followCheck.isHidden = selectedIsPrimary
         followCheck.state = model.followsPrimary ? .on : .off
-        primaryButton.isHidden = !canFollow
+        repoNote.stringValue = L10n.tr("tasks.settings.reposInfo", model.repoCount)
     }
 
     private func build() {
@@ -1342,6 +1345,10 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         primaryButton.title = L10n.tr("tasks.settings.setPrimary")
         primaryButton.target = self
         primaryButton.action = #selector(primaryTapped)
+        primaryBadge.font = .systemFont(ofSize: 12)
+        primaryBadge.textColor = .secondaryLabelColor
+        primaryBadge.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(primaryBadge)
         repoNote.font = TaskFormKit.captionFont
         repoNote.textColor = .tertiaryLabelColor
         repoNote.lineBreakMode = .byTruncatingTail
@@ -1381,21 +1388,22 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         autoCloseBlock.translatesAutoresizingMaskIntoConstraints = false
         _ = TaskFormKit.requiredHeight(autoCloseBlock)
         autoCloseHint.widthAnchor.constraint(equalTo: autoCloseBlock.widthAnchor).isActive = true
-        // 多仓库：抽屉顶部的仓库选择区（主仓库固定排第一）+ 跟随主仓库开关。
-        let repoActions = NSStackView(views: [followCheck, primaryButton])
-        repoActions.orientation = .horizontal
-        repoActions.alignment = .centerY
-        repoActions.spacing = 10
-        repoActions.translatesAutoresizingMaskIntoConstraints = false
-        _ = TaskFormKit.requiredHeight(repoActions)
+        // 多仓库：仓库下拉 + 主仓库标识/「设为主仓库」（同一行，紧随下拉）。
+        let repoRow = NSStackView(views: [repoPopUp, primaryBadge, primaryButton])
+        repoRow.orientation = .horizontal
+        repoRow.alignment = .centerY
+        repoRow.spacing = 8
+        repoRow.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(repoRow)
         repoBlock.orientation = .vertical
         repoBlock.alignment = .leading
         repoBlock.spacing = 4
         repoBlock.translatesAutoresizingMaskIntoConstraints = false
         repoBlock.addArrangedSubview(repoCaption)
-        repoBlock.addArrangedSubview(repoPopUp)
+        repoBlock.addArrangedSubview(repoRow)
+        // 下拉下面：非主仓库的「跟随」勾选 + 说明信息（主仓库只有说明信息）。
+        repoBlock.addArrangedSubview(followCheck)
         repoBlock.addArrangedSubview(repoNote)
-        repoBlock.addArrangedSubview(repoActions)
         _ = TaskFormKit.requiredHeight(repoBlock)
         let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
         // 仓库选择在最上（多仓库时），随后 工作流、自动关闭、GitHub Token —— 与
