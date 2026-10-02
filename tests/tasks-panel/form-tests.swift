@@ -50,6 +50,17 @@ func layout(_ view: NSView, width: CGFloat) -> NSSize {
     return view.frame.size
 }
 
+/// 设置抽屉里仓库下拉的标题列表（headless 断言用）。
+func repoPopupTitles(_ form: TaskSettingsView) -> [String] {
+    (0..<form.repoPopUp.numberOfItems).compactMap { form.repoPopUp.item(at: $0)?.title }
+}
+
+/// 模拟从下拉里选中第 `index` 个仓库。
+func selectRepo(_ form: TaskSettingsView, _ index: Int) {
+    form.repoPopUp.selectItem(at: index)
+    form.repoSelected(form.repoPopUp)
+}
+
 /// Every descendant of `view` (depth-first) that is a `type` — the cards are
 /// stacks inside stacks, so their rows are reached by walking, not by index.
 func descendants<T>(_ view: NSView, of type: T.Type) -> [T] {
@@ -814,14 +825,14 @@ do {
     form.onSubmit = { submitted = $0 }
     _ = layout(form, width: 460)
     check(!form.repoBlock.isHidden, "多仓库显示仓库选择区")
-    eq(form.repoButtons.map { $0.title }, ["wsrepoPrimarySuffix", "repo-b"], "主仓库固定排第一并带主仓库标记")
-    check(form.repoButtons[0].state == .on, "默认编辑主仓库")
+    eq(repoPopupTitles(form), ["wsrepoPrimarySuffix", "repo-b"], "主仓库固定排第一并带主仓库标记")
+    check(form.repoPopUp.indexOfSelectedItem == 0, "默认编辑主仓库")
     check(form.followCheck.isHidden, "主仓库没有「跟随」开关")
     check(form.primaryButton.isHidden, "主仓库没有「设为主仓库」按钮")
 
     // 选中非主仓库 b：默认跟随，字段禁用并显示继承值。
-    form.repoTapped(form.repoButtons[1])
-    check(form.repoButtons[1].state == .on, "选中 b")
+    selectRepo(form, 1)
+    check(form.repoPopUp.indexOfSelectedItem == 1, "选中 b")
     check(!form.followCheck.isHidden, "非主仓库有「跟随」开关")
     check(form.followCheck.state == .on, "跟随默认开启")
     check(!form.integrationRadios[2].isEnabled, "跟随时工作流字段禁用")
@@ -853,8 +864,8 @@ do {
     one.selectedRepoID = "only"
     let lockedForm = TaskSettingsView(model: one)
     _ = layout(lockedForm, width: 460)
-    check(lockedForm.repoButtons.count == 1, "唯一仓库也列出来（N==1 仍是多仓库模式）")
-    check(!lockedForm.repoButtons[0].isEnabled, "N==1 锁定不可点")
+    check(lockedForm.repoPopUp.numberOfItems == 1, "唯一仓库也列出来（N==1 仍是多仓库模式）")
+    check(!lockedForm.repoPopUp.isEnabled, "N==1 锁定不可点")
 
     // 单仓库 / 普通目录：整块隐藏，抽屉与今天一致。
     var single = TaskSettingsModel(token: "", defaultIntegration: .merge,
@@ -862,7 +873,7 @@ do {
     single.repos = []
     let legacy = TaskSettingsView(model: single)
     _ = layout(legacy, width: 440)
-    check(legacy.repoButtons.isEmpty, "单仓库没有仓库按钮")
+    check(legacy.repoPopUp.numberOfItems == 0, "单仓库没有仓库按钮")
     check(legacy.repoBlock.isHidden, "单仓库隐藏仓库选择区")
 }
 
@@ -893,22 +904,22 @@ do {
     var submitted: TaskSettingsModel?
     form.onSubmit = { submitted = $0 }
     _ = layout(form, width: 460)
-    eq(form.repoButtons.map { $0.title }, ["wsrepoPrimarySuffix", "repo-b", "repo-c"], "初始顺序：主仓库在前")
+    eq(repoPopupTitles(form), ["wsrepoPrimarySuffix", "repo-b", "repo-c"], "初始顺序：主仓库在前")
 
     // 选中 c，关掉跟随并给它一组独立值，然后设为主仓库。
-    form.repoTapped(form.repoButtons[2])
+    selectRepo(form, 2)
     form.followCheck.state = .off
     form.followTapped()
     form.selectIntegration(QueueIntegration.none)
     form.setAutoCloseOnPublish(true)
     form.primaryTapped()
-    eq(form.repoButtons.map { $0.title }, ["repo-crepoPrimarySuffix", "ws", "repo-b"],
+    eq(repoPopupTitles(form), ["repo-crepoPrimarySuffix", "ws", "repo-b"],
        "改主仓库后重排：新的主仓库排第一，其余保持原相对顺序")
     check(form.followCheck.isHidden, "新主仓库没有跟随开关")
     check(form.primaryButton.isHidden, "新主仓库没有设为主仓库按钮")
 
     // 其余非主仓库（b）跟随新的主仓库：继承它的 none / 自动关闭 on。
-    form.repoTapped(form.repoButtons[2])            // repo-b
+    selectRepo(form, 2)            // repo-b
     check(form.followCheck.state == .on, "b 跟随新主仓库")
     eq(form.selectedIntegration, QueueIntegration.none, "继承新主仓库的工作流 none")
     check(form.autoCloseCheck.state == .on, "继承新主仓库的自动关闭 on")

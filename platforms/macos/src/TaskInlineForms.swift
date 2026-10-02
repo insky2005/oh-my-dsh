@@ -1144,11 +1144,12 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     /// Internal for the headless form tests.
     let repoBlock = NSStackView()
     let repoCaption = TaskFormKit.caption()
-    var repoButtons: [NSButton] = []
+    /// 仓库切换用**下拉**而不是 radio（用户 2026-10-02）：radio 会让人误以为
+    /// 「这一排是选主仓库」。主仓库只由标题后缀 +「设为主仓库」按钮表达（设计 §8.1）。
+    let repoPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     let repoNote = TaskFormKit.hintLabel(.secondaryLabelColor)
     let followCheck: NSButton
     let primaryButton: NSButton
-    private let repoStack = NSStackView()
     /// The repo ids the buttons were last built for; the view is only rebuilt when
     /// the set (or its order) changes, so switching repos does not thrash it.
     private var configuredRepoIDs: [String] = []
@@ -1268,32 +1269,22 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         guard model.isMultiRepo else { return }
         repoCaption.stringValue = L10n.tr("tasks.settings.repos")
         let ids = model.repos.map { $0.id }
-        if ids != configuredRepoIDs {
+        if ids != configuredRepoIDs || repoPopUp.numberOfItems != model.repos.count {
             configuredRepoIDs = ids
-            for view in repoStack.arrangedSubviews {
-                repoStack.removeArrangedSubview(view)
-                view.removeFromSuperview()
-            }
-            repoButtons = model.repos.enumerated().map { index, repo in
-                let button = NSButton(radioButtonWithTitle: repo.displayName, target: self,
-                                      action: #selector(repoTapped(_:)))
-                button.tag = index
-                button.font = .systemFont(ofSize: 12)
-                button.translatesAutoresizingMaskIntoConstraints = false
-                repoStack.addArrangedSubview(button)
-                return button
-            }
+            repoPopUp.removeAllItems()
+            for repo in model.repos { repoPopUp.addItem(withTitle: repo.displayName) }
         }
-        for (index, repo) in model.repos.enumerated() where index < repoButtons.count {
-            let button = repoButtons[index]
-            button.tag = index
-            button.title = repo.isPrimary
+        for (index, repo) in model.repos.enumerated() where index < repoPopUp.numberOfItems {
+            repoPopUp.item(at: index)?.title = repo.isPrimary
                 ? repo.displayName + L10n.tr("tasks.repoPrimarySuffix")
                 : repo.displayName
-            button.state = (repo.id == model.selectedRepoID) ? .on : .off
-            // N==1（根非 git + 唯一子仓库）没有可选的，只读锁定。
-            button.isEnabled = model.repos.count > 1
         }
+        if let index = model.repos.firstIndex(where: { $0.id == model.selectedRepoID }) {
+            repoPopUp.selectItem(at: index)
+        }
+        // N==1（根非 git + 唯一子仓库）没有可选的，只读锁定。
+        repoPopUp.isEnabled = model.repos.count > 1
+        repoPopUp.toolTip = L10n.tr("tasks.settings.reposInfo", model.repoCount)
         repoNote.stringValue = L10n.tr("tasks.settings.reposInfo", model.repoCount)
         let selectedIsPrimary = model.selectedRepo?.isPrimary ?? true
         let canFollow = model.isMultiRepo && !selectedIsPrimary
@@ -1355,11 +1346,11 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         repoNote.textColor = .tertiaryLabelColor
         repoNote.lineBreakMode = .byTruncatingTail
         _ = TaskFormKit.requiredHeight(repoNote)
-        repoStack.orientation = .horizontal
-        repoStack.alignment = .centerY
-        repoStack.spacing = 12
-        repoStack.translatesAutoresizingMaskIntoConstraints = false
-        _ = TaskFormKit.requiredHeight(repoStack)
+        repoPopUp.font = .systemFont(ofSize: 12)
+        repoPopUp.translatesAutoresizingMaskIntoConstraints = false
+        repoPopUp.target = self
+        repoPopUp.action = #selector(repoSelected(_:))
+        _ = TaskFormKit.requiredHeight(repoPopUp)
         closeButton.onAction = { [weak self] in self?.onCancel?() }
         submitButton.target = self
         submitButton.action = #selector(submitTapped)
@@ -1402,7 +1393,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         repoBlock.spacing = 4
         repoBlock.translatesAutoresizingMaskIntoConstraints = false
         repoBlock.addArrangedSubview(repoCaption)
-        repoBlock.addArrangedSubview(repoStack)
+        repoBlock.addArrangedSubview(repoPopUp)
         repoBlock.addArrangedSubview(repoNote)
         repoBlock.addArrangedSubview(repoActions)
         _ = TaskFormKit.requiredHeight(repoBlock)
@@ -1447,11 +1438,12 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
                              autoClose: autoCloseCheck.state == .on)
     }
 
-    /// A repository was clicked: fold the current draft first (its controls may
-    /// hold uncommitted input), then switch.
-    @objc func repoTapped(_ sender: NSButton) {
-        guard sender.tag >= 0, sender.tag < model.repos.count else { return }
-        apply(currentDraft.selectingRepo(model.repos[sender.tag].id))
+    /// A repository was picked from the dropdown: fold the current draft first
+    /// (its controls may hold uncommitted input), then switch.
+    @objc func repoSelected(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        guard index >= 0, index < model.repos.count else { return }
+        apply(currentDraft.selectingRepo(model.repos[index].id))
     }
 
     /// 「跟随主仓库配置」was toggled: ON drops the explicit values, OFF prefills
