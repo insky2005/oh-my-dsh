@@ -32,6 +32,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 - [skills-manager-design.md](design/panels/skills-manager-design.md) — 技能面板：四档级别、registry 与调用开关
 - [builtin-skills-design.md](design/panels/builtin-skills-design.md) — 内置 Skill 全局化 + 重命名
 - [task-todo-skill-design.md](design/panels/task-todo-skill-design.md) — `task-todo` 技能与 `/api/tasks/*` 契约
+- [multi-repo-workspace-design.md](design/panels/multi-repo-workspace-design.md) — 多仓库工作区：根目录非 git 时的仓库集合识别与 git 工作流（草案）
 - [file-panel-composer-reference.md](design/panels/file-panel-composer-reference.md) — 文件面板「添加到对话」`@` 引用
 
 ## design/channels/ — 通道设计
