@@ -1052,6 +1052,8 @@ final class IssueRunnerPanelController: NSObject {
             // through the shell's core bridge (the same session logs the audit panel
             // uses) — the runner calls it off the main thread.
             sessionReport: { sessionId in Self.sessionReport(sessionId: sessionId, workspace: repoRoot) },
+            // P1 完成校验：任务会话必须回显本次尝试的完成 marker，否则进入「待确认」。
+            requireCompletionMarker: true,
             // 队列完成回传：把报告投给创建队列的那个会话（同样是 session.prompt，
             // mode=queue）—— 这就是「做完把完成情况发回 dsh 会话 X」的落点。
             notifySession: { sessionId, text in

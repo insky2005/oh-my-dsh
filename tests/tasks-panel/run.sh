@@ -195,6 +195,17 @@ if grep -qF '请加载 issue-resolve' ../../platforms/macos/src/TasksRunner.swif
 fi
 echo "ok - issue 与手动任务共用同一份要求清单，且不再引用退役技能"
 
+# P1 完成校验：真实面板 env 必须开启任务完成 marker 门槛，runner 必须按本次尝试的
+# marker 判定 done。关掉它 = 「断网导致 turn 结束」又被当成「任务完成」。
+if ! grep -q 'requireCompletionMarker: true' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -q 'func makeTaskMarker' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'markerConfirmed(in:' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'case unverified = "tasks.errUnverified"' ../../platforms/macos/src/TasksCore.swift; then
+  echo "FAIL - P1 完成协议：面板必须开启 requireCompletionMarker，runner 必须实现 marker 判定"
+  exit 1
+fi
+echo "ok - P1 完成协议：任务完成 marker 由 runner 生成并作为 done 的唯一依据"
+
 # 任务面板的每一项设置都必须按工作区存：一个全局键会把某个工作区的选择泄进所有工作区
 # （「交付成功后自动关闭队列」曾写全局 tasksAutoCloseOnPublish，于是每个工作区都显示勾上）。
 IP=../../platforms/macos/src/IssueRunnerPanel.swift

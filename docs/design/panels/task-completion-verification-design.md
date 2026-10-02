@@ -1,6 +1,6 @@
 # 任务完成校验设计（Task Completion Verification）
 
-> 状态：草案（问题已定位，方案未实现）· 日期：2026-10-02 · 关联：docs/design/panels/issue-runner-design.md、docs/design/panels/tasks-queue-session-loop-design.md、platforms/macos/src/TasksRunner.swift
+> 状态：部分实现（P1 已落地：任务会话 marker 协议 + `finish()` 依据 marker 判定；P2–P4 待做）· 日期：2026-10-02 · 关联：docs/design/panels/issue-runner-design.md、docs/design/panels/tasks-queue-session-loop-design.md、platforms/macos/src/TasksRunner.swift
 > 来源：2026-10-02 多仓库队列实测（P2/P3/P4 断网未完成却被标记「已完成」）
 
 ## 1. 现象
@@ -45,6 +45,18 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 - 复用 finalize 已有机制：交付会话已经用 `TasksRunner.makeMarker()` 做「只采纳本次 turn 的汇报」（`platforms/macos/src/TasksRunner.swift` 的 `makeFinalizeRun` / `makeMarker`）。本设计只是把它从「交付会话」扩展到「任务会话」。
 - marker 由 runner 生成（带任务 id 或 UUID），随 prompt 注入；不写进卡片正文。
 
+**P1 实现状态（2026-10-02）**：
+
+- `TasksRunner.makeTaskMarker()` 生成 `DSH-TASK-DONE-XXXXXXXX`，`pump` 记录在
+  `TaskItem.completionMarker` / `TaskLocalState.taskMarkers`（只进 `local.json`），并把
+  `TaskPrompts.completionMarkerInstruction` 追加在提示词最后；交付会话的
+  `DSH-FINALIZE-` 与它两套独立。
+- `finish()` 只认**本次尝试** marker 在会话汇报**最后一个非空行**的回显：通过才
+  `.done`；marker 从写回卡片的汇报里剔除。
+- 兼容：`TaskRunnerEnv.requireCompletionMarker` 默认 `false`，真实面板
+  （`IssueRunnerPanel`）开启；不提供 `sessionReport` 的 legacy / headless env 不受门槛
+  影响（既有「正常结束即 done」用例走 legacy 路径）。
+
 ### 4.2 「待确认」状态
 
 会话结束但没有 marker / 汇报为空 → 任务进入**待确认**。两种落地方式：
@@ -77,8 +89,8 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 
 ## 5. 数据模型
 
-- `TaskFailure` 新增 `unverified`（L10n 键 `tasks.errUnverified`）；若走方式 A，则新增 `TaskState.needsReview`。
-- `TaskItem` 记录本次尝试的 marker（以及是否已校验），用于重启恢复后仍能判断；marker 是机器私有，只进 `local.json` / 内存，不进 `index.json` 的 issue 条目正文。
+- `TaskFailure` 新增 `unverified`（L10n 键 `tasks.errUnverified`）；若走方式 A，则新增 `TaskState.needsReview`。**P1 先走方式 B**：无 marker → `.failed + .unverified`（队列因此暂停），P2 再引入独立状态与卡片动作。
+- `TaskItem` 记录本次尝试的 marker（`completionMarker`）与是否已校验（`markerVerified`），用于重启恢复后仍能判断；marker 是机器私有，只进 `local.json` / 内存（`TaskLocalState.taskMarkers` / `taskMarkerVerified`），不进 `index.json` / `manual.json` 正文。
 
 ## 6. UI
 
@@ -103,7 +115,7 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 
 | 阶段 | 内容 | 价值 |
 |---|---|---|
-| **P1** | 任务会话 marker 协议 + `finish()` 依据 marker 判定 | 堵住「断网 = 完成」 |
+| **P1** ✅ | 任务会话 marker 协议 + `finish()` 依据 marker 判定 | 堵住「断网 = 完成」 |
 | **P2** | 待确认状态 + 卡片动作（重试 / 标记完成）+ 队列暂停 | 把判断权交回用户 |
 | **P3** | 完成通知诚实化 | 低成本纠偏 |
 | **P4** | `expectsCommit` 产物校验（可选） | 抓「什么都没干」 |
@@ -111,6 +123,7 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 ## 9. 测试
 
 - **运行器**：会话 idle 但汇报无 marker → 不判 done（待确认 / unverified）；有 marker → done；marker 不属于本次 turn → 不采纳；空汇报 → 待确认。
+  - P1 已在 `tests/tasks-panel/runner-tests.swift` 覆盖以上四种情形（含「marker 出现在中间行不采纳」与 `local.json` 往返 / `index.json` 不含 marker）。
 - **通知**：混合「完成 / 待确认」时的计数与文案。
 - **视图模型**：待确认徽标与「标记完成 / 重试」动作；队列暂停原因。
 - **兼容**：既有「会话正常结束即 done」的用例需要显式补上 marker（或标记为 legacy 路径）。

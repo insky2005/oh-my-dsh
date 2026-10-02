@@ -188,6 +188,9 @@ struct TaskRunnerEnv {
     /// BLOCKING (it reads a session log through the shell's core bridge), so the
     /// runner only calls it inside its background step.
     var sessionReport: (_ sessionId: String) -> String? = { _ in nil }
+    /// P1 完成校验：任务会话是否必须在最后一行回显 runner 注入的完成 marker。真实面板
+    /// 开启；legacy / 无 sessionReport 的 headless env 默认关闭（不设门槛，维持旧行为）。
+    var requireCompletionMarker: Bool = false
     /// Deliver the queue-completion report to the session that CREATED the queue.
     /// The runner calls it inside env.perform (never on the main thread). Defaults to
     /// "nothing delivered" so every existing test that does not care still compiles.
@@ -510,6 +513,14 @@ enum TaskPrompts {
 
     static let reportRequirement =
         "**必须**在结束时汇报：改了什么、怎么验证的、结果如何（没做完或失败也要说清楚，不要沉默结束）——这段文字会写回任务卡片，队列里后面的任务也会看到它；"
+
+    /// 任务会话的完成标记要求（P1 完成协议）：会话必须在最后单独一行原样回显 runner
+    /// 生成、随提示词注入的每任务唯一 marker。壳层据此判断「这次 turn 真的做完」——
+    /// dsh 不提供结束原因，断网导致的 turn 结束与正常完成在会话列表里长得一样，只有
+    /// 这个 marker 能把两者分开。与交付会话的 DSH-FINALIZE- 同一约定、两套独立。
+    static func completionMarkerInstruction(_ marker: String) -> String {
+        "最后**单独一行**原样输出完成标记（供壳层确认本任务已完成）：" + marker
+    }
 
     /// The issue task's prompt: the issue itself, then **the same requirements a
     /// manual task gets**.
@@ -1048,6 +1059,9 @@ final class TasksRunner {
         var branch: String?
         var sessionId: String
         var startedAt: Date
+        /// 本次尝试的完成 marker（P1）：只有会话最后的汇报回显了它，才算这次 turn
+        /// 真的做完。nil = legacy / 无 marker 的旧路径。
+        var marker: String?
     }
 
     /// The dedicated 开 PR 会话 of a finished queue (§V2-6): the session that pushes
@@ -1284,6 +1298,10 @@ final class TasksRunner {
         unknownPolls = 0
         missingPolls = 0
         board.markRunning(taskID, at: now)
+        // 本次尝试的完成 marker（P1）：随提示词注入，并记在任务 / local.json 上。
+        // 只有这次 turn 的汇报回显了它，finish() 才判 done。legacy env 不设门槛。
+        let marker: String? = env.requireCompletionMarker ? TasksRunner.makeTaskMarker() : nil
+        if let marker = marker { board.recordAttemptMarker(taskID, marker) }
         persist()
         log("tasks: starting " + taskID + " on " + (branch ?? "the current branch"))
 
@@ -1331,7 +1349,11 @@ final class TasksRunner {
             if let brief = brief, !brief.isEmpty {
                 log("tasks: brief for " + taskID + " is " + String(brief.count) + " chars")
             }
-            let prompt = promptText(task, queue, brief)
+            // 完成标记追加在提示词最后一行：任务会话的汇报必须回显它（P1）。
+            var prompt = promptText(task, queue, brief)
+            if let marker = marker {
+                prompt += "\n\n" + TaskPrompts.completionMarkerInstruction(marker)
+            }
             guard let sessionId = createSession(repoRoot) else {
                 startResult = .failed(.session, nil, nil)
                 return
@@ -1368,7 +1390,8 @@ final class TasksRunner {
             }
             let queueID = board.task(taskID)?.queueId
             phase = .active(Active(taskID: taskID, queueID: queueID, branch: branch,
-                                   sessionId: sessionId, startedAt: now))
+                                   sessionId: sessionId, startedAt: now,
+                                   marker: board.task(taskID)?.completionMarker))
             board.local.sessions[taskID] = sessionId
             if let i = board.index(ofTask: taskID) { board.tasks[i].sessionId = sessionId }
             env.log("tasks: " + taskID + " running in " + sessionId)
@@ -1477,17 +1500,33 @@ final class TasksRunner {
             log("tasks: " + taskID + " finishes its own work — the queue's finalize session runs later")
         }
 
+        let marker = active.marker
         phase = .finishing(taskID)
-        var outcome: FinishOutcome = .done
         var report: String? = nil
+        // 没有 marker 的是 legacy / 旧路径：不设门槛。有 marker 就必须由本次 turn 的
+        // 最后一行回显它，否则进入「待确认」——不允许再写死 done。
+        var verified = (marker == nil)
         env.perform({
             // The 汇报 is read HERE, while the session still exists, and written back
             // onto the task: the card shows it, and the next task of the queue gets it
             // as its 前置汇报 even if this session is deleted tomorrow.
-            report = sessionReport(active.sessionId)
+            let raw = sessionReport(active.sessionId)
+            if let marker = marker {
+                // P1 完成协议：只认本次 turn 最后一行回显的 marker；写回卡片的汇报里
+                // 去掉 marker（它是壳层的机械信号，不是代理的汇报内容）。
+                verified = TasksRunner.markerConfirmed(in: raw, marker: marker)
+                report = TasksRunner.strippingMarker(raw, marker: marker)
+            } else {
+                report = raw
+            }
         }, {
+            self.board.recordMarkerVerified(taskID, verified)
+            if !verified {
+                log("tasks: " + taskID + " 会话结束但最后汇报没有本次完成标记——待确认（不判 done）")
+            }
+            let outcome: FinishOutcome = verified ? .done : .failed(.unverified)
             self.applyFinish(taskID: taskID, outcome: outcome, now: now, report: report,
-                             finalizeQueueID: wantsFinalize ? queue?.id : nil)
+                             finalizeQueueID: (wantsFinalize && verified) ? queue?.id : nil)
         })
     }
 
@@ -1778,9 +1817,32 @@ final class TasksRunner {
                      targets: targets, runs: runs, replacesRepoIDs: replacesRepoIDs)
     }
 
-    /// A marker the finalize session must echo back verbatim on its own last line.
-    static func makeMarker() -> String {
-        "DSH-FINALIZE-" + UUID().uuidString.prefix(8).uppercased()
+    /// A marker a session must echo back verbatim on its own last line.
+    static func makeMarker(prefix: String = "DSH-FINALIZE-") -> String {
+        prefix + UUID().uuidString.prefix(8).uppercased()
+    }
+
+    /// 任务会话的完成 marker（P1）：每任务、每次尝试唯一，形如
+    /// DSH-TASK-DONE-XXXXXXXX。与交付会话的 DSH-FINALIZE- 两套独立、互不干扰。
+    static func makeTaskMarker() -> String {
+        makeMarker(prefix: "DSH-TASK-DONE-")
+    }
+
+    /// 会话最后的汇报是否回显了**本次** marker。只认最后一个非空行，且必须是本次
+    /// 尝试的随机串 —— 旧 turn / 别处复述的 marker 不算数。
+    static func markerConfirmed(in report: String?, marker: String) -> Bool {
+        guard let report = report else { return false }
+        let last = report.split(separator: "\n", omittingEmptySubsequences: true)
+            .last
+            .map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        return last.contains(marker)
+    }
+
+    /// 把 marker 从会话汇报里去掉：它是壳层的机械信号，不是代理的汇报内容。
+    static func strippingMarker(_ report: String?, marker: String?) -> String? {
+        guard let report = report, let marker = marker else { return report }
+        return report.replacingOccurrences(of: marker, with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func beginPRRun(_ run: PRRun) {

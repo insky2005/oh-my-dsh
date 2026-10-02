@@ -102,10 +102,32 @@ final class FakeDsh {
     var reports: [String: String] = [:]
     /// Which sessions were asked for a report, in order.
     private(set) var reportCalls: [String] = []
+    /// Whether a simulated agent echoes the TASK completion marker back on its last
+    /// line the way the prompt asks (P1). ON by default, so every existing scenario
+    /// runs through the marker gate exactly like a compliant agent would; a test
+    /// about a MISSING/stale marker turns it off.
+    var echoesTaskMarkers = true
 
     func report(_ id: String) -> String? {
         reportCalls.append(id)
-        return reports[id]
+        var text = reports[id]
+        if echoesTaskMarkers, let marker = Self.taskMarker(in: prompts[id] ?? "") {
+            let base = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !base.contains(marker) {
+                text = base.isEmpty ? marker : base + "\n" + marker
+            }
+        }
+        return text
+    }
+
+    /// The task completion marker (DSH-TASK-DONE-XXXXXXXX) in a prompt, or nil.
+    /// The finalize marker (DSH-FINALIZE-) is a different namespace and deliberately
+    /// not matched.
+    private static func taskMarker(in prompt: String) -> String? {
+        guard let range = prompt.range(of: "DSH-TASK-DONE-", options: .backwards) else { return nil }
+        let tail = prompt[range.upperBound...].prefix { $0.isHexDigit }
+        let hex = String(tail.prefix(8))
+        return hex.count == 8 ? "DSH-TASK-DONE-" + hex : nil
     }
 
     func sessionState(_ id: String) -> SessionState {
@@ -243,6 +265,7 @@ final class Harness {
                                           shape: shape)
             },
             sessionReport: { id in dsh.report(id) },
+            requireCompletionMarker: true,
             notifySession: { id, text in dsh.notify(id, text) },
             persist: { board in rec.persistCount += 1; _ = board },
             persistIssueTask: { task in rec.issueWrites.append(task.id) },
@@ -314,6 +337,7 @@ final class MultiRepoHarness {
             findExistingPRFor: findExistingPRFor,
             promptText: { _, _, brief in brief ?? "" },
             sessionReport: { id in dsh.report(id) },
+            requireCompletionMarker: true,
             notifySession: { id, text in dsh.notify(id, text) },
             persist: { board in rec.persistCount += 1; _ = board },
             persistIssueTask: { task in rec.issueWrites.append(task.id) },
@@ -2583,6 +2607,98 @@ do {
           "已成功的仓库不重试")
     check(!h.runner.retryFailedRepo(queueID: queue.id, repoID: "gone"),
           "不存在的仓库不重试")
+}
+
+// MARK: - P1 完成 marker 协议
+
+section("P1 完成 marker：会话最后一行回显本次 marker 才判 done")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    let prompt = h.dsh.prompts["session-1"] ?? ""
+    check(prompt.contains("DSH-TASK-DONE-"), "提示词里带本次完成 marker")
+    check(prompt.hasSuffix(prompt.range(of: "DSH-TASK-DONE-[0-9A-F]{8}",
+                                        options: .regularExpression).map { String(prompt[$0]) } ?? ""),
+          "marker 指令落在提示词最后")
+    let marker = prompt.range(of: "DSH-TASK-DONE-[0-9A-F]{8}", options: .regularExpression)
+        .map { String(prompt[$0]) } ?? "DSH-TASK-DONE-NONE"
+    eq(h.board.task(taskID)?.completionMarker, marker, "任务记录了本次尝试的 marker")
+    eq(h.board.task(taskID)?.markerVerified, false, "启动时尚未校验")
+
+    h.dsh.reports["session-1"] = "改完了，测试通过。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .done, "汇报回显了本次 marker → done")
+    eq(h.board.task(taskID)?.markerVerified, true, "并记录了已校验")
+    check(!((h.board.task(taskID)?.report) ?? "").contains("DSH-TASK-DONE-"),
+          "marker 不写回卡片汇报")
+    eq(h.board.local.taskMarkers[taskID], marker, "marker 落进 local.json 的状态")
+    eq(h.board.local.taskMarkerVerified[taskID], true, "已校验落进 local.json")
+    let reloaded = TaskLocalState.from(h.board.local.dictionary())
+    eq(reloaded.taskMarkers[taskID], marker, "local.json 往返后 marker 还在")
+    eq(reloaded.taskMarkerVerified[taskID], true, "local.json 往返后校验状态还在")
+
+    var gh = TaskItem.github(number: 7, title: "x")
+    gh.completionMarker = marker
+    gh.markerVerified = true
+    let entry = gh.indexDictionary()
+    check(entry["completionMarker"] == nil && entry["markerVerified"] == nil,
+          "marker 不进 index.json 的 issue 条目正文")
+    _ = queueID
+}
+
+section("P1 完成 marker：无 marker / 非本次 marker / 空汇报 → 待确认，不判 done")
+do {
+    // 会话 idle，但汇报里没有本次 marker。
+    let (board1, task1, queue1) = singleTaskBoard(autoPR: false)
+    let h1 = Harness(board: board1)
+    h1.dsh.echoesTaskMarkers = false
+    _ = h1.runner.enqueue(taskID: task1, into: queue1)
+    h1.dsh.reports["session-1"] = "改完了，但忘了写完成标记。"
+    h1.dsh.finishAll()
+    _ = h1.runner.step()
+    eq(h1.board.task(task1)?.state, .failed, "无 marker → 不判 done")
+    eq(h1.board.task(task1)?.error, "tasks.errUnverified", "而是待确认（unverified）")
+    eq(h1.board.task(task1)?.markerVerified, false, "未通过校验")
+    check(h1.board.queue(queue1)?.state == .paused, "队列暂停：不继续后面的任务、不交付")
+
+    // 汇报里是别的 marker（旧 turn / 复述）→ 不采纳。
+    let (board2, task2, queue2) = singleTaskBoard(autoPR: false)
+    let h2 = Harness(board: board2)
+    h2.dsh.echoesTaskMarkers = false
+    _ = h2.runner.enqueue(taskID: task2, into: queue2)
+    h2.dsh.reports["session-1"] = "上一轮的完成标记：DSH-TASK-DONE-DEADBEEF"
+    h2.dsh.finishAll()
+    _ = h2.runner.step()
+    eq(h2.board.task(task2)?.state, .failed, "非本次 marker → 不判 done")
+    eq(h2.board.task(task2)?.error, "tasks.errUnverified", "同样进入待确认")
+
+    // 本次 marker 出现在中间一行、最后一行另有内容 → 只认最后一行，不采纳。
+    let (board3, task3, queue3) = singleTaskBoard(autoPR: false)
+    let h3 = Harness(board: board3)
+    h3.dsh.echoesTaskMarkers = false
+    _ = h3.runner.enqueue(taskID: task3, into: queue3)
+    let prompt3 = h3.dsh.prompts["session-1"] ?? ""
+    let marker3 = prompt3.range(of: "DSH-TASK-DONE-[0-9A-F]{8}", options: .regularExpression)
+        .map { String(prompt3[$0]) } ?? "DSH-TASK-DONE-NONE"
+    h3.dsh.reports["session-1"] = "本次完成标记 " + marker3 + "\n后面还有一句收尾的话"
+    h3.dsh.finishAll()
+    _ = h3.runner.step()
+    eq(h3.board.task(task3)?.state, .failed, "marker 不在最后一行 → 不采纳")
+
+    // 空汇报（会话没有任何最后文本）→ 待确认。
+    let (board4, task4, queue4) = singleTaskBoard(autoPR: false)
+    let h4 = Harness(board: board4)
+    h4.dsh.echoesTaskMarkers = false
+    _ = h4.runner.enqueue(taskID: task4, into: queue4)
+    h4.dsh.finishAll()
+    _ = h4.runner.step()
+    eq(h4.board.task(task4)?.state, .failed, "空汇报 → 不判 done")
+    eq(h4.board.task(task4)?.error, "tasks.errUnverified", "空汇报进入待确认")
+    _ = queue2
+    _ = queue3
+    _ = queue4
 }
 
 if failures == 0 {

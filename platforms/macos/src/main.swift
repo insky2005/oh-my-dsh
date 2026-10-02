@@ -613,6 +613,7 @@ enum L10n {
         "tasks.errPR": ("上一次开 PR 没有成功（会话结束了却没给出 PR 链接）——点这里再开一次；详情看那个会话与日志", "The last PR attempt produced nothing (the session ended without a PR URL) — click to try again; see that session and the log"),
         "tasks.errName": ("任务标题不能为空", "A task title is required"),
         "tasks.errInterrupted": ("上次运行被中断（会话已随 App 退出结束）", "Interrupted: the session ended with the app"),
+        "tasks.errUnverified": ("会话结束了，但最后的汇报没有本次完成标记——无法确认任务真的做完（可能是断网或被打断）。请核对改动后再继续", "The session ended without this run's completion marker, so the task cannot be confirmed complete (it may have been interrupted). Review the changes before continuing"),
         "tasks.errNotGit": ("当前工作区不是 git 仓库：切不到队列的分支（点卡片上的「不切分支并重试」，或清空该队列的分支即可运行）", "This workspace is not a git repository, so the queue's branch cannot be checked out — use “Retry without a branch” on the card, or clear the queue's branch"),
         "tasks.errDirtyTree": ("工作区有未提交改动，已停止切换分支（请先 commit 或 stash）", "The worktree has uncommitted changes; branch switching stopped (commit or stash first)"),
         "tasks.errRepoDirty": ("多仓库预检未通过：仓库 %@ 有未提交改动（尚未切换任何仓库，请先 commit 或 stash）", "Multi-repo pre-flight failed: repo %@ has uncommitted changes (nothing was switched yet — commit or stash first)"),

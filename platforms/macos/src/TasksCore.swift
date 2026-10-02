@@ -29,6 +29,10 @@ enum TaskFailure: String {
     case prompt = "tasks.errPrompt"
     case timeout = "tasks.errTimeout"
     case noPush = "tasks.errNoPush"
+    /// 会话结束了，但本次尝试的完成 marker 没有回显：无法证明任务真的做完（断网导致
+    /// 的 turn 结束与正常结束在 dsh 列表里长得一样）。P1 先以「失败 + 待确认」落地，
+    /// P2 会把它换成独立的 needsReview 状态。
+    case unverified = "tasks.errUnverified"
 }
 
 // MARK: - Source & state
@@ -156,6 +160,13 @@ struct TaskItem: Equatable {
     /// exists only on this machine): it belongs to local.json, never to manual.json /
     /// index.json — the committed index keeps its v1 shape and stays shareable.
     var report: String?
+    /// 本次尝试的完成 marker（runner 生成、写进提示词，会话须在最后一行回显）。它只
+    /// 进 local.json / 内存，绝不进 index.json / manual.json：机器私有，且重启恢复后
+    /// 据此判断这次尝试是否已被校验过（见 markerVerified）。
+    var completionMarker: String?
+    /// 本次尝试的 marker 是否已经校验通过（会话最后一行回显了它）。只有通过才判
+    /// done；否则进入「待确认」（P1 先以 failed + unverified 落地）。
+    var markerVerified: Bool
 
     init(id: String,
          source: TaskSource,
@@ -172,7 +183,9 @@ struct TaskItem: Equatable {
          errorDetail: String? = nil,
          startedAt: Date? = nil,
          finishedAt: Date? = nil,
-         report: String? = nil) {
+         report: String? = nil,
+         completionMarker: String? = nil,
+         markerVerified: Bool = false) {
         self.id = id
         self.source = source
         self.number = number
@@ -189,6 +202,8 @@ struct TaskItem: Equatable {
         self.startedAt = startedAt
         self.finishedAt = finishedAt
         self.report = report
+        self.completionMarker = completionMarker
+        self.markerVerified = markerVerified
     }
 
     /// ISO-8601 in the exact shape v1 wrote (2026-08-20T15:26:43Z).
@@ -1087,6 +1102,11 @@ struct TaskLocalState: Equatable {
     /// queue id -> ISO-8601 stamp of the completion report already sent. Keeps the
     /// report idempotent and lets a restart pick up one the app never got to send.
     var queueNotified: [String: String] = [:]
+    /// task id -> 本次尝试的完成 marker（P1 完成校验）。机器私有，只进 local.json；
+    /// 会话日志与卡片正文都不该出现它。
+    var taskMarkers: [String: String] = [:]
+    /// task id -> 该 marker 是否已校验通过。重启恢复后据此判断，无需重新问会话。
+    var taskMarkerVerified: [String: Bool] = [:]
 
     /// v1 keyed sessions by ISSUE NUMBER ("6"); v2 keys them by task id
     /// ("issue-6"). Reading accepts both and rewrites nothing on load.
@@ -1116,6 +1136,14 @@ struct TaskLocalState: Equatable {
         s.runningTaskID = d["runningTaskId"] as? String
         if let raw = d["queueSessions"] as? [String: String] { s.queueSessions = raw }
         if let raw = d["queueNotified"] as? [String: String] { s.queueNotified = raw }
+        if let raw = d["taskMarkers"] as? [String: String] {
+            for (key, text) in raw where !text.isEmpty { s.taskMarkers[taskID(fromStoredKey: key)] = text }
+        }
+        if let raw = d["taskMarkerVerified"] as? [String: Any] {
+            for (key, value) in raw {
+                if let verified = value as? Bool { s.taskMarkerVerified[taskID(fromStoredKey: key)] = verified }
+            }
+        }
         return s
     }
 
@@ -1131,6 +1159,8 @@ struct TaskLocalState: Equatable {
         if !reports.isEmpty { d["reports"] = reports }
         if !queueSessions.isEmpty { d["queueSessions"] = queueSessions }
         if !queueNotified.isEmpty { d["queueNotified"] = queueNotified }
+        if !taskMarkers.isEmpty { d["taskMarkers"] = taskMarkers }
+        if !taskMarkerVerified.isEmpty { d["taskMarkerVerified"] = taskMarkerVerified }
         if let activeQueueID = activeQueueID { d["activeQueueId"] = activeQueueID }
         if let runningTaskID = runningTaskID { d["runningTaskId"] = runningTaskID }
         return d
@@ -1397,6 +1427,23 @@ struct TaskBoard {
         local.reports[taskID] = text
     }
 
+    /// 记录本次尝试的完成 marker（runner 在任务启动时调用，随提示词注入）。重试会
+    /// 覆盖它：marker 属于「这一次尝试」，不是任务的永久属性。只落 local.json。
+    mutating func recordAttemptMarker(_ taskID: String, _ marker: String) {
+        guard let i = index(ofTask: taskID) else { return }
+        tasks[i].completionMarker = marker
+        tasks[i].markerVerified = false
+        local.taskMarkers[taskID] = marker
+        local.taskMarkerVerified[taskID] = false
+    }
+
+    /// 标记本次尝试的 marker 是否通过校验（会话最后一行是否回显了它）。
+    mutating func recordMarkerVerified(_ taskID: String, _ verified: Bool) {
+        guard let i = index(ofTask: taskID) else { return }
+        tasks[i].markerVerified = verified
+        local.taskMarkerVerified[taskID] = verified
+    }
+
     /// Fail a task. A queue containing it is PAUSED and its id returned: inside
     /// a queue every task shares one branch, so running the next one would build
     /// on half-finished work. The user then chooses 重试 or 跳过并继续.
@@ -1474,6 +1521,11 @@ struct TaskBoard {
         // next task in the queue as if it were this run's outcome.
         tasks[i].report = nil
         local.reports[taskID] = nil
+        // The next attempt gets a fresh marker: the old one must never confirm it.
+        tasks[i].completionMarker = nil
+        tasks[i].markerVerified = false
+        local.taskMarkers[taskID] = nil
+        local.taskMarkerVerified[taskID] = nil
         if let queueID = tasks[i].queueId, let qi = index(ofQueue: queueID) {
             tasks[i].state = .queued
             queues[qi].state = .active
@@ -1551,10 +1603,14 @@ struct TaskBoard {
 
     /// Attach the machine-scoped half of a loaded board: the dsh session each task
     /// ran in, and the 汇报 each one left behind.
-    mutating func attachSessions(_ sessions: [String: String], reports: [String: String] = [:]) {
+    mutating func attachSessions(_ sessions: [String: String], reports: [String: String] = [:],
+                                 markers: [String: String] = [:],
+                                 markerVerified: [String: Bool] = [:]) {
         for i in tasks.indices {
             if let sessionId = sessions[tasks[i].id] { tasks[i].sessionId = sessionId }
             if let report = reports[tasks[i].id] { tasks[i].report = report }
+            if let marker = markers[tasks[i].id] { tasks[i].completionMarker = marker }
+            if let verified = markerVerified[tasks[i].id] { tasks[i].markerVerified = verified }
         }
     }
 
