@@ -979,6 +979,8 @@ struct TaskSettingsModel: Equatable {
     /// 仓库选择区（N==1 只读锁定）。
     var repos: [TaskSettingsRepoModel] = []
     var selectedRepoID: String? = nil
+    /// issue 归属仓库（设计 §9）：nil = 跟随主仓库；非 nil = 显式指定。
+    var issueRepoID: String? = nil
 
     var isMultiRepo: Bool { !repos.isEmpty }
     var selectedRepoIndex: Int? { repos.firstIndex { $0.id == selectedRepoID } }
@@ -990,6 +992,10 @@ struct TaskSettingsModel: Equatable {
     var primaryRepoID: String? { primaryRepo?.id }
     var followsPrimary: Bool { selectedRepo?.followsPrimary ?? false }
     var repoCount: Int { repos.count }
+    /// 多仓库模式才显示 issue 归属配置（单仓库 / plain 维持今天形态）。
+    var showsIssueRepo: Bool { isMultiRepo }
+    /// issue 归属是否为显式指定（nil = 跟随主仓库）。
+    var issueRepoIsExplicit: Bool { issueRepoID != nil }
 
     // The active repo's values (or the single-repo fields when there is no repo).
     var activeToken: String { selectedRepo?.token ?? token }
@@ -1023,6 +1029,13 @@ struct TaskSettingsModel: Equatable {
             copy.defaultIntegration = integration
             copy.autoCloseOnPublish = autoClose
         }
+        return copy
+    }
+
+    /// 选择 issue 归属仓库；nil = 跟随主仓库（design §9）。
+    func selectingIssueRepo(_ id: String?) -> TaskSettingsModel {
+        var copy = self
+        copy.issueRepoID = (id?.isEmpty == true) ? nil : id
         return copy
     }
 
@@ -1152,9 +1165,15 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     let repoNote = TaskFormKit.hintLabel(.secondaryLabelColor)
     let followCheck: NSButton
     let primaryButton: NSButton
+    /// issue 归属仓库（工作区级，设计 §9）：一个「跟随主仓库」+ 每个仓库的下拉。
+    let issueRepoBlock = NSStackView()
+    let issueRepoCaption = TaskFormKit.caption()
+    let issueRepoPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    let issueRepoNote = TaskFormKit.hintLabel(.secondaryLabelColor)
     /// The repo ids the buttons were last built for; the view is only rebuilt when
     /// the set (or its order) changes, so switching repos does not thrash it.
     private var configuredRepoIDs: [String] = []
+    private var configuredIssueRepoIDs: [String] = []
     /// The token row, kept so a non-GitHub repo can hide it (没有 token 框).
     private var tokenRow: NSStackView!
     /// The workflow + auto-close blocks, disabled while following the primary.
@@ -1204,7 +1223,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
     override func layout() {
         super.layout()
         let width = max(160, bounds.width - 32)
-        for label in [info, tokenHint, autoCloseHint, repoNote] {
+        for label in [info, tokenHint, autoCloseHint, repoNote, issueRepoNote] {
             guard abs(label.preferredMaxLayoutWidth - width) > 0.5 else { continue }
             label.preferredMaxLayoutWidth = width
             label.invalidateIntrinsicContentSize()
@@ -1259,6 +1278,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         cancelButton.title = L10n.tr("btn.cancel")
         closeButton.toolTip = L10n.tr("btn.cancel")
         syncRepoPicker(model)
+        syncIssueRepo(model)
     }
 
     /// Show / hide and populate the multi-repo 仓库 selector + the 跟随主仓库
@@ -1299,6 +1319,38 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
             ? L10n.tr("tasks.settings.primaryRepoInfo", model.repoCount)
             : L10n.tr("tasks.settings.followerRepoInfo", model.repoCount)
         repoNote.isHidden = false
+    }
+
+    /// issue 归属仓库：多仓库模式显示；选项 0 = 跟随主仓库，其后每个仓库。
+    private func syncIssueRepo(_ model: TaskSettingsModel) {
+        issueRepoBlock.isHidden = !model.showsIssueRepo
+        guard model.showsIssueRepo else { return }
+        issueRepoCaption.stringValue = L10n.tr("tasks.settings.issueRepo")
+        let ids = model.repos.map { $0.id }
+        if ids != configuredIssueRepoIDs || issueRepoPopUp.numberOfItems != model.repos.count + 1 {
+            configuredIssueRepoIDs = ids
+            issueRepoPopUp.removeAllItems()
+            issueRepoPopUp.addItem(withTitle: L10n.tr("tasks.settings.issueRepoFollow"))
+            for repo in model.repos { issueRepoPopUp.addItem(withTitle: issueRepoLabel(repo)) }
+        } else {
+            issueRepoPopUp.item(at: 0)?.title = L10n.tr("tasks.settings.issueRepoFollow")
+            for (index, repo) in model.repos.enumerated() where index + 1 < issueRepoPopUp.numberOfItems {
+                issueRepoPopUp.item(at: index + 1)?.title = issueRepoLabel(repo)
+            }
+        }
+        if model.issueRepoIsExplicit, let id = model.issueRepoID,
+           let index = model.repos.firstIndex(where: { $0.id == id }) {
+            issueRepoPopUp.selectItem(at: index + 1)
+        } else {
+            issueRepoPopUp.selectItem(at: 0)
+        }
+        issueRepoNote.stringValue = L10n.tr("tasks.settings.issueRepoInfo")
+        issueRepoNote.isHidden = false
+    }
+
+    private func issueRepoLabel(_ repo: TaskSettingsRepoModel) -> String {
+        let base = repo.github.map { $0.owner + "/" + $0.name } ?? repo.displayName
+        return repo.isPrimary ? base + L10n.tr("tasks.repoPrimarySuffix") : base
     }
 
     private func build() {
@@ -1364,6 +1416,18 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         repoPopUp.target = self
         repoPopUp.action = #selector(repoSelected(_:))
         _ = TaskFormKit.requiredHeight(repoPopUp)
+        issueRepoCaption.setContentHuggingPriority(.required, for: .horizontal)
+        issueRepoCaption.setContentCompressionResistancePriority(.required, for: .horizontal)
+        issueRepoPopUp.font = .systemFont(ofSize: 12)
+        issueRepoPopUp.translatesAutoresizingMaskIntoConstraints = false
+        issueRepoPopUp.target = self
+        issueRepoPopUp.action = #selector(issueRepoSelected(_:))
+        _ = TaskFormKit.requiredHeight(issueRepoPopUp)
+        issueRepoNote.font = TaskFormKit.captionFont
+        issueRepoNote.textColor = .tertiaryLabelColor
+        issueRepoNote.lineBreakMode = .byWordWrapping
+        issueRepoNote.maximumNumberOfLines = 0
+        _ = TaskFormKit.requiredHeight(issueRepoNote)
         closeButton.onAction = { [weak self] in self?.onCancel?() }
         submitButton.target = self
         submitButton.action = #selector(submitTapped)
@@ -1407,17 +1471,27 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         repoBlock.translatesAutoresizingMaskIntoConstraints = false
         repoBlock.addArrangedSubview(repoCaption)
         repoBlock.addArrangedSubview(repoRow)
-        // 下拉下面：非主仓库的「跟随」勾选 + 说明信息（主仓库只有说明信息）。
-        repoBlock.addArrangedSubview(followCheck)
+        // 下拉下面：说明信息在前，「跟随主仓库配置」勾选在后（用户 2026-10-02）。
         repoBlock.addArrangedSubview(repoNote)
+        repoBlock.addArrangedSubview(followCheck)
         // 说明信息的换行宽度跟随 block（此时已有共同祖先，约束才能激活）。
         repoNote.widthAnchor.constraint(equalTo: repoBlock.widthAnchor).isActive = true
         _ = TaskFormKit.requiredHeight(repoBlock)
+        // issue 归属仓库（工作区级）：标题 + 下拉（跟随主仓库 / 各仓库）+ 说明。
+        issueRepoBlock.orientation = .vertical
+        issueRepoBlock.alignment = .leading
+        issueRepoBlock.spacing = 4
+        issueRepoBlock.translatesAutoresizingMaskIntoConstraints = false
+        issueRepoBlock.addArrangedSubview(issueRepoCaption)
+        issueRepoBlock.addArrangedSubview(issueRepoPopUp)
+        issueRepoBlock.addArrangedSubview(issueRepoNote)
+        issueRepoNote.widthAnchor.constraint(equalTo: issueRepoBlock.widthAnchor).isActive = true
+        _ = TaskFormKit.requiredHeight(issueRepoBlock)
         let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
         // 仓库选择在最上（多仓库时），随后 工作流、自动关闭、GitHub Token —— 与
         // intro 的两段顺序一致；单仓库时 repoBlock 隐藏，顺序与今天不变。
         let column = NSStackView(views: [headingRow, info, repoBlock, workflowBlock,
-                                         autoCloseBlock, tokenRow, tokenHint, buttons])
+                                         autoCloseBlock, tokenRow, tokenHint, issueRepoBlock, buttons])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 8
@@ -1425,7 +1499,7 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         _ = TaskFormKit.requiredHeight(column)
         addSubview(column)
         TaskFormKit.stretch([headingRow, info, repoBlock, workflowBlock, autoCloseBlock,
-                             tokenRow, tokenHint], to: column)
+                             tokenRow, tokenHint, issueRepoBlock], to: column)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
@@ -1460,6 +1534,15 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         let index = sender.indexOfSelectedItem
         guard index >= 0, index < model.repos.count else { return }
         apply(currentDraft.selectingRepo(model.repos[index].id))
+    }
+
+    /// issue 归属下拉：0 = 跟随主仓库（清掉显式值），其后是各个仓库。
+    @objc func issueRepoSelected(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        let id: String? = index <= 0
+            ? nil
+            : (index - 1 < model.repos.count ? model.repos[index - 1].id : nil)
+        apply(currentDraft.selectingIssueRepo(id))
     }
 
     /// 「跟随主仓库配置」was toggled: ON drops the explicit values, OFF prefills

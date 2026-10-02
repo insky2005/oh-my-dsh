@@ -782,6 +782,10 @@ enum L10n {
         "tasks.settings.followerRepoInfo": ("本工作区有 %d 个仓库。非主仓库默认跟随主仓库配置；取消「跟随主仓库配置」后，可以为它单独设置「工作流 / 交付后自动关闭」；点「设为主仓库」可把它变成默认目标。", "This workspace has %d repositories. Other repositories follow the primary by default; clear \"Follow the primary repository's settings\" to give this one its own workflow / auto-close settings. Click \"Set as primary\" to make it the workspace default."),
         "tasks.settings.followPrimary": ("跟随主仓库配置", "Follow the primary repository's settings"),
         "tasks.settings.setPrimary": ("设为主仓库", "Set as primary"),
+        // issue 归属仓库（设计 §9）：工作区级，默认跟随主仓库。
+        "tasks.settings.issueRepo": ("issue 归属仓库", "Issue repository"),
+        "tasks.settings.issueRepoFollow": ("跟随主仓库", "Follow the primary"),
+        "tasks.settings.issueRepoInfo": ("issue 列表、刷新与「全部处理」都以这个仓库为准；默认跟随主仓库。", "Issue listing, refresh and \"Process all\" use this repository; by default it follows the primary."),
         "tasks.queue.close": ("关闭队列", "Close Queue"),
         "tasks.closeQueueTitle": ("关闭队列「%@」？", "Close queue %@?"),
         "tasks.closeQueueInfo": ("关闭后仍保留任务、分支与 PR 记录，但不再接收任务，也不能启动或交付。", "Closing keeps the task, branch and PR record, but the queue accepts no more tasks and cannot be started or delivered."),

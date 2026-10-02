@@ -61,6 +61,11 @@ func selectRepo(_ form: TaskSettingsView, _ index: Int) {
     form.repoSelected(form.repoPopUp)
 }
 
+/// 设置抽屉里 issue 归属下拉的标题列表。
+func issueRepoPopupTitles(_ form: TaskSettingsView) -> [String] {
+    (0..<form.issueRepoPopUp.numberOfItems).compactMap { form.issueRepoPopUp.item(at: $0)?.title }
+}
+
 /// Every descendant of `view` (depth-first) that is a `type` — the cards are
 /// stacks inside stacks, so their rows are reached by walking, not by index.
 func descendants<T>(_ view: NSView, of type: T.Type) -> [T] {
@@ -847,6 +852,18 @@ do {
     check(form.autoCloseCheck.state == .on, "显示继承自主仓库的自动关闭")
     check(!form.tokenField.isEnabled, "非 GitHub 仓库没有 token 框")
 
+    // issue 归属配置（工作区级）：默认跟随主仓库，可显式选一个仓库。
+    check(!form.issueRepoBlock.isHidden, "多仓库显示 issue 归属配置")
+    eq(issueRepoPopupTitles(form),
+       [L10n.tr("tasks.settings.issueRepoFollow"),
+        "ws" + L10n.tr("tasks.repoPrimarySuffix"), "repo-b"],
+       "issue 选项：跟随主仓库 + 各仓库（主仓库带标识）")
+    check(form.issueRepoPopUp.indexOfSelectedItem == 0, "issue 默认跟随主仓库")
+    form.issueRepoPopUp.selectItem(at: 2)
+    form.issueRepoSelected(form.issueRepoPopUp)
+    check(form.currentDraft.issueRepoIsExplicit, "选中仓库后成为显式")
+    eq(form.currentDraft.issueRepoID, "repo-b", "显式 issue 归属 = repo-b")
+
     // 关闭跟随：用主仓库当前值预填，从此独立存储。
     form.followCheck.state = .off
     form.followTapped()
@@ -861,6 +878,7 @@ do {
     eq(savedB?.explicitAutoClose, false, "b 独立存储自己的自动关闭")
     eq(savedB?.followsPrimary, false, "b 不再跟随")
     eq(submitted?.repos.first { $0.id == "." }?.explicitIntegration, .merge, "主仓库的值不受 b 影响")
+    eq(submitted?.issueRepoID, "repo-b", "提交带上显式 issue 归属")
 
     // N==1 多仓库（根非 git + 唯一子仓库）：选择区只读锁定。
     var one = TaskSettingsModel(token: "", defaultIntegration: .merge,
@@ -881,6 +899,7 @@ do {
     _ = layout(legacy, width: 440)
     check(legacy.repoPopUp.numberOfItems == 0, "单仓库没有仓库按钮")
     check(legacy.repoBlock.isHidden, "单仓库隐藏仓库选择区")
+    check(legacy.issueRepoBlock.isHidden, "单仓库隐藏 issue 归属配置")
 }
 
 section("多仓库设置抽屉：改主仓库后的重排与继承")

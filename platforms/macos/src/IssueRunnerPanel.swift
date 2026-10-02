@@ -2312,6 +2312,10 @@ final class IssueRunnerPanelController: NSObject {
             autoCloseOnPublish: repos.first(where: { $0.isPrimary })?.autoCloseOnPublish ?? false)
         model.repos = repos
         model.selectedRepoID = primaryID
+        // issue 归属（显式值；指向已移除的仓库则视为未指定 → 跟随主仓库）。
+        model.issueRepoID = store.storedIssueRepoID(forWorkspace: path).flatMap { id in
+            workspaceRepoSet.repos.contains { $0.id == id } ? id : nil
+        }
         return model
     }
 
@@ -2346,6 +2350,11 @@ final class IssueRunnerPanelController: NSObject {
                 }
             }
             Self.saveRepoSettings(store)
+            // issue 归属仓库（工作区级）：选「跟随主仓库」= 清掉显式值。
+            Self.setStoredIssueRepoID(settings.issueRepoIsExplicit ? settings.issueRepoID : nil,
+                                      forWorkspace: path)
+            repo = Self.issueRepo(root: path, repoSet: workspaceRepoSet)
+            updateIssueRepoControl()
             if let primary = settings.primaryRepo {
                 runner?.setDefaultIntegration(primary.integration)
                 runner?.setAutoCloseOnPublish(primary.autoCloseOnPublish)
