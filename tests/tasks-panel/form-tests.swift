@@ -850,7 +850,7 @@ do {
     check(!form.autoCloseCheck.isEnabled, "跟随时自动关闭禁用")
     eq(form.selectedIntegration, .merge, "显示继承自主仓库的工作流")
     check(form.autoCloseCheck.state == .on, "显示继承自主仓库的自动关闭")
-    check(!form.tokenField.isEnabled, "非 GitHub 仓库没有 token 框")
+    check(form.tokenField.isEnabled, "token 框常显（与单仓库模式一致）")
 
     // issue 归属配置（工作区级）：默认跟随主仓库，可显式选一个仓库。
     check(!form.issueRepoBlock.isHidden, "多仓库显示 issue 归属配置")

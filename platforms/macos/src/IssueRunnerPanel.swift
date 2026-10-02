@@ -2230,7 +2230,8 @@ final class IssueRunnerPanelController: NSObject {
                 prAvailable: github != nil,
                 remoteAvailable: repo.remoteName != nil,
                 github: github,
-                token: github.flatMap { loadToken(for: ($0.owner, $0.name)) } ?? "",
+                token: github.flatMap { loadToken(for: ($0.owner, $0.name)) }
+                    ?? (loadToken(for: nil) ?? ""),
                 integration: store.resolvedIntegration(forWorkspace: path, repoID: repo.id,
                                                        primaryID: primaryID, recommended: repoRecommended),
                 explicitIntegration: store.explicitIntegration(forWorkspace: path, repoID: repo.id),
@@ -2272,11 +2273,16 @@ final class IssueRunnerPanelController: NSObject {
             // a repo that does not follow stores both fields independently.
             var store = Self.repoSettings()
             for repo in settings.repos {
-                // token 不参与跟随：每个 GitHub 仓库各自保存；只写用户改过的，
-                // 免得打开一次抽屉就把通用 token 复制到每个仓库文件。
-                if let github = repo.github, repo.tokenChanged {
+                // token 不参与跟随：只写用户改过的，免得打开一次抽屉就复制。
+                // GitHub 仓库写它自己的 owner/repo 文件；非 GitHub 仓库没有 owner/repo，
+                // 写通用 token 文件（token 框在两种模式下都常显）。
+                if repo.tokenChanged {
                     let value = repo.token.trimmingCharacters(in: .whitespacesAndNewlines)
-                    saveToken(value, for: (owner: github.owner, repo: github.name))
+                    if let github = repo.github {
+                        saveToken(value, for: (owner: github.owner, repo: github.name))
+                    } else {
+                        saveToken(value, for: nil)
+                    }
                 }
                 if let explicit = repo.explicitIntegration, let explicitClose = repo.explicitAutoClose {
                     store.setIntegration(explicit, forWorkspace: path, repoID: repo.id)

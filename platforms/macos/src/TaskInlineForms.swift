@@ -1005,7 +1005,6 @@ struct TaskSettingsModel: Equatable {
     var activePRAvailable: Bool { selectedRepo?.prAvailable ?? prAvailable }
     var activeGitAvailable: Bool { selectedRepo?.gitAvailable ?? gitAvailable }
     var activeRemoteAvailable: Bool { selectedRepo?.remoteAvailable ?? remoteAvailable }
-    var activeHasGitHub: Bool { selectedRepo.map { $0.github != nil } ?? prAvailable }
 
     /// Fold the drawer's controls back into the model. The active repo keeps its
     /// draft (design §8.1: 草稿按仓库缓存，不丢未提交输入); a repo that follows
@@ -1267,12 +1266,12 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         autoCloseCheck.state = model.activeAutoClose ? .on : .off
         autoCloseCheck.isEnabled = !follows
         autoCloseHint.stringValue = L10n.tr("tasks.settings.autoCloseHint")
-        // 非 GitHub 仓库没有 token 框：它没有 owner/repo 可存（token 不跟随主仓库）。
-        let showsToken = !model.isMultiRepo || model.activeHasGitHub
-        tokenRow.isHidden = !showsToken
-        tokenHint.isHidden = !showsToken
-        tokenField.isEnabled = showsToken
-        tokenBox.alphaValue = showsToken ? 1 : 0.45
+        // token 框**常显**（与单仓库模式一致）：选中仓库是 GitHub 时写它的
+        // owner/repo，否则写通用 token（非 GitHub 仓库没有 owner/repo 可存）。
+        tokenRow.isHidden = false
+        tokenHint.isHidden = false
+        tokenField.isEnabled = true
+        tokenBox.alphaValue = 1
         submitButton.title = L10n.tr("tasks.new.save")
         submitButton.isEnabled = true
         cancelButton.title = L10n.tr("btn.cancel")
