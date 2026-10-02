@@ -288,10 +288,16 @@ extension TasksRunner {
         // maps the pre-flight failures back onto the old reasons and carries no detail.
         // Several targets get the explicit multi-repo reasons + the failing repo id.
         // Phase 1: pre-flight. A failure here leaves every repository where it was.
+        //
+        // "只保护 checkout"（2026-10-02）：干净 / 基线检查只在**真的要切**时才做。
+        // enter() 不碰 git 的三种情况一律跳过——队列没有分支（.noBranch）、已经在
+        // 目标分支上（.alreadyOnBranch）、空仓库没有提交可丢（直接 checkout -b）——
+        // 否则「已在分支 + 有改动」会被预检拦下，而 enter() 根本不会 checkout。
         for repo in targets {
             guard repo.isGit else { return (.notGitRepo, single ? nil : repo.id) }
             let git = gitFor(repo)
-            guard git.hasCommits() else { continue }
+            guard let wanted = branch, !wanted.isEmpty, git.hasCommits(),
+                  git.currentBranch() != wanted else { continue }
             guard !git.hasTrackedChanges() else {
                 return (single ? .dirtyWorktree : .repoDirty, single ? nil : repo.id)
             }

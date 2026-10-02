@@ -1071,6 +1071,49 @@ do {
     check(h.rec.logged("tasks.errRepoDirty"), "日志里记了预检失败")
 }
 
+section("只保护 checkout：已在目标分支上 / 不切分支时，不再查干净")
+do {
+    // 已在目标分支上：enter 不 checkout，预检就不该拦（哪怕有已跟踪改动）。
+    let repos = [
+        WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                      defaultBase: "main", displayName: "repo-a"),
+        WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                      defaultBase: "master", displayName: "repo-b"),
+    ]
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "多仓库改动", body: nil, id: "manual-mr000004")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Multi", branch: "feature/multi",
+                                  autoPR: false, repos: ["repo-a", "repo-b"])
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: repos, primaryRepoID: "repo-a")
+    h.git("repo-a").current = "feature/multi"
+    h.git("repo-a").knownBranches = ["main", "feature/multi"]
+    h.git("repo-a").worktreeClean = false          // 已在分支上：脏也不该拦
+    h.git("repo-b").current = "master"
+    h.git("repo-b").knownBranches = ["master"]
+
+    _ = h.runner.startQueue(queue.id)
+    check(h.board.task(task.id)?.state == .running, "已在目标分支的脏仓库不再挡预检")
+    check(h.board.task(task.id)?.error == nil, "没有记脏工作区错误")
+    check(h.git("repo-a").checkouts.isEmpty, "repo-a 本来就在分支上，没有 checkout")
+    check(h.git("repo-b").checkouts.contains("feature/multi"), "repo-b 照常切到分支")
+}
+do {
+    // 不切分支（branch 为空）：enter 返回 .noBranch，预检同样不该查干净。
+    let repos = [WorkspaceRepo(id: ".", absolutePath: "/tmp/ws", isGit: true, displayName: "ws")]
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "不切分支", body: nil, id: "manual-mr000005")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "NoBranch", branch: "", autoPR: false, repos: ["."])
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: repos, primaryRepoID: ".")
+    h.git(".").worktreeClean = false
+
+    _ = h.runner.startQueue(queue.id)
+    check(h.board.task(task.id)?.state == .running, "不切分支的队列即使工作区脏也照跑")
+    check(h.git(".").checkouts.isEmpty, "没有 checkout")
+}
 section("多仓库 pump：只有未跟踪文件 → 预检放行")
 do {
     let repos = [
