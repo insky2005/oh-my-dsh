@@ -744,7 +744,6 @@ enum L10n {
         "tasks.issueRepo.choose": ("选择 Issue 仓库", "Choose issue repository"),
         "tasks.issueRepo.notGitHub": ("当前 issue 归属仓库不是 GitHub 仓库，请在这里选择仓库", "The current issue repository is not a GitHub repository — choose one here"),
         "tasks.issueRepo.locked": ("本工作区只有一个仓库", "Single repository in this workspace"),
-        "tasks.issueRepo.switched": ("已切换 issue 归属仓库", "Issue repository switched"),
         "tasks.queue.pause": ("暂停", "Pause"),
         "tasks.queue.openPR": ("交付：推送分支并开 / 更新 PR", "Deliver: push the branch and open/update the PR"),
         // 工作流（Git workflow：pr / merge / push）—— 用户可见名称集中在 tasks.integration.*，

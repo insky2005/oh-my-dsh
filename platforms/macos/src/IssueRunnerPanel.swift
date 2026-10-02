@@ -95,9 +95,6 @@ final class IssueRunnerPanelController: NSObject {
     /// directory plus what it is not — 非 GitHub 仓库 / 非 Git 仓库). It fits its
     /// own text to the room it has (see FittingHeaderLabel).
     private let repoLabel = FittingHeaderLabel()
-    /// issue 区的仓库归属（design §9）：多仓库时显示当前归属并可切换；主仓库不是
-    /// GitHub 仓库时给出显式提示。单仓库 / plain 时隐藏（维持今天形态）。
-    private let issueRepoButton = NSButton(title: "", target: nil, action: nil)
     /// The source filter as flat tabs — the skills panel's strip, so the whole
     /// shell keeps one tab体例 instead of one control style per panel.
     private let filterTabs = SkillTabStrip()
@@ -231,7 +228,6 @@ final class IssueRunnerPanelController: NSObject {
         // says (the 统计信息 card, every card badge, the empty state) carries an
         // L10n string baked in when it was built — so a language switch rebuilds
         // the list. Re-rendering never touches the board, only its rendering.
-        updateIssueRepoControl()
         if runner != nil { render() }
     }
 
@@ -311,14 +307,7 @@ final class IssueRunnerPanelController: NSObject {
         // The buttons keep their size; the tabs give way (a narrow panel must
         // never push the row past its own edge).
         filterTabs.setCompressible(true)
-        issueRepoButton.bezelStyle = .rounded
-        issueRepoButton.controlSize = .small
-        issueRepoButton.font = .systemFont(ofSize: 11)
-        issueRepoButton.target = self
-        issueRepoButton.action = #selector(issueRepoTapped)
-        issueRepoButton.translatesAutoresizingMaskIntoConstraints = false
-        issueRepoButton.isHidden = true
-        let tabStrip = NSStackView(views: [filterTabs, issueRepoButton, tabSpacer, newTaskRowButton, newQueueRowButton])
+        let tabStrip = NSStackView(views: [filterTabs, tabSpacer, newTaskRowButton, newQueueRowButton])
         tabStrip.orientation = .horizontal
         tabStrip.alignment = .centerY
         tabStrip.spacing = 5
@@ -1544,59 +1533,7 @@ final class IssueRunnerPanelController: NSObject {
                                           explicitID: Self.storedIssueRepoID(forWorkspace: path))
     }
 
-    /// 刷新 issue 归属按钮：多仓库才显示；归属不是 GitHub 仓库时用警示色与提示。
-    private func updateIssueRepoControl() {
-        let target = issueRepoTarget
-        guard target.isMultiRepo else {
-            issueRepoButton.isHidden = true
-            return
-        }
-        issueRepoButton.isHidden = false
-        issueRepoButton.title = target.title
-        issueRepoButton.contentTintColor = target.needsChoice ? .systemRed : nil
-        issueRepoButton.toolTip = target.hintKey.map { L10n.tr($0) } ?? target.title
-        issueRepoButton.isEnabled = target.showsPicker
-    }
 
-    @objc private func issueRepoTapped() {
-        let target = issueRepoTarget
-        guard target.showsPicker else { return }
-        let menu = NSMenu(title: target.title)
-        for choice in target.choices {
-            let item = NSMenuItem(title: choice.label, action: #selector(issueRepoChosen(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.representedObject = choice.id
-            item.state = choice.isSelected ? .on : .off
-            menu.addItem(item)
-        }
-        menu.popUp(positioning: nil,
-                   at: NSPoint(x: 0, y: issueRepoButton.bounds.height), in: issueRepoButton)
-    }
-
-    @objc private func issueRepoChosen(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String else { return }
-        selectIssueRepo(id)
-    }
-
-    /// 切换 issue 归属仓库：写入显式设置后立即重建工作区（无任务在跑时），让 issue
-    /// 列表 / token / 「全部处理」都用新仓库；有任务在跑时只更新 issue 归属本身。
-    private func selectIssueRepo(_ id: String) {
-        guard let path = repoRootPath,
-              workspaceRepoSet.repos.contains(where: { $0.id == id }) else { return }
-        Self.setStoredIssueRepoID(id, forWorkspace: path)
-        repo = Self.issueRepo(root: path, repoSet: workspaceRepoSet)
-        if workspaces.trackedRunner(for: path)?.isBusy != true {
-            workspaces.invalidate(path)
-            adoptWorkspace(path)
-        } else {
-            updateLabels()
-            reloadIssues()
-            syncFromBoard()
-        }
-        setStatus(L10n.tr("tasks.issueRepo.switched"), spin: false)
-        autoHideStatus(after: 4)
-    }
 
     // MARK: - 交付成功后自动关闭队列 (PER WORKSPACE)
 
@@ -2354,7 +2291,6 @@ final class IssueRunnerPanelController: NSObject {
             Self.setStoredIssueRepoID(settings.issueRepoIsExplicit ? settings.issueRepoID : nil,
                                       forWorkspace: path)
             repo = Self.issueRepo(root: path, repoSet: workspaceRepoSet)
-            updateIssueRepoControl()
             if let primary = settings.primaryRepo {
                 runner?.setDefaultIntegration(primary.integration)
                 runner?.setAutoCloseOnPublish(primary.autoCloseOnPublish)
