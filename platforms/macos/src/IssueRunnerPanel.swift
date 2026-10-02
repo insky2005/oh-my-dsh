@@ -519,6 +519,9 @@ final class IssueRunnerPanelController: NSObject {
         guard TaskWorkspaceRegistry.needsReadopt(resolved: workspacePath?(),
                                                  adopted: workspaces.currentPath,
                                                  hasRunner: runner != nil) else { return }
+        // 工作区要换了：把已打开的抽屉（面板设置 / 新建任务 / 新建队列 / 编辑）收起来。
+        // 否则它会拿着旧工作区的数据继续显示，甚至把旧值写进新工作区（用户 2026-10-02）。
+        dismissForm()
         resolveRepoAndReload()
     }
 
