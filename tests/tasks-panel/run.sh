@@ -265,4 +265,20 @@ if ! grep -q 'tasksIssueRepoByWorkspace' "$IP" \
 fi
 echo "ok - issue 归属仓库按工作区存并写进 issue 任务的 auto queue"
 
+# P5 重试续跑：重试必须显式置 pendingRetries 标记，runner 必须有短续跑提示词，
+# 且只有「上一轮真的 prompt 过这个会话」才复用（promptedSessions）。靠「有 sessionId」
+# 猜会把 skip / 队列推进也误判成重试；产物基线必须沿用最初那次，否则上一轮已 commit
+# 的续跑会被误判 noCommit。
+if ! grep -q 'private var pendingRetries: Set<String>' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'pendingRetries.insert(taskID)' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'pendingRetries.remove(taskID)' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func retryContinuation' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'promptedSessions\[taskID\] = sessionId' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'promptedSessionsNow\[taskID\] == previous' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'attemptBaselinesNow\[taskID\]' ../../platforms/macos/src/TasksRunner.swift; then
+  echo "FAIL - P5 重试续跑：重试必须显式传信号，只有 prompt 过且 idle 的会话才复用"
+  exit 1
+fi
+echo "ok - P5 重试续跑：显式重试信号 + 短续跑提示词 + 原始产物基线"
+
 echo "tasks-panel tests passed"

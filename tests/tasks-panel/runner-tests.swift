@@ -765,8 +765,10 @@ do {
 
     check(h.runner.retry(taskID: taskID), "retry is accepted")
     check(h.board.task(taskID)?.state == .running, "the retry started a new run")
-    check(h.dsh.sessions.count == 2, "retry opens a new session")
+    eq(h.dsh.sessions.count, 1, "retry continues the idle session (P5) instead of opening a new one")
     check(h.dsh.cancelled.count == 1, "no second cancel")
+    check((h.dsh.prompts["session-1"] ?? "").contains("从未完成处继续"),
+          "the previous session gets the SHORT continuation prompt")
 }
 do {
     var board = TaskBoard()
@@ -2755,7 +2757,9 @@ do {
     eq(h.board.queue(queueID)?.state, .active, "重试恢复队列")
     check(h.board.task(first)?.completionMarker != staleMarker, "重试换一个全新的 marker")
     eq(h.board.task(first)?.error, nil, "重试清掉待确认说明")
-    eq(h.dsh.sessions.count, 2, "重试起了新会话")
+    eq(h.dsh.sessions.count, 1, "待确认重试复用上一轮的会话（P5），不新建")
+    check((h.dsh.prompts["session-1"] ?? "").contains("从未完成处继续"),
+          "发的是短续跑提示词")
 }
 
 section("P2 标记完成：用户确认 → 直接 .done，并走正常完成路径")
@@ -2959,6 +2963,181 @@ do {
     eq(TasksRunner.infersCommitExpectation(task: issue, targets: [plainRepo], shape: nil), false,
        "目标仓库都不是 git → 不期望提交")
 }
+
+// MARK: - P5 重试续跑（同一会话 + 短提示词）
+
+section("P5 重试续跑：会话空闲则不新建会话，发短提示词 + 新 marker；回显 → done")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    let firstMarker = h.board.task(taskID)?.completionMarker ?? "NONE"
+    h.dsh.reports["session-1"] = "上一轮网络断了，只改了一半。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .needsReview, "先进入待确认")
+
+    // 会话还在、且 dsh 说它 idle：重试应当续跑，不再建会话。
+    h.dsh.echoesTaskMarkers = true
+    check(h.runner.retry(taskID: taskID), "重试被接受")
+    eq(h.dsh.sessions.count, 1, "没有新建会话：续跑同一个会话")
+    let retryPrompt = h.dsh.prompts["session-1"] ?? ""
+    check(retryPrompt.contains("从未完成处继续"), "发的是短续跑提示词")
+    check(retryPrompt.contains("Polish README"), "短提示词带上任务标题")
+    check(retryPrompt.contains("**必须**在结束时汇报"), "仍然要求汇报")
+    check(!retryPrompt.contains("本任务须在分支"), "没有重发完整要求")
+    let newMarker = h.board.task(taskID)?.completionMarker ?? "NONE"
+    check(newMarker != firstMarker, "换了新 marker")
+    check(retryPrompt.contains(newMarker), "短提示词里是本次新 marker")
+
+    // 会话回显新 marker → done。
+    h.dsh.reports["session-1"] = "接着把剩下的改完了。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .done, "续跑回显本次 marker → done")
+    _ = queueID
+}
+
+section("P5 重试续跑：会话 missing / 建会话前失败 / prompt 失败 → 回退新会话 + 完整提示词")
+do {
+    // 会话从 dsh 列表里消失：不可续。
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .needsReview, "先待确认")
+    h.dsh.stateOverride["session-1"] = .missing
+    h.dsh.echoesTaskMarkers = true
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.sessions.count, 2, "会话没了 → 回退新会话")
+    let fallback = h.dsh.prompts["session-2"] ?? ""
+    check(fallback.contains("请完成以下任务："), "回退用完整提示词")
+    check(!fallback.contains("从未完成处继续"), "不是短续跑提示词")
+    _ = queueID
+}
+do {
+    // 建会话前就失败：根本没有 sessionId 可续。
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.createFails = true
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.state, .failed, "建会话失败 → 任务失败")
+    eq(h.board.task(taskID)?.sessionId, nil, "没有会话可续")
+    h.dsh.createFails = false
+    h.dsh.echoesTaskMarkers = true
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.sessions.count, 1, "回退到新会话")
+    check((h.dsh.prompts["session-1"] ?? "").contains("请完成以下任务："), "回退完整提示词")
+    _ = queueID
+}
+do {
+    // 会话建了但提示词没发出去：那是空转会话，不能续。
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.promptFails = true
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.state, .failed, "提示词失败 → 任务失败")
+    eq(h.board.task(taskID)?.sessionId, "session-1", "会话建了但没发出去")
+    h.dsh.promptFails = false
+    h.dsh.echoesTaskMarkers = true
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.sessions.count, 2, "未 prompt 过的会话不可续 → 新会话")
+    check((h.dsh.prompts["session-2"] ?? "").contains("请完成以下任务："), "回退完整提示词")
+    _ = queueID
+}
+do {
+    // .unknown（RPC 问不到）同样不可续：不确定就不复用。
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    h.dsh.stateOverride["session-1"] = .unknown
+    h.dsh.echoesTaskMarkers = true
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.sessions.count, 2, "问不到会话状态 → 回退新会话")
+    _ = queueID
+}
+do {
+    // .running：不能两个会话同改一个工作区，先取消旧会话再回退。
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .needsReview, "先待确认")
+    h.dsh.stateOverride["session-1"] = .running
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.cancelled, ["session-1"], "先取消还在跑的旧会话")
+    eq(h.dsh.sessions.count, 2, "再起新会话")
+    _ = queueID
+}
+
+section("P5 续跑同样要求 marker：不回显 → 待确认")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .needsReview, "第一次待确认")
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.sessions.count, 1, "续跑同一会话")
+    h.dsh.reports["session-1"] = "还是没写 marker（又断了）。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .needsReview, "续跑不回显本次 marker → 仍待确认")
+    eq(h.board.queue(queueID)?.state, .paused, "队列再次暂停")
+}
+
+section("P5 + P4：上一轮已 commit，续跑无新提交也不误判 noCommit")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board, verifyExpectedCommit: true, workspaceShape: .github)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    // 第一次尝试：代理 commit 了（HEAD 变化），却没回显 marker → 待确认（P1 的原因）。
+    h.repo.head = "abc1234"
+    h.dsh.reports["session-1"] = "改完并 commit 了，但没写 marker。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .needsReview, "没有 marker → 待确认")
+    eq(h.board.task(taskID)?.error, "tasks.errUnverified", "原因是 marker，不是 noCommit")
+
+    // 续跑：这次没有新 commit（HEAD 仍是 abc1234），但回显了本次 marker。
+    h.dsh.echoesTaskMarkers = true
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.sessions.count, 1, "续跑同一会话")
+    h.dsh.reports["session-1"] = "接着确认了一遍，没有新改动。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .done, "上一轮提交算产物，不误判 noCommit")
+    eq(h.board.task(taskID)?.error, nil, "没有 noCommit 降级")
+    _ = queueID
+}
+
+section("P5 兼容守卫：首次启动的完整提示词逐字节不变")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    let prompt = h.dsh.prompts["session-1"] ?? ""
+    let marker = h.board.task(taskID)?.completionMarker ?? "NONE"
+    let expected = TaskPrompts.manual(title: "Polish README", body: "tidy it",
+                                      branch: "feature/docs-cleanup", queueName: "Docs Cleanup",
+                                      base: "main", brief: nil, shape: .github)
+        + "\n\n" + TaskPrompts.completionMarkerInstruction(marker)
+    eq(prompt, expected, "首次启动逐字节等于 promptText + 完成标记")
+    check(!prompt.contains("从未完成处继续"), "首次启动不带续跑前缀")
+    _ = queueID
+}
+
 
 if failures == 0 {
     print("ok - \(checks) checks passed")

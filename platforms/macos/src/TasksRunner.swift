@@ -604,6 +604,26 @@ enum TaskPrompts {
         "最后**单独一行**原样输出完成标记（供壳层确认本任务已完成）：" + marker
     }
 
+    /// P5 重试续跑的**短提示词**：上一轮因中断 / 没拿到完成证据而停，这次接着同一个
+    /// 会话干，不重发完整任务描述与队列简报（上一轮已经看过）。仍然要求汇报与本次
+    /// marker，所以续跑和首次启动走同一套完成校验。marker 每轮重新生成，旧 marker
+    /// 不会被这次回显确认。
+    static func retryContinuation(title: String, marker: String?) -> String {
+        var lines: [String] = []
+        lines.append("上一轮因中断 / 未拿到完成证据，请从未完成处继续：")
+        lines.append("")
+        lines.append("## 任务")
+        lines.append(title)
+        lines.append("")
+        lines.append("要求：")
+        lines.append("1. " + Self.reportRequirement)
+        if let marker = marker {
+            lines.append("")
+            lines.append(Self.completionMarkerInstruction(marker))
+        }
+        return lines.joined(separator: "\n")
+    }
+
     /// The issue task's prompt: the issue itself, then **the same requirements a
     /// manual task gets**.
     ///
@@ -1260,6 +1280,22 @@ final class TasksRunner {
     /// as soon as there is a session to cancel. Cleared whenever a start begins.
     private var cancelRequested = false
 
+    /// task id -> the session that ACTUALLY received a prompt (P5 重试续跑). A session
+    /// that was created but whose prompt failed is deliberately NOT recorded: retrying
+    /// into it would continue an empty conversation. In memory only — after a restart
+    /// the runner forgets, and a retry safely falls back to a fresh session.
+    private var promptedSessions: [String: String] = [:]
+    /// Tasks whose card's 重试 was clicked and that have not started yet (P5). A pending
+    /// FLAG, not a look at sessionId: skip / queue advance never set it, so they never
+    /// resume. Set by retry(), consumed by the pump that actually starts the task — it
+    /// survives the window where the serial slot is busy with another queue's task.
+    private var pendingRetries: Set<String> = []
+    /// task id -> the product baseline of the FIRST attempt (P4/P5). A resumed attempt
+    /// must compare against that baseline, not against a fresh HEAD: the previous round
+    /// may already have committed, and then "no new commit this time" is not "did
+    /// nothing". Kept while the runner lives; a restart falls back to a fresh baseline.
+    private var attemptBaselines: [String: TaskProductBaseline] = [:]
+
     /// How long a task may run before its session is cancelled.
     ///
     /// 30 minutes used to be hard-coded and quietly killed long work; 60 is the
@@ -1395,6 +1431,11 @@ final class TasksRunner {
     // MARK: - Starting
 
     /// Start the next startable task, if the serial slot is free. Returns its id.
+    ///
+    /// A task flagged by retry() (pendingRetries, P5) may CONTINUE its previous
+    /// attempt's session; every other pump (skip / queue advance / first start) opens
+    /// a fresh session, because a stale sessionId alone is not an invitation to resume
+    /// work nobody retried.
     @discardableResult
     func pump(now: Date = Date()) -> String? {
         guard case .idle = phase else { return nil }
@@ -1421,6 +1462,16 @@ final class TasksRunner {
         let repoSetProvider = env.repoSetProvider
         let verifyExpectedCommit = env.verifyExpectedCommit
         let workspaceShape = env.workspaceShape
+        let sessionState = env.sessionState
+        let cancelSession = env.cancelSession
+        // P5 重试续跑：只在这条 pump 由 重试 触发、且上一轮真的把提示词发给了那个会话、
+        // 会话现在空闲时才复用。快照在后台步骤前取，避免背景线程读可变状态。
+        // 消费 pendingRetries 只发生在真正选中这条任务时：runner 忙时 pump 提前返回，
+        // 重试意图留到 slot 空出来再兑现。
+        let isRetry = pendingRetries.remove(taskID) != nil
+        let previousSession = task.sessionId
+        let promptedSessionsNow = promptedSessions
+        let attemptBaselinesNow = attemptBaselines
 
         phase = .starting(taskID)
         cancelRequested = false
@@ -1481,8 +1532,44 @@ final class TasksRunner {
                 expectsCommit = TasksRunner.infersCommitExpectation(task: task, targets: targets,
                                                                     shape: workspaceShape?())
                 if expectsCommit {
-                    baseline = TaskProductBaseline.capture(targets: targets, git: git, gitFor: gitFor)
+                    // P5：重试沿用**最初那次尝试**的基线。上一轮若已 commit，续跑时再抓
+                    // 当前 HEAD 会把那些提交算成基线，于是「没有新提交」被误判成 noCommit
+                    // ——那正是被重试的任务最常见的形状。
+                    if isRetry, let saved = attemptBaselinesNow[taskID] {
+                        baseline = saved
+                    } else {
+                        baseline = TaskProductBaseline.capture(targets: targets, git: git, gitFor: gitFor)
+                    }
                 }
+            }
+            // P5 重试续跑：只有「这次是重试 + 上一轮真的 prompt 过这个会话 + 会话现在
+            // 空闲」三条同时成立才复用。建会话前失败 / .prompt 失败（建了没发出去）/
+            // .missing / .unknown 都算不可续，回退新会话 + 完整提示词；.running 先取消
+            // 再回退——两个会话同改一个工作区比丢上下文更糟。
+            var resumed: String? = nil
+            if isRetry, let previous = previousSession, !previous.isEmpty,
+               promptedSessionsNow[taskID] == previous {
+                switch sessionState(previous) {
+                case .idle:
+                    resumed = previous
+                case .running:
+                    _ = cancelSession(previous)
+                    log("tasks: " + taskID + " — its previous session was still running; cancelled it and starting fresh")
+                case .unknown, .missing:
+                    break
+                }
+            }
+            if let resumed = resumed {
+                // 短提示词：一句「上一轮因中断 / 未拿到完成证据，请从未完成处继续」+ 任务
+                // 标题 + reportRequirement + 本次 marker。队列简报与完整要求都不重发。
+                let continuation = TaskPrompts.retryContinuation(title: title, marker: marker)
+                if promptSession(resumed, continuation) {
+                    log("tasks: " + taskID + " continuing its previous session " + resumed)
+                    startResult = .started(sessionId: resumed, branch: branch)
+                    return
+                }
+                log("tasks: " + taskID + " could not continue its previous session "
+                    + resumed + " — starting a fresh one")
             }
             // The 交接简报 is built HERE, off the main thread: it reads the earlier
             // tasks' session logs (a core-bridge call) and asks each target repo for
@@ -1494,6 +1581,7 @@ final class TasksRunner {
             if let brief = brief, !brief.isEmpty {
                 log("tasks: brief for " + taskID + " is " + String(brief.count) + " chars")
             }
+            // 完整提示词：只在 fresh / 回退时使用（首次启动路径逐字节不变）。
             // 完成标记追加在提示词最后一行：任务会话的汇报必须回显它（P1）。
             var prompt = promptText(task, queue, brief)
             if let marker = marker {
@@ -1537,6 +1625,11 @@ final class TasksRunner {
                 _ = pump(now: now)
                 return
             }
+            // P5：记下「这个会话真的收到过提示词」，供下次重试判断能否续跑（.failed(.prompt)
+            // 的会话不会被记，因此不会被续跑到一个空转的会话）。P4 的基线只在应产出提交时
+            // 记，重试沿用最初那次。
+            promptedSessions[taskID] = sessionId
+            if expectsCommit { attemptBaselines[taskID] = baseline }
             let queueID = board.task(taskID)?.queueId
             board.recordExpectsCommit(taskID, expectsCommit)
             phase = .active(Active(taskID: taskID, queueID: queueID, branch: branch,
@@ -2718,6 +2811,8 @@ final class TasksRunner {
         let ok = board.retryAndResume(taskID)
         guard ok else { return false }
         persist()
+        // P5：显式标记这次是重试——只有它允许续跑上一轮的会话（skip / 队列推进不设）。
+        pendingRetries.insert(taskID)
         _ = pump()
         return true
     }
