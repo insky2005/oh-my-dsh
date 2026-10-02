@@ -703,6 +703,167 @@ do {
           "远端没了不重新识别（那是另一个话题）")
 }
 
+section("多仓库头部：目录名 · N 个仓库，tooltip 列名并标注主仓库")
+do {
+    let root = WorkspaceRepo(id: ".", absolutePath: "/tmp/ws", isGit: true, displayName: "ws")
+    let a = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                         displayName: "repo-a")
+    let b = WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                         displayName: "repo-b")
+    let multiSet = WorkspaceRepoSet(repos: [root, a, b], primary: a)
+    let model = TaskWorkspaceModel.build(owner: nil, repo: nil, workspacePath: "/tmp/ws",
+                                         isGitRepo: true, repoSet: multiSet)
+    eq(model.title, "ws · tasks.repoCount(3)", "多仓库头部显示 目录名 · N 个仓库")
+    check(model.isMultiRepo, "模型也说是多仓库")
+    eq(model.repoCount, 3, "计数是仓库数")
+    eq(model.primaryRepoName, "repo-a", "primary 单独记着")
+    check(model.repoListTooltip?.contains("repo-b") == true, "tooltip 列出子仓库")
+    check(model.repoListTooltip?.contains("tasks.repoPrimarySuffix") == true, "并标注主仓库")
+
+    // 一个 GitHub 子仓库 —— 头部按钮按「任一仓库有 GitHub」可用。
+    let ghRepo = WorkspaceRepo(id: "repo-c", absolutePath: "/tmp/ws/repo-c", isGit: true,
+                               github: GitHubRepo(owner: "o", name: "c"), displayName: "repo-c")
+    let ghSet = WorkspaceRepoSet(repos: [root, ghRepo], primary: root)
+    let ghModel = TaskWorkspaceModel.build(owner: nil, repo: nil, workspacePath: "/tmp/ws",
+                                           isGitRepo: true, repoSet: ghSet)
+    check(ghModel.githubAvailable, "任一仓库有 GitHub 远端即可用")
+
+    // 单仓库（根）仍走老路径：owner/repo，零变化。
+    let singleSet = WorkspaceRepoSet(repos: [root], primary: root)
+    let single = TaskWorkspaceModel.build(owner: "o", repo: "r", workspacePath: "/tmp/ws",
+                                          isGitRepo: true, repoSet: singleSet)
+    eq(single.title, "o/r", "单仓库仍是 owner/repo")
+    check(!single.isMultiRepo, "单仓库不是多仓库")
+    eq(single.repoListTooltip, nil, "单仓库没有额外 tooltip")
+
+    // 根不是仓库、恰好一个子仓库：N==1 也是多仓库（§4.3）。
+    let oneChild = WorkspaceRepoSet(repos: [a], primary: a)
+    let one = TaskWorkspaceModel.build(owner: nil, repo: nil, workspacePath: "/tmp/ws",
+                                       isGitRepo: false, repoSet: oneChild)
+    eq(one.repoCount, 1, "N==1 也是多仓库")
+    check(one.isMultiRepo, "根非仓库时按多仓库显示")
+    check(one.repoListTooltip?.contains("repo-a") == true, "tooltip 列出唯一仓库")
+}
+
+section("issue 归属模型：默认跟随主仓库 / 切换后显式 / 主仓库非 GitHub 提示")
+do {
+    let root = WorkspaceRepo(id: ".", absolutePath: "/tmp/ws", isGit: true, displayName: "ws")
+    let a = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                          displayName: "repo-a")
+    let gh = WorkspaceRepo(id: "repo-gh", absolutePath: "/tmp/ws/repo-gh", isGit: true,
+                           github: GitHubRepo(owner: "o", name: "gh"), displayName: "repo-gh")
+    let multi = WorkspaceRepoSet(repos: [a, gh], primary: a)
+
+    // 默认跟随主仓库（不是「第一个 GitHub 仓库」）。
+    let follow = IssueRepoTargetModel.build(repoSet: multi, explicitID: nil)
+    eq(follow.selectedRepoID, "repo-a", "默认归属主仓库")
+    check(!follow.isExplicit, "默认不是显式指定")
+    check(follow.showsPicker, "N>=2 可切换")
+    check(follow.needsChoice, "主仓库不是 GitHub → 需要用户选择")
+    eq(follow.hintKey, "tasks.issueRepo.notGitHub", "给出显式提示键")
+    eq(follow.selectedGithub, nil, "非 GitHub 归属没有 owner/repo")
+
+    // 用户切换 → 显式指定，不再跟随，且归属那个 GitHub 仓库。
+    let explicit = IssueRepoTargetModel.build(repoSet: multi, explicitID: "repo-gh")
+    eq(explicit.selectedRepoID, "repo-gh", "切换后归属该仓库")
+    check(explicit.isExplicit, "切换后是显式指定")
+    eq(explicit.selectedGithub, GitHubRepo(owner: "o", name: "gh"), "拿到 owner/repo")
+    check(!explicit.needsChoice, "选到 GitHub 仓库后不再提示")
+    eq(explicit.hintKey, nil, "没有提示键")
+
+    // 显式仓库失效 → 回到跟随主仓库。
+    let stale = IssueRepoTargetModel.build(repoSet: multi, explicitID: "gone")
+    eq(stale.selectedRepoID, "repo-a", "失效显式 → 回退主仓库")
+    check(!stale.isExplicit, "失效后不算显式")
+
+    // N==1：归属存在但只读锁定。
+    let one = IssueRepoTargetModel.build(repoSet: WorkspaceRepoSet(repos: [gh], primary: gh),
+                                         explicitID: nil)
+    check(!one.showsPicker, "N==1 不给出切换入口")
+    check(one.isLocked, "N==1 只读锁定")
+    check(!one.needsChoice, "唯一仓库是 GitHub")
+
+    // N==1 且不是 GitHub：没有别的可选，但依然显式提示，不装作无事发生。
+    let lockedNonGh = IssueRepoTargetModel.build(
+        repoSet: WorkspaceRepoSet(repos: [a], primary: a), explicitID: nil)
+    check(lockedNonGh.needsChoice, "N==1 非 GitHub 仍提示")
+    eq(lockedNonGh.title, L10n.tr("tasks.issueRepo.notGitHub"), "锁定但给出显式提示")
+
+    // 单仓库（legacy）维持今天形态：不是多仓库，没有选择区。
+    let single = IssueRepoTargetModel.build(repoSet: WorkspaceRepoSet(repos: [root], primary: root),
+                                            explicitID: nil)
+    check(!single.isMultiRepo, "单仓库模式不算多仓库")
+    check(!single.showsPicker, "单仓库没有选择区")
+}
+
+section("仓库集合变化也算工作区形状变化（新增 / 删除仓库）")
+do {
+    let added = TaskWorkspaceShape.change(wasRepoIDs: [], repoIDsNow: ["repo-a"],
+                                          wasGit: false, hadRemote: false,
+                                          isGitNow: true, hasRemoteNow: false)
+    eq(added?.reposChanged, true, "认出新增仓库")
+    eq(added?.messageKey, "tasks.reposChanged", "并给状态行文案")
+
+    let removed = TaskWorkspaceShape.change(wasRepoIDs: [".", "repo-a"], repoIDsNow: ["."],
+                                            wasGit: true, hadRemote: true,
+                                            isGitNow: true, hasRemoteNow: true)
+    eq(removed?.reposChanged, true, "认出删除仓库")
+
+    // 同一集合（顺序不同）不算变化：运行期不该反复重建 runner。
+    check(TaskWorkspaceShape.change(wasRepoIDs: [".", "repo-a"], repoIDsNow: ["repo-a", "."],
+                                    wasGit: true, hadRemote: true,
+                                    isGitNow: true, hasRemoteNow: true) == nil,
+          "集合不变（顺序不同）不重新识别")
+}
+
+section("多仓库队列表单：默认只选 primary，N==1 只读锁定")
+do {
+    let root = WorkspaceRepo(id: ".", absolutePath: "/tmp/ws", isGit: true, displayName: "ws")
+    let a = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                         displayName: "repo-a")
+    let b = WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                         displayName: "repo-b")
+    let multi = QueueComposerModel.create().forRepos([root, a, b], primary: a)
+    check(multi.showsRepoPicker, "多仓库显示仓库选择区")
+    check(!multi.repoPickerLocked, "N>=2 可以改选")
+    eq(multi.selectedRepoIDs, ["repo-a"], "默认只选 primary")
+    eq(multi.selectedRepos.map { $0.id }, ["repo-a"], "selectedRepos 跟随选择")
+
+    let toggled = multi.togglingRepo("repo-b")
+    eq(Set(toggled.selectedRepoIDs), Set(["repo-a", "repo-b"]), "可以勾上第二个仓库")
+    eq(toggled.togglingRepo("repo-b").selectedRepoIDs, ["repo-a"], "也可以取消")
+    eq(multi.togglingRepo("repo-a").selectedRepoIDs, ["repo-a"],
+       "最后一个仓库不能被取消")
+
+    // N==1：显示但锁定，点击无效。
+    let locked = QueueComposerModel.create().forRepos([a], primary: a)
+    check(locked.showsRepoPicker, "N==1 也显示选择区")
+    check(locked.repoPickerLocked, "N==1 只读锁定")
+    eq(locked.togglingRepo("repo-a").selectedRepoIDs, ["repo-a"], "锁定后点击不改变选择")
+
+    // 单仓库 / 普通目录：没有选择区（与今天逐像素一致）。
+    check(!QueueComposerModel.create().showsRepoPicker, "空的 availableRepos 不显示选择区")
+    let legacyForm = QueueComposerModel.create().forWorkspace(git: true, pr: true)
+    check(!legacyForm.showsRepoPicker, "forWorkspace 不引入选择区")
+
+    // 编辑已有队列：按它存的目标仓库预选，而不是重置成 primary。
+    let reopened = QueueComposerModel.create().forRepos([root, a, b], primary: a,
+                                                        selected: ["repo-b", "gone"])
+    eq(reopened.selectedRepoIDs, ["repo-b"], "编辑时按存储的 repos 预选（丢弃失效 id）")
+    let stale = QueueComposerModel.create().forRepos([root, a, b], primary: a,
+                                                     selected: ["gone"])
+    eq(stale.selectedRepoIDs, ["repo-a"], "存储的仓库都不在了 → 回退 primary")
+    check(QueueComposerModel.create().forRepos([root, a, b], primary: a).selectedRepoIDs == ["repo-a"],
+          "没有存储值时默认仍只选 primary")
+
+    // 提交时要持久化什么：多仓库选择 → 显式 ids；单仓库 / 普通目录 → nil。
+    eq(reopened.storedRepoIDs, ["repo-b"], "多仓库表单持久化显式选择")
+    check(QueueComposerModel.create().storedRepoIDs == nil, "普通目录没有选择区，存 nil")
+    check(QueueComposerModel.create().forRepos([a], primary: a).storedRepoIDs == ["repo-a"],
+          "多仓库仅一个仓库时也存下它")
+    check(legacyForm.storedRepoIDs == nil, "单仓库模式仍然存 nil（queue.repos 保持旧语义）")
+}
+
 section("队列被删掉之后的失败任务：直接给 加入队列 / 处理，不再先给一次空重试")
 do {
     // 手动任务 + 一个失败的队列：重试还在（它把任务放回队列并唤醒队列）。

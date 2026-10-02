@@ -17,6 +17,12 @@ enum TaskFailure: String {
     case sessionGone = "tasks.errSessionGone"
     case notGitRepo = "tasks.errNotGit"
     case dirtyWorktree = "tasks.errDirtyTree"
+    /// 多仓库预检：目标仓库的工作区不干净（design §5.2）。detail 带上仓库 id。
+    case repoDirty = "tasks.errRepoDirty"
+    /// 多仓库预检：目标仓库的基线分支解析不出来（本地与远端追踪都没有）。
+    case repoNoBase = "tasks.errRepoNoBase"
+    /// 多仓库进入分支：前面的仓库已经切好，某个仓库失败（不回滚）。
+    case repoBranch = "tasks.errRepoBranch"
     case checkout = "tasks.errBranch"
     case pull = "tasks.errPull"
     case session = "tasks.errSession"
@@ -135,6 +141,10 @@ struct TaskItem: Equatable {
     var prUrl: String?
     var sessionId: String?
     var error: String?
+    /// 失败时补充给用户的细节（多仓库失败点名具体仓库，见 design §5.2）。它跟着
+    /// `error` 一起持久化，卡片渲染为 `L10n.tr(error, errorDetail)`；nil = 今天的
+    /// 单值错误文案。
+    var errorDetail: String?
     var startedAt: Date?
     var finishedAt: Date?
     /// What the agent said when it finished — its 汇报, written back onto the task by
@@ -159,6 +169,7 @@ struct TaskItem: Equatable {
          prUrl: String? = nil,
          sessionId: String? = nil,
          error: String? = nil,
+         errorDetail: String? = nil,
          startedAt: Date? = nil,
          finishedAt: Date? = nil,
          report: String? = nil) {
@@ -174,6 +185,7 @@ struct TaskItem: Equatable {
         self.prUrl = prUrl
         self.sessionId = sessionId
         self.error = error
+        self.errorDetail = errorDetail
         self.startedAt = startedAt
         self.finishedAt = finishedAt
         self.report = report
@@ -227,6 +239,7 @@ struct TaskItem: Equatable {
         if let branch = branch { d["branch"] = branch }
         if let prUrl = prUrl { d["prUrl"] = prUrl }
         if let error = error { d["error"] = error }
+        if let errorDetail = errorDetail { d["errorDetail"] = errorDetail }
         if let startedAt = startedAt { d["startedAt"] = TaskItem.iso8601.string(from: startedAt) }
         if let finishedAt = finishedAt { d["finishedAt"] = TaskItem.iso8601.string(from: finishedAt) }
         return d
@@ -246,6 +259,7 @@ struct TaskItem: Equatable {
                         prUrl: d["prUrl"] as? String,
                         sessionId: nil,
                         error: d["error"] as? String,
+                        errorDetail: d["errorDetail"] as? String,
                         startedAt: (d["startedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) },
                         finishedAt: (d["finishedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
     }
@@ -266,6 +280,7 @@ struct TaskItem: Equatable {
         if let branch = branch { d["branch"] = branch }
         if let prUrl = prUrl { d["prUrl"] = prUrl }
         if let error = error { d["error"] = error }
+        if let errorDetail = errorDetail { d["errorDetail"] = errorDetail }
         if let startedAt = startedAt { d["startedAt"] = TaskItem.iso8601.string(from: startedAt) }
         if let finishedAt = finishedAt { d["finishedAt"] = TaskItem.iso8601.string(from: finishedAt) }
         return d
@@ -285,6 +300,7 @@ struct TaskItem: Equatable {
                         prUrl: d["prUrl"] as? String,
                         sessionId: nil,
                         error: d["error"] as? String,
+                        errorDetail: d["errorDetail"] as? String,
                         startedAt: (d["startedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) },
                         finishedAt: (d["finishedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
     }
@@ -366,6 +382,265 @@ enum TaskBranch {
         let lowered = labels.map { $0.lowercased() }
         let isFeature = lowered.contains { $0.contains("feature") || $0.contains("enhancement") }
         return isFeature ? "feature/issue-\(number)" : "fix/issue-\(number)"
+    }
+}
+
+// MARK: - Workspace repositories (multi-repo workspace)
+
+/// A GitHub remote, split into the two halves every GitHub API call needs.
+struct GitHubRepo: Equatable {
+    var owner: String
+    var name: String
+}
+
+/// One directory inside a workspace that can be used as a git target.
+struct WorkspaceRepo: Equatable {
+    /// Workspace-relative path; "." is the root itself. Stable id for persistence.
+    var id: String
+    var absolutePath: String
+    var isGit: Bool
+    /// This repo's own default branch (main / master differ per repo).
+    var defaultBase: String = "main"
+    /// Preferred push remote (github > origin > first), or nil for a local-only repo.
+    var remoteName: String?
+    /// Set when a github.com remote exists.
+    var github: GitHubRepo?
+    /// "." → the root directory's last path component; otherwise the relative path.
+    var displayName: String
+}
+
+/// How a workspace's repository layout is classified — the compatibility matrix of
+/// docs/design/panels/multi-repo-workspace-design.md §4.3.
+enum WorkspaceRepoMode: Equatable {
+    /// No repository at all — today's 非 Git 目录.
+    case plain
+    /// Root is a repository and no participating child repo exists — today's shape.
+    case single
+    /// Anything else with at least one repository (root + children, or children only).
+    /// One child repo is already multi: adding/removing a repo never flips the paradigm.
+    case multi
+}
+
+/// The repositories a workspace contains. Pure value type; detection reads the
+/// outside world through an injectable `WorkspaceRepoProbe`.
+struct WorkspaceRepoSet: Equatable {
+    var repos: [WorkspaceRepo] = []
+    /// The user's explicit pick when it still exists, else root, else the first
+    /// GitHub repo, else the first git repo, else nil.
+    var primary: WorkspaceRepo?
+
+    var gitRepos: [WorkspaceRepo] { repos.filter(\.isGit) }
+    var gitAvailable: Bool { !gitRepos.isEmpty }
+    /// Any repo can open a PR (issue-area availability).
+    var prAvailable: Bool { repos.contains { $0.github != nil } }
+    /// Whether EVERY target repo can open a PR (the PR delivery mode).
+    func allCanOpenPR(_ targets: [WorkspaceRepo]) -> Bool {
+        !targets.isEmpty && targets.allSatisfy { $0.github != nil }
+    }
+
+    /// Only「root is a repo and no participating child」is the legacy single-repo
+    /// shape; everything else with a repo is multi, even a lone child repo.
+    var mode: WorkspaceRepoMode {
+        if repos.isEmpty { return .plain }
+        if repos.count == 1, repos[0].id == "." { return .single }
+        return .multi
+    }
+
+    var isSingleRepo: Bool { mode == .single }
+    var isMultiRepo: Bool { mode == .multi }
+}
+
+/// The outside-world facts `WorkspaceRepoSet.detect` needs, injected so a test can
+/// describe a directory tree without running git. The filesystem defaults are real;
+/// the git answers default to "nothing is a repository", so a test overrides only
+/// what it cares about. `.live` is the real thing (Process + the real .gitmodules).
+struct WorkspaceRepoProbe {
+    var isDirectory: (String) -> Bool
+    var directoryEntries: (String) -> [String]
+    var hasGitEntry: (String) -> Bool
+    /// True only when the directory is itself a work-tree top level (not a subdir).
+    var isGitRepoRoot: (String) -> Bool
+    /// Submodule paths declared by the root .gitmodules (workspace-relative).
+    var submodulePaths: (String) -> [String]
+    var defaultBase: (String) -> String
+    var remoteName: (String) -> String?
+    var github: (String) -> GitHubRepo?
+
+    init(isDirectory: @escaping (String) -> Bool = { path in
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else { return false }
+            return isDir.boolValue
+        },
+        directoryEntries: @escaping (String) -> [String] = { path in
+            (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? []
+        },
+        hasGitEntry: @escaping (String) -> Bool = { path in
+            FileManager.default.fileExists(atPath: path + "/.git")
+        },
+        isGitRepoRoot: @escaping (String) -> Bool = { _ in false },
+        submodulePaths: @escaping (String) -> [String] = { root in
+            guard let text = try? String(contentsOfFile: root + "/.gitmodules", encoding: .utf8) else { return [] }
+            return WorkspaceRepoProbe.parseGitmodules(text)
+        },
+        defaultBase: @escaping (String) -> String = { _ in "main" },
+        remoteName: @escaping (String) -> String? = { _ in nil },
+        github: @escaping (String) -> GitHubRepo? = { _ in nil }) {
+        self.isDirectory = isDirectory
+        self.directoryEntries = directoryEntries
+        self.hasGitEntry = hasGitEntry
+        self.isGitRepoRoot = isGitRepoRoot
+        self.submodulePaths = submodulePaths
+        self.defaultBase = defaultBase
+        self.remoteName = remoteName
+        self.github = github
+    }
+
+    /// The real probe: git through `/usr/bin/git`, the tree through FileManager.
+    /// Everything here is BLOCKING, so callers run detection on a background queue.
+    static let live = WorkspaceRepoProbe(
+        isGitRepoRoot: { path in
+            guard runGit(path, ["rev-parse", "--is-inside-work-tree"]) == "true",
+                  let top = runGit(path, ["rev-parse", "--show-toplevel"]) else { return false }
+            return (top as NSString).standardizingPath == (path as NSString).standardizingPath
+        },
+        submodulePaths: { root in
+            guard let text = try? String(contentsOfFile: root + "/.gitmodules", encoding: .utf8) else { return [] }
+            return parseGitmodules(text)
+        },
+        defaultBase: { path in
+            let remote = pushRemoteName(path)
+            let remoteHead = remote.flatMap { name in
+                runGit(path, ["symbolic-ref", "--short", "refs/remotes/\(name)/HEAD"])
+            }
+            let current = runGit(path, ["rev-parse", "--abbrev-ref", "HEAD"])
+            let hasMain = runGit(path, ["rev-parse", "--verify", "--quiet", "main"]) != nil
+            let hasMaster = runGit(path, ["rev-parse", "--verify", "--quiet", "master"]) != nil
+            return TaskBranch.defaultBaseBranch(symbolicRef: remoteHead, current: current,
+                                                hasMain: hasMain, hasMaster: hasMaster)
+        },
+        remoteName: { path in pushRemoteName(path) },
+        github: { path in
+            guard let out = runGit(path, ["remote", "-v"]) else { return nil }
+            return githubRepo(fromRemotes: parseGitRemotes(out))
+        })
+
+    /// The `path = …` lines of a .gitmodules file, in order.
+    static func parseGitmodules(_ text: String) -> [String] {
+        var paths: [String] = []
+        for line in text.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard let eq = trimmed.firstIndex(of: "=") else { continue }
+            guard trimmed[..<eq].trimmingCharacters(in: .whitespaces) == "path" else { continue }
+            let value = trimmed[trimmed.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+            if !value.isEmpty { paths.append(value) }
+        }
+        return paths
+    }
+
+    /// `git remote -v` → one (name, url) per remote, first line wins.
+    static func parseGitRemotes(_ output: String) -> [(name: String, url: String)] {
+        var seen: Set<String> = []
+        var remotes: [(name: String, url: String)] = []
+        for line in output.split(separator: "\n") {
+            let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            guard parts.count >= 2 else { continue }
+            let name = String(parts[0])
+            guard !seen.contains(name) else { continue }
+            seen.insert(name)
+            remotes.append((name, String(parts[1])))
+        }
+        return remotes
+    }
+
+    /// The github.com remote, preferring the one literally named "github".
+    static func githubRepo(fromRemotes remotes: [(name: String, url: String)]) -> GitHubRepo? {
+        let url = remotes.first { $0.name == "github" && $0.url.contains("github.com") }?.url
+            ?? remotes.first { $0.url.contains("github.com") }?.url
+        guard let url = url,
+              let range = url.range(of: "github.com[/:]", options: .regularExpression) else { return nil }
+        let tail = String(url[range.upperBound...])
+        let parts = tail.split(separator: "/")
+        guard parts.count >= 2 else { return nil }
+        let owner = String(parts[0])
+        let name = String(parts[1]).replacingOccurrences(of: ".git", with: "")
+        guard !owner.isEmpty, !name.isEmpty else { return nil }
+        return GitHubRepo(owner: owner, name: name)
+    }
+
+    /// The remote used to push: "github", else "origin", else the first one.
+    static func pushRemoteName(_ path: String) -> String? {
+        guard let out = runGit(path, ["remote"]) else { return nil }
+        let names = out.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" }).map(String.init)
+        if names.contains("github") { return "github" }
+        if names.contains("origin") { return "origin" }
+        return names.first
+    }
+
+    /// git with these arguments in `path`; nil when it fails or cannot launch.
+    static func runGit(_ path: String, _ args: [String]) -> String? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        proc.arguments = ["-C", path] + args
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        do { try proc.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        guard proc.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+extension WorkspaceRepoSet {
+
+    /// Directories never scanned for repositories: heavy build leaves (the hidden
+    /// ones are already covered by the dot rule, but the list documents intent).
+    static let excludedDirectoryNames: Set<String> = ["node_modules", ".build", ".cache", "dist"]
+
+    /// Detect the workspace's repositories (design §4.1): the root when it IS a
+    /// work-tree top level (id "."), plus every direct child directory carrying a
+    /// .git entry, minus hidden / excluded directories and the root .
+    /// gitmodules submodules. `primaryRepoID` is the user's
+    /// `tasksPrimaryRepoByWorkspace` pick; a stale one falls back to the auto rule.
+    static func detect(root: String,
+                       primaryRepoID: String? = nil,
+                       probe: WorkspaceRepoProbe = .live) -> WorkspaceRepoSet {
+        var repos: [WorkspaceRepo] = []
+        if probe.isGitRepoRoot(root) {
+            repos.append(makeRepo(id: ".", path: root, root: root, probe: probe))
+        }
+        let submodules = Set(probe.submodulePaths(root))
+        for name in probe.directoryEntries(root).sorted() {
+            guard !name.hasPrefix("."), !excludedDirectoryNames.contains(name) else { continue }
+            let path = root + "/" + name
+            guard probe.isDirectory(path) else { continue }
+            // A submodule is managed by the parent repo: not an independent target.
+            let isSubmodule = submodules.contains(name)
+                || submodules.contains { $0.hasPrefix(name + "/") }
+            guard !isSubmodule, probe.hasGitEntry(path) else { continue }
+            repos.append(makeRepo(id: name, path: path, root: root, probe: probe))
+        }
+        return WorkspaceRepoSet(repos: repos, primary: resolvePrimary(repos, specifiedID: primaryRepoID))
+    }
+
+    /// User pick (when it still exists) → root → first GitHub repo → first git repo.
+    static func resolvePrimary(_ repos: [WorkspaceRepo], specifiedID: String?) -> WorkspaceRepo? {
+        if let id = specifiedID, let picked = repos.first(where: { $0.id == id }) { return picked }
+        if let root = repos.first(where: { $0.id == "." }) { return root }
+        if let github = repos.first(where: { $0.github != nil }) { return github }
+        return repos.first(where: { $0.isGit })
+    }
+
+    private static func makeRepo(id: String, path: String, root: String,
+                                 probe: WorkspaceRepoProbe) -> WorkspaceRepo {
+        WorkspaceRepo(id: id,
+                      absolutePath: path,
+                      isGit: true,
+                      defaultBase: probe.defaultBase(path),
+                      remoteName: probe.remoteName(path),
+                      github: probe.github(path),
+                      displayName: id == "." ? (root as NSString).lastPathComponent : id)
     }
 }
 
@@ -477,6 +752,111 @@ enum QueueIntegration: String, CaseIterable {
     func isAvailable(isGit: Bool, hasGitHubRemote: Bool, hasRemote: Bool) -> Bool {
         Self.available(self, isGit: isGit, hasGitHubRemote: hasGitHubRemote, hasRemote: hasRemote)
     }
+
+    // MARK: - 多仓库：按仓库能力降级（design §7.2）
+
+    /// 该仓库对某个 intent 能否**原生**做到。
+    /// PR 需要 GitHub 远端；push 需要远端；本地合并只需要是 git 仓库；
+    /// 「无」永远成立。
+    static func supports(_ mode: QueueIntegration, repo: WorkspaceRepo, hasRemote: Bool) -> Bool {
+        switch mode {
+        case .none: return true
+        case .pr: return repo.github != nil
+        case .merge: return repo.isGit
+        case .push: return repo.isGit && hasRemote
+        }
+    }
+
+    /// 按仓库能力降级：PR → 推送 → 本地合并 → 不做。混合能力的工作区不再整体
+    /// 拒绝 —— 每个仓库落到自己能做的那一档，交付结果也按仓库分别记录。
+    static func effective(_ intent: QueueIntegration, repo: WorkspaceRepo, hasRemote: Bool) -> QueueIntegration {
+        if supports(intent, repo: repo, hasRemote: hasRemote) { return intent }
+        switch intent {
+        case .pr: return hasRemote ? .push : (repo.isGit ? .merge : .none)
+        case .push: return repo.isGit ? .merge : .none
+        case .merge: return .none
+        case .none: return .none
+        }
+    }
+
+    /// 选项可用性：只要「有一个」目标能原生做到就可选（单仓库时即今天的可用性）。
+    static func available(_ intent: QueueIntegration, targets: [WorkspaceRepo],
+                          hasRemote: (WorkspaceRepo) -> Bool) -> Bool {
+        guard !targets.isEmpty else { return intent == .none }
+        return intent == .none || targets.contains { supports(intent, repo: $0, hasRemote: hasRemote($0)) }
+    }
+
+    /// 队列级覆盖未设置时，每个目标仓库用它自己的按仓库默认值作为 intent
+    /// （design §7.2/§8.1）：intent(repo) = queue.integration ?? perRepoDefault(repo)。
+    static func intent(queueOverride: QueueIntegration?, perRepoDefault: QueueIntegration) -> QueueIntegration {
+        queueOverride ?? perRepoDefault
+    }
+}
+
+/// 一个目标仓库在一次交付里走到了哪一步（design §7.1）。
+enum RepoRunStatus: String {
+    case pending
+    case running
+    case done
+    case failed
+    case skipped
+}
+
+/// 一个队列对**一个**目标仓库的交付记录（design §7.1）。各仓库独立处理：
+/// 某个失败不丢弃已成功的仓库，卡片按仓库逐行展示结果。
+struct QueueRepoRun: Equatable {
+    /// WorkspaceRepo.id（相对工作区根的路径，"." = 工作区根）。
+    var repoID: String
+    var branch: String
+    var base: String
+    /// 队列对该仓库的**意图**（= 队列级交付模式，或该仓库的按仓库默认值）。
+    var intent: QueueIntegration
+    /// 按该仓库能力降级后的**实际动作**。
+    var effective: QueueIntegration
+    var status: RepoRunStatus
+    var prUrl: String?
+    /// 失败原因或成功摘要（L10n 键或纯文本）。
+    var note: String?
+
+    init(repoID: String, branch: String = "", base: String = "main",
+         intent: QueueIntegration = .none, effective: QueueIntegration = .none,
+         status: RepoRunStatus = .pending, prUrl: String? = nil, note: String? = nil) {
+        self.repoID = repoID
+        self.branch = branch
+        self.base = base
+        self.intent = intent
+        self.effective = effective
+        self.status = status
+        self.prUrl = prUrl
+        self.note = note
+    }
+
+    func dictionary() -> [String: Any] {
+        var d: [String: Any] = [
+            "repoID": repoID,
+            "branch": branch,
+            "base": base,
+            "intent": intent.rawValue,
+            "effective": effective.rawValue,
+            "status": status.rawValue,
+        ]
+        if let prUrl = prUrl { d["prUrl"] = prUrl }
+        if let note = note { d["note"] = note }
+        return d
+    }
+
+    static func from(_ d: [String: Any]) -> QueueRepoRun? {
+        guard let repoID = d["repoID"] as? String else { return nil }
+        return QueueRepoRun(
+            repoID: repoID,
+            branch: (d["branch"] as? String) ?? "",
+            base: (d["base"] as? String) ?? "main",
+            intent: (d["intent"] as? String).flatMap { QueueIntegration(rawValue: $0) } ?? .none,
+            effective: (d["effective"] as? String).flatMap { QueueIntegration(rawValue: $0) } ?? .none,
+            status: (d["status"] as? String).flatMap { RepoRunStatus(rawValue: $0) } ?? .pending,
+            prUrl: d["prUrl"] as? String,
+            note: d["note"] as? String)
+    }
 }
 
 /// A queue is a lane: every task in it shares ONE branch and runs strictly in
@@ -501,6 +881,13 @@ struct TaskQueue: Equatable {
     /// its 已完成 state — a PR that could not be opened is not failed work — but the
     /// reason is shown instead of silently disappearing into the log.
     var prError: String?
+    /// 本队列的目标仓库（WorkspaceRepo.id 列表；"." = 工作区根）。nil / 空 =
+    /// 默认主仓库 primary（design §7.1 / §5.2）。P2 用它做「按仓库预检 + 切分支」，
+    /// 交付阶段（P3）在此基础上按仓库记录 repoRuns。
+    var repos: [String]?
+    /// 每个目标仓库的交付结果（design §7.1/§7.3，各仓库独立处理）。旧数据没有这个
+    /// 键时为空数组 = 旧行为。
+    var repoRuns: [QueueRepoRun]
     /// Per-queue override of the workspace's integration default; nil = follow the
     /// tasks-panel setting.
     var integration: QueueIntegration?
@@ -519,6 +906,8 @@ struct TaskQueue: Equatable {
          autoPR: Bool = false,
          prUrl: String? = nil,
          prError: String? = nil,
+         repos: [String]? = nil,
+         repoRuns: [QueueRepoRun] = [],
          integration: QueueIntegration? = nil,
          integrationNote: String? = nil,
          createdAt: Date? = nil) {
@@ -532,6 +921,8 @@ struct TaskQueue: Equatable {
         self.autoPR = autoPR
         self.prUrl = prUrl
         self.prError = prError
+        self.repos = repos
+        self.repoRuns = repoRuns
         self.integration = integration
         self.integrationNote = integrationNote
         self.createdAt = createdAt
@@ -561,7 +952,8 @@ struct TaskQueue: Equatable {
     static func auto(for task: TaskItem,
                      baseBranch: String = "main",
                      switchesBranch: Bool = true,
-                     opensPR: Bool = true) -> TaskQueue {
+                     opensPR: Bool = true,
+                     repos: [String]? = nil) -> TaskQueue {
         let number = task.number ?? 0
         return TaskQueue(id: TaskQueue.newID(),
                          name: "Issue #\(number)",
@@ -574,6 +966,7 @@ struct TaskQueue: Equatable {
                          autoCreated: true,
                          autoPR: opensPR,
                          prUrl: nil,
+                         repos: repos,
                          createdAt: Date())
     }
 
@@ -644,6 +1037,8 @@ struct TaskQueue: Equatable {
         if let branch = branch { d["branch"] = branch }
         if let prUrl = prUrl { d["prUrl"] = prUrl }
         if let prError = prError { d["prError"] = prError }
+        if let repos = repos { d["repos"] = repos }
+        if !repoRuns.isEmpty { d["repoRuns"] = repoRuns.map { $0.dictionary() } }
         if let integration = integration { d["integration"] = integration.rawValue }
         if let integrationNote = integrationNote { d["integrationNote"] = integrationNote }
         if let createdAt = createdAt { d["createdAt"] = TaskItem.iso8601.string(from: createdAt) }
@@ -662,6 +1057,8 @@ struct TaskQueue: Equatable {
                          autoPR: (d["autoPR"] as? Bool) ?? false,
                          prUrl: d["prUrl"] as? String,
                          prError: d["prError"] as? String,
+                         repos: d["repos"] as? [String],
+                         repoRuns: (d["repoRuns"] as? [[String: Any]])?.compactMap { QueueRepoRun.from($0) } ?? [],
                          integration: (d["integration"] as? String).flatMap { QueueIntegration(rawValue: $0) },
                          integrationNote: d["integrationNote"] as? String,
                          createdAt: (d["createdAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
@@ -901,6 +1298,7 @@ struct TaskBoard {
                               baseBranch: String = "main",
                               autoPR: Bool = false,
                               autoCreated: Bool = false,
+                              repos: [String]? = nil,
                               integration: QueueIntegration? = nil) -> TaskQueue {
         let queueID = TaskQueue.newID()
         let resolved: String?
@@ -911,8 +1309,8 @@ struct TaskBoard {
         }
         let queue = TaskQueue(id: queueID, name: name, branch: resolved, baseBranch: baseBranch,
                               taskIds: [], state: .draft, autoCreated: autoCreated,
-                              autoPR: autoPR, prUrl: nil, integration: integration,
-                              createdAt: Date())
+                              autoPR: autoPR, prUrl: nil, repos: repos,
+                              integration: integration, createdAt: Date())
         queues.append(queue)
         return queue
     }
@@ -964,6 +1362,7 @@ struct TaskBoard {
         tasks[i].state = .running
         tasks[i].startedAt = date
         tasks[i].error = nil
+        tasks[i].errorDetail = nil
         if let queueID = tasks[i].queueId, let qi = index(ofQueue: queueID) {
             queues[qi].state = .active
             local.activeQueueID = queueID
@@ -971,6 +1370,7 @@ struct TaskBoard {
             // both the success summary and the publish-failure reason.
             queues[qi].integrationNote = nil
             queues[qi].prError = nil
+            queues[qi].repoRuns = []
             if let branch = queues[qi].branch { tasks[i].branch = branch }
         }
         local.runningTaskID = taskID
@@ -1002,10 +1402,12 @@ struct TaskBoard {
     /// on half-finished work. The user then chooses 重试 or 跳过并继续.
     @discardableResult
     mutating func markFailed(_ taskID: String, error: String, report: String? = nil,
+                             errorDetail: String? = nil,
                              at date: Date = Date()) -> String? {
         guard let i = index(ofTask: taskID) else { return nil }
         tasks[i].state = .failed
         tasks[i].error = error
+        tasks[i].errorDetail = errorDetail
         tasks[i].finishedAt = date
         // A failed run's last words matter MORE than a successful one's: they say how
         // far it got (the next task in the queue receives them as its 前置汇报).
@@ -1044,6 +1446,14 @@ struct TaskBoard {
         return true
     }
 
+    /// 逐仓库记录本次交付的结果（design §7.1/§7.3）。一个仓库失败不影响其他仓库。
+    @discardableResult
+    mutating func setQueueRepoRuns(_ queueID: String, _ runs: [QueueRepoRun]) -> Bool {
+        guard let i = index(ofQueue: queueID) else { return false }
+        queues[i].repoRuns = runs
+        return true
+    }
+
     @discardableResult
     mutating func setQueuePRError(_ queueID: String, _ key: String?) -> Bool {
         guard let i = index(ofQueue: queueID) else { return false }
@@ -1058,6 +1468,7 @@ struct TaskBoard {
     mutating func retryAndResume(_ taskID: String) -> Bool {
         guard let i = index(ofTask: taskID), tasks[i].state.isQueueable else { return false }
         tasks[i].error = nil
+        tasks[i].errorDetail = nil
         tasks[i].finishedAt = nil
         // The old report described the run being retried: it must not be handed to the
         // next task in the queue as if it were this run's outcome.
@@ -1166,5 +1577,184 @@ struct TaskBoard {
         }
         local.runningTaskID = nil
         return (interrupted, paused)
+    }
+}
+
+// MARK: - Per-repo panel settings (design §8.1)
+
+/// 面板设置的「按仓库」存储与解析链（多仓库工作区）。
+///
+/// 四张映射与 ShellConfig 的键一一对应，IssueRunnerPanel 只做
+/// [String: Any] ⇄ 类型化字典的转换；这里是纯值类型，所以 model-tests 能直接驱动
+/// 「写入 / 旧值回退 / 跟随主仓库 / 独立存储」而不需要真的配置文件。
+///
+/// 两层并存是刻意为之：
+///   - 旧的**按工作区**值（tasksIntegrationByWorkspace /
+///     tasksAutoCloseOnPublishByWorkspace）仍是主仓库的兜底，既有安装无需迁移；
+///   - 新的**按仓库**值**只在显式设置时写入** —— 缺失 = 「跟随主仓库」。
+struct RepoSettings: Equatable {
+
+    // 旧的按工作区值（兼容既有数据）。
+    var integrationByWorkspace: [String: String] = [:]
+    var autoCloseByWorkspace: [String: Bool] = [:]
+
+    // 新的按仓库值。缺失 = 跟随主仓库，不存任何默认值。
+    var integrationByRepo: [String: String] = [:]
+    var autoCloseByRepo: [String: Bool] = [:]
+
+    // 工作区 → 用户指定的主仓库 repoID。
+    var primaryByWorkspace: [String: String] = [:]
+
+    // 工作区 → issue 归属仓库 repoID（design §9）。缺失 = 跟随主仓库；用户切换后
+    // 才写入，此后即为显式指定，不再跟随。
+    var issueRepoByWorkspace: [String: String] = [:]
+
+    /// 路径 → repoID 的分隔符：换行不会出现在文件路径或 repoID 里，两半永不混淆。
+    static let keySeparator = "\n"
+
+    /// 与 IssueRunnerPanel.workspaceSettingsKey 同一套规范化：尾斜杠 / .. 不会
+    /// 造出第二个键。
+    static func workspaceKey(_ path: String) -> String {
+        let standardized = (path as NSString).standardizingPath
+        if standardized.count > 1, standardized.hasSuffix("/") {
+            return String(standardized.dropLast())
+        }
+        return standardized
+    }
+
+    static func scopedKey(path: String, repoID: String) -> String {
+        workspaceKey(path) + keySeparator + repoID
+    }
+
+    // MARK: - 显式读取
+
+    /// 该仓库是否自己显式存过值。nil = 没存 = 跟随主仓库。
+    func explicitIntegration(forWorkspace path: String, repoID: String) -> QueueIntegration? {
+        guard let raw = integrationByRepo[Self.scopedKey(path: path, repoID: repoID)] else { return nil }
+        return QueueIntegration(rawValue: raw)
+    }
+
+    func explicitAutoClose(forWorkspace path: String, repoID: String) -> Bool? {
+        autoCloseByRepo[Self.scopedKey(path: path, repoID: repoID)]
+    }
+
+    /// 旧的工作区值（主仓库兜底用）。
+    func legacyIntegration(forWorkspace path: String) -> QueueIntegration? {
+        guard let raw = integrationByWorkspace[Self.workspaceKey(path)] else { return nil }
+        return QueueIntegration(rawValue: raw)
+    }
+
+    func legacyAutoClose(forWorkspace path: String) -> Bool {
+        autoCloseByWorkspace[Self.workspaceKey(path)] ?? false
+    }
+
+    /// 用户指定的主仓库 repoID，或 nil（未指定 / 已失效由调用方的 detect 回退）。
+    func storedPrimaryRepoID(forWorkspace path: String) -> String? {
+        guard let id = primaryByWorkspace[Self.workspaceKey(path)], !id.isEmpty else { return nil }
+        return id
+    }
+
+    // MARK: - 显式写入（nil = 删除 → 回到「跟随主仓库」）
+
+    mutating func setIntegration(_ mode: QueueIntegration?, forWorkspace path: String, repoID: String) {
+        let key = Self.scopedKey(path: path, repoID: repoID)
+        if let mode = mode {
+            integrationByRepo[key] = mode.rawValue
+        } else {
+            integrationByRepo.removeValue(forKey: key)
+        }
+    }
+
+    mutating func setAutoClose(_ on: Bool?, forWorkspace path: String, repoID: String) {
+        let key = Self.scopedKey(path: path, repoID: repoID)
+        if let on = on {
+            autoCloseByRepo[key] = on
+        } else {
+            autoCloseByRepo.removeValue(forKey: key)
+        }
+    }
+
+    mutating func setLegacyIntegration(_ mode: QueueIntegration, forWorkspace path: String) {
+        integrationByWorkspace[Self.workspaceKey(path)] = mode.rawValue
+    }
+
+    mutating func setLegacyAutoClose(_ on: Bool, forWorkspace path: String) {
+        autoCloseByWorkspace[Self.workspaceKey(path)] = on
+    }
+
+    mutating func setPrimaryRepoID(_ id: String?, forWorkspace path: String) {
+        let key = Self.workspaceKey(path)
+        if let id = id, !id.isEmpty {
+            primaryByWorkspace[key] = id
+        } else {
+            primaryByWorkspace.removeValue(forKey: key)
+        }
+    }
+
+    // MARK: - issue 归属仓库（design §9）
+
+    /// 用户显式切换过的 issue 归属仓库（nil = 从未切换 / 已失效，跟随主仓库）。
+    func storedIssueRepoID(forWorkspace path: String) -> String? {
+        guard let id = issueRepoByWorkspace[Self.workspaceKey(path)], !id.isEmpty else { return nil }
+        return id
+    }
+
+    /// 写入 issue 归属（nil = 删除 → 回到「跟随主仓库」）。用户在 issue 区切过一次
+    /// 之后这就是显式指定，不再跟随。
+    mutating func setIssueRepoID(_ id: String?, forWorkspace path: String) {
+        let key = Self.workspaceKey(path)
+        if let id = id, !id.isEmpty {
+            issueRepoByWorkspace[key] = id
+        } else {
+            issueRepoByWorkspace.removeValue(forKey: key)
+        }
+    }
+
+    /// 解析 issue 归属：显式指定且该仓库仍存在 → 用它；否则跟随主仓库（primary）。
+    /// 两者都没有时 nil（plain 工作区）。
+    func resolvedIssueRepoID(forWorkspace path: String, repoSet: WorkspaceRepoSet) -> String? {
+        if let id = storedIssueRepoID(forWorkspace: path),
+           repoSet.repos.contains(where: { $0.id == id }) {
+            return id
+        }
+        return repoSet.primary?.id
+    }
+
+    /// 是否处于「显式指定」状态（用户切换过且该仓库仍存在）。
+    func isIssueRepoExplicit(forWorkspace path: String, repoSet: WorkspaceRepoSet) -> Bool {
+        guard let id = storedIssueRepoID(forWorkspace: path) else { return false }
+        return repoSet.repos.contains(where: { $0.id == id })
+    }
+
+    // MARK: - 解析链
+
+    /// 1. 该仓库的显式按仓库值 → 用它；
+    /// 2. 非主仓库且未显式设置（默认跟随）→ 用主仓库的解析结果；
+    /// 3. 主仓库未显式设置 → 旧的工作区值（兼容）→ recommended。
+    func resolvedIntegration(forWorkspace path: String, repoID: String, primaryID: String?,
+                             recommended: QueueIntegration) -> QueueIntegration {
+        if let explicit = explicitIntegration(forWorkspace: path, repoID: repoID) { return explicit }
+        if let primaryID = primaryID, primaryID != repoID {
+            return resolvedIntegration(forWorkspace: path, repoID: primaryID,
+                                       primaryID: primaryID, recommended: recommended)
+        }
+        return legacyIntegration(forWorkspace: path) ?? recommended
+    }
+
+    /// 同一解析链；主仓库的兜底是旧工作区值，最终 false（自动关闭默认关）。
+    func resolvedAutoClose(forWorkspace path: String, repoID: String, primaryID: String?) -> Bool {
+        if let explicit = explicitAutoClose(forWorkspace: path, repoID: repoID) { return explicit }
+        if let primaryID = primaryID, primaryID != repoID {
+            return resolvedAutoClose(forWorkspace: path, repoID: primaryID, primaryID: primaryID)
+        }
+        return legacyAutoClose(forWorkspace: path)
+    }
+
+    /// 当前是否「跟随主仓库」：只有**非主仓库**且没有任何显式值时才跟随；
+    /// 主仓库本身就是来源，永不跟随。
+    func followsPrimary(forWorkspace path: String, repoID: String, primaryID: String?) -> Bool {
+        guard let primaryID = primaryID, primaryID != repoID else { return false }
+        return explicitIntegration(forWorkspace: path, repoID: repoID) == nil
+            && explicitAutoClose(forWorkspace: path, repoID: repoID) == nil
     }
 }

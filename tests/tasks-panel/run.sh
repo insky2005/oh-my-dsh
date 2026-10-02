@@ -124,6 +124,32 @@ if ! grep -q 'static func repoShape(path: String) -> TaskRepoShape' ../../platfo
 fi
 echo "ok - the task prompt probes the workspace shape per prompt"
 
+# 目标仓库集合必须运行期重探测，禁止从 makeEnv 的 env 抄一份：工作区会加/减仓库，
+# 提示词必须描述 runner 真正会进入的那组仓库。promptText 现场 detectRepoSet +
+# TasksRunner.resolveTargets（queue.repos 优先、否则 primary），两处共用一个解析入口。
+if ! grep -q 'TasksRunner.resolveTargets(queue: queue, repos: liveSet.repos' ../../platforms/macos/src/IssueRunnerPanel.swift; then
+  echo "FAIL - 提示词的目标仓库必须运行期重探测（detectRepoSet + TasksRunner.resolveTargets），不能从 env 抄一份"
+  exit 1
+fi
+# runner 侧同理：pump 必须用 env.repoSetProvider 现场重探，不能只吃 adopt 时的快照。
+if ! grep -q 'let live = repoSetProvider?()' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'repoSetProvider: { Self.detectRepoSet(repoRoot) }' ../../platforms/macos/src/IssueRunnerPanel.swift; then
+  echo "FAIL - pump 的目标仓库必须经 env.repoSetProvider 运行期重探（design §5.1）"
+  exit 1
+fi
+echo "ok - 目标仓库集合在提示词与 pump 里运行期重探测"
+
+# 队列表单里选中的目标仓库必须写回队列：queue.repos 是 P2 预检的真实入口，
+# 表单只画选择区、提交时不落库的话，多仓库预检永远只会拿到 primary。编辑时还要
+# 按已存的 repos 回填（selected: queue.repos），否则保存会把选择重置成 primary。
+if ! grep -q 'repos: composer.storedRepoIDs' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -q 'repos: .some(composer.storedRepoIDs)' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -q 'selected: queue.repos' ../../platforms/macos/src/IssueRunnerPanel.swift; then
+  echo "FAIL - 队列表单的目标仓库必须写回队列（create/update）并在编辑时回填（queue.repos）"
+  exit 1
+fi
+echo "ok - 队列表单的目标仓库写回队列（create/update）并在编辑时回填"
+
 # The 处理 button answers a BOARD question (「有待办吗」), so it has to be re-derived
 # whenever the board changes — not only when the WORKSPACE does. It used to be set
 # only in updateLabels(), which runs on adopt / language switch: creating a task (the
@@ -156,7 +182,7 @@ echo "ok - the session opener passes every argument and reports bridge errors"
 # 提示词只允许有**一份要求清单**：issue 与手动任务都走 TaskPrompts.requirements。
 # 各写一份的那段历史，正是 issue 任务被留在「会 push、PR 由面板开」旧政策里的原因
 # （2026-09-27 对齐前，issue 侧还要求加载 issue-resolve 技能）。
-SHARED_REQUIREMENTS=$(grep -cF 'requirements(branch: branch, queueName: queueName, base: base, shape: shape)' ../../platforms/macos/src/TasksRunner.swift)
+SHARED_REQUIREMENTS=$(grep -cF 'requirements(branch: branch, queueName: queueName, base: base, targets: targetList)' ../../platforms/macos/src/TasksRunner.swift)
 if [ "$SHARED_REQUIREMENTS" != "2" ]; then
   echo "FAIL - issue 与手动任务的提示词必须共用 TaskPrompts.requirements（找到 $SHARED_REQUIREMENTS 处调用，期望 2）"
   exit 1
@@ -181,5 +207,15 @@ if ! grep -q 'tasksAutoCloseOnPublishByWorkspace' "$IP" \
   exit 1
 fi
 echo "ok - 面板设置按工作区隔离（autoCloseOnPublish 用工作区映射）"
+
+# issue 归属仓库（design §9）：必须按工作区存（默认跟随主仓库），并且真实写进
+# issue 任务的 auto queue —— 只画提示、不落 repos 的话，队列仍然按 primary 跑。
+if ! grep -q 'tasksIssueRepoByWorkspace' "$IP" \
+   || ! grep -q 'runner.startIssueTask(task.id, repos:' "$IP" \
+   || ! grep -q 'repos: repos)' ../../platforms/macos/src/TasksRunner.swift; then
+  echo "FAIL - issue 归属仓库必须按工作区存并写进 issue 任务的 auto queue（queue.repos）"
+  exit 1
+fi
+echo "ok - issue 归属仓库按工作区存并写进 issue 任务的 auto queue"
 
 echo "tasks-panel tests passed"

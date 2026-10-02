@@ -142,6 +142,14 @@ final class IssueRunnerPanelController: NSObject {
     /// current → "main"): the base an issue task's queue is built on, and what the
     /// queue form prefills.
     private var workspaceDefaultBase = "main"
+    /// The adopted workspace's repositories (multi-repo, P1b): the header counts
+    /// them, the queue form picks among them, and the runner env hands each its own
+    /// git. Empty until a workspace is adopted.
+    private var workspaceRepoSet = WorkspaceRepoSet()
+    /// Per-path repo-set cache: the registry factory detects it to build the env,
+    /// and adoptWorkspace reuses the same answer for the header / forms instead of
+    /// probing git twice on the main thread.
+    private var repoSetByPath: [String: WorkspaceRepoSet] = [:]
     /// Workspaces other than the current one that have a task in flight (their
     /// runners are alive). The header offers a way to jump to them — tracking work
     /// the user cannot see would just be a different way of hiding it.
@@ -196,8 +204,12 @@ final class IssueRunnerPanelController: NSObject {
         // without a GitHub remote are different things and say so differently.
         let workspace = TaskWorkspaceModel.build(owner: repo?.owner, repo: repo?.repo,
                                                  workspacePath: repoRootPath,
-                                                 isGitRepo: workspaceIsGit)
+                                                 isGitRepo: workspaceIsGit,
+                                                 repoSet: workspaceRepoSet)
         repoLabel.fullText = workspace.title
+        // Multi-repo: the compact line counts repositories, the tooltip names them
+        // (the primary marked) — the count alone would hide which ones.
+        repoLabel.toolTip = workspace.repoListTooltip
         // The gear opens 面板设置 (token + 工作流). The integration default applies
         // to every workspace, so the gear is NOT GitHub-gated any more.
         configButton.isEnabled = true
@@ -507,6 +519,9 @@ final class IssueRunnerPanelController: NSObject {
         guard TaskWorkspaceRegistry.needsReadopt(resolved: workspacePath?(),
                                                  adopted: workspaces.currentPath,
                                                  hasRunner: runner != nil) else { return }
+        // 工作区要换了：把已打开的抽屉（面板设置 / 新建任务 / 新建队列 / 编辑）收起来。
+        // 否则它会拿着旧工作区的数据继续显示，甚至把旧值写进新工作区（用户 2026-10-02）。
+        dismissForm()
         resolveRepoAndReload()
     }
 
@@ -868,11 +883,20 @@ final class IssueRunnerPanelController: NSObject {
             recovered = board.reconcileAfterRestart(interruptedError: TaskFailure.interrupted.rawValue)
             TasksStore.saveLocalHalf(path, board)
         }
-        let detected = Self.detectGitHubRemote(path)
-        let isGit = Self.isGitRepo(path)
+        // The repo SET is what this workspace is now (design §4.1): the header
+        // counts it, the queue form picks among it, and the env hands each repo its
+        // own git. Detection is blocking, so it happens here once — adoptWorkspace
+        // reuses the cached answer for the header / forms.
+        let repoSet = repoSetByPath[path] ?? Self.detectRepoSet(path)
+        repoSetByPath[path] = repoSet
+        // Issues still belong to ONE repo: the root's GitHub remote, else the
+        // primary's (design §9 — 默认跟随主仓库).
+        let detected = Self.issueRepo(root: path, repoSet: repoSet)
+        let isGit = repoSet.gitAvailable
         let timeout = Self.taskTimeout()
         let runner = TasksRunner(board: board,
-                                 env: makeEnv(repoRoot: path, repo: detected, isGit: isGit),
+                                 env: makeEnv(repoRoot: path, repo: detected, isGit: isGit,
+                                              repoSet: repoSet),
                                  timeout: timeout)
         let extra = recovered.interrupted.isEmpty ? "" : ", interrupted: " + recovered.interrupted.joined(separator: ",")
         AppLog.shared.log("tasks: board loaded at \(path) — \(board.tasks.count) tasks, \(board.queues.count) queues"
@@ -892,7 +916,7 @@ final class IssueRunnerPanelController: NSObject {
     /// dsh session RPC on this port, GitHub REST with this repo's token, and the
     /// four-file persistence under .dsh/tasks/.
     private func makeEnv(repoRoot: String, repo: (owner: String, repo: String)?,
-                         isGit: Bool) -> TaskRunnerEnv {
+                         isGit: Bool, repoSet: WorkspaceRepoSet = WorkspaceRepoSet()) -> TaskRunnerEnv {
         // The dsh web port is read AT CALL TIME, never frozen here.
         //
         // This env is built as soon as the panel adopts a workspace — which is
@@ -911,11 +935,15 @@ final class IssueRunnerPanelController: NSObject {
         // Per workspace, not per panel: two runners can be alive at once, each with
         // its own remote, token and PR policy.
         let token = repo.flatMap { loadToken(for: $0) }
+        // The PRIMARY repo is the default git target (a legacy single-repo workspace
+        // has the root as its primary; a plain directory has none and keeps repoRoot).
+        // Per-repo handles live in gitFor below (design §5.1).
+        let primaryPath = repoSet.primary?.absolutePath ?? repoRoot
         return TaskRunnerEnv(
             git: TaskGit(run: { args in
-                              Self.runProcess("/usr/bin/git", ["-C", repoRoot] + args, cwd: repoRoot)
+                              Self.runProcess("/usr/bin/git", ["-C", primaryPath] + args, cwd: primaryPath)
                           },
-                          remoteName: { Self.pushRemoteName(path: repoRoot) }),
+                          remoteName: { Self.pushRemoteName(path: primaryPath) }),
             repoRoot: repoRoot,
             createSession: { cwd in
                 // Both the port and the workspaceId are resolved now, not when the
@@ -932,12 +960,21 @@ final class IssueRunnerPanelController: NSObject {
             sessionState: { id in Self.sessionState(port: portOf(), sessionId: id) },
             defaultBaseBranch: Self.detectDefaultBaseBranch(path: repoRoot),
             // 队列没写自己的 integration 时用它（面板设置里可改；**按工作区**存）。
-            defaultIntegration: Self.resolvedIntegration(forWorkspace: repoRoot, isGit: isGit,
-                                                         hasGitHubRemote: repo != nil),
-            // 交付成功后自动关闭队列（面板设置；**按工作区**存 —— 和其他设置项一样）。
-            autoCloseOnPublish: Self.storedAutoCloseOnPublish(forWorkspace: repoRoot),
+            defaultIntegration: Self.resolvedIntegration(forWorkspace: repoRoot, repoSet: repoSet,
+                                                         recommended: QueueIntegration.recommended(isGit: isGit,
+                                                                                                   hasGitHubRemote: repo != nil)),
+            // 每个仓库自己的交付默认值（design §7.2）：队列未覆盖时用它作为 intent。
+            defaultIntegrationFor: { repo in
+                Self.resolvedIntegration(forWorkspace: repoRoot, repoSet: repoSet, repoID: repo.id,
+                                         recommended: QueueIntegration.recommended(isGit: repo.isGit,
+                                                                                   hasGitHubRemote: repo.github != nil))
+            },
+            // 交付成功后自动关闭队列（面板设置；多仓库下按仓库，主仓库兜底旧工作区值）。
+            autoCloseOnPublish: Self.resolvedAutoCloseOnPublish(forWorkspace: repoRoot, repoSet: repoSet),
             canSwitchBranches: isGit,
-            canOpenPR: { repo != nil },
+            // 任一仓库有 GitHub 远端就可以走 PR（多仓库各仓库独立降级，design §4/§8）；
+            // repo != nil 是「工作区直接探测到 GitHub」的兜底。
+            canOpenPR: { repoSet.prAvailable || repo != nil },
             cancelSession: { id in Self.cancelSession(port: portOf(), sessionId: id) },
             // Only a LOOKUP: the PR itself is created by the queue 开 PR 会话 (the
             // runner startQueuePR), because its title and body have to summarize the
@@ -946,6 +983,13 @@ final class IssueRunnerPanelController: NSObject {
             findExistingPR: { branch in
                 guard let repo = repo else { return nil }
                 return Self.findExistingPR(owner: repo.owner, repo: repo.repo, branch: branch, token: token)
+            },
+            // 逐仓库 PR 兜底（design §7.4）：用该仓库自己的 owner/repo 与 token。
+            findExistingPRFor: { [weak self] repo, branch in
+                guard let gh = repo.github else { return nil }
+                let repoToken = self?.loadToken(for: (owner: gh.owner, repo: gh.name))
+                return Self.findExistingPR(owner: gh.owner, repo: gh.name, branch: branch,
+                                           token: repoToken)
             },
             promptText: { task, queue, brief in
                 // 两种来源共用同一套要求（TaskPrompts.requirements），**只有头不同**
@@ -967,6 +1011,24 @@ final class IssueRunnerPanelController: NSObject {
                 // can still tell the truth, and it is written on the runner's background
                 // queue, so the probe costs the UI nothing.
                 let shape = Self.repoShape(path: repoRoot)
+                // Prompt targets follow the LIVE repo set (design §5): a workspace
+                // can gain or lose repositories between tasks. The SAME resolution the
+                // runner uses (queue.repos else primary) is applied here, so the text the
+                // agent reads always describes the repositories pump will actually enter.
+                let liveSet = Self.detectRepoSet(repoRoot)
+                let resolvedRepos = TasksRunner.resolveTargets(queue: queue, repos: liveSet.repos,
+                                                               primaryRepoID: liveSet.primary?.id)
+                let targets: [TaskPromptTarget]
+                if resolvedRepos.isEmpty {
+                    targets = [TaskPromptTarget(repoID: ".", shape: shape)]
+                } else {
+                    targets = resolvedRepos.map { repo in
+                        TaskPromptTarget(repoID: repo.id,
+                                         shape: TaskRepoShape.detect(isGit: repo.isGit,
+                                                                     hasGitHubRemote: repo.github != nil),
+                                         defaultBase: repo.defaultBase)
+                    }
+                }
                 // 队列自己的「基于分支」；不在队列里的任务用工作区的默认分支 —— 两条
                 // 分支 rail 都会点名它（「若无分支，须基于 X 新建」/「直接在主分支 X 上处理」）。
                 let base = queue?.baseBranch ?? Self.detectDefaultBaseBranch(path: repoRoot)
@@ -976,13 +1038,15 @@ final class IssueRunnerPanelController: NSObject {
                                              branch: queue?.branch, queueName: sharedQueueName,
                                              base: base,
                                              brief: brief,
-                                             shape: shape)
+                                             shape: shape,
+                                             targets: targets)
                 }
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: sharedQueueName,
                                           base: base,
                                           brief: brief,
-                                          shape: shape)
+                                          shape: shape,
+                                          targets: targets)
             },
             // The 交接简报: what the previous task in this queue last said. Read
             // through the shell's core bridge (the same session logs the audit panel
@@ -1001,7 +1065,23 @@ final class IssueRunnerPanelController: NSObject {
                     blocking()
                     DispatchQueue.main.async { completion() }
                 }
-            }
+            },
+            // The workspace repo set and one git handle per repo (design §5.1) — the
+            // per-repo pipeline (pre-flight / branch / brief) is P2; the legacy `git`
+            // field above still points at the primary.
+            repos: repoSet.repos,
+            gitFor: { repo in
+                TaskGit(run: { args in
+                             Self.runProcess("/usr/bin/git", ["-C", repo.absolutePath] + args,
+                                             cwd: repo.absolutePath)
+                         },
+                         remoteName: { Self.pushRemoteName(path: repo.absolutePath) })
+            },
+            // The queue's default target when it names none (design §5.2 / Q2).
+            primaryRepoID: repoSet.primary?.id,
+            // Runtime re-probe for pump (design §5.1): the same detection the prompt
+            // does, so a task that adds / removes a repository is followed by the next.
+            repoSetProvider: { Self.detectRepoSet(repoRoot) }
         )
     }
 
@@ -1120,22 +1200,28 @@ final class IssueRunnerPanelController: NSObject {
     /// user is left with a header that says 非 Git 仓库 in a directory that is one.
     private func recheckWorkspaceShape() {
         guard let path = workspaces.currentPath else { return }
-        // Only ask git when the answer could have changed, so the steady state costs
-        // nothing: no repository → ask whether there is one now; a repository without a
-        // GitHub remote → ask whether there is one now.
-        let isGitNow = workspaceIsGit || Self.isGitRepo(path)
-        guard isGitNow else { return }
-        let hasRemoteNow = repo != nil || Self.detectGitHubRemote(path) != nil
-        guard let shape = TaskWorkspaceShape.change(wasGit: workspaceIsGit, hadRemote: repo != nil,
-                                                     isGitNow: isGitNow, hasRemoteNow: hasRemoteNow),
+        // Re-detect the whole repository set, not just「is the root a repo now」: a
+        // container workspace can gain or lose a CHILD repository while its root is
+        // not a repository at all (design §4.3). This runs after a task finished /
+        // the workspace went idle — never on the steady-state tick.
+        let repoSetNow = Self.detectRepoSet(path)
+        let repoIDsNow = repoSetNow.repos.map { $0.id }
+        let isGitNow = repoSetNow.gitAvailable
+        let hasRemoteNow = repoSetNow.prAvailable
+        guard let shape = TaskWorkspaceShape.change(wasRepoIDs: workspaceRepoSet.repos.map { $0.id },
+                                                     repoIDsNow: repoIDsNow,
+                                                     wasGit: workspaceIsGit,
+                                                     hadRemote: repo != nil,
+                                                     isGitNow: isGitNow,
+                                                     hasRemoteNow: hasRemoteNow),
               let messageKey = shape.messageKey else { return }
-        // The runner's env captured "there is no repository here" when it was built, so
-        // the runner has to be rebuilt — but only with NOTHING in flight in this
-        // workspace: two runners on one board would step the same task twice. (The next
-        // finish, or the go-idle call, tries again.)
+        // The runner env captured the repo set when it was built, so the runner has
+        // to be rebuilt — but only with NOTHING in flight in this workspace: two
+        // runners on one board would step the same task twice. (The next finish, or
+        // the go-idle call, tries again.)
         guard workspaces.trackedRunner(for: path)?.isBusy != true else { return }
         AppLog.shared.log("tasks: workspace re-detected at \(path)"
-                          + " (git=\(isGitNow ? "yes" : "no"), github=\(hasRemoteNow ? "yes" : "no"))"
+                          + " (repos=\(repoIDsNow.joined(separator: ",")), git=\(isGitNow ? "yes" : "no"), github=\(hasRemoteNow ? "yes" : "no"))"
                           + " — runner rebuilt for the new shape")
         workspaces.invalidate(path)
         adoptWorkspace(path)
@@ -1195,17 +1281,24 @@ final class IssueRunnerPanelController: NSObject {
     /// branch simply fails with tasks.errNotGit if the directory is not a git
     /// repository (docs/design/panels/issue-runner-design.md §V2-7).
     private func adoptWorkspace(_ path: String) {
-        let detected = Self.detectGitHubRemote(path)
+        // The repo SET is the workspace shape now (multi-repo, P1b): detect it once,
+        // cache it for the runner env, and derive the legacy single-root facts from
+        // the primary. Always fresh: recheckWorkspaceShape re-adopts precisely
+        // because the set changed, so a cache hit here would hide the change.
+        let repoSet = Self.detectRepoSet(path)
+        repoSetByPath[path] = repoSet
+        workspaceRepoSet = repoSet
+        let detected = Self.issueRepo(root: path, repoSet: repoSet)
         let sameBoard = (workspaces.currentPath == path) && runner != nil
         repo = detected
         repoRootPath = path
         let github = detected.map { $0.owner + "/" + $0.repo } ?? "-"
-        workspaceIsGit = Self.isGitRepo(path)
-        workspaceDefaultBase = workspaceIsGit ? Self.detectDefaultBaseBranch(path: path) : "main"
+        workspaceIsGit = repoSet.gitAvailable
+        workspaceDefaultBase = repoSet.primary?.defaultBase ?? "main"
         // Any remote (not only GitHub) counts — push needs somewhere to push to.
         // Merge does not: it is a local operation.
-        workspaceHasRemote = workspaceIsGit && Self.pushRemoteName(path: path) != nil
-        AppLog.shared.log("tasks: workspace adopted at \(path) (github=\(github) git=\(workspaceIsGit ? "yes" : "no") base=\(workspaceDefaultBase))")
+        workspaceHasRemote = repoSet.repos.contains { $0.remoteName != nil }
+        AppLog.shared.log("tasks: workspace adopted at \(path) (github=\(github) git=\(workspaceIsGit ? "yes" : "no") base=\(workspaceDefaultBase) repos=\(repoSet.repos.count))")
         updateLabels()
         if !sameBoard {
             // Switching workspaces does NOT stop tracking the one we leave: its
@@ -1310,11 +1403,9 @@ final class IssueRunnerPanelController: NSObject {
     /// Standardized key, so a trailing slash / `..` does not create a second entry
     /// (the same normalization TaskWorkspaceRegistry.needsReadopt uses).
     static func workspaceSettingsKey(_ path: String) -> String {
-        let standardized = (path as NSString).standardizingPath
-        if standardized.count > 1, standardized.hasSuffix("/") {
-            return String(standardized.dropLast())
-        }
-        return standardized
+        // One normalization for the legacy workspace keys and the new per-repo
+        // scoped keys, so they can never drift apart (design §8.1).
+        RepoSettings.workspaceKey(path)
     }
 
     // MARK: - 工作流 default (PER WORKSPACE)
@@ -1325,6 +1416,14 @@ final class IssueRunnerPanelController: NSObject {
     /// overrides it. If a GLOBAL default is ever wanted, it belongs in the shell's
     /// settings, not in this panel.
     private static let integrationByWorkspaceKey = "tasksIntegrationByWorkspace"
+    /// 新的按仓库键（设计 §8.1）：键 = 工作区路径 + 分隔符 + repoID；只存显式值，
+    /// 缺失 = 「跟随主仓库」。
+    private static let integrationByRepoKey = "tasksIntegrationByRepo"
+    private static let autoCloseByRepoKey = "tasksAutoCloseOnPublishByRepo"
+    /// 工作区级的主仓库指定（值 = repoID）。
+    private static let primaryRepoByWorkspaceKey = "tasksPrimaryRepoByWorkspace"
+    /// issue 归属仓库（design §9）：工作区级；缺失 = 跟随主仓库。
+    private static let issueRepoByWorkspaceKey = "tasksIssueRepoByWorkspace"
 
     /// The mode saved for this workspace, or nil when it was never set.
     static func storedIntegration(forWorkspace path: String) -> QueueIntegration? {
@@ -1339,6 +1438,71 @@ final class IssueRunnerPanelController: NSObject {
         ShellConfig.shared.set(map, forKey: integrationByWorkspaceKey)
     }
 
+    // MARK: - 按仓库设置 / 主仓库（多仓库工作区，设计 §8.1）
+
+    /// All per-repo panel settings as one pure value: the four ShellConfig maps
+    /// plus the primary pick. Reads go straight to the shell's (cached) config.
+    static func repoSettings() -> RepoSettings {
+        var settings = RepoSettings()
+        settings.integrationByWorkspace = stringMap(ShellConfig.shared.object(forKey: integrationByWorkspaceKey))
+        settings.autoCloseByWorkspace = boolMap(ShellConfig.shared.object(forKey: autoCloseByWorkspaceKey))
+        settings.integrationByRepo = stringMap(ShellConfig.shared.object(forKey: integrationByRepoKey))
+        settings.autoCloseByRepo = boolMap(ShellConfig.shared.object(forKey: autoCloseByRepoKey))
+        settings.primaryByWorkspace = stringMap(ShellConfig.shared.object(forKey: primaryRepoByWorkspaceKey))
+        settings.issueRepoByWorkspace = stringMap(ShellConfig.shared.object(forKey: issueRepoByWorkspaceKey))
+        return settings
+    }
+
+    static func saveRepoSettings(_ settings: RepoSettings) {
+        ShellConfig.shared.set(settings.integrationByWorkspace, forKey: integrationByWorkspaceKey)
+        ShellConfig.shared.set(settings.autoCloseByWorkspace, forKey: autoCloseByWorkspaceKey)
+        ShellConfig.shared.set(settings.integrationByRepo, forKey: integrationByRepoKey)
+        ShellConfig.shared.set(settings.autoCloseByRepo, forKey: autoCloseByRepoKey)
+        ShellConfig.shared.set(settings.primaryByWorkspace, forKey: primaryRepoByWorkspaceKey)
+        ShellConfig.shared.set(settings.issueRepoByWorkspace, forKey: issueRepoByWorkspaceKey)
+    }
+
+    private static func stringMap(_ value: Any?) -> [String: String] {
+        guard let map = value as? [String: Any] else { return [:] }
+        return map.compactMapValues { $0 as? String }
+    }
+
+    private static func boolMap(_ value: Any?) -> [String: Bool] {
+        guard let map = value as? [String: Any] else { return [:] }
+        return map.compactMapValues { $0 as? Bool }
+    }
+
+    /// Write the workspace-level primary pick (nil = remove → auto rule).
+    static func setStoredPrimaryRepoID(_ id: String?, forWorkspace path: String) {
+        var settings = repoSettings()
+        settings.setPrimaryRepoID(id, forWorkspace: path)
+        saveRepoSettings(settings)
+    }
+
+    /// The primary's resolved default, honoring the full chain (explicit repo
+    /// value → the primary's legacy workspace value → the recommendation). The
+    /// runner env and the queue forms use this.
+    static func resolvedIntegration(forWorkspace path: String, repoSet: WorkspaceRepoSet,
+                                    recommended: QueueIntegration) -> QueueIntegration {
+        let primaryID = repoSet.primary?.id
+        return repoSettings().resolvedIntegration(forWorkspace: path, repoID: primaryID ?? ".",
+                                                  primaryID: primaryID, recommended: recommended)
+    }
+
+    /// 某个具体仓库的交付默认值（按仓库 → 主仓库 → 旧工作区值 → recommended），
+    /// 多仓库交付的 per-repo intent 用它（design §7.2/§8.1）。
+    static func resolvedIntegration(forWorkspace path: String, repoSet: WorkspaceRepoSet,
+                                    repoID: String, recommended: QueueIntegration) -> QueueIntegration {
+        repoSettings().resolvedIntegration(forWorkspace: path, repoID: repoID,
+                                           primaryID: repoSet.primary?.id, recommended: recommended)
+    }
+
+    static func resolvedAutoCloseOnPublish(forWorkspace path: String, repoSet: WorkspaceRepoSet) -> Bool {
+        let primaryID = repoSet.primary?.id
+        return repoSettings().resolvedAutoClose(forWorkspace: path, repoID: primaryID ?? ".",
+                                                primaryID: primaryID)
+    }
+
     /// What a queue without its own override uses here: the saved value, else this
     /// workspace's RECOMMENDATION — so the panel is sensible before anyone sets it,
     /// and 首次打开设置时默认选中的就是这一档.
@@ -1351,9 +1515,28 @@ final class IssueRunnerPanelController: NSObject {
     /// This workspace's resolved 工作流 default (设置抽屉 / 队列头的 fallback).
     private var workspaceIntegration: QueueIntegration {
         guard let path = repoRootPath else { return .pr }
-        return Self.resolvedIntegration(forWorkspace: path, isGit: workspaceIsGit,
-                                        hasGitHubRemote: repo != nil)
+        return Self.resolvedIntegration(forWorkspace: path, repoSet: workspaceRepoSet,
+                                        recommended: QueueIntegration.recommended(isGit: workspaceIsGit,
+                                                                                  hasGitHubRemote: repo != nil))
     }
+
+    /// The repos a queue form may pick from: the whole set in multi-repo mode,
+    /// none in the single-repo / plain shapes (the form then looks exactly like
+    /// today — no selector at all, design §8).
+    private var repoPickerRepos: [WorkspaceRepo] {
+        workspaceRepoSet.isMultiRepo ? workspaceRepoSet.repos : []
+    }
+
+    // MARK: - issue 仓库归属（design §9）
+
+    /// issue 区的仓库归属模型：显式指定优先，否则跟随主仓库。
+    private var issueRepoTarget: IssueRepoTargetModel {
+        guard let path = repoRootPath else { return IssueRepoTargetModel() }
+        return IssueRepoTargetModel.build(repoSet: workspaceRepoSet,
+                                          explicitID: Self.storedIssueRepoID(forWorkspace: path))
+    }
+
+
 
     // MARK: - 交付成功后自动关闭队列 (PER WORKSPACE)
 
@@ -1383,6 +1566,59 @@ final class IssueRunnerPanelController: NSObject {
             return TimeInterval(minutes * 60)
         }
         return TasksRunner.defaultTimeout
+    }
+
+    /// Detect a workspace's repository set (design §4.1). BLOCKING (git), so it
+    /// runs where the existing adopt probes run. The user's
+    /// `tasksPrimaryRepoByWorkspace` pick resolves the primary; a stale one falls
+    /// back to the automatic rule (root → first GitHub → first git).
+    static func detectRepoSet(_ path: String) -> WorkspaceRepoSet {
+        let set = WorkspaceRepoSet.detect(root: path,
+                                          primaryRepoID: storedPrimaryRepoID(forWorkspace: path))
+        guard set.repos.isEmpty, isGitRepo(path) else { return set }
+        // A workspace registered to a SUBDIRECTORY of a repository is inside a work
+        // tree but is not its top level. detect() only takes the root when it IS the
+        // top level, so fall back to the legacy single-repo view rather than calling
+        // the directory plain and taking git away from it.
+        let probe = WorkspaceRepoProbe.live
+        let root = WorkspaceRepo(id: ".", absolutePath: path, isGit: true,
+                                 defaultBase: probe.defaultBase(path),
+                                 remoteName: probe.remoteName(path),
+                                 github: probe.github(path),
+                                 displayName: (path as NSString).lastPathComponent)
+        return WorkspaceRepoSet(repos: [root], primary: root)
+    }
+
+    /// The user's explicit primary-repo pick for a workspace, or nil.
+    static func storedPrimaryRepoID(forWorkspace path: String) -> String? {
+        repoSettings().storedPrimaryRepoID(forWorkspace: path)
+    }
+
+    /// The repo ISSUES belong to (design §9): the user's explicit workspace pick
+    /// when it still exists, else the primary (default follow). A pick that is not
+    /// a GitHub repo returns nil — the issue area then says 「choose a repository」
+    /// explicitly instead of silently falling back to another one (Q12).
+    static func issueRepo(root: String, repoSet: WorkspaceRepoSet) -> (owner: String, repo: String)? {
+        let id = repoSettings().resolvedIssueRepoID(forWorkspace: root, repoSet: repoSet)
+        if let id = id, let repo = repoSet.repos.first(where: { $0.id == id }) {
+            guard let github = repo.github else { return nil }
+            return (github.owner, github.name)
+        }
+        // No repository detected (plain, or registered inside a repo's subdirectory):
+        // keep today's direct probe.
+        return detectGitHubRemote(root)
+    }
+
+    /// The user's explicit issue-repo pick for a workspace, or nil (following).
+    static func storedIssueRepoID(forWorkspace path: String) -> String? {
+        repoSettings().storedIssueRepoID(forWorkspace: path)
+    }
+
+    /// Write the explicit issue-repo pick (nil = back to following the primary).
+    static func setStoredIssueRepoID(_ id: String?, forWorkspace path: String) {
+        var settings = repoSettings()
+        settings.setIssueRepoID(id, forWorkspace: path)
+        saveRepoSettings(settings)
     }
 
     /// True when the directory is inside a git work tree.
@@ -1646,7 +1882,7 @@ final class IssueRunnerPanelController: NSObject {
             // the same shape an issue task gets. Unrelated work never shares a
             // branch just because it was batched.
             let queueID = task.source == .github
-                ? runner.startIssueTask(task.id)
+                ? runner.startIssueTask(task.id, repos: issueRepoTarget.selectedRepoID.map { [$0] })
                 : runner.startManualTask(task.id)
             if let queueID = queueID {
                 started += 1
@@ -1666,7 +1902,22 @@ final class IssueRunnerPanelController: NSObject {
     /// 处理 one issue: create (or reuse) its single-task queue and run it.
     private func startIssueTask(_ taskID: String) {
         guard let runner = runner else { return }
-        _ = runner.startIssueTask(taskID)
+        _ = runner.startIssueTask(taskID, repos: issueRepoTarget.selectedRepoID.map { [$0] })
+        syncFromBoard()
+    }
+
+    /// 单独重试一个交付失败的仓库（P4）：只重开该仓库的交付会话，成功后并回卡片。
+    private func retryFailedRepo(queueID: String, repoID: String) {
+        guard let runner = runner else { return }
+        let ok = runner.retryFailedRepo(queueID: queueID, repoID: repoID)
+        if ok {
+            setStatus(L10n.tr("tasks.repoRun.retrying",
+                              QueueHeaderModel.repoDisplayName(repoID)), spin: true)
+            autoHideStatus(after: 8)
+        } else {
+            setStatus(L10n.tr("tasks.repoRun.retryFailed"), spin: false)
+            autoHideStatus(after: 5)
+        }
         syncFromBoard()
     }
 
@@ -1933,21 +2184,79 @@ final class IssueRunnerPanelController: NSObject {
     /// 面板设置 — a DRAWER (the same formSheet as 新建任务 / 新建队列), not an NSAlert:
     /// the GitHub token and THIS workspace's 工作流 default share one surface.
     private func configTapped() {
-        let model = TaskSettingsModel(
-            token: loadToken(for: repo) ?? "",
-            // 没保存过时它就是本工作区的推荐（见 resolvedIntegration），所以首次
-            // 打开抽屉默认选中的正是推荐那一档。
-            defaultIntegration: workspaceIntegration,
-            recommendedIntegration: QueueIntegration.recommended(isGit: workspaceIsGit,
-                                                                 hasGitHubRemote: repo != nil),
-            prAvailable: repo != nil,
-            gitAvailable: workspaceIsGit,
-            remoteAvailable: workspaceHasRemote,
-            autoCloseOnPublish: repoRootPath.map { Self.storedAutoCloseOnPublish(forWorkspace: $0) } ?? false)
+        let model = makeSettingsModel()
         let form = TaskSettingsView(model: model)
         form.onSubmit = { [weak self] settings in self?.submitSettings(settings) }
         form.onCancel = { [weak self] in self?.dismissForm() }
         presentForm(form) { ($0 as? TaskSettingsView)?.focusToken() }
+    }
+
+    /// Build the settings drawer model. 多仓库模式 gives every repository (主仓库
+    /// 固定排第一) with its explicit values / 跟随主仓库 state; 单仓库 / 普通目录
+    /// keeps today's one-workspace form unchanged (design §8.1).
+    private func makeSettingsModel() -> TaskSettingsModel {
+        let recommended = QueueIntegration.recommended(isGit: workspaceIsGit,
+                                                       hasGitHubRemote: repo != nil)
+        guard let path = repoRootPath else {
+            return TaskSettingsModel(token: repo.flatMap { loadToken(for: $0) } ?? "",
+                                     defaultIntegration: .pr,
+                                     recommendedIntegration: recommended,
+                                     prAvailable: repo != nil)
+        }
+        guard workspaceRepoSet.isMultiRepo else {
+            // 单仓库模式：与今天完全一致（一个 token 框 + 一组 radio + 一个勾选）。
+            return TaskSettingsModel(
+                token: repo.flatMap { loadToken(for: $0) } ?? "",
+                defaultIntegration: Self.resolvedIntegration(forWorkspace: path, repoSet: workspaceRepoSet,
+                                                             recommended: recommended),
+                recommendedIntegration: recommended,
+                prAvailable: repo != nil,
+                gitAvailable: workspaceIsGit,
+                remoteAvailable: workspaceHasRemote,
+                autoCloseOnPublish: Self.resolvedAutoCloseOnPublish(forWorkspace: path, repoSet: workspaceRepoSet))
+        }
+        let store = Self.repoSettings()
+        let primaryID = workspaceRepoSet.primary?.id
+        // 主仓库固定排第一，其余保持探测顺序。
+        var ordered: [WorkspaceRepo] = []
+        if let primary = workspaceRepoSet.primary { ordered.append(primary) }
+        ordered += workspaceRepoSet.repos.filter { $0.id != primaryID }
+        let repos = ordered.map { repo -> TaskSettingsRepoModel in
+            let repoRecommended = QueueIntegration.recommended(isGit: repo.isGit,
+                                                                hasGitHubRemote: repo.github != nil)
+            let github = repo.github
+            return TaskSettingsRepoModel(
+                id: repo.id,
+                displayName: repo.displayName,
+                isPrimary: repo.id == primaryID,
+                gitAvailable: repo.isGit,
+                prAvailable: github != nil,
+                remoteAvailable: repo.remoteName != nil,
+                github: github,
+                token: github.flatMap { loadToken(for: ($0.owner, $0.name)) } ?? "",
+                integration: store.resolvedIntegration(forWorkspace: path, repoID: repo.id,
+                                                       primaryID: primaryID, recommended: repoRecommended),
+                explicitIntegration: store.explicitIntegration(forWorkspace: path, repoID: repo.id),
+                autoCloseOnPublish: store.resolvedAutoClose(forWorkspace: path, repoID: repo.id,
+                                                            primaryID: primaryID),
+                explicitAutoClose: store.explicitAutoClose(forWorkspace: path, repoID: repo.id),
+                recommendedIntegration: repoRecommended)
+        }
+        var model = TaskSettingsModel(
+            token: "",
+            defaultIntegration: repos.first(where: { $0.isPrimary })?.integration ?? recommended,
+            recommendedIntegration: recommended,
+            prAvailable: workspaceRepoSet.prAvailable,
+            gitAvailable: workspaceRepoSet.gitAvailable,
+            remoteAvailable: workspaceHasRemote,
+            autoCloseOnPublish: repos.first(where: { $0.isPrimary })?.autoCloseOnPublish ?? false)
+        model.repos = repos
+        model.selectedRepoID = primaryID
+        // issue 归属（显式值；指向已移除的仓库则视为未指定 → 跟随主仓库）。
+        model.issueRepoID = store.storedIssueRepoID(forWorkspace: path).flatMap { id in
+            workspaceRepoSet.repos.contains { $0.id == id } ? id : nil
+        }
+        return model
     }
 
     /// 使用说明 —— the toolbar button. The empty board shows the same content inline,
@@ -1959,17 +2268,60 @@ final class IssueRunnerPanelController: NSObject {
     }
 
     private func submitSettings(_ settings: TaskSettingsModel) {
-        let value = settings.token.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Empty → delete the token file; otherwise write it (file only).
-        saveToken(value, for: repo)
-        // PER WORKSPACE (every 面板设置 item): save under this workspace's path, then
-        // tell the live runner (its env was snapshotted at adopt time) so the next
-        // finalize uses it. Other workspaces keep their own value.
-        if let path = repoRootPath {
-            Self.setStoredIntegration(settings.defaultIntegration, forWorkspace: path)
-            runner?.setDefaultIntegration(settings.defaultIntegration)
-            Self.setStoredAutoCloseOnPublish(settings.autoCloseOnPublish, forWorkspace: path)
-            runner?.setAutoCloseOnPublish(settings.autoCloseOnPublish)
+        if settings.isMultiRepo, let path = repoRootPath {
+            let oldPrimary = Self.storedPrimaryRepoID(forWorkspace: path)
+            Self.setStoredPrimaryRepoID(settings.primaryRepoID, forWorkspace: path)
+            // Per-repo explicit values. A follower stores NOTHING (missing = 跟随);
+            // a repo that does not follow stores both fields independently.
+            var store = Self.repoSettings()
+            for repo in settings.repos {
+                // token 不参与跟随：只写用户改过的，免得打开一次抽屉就复制；只有
+                // GitHub 仓库有 token（按 owner/repo 存文件），非 GitHub 写入被跳过。
+                if let github = repo.github, repo.tokenChanged {
+                    let value = repo.token.trimmingCharacters(in: .whitespacesAndNewlines)
+                    saveToken(value, for: (owner: github.owner, repo: github.name))
+                }
+                if let explicit = repo.explicitIntegration, let explicitClose = repo.explicitAutoClose {
+                    store.setIntegration(explicit, forWorkspace: path, repoID: repo.id)
+                    store.setAutoClose(explicitClose, forWorkspace: path, repoID: repo.id)
+                } else {
+                    store.setIntegration(nil, forWorkspace: path, repoID: repo.id)
+                    store.setAutoClose(nil, forWorkspace: path, repoID: repo.id)
+                }
+            }
+            Self.saveRepoSettings(store)
+            // issue 归属仓库（工作区级）：选「跟随主仓库」= 清掉显式值。
+            Self.setStoredIssueRepoID(settings.issueRepoIsExplicit ? settings.issueRepoID : nil,
+                                      forWorkspace: path)
+            repo = Self.issueRepo(root: path, repoSet: workspaceRepoSet)
+            if let primary = settings.primaryRepo {
+                runner?.setDefaultIntegration(primary.integration)
+                runner?.setAutoCloseOnPublish(primary.autoCloseOnPublish)
+            }
+            // 改主仓库 = 换了 git 落点 / 默认基线：没在跑任务时重建这一工作区的
+            // runner，让新的 primary 立即生效（跑着的话保持现状，避免两个 runner
+            // 同时步进同一个任务）。
+            if oldPrimary != Self.storedPrimaryRepoID(forWorkspace: path),
+               workspaces.trackedRunner(for: path)?.isBusy != true {
+                workspaces.invalidate(path)
+                adoptWorkspace(path)
+            }
+        } else {
+            // token 只对 GitHub 仓库有意义：没有 owner/repo 时不写通用文件。
+            if let repo = repo {
+                let value = settings.token.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Empty → delete the token file; otherwise write it (file only).
+                saveToken(value, for: repo)
+            }
+            // PER WORKSPACE (every 面板设置 item): save under this workspace's path, then
+            // tell the live runner (its env was snapshotted at adopt time) so the next
+            // finalize uses it. Other workspaces keep their own value.
+            if let path = repoRootPath {
+                Self.setStoredIntegration(settings.defaultIntegration, forWorkspace: path)
+                runner?.setDefaultIntegration(settings.defaultIntegration)
+                Self.setStoredAutoCloseOnPublish(settings.autoCloseOnPublish, forWorkspace: path)
+                runner?.setAutoCloseOnPublish(settings.autoCloseOnPublish)
+            }
         }
         dismissForm()
         setStatus(L10n.tr("tasks.settings.saved"), spin: false)
@@ -2255,7 +2607,8 @@ final class IssueRunnerPanelController: NSObject {
                                            prAvailable: repo != nil, isCurrent: isCurrent,
                                            integration: integration,
                                            hasRemote: workspaceHasRemote,
-                                           noteExpanded: expandedQueueNotes.contains(queue.id))
+                                           noteExpanded: expandedQueueNotes.contains(queue.id),
+                                           repoRuns: queue.repoRuns)
         let header = TaskQueueHeaderView(model: model)
         let queueID = queue.id
         header.onToggle = { [weak self] in self?.toggleQueue(queueID) }
@@ -2269,6 +2622,10 @@ final class IssueRunnerPanelController: NSObject {
         }
         header.onOpenPR = { [weak self] in self?.publishPR(for: queue) }
         header.onOpenPRLink = { [weak self] in self?.openPRURL(queue) }
+        header.onOpenRepoPR = { [weak self] url in self?.openURLString(url) }
+        header.onRetryRepo = { [weak self] repoID in
+            self?.retryFailedRepo(queueID: queueID, repoID: repoID)
+        }
         header.onClose = { [weak self] in self?.confirmCloseQueue(queue) }
         // 重命名 / 改分支 / 基于分支 / PR 开关 are one inline form now.
         header.onSettings = { [weak self] in self?.openQueueComposer(.edit(queueID: queueID)) }
@@ -2388,7 +2745,13 @@ final class IssueRunnerPanelController: NSObject {
 
     /// 打开已有 PR 的链接 —— 与「交付」分开：PR 已存在时仍要能再次交付去更新它。
     private func openPRURL(_ queue: TaskQueue) {
-        guard let url = queue.prUrl, let link = URL(string: url) else { return }
+        guard let url = queue.prUrl else { return }
+        openURLString(url)
+    }
+
+    /// 打开一个 URL 字符串（多仓库交付卡片上的逐仓库 PR 链接）。
+    private func openURLString(_ url: String) {
+        guard let link = URL(string: url) else { return }
         NSWorkspace.shared.open(link)
     }
 
@@ -2532,15 +2895,20 @@ final class IssueRunnerPanelController: NSObject {
                                           hasRemote: workspaceHasRemote,
                                           defaultBase: workspaceDefaultBase,
                                           defaultIntegration: workspaceIntegration)
+                .forRepos(repoPickerRepos, primary: workspaceRepoSet.primary)
             model.autoPR = false
             showQueueForm(model)
         case .edit(let queueID):
             guard let queue = runner.board.queue(queueID) else { return }
+            // The repo selector is a multi-repo affordance: single-repo / plain
+            // workspaces pass [] and keep today's form unchanged.
             showQueueForm(QueueComposerModel.edit(queue, prAvailable: repo != nil,
                                                   gitAvailable: workspaceIsGit,
                                                   hasRemote: workspaceHasRemote,
                                                   defaultBaseBranch: workspaceDefaultBase,
-                                                  defaultIntegration: workspaceIntegration))
+                                                  defaultIntegration: workspaceIntegration)
+                .forRepos(repoPickerRepos, primary: workspaceRepoSet.primary,
+                          selected: queue.repos))
         }
     }
 
@@ -2557,6 +2925,7 @@ final class IssueRunnerPanelController: NSObject {
                                            branch: composer.branchValue,
                                            baseBranch: composer.normalizedBaseBranch,
                                            autoPR: composer.autoPR && repo != nil,
+                                           repos: composer.storedRepoIDs,
                                            integration: composer.integration)
             if let taskID = taskID { _ = runner.enqueue(taskID: taskID, into: queue.id) }
             setStatus(L10n.tr("tasks.queue.created", queue.name), spin: false)
@@ -2571,6 +2940,7 @@ final class IssueRunnerPanelController: NSObject {
                                      branch: .some(composer.branchValue),
                                      baseBranch: composer.normalizedBaseBranch,
                                      autoPR: composer.autoPR && repo != nil,
+                                     repos: .some(composer.storedRepoIDs),
                                      integration: .some(composer.integration)) else {
                 // The queue is gone (workspace switched under the open form): say
                 // so instead of reporting a save that never happened.

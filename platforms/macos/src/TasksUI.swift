@@ -151,7 +151,15 @@ struct TaskCardModel: Equatable {
             detailLines.append(L10n.tr("tasks.detailQueue", queue.name))
         }
         if let session = task.sessionId { detailLines.append(L10n.tr("tasks.detailSession", session)) }
-        if let error = task.error { detailLines.append(L10n.tr(error)) }
+        // 多仓库失败会带上仓库细节（design §5.2）：`error` 仍是 L10n 键，detail
+        // 作为它的 %@ 参数；单值错误（detail 为 nil）保持今天逐字不变。
+        if let error = task.error {
+            if let detail = task.errorDetail, !detail.isEmpty {
+                detailLines.append(L10n.tr(error, detail))
+            } else {
+                detailLines.append(L10n.tr(error))
+            }
+        }
         // 单行任务的描述就是标题：卡片标题已经说了，详情不再重复一遍。
         if let body = task.body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty,
            body != task.title.trimmingCharacters(in: .whitespacesAndNewlines) {
@@ -417,11 +425,17 @@ struct TaskWorkspaceShape: Equatable {
     var becameGit = false
     /// It has a GitHub remote now, and had none when it was adopted.
     var becameRemote = false
+    /// The repository SET changed since adoption — a repo appeared or disappeared
+    /// (multi-repo workspaces gain/lose repositories without the root changing).
+    var reposChanged = false
 
-    var changed: Bool { becameGit || becameRemote }
+    var changed: Bool { becameGit || becameRemote || reposChanged }
 
     /// The status line to show, or nil when nothing changed.
     var messageKey: String? {
+        // A changed repository SET is the more specific story a multi-repo
+        // workspace needs to tell, so it wins over the single-root facts.
+        if reposChanged { return "tasks.reposChanged" }
         if becameGit { return "tasks.gitAppeared" }
         if becameRemote { return "tasks.remoteAppeared" }
         return nil
@@ -431,6 +445,18 @@ struct TaskWorkspaceShape: Equatable {
                        isGitNow: Bool, hasRemoteNow: Bool) -> TaskWorkspaceShape? {
         let shape = TaskWorkspaceShape(becameGit: !wasGit && isGitNow,
                                        becameRemote: !hadRemote && hasRemoteNow)
+        return shape.changed ? shape : nil
+    }
+
+    /// Repo-set aware change: what a workspace shows is not only「root became a
+    /// repo」/「it gained a remote」but also「it gained or lost a repository」. The
+    /// id SET is compared (order is meaningless); both sides empty is no change.
+    static func change(wasRepoIDs: [String], repoIDsNow: [String],
+                       wasGit: Bool, hadRemote: Bool,
+                       isGitNow: Bool, hasRemoteNow: Bool) -> TaskWorkspaceShape? {
+        let shape = TaskWorkspaceShape(becameGit: !wasGit && isGitNow,
+                                       becameRemote: !hadRemote && hasRemoteNow,
+                                       reposChanged: Set(wasRepoIDs) != Set(repoIDsNow))
         return shape.changed ? shape : nil
     }
 }
@@ -444,15 +470,47 @@ struct TaskWorkspaceShape: Equatable {
 /// 远端」决定可用性 —— 在非 GitHub 工作区里它们点了什么都不会发生（reloadIssues /
 /// runAll 本来就 guard 掉了 repo），灰掉并说明原因，而不是留一个「点了没反应」的控件。
 struct TaskWorkspaceModel: Equatable {
-    /// The header's second line: owner/repo, 目录名 · 非 GitHub 仓库, …
+    /// The header's second line: owner/repo, 目录名 · 非 GitHub 仓库, 目录名 · N 个仓库, …
     var title: String
     /// 配置 GitHub Token / 刷新 Issues / 全部处理 这三个 GitHub 专属按钮能不能用。
     var githubAvailable: Bool
     /// 不能用时按钮 tooltip 里的原因（能用时为 nil）。
     var disabledHint: String?
+    /// Multi-repo workspaces name a COUNT instead of one remote (§8). 1 in the
+    /// single-repo / plain shapes, where the title stays exactly what it always was.
+    var repoCount: Int = 1
+    /// The repos' display names, for the header tooltip (multi-repo).
+    var repoNames: [String] = []
+    /// True when the header counts repositories instead of naming one capability.
+    var isMultiRepo: Bool = false
+    /// The primary repo's display name, marked in the tooltip (multi-repo).
+    var primaryRepoName: String?
+
+    /// The header tooltip for a multi-repo workspace: one repo per line, the
+    /// primary marked. nil in the single-repo / plain shapes (no extra tooltip).
+    var repoListTooltip: String? {
+        guard isMultiRepo, !repoNames.isEmpty else { return nil }
+        return repoNames.map { name in
+            name == primaryRepoName ? name + L10n.tr("tasks.repoPrimarySuffix") : name
+        }.joined(separator: "\n")
+    }
 
     static func build(owner: String?, repo: String?, workspacePath: String?,
-                      isGitRepo: Bool) -> TaskWorkspaceModel {
+                      isGitRepo: Bool,
+                      repoSet: WorkspaceRepoSet? = nil) -> TaskWorkspaceModel {
+        // Multi-repo: the header counts repositories instead of naming one remote
+        // (a root that is a repo WITH participating children is already multi, §4.3).
+        if let set = repoSet, set.isMultiRepo, let path = workspacePath, !path.isEmpty {
+            let name = (path as NSString).lastPathComponent
+            let count = set.repos.count
+            return TaskWorkspaceModel(title: name + " · " + L10n.tr("tasks.repoCount", count),
+                                      githubAvailable: set.prAvailable,
+                                      disabledHint: set.prAvailable ? nil : L10n.tr("tasks.githubUnavailable"),
+                                      repoCount: count,
+                                      repoNames: set.repos.map { $0.displayName },
+                                      isMultiRepo: true,
+                                      primaryRepoName: set.primary?.displayName)
+        }
         if let owner = owner, let repo = repo, !owner.isEmpty, !repo.isEmpty {
             return TaskWorkspaceModel(title: owner + "/" + repo,
                                       githubAvailable: true, disabledHint: nil)
@@ -466,6 +524,71 @@ struct TaskWorkspaceModel: Equatable {
         let kind = isGitRepo ? L10n.tr("tasks.noRepoShort") : L10n.tr("tasks.noGitShort")
         return TaskWorkspaceModel(title: name + " · " + kind, githubAvailable: false,
                                   disabledHint: L10n.tr("tasks.githubUnavailable"))
+    }
+}
+
+/// issue 区的仓库归属模型（design §9）。
+///
+/// issue 天然属于一个 owner/repo：多仓库工作区下默认**跟随主仓库**，用户在 issue 区
+/// 切换后即成为**显式指定**，不再跟随。主仓库不是 GitHub 仓库时显式给出「请选择仓库」
+/// 的提示，绝不静默回退到别的仓库（Q12）。N≥2 可切换，N==1 只读锁定；单仓库模式
+/// 维持今天的形态（无选择区）。
+struct IssueRepoTargetModel: Equatable {
+    struct Choice: Equatable {
+        var id: String
+        var displayName: String
+        var github: GitHubRepo?
+        var isPrimary: Bool
+        var isSelected: Bool
+
+        /// 菜单里的名称：GitHub 用 owner/repo，否则目录名；主仓库带后缀。
+        var label: String {
+            let base = github.map { $0.owner + "/" + $0.name } ?? displayName
+            return isPrimary ? base + L10n.tr("tasks.repoPrimarySuffix") : base
+        }
+    }
+
+    var choices: [Choice] = []
+    var selectedRepoID: String?
+    /// 多仓库模式才可能有选择区（legacy 单仓库维持今天形态）。
+    var isMultiRepo: Bool = false
+    /// 用户已显式切换过（不再跟随主仓库）。
+    var isExplicit: Bool = false
+
+    var selected: Choice? { choices.first { $0.isSelected } }
+    var selectedGithub: GitHubRepo? { selected?.github }
+    /// 多仓库且不止一个仓库时才给出切换入口。
+    var showsPicker: Bool { isMultiRepo && choices.count > 1 }
+    /// N==1：归属存在但只读锁定。
+    var isLocked: Bool { isMultiRepo && choices.count <= 1 }
+    /// 归属仓库不是 GitHub 仓库（无法拉 issues）→ 显式提示，不静默换一个。
+    var needsChoice: Bool { isMultiRepo && selectedGithub == nil }
+    var hintKey: String? { needsChoice ? "tasks.issueRepo.notGitHub" : nil }
+    /// 选择入口的标题。
+    var title: String {
+        if let github = selectedGithub {
+            return L10n.tr("tasks.issueRepo.label", github.owner + "/" + github.name)
+        }
+        // 归属不是 GitHub 仓库时优先给出「请选择仓库」的显式提示（哪怕 N==1 没有
+        // 别的可选，也不能让 issue 区看起来什么都没发生）。
+        if needsChoice { return L10n.tr("tasks.issueRepo.notGitHub") }
+        if isLocked { return L10n.tr("tasks.issueRepo.locked") }
+        return L10n.tr("tasks.issueRepo.choose")
+    }
+
+    /// 显式指定优先（该仓库仍存在时）；否则跟随主仓库（primary）。
+    static func build(repoSet: WorkspaceRepoSet, explicitID: String?) -> IssueRepoTargetModel {
+        let validExplicit = explicitID.flatMap { id in
+            repoSet.repos.contains { $0.id == id } ? id : nil
+        }
+        let selectedID = validExplicit ?? repoSet.primary?.id
+        let choices = repoSet.repos.map { repo in
+            Choice(id: repo.id, displayName: repo.displayName, github: repo.github,
+                   isPrimary: repo.id == repoSet.primary?.id, isSelected: repo.id == selectedID)
+        }
+        return IssueRepoTargetModel(choices: choices, selectedRepoID: selectedID,
+                                    isMultiRepo: repoSet.isMultiRepo,
+                                    isExplicit: validExplicit != nil)
     }
 }
 
@@ -579,6 +702,51 @@ struct QueueHeaderModel: Equatable {
     var integrationNote: String?
     /// Whether the result row is currently expanded (panel state, per queue).
     var integrationNoteExpanded: Bool
+    /// 每个目标仓库的交付结果（design §7.1；多仓库交付才有，legacy 单仓库为空）。
+    var repoRuns: [QueueRepoRun] = []
+
+    /// 是否展示逐仓库结果区（有交付记录才展示）。
+    var showsRepoRuns: Bool { !repoRuns.isEmpty }
+
+    /// 失败仓库可单独重试（design §7.3 / P4）：队列本身可交付，且至少一个仓库失败。
+    var canRetryRepos: Bool { canOpenPR && repoRuns.contains { $0.status == .failed } }
+
+    /// 一个仓库结果行的动作名。
+    static func repoActionLabel(_ mode: QueueIntegration) -> String {
+        switch mode {
+        case .pr: return L10n.tr("tasks.repoRun.action.pr")
+        case .push: return L10n.tr("tasks.repoRun.action.push")
+        case .merge: return L10n.tr("tasks.repoRun.action.merge")
+        case .none: return L10n.tr("tasks.repoRun.action.none")
+        }
+    }
+
+    /// 一个仓库结果行的状态名。
+    static func repoStatusLabel(_ status: RepoRunStatus) -> String {
+        switch status {
+        case .pending: return L10n.tr("tasks.repoRun.status.pending")
+        case .running: return L10n.tr("tasks.repoRun.status.running")
+        case .done: return L10n.tr("tasks.repoRun.status.done")
+        case .failed: return L10n.tr("tasks.repoRun.status.failed")
+        case .skipped: return L10n.tr("tasks.repoRun.status.skipped")
+        }
+    }
+
+    /// 状态对应的色调（卡片逐仓库行的徽标）。
+    static func repoTone(_ status: RepoRunStatus) -> TaskTone {
+        switch status {
+        case .done: return .positive
+        case .failed: return .negative
+        case .running: return .running
+        case .pending: return .warning
+        case .skipped: return .neutral
+        }
+    }
+
+    /// 仓库在结果区的名字：根是「（工作区根）」，子仓库是「repo/」。
+    static func repoDisplayName(_ repoID: String) -> String {
+        repoID == "." ? L10n.tr("tasks.repoRun.root") : repoID + "/"
+    }
 
     /// The note split into lines (empty lines kept: a report may have blank lines).
     var integrationNoteLines: [String] {
@@ -608,7 +776,8 @@ struct QueueHeaderModel: Equatable {
                       prAvailable: Bool = true, isCurrent: Bool = true,
                       integration: QueueIntegration = .pr,
                       hasRemote: Bool = true,
-                      noteExpanded: Bool = false) -> QueueHeaderModel {
+                      noteExpanded: Bool = false,
+                      repoRuns: [QueueRepoRun]? = nil) -> QueueHeaderModel {
         let tasks = queue.taskIds.compactMap { board.task($0) }
         let doneCount = tasks.filter { $0.state == .done }.count
         let failedCount = tasks.filter { $0.state == .failed }.count
@@ -676,7 +845,8 @@ struct QueueHeaderModel: Equatable {
                                 reportsToSession: board.local.queueSessions[queue.id] != nil,
                                 integration: integration,
                                 integrationNote: queue.integrationNote,
-                                integrationNoteExpanded: noteExpanded)
+                                integrationNoteExpanded: noteExpanded,
+                                repoRuns: repoRuns ?? queue.repoRuns)
     }
 }
 
@@ -1024,6 +1194,81 @@ struct QueueComposerModel: Equatable {
     /// What THIS workspace usually wants — a recommendation shown in the picker,
     /// never enforced (github→pr / git→merge / 普通目录→push).
     var recommendedIntegration: QueueIntegration = .pr
+    /// Multi-repo mode: the repositories a queue may target. Empty in the
+    /// single-repo / plain shapes, where the form shows no selector at all — the
+    /// legacy form is untouched (§8).
+    var availableRepos: [WorkspaceRepo] = []
+    /// The target repo ids. Multi-repo starts on the primary only (Q2).
+    var selectedRepoIDs: [String] = []
+
+    /// Whether the repository selector is on screen. Single-repo and plain
+    /// workspaces pass no repos and keep today's form.
+    var showsRepoPicker: Bool { !availableRepos.isEmpty }
+
+    /// A workspace with exactly ONE repo (root not a repo, one child) shows the
+    /// selector but locks it — there is nothing to choose (§4.3).
+    var repoPickerLocked: Bool { availableRepos.count <= 1 }
+
+    /// The repositories this queue really targets, in workspace order.
+    var selectedRepos: [WorkspaceRepo] {
+        availableRepos.filter { selectedRepoIDs.contains($0.id) }
+    }
+
+    /// Configure the multi-repo selector: default only the primary (Q2); a
+    /// workspace always has one when repos is non-empty. Editing an existing queue
+    /// passes its stored `repos` as `selected`, so the form reopens on the
+    /// repositories the queue really targets instead of resetting to the primary.
+    func forRepos(_ repos: [WorkspaceRepo], primary: WorkspaceRepo?,
+                  selected: [String]? = nil) -> QueueComposerModel {
+        var copy = self
+        copy.availableRepos = repos
+        if let selected = selected {
+            let known = repos.map { $0.id }.filter { selected.contains($0) }
+            if !known.isEmpty {
+                copy.selectedRepoIDs = known
+                return copy
+            }
+        }
+        if let primary = primary, repos.contains(where: { $0.id == primary.id }) {
+            copy.selectedRepoIDs = [primary.id]
+        } else {
+            copy.selectedRepoIDs = repos.first.map { [$0.id] } ?? []
+        }
+        return copy
+    }
+
+    /// What the queue should PERSIST as its target repositories (design §7.1):
+    /// the explicit selection while the multi-repo picker is on screen, else nil —
+    /// a single-repo / plain workspace keeps `queue.repos == nil`, meaning
+    /// "the primary", exactly like today. Ids are emitted in workspace order and
+    /// unknown ids are dropped, so queues.json does not depend on click order.
+    var storedRepoIDs: [String]? {
+        guard showsRepoPicker else { return nil }
+        let ordered = selectedRepos.map { $0.id }
+        return ordered.isEmpty ? nil : ordered
+    }
+
+    /// Toggle one repository. A locked (single-repo) selector ignores clicks, and
+    /// the LAST selected repo cannot be removed — a queue with no target has
+    /// nothing to run on.
+    func togglingRepo(_ id: String) -> QueueComposerModel {
+        guard !repoPickerLocked, availableRepos.contains(where: { $0.id == id }) else { return self }
+        var copy = self
+        if let index = copy.selectedRepoIDs.firstIndex(of: id) {
+            guard copy.selectedRepoIDs.count > 1 else { return self }
+            copy.selectedRepoIDs.remove(at: index)
+        } else {
+            copy.selectedRepoIDs.append(id)
+        }
+        return copy
+    }
+
+    /// Replace the selection from a view (keeps workspace order, drops unknown ids).
+    func withSelectedRepos(_ ids: [String]) -> QueueComposerModel {
+        var copy = self
+        copy.selectedRepoIDs = availableRepos.map { $0.id }.filter { ids.contains($0) }
+        return copy
+    }
 
     /// The mode this queue will really use: its own override, else the panel default.
     var effectiveIntegration: QueueIntegration { integration ?? defaultIntegration }

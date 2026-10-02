@@ -573,6 +573,20 @@ check(reloaded.queue(sq.id)?.branch == "feature/docs-cleanup", "the queue branch
 eq(reloaded.queue(sq.id)?.integration, .merge, "the integration override round-trips")
 check(reloaded.task(m1.id)?.state == .queued, "the queued state round-trips")
 
+section("多仓库队列字段：repos / errorDetail 往返，旧文件缺省为 nil")
+let repoMR = tempRepo("multi-repo-fields")
+var boardMR = TaskBoard()
+let taskMR = TaskItem.manual(title: "多仓库", body: nil, id: "manual-mr900001")
+boardMR.tasks = [taskMR]
+let queueMR = boardMR.createQueue(name: "Multi", autoPR: false, repos: ["repo-a", "repo-b"])
+_ = boardMR.enqueue(taskID: taskMR.id, into: queueMR.id)
+_ = boardMR.markFailed(taskMR.id, error: "tasks.errRepoDirty", errorDetail: "repo-b")
+TasksStore.saveLocalHalf(repoMR, boardMR)
+let reloadedMR = TasksStore.load(repoMR)
+eq(reloadedMR.queue(queueMR.id)?.repos, ["repo-a", "repo-b"], "queues.json 里 repos 往返")
+eq(reloadedMR.task(taskMR.id)?.errorDetail, "repo-b", "manual.json 里 errorDetail 往返")
+eq(TaskQueue.from(["id": "q-old", "name": "old"])?.repos, nil, "旧 queues.json 无 repos → nil")
+
 // MARK: - index.json compatibility
 
 section("index.json v1 compatibility")
@@ -642,6 +656,359 @@ let repaired = TasksStore.load(repoDrift)
 check(repaired.task("manual-ffff0001")?.queueId == "q-drift1", "the queue id is re-derived from the queue")
 check(repaired.task("manual-ffff0001")?.state == .queued, "a listed pending task becomes queued")
 check(repaired.task("manual-ffff0001")?.title == "Drifted", "the rest of the task is untouched")
+
+// MARK: - multi-repo workspace (detect / mode / primary)
+
+section("多仓库工作区：探测 / 兼容矩阵 / 主仓库")
+do {
+    func mkdir(_ path: String) {
+        try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+    }
+    func makeGit(_ path: String) { mkdir(path + "/.git") }
+    func gitmodules(_ root: String, _ paths: [String]) {
+        write(paths.map { "[submodule \"\($0)\"]\n\tpath = \($0)\n\turl = https://example.test/x.git\n" }.joined(),
+              to: root + "/.gitmodules")
+    }
+    // The directory tree is real; the git answers are scripted per path.
+    func probe(gitRoots: Set<String> = [],
+               bases: [String: String] = [:],
+               remotes: [String: String] = [:],
+               githubs: [String: GitHubRepo] = [:]) -> WorkspaceRepoProbe {
+        var p = WorkspaceRepoProbe()
+        p.isGitRepoRoot = { gitRoots.contains(($0 as NSString).standardizingPath) }
+        p.defaultBase = { bases[$0] ?? "main" }
+        p.remoteName = { remotes[$0] }
+        p.github = { githubs[$0] }
+        return p
+    }
+
+    // 矩阵 1：根是仓库且无参与子仓库 → legacy 单仓库。
+    let rootSingle = tempRepo("ws-single")
+    makeGit(rootSingle)
+    mkdir(rootSingle + "/docs")                       // 普通目录，不是仓库
+    let single = WorkspaceRepoSet.detect(root: rootSingle, probe: probe(gitRoots: [rootSingle]))
+    eq(single.repos.map { $0.id }, ["."], "根是仓库、没有子仓库：集合里只有根")
+    eq(single.mode, .single, "根是仓库且无参与子仓库 → legacy 单仓库")
+    check(single.isSingleRepo && !single.isMultiRepo, "single 模式标志")
+    check(single.primary?.id == ".", "primary 是根")
+    eq(single.repos.first?.displayName, (rootSingle as NSString).lastPathComponent, "根的展示名是目录末级名")
+    check(single.gitAvailable, "根仓库让 git 可用")
+    check(!single.allCanOpenPR(single.repos), "根没有 GitHub 远端时不能开 PR")
+
+    // 矩阵 2：根是仓库且有参与子仓库 → 多仓库，根为主。
+    let rootChild = tempRepo("ws-rootchild")
+    makeGit(rootChild)
+    makeGit(rootChild + "/lib")
+    let rootChildSet = WorkspaceRepoSet.detect(root: rootChild, probe: probe(gitRoots: [rootChild]))
+    eq(rootChildSet.repos.map { $0.id }, [".", "lib"], "根 + 子都参与，根排最前")
+    eq(rootChildSet.mode, .multi, "根是仓库且有参与子仓库 → 多仓库")
+    check(rootChildSet.primary?.id == ".", "根 + 子共存时根仍是 primary")
+
+    // 矩阵 3：根非 git + 恰好一个子仓库 → 仍是多仓库（不按数量切范式）。
+    let rootOne = tempRepo("ws-onechild")
+    makeGit(rootOne + "/only")
+    let oneChild = WorkspaceRepoSet.detect(root: rootOne, probe: probe())
+    eq(oneChild.repos.map { $0.id }, ["only"], "根不是仓库：只收子仓库")
+    eq(oneChild.mode, .multi, "根非 git + 恰好一个子仓库 → 多仓库（N==1 也是）")
+    check(oneChild.primary?.id == "only", "primary 是唯一的子仓库")
+
+    // 矩阵 4：根非 git 且无子仓库 → plain。
+    let rootPlain = tempRepo("ws-plain")
+    mkdir(rootPlain + "/notes")
+    let plain = WorkspaceRepoSet.detect(root: rootPlain, probe: probe())
+    eq(plain.repos.count, 0, "没有仓库")
+    eq(plain.mode, .plain, "没有仓库 → plain")
+    check(plain.primary == nil, "plain 没有 primary")
+    check(!plain.gitAvailable, "plain 的 git 不可用")
+
+    // 扫描纪律：隐藏目录 + node_modules/.build/.cache/dist + 普通文件全部跳过。
+    let rootSkip = tempRepo("ws-exclude")
+    makeGit(rootSkip + "/keep")
+    for name in [".hidden", "node_modules", ".build", ".cache", "dist"] { makeGit(rootSkip + "/" + name) }
+    write("not a dir", to: rootSkip + "/plainfile")
+    let skipped = WorkspaceRepoSet.detect(root: rootSkip, probe: probe())
+    eq(skipped.repos.map { $0.id }, ["keep"], "隐藏目录与 node_modules/.build/.cache/dist 被排除")
+
+    // submodule 排除：根 .gitmodules 里列出的直接子目录不算独立目标，普通子仓库照常加入。
+    let rootSub = tempRepo("ws-submodule")
+    makeGit(rootSub)
+    makeGit(rootSub + "/sub")
+    makeGit(rootSub + "/plain")
+    gitmodules(rootSub, ["sub"])
+    let subSet = WorkspaceRepoSet.detect(root: rootSub, probe: probe(gitRoots: [rootSub]))
+    eq(subSet.repos.map { $0.id }, [".", "plain"], "submodule 被排除，普通子仓库加入")
+    eq(subSet.mode, .multi, "根 + 普通子仓库 → 多仓库")
+    eq(WorkspaceRepoProbe.parseGitmodules("[submodule \"nested\"]\n\tpath = a/b\n\turl = x\n"),
+       ["a/b"], "gitmodules 只取 path 行；嵌套路径也认")
+
+    // primary 自动规则：根 > 第一个 GitHub 远端 > 第一个 git。
+    let rootPrimary = tempRepo("ws-primary")
+    for name in ["a", "b", "c"] { makeGit(rootPrimary + "/" + name) }
+    let ghB = GitHubRepo(owner: "owner", name: "b")
+    let multi = WorkspaceRepoSet.detect(root: rootPrimary,
+        probe: probe(remotes: [rootPrimary + "/a": "origin", rootPrimary + "/c": "origin"],
+                     githubs: [rootPrimary + "/b": ghB]))
+    eq(multi.repos.map { $0.id }, ["a", "b", "c"], "子仓库按名字排序")
+    eq(multi.primary?.id, "b", "根不是仓库时：第一个有 GitHub 远端的子仓库当 primary")
+    eq(multi.repos.first { $0.id == "b" }?.github, ghB, "仓库自己的 GitHub 被记录")
+    eq(multi.repos.first { $0.id == "a" }?.remoteName, "origin", "仓库自己的远端被记录")
+    eq(multi.repos.first { $0.id == "a" }?.displayName, "a", "子仓库的展示名是相对路径")
+    check(multi.prAvailable, "任一个 GitHub 仓库让 PR 可用")
+    check(multi.allCanOpenPR([multi.repos[1]]), "目标仓库有 GitHub 时可开 PR")
+    check(!multi.allCanOpenPR([multi.repos[0], multi.repos[1]]), "混合能力时不是所有目标都能开 PR")
+    check(!multi.allCanOpenPR([]), "空目标集合不能开 PR")
+
+    // 根参与时压过「第一个 GitHub」。
+    let withRoot = WorkspaceRepoSet.detect(root: rootPrimary,
+        probe: probe(gitRoots: [rootPrimary], githubs: [rootPrimary + "/a": GitHubRepo(owner: "o", name: "a")]))
+    check(withRoot.primary?.id == ".", "根参与时根优先，即使子仓库有 GitHub 远端")
+
+    // primary 解析：用户指定生效；指定仓库已不存在 → 回退自动规则。
+    let picked = WorkspaceRepoSet.detect(root: rootPrimary, primaryRepoID: "c", probe: probe(githubs: [rootPrimary + "/b": ghB]))
+    eq(picked.primary?.id, "c", "用户指定的主仓库生效")
+    let stale = WorkspaceRepoSet.detect(root: rootPrimary, primaryRepoID: "removed", probe: probe(githubs: [rootPrimary + "/b": ghB]))
+    eq(stale.primary?.id, "b", "指定的仓库已不存在 → 回退自动规则")
+
+    // 每个仓库自己的默认分支不同（main / master）。
+    let rootBase = tempRepo("ws-base")
+    makeGit(rootBase + "/x")
+    makeGit(rootBase + "/y")
+    let based = WorkspaceRepoSet.detect(root: rootBase,
+        probe: probe(bases: [rootBase + "/x": "main", rootBase + "/y": "master"]))
+    eq(based.repos.first { $0.id == "x" }?.defaultBase, "main", "x 的默认分支")
+    eq(based.repos.first { $0.id == "y" }?.defaultBase, "master", "y 的默认分支（master 仓库）")
+
+    for dir in [rootSingle, rootChild, rootOne, rootPlain, rootSkip, rootSub, rootPrimary, rootBase] {
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+}
+
+section("多仓库工作区：按仓库设置 / 主仓库继承解析链")
+do {
+    let ws = "/tmp/ws-repo-settings////"
+    let canonical = "/tmp/ws-repo-settings"
+    eq(RepoSettings.workspaceKey(ws), canonical, "尾斜杠被规范化（同一个工作区只有一个键）")
+    eq(RepoSettings.workspaceKey("/tmp/ws-repo-settings/../ws-repo-settings"), canonical,
+       ".. 也被规范化")
+    eq(RepoSettings.scopedKey(path: canonical, repoID: "a"),
+       canonical + RepoSettings.keySeparator + "a", "按仓库键 = 工作区 + 分隔符 + repoID")
+
+    var store = RepoSettings()
+
+    // 写入：只写显式值，缺失即「跟随主仓库」。
+    store.setIntegration(.pr, forWorkspace: ws, repoID: "a")
+    store.setAutoClose(true, forWorkspace: ws, repoID: "a")
+    eq(store.explicitIntegration(forWorkspace: ws, repoID: "a"), .pr, "显式工作流写进按仓库键")
+    eq(store.explicitAutoClose(forWorkspace: ws, repoID: "a"), true, "显式自动关闭写进按仓库键")
+    eq(store.explicitIntegration(forWorkspace: ws, repoID: "b"), nil, "没写过的仓库没有显式值")
+    check(store.integrationByRepo.count == 1 && store.autoCloseByRepo.count == 1,
+          "一次写入只落一条记录")
+
+    // 解析链第 1 步：显式值优先于一切。
+    eq(store.resolvedIntegration(forWorkspace: ws, repoID: "a", primaryID: "a", recommended: .push),
+       .pr, "有显式值 → 用它（压过 recommended）")
+    eq(store.resolvedAutoClose(forWorkspace: ws, repoID: "a", primaryID: "a"), true,
+       "自动关闭同样先看显式值")
+
+    // 解析链第 2 步：非主仓库未显式 → 跟随主仓库的解析结果。
+    eq(store.resolvedIntegration(forWorkspace: ws, repoID: "b", primaryID: "a", recommended: .push),
+       .pr, "非主仓库 b 未显式 → 跟随主仓库 a 的 pr")
+    eq(store.resolvedAutoClose(forWorkspace: ws, repoID: "b", primaryID: "a"), true,
+       "自动关闭也跟随")
+
+    // 解析链第 3 步：主仓库未显式 → 旧工作区值 → recommended。
+    var legacy = RepoSettings()
+    legacy.setLegacyIntegration(.merge, forWorkspace: ws)
+    legacy.setLegacyAutoClose(true, forWorkspace: ws)
+    eq(legacy.explicitIntegration(forWorkspace: ws, repoID: "a"), nil, "旧值不写进按仓库键")
+    eq(legacy.resolvedIntegration(forWorkspace: ws, repoID: "a", primaryID: "a", recommended: .push),
+       .merge, "主仓库没有按仓库值 → 回退旧工作区值")
+    eq(legacy.resolvedAutoClose(forWorkspace: ws, repoID: "a", primaryID: "a"), true,
+       "自动关闭同样回退旧工作区值")
+    eq(legacy.resolvedIntegration(forWorkspace: ws, repoID: "b", primaryID: "a", recommended: .push),
+       .merge, "跟随主仓库时继承的是主仓库解析后的旧工作区值")
+
+    var bare = RepoSettings()
+    eq(bare.resolvedIntegration(forWorkspace: ws, repoID: "a", primaryID: "a", recommended: .push),
+       .push, "全都没有 → recommended")
+    eq(bare.resolvedAutoClose(forWorkspace: ws, repoID: "a", primaryID: "a"), false,
+       "自动关闭的最终兜底是关")
+
+    // 跟随判定：只有非主仓库且无显式值才跟随；主仓库永不跟随。
+    check(bare.followsPrimary(forWorkspace: ws, repoID: "b", primaryID: "a"), "b 默认跟随主仓库")
+    check(!bare.followsPrimary(forWorkspace: ws, repoID: "a", primaryID: "a"), "主仓库不跟随")
+    eq(store.followsPrimary(forWorkspace: ws, repoID: "b", primaryID: "a"), true,
+       "b 没有显式值 → 仍跟随（跟随与 a 是否有值无关）")
+
+    // 独立存储：给 b 写显式值后 a 不受影响，b 不再跟随。
+    store.setIntegration(QueueIntegration.none, forWorkspace: ws, repoID: "b")
+    store.setAutoClose(false, forWorkspace: ws, repoID: "b")
+    eq(store.explicitIntegration(forWorkspace: ws, repoID: "a"), .pr, "b 的写入没有动 a")
+    eq(store.explicitIntegration(forWorkspace: ws, repoID: "b"), QueueIntegration.none, "b 独立存储自己的值")
+    eq(store.resolvedIntegration(forWorkspace: ws, repoID: "b", primaryID: "a", recommended: .push),
+       .none, "b 独立后不再跟随 a")
+    eq(store.followsPrimary(forWorkspace: ws, repoID: "b", primaryID: "a"), false,
+       "有显式值 → 不跟随")
+
+    // 关掉「跟随」再打开：删除显式值即回到跟随。
+    store.setIntegration(nil, forWorkspace: ws, repoID: "b")
+    store.setAutoClose(nil, forWorkspace: ws, repoID: "b")
+    eq(store.explicitIntegration(forWorkspace: ws, repoID: "b"), nil, "nil 删除显式值")
+    check(store.integrationByRepo.count == 1, "删除后 map 里不再留空键")
+    eq(store.resolvedIntegration(forWorkspace: ws, repoID: "b", primaryID: "a", recommended: .push),
+       .pr, "重新跟随主仓库")
+    check(store.followsPrimary(forWorkspace: ws, repoID: "b", primaryID: "a"), "回到跟随")
+
+    // 主仓库指定与失效回退（存储层只负责存 / 取；失效回退在 detect）。
+    check(store.storedPrimaryRepoID(forWorkspace: ws) == nil, "没有指定时返回 nil")
+    store.setPrimaryRepoID("b", forWorkspace: ws)
+    eq(store.storedPrimaryRepoID(forWorkspace: ws), "b", "存下用户指定的主仓库")
+    eq(store.storedPrimaryRepoID(forWorkspace: canonical), "b", "尾斜杠路径读到同一个键")
+    store.setPrimaryRepoID(nil, forWorkspace: ws)
+    check(store.storedPrimaryRepoID(forWorkspace: ws) == nil, "nil = 取消指定")
+
+    // 换主仓库后的继承：显式值在谁身上就归谁，跟随者跟着新的主仓库。
+    var swap = RepoSettings()
+    swap.setIntegration(.merge, forWorkspace: ws, repoID: "old")
+    swap.setLegacyIntegration(.pr, forWorkspace: ws)
+    eq(swap.resolvedIntegration(forWorkspace: ws, repoID: "new", primaryID: "old", recommended: .none),
+       .merge, "换主之前跟随者继承旧主仓库")
+    eq(swap.resolvedIntegration(forWorkspace: ws, repoID: "new", primaryID: "new", recommended: .none),
+       .pr, "换主之后跟随者继承新主仓库（新主回退旧工作区值 pr）")
+    eq(swap.resolvedIntegration(forWorkspace: ws, repoID: "old", primaryID: "new", recommended: .none),
+       .merge, "旧主仓库自己的显式值仍归它自己（降级为非主后不跟随）")
+}
+
+
+// MARK: - issue 归属仓库（design §9）
+
+section("issue 归属：默认跟随主仓库 / 切换后显式 / 失效回退")
+do {
+    let ws = "/tmp/ws-issue-repo"
+    let a = WorkspaceRepo(id: "a", absolutePath: ws + "/a", isGit: true,
+                          github: GitHubRepo(owner: "o", name: "a"), displayName: "a")
+    let b = WorkspaceRepo(id: "b", absolutePath: ws + "/b", isGit: true,
+                          github: GitHubRepo(owner: "o", name: "b"), displayName: "b")
+    let c = WorkspaceRepo(id: "c", absolutePath: ws + "/c", isGit: true, displayName: "c")
+    let multi = WorkspaceRepoSet(repos: [a, b, c], primary: a)
+    let plain = WorkspaceRepoSet()
+
+    // 默认跟随主仓库。
+    var store = RepoSettings()
+    check(store.storedIssueRepoID(forWorkspace: ws) == nil, "没切换过 → 没有显式记录")
+    eq(store.resolvedIssueRepoID(forWorkspace: ws, repoSet: multi), "a",
+       "默认跟随主仓库（primary）")
+    check(!store.isIssueRepoExplicit(forWorkspace: ws, repoSet: multi), "默认不是显式指定")
+
+    // 用户切换 → 显式指定，不再跟随。
+    store.setIssueRepoID("b", forWorkspace: ws)
+    eq(store.storedIssueRepoID(forWorkspace: ws), "b", "切换写进显式设置")
+    eq(store.resolvedIssueRepoID(forWorkspace: ws, repoSet: multi), "b", "切换后归属该仓库")
+    check(store.isIssueRepoExplicit(forWorkspace: ws, repoSet: multi), "切换后是显式指定")
+    // 换主仓库不影响显式归属。
+    let swapped = WorkspaceRepoSet(repos: [a, b, c], primary: b)
+    eq(store.resolvedIssueRepoID(forWorkspace: ws, repoSet: swapped), "b",
+       "显式指定不受主仓库变化影响（仍指向 b）")
+
+    // 显式仓库被移除 → 回到跟随主仓库，不静默停在一个不存在的仓库上。
+    var stale = RepoSettings()
+    stale.setIssueRepoID("gone", forWorkspace: ws)
+    eq(stale.resolvedIssueRepoID(forWorkspace: ws, repoSet: multi), "a",
+       "指定的仓库已不存在 → 回退主仓库")
+    check(!stale.isIssueRepoExplicit(forWorkspace: ws, repoSet: multi), "失效后不算显式")
+
+    // plain 工作区没有归属。
+    check(store.resolvedIssueRepoID(forWorkspace: ws, repoSet: plain) == nil,
+          "没有任何仓库 → 没有 issue 归属")
+
+    // 取消显式 → 回到跟随。
+    store.setIssueRepoID(nil, forWorkspace: ws)
+    check(store.storedIssueRepoID(forWorkspace: ws) == nil, "nil = 取消显式指定")
+    eq(store.resolvedIssueRepoID(forWorkspace: ws, repoSet: multi), "a", "重新跟随主仓库")
+
+    // issue 任务 auto queue 的 repos 固定为 [issueRepoID]。
+    let issue = TaskItem.github(number: 9, title: "x")
+    let auto = TaskQueue.auto(for: issue, repos: ["b"])
+    eq(auto.repos, ["b"], "issue auto queue 的目标仓库就是 issue 归属仓库")
+    check(TaskQueue.auto(for: issue).repos == nil, "不传 repos 时仍是旧行为")
+}
+
+// MARK: - 多仓库交付：按仓库降级链 / repoRuns（design §7.2）
+
+section("多仓库交付：supports / effective 逐仓库降级链 / available / intent")
+do {
+    let github = WorkspaceRepo(id: "repo-gh", absolutePath: "/ws/repo-gh", isGit: true,
+                               remoteName: "github", github: GitHubRepo(owner: "o", name: "repo-gh"),
+                               displayName: "repo-gh")
+    let gitRemote = WorkspaceRepo(id: "repo-git", absolutePath: "/ws/repo-git", isGit: true,
+                                  remoteName: "origin", displayName: "repo-git")
+    let gitLocal = WorkspaceRepo(id: "repo-local", absolutePath: "/ws/repo-local", isGit: true,
+                                 displayName: "repo-local")
+    let plain = WorkspaceRepo(id: "repo-plain", absolutePath: "/ws/repo-plain", isGit: false,
+                              displayName: "repo-plain")
+
+    // supports：pr 要 GitHub；push 要 git + 远端；merge 只要 git；none 永远成立。
+    check(QueueIntegration.supports(.pr, repo: github, hasRemote: true), "GitHub 仓库原生支持 PR")
+    check(!QueueIntegration.supports(.pr, repo: gitRemote, hasRemote: true), "非 GitHub 仓库不支持 PR")
+    check(QueueIntegration.supports(.push, repo: gitRemote, hasRemote: true), "有远端支持 push")
+    check(!QueueIntegration.supports(.push, repo: gitLocal, hasRemote: false), "无远端不支持 push")
+    check(QueueIntegration.supports(.merge, repo: gitLocal, hasRemote: false), "git 仓库支持本地合并")
+    check(!QueueIntegration.supports(.merge, repo: plain, hasRemote: false), "非 git 不支持本地合并")
+    check(QueueIntegration.supports(.none, repo: plain, hasRemote: false), "「无」永远成立")
+
+    // effective：PR → push（有远端）→ 本地合并 → 不做。
+    eq(QueueIntegration.effective(.pr, repo: github, hasRemote: true), .pr, "GitHub + pr 原样")
+    eq(QueueIntegration.effective(.pr, repo: gitRemote, hasRemote: true), .push, "非 GitHub + pr 降级为 push")
+    eq(QueueIntegration.effective(.pr, repo: gitLocal, hasRemote: false), .merge, "无远端 + pr 降级为本地合并")
+    eq(QueueIntegration.effective(.pr, repo: plain, hasRemote: false), .none, "非 git + pr 降级为不做")
+    eq(QueueIntegration.effective(.push, repo: gitLocal, hasRemote: false), .merge, "无远端 + push 降级为本地合并")
+    eq(QueueIntegration.effective(.push, repo: plain, hasRemote: false), .none, "非 git + push 降级为不做")
+    eq(QueueIntegration.effective(.merge, repo: plain, hasRemote: false), .none, "非 git + merge 降级为不做")
+    eq(QueueIntegration.effective(.none, repo: github, hasRemote: true), .none, "「无」不变")
+
+    // available：只要有一个目标能原生做到就可选；空目标只有 none 可用。
+    let targets = [gitRemote, plain]
+    check(QueueIntegration.available(.pr, targets: [github], hasRemote: { _ in true }), "有 GitHub 目标时 PR 可选")
+    check(!QueueIntegration.available(.pr, targets: targets, hasRemote: { $0.id == "repo-git" }), "没有 GitHub 目标时 PR 不可选")
+    check(QueueIntegration.available(.push, targets: targets, hasRemote: { $0.id == "repo-git" }), "有一个能 push 就可选")
+    check(QueueIntegration.available(.merge, targets: [plain], hasRemote: { _ in false }) == false, "全不能 merge 时不可选")
+    check(QueueIntegration.available(.none, targets: [], hasRemote: { _ in false }), "空目标只有 none 可用")
+    check(!QueueIntegration.available(.pr, targets: [], hasRemote: { _ in true }), "空目标的 pr 不可用")
+
+    // intent：队列有覆盖用覆盖，否则用该仓库的默认值。
+    eq(QueueIntegration.intent(queueOverride: .push, perRepoDefault: .pr), .push, "队列覆盖优先")
+    eq(QueueIntegration.intent(queueOverride: nil, perRepoDefault: .merge), .merge, "未覆盖用仓库默认")
+}
+
+section("QueueRepoRun / repoRuns：往返与 reset")
+do {
+    let run = QueueRepoRun(repoID: "repo-a", branch: "feature/x", base: "main",
+                           intent: .pr, effective: .push, status: .done,
+                           prUrl: "https://github.com/o/a/pull/1", note: "已推送 abc123")
+    let back = QueueRepoRun.from(run.dictionary())
+    check(back == run, "QueueRepoRun 往返逐字段一致")
+    check(QueueRepoRun.from(["repoID": "x"])?.status == .pending, "缺 status 默认 pending")
+
+    let queue = TaskQueue(id: "q-rr", name: "RR", branch: "feature/x", baseBranch: "main",
+                          repoRuns: [run, QueueRepoRun(repoID: "repo-b", effective: .merge, status: .failed,
+                                                       note: "冲突")])
+    let round = TaskQueue.from(queue.dictionary())
+    eq(round?.repoRuns.count, 2, "TaskQueue 往返保留两个 repoRuns")
+    eq(round?.repoRuns.first?.effective, .push, "effective 往返")
+    eq(round?.repoRuns.last?.status, .failed, "status 往返")
+    eq(TaskQueue.from(["id": "q-old", "name": "old"])?.repoRuns, [], "旧 queues.json 无 repoRuns → 空")
+
+    var board = TaskBoard()
+    let q = board.createQueue(name: "Runs")
+    check(board.setQueueRepoRuns(q.id, [run]), "TaskBoard 能写入 repoRuns")
+    eq(board.queue(q.id)?.repoRuns.count, 1, "写入后挂在队列上")
+    // 新一轮任务开始时清掉上一轮交付结果。
+    let t = TaskItem.manual(title: "t", body: nil, id: "manual-rr000001")
+    board.tasks = [t]
+    _ = board.enqueue(taskID: t.id, into: q.id)
+    board.markRunning(t.id)
+    eq(board.queue(q.id)?.repoRuns, [], "markRunning 清掉上一轮 repoRuns")
+}
 
 for dir in [repo, repoLegacy, repoBroken, repoDrift] {
     try? FileManager.default.removeItem(atPath: dir)
