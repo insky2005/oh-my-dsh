@@ -629,6 +629,7 @@ enum L10n {
         "tasks.state.running": ("处理中", "Running"),
         "tasks.state.done": ("已完成", "Done"),
         "tasks.state.failed": ("失败", "Failed"),
+        "tasks.state.needsReview": ("待确认", "Needs review"),
         "tasks.state.cancelled": ("已取消", "Cancelled"),
         "tasks.state.closed": ("已关闭", "Closed"),
         "tasks.detailProcess": ("处理", "Process"),
@@ -636,6 +637,7 @@ enum L10n {
         "tasks.queue.addHint": ("加入队列：点开选一个已有队列，或新建队列（新建在最上面）", "Add to Queue: pick an existing queue, or create one (New Queue is first)"),
         "tasks.queue.remove": ("移出队列", "Leave Queue"),
         "tasks.detailRetry": ("重试", "Retry"),
+        "tasks.detailConfirmDone": ("标记完成", "Mark done"),
         "tasks.detailSkip": ("跳过并继续", "Skip & Continue"),
         "tasks.detailOpenSession": ("打开会话", "Open session"),
         "tasks.detailReview": ("审查改动", "Review changes"),
@@ -823,6 +825,9 @@ enum L10n {
         "tasks.queue.state.closed": ("已关闭", "Closed"),
         "tasks.queue.noBranch": ("不切分支", "No branch"),
         "tasks.queue.failedCount": ("%d 个失败", "%d failed"),
+        "tasks.queue.needsReviewCount": ("%d 个待确认", "%d need review"),
+        // 待确认导致队列暂停：原因写在队列头上（橙，不是失败的红色）。
+        "tasks.queue.pausedNeedsReview": ("有任务待确认，队列已暂停：请「重试」，或确认做完了就「标记完成」后再继续", "A task needs review, so the queue is paused — retry it, or mark it done if you can confirm the work is complete"),
         // PR 的标题与正文不再由壳层套模板：开 PR 的会话读完真实 diff 之后自己写
         // （§V2-6），所以这两条旧文案随 REST createPR 一起删掉。
         // 交付会话运行时的状态行，按工作流分（不再一律说「开 PR」）。

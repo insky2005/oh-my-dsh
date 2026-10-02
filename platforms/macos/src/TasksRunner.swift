@@ -483,6 +483,8 @@ enum TaskPrompts {
                 switch earlier.state {
                 case .done: head += " —— 已完成"
                 case .failed: head += " —— 失败（\(L10n.tr(earlier.errorKey ?? "tasks.errUnknown"))）"
+                // 待确认不算「已完成」：它只是前一条任务的现状，后面的人必须知道。
+                case .needsReview: head += " —— 待确认（未确认完成）"
                 case .cancelled: head += " —— 被取消"
                 default: head += " —— \(earlier.state.rawValue)"
                 }
@@ -1110,9 +1112,13 @@ final class TasksRunner {
     }
 
     private enum FinishOutcome {
-        /// The session stopped. Its work is done; its PR (if its queue wants one) is
-        /// a separate session's business — see startQueuePR.
+        /// The session stopped AND this attempt's completion marker came back. Its
+        /// work is done; its PR (if its queue wants one) is a separate session's
+        /// business — see startQueuePR.
         case done
+        /// 会话结束了，但没有本次完成 marker：无法证明做完了。队列暂停、等用户
+        /// 重试或标记完成（不是「失败」——判断权交回用户）。
+        case needsReview
         case failed(TaskFailure)
     }
 
@@ -1423,10 +1429,11 @@ final class TasksRunner {
         let index = position ?? queue.taskIds.firstIndex(of: taskID).map { $0 + 1 } ?? 1
         let earlier = queue.taskIds.prefix(max(0, index - 1)).compactMap { id -> TaskPrompts.QueueBrief.Earlier? in
             guard let task = board.task(id) else { return nil }
-            // Everything that is BEHIND us counts, however it ended: a failed or
-            // cancelled task left work and a story the next task must know (else
-            // the retry re-explores from scratch).
-            guard task.state == .done || task.state == .failed || task.state == .cancelled else { return nil }
+            // Everything that is BEHIND us counts, however it ended: a failed,
+            // cancelled or 待确认 task left work and a story the next task must know
+            // (else the retry re-explores from scratch).
+            guard task.state == .done || task.state == .failed
+                || task.state == .needsReview || task.state == .cancelled else { return nil }
             // The stored 汇报 first: the runner writes it back when a task ends (so it
             // survives a deleted session), and only a task that ended before that
             // existed has to be read out of the session log again.
@@ -1524,7 +1531,7 @@ final class TasksRunner {
             if !verified {
                 log("tasks: " + taskID + " 会话结束但最后汇报没有本次完成标记——待确认（不判 done）")
             }
-            let outcome: FinishOutcome = verified ? .done : .failed(.unverified)
+            let outcome: FinishOutcome = verified ? .done : .needsReview
             self.applyFinish(taskID: taskID, outcome: outcome, now: now, report: report,
                              finalizeQueueID: (wantsFinalize && verified) ? queue?.id : nil)
         })
@@ -1538,6 +1545,9 @@ final class TasksRunner {
         case .done:
             board.markDone(taskID, report: report, at: now)
             env.log("tasks: " + taskID + " done")
+        case .needsReview:
+            board.markNeedsReview(taskID, report: report, at: now)
+            env.log("tasks: " + taskID + " needs review (no completion marker) — queue paused")
         case .failed(let failure):
             board.markFailed(taskID, error: failure.rawValue, report: report, at: now)
             env.log("tasks: " + taskID + " failed (" + failure.rawValue + ")")
@@ -2554,6 +2564,34 @@ final class TasksRunner {
             _ = pump()
         }
         return ok
+    }
+
+    /// 标记完成: the user looked at a 待确认 task and confirms it really finished.
+    /// The task becomes .done and the queue it was blocking resumes — exactly the
+    /// normal finish path, so a last task that completes the queue reports back and
+    /// (autoPR permitting) starts its delivery session, while one with tasks left
+    /// runs the next one.
+    @discardableResult
+    func confirmDone(taskID: String) -> Bool {
+        guard let task = board.task(taskID), task.state == .needsReview else { return false }
+        let queueID = task.queueId
+        board.confirmDone(taskID)
+        persist()
+        env.log("tasks: " + taskID + " confirmed done by the user")
+        notifyFinishedQueues()
+        if let queueID = queueID, let queue = board.queue(queueID) {
+            if queue.state == .done {
+                let mode = board.integration(forQueue: queueID, default: env.defaultIntegration)
+                if queue.autoPR && mode != QueueIntegration.none {
+                    startQueueIntegration(queueID)
+                }
+            } else if queue.state == .paused {
+                _ = board.resumeQueue(queueID)
+                persist()
+            }
+        }
+        _ = pump()
+        return true
     }
 
     /// 取消 the running task: cancel its session, keep the branch and session for

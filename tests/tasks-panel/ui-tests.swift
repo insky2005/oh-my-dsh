@@ -1497,6 +1497,87 @@ do {
        "running is an accent count, not an alarm")
 }
 
+// MARK: - P2 待确认
+
+section("P2 待确认卡片：徽标 + 重试 / 标记完成")
+do {
+    var board = TaskBoard()
+    let first = TaskItem.manual(title: "One", id: "manual-0r00aaaa")
+    let second = TaskItem.manual(title: "Two", id: "manual-0r01bbbb")
+    board.tasks = [first, second]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: first.id, into: queue.id)
+    _ = board.enqueue(taskID: second.id, into: queue.id)
+    board.markRunning(first.id)
+    _ = board.markNeedsReview(first.id, report: "做了一半")
+
+    let card = TaskCardModel.build(board.task(first.id)!, board: board,
+                                   expanded: true, githubRepo: false)
+    eq(card.stateBadge, "tasks.state.needsReview", "待确认有自己的徽标（与已完成 / 失败并列）")
+    eq(card.tone, TaskTone.warning, "待确认是要人决定，不是红色失败")
+    eq(card.primaryKey, "tasks.detailRetry", "主操作是重试")
+    check(card.primaryAction == .retry(clearsBranch: false), "主操作真的重新跑这条任务")
+    check(card.canRetry, "重试可用")
+    check(card.canConfirmDone, "待确认给「标记完成」")
+    check(card.canSkip, "后面还有排队任务 → 也给跳过并继续")
+    check(card.canEdit, "待确认仍可编辑（改完再重试）")
+    check(card.detail.contains("tasks.errUnverified"), "详情里说明为什么待确认")
+    // 方式 A 的状态语义：它不是运行中/队列中，但也还不算完成；可以重新入队。
+    check(TaskState.needsReview.isFinished, "待确认是一次「结束了的尝试」")
+    check(TaskState.needsReview.isQueueable, "待确认可以重新入队（重试）")
+    check(TaskState.needsReview.isEditable, "待确认可编辑")
+
+    // 状态随 manual.json 往返（rawValue 直接写盘，重启用它恢复）。
+    var stored = TaskItem.manual(title: "Round trip", id: "manual-0r20aaaa")
+    stored.state = .needsReview
+    eq(TaskItem.fromManual(stored.manualDictionary())?.state, .needsReview,
+       "待确认状态随 manual.json 往返")
+
+    // 失败没有「标记完成」：失败不是用户能一键放行的东西。
+    var failedBoard = board
+    if let i = failedBoard.index(ofTask: first.id) { failedBoard.tasks[i].state = .failed }
+    let failedCard = TaskCardModel.build(failedBoard.task(first.id)!, board: failedBoard,
+                                         expanded: true, githubRepo: false)
+    check(!failedCard.canConfirmDone, "失败不提供「标记完成」")
+}
+
+section("P2 队列头：待确认暂停时说明原因")
+do {
+    var board = TaskBoard()
+    let first = TaskItem.manual(title: "One", id: "manual-0r10aaaa")
+    let second = TaskItem.manual(title: "Two", id: "manual-0r11bbbb")
+    board.tasks = [first, second]
+    let queue = board.createQueue(name: "Lane")
+    _ = board.enqueue(taskID: first.id, into: queue.id)
+    _ = board.enqueue(taskID: second.id, into: queue.id)
+    board.markRunning(first.id)
+    _ = board.markNeedsReview(first.id)
+
+    let header = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    eq(header.reviewCount, 1, "待确认被计数")
+    eq(header.failedCount, 0, "它不是失败")
+    eq(header.stateKey, "tasks.queue.state.paused", "待确认暂停队列")
+    eq(header.pauseReasonKey, "tasks.queue.pausedNeedsReview", "队列头给出暂停原因")
+    eq(header.startHintKey, "tasks.queue.continue", "继续 = 跳过待确认跑下一个")
+    check(header.canStart, "还有排队任务 → 可以继续")
+
+    // 纯失败（没有待确认）不写「待确认」的原因。
+    var failedBoard = board
+    if let i = failedBoard.index(ofTask: first.id) {
+        failedBoard.tasks[i].state = .failed
+        failedBoard.tasks[i].error = TaskFailure.session.rawValue
+    }
+    let failedHeader = QueueHeaderModel.build(failedBoard.queue(queue.id)!, board: failedBoard,
+                                              collapsed: false)
+    eq(failedHeader.reviewCount, 0, "失败不计入待确认")
+    eq(failedHeader.pauseReasonKey, nil, "没有待确认就不写那条原因")
+
+    // 用户确认做完了 → 直接 done，队列不再挂着。
+    _ = board.confirmDone(first.id)
+    eq(board.task(first.id)?.state, .done, "标记完成 → 直接 .done")
+    eq(board.task(first.id)?.error, nil, "待确认说明被清掉")
+}
+
 if failures == 0 {
     print("ok - \(checks) checks passed")
 } else {

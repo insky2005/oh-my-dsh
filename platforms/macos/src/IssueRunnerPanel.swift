@@ -2578,6 +2578,12 @@ final class IssueRunnerPanelController: NSObject {
             _ = self?.runner?.skip(taskID: taskID)
             self?.syncFromBoard()
         }
+        card.onConfirmDone = { [weak self] in
+            // 标记完成: the user confirms a 待确认 task really finished; it goes .done
+            // and the queue it paused resumes (TasksRunner.confirmDone).
+            _ = self?.runner?.confirmDone(taskID: taskID)
+            self?.syncFromBoard()
+        }
         card.onOpenSession = { [weak self] in
             guard let session = task.sessionId else { return }
             // Say something the moment it is clicked: the shell's lookup walks dsh web's

@@ -368,6 +368,19 @@ func singleTaskBoard(queueName: String = "Docs Cleanup",
     return (board, task.id, queue.id)
 }
 
+/// A board with TWO manual tasks and one user queue (neither enqueued). Used by
+/// the P2 待确认 tests: the first task can be left unconfirmed while the second
+/// proves the queue really stopped.
+func twoTaskBoard(queueName: String = "Docs Cleanup",
+                  autoPR: Bool = true) -> (TaskBoard, String, String, String) {
+    var board = TaskBoard()
+    let first = TaskItem.manual(title: "One", id: "manual-0p00aaaa")
+    let second = TaskItem.manual(title: "Two", id: "manual-0p01bbbb")
+    board.tasks = [first, second]
+    let queue = board.createQueue(name: queueName, autoPR: autoPR)
+    return (board, first.id, second.id, queue.id)
+}
+
 // MARK: - Happy path
 
 section("happy path: branch, session, prompt, push, PR")
@@ -2658,8 +2671,8 @@ do {
     h1.dsh.reports["session-1"] = "改完了，但忘了写完成标记。"
     h1.dsh.finishAll()
     _ = h1.runner.step()
-    eq(h1.board.task(task1)?.state, .failed, "无 marker → 不判 done")
-    eq(h1.board.task(task1)?.error, "tasks.errUnverified", "而是待确认（unverified）")
+    eq(h1.board.task(task1)?.state, .needsReview, "无 marker → 待确认（不是失败、也不是 done）")
+    eq(h1.board.task(task1)?.error, "tasks.errUnverified", "卡片拿到待确认的原因")
     eq(h1.board.task(task1)?.markerVerified, false, "未通过校验")
     check(h1.board.queue(queue1)?.state == .paused, "队列暂停：不继续后面的任务、不交付")
 
@@ -2671,7 +2684,7 @@ do {
     h2.dsh.reports["session-1"] = "上一轮的完成标记：DSH-TASK-DONE-DEADBEEF"
     h2.dsh.finishAll()
     _ = h2.runner.step()
-    eq(h2.board.task(task2)?.state, .failed, "非本次 marker → 不判 done")
+    eq(h2.board.task(task2)?.state, .needsReview, "非本次 marker → 不判 done")
     eq(h2.board.task(task2)?.error, "tasks.errUnverified", "同样进入待确认")
 
     // 本次 marker 出现在中间一行、最后一行另有内容 → 只认最后一行，不采纳。
@@ -2685,7 +2698,7 @@ do {
     h3.dsh.reports["session-1"] = "本次完成标记 " + marker3 + "\n后面还有一句收尾的话"
     h3.dsh.finishAll()
     _ = h3.runner.step()
-    eq(h3.board.task(task3)?.state, .failed, "marker 不在最后一行 → 不采纳")
+    eq(h3.board.task(task3)?.state, .needsReview, "marker 不在最后一行 → 不采纳")
 
     // 空汇报（会话没有任何最后文本）→ 待确认。
     let (board4, task4, queue4) = singleTaskBoard(autoPR: false)
@@ -2694,11 +2707,87 @@ do {
     _ = h4.runner.enqueue(taskID: task4, into: queue4)
     h4.dsh.finishAll()
     _ = h4.runner.step()
-    eq(h4.board.task(task4)?.state, .failed, "空汇报 → 不判 done")
+    eq(h4.board.task(task4)?.state, .needsReview, "空汇报 → 不判 done")
     eq(h4.board.task(task4)?.error, "tasks.errUnverified", "空汇报进入待确认")
     _ = queue2
     _ = queue3
     _ = queue4
+}
+
+// MARK: - P2 待确认状态与卡片出口
+
+section("P2 待确认：队列暂停、不发完成通知、不自动开 PR")
+do {
+    var (board, first, second, queueID) = twoTaskBoard()
+    // 队列有来源会话：如果它被判完成，这条通知就会发出去 —— 待确认不该发。
+    board.local.queueSessions[queueID] = "origin-session"
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: first, into: queueID)
+    _ = h.runner.enqueue(taskID: second, into: queueID)
+    h.dsh.reports["session-1"] = "改了一半，网络断了。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.task(first)?.state, .needsReview, "没有 marker → 待确认")
+    eq(h.board.queue(queueID)?.state, .paused, "待确认暂停队列")
+    eq(h.board.task(second)?.state, .queued, "后面的任务没有被启动")
+    eq(h.board.queue(queueID)?.taskIds.count, 2, "任务没有丢")
+    check(h.dsh.notifications.isEmpty, "待确认不发完成通知")
+    eq(h.dsh.sessions.count, 1, "待确认不起交付会话（不自动开 PR）")
+    check(h.rec.logged("needs review"), "日志记下待确认")
+
+    // 重试是出口之一：该任务重新排队并立刻跑起来，队列恢复活跃。
+    let staleMarker = h.board.task(first)?.completionMarker
+    check(h.runner.retry(taskID: first), "待确认可以重试")
+    eq(h.board.task(first)?.state, .running, "重试后重新跑")
+    eq(h.board.queue(queueID)?.state, .active, "重试恢复队列")
+    check(h.board.task(first)?.completionMarker != staleMarker, "重试换一个全新的 marker")
+    eq(h.board.task(first)?.error, nil, "重试清掉待确认说明")
+    eq(h.dsh.sessions.count, 2, "重试起了新会话")
+}
+
+section("P2 标记完成：用户确认 → 直接 .done，并走正常完成路径")
+do {
+    var (board, first, _, queueID) = twoTaskBoard()
+    board.local.queueSessions[queueID] = "origin-session"
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: first, into: queueID)
+    h.dsh.reports["session-1"] = "做完了，但忘了写完成标记。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(first)?.state, .needsReview, "先进入待确认")
+
+    check(h.runner.confirmDone(taskID: first), "标记完成被接受")
+    eq(h.board.task(first)?.state, .done, "用户确认 → done")
+    eq(h.board.task(first)?.error, nil, "待确认的说明被清掉")
+    eq(h.board.queue(queueID)?.state, .done, "最后一条确认后队列完成")
+    eq(h.dsh.notifications.count, 1, "确认后照常回传完成通知")
+    // 队列有来源会话：交付复用它，不再新建一个会话。
+    eq(h.runner.openingPRQueueID, queueID, "队列完成照常起交付（autoPR 开着）")
+    check(h.dsh.prompts["origin-session"] != nil, "来源会话收到交付提示词")
+
+    // 不是待确认的任务不能被「标记完成」放行。
+    check(!h.runner.confirmDone(taskID: first), "已 done 的任务不再接受标记完成")
+}
+
+section("P2 跳过并继续：交接简报把待确认标为「待确认」，不写进「已完成」")
+do {
+    let (board, first, second, queueID) = twoTaskBoard()
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: first, into: queueID)
+    _ = h.runner.enqueue(taskID: second, into: queueID)
+    h.dsh.reports["session-1"] = "做了一半。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(first)?.state, .needsReview, "前一条待确认")
+
+    check(h.runner.skip(taskID: first), "跳过并继续")
+    let nextPrompt = h.dsh.prompts["session-2"] ?? ""
+    check(nextPrompt.contains("—— 待确认"), "前一条在简报里标为待确认")
+    check(!nextPrompt.contains("—— 已完成"), "没有把待确认写进「已完成」")
 }
 
 if failures == 0 {

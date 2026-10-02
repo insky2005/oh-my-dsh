@@ -206,6 +206,18 @@ if ! grep -q 'requireCompletionMarker: true' ../../platforms/macos/src/IssueRunn
 fi
 echo "ok - P1 完成协议：任务完成 marker 由 runner 生成并作为 done 的唯一依据"
 
+# P2 待确认：独立状态 + 卡片出口（重试 / 标记完成）。复用 .failed 的话「失败」的措辞
+# 偏重，而且无法把「用户一键放行」和「真失败」区分开。
+if ! grep -q 'case needsReview' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -q 'func markNeedsReview' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -q 'func confirmDone(taskID:' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'case .needsReview' ../../platforms/macos/src/TasksUI.swift \
+   || ! grep -q 'tasks.detailConfirmDone' ../../platforms/macos/src/TaskCardView.swift; then
+  echo "FAIL - P2 待确认：必须有独立 needsReview 状态、标记完成动作与卡片出口"
+  exit 1
+fi
+echo "ok - P2 待确认：独立状态 + 重试 / 标记完成"
+
 # 任务面板的每一项设置都必须按工作区存：一个全局键会把某个工作区的选择泄进所有工作区
 # （「交付成功后自动关闭队列」曾写全局 tasksAutoCloseOnPublish，于是每个工作区都显示勾上）。
 IP=../../platforms/macos/src/IssueRunnerPanel.swift

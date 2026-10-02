@@ -1,6 +1,6 @@
 # 任务完成校验设计（Task Completion Verification）
 
-> 状态：部分实现（P1 已落地：任务会话 marker 协议 + `finish()` 依据 marker 判定；P2–P4 待做）· 日期：2026-10-02 · 关联：docs/design/panels/issue-runner-design.md、docs/design/panels/tasks-queue-session-loop-design.md、platforms/macos/src/TasksRunner.swift
+> 状态：部分实现（P1 已落地：任务会话 marker 协议 + `finish()` 依据 marker 判定；P2 已落地：独立 `TaskState.needsReview` 待确认状态 + 卡片「重试 / 标记完成」+ 队列暂停原因；P3–P4 待做）· 日期：2026-10-02 · 关联：docs/design/panels/issue-runner-design.md、docs/design/panels/tasks-queue-session-loop-design.md、platforms/macos/src/TasksRunner.swift
 > 来源：2026-10-02 多仓库队列实测（P2/P3/P4 断网未完成却被标记「已完成」）
 
 ## 1. 现象
@@ -72,6 +72,20 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 - 卡片状态徽标「待确认」，动作两个：**重试**（重新跑这条任务）与**标记完成**（用户确认其实做完了，直接转 `.done`）；
 - 待确认不写入队列交接简报的「已完成」段（它是未确认的）。
 
+**P2 实现状态（2026-10-02）**：
+
+- 走**方式 A**：`TaskState.needsReview`（`isFinished` / `isQueueable` / `isEditable` / `badge`
+  均已同步）。`finish()` 无本次 marker 时进入 `FinishOutcome.needsReview`，
+  `TaskBoard.markNeedsReview` 与失败一样暂停队列（`.paused`），`error` 仍带
+  `tasks.errUnverified` 作为卡片上的原因；不触发完成回传，也不起交付会话。
+- 卡片：徽标「待确认」（橙色，与失败的红区分）；主操作「重试」；**新增**「标记完成」
+  次级动作 → `TasksRunner.confirmDone` → `TaskBoard.confirmDone`（清掉 unverified 说明、
+  `.done`，并走正常完成路径：最后一条会回传并（autoPR 允许时）起交付会话，还有排队
+  任务则恢复队列）。
+- 队列头：`QueueHeaderModel.reviewCount` 计数 + `pauseReasonKey`（待确认导致暂停时
+  显示橙色原因行，折起也可见），`startHintKey` 把待确认算作可「继续」。
+- 交接简报：待确认那一棒进简报但标「待确认（未确认完成）」，不写「已完成」。
+
 ### 4.3 产物校验（增强，可选）
 
 给任务加一个 `expectsCommit` 标志（按任务来源/队列类型推断，或提示词里声明）：会话结束后检查队列分支在任务开始后是否有新提交、或工作区是否有改动；没有则同样降级为待确认。
@@ -89,7 +103,7 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 
 ## 5. 数据模型
 
-- `TaskFailure` 新增 `unverified`（L10n 键 `tasks.errUnverified`）；若走方式 A，则新增 `TaskState.needsReview`。**P1 先走方式 B**：无 marker → `.failed + .unverified`（队列因此暂停），P2 再引入独立状态与卡片动作。
+- `TaskFailure` 新增 `unverified`（L10n 键 `tasks.errUnverified`）；若走方式 A，则新增 `TaskState.needsReview`。**P1 先走方式 B**（无 marker → `.failed + .unverified`），**P2 已切换为方式 A**：独立 `TaskState.needsReview`，`tasks.errUnverified` 保留为卡片上的原因文案。
 - `TaskItem` 记录本次尝试的 marker（`completionMarker`）与是否已校验（`markerVerified`），用于重启恢复后仍能判断；marker 是机器私有，只进 `local.json` / 内存（`TaskLocalState.taskMarkers` / `taskMarkerVerified`），不进 `index.json` / `manual.json` 正文。
 
 ## 6. UI
@@ -116,7 +130,7 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 | 阶段 | 内容 | 价值 |
 |---|---|---|
 | **P1** ✅ | 任务会话 marker 协议 + `finish()` 依据 marker 判定 | 堵住「断网 = 完成」 |
-| **P2** | 待确认状态 + 卡片动作（重试 / 标记完成）+ 队列暂停 | 把判断权交回用户 |
+| **P2** ✅ | 待确认状态 + 卡片动作（重试 / 标记完成）+ 队列暂停 | 把判断权交回用户 |
 | **P3** | 完成通知诚实化 | 低成本纠偏 |
 | **P4** | `expectsCommit` 产物校验（可选） | 抓「什么都没干」 |
 
@@ -126,6 +140,8 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
   - P1 已在 `tests/tasks-panel/runner-tests.swift` 覆盖以上四种情形（含「marker 出现在中间行不采纳」与 `local.json` 往返 / `index.json` 不含 marker）。
 - **通知**：混合「完成 / 待确认」时的计数与文案。
 - **视图模型**：待确认徽标与「标记完成 / 重试」动作；队列暂停原因。
+  - P2 已在 `tests/tasks-panel/ui-tests.swift` 覆盖徽标、`canConfirmDone`、暂停原因与状态语义。
+- **运行器**：待确认触发队列暂停（不启动后续任务、不回传、不起交付会话）；重试与「标记完成」是两条出口。P2 已在 `tests/tasks-panel/runner-tests.swift` 覆盖。
 - **兼容**：既有「会话正常结束即 done」的用例需要显式补上 marker（或标记为 legacy 路径）。
 
 ## 10. 开放问题

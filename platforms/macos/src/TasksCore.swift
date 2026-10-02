@@ -30,8 +30,8 @@ enum TaskFailure: String {
     case timeout = "tasks.errTimeout"
     case noPush = "tasks.errNoPush"
     /// 会话结束了，但本次尝试的完成 marker 没有回显：无法证明任务真的做完（断网导致
-    /// 的 turn 结束与正常结束在 dsh 列表里长得一样）。P1 先以「失败 + 待确认」落地，
-    /// P2 会把它换成独立的 needsReview 状态。
+    /// 的 turn 结束与正常结束在 dsh 列表里长得一样）。P2 起它不再是「失败」——任务进入
+    /// 独立的 TaskState.needsReview，这个键作为卡片上「待确认」的原因保留。
     case unverified = "tasks.errUnverified"
 }
 
@@ -56,20 +56,24 @@ enum TaskState: String {
     case running
     case done
     case failed
+    /// 待确认：会话结束了，但没拿到本次完成 marker（断网 / 被打断 / 漏写）。它不是
+    /// 成功，也未必是失败——判断权交回用户（重试 / 标记完成）。行为与失败一致：队列
+    /// 暂停、后续任务不启动、不发完成通知、不自动开 PR。
+    case needsReview
     case cancelled
     case closed
 
     var isFinished: Bool {
         switch self {
-        case .done, .failed, .cancelled, .closed: return true
+        case .done, .failed, .needsReview, .cancelled, .closed: return true
         case .pending, .queued, .running: return false
         }
     }
 
-    /// May be put into a queue (again).
+    /// May be put into a queue (again). 待确认和失败一样可以重试。
     var isQueueable: Bool {
         switch self {
-        case .pending, .failed, .cancelled: return true
+        case .pending, .failed, .needsReview, .cancelled: return true
         case .queued, .running, .done, .closed: return false
         }
     }
@@ -83,7 +87,7 @@ enum TaskState: String {
     /// having an edit button.
     var isEditable: Bool {
         switch self {
-        case .pending, .queued, .failed, .cancelled: return true
+        case .pending, .queued, .failed, .needsReview, .cancelled: return true
         case .running, .done, .closed: return false
         }
     }
@@ -96,6 +100,7 @@ enum TaskState: String {
         case .running: return "…"
         case .done: return "✓"
         case .failed: return "✗"
+        case .needsReview: return "?"
         case .cancelled: return "−"
         case .closed: return "☑"
         }
@@ -165,7 +170,7 @@ struct TaskItem: Equatable {
     /// 据此判断这次尝试是否已被校验过（见 markerVerified）。
     var completionMarker: String?
     /// 本次尝试的 marker 是否已经校验通过（会话最后一行回显了它）。只有通过才判
-    /// done；否则进入「待确认」（P1 先以 failed + unverified 落地）。
+    /// done；否则进入独立的待确认状态 TaskState.needsReview。
     var markerVerified: Bool
 
     init(id: String,
@@ -1461,6 +1466,33 @@ struct TaskBoard {
         recordReport(taskID, report)
         local.runningTaskID = nil
         return pauseQueue(containing: tasks[i])
+    }
+
+    /// 待确认: the session ended without this attempt's completion marker. Not a
+    /// success and not necessarily a failure — the user decides (重试 / 标记完成).
+    /// Like a failure it PAUSES the queue: running the next task would build on
+    /// work nobody confirmed, and it must never fire a completion report or an
+    /// automatic PR. `error` carries the reason key the card renders.
+    @discardableResult
+    mutating func markNeedsReview(_ taskID: String, report: String? = nil,
+                                  at date: Date = Date()) -> String? {
+        guard let i = index(ofTask: taskID) else { return nil }
+        tasks[i].state = .needsReview
+        tasks[i].error = TaskFailure.unverified.rawValue
+        tasks[i].errorDetail = nil
+        tasks[i].finishedAt = date
+        recordReport(taskID, report)
+        local.runningTaskID = nil
+        return pauseQueue(containing: tasks[i])
+    }
+
+    /// 用户确认「其实做完了」：待确认 → 已完成。清掉 unverified 的说明（它描述的
+    /// 是刚刚被用户推翻的判断），其余走正常的完成路径（refreshQueueCompletion）。
+    mutating func confirmDone(_ taskID: String, at date: Date = Date()) {
+        guard let i = index(ofTask: taskID), tasks[i].state == .needsReview else { return }
+        tasks[i].error = nil
+        tasks[i].errorDetail = nil
+        markDone(taskID, at: date)
     }
 
     /// Cancel a task (user-initiated). Cancelling frees the serial slot without
