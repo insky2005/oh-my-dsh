@@ -2810,7 +2810,8 @@ final class IssueRunnerPanelController: NSObject {
                                                   hasRemote: workspaceHasRemote,
                                                   defaultBaseBranch: workspaceDefaultBase,
                                                   defaultIntegration: workspaceIntegration)
-                .forRepos(repoPickerRepos, primary: workspaceRepoSet.primary))
+                .forRepos(repoPickerRepos, primary: workspaceRepoSet.primary,
+                          selected: queue.repos))
         }
     }
 
@@ -2827,6 +2828,7 @@ final class IssueRunnerPanelController: NSObject {
                                            branch: composer.branchValue,
                                            baseBranch: composer.normalizedBaseBranch,
                                            autoPR: composer.autoPR && repo != nil,
+                                           repos: composer.storedRepoIDs,
                                            integration: composer.integration)
             if let taskID = taskID { _ = runner.enqueue(taskID: taskID, into: queue.id) }
             setStatus(L10n.tr("tasks.queue.created", queue.name), spin: false)
@@ -2841,6 +2843,7 @@ final class IssueRunnerPanelController: NSObject {
                                      branch: .some(composer.branchValue),
                                      baseBranch: composer.normalizedBaseBranch,
                                      autoPR: composer.autoPR && repo != nil,
+                                     repos: .some(composer.storedRepoIDs),
                                      integration: .some(composer.integration)) else {
                 // The queue is gone (workspace switched under the open form): say
                 // so instead of reporting a save that never happened.

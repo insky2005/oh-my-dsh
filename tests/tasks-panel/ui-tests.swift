@@ -794,6 +794,23 @@ do {
     check(!QueueComposerModel.create().showsRepoPicker, "空的 availableRepos 不显示选择区")
     let legacyForm = QueueComposerModel.create().forWorkspace(git: true, pr: true)
     check(!legacyForm.showsRepoPicker, "forWorkspace 不引入选择区")
+
+    // 编辑已有队列：按它存的目标仓库预选，而不是重置成 primary。
+    let reopened = QueueComposerModel.create().forRepos([root, a, b], primary: a,
+                                                        selected: ["repo-b", "gone"])
+    eq(reopened.selectedRepoIDs, ["repo-b"], "编辑时按存储的 repos 预选（丢弃失效 id）")
+    let stale = QueueComposerModel.create().forRepos([root, a, b], primary: a,
+                                                     selected: ["gone"])
+    eq(stale.selectedRepoIDs, ["repo-a"], "存储的仓库都不在了 → 回退 primary")
+    check(QueueComposerModel.create().forRepos([root, a, b], primary: a).selectedRepoIDs == ["repo-a"],
+          "没有存储值时默认仍只选 primary")
+
+    // 提交时要持久化什么：多仓库选择 → 显式 ids；单仓库 / 普通目录 → nil。
+    eq(reopened.storedRepoIDs, ["repo-b"], "多仓库表单持久化显式选择")
+    check(QueueComposerModel.create().storedRepoIDs == nil, "普通目录没有选择区，存 nil")
+    check(QueueComposerModel.create().forRepos([a], primary: a).storedRepoIDs == ["repo-a"],
+          "多仓库仅一个仓库时也存下它")
+    check(legacyForm.storedRepoIDs == nil, "单仓库模式仍然存 nil（queue.repos 保持旧语义）")
 }
 
 section("队列被删掉之后的失败任务：直接给 加入队列 / 处理，不再先给一次空重试")

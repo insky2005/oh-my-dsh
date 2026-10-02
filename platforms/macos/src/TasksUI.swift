@@ -1103,16 +1103,37 @@ struct QueueComposerModel: Equatable {
     }
 
     /// Configure the multi-repo selector: default only the primary (Q2); a
-    /// workspace always has one when repos is non-empty.
-    func forRepos(_ repos: [WorkspaceRepo], primary: WorkspaceRepo?) -> QueueComposerModel {
+    /// workspace always has one when repos is non-empty. Editing an existing queue
+    /// passes its stored `repos` as `selected`, so the form reopens on the
+    /// repositories the queue really targets instead of resetting to the primary.
+    func forRepos(_ repos: [WorkspaceRepo], primary: WorkspaceRepo?,
+                  selected: [String]? = nil) -> QueueComposerModel {
         var copy = self
         copy.availableRepos = repos
+        if let selected = selected {
+            let known = repos.map { $0.id }.filter { selected.contains($0) }
+            if !known.isEmpty {
+                copy.selectedRepoIDs = known
+                return copy
+            }
+        }
         if let primary = primary, repos.contains(where: { $0.id == primary.id }) {
             copy.selectedRepoIDs = [primary.id]
         } else {
             copy.selectedRepoIDs = repos.first.map { [$0.id] } ?? []
         }
         return copy
+    }
+
+    /// What the queue should PERSIST as its target repositories (design §7.1):
+    /// the explicit selection while the multi-repo picker is on screen, else nil —
+    /// a single-repo / plain workspace keeps `queue.repos == nil`, meaning
+    /// "the primary", exactly like today. Ids are emitted in workspace order and
+    /// unknown ids are dropped, so queues.json does not depend on click order.
+    var storedRepoIDs: [String]? {
+        guard showsRepoPicker else { return nil }
+        let ordered = selectedRepos.map { $0.id }
+        return ordered.isEmpty ? nil : ordered
     }
 
     /// Toggle one repository. A locked (single-repo) selector ignores clicks, and

@@ -379,6 +379,10 @@ enum TaskPrompts {
         var base: String
         /// 每个目标仓库在分支上已有的提交（单仓库时只有一个分组，渲染与今天一致）。
         var commits: [RepoCommits]
+        /// 多目标队列按仓库分组渲染提交（design §5.3）——即使只有一个仓库有提交，
+        /// 也要保留仓库抬头，否则接着干的人看不出这条提交属于哪个仓库。单目标
+        /// （或 legacy env）保持今天的分行文本。
+        var groupedByRepo: Bool = false
     }
 
     /// The brief as prompt text, or nil when there is nothing to hand over.
@@ -398,7 +402,7 @@ enum TaskPrompts {
         }
         if !brief.commits.isEmpty {
             lines.append("分支上已有的提交：")
-            if brief.commits.count == 1 {
+            if !brief.groupedByRepo {
                 // 单目标（根或子仓库）：与今天逐字一致 —— 只有一组，不打仓库抬头。
                 for commit in brief.commits[0].commits { lines.append("  " + commit) }
             } else {
@@ -1278,7 +1282,8 @@ final class TasksRunner {
         }
         let heading = TaskPrompts.QueueBrief(queueName: queue.name, position: index,
                                              total: queue.taskIds.count, earlier: earlier,
-                                             branch: branch, base: base, commits: commits)
+                                             branch: branch, base: base, commits: commits,
+                                             groupedByRepo: targets.count > 1)
         return TaskPrompts.briefSection(heading)
     }
 
@@ -1728,9 +1733,10 @@ final class TasksRunner {
                      branch: String? = nil,
                      baseBranch: String = "main",
                      autoPR: Bool = false,
+                     repos: [String]? = nil,
                      integration: QueueIntegration? = nil) -> TaskQueue {
         let queue = board.createQueue(name: name, branch: branch, baseBranch: baseBranch,
-                                      autoPR: autoPR, integration: integration)
+                                      autoPR: autoPR, repos: repos, integration: integration)
         persist()
         return queue
     }
@@ -1851,6 +1857,7 @@ final class TasksRunner {
                      baseBranch: String? = nil,
                      autoPR: Bool? = nil,
                      prUrl: String? = nil,
+                     repos: [String]?? = nil,
                      integration: QueueIntegration?? = nil) -> Bool {
         guard let qi = board.index(ofQueue: queueID) else { return false }
         if let name = name { board.queues[qi].name = name }
@@ -1858,6 +1865,8 @@ final class TasksRunner {
         if let baseBranch = baseBranch { board.queues[qi].baseBranch = baseBranch }
         if let autoPR = autoPR { board.queues[qi].autoPR = autoPR }
         if let prUrl = prUrl { board.queues[qi].prUrl = prUrl }
+        // .some(nil) clears the target list (back to the primary), nil leaves it.
+        if let repos = repos { board.queues[qi].repos = repos }
         if let integration = integration { board.queues[qi].integration = integration }
         persist()
         return true

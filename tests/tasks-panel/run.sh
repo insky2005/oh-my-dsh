@@ -139,6 +139,17 @@ if ! grep -q 'let live = repoSetProvider?()' ../../platforms/macos/src/TasksRunn
 fi
 echo "ok - 目标仓库集合在提示词与 pump 里运行期重探测"
 
+# 队列表单里选中的目标仓库必须写回队列：queue.repos 是 P2 预检的真实入口，
+# 表单只画选择区、提交时不落库的话，多仓库预检永远只会拿到 primary。编辑时还要
+# 按已存的 repos 回填（selected: queue.repos），否则保存会把选择重置成 primary。
+if ! grep -q 'repos: composer.storedRepoIDs' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -q 'repos: .some(composer.storedRepoIDs)' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -q 'selected: queue.repos' ../../platforms/macos/src/IssueRunnerPanel.swift; then
+  echo "FAIL - 队列表单的目标仓库必须写回队列（create/update）并在编辑时回填（queue.repos）"
+  exit 1
+fi
+echo "ok - 队列表单的目标仓库写回队列（create/update）并在编辑时回填"
+
 # The 处理 button answers a BOARD question (「有待办吗」), so it has to be re-derived
 # whenever the board changes — not only when the WORKSPACE does. It used to be set
 # only in updateLabels(), which runs on adopt / language switch: creating a task (the

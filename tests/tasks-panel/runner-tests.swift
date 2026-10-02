@@ -1154,6 +1154,53 @@ do {
     check(first.contains("bbb222 repo-b 的改动"), "repo-b 的提交在它自己的分组里")
 }
 
+section("多仓库交接简报：只有一个仓库有提交时也保留仓库抬头（design §5.3）")
+do {
+    let repos = [
+        WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                      defaultBase: "main", displayName: "repo-a"),
+        WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                      defaultBase: "master", displayName: "repo-b"),
+    ]
+    var board = TaskBoard()
+    let t1 = TaskItem.manual(title: "第一棒", body: nil, id: "manual-mr110001")
+    let t2 = TaskItem.manual(title: "第二棒", body: nil, id: "manual-mr110002")
+    board.tasks = [t1, t2]
+    let queue = board.createQueue(name: "Multi One", autoPR: false, repos: ["repo-a", "repo-b"])
+    _ = board.enqueue(taskID: t1.id, into: queue.id)
+    _ = board.enqueue(taskID: t2.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: repos, primaryRepoID: "repo-a")
+    h.git("repo-a").knownBranches = ["main"]
+    h.git("repo-b").current = "master"
+    h.git("repo-b").knownBranches = ["master"]
+    h.git("repo-a").commits = []
+    h.git("repo-b").commits = ["bbb222 repo-b 的改动"]
+
+    _ = h.runner.startQueue(queue.id)
+    let first = h.dsh.prompts["session-1"] ?? ""
+    check(first.contains("repo-b/"), "只有 repo-b 有提交时仍保留仓库抬头")
+    check(first.contains("bbb222 repo-b 的改动"), "并且提交正文还在")
+    check(!first.contains("repo-a/："), "没有提交的仓库不打空抬头")
+}
+
+section("runner.createQueue / updateQueue 写回 queue.repos（表单目标的真实入口）")
+do {
+    var board = TaskBoard()
+    let repos = [
+        WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true, displayName: "repo-a"),
+        WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true, displayName: "repo-b"),
+    ]
+    let h = MultiRepoHarness(board: board, repos: repos, primaryRepoID: "repo-a")
+    let q = h.runner.createQueue(name: "Persist", autoPR: false, repos: ["repo-b", "repo-a"])
+    eq(h.board.queue(q.id)?.repos, ["repo-b", "repo-a"], "createQueue 写入目标仓库（保序）")
+    _ = h.runner.updateQueue(q.id, repos: .some(["repo-b"]))
+    eq(h.board.queue(q.id)?.repos, ["repo-b"], "updateQueue 覆盖目标仓库")
+    _ = h.runner.updateQueue(q.id, name: "Renamed")
+    eq(h.board.queue(q.id)?.repos, ["repo-b"], "不传 repos 时保持不变")
+    _ = h.runner.updateQueue(q.id, repos: .some(nil))
+    eq(h.board.queue(q.id)?.repos, nil, "updateQueue 传 .some(nil) 回到 primary")
+}
+
 section("非 git 目录里的 issue 任务：自动队列也不设分支（这里曾经必然 errNotGit）")
 do {
     var board = TaskBoard()
