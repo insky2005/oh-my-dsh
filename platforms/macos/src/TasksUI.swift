@@ -637,6 +637,48 @@ struct QueueHeaderModel: Equatable {
     var integrationNote: String?
     /// Whether the result row is currently expanded (panel state, per queue).
     var integrationNoteExpanded: Bool
+    /// 每个目标仓库的交付结果（design §7.1；多仓库交付才有，legacy 单仓库为空）。
+    var repoRuns: [QueueRepoRun] = []
+
+    /// 是否展示逐仓库结果区（有交付记录才展示）。
+    var showsRepoRuns: Bool { !repoRuns.isEmpty }
+
+    /// 一个仓库结果行的动作名。
+    static func repoActionLabel(_ mode: QueueIntegration) -> String {
+        switch mode {
+        case .pr: return L10n.tr("tasks.repoRun.action.pr")
+        case .push: return L10n.tr("tasks.repoRun.action.push")
+        case .merge: return L10n.tr("tasks.repoRun.action.merge")
+        case .none: return L10n.tr("tasks.repoRun.action.none")
+        }
+    }
+
+    /// 一个仓库结果行的状态名。
+    static func repoStatusLabel(_ status: RepoRunStatus) -> String {
+        switch status {
+        case .pending: return L10n.tr("tasks.repoRun.status.pending")
+        case .running: return L10n.tr("tasks.repoRun.status.running")
+        case .done: return L10n.tr("tasks.repoRun.status.done")
+        case .failed: return L10n.tr("tasks.repoRun.status.failed")
+        case .skipped: return L10n.tr("tasks.repoRun.status.skipped")
+        }
+    }
+
+    /// 状态对应的色调（卡片逐仓库行的徽标）。
+    static func repoTone(_ status: RepoRunStatus) -> TaskTone {
+        switch status {
+        case .done: return .positive
+        case .failed: return .negative
+        case .running: return .running
+        case .pending: return .warning
+        case .skipped: return .neutral
+        }
+    }
+
+    /// 仓库在结果区的名字：根是「（工作区根）」，子仓库是「repo/」。
+    static func repoDisplayName(_ repoID: String) -> String {
+        repoID == "." ? L10n.tr("tasks.repoRun.root") : repoID + "/"
+    }
 
     /// The note split into lines (empty lines kept: a report may have blank lines).
     var integrationNoteLines: [String] {
@@ -666,7 +708,8 @@ struct QueueHeaderModel: Equatable {
                       prAvailable: Bool = true, isCurrent: Bool = true,
                       integration: QueueIntegration = .pr,
                       hasRemote: Bool = true,
-                      noteExpanded: Bool = false) -> QueueHeaderModel {
+                      noteExpanded: Bool = false,
+                      repoRuns: [QueueRepoRun]? = nil) -> QueueHeaderModel {
         let tasks = queue.taskIds.compactMap { board.task($0) }
         let doneCount = tasks.filter { $0.state == .done }.count
         let failedCount = tasks.filter { $0.state == .failed }.count
@@ -734,7 +777,8 @@ struct QueueHeaderModel: Equatable {
                                 reportsToSession: board.local.queueSessions[queue.id] != nil,
                                 integration: integration,
                                 integrationNote: queue.integrationNote,
-                                integrationNoteExpanded: noteExpanded)
+                                integrationNoteExpanded: noteExpanded,
+                                repoRuns: repoRuns ?? queue.repoRuns)
     }
 }
 

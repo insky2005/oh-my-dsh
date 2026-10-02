@@ -752,6 +752,111 @@ enum QueueIntegration: String, CaseIterable {
     func isAvailable(isGit: Bool, hasGitHubRemote: Bool, hasRemote: Bool) -> Bool {
         Self.available(self, isGit: isGit, hasGitHubRemote: hasGitHubRemote, hasRemote: hasRemote)
     }
+
+    // MARK: - 多仓库：按仓库能力降级（design §7.2）
+
+    /// 该仓库对某个 intent 能否**原生**做到。
+    /// PR 需要 GitHub 远端；push 需要远端；本地合并只需要是 git 仓库；
+    /// 「无」永远成立。
+    static func supports(_ mode: QueueIntegration, repo: WorkspaceRepo, hasRemote: Bool) -> Bool {
+        switch mode {
+        case .none: return true
+        case .pr: return repo.github != nil
+        case .merge: return repo.isGit
+        case .push: return repo.isGit && hasRemote
+        }
+    }
+
+    /// 按仓库能力降级：PR → 推送 → 本地合并 → 不做。混合能力的工作区不再整体
+    /// 拒绝 —— 每个仓库落到自己能做的那一档，交付结果也按仓库分别记录。
+    static func effective(_ intent: QueueIntegration, repo: WorkspaceRepo, hasRemote: Bool) -> QueueIntegration {
+        if supports(intent, repo: repo, hasRemote: hasRemote) { return intent }
+        switch intent {
+        case .pr: return hasRemote ? .push : (repo.isGit ? .merge : .none)
+        case .push: return repo.isGit ? .merge : .none
+        case .merge: return .none
+        case .none: return .none
+        }
+    }
+
+    /// 选项可用性：只要「有一个」目标能原生做到就可选（单仓库时即今天的可用性）。
+    static func available(_ intent: QueueIntegration, targets: [WorkspaceRepo],
+                          hasRemote: (WorkspaceRepo) -> Bool) -> Bool {
+        guard !targets.isEmpty else { return intent == .none }
+        return intent == .none || targets.contains { supports(intent, repo: $0, hasRemote: hasRemote($0)) }
+    }
+
+    /// 队列级覆盖未设置时，每个目标仓库用它自己的按仓库默认值作为 intent
+    /// （design §7.2/§8.1）：intent(repo) = queue.integration ?? perRepoDefault(repo)。
+    static func intent(queueOverride: QueueIntegration?, perRepoDefault: QueueIntegration) -> QueueIntegration {
+        queueOverride ?? perRepoDefault
+    }
+}
+
+/// 一个目标仓库在一次交付里走到了哪一步（design §7.1）。
+enum RepoRunStatus: String {
+    case pending
+    case running
+    case done
+    case failed
+    case skipped
+}
+
+/// 一个队列对**一个**目标仓库的交付记录（design §7.1）。各仓库独立处理：
+/// 某个失败不丢弃已成功的仓库，卡片按仓库逐行展示结果。
+struct QueueRepoRun: Equatable {
+    /// WorkspaceRepo.id（相对工作区根的路径，"." = 工作区根）。
+    var repoID: String
+    var branch: String
+    var base: String
+    /// 队列对该仓库的**意图**（= 队列级交付模式，或该仓库的按仓库默认值）。
+    var intent: QueueIntegration
+    /// 按该仓库能力降级后的**实际动作**。
+    var effective: QueueIntegration
+    var status: RepoRunStatus
+    var prUrl: String?
+    /// 失败原因或成功摘要（L10n 键或纯文本）。
+    var note: String?
+
+    init(repoID: String, branch: String = "", base: String = "main",
+         intent: QueueIntegration = .none, effective: QueueIntegration = .none,
+         status: RepoRunStatus = .pending, prUrl: String? = nil, note: String? = nil) {
+        self.repoID = repoID
+        self.branch = branch
+        self.base = base
+        self.intent = intent
+        self.effective = effective
+        self.status = status
+        self.prUrl = prUrl
+        self.note = note
+    }
+
+    func dictionary() -> [String: Any] {
+        var d: [String: Any] = [
+            "repoID": repoID,
+            "branch": branch,
+            "base": base,
+            "intent": intent.rawValue,
+            "effective": effective.rawValue,
+            "status": status.rawValue,
+        ]
+        if let prUrl = prUrl { d["prUrl"] = prUrl }
+        if let note = note { d["note"] = note }
+        return d
+    }
+
+    static func from(_ d: [String: Any]) -> QueueRepoRun? {
+        guard let repoID = d["repoID"] as? String else { return nil }
+        return QueueRepoRun(
+            repoID: repoID,
+            branch: (d["branch"] as? String) ?? "",
+            base: (d["base"] as? String) ?? "main",
+            intent: (d["intent"] as? String).flatMap { QueueIntegration(rawValue: $0) } ?? .none,
+            effective: (d["effective"] as? String).flatMap { QueueIntegration(rawValue: $0) } ?? .none,
+            status: (d["status"] as? String).flatMap { RepoRunStatus(rawValue: $0) } ?? .pending,
+            prUrl: d["prUrl"] as? String,
+            note: d["note"] as? String)
+    }
 }
 
 /// A queue is a lane: every task in it shares ONE branch and runs strictly in
@@ -780,6 +885,9 @@ struct TaskQueue: Equatable {
     /// 默认主仓库 primary（design §7.1 / §5.2）。P2 用它做「按仓库预检 + 切分支」，
     /// 交付阶段（P3）在此基础上按仓库记录 repoRuns。
     var repos: [String]?
+    /// 每个目标仓库的交付结果（design §7.1/§7.3，各仓库独立处理）。旧数据没有这个
+    /// 键时为空数组 = 旧行为。
+    var repoRuns: [QueueRepoRun]
     /// Per-queue override of the workspace's integration default; nil = follow the
     /// tasks-panel setting.
     var integration: QueueIntegration?
@@ -799,6 +907,7 @@ struct TaskQueue: Equatable {
          prUrl: String? = nil,
          prError: String? = nil,
          repos: [String]? = nil,
+         repoRuns: [QueueRepoRun] = [],
          integration: QueueIntegration? = nil,
          integrationNote: String? = nil,
          createdAt: Date? = nil) {
@@ -813,6 +922,7 @@ struct TaskQueue: Equatable {
         self.prUrl = prUrl
         self.prError = prError
         self.repos = repos
+        self.repoRuns = repoRuns
         self.integration = integration
         self.integrationNote = integrationNote
         self.createdAt = createdAt
@@ -926,6 +1036,7 @@ struct TaskQueue: Equatable {
         if let prUrl = prUrl { d["prUrl"] = prUrl }
         if let prError = prError { d["prError"] = prError }
         if let repos = repos { d["repos"] = repos }
+        if !repoRuns.isEmpty { d["repoRuns"] = repoRuns.map { $0.dictionary() } }
         if let integration = integration { d["integration"] = integration.rawValue }
         if let integrationNote = integrationNote { d["integrationNote"] = integrationNote }
         if let createdAt = createdAt { d["createdAt"] = TaskItem.iso8601.string(from: createdAt) }
@@ -945,6 +1056,7 @@ struct TaskQueue: Equatable {
                          prUrl: d["prUrl"] as? String,
                          prError: d["prError"] as? String,
                          repos: d["repos"] as? [String],
+                         repoRuns: (d["repoRuns"] as? [[String: Any]])?.compactMap { QueueRepoRun.from($0) } ?? [],
                          integration: (d["integration"] as? String).flatMap { QueueIntegration(rawValue: $0) },
                          integrationNote: d["integrationNote"] as? String,
                          createdAt: (d["createdAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
@@ -1256,6 +1368,7 @@ struct TaskBoard {
             // both the success summary and the publish-failure reason.
             queues[qi].integrationNote = nil
             queues[qi].prError = nil
+            queues[qi].repoRuns = []
             if let branch = queues[qi].branch { tasks[i].branch = branch }
         }
         local.runningTaskID = taskID
@@ -1328,6 +1441,14 @@ struct TaskBoard {
     mutating func setQueueIntegrationNote(_ queueID: String, _ note: String?) -> Bool {
         guard let i = index(ofQueue: queueID) else { return false }
         queues[i].integrationNote = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return true
+    }
+
+    /// 逐仓库记录本次交付的结果（design §7.1/§7.3）。一个仓库失败不影响其他仓库。
+    @discardableResult
+    mutating func setQueueRepoRuns(_ queueID: String, _ runs: [QueueRepoRun]) -> Bool {
+        guard let i = index(ofQueue: queueID) else { return false }
+        queues[i].repoRuns = runs
         return true
     }
 

@@ -879,6 +879,84 @@ do {
        .merge, "旧主仓库自己的显式值仍归它自己（降级为非主后不跟随）")
 }
 
+
+// MARK: - 多仓库交付：按仓库降级链 / repoRuns（design §7.2）
+
+section("多仓库交付：supports / effective 逐仓库降级链 / available / intent")
+do {
+    let github = WorkspaceRepo(id: "repo-gh", absolutePath: "/ws/repo-gh", isGit: true,
+                               remoteName: "github", github: GitHubRepo(owner: "o", name: "repo-gh"),
+                               displayName: "repo-gh")
+    let gitRemote = WorkspaceRepo(id: "repo-git", absolutePath: "/ws/repo-git", isGit: true,
+                                  remoteName: "origin", displayName: "repo-git")
+    let gitLocal = WorkspaceRepo(id: "repo-local", absolutePath: "/ws/repo-local", isGit: true,
+                                 displayName: "repo-local")
+    let plain = WorkspaceRepo(id: "repo-plain", absolutePath: "/ws/repo-plain", isGit: false,
+                              displayName: "repo-plain")
+
+    // supports：pr 要 GitHub；push 要 git + 远端；merge 只要 git；none 永远成立。
+    check(QueueIntegration.supports(.pr, repo: github, hasRemote: true), "GitHub 仓库原生支持 PR")
+    check(!QueueIntegration.supports(.pr, repo: gitRemote, hasRemote: true), "非 GitHub 仓库不支持 PR")
+    check(QueueIntegration.supports(.push, repo: gitRemote, hasRemote: true), "有远端支持 push")
+    check(!QueueIntegration.supports(.push, repo: gitLocal, hasRemote: false), "无远端不支持 push")
+    check(QueueIntegration.supports(.merge, repo: gitLocal, hasRemote: false), "git 仓库支持本地合并")
+    check(!QueueIntegration.supports(.merge, repo: plain, hasRemote: false), "非 git 不支持本地合并")
+    check(QueueIntegration.supports(.none, repo: plain, hasRemote: false), "「无」永远成立")
+
+    // effective：PR → push（有远端）→ 本地合并 → 不做。
+    eq(QueueIntegration.effective(.pr, repo: github, hasRemote: true), .pr, "GitHub + pr 原样")
+    eq(QueueIntegration.effective(.pr, repo: gitRemote, hasRemote: true), .push, "非 GitHub + pr 降级为 push")
+    eq(QueueIntegration.effective(.pr, repo: gitLocal, hasRemote: false), .merge, "无远端 + pr 降级为本地合并")
+    eq(QueueIntegration.effective(.pr, repo: plain, hasRemote: false), .none, "非 git + pr 降级为不做")
+    eq(QueueIntegration.effective(.push, repo: gitLocal, hasRemote: false), .merge, "无远端 + push 降级为本地合并")
+    eq(QueueIntegration.effective(.push, repo: plain, hasRemote: false), .none, "非 git + push 降级为不做")
+    eq(QueueIntegration.effective(.merge, repo: plain, hasRemote: false), .none, "非 git + merge 降级为不做")
+    eq(QueueIntegration.effective(.none, repo: github, hasRemote: true), .none, "「无」不变")
+
+    // available：只要有一个目标能原生做到就可选；空目标只有 none 可用。
+    let targets = [gitRemote, plain]
+    check(QueueIntegration.available(.pr, targets: [github], hasRemote: { _ in true }), "有 GitHub 目标时 PR 可选")
+    check(!QueueIntegration.available(.pr, targets: targets, hasRemote: { $0.id == "repo-git" }), "没有 GitHub 目标时 PR 不可选")
+    check(QueueIntegration.available(.push, targets: targets, hasRemote: { $0.id == "repo-git" }), "有一个能 push 就可选")
+    check(QueueIntegration.available(.merge, targets: [plain], hasRemote: { _ in false }) == false, "全不能 merge 时不可选")
+    check(QueueIntegration.available(.none, targets: [], hasRemote: { _ in false }), "空目标只有 none 可用")
+    check(!QueueIntegration.available(.pr, targets: [], hasRemote: { _ in true }), "空目标的 pr 不可用")
+
+    // intent：队列有覆盖用覆盖，否则用该仓库的默认值。
+    eq(QueueIntegration.intent(queueOverride: .push, perRepoDefault: .pr), .push, "队列覆盖优先")
+    eq(QueueIntegration.intent(queueOverride: nil, perRepoDefault: .merge), .merge, "未覆盖用仓库默认")
+}
+
+section("QueueRepoRun / repoRuns：往返与 reset")
+do {
+    let run = QueueRepoRun(repoID: "repo-a", branch: "feature/x", base: "main",
+                           intent: .pr, effective: .push, status: .done,
+                           prUrl: "https://github.com/o/a/pull/1", note: "已推送 abc123")
+    let back = QueueRepoRun.from(run.dictionary())
+    check(back == run, "QueueRepoRun 往返逐字段一致")
+    check(QueueRepoRun.from(["repoID": "x"])?.status == .pending, "缺 status 默认 pending")
+
+    let queue = TaskQueue(id: "q-rr", name: "RR", branch: "feature/x", baseBranch: "main",
+                          repoRuns: [run, QueueRepoRun(repoID: "repo-b", effective: .merge, status: .failed,
+                                                       note: "冲突")])
+    let round = TaskQueue.from(queue.dictionary())
+    eq(round?.repoRuns.count, 2, "TaskQueue 往返保留两个 repoRuns")
+    eq(round?.repoRuns.first?.effective, .push, "effective 往返")
+    eq(round?.repoRuns.last?.status, .failed, "status 往返")
+    eq(TaskQueue.from(["id": "q-old", "name": "old"])?.repoRuns, [], "旧 queues.json 无 repoRuns → 空")
+
+    var board = TaskBoard()
+    let q = board.createQueue(name: "Runs")
+    check(board.setQueueRepoRuns(q.id, [run]), "TaskBoard 能写入 repoRuns")
+    eq(board.queue(q.id)?.repoRuns.count, 1, "写入后挂在队列上")
+    // 新一轮任务开始时清掉上一轮交付结果。
+    let t = TaskItem.manual(title: "t", body: nil, id: "manual-rr000001")
+    board.tasks = [t]
+    _ = board.enqueue(taskID: t.id, into: q.id)
+    board.markRunning(t.id)
+    eq(board.queue(q.id)?.repoRuns, [], "markRunning 清掉上一轮 repoRuns")
+}
+
 for dir in [repo, repoLegacy, repoBroken, repoDrift] {
     try? FileManager.default.removeItem(atPath: dir)
 }

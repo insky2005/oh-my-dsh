@@ -960,6 +960,12 @@ final class IssueRunnerPanelController: NSObject {
             defaultIntegration: Self.resolvedIntegration(forWorkspace: repoRoot, repoSet: repoSet,
                                                          recommended: QueueIntegration.recommended(isGit: isGit,
                                                                                                    hasGitHubRemote: repo != nil)),
+            // 每个仓库自己的交付默认值（design §7.2）：队列未覆盖时用它作为 intent。
+            defaultIntegrationFor: { repo in
+                Self.resolvedIntegration(forWorkspace: repoRoot, repoSet: repoSet, repoID: repo.id,
+                                         recommended: QueueIntegration.recommended(isGit: repo.isGit,
+                                                                                   hasGitHubRemote: repo.github != nil))
+            },
             // 交付成功后自动关闭队列（面板设置；多仓库下按仓库，主仓库兜底旧工作区值）。
             autoCloseOnPublish: Self.resolvedAutoCloseOnPublish(forWorkspace: repoRoot, repoSet: repoSet),
             canSwitchBranches: isGit,
@@ -972,6 +978,13 @@ final class IssueRunnerPanelController: NSObject {
             findExistingPR: { branch in
                 guard let repo = repo else { return nil }
                 return Self.findExistingPR(owner: repo.owner, repo: repo.repo, branch: branch, token: token)
+            },
+            // 逐仓库 PR 兜底（design §7.4）：用该仓库自己的 owner/repo 与 token。
+            findExistingPRFor: { [weak self] repo, branch in
+                guard let gh = repo.github else { return nil }
+                let repoToken = self?.loadToken(for: (owner: gh.owner, repo: gh.name))
+                return Self.findExistingPR(owner: gh.owner, repo: gh.name, branch: branch,
+                                           token: repoToken)
             },
             promptText: { task, queue, brief in
                 // 两种来源共用同一套要求（TaskPrompts.requirements），**只有头不同**
@@ -1465,6 +1478,14 @@ final class IssueRunnerPanelController: NSObject {
         let primaryID = repoSet.primary?.id
         return repoSettings().resolvedIntegration(forWorkspace: path, repoID: primaryID ?? ".",
                                                   primaryID: primaryID, recommended: recommended)
+    }
+
+    /// 某个具体仓库的交付默认值（按仓库 → 主仓库 → 旧工作区值 → recommended），
+    /// 多仓库交付的 per-repo intent 用它（design §7.2/§8.1）。
+    static func resolvedIntegration(forWorkspace path: String, repoSet: WorkspaceRepoSet,
+                                    repoID: String, recommended: QueueIntegration) -> QueueIntegration {
+        repoSettings().resolvedIntegration(forWorkspace: path, repoID: repoID,
+                                           primaryID: repoSet.primary?.id, recommended: recommended)
     }
 
     static func resolvedAutoCloseOnPublish(forWorkspace path: String, repoSet: WorkspaceRepoSet) -> Bool {
@@ -2521,7 +2542,8 @@ final class IssueRunnerPanelController: NSObject {
                                            prAvailable: repo != nil, isCurrent: isCurrent,
                                            integration: integration,
                                            hasRemote: workspaceHasRemote,
-                                           noteExpanded: expandedQueueNotes.contains(queue.id))
+                                           noteExpanded: expandedQueueNotes.contains(queue.id),
+                                           repoRuns: queue.repoRuns)
         let header = TaskQueueHeaderView(model: model)
         let queueID = queue.id
         header.onToggle = { [weak self] in self?.toggleQueue(queueID) }
@@ -2535,6 +2557,7 @@ final class IssueRunnerPanelController: NSObject {
         }
         header.onOpenPR = { [weak self] in self?.publishPR(for: queue) }
         header.onOpenPRLink = { [weak self] in self?.openPRURL(queue) }
+        header.onOpenRepoPR = { [weak self] url in self?.openURLString(url) }
         header.onClose = { [weak self] in self?.confirmCloseQueue(queue) }
         // 重命名 / 改分支 / 基于分支 / PR 开关 are one inline form now.
         header.onSettings = { [weak self] in self?.openQueueComposer(.edit(queueID: queueID)) }
@@ -2654,7 +2677,13 @@ final class IssueRunnerPanelController: NSObject {
 
     /// 打开已有 PR 的链接 —— 与「交付」分开：PR 已存在时仍要能再次交付去更新它。
     private func openPRURL(_ queue: TaskQueue) {
-        guard let url = queue.prUrl, let link = URL(string: url) else { return }
+        guard let url = queue.prUrl else { return }
+        openURLString(url)
+    }
+
+    /// 打开一个 URL 字符串（多仓库交付卡片上的逐仓库 PR 链接）。
+    private func openURLString(_ url: String) {
+        guard let link = URL(string: url) else { return }
         NSWorkspace.shared.open(link)
     }
 

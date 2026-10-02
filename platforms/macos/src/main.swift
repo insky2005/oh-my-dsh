@@ -722,6 +722,17 @@ enum L10n {
         "tasks.reposChanged": ("这个工作区的仓库集合变了 —— 已重新识别工作区", "The workspace's repository set changed — workspace re-detected"),
         "tasks.repoCount": ("%d 个仓库", "%d repositories"),
         "tasks.repoPrimarySuffix": ("（主仓库）", " (primary)"),
+        // 多仓库交付卡片：逐仓库结果（动作 / 状态 / 仓库名）。
+        "tasks.repoRun.root": ("（工作区根）", "(workspace root)"),
+        "tasks.repoRun.action.pr": ("开 PR", "Open PR"),
+        "tasks.repoRun.action.push": ("直接推送", "Push"),
+        "tasks.repoRun.action.merge": ("本地合并", "Local merge"),
+        "tasks.repoRun.action.none": ("不交付", "No delivery"),
+        "tasks.repoRun.status.pending": ("待交付", "Pending"),
+        "tasks.repoRun.status.running": ("交付中", "Delivering"),
+        "tasks.repoRun.status.done": ("已交付", "Delivered"),
+        "tasks.repoRun.status.failed": ("失败", "Failed"),
+        "tasks.repoRun.status.skipped": ("已跳过", "Skipped"),
         "tasks.queue.pause": ("暂停", "Pause"),
         "tasks.queue.openPR": ("交付：推送分支并开 / 更新 PR", "Deliver: push the branch and open/update the PR"),
         // 工作流（Git workflow：pr / merge / push）—— 用户可见名称集中在 tasks.integration.*，

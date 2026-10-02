@@ -438,6 +438,56 @@ do {
         .first { $0.title == L10n.tr("tasks.queue.note.collapse") }
     check(collapse != nil, "展开后给「收起」入口")
 }
+
+section("多仓库交付卡片：逐仓库结果显示，PR 链接可点")
+do {
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "多仓库", body: nil, id: "manual-reporun01")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Multi", branch: "feature/x", autoPR: true,
+                                  repos: ["repo-a", "repo-b"])
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    board.markRunning(task.id)
+    board.markDone(task.id)
+    _ = board.setQueueRepoRuns(queue.id, [
+        QueueRepoRun(repoID: ".", branch: "feature/x", base: "main",
+                     intent: .pr, effective: .pr, status: .done,
+                     prUrl: "https://github.com/o/r/pull/7"),
+        QueueRepoRun(repoID: "repo-b", branch: "feature/x", base: "master",
+                     intent: .pr, effective: .merge, status: .failed, note: "冲突，请用户介入"),
+    ])
+
+    let model = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: false)
+    check(model.showsRepoRuns, "有交付记录的队列显示逐仓库结果区")
+    eq(model.repoRuns.count, 2, "两个仓库都在模型里")
+    eq(QueueHeaderModel.repoDisplayName("."), L10n.tr("tasks.repoRun.root"), "根仓库显示为（工作区根）")
+    eq(QueueHeaderModel.repoDisplayName("repo-b"), "repo-b/", "子仓库带斜杠")
+    eq(QueueHeaderModel.repoActionLabel(.merge), L10n.tr("tasks.repoRun.action.merge"), "动作名可读")
+    eq(QueueHeaderModel.repoStatusLabel(.failed), L10n.tr("tasks.repoRun.status.failed"), "状态名可读")
+    eq(QueueHeaderModel.repoTone(.done), TaskTone.positive, "成功是正向色")
+    eq(QueueHeaderModel.repoTone(.failed), TaskTone.negative, "失败是负向色")
+
+    let header = TaskQueueHeaderView(model: model)
+    _ = layout(header, width: 320)
+    let labels = descendants(header, of: NSTextField.self).map { $0.stringValue }
+    check(labels.contains("repo-b/"), "子仓库行在卡片上")
+    check(labels.contains(L10n.tr("tasks.repoRun.action.merge")), "失败仓库的实际动作在卡片上")
+    check(labels.contains("冲突，请用户介入"), "失败原因在卡片上")
+
+    let link = descendants(header, of: RepoPRButton.self).first { $0.url == "https://github.com/o/r/pull/7" }
+    check(link != nil, "逐仓库 PR 链接在卡片上")
+    var opened: String?
+    header.onOpenRepoPR = { opened = $0 }
+    link?.performClick(nil)
+    eq(opened, "https://github.com/o/r/pull/7", "点击逐仓库链接把 URL 交给面板")
+
+    // 折叠：逐仓库结果区不出现（与交付结果同规则）。
+    let collapsedModel = QueueHeaderModel.build(board.queue(queue.id)!, board: board, collapsed: true)
+    let collapsedHeader = TaskQueueHeaderView(model: collapsedModel)
+    _ = layout(collapsedHeader, width: 320)
+    let collapsedLabels = descendants(collapsedHeader, of: NSTextField.self).map { $0.stringValue }
+    check(!collapsedLabels.contains("repo-b/"), "折叠时不显示逐仓库结果")
+}
 section("fields span the whole form")
 do {
     // An EMPTY NSTextField's intrinsic width is almost nothing, and a .leading

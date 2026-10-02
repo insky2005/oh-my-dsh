@@ -285,7 +285,9 @@ final class MultiRepoHarness {
     var board: TaskBoard { runner.board }
 
     init(board: TaskBoard, repos: [WorkspaceRepo], primaryRepoID: String? = nil,
-         repoSetProvider: (() -> WorkspaceRepoSet)? = nil) {
+         repoSetProvider: (() -> WorkspaceRepoSet)? = nil,
+         defaultIntegrationFor: ((WorkspaceRepo) -> QueueIntegration)? = nil,
+         findExistingPRFor: ((WorkspaceRepo, String) -> String?)? = nil) {
         self.repos = repos
         var table: [String: FakeRepo] = [:]
         for repo in repos { table[repo.id] = FakeRepo() }
@@ -301,8 +303,10 @@ final class MultiRepoHarness {
             renameSession: { id, title in dsh.rename(id, title) },
             promptSession: { id, text in dsh.prompt(id, text) },
             sessionState: { id in dsh.sessionState(id) },
+            defaultIntegrationFor: defaultIntegrationFor,
             cancelSession: { id in dsh.cancel(id) },
             findExistingPR: { branch in rec.existingPRs[branch] },
+            findExistingPRFor: findExistingPRFor,
             promptText: { _, _, brief in brief ?? "" },
             sessionReport: { id in dsh.report(id) },
             notifySession: { id, text in dsh.notify(id, text) },
@@ -2258,6 +2262,164 @@ do {
     h6.dsh.finishAll()
     _ = h6.runner.step()
     eq(h6.board.queue(queue6)?.state, QueueState.paused, "paused 队列不自动关闭")
+}
+
+
+// MARK: - 多仓库交付：计划 / 提示词 / 结果解析（design §7）
+
+section("多仓库交付计划：intent = 队列覆盖 ?? 仓库默认，effective 按能力降级")
+do {
+    let gh = WorkspaceRepo(id: "repo-gh", absolutePath: "/ws/repo-gh", isGit: true,
+                           remoteName: "github", github: GitHubRepo(owner: "o", name: "repo-gh"),
+                           displayName: "repo-gh")
+    let local = WorkspaceRepo(id: "repo-local", absolutePath: "/ws/repo-local", isGit: true,
+                              defaultBase: "develop", displayName: "repo-local")
+    let plain = WorkspaceRepo(id: "repo-plain", absolutePath: "/ws/repo-plain", isGit: false,
+                              displayName: "repo-plain")
+    let queue = TaskQueue(id: "q-plan", name: "Q", branch: "feature/x", baseBranch: "main")
+    let plan = TasksRunner.deliveryPlan(queue: queue, targets: [gh, local, plain],
+                                        queueOverride: nil,
+                                        perRepoDefault: { _ in .pr },
+                                        hasRemote: { $0.id == "repo-gh" })
+    eq(plan.map { $0.repoID }, ["repo-gh", "repo-local", "repo-plain"], "计划覆盖每个目标仓库")
+    eq(plan[0].intent, .pr, "GitHub 仓库 intent = 默认 pr")
+    eq(plan[0].effective, .pr, "GitHub 仓库 effective 原样")
+    eq(plan[1].effective, .merge, "无远端仓库 pr 降级为本地合并")
+    eq(plan[2].effective, .none, "非 git 仓库降级为不做")
+    eq(plan[1].branch, "feature/x", "交付分支是队列分支")
+    eq(plan[1].base, "develop", "每个仓库用自己的默认基线")
+    eq(plan[1].status, .pending, "计划状态从 pending 开始")
+    // 队列覆盖 push：有远端的原样、无远端的降级 merge。
+    let plan2 = TasksRunner.deliveryPlan(queue: queue, targets: [gh, local], queueOverride: .push,
+                                         perRepoDefault: { _ in .pr },
+                                         hasRemote: { $0.id == "repo-gh" })
+    eq(plan2[0].effective, .push, "队列覆盖 push：有远端原样")
+    eq(plan2[1].effective, .merge, "队列覆盖 push：无远端降级 merge")
+    eq(plan2[1].intent, .push, "intent 记录队列覆盖")
+}
+
+section("多仓库交付提示词：逐仓库给出 effective 动作并要求逐行输出")
+do {
+    let runs = [
+        QueueRepoRun(repoID: "repo-a", branch: "feature/x", base: "main",
+                     intent: .pr, effective: .pr),
+        QueueRepoRun(repoID: "repo-b", branch: "feature/x", base: "master",
+                     intent: .pr, effective: .merge),
+        QueueRepoRun(repoID: "repo-c", branch: "feature/x", base: "main",
+                     intent: .merge, effective: .none),
+    ]
+    let text = TaskPrompts.integration(queueName: "Multi", branch: "feature/x", base: "main", runs: runs)
+    check(text.contains("repo-a/"), "点名声 repo-a")
+    check(text.contains("repo-b/"), "点名声 repo-b")
+    check(text.contains("开 PR"), "repo-a 的动作是开 PR")
+    check(text.contains("本地合并"), "repo-b 的动作是本地合并")
+    check(text.contains("降级"), "写明 repo-b 的动作是降级来的")
+    check(text.contains("<repoID>") && text.contains(": pr"), "给出可解析的 pr 输出格式")
+    check(text.contains("<repoID>") && text.contains(": merge"), "给出可解析的 merge 输出格式")
+    check(text.contains("git -C"), "要求逐仓库执行")
+    // 单目标（根仓库）保持今天逐字节相同的单仓库交付文本。
+    let single = [QueueRepoRun(repoID: ".", branch: "feature/x", base: "main",
+                               intent: .merge, effective: .merge)]
+    let legacy = TaskPrompts.integration(mode: .merge, queueName: "Q", branch: "feature/x",
+                                         base: "main", commits: [])
+    eq(TaskPrompts.integration(queueName: "Q", branch: "feature/x", base: "main", runs: single),
+       legacy, "单目标根仓库 = 今天的单仓库交付文本")
+}
+
+section("per-repo 结果解析：逐行解析 + findExistingPR 兜底")
+do {
+    let report = """
+    干完了。
+    repo-a: pr https://github.com/o/a/pull/12
+    repo-b: merge 已合并到 master abc1234
+    repo-c: none 不交付
+    """
+    let parsed = TasksRunner.repoResults(in: report)
+    eq(parsed.count, 3, "解析出 3 个仓库结果")
+    eq(parsed[0].repoID, "repo-a", "repo-a 行首是仓库 id")
+    eq(parsed[0].action, .pr, "repo-a 的 action 是 pr")
+    eq(parsed[0].prUrl, "https://github.com/o/a/pull/12", "PR 行取到 URL")
+    eq(parsed[1].action, .merge, "repo-b 的 action 是 merge")
+    eq(parsed[2].action, .none, "repo-c 的 action 是 none")
+    eq(TasksRunner.repoResults(in: "## 队列信息\n分支：x（基于 main）").count, 0,
+       "非结果行（抬头 / 分支）被忽略")
+
+    let gh = WorkspaceRepo(id: "repo-a", absolutePath: "/ws/a", isGit: true,
+                           remoteName: "github", github: GitHubRepo(owner: "o", name: "a"),
+                           displayName: "a")
+    let b = WorkspaceRepo(id: "repo-b", absolutePath: "/ws/b", isGit: true,
+                          remoteName: "origin", displayName: "b")
+    let runs = [
+        QueueRepoRun(repoID: "repo-a", branch: "feature/x", base: "main",
+                     intent: .pr, effective: .pr),
+        QueueRepoRun(repoID: "repo-b", branch: "feature/x", base: "master",
+                     intent: .pr, effective: .merge),
+        QueueRepoRun(repoID: "repo-c", branch: "feature/x", base: "main",
+                     intent: .pr, effective: .none),
+    ]
+    let resolved = TasksRunner.resolveRepoRuns(runs, targets: [gh, b], results: parsed,
+                                               findExistingPR: { _, _ in nil })
+    eq(resolved[0].status, .done, "PR 行 → 成功")
+    eq(resolved[0].prUrl, "https://github.com/o/a/pull/12", "URL 落到该仓库的结果上")
+    eq(resolved[1].status, .done, "merge 行「已合并」→ 成功")
+    eq(resolved[2].status, .skipped, "effective none → skipped")
+    check(resolved[1].note?.contains("已合并") == true, "merge 的 note 是会话结果行")
+
+    // 会话没有逐行报：按 effective 用 findExistingPR 兜底。
+    let fallback = TasksRunner.resolveRepoRuns([runs[0], runs[1]], targets: [gh, b], results: [],
+                                               findExistingPR: { repo, _ in
+                                                   repo.id == "repo-a"
+                                                       ? "https://github.com/o/a/pull/9" : nil
+                                               })
+    eq(fallback[0].status, .done, "没有 pr 行时用 findExistingPR 兜底")
+    eq(fallback[0].prUrl, "https://github.com/o/a/pull/9", "兜底 URL 落到仓库结果上")
+    eq(fallback[1].status, .failed, "merge 没报也找不到 → 失败")
+}
+
+section("多仓库 startQueueIntegration：一个队列一个交付会话，逐仓库记账")
+do {
+    let gh = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                           defaultBase: "main", remoteName: "github",
+                           github: GitHubRepo(owner: "o", name: "a"), displayName: "repo-a")
+    let b = WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                          defaultBase: "master", displayName: "repo-b")
+    var board = TaskBoard()
+    let queue = board.createQueue(name: "Multi", autoPR: false, repos: ["repo-a", "repo-b"])
+    let h = MultiRepoHarness(board: board, repos: [gh, b], primaryRepoID: "repo-a",
+                             defaultIntegrationFor: { _ in .pr })
+    h.git("repo-b").remote = nil   // repo-b 无远端 → pr 降级为本地合并
+    check(h.runner.startQueueIntegration(queue.id), "混合能力下交付会话照常启动")
+    eq(h.dsh.sessions.count, 1, "一个队列一个交付会话")
+    let prompt = h.dsh.prompts[h.dsh.sessions[0]] ?? ""
+    check(prompt.contains("repo-a/") && prompt.contains("repo-b/"), "提示词点名两个仓库")
+    check(prompt.contains("开 PR"), "repo-a 的动作是开 PR")
+    check(prompt.contains("本地合并"), "repo-b 按能力降级为本地合并")
+
+    h.dsh.reports[h.dsh.sessions[0]] = """
+    repo-a: pr https://github.com/o/a/pull/3
+    repo-b: merge 已合并到 master abc1234
+    """
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    let runs = h.board.queue(queue.id)?.repoRuns ?? []
+    eq(runs.count, 2, "队列记录两个仓库的结果")
+    eq(runs.first { $0.repoID == "repo-a" }?.status, .done, "repo-a 成功")
+    eq(runs.first { $0.repoID == "repo-a" }?.prUrl, "https://github.com/o/a/pull/3", "repo-a 的 PR 链接")
+    eq(runs.first { $0.repoID == "repo-b" }?.status, .done, "repo-b 成功")
+    eq(h.board.queue(queue.id)?.prUrl, "https://github.com/o/a/pull/3", "队列保留第一个成功 PR（兼容字段）")
+
+    // 全都无得交付：拒绝启动，不建会话。
+    let plainA = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/p-a", isGit: false,
+                               displayName: "p-a")
+    var board2 = TaskBoard()
+    let queue2 = board2.createQueue(name: "None", autoPR: false, repos: ["repo-a"])
+    let h2 = MultiRepoHarness(board: board2, repos: [plainA], primaryRepoID: "repo-a",
+                              defaultIntegrationFor: { _ in .pr })
+    h2.git("repo-a").isRepo = false
+    h2.git("repo-a").remote = nil
+    check(!h2.runner.startQueueIntegration(queue2.id), "所有目标都无得交付时拒绝")
+    eq(h2.dsh.sessions.count, 0, "拒绝时不建交付会话")
+    eq(h2.board.queue(queue2.id)?.prError, "tasks.errPRNoRemote", "拒绝原因记在队列上")
 }
 
 if failures == 0 {

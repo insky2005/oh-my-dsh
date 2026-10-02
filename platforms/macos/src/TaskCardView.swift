@@ -568,6 +568,12 @@ final class TaskCardView: NSView {
 /// The queue (lane) header: how many queues there are, which branch each one
 /// works on, how far along it is, and the actions that apply to the queue.
 ///
+/// A PR link button that carries the URL it opens (the per-repo delivery rows need
+/// one link per repository, not just the queue's single prUrl).
+final class RepoPRButton: NSButton {
+    var url: String = ""
+}
+
 /// Shape follows the channel panel's SessionTitleBar: an opaque highlighted fill
 /// (never a translucent card), one line while collapsed, two while expanded.
 final class TaskQueueHeaderView: NSView {
@@ -588,6 +594,8 @@ final class TaskQueueHeaderView: NSView {
     var onClose: (() -> Void)?
     /// 展开 / 收起交付结果（会话回写的那段文字）。
     var onToggleNote: (() -> Void)?
+    /// 打开某个仓库交付结果的 PR 链接（多仓库交付卡片用）。
+    var onOpenRepoPR: ((String) -> Void)?
 
     init(model: QueueHeaderModel) {
         self.model = model
@@ -752,6 +760,10 @@ final class TaskQueueHeaderView: NSView {
         if !model.isCollapsed, let noteRow = noteRow() {
             rows.append(noteRow)
         }
+        // 多仓库交付：逐仓库列出实际动作、结果与各自的 PR 链接（design §7.1/§8）。
+        if !model.isCollapsed, let runsRow = repoRunsRow() {
+            rows.append(runsRow)
+        }
         // Why the last delivery did not even start (no branch / no remote / busy).
         if let key = model.prErrorKey {
             rows.append(errorRow(L10n.tr(key)))
@@ -806,6 +818,72 @@ final class TaskQueueHeaderView: NSView {
         row.spacing = 6
         row.translatesAutoresizingMaskIntoConstraints = false
         return row
+    }
+
+    /// 多仓库交付的逐仓库结果区（design §8）：每行 = 仓库名 + 实际动作 + 状态徽标
+    /// + 该仓库的 PR 链接（如果有）。某个仓库失败只标红它自己。
+    private func repoRunsRow() -> NSView? {
+        guard model.showsRepoRuns else { return nil }
+        let column = NSStackView()
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 2
+        column.translatesAutoresizingMaskIntoConstraints = false
+        for run in model.repoRuns {
+            let row = NSStackView()
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 6
+            row.translatesAutoresizingMaskIntoConstraints = false
+
+            let name = NSTextField(labelWithString: QueueHeaderModel.repoDisplayName(run.repoID))
+            name.font = .systemFont(ofSize: 11, weight: .medium)
+            name.textColor = .secondaryLabelColor
+            name.translatesAutoresizingMaskIntoConstraints = false
+            name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            row.addArrangedSubview(name)
+
+            let action = NSTextField(labelWithString: QueueHeaderModel.repoActionLabel(run.effective))
+            action.font = .systemFont(ofSize: 11)
+            action.textColor = .tertiaryLabelColor
+            action.translatesAutoresizingMaskIntoConstraints = false
+            row.addArrangedSubview(action)
+
+            let status = TaskBadgeView(text: QueueHeaderModel.repoStatusLabel(run.status),
+                                       tone: QueueHeaderModel.repoTone(run.status))
+            status.translatesAutoresizingMaskIntoConstraints = false
+            row.addArrangedSubview(status)
+
+            if let prUrl = run.prUrl {
+                let link = RepoPRButton(title: TaskCardModel.shortPR(prUrl), target: self,
+                                        action: #selector(repoPRLinkTapped(_:)))
+                link.url = prUrl
+                link.isBordered = false
+                link.controlSize = .small
+                link.contentTintColor = .controlAccentColor
+                link.font = .systemFont(ofSize: 11)
+                link.toolTip = prUrl
+                link.translatesAutoresizingMaskIntoConstraints = false
+                row.addArrangedSubview(link)
+            }
+            if let note = run.note, !note.isEmpty {
+                let noteLabel = NSTextField(labelWithString: note)
+                noteLabel.font = .systemFont(ofSize: 11)
+                noteLabel.textColor = .tertiaryLabelColor
+                noteLabel.lineBreakMode = .byTruncatingTail
+                noteLabel.toolTip = note
+                noteLabel.translatesAutoresizingMaskIntoConstraints = false
+                noteLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                row.addArrangedSubview(noteLabel)
+            }
+            column.addArrangedSubview(row)
+        }
+        return column
+    }
+
+    @objc private func repoPRLinkTapped(_ sender: NSButton) {
+        guard let button = sender as? RepoPRButton, !button.url.isEmpty else { return }
+        onOpenRepoPR?(button.url)
     }
 
     @objc private func toggleNoteTapped() { onToggleNote?() }

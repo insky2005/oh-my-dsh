@@ -151,6 +151,8 @@ struct TaskRunnerEnv {
     /// The workspace's default integration mode (the tasks-panel setting), used for a
     /// queue that has no per-queue override.
     var defaultIntegration: QueueIntegration = .pr
+    /// per-repo default
+    var defaultIntegrationFor: ((WorkspaceRepo) -> QueueIntegration)?
     /// 交付成功后自动关闭队列 (a PER-WORKSPACE panel setting): when true, a queue in
     /// THIS workspace whose delivery session succeeds is moved to .closed. Off by
     /// default so nothing closes a queue behind the user's back.
@@ -169,6 +171,9 @@ struct TaskRunnerEnv {
     /// here any more: the PR is written by the session, from the real diff (its
     /// title and body are a summary, not a template).
     var findExistingPR: (_ branch: String) -> String?
+    /// 按仓库查询已有 PR（design §7.4）：多仓库交付时对每个目标仓库兜底。nil = 回落
+    /// 单仓库的 findExistingPR（legacy env）。
+    var findExistingPRFor: ((WorkspaceRepo, String) -> String?)?
     /// The text handed to the agent. `brief` is the 交接简报 for a task that has
     /// work in front of it in its queue (nil when there is nothing to hand over).
     var promptText: (_ task: TaskItem, _ queue: TaskQueue?, _ brief: String?) -> String
@@ -211,6 +216,16 @@ struct TaskRunnerEnv {
     /// the single legacy handle. This is what the per-repo pipeline will use (P2);
     /// the legacy `git` field keeps every current call site working unchanged.
     func gitHandle(for repo: WorkspaceRepo) -> TaskGit { gitFor?(repo) ?? git }
+
+    /// 该仓库的交付默认值（design §7.2）：面板按仓库注入，legacy env 回落单一值。
+    func integrationDefault(for repo: WorkspaceRepo) -> QueueIntegration {
+        defaultIntegrationFor?(repo) ?? defaultIntegration
+    }
+
+    /// 该仓库已有 PR 的兜底查询（design §7.4）。
+    func existingPR(for repo: WorkspaceRepo, branch: String) -> String? {
+        findExistingPRFor?(repo, branch) ?? findExistingPR(branch)
+    }
 
     /// A perform that runs both closures right here — the headless default.
     static func synchronous(_ blocking: () -> Void, _ completion: () -> Void) {
@@ -294,6 +309,37 @@ extension TasksRunner {
             if entered == .switched || entered == .alreadyOnBranch { switched.append(repo.id) }
         }
         return (nil, nil)
+    }
+
+    /// 本队列每个目标仓库的交付计划（design §7.2）：intent = 队列覆盖 ?? 该仓库的
+    /// 按仓库默认值；effective = 按该仓库能力降级（PR → push → 本地合并 → 不做），
+    /// 各仓库互不影响。
+    static func deliveryPlan(queue: TaskQueue?,
+                             targets: [WorkspaceRepo],
+                             queueOverride: QueueIntegration?,
+                             perRepoDefault: (WorkspaceRepo) -> QueueIntegration,
+                             hasRemote: (WorkspaceRepo) -> Bool) -> [QueueRepoRun] {
+        let single = targets.count == 1
+        let queueBase = queue?.baseBranch
+        let branch = queue?.branch ?? ""
+        return targets.map { repo in
+            let intent = QueueIntegration.intent(queueOverride: queueOverride,
+                                                 perRepoDefault: perRepoDefault(repo))
+            let effective = QueueIntegration.effective(intent, repo: repo, hasRemote: hasRemote(repo))
+            // 单目标的工作区根沿用队列自己的「基于分支」，其余用仓库自己的默认分支。
+            let base: String
+            if single, repo.id == ".", let queueBase = queueBase, !queueBase.isEmpty {
+                base = queueBase
+            } else {
+                base = repo.defaultBase
+            }
+            return QueueRepoRun(repoID: repo.id,
+                                branch: branch.isEmpty ? base : branch,
+                                base: base,
+                                intent: intent,
+                                effective: effective,
+                                status: .pending)
+        }
     }
 }
 
@@ -728,6 +774,86 @@ enum TaskPrompts {
         return text + "\n\n最后**单独一行**原样输出完成标记（供壳层确认本次交付结束）：" + marker
     }
 
+    /// 多仓库交付会话的提示词（design §7.3）：对每个目标仓库给出它的 effective 动作，
+    /// 要求逐仓库执行并在最后**逐行**输出可解析结果。单目标（工作区根）保持今天
+    /// 逐字节相同的单仓库交付文本。
+    static func integration(queueName: String?, branch: String?, base: String,
+                            runs: [QueueRepoRun], commits: [String] = [],
+                            marker: String? = nil) -> String {
+        if runs.count <= 1 {
+            let run = runs.first
+            let text: String
+            if let run = run, run.repoID != "." {
+                text = "本工作区要交付的仓库位于子目录 " + run.repoID + "/；请在其中执行下面的交付动作。\n\n"
+                    + integration(mode: run.effective, queueName: queueName, branch: branch,
+                                  base: run.base, commits: commits)
+            } else {
+                text = integration(mode: run?.effective ?? .none, queueName: queueName, branch: branch,
+                                   base: base, commits: commits)
+            }
+            guard let marker = marker else { return text }
+            return text + "\n\n最后**单独一行**原样输出完成标记（供壳层确认本次交付结束）：" + marker
+        }
+        let q = "\u{60}"
+        var lines: [String] = []
+        lines.append("队列「\(queueName ?? branch ?? "队列")」的任务已完成。本队列涉及多个仓库，请**逐仓库**按它自己的实际动作交付：")
+        lines.append("")
+        lines.append("## 队列信息")
+        if let queueName = queueName, !queueName.isEmpty { lines.append("队列：\(queueName)") }
+        if let branch = branch, !branch.isEmpty { lines.append("分支：\(branch)") }
+        lines.append("")
+        lines.append("## 各仓库及实际动作")
+        for run in runs {
+            lines.append("- " + repoLabel(run.repoID) + "（分支 " + q + run.branch + q + "，基于 "
+                         + q + run.base + q + "）：" + actionDescription(run))
+        }
+        lines.append("")
+        lines.append("要求：")
+        lines.append("1. 每个仓库都在它自己的目录里执行（" + q + "git -C <repo> …" + q + " 或先 "
+                     + q + "cd <repo>" + q + "）；不要用一把 git 命令概括全部；")
+        lines.append("2. **按上面给出的实际动作分别执行**：写「开 PR」的推送分支并开 / 复用 PR；写「直接推送」的推送当前分支；写「本地合并」的把分支合进基线（有远端才推送基线）；写「不交付」的什么都不做；")
+        lines.append("3. 某个仓库失败**不要丢弃**已经成功的仓库，也不要把别的仓库的失败算到它头上；")
+        lines.append("4. 需要 GitHub 写操作时，token 在 $DSH_HOME/oh-my-dsh/tokens/<owner>-<repo> 或 $DSH_HOME/oh-my-dsh/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；")
+        lines.append("")
+        lines.append("最后**逐行**输出每个仓库的结果，格式固定（一行一个仓库，行首必须是 "
+                     + q + "<repoID>: <action> <结果>" + q + "，action 取 " + q + "pr" + q
+                     + " / " + q + "push" + q + " / " + q + "merge" + q + " / " + q + "none" + q + "）：")
+        lines.append(q + "<repoID>" + q + ": pr https://github.com/<owner>/<repo>/pull/<编号>")
+        lines.append(q + "<repoID>" + q + ": push 已推送 <branch> <短hash>")
+        lines.append(q + "<repoID>" + q + ": merge 已合并到 <base> <短hash>")
+        lines.append(q + "<repoID>" + q + ": none 不交付")
+        var text = lines.joined(separator: "\n")
+        if let marker = marker {
+            text += "\n\n最后**单独一行**原样输出完成标记（供壳层确认本次交付结束）：" + marker
+        }
+        return text
+    }
+
+    /// 仓库在提示词里的抬头：根是「（工作区根）」，子仓库是「repo/」。
+    static func repoLabel(_ repoID: String) -> String {
+        repoID == "." ? "（工作区根）" : repoID + "/"
+    }
+
+    /// 一个仓库的实际交付动作（含降级说明），写进多仓库交付提示词。
+    static func actionDescription(_ run: QueueRepoRun) -> String {
+        let base: String
+        switch run.effective {
+        case .pr: base = "开 PR（推送分支并开 / 复用 pull request）"
+        case .push: base = "直接推送（不合并、不开 PR）"
+        case .merge: base = "本地合并（合进基线，不开 PR）"
+        case .none: base = "不交付（不做任何 git / 远端操作）"
+        }
+        guard run.intent != run.effective else { return base }
+        let intent: String
+        switch run.intent {
+        case .pr: intent = "PR"
+        case .push: intent = "推送"
+        case .merge: intent = "本地合并"
+        case .none: intent = "不交付"
+        }
+        return base + "（原意图「" + intent + "」因该仓库能力不足而降级）"
+    }
+
     /// 本地合并进 base（有远端才推送）。冲突尽量现场解；超出确定范围就停下请用户介入；
     /// base 被保护时如实报错（用户自己处理，比如改仓库设置或改用 PR）。
     /// hasRemote == false：只做本地合并，明确不推送——本地仓库也能交付。
@@ -923,6 +1049,11 @@ final class TasksRunner {
         var marker: String?
         /// Whether sessionId is the originating session. We never cancel it.
         var reused: Bool
+        /// 本队列的目标仓库（design §7.3）：多仓库交付时按顺序记录每个仓库的
+        /// intent / effective / 结果。legacy 单仓库 env 为空。
+        var targets: [WorkspaceRepo] = []
+        /// 每个目标仓库的交付计划（含 effective）；空 = legacy 单仓库路径。
+        var runs: [QueueRepoRun] = []
     }
 
     private enum Phase {
@@ -1387,14 +1518,71 @@ final class TasksRunner {
             persist()
             return false
         }
+        // 目标仓库：运行期重探测优先（design §5.1），否则用 adopt 快照。空 = legacy
+        // 单仓库 env，走今天的单仓库交付路径（逐字节不变）。
+        let liveSet = env.repoSetProvider?()
+        let repos = liveSet?.repos ?? env.repos
+        let primaryID = liveSet?.primary?.id ?? env.primaryRepoID
+        let targets = TasksRunner.resolveTargets(queue: queue, repos: repos, primaryRepoID: primaryID)
+        if targets.isEmpty {
+            return startLegacyIntegration(queue)
+        }
+        // 多仓库：每个仓库的 intent = 队列覆盖 ?? 该仓库默认，再按能力降级
+        // （design §7.2）。「无」是整队列的明确选择，不做。
+        let env = self.env
+        if queue.integration == .some(.none) {
+            env.log("tasks: queue " + queueID + " 的工作流是「无」——不交付")
+            return false
+        }
+        let runs = TasksRunner.deliveryPlan(
+            queue: queue, targets: targets,
+            queueOverride: queue.integration,
+            perRepoDefault: { env.integrationDefault(for: $0) },
+            hasRemote: { repo in repo.remoteName != nil || env.gitHandle(for: repo).remoteName() != nil })
+        // 只要**任意一个**目标 effective != none 就继续；全都没得交付才拒绝。
+        guard runs.contains(where: { $0.effective != .none }) else {
+            env.log("tasks: queue " + queueID + " 的每个目标仓库都没有可交付的动作")
+            _ = board.setQueuePRError(queueID, "tasks.errPRNoRemote")
+            persist()
+            return false
+        }
+        // mode 只用于日志 / legacy 判定：取最强的 effective。
+        let mode = runs.first { $0.effective == .pr }?.effective
+            ?? runs.first { $0.effective == .push }?.effective
+            ?? runs.first { $0.effective == .merge }?.effective ?? .none
+        let base = queue.baseBranch
+        let name = queue.name
+        let branch = queue.branch
+        let origin = board.local.queueSessions[queueID]
+        phase = .startingPR(queueID)
+        var run: PRRun?
+        env.perform({
+            run = TasksRunner.makeFinalizeRun(env: env, queueID: queueID, mode: mode, name: name,
+                                              branch: branch, base: base,
+                                              originSession: origin,
+                                              targets: targets, runs: runs)
+        }, {
+            guard let run = run else {
+                self.phase = .idle
+                self.env.log("tasks: could not start a finalize session for queue " + queueID)
+                _ = self.board.setQueuePRError(queueID, "tasks.errPRSession")
+                self.persist()
+                return
+            }
+            self.beginPRRun(run)
+        })
+        return true
+    }
+
+    /// 单仓库（或 legacy）交付：与今天逐字节相同的守卫与路径。
+    private func startLegacyIntegration(_ queue: TaskQueue) -> Bool {
+        let queueID = queue.id
         let mode = board.integration(forQueue: queueID, default: env.defaultIntegration)
         // 「无」是明确的选择，不是失败：什么都不做，也不在队列上记错误。
         if mode == .none {
             env.log("tasks: queue " + queueID + " 的工作流是「无」——不交付")
             return false
         }
-        // Mode-specific requirements: refuse with a reason on the queue rather than
-        // starting a session that cannot succeed.
         if mode == .pr || mode == .merge {
             guard let branch = queue.branch, !branch.isEmpty else {
                 env.log("tasks: queue " + queueID + " has no branch — nothing to " + mode.rawValue)
@@ -1412,7 +1600,6 @@ final class TasksRunner {
             }
         }
         if mode == .push {
-            // 「直接推送」必须有地方可推；merge 是本地操作，没远端就只合并、不推送。
             guard env.git.remoteName() != nil else {
                 env.log("tasks: queue " + queueID + " — this workspace has no git remote to push to")
                 _ = board.setQueuePRError(queueID, "tasks.errPRNoRemote")
@@ -1423,7 +1610,6 @@ final class TasksRunner {
         let env = self.env
         let base = queue.baseBranch
         let name = queue.name
-        // The session that created this queue (nil for a manually created queue).
         let origin = board.local.queueSessions[queueID]
         phase = .startingPR(queueID)
         var run: PRRun?
@@ -1449,30 +1635,39 @@ final class TasksRunner {
     /// then records the reason on the queue instead of leaving a half-created session.
     static func makeFinalizeRun(env: TaskRunnerEnv, queueID: String, mode: QueueIntegration,
                                 name: String, branch: String?, base: String,
-                                originSession: String? = nil) -> PRRun? {
+                                originSession: String? = nil,
+                                targets: [WorkspaceRepo] = [],
+                                runs: [QueueRepoRun] = []) -> PRRun? {
         // What the branch carries, for the session context: it still reads the diff
         // itself (that is the point), but the commit list saves it from starting with
         // 「what is this branch」.
         let commits = branch.flatMap { _ in env.git.commits(base: base) } ?? []
         let hasRemote = env.git.remoteName() != nil
+        // 多仓库交付用逐仓库提示词（design §7.3）；legacy / 单仓库保持今天文本。
+        func prompt(_ marker: String?) -> String {
+            if runs.isEmpty {
+                return TaskPrompts.integration(mode: mode, queueName: name, branch: branch,
+                                               base: base, commits: commits, hasRemote: hasRemote,
+                                               marker: marker)
+            }
+            return TaskPrompts.integration(queueName: name, branch: branch, base: base,
+                                           runs: runs, commits: commits, marker: marker)
+        }
         // Prefer the queue's ORIGINATING session (user 2026-10-01): the queue was
         // created there and its completion is reported there, so finalize in the same
         // conversation. A unique MARKER is required back, because that session is a
         // real conversation — its last report may be an unrelated turn.
         if let origin = originSession, !origin.isEmpty {
             let marker = TasksRunner.makeMarker()
-            let text = TaskPrompts.integration(mode: mode, queueName: name, branch: branch,
-                                               base: base, commits: commits, hasRemote: hasRemote,
-                                               marker: marker)
-            if env.promptSession(origin, text) {
+            if env.promptSession(origin, prompt(marker)) {
                 return PRRun(queueID: queueID, mode: mode, branch: branch ?? base, base: base,
-                             sessionId: origin, startedAt: Date(), marker: marker, reused: true)
+                             sessionId: origin, startedAt: Date(), marker: marker, reused: true,
+                             targets: targets, runs: runs)
             }
             env.log("tasks: could not prompt the originating session " + origin
                     + " — falling back to a fresh finalize session")
         }
-        let text = TaskPrompts.integration(mode: mode, queueName: name, branch: branch, base: base,
-                                           commits: commits, hasRemote: hasRemote)
+        let text = prompt(nil)
         guard let sessionId = env.createSession(env.repoRoot) else { return nil }
         // 交付会话的名字：三种工作流统一叫「交付：<队列名>」（具体动作由提示词说）。
         _ = env.renameSession(sessionId, L10n.tr("tasks.queue.finalizeSessionName", name))
@@ -1481,7 +1676,8 @@ final class TasksRunner {
             return nil
         }
         return PRRun(queueID: queueID, mode: mode, branch: branch ?? base, base: base,
-                     sessionId: sessionId, startedAt: Date(), marker: nil, reused: false)
+                     sessionId: sessionId, startedAt: Date(), marker: nil, reused: false,
+                     targets: targets, runs: runs)
     }
 
     /// A marker the finalize session must echo back verbatim on its own last line.
@@ -1547,13 +1743,25 @@ final class TasksRunner {
     /// already has open for the branch.
     private func finishPRRun(_ run: PRRun) {
         prLookupInFlight = true
-        let findExistingPR = env.findExistingPR
         let sessionReport = env.sessionReport
+        let planned = run.runs
+        let targets = run.targets
+        let env = self.env
         var prUrl: String?
         var report: String?
+        var resolved: [QueueRepoRun] = []
         env.perform({
             report = sessionReport(run.sessionId)
-            prUrl = TasksRunner.prURL(in: report) ?? findExistingPR(run.branch)
+            if planned.isEmpty {
+                // legacy 单仓库：与今天逐字节相同。
+                prUrl = TasksRunner.prURL(in: report) ?? env.findExistingPR(run.branch)
+            } else {
+                // 多仓库：逐行解析 + 按仓库 findExistingPR 兜底（design §7.4）。
+                resolved = TasksRunner.resolveRepoRuns(
+                    planned, targets: targets,
+                    results: TasksRunner.repoResults(in: report),
+                    findExistingPR: { repo, branch in env.existingPR(for: repo, branch: branch) })
+            }
         }, {
             // A reused ORIGINATING session only counts when OUR turn's marker came
             // back: its last report may otherwise belong to the user's conversation.
@@ -1561,7 +1769,7 @@ final class TasksRunner {
                 self.prLookupInFlight = false
                 return
             }
-            self.applyPRRun(run, prUrl: prUrl, report: report)
+            self.applyPRRun(run, prUrl: prUrl, report: report, repoRuns: resolved)
         })
     }
 
@@ -1577,13 +1785,16 @@ final class TasksRunner {
         let name = board.queue(queueID)?.name ?? queueID
         let branch = run.branch
         let base = run.base
+        let targets = run.targets
+        let runs = run.runs
         let env = self.env
         phase = .startingPR(queueID)
         var fresh: PRRun?
         env.perform({
             fresh = TasksRunner.makeFinalizeRun(env: env, queueID: queueID, mode: mode,
                                                 name: name, branch: branch, base: base,
-                                                originSession: nil)
+                                                originSession: nil,
+                                                targets: targets, runs: runs)
         }, {
             guard let fresh = fresh else {
                 self.phase = .idle
@@ -1596,7 +1807,8 @@ final class TasksRunner {
         })
     }
 
-    private func applyPRRun(_ run: PRRun, prUrl: String?, report: String?) {
+    private func applyPRRun(_ run: PRRun, prUrl: String?, report: String?,
+                           repoRuns: [QueueRepoRun] = []) {
         prLookupInFlight = false
         phase = .idle
         // The card shows the session's report; the FIRST line is what a collapsed card
@@ -1611,6 +1823,29 @@ final class TasksRunner {
         let firstLine = full.split(separator: "\n").first.map(String.init) ?? ""
         let note = full.isEmpty ? nil : String(full.prefix(4000))
         _ = board.setQueueIntegrationNote(run.queueID, note)
+        // 多仓库：各仓库独立记账（design §7.3）。某个失败不丢弃已成功的仓库；队列仍
+        // 进入 done，卡片按仓库逐行展示 N 成功 / M 失败。
+        if !run.runs.isEmpty {
+            let runs = repoRuns.isEmpty ? run.runs : repoRuns
+            _ = board.setQueueRepoRuns(run.queueID, runs)
+            let successes = runs.filter { $0.status == .done }
+            let failures = runs.filter { $0.status == .failed }
+            if let url = successes.compactMap({ $0.prUrl }).first {
+                _ = updateQueue(run.queueID, prUrl: url)
+            }
+            if failures.isEmpty || !successes.isEmpty {
+                _ = board.setQueuePRError(run.queueID, nil)
+            } else {
+                _ = board.setQueuePRError(run.queueID, "tasks.errPR")
+            }
+            env.log("tasks: queue " + run.queueID + " finalized per repo — "
+                    + runs.map { $0.repoID + ":" + $0.status.rawValue }.joined(separator: "、"))
+            let published = failures.isEmpty && !successes.isEmpty
+            if published { autoCloseAfterPublish(run.queueID) }
+            persist()
+            _ = pump()
+            return
+        }
         var published = false
         if run.mode == .pr {
             if let prUrl = prUrl {
@@ -1671,6 +1906,97 @@ final class TasksRunner {
         guard let range = report.range(of: "https?://[^\\s]*github\\.com/[^\\s]*/pull/[0-9]+",
                                        options: .regularExpression) else { return nil }
         return String(report[range])
+    }
+
+    /// 交付会话逐行输出的一个仓库结果（design §7.4）：`<repoID>: <action> <结果>`。
+    struct RepoResult: Equatable {
+        var repoID: String
+        var action: QueueIntegration
+        var detail: String
+        var prUrl: String?
+    }
+
+    /// 从交付会话的汇报里解析**每个仓库**的一行结果（design §7.4）。宽松匹配：
+    /// 只有行首是「repoID: action …」且 action 是四种之一才算；解析不到的仓库交给
+    /// findExistingPR 兜底，不把解析成功当唯一判据。
+    static func repoResults(in report: String?) -> [RepoResult] {
+        guard let report = report else { return [] }
+        var results: [RepoResult] = []
+        for rawLine in report.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let repoID = String(line[line.startIndex..<colon]).trimmingCharacters(in: .whitespaces)
+            guard !repoID.isEmpty, !repoID.contains(" ") else { continue }
+            let rest = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            let tokens = rest.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            guard let first = tokens.first,
+                  let action = QueueIntegration(rawValue: String(first).lowercased()) else { continue }
+            let detail = tokens.count > 1 ? String(tokens[1]) : ""
+            results.append(RepoResult(repoID: repoID, action: action, detail: detail,
+                                      prUrl: prURL(in: detail)))
+        }
+        return results
+    }
+
+    /// 把解析结果与兜底查询套到交付计划上，得到每个仓库的最终状态（design §7.3/§7.4）。
+    /// 某个仓库失败不影响其他仓库；effective 为「不做」的仓库记账为 skipped。
+    static func resolveRepoRuns(_ runs: [QueueRepoRun],
+                                targets: [WorkspaceRepo],
+                                results: [RepoResult],
+                                findExistingPR: (WorkspaceRepo, String) -> String?) -> [QueueRepoRun] {
+        runs.map { run in
+            var out = run
+            let repo = targets.first { $0.id == run.repoID }
+            let parsed = results.first { $0.repoID == run.repoID }
+            func existing() -> String? {
+                guard let repo = repo else { return nil }
+                return findExistingPR(repo, run.branch)
+            }
+            if let detail = parsed?.detail, !detail.isEmpty { out.note = detail }
+            if run.effective == .none {
+                out.status = .skipped
+                if out.note == nil { out.note = "不交付" }
+                return out
+            }
+            if let parsed = parsed {
+                switch parsed.action {
+                case .pr:
+                    if let url = parsed.prUrl {
+                        out.status = .done; out.prUrl = url
+                    } else if let url = existing() {
+                        out.status = .done; out.prUrl = url
+                    } else {
+                        out.status = .failed
+                    }
+                case .merge:
+                    out.status = parsed.detail.contains("已合并") ? .done : .failed
+                case .push:
+                    out.status = parsed.detail.contains("已推送") ? .done : .failed
+                case .none:
+                    out.status = .skipped
+                }
+                // 该仓库本来要做 PR，但会话没有按 pr 报：仍然用 GitHub 兜底找已有 PR。
+                if run.effective == .pr, out.status != .done, parsed.action != .pr,
+                   let url = existing() {
+                    out.status = .done; out.prUrl = url
+                }
+                return out
+            }
+            // 会话没有逐行报这个仓库：按 effective 兜底。
+            switch run.effective {
+            case .pr:
+                if let url = existing() {
+                    out.status = .done; out.prUrl = url
+                } else {
+                    out.status = .failed
+                }
+            case .merge, .push:
+                out.status = .failed
+            case .none:
+                out.status = .skipped
+            }
+            return out
+        }
     }
 
     private func persist() {
