@@ -826,6 +826,7 @@ do {
     _ = layout(form, width: 460)
     check(!form.repoBlock.isHidden, "多仓库显示仓库选择区")
     check(!form.repoNote.isHidden, "多仓库显示下拉下方的说明信息")
+    let primaryNote = form.repoNote.stringValue
     eq(repoPopupTitles(form), ["ws", "repo-b"], "主仓库固定排第一")
     check(form.repoPopUp.indexOfSelectedItem == 0, "默认编辑主仓库")
     check(!form.primaryBadge.isHidden, "主仓库在下拉后显示主仓库标识")
@@ -837,6 +838,7 @@ do {
     check(form.repoPopUp.indexOfSelectedItem == 1, "选中 b")
     check(form.primaryBadge.isHidden, "非主仓库不显示主仓库标识")
     check(!form.primaryButton.isHidden, "非主仓库显示「设为主仓库」")
+    check(form.repoNote.stringValue != primaryNote, "主仓库 / 非主仓库 显示不同说明")
     check(!form.followCheck.isHidden, "非主仓库有「跟随」开关")
     check(form.followCheck.state == .on, "跟随默认开启")
     check(!form.integrationRadios[2].isEnabled, "跟随时工作流字段禁用")

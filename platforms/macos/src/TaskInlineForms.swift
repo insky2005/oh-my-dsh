@@ -1294,7 +1294,10 @@ final class TaskSettingsView: TaskFormCardView, NSTextFieldDelegate {
         followCheck.isHidden = selectedIsPrimary
         followCheck.state = model.followsPrimary ? .on : .off
         // hintLabel 默认隐藏（它是别处的校验提示），这一条是常显信息，必须显式打开。
-        repoNote.stringValue = L10n.tr("tasks.settings.reposInfo", model.repoCount)
+        // 说明按「选中的是主仓库 / 非主仓库」分别讲清它是什么、能做什么。
+        repoNote.stringValue = selectedIsPrimary
+            ? L10n.tr("tasks.settings.primaryRepoInfo", model.repoCount)
+            : L10n.tr("tasks.settings.followerRepoInfo", model.repoCount)
         repoNote.isHidden = false
     }
 

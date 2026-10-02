@@ -777,7 +777,9 @@ enum L10n {
         "tasks.settings.autoCloseHint": ("开启后，队列的交付会话成功交付（PR / 合并 / 推送）时，队列自动进入「已关闭」：不再接收任务，也不能启动或交付，但保留任务、分支与 PR 记录。按工作区保存：只影响当前工作区，与其他工作区互不影响。", "When on, a queue closes itself once its delivery session delivers successfully (PR / merge / push): it accepts no more tasks and cannot be started or delivered, but keeps its tasks, branch and PR record. Saved per workspace: it affects THIS workspace only and never leaks into another."),
         // 多仓库工作区：设置抽屉顶部的仓库选择 + 主仓库继承（设计 §8.1）。
         "tasks.settings.repos": ("仓库", "Repositories"),
-        "tasks.settings.reposInfo": ("本工作区有 %d 个仓库；主仓库固定排第一，其余仓库默认跟随主仓库配置。", "This workspace has %d repositories; the primary is listed first and the others follow its settings by default."),
+        "tasks.settings.reposInfo": ("本工作区有 %d 个仓库。", "This workspace has %d repositories."),
+        "tasks.settings.primaryRepoInfo": ("本工作区有 %d 个仓库。主仓库是本工作区的默认目标：新建队列默认选它、issue 默认归它；它的「工作流 / 交付后自动关闭」也是其他仓库的默认值。", "This workspace has %d repositories. The primary is the workspace's default target: new queues pick it, issues belong to it, and its workflow / auto-close settings are the default for the other repositories."),
+        "tasks.settings.followerRepoInfo": ("本工作区有 %d 个仓库。非主仓库默认跟随主仓库配置；取消「跟随主仓库配置」后，可以为它单独设置「工作流 / 交付后自动关闭」；点「设为主仓库」可把它变成默认目标。", "This workspace has %d repositories. Other repositories follow the primary by default; clear \"Follow the primary repository's settings\" to give this one its own workflow / auto-close settings. Click \"Set as primary\" to make it the workspace default."),
         "tasks.settings.followPrimary": ("跟随主仓库配置", "Follow the primary repository's settings"),
         "tasks.settings.setPrimary": ("设为主仓库", "Set as primary"),
         "tasks.queue.close": ("关闭队列", "Close Queue"),
