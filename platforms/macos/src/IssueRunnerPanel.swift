@@ -1054,6 +1054,11 @@ final class IssueRunnerPanelController: NSObject {
             sessionReport: { sessionId in Self.sessionReport(sessionId: sessionId, workspace: repoRoot) },
             // P1 完成校验：任务会话必须回显本次尝试的完成 marker，否则进入「待确认」。
             requireCompletionMarker: true,
+            // P4 产物校验（§4.3）：对「应产出提交」的任务，会话结束后还要看分支有没有
+            // 新提交、工作区有没有改动，都没有就同样降级为待确认。形状探测与提示词同源
+            // （repoShape），所以提示词要求 commit 的任务才会被要求产物。
+            verifyExpectedCommit: true,
+            workspaceShape: { Self.repoShape(path: repoRoot) },
             // 队列完成回传：把报告投给创建队列的那个会话（同样是 session.prompt，
             // mode=queue）—— 这就是「做完把完成情况发回 dsh 会话 X」的落点。
             notifySession: { sessionId, text in

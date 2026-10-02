@@ -229,6 +229,19 @@ if ! grep -q 'func completionCounts' ../../platforms/macos/src/TasksRunner.swift
 fi
 echo "ok - P3 完成通知：完成 / 待确认分开计数，待确认带 ? 与人工出口"
 
+# P4 产物校验（可选）：真实面板必须开启它，runner 必须按「应产出提交」推断、并在会话
+# 结束后比对基线 HEAD / 工作区改动；没有产物时降级为待确认（带 errNoCommit 原因）。
+# 关掉它或删掉推断 = 「agent 什么都没干就结束」又只能靠 marker 兜底。
+if ! grep -q 'verifyExpectedCommit: true' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -q 'workspaceShape: { Self.repoShape(path: repoRoot) }' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -q 'func infersCommitExpectation' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func hasProduct' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'case noCommit = "tasks.errNoCommit"' ../../platforms/macos/src/TasksCore.swift; then
+  echo "FAIL - P4 产物校验：面板必须开启 verifyExpectedCommit，runner 必须实现 expectsCommit 推断与产物校验"
+  exit 1
+fi
+echo "ok - P4 产物校验：expectsCommit 推断 + 基线比对，无产物降级待确认"
+
 # 任务面板的每一项设置都必须按工作区存：一个全局键会把某个工作区的选择泄进所有工作区
 # （「交付成功后自动关闭队列」曾写全局 tasksAutoCloseOnPublish，于是每个工作区都显示勾上）。
 IP=../../platforms/macos/src/IssueRunnerPanel.swift

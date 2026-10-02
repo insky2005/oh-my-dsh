@@ -32,6 +32,9 @@ final class FakeRepo {
     /// A fresh `git init` with nothing in it: HEAD is unborn, so
     /// `rev-parse --verify HEAD` fails, exactly like real git.
     var unborn = false
+    /// The current HEAD commit hash (P4 产物校验的基线比对). A test simulates a new
+    /// commit by changing it before the task's session ends.
+    var head = "0f0f0f0f"
     var current = "main"
     var worktreeClean = true
     /// Lines `git status --porcelain` reports for UNTRACKED paths. Omitted when the
@@ -61,9 +64,11 @@ final class FakeRepo {
         switch first {
         case "rev-parse":
             if args.count >= 2, args[1] == "--abbrev-ref" { return current }
+            // P4 基线比对直接读 HEAD（rev-parse HEAD），与 --verify HEAD 共用同一个值。
+            if args.count == 2, args[1] == "HEAD" { return unborn ? nil : head }
             if args.count >= 2, args[1] == "--verify" {
                 let name = args.last ?? ""
-                if name == "HEAD" { return unborn ? nil : "0f0f0f0f" }
+                if name == "HEAD" { return unborn ? nil : head }
                 return knownBranches.contains(name) ? "0f0f0f0f" : nil
             }
             return nil
@@ -219,7 +224,9 @@ final class Harness {
          timeout: TimeInterval = 30 * 60,
          asynchronous: Bool = false,
          defaultBaseBranch: String = "main",
-         autoCloseOnPublish: Bool = false) {
+         autoCloseOnPublish: Bool = false,
+         verifyExpectedCommit: Bool = false,
+         workspaceShape: TaskRepoShape? = nil) {
         self.asynchronous = asynchronous
         let work = self.work
         let asynchronous = asynchronous        // captured by the perform closure
@@ -266,6 +273,10 @@ final class Harness {
             },
             sessionReport: { id in dsh.report(id) },
             requireCompletionMarker: true,
+            // P4 产物校验默认关闭（与面板一致）：既有用例仍走 P1 的 marker 门槛；
+            // P4 用例显式开启并给出工作区形状。
+            verifyExpectedCommit: verifyExpectedCommit,
+            workspaceShape: workspaceShape.map { shape in { shape } },
             notifySession: { id, text in dsh.notify(id, text) },
             persist: { board in rec.persistCount += 1; _ = board },
             persistIssueTask: { task in rec.issueWrites.append(task.id) },
@@ -2863,6 +2874,90 @@ do {
     check(!text.contains("已全部完成"), "跳过待确认也不谎报「已全部完成」")
     check(text.contains("1. ? One"), "第一条在列表里是待确认 ?")
     check(text.contains("2. ✓ Two"), "第二条是完成 ✓")
+}
+
+// MARK: - P4 产物校验（expectsCommit）
+
+section("P4 产物校验：应产出提交却没有任何产物 → 待确认，不是 done")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board, verifyExpectedCommit: true, workspaceShape: .github)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.expectsCommit, true, "git 工作区里的任务被推断为应产出提交")
+
+    // 代理回显了 marker、也写了汇报，但 git 里既没有新提交、工作区也是干净的。
+    h.dsh.reports["session-1"] = "我什么都没改就结束了。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.task(taskID)?.state, .needsReview, "没有产物 → 待确认（不是 done）")
+    eq(h.board.task(taskID)?.error, "tasks.errNoCommit", "卡片拿到「未产出提交」的原因")
+    eq(h.board.task(taskID)?.markerVerified, true, "marker 本身是通过的（P4 是它的补充）")
+    check(h.board.queue(queueID)?.state == .paused, "队列暂停：不继续后面的任务、不交付")
+    check(h.rec.logged("expectsCommit"), "日志说明是产物校验拦下的")
+    eq(h.dsh.notifications.count, 0, "待确认不发完成通知")
+}
+
+section("P4 产物校验：出现新提交 → 可判 done")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board, verifyExpectedCommit: true, workspaceShape: .github)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    // 任务开始后真的提交了：HEAD 变化。
+    h.repo.head = "abc1234"
+    h.dsh.reports["session-1"] = "改完并 commit 了。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.task(taskID)?.state, .done, "有新提交 → done")
+    eq(h.board.task(taskID)?.error, nil, "没有待确认原因")
+    eq(h.board.queue(queueID)?.state, .done, "队列正常完成")
+    _ = queueID
+}
+
+section("P4 产物校验：只改了工作区没 commit → 也算有产物")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board, verifyExpectedCommit: true, workspaceShape: .github)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.repo.worktreeClean = false
+    h.dsh.reports["session-1"] = "改了文件，还没 commit。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .done, "工作区有改动 → done")
+}
+
+section("P4 产物校验：非 git 工作区不设期望，不因为没提交降级")
+do {
+    // 非 git 工作区的队列不带分支（branch: ""），否则切分支会先失败——那才是
+    // tasks.errNotGit 的来路，会把「有没有产物」的断言搅浑。
+    let (board, taskID, queueID) = singleTaskBoard(branch: "", autoPR: false)
+    let h = Harness(board: board, github: false, gitRepo: false,
+                    verifyExpectedCommit: true, workspaceShape: .plain)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.expectsCommit, false, "非 git 工作区不期望提交")
+    h.dsh.reports["session-1"] = "纯文档任务，没有提交。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .done, "没有提交也不降级（非目标 §3）")
+}
+
+section("P4 产物校验：推断规则（来源 / 工作区形状 / 目标仓库）")
+do {
+    let issue = TaskItem.github(number: 1, title: "Fix")
+    let manual = TaskItem.manual(title: "Write docs")
+    eq(TasksRunner.infersCommitExpectation(task: issue, targets: [], shape: .plain), false,
+       "非 git 工作区：issue 任务也不期望提交")
+    eq(TasksRunner.infersCommitExpectation(task: issue, targets: [], shape: nil), true,
+       "无形状信息时 issue 按来源期望提交")
+    eq(TasksRunner.infersCommitExpectation(task: manual, targets: [], shape: nil), false,
+       "无形状信息时手动任务不预设")
+    let gitRepo = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/a", isGit: true, displayName: "a")
+    eq(TasksRunner.infersCommitExpectation(task: manual, targets: [gitRepo], shape: nil), true,
+       "目标仓库是 git → 期望提交")
+    let plainRepo = WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/b", isGit: false, displayName: "b")
+    eq(TasksRunner.infersCommitExpectation(task: issue, targets: [plainRepo], shape: nil), false,
+       "目标仓库都不是 git → 不期望提交")
 }
 
 if failures == 0 {

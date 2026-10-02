@@ -72,6 +72,17 @@ struct TaskGit {
         run(["rev-parse", "--verify", "--quiet", "HEAD"]) != nil
     }
 
+    /// The current HEAD commit hash (P4 产物校验的起始基线), or nil when git cannot
+    /// answer — an unborn repository (`git init`ed, nothing committed), a directory
+    /// that is not a repository, or a failed command. nil is a value, not "no
+    /// product": `TaskProductBaseline` compares it as-is so "unborn → still unborn"
+    /// counts as no new commit while "unborn → a hash" counts as one.
+    func headCommit() -> String? {
+        guard let out = run(["rev-parse", "HEAD"])?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !out.isEmpty else { return nil }
+        return out
+    }
+
 
     /// The commits the branch carries on top of `base` ("a1b2c3 subject"), or nil
     /// when git could not answer. This is the STRUCTURAL half of a 交接简报: what
@@ -114,6 +125,53 @@ struct TaskGit {
             guard run(["checkout", "-b", branch]) != nil else { return .createBranchFailed }
         }
         return .switched
+    }
+}
+
+/// P4 产物校验的起始基线（design §4.3）：任务开始前，每个目标仓库的 HEAD。
+///
+/// 「agent 什么都没干就结束」的判据是：本次任务开始后，它负责的仓库**既没有新提交、
+/// 工作区也没有改动**。要判断「新」，就得在开始时各记一个 HEAD，结束时再比。基线本身
+/// 不比内容、不看 diff：只看有没有产物，质量仍交给 P1 的 marker 与人。
+struct TaskProductBaseline: Equatable {
+    struct Repo: Equatable {
+        /// 目标仓库 id（"." = 工作区根 / legacy 单仓库）。
+        var repoID: String
+        /// 任务开始时的 HEAD；nil = unborn / 非 git / 命令失败。
+        var head: String?
+    }
+
+    var repos: [Repo]
+
+    /// 在任务启动时（切完分支之后、提示词发出之前）记录每个目标仓库的 HEAD。
+    static func capture(targets: [WorkspaceRepo], git: TaskGit,
+                        gitFor: ((WorkspaceRepo) -> TaskGit)?) -> TaskProductBaseline {
+        if targets.isEmpty {
+            return TaskProductBaseline(repos: [Repo(repoID: ".", head: git.headCommit())])
+        }
+        return TaskProductBaseline(repos: targets.map { repo in
+            Repo(repoID: repo.id, head: (gitFor?(repo) ?? git).headCommit())
+        })
+    }
+
+    /// 任务开始后有没有产物：任何目标仓库出现新提交，或工作区有已跟踪改动。
+    ///
+    /// git 答不上来时**算有产物**（fail open）：不确定不该把一条任务降级为待确认；
+    /// 降级的代价是用户要多点一次，而误判 done 的代价才是这套机制要防的。untracked
+    /// 文件与 `hasTrackedChanges` 一致地不算改动。
+    func hasProduct(targets: [WorkspaceRepo], git: TaskGit,
+                    gitFor: ((WorkspaceRepo) -> TaskGit)?) -> Bool {
+        for entry in repos {
+            let handle: TaskGit
+            if let repo = targets.first(where: { $0.id == entry.repoID }) {
+                handle = gitFor?(repo) ?? git
+            } else {
+                handle = git
+            }
+            if handle.hasTrackedChanges() { return true }
+            if handle.headCommit() != entry.head { return true }
+        }
+        return false
     }
 }
 
@@ -191,6 +249,15 @@ struct TaskRunnerEnv {
     /// P1 完成校验：任务会话是否必须在最后一行回显 runner 注入的完成 marker。真实面板
     /// 开启；legacy / 无 sessionReport 的 headless env 默认关闭（不设门槛，维持旧行为）。
     var requireCompletionMarker: Bool = false
+    /// P4 产物校验（design §4.3，可选增强）：开启后，对「应产出提交」的任务，会话结束
+    /// 时还要看队列分支有没有新提交、工作区有没有改动；都没有就同样降级为待确认。它抓
+    /// 「agent 什么都没干就结束」，是 marker 的**补充而非替代**，所以默认关闭；真实面板
+    /// 开启。开启但任务被推断为「不应产出提交」（非 git 工作区）时不做这层校验。
+    var verifyExpectedCommit: Bool = false
+    /// 推断「是否应产出提交」所需的当前工作区形状（git / plain）。真实面板传
+    /// `repoShape`，与提示词用同一个探测；nil = 用目标仓库的 isGit 推断，再退回到
+    /// 「issue 任务按来源应产出提交、手动任务不预设」（legacy / headless env）。
+    var workspaceShape: (() -> TaskRepoShape)?
     /// Deliver the queue-completion report to the session that CREATED the queue.
     /// The runner calls it inside env.perform (never on the main thread). Defaults to
     /// "nothing delivered" so every existing test that does not care still compiles.
@@ -263,6 +330,19 @@ extension TasksRunner {
             ?? repos.first { $0.github != nil }
             ?? repos.first { $0.isGit }
         return primary.map { [$0] } ?? []
+    }
+
+    /// P4 产物校验：这次尝试是否**应该**产出提交（design §4.3「按任务来源/队列类型推断」）。
+    ///
+    /// 判据：任务负责的仓库里有 git 仓库时，提示词本来就要求「完成前 commit」，于是把提交
+    /// 当作应然产物；全是非 git 目录时不可能有提交，不设期望。没有目标仓库（legacy /
+    /// headless env）时看工作区形状；形状也未知时退回来源推断——issue 任务天然是代码修复，
+    /// 手动任务则不预设（避免把「本来就是文档/问答类、不产提交」的任务误降级）。
+    static func infersCommitExpectation(task: TaskItem, targets: [WorkspaceRepo],
+                                        shape: TaskRepoShape?) -> Bool {
+        if !targets.isEmpty { return targets.contains { $0.isGit } }
+        if let shape = shape { return shape != .plain }
+        return task.source == .github
     }
 
     /// The two-phase branch entry (design §5.2).
@@ -987,8 +1067,9 @@ enum TaskPrompts {
                 let detail = task.errorDetail.map { "：" + $0 } ?? ""
                 lines.append("   失败：\(task.error ?? "失败")\(detail)")
             } else if task.state == .needsReview {
-                // 没有完成证据的任务：如实写「待确认」，并给出两条人工出口。
-                lines.append("   待确认：会话结束了，但没有拿到本次完成标记——请先「重试」或确认后「标记完成」")
+                // 没有完成证据的任务：如实写「待确认」，并给出两条人工出口。证据有两种
+                // （P1 的完成标记、P4 的产物），文案不偏向其中一种，免得另一种原因下误导。
+                lines.append("   待确认：会话结束了，但没有拿到完成证据（本次完成标记 / 应产出提交的改动）——请先「重试」或确认后「标记完成」")
             } else if task.state == .cancelled {
                 lines.append("   已取消")
             }
@@ -1099,6 +1180,11 @@ final class TasksRunner {
         /// 本次尝试的完成 marker（P1）：只有会话最后的汇报回显了它，才算这次 turn
         /// 真的做完。nil = legacy / 无 marker 的旧路径。
         var marker: String?
+        /// P4 产物校验：这次尝试是否应产出提交，以及开始时的 HEAD 基线。
+        var expectsCommit: Bool = false
+        var baseline: TaskProductBaseline = TaskProductBaseline(repos: [])
+        /// 本次尝试的目标仓库（交付 / P4 产物校验按仓库进行）；空 = legacy 单仓库。
+        var targets: [WorkspaceRepo] = []
     }
 
     /// The dedicated 开 PR 会话 of a finished queue (§V2-6): the session that pushes
@@ -1333,6 +1419,8 @@ final class TasksRunner {
         let reposSnapshot = env.repos
         let primarySnapshot = env.primaryRepoID
         let repoSetProvider = env.repoSetProvider
+        let verifyExpectedCommit = env.verifyExpectedCommit
+        let workspaceShape = env.workspaceShape
 
         phase = .starting(taskID)
         cancelRequested = false
@@ -1347,6 +1435,11 @@ final class TasksRunner {
         log("tasks: starting " + taskID + " on " + (branch ?? "the current branch"))
 
         var startResult: StartResult = .failed(.session, nil, nil)
+        // P4 产物校验：目标仓库、是否应产出提交、以及开始时的 HEAD 基线都在后台步骤
+        // 里定下，随 applyStart 交给 Active（finish 时据此比对）。
+        var activeTargets: [WorkspaceRepo] = []
+        var expectsCommit = false
+        var baseline = TaskProductBaseline(repos: [])
         env.perform({
             // Re-probe the workspace's repositories HERE, on the runner's background
             // queue (design §5.1): a workspace can gain or lose repositories between
@@ -1380,6 +1473,17 @@ final class TasksRunner {
                     return
                 }
             }
+            // P4：切完分支、发出提示词之前记下产物基线。expectsCommit 与提示词用同一套
+            // 形状判断（git 工作区本来就要求「完成前 commit」），非 git / 不产提交的任务
+            // 不设期望——这正是「不因为没提交就一概判失败」的落点。
+            activeTargets = targets
+            if verifyExpectedCommit {
+                expectsCommit = TasksRunner.infersCommitExpectation(task: task, targets: targets,
+                                                                    shape: workspaceShape?())
+                if expectsCommit {
+                    baseline = TaskProductBaseline.capture(targets: targets, git: git, gitFor: gitFor)
+                }
+            }
             // The 交接简报 is built HERE, off the main thread: it reads the earlier
             // tasks' session logs (a core-bridge call) and asks each target repo for
             // the commits the branch already carries (grouped per repo, design §5.3).
@@ -1406,12 +1510,16 @@ final class TasksRunner {
             }
             startResult = .started(sessionId: sessionId, branch: branch)
         }, {
-            self.applyStart(taskID: taskID, result: startResult, now: now)
+            self.applyStart(taskID: taskID, result: startResult, now: now,
+                            expectsCommit: expectsCommit, baseline: baseline, targets: activeTargets)
         })
         return taskID
     }
 
-    private func applyStart(taskID: String, result: StartResult, now: Date) {
+    private func applyStart(taskID: String, result: StartResult, now: Date,
+                            expectsCommit: Bool = false,
+                            baseline: TaskProductBaseline = TaskProductBaseline(repos: []),
+                            targets: [WorkspaceRepo] = []) {
         phase = .idle
         switch result {
         case .started(let sessionId, let branch):
@@ -1430,9 +1538,12 @@ final class TasksRunner {
                 return
             }
             let queueID = board.task(taskID)?.queueId
+            board.recordExpectsCommit(taskID, expectsCommit)
             phase = .active(Active(taskID: taskID, queueID: queueID, branch: branch,
                                    sessionId: sessionId, startedAt: now,
-                                   marker: board.task(taskID)?.completionMarker))
+                                   marker: board.task(taskID)?.completionMarker,
+                                   expectsCommit: expectsCommit, baseline: baseline,
+                                   targets: targets))
             board.local.sessions[taskID] = sessionId
             if let i = board.index(ofTask: taskID) { board.tasks[i].sessionId = sessionId }
             env.log("tasks: " + taskID + " running in " + sessionId)
@@ -1543,11 +1654,17 @@ final class TasksRunner {
         }
 
         let marker = active.marker
+        // P4：本任务是否应产出提交。false（非 git / 不预设）时不做产物门槛。
+        let expectsCommit = active.expectsCommit
+        let git = env.git
+        let gitFor = env.gitFor
         phase = .finishing(taskID)
         var report: String? = nil
         // 没有 marker 的是 legacy / 旧路径：不设门槛。有 marker 就必须由本次 turn 的
         // 最后一行回显它，否则进入「待确认」——不允许再写死 done。
         var verified = (marker == nil)
+        // 产物校验的初值：不期望提交的任务天然「有产物」（不做这层门槛）。
+        var product = !expectsCommit
         env.perform({
             // The 汇报 is read HERE, while the session still exists, and written back
             // onto the task: the card shows it, and the next task of the queue gets it
@@ -1561,19 +1678,34 @@ final class TasksRunner {
             } else {
                 report = raw
             }
+            // P4 产物校验（design §4.3）：marker 过了还不算数——应产出提交的任务必须
+            // 在开始后真的留下东西（队列分支新提交，或工作区已跟踪改动）。这一层是 P1 的
+            // 补充：它抓「agent 什么都没干就结束」，抓不住「干了一半」。
+            if verified && !product {
+                product = active.baseline.hasProduct(targets: active.targets,
+                                                     git: git, gitFor: gitFor)
+            }
         }, {
             self.board.recordMarkerVerified(taskID, verified)
-            if !verified {
+            let noMarker = !verified
+            let noProduct = verified && !product
+            if noMarker {
                 log("tasks: " + taskID + " 会话结束但最后汇报没有本次完成标记——待确认（不判 done）")
+            } else if noProduct {
+                log("tasks: " + taskID + " 有完成标记但分支没有新提交、工作区也没有改动——"
+                    + "待确认（expectsCommit 产物校验）")
             }
-            let outcome: FinishOutcome = verified ? .done : .needsReview
+            let outcome: FinishOutcome = (verified && product) ? .done : .needsReview
+            let reason = noProduct ? TaskFailure.noCommit.rawValue : TaskFailure.unverified.rawValue
             self.applyFinish(taskID: taskID, outcome: outcome, now: now, report: report,
-                             finalizeQueueID: (wantsFinalize && verified) ? queue?.id : nil)
+                             reviewReason: reason,
+                             finalizeQueueID: (wantsFinalize && verified && product) ? queue?.id : nil)
         })
     }
 
     private func applyFinish(taskID: String, outcome: FinishOutcome, now: Date,
-                             report: String? = nil, finalizeQueueID: String? = nil) {
+                             report: String? = nil, reviewReason: String? = nil,
+                             finalizeQueueID: String? = nil) {
         phase = .idle
         let isIssue = board.task(taskID)?.source == .github
         switch outcome {
@@ -1581,8 +1713,9 @@ final class TasksRunner {
             board.markDone(taskID, report: report, at: now)
             env.log("tasks: " + taskID + " done")
         case .needsReview:
-            board.markNeedsReview(taskID, report: report, at: now)
-            env.log("tasks: " + taskID + " needs review (no completion marker) — queue paused")
+            let reason = reviewReason ?? TaskFailure.unverified.rawValue
+            board.markNeedsReview(taskID, reason: reason, report: report, at: now)
+            env.log("tasks: " + taskID + " needs review (" + reason + ") — queue paused")
         case .failed(let failure):
             board.markFailed(taskID, error: failure.rawValue, report: report, at: now)
             env.log("tasks: " + taskID + " failed (" + failure.rawValue + ")")

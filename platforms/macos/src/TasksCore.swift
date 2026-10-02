@@ -33,6 +33,9 @@ enum TaskFailure: String {
     /// 的 turn 结束与正常结束在 dsh 列表里长得一样）。P2 起它不再是「失败」——任务进入
     /// 独立的 TaskState.needsReview，这个键作为卡片上「待确认」的原因保留。
     case unverified = "tasks.errUnverified"
+    /// P4 产物校验：任务被判定为「应产出提交」，但会话结束后队列分支没有新提交、工作区
+    /// 也没有改动——agent 很可能什么都没干就结束了。它同样是「待确认」的原因，不是失败。
+    case noCommit = "tasks.errNoCommit"
 }
 
 // MARK: - Source & state
@@ -172,6 +175,10 @@ struct TaskItem: Equatable {
     /// 本次尝试的 marker 是否已经校验通过（会话最后一行回显了它）。只有通过才判
     /// done；否则进入独立的待确认状态 TaskState.needsReview。
     var markerVerified: Bool
+    /// P4 产物校验：这次尝试是否**应该**产出提交（design §4.3）。runner 在任务启动时
+    /// 按任务来源 / 工作区形状推断并记下它；会话结束后若为 true 却没有新提交、工作区也没
+    /// 有改动，就降级为待确认。它不是任务的永久属性，只描述本次尝试的期望。
+    var expectsCommit: Bool
 
     init(id: String,
          source: TaskSource,
@@ -190,7 +197,8 @@ struct TaskItem: Equatable {
          finishedAt: Date? = nil,
          report: String? = nil,
          completionMarker: String? = nil,
-         markerVerified: Bool = false) {
+         markerVerified: Bool = false,
+         expectsCommit: Bool = false) {
         self.id = id
         self.source = source
         self.number = number
@@ -209,6 +217,7 @@ struct TaskItem: Equatable {
         self.report = report
         self.completionMarker = completionMarker
         self.markerVerified = markerVerified
+        self.expectsCommit = expectsCommit
     }
 
     /// ISO-8601 in the exact shape v1 wrote (2026-08-20T15:26:43Z).
@@ -1449,6 +1458,13 @@ struct TaskBoard {
         local.taskMarkerVerified[taskID] = verified
     }
 
+    /// P4：记下这次尝试是否应产出提交（runner 在任务启动时按来源 / 工作区形状推断）。
+    /// 它只描述本次尝试，重试时由下一次 pump 覆盖。
+    mutating func recordExpectsCommit(_ taskID: String, _ expects: Bool) {
+        guard let i = index(ofTask: taskID) else { return }
+        tasks[i].expectsCommit = expects
+    }
+
     /// Fail a task. A queue containing it is PAUSED and its id returned: inside
     /// a queue every task shares one branch, so running the next one would build
     /// on half-finished work. The user then chooses 重试 or 跳过并继续.
@@ -1468,17 +1484,20 @@ struct TaskBoard {
         return pauseQueue(containing: tasks[i])
     }
 
-    /// 待确认: the session ended without this attempt's completion marker. Not a
+    /// 待确认: the session ended without evidence that this attempt is done (its
+    /// completion marker, and — for a task that should commit — any product). Not a
     /// success and not necessarily a failure — the user decides (重试 / 标记完成).
     /// Like a failure it PAUSES the queue: running the next task would build on
     /// work nobody confirmed, and it must never fire a completion report or an
-    /// automatic PR. `error` carries the reason key the card renders.
+    /// automatic PR. `reason` is the key the card renders (marker missing vs no
+    /// commit produced).
     @discardableResult
-    mutating func markNeedsReview(_ taskID: String, report: String? = nil,
+    mutating func markNeedsReview(_ taskID: String, reason: String = TaskFailure.unverified.rawValue,
+                                  report: String? = nil,
                                   at date: Date = Date()) -> String? {
         guard let i = index(ofTask: taskID) else { return nil }
         tasks[i].state = .needsReview
-        tasks[i].error = TaskFailure.unverified.rawValue
+        tasks[i].error = reason
         tasks[i].errorDetail = nil
         tasks[i].finishedAt = date
         recordReport(taskID, report)
