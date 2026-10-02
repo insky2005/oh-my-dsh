@@ -34,6 +34,9 @@ final class FakeRepo {
     var unborn = false
     var current = "main"
     var worktreeClean = true
+    /// Lines `git status --porcelain` reports for UNTRACKED paths. Omitted when the
+    /// caller asks `--untracked-files=no`, exactly like real git.
+    var untracked = ""
     var remote: String? = "origin"
     var pushed: Set<String> = []
     var knownBranches: Set<String> = ["main"]
@@ -65,7 +68,9 @@ final class FakeRepo {
             }
             return nil
         case "status":
-            return worktreeClean ? "" : " M Sources/x.swift"
+            let tracked = worktreeClean ? "" : " M Sources/x.swift"
+            let untrackedPart = args.contains("--untracked-files=no") ? "" : untracked
+            return [tracked, untrackedPart].filter { !$0.isEmpty }.joined(separator: "\n")
         case "checkout":
             guard args.count >= 2 else { return nil }
             let target = args.last ?? ""
@@ -355,7 +360,8 @@ do {
     check(h.board.task(taskID)?.branch == "feature/docs-cleanup", "the queue branch is copied onto the task")
     eq(h.repo.current, "feature/docs-cleanup", "the worktree is on the queue branch")
     eq(h.repo.checkouts, ["main", "feature/docs-cleanup"], "checkout base then create the branch")
-    check(h.repo.calls.contains("status --porcelain"), "the clean check ran before switching")
+    check(h.repo.calls.contains("status --porcelain --untracked-files=no"),
+          "the clean check (tracked changes only) ran before switching")
     check(h.dsh.titles["session-1"] == "TASK: Polish README", "the session was renamed with the TASK prefix")
     check((h.dsh.prompts["session-1"] ?? "").contains("Docs Cleanup"), "the prompt names the queue")
     check(h.rec.persistCount > 0, "state was persisted while starting")
@@ -1065,6 +1071,75 @@ do {
     check(h.rec.logged("tasks.errRepoDirty"), "日志里记了预检失败")
 }
 
+section("只保护 checkout：已在目标分支上 / 不切分支时，不再查干净")
+do {
+    // 已在目标分支上：enter 不 checkout，预检就不该拦（哪怕有已跟踪改动）。
+    let repos = [
+        WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                      defaultBase: "main", displayName: "repo-a"),
+        WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                      defaultBase: "master", displayName: "repo-b"),
+    ]
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "多仓库改动", body: nil, id: "manual-mr000004")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Multi", branch: "feature/multi",
+                                  autoPR: false, repos: ["repo-a", "repo-b"])
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: repos, primaryRepoID: "repo-a")
+    h.git("repo-a").current = "feature/multi"
+    h.git("repo-a").knownBranches = ["main", "feature/multi"]
+    h.git("repo-a").worktreeClean = false          // 已在分支上：脏也不该拦
+    h.git("repo-b").current = "master"
+    h.git("repo-b").knownBranches = ["master"]
+
+    _ = h.runner.startQueue(queue.id)
+    check(h.board.task(task.id)?.state == .running, "已在目标分支的脏仓库不再挡预检")
+    check(h.board.task(task.id)?.error == nil, "没有记脏工作区错误")
+    check(h.git("repo-a").checkouts.isEmpty, "repo-a 本来就在分支上，没有 checkout")
+    check(h.git("repo-b").checkouts.contains("feature/multi"), "repo-b 照常切到分支")
+}
+do {
+    // 不切分支（branch 为空）：enter 返回 .noBranch，预检同样不该查干净。
+    let repos = [WorkspaceRepo(id: ".", absolutePath: "/tmp/ws", isGit: true, displayName: "ws")]
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "不切分支", body: nil, id: "manual-mr000005")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "NoBranch", branch: "", autoPR: false, repos: ["."])
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: repos, primaryRepoID: ".")
+    h.git(".").worktreeClean = false
+
+    _ = h.runner.startQueue(queue.id)
+    check(h.board.task(task.id)?.state == .running, "不切分支的队列即使工作区脏也照跑")
+    check(h.git(".").checkouts.isEmpty, "没有 checkout")
+}
+section("多仓库 pump：只有未跟踪文件 → 预检放行")
+do {
+    let repos = [
+        WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                      defaultBase: "main", displayName: "repo-a"),
+        WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                      defaultBase: "master", displayName: "repo-b"),
+    ]
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "多仓库改动", body: nil, id: "manual-mr000003")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Multi", branch: "feature/multi",
+                                  autoPR: false, repos: ["repo-a", "repo-b"])
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: repos, primaryRepoID: "repo-a")
+    h.git("repo-a").knownBranches = ["main"]
+    h.git("repo-b").current = "master"
+    h.git("repo-b").knownBranches = ["master"]
+    h.git("repo-b").untracked = "?? .tmp/scratch.log"   // 只有未跟踪草稿
+
+    _ = h.runner.startQueue(queue.id)
+    check(h.board.task(task.id)?.state == .running, "未跟踪草稿不挡预检，任务开始")
+    check(h.board.task(task.id)?.error == nil, "没有记脏工作区错误")
+    check(!h.git("repo-a").checkouts.isEmpty, "repo-a 切了分支")
+    check(!h.git("repo-b").checkouts.isEmpty, "repo-b 也切了")
+}
 section("单目标多仓库 env：脏仓库仍用 legacy 错误键（不写「多仓库」）")
 do {
     let root = WorkspaceRepo(id: ".", absolutePath: "/tmp/ws", isGit: true, displayName: "ws")
@@ -1799,13 +1874,15 @@ do {
     eq(empty.git().enter(branch: "feature/first", base: "main"), .switched,
        "空仓库里照样进得了队列分支（此前必定 errCheckout）")
     eq(empty.checkouts, ["feature/first"], "只做一次 checkout -b，没有去切不存在的 main")
-    check(!empty.calls.contains("status --porcelain"), "空仓库里「工作区脏」这条不适用：没有提交可以丢")
+    check(!empty.calls.contains { $0.hasPrefix("status") },
+          "空仓库里「工作区脏」这条不适用：没有提交可以丢")
     check(!empty.calls.contains("pull --ff-only"), "也没有远端可 pull")
 
     // 有提交的普通仓库完全不变：先干净、先切基线、再 pull、再开分支。
     let normal = FakeRepo()
     eq(normal.git().enter(branch: "feature/x", base: "main"), .switched, "普通仓库照旧")
-    check(normal.calls.contains("status --porcelain"), "普通仓库仍然先查工作区")
+    check(normal.calls.contains("status --porcelain --untracked-files=no"),
+          "普通仓库仍然先查工作区（只看已跟踪改动）")
     check(normal.calls.contains("checkout main"), "先切基线")
     check(normal.calls.contains("pull --ff-only"), "有远端就 pull")
 
@@ -1814,6 +1891,23 @@ do {
     dirty.worktreeClean = false
     eq(dirty.git().enter(branch: "feature/x", base: "main"), .dirtyWorktree,
        "普通仓库脏了就停下，绝不覆盖用户的改动")
+}
+section("未跟踪文件不算「工作区脏」：只挡已跟踪改动（git 自己判撞名）")
+do {
+    // 只有未跟踪草稿：git 允许切分支，判据也不该拦。
+    let scratch = FakeRepo()
+    scratch.untracked = "?? .tmp/\n?? docs/research/x.md"
+    eq(scratch.git().enter(branch: "feature/x", base: "main"), .switched,
+       "只有未跟踪文件时照常切分支")
+    check(scratch.calls.contains("status --porcelain --untracked-files=no"),
+          "干净检查只看已跟踪改动")
+    check(scratch.checkouts.contains("feature/x"), "并且真的切过去了")
+
+    // 已跟踪的未提交改动：仍然停下。
+    let tracked = FakeRepo()
+    tracked.worktreeClean = false
+    eq(tracked.git().enter(branch: "feature/x", base: "main"), .dirtyWorktree,
+       "已跟踪的未提交改动仍然停下")
 }
 section("删掉队列之后的失败任务：全部处理能把它们重新跑起来")
 do {

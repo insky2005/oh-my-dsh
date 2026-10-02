@@ -69,7 +69,7 @@ manual: false
 - 同一队列的任务**共享一个分支、按 FIFO 顺序执行** → 后一个任务看得到前一个的 commit（**依赖关系由分支累积表达**，替代 v1 靠 checkout 失败碰运气）；
 - **全局严格串行**：一个工作树同一时刻只能在一个分支上，所以队列之间也不并行；
 - 队内任务失败 / 取消 → **暂停该队列**，后续任务留在 `queued`，卡片给「重试 / 跳过并继续」；
-- 切到另一个队列前要求**工作区干净**（`git status --porcelain` 非空 → 拒绝启动、卡片标 `tasks.errDirtyTree`）；
+- 切到另一个队列前要求**无未提交的已跟踪改动**（`git status --porcelain --untracked-files=no` 非空 → 拒绝启动、卡片标 `tasks.errDirtyTree`）；未跟踪文件不算脏——`git checkout` 只在未跟踪文件会被目标分支覆盖时自己拒绝；且只在**真的要切**时检查：已在目标分支 / 队列不切分支 / 空仓库跳过（只保护 checkout）；
 - 队列分支：默认 `feature/<slug>`（纯中文 / emoji 名 slug 为空时回退 `feature/queue-<id 前 4 位>`），用户可改、可留空（= 不切分支）；
 - issue 任务的「处理」= 自动建**单任务队列**（`autoCreated`，分支走 `fix/issue-N` / `feature/issue-N`；**非 git 目录不派生分支**，形状由 `TaskQueue.auto(for:baseBranch:switchesBranch:opensPR:)` 统一给）；重试复用同一个自动队列；
 - 「全部处理」= 给**每个待办**各建一个单任务队列（**手动任务同样如此**——不再只管 issue），再按板面顺序串行跑（`focus(onQueue:)` 把运行器指回第一个队列）；>1 条时先弹确认框，**计数与「各自一条分支 / 是否开 PR」的说明只在确认框里**，tooltip 只说按钮做什么。判据收在一处：`TasksRunAllModel.startable(in:)` = 未入队 + **队列被删后的失败 / 已取消**（仍在队列里的失败不算——那是泳道自己的事）；
@@ -151,7 +151,7 @@ manual: false
 |---|---|
 | 工作区不是 GitHub 仓库 | issue 区显示空态（不替换为其他已注册工作区）；**手动任务与队列照常可用**，开 PR 会话不启动（`tasks.errPRNoRemote`） |
 | 工作区不是 git 仓库 | **任务照常能跑**：自动队列不派生分支（`env.canSwitchBranches=false`），提示词按 `TaskRepoShape.plain` 只说「壳层不切分支 / 不提交 / 不推送，直接在当前目录改文件即可；任务要求建仓库或提交就照做」；旧队列带着切不了的分支时启动前先去掉（`dropUnswitchableBranch`），卡片也给「不切分支并重试」 |
-| 脏工作区 + 切队列 | 拒绝启动，任务 failed（`tasks.errDirtyTree`），队列暂停 |
+| 已跟踪改动 + 真要切队列 | 拒绝启动，任务 failed（`tasks.errDirtyTree`），队列暂停；只有未跟踪文件、或已在目标分支 / 不切分支时不算（只保护 checkout） |
 | checkout / 拉取失败 | failed（`tasks.errBranch` / `tasks.errPull`），队列暂停（v1 会静默忽略这两个失败） |
 | 建会话 / 提示词失败 | failed（`tasks.errSession` / `tasks.errPrompt`）；会话已建时仍把 sessionId 记进 board，可追溯 |
 | 超时（**60 分钟**，`TaskRunnerEnv.defaultTimeout`，卡片元行里写明） | `session.cancel` + failed（`tasks.errTimeout`）+ 队列暂停 |

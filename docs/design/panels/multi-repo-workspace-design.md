@@ -161,7 +161,7 @@ struct TaskRunnerEnv {
 
 ### 5.2 `pump` 两段式
 
-1. **预检（pre-flight）**：解析本队列的目标仓库（`queue.repos`，空 = 默认 primary），逐个检查 `isGit / 工作区干净 / base 可解析`。**任一不过即失败并指名仓库**（新增 `TaskFailure` 文案，如 `tasks.errRepoDirty`、`tasks.errRepoNoBase`），此时尚未改动任何仓库。（注意：**执行阶段仍是 fail-fast**，与 §7.2 交付的「各仓库独立处理」不同——避免一半仓库已经开工；若希望执行阶段也独立，另议。）
+1. **预检（pre-flight）**：解析本队列的目标仓库（`queue.repos`，空 = 默认 primary），逐个检查 `isGit / 无未提交的已跟踪改动 / base 可解析`（未跟踪文件不算；真正的撞名冲突由 `git checkout` 自己拒绝）。检查只针对**真的要切分支**的仓库——已在目标分支上、队列不切分支（`branch` 为空）、空仓库（没有提交）都跳过，因为 `enter()` 在这三种情况下不 `checkout`（**「只保护 checkout」**）。**任一不过即失败并指名仓库**（新增 `TaskFailure` 文案，如 `tasks.errRepoDirty`、`tasks.errRepoNoBase`），此时尚未改动任何仓库。（注意：**执行阶段仍是 fail-fast**，与 §7.2 交付的「各仓库独立处理」不同——避免一半仓库已经开工；若希望执行阶段也独立，另议。）
 2. **进入分支**：预检全过，再逐个 `gitFor(repo).enter(branch, base: repo.defaultBase)`。同一分支名在所有目标仓库上创建（各自独立，重名无冲突）。中途某个失败时，前面的仓库已切走——这是**非破坏性**的，不强行回滚，错误里说明「哪些仓库已切到分支、哪个失败」。
 
 ```swift

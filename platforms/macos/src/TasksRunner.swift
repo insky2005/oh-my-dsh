@@ -37,10 +37,17 @@ struct TaskGit {
         run(["rev-parse", "--abbrev-ref", "HEAD"])
     }
 
-    /// Fails CLOSED: a status command that cannot run counts as not clean.
-    func isWorktreeClean() -> Bool {
-        guard let out = run(["status", "--porcelain"]) else { return false }
-        return out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    /// Whether the worktree has TRACKED local changes (staged or unstaged).
+    ///
+    /// Untracked files are deliberately NOT counted. `git checkout` only refuses when
+    /// an untracked file would be overwritten by the target branch, and it says so
+    /// itself; treating every scratch file as a blocker froze queues that git would
+    /// have switched happily (user 2026-10-02: `.tmp/` + local research docs blocked
+    /// a branch switch). Fails CLOSED: a status command that cannot run counts as
+    /// having changes.
+    func hasTrackedChanges() -> Bool {
+        guard let out = run(["status", "--porcelain", "--untracked-files=no"]) else { return true }
+        return !out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     func branchExists(_ name: String) -> Bool {
@@ -91,13 +98,13 @@ struct TaskGit {
         // An UNBORN repository (fresh `git init`, no commits): HEAD points at nothing,
         // so `git checkout <base>` fails with "pathspec … did not match" — the task
         // right after 初始化 git 仓库 failed with tasks.errCheckout before it could do
-        // anything at all. Its files are all untracked too, so the worktree is "dirty"
-        // by definition and the clean check would stop it as well. Nothing can be lost
-        // in a repository that has no commit: the branch is created from the unborn
-        // HEAD, and the task's work simply becomes the first commit.
+        // anything at all. Nothing can be lost in a repository that has no commit:
+        // the branch is created from the unborn HEAD, and the task's work simply
+        // becomes the first commit. (Untracked files no longer count as dirty — see
+        // hasTrackedChanges — but the missing base still needs this exception.)
         let empty = !hasCommits()
         if !empty {
-            guard isWorktreeClean() else { return .dirtyWorktree }
+            guard !hasTrackedChanges() else { return .dirtyWorktree }
             guard run(["checkout", base]) != nil else { return .checkoutFailed }
             if remoteName() != nil, run(["pull", "--ff-only"]) == nil { return .pullFailed }
         }
@@ -281,11 +288,17 @@ extension TasksRunner {
         // maps the pre-flight failures back onto the old reasons and carries no detail.
         // Several targets get the explicit multi-repo reasons + the failing repo id.
         // Phase 1: pre-flight. A failure here leaves every repository where it was.
+        //
+        // "只保护 checkout"（2026-10-02）：干净 / 基线检查只在**真的要切**时才做。
+        // enter() 不碰 git 的三种情况一律跳过——队列没有分支（.noBranch）、已经在
+        // 目标分支上（.alreadyOnBranch）、空仓库没有提交可丢（直接 checkout -b）——
+        // 否则「已在分支 + 有改动」会被预检拦下，而 enter() 根本不会 checkout。
         for repo in targets {
             guard repo.isGit else { return (.notGitRepo, single ? nil : repo.id) }
             let git = gitFor(repo)
-            guard git.hasCommits() else { continue }
-            guard git.isWorktreeClean() else {
+            guard let wanted = branch, !wanted.isEmpty, git.hasCommits(),
+                  git.currentBranch() != wanted else { continue }
+            guard !git.hasTrackedChanges() else {
                 return (single ? .dirtyWorktree : .repoDirty, single ? nil : repo.id)
             }
             guard git.baseIsResolvable(repoBase(repo)) else {
