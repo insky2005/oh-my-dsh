@@ -14,6 +14,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 ## research/ — 调研 · 选型 · 策略
 
 - [productization.md](research/productization.md) — 产品化总纲：P0 现状 → P1 开源/CI → P2 Windows → P3 Linux → P4 生态增长
+- [ai-native-workflow-architecture.md](research/ai-native-workflow-architecture.md) — AI 原生研发工作流的**产品能力架构与目标**：事项为中心的状态图 / 并行条件 / 载体与角色分工 / 工具缺口（草案）
 - 在途草案（尚未提交，暂不建链）：`agent-driver-research.md`（统一驱动 AI coding agent 的接口选型调研）、`agent-driver-protocols.md`（协议对比勘误稿，ACP 为准）、`agent-enterprise-research.md`（企业能力可复用开源方案调研）、`multi-agent-host-design.md`（多 Agent 宿主 + 企业治理架构提案草案）
 
 ## design/shell/ — 壳层共性设计
@@ -33,6 +34,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 - [builtin-skills-design.md](design/panels/builtin-skills-design.md) — 内置 Skill 全局化 + 重命名
 - [task-todo-skill-design.md](design/panels/task-todo-skill-design.md) — `task-todo` 技能与 `/api/tasks/*` 契约
 - [multi-repo-workspace-design.md](design/panels/multi-repo-workspace-design.md) — 多仓库工作区：根目录非 git 时的仓库集合识别与 git 工作流（草案）
+- [task-completion-verification-design.md](design/panels/task-completion-verification-design.md) — 任务完成校验：会话结束≠任务完成，marker + 待确认（草案）
 - [file-panel-composer-reference.md](design/panels/file-panel-composer-reference.md) — 文件面板「添加到对话」`@` 引用
 
 ## design/channels/ — 通道设计
