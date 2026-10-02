@@ -1,6 +1,6 @@
 # 任务完成校验设计（Task Completion Verification）
 
-> 状态：部分实现（P1 已落地：任务会话 marker 协议 + `finish()` 依据 marker 判定；P2 已落地：独立 `TaskState.needsReview` 待确认状态 + 卡片「重试 / 标记完成」+ 队列暂停原因；P3–P4 待做）· 日期：2026-10-02 · 关联：docs/design/panels/issue-runner-design.md、docs/design/panels/tasks-queue-session-loop-design.md、platforms/macos/src/TasksRunner.swift
+> 状态：部分实现（P1 已落地：任务会话 marker 协议 + `finish()` 依据 marker 判定；P2 已落地：独立 `TaskState.needsReview` 待确认状态 + 卡片「重试 / 标记完成」+ 队列暂停原因；P3 已落地：完成通知按「完成 / 待确认」分开计数；P4 待做）· 日期：2026-10-02 · 关联：docs/design/panels/issue-runner-design.md、docs/design/panels/tasks-queue-session-loop-design.md、platforms/macos/src/TasksRunner.swift
 > 来源：2026-10-02 多仓库队列实测（P2/P3/P4 断网未完成却被标记「已完成」）
 
 ## 1. 现象
@@ -97,6 +97,18 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 
 队列汇总只把**有 marker/汇报**的任务计为「完成」，其余计为「待确认」。通知文案改为「N 条完成 / M 条待确认」，不再无条件输出「已全部完成（N/N）」。即使 §4.1–4.3 暂不实现，这一条也应单独做。
 
+**P3 实现状态（2026-10-02）**：
+
+- `TaskPrompts.completionCounts(tasks)` 分开数 `.done`（完成）与 `.needsReview`（待确认）；
+  其余状态（失败 / 取消 / 关闭）不计入这两类，走自己的记号与原因。
+- `queueFinishedSummary`：没有任何待确认时保留「已全部完成（N/N）」；一旦有待确认，首行改为
+  「完成 N 条 / 待确认 M 条（共 T 条）」，并在尾部写明「不是全部完成」，待确认任务用 `?` 标记且
+  列出两条人工出口（重试 / 标记完成）。**用户「跳过并继续」后队列仍会到 `.done`，此时通知不再谎报全绿**。
+- 判据即 P1/P2 的状态机（`.done` = 本次 marker 校验通过或用户「标记完成」；`.needsReview` = 没拿到完成证据），
+  因此既覆盖「有 marker/汇报」，又不会把用户确认过的任务误算成待确认。
+- 测试：`tests/tasks-panel/runner-tests.swift` 覆盖全完成、完成 / 待确认混合，以及「跳过待确认 → 队列完成」
+  的端到端通知文案；`run.sh` 有 P3 source guard。
+
 ### 4.5 网络异常信号（调研项）
 
 若 dsh 的会话列表或会话日志暴露 abort / error 类结束原因，可直接判 `interrupted`，比 marker 更早、更准。当前 `sessionState` 只读 `running`，需先确认 dsh 是否提供；不提供就完全依赖 §4.1。
@@ -131,14 +143,16 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 |---|---|---|
 | **P1** ✅ | 任务会话 marker 协议 + `finish()` 依据 marker 判定 | 堵住「断网 = 完成」 |
 | **P2** ✅ | 待确认状态 + 卡片动作（重试 / 标记完成）+ 队列暂停 | 把判断权交回用户 |
-| **P3** | 完成通知诚实化 | 低成本纠偏 |
+| **P3** ✅ | 完成通知诚实化 | 低成本纠偏 |
 | **P4** | `expectsCommit` 产物校验（可选） | 抓「什么都没干」 |
 
 ## 9. 测试
 
 - **运行器**：会话 idle 但汇报无 marker → 不判 done（待确认 / unverified）；有 marker → done；marker 不属于本次 turn → 不采纳；空汇报 → 待确认。
   - P1 已在 `tests/tasks-panel/runner-tests.swift` 覆盖以上四种情形（含「marker 出现在中间行不采纳」与 `local.json` 往返 / `index.json` 不含 marker）。
-- **通知**：混合「完成 / 待确认」时的计数与文案。
+- **通知**：混合「完成 / 待确认」时的计数与文案；全完成仍报「已全部完成」，含待确认则报「完成 N / 待确认 M」
+  且不再出现「已全部完成」。P3 已在 `tests/tasks-panel/runner-tests.swift` 覆盖两种场景，并补了一条
+  「跳过待确认 → 队列 `.done`」的端到端用例（正是 P2 遗留的谎报点）。
 - **视图模型**：待确认徽标与「标记完成 / 重试」动作；队列暂停原因。
   - P2 已在 `tests/tasks-panel/ui-tests.swift` 覆盖徽标、`canConfirmDone`、暂停原因与状态语义。
 - **运行器**：待确认触发队列暂停（不启动后续任务、不回传、不起交付会话）；重试与「标记完成」是两条出口。P2 已在 `tests/tasks-panel/runner-tests.swift` 覆盖。

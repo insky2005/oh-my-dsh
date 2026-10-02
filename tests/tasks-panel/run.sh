@@ -218,6 +218,17 @@ if ! grep -q 'case needsReview' ../../platforms/macos/src/TasksCore.swift \
 fi
 echo "ok - P2 待确认：独立状态 + 重试 / 标记完成"
 
+# P3 完成通知诚实化：队列汇总必须把「完成 / 待确认」分开计数，不得再无条件输出
+# 「已全部完成」。状态机（P1/P2）已经给出判定，汇总只负责如实翻译成计数与文案。
+if ! grep -q 'func completionCounts' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -qF 'counts.needsReview == 0' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -qF '完成 \(counts.done) 条 / 待确认 \(counts.needsReview) 条（共 \(tasks.count) 条）' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -qF 'case .needsReview: mark = "?"' ../../platforms/macos/src/TasksRunner.swift; then
+  echo "FAIL - P3 完成通知：汇总必须把待确认单独计数，不再无条件报「已全部完成」"
+  exit 1
+fi
+echo "ok - P3 完成通知：完成 / 待确认分开计数，待确认带 ? 与人工出口"
+
 # 任务面板的每一项设置都必须按工作区存：一个全局键会把某个工作区的选择泄进所有工作区
 # （「交付成功后自动关闭队列」曾写全局 tasksAutoCloseOnPublish，于是每个工作区都显示勾上）。
 IP=../../platforms/macos/src/IssueRunnerPanel.swift

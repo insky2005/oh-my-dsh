@@ -927,6 +927,28 @@ enum TaskPrompts {
         return lines.joined(separator: "\n")
     }
 
+    /// §4.4 完成通知诚实化：数出队列里「确认完成」与「待确认」各几条。
+    ///
+    /// 判据就是 P1/P2 落定的状态机：`.done` 只有两条来路——本次完成 marker 在会话
+    /// 最后一行校验通过（`markerVerified`），或用户「标记完成」确认；`.needsReview`
+    /// 正是「会话结束了，但没拿到本次 marker / 汇报」的落点。其余状态（失败 / 取消 /
+    /// 关闭）有自己的记号与原因，不计入这两类。
+    ///
+    /// 汇总不再独立读 marker：状态已经是那条判定，而**用户确认过的任务没有 marker
+    /// 也不该被当成待确认**。汇总只负责把状态译成诚实的计数。
+    static func completionCounts(_ tasks: [TaskItem]) -> (done: Int, needsReview: Int) {
+        var done = 0
+        var needsReview = 0
+        for task in tasks {
+            switch task.state {
+            case .done: done += 1
+            case .needsReview: needsReview += 1
+            default: break
+            }
+        }
+        return (done, needsReview)
+    }
+
     /// The completion report handed back to the session that created a queue — sent
     /// when the queue reaches .done (see TasksRunner.notifyFinishedQueues).
     ///
@@ -938,8 +960,14 @@ enum TaskPrompts {
     /// `commits` is the queue branch's `git log --oneline base..HEAD`; empty, or a
     /// branchless queue (a non-git workspace), drops the section entirely.
     static func queueFinishedSummary(queue: TaskQueue, tasks: [TaskItem], commits: [String] = []) -> String {
-        let done = tasks.filter { $0.state == .done }.count
-        var lines: [String] = ["【任务面板】队列「\(queue.name)」已全部完成（\(done)/\(tasks.count)）"]
+        // §4.4 完成通知诚实化：先分开数「确认完成」与「待确认」，不再一律报「全部完成」。
+        let counts = Self.completionCounts(tasks)
+        var lines: [String]
+        if counts.needsReview == 0 {
+            lines = ["【任务面板】队列「\(queue.name)」已全部完成（\(counts.done)/\(tasks.count)）"]
+        } else {
+            lines = ["【任务面板】队列「\(queue.name)」完成 \(counts.done) 条 / 待确认 \(counts.needsReview) 条（共 \(tasks.count) 条）"]
+        }
         if let branch = queue.branch, !branch.isEmpty {
             lines.append("分支：\(branch) → \(queue.baseBranch)")
         }
@@ -950,6 +978,7 @@ enum TaskPrompts {
             switch task.state {
             case .done: mark = "✓"
             case .failed: mark = "✗"
+            case .needsReview: mark = "?"
             case .cancelled: mark = "−"
             default: mark = "·"
             }
@@ -957,6 +986,9 @@ enum TaskPrompts {
             if task.state == .failed {
                 let detail = task.errorDetail.map { "：" + $0 } ?? ""
                 lines.append("   失败：\(task.error ?? "失败")\(detail)")
+            } else if task.state == .needsReview {
+                // 没有完成证据的任务：如实写「待确认」，并给出两条人工出口。
+                lines.append("   待确认：会话结束了，但没有拿到本次完成标记——请先「重试」或确认后「标记完成」")
             } else if task.state == .cancelled {
                 lines.append("   已取消")
             }
@@ -984,6 +1016,9 @@ enum TaskPrompts {
             for commit in commits { lines.append("  " + commit) }
         }
         lines.append("")
+        if counts.needsReview > 0 {
+            lines.append("注意：有任务待确认，**不是全部完成**——请先把待确认任务交给用户处理（重试 / 标记完成），再按验收结果判断。")
+        }
         lines.append("这是任务面板的完成通知。请用一两句话确认收到并等待用户验收，不要主动改代码或新建任务。")
         return lines.joined(separator: "\n")
     }

@@ -2790,6 +2790,81 @@ do {
     check(!nextPrompt.contains("—— 已完成"), "没有把待确认写进「已完成」")
 }
 
+// MARK: - P3 完成通知诚实化
+
+section("P3 完成通知：全完成报「已全部完成」，完成 / 待确认混合如实计数")
+do {
+    // 全完成：没有任何待确认，保持原有「已全部完成（N/N）」。
+    var allDone = TaskBoard()
+    let a1 = TaskItem.manual(title: "A", id: "manual-0p10aaaa")
+    let a2 = TaskItem.manual(title: "B", id: "manual-0p11bbbb")
+    allDone.tasks = [a1, a2]
+    let aq = allDone.createQueue(name: "全绿", branch: "feature/all", autoPR: false)
+    allDone.markRunning(a1.id); allDone.markDone(a1.id, report: "A 完成")
+    allDone.markRunning(a2.id); allDone.markDone(a2.id, report: "B 完成")
+    let allTasks = [allDone.task(a1.id)!, allDone.task(a2.id)!]
+    let allCounts = TaskPrompts.completionCounts(allTasks)
+    eq(allCounts.done, 2, "全完成：完成计 2")
+    eq(allCounts.needsReview, 0, "全完成：待确认计 0")
+    let allText = TaskPrompts.queueFinishedSummary(queue: allDone.queue(aq.id)!, tasks: allTasks)
+    check(allText.contains("已全部完成（2/2）"), "全完成仍写「已全部完成（2/2）」")
+    check(!allText.contains("待确认"), "全完成不提「待确认」")
+
+    // 混合：2 完成 + 1 待确认 —— 首行必须写清两个计数，不能再报「全部完成」。
+    var mixed = TaskBoard()
+    let m1 = TaskItem.manual(title: "One", id: "manual-0p12cccc")
+    let m2 = TaskItem.manual(title: "Two", id: "manual-0p13dddd")
+    let m3 = TaskItem.manual(title: "Three", id: "manual-0p14eeee")
+    mixed.tasks = [m1, m2, m3]
+    let mq = mixed.createQueue(name: "混合", autoPR: false)
+    mixed.markRunning(m1.id); mixed.markDone(m1.id, report: "一完成")
+    mixed.markRunning(m2.id); mixed.markDone(m2.id, report: "二完成")
+    mixed.markRunning(m3.id); _ = mixed.markNeedsReview(m3.id, report: "三做了一半")
+    let mixedTasks = [mixed.task(m1.id)!, mixed.task(m2.id)!, mixed.task(m3.id)!]
+    let mixedCounts = TaskPrompts.completionCounts(mixedTasks)
+    eq(mixedCounts.done, 2, "混合：完成计 2")
+    eq(mixedCounts.needsReview, 1, "混合：待确认计 1")
+    let mixedText = TaskPrompts.queueFinishedSummary(queue: mixed.queue(mq.id)!, tasks: mixedTasks)
+    check(mixedText.contains("完成 2 条 / 待确认 1 条（共 3 条）"),
+          "首行如实写「完成 2 条 / 待确认 1 条」")
+    check(!mixedText.contains("已全部完成"), "有欠账就不再报「已全部完成」")
+    check(mixedText.contains("3. ? Three"), "待确认任务带自己的记号 ?")
+    check(mixedText.contains("待确认："), "待确认任务列出原因与两条出口")
+    check(mixedText.contains("不是全部完成"), "尾部再强调不是全部完成")
+    check(mixedText.contains("三做了一半"), "待确认任务的汇报照样带上，验收看得到它做到哪")
+}
+
+section("P3 跳过待确认后队列完成：通知仍如实报「完成 1 / 待确认 1」")
+do {
+    var (board, first, second, queueID) = twoTaskBoard()
+    board.local.queueSessions[queueID] = "origin-session"
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: first, into: queueID)
+    _ = h.runner.enqueue(taskID: second, into: queueID)
+    h.dsh.reports["session-1"] = "第一条做了一半。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(first)?.state, .needsReview, "第一条待确认")
+
+    // 用户「跳过并继续」：第二条接着跑（FakeDsh 默认守约，回显 marker）。
+    h.dsh.echoesTaskMarkers = true
+    check(h.runner.skip(taskID: first), "跳过待确认")
+    eq(h.board.task(second)?.state, .running, "第二条跑起来")
+    h.dsh.reports["session-2"] = "第二条做完了。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.task(second)?.state, .done, "第二条完成")
+    eq(h.board.queue(queueID)?.state, .done, "队列到达 done")
+    eq(h.dsh.notifications.count, 1, "队列完成发一次通知")
+    let text = h.dsh.notifications.first?.text ?? ""
+    check(text.contains("完成 1 条 / 待确认 1 条（共 2 条）"), "通知如实写「完成 1 / 待确认 1」")
+    check(!text.contains("已全部完成"), "跳过待确认也不谎报「已全部完成」")
+    check(text.contains("1. ? One"), "第一条在列表里是待确认 ?")
+    check(text.contains("2. ✓ Two"), "第二条是完成 ✓")
+}
+
 if failures == 0 {
     print("ok - \(checks) checks passed")
 } else {
