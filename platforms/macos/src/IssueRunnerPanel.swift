@@ -142,6 +142,14 @@ final class IssueRunnerPanelController: NSObject {
     /// current → "main"): the base an issue task's queue is built on, and what the
     /// queue form prefills.
     private var workspaceDefaultBase = "main"
+    /// The adopted workspace's repositories (multi-repo, P1b): the header counts
+    /// them, the queue form picks among them, and the runner env hands each its own
+    /// git. Empty until a workspace is adopted.
+    private var workspaceRepoSet = WorkspaceRepoSet()
+    /// Per-path repo-set cache: the registry factory detects it to build the env,
+    /// and adoptWorkspace reuses the same answer for the header / forms instead of
+    /// probing git twice on the main thread.
+    private var repoSetByPath: [String: WorkspaceRepoSet] = [:]
     /// Workspaces other than the current one that have a task in flight (their
     /// runners are alive). The header offers a way to jump to them — tracking work
     /// the user cannot see would just be a different way of hiding it.
@@ -196,8 +204,12 @@ final class IssueRunnerPanelController: NSObject {
         // without a GitHub remote are different things and say so differently.
         let workspace = TaskWorkspaceModel.build(owner: repo?.owner, repo: repo?.repo,
                                                  workspacePath: repoRootPath,
-                                                 isGitRepo: workspaceIsGit)
+                                                 isGitRepo: workspaceIsGit,
+                                                 repoSet: workspaceRepoSet)
         repoLabel.fullText = workspace.title
+        // Multi-repo: the compact line counts repositories, the tooltip names them
+        // (the primary marked) — the count alone would hide which ones.
+        repoLabel.toolTip = workspace.repoListTooltip
         // The gear opens 面板设置 (token + 工作流). The integration default applies
         // to every workspace, so the gear is NOT GitHub-gated any more.
         configButton.isEnabled = true
@@ -868,11 +880,20 @@ final class IssueRunnerPanelController: NSObject {
             recovered = board.reconcileAfterRestart(interruptedError: TaskFailure.interrupted.rawValue)
             TasksStore.saveLocalHalf(path, board)
         }
-        let detected = Self.detectGitHubRemote(path)
-        let isGit = Self.isGitRepo(path)
+        // The repo SET is what this workspace is now (design §4.1): the header
+        // counts it, the queue form picks among it, and the env hands each repo its
+        // own git. Detection is blocking, so it happens here once — adoptWorkspace
+        // reuses the cached answer for the header / forms.
+        let repoSet = repoSetByPath[path] ?? Self.detectRepoSet(path)
+        repoSetByPath[path] = repoSet
+        // Issues still belong to ONE repo: the root's GitHub remote, else the
+        // primary's (design §9 — 默认跟随主仓库).
+        let detected = Self.issueRepo(root: path, repoSet: repoSet)
+        let isGit = repoSet.gitAvailable
         let timeout = Self.taskTimeout()
         let runner = TasksRunner(board: board,
-                                 env: makeEnv(repoRoot: path, repo: detected, isGit: isGit),
+                                 env: makeEnv(repoRoot: path, repo: detected, isGit: isGit,
+                                              repoSet: repoSet),
                                  timeout: timeout)
         let extra = recovered.interrupted.isEmpty ? "" : ", interrupted: " + recovered.interrupted.joined(separator: ",")
         AppLog.shared.log("tasks: board loaded at \(path) — \(board.tasks.count) tasks, \(board.queues.count) queues"
@@ -892,7 +913,7 @@ final class IssueRunnerPanelController: NSObject {
     /// dsh session RPC on this port, GitHub REST with this repo's token, and the
     /// four-file persistence under .dsh/tasks/.
     private func makeEnv(repoRoot: String, repo: (owner: String, repo: String)?,
-                         isGit: Bool) -> TaskRunnerEnv {
+                         isGit: Bool, repoSet: WorkspaceRepoSet = WorkspaceRepoSet()) -> TaskRunnerEnv {
         // The dsh web port is read AT CALL TIME, never frozen here.
         //
         // This env is built as soon as the panel adopts a workspace — which is
@@ -911,11 +932,15 @@ final class IssueRunnerPanelController: NSObject {
         // Per workspace, not per panel: two runners can be alive at once, each with
         // its own remote, token and PR policy.
         let token = repo.flatMap { loadToken(for: $0) }
+        // The PRIMARY repo is the default git target (a legacy single-repo workspace
+        // has the root as its primary; a plain directory has none and keeps repoRoot).
+        // Per-repo handles live in gitFor below (design §5.1).
+        let primaryPath = repoSet.primary?.absolutePath ?? repoRoot
         return TaskRunnerEnv(
             git: TaskGit(run: { args in
-                              Self.runProcess("/usr/bin/git", ["-C", repoRoot] + args, cwd: repoRoot)
+                              Self.runProcess("/usr/bin/git", ["-C", primaryPath] + args, cwd: primaryPath)
                           },
-                          remoteName: { Self.pushRemoteName(path: repoRoot) }),
+                          remoteName: { Self.pushRemoteName(path: primaryPath) }),
             repoRoot: repoRoot,
             createSession: { cwd in
                 // Both the port and the workspaceId are resolved now, not when the
@@ -967,6 +992,20 @@ final class IssueRunnerPanelController: NSObject {
                 // can still tell the truth, and it is written on the runner's background
                 // queue, so the probe costs the UI nothing.
                 let shape = Self.repoShape(path: repoRoot)
+                // Prompt targets follow the LIVE repo set (design §5): a workspace
+                // can gain or lose repositories between tasks. P1's default target
+                // is the primary; a queue-level target set arrives with delivery (P3).
+                let liveSet = Self.detectRepoSet(repoRoot)
+                let targets: [TaskPromptTarget]
+                if let primary = liveSet.primary {
+                    targets = [TaskPromptTarget(
+                        repoID: primary.id,
+                        shape: TaskRepoShape.detect(isGit: primary.isGit,
+                                                    hasGitHubRemote: primary.github != nil),
+                        defaultBase: primary.defaultBase)]
+                } else {
+                    targets = [TaskPromptTarget(repoID: ".", shape: shape)]
+                }
                 // 队列自己的「基于分支」；不在队列里的任务用工作区的默认分支 —— 两条
                 // 分支 rail 都会点名它（「若无分支，须基于 X 新建」/「直接在主分支 X 上处理」）。
                 let base = queue?.baseBranch ?? Self.detectDefaultBaseBranch(path: repoRoot)
@@ -976,13 +1015,15 @@ final class IssueRunnerPanelController: NSObject {
                                              branch: queue?.branch, queueName: sharedQueueName,
                                              base: base,
                                              brief: brief,
-                                             shape: shape)
+                                             shape: shape,
+                                             targets: targets)
                 }
                 return TaskPrompts.manual(title: task.title, body: task.body,
                                           branch: queue?.branch, queueName: sharedQueueName,
                                           base: base,
                                           brief: brief,
-                                          shape: shape)
+                                          shape: shape,
+                                          targets: targets)
             },
             // The 交接简报: what the previous task in this queue last said. Read
             // through the shell's core bridge (the same session logs the audit panel
@@ -1001,6 +1042,17 @@ final class IssueRunnerPanelController: NSObject {
                     blocking()
                     DispatchQueue.main.async { completion() }
                 }
+            },
+            // The workspace repo set and one git handle per repo (design §5.1) —
+            // the per-repo pipeline (pre-flight / branch / brief) is P2; today the
+            // legacy `git` field above already points at the primary.
+            repos: repoSet.repos,
+            gitFor: { repo in
+                TaskGit(run: { args in
+                             Self.runProcess("/usr/bin/git", ["-C", repo.absolutePath] + args,
+                                             cwd: repo.absolutePath)
+                         },
+                         remoteName: { Self.pushRemoteName(path: repo.absolutePath) })
             }
         )
     }
@@ -1120,22 +1172,28 @@ final class IssueRunnerPanelController: NSObject {
     /// user is left with a header that says 非 Git 仓库 in a directory that is one.
     private func recheckWorkspaceShape() {
         guard let path = workspaces.currentPath else { return }
-        // Only ask git when the answer could have changed, so the steady state costs
-        // nothing: no repository → ask whether there is one now; a repository without a
-        // GitHub remote → ask whether there is one now.
-        let isGitNow = workspaceIsGit || Self.isGitRepo(path)
-        guard isGitNow else { return }
-        let hasRemoteNow = repo != nil || Self.detectGitHubRemote(path) != nil
-        guard let shape = TaskWorkspaceShape.change(wasGit: workspaceIsGit, hadRemote: repo != nil,
-                                                     isGitNow: isGitNow, hasRemoteNow: hasRemoteNow),
+        // Re-detect the whole repository set, not just「is the root a repo now」: a
+        // container workspace can gain or lose a CHILD repository while its root is
+        // not a repository at all (design §4.3). This runs after a task finished /
+        // the workspace went idle — never on the steady-state tick.
+        let repoSetNow = Self.detectRepoSet(path)
+        let repoIDsNow = repoSetNow.repos.map { $0.id }
+        let isGitNow = repoSetNow.gitAvailable
+        let hasRemoteNow = repoSetNow.prAvailable
+        guard let shape = TaskWorkspaceShape.change(wasRepoIDs: workspaceRepoSet.repos.map { $0.id },
+                                                     repoIDsNow: repoIDsNow,
+                                                     wasGit: workspaceIsGit,
+                                                     hadRemote: repo != nil,
+                                                     isGitNow: isGitNow,
+                                                     hasRemoteNow: hasRemoteNow),
               let messageKey = shape.messageKey else { return }
-        // The runner's env captured "there is no repository here" when it was built, so
-        // the runner has to be rebuilt — but only with NOTHING in flight in this
-        // workspace: two runners on one board would step the same task twice. (The next
-        // finish, or the go-idle call, tries again.)
+        // The runner env captured the repo set when it was built, so the runner has
+        // to be rebuilt — but only with NOTHING in flight in this workspace: two
+        // runners on one board would step the same task twice. (The next finish, or
+        // the go-idle call, tries again.)
         guard workspaces.trackedRunner(for: path)?.isBusy != true else { return }
         AppLog.shared.log("tasks: workspace re-detected at \(path)"
-                          + " (git=\(isGitNow ? "yes" : "no"), github=\(hasRemoteNow ? "yes" : "no"))"
+                          + " (repos=\(repoIDsNow.joined(separator: ",")), git=\(isGitNow ? "yes" : "no"), github=\(hasRemoteNow ? "yes" : "no"))"
                           + " — runner rebuilt for the new shape")
         workspaces.invalidate(path)
         adoptWorkspace(path)
@@ -1195,17 +1253,24 @@ final class IssueRunnerPanelController: NSObject {
     /// branch simply fails with tasks.errNotGit if the directory is not a git
     /// repository (docs/design/panels/issue-runner-design.md §V2-7).
     private func adoptWorkspace(_ path: String) {
-        let detected = Self.detectGitHubRemote(path)
+        // The repo SET is the workspace shape now (multi-repo, P1b): detect it once,
+        // cache it for the runner env, and derive the legacy single-root facts from
+        // the primary. Always fresh: recheckWorkspaceShape re-adopts precisely
+        // because the set changed, so a cache hit here would hide the change.
+        let repoSet = Self.detectRepoSet(path)
+        repoSetByPath[path] = repoSet
+        workspaceRepoSet = repoSet
+        let detected = Self.issueRepo(root: path, repoSet: repoSet)
         let sameBoard = (workspaces.currentPath == path) && runner != nil
         repo = detected
         repoRootPath = path
         let github = detected.map { $0.owner + "/" + $0.repo } ?? "-"
-        workspaceIsGit = Self.isGitRepo(path)
-        workspaceDefaultBase = workspaceIsGit ? Self.detectDefaultBaseBranch(path: path) : "main"
+        workspaceIsGit = repoSet.gitAvailable
+        workspaceDefaultBase = repoSet.primary?.defaultBase ?? "main"
         // Any remote (not only GitHub) counts — push needs somewhere to push to.
         // Merge does not: it is a local operation.
-        workspaceHasRemote = workspaceIsGit && Self.pushRemoteName(path: path) != nil
-        AppLog.shared.log("tasks: workspace adopted at \(path) (github=\(github) git=\(workspaceIsGit ? "yes" : "no") base=\(workspaceDefaultBase))")
+        workspaceHasRemote = repoSet.repos.contains { $0.remoteName != nil }
+        AppLog.shared.log("tasks: workspace adopted at \(path) (github=\(github) git=\(workspaceIsGit ? "yes" : "no") base=\(workspaceDefaultBase) repos=\(repoSet.repos.count))")
         updateLabels()
         if !sameBoard {
             // Switching workspaces does NOT stop tracking the one we leave: its
@@ -1355,6 +1420,13 @@ final class IssueRunnerPanelController: NSObject {
                                         hasGitHubRemote: repo != nil)
     }
 
+    /// The repos a queue form may pick from: the whole set in multi-repo mode,
+    /// none in the single-repo / plain shapes (the form then looks exactly like
+    /// today — no selector at all, design §8).
+    private var repoPickerRepos: [WorkspaceRepo] {
+        workspaceRepoSet.isMultiRepo ? workspaceRepoSet.repos : []
+    }
+
     // MARK: - 交付成功后自动关闭队列 (PER WORKSPACE)
 
     /// 交付成功后自动关闭队列 —— **per workspace**, like every other 面板设置 item
@@ -1383,6 +1455,42 @@ final class IssueRunnerPanelController: NSObject {
             return TimeInterval(minutes * 60)
         }
         return TasksRunner.defaultTimeout
+    }
+
+    /// Detect a workspace's repository set (design §4.1). BLOCKING (git), so it
+    /// runs where the existing adopt probes run. The user's
+    /// `tasksPrimaryRepoByWorkspace` pick resolves the primary; a stale one falls
+    /// back to the automatic rule (root → first GitHub → first git).
+    static func detectRepoSet(_ path: String) -> WorkspaceRepoSet {
+        let set = WorkspaceRepoSet.detect(root: path,
+                                          primaryRepoID: storedPrimaryRepoID(forWorkspace: path))
+        guard set.repos.isEmpty, isGitRepo(path) else { return set }
+        // A workspace registered to a SUBDIRECTORY of a repository is inside a work
+        // tree but is not its top level. detect() only takes the root when it IS the
+        // top level, so fall back to the legacy single-repo view rather than calling
+        // the directory plain and taking git away from it.
+        let probe = WorkspaceRepoProbe.live
+        let root = WorkspaceRepo(id: ".", absolutePath: path, isGit: true,
+                                 defaultBase: probe.defaultBase(path),
+                                 remoteName: probe.remoteName(path),
+                                 github: probe.github(path),
+                                 displayName: (path as NSString).lastPathComponent)
+        return WorkspaceRepoSet(repos: [root], primary: root)
+    }
+
+    /// The user's explicit primary-repo pick for a workspace, or nil.
+    static func storedPrimaryRepoID(forWorkspace path: String) -> String? {
+        guard let map = ShellConfig.shared.object(forKey: "tasksPrimaryRepoByWorkspace") as? [String: Any],
+              let id = map[workspaceSettingsKey(path)] as? String, !id.isEmpty else { return nil }
+        return id
+    }
+
+    /// The repo ISSUES belong to: the root's GitHub remote, else the primary's
+    /// (design §9: default to the primary, never silently to another one).
+    static func issueRepo(root: String, repoSet: WorkspaceRepoSet) -> (owner: String, repo: String)? {
+        if let root = detectGitHubRemote(root) { return root }
+        guard let github = repoSet.primary?.github else { return nil }
+        return (github.owner, github.name)
     }
 
     /// True when the directory is inside a git work tree.
@@ -2532,15 +2640,19 @@ final class IssueRunnerPanelController: NSObject {
                                           hasRemote: workspaceHasRemote,
                                           defaultBase: workspaceDefaultBase,
                                           defaultIntegration: workspaceIntegration)
+                .forRepos(repoPickerRepos, primary: workspaceRepoSet.primary)
             model.autoPR = false
             showQueueForm(model)
         case .edit(let queueID):
             guard let queue = runner.board.queue(queueID) else { return }
+            // The repo selector is a multi-repo affordance: single-repo / plain
+            // workspaces pass [] and keep today's form unchanged.
             showQueueForm(QueueComposerModel.edit(queue, prAvailable: repo != nil,
                                                   gitAvailable: workspaceIsGit,
                                                   hasRemote: workspaceHasRemote,
                                                   defaultBaseBranch: workspaceDefaultBase,
-                                                  defaultIntegration: workspaceIntegration))
+                                                  defaultIntegration: workspaceIntegration)
+                .forRepos(repoPickerRepos, primary: workspaceRepoSet.primary))
         }
     }
 

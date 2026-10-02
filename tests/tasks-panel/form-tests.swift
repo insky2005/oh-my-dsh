@@ -609,6 +609,46 @@ do {
     eq(submitted?.integrationChoices.count, 5, "选项集合包含跟随设置与「无」")
 }
 
+section("多仓库队列表单：仓库选择区（N==1 锁定）")
+do {
+    let root = WorkspaceRepo(id: ".", absolutePath: "/tmp/ws", isGit: true, displayName: "ws")
+    let a = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                         displayName: "repo-a")
+    let b = WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                         displayName: "repo-b")
+    let form = QueueComposerView(model: QueueComposerModel.create().forRepos([root, a, b],
+                                                                           primary: root))
+    var submitted: QueueComposerModel?
+    form.onSubmit = { submitted = $0 }
+    _ = layout(form, width: 400)
+    eq(form.repoCheckboxes.map { $0.title }, ["ws", "repo-a", "repo-b"], "逐个列出仓库")
+    check(form.repoCheckboxes[0].state == .on, "默认勾选 primary")
+    check(form.repoCheckboxes[1].state == .off, "其余不勾")
+    check(form.repoCheckboxes[1].isEnabled, "N>=2 时可点")
+    eq(form.repoNote.stringValue, "reposHint", "并给出选择说明")
+
+    form.repoCheckboxes[1].state = .on
+    form.repoTapped(form.repoCheckboxes[1])
+    check(form.repoCheckboxes[1].state == .on, "勾上第二个仓库后仍是选中态")
+    form.nameField.stringValue = "Lane"
+    form.controlTextDidChange(typed(form.nameField))
+    form.submitTapped()
+    eq(Set(submitted?.selectedRepoIDs ?? []), Set([".", "repo-a"]), "提交带上两个目标仓库")
+
+    // N==1：显示但只读锁定。
+    let locked = QueueComposerView(model: QueueComposerModel.create().forRepos([a], primary: a))
+    _ = layout(locked, width: 400)
+    check(locked.repoCheckboxes.count == 1, "唯一仓库也列出来")
+    check(!locked.repoCheckboxes[0].isEnabled, "N==1 锁定不可点")
+    eq(locked.repoNote.stringValue, "reposLocked", "并说明锁定原因")
+
+    // 单仓库 / 普通目录：整块隐藏，表单与今天一致。
+    let legacy = QueueComposerView(model: QueueComposerModel.create())
+    _ = layout(legacy, width: 400)
+    check(legacy.repoCheckboxes.isEmpty, "没有仓库选择区")
+    check(legacy.repoBlock.isHidden, "选择区隐藏")
+}
+
 section("面板设置抽屉：token + 工作流默认值")
 do {
     let model = TaskSettingsModel(token: "ghp_x", defaultIntegration: .merge,

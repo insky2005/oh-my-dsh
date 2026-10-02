@@ -177,6 +177,18 @@ struct TaskRunnerEnv {
     /// Run blocking work (git, HTTP, RPC) off the main thread, then hop back.
     /// Tests pass an immediate, synchronous implementation.
     var perform: (_ blocking: @escaping () -> Void, _ completion: @escaping () -> Void) -> Void
+    /// The workspace's repositories (multi-repo, design §5.1). Empty on every
+    /// legacy path — a single-repo env carries exactly one root repo, a plain one
+    /// none — and nothing reads it unless a target actually comes from it.
+    var repos: [WorkspaceRepo] = []
+    /// Per-repo git handle (design §5.1). nil = fall back to `git` (the root /
+    /// primary handle), so a legacy single-repo env needs nothing new.
+    var gitFor: ((WorkspaceRepo) -> TaskGit)?
+
+    /// The git handle for a target repo: its own when the env carries one, else
+    /// the single legacy handle. This is what the per-repo pipeline will use (P2);
+    /// the legacy `git` field keeps every current call site working unchanged.
+    func gitHandle(for repo: WorkspaceRepo) -> TaskGit { gitFor?(repo) ?? git }
 
     /// A perform that runs both closures right here — the headless default.
     static func synchronous(_ blocking: () -> Void, _ completion: () -> Void) {
@@ -216,6 +228,15 @@ enum TaskRepoShape: Equatable {
         guard isGit else { return .plain }
         return hasGitHubRemote ? .github : .git
     }
+}
+
+/// One repository a prompt describes. `repoID` "." is the workspace root; anything
+/// else is a workspace-relative child path (design §6).
+struct TaskPromptTarget: Equatable {
+    var repoID: String
+    var shape: TaskRepoShape
+    /// The repo's own default branch (the multi-repo branch line names it).
+    var defaultBase: String = "main"
 }
 
 /// Texts handed to the agent. Both task sources share ONE requirement list
@@ -320,7 +341,8 @@ enum TaskPrompts {
     /// （issue 头 = 编号/标题/标签/正文；手动任务头 = 标题/描述）。
     static func issue(number: Int, title: String, body: String?, labels: [String],
                       branch: String?, queueName: String?, base: String? = nil,
-                      brief: String? = nil, shape: TaskRepoShape = .github) -> String {
+                      brief: String? = nil, shape: TaskRepoShape = .github,
+                      targets: [TaskPromptTarget]? = nil) -> String {
         var lines: [String] = []
         lines.append("请完成以下 GitHub issue 的修复：")
         lines.append("")
@@ -341,7 +363,11 @@ enum TaskPrompts {
         }
         lines.append("")
         lines.append("要求：")
-        let list = requirements(branch: branch, queueName: queueName, base: base, shape: shape)
+        // The requirements follow the TARGETS (design §4.3/§6): one target keeps
+        // today's text (a legacy caller passes only `shape`, i.e. the root); two
+        // or more get the multi-repo inventory.
+        let targetList = targets ?? [TaskPromptTarget(repoID: ".", shape: shape)]
+        let list = requirements(branch: branch, queueName: queueName, base: base, targets: targetList)
         for (index, requirement) in list.enumerated() {
             lines.append("\(index + 1). " + requirement)
         }
@@ -361,8 +387,16 @@ enum TaskPrompts {
     /// 要求）。push / PR 一律不在这里：那是壳层那一半，由队列结束后的「开 PR 会话」做 ——
     /// 说了就是让代理操心不属于它的事。
     static func requirements(branch: String?, queueName: String?, base: String?,
-                             shape: TaskRepoShape) -> [String] {
+                             shape: TaskRepoShape,
+                             targetRepoID: String? = nil) -> [String] {
         var requirements: [String] = []
+        // A single target that is NOT the workspace root gets ONE extra line at the
+        // head (design §4.3): every git command has to run inside that child. The
+        // root target gets nothing, so the legacy single-repo prompt is byte-for-byte
+        // what it always was.
+        if let repoID = targetRepoID, repoID != ".", !repoID.isEmpty {
+            requirements.append(Self.childWorkdirRequirement(repoID: repoID))
+        }
         if let queueName = queueName {
             requirements.append("本任务是队列「\(queueName)」中的一项，与其他任务共享同一分支与改动；")
         } else {
@@ -405,6 +439,66 @@ enum TaskPrompts {
         return requirements
     }
 
+    /// The one line a single CHILD-repo target adds (design §4.3): the workspace
+    /// root is only a container, so every git command has to run inside the child.
+    static func childWorkdirRequirement(repoID: String) -> String {
+        let q = "\u{60}"
+        return "本工作区的 git 仓库位于子目录 " + q + repoID + "/" + q
+            + "；所有 git 命令请加 " + q + "-C " + repoID + "/" + q
+            + "（或先 " + q + "cd" + q + " 进去），不要在工作区根执行 git。"
+    }
+
+    /// Dispatch on the NUMBER of target repositories (design §4.3 / §6).
+    ///
+    /// ONE target — the root or a child — is today's single-repo text, byte for
+    /// byte (a child only prepends the work-directory line). TWO or more switch to
+    /// the multi-repo inventory text. The wording follows the TARGETS, never the
+    /// workspace mode: a multi-repo workspace whose queue targets only the primary
+    /// still gets the single-repo text.
+    static func requirements(branch: String?, queueName: String?, base: String?,
+                             targets: [TaskPromptTarget]) -> [String] {
+        if targets.count <= 1 {
+            let target = targets.first
+            return requirements(branch: branch, queueName: queueName, base: base,
+                                shape: target?.shape ?? .plain,
+                                targetRepoID: target?.repoID)
+        }
+        return multiRepoRequirements(branch: branch, queueName: queueName, targets: targets)
+    }
+
+    /// The multi-repo 要求 list (design §6): every repository is named, each is
+    /// committed in separately, and a single git status must not stand in for all
+    /// of them.
+    static func multiRepoRequirements(branch: String?, queueName: String?,
+                                      targets: [TaskPromptTarget]) -> [String] {
+        let q = "\u{60}"
+        var requirements: [String] = []
+        if let queueName = queueName {
+            requirements.append("本任务是队列「\(queueName)」中的一项，与其他任务共享同一分支与改动；")
+        } else {
+            requirements.append("本任务独立执行，不共享分支与改动；")
+        }
+        // 涉及仓库清单：逐个点名，相对工作区根。
+        let inventory = targets.map { q + $0.repoID + "/" + q }.joined(separator: "、")
+        requirements.append("本队列涉及仓库：\(inventory)（相对工作区根）；")
+        // 分支：同一分支名贯穿所有仓库，但每个仓库基于自己的默认分支。
+        let bases = targets.map { q + $0.repoID + q + " 基于 " + q + $0.defaultBase + q }.joined(separator: "，")
+        if let branch = branch, !branch.isEmpty {
+            requirements.append("**每个**仓库都须在其分支 " + q + branch + q + " 上处理（各自基于自己的默认分支：\(bases)）；")
+        } else {
+            requirements.append("本队列不切分支：各仓库直接在自己的默认分支上处理（\(bases)），不要新建分支；")
+        }
+        requirements.append(Self.verifyRequirement)
+        requirements.append("在有改动的仓库里**分别** " + q + "git -C <repo> add/commit" + q + "（建议 feat/fix: 简述）；没有改动的仓库不用提交；")
+        // token：只要任一目标仓库是 GitHub 就出现（token 文件按 owner-repo 组织）。
+        if targets.contains(where: { $0.shape == .github }) {
+            requirements.append("需要 GitHub 写操作时，token 在 $DSH_HOME/oh-my-dsh/tokens/<owner>-<repo> 或 $DSH_HOME/oh-my-dsh/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；")
+        }
+        requirements.append("不要用一把 " + q + "git status" + q + " 概括全部，逐仓库 " + q + "git -C <repo> status" + q + " 确认；")
+        requirements.append(Self.reportRequirement)
+        return requirements
+    }
+
     /// Manual task: the user's own title and description plus the same rails.
     ///
     /// `shape` follows the WORKSPACE (see TaskRepoShape): it decides which rails
@@ -418,7 +512,8 @@ enum TaskPrompts {
     static func manual(title: String, body: String?, branch: String?, queueName: String?,
                        base: String? = nil,
                        brief: String? = nil,
-                       shape: TaskRepoShape = .github) -> String {
+                       shape: TaskRepoShape = .github,
+                       targets: [TaskPromptTarget]? = nil) -> String {
         var lines: [String] = []
         lines.append("请完成以下任务：")
         lines.append("")
@@ -435,7 +530,11 @@ enum TaskPrompts {
         // 「会 push、PR 由面板开」的旧政策里的原因。
         lines.append("")
         lines.append("要求：")
-        let list = requirements(branch: branch, queueName: queueName, base: base, shape: shape)
+        // The requirements follow the TARGETS (design §4.3/§6): one target keeps
+        // today's text (a legacy caller passes only `shape`, i.e. the root); two
+        // or more get the multi-repo inventory.
+        let targetList = targets ?? [TaskPromptTarget(repoID: ".", shape: shape)]
+        let list = requirements(branch: branch, queueName: queueName, base: base, targets: targetList)
         for (index, requirement) in list.enumerated() {
             lines.append("\(index + 1). " + requirement)
         }

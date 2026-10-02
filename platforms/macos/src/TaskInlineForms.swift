@@ -538,6 +538,19 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
     /// The 高级设置 section (分支 / 基于分支 / PR): hidden while creating, open
     /// while editing. Internal so the tests can assert the default.
     let advancedStack: NSStackView
+    /// Multi-repo 仓库 selector: one checkbox per repository. Hidden in the
+    /// single-repo / plain shapes, so today's form is unchanged (design §8).
+    /// Internal for the headless form tests.
+    let repoCaption = TaskFormKit.caption()
+    var repoCheckboxes: [NSButton] = []
+    let repoNote = TaskFormKit.hintLabel(.secondaryLabelColor)
+    private let repoStack = NSStackView()
+    /// Internal so the headless form tests can assert the block is hidden in the
+    /// single-repo / plain shapes.
+    let repoBlock = NSStackView()
+    /// The repo ids the checkboxes were last built for (the view is only rebuilt
+    /// when the set changes, so typing does not thrash it).
+    private var configuredRepoIDs: [String] = []
     let hint: NSTextField
     let submitButton: NSButton
     let cancelButton: NSButton
@@ -650,6 +663,60 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         cancelButton.title = L10n.tr("btn.cancel")
         closeButton.toolTip = L10n.tr("btn.cancel")
         TaskFormKit.setHint(hint, key: model.problemKey)
+        syncRepoPicker(model)
+    }
+
+    /// Show / hide and populate the multi-repo 仓库 selector. Nothing happens in
+    /// the single-repo / plain shapes (availableRepos is empty), which is what
+    /// keeps the legacy form byte-for-byte the same.
+    private func syncRepoPicker(_ model: QueueComposerModel) {
+        repoBlock.isHidden = !model.showsRepoPicker
+        // A hidden arranged subview is dropped from NSStackView layout, so the
+        // collapsed / legacy form does not grow by these rows.
+        guard model.showsRepoPicker else { return }
+        repoCaption.stringValue = L10n.tr("tasks.queue.repos")
+        let ids = model.availableRepos.map { $0.id }
+        if ids != configuredRepoIDs {
+            configuredRepoIDs = ids
+            for view in repoStack.arrangedSubviews {
+                repoStack.removeArrangedSubview(view)
+                view.removeFromSuperview()
+            }
+            repoCheckboxes = model.availableRepos.map { repo in
+                let box = NSButton(checkboxWithTitle: repo.displayName, target: self,
+                                   action: #selector(repoTapped(_:)))
+                box.font = .systemFont(ofSize: 12)
+                box.translatesAutoresizingMaskIntoConstraints = false
+                repoStack.addArrangedSubview(box)
+                return box
+            }
+        }
+        for (index, repo) in model.availableRepos.enumerated() where index < repoCheckboxes.count {
+            let box = repoCheckboxes[index]
+            box.title = repo.displayName
+            box.state = model.selectedRepoIDs.contains(repo.id) ? .on : .off
+            // N == 1 multi-repo: the selector is read-only (there is nothing to pick).
+            box.isEnabled = !model.repoPickerLocked
+        }
+        repoNote.stringValue = model.repoPickerLocked
+            ? L10n.tr("tasks.queue.reposLocked")
+            : L10n.tr("tasks.queue.reposHint")
+    }
+
+    /// A 仓库 checkbox was clicked: the MODEL owns the selection rules (a locked
+    /// selector ignores clicks, the last repo cannot be removed), then re-render.
+    @objc func repoTapped(_ sender: NSButton) {
+        guard let index = repoCheckboxes.firstIndex(of: sender),
+              index < model.availableRepos.count else { return }
+        let id = model.availableRepos[index].id
+        let draft = model.togglingRepo(id)
+            .typed(name: nameField.stringValue,
+                   branch: branchField.stringValue,
+                   baseBranch: baseField.stringValue,
+                   autoPR: prSwitch.state == .on,
+                   skippingBranch: skipBranchSwitch.state == .on)
+            .typedIntegration(selectedIntegration)
+        apply(draft)
     }
 
     private func build() {
@@ -764,8 +831,30 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         }
         TaskFormKit.stretch([branchRow, baseRow, integrationBlock, prRow], to: advancedStack)
 
+        // 多仓库 仓库选择区 — OUTSIDE 高级设置: who the queue targets is not an
+        // advanced option. Hidden whenever availableRepos is empty.
+        repoCaption.setContentHuggingPriority(.required, for: .horizontal)
+        repoCaption.setContentCompressionResistancePriority(.required, for: .horizontal)
+        repoNote.font = TaskFormKit.captionFont
+        repoNote.textColor = .tertiaryLabelColor
+        repoNote.lineBreakMode = .byTruncatingTail
+        _ = TaskFormKit.requiredHeight(repoNote)
+        repoStack.orientation = .vertical
+        repoStack.alignment = .leading
+        repoStack.spacing = 3
+        repoStack.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(repoStack)
+        repoBlock.orientation = .vertical
+        repoBlock.alignment = .leading
+        repoBlock.spacing = 3
+        repoBlock.translatesAutoresizingMaskIntoConstraints = false
+        repoBlock.addArrangedSubview(repoCaption)
+        repoBlock.addArrangedSubview(repoStack)
+        repoBlock.addArrangedSubview(repoNote)
+        _ = TaskFormKit.requiredHeight(repoBlock)
+
         let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
-        let column = NSStackView(views: [headingRow, info, nameRow, hintRow, advancedStack, hint, buttons])
+        let column = NSStackView(views: [headingRow, info, nameRow, repoBlock, hintRow, advancedStack, hint, buttons])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 8
@@ -773,7 +862,7 @@ final class QueueComposerView: TaskFormCardView, NSTextFieldDelegate {
         // The form's height is what the sheet follows: nothing inside may squash it.
         _ = TaskFormKit.requiredHeight(column)
         addSubview(column)
-        TaskFormKit.stretch([headingRow, info, nameRow, hintRow, advancedStack], to: column)
+        TaskFormKit.stretch([headingRow, info, nameRow, repoBlock, hintRow, advancedStack], to: column)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),

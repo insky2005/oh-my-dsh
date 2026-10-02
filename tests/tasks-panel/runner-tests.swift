@@ -805,6 +805,114 @@ do {
     check(issuePrompt.hasSuffix("## 队列信息"), "交接简报落在所有要求之后（两种来源同一落点）")
 }
 
+section("多仓库提示词：单目标逐字节不变，子仓库多一行，多目标换清单")
+do {
+    // The legacy call (shape only) IS the single-root target.
+    let legacy = TaskPrompts.requirements(branch: "feature/x", queueName: "Lane",
+                                          base: "main", shape: .github)
+    let root = TaskPrompts.requirements(branch: "feature/x", queueName: "Lane",
+                                        base: "main",
+                                        targets: [TaskPromptTarget(repoID: ".", shape: .github)])
+    eq(root, legacy, "单目标（根仓库）与今天的单仓库文本逐字节相同")
+
+    // A child target: exactly one extra line, at the HEAD, and the rest identical.
+    let child = TaskPrompts.requirements(branch: "feature/x", queueName: "Lane",
+                                         base: "main",
+                                         targets: [TaskPromptTarget(repoID: "repo-a",
+                                                                    shape: .github,
+                                                                    defaultBase: "main")])
+    eq(child.count, legacy.count + 1, "子仓库目标只多一行")
+    eq(Array(child.dropFirst()), legacy, "其余各条与单仓库逐字节相同")
+    check(child[0].contains("子目录 `repo-a/`"), "多出的一行说工作目录")
+    check(child[0].contains("-C repo-a/"), "并给出 -C 写法")
+
+    // The full prompt: a legacy call and an explicit root target agree byte for byte.
+    let legacyPrompt = TaskPrompts.manual(title: "T", body: "B", branch: "feature/x",
+                                          queueName: "Lane", base: "main", shape: .github)
+    let rootPrompt = TaskPrompts.manual(title: "T", body: "B", branch: "feature/x",
+                                        queueName: "Lane", base: "main", shape: .github,
+                                        targets: [TaskPromptTarget(repoID: ".", shape: .github)])
+    eq(rootPrompt, legacyPrompt, "显式根目标与旧调用逐字节相同")
+    let childPrompt = TaskPrompts.manual(title: "T", body: "B", branch: "feature/x",
+                                         queueName: "Lane", base: "main", shape: .github,
+                                         targets: [TaskPromptTarget(repoID: "repo-a", shape: .github)])
+    check(childPrompt.contains("子目录 `repo-a/`"), "手动任务在子仓库目标下也带工作目录说明")
+
+    // Two targets: the multi-repo inventory text.
+    let multi = TaskPrompts.requirements(
+        branch: "feature/x", queueName: "Lane", base: "main",
+        targets: [TaskPromptTarget(repoID: "repo-a", shape: .github, defaultBase: "main"),
+                  TaskPromptTarget(repoID: "repo-b", shape: .git, defaultBase: "master")])
+    check(multi.contains { $0.contains("repo-a") && $0.contains("repo-b") },
+          "多目标点名每个仓库")
+    check(multi.contains { $0.contains("每个") && $0.contains("feature/x") },
+          "同一分支贯穿所有仓库")
+    check(multi.contains { $0.contains("repo-b") && $0.contains("master") },
+          "分支条逐仓库给出默认分支")
+    check(multi.contains { $0.contains("分别") && $0.contains("commit") },
+          "commit 条要求逐仓库提交")
+    check(multi.contains { $0.contains("token 在 $DSH_HOME") },
+          "任一 GitHub 目标就出现 token 条")
+    check(multi.contains { $0.contains("逐仓库") && $0.contains("git status") },
+          "反误解条：逐仓库确认 status")
+    check(!multi.contains { $0.contains("这里还不是 git 仓库") },
+          "多目标不说「这里还不是 git 仓库」")
+    // NoGit: no token rail even with several targets.
+    let noGit = TaskPrompts.requirements(branch: nil, queueName: nil, base: "main",
+                                         targets: [TaskPromptTarget(repoID: "a", shape: .git),
+                                                   TaskPromptTarget(repoID: "b", shape: .git)])
+    check(!noGit.contains { $0.contains("token") }, "全不是 GitHub 就没有 token 条")
+}
+
+section("TaskRunnerEnv：repos 与 gitFor(repo) 按仓库分派，缺省回落到 git")
+do {
+    func bareEnv(git: TaskGit, repos: [WorkspaceRepo] = [],
+                 gitFor: ((WorkspaceRepo) -> TaskGit)? = nil) -> TaskRunnerEnv {
+        TaskRunnerEnv(git: git, repoRoot: "/tmp/repo",
+                      createSession: { _ in nil },
+                      renameSession: { _, _ in false },
+                      promptSession: { _, _ in false },
+                      sessionState: { _ in .unknown },
+                      cancelSession: { _ in false },
+                      findExistingPR: { _ in nil },
+                      promptText: { _, _, _ in "" },
+                      persist: { _ in },
+                      persistIssueTask: { _ in },
+                      log: { _ in },
+                      perform: TaskRunnerEnv.synchronous,
+                      repos: repos,
+                      gitFor: gitFor)
+    }
+    let rootRepo = WorkspaceRepo(id: ".", absolutePath: "/tmp/repo", isGit: true,
+                                displayName: "repo")
+    let childRepo = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/repo/repo-a", isGit: true,
+                                 displayName: "repo-a")
+    var calls: [String] = []
+    let rootGit = TaskGit(run: { args in
+        calls.append("root:" + args.joined(separator: " "))
+        return nil
+    }, remoteName: { nil })
+    let childGit = TaskGit(run: { args in
+        calls.append("child:" + args.joined(separator: " "))
+        return nil
+    }, remoteName: { "origin" })
+    let env = bareEnv(git: rootGit, repos: [rootRepo, childRepo], gitFor: { repo in
+        repo.id == "." ? rootGit : childGit
+    })
+    _ = env.gitHandle(for: childRepo).run(["status"])
+    _ = env.gitHandle(for: rootRepo).run(["status"])
+    eq(calls, ["child:status", "root:status"], "gitFor(repo) 按仓库分派")
+    eq(env.repos.map { $0.id }, [".", "repo-a"], "env 带着仓库集合")
+    eq(env.gitHandle(for: childRepo).remoteName(), "origin",
+       "子仓库的 remoteName 来自它自己的句柄")
+
+    // A legacy env without gitFor falls back to the single git handle.
+    let legacyEnv = bareEnv(git: rootGit, repos: [rootRepo])
+    _ = legacyEnv.gitHandle(for: childRepo).run(["branch"])
+    eq(calls.last, "root:branch", "没有 gitFor 时回落到 git 字段")
+    check(legacyEnv.repos.count == 1, "legacy env 的 repos 仍是显式给的那一份")
+}
+
 section("非 git 目录里的 issue 任务：自动队列也不设分支（这里曾经必然 errNotGit）")
 do {
     var board = TaskBoard()
