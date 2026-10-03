@@ -108,7 +108,13 @@ for (const w of wss) {
   console.log(String(w.fm.id || w.file).padEnd(10) + String(w.fm.stage || '-').padEnd(12) + String(d2.pr || '-').padEnd(6) + String(w.outcome).padEnd(22) + String(w.closed));
 }
 console.log('');
-console.log('需求'.padEnd(10) + 'state'.padEnd(14) + 'children'.padEnd(10) + 'closed');
+console.log('需求'.padEnd(10) + '有效状态'.padEnd(14) + 'children'.padEnd(10) + 'closed');
 for (const req of reqs) {
-  console.log(String(req.fm.id || req.file).padEnd(10) + String(req.fm.state || '-').padEnd(14) + String(req.kids).padEnd(10) + String(req.closed));
+  const raw = req.fm.state || '';
+  let eff;
+  if (raw === 'discarded') eff = 'discarded';
+  else if (req.closed) eff = 'closed';
+  else if (req.kids > 0) eff = 'split';
+  else eff = raw || 'candidate';
+  console.log(String(req.fm.id || req.file).padEnd(10) + eff.padEnd(14) + String(req.kids).padEnd(10) + String(req.closed));
 }

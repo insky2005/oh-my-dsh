@@ -1,6 +1,7 @@
 # 需求 / 事项存储（.dsh）设计
 
-> 状态：草案（WS-002 规划已确认 2026-10-03、Q14 已确认；待验收 sign-off）· 日期：2026-10-03 · 关联：`.dsh/workstreams/WS-002.md`、`.dsh/requirements/REQ-002.md`、`.dsh/requirements/README.md`、`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/workstream-handoff-prompt-design.md`
+> 状态：草案（WS-002 已交付；WS-005 状态派生修订 2026-10-03）· 日期：2026-10-03 · 关联：`.dsh/workstreams/WS-002.md`、`.dsh/workstreams/WS-005.md`、`.dsh/requirements/REQ-002.md`、`.dsh/requirements/README.md`、`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/workstream-handoff-prompt-design.md`
+> 修订（WS-005，2026-10-03）：需求 `state` 只留人工判断，`split` / `closed` 为派生；见 §3.1 / §5 / §6 / §10。
 
 ## 1. 目的与范围
 
@@ -22,7 +23,7 @@
 需求 REQ ── 拆解（agent 出方案 / 人确认）──► 1..N 事项 WS ── 关联 ──► 0..N 队列 queue（.dsh/tasks）
    │                                              │
    │ 0..1（事项可无需求）                          ├─ 规划.验收标准 ── 长期不变量 ──► 回归门 REG
-   └─ 池状态（candidate/evaluating/split/…）        └─ 覆盖 covered（点记录，锚变更）
+   └─ 池状态（人工 candidate/evaluating/…；派生 split/closed） └─ 覆盖 covered（点记录，锚变更）
 ```
 
 **权威边（单一真相，原则 2）**：
@@ -46,7 +47,7 @@
 ---
 id: REQ-002                 # 必选，REQ-<n>，不可变
 title: ...                  # 必选
-state: evaluating           # 必选，池状态
+state: evaluating           # 可选；仅人工判断（拆分后不写）
 source: 2026-10-03 会话      # 必选，来源（会话 / issue / 文档 / 人）
 created: 2026-10-03         # 必选
 updated: 2026-10-03         # 必选
@@ -54,15 +55,26 @@ workstreams: [WS-002]       # 派生缓存（由 WS.requirement 反向聚合）
 ---
 ```
 
-- `state`（池状态，**不套事项阶段机**，原则 12）：
+- `state`（**仅人工判断**，不套事项阶段机，原则 12；**可选**，拆分后不写）：
 
   | 值 | 中文 | 含义 |
   |---|---|---|
   | `candidate` | 候选 | 收件箱里待评估 |
   | `evaluating` | 评估中 | 正在论证做法 / 边界 |
-  | `split` | 已拆分 | 已产出 1..N 个事项（**不等于关闭**） |
   | `suspended` | 挂起 | 主动搁置，可再启 |
   | `discarded` | 丢弃 | 人显式放弃（显式决定，不是派生） |
+
+- **`split` / `closed` 是派生，不落字段**（同 §5）：`split(req) = children(req) ≠ ∅`；`closed` 见 §6。
+- **有效状态（`effective_state`）**，供面板 / 工具显示，派生优先级：
+
+  ```
+  discarded          若 state == discarded（显式放弃，最高优先）
+  closed             若 children ≠ ∅ 且全部终态
+  split              若 children ≠ ∅
+  state 或 candidate 否则
+  ```
+
+  拆分之后 `state` 不再作为权威，卡片里可以没有它。
 
 - 正文：`## 诉求`（必选）、`## 决策`、`## 拆解`（拆解器未落地前以表格承载）、`## 关联`。
 
@@ -113,7 +125,9 @@ updated: 2026-10-03
 
 | 实体.字段 | 类别 | 说明 |
 |---|---|---|
-| REQ.id / title / state / source / created / updated | 必选 | 需求定义 |
+| REQ.id / title / source / created / updated | 必选 | 需求定义 |
+| REQ.state | 可选（拆分前） | 仅人工判断；拆分后不写 |
+| REQ.split | 禁止 | 派生谓词：children ≠ ∅ |
 | REQ.workstreams | 派生 | 由 WS.requirement 反向聚合的缓存 |
 | REQ.closed / REQ.outcome | 禁止 | 终态派生谓词，不落字段 |
 | WS.id / title / stage / created / updated | 必选 | 事项定义与阶段 |
@@ -151,6 +165,7 @@ updated: 2026-10-03
 - 卡片**不得出现** `closed` 字段（REQ / WS 皆然）；
 - `outcome` **只允许**作为 `delivery` 块内的**派生缓存**（由交付追踪依 PR 状态写入 / 重算），**禁止手写**；顶层 `outcome` 一律非法；
 - 交付阶段允许写入的是**事实**：`delivery.pr`、`delivery.url`；由这些事实观察出 `outcome`。
+- 同理，`split` 也不落字段（§3.1）：`split(req) = children(req) ≠ ∅`；派生器输出「有效状态」。
 
 **复核命令**（交付前跑；可作为将来 `REG-002` 的雏形，见 §9）：
 
@@ -167,6 +182,8 @@ awk '
   }
   END { exit bad }
 ' .dsh/requirements/REQ-*.md .dsh/workstreams/WS-*.md || bad=1
+# 3) split 绝不能作为字段出现
+grep -rnE '^[[:space:]]*split[[:space:]]*:' .dsh/requirements && bad=1
 [ "$bad" -eq 0 ] && echo 'PASS 终态未手写' || echo 'FAIL 终态被手写'
 ```
 
@@ -183,6 +200,7 @@ awk '
 - **部分交付也算关闭**：只要「至少一个子事项」且「没有非终态子事项」即可（有的 merged、有的 abandoned / discarded 都满足）；`split` 只表示「已拆解」，**不等于关闭**。
 - **不回弹**：关闭后不因后续改动重开、不要求重验；重开**另起需求并回指**（原则 15）。
 - **空子集**：尚无子事项的需求**不满足** `closed`（前件要求子事项非空），不得自动关闭；它停在池状态（`candidate` / `evaluating` / `suspended`），除非人显式 `discarded`。
+- 池状态取值见 §3.1：`state` 仅人工判断，`split` / `closed` 派生；需求卡不写 `split` / `closed`。
 
 **派生复核命令**（示意，读盘即可算，不落字段）：
 
@@ -261,9 +279,11 @@ done
 | AC2 committed vs ignored 分界 | §4 |
 | AC3 单一写者 + 文件监听热重载的反转路径 | §7 |
 | AC4 `outcome` / `closed` 派生、禁止手写（复核命令） | §5 |
-| AC5 需求关闭规则（Q14） | §6（待规划确认） |
+| AC5 需求关闭规则（Q14） | §6 |
 | AC6 与 `.dsh/tasks` 的边界 | §8 |
 | AC7 `docs/README.md` 索引已登记 | `docs/README.md` design/panels 段 |
+
+> WS-005 修订（2026-10-03）：§3.1 的 `state` 收窄为人工判断，`split` 改为派生；需求卡不再写 `split`。
 
 ## 11. 确认记录与遗留
 
@@ -272,6 +292,7 @@ done
 1. **规划确认**（2026-10-03）：WS-002 目标 / 边界 / AC1–AC7 与阶段裁剪声明确认。
 2. **Q14 需求关闭规则**（§6，2026-10-03 确认）：有子事项且子事项全部终态 → 需求可关闭（部分交付并入终态即算）；`discarded` 为显式放弃。本设计保留「子事项非空」守卫，避免空子集被 `∀` 空真误判为关闭。
 3. **运行时绑定落点**（§4，2026-10-03 确认）：需求级运行时绑定**另立** `.dsh/requirements/local.json`，与事项级 `.dsh/workstreams/local.json` 对称；`.gitignore` 增对应忽略行（落地属任务阶段）。
+4. **WS-005 规划确认**（2026-10-03）：需求 `state` 仅人工判断，`split` / `closed` 派生；迁移 5 张需求卡（去掉 `state`）。
 
 **待验收 sign-off**：交付物 = 本设计稿 + `docs/README.md` 索引登记。
 
