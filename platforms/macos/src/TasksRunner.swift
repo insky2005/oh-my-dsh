@@ -37,9 +37,13 @@ struct TaskGit {
         run(["rev-parse", "--abbrev-ref", "HEAD"])
     }
 
+    /// 只把**已跟踪**的改动当「不干净」：未跟踪文件不算。
+    ///
+    /// `git checkout` 只在未跟踪文件会被目标分支覆盖时才拒绝（它自己会报错），
+    /// 所以把 .tmp/、日志之类的本地草稿当脏会卡死整条队列（2026-10-02 实测）。
     /// Fails CLOSED: a status command that cannot run counts as not clean.
     func isWorktreeClean() -> Bool {
-        guard let out = run(["status", "--porcelain"]) else { return false }
+        guard let out = run(["status", "--porcelain", "--untracked-files=no"]) else { return false }
         return out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -79,10 +83,10 @@ struct TaskGit {
         // An UNBORN repository (fresh `git init`, no commits): HEAD points at nothing,
         // so `git checkout <base>` fails with "pathspec … did not match" — the task
         // right after 初始化 git 仓库 failed with tasks.errCheckout before it could do
-        // anything at all. Its files are all untracked too, so the worktree is "dirty"
-        // by definition and the clean check would stop it as well. Nothing can be lost
-        // in a repository that has no commit: the branch is created from the unborn
-        // HEAD, and the task's work simply becomes the first commit.
+        // anything at all. Nothing can be lost in a repository that has no commit: the
+        // branch is created from the unborn HEAD, and the task's work simply becomes the
+        // first commit. (Untracked files no longer count as dirty — see isWorktreeClean
+        // — but the missing base still needs this exception.)
         let empty = !hasCommits()
         if !empty {
             guard isWorktreeClean() else { return .dirtyWorktree }

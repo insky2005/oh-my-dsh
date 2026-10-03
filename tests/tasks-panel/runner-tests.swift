@@ -34,6 +34,9 @@ final class FakeRepo {
     var unborn = false
     var current = "main"
     var worktreeClean = true
+    /// Lines `git status --porcelain` reports for UNTRACKED paths. Omitted when the
+    /// caller asks `--untracked-files=no`, exactly like real git.
+    var untracked = ""
     var remote: String? = "origin"
     var pushed: Set<String> = []
     var knownBranches: Set<String> = ["main"]
@@ -65,7 +68,9 @@ final class FakeRepo {
             }
             return nil
         case "status":
-            return worktreeClean ? "" : " M Sources/x.swift"
+            let tracked = worktreeClean ? "" : " M Sources/x.swift"
+            let untrackedPart = args.contains("--untracked-files=no") ? "" : untracked
+            return [tracked, untrackedPart].filter { !$0.isEmpty }.joined(separator: "\n")
         case "checkout":
             guard args.count >= 2 else { return nil }
             let target = args.last ?? ""
@@ -303,7 +308,8 @@ do {
     check(h.board.task(taskID)?.branch == "feature/docs-cleanup", "the queue branch is copied onto the task")
     eq(h.repo.current, "feature/docs-cleanup", "the worktree is on the queue branch")
     eq(h.repo.checkouts, ["main", "feature/docs-cleanup"], "checkout base then create the branch")
-    check(h.repo.calls.contains("status --porcelain"), "the clean check ran before switching")
+    check(h.repo.calls.contains("status --porcelain --untracked-files=no"),
+          "the clean check (tracked changes only) ran before switching")
     check(h.dsh.titles["session-1"] == "TASK: Polish README", "the session was renamed with the TASK prefix")
     check((h.dsh.prompts["session-1"] ?? "").contains("Docs Cleanup"), "the prompt names the queue")
     check(h.rec.persistCount > 0, "state was persisted while starting")
@@ -1399,13 +1405,15 @@ do {
     eq(empty.git().enter(branch: "feature/first", base: "main"), .switched,
        "空仓库里照样进得了队列分支（此前必定 errCheckout）")
     eq(empty.checkouts, ["feature/first"], "只做一次 checkout -b，没有去切不存在的 main")
-    check(!empty.calls.contains("status --porcelain"), "空仓库里「工作区脏」这条不适用：没有提交可以丢")
+    check(!empty.calls.contains { $0.hasPrefix("status") },
+          "空仓库里「工作区脏」这条不适用：没有提交可以丢")
     check(!empty.calls.contains("pull --ff-only"), "也没有远端可 pull")
 
     // 有提交的普通仓库完全不变：先干净、先切基线、再 pull、再开分支。
     let normal = FakeRepo()
     eq(normal.git().enter(branch: "feature/x", base: "main"), .switched, "普通仓库照旧")
-    check(normal.calls.contains("status --porcelain"), "普通仓库仍然先查工作区")
+    check(normal.calls.contains("status --porcelain --untracked-files=no"),
+          "普通仓库仍然先查工作区（只看已跟踪改动）")
     check(normal.calls.contains("checkout main"), "先切基线")
     check(normal.calls.contains("pull --ff-only"), "有远端就 pull")
 
@@ -1414,6 +1422,23 @@ do {
     dirty.worktreeClean = false
     eq(dirty.git().enter(branch: "feature/x", base: "main"), .dirtyWorktree,
        "普通仓库脏了就停下，绝不覆盖用户的改动")
+}
+section("未跟踪文件不算「工作区脏」：只挡已跟踪改动（git 自己判撞名）")
+do {
+    // 只有未跟踪草稿：git 允许切分支，判据也不该拦。
+    let scratch = FakeRepo()
+    scratch.untracked = "?? .tmp/\n?? docs/research/x.md"
+    eq(scratch.git().enter(branch: "feature/x", base: "main"), .switched,
+       "只有未跟踪文件时照常切分支")
+    check(scratch.calls.contains("status --porcelain --untracked-files=no"),
+          "干净检查只看已跟踪改动")
+    check(scratch.checkouts.contains("feature/x"), "并且真的切过去了")
+
+    // 已跟踪的未提交改动：仍然停下。
+    let tracked = FakeRepo()
+    tracked.worktreeClean = false
+    eq(tracked.git().enter(branch: "feature/x", base: "main"), .dirtyWorktree,
+       "已跟踪的未提交改动仍然停下")
 }
 section("删掉队列之后的失败任务：全部处理能把它们重新跑起来")
 do {
