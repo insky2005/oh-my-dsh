@@ -14,7 +14,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 ## research/ — 调研 · 选型 · 策略
 
 - [productization.md](research/productization.md) — 产品化总纲：P0 现状 → P1 开源/CI → P2 Windows → P3 Linux → P4 生态增长
-- [ai-native-workflow-architecture.md](research/ai-native-workflow-architecture.md) — AI 原生研发工作流的**产品能力架构与目标**：事项为中心的状态图 / 并行条件 / 载体与角色分工 / 工具缺口（草案）
+- [ai-native-workflow-architecture.md](research/ai-native-workflow-architecture.md) — AI 原生研发工作流的**产品能力架构与目标**：需求池 → 拆解 → 事项的两层状态图 / 并行条件 / 载体与角色分工 / 工具缺口（草案）
 - 在途草案（尚未提交，暂不建链）：`agent-driver-research.md`（统一驱动 AI coding agent 的接口选型调研）、`agent-driver-protocols.md`（协议对比勘误稿，ACP 为准）、`agent-enterprise-research.md`（企业能力可复用开源方案调研）、`multi-agent-host-design.md`（多 Agent 宿主 + 企业治理架构提案草案）
 
 ## design/shell/ — 壳层共性设计
