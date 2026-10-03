@@ -36,6 +36,9 @@ pic/
 .dsh/tasks/manual.json
 .dsh/tasks/queues.json
 
+# requirement/workstream runtime bindings (machine-scoped)
+.dsh/workstreams/local.json
+
 # Xcode / Swift
 DerivedData/
 *.xcuserstate
