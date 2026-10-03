@@ -1,8 +1,8 @@
 ---
 title: 模块：任务面板（Tasks / IssueRunner）
 tags: [module, tasks, github, issue, queue, index, manual-task]
-updated: 2026-10-01T17:00:35Z
-sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksWorkspaces.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/BrowserAPI.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/design/panels/issue-runner-design.md, docs/design/shell/ui-color-scheme.md, docs/process/git-workflow.md, docs/design/panels/task-todo-skill-design.md, .dsh/skills/task-todo/SKILL.md, docs/design/panels/issue-runner-design.md, CHANGELOG.md, README.md, docs/process/dsh-version-impact.md]
+updated: 2026-10-03T03:20:00Z
+sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksWorkspaces.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/BrowserAPI.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/design/panels/issue-runner-design.md, docs/design/shell/ui-color-scheme.md, docs/process/git-workflow.md, docs/design/panels/task-todo-skill-design.md, .dsh/skills/task-todo/SKILL.md, docs/design/panels/issue-runner-design.md, CHANGELOG.md, README.md, docs/process/dsh-version-impact.md, docs/design/panels/multi-repo-workspace-design.md, docs/design/panels/task-completion-verification-design.md]
 manual: false
 ---
 
@@ -10,7 +10,7 @@ manual: false
 
 ## 一句话
 
-任务台：**手动任务 + GitHub issue** 两种来源、**队列（泳道）** 严格串行执行，以**卡片列表**呈现。issue 任务点「处理」自动建一个**单任务队列**并跑完整闭环（切分支 → dsh 会话 → 提示词 → **只 commit**）；手动任务用「+」只填标题与描述（**面板内联表单，不弹对话框**），创建后落在**未入队**区，再从卡片上「加入队列 ▾」选已有队列或新建队列（同样是内联表单）。**push 与 PR 不在任务会话里**：队列跑完、开着「自动开 PR」且工作区是 GitHub 仓库时，运行器另起一个专门的「**开 PR 会话**」去做（见下）。
+任务台：**手动任务 + GitHub issue** 两种来源、**队列（泳道）** 严格串行执行，以**卡片列表**呈现。issue 任务点「处理」自动建一个**单任务队列**并跑完整闭环（切分支 → dsh 会话 → 提示词 → **只 commit**）；手动任务用「+」只填标题与描述（**面板内联表单，不弹对话框**），创建后落在**未入队**区，再从卡片上「加入队列 ▾」选已有队列或新建队列（同样是内联表单）。**push 与 PR 不在任务会话里**：队列跑完、开着自动交付时，运行器按队列的 Git 工作流（pr / merge / push / 无）另起一个「**交付会话**」去做；工作区支持**根 + 直接子目录多仓库**，任务完成还要过**完成校验**（拿到本次 marker 才算 done，否则「待确认」）。
 
 ## 文件与分层
 
@@ -19,7 +19,7 @@ manual: false
 | `IssueRunnerPanel.swift` | 面板装配：卡片列表 / 队列头 / 内联表单接线 / 菜单 / 仓库识别 / issue 拉取 / GitHub REST / token |
 | `TasksCore.swift` | **纯模型**：`TaskItem` / `TaskQueue` / `TaskBoard` / `TaskDraft` / `QueueChoice` / 分支命名 / 状态机（无 I/O、无 AppKit） |
 | `TasksStore.swift` | `.dsh/tasks/` **四文件**读写（index / manual / queues / local），读侧容错、绝不删文件 |
-| `TasksRunner.swift` | **运行器**：git 三步进入分支、dsh 会话、提示词、队列结束后的「开 PR 会话」、取消 · 重试 · 跳过、重启恢复（任务侧只 commit，不 push / 不开 PR） |
+| `TasksRunner.swift` | **运行器**：按仓库预检 + 进入分支、dsh 会话、提示词、完成校验（marker / 产物）、队列结束后的按仓库「交付会话」、取消 · 重试 · 跳过、重启恢复（任务侧只 commit，不 push / 不开 PR） |
 | `TasksUI.swift` | **视图模型**：`TaskCardModel` / `QueueHeaderModel` / `TasksSummaryModel` / `TasksEmptyStateModel` / `TaskComposerModel` / `QueueComposerModel`（纯 Foundation，可无头断言） |
 | `TaskCardView.swift` | 视图：卡片 / 队列头 / 徽标 / 进度条 / 分节标题（只渲染与转发点击） |
 | `TaskInlineForms.swift` | 视图：两张**内联表单**（新建·编辑任务 / 新建·设置队列）——无模态，字段与按钮状态由视图模型决定 |
@@ -31,13 +31,13 @@ manual: false
 
 壳层的 localhost REST 服务（`BrowserAPIServer`，127.0.0.1，端口写 `$DSH_HOME/oh-my-dsh/shell-api.port` 与 `$DSH_HOME/oh-my-dsh/browser-api.port`——同一个端口）上多了**第二块路由面**：`/api/browser/*` 归浏览器面板，`/api/tasks/*` 归任务面板（`TasksAPIRouter` 命中即返回，未命中返回 nil，原路由与 404 都不受影响）。
 
-- `GET /api/tasks/list?workspace=<路径>` → 面板现有的任务与队列；
-- `POST /api/tasks/create` `{workspace?, focus?, tasks:[{title, body?} | "标题"]}` → 批量创建（上限 50 条），返回 `created`（逐条 id/标题）与 `rejected`（逐条原因：`empty-title`/`not-an-object`/`too-many`）；
+- `GET /api/tasks/task/list?workspace=<路径>`（旧 `/api/tasks/list` 保留 alias）→ 面板现有的任务与队列；
+- `POST /api/tasks/task/create`（旧 `/api/tasks/create` 保留 alias）`{workspace?, focus?, tasks:[…]}` → 批量创建（上限 50 条），返回 `created` / `rejected`（`empty-title`/`not-an-object`/`too-many`）；另有队列端点 `POST /api/tasks/queue/create|start|append|deliver`（见下「队列的会话闭环」）；
 - **工作区解析**（`TasksAPIWorkspace.resolve`，纯函数）：请求路径与面板当前/已跟踪 board 精确匹配 → 用它；否则取**最近祖先**（代理的 cwd 常在 workspace 子目录里）；都不匹配则原样交给调用方判存在性；没传就用面板当前 board。面板尚未 adopt 工作区 → `400 no-workspace`；服务在而面板没接好 → `503 panel-unavailable`；
 - **落盘走面板自己的那条路**：`TasksRunner.createManualTask`（唯一入口，自带 persist 与日志），并且必须经 `BrowserAPIBridge` 派发到**主线程**——board 的读改写与 3 秒 step 定时器同一条线程，否则两个写者互相覆盖。任务一律「**待处理、未入队**」：建任务不启动任何东西；
 - `focus` 默认 true：切到该工作区 board 并展开面板（`onShowPanel` → `setRightPanel(.tasks)`），状态行说一句「已由 Agent 创建 N 个任务」（L10n `tasks.apiCreated`）。
 
-配套**内置技能 `task-todo`**（App 启动安装到全局 `$DSH_HOME/skills/task-todo/SKILL.md`，见 [skill-installer](skill-installer.md)）规定：**只在用户明确要求时**执行、先 list 再建（避免重复）、一次请求提交全部任务、并写明「不启动任务 / 不建队列 / 不直接改 `.dsh/tasks/*.json`」；App 没运行就报错请用户打开。设计见 `docs/design/panels/task-todo-skill-design.md`，回归 `tests/tasks-panel/api-tests.swift`（68 项）+ `tests/browser-panel`（把这块路由面一起编译）。
+配套**内置技能 `task-todo`**（App 启动安装到全局 `$DSH_HOME/skills/task-todo/SKILL.md`，见 [skill-installer](skill-installer.md)）规定：**只在用户明确要求时**执行、先 list 再建（避免重复）、一次请求提交全部任务、并写明「不启动任务 / 不建队列 / 不直接改 `.dsh/tasks/*.json`」；App 没运行就报错请用户打开。设计见 `docs/design/panels/task-todo-skill-design.md`，回归 `tests/tasks-panel/api-tests.swift`（132 项）+ `tests/browser-panel`（把这块路由面一起编译）。
 
 ## issue 任务与手动任务对齐（2026-09-27）
 
@@ -51,14 +51,14 @@ manual: false
 ## 任务会话的收尾与卡片细节（2026-09-27 批次，PR #59 / #60）
 
 - **汇报写回卡片**：任务结束（成功**或失败**）时壳层在收尾的后台步骤里取出代理在会话里的最后一段文字，写进 `TaskItem.report` 与 `local.json` 的 `reports`（机器作用域，**不写** `manual.json` / `index.json`）；卡片详情多一行「汇报」，队列里**下一棒的交接简报优先用它**（会话被删也还在，读不到才回落读会话日志），点「重试」会清掉上一轮的汇报；
-- **队列信息只有一种抬头**：交接简报与开 PR 会话的上下文统一成 `## 队列信息`，字段顺序 = 队列（位次）→ 分支（基于 X）→ 分支上已有的提交 → 前面任务的汇报；
+- **队列信息只有一种抬头**：交接简报与交付会话的上下文统一成 `## 队列信息`，字段顺序 = 队列（位次）→ 分支（基于 X）→ 分支上已有的提交 → 前面任务的汇报；
 - **提示词按工作区形状现场生成**：`TaskRepoShape`（`.plain` / `.git` / `.github` 三态）在**写提示词的那一刻**重新探测（一次 `rev-parse --is-inside-work-tree`，是仓库才再问 `git remote -v`）——队列里前一个任务刚做的 `git init` / `git remote add`，后一个任务立刻就知道；要求条目按形状连续编号，token 条只在 GitHub 仓库出现；
 - **「打开会话」点了没反应的根因**：`callAsyncJavaScript` 把参数变成**函数体里的局部变量**，而不带工作区名的调用（任务面板正是这种）没传 `workspaceName` → 页面抛 ReferenceError；现在 `workspaceName` **永远传**（没有就传空串）+ `typeof` 兜底，bridge 异常**立即**走 `reportOpenFailure`，并且说给**请求它的那个面板**（任务面板新增 `reportStatus(_:)`）；
 - **卡片细节**：来源徽标（`手动` / `Issue #12`）排在**任务名后面**、状态徽标仍在最右；队列名前 `rectangle.stack`、任务名前 `checklist` 两枚静默行标（符号取不到时退化成 0 宽视图）；完成的 **issue** 任务主按钮是「打开 Issue」，完成的**手动任务没有主按钮**（`TaskCardModel.primaryKey/primaryAction` 因此变成可选）。
 
 ## 任务模型与状态机
 
-- 状态：`pending`（不在任何队列）/ `queued` / `running` / `done` / `failed` / `cancelled` / `closed`（issue 已关闭）。v1 的 rawValue **全部保留**，旧 `index.json` 零迁移；
+- 状态：`pending`（不在任何队列）/ `queued` / `running` / `done` / `failed` / **`needsReview`（待确认）** / `cancelled` / `closed`（issue 已关闭）。v1 的 rawValue **全部保留**，旧 `index.json` 零迁移；
 - id：github 任务 `issue-<N>`；手动任务 `manual-<8 位 hex>`；
 - `TaskBoard` 是唯一真相：入队 · 移出 · 建/改/删队列 · 启动 · 完成 · 失败 · 取消 · 重试 · 跳过 · 重启恢复都经过它，面板只渲染与调用；
 - **失败原因存 L10n 键**（`TaskFailure` 的 rawValue，如 `tasks.errDirtyTree`），显示时 `L10n.tr(error)` —— 语言切换与落盘索引都不会串味；旧索引里的本地化文本也能被 `L10n.tr` 原样返回；
@@ -73,7 +73,7 @@ manual: false
 - 队列分支：默认 `feature/<slug>`（纯中文 / emoji 名 slug 为空时回退 `feature/queue-<id 前 4 位>`），用户可改、可留空（= 不切分支）；
 - issue 任务的「处理」= 自动建**单任务队列**（`autoCreated`，分支走 `fix/issue-N` / `feature/issue-N`；**非 git 目录不派生分支**，形状由 `TaskQueue.auto(for:baseBranch:switchesBranch:opensPR:)` 统一给）；重试复用同一个自动队列；
 - 「全部处理」= 给**每个待办**各建一个单任务队列（**手动任务同样如此**——不再只管 issue），再按板面顺序串行跑（`focus(onQueue:)` 把运行器指回第一个队列）；>1 条时先弹确认框，**计数与「各自一条分支 / 是否开 PR」的说明只在确认框里**，tooltip 只说按钮做什么。判据收在一处：`TasksRunAllModel.startable(in:)` = 未入队 + **队列被删后的失败 / 已取消**（仍在队列里的失败不算——那是泳道自己的事）；
-- **开 PR 会话**（2026-09-27 起，任务会话与 PR 彻底分家）：队内任务的提示词里**不再出现 push / PR**，运行器也不再校验 `git ls-remote`（`tasks.errNoPush` 与 `env.createPR` / 面板直连 GitHub API 的 `createPR` 一并删除）。队列最后一项完成、队列开着「自动开 PR」且工作区是 GitHub 仓库时，`TasksRunner.startQueuePR` 在仓库目录新建名为「**开 PR：<队列名>**」的 dsh 会话（相位 `.startingPR` / `.openingPR`，同样占用那个串行槽位），`TaskPrompts.pullRequest` 要它先读真实改动（`git log/diff`）、**自己写**标题与正文、push 分支、开或复用 PR，并在最后一行给链接；运行器从它的汇报里搜 `github.com/…/pull/N`，搜不到就用该分支已有的 PR 兜底，都没有就把原因记在队列上（`tasks.errPR` / `errPRNoBranch` / `errPRNoRemote` / `errPRSession`，显示在队列头「开 PR」按钮的 tooltip 里）——**队列保持已完成**，PR 开不出来从来不算任务失败。队列头的「开 PR」按钮走的也是这条路。
+- **开 PR 会话（2026-09-27；2026-10-01 起由可配置的 `QueueIntegration` 交付会话取代，见上「队列的会话闭环」与「多仓库工作区」）**：任务会话与 PR 彻底分家；队内任务的提示词里**不再出现 push / PR**，运行器也不再校验 `git ls-remote`（`tasks.errNoPush` 与 `env.createPR` / 面板直连 GitHub API 的 `createPR` 一并删除）。队列最后一项完成、队列开着「自动开 PR」且工作区是 GitHub 仓库时，`TasksRunner.startQueuePR` 在仓库目录新建名为「**开 PR：<队列名>**」的 dsh 会话（相位 `.startingPR` / `.openingPR`，同样占用那个串行槽位），`TaskPrompts.pullRequest` 要它先读真实改动（`git log/diff`）、**自己写**标题与正文、push 分支、开或复用 PR，并在最后一行给链接；运行器从它的汇报里搜 `github.com/…/pull/N`，搜不到就用该分支已有的 PR 兜底，都没有就把原因记在队列上（`tasks.errPR` / `errPRNoBranch` / `errPRNoRemote` / `errPRSession`，显示在队列头「开 PR」按钮的 tooltip 里）——**队列保持已完成**，PR 开不出来从来不算任务失败。队列头的交付按钮走的是同一条路（按工作流显示「开 PR / 合并到基线 / 直接推送」）。
 
 ## 持久化（`<repo>/.dsh/tasks/`）
 
@@ -81,8 +81,8 @@ manual: false
 |---|---|---|
 | `index.json` | **提交** | github 任务 ↔ issue / 分支 / PR / 状态（v1 形状，`version: 1`） |
 | `manual.json` | 本机 | 手动任务：标题 / 描述 / 状态 / 队列 / 分支 / 错误 / 时间戳 |
-| `queues.json` | 本机 | 队列：名 / 分支 / 基线 / `taskIds`（FIFO）/ 状态 / `autoCreated` / `autoPR` / `prUrl` |
-| `local.json` | 本机 | `sessions`（task id → sessionId）+ `activeQueueId` / `runningTaskId` |
+| `queues.json` | 本机 | 队列：名 / 分支 / 基线 / `taskIds`（FIFO）/ 状态 / `autoCreated` / `autoPR` / `prUrl` / `repos`（目标仓库 id）/ `repoRuns`（逐仓库交付结果）/ `integration` / `integrationNote` |
+| `local.json` | 本机 | `sessions`（task id → sessionId）/ `reports` / `taskMarkers`（task id → 完成 marker）/ `queueSessions` / `queueNotified` / `activeQueueId` / `runningTaskId` |
 
 - **session 不入任务本体**：会话只在一台机器上有效，所以 github 与手动任务共用 `local.json` 这一份 overlay；
 - `local.json` 的 session 键读侧**兼容 v1 的纯数字键**（`"6"` 视为 `issue-6`），写侧一律 task id —— 历史文件零迁移、读取时也不重写；
@@ -136,7 +136,24 @@ manual: false
 - **收尾优先复用来源会话（2026-10-01）**：队列在哪条会话创建就在哪条会话收尾，手动队列没有来源才新建收尾会话；来源会话是真实对话，故提示词要求回**唯一完成标记**、壳层只采用带标记的汇报；来源不可用 / 忙到超时 / 已消失则**回退新建**，且**绝不取消**用户的会话；
 - **「使用说明」抽屉（2026-10-01）**：右上角常驻问号按钮，内容由纯模型 `TasksHelpModel` 按 L10n 键生成（新建任务 / 队列 / Git 工作流 / 会话回传四节），无任务时也铺在空态内容区（仅在未筛选时）；
 - **Git 工作流可配置（2026-10-01）**：`QueueIntegration`（pr / merge / push / 无）作为「队列如何落地」的显式设置，默认按工作区（`tasksIntegrationByWorkspace`）、队列自身 `integration` 覆盖；动作全部交给收尾会话（壳层不直接 merge/push），merge 是本地操作、无远端也能用，失败原因显示在队列卡而非按钮 tooltip；
-- 回归：`tests/tasks-panel/run.sh` **1405 项**。
+- 回归：`tests/tasks-panel/run.sh` **2036 项**（模型 322 + 运行器 732 + 视图模型 480 + 视图 370 + 本地 API 132）。
+
+## 多仓库工作区（2026-10-02）
+
+- **仓库集合探测 `WorkspaceRepoSet.detect`（纯模型，`TasksCore.swift`）**：工作区 = 根目录（若根本身是仓库，id `"."`）+ **直接子目录**里的独立仓库；只扫直接子目录、排除隐藏目录与 `node_modules/.build/.cache/dist`，以及根 `.gitmodules` 列出的 submodule。`primary`（主仓库）= 用户指定（`tasksPrimaryRepoByWorkspace`）→ 根 → 第一个 GitHub → 第一个 git；「根是仓库且无参与子仓库」才是 legacy 单仓库，其余有仓库一律多仓库（N==1 也算）；
+- **按仓库预检 + 切分支（`pump` 两段式）**：先逐个检查目标仓库 `isGit / 无未提交的已跟踪改动 / base 可解析`（只保护真要 checkout 的仓库），任一不过即失败并点名仓库（`tasks.errRepoDirty` / `errRepoNoBase` / `errRepoBranch`，细节写 `TaskItem.errorDetail`）；全过后逐个 `enter(branch, base: repo.defaultBase)`，中途失败不回滚；
+- **提示词 / 简报按目标仓库分组**：目标只有一个时生成的文本与今天逐字节相同（子仓库只加一行工作目录说明），≥2 时列仓库清单、要求逐仓库 `git -C <repo>` 提交，token 条只要任一目标是 GitHub 就出现（`TasksRunner.resolveTargets` 运行期重探）；
+- **交付按仓库独立降级（`QueueRepoRun` / `TaskQueue.repoRuns`）**：队列级 `intent`（队列 `integration` 或各仓库按仓库默认）按仓库能力降级（PR → push → 本地 merge → 无），交付会话逐仓库执行并逐行回报，结果分别记录、失败仓库可单独重试；`prUrl` 保留第一个成功的 PR；
+- **面板设置按仓库**：`tasksIntegrationByRepo` / `tasksAutoCloseOnPublishByRepo`（键 = 工作区 + repoID），非主仓库默认「跟随主仓库配置」，主仓库未设置时回退旧工作区值；队列表单 / issue 归属在多仓库时给出仓库选择（默认只选 primary，N==1 锁定）；设计 `docs/design/panels/multi-repo-workspace-design.md`。
+
+## 任务完成校验（P1–P5，2026-10-02）
+
+- **P1 完成 marker**：runner 为每次尝试生成唯一 `DSH-TASK-DONE-XXXXXXXX`（`TasksRunner.makeTaskMarker`），提示词要求会话**最后一行**回显；`finish()` 只认本次尝试 marker 在最后一个非空行的回显才判 `done`（`completionMarker` / `markerVerified` 只进 `local.json`）；
+- **P2 待确认**：没拿到 marker / 汇报为空 → 独立 `TaskState.needsReview`（橙色徽标、原因 `tasks.errUnverified`），与失败一样**暂停队列**、不回传、不交付；卡片给 **「重试」** 与 **「标记完成」**（`confirmDone` 走正常完成路径）；
+- **P3 通知诚实化**：完成汇总分开数 `.done` 与 `.needsReview`，有待确认时首行改为「完成 N 条 / 待确认 M 条」并写明「不是全部完成」，不再一律报「已全部完成」；
+- **P4 产物校验**：启动时按目标仓库有无 git 推断 `expectsCommit` 并记各仓库起始 HEAD（`TaskProductBaseline`）；marker 通过但应产出提交却无新提交、工作区也无改动 → 同样 `needsReview`，原因 `tasks.errNoCommit`；git 答不上来按「有产物」放行（fail open）；
+- **P5 重试续跑同一会话**：显式重试信号 + 上一轮真 prompt 过该会话 + `idle` → 只发短续跑提示词（`TaskPrompts.retryContinuation`，新 marker）+ 沿用最初产物基线；建会话前失败 / prompt 失败 / missing / running 一律回退「新会话 + 完整提示词」；
+- 设计 `docs/design/panels/task-completion-verification-design.md`，`tests/tasks-panel/run.sh` 有 P1–P5 源码守卫。
 
 ## 集成点（main.swift）
 
@@ -149,7 +166,7 @@ manual: false
 
 | 场景 | 行为 |
 |---|---|
-| 工作区不是 GitHub 仓库 | issue 区显示空态（不替换为其他已注册工作区）；**手动任务与队列照常可用**，开 PR 会话不启动（`tasks.errPRNoRemote`） |
+| 工作区不是 GitHub 仓库 | issue 区显示空态（不替换为其他已注册工作区）；**手动任务与队列照常可用**，交付按仓库能力降级（无 GitHub 时 PR → push / merge / 无） |
 | 工作区不是 git 仓库 | **任务照常能跑**：自动队列不派生分支（`env.canSwitchBranches=false`），提示词按 `TaskRepoShape.plain` 只说「壳层不切分支 / 不提交 / 不推送，直接在当前目录改文件即可；任务要求建仓库或提交就照做」；旧队列带着切不了的分支时启动前先去掉（`dropUnswitchableBranch`），卡片也给「不切分支并重试」 |
 | 已跟踪改动 + 真要切队列 | 拒绝启动，任务 failed（`tasks.errDirtyTree`），队列暂停；只有未跟踪文件、或已在目标分支 / 不切分支时不算（只保护 checkout） |
 | checkout / 拉取失败 | failed（`tasks.errBranch` / `tasks.errPull`），队列暂停（v1 会静默忽略这两个失败） |
@@ -162,7 +179,7 @@ manual: false
 
 ## 测试
 
-- `tests/tasks-panel/run.sh` **1405 项**（五段：模型 203 + 运行器 454 + 视图模型 381 + 视图 254 + **本地 API 113**，2026-10-01 本机实测全绿），运行器段用**假 git + 假 dsh** 驱动完整流水线（含非 git 目录两问：无分支队列照常跑完 / 有分支队列报 `errNotGit`）；`run.sh` 另有**源码守卫**：建会话必须走 `DshWorkspaceOps`、运行器环境不许冻结端口、提示词必须现场探测工作区形状、两种来源共用同一份要求清单、开 PR 会话的参数写全；
+- `tests/tasks-panel/run.sh` **2036 项**（五段：模型 322 + 运行器 732 + 视图模型 480 + 视图 370 + **本地 API 132**，2026-10-03 本机实测全绿），运行器段用**假 git + 假 dsh** 驱动完整流水线（含非 git 目录两问：无分支队列照常跑完 / 有分支队列报 `errNotGit`）；`run.sh` 另有**源码守卫**：建会话必须走 `DshWorkspaceOps`、运行器环境不许冻结端口、提示词必须现场探测工作区形状与目标仓库集合、两种来源共用同一份要求清单、交付会话的参数写全，以及 P1–P5 完成校验的源码守卫；
 - `core/tests/tasks.test.js` **18 项**（四文件读写 + 会话键兼容 + 队列入队/移出）；
 - 已登记 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`（两处清单必须一致）。
 
