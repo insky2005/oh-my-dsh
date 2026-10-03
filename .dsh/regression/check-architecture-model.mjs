@@ -19,7 +19,7 @@ const checks = [
   ['AC9 §4 编号连续', heads === '1234567'],
   ['AC10 §4.x 引用有效', refOK],
   ['AC11 原则 8 = 点记录', doc.includes('**裁决是点记录，不是实时谓词**')],
-  ['AC12 终态吸收', doc.includes('**终态吸收**') && doc.includes('已交付 / 已放弃 / 被取代')],
+  ['AC12 终态是派生谓词', doc.includes('**终态是派生的，不是迁移**') && doc.includes('派生谓词，不是 stage')],
 ];
 
 let fail = 0;
