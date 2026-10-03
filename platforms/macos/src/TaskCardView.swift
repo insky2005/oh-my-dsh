@@ -304,6 +304,8 @@ final class TaskCardView: NSView {
     var onCommentClose: (() -> Void)?
     /// 跳过并继续: keep this failure's record and run the next queued task.
     var onSkip: (() -> Void)?
+    /// 标记完成: the user confirms a 待确认 task really finished.
+    var onConfirmDone: (() -> Void)?
     /// The task's dsh session: show it in dsh web / audit its changes.
     var onOpenSession: (() -> Void)?
     var onReview: (() -> Void)?
@@ -486,6 +488,9 @@ final class TaskCardView: NSView {
         if model.canCommentClose {
             views.append(actionButton("tasks.detailCommentClose", #selector(commentCloseTapped)))
         }
+        if model.canConfirmDone {
+            views.append(actionButton("tasks.detailConfirmDone", #selector(confirmDoneTapped)))
+        }
         if model.canSkip {
             views.append(actionButton("tasks.detailSkip", #selector(skipTapped)))
         }
@@ -557,6 +562,7 @@ final class TaskCardView: NSView {
 
     @objc private func commentCloseTapped() { onCommentClose?() }
     @objc private func skipTapped() { onSkip?() }
+    @objc private func confirmDoneTapped() { onConfirmDone?() }
     @objc private func openSessionTapped() { onOpenSession?() }
     @objc private func reviewTapped() { onReview?() }
     @objc private func editTapped() { onEdit?() }
@@ -755,12 +761,23 @@ final class TaskQueueHeaderView: NSView {
                                        tone: .negative)
             metaRow.addArrangedSubview(failed)
         }
+        if model.reviewCount > 0 {
+            let review = TaskBadgeView(text: L10n.tr("tasks.queue.needsReviewCount", model.reviewCount),
+                                       tone: .warning)
+            metaRow.addArrangedSubview(review)
+        }
         var rows: [NSView] = [titleRow]
         if model.isCollapsed {
             branch.toolTip = model.branchText
             branch.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         } else {
             rows.append(metaRow)
+        }
+        // 待确认导致队列暂停：原因写在队列头上，折起也可见 —— 否则用户只看到一个
+        // 「已暂停」却不知道是谁停的、下一步该点什么。
+        if let key = model.pauseReasonKey {
+            rows.append(errorRow(L10n.tr(key), color: .systemOrange,
+                                 symbol: "questionmark.circle.fill"))
         }
         // The last delivery session's outcome (its report's first line, or the
         // failure reason) — on the card, not only in the log. A failure is worth the
@@ -915,27 +932,30 @@ final class TaskQueueHeaderView: NSView {
 
     @objc private func toggleNoteTapped() { onToggleNote?() }
 
-    /// Why a publish could not start (an L10n key on the queue): a warning-tinted
-    /// line under the meta row, so the button keeps saying what it does.
-    private func errorRow(_ text: String) -> NSView {
+    /// Why a publish could not start, or why a queue is paused (an L10n key on the
+    /// queue): a tinted line under the meta row, so the button keeps saying what it
+    /// does. Red for failures, orange for 待确认 (a decision is needed, not an error).
+    private func errorRow(_ text: String,
+                          color: NSColor = .systemRed,
+                          symbol: String = "exclamationmark.triangle.fill") -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 4
         row.translatesAutoresizingMaskIntoConstraints = false
-        if let image = NSImage(systemSymbolName: "exclamationmark.triangle.fill",
+        if let image = NSImage(systemSymbolName: symbol,
                                accessibilityDescription: nil) {
             let icon = NSImageView()
             icon.image = image
             icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
-            icon.contentTintColor = .systemRed
+            icon.contentTintColor = color
             icon.translatesAutoresizingMaskIntoConstraints = false
             icon.setContentHuggingPriority(.required, for: .horizontal)
             row.addArrangedSubview(icon)
         }
         let label = NSTextField(labelWithString: text)
         label.font = .systemFont(ofSize: 11)
-        label.textColor = .systemRed
+        label.textColor = color
         label.lineBreakMode = .byTruncatingTail
         label.toolTip = text
         label.translatesAutoresizingMaskIntoConstraints = false

@@ -64,6 +64,10 @@ struct TaskCardModel: Equatable {
     var canDequeue: Bool
     var canCancel: Bool
     var canRetry: Bool
+    /// 标记完成: a 待确认 task the user has looked at and confirms is really done
+    /// (TasksRunner.confirmDone). Only offered for needsReview — a failure is not
+    /// something the user can wave through.
+    var canConfirmDone: Bool = false
     /// 跳过并继续: keep this failure's record and let the queue walk PAST it to the
     /// next queued task (TasksRunner.skip). Offered only when there IS a next task
     /// — skipping the last one would resume a queue with nothing left to do.
@@ -122,6 +126,10 @@ struct TaskCardModel: Equatable {
             stateBadge = L10n.tr("tasks.state.done"); tone = .positive
         case .failed:
             stateBadge = L10n.tr("tasks.state.failed"); tone = .negative
+        case .needsReview:
+            // 待确认: not a success and not a failure — it asks for a human decision,
+            // so it reads as actionable (orange), like 已取消/暂停 rather than red.
+            stateBadge = L10n.tr("tasks.state.needsReview"); tone = .warning
         case .cancelled:
             stateBadge = L10n.tr("tasks.state.cancelled"); tone = .warning
         case .closed:
@@ -189,7 +197,8 @@ struct TaskCardModel: Equatable {
         // showed 加入队列, one click later.
         let hasQueue = queue != nil
         let joinQueue = task.source == .manual && !hasQueue
-            && (task.state == .pending || task.state == .failed || task.state == .cancelled)
+            && (task.state == .pending || task.state == .failed
+                || task.state == .needsReview || task.state == .cancelled)
 
         // nil = 这张卡片没有主操作（见下面 .done：完成的手动任务没什么可点的）。
         var primaryKey: String? = "tasks.detailProcess"
@@ -204,6 +213,7 @@ struct TaskCardModel: Equatable {
         var canDequeue = false
         var canCancel = false
         var canRetry = false
+        var canConfirmDone = false
         var canSkip = false
         var primaryDisabledHintKey: String?
         switch task.state {
@@ -238,7 +248,10 @@ struct TaskCardModel: Equatable {
                 primaryKey = nil
                 primaryAction = nil
             }
-        case .failed, .cancelled:
+        case .failed, .needsReview, .cancelled:
+            // 待确认比失败多一个出口：用户可以直接确认「其实做完了」。即使队列已被删除
+            // 也保留它 —— 判断权在用户，不取决于那条泳道还在不在。
+            canConfirmDone = task.state == .needsReview
             if joinQueue {
                 // Its queue is gone: offer the honest next step instead of a 重试
                 // that only resets the card.
@@ -277,6 +290,7 @@ struct TaskCardModel: Equatable {
                              canDequeue: canDequeue,
                              canCancel: canCancel,
                              canRetry: canRetry,
+                             canConfirmDone: canConfirmDone,
                              canSkip: canSkip,
                              primaryDisabledHintKey: primaryDisabledHintKey,
                              // A finished issue task is commentable whether or not a PR
@@ -362,7 +376,7 @@ struct TasksRunAllModel: Equatable {
         switch task.state {
         case .pending:
             return true
-        case .failed, .cancelled:
+        case .failed, .needsReview, .cancelled:
             return task.queueId.flatMap { board.queue($0) } == nil
         default:
             return false
@@ -660,6 +674,10 @@ struct QueueHeaderModel: Equatable {
     var stateKey: String
     var tone: TaskTone
     var failedCount: Int
+    /// 待确认任务数（needsReview），与 failedCount 并列。
+    var reviewCount: Int = 0
+    /// 待确认导致队列暂停时的原因（L10n key）；nil = 不是待确认导致的暂停。
+    var pauseReasonKey: String? = nil
     var queuedCount: Int
     var runningCount: Int
     var doneCount: Int
@@ -781,6 +799,7 @@ struct QueueHeaderModel: Equatable {
         let tasks = queue.taskIds.compactMap { board.task($0) }
         let doneCount = tasks.filter { $0.state == .done }.count
         let failedCount = tasks.filter { $0.state == .failed }.count
+        let reviewCount = tasks.filter { $0.state == .needsReview }.count
         let queuedCount = tasks.filter { $0.state == .queued }.count
         let runningCount = tasks.filter { $0.state == .running }.count
 
@@ -816,12 +835,17 @@ struct QueueHeaderModel: Equatable {
                                 stateKey: stateKey,
                                 tone: tone,
                                 failedCount: failedCount,
+                                reviewCount: reviewCount,
+                                pauseReasonKey: (queue.state == .paused && reviewCount > 0)
+                                    ? "tasks.queue.pausedNeedsReview" : nil,
                                 queuedCount: queuedCount,
                                 runningCount: runningCount,
                                 doneCount: doneCount,
                                 totalCount: tasks.count,
                                 canStart: queuedCount > 0 && queue.state != .active && queue.state != .closed,
-                                startHintKey: (queue.state == .paused && failedCount > 0 && queuedCount > 0)
+                                // 待确认和失败一样，继续 = 跳过它跑下一个。
+                                startHintKey: (queue.state == .paused
+                                    && (failedCount > 0 || reviewCount > 0) && queuedCount > 0)
                                     ? "tasks.queue.continue" : "tasks.queue.start",
                                 canPause: queue.state == .active,
                                 // .done 仍是「交付」：设置/删除不回到行上（避免把名字挤没），

@@ -1052,6 +1052,13 @@ final class IssueRunnerPanelController: NSObject {
             // through the shell's core bridge (the same session logs the audit panel
             // uses) — the runner calls it off the main thread.
             sessionReport: { sessionId in Self.sessionReport(sessionId: sessionId, workspace: repoRoot) },
+            // P1 完成校验：任务会话必须回显本次尝试的完成 marker，否则进入「待确认」。
+            requireCompletionMarker: true,
+            // P4 产物校验（§4.3）：对「应产出提交」的任务，会话结束后还要看分支有没有
+            // 新提交、工作区有没有改动，都没有就同样降级为待确认。形状探测与提示词同源
+            // （repoShape），所以提示词要求 commit 的任务才会被要求产物。
+            verifyExpectedCommit: true,
+            workspaceShape: { Self.repoShape(path: repoRoot) },
             // 队列完成回传：把报告投给创建队列的那个会话（同样是 session.prompt，
             // mode=queue）—— 这就是「做完把完成情况发回 dsh 会话 X」的落点。
             notifySession: { sessionId, text in
@@ -2574,6 +2581,12 @@ final class IssueRunnerPanelController: NSObject {
             // 跳过并继续: keep the failure's record, resume the queue, run the next
             // queued task (the runner knows how — the UI never could reach it before).
             _ = self?.runner?.skip(taskID: taskID)
+            self?.syncFromBoard()
+        }
+        card.onConfirmDone = { [weak self] in
+            // 标记完成: the user confirms a 待确认 task really finished; it goes .done
+            // and the queue it paused resumes (TasksRunner.confirmDone).
+            _ = self?.runner?.confirmDone(taskID: taskID)
             self?.syncFromBoard()
         }
         card.onOpenSession = { [weak self] in

@@ -32,6 +32,9 @@ final class FakeRepo {
     /// A fresh `git init` with nothing in it: HEAD is unborn, so
     /// `rev-parse --verify HEAD` fails, exactly like real git.
     var unborn = false
+    /// The current HEAD commit hash (P4 产物校验的基线比对). A test simulates a new
+    /// commit by changing it before the task's session ends.
+    var head = "0f0f0f0f"
     var current = "main"
     var worktreeClean = true
     /// Lines `git status --porcelain` reports for UNTRACKED paths. Omitted when the
@@ -61,9 +64,11 @@ final class FakeRepo {
         switch first {
         case "rev-parse":
             if args.count >= 2, args[1] == "--abbrev-ref" { return current }
+            // P4 基线比对直接读 HEAD（rev-parse HEAD），与 --verify HEAD 共用同一个值。
+            if args.count == 2, args[1] == "HEAD" { return unborn ? nil : head }
             if args.count >= 2, args[1] == "--verify" {
                 let name = args.last ?? ""
-                if name == "HEAD" { return unborn ? nil : "0f0f0f0f" }
+                if name == "HEAD" { return unborn ? nil : head }
                 return knownBranches.contains(name) ? "0f0f0f0f" : nil
             }
             return nil
@@ -102,10 +107,32 @@ final class FakeDsh {
     var reports: [String: String] = [:]
     /// Which sessions were asked for a report, in order.
     private(set) var reportCalls: [String] = []
+    /// Whether a simulated agent echoes the TASK completion marker back on its last
+    /// line the way the prompt asks (P1). ON by default, so every existing scenario
+    /// runs through the marker gate exactly like a compliant agent would; a test
+    /// about a MISSING/stale marker turns it off.
+    var echoesTaskMarkers = true
 
     func report(_ id: String) -> String? {
         reportCalls.append(id)
-        return reports[id]
+        var text = reports[id]
+        if echoesTaskMarkers, let marker = Self.taskMarker(in: prompts[id] ?? "") {
+            let base = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !base.contains(marker) {
+                text = base.isEmpty ? marker : base + "\n" + marker
+            }
+        }
+        return text
+    }
+
+    /// The task completion marker (DSH-TASK-DONE-XXXXXXXX) in a prompt, or nil.
+    /// The finalize marker (DSH-FINALIZE-) is a different namespace and deliberately
+    /// not matched.
+    private static func taskMarker(in prompt: String) -> String? {
+        guard let range = prompt.range(of: "DSH-TASK-DONE-", options: .backwards) else { return nil }
+        let tail = prompt[range.upperBound...].prefix { $0.isHexDigit }
+        let hex = String(tail.prefix(8))
+        return hex.count == 8 ? "DSH-TASK-DONE-" + hex : nil
     }
 
     func sessionState(_ id: String) -> SessionState {
@@ -197,7 +224,9 @@ final class Harness {
          timeout: TimeInterval = 30 * 60,
          asynchronous: Bool = false,
          defaultBaseBranch: String = "main",
-         autoCloseOnPublish: Bool = false) {
+         autoCloseOnPublish: Bool = false,
+         verifyExpectedCommit: Bool = false,
+         workspaceShape: TaskRepoShape? = nil) {
         self.asynchronous = asynchronous
         let work = self.work
         let asynchronous = asynchronous        // captured by the perform closure
@@ -243,6 +272,11 @@ final class Harness {
                                           shape: shape)
             },
             sessionReport: { id in dsh.report(id) },
+            requireCompletionMarker: true,
+            // P4 产物校验默认关闭（与面板一致）：既有用例仍走 P1 的 marker 门槛；
+            // P4 用例显式开启并给出工作区形状。
+            verifyExpectedCommit: verifyExpectedCommit,
+            workspaceShape: workspaceShape.map { shape in { shape } },
             notifySession: { id, text in dsh.notify(id, text) },
             persist: { board in rec.persistCount += 1; _ = board },
             persistIssueTask: { task in rec.issueWrites.append(task.id) },
@@ -314,6 +348,7 @@ final class MultiRepoHarness {
             findExistingPRFor: findExistingPRFor,
             promptText: { _, _, brief in brief ?? "" },
             sessionReport: { id in dsh.report(id) },
+            requireCompletionMarker: true,
             notifySession: { id, text in dsh.notify(id, text) },
             persist: { board in rec.persistCount += 1; _ = board },
             persistIssueTask: { task in rec.issueWrites.append(task.id) },
@@ -342,6 +377,19 @@ func singleTaskBoard(queueName: String = "Docs Cleanup",
     board.tasks = [task]
     let queue = board.createQueue(name: queueName, branch: branch, baseBranch: base, autoPR: autoPR)
     return (board, task.id, queue.id)
+}
+
+/// A board with TWO manual tasks and one user queue (neither enqueued). Used by
+/// the P2 待确认 tests: the first task can be left unconfirmed while the second
+/// proves the queue really stopped.
+func twoTaskBoard(queueName: String = "Docs Cleanup",
+                  autoPR: Bool = true) -> (TaskBoard, String, String, String) {
+    var board = TaskBoard()
+    let first = TaskItem.manual(title: "One", id: "manual-0p00aaaa")
+    let second = TaskItem.manual(title: "Two", id: "manual-0p01bbbb")
+    board.tasks = [first, second]
+    let queue = board.createQueue(name: queueName, autoPR: autoPR)
+    return (board, first.id, second.id, queue.id)
 }
 
 // MARK: - Happy path
@@ -717,8 +765,10 @@ do {
 
     check(h.runner.retry(taskID: taskID), "retry is accepted")
     check(h.board.task(taskID)?.state == .running, "the retry started a new run")
-    check(h.dsh.sessions.count == 2, "retry opens a new session")
+    eq(h.dsh.sessions.count, 1, "retry continues the idle session (P5) instead of opening a new one")
     check(h.dsh.cancelled.count == 1, "no second cancel")
+    check((h.dsh.prompts["session-1"] ?? "").contains("从未完成处继续"),
+          "the previous session gets the SHORT continuation prompt")
 }
 do {
     var board = TaskBoard()
@@ -2584,6 +2634,510 @@ do {
     check(!h.runner.retryFailedRepo(queueID: queue.id, repoID: "gone"),
           "不存在的仓库不重试")
 }
+
+// MARK: - P1 完成 marker 协议
+
+section("P1 完成 marker：会话最后一行回显本次 marker 才判 done")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    let prompt = h.dsh.prompts["session-1"] ?? ""
+    check(prompt.contains("DSH-TASK-DONE-"), "提示词里带本次完成 marker")
+    check(prompt.hasSuffix(prompt.range(of: "DSH-TASK-DONE-[0-9A-F]{8}",
+                                        options: .regularExpression).map { String(prompt[$0]) } ?? ""),
+          "marker 指令落在提示词最后")
+    let marker = prompt.range(of: "DSH-TASK-DONE-[0-9A-F]{8}", options: .regularExpression)
+        .map { String(prompt[$0]) } ?? "DSH-TASK-DONE-NONE"
+    eq(h.board.task(taskID)?.completionMarker, marker, "任务记录了本次尝试的 marker")
+    eq(h.board.task(taskID)?.markerVerified, false, "启动时尚未校验")
+
+    h.dsh.reports["session-1"] = "改完了，测试通过。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .done, "汇报回显了本次 marker → done")
+    eq(h.board.task(taskID)?.markerVerified, true, "并记录了已校验")
+    check(!((h.board.task(taskID)?.report) ?? "").contains("DSH-TASK-DONE-"),
+          "marker 不写回卡片汇报")
+    eq(h.board.local.taskMarkers[taskID], marker, "marker 落进 local.json 的状态")
+    eq(h.board.local.taskMarkerVerified[taskID], true, "已校验落进 local.json")
+    let reloaded = TaskLocalState.from(h.board.local.dictionary())
+    eq(reloaded.taskMarkers[taskID], marker, "local.json 往返后 marker 还在")
+    eq(reloaded.taskMarkerVerified[taskID], true, "local.json 往返后校验状态还在")
+
+    var gh = TaskItem.github(number: 7, title: "x")
+    gh.completionMarker = marker
+    gh.markerVerified = true
+    let entry = gh.indexDictionary()
+    check(entry["completionMarker"] == nil && entry["markerVerified"] == nil,
+          "marker 不进 index.json 的 issue 条目正文")
+    _ = queueID
+}
+
+section("P1 完成 marker：无 marker / 非本次 marker / 空汇报 → 待确认，不判 done")
+do {
+    // 会话 idle，但汇报里没有本次 marker。
+    let (board1, task1, queue1) = singleTaskBoard(autoPR: false)
+    let h1 = Harness(board: board1)
+    h1.dsh.echoesTaskMarkers = false
+    _ = h1.runner.enqueue(taskID: task1, into: queue1)
+    h1.dsh.reports["session-1"] = "改完了，但忘了写完成标记。"
+    h1.dsh.finishAll()
+    _ = h1.runner.step()
+    eq(h1.board.task(task1)?.state, .needsReview, "无 marker → 待确认（不是失败、也不是 done）")
+    eq(h1.board.task(task1)?.error, "tasks.errUnverified", "卡片拿到待确认的原因")
+    eq(h1.board.task(task1)?.markerVerified, false, "未通过校验")
+    check(h1.board.queue(queue1)?.state == .paused, "队列暂停：不继续后面的任务、不交付")
+
+    // 汇报里是别的 marker（旧 turn / 复述）→ 不采纳。
+    let (board2, task2, queue2) = singleTaskBoard(autoPR: false)
+    let h2 = Harness(board: board2)
+    h2.dsh.echoesTaskMarkers = false
+    _ = h2.runner.enqueue(taskID: task2, into: queue2)
+    h2.dsh.reports["session-1"] = "上一轮的完成标记：DSH-TASK-DONE-DEADBEEF"
+    h2.dsh.finishAll()
+    _ = h2.runner.step()
+    eq(h2.board.task(task2)?.state, .needsReview, "非本次 marker → 不判 done")
+    eq(h2.board.task(task2)?.error, "tasks.errUnverified", "同样进入待确认")
+
+    // 本次 marker 出现在中间一行、最后一行另有内容 → 只认最后一行，不采纳。
+    let (board3, task3, queue3) = singleTaskBoard(autoPR: false)
+    let h3 = Harness(board: board3)
+    h3.dsh.echoesTaskMarkers = false
+    _ = h3.runner.enqueue(taskID: task3, into: queue3)
+    let prompt3 = h3.dsh.prompts["session-1"] ?? ""
+    let marker3 = prompt3.range(of: "DSH-TASK-DONE-[0-9A-F]{8}", options: .regularExpression)
+        .map { String(prompt3[$0]) } ?? "DSH-TASK-DONE-NONE"
+    h3.dsh.reports["session-1"] = "本次完成标记 " + marker3 + "\n后面还有一句收尾的话"
+    h3.dsh.finishAll()
+    _ = h3.runner.step()
+    eq(h3.board.task(task3)?.state, .needsReview, "marker 不在最后一行 → 不采纳")
+
+    // 空汇报（会话没有任何最后文本）→ 待确认。
+    let (board4, task4, queue4) = singleTaskBoard(autoPR: false)
+    let h4 = Harness(board: board4)
+    h4.dsh.echoesTaskMarkers = false
+    _ = h4.runner.enqueue(taskID: task4, into: queue4)
+    h4.dsh.finishAll()
+    _ = h4.runner.step()
+    eq(h4.board.task(task4)?.state, .needsReview, "空汇报 → 不判 done")
+    eq(h4.board.task(task4)?.error, "tasks.errUnverified", "空汇报进入待确认")
+    _ = queue2
+    _ = queue3
+    _ = queue4
+}
+
+// MARK: - P2 待确认状态与卡片出口
+
+section("P2 待确认：队列暂停、不发完成通知、不自动开 PR")
+do {
+    var (board, first, second, queueID) = twoTaskBoard()
+    // 队列有来源会话：如果它被判完成，这条通知就会发出去 —— 待确认不该发。
+    board.local.queueSessions[queueID] = "origin-session"
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: first, into: queueID)
+    _ = h.runner.enqueue(taskID: second, into: queueID)
+    h.dsh.reports["session-1"] = "改了一半，网络断了。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.task(first)?.state, .needsReview, "没有 marker → 待确认")
+    eq(h.board.queue(queueID)?.state, .paused, "待确认暂停队列")
+    eq(h.board.task(second)?.state, .queued, "后面的任务没有被启动")
+    eq(h.board.queue(queueID)?.taskIds.count, 2, "任务没有丢")
+    check(h.dsh.notifications.isEmpty, "待确认不发完成通知")
+    eq(h.dsh.sessions.count, 1, "待确认不起交付会话（不自动开 PR）")
+    check(h.rec.logged("needs review"), "日志记下待确认")
+
+    // 重试是出口之一：该任务重新排队并立刻跑起来，队列恢复活跃。
+    let staleMarker = h.board.task(first)?.completionMarker
+    check(h.runner.retry(taskID: first), "待确认可以重试")
+    eq(h.board.task(first)?.state, .running, "重试后重新跑")
+    eq(h.board.queue(queueID)?.state, .active, "重试恢复队列")
+    check(h.board.task(first)?.completionMarker != staleMarker, "重试换一个全新的 marker")
+    eq(h.board.task(first)?.error, nil, "重试清掉待确认说明")
+    eq(h.dsh.sessions.count, 1, "待确认重试复用上一轮的会话（P5），不新建")
+    check((h.dsh.prompts["session-1"] ?? "").contains("从未完成处继续"),
+          "发的是短续跑提示词")
+}
+
+section("P2 标记完成：用户确认 → 直接 .done，并走正常完成路径")
+do {
+    var (board, first, _, queueID) = twoTaskBoard()
+    board.local.queueSessions[queueID] = "origin-session"
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: first, into: queueID)
+    h.dsh.reports["session-1"] = "做完了，但忘了写完成标记。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(first)?.state, .needsReview, "先进入待确认")
+
+    check(h.runner.confirmDone(taskID: first), "标记完成被接受")
+    eq(h.board.task(first)?.state, .done, "用户确认 → done")
+    eq(h.board.task(first)?.error, nil, "待确认的说明被清掉")
+    eq(h.board.queue(queueID)?.state, .done, "最后一条确认后队列完成")
+    eq(h.dsh.notifications.count, 1, "确认后照常回传完成通知")
+    // 队列有来源会话：交付复用它，不再新建一个会话。
+    eq(h.runner.openingPRQueueID, queueID, "队列完成照常起交付（autoPR 开着）")
+    check(h.dsh.prompts["origin-session"] != nil, "来源会话收到交付提示词")
+
+    // 不是待确认的任务不能被「标记完成」放行。
+    check(!h.runner.confirmDone(taskID: first), "已 done 的任务不再接受标记完成")
+}
+
+section("P2 跳过并继续：交接简报把待确认标为「待确认」，不写进「已完成」")
+do {
+    let (board, first, second, queueID) = twoTaskBoard()
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: first, into: queueID)
+    _ = h.runner.enqueue(taskID: second, into: queueID)
+    h.dsh.reports["session-1"] = "做了一半。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(first)?.state, .needsReview, "前一条待确认")
+
+    check(h.runner.skip(taskID: first), "跳过并继续")
+    let nextPrompt = h.dsh.prompts["session-2"] ?? ""
+    check(nextPrompt.contains("—— 待确认"), "前一条在简报里标为待确认")
+    check(!nextPrompt.contains("—— 已完成"), "没有把待确认写进「已完成」")
+}
+
+// MARK: - P3 完成通知诚实化
+
+section("P3 完成通知：全完成报「已全部完成」，完成 / 待确认混合如实计数")
+do {
+    // 全完成：没有任何待确认，保持原有「已全部完成（N/N）」。
+    var allDone = TaskBoard()
+    let a1 = TaskItem.manual(title: "A", id: "manual-0p10aaaa")
+    let a2 = TaskItem.manual(title: "B", id: "manual-0p11bbbb")
+    allDone.tasks = [a1, a2]
+    let aq = allDone.createQueue(name: "全绿", branch: "feature/all", autoPR: false)
+    allDone.markRunning(a1.id); allDone.markDone(a1.id, report: "A 完成")
+    allDone.markRunning(a2.id); allDone.markDone(a2.id, report: "B 完成")
+    let allTasks = [allDone.task(a1.id)!, allDone.task(a2.id)!]
+    let allCounts = TaskPrompts.completionCounts(allTasks)
+    eq(allCounts.done, 2, "全完成：完成计 2")
+    eq(allCounts.needsReview, 0, "全完成：待确认计 0")
+    let allText = TaskPrompts.queueFinishedSummary(queue: allDone.queue(aq.id)!, tasks: allTasks)
+    check(allText.contains("已全部完成（2/2）"), "全完成仍写「已全部完成（2/2）」")
+    check(!allText.contains("待确认"), "全完成不提「待确认」")
+
+    // 混合：2 完成 + 1 待确认 —— 首行必须写清两个计数，不能再报「全部完成」。
+    var mixed = TaskBoard()
+    let m1 = TaskItem.manual(title: "One", id: "manual-0p12cccc")
+    let m2 = TaskItem.manual(title: "Two", id: "manual-0p13dddd")
+    let m3 = TaskItem.manual(title: "Three", id: "manual-0p14eeee")
+    mixed.tasks = [m1, m2, m3]
+    let mq = mixed.createQueue(name: "混合", autoPR: false)
+    mixed.markRunning(m1.id); mixed.markDone(m1.id, report: "一完成")
+    mixed.markRunning(m2.id); mixed.markDone(m2.id, report: "二完成")
+    mixed.markRunning(m3.id); _ = mixed.markNeedsReview(m3.id, report: "三做了一半")
+    let mixedTasks = [mixed.task(m1.id)!, mixed.task(m2.id)!, mixed.task(m3.id)!]
+    let mixedCounts = TaskPrompts.completionCounts(mixedTasks)
+    eq(mixedCounts.done, 2, "混合：完成计 2")
+    eq(mixedCounts.needsReview, 1, "混合：待确认计 1")
+    let mixedText = TaskPrompts.queueFinishedSummary(queue: mixed.queue(mq.id)!, tasks: mixedTasks)
+    check(mixedText.contains("完成 2 条 / 待确认 1 条（共 3 条）"),
+          "首行如实写「完成 2 条 / 待确认 1 条」")
+    check(!mixedText.contains("已全部完成"), "有欠账就不再报「已全部完成」")
+    check(mixedText.contains("3. ? Three"), "待确认任务带自己的记号 ?")
+    check(mixedText.contains("待确认："), "待确认任务列出原因与两条出口")
+    check(mixedText.contains("不是全部完成"), "尾部再强调不是全部完成")
+    check(mixedText.contains("三做了一半"), "待确认任务的汇报照样带上，验收看得到它做到哪")
+}
+
+section("P3 跳过待确认后队列完成：通知仍如实报「完成 1 / 待确认 1」")
+do {
+    var (board, first, second, queueID) = twoTaskBoard()
+    board.local.queueSessions[queueID] = "origin-session"
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: first, into: queueID)
+    _ = h.runner.enqueue(taskID: second, into: queueID)
+    h.dsh.reports["session-1"] = "第一条做了一半。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(first)?.state, .needsReview, "第一条待确认")
+
+    // 用户「跳过并继续」：第二条接着跑（FakeDsh 默认守约，回显 marker）。
+    h.dsh.echoesTaskMarkers = true
+    check(h.runner.skip(taskID: first), "跳过待确认")
+    eq(h.board.task(second)?.state, .running, "第二条跑起来")
+    h.dsh.reports["session-2"] = "第二条做完了。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.task(second)?.state, .done, "第二条完成")
+    eq(h.board.queue(queueID)?.state, .done, "队列到达 done")
+    eq(h.dsh.notifications.count, 1, "队列完成发一次通知")
+    let text = h.dsh.notifications.first?.text ?? ""
+    check(text.contains("完成 1 条 / 待确认 1 条（共 2 条）"), "通知如实写「完成 1 / 待确认 1」")
+    check(!text.contains("已全部完成"), "跳过待确认也不谎报「已全部完成」")
+    check(text.contains("1. ? One"), "第一条在列表里是待确认 ?")
+    check(text.contains("2. ✓ Two"), "第二条是完成 ✓")
+}
+
+// MARK: - P4 产物校验（expectsCommit）
+
+section("P4 产物校验：应产出提交却没有任何产物 → 待确认，不是 done")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board, verifyExpectedCommit: true, workspaceShape: .github)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.expectsCommit, true, "git 工作区里的任务被推断为应产出提交")
+
+    // 代理回显了 marker、也写了汇报，但 git 里既没有新提交、工作区也是干净的。
+    h.dsh.reports["session-1"] = "我什么都没改就结束了。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.task(taskID)?.state, .needsReview, "没有产物 → 待确认（不是 done）")
+    eq(h.board.task(taskID)?.error, "tasks.errNoCommit", "卡片拿到「未产出提交」的原因")
+    eq(h.board.task(taskID)?.markerVerified, true, "marker 本身是通过的（P4 是它的补充）")
+    check(h.board.queue(queueID)?.state == .paused, "队列暂停：不继续后面的任务、不交付")
+    check(h.rec.logged("expectsCommit"), "日志说明是产物校验拦下的")
+    eq(h.dsh.notifications.count, 0, "待确认不发完成通知")
+}
+
+section("P4 产物校验：出现新提交 → 可判 done")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board, verifyExpectedCommit: true, workspaceShape: .github)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    // 任务开始后真的提交了：HEAD 变化。
+    h.repo.head = "abc1234"
+    h.dsh.reports["session-1"] = "改完并 commit 了。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.task(taskID)?.state, .done, "有新提交 → done")
+    eq(h.board.task(taskID)?.error, nil, "没有待确认原因")
+    eq(h.board.queue(queueID)?.state, .done, "队列正常完成")
+    _ = queueID
+}
+
+section("P4 产物校验：只改了工作区没 commit → 也算有产物")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board, verifyExpectedCommit: true, workspaceShape: .github)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.repo.worktreeClean = false
+    h.dsh.reports["session-1"] = "改了文件，还没 commit。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .done, "工作区有改动 → done")
+}
+
+section("P4 产物校验：非 git 工作区不设期望，不因为没提交降级")
+do {
+    // 非 git 工作区的队列不带分支（branch: ""），否则切分支会先失败——那才是
+    // tasks.errNotGit 的来路，会把「有没有产物」的断言搅浑。
+    let (board, taskID, queueID) = singleTaskBoard(branch: "", autoPR: false)
+    let h = Harness(board: board, github: false, gitRepo: false,
+                    verifyExpectedCommit: true, workspaceShape: .plain)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.expectsCommit, false, "非 git 工作区不期望提交")
+    h.dsh.reports["session-1"] = "纯文档任务，没有提交。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .done, "没有提交也不降级（非目标 §3）")
+}
+
+section("P4 产物校验：推断规则（来源 / 工作区形状 / 目标仓库）")
+do {
+    let issue = TaskItem.github(number: 1, title: "Fix")
+    let manual = TaskItem.manual(title: "Write docs")
+    eq(TasksRunner.infersCommitExpectation(task: issue, targets: [], shape: .plain), false,
+       "非 git 工作区：issue 任务也不期望提交")
+    eq(TasksRunner.infersCommitExpectation(task: issue, targets: [], shape: nil), true,
+       "无形状信息时 issue 按来源期望提交")
+    eq(TasksRunner.infersCommitExpectation(task: manual, targets: [], shape: nil), false,
+       "无形状信息时手动任务不预设")
+    let gitRepo = WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/a", isGit: true, displayName: "a")
+    eq(TasksRunner.infersCommitExpectation(task: manual, targets: [gitRepo], shape: nil), true,
+       "目标仓库是 git → 期望提交")
+    let plainRepo = WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/b", isGit: false, displayName: "b")
+    eq(TasksRunner.infersCommitExpectation(task: issue, targets: [plainRepo], shape: nil), false,
+       "目标仓库都不是 git → 不期望提交")
+}
+
+// MARK: - P5 重试续跑（同一会话 + 短提示词）
+
+section("P5 重试续跑：会话空闲则不新建会话，发短提示词 + 新 marker；回显 → done")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    let firstMarker = h.board.task(taskID)?.completionMarker ?? "NONE"
+    h.dsh.reports["session-1"] = "上一轮网络断了，只改了一半。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .needsReview, "先进入待确认")
+
+    // 会话还在、且 dsh 说它 idle：重试应当续跑，不再建会话。
+    h.dsh.echoesTaskMarkers = true
+    check(h.runner.retry(taskID: taskID), "重试被接受")
+    eq(h.dsh.sessions.count, 1, "没有新建会话：续跑同一个会话")
+    let retryPrompt = h.dsh.prompts["session-1"] ?? ""
+    check(retryPrompt.contains("从未完成处继续"), "发的是短续跑提示词")
+    check(retryPrompt.contains("Polish README"), "短提示词带上任务标题")
+    check(retryPrompt.contains("**必须**在结束时汇报"), "仍然要求汇报")
+    check(!retryPrompt.contains("本任务须在分支"), "没有重发完整要求")
+    let newMarker = h.board.task(taskID)?.completionMarker ?? "NONE"
+    check(newMarker != firstMarker, "换了新 marker")
+    check(retryPrompt.contains(newMarker), "短提示词里是本次新 marker")
+
+    // 会话回显新 marker → done。
+    h.dsh.reports["session-1"] = "接着把剩下的改完了。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .done, "续跑回显本次 marker → done")
+    _ = queueID
+}
+
+section("P5 重试续跑：会话 missing / 建会话前失败 / prompt 失败 → 回退新会话 + 完整提示词")
+do {
+    // 会话从 dsh 列表里消失：不可续。
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .needsReview, "先待确认")
+    h.dsh.stateOverride["session-1"] = .missing
+    h.dsh.echoesTaskMarkers = true
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.sessions.count, 2, "会话没了 → 回退新会话")
+    let fallback = h.dsh.prompts["session-2"] ?? ""
+    check(fallback.contains("请完成以下任务："), "回退用完整提示词")
+    check(!fallback.contains("从未完成处继续"), "不是短续跑提示词")
+    _ = queueID
+}
+do {
+    // 建会话前就失败：根本没有 sessionId 可续。
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.createFails = true
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.state, .failed, "建会话失败 → 任务失败")
+    eq(h.board.task(taskID)?.sessionId, nil, "没有会话可续")
+    h.dsh.createFails = false
+    h.dsh.echoesTaskMarkers = true
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.sessions.count, 1, "回退到新会话")
+    check((h.dsh.prompts["session-1"] ?? "").contains("请完成以下任务："), "回退完整提示词")
+    _ = queueID
+}
+do {
+    // 会话建了但提示词没发出去：那是空转会话，不能续。
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.promptFails = true
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.state, .failed, "提示词失败 → 任务失败")
+    eq(h.board.task(taskID)?.sessionId, "session-1", "会话建了但没发出去")
+    h.dsh.promptFails = false
+    h.dsh.echoesTaskMarkers = true
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.sessions.count, 2, "未 prompt 过的会话不可续 → 新会话")
+    check((h.dsh.prompts["session-2"] ?? "").contains("请完成以下任务："), "回退完整提示词")
+    _ = queueID
+}
+do {
+    // .unknown（RPC 问不到）同样不可续：不确定就不复用。
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    h.dsh.stateOverride["session-1"] = .unknown
+    h.dsh.echoesTaskMarkers = true
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.sessions.count, 2, "问不到会话状态 → 回退新会话")
+    _ = queueID
+}
+do {
+    // .running：不能两个会话同改一个工作区，先取消旧会话再回退。
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .needsReview, "先待确认")
+    h.dsh.stateOverride["session-1"] = .running
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.cancelled, ["session-1"], "先取消还在跑的旧会话")
+    eq(h.dsh.sessions.count, 2, "再起新会话")
+    _ = queueID
+}
+
+section("P5 续跑同样要求 marker：不回显 → 待确认")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .needsReview, "第一次待确认")
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.sessions.count, 1, "续跑同一会话")
+    h.dsh.reports["session-1"] = "还是没写 marker（又断了）。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .needsReview, "续跑不回显本次 marker → 仍待确认")
+    eq(h.board.queue(queueID)?.state, .paused, "队列再次暂停")
+}
+
+section("P5 + P4：上一轮已 commit，续跑无新提交也不误判 noCommit")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board, verifyExpectedCommit: true, workspaceShape: .github)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    // 第一次尝试：代理 commit 了（HEAD 变化），却没回显 marker → 待确认（P1 的原因）。
+    h.repo.head = "abc1234"
+    h.dsh.reports["session-1"] = "改完并 commit 了，但没写 marker。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .needsReview, "没有 marker → 待确认")
+    eq(h.board.task(taskID)?.error, "tasks.errUnverified", "原因是 marker，不是 noCommit")
+
+    // 续跑：这次没有新 commit（HEAD 仍是 abc1234），但回显了本次 marker。
+    h.dsh.echoesTaskMarkers = true
+    _ = h.runner.retry(taskID: taskID)
+    eq(h.dsh.sessions.count, 1, "续跑同一会话")
+    h.dsh.reports["session-1"] = "接着确认了一遍，没有新改动。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.board.task(taskID)?.state, .done, "上一轮提交算产物，不误判 noCommit")
+    eq(h.board.task(taskID)?.error, nil, "没有 noCommit 降级")
+    _ = queueID
+}
+
+section("P5 兼容守卫：首次启动的完整提示词逐字节不变")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    let prompt = h.dsh.prompts["session-1"] ?? ""
+    let marker = h.board.task(taskID)?.completionMarker ?? "NONE"
+    let expected = TaskPrompts.manual(title: "Polish README", body: "tidy it",
+                                      branch: "feature/docs-cleanup", queueName: "Docs Cleanup",
+                                      base: "main", brief: nil, shape: .github)
+        + "\n\n" + TaskPrompts.completionMarkerInstruction(marker)
+    eq(prompt, expected, "首次启动逐字节等于 promptText + 完成标记")
+    check(!prompt.contains("从未完成处继续"), "首次启动不带续跑前缀")
+    _ = queueID
+}
+
 
 if failures == 0 {
     print("ok - \(checks) checks passed")

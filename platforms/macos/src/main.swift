@@ -613,6 +613,8 @@ enum L10n {
         "tasks.errPR": ("上一次开 PR 没有成功（会话结束了却没给出 PR 链接）——点这里再开一次；详情看那个会话与日志", "The last PR attempt produced nothing (the session ended without a PR URL) — click to try again; see that session and the log"),
         "tasks.errName": ("任务标题不能为空", "A task title is required"),
         "tasks.errInterrupted": ("上次运行被中断（会话已随 App 退出结束）", "Interrupted: the session ended with the app"),
+        "tasks.errUnverified": ("会话结束了，但最后的汇报没有本次完成标记——无法确认任务真的做完（可能是断网或被打断）。请核对改动后再继续", "The session ended without this run's completion marker, so the task cannot be confirmed complete (it may have been interrupted). Review the changes before continuing"),
+        "tasks.errNoCommit": ("会话结束了，但这条任务被判定为「应产出提交」，而分支上没有新提交、工作区也没有改动——agent 很可能什么都没干就结束了。请核对后再决定「重试」或「标记完成」", "The session ended, but this task was expected to produce a commit and the branch has no new commit and the worktree has no changes — the agent may have done nothing at all. Review the work, then retry or mark it complete"),
         "tasks.errNotGit": ("当前工作区不是 git 仓库：切不到队列的分支（点卡片上的「不切分支并重试」，或清空该队列的分支即可运行）", "This workspace is not a git repository, so the queue's branch cannot be checked out — use “Retry without a branch” on the card, or clear the queue's branch"),
         "tasks.errDirtyTree": ("工作区有未提交改动，已停止切换分支（请先 commit 或 stash）", "The worktree has uncommitted changes; branch switching stopped (commit or stash first)"),
         "tasks.errRepoDirty": ("多仓库预检未通过：仓库 %@ 有未提交改动（尚未切换任何仓库，请先 commit 或 stash）", "Multi-repo pre-flight failed: repo %@ has uncommitted changes (nothing was switched yet — commit or stash first)"),
@@ -628,6 +630,7 @@ enum L10n {
         "tasks.state.running": ("处理中", "Running"),
         "tasks.state.done": ("已完成", "Done"),
         "tasks.state.failed": ("失败", "Failed"),
+        "tasks.state.needsReview": ("待确认", "Needs review"),
         "tasks.state.cancelled": ("已取消", "Cancelled"),
         "tasks.state.closed": ("已关闭", "Closed"),
         "tasks.detailProcess": ("处理", "Process"),
@@ -635,6 +638,7 @@ enum L10n {
         "tasks.queue.addHint": ("加入队列：点开选一个已有队列，或新建队列（新建在最上面）", "Add to Queue: pick an existing queue, or create one (New Queue is first)"),
         "tasks.queue.remove": ("移出队列", "Leave Queue"),
         "tasks.detailRetry": ("重试", "Retry"),
+        "tasks.detailConfirmDone": ("标记完成", "Mark done"),
         "tasks.detailSkip": ("跳过并继续", "Skip & Continue"),
         "tasks.detailOpenSession": ("打开会话", "Open session"),
         "tasks.detailReview": ("审查改动", "Review changes"),
@@ -822,6 +826,9 @@ enum L10n {
         "tasks.queue.state.closed": ("已关闭", "Closed"),
         "tasks.queue.noBranch": ("不切分支", "No branch"),
         "tasks.queue.failedCount": ("%d 个失败", "%d failed"),
+        "tasks.queue.needsReviewCount": ("%d 个待确认", "%d need review"),
+        // 待确认导致队列暂停：原因写在队列头上（橙，不是失败的红色）。
+        "tasks.queue.pausedNeedsReview": ("有任务待确认，队列已暂停：请「重试」，或确认做完了就「标记完成」后再继续", "A task needs review, so the queue is paused — retry it, or mark it done if you can confirm the work is complete"),
         // PR 的标题与正文不再由壳层套模板：开 PR 的会话读完真实 diff 之后自己写
         // （§V2-6），所以这两条旧文案随 REST createPR 一起删掉。
         // 交付会话运行时的状态行，按工作流分（不再一律说「开 PR」）。

@@ -1,6 +1,6 @@
 # 任务完成校验设计（Task Completion Verification）
 
-> 状态：草案（问题已定位，方案未实现）· 日期：2026-10-02 · 关联：docs/design/panels/issue-runner-design.md、docs/design/panels/tasks-queue-session-loop-design.md、platforms/macos/src/TasksRunner.swift
+> 状态：已落地（P1：任务会话 marker 协议 + `finish()` 依据 marker 判定；P2：独立 `TaskState.needsReview` 待确认状态 + 卡片「重试 / 标记完成」+ 队列暂停原因；P3：完成通知按「完成 / 待确认」分开计数；P4：`expectsCommit` 产物校验，抓「什么都没干就结束」；P5：重试续跑同一会话 + 短提示词）· 日期：2026-10-02 · 关联：docs/design/panels/issue-runner-design.md、docs/design/panels/tasks-queue-session-loop-design.md、platforms/macos/src/TasksRunner.swift
 > 来源：2026-10-02 多仓库队列实测（P2/P3/P4 断网未完成却被标记「已完成」）
 
 ## 1. 现象
@@ -45,6 +45,18 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 - 复用 finalize 已有机制：交付会话已经用 `TasksRunner.makeMarker()` 做「只采纳本次 turn 的汇报」（`platforms/macos/src/TasksRunner.swift` 的 `makeFinalizeRun` / `makeMarker`）。本设计只是把它从「交付会话」扩展到「任务会话」。
 - marker 由 runner 生成（带任务 id 或 UUID），随 prompt 注入；不写进卡片正文。
 
+**P1 实现状态（2026-10-02）**：
+
+- `TasksRunner.makeTaskMarker()` 生成 `DSH-TASK-DONE-XXXXXXXX`，`pump` 记录在
+  `TaskItem.completionMarker` / `TaskLocalState.taskMarkers`（只进 `local.json`），并把
+  `TaskPrompts.completionMarkerInstruction` 追加在提示词最后；交付会话的
+  `DSH-FINALIZE-` 与它两套独立。
+- `finish()` 只认**本次尝试** marker 在会话汇报**最后一个非空行**的回显：通过才
+  `.done`；marker 从写回卡片的汇报里剔除。
+- 兼容：`TaskRunnerEnv.requireCompletionMarker` 默认 `false`，真实面板
+  （`IssueRunnerPanel`）开启；不提供 `sessionReport` 的 legacy / headless env 不受门槛
+  影响（既有「正常结束即 done」用例走 legacy 路径）。
+
 ### 4.2 「待确认」状态
 
 会话结束但没有 marker / 汇报为空 → 任务进入**待确认**。两种落地方式：
@@ -60,6 +72,29 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 - 卡片状态徽标「待确认」，动作两个：**重试**（重新跑这条任务）与**标记完成**（用户确认其实做完了，直接转 `.done`）；
 - 待确认不写入队列交接简报的「已完成」段（它是未确认的）。
 
+**P2 实现状态（2026-10-02）**：
+
+- 走**方式 A**：`TaskState.needsReview`（`isFinished` / `isQueueable` / `isEditable` / `badge`
+  均已同步）。`finish()` 无本次 marker 时进入 `FinishOutcome.needsReview`，
+  `TaskBoard.markNeedsReview` 与失败一样暂停队列（`.paused`），`error` 仍带
+  `tasks.errUnverified` 作为卡片上的原因；不触发完成回传，也不起交付会话。
+- 卡片：徽标「待确认」（橙色，与失败的红区分）；主操作「重试」；**新增**「标记完成」
+  次级动作 → `TasksRunner.confirmDone` → `TaskBoard.confirmDone`（清掉 unverified 说明、
+  `.done`，并走正常完成路径：最后一条会回传并（autoPR 允许时）起交付会话，还有排队
+  任务则恢复队列）。
+- 队列头：`QueueHeaderModel.reviewCount` 计数 + `pauseReasonKey`（待确认导致暂停时
+  显示橙色原因行，折起也可见），`startHintKey` 把待确认算作可「继续」。
+- 交接简报：待确认那一棒进简报但标「待确认（未确认完成）」，不写「已完成」。
+
+**P5 实现状态（2026-10-02）**：重试不再「无条件新建会话 + 重发完整提示词」，而是尽量在**同一会话**里续跑，只发一条带新 marker 的短提示词（交付会话 `makeFinalizeRun` 早已有同一套先例）。
+
+- **显式重试信号**：`retry(taskID:)` 在 runner 上置一个 `pendingRetries` 标记，只有被这条重试选中的任务才消费它；跳过 / 队列推进 / 首次启动都不置标记，绝不因为「任务上还挂着旧 sessionId」就误续。标记留到 runner 的串行槽空出来再兑现，忙时不会丢。
+- **复用条件（全部满足）**：本次是重试触发 + `task.sessionId` 存在 + 上一轮**真的 prompt 过该会话**（runner 内存 `promptedSessions`，只记提示词成功发出的会话）+ `sessionState(id) == .idle`。建会话前失败 / `.prompt` 失败（建了没发出去）/ `.missing` / `.unknown` 一律不可续，回退「新会话 + 完整提示词」；`.running` 先 `cancelSession` 再回退——两个会话同改一个工作区比丢上下文更糟。
+- **短提示词**：`TaskPrompts.retryContinuation(title:marker:)` = 一句「上一轮因中断 / 未拿到完成证据，请从未完成处继续」+ 任务标题 + `reportRequirement` + `completionMarkerInstruction(marker)`；不重发完整要求与队列简报。marker 每轮重新生成，完成校验与首次启动同一套。
+- **P4 基线**：重试沿用**最初那次尝试**的 `TaskProductBaseline`（runner 内存 `attemptBaselines`），不拿续跑时的 HEAD 重抓；上一轮已 commit 的续跑不会被误判 `noCommit`。两条内存记录在重启后丢失，重试安全地回退新会话 / 新基线。
+- **兼容**：首次启动路径逐字节不变——完整提示词只在 fresh / 回退分支里构造。
+- **测试**：`runner-tests.swift` 覆盖 idle 续跑（短提示词 + 新 marker + done）、missing / 建会话前失败 / prompt 失败 / unknown / running 的回退、续跑不回显 marker → 待确认、以及「上一轮已 commit、续跑无新提交 → 不误判 noCommit」；`run.sh` 有 P5 source guard。
+
 ### 4.3 产物校验（增强，可选）
 
 给任务加一个 `expectsCommit` 标志（按任务来源/队列类型推断，或提示词里声明）：会话结束后检查队列分支在任务开始后是否有新提交、或工作区是否有改动；没有则同样降级为待确认。
@@ -67,9 +102,40 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 - 能抓住「agent 什么都没干就结束」这一类；
 - 抓不住「干了一半」，所以它是 §4.1 的补充而不是替代。
 
+**P4 实现状态（2026-10-02）**：
+
+- `TaskItem.expectsCommit` 记录「本次尝试是否应产出提交」，由 `TasksRunner` 在任务启动
+  时用 `infersCommitExpectation` 推断：任务的目标仓库里有 git 仓库 → true；全是非 git
+  目录 → false（不可能有提交）；没有目标仓库（legacy / headless env）时看工作区形状，形状
+  也未知时退回来源推断（issue → true，手动任务不预设）。真实面板在 `makeEnv` 打开
+  `verifyExpectedCommit` 并把 `workspaceShape` 接到与提示词同源的 `repoShape`。
+- 启动时（切完分支、发出提示词之前）用 `TaskProductBaseline.capture` 记下每个目标仓库的
+  HEAD；`finish()` 里若 marker 已通过且 `expectsCommit`，再用 `hasProduct` 比对「有
+  新提交（HEAD 变化）或工作区有已跟踪改动」。都没有 → 与 P1 一样进入 `.needsReview`，
+  但原因换成 `tasks.errNoCommit`，日志点名是产物校验拦下的。
+- `expectsCommit` 为 false 时不做这层门槛；git 答不上来（unborn / 非 git / 命令失败）时
+  `hasProduct` **算有产物**（fail open）——不确定不降级，避免误伤。
+- 与 P1 的关系：P4 只加证据，不减证据。marker 缺失仍按 P1 待确认；marker 通过但没有任何
+  产物才由 P4 拦下。队列汇总（§4.4）本就不独立读 marker，故 `errNoCommit` 自动计入待确认。
+- 测试：`tests/tasks-panel/runner-tests.swift` 覆盖「marker 通过但无产物 → 待确认」
+  「有新提交 → done」「只改工作区没 commit → done」「非 git 工作区不设期望 → 不降级」与
+  推断规则；`run.sh` 有 P4 source guard。
+
 ### 4.4 完成通知诚实化（低成本兜底）
 
 队列汇总只把**有 marker/汇报**的任务计为「完成」，其余计为「待确认」。通知文案改为「N 条完成 / M 条待确认」，不再无条件输出「已全部完成（N/N）」。即使 §4.1–4.3 暂不实现，这一条也应单独做。
+
+**P3 实现状态（2026-10-02）**：
+
+- `TaskPrompts.completionCounts(tasks)` 分开数 `.done`（完成）与 `.needsReview`（待确认）；
+  其余状态（失败 / 取消 / 关闭）不计入这两类，走自己的记号与原因。
+- `queueFinishedSummary`：没有任何待确认时保留「已全部完成（N/N）」；一旦有待确认，首行改为
+  「完成 N 条 / 待确认 M 条（共 T 条）」，并在尾部写明「不是全部完成」，待确认任务用 `?` 标记且
+  列出两条人工出口（重试 / 标记完成）。**用户「跳过并继续」后队列仍会到 `.done`，此时通知不再谎报全绿**。
+- 判据即 P1/P2 的状态机（`.done` = 本次 marker 校验通过或用户「标记完成」；`.needsReview` = 没拿到完成证据），
+  因此既覆盖「有 marker/汇报」，又不会把用户确认过的任务误算成待确认。
+- 测试：`tests/tasks-panel/runner-tests.swift` 覆盖全完成、完成 / 待确认混合，以及「跳过待确认 → 队列完成」
+  的端到端通知文案；`run.sh` 有 P3 source guard。
 
 ### 4.5 网络异常信号（调研项）
 
@@ -77,8 +143,9 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 
 ## 5. 数据模型
 
-- `TaskFailure` 新增 `unverified`（L10n 键 `tasks.errUnverified`）；若走方式 A，则新增 `TaskState.needsReview`。
-- `TaskItem` 记录本次尝试的 marker（以及是否已校验），用于重启恢复后仍能判断；marker 是机器私有，只进 `local.json` / 内存，不进 `index.json` 的 issue 条目正文。
+- `TaskFailure` 新增 `unverified`（L10n 键 `tasks.errUnverified`）；若走方式 A，则新增 `TaskState.needsReview`。**P1 先走方式 B**（无 marker → `.failed + .unverified`），**P2 已切换为方式 A**：独立 `TaskState.needsReview`，`tasks.errUnverified` 保留为卡片上的原因文案。
+- `TaskItem` 记录本次尝试的 marker（`completionMarker`）与是否已校验（`markerVerified`），用于重启恢复后仍能判断；marker 是机器私有，只进 `local.json` / 内存（`TaskLocalState.taskMarkers` / `taskMarkerVerified`），不进 `index.json` / `manual.json` 正文。
+- `TaskItem.expectsCommit`（P4）记录本次尝试是否应产出提交；它是运行期推断值，不必持久化，重试时由下一次 pump 覆盖。产物基线（各目标仓库起始 HEAD）只活在 `Active` 内，`finish()` 用完即弃。
 
 ## 6. UI
 
@@ -103,17 +170,28 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 
 | 阶段 | 内容 | 价值 |
 |---|---|---|
-| **P1** | 任务会话 marker 协议 + `finish()` 依据 marker 判定 | 堵住「断网 = 完成」 |
-| **P2** | 待确认状态 + 卡片动作（重试 / 标记完成）+ 队列暂停 | 把判断权交回用户 |
-| **P3** | 完成通知诚实化 | 低成本纠偏 |
-| **P4** | `expectsCommit` 产物校验（可选） | 抓「什么都没干」 |
+| **P1** ✅ | 任务会话 marker 协议 + `finish()` 依据 marker 判定 | 堵住「断网 = 完成」 |
+| **P2** ✅ | 待确认状态 + 卡片动作（重试 / 标记完成）+ 队列暂停 | 把判断权交回用户 |
+| **P3** ✅ | 完成通知诚实化 | 低成本纠偏 |
+| **P4** ✅ | `expectsCommit` 产物校验（可选） | 抓「什么都没干」 |
+| **P5** ✅ | 重试在同一会话续跑 + 短提示词 | 重试不丢上一轮上下文，也不再重发整篇要求 |
 
 ## 9. 测试
 
 - **运行器**：会话 idle 但汇报无 marker → 不判 done（待确认 / unverified）；有 marker → done；marker 不属于本次 turn → 不采纳；空汇报 → 待确认。
-- **通知**：混合「完成 / 待确认」时的计数与文案。
+  - P1 已在 `tests/tasks-panel/runner-tests.swift` 覆盖以上四种情形（含「marker 出现在中间行不采纳」与 `local.json` 往返 / `index.json` 不含 marker）。
+- **通知**：混合「完成 / 待确认」时的计数与文案；全完成仍报「已全部完成」，含待确认则报「完成 N / 待确认 M」
+  且不再出现「已全部完成」。P3 已在 `tests/tasks-panel/runner-tests.swift` 覆盖两种场景，并补了一条
+  「跳过待确认 → 队列 `.done`」的端到端用例（正是 P2 遗留的谎报点）。
 - **视图模型**：待确认徽标与「标记完成 / 重试」动作；队列暂停原因。
+  - P2 已在 `tests/tasks-panel/ui-tests.swift` 覆盖徽标、`canConfirmDone`、暂停原因与状态语义。
+- **运行器**：待确认触发队列暂停（不启动后续任务、不回传、不起交付会话）；重试与「标记完成」是两条出口。P2 已在 `tests/tasks-panel/runner-tests.swift` 覆盖。
 - **兼容**：既有「会话正常结束即 done」的用例需要显式补上 marker（或标记为 legacy 路径）。
+- **重试续跑（P5）**：idle 会话不新建、发短提示词 + 新 marker，回显 → done；missing / 建会话前失败 / prompt 失败 / unknown 回退新会话 + 完整提示词；running 先取消；续跑不回显 marker → 待确认；P4 上一轮已 commit、续跑无新提交不误判 noCommit；首次启动提示词逐字节不变。P5 已在 `tests/tasks-panel/runner-tests.swift` 覆盖，`run.sh` 有 source guard。
+- **产物校验（P4）**：应产出提交但会话结束后分支无新提交、工作区无改动 → 待确认
+  （`tasks.errNoCommit`）；有新提交或工作区改动 → 可判 done；非 git 工作区 / 不预设的任务
+  不因「没有提交」降级。P4 已在 `tests/tasks-panel/runner-tests.swift` 覆盖这四种情形与
+  `infersCommitExpectation` 的推断规则。
 
 ## 10. 开放问题
 

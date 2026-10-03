@@ -195,6 +195,53 @@ if grep -qF '请加载 issue-resolve' ../../platforms/macos/src/TasksRunner.swif
 fi
 echo "ok - issue 与手动任务共用同一份要求清单，且不再引用退役技能"
 
+# P1 完成校验：真实面板 env 必须开启任务完成 marker 门槛，runner 必须按本次尝试的
+# marker 判定 done。关掉它 = 「断网导致 turn 结束」又被当成「任务完成」。
+if ! grep -q 'requireCompletionMarker: true' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -q 'func makeTaskMarker' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'markerConfirmed(in:' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'case unverified = "tasks.errUnverified"' ../../platforms/macos/src/TasksCore.swift; then
+  echo "FAIL - P1 完成协议：面板必须开启 requireCompletionMarker，runner 必须实现 marker 判定"
+  exit 1
+fi
+echo "ok - P1 完成协议：任务完成 marker 由 runner 生成并作为 done 的唯一依据"
+
+# P2 待确认：独立状态 + 卡片出口（重试 / 标记完成）。复用 .failed 的话「失败」的措辞
+# 偏重，而且无法把「用户一键放行」和「真失败」区分开。
+if ! grep -q 'case needsReview' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -q 'func markNeedsReview' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -q 'func confirmDone(taskID:' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'case .needsReview' ../../platforms/macos/src/TasksUI.swift \
+   || ! grep -q 'tasks.detailConfirmDone' ../../platforms/macos/src/TaskCardView.swift; then
+  echo "FAIL - P2 待确认：必须有独立 needsReview 状态、标记完成动作与卡片出口"
+  exit 1
+fi
+echo "ok - P2 待确认：独立状态 + 重试 / 标记完成"
+
+# P3 完成通知诚实化：队列汇总必须把「完成 / 待确认」分开计数，不得再无条件输出
+# 「已全部完成」。状态机（P1/P2）已经给出判定，汇总只负责如实翻译成计数与文案。
+if ! grep -q 'func completionCounts' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -qF 'counts.needsReview == 0' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -qF '完成 \(counts.done) 条 / 待确认 \(counts.needsReview) 条（共 \(tasks.count) 条）' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -qF 'case .needsReview: mark = "?"' ../../platforms/macos/src/TasksRunner.swift; then
+  echo "FAIL - P3 完成通知：汇总必须把待确认单独计数，不再无条件报「已全部完成」"
+  exit 1
+fi
+echo "ok - P3 完成通知：完成 / 待确认分开计数，待确认带 ? 与人工出口"
+
+# P4 产物校验（可选）：真实面板必须开启它，runner 必须按「应产出提交」推断、并在会话
+# 结束后比对基线 HEAD / 工作区改动；没有产物时降级为待确认（带 errNoCommit 原因）。
+# 关掉它或删掉推断 = 「agent 什么都没干就结束」又只能靠 marker 兜底。
+if ! grep -q 'verifyExpectedCommit: true' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -q 'workspaceShape: { Self.repoShape(path: repoRoot) }' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -q 'func infersCommitExpectation' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func hasProduct' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'case noCommit = "tasks.errNoCommit"' ../../platforms/macos/src/TasksCore.swift; then
+  echo "FAIL - P4 产物校验：面板必须开启 verifyExpectedCommit，runner 必须实现 expectsCommit 推断与产物校验"
+  exit 1
+fi
+echo "ok - P4 产物校验：expectsCommit 推断 + 基线比对，无产物降级待确认"
+
 # 任务面板的每一项设置都必须按工作区存：一个全局键会把某个工作区的选择泄进所有工作区
 # （「交付成功后自动关闭队列」曾写全局 tasksAutoCloseOnPublish，于是每个工作区都显示勾上）。
 IP=../../platforms/macos/src/IssueRunnerPanel.swift
@@ -217,5 +264,21 @@ if ! grep -q 'tasksIssueRepoByWorkspace' "$IP" \
   exit 1
 fi
 echo "ok - issue 归属仓库按工作区存并写进 issue 任务的 auto queue"
+
+# P5 重试续跑：重试必须显式置 pendingRetries 标记，runner 必须有短续跑提示词，
+# 且只有「上一轮真的 prompt 过这个会话」才复用（promptedSessions）。靠「有 sessionId」
+# 猜会把 skip / 队列推进也误判成重试；产物基线必须沿用最初那次，否则上一轮已 commit
+# 的续跑会被误判 noCommit。
+if ! grep -q 'private var pendingRetries: Set<String>' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'pendingRetries.insert(taskID)' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'pendingRetries.remove(taskID)' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func retryContinuation' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'promptedSessions\[taskID\] = sessionId' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'promptedSessionsNow\[taskID\] == previous' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'attemptBaselinesNow\[taskID\]' ../../platforms/macos/src/TasksRunner.swift; then
+  echo "FAIL - P5 重试续跑：重试必须显式传信号，只有 prompt 过且 idle 的会话才复用"
+  exit 1
+fi
+echo "ok - P5 重试续跑：显式重试信号 + 短续跑提示词 + 原始产物基线"
 
 echo "tasks-panel tests passed"
