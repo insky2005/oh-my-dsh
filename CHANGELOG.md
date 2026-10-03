@@ -5,9 +5,11 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
-## [Unreleased]
+## [1.18.1] - 2026-10-03
 
 ### Fixed
+
+- **切队列前的工作区干净检查不再把未跟踪文件当脏（2026-10-02）**：队列启动要切分支时，预检用 `git status --porcelain`（默认含未跟踪 `??`）判「工作区脏」，于是任何没进 `.gitignore` 的本地草稿（`.tmp/`、日志、探针脚本）都会让队列直接失败暂停——而 `git checkout` 只在未跟踪文件会被目标分支覆盖时才拒绝，其余照切不误。现在 `TaskGit.isWorktreeClean` 改用 `--untracked-files=no`，只看已跟踪改动；真正的撞名冲突交给 `checkout` 自己报错。回归：`tests/tasks-panel` 新增「只有未跟踪文件照常切分支 / 已跟踪改动仍然拦」，`run.sh` 全绿（运行器 472）。对应 `main` 上的完整修复见 #76。
 
 - **英文界面修复：Agent 追加任务后壳层崩溃（2026-10-02，v1.18.0）**：`tasks.apiQueueAppended` 的中英文案占位符顺序相反（中文 `%@`→`%d`、英文 `%d`→`%@`），而 `L10n.tr` 把同一份参数列表交给当前语言的格式串；英文下 `%@` 拿到整数 `created.count`（3）被当成对象指针，`String(format:)` 内部对 `0x3` 调 `objc_opt_respondsToSelector` 直接 SIGSEGV（`KERN_INVALID_ADDRESS at 0x3`）。改用位置参数 `%1$@` / `%2$d`，两种语言各自保留自然语序。回归：`tests/l10n` 新增「中英格式参数必须一致」检查——改前先复现失败（精确命中该 key），改后通过。
 
