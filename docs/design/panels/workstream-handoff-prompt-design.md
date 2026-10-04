@@ -16,15 +16,15 @@
 
 ## 3. 公共头（所有 stage 共用）
 
+工作区通用规则（模型 / `.dsh` 约定 / 人工确认门 / 只拆不胀 / `/task-todo`）应由**工作区 `AGENTS.md` 承载、对话开始自动加载**（见 `docs/usage/ai-native-workflow-manual.md` §2.0）。提示词只带**本步事实**：
+
 ```text
 你在 <repo> 处理一个事项。
 
-事实来源（先读，别信转述）：
+本步事实：
 - 事项：.dsh/workstreams/<WS-ID>.md
 - 需求：.dsh/requirements/<REQ-ID>.md
-- 存储约定：.dsh/requirements/README.md
-- 模型：docs/research/ai-native-workflow-architecture.md
-- 仓库约定：AGENTS.md
+- 存储约定：.dsh/requirements/README.md（通用规则见工作区 AGENTS.md）
 
 当前 stage：<stage>      本步动作：<action>
 目标：<卡片的规划.目标>
@@ -35,8 +35,9 @@
 | stage | action | 要点 |
 |---|---|---|
 | 规划 | 确认规划 | 补齐验收标准 + 裁剪声明后，**停下请人确认**，再进设计 |
-| 设计 | 出设计 | 写 `docs/design/**`，不写实现 |
-| 任务 | 实施 | 切分支；按队列 / 任务执行，提交走 conventional commits |
+| 设计 | 出设计 | 写 `docs/design/**`，不写实现；**写完停下请人确认** |
+| 任务 | 拆分任务 | **`/task-todo`** 建**等待态队列 + 批量入队**（= 任务拆分本身，只建不启动）；**停下请人确认拆分合理**；记 `WS.queues` |
+| 任务 | 启动实施 | 确认后 **`/task-todo 启动队列`**（`queue/start`）；切分支、边界内实施、conventional commits |
 | 验收 | 校验 | 跑回归门 `<REG-ID>` + 机检证据；**人 sign-off**，agent 不自签 |
 | 交付 | 交付 | push / PR；在卡片写 covered / 交付 PR |
 
@@ -46,6 +47,7 @@
 - **只拆不胀**：范围外 → 新需求卡片（R5），不就地吸收；
 - 裁决是点记录；覆盖锚变更；终态是派生谓词（**不写** `closed` / `outcome`）；
 - 回归门 `<REG-ID>`：若改动其覆盖路径，交付前运行；
+- 任务阶段用 **`/task-todo`** 落地（拆分 = 建等待态队列、实施 = 启动、交付 = deliver）；
 - 不改其它会话的在途文件。
 
 ## 5. 生成示例：WS-002
@@ -53,13 +55,12 @@
 ```text
 你在 oh-my-dsh 仓库工作。处理事项 WS-002「需求 / 事项落盘 .dsh 落地」。
 
-先读：.dsh/workstreams/WS-002.md、.dsh/requirements/REQ-002.md、
-      .dsh/requirements/README.md、docs/research/ai-native-workflow-architecture.md、AGENTS.md。
+先读：.dsh/workstreams/WS-002.md、.dsh/requirements/REQ-002.md（通用规则见工作区 AGENTS.md）。
 
 当前 stage：规划 → 确认规划后进设计。
 目标：产出 docs/design/panels/requirements-workstream-store-design.md。
 规则：……（同 §4）
-结束前停下问：规划确认 / 验收 sign-off。不要自签。
+结束前停下问：规划确认 / 设计确认 / 拆分确认 / 验收 sign-off。不要自签。
 ```
 
 ## 6. 变量来源

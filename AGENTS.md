@@ -20,6 +20,14 @@
 - `docs/process/release-process.md` —— **发布流程**（CHANGELOG → tag → local-release → 版本推进）；
 - `README.md` —— 安装 / 构建 / 环境变量。
 
+## AI 原生工作流（.dsh 卡片）
+
+- 规范：.dsh/ai-native-workflow-spec.md
+- 状态在 .dsh（随仓库提交）：需求 REQ-*.md、事项 WS-*.md、回归门 REG-*.md
+- 不手写派生字段：closed / outcome / split 由派生器算出
+- 人工确认门：拆解 / 规划 / 设计 / 任务拆分 / 验收 sign-off / merge
+- 只拆不胀：范围外的新发现回池
+
 ## 关键约束
 
 1. **绝不改动 DeepSeek Harness 源码**；扩展只走壳层面板 + dsh 既有能力；
