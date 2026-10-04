@@ -120,11 +120,20 @@
 
 ## 8. 参考实现（不属于规范本身，可替换）
 
-- **派生器**：`node .dsh/tools/derive-status.mjs`（读卡片 + 查 PR 状态，输出 outcome / closed / 有效状态）；
-- **回归门 checker**：`node .dsh/regression/check-*.mjs`；
-- **任务阶段工具**：oh-my-dsh 的任务面板 + `/task-todo` 技能（拆分 = 建等待态队列、实施 = 启动、交付 = deliver）——**可选**，任何等价机制都可以。
+规范只定义**接口**（§6）；下面是它们的参考实现，任何等价实现都可以：
 
-## 9. 词汇表
+- **派生器**：`node .dsh/tools/derive-status.mjs`（读卡片 + 查 PR 状态，输出 outcome / closed / 有效状态）；
+- **回归门 checker**：`node .dsh/regression/check-*.mjs`。
+
+## 9. 配合 oh-my-dsh App 使用时提供的能力（可选）
+
+这是 **App 能力，不是本规范的一部分**——项目**配合 oh-my-dsh 使用**时才有：
+
+- **任务面板 + `/task-todo` 技能**：任务拆分 = 建**等待态队列** + 批量入队（`.draft`，不启动）；实施 = 启动队列；交付 = 交付会话 push + PR；队列跑完回传会话。
+
+不用 App 时，任何等价机制（自有队列 / 脚本 / 其它工具）都可以。
+
+## 10. 词汇表
 
 | 词 | English |
 |---|---|
