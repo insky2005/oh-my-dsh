@@ -37,6 +37,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 - [task-completion-verification-design.md](design/panels/task-completion-verification-design.md) — 任务完成校验：会话结束≠任务完成，marker + 待确认（草案）
 - [workstream-handoff-prompt-design.md](design/panels/workstream-handoff-prompt-design.md) — 事项交接提示词：指针 + (stage, action) + 模型规则，供面板生成（草案）
 - [requirements-workstream-store-design.md](design/panels/requirements-workstream-store-design.md) — 需求 / 事项 / 回归门卡片 schema、committed/ignored 分界与写入所有权反转（草案）
+- [planning-template-design.md](design/panels/planning-template-design.md) — 规划模板（四件套）与「无证据不进设计」门禁判据（草案）
 - [file-panel-composer-reference.md](design/panels/file-panel-composer-reference.md) — 文件面板「添加到对话」`@` 引用
 
 ## design/channels/ — 通道设计
