@@ -1,9 +1,9 @@
 # 右栏面板详细说明
 
-本文是 oh-my-dsh 右栏**九个原生面板**的完整说明（特性、边界、已知限制与设计文档）。
-窗口最右侧是**活动栏**（图标入口，九个面板互斥切换，**首位是「项目」**），图标自上而下的顺序与下文一致：
+本文是 oh-my-dsh 右栏**十个原生面板**的完整说明（特性、边界、已知限制与设计文档）。
+窗口最右侧是**活动栏**（图标入口，十个面板互斥切换，**首位是「项目」**），图标自上而下的顺序与下文一致：
 
-**项目 → 文件 → 终端 → Repo Wiki 知识库 → 任务 → 通道 → 审查 → 浏览器 → 技能**
+**项目 → 文件 → 终端 → Repo Wiki 知识库 → 任务 → 通道 → 审查 → 浏览器 → 技能 → 需求池**
 
 简要说明与截图见 [README 的「右栏面板」](../../README.md#右栏面板)；面板配色方案见 [`docs/design/shell/ui-color-scheme.md`](../design/shell/ui-color-scheme.md)。
 
@@ -168,3 +168,15 @@
 - **安全**：技能以完整代理权限运行，安装确认处固定提示；仅接受 https 地址，路径穿越被拒绝，失败不留半成品。
 
 设计与机制（四档级别判定、registry 模型、开关的可逆写法）：`docs/design/panels/skills-manager-design.md`。
+
+## 需求池面板（`⌥⌘I` / 活动栏末位「需求池」图标）
+
+AI 原生工作流的**前端三件**：想法收件箱、需求池、拆解器。需求与事项状态落在项目 `.dsh`（随仓库提交），面板只是它的工作台。
+
+- **想法收件箱**：头部「＋」弹表单（标题 + 诉求），创建 `.dsh/requirements/REQ-*.md`（`state: candidate`）；也可在会话里让 agent 用内置技能 `requirement-pool` 经 localhost API 落卡；
+- **需求池**：每个需求一张卡片，显示**有效状态**（候选 / 评估中 / 挂起 / 丢弃 / 已拆分 / 已关闭；派生优先级 `discarded > closed > split > state`）、来源与更新日期，以及拆出的子事项（`WS-xxx 阶段`，点击在文件面板打开）；
+- **状态菜单**：卡片上的「状态」写回人工能判断的四档（`candidate` / `evaluating` / `suspended` / `discarded`）；`split` / `closed` 是**派生谓词**，不写字段；
+- **拆解器**：卡片「拆解」复制一段交接提示词（含 `POST /api/requirements/breakdown/propose` 的调用），交给会话里的 agent 出「1 需求 → 1..N 事项」方案；方案以**待确认提案**显示在卡片上；
+- **人工确认门**：只有面板上的「确认拆解」会真正建 `WS-*.md`（`requirement` 指回需求、`stage: planning`）并留下需求 → 事项映射表；「驳回」清掉提案。agent 绝不调 `confirm`（R10）；
+- **已知限制**：`closed` 只读卡片里 `delivery.outcome` 的派生缓存、不联网；PR 状态的网络派生仍由 `node .dsh/tools/derive-status.mjs` 完成（见 [手动模式使用说明](ai-native-workflow-manual.md)）；
+- 设计与 API 契约：`docs/design/panels/requirements-pool-panel-design.md`；存储 schema：`docs/design/panels/requirements-workstream-store-design.md`。

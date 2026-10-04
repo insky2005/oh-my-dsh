@@ -7,6 +7,10 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **需求池面板：想法收件箱 + 需求池 + 拆解器（2026-10-04）**：AI 原生工作流从手动模式升级为壳层能力。新增右栏第 10 个面板（活动栏末位 `tray.full`，`⌥⌘I`）：卡片按**有效状态**（`discarded > closed > split > state`，派生）展示需求，列出拆出的 `WS-*` 子事项（点击在文件面板打开）；头部「＋」把想法落成 `.dsh/requirements/REQ-*.md`（`state: candidate`），也可由内置技能 `requirement-pool` 经 API 落卡。**拆解器**走「agent 出方案 / 人确认」：面板「拆解」复制交接提示词，agent 经 `POST /api/requirements/breakdown/propose` 提交 1..N 事项提案，**人**在面板「确认拆解」才生成 `WS-*.md`（`requirement` 回指、`stage: planning`）并留下映射表，agent 绝不调 `confirm`（R10）。实现：纯模型 `RequirementsCore.swift`（frontmatter 解析 / 派生 / 原子写）、纯路由 `RequirementsAPI.swift`（`/api/requirements/*`）、面板 `RequirementsPanel.swift`、技能 `requirement-pool`；`closed` 只读 `delivery.outcome` 缓存、不联网（网络派生仍归 `derive-status.mjs`）。测试 `tests/requirements-panel`（模型 61 + API 42）。
+
 ### Fixed
 
 - **英文界面修复：Agent 追加任务后壳层崩溃（2026-10-02，v1.18.0）**：`tasks.apiQueueAppended` 的中英文案占位符顺序相反（中文 `%@`→`%d`、英文 `%d`→`%@`），而 `L10n.tr` 把同一份参数列表交给当前语言的格式串；英文下 `%@` 拿到整数 `created.count`（3）被当成对象指针，`String(format:)` 内部对 `0x3` 调 `objc_opt_respondsToSelector` 直接 SIGSEGV（`KERN_INVALID_ADDRESS at 0x3`）。改用位置参数 `%1$@` / `%2$d`，两种语言各自保留自然语序。回归：`tests/l10n` 新增「中英格式参数必须一致」检查——改前先复现失败（精确命中该 key），改后通过。

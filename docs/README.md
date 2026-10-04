@@ -5,7 +5,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 
 ## 常用入口
 
-- [右栏面板详细说明](usage/panels.md) — 九个原生面板的功能、边界与截图
+- [右栏面板详细说明](usage/panels.md) — 十个原生面板的功能、边界与截图
 - [产品化总纲](research/productization.md) — 路线图 / 分发 / 升级 / 多平台 / 开源治理
 - [dsh 升级影响清单](process/dsh-version-impact.md) — 五个耦合面 + 每次升级的执行 SOP
 - [发布流程](process/release-process.md) · [分支与提交规范](process/git-workflow.md)
@@ -37,6 +37,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 - [task-completion-verification-design.md](design/panels/task-completion-verification-design.md) — 任务完成校验：会话结束≠任务完成，marker + 待确认（草案）
 - [workstream-handoff-prompt-design.md](design/panels/workstream-handoff-prompt-design.md) — 事项交接提示词：指针 + (stage, action) + 模型规则，供面板生成（草案）
 - [requirements-workstream-store-design.md](design/panels/requirements-workstream-store-design.md) — 需求 / 事项 / 回归门卡片 schema、committed/ignored 分界与写入所有权反转（草案）
+- [requirements-pool-panel-design.md](design/panels/requirements-pool-panel-design.md) — 需求池面板（含想法收件箱与拆解器）：REQ/WS 读写、拆解提案与人工确认、`/api/requirements/*`（已实现）
 - [planning-template-design.md](design/panels/planning-template-design.md) — 规划模板（四件套）与「无证据不进设计」门禁判据（草案）
 - [file-panel-composer-reference.md](design/panels/file-panel-composer-reference.md) — 文件面板「添加到对话」`@` 引用
 
@@ -86,7 +87,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 
 ## usage/ — 使用说明
 
-- [panels.md](usage/panels.md) — 右栏九个面板的完整说明
+- [panels.md](usage/panels.md) — 右栏十个面板的完整说明
 - [ai-native-workflow-manual.md](usage/ai-native-workflow-manual.md) — 手动模式闭环：需求 → 拆解 → 事项，配合任务面板的提示词与操作
 
 ## raw/ — 素材

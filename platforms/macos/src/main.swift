@@ -109,8 +109,10 @@ enum L10n {
         "menu.appearance": ("外观", "Appearance"),
         "menu.toggleFiles": ("显示/隐藏 文件面板", "Toggle Files Panel"),
         "menu.toggleProjects": ("显示/隐藏 项目面板", "Toggle Projects Panel"),
+        "menu.toggleRequirements": ("显示/隐藏 需求池面板", "Toggle Requirements Panel"),
         // activity bar
         "bar.projects": ("项目", "Projects"),
+        "bar.requirements": ("需求池", "Requirements"),
         "bar.preview": ("文件", "Files"),
         "bar.terminal": ("终端", "Terminal"),
         "edit.undo": ("撤销", "Undo"),
@@ -896,6 +898,38 @@ enum L10n {
         "projects.settingsPick": ("选择…", "Choose…"),
         "projects.settingsReset": ("恢复默认", "Reset to Default"),
         "projects.settingsInvalidPath": ("请输入绝对路径（可用 “~”）", "Enter an absolute path (a leading “~” is allowed)"),
+        // requirements pool panel
+        "requirements.title": ("需求池", "Requirements"),
+        "requirements.new": ("新建需求", "New Requirement"),
+        "requirements.formTitle": ("新建需求", "New Requirement"),
+        "requirements.formTitlePrompt": ("标题", "Title"),
+        "requirements.formBodyPrompt": ("诉求", "Statement"),
+        "requirements.create": ("创建", "Create"),
+        "requirements.cancel": ("取消", "Cancel"),
+        "requirements.empty": ("还没有需求。点「＋」把一条想法记进来。", "No requirements yet. Click + to capture an idea."),
+        "requirements.noChildren": ("尚未拆解", "Not broken down"),
+        "requirements.state.candidate": ("候选", "Candidate"),
+        "requirements.state.evaluating": ("评估中", "Evaluating"),
+        "requirements.state.suspended": ("挂起", "Suspended"),
+        "requirements.state.discarded": ("丢弃", "Discarded"),
+        "requirements.state.split": ("已拆分", "Split"),
+        "requirements.state.closed": ("已关闭", "Closed"),
+        "requirements.set.state": ("状态", "State"),
+        "requirements.breakdown": ("拆解", "Break down"),
+        "requirements.breakdownPromptCopied": ("已复制拆解提示词；在会话里运行 /requirement-pool 拆解 %@", "Breakdown prompt copied; run /requirement-pool breakdown %@ in a session"),
+        "requirements.proposal": ("待确认拆解（%d 个事项）", "Proposed breakdown (%d workstreams)"),
+        "requirements.confirm": ("确认拆解", "Confirm"),
+        "requirements.reject": ("驳回", "Reject"),
+        "requirements.confirmed": ("已生成 %d 个事项", "Created %d workstreams"),
+        "requirements.rejected": ("已驳回拆解提案", "Proposal dismissed"),
+        "requirements.created": ("已创建 %@", "Created %@"),
+        "requirements.stateChanged": ("%@ → %@", "%@ → %@"),
+        "requirements.error.notFound": ("找不到该需求", "Requirement not found"),
+        "requirements.error.noProposal": ("没有待确认的拆解提案", "No proposal to confirm"),
+        "requirements.error.unknownState": ("无效的状态", "Invalid state"),
+        "requirements.error.generic": ("操作失败：%@", "Failed: %@"),
+        "requirements.needsWorkspace": ("请先选择一个工作区", "Select a workspace first"),
+        "requirements.openWorkstream": ("打开事项卡", "Open workstream card"),
     ]
 
     /// Localize a key, optionally filling %@ / %d placeholders.
@@ -2220,9 +2254,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var channelToggleMenuItem: NSMenuItem?
     private var reviewToggleMenuItem: NSMenuItem?
     private var projectsToggleMenuItem: NSMenuItem?
+    private var requirementsToggleMenuItem: NSMenuItem?
     private var skillsToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip). "项目" comes first (design D4).
     private var projectsBarButton: ActivityBarButton!
+    private var requirementsBarButton: ActivityBarButton!
     private var previewBarButton: ActivityBarButton!
     private var closeTabMenuItem: NSMenuItem?
     private var terminalBarButton: ActivityBarButton!
@@ -2244,6 +2280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var channelPanel: ChannelPanelController!
     private var reviewPanel: ReviewPanelController!
     private var projectsPanel: ProjectsPanelController!
+    private var requirementsPanel: RequirementsPanelController!
     private var skillsPanel: SkillsPanelController!
     /// Browser panel localhost REST API (Agent / user curl). Runs from launch.
     private var browserAPIServer: BrowserAPIServer!
@@ -2254,7 +2291,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
     /// terminal, wiki, tasks and browser panels share one slot; the activity
     /// bar toggles between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review, skills, projects }
+    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review, skills, projects, requirements }
     private var rightPanel: RightPanel = .none
     /// Set by prepareSessionSnapshot() when session snapshots need the user's
     /// attention (unavailable runtime / an unfinished rollback). Surfaced by the
@@ -2299,7 +2336,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                                 max(ChannelPanelController.minWidth,
                                     max(ReviewPanelController.minWidth,
                                         max(SkillsPanelController.minWidth,
-                                            ProjectsPanelController.minWidth)))))))))
+                                            max(ProjectsPanelController.minWidth,
+                                                RequirementsPanelController.minWidth))))))))))
     /// *Initial* panel width when the user has never chosen one. The user's
     /// saved/dragged width always wins (clamped to the minimum above); this is
     /// only the first-run width. Deliberately NOT window-relative: a "half the
@@ -2522,6 +2560,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.projects)
             AppLog.shared.log("projects self-test enabled")
         }
+        // Requirements pool self-test hook (debugging / QA): DSH_REQUIREMENTS_TEST=1.
+        if ProcessInfo.processInfo.environment["DSH_REQUIREMENTS_TEST"] == "1" {
+            setRightPanel(.requirements)
+            AppLog.shared.log("requirements self-test enabled")
+        }
         // Tasks self-test hook (debugging / QA): opens the task panel. With
         // DSH_TASKS_TEST_PATH=<repo> it loads that repo's .dsh/tasks/ board
         // instead of waiting for the workspace to resolve (fixture QA).
@@ -2570,6 +2613,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "review", "审查": return .review
         case "skills", "技能": return .skills
         case "projects", "项目": return .projects
+        case "requirements", "需求池": return .requirements
         default: return nil
         }
     }
@@ -2771,6 +2815,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.dumpPanelDebugInfo(panelView: self.projectsPanel.view, label: "projects-loaded")
         }
 
+        requirementsPanel = RequirementsPanelController()
+        AppLog.shared.log("launch: requirementsPanel created")
+        requirementsPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        requirementsPanel.workspaceProvider = { [weak self] in self?.activeWorkspacePath() }
+        // Children buttons open the workstream card in the file panel.
+        requirementsPanel.onOpenWorkstream = { [weak self] path in
+            guard let self = self else { return }
+            self.previewPanel.open(path: path)
+            self.setRightPanel(.preview)
+        }
+        // REST focus=true: bring the workspace up and show this panel.
+        requirementsPanel.onFocus = { [weak self] _ in
+            self?.setRightPanel(.requirements)
+        }
+        requirementsPanel.onDidRender = { [weak self] in
+            guard let self = self, self.uiDebug else { return }
+            self.dumpPanelDebugInfo(panelView: self.requirementsPanel.view, label: "requirements-loaded")
+        }
+
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
@@ -2808,7 +2871,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsBarButton = makeActivityButton(symbol: "puzzlepiece",
                                              tooltip: L10n.tr("bar.skills"),
                                              action: #selector(skillsEntryTapped(_:)))
-        let barStack = NSStackView(views: [projectsBarButton, previewBarButton, terminalBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton, browserBarButton, skillsBarButton])
+        requirementsBarButton = makeActivityButton(symbol: "tray.full",
+                                                   tooltip: L10n.tr("bar.requirements"),
+                                                   action: #selector(requirementsEntryTapped(_:)))
+        let barStack = NSStackView(views: [projectsBarButton, previewBarButton, terminalBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton, browserBarButton, skillsBarButton, requirementsBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -2870,6 +2936,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "review": kind = .review
         case "skills": kind = .skills
         case "projects": kind = .projects
+        case "requirements": kind = .requirements
         default: kind = .preview
         }
         setRightPanel(visible ? kind : .none)
@@ -2887,6 +2954,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .review: return reviewPanel.view
         case .skills: return skillsPanel.view
         case .projects: return projectsPanel.view
+        case .requirements: return requirementsPanel.view
         case .none: return NSView()
         }
     }
@@ -2946,6 +3014,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reviewToggleMenuItem?.state = (panel == .review) ? .on : .off
         skillsToggleMenuItem?.state = (panel == .skills) ? .on : .off
         projectsToggleMenuItem?.state = (panel == .projects) ? .on : .off
+        requirementsToggleMenuItem?.state = (panel == .requirements) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
@@ -2955,6 +3024,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reviewBarButton?.setActive(panel == .review)
         skillsBarButton?.setActive(panel == .skills)
         projectsBarButton?.setActive(panel == .projects)
+        requirementsBarButton?.setActive(panel == .requirements)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
@@ -3040,6 +3110,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if uiDebug {
                     self.dumpPanelDebugInfo(panelView: projectsPanel.view, label: "projects")
                 }
+            case .requirements:
+                requirementsPanel.ensureLoaded()
+                if uiDebug {
+                    self.dumpPanelDebugInfo(panelView: requirementsPanel.view, label: "requirements")
+                }
             }
         } else {
             split.setPosition(split.bounds.width, ofDividerAt: 0)
@@ -3073,6 +3148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .review: kind = "review"
         case .skills: kind = "skills"
         case .projects: kind = "projects"
+        case .requirements: kind = "requirements"
         default: kind = "preview"
         }
         ShellConfig.shared.set(kind, forKey: "rightPanelKind")
@@ -4980,6 +5056,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reviewPanel?.workspaceChanged()
         // The Projects panel only re-renders its highlight + badges here.
         projectsPanel?.workspaceChanged()
+        requirementsPanel?.workspaceChanged()
         AppLog.shared.log("project directory adopted: " + std)
         return true
     }
@@ -5791,6 +5868,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleSkills.target = self
         toggleSkills.state = (rightPanel == .skills) ? .on : .off
         skillsToggleMenuItem = toggleSkills
+        // 「需求池」放在视图菜单末位（活动栏亦在末位），快捷键 ⌥⌘I。
+        let toggleRequirements = viewMenu.addItem(withTitle: L10n.tr("menu.toggleRequirements"), action: #selector(requirementsEntryTapped(_:)), keyEquivalent: "i")
+        toggleRequirements.keyEquivalentModifierMask = [.command, .option]
+        toggleRequirements.target = self
+        toggleRequirements.state = (rightPanel == .requirements) ? .on : .off
+        requirementsToggleMenuItem = toggleRequirements
         viewItem.submenu = viewMenu
 
         // Settings menu: dsh settings/upgrade/registry + logs + language.
@@ -5943,6 +6026,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsBarButton?.toolTip = L10n.tr("bar.skills")
         wikiBarButton?.toolTip = L10n.tr("bar.wiki")
         tasksBarButton?.toolTip = L10n.tr("bar.tasks")
+        requirementsBarButton?.toolTip = L10n.tr("bar.requirements")
         // 各面板头部操作按钮 tooltip 同样跟随语言
         previewPanel?.refreshTooltips()
         terminalPanel?.refreshTooltips()
@@ -5953,6 +6037,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reviewPanel?.refreshTooltips()
         skillsPanel?.refreshTooltips()
         projectsPanel?.refreshTooltips()
+        requirementsPanel?.refreshTooltips()
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url
@@ -6135,6 +6220,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Toggle the Projects panel (activity bar's first entry / ⌥⌘P).
     @objc private func projectsEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .projects ? .none : .projects)
+    }
+    /// Toggle the Requirements Pool panel (activity bar's last entry / ⌥⌘I).
+    @objc private func requirementsEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .requirements ? .none : .requirements)
     }
     /// Toggle the Review (change audit) panel (activity bar entry / ⌥⌘R).
     @objc private func reviewEntryTapped(_ sender: Any?) {
@@ -6499,6 +6588,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         bridge.tasksQueueDeliver = { [weak self] request in
             self?.tasksPanel?.apiTaskQueueDeliver(request) ?? BrowserAPIBridge.tasksUnavailable
         }
+        // 同一服务上的第三块路由面：/api/requirements/*（收件箱 + 拆解器提案）。
+        bridge.requirementsList = { [weak self] workspace in
+            self?.requirementsPanel?.apiRequirementsList(workspace: workspace) ?? BrowserAPIBridge.requirementsUnavailable
+        }
+        bridge.requirementsCreate = { [weak self] request in
+            self?.requirementsPanel?.apiRequirementsCreate(request) ?? BrowserAPIBridge.requirementsUnavailable
+        }
+        bridge.requirementsSetState = { [weak self] request in
+            self?.requirementsPanel?.apiRequirementsSetState(request) ?? BrowserAPIBridge.requirementsUnavailable
+        }
+        bridge.requirementsPropose = { [weak self] request in
+            self?.requirementsPanel?.apiRequirementsPropose(request) ?? BrowserAPIBridge.requirementsUnavailable
+        }
+        bridge.requirementsConfirm = { [weak self] request in
+            self?.requirementsPanel?.apiRequirementsConfirm(request) ?? BrowserAPIBridge.requirementsUnavailable
+        }
+        bridge.requirementsReject = { [weak self] request in
+            self?.requirementsPanel?.apiRequirementsReject(request) ?? BrowserAPIBridge.requirementsUnavailable
+        }
         bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
         bridge.hidePanel = { [weak self] in
             if self?.rightPanel == .browser { self?.setRightPanel(.none) }
@@ -6788,6 +6896,7 @@ final class SettingsWindowController {
         ("menu.toggleChannel", "⌥⌘H"),
         ("menu.toggleReview", "⌥⌘R"),
         ("menu.toggleSkills", "⌥⌘S"),
+        ("menu.toggleRequirements", "⌥⌘I"),
         ("settings.openMenu", "⌘,"),
     ]
 
