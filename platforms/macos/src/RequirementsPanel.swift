@@ -275,6 +275,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     private let headerTitle = HeaderLabel()
     private let newButton = CustomIconButton(glyph: .plus, tooltip: "")
     private let refreshButton = CustomIconButton(glyph: .symbol("arrow.clockwise"), tooltip: "")
+    private let helpButton = CustomIconButton(glyph: .symbol("questionmark.circle"), tooltip: "")
     private let hideButton = CustomIconButton(glyph: .close, tooltip: "")
 
     private let scroll = NSScrollView()
@@ -282,8 +283,16 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     private let emptyLabel = NSTextField(labelWithString: "")
     private let emptyButton = NSButton(title: "", target: nil, action: nil)
     private let emptyView = NSStackView()
+    private let helpTextView = TasksHelpTextView()
 
     private let statusLabel = NSTextField(labelWithString: "")
+
+    // The shared form drawer (TaskInlineForms.swift): the composer and the help
+    // view slide up in it, exactly like the tasks panel's forms.
+    private let formSheetHost = TaskFormSheetHostView()
+    private let formSheet = TaskFormSheetView()
+    private var formSheetTop: NSLayoutConstraint!
+    private weak var formSheetContent: NSView?
 
     // MARK: - State
 
@@ -294,8 +303,9 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     override init() {
         super.init()
         buildUI()
-        newButton.onAction = { [weak self] in self?.promptForNewRequirement() }
+        newButton.onAction = { [weak self] in self?.openComposer() }
         refreshButton.onAction = { [weak self] in self?.reload() }
+        helpButton.onAction = { [weak self] in self?.helpTapped() }
         hideButton.onAction = { [weak self] in self?.onRequestHide?() }
         updateLabels()
     }
@@ -316,8 +326,10 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
         headerTitle.text = L10n.tr("requirements.title")
         newButton.toolTip = L10n.tr("requirements.new")
         refreshButton.toolTip = L10n.tr("snapshot.action.refresh")
+        helpButton.toolTip = L10n.tr("requirements.help.hint")
         hideButton.toolTip = L10n.tr("preview.closePanel")
         emptyButton.title = L10n.tr("requirements.new")
+        helpTextView.apply(helpModel())
     }
 
     /// The panel's one-line result area (success messages fade, failures stay).
@@ -366,6 +378,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
         let hasWorkspace = !(workspaceProvider?() ?? "").isEmpty
         emptyLabel.stringValue = hasWorkspace ? L10n.tr("requirements.empty") : L10n.tr("requirements.needsWorkspace")
         emptyButton.isHidden = !hasWorkspace
+        helpTextView.isHidden = !snapshot.requirements.isEmpty
         emptyView.isHidden = !snapshot.requirements.isEmpty
         scroll.isHidden = snapshot.requirements.isEmpty
 
@@ -389,42 +402,103 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
 
     // MARK: - Actions
 
-    @objc private func newRequirementTapped(_ sender: Any?) { promptForNewRequirement() }
+    @objc private func newRequirementTapped(_ sender: Any?) { openComposer() }
 
-    /// The idea inbox: a title + statement sheet, then an atomic REQ card write.
-    func promptForNewRequirement() {
+    /// The idea inbox: a drawer whose one box's first line is the title (the rest
+    /// is the 诉求), then an atomic REQ card write — the same drawer the tasks
+    /// panel's composer uses (TaskInlineForms.swift).
+    func openComposer() {
         guard let workspace = workspaceProvider?(), !workspace.isEmpty else {
             presentNeedsWorkspace()
             return
         }
-        let width: CGFloat = 360
-        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 104))
-        let titleField = NSTextField(frame: NSRect(x: 0, y: 72, width: width, height: 24))
-        titleField.placeholderString = L10n.tr("requirements.formTitlePrompt")
-        let bodyField = NSTextField(frame: NSRect(x: 0, y: 8, width: width, height: 56))
-        bodyField.placeholderString = L10n.tr("requirements.formBodyPrompt")
-        bodyField.usesSingleLineMode = false
-        bodyField.lineBreakMode = .byWordWrapping
-        bodyField.cell?.wraps = true
-        bodyField.cell?.isScrollable = false
-        accessory.addSubview(titleField)
-        accessory.addSubview(bodyField)
+        let form = RequirementComposerView(model: RequirementComposerModel.build())
+        form.onSubmit = { [weak self] composer in self?.submitComposer(composer) }
+        form.onCancel = { [weak self] in self?.dismissForm() }
+        presentForm(form) { ($0 as? RequirementComposerView)?.focusEditor() }
+    }
 
-        let alert = NSAlert()
-        alert.messageText = L10n.tr("requirements.formTitle")
-        alert.addButton(withTitle: L10n.tr("requirements.create"))
-        alert.addButton(withTitle: L10n.tr("requirements.cancel"))
-        alert.accessoryView = accessory
+    /// Submit the composer; on a refused write the drawer stays open so nothing
+    /// typed is lost (the reason is in the status line).
+    func submitComposer(_ composer: RequirementComposerModel) {
+        guard composer.canSubmit else { return }
+        if createRequirement(title: composer.title, body: composer.body) {
+            dismissForm()
+        }
+    }
 
-        guard let window = view.window else {
-            AppLog.shared.log("requirements: no window for the new requirement sheet")
-            return
+    // MARK: - 使用说明 (help)
+
+    private func helpModel() -> TasksHelpModel {
+        let spec = RequirementsHelpSpec.build()
+        return TasksHelpModel(titleKey: spec.titleKey,
+                              introKey: spec.introKey,
+                              sections: spec.sections.map {
+                                  TasksHelpModel.Section(headingKey: $0.headingKey, lineKeys: $0.lineKeys)
+                              })
+    }
+
+    /// The 使用说明 drawer (always available from the header's ? button; the same
+    /// text is shown inline while the pool is empty).
+    func helpTapped() {
+        let help = TasksHelpView(model: helpModel())
+        help.onCancel = { [weak self] in self?.dismissForm() }
+        presentForm(help) { _ in }
+    }
+
+    // MARK: - Form drawer
+
+    /// Pull the shared drawer up with this content, or swap its content while it is
+    /// already up (a second create must not re-animate).
+    private func presentForm(_ content: NSView, focus: @escaping (NSView) -> Void) {
+        formSheet.setContent(content)
+        formSheetContent = content
+        formSheetHost.blocksClicksBelow = true
+        view.layoutSubtreeIfNeeded()
+        let wasVisible = !formSheet.isHidden
+        view.layoutSubtreeIfNeeded()
+        if wasVisible {
+            formSheetTop.constant = TaskFormSheetHostView.restingTop
+            view.layoutSubtreeIfNeeded()
+            formSheetHost.showScrim()
+            formSheetHost.scrim.alphaValue = 1
+        } else {
+            formSheetTop.constant = -(formSheetHost.bounds.height)
+            view.layoutSubtreeIfNeeded()
+            formSheet.isHidden = false
+            formSheetHost.showScrim()
+            formSheetHost.scrim.alphaValue = 0
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                formSheetTop.animator().constant = TaskFormSheetHostView.restingTop
+                formSheet.animator().alphaValue = 1
+                formSheetHost.scrim.animator().alphaValue = 1
+            }
         }
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            self?.createRequirement(title: titleField.stringValue, body: bodyField.stringValue)
+        DispatchQueue.main.asyncAfter(deadline: .now() + (wasVisible ? 0 : 0.22)) { [weak self] in
+            guard let self = self, let content = self.formSheetContent else { return }
+            focus(content)
         }
-        window.makeFirstResponder(titleField)
+    }
+
+    private func dismissForm() {
+        guard !formSheet.isHidden else { return }
+        let hidden = -formSheetHost.bounds.height
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            self.formSheetTop.animator().constant = hidden
+            self.formSheet.animator().alphaValue = 0
+            self.formSheetHost.scrim.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            guard let self = self else { return }
+            self.formSheet.isHidden = true
+            self.formSheetHost.hideScrim()
+            self.formSheet.setContent(NSView())
+            self.formSheetContent = nil
+            self.formSheetHost.blocksClicksBelow = false
+        })
     }
 
     @discardableResult
@@ -666,7 +740,7 @@ extension RequirementsPanelController {
         let header = DynamicFillView()
         header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
-        let actions = NSStackView(views: [newButton, refreshButton, hideButton])
+        let actions = NSStackView(views: [newButton, refreshButton, helpButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -709,8 +783,11 @@ extension RequirementsPanelController {
         emptyButton.target = self
         emptyButton.action = #selector(newRequirementTapped(_:))
         emptyButton.translatesAutoresizingMaskIntoConstraints = false
+        helpTextView.contentWidth = 300
+        helpTextView.translatesAutoresizingMaskIntoConstraints = false
         emptyView.addArrangedSubview(emptyLabel)
         emptyView.addArrangedSubview(emptyButton)
+        emptyView.addArrangedSubview(helpTextView)
         emptyView.orientation = .vertical
         emptyView.alignment = .centerX
         emptyView.spacing = 10
@@ -730,7 +807,21 @@ extension RequirementsPanelController {
             statusLabel.centerYAnchor.constraint(equalTo: statusRow.centerYAnchor),
         ])
 
-        for sub in [header, scroll, emptyView, statusRow] { view.addSubview(sub) }
+        // --- form drawer (composer / 使用说明) ---
+        formSheetHost.translatesAutoresizingMaskIntoConstraints = false
+        formSheetHost.wantsLayer = true
+        formSheetHost.layer?.masksToBounds = true
+        formSheet.translatesAutoresizingMaskIntoConstraints = false
+        formSheet.isHidden = true
+        formSheet.alphaValue = 0
+        formSheetHost.addSubview(formSheet)
+        formSheetHost.onLayout = { [weak self] in
+            (self?.formSheetContent as? RequirementComposerView)?.layoutEditor()
+        }
+        formSheetTop = formSheet.topAnchor.constraint(equalTo: formSheetHost.topAnchor,
+                                                      constant: TaskFormSheetHostView.restingTop)
+
+        for sub in [header, scroll, emptyView, statusRow, formSheetHost] { view.addSubview(sub) }
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: view.topAnchor),
             header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -742,15 +833,174 @@ extension RequirementsPanelController {
             scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: statusRow.topAnchor),
 
-            emptyView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            emptyView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            emptyView.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
+            emptyView.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
             emptyView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
             emptyView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+            helpTextView.widthAnchor.constraint(equalToConstant: 300),
 
             statusRow.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             statusRow.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             statusRow.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             statusRow.heightAnchor.constraint(equalToConstant: 24),
+
+            formSheetHost.topAnchor.constraint(equalTo: header.bottomAnchor),
+            formSheetHost.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            formSheetHost.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            formSheetHost.bottomAnchor.constraint(equalTo: statusRow.topAnchor),
+
+            formSheet.leadingAnchor.constraint(equalTo: formSheetHost.leadingAnchor, constant: 8),
+            formSheet.trailingAnchor.constraint(equalTo: formSheetHost.trailingAnchor, constant: -8),
+            formSheet.heightAnchor.constraint(lessThanOrEqualTo: formSheetHost.heightAnchor,
+                                              constant: -2 * TaskFormSheetHostView.restingTop),
+            formSheetTop,
         ])
     }
 }
+
+// MARK: - The requirements composer drawer
+
+/// The inline requirements composer: ONE box whose first line is the requirement's
+/// title and whose remaining lines are its 诉求 (a single line is both), plus
+/// 创建 / 取消. Mirrors the tasks panel's TaskComposerView.
+final class RequirementComposerView: TaskFormCardView, NSTextViewDelegate {
+
+    private(set) var model: RequirementComposerModel
+    var onSubmit: ((RequirementComposerModel) -> Void)?
+    var onCancel: (() -> Void)?
+
+    private let heading = NSTextField(labelWithString: "")
+    private let info = NSTextField(wrappingLabelWithString: "")
+    private let contentCaption = TaskFormKit.caption()
+    private let closeButton = CustomIconButton(glyph: .close, tooltip: "", size: 22)
+    let editor: NSTextView
+    let editorBox: TaskFieldBox
+    let editorPlaceholder: NSTextField
+    private var editorBoxHeight: NSLayoutConstraint!
+    private var editorTextHeight: NSLayoutConstraint!
+    let hint: NSTextField
+    let submitButton: NSButton
+    let cancelButton: NSButton
+
+    init(model: RequirementComposerModel) {
+        self.model = model
+        let content = TaskFormKit.textArea(model.content)
+        editorBox = content.box
+        editor = content.text
+        editorPlaceholder = content.placeholder
+        editorBoxHeight = content.boxHeight
+        editorTextHeight = content.textHeight
+        hint = TaskFormKit.hintLabel()
+        submitButton = TaskFormKit.button("", primary: true)
+        cancelButton = TaskFormKit.button("", primary: false)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        editor.delegate = self
+        build()
+        apply(model)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func focusEditor() { window?.makeFirstResponder(editor) }
+
+    func apply(_ model: RequirementComposerModel) {
+        self.model = model
+        heading.stringValue = L10n.tr(model.headingKey)
+        info.stringValue = L10n.tr(model.infoKey)
+        contentCaption.stringValue = L10n.tr(model.contentCaptionKey)
+        editorPlaceholder.stringValue = L10n.tr(model.placeholderKey)
+        editorPlaceholder.isHidden = !editor.string.isEmpty
+        submitButton.title = L10n.tr(model.submitKey)
+        cancelButton.title = L10n.tr("btn.cancel")
+        closeButton.toolTip = L10n.tr("btn.cancel")
+        submitButton.isEnabled = model.canSubmit
+        TaskFormKit.setHint(hint, key: model.problemKey)
+    }
+
+    private func build() {
+        info.font = TaskFormKit.captionFont
+        info.textColor = .secondaryLabelColor
+        info.maximumNumberOfLines = 2
+        info.lineBreakMode = .byTruncatingTail
+        info.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(info)
+        closeButton.onAction = { [weak self] in self?.onCancel?() }
+        submitButton.target = self
+        submitButton.action = #selector(submitTapped)
+        cancelButton.target = self
+        cancelButton.action = #selector(cancelTapped)
+
+        let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
+        let contentRow = TaskFormKit.row(contentCaption, editorBox)
+        let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
+        let column = NSStackView(views: [headingRow, info, contentRow, hint, buttons])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 8
+        column.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(column)
+        addSubview(column)
+        TaskFormKit.stretch([headingRow, info, contentRow, hint], to: column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+        ])
+    }
+
+    private var currentDraft: RequirementComposerModel {
+        model.typed(content: editor.string)
+    }
+
+    /// The editor grows with what is typed (the box never shrinks below its
+    /// comfortable default; past the maximum it scrolls under the caret).
+    private func updateEditorHeight() {
+        let width = editorBox.bounds.width
+        guard width > 1 else { return }
+        let needed = TaskFormKit.textHeight(editor.string, width: width)
+        let box = min(TaskFormKit.editorMaxHeight, max(TaskFormKit.editorHeight, needed))
+        if abs(editorBoxHeight.constant - box) > 0.5 { editorBoxHeight.constant = box }
+        let text = max(box - 8, needed)
+        if abs(editorTextHeight.constant - text) > 0.5 { editorTextHeight.constant = text }
+    }
+
+    func layoutEditor() { updateEditorHeight() }
+
+    @objc func submitTapped() {
+        let typed = currentDraft
+        guard typed.canSubmit else {
+            apply(typed.attemptedSubmit())
+            return
+        }
+        onSubmit?(typed)
+    }
+
+    @objc private func cancelTapped() { onCancel?() }
+
+    // MARK: NSTextViewDelegate
+
+    func textDidChange(_ notification: Notification) {
+        updateEditorHeight()
+        apply(currentDraft)
+    }
+    func textDidBeginEditing(_ notification: Notification) { apply(currentDraft) }
+    func textDidEndEditing(_ notification: Notification) { apply(currentDraft) }
+
+    /// A plain Enter stays a NEWLINE (the first line is the title, the rest is the
+    /// statement); ⌘↩ submits, Esc closes.
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            onCancel?()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.insertNewline(_:)),
+           NSApp.currentEvent?.modifierFlags.contains(.command) == true {
+            submitTapped()
+            return true
+        }
+        return false
+    }
+}
+

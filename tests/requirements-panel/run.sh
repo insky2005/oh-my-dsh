@@ -13,9 +13,10 @@ CACHE="$(cd ../../.build/module-cache && pwd)"
 echo "--- requirements model (frontmatter / derivation / writes / breakdown) ---"
 TMP="$(mktemp -d)"
 cp ../../platforms/macos/src/RequirementsCore.swift "$TMP/RequirementsCore.swift"
+cp ../../platforms/macos/src/RequirementsUI.swift "$TMP/RequirementsUI.swift"
 cp model-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
-  -o "$TMP/model-tests" "$TMP/RequirementsCore.swift" "$TMP/main.swift"
+  -o "$TMP/model-tests" "$TMP/RequirementsCore.swift" "$TMP/RequirementsUI.swift" "$TMP/main.swift"
 "$TMP/model-tests"
 rm -rf "$TMP"
 

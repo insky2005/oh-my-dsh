@@ -229,7 +229,8 @@ updated: <today>
 | 控件 | 行为 |
 |---|---|
 | 标题「需求池」 | `HeaderLabel`，固定显示面板名 |
-| `plus` 新建需求 | 收件箱：弹表单（标题 + 诉求），确定 → `createRequirement`（`state: candidate`） |
+| `plus` 新建需求 | 收件箱：打开**抽屉**，一个输入框里**首行标题 / 其余行诉求**，`⌘↩` 或「创建」→ `createRequirement`（`state: candidate`） |
+| `questionmark.circle` | 打开「使用说明」抽屉（面板创建 / agent 对话创建 / 拆解三节） |
 | `arrow.clockwise` | 重读盘面并重绘 |
 | `xmark` | `onRequestHide` → 收起右栏 |
 
@@ -243,13 +244,13 @@ updated: <today>
 
 ### 5.3 空态与状态行
 
-- 目录空：居中「还没有需求。点「＋」把一条想法记进来。」+「＋ 新建需求」按钮；
+- 目录空：居中「还没有需求。点「＋」把一条想法记进来。」+「＋ 新建需求」按钮；下方**直接铺使用说明正文**（与 `?` 抽屉同一份，无需先点帮助）；
 - 无工作区：提示「请先选择一个工作区」（不弹模态）；
 - 状态行：`已创建 REQ-008` / `候选 → 评估中` / `已生成 3 个事项` / `找不到该需求` / `没有待确认的拆解提案`；成功 5s 清空，失败保留到下次操作。
 
-### 5.4 新建需求表单
+### 5.4 新建需求抽屉（复用任务面板的 form sheet）
 
-照 `FilePanel.promptForNewItem`：`NSAlert` + `NSView` accessory（标题单行 + 诉求多行），`beginSheetModal`；标题必填、诉求可空（空则回退标题）。无窗口时只记日志、不弹。
+照任务面板的 `TaskFormSheetView` / `TaskFormSheetHostView`（`TaskInlineForms.swift`）：**一个输入框**（`NSTextView` 包在 `TaskFieldBox` 里），**首行 = 标题、其余行 = 诉求**（只有一行时该行同时是标题与诉求；`createRequirement` 对空诉求回退标题）；`⌘↩` 提交、`Esc` 取消，标题为空时提交按钮禁用、尝试提交后给出 `requirements.newProblem`。视图模型 `RequirementComposerModel`（纯 Foundation，`RequirementsUI.swift`）可无头断言。写失败（无标题 / 无工作区）时抽屉保持打开，原因进状态行。
 
 ### 5.5 配色
 
@@ -313,12 +314,12 @@ updated: <today>
 | `requirements.title` | 需求池 | Requirements |
 | `requirements.new` | 新建需求 | New Requirement |
 | `requirements.formTitle` | 新建需求 | New Requirement |
-| `requirements.formTitlePrompt` | 标题 | Title |
-| `requirements.formBodyPrompt` | 诉求 | Statement |
 | `requirements.create` | 创建 | Create |
-| `requirements.cancel` | 取消 | Cancel |
+| `requirements.newInfo` | 首行是标题，其余行是诉求（也可让 agent 用 requirement-pool 技能落卡）。 | The first line is the title; later lines are the statement (the agent can also use the requirement-pool skill). |
+| `requirements.newContent` | 标题与诉求 | Title and statement |
+| `requirements.newContentHint` | 首行作为标题，其余行是诉求 | First line is the title; the rest is the statement |
+| `requirements.newProblem` | 请填写标题（首行） | Enter a title (the first line) |
 | `requirements.empty` | 还没有需求。点「＋」把一条想法记进来。 | No requirements yet. Click + to capture an idea. |
-| `requirements.children` | %d 个事项 | %d workstreams |
 | `requirements.noChildren` | 尚未拆解 | Not broken down |
 | `requirements.state.candidate` | 候选 | Candidate |
 | `requirements.state.evaluating` | 评估中 | Evaluating |
@@ -342,6 +343,15 @@ updated: <today>
 | `requirements.error.generic` | 操作失败：%@ | Failed: %@ |
 | `requirements.needsWorkspace` | 请先选择一个工作区 | Select a workspace first |
 | `requirements.openWorkstream` | 打开事项卡 | Open workstream card |
+| `requirements.help.hint` | 使用说明 | Help |
+| `requirements.help.title` | 需求池使用说明 | Requirements Pool Help |
+| `requirements.help.intro` | 需求池是 AI 原生工作流的前端：收集想法、评估、拆解成事项。 | The pool is the front end of the AI-native workflow: capture ideas, evaluate them, break them into workstreams. |
+| `requirements.help.panel.heading` | ① 用面板创建需求 | 1. Capture from the panel |
+| `requirements.help.panel.body` | 点右上角「＋」打开抽屉：首行写标题，其余行写诉求；按 ⌘↩ 或点「创建」。 | Click + in the header to open the drawer: the first line is the title, later lines are the statement; press Command-Return or click Create. |
+| `requirements.help.agent.heading` | ② 用 agent 对话创建需求 | 2. Capture from an agent conversation |
+| `requirements.help.agent.body` | 在会话里说「把这条想法落成需求」或运行 /requirement-pool 记一条需求；agent 经 API 落卡。 | In a session, say that you want an idea captured, or run /requirement-pool; the agent writes the card through the API. |
+| `requirements.help.breakdown.heading` | ③ 拆解成事项 | 3. Break a requirement down |
+| `requirements.help.breakdown.body` | 点「拆解」复制提示词，在会话里运行；agent 提出待确认方案，人在面板确认后才生成事项卡。 | Click Break down to copy the prompt and run it in a session; the agent proposes, and only a human Confirm creates the cards. |
 
 ---
 

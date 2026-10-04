@@ -217,6 +217,34 @@ expectError("reject without proposal -> noProposal", .noProposal) {
 check(RequirementsCore.breakdownPrompt("REQ-001").contains("/api/requirements/breakdown/propose"), "prompt points at the propose endpoint")
 check(RequirementsCore.breakdownPrompt("REQ-042").contains("REQ-042"), "prompt names the requirement")
 
+// MARK: - composer + help view models (RequirementsUI.swift)
+
+section("composer")
+let emptyComposer = RequirementComposerModel.build()
+eq(emptyComposer.canSubmit, false, "empty composer cannot submit")
+eq(emptyComposer.title, "", "empty composer has no title")
+eq(emptyComposer.isPristine, true, "empty composer is pristine")
+
+let typedComposer = RequirementComposerModel.build().typed(content: "  标题一  \n第二行\n第三行")
+eq(typedComposer.title, "标题一", "first line (trimmed) is the title")
+eq(typedComposer.body, "第二行\n第三行", "remaining lines are the statement")
+eq(typedComposer.canSubmit, true, "a title enables submit")
+eq(RequirementComposerModel.build().typed(content: "只有一行").body, "只有一行", "a single line is both title and statement")
+
+let blank = RequirementComposerModel.build().typed(content: "   ")
+eq(blank.problemKey, nil, "no problem before a submit attempt")
+eq(blank.attemptedSubmit().problemKey, "requirements.newProblem", "blank title reports the problem after submit")
+eq(emptyComposer.attemptedSubmit().problemKey, "requirements.newProblem", "pristine composer reports the problem after submit")
+
+section("help")
+let helpSpec = RequirementsHelpSpec.build()
+eq(helpSpec.sections.count, 3, "help has three sections")
+eq(helpSpec.titleKey, "requirements.help.title", "help title key")
+eq(helpSpec.introKey, "requirements.help.intro", "help intro key")
+check(helpSpec.sections.allSatisfy {
+    $0.headingKey.hasPrefix("requirements.help.") && $0.lineKeys.allSatisfy { $0.hasPrefix("requirements.help.") }
+}, "every help key stays namespaced under requirements.help.")
+
 section("result")
 print("requirements model: " + String(checks - failures) + "/" + String(checks) + " passed")
 if failures > 0 { exit(1) }
