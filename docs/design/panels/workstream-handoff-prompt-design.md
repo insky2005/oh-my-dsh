@@ -35,8 +35,9 @@
 | stage | action | 要点 |
 |---|---|---|
 | 规划 | 确认规划 | 补齐验收标准 + 裁剪声明后，**停下请人确认**，再进设计 |
-| 设计 | 出设计 | 写 `docs/design/**`，不写实现 |
-| 任务 | 实施 | 切分支；按队列 / 任务执行，提交走 conventional commits |
+| 设计 | 出设计 | 写 `docs/design/**`，不写实现；**写完停下请人确认** |
+| 任务 | 拆分任务 | 出任务拆分方案（标题 + 描述 + 顺序）；**停下请人确认拆分合理**，确认后才落队列 |
+| 任务 | 启动实施 | 落成队列并启动；记 `WS.queues`；切分支、边界内实施、conventional commits |
 | 验收 | 校验 | 跑回归门 `<REG-ID>` + 机检证据；**人 sign-off**，agent 不自签 |
 | 交付 | 交付 | push / PR；在卡片写 covered / 交付 PR |
 
@@ -59,7 +60,7 @@
 当前 stage：规划 → 确认规划后进设计。
 目标：产出 docs/design/panels/requirements-workstream-store-design.md。
 规则：……（同 §4）
-结束前停下问：规划确认 / 验收 sign-off。不要自签。
+结束前停下问：规划确认 / 设计确认 / 拆分确认 / 验收 sign-off。不要自签。
 ```
 
 ## 6. 变量来源
