@@ -1,7 +1,7 @@
 # AI 原生工作流 · 可复用规范（Spec）
 
 > 状态：草案 · 日期：2026-10-03 · 适用：任何采用「需求 → 拆解 → 事项」工作流的项目
-> 来源：从 oh-my-dsh 的实践与产出物中抽取的**通用部分**；本项目的具体实现见 `docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/usage/ai-native-workflow-manual.md`。
+> 来源：从 oh-my-dsh 的实践中抽取的**通用部分**。本文件是**自包含规范**，不依赖任何具体项目的文档或文件；`oh-my-dsh` 是它的第一个 adopter。
 
 ## 0. 这份文档是什么
 
@@ -118,12 +118,21 @@
 - 只拆不胀：范围外的新发现回池
 ```
 
-## 8. 参考实现（不属于规范本身，可替换）
+## 8. 参考示例（不属于规范本身）
 
-规范只定义**接口**（§6）；下面是它们的参考实现，任何等价实现都可以：
+规范只定义**接口**（§6）；下面是**示例形状**，不是要求——任何等价实现都可以。
 
-- **派生器**：`node .dsh/tools/derive-status.mjs`（读卡片 + 查 PR 状态，输出 outcome / closed / 有效状态）；
-- **回归门 checker**：`node .dsh/regression/check-*.mjs`。
+**终态派生器**（只读）：
+
+- 输入：需求 / 事项卡片 + 交付结果（PR 状态）；
+- 输出：事项 `outcome`（merged / open / closed / abandoned）；`closed = stage==交付 且 outcome 终结`；需求有效状态（`discarded > closed > split > state`）；
+- 约束：**只读、不写卡片**；无令牌 / 无网络 → `unknown`，不假装成功。
+
+**回归门 checker**：
+
+- 一段能**自证失败**（有负例）的可执行检查；
+- 由事项验收标准中「长期成立」的部分升格而来，经 `REG-*.md` 的 `runs` 引用；
+- 后事项打破 → 后事项失败，不重开前事项。
 
 ## 9. 配合 oh-my-dsh App 使用时提供的能力（可选）
 
