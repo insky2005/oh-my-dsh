@@ -78,7 +78,7 @@
 ### 2.5 任务拆分（`task-todo` 落成等待态队列 → 人确认拆分合理）
 
 ```text
-读 WS-<id> 的设计，用 task-todo 把方案拆成任务：建等待态队列 + 批量入队。
+加载 task-todo 技能，读 WS-<id> 的设计，把方案拆成任务：建等待态队列 + 批量入队。
 这一步**就是「任务拆分」本身**（每条任务 = 一个待入队的拆分单元）——只建、不启动。
 把队列 id 记到 WS-<id>.md 的 `queues`；建成后停下，让我在任务面板确认拆分是否合理。
 ```
@@ -88,7 +88,7 @@
 ### 2.6 实施（确认拆分 → 启动队列）
 
 ```text
-拆分已确认，启动队列（task-todo 调 queue/start）。
+加载 task-todo 技能，启动队列（queue/start）。
 实施时：先切分支 feature/<slug>；只做边界内的事，范围外的新发现回池；
 conventional commits；改到共享路径前先跑回归门。
 ```
@@ -156,6 +156,8 @@ GH_TOKEN=$(cat "$HOME/.dsh/oh-my-dsh/tokens/<owner>-<repo>") \
 ## 4. 任务面板：内置技能 `task-todo`（任务拆分 / 实施 / 交付）
 
 **任务拆分、任务实施、交付这三步，目前都由任务面板的内置技能 `task-todo` 承接**（App 启动时安装到 `$DSH_HOME/skills/task-todo/SKILL.md`）；不用技能时也可在面板里手点（§3）。
+
+> **提示词里要点名 `task-todo`**（如「用 task-todo 技能…」/「加载 task-todo 技能…」），agent 才会加载并执行；技能只在明确要求时动手。
 
 | 工作流步骤 | 技能动作 | API |
 |---|---|---|
