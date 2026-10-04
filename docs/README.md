@@ -23,6 +23,10 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 - [storage-layout-refactor.md](design/shell/storage-layout-refactor.md) — 壳层工作数据收敛到 `$DSH_HOME/oh-my-dsh/`
 - [ui-color-scheme.md](design/shell/ui-color-scheme.md) — 面板配色令牌与取色 API（单一事实来源 `PanelSurface.swift`）
 
+## design/workflow/ — 工作流规范
+
+- [ai-native-workflow-spec.md](design/workflow/ai-native-workflow-spec.md) — AI 原生工作流**可复用规范**：概念、`.dsh` 契约、规则、人工确认门、接入指南（草案）
+
 ## design/panels/ — 面板设计
 
 - [projects-panel-design.md](design/panels/projects-panel-design.md) — 项目面板：工作区注册、当前目录单一真相
