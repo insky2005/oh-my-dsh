@@ -24,7 +24,7 @@
 
 本仓库同时是「AI 原生工作流」的第一个用户（dogfooding）。会话开始即遵循：
 
-- **规范与约定**：`docs/design/workflow/ai-native-workflow-spec.md`（**可复用规范**——其他项目从它接入）、`docs/usage/ai-native-workflow-manual.md`（手动模式用法）；
+- **规范与约定**：`.dsh/ai-native-workflow-spec.md`（**可复用规范，默认放在项目 `.dsh/` 下**——其他项目从它接入）、`docs/usage/ai-native-workflow-manual.md`（手动模式用法）；
   本项目产出物：`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/requirements-workstream-store-design.md`；
 - **状态在 `.dsh`**（随仓库提交）：需求 `REQ-*.md`、事项 `WS-*.md`、回归门 `REG-*.md`；任务队列在任务面板；
 - **不手写派生字段**：`closed` / `outcome` / `split` 由 `node .dsh/tools/derive-status.mjs` 派生；
@@ -54,7 +54,6 @@
 | `docs/design/shell/` | 壳层共性设计（服务生命周期、数据目录、配色令牌…） |
 | `docs/design/panels/` | 面板的设计与实现约定 |
 | `docs/design/channels/` | 通道（微信 / 钉钉）的抽象、指令、存储、项目开关 |
-| `docs/design/workflow/` | **可复用的工作流规范（spec）** |
 | `docs/plans/` | 实施计划（`<TOPIC>_PLAN-*.md`、`dsh-*-compat-audit.md`） |
 | `docs/feedback/` | 持续跟踪的使用反馈 |
 | `docs/fixes/` | 问题排查与修复记录（现象 → 根因 → 修复 → 验证） |

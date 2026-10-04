@@ -42,7 +42,7 @@
 
 ```md
 ## AI 原生工作流（.dsh 卡片）
-- 规范：<AI 原生工作流 spec 的路径>（本项目的产出物：模型 / schema / 用法文档）
+- 规范：.dsh/ai-native-workflow-spec.md（本项目产出物：模型 / schema / 用法文档见 docs/）
 - 状态在 .dsh（随仓库提交）：需求 REQ-*.md、事项 WS-*.md、回归门 REG-*.md；任务队列在任务面板
 - 不手写派生字段：closed / outcome / split 由派生器算出
 - 人工确认门：拆解 / 规划 / 设计 / 任务拆分 / 验收 sign-off / merge

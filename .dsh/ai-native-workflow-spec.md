@@ -36,10 +36,11 @@
 
 ```text
 .dsh/
+├── ai-native-workflow-spec.md   # 本规范（默认位置，随仓库提交）
 ├── requirements/REQ-<id>.md     # 需求卡
 ├── workstreams/WS-<id>.md       # 事项卡
 ├── regression/REG-<id>.md       # 回归门 + 可执行 checker
-└── tools/                      # 派生器等（参考实现）
+└── tools/                       # 派生器等（参考实现）
 ```
 
 **字段摘要**：
@@ -99,17 +100,18 @@
 
 ## 7. 接入指南（新项目）
 
-1. **建目录**：`.dsh/requirements`、`.dsh/workstreams`、`.dsh/regression`、`.dsh/tools`；
-2. **写通用规则**：在本项目 `AGENTS.md` 增一段（模板见下）——agent 对话开始会自动加载；
-3. **放参考实现**：派生器与回归门 checker（见 §8）；
-4. **约定确认门**：把 §5 的 ◆ 写进团队约定（谁确认、在哪个 PR / 面板确认）；
-5. **迁移**：从「无卡片」起，先把一个真实需求落成 `REQ-*.md` + 一件 `WS-*.md`，走完一次闭环再铺开。
+1. **放规范**：把本文件复制到 `<项目根>/.dsh/ai-native-workflow-spec.md`（**默认位置**），随仓库提交；
+2. **建目录**：`.dsh/requirements`、`.dsh/workstreams`、`.dsh/regression`、`.dsh/tools`；
+3. **写通用规则**：在本项目 `AGENTS.md` 增一段（模板见下）——agent 对话开始会自动加载；
+4. **放参考实现**：派生器与回归门 checker（见 §8）；
+5. **约定确认门**：把 §5 的 ◆ 写进团队约定（谁确认、在哪个 PR / 面板确认）；
+6. **迁移**：从「无卡片」起，先把一个真实需求落成 `REQ-*.md` + 一件 `WS-*.md`，走完一次闭环再铺开。
 
 `AGENTS.md` 模板：
 
 ```md
 ## AI 原生工作流（.dsh 卡片）
-- 规范：<本 spec 在你项目中的路径>
+- 规范：.dsh/ai-native-workflow-spec.md
 - 状态在 .dsh（随仓库提交）：需求 REQ-*.md、事项 WS-*.md、回归门 REG-*.md
 - 不手写派生字段：closed / outcome / split 由派生器算出
 - 人工确认门：拆解 / 规划 / 设计 / 任务拆分 / 验收 sign-off / merge
