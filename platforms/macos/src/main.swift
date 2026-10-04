@@ -905,6 +905,7 @@ enum L10n {
         "requirements.editTitle": ("编辑需求", "Edit Requirement"),
         "requirements.editInfo": ("改标题与诉求；状态、拆解映射与子事项不受影响。", "Change the title and statement; the state, breakdown and workstreams are untouched."),
         "requirements.save": ("保存", "Save"),
+        "requirements.createAndRefine": ("创建并细化", "Create & Refine"),
         "requirements.edit": ("编辑", "Edit"),
         "requirements.updated": ("已保存 %@", "Saved %@"),
         "requirements.create": ("创建", "Create"),
@@ -2863,8 +2864,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         requirementsPanel.onBreakdownResolved = { [weak self] id, confirmed, created in
             self?.notifyBreakdownResolved(id, confirmed: confirmed, created: created)
         }
-        // 面板「＋」创建的需求没有对话来源：起一条「细化」会话并绑定。
-        requirementsPanel.onRequirementCreated = { [weak self] id, title in
+        // 抽屉的「创建并细化」：为面板创建的需求起一条「细化」会话并绑定。
+        requirementsPanel.onRefineRequested = { [weak self] id, title in
             self?.startRequirementRefinementSession(id, title: title)
         }
         requirementsPanel.onDidRender = { [weak self] in

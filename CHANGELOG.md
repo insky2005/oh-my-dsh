@@ -23,7 +23,7 @@ All notable changes to this project are documented in this file. Format follows
 
 - **需求池拆解：面板把提示词直接发进当前对话（2026-10-04）**：点卡片「拆解」不再只复制到剪贴板——用 `dshSession` 跟踪器上报的当前会话调 `DshSessionOps.sendPrompt`（`session/prompt`，与 wiki 生成 / 任务队列同一形状）把提示词**直接发进对话**；agent 随即调 `POST /api/requirements/breakdown/propose` 提出待确认方案。**没有打开的对话或发送失败时回退复制**并在状态行说明。另一入口不变：对话里运行 `/requirement-pool 拆解 <REQ-id>`。人工确认门（R10）不变：`confirm` 仍只在面板。
 
-- **面板创建需求后自动起一条细化会话（2026-10-04）**：面板「＋」建卡没有对话来源，创建成功后 main 会在活动工作区 `session/create` → `session/rename`「细化 REQ-xxx」→ `session/prompt` 细化提示词（只讨论、只澄清、不改代码；改卡走 `/update`），并把卡片**绑定到该会话**、切过去；会话创建失败回退当前会话，再失败只留卡片并提示。这样面板创建的需求也满足「同一需求同一会话」。测试模型 **97 → 100**。
+- **面板创建需求：「创建并细化」起一条细化会话（2026-10-04）**：面板「＋」建卡没有对话来源，抽屉底部提供 `[创建] [创建并细化] [取消]`——**普通「创建」只写卡**；点**「创建并细化」**时 main 在活动工作区 `session/create` → `session/rename`「细化 REQ-xxx」→ `session/prompt` 细化提示词（只讨论、只澄清、不改代码；改卡走 `/update`），并把卡片**绑定到该会话**、切过去；会话创建失败回退当前会话，再失败只留卡片并提示。这样面板创建的需求也满足「同一需求同一会话」。测试模型 **97 → 103**。
 
 - **工作流硬规则：对话/需求阶段只读，开工唯一入口 = 已启动的任务队列（2026-10-04）**：`AGENTS.md` 工作流段、`.dsh/ai-native-workflow-spec.md`（新增 **R12** + AGENTS 模板）、内置技能 `requirement-pool` 三处都加这条——需求未落卡 / 事项未确认 / 队列未启动之前，只讨论、只澄清、只落卡，**不得修改代码或文件**；这是「避免 agent 在想法阶段直接开工」的软闸（覆盖所有会话；硬闸走 dsh 的 plan mode / 权限预设，另议）。使用说明常见坑同步。
 

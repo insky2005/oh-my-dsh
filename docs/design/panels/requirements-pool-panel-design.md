@@ -261,7 +261,7 @@ updated: <today>
 
 照任务面板的 `TaskFormSheetView` / `TaskFormSheetHostView`（`TaskInlineForms.swift`）：**一个输入框**（`NSTextView` 包在 `TaskFieldBox` 里），**首行 = 标题、其余行 = 诉求**（只有一行时该行同时是标题与诉求；`createRequirement` 对空诉求回退标题）；`⌘↩` 提交、`Esc` 取消，标题为空时提交按钮禁用、尝试提交后给出 `requirements.newProblem`。视图模型 `RequirementComposerModel`（纯 Foundation，`RequirementsUI.swift`）可无头断言。写失败（无标题 / 无工作区）时抽屉保持打开，原因进状态行。
 
-**创建成功后起一条「细化」会话**（面板建的需求没有对话来源）：main 在活动工作区 `session/create` → `session/rename`（「细化 REQ-xxx 标题」）→ `session/prompt`（[`refinementPrompt`]，要求只讨论 / 只澄清、不改代码，改卡片走 `/update`）；成功即把卡片绑定到该会话并切过去，会话创建失败回退当前会话，再失败只留卡片并提示。这样面板创建的需求同样满足「同一需求同一会话」。
+抽屉底部是 `[创建] [创建并细化] [取消]`：**普通「创建」只写卡**；**「创建并细化」**才为它起一条「细化」会话（面板建的需求没有对话来源）。main 在活动工作区 `session/create` → `session/rename`（「细化 REQ-xxx 标题」）→ `session/prompt`（[`refinementPrompt`]，要求只讨论 / 只澄清、不改代码，改卡片走 `/update`）；成功即把卡片绑定到该会话并切过去，会话创建失败回退当前会话，再失败只留卡片并提示。这样面板创建的需求同样满足「同一需求同一会话」。
 
 ### 5.5 配色
 
@@ -333,6 +333,7 @@ updated: <today>
 | `requirements.edit` | 编辑 | Edit |
 | `requirements.updated` | 已保存 %@ | Saved %@ |
 | `requirements.create` | 创建 | Create |
+| `requirements.createAndRefine` | 创建并细化 | Create & Refine |
 | `requirements.newInfo` | 首行是标题，其余行是诉求（也可让 agent 用 requirement-pool 技能落卡）。 | The first line is the title; later lines are the statement (the agent can also use the requirement-pool skill). |
 | `requirements.newContent` | 标题与诉求 | Title and statement |
 | `requirements.newContentHint` | 首行作为标题，其余行是诉求 | First line is the title; the rest is the statement |

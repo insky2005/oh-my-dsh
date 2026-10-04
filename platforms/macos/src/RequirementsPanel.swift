@@ -284,9 +284,9 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     /// source session when it has one, else the current one; nil falls back to
     /// copying the prompt to the clipboard.
     var onBreakdown: ((String, String?) -> Void)?
-    /// A requirement was just created from the panel drawer; main.swift starts a
-    /// refinement session for it and binds the card to that session (id, title).
-    var onRequirementCreated: ((String, String) -> Void)?
+    /// The user pressed「创建并细化」; main.swift starts a refinement session for
+    /// the new card and binds it to that session (id, title).
+    var onRefineRequested: ((String, String) -> Void)?
     /// Human confirmed (true) / rejected (false) a proposal in the panel; the
     /// created workstream ids come along so main.swift can write the outcome back
     /// to the requirement's session.
@@ -457,7 +457,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
             model = RequirementComposerModel.build()
         }
         let form = RequirementComposerView(model: model)
-        form.onSubmit = { [weak self] composer in self?.submitComposer(composer) }
+        form.onSubmit = { [weak self] composer, refine in self?.submitComposer(composer, refine: refine) }
         form.onCancel = { [weak self] in self?.dismissForm() }
         presentForm(form) { ($0 as? RequirementComposerView)?.focusEditor() }
     }
@@ -486,12 +486,18 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
 
     /// Submit the composer; on a refused write the drawer stays open so nothing
     /// typed is lost (the reason is in the status line).
-    func submitComposer(_ composer: RequirementComposerModel) {
+    func submitComposer(_ composer: RequirementComposerModel, refine: Bool) {
         guard composer.canSubmit else { return }
         let saved: Bool
         switch composer.mode {
         case .create:
-            saved = createRequirement(title: composer.title, body: composer.body)
+            if let card = createRequirement(title: composer.title, body: composer.body) {
+                // Only「创建并细化」starts a session; plain「创建」just writes the card.
+                if refine { onRefineRequested?(card.id, card.title) }
+                saved = true
+            } else {
+                saved = false
+            }
         case .edit(let id):
             saved = updateRequirement(id: id, title: composer.title, body: composer.body)
         }
@@ -573,10 +579,10 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     }
 
     @discardableResult
-    func createRequirement(title: String, body: String) -> Bool {
+    func createRequirement(title: String, body: String) -> RequirementCard? {
         guard let workspace = workspaceProvider?(), !workspace.isEmpty else {
             presentNeedsWorkspace()
-            return false
+            return nil
         }
         do {
             let card = try RequirementsCore.createRequirement(workspace: workspace,
@@ -587,14 +593,13 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
             setStatus(L10n.tr("requirements.created", card.id), isError: false)
             pendingScrollId = card.id
             reload()
-            onRequirementCreated?(card.id, card.title)
-            return true
+            return card
         } catch let error as PoolError {
             setStatus(message(for: error), isError: true)
         } catch {
             setStatus(L10n.tr("requirements.error.generic", error.localizedDescription), isError: true)
         }
-        return false
+        return nil
     }
 
     @discardableResult
@@ -1015,7 +1020,8 @@ extension RequirementsPanelController {
 final class RequirementComposerView: TaskFormCardView, NSTextViewDelegate {
 
     private(set) var model: RequirementComposerModel
-    var onSubmit: ((RequirementComposerModel) -> Void)?
+    /// (model, refine) — refine is true only for the「创建并细化」button.
+    var onSubmit: ((RequirementComposerModel, Bool) -> Void)?
     var onCancel: (() -> Void)?
 
     private let heading = NSTextField(labelWithString: "")
@@ -1029,6 +1035,8 @@ final class RequirementComposerView: TaskFormCardView, NSTextViewDelegate {
     private var editorTextHeight: NSLayoutConstraint!
     let hint: NSTextField
     let submitButton: NSButton
+    /// 「创建并细化」— only shown in create mode (edit mode is just 保存).
+    let refineButton: NSButton
     let cancelButton: NSButton
 
     init(model: RequirementComposerModel) {
@@ -1041,6 +1049,7 @@ final class RequirementComposerView: TaskFormCardView, NSTextViewDelegate {
         editorTextHeight = content.textHeight
         hint = TaskFormKit.hintLabel()
         submitButton = TaskFormKit.button("", primary: true)
+        refineButton = TaskFormKit.button("", primary: false)
         cancelButton = TaskFormKit.button("", primary: false)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -1061,9 +1070,12 @@ final class RequirementComposerView: TaskFormCardView, NSTextViewDelegate {
         editorPlaceholder.stringValue = L10n.tr(model.placeholderKey)
         editorPlaceholder.isHidden = !editor.string.isEmpty
         submitButton.title = L10n.tr(model.submitKey)
+        refineButton.title = L10n.tr(model.refineKey)
+        refineButton.isHidden = !model.showsRefineButton
         cancelButton.title = L10n.tr("btn.cancel")
         closeButton.toolTip = L10n.tr("btn.cancel")
         submitButton.isEnabled = model.canSubmit
+        refineButton.isEnabled = model.canSubmit
         TaskFormKit.setHint(hint, key: model.problemKey)
     }
 
@@ -1077,12 +1089,14 @@ final class RequirementComposerView: TaskFormCardView, NSTextViewDelegate {
         closeButton.onAction = { [weak self] in self?.onCancel?() }
         submitButton.target = self
         submitButton.action = #selector(submitTapped)
+        refineButton.target = self
+        refineButton.action = #selector(refineTapped)
         cancelButton.target = self
         cancelButton.action = #selector(cancelTapped)
 
         let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
         let contentRow = TaskFormKit.row(contentCaption, editorBox)
-        let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
+        let buttons = TaskFormKit.buttonRow([submitButton, refineButton, cancelButton])
         let column = NSStackView(views: [headingRow, info, contentRow, hint, buttons])
         column.orientation = .vertical
         column.alignment = .leading
@@ -1117,13 +1131,18 @@ final class RequirementComposerView: TaskFormCardView, NSTextViewDelegate {
 
     func layoutEditor() { updateEditorHeight() }
 
-    @objc func submitTapped() {
+    @objc func submitTapped() { submit(refine: false) }
+
+    /// 创建并细化：建卡后由 main 起一条细化会话。
+    @objc func refineTapped() { submit(refine: true) }
+
+    private func submit(refine: Bool) {
         let typed = currentDraft
         guard typed.canSubmit else {
             apply(typed.attemptedSubmit())
             return
         }
-        onSubmit?(typed)
+        onSubmit?(typed, refine)
     }
 
     @objc private func cancelTapped() { onCancel?() }

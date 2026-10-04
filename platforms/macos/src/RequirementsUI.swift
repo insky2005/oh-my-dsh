@@ -30,6 +30,9 @@ struct RequirementComposerModel: Equatable {
     // L10n keys (the L10n lint sees these as literals).
     var headingKey: String { mode.isCreate ? "requirements.formTitle" : "requirements.editTitle" }
     var submitKey: String { mode.isCreate ? "requirements.create" : "requirements.save" }
+    /// 创建模式多一个「创建并细化」按钮（建卡后起一条细化会话）；编辑模式没有。
+    var refineKey: String { "requirements.createAndRefine" }
+    var showsRefineButton: Bool { mode.isCreate }
     var infoKey: String { mode.isCreate ? "requirements.newInfo" : "requirements.editInfo" }
     var contentCaptionKey: String { "requirements.newContent" }
     var placeholderKey: String { "requirements.newContentHint" }
