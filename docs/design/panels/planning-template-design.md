@@ -1,6 +1,7 @@
 # 规划模板设计：四件套与「无证据不进设计」
 
-> 状态：草案（WS-007 规划已确认，交付待人 sign-off）· 日期：2026-10-03 · 关联：`.dsh/requirements/REQ-004.md`、`.dsh/workstreams/WS-007.md`、`.dsh/workstreams/WS-008.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/research/ai-native-workflow-architecture.md`、`.dsh/ai-native-workflow-spec.md`
+> 状态：草案（WS-007 已交付；WS-008 修订 P2 判据）· 日期：2026-10-03 · 关联：`.dsh/requirements/REQ-004.md`、`.dsh/workstreams/WS-007.md`、`.dsh/workstreams/WS-008.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/research/ai-native-workflow-architecture.md`、`.dsh/ai-native-workflow-spec.md`
+> 修订（WS-008，2026-10-03）：P2 边界判据由「（做）/（不做）两栏」放宽为「存在边界条目」；见 §2 / §4 / §6。
 
 ## 1. 目的与范围
 
@@ -24,7 +25,7 @@
 | # | 件 | 回答的问题 | 必填性 |
 |---|---|---|---|
 | P1 | 目标（WHAT） | 这次要达成什么？ | 必填，1 条 |
-| P2 | 边界 | 做什么 / 不做什么？ | 必填，「做」与「不做」各 ≥1 条 |
+| P2 | 边界 | 做什么 / 不做什么？ | 必填，≥1 条 |
 | P3 | 验收标准 | 怎么算完（可机检）？ | 必填，≥1 条编号 AC |
 | P4 | 阶段裁剪声明 | 跳过哪些后续阶段、为何 / 如何承载？ | 必填（显式，哪怕「不裁剪」） |
 
@@ -37,10 +38,11 @@
 
 ### P2 边界
 
-- **定义**：**做**（本事项包含的改动面）与**不做**（明确排除、会顺带发生但不就地吸收的工作）两栏。
-- **必填性**：必填，两栏各 ≥1 条。
-- **判据**：`## 规划` 内含「边界（做）」与「边界（不做）」两栏且各非空。
-- **正例**：见 §3 骨架。
+- **定义**：写清**做**（本事项包含的改动面）与**不做**（明确排除、会顺带发生但不就地吸收的工作）。
+- **必填性**：必填，≥1 条。
+- **判据**：`## 规划` 内**存在「边界」条目**。写法自由：可用「边界（做）/（不做）」两栏（见 §3 骨架），
+  也可平铺一条并在其中体现做/不做；是否覆盖两者由人 Review——门禁只查存在性。
+- **正例**：`边界：只改 docs/design/panels/planning-template-design.md 与索引；不做面板、拆解器。`
 
 ### P3 验收标准
 
@@ -106,3 +108,6 @@
 | AC4 保留架构 §4.2 完成证据原句 | 架构 §4.2（未改动该句） |
 | AC5 `docs/README.md` 已登记、存储设计 §9 候选已收口 | `docs/README.md` design/panels 段；存储设计 §9 |
 | AC6 回归门 REG-001 通过 | 见 WS-007 验收记录 |
+
+> WS-008 修订（2026-10-03）：P2 边界判据放宽为「存在边界条目」（§2 / §4）。
+> 因 WS-007 已终态，本次纠偏的验证义务由 **WS-008** 承担（原则 14 / 15，不重开前事项）。
