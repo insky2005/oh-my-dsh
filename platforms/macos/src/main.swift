@@ -902,6 +902,11 @@ enum L10n {
         "requirements.title": ("需求池", "Requirements"),
         "requirements.new": ("新建需求", "New Requirement"),
         "requirements.formTitle": ("新建需求", "New Requirement"),
+        "requirements.editTitle": ("编辑需求", "Edit Requirement"),
+        "requirements.editInfo": ("改标题与诉求；状态、拆解映射与子事项不受影响。", "Change the title and statement; the state, breakdown and workstreams are untouched."),
+        "requirements.save": ("保存", "Save"),
+        "requirements.edit": ("编辑", "Edit"),
+        "requirements.updated": ("已保存 %@", "Saved %@"),
         "requirements.create": ("创建", "Create"),
         "requirements.newInfo": ("首行是标题，其余行是诉求（也可让 agent 用 requirement-pool 技能落卡）。", "The first line is the title; later lines are the statement (the agent can also use the requirement-pool skill)."),
         "requirements.newContent": ("标题与诉求", "Title and statement"),
@@ -6646,6 +6651,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         bridge.requirementsSetState = { [weak self] request in
             self?.requirementsPanel?.apiRequirementsSetState(request) ?? BrowserAPIBridge.requirementsUnavailable
+        }
+        bridge.requirementsUpdate = { [weak self] request in
+            self?.requirementsPanel?.apiRequirementsUpdate(request) ?? BrowserAPIBridge.requirementsUnavailable
         }
         bridge.requirementsPropose = { [weak self] request in
             self?.requirementsPanel?.apiRequirementsPropose(request) ?? BrowserAPIBridge.requirementsUnavailable

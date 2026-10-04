@@ -39,6 +39,14 @@ struct RequirementsTargetRequest: Equatable {
     var id: String
 }
 
+/// POST /api/requirements/update: edit a card's title + 诉求.
+struct RequirementsUpdateRequest: Equatable {
+    var workspace: String?
+    var id: String
+    var title: String
+    var body: String?
+}
+
 // MARK: - Delegate
 
 /// Implemented by the requirements panel controller (wired through BrowserAPIBridge,
@@ -47,6 +55,7 @@ protocol RequirementsAPIDelegate: AnyObject {
     func apiRequirementsList(workspace: String?) -> [String: Any]
     func apiRequirementsCreate(_ request: RequirementsCreateRequest) -> [String: Any]
     func apiRequirementsSetState(_ request: RequirementsStateRequest) -> [String: Any]
+    func apiRequirementsUpdate(_ request: RequirementsUpdateRequest) -> [String: Any]
     func apiRequirementsPropose(_ request: RequirementsBreakdownRequest) -> [String: Any]
     func apiRequirementsConfirm(_ request: RequirementsTargetRequest) -> [String: Any]
     func apiRequirementsReject(_ request: RequirementsTargetRequest) -> [String: Any]
@@ -144,6 +153,21 @@ enum RequirementsAPIRouter {
                                                id: id, state: state)
             let result = delegate.apiRequirementsSetState(req)
             return .json(status(for: result), result)
+
+        case ("POST", "/api/requirements/update"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            guard let id = (body["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty else {
+                return .json(400, ["ok": false, "error": "missing-id"])
+            }
+            let title = ((body["title"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else {
+                return .json(400, ["ok": false, "error": "missing-title", "hint": "expected {\"id\": \"REQ-1\", \"title\": \"...\"}"])
+            }
+            guard let delegate = delegate else { return unavailable() }
+            let update = RequirementsUpdateRequest(workspace: RequirementsAPIWorkspace.normalize(body["workspace"] as? String),
+                                                   id: id, title: title, body: body["body"] as? String)
+            let updated = delegate.apiRequirementsUpdate(update)
+            return .json(status(for: updated), updated)
 
         case ("POST", "/api/requirements/breakdown/propose"):
             guard let body = request.jsonBody() else { return missingBody() }

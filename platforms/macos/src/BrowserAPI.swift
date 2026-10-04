@@ -264,6 +264,7 @@ final class BrowserAPIBridge: BrowserAPIDelegate {
     var requirementsList: (String?) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
     var requirementsCreate: (RequirementsCreateRequest) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
     var requirementsSetState: (RequirementsStateRequest) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
+    var requirementsUpdate: (RequirementsUpdateRequest) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
     var requirementsPropose: (RequirementsBreakdownRequest) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
     var requirementsConfirm: (RequirementsTargetRequest) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
     var requirementsReject: (RequirementsTargetRequest) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
@@ -644,6 +645,10 @@ extension BrowserAPIBridge: RequirementsAPIDelegate {
 
     func apiRequirementsSetState(_ request: RequirementsStateRequest) -> [String: Any] {
         onMain(fallback: Self.requirementsUnavailable) { self.requirementsSetState(request) }
+    }
+
+    func apiRequirementsUpdate(_ request: RequirementsUpdateRequest) -> [String: Any] {
+        onMain(fallback: Self.requirementsUnavailable) { self.requirementsUpdate(request) }
     }
 
     func apiRequirementsPropose(_ request: RequirementsBreakdownRequest) -> [String: Any] {

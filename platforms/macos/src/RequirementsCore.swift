@@ -93,6 +93,12 @@ struct RequirementCard: Equatable {
     var body: String
 }
 
+extension RequirementCard {
+    /// The `## 诉求` text (or the body with headings stripped) — what the card
+    /// shows as its content preview.
+    var statement: String { RequirementsCore.statement(from: body) }
+}
+
 /// One workstream card, summarised (the panel shows it read-only).
 struct WorkstreamSummary: Equatable {
     var id: String
@@ -439,6 +445,27 @@ enum RequirementsCore {
         return base
     }
 
+    /// The text of a level-2 section (without its heading), or nil when absent/empty.
+    static func sectionText(_ body: String, heading: String) -> String? {
+        let lines = body.components(separatedBy: "\n")
+        guard let start = lines.firstIndex(where: { $0.hasPrefix(heading) }) else { return nil }
+        var end = start + 1
+        while end < lines.count, !lines[end].hasPrefix("## ") { end += 1 }
+        let text = lines[(start + 1)..<end].joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    /// What a card shows as its content: the `## 诉求` section, or the body with
+    /// markdown headings stripped when there is none.
+    static func statement(from body: String) -> String {
+        if let statement = sectionText(body, heading: "## 诉求") { return statement }
+        return body.components(separatedBy: "\n")
+            .filter { !$0.hasPrefix("#") }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func recompose(_ text: String, body: String) -> String {
         guard let (fm, _) = splitCard(text) else { return text }
         return "---\n" + fm + "\n---\n" + body
@@ -545,6 +572,29 @@ enum RequirementsCore {
         let updated = setFrontmatterFields(text, fields: ["state": state, "updated": today])
         try atomicWrite(updated, to: path)
         guard let card = card(from: updated, path: path) else { throw PoolError.writeFailed("card did not parse") }
+        return card
+    }
+
+    /// Edit a card's title and (optionally) its 诉求. Only the frontmatter `title`
+    /// and the `## 诉求` section change; state, breakdown and mapping stay.
+    static func updateRequirement(workspace: String,
+                                  id: String,
+                                  title: String,
+                                  body: String?,
+                                  today: String) throws -> RequirementCard {
+        let trimmedTitle = title.trimmed
+        guard !trimmedTitle.isEmpty else { throw PoolError.missingTitle }
+        let path = requirementPath(workspace, id: id)
+        guard let text = readText(path) else { throw PoolError.unknownRequirement(id) }
+        let (_, oldBody) = parseCard(text)
+        var newBody = oldBody
+        if let statement = body?.trimmed, !statement.isEmpty {
+            newBody = replaceSection(oldBody, heading: "## 诉求", with: "## 诉求\n\n" + statement + "\n")
+        }
+        let rewritten = setFrontmatterFields(recompose(text, body: newBody),
+                                             fields: ["title": trimmedTitle, "updated": today])
+        try atomicWrite(rewritten, to: path)
+        guard let card = card(from: rewritten, path: path) else { throw PoolError.writeFailed("card did not parse") }
         return card
     }
 

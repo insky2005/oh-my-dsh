@@ -35,6 +35,7 @@ PORT="$(cat "$PORT" 2>/dev/null || echo 3081)"
 | GET `/api/requirements/list` | `?workspace=<路径>` | 需求 + 子事项 + 待确认提案 |
 | POST `/api/requirements/create` | `{"workspace":"…","title":"…","body":"…","focus":true}` | 收件箱：新建需求卡（candidate） |
 | POST `/api/requirements/state` | `{"id":"REQ-003","state":"evaluating"}` | 改人工状态（candidate/evaluating/suspended/discarded） |
+| POST `/api/requirements/update` | `{"id":"REQ-003","title":"…","body":"…"}` | 改标题 + 诉求（只改这两处） |
 | POST `/api/requirements/breakdown/propose` | `{"id":"REQ-003","items":[{"title":"…","boundary":"…","dependsOn":["…"]}]}` | 拆解器：写**待确认**提案 |
 | POST `/api/requirements/breakdown/confirm` / `reject` | `{"id":"REQ-003"}` | 人工确认 / 驳回 —— **confirm 不由 agent 调** |
 

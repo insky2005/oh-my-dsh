@@ -11,13 +11,26 @@ import Foundation
 /// the lines after it are the 诉求 (a single line is both — RequirementsCore
 /// already falls back to the title when the body is empty).
 struct RequirementComposerModel: Equatable {
+
+    enum Mode: Equatable {
+        case create
+        case edit(id: String)
+
+        var isCreate: Bool { self == .create }
+        var requirementID: String? {
+            if case .edit(let id) = self { return id }
+            return nil
+        }
+    }
+
     var content: String
     var attempted: Bool
+    var mode: Mode = .create
 
     // L10n keys (the L10n lint sees these as literals).
-    var headingKey: String { "requirements.formTitle" }
-    var submitKey: String { "requirements.create" }
-    var infoKey: String { "requirements.newInfo" }
+    var headingKey: String { mode.isCreate ? "requirements.formTitle" : "requirements.editTitle" }
+    var submitKey: String { mode.isCreate ? "requirements.create" : "requirements.save" }
+    var infoKey: String { mode.isCreate ? "requirements.newInfo" : "requirements.editInfo" }
     var contentCaptionKey: String { "requirements.newContent" }
     var placeholderKey: String { "requirements.newContentHint" }
 
@@ -49,8 +62,15 @@ struct RequirementComposerModel: Equatable {
         return copy
     }
 
-    static func build(content: String = "") -> RequirementComposerModel {
-        RequirementComposerModel(content: content, attempted: false)
+    static func build(mode: Mode = .create, content: String = "") -> RequirementComposerModel {
+        RequirementComposerModel(content: content, attempted: false, mode: mode)
+    }
+
+    /// The composer for editing an existing card: title + 诉求 back in the one box.
+    static func edit(_ card: RequirementCard) -> RequirementComposerModel {
+        let statement = card.statement
+        let content = (statement.isEmpty || statement == card.title) ? card.title : card.title + "\n" + statement
+        return RequirementComposerModel(content: content, attempted: false, mode: .edit(id: card.id))
     }
 }
 

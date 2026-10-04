@@ -54,6 +54,8 @@ final class FakeRequirementsAPI: RequirementsAPIDelegate {
     var lastListWorkspace: String?
     var lastCreate: RequirementsCreateRequest?
     var lastState: RequirementsStateRequest?
+    var updateResult: [String: Any] = ["ok": true]
+    var lastUpdate: RequirementsUpdateRequest?
     var lastPropose: RequirementsBreakdownRequest?
     var lastConfirm: RequirementsTargetRequest?
     var lastReject: RequirementsTargetRequest?
@@ -69,6 +71,10 @@ final class FakeRequirementsAPI: RequirementsAPIDelegate {
     func apiRequirementsSetState(_ request: RequirementsStateRequest) -> [String: Any] {
         lastState = request
         return stateResult
+    }
+    func apiRequirementsUpdate(_ request: RequirementsUpdateRequest) -> [String: Any] {
+        lastUpdate = request
+        return updateResult
     }
     func apiRequirementsPropose(_ request: RequirementsBreakdownRequest) -> [String: Any] {
         lastPropose = request
@@ -150,6 +156,18 @@ eq(stateNoState?.status, 400, "state without state -> 400")
 let stateOK = RequirementsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/requirements/state", json: ["id": "REQ-001", "state": "suspended"]), delegate: fake)
 eq(stateOK?.status, 200, "state 200")
 eq(fake.lastState?.state, "suspended", "state passed to delegate")
+
+section("update")
+let updateNoId = RequirementsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/requirements/update", json: ["title": "x"]), delegate: fake)
+eq(updateNoId?.status, 400, "update without id -> 400")
+eq(updateNoId?.json?["error"] as? String, "missing-id", "update missing-id code")
+let updateNoTitle = RequirementsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/requirements/update", json: ["id": "REQ-001", "title": "   "]), delegate: fake)
+eq(updateNoTitle?.status, 400, "update without title -> 400")
+let updateOK = RequirementsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/requirements/update", json: ["id": "REQ-001", "title": " 新标题 ", "body": "新诉求", "workspace": "/tmp/ws"]), delegate: fake)
+eq(updateOK?.status, 200, "update 200")
+eq(fake.lastUpdate?.id, "REQ-001", "update routed to the delegate")
+eq(fake.lastUpdate?.title, "新标题", "update title trimmed")
+eq(fake.lastUpdate?.body, "新诉求", "update body passed through")
 
 section("breakdown")
 let proposeNoItems = RequirementsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/requirements/breakdown/propose", json: ["id": "REQ-001"]), delegate: fake)

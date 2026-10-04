@@ -62,6 +62,7 @@ final class RequirementCardView: NSView {
     var onConfirm: (() -> Void)?
     var onReject: (() -> Void)?
     var onOpenWorkstream: ((String) -> Void)?
+    var onEdit: (() -> Void)?
 
     /// The rendered requirement (internal for symmetry with ProjectCardView).
     let item: PoolItem
@@ -107,6 +108,16 @@ final class RequirementCardView: NSView {
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
+        // The 诉求 preview: the card must show what the requirement actually says
+        // (an agent-captured card used to be title-only).
+        let statementLabel = NSTextField(wrappingLabelWithString: item.requirement.statement)
+        statementLabel.font = NSFont.systemFont(ofSize: 11)
+        statementLabel.textColor = .secondaryLabelColor
+        statementLabel.maximumNumberOfLines = 4
+        statementLabel.lineBreakMode = .byTruncatingTail
+        statementLabel.toolTip = item.requirement.statement
+        statementLabel.isHidden = item.requirement.statement.isEmpty
+
         var meta: [String] = []
         if !item.requirement.source.isEmpty { meta.append(item.requirement.source) }
         if !item.requirement.updated.isEmpty { meta.append(item.requirement.updated) }
@@ -121,6 +132,13 @@ final class RequirementCardView: NSView {
         stateButton.font = NSFont.systemFont(ofSize: 11)
         stateButton.setContentHuggingPriority(.required, for: .horizontal)
 
+        let editButton = NSButton(title: L10n.tr("requirements.edit"), target: self, action: #selector(editTapped(_:)))
+        editButton.bezelStyle = .rounded
+        editButton.controlSize = .small
+        editButton.font = NSFont.systemFont(ofSize: 11)
+        editButton.toolTip = L10n.tr("requirements.edit")
+        editButton.setContentHuggingPriority(.required, for: .horizontal)
+
         let breakdownButton = NSButton(title: L10n.tr("requirements.breakdown"), target: self, action: #selector(breakdownTapped(_:)))
         breakdownButton.bezelStyle = .rounded
         breakdownButton.controlSize = .small
@@ -130,12 +148,14 @@ final class RequirementCardView: NSView {
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
-        let titleRow = NSStackView(views: [badge, titleLabel, spacer, stateButton, breakdownButton])
+        // Title first, then the state badge (the user reads the requirement, then
+        // its state); the actions stay pinned right.
+        let titleRow = NSStackView(views: [titleLabel, badge, spacer, stateButton, editButton, breakdownButton])
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
         titleRow.spacing = 8
 
-        var rows: [NSView] = [titleRow, metaLabel, childrenRow()]
+        var rows: [NSView] = [titleRow, statementLabel, metaLabel, childrenRow()]
         if let proposal = item.proposal, !proposal.isEmpty {
             rows.append(proposalView(proposal))
         }
@@ -152,6 +172,7 @@ final class RequirementCardView: NSView {
             column.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             titleRow.widthAnchor.constraint(equalTo: column.widthAnchor),
+            statementLabel.widthAnchor.constraint(equalTo: column.widthAnchor),
             metaLabel.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor),
         ])
     }
@@ -237,6 +258,7 @@ final class RequirementCardView: NSView {
         onSetState?(state)
     }
 
+    @objc private func editTapped(_ sender: Any?) { onEdit?() }
     @objc private func breakdownTapped(_ sender: Any?) { onBreakdown?() }
     @objc private func confirmTapped(_ sender: Any?) { onConfirm?() }
     @objc private func rejectTapped(_ sender: Any?) { onReject?() }
@@ -370,6 +392,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
             let card = RequirementCardView(item: item)
             let id = item.requirement.id
             card.onSetState = { [weak self] state in self?.setState(id: id, state: state) }
+            card.onEdit = { [weak self] in self?.openComposer(id: id) }
             card.onBreakdown = { [weak self] in self?.breakdownRequested(id: id) }
             card.onConfirm = { [weak self] in self?.confirmBreakdown(id: id) }
             card.onReject = { [weak self] in self?.rejectBreakdown(id: id) }
@@ -407,27 +430,64 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
 
     @objc private func newRequirementTapped(_ sender: Any?) { openComposer() }
 
-    /// The idea inbox: a drawer whose one box's first line is the title (the rest
-    /// is the 诉求), then an atomic REQ card write — the same drawer the tasks
-    /// panel's composer uses (TaskInlineForms.swift).
-    func openComposer() {
+    /// The idea inbox / editor: a drawer whose one box's first line is the title
+    /// (the rest is the 诉求) — the same drawer the tasks panel's composer uses
+    /// (TaskInlineForms.swift). Pass an id to edit that card.
+    func openComposer(id: String? = nil) {
         guard let workspace = workspaceProvider?(), !workspace.isEmpty else {
             presentNeedsWorkspace()
             return
         }
-        let form = RequirementComposerView(model: RequirementComposerModel.build())
+        let model: RequirementComposerModel
+        if let id = id {
+            guard let item = snapshot.requirements.first(where: { $0.requirement.id == id }) else {
+                setStatus(L10n.tr("requirements.error.notFound"), isError: true)
+                return
+            }
+            model = RequirementComposerModel.edit(item.requirement)
+        } else {
+            model = RequirementComposerModel.build()
+        }
+        let form = RequirementComposerView(model: model)
         form.onSubmit = { [weak self] composer in self?.submitComposer(composer) }
         form.onCancel = { [weak self] in self?.dismissForm() }
         presentForm(form) { ($0 as? RequirementComposerView)?.focusEditor() }
+    }
+
+    /// Save the edited title + 诉求 (only those two change).
+    @discardableResult
+    func updateRequirement(id: String, title: String, body: String) -> Bool {
+        guard let workspace = workspaceProvider?(), !workspace.isEmpty else {
+            presentNeedsWorkspace()
+            return false
+        }
+        do {
+            let card = try RequirementsCore.updateRequirement(workspace: workspace, id: id,
+                                                              title: title, body: body,
+                                                              today: RequirementsCore.today())
+            setStatus(L10n.tr("requirements.updated", card.id), isError: false)
+            reload()
+            return true
+        } catch let error as PoolError {
+            setStatus(message(for: error), isError: true)
+        } catch {
+            setStatus(L10n.tr("requirements.error.generic", error.localizedDescription), isError: true)
+        }
+        return false
     }
 
     /// Submit the composer; on a refused write the drawer stays open so nothing
     /// typed is lost (the reason is in the status line).
     func submitComposer(_ composer: RequirementComposerModel) {
         guard composer.canSubmit else { return }
-        if createRequirement(title: composer.title, body: composer.body) {
-            dismissForm()
+        let saved: Bool
+        switch composer.mode {
+        case .create:
+            saved = createRequirement(title: composer.title, body: composer.body)
+        case .edit(let id):
+            saved = updateRequirement(id: id, title: composer.title, body: composer.body)
         }
+        if saved { dismissForm() }
     }
 
     // MARK: - 使用说明 (help)
@@ -686,6 +746,23 @@ extension RequirementsPanelController {
         }
         do {
             let card = try RequirementsCore.setState(workspace: workspace, id: request.id, state: request.state, today: RequirementsCore.today())
+            if workspace == (workspaceProvider?() ?? "") { reload() }
+            return ["ok": true, "requirement": RequirementsAPIResponse.requirement(card)]
+        } catch let error as PoolError {
+            return error.apiResult
+        } catch {
+            return ["ok": false, "error": "write-failed", "message": error.localizedDescription]
+        }
+    }
+
+    func apiRequirementsUpdate(_ request: RequirementsUpdateRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return PoolError.noWorkspace.apiResult
+        }
+        do {
+            let card = try RequirementsCore.updateRequirement(workspace: workspace, id: request.id,
+                                                              title: request.title, body: request.body,
+                                                              today: RequirementsCore.today())
             if workspace == (workspaceProvider?() ?? "") { reload() }
             return ["ok": true, "requirement": RequirementsAPIResponse.requirement(card)]
         } catch let error as PoolError {

@@ -247,6 +247,55 @@ check(helpSpec.sections.allSatisfy {
     $0.headingKey.hasPrefix("requirements.help.") && $0.lineKeys.allSatisfy { $0.hasPrefix("requirements.help.") }
 }, "every help key stays namespaced under requirements.help.")
 
+// MARK: - statement + updateRequirement (content preview / editing)
+
+section("statement")
+let statementFixture = """
+---
+id: REQ-003
+title: T
+---
+## 诉求
+
+这是一段诉求。
+"""
+let parsedStatement = RequirementsCore.parseCard(statementFixture)
+eq(RequirementsCore.statement(from: parsedStatement.body), "这是一段诉求。",
+   "statement reads the 诉求 section")
+eq(RequirementsCore.statement(from: "\n# Heading\nplain text\n"), "plain text",
+   "statement falls back to the heading-stripped body")
+
+section("update")
+let ws5 = tempWorkspace("update")
+_ = try! RequirementsCore.createRequirement(workspace: ws5, title: "旧标题", body: "旧诉求", source: nil, today: "2026-10-04")
+let edited = try! RequirementsCore.updateRequirement(workspace: ws5, id: "REQ-001", title: "新标题", body: "新诉求", today: "2026-10-05")
+eq(edited.title, "新标题", "update: title changed")
+eq(edited.statement, "新诉求", "update: statement changed")
+eq(edited.updated, "2026-10-05", "update: updated bumped")
+_ = try! RequirementsCore.setState(workspace: ws5, id: "REQ-001", state: "evaluating", today: "2026-10-05")
+_ = try! RequirementsCore.propose(workspace: ws5, id: "REQ-001",
+                                  items: [BreakdownItem(title: "A", boundary: "b", dependsOn: [])],
+                                  today: "2026-10-05")
+let edited2 = try! RequirementsCore.updateRequirement(workspace: ws5, id: "REQ-001", title: "再改", body: "新诉求2", today: "2026-10-06")
+eq(edited2.state, "evaluating", "update: state untouched")
+eq(edited2.updated, "2026-10-06", "update: updated bumped again")
+eq(RequirementsCore.parseProposal(edited2.body)?.count, 1, "update: pending proposal untouched")
+expectError("update: empty title refused", .missingTitle) {
+    _ = try RequirementsCore.updateRequirement(workspace: ws5, id: "REQ-001", title: "  ", body: nil, today: "2026-10-06")
+}
+expectError("update: unknown requirement refused", .unknownRequirement("REQ-999")) {
+    _ = try RequirementsCore.updateRequirement(workspace: ws5, id: "REQ-999", title: "x", body: nil, today: "2026-10-06")
+}
+
+section("composer edit")
+let editModel = RequirementComposerModel.edit(edited2)
+eq(editModel.mode.isCreate, false, "edit model is not create")
+eq(editModel.mode.requirementID, "REQ-001", "edit model carries the id")
+eq(editModel.title, "再改", "edit model title parsed from content")
+eq(editModel.body, "新诉求2", "edit model body parsed from content")
+eq(editModel.submitKey, "requirements.save", "edit model submits as save")
+eq(editModel.headingKey, "requirements.editTitle", "edit model heading is the edit title")
+
 section("result")
 print("requirements model: " + String(checks - failures) + "/" + String(checks) + " passed")
 if failures > 0 { exit(1) }

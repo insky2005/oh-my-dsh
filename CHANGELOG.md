@@ -15,6 +15,8 @@ All notable changes to this project are documented in this file. Format follows
 
 - **需求池面板：建需求按钮移到工具栏右侧（2026-10-04）**：头部只留 `[⟳] [?] [✕]`，下面新增一行 32pt **工具栏**（含底部分隔线，与任务面板页签行同形），「＋ 新建需求」**右对齐**放在工具栏右侧；使用说明与设计 / 使用文档同步。
 
+- **需求池卡片：显示诉求内容 + 状态徽标后移 + 可编辑（2026-10-04）**：卡片现在显示 `## 诉求` 正文预览（最多 4 行，tooltip 全文）——agent 落卡的内容不再只活在文件里；**状态徽标移到标题之后**；新增**「编辑」**按钮，复用同一个抽屉预填标题 + 诉求，保存走 `POST /api/requirements/update`（只改 frontmatter `title` 与 `## 诉求`，状态 / 拆解提案 / 子事项都不动）。测试 `tests/requirements-panel` 模型 **77 → 93**、API **42 → 49**。
+
 - **需求池拆解：面板把提示词直接发进当前对话（2026-10-04）**：点卡片「拆解」不再只复制到剪贴板——用 `dshSession` 跟踪器上报的当前会话调 `DshSessionOps.sendPrompt`（`session/prompt`，与 wiki 生成 / 任务队列同一形状）把提示词**直接发进对话**；agent 随即调 `POST /api/requirements/breakdown/propose` 提出待确认方案。**没有打开的对话或发送失败时回退复制**并在状态行说明。另一入口不变：对话里运行 `/requirement-pool 拆解 <REQ-id>`。人工确认门（R10）不变：`confirm` 仍只在面板。
 
 ### Fixed

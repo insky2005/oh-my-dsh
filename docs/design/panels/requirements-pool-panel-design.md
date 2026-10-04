@@ -196,6 +196,7 @@ updated: <today>
 | GET `/api/requirements/list` | `?workspace=<路径>` | `{ok, workspace, requirements:[{id,title,state,effectiveState,source,created,updated,children:[{id,title,stage,outcome}],proposal:[…]}]}` |
 | POST `/api/requirements/create` | `{"workspace":"…","title":"…","body":"…","source":"…","focus":true}` | 收件箱：新建 `REQ-*.md`（`state: candidate`）；返回 `{ok, requirement:{…}}` |
 | POST `/api/requirements/state` | `{"workspace":"…","id":"REQ-003","state":"evaluating"}` | 改人工状态；`state ∈ {candidate,evaluating,suspended,discarded}`；返回 `{ok, requirement:{…}}` |
+| POST `/api/requirements/update` | `{"workspace":"…","id":"REQ-003","title":"…","body":"…"}` | 编辑标题 + 诉求（只改这两处）；返回 `{ok, requirement:{…}}` |
 | POST `/api/requirements/breakdown/propose` | `{"workspace":"…","id":"REQ-003","items":[{"title":"…","boundary":"…","dependsOn":["…"]}]}` | 拆解器第 1 步：写待确认提案（覆盖旧提案） |
 | POST `/api/requirements/breakdown/confirm` | `{"workspace":"…","id":"REQ-003"}` | 拆解器第 2 步（**人确认后**）：建 `WS-*.md`，替换提案为映射表 |
 | POST `/api/requirements/breakdown/reject` | `{"workspace":"…","id":"REQ-003"}` | 驳回：清除待确认提案 |
@@ -215,9 +216,10 @@ updated: <today>
 ├─ 工具栏（DynamicFillView + 分隔线）                          [＋ 新建需求]
 ├─ 内容（NSScrollView）  需求卡片 × N
 │    └─ 卡片
-│         ├─ 第一行：[有效状态徽标] REQ-008 标题            [状态 ▾] [拆解]
-│         ├─ 第二行：来源 · 更新日期
-│         ├─ 第三行：子事项 WS-009 规划 · WS-010 设计   （或「尚未拆解」）
+│         ├─ 第一行：REQ-008 标题  [有效状态徽标]      [状态 ▾] [编辑] [拆解]
+│         ├─ 第二行：诉求预览（最多 4 行，tooltip 全文）
+│         ├─ 第三行：来源 · 更新日期
+│         ├─ 第四行：子事项 WS-009 规划 · WS-010 设计   （或「尚未拆解」）
 │         └─ （有待确认提案时）提案区
 │              ├─ 「待确认拆解（N 个事项）」
 │              ├─ · 标题 — 边界
@@ -239,8 +241,10 @@ updated: <today>
 
 ### 5.2 卡片与动作
 
-- **状态徽标**：`candidate` / `evaluating` / `suspended` / `discarded` / `split` / `closed`；`split` 用 accent，`closed` / `discarded` 用次要色。
-- **「状态 ▾」菜单**：候选 / 评估中 / 挂起 / 丢弃 → 调 `setState`。
+- **标题行**：先读 `REQ-id 标题`，其后跟**有效状态徽标**（`candidate` / `evaluating` / `suspended` / `discarded` / `split` / `closed`；`split` 用 accent，`closed` / `discarded` 用次要色）；动作 `[状态][编辑][拆解]` 右对齐。
+- **内容预览**：卡片显示 `## 诉求` 的正文（最多 4 行、`byTruncatingTail`，tooltip 给全文）——agent 落卡的内容不再只活在文件里。
+- **「状态 ▾」菜单**：候选 / 评估中 / 挂起 / 丢弃 → 调 `setState`（写回**人工判断**；`split` / `closed` 是派生，不出现在菜单里）。
+- **「编辑」按钮**：打开同一个抽屉并预填（首行标题 + 诉求），保存走 `updateRequirement`：**只改** frontmatter `title` 与 `## 诉求`，状态、拆解映射、子事项都不动。
 - **「拆解」按钮**：把拆解提示词**直接发送到当前对话**（`DshSessionOps.sendPrompt` → `session.prompt`，目标是 `dshSession` 跟踪器上报的当前会话）；**没有打开的对话或发送失败时回退复制**到剪贴板，状态行说明走了哪条路。随后 agent 调 `POST /api/requirements/breakdown/propose` 提出**待确认提案**；有提案时提案区就地给出确认 / 驳回。
 - **提案区**：`确认拆解` → `confirm`（建 WS 卡）；`驳回` → `reject`。
 - **子事项行**：只读展示 `WS-id stage`；点击经 `onOpenWorkstream` 在文件面板打开该卡。
@@ -319,6 +323,11 @@ updated: <today>
 | `requirements.title` | 需求池 | Requirements |
 | `requirements.new` | 新建需求 | New Requirement |
 | `requirements.formTitle` | 新建需求 | New Requirement |
+| `requirements.editTitle` | 编辑需求 | Edit Requirement |
+| `requirements.editInfo` | 改标题与诉求；状态、拆解映射与子事项不受影响。 | Change the title and statement; the state, breakdown and workstreams are untouched. |
+| `requirements.save` | 保存 | Save |
+| `requirements.edit` | 编辑 | Edit |
+| `requirements.updated` | 已保存 %@ | Saved %@ |
 | `requirements.create` | 创建 | Create |
 | `requirements.newInfo` | 首行是标题，其余行是诉求（也可让 agent 用 requirement-pool 技能落卡）。 | The first line is the title; later lines are the statement (the agent can also use the requirement-pool skill). |
 | `requirements.newContent` | 标题与诉求 | Title and statement |
