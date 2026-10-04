@@ -914,8 +914,8 @@ enum L10n {
         "requirements.help.create.panel": ("在面板：点右上角「＋」，在抽屉的首行写标题、其余行写诉求，按 ⌘↩ 或点「创建」。", "In the panel: click + in the header, write the title on the first line and the statement on the rest, then press Command-Return or click Create."),
         "requirements.help.create.chat": ("在对话：输入「把这个想法落成需求」，或运行 /requirement-pool。", "In a conversation: type “capture this idea as a requirement”, or run /requirement-pool."),
         "requirements.help.breakdown.heading": ("拆解事项", "Break down a requirement"),
-        "requirements.help.breakdown.panel": ("在面板：点卡片「拆解」复制提示词；方案回来后点「确认拆解」或「驳回」。", "In the panel: click Break down on a card to copy the prompt; when a proposal appears, click Confirm or Reject."),
-        "requirements.help.breakdown.chat": ("在对话：粘贴提示词发送，等 agent 给出拆解方案。", "In a conversation: paste the prompt and send it; the agent then proposes a breakdown."),
+        "requirements.help.breakdown.panel": ("在面板：点卡片「拆解」，提示词会发送到当前对话；方案回来后点「确认拆解」或「驳回」。", "In the panel: click Break down on a card and the prompt is sent to the current conversation; when a proposal appears, click Confirm or Reject."),
+        "requirements.help.breakdown.chat": ("在对话：运行 /requirement-pool 拆解 <REQ-id>。", "In a conversation: run /requirement-pool breakdown <REQ-id>."),
         "requirements.empty": ("还没有需求。点「＋」把一条想法记进来。", "No requirements yet. Click + to capture an idea."),
         "requirements.noChildren": ("尚未拆解", "Not broken down"),
         "requirements.state.candidate": ("候选", "Candidate"),
@@ -927,6 +927,9 @@ enum L10n {
         "requirements.set.state": ("状态", "State"),
         "requirements.breakdown": ("拆解", "Break down"),
         "requirements.breakdownPromptCopied": ("已复制拆解提示词；在会话里运行 /requirement-pool 拆解 %@", "Breakdown prompt copied; run /requirement-pool breakdown %@ in a session"),
+        "requirements.breakdownSent": ("已把拆解提示词发送到当前对话", "Breakdown prompt sent to the current conversation"),
+        "requirements.breakdownNoSession": ("当前没有打开的对话，已复制提示词", "No conversation is open; the prompt was copied"),
+        "requirements.breakdownSendFailed": ("发送失败，已复制提示词", "Could not send; the prompt was copied"),
         "requirements.proposal": ("待确认拆解（%d 个事项）", "Proposed breakdown (%d workstreams)"),
         "requirements.confirm": ("确认拆解", "Confirm"),
         "requirements.reject": ("驳回", "Reject"),
@@ -2316,6 +2319,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// The session whose "open in dsh" is currently being attempted, so a retry
     /// chain and a fresh click for the same id cannot overlap (see openDSHSession).
     private var openInFlight: String?
+    /// The session the user is currently viewing in dsh web (posted by the
+    /// dshSession tracker). Panel buttons hand their prompt to THIS conversation.
+    private var activeSessionId: String?
     /// The「会话快照…」window (created lazily).
     private var snapshotWindowController: SnapshotWindowController?
     /// Oldest dsh generation this shell still adapts to (core keeps both API
@@ -2838,6 +2844,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // REST focus=true: bring the workspace up and show this panel.
         requirementsPanel.onFocus = { [weak self] _ in
             self?.setRightPanel(.requirements)
+        }
+        // 拆解：把提示词直接发进当前对话（agent 随后调面板 API 提方案）。
+        requirementsPanel.onBreakdown = { [weak self] id in
+            self?.sendBreakdownPrompt(id)
         }
         requirementsPanel.onDidRender = { [weak self] in
             guard let self = self, self.uiDebug else { return }
@@ -5195,6 +5205,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    /// 拆解：send the breakdown handoff prompt into the conversation the user is
+    /// viewing, so the agent proposes through the panel API. Without an active
+    /// session (or when the send fails) the prompt is copied instead, and the
+    /// panel's status line says which happened.
+    private func sendBreakdownPrompt(_ requirementId: String) {
+        let prompt = RequirementsCore.breakdownPrompt(requirementId)
+        let port = server.port
+        guard port > 0, let sessionId = activeSessionId, !sessionId.isEmpty else {
+            requirementsPanel?.copyBreakdownPrompt(id: requirementId)
+            requirementsPanel?.setStatus(L10n.tr("requirements.breakdownNoSession"), isError: false)
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let sent = DshSessionOps.sendPrompt(port: port, sessionId: sessionId, text: prompt)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if sent {
+                    AppLog.shared.log("requirements: breakdown prompt for \(requirementId) sent to session \(sessionId)")
+                    self.requirementsPanel?.setStatus(L10n.tr("requirements.breakdownSent"), isError: false)
+                } else {
+                    AppLog.shared.log("requirements: breakdown send failed (\(DshWebRPC.lastFailure ?? "?"))")
+                    self.requirementsPanel?.copyBreakdownPrompt(id: requirementId)
+                    self.requirementsPanel?.setStatus(L10n.tr("requirements.breakdownSendFailed"), isError: true)
+                }
+            }
+        }
+    }
+
     /// Files panel → composer: append one workspace-relative `@` reference to
     /// the draft dsh web is showing (the panel decided WHICH reference; the
     /// shell owns the page). The draft is only ever appended to — the user's
@@ -5744,6 +5782,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // working directory and re-point every project-dir consumer.
         guard message.name == "dshSession" else { return }
         guard let body = message.body as? [String: Any], let sid = body["sessionId"] as? String else { return }
+        activeSessionId = sid
         AppLog.shared.log("active session changed: \(sid)")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }

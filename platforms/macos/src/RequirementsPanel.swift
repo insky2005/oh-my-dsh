@@ -258,6 +258,9 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     var workspaceProvider: (() -> String?)?
     /// Open a workstream card in the file panel.
     var onOpenWorkstream: ((String) -> Void)?
+    /// Send the breakdown prompt into the current conversation (main.swift).
+    /// nil falls back to copying it to the clipboard.
+    var onBreakdown: ((String) -> Void)?
     /// Focus this workspace and show the requirements panel (REST focus=true).
     var onFocus: ((String) -> Void)?
     /// QA hook (--ui-debug): fires after each render.
@@ -367,7 +370,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
             let card = RequirementCardView(item: item)
             let id = item.requirement.id
             card.onSetState = { [weak self] state in self?.setState(id: id, state: state) }
-            card.onBreakdown = { [weak self] in self?.copyBreakdownPrompt(id: id) }
+            card.onBreakdown = { [weak self] in self?.breakdownRequested(id: id) }
             card.onConfirm = { [weak self] in self?.confirmBreakdown(id: id) }
             card.onReject = { [weak self] in self?.rejectBreakdown(id: id) }
             card.onOpenWorkstream = { [weak self] path in self?.onOpenWorkstream?(path) }
@@ -544,8 +547,19 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
         return false
     }
 
-    /// Copy the breakdown handoff prompt: the agent proposes through the REST API,
-    /// the human confirms below. The panel never starts a session itself.
+    /// The 拆解 button: hand the prompt to the current conversation when main.swift
+    /// wired a sender (it sends through session.prompt); otherwise copy it. The
+    /// agent then proposes through the REST API and the human confirms below.
+    @discardableResult
+    func breakdownRequested(id: String) -> Bool {
+        if let onBreakdown = onBreakdown {
+            onBreakdown(id)
+            return true
+        }
+        return copyBreakdownPrompt(id: id)
+    }
+
+    /// Copy the breakdown handoff prompt (fallback / manual path).
     @discardableResult
     func copyBreakdownPrompt(id: String) -> Bool {
         let prompt = RequirementsCore.breakdownPrompt(id)

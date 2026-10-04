@@ -443,5 +443,37 @@ let tmpDir = NSTemporaryDirectory()
 eq(DshWorkspaceStore.canonical(tmpDir), DshWorkspaceStore.canonical("/private" + tmpDir),
    "canonical: the /var and /private/var spellings of one directory fold together")
 
+// MARK: - DshSessionOps (面板把提示词发进当前对话)
+
+DshWebRPC.resetForTests()
+DshWebRPC.token = "launch-token"
+fake.requests = []; fake.bodies = [:]
+fake.routes = [
+    "GET /?token=launch-token": (303, nil),
+    "POST /api/session/prompt": (200, okValue(["ok": true])),
+]
+check(DshSessionOps.sendPrompt(port: 6030, sessionId: "s-1", text: "拆解 REQ-001"),
+      "sendPrompt: ok on a 200")
+eq(fake.requests.filter { $0 == "POST /api/session/prompt" }.count, 1,
+   "sendPrompt: exactly one session/prompt POST")
+let sessionPromptArgs = ((fake.bodies["POST /api/session/prompt"]?["payload"] as? [String: Any])?["args"] as? [String: Any])?["request"] as? [String: Any]
+eq(sessionPromptArgs?["sessionId"] as? String, "s-1", "sendPrompt: carries the sessionId")
+eq(sessionPromptArgs?["mode"] as? String, "queue", "sendPrompt: queue mode")
+let sessionPromptContent = sessionPromptArgs?["content"] as? [[String: Any]]
+eq(sessionPromptContent?.first?["type"] as? String, "text", "sendPrompt: one text part")
+eq(sessionPromptContent?.first?["text"] as? String, "拆解 REQ-001", "sendPrompt: carries the prompt text")
+check(sessionPromptArgs?["requestId"] != nil, "sendPrompt: carries a requestId (dsh >= 0.1.2)")
+
+check(!DshSessionOps.sendPrompt(port: 6030, sessionId: "", text: "x"),
+      "sendPrompt: an empty sessionId is refused")
+check(!DshSessionOps.sendPrompt(port: 6030, sessionId: "s-1", text: ""),
+      "sendPrompt: empty text is refused")
+
+DshWebRPC.resetForTests()
+DshWebRPC.token = "launch-token"
+fake.routes = ["POST /api/session/prompt": (500, nil), "POST /api/session.prompt": (500, nil)]
+check(!DshSessionOps.sendPrompt(port: 6031, sessionId: "s-1", text: "x"),
+      "sendPrompt: a failing server returns false (the panel then copies)")
+
 print(failures == 0 ? "dsh-rpc tests passed" : "dsh-rpc tests FAILED (\(failures))")
 exit(failures == 0 ? 0 : 1)

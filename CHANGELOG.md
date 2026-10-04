@@ -13,6 +13,8 @@ All notable changes to this project are documented in this file. Format follows
 
 - **需求池面板：创建需求改抽屉 + 使用说明（2026-10-04）**：头部「＋」不再弹 `NSAlert`，改用与任务面板「新建任务」同款的**表单抽屉**（复用 `TaskFormSheetView` / `TaskFormKit`）——一个输入框，**首行 = 标题、其余行 = 诉求**（单行则两者相同），`⌘↩` 提交、`Esc` 取消；视图模型 `RequirementComposerModel`（纯 Foundation，`platforms/macos/src/RequirementsUI.swift`）可无头断言。右上角新增 **`?` 使用说明**按钮：抽屉里是「创建需求 / 拆解事项」两节，每节分「在面板」「在对话」两条**操作**（只讲操作，不讲结果），**池为空时同一份说明直接铺在内容区**（不必先点帮助）。测试 `tests/requirements-panel` 模型 **61 → 75**。
 
+- **需求池拆解：面板把提示词直接发进当前对话（2026-10-04）**：点卡片「拆解」不再只复制到剪贴板——用 `dshSession` 跟踪器上报的当前会话调 `DshSessionOps.sendPrompt`（`session/prompt`，与 wiki 生成 / 任务队列同一形状）把提示词**直接发进对话**；agent 随即调 `POST /api/requirements/breakdown/propose` 提出待确认方案。**没有打开的对话或发送失败时回退复制**并在状态行说明。另一入口不变：对话里运行 `/requirement-pool 拆解 <REQ-id>`。人工确认门（R10）不变：`confirm` 仍只在面板。
+
 ### Fixed
 
 - **英文界面修复：Agent 追加任务后壳层崩溃（2026-10-02，v1.18.0）**：`tasks.apiQueueAppended` 的中英文案占位符顺序相反（中文 `%@`→`%d`、英文 `%d`→`%@`），而 `L10n.tr` 把同一份参数列表交给当前语言的格式串；英文下 `%@` 拿到整数 `created.count`（3）被当成对象指针，`String(format:)` 内部对 `0x3` 调 `objc_opt_respondsToSelector` 直接 SIGSEGV（`KERN_INVALID_ADDRESS at 0x3`）。改用位置参数 `%1$@` / `%2$d`，两种语言各自保留自然语序。回归：`tests/l10n` 新增「中英格式参数必须一致」检查——改前先复现失败（精确命中该 key），改后通过。
