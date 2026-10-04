@@ -22,16 +22,11 @@
 
 ## AI 原生工作流（.dsh 卡片）
 
-本仓库同时是「AI 原生工作流」的第一个用户（dogfooding）。以下与 `.dsh/ai-native-workflow-spec.md` §7 的 `AGENTS.md` 模板保持一致：
-
 - 规范：.dsh/ai-native-workflow-spec.md
 - 状态在 .dsh（随仓库提交）：需求 REQ-*.md、事项 WS-*.md、回归门 REG-*.md
 - 不手写派生字段：closed / outcome / split 由派生器算出
 - 人工确认门：拆解 / 规划 / 设计 / 任务拆分 / 验收 sign-off / merge
 - 只拆不胀：范围外的新发现回池
-
-本项目附加（模板之外）：
-
 - 用法：`docs/usage/ai-native-workflow-manual.md`；本项目产出物：`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/requirements-workstream-store-design.md`；
 - 派生器：`node .dsh/tools/derive-status.mjs`；回归门：`REG-001`；
 - 任务阶段用 `/task-todo`（拆分 = 建等待态队列、实施 = 启动、交付 = deliver）。
