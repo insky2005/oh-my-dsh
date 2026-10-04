@@ -53,8 +53,11 @@ final class RequirementsRootView: NSView {
     }
 }
 
-/// One requirement card: state badge + title, source line, children line, and the
-/// pending breakdown proposal (with its human confirmation gate) when present.
+/// One requirement card, in the tasks panel's card grammar (TaskCardView.swift):
+///   * a RAISED block (corner 8, ONE hairline) = the requirement container;
+///   * workstreams + the pending proposal are RECESSED blocks inside it;
+///   * state lives in a trailing badge (tone like the task cards), never on the
+///     border — the one accent is the "active" state (evaluating / split).
 final class RequirementCardView: NSView {
 
     var onSetState: ((String) -> Void)?
@@ -66,13 +69,12 @@ final class RequirementCardView: NSView {
 
     /// The rendered requirement (internal for symmetry with ProjectCardView).
     let item: PoolItem
-
-    private let badge = NSTextField(labelWithString: "")
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let metaLabel = NSTextField(labelWithString: "")
+    /// The card starts open when it has something to show inside.
+    private(set) var isExpanded: Bool
 
     init(item: PoolItem) {
         self.item = item
+        self.isExpanded = !item.children.isEmpty || !(item.proposal?.isEmpty ?? true)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -85,79 +87,121 @@ final class RequirementCardView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        PanelControl.fill(dark: dark, highlighted: false).setFill()
+        TaskInk.fill(dark: dark, recessed: false).setFill()
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
         path.fill()
-        (dark ? NSColor(calibratedWhite: 0.38, alpha: 0.7) : NSColor(calibratedWhite: 0.82, alpha: 1)).setStroke()
+        TaskInk.hairline(dark: dark).setStroke()
         path.lineWidth = 1
         path.stroke()
+    }
+
+    /// Clicking the card (outside its controls) expands / collapses it.
+    override func mouseDown(with event: NSEvent) { toggleExpanded() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        if hit is NSButton || hit is CustomIconButton || hit is TaskBadgeView { return hit }
+        return self
+    }
+
+    func toggleExpanded() {
+        isExpanded.toggle()
+        for sub in subviews { sub.removeFromSuperview() }
+        build()
     }
 
     // MARK: - Layout
 
     private func build() {
         let state = item.effectiveState
+        let tone = requirementTone(state)
 
-        badge.stringValue = requirementStateLabel(state)
-        badge.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        badge.textColor = state == .split ? .controlAccentColor : .secondaryLabelColor
-        badge.setContentHuggingPriority(.required, for: .horizontal)
+        // Row 1 — disclosure / kind glyph / title / badges / actions. The state
+        // badge sits last before the actions (tasks grammar), never on the border.
+        let chevron = NSImageView()
+        chevron.image = NSImage(systemSymbolName: isExpanded ? "chevron.down" : "chevron.right",
+                                accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
+        chevron.contentTintColor = .tertiaryLabelColor
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.widthAnchor.constraint(equalToConstant: 14).isActive = true
+        chevron.heightAnchor.constraint(equalToConstant: 14).isActive = true
 
-        titleLabel.stringValue = item.requirement.id + "  " + item.requirement.title
-        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let glyph = taskRowGlyph("tray.full", accessibility: "requirements.glyph")
 
-        // The 诉求 preview: the card must show what the requirement actually says
-        // (an agent-captured card used to be title-only).
-        let statementLabel = NSTextField(wrappingLabelWithString: item.requirement.statement)
-        statementLabel.font = NSFont.systemFont(ofSize: 11)
-        statementLabel.textColor = .secondaryLabelColor
-        statementLabel.maximumNumberOfLines = 4
-        statementLabel.lineBreakMode = .byTruncatingTail
-        statementLabel.toolTip = item.requirement.statement
-        statementLabel.isHidden = item.requirement.statement.isEmpty
+        let title = NSTextField(labelWithString: item.requirement.id + "  " + item.requirement.title)
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.textColor = TaskBadgeView.bodyColor(tone)
+        title.lineBreakMode = .byTruncatingTail
+        title.toolTip = item.requirement.title
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        var meta: [String] = []
-        if !item.requirement.source.isEmpty { meta.append(item.requirement.source) }
-        if !item.requirement.updated.isEmpty { meta.append(item.requirement.updated) }
-        metaLabel.stringValue = meta.joined(separator: " · ")
-        metaLabel.font = NSFont.systemFont(ofSize: 11)
-        metaLabel.textColor = .tertiaryLabelColor
-        metaLabel.lineBreakMode = .byTruncatingTail
-
-        let stateButton = NSButton(title: L10n.tr("requirements.set.state"), target: self, action: #selector(showStateMenu(_:)))
-        stateButton.bezelStyle = .rounded
-        stateButton.controlSize = .small
-        stateButton.font = NSFont.systemFont(ofSize: 11)
-        stateButton.setContentHuggingPriority(.required, for: .horizontal)
-
-        let editButton = NSButton(title: L10n.tr("requirements.edit"), target: self, action: #selector(editTapped(_:)))
-        editButton.bezelStyle = .rounded
-        editButton.controlSize = .small
-        editButton.font = NSFont.systemFont(ofSize: 11)
-        editButton.toolTip = L10n.tr("requirements.edit")
-        editButton.setContentHuggingPriority(.required, for: .horizontal)
+        let kindBadge = TaskBadgeView(text: L10n.tr("requirements.kind"), tone: .neutral)
+        let stateBadge = TaskBadgeView(text: requirementStateLabel(state), tone: tone,
+                                       filled: state == .evaluating)
 
         let breakdownButton = NSButton(title: L10n.tr("requirements.breakdown"), target: self, action: #selector(breakdownTapped(_:)))
         breakdownButton.bezelStyle = .rounded
         breakdownButton.controlSize = .small
-        breakdownButton.font = NSFont.systemFont(ofSize: 11)
+        breakdownButton.font = .systemFont(ofSize: 11)
         breakdownButton.toolTip = L10n.tr("requirements.breakdown")
-        breakdownButton.setContentHuggingPriority(.required, for: .horizontal)
+        breakdownButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let stateButton = CustomIconButton(glyph: .symbol("circle.dashed"),
+                                           tooltip: L10n.tr("requirements.set.state") + "：" + requirementManualStateLabel(item.requirement.state ?? "candidate"),
+                                           size: 22)
+        stateButton.onAction = { [weak self] in self?.showStateMenu(from: stateButton) }
+        let editButton = CustomIconButton(glyph: .symbol("pencil"), tooltip: L10n.tr("requirements.edit"), size: 22)
+        editButton.onAction = { [weak self] in self?.onEdit?() }
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
-        // Title first, then the state badge (the user reads the requirement, then
-        // its state); the actions stay pinned right.
-        let titleRow = NSStackView(views: [titleLabel, badge, spacer, stateButton, editButton, breakdownButton])
+        var titleViews: [NSView] = [chevron, glyph, title, kindBadge]
+        if !item.children.isEmpty {
+            titleViews.append(TaskBadgeView(text: L10n.tr("requirements.children", item.children.count), tone: .neutral))
+        }
+        titleViews.append(contentsOf: [spacer, stateBadge, breakdownButton, stateButton, editButton])
+        let titleRow = NSStackView(views: titleViews)
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
-        titleRow.spacing = 8
+        titleRow.spacing = 6
 
-        var rows: [NSView] = [titleRow, statementLabel, metaLabel, childrenRow()]
+        var rows: [NSView] = [titleRow]
+
+        // 诉求 preview: always visible (an agent-captured card used to be title-only),
+        // clamped to 3 lines when collapsed.
+        if !item.requirement.statement.isEmpty {
+            let statement = NSTextField(wrappingLabelWithString: item.requirement.statement)
+            statement.font = .systemFont(ofSize: 11)
+            statement.textColor = .secondaryLabelColor
+            statement.maximumNumberOfLines = isExpanded ? 0 : 3
+            statement.lineBreakMode = .byTruncatingTail
+            statement.toolTip = item.requirement.statement
+            rows.append(statement)
+        }
+
+        var meta: [String] = []
+        if !item.requirement.source.isEmpty { meta.append(item.requirement.source) }
+        if !item.requirement.updated.isEmpty { meta.append(item.requirement.updated) }
         if let proposal = item.proposal, !proposal.isEmpty {
-            rows.append(proposalView(proposal))
+            meta.append(L10n.tr("requirements.proposalMeta", proposal.count))
+        }
+        if !meta.isEmpty {
+            let metaLabel = NSTextField(labelWithString: meta.joined(separator: "  ·  "))
+            metaLabel.font = .systemFont(ofSize: 10)
+            metaLabel.textColor = .tertiaryLabelColor
+            metaLabel.lineBreakMode = .byTruncatingMiddle
+            rows.append(metaLabel)
+        }
+
+        if isExpanded {
+            if !item.children.isEmpty {
+                rows.append(sectionTitle(L10n.tr("requirements.childrenSection"), count: item.children.count))
+                for child in item.children { rows.append(workstreamCard(child)) }
+            }
+            if let proposal = item.proposal, !proposal.isEmpty {
+                rows.append(proposalBlock(proposal))
+            }
         }
 
         let column = NSStackView(views: rows)
@@ -167,81 +211,109 @@ final class RequirementCardView: NSView {
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
         NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            column.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            titleRow.widthAnchor.constraint(equalTo: column.widthAnchor),
-            statementLabel.widthAnchor.constraint(equalTo: column.widthAnchor),
-            metaLabel.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
         ])
+        for row in rows { row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
     }
 
-    /// The children line: one small button per workstream ("WS-001 规划"), so a
-    /// click can open the card in the file panel; "尚未拆解" when there are none.
-    private func childrenRow() -> NSView {
-        if item.children.isEmpty {
-            let label = NSTextField(labelWithString: L10n.tr("requirements.noChildren"))
-            label.font = NSFont.systemFont(ofSize: 11)
-            label.textColor = .tertiaryLabelColor
-            return label
+    /// A quiet section caption inside the card ("已拆解事项 (N)").
+    private func sectionTitle(_ text: String, count: Int) -> NSView {
+        let label = NSTextField(labelWithString: text + " (" + String(count) + ")")
+        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        return label
+    }
+
+    /// One workstream as a RECESSED mini card (the queue lane's nested card).
+    private func workstreamCard(_ child: WorkstreamSummary) -> NSView {
+        let glyph = taskRowGlyph("doc.text", accessibility: "requirements.glyph.workstream")
+        let id = NSTextField(labelWithString: child.id)
+        id.font = .systemFont(ofSize: 12, weight: .semibold)
+        let name = NSTextField(labelWithString: child.title)
+        name.font = .systemFont(ofSize: 12)
+        name.lineBreakMode = .byTruncatingTail
+        name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let stageBadge = TaskBadgeView(text: child.stage, tone: .neutral)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        let open = CustomIconButton(glyph: .symbol("arrow.up.forward.app"),
+                                    tooltip: L10n.tr("requirements.openWorkstream"), size: 22)
+        let path = child.path
+        open.onAction = { [weak self] in self?.onOpenWorkstream?(path) }
+        let row = NSStackView(views: [glyph, id, name, spacer, stageBadge, open])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 6
+        return RequirementNestedCardView(content: row, recessed: true)
+    }
+
+    /// The pending proposal + its human confirmation gate (R10): a RECESSED block
+    /// whose header carries the 确认 / 驳回 actions, and one RAISED mini card per
+    /// proposed workstream (the queue-lane grammar).
+    private func proposalBlock(_ proposal: [BreakdownItem]) -> NSView {
+        let glyph = taskRowGlyph("square.dashed", accessibility: "requirements.glyph.proposal")
+        let header = NSTextField(labelWithString: L10n.tr("requirements.proposalSection"))
+        header.font = .systemFont(ofSize: 12, weight: .semibold)
+        let pending = TaskBadgeView(text: L10n.tr("requirements.pending", proposal.count), tone: .warning)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        let confirm = NSButton(title: L10n.tr("requirements.confirm"), target: self, action: #selector(confirmTapped(_:)))
+        confirm.bezelStyle = .rounded
+        confirm.controlSize = .small
+        confirm.font = .systemFont(ofSize: 11)
+        let reject = NSButton(title: L10n.tr("requirements.reject"), target: self, action: #selector(rejectTapped(_:)))
+        reject.bezelStyle = .rounded
+        reject.controlSize = .small
+        reject.font = .systemFont(ofSize: 11)
+        let headerRow = NSStackView(views: [glyph, header, pending, spacer, confirm, reject])
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .centerY
+        headerRow.spacing = 6
+
+        var rows: [NSView] = [headerRow]
+        for entry in proposal { rows.append(proposalItemCard(entry)) }
+        let column = NSStackView(views: rows)
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 6
+        for row in rows { row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
+        return RequirementNestedCardView(content: column, recessed: true)
+    }
+
+    /// One proposal item as a RAISED mini card inside the recessed proposal block.
+    private func proposalItemCard(_ entry: BreakdownItem) -> NSView {
+        let glyph = taskRowGlyph("square.dashed", accessibility: "requirements.glyph.proposalItem")
+        let title = NSTextField(labelWithString: entry.title)
+        title.font = .systemFont(ofSize: 12, weight: .semibold)
+        title.lineBreakMode = .byTruncatingTail
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        var views: [NSView] = [glyph, title]
+        if !entry.boundary.isEmpty {
+            let boundary = NSTextField(labelWithString: "— " + entry.boundary)
+            boundary.font = .systemFont(ofSize: 11)
+            boundary.textColor = .secondaryLabelColor
+            boundary.lineBreakMode = .byTruncatingTail
+            views.append(boundary)
         }
-        var views: [NSView] = []
-        for child in item.children {
-            let button = NSButton(title: child.id + " " + child.stage, target: self, action: #selector(openWorkstream(_:)))
-            button.bezelStyle = .inline
-            button.controlSize = .small
-            button.font = NSFont.systemFont(ofSize: 11)
-            button.toolTip = L10n.tr("requirements.openWorkstream")
-            button.identifier = NSUserInterfaceItemIdentifier(child.path)
-            views.append(button)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        views.append(spacer)
+        if !entry.dependsOn.isEmpty {
+            views.append(TaskBadgeView(text: L10n.tr("requirements.depends", entry.dependsOn.count), tone: .neutral))
         }
         let row = NSStackView(views: views)
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 6
-        return row
-    }
-
-    /// The pending breakdown proposal + its human confirmation gate (R10). The
-    /// agent may only PROPOSE; confirm / dismiss belong to the human here.
-    private func proposalView(_ proposal: [BreakdownItem]) -> NSView {
-        let header = NSTextField(labelWithString: L10n.tr("requirements.proposal", proposal.count))
-        header.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        header.textColor = .controlAccentColor
-
-        var itemViews: [NSView] = [header]
-        for entry in proposal {
-            let text = entry.boundary.isEmpty ? "· " + entry.title : "· " + entry.title + " — " + entry.boundary
-            let label = NSTextField(wrappingLabelWithString: text)
-            label.font = NSFont.systemFont(ofSize: 11)
-            label.textColor = .secondaryLabelColor
-            itemViews.append(label)
-        }
-
-        let confirm = NSButton(title: L10n.tr("requirements.confirm"), target: self, action: #selector(confirmTapped(_:)))
-        confirm.bezelStyle = .rounded
-        confirm.controlSize = .small
-        confirm.font = NSFont.systemFont(ofSize: 11)
-        let reject = NSButton(title: L10n.tr("requirements.reject"), target: self, action: #selector(rejectTapped(_:)))
-        reject.bezelStyle = .rounded
-        reject.controlSize = .small
-        reject.font = NSFont.systemFont(ofSize: 11)
-        let buttons = NSStackView(views: [confirm, reject])
-        buttons.orientation = .horizontal
-        buttons.spacing = 6
-        itemViews.append(buttons)
-
-        let stack = NSStackView(views: itemViews)
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 4
-        return stack
+        return RequirementNestedCardView(content: row, recessed: false)
     }
 
     // MARK: - Actions
 
-    @objc private func showStateMenu(_ sender: NSButton) {
+    @objc private func showStateMenu(from view: NSView) {
         let menu = NSMenu()
         for state in RequirementsCore.manualStates {
             let entry = NSMenuItem(title: requirementManualStateLabel(state),
@@ -250,7 +322,7 @@ final class RequirementCardView: NSView {
             entry.representedObject = state
             menu.addItem(entry)
         }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 4), in: view)
     }
 
     @objc private func statePicked(_ sender: NSMenuItem) {
@@ -258,14 +330,56 @@ final class RequirementCardView: NSView {
         onSetState?(state)
     }
 
-    @objc private func editTapped(_ sender: Any?) { onEdit?() }
     @objc private func breakdownTapped(_ sender: Any?) { onBreakdown?() }
     @objc private func confirmTapped(_ sender: Any?) { onConfirm?() }
     @objc private func rejectTapped(_ sender: Any?) { onReject?() }
+}
 
-    @objc private func openWorkstream(_ sender: NSButton) {
-        guard let id = sender.identifier?.rawValue else { return }
-        onOpenWorkstream?(id)
+/// A nested card inside a requirement (a workstream or a proposal block): fill by
+/// nesting level (recessed inside a container, raised inside a recessed block) +
+/// ONE hairline, corner 8, content inset 8/7 — the task-card grammar.
+final class RequirementNestedCardView: NSView {
+    private let recessed: Bool
+
+    init(content: NSView, recessed: Bool) {
+        self.recessed = recessed
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            content.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var isOpaque: Bool { false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        TaskInk.fill(dark: dark, recessed: recessed).setFill()
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        path.fill()
+        TaskInk.hairline(dark: dark).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
+}
+
+/// Effective pool state → the task-card tone ladder (TaskTone).
+func requirementTone(_ state: ReqEffectiveState) -> TaskTone {
+    switch state {
+    case .candidate: return .neutral
+    case .evaluating: return .running
+    case .suspended: return .warning
+    case .discarded: return .neutral
+    case .split: return .running
+    case .closed: return .positive
     }
 }
 

@@ -217,15 +217,16 @@ updated: <today>
 ├─ 头部（DynamicFillView + HeaderLabel「需求池」）            [⟳] [?] [✕]
 ├─ 工具栏（DynamicFillView + 分隔线）                          [＋ 新建需求]
 ├─ 内容（NSScrollView）  需求卡片 × N
-│    └─ 卡片
-│         ├─ 第一行：REQ-008 标题  [有效状态徽标]      [状态 ▾] [编辑] [拆解]
-│         ├─ 第二行：诉求预览（最多 4 行，tooltip 全文）
-│         ├─ 第三行：来源 · 更新日期
-│         ├─ 第四行：子事项 WS-009 规划 · WS-010 设计   （或「尚未拆解」）
-│         └─ （有待确认提案时）提案区
-│              ├─ 「待确认拆解（N 个事项）」
-│              ├─ · 标题 — 边界
-│              └─ [确认拆解] [驳回]
+│    └─ 需求卡（raised 块，圆角 8，一条 hairline；点空白处展开/收起）
+│         ├─ 标题行：▸ 需求 REQ-008 标题 [需求][N 个事项] … [有效状态徽标] [拆解][状态][✎]
+│         ├─ 诉求预览（11pt secondary，收起 3 行 / 展开不限，tooltip 全文）
+│         ├─ meta（10pt tertiary）：来源 · 更新 · 待确认拆解 N 项
+│         └─ 展开后：
+│              ├─ 已拆解事项 (N)
+│              │    └─ 事项 mini 卡（recessed）：doc.text  WS-009 标题  [阶段]  [↗]
+│              └─ 待确认拆解（recessed 块）
+│                   ├─ 头：square.dashed  待确认拆解  [待确认 N 项]  [确认拆解][驳回]
+│                   └─ 每条提案（raised mini 卡）：square.dashed  标题 — 边界  [依赖 N]
 └─ 状态行（成功 5s 清空；失败保留）
 ```
 
@@ -239,16 +240,22 @@ updated: <today>
 | `arrow.clockwise` | 头部右 | 重读盘面并重绘 |
 | `questionmark.circle` | 头部右 | 打开「使用说明」抽屉：**创建需求 / 拆解事项** 两节，每节分「在面板」「在对话」两条操作 |
 | `xmark` | 头部右 | `onRequestHide` → 收起右栏 |
-| `plus` 新建需求 | **工具栏右** | 收件箱：打开**抽屉**，一个输入框里**首行标题 / 其余行诉求**，`⌘↩` 或「创建」→ `createRequirement`（`state: candidate`） |
+| `plus` 新建需求 | **工具栏右** | 收件箱：打开**抽屉**，一个输入框里**首行标题 / 其余行诉求**，`⌘↩` /「创建」只写卡，「创建并细化」再起一条细化会话 |
 
-### 5.2 卡片与动作
+### 5.2 卡片结构（照搬任务面板的卡片语法）
 
-- **标题行**：先读 `REQ-id 标题`，其后跟**有效状态徽标**（`candidate` / `evaluating` / `suspended` / `discarded` / `split` / `closed`；`split` 用 accent，`closed` / `discarded` 用次要色）；动作 `[状态][编辑][拆解]` 右对齐。
-- **内容预览**：卡片显示 `## 诉求` 的正文（最多 4 行、`byTruncatingTail`，tooltip 给全文）——agent 落卡的内容不再只活在文件里。
-- **「状态 ▾」菜单**：候选 / 评估中 / 挂起 / 丢弃 → 调 `setState`（写回**人工判断**；`split` / `closed` 是派生，不出现在菜单里）。
-- **「编辑」按钮**：打开同一个抽屉并预填（首行标题 + 诉求），保存走 `updateRequirement`：**只改** frontmatter `title` 与 `## 诉求`，状态、拆解映射、子事项都不动。
-- **「拆解」按钮**：把拆解提示词**直接发进对话**——优先该卡片的**来源会话**（agent 落卡时带的 `$DSH_SESSION_ID`，存在 `.dsh/requirements/local.json`），没有才用 `dshSession` 跟踪器上报的**当前会话**；两者都没有或发送失败则**回退复制**到剪贴板，状态行说明走了哪条路；发送到**非当前**会话时把它切到前台（`openDSHSession`），让拆解过程可见。随后 agent 调 `POST /api/requirements/breakdown/propose` 提出**待确认提案**；有提案时提案区就地给出确认 / 驳回。
-- **提案区**：`确认拆解` → `confirm`（建 WS 卡）；`驳回` → `reject`。两者成功后 main 会把**结果回写到该需求的会话**（同一会话闭环），并把该会话切到前台。
+需求卡 = **raised 块**（圆角 8，一条 hairline，`TaskInk`）；内部嵌套用 **recessed 块**（越往里越"陷"）——与任务队列的「泳道 → 任务卡」同一套语法，直接复用 `TaskCardView.swift` 的 `TaskInk` / `TaskBadgeView` / `taskRowGlyph`，**不新增颜色令牌**。
+
+- **标题行**：折叠箭头 → 类型 glyph（`tray.full`，tertiary 13×13）→ 标题 13pt semibold（颜色取 `TaskBadgeView.bodyColor(tone)`）→ `[需求]` 中性徽标 → `[N 个事项]` 中性计数徽标（有子事项时）→ spacer → **有效状态徽标**（`evaluating` 用 filled accent）→ 动作。
+  - 状态**只在徽标里**，不染边框；唯一的强调是"活动态"（running）。
+- **动作**（右对齐）：`拆解`（文本按钮，主操作）、`状态`（`circle.dashed` 图标，tooltip 显示当前人工状态）、`编辑`（`pencil` 图标）。次要动作用 `CustomIconButton(size: 22)`（hover 走 `PanelControl` highlight 档）。
+- **诉求预览**：`## 诉求` 正文，11pt secondary；**收起 3 行、展开不限**，tooltip 全文。
+- **meta**：来源 · 更新日期 · `待确认拆解 N 项`（10pt tertiary）。
+- **展开 / 收起**：点卡片空白处切换；`hitTest` 白名单（按钮 / 图标按钮 / 徽标）让控件先接事件。
+- **已拆解事项**（展开后）：`已拆解事项 (N)` 小标题 + 每个 `WS-*` 一张 **recessed mini 卡**（`doc.text` glyph + id + 标题 + `[阶段]` 中性徽标 + `↗` 打开文件面板）。
+- **待确认拆解**（展开后）：一个 **recessed 块**，头是 `square.dashed 待确认拆解 [待确认 N 项] … [确认拆解] [驳回]`；**每条提案一张 raised mini 卡**（`square.dashed` + 标题 12pt semibold + `— 边界` + `[依赖 N]`）。
+- **状态色（tone）**：`candidate`→neutral、`evaluating`→running、`suspended`→warning、`discarded`→neutral、`split`→running、`closed`→positive（`requirementTone`）。
+- **动作语义**（不变）：状态菜单写回**人工判断**（`split`/`closed` 派生，不在菜单里）；编辑只改 title + `## 诉求`；拆解发提示词到**来源会话**（`.dsh/requirements/local.json`）或当前会话，都没有才回退复制，发到别的会话会切前台；`确认拆解`/`驳回` 在提案块里，成功后把**结果回写**到该需求的会话（同一会话闭环）。
 - **子事项行**：只读展示 `WS-id stage`；点击经 `onOpenWorkstream` 在文件面板打开该卡。
 
 ### 5.3 空态与状态行
@@ -339,7 +346,13 @@ updated: <today>
 | `requirements.newContentHint` | 首行作为标题，其余行是诉求 | First line is the title; the rest is the statement |
 | `requirements.newProblem` | 请填写标题（首行） | Enter a title (the first line) |
 | `requirements.empty` | 还没有需求。点「＋」把一条想法记进来。 | No requirements yet. Click + to capture an idea. |
-| `requirements.noChildren` | 尚未拆解 | Not broken down |
+| `requirements.kind` | 需求 | Requirement |
+| `requirements.children` | %d 个事项 | %d workstreams |
+| `requirements.childrenSection` | 已拆解事项 | Workstreams |
+| `requirements.glyph` | 需求 | Requirement |
+| `requirements.glyph.workstream` | 事项 | Workstream |
+| `requirements.glyph.proposal` | 待确认拆解 | Proposed breakdown |
+| `requirements.glyph.proposalItem` | 提案事项 | Proposed workstream |
 | `requirements.state.candidate` | 候选 | Candidate |
 | `requirements.state.evaluating` | 评估中 | Evaluating |
 | `requirements.state.suspended` | 挂起 | Suspended |
@@ -352,7 +365,10 @@ updated: <today>
 | `requirements.breakdownSent` | 已把拆解提示词发送到对话 | Breakdown prompt sent to the conversation |
 | `requirements.breakdownNoSession` | 当前没有打开的对话，已复制提示词 | No conversation is open; the prompt was copied |
 | `requirements.breakdownSendFailed` | 发送失败，已复制提示词 | Could not send; the prompt was copied |
-| `requirements.proposal` | 待确认拆解（%d 个事项） | Proposed breakdown (%d workstreams) |
+| `requirements.proposalSection` | 待确认拆解 | Proposed breakdown |
+| `requirements.proposalMeta` | 待确认拆解 %d 项 | %d proposed |
+| `requirements.pending` | 待确认 %d 项 | %d pending |
+| `requirements.depends` | 依赖 %d | %d deps |
 | `requirements.confirm` | 确认拆解 | Confirm |
 | `requirements.reject` | 驳回 | Reject |
 | `requirements.confirmed` | 已生成 %d 个事项 | Created %d workstreams |
