@@ -91,6 +91,10 @@ struct RequirementCard: Equatable {
     var updated: String
     var path: String
     var body: String
+    /// The dsh session that captured this card — a machine-scoped runtime binding
+    /// kept in .dsh/requirements/local.json (gitignored), never in the card. nil
+    /// for cards created from the panel.
+    var session: String? = nil
 }
 
 extension RequirementCard {
@@ -163,6 +167,31 @@ enum RequirementsCore {
 
     static func requirementPath(_ workspace: String, id: String) -> String {
         (requirementsDir(workspace) as NSString).appendingPathComponent(id + ".md")
+    }
+
+    /// Machine-scoped runtime bindings (REQ-id -> capturing dsh session). Ignored
+    /// by git (see .gitignore / store design §4).
+    static func localSessionsPath(_ workspace: String) -> String {
+        (requirementsDir(workspace) as NSString).appendingPathComponent("local.json")
+    }
+
+    static func loadSessions(workspace: String) -> [String: String] {
+        guard let text = readText(localSessionsPath(workspace)),
+              let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sessions = object["sessions"] as? [String: String] else { return [:] }
+        return sessions
+    }
+
+    /// Best-effort: a missing binding only means "fall back to the current session".
+    static func rememberSession(workspace: String, id: String, session: String) {
+        guard !session.isEmpty else { return }
+        var sessions = loadSessions(workspace: workspace)
+        sessions[id] = session
+        guard let data = try? JSONSerialization.data(withJSONObject: ["sessions": sessions],
+                                                     options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return }
+        try? atomicWrite(text, to: localSessionsPath(workspace))
     }
 
     static func workstreamPath(_ workspace: String, id: String) -> String {
@@ -341,13 +370,15 @@ enum RequirementsCore {
             childrenOf[req, default: []].append(ws)
         }
 
+        let sessions = loadSessions(workspace: workspace)
         var items: [PoolItem] = []
         for name in markdownFiles(requirementsDir(workspace), prefix: "REQ-", fileManager: fileManager) {
             let path = (requirementsDir(workspace) as NSString).appendingPathComponent(name)
-            guard let text = readText(path), let card = card(from: text, path: path) else {
+            guard let text = readText(path), var card = card(from: text, path: path) else {
                 unparsed.append(path)
                 continue
             }
+            card.session = sessions[card.id]
             let children = (childrenOf[card.id] ?? []).sorted { numericPart($0.id) < numericPart($1.id) }
             items.append(PoolItem(requirement: card,
                                   effectiveState: effectiveState(state: card.state, children: children),
@@ -539,6 +570,7 @@ enum RequirementsCore {
                                   body: String?,
                                   source: String?,
                                   today: String,
+                                  session: String? = nil,
                                   fileManager: FileManager = .default) throws -> RequirementCard {
         let title = title.trimmed
         guard !title.isEmpty else { throw PoolError.missingTitle }
@@ -557,7 +589,11 @@ enum RequirementsCore {
             + "---\n\n## 诉求\n\n" + statement + "\n"
         let path = requirementPath(workspace, id: id)
         try atomicWrite(text, to: path)
-        guard let card = card(from: text, path: path) else { throw PoolError.writeFailed("created card did not parse") }
+        if let session = session?.trimmed, !session.isEmpty {
+            rememberSession(workspace: workspace, id: id, session: session)
+        }
+        guard var card = card(from: text, path: path) else { throw PoolError.writeFailed("created card did not parse") }
+        card.session = session?.trimmed.nilIfEmpty
         return card
     }
 

@@ -20,6 +20,9 @@ struct RequirementsCreateRequest: Equatable {
     var title: String
     var body: String?
     var source: String?
+    /// The capturing dsh session ($DSH_SESSION_ID); remembered as the card's
+    /// source session so the panel can send a later 拆解 prompt back to it.
+    var session: String?
 }
 
 struct RequirementsStateRequest: Equatable {
@@ -136,7 +139,8 @@ enum RequirementsAPIRouter {
                                                 focus: (body["focus"] as? Bool) ?? true,
                                                 title: title,
                                                 body: body["body"] as? String,
-                                                source: body["source"] as? String)
+                                                source: body["source"] as? String,
+                                                session: (body["session"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty)
             let result = delegate.apiRequirementsCreate(req)
             return .json(status(for: result), result)
 

@@ -141,6 +141,10 @@ eq(fake.lastCreate?.body, "详述", "body passed through")
 eq(fake.lastCreate?.focus, true, "focus defaults to true")
 eq(fake.lastCreate?.workspace, "/tmp/ws", "workspace normalized")
 
+let createWithSession = RequirementsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/requirements/create", json: ["title": "x", "session": " s-9 "]), delegate: fake)
+eq(createWithSession?.status, 200, "create with session 200")
+eq(fake.lastCreate?.session, "s-9", "create carries the (trimmed) source session")
+
 let createNoFocus = RequirementsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/requirements/create", json: ["title": "x", "focus": false]), delegate: fake)
 eq(createNoFocus?.status, 200, "create with focus=false 200")
 eq(fake.lastCreate?.focus, false, "focus=false honoured")

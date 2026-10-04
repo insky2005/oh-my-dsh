@@ -287,6 +287,16 @@ expectError("update: unknown requirement refused", .unknownRequirement("REQ-999"
     _ = try RequirementsCore.updateRequirement(workspace: ws5, id: "REQ-999", title: "x", body: nil, today: "2026-10-06")
 }
 
+section("session binding")
+let ws6 = tempWorkspace("session")
+let withSession = try! RequirementsCore.createRequirement(workspace: ws6, title: "会话来源", body: "x", source: nil, today: "2026-10-04", session: "s-abc")
+eq(withSession.session, "s-abc", "created card carries the source session")
+let reloaded = RequirementsCore.load(workspace: ws6)
+eq(reloaded.requirements.first?.requirement.session, "s-abc", "load reads the session binding back")
+check(files(in: RequirementsCore.requirementsDir(ws6)).contains("local.json"), "the binding lives in local.json (runtime, ignored)")
+let plain = try! RequirementsCore.createRequirement(workspace: ws6, title: "面板来源", body: nil, source: nil, today: "2026-10-04")
+eq(plain.session, nil, "panel-created card has no source session")
+
 section("composer edit")
 let editModel = RequirementComposerModel.edit(edited2)
 eq(editModel.mode.isCreate, false, "edit model is not create")

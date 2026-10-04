@@ -130,7 +130,8 @@ static func reject(workspace:id:today:) throws -> RequirementCard
 - **原子写**：写临时文件 `<name>.tmp-<pid>` 后 `rename`（同目录），避免半截 YAML（存储设计 §7.1）；
 - **只改本卡**：`propose` / `confirm` / `reject` 只触碰目标 REQ 卡的 `## 拆解` 段；`setState` 只改 `state` 行；
 - **幂等**：`confirm` 对已确认（无 proposal）返回 `noProposal`；`propose` 覆盖旧提案；
-- **不改别人**：不触碰其它 REQ/WS 卡、不写 `local.json`。
+- **不改别人**：不触碰其它 REQ/WS 卡；只写目标卡的 `local.json` 绑定。
+- **运行时绑定另存**：`REQ-id → 来源会话` 写在 `.dsh/requirements/local.json`（**ignored，机器范围**，存储设计 §4），不进卡片；`createRequirement(session:)` 写入、`load()` 读回 `RequirementCard.session`。
 
 ### 3.6 提案的正文格式（拆解器契约）
 
@@ -194,7 +195,7 @@ updated: <today>
 | 方法 / 路径 | 请求体 | 说明 |
 |---|---|---|
 | GET `/api/requirements/list` | `?workspace=<路径>` | `{ok, workspace, requirements:[{id,title,state,effectiveState,source,created,updated,children:[{id,title,stage,outcome}],proposal:[…]}]}` |
-| POST `/api/requirements/create` | `{"workspace":"…","title":"…","body":"…","source":"…","focus":true}` | 收件箱：新建 `REQ-*.md`（`state: candidate`）；返回 `{ok, requirement:{…}}` |
+| POST `/api/requirements/create` | `{"workspace":"…","title":"…","body":"…","session":"$DSH_SESSION_ID","source":"…","focus":true}` | 收件箱：新建 `REQ-*.md`（`state: candidate`）；带 `session` 时把**来源会话**记到 `local.json`；返回 `{ok, requirement:{…}}` |
 | POST `/api/requirements/state` | `{"workspace":"…","id":"REQ-003","state":"evaluating"}` | 改人工状态；`state ∈ {candidate,evaluating,suspended,discarded}`；返回 `{ok, requirement:{…}}` |
 | POST `/api/requirements/update` | `{"workspace":"…","id":"REQ-003","title":"…","body":"…"}` | 编辑标题 + 诉求（只改这两处）；返回 `{ok, requirement:{…}}` |
 | POST `/api/requirements/breakdown/propose` | `{"workspace":"…","id":"REQ-003","items":[{"title":"…","boundary":"…","dependsOn":["…"]}]}` | 拆解器第 1 步：写待确认提案（覆盖旧提案） |
@@ -245,7 +246,7 @@ updated: <today>
 - **内容预览**：卡片显示 `## 诉求` 的正文（最多 4 行、`byTruncatingTail`，tooltip 给全文）——agent 落卡的内容不再只活在文件里。
 - **「状态 ▾」菜单**：候选 / 评估中 / 挂起 / 丢弃 → 调 `setState`（写回**人工判断**；`split` / `closed` 是派生，不出现在菜单里）。
 - **「编辑」按钮**：打开同一个抽屉并预填（首行标题 + 诉求），保存走 `updateRequirement`：**只改** frontmatter `title` 与 `## 诉求`，状态、拆解映射、子事项都不动。
-- **「拆解」按钮**：把拆解提示词**直接发送到当前对话**（`DshSessionOps.sendPrompt` → `session.prompt`，目标是 `dshSession` 跟踪器上报的当前会话）；**没有打开的对话或发送失败时回退复制**到剪贴板，状态行说明走了哪条路。随后 agent 调 `POST /api/requirements/breakdown/propose` 提出**待确认提案**；有提案时提案区就地给出确认 / 驳回。
+- **「拆解」按钮**：把拆解提示词**直接发进对话**——优先该卡片的**来源会话**（agent 落卡时带的 `$DSH_SESSION_ID`，存在 `.dsh/requirements/local.json`），没有才用 `dshSession` 跟踪器上报的**当前会话**；两者都没有或发送失败则**回退复制**到剪贴板，状态行说明走了哪条路；发送到**非当前**会话时把它切到前台（`openDSHSession`），让拆解过程可见。随后 agent 调 `POST /api/requirements/breakdown/propose` 提出**待确认提案**；有提案时提案区就地给出确认 / 驳回。
 - **提案区**：`确认拆解` → `confirm`（建 WS 卡）；`驳回` → `reject`。
 - **子事项行**：只读展示 `WS-id stage`；点击经 `onOpenWorkstream` 在文件面板打开该卡。
 
@@ -268,7 +269,7 @@ updated: <today>
 ## 6. 拆解器工作流（端到端）
 
 ```text
-面板「拆解」按钮 ──session.prompt──► 当前对话        对话里运行 /requirement-pool 拆解 REQ-xxx
+面板「拆解」按钮 ──session.prompt──► 来源会话（优先）/ 当前对话   对话里运行 /requirement-pool 拆解 REQ-xxx
         （无会话 / 发送失败则回退复制提示词）                      │
                     └──────────────────┬─────────────────────────┘
                                         ▼
@@ -344,7 +345,7 @@ updated: <today>
 | `requirements.set.state` | 状态 | State |
 | `requirements.breakdown` | 拆解 | Break down |
 | `requirements.breakdownPromptCopied` | 已复制拆解提示词；在会话里运行 /requirement-pool 拆解 %@ | Breakdown prompt copied; run /requirement-pool breakdown %@ in a session |
-| `requirements.breakdownSent` | 已把拆解提示词发送到当前对话 | Breakdown prompt sent to the current conversation |
+| `requirements.breakdownSent` | 已把拆解提示词发送到对话 | Breakdown prompt sent to the conversation |
 | `requirements.breakdownNoSession` | 当前没有打开的对话，已复制提示词 | No conversation is open; the prompt was copied |
 | `requirements.breakdownSendFailed` | 发送失败，已复制提示词 | Could not send; the prompt was copied |
 | `requirements.proposal` | 待确认拆解（%d 个事项） | Proposed breakdown (%d workstreams) |
@@ -367,7 +368,7 @@ updated: <today>
 | `requirements.help.create.panel` | 在面板：点工具栏右侧的「＋」，在抽屉的首行写标题、其余行写诉求，按 ⌘↩ 或点「创建」。 | In the panel: click + on the right of the toolbar, write the title on the first line and the statement on the rest, then press Command-Return or click Create. |
 | `requirements.help.create.chat` | 在对话：输入「把这个想法落成需求」，或运行 /requirement-pool。 | In a conversation: type “capture this idea as a requirement”, or run /requirement-pool. |
 | `requirements.help.breakdown.heading` | 拆解事项 | Break down a requirement |
-| `requirements.help.breakdown.panel` | 在面板：点卡片「拆解」，提示词会发送到当前对话；方案回来后点「确认拆解」或「驳回」。 | In the panel: click Break down on a card and the prompt is sent to the current conversation; when a proposal appears, click Confirm or Reject. |
+| `requirements.help.breakdown.panel` | 在面板：点卡片「拆解」，提示词会发送到创建该需求的会话（没有则当前对话）；方案回来后点「确认拆解」或「驳回」。 | In the panel: click Break down and the prompt is sent to the session that created the requirement (or the current one); when a proposal appears, click Confirm or Reject. |
 | `requirements.help.breakdown.chat` | 在对话：运行 /requirement-pool 拆解 <REQ-id>。 | In a conversation: run /requirement-pool breakdown <REQ-id>. |
 
 ---

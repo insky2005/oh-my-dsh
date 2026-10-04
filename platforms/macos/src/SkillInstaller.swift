@@ -353,7 +353,7 @@ enum BuiltinSkill: CaseIterable {
     | 方法/路径 | 请求体 | 说明 |
     |---|---|---|
     | GET `/api/requirements/list` | `?workspace=<路径>` | 需求 + 子事项 + 待确认提案 |
-    | POST `/api/requirements/create` | `{"workspace":"…","title":"…","body":"…","focus":true}` | 收件箱：新建需求卡（candidate） |
+    | POST `/api/requirements/create` | `{"workspace":"…","title":"…","body":"…","session":"$DSH_SESSION_ID","focus":true}` | 收件箱：新建需求卡（candidate）；带 `session` 以便日后「拆解」回到本会话 |
     | POST `/api/requirements/state` | `{"id":"REQ-003","state":"evaluating"}` | 改人工状态（candidate/evaluating/suspended/discarded） |
     | POST `/api/requirements/update` | `{"id":"REQ-003","title":"…","body":"…"}` | 改标题 + 诉求（只改这两处） |
     | POST `/api/requirements/breakdown/propose` | `{"id":"REQ-003","items":[{"title":"…","boundary":"…","dependsOn":["…"]}]}` | 拆解器：写**待确认**提案 |
@@ -367,10 +367,10 @@ enum BuiltinSkill: CaseIterable {
     ### 收件（落需求）
 
     1. 用户明确要求后，把诉求整理成一行**标题** + **诉求正文**（要解决什么 / 为什么）。
-    2. 提交：
+    2. 提交（**带上本会话的 `$DSH_SESSION_ID`**，面板之后点「拆解」会优先回到这个会话）：
        ```bash
        cat > /tmp/requirement-pool.json <<'JSON'
-       {"workspace": "<pwd 的输出>", "title": "标题", "body": "诉求正文", "focus": true}
+       {"workspace": "<pwd 的输出>", "title": "标题", "body": "诉求正文", "session": "<$DSH_SESSION_ID 的值>", "focus": true}
        JSON
        curl -s -X POST "http://127.0.0.1:$PORT/api/requirements/create" -H 'Content-Type: application/json' --data-binary @/tmp/requirement-pool.json
        ```

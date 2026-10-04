@@ -919,7 +919,7 @@ enum L10n {
         "requirements.help.create.panel": ("在面板：点工具栏右侧的「＋」，在抽屉的首行写标题、其余行写诉求，按 ⌘↩ 或点「创建」。", "In the panel: click + on the right of the toolbar, write the title on the first line and the statement on the rest, then press Command-Return or click Create."),
         "requirements.help.create.chat": ("在对话：输入「把这个想法落成需求」，或运行 /requirement-pool。", "In a conversation: type “capture this idea as a requirement”, or run /requirement-pool."),
         "requirements.help.breakdown.heading": ("拆解事项", "Break down a requirement"),
-        "requirements.help.breakdown.panel": ("在面板：点卡片「拆解」，提示词会发送到当前对话；方案回来后点「确认拆解」或「驳回」。", "In the panel: click Break down on a card and the prompt is sent to the current conversation; when a proposal appears, click Confirm or Reject."),
+        "requirements.help.breakdown.panel": ("在面板：点卡片「拆解」，提示词会发送到创建该需求的会话（没有则当前对话）；方案回来后点「确认拆解」或「驳回」。", "In the panel: click Break down and the prompt is sent to the session that created the requirement (or the current one); when a proposal appears, click Confirm or Reject."),
         "requirements.help.breakdown.chat": ("在对话：运行 /requirement-pool 拆解 <REQ-id>。", "In a conversation: run /requirement-pool breakdown <REQ-id>."),
         "requirements.empty": ("还没有需求。点「＋」把一条想法记进来。", "No requirements yet. Click + to capture an idea."),
         "requirements.noChildren": ("尚未拆解", "Not broken down"),
@@ -932,7 +932,7 @@ enum L10n {
         "requirements.set.state": ("状态", "State"),
         "requirements.breakdown": ("拆解", "Break down"),
         "requirements.breakdownPromptCopied": ("已复制拆解提示词；在会话里运行 /requirement-pool 拆解 %@", "Breakdown prompt copied; run /requirement-pool breakdown %@ in a session"),
-        "requirements.breakdownSent": ("已把拆解提示词发送到当前对话", "Breakdown prompt sent to the current conversation"),
+        "requirements.breakdownSent": ("已把拆解提示词发送到对话", "Breakdown prompt sent to the conversation"),
         "requirements.breakdownNoSession": ("当前没有打开的对话，已复制提示词", "No conversation is open; the prompt was copied"),
         "requirements.breakdownSendFailed": ("发送失败，已复制提示词", "Could not send; the prompt was copied"),
         "requirements.proposal": ("待确认拆解（%d 个事项）", "Proposed breakdown (%d workstreams)"),
@@ -2850,9 +2850,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         requirementsPanel.onFocus = { [weak self] _ in
             self?.setRightPanel(.requirements)
         }
-        // 拆解：把提示词直接发进当前对话（agent 随后调面板 API 提方案）。
-        requirementsPanel.onBreakdown = { [weak self] id in
-            self?.sendBreakdownPrompt(id)
+        // 拆解：把提示词直接发进对话——优先该卡片的**来源会话**（由 agent 落卡时
+        // 带上 $DSH_SESSION_ID），否则当前会话；agent 随后调面板 API 提方案。
+        requirementsPanel.onBreakdown = { [weak self] id, session in
+            self?.sendBreakdownPrompt(id, preferredSession: session)
         }
         requirementsPanel.onDidRender = { [weak self] in
             guard let self = self, self.uiDebug else { return }
@@ -5214,21 +5215,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// viewing, so the agent proposes through the panel API. Without an active
     /// session (or when the send fails) the prompt is copied instead, and the
     /// panel's status line says which happened.
-    private func sendBreakdownPrompt(_ requirementId: String) {
+    private func sendBreakdownPrompt(_ requirementId: String, preferredSession: String?) {
         let prompt = RequirementsCore.breakdownPrompt(requirementId)
         let port = server.port
-        guard port > 0, let sessionId = activeSessionId, !sessionId.isEmpty else {
+        // Prefer the session that CAPTURED the card; fall back to the one on screen.
+        var targets: [String] = []
+        if let source = preferredSession?.trimmingCharacters(in: .whitespacesAndNewlines), !source.isEmpty {
+            targets.append(source)
+        }
+        if let current = activeSessionId, !current.isEmpty, !targets.contains(current) {
+            targets.append(current)
+        }
+        guard port > 0, !targets.isEmpty else {
             requirementsPanel?.copyBreakdownPrompt(id: requirementId)
             requirementsPanel?.setStatus(L10n.tr("requirements.breakdownNoSession"), isError: false)
             return
         }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let sent = DshSessionOps.sendPrompt(port: port, sessionId: sessionId, text: prompt)
+            var used: String?
+            for target in targets {
+                if DshSessionOps.sendPrompt(port: port, sessionId: target, text: prompt) {
+                    used = target
+                    break
+                }
+            }
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                if sent {
-                    AppLog.shared.log("requirements: breakdown prompt for \(requirementId) sent to session \(sessionId)")
+                if let used = used {
+                    AppLog.shared.log("requirements: breakdown prompt for \(requirementId) sent to session \(used)")
                     self.requirementsPanel?.setStatus(L10n.tr("requirements.breakdownSent"), isError: false)
+                    // Bring that conversation on screen when it is not the one the
+                    // user is already looking at, so the breakdown is visible.
+                    if used != self.activeSessionId {
+                        self.openDSHSession(used)
+                    }
                 } else {
                     AppLog.shared.log("requirements: breakdown send failed (\(DshWebRPC.lastFailure ?? "?"))")
                     self.requirementsPanel?.copyBreakdownPrompt(id: requirementId)

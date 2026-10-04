@@ -280,9 +280,10 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     var workspaceProvider: (() -> String?)?
     /// Open a workstream card in the file panel.
     var onOpenWorkstream: ((String) -> Void)?
-    /// Send the breakdown prompt into the current conversation (main.swift).
-    /// nil falls back to copying it to the clipboard.
-    var onBreakdown: ((String) -> Void)?
+    /// Send the breakdown prompt into a conversation (main.swift): the card's
+    /// source session when it has one, else the current one; nil falls back to
+    /// copying the prompt to the clipboard.
+    var onBreakdown: ((String, String?) -> Void)?
     /// Focus this workspace and show the requirements panel (REST focus=true).
     var onFocus: ((String) -> Void)?
     /// QA hook (--ui-debug): fires after each render.
@@ -613,7 +614,8 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     @discardableResult
     func breakdownRequested(id: String) -> Bool {
         if let onBreakdown = onBreakdown {
-            onBreakdown(id)
+            let source = snapshot.requirements.first { $0.requirement.id == id }?.requirement.session
+            onBreakdown(id, source)
             return true
         }
         return copyBreakdownPrompt(id: id)
@@ -729,7 +731,8 @@ extension RequirementsPanelController {
                                                               title: request.title,
                                                               body: request.body,
                                                               source: request.source ?? "api",
-                                                              today: RequirementsCore.today())
+                                                              today: RequirementsCore.today(),
+                                                              session: request.session)
             if request.focus { onFocus?(workspace) }
             if workspace == (workspaceProvider?() ?? "") { reload() }
             return ["ok": true, "requirement": RequirementsAPIResponse.requirement(card)]
