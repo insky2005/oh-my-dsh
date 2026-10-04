@@ -23,6 +23,8 @@ All notable changes to this project are documented in this file. Format follows
 
 - **需求池拆解：面板把提示词直接发进当前对话（2026-10-04）**：点卡片「拆解」不再只复制到剪贴板——用 `dshSession` 跟踪器上报的当前会话调 `DshSessionOps.sendPrompt`（`session/prompt`，与 wiki 生成 / 任务队列同一形状）把提示词**直接发进对话**；agent 随即调 `POST /api/requirements/breakdown/propose` 提出待确认方案。**没有打开的对话或发送失败时回退复制**并在状态行说明。另一入口不变：对话里运行 `/requirement-pool 拆解 <REQ-id>`。人工确认门（R10）不变：`confirm` 仍只在面板。
 
+- **工作流硬规则：对话/需求阶段只读，开工唯一入口 = 已启动的任务队列（2026-10-04）**：`AGENTS.md` 工作流段、`.dsh/ai-native-workflow-spec.md`（新增 **R12** + AGENTS 模板）、内置技能 `requirement-pool` 三处都加这条——需求未落卡 / 事项未确认 / 队列未启动之前，只讨论、只澄清、只落卡，**不得修改代码或文件**；这是「避免 agent 在想法阶段直接开工」的软闸（覆盖所有会话；硬闸走 dsh 的 plan mode / 权限预设，另议）。使用说明常见坑同步。
+
 ### Fixed
 
 - **英文界面修复：Agent 追加任务后壳层崩溃（2026-10-02，v1.18.0）**：`tasks.apiQueueAppended` 的中英文案占位符顺序相反（中文 `%@`→`%d`、英文 `%d`→`%@`），而 `L10n.tr` 把同一份参数列表交给当前语言的格式串；英文下 `%@` 拿到整数 `created.count`（3）被当成对象指针，`String(format:)` 内部对 `0x3` 调 `objc_opt_respondsToSelector` 直接 SIGSEGV（`KERN_INVALID_ADDRESS at 0x3`）。改用位置参数 `%1$@` / `%2$d`，两种语言各自保留自然语序。回归：`tests/l10n` 新增「中英格式参数必须一致」检查——改前先复现失败（精确命中该 key），改后通过。

@@ -16,6 +16,7 @@ oh-my-dsh 壳层的**需求池面板**（Requirements，⌥⌘I）通过 **local
 - **只提案，不自签**：拆解方案只能调 `/api/requirements/breakdown/propose`；确认
   （`/api/requirements/breakdown/confirm`）是**人工确认门**，由需求池面板的「确认拆解」
   按钮完成，agent **绝不**调它。
+- **对话 / 收件 / 拆解阶段不改代码**：需求还在讨论、未落卡或拆解未确认之前，只讨论、只澄清、只落卡；**实施的唯一入口 = 已启动的任务队列**（工作区 `AGENTS.md` / 规范 R12）。
 - **不直接改** `.dsh/requirements/*.md` / `.dsh/workstreams/*.md`。
 - App 没运行时停下来告诉用户「请先打开 oh-my-dsh」，**不要**绕过 API 写文件。
 

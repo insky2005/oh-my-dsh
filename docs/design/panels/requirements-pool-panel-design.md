@@ -303,7 +303,7 @@ updated: <today>
 - 两个动作：
   1. **收件**：用户明确说「记个想法 / 落成需求」→ `POST /api/requirements/create`；
   2. **拆解**：用户明确说「拆解 REQ-xxx」→ 读卡 + 子事项 → `POST /api/requirements/breakdown/propose`，**停下等人确认**；
-- 硬规则同 `task-todo`：只在用户明确要求时执行；不直接写 `.dsh` 文件；App 没运行时报错、不绕过。
+- 硬规则同 `task-todo`：只在用户明确要求时执行；**对话 / 收件 / 拆解阶段不改代码**（实施的唯一入口 = 已启动的任务队列，spec R12）；不直接写 `.dsh` 文件；App 没运行时报错、不绕过。
 
 ---
 

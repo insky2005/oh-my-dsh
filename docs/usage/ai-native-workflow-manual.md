@@ -51,6 +51,7 @@
 - 状态在 .dsh（随仓库提交）：需求 REQ-*.md、事项 WS-*.md、回归门 REG-*.md
 - 不手写派生字段：closed / outcome / split 由派生器算出
 - 人工确认门：拆解 / 规划 / 设计 / 任务拆分 / 验收 sign-off / merge
+- 开工前置（硬规则）：需求未落卡 / 事项未确认 / 任务队列未启动之前，只讨论、只澄清、只落卡，不得修改代码或文件；实施的唯一入口 = 已启动的任务队列
 - 只拆不胀：范围外的新发现回池
 ```
 
@@ -228,7 +229,7 @@ git push https://github.com/<owner>/<repo>.git HEAD:refs/heads/feature/<slug>
 
 ## 8. 常见坑
 
-规则以 **spec §4（R1–R11）** 为准；这里只列最容易踩的几条。
+规则以 **spec §4（R1–R12）** 为准；这里只列最容易踩的几条。
 
 | 坑 | 正确做法 |
 |---|---|
@@ -237,3 +238,4 @@ git push https://github.com/<owner>/<repo>.git HEAD:refs/heads/feature/<slug>
 | 让 agent 自签验收 | 机检绿 ≠ 完成；**人 sign-off** 是 Own 点 |
 | 直改 `.dsh/tasks/*.json` | 走任务面板或 `/api/tasks/*`（面板是唯一写者） |
 | 以为「建了队列」就是「开跑」 | 建 ≠ 启动；显式「启动」或点「开始」 |
+| 需求还没落卡 / 拆解还没确认就动手改代码 | 需求阶段**只讨论、只澄清、只落卡**；实施的唯一入口是**已启动的任务队列**（spec R12） |
