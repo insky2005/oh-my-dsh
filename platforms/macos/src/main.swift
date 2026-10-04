@@ -940,6 +940,8 @@ enum L10n {
         "requirements.reject": ("驳回", "Reject"),
         "requirements.confirmed": ("已生成 %d 个事项", "Created %d workstreams"),
         "requirements.rejected": ("已驳回拆解提案", "Proposal dismissed"),
+        "requirements.refineStarted": ("已创建 %@，并在新会话里开始细化", "Created %@ and started a refinement session"),
+        "requirements.refineFailed": ("已创建需求；细化会话未启动，可在会话里手动继续", "Requirement created; the refinement session could not start — continue in a chat"),
         "requirements.notify.confirmed": ("需求池：%@ 的拆解已由人在面板确认，生成 %@。收到即可，等我下一步指令，不要自动开工。", "Requirements pool: %@ breakdown confirmed by the human; created %@. Just acknowledge and wait for my next instruction."),
         "requirements.notify.rejected": ("需求池：%@ 的拆解提案已被人在面板驳回。收到即可，等我下一步指令。", "Requirements pool: %@ breakdown proposal was rejected by the human. Just acknowledge and wait for my next instruction."),
         "requirements.created": ("已创建 %@", "Created %@"),
@@ -2860,6 +2862,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // 人在面板确认 / 驳回后，把结果回写到该需求的会话（同一会话闭环）。
         requirementsPanel.onBreakdownResolved = { [weak self] id, confirmed, created in
             self?.notifyBreakdownResolved(id, confirmed: confirmed, created: created)
+        }
+        // 面板「＋」创建的需求没有对话来源：起一条「细化」会话并绑定。
+        requirementsPanel.onRequirementCreated = { [weak self] id, title in
+            self?.startRequirementRefinementSession(id, title: title)
         }
         requirementsPanel.onDidRender = { [weak self] in
             guard let self = self, self.uiDebug else { return }
@@ -5293,6 +5299,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 } else {
                     AppLog.shared.log("requirements: result write-back failed (\(DshWebRPC.lastFailure ?? "?"))")
                 }
+            }
+        }
+    }
+
+    /// 面板创建的需求没有对话来源：在活动工作区起一条会话、改名「细化 REQ-xxx」、
+    /// 发细化提示词，并把卡片绑定到它——之后拆解 / 确认都回到这条对话。
+    private func startRequirementRefinementSession(_ requirementId: String, title: String) {
+        guard let workspace = activeWorkspacePath(), !workspace.isEmpty else { return }
+        let port = server.port
+        guard port > 0 else {
+            requirementsPanel?.setStatus(L10n.tr("requirements.refineFailed"), isError: true)
+            return
+        }
+        let current = activeSessionId
+        let prompt = RequirementsCore.refinementPrompt(requirementId, title: title)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var target = DshWorkspaceOps.createSession(port: port, cwd: workspace, workspaceId: nil)
+            if let sid = target {
+                _ = DshSessionOps.rename(port: port, sessionId: sid, title: "细化 " + requirementId + " " + title)
+            } else {
+                target = current
+            }
+            var sent = false
+            if let target = target {
+                sent = DshSessionOps.sendPrompt(port: port, sessionId: target, text: prompt)
+            }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let used = target, sent else {
+                    AppLog.shared.log("requirements: could not start a refinement session for \(requirementId)")
+                    self.requirementsPanel?.setStatus(L10n.tr("requirements.refineFailed"), isError: true)
+                    return
+                }
+                RequirementsCore.rememberSession(workspace: workspace, id: requirementId, session: used)
+                AppLog.shared.log("requirements: refinement session \(used) for \(requirementId)")
+                self.requirementsPanel?.setStatus(L10n.tr("requirements.refineStarted", requirementId), isError: false)
+                if used != self.activeSessionId { self.openDSHSession(used) }
             }
         }
     }

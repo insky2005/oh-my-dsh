@@ -485,6 +485,14 @@ enum DshSessionOps {
         return DshWebRPC.call(DshWebRPC.sessionPrompt, payload, port: port, timeout: timeout,
                               modernExtras: ["requestId": UUID().uuidString]) != nil
     }
+
+    /// session.rename { sessionId, title } — best effort (a server that rejects the
+    /// title must not fail the caller's real work).
+    static func rename(port: Int, sessionId: String, title: String) -> Bool {
+        guard !sessionId.isEmpty, !title.isEmpty else { return false }
+        return DshWebRPC.call(DshWebRPC.sessionRename,
+                              ["sessionId": sessionId, "title": title], port: port) != nil
+    }
 }
 
 private extension NSLock {

@@ -261,6 +261,8 @@ updated: <today>
 
 照任务面板的 `TaskFormSheetView` / `TaskFormSheetHostView`（`TaskInlineForms.swift`）：**一个输入框**（`NSTextView` 包在 `TaskFieldBox` 里），**首行 = 标题、其余行 = 诉求**（只有一行时该行同时是标题与诉求；`createRequirement` 对空诉求回退标题）；`⌘↩` 提交、`Esc` 取消，标题为空时提交按钮禁用、尝试提交后给出 `requirements.newProblem`。视图模型 `RequirementComposerModel`（纯 Foundation，`RequirementsUI.swift`）可无头断言。写失败（无标题 / 无工作区）时抽屉保持打开，原因进状态行。
 
+**创建成功后起一条「细化」会话**（面板建的需求没有对话来源）：main 在活动工作区 `session/create` → `session/rename`（「细化 REQ-xxx 标题」）→ `session/prompt`（[`refinementPrompt`]，要求只讨论 / 只澄清、不改代码，改卡片走 `/update`）；成功即把卡片绑定到该会话并切过去，会话创建失败回退当前会话，再失败只留卡片并提示。这样面板创建的需求同样满足「同一需求同一会话」。
+
 ### 5.5 配色
 
 一律 `PanelSurface`（面板底）+ `PanelControl`（卡片 / 按钮两档），不新增颜色令牌（`docs/design/shell/ui-color-scheme.md`）。

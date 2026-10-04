@@ -284,6 +284,9 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     /// source session when it has one, else the current one; nil falls back to
     /// copying the prompt to the clipboard.
     var onBreakdown: ((String, String?) -> Void)?
+    /// A requirement was just created from the panel drawer; main.swift starts a
+    /// refinement session for it and binds the card to that session (id, title).
+    var onRequirementCreated: ((String, String) -> Void)?
     /// Human confirmed (true) / rejected (false) a proposal in the panel; the
     /// created workstream ids come along so main.swift can write the outcome back
     /// to the requirement's session.
@@ -584,6 +587,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
             setStatus(L10n.tr("requirements.created", card.id), isError: false)
             pendingScrollId = card.id
             reload()
+            onRequirementCreated?(card.id, card.title)
             return true
         } catch let error as PoolError {
             setStatus(message(for: error), isError: true)
