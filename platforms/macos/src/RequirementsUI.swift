@@ -71,12 +71,12 @@ struct RequirementsHelpSpec: Equatable {
             titleKey: "requirements.help.title",
             introKey: "requirements.help.intro",
             sections: [
-                Section(headingKey: "requirements.help.panel.heading",
-                        lineKeys: ["requirements.help.panel.body"]),
-                Section(headingKey: "requirements.help.agent.heading",
-                        lineKeys: ["requirements.help.agent.body"]),
+                Section(headingKey: "requirements.help.create.heading",
+                        lineKeys: ["requirements.help.create.panel",
+                                   "requirements.help.create.chat"]),
                 Section(headingKey: "requirements.help.breakdown.heading",
-                        lineKeys: ["requirements.help.breakdown.body"])
+                        lineKeys: ["requirements.help.breakdown.panel",
+                                   "requirements.help.breakdown.chat"])
             ])
     }
 }

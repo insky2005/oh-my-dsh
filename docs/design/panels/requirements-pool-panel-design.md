@@ -230,7 +230,7 @@ updated: <today>
 |---|---|
 | 标题「需求池」 | `HeaderLabel`，固定显示面板名 |
 | `plus` 新建需求 | 收件箱：打开**抽屉**，一个输入框里**首行标题 / 其余行诉求**，`⌘↩` 或「创建」→ `createRequirement`（`state: candidate`） |
-| `questionmark.circle` | 打开「使用说明」抽屉（面板创建 / agent 对话创建 / 拆解三节） |
+| `questionmark.circle` | 打开「使用说明」抽屉：**创建需求 / 拆解事项** 两节，每节分「在面板」「在对话」两条操作 |
 | `arrow.clockwise` | 重读盘面并重绘 |
 | `xmark` | `onRequestHide` → 收起右栏 |
 
@@ -345,13 +345,13 @@ updated: <today>
 | `requirements.openWorkstream` | 打开事项卡 | Open workstream card |
 | `requirements.help.hint` | 使用说明 | Help |
 | `requirements.help.title` | 需求池使用说明 | Requirements Pool Help |
-| `requirements.help.intro` | 需求池是 AI 原生工作流的前端：收集想法、评估、拆解成事项。 | The pool is the front end of the AI-native workflow: capture ideas, evaluate them, break them into workstreams. |
-| `requirements.help.panel.heading` | ① 用面板创建需求 | 1. Capture from the panel |
-| `requirements.help.panel.body` | 点右上角「＋」打开抽屉：首行写标题，其余行写诉求；按 ⌘↩ 或点「创建」。 | Click + in the header to open the drawer: the first line is the title, later lines are the statement; press Command-Return or click Create. |
-| `requirements.help.agent.heading` | ② 用 agent 对话创建需求 | 2. Capture from an agent conversation |
-| `requirements.help.agent.body` | 在会话里说「把这条想法落成需求」或运行 /requirement-pool 记一条需求；agent 经 API 落卡。 | In a session, say that you want an idea captured, or run /requirement-pool; the agent writes the card through the API. |
-| `requirements.help.breakdown.heading` | ③ 拆解成事项 | 3. Break a requirement down |
-| `requirements.help.breakdown.body` | 点「拆解」复制提示词，在会话里运行；agent 提出待确认方案，人在面板确认后才生成事项卡。 | Click Break down to copy the prompt and run it in a session; the agent proposes, and only a human Confirm creates the cards. |
+| `requirements.help.intro` | 在面板或对话里都能完成下列操作。 | Both actions work from the panel or a conversation. |
+| `requirements.help.create.heading` | 创建需求 | Create a requirement |
+| `requirements.help.create.panel` | 在面板：点右上角「＋」，在抽屉的首行写标题、其余行写诉求，按 ⌘↩ 或点「创建」。 | In the panel: click + in the header, write the title on the first line and the statement on the rest, then press Command-Return or click Create. |
+| `requirements.help.create.chat` | 在对话：输入「把这个想法落成需求」，或运行 /requirement-pool。 | In a conversation: type “capture this idea as a requirement”, or run /requirement-pool. |
+| `requirements.help.breakdown.heading` | 拆解事项 | Break down a requirement |
+| `requirements.help.breakdown.panel` | 在面板：点卡片「拆解」复制提示词；方案回来后点「确认拆解」或「驳回」。 | In the panel: click Break down on a card to copy the prompt; when a proposal appears, click Confirm or Reject. |
+| `requirements.help.breakdown.chat` | 在对话：粘贴提示词发送，等 agent 给出拆解方案。 | In a conversation: paste the prompt and send it; the agent then proposes a breakdown. |
 
 ---
 

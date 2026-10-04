@@ -178,6 +178,6 @@ AI 原生工作流的**前端三件**：想法收件箱、需求池、拆解器�
 - **状态菜单**：卡片上的「状态」写回人工能判断的四档（`candidate` / `evaluating` / `suspended` / `discarded`）；`split` / `closed` 是**派生谓词**，不写字段；
 - **拆解器**：卡片「拆解」复制一段交接提示词（含 `POST /api/requirements/breakdown/propose` 的调用），交给会话里的 agent 出「1 需求 → 1..N 事项」方案；方案以**待确认提案**显示在卡片上；
 - **人工确认门**：只有面板上的「确认拆解」会真正建 `WS-*.md`（`requirement` 指回需求、`stage: planning`）并留下需求 → 事项映射表；「驳回」清掉提案。agent 绝不调 `confirm`（R10）；
-- **使用说明**：右上角 `?` 始终可打开「需求池使用说明」抽屉（面板创建 / agent 对话创建 / 拆解成事项三节）；**池为空时同一份说明直接铺在内容区**，不用先点帮助；
+- **使用说明**：右上角 `?` 始终可打开「需求池使用说明」抽屉（**创建需求 / 拆解事项** 两节，每节分「在面板」「在对话」两条操作）；**池为空时同一份说明直接铺在内容区**，不用先点帮助；
 - **已知限制**：`closed` 只读卡片里 `delivery.outcome` 的派生缓存、不联网；PR 状态的网络派生仍由 `node .dsh/tools/derive-status.mjs` 完成（见 [手动模式使用说明](ai-native-workflow-manual.md)）；
 - 设计与 API 契约：`docs/design/panels/requirements-pool-panel-design.md`；存储 schema：`docs/design/panels/requirements-workstream-store-design.md`。

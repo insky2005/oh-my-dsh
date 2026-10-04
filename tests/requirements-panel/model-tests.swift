@@ -238,7 +238,9 @@ eq(emptyComposer.attemptedSubmit().problemKey, "requirements.newProblem", "prist
 
 section("help")
 let helpSpec = RequirementsHelpSpec.build()
-eq(helpSpec.sections.count, 3, "help has three sections")
+eq(helpSpec.sections.count, 2, "help has two sections (create / breakdown)")
+eq(helpSpec.sections[0].lineKeys, ["requirements.help.create.panel", "requirements.help.create.chat"], "create covers panel + conversation")
+eq(helpSpec.sections[1].lineKeys, ["requirements.help.breakdown.panel", "requirements.help.breakdown.chat"], "breakdown covers panel + conversation")
 eq(helpSpec.titleKey, "requirements.help.title", "help title key")
 eq(helpSpec.introKey, "requirements.help.intro", "help intro key")
 check(helpSpec.sections.allSatisfy {

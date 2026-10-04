@@ -11,7 +11,7 @@ All notable changes to this project are documented in this file. Format follows
 
 - **需求池面板：想法收件箱 + 需求池 + 拆解器（2026-10-04）**：AI 原生工作流从手动模式升级为壳层能力。新增右栏第 10 个面板（活动栏末位 `tray.full`，`⌥⌘I`）：卡片按**有效状态**（`discarded > closed > split > state`，派生）展示需求，列出拆出的 `WS-*` 子事项（点击在文件面板打开）；头部「＋」用**抽屉**（首行标题 / 其余行诉求）落成 `.dsh/requirements/REQ-*.md`（`state: candidate`），也可由内置技能 `requirement-pool` 经 API 落卡。**拆解器**走「agent 出方案 / 人确认」：面板「拆解」复制交接提示词，agent 经 `POST /api/requirements/breakdown/propose` 提交 1..N 事项提案，**人**在面板「确认拆解」才生成 `WS-*.md`（`requirement` 回指、`stage: planning`）并留下映射表，agent 绝不调 `confirm`（R10）。实现：纯模型 `RequirementsCore.swift`（frontmatter 解析 / 派生 / 原子写）、纯路由 `RequirementsAPI.swift`（`/api/requirements/*`）、面板 `RequirementsPanel.swift`、技能 `requirement-pool`；`closed` 只读 `delivery.outcome` 缓存、不联网（网络派生仍归 `derive-status.mjs`）。测试 `tests/requirements-panel`（模型 61 + API 42）。
 
-- **需求池面板：创建需求改抽屉 + 使用说明（2026-10-04）**：头部「＋」不再弹 `NSAlert`，改用与任务面板「新建任务」同款的**表单抽屉**（复用 `TaskFormSheetView` / `TaskFormKit`）——一个输入框，**首行 = 标题、其余行 = 诉求**（单行则两者相同），`⌘↩` 提交、`Esc` 取消；视图模型 `RequirementComposerModel`（纯 Foundation，`platforms/macos/src/RequirementsUI.swift`）可无头断言。右上角新增 **`?` 使用说明**按钮：抽屉里是「① 用面板创建需求」「② 用 agent 对话创建需求」「③ 拆解成事项」三节，**池为空时同一份说明直接铺在内容区**（不必先点帮助）。测试 `tests/requirements-panel` 模型 **61 → 75**。
+- **需求池面板：创建需求改抽屉 + 使用说明（2026-10-04）**：头部「＋」不再弹 `NSAlert`，改用与任务面板「新建任务」同款的**表单抽屉**（复用 `TaskFormSheetView` / `TaskFormKit`）——一个输入框，**首行 = 标题、其余行 = 诉求**（单行则两者相同），`⌘↩` 提交、`Esc` 取消；视图模型 `RequirementComposerModel`（纯 Foundation，`platforms/macos/src/RequirementsUI.swift`）可无头断言。右上角新增 **`?` 使用说明**按钮：抽屉里是「创建需求 / 拆解事项」两节，每节分「在面板」「在对话」两条**操作**（只讲操作，不讲结果），**池为空时同一份说明直接铺在内容区**（不必先点帮助）。测试 `tests/requirements-panel` 模型 **61 → 75**。
 
 ### Fixed
 
