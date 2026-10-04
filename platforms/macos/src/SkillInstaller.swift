@@ -354,12 +354,13 @@ enum BuiltinSkill: CaseIterable {
     |---|---|---|
     | GET `/api/requirements/list` | `?workspace=<路径>` | 需求 + 子事项 + 待确认提案 |
     | POST `/api/requirements/create` | `{"workspace":"…","title":"…","body":"…","session":"$DSH_SESSION_ID","focus":true}` | 收件箱：新建需求卡（candidate）；带 `session` 以便日后「拆解」回到本会话 |
-    | POST `/api/requirements/state` | `{"id":"REQ-003","state":"evaluating"}` | 改人工状态（candidate/evaluating/suspended/discarded） |
-    | POST `/api/requirements/update` | `{"id":"REQ-003","title":"…","body":"…"}` | 改标题 + 诉求（只改这两处） |
-    | POST `/api/requirements/breakdown/propose` | `{"id":"REQ-003","items":[{"title":"…","boundary":"…","dependsOn":["…"]}]}` | 拆解器：写**待确认**提案 |
+    | POST `/api/requirements/state` | `{"id":"REQ-003","state":"evaluating","session":"$DSH_SESSION_ID"}` | 改人工状态（candidate/evaluating/suspended/discarded） |
+    | POST `/api/requirements/update` | `{"id":"REQ-003","title":"…","body":"…","session":"$DSH_SESSION_ID"}` | 改标题 + 诉求（只改这两处） |
+    | POST `/api/requirements/breakdown/propose` | `{"id":"REQ-003","items":[{"title":"…","boundary":"…","dependsOn":["…"]}],"session":"$DSH_SESSION_ID"}` | 拆解器：写**待确认**提案 |
     | POST `/api/requirements/breakdown/confirm` / `reject` | `{"id":"REQ-003"}` | 人工确认 / 驳回 —— **confirm 不由 agent 调** |
 
     - `workspace` 传 `$(pwd)`；不传则用面板当前工作区。
+    - **每个写操作都带上 `session`（`$DSH_SESSION_ID`）**：壳层把该需求绑定到本会话，之后面板上的「拆解 / 确认 / 驳回」都会回到这里——**同一需求的所有对话落在同一个会话**。
     - `items` 每条：标题 + 边界 + 依赖（`dependsOn` 可空）。
 
     ## 工作流
@@ -383,7 +384,7 @@ enum BuiltinSkill: CaseIterable {
     3. 提交提案：
        ```bash
        cat > /tmp/breakdown.json <<'JSON'
-       {"id": "REQ-xxx", "items": [
+       {"id": "REQ-xxx", "session": "<$DSH_SESSION_ID 的值>", "items": [
          {"title": "事项 A", "boundary": "只做 A", "dependsOn": []},
          {"title": "事项 B", "boundary": "依赖 A", "dependsOn": ["事项 A"]}
        ]}

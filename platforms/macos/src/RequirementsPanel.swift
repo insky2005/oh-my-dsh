@@ -284,6 +284,10 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     /// source session when it has one, else the current one; nil falls back to
     /// copying the prompt to the clipboard.
     var onBreakdown: ((String, String?) -> Void)?
+    /// Human confirmed (true) / rejected (false) a proposal in the panel; the
+    /// created workstream ids come along so main.swift can write the outcome back
+    /// to the requirement's session.
+    var onBreakdownResolved: ((String, Bool, [String]) -> Void)?
     /// Focus this workspace and show the requirements panel (REST focus=true).
     var onFocus: ((String) -> Void)?
     /// QA hook (--ui-debug): fires after each render.
@@ -641,6 +645,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
             let created = try RequirementsCore.confirm(workspace: workspace, id: id, today: RequirementsCore.today())
             setStatus(L10n.tr("requirements.confirmed", created.count), isError: false)
             reload()
+            onBreakdownResolved?(id, true, created.map { $0.id })
             return true
         } catch let error as PoolError {
             setStatus(message(for: error), isError: true)
@@ -660,6 +665,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
             _ = try RequirementsCore.reject(workspace: workspace, id: id, today: RequirementsCore.today())
             setStatus(L10n.tr("requirements.rejected"), isError: false)
             reload()
+            onBreakdownResolved?(id, false, [])
             return true
         } catch let error as PoolError {
             setStatus(message(for: error), isError: true)
@@ -700,6 +706,13 @@ extension RequirementsPanelController {
             return current
         }
         return requested
+    }
+
+    /// Keep the requirement bound to the session that acted on it, so every later
+    /// panel action (and the confirm/reject write-back) stays in ONE conversation.
+    private func bindSession(_ session: String?, workspace: String, id: String) {
+        guard let session = session?.trimmingCharacters(in: .whitespacesAndNewlines), !session.isEmpty else { return }
+        RequirementsCore.rememberSession(workspace: workspace, id: id, session: session)
     }
 
     private func listDictionary(_ workspace: String?) -> [String: Any] {
@@ -749,6 +762,7 @@ extension RequirementsPanelController {
         }
         do {
             let card = try RequirementsCore.setState(workspace: workspace, id: request.id, state: request.state, today: RequirementsCore.today())
+            bindSession(request.session, workspace: workspace, id: request.id)
             if workspace == (workspaceProvider?() ?? "") { reload() }
             return ["ok": true, "requirement": RequirementsAPIResponse.requirement(card)]
         } catch let error as PoolError {
@@ -766,6 +780,7 @@ extension RequirementsPanelController {
             let card = try RequirementsCore.updateRequirement(workspace: workspace, id: request.id,
                                                               title: request.title, body: request.body,
                                                               today: RequirementsCore.today())
+            bindSession(request.session, workspace: workspace, id: request.id)
             if workspace == (workspaceProvider?() ?? "") { reload() }
             return ["ok": true, "requirement": RequirementsAPIResponse.requirement(card)]
         } catch let error as PoolError {
@@ -781,6 +796,7 @@ extension RequirementsPanelController {
         }
         do {
             _ = try RequirementsCore.propose(workspace: workspace, id: request.id, items: request.items, today: RequirementsCore.today())
+            bindSession(request.session, workspace: workspace, id: request.id)
             if workspace == (workspaceProvider?() ?? "") { reload() }
             return ["ok": true, "id": request.id, "count": request.items.count]
         } catch let error as PoolError {
@@ -796,6 +812,7 @@ extension RequirementsPanelController {
         }
         do {
             let created = try RequirementsCore.confirm(workspace: workspace, id: request.id, today: RequirementsCore.today())
+            bindSession(request.session, workspace: workspace, id: request.id)
             if workspace == (workspaceProvider?() ?? "") { reload() }
             return ["ok": true, "created": created.map(RequirementsAPIResponse.workstream)]
         } catch let error as PoolError {
@@ -811,6 +828,7 @@ extension RequirementsPanelController {
         }
         do {
             _ = try RequirementsCore.reject(workspace: workspace, id: request.id, today: RequirementsCore.today())
+            bindSession(request.session, workspace: workspace, id: request.id)
             if workspace == (workspaceProvider?() ?? "") { reload() }
             return ["ok": true, "id": request.id]
         } catch let error as PoolError {

@@ -131,7 +131,8 @@ static func reject(workspace:id:today:) throws -> RequirementCard
 - **只改本卡**：`propose` / `confirm` / `reject` 只触碰目标 REQ 卡的 `## 拆解` 段；`setState` 只改 `state` 行；
 - **幂等**：`confirm` 对已确认（无 proposal）返回 `noProposal`；`propose` 覆盖旧提案；
 - **不改别人**：不触碰其它 REQ/WS 卡；只写目标卡的 `local.json` 绑定。
-- **运行时绑定另存**：`REQ-id → 来源会话` 写在 `.dsh/requirements/local.json`（**ignored，机器范围**，存储设计 §4），不进卡片；`createRequirement(session:)` 写入、`load()` 读回 `RequirementCard.session`。
+- **运行时绑定另存**：`REQ-id → 会话` 写在 `.dsh/requirements/local.json`（**ignored，机器范围**，存储设计 §4），不进卡片；`createRequirement(session:)` 写入、`load()` 读回 `RequirementCard.session`。
+- **同一会话不变量**：所有写接口（create / update / state / propose / confirm / reject）都接受 `session`，每次写都把该需求重绑到**发起这次写的会话**；面板动作使用绑定值，**没有绑定或发送失败时回退到当前会话并重绑**。因此一个需求从对话、落卡、调整、拆解到确认，**始终在同一个会话**里。
 
 ### 3.6 提案的正文格式（拆解器契约）
 
@@ -196,11 +197,11 @@ updated: <today>
 |---|---|---|
 | GET `/api/requirements/list` | `?workspace=<路径>` | `{ok, workspace, requirements:[{id,title,state,effectiveState,source,created,updated,children:[{id,title,stage,outcome}],proposal:[…]}]}` |
 | POST `/api/requirements/create` | `{"workspace":"…","title":"…","body":"…","session":"$DSH_SESSION_ID","source":"…","focus":true}` | 收件箱：新建 `REQ-*.md`（`state: candidate`）；带 `session` 时把**来源会话**记到 `local.json`；返回 `{ok, requirement:{…}}` |
-| POST `/api/requirements/state` | `{"workspace":"…","id":"REQ-003","state":"evaluating"}` | 改人工状态；`state ∈ {candidate,evaluating,suspended,discarded}`；返回 `{ok, requirement:{…}}` |
-| POST `/api/requirements/update` | `{"workspace":"…","id":"REQ-003","title":"…","body":"…"}` | 编辑标题 + 诉求（只改这两处）；返回 `{ok, requirement:{…}}` |
-| POST `/api/requirements/breakdown/propose` | `{"workspace":"…","id":"REQ-003","items":[{"title":"…","boundary":"…","dependsOn":["…"]}]}` | 拆解器第 1 步：写待确认提案（覆盖旧提案） |
-| POST `/api/requirements/breakdown/confirm` | `{"workspace":"…","id":"REQ-003"}` | 拆解器第 2 步（**人确认后**）：建 `WS-*.md`，替换提案为映射表 |
-| POST `/api/requirements/breakdown/reject` | `{"workspace":"…","id":"REQ-003"}` | 驳回：清除待确认提案 |
+| POST `/api/requirements/state` | `{"workspace":"…","id":"REQ-003","state":"evaluating","session":"$DSH_SESSION_ID"}` | 改人工状态；`state ∈ {candidate,evaluating,suspended,discarded}`；返回 `{ok, requirement:{…}}` |
+| POST `/api/requirements/update` | `{"workspace":"…","id":"REQ-003","title":"…","body":"…","session":"$DSH_SESSION_ID"}` | 编辑标题 + 诉求（只改这两处）；返回 `{ok, requirement:{…}}` |
+| POST `/api/requirements/breakdown/propose` | `{"workspace":"…","id":"REQ-003","items":[…],"session":"$DSH_SESSION_ID"}` | 拆解器第 1 步：写待确认提案（覆盖旧提案） |
+| POST `/api/requirements/breakdown/confirm` | `{"workspace":"…","id":"REQ-003","session":"$DSH_SESSION_ID"}` | 拆解器第 2 步（**人确认后**）：建 `WS-*.md`，替换提案为映射表 |
+| POST `/api/requirements/breakdown/reject` | `{"workspace":"…","id":"REQ-003","session":"$DSH_SESSION_ID"}` | 驳回：清除待确认提案 |
 
 - `workspace` 缺省 = 面板当前工作区；传 `pwd` 时按「精确 / 最近祖先」解析（规则与 `TasksAPIWorkspace` 一致，纯路由独立实现以免测试耦合任务模型）；
 - 错误码：`missing-body` / `missing-title` / `missing-id` / `no-items` / `unknown-state`（400）、`unknown-requirement`（404）、`no-proposal`（409）、`no-workspace`（400）、`panel-unavailable`（503）；
@@ -247,7 +248,7 @@ updated: <today>
 - **「状态 ▾」菜单**：候选 / 评估中 / 挂起 / 丢弃 → 调 `setState`（写回**人工判断**；`split` / `closed` 是派生，不出现在菜单里）。
 - **「编辑」按钮**：打开同一个抽屉并预填（首行标题 + 诉求），保存走 `updateRequirement`：**只改** frontmatter `title` 与 `## 诉求`，状态、拆解映射、子事项都不动。
 - **「拆解」按钮**：把拆解提示词**直接发进对话**——优先该卡片的**来源会话**（agent 落卡时带的 `$DSH_SESSION_ID`，存在 `.dsh/requirements/local.json`），没有才用 `dshSession` 跟踪器上报的**当前会话**；两者都没有或发送失败则**回退复制**到剪贴板，状态行说明走了哪条路；发送到**非当前**会话时把它切到前台（`openDSHSession`），让拆解过程可见。随后 agent 调 `POST /api/requirements/breakdown/propose` 提出**待确认提案**；有提案时提案区就地给出确认 / 驳回。
-- **提案区**：`确认拆解` → `confirm`（建 WS 卡）；`驳回` → `reject`。
+- **提案区**：`确认拆解` → `confirm`（建 WS 卡）；`驳回` → `reject`。两者成功后 main 会把**结果回写到该需求的会话**（同一会话闭环），并把该会话切到前台。
 - **子事项行**：只读展示 `WS-id stage`；点击经 `onOpenWorkstream` 在文件面板打开该卡。
 
 ### 5.3 空态与状态行

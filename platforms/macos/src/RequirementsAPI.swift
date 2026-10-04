@@ -29,17 +29,21 @@ struct RequirementsStateRequest: Equatable {
     var workspace: String?
     var id: String
     var state: String
+    /// The session this action came from; remembered as the card's source session.
+    var session: String?
 }
 
 struct RequirementsBreakdownRequest: Equatable {
     var workspace: String?
     var id: String
     var items: [BreakdownItem] = []
+    var session: String?
 }
 
 struct RequirementsTargetRequest: Equatable {
     var workspace: String?
     var id: String
+    var session: String?
 }
 
 /// POST /api/requirements/update: edit a card's title + 诉求.
@@ -48,6 +52,12 @@ struct RequirementsUpdateRequest: Equatable {
     var id: String
     var title: String
     var body: String?
+    var session: String?
+}
+
+/// Read the optional session field from any write body (trimmed, nil when empty).
+func requirementsSession(_ body: [String: Any]) -> String? {
+    (body["session"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
 }
 
 // MARK: - Delegate
@@ -154,7 +164,7 @@ enum RequirementsAPIRouter {
             }
             guard let delegate = delegate else { return unavailable() }
             let req = RequirementsStateRequest(workspace: RequirementsAPIWorkspace.normalize(body["workspace"] as? String),
-                                               id: id, state: state)
+                                               id: id, state: state, session: requirementsSession(body))
             let result = delegate.apiRequirementsSetState(req)
             return .json(status(for: result), result)
 
@@ -169,7 +179,8 @@ enum RequirementsAPIRouter {
             }
             guard let delegate = delegate else { return unavailable() }
             let update = RequirementsUpdateRequest(workspace: RequirementsAPIWorkspace.normalize(body["workspace"] as? String),
-                                                   id: id, title: title, body: body["body"] as? String)
+                                                   id: id, title: title, body: body["body"] as? String,
+                                                   session: requirementsSession(body))
             let updated = delegate.apiRequirementsUpdate(update)
             return .json(status(for: updated), updated)
 
@@ -185,7 +196,7 @@ enum RequirementsAPIRouter {
             }
             guard let delegate = delegate else { return unavailable() }
             let req = RequirementsBreakdownRequest(workspace: RequirementsAPIWorkspace.normalize(body["workspace"] as? String),
-                                                   id: id, items: items)
+                                                   id: id, items: items, session: requirementsSession(body))
             let result = delegate.apiRequirementsPropose(req)
             return .json(status(for: result), result)
 
@@ -196,7 +207,8 @@ enum RequirementsAPIRouter {
                 return .json(400, ["ok": false, "error": "missing-id"])
             }
             guard let delegate = delegate else { return unavailable() }
-            let req = RequirementsTargetRequest(workspace: RequirementsAPIWorkspace.normalize(body["workspace"] as? String), id: id)
+            let req = RequirementsTargetRequest(workspace: RequirementsAPIWorkspace.normalize(body["workspace"] as? String),
+                                                id: id, session: requirementsSession(body))
             let result = request.path.hasSuffix("/confirm")
                 ? delegate.apiRequirementsConfirm(req)
                 : delegate.apiRequirementsReject(req)

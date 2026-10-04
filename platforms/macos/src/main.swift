@@ -940,6 +940,8 @@ enum L10n {
         "requirements.reject": ("驳回", "Reject"),
         "requirements.confirmed": ("已生成 %d 个事项", "Created %d workstreams"),
         "requirements.rejected": ("已驳回拆解提案", "Proposal dismissed"),
+        "requirements.notify.confirmed": ("需求池：%@ 的拆解已由人在面板确认，生成 %@。收到即可，等我下一步指令，不要自动开工。", "Requirements pool: %@ breakdown confirmed by the human; created %@. Just acknowledge and wait for my next instruction."),
+        "requirements.notify.rejected": ("需求池：%@ 的拆解提案已被人在面板驳回。收到即可，等我下一步指令。", "Requirements pool: %@ breakdown proposal was rejected by the human. Just acknowledge and wait for my next instruction."),
         "requirements.created": ("已创建 %@", "Created %@"),
         "requirements.stateChanged": ("%@ → %@", "%@ → %@"),
         "requirements.error.notFound": ("找不到该需求", "Requirement not found"),
@@ -2854,6 +2856,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // 带上 $DSH_SESSION_ID），否则当前会话；agent 随后调面板 API 提方案。
         requirementsPanel.onBreakdown = { [weak self] id, session in
             self?.sendBreakdownPrompt(id, preferredSession: session)
+        }
+        // 人在面板确认 / 驳回后，把结果回写到该需求的会话（同一会话闭环）。
+        requirementsPanel.onBreakdownResolved = { [weak self] id, confirmed, created in
+            self?.notifyBreakdownResolved(id, confirmed: confirmed, created: created)
         }
         requirementsPanel.onDidRender = { [weak self] in
             guard let self = self, self.uiDebug else { return }
@@ -5244,6 +5250,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if let used = used {
                     AppLog.shared.log("requirements: breakdown prompt for \(requirementId) sent to session \(used)")
                     self.requirementsPanel?.setStatus(L10n.tr("requirements.breakdownSent"), isError: false)
+                    // Keep the requirement bound to the session actually used, so
+                    // every later action stays in ONE conversation.
+                    if used != preferredSession, let workspace = self.activeWorkspacePath() {
+                        RequirementsCore.rememberSession(workspace: workspace, id: requirementId, session: used)
+                    }
                     // Bring that conversation on screen when it is not the one the
                     // user is already looking at, so the breakdown is visible.
                     if used != self.activeSessionId {
@@ -5253,6 +5264,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     AppLog.shared.log("requirements: breakdown send failed (\(DshWebRPC.lastFailure ?? "?"))")
                     self.requirementsPanel?.copyBreakdownPrompt(id: requirementId)
                     self.requirementsPanel?.setStatus(L10n.tr("requirements.breakdownSendFailed"), isError: true)
+                }
+            }
+        }
+    }
+
+    /// 人在面板确认 / 驳回拆解后，把结果写回该需求的会话——同一会话闭环，agent
+    /// 由此知道该继续按事项推进（通知只是「收到即可」，不自动开工）。
+    private func notifyBreakdownResolved(_ requirementId: String, confirmed: Bool, created: [String]) {
+        guard let workspace = activeWorkspacePath(), !workspace.isEmpty else { return }
+        let bound = RequirementsCore.load(workspace: workspace).requirements
+            .first { $0.requirement.id == requirementId }?.requirement.session
+        let port = server.port
+        guard port > 0, let sessionId = (bound?.isEmpty == false ? bound : activeSessionId), !sessionId.isEmpty else {
+            AppLog.shared.log("requirements: no session to write the \(requirementId) result back to")
+            return
+        }
+        let text = confirmed
+            ? L10n.tr("requirements.notify.confirmed", requirementId, created.joined(separator: "、"))
+            : L10n.tr("requirements.notify.rejected", requirementId)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let sent = DshSessionOps.sendPrompt(port: port, sessionId: sessionId, text: text)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if sent {
+                    AppLog.shared.log("requirements: \(requirementId) result written back to session \(sessionId)")
+                    if sessionId != self.activeSessionId { self.openDSHSession(sessionId) }
+                } else {
+                    AppLog.shared.log("requirements: result write-back failed (\(DshWebRPC.lastFailure ?? "?"))")
                 }
             }
         }

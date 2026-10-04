@@ -17,6 +17,8 @@ All notable changes to this project are documented in this file. Format follows
 
 - **需求池卡片：显示诉求内容 + 状态徽标后移 + 可编辑（2026-10-04）**：卡片现在显示 `## 诉求` 正文预览（最多 4 行，tooltip 全文）——agent 落卡的内容不再只活在文件里；**状态徽标移到标题之后**；新增**「编辑」**按钮，复用同一个抽屉预填标题 + 诉求，保存走 `POST /api/requirements/update`（只改 frontmatter `title` 与 `## 诉求`，状态 / 拆解提案 / 子事项都不动）。测试 `tests/requirements-panel` 模型 **77 → 93**、API **42 → 49**。
 
+- **需求池：同一需求的对话始终落在同一个会话（2026-10-04）**：所有写接口（create / update / state / propose / confirm / reject）都接受 `session`，每次写把 `REQ-id` 重绑到**发起这次写的会话**；面板「拆解」用绑定会话，没有 / 失败才回退当前会话并**重绑**；人在面板**确认 / 驳回后把结果回写**到该会话（「收到即可，不要自动开工」），并把该会话切到前台。这样从对话、落卡、调整、拆解到确认全程同一条对话。技能写操作全部带 `$DSH_SESSION_ID`。
+
 - **需求池拆解：优先回到创建该需求的会话（2026-10-04）**：agent 用 `requirement-pool` 落卡时带上 `$DSH_SESSION_ID`，壳层把「REQ-id → 来源会话」写进 **ignored** 的 `.dsh/requirements/local.json`（运行时绑定，不进卡片）；面板点「拆解」时**优先把提示词发回来源会话**，没有才用当前会话，仍失败则回退复制。`POST /api/requirements/create` 新增 `session` 字段。测试 `tests/requirements-panel` 模型 **93 → 97**、API **49 → 51**。
 
 - **需求池拆解：面板把提示词直接发进当前对话（2026-10-04）**：点卡片「拆解」不再只复制到剪贴板——用 `dshSession` 跟踪器上报的当前会话调 `DshSessionOps.sendPrompt`（`session/prompt`，与 wiki 生成 / 任务队列同一形状）把提示词**直接发进对话**；agent 随即调 `POST /api/requirements/breakdown/propose` 提出待确认方案。**没有打开的对话或发送失败时回退复制**并在状态行说明。另一入口不变：对话里运行 `/requirement-pool 拆解 <REQ-id>`。人工确认门（R10）不变：`confirm` 仍只在面板。
