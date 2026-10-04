@@ -2862,7 +2862,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityBar.translatesAutoresizingMaskIntoConstraints = false
 
         // 活动栏图标：tooltip 跟随系统语言（L10n 中英切换）；
-        // 顺序 = 项目、文件、终端、Wiki、任务、通道、审查、浏览器、技能
+        // 顺序 = 项目、文件、终端、Wiki、需求池、任务、通道、审查、浏览器、技能
         // （「项目」在首位，见设计 §5/D4；「浏览器」改到末位「技能」之前，2026-09-24）。
         projectsBarButton = makeActivityButton(symbol: "folder",
                                                tooltip: L10n.tr("bar.projects"),
@@ -2894,7 +2894,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         requirementsBarButton = makeActivityButton(symbol: "tray.full",
                                                    tooltip: L10n.tr("bar.requirements"),
                                                    action: #selector(requirementsEntryTapped(_:)))
-        let barStack = NSStackView(views: [projectsBarButton, previewBarButton, terminalBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton, browserBarButton, skillsBarButton, requirementsBarButton])
+        let barStack = NSStackView(views: [projectsBarButton, previewBarButton, terminalBarButton, wikiBarButton, requirementsBarButton, tasksBarButton, channelBarButton, reviewBarButton, browserBarButton, skillsBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -5869,8 +5869,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         viewMenu.addItem(.separator())
         // 「项目」在首位（与活动栏一一对应，设计 §5/D4）；⌥⌘P 由「文件面板」
         // 让出（PR #57 已把文件面板改为 ⌥⌘F）。
-        // 其余各项顺序与活动栏保持一一对应：项目 / 文件 / 终端 / 知识库 / 任务 /
-        // 通道 / 审查 / 浏览器 / 技能（「浏览器」2026-09-24 移到末位「技能」之前）。
+        // 其余各项顺序与活动栏保持一一对应：项目 / 文件 / 终端 / 知识库 / 需求池 /
+        // 任务 / 通道 / 审查 / 浏览器 / 技能（「浏览器」2026-09-24 移到末位「技能」之前）。
         let toggleProjects = viewMenu.addItem(withTitle: L10n.tr("menu.toggleProjects"), action: #selector(projectsEntryTapped(_:)), keyEquivalent: "p")
         toggleProjects.keyEquivalentModifierMask = [.command, .option]
         toggleProjects.target = self
@@ -5891,6 +5891,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleWiki.target = self
         toggleWiki.state = (rightPanel == .wiki) ? .on : .off
         wikiToggleMenuItem = toggleWiki
+        // 「需求池」在知识库之后、任务之前（与活动栏一一对应），快捷键 ⌥⌘I。
+        let toggleRequirements = viewMenu.addItem(withTitle: L10n.tr("menu.toggleRequirements"), action: #selector(requirementsEntryTapped(_:)), keyEquivalent: "i")
+        toggleRequirements.keyEquivalentModifierMask = [.command, .option]
+        toggleRequirements.target = self
+        toggleRequirements.state = (rightPanel == .requirements) ? .on : .off
+        requirementsToggleMenuItem = toggleRequirements
         let toggleTasks = viewMenu.addItem(withTitle: L10n.tr("menu.toggleTasks"), action: #selector(tasksEntryTapped(_:)), keyEquivalent: "j")
         toggleTasks.keyEquivalentModifierMask = [.command, .option]
         toggleTasks.target = self
@@ -5917,12 +5923,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleSkills.target = self
         toggleSkills.state = (rightPanel == .skills) ? .on : .off
         skillsToggleMenuItem = toggleSkills
-        // 「需求池」放在视图菜单末位（活动栏亦在末位），快捷键 ⌥⌘I。
-        let toggleRequirements = viewMenu.addItem(withTitle: L10n.tr("menu.toggleRequirements"), action: #selector(requirementsEntryTapped(_:)), keyEquivalent: "i")
-        toggleRequirements.keyEquivalentModifierMask = [.command, .option]
-        toggleRequirements.target = self
-        toggleRequirements.state = (rightPanel == .requirements) ? .on : .off
-        requirementsToggleMenuItem = toggleRequirements
         viewItem.submenu = viewMenu
 
         // Settings menu: dsh settings/upgrade/registry + logs + language.
@@ -6941,11 +6941,11 @@ final class SettingsWindowController {
         ("menu.toggleFiles", "⌥⌘F"),
         ("menu.toggleTerminal", "⌥⌘T"),
         ("menu.toggleWiki", "⌥⌘W"),
+        ("menu.toggleRequirements", "⌥⌘I"),
         ("menu.toggleBrowser", "⌥⌘B"),
         ("menu.toggleChannel", "⌥⌘H"),
         ("menu.toggleReview", "⌥⌘R"),
         ("menu.toggleSkills", "⌥⌘S"),
-        ("menu.toggleRequirements", "⌥⌘I"),
         ("settings.openMenu", "⌘,"),
     ]
 
