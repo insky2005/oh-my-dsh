@@ -754,7 +754,7 @@ extension RequirementsPanelController {
         let header = DynamicFillView()
         header.kind = .panel
         header.translatesAutoresizingMaskIntoConstraints = false
-        let actions = NSStackView(views: [newButton, refreshButton, helpButton, hideButton])
+        let actions = NSStackView(views: [refreshButton, helpButton, hideButton])
         actions.orientation = .horizontal
         actions.spacing = 6
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -767,6 +767,31 @@ extension RequirementsPanelController {
             actions.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
             actions.centerYAnchor.constraint(equalTo: header.centerYAnchor),
         ])
+
+        // --- toolbar: 建需求 sits on its RIGHT (the row below the header,
+        // mirroring the tasks panel's tab row) ---
+        let toolbar = DynamicFillView()
+        toolbar.kind = .panel
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
+        let toolbarSpacer = NSView()
+        toolbarSpacer.translatesAutoresizingMaskIntoConstraints = false
+        toolbarSpacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        toolbarSpacer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        let toolbarStack = NSStackView(views: [toolbarSpacer, newButton])
+        toolbarStack.orientation = .horizontal
+        toolbarStack.alignment = .centerY
+        toolbarStack.spacing = 5
+        toolbarStack.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.addSubview(toolbarStack)
+        NSLayoutConstraint.activate([
+            toolbarStack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 6),
+            toolbarStack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -8),
+            toolbarStack.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            toolbar.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        let toolbarUnderline = NSBox()
+        toolbarUnderline.boxType = .separator
+        toolbarUnderline.translatesAutoresizingMaskIntoConstraints = false
 
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.hasVerticalScroller = true
@@ -835,14 +860,22 @@ extension RequirementsPanelController {
         formSheetTop = formSheet.topAnchor.constraint(equalTo: formSheetHost.topAnchor,
                                                       constant: TaskFormSheetHostView.restingTop)
 
-        for sub in [header, scroll, emptyView, statusRow, formSheetHost] { view.addSubview(sub) }
+        for sub in [header, toolbar, toolbarUnderline, scroll, emptyView, statusRow, formSheetHost] { view.addSubview(sub) }
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: view.topAnchor),
             header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             header.heightAnchor.constraint(equalToConstant: 44),
 
-            scroll.topAnchor.constraint(equalTo: header.bottomAnchor),
+            toolbar.topAnchor.constraint(equalTo: header.bottomAnchor),
+            toolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+
+            toolbarUnderline.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            toolbarUnderline.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            toolbarUnderline.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+
+            scroll.topAnchor.constraint(equalTo: toolbarUnderline.bottomAnchor),
             scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: statusRow.topAnchor),
@@ -858,7 +891,7 @@ extension RequirementsPanelController {
             statusRow.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             statusRow.heightAnchor.constraint(equalToConstant: 24),
 
-            formSheetHost.topAnchor.constraint(equalTo: header.bottomAnchor),
+            formSheetHost.topAnchor.constraint(equalTo: toolbarUnderline.bottomAnchor),
             formSheetHost.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             formSheetHost.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             formSheetHost.bottomAnchor.constraint(equalTo: statusRow.topAnchor),

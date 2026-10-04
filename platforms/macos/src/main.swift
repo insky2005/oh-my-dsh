@@ -911,7 +911,7 @@ enum L10n {
         "requirements.help.title": ("需求池使用说明", "Requirements Pool Help"),
         "requirements.help.intro": ("在面板或对话里都能完成下列操作。", "Both actions work from the panel or a conversation."),
         "requirements.help.create.heading": ("创建需求", "Create a requirement"),
-        "requirements.help.create.panel": ("在面板：点右上角「＋」，在抽屉的首行写标题、其余行写诉求，按 ⌘↩ 或点「创建」。", "In the panel: click + in the header, write the title on the first line and the statement on the rest, then press Command-Return or click Create."),
+        "requirements.help.create.panel": ("在面板：点工具栏右侧的「＋」，在抽屉的首行写标题、其余行写诉求，按 ⌘↩ 或点「创建」。", "In the panel: click + on the right of the toolbar, write the title on the first line and the statement on the rest, then press Command-Return or click Create."),
         "requirements.help.create.chat": ("在对话：输入「把这个想法落成需求」，或运行 /requirement-pool。", "In a conversation: type “capture this idea as a requirement”, or run /requirement-pool."),
         "requirements.help.breakdown.heading": ("拆解事项", "Break down a requirement"),
         "requirements.help.breakdown.panel": ("在面板：点卡片「拆解」，提示词会发送到当前对话；方案回来后点「确认拆解」或「驳回」。", "In the panel: click Break down on a card and the prompt is sent to the current conversation; when a proposal appears, click Confirm or Reject."),

@@ -211,7 +211,8 @@ updated: <today>
 
 ```text
 需求池面板（右栏槽第 10 个，活动栏第 5 位 tray.full，⌥⌘I）
-├─ 头部（DynamicFillView + HeaderLabel「需求池」）   [＋ 新建需求] [⟳] [✕]
+├─ 头部（DynamicFillView + HeaderLabel「需求池」）            [⟳] [?] [✕]
+├─ 工具栏（DynamicFillView + 分隔线）                          [＋ 新建需求]
 ├─ 内容（NSScrollView）  需求卡片 × N
 │    └─ 卡片
 │         ├─ 第一行：[有效状态徽标] REQ-008 标题            [状态 ▾] [拆解]
@@ -224,15 +225,17 @@ updated: <today>
 └─ 状态行（成功 5s 清空；失败保留）
 ```
 
-### 5.1 头部
+### 5.1 头部与工具栏
 
-| 控件 | 行为 |
-|---|---|
-| 标题「需求池」 | `HeaderLabel`，固定显示面板名 |
-| `plus` 新建需求 | 收件箱：打开**抽屉**，一个输入框里**首行标题 / 其余行诉求**，`⌘↩` 或「创建」→ `createRequirement`（`state: candidate`） |
-| `questionmark.circle` | 打开「使用说明」抽屉：**创建需求 / 拆解事项** 两节，每节分「在面板」「在对话」两条操作 |
-| `arrow.clockwise` | 重读盘面并重绘 |
-| `xmark` | `onRequestHide` → 收起右栏 |
+头部一行：标题在左，`[⟳] [?] [✕]` 在右。头部下面是一行 **32pt 工具栏**（含底部分隔线，与任务面板的页签行同形），**「＋ 新建需求」在工具栏右侧**（左侧留空，将来可放汇总）。
+
+| 控件 | 位置 | 行为 |
+|---|---|---|
+| 标题「需求池」 | 头部左 | `HeaderLabel`，固定显示面板名 |
+| `arrow.clockwise` | 头部右 | 重读盘面并重绘 |
+| `questionmark.circle` | 头部右 | 打开「使用说明」抽屉：**创建需求 / 拆解事项** 两节，每节分「在面板」「在对话」两条操作 |
+| `xmark` | 头部右 | `onRequestHide` → 收起右栏 |
+| `plus` 新建需求 | **工具栏右** | 收件箱：打开**抽屉**，一个输入框里**首行标题 / 其余行诉求**，`⌘↩` 或「创建」→ `createRequirement`（`state: candidate`） |
 
 ### 5.2 卡片与动作
 
@@ -352,7 +355,7 @@ updated: <today>
 | `requirements.help.title` | 需求池使用说明 | Requirements Pool Help |
 | `requirements.help.intro` | 在面板或对话里都能完成下列操作。 | Both actions work from the panel or a conversation. |
 | `requirements.help.create.heading` | 创建需求 | Create a requirement |
-| `requirements.help.create.panel` | 在面板：点右上角「＋」，在抽屉的首行写标题、其余行写诉求，按 ⌘↩ 或点「创建」。 | In the panel: click + in the header, write the title on the first line and the statement on the rest, then press Command-Return or click Create. |
+| `requirements.help.create.panel` | 在面板：点工具栏右侧的「＋」，在抽屉的首行写标题、其余行写诉求，按 ⌘↩ 或点「创建」。 | In the panel: click + on the right of the toolbar, write the title on the first line and the statement on the rest, then press Command-Return or click Create. |
 | `requirements.help.create.chat` | 在对话：输入「把这个想法落成需求」，或运行 /requirement-pool。 | In a conversation: type “capture this idea as a requirement”, or run /requirement-pool. |
 | `requirements.help.breakdown.heading` | 拆解事项 | Break down a requirement |
 | `requirements.help.breakdown.panel` | 在面板：点卡片「拆解」，提示词会发送到当前对话；方案回来后点「确认拆解」或「驳回」。 | In the panel: click Break down on a card and the prompt is sent to the current conversation; when a proposal appears, click Confirm or Reject. |
