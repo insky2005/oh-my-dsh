@@ -20,6 +20,17 @@
 - `docs/process/release-process.md` —— **发布流程**（CHANGELOG → tag → local-release → 版本推进）；
 - `README.md` —— 安装 / 构建 / 环境变量。
 
+## AI 原生工作流（`.dsh` 卡片）
+
+本仓库同时是「AI 原生工作流」的第一个用户（dogfooding）。会话开始即遵循：
+
+- **模型与约定**：`docs/research/ai-native-workflow-architecture.md`（模型）、`docs/design/panels/requirements-workstream-store-design.md`（`.dsh` 卡片 schema）、`docs/usage/ai-native-workflow-manual.md`（手动模式用法）；
+- **状态在 `.dsh`**（随仓库提交）：需求 `REQ-*.md`、事项 `WS-*.md`、回归门 `REG-*.md`；任务队列在任务面板；
+- **不手写派生字段**：`closed` / `outcome` / `split` 由 `node .dsh/tools/derive-status.mjs` 派生；
+- **人工确认门**：拆解 / 规划 / 设计 / 任务拆分 / 验收 sign-off / merge；
+- **只拆不胀**：范围外的新发现回池为新需求，不就地吸收；
+- **任务阶段用 `/task-todo`**：拆分 = 建等待态队列、实施 = 启动、交付 = deliver。
+
 ## 关键约束
 
 1. **绝不改动 DeepSeek Harness 源码**；扩展只走壳层面板 + dsh 既有能力；

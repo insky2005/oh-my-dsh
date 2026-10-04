@@ -16,15 +16,15 @@
 
 ## 3. 公共头（所有 stage 共用）
 
+工作区通用规则（模型 / `.dsh` 约定 / 人工确认门 / 只拆不胀 / `/task-todo`）应由**工作区 `AGENTS.md` 承载、对话开始自动加载**（见 `docs/usage/ai-native-workflow-manual.md` §2.0）。提示词只带**本步事实**：
+
 ```text
 你在 <repo> 处理一个事项。
 
-事实来源（先读，别信转述）：
+本步事实：
 - 事项：.dsh/workstreams/<WS-ID>.md
 - 需求：.dsh/requirements/<REQ-ID>.md
-- 存储约定：.dsh/requirements/README.md
-- 模型：docs/research/ai-native-workflow-architecture.md
-- 仓库约定：AGENTS.md
+- 存储约定：.dsh/requirements/README.md（通用规则见工作区 AGENTS.md）
 
 当前 stage：<stage>      本步动作：<action>
 目标：<卡片的规划.目标>
@@ -55,8 +55,7 @@
 ```text
 你在 oh-my-dsh 仓库工作。处理事项 WS-002「需求 / 事项落盘 .dsh 落地」。
 
-先读：.dsh/workstreams/WS-002.md、.dsh/requirements/REQ-002.md、
-      .dsh/requirements/README.md、docs/research/ai-native-workflow-architecture.md、AGENTS.md。
+先读：.dsh/workstreams/WS-002.md、.dsh/requirements/REQ-002.md（通用规则见工作区 AGENTS.md）。
 
 当前 stage：规划 → 确认规划后进设计。
 目标：产出 docs/design/panels/requirements-workstream-store-design.md。

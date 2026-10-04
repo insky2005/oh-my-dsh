@@ -36,15 +36,21 @@
 
 ## 2. 手动模式：逐步 + 提示词示例
 
-### 2.0 通用开头（每次交接都带上）
+### 2.0 通用规则：写进工作区 `AGENTS.md`（自动加载）
 
-```text
-你在 oh-my-dsh 仓库工作。先读事实来源，不要依赖转述：
-- AGENTS.md                                         仓库约定（分支/提交/文档）
-- docs/research/ai-native-workflow-architecture.md  模型
-- docs/design/panels/requirements-workstream-store-design.md  .dsh 存储 schema
-- docs/usage/ai-native-workflow-manual.md           本说明
+下面这些是**工作区通用规则**，不属于某一次任务——写进工作区的 `AGENTS.md`（agent 对话开始会自动加载），就**不必每条提示词重复**。换项目 / 换工作区时，改的是这份 `AGENTS.md`，而不是每条提示词。
+
+```md
+## AI 原生工作流（.dsh 卡片）
+- 模型与约定：<模型文档>、<存储 schema>、<用法文档>
+- 状态在 .dsh（随仓库提交）：需求 REQ-*.md、事项 WS-*.md、回归门 REG-*.md；任务队列在任务面板
+- 不手写派生字段：closed / outcome / split 由派生器算出
+- 人工确认门：拆解 / 规划 / 设计 / 任务拆分 / 验收 sign-off / merge
+- 只拆不胀：范围外的新发现回池
+- 任务阶段用 /task-todo（拆分=建等待态队列、实施=启动、交付=deliver）
 ```
+
+> 本仓库的实例见 `AGENTS.md` 的「AI 原生工作流」段。之后每条提示词只写**本步要做什么**（见 §2.1–§2.9）。
 
 ### 2.1 落需求
 
@@ -185,8 +191,7 @@ GH_TOKEN=$(cat "$HOME/.dsh/oh-my-dsh/tokens/<owner>-<repo>") \
 
 ```text
 你在 oh-my-dsh 仓库工作。处理事项 WS-<id>「<标题>」。
-先读：.dsh/workstreams/WS-<id>.md、.dsh/requirements/<REQ-ID>.md、
-      .dsh/requirements/README.md、docs/research/ai-native-workflow-architecture.md、AGENTS.md。
+先读：.dsh/workstreams/WS-<id>.md、.dsh/requirements/<REQ-ID>.md（通用规则见工作区 AGENTS.md）。
 当前 stage：<stage>；本步动作：<action>。目标与边界以卡片「规划」为准。
 规则：只拆不胀；终态是派生谓词（不写 closed/outcome/split）；
       回归门 <REG-ID>（若改动其覆盖路径，交付前跑）；不改其它会话的在途文件。
