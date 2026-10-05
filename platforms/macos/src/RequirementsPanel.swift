@@ -447,7 +447,11 @@ final class RequirementHeaderView: NSView {
     /// working because AppKit hit-tests the deepest view first (TaskCardView's rule).
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let hit = super.hitTest(point) else { return nil }
-        if hit is NSButton || hit is TaskBadgeView || hit is NSTextView || hit is CustomIconButton {
+        // The state badge is itself a drop-down: it must receive its own click
+        // instead of the header toggling the card (it is not an NSButton).
+        if hit is NSButton || hit is TaskBadgeView || hit is NSTextView
+            || hit is CustomIconButton || hit is RequirementStateControl
+            || hit.superview is RequirementStateControl {
             return hit
         }
         return self
