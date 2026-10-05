@@ -136,3 +136,60 @@ struct RejectReasonModel {
         return model
     }
 }
+
+/// One rendered row of a requirement's 已拆解事项 list. CONTENT (id / title /
+/// boundary / deps) comes from the REQ card's confirmed table; STATUS (stage /
+/// outcome) comes from the WS card — see
+/// docs/design/panels/requirements-breakdown-standard-design.md (C2 / C3).
+struct WorkstreamDisplay: Equatable {
+    /// 标识: nil for a candidate row that has no workstream card.
+    var id: String?
+    var title: String
+    var boundary: String
+    var dependsOn: [String]
+    var stage: String?
+    var outcome: String?
+    var path: String?
+    /// The REQ table lists an id whose WS card is absent.
+    var missingCard: Bool = false
+    /// The WS card exists but the REQ table does not list it.
+    var notInPlan: Bool = false
+
+    /// Merge the two authorities. REQ rows lead (and keep their order); WS children
+    /// that the table misses are appended and flagged. An empty table (legacy card
+    /// that was never parsed) falls back to the plain WS children without flags.
+    static func merged(confirmed: [ConfirmedItem], children: [WorkstreamSummary]) -> [WorkstreamDisplay] {
+        if confirmed.isEmpty {
+            return children.map { child in
+                WorkstreamDisplay(id: child.id, title: child.title, boundary: "", dependsOn: [],
+                                  stage: child.stage, outcome: child.outcome, path: child.path)
+            }
+        }
+        var byId: [String: WorkstreamSummary] = [:]
+        for child in children where byId[child.id] == nil { byId[child.id] = child }
+        var used = Set<String>()
+        var out: [WorkstreamDisplay] = []
+        for row in confirmed {
+            var display = WorkstreamDisplay(id: row.id, title: row.title, boundary: row.boundary,
+                                            dependsOn: row.dependsOn, stage: nil, outcome: nil, path: nil)
+            if let id = row.id {
+                if let child = byId[id] {
+                    used.insert(id)
+                    display.stage = child.stage
+                    display.outcome = child.outcome
+                    display.path = child.path
+                    if display.title.isEmpty { display.title = child.title }
+                } else {
+                    display.missingCard = true
+                }
+            }
+            out.append(display)
+        }
+        for child in children where !used.contains(child.id) {
+            out.append(WorkstreamDisplay(id: child.id, title: child.title, boundary: "", dependsOn: [],
+                                         stage: child.stage, outcome: child.outcome, path: child.path,
+                                         missingCard: false, notInPlan: true))
+        }
+        return out
+    }
+}

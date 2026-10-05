@@ -211,6 +211,16 @@ expectError("confirm is not repeatable", .noProposal) {
 }
 check(!files(in: RequirementsCore.workstreamsDir(ws3)).contains(where: { $0.contains(".tmp-") }), "no temp WS files")
 
+// Standard confirmed table: 标识 | 事项 | 边界 | 依赖 (no 状态 persisted).
+let confirmedRows = RequirementsCore.parseConfirmed(reqTextAfterConfirm)
+eq(confirmedRows.count, 2, "parseConfirmed reads both rows")
+eq(confirmedRows[0].id, "WS-000001", "confirmed row carries the WS id")
+eq(confirmedRows[0].title, "事项 A", "confirmed row title")
+eq(confirmedRows[0].boundary, "只做 A", "confirmed row boundary")
+eq(confirmedRows[1].dependsOn, ["WS-000001"], "dependsOn mapped to the WS id")
+check(reqTextAfterConfirm.contains("| 标识 | 事项 | 边界 | 依赖 |"), "standard header written")
+check(!reqTextAfterConfirm.contains("| 状态 |"), "no status column persisted")
+
 // reject
 _ = try! RequirementsCore.propose(workspace: ws3, id: req3Id, items: items, today: "2026-10-04")
 let rejected = try! RequirementsCore.reject(workspace: ws3, id: req3Id, today: "2026-10-04")
@@ -236,6 +246,61 @@ check(RequirementsCore.refinementPrompt("REQ-042", title: "想法").contains("/a
 check(RequirementsCore.refinementPrompt("REQ-042", title: "想法").contains("不要修改代码"), "refinement prompt keeps the read-only rule")
 check(RequirementsCore.refinementPrompt("REQ-042", title: "想法").contains("@.dsh/requirements/REQ-042.md"), "refinement prompt references the card path")
 check(RequirementsCore.refinementPrompt("REQ-042", title: "想法").contains("等待用户进行「需求拆解」"), "refinement prompt waits for the human breakdown")
+
+// MARK: - confirmed table parsing (legacy tolerance)
+
+section("confirmed parsing")
+let legacyThreeCol = """
+## 拆解（agent 提案 / 人工确认）
+
+| 事项 | 边界 | 状态 |
+|---|---|---|
+| WS-001 架构模型修订 | 只改架构文档 + 索引 | 已交付（PR #78 merged） |
+| （候选）需求池面板设计 | 独立面板 | 未确认 |
+"""
+let legacyRows = RequirementsCore.parseConfirmed(legacyThreeCol)
+eq(legacyRows.count, 2, "3-column legacy table parses")
+eq(legacyRows[0].id, "WS-001", "legacy id split out of the 事项 cell")
+eq(legacyRows[0].title, "架构模型修订", "legacy title keeps only the text")
+eq(legacyRows[1].id, nil, "candidate row has no id")
+eq(legacyRows[1].title, "（候选）需求池面板设计", "candidate title kept whole")
+
+let legacyFourCol = """
+## 拆解（agent 提案 / 人工确认）
+| 事项 | 边界 | 状态 | 依赖 |
+|---|---|---|---|
+| WS-007 规划模板 | 只改设计文档 | 规划中 | — |
+| WS-008 门禁 | 只加 regression | 规划中 | WS-007 之后 |
+"""
+let fourRows = RequirementsCore.parseConfirmed(legacyFourCol)
+eq(fourRows.count, 2, "4-column legacy table parses")
+eq(fourRows[1].dependsOn, ["WS-007"], "prose deps extract the WS id")
+eq(RequirementsCore.parseConfirmed("## 诉求\n\n没有表。\n").count, 0, "no table -> empty")
+eq(RequirementsCore.parseConfirmed("").count, 0, "empty body -> empty")
+
+// MARK: - WorkstreamDisplay merge (REQ content + WS status)
+
+section("workstream merge")
+let mergeConfirmed = [ConfirmedItem(id: "WS-001", title: "甲", boundary: "边界甲", dependsOn: []),
+                      ConfirmedItem(id: "WS-999", title: "缺失", boundary: "", dependsOn: []),
+                      ConfirmedItem(id: nil, title: "候选", boundary: "候选边界", dependsOn: [])]
+let mergeChildren = [WorkstreamSummary(id: "WS-001", title: "甲卡", requirement: "REQ-001", stage: "design", outcome: nil, path: "/ws/1"),
+                     WorkstreamSummary(id: "WS-002", title: "表外", requirement: "REQ-001", stage: "delivery", outcome: "merged", path: "/ws/2")]
+let merged = WorkstreamDisplay.merged(confirmed: mergeConfirmed, children: mergeChildren)
+eq(merged.count, 4, "confirmed rows lead, unmatched WS children appended")
+eq(merged[0].id, "WS-001", "first row id")
+eq(merged[0].stage, "design", "status joined from the WS card")
+eq(merged[0].boundary, "边界甲", "boundary from REQ")
+eq(merged[0].missingCard, false, "matched row is not missing")
+eq(merged[1].missingCard, true, "confirmed id without a WS card is flagged")
+eq(merged[2].id, nil, "candidate row keeps no id")
+eq(merged[2].stage, nil, "candidate row has no status")
+eq(merged[3].id, "WS-002", "WS child absent from the table appended")
+eq(merged[3].notInPlan, true, "tableless WS child is flagged")
+
+let fallback = WorkstreamDisplay.merged(confirmed: [], children: mergeChildren)
+eq(fallback.count, 2, "empty table falls back to all children")
+eq(fallback.allSatisfy { !$0.notInPlan && !$0.missingCard }, true, "fallback carries no flags")
 
 // MARK: - composer + help view models (RequirementsUI.swift)
 

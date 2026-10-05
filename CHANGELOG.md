@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **需求池：拆解确认清单标准化 + 事项卡合并展示（2026-10-05）**：REQ 卡确认拆解后，`## 拆解` 表由 `confirm` 按标准列生成 **`标识 | 事项 | 边界 | 依赖`**（`依赖` 写 WS 标识而非标题）；**状态不落 REQ**（T1，派生字段不落盘），阶段 / 结果一律由面板按 WS 卡实时读取。面板「已拆解事项」改为渲染 **REQ 内容 × WS 状态** 的合并行（`WorkstreamDisplay`）：展开显示每行的 `边界 / 依赖`，阶段徽标**本地化**（规划/设计/任务/验收/交付），并对分歧显式标注（`WS 卡缺失` / `REQ 表未记录`）；解析按列名识别，兼容旧卡 3/4 列与无 ID 的候选行。`GET /api/requirements/list` 每个需求新增 `confirmed`。设计见 `docs/design/panels/requirements-breakdown-standard-design.md`。模型测试 **122 → 150**、API **51 → 55**。
+
 - **修复：确认拆解后 REQ 卡未关联 `workstreams`（2026-10-04）**：`confirm` 以前只建 `WS-*.md` + 映射表，没把 `workstreams: [WS-…]` 写回 REQ frontmatter；现在确认时**合并已有列表并写回**（新建需求也预置 `workstreams: []`）。面板列表本就走 WS 的 `requirement:` 反向聚合，所以界面看不出问题，但卡片自身缺字段。模型测试 **121 → 122**。
 
 - **REQ / WS 编号改为 6 位（2026-10-04）**：`nextId` 从 `%03d` 改为 `%06d`——新卡为 `REQ-000008` / `WS-000009`；`numericPart` 按数字解析与排序，旧的 3 位卡保持原样且能与 6 位混排、继续参与编号。设计「id 分配」说明与示例同步。模型测试 **120 → 121**。

@@ -213,6 +213,15 @@ let dict = RequirementsAPIResponse.item(item)
 eq(dict["effectiveState"] as? String, "split", "item effectiveState in JSON")
 eq((dict["children"] as? [[String: Any]])?.count, 1, "children array in JSON")
 eq((dict["proposal"] as? [[String: Any]])?.count, 1, "proposal array in JSON")
+eq(dict["confirmed"] == nil, true, "no confirmed rows -> key absent")
+
+let itemWithConfirmed = PoolItem(requirement: card, effectiveState: .split,
+                                 children: item.children, proposal: nil,
+                                 confirmed: [ConfirmedItem(id: "WS-001", title: "w", boundary: "b", dependsOn: ["WS-000009"])])
+let confirmedDict = RequirementsAPIResponse.item(itemWithConfirmed)
+eq((confirmedDict["confirmed"] as? [[String: Any]])?.count, 1, "confirmed array in JSON")
+eq((((confirmedDict["confirmed"] as? [[String: Any]])?.first)?["id"]) as? String, "WS-001", "confirmed id in JSON")
+eq((((confirmedDict["confirmed"] as? [[String: Any]])?.first)?["dependsOn"]) as? [String], ["WS-000009"], "confirmed deps in JSON")
 
 section("result")
 print("requirements api: " + String(checks - failures) + "/" + String(checks) + " passed")

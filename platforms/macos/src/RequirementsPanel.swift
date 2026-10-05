@@ -44,6 +44,19 @@ func requirementManualStateLabel(_ state: String) -> String {
     }
 }
 
+/// Localized label for a workstream stage (unknown values fall back to the raw
+/// stage so a future stage never renders as a missing key).
+func workstreamStageLabel(_ stage: String) -> String {
+    switch stage {
+    case "planning": return L10n.tr("requirements.stage.planning")
+    case "design": return L10n.tr("requirements.stage.design")
+    case "task": return L10n.tr("requirements.stage.task")
+    case "acceptance": return L10n.tr("requirements.stage.acceptance")
+    case "delivery": return L10n.tr("requirements.stage.delivery")
+    default: return stage
+    }
+}
+
 /// Panel background — the shared panel surface token (see PanelSurface.swift).
 final class RequirementsRootView: NSView {
     override var isOpaque: Bool { false }
@@ -202,9 +215,12 @@ final class RequirementCardView: NSView {
         // The requirement's OWN collapse hides its body; each nested card then
         // collapses ITSELF (a workstream / a proposal item)。
         if isExpanded {
-            if !item.children.isEmpty {
-                rows.append(sectionTitle(L10n.tr("requirements.childrenSection"), count: item.children.count))
-                for child in item.children { rows.append(workstreamCard(child)) }
+            // CONTENT from the REQ confirmed table, STATUS from the WS cards (design
+            // doc: requirements-breakdown-standard-design.md).
+            let displays = WorkstreamDisplay.merged(confirmed: item.confirmed, children: item.children)
+            if !displays.isEmpty {
+                rows.append(sectionTitle(L10n.tr("requirements.childrenSection"), count: displays.count))
+                for display in displays { rows.append(workstreamCard(display)) }
             }
             if let proposal = item.proposal, !proposal.isEmpty {
                 rows.append(proposalBlock(proposal))
@@ -234,35 +250,64 @@ final class RequirementCardView: NSView {
         return label
     }
 
-    /// One workstream as a RECESSED mini card that collapses ITSELF: collapsed shows
-    /// the header (id + title + stage + ↗), expanded adds 阶段 / 结果 / 路径.
-    private func workstreamCard(_ child: WorkstreamSummary) -> NSView {
+    /// One 已拆解事项 as a RECESSED mini card that collapses ITSELF: the header
+    /// carries the REQ 标识/标题 + the WS stage badge (+ divergence badges + ↗);
+    /// expanded adds 边界 / 依赖 (REQ) and 阶段 / 结果 / 路径 (WS).
+    private func workstreamCard(_ display: WorkstreamDisplay) -> NSView {
         let glyph = taskRowGlyph("doc.text", accessibility: "requirements.glyph.workstream")
-        let id = NSTextField(labelWithString: child.id)
-        id.font = .systemFont(ofSize: 12, weight: .semibold)
-        let name = NSTextField(labelWithString: child.title)
+        var titleViews: [NSView] = [glyph]
+        if let id = display.id {
+            let idLabel = NSTextField(labelWithString: id)
+            idLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+            titleViews.append(idLabel)
+        }
+        let name = NSTextField(labelWithString: display.title)
         name.font = .systemFont(ofSize: 12)
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let stageBadge = TaskBadgeView(text: child.stage, tone: .neutral)
+        titleViews.append(name)
         let spacer = NSView()
         spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
-        let open = CustomIconButton(glyph: .symbol("arrow.up.forward.app"),
-                                    tooltip: L10n.tr("requirements.openWorkstream"), size: 22)
-        let path = child.path
-        open.onAction = { [weak self] in self?.onOpenWorkstream?(path) }
-        let row = NSStackView(views: [glyph, id, name, spacer, stageBadge, open])
+        titleViews.append(spacer)
+        if display.missingCard {
+            titleViews.append(TaskBadgeView(text: L10n.tr("requirements.missingCard"), tone: .warning))
+        }
+        if display.notInPlan {
+            titleViews.append(TaskBadgeView(text: L10n.tr("requirements.notInPlan"), tone: .neutral))
+        }
+        if let stage = display.stage {
+            titleViews.append(TaskBadgeView(text: workstreamStageLabel(stage), tone: .neutral))
+        }
+        if let path = display.path {
+            let open = CustomIconButton(glyph: .symbol("arrow.up.forward.app"),
+                                        tooltip: L10n.tr("requirements.openWorkstream"), size: 22)
+            open.onAction = { [weak self] in self?.onOpenWorkstream?(path) }
+            titleViews.append(open)
+        }
+        let row = NSStackView(views: titleViews)
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 6
-        return RequirementNestedCardView(header: row, body: workstreamDetail(child),
+        return RequirementNestedCardView(header: row, body: workstreamDetail(display),
                                          recessed: true, collapsible: true)
     }
 
-    private func workstreamDetail(_ child: WorkstreamSummary) -> NSView {
-        let rows: [NSView] = [detailLine("requirements.detail.stage", child.stage),
-                              detailLine("requirements.detail.outcome", child.outcome ?? "—"),
-                              detailLine("requirements.detail.path", child.path)]
+    private func workstreamDetail(_ display: WorkstreamDisplay) -> NSView? {
+        var rows: [NSView] = []
+        if !display.boundary.isEmpty {
+            rows.append(detailLine("requirements.detail.boundary", display.boundary))
+        }
+        if !display.dependsOn.isEmpty {
+            rows.append(detailLine("requirements.detail.depends", display.dependsOn.joined(separator: "、")))
+        }
+        if let stage = display.stage {
+            rows.append(detailLine("requirements.detail.stage", workstreamStageLabel(stage)))
+            rows.append(detailLine("requirements.detail.outcome", display.outcome ?? "—"))
+        }
+        if let path = display.path {
+            rows.append(detailLine("requirements.detail.path", path))
+        }
+        guard !rows.isEmpty else { return nil }
         let column = NSStackView(views: rows)
         column.orientation = .vertical
         column.alignment = .leading

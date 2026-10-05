@@ -102,6 +102,16 @@ enum RequirementsAPIResponse {
         items.map { ["title": $0.title, "boundary": $0.boundary, "dependsOn": $0.dependsOn] }
     }
 
+    /// The confirmed breakdown rows (REQ-authoritative CONTENT). 状态 is absent on
+    /// purpose: clients read the live stage / outcome from the WS children.
+    static func confirmed(_ rows: [ConfirmedItem]) -> [[String: Any]] {
+        rows.map { row in
+            var out: [String: Any] = ["title": row.title, "boundary": row.boundary, "dependsOn": row.dependsOn]
+            if let id = row.id { out["id"] = id }
+            return out
+        }
+    }
+
     static func requirement(_ card: RequirementCard) -> [String: Any] {
         var out: [String: Any] = ["id": card.id, "title": card.title]
         if let state = card.state { out["state"] = state }
@@ -116,6 +126,7 @@ enum RequirementsAPIResponse {
         out["effectiveState"] = item.effectiveState.rawValue
         out["children"] = item.children.map(workstream)
         if let proposal = item.proposal { out["proposal"] = self.proposal(proposal) }
+        if !item.confirmed.isEmpty { out["confirmed"] = confirmed(item.confirmed) }
         return out
     }
 }

@@ -121,13 +121,28 @@ struct BreakdownItem: Equatable {
     var dependsOn: [String]
 }
 
-/// A requirement as the panel renders it: card + derived state + children + proposal.
+/// One row of the CONFIRMED breakdown list in the requirement's 拆解 section.
+/// This is the REQ-authoritative CONTENT (id / title / boundary / deps). 状态 is
+/// deliberately NOT stored here: stage / outcome always come from the WS card.
+struct ConfirmedItem: Equatable {
+    /// 标识: the workstream id, or nil for a candidate row that has no card.
+    var id: String?
+    var title: String
+    var boundary: String
+    /// 依赖: workstream ids (raw text preserved when it holds no WS id).
+    var dependsOn: [String]
+}
+
+/// A requirement as the panel renders it: card + derived state + children + proposal
+/// + the confirmed breakdown list read from the card body.
 struct PoolItem: Equatable {
     var requirement: RequirementCard
     var effectiveState: ReqEffectiveState
     var children: [WorkstreamSummary]
     /// Pending (unconfirmed) breakdown proposal; nil = none.
     var proposal: [BreakdownItem]?
+    /// Confirmed breakdown rows (拆解 table); empty when not broken down yet.
+    var confirmed: [ConfirmedItem] = []
 }
 
 /// Everything a panel render / API list needs at once.
@@ -383,7 +398,8 @@ enum RequirementsCore {
             items.append(PoolItem(requirement: card,
                                   effectiveState: effectiveState(state: card.state, children: children),
                                   children: children,
-                                  proposal: parseProposal(card.body)))
+                                  proposal: parseProposal(card.body),
+                                  confirmed: parseConfirmed(card.body)))
         }
 
         return PoolSnapshot(workspace: workspace,
@@ -444,15 +460,124 @@ enum RequirementsCore {
         return breakdownHeading + "（agent 提案 / 人工确认）\n\n" + "```json proposal\n" + json + "\n```\n"
     }
 
+    /// The standard confirmed table: 标识 | 事项 | 边界 | 依赖.
+    /// 状态 is intentionally absent (the panel joins it live from the WS card);
+    /// 依赖 is written as WS ids when the proposal's dependency titles map onto the
+    /// created workstreams. See docs/design/panels/requirements-breakdown-standard-design.md.
     static func confirmedSection(items: [BreakdownItem], ids: [String], today: String) -> String {
-        var out = breakdownHeading + "（agent 提案 / 人工确认）\n\n| 事项 | 边界 | 依赖 |\n|---|---|---|\n"
+        var idByTitle: [String: String] = [:]
+        for (i, item) in items.enumerated() where i < ids.count { idByTitle[item.title] = ids[i] }
+        var out = breakdownHeading + "（agent 提案 / 人工确认）\n\n"
+            + "| 标识 | 事项 | 边界 | 依赖 |\n"
+            + "|---|---|---|---|\n"
         for (i, item) in items.enumerated() {
-            let id = i < ids.count ? ids[i] : ""
-            let deps = item.dependsOn.isEmpty ? "—" : item.dependsOn.joined(separator: "、")
+            let id = i < ids.count ? ids[i] : "—"
+            let deps = item.dependsOn.isEmpty
+                ? "—"
+                : item.dependsOn.map { idByTitle[$0] ?? $0 }.joined(separator: "、")
             let boundary = item.boundary.replacingOccurrences(of: "|", with: "/")
-            out += "| " + id + " " + item.title + " | " + boundary + " | " + deps + " |\n"
+            let title = item.title.replacingOccurrences(of: "|", with: "/")
+            out += "| " + id + " | " + title + " | " + boundary + " | " + deps + " |\n"
         }
         out += "\n确认记录（" + today + "）：人确认拆解，生成 " + ids.joined(separator: "、") + "。\n"
+        return out
+    }
+
+    /// Parse the CONFIRMED breakdown table out of a requirement body's 拆解 section.
+    /// Column names drive the mapping, so legacy hand-written tables (3/4 columns,
+    /// an extra 状态, candidate rows, prose deps) still parse. Any 状态 column is
+    /// ignored on purpose. Returns [] when there is no table (e.g. a pending proposal).
+    static func parseConfirmed(_ body: String) -> [ConfirmedItem] {
+        guard let section = sectionText(body, heading: breakdownHeading) else { return [] }
+        let lines = section.components(separatedBy: "\n")
+        guard let headerIndex = lines.firstIndex(where: { line in
+            tableCells(line).contains { normalizeColumn($0) == "title" }
+        }) else { return [] }
+        let header = tableCells(lines[headerIndex])
+        var out: [ConfirmedItem] = []
+        for line in lines.dropFirst(headerIndex + 1) {
+            let cells = tableCells(line)
+            guard !cells.isEmpty else { continue }
+            if cells.allSatisfy({ isSeparatorCell($0) }) { continue }
+            var row: [String: String] = [:]
+            for (i, name) in header.enumerated() {
+                let key = normalizeColumn(name)
+                if row[key] != nil { continue }
+                row[key] = i < cells.count ? cleanCell(cells[i]) : ""
+            }
+            let rawTitle = row["title"] ?? ""
+            var id = (row["id"] ?? "").nilIfEmpty
+            var title = rawTitle
+            if id == nil, let found = workstreamIds(in: rawTitle).first {
+                id = found
+                if let range = rawTitle.range(of: found) {
+                    title = String(rawTitle[range.upperBound...])
+                        .trimmingCharacters(in: CharacterSet(charactersIn: " ：:—-"))
+                }
+            }
+            let boundary = row["boundary"] ?? ""
+            if id == nil && title.isEmpty && boundary.isEmpty { continue }
+            if title.isEmpty { title = id ?? "" }
+            out.append(ConfirmedItem(id: id,
+                                     title: title,
+                                     boundary: boundary,
+                                     dependsOn: workstreamIds(in: row["depends"] ?? "")))
+        }
+        return out
+    }
+
+    /// Split a markdown table row into trimmed cells; a line without a pipe
+    /// (prose / fence) yields an empty array.
+    static func tableCells(_ line: String) -> [String] {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.contains("|") else { return [] }
+        var body = trimmed
+        if body.hasPrefix("|") { body.removeFirst() }
+        if body.hasSuffix("|") { body.removeLast() }
+        return body.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    static func normalizeColumn(_ raw: String) -> String {
+        switch raw.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "标识", "id", "编号": return "id"
+        case "事项", "title", "标题": return "title"
+        case "边界", "boundary", "范围": return "boundary"
+        case "依赖", "依赖顺序", "depends", "depends on", "dependency": return "depends"
+        default: return raw.trimmingCharacters(in: .whitespaces).lowercased()
+        }
+    }
+
+    static func isSeparatorCell(_ cell: String) -> Bool {
+        let dashes = cell.filter { $0 == "-" }.count
+        return dashes >= 2 && cell.allSatisfy { $0 == "-" || $0 == ":" || $0 == " " }
+    }
+
+    static func cleanCell(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        if trimmed == "—" || trimmed == "–" || trimmed == "-" { return "" }
+        return trimmed
+    }
+
+    /// Every WS-<digits> token in a string, in order (no regex).
+    static func workstreamIds(in text: String) -> [String] {
+        let chars = Array(text)
+        var out: [String] = []
+        var i = 0
+        while i + 2 < chars.count {
+            if (chars[i] == "W" || chars[i] == "w"),
+               (chars[i + 1] == "S" || chars[i + 1] == "s"),
+               chars[i + 2] == "-" {
+                var j = i + 3
+                var digits = ""
+                while j < chars.count, chars[j].isNumber { digits.append(chars[j]); j += 1 }
+                if !digits.isEmpty {
+                    out.append("WS-" + digits)
+                    i = j
+                    continue
+                }
+            }
+            i += 1
+        }
         return out
     }
 
