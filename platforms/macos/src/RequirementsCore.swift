@@ -365,6 +365,25 @@ enum RequirementsCore {
         }
     }
 
+    /// The DERIVED half of the state, shown as its own badge next to the manual one:
+    /// `split` when the requirement owns open workstreams, `closed` when all of them
+    /// are terminal, nil when there is no breakdown (then the manual state is all there
+    /// is to show). This is deliberately separate from the manual state — a broken-down
+    /// requirement can still carry a manual judgement (e.g. suspended + split).
+    static func derivedState(children: [WorkstreamSummary]) -> ReqEffectiveState? {
+        if children.isEmpty { return nil }
+        return children.allSatisfy({ isTerminal($0) }) ? .closed : .split
+    }
+
+    /// The manual states the menu offers from the current one: the current state is
+    /// hidden (no self-switch) and `discarded` is a one-way door (once discarded there
+    /// are no options). Order follows `manualStates`, with discarded last.
+    static func allowedStates(from state: String?) -> [String] {
+        let current = state ?? "candidate"
+        guard current != "discarded" else { return [] }
+        return manualStates.filter { $0 != current && $0 != "discarded" } + ["discarded"]
+    }
+
     static func load(workspace: String, fileManager: FileManager = .default) -> PoolSnapshot {
         let workspace = workspace.trimmed
         guard !workspace.isEmpty, isDirectory(workspace, fileManager) else {

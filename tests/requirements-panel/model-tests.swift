@@ -120,6 +120,16 @@ eq(RequirementsCore.effectiveState(state: nil, children: [closedChild, abandoned
 eq(RequirementsCore.effectiveState(state: "discarded", children: [closedChild]), .discarded, "discarded wins over closed")
 eq(RequirementsCore.effectiveState(state: nil, children: []), .candidate, "empty children never closed")
 
+// Manual vs derived state, and the menu's reachable set.
+eq(RequirementsCore.derivedState(children: []), nil, "no children -> nil derived state")
+eq(RequirementsCore.derivedState(children: [openChild]), .split, "open child -> derived split")
+eq(RequirementsCore.derivedState(children: [closedChild]), .closed, "all terminal -> derived closed")
+eq(RequirementsCore.allowedStates(from: nil), ["evaluating", "suspended", "discarded"], "candidate offers the other manual states")
+eq(RequirementsCore.allowedStates(from: "evaluating"), ["candidate", "suspended", "discarded"], "evaluating offers the others")
+eq(RequirementsCore.allowedStates(from: "suspended"), ["candidate", "evaluating", "discarded"], "suspended offers the others")
+eq(RequirementsCore.allowedStates(from: "discarded"), [], "discarded is terminal (no options)")
+check(!RequirementsCore.allowedStates(from: "candidate").contains("candidate"), "current state is hidden")
+
 // MARK: - load()
 
 section("load")

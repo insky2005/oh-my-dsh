@@ -124,6 +124,9 @@ enum RequirementsAPIResponse {
     static func item(_ item: PoolItem) -> [String: Any] {
         var out = requirement(item.requirement)
         out["effectiveState"] = item.effectiveState.rawValue
+        if let derived = RequirementsCore.derivedState(children: item.children) {
+            out["derivedState"] = derived.rawValue
+        }
         out["children"] = item.children.map(workstream)
         if let proposal = item.proposal { out["proposal"] = self.proposal(proposal) }
         if !item.confirmed.isEmpty { out["confirmed"] = confirmed(item.confirmed) }

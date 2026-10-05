@@ -119,8 +119,10 @@ final class RequirementCardView: NSView {
     // MARK: - Layout
 
     private func build() {
-        let state = item.effectiveState
-        let tone = requirementTone(state)
+        let effectiveTone = requirementTone(item.effectiveState)
+        let manualState = item.requirement.state ?? "candidate"
+        let manualTone = requirementTone(ReqEffectiveState(rawValue: manualState) ?? .candidate)
+        let derived = RequirementsCore.derivedState(children: item.children)
 
         // Row 1 — disclosure / kind glyph / title / badges / actions. The state
         // badge sits last before the actions (tasks grammar), never on the border.
@@ -133,19 +135,28 @@ final class RequirementCardView: NSView {
 
         let title = NSTextField(labelWithString: item.requirement.id + "  " + item.requirement.title)
         title.font = .systemFont(ofSize: 13, weight: .semibold)
-        title.textColor = TaskBadgeView.bodyColor(tone)
+        title.textColor = TaskBadgeView.bodyColor(effectiveTone)
         title.lineBreakMode = .byTruncatingTail
         title.toolTip = item.requirement.title
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let kindBadge = TaskBadgeView(text: L10n.tr("requirements.kind"), tone: .neutral)
-        let stateBadge = TaskBadgeView(text: requirementStateLabel(state), tone: tone,
-                                       filled: state == .evaluating)
-        // The badge IS the drop-down: clicking it opens the manual-state menu.
-        let stateControl = RequirementStateControl(badge: stateBadge,
-                                                   tint: state == .evaluating ? .white : TaskBadgeView.color(tone))
-        stateControl.toolTip = L10n.tr("requirements.set.state") + "：" + requirementManualStateLabel(item.requirement.state ?? "candidate")
+        // Manual state and derived state are shown as SEPARATE badges: the manual one
+        // is the drop-down control (its menu only offers reachable states), the derived
+        // one is read-only (split / closed, derived from the children).
+        let manualBadge = TaskBadgeView(text: requirementManualStateLabel(manualState), tone: manualTone,
+                                        filled: manualState == "evaluating")
+        let stateControl = RequirementStateControl(badge: manualBadge,
+                                                   tint: manualState == "evaluating" ? .white : TaskBadgeView.color(manualTone),
+                                                   interactive: !RequirementsCore.allowedStates(from: manualState).isEmpty)
+        stateControl.toolTip = L10n.tr("requirements.set.state") + "：" + requirementManualStateLabel(manualState)
         stateControl.onShowMenu = { [weak self] in self?.showStateMenu(from: stateControl) }
+        var derivedBadge: TaskBadgeView?
+        if let derived = derived {
+            let badge = TaskBadgeView(text: requirementStateLabel(derived), tone: requirementTone(derived))
+            badge.toolTip = L10n.tr("requirements.derivedState")
+            derivedBadge = badge
+        }
 
         let breakdownButton = NSButton(title: L10n.tr("requirements.breakdown"), target: self, action: #selector(breakdownTapped(_:)))
         breakdownButton.bezelStyle = .rounded
@@ -175,7 +186,9 @@ final class RequirementCardView: NSView {
         if !item.children.isEmpty {
             titleViews.append(TaskBadgeView(text: L10n.tr("requirements.children", item.children.count), tone: .neutral))
         }
-        titleViews.append(contentsOf: [spacer, stateControl])
+        titleViews.append(spacer)
+        if let derivedBadge = derivedBadge { titleViews.append(derivedBadge) }
+        titleViews.append(stateControl)
         if showsBreakdown { titleViews.append(breakdownButton) }
         if showsEdit { titleViews.append(editButton) }
         let titleRow = NSStackView(views: titleViews)
@@ -399,8 +412,10 @@ final class RequirementCardView: NSView {
     // MARK: - Actions
 
     @objc private func showStateMenu(from view: NSView) {
+        let options = RequirementsCore.allowedStates(from: item.requirement.state)
+        guard !options.isEmpty else { return }
         let menu = NSMenu()
-        for state in RequirementsCore.manualStates {
+        for state in options {
             let entry = NSMenuItem(title: requirementManualStateLabel(state),
                                    action: #selector(statePicked(_:)), keyEquivalent: "")
             entry.target = self
@@ -429,9 +444,13 @@ final class RequirementStateControl: NSView {
     var onShowMenu: (() -> Void)?
     private let badge: TaskBadgeView
     private let chevron = NSImageView()
+    /// When false (no reachable manual states, e.g. discarded) the pill is read-only:
+    /// no chevron, no click claiming — the header gets the click to toggle instead.
+    private let interactive: Bool
 
-    init(badge: TaskBadgeView, tint: NSColor) {
+    init(badge: TaskBadgeView, tint: NSColor, interactive: Bool = true) {
         self.badge = badge
+        self.interactive = interactive
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
@@ -440,18 +459,24 @@ final class RequirementStateControl: NSView {
         chevron.translatesAutoresizingMaskIntoConstraints = false
         badge.translatesAutoresizingMaskIntoConstraints = false
         addSubview(badge)
-        addSubview(chevron)
         NSLayoutConstraint.activate([
             badge.leadingAnchor.constraint(equalTo: leadingAnchor),
             badge.centerYAnchor.constraint(equalTo: centerYAnchor),
-            chevron.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 3),
-            chevron.trailingAnchor.constraint(equalTo: trailingAnchor),
-            chevron.centerYAnchor.constraint(equalTo: centerYAnchor),
-            chevron.widthAnchor.constraint(equalToConstant: 8),
-            chevron.heightAnchor.constraint(equalToConstant: 8),
             topAnchor.constraint(equalTo: badge.topAnchor),
             bottomAnchor.constraint(equalTo: badge.bottomAnchor),
         ])
+        if interactive {
+            addSubview(chevron)
+            NSLayoutConstraint.activate([
+                chevron.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 3),
+                chevron.trailingAnchor.constraint(equalTo: trailingAnchor),
+                chevron.centerYAnchor.constraint(equalTo: centerYAnchor),
+                chevron.widthAnchor.constraint(equalToConstant: 8),
+                chevron.heightAnchor.constraint(equalToConstant: 8),
+            ])
+        } else {
+            badge.trailingAnchor.constraint(equalTo: trailingAnchor).isActive = true
+        }
         toolTip = L10n.tr("requirements.set.state")
     }
 
@@ -461,18 +486,19 @@ final class RequirementStateControl: NSView {
 
     override var intrinsicContentSize: NSSize {
         let size = badge.intrinsicContentSize
-        return NSSize(width: size.width + 3 + 8, height: size.height)
+        return NSSize(width: size.width + (interactive ? 3 + 8 : 0), height: size.height)
     }
 
     /// Claim the click anywhere on the pill (+ its chevron).
     override func hitTest(_ point: NSPoint) -> NSView? {
+        guard interactive else { return nil }
         let local = superview.map { convert(point, from: $0) } ?? point
         return bounds.contains(local) ? self : nil
     }
 
     override func mouseDown(with event: NSEvent) { onShowMenu?() }
 
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    override func resetCursorRects() { if interactive { addCursorRect(bounds, cursor: .pointingHand) } }
 }
 
 /// The requirement's header row — the lane-header equivalent. Clicking ANYWHERE in

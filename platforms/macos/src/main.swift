@@ -955,6 +955,7 @@ enum L10n {
         "requirements.state.split": ("已拆分", "Split"),
         "requirements.state.closed": ("已关闭", "Closed"),
         "requirements.set.state": ("状态", "State"),
+        "requirements.derivedState": ("派生状态", "Derived state"),
         "requirements.breakdown": ("拆解", "Break down"),
         "requirements.breakdownPromptCopied": ("已复制拆解提示词；在会话里运行 /requirement-pool 拆解 %@", "Breakdown prompt copied; run /requirement-pool breakdown %@ in a session"),
         "requirements.breakdownSent": ("已把拆解提示词发送到对话", "Breakdown prompt sent to the conversation"),

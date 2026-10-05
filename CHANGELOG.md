@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **需求池：人工状态与派生状态分开显示，菜单按当前状态收敛（2026-10-05）**：卡片标题行现在是**两个徽标**——人工状态（可点下拉，`candidate` / `evaluating` / `suspended` / `discarded`）+ 派生状态（`split` / `closed`，只读，来自子事项）；两者互不覆盖，已拆解需求也能显式看到人工判断。状态菜单只列**可达**目标：隐藏当前状态，`discarded` 设为**单向门**（丢弃后菜单无可选项、徽标只读）。`GET /api/requirements/list` 新增 `derivedState`。模型测试 **153 → 161**、API **56 → 58**。
+
 - **需求池：事项卡折叠态显示依赖徽标（2026-10-05）**：事项依赖原先只在展开后可见；现在折叠头部就有 `[依赖 N]` 徽标（tooltip 列出 WS 标识），与提案项卡的语法一致。依赖取自 REQ 确认表的 `依赖` 列，旧卡多数没有该列（开发版里仅 REQ-004 的 WS-008 有）。
 
 - **需求池：已拆解需求冻结，不可再编辑（2026-10-05）**：一个需求一旦拆出事项（`WS.requirement` 指回它），**面板隐藏「编辑」**，模型层 `updateRequirement` 直接抛 `breakdownLocked`（API `POST /api/requirements/update` → 409 `breakdown-locked`）——避免改了需求、确认过的拆解却对不上（对齐设计「已确认的映射表不追溯修改 / 重开另起需求」，R5）。仅有**待确认提案**时仍可编辑。模型测试 **150 → 153**、API **55 → 56**。
