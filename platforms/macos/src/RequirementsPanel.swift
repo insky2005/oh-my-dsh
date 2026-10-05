@@ -148,8 +148,10 @@ final class RequirementCardView: NSView {
         // one is read-only (split / closed, derived from the children).
         let manualBadge = TaskBadgeView(text: requirementManualStateLabel(manualState), tone: manualTone,
                                         filled: manualState == "evaluating")
+        // The chevron sits OUTSIDE the pill on the panel background, so it must be
+        // tone-coloured — white (the filled 评估中 badge's text colour) is invisible.
         let stateControl = RequirementStateControl(badge: manualBadge,
-                                                   tint: manualState == "evaluating" ? .white : TaskBadgeView.color(manualTone),
+                                                   tint: TaskBadgeView.color(manualTone),
                                                    interactive: !RequirementsCore.allowedStates(from: manualState, derived: derived).isEmpty)
         stateControl.toolTip = L10n.tr("requirements.set.state") + "：" + requirementManualStateLabel(manualState)
         stateControl.onShowMenu = { [weak self] in self?.showStateMenu(from: stateControl) }

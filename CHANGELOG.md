@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **需求池：状态生命周期改为单向前进 + 修复评估中下拉箭头不可见（2026-10-05）**：人工状态只能**前进**——`candidate → evaluating → evaluated`，`evaluated` 不能再切回 `evaluating`（`suspended` 作为旁路可继续前进，`discarded` 单向）。另修复状态徽标的下拉箭头：它画在药丸**外侧**的面板底色上，原来在 `evaluating`（filled 药丸）时被染成白色而看不见，现统一用 tone 色。模型测试 **170 → 171**。
+
 - **需求池：新增「已评估」状态 + 拆解自动推进（2026-10-05）**：人工生命周期补上 `evaluated`（已评估）一档：**提交拆解提案 `propose` 自动把 `candidate` 推进到 `evaluating`（评估中），确认拆解 `confirm` 自动推进到 `evaluated`（已评估）**（`reject` 不改）。于是确认后卡片显示 `[已评估] [已拆分]` 两个徽标。转换矩阵同步（无派生态时可切 `evaluating/evaluated/suspended/discarded`；`split` 仍隐藏 `candidate`；`closed`/`discarded` 无可选项）。模型测试 **167 → 170**。
 
 - **需求池：状态转换规则（派生状态作为前置，模型/API 强制）（2026-10-05）**：人工状态切换由**派生态门控**，并在模型/API 层强制（不再只是菜单过滤）：`split` 隐藏 `candidate`（拆解过即已评估）、`closed` 无人工可切目标（终态不回弹，重开另起，原则 15）、`discarded` 单向；非法转换抛 `invalidTransition`（API → 409 `invalid-transition`），同状态为幂等 no-op。设计新增 §3.3.1 转换矩阵。模型测试 **161 → 167**、API **58 → 59**。

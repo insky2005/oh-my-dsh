@@ -381,24 +381,26 @@ enum RequirementsCore {
         return children.allSatisfy({ isTerminal($0) }) ? .closed : .split
     }
 
-    /// The manual states reachable from the current one, with the DERIVED state as a
-    /// precondition (design §3.3.1):
+    /// The manual states reachable from the current one. The lifecycle is
+    /// FORWARD-ONLY (candidate → evaluating → evaluated) with suspended / discarded
+    /// as side paths, and the DERIVED state is a precondition (design §3.3.1):
     ///   * `discarded` is a one-way door → no options;
     ///   * derived `closed` (every workstream terminal) is a terminal too → no options
     ///     (reopen by opening a NEW requirement, 原则 15);
-    ///   * derived `split` (open workstreams) hides `candidate` — a broken-down
-    ///     requirement has already been judged, so it is never a candidate again:
-    ///     it can be evaluating / suspended / discarded;
-    ///   * no breakdown (nil) keeps the full set.
-    /// The current state is always hidden (no self-switch); order follows `manualStates`,
-    /// with discarded last.
+    ///   * derived `split` (open workstreams) never offers `candidate`.
     static func allowedStates(from state: String?, derived: ReqEffectiveState?) -> [String] {
         let current = state ?? "candidate"
         if current == "discarded" { return [] }
         if derived == .closed { return [] }
-        var options = manualStates.filter { $0 != current && $0 != "discarded" }
+        var options: [String]
+        switch current {
+        case "candidate": options = ["evaluating", "suspended", "discarded"]
+        case "evaluating": options = ["evaluated", "suspended", "discarded"]
+        case "evaluated": options = ["suspended", "discarded"]
+        case "suspended": options = ["evaluating", "evaluated", "discarded"]
+        default: options = ["evaluating", "evaluated", "suspended", "discarded"]
+        }
         if derived == .split { options.removeAll { $0 == "candidate" } }
-        options.append("discarded")
         return options
     }
 

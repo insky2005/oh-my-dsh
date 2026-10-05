@@ -124,12 +124,12 @@ eq(RequirementsCore.effectiveState(state: nil, children: []), .candidate, "empty
 eq(RequirementsCore.derivedState(children: []), nil, "no children -> nil derived state")
 eq(RequirementsCore.derivedState(children: [openChild]), .split, "open child -> derived split")
 eq(RequirementsCore.derivedState(children: [closedChild]), .closed, "all terminal -> derived closed")
-eq(RequirementsCore.allowedStates(from: nil, derived: nil), ["evaluating", "evaluated", "suspended", "discarded"], "no breakdown: candidate offers the other manual states")
-eq(RequirementsCore.allowedStates(from: "evaluating", derived: nil), ["candidate", "evaluated", "suspended", "discarded"], "no breakdown: evaluating offers the others")
-eq(RequirementsCore.allowedStates(from: "suspended", derived: nil), ["candidate", "evaluating", "evaluated", "discarded"], "no breakdown: suspended offers the others")
+eq(RequirementsCore.allowedStates(from: nil, derived: nil), ["evaluating", "suspended", "discarded"], "candidate moves forward to evaluating only")
+eq(RequirementsCore.allowedStates(from: "evaluating", derived: nil), ["evaluated", "suspended", "discarded"], "evaluating moves forward only (no candidate back)")
+eq(RequirementsCore.allowedStates(from: "evaluated", derived: nil), ["suspended", "discarded"], "evaluated cannot go back")
+eq(RequirementsCore.allowedStates(from: "suspended", derived: nil), ["evaluating", "evaluated", "discarded"], "suspended resumes forward")
 eq(RequirementsCore.allowedStates(from: "discarded", derived: nil), [], "discarded is terminal")
-eq(RequirementsCore.allowedStates(from: "evaluating", derived: .split), ["evaluated", "suspended", "discarded"], "split hides candidate (already judged)")
-eq(RequirementsCore.allowedStates(from: "candidate", derived: .split), ["evaluating", "evaluated", "suspended", "discarded"], "split from candidate still offers evaluating")
+eq(RequirementsCore.allowedStates(from: "candidate", derived: .split), ["evaluating", "suspended", "discarded"], "split never offers candidate")
 eq(RequirementsCore.allowedStates(from: "evaluating", derived: .closed), [], "closed is terminal (reopen = new requirement)")
 check(!RequirementsCore.allowedStates(from: "candidate", derived: nil).contains("candidate"), "current state is hidden")
 
@@ -254,11 +254,14 @@ section("state transitions")
 let wsTrans = tempWorkspace("transitions")
 let reqTrans = try! RequirementsCore.createRequirement(workspace: wsTrans, title: "状态", body: nil, source: nil, today: "2026-10-05")
 let reqTransId = reqTrans.id
-// No breakdown: the four manual states are mutually reachable.
+// Forward-only lifecycle: candidate -> evaluating -> evaluated.
 _ = try! RequirementsCore.setState(workspace: wsTrans, id: reqTransId, state: "evaluating", today: "2026-10-05")
+_ = try! RequirementsCore.setState(workspace: wsTrans, id: reqTransId, state: "evaluated", today: "2026-10-05")
+expectError("evaluated cannot go back to evaluating", .invalidTransition("evaluated", "evaluating")) {
+    _ = try RequirementsCore.setState(workspace: wsTrans, id: reqTransId, state: "evaluating", today: "2026-10-05")
+}
+// suspended resumes forward; discarded is a one-way door.
 _ = try! RequirementsCore.setState(workspace: wsTrans, id: reqTransId, state: "suspended", today: "2026-10-05")
-_ = try! RequirementsCore.setState(workspace: wsTrans, id: reqTransId, state: "candidate", today: "2026-10-05")
-// discarded is a one-way door.
 _ = try! RequirementsCore.setState(workspace: wsTrans, id: reqTransId, state: "discarded", today: "2026-10-05")
 expectError("discarded cannot be undone", .invalidTransition("discarded", "candidate")) {
     _ = try RequirementsCore.setState(workspace: wsTrans, id: reqTransId, state: "candidate", today: "2026-10-05")
@@ -271,8 +274,8 @@ let reqSplitId = reqSplit.id
 _ = try! RequirementsCore.propose(workspace: wsSplit, id: reqSplitId,
                                   items: [BreakdownItem(title: "A", boundary: "b", dependsOn: [])], today: "2026-10-05")
 _ = try! RequirementsCore.confirm(workspace: wsSplit, id: reqSplitId, today: "2026-10-05")
-_ = try! RequirementsCore.setState(workspace: wsSplit, id: reqSplitId, state: "evaluating", today: "2026-10-05")
-expectError("split cannot go back to candidate", .invalidTransition("evaluating", "candidate")) {
+_ = try! RequirementsCore.setState(workspace: wsSplit, id: reqSplitId, state: "suspended", today: "2026-10-05")
+expectError("split never offers candidate", .invalidTransition("suspended", "candidate")) {
     _ = try RequirementsCore.setState(workspace: wsSplit, id: reqSplitId, state: "candidate", today: "2026-10-05")
 }
 

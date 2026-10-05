@@ -131,14 +131,19 @@ static func reject(workspace:id:today:) throws -> RequirementCard
 - 确认拆解 `confirm`：`candidate` / `evaluating` → `evaluated`；
 - 驳回 `reject` 不改 `state`（仍在评估中）。
 
-**手动可达集**（`allowedStates`；隐藏当前态与 `discarded` 后追加 `discarded`）：
+**手动可达集**（`allowedStates`；生命周期**单向前进**，`suspended` / `discarded` 是旁路）：
 
-| 当前派生态 | 可切换的人工态 |
+| 当前 | 可切换的人工态 |
 |---|---|
-| 无（未拆解） | `evaluating` / `evaluated` / `suspended` / `discarded` |
-| `split`（有进行中事项） | `evaluating` / `evaluated` / `suspended` / `discarded`，但**不含 `candidate`**（拆解过即已评估） |
-| `closed`（全部事项终态） | **无**：终态不回弹，重开请另起需求（原则 15） |
-| 当前 `discarded` | **无**：单向门 |
+| `candidate` | `evaluating` / `suspended` / `discarded`（不能跳级到 `evaluated`） |
+| `evaluating` | `evaluated` / `suspended` / `discarded`（不能回退 `candidate`） |
+| `evaluated` | `suspended` / `discarded`（**不能回退**） |
+| `suspended` | `evaluating` / `evaluated` / `discarded`（继续前进） |
+| `discarded` | **无**：单向门 |
+| 派生 `closed` | **无**（优先于上表）：终态不回弹，重开请另起需求（原则 15） |
+| 派生 `split` | 在上表基础上**永不含 `candidate`** |
+
+- 当前态永远隐藏（无自切换）；
 
 - `setState` 先读当前 `state` + 子事项派生的 `derived`，目标不在可达集 → `throws PoolError.invalidTransition(from, to)`（API → 409 `invalid-transition`）；同状态是幂等 no-op；
 - 有效态 `discarded > closed > split > state` 只用于**展示 / API 汇总**，不写入卡片；`evaluated` 与派生 `split` 会同时出现（徽标 `[已评估] [已拆分]`）。
