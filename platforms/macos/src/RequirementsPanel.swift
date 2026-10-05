@@ -187,14 +187,16 @@ final class RequirementCardView: NSView {
             rows.append(metaLabel)
         }
 
-        if isExpanded, !item.children.isEmpty {
-            rows.append(sectionTitle(L10n.tr("requirements.childrenSection"), count: item.children.count))
-            for child in item.children { rows.append(workstreamCard(child)) }
-        }
-        // A pending proposal is ALWAYS visible (the gate matters): compact
-        // (标题 + 依赖) while the card is collapsed, full cards once expanded.
-        if let proposal = item.proposal, !proposal.isEmpty {
-            rows.append(proposalBlock(proposal, expanded: isExpanded))
+        // The requirement's OWN collapse hides its body; each nested card then
+        // collapses ITSELF (a workstream / a proposal item)。
+        if isExpanded {
+            if !item.children.isEmpty {
+                rows.append(sectionTitle(L10n.tr("requirements.childrenSection"), count: item.children.count))
+                for child in item.children { rows.append(workstreamCard(child)) }
+            }
+            if let proposal = item.proposal, !proposal.isEmpty {
+                rows.append(proposalBlock(proposal))
+            }
         }
 
         let column = NSStackView(views: rows)
@@ -220,7 +222,8 @@ final class RequirementCardView: NSView {
         return label
     }
 
-    /// One workstream as a RECESSED mini card (the queue lane's nested card).
+    /// One workstream as a RECESSED mini card that collapses ITSELF: collapsed shows
+    /// the header (id + title + stage + ↗), expanded adds 阶段 / 结果 / 路径.
     private func workstreamCard(_ child: WorkstreamSummary) -> NSView {
         let glyph = taskRowGlyph("doc.text", accessibility: "requirements.glyph.workstream")
         let id = NSTextField(labelWithString: child.id)
@@ -240,17 +243,35 @@ final class RequirementCardView: NSView {
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 6
-        let nested = RequirementNestedCardView(content: row, recessed: true)
-        // Like a task card: the whole nested card is clickable (here: open the file).
-        nested.onActivate = { [weak self] in self?.onOpenWorkstream?(path) }
-        return nested
+        return RequirementNestedCardView(header: row, body: workstreamDetail(child),
+                                         recessed: true, collapsible: true)
     }
 
-    /// The pending proposal + its human confirmation gate (R10): a RECESSED block
-    /// whose header carries the 确认 / 驳回 actions. Collapsed → one compact line per
-    /// item (标题 + 依赖); expanded → a RAISED mini card per item with 标题 and 内容
-    /// on separate lines.
-    private func proposalBlock(_ proposal: [BreakdownItem], expanded: Bool) -> NSView {
+    private func workstreamDetail(_ child: WorkstreamSummary) -> NSView {
+        let rows: [NSView] = [detailLine("requirements.detail.stage", child.stage),
+                              detailLine("requirements.detail.outcome", child.outcome ?? "—"),
+                              detailLine("requirements.detail.path", child.path)]
+        let column = NSStackView(views: rows)
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 2
+        for row in rows { row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
+        return column
+    }
+
+    private func detailLine(_ key: String, _ value: String) -> NSView {
+        let label = NSTextField(labelWithString: L10n.tr(key) + "：" + value)
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingMiddle
+        label.toolTip = value
+        return label
+    }
+
+    /// The pending proposal + its human confirmation gate (R10): a RECESSED container
+    /// whose header carries 确认 / 驳回, with one item card per proposed workstream.
+    /// Each item card collapses ITSELF (collapsed = 标题 + 依赖; expanded adds 内容).
+    private func proposalBlock(_ proposal: [BreakdownItem]) -> NSView {
         let glyph = taskRowGlyph("square.dashed", accessibility: "requirements.glyph.proposal")
         let header = NSTextField(labelWithString: L10n.tr("requirements.proposalSection"))
         header.font = .systemFont(ofSize: 12, weight: .semibold)
@@ -270,39 +291,17 @@ final class RequirementCardView: NSView {
         headerRow.alignment = .centerY
         headerRow.spacing = 6
 
-        var rows: [NSView] = [headerRow]
-        for entry in proposal {
-            rows.append(expanded ? proposalItemCard(entry) : proposalItemRow(entry))
-        }
-        let column = NSStackView(views: rows)
+        let items = proposal.map { proposalItemCard($0) }
+        let column = NSStackView(views: items)
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 6
-        for row in rows { row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
-        return RequirementNestedCardView(content: column, recessed: true)
+        for item in items { item.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
+        return RequirementNestedCardView(header: headerRow, body: column, recessed: true)
     }
 
-    /// Collapsed form: ONE line — 标题 + [依赖 N] (the 内容 stays hidden).
-    private func proposalItemRow(_ entry: BreakdownItem) -> NSView {
-        let glyph = taskRowGlyph("square.dashed", accessibility: "requirements.glyph.proposalItem")
-        let title = NSTextField(labelWithString: entry.title)
-        title.font = .systemFont(ofSize: 12, weight: .semibold)
-        title.lineBreakMode = .byTruncatingTail
-        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
-        var views: [NSView] = [glyph, title, spacer]
-        if !entry.dependsOn.isEmpty {
-            views.append(TaskBadgeView(text: L10n.tr("requirements.depends", entry.dependsOn.count), tone: .neutral))
-        }
-        let row = NSStackView(views: views)
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 6
-        return RequirementNestedCardView(content: row, recessed: false)
-    }
-
-    /// Expanded form: 标题 and 内容（边界）on separate lines.
+    /// One proposal item: a RAISED mini card that collapses itself — collapsed shows
+    /// 标题 + [依赖 N], expanded adds the 内容（边界）.
     private func proposalItemCard(_ entry: BreakdownItem) -> NSView {
         let glyph = taskRowGlyph("square.dashed", accessibility: "requirements.glyph.proposalItem")
         let title = NSTextField(labelWithString: entry.title)
@@ -320,19 +319,14 @@ final class RequirementCardView: NSView {
         titleRow.alignment = .centerY
         titleRow.spacing = 6
 
-        var rows: [NSView] = [titleRow]
+        var body: NSView? = nil
         if !entry.boundary.isEmpty {
             let boundary = NSTextField(wrappingLabelWithString: entry.boundary)
             boundary.font = .systemFont(ofSize: 11)
             boundary.textColor = .secondaryLabelColor
-            rows.append(boundary)
+            body = boundary
         }
-        let column = NSStackView(views: rows)
-        column.orientation = .vertical
-        column.alignment = .leading
-        column.spacing = 3
-        for row in rows { row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
-        return RequirementNestedCardView(content: column, recessed: false)
+        return RequirementNestedCardView(header: titleRow, body: body, recessed: false, collapsible: true)
     }
 
     // MARK: - Actions
@@ -404,50 +398,88 @@ final class RequirementHeaderView: NSView {
 /// ONE hairline, corner 8, content inset 8/7 — the task-card grammar.
 final class RequirementNestedCardView: NSView {
     private let recessed: Bool
-    /// When set, the whole nested card is clickable (a workstream opens its file).
-    var onActivate: (() -> Void)?
+    private let headerContent: NSView
+    private let bodyContent: NSView?
+    /// A collapsible card toggles its OWN body (the requirement card is not involved).
+    private let collapsible: Bool
+    private(set) var isExpanded: Bool
 
-    init(content: NSView, recessed: Bool) {
+    init(header: NSView, body: NSView?, recessed: Bool,
+         collapsible: Bool = false, startsExpanded: Bool = false) {
         self.recessed = recessed
+        self.headerContent = header
+        self.bodyContent = body
+        self.collapsible = collapsible && body != nil
+        self.isExpanded = startsExpanded
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        content.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(content)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            content.topAnchor.constraint(equalTo: topAnchor, constant: 7),
-            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
-        ])
+        build()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override var isOpaque: Bool { false }
 
-    /// Without an action the card is transparent to clicks; with one, the whole card
-    /// claims them (its own controls still win by hit-test order).
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let hit = super.hitTest(point) else { return nil }
-        if hit is NSButton || hit is CustomIconButton || hit is TaskBadgeView { return hit }
-        return onActivate == nil ? hit : self
+    func toggle() {
+        isExpanded.toggle()
+        build()
     }
 
-    override func mouseDown(with event: NSEvent) { onActivate?() }
+    private func build() {
+        for sub in subviews { sub.removeFromSuperview() }
+        // A collapsible card gets its own chevron + header-only click target.
+        let header: NSView
+        if collapsible {
+            let chevron = taskRowGlyph(isExpanded ? "chevron.down" : "chevron.right",
+                                       accessibility: isExpanded ? "requirements.collapse" : "requirements.expand")
+            let row = NSStackView(views: [chevron, headerContent])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 6
+            let clickable = RequirementHeaderView(content: row)
+            clickable.onToggle = { [weak self] in self?.toggle() }
+            header = clickable
+        } else {
+            header = headerContent
+        }
 
-    override func resetCursorRects() {
-        if onActivate != nil { addCursorRect(bounds, cursor: .pointingHand) }
+        let column = NSStackView()
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 6
+        column.translatesAutoresizingMaskIntoConstraints = false
+        column.addArrangedSubview(header)
+        header.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        if let body = bodyContent, !collapsible || isExpanded {
+            body.translatesAutoresizingMaskIntoConstraints = false
+            column.addArrangedSubview(body)
+            body.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        }
+        addSubview(column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
+        ])
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let dark = effectiveAppearanceBestMatch()
         TaskInk.fill(dark: dark, recessed: recessed).setFill()
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
         path.fill()
         TaskInk.hairline(dark: dark).setStroke()
         path.lineWidth = 1
         path.stroke()
+    }
+}
+
+private extension NSView {
+    /// Small helper so the card draw code reads the same as the tasks panel's.
+    func effectiveAppearanceBestMatch() -> Bool {
+        effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
 }
 
