@@ -1,7 +1,8 @@
 # AI 原生工作流 · 可复用规范（Spec）
 
-> 状态：草案 · 日期：2026-10-03 · 适用：任何采用「需求 → 拆解 → 事项」工作流的项目
+> 状态：草案 · 日期：2026-10-05 · 适用：任何采用「需求 → 拆解 → 事项」工作流的项目
 > 来源：从 oh-my-dsh 的实践中抽取的**通用部分**。本文件是**自包含规范**，不依赖任何具体项目的文档或文件；`oh-my-dsh` 是它的第一个 adopter。
+> 修订（2026-10-05）：配合 oh-my-dsh **需求池面板**落地，§9 增补该 App 能力，§3 人工判断状态补 `evaluated`。
 
 ## 0. 这份文档是什么
 
@@ -45,7 +46,7 @@
 
 **字段摘要**：
 
-- **REQ**：`id` / `title` / `source` / `created` / `updated`（必选）；`state`（**可选，仅人工判断**：candidate / evaluating / suspended / discarded）；`workstreams`（派生缓存）；
+- **REQ**：`id` / `title` / `source` / `created` / `updated`（必选）；`state`（**可选，仅人工判断**：candidate / evaluating / evaluated / suspended / discarded）；`workstreams`（派生缓存）；
 - **WS**：`id` / `title` / `stage` / `created` / `updated`（必选）；`requirement`（0..1）；`covered`（验收起必选，锚变更）；`regression`（0..1）；`queues`（0..N）；`delivery.pr` / `delivery.url`（交付阶段的事实）；
 - **REG**：`id` / `title` / `source` / `runs`（可执行检查）/ `created` / `updated`。
 
@@ -157,6 +158,7 @@ agent 需完成并自检：
 
 这是 **App 能力，不是本规范的一部分**——项目**配合 oh-my-dsh 使用**时才有：
 
+- **需求池面板 + `/requirement-pool` 技能**：想法收件箱 = 落 `REQ-*.md`（`state: candidate`）；需求池 = 按有效状态（`discarded > closed > split > state`）展示、人工改 `state`、丢弃；拆解器 = agent 经 API 提交 `1..N` **待确认提案**，**人在面板确认 / 驳回（可带原因）**后才生成 `WS-*.md`，留下需求 → 事项映射。`confirm` 只由面板（人）触发，agent 只 `propose`（R10）；需求从收件到确认拆解始终回到同一会话（运行时绑定只在本机，不进卡片）。面板只服务需求池，规划 / 设计 / 验收 / 交付仍走事项会话。
 - **任务面板 + `/task-todo` 技能**：任务拆分 = 建**等待态队列** + 批量入队（`.draft`，不启动）；实施 = 启动队列；交付 = 交付会话 push + PR；队列跑完回传会话。
 
 不用 App 时，任何等价机制（自有队列 / 脚本 / 其它工具）都可以。

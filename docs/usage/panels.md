@@ -74,7 +74,7 @@ AI 原生工作流的**前端三件**：想法收件箱、需求池、拆解器�
 - **拆解器**：「拆解」按钮带 `square.split.2x2` 图标，且**仅在尚未拆解时出现**（已有子事项 / 有待确认提案 / 已丢弃则隐藏）；点击后把交接提示词（含 `POST /api/requirements/breakdown/propose` 的调用）**直接发进对话**——优先**创建该需求的会话**（agent 落卡时带的 `$DSH_SESSION_ID`，记在 ignored 的 `.dsh/requirements/local.json`），没有才用当前会话；两者都没有 / 发送失败时回退复制（人工粘贴）；发到别的会话时会把该会话切到前台。由 agent 出「1 需求 → 1..N 事项」方案，以**待确认提案**显示在卡片上；
 - **人工确认门**：只有面板上的「确认拆解」会真正建 `WS-*.md`（`requirement` 指回需求、`stage: planning`）并留下需求 → 事项映射表；「驳回」会先弹**原因抽屉**（必填），提交后清掉提案并把**原因**带进写回该需求会话的提示词（让 agent 按原因改，而不是作废）。**确认 / 驳回的结果会回写到该需求的会话**（同一会话闭环）。agent 绝不调 `confirm`（R10）；
 - **使用说明**：右上角 `?` 始终可打开「需求池使用说明」抽屉（**创建需求 / 拆解事项** 两节，每节分「在面板」「在对话」两条操作）；**池为空时同一份说明直接铺在内容区**，不用先点帮助；
-- **已知限制**：`closed` 只读卡片里 `delivery.outcome` 的派生缓存、不联网；PR 状态的网络派生仍由 `node .dsh/tools/derive-status.mjs` 完成（见 [手动模式使用说明](ai-native-workflow-manual.md)）；
+- **已知限制**：`closed` 只读卡片里 `delivery.outcome` 的派生缓存、不联网；PR 状态的网络派生仍由 `node .dsh/tools/derive-status.mjs` 完成（见 [AI 原生工作流使用说明](ai-native-workflow-manual.md)）；
 - 设计与 API 契约：`docs/design/panels/requirements-pool-panel-design.md`；存储 schema：`docs/design/panels/requirements-workstream-store-design.md`。
 
 ## 任务面板（`⌥⌘J` / 活动栏「任务」图标）

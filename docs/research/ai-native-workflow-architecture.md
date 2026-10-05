@@ -425,7 +425,7 @@
 - `docs/design/panels/task-completion-verification-design.md` — 完成校验（「验收」阶段的前置）；
 - `docs/design/panels/multi-repo-workspace-design.md` — 多仓库工作区（「仓库级并行」的现状）；
 - `docs/design/panels/projects-panel-design.md` — 项目面板（**生命周期总览的候选宿主**）；
-- `docs/design/panels/requirements-pool-panel-design.md` — 需求池面板（**独立面板，尚未立项**；本文 §4.1 是其上游模型）。
+- `docs/design/panels/requirements-pool-panel-design.md` — 需求池面板（**已实现**，`⌥⌘I`，`feature/requirements-pool-panel`；本文 §4.1 是其上游模型）。
 
 **样板 / 本仓库自身的流程**（只作实例，不是本文主体）：
 
