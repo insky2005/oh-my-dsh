@@ -221,6 +221,12 @@ eq(confirmedRows[1].dependsOn, ["WS-000001"], "dependsOn mapped to the WS id")
 check(reqTextAfterConfirm.contains("| 标识 | 事项 | 边界 | 依赖 |"), "standard header written")
 check(!reqTextAfterConfirm.contains("| 状态 |"), "no status column persisted")
 
+// A broken-down requirement is frozen (edit is refused at the model layer).
+check(RequirementsCore.hasWorkstreams(workspace: ws3, id: req3Id), "confirmed requirement reports workstreams")
+expectError("update after breakdown -> breakdownLocked", .breakdownLocked(req3Id)) {
+    _ = try RequirementsCore.updateRequirement(workspace: ws3, id: req3Id, title: "改不动", body: "x", today: "2026-10-06")
+}
+
 // reject
 _ = try! RequirementsCore.propose(workspace: ws3, id: req3Id, items: items, today: "2026-10-04")
 let rejected = try! RequirementsCore.reject(workspace: ws3, id: req3Id, today: "2026-10-04")
@@ -366,6 +372,7 @@ let edited2 = try! RequirementsCore.updateRequirement(workspace: ws5, id: req5Id
 eq(edited2.state, "evaluating", "update: state untouched")
 eq(edited2.updated, "2026-10-06", "update: updated bumped again")
 eq(RequirementsCore.parseProposal(edited2.body)?.count, 1, "update: pending proposal untouched")
+check(!RequirementsCore.hasWorkstreams(workspace: ws5, id: req5Id), "proposal-only requirement is not locked")
 expectError("update: empty title refused", .missingTitle) {
     _ = try RequirementsCore.updateRequirement(workspace: ws5, id: req5Id, title: "  ", body: nil, today: "2026-10-06")
 }

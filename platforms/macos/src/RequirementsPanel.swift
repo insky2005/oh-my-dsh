@@ -163,6 +163,9 @@ final class RequirementCardView: NSView {
             && (item.proposal?.isEmpty ?? true)
             && item.effectiveState != .discarded
 
+        // A requirement that already owns workstreams is frozen: editing it would
+        // make the confirmed breakdown no longer match (open a new requirement).
+        let showsEdit = item.children.isEmpty
         let editButton = CustomIconButton(glyph: .symbol("pencil"), tooltip: L10n.tr("requirements.edit"), size: 22)
         editButton.onAction = { [weak self] in self?.onEdit?() }
 
@@ -174,7 +177,7 @@ final class RequirementCardView: NSView {
         }
         titleViews.append(contentsOf: [spacer, stateControl])
         if showsBreakdown { titleViews.append(breakdownButton) }
-        titleViews.append(editButton)
+        if showsEdit { titleViews.append(editButton) }
         let titleRow = NSStackView(views: titleViews)
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
@@ -1051,6 +1054,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
         case .noWorkspace: return L10n.tr("requirements.needsWorkspace")
         case .unknownRequirement: return L10n.tr("requirements.error.notFound")
         case .noProposal: return L10n.tr("requirements.error.noProposal")
+        case .breakdownLocked: return L10n.tr("requirements.error.breakdownLocked")
         case .unknownState: return L10n.tr("requirements.error.unknownState")
         default: return L10n.tr("requirements.error.generic", error.message)
         }

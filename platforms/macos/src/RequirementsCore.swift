@@ -29,6 +29,7 @@ enum PoolError: Error, Equatable {
     case unknownState(String)
     case missingTitle
     case noItems
+    case breakdownLocked(String)
     case writeFailed(String)
 
     /// The stable code the localhost API returns (design §4).
@@ -40,6 +41,7 @@ enum PoolError: Error, Equatable {
         case .unknownState: return "unknown-state"
         case .missingTitle: return "missing-title"
         case .noItems: return "no-items"
+        case .breakdownLocked: return "breakdown-locked"
         case .writeFailed: return "write-failed"
         }
     }
@@ -49,6 +51,7 @@ enum PoolError: Error, Equatable {
         switch self {
         case .unknownRequirement: return 404
         case .noProposal: return 409
+        case .breakdownLocked: return 409
         case .writeFailed: return 500
         default: return 400
         }
@@ -62,6 +65,7 @@ enum PoolError: Error, Equatable {
         case .unknownState(let s): return "unknown requirement state: " + s
         case .missingTitle: return "title is required"
         case .noItems: return "breakdown proposal needs at least one item"
+        case .breakdownLocked(let id): return "requirement already has workstreams, cannot edit: " + id
         case .writeFailed(let why): return "write failed: " + why
         }
     }
@@ -740,17 +744,35 @@ enum RequirementsCore {
         return card
     }
 
+    /// Whether any workstream card points back at this requirement. Once broken
+    /// down the requirement is frozen (design: 已确认的映射表不追溯修改 / 重开另起需求).
+    static func hasWorkstreams(workspace: String, id: String,
+                               fileManager: FileManager = .default) -> Bool {
+        for name in markdownFiles(workstreamsDir(workspace), prefix: "WS-", fileManager: fileManager) {
+            let path = (workstreamsDir(workspace) as NSString).appendingPathComponent(name)
+            guard let text = readText(path), let ws = workstream(from: text, path: path) else { continue }
+            if ws.requirement == id { return true }
+        }
+        return false
+    }
+
     /// Edit a card's title and (optionally) its 诉求. Only the frontmatter `title`
     /// and the `## 诉求` section change; state, breakdown and mapping stay.
+    /// A requirement that already owns workstreams is LOCKED: editing it would make
+    /// the confirmed breakdown no longer match the requirement (open a new one instead).
     static func updateRequirement(workspace: String,
                                   id: String,
                                   title: String,
                                   body: String?,
-                                  today: String) throws -> RequirementCard {
+                                  today: String,
+                                  fileManager: FileManager = .default) throws -> RequirementCard {
         let trimmedTitle = title.trimmed
         guard !trimmedTitle.isEmpty else { throw PoolError.missingTitle }
         let path = requirementPath(workspace, id: id)
         guard let text = readText(path) else { throw PoolError.unknownRequirement(id) }
+        guard !hasWorkstreams(workspace: workspace, id: id, fileManager: fileManager) else {
+            throw PoolError.breakdownLocked(id)
+        }
         let (_, oldBody) = parseCard(text)
         var newBody = oldBody
         if let statement = body?.trimmed, !statement.isEmpty {

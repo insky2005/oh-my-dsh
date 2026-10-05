@@ -203,6 +203,8 @@ fake.stateResult = ["ok": false, "error": "unknown-requirement"]
 eq(RequirementsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/requirements/state", json: ["id": "REQ-9", "state": "candidate"]), delegate: fake)?.status, 404, "unknown-requirement -> 404")
 fake.createResult = ["ok": false, "error": "no-workspace"]
 eq(RequirementsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/requirements/create", json: ["title": "x"]), delegate: fake)?.status, 400, "no-workspace -> 400")
+fake.updateResult = ["ok": false, "error": "breakdown-locked"]
+eq(RequirementsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/requirements/update", json: ["id": "REQ-001", "title": "x"]), delegate: fake)?.status, 409, "breakdown-locked -> 409")
 
 section("response shapes")
 let card = RequirementCard(id: "REQ-001", title: "t", state: "evaluating", source: "s", created: "2026-10-03", updated: "2026-10-04", path: "", body: "")

@@ -249,7 +249,7 @@ updated: <today>
 - **标题行**：折叠箭头 → 类型 glyph（`tray.full`，tertiary 13×13）→ 标题 13pt semibold（颜色取 `TaskBadgeView.bodyColor(tone)`）→ `[需求]` 中性徽标 → `[N 个事项]` 中性计数徽标（有子事项时）→ spacer → **有效状态徽标**（`evaluating` 用 filled accent）→ 动作。
   - 状态**只在徽标里**，不染边框；唯一的强调是"活动态"（running）。
 - **状态徽标即下拉**：**状态徽标本身可点**——`RequirementStateControl` = `TaskBadgeView` 药丸 + 尾部 **`chevron.down` 指示符号**（hover 手型，tooltip 显示当前人工状态），点击弹出人工状态菜单（候选 / 评估中 / 挂起 / 丢弃）；**不再有单独的 `circle.dashed` 状态按钮**。
-- **动作**（右对齐）：`拆解`（文本按钮 + **`square.split.2x2` 图标**，主操作；**仅在尚未拆解时出现**——无子事项、无待确认提案、且非 `discarded`，否则隐藏）、`编辑`（`pencil` 图标）。次要动作用 `CustomIconButton(size: 22)`（hover 走 `PanelControl` highlight 档）。
+- **动作**（右对齐）：`拆解`（文本按钮 + **`square.split.2x2` 图标**，主操作；**仅在尚未拆解时出现**——无子事项、无待确认提案、且非 `discarded`，否则隐藏）、`编辑`（`pencil` 图标；**已拆解事项后隐藏**——需求被冻结）。次要动作用 `CustomIconButton(size: 22)`（hover 走 `PanelControl` highlight 档）。
 - **诉求预览**：`## 诉求` 正文，11pt secondary；**收起 3 行、展开不限**，tooltip 全文。
 - **meta**：来源 · 更新日期 · `待确认拆解 N 项`（10pt tertiary）。
 - **每张卡各自折叠**（层级：需求卡 → 事项卡 / 提案卡），每张卡的 `chevron` 都只是 `taskRowGlyph` **指示器（不是按钮）**，点击由它**自己的标题行**接管（`RequirementHeaderView`），不会误触发父卡：
@@ -260,7 +260,7 @@ updated: <today>
 - **待确认拆解**（需求卡展开后）：一个 **recessed 容器**，头是 `square.dashed 待确认拆解 [待确认 N 项] … [确认拆解] [驳回]`，下面是每条一张**提案卡**（各自可折叠）。点「驳回」打开**原因抽屉**（必填），原因随结果写回该需求的会话提示词。
 - **确认拆解**：建 `WS-*.md`（`requirement:` 指回需求）并把 **`workstreams: [WS-…]` 写回 REQ 卡 frontmatter**（合并已有列表）；面板的子事项列表另有 `WS.requirement` 反向聚合兜底，所以这个字段以前漏写时界面看不出来。
 - **状态色（tone）**：`candidate`→neutral、`evaluating`→running、`suspended`→warning、`discarded`→neutral、`split`→running、`closed`→positive（`requirementTone`）。
-- **动作语义**（不变）：状态菜单写回**人工判断**（`split`/`closed` 派生，不在菜单里）；编辑只改 title + `## 诉求`；拆解发提示词到**来源会话**（`.dsh/requirements/local.json`）或当前会话，都没有才回退复制，发到别的会话会切前台；`确认拆解`/`驳回` 在提案块里，成功后把**结果回写**到该需求的会话（同一会话闭环）。
+- **动作语义**（不变）：状态菜单写回**人工判断**（`split`/`closed` 派生，不在菜单里）；编辑只改 title + `## 诉求`，且**仅在尚未拆解时可用**（已有子事项 = 冻结，改需求请另起，R5）；拆解发提示词到**来源会话**（`.dsh/requirements/local.json`）或当前会话，都没有才回退复制，发到别的会话会切前台；`确认拆解`/`驳回` 在提案块里，成功后把**结果回写**到该需求的会话（同一会话闭环）。
 
 ### 5.3 空态与状态行
 
