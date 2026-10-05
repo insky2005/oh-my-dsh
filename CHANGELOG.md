@@ -7,6 +7,64 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **需求池：状态生命周期改为单向前进 + 修复评估中下拉箭头不可见（2026-10-05）**：人工状态只能**前进**——`candidate → evaluating → evaluated`，`evaluated` 不能再切回 `evaluating`（`suspended` 作为旁路可继续前进，`discarded` 单向）。另修复状态徽标的下拉箭头：它画在药丸**外侧**的面板底色上，原来在 `evaluating`（filled 药丸）时被染成白色而看不见，现统一用 tone 色。模型测试 **170 → 171**。
+
+- **需求池：新增「已评估」状态 + 拆解自动推进（2026-10-05）**：人工生命周期补上 `evaluated`（已评估）一档：**提交拆解提案 `propose` 自动把 `candidate` 推进到 `evaluating`（评估中），确认拆解 `confirm` 自动推进到 `evaluated`（已评估）**（`reject` 不改）。于是确认后卡片显示 `[已评估] [已拆分]` 两个徽标。转换矩阵同步（无派生态时可切 `evaluating/evaluated/suspended/discarded`；`split` 仍隐藏 `candidate`；`closed`/`discarded` 无可选项）。模型测试 **167 → 170**。
+
+- **需求池：状态转换规则（派生状态作为前置，模型/API 强制）（2026-10-05）**：人工状态切换由**派生态门控**，并在模型/API 层强制（不再只是菜单过滤）：`split` 隐藏 `candidate`（拆解过即已评估）、`closed` 无人工可切目标（终态不回弹，重开另起，原则 15）、`discarded` 单向；非法转换抛 `invalidTransition`（API → 409 `invalid-transition`），同状态为幂等 no-op。设计新增 §3.3.1 转换矩阵。模型测试 **161 → 167**、API **58 → 59**。
+
+- **需求池：事项卡依赖徽标直接显示标识（2026-10-05）**：事项卡折叠态的依赖徽标由 `依赖 N` 改为 **`依赖：WS-002`**（多个用 `、` 连接），不再需要悬停看 tooltip；详情行不变。
+
+- **需求池：人工状态与派生状态分开显示，菜单按当前状态收敛（2026-10-05）**：卡片标题行现在是**两个徽标**——人工状态（可点下拉，`candidate` / `evaluating` / `suspended` / `discarded`）+ 派生状态（`split` / `closed`，只读，来自子事项）；两者互不覆盖，已拆解需求也能显式看到人工判断。状态菜单只列**可达**目标：隐藏当前状态，`discarded` 设为**单向门**（丢弃后菜单无可选项、徽标只读）。`GET /api/requirements/list` 新增 `derivedState`。模型测试 **153 → 161**、API **56 → 58**。
+
+- **需求池：事项卡折叠态显示依赖徽标（2026-10-05）**：事项依赖原先只在展开后可见；现在折叠头部就有 `[依赖 N]` 徽标（tooltip 列出 WS 标识），与提案项卡的语法一致。依赖取自 REQ 确认表的 `依赖` 列，旧卡多数没有该列（开发版里仅 REQ-004 的 WS-008 有）。
+
+- **需求池：已拆解需求冻结，不可再编辑（2026-10-05）**：一个需求一旦拆出事项（`WS.requirement` 指回它），**面板隐藏「编辑」**，模型层 `updateRequirement` 直接抛 `breakdownLocked`（API `POST /api/requirements/update` → 409 `breakdown-locked`）——避免改了需求、确认过的拆解却对不上（对齐设计「已确认的映射表不追溯修改 / 重开另起需求」，R5）。仅有**待确认提案**时仍可编辑。模型测试 **150 → 153**、API **55 → 56**。
+
+- **需求池：拆解确认清单标准化 + 事项卡合并展示（2026-10-05）**：REQ 卡确认拆解后，`## 拆解` 表由 `confirm` 按标准列生成 **`标识 | 事项 | 边界 | 依赖`**（`依赖` 写 WS 标识而非标题）；**状态不落 REQ**（T1，派生字段不落盘），阶段 / 结果一律由面板按 WS 卡实时读取。面板「已拆解事项」改为渲染 **REQ 内容 × WS 状态** 的合并行（`WorkstreamDisplay`）：展开显示每行的 `边界 / 依赖`，阶段徽标**本地化**（规划/设计/任务/验收/交付），并对分歧显式标注（`WS 卡缺失` / `REQ 表未记录`）；解析按列名识别，兼容旧卡 3/4 列与无 ID 的候选行。`GET /api/requirements/list` 每个需求新增 `confirmed`。设计见 `docs/design/panels/requirements-breakdown-standard-design.md`。模型测试 **122 → 150**、API **51 → 55**。
+
+- **修复：确认拆解后 REQ 卡未关联 `workstreams`（2026-10-04）**：`confirm` 以前只建 `WS-*.md` + 映射表，没把 `workstreams: [WS-…]` 写回 REQ frontmatter；现在确认时**合并已有列表并写回**（新建需求也预置 `workstreams: []`）。面板列表本就走 WS 的 `requirement:` 反向聚合，所以界面看不出问题，但卡片自身缺字段。模型测试 **121 → 122**。
+
+- **REQ / WS 编号改为 6 位（2026-10-04）**：`nextId` 从 `%03d` 改为 `%06d`——新卡为 `REQ-000008` / `WS-000009`；`numericPart` 按数字解析与排序，旧的 3 位卡保持原样且能与 6 位混排、继续参与编号。设计「id 分配」说明与示例同步。模型测试 **120 → 121**。
+
+- **驳回提示词改写（2026-10-04）**：④带原因 / ⑤无原因统一为 `RequirementsCore.rejectPrompt(_:title:reason:)`——`REQ-xxx「标题」@路径，需求拆解已驳回。`（**有原因才多一行 `驳回原因：…`**）`请修改拆解方案。` + 三条注意（只拆不胀 / 重新提交待确认提案并调拆解器 API / 提交后等待用户确认『待确认提案』）；提议 API 那一行抽成 `proposeAPIHint`，② 与 ④⑤ 共用，避免两处漂移。移除 L10n `requirements.notify.rejected` / `rejectedWithReason`。模型测试 **114 → 120**。
+
+- **确认拆解提示词改写（2026-10-04）**：`requirements.notify.confirmed` 改为 `REQ-xxx「标题」@.dsh/requirements/REQ-xxx.md，需求拆解已确认。` + `生成事项：WS-…。` + 两条注意（回复『收到』/ 列出事项清单）；main 的 `notifyBreakdownResolved` 改为取整张需求卡（拿 title + session）再拼提示词。设计 §5.7 ③ 同步。
+
+- **拆解提示词改写（2026-10-04）**：`breakdownPrompt` 改为 `REQ-xxx「标题」@.dsh/requirements/REQ-xxx.md，需求已确认。` 开头，正文「根据需求，将需求拆解为可依次落地的事项。请给出拆解方案：每个事项的标题、边界、依赖顺序。」+ 三条注意（只拆不胀 / 调拆解器 API 提交待确认提案 / **提交后等待用户确认『待确认提案』**）；为此 `breakdownPrompt` 增加 `title` 参数，面板 `onBreakdown` 与 `sendBreakdownPrompt` 一起传标题。设计 §5.7 ② 同步。
+
+- **细化提示词改写 + 面板提示词汇总（2026-10-04）**：`refinementPrompt` 改为以 `REQ-xxx「标题」@.dsh/requirements/REQ-xxx.md` 开头，随后「请和我一起细化这条需求…」+ 三条注意（只讨论不改代码 / 改卡走 `/update` 带 session / **细化后等待用户拆解**）；设计新增 **§5.7 面板发出的提示词（单一事实来源）**，把 ①细化 ②拆解 ③确认 ④驳回（带原因）⑤驳回（兜底）五条全文集中一处，改措辞时必须同步。模型测试 **110 → 112**。
+
+- **驳回拆解：原因抽屉 + 原因带进提示词（2026-10-04）**：点「驳回」不再直接丢弃提案，而是弹一个必填的**原因抽屉**（`RequirementRejectView` + `RejectReasonModel`，`⌘↩` 提交 / `Esc` 取消，空原因禁用提交）；提交后清提案并把原因拼进写回该需求会话的提示词（`requirements.notify.rejectedWithReason`），让 agent **按原因改**而不是作废。测试模型 **103 → 110**。
+
+- **需求池状态徽标改为下拉（2026-10-04）**：**状态徽标本身可点**——`RequirementStateControl` = `TaskBadgeView` 药丸 + 尾部 **`chevron.down` 指示符号**（hover 手型、tooltip 显示当前人工状态），点击直接弹出人工状态菜单（候选 / 评估中 / 挂起 / 丢弃）；`RequirementStateControl` 自己认领点击并加入 `RequirementHeaderView` 的 `hitTest` 白名单（否则 header 会吞掉点击、误触折叠卡片）；**去掉单独的 `circle.dashed` 状态按钮**。菜单对齐壳层既有约定（`IssueRunnerPanel` / `FilePanel`）向下弹出（`y: -6`），**不遮挡状态徽标本身**。
+
+- **需求池「拆解」按钮：加图标 + 拆解后隐藏（2026-10-04）**：按钮标题前加 **`square.split.2x2` 图标**；并且**仅在尚未拆解时出现**——已有子事项、存在待确认提案、或需求已 `discarded` 时隐藏（驳回提案或回到候选后会重新出现）。
+
+- **需求池卡片交互修正（2026-10-04）**：**每张卡各自折叠**（需求卡 → 事项卡 / 提案卡）：① 点每张卡**自己的标题行**切换，`chevron` 只是指示器（不是按钮）；② **事项卡**收起 = 头部，展开 = 追加 阶段 / 结果 / 路径；③ **提案卡**收起 = `标题 + 依赖`，展开 = 追加**内容（边界）**；④ 需求卡收起时隐藏正文（事项 / 提案列表），meta 仍显示 `待确认拆解 N 项`。
+
+- **需求池卡片改用任务面板的卡片语法（2026-10-04）**：需求卡 = **raised 块**（圆角 8 + 一条 hairline，`TaskInk`）；标题行 = `▸ 类型glyph REQ-id 标题 [需求][N 个事项] … 状态徽标 [拆解][状态][✎]`，**状态只进徽标**（tone：候选 neutral / 评估中·已拆分 running / 挂起 warning / 已关闭 positive，直接复用 `TaskBadgeView`）；诉求常显（收起 3 行）；**点卡片空白处展开/收起**——展开后是 **recessed 的「已拆解事项」mini 卡**（`WS-* 标题 [阶段] ↗`）与 **recessed 的「待确认拆解」块**（每条提案一张 **raised mini 卡**：`标题 — 边界 [依赖 N]`，右上确认 / 驳回）。`TaskCardView.swift` 的 `TaskInk` / `TaskBadgeView` / `taskRowGlyph` 直接复用，**不新增颜色令牌**。
+
+- **需求池面板：想法收件箱 + 需求池 + 拆解器（2026-10-04）**：AI 原生工作流从手动模式升级为壳层能力。新增右栏第 10 个面板（活动栏第 5 位、任务之前，`tray.full`，`⌥⌘I`）：卡片按**有效状态**（`discarded > closed > split > state`，派生）展示需求，列出拆出的 `WS-*` 子事项（点击在文件面板打开）；头部「＋」用**抽屉**（首行标题 / 其余行诉求）落成 `.dsh/requirements/REQ-*.md`（`state: candidate`），也可由内置技能 `requirement-pool` 经 API 落卡。**拆解器**走「agent 出方案 / 人确认」：面板「拆解」复制交接提示词，agent 经 `POST /api/requirements/breakdown/propose` 提交 1..N 事项提案，**人**在面板「确认拆解」才生成 `WS-*.md`（`requirement` 回指、`stage: planning`）并留下映射表，agent 绝不调 `confirm`（R10）。实现：纯模型 `RequirementsCore.swift`（frontmatter 解析 / 派生 / 原子写）、纯路由 `RequirementsAPI.swift`（`/api/requirements/*`）、面板 `RequirementsPanel.swift`、技能 `requirement-pool`；`closed` 只读 `delivery.outcome` 缓存、不联网（网络派生仍归 `derive-status.mjs`）。测试 `tests/requirements-panel`（模型 61 + API 42）。
+
+- **需求池面板：创建需求改抽屉 + 使用说明（2026-10-04）**：头部「＋」不再弹 `NSAlert`，改用与任务面板「新建任务」同款的**表单抽屉**（复用 `TaskFormSheetView` / `TaskFormKit`）——一个输入框，**首行 = 标题、其余行 = 诉求**（单行则两者相同），`⌘↩` 提交、`Esc` 取消；视图模型 `RequirementComposerModel`（纯 Foundation，`platforms/macos/src/RequirementsUI.swift`）可无头断言。右上角新增 **`?` 使用说明**按钮：抽屉里是「创建需求 / 拆解事项」两节，每节分「在面板」「在对话」两条**操作**（只讲操作，不讲结果），**池为空时同一份说明直接铺在内容区**（不必先点帮助）。测试 `tests/requirements-panel` 模型 **61 → 75**。
+
+- **需求池面板：建需求按钮移到工具栏右侧（2026-10-04）**：头部只留 `[⟳] [?] [✕]`，下面新增一行 32pt **工具栏**（含底部分隔线，与任务面板页签行同形），「＋ 新建需求」**右对齐**放在工具栏右侧；使用说明与设计 / 使用文档同步。
+
+- **需求池卡片：显示诉求内容 + 状态徽标后移 + 可编辑（2026-10-04）**：卡片现在显示 `## 诉求` 正文预览（最多 4 行，tooltip 全文）——agent 落卡的内容不再只活在文件里；**状态徽标移到标题之后**；新增**「编辑」**按钮，复用同一个抽屉预填标题 + 诉求，保存走 `POST /api/requirements/update`（只改 frontmatter `title` 与 `## 诉求`，状态 / 拆解提案 / 子事项都不动）。测试 `tests/requirements-panel` 模型 **77 → 93**、API **42 → 49**。
+
+- **需求池：同一需求的对话始终落在同一个会话（2026-10-04）**：所有写接口（create / update / state / propose / confirm / reject）都接受 `session`，每次写把 `REQ-id` 重绑到**发起这次写的会话**；面板「拆解」用绑定会话，没有 / 失败才回退当前会话并**重绑**；人在面板**确认 / 驳回后把结果回写**到该会话（「收到即可，不要自动开工」），并把该会话切到前台。这样从对话、落卡、调整、拆解到确认全程同一条对话。技能写操作全部带 `$DSH_SESSION_ID`。
+
+- **需求池拆解：优先回到创建该需求的会话（2026-10-04）**：agent 用 `requirement-pool` 落卡时带上 `$DSH_SESSION_ID`，壳层把「REQ-id → 来源会话」写进 **ignored** 的 `.dsh/requirements/local.json`（运行时绑定，不进卡片）；面板点「拆解」时**优先把提示词发回来源会话**，没有才用当前会话，仍失败则回退复制。`POST /api/requirements/create` 新增 `session` 字段。测试 `tests/requirements-panel` 模型 **93 → 97**、API **49 → 51**。
+
+- **需求池拆解：面板把提示词直接发进当前对话（2026-10-04）**：点卡片「拆解」不再只复制到剪贴板——用 `dshSession` 跟踪器上报的当前会话调 `DshSessionOps.sendPrompt`（`session/prompt`，与 wiki 生成 / 任务队列同一形状）把提示词**直接发进对话**；agent 随即调 `POST /api/requirements/breakdown/propose` 提出待确认方案。**没有打开的对话或发送失败时回退复制**并在状态行说明。另一入口不变：对话里运行 `/requirement-pool 拆解 <REQ-id>`。人工确认门（R10）不变：`confirm` 仍只在面板。
+
+- **面板创建需求：「创建并细化」起一条细化会话（2026-10-04）**：面板「＋」建卡没有对话来源，抽屉底部提供 `[创建] [创建并细化] [取消]`——**普通「创建」只写卡**；点**「创建并细化」**时 main 在活动工作区 `session/create` → `session/rename`「细化 REQ-xxx」→ `session/prompt` 细化提示词（只讨论、只澄清、不改代码；改卡走 `/update`），并把卡片**绑定到该会话**、切过去；会话创建失败回退当前会话，再失败只留卡片并提示。这样面板创建的需求也满足「同一需求同一会话」。测试模型 **97 → 103**。
+
+- **工作流硬规则：对话/需求阶段只读，开工唯一入口 = 已启动的任务队列（2026-10-04）**：`AGENTS.md` 工作流段、`.dsh/ai-native-workflow-spec.md`（新增 **R12** + AGENTS 模板）、内置技能 `requirement-pool` 三处都加这条——需求未落卡 / 事项未确认 / 队列未启动之前，只讨论、只澄清、只落卡，**不得修改代码或文件**；这是「避免 agent 在想法阶段直接开工」的软闸（覆盖所有会话；硬闸走 dsh 的 plan mode / 权限预设，另议）。使用说明常见坑同步。
+
 ### Fixed
 
 - **英文界面修复：Agent 追加任务后壳层崩溃（2026-10-02，v1.18.0）**：`tasks.apiQueueAppended` 的中英文案占位符顺序相反（中文 `%@`→`%d`、英文 `%d`→`%@`），而 `L10n.tr` 把同一份参数列表交给当前语言的格式串；英文下 `%@` 拿到整数 `created.count`（3）被当成对象指针，`String(format:)` 内部对 `0x3` 调 `objc_opt_respondsToSelector` 直接 SIGSEGV（`KERN_INVALID_ADDRESS at 0x3`）。改用位置参数 `%1$@` / `%2$d`，两种语言各自保留自然语序。回归：`tests/l10n` 新增「中英格式参数必须一致」检查——改前先复现失败（精确命中该 key），改后通过。

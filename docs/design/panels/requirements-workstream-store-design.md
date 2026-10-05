@@ -51,7 +51,7 @@ state: evaluating           # 可选；仅人工判断（拆分后不写）
 source: 2026-10-03 会话      # 必选，来源（会话 / issue / 文档 / 人）
 created: 2026-10-03         # 必选
 updated: 2026-10-03         # 必选
-workstreams: [WS-002]       # 派生缓存（由 WS.requirement 反向聚合）
+workstreams: [WS-002]       # 确认拆解时由面板写入；另有 WS.requirement 反向聚合兜底
 ---
 ```
 

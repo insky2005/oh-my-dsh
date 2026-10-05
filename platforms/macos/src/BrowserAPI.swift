@@ -124,6 +124,12 @@ enum BrowserAPIRouter {
             return tasks
         }
 
+        // /api/requirements/* is the requirements pool panel's route face, on the
+        // same service and port. Same fall-through contract as /api/tasks/*.
+        if let requirements = RequirementsAPIRouter.route(request, delegate: delegate as? RequirementsAPIDelegate) {
+            return requirements
+        }
+
         switch (request.method, request.path) {
         case ("GET", "/api/browser/status"):
             return .json(200, delegate.apiStatus())
@@ -253,6 +259,19 @@ final class BrowserAPIBridge: BrowserAPIDelegate {
         "ok": false,
         "error": "panel-unavailable",
         "hint": "the tasks panel is not ready",
+    ]
+    /// /api/requirements/* 的落地（闭包形状同 tasks，面板类型不进本文件）。
+    var requirementsList: (String?) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
+    var requirementsCreate: (RequirementsCreateRequest) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
+    var requirementsSetState: (RequirementsStateRequest) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
+    var requirementsUpdate: (RequirementsUpdateRequest) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
+    var requirementsPropose: (RequirementsBreakdownRequest) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
+    var requirementsConfirm: (RequirementsTargetRequest) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
+    var requirementsReject: (RequirementsTargetRequest) -> [String: Any] = { _ in BrowserAPIBridge.requirementsUnavailable }
+    static let requirementsUnavailable: [String: Any] = [
+        "ok": false,
+        "error": "panel-unavailable",
+        "hint": "the requirements pool panel is not ready",
     ]
     var showPanel: () -> Void = {}
     var hidePanel: () -> Void = {}
@@ -607,6 +626,41 @@ extension BrowserAPIBridge: TasksAPIDelegate {
         var result: [String: Any] = fallback
         DispatchQueue.main.sync { result = work() ?? fallback }
         return result
+    }
+}
+
+// MARK: - 需求池面板路由的落地（面板控制器 → RequirementsAPIDelegate）
+
+/// Same shape as the tasks bridge: HTTP runs on its own queue, the pool reads and
+/// writes run on the main thread so there is a single writer (design section 8).
+extension BrowserAPIBridge: RequirementsAPIDelegate {
+
+    func apiRequirementsList(workspace: String?) -> [String: Any] {
+        onMain(fallback: Self.requirementsUnavailable) { self.requirementsList(workspace) }
+    }
+
+    func apiRequirementsCreate(_ request: RequirementsCreateRequest) -> [String: Any] {
+        onMain(fallback: Self.requirementsUnavailable) { self.requirementsCreate(request) }
+    }
+
+    func apiRequirementsSetState(_ request: RequirementsStateRequest) -> [String: Any] {
+        onMain(fallback: Self.requirementsUnavailable) { self.requirementsSetState(request) }
+    }
+
+    func apiRequirementsUpdate(_ request: RequirementsUpdateRequest) -> [String: Any] {
+        onMain(fallback: Self.requirementsUnavailable) { self.requirementsUpdate(request) }
+    }
+
+    func apiRequirementsPropose(_ request: RequirementsBreakdownRequest) -> [String: Any] {
+        onMain(fallback: Self.requirementsUnavailable) { self.requirementsPropose(request) }
+    }
+
+    func apiRequirementsConfirm(_ request: RequirementsTargetRequest) -> [String: Any] {
+        onMain(fallback: Self.requirementsUnavailable) { self.requirementsConfirm(request) }
+    }
+
+    func apiRequirementsReject(_ request: RequirementsTargetRequest) -> [String: Any] {
+        onMain(fallback: Self.requirementsUnavailable) { self.requirementsReject(request) }
     }
 }
 

@@ -109,8 +109,10 @@ enum L10n {
         "menu.appearance": ("外观", "Appearance"),
         "menu.toggleFiles": ("显示/隐藏 文件面板", "Toggle Files Panel"),
         "menu.toggleProjects": ("显示/隐藏 项目面板", "Toggle Projects Panel"),
+        "menu.toggleRequirements": ("显示/隐藏 需求池面板", "Toggle Requirements Panel"),
         // activity bar
         "bar.projects": ("项目", "Projects"),
+        "bar.requirements": ("需求池", "Requirements"),
         "bar.preview": ("文件", "Files"),
         "bar.terminal": ("终端", "Terminal"),
         "edit.undo": ("撤销", "Undo"),
@@ -896,6 +898,95 @@ enum L10n {
         "projects.settingsPick": ("选择…", "Choose…"),
         "projects.settingsReset": ("恢复默认", "Reset to Default"),
         "projects.settingsInvalidPath": ("请输入绝对路径（可用 “~”）", "Enter an absolute path (a leading “~” is allowed)"),
+        // requirements pool panel
+        "requirements.title": ("需求池", "Requirements"),
+        "requirements.new": ("新建需求", "New Requirement"),
+        "requirements.formTitle": ("新建需求", "New Requirement"),
+        "requirements.editTitle": ("编辑需求", "Edit Requirement"),
+        "requirements.editInfo": ("改标题与诉求；状态、拆解映射与子事项不受影响。", "Change the title and statement; the state, breakdown and workstreams are untouched."),
+        "requirements.save": ("保存", "Save"),
+        "requirements.createAndRefine": ("创建并细化", "Create & Refine"),
+        "requirements.edit": ("编辑", "Edit"),
+        "requirements.updated": ("已保存 %@", "Saved %@"),
+        "requirements.create": ("创建", "Create"),
+        "requirements.newInfo": ("首行是标题，其余行是诉求（也可让 agent 用 requirement-pool 技能落卡）。", "The first line is the title; later lines are the statement (the agent can also use the requirement-pool skill)."),
+        "requirements.newContent": ("标题与诉求", "Title and statement"),
+        "requirements.newContentHint": ("首行作为标题，其余行是诉求", "First line is the title; the rest is the statement"),
+        "requirements.newProblem": ("请填写标题（首行）", "Enter a title (the first line)"),
+        "requirements.help.hint": ("使用说明", "Help"),
+        "requirements.help.title": ("需求池使用说明", "Requirements Pool Help"),
+        "requirements.help.intro": ("在面板或对话里都能完成下列操作。", "Both actions work from the panel or a conversation."),
+        "requirements.help.create.heading": ("创建需求", "Create a requirement"),
+        "requirements.help.create.panel": ("在面板：点工具栏右侧的「＋」，在抽屉的首行写标题、其余行写诉求，按 ⌘↩ 或点「创建」。", "In the panel: click + on the right of the toolbar, write the title on the first line and the statement on the rest, then press Command-Return or click Create."),
+        "requirements.help.create.chat": ("在对话：输入「把这个想法落成需求」，或运行 /requirement-pool。", "In a conversation: type “capture this idea as a requirement”, or run /requirement-pool."),
+        "requirements.help.breakdown.heading": ("拆解事项", "Break down a requirement"),
+        "requirements.help.breakdown.panel": ("在面板：点卡片「拆解」，提示词会发送到创建该需求的会话（没有则当前对话）；方案回来后点「确认拆解」或「驳回」。", "In the panel: click Break down and the prompt is sent to the session that created the requirement (or the current one); when a proposal appears, click Confirm or Reject."),
+        "requirements.help.breakdown.chat": ("在对话：运行 /requirement-pool 拆解 <REQ-id>。", "In a conversation: run /requirement-pool breakdown <REQ-id>."),
+        "requirements.empty": ("还没有需求。点「＋」把一条想法记进来。", "No requirements yet. Click + to capture an idea."),
+        "requirements.expand": ("展开", "Expand"),
+        "requirements.collapse": ("收起", "Collapse"),
+        "requirements.kind": ("需求", "Requirement"),
+        "requirements.children": ("%d 个事项", "%d workstreams"),
+        "requirements.childrenSection": ("已拆解事项", "Workstreams"),
+        "requirements.proposalSection": ("待确认拆解", "Proposed breakdown"),
+        "requirements.proposalMeta": ("待确认拆解 %d 项", "%d proposed"),
+        "requirements.pending": ("待确认 %d 项", "%d pending"),
+        "requirements.depends": ("依赖 %d", "%d deps"),
+        "requirements.dependsOn": ("依赖：%@", "Depends: %@"),
+        "requirements.detail.stage": ("阶段", "Stage"),
+        "requirements.detail.outcome": ("结果", "Outcome"),
+        "requirements.detail.path": ("路径", "Path"),
+        "requirements.detail.boundary": ("边界", "Boundary"),
+        "requirements.detail.depends": ("依赖", "Depends on"),
+        "requirements.stage.planning": ("规划", "Planning"),
+        "requirements.stage.design": ("设计", "Design"),
+        "requirements.stage.task": ("任务", "Tasks"),
+        "requirements.stage.acceptance": ("验收", "Acceptance"),
+        "requirements.stage.delivery": ("交付", "Delivery"),
+        "requirements.missingCard": ("WS 卡缺失", "WS card missing"),
+        "requirements.notInPlan": ("REQ 表未记录", "Not in REQ table"),
+        "requirements.glyph": ("需求", "Requirement"),
+        "requirements.glyph.workstream": ("事项", "Workstream"),
+        "requirements.glyph.proposal": ("待确认拆解", "Proposed breakdown"),
+        "requirements.glyph.proposalItem": ("提案事项", "Proposed workstream"),
+        "requirements.state.candidate": ("候选", "Candidate"),
+        "requirements.state.evaluating": ("评估中", "Evaluating"),
+        "requirements.state.evaluated": ("已评估", "Evaluated"),
+        "requirements.state.suspended": ("挂起", "Suspended"),
+        "requirements.state.discarded": ("丢弃", "Discarded"),
+        "requirements.state.split": ("已拆分", "Split"),
+        "requirements.state.closed": ("已关闭", "Closed"),
+        "requirements.set.state": ("状态", "State"),
+        "requirements.derivedState": ("派生状态", "Derived state"),
+        "requirements.breakdown": ("拆解", "Break down"),
+        "requirements.breakdownPromptCopied": ("已复制拆解提示词；在会话里运行 /requirement-pool 拆解 %@", "Breakdown prompt copied; run /requirement-pool breakdown %@ in a session"),
+        "requirements.breakdownSent": ("已把拆解提示词发送到对话", "Breakdown prompt sent to the conversation"),
+        "requirements.breakdownNoSession": ("当前没有打开的对话，已复制提示词", "No conversation is open; the prompt was copied"),
+        "requirements.breakdownSendFailed": ("发送失败，已复制提示词", "Could not send; the prompt was copied"),
+        "requirements.confirm": ("确认拆解", "Confirm"),
+        "requirements.reject": ("驳回", "Reject"),
+        "requirements.confirmed": ("已生成 %d 个事项", "Created %d workstreams"),
+        "requirements.rejected": ("已驳回拆解提案", "Proposal dismissed"),
+        "requirements.reject.title": ("驳回拆解", "Reject breakdown"),
+        "requirements.reject.info": ("写清驳回原因——会带进对话提示词，让拆分方案按原因修改。", "Say why — the reason goes into the conversation prompt so the breakdown can be revised."),
+        "requirements.reject.content": ("驳回原因", "Reason"),
+        "requirements.reject.placeholder": ("例如：粒度太粗 / 与现有事项重复 / 漏了迁移步骤", "e.g. too coarse / duplicates existing workstreams / misses a migration step"),
+        "requirements.reject.submit": ("驳回并说明", "Reject with reason"),
+        "requirements.reject.problem": ("请填写驳回原因", "Enter a reason"),
+        "requirements.refineStarted": ("已创建 %@，并在新会话里开始细化", "Created %@ and started a refinement session"),
+        "requirements.refineFailed": ("已创建需求；细化会话未启动，可在会话里手动继续", "Requirement created; the refinement session could not start — continue in a chat"),
+        "requirements.notify.confirmed": ("%@「%@」@.dsh/requirements/%@.md，需求拆解已确认。\n生成事项：%@。\n\n注意：\n- 回复『收到』。\n- 列出事项清单。", "%@「%@」@.dsh/requirements/%@.md — breakdown confirmed.\nWorkstreams created: %@.\n\nNotes:\n- Reply \"received\".\n- List the workstreams."),
+
+        "requirements.created": ("已创建 %@", "Created %@"),
+        "requirements.stateChanged": ("%@ → %@", "%@ → %@"),
+        "requirements.error.notFound": ("找不到该需求", "Requirement not found"),
+        "requirements.error.noProposal": ("没有待确认的拆解提案", "No proposal to confirm"),
+        "requirements.error.breakdownLocked": ("需求已拆解事项，不能再编辑；请另起需求", "Already broken down into workstreams; open a new requirement instead"),
+        "requirements.error.invalidTransition": ("「%@」不能切换到「%@」", "Cannot switch from %@ to %@"),
+        "requirements.error.unknownState": ("无效的状态", "Invalid state"),
+        "requirements.error.generic": ("操作失败：%@", "Failed: %@"),
+        "requirements.needsWorkspace": ("请先选择一个工作区", "Select a workspace first"),
+        "requirements.openWorkstream": ("打开事项卡", "Open workstream card"),
     ]
 
     /// Localize a key, optionally filling %@ / %d placeholders.
@@ -2220,9 +2311,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var channelToggleMenuItem: NSMenuItem?
     private var reviewToggleMenuItem: NSMenuItem?
     private var projectsToggleMenuItem: NSMenuItem?
+    private var requirementsToggleMenuItem: NSMenuItem?
     private var skillsToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip). "项目" comes first (design D4).
     private var projectsBarButton: ActivityBarButton!
+    private var requirementsBarButton: ActivityBarButton!
     private var previewBarButton: ActivityBarButton!
     private var closeTabMenuItem: NSMenuItem?
     private var terminalBarButton: ActivityBarButton!
@@ -2244,6 +2337,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var channelPanel: ChannelPanelController!
     private var reviewPanel: ReviewPanelController!
     private var projectsPanel: ProjectsPanelController!
+    private var requirementsPanel: RequirementsPanelController!
     private var skillsPanel: SkillsPanelController!
     /// Browser panel localhost REST API (Agent / user curl). Runs from launch.
     private var browserAPIServer: BrowserAPIServer!
@@ -2254,7 +2348,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
     /// terminal, wiki, tasks and browser panels share one slot; the activity
     /// bar toggles between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review, skills, projects }
+    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review, skills, projects, requirements }
     private var rightPanel: RightPanel = .none
     /// Set by prepareSessionSnapshot() when session snapshots need the user's
     /// attention (unavailable runtime / an unfinished rollback). Surfaced by the
@@ -2269,6 +2363,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// The session whose "open in dsh" is currently being attempted, so a retry
     /// chain and a fresh click for the same id cannot overlap (see openDSHSession).
     private var openInFlight: String?
+    /// The session the user is currently viewing in dsh web (posted by the
+    /// dshSession tracker). Panel buttons hand their prompt to THIS conversation.
+    private var activeSessionId: String?
     /// The「会话快照…」window (created lazily).
     private var snapshotWindowController: SnapshotWindowController?
     /// Oldest dsh generation this shell still adapts to (core keeps both API
@@ -2299,7 +2396,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                                 max(ChannelPanelController.minWidth,
                                     max(ReviewPanelController.minWidth,
                                         max(SkillsPanelController.minWidth,
-                                            ProjectsPanelController.minWidth)))))))))
+                                            max(ProjectsPanelController.minWidth,
+                                                RequirementsPanelController.minWidth))))))))))
     /// *Initial* panel width when the user has never chosen one. The user's
     /// saved/dragged width always wins (clamped to the minimum above); this is
     /// only the first-run width. Deliberately NOT window-relative: a "half the
@@ -2522,6 +2620,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.projects)
             AppLog.shared.log("projects self-test enabled")
         }
+        // Requirements pool self-test hook (debugging / QA): DSH_REQUIREMENTS_TEST=1.
+        if ProcessInfo.processInfo.environment["DSH_REQUIREMENTS_TEST"] == "1" {
+            setRightPanel(.requirements)
+            AppLog.shared.log("requirements self-test enabled")
+        }
         // Tasks self-test hook (debugging / QA): opens the task panel. With
         // DSH_TASKS_TEST_PATH=<repo> it loads that repo's .dsh/tasks/ board
         // instead of waiting for the workspace to resolve (fixture QA).
@@ -2570,6 +2673,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "review", "审查": return .review
         case "skills", "技能": return .skills
         case "projects", "项目": return .projects
+        case "requirements", "需求池": return .requirements
         default: return nil
         }
     }
@@ -2771,6 +2875,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.dumpPanelDebugInfo(panelView: self.projectsPanel.view, label: "projects-loaded")
         }
 
+        requirementsPanel = RequirementsPanelController()
+        AppLog.shared.log("launch: requirementsPanel created")
+        requirementsPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        requirementsPanel.workspaceProvider = { [weak self] in self?.activeWorkspacePath() }
+        // Children buttons open the workstream card in the file panel.
+        requirementsPanel.onOpenWorkstream = { [weak self] path in
+            guard let self = self else { return }
+            self.previewPanel.open(path: path)
+            self.setRightPanel(.preview)
+        }
+        // REST focus=true: bring the workspace up and show this panel.
+        requirementsPanel.onFocus = { [weak self] _ in
+            self?.setRightPanel(.requirements)
+        }
+        // 拆解：把提示词直接发进对话——优先该卡片的**来源会话**（由 agent 落卡时
+        // 带上 $DSH_SESSION_ID），否则当前会话；agent 随后调面板 API 提方案。
+        requirementsPanel.onBreakdown = { [weak self] id, title, session in
+            self?.sendBreakdownPrompt(id, title: title, preferredSession: session)
+        }
+        // 人在面板确认 / 驳回后，把结果回写到该需求的会话（同一会话闭环）。
+        requirementsPanel.onBreakdownResolved = { [weak self] id, confirmed, created, reason in
+            self?.notifyBreakdownResolved(id, confirmed: confirmed, created: created, reason: reason)
+        }
+        // 抽屉的「创建并细化」：为面板创建的需求起一条「细化」会话并绑定。
+        requirementsPanel.onRefineRequested = { [weak self] id, title in
+            self?.startRequirementRefinementSession(id, title: title)
+        }
+        requirementsPanel.onDidRender = { [weak self] in
+            guard let self = self, self.uiDebug else { return }
+            self.dumpPanelDebugInfo(panelView: self.requirementsPanel.view, label: "requirements-loaded")
+        }
+
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
@@ -2779,7 +2915,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityBar.translatesAutoresizingMaskIntoConstraints = false
 
         // 活动栏图标：tooltip 跟随系统语言（L10n 中英切换）；
-        // 顺序 = 项目、文件、终端、Wiki、任务、通道、审查、浏览器、技能
+        // 顺序 = 项目、文件、终端、Wiki、需求池、任务、通道、审查、浏览器、技能
         // （「项目」在首位，见设计 §5/D4；「浏览器」改到末位「技能」之前，2026-09-24）。
         projectsBarButton = makeActivityButton(symbol: "folder",
                                                tooltip: L10n.tr("bar.projects"),
@@ -2808,7 +2944,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsBarButton = makeActivityButton(symbol: "puzzlepiece",
                                              tooltip: L10n.tr("bar.skills"),
                                              action: #selector(skillsEntryTapped(_:)))
-        let barStack = NSStackView(views: [projectsBarButton, previewBarButton, terminalBarButton, wikiBarButton, tasksBarButton, channelBarButton, reviewBarButton, browserBarButton, skillsBarButton])
+        requirementsBarButton = makeActivityButton(symbol: "tray.full",
+                                                   tooltip: L10n.tr("bar.requirements"),
+                                                   action: #selector(requirementsEntryTapped(_:)))
+        let barStack = NSStackView(views: [projectsBarButton, previewBarButton, terminalBarButton, wikiBarButton, requirementsBarButton, tasksBarButton, channelBarButton, reviewBarButton, browserBarButton, skillsBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -2870,6 +3009,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "review": kind = .review
         case "skills": kind = .skills
         case "projects": kind = .projects
+        case "requirements": kind = .requirements
         default: kind = .preview
         }
         setRightPanel(visible ? kind : .none)
@@ -2887,6 +3027,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .review: return reviewPanel.view
         case .skills: return skillsPanel.view
         case .projects: return projectsPanel.view
+        case .requirements: return requirementsPanel.view
         case .none: return NSView()
         }
     }
@@ -2946,6 +3087,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reviewToggleMenuItem?.state = (panel == .review) ? .on : .off
         skillsToggleMenuItem?.state = (panel == .skills) ? .on : .off
         projectsToggleMenuItem?.state = (panel == .projects) ? .on : .off
+        requirementsToggleMenuItem?.state = (panel == .requirements) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
@@ -2955,6 +3097,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reviewBarButton?.setActive(panel == .review)
         skillsBarButton?.setActive(panel == .skills)
         projectsBarButton?.setActive(panel == .projects)
+        requirementsBarButton?.setActive(panel == .requirements)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
@@ -3040,6 +3183,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if uiDebug {
                     self.dumpPanelDebugInfo(panelView: projectsPanel.view, label: "projects")
                 }
+            case .requirements:
+                requirementsPanel.ensureLoaded()
+                if uiDebug {
+                    self.dumpPanelDebugInfo(panelView: requirementsPanel.view, label: "requirements")
+                }
             }
         } else {
             split.setPosition(split.bounds.width, ofDividerAt: 0)
@@ -3073,6 +3221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .review: kind = "review"
         case .skills: kind = "skills"
         case .projects: kind = "projects"
+        case .requirements: kind = "requirements"
         default: kind = "preview"
         }
         ShellConfig.shared.set(kind, forKey: "rightPanelKind")
@@ -4980,6 +5129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reviewPanel?.workspaceChanged()
         // The Projects panel only re-renders its highlight + badges here.
         projectsPanel?.workspaceChanged()
+        requirementsPanel?.workspaceChanged()
         AppLog.shared.log("project directory adopted: " + std)
         return true
     }
@@ -5104,6 +5254,131 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                                   + " (the sidebar bridge said: " + reason + ")")
                 self.projectsPanel?.setStatus(L10n.tr("projects.newSessionFallback",
                                                       (path as NSString).lastPathComponent), isError: true)
+            }
+        }
+    }
+
+    /// 拆解：send the breakdown handoff prompt into the conversation the user is
+    /// viewing, so the agent proposes through the panel API. Without an active
+    /// session (or when the send fails) the prompt is copied instead, and the
+    /// panel's status line says which happened.
+    private func sendBreakdownPrompt(_ requirementId: String, title: String, preferredSession: String?) {
+        let prompt = RequirementsCore.breakdownPrompt(requirementId, title: title)
+        let port = server.port
+        // Prefer the session that CAPTURED the card; fall back to the one on screen.
+        var targets: [String] = []
+        if let source = preferredSession?.trimmingCharacters(in: .whitespacesAndNewlines), !source.isEmpty {
+            targets.append(source)
+        }
+        if let current = activeSessionId, !current.isEmpty, !targets.contains(current) {
+            targets.append(current)
+        }
+        guard port > 0, !targets.isEmpty else {
+            requirementsPanel?.copyBreakdownPrompt(id: requirementId)
+            requirementsPanel?.setStatus(L10n.tr("requirements.breakdownNoSession"), isError: false)
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var used: String?
+            for target in targets {
+                if DshSessionOps.sendPrompt(port: port, sessionId: target, text: prompt) {
+                    used = target
+                    break
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let used = used {
+                    AppLog.shared.log("requirements: breakdown prompt for \(requirementId) sent to session \(used)")
+                    self.requirementsPanel?.setStatus(L10n.tr("requirements.breakdownSent"), isError: false)
+                    // Keep the requirement bound to the session actually used, so
+                    // every later action stays in ONE conversation.
+                    if used != preferredSession, let workspace = self.activeWorkspacePath() {
+                        RequirementsCore.rememberSession(workspace: workspace, id: requirementId, session: used)
+                    }
+                    // Bring that conversation on screen when it is not the one the
+                    // user is already looking at, so the breakdown is visible.
+                    if used != self.activeSessionId {
+                        self.openDSHSession(used)
+                    }
+                } else {
+                    AppLog.shared.log("requirements: breakdown send failed (\(DshWebRPC.lastFailure ?? "?"))")
+                    self.requirementsPanel?.copyBreakdownPrompt(id: requirementId)
+                    self.requirementsPanel?.setStatus(L10n.tr("requirements.breakdownSendFailed"), isError: true)
+                }
+            }
+        }
+    }
+
+    /// 人在面板确认 / 驳回拆解后，把结果写回该需求的会话——同一会话闭环，agent
+    /// 由此知道该继续按事项推进（通知只是「收到即可」，不自动开工）。
+    private func notifyBreakdownResolved(_ requirementId: String, confirmed: Bool, created: [String], reason: String?) {
+        guard let workspace = activeWorkspacePath(), !workspace.isEmpty else { return }
+        let requirement = RequirementsCore.load(workspace: workspace).requirements
+            .first { $0.requirement.id == requirementId }?.requirement
+        let title = requirement?.title ?? ""
+        let port = server.port
+        guard port > 0,
+              let sessionId = (requirement?.session?.isEmpty == false ? requirement?.session : activeSessionId),
+              !sessionId.isEmpty else {
+            AppLog.shared.log("requirements: no session to write the \(requirementId) result back to")
+            return
+        }
+        let text: String
+        if confirmed {
+            text = L10n.tr("requirements.notify.confirmed", requirementId, title, requirementId,
+                           created.joined(separator: "、"))
+        } else {
+            // 驳回：带上原因（若有）请 agent 改了再提案；reason 为空时省略原因行。
+            text = RequirementsCore.rejectPrompt(requirementId, title: title, reason: reason)
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let sent = DshSessionOps.sendPrompt(port: port, sessionId: sessionId, text: text)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if sent {
+                    AppLog.shared.log("requirements: \(requirementId) result written back to session \(sessionId)")
+                    if sessionId != self.activeSessionId { self.openDSHSession(sessionId) }
+                } else {
+                    AppLog.shared.log("requirements: result write-back failed (\(DshWebRPC.lastFailure ?? "?"))")
+                }
+            }
+        }
+    }
+
+    /// 面板创建的需求没有对话来源：在活动工作区起一条会话、改名「细化 REQ-xxx」、
+    /// 发细化提示词，并把卡片绑定到它——之后拆解 / 确认都回到这条对话。
+    private func startRequirementRefinementSession(_ requirementId: String, title: String) {
+        guard let workspace = activeWorkspacePath(), !workspace.isEmpty else { return }
+        let port = server.port
+        guard port > 0 else {
+            requirementsPanel?.setStatus(L10n.tr("requirements.refineFailed"), isError: true)
+            return
+        }
+        let current = activeSessionId
+        let prompt = RequirementsCore.refinementPrompt(requirementId, title: title)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var target = DshWorkspaceOps.createSession(port: port, cwd: workspace, workspaceId: nil)
+            if let sid = target {
+                _ = DshSessionOps.rename(port: port, sessionId: sid, title: "细化 " + requirementId + " " + title)
+            } else {
+                target = current
+            }
+            var sent = false
+            if let target = target {
+                sent = DshSessionOps.sendPrompt(port: port, sessionId: target, text: prompt)
+            }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let used = target, sent else {
+                    AppLog.shared.log("requirements: could not start a refinement session for \(requirementId)")
+                    self.requirementsPanel?.setStatus(L10n.tr("requirements.refineFailed"), isError: true)
+                    return
+                }
+                RequirementsCore.rememberSession(workspace: workspace, id: requirementId, session: used)
+                AppLog.shared.log("requirements: refinement session \(used) for \(requirementId)")
+                self.requirementsPanel?.setStatus(L10n.tr("requirements.refineStarted", requirementId), isError: false)
+                if used != self.activeSessionId { self.openDSHSession(used) }
             }
         }
     }
@@ -5657,6 +5932,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // working directory and re-point every project-dir consumer.
         guard message.name == "dshSession" else { return }
         guard let body = message.body as? [String: Any], let sid = body["sessionId"] as? String else { return }
+        activeSessionId = sid
         AppLog.shared.log("active session changed: \(sid)")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
@@ -5743,8 +6019,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         viewMenu.addItem(.separator())
         // 「项目」在首位（与活动栏一一对应，设计 §5/D4）；⌥⌘P 由「文件面板」
         // 让出（PR #57 已把文件面板改为 ⌥⌘F）。
-        // 其余各项顺序与活动栏保持一一对应：项目 / 文件 / 终端 / 知识库 / 任务 /
-        // 通道 / 审查 / 浏览器 / 技能（「浏览器」2026-09-24 移到末位「技能」之前）。
+        // 其余各项顺序与活动栏保持一一对应：项目 / 文件 / 终端 / 知识库 / 需求池 /
+        // 任务 / 通道 / 审查 / 浏览器 / 技能（「浏览器」2026-09-24 移到末位「技能」之前）。
         let toggleProjects = viewMenu.addItem(withTitle: L10n.tr("menu.toggleProjects"), action: #selector(projectsEntryTapped(_:)), keyEquivalent: "p")
         toggleProjects.keyEquivalentModifierMask = [.command, .option]
         toggleProjects.target = self
@@ -5765,6 +6041,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleWiki.target = self
         toggleWiki.state = (rightPanel == .wiki) ? .on : .off
         wikiToggleMenuItem = toggleWiki
+        // 「需求池」在知识库之后、任务之前（与活动栏一一对应），快捷键 ⌥⌘I。
+        let toggleRequirements = viewMenu.addItem(withTitle: L10n.tr("menu.toggleRequirements"), action: #selector(requirementsEntryTapped(_:)), keyEquivalent: "i")
+        toggleRequirements.keyEquivalentModifierMask = [.command, .option]
+        toggleRequirements.target = self
+        toggleRequirements.state = (rightPanel == .requirements) ? .on : .off
+        requirementsToggleMenuItem = toggleRequirements
         let toggleTasks = viewMenu.addItem(withTitle: L10n.tr("menu.toggleTasks"), action: #selector(tasksEntryTapped(_:)), keyEquivalent: "j")
         toggleTasks.keyEquivalentModifierMask = [.command, .option]
         toggleTasks.target = self
@@ -5943,6 +6225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsBarButton?.toolTip = L10n.tr("bar.skills")
         wikiBarButton?.toolTip = L10n.tr("bar.wiki")
         tasksBarButton?.toolTip = L10n.tr("bar.tasks")
+        requirementsBarButton?.toolTip = L10n.tr("bar.requirements")
         // 各面板头部操作按钮 tooltip 同样跟随语言
         previewPanel?.refreshTooltips()
         terminalPanel?.refreshTooltips()
@@ -5953,6 +6236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         reviewPanel?.refreshTooltips()
         skillsPanel?.refreshTooltips()
         projectsPanel?.refreshTooltips()
+        requirementsPanel?.refreshTooltips()
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url
@@ -6135,6 +6419,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Toggle the Projects panel (activity bar's first entry / ⌥⌘P).
     @objc private func projectsEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .projects ? .none : .projects)
+    }
+    /// Toggle the Requirements Pool panel (activity bar's last entry / ⌥⌘I).
+    @objc private func requirementsEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .requirements ? .none : .requirements)
     }
     /// Toggle the Review (change audit) panel (activity bar entry / ⌥⌘R).
     @objc private func reviewEntryTapped(_ sender: Any?) {
@@ -6499,6 +6787,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         bridge.tasksQueueDeliver = { [weak self] request in
             self?.tasksPanel?.apiTaskQueueDeliver(request) ?? BrowserAPIBridge.tasksUnavailable
         }
+        // 同一服务上的第三块路由面：/api/requirements/*（收件箱 + 拆解器提案）。
+        bridge.requirementsList = { [weak self] workspace in
+            self?.requirementsPanel?.apiRequirementsList(workspace: workspace) ?? BrowserAPIBridge.requirementsUnavailable
+        }
+        bridge.requirementsCreate = { [weak self] request in
+            self?.requirementsPanel?.apiRequirementsCreate(request) ?? BrowserAPIBridge.requirementsUnavailable
+        }
+        bridge.requirementsSetState = { [weak self] request in
+            self?.requirementsPanel?.apiRequirementsSetState(request) ?? BrowserAPIBridge.requirementsUnavailable
+        }
+        bridge.requirementsUpdate = { [weak self] request in
+            self?.requirementsPanel?.apiRequirementsUpdate(request) ?? BrowserAPIBridge.requirementsUnavailable
+        }
+        bridge.requirementsPropose = { [weak self] request in
+            self?.requirementsPanel?.apiRequirementsPropose(request) ?? BrowserAPIBridge.requirementsUnavailable
+        }
+        bridge.requirementsConfirm = { [weak self] request in
+            self?.requirementsPanel?.apiRequirementsConfirm(request) ?? BrowserAPIBridge.requirementsUnavailable
+        }
+        bridge.requirementsReject = { [weak self] request in
+            self?.requirementsPanel?.apiRequirementsReject(request) ?? BrowserAPIBridge.requirementsUnavailable
+        }
         bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
         bridge.hidePanel = { [weak self] in
             if self?.rightPanel == .browser { self?.setRightPanel(.none) }
@@ -6784,6 +7094,7 @@ final class SettingsWindowController {
         ("menu.toggleFiles", "⌥⌘F"),
         ("menu.toggleTerminal", "⌥⌘T"),
         ("menu.toggleWiki", "⌥⌘W"),
+        ("menu.toggleRequirements", "⌥⌘I"),
         ("menu.toggleBrowser", "⌥⌘B"),
         ("menu.toggleChannel", "⌥⌘H"),
         ("menu.toggleReview", "⌥⌘R"),

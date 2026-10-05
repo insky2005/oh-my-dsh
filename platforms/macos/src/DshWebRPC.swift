@@ -466,6 +466,35 @@ enum DshWorkspaceOps {
     }
 }
 
+/// Hand a user turn to an EXISTING dsh session — the same session/prompt envelope
+/// the wiki generator and the task queues use. A panel button that "sends the
+/// prompt into the conversation" goes through here instead of copying to the
+/// clipboard.
+enum DshSessionOps {
+
+    /// session.prompt { sessionId, mode: "queue", content: [{type:"text",text}] }.
+    /// dsh >= 0.1.2 requires a client request id for idempotent delivery.
+    static func sendPrompt(port: Int, sessionId: String, text: String,
+                           timeout: TimeInterval = 15) -> Bool {
+        guard !sessionId.isEmpty, !text.isEmpty else { return false }
+        let payload: [String: Any] = [
+            "sessionId": sessionId,
+            "mode": "queue",
+            "content": [["type": "text", "text": text]],
+        ]
+        return DshWebRPC.call(DshWebRPC.sessionPrompt, payload, port: port, timeout: timeout,
+                              modernExtras: ["requestId": UUID().uuidString]) != nil
+    }
+
+    /// session.rename { sessionId, title } — best effort (a server that rejects the
+    /// title must not fail the caller's real work).
+    static func rename(port: Int, sessionId: String, title: String) -> Bool {
+        guard !sessionId.isEmpty, !title.isEmpty else { return false }
+        return DshWebRPC.call(DshWebRPC.sessionRename,
+                              ["sessionId": sessionId, "title": title], port: port) != nil
+    }
+}
+
 private extension NSLock {
     /// Run `body` with the lock held (keeps the call sites readable).
     func lock_run<T>(_ body: () -> T) -> T {

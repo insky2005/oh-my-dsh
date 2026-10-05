@@ -16,14 +16,19 @@ cp ../../platforms/macos/src/BrowserAPI.swift "$TMP/BrowserAPI.swift"
 cp ../../platforms/macos/src/BrowserCDP.swift "$TMP/BrowserCDP.swift"
 cp ../../platforms/macos/src/PanelSurface.swift "$TMP/PanelSurface.swift"   # 面板底色 token
 # The same localhost service also carries the TASKS panel's routes (/api/tasks/*,
-# TasksAPI.swift). It is a pure model, but it needs the task/queue types, so the
-# task model comes along — that also pins the two路由面 sitting on one server.
+# TasksAPI.swift) and the REQUIREMENTS pool panel's routes (/api/requirements/*,
+# RequirementsAPI.swift). Both are pure models; they need the task/queue and
+# requirement types, so those model files come along too — that also pins the
+# three路由面 sitting on one server.
 cp ../../platforms/macos/src/TasksAPI.swift "$TMP/TasksAPI.swift"
 cp ../../platforms/macos/src/TasksCore.swift "$TMP/TasksCore.swift"
+cp ../../platforms/macos/src/RequirementsAPI.swift "$TMP/RequirementsAPI.swift"
+cp ../../platforms/macos/src/RequirementsCore.swift "$TMP/RequirementsCore.swift"
 cp browser-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
   -o "$TMP/browser-tests" "$TMP/stubs.swift" "$TMP/PanelSurface.swift" "$TMP/BrowserPanel.swift" \
   "$TMP/BrowserAPI.swift" "$TMP/TasksAPI.swift" "$TMP/TasksCore.swift" \
+  "$TMP/RequirementsAPI.swift" "$TMP/RequirementsCore.swift" \
   "$TMP/BrowserCDP.swift" "$TMP/main.swift"
 "$TMP/browser-tests"
 rm -rf "$TMP"
