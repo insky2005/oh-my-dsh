@@ -134,7 +134,16 @@ final class RequirementCardView: NSView {
         breakdownButton.controlSize = .small
         breakdownButton.font = .systemFont(ofSize: 11)
         breakdownButton.toolTip = L10n.tr("requirements.breakdown")
+        breakdownButton.image = NSImage(systemSymbolName: "square.split.2x2",
+                                        accessibilityDescription: L10n.tr("requirements.breakdown"))
+        breakdownButton.imagePosition = .imageLeading
+        breakdownButton.imageScaling = .scaleProportionallyDown
         breakdownButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // Already broken down (children), a proposal is pending, or the requirement
+        // is discarded: there is nothing left to 「拆解」 — hide the action.
+        let showsBreakdown = item.children.isEmpty
+            && (item.proposal?.isEmpty ?? true)
+            && item.effectiveState != .discarded
 
         let stateButton = CustomIconButton(glyph: .symbol("circle.dashed"),
                                            tooltip: L10n.tr("requirements.set.state") + "：" + requirementManualStateLabel(item.requirement.state ?? "candidate"),
@@ -149,7 +158,9 @@ final class RequirementCardView: NSView {
         if !item.children.isEmpty {
             titleViews.append(TaskBadgeView(text: L10n.tr("requirements.children", item.children.count), tone: .neutral))
         }
-        titleViews.append(contentsOf: [spacer, stateBadge, breakdownButton, stateButton, editButton])
+        titleViews.append(contentsOf: [spacer, stateBadge])
+        if showsBreakdown { titleViews.append(breakdownButton) }
+        titleViews.append(contentsOf: [stateButton, editButton])
         let titleRow = NSStackView(views: titleViews)
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY

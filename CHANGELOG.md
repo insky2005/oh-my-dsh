@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **需求池「拆解」按钮：加图标 + 拆解后隐藏（2026-10-04）**：按钮标题前加 **`square.split.2x2` 图标**；并且**仅在尚未拆解时出现**——已有子事项、存在待确认提案、或需求已 `discarded` 时隐藏（驳回提案或回到候选后会重新出现）。
+
 - **需求池卡片交互修正（2026-10-04）**：**每张卡各自折叠**（需求卡 → 事项卡 / 提案卡）：① 点每张卡**自己的标题行**切换，`chevron` 只是指示器（不是按钮）；② **事项卡**收起 = 头部，展开 = 追加 阶段 / 结果 / 路径；③ **提案卡**收起 = `标题 + 依赖`，展开 = 追加**内容（边界）**；④ 需求卡收起时隐藏正文（事项 / 提案列表），meta 仍显示 `待确认拆解 N 项`。
 
 - **需求池卡片改用任务面板的卡片语法（2026-10-04）**：需求卡 = **raised 块**（圆角 8 + 一条 hairline，`TaskInk`）；标题行 = `▸ 类型glyph REQ-id 标题 [需求][N 个事项] … 状态徽标 [拆解][状态][✎]`，**状态只进徽标**（tone：候选 neutral / 评估中·已拆分 running / 挂起 warning / 已关闭 positive，直接复用 `TaskBadgeView`）；诉求常显（收起 3 行）；**点卡片空白处展开/收起**——展开后是 **recessed 的「已拆解事项」mini 卡**（`WS-* 标题 [阶段] ↗`）与 **recessed 的「待确认拆解」块**（每条提案一张 **raised mini 卡**：`标题 — 边界 [依赖 N]`，右上确认 / 驳回）。`TaskCardView.swift` 的 `TaskInk` / `TaskBadgeView` / `taskRowGlyph` 直接复用，**不新增颜色令牌**。

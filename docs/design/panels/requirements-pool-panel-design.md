@@ -248,7 +248,7 @@ updated: <today>
 
 - **标题行**：折叠箭头 → 类型 glyph（`tray.full`，tertiary 13×13）→ 标题 13pt semibold（颜色取 `TaskBadgeView.bodyColor(tone)`）→ `[需求]` 中性徽标 → `[N 个事项]` 中性计数徽标（有子事项时）→ spacer → **有效状态徽标**（`evaluating` 用 filled accent）→ 动作。
   - 状态**只在徽标里**，不染边框；唯一的强调是"活动态"（running）。
-- **动作**（右对齐）：`拆解`（文本按钮，主操作）、`状态`（`circle.dashed` 图标，tooltip 显示当前人工状态）、`编辑`（`pencil` 图标）。次要动作用 `CustomIconButton(size: 22)`（hover 走 `PanelControl` highlight 档）。
+- **动作**（右对齐）：`拆解`（文本按钮 + **`square.split.2x2` 图标**，主操作；**仅在尚未拆解时出现**——无子事项、无待确认提案、且非 `discarded`，否则隐藏）、`状态`（`circle.dashed` 图标，tooltip 显示当前人工状态）、`编辑`（`pencil` 图标）。次要动作用 `CustomIconButton(size: 22)`（hover 走 `PanelControl` highlight 档）。
 - **诉求预览**：`## 诉求` 正文，11pt secondary；**收起 3 行、展开不限**，tooltip 全文。
 - **meta**：来源 · 更新日期 · `待确认拆解 N 项`（10pt tertiary）。
 - **每张卡各自折叠**（层级：需求卡 → 事项卡 / 提案卡），每张卡的 `chevron` 都只是 `taskRowGlyph` **指示器（不是按钮）**，点击由它**自己的标题行**接管（`RequirementHeaderView`），不会误触发父卡：
