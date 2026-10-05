@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **驳回提示词改写（2026-10-04）**：④带原因 / ⑤无原因统一为 `RequirementsCore.rejectPrompt(_:title:reason:)`——`REQ-xxx「标题」@路径，需求拆解已驳回。`（**有原因才多一行 `驳回原因：…`**）`请修改拆解方案。` + 三条注意（只拆不胀 / 重新提交待确认提案并调拆解器 API / 提交后等待用户确认『待确认提案』）；提议 API 那一行抽成 `proposeAPIHint`，② 与 ④⑤ 共用，避免两处漂移。移除 L10n `requirements.notify.rejected` / `rejectedWithReason`。模型测试 **114 → 120**。
+
 - **确认拆解提示词改写（2026-10-04）**：`requirements.notify.confirmed` 改为 `REQ-xxx「标题」@.dsh/requirements/REQ-xxx.md，需求拆解已确认。` + `生成事项：WS-…。` + 两条注意（回复『收到』/ 列出事项清单）；main 的 `notifyBreakdownResolved` 改为取整张需求卡（拿 title + session）再拼提示词。设计 §5.7 ③ 同步。
 
 - **拆解提示词改写（2026-10-04）**：`breakdownPrompt` 改为 `REQ-xxx「标题」@.dsh/requirements/REQ-xxx.md，需求已确认。` 开头，正文「根据需求，将需求拆解为可依次落地的事项。请给出拆解方案：每个事项的标题、边界、依赖顺序。」+ 三条注意（只拆不胀 / 调拆解器 API 提交待确认提案 / **提交后等待用户确认『待确认提案』**）；为此 `breakdownPrompt` 增加 `title` 参数，面板 `onBreakdown` 与 `sendBreakdownPrompt` 一起传标题。设计 §5.7 ② 同步。

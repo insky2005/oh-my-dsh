@@ -275,7 +275,7 @@ updated: <today>
 
 ### 5.5 驳回原因抽屉
 
-点「驳回」不直接丢弃提案，而是复用同一个 form sheet 拉一个**原因抽屉**（`RequirementRejectView` + 纯模型 `RejectReasonModel`）：**一个必填输入框**，`⌘↩` 提交、`Esc` 取消；空原因时提交禁用、尝试提交后给 `requirements.reject.problem`。提交后先 `reject`（清提案），再把原因拼进**写回该需求会话**的提示词（`requirements.notify.rejectedWithReason`，全文见 §5.7）。
+点「驳回」不直接丢弃提案，而是复用同一个 form sheet 拉一个**原因抽屉**（`RequirementRejectView` + 纯模型 `RejectReasonModel`）：**一个必填输入框**，`⌘↩` 提交、`Esc` 取消；空原因时提交禁用、尝试提交后给 `requirements.reject.problem`。提交后先 `reject`（清提案），再把原因拼进**写回该需求会话**的提示词（`RequirementsCore.rejectPrompt(_:title:reason:)`，全文见 §5.7）。
 
 这样驳回不是「作废」，而是**带方向的返工**：agent 按原因改，人再确认。
 
@@ -323,17 +323,29 @@ REQ-008「标题」@.dsh/requirements/REQ-008.md，需求拆解已确认。
 - 列出事项清单。
 ```
 
-**④ 驳回拆解（带原因）**（`requirements.notify.rejectedWithReason`；回写绑定会话）
+**④ 驳回拆解（带原因）**（`RequirementsCore.rejectPrompt(_:title:reason:)`；回写绑定会话）
 
 ```text
-需求池：REQ-008 的拆解提案已被人在面板驳回。原因：<原因>
-请据此修改拆解方案，重新提交待确认提案（POST /api/requirements/breakdown/propose），不要建卡。
+REQ-008「标题」@.dsh/requirements/REQ-008.md，需求拆解已驳回。
+驳回原因：粒度太粗，且漏了迁移步骤
+请修改拆解方案。
+
+注意：
+- 只拆不胀，范围外的新发现回池。
+- 重新提交待确认提案（不要建卡、不要自签）。调用 拆解器 API `POST /api/requirements/breakdown/propose  {"id":"REQ-008","items":[{"title":"...","boundary":"...","dependsOn":["..."]}]}` 提交。
+- 提交后，等待用户确认『待确认提案』。
 ```
 
-**⑤ 驳回拆解（无原因，兜底）**（`requirements.notify.rejected`；仅在 `reason` 为空时走到）
+**⑤ 驳回拆解（无原因）**（同一个 `rejectPrompt`；`reason` 为空时省略「驳回原因：…」一行）
 
 ```text
-需求池：REQ-008 的拆解提案已被人在面板驳回。收到即可，等我下一步指令。
+REQ-008「标题」@.dsh/requirements/REQ-008.md，需求拆解已驳回。
+请修改拆解方案。
+
+注意：
+- 只拆不胀，范围外的新发现回池。
+- 重新提交待确认提案（不要建卡、不要自签）。调用 拆解器 API `POST /api/requirements/breakdown/propose  {"id":"REQ-008","items":[{"title":"...","boundary":"...","dependsOn":["..."]}]}` 提交。
+- 提交后，等待用户确认『待确认提案』。
 ```
 
 > 贯穿 ①②③④⑤ 的硬约束：只讨论不改代码 · 只拆不胀 · 不要建卡 / 不要自签 · 收到即可不自动开工（AGENTS.md 开工前置 + R10 人工确认门）。
@@ -443,7 +455,6 @@ REQ-008「标题」@.dsh/requirements/REQ-008.md，需求拆解已确认。
 | `requirements.reject.placeholder` | 例如：粒度太粗 / 与现有事项重复 / 漏了迁移步骤 | e.g. too coarse / duplicates existing workstreams / misses a migration step |
 | `requirements.reject.submit` | 驳回并说明 | Reject with reason |
 | `requirements.reject.problem` | 请填写驳回原因 | Enter a reason |
-| `requirements.notify.rejectedWithReason` | 需求池：%@ 的拆解提案已被人在面板驳回。原因：%@ / 请据此修改拆解方案，重新提交待确认提案，不要建卡。 | Requirements pool: %@ breakdown proposal was rejected by the human. Reason: %@ / Revise and re-submit a pending proposal; do not create cards. |
 | `requirements.created` | 已创建 %@ | Created %@ |
 | `requirements.stateChanged` | %@ → %@ | %@ → %@ |
 | `requirements.error.notFound` | 找不到该需求 | Requirement not found |

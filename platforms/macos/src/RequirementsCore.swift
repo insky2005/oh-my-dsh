@@ -726,8 +726,30 @@ enum RequirementsCore {
             + "\n"
             + "注意：\n"
             + "- 只拆不胀，范围外的新发现回池。\n"
-            + "- 提交待确认提案（不要建卡、不要自签）。调用 拆解器 API `POST /api/requirements/breakdown/propose  {\"id\":\"" + requirementId + "\",\"items\":[{\"title\":\"...\",\"boundary\":\"...\",\"dependsOn\":[\"...\"]}]}` 提交。\n"
+            + "- 提交待确认提案（不要建卡、不要自签）。" + proposeAPIHint(requirementId) + "\n"
             + "- 提交后，等待用户确认『待确认提案』。"
+    }
+
+    /// 「驳回」后请 agent 改方案再提案；`reason` 为空时省略「驳回原因：…」一行，
+    /// 其余与拆解提示词一致（design §5.7 ④⑤）。
+    static func rejectPrompt(_ requirementId: String, title: String, reason: String?) -> String {
+        var text = requirementId + "「" + title + "」@.dsh/requirements/" + requirementId + ".md，需求拆解已驳回。\n"
+        if let reason = reason, !reason.isEmpty {
+            text += "驳回原因：" + reason + "\n"
+        }
+        text += "请修改拆解方案。\n"
+            + "\n"
+            + "注意：\n"
+            + "- 只拆不胀，范围外的新发现回池。\n"
+            + "- 重新提交待确认提案（不要建卡、不要自签）。" + proposeAPIHint(requirementId) + "\n"
+            + "- 提交后，等待用户确认『待确认提案』。"
+        return text
+    }
+
+    /// The propose-endpoint line shared by 拆解 / 驳回（一处维护，避免两处漂移）。
+    private static func proposeAPIHint(_ requirementId: String) -> String {
+        return "调用 拆解器 API `POST /api/requirements/breakdown/propose  {\"id\":\"" + requirementId
+            + "\",\"items\":[{\"title\":\"...\",\"boundary\":\"...\",\"dependsOn\":[\"...\"]}]}` 提交。"
     }
 }
 
