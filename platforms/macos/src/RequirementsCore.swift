@@ -589,6 +589,7 @@ enum RequirementsCore {
             + "source: " + src + "\n"
             + "created: " + today + "\n"
             + "updated: " + today + "\n"
+            + "workstreams: []\n"
             + "---\n\n## 诉求\n\n" + statement + "\n"
         let path = requirementPath(workspace, id: id)
         try atomicWrite(text, to: path)
@@ -658,7 +659,7 @@ enum RequirementsCore {
                         fileManager: FileManager = .default) throws -> [WorkstreamSummary] {
         let path = requirementPath(workspace, id: id)
         guard let text = readText(path) else { throw PoolError.unknownRequirement(id) }
-        let (_, body) = parseCard(text)
+        let (fm, body) = parseCard(text)
         guard let proposal = parseProposal(body), !proposal.isEmpty else { throw PoolError.noProposal }
         try ensureDirectories(workspace, fileManager: fileManager)
 
@@ -685,8 +686,15 @@ enum RequirementsCore {
             if let summary = workstream(from: wsText, path: wsPath) { created.append(summary) }
         }
 
+        // Link the created workstreams back in the requirement's OWN frontmatter
+        // (`workstreams: [WS-…]`) — the panel derives children from the WS cards'
+        // `requirement:` back-refs, but the REQ card must carry the list too.
+        var workstreamList = list(fm, "workstreams")
+        for wsId in ids where !workstreamList.contains(wsId) { workstreamList.append(wsId) }
         let newBody = replaceSection(body, heading: breakdownHeading, with: confirmedSection(items: proposal, ids: ids, today: today))
-        let rewritten = setFrontmatterFields(recompose(text, body: newBody), fields: ["updated": today])
+        let rewritten = setFrontmatterFields(recompose(text, body: newBody),
+                                             fields: ["updated": today,
+                                                      "workstreams": "[" + workstreamList.joined(separator: ", ") + "]"])
         try atomicWrite(rewritten, to: path)
         return created
     }

@@ -258,6 +258,7 @@ updated: <today>
   - **提案卡**（raised）：点它的标题行切换；收起 = `标题 + [依赖 N]`，展开 = 追加**内容（边界）**一行（11pt secondary、换行）。
 - **已拆解事项**（需求卡展开后）：`已拆解事项 (N)` 小标题 + 每个 `WS-*` 一张**事项卡**。
 - **待确认拆解**（需求卡展开后）：一个 **recessed 容器**，头是 `square.dashed 待确认拆解 [待确认 N 项] … [确认拆解] [驳回]`，下面是每条一张**提案卡**（各自可折叠）。点「驳回」打开**原因抽屉**（必填），原因随结果写回该需求的会话提示词。
+- **确认拆解**：建 `WS-*.md`（`requirement:` 指回需求）并把 **`workstreams: [WS-…]` 写回 REQ 卡 frontmatter**（合并已有列表）；面板的子事项列表另有 `WS.requirement` 反向聚合兜底，所以这个字段以前漏写时界面看不出来。
 - **状态色（tone）**：`candidate`→neutral、`evaluating`→running、`suspended`→warning、`discarded`→neutral、`split`→running、`closed`→positive（`requirementTone`）。
 - **动作语义**（不变）：状态菜单写回**人工判断**（`split`/`closed` 派生，不在菜单里）；编辑只改 title + `## 诉求`；拆解发提示词到**来源会话**（`.dsh/requirements/local.json`）或当前会话，都没有才回退复制，发到别的会话会切前台；`确认拆解`/`驳回` 在提案块里，成功后把**结果回写**到该需求的会话（同一会话闭环）。
 

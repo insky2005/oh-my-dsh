@@ -203,6 +203,9 @@ let afterConfirm = RequirementsCore.load(workspace: ws3)
 eq(afterConfirm.requirements[0].proposal == nil, true, "proposal cleared after confirm")
 eq(afterConfirm.requirements[0].effectiveState, .split, "confirmed requirement shows split")
 eq(afterConfirm.requirements[0].children.count, 2, "children visible after confirm")
+let reqTextAfterConfirm = RequirementsCore.readText(RequirementsCore.requirementPath(ws3, id: req3Id)) ?? ""
+check(reqTextAfterConfirm.contains("workstreams: [WS-000001, WS-000002]"),
+      "REQ frontmatter links the created workstreams")
 expectError("confirm is not repeatable", .noProposal) {
     _ = try RequirementsCore.confirm(workspace: ws3, id: req3Id, today: "2026-10-04")
 }

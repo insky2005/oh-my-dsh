@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **修复：确认拆解后 REQ 卡未关联 `workstreams`（2026-10-04）**：`confirm` 以前只建 `WS-*.md` + 映射表，没把 `workstreams: [WS-…]` 写回 REQ frontmatter；现在确认时**合并已有列表并写回**（新建需求也预置 `workstreams: []`）。面板列表本就走 WS 的 `requirement:` 反向聚合，所以界面看不出问题，但卡片自身缺字段。模型测试 **121 → 122**。
+
 - **REQ / WS 编号改为 6 位（2026-10-04）**：`nextId` 从 `%03d` 改为 `%06d`——新卡为 `REQ-000008` / `WS-000009`；`numericPart` 按数字解析与排序，旧的 3 位卡保持原样且能与 6 位混排、继续参与编号。设计「id 分配」说明与示例同步。模型测试 **120 → 121**。
 
 - **驳回提示词改写（2026-10-04）**：④带原因 / ⑤无原因统一为 `RequirementsCore.rejectPrompt(_:title:reason:)`——`REQ-xxx「标题」@路径，需求拆解已驳回。`（**有原因才多一行 `驳回原因：…`**）`请修改拆解方案。` + 三条注意（只拆不胀 / 重新提交待确认提案并调拆解器 API / 提交后等待用户确认『待确认提案』）；提议 API 那一行抽成 `proposeAPIHint`，② 与 ④⑤ 共用，避免两处漂移。移除 L10n `requirements.notify.rejected` / `rejectedWithReason`。模型测试 **114 → 120**。
