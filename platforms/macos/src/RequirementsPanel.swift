@@ -27,6 +27,7 @@ func requirementStateLabel(_ state: ReqEffectiveState) -> String {
     switch state {
     case .candidate: return L10n.tr("requirements.state.candidate")
     case .evaluating: return L10n.tr("requirements.state.evaluating")
+    case .evaluated: return L10n.tr("requirements.state.evaluated")
     case .suspended: return L10n.tr("requirements.state.suspended")
     case .discarded: return L10n.tr("requirements.state.discarded")
     case .split: return L10n.tr("requirements.state.split")
@@ -38,6 +39,7 @@ func requirementStateLabel(_ state: ReqEffectiveState) -> String {
 func requirementManualStateLabel(_ state: String) -> String {
     switch state {
     case "evaluating": return L10n.tr("requirements.state.evaluating")
+    case "evaluated": return L10n.tr("requirements.state.evaluated")
     case "suspended": return L10n.tr("requirements.state.suspended")
     case "discarded": return L10n.tr("requirements.state.discarded")
     default: return L10n.tr("requirements.state.candidate")
@@ -642,6 +644,7 @@ func requirementTone(_ state: ReqEffectiveState) -> TaskTone {
     switch state {
     case .candidate: return .neutral
     case .evaluating: return .running
+    case .evaluated: return .positive
     case .suspended: return .warning
     case .discarded: return .neutral
     case .split: return .running

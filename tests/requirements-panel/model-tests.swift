@@ -124,12 +124,12 @@ eq(RequirementsCore.effectiveState(state: nil, children: []), .candidate, "empty
 eq(RequirementsCore.derivedState(children: []), nil, "no children -> nil derived state")
 eq(RequirementsCore.derivedState(children: [openChild]), .split, "open child -> derived split")
 eq(RequirementsCore.derivedState(children: [closedChild]), .closed, "all terminal -> derived closed")
-eq(RequirementsCore.allowedStates(from: nil, derived: nil), ["evaluating", "suspended", "discarded"], "no breakdown: candidate offers the other manual states")
-eq(RequirementsCore.allowedStates(from: "evaluating", derived: nil), ["candidate", "suspended", "discarded"], "no breakdown: evaluating offers the others")
-eq(RequirementsCore.allowedStates(from: "suspended", derived: nil), ["candidate", "evaluating", "discarded"], "no breakdown: suspended offers the others")
+eq(RequirementsCore.allowedStates(from: nil, derived: nil), ["evaluating", "evaluated", "suspended", "discarded"], "no breakdown: candidate offers the other manual states")
+eq(RequirementsCore.allowedStates(from: "evaluating", derived: nil), ["candidate", "evaluated", "suspended", "discarded"], "no breakdown: evaluating offers the others")
+eq(RequirementsCore.allowedStates(from: "suspended", derived: nil), ["candidate", "evaluating", "evaluated", "discarded"], "no breakdown: suspended offers the others")
 eq(RequirementsCore.allowedStates(from: "discarded", derived: nil), [], "discarded is terminal")
-eq(RequirementsCore.allowedStates(from: "evaluating", derived: .split), ["suspended", "discarded"], "split hides candidate (already judged)")
-eq(RequirementsCore.allowedStates(from: "candidate", derived: .split), ["evaluating", "suspended", "discarded"], "split from candidate still offers evaluating")
+eq(RequirementsCore.allowedStates(from: "evaluating", derived: .split), ["evaluated", "suspended", "discarded"], "split hides candidate (already judged)")
+eq(RequirementsCore.allowedStates(from: "candidate", derived: .split), ["evaluating", "evaluated", "suspended", "discarded"], "split from candidate still offers evaluating")
 eq(RequirementsCore.allowedStates(from: "evaluating", derived: .closed), [], "closed is terminal (reopen = new requirement)")
 check(!RequirementsCore.allowedStates(from: "candidate", derived: nil).contains("candidate"), "current state is hidden")
 
@@ -286,6 +286,18 @@ write(wsClosed + "/.dsh/workstreams/WS-000001.md",
 expectError("closed is terminal", .invalidTransition("evaluating", "suspended")) {
     _ = try RequirementsCore.setState(workspace: wsClosed, id: reqClosedId, state: "suspended", today: "2026-10-05")
 }
+
+// propose advances candidate -> evaluating; confirm advances -> evaluated.
+let wsAuto = tempWorkspace("auto-state")
+let reqAuto = try! RequirementsCore.createRequirement(workspace: wsAuto, title: "自动", body: nil, source: nil, today: "2026-10-05")
+eq(reqAuto.state, "candidate", "new requirement is candidate")
+let autoProposal = try! RequirementsCore.propose(workspace: wsAuto, id: reqAuto.id,
+                                                 items: [BreakdownItem(title: "A", boundary: "b", dependsOn: [])],
+                                                 today: "2026-10-05")
+eq(autoProposal.state, "evaluating", "propose moves candidate to evaluating")
+_ = try! RequirementsCore.confirm(workspace: wsAuto, id: reqAuto.id, today: "2026-10-05")
+let autoReload = RequirementsCore.load(workspace: wsAuto).requirements.first
+eq(autoReload?.requirement.state, "evaluated", "confirm moves evaluating to evaluated")
 
 check(RequirementsCore.breakdownPrompt("REQ-001", title: "想法").contains("/api/requirements/breakdown/propose"), "prompt points at the propose endpoint")
 check(RequirementsCore.breakdownPrompt("REQ-042", title: "想法").contains("REQ-042"), "prompt names the requirement")

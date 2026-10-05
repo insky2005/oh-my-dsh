@@ -82,6 +82,7 @@ enum PoolError: Error, Equatable {
 enum ReqEffectiveState: String, Equatable, CaseIterable {
     case candidate
     case evaluating
+    case evaluated
     case suspended
     case discarded
     case split
@@ -167,7 +168,7 @@ struct PoolSnapshot: Equatable {
 enum RequirementsCore {
 
     /// Manual pool states (design §3.3); split / closed are derived and must not appear.
-    static let manualStates: [String] = ["candidate", "evaluating", "suspended", "discarded"]
+    static let manualStates: [String] = ["candidate", "evaluating", "evaluated", "suspended", "discarded"]
 
     /// Delivery outcomes that make a workstream terminal (store design §5/§6).
     static let terminalOutcomes: Set<String> = ["merged", "closed", "abandoned"]
@@ -364,6 +365,7 @@ enum RequirementsCore {
         if !children.isEmpty { return .split }
         switch state {
         case "evaluating": return .evaluating
+        case "evaluated": return .evaluated
         case "suspended": return .suspended
         default: return .candidate
         }
@@ -845,9 +847,13 @@ enum RequirementsCore {
         guard !items.isEmpty else { throw PoolError.noItems }
         let path = requirementPath(workspace, id: id)
         guard let text = readText(path) else { throw PoolError.unknownRequirement(id) }
-        let (_, body) = parseCard(text)
+        let (fm, body) = parseCard(text)
         let newBody = replaceSection(body, heading: breakdownHeading, with: proposalSection(items))
-        let rewritten = setFrontmatterFields(recompose(text, body: newBody), fields: ["updated": today])
+        var fields: [String: String] = ["updated": today]
+        // A submitted 拆解提案 moves a candidate into 评估中 (design §3.3.1).
+        let current = string(fm, "state")
+        if current == nil || current == "candidate" { fields["state"] = "evaluating" }
+        let rewritten = setFrontmatterFields(recompose(text, body: newBody), fields: fields)
         try atomicWrite(rewritten, to: path)
         guard let card = card(from: rewritten, path: path) else { throw PoolError.writeFailed("card did not parse") }
         return card
@@ -892,9 +898,12 @@ enum RequirementsCore {
         var workstreamList = list(fm, "workstreams")
         for wsId in ids where !workstreamList.contains(wsId) { workstreamList.append(wsId) }
         let newBody = replaceSection(body, heading: breakdownHeading, with: confirmedSection(items: proposal, ids: ids, today: today))
-        let rewritten = setFrontmatterFields(recompose(text, body: newBody),
-                                             fields: ["updated": today,
-                                                      "workstreams": "[" + workstreamList.joined(separator: ", ") + "]"])
+        var fields: [String: String] = ["updated": today,
+                                        "workstreams": "[" + workstreamList.joined(separator: ", ") + "]"]
+        // A confirmed breakdown moves candidate / evaluating into 已评估 (design §3.3.1).
+        let current = string(fm, "state")
+        if current == nil || current == "candidate" || current == "evaluating" { fields["state"] = "evaluated" }
+        let rewritten = setFrontmatterFields(recompose(text, body: newBody), fields: fields)
         try atomicWrite(rewritten, to: path)
         return created
     }

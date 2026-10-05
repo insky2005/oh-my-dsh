@@ -123,17 +123,25 @@ static func reject(workspace:id:today:) throws -> RequirementCard
 
 ### 3.3.1 状态转换（人工态 × 派生态）
 
-人工态（`state`）只在「未拆解 / 拆解中 / 已关闭 / 已丢弃」四种语境下允许，**派生态是人工转换的前置条件**（`RequirementsCore.allowedStates(from:derived:)`，**模型强制**、菜单只列可达项）：
+人工态（`state`）是需求的生命周期：`candidate`（候选）→ `evaluating`（评估中）→ `evaluated`（已评估），另有 `suspended`（挂起）/ `discarded`（丢弃）两个旁路。**派生态是人工转换的前置条件**（`RequirementsCore.allowedStates(from:derived:)`，**模型强制**、菜单只列可达项）：
 
-| 当前派生态 | 可切换的人工态（隐藏当前态） |
+**自动推进**（写卡时顺带改 `state`）：
+
+- 提交拆解提案 `propose`：`candidate`（或 nil）→ `evaluating`；
+- 确认拆解 `confirm`：`candidate` / `evaluating` → `evaluated`；
+- 驳回 `reject` 不改 `state`（仍在评估中）。
+
+**手动可达集**（`allowedStates`；隐藏当前态与 `discarded` 后追加 `discarded`）：
+
+| 当前派生态 | 可切换的人工态 |
 |---|---|
-| 无（未拆解） | `evaluating` / `suspended` / `discarded`；`candidate` 可回退 |
-| `split`（有进行中事项） | `evaluating` / `suspended` / `discarded`（**不含 `candidate`**——拆解过即已评估） |
+| 无（未拆解） | `evaluating` / `evaluated` / `suspended` / `discarded` |
+| `split`（有进行中事项） | `evaluating` / `evaluated` / `suspended` / `discarded`，但**不含 `candidate`**（拆解过即已评估） |
 | `closed`（全部事项终态） | **无**：终态不回弹，重开请另起需求（原则 15） |
 | 当前 `discarded` | **无**：单向门 |
 
 - `setState` 先读当前 `state` + 子事项派生的 `derived`，目标不在可达集 → `throws PoolError.invalidTransition(from, to)`（API → 409 `invalid-transition`）；同状态是幂等 no-op；
-- 有效态 `discarded > closed > split > state` 只用于**展示 / API 汇总**，不写入卡片。
+- 有效态 `discarded > closed > split > state` 只用于**展示 / API 汇总**，不写入卡片；`evaluated` 与派生 `split` 会同时出现（徽标 `[已评估] [已拆分]`）。
 
 ### 3.4 终态的网络派生不在本期
 
@@ -273,7 +281,7 @@ updated: <today>
 - **已拆解事项**（需求卡展开后）：`已拆解事项 (N)` 小标题 + 每个 `WS-*` 一张**事项卡**。
 - **待确认拆解**（需求卡展开后）：一个 **recessed 容器**，头是 `square.dashed 待确认拆解 [待确认 N 项] … [确认拆解] [驳回]`，下面是每条一张**提案卡**（各自可折叠）。点「驳回」打开**原因抽屉**（必填），原因随结果写回该需求的会话提示词。
 - **确认拆解**：建 `WS-*.md`（`requirement:` 指回需求）并把 **`workstreams: [WS-…]` 写回 REQ 卡 frontmatter**（合并已有列表）；面板的子事项列表另有 `WS.requirement` 反向聚合兜底，所以这个字段以前漏写时界面看不出来。
-- **状态色（tone）**：`candidate`→neutral、`evaluating`→running、`suspended`→warning、`discarded`→neutral、`split`→running、`closed`→positive（`requirementTone`）——人工徽标取人工态、派生徽标取派生态，标题正文色取**有效态**（`discarded > closed > split > state`）。
+- **状态色（tone）**：`candidate`→neutral、`evaluating`→running、`evaluated`→positive、`suspended`→warning、`discarded`→neutral、`split`→running、`closed`→positive（`requirementTone`）——人工徽标取人工态、派生徽标取派生态，标题正文色取**有效态**（`discarded > closed > split > state`）。
 - **动作语义**（不变）：状态菜单写回**人工判断**（`split`/`closed` 派生，不在菜单里）；编辑只改 title + `## 诉求`，且**仅在尚未拆解时可用**（已有子事项 = 冻结，改需求请另起，R5）；拆解发提示词到**来源会话**（`.dsh/requirements/local.json`）或当前会话，都没有才回退复制，发到别的会话会切前台；`确认拆解`/`驳回` 在提案块里，成功后把**结果回写**到该需求的会话（同一会话闭环）。
 
 ### 5.3 空态与状态行
@@ -446,6 +454,7 @@ REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已驳回�
 | `requirements.glyph.proposalItem` | 提案事项 | Proposed workstream |
 | `requirements.state.candidate` | 候选 | Candidate |
 | `requirements.state.evaluating` | 评估中 | Evaluating |
+| `requirements.state.evaluated` | 已评估 | Evaluated |
 | `requirements.state.suspended` | 挂起 | Suspended |
 | `requirements.state.discarded` | 丢弃 | Discarded |
 | `requirements.state.split` | 已拆分 | Split |

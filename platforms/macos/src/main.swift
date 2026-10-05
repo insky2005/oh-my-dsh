@@ -951,6 +951,7 @@ enum L10n {
         "requirements.glyph.proposalItem": ("提案事项", "Proposed workstream"),
         "requirements.state.candidate": ("候选", "Candidate"),
         "requirements.state.evaluating": ("评估中", "Evaluating"),
+        "requirements.state.evaluated": ("已评估", "Evaluated"),
         "requirements.state.suspended": ("挂起", "Suspended"),
         "requirements.state.discarded": ("丢弃", "Discarded"),
         "requirements.state.split": ("已拆分", "Split"),
