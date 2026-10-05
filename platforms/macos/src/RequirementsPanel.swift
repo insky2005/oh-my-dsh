@@ -352,7 +352,9 @@ final class RequirementCardView: NSView {
             entry.representedObject = state
             menu.addItem(entry)
         }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 4), in: view)
+        // Same anchor as the rest of the shell (IssueRunnerPanel / FilePanel): the
+        // menu opens BELOW the control so it never covers the state badge itself.
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: view)
     }
 
     @objc private func statePicked(_ sender: NSMenuItem) {
