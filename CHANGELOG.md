@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **需求池：事项卡折叠态显示依赖徽标（2026-10-05）**：事项依赖原先只在展开后可见；现在折叠头部就有 `[依赖 N]` 徽标（tooltip 列出 WS 标识），与提案项卡的语法一致。依赖取自 REQ 确认表的 `依赖` 列，旧卡多数没有该列（开发版里仅 REQ-004 的 WS-008 有）。
+
 - **需求池：已拆解需求冻结，不可再编辑（2026-10-05）**：一个需求一旦拆出事项（`WS.requirement` 指回它），**面板隐藏「编辑」**，模型层 `updateRequirement` 直接抛 `breakdownLocked`（API `POST /api/requirements/update` → 409 `breakdown-locked`）——避免改了需求、确认过的拆解却对不上（对齐设计「已确认的映射表不追溯修改 / 重开另起需求」，R5）。仅有**待确认提案**时仍可编辑。模型测试 **150 → 153**、API **55 → 56**。
 
 - **需求池：拆解确认清单标准化 + 事项卡合并展示（2026-10-05）**：REQ 卡确认拆解后，`## 拆解` 表由 `confirm` 按标准列生成 **`标识 | 事项 | 边界 | 依赖`**（`依赖` 写 WS 标识而非标题）；**状态不落 REQ**（T1，派生字段不落盘），阶段 / 结果一律由面板按 WS 卡实时读取。面板「已拆解事项」改为渲染 **REQ 内容 × WS 状态** 的合并行（`WorkstreamDisplay`）：展开显示每行的 `边界 / 依赖`，阶段徽标**本地化**（规划/设计/任务/验收/交付），并对分歧显式标注（`WS 卡缺失` / `REQ 表未记录`）；解析按列名识别，兼容旧卡 3/4 列与无 ID 的候选行。`GET /api/requirements/list` 每个需求新增 `confirmed`。设计见 `docs/design/panels/requirements-breakdown-standard-design.md`。模型测试 **122 → 150**、API **51 → 55**。
