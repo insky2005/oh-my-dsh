@@ -149,10 +149,10 @@ section("writes")
 let ws2 = tempWorkspace("writes")
 write(ws2 + "/.dsh/requirements/REQ-007.md", requirementFixture("REQ-007", state: nil))
 let created = try! RequirementsCore.createRequirement(workspace: ws2, title: "  新需求  ", body: "", source: nil, today: "2026-10-04")
-eq(created.id, "REQ-008", "next id after REQ-007")
+eq(created.id, "REQ-000008", "next id after REQ-007 (six-digit)")
 eq(created.title, "新需求", "title trimmed")
 eq(created.state, "candidate", "new requirement is a candidate")
-check(FileManager.default.fileExists(atPath: RequirementsCore.requirementPath(ws2, id: "REQ-008")), "card written")
+check(FileManager.default.fileExists(atPath: RequirementsCore.requirementPath(ws2, id: "REQ-000008")), "card written")
 check(!files(in: RequirementsCore.requirementsDir(ws2)).contains(where: { $0.contains(".tmp-") }), "no temp files left behind")
 check(created.body.contains("新需求"), "empty body falls back to the title")
 
@@ -160,11 +160,11 @@ expectError("empty title throws missingTitle", .missingTitle) {
     _ = try RequirementsCore.createRequirement(workspace: ws2, title: "   ", body: nil, source: nil, today: "2026-10-04")
 }
 
-let evaluating = try! RequirementsCore.setState(workspace: ws2, id: "REQ-008", state: "evaluating", today: "2026-10-05")
+let evaluating = try! RequirementsCore.setState(workspace: ws2, id: "REQ-000008", state: "evaluating", today: "2026-10-05")
 eq(evaluating.state, "evaluating", "state updated")
 eq(evaluating.updated, "2026-10-05", "updated date bumped")
 expectError("derived state rejected on write", .unknownState("split")) {
-    _ = try RequirementsCore.setState(workspace: ws2, id: "REQ-008", state: "split", today: "2026-10-05")
+    _ = try RequirementsCore.setState(workspace: ws2, id: "REQ-000008", state: "split", today: "2026-10-05")
 }
 expectError("unknown requirement throws", .unknownRequirement("REQ-999")) {
     _ = try RequirementsCore.setState(workspace: ws2, id: "REQ-999", state: "candidate", today: "2026-10-05")
@@ -174,44 +174,46 @@ expectError("unknown requirement throws", .unknownRequirement("REQ-999")) {
 
 section("breakdown")
 let ws3 = tempWorkspace("breakdown")
-_ = try! RequirementsCore.createRequirement(workspace: ws3, title: "拆分我", body: "把这件事拆开。", source: "test", today: "2026-10-04")
+let req3 = try! RequirementsCore.createRequirement(workspace: ws3, title: "拆分我", body: "把这件事拆开。", source: "test", today: "2026-10-04")
+eq(req3.id, "REQ-000001", "first requirement is six-digit")
+let req3Id = req3.id
 let items = [BreakdownItem(title: "事项 A", boundary: "只做 A", dependsOn: []),
              BreakdownItem(title: "事项 B", boundary: "依赖 A", dependsOn: ["事项 A"])]
-let proposed = try! RequirementsCore.propose(workspace: ws3, id: "REQ-001", items: items, today: "2026-10-04")
+let proposed = try! RequirementsCore.propose(workspace: ws3, id: req3Id, items: items, today: "2026-10-04")
 eq(proposed.body.contains("json proposal"), true, "proposal fence written")
 eq(RequirementsCore.parseProposal(proposed.body)?.count, 2, "proposal round-trips")
 eq(RequirementsCore.parseProposal(proposed.body)?[1].dependsOn, ["事项 A"], "dependsOn round-trips")
 
 // Negative gate: confirm without a proposal must fail (design §10 "门要能自证").
 let ws4 = tempWorkspace("nogate")
-_ = try! RequirementsCore.createRequirement(workspace: ws4, title: "无提案", body: nil, source: nil, today: "2026-10-04")
+let req4 = try! RequirementsCore.createRequirement(workspace: ws4, title: "无提案", body: nil, source: nil, today: "2026-10-04")
 expectError("confirm without proposal -> noProposal", .noProposal) {
-    _ = try RequirementsCore.confirm(workspace: ws4, id: "REQ-001", today: "2026-10-04")
+    _ = try RequirementsCore.confirm(workspace: ws4, id: req4.id, today: "2026-10-04")
 }
 
-let createdWs = try! RequirementsCore.confirm(workspace: ws3, id: "REQ-001", today: "2026-10-04")
+let createdWs = try! RequirementsCore.confirm(workspace: ws3, id: req3Id, today: "2026-10-04")
 eq(createdWs.count, 2, "confirm creates one WS per item")
-eq(createdWs[0].id, "WS-001", "first WS id")
-eq(createdWs[1].id, "WS-002", "second WS id")
-eq(createdWs[0].requirement, "REQ-001", "WS points back at the requirement")
+eq(createdWs[0].id, "WS-000001", "first WS id is six-digit")
+eq(createdWs[1].id, "WS-000002", "second WS id is six-digit")
+eq(createdWs[0].requirement, req3Id, "WS points back at the requirement")
 eq(createdWs[0].stage, "planning", "new WS starts in planning")
-check(FileManager.default.fileExists(atPath: RequirementsCore.workstreamPath(ws3, id: "WS-002")), "second WS written")
+check(FileManager.default.fileExists(atPath: RequirementsCore.workstreamPath(ws3, id: "WS-000002")), "second WS written")
 
 let afterConfirm = RequirementsCore.load(workspace: ws3)
 eq(afterConfirm.requirements[0].proposal == nil, true, "proposal cleared after confirm")
 eq(afterConfirm.requirements[0].effectiveState, .split, "confirmed requirement shows split")
 eq(afterConfirm.requirements[0].children.count, 2, "children visible after confirm")
 expectError("confirm is not repeatable", .noProposal) {
-    _ = try RequirementsCore.confirm(workspace: ws3, id: "REQ-001", today: "2026-10-04")
+    _ = try RequirementsCore.confirm(workspace: ws3, id: req3Id, today: "2026-10-04")
 }
 check(!files(in: RequirementsCore.workstreamsDir(ws3)).contains(where: { $0.contains(".tmp-") }), "no temp WS files")
 
 // reject
-_ = try! RequirementsCore.propose(workspace: ws3, id: "REQ-001", items: items, today: "2026-10-04")
-let rejected = try! RequirementsCore.reject(workspace: ws3, id: "REQ-001", today: "2026-10-04")
+_ = try! RequirementsCore.propose(workspace: ws3, id: req3Id, items: items, today: "2026-10-04")
+let rejected = try! RequirementsCore.reject(workspace: ws3, id: req3Id, today: "2026-10-04")
 eq(RequirementsCore.parseProposal(rejected.body), nil, "reject clears the proposal")
 expectError("reject without proposal -> noProposal", .noProposal) {
-    _ = try RequirementsCore.reject(workspace: ws3, id: "REQ-001", today: "2026-10-04")
+    _ = try RequirementsCore.reject(workspace: ws3, id: req3Id, today: "2026-10-04")
 }
 
 check(RequirementsCore.breakdownPrompt("REQ-001", title: "想法").contains("/api/requirements/breakdown/propose"), "prompt points at the propose endpoint")
@@ -282,21 +284,22 @@ eq(RequirementsCore.statement(from: "\n# Heading\nplain text\n"), "plain text",
 
 section("update")
 let ws5 = tempWorkspace("update")
-_ = try! RequirementsCore.createRequirement(workspace: ws5, title: "旧标题", body: "旧诉求", source: nil, today: "2026-10-04")
-let edited = try! RequirementsCore.updateRequirement(workspace: ws5, id: "REQ-001", title: "新标题", body: "新诉求", today: "2026-10-05")
+let req5 = try! RequirementsCore.createRequirement(workspace: ws5, title: "旧标题", body: "旧诉求", source: nil, today: "2026-10-04")
+let req5Id = req5.id
+let edited = try! RequirementsCore.updateRequirement(workspace: ws5, id: req5Id, title: "新标题", body: "新诉求", today: "2026-10-05")
 eq(edited.title, "新标题", "update: title changed")
 eq(edited.statement, "新诉求", "update: statement changed")
 eq(edited.updated, "2026-10-05", "update: updated bumped")
-_ = try! RequirementsCore.setState(workspace: ws5, id: "REQ-001", state: "evaluating", today: "2026-10-05")
-_ = try! RequirementsCore.propose(workspace: ws5, id: "REQ-001",
+_ = try! RequirementsCore.setState(workspace: ws5, id: req5Id, state: "evaluating", today: "2026-10-05")
+_ = try! RequirementsCore.propose(workspace: ws5, id: req5Id,
                                   items: [BreakdownItem(title: "A", boundary: "b", dependsOn: [])],
                                   today: "2026-10-05")
-let edited2 = try! RequirementsCore.updateRequirement(workspace: ws5, id: "REQ-001", title: "再改", body: "新诉求2", today: "2026-10-06")
+let edited2 = try! RequirementsCore.updateRequirement(workspace: ws5, id: req5Id, title: "再改", body: "新诉求2", today: "2026-10-06")
 eq(edited2.state, "evaluating", "update: state untouched")
 eq(edited2.updated, "2026-10-06", "update: updated bumped again")
 eq(RequirementsCore.parseProposal(edited2.body)?.count, 1, "update: pending proposal untouched")
 expectError("update: empty title refused", .missingTitle) {
-    _ = try RequirementsCore.updateRequirement(workspace: ws5, id: "REQ-001", title: "  ", body: nil, today: "2026-10-06")
+    _ = try RequirementsCore.updateRequirement(workspace: ws5, id: req5Id, title: "  ", body: nil, today: "2026-10-06")
 }
 expectError("update: unknown requirement refused", .unknownRequirement("REQ-999")) {
     _ = try RequirementsCore.updateRequirement(workspace: ws5, id: "REQ-999", title: "x", body: nil, today: "2026-10-06")
@@ -315,7 +318,7 @@ eq(plain.session, nil, "panel-created card has no source session")
 section("composer edit")
 let editModel = RequirementComposerModel.edit(edited2)
 eq(editModel.mode.isCreate, false, "edit model is not create")
-eq(editModel.mode.requirementID, "REQ-001", "edit model carries the id")
+eq(editModel.mode.requirementID, req5Id, "edit model carries the id")
 eq(editModel.title, "再改", "edit model title parsed from content")
 eq(editModel.body, "新诉求2", "edit model body parsed from content")
 eq(editModel.submitKey, "requirements.save", "edit model submits as save")

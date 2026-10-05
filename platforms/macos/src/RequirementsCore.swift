@@ -560,7 +560,10 @@ enum RequirementsCore {
     static func nextId(prefix: String, in dir: String, fileManager: FileManager = .default) -> String {
         let files = markdownFiles(dir, prefix: prefix, fileManager: fileManager)
         let maxN = files.map(numericPart).max() ?? 0
-        return prefix + String(format: "%03d", maxN + 1)
+        // Six-digit ids (REQ-000008 / WS-000009): three digits ran out too soon.
+        // numericPart() parses any width, so older three-digit cards keep sorting
+        // and keep receiving the next number.
+        return prefix + String(format: "%06d", maxN + 1)
     }
 
     // MARK: Requirement writes

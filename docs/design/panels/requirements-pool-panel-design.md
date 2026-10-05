@@ -118,7 +118,7 @@ static func reject(workspace:id:today:) throws -> RequirementCard
   - `split(req) = children ≠ ∅`；
   - `closed(req) = children ≠ ∅ 且 ∀ terminal(ws)`，或 `state == discarded`（显式放弃优先显示 discarded）；
   - `effective = discarded > closed > split > (state || candidate)`。
-- **id 分配**：扫描目录取最大数字 + 1，三位零填充（`REQ-008` / `WS-009`）；无卡片从 001 起。
+- **id 分配**：扫描目录取最大数字 + 1，**六位零填充**（`REQ-000008` / `WS-000009`）；无卡片从 `000001` 起；解析与排序都按数字，兼容旧的 3 位卡（混排也正确）。
 - **工作区守卫**：workspace 为空或不存在 → `throws PoolError.noWorkspace`；`<workspace>/.dsh` 不存在时**创建 `requirements`/`workstreams`**（幂等），不创建卡片。
 
 ### 3.4 终态的网络派生不在本期
@@ -153,9 +153,9 @@ static func reject(workspace:id:today:) throws -> RequirementCard
 
 | 事项 | 边界 | 依赖 |
 |---|---|---|
-| WS-009 标题 | 边界 | — |
+| WS-000009 标题 | 边界 | — |
 
-确认记录（2026-10-04）：人确认拆解，生成 WS-009、WS-010。
+确认记录（2026-10-04）：人确认拆解，生成 WS-000009、WS-000010。
 ```
 
 - 存在 `json proposal` 围栏代码块 ⇒ 有待确认提案（磁盘上规范用三个反引号，解析器同时接受 `~~~`；上面的代码块为了嵌套在 markdown 里用 `~~~` 展示）；
@@ -218,12 +218,12 @@ updated: <today>
 ├─ 工具栏（DynamicFillView + 分隔线）                          [＋ 新建需求]
 ├─ 内容（NSScrollView）  需求卡片 × N
 │    └─ 需求卡（raised 块，圆角 8，一条 hairline；点空白处展开/收起）
-│         ├─ 标题行：▸ 需求 REQ-008 标题 [需求][N 个事项] … [有效状态徽标 ▾] [拆解][✎]
+│         ├─ 标题行：▸ 需求 REQ-000008 标题 [需求][N 个事项] … [有效状态徽标 ▾] [拆解][✎]
 │         ├─ 诉求预览（11pt secondary，收起 3 行 / 展开不限，tooltip 全文）
 │         ├─ meta（10pt tertiary）：来源 · 更新 · 待确认拆解 N 项
 │         └─ 展开后：
 │              ├─ 已拆解事项 (N)
-│              │    └─ 事项 mini 卡（recessed）：doc.text  WS-009 标题  [阶段]  [↗]
+│              │    └─ 事项 mini 卡（recessed）：doc.text  WS-000009 标题  [阶段]  [↗]
 │              └─ 待确认拆解（recessed 块）
 │                   ├─ 头：square.dashed  待确认拆解  [待确认 N 项]  [确认拆解][驳回]
 │                   └─ 每条提案（raised mini 卡）：square.dashed  标题 — 边界  [依赖 N]
@@ -265,7 +265,7 @@ updated: <today>
 
 - 目录空：居中「还没有需求。点「＋」把一条想法记进来。」+「＋ 新建需求」按钮；下方**直接铺使用说明正文**（与 `?` 抽屉同一份，无需先点帮助）；
 - 无工作区：提示「请先选择一个工作区」（不弹模态）；
-- 状态行：`已创建 REQ-008` / `候选 → 评估中` / `已生成 3 个事项` / `找不到该需求` / `没有待确认的拆解提案`；成功 5s 清空，失败保留到下次操作。
+- 状态行：`已创建 REQ-000008` / `候选 → 评估中` / `已生成 3 个事项` / `找不到该需求` / `没有待确认的拆解提案`；成功 5s 清空，失败保留到下次操作。
 
 ### 5.4 新建需求抽屉（复用任务面板的 form sheet）
 
@@ -290,7 +290,7 @@ updated: <today>
 **① 创建并细化**（`RequirementsCore.refinementPrompt`；新建会话，失败回退当前会话）
 
 ```text
-REQ-008「标题」@.dsh/requirements/REQ-008.md
+REQ-000008「标题」@.dsh/requirements/REQ-000008.md
 请和我一起细化这条需求：澄清目标、边界、验收标准；
 
 注意：
@@ -302,21 +302,21 @@ REQ-008「标题」@.dsh/requirements/REQ-008.md
 **② 拆解**（`RequirementsCore.breakdownPrompt(_:title:)`；来源会话优先，其次当前会话；都没有 / 发送失败则回退复制提示词）
 
 ```text
-REQ-008「标题」@.dsh/requirements/REQ-008.md，需求已确认。
+REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求已确认。
 根据需求，将需求拆解为可依次落地的事项。
 请给出拆解方案：每个事项的标题、边界、依赖顺序。
 
 注意：
 - 只拆不胀，范围外的新发现回池。
-- 提交待确认提案（不要建卡、不要自签）。调用 拆解器 API `POST /api/requirements/breakdown/propose  {"id":"REQ-008","items":[{"title":"...","boundary":"...","dependsOn":["..."]}]}` 提交。
+- 提交待确认提案（不要建卡、不要自签）。调用 拆解器 API `POST /api/requirements/breakdown/propose  {"id":"REQ-000008","items":[{"title":"...","boundary":"...","dependsOn":["..."]}]}` 提交。
 - 提交后，等待用户确认『待确认提案』。
 ```
 
 **③ 确认拆解**（`requirements.notify.confirmed`，参数 `id / title / id / created`；回写绑定会话）
 
 ```text
-REQ-008「标题」@.dsh/requirements/REQ-008.md，需求拆解已确认。
-生成事项：WS-009、WS-010。
+REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已确认。
+生成事项：WS-000009、WS-000010。
 
 注意：
 - 回复『收到』。
@@ -326,25 +326,25 @@ REQ-008「标题」@.dsh/requirements/REQ-008.md，需求拆解已确认。
 **④ 驳回拆解（带原因）**（`RequirementsCore.rejectPrompt(_:title:reason:)`；回写绑定会话）
 
 ```text
-REQ-008「标题」@.dsh/requirements/REQ-008.md，需求拆解已驳回。
+REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已驳回。
 驳回原因：粒度太粗，且漏了迁移步骤
 请修改拆解方案。
 
 注意：
 - 只拆不胀，范围外的新发现回池。
-- 重新提交待确认提案（不要建卡、不要自签）。调用 拆解器 API `POST /api/requirements/breakdown/propose  {"id":"REQ-008","items":[{"title":"...","boundary":"...","dependsOn":["..."]}]}` 提交。
+- 重新提交待确认提案（不要建卡、不要自签）。调用 拆解器 API `POST /api/requirements/breakdown/propose  {"id":"REQ-000008","items":[{"title":"...","boundary":"...","dependsOn":["..."]}]}` 提交。
 - 提交后，等待用户确认『待确认提案』。
 ```
 
 **⑤ 驳回拆解（无原因）**（同一个 `rejectPrompt`；`reason` 为空时省略「驳回原因：…」一行）
 
 ```text
-REQ-008「标题」@.dsh/requirements/REQ-008.md，需求拆解已驳回。
+REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已驳回。
 请修改拆解方案。
 
 注意：
 - 只拆不胀，范围外的新发现回池。
-- 重新提交待确认提案（不要建卡、不要自签）。调用 拆解器 API `POST /api/requirements/breakdown/propose  {"id":"REQ-008","items":[{"title":"...","boundary":"...","dependsOn":["..."]}]}` 提交。
+- 重新提交待确认提案（不要建卡、不要自签）。调用 拆解器 API `POST /api/requirements/breakdown/propose  {"id":"REQ-000008","items":[{"title":"...","boundary":"...","dependsOn":["..."]}]}` 提交。
 - 提交后，等待用户确认『待确认提案』。
 ```
 
