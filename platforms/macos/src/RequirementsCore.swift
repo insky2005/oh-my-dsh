@@ -719,13 +719,15 @@ enum RequirementsCore {
 
     /// The handoff text the panel copies when the user clicks "拆解" (design §6). It
     /// points the agent at the card and the propose endpoint; the human still confirms.
-    static func breakdownPrompt(_ requirementId: String) -> String {
-        return "你在 oh-my-dsh 仓库工作。用户要把需求 " + requirementId + " 拆解成 1..N 个事项。\n"
-            + "先读 .dsh/requirements/" + requirementId + ".md 与它的子事项（.dsh/workstreams/WS-*.md 中 requirement: " + requirementId + " 的），\n"
-            + "给出拆解方案：每个事项的标题、边界、依赖顺序。只拆不胀，范围外的新发现回池。\n"
-            + "然后用壳层 API 提交待确认提案（不要建卡、不要自签）：\n"
-            + "  POST /api/requirements/breakdown/propose  {\"id\":\"" + requirementId + "\",\"items\":[{\"title\":\"...\",\"boundary\":\"...\",\"dependsOn\":[\"...\"]}]}\n"
-            + "提交后停下，等人在需求池面板确认。"
+    static func breakdownPrompt(_ requirementId: String, title: String) -> String {
+        return requirementId + "「" + title + "」@.dsh/requirements/" + requirementId + ".md，需求已确认。\n"
+            + "根据需求，将需求拆解为可依次落地的事项。\n"
+            + "请给出拆解方案：每个事项的标题、边界、依赖顺序。\n"
+            + "\n"
+            + "注意：\n"
+            + "- 只拆不胀，范围外的新发现回池。\n"
+            + "- 提交待确认提案（不要建卡、不要自签）。调用 拆解器 API `POST /api/requirements/breakdown/propose  {\"id\":\"" + requirementId + "\",\"items\":[{\"title\":\"...\",\"boundary\":\"...\",\"dependsOn\":[\"...\"]}]}` 提交。\n"
+            + "- 提交后，等待用户确认『待确认提案』。"
     }
 }
 

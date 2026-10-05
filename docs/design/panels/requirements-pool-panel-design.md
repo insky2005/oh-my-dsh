@@ -299,15 +299,17 @@ REQ-008「标题」@.dsh/requirements/REQ-008.md
 - 细化后，等待用户进行「需求拆解」。
 ```
 
-**② 拆解**（`RequirementsCore.breakdownPrompt`；来源会话优先，其次当前会话；都没有 / 发送失败则回退复制提示词）
+**② 拆解**（`RequirementsCore.breakdownPrompt(_:title:)`；来源会话优先，其次当前会话；都没有 / 发送失败则回退复制提示词）
 
 ```text
-你在 oh-my-dsh 仓库工作。用户要把需求 REQ-008 拆解成 1..N 个事项。
-先读 .dsh/requirements/REQ-008.md 与它的子事项（.dsh/workstreams/WS-*.md 中 requirement: REQ-008 的），
-给出拆解方案：每个事项的标题、边界、依赖顺序。只拆不胀，范围外的新发现回池。
-然后用壳层 API 提交待确认提案（不要建卡、不要自签）：
-  POST /api/requirements/breakdown/propose  {"id":"REQ-008","items":[{"title":"...","boundary":"...","dependsOn":["..."]}]}
-提交后停下，等人在需求池面板确认。
+REQ-008「标题」@.dsh/requirements/REQ-008.md，需求已确认。
+根据需求，将需求拆解为可依次落地的事项。
+请给出拆解方案：每个事项的标题、边界、依赖顺序。
+
+注意：
+- 只拆不胀，范围外的新发现回池。
+- 提交待确认提案（不要建卡、不要自签）。调用 拆解器 API `POST /api/requirements/breakdown/propose  {"id":"REQ-008","items":[{"title":"...","boundary":"...","dependsOn":["..."]}]}` 提交。
+- 提交后，等待用户确认『待确认提案』。
 ```
 
 **③ 确认拆解**（`requirements.notify.confirmed`；回写绑定会话）

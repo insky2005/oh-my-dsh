@@ -2878,8 +2878,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         // 拆解：把提示词直接发进对话——优先该卡片的**来源会话**（由 agent 落卡时
         // 带上 $DSH_SESSION_ID），否则当前会话；agent 随后调面板 API 提方案。
-        requirementsPanel.onBreakdown = { [weak self] id, session in
-            self?.sendBreakdownPrompt(id, preferredSession: session)
+        requirementsPanel.onBreakdown = { [weak self] id, title, session in
+            self?.sendBreakdownPrompt(id, title: title, preferredSession: session)
         }
         // 人在面板确认 / 驳回后，把结果回写到该需求的会话（同一会话闭环）。
         requirementsPanel.onBreakdownResolved = { [weak self] id, confirmed, created, reason in
@@ -5249,8 +5249,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// viewing, so the agent proposes through the panel API. Without an active
     /// session (or when the send fails) the prompt is copied instead, and the
     /// panel's status line says which happened.
-    private func sendBreakdownPrompt(_ requirementId: String, preferredSession: String?) {
-        let prompt = RequirementsCore.breakdownPrompt(requirementId)
+    private func sendBreakdownPrompt(_ requirementId: String, title: String, preferredSession: String?) {
+        let prompt = RequirementsCore.breakdownPrompt(requirementId, title: title)
         let port = server.port
         // Prefer the session that CAPTURED the card; fall back to the one on screen.
         var targets: [String] = []

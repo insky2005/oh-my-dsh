@@ -214,8 +214,10 @@ expectError("reject without proposal -> noProposal", .noProposal) {
     _ = try RequirementsCore.reject(workspace: ws3, id: "REQ-001", today: "2026-10-04")
 }
 
-check(RequirementsCore.breakdownPrompt("REQ-001").contains("/api/requirements/breakdown/propose"), "prompt points at the propose endpoint")
-check(RequirementsCore.breakdownPrompt("REQ-042").contains("REQ-042"), "prompt names the requirement")
+check(RequirementsCore.breakdownPrompt("REQ-001", title: "想法").contains("/api/requirements/breakdown/propose"), "prompt points at the propose endpoint")
+check(RequirementsCore.breakdownPrompt("REQ-042", title: "想法").contains("REQ-042"), "prompt names the requirement")
+check(RequirementsCore.breakdownPrompt("REQ-042", title: "想法").contains("@.dsh/requirements/REQ-042.md"), "prompt references the card path")
+check(RequirementsCore.breakdownPrompt("REQ-042", title: "想法").contains("等待用户确认『待确认提案』"), "prompt waits for the human to confirm")
 check(RequirementsCore.refinementPrompt("REQ-042", title: "想法").contains("REQ-042"), "refinement prompt names the requirement")
 check(RequirementsCore.refinementPrompt("REQ-042", title: "想法").contains("/api/requirements/update"), "refinement prompt points at the update endpoint")
 check(RequirementsCore.refinementPrompt("REQ-042", title: "想法").contains("不要修改代码"), "refinement prompt keeps the read-only rule")

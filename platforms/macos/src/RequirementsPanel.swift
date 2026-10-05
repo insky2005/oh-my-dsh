@@ -580,7 +580,8 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     /// Send the breakdown prompt into a conversation (main.swift): the card's
     /// source session when it has one, else the current one; nil falls back to
     /// copying the prompt to the clipboard.
-    var onBreakdown: ((String, String?) -> Void)?
+    /// (id, title, source session) — title is needed by the handoff prompt.
+    var onBreakdown: ((String, String, String?) -> Void)?
     /// The user pressed「创建并细化」; main.swift starts a refinement session for
     /// the new card and binds it to that session (id, title).
     var onRefineRequested: ((String, String) -> Void)?
@@ -938,8 +939,8 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     @discardableResult
     func breakdownRequested(id: String) -> Bool {
         if let onBreakdown = onBreakdown {
-            let source = snapshot.requirements.first { $0.requirement.id == id }?.requirement.session
-            onBreakdown(id, source)
+            let item = snapshot.requirements.first { $0.requirement.id == id }
+            onBreakdown(id, item?.requirement.title ?? "", item?.requirement.session)
             return true
         }
         return copyBreakdownPrompt(id: id)
@@ -948,7 +949,8 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     /// Copy the breakdown handoff prompt (fallback / manual path).
     @discardableResult
     func copyBreakdownPrompt(id: String) -> Bool {
-        let prompt = RequirementsCore.breakdownPrompt(id)
+        let title = snapshot.requirements.first { $0.requirement.id == id }?.requirement.title ?? ""
+        let prompt = RequirementsCore.breakdownPrompt(id, title: title)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(prompt, forType: .string)
         setStatus(L10n.tr("requirements.breakdownPromptCopied", id), isError: false)

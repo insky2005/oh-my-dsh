@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **拆解提示词改写（2026-10-04）**：`breakdownPrompt` 改为 `REQ-xxx「标题」@.dsh/requirements/REQ-xxx.md，需求已确认。` 开头，正文「根据需求，将需求拆解为可依次落地的事项。请给出拆解方案：每个事项的标题、边界、依赖顺序。」+ 三条注意（只拆不胀 / 调拆解器 API 提交待确认提案 / **提交后等待用户确认『待确认提案』**）；为此 `breakdownPrompt` 增加 `title` 参数，面板 `onBreakdown` 与 `sendBreakdownPrompt` 一起传标题。设计 §5.7 ② 同步。
+
 - **细化提示词改写 + 面板提示词汇总（2026-10-04）**：`refinementPrompt` 改为以 `REQ-xxx「标题」@.dsh/requirements/REQ-xxx.md` 开头，随后「请和我一起细化这条需求…」+ 三条注意（只讨论不改代码 / 改卡走 `/update` 带 session / **细化后等待用户拆解**）；设计新增 **§5.7 面板发出的提示词（单一事实来源）**，把 ①细化 ②拆解 ③确认 ④驳回（带原因）⑤驳回（兜底）五条全文集中一处，改措辞时必须同步。模型测试 **110 → 112**。
 
 - **驳回拆解：原因抽屉 + 原因带进提示词（2026-10-04）**：点「驳回」不再直接丢弃提案，而是弹一个必填的**原因抽屉**（`RequirementRejectView` + `RejectReasonModel`，`⌘↩` 提交 / `Esc` 取消，空原因禁用提交）；提交后清提案并把原因拼进写回该需求会话的提示词（`requirements.notify.rejectedWithReason`），让 agent **按原因改**而不是作废。测试模型 **103 → 110**。
