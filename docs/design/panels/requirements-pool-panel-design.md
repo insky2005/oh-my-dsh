@@ -251,9 +251,9 @@ updated: <today>
 - **动作**（右对齐）：`拆解`（文本按钮，主操作）、`状态`（`circle.dashed` 图标，tooltip 显示当前人工状态）、`编辑`（`pencil` 图标）。次要动作用 `CustomIconButton(size: 22)`（hover 走 `PanelControl` highlight 档）。
 - **诉求预览**：`## 诉求` 正文，11pt secondary；**收起 3 行、展开不限**，tooltip 全文。
 - **meta**：来源 · 更新日期 · `待确认拆解 N 项`（10pt tertiary）。
-- **展开 / 收起**：点卡片空白处切换；`hitTest` 白名单（按钮 / 图标按钮 / 徽标）让控件先接事件。
+- **展开 / 收起**：**只有刻度箭头（`chevron.down/right` 图标按钮）切换**；点卡片内部（诉求文字、事项卡、提案块）**不会**收起——整卡不再接管点击。
 - **已拆解事项**（展开后）：`已拆解事项 (N)` 小标题 + 每个 `WS-*` 一张 **recessed mini 卡**（`doc.text` glyph + id + 标题 + `[阶段]` 中性徽标 + `↗` 打开文件面板）。
-- **待确认拆解**（展开后）：一个 **recessed 块**，头是 `square.dashed 待确认拆解 [待确认 N 项] … [确认拆解] [驳回]`；**每条提案一张 raised mini 卡**（`square.dashed` + 标题 12pt semibold + `— 边界` + `[依赖 N]`）。
+- **待确认拆解**：**常显**（提案是人工门禁，收起也要看得到）——一个 **recessed 块**，头是 `square.dashed 待确认拆解 [待确认 N 项] … [确认拆解] [驳回]`。**收起时**每条一行（`标题` + `[依赖 N]`，内容不显示）；**展开时**每条一张 **raised mini 卡**：第一行 `标题 + [依赖 N]`，第二行是**内容（边界）**（11pt secondary、换行）。
 - **状态色（tone）**：`candidate`→neutral、`evaluating`→running、`suspended`→warning、`discarded`→neutral、`split`→running、`closed`→positive（`requirementTone`）。
 - **动作语义**（不变）：状态菜单写回**人工判断**（`split`/`closed` 派生，不在菜单里）；编辑只改 title + `## 诉求`；拆解发提示词到**来源会话**（`.dsh/requirements/local.json`）或当前会话，都没有才回退复制，发到别的会话会切前台；`确认拆解`/`驳回` 在提案块里，成功后把**结果回写**到该需求的会话（同一会话闭环）。
 - **子事项行**：只读展示 `WS-id stage`；点击经 `onOpenWorkstream` 在文件面板打开该卡。

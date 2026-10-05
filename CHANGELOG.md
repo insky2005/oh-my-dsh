@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **需求池卡片交互修正（2026-10-04）**：① **只有刻度箭头切换展开/收起**，点卡片内部（诉求文字、事项卡、提案块）不再误收起；② **「待确认拆解」常显**（不再只在展开时出现）——**收起时**每条只展示 `标题 + 依赖`，**展开后**每条拆成 `标题行 / 内容行`（边界换行）+ `[依赖 N]`。
+
 - **需求池卡片改用任务面板的卡片语法（2026-10-04）**：需求卡 = **raised 块**（圆角 8 + 一条 hairline，`TaskInk`）；标题行 = `▸ 类型glyph REQ-id 标题 [需求][N 个事项] … 状态徽标 [拆解][状态][✎]`，**状态只进徽标**（tone：候选 neutral / 评估中·已拆分 running / 挂起 warning / 已关闭 positive，直接复用 `TaskBadgeView`）；诉求常显（收起 3 行）；**点卡片空白处展开/收起**——展开后是 **recessed 的「已拆解事项」mini 卡**（`WS-* 标题 [阶段] ↗`）与 **recessed 的「待确认拆解」块**（每条提案一张 **raised mini 卡**：`标题 — 边界 [依赖 N]`，右上确认 / 驳回）。`TaskCardView.swift` 的 `TaskInk` / `TaskBadgeView` / `taskRowGlyph` 直接复用，**不新增颜色令牌**。
 
 - **需求池面板：想法收件箱 + 需求池 + 拆解器（2026-10-04）**：AI 原生工作流从手动模式升级为壳层能力。新增右栏第 10 个面板（活动栏第 5 位、任务之前，`tray.full`，`⌥⌘I`）：卡片按**有效状态**（`discarded > closed > split > state`，派生）展示需求，列出拆出的 `WS-*` 子事项（点击在文件面板打开）；头部「＋」用**抽屉**（首行标题 / 其余行诉求）落成 `.dsh/requirements/REQ-*.md`（`state: candidate`），也可由内置技能 `requirement-pool` 经 API 落卡。**拆解器**走「agent 出方案 / 人确认」：面板「拆解」复制交接提示词，agent 经 `POST /api/requirements/breakdown/propose` 提交 1..N 事项提案，**人**在面板「确认拆解」才生成 `WS-*.md`（`requirement` 回指、`stage: planning`）并留下映射表，agent 绝不调 `confirm`（R10）。实现：纯模型 `RequirementsCore.swift`（frontmatter 解析 / 派生 / 原子写）、纯路由 `RequirementsAPI.swift`（`/api/requirements/*`）、面板 `RequirementsPanel.swift`、技能 `requirement-pool`；`closed` 只读 `delivery.outcome` 缓存、不联网（网络派生仍归 `derive-status.mjs`）。测试 `tests/requirements-panel`（模型 61 + API 42）。

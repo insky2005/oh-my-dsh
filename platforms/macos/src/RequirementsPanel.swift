@@ -95,15 +95,8 @@ final class RequirementCardView: NSView {
         path.stroke()
     }
 
-    /// Clicking the card (outside its controls) expands / collapses it.
-    override func mouseDown(with event: NSEvent) { toggleExpanded() }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let hit = super.hitTest(point) else { return nil }
-        if hit is NSButton || hit is CustomIconButton || hit is TaskBadgeView { return hit }
-        return self
-    }
-
+    /// Only the disclosure chevron toggles: clicking inside the card (text, nested
+    /// cards, proposal items) must never collapse it.
     func toggleExpanded() {
         isExpanded.toggle()
         for sub in subviews { sub.removeFromSuperview() }
@@ -118,14 +111,11 @@ final class RequirementCardView: NSView {
 
         // Row 1 — disclosure / kind glyph / title / badges / actions. The state
         // badge sits last before the actions (tasks grammar), never on the border.
-        let chevron = NSImageView()
-        chevron.image = NSImage(systemSymbolName: isExpanded ? "chevron.down" : "chevron.right",
-                                accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
-        chevron.contentTintColor = .tertiaryLabelColor
-        chevron.translatesAutoresizingMaskIntoConstraints = false
-        chevron.widthAnchor.constraint(equalToConstant: 14).isActive = true
-        chevron.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        let chevron = CustomIconButton(glyph: .symbol(isExpanded ? "chevron.down" : "chevron.right"),
+                                       tooltip: L10n.tr(isExpanded ? "requirements.collapse" : "requirements.expand"),
+                                       size: 18)
+        chevron.onAction = { [weak self] in self?.toggleExpanded() }
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
 
         let glyph = taskRowGlyph("tray.full", accessibility: "requirements.glyph")
 
@@ -194,14 +184,14 @@ final class RequirementCardView: NSView {
             rows.append(metaLabel)
         }
 
-        if isExpanded {
-            if !item.children.isEmpty {
-                rows.append(sectionTitle(L10n.tr("requirements.childrenSection"), count: item.children.count))
-                for child in item.children { rows.append(workstreamCard(child)) }
-            }
-            if let proposal = item.proposal, !proposal.isEmpty {
-                rows.append(proposalBlock(proposal))
-            }
+        if isExpanded, !item.children.isEmpty {
+            rows.append(sectionTitle(L10n.tr("requirements.childrenSection"), count: item.children.count))
+            for child in item.children { rows.append(workstreamCard(child)) }
+        }
+        // A pending proposal is ALWAYS visible (the gate matters): compact
+        // (标题 + 依赖) while the card is collapsed, full cards once expanded.
+        if let proposal = item.proposal, !proposal.isEmpty {
+            rows.append(proposalBlock(proposal, expanded: isExpanded))
         }
 
         let column = NSStackView(views: rows)
@@ -251,9 +241,10 @@ final class RequirementCardView: NSView {
     }
 
     /// The pending proposal + its human confirmation gate (R10): a RECESSED block
-    /// whose header carries the 确认 / 驳回 actions, and one RAISED mini card per
-    /// proposed workstream (the queue-lane grammar).
-    private func proposalBlock(_ proposal: [BreakdownItem]) -> NSView {
+    /// whose header carries the 确认 / 驳回 actions. Collapsed → one compact line per
+    /// item (标题 + 依赖); expanded → a RAISED mini card per item with 标题 and 内容
+    /// on separate lines.
+    private func proposalBlock(_ proposal: [BreakdownItem], expanded: Bool) -> NSView {
         let glyph = taskRowGlyph("square.dashed", accessibility: "requirements.glyph.proposal")
         let header = NSTextField(labelWithString: L10n.tr("requirements.proposalSection"))
         header.font = .systemFont(ofSize: 12, weight: .semibold)
@@ -274,7 +265,9 @@ final class RequirementCardView: NSView {
         headerRow.spacing = 6
 
         var rows: [NSView] = [headerRow]
-        for entry in proposal { rows.append(proposalItemCard(entry)) }
+        for entry in proposal {
+            rows.append(expanded ? proposalItemCard(entry) : proposalItemRow(entry))
+        }
         let column = NSStackView(views: rows)
         column.orientation = .vertical
         column.alignment = .leading
@@ -283,24 +276,16 @@ final class RequirementCardView: NSView {
         return RequirementNestedCardView(content: column, recessed: true)
     }
 
-    /// One proposal item as a RAISED mini card inside the recessed proposal block.
-    private func proposalItemCard(_ entry: BreakdownItem) -> NSView {
+    /// Collapsed form: ONE line — 标题 + [依赖 N] (the 内容 stays hidden).
+    private func proposalItemRow(_ entry: BreakdownItem) -> NSView {
         let glyph = taskRowGlyph("square.dashed", accessibility: "requirements.glyph.proposalItem")
         let title = NSTextField(labelWithString: entry.title)
         title.font = .systemFont(ofSize: 12, weight: .semibold)
         title.lineBreakMode = .byTruncatingTail
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        var views: [NSView] = [glyph, title]
-        if !entry.boundary.isEmpty {
-            let boundary = NSTextField(labelWithString: "— " + entry.boundary)
-            boundary.font = .systemFont(ofSize: 11)
-            boundary.textColor = .secondaryLabelColor
-            boundary.lineBreakMode = .byTruncatingTail
-            views.append(boundary)
-        }
         let spacer = NSView()
         spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
-        views.append(spacer)
+        var views: [NSView] = [glyph, title, spacer]
         if !entry.dependsOn.isEmpty {
             views.append(TaskBadgeView(text: L10n.tr("requirements.depends", entry.dependsOn.count), tone: .neutral))
         }
@@ -309,6 +294,39 @@ final class RequirementCardView: NSView {
         row.alignment = .centerY
         row.spacing = 6
         return RequirementNestedCardView(content: row, recessed: false)
+    }
+
+    /// Expanded form: 标题 and 内容（边界）on separate lines.
+    private func proposalItemCard(_ entry: BreakdownItem) -> NSView {
+        let glyph = taskRowGlyph("square.dashed", accessibility: "requirements.glyph.proposalItem")
+        let title = NSTextField(labelWithString: entry.title)
+        title.font = .systemFont(ofSize: 12, weight: .semibold)
+        title.lineBreakMode = .byTruncatingTail
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        var titleViews: [NSView] = [glyph, title, spacer]
+        if !entry.dependsOn.isEmpty {
+            titleViews.append(TaskBadgeView(text: L10n.tr("requirements.depends", entry.dependsOn.count), tone: .neutral))
+        }
+        let titleRow = NSStackView(views: titleViews)
+        titleRow.orientation = .horizontal
+        titleRow.alignment = .centerY
+        titleRow.spacing = 6
+
+        var rows: [NSView] = [titleRow]
+        if !entry.boundary.isEmpty {
+            let boundary = NSTextField(wrappingLabelWithString: entry.boundary)
+            boundary.font = .systemFont(ofSize: 11)
+            boundary.textColor = .secondaryLabelColor
+            rows.append(boundary)
+        }
+        let column = NSStackView(views: rows)
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 3
+        for row in rows { row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
+        return RequirementNestedCardView(content: column, recessed: false)
     }
 
     // MARK: - Actions

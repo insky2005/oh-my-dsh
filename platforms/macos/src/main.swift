@@ -923,6 +923,8 @@ enum L10n {
         "requirements.help.breakdown.panel": ("在面板：点卡片「拆解」，提示词会发送到创建该需求的会话（没有则当前对话）；方案回来后点「确认拆解」或「驳回」。", "In the panel: click Break down and the prompt is sent to the session that created the requirement (or the current one); when a proposal appears, click Confirm or Reject."),
         "requirements.help.breakdown.chat": ("在对话：运行 /requirement-pool 拆解 <REQ-id>。", "In a conversation: run /requirement-pool breakdown <REQ-id>."),
         "requirements.empty": ("还没有需求。点「＋」把一条想法记进来。", "No requirements yet. Click + to capture an idea."),
+        "requirements.expand": ("展开", "Expand"),
+        "requirements.collapse": ("收起", "Collapse"),
         "requirements.kind": ("需求", "Requirement"),
         "requirements.children": ("%d 个事项", "%d workstreams"),
         "requirements.childrenSection": ("已拆解事项", "Workstreams"),
