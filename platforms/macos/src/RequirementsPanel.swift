@@ -111,11 +111,10 @@ final class RequirementCardView: NSView {
 
         // Row 1 — disclosure / kind glyph / title / badges / actions. The state
         // badge sits last before the actions (tasks grammar), never on the border.
-        let chevron = CustomIconButton(glyph: .symbol(isExpanded ? "chevron.down" : "chevron.right"),
-                                       tooltip: L10n.tr(isExpanded ? "requirements.collapse" : "requirements.expand"),
-                                       size: 18)
-        chevron.onAction = { [weak self] in self?.toggleExpanded() }
-        chevron.setContentHuggingPriority(.required, for: .horizontal)
+        // The chevron is only an INDICATOR: the whole header row is the toggle
+        // (TaskCardView's grammar), so it must not be a button.
+        let chevron = taskRowGlyph(isExpanded ? "chevron.down" : "chevron.right",
+                                   accessibility: isExpanded ? "requirements.collapse" : "requirements.expand")
 
         let glyph = taskRowGlyph("tray.full", accessibility: "requirements.glyph")
 
@@ -156,7 +155,11 @@ final class RequirementCardView: NSView {
         titleRow.alignment = .centerY
         titleRow.spacing = 6
 
-        var rows: [NSView] = [titleRow]
+        // The header row owns the toggle; the body below it never does (a click on
+        // the statement / nested cards must not collapse the requirement).
+        let header = RequirementHeaderView(content: titleRow)
+        header.onToggle = { [weak self] in self?.toggleExpanded() }
+        var rows: [NSView] = [header]
 
         // 诉求 preview: always visible (an agent-captured card used to be title-only),
         // clamped to 3 lines when collapsed.
@@ -237,7 +240,10 @@ final class RequirementCardView: NSView {
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 6
-        return RequirementNestedCardView(content: row, recessed: true)
+        let nested = RequirementNestedCardView(content: row, recessed: true)
+        // Like a task card: the whole nested card is clickable (here: open the file).
+        nested.onActivate = { [weak self] in self?.onOpenWorkstream?(path) }
+        return nested
     }
 
     /// The pending proposal + its human confirmation gate (R10): a RECESSED block
@@ -353,11 +359,53 @@ final class RequirementCardView: NSView {
     @objc private func rejectTapped(_ sender: Any?) { onReject?() }
 }
 
+/// The requirement's header row — the lane-header equivalent. Clicking ANYWHERE in
+/// this row (outside its controls) toggles the card, exactly like a task card; the
+/// chevron is only an indicator. The body below the header never toggles.
+final class RequirementHeaderView: NSView {
+    var onToggle: (() -> Void)?
+    private let content: NSView
+
+    init(content: NSView) {
+        self.content = content
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor),
+            content.topAnchor.constraint(equalTo: topAnchor),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var isOpaque: Bool { false }
+
+    /// Labels are hit-testable but must not swallow the header click; controls keep
+    /// working because AppKit hit-tests the deepest view first (TaskCardView's rule).
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        if hit is NSButton || hit is TaskBadgeView || hit is NSTextView || hit is CustomIconButton {
+            return hit
+        }
+        return self
+    }
+
+    override func mouseDown(with event: NSEvent) { onToggle?() }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+}
+
 /// A nested card inside a requirement (a workstream or a proposal block): fill by
 /// nesting level (recessed inside a container, raised inside a recessed block) +
 /// ONE hairline, corner 8, content inset 8/7 — the task-card grammar.
 final class RequirementNestedCardView: NSView {
     private let recessed: Bool
+    /// When set, the whole nested card is clickable (a workstream opens its file).
+    var onActivate: (() -> Void)?
 
     init(content: NSView, recessed: Bool) {
         self.recessed = recessed
@@ -377,6 +425,20 @@ final class RequirementNestedCardView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override var isOpaque: Bool { false }
+
+    /// Without an action the card is transparent to clicks; with one, the whole card
+    /// claims them (its own controls still win by hit-test order).
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        if hit is NSButton || hit is CustomIconButton || hit is TaskBadgeView { return hit }
+        return onActivate == nil ? hit : self
+    }
+
+    override func mouseDown(with event: NSEvent) { onActivate?() }
+
+    override func resetCursorRects() {
+        if onActivate != nil { addCursorRect(bounds, cursor: .pointingHand) }
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua

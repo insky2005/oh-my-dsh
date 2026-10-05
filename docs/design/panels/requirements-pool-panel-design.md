@@ -251,7 +251,7 @@ updated: <today>
 - **动作**（右对齐）：`拆解`（文本按钮，主操作）、`状态`（`circle.dashed` 图标，tooltip 显示当前人工状态）、`编辑`（`pencil` 图标）。次要动作用 `CustomIconButton(size: 22)`（hover 走 `PanelControl` highlight 档）。
 - **诉求预览**：`## 诉求` 正文，11pt secondary；**收起 3 行、展开不限**，tooltip 全文。
 - **meta**：来源 · 更新日期 · `待确认拆解 N 项`（10pt tertiary）。
-- **展开 / 收起**：**只有刻度箭头（`chevron.down/right` 图标按钮）切换**；点卡片内部（诉求文字、事项卡、提案块）**不会**收起——整卡不再接管点击。
+- **展开 / 收起**：**点标题行（header row）任意处**切换——与任务卡一致，`chevron` 只是**指示器不是按钮**；**头部以下的正文**（诉求、事项 mini 卡、提案块）点击**不会**收起（header 是独立的 `RequirementHeaderView`，只有它接管点击）。事项 mini 卡自身**整卡可点**（打开文件），与任务卡「整卡可点」同构。
 - **已拆解事项**（展开后）：`已拆解事项 (N)` 小标题 + 每个 `WS-*` 一张 **recessed mini 卡**（`doc.text` glyph + id + 标题 + `[阶段]` 中性徽标 + `↗` 打开文件面板）。
 - **待确认拆解**：**常显**（提案是人工门禁，收起也要看得到）——一个 **recessed 块**，头是 `square.dashed 待确认拆解 [待确认 N 项] … [确认拆解] [驳回]`。**收起时**每条一行（`标题` + `[依赖 N]`，内容不显示）；**展开时**每条一张 **raised mini 卡**：第一行 `标题 + [依赖 N]`，第二行是**内容（边界）**（11pt secondary、换行）。
 - **状态色（tone）**：`candidate`→neutral、`evaluating`→running、`suspended`→warning、`discarded`→neutral、`split`→running、`closed`→positive（`requirementTone`）。
