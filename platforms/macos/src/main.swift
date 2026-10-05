@@ -5378,7 +5378,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 used = bound
                 reused = true
             } else {
-                var target = DshWorkspaceOps.createSession(port: port, cwd: workspace, workspaceId: nil)
+                // Resolve the workspace id so dsh groups the new session under the
+                // active workspace instead of leaving it Ungrouped (same as the
+                // Projects panel / wiki do). Only register when the lookup misses.
+                let workspaceId = DshWorkspaceStore.workspaceId(forPath: workspace, port: port,
+                                                                log: { AppLog.shared.log($0) })
+                    ?? DshWorkspaceOps.register(port: port, path: workspace)
+                var target = DshWorkspaceOps.createSession(port: port, cwd: workspace, workspaceId: workspaceId)
                 if let sid = target {
                     _ = DshSessionOps.rename(port: port, sessionId: sid, title: "细化 " + requirementId + " " + title)
                 } else {

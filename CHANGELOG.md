@@ -9,7 +9,7 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
-- **需求池：需求创建后可单独发起「细化」（2026-10-06）**：需求卡新增 **「细化」动作**（`wand.and.stars` 图标），**未拆解且未丢弃时出现**（与「编辑」同一冻结规则，纯模型 `PoolItem.canRefine` 可断言）。点击后复用「创建并细化」的细化交接：**已有绑定会话则回到该会话，没有 / 发送失败才新起一条「细化 REQ-xxx」**（`startRequirementRefinementSession(created:)` 统一创建抽屉与卡片两条路径，`refinementPrompt` 不变）。于是普通「创建」、以及 agent 经 `requirement-pool` 落下的卡，建后都能随时补上细化。使用说明新增「细化需求」一节（创建 / 细化 / 拆解三节）。模型测试 **171 → 176**、API **59 → 59**。
+- **需求池：需求创建后可单独发起「细化」（2026-10-06）**：需求卡新增 **「细化」动作**（`wand.and.stars` 图标），**未拆解且未丢弃时出现**（与「编辑」同一冻结规则，纯模型 `PoolItem.canRefine` 可断言）。点击后复用「创建并细化」的细化交接：**已有绑定会话则回到该会话，没有 / 发送失败才新起一条「细化 REQ-xxx」（**按活动工作区 `workspaceId` 分组，不再落到「未分组」**）**（`startRequirementRefinementSession(created:)` 统一创建抽屉与卡片两条路径，`refinementPrompt` 不变）。于是普通「创建」、以及 agent 经 `requirement-pool` 落下的卡，建后都能随时补上细化。使用说明新增「细化需求」一节（创建 / 细化 / 拆解三节）。模型测试 **171 → 176**、API **59 → 59**。
 
 - **需求池：状态生命周期改为单向前进 + 修复评估中下拉箭头不可见（2026-10-05）**：人工状态只能**前进**——`candidate → evaluating → evaluated`，`evaluated` 不能再切回 `evaluating`（`suspended` 作为旁路可继续前进，`discarded` 单向）。另修复状态徽标的下拉箭头：它画在药丸**外侧**的面板底色上，原来在 `evaluating`（filled 药丸）时被染成白色而看不见，现统一用 tone 色。模型测试 **170 → 171**。
 
