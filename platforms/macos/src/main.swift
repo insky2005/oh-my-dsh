@@ -919,6 +919,9 @@ enum L10n {
         "requirements.help.create.heading": ("创建需求", "Create a requirement"),
         "requirements.help.create.panel": ("在面板：点工具栏右侧的「＋」，在抽屉的首行写标题、其余行写诉求，按 ⌘↩ 或点「创建」。", "In the panel: click + on the right of the toolbar, write the title on the first line and the statement on the rest, then press Command-Return or click Create."),
         "requirements.help.create.chat": ("在对话：输入「把这个想法落成需求」，或运行 /requirement-pool。", "In a conversation: type “capture this idea as a requirement”, or run /requirement-pool."),
+        "requirements.help.refine.heading": ("细化需求", "Refine a requirement"),
+        "requirements.help.refine.panel": ("在面板：点卡片「细化」——已有细化会话就回到它，没有就新起一条，让 agent 澄清目标、边界、验收标准。", "In the panel: click Refine on a card — it resumes the requirement's existing session, or starts a new one, so the agent can clarify goals, boundaries and acceptance criteria."),
+        "requirements.help.refine.chat": ("在对话：直接和 agent 讨论这条需求即可；改卡走 POST /api/requirements/update。", "In a conversation: just discuss the requirement with the agent; card edits go through POST /api/requirements/update."),
         "requirements.help.breakdown.heading": ("拆解事项", "Break down a requirement"),
         "requirements.help.breakdown.panel": ("在面板：点卡片「拆解」，提示词会发送到创建该需求的会话（没有则当前对话）；方案回来后点「确认拆解」或「驳回」。", "In the panel: click Break down and the prompt is sent to the session that created the requirement (or the current one); when a proposal appears, click Confirm or Reject."),
         "requirements.help.breakdown.chat": ("在对话：运行 /requirement-pool 拆解 <REQ-id>。", "In a conversation: run /requirement-pool breakdown <REQ-id>."),
@@ -959,6 +962,7 @@ enum L10n {
         "requirements.set.state": ("状态", "State"),
         "requirements.derivedState": ("派生状态", "Derived state"),
         "requirements.breakdown": ("拆解", "Break down"),
+        "requirements.refine": ("细化", "Refine"),
         "requirements.breakdownPromptCopied": ("已复制拆解提示词；在会话里运行 /requirement-pool 拆解 %@", "Breakdown prompt copied; run /requirement-pool breakdown %@ in a session"),
         "requirements.breakdownSent": ("已把拆解提示词发送到对话", "Breakdown prompt sent to the conversation"),
         "requirements.breakdownNoSession": ("当前没有打开的对话，已复制提示词", "No conversation is open; the prompt was copied"),
@@ -974,6 +978,8 @@ enum L10n {
         "requirements.reject.submit": ("驳回并说明", "Reject with reason"),
         "requirements.reject.problem": ("请填写驳回原因", "Enter a reason"),
         "requirements.refineStarted": ("已创建 %@，并在新会话里开始细化", "Created %@ and started a refinement session"),
+        "requirements.refineStartedExisting": ("已为 %@ 发起细化会话", "Started a refinement session for %@"),
+        "requirements.refineContinued": ("已在现有会话里继续细化 %@", "Continued refining %@ in its existing session"),
         "requirements.refineFailed": ("已创建需求；细化会话未启动，可在会话里手动继续", "Requirement created; the refinement session could not start — continue in a chat"),
         "requirements.notify.confirmed": ("%@「%@」@.dsh/requirements/%@.md，需求拆解已确认。\n生成事项：%@。\n\n注意：\n- 回复『收到』。\n- 列出事项清单。", "%@「%@」@.dsh/requirements/%@.md — breakdown confirmed.\nWorkstreams created: %@.\n\nNotes:\n- Reply \"received\".\n- List the workstreams."),
 
@@ -2898,9 +2904,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         requirementsPanel.onBreakdownResolved = { [weak self] id, confirmed, created, reason in
             self?.notifyBreakdownResolved(id, confirmed: confirmed, created: created, reason: reason)
         }
-        // 抽屉的「创建并细化」：为面板创建的需求起一条「细化」会话并绑定。
-        requirementsPanel.onRefineRequested = { [weak self] id, title in
-            self?.startRequirementRefinementSession(id, title: title)
+        // 抽屉的「创建并细化」与卡片「细化」：为需求起 / 续一条「细化」会话并绑定；
+        // 已有绑定会话时优先复用（同一需求同一会话）。
+        requirementsPanel.onRefineRequested = { [weak self] id, title, created in
+            self?.startRequirementRefinementSession(id, title: title, created: created)
         }
         requirementsPanel.onDidRender = { [weak self] in
             guard let self = self, self.uiDebug else { return }
@@ -5346,9 +5353,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    /// 面板创建的需求没有对话来源：在活动工作区起一条会话、改名「细化 REQ-xxx」、
-    /// 发细化提示词，并把卡片绑定到它——之后拆解 / 确认都回到这条对话。
-    private func startRequirementRefinementSession(_ requirementId: String, title: String) {
+    /// 面板的「创建并细化」(created) / 卡片「细化」：优先复用该需求已绑定的会话；没有
+    /// （或发送失败）才在活动工作区起一条会话、改名「细化 REQ-xxx」、发细化提示词，并把
+    /// 卡片绑定到它——之后拆解 / 确认都回到这条对话（同一需求同一会话）。
+    private func startRequirementRefinementSession(_ requirementId: String, title: String, created: Bool) {
         guard let workspace = activeWorkspacePath(), !workspace.isEmpty else { return }
         let port = server.port
         guard port > 0 else {
@@ -5357,27 +5365,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         let current = activeSessionId
         let prompt = RequirementsCore.refinementPrompt(requirementId, title: title)
+        // A card already bound to a session (agent capture / an earlier refinement)
+        // resumes THAT conversation; a just-created card has none and starts fresh.
+        let bound = RequirementsCore.load(workspace: workspace).requirements
+            .first { $0.requirement.id == requirementId }?.requirement.session?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            var target = DshWorkspaceOps.createSession(port: port, cwd: workspace, workspaceId: nil)
-            if let sid = target {
-                _ = DshSessionOps.rename(port: port, sessionId: sid, title: "细化 " + requirementId + " " + title)
+            var used: String?
+            var reused = false
+            if let bound = bound, !bound.isEmpty,
+               DshSessionOps.sendPrompt(port: port, sessionId: bound, text: prompt) {
+                used = bound
+                reused = true
             } else {
-                target = current
-            }
-            var sent = false
-            if let target = target {
-                sent = DshSessionOps.sendPrompt(port: port, sessionId: target, text: prompt)
+                var target = DshWorkspaceOps.createSession(port: port, cwd: workspace, workspaceId: nil)
+                if let sid = target {
+                    _ = DshSessionOps.rename(port: port, sessionId: sid, title: "细化 " + requirementId + " " + title)
+                } else {
+                    target = current
+                }
+                if let target = target, DshSessionOps.sendPrompt(port: port, sessionId: target, text: prompt) {
+                    used = target
+                }
             }
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                guard let used = target, sent else {
+                guard let used = used else {
                     AppLog.shared.log("requirements: could not start a refinement session for \(requirementId)")
                     self.requirementsPanel?.setStatus(L10n.tr("requirements.refineFailed"), isError: true)
                     return
                 }
                 RequirementsCore.rememberSession(workspace: workspace, id: requirementId, session: used)
-                AppLog.shared.log("requirements: refinement session \(used) for \(requirementId)")
-                self.requirementsPanel?.setStatus(L10n.tr("requirements.refineStarted", requirementId), isError: false)
+                AppLog.shared.log("requirements: refinement session \(used) for \(requirementId) (reused: \(reused))")
+                let message: String
+                if reused {
+                    message = L10n.tr("requirements.refineContinued", requirementId)
+                } else if created {
+                    message = L10n.tr("requirements.refineStarted", requirementId)
+                } else {
+                    message = L10n.tr("requirements.refineStartedExisting", requirementId)
+                }
+                self.requirementsPanel?.setStatus(message, isError: false)
                 if used != self.activeSessionId { self.openDSHSession(used) }
             }
         }

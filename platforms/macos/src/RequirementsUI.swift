@@ -97,6 +97,9 @@ struct RequirementsHelpSpec: Equatable {
                 Section(headingKey: "requirements.help.create.heading",
                         lineKeys: ["requirements.help.create.panel",
                                    "requirements.help.create.chat"]),
+                Section(headingKey: "requirements.help.refine.heading",
+                        lineKeys: ["requirements.help.refine.panel",
+                                   "requirements.help.refine.chat"]),
                 Section(headingKey: "requirements.help.breakdown.heading",
                         lineKeys: ["requirements.help.breakdown.panel",
                                    "requirements.help.breakdown.chat"])
@@ -192,4 +195,11 @@ struct WorkstreamDisplay: Equatable {
         }
         return out
     }
+}
+
+/// The「细化」card action's visibility — the same freeze rule as「编辑」: a requirement
+/// that already owns workstreams no longer needs refinement, and a discarded one has
+/// left the pool. Kept here (pure, no AppKit) so the rule stays unit-testable.
+extension PoolItem {
+    var canRefine: Bool { children.isEmpty && effectiveState != .discarded }
 }
