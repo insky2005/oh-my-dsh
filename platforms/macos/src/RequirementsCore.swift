@@ -30,6 +30,7 @@ enum PoolError: Error, Equatable {
     case missingTitle
     case noItems
     case breakdownLocked(String)
+    case invalidTransition(String, String)
     case writeFailed(String)
 
     /// The stable code the localhost API returns (design §4).
@@ -42,6 +43,7 @@ enum PoolError: Error, Equatable {
         case .missingTitle: return "missing-title"
         case .noItems: return "no-items"
         case .breakdownLocked: return "breakdown-locked"
+        case .invalidTransition: return "invalid-transition"
         case .writeFailed: return "write-failed"
         }
     }
@@ -52,6 +54,7 @@ enum PoolError: Error, Equatable {
         case .unknownRequirement: return 404
         case .noProposal: return 409
         case .breakdownLocked: return 409
+        case .invalidTransition: return 409
         case .writeFailed: return 500
         default: return 400
         }
@@ -66,6 +69,7 @@ enum PoolError: Error, Equatable {
         case .missingTitle: return "title is required"
         case .noItems: return "breakdown proposal needs at least one item"
         case .breakdownLocked(let id): return "requirement already has workstreams, cannot edit: " + id
+        case .invalidTransition(let from, let to): return "state transition not allowed: " + from + " -> " + to
         case .writeFailed(let why): return "write failed: " + why
         }
     }
@@ -375,13 +379,25 @@ enum RequirementsCore {
         return children.allSatisfy({ isTerminal($0) }) ? .closed : .split
     }
 
-    /// The manual states the menu offers from the current one: the current state is
-    /// hidden (no self-switch) and `discarded` is a one-way door (once discarded there
-    /// are no options). Order follows `manualStates`, with discarded last.
-    static func allowedStates(from state: String?) -> [String] {
+    /// The manual states reachable from the current one, with the DERIVED state as a
+    /// precondition (design §3.3.1):
+    ///   * `discarded` is a one-way door → no options;
+    ///   * derived `closed` (every workstream terminal) is a terminal too → no options
+    ///     (reopen by opening a NEW requirement, 原则 15);
+    ///   * derived `split` (open workstreams) hides `candidate` — a broken-down
+    ///     requirement has already been judged, so it is never a candidate again:
+    ///     it can be evaluating / suspended / discarded;
+    ///   * no breakdown (nil) keeps the full set.
+    /// The current state is always hidden (no self-switch); order follows `manualStates`,
+    /// with discarded last.
+    static func allowedStates(from state: String?, derived: ReqEffectiveState?) -> [String] {
         let current = state ?? "candidate"
-        guard current != "discarded" else { return [] }
-        return manualStates.filter { $0 != current && $0 != "discarded" } + ["discarded"]
+        if current == "discarded" { return [] }
+        if derived == .closed { return [] }
+        var options = manualStates.filter { $0 != current && $0 != "discarded" }
+        if derived == .split { options.removeAll { $0 == "candidate" } }
+        options.append("discarded")
+        return options
     }
 
     static func load(workspace: String, fileManager: FileManager = .default) -> PoolSnapshot {
@@ -757,22 +773,40 @@ enum RequirementsCore {
         guard manualStates.contains(state) else { throw PoolError.unknownState(state) }
         let path = requirementPath(workspace, id: id)
         guard let text = readText(path) else { throw PoolError.unknownRequirement(id) }
+        guard let existing = card(from: text, path: path) else { throw PoolError.writeFailed("card did not parse") }
+        // The derived state gates the manual transition (design §3.3.1). Same-state is
+        // an idempotent no-op, so it always passes.
+        if state != existing.state {
+            let children = workstreams(workspace: workspace, id: id, fileManager: fileManager)
+            let derived = derivedState(children: children)
+            guard allowedStates(from: existing.state, derived: derived).contains(state) else {
+                throw PoolError.invalidTransition(existing.state ?? "candidate", state)
+            }
+        }
         let updated = setFrontmatterFields(text, fields: ["state": state, "updated": today])
         try atomicWrite(updated, to: path)
         guard let card = card(from: updated, path: path) else { throw PoolError.writeFailed("card did not parse") }
         return card
     }
 
+    /// The workstream cards that point back at this requirement. The forward pointer
+    /// is the membership authority (REQ.workstreams is only a cache).
+    static func workstreams(workspace: String, id: String,
+                            fileManager: FileManager = .default) -> [WorkstreamSummary] {
+        var out: [WorkstreamSummary] = []
+        for name in markdownFiles(workstreamsDir(workspace), prefix: "WS-", fileManager: fileManager) {
+            let path = (workstreamsDir(workspace) as NSString).appendingPathComponent(name)
+            guard let text = readText(path), let ws = workstream(from: text, path: path) else { continue }
+            if ws.requirement == id { out.append(ws) }
+        }
+        return out
+    }
+
     /// Whether any workstream card points back at this requirement. Once broken
     /// down the requirement is frozen (design: 已确认的映射表不追溯修改 / 重开另起需求).
     static func hasWorkstreams(workspace: String, id: String,
                                fileManager: FileManager = .default) -> Bool {
-        for name in markdownFiles(workstreamsDir(workspace), prefix: "WS-", fileManager: fileManager) {
-            let path = (workstreamsDir(workspace) as NSString).appendingPathComponent(name)
-            guard let text = readText(path), let ws = workstream(from: text, path: path) else { continue }
-            if ws.requirement == id { return true }
-        }
-        return false
+        !workstreams(workspace: workspace, id: id, fileManager: fileManager).isEmpty
     }
 
     /// Edit a card's title and (optionally) its 诉求. Only the frontmatter `title`

@@ -250,7 +250,7 @@ enum RequirementsAPIRouter {
         if (result["ok"] as? Bool) == true { return 200 }
         switch result["error"] as? String {
         case "unknown-requirement": return 404
-        case "no-proposal", "breakdown-locked": return 409
+        case "no-proposal", "breakdown-locked", "invalid-transition": return 409
         case "panel-unavailable": return 503
         case "write-failed": return 500
         default: return 400

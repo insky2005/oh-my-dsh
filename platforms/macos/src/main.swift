@@ -981,6 +981,7 @@ enum L10n {
         "requirements.error.notFound": ("找不到该需求", "Requirement not found"),
         "requirements.error.noProposal": ("没有待确认的拆解提案", "No proposal to confirm"),
         "requirements.error.breakdownLocked": ("需求已拆解事项，不能再编辑；请另起需求", "Already broken down into workstreams; open a new requirement instead"),
+        "requirements.error.invalidTransition": ("「%@」不能切换到「%@」", "Cannot switch from %@ to %@"),
         "requirements.error.unknownState": ("无效的状态", "Invalid state"),
         "requirements.error.generic": ("操作失败：%@", "Failed: %@"),
         "requirements.needsWorkspace": ("请先选择一个工作区", "Select a workspace first"),

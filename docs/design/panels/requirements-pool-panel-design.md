@@ -121,6 +121,20 @@ static func reject(workspace:id:today:) throws -> RequirementCard
 - **id 分配**：扫描目录取最大数字 + 1，**六位零填充**（`REQ-000008` / `WS-000009`）；无卡片从 `000001` 起；解析与排序都按数字，兼容旧的 3 位卡（混排也正确）。
 - **工作区守卫**：workspace 为空或不存在 → `throws PoolError.noWorkspace`；`<workspace>/.dsh` 不存在时**创建 `requirements`/`workstreams`**（幂等），不创建卡片。
 
+### 3.3.1 状态转换（人工态 × 派生态）
+
+人工态（`state`）只在「未拆解 / 拆解中 / 已关闭 / 已丢弃」四种语境下允许，**派生态是人工转换的前置条件**（`RequirementsCore.allowedStates(from:derived:)`，**模型强制**、菜单只列可达项）：
+
+| 当前派生态 | 可切换的人工态（隐藏当前态） |
+|---|---|
+| 无（未拆解） | `evaluating` / `suspended` / `discarded`；`candidate` 可回退 |
+| `split`（有进行中事项） | `evaluating` / `suspended` / `discarded`（**不含 `candidate`**——拆解过即已评估） |
+| `closed`（全部事项终态） | **无**：终态不回弹，重开请另起需求（原则 15） |
+| 当前 `discarded` | **无**：单向门 |
+
+- `setState` 先读当前 `state` + 子事项派生的 `derived`，目标不在可达集 → `throws PoolError.invalidTransition(from, to)`（API → 409 `invalid-transition`）；同状态是幂等 no-op；
+- 有效态 `discarded > closed > split > state` 只用于**展示 / API 汇总**，不写入卡片。
+
 ### 3.4 终态的网络派生不在本期
 
 `closed` 只读卡片里 `delivery.outcome` 的**派生缓存**。若 PR 已 merged 但缓存未写，面板显示 `split`（未关闭），这是**已知限制**：网络派生仍由 `node .dsh/tools/derive-status.mjs` 完成（REQ-006 / WS-004），面板不联网、不假装成功。
@@ -204,7 +218,7 @@ updated: <today>
 | POST `/api/requirements/breakdown/reject` | `{"workspace":"…","id":"REQ-003","session":"$DSH_SESSION_ID"}` | 驳回：清除待确认提案 |
 
 - `workspace` 缺省 = 面板当前工作区；传 `pwd` 时按「精确 / 最近祖先」解析（规则与 `TasksAPIWorkspace` 一致，纯路由独立实现以免测试耦合任务模型）；
-- 错误码：`missing-body` / `missing-title` / `missing-id` / `no-items` / `unknown-state`（400）、`unknown-requirement`（404）、`no-proposal`（409）、`no-workspace`（400）、`panel-unavailable`（503）；
+- 错误码：`missing-body` / `missing-title` / `missing-id` / `no-items` / `unknown-state`（400）、`unknown-requirement`（404）、`no-proposal` / `breakdown-locked` / `invalid-transition`（409）、`no-workspace`（400）、`panel-unavailable`（503）；
 - `focus` 默认 `true`：切到该工作区并展开需求池面板（与任务面板同语义）；
 - **不提供**「直接写卡片」端点：写只走上述语义化动作。
 
@@ -248,7 +262,7 @@ updated: <today>
 
 - **标题行**：折叠箭头 → 类型 glyph（`tray.full`，tertiary 13×13）→ 标题 13pt semibold（颜色取 `TaskBadgeView.bodyColor(tone)`）→ `[需求]` 中性徽标 → `[N 个事项]` 中性计数徽标（有子事项时）→ spacer → **有效状态徽标**（`evaluating` 用 filled accent）→ 动作。
   - 状态**只在徽标里**，不染边框；唯一的强调是"活动态"（running）。
-- **人工状态徽标即下拉 + 派生状态独立徽标**：`RequirementStateControl` = 人工状态 `TaskBadgeView` 药丸 + 尾部 **`chevron.down` 指示符号**（hover 手型，tooltip 显示当前人工状态），点击弹出人工状态菜单；菜单只列**可达**状态（隐藏当前态；`discarded` 为**单向门**，丢弃后无可选项、徽标只读）。派生状态（`split` / `closed`）作为**独立只读徽标**显示在人工徽标左侧（tooltip「派生状态」），二者互不覆盖——已拆解的需求仍可携带人工判断（如 挂起 + 已拆分）。
+- **人工状态徽标即下拉 + 派生状态独立徽标**：`RequirementStateControl` = 人工状态 `TaskBadgeView` 药丸 + 尾部 **`chevron.down` 指示符号**（hover 手型，tooltip 显示当前人工状态），点击弹出人工状态菜单；菜单只列**可达**状态（隐藏当前态；`discarded` 为**单向门**，丢弃后无可选项、徽标只读）；可达集同时受**派生状态**约束（见 §3.3.1）：`split` 隐藏 `candidate`、`closed` 无人工可切目标。派生状态（`split` / `closed`）作为**独立只读徽标**显示在人工徽标左侧（tooltip「派生状态」），二者互不覆盖——已拆解的需求仍可携带人工判断（如 挂起 + 已拆分）。
 - **动作**（右对齐）：`拆解`（文本按钮 + **`square.split.2x2` 图标**，主操作；**仅在尚未拆解时出现**——无子事项、无待确认提案、且非 `discarded`，否则隐藏）、`编辑`（`pencil` 图标；**已拆解事项后隐藏**——需求被冻结）。次要动作用 `CustomIconButton(size: 22)`（hover 走 `PanelControl` highlight 档）。
 - **诉求预览**：`## 诉求` 正文，11pt secondary；**收起 3 行、展开不限**，tooltip 全文。
 - **meta**：来源 · 更新日期 · `待确认拆解 N 项`（10pt tertiary）。

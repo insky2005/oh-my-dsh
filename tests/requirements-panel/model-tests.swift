@@ -124,11 +124,14 @@ eq(RequirementsCore.effectiveState(state: nil, children: []), .candidate, "empty
 eq(RequirementsCore.derivedState(children: []), nil, "no children -> nil derived state")
 eq(RequirementsCore.derivedState(children: [openChild]), .split, "open child -> derived split")
 eq(RequirementsCore.derivedState(children: [closedChild]), .closed, "all terminal -> derived closed")
-eq(RequirementsCore.allowedStates(from: nil), ["evaluating", "suspended", "discarded"], "candidate offers the other manual states")
-eq(RequirementsCore.allowedStates(from: "evaluating"), ["candidate", "suspended", "discarded"], "evaluating offers the others")
-eq(RequirementsCore.allowedStates(from: "suspended"), ["candidate", "evaluating", "discarded"], "suspended offers the others")
-eq(RequirementsCore.allowedStates(from: "discarded"), [], "discarded is terminal (no options)")
-check(!RequirementsCore.allowedStates(from: "candidate").contains("candidate"), "current state is hidden")
+eq(RequirementsCore.allowedStates(from: nil, derived: nil), ["evaluating", "suspended", "discarded"], "no breakdown: candidate offers the other manual states")
+eq(RequirementsCore.allowedStates(from: "evaluating", derived: nil), ["candidate", "suspended", "discarded"], "no breakdown: evaluating offers the others")
+eq(RequirementsCore.allowedStates(from: "suspended", derived: nil), ["candidate", "evaluating", "discarded"], "no breakdown: suspended offers the others")
+eq(RequirementsCore.allowedStates(from: "discarded", derived: nil), [], "discarded is terminal")
+eq(RequirementsCore.allowedStates(from: "evaluating", derived: .split), ["suspended", "discarded"], "split hides candidate (already judged)")
+eq(RequirementsCore.allowedStates(from: "candidate", derived: .split), ["evaluating", "suspended", "discarded"], "split from candidate still offers evaluating")
+eq(RequirementsCore.allowedStates(from: "evaluating", derived: .closed), [], "closed is terminal (reopen = new requirement)")
+check(!RequirementsCore.allowedStates(from: "candidate", derived: nil).contains("candidate"), "current state is hidden")
 
 // MARK: - load()
 
@@ -243,6 +246,45 @@ let rejected = try! RequirementsCore.reject(workspace: ws3, id: req3Id, today: "
 eq(RequirementsCore.parseProposal(rejected.body), nil, "reject clears the proposal")
 expectError("reject without proposal -> noProposal", .noProposal) {
     _ = try RequirementsCore.reject(workspace: ws3, id: req3Id, today: "2026-10-04")
+}
+
+// MARK: - state transitions (derived state as precondition)
+
+section("state transitions")
+let wsTrans = tempWorkspace("transitions")
+let reqTrans = try! RequirementsCore.createRequirement(workspace: wsTrans, title: "状态", body: nil, source: nil, today: "2026-10-05")
+let reqTransId = reqTrans.id
+// No breakdown: the four manual states are mutually reachable.
+_ = try! RequirementsCore.setState(workspace: wsTrans, id: reqTransId, state: "evaluating", today: "2026-10-05")
+_ = try! RequirementsCore.setState(workspace: wsTrans, id: reqTransId, state: "suspended", today: "2026-10-05")
+_ = try! RequirementsCore.setState(workspace: wsTrans, id: reqTransId, state: "candidate", today: "2026-10-05")
+// discarded is a one-way door.
+_ = try! RequirementsCore.setState(workspace: wsTrans, id: reqTransId, state: "discarded", today: "2026-10-05")
+expectError("discarded cannot be undone", .invalidTransition("discarded", "candidate")) {
+    _ = try RequirementsCore.setState(workspace: wsTrans, id: reqTransId, state: "candidate", today: "2026-10-05")
+}
+
+// split (open workstreams) hides candidate.
+let wsSplit = tempWorkspace("transitions-split")
+let reqSplit = try! RequirementsCore.createRequirement(workspace: wsSplit, title: "拆分态", body: nil, source: nil, today: "2026-10-05")
+let reqSplitId = reqSplit.id
+_ = try! RequirementsCore.propose(workspace: wsSplit, id: reqSplitId,
+                                  items: [BreakdownItem(title: "A", boundary: "b", dependsOn: [])], today: "2026-10-05")
+_ = try! RequirementsCore.confirm(workspace: wsSplit, id: reqSplitId, today: "2026-10-05")
+_ = try! RequirementsCore.setState(workspace: wsSplit, id: reqSplitId, state: "evaluating", today: "2026-10-05")
+expectError("split cannot go back to candidate", .invalidTransition("evaluating", "candidate")) {
+    _ = try RequirementsCore.setState(workspace: wsSplit, id: reqSplitId, state: "candidate", today: "2026-10-05")
+}
+
+// closed (all workstreams terminal) is a terminal: no manual transition.
+let wsClosed = tempWorkspace("transitions-closed")
+let reqClosed = try! RequirementsCore.createRequirement(workspace: wsClosed, title: "关闭态", body: nil, source: nil, today: "2026-10-05")
+let reqClosedId = reqClosed.id
+_ = try! RequirementsCore.setState(workspace: wsClosed, id: reqClosedId, state: "evaluating", today: "2026-10-05")
+write(wsClosed + "/.dsh/workstreams/WS-000001.md",
+      workstreamFixture("WS-000001", requirement: reqClosedId, stage: "delivery", outcome: "merged"))
+expectError("closed is terminal", .invalidTransition("evaluating", "suspended")) {
+    _ = try RequirementsCore.setState(workspace: wsClosed, id: reqClosedId, state: "suspended", today: "2026-10-05")
 }
 
 check(RequirementsCore.breakdownPrompt("REQ-001", title: "想法").contains("/api/requirements/breakdown/propose"), "prompt points at the propose endpoint")

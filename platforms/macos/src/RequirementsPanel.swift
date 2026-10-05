@@ -148,7 +148,7 @@ final class RequirementCardView: NSView {
                                         filled: manualState == "evaluating")
         let stateControl = RequirementStateControl(badge: manualBadge,
                                                    tint: manualState == "evaluating" ? .white : TaskBadgeView.color(manualTone),
-                                                   interactive: !RequirementsCore.allowedStates(from: manualState).isEmpty)
+                                                   interactive: !RequirementsCore.allowedStates(from: manualState, derived: derived).isEmpty)
         stateControl.toolTip = L10n.tr("requirements.set.state") + "：" + requirementManualStateLabel(manualState)
         stateControl.onShowMenu = { [weak self] in self?.showStateMenu(from: stateControl) }
         var derivedBadge: TaskBadgeView?
@@ -413,7 +413,8 @@ final class RequirementCardView: NSView {
     // MARK: - Actions
 
     @objc private func showStateMenu(from view: NSView) {
-        let options = RequirementsCore.allowedStates(from: item.requirement.state)
+        let options = RequirementsCore.allowedStates(from: item.requirement.state,
+                                                     derived: RequirementsCore.derivedState(children: item.children))
         guard !options.isEmpty else { return }
         let menu = NSMenu()
         for state in options {
@@ -1089,6 +1090,9 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
         case .unknownRequirement: return L10n.tr("requirements.error.notFound")
         case .noProposal: return L10n.tr("requirements.error.noProposal")
         case .breakdownLocked: return L10n.tr("requirements.error.breakdownLocked")
+        case .invalidTransition(let from, let to):
+            return L10n.tr("requirements.error.invalidTransition",
+                           requirementManualStateLabel(from), requirementManualStateLabel(to))
         case .unknownState: return L10n.tr("requirements.error.unknownState")
         default: return L10n.tr("requirements.error.generic", error.message)
         }
