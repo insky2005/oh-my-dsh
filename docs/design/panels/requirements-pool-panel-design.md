@@ -275,18 +275,62 @@ updated: <today>
 
 ### 5.5 驳回原因抽屉
 
-点「驳回」不直接丢弃提案，而是复用同一个 form sheet 拉一个**原因抽屉**（`RequirementRejectView` + 纯模型 `RejectReasonModel`）：**一个必填输入框**，`⌘↩` 提交、`Esc` 取消；空原因时提交禁用、尝试提交后给 `requirements.reject.problem`。提交后先 `reject`（清提案），再把原因拼进**写回该需求会话**的提示词（`requirements.notify.rejectedWithReason`）：
-
-```text
-需求池：REQ-003 的拆解提案已被人在面板驳回。原因：<原因>
-请据此修改拆解方案，重新提交待确认提案（POST /api/requirements/breakdown/propose），不要建卡。
-```
+点「驳回」不直接丢弃提案，而是复用同一个 form sheet 拉一个**原因抽屉**（`RequirementRejectView` + 纯模型 `RejectReasonModel`）：**一个必填输入框**，`⌘↩` 提交、`Esc` 取消；空原因时提交禁用、尝试提交后给 `requirements.reject.problem`。提交后先 `reject`（清提案），再把原因拼进**写回该需求会话**的提示词（`requirements.notify.rejectedWithReason`，全文见 §5.7）。
 
 这样驳回不是「作废」，而是**带方向的返工**：agent 按原因改，人再确认。
 
 ### 5.6 配色
 
 一律 `PanelSurface`（面板底）+ `PanelControl`（卡片 / 按钮两档），不新增颜色令牌（`docs/design/shell/ui-color-scheme.md`）。
+
+### 5.7 面板发出的提示词（单一事实来源）
+
+面板只在四个环节往对话里发提示词；本节的文本是**唯一对照**——`refinementPrompt` / `breakdownPrompt` / `requirements.notify.*` 措辞再变，必须同步这里。目标会话见 §6。
+
+**① 创建并细化**（`RequirementsCore.refinementPrompt`；新建会话，失败回退当前会话）
+
+```text
+REQ-008「标题」@.dsh/requirements/REQ-008.md
+请和我一起细化这条需求：澄清目标、边界、验收标准；
+
+注意：
+- 只讨论、只澄清，不要修改代码或其它文件。
+- 须修改需求时，用 POST /api/requirements/update（带上 session，保持同一会话）。
+- 细化后，等待用户进行「需求拆解」。
+```
+
+**② 拆解**（`RequirementsCore.breakdownPrompt`；来源会话优先，其次当前会话；都没有 / 发送失败则回退复制提示词）
+
+```text
+你在 oh-my-dsh 仓库工作。用户要把需求 REQ-008 拆解成 1..N 个事项。
+先读 .dsh/requirements/REQ-008.md 与它的子事项（.dsh/workstreams/WS-*.md 中 requirement: REQ-008 的），
+给出拆解方案：每个事项的标题、边界、依赖顺序。只拆不胀，范围外的新发现回池。
+然后用壳层 API 提交待确认提案（不要建卡、不要自签）：
+  POST /api/requirements/breakdown/propose  {"id":"REQ-008","items":[{"title":"...","boundary":"...","dependsOn":["..."]}]}
+提交后停下，等人在需求池面板确认。
+```
+
+**③ 确认拆解**（`requirements.notify.confirmed`；回写绑定会话）
+
+```text
+需求池：REQ-008 的拆解已由人在面板确认，生成 WS-009、WS-010。
+收到即可，等我下一步指令，不要自动开工。
+```
+
+**④ 驳回拆解（带原因）**（`requirements.notify.rejectedWithReason`；回写绑定会话）
+
+```text
+需求池：REQ-008 的拆解提案已被人在面板驳回。原因：<原因>
+请据此修改拆解方案，重新提交待确认提案（POST /api/requirements/breakdown/propose），不要建卡。
+```
+
+**⑤ 驳回拆解（无原因，兜底）**（`requirements.notify.rejected`；仅在 `reason` 为空时走到）
+
+```text
+需求池：REQ-008 的拆解提案已被人在面板驳回。收到即可，等我下一步指令。
+```
+
+> 贯穿 ①②③④⑤ 的硬约束：只讨论不改代码 · 只拆不胀 · 不要建卡 / 不要自签 · 收到即可不自动开工（AGENTS.md 开工前置 + R10 人工确认门）。
 
 ---
 

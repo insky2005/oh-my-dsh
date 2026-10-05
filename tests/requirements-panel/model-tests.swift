@@ -219,6 +219,8 @@ check(RequirementsCore.breakdownPrompt("REQ-042").contains("REQ-042"), "prompt n
 check(RequirementsCore.refinementPrompt("REQ-042", title: "想法").contains("REQ-042"), "refinement prompt names the requirement")
 check(RequirementsCore.refinementPrompt("REQ-042", title: "想法").contains("/api/requirements/update"), "refinement prompt points at the update endpoint")
 check(RequirementsCore.refinementPrompt("REQ-042", title: "想法").contains("不要修改代码"), "refinement prompt keeps the read-only rule")
+check(RequirementsCore.refinementPrompt("REQ-042", title: "想法").contains("@.dsh/requirements/REQ-042.md"), "refinement prompt references the card path")
+check(RequirementsCore.refinementPrompt("REQ-042", title: "想法").contains("等待用户进行「需求拆解」"), "refinement prompt waits for the human breakdown")
 
 // MARK: - composer + help view models (RequirementsUI.swift)
 

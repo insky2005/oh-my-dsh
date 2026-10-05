@@ -708,10 +708,13 @@ enum RequirementsCore {
     /// (design §5.4): the card exists, the agent only discusses / clarifies, and
     /// card edits go through the API so the session stays the single thread.
     static func refinementPrompt(_ requirementId: String, title: String) -> String {
-        return "需求池：新需求 " + requirementId + "「" + title + "」已在面板创建（卡片 .dsh/requirements/" + requirementId + ".md）。\n"
-            + "请和我一起细化这条需求：澄清目标、边界、验收标准；只讨论、只澄清，不要修改代码或其它文件（实施的唯一入口是已启动的任务队列）。\n"
-            + "要改卡片时用 POST /api/requirements/update（带上 session，保持同一会话）。\n"
-            + "细化完成后提醒我到需求池面板确认并「拆解」。"
+        return requirementId + "「" + title + "」@.dsh/requirements/" + requirementId + ".md\n"
+            + "请和我一起细化这条需求：澄清目标、边界、验收标准；\n"
+            + "\n"
+            + "注意：\n"
+            + "- 只讨论、只澄清，不要修改代码或其它文件。\n"
+            + "- 须修改需求时，用 POST /api/requirements/update（带上 session，保持同一会话）。\n"
+            + "- 细化后，等待用户进行「需求拆解」。"
     }
 
     /// The handoff text the panel copies when the user clicks "拆解" (design §6). It

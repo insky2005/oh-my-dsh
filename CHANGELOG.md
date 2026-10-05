@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **细化提示词改写 + 面板提示词汇总（2026-10-04）**：`refinementPrompt` 改为以 `REQ-xxx「标题」@.dsh/requirements/REQ-xxx.md` 开头，随后「请和我一起细化这条需求…」+ 三条注意（只讨论不改代码 / 改卡走 `/update` 带 session / **细化后等待用户拆解**）；设计新增 **§5.7 面板发出的提示词（单一事实来源）**，把 ①细化 ②拆解 ③确认 ④驳回（带原因）⑤驳回（兜底）五条全文集中一处，改措辞时必须同步。模型测试 **110 → 112**。
+
 - **驳回拆解：原因抽屉 + 原因带进提示词（2026-10-04）**：点「驳回」不再直接丢弃提案，而是弹一个必填的**原因抽屉**（`RequirementRejectView` + `RejectReasonModel`，`⌘↩` 提交 / `Esc` 取消，空原因禁用提交）；提交后清提案并把原因拼进写回该需求会话的提示词（`requirements.notify.rejectedWithReason`），让 agent **按原因改**而不是作废。测试模型 **103 → 110**。
 
 - **需求池状态徽标改为下拉（2026-10-04）**：**状态徽标本身可点**——`RequirementStateControl` = `TaskBadgeView` 药丸 + 尾部 **`chevron.down` 指示符号**（hover 手型、tooltip 显示当前人工状态），点击直接弹出人工状态菜单（候选 / 评估中 / 挂起 / 丢弃）；`RequirementStateControl` 自己认领点击并加入 `RequirementHeaderView` 的 `hitTest` 白名单（否则 header 会吞掉点击、误触折叠卡片）；**去掉单独的 `circle.dashed` 状态按钮**。菜单对齐壳层既有约定（`IssueRunnerPanel` / `FilePanel`）向下弹出（`y: -6`），**不遮挡状态徽标本身**。
