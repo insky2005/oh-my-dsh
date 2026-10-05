@@ -312,11 +312,15 @@ REQ-008「标题」@.dsh/requirements/REQ-008.md，需求已确认。
 - 提交后，等待用户确认『待确认提案』。
 ```
 
-**③ 确认拆解**（`requirements.notify.confirmed`；回写绑定会话）
+**③ 确认拆解**（`requirements.notify.confirmed`，参数 `id / title / id / created`；回写绑定会话）
 
 ```text
-需求池：REQ-008 的拆解已由人在面板确认，生成 WS-009、WS-010。
-收到即可，等我下一步指令，不要自动开工。
+REQ-008「标题」@.dsh/requirements/REQ-008.md，需求拆解已确认。
+生成事项：WS-009、WS-010。
+
+注意：
+- 回复『收到』。
+- 列出事项清单。
 ```
 
 **④ 驳回拆解（带原因）**（`requirements.notify.rejectedWithReason`；回写绑定会话）

@@ -963,7 +963,7 @@ enum L10n {
         "requirements.reject.problem": ("请填写驳回原因", "Enter a reason"),
         "requirements.refineStarted": ("已创建 %@，并在新会话里开始细化", "Created %@ and started a refinement session"),
         "requirements.refineFailed": ("已创建需求；细化会话未启动，可在会话里手动继续", "Requirement created; the refinement session could not start — continue in a chat"),
-        "requirements.notify.confirmed": ("需求池：%@ 的拆解已由人在面板确认，生成 %@。收到即可，等我下一步指令，不要自动开工。", "Requirements pool: %@ breakdown confirmed by the human; created %@. Just acknowledge and wait for my next instruction."),
+        "requirements.notify.confirmed": ("%@「%@」@.dsh/requirements/%@.md，需求拆解已确认。\n生成事项：%@。\n\n注意：\n- 回复『收到』。\n- 列出事项清单。", "%@「%@」@.dsh/requirements/%@.md — breakdown confirmed.\nWorkstreams created: %@.\n\nNotes:\n- Reply \"received\".\n- List the workstreams."),
         "requirements.notify.rejected": ("需求池：%@ 的拆解提案已被人在面板驳回。收到即可，等我下一步指令。", "Requirements pool: %@ breakdown proposal was rejected by the human. Just acknowledge and wait for my next instruction."),
         "requirements.notify.rejectedWithReason": ("需求池：%@ 的拆解提案已被人在面板驳回。原因：%@\n请据此修改拆解方案，重新提交待确认提案（POST /api/requirements/breakdown/propose），不要建卡。", "Requirements pool: %@ breakdown proposal was rejected by the human. Reason: %@\nRevise the breakdown accordingly and re-submit a pending proposal (POST /api/requirements/breakdown/propose); do not create cards."),
         "requirements.created": ("已创建 %@", "Created %@"),
@@ -5301,16 +5301,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// 由此知道该继续按事项推进（通知只是「收到即可」，不自动开工）。
     private func notifyBreakdownResolved(_ requirementId: String, confirmed: Bool, created: [String], reason: String?) {
         guard let workspace = activeWorkspacePath(), !workspace.isEmpty else { return }
-        let bound = RequirementsCore.load(workspace: workspace).requirements
-            .first { $0.requirement.id == requirementId }?.requirement.session
+        let requirement = RequirementsCore.load(workspace: workspace).requirements
+            .first { $0.requirement.id == requirementId }?.requirement
+        let title = requirement?.title ?? ""
         let port = server.port
-        guard port > 0, let sessionId = (bound?.isEmpty == false ? bound : activeSessionId), !sessionId.isEmpty else {
+        guard port > 0,
+              let sessionId = (requirement?.session?.isEmpty == false ? requirement?.session : activeSessionId),
+              !sessionId.isEmpty else {
             AppLog.shared.log("requirements: no session to write the \(requirementId) result back to")
             return
         }
         let text: String
         if confirmed {
-            text = L10n.tr("requirements.notify.confirmed", requirementId, created.joined(separator: "、"))
+            text = L10n.tr("requirements.notify.confirmed", requirementId, title, requirementId,
+                           created.joined(separator: "、"))
         } else if let reason = reason, !reason.isEmpty {
             // The rejection reason goes into the prompt so the agent revises, not guesses.
             text = L10n.tr("requirements.notify.rejectedWithReason", requirementId, reason)
