@@ -257,7 +257,7 @@ updated: <today>
   - **事项卡**（recessed）：点它的标题行切换；收起 = 头部（`doc.text` + `WS-*` + 标题 + `[阶段]` + `↗`），展开 = 追加 **阶段 / 结果 / 路径** 三行。
   - **提案卡**（raised）：点它的标题行切换；收起 = `标题 + [依赖 N]`，展开 = 追加**内容（边界）**一行（11pt secondary、换行）。
 - **已拆解事项**（需求卡展开后）：`已拆解事项 (N)` 小标题 + 每个 `WS-*` 一张**事项卡**。
-- **待确认拆解**（需求卡展开后）：一个 **recessed 容器**，头是 `square.dashed 待确认拆解 [待确认 N 项] … [确认拆解] [驳回]`，下面是每条一张**提案卡**（各自可折叠）。
+- **待确认拆解**（需求卡展开后）：一个 **recessed 容器**，头是 `square.dashed 待确认拆解 [待确认 N 项] … [确认拆解] [驳回]`，下面是每条一张**提案卡**（各自可折叠）。点「驳回」打开**原因抽屉**（必填），原因随结果写回该需求的会话提示词。
 - **状态色（tone）**：`candidate`→neutral、`evaluating`→running、`suspended`→warning、`discarded`→neutral、`split`→running、`closed`→positive（`requirementTone`）。
 - **动作语义**（不变）：状态菜单写回**人工判断**（`split`/`closed` 派生，不在菜单里）；编辑只改 title + `## 诉求`；拆解发提示词到**来源会话**（`.dsh/requirements/local.json`）或当前会话，都没有才回退复制，发到别的会话会切前台；`确认拆解`/`驳回` 在提案块里，成功后把**结果回写**到该需求的会话（同一会话闭环）。
 
@@ -273,7 +273,18 @@ updated: <today>
 
 抽屉底部是 `[创建] [创建并细化] [取消]`：**普通「创建」只写卡**；**「创建并细化」**才为它起一条「细化」会话（面板建的需求没有对话来源）。main 在活动工作区 `session/create` → `session/rename`（「细化 REQ-xxx 标题」）→ `session/prompt`（[`refinementPrompt`]，要求只讨论 / 只澄清、不改代码，改卡片走 `/update`）；成功即把卡片绑定到该会话并切过去，会话创建失败回退当前会话，再失败只留卡片并提示。这样面板创建的需求同样满足「同一需求同一会话」。
 
-### 5.5 配色
+### 5.5 驳回原因抽屉
+
+点「驳回」不直接丢弃提案，而是复用同一个 form sheet 拉一个**原因抽屉**（`RequirementRejectView` + 纯模型 `RejectReasonModel`）：**一个必填输入框**，`⌘↩` 提交、`Esc` 取消；空原因时提交禁用、尝试提交后给 `requirements.reject.problem`。提交后先 `reject`（清提案），再把原因拼进**写回该需求会话**的提示词（`requirements.notify.rejectedWithReason`）：
+
+```text
+需求池：REQ-003 的拆解提案已被人在面板驳回。原因：<原因>
+请据此修改拆解方案，重新提交待确认提案（POST /api/requirements/breakdown/propose），不要建卡。
+```
+
+这样驳回不是「作废」，而是**带方向的返工**：agent 按原因改，人再确认。
+
+### 5.6 配色
 
 一律 `PanelSurface`（面板底）+ `PanelControl`（卡片 / 按钮两档），不新增颜色令牌（`docs/design/shell/ui-color-scheme.md`）。
 
@@ -376,6 +387,13 @@ updated: <today>
 | `requirements.reject` | 驳回 | Reject |
 | `requirements.confirmed` | 已生成 %d 个事项 | Created %d workstreams |
 | `requirements.rejected` | 已驳回拆解提案 | Proposal dismissed |
+| `requirements.reject.title` | 驳回拆解 | Reject breakdown |
+| `requirements.reject.info` | 写清驳回原因——会带进对话提示词，让拆分方案按原因修改。 | Say why — the reason goes into the conversation prompt so the breakdown can be revised. |
+| `requirements.reject.content` | 驳回原因 | Reason |
+| `requirements.reject.placeholder` | 例如：粒度太粗 / 与现有事项重复 / 漏了迁移步骤 | e.g. too coarse / duplicates existing workstreams / misses a migration step |
+| `requirements.reject.submit` | 驳回并说明 | Reject with reason |
+| `requirements.reject.problem` | 请填写驳回原因 | Enter a reason |
+| `requirements.notify.rejectedWithReason` | 需求池：%@ 的拆解提案已被人在面板驳回。原因：%@ / 请据此修改拆解方案，重新提交待确认提案，不要建卡。 | Requirements pool: %@ breakdown proposal was rejected by the human. Reason: %@ / Revise and re-submit a pending proposal; do not create cards. |
 | `requirements.created` | 已创建 %@ | Created %@ |
 | `requirements.stateChanged` | %@ → %@ | %@ → %@ |
 | `requirements.error.notFound` | 找不到该需求 | Requirement not found |

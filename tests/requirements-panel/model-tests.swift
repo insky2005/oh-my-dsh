@@ -312,6 +312,18 @@ eq(RequirementComposerModel.build().showsRefineButton, true, "create composer sh
 eq(editModel.showsRefineButton, false, "edit composer hides 创建并细化")
 eq(RequirementComposerModel.build().refineKey, "requirements.createAndRefine", "refine button key")
 
+section("reject reason")
+var reject = RejectReasonModel.build()
+eq(reject.canSubmit, false, "an empty rejection cannot submit")
+eq(reject.problemKey, nil, "no problem before an attempted submit")
+reject = reject.attemptedSubmit()
+eq(reject.problemKey, "requirements.reject.problem", "empty rejection shows the problem after submit")
+reject = reject.typed(content: "  粒度太粗  ")
+eq(reject.reason, "粒度太粗", "the reason is trimmed")
+eq(reject.canSubmit, true, "a non-empty reason can submit")
+eq(reject.typed(content: "x").submitKey, "requirements.reject.submit", "reject submit key")
+eq(reject.typed(content: "x").contentCaptionKey, "requirements.reject.content", "reject content caption key")
+
 section("result")
 print("requirements model: " + String(checks - failures) + "/" + String(checks) + " passed")
 if failures > 0 { exit(1) }

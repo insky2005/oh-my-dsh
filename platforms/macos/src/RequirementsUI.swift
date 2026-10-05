@@ -103,3 +103,36 @@ struct RequirementsHelpSpec: Equatable {
             ])
     }
 }
+
+/// The 驳回 reason drawer's pure model: ONE required text area. A rejection must say
+/// why — the reason is carried into the requirement's conversation prompt so the
+/// agent revises the breakdown instead of guessing.
+struct RejectReasonModel {
+
+    var content: String = ""
+    var attempted = false
+
+    let headingKey = "requirements.reject.title"
+    let infoKey = "requirements.reject.info"
+    let contentCaptionKey = "requirements.reject.content"
+    let placeholderKey = "requirements.reject.placeholder"
+    let submitKey = "requirements.reject.submit"
+
+    static func build() -> RejectReasonModel { RejectReasonModel() }
+
+    var reason: String { content.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var canSubmit: Bool { !reason.isEmpty }
+    var problemKey: String? { attempted && !canSubmit ? "requirements.reject.problem" : nil }
+
+    func typed(content: String) -> RejectReasonModel {
+        var model = self
+        model.content = content
+        return model
+    }
+
+    func attemptedSubmit() -> RejectReasonModel {
+        var model = self
+        model.attempted = true
+        return model
+    }
+}

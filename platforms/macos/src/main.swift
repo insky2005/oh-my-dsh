@@ -955,10 +955,17 @@ enum L10n {
         "requirements.reject": ("驳回", "Reject"),
         "requirements.confirmed": ("已生成 %d 个事项", "Created %d workstreams"),
         "requirements.rejected": ("已驳回拆解提案", "Proposal dismissed"),
+        "requirements.reject.title": ("驳回拆解", "Reject breakdown"),
+        "requirements.reject.info": ("写清驳回原因——会带进对话提示词，让拆分方案按原因修改。", "Say why — the reason goes into the conversation prompt so the breakdown can be revised."),
+        "requirements.reject.content": ("驳回原因", "Reason"),
+        "requirements.reject.placeholder": ("例如：粒度太粗 / 与现有事项重复 / 漏了迁移步骤", "e.g. too coarse / duplicates existing workstreams / misses a migration step"),
+        "requirements.reject.submit": ("驳回并说明", "Reject with reason"),
+        "requirements.reject.problem": ("请填写驳回原因", "Enter a reason"),
         "requirements.refineStarted": ("已创建 %@，并在新会话里开始细化", "Created %@ and started a refinement session"),
         "requirements.refineFailed": ("已创建需求；细化会话未启动，可在会话里手动继续", "Requirement created; the refinement session could not start — continue in a chat"),
         "requirements.notify.confirmed": ("需求池：%@ 的拆解已由人在面板确认，生成 %@。收到即可，等我下一步指令，不要自动开工。", "Requirements pool: %@ breakdown confirmed by the human; created %@. Just acknowledge and wait for my next instruction."),
         "requirements.notify.rejected": ("需求池：%@ 的拆解提案已被人在面板驳回。收到即可，等我下一步指令。", "Requirements pool: %@ breakdown proposal was rejected by the human. Just acknowledge and wait for my next instruction."),
+        "requirements.notify.rejectedWithReason": ("需求池：%@ 的拆解提案已被人在面板驳回。原因：%@\n请据此修改拆解方案，重新提交待确认提案（POST /api/requirements/breakdown/propose），不要建卡。", "Requirements pool: %@ breakdown proposal was rejected by the human. Reason: %@\nRevise the breakdown accordingly and re-submit a pending proposal (POST /api/requirements/breakdown/propose); do not create cards."),
         "requirements.created": ("已创建 %@", "Created %@"),
         "requirements.stateChanged": ("%@ → %@", "%@ → %@"),
         "requirements.error.notFound": ("找不到该需求", "Requirement not found"),
@@ -2875,8 +2882,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self?.sendBreakdownPrompt(id, preferredSession: session)
         }
         // 人在面板确认 / 驳回后，把结果回写到该需求的会话（同一会话闭环）。
-        requirementsPanel.onBreakdownResolved = { [weak self] id, confirmed, created in
-            self?.notifyBreakdownResolved(id, confirmed: confirmed, created: created)
+        requirementsPanel.onBreakdownResolved = { [weak self] id, confirmed, created, reason in
+            self?.notifyBreakdownResolved(id, confirmed: confirmed, created: created, reason: reason)
         }
         // 抽屉的「创建并细化」：为面板创建的需求起一条「细化」会话并绑定。
         requirementsPanel.onRefineRequested = { [weak self] id, title in
@@ -5292,7 +5299,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     /// 人在面板确认 / 驳回拆解后，把结果写回该需求的会话——同一会话闭环，agent
     /// 由此知道该继续按事项推进（通知只是「收到即可」，不自动开工）。
-    private func notifyBreakdownResolved(_ requirementId: String, confirmed: Bool, created: [String]) {
+    private func notifyBreakdownResolved(_ requirementId: String, confirmed: Bool, created: [String], reason: String?) {
         guard let workspace = activeWorkspacePath(), !workspace.isEmpty else { return }
         let bound = RequirementsCore.load(workspace: workspace).requirements
             .first { $0.requirement.id == requirementId }?.requirement.session
@@ -5301,9 +5308,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             AppLog.shared.log("requirements: no session to write the \(requirementId) result back to")
             return
         }
-        let text = confirmed
-            ? L10n.tr("requirements.notify.confirmed", requirementId, created.joined(separator: "、"))
-            : L10n.tr("requirements.notify.rejected", requirementId)
+        let text: String
+        if confirmed {
+            text = L10n.tr("requirements.notify.confirmed", requirementId, created.joined(separator: "、"))
+        } else if let reason = reason, !reason.isEmpty {
+            // The rejection reason goes into the prompt so the agent revises, not guesses.
+            text = L10n.tr("requirements.notify.rejectedWithReason", requirementId, reason)
+        } else {
+            text = L10n.tr("requirements.notify.rejected", requirementId)
+        }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let sent = DshSessionOps.sendPrompt(port: port, sessionId: sessionId, text: text)
             DispatchQueue.main.async {

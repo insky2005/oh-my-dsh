@@ -585,7 +585,8 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     /// Human confirmed (true) / rejected (false) a proposal in the panel; the
     /// created workstream ids come along so main.swift can write the outcome back
     /// to the requirement's session.
-    var onBreakdownResolved: ((String, Bool, [String]) -> Void)?
+    /// (id, confirmed, created ids, reject reason) — reason is nil for a confirm.
+    var onBreakdownResolved: ((String, Bool, [String], String?) -> Void)?
     /// Focus this workspace and show the requirements panel (REST focus=true).
     var onFocus: ((String) -> Void)?
     /// QA hook (--ui-debug): fires after each render.
@@ -698,7 +699,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
             card.onEdit = { [weak self] in self?.openComposer(id: id) }
             card.onBreakdown = { [weak self] in self?.breakdownRequested(id: id) }
             card.onConfirm = { [weak self] in self?.confirmBreakdown(id: id) }
-            card.onReject = { [weak self] in self?.rejectBreakdown(id: id) }
+            card.onReject = { [weak self] in self?.openRejectDrawer(id: id) }
             card.onOpenWorkstream = { [weak self] path in self?.onOpenWorkstream?(path) }
             list.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -20).isActive = true
@@ -755,6 +756,19 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
         form.onSubmit = { [weak self] composer, refine in self?.submitComposer(composer, refine: refine) }
         form.onCancel = { [weak self] in self?.dismissForm() }
         presentForm(form) { ($0 as? RequirementComposerView)?.focusEditor() }
+    }
+
+    /// 驳回 needs a reason (it is carried into the session prompt): collect it in the
+    /// drawer instead of discarding silently.
+    func openRejectDrawer(id: String) {
+        let form = RequirementRejectView(model: RejectReasonModel.build())
+        form.onSubmit = { [weak self] model in self?.submitReject(id: id, reason: model.reason) }
+        form.onCancel = { [weak self] in self?.dismissForm() }
+        presentForm(form) { ($0 as? RequirementRejectView)?.focusEditor() }
+    }
+
+    func submitReject(id: String, reason: String) {
+        if rejectBreakdown(id: id, reason: reason) { dismissForm() }
     }
 
     /// Save the edited title + 诉求 (only those two change).
@@ -949,7 +963,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
             let created = try RequirementsCore.confirm(workspace: workspace, id: id, today: RequirementsCore.today())
             setStatus(L10n.tr("requirements.confirmed", created.count), isError: false)
             reload()
-            onBreakdownResolved?(id, true, created.map { $0.id })
+            onBreakdownResolved?(id, true, created.map { $0.id }, nil)
             return true
         } catch let error as PoolError {
             setStatus(message(for: error), isError: true)
@@ -960,7 +974,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     }
 
     @discardableResult
-    func rejectBreakdown(id: String) -> Bool {
+    func rejectBreakdown(id: String, reason: String) -> Bool {
         guard let workspace = workspaceProvider?(), !workspace.isEmpty else {
             presentNeedsWorkspace()
             return false
@@ -969,7 +983,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
             _ = try RequirementsCore.reject(workspace: workspace, id: id, today: RequirementsCore.today())
             setStatus(L10n.tr("requirements.rejected"), isError: false)
             reload()
-            onBreakdownResolved?(id, false, [])
+            onBreakdownResolved?(id, false, [], reason)
             return true
         } catch let error as PoolError {
             setStatus(message(for: error), isError: true)
@@ -1258,6 +1272,7 @@ extension RequirementsPanelController {
         formSheetHost.addSubview(formSheet)
         formSheetHost.onLayout = { [weak self] in
             (self?.formSheetContent as? RequirementComposerView)?.layoutEditor()
+            (self?.formSheetContent as? RequirementRejectView)?.layoutEditor()
         }
         formSheetTop = formSheet.topAnchor.constraint(equalTo: formSheetHost.topAnchor,
                                                       constant: TaskFormSheetHostView.restingTop)
@@ -1453,6 +1468,147 @@ final class RequirementComposerView: TaskFormCardView, NSTextViewDelegate {
 
     /// A plain Enter stays a NEWLINE (the first line is the title, the rest is the
     /// statement); ⌘↩ submits, Esc closes.
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            onCancel?()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.insertNewline(_:)),
+           NSApp.currentEvent?.modifierFlags.contains(.command) == true {
+            submitTapped()
+            return true
+        }
+        return false
+    }
+}
+
+// MARK: - The 驳回 reason drawer
+
+/// The 驳回 reason drawer: ONE required text area + 驳回 / 取消. A rejection must say
+/// why — the reason is carried into the requirement's conversation prompt so the
+/// agent can revise the breakdown instead of guessing. Mirrors RequirementComposerView.
+final class RequirementRejectView: TaskFormCardView, NSTextViewDelegate {
+
+    private(set) var model: RejectReasonModel
+    var onSubmit: ((RejectReasonModel) -> Void)?
+    var onCancel: (() -> Void)?
+
+    private let heading = NSTextField(labelWithString: "")
+    private let info = NSTextField(wrappingLabelWithString: "")
+    private let contentCaption = TaskFormKit.caption()
+    private let closeButton = CustomIconButton(glyph: .close, tooltip: "", size: 22)
+    let editor: NSTextView
+    let editorBox: TaskFieldBox
+    let editorPlaceholder: NSTextField
+    private var editorBoxHeight: NSLayoutConstraint!
+    private var editorTextHeight: NSLayoutConstraint!
+    let hint: NSTextField
+    let submitButton: NSButton
+    let cancelButton: NSButton
+
+    init(model: RejectReasonModel) {
+        self.model = model
+        let content = TaskFormKit.textArea(model.content)
+        editorBox = content.box
+        editor = content.text
+        editorPlaceholder = content.placeholder
+        editorBoxHeight = content.boxHeight
+        editorTextHeight = content.textHeight
+        hint = TaskFormKit.hintLabel()
+        submitButton = TaskFormKit.button("", primary: true)
+        cancelButton = TaskFormKit.button("", primary: false)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        editor.delegate = self
+        build()
+        apply(model)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func focusEditor() { window?.makeFirstResponder(editor) }
+
+    func apply(_ model: RejectReasonModel) {
+        self.model = model
+        heading.stringValue = L10n.tr(model.headingKey)
+        info.stringValue = L10n.tr(model.infoKey)
+        contentCaption.stringValue = L10n.tr(model.contentCaptionKey)
+        editorPlaceholder.stringValue = L10n.tr(model.placeholderKey)
+        editorPlaceholder.isHidden = !editor.string.isEmpty
+        submitButton.title = L10n.tr(model.submitKey)
+        cancelButton.title = L10n.tr("btn.cancel")
+        closeButton.toolTip = L10n.tr("btn.cancel")
+        submitButton.isEnabled = model.canSubmit
+        TaskFormKit.setHint(hint, key: model.problemKey)
+    }
+
+    private func build() {
+        info.font = TaskFormKit.captionFont
+        info.textColor = .secondaryLabelColor
+        info.maximumNumberOfLines = 2
+        info.lineBreakMode = .byTruncatingTail
+        info.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(info)
+        closeButton.onAction = { [weak self] in self?.onCancel?() }
+        submitButton.target = self
+        submitButton.action = #selector(submitTapped)
+        cancelButton.target = self
+        cancelButton.action = #selector(cancelTapped)
+
+        let headingRow = TaskFormKit.headingRow(title: heading, close: closeButton)
+        let contentRow = TaskFormKit.row(contentCaption, editorBox)
+        let buttons = TaskFormKit.buttonRow([submitButton, cancelButton])
+        let column = NSStackView(views: [headingRow, info, contentRow, hint, buttons])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 8
+        column.translatesAutoresizingMaskIntoConstraints = false
+        _ = TaskFormKit.requiredHeight(column)
+        addSubview(column)
+        TaskFormKit.stretch([headingRow, info, contentRow, hint], to: column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+        ])
+    }
+
+    private var currentDraft: RejectReasonModel { model.typed(content: editor.string) }
+
+    private func updateEditorHeight() {
+        let width = editorBox.bounds.width
+        guard width > 1 else { return }
+        let needed = TaskFormKit.textHeight(editor.string, width: width)
+        let box = min(TaskFormKit.editorMaxHeight, max(TaskFormKit.editorHeight, needed))
+        if abs(editorBoxHeight.constant - box) > 0.5 { editorBoxHeight.constant = box }
+        let text = max(box - 8, needed)
+        if abs(editorTextHeight.constant - text) > 0.5 { editorTextHeight.constant = text }
+    }
+
+    func layoutEditor() { updateEditorHeight() }
+
+    @objc func submitTapped() {
+        let typed = currentDraft
+        guard typed.canSubmit else {
+            apply(typed.attemptedSubmit())
+            return
+        }
+        onSubmit?(typed)
+    }
+
+    @objc private func cancelTapped() { onCancel?() }
+
+    // MARK: NSTextViewDelegate
+
+    func textDidChange(_ notification: Notification) {
+        updateEditorHeight()
+        apply(currentDraft)
+    }
+    func textDidBeginEditing(_ notification: Notification) { apply(currentDraft) }
+    func textDidEndEditing(_ notification: Notification) { apply(currentDraft) }
+
+    /// ⌘↩ submits, Esc closes; a plain Enter stays a newline.
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             onCancel?()
