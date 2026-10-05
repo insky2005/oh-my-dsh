@@ -285,11 +285,12 @@ final class RequirementCardView: NSView {
         let spacer = NSView()
         spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
         titleViews.append(spacer)
-        // Dependencies stay visible even while the mini card is collapsed (same
-        // [依赖 N] badge grammar as the proposal item cards).
+        // Dependencies stay visible even while the mini card is collapsed, and show
+        // the actual workstream ids (依赖：WS-002、WS-003) rather than a count.
         if !display.dependsOn.isEmpty {
-            let deps = TaskBadgeView(text: L10n.tr("requirements.depends", display.dependsOn.count), tone: .neutral)
-            deps.toolTip = display.dependsOn.joined(separator: "、")
+            let joined = display.dependsOn.joined(separator: "、")
+            let deps = TaskBadgeView(text: L10n.tr("requirements.dependsOn", joined), tone: .neutral)
+            deps.toolTip = joined
             titleViews.append(deps)
         }
         if display.missingCard {
