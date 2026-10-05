@@ -128,6 +128,11 @@ final class RequirementCardView: NSView {
         let kindBadge = TaskBadgeView(text: L10n.tr("requirements.kind"), tone: .neutral)
         let stateBadge = TaskBadgeView(text: requirementStateLabel(state), tone: tone,
                                        filled: state == .evaluating)
+        // The badge IS the drop-down: clicking it opens the manual-state menu.
+        let stateControl = RequirementStateControl(badge: stateBadge,
+                                                   tint: state == .evaluating ? .white : TaskBadgeView.color(tone))
+        stateControl.toolTip = L10n.tr("requirements.set.state") + "：" + requirementManualStateLabel(item.requirement.state ?? "candidate")
+        stateControl.onShowMenu = { [weak self] in self?.showStateMenu(from: stateControl) }
 
         let breakdownButton = NSButton(title: L10n.tr("requirements.breakdown"), target: self, action: #selector(breakdownTapped(_:)))
         breakdownButton.bezelStyle = .rounded
@@ -145,10 +150,6 @@ final class RequirementCardView: NSView {
             && (item.proposal?.isEmpty ?? true)
             && item.effectiveState != .discarded
 
-        let stateButton = CustomIconButton(glyph: .symbol("circle.dashed"),
-                                           tooltip: L10n.tr("requirements.set.state") + "：" + requirementManualStateLabel(item.requirement.state ?? "candidate"),
-                                           size: 22)
-        stateButton.onAction = { [weak self] in self?.showStateMenu(from: stateButton) }
         let editButton = CustomIconButton(glyph: .symbol("pencil"), tooltip: L10n.tr("requirements.edit"), size: 22)
         editButton.onAction = { [weak self] in self?.onEdit?() }
 
@@ -158,9 +159,9 @@ final class RequirementCardView: NSView {
         if !item.children.isEmpty {
             titleViews.append(TaskBadgeView(text: L10n.tr("requirements.children", item.children.count), tone: .neutral))
         }
-        titleViews.append(contentsOf: [spacer, stateBadge])
+        titleViews.append(contentsOf: [spacer, stateControl])
         if showsBreakdown { titleViews.append(breakdownButton) }
-        titleViews.append(contentsOf: [stateButton, editButton])
+        titleViews.append(editButton)
         let titleRow = NSStackView(views: titleViews)
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
@@ -362,6 +363,59 @@ final class RequirementCardView: NSView {
     @objc private func breakdownTapped(_ sender: Any?) { onBreakdown?() }
     @objc private func confirmTapped(_ sender: Any?) { onConfirm?() }
     @objc private func rejectTapped(_ sender: Any?) { onReject?() }
+}
+
+/// The effective-state badge as a DROP-DOWN: the same pill as TaskBadgeView plus a
+/// trailing chevron; clicking anywhere on it opens the manual-state menu. It claims
+/// its own clicks, so the badge itself IS the control (no separate icon button).
+final class RequirementStateControl: NSView {
+    var onShowMenu: (() -> Void)?
+    private let badge: TaskBadgeView
+    private let chevron = NSImageView()
+
+    init(badge: TaskBadgeView, tint: NSColor) {
+        self.badge = badge
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 7, weight: .semibold))
+        chevron.contentTintColor = tint
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(badge)
+        addSubview(chevron)
+        NSLayoutConstraint.activate([
+            badge.leadingAnchor.constraint(equalTo: leadingAnchor),
+            badge.centerYAnchor.constraint(equalTo: centerYAnchor),
+            chevron.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 3),
+            chevron.trailingAnchor.constraint(equalTo: trailingAnchor),
+            chevron.centerYAnchor.constraint(equalTo: centerYAnchor),
+            chevron.widthAnchor.constraint(equalToConstant: 8),
+            chevron.heightAnchor.constraint(equalToConstant: 8),
+            topAnchor.constraint(equalTo: badge.topAnchor),
+            bottomAnchor.constraint(equalTo: badge.bottomAnchor),
+        ])
+        toolTip = L10n.tr("requirements.set.state")
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var isOpaque: Bool { false }
+
+    override var intrinsicContentSize: NSSize {
+        let size = badge.intrinsicContentSize
+        return NSSize(width: size.width + 3 + 8, height: size.height)
+    }
+
+    /// Claim the click anywhere on the pill (+ its chevron).
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = superview.map { convert(point, from: $0) } ?? point
+        return bounds.contains(local) ? self : nil
+    }
+
+    override func mouseDown(with event: NSEvent) { onShowMenu?() }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 }
 
 /// The requirement's header row — the lane-header equivalent. Clicking ANYWHERE in
