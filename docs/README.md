@@ -90,7 +90,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 ## usage/ — 使用说明
 
 - [panels.md](usage/panels.md) — 右栏十一个面板的完整说明
-- [ai-native-workflow-manual.md](usage/ai-native-workflow-manual.md) — 面板使用说明：需求池面板（需求 → 拆解确认）+ 任务面板（任务拆分 → 交付），含逐步提示词
+- [ai-native-workflow-manual.md](usage/ai-native-workflow-manual.md) — 面板使用说明：需求池面板（需求 → 拆解确认）+ 事项面板（规划 / 设计 / 执行 / 验收 / 交付）+ 任务面板（任务拆分 → 交付），含逐步提示词
 
 ## raw/ — 素材
 

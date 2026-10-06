@@ -1,6 +1,6 @@
-# AI 原生工作流 · 使用说明（需求池面板 + 任务面板）
+# AI 原生工作流 · 使用说明（需求池面板 + 事项面板 + 任务面板）
 
-> 状态：草案 · 日期：2026-10-05 · 关联：`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/requirements-pool-panel-design.md`、`docs/design/panels/requirements-breakdown-standard-design.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/design/panels/workstream-handoff-prompt-design.md`、`docs/usage/panels.md`、`.dsh/requirements/README.md`
+> 状态：草案 · 日期：2026-10-07 · 关联：`docs/design/panels/workstream-panel-design.md`、`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/requirements-pool-panel-design.md`、`docs/design/panels/requirements-breakdown-standard-design.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/design/panels/workstream-handoff-prompt-design.md`、`docs/usage/panels.md`、`.dsh/requirements/README.md`
 
 ## 0. 适用范围
 
@@ -11,9 +11,10 @@
 | 阶段 | 承接者 | 入口 |
 |---|---|---|
 | 需求 → 拆解 | **需求池面板** + 技能 `requirement-pool` | `⌥⌘I`（活动栏第 5 位「需求池」） |
-| 任务拆分 → 实施 → 交付 | **任务面板** + 技能 `task-todo` | `⌥⌘J`（活动栏「任务」） |
+| 规划 → 设计 → 执行 → 验收 → 交付 | **事项面板** + 技能 `workstream-panel` | `⌥⌘K`（活动栏第 6 位「事项」） |
+| 任务拆分 → 实施 → 交付（任务面板自有流程） | **任务面板** + 技能 `task-todo` | `⌥⌘J`（活动栏「任务」） |
 
-规划 / 设计仍由**事项会话**承担（面板不服务这两个阶段）；终态由 `derive-status` 派生。
+事项面板按事项卡片推进五个阶段（阶段队列 `.done` ≠ 阶段完成，须过机检证据 + 人工确认门 R10）；任务面板是独立的手动任务 / issue 作业台，与事项面板不共享存储；终态由 `derive-status` 派生。
 
 不用面板也可以：用 agent 直接读写 `.dsh` 卡片，按 §2 的提示词逐步推进——**手动路径与面板路径等价**，只是少了「确认拆解 / 启动队列」这类面板按钮。
 
@@ -37,7 +38,7 @@
 事项卡 WS-*.md
   │ 规划(AC + 裁剪)                      ◆ 人确认规划
   ▼ 设计                                 ◆ 人确认设计
-  ▼ 任务拆分（/task-todo 建等待态队列）   ◆ 人确认拆分合理
+  ▼ 执行（事项面板建等待态阶段任务）     ◆ 人确认拆分合理 / 启动队列
   ▼ 启动实施
   ▼ 验收(回归门 + 机检证据)              ◆ 人 sign-off
   ▼ 交付(PR) ◆ 人 merge ─► derive-status ─► closed(派生)
@@ -109,25 +110,25 @@
 写完后停下，让我确认设计再往下。
 ```
 
-### 2.5 任务拆分（`task-todo` 落成等待态队列 → 人确认拆分合理）
+### 2.5 执行：阶段任务拆分（事项面板 API → 人确认拆分合理）
 
 ```text
-/task-todo 把 WS-<id> 的设计拆成任务：建等待态队列 + 批量入队（只建、不启动）。
-这一步**就是「任务拆分」本身**（每条任务 = 一个待入队的拆分单元）——只建、不启动。
-把队列 id 记到 WS-<id>.md 的 `queues`；建成后停下，让我在任务面板确认拆分是否合理。
+POST /api/workstreams/task/create 把 WS-<id> 的执行阶段拆成任务（titles[]，带 stage: task）。
+这一步**就是「任务拆分」本身**（每条任务 = 一个等待态拆分单元）——只建、不启动。
+任务追加到该事项唯一队列，`WS.queues` 由面板写回；建成后停下，让我在事项面板确认拆分是否合理。
 ```
 
-> 等待态队列（`.draft`）是**拆分结果的载体**：人在面板里看过任务清单、确认合理，才启动。见 §5。
+> 等待态任务（队列 `.draft`）是**拆分结果的载体**：人在事项面板里看过任务清单、确认合理，才启动。见 §5 与 `docs/usage/panels.md` 事项面板。
 
-### 2.6 实施（确认拆分 → 启动队列）
+### 2.6 实施（确认拆分 → 启动阶段队列）
 
 ```text
-/task-todo 启动队列。
+POST /api/workstreams/queue/start（带 stage: task，只跑执行阶段任务）。
 实施时：先切分支 feature/<slug>；只做边界内的事，范围外的新发现回池；
 conventional commits；改到共享路径前先跑回归门。
 ```
 
-> 队列跑完由 `task-todo` 交付（`queue/deliver`，交付会话 push + PR），见 §5。
+> 队列跑完 ≠ 阶段完成：执行阶段仍要过「机检证据 + 人工确认」才推进；交付由事项面板「交付」动作发起（`WorkstreamsDelivery`），见 `docs/usage/panels.md` 事项面板。
 
 ### 2.7 验收
 
@@ -139,7 +140,7 @@ conventional commits；改到共享路径前先跑回归门。
 ### 2.8 交付
 
 ```text
-记录 WS-<id> 的 delivery.pr，push 分支并开 PR。
+push 分支并开 PR；交付事实（delivery.pr / url）经事项面板交付流程回填（POST /api/workstreams/delivery）。
 `closed` / `outcome` 不要手写。
 ```
 
@@ -210,7 +211,9 @@ GH_TOKEN=$(cat "$HOME/.dsh/oh-my-dsh/tokens/<owner>-<repo>") \
 
 ## 5. 任务面板：内置技能 `task-todo`（任务拆分 / 实施 / 交付）
 
-任务面板 / `task-todo` 是 **oh-my-dsh App 的能力**（spec §9），不是规范的一部分。**任务拆分、任务实施、交付这三步**由内置技能 `task-todo` 承接（App 启动时安装到 `$DSH_HOME/skills/task-todo/SKILL.md`）；不用技能时也可在面板里手点（§4）。
+任务面板 / `task-todo` 是 **oh-my-dsh App 的能力**（spec §9），不是规范的一部分。**任务面板自有的**任务拆分、任务实施、交付由内置技能 `task-todo` 承接（App 启动时安装到 `$DSH_HOME/skills/task-todo/SKILL.md`）；不用技能时也可在面板里手点（§4）。
+
+> **事项（Workstream）的执行阶段不用本技能**，走事项面板自有 API / `workstream-panel` 技能（见 §2.5–2.8）。
 
 > 用 **`/task-todo` 指令**调用（如 `/task-todo 把设计拆成任务`、`/task-todo 启动队列`）；技能只在明确要求时动手。
 

@@ -1,7 +1,7 @@
 ---
 title: 模块：Workstreams*（事项面板）
 tags: [module, workstreams, panel, ai-native-workflow, stage-gate]
-updated: 2026-10-06T00:00:00Z
+updated: 2026-10-07T00:00:00Z
 sources: [platforms/macos/src/WorkstreamsCore.swift, platforms/macos/src/WorkstreamsUI.swift, platforms/macos/src/WorkstreamsRunState.swift, platforms/macos/src/WorkstreamsAPI.swift, platforms/macos/src/WorkstreamsPanel.swift, platforms/macos/src/WorkstreamsQueues.swift, platforms/macos/src/WorkstreamsRunner.swift, platforms/macos/src/WorkstreamsPrompts.swift, platforms/macos/src/WorkstreamsStageGate.swift, platforms/macos/src/WorkstreamsDelivery.swift, platforms/macos/src/WSCardView.swift, platforms/macos/src/WSInlineForms.swift, platforms/macos/src/main.swift, tests/workstreams-panel/, docs/design/panels/workstream-panel-design.md, docs/design/panels/requirements-workstream-store-design.md, docs/design/panels/workstream-handoff-prompt-design.md, docs/usage/panels.md, .dsh/skills/workstream-panel/SKILL.md]
 manual: false
 ---

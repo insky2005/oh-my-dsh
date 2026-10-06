@@ -1,6 +1,6 @@
 # 事项面板设计（Workstream Panel · 全新独立面板）
 
-> 状态：**已落地**（2026-10-06 实现落地；设计定稿于 2026-10-06）· 日期：2026-10-06
+> 状态：**已落地**（2026-10-06 实现落地；2026-10-07 交付接线与文档同步收口）· 日期：2026-10-07
 > 关联（上游模型）：`docs/research/ai-native-workflow-architecture.md`（§2 / §3.1 / §4 / §7 原则 5 / §9 Q2·Q11）、`.dsh/ai-native-workflow-spec.md`（R1 / R5 / R6 / R10 / R12）
 > 关联（存储 / 面板体例）：`docs/design/panels/requirements-workstream-store-design.md`（REQ/WS/REG schema、Phase A/B 写权）、`docs/design/panels/requirements-pool-panel-design.md`、`docs/design/panels/workstream-handoff-prompt-design.md`、`docs/design/panels/planning-template-design.md`、`docs/design/panels/task-completion-verification-design.md`
 > 参考（交互样板，**不复用其代码**）：`docs/design/panels/issue-runner-design.md`、`docs/design/panels/tasks-queue-session-loop-design.md`

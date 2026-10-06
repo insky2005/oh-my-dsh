@@ -16,7 +16,7 @@
 
 ## 3. 公共头（所有 stage 共用）
 
-工作区通用规则（模型 / `.dsh` 约定 / 人工确认门 / 只拆不胀 / `/task-todo`）应由**工作区 `AGENTS.md` 承载、对话开始自动加载**（见 `docs/usage/ai-native-workflow-manual.md` §2.0）。提示词只带**本步事实**：
+工作区通用规则（模型 / `.dsh` 约定 / 人工确认门 / 只拆不胀 / 事项面板 API `/api/workstreams/*`）应由**工作区 `AGENTS.md` 承载、对话开始自动加载**（见 `docs/usage/ai-native-workflow-manual.md` §2.0）。提示词只带**本步事实**：
 
 ```text
 你在 <repo> 处理一个事项。
@@ -36,10 +36,10 @@
 |---|---|---|
 | 规划 | 确认规划 | 补齐验收标准 + 裁剪声明后，**停下请人确认**，再进设计 |
 | 设计 | 出设计 | 写 `docs/design/**`，不写实现；**写完停下请人确认** |
-| 任务 | 拆分任务 | **`/task-todo`** 建**等待态队列 + 批量入队**（= 任务拆分本身，只建不启动）；**停下请人确认拆分合理**；记 `WS.queues` |
-| 任务 | 启动实施 | 确认后 **`/task-todo 启动队列`**（`queue/start`）；切分支、边界内实施、conventional commits |
+| 任务 | 拆分任务 | **`POST /api/workstreams/task/create`** 建**等待态阶段任务**（追加到该事项唯一队列；= 任务拆分本身，只建不启动）；**停下请人确认拆分合理**；`WS.queues` 由面板写回 |
+| 任务 | 启动实施 | 确认后 **`POST /api/workstreams/queue/start`**（带 `stage` = 只跑该阶段）；切分支、边界内实施、conventional commits |
 | 验收 | 校验 | 跑回归门 `<REG-ID>` + 机检证据；**人 sign-off**，agent 不自签 |
-| 交付 | 交付 | push / PR；在卡片写 covered / 交付 PR |
+| 交付 | 交付 | push / PR；`covered` / `delivery` 经 `POST /api/workstreams/covered`、`/delivery` 回填（面板写卡，`outcome` 派生不手写） |
 
 每个 action 段都附**模型规则**（强制）：
 
@@ -47,7 +47,7 @@
 - **只拆不胀**：范围外 → 新需求卡片（R5），不就地吸收；
 - 裁决是点记录；覆盖锚变更；终态是派生谓词（**不写** `closed` / `outcome`）；
 - 回归门 `<REG-ID>`：若改动其覆盖路径，交付前运行；
-- 任务阶段用 **`/task-todo`** 落地（拆分 = 建等待态队列、实施 = 启动、交付 = deliver）；
+- 任务阶段走**事项面板自有 API**（`task/create` 拆分、`queue/start` 启动、`delivery` 交付），**不用 `/task-todo`（任务面板）**；
 - 不改其它会话的在途文件。
 
 ## 5. 生成示例：WS-002
@@ -74,8 +74,8 @@
 | `<REG-ID>` | 卡片的 `regression`（无则省略该条） |
 | 目标 | 卡片的「规划.目标」 |
 
-## 7. 依赖与待办
+## 7. 依赖与落地
 
 - 可靠生成的前提是**存储 schema 定稿**（WS-002 / `requirements-workstream-store-design.md`）；
 - `outcome` / `closed` 改为派生后，本模板不再出现「写 closed」这类动作；
-- stage → action 的映射（§4）需随模型演进同步。
+- **已落地（2026-10-06 / 07）**：生成器为 `WorkstreamsPrompts.swift`（`WorkstreamHandoff`），阶段提示词由面板生成、原样注入任务 body 并按执行阶段追加完成 marker；阶段拆分 / 启动已改指事项面板自有 API（`task/create` / `queue/start`），交付事实经 `covered` / `delivery` 写路由回填，不再走任务面板 `/task-todo`；与 §4 表格一致。
