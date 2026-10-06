@@ -281,6 +281,7 @@ final class BrowserAPIBridge: BrowserAPIDelegate {
     ]
     /// /api/workstreams/* 的落地（闭包形状同 tasks / requirements，面板类型不进本文件）。
     var workstreamsList: (String?) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsBound: (String) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     var workstreamsCreate: (WorkstreamsCreateRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     var workstreamsUpdate: (WorkstreamsUpdateRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     var workstreamsStage: (WorkstreamsStageRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
@@ -698,6 +699,10 @@ extension BrowserAPIBridge: WorkstreamsAPIDelegate {
 
     func apiWorkstreamsList(workspace: String?) -> [String: Any] {
         onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsList(workspace) }
+    }
+
+    func apiWorkstreamsBound(session: String) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsBound(session) }
     }
 
     func apiWorkstreamsCreate(_ request: WorkstreamsCreateRequest) -> [String: Any] {

@@ -159,6 +159,26 @@ struct WorkstreamsSnapshot: Equatable {
     var unparsed: [String]
 }
 
+// MARK: - 事项 ↔ 会话绑定（design §6）
+
+/// 「在会话中处理」选中的目标会话（对齐需求池「细化」）：有绑定且可用就复用；
+/// 没有 / 绑定已坏就新建；新建失败再回退当前会话。纯值，便于 headless 测试。
+enum WorkstreamSessionTarget: Equatable {
+    case reuse(String)
+    case created(String)
+    case fallback(String)
+
+    var session: String {
+        switch self {
+        case .reuse(let s), .created(let s), .fallback(let s): return s
+        }
+    }
+
+    var isReuse: Bool { if case .reuse = self { return true }; return false }
+    var isCreated: Bool { if case .created = self { return true }; return false }
+    var isFallback: Bool { if case .fallback = self { return true }; return false }
+}
+
 // MARK: - Frontmatter nodes
 
 /// A permissive frontmatter block. .dsh cards mix sequence items and mapping
@@ -665,6 +685,35 @@ enum WorkstreamsCore {
     static func write(_ card: WorkstreamCard, fileManager: FileManager = .default) throws -> WorkstreamCard {
         try atomicWrite(serialize(card), to: card.path)
         return try parseCard(readText(card.path) ?? "", path: card.path)
+    }
+
+    // MARK: 事项 ↔ 会话绑定（design §6，存 .dsh/workstreams/local.json）
+
+    /// 该事项已绑定的会话 id（无绑定 / 空白一律 nil）。
+    static func boundSession(in sessions: [String: String], workstream: String) -> String? {
+        clean(sessions[workstream])
+    }
+
+    /// 反查：该会话绑定的事项 id。一个会话可能捕获多个事项，取 id 序第一个以保证
+    /// 结果确定。
+    static func boundWorkstream(in sessions: [String: String], session: String) -> String? {
+        guard let needle = clean(session) else { return nil }
+        return sessions.filter { $0.value == needle }.map { $0.key }.sorted().first
+    }
+
+    /// 「在会话中处理」的目标会话决策（无绑定 / 坏会话回退当前会话）：
+    ///   - bound 非空且 boundAlive -> 复用 bound（.reuse）
+    ///   - 否则 created 非空 -> 用新建的会话（.created）
+    ///   - 否则 current 非空 -> 回退当前会话（.fallback）
+    ///   - 都没有 -> nil（面板按失败处理）
+    static func sessionTarget(bound: String?,
+                              boundAlive: Bool,
+                              created: String?,
+                              current: String?) -> WorkstreamSessionTarget? {
+        if let bound = clean(bound), boundAlive { return .reuse(bound) }
+        if let created = clean(created) { return .created(created) }
+        if let current = clean(current) { return .fallback(current) }
+        return nil
     }
 
     // MARK: Section helpers (used by the API plan route and panel body edits)

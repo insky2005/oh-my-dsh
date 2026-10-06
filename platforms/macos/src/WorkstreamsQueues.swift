@@ -253,10 +253,13 @@ struct WSTaskDraft: Equatable {
 
 // MARK: - local.json（机器私有 overlay）
 
-/// 只属于本机的运行时绑定：任务 → dsh 会话、汇报、完成 marker、当前活跃队列。
+/// 只属于本机的运行时绑定：任务 → dsh 会话、汇报、完成 marker、当前活跃队列、
+/// 事项 → 会话（「在会话中处理」的绑定，design §6）。
 struct WSLocalState: Equatable {
     /// task id -> dsh sessionId.
     var sessions: [String: String] = [:]
+    /// workstream id -> dsh sessionId（事项 ↔ 会话运行时绑定；反向可查）。
+    var workstreamSessions: [String: String] = [:]
     /// task id -> 代理汇报。
     var reports: [String: String] = [:]
     var activeQueueID: String?
@@ -274,6 +277,9 @@ struct WSLocalState: Equatable {
                       let sessionId = entry["sessionId"] as? String else { continue }
                 s.sessions[key] = sessionId
             }
+        }
+        if let raw = d["workstreamSessions"] as? [String: String] {
+            for (key, sessionId) in raw where !sessionId.isEmpty { s.workstreamSessions[key] = sessionId }
         }
         if let raw = d["reports"] as? [String: String] {
             for (key, text) in raw where !text.isEmpty { s.reports[key] = text }
@@ -298,6 +304,7 @@ struct WSLocalState: Equatable {
                                "updatedAt": WSTaskItem.iso8601.string(from: Date())]
         }
         var d: [String: Any] = ["sessions": sessionsOut]
+        if !workstreamSessions.isEmpty { d["workstreamSessions"] = workstreamSessions }
         if !reports.isEmpty { d["reports"] = reports }
         if !taskMarkers.isEmpty { d["taskMarkers"] = taskMarkers }
         if !taskMarkerVerified.isEmpty { d["taskMarkerVerified"] = taskMarkerVerified }
@@ -337,6 +344,25 @@ struct WSBoard {
     func queue(forWorkstream workstreamID: String, mapping: [String] = []) -> WSQueue? {
         if let mapped = mapping.first, let q = queue(mapped) { return q }
         return queues.first { $0.workstreamId == workstreamID }
+    }
+
+    // MARK: 事项 ↔ 会话绑定（design §6）
+
+    /// 该事项绑定的会话 id。
+    func session(forWorkstream workstreamID: String) -> String? {
+        WorkstreamsCore.boundSession(in: local.workstreamSessions, workstream: workstreamID)
+    }
+
+    /// 反查：该会话绑定的事项 id（无则 nil）。
+    func workstreamId(boundTo session: String) -> String? {
+        WorkstreamsCore.boundWorkstream(in: local.workstreamSessions, session: session)
+    }
+
+    /// 记住作用于某事项的会话（best-effort 运行时绑定）。
+    mutating func bindWorkstreamSession(id: String, session: String) {
+        let sid = session.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sid.isEmpty, !id.isEmpty else { return }
+        local.workstreamSessions[id] = sid
     }
 
     // MARK: queue membership
@@ -638,7 +664,8 @@ struct WSBoard {
 /// 事项面板的磁盘布局，落点 <repoRoot>/.dsh/workstreams/：
 ///
 ///   queues.json  local  队列定义、FIFO 顺序与三级任务（同文件，ignored）
-///   local.json   local  任务 → dsh session、汇报、完成 marker、活跃队列（ignored）
+///   local.json   local  任务 → dsh session、汇报、完成 marker、活跃队列、
+///                       事项 → 会话（ignored）
 ///
 /// **硬约束（design D8）**：只碰 .dsh/workstreams/，绝不读写 .dsh/tasks/。
 /// 读取宽容：文件缺失 / 损坏一律返回空状态，读永不删改数据。
@@ -687,11 +714,34 @@ enum WSStore {
     }
 
     static func loadLocal(_ repoRoot: String) -> WSLocalState {
-        WSLocalState.from(readJSON(path(repoRoot, file: localFile)))
+        // Read-only: do NOT create .dsh/workstreams just to list a binding.
+        let file = (repoRoot as NSString).appendingPathComponent(".dsh/workstreams/" + localFile)
+        return WSLocalState.from(readJSON(file))
     }
 
     static func saveLocal(_ repoRoot: String, _ state: WSLocalState) {
         writeJSON(path(repoRoot, file: localFile), state.dictionary())
+    }
+
+    // MARK: 事项 ↔ 会话绑定（design §6）
+
+    /// 记住作用于某事项的 dsh 会话（best-effort：缺失绑定只意味着回退当前会话）。
+    static func rememberWorkstreamSession(_ repoRoot: String, id: String, session: String) {
+        let sid = session.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sid.isEmpty, !id.isEmpty else { return }
+        var local = loadLocal(repoRoot)
+        local.workstreamSessions[id] = sid
+        saveLocal(repoRoot, local)
+    }
+
+    /// WS-id -> sessionId（反查用）。
+    static func workstreamSessions(_ repoRoot: String) -> [String: String] {
+        loadLocal(repoRoot).workstreamSessions
+    }
+
+    /// 该会话绑定的事项 id（无则 nil）。
+    static func workstreamId(boundTo session: String, in repoRoot: String) -> String? {
+        WorkstreamsCore.boundWorkstream(in: loadLocal(repoRoot).workstreamSessions, session: session)
     }
 
     /// 读全板：队列 + 任务 + 机器 overlay，应用会话并重推成员关系。

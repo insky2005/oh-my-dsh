@@ -45,6 +45,7 @@ struct HTTPResponse {
 
 final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     var listResult: [String: Any] = ["ok": true, "workstreams": []]
+    var boundResult: [String: Any] = ["ok": true, "workstreams": []]
     var createResult: [String: Any] = ["ok": true]
     var updateResult: [String: Any] = ["ok": true]
     var stageResult: [String: Any] = ["ok": true]
@@ -60,6 +61,7 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     var deliveryResult: [String: Any] = ["ok": true]
 
     var lastListWorkspace: String?
+    var lastBoundSession: String?
     var lastCreate: WorkstreamsCreateRequest?
     var lastUpdate: WorkstreamsUpdateRequest?
     var lastStage: WorkstreamsStageRequest?
@@ -78,6 +80,10 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     func apiWorkstreamsList(workspace: String?) -> [String: Any] {
         lastListWorkspace = workspace
         return listResult
+    }
+    func apiWorkstreamsBound(session: String) -> [String: Any] {
+        lastBoundSession = session
+        return boundResult
     }
     func apiWorkstreamsCreate(_ request: WorkstreamsCreateRequest) -> [String: Any] {
         lastCreate = request
@@ -171,6 +177,23 @@ eq(list?.status, 200, "list 200")
 eq(fake.lastListWorkspace?.hasSuffix("/repo"), true, "workspace normalized (tilde expanded, trailing slash dropped)")
 let listWrongMethod = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/list"), delegate: fake)
 eq(listWrongMethod?.status, 404, "list is GET-only")
+
+section("bound (reverse session lookup)")
+let boundUnavailable = WorkstreamsAPIRouter.route(HTTPRequest(method: "GET", path: "/api/workstreams/bound", query: ["session": "s-1"]), delegate: nil)
+eq(boundUnavailable?.status, 503, "bound without delegate -> 503")
+let boundNoSession = WorkstreamsAPIRouter.route(HTTPRequest(method: "GET", path: "/api/workstreams/bound"), delegate: fake)
+eq(boundNoSession?.status, 400, "bound without session -> 400")
+eq(boundNoSession?.json?["error"] as? String, "missing-session", "missing-session code")
+let boundBlankSession = WorkstreamsAPIRouter.route(HTTPRequest(method: "GET", path: "/api/workstreams/bound", query: ["session": "   "]), delegate: fake)
+eq(boundBlankSession?.status, 400, "bound with blank session -> 400")
+eq(boundBlankSession?.json?["error"] as? String, "missing-session", "blank session -> missing-session")
+fake.boundResult = ["ok": true, "session": "s-1", "workstreams": [["id": "WS-000001"]]]
+let boundOK = WorkstreamsAPIRouter.route(HTTPRequest(method: "GET", path: "/api/workstreams/bound", query: ["session": "  s-1  "]), delegate: fake)
+eq(boundOK?.status, 200, "bound 200")
+eq(fake.lastBoundSession, "s-1", "bound session trimmed and routed")
+eq((boundOK?.json?["workstreams"] as? [[String: Any]])?.count, 1, "bound returns the bound workstreams")
+let boundWrongMethod = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/bound", json: ["session": "s-1"]), delegate: fake)
+eq(boundWrongMethod?.status, 404, "bound is GET-only")
 
 section("create")
 let createNoBody = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/create"), delegate: fake)
@@ -501,6 +524,10 @@ eq(cardJSON["queues"] as? [String], ["q-1"], "card queues as an id list in JSON"
 eq((cardJSON["delivery"] as? [String: Any])?["pr"] as? Int, 42, "delivery pr in JSON")
 eq((cardJSON["delivery"] as? [String: Any])?["outcome"] as? String, "merged", "delivery outcome in JSON")
 eq(cardJSON["body"] as? String, "# body", "card body in JSON")
+let cardBound = WorkstreamsAPIResponse.card(card, session: "s-7")
+eq(cardBound["session"] as? String, "s-7", "card carries the bound session")
+let cardNoBound = WorkstreamsAPIResponse.card(card, session: "   ")
+eq(cardNoBound["session"] == nil, true, "blank session stays absent from the card")
 
 let bare = WorkstreamCard(id: "WS-000002", title: "bare", requirement: nil, stage: .planning,
                           covered: nil, regression: nil, queues: [], delivery: nil,
@@ -520,6 +547,9 @@ eq((snapJSON["workstreams"] as? [[String: Any]])?.count, 1, "snapshot workstream
 eq(snapJSON["unparsed"] as? [String], ["/w/WS-bad.md"], "snapshot unparsed")
 let emptySnap = WorkstreamsAPIResponse.snapshot(WorkstreamsSnapshot(workspace: "/w", dshExists: false, workstreams: [], unparsed: []))
 eq(emptySnap["unparsed"] == nil, true, "no unparsed -> key absent")
+let snapBound = WorkstreamsAPIResponse.snapshot(snapshot, sessions: ["WS-000001": "s-9"])
+let boundCardJSON = (snapBound["workstreams"] as? [[String: Any]])?.first
+eq(boundCardJSON?["session"] as? String, "s-9", "snapshot attaches the session binding")
 
 section("result")
 print("workstreams api: " + String(checks - failures) + "/" + String(checks) + " passed")

@@ -104,7 +104,7 @@
 | 事项卡（`stage`、各阶段段落） | `.dsh/workstreams/WS-*.md` | committed |
 | 事项 ↔ 队列关联 | `WS.queues` = `[q-...]`（**0..1**，一事项一队列；裁决 D1 / D16） | committed |
 | 三级任务（带 `workstreamId` + `stage`） | 事项面板自有文件，如 `.dsh/workstreams/queues.json`；**不得触碰 `.dsh/tasks/*`**（裁决 D8） | ignored |
-| 事项 / 任务运行时绑定（会话 id 等） | `.dsh/workstreams/local.json`（沿用存储设计约定） | ignored |
+| 事项 / 任务运行时绑定（会话 id 等） | `.dsh/workstreams/local.json`（沿用存储设计约定）：任务 → 会话 `sessions`，**事项 → 会话 `workstreamSessions`（WS-id → sessionId，可反查）** | ignored |
 | 交付事实 / outcome 派生缓存 | WS 卡 `delivery` 块（沿用 schema） | committed（缓存）/ 派生 |
 
 **硬约束**：事项面板不得读写 `.dsh/tasks/*`；不得依赖 `/api/tasks/*`。
@@ -185,4 +185,5 @@ D10 之所以是伪问题，源于把两个正交的轴混为一谈：
    - **已落地**：一事项一队列——`createStageQueue` 追加到该事项的队列、任务带 `stage`；`queue/start` 带 `stage` = 阶段级启动（只跑该阶段任务，跑完暂停队列）；
    - **已落地（2026-10-06）**：任务运行态 → 阶段运行态 → 事项运行态回写（A13 / D18）——纯模型 `WorkstreamsRunState.swift`（`WSRunState.stage` / `WSRunState.workstream`）从**队列状态 + 任务状态**（外加 `## 阶段确认` 审计痕迹判回边）派生**未开始 / 进行中 / 待确认 / 完成 / 阻塞**，主卡与阶段卡显示徽标；**权威 `stage` 一字不改**（仍只由 `confirmStage` 推进）。阶段门读 runner 的实时板，而非磁盘快照；
    - **已落地（2026-10-07）**：阶段提示词去掉 `/task-todo`、改指事项面板自有 API（`task/create` / `queue/start`），技能 `workstream-panel` 同步；
-   - **已落地（2026-10-07）**：`covered` / `delivery` 写路由（`POST /api/workstreams/covered` / `delivery`；`delivery.outcome` 是派生缓存，API 拒绝手写，报 `outcome-derived`）；交付接线——面板「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给明确原因（`not-delivery-stage` / `not-git-repo` / `no-branch` / `no-remote` / `no-github-remote` / `no-token`），成功则 `runner.enqueueDelivery` 建 delivery 阶段任务并只启动该阶段。**至此 §10 无待办。**
+   - **已落地（2026-10-07）**：`covered` / `delivery` 写路由（`POST /api/workstreams/covered` / `delivery`；`delivery.outcome` 是派生缓存，API 拒绝手写，报 `outcome-derived`）；交付接线——面板「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给明确原因（`not-delivery-stage` / `not-git-repo` / `no-branch` / `no-remote` / `no-github-remote` / `no-token`），成功则 `runner.enqueueDelivery` 建 delivery 阶段任务并只启动该阶段；
+   - **已落地（2026-10-07）**：事项 ↔ 会话绑定——`local.json` 新增 `workstreamSessions`（ignored），任何 `/api/workstreams/*` 写请求带 `session` 时记忆、`list` 随带；反查路由 `GET /api/workstreams/bound?session=...`；主卡「**在会话中处理**」对齐需求池「细化」（复用绑定会话 / 新建并绑定 / 回退当前会话），由 `WorkstreamsCore.sessionTarget` 纯决策 + `WorkstreamsQueues` 持久化承载。**至此 §10 无待办。**

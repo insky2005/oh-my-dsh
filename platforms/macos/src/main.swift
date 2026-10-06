@@ -1031,6 +1031,12 @@ enum L10n {
         "workstreams.glyph.stage": ("阶段", "Stage"),
         "workstreams.glyph.task": ("任务", "Task"),
         "workstreams.openCard": ("打开事项卡", "Open workstream card"),
+        // 事项 ↔ 会话绑定（design §6）：「在会话中处理」按钮 + 三种落点提示。
+        "workstreams.handleInSession": ("在会话中处理", "Handle in session"),
+        "workstreams.handle.started": ("已为 %@ 发起处理会话", "Started a session for %@"),
+        "workstreams.handle.continued": ("已在现有会话里继续处理 %@", "Continued %@ in its existing session"),
+        "workstreams.handle.fallback": ("已在当前会话里继续处理 %@", "Continued %@ in the current session"),
+        "workstreams.handle.failed": ("无法启动事项会话", "Could not start the workstream session"),
         "workstreams.expand": ("展开", "Expand"),
         "workstreams.collapse": ("收起", "Collapse"),
         "workstreams.errInterrupted": ("任务因应用重启而中断，可重试", "Task interrupted by an app restart; retry it"),
@@ -3033,6 +3039,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         workstreamsPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
         workstreamsPanel.workspaceProvider = { [weak self] in self?.activeWorkspacePath() }
         workstreamsPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
+        // 「在会话中处理」(design §6): reuse the workstream's bound session when it
+        // is alive, otherwise create one and bind it (falling back to the current
+        // session) — the workstream analogue of the requirements pool's「细化」.
+        workstreamsPanel.onHandleInSession = { [weak self] id, title, session in
+            self?.startWorkstreamSession(id, title: title, boundSession: session)
+        }
         // Clicking a card opens its WS-*.md in the file panel (same as the
         // requirements pool's child-workstream button).
         workstreamsPanel.onOpenCard = { [weak self] path in
@@ -5564,6 +5576,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    /// 「在会话中处理」(design §6): the workstream analogue of the requirements
+    /// pool's「细化」. Reuse the bound session when it is alive; otherwise create a
+    /// session and bind it; otherwise fall back to the current session. The binding
+    /// is always recorded so the next action stays in the same conversation.
+    private func startWorkstreamSession(_ workstreamId: String, title: String, boundSession: String?) {
+        guard let workspace = activeWorkspacePath(), !workspace.isEmpty else { return }
+        let port = server.port
+        guard port > 0 else {
+            workstreamsPanel?.setStatus(L10n.tr("workstreams.handle.failed"), isError: true)
+            return
+        }
+        guard let card = try? WorkstreamsCore.loadCard(workspace: workspace, id: workstreamId) else {
+            workstreamsPanel?.setStatus(L10n.tr("workstreams.handle.failed"), isError: true)
+            return
+        }
+        let current = activeSessionId
+        let prompt = WorkstreamHandoff.prompt(card: card, stage: card.stage, workspace: workspace)
+        let bound = boundSession?.trimmingCharacters(in: .whitespacesAndNewlines)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // 1) the bound session when it is alive; 2) a freshly created session;
+            // 3) the current session (无绑定 / 坏会话回退当前会话).
+            var boundAlive = false
+            if let bound = bound, !bound.isEmpty,
+               DshSessionOps.sendPrompt(port: port, sessionId: bound, text: prompt) {
+                boundAlive = true
+            }
+            var created: String?
+            if !boundAlive {
+                let workspaceId = DshWorkspaceStore.workspaceId(forPath: workspace, port: port,
+                                                                log: { AppLog.shared.log($0) })
+                    ?? DshWorkspaceOps.register(port: port, path: workspace)
+                if let sid = DshWorkspaceOps.createSession(port: port, cwd: workspace, workspaceId: workspaceId) {
+                    _ = DshSessionOps.rename(port: port, sessionId: sid,
+                                             title: "事项 " + workstreamId + " " + title)
+                    if DshSessionOps.sendPrompt(port: port, sessionId: sid, text: prompt) {
+                        created = sid
+                    }
+                }
+            }
+            var fallback: String?
+            if !boundAlive, created == nil, let current = current, !current.isEmpty,
+               DshSessionOps.sendPrompt(port: port, sessionId: current, text: prompt) {
+                fallback = current
+            }
+            let target = WorkstreamsCore.sessionTarget(bound: bound, boundAlive: boundAlive,
+                                                       created: created, current: fallback)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let used = target?.session else {
+                    AppLog.shared.log("workstreams: could not start a session for \(workstreamId)")
+                    self.workstreamsPanel?.setStatus(L10n.tr("workstreams.handle.failed"), isError: true)
+                    return
+                }
+                WSStore.rememberWorkstreamSession(workspace, id: workstreamId, session: used)
+                AppLog.shared.log("workstreams: handle session \(used) for \(workstreamId)")
+                let message: String
+                switch target {
+                case .reuse?: message = L10n.tr("workstreams.handle.continued", workstreamId)
+                case .fallback?: message = L10n.tr("workstreams.handle.fallback", workstreamId)
+                default: message = L10n.tr("workstreams.handle.started", workstreamId)
+                }
+                self.workstreamsPanel?.setStatus(message, isError: false)
+                if used != self.activeSessionId { self.openDSHSession(used) }
+            }
+        }
+    }
+
     /// Files panel → composer: append one workspace-relative `@` reference to
     /// the draft dsh web is showing (the panel decided WHICH reference; the
     /// shell owns the page). The draft is only ever appended to — the user's
@@ -7006,6 +7085,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // WS-*.md 的唯一写者，agent 经此写卡而非直改文件）。
         bridge.workstreamsList = { [weak self] workspace in
             self?.workstreamsPanel?.apiWorkstreamsList(workspace: workspace) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        // 反查：会话 -> 绑定的事项（agent 用 $DSH_SESSION_ID 查自己的事项）。
+        bridge.workstreamsBound = { [weak self] session in
+            self?.workstreamsPanel?.apiWorkstreamsBound(session: session) ?? BrowserAPIBridge.workstreamsUnavailable
         }
         bridge.workstreamsCreate = { [weak self] request in
             self?.workstreamsPanel?.apiWorkstreamsCreate(request) ?? BrowserAPIBridge.workstreamsUnavailable

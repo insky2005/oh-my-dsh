@@ -13,6 +13,7 @@
 //
 //  Routes (see the queue task and docs/design/panels/workstream-panel-design.md):
 //    GET  /api/workstreams/list     ?workspace=...
+//    GET  /api/workstreams/bound    ?session=$DSH_SESSION_ID   (reverse lookup)
 //    POST /api/workstreams/create   {workspace?, title, requirement?, stage?, body?, session?}
 //    POST /api/workstreams/update   {workspace?, id, title?|requirement?|body?, session?}
 //    POST /api/workstreams/stage    {workspace?, id, stage, session?}
@@ -164,6 +165,8 @@ func workstreamsSession(_ body: [String: Any]) -> String? {
 /// always called on the main thread — same rule as the tasks / requirements panels).
 protocol WorkstreamsAPIDelegate: AnyObject {
     func apiWorkstreamsList(workspace: String?) -> [String: Any]
+    /// Reverse lookup: the workstream(s) bound to a dsh session (design §6).
+    func apiWorkstreamsBound(session: String) -> [String: Any]
     func apiWorkstreamsCreate(_ request: WorkstreamsCreateRequest) -> [String: Any]
     func apiWorkstreamsUpdate(_ request: WorkstreamsUpdateRequest) -> [String: Any]
     func apiWorkstreamsStage(_ request: WorkstreamsStageRequest) -> [String: Any]
@@ -224,8 +227,12 @@ enum WorkstreamsAPIResponse {
         return out
     }
 
-    static func card(_ card: WorkstreamCard) -> [String: Any] {
+    /// One card as JSON. The session argument is the machine-scoped binding kept
+    /// in local.json (design §6); the panel attaches it, it is never read from the
+    /// card itself.
+    static func card(_ card: WorkstreamCard, session: String? = nil) -> [String: Any] {
         var out: [String: Any] = ["id": card.id, "title": card.title, "stage": card.stage.rawValue]
+        if let session = wsNonEmpty(session) { out["session"] = session }
         if let r = card.requirement { out["requirement"] = r }
         if let c = card.covered { out["covered"] = covered(c) }
         if let r = card.regression { out["regression"] = r }
@@ -237,12 +244,15 @@ enum WorkstreamsAPIResponse {
         return out
     }
 
-    static func snapshot(_ snap: WorkstreamsSnapshot) -> [String: Any] {
+    /// The sessions argument is the WS-id -> sessionId binding map (local.json);
+    /// every card gets its bound session attached when present (design §6).
+    static func snapshot(_ snap: WorkstreamsSnapshot,
+                         sessions: [String: String] = [:]) -> [String: Any] {
         var out: [String: Any] = [
             "ok": true,
             "workspace": snap.workspace,
             "dshExists": snap.dshExists,
-            "workstreams": snap.workstreams.map(card),
+            "workstreams": snap.workstreams.map { card($0, session: wsNonEmpty(sessions[$0.id])) },
         ]
         if !snap.unparsed.isEmpty { out["unparsed"] = snap.unparsed }
         return out
@@ -411,6 +421,14 @@ enum WorkstreamsAPIRouter {
             let workspace = WorkstreamsAPIWorkspace.normalize(request.query["workspace"])
             let result = delegate.apiWorkstreamsList(workspace: workspace)
             return .json(status(for: result), result)
+
+        case ("GET", "/api/workstreams/bound"):
+            guard let delegate = delegate else { return unavailable() }
+            guard let session = wsNonEmpty(request.query["session"]) else {
+                return missingSession()
+            }
+            let bound = delegate.apiWorkstreamsBound(session: session)
+            return .json(status(for: bound), bound)
 
         case ("POST", "/api/workstreams/create"):
             guard let body = request.jsonBody() else { return missingBody() }
@@ -682,6 +700,11 @@ enum WorkstreamsAPIRouter {
 
     static func missingId() -> HTTPResponse {
         .json(400, ["ok": false, "error": "missing-id"])
+    }
+
+    static func missingSession() -> HTTPResponse {
+        .json(400, ["ok": false, "error": "missing-session",
+                    "hint": "expected ?session=$DSH_SESSION_ID"])
     }
 
     static func missingStage() -> HTTPResponse {

@@ -429,6 +429,41 @@ do {
     try? fm.removeItem(atPath: root)
 }
 
+section("storage: 事项 ↔ 会话绑定 (workstreamSessions, design §6)")
+do {
+    let root = NSTemporaryDirectory() + "ws-bind-" + UUID().uuidString
+    // No local.json yet: rememberSession creates the file, never .dsh/tasks.
+    WSStore.rememberWorkstreamSession(root, id: "WS-000001", session: "  s-1  ")
+    WSStore.rememberWorkstreamSession(root, id: "WS-000002", session: "s-2")
+    eq(WSStore.workstreamSessions(root), ["WS-000001": "s-1", "WS-000002": "s-2"],
+       "workstream session bindings round-trip (trimmed)")
+    eq(WSStore.workstreamId(boundTo: "s-2", in: root), "WS-000002", "reverse lookup by session")
+    eq(WSStore.workstreamId(boundTo: "nope", in: root) == nil, true, "unknown session -> nil")
+
+    // Remembering a workstream binding must not clobber the task sessions.
+    var board = WSStore.load(root)
+    board.local.sessions["wt-1"] = "task-session"
+    WSStore.saveLocal(root, board.local)
+    WSStore.rememberWorkstreamSession(root, id: "WS-000003", session: "s-3")
+    let reloaded = WSStore.load(root)
+    eq(reloaded.local.sessions["wt-1"], "task-session", "task session survives a binding write")
+    eq(reloaded.local.workstreamSessions["WS-000003"], "s-3", "new binding added")
+    eq(reloaded.workstreamId(boundTo: "s-2"), "WS-000002", "board reverse lookup")
+    eq(reloaded.session(forWorkstream: "WS-000001"), "s-1", "board forward lookup")
+
+    // Blank session / empty id are no-ops.
+    WSStore.rememberWorkstreamSession(root, id: "WS-000001", session: "   ")
+    WSStore.rememberWorkstreamSession(root, id: "", session: "s-x")
+    eq(WSStore.workstreamSessions(root)["WS-000001"], "s-1", "blank session does not overwrite")
+    check(!FileManager.default.fileExists(atPath: root + "/.dsh/tasks"),
+          "a binding write never touches .dsh/tasks")
+
+    let stateDict = WSLocalState.from(["workstreamSessions": ["WS-1": "s-1"], "sessions": [:]]).dictionary()
+    eq(stateDict["workstreamSessions"] as? [String: String], ["WS-1": "s-1"],
+       "workstreamSessions serializes into local.json")
+    try? FileManager.default.removeItem(atPath: root)
+}
+
 section("storage: a running board reloads and reconciles as interrupted")
 do {
     let root = NSTemporaryDirectory() + "ws-runner-" + UUID().uuidString

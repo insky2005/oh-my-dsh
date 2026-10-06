@@ -439,4 +439,51 @@ for key in workstreams.stage.deliver workstreams.deliver.not-delivery-stage \
 done
 echo "delivery wiring + covered / delivery write routes guard ok"
 
+echo "--- workstream 会话绑定 / 在会话中处理 guard (design §6) ---"
+# 事项 ↔ 会话绑定：local.json 的 workstreamSessions + 反查 + 「在会话中处理」动作。
+# 模型层：持久化 / 反查 / 目标会话决策。
+for sym in 'workstreamSessions' 'rememberWorkstreamSession' 'workstreamSessions(' \
+           'workstreamId(boundTo' 'bindWorkstreamSession'; do
+  if ! grep -qF "$sym" "$SRC2/WorkstreamsQueues.swift"; then
+    echo "FAIL: WorkstreamsQueues.swift is missing $sym" >&2
+    exit 1
+  fi
+done
+for sym in 'sessionTarget(' 'boundWorkstream(' 'boundSession(' 'WorkstreamSessionTarget'; do
+  if ! grep -qF "$sym" "$SRC2/WorkstreamsCore.swift"; then
+    echo "FAIL: WorkstreamsCore.swift is missing $sym" >&2
+    exit 1
+  fi
+done
+# API：反查路由 + delegate；list / card 回带绑定。
+if ! grep -qF '/api/workstreams/bound' "$SRC2/WorkstreamsAPI.swift" \
+   || ! grep -qE 'func apiWorkstreamsBound\(' "$SRC2/WorkstreamsAPI.swift" \
+   || ! grep -qF 'sessions: [String: String] = [:]' "$SRC2/WorkstreamsAPI.swift"; then
+  echo "FAIL: WorkstreamsAPI.swift is missing the reverse-lookup route / delegate / list binding" >&2
+  exit 1
+fi
+# 面板：写请求 rememberSession + 「在会话中处理」按钮 / 动作落地。
+for needle in 'apiWorkstreamsBound' 'onHandleInSession' 'handleInSession(' 'bindSession(' \
+              'rememberWorkstreamSession'; do
+  if ! grep -qF "$needle" "$SRC2/WorkstreamsPanel.swift"; then
+    echo "FAIL: WorkstreamsPanel.swift is missing $needle" >&2
+    exit 1
+  fi
+done
+if ! grep -qF 'workstreamsBound' "$SRC2/BrowserAPI.swift" \
+   || ! grep -qF 'bridge.workstreamsBound' "$MAIN" \
+   || ! grep -qF 'startWorkstreamSession' "$MAIN" \
+   || ! grep -qF 'workstreamsPanel.onHandleInSession' "$MAIN"; then
+  echo "FAIL: BrowserAPI.swift / main.swift are missing the bound bridge / handle wiring" >&2
+  exit 1
+fi
+for key in workstreams.handleInSession workstreams.handle.started workstreams.handle.continued \
+           workstreams.handle.fallback workstreams.handle.failed; do
+  if ! grep -qF "$key" "$MAIN"; then
+    echo "FAIL: main.swift is missing the $key L10n key" >&2
+    exit 1
+  fi
+done
+echo "workstream session binding / handle guard ok"
+
 echo "workstreams-panel tests passed"

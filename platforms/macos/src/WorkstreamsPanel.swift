@@ -254,6 +254,9 @@ final class WSPrimaryCardView: NSView {
     /// Human gate actions for the current stage (R10).
     var onConfirmStage: (() -> Void)?
     var onRejectStage: (() -> Void)?
+    /// 「在会话中处理」(design §6): reuse the workstream's bound dsh session, or
+    /// start (and bind) a new one.
+    var onHandleInSession: (() -> Void)?
     /// 事项级启动 (design A3).
     var onStartWorkstream: (() -> Void)?
     /// 阶段二级卡的「＋创建任务」/「启动阶段」(design A3 / A14).
@@ -317,6 +320,10 @@ final class WSPrimaryCardView: NSView {
                                           filled: model.stage == .task))
         // Derived workstream run state (A13): the roll-up of the five stages.
         titleViews.append(WSTierBadgeView(text: L10n.tr(model.runStateKey), tone: model.runStateTone))
+        let handle = CustomIconButton(glyph: .symbol("bubble.left.and.bubble.right"),
+                                      tooltip: L10n.tr("workstreams.handleInSession"), size: 22)
+        handle.onAction = { [weak self] in self?.onHandleInSession?() }
+        titleViews.append(handle)
         let start = CustomIconButton(glyph: .play,
                                      tooltip: L10n.tr("workstreams.start.item"), size: 22)
         start.onAction = { [weak self] in self?.onStartWorkstream?() }
@@ -672,6 +679,10 @@ final class WorkstreamsPanelController: NSObject {
     var workspaceProvider: (() -> String?)?
     /// Open a workstream card in the file panel.
     var onOpenCard: ((String) -> Void)?
+    /// 「在会话中处理」(design §6): main.swift reuses the workstream's bound
+    /// session when it is alive, otherwise starts (and binds) a new one; the
+    /// third argument is the bound session read from local.json (nil = none).
+    var onHandleInSession: ((String, String, String?) -> Void)?
     /// QA hook (--ui-debug): fires after each render.
     var onDidRender: (() -> Void)?
     /// dsh web port, supplied by main.swift (read at call time, never frozen).
@@ -807,6 +818,7 @@ final class WorkstreamsPanelController: NSObject {
             card.onOpen = { [weak self] in self?.onOpenCard?(model.path) }
             card.onConfirmStage = { [weak self] in self?.confirmCurrentStage(model.id) }
             card.onRejectStage = { [weak self] in self?.rejectCurrentStage(model.id) }
+            card.onHandleInSession = { [weak self] in self?.handleInSession(model.id) }
             card.onStartWorkstream = { [weak self] in self?.startWorkstream(model.id) }
             card.onCreateStageTask = { [weak self] stage in self?.createStageTask(model.id, stage: stage) }
             card.onStartStage = { [weak self] stage in self?.startStage(model.id, stage: stage) }
@@ -958,6 +970,18 @@ final class WorkstreamsPanelController: NSObject {
     }
 
     // MARK: Queue actions (panel buttons)
+
+    /// 主卡「在会话中处理」(design §6): hand the workstream + its bound session to
+    /// main.swift, which reuses that conversation or starts (and binds) a new one.
+    @discardableResult
+    func handleInSession(_ cardID: String) -> Bool {
+        guard let onHandleInSession = onHandleInSession else { return false }
+        guard let workspace = workspaceProvider?(), !workspace.isEmpty,
+              let card = snapshot.workstreams.first(where: { $0.id == cardID }) else { return false }
+        let bound = WSStore.loadLocal(workspace).workstreamSessions[card.id]
+        onHandleInSession(card.id, card.title, bound)
+        return true
+    }
 
     /// 主卡「启动事项」：事项级启动 = 跑该事项队列（design A3）。
     func startWorkstream(_ cardID: String) {
@@ -1319,21 +1343,35 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
         // Reuse the freshly rendered snapshot when it is the visible workspace;
         // otherwise load the requested one (the list is read-only either way).
         let loaded = workspace == (workspaceProvider?() ?? "") ? snapshot : WorkstreamsCore.load(workspace: workspace)
-        return WorkstreamsAPIResponse.snapshot(loaded)
+        // list carries the machine-scoped session bindings (design §6).
+        return WorkstreamsAPIResponse.snapshot(loaded, sessions: WSStore.workstreamSessions(workspace))
     }
 
     /// One write result shape for every route: the re-parsed card on success,
     /// the model error code / message on failure (the router maps the status).
-    private func writeResult(_ body: () throws -> WorkstreamCard, workspace: String) -> [String: Any] {
+    private func writeResult(_ body: () throws -> WorkstreamCard,
+                             workspace: String,
+                             session: String? = nil) -> [String: Any] {
         do {
             let card = try body()
+            // Remember the session that acted on this card (design §6): every later
+            // panel action can then resume the same conversation.
+            bindSession(session, workspace: workspace, id: card.id)
             if workspace == (workspaceProvider?() ?? "") { reload() }
-            return ["ok": true, "workstream": WorkstreamsAPIResponse.card(card)]
+            return ["ok": true, "workstream": WorkstreamsAPIResponse.card(card, session: session)]
         } catch let error as WorkstreamError {
             return error.apiResult
         } catch {
             return WorkstreamError.writeFailed(error.localizedDescription).apiResult
         }
+    }
+
+    /// Keep the workstream bound to the session that acted on it (design §6).
+    /// Best-effort: a missing binding only means "fall back to the current session".
+    private func bindSession(_ session: String?, workspace: String, id: String) {
+        guard let session = session?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !session.isEmpty else { return }
+        WSStore.rememberWorkstreamSession(workspace, id: id, session: session)
     }
 
     func apiWorkstreamsList(workspace: String?) -> [String: Any] {
@@ -1342,6 +1380,29 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
             reload()
         }
         return listDictionary(resolved)
+    }
+
+    /// GET /api/workstreams/bound?session=... — reverse lookup: the workstream(s)
+    /// bound to that session (design §6). An unbound session returns an empty list
+    /// (the caller falls back to the current session).
+    func apiWorkstreamsBound(session: String) -> [String: Any] {
+        guard let workspace = resolveWorkspace(nil), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        guard let needle = wsNonEmpty(session) else {
+            return ["ok": false, "error": "missing-session",
+                    "hint": "expected ?session=$DSH_SESSION_ID"]
+        }
+        let loaded = workspace == (workspaceProvider?() ?? "") ? snapshot : WorkstreamsCore.load(workspace: workspace)
+        let bindings = WSStore.workstreamSessions(workspace)
+        let bound = loaded.workstreams.filter { bindings[$0.id] == needle }
+        var out: [String: Any] = [
+            "ok": true,
+            "session": needle,
+            "workstreams": bound.map { WorkstreamsAPIResponse.card($0, session: needle) },
+        ]
+        if let first = bound.first { out["workstream"] = WorkstreamsAPIResponse.card(first, session: needle) }
+        return out
     }
 
     func apiWorkstreamsCreate(_ request: WorkstreamsCreateRequest) -> [String: Any] {
@@ -1355,7 +1416,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                        stage: request.stage,
                                        body: request.body,
                                        today: WorkstreamsCore.today())
-        }, workspace: workspace)
+        }, workspace: workspace, session: request.session)
     }
 
     func apiWorkstreamsUpdate(_ request: WorkstreamsUpdateRequest) -> [String: Any] {
@@ -1369,7 +1430,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                        requirement: request.requirement,
                                        body: request.body,
                                        today: WorkstreamsCore.today())
-        }, workspace: workspace)
+        }, workspace: workspace, session: request.session)
     }
 
     func apiWorkstreamsStage(_ request: WorkstreamsStageRequest) -> [String: Any] {
@@ -1381,7 +1442,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                          id: request.id,
                                          stage: request.stage,
                                          today: WorkstreamsCore.today())
-        }, workspace: workspace)
+        }, workspace: workspace, session: request.session)
     }
 
     /// Replace one level-2 section (planning / design prose). heading keeps its
@@ -1397,7 +1458,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
             let body = WorkstreamsCore.replaceSection(card.body, heading: request.heading, with: section)
             return try WorkstreamsCore.update(workspace: workspace, id: request.id, body: body,
                                               today: WorkstreamsCore.today())
-        }, workspace: workspace)
+        }, workspace: workspace, session: request.session)
     }
 
     func apiWorkstreamsQueues(_ request: WorkstreamsQueuesRequest) -> [String: Any] {
@@ -1409,7 +1470,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                           id: request.id,
                                           queues: request.queues,
                                           today: WorkstreamsCore.today())
-        }, workspace: workspace)
+        }, workspace: workspace, session: request.session)
     }
 
     /// POST /api/workstreams/covered — record the acceptance point record (facts
@@ -1423,7 +1484,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                            id: request.id,
                                            covered: request.covered,
                                            today: WorkstreamsCore.today())
-        }, workspace: workspace)
+        }, workspace: workspace, session: request.session)
     }
 
     /// POST /api/workstreams/delivery — record the delivery facts. The outcome is a
@@ -1442,7 +1503,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                               merged: request.merged,
                                               abandoned: request.abandoned,
                                               today: WorkstreamsCore.today())
-        }, workspace: workspace)
+        }, workspace: workspace, session: request.session)
     }
 
     /// Flatten the queue board into the gate's runtime facts (design D3). The queue
@@ -1477,12 +1538,13 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                                            carrier: stageCarrier(for: card, board: loadBoard(workspace)),
                                                            note: request.note,
                                                            today: WorkstreamsCore.today())
+            bindSession(request.session, workspace: workspace, id: updated.id)
             if workspace == (workspaceProvider?() ?? "") { reload() }
             let gate = WorkstreamsStageGate.evaluate(updated,
                                                      carrier: stageCarrier(for: updated, board: loadBoard(workspace)),
                                                      workspace: workspace)
             return ["ok": true,
-                    "workstream": WorkstreamsAPIResponse.card(updated),
+                    "workstream": WorkstreamsAPIResponse.card(updated, session: request.session),
                     "gate": WorkstreamsStageGate.json(gate)]
         } catch let error as WorkstreamError {
             return error.apiResult
@@ -1502,7 +1564,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                             reason: request.reason,
                                             target: request.target,
                                             today: WorkstreamsCore.today())
-        }, workspace: workspace)
+        }, workspace: workspace, session: request.session)
     }
 
     // MARK: Stage task create / start / pause (design A3 / A14)
@@ -1527,6 +1589,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                         "message": "the workstream queue is closed; no task was created"]
             }
             writeBackQueueMapping(card: card, queueID: built.queue.id, workspace: workspace)
+            bindSession(request.session, workspace: workspace, id: card.id)
             if workspace == currentWorkspace { reload() }
             return ["ok": true, "queue": queueJSON(built.queue),
                     "tasks": built.created.map { taskJSON($0) }]
@@ -1568,6 +1631,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                 return ["ok": false, "error": "no-queue",
                         "message": "the workstream queue could not be started"]
             }
+            bindSession(request.session, workspace: workspace, id: card.id)
             if workspace == currentWorkspace { reload() }
             var out: [String: Any] = ["ok": true, "queue": queueJSON(queue)]
             if let stage = request.stage { out["stage"] = stage.rawValue }
@@ -1597,6 +1661,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                 return ["ok": false, "error": "no-queue",
                         "message": "the workstream queue could not be paused"]
             }
+            bindSession(request.session, workspace: workspace, id: card.id)
             if workspace == currentWorkspace { reload() }
             return ["ok": true, "queue": queueJSON(queue)]
         } catch let error as WorkstreamError {

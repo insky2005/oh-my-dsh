@@ -394,6 +394,40 @@ let replaced = WorkstreamsCore.replaceSection("## 规划\n\n旧\n\n## 设计\n\n
 check(replaced.contains("新") && !replaced.contains("旧") && replaced.contains("## 设计"),
       "replaceSection swaps one section only")
 
+// MARK: - 事项 ↔ 会话绑定 (design §6)
+
+section("session binding")
+let bindings = ["WS-000002": "s-2", "WS-000001": "s-1"]
+eq(WorkstreamsCore.boundSession(in: bindings, workstream: "WS-000001"), "s-1", "bound session lookup")
+eq(WorkstreamsCore.boundSession(in: bindings, workstream: "WS-000999") == nil, true, "unbound workstream -> nil")
+eq(WorkstreamsCore.boundSession(in: ["WS-1": "  "], workstream: "WS-1") == nil, true, "blank binding -> nil")
+eq(WorkstreamsCore.boundWorkstream(in: bindings, session: "s-2"), "WS-000002", "reverse lookup finds the workstream")
+eq(WorkstreamsCore.boundWorkstream(in: bindings, session: " nope "), nil, "unknown session -> nil")
+// One session may have captured two workstreams: id order keeps it deterministic.
+let multiBound = ["WS-000002": "s-1", "WS-000001": "s-1"]
+eq(WorkstreamsCore.boundWorkstream(in: multiBound, session: "s-1"), "WS-000001",
+   "reverse lookup is deterministic (id order)")
+
+// 「在会话中处理」的目标选择: reuse > created > fallback current.
+eq(WorkstreamsCore.sessionTarget(bound: "s-9", boundAlive: true, created: "s-new", current: "s-cur"),
+   .reuse("s-9"), "live bound session is reused")
+eq(WorkstreamsCore.sessionTarget(bound: "s-9", boundAlive: false, created: "s-new", current: "s-cur"),
+   .created("s-new"), "dead bound session -> new session")
+eq(WorkstreamsCore.sessionTarget(bound: nil, boundAlive: false, created: "s-new", current: "s-cur"),
+   .created("s-new"), "no binding -> new session")
+eq(WorkstreamsCore.sessionTarget(bound: "s-9", boundAlive: false, created: nil, current: "s-cur"),
+   .fallback("s-cur"), "dead bound session + failed create -> fall back to current")
+eq(WorkstreamsCore.sessionTarget(bound: nil, boundAlive: false, created: nil, current: "s-cur"),
+   .fallback("s-cur"), "no binding + failed create -> fall back to current")
+eq(WorkstreamsCore.sessionTarget(bound: nil, boundAlive: false, created: nil, current: nil) == nil, true,
+   "no candidate at all -> nil")
+eq(WorkstreamsCore.sessionTarget(bound: "  ", boundAlive: true, created: nil, current: "s-cur"),
+   .fallback("s-cur"), "blank bound session ignored")
+let reuseTarget = WorkstreamsCore.sessionTarget(bound: "s-1", boundAlive: true, created: nil, current: nil)
+eq(reuseTarget?.isReuse, true, "target exposes isReuse")
+eq(reuseTarget?.isCreated, false, "reuse is not created")
+eq(reuseTarget?.session, "s-1", "target exposes the chosen session")
+
 // MARK: - Report
 
 print("")
