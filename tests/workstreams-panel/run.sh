@@ -16,6 +16,9 @@
 #   5. the stage handoff prompts (WorkstreamsPrompts.swift): the panel-generated
 #      (stage, action) prompt for planning / design / task / acceptance / delivery,
 #      injection into a stage queue task's body and the execution completion marker.
+#   6. the delivery pipeline (WorkstreamsDelivery.swift): git remote / github / base
+#      detection, PR lookup and the token file layout, plus every refusal reason
+#      (notDeliveryStage / notGitRepo / noBranch / noRemote / noGitHubRemote / noToken).
 # No AppKit, no dsh server, no window. Usage: tests/workstreams-panel/run.sh
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -79,6 +82,15 @@ swiftc -swift-version 5 -module-cache-path "$CACHE" \
 "$TMP/prompt-tests"
 rm -rf "$TMP"
 
+echo "--- workstreams delivery (git pipeline / GitHub PR / token file reading, A10) ---"
+TMP="$(mktemp -d)"
+cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
+cp ../../platforms/macos/src/WorkstreamsDelivery.swift "$TMP/WorkstreamsDelivery.swift"
+cp delivery-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
+swiftc -swift-version 5 -module-cache-path "$CACHE" \
+  -o "$TMP/delivery-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsDelivery.swift" "$TMP/main.swift"
+"$TMP/delivery-tests"
+rm -rf "$TMP"
 
 echo "--- workstreams stage gate (machine predicates + human confirmation, R10) ---"
 TMP="$(mktemp -d)"
@@ -113,17 +125,44 @@ echo "--- workstreams queue engine isolation guard (A1 / A10 / D8) ---"
 # The engine is a copy, not a caller: it must not reference the tasks panel's model /
 # runner / store symbols in CODE (comment lines may cite them as provenance), and it
 # must never touch the tasks storage path.
-ENGINE="$SRC2/WorkstreamsQueues.swift $SRC2/WorkstreamsRunner.swift"
+ENGINE="$SRC2/WorkstreamsQueues.swift $SRC2/WorkstreamsRunner.swift $SRC2/WorkstreamsDelivery.swift"
 if grep -nE '\b(TasksRunner|TasksCore|TasksStore|TaskBoard|TaskItem|TaskQueue|TaskState|TaskFailure|TaskPrompts|TaskLocalState|TaskDraft)\b' $ENGINE \
    | grep -vE ':[0-9]+:[[:space:]]*//' ; then
-  echo "FAIL: the workstreams queue engine references tasks-panel symbols in code" >&2
+  echo "FAIL: the workstreams engine/delivery references tasks-panel symbols in code" >&2
   exit 1
 fi
 if grep -n 'dsh/tasks' $ENGINE | grep -vE ':[0-9]+:[[:space:]]*//' ; then
-  echo "FAIL: the workstreams queue engine must not touch .dsh/tasks/" >&2
+  echo "FAIL: the workstreams engine/delivery must not touch .dsh/tasks/" >&2
   exit 1
 fi
 echo "workstreams queue engine isolation guard ok"
+
+echo "--- workstreams delivery guard (A10: git pipeline / PR / token files, staged) ---"
+DELIVERY="$SRC2/WorkstreamsDelivery.swift"
+if [ ! -f "$DELIVERY" ]; then
+  echo "FAIL: WorkstreamsDelivery.swift is missing" >&2
+  exit 1
+fi
+for sym in 'struct WSGitProbe' 'struct WSTokenStore' 'struct WSGitHubPR' 'enum WSDeliveryOutcome' \
+           'enum WSDeliveryBlocker' 'struct WSDeliveryPlan' 'static func resolve(' 'static func prompt(plan:'; do
+  if ! grep -qF "$sym" "$DELIVERY"; then
+    echo "FAIL: WorkstreamsDelivery.swift is missing $sym" >&2
+    exit 1
+  fi
+done
+# 失败路径必须有明确原因（无分支 / 无远端 / 无 token 的稳定码）。
+for code in '"no-branch"' '"no-remote"' '"no-token"'; do
+  if ! grep -qF "$code" "$DELIVERY"; then
+    echo "FAIL: WorkstreamsDelivery.swift is missing the $code reason" >&2
+    exit 1
+  fi
+done
+# 与任务面板一致：token 只读文件，绝不读 Keychain。
+if grep -nE 'SecItem|kSecClass|SecCopyMatching' "$DELIVERY" | grep -vE ':[0-9]+:[[:space:]]*//'; then
+  echo "FAIL: the delivery module must read tokens from files, not the Keychain" >&2
+  exit 1
+fi
+echo "workstreams delivery guard ok"
 
 echo "--- workstreams panel surface guard (PanelSurface / PanelControl, no new token) ---"
 SRC3="../../platforms/macos/src"
