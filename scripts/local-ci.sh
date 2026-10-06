@@ -78,6 +78,8 @@ stage_swift() {
   tests/projects-panel/run.sh
   echo "--- requirements pool panel (model + API) tests ---"
   tests/requirements-panel/run.sh
+  echo "--- workstreams panel (model) tests ---"
+  tests/workstreams-panel/run.sh
   echo "--- tasks panel (model + four-file store) tests ---"
   tests/tasks-panel/run.sh
   echo "--- injected-script guard (dsh web bridges) ---"
