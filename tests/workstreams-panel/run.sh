@@ -13,6 +13,9 @@
 #      serial step/pump phase machine, the session lifecycle (create -> name ->
 #      prompt -> poll -> cancel / retry), restart recovery and the
 #      queues-local persistence under .dsh/workstreams/.
+#   5. the stage handoff prompts (WorkstreamsPrompts.swift): the panel-generated
+#      (stage, action) prompt for planning / design / task / acceptance / delivery,
+#      injection into a stage queue task's body and the execution completion marker.
 # No AppKit, no dsh server, no window. Usage: tests/workstreams-panel/run.sh
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -54,12 +57,26 @@ echo "--- workstreams runner (serial pump / session lifecycle / cancel / retry /
 TMP="$(mktemp -d)"
 cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
 cp ../../platforms/macos/src/WorkstreamsQueues.swift "$TMP/WorkstreamsQueues.swift"
+cp ../../platforms/macos/src/WorkstreamsPrompts.swift "$TMP/WorkstreamsPrompts.swift"
 cp ../../platforms/macos/src/WorkstreamsRunner.swift "$TMP/WorkstreamsRunner.swift"
 cp runner-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
   -o "$TMP/runner-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsQueues.swift" \
-  "$TMP/WorkstreamsRunner.swift" "$TMP/main.swift"
+  "$TMP/WorkstreamsPrompts.swift" "$TMP/WorkstreamsRunner.swift" "$TMP/main.swift"
 "$TMP/runner-tests"
+rm -rf "$TMP"
+
+echo "--- workstreams stage handoff prompts (planning / design / task / acceptance / delivery) ---"
+TMP="$(mktemp -d)"
+cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
+cp ../../platforms/macos/src/WorkstreamsQueues.swift "$TMP/WorkstreamsQueues.swift"
+cp ../../platforms/macos/src/WorkstreamsPrompts.swift "$TMP/WorkstreamsPrompts.swift"
+cp ../../platforms/macos/src/WorkstreamsRunner.swift "$TMP/WorkstreamsRunner.swift"
+cp prompt-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
+swiftc -swift-version 5 -module-cache-path "$CACHE" \
+  -o "$TMP/prompt-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsQueues.swift" \
+  "$TMP/WorkstreamsPrompts.swift" "$TMP/WorkstreamsRunner.swift" "$TMP/main.swift"
+"$TMP/prompt-tests"
 rm -rf "$TMP"
 
 
@@ -172,5 +189,41 @@ if ! grep -q '/api/workstreams/stage/confirm' "$SRC2/WorkstreamsAPI.swift" \
   exit 1
 fi
 echo "workstreams stage gate guard ok"
+
+echo "--- workstreams stage prompt guard (D15: panel-generated, injected into the task body) ---"
+PROMPTS="$SRC2/WorkstreamsPrompts.swift"
+if [ ! -f "$PROMPTS" ]; then
+  echo "FAIL: WorkstreamsPrompts.swift is missing" >&2
+  exit 1
+fi
+for sym in 'enum WSStageAction' 'enum WorkstreamHandoff' 'func prompt(card:' 'func stageTask(' \
+           'func injectingCompletionMarker('; do
+  if ! grep -qF "$sym" "$PROMPTS"; then
+    echo "FAIL: WorkstreamsPrompts.swift is missing $sym" >&2
+    exit 1
+  fi
+done
+# 五个阶段的中文名 + 执行阶段的两个动作，缺一不可（design §4）。
+for needle in 规划 设计 执行 验收 交付 拆分任务 启动实施; do
+  if ! grep -qF "$needle" "$PROMPTS"; then
+    echo "FAIL: the stage prompt source no longer mentions $needle" >&2
+    exit 1
+  fi
+done
+# 执行阶段的完成协议仍由 runner 注入 marker；
+# 面板生成的提示词必须能被 runner 原样识别，而不是被包成任务模板。
+if ! grep -qE 'WorkstreamHandoff\.isHandoff' "$SRC2/WorkstreamsRunner.swift"; then
+  echo "FAIL: the runner must recognise a panel-generated handoff body" >&2
+  exit 1
+fi
+if ! grep -qE 'WorkstreamHandoff\.injectingCompletionMarker' "$SRC2/WorkstreamsRunner.swift"; then
+  echo "FAIL: the runner must inject the execution marker through WorkstreamHandoff" >&2
+  exit 1
+fi
+if ! grep -qE 'func createStageQueue\(' "$SRC2/WorkstreamsRunner.swift"; then
+  echo "FAIL: the runner is missing the panel entry point createStageQueue" >&2
+  exit 1
+fi
+echo "workstreams stage prompt guard ok"
 
 echo "workstreams-panel tests passed"

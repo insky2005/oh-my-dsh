@@ -62,20 +62,23 @@ enum WSCancelOutcome: Equatable {
 
 /// 事项面板自有的提示词构造（复制 + 改造自 TaskPrompts 的最小集）。纯函数，
 /// 可在后台步骤里调用。
+///
+/// 阶段交接提示词（设计 D15）由 `WorkstreamHandoff`（WorkstreamsPrompts.swift）生成、
+/// 注入任务 body；这里只负责运行时的包装：body 已是完整交接提示词时原样发送，否则
+/// 回落到任务面板同形的短模板。完成 marker 也委托给 `WorkstreamHandoff`，一处维护。
 enum WSPrompts {
     /// 各阶段的简短说明，用于提示词头部。
     static func stageLabel(_ stage: WorkstreamStage) -> String {
-        switch stage {
-        case .planning: return "规划"
-        case .design: return "设计"
-        case .task: return "执行"
-        case .acceptance: return "验收"
-        case .delivery: return "交付"
-        }
+        WorkstreamHandoff.stageLabel(stage)
     }
 
     /// 一条三级任务的完整提示词：阶段上下文 + 任务标题/描述 + 要求清单。
+    /// body 是面板生成的阶段交接提示词时原样使用（design §2 原则 1：提示词是指针）。
     static func task(_ task: WSTaskItem, queue: WSQueue?) -> String {
+        if let body = task.body?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !body.isEmpty, body != task.title, WorkstreamHandoff.isHandoff(body) {
+            return body
+        }
         var lines: [String] = []
         let stage = queue.map { stageLabel($0.stage) } ?? "执行"
         if let queue = queue, !queue.workstreamId.isEmpty {
@@ -100,16 +103,14 @@ enum WSPrompts {
 
     /// 完成标记要求（P1 完成协议）：追加在提示词末尾，会话须在最后一行原样回显。
     static func completionMarkerInstruction(_ marker: String) -> String {
-        return "完成前，请在最后一行原样输出以下标记（供面板识别本次任务已结束）：\n" + marker
+        WorkstreamHandoff.completionMarkerInstruction(marker)
     }
 
     /// 重试续跑的短提示词：一句「从未完成处继续」+ 标题；不重发完整要求。
     static func retryContinuation(title: String, marker: String?) -> String {
         var text = "上一轮因中断或未拿到完成证据而停止，请从未完成处继续本任务：" + title + "。\n"
             + "（不要重做已经完成的部分。）"
-        if let marker = marker {
-            text += "\n\n" + completionMarkerInstruction(marker)
-        }
+        text = WorkstreamHandoff.injectingCompletionMarker(text, marker: marker)
         return text
     }
 }
@@ -381,10 +382,9 @@ final class WorkstreamsRunner {
                 }
                 log("workstreams: " + taskID + " could not continue " + resumed + " — starting a fresh one")
             }
-            var prompt = promptText(task, queue)
-            if let marker = marker {
-                prompt += "\n\n" + WSPrompts.completionMarkerInstruction(marker)
-            }
+            // 阶段提示词（面板生成、注入 body）+ 本次完成 marker（执行阶段的完成协议）。
+            let prompt = WorkstreamHandoff.injectingCompletionMarker(promptText(task, queue),
+                                                                     marker: marker)
             guard let sessionId = createSession(repoRoot) else {
                 startResult = .failed(.session, nil)
                 return
@@ -515,6 +515,23 @@ final class WorkstreamsRunner {
         env.log("workstreams: created queue " + queue.id + " (" + queue.name + ") with "
                 + String(created.count) + " task(s)")
         return (board.queue(queue.id) ?? queue, created)
+    }
+
+    /// 面板建「阶段队列」：按阶段默认动作（或指定动作）生成交接提示词，注入每条任务的
+    /// body（design D15 / workstream-handoff-prompt-design §2）。只建等待态队列，不启动；
+    /// 卡片的 queues 映射由面板另行写回 WS 卡。queue.name 用阶段中文名。
+    @discardableResult
+    func createStageQueue(card: WorkstreamCard, stage: WorkstreamStage,
+                          workspace: String = "",
+                          titles: [String],
+                          action: WSStageAction? = nil) -> (queue: WSQueue, created: [WSTaskItem]) {
+        let chosen = action ?? WSStageAction.defaultAction(for: stage)
+        let drafts = titles.map { title in
+            WorkstreamHandoff.stageTask(title: title, card: card, action: chosen,
+                                        workspace: workspace)
+        }
+        return createQueueWithTasks(name: WorkstreamHandoff.stageLabel(stage),
+                                    workstreamID: card.id, stage: stage, drafts: drafts)
     }
 
     /// 往已有队列追加任务（对话里「再补几条」）。不自动启动。
