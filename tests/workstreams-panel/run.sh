@@ -7,6 +7,8 @@
 #      codes and response shapes (no AppKit, no disk).
 #   3. the pure view models (WorkstreamsUI.swift): the three-level card model,
 #      the top stage filter and the empty state.
+#   3.5 the stage gate (WorkstreamsStageGate.swift): per-stage machine evidence
+#      and the human confirmation / back-edge gate (R10).
 #   4. the queue engine (WorkstreamsQueues.swift + WorkstreamsRunner.swift): the
 #      serial step/pump phase machine, the session lifecycle (create -> name ->
 #      prompt -> poll -> cancel / retry), restart recovery and the
@@ -39,10 +41,12 @@ rm -rf "$TMP"
 echo "--- workstreams UI models (three-level card / stage filter / empty state) ---"
 TMP="$(mktemp -d)"
 cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
+cp ../../platforms/macos/src/WorkstreamsStageGate.swift "$TMP/WorkstreamsStageGate.swift"
 cp ../../platforms/macos/src/WorkstreamsUI.swift "$TMP/WorkstreamsUI.swift"
 cp ui-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
-  -o "$TMP/ui-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsUI.swift" "$TMP/main.swift"
+  -o "$TMP/ui-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsStageGate.swift" \
+  "$TMP/WorkstreamsUI.swift" "$TMP/main.swift"
 "$TMP/ui-tests"
 rm -rf "$TMP"
 
@@ -58,6 +62,16 @@ swiftc -swift-version 5 -module-cache-path "$CACHE" \
 "$TMP/runner-tests"
 rm -rf "$TMP"
 
+
+echo "--- workstreams stage gate (machine predicates + human confirmation, R10) ---"
+TMP="$(mktemp -d)"
+cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
+cp ../../platforms/macos/src/WorkstreamsStageGate.swift "$TMP/WorkstreamsStageGate.swift"
+cp stage-gate-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
+swiftc -swift-version 5 -module-cache-path "$CACHE" \
+  -o "$TMP/stage-gate-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsStageGate.swift" "$TMP/main.swift"
+"$TMP/stage-gate-tests"
+rm -rf "$TMP"
 
 echo "--- view base namespace guard (WSCardView / WSInlineForms / WorkstreamsPanel, design A6) ---"
 SRC2="../../platforms/macos/src"
@@ -131,6 +145,32 @@ wiring_check 'workstreamsPanel = WorkstreamsPanelController\(\)' 'the panel inst
 wiring_check 'workstreamsPanel\.workspaceProvider' 'the workspace provider wiring'
 wiring_check 'bridge\.workstreamsList' 'the /api/workstreams/list bridge landing'
 wiring_check 'bridge\.workstreamsQueues' 'the /api/workstreams/queues bridge landing'
+wiring_check 'bridge\.workstreamsStageConfirm' 'the /api/workstreams/stage/confirm bridge landing'
+wiring_check 'bridge\.workstreamsStageReject' 'the /api/workstreams/stage/reject bridge landing'
 echo "main.swift wiring guard ok"
+
+echo "--- workstreams stage gate guard (R10: machine evidence AND human confirmation) ---"
+GATE="$SRC2/WorkstreamsStageGate.swift"
+if [ ! -f "$GATE" ]; then
+  echo "FAIL: WorkstreamsStageGate.swift is missing" >&2
+  exit 1
+fi
+for sym in planningEvidence designEvidence executionEvidence acceptanceEvidence deliveryEvidence confirmStage rejectStage; do
+  if ! grep -qE "func $sym\b" "$GATE"; then
+    echo "FAIL: WorkstreamsStageGate.swift is missing $sym" >&2
+    exit 1
+  fi
+done
+if ! grep -q 'evidenceMissing' "$GATE"; then
+  echo "FAIL: the gate must refuse confirmation when evidence is missing" >&2
+  exit 1
+fi
+# The agent-facing routes must reach the panel; the human gate is a separate route.
+if ! grep -q '/api/workstreams/stage/confirm' "$SRC2/WorkstreamsAPI.swift" \
+   || ! grep -q '/api/workstreams/stage/reject' "$SRC2/WorkstreamsAPI.swift"; then
+  echo "FAIL: the stage confirm / reject routes are missing from WorkstreamsAPI.swift" >&2
+  exit 1
+fi
+echo "workstreams stage gate guard ok"
 
 echo "workstreams-panel tests passed"

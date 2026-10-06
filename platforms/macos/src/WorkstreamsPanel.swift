@@ -251,6 +251,9 @@ final class WSPrimaryCardView: NSView {
 
     let model: WSCardModel
     var onOpen: (() -> Void)?
+    /// Human gate actions for the current stage (R10).
+    var onConfirmStage: (() -> Void)?
+    var onRejectStage: (() -> Void)?
     private(set) var isExpanded: Bool
 
     init(model: WSCardModel) {
@@ -367,9 +370,22 @@ final class WSPrimaryCardView: NSView {
             headerViews.append(WSTierBadgeView(text: L10n.tr("workstreams.stage.current"), tone: stage.tone,
                                                filled: stage.stage == .task))
         }
+        if stage.awaitingConfirmation {
+            headerViews.append(WSTierBadgeView(text: L10n.tr("workstreams.gate.awaiting"), tone: .warning))
+        }
         headerViews.append(spacer)
         if !stage.queueIDs.isEmpty {
             headerViews.append(WSTierBadgeView(text: stage.queueIDs.joined(separator: ", "), tone: .neutral))
+        }
+        if stage.awaitingConfirmation {
+            let confirm = CustomIconButton(glyph: .symbol("checkmark"),
+                                           tooltip: L10n.tr("workstreams.gate.confirm"), size: 22)
+            confirm.onAction = { [weak self] in self?.onConfirmStage?() }
+            let reject = CustomIconButton(glyph: .symbol("arrow.uturn.left"),
+                                          tooltip: L10n.tr("workstreams.gate.reject"), size: 22)
+            reject.onAction = { [weak self] in self?.onRejectStage?() }
+            headerViews.append(confirm)
+            headerViews.append(reject)
         }
         let headerRow = NSStackView(views: headerViews)
         headerRow.orientation = .horizontal
@@ -378,6 +394,15 @@ final class WSPrimaryCardView: NSView {
 
         var bodyRows: [NSView] = []
         for line in stage.evidence { bodyRows.append(detailLine(line)) }
+        if stage.evidenceMissing {
+            let missing = stage.missingEvidenceKeys.map { L10n.tr($0) }.joined(separator: "、")
+            let blocked = NSTextField(labelWithString: L10n.tr("workstreams.gate.evidenceMissing") + "：" + missing)
+            blocked.font = .systemFont(ofSize: 11)
+            blocked.textColor = .systemOrange
+            blocked.lineBreakMode = .byTruncatingTail
+            blocked.toolTip = missing
+            bodyRows.append(blocked)
+        }
         if !stage.hasQueue && stage.tasks.isEmpty {
             let none = NSTextField(labelWithString: L10n.tr("workstreams.stage.noQueue"))
             none.font = .systemFont(ofSize: 11)
@@ -692,11 +717,15 @@ final class WorkstreamsPanelController: NSObject {
     }
 
     private func render() {
-        board = WSBoardModel.build(snapshot: snapshot, filter: selectedFilter)
+        let workspace = workspaceProvider?() ?? snapshot.workspace
+        board = WSBoardModel.build(snapshot: snapshot, filter: selectedFilter,
+                                   gates: stageGates(for: snapshot, workspace: workspace))
         for sub in list.arrangedSubviews { sub.removeFromSuperview() }
         for model in board.cards {
             let card = WSPrimaryCardView(model: model)
             card.onOpen = { [weak self] in self?.onOpenCard?(model.path) }
+            card.onConfirmStage = { [weak self] in self?.confirmCurrentStage(model.id) }
+            card.onRejectStage = { [weak self] in self?.rejectCurrentStage(model.id) }
             list.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -20).isActive = true
         }
@@ -706,6 +735,74 @@ final class WorkstreamsPanelController: NSObject {
         emptyView.isHidden = empty == nil
         scroll.isHidden = board.cards.isEmpty
         onDidRender?()
+    }
+
+    // MARK: Stage gate
+
+    /// The queue board for a workspace; never creates .dsh/workstreams just to read.
+    func loadBoard(_ workspace: String) -> WSBoard {
+        let queuesPath = (workspace as NSString).appendingPathComponent(".dsh/workstreams/queues.json")
+        return FileManager.default.fileExists(atPath: queuesPath) ? WSStore.load(workspace) : WSBoard()
+    }
+
+    /// Evaluate every card's stage gate (design A4 / D3) for the visible board.
+    func stageGates(for snapshot: WorkstreamsSnapshot, workspace: String) -> [String: WSStageGate] {
+        guard !workspace.isEmpty else { return [:] }
+        let wsBoard = loadBoard(workspace)
+        var out: [String: WSStageGate] = [:]
+        for card in snapshot.workstreams {
+            out[card.id] = WorkstreamsStageGate.evaluate(card,
+                                                         carrier: stageCarrier(for: card, board: wsBoard),
+                                                         workspace: workspace)
+        }
+        return out
+    }
+
+    /// The panel's confirmation button (the human side of R10).
+    func confirmCurrentStage(_ cardID: String) {
+        guard let workspace = workspaceProvider?(), !workspace.isEmpty,
+              let card = snapshot.workstreams.first(where: { $0.id == cardID }) else { return }
+        do {
+            _ = try WorkstreamsCore.confirmStage(workspace: workspace, id: cardID,
+                                                 expectedStage: card.stage,
+                                                 carrier: stageCarrier(for: card, board: loadBoard(workspace)),
+                                                 note: nil, today: WorkstreamsCore.today())
+            setStatus(L10n.tr("workstreams.gate.confirmed"), isError: false)
+        } catch let error as WorkstreamError {
+            setStatus(L10n.tr("workstreams.gate.failed") + "：" + error.message, isError: true)
+        } catch {
+            setStatus(L10n.tr("workstreams.gate.failed"), isError: true)
+        }
+        reload()
+    }
+
+    /// The panel's back-edge button: ask for a reason, then record it (R2 / R10).
+    func rejectCurrentStage(_ cardID: String) {
+        guard let workspace = workspaceProvider?(), !workspace.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("workstreams.gate.rejectTitle")
+        alert.informativeText = L10n.tr("workstreams.gate.rejectMessage")
+        alert.addButton(withTitle: L10n.tr("workstreams.gate.reject"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.placeholderString = L10n.tr("workstreams.gate.rejectPlaceholder")
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let reason = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reason.isEmpty else {
+            setStatus(L10n.tr("workstreams.gate.rejectNeedsReason"), isError: true)
+            return
+        }
+        do {
+            _ = try WorkstreamsCore.rejectStage(workspace: workspace, id: cardID, reason: reason,
+                                                target: nil, today: WorkstreamsCore.today())
+            setStatus(L10n.tr("workstreams.gate.rejected"), isError: false)
+        } catch let error as WorkstreamError {
+            setStatus(L10n.tr("workstreams.gate.failed") + "：" + error.message, isError: true)
+        } catch {
+            setStatus(L10n.tr("workstreams.gate.failed"), isError: true)
+        }
+        reload()
     }
 }
 
@@ -966,6 +1063,64 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                           id: request.id,
                                           queues: request.queues,
                                           today: WorkstreamsCore.today())
+        }, workspace: workspace)
+    }
+
+    /// Flatten the queue board into the gate's runtime facts (design D3).
+    func stageCarrier(for card: WorkstreamCard, board: WSBoard) -> WSStageCarrier {
+        let queue = board.queue(forWorkstream: card.id, stage: card.stage, mapping: card.queues)
+        guard let queue = queue else {
+            return WSStageCarrier(hasQueue: false, done: true, taskCount: 0,
+                                  allTasksDone: true, allEvidenceVerified: true)
+        }
+        let tasks = board.tasks(inQueue: queue.id)
+        return WSStageCarrier(hasQueue: true,
+                              done: queue.state == .done,
+                              taskCount: tasks.count,
+                              allTasksDone: !tasks.isEmpty && tasks.allSatisfy { $0.state == .done },
+                              allEvidenceVerified: !tasks.isEmpty
+                                  && tasks.allSatisfy { $0.markerVerified || $0.userConfirmed })
+    }
+
+    /// The human confirmation gate (R10): advances the stage only when the machine
+    /// predicate already passes; a person is the only caller.
+    func apiWorkstreamsStageConfirm(_ request: WorkstreamsStageConfirmRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        do {
+            let card = try WorkstreamsCore.loadCard(workspace: workspace, id: request.id)
+            let updated = try WorkstreamsCore.confirmStage(workspace: workspace,
+                                                           id: request.id,
+                                                           expectedStage: request.stage,
+                                                           carrier: stageCarrier(for: card, board: WSStore.load(workspace)),
+                                                           note: request.note,
+                                                           today: WorkstreamsCore.today())
+            if workspace == (workspaceProvider?() ?? "") { reload() }
+            let gate = WorkstreamsStageGate.evaluate(updated,
+                                                     carrier: stageCarrier(for: updated, board: WSStore.load(workspace)),
+                                                     workspace: workspace)
+            return ["ok": true,
+                    "workstream": WorkstreamsAPIResponse.card(updated),
+                    "gate": WorkstreamsStageGate.json(gate)]
+        } catch let error as WorkstreamError {
+            return error.apiResult
+        } catch {
+            return WorkstreamError.writeFailed(error.localizedDescription).apiResult
+        }
+    }
+
+    /// The back edge: sends the stage back for rework and records the reason.
+    func apiWorkstreamsStageReject(_ request: WorkstreamsStageRejectRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        return writeResult({
+            try WorkstreamsCore.rejectStage(workspace: workspace,
+                                            id: request.id,
+                                            reason: request.reason,
+                                            target: request.target,
+                                            today: WorkstreamsCore.today())
         }, workspace: workspace)
     }
 }

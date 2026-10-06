@@ -286,6 +286,8 @@ final class BrowserAPIBridge: BrowserAPIDelegate {
     var workstreamsStage: (WorkstreamsStageRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     var workstreamsPlan: (WorkstreamsPlanRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     var workstreamsQueues: (WorkstreamsQueuesRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsStageConfirm: (WorkstreamsStageConfirmRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsStageReject: (WorkstreamsStageRejectRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     static let workstreamsUnavailable: [String: Any] = [
         "ok": false,
         "error": "panel-unavailable",
@@ -710,6 +712,14 @@ extension BrowserAPIBridge: WorkstreamsAPIDelegate {
 
     func apiWorkstreamsQueues(_ request: WorkstreamsQueuesRequest) -> [String: Any] {
         onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsQueues(request) }
+    }
+
+    func apiWorkstreamsStageConfirm(_ request: WorkstreamsStageConfirmRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsStageConfirm(request) }
+    }
+
+    func apiWorkstreamsStageReject(_ request: WorkstreamsStageRejectRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsStageReject(request) }
     }
 }
 

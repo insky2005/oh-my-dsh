@@ -76,6 +76,9 @@ struct WSTaskItem: Equatable {
     /// 本次尝试的完成 marker（runner 生成、写进提示词，会话须在最后一行回显）。
     var completionMarker: String?
     var markerVerified: Bool
+    /// 人看过待确认任务后按「标记完成」放行（P2）。与 markerVerified 一起构成
+    /// 任务级完成证据；阶段门用它判断执行阶段是否拿到证据（P1-P5）。
+    var userConfirmed: Bool
 
     init(id: String,
          title: String,
@@ -88,7 +91,8 @@ struct WSTaskItem: Equatable {
          finishedAt: Date? = nil,
          report: String? = nil,
          completionMarker: String? = nil,
-         markerVerified: Bool = false) {
+         markerVerified: Bool = false,
+         userConfirmed: Bool = false) {
         self.id = id
         self.title = title
         self.body = body
@@ -101,6 +105,7 @@ struct WSTaskItem: Equatable {
         self.report = report
         self.completionMarker = completionMarker
         self.markerVerified = markerVerified
+        self.userConfirmed = userConfirmed
     }
 
     /// ISO-8601，与仓库既有 .dsh 文件同形（2026-08-20T15:26:43Z）。
@@ -120,6 +125,7 @@ struct WSTaskItem: Equatable {
         var d: [String: Any] = ["id": id, "title": title, "state": state.rawValue]
         if let body = body, !body.isEmpty { d["body"] = body }
         if let error = error { d["error"] = error }
+        if userConfirmed { d["userConfirmed"] = true }
         if let startedAt = startedAt { d["startedAt"] = WSTaskItem.iso8601.string(from: startedAt) }
         if let finishedAt = finishedAt { d["finishedAt"] = WSTaskItem.iso8601.string(from: finishedAt) }
         return d
@@ -133,7 +139,8 @@ struct WSTaskItem: Equatable {
                           state: WSTaskState(rawValue: (d["state"] as? String) ?? "pending") ?? .pending,
                           error: d["error"] as? String,
                           startedAt: (d["startedAt"] as? String).flatMap { WSTaskItem.iso8601.date(from: $0) },
-                          finishedAt: (d["finishedAt"] as? String).flatMap { WSTaskItem.iso8601.date(from: $0) })
+                          finishedAt: (d["finishedAt"] as? String).flatMap { WSTaskItem.iso8601.date(from: $0) },
+                          userConfirmed: (d["userConfirmed"] as? Bool) ?? false)
     }
 }
 
@@ -481,6 +488,7 @@ struct WSBoard {
     mutating func confirmDone(_ taskID: String, at date: Date = Date()) {
         guard let i = index(ofTask: taskID), tasks[i].state == .needsReview else { return }
         tasks[i].error = nil
+        tasks[i].userConfirmed = true
         markDone(taskID, at: date)
     }
 

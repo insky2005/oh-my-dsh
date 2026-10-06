@@ -73,6 +73,22 @@ struct WorkstreamsQueuesRequest: Equatable {
     var session: String?
 }
 
+struct WorkstreamsStageConfirmRequest: Equatable {
+    var workspace: String?
+    var id: String
+    var stage: WorkstreamStage?
+    var note: String?
+    var session: String?
+}
+
+struct WorkstreamsStageRejectRequest: Equatable {
+    var workspace: String?
+    var id: String
+    var reason: String
+    var target: WorkstreamStage?
+    var session: String?
+}
+
 /// Read the optional session field from any write body (trimmed, nil when empty).
 func workstreamsSession(_ body: [String: Any]) -> String? {
     wsNonEmpty(body["session"] as? String)
@@ -89,6 +105,8 @@ protocol WorkstreamsAPIDelegate: AnyObject {
     func apiWorkstreamsStage(_ request: WorkstreamsStageRequest) -> [String: Any]
     func apiWorkstreamsPlan(_ request: WorkstreamsPlanRequest) -> [String: Any]
     func apiWorkstreamsQueues(_ request: WorkstreamsQueuesRequest) -> [String: Any]
+    func apiWorkstreamsStageConfirm(_ request: WorkstreamsStageConfirmRequest) -> [String: Any]
+    func apiWorkstreamsStageReject(_ request: WorkstreamsStageRejectRequest) -> [String: Any]
 }
 
 // MARK: - Workspace normalization
@@ -318,6 +336,42 @@ enum WorkstreamsAPIRouter {
             let result = delegate.apiWorkstreamsQueues(req)
             return .json(status(for: result), result)
 
+        case ("POST", "/api/workstreams/stage/confirm"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            guard let id = wsNonEmpty(body["id"] as? String) else { return missingId() }
+            var expected: WorkstreamStage? = nil
+            if let raw = wsNonEmpty(body["stage"] as? String) {
+                guard let parsed = WorkstreamStage.parse(raw) else { return invalidStage(raw) }
+                expected = parsed
+            }
+            guard let delegate = delegate else { return unavailable() }
+            let confirm = WorkstreamsStageConfirmRequest(workspace: WorkstreamsAPIWorkspace.normalize(body["workspace"] as? String),
+                                                         id: id, stage: expected,
+                                                         note: wsNonEmpty(body["note"] as? String),
+                                                         session: workstreamsSession(body))
+            let confirmed = delegate.apiWorkstreamsStageConfirm(confirm)
+            return .json(status(for: confirmed), confirmed)
+
+        case ("POST", "/api/workstreams/stage/reject"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            guard let id = wsNonEmpty(body["id"] as? String) else { return missingId() }
+            let reason = ((body["reason"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !reason.isEmpty else {
+                return .json(400, ["ok": false, "error": "missing-reason",
+                                   "hint": "expected {\"id\": \"WS-000001\", \"reason\": \"...\"}"])
+            }
+            var target: WorkstreamStage? = nil
+            if let raw = wsNonEmpty(body["target"] as? String) {
+                guard let parsed = WorkstreamStage.parse(raw) else { return invalidStage(raw) }
+                target = parsed
+            }
+            guard let delegate = delegate else { return unavailable() }
+            let reject = WorkstreamsStageRejectRequest(workspace: WorkstreamsAPIWorkspace.normalize(body["workspace"] as? String),
+                                                       id: id, reason: reason, target: target,
+                                                       session: workstreamsSession(body))
+            let rejected = delegate.apiWorkstreamsStageReject(reject)
+            return .json(status(for: rejected), rejected)
+
         default:
             return .json(404, ["ok": false, "error": "not-found"])
         }
@@ -331,6 +385,8 @@ enum WorkstreamsAPIRouter {
         case "unknown-workstream": return 404
         case "panel-unavailable": return 503
         case "write-failed": return 500
+        case "evidence-missing": return 409
+        case "stage-changed": return 409
         default: return 400
         }
     }

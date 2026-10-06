@@ -234,6 +234,33 @@ eq(parsedModel.stages.first { $0.stage == .acceptance }?.queueIDs, ["q-222"], "p
 eq(parsedModel.stages.first { $0.stage == .acceptance }?.evidence.first?.value,
    "platforms/macos/src/WorkstreamsPanel.swift", "parsed covered evidence")
 
+// MARK: - Stage gate surfaces on the card model
+
+section("stage gate on the card model")
+let fullPlanBody = """
+## 规划
+
+- 目标（WHAT）：交付门。
+- 边界（做）：事项面板。
+- 阶段裁剪声明：不裁剪。
+- 验收标准：
+  - AC1 通过。
+"""
+let gateCard = card(id: "WS-000070", stage: .planning, body: fullPlanBody)
+let gate = WorkstreamsStageGate.evaluate(gateCard, carrier: .none)
+let gatedModel = WSCardModel.build(from: gateCard, gate: gate)
+let planningStage = gatedModel.stages.first { $0.stage == .planning }
+eq(planningStage?.gateState, .awaitingConfirmation, "awaiting gate surfaces on the current stage")
+eq(planningStage?.awaitingConfirmation, true, "awaiting flag")
+eq(gatedModel.stages.first { $0.stage == .design }?.gateState == nil, true, "other stages carry no gate state")
+
+let blockedCard = card(id: "WS-000071", stage: .planning, body: "## 规划\n")
+let blockedGate = WorkstreamsStageGate.evaluate(blockedCard, carrier: .none)
+let blockedModel = WSCardModel.build(from: blockedCard, gate: blockedGate)
+let blockedStage = blockedModel.stages.first { $0.stage == .planning }
+eq(blockedStage?.evidenceMissing, true, "evidence-missing flag")
+check((blockedStage?.missingEvidenceKeys.isEmpty ?? true) == false, "missing evidence keys surface")
+
 // MARK: - Report
 
 print("")

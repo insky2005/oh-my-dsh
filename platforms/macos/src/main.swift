@@ -1031,6 +1031,32 @@ enum L10n {
         "workstreams.errPrompt": ("无法发送提示词", "Could not send the prompt"),
         "workstreams.errTimeout": ("任务超时已被取消", "The task timed out and was cancelled"),
         "workstreams.errUnverified": ("会话结束但未回显完成标记，待确认", "The session ended without the completion marker; needs review"),
+        // Stage gate: per-stage machine evidence (the human gate is the button).
+        "workstreams.evidence.planning.target": ("规划目标（WHAT）", "Planning goal (WHAT)"),
+        "workstreams.evidence.planning.boundary": ("规划边界", "Planning boundaries"),
+        "workstreams.evidence.planning.acceptance": ("验收标准（AC）", "Acceptance criteria (AC)"),
+        "workstreams.evidence.planning.trim": ("阶段裁剪声明", "Stage-trim declaration"),
+        "workstreams.evidence.design.section": ("设计段", "Design section"),
+        "workstreams.evidence.design.doc": ("设计文档", "Design document"),
+        "workstreams.evidence.design.questions": ("Q 已关闭", "Q closed"),
+        "workstreams.evidence.task.queue": ("阶段队列", "Stage queue"),
+        "workstreams.evidence.task.done": ("队列已完成", "Queue finished"),
+        "workstreams.evidence.task.marker": ("任务完成证据（marker / 产物）", "Task evidence (marker / product)"),
+        "workstreams.evidence.acceptance.section": ("验收记录", "Acceptance record"),
+        "workstreams.evidence.acceptance.covered": ("覆盖锚（covered）", "Covered anchor"),
+        "workstreams.evidence.delivery.pr": ("PR 事实", "PR fact"),
+        "workstreams.evidence.delivery.outcome": ("结果派生（outcome）", "Derived outcome"),
+        "workstreams.gate.awaiting": ("待确认", "Needs review"),
+        "workstreams.gate.confirm": ("确认并推进到下一阶段", "Confirm and advance"),
+        "workstreams.gate.reject": ("退回本阶段返工", "Send back for rework"),
+        "workstreams.gate.rejectTitle": ("退回本阶段返工", "Send back for rework"),
+        "workstreams.gate.rejectMessage": ("退回会留痕并回到本阶段；请写明原因。", "Sending back is recorded and returns to this stage; state a reason."),
+        "workstreams.gate.rejectPlaceholder": ("例如：规划缺少边界", "e.g. the plan lacks boundaries"),
+        "workstreams.gate.confirmed": ("已确认，推进到下一阶段", "Confirmed; advanced to the next stage"),
+        "workstreams.gate.rejected": ("已退回本阶段并留痕", "Sent back and recorded"),
+        "workstreams.gate.rejectNeedsReason": ("退回必须填写原因", "A reason is required to send the stage back"),
+        "workstreams.gate.evidenceMissing": ("证据不足，不能推进", "Evidence is missing; cannot advance"),
+        "workstreams.gate.failed": ("阶段操作失败", "The stage action failed"),
     ]
 
     /// Localize a key, optionally filling %@ / %d placeholders.
@@ -6954,6 +6980,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         bridge.workstreamsQueues = { [weak self] request in
             self?.workstreamsPanel?.apiWorkstreamsQueues(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsStageConfirm = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsStageConfirm(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsStageReject = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsStageReject(request) ?? BrowserAPIBridge.workstreamsUnavailable
         }
         bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
         bridge.hidePanel = { [weak self] in

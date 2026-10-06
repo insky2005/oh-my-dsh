@@ -50,6 +50,8 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     var stageResult: [String: Any] = ["ok": true]
     var planResult: [String: Any] = ["ok": true]
     var queuesResult: [String: Any] = ["ok": true]
+    var stageConfirmResult: [String: Any] = ["ok": true]
+    var stageRejectResult: [String: Any] = ["ok": true]
 
     var lastListWorkspace: String?
     var lastCreate: WorkstreamsCreateRequest?
@@ -57,6 +59,8 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     var lastStage: WorkstreamsStageRequest?
     var lastPlan: WorkstreamsPlanRequest?
     var lastQueues: WorkstreamsQueuesRequest?
+    var lastStageConfirm: WorkstreamsStageConfirmRequest?
+    var lastStageReject: WorkstreamsStageRejectRequest?
 
     func apiWorkstreamsList(workspace: String?) -> [String: Any] {
         lastListWorkspace = workspace
@@ -81,6 +85,14 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     func apiWorkstreamsQueues(_ request: WorkstreamsQueuesRequest) -> [String: Any] {
         lastQueues = request
         return queuesResult
+    }
+    func apiWorkstreamsStageConfirm(_ request: WorkstreamsStageConfirmRequest) -> [String: Any] {
+        lastStageConfirm = request
+        return stageConfirmResult
+    }
+    func apiWorkstreamsStageReject(_ request: WorkstreamsStageRejectRequest) -> [String: Any] {
+        lastStageReject = request
+        return stageRejectResult
     }
 }
 
@@ -238,6 +250,41 @@ eq(fake.lastQueues?.queues.isEmpty, true, "empty queues passes through")
 let queuesNotList = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queues", json: ["id": "WS-000001", "queues": "q-1"]), delegate: fake)
 eq(queuesNotList?.json?["error"] as? String, "invalid-queue", "non-list queues -> invalid-queue")
 
+section("stage gate routes")
+let confirmNoId = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage/confirm", json: ["stage": "design"]), delegate: fake)
+eq(confirmNoId?.json?["error"] as? String, "missing-id", "confirm missing-id code")
+
+let confirmBadStage = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage/confirm", json: ["id": "WS-000001", "stage": "warp"]), delegate: fake)
+eq(confirmBadStage?.status, 400, "confirm invalid stage -> 400")
+eq(confirmBadStage?.json?["error"] as? String, "invalid-stage", "confirm invalid-stage code")
+
+let confirmOK = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage/confirm", json: ["id": "WS-000001", "stage": " design ", "note": " 通过 ", "workspace": "/tmp/ws", "session": "s-1"]), delegate: fake)
+eq(confirmOK?.status, 200, "confirm 200")
+eq(fake.lastStageConfirm?.id, "WS-000001", "confirm id routed")
+eq(fake.lastStageConfirm?.stage, .design, "confirm expected stage parsed")
+eq(fake.lastStageConfirm?.note, "通过", "confirm note trimmed")
+eq(fake.lastStageConfirm?.session, "s-1", "confirm carries session")
+eq(fake.lastStageConfirm?.workspace, "/tmp/ws", "confirm workspace normalized")
+
+let confirmNoStage = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage/confirm", json: ["id": "WS-000001"]), delegate: fake)
+eq(confirmNoStage?.status, 200, "confirm without expected stage is allowed")
+eq(fake.lastStageConfirm?.stage == nil, true, "absent expected stage stays nil")
+
+let rejectNoId = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage/reject", json: ["reason": "x"]), delegate: fake)
+eq(rejectNoId?.json?["error"] as? String, "missing-id", "reject missing-id code")
+
+let rejectNoReason = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage/reject", json: ["id": "WS-000001", "reason": "   "]), delegate: fake)
+eq(rejectNoReason?.status, 400, "reject without reason -> 400")
+eq(rejectNoReason?.json?["error"] as? String, "missing-reason", "missing-reason code (negative path)")
+
+let rejectBadTarget = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage/reject", json: ["id": "WS-000001", "reason": "x", "target": "warp"]), delegate: fake)
+eq(rejectBadTarget?.json?["error"] as? String, "invalid-stage", "reject invalid target -> invalid-stage")
+
+let rejectOK = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage/reject", json: ["id": "WS-000001", "reason": " 边界未定 ", "target": " planning ", "workspace": "/tmp/ws"]), delegate: fake)
+eq(rejectOK?.status, 200, "reject 200")
+eq(fake.lastStageReject?.reason, "边界未定", "reject reason trimmed")
+eq(fake.lastStageReject?.target, .planning, "reject target parsed")
+
 section("error mapping")
 fake.listResult = ["ok": false, "error": "no-workspace"]
 eq(WorkstreamsAPIRouter.route(HTTPRequest(method: "GET", path: "/api/workstreams/list"), delegate: fake)?.status, 400, "no-workspace -> 400")
@@ -248,6 +295,8 @@ eq(WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstream
 fake.createResult = ["ok": false, "error": "malformed-frontmatter"]
 eq(WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/create", json: ["title": "x"]), delegate: fake)?.status, 400, "malformed-frontmatter -> 400")
 eq(WorkstreamsAPIRouter.status(for: ["ok": false, "error": "panel-unavailable"]), 503, "panel-unavailable -> 503")
+eq(WorkstreamsAPIRouter.status(for: ["ok": false, "error": "evidence-missing"]), 409, "evidence-missing -> 409")
+eq(WorkstreamsAPIRouter.status(for: ["ok": false, "error": "stage-changed"]), 409, "stage-changed -> 409")
 eq(WorkstreamsAPIRouter.status(for: ["ok": false, "error": "something-new"]), 400, "unknown error code -> 400")
 
 section("WorkstreamError alignment")
@@ -255,6 +304,7 @@ let cases: [WorkstreamError] = [
     .noWorkspace, .unknownWorkstream("WS-1"), .missingId, .missingTitle, .missingStage,
     .invalidStage("x"), .invalidQueue("x"), .malformedFrontmatter("x"),
     .missingField("f"), .writeFailed("x"),
+    .evidenceMissing(["a", "b"]), .stageChanged("planning", "design"), .missingReason,
 ]
 for errorCase in cases {
     let result = errorCase.apiResult

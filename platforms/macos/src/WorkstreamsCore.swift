@@ -33,6 +33,13 @@ enum WorkstreamError: Error, Equatable {
     case malformedFrontmatter(String)
     case missingField(String)
     case writeFailed(String)
+    /// The human confirmation gate refused: the stage's machine predicate is not
+    /// satisfied, so the stage may not advance (the missing evidence item keys).
+    case evidenceMissing([String])
+    /// The card moved under the caller: confirmation was based on a stale stage.
+    case stageChanged(String, String)
+    /// A back edge needs a reason (the trace carries it).
+    case missingReason
 
     /// The stable code the localhost API returns (align with /api/requirements/*).
     var code: String {
@@ -47,6 +54,9 @@ enum WorkstreamError: Error, Equatable {
         case .malformedFrontmatter: return "malformed-frontmatter"
         case .missingField: return "missing-field"
         case .writeFailed: return "write-failed"
+        case .evidenceMissing: return "evidence-missing"
+        case .stageChanged: return "stage-changed"
+        case .missingReason: return "missing-reason"
         }
     }
 
@@ -55,6 +65,8 @@ enum WorkstreamError: Error, Equatable {
         switch self {
         case .unknownWorkstream: return 404
         case .writeFailed: return 500
+        case .evidenceMissing: return 409
+        case .stageChanged: return 409
         default: return 400
         }
     }
@@ -71,6 +83,11 @@ enum WorkstreamError: Error, Equatable {
         case .malformedFrontmatter(let why): return "malformed frontmatter: " + why
         case .missingField(let f): return "missing required field: " + f
         case .writeFailed(let why): return "write failed: " + why
+        case .evidenceMissing(let keys):
+            return "stage evidence is incomplete: " + keys.joined(separator: ", ")
+        case .stageChanged(let expected, let actual):
+            return "workstream stage changed: expected " + expected + ", now " + actual
+        case .missingReason: return "a reason is required to send the stage back"
         }
     }
 }

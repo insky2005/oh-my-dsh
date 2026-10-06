@@ -101,11 +101,19 @@ struct WSStageCardModel: Equatable {
     var tasks: [WSTaskCardModel]
     var evidence: [WSLine]
     var isExpanded: Bool
+    /// Gate state for the current stage; nil on the other four stage cards.
+    var gateState: WSStageGateState? = nil
+    /// L10n keys of the machine evidence still missing (a blocked gate).
+    var missingEvidenceKeys: [String] = []
 
     var labelKey: String { wsStageLabelKey(stage) }
     var tone: WSTone { wsStageTone(stage) }
     var hasQueue: Bool { !queueIDs.isEmpty }
     var taskCount: Int { tasks.count }
+    /// The stage queue finished with evidence and waits for a person (R10).
+    var awaitingConfirmation: Bool { isCurrent && gateState == .awaitingConfirmation }
+    /// The stage queue finished but the machine predicate fails: cannot advance.
+    var evidenceMissing: Bool { isCurrent && gateState == .evidenceMissing }
 }
 
 // MARK: - Primary card (workstream)
@@ -129,17 +137,20 @@ struct WSCardModel: Equatable {
     /// WorkstreamStage.allCases order). A queue lands in its own stage; a legacy
     /// queue with no stage stays read-compatible by falling back to the card's
     /// current stage (design §9.1).
-    static func build(from card: WorkstreamCard) -> WSCardModel {
+    static func build(from card: WorkstreamCard, gate: WSStageGate? = nil) -> WSCardModel {
         let stages = WorkstreamStage.allCases.map { stage -> WSStageCardModel in
             let queueIDs = card.queues
                 .filter { effectiveStage($0, fallback: card.stage) == stage }
                 .map { $0.id }
+            let stageGate = (gate?.stage == stage) ? gate : nil
             return WSStageCardModel(stage: stage,
                                     isCurrent: stage == card.stage,
                                     queueIDs: queueIDs,
                                     tasks: [],
                                     evidence: evidence(for: stage, card: card),
-                                    isExpanded: false)
+                                    isExpanded: false,
+                                    gateState: stageGate?.state,
+                                    missingEvidenceKeys: stageGate?.evidence.missingKeys ?? [])
         }
         var meta: [WSLine] = []
         if let requirement = card.requirement, !requirement.isEmpty {
@@ -281,9 +292,10 @@ struct WSBoardModel: Equatable {
                                        filter: filter)
     }
 
-    static func build(snapshot: WorkstreamsSnapshot, filter: WSStageFilter) -> WSBoardModel {
+    static func build(snapshot: WorkstreamsSnapshot, filter: WSStageFilter,
+                      gates: [String: WSStageGate] = [:]) -> WSBoardModel {
         let selected = filter.filter(snapshot.workstreams)
-        return WSBoardModel(cards: selected.map(WSCardModel.build(from:)),
+        return WSBoardModel(cards: selected.map { WSCardModel.build(from: $0, gate: gates[$0.id]) },
                             filter: filter,
                             hasWorkspace: !snapshot.workspace.isEmpty,
                             totalCount: snapshot.workstreams.count)
