@@ -396,9 +396,10 @@ eq(emptyComposer.attemptedSubmit().problemKey, "requirements.newProblem", "prist
 
 section("help")
 let helpSpec = RequirementsHelpSpec.build()
-eq(helpSpec.sections.count, 2, "help has two sections (create / breakdown)")
+eq(helpSpec.sections.count, 3, "help has three sections (create / refine / breakdown)")
 eq(helpSpec.sections[0].lineKeys, ["requirements.help.create.panel", "requirements.help.create.chat"], "create covers panel + conversation")
-eq(helpSpec.sections[1].lineKeys, ["requirements.help.breakdown.panel", "requirements.help.breakdown.chat"], "breakdown covers panel + conversation")
+eq(helpSpec.sections[1].lineKeys, ["requirements.help.refine.panel", "requirements.help.refine.chat"], "refine covers panel + conversation")
+eq(helpSpec.sections[2].lineKeys, ["requirements.help.breakdown.panel", "requirements.help.breakdown.chat"], "breakdown covers panel + conversation")
 eq(helpSpec.titleKey, "requirements.help.title", "help title key")
 eq(helpSpec.introKey, "requirements.help.intro", "help intro key")
 check(helpSpec.sections.allSatisfy {
@@ -480,6 +481,22 @@ eq(reject.reason, "粒度太粗", "the reason is trimmed")
 eq(reject.canSubmit, true, "a non-empty reason can submit")
 eq(reject.typed(content: "x").submitKey, "requirements.reject.submit", "reject submit key")
 eq(reject.typed(content: "x").contentCaptionKey, "requirements.reject.content", "reject content caption key")
+
+section("refine action visibility")
+let refineCard = RequirementCard(id: "REQ-900", title: "细化", state: nil, source: "",
+                                 created: "", updated: "", path: "", body: "")
+eq(PoolItem(requirement: refineCard, effectiveState: .candidate, children: [], proposal: nil).canRefine,
+   true, "an un-split candidate offers 细化")
+eq(PoolItem(requirement: refineCard, effectiveState: .discarded, children: [], proposal: nil).canRefine,
+   false, "a discarded requirement hides 细化")
+let refineWS = WorkstreamSummary(id: "WS-900", title: "t", requirement: "REQ-900",
+                                 stage: "planning", outcome: nil, path: "")
+eq(PoolItem(requirement: refineCard, effectiveState: .split, children: [refineWS], proposal: nil).canRefine,
+   false, "a split requirement hides 细化 (frozen like 编辑)")
+let refineProposal = BreakdownItem(title: "a", boundary: "b", dependsOn: [])
+eq(PoolItem(requirement: refineCard, effectiveState: .evaluating, children: [],
+            proposal: [refineProposal]).canRefine,
+   true, "a pending proposal does not hide 细化")
 
 section("result")
 print("requirements model: " + String(checks - failures) + "/" + String(checks) + " passed")

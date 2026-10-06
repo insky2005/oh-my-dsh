@@ -276,7 +276,7 @@ updated: <today>
 - **标题行**：折叠箭头 → 类型 glyph（`tray.full`，tertiary 13×13）→ 标题 13pt semibold（颜色取 `TaskBadgeView.bodyColor(tone)`）→ `[需求]` 中性徽标 → `[N 个事项]` 中性计数徽标（有子事项时）→ spacer → **有效状态徽标**（`evaluating` 用 filled accent）→ 动作。
   - 状态**只在徽标里**，不染边框；唯一的强调是"活动态"（running）。
 - **人工状态徽标即下拉 + 派生状态独立徽标**：`RequirementStateControl` = 人工状态 `TaskBadgeView` 药丸 + 尾部 **`chevron.down` 指示符号**（hover 手型，tooltip 显示当前人工状态），点击弹出人工状态菜单；菜单只列**可达**状态（隐藏当前态；`discarded` 为**单向门**，丢弃后无可选项、徽标只读）；可达集同时受**派生状态**约束（见 §3.3.1）：`split` 隐藏 `candidate`、`closed` 无人工可切目标。派生状态（`split` / `closed`）作为**独立只读徽标**显示在人工徽标左侧（tooltip「派生状态」），二者互不覆盖——已拆解的需求仍可携带人工判断（如 挂起 + 已拆分）。
-- **动作**（右对齐）：`拆解`（文本按钮 + **`square.split.2x2` 图标**，主操作；**仅在尚未拆解时出现**——无子事项、无待确认提案、且非 `discarded`，否则隐藏）、`编辑`（`pencil` 图标；**已拆解事项后隐藏**——需求被冻结）。次要动作用 `CustomIconButton(size: 22)`（hover 走 `PanelControl` highlight 档）。
+- **动作**（右对齐）：`细化`（文本按钮 + **`wand.and.stars` 图标**；**未拆解且未丢弃时出现**，与「编辑」同一冻结规则；点击后**已有绑定会话就复用它、没有才新建**一条「细化 REQ-xxx」会话，复用「创建并细化」同一套 `refinementPrompt` / `startRequirementRefinementSession`）、`拆解`（文本按钮 + **`square.split.2x2` 图标**，主操作；**仅在尚未拆解时出现**——无子事项、无待确认提案、且非 `discarded`，否则隐藏）、`编辑`（`pencil` 图标；**已拆解事项后隐藏**——需求被冻结）。次要动作用 `CustomIconButton(size: 22)`（hover 走 `PanelControl` highlight 档）。
 - **诉求预览**：`## 诉求` 正文，11pt secondary；**收起 3 行、展开不限**，tooltip 全文。
 - **meta**：来源 · 更新日期 · `待确认拆解 N 项`（10pt tertiary）。
 - **每张卡各自折叠**（层级：需求卡 → 事项卡 / 提案卡），每张卡的 `chevron` 都只是 `taskRowGlyph` **指示器（不是按钮）**，点击由它**自己的标题行**接管（`RequirementHeaderView`），不会误触发父卡：
@@ -299,7 +299,7 @@ updated: <today>
 
 照任务面板的 `TaskFormSheetView` / `TaskFormSheetHostView`（`TaskInlineForms.swift`）：**一个输入框**（`NSTextView` 包在 `TaskFieldBox` 里），**首行 = 标题、其余行 = 诉求**（只有一行时该行同时是标题与诉求；`createRequirement` 对空诉求回退标题）；`⌘↩` 提交、`Esc` 取消，标题为空时提交按钮禁用、尝试提交后给出 `requirements.newProblem`。视图模型 `RequirementComposerModel`（纯 Foundation，`RequirementsUI.swift`）可无头断言。写失败（无标题 / 无工作区）时抽屉保持打开，原因进状态行。
 
-抽屉底部是 `[创建] [创建并细化] [取消]`：**普通「创建」只写卡**；**「创建并细化」**才为它起一条「细化」会话（面板建的需求没有对话来源）。main 在活动工作区 `session/create` → `session/rename`（「细化 REQ-xxx 标题」）→ `session/prompt`（[`refinementPrompt`]，要求只讨论 / 只澄清、不改代码，改卡片走 `/update`）；成功即把卡片绑定到该会话并切过去，会话创建失败回退当前会话，再失败只留卡片并提示。这样面板创建的需求同样满足「同一需求同一会话」。
+抽屉底部是 `[创建] [创建并细化] [取消]`：**普通「创建」只写卡**；**「创建并细化」**才为它起一条「细化」会话（面板建的需求没有对话来源）。main 在活动工作区按解析出的 `workspaceId` 调 `session/create`（会话归到该工作区、不落「未分组」）→ `session/rename`（「细化 REQ-xxx 标题」）→ `session/prompt`（[`refinementPrompt`]，要求只讨论 / 只澄清、不改代码，改卡片走 `/update`）；成功即把卡片绑定到该会话并切过去，会话创建失败回退当前会话，再失败只留卡片并提示。这样面板创建的需求同样满足「同一需求同一会话」。普通「创建」落下的卡（以及 agent 经 `requirement-pool` 落的卡）之后可在卡片上点**「细化」**补起这条会话：**已绑定的会话优先复用**，没有 / 发送失败才新起一条（可见性由 `PoolItem.canRefine` 决定）。
 
 ### 5.5 驳回原因抽屉
 
@@ -315,7 +315,7 @@ updated: <today>
 
 面板只在四个环节往对话里发提示词；本节的文本是**唯一对照**——`refinementPrompt` / `breakdownPrompt` / `requirements.notify.*` 措辞再变，必须同步这里。目标会话见 §6。
 
-**① 创建并细化**（`RequirementsCore.refinementPrompt`；新建会话，失败回退当前会话）
+**① 创建并细化 / 卡片「细化」**（`RequirementsCore.refinementPrompt`；「创建并细化」新建会话、失败回退当前会话；卡片「细化」优先复用该需求已绑定的会话，没有 / 发送失败才新建）
 
 ```text
 REQ-000008「标题」@.dsh/requirements/REQ-000008.md
@@ -466,6 +466,7 @@ REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已驳回�
 | `requirements.state.closed` | 已关闭 | Closed |
 | `requirements.set.state` | 状态 | State |
 | `requirements.breakdown` | 拆解 | Break down |
+| `requirements.refine` | 细化 | Refine |
 | `requirements.breakdownPromptCopied` | 已复制拆解提示词；在会话里运行 /requirement-pool 拆解 %@ | Breakdown prompt copied; run /requirement-pool breakdown %@ in a session |
 | `requirements.breakdownSent` | 已把拆解提示词发送到对话 | Breakdown prompt sent to the conversation |
 | `requirements.breakdownNoSession` | 当前没有打开的对话，已复制提示词 | No conversation is open; the prompt was copied |
@@ -498,6 +499,9 @@ REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已驳回�
 | `requirements.help.create.heading` | 创建需求 | Create a requirement |
 | `requirements.help.create.panel` | 在面板：点工具栏右侧的「＋」，在抽屉的首行写标题、其余行写诉求，按 ⌘↩ 或点「创建」。 | In the panel: click + on the right of the toolbar, write the title on the first line and the statement on the rest, then press Command-Return or click Create. |
 | `requirements.help.create.chat` | 在对话：输入「把这个想法落成需求」，或运行 /requirement-pool。 | In a conversation: type “capture this idea as a requirement”, or run /requirement-pool. |
+| `requirements.help.refine.heading` | 细化需求 | Refine a requirement |
+| `requirements.help.refine.panel` | 在面板：点卡片「细化」——已有细化会话就回到它，没有就新起一条，让 agent 澄清目标、边界、验收标准。 | In the panel: click Refine on a card — it resumes the requirement's existing session, or starts a new one, so the agent can clarify goals, boundaries and acceptance criteria. |
+| `requirements.help.refine.chat` | 在对话：直接和 agent 讨论这条需求即可；改卡走 POST /api/requirements/update。 | In a conversation: just discuss the requirement with the agent; card edits go through POST /api/requirements/update. |
 | `requirements.help.breakdown.heading` | 拆解事项 | Break down a requirement |
 | `requirements.help.breakdown.panel` | 在面板：点卡片「拆解」，提示词会发送到创建该需求的会话（没有则当前对话）；方案回来后点「确认拆解」或「驳回」。 | In the panel: click Break down and the prompt is sent to the session that created the requirement (or the current one); when a proposal appears, click Confirm or Reject. |
 | `requirements.help.breakdown.chat` | 在对话：运行 /requirement-pool 拆解 <REQ-id>。 | In a conversation: run /requirement-pool breakdown <REQ-id>. |
@@ -518,6 +522,7 @@ REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已驳回�
 ## 11. 手工验收清单
 
 - [ ] ⌥⌘I 打开需求池；活动栏图标高亮；再次按下收起；
+- [ ] 未拆解的卡片出现「细化」；点它→已有绑定会话则回到该会话，没有则新建「细化 REQ-xxx」；已拆解 / 丢弃后隐藏；
 - [ ] 「＋」新建需求 → 盘上出现 `REQ-<n>.md`（`state: candidate`），面板出现卡片；
 - [ ] 对现有 REQ-001…007 的展示：有效状态与 `node .dsh/tools/derive-status.mjs` 一致（除未缓存 outcome 的差异）；
 - [ ] 对某需求运行 `/requirement-pool 拆解 REQ-xxx` → 面板出现「待确认拆解」；

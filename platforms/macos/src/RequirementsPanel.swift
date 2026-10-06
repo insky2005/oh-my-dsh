@@ -76,6 +76,7 @@ final class RequirementsRootView: NSView {
 final class RequirementCardView: NSView {
 
     var onSetState: ((String) -> Void)?
+    var onRefine: (() -> Void)?
     var onBreakdown: (() -> Void)?
     var onConfirm: (() -> Void)?
     var onReject: (() -> Void)?
@@ -172,6 +173,22 @@ final class RequirementCardView: NSView {
         breakdownButton.imagePosition = .imageLeading
         breakdownButton.imageScaling = .scaleProportionallyDown
         breakdownButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // 「细化」: start (or resume) a refinement conversation for a card that was
+        // created without one (plain「创建」or an agent-captured card). Same freeze
+        // rule as「编辑」— once split there is nothing left to refine — and out once
+        // discarded; the model keeps the rule (PoolItem.canRefine) so it is testable.
+        let refineButton = NSButton(title: L10n.tr("requirements.refine"), target: self, action: #selector(refineTapped(_:)))
+        refineButton.bezelStyle = .rounded
+        refineButton.controlSize = .small
+        refineButton.font = .systemFont(ofSize: 11)
+        refineButton.toolTip = L10n.tr("requirements.refine")
+        refineButton.image = NSImage(systemSymbolName: "wand.and.stars",
+                                     accessibilityDescription: L10n.tr("requirements.refine"))
+        refineButton.imagePosition = .imageLeading
+        refineButton.imageScaling = .scaleProportionallyDown
+        refineButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let showsRefine = item.canRefine
+
         // Already broken down (children), a proposal is pending, or the requirement
         // is discarded: there is nothing left to 「拆解」 — hide the action.
         let showsBreakdown = item.children.isEmpty
@@ -193,6 +210,7 @@ final class RequirementCardView: NSView {
         titleViews.append(spacer)
         if let derivedBadge = derivedBadge { titleViews.append(derivedBadge) }
         titleViews.append(stateControl)
+        if showsRefine { titleViews.append(refineButton) }
         if showsBreakdown { titleViews.append(breakdownButton) }
         if showsEdit { titleViews.append(editButton) }
         let titleRow = NSStackView(views: titleViews)
@@ -439,6 +457,7 @@ final class RequirementCardView: NSView {
     }
 
     @objc private func breakdownTapped(_ sender: Any?) { onBreakdown?() }
+    @objc private func refineTapped(_ sender: Any?) { onRefine?() }
     @objc private func confirmTapped(_ sender: Any?) { onConfirm?() }
     @objc private func rejectTapped(_ sender: Any?) { onReject?() }
 }
@@ -670,9 +689,11 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     /// copying the prompt to the clipboard.
     /// (id, title, source session) — title is needed by the handoff prompt.
     var onBreakdown: ((String, String, String?) -> Void)?
-    /// The user pressed「创建并细化」; main.swift starts a refinement session for
-    /// the new card and binds it to that session (id, title).
-    var onRefineRequested: ((String, String) -> Void)?
+    /// The user pressed「创建并细化」(created: true) or a card's「细化」
+    /// (created: false); main.swift resumes the requirement's bound session when it
+    /// has one — otherwise starts a new one — and binds the card to it
+    /// (id, title, created now).
+    var onRefineRequested: ((String, String, Bool) -> Void)?
     /// Human confirmed (true) / rejected (false) a proposal in the panel; the
     /// created workstream ids come along so main.swift can write the outcome back
     /// to the requirement's session.
@@ -788,6 +809,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
             let id = item.requirement.id
             card.onSetState = { [weak self] state in self?.setState(id: id, state: state) }
             card.onEdit = { [weak self] in self?.openComposer(id: id) }
+            card.onRefine = { [weak self] in self?.refineRequested(id: id) }
             card.onBreakdown = { [weak self] in self?.breakdownRequested(id: id) }
             card.onConfirm = { [weak self] in self?.confirmBreakdown(id: id) }
             card.onReject = { [weak self] in self?.openRejectDrawer(id: id) }
@@ -893,7 +915,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
         case .create:
             if let card = createRequirement(title: composer.title, body: composer.body) {
                 // Only「创建并细化」starts a session; plain「创建」just writes the card.
-                if refine { onRefineRequested?(card.id, card.title) }
+                if refine { onRefineRequested?(card.id, card.title, true) }
                 saved = true
             } else {
                 saved = false
@@ -1032,6 +1054,17 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
             return true
         }
         return copyBreakdownPrompt(id: id)
+    }
+
+    /// The card's「细化」action: reuse the composer's「创建并细化」handoff — main.swift
+    /// resumes the requirement's bound session when it has one, otherwise starts a new
+    /// one — so a card created without refinement can still start it later.
+    @discardableResult
+    func refineRequested(id: String) -> Bool {
+        guard let onRefineRequested = onRefineRequested else { return false }
+        let title = snapshot.requirements.first { $0.requirement.id == id }?.requirement.title ?? ""
+        onRefineRequested(id, title, false)
+        return true
     }
 
     /// Copy the breakdown handoff prompt (fallback / manual path).
