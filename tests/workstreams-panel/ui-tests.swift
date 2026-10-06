@@ -329,6 +329,47 @@ let splitBlocked = WSCardModel.build(from: card(id: "WS-000202", stage: .task,
 eq(wsFirstUnprocessedStage(splitBlocked), .task,
    "a blocked current stage is the first unprocessed")
 
+// MARK: - Stage task composer (UX: the 创建任务 drawer)
+
+section("stage task composer: one box, first line = title, the rest = content")
+let composer = WSStageTaskComposerModel.build(stage: .design)
+eq(composer.stage, .design, "the composer starts on the requested stage")
+eq(composer.content, "", "the box starts empty")
+eq(composer.title, "", "an empty box has no title")
+eq(composer.body, "", "an empty box has no content")
+eq(composer.canSubmit, false, "an empty draft cannot be submitted")
+eq(composer.problemKey, nil, "no hint before a submit attempt")
+eq(composer.attemptedSubmit().problemKey, "workstreams.task.create.empty",
+   "the attempted empty draft explains the missing title")
+eq(composer.headingKey, "workstreams.task.create.title", "heading key")
+eq(composer.submitKey, "workstreams.task.create.submit", "submit key")
+eq(composer.infoKey, "workstreams.task.create.message", "info key")
+
+let typed = composer.typed(content: "  让面板能创建任务  \n第一行内容\n第二行内容\n")
+eq(typed.canSubmit, true, "a title makes the draft submittable")
+eq(typed.title, "让面板能创建任务", "the first line is the trimmed title")
+eq(typed.body, "第一行内容\n第二行内容", "the remaining lines are the trimmed content")
+eq(typed.attemptedSubmit().problemKey, nil, "a valid draft has no problem hint")
+
+let single = composer.typed(content: "只有一行")
+eq(single.canSubmit, true, "a one-line draft is a complete task")
+eq(single.title, "只有一行", "the single line is the title")
+eq(single.body, "", "a one-line draft has no extra content to append")
+
+let blankTitle = composer.typed(content: "   \n正文")
+eq(blankTitle.canSubmit, false, "a whitespace-only first line is not a title")
+eq(blankTitle.typed(stage: .delivery).stage, .delivery, "the stage may be changed on the draft")
+
+section("stage task composer: default stage is the first unprocessed stage")
+eq(WSStageTaskComposerModel.stages.count, 5, "the selector offers five stages")
+eq(WSStageTaskComposerModel.stages,
+   [.planning, .design, .task, .acceptance, .delivery], "the selector is in canonical order")
+let composerCard = WSCardModel.build(from: card(id: "WS-000210", stage: .design))
+eq(WSStageTaskComposerModel.forCard(composerCard).stage, .design,
+   "the drawer defaults to the first unprocessed (current) stage, not index 0")
+eq(WSStageTaskComposerModel.forCard(splitDone).stage, .delivery,
+   "a fully done workstream falls back to its authoritative stage")
+
 // MARK: - Parse round-trip
 
 section("parsed card feeds the card model")

@@ -40,7 +40,7 @@ manual: false
 
 `main.swift` 接线：`RightPanel.workstreams`、活动栏槽位紧邻「需求池」之后、`⌥⌘K` 视图菜单、`DSH_WORKSTREAMS_TEST=1` 自测钩子、`workspaceChanged()`、`onOpenCard`、`serverPortProvider`（dsh RPC 端口）；面板实现 `WorkstreamsAPIDelegate`（含任务 / 队列路由）与阶段门确认 / 退回。
 
-**队列引擎已接线**（2026-10-06）：面板按工作区各持一个 `WorkstreamsRunner`，3s `step()` 定时器推进、工作区切换重建、首次加载对账（reconcile 一次）；主卡「启动事项」（面板唯一启动入口）、阶段卡「＋创建任务」，三级任务卡显示状态 / 会话；阶段门读 runner 的实时板。
+**队列引擎已接线**（2026-10-06）：面板按工作区各持一个 `WorkstreamsRunner`，3s `step()` 定时器推进、工作区切换重建、首次加载对账（reconcile 一次）；主卡「启动事项」（面板唯一启动入口）、主卡「创建任务」抽屉（原阶段卡「＋创建任务」，UX 收口），三级任务卡显示状态 / 会话；阶段门读 runner 的实时板。
 
 **交付接线与事实写路由**（2026-10-07）：交付模块 `WorkstreamsDelivery` 已接入面板——阶段卡「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给明确原因（`WSDeliveryBlocker`），成功则 `WorkstreamsRunner.enqueueDelivery` 建 delivery 阶段任务并只启动该阶段；新增 `POST /api/workstreams/covered`（`paths` + `base` / `head` 事实）与 `POST /api/workstreams/delivery`（`pr` / `url` 事实）；**`delivery.outcome` 是派生缓存**，API 拒绝手写（`outcome-derived`）；阶段提示词与技能均已改指事项面板自有 API。
 
@@ -54,6 +54,8 @@ manual: false
 
 **默认展开首个未处理事项卡**（2026-10-07，UX）：面板加载 / 重绘时只展开首个 `runState != 完成`（A13 派生态：未开始 / 进行中 / 待确认 / 阻塞）的事项卡，其余收起；全部完成时不展开任何卡。纯谓词 `wsDefaultExpandedID` / `wsApplyingDefaultExpansion`（`WorkstreamsUI.swift`）由 `WSBoardModel.build` 每次构建时应用（在阶段筛选后的可见列表内取首个未处理）。
 
+**创建任务抽屉**（2026-10-07，UX）：阶段卡的「＋创建任务」按钮与 `onCreateStageTask` / `workstreams.stage.createTask` 移除，创建入口收口到**主卡「创建任务」**——打开复用 `WSInlineForms` 的表单抽屉（`WSStageTaskComposerView` + `WSFormSheetHostView`）：**阶段选择器**（五阶段，默认 `wsFirstUnprocessedStage`）+ 一个输入框（**首行 = 标题、其余行 = 内容**，`WSStageTaskComposerModel`；⌘↩ 提交、Esc 取消、标题为空禁用）。提交走同一 `createStageQueue` 路径（`WorkstreamHandoff.stageTask` 注入该阶段交接提示词，输入内容附后），建**等待态**任务、追加到事项唯一队列、**不启动**。
+
 ## 测试
 
-`tests/workstreams-panel/run.sh`（**1042 项**）：model 93 + API 266 + ui 174 + runner 132 + prompt 190 + delivery 127 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **事项会话绑定与拆分任务（首个未处理阶段）** / **focus 通道（面板高亮滚动 + API focus + 需求池跳转）** / **对话内阶段推进（确认 → 向主场会话发下一阶段提示词）** / **默认展开（首个未处理卡）** / **启动收口（阶段卡无启动按钮 + 事项启动按阶段 canonical 顺序）** 等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。
+`tests/workstreams-panel/run.sh`（**1070 项**）：model 93 + API 266 + ui 197 + runner 132 + prompt 195 + delivery 127 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **事项会话绑定与拆分任务（首个未处理阶段）** / **focus 通道（面板高亮滚动 + API focus + 需求池跳转）** / **对话内阶段推进（确认 → 向主场会话发下一阶段提示词）** / **默认展开（首个未处理卡）** / **启动收口（阶段卡无启动按钮 + 事项启动按阶段 canonical 顺序）** / **创建任务抽屉（主卡按钮 + 阶段选择 + 首行标题·其余内容）** 等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。

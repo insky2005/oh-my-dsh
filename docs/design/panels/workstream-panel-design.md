@@ -118,6 +118,7 @@
 - **拆分 ≠ 启动**：`task/create` 只建**等待态**任务；**建完停下等人确认拆分**，人确认后才 `queue/start` 起跑。
 - **确认 ≠ 启动**：确认回答「这个阶段做完没有」（前移 `stage`，并触发下一阶段提示词，见 §5 / §6.1）；启动回答「把任务跑起来」（**不改 `stage`**）。二者可以先后发生，但不能互相替代。
 - **技能入口语境**：对话里说「把这个事项拆成任务」→ `task/create`（等待态，停在等人）；说「启动这个阶段 / 启动这个事项」→ `queue/start`（阶段级 / 事项级）；说「确认这个阶段」→ **请人去面板点**，agent 不代劳。
+- **面板直建任务（UX，2026-10-07）**：事项主卡「**创建任务**」打开 `WSInlineForms` 表单抽屉——**阶段选择器**（五阶段，默认该事项**首个未处理阶段**，与「拆分任务」同源 A13 派生态）+ **一个输入框**（首行 = 标题，其余行 = 内容）。⌘↩ 提交、Esc 取消、标题为空时禁用提交。提交走与 agent **同一条 `task/create` 路径**：注入该阶段交接提示词（面板输入的内容附在提示词之后），建**等待态**任务、追加到该事项唯一队列、**不启动**。阶段二级卡的「＋创建任务」按钮已移除（创建入口收口到主卡）。
 
 **默认展开首个未处理事项**（UX）：面板**加载 / 重绘**只展开**首个 `runState != 完成` 的事项卡**（`wsDefaultExpandedID` / `wsApplyingDefaultExpansion`，在 `WSBoardModel.build` 每次构建时应用；阶段筛选后的可见列表内取首个），其余收起，**全部完成不展开任何卡**。「拆分任务」的目标阶段同样取**首个未处理阶段**——两处都以 A13 派生态为准，不碰权威 `stage`。
 
@@ -228,7 +229,7 @@ D10 之所以是伪问题，源于把两个正交的轴混为一谈：
 1. 本文件已**定稿并落地**（2026-10-06）：上游文档已同步（见 §7），面板 / 模型 / API / 队列引擎 / 阶段门 / 交付 / 技能均已实现；
 2. **已落地**：`WorkstreamsCore` / `WorkstreamsUI` / `WorkstreamsPanel` / `WorkstreamsAPI` / `WorkstreamsQueues`+`WorkstreamsRunner` / `WorkstreamsStageGate` / `WorkstreamsPrompts` / `WorkstreamsDelivery` / `WSCardView`+`WSInlineForms`，内置技能 `workstream-panel`；用户说明见 `docs/usage/panels.md` 与 `CHANGELOG.md`；**模型修订（A9 / A12）已落地**：`WS.queues` = `[q-...]`（0..1，兼容旧 `[{id, stage}]` 读入取 id），任务带 `workstreamId` + `stage`；
 3. **接线进展**：
-   - **已落地（2026-10-06）**：面板实例化并驱动 `WorkstreamsRunner`（3s `step()` 定时器、工作区切换重建、`serverPortProvider` 注入 dsh RPC）；`/api/workstreams/task/create` / `task/list` / `queue/start` / `queue/pause`；主卡「启动事项」+ 阶段卡「＋创建任务」；三级任务卡展示状态 / 会话；
+   - **已落地（2026-10-06）**：面板实例化并驱动 `WorkstreamsRunner`（3s `step()` 定时器、工作区切换重建、`serverPortProvider` 注入 dsh RPC）；`/api/workstreams/task/create` / `task/list` / `queue/start` / `queue/pause`；主卡「启动事项」+ 主卡「创建任务」抽屉（原阶段卡「＋创建任务」，UX 收口）；三级任务卡展示状态 / 会话；
    - **已落地**：一事项一队列——`createStageQueue` 追加到该事项的队列、任务带 `stage`；`queue/start` 带 `stage` = 阶段级启动（只跑该阶段任务，跑完暂停队列）；
    - **已落地（2026-10-06）**：任务运行态 → 阶段运行态 → 事项运行态回写（A13 / D18）——纯模型 `WorkstreamsRunState.swift`（`WSRunState.stage` / `WSRunState.workstream`）从**队列状态 + 任务状态**（外加 `## 阶段确认` 审计痕迹判回边）派生**未开始 / 进行中 / 待确认 / 完成 / 阻塞**，主卡与阶段卡显示徽标；**权威 `stage` 一字不改**（仍只由 `confirmStage` 推进）。阶段门读 runner 的实时板，而非磁盘快照；
    - **已落地（2026-10-07）**：阶段提示词去掉 `/task-todo`、改指事项面板自有 API（`task/create` / `queue/start`），技能 `workstream-panel` 同步；
@@ -241,3 +242,4 @@ D10 之所以是伪问题，源于把两个正交的轴混为一谈：
    - **已落地（2026-10-07）**：**「拆分任务」按钮（目标 = 首个未处理阶段，UX）**——主卡动作由旧的「在会话中处理」更名并改语义：解析首个 `runState != 完成` 的阶段（纯谓词 `wsFirstUnprocessedStage`），经 `WorkstreamHandoff.splitPrompt` 把该阶段的拆解提示词发进主场会话（复用 / 新建并绑定 / 回退当前会话沿用 A16 的 `sessionTarget`）；提示词点名事项 + 阶段，要求 `POST /api/workstreams/task/create` 建**等待态**、带该 `stage` 的任务，**建完停下等人确认、不自签、不启动**。阶段卡去掉重复入口（只保留确认 / 退回、＋创建任务、交付）。prompt 测试覆盖各阶段拆分提示词与「执行阶段拆分 = 通用 (stage, action) 构造」。
    - **已落地（2026-10-07）**：**三件事固化进设计**——「**拆分任务 = 会话提示词（按首个未处理阶段）**」「**确认 = 阶段上的人工门**」「**启动 = 阶段上的「启动阶段」/ 技能 `queue/start`**」写成 **§5.1**，并在 A3 / A14 / D19 与 §4 / §6 交叉明确；补「默认只展开首个未处理事项」规则。`workstream-handoff-prompt-design.md` 补拆分提示词定位与措辞；`workstream-panel` 技能补「对话中发起拆分 / 启动」入口与路由语境。
    - **已落地（2026-10-07）**：**启动收口 + 阶段 canonical 顺序（UX）**——阶段卡的「启动阶段」按钮与 `onStartStage` / `startStage` 入口移除（连 `workstreams.stage.start` / `started` L10n 删除），**事项卡「启动事项」成为面板唯一启动入口**；`WSBoard.nextStartable` / `firstQueued` 在事项级（`stage == nil`）改为按**阶段 canonical 顺序**（规划 → 设计 → 执行 → 验收 → 交付）再按入队序取任务，不再纯按 `taskIds` 插入序（阶段级 `stage` 过滤仍按入队序）。runner 测试覆盖「跨阶段交错建任务 → 按阶段顺序执行」与「同阶段内仍按入队顺序」；技能 / 用户说明同步。
+    - **已落地（2026-10-07）**：**创建任务移到事项卡抽屉（UX）**——阶段卡的「＋创建任务」按钮与 `onCreateStageTask` / `workstreams.stage.createTask` 移除；主卡新增「创建任务」按钮，打开复用 `WSInlineForms` 的表单抽屉（`WSStageTaskComposerView` + `WSFormSheetHostView`）——**阶段选择器**（五阶段，默认 `wsFirstUnprocessedStage`）+ 一个输入框（首行 = 标题、其余行 = 内容，`WSStageTaskComposerModel`）。提交走同一 `createStageQueue` 路径（`WorkstreamHandoff.stageTask` 注入该阶段交接提示词，内容附后），建**等待态**任务、追加到事项唯一队列、**不启动**。UI 测试覆盖标题 / 内容拆分与默认阶段；提示词 / runner / 面板 / L10n 同步。

@@ -149,14 +149,21 @@ enum WorkstreamHandoff {
     }
 
     /// 面板建阶段队列任务：提示词由壳层生成、注入任务 body（design §2 原则 1/3）。
+    /// 面板「创建任务」抽屉允许额外输入一段内容（首行是标题、其余行是内容）：内容
+    /// 非空时附在提示词之后，提示词仍是 body 的开头（runner 靠它识别交接提示词）。
     static func stageTask(title: String,
+                          content: String = "",
                           card: WorkstreamCard,
                           action: WSStageAction,
                           workspace: String = "",
                           repoName: String? = nil) -> WSTaskDraft {
-        WSTaskDraft(title: title,
-                    body: prompt(card: card, action: action,
-                                 workspace: workspace, repoName: repoName))
+        var body = prompt(card: card, action: action,
+                          workspace: workspace, repoName: repoName)
+        let extra = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !extra.isEmpty {
+            body += "\n\n任务内容：\n" + extra
+        }
+        return WSTaskDraft(title: title, body: body)
     }
 
     /// 把阶段提示词注入一条已存在的任务 body（补任务 / 重建阶段队列时）。

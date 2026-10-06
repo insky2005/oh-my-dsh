@@ -562,10 +562,13 @@ final class WorkstreamsRunner {
     func createStageQueue(card: WorkstreamCard, stage: WorkstreamStage,
                           workspace: String = "",
                           titles: [String],
+                          contents: [String] = [],
                           action: WSStageAction? = nil) -> (queue: WSQueue, created: [WSTaskItem]) {
         let chosen = action ?? WSStageAction.defaultAction(for: stage)
-        let drafts = titles.map { title in
-            WorkstreamHandoff.stageTask(title: title, card: card, action: chosen,
+        let drafts = titles.enumerated().map { index, title in
+            WorkstreamHandoff.stageTask(title: title,
+                                        content: index < contents.count ? contents[index] : "",
+                                        card: card, action: chosen,
                                         workspace: workspace)
         }
         return appendStageTasks(card: card, stage: stage, drafts: drafts)

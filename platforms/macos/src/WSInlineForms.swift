@@ -501,6 +501,203 @@ final class WSComposerView: WSFormCardView, NSTextViewDelegate {
     }
 }
 
+// MARK: - 新建阶段任务（事项面板「创建任务」抽屉）
+
+/// The workstream panel's 「创建任务」form: a stage selector (the five stages,
+/// defaulting to the workstream's first unprocessed stage) plus ONE box whose
+/// first line is the task title and whose remaining lines are the task content —
+/// the same one-box grammar as WSComposerView. ⌘↩ submits, Esc closes, and the
+/// submit button stays disabled until the title is there.
+///
+/// The form only builds a waiting-state task: the panel appends it to the
+/// workstream's queue through the same `task/create` path and never starts it
+/// (the workstream card's 「启动事项」 is the panel's single start entry).
+final class WSStageTaskComposerView: WSFormCardView, NSTextViewDelegate {
+
+    private(set) var model: WSStageTaskComposerModel
+
+    /// Submit the (valid) draft.
+    var onSubmit: ((WSStageTaskComposerModel) -> Void)?
+    /// Close without submitting.
+    var onCancel: (() -> Void)?
+
+    private let heading = NSTextField(labelWithString: "")
+    private let info = NSTextField(wrappingLabelWithString: "")
+    private let stageCaption = WSFormKit.caption()
+    private let contentCaption = WSFormKit.caption()
+    private let closeButton = CustomIconButton(glyph: .close, tooltip: "", size: 22)
+    /// The stage selector: one item per stage, in canonical order. Internal so the
+    /// headless form tests can select a stage.
+    let stagePopup: NSPopUpButton
+    /// The one input surface: first line = title, the lines after it = content.
+    let editor: NSTextView
+    let editorBox: WSFieldBox
+    let editorPlaceholder: NSTextField
+    private var editorBoxHeight: NSLayoutConstraint!
+    private var editorTextHeight: NSLayoutConstraint!
+    let hint: NSTextField
+    let submitButton: NSButton
+    let closeActionButton: NSButton
+
+    init(model: WSStageTaskComposerModel) {
+        self.model = model
+        stagePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        let content = WSFormKit.textArea(model.content)
+        editorBox = content.box
+        editor = content.text
+        editorPlaceholder = content.placeholder
+        editorBoxHeight = content.boxHeight
+        editorTextHeight = content.textHeight
+        hint = WSFormKit.hintLabel()
+        submitButton = WSFormKit.button("", primary: true)
+        closeActionButton = WSFormKit.button("", primary: false)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        editor.delegate = self
+        build()
+        apply(model)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// Put the caret in the box once the card is on screen.
+    func focusEditor() {
+        window?.makeFirstResponder(editor)
+    }
+
+    private var selectedStage: WorkstreamStage {
+        let stages = WSStageTaskComposerModel.stages
+        let index = stagePopup.indexOfSelectedItem
+        guard index >= 0, index < stages.count else { return model.stage }
+        return stages[index]
+    }
+
+    /// Push a model into the (already built) views: labels, texts, stage, values
+    /// and the hint. Also drives the live submit-button state while typing.
+    func apply(_ model: WSStageTaskComposerModel) {
+        self.model = model
+        heading.stringValue = L10n.tr(model.headingKey)
+        info.stringValue = L10n.tr(model.infoKey)
+        stageCaption.stringValue = L10n.tr("workstreams.task.create.stage")
+        contentCaption.stringValue = L10n.tr("workstreams.task.create.content")
+        editorPlaceholder.stringValue = L10n.tr("workstreams.task.create.placeholder")
+        editorPlaceholder.isHidden = !editor.string.isEmpty
+        // Rebuild the selector only when it is out of sync: apply() runs on every
+        // keystroke and must not thrash the popup.
+        let stages = WSStageTaskComposerModel.stages
+        if stagePopup.numberOfItems != stages.count {
+            stagePopup.removeAllItems()
+            stagePopup.addItems(withTitles: stages.map { L10n.tr(wsStageLabelKey($0)) })
+        }
+        if let index = stages.firstIndex(of: model.stage), stagePopup.indexOfSelectedItem != index {
+            stagePopup.selectItem(at: index)
+        }
+        submitButton.title = L10n.tr(model.submitKey)
+        closeActionButton.title = L10n.tr("btn.cancel")
+        closeButton.toolTip = L10n.tr("btn.cancel")
+        submitButton.isEnabled = model.canSubmit
+        WSFormKit.setHint(hint, key: model.problemKey)
+    }
+
+    private func build() {
+        info.font = WSFormKit.captionFont
+        info.textColor = .secondaryLabelColor
+        // Two lines at most: the form's height must stay predictable so the
+        // sheet (and the buttons inside it) always fit a short panel.
+        info.maximumNumberOfLines = 2
+        info.lineBreakMode = .byTruncatingTail
+        info.translatesAutoresizingMaskIntoConstraints = false
+        _ = WSFormKit.requiredHeight(info)
+        stagePopup.translatesAutoresizingMaskIntoConstraints = false
+        stagePopup.target = self
+        stagePopup.action = #selector(stageChanged)
+        closeButton.onAction = { [weak self] in self?.onCancel?() }
+        submitButton.target = self
+        submitButton.action = #selector(submitTapped)
+        closeActionButton.target = self
+        closeActionButton.action = #selector(cancelTapped)
+
+        let headingRow = WSFormKit.headingRow(title: heading, close: closeButton)
+        let stageRow = WSFormKit.row(stageCaption, stagePopup)
+        let contentRow = WSFormKit.row(contentCaption, editorBox)
+        let buttons = WSFormKit.buttonRow([submitButton, closeActionButton])
+        let column = NSStackView(views: [headingRow, info, stageRow, contentRow, hint, buttons])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 8
+        column.translatesAutoresizingMaskIntoConstraints = false
+        // The form's height is what the sheet follows: nothing inside may squash it.
+        _ = WSFormKit.requiredHeight(column)
+        addSubview(column)
+        WSFormKit.stretch([headingRow, info, stageRow, contentRow, hint], to: column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+        ])
+    }
+
+    private var currentDraft: WSStageTaskComposerModel {
+        model.typed(content: editor.string).typed(stage: selectedStage)
+    }
+
+    /// The editor grows with what is typed (the same rule as WSComposerView).
+    private func updateEditorHeight() {
+        let width = editorBox.bounds.width
+        guard width > 1 else { return }
+        let needed = WSFormKit.textHeight(editor.string, width: width)
+        let box = min(WSFormKit.editorMaxHeight, max(WSFormKit.editorHeight, needed))
+        if abs(editorBoxHeight.constant - box) > 0.5 { editorBoxHeight.constant = box }
+        let text = max(box - 8, needed)
+        if abs(editorTextHeight.constant - text) > 0.5 { editorTextHeight.constant = text }
+    }
+
+    func layoutEditor() { updateEditorHeight() }
+
+    /// The submit button's action; internal so the headless tests can press it.
+    @objc func submitTapped() {
+        let typed = currentDraft
+        guard typed.canSubmit else {
+            apply(typed.attemptedSubmit())
+            return
+        }
+        onSubmit?(typed)
+    }
+
+    @objc private func cancelTapped() { onCancel?() }
+
+    /// The stage selector changed: fold it into the model (and keep the hint /
+    /// submit state in sync).
+    @objc private func stageChanged() { apply(currentDraft) }
+
+    // MARK: NSTextViewDelegate
+
+    func textDidChange(_ notification: Notification) {
+        updateEditorHeight()
+        apply(currentDraft)
+    }
+
+    func textDidBeginEditing(_ notification: Notification) { apply(currentDraft) }
+    func textDidEndEditing(_ notification: Notification) { apply(currentDraft) }
+
+    /// A plain Enter stays a NEWLINE — the lines are the task (first one = title,
+    /// the rest = content), so they cannot also mean "submit". ⌘↩ submits and Esc
+    /// closes; the form says so in its info line.
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            onCancel?()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.insertNewline(_:)),
+           NSApp.currentEvent?.modifierFlags.contains(.command) == true {
+            submitTapped()
+            return true
+        }
+        return false
+    }
+}
+
 // MARK: - 新建队列 / 队列设置
 
 /// The inline queue form: 队列名 / 分支 / 基于分支 / 完成后创建 PR.

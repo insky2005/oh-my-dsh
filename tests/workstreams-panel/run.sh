@@ -642,4 +642,59 @@ if ! grep -qF 'WSStore.workstreamSessions(workspace)[card.id]' "$MAIN" \
 fi
 echo "对话内阶段推进 guard ok"
 
+echo "--- 创建任务抽屉 guard (UX: 事项卡抽屉 + 阶段选择 + 首行标题/其余内容) ---"
+# 阶段卡的「＋创建任务」入口与 onCreateStageTask 已移除；创建任务移到事项卡，复用
+# WSInlineForms 的表单抽屉（WSStageTaskComposerView / WSFormSheetHostView）。
+if grep -qE 'onCreateStageTask|workstreams\.stage\.createTask' "$PANEL" "$MAIN"; then
+  echo "FAIL: the stage card must no longer create tasks (onCreateStageTask / workstreams.stage.createTask)" >&2
+  exit 1
+fi
+for needle in 'onCreateTask' 'func createTaskButton()' 'openCreateTask(' \
+              'submitCreateTask(' 'WSStageTaskComposerView' 'WSFormSheetHostView' \
+              'WSStageTaskComposerModel.forCard(' 'contents: [composer.body]'; do
+  if ! grep -qF "$needle" "$PANEL"; then
+    echo "FAIL: WorkstreamsPanel.swift is missing $needle" >&2
+    exit 1
+  fi
+done
+# 抽屉表单：阶段选择器 + 多行输入 + 标题为空禁用 + ⌘↩ / Esc。
+FORMS="$SRC2/WSInlineForms.swift"
+for needle in 'final class WSStageTaskComposerView' 'let stagePopup: NSPopUpButton' \
+              'WSStageTaskComposerModel' 'submitButton.isEnabled = model.canSubmit' \
+              'cancelOperation' 'insertNewline'; do
+  if ! grep -qF "$needle" "$FORMS"; then
+    echo "FAIL: WSInlineForms.swift is missing $needle" >&2
+    exit 1
+  fi
+done
+# 纯视图模型：首行标题 / 其余内容 + 默认首个未处理阶段。
+if ! grep -qF 'struct WSStageTaskComposerModel' "$SRC2/WorkstreamsUI.swift" \
+   || ! grep -qF 'static func forCard(' "$SRC2/WorkstreamsUI.swift" \
+   || ! grep -qF 'wsFirstUnprocessedStage(card) ?? card.stage' "$SRC2/WorkstreamsUI.swift"; then
+  echo "FAIL: WorkstreamsUI.swift is missing the stage task composer model" >&2
+  exit 1
+fi
+# 面板输入的内容附在阶段交接提示词之后（body 仍以提示词开头，runner 靠它识别交接）。
+if ! grep -qF 'content: String = ""' "$PROMPTS" \
+   || ! grep -qF 'contents: [String] = []' "$SRC2/WorkstreamsRunner.swift" \
+   || ! grep -qF '任务内容：' "$PROMPTS"; then
+  echo "FAIL: the stage task prompt/runner must carry the drawer content" >&2
+  exit 1
+fi
+# L10n 键成对（按钮 / 抽屉标签 / 提交）。
+for key in workstreams.task.new workstreams.task.create.stage \
+           workstreams.task.create.content workstreams.task.create.submit; do
+  if ! grep -qF "$key" "$MAIN"; then
+    echo "FAIL: main.swift is missing the $key L10n key" >&2
+    exit 1
+  fi
+done
+# UI 测试实际覆盖了默认阶段与标题 / 内容拆分。
+if ! grep -qF 'WSStageTaskComposerModel.forCard(' ui-tests.swift \
+   || ! grep -qF '第一行内容' ui-tests.swift; then
+  echo "FAIL: the composer default-stage / one-box rules are not pinned by ui-tests" >&2
+  exit 1
+fi
+echo "创建任务抽屉 guard ok"
+
 echo "workstreams-panel tests passed"

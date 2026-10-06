@@ -229,6 +229,19 @@ do {
     check(WorkstreamHandoff.isHandoff(draft.effectiveBody), "the body is a generated handoff")
     eq(draft.body, draft.normalizedBody, "the body carries no leading/trailing blank lines")
 
+    // The 「创建任务」drawer's content is appended AFTER the prompt (the prompt still
+    // leads the body, so isHandoff keeps recognising it). Blank content is a no-op.
+    let withContent = WorkstreamHandoff.stageTask(title: "补充任务",
+                                                  content: "  做第一件事\n做第二件事  ",
+                                                  card: card, action: .confirmPlanning)
+    check(WorkstreamHandoff.isHandoff(withContent.body), "content keeps the handoff marker")
+    contains(withContent.body, "任务内容：", "the drawer content is labelled in the body")
+    contains(withContent.body, "做第一件事", "the drawer content is in the body")
+    check(withContent.body.hasPrefix(expected), "the handoff prompt still leads the body")
+    let noContent = WorkstreamHandoff.stageTask(title: "只有标题", content: "   ",
+                                                card: card, action: .confirmPlanning)
+    eq(noContent.body, expected, "blank content does not change the prompt body")
+
     var task = WSTaskItem(id: "wt-1", title: "规划")
     task = WorkstreamHandoff.injectingStagePrompt(into: task, card: card, action: .confirmPlanning)
     eq(task.body, expected, "injectingStagePrompt writes the prompt into an existing task")

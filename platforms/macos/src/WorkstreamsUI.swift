@@ -404,6 +404,90 @@ func wsFirstUnprocessedStage(_ card: WSCardModel) -> WorkstreamStage? {
     card.stages.first { $0.runState != .done }?.stage
 }
 
+// MARK: - Stage task composer (「创建任务」drawer, UX)
+
+/// The 「创建任务」drawer's pure view model: a stage selector plus ONE box whose
+/// first line is the title and whose remaining lines are the task content. It is
+/// the panel's direct counterpart to the agent-facing `task/create` route: the
+/// task is created in the WAITING state and appended to the workstream's single
+/// queue — nothing starts here (the workstream card's 「启动事项」 does).
+///
+/// The stage defaults to the workstream's first unprocessed stage
+/// (`wsFirstUnprocessedStage`), the same A13-derived target the 「拆分任务」
+/// button uses. Pure, so the typing / submit rules are asserted headlessly.
+struct WSStageTaskComposerModel: Equatable {
+    var stage: WorkstreamStage
+    /// The box exactly as typed: first line = title, the lines after it = content.
+    var content: String
+    /// Set once submit was pressed on an incomplete draft, so the hint shows up
+    /// when it is actually needed rather than while typing.
+    var attempted: Bool
+
+    /// The stages the selector offers, in canonical order.
+    static let stages = WorkstreamStage.allCases
+
+    /// The first line, trimmed — the task title (empty means "not submittable").
+    var title: String {
+        (content.components(separatedBy: .newlines).first ?? "")
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// The lines after the first, trimmed — the task content appended below the
+    /// stage handoff prompt. Empty when only a title was typed.
+    var body: String {
+        content.components(separatedBy: .newlines).dropFirst()
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var canSubmit: Bool { !title.isEmpty }
+
+    /// The first problem as an L10n key — shown only after a submit attempt (the
+    /// button stays disabled until the title is there, so the form never nags
+    /// while it is being typed into).
+    var problemKey: String? { attempted && !canSubmit ? "workstreams.task.create.empty" : nil }
+
+    var headingKey: String { "workstreams.task.create.title" }
+    var submitKey: String { "workstreams.task.create.submit" }
+    var infoKey: String { "workstreams.task.create.message" }
+
+    var isPristine: Bool {
+        content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The form as it is while the user types (live, so the submit button follows
+    /// what is actually in the box).
+    func typed(content: String) -> WSStageTaskComposerModel {
+        var copy = self
+        copy.content = content
+        return copy
+    }
+
+    /// Pick a different stage in the selector.
+    func typed(stage: WorkstreamStage) -> WSStageTaskComposerModel {
+        var copy = self
+        copy.stage = stage
+        return copy
+    }
+
+    /// The form after a submit attempt (turns on the problem hint).
+    func attemptedSubmit() -> WSStageTaskComposerModel {
+        var copy = self
+        copy.attempted = true
+        return copy
+    }
+
+    static func build(stage: WorkstreamStage, content: String = "") -> WSStageTaskComposerModel {
+        WSStageTaskComposerModel(stage: stage, content: content, attempted: false)
+    }
+
+    /// The drawer's default for one rendered card: the first unprocessed stage,
+    /// falling back to the authoritative stage when every stage is done.
+    static func forCard(_ card: WSCardModel) -> WSStageTaskComposerModel {
+        build(stage: wsFirstUnprocessedStage(card) ?? card.stage)
+    }
+}
+
 // MARK: - The filtered board
 
 /// The whole board the panel renders: the cards for the active filter, the

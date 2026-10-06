@@ -266,8 +266,10 @@ final class WSPrimaryCardView: NSView {
     /// 事项级启动 (design A3)：面板唯一的启动入口；启动后 runner 按阶段 canonical
     /// 顺序推进该事项的整条队列。
     var onStartWorkstream: (() -> Void)?
-    /// 阶段二级卡的「＋创建任务」(design A3 / A14).
-    var onCreateStageTask: ((WorkstreamStage) -> Void)?
+    /// 主卡「创建任务」(UX): open the stage-task drawer (a stage selector + one box
+    /// whose first line is the title and the rest the content) and append a
+    /// waiting-state task to the workstream's queue — never start it.
+    var onCreateTask: (() -> Void)?
     /// 阶段二级卡的「交付」(design A10): only offered on the delivery stage card.
     var onDeliverStage: (() -> Void)?
     private(set) var isExpanded: Bool
@@ -327,6 +329,7 @@ final class WSPrimaryCardView: NSView {
         // Derived workstream run state (A13): the roll-up of the five stages.
         titleViews.append(WSTierBadgeView(text: L10n.tr(model.runStateKey), tone: model.runStateTone))
         titleViews.append(splitTasksButton())
+        titleViews.append(createTaskButton())
         let start = CustomIconButton(glyph: .play,
                                      tooltip: L10n.tr("workstreams.start.item"), size: 22)
         start.onAction = { [weak self] in self?.onStartWorkstream?() }
@@ -391,6 +394,16 @@ final class WSPrimaryCardView: NSView {
         return split
     }
 
+    /// 「创建任务」(UX): open the panel's stage-task drawer for this workstream.
+    /// The drawer's stage defaults to the FIRST unprocessed stage; submitting
+    /// appends a waiting-state task to the workstream's single queue.
+    private func createTaskButton() -> CustomIconButton {
+        let create = CustomIconButton(glyph: .symbol("plus.square"),
+                                      tooltip: L10n.tr("workstreams.task.new"), size: 22)
+        create.onAction = { [weak self] in self?.onCreateTask?() }
+        return create
+    }
+
     /// One 阶段二级卡 (recessed inside the primary card). Empty stages are a
     /// header only (no disclosure; nothing to show yet).
     private func stageCard(_ stage: WSStageCardModel) -> NSView {
@@ -421,13 +434,10 @@ final class WSPrimaryCardView: NSView {
             headerViews.append(confirm)
             headerViews.append(reject)
         }
-        // 阶段级动作 (design A3 / A14): create waiting-state stage tasks. Starting is
-        // no longer a stage-card action — the workstream card's 「启动事项」 is the
-        // single entry and the runner walks the queue in canonical stage order.
-        let createTask = CustomIconButton(glyph: .symbol("plus"),
-                                          tooltip: L10n.tr("workstreams.stage.createTask"), size: 22)
-        createTask.onAction = { [weak self] in self?.onCreateStageTask?(stage.stage) }
-        headerViews.append(createTask)
+        // Task creation is no longer a stage-card action (UX): the workstream card's
+        // 「创建任务」 opens the stage-task drawer. Starting is likewise not a
+        // stage-card action — the workstream card's 「启动事项」 is the single entry
+        // and the runner walks the queue in canonical stage order.
         // 交付阶段动作 (design A10): resolve the git / PR / token plan and start a
         // delivery session. Only the delivery stage card carries it.
         if stage.stage == .delivery {
@@ -745,6 +755,13 @@ final class WorkstreamsPanelController: NSObject {
     private let emptyView = NSStackView()
     private let statusLabel = NSTextField(labelWithString: "")
 
+    // The shared form drawer (WSInlineForms.swift): the 「创建任务」 composer slides
+    // up in it, exactly like the requirements pool's forms.
+    private let formSheetHost = WSFormSheetHostView()
+    private let formSheet = WSFormSheetView()
+    private var formSheetTop: NSLayoutConstraint!
+    private weak var formSheetContent: NSView?
+
     private var statusClearTimer: Timer?
 
     // MARK: Queue engine (WorkstreamsRunner, design A3 / A10 / A14)
@@ -872,7 +889,7 @@ final class WorkstreamsPanelController: NSObject {
             card.onRejectStage = { [weak self] in self?.rejectCurrentStage(model.id) }
             card.onSplitTasks = { [weak self] in self?.splitTasks(model.id) }
             card.onStartWorkstream = { [weak self] in self?.startWorkstream(model.id) }
-            card.onCreateStageTask = { [weak self] stage in self?.createStageTask(model.id, stage: stage) }
+            card.onCreateTask = { [weak self] in self?.openCreateTask(model) }
             card.onDeliverStage = { [weak self] in self?.deliverWorkstream(model.id) }
             list.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -20).isActive = true
@@ -1108,33 +1125,95 @@ final class WorkstreamsPanelController: NSObject {
         reload()
     }
 
-    /// 阶段二级卡「＋创建任务」：按阶段默认动作生成交接提示词、建等待态任务（A14）。
-    func createStageTask(_ cardID: String, stage: WorkstreamStage) {
-        guard let workspace = workspaceProvider?(), !workspace.isEmpty,
-              let runner = ensureRunner(workspace),
-              let card = snapshot.workstreams.first(where: { $0.id == cardID }) else { return }
-        let alert = NSAlert()
-        alert.messageText = L10n.tr("workstreams.task.create.title")
-        alert.informativeText = L10n.tr("workstreams.task.create.message")
-        alert.addButton(withTitle: L10n.tr("btn.save"))
-        alert.addButton(withTitle: L10n.tr("btn.cancel"))
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        field.placeholderString = L10n.tr("workstreams.task.create.placeholder")
-        alert.accessoryView = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else {
+    /// 主卡「创建任务」(UX)：打开 WSInlineForms 表单抽屉——阶段选择器（五阶段，默认
+    /// 首个未处理阶段）+ 一个输入框（首行 = 标题，其余行 = 内容）。⌘↩ 提交、Esc 取消、
+    /// 标题为空时禁用提交。提交走同一台 task/create 路径，建**等待态**任务、追加到事项
+    /// 唯一队列，**不启动**。
+    func openCreateTask(_ card: WSCardModel) {
+        let form = WSStageTaskComposerView(model: WSStageTaskComposerModel.forCard(card))
+        form.onSubmit = { [weak self] composer in
+            self?.submitCreateTask(card.id, composer: composer)
+        }
+        form.onCancel = { [weak self] in self?.dismissForm() }
+        presentForm(form) { ($0 as? WSStageTaskComposerView)?.focusEditor() }
+    }
+
+    /// Build one waiting-state stage task from the drawer draft (A14): the stage
+    /// handoff prompt is injected into the task body, the user's content is
+    /// appended after it, the queue mapping is written back — and NOTHING starts.
+    func submitCreateTask(_ cardID: String, composer: WSStageTaskComposerModel) {
+        guard composer.canSubmit else {
             setStatus(L10n.tr("workstreams.task.create.empty"), isError: true)
             return
         }
-        let built = runner.createStageQueue(card: card, stage: stage, workspace: workspace, titles: [title])
+        guard let workspace = workspaceProvider?(), !workspace.isEmpty,
+              let runner = ensureRunner(workspace),
+              let card = snapshot.workstreams.first(where: { $0.id == cardID }) else { return }
+        let built = runner.createStageQueue(card: card, stage: composer.stage, workspace: workspace,
+                                            titles: [composer.title], contents: [composer.body])
         guard !built.created.isEmpty else {
             setStatus(L10n.tr("workstreams.task.create.failed"), isError: true)
             return
         }
         writeBackQueueMapping(card: card, queueID: built.queue.id, workspace: workspace)
+        dismissForm()
         setStatus(L10n.tr("workstreams.task.created", built.created.count), isError: false)
         reload()
+    }
+
+    // MARK: Form drawer (the 「创建任务」composer)
+
+    /// Pull the shared drawer up with this content, or swap its content while it is
+    /// already up (a second create must not re-animate). Mirrors RequirementsPanel.
+    private func presentForm(_ content: NSView, focus: @escaping (NSView) -> Void) {
+        formSheet.setContent(content)
+        formSheetContent = content
+        formSheetHost.blocksClicksBelow = true
+        view.layoutSubtreeIfNeeded()
+        let wasVisible = !formSheet.isHidden
+        view.layoutSubtreeIfNeeded()
+        if wasVisible {
+            formSheetTop.constant = WSFormSheetHostView.restingTop
+            view.layoutSubtreeIfNeeded()
+            formSheetHost.showScrim()
+            formSheetHost.scrim.alphaValue = 1
+        } else {
+            formSheetTop.constant = -(formSheetHost.bounds.height)
+            view.layoutSubtreeIfNeeded()
+            formSheet.isHidden = false
+            formSheetHost.showScrim()
+            formSheetHost.scrim.alphaValue = 0
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                formSheetTop.animator().constant = WSFormSheetHostView.restingTop
+                formSheet.animator().alphaValue = 1
+                formSheetHost.scrim.animator().alphaValue = 1
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (wasVisible ? 0 : 0.22)) { [weak self] in
+            guard let self = self, let content = self.formSheetContent else { return }
+            focus(content)
+        }
+    }
+
+    private func dismissForm() {
+        guard !formSheet.isHidden else { return }
+        let hidden = -formSheetHost.bounds.height
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            self.formSheetTop.animator().constant = hidden
+            self.formSheet.animator().alphaValue = 0
+            self.formSheetHost.scrim.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            guard let self = self else { return }
+            self.formSheet.isHidden = true
+            self.formSheetHost.hideScrim()
+            self.formSheet.setContent(NSView())
+            self.formSheetContent = nil
+            self.formSheetHost.blocksClicksBelow = false
+        })
     }
 
     /// The panel is the only writer of WS-*.md (design A5): record the engine
@@ -1346,7 +1425,21 @@ extension WorkstreamsPanelController {
             statusLabel.centerYAnchor.constraint(equalTo: statusRow.centerYAnchor),
         ])
 
-        for sub in [header, toolbar, toolbarUnderline, scroll, emptyView, statusRow] {
+        // --- form drawer (the 「创建任务」composer) ---
+        formSheetHost.translatesAutoresizingMaskIntoConstraints = false
+        formSheetHost.wantsLayer = true
+        formSheetHost.layer?.masksToBounds = true
+        formSheet.translatesAutoresizingMaskIntoConstraints = false
+        formSheet.isHidden = true
+        formSheet.alphaValue = 0
+        formSheetHost.addSubview(formSheet)
+        formSheetHost.onLayout = { [weak self] in
+            (self?.formSheetContent as? WSStageTaskComposerView)?.layoutEditor()
+        }
+        formSheetTop = formSheet.topAnchor.constraint(equalTo: formSheetHost.topAnchor,
+                                                      constant: WSFormSheetHostView.restingTop)
+
+        for sub in [header, toolbar, toolbarUnderline, scroll, emptyView, statusRow, formSheetHost] {
             view.addSubview(sub)
         }
         NSLayoutConstraint.activate([
@@ -1377,6 +1470,17 @@ extension WorkstreamsPanelController {
             statusRow.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             statusRow.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             statusRow.heightAnchor.constraint(equalToConstant: 24),
+
+            formSheetHost.topAnchor.constraint(equalTo: toolbarUnderline.bottomAnchor),
+            formSheetHost.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            formSheetHost.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            formSheetHost.bottomAnchor.constraint(equalTo: statusRow.topAnchor),
+
+            formSheet.leadingAnchor.constraint(equalTo: formSheetHost.leadingAnchor, constant: 8),
+            formSheet.trailingAnchor.constraint(equalTo: formSheetHost.trailingAnchor, constant: -8),
+            formSheet.heightAnchor.constraint(lessThanOrEqualTo: formSheetHost.heightAnchor,
+                                              constant: -2 * WSFormSheetHostView.restingTop),
+            formSheetTop,
         ])
     }
 }
