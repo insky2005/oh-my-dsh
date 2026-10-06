@@ -191,7 +191,7 @@ GH_TOKEN=$(cat "$HOME/.dsh/oh-my-dsh/tokens/<owner>-<repo>") \
 |---|---|---|
 | 层级 | **追踪单元** | **执行载体** |
 | 宿主 | `.dsh/workstreams/WS-*.md`（committed） | `.dsh/tasks/queues.json`（本机） |
-| 基数 | 1 事项 : 0..N 队列 | 1 队列 : 0..1 事项 |
+| 基数 | 1 事项 : 0..1 队列 | 1 队列 : 0..1 事项 |
 | 关联权威 | `WS.queues`（committed） | 队列内 `workstream` 是运行时镜像（可重建） |
 
 ### 4.2 三种工作区形状（提示词按形状出条目）

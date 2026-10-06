@@ -6,8 +6,8 @@ import Foundation
 // TasksCore / TasksStore「复制 + 重命名 + 改造」，但：
 //   - 不 import / 不调用 / 不继承任务面板任何代码（A1 clean-room）；
 //   - 队列与三级任务只落 .dsh/workstreams/（ignored），**绝不读写 .dsh/tasks/**（D8）；
-//   - 队列新增 workstreamId + stage 两个字段，把「阶段 ↔ 队列」映射带进引擎，
-//     事项启动 = 启动当前阶段的队列。
+//   - 队列新增 workstreamId；任务新增 workstreamId + stage（一事项一队列，
+//     阶段是任务的属性，design A9 / A12）：事项启动 = 启动该事项的队列。
 //
 // 纯值类型 + 纯 Foundation：无 AppKit、无定时器、无磁盘副作用（存储走 WSStore），
 // 因此可以在 headless 测试里直接驱动。
@@ -67,6 +67,13 @@ struct WSTaskItem: Equatable {
     var body: String?
     var state: WSTaskState
     var queueId: String?
+    /// The workstream this task belongs to (design A12 / D17): the task is a
+    /// direct member of a workstream, not only of a queue.
+    var workstreamId: String?
+    /// The stage this task executes (design A12 / D17). Stage is a task property,
+    /// so the stage view groups tasks by it. Optional for read-compatibility with
+    /// entries written before the field existed.
+    var stage: WorkstreamStage?
     var sessionId: String?
     var error: String?
     var startedAt: Date?
@@ -85,6 +92,8 @@ struct WSTaskItem: Equatable {
          body: String? = nil,
          state: WSTaskState = .pending,
          queueId: String? = nil,
+         workstreamId: String? = nil,
+         stage: WorkstreamStage? = nil,
          sessionId: String? = nil,
          error: String? = nil,
          startedAt: Date? = nil,
@@ -98,6 +107,8 @@ struct WSTaskItem: Equatable {
         self.body = body
         self.state = state
         self.queueId = queueId
+        self.workstreamId = workstreamId
+        self.stage = stage
         self.sessionId = sessionId
         self.error = error
         self.startedAt = startedAt
@@ -124,6 +135,8 @@ struct WSTaskItem: Equatable {
     func dictionary() -> [String: Any] {
         var d: [String: Any] = ["id": id, "title": title, "state": state.rawValue]
         if let body = body, !body.isEmpty { d["body"] = body }
+        if let workstreamId = workstreamId, !workstreamId.isEmpty { d["workstreamId"] = workstreamId }
+        if let stage = stage { d["stage"] = stage.rawValue }
         if let error = error { d["error"] = error }
         if userConfirmed { d["userConfirmed"] = true }
         if let startedAt = startedAt { d["startedAt"] = WSTaskItem.iso8601.string(from: startedAt) }
@@ -137,6 +150,8 @@ struct WSTaskItem: Equatable {
                           title: title,
                           body: d["body"] as? String,
                           state: WSTaskState(rawValue: (d["state"] as? String) ?? "pending") ?? .pending,
+                          workstreamId: (d["workstreamId"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+                          stage: (d["stage"] as? String).flatMap { WorkstreamStage.parse($0) },
                           error: d["error"] as? String,
                           startedAt: (d["startedAt"] as? String).flatMap { WSTaskItem.iso8601.date(from: $0) },
                           finishedAt: (d["finishedAt"] as? String).flatMap { WSTaskItem.iso8601.date(from: $0) },
@@ -146,16 +161,18 @@ struct WSTaskItem: Equatable {
 
 // MARK: - 队列
 
-/// 一条阶段队列：一个事项的一个阶段对应一条队列，队内任务严格串行。
+/// 一条执行队列：一个事项至多一条队列（design A9 / D16），五个阶段的任务共用它，
+/// 队内任务严格串行。
 ///
-/// workstreamId / stage 是本次「复制 + 改造」相对任务面板新增的适配点
-/// （design A10 / D1）：队列知道它属于哪个事项、承载哪个阶段，runner 才能实现
-/// 「事项启动 = 启动当前阶段的队列」。
+/// workstreamId 是本次「复制 + 改造」相对任务面板新增的适配点（design A10）：队列
+/// 知道它属于哪个事项，runner 才能实现「事项启动 = 启动该事项的队列」。stage 已
+/// 降级为可选的历史字段——队列不再按阶段划分，阶段是**任务**的属性（A12 / D17）。
 struct WSQueue: Equatable {
     var id: String
     var name: String
     var workstreamId: String
-    var stage: WorkstreamStage
+    /// 兼容旧数据：队列以前带阶段；新写入不再标阶段。
+    var stage: WorkstreamStage?
     var taskIds: [String]
     var state: WSQueueState
     var createdAt: Date?
@@ -163,7 +180,7 @@ struct WSQueue: Equatable {
     init(id: String,
          name: String,
          workstreamId: String = "",
-         stage: WorkstreamStage = .task,
+         stage: WorkstreamStage? = nil,
          taskIds: [String] = [],
          state: WSQueueState = .draft,
          createdAt: Date? = nil) {
@@ -193,17 +210,19 @@ struct WSQueue: Equatable {
             "id": id,
             "name": name,
             "workstreamId": workstreamId,
-            "stage": stage.rawValue,
             "taskIds": taskIds,
             "state": state.rawValue,
         ]
+        if let stage = stage { d["stage"] = stage.rawValue }
         if let createdAt = createdAt { d["createdAt"] = WSTaskItem.iso8601.string(from: createdAt) }
         return d
     }
 
     static func from(_ d: [String: Any]) -> WSQueue? {
         guard let id = d["id"] as? String, let name = d["name"] as? String else { return nil }
-        let stage = (d["stage"] as? String).flatMap { WorkstreamStage.parse($0) } ?? .task
+        // stage is a legacy field (queue no longer carries a stage): keep it when
+        // present, otherwise nil. Never default it to a real stage.
+        let stage = (d["stage"] as? String).flatMap { WorkstreamStage.parse($0) }
         return WSQueue(id: id,
                        name: name,
                        workstreamId: (d["workstreamId"] as? String) ?? "",
@@ -312,14 +331,12 @@ struct WSBoard {
         return queue.taskIds.compactMap { task($0) }
     }
 
-    /// 某事项当前阶段对应的队列：优先按 WS 卡 committed 的 queues 映射，回落
-    /// 到引擎自带的 workstreamId + stage 标记。
-    func queue(forWorkstream workstreamID: String, stage: WorkstreamStage,
-               mapping: [WorkstreamQueue] = []) -> WSQueue? {
-        if let mapped = mapping.first(where: { $0.stage == stage }), let q = queue(mapped.id) {
-            return q
-        }
-        return queues.first { $0.workstreamId == workstreamID && $0.stage == stage }
+    /// 某事项的执行队列：优先按 WS 卡 committed 的 queues=[q-...] 映射，回落到
+    /// 引擎自带的 workstreamId 标记。一个事项至多一条队列（A9 / D16），故映射只
+    /// 需第一条。
+    func queue(forWorkstream workstreamID: String, mapping: [String] = []) -> WSQueue? {
+        if let mapped = mapping.first, let q = queue(mapped) { return q }
+        return queues.first { $0.workstreamId == workstreamID }
     }
 
     // MARK: queue membership
@@ -387,10 +404,9 @@ struct WSBoard {
     @discardableResult
     mutating func createQueue(name: String,
                              workstreamID: String = "",
-                             stage: WorkstreamStage = .task,
                              createdAt: Date = Date()) -> WSQueue {
         let queue = WSQueue(id: WSQueue.newID(), name: name, workstreamId: workstreamID,
-                            stage: stage, taskIds: [], state: .draft, createdAt: createdAt)
+                            stage: nil, taskIds: [], state: .draft, createdAt: createdAt)
         queues.append(queue)
         return queue
     }

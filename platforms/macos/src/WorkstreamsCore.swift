@@ -109,13 +109,10 @@ enum WorkstreamStage: String, CaseIterable, Equatable {
     }
 }
 
-/// One queues entry: the authoritative stage / queue mapping kept in the card
-/// (committed). stage is optional for read-compatibility with the legacy bare
-/// [q-...] list, but new writes always carry it.
-struct WorkstreamQueue: Equatable {
-    var id: String
-    var stage: WorkstreamStage?
-}
+// WS.queues is a list of queue ids (design A9 / D16): a workstream has at most
+// one execution queue, and stages live on the tasks, not on the queue. The card
+// therefore carries [q-...]; the legacy [{id, stage}] mapping is still read by
+// taking each entry's id (stage dropped).
 
 /// The covered point record (store design §3.2): the changed paths a stage
 /// accepted, anchored to immutable content ids (blob / tree), never a branch
@@ -144,7 +141,8 @@ struct WorkstreamCard: Equatable {
     var covered: CoveredRecord?
     /// 0..1 regression gate (REG-*).
     var regression: String?
-    var queues: [WorkstreamQueue]
+    /// 0..1 execution queue id (authoritative edge kept in the card).
+    var queues: [String]
     var delivery: DeliveryInfo?
     var created: String?
     var updated: String?
@@ -341,27 +339,24 @@ enum WorkstreamsCore {
         return v.isEmpty ? nil : v
     }
 
-    /// Materialise a queues block. Accepts the canonical [{id, stage}]
-    /// list-of-maps and the legacy bare [q-...] list (stage stays nil).
-    static func parseQueues(_ block: YAMLBlock) -> [WorkstreamQueue] {
-        var out: [WorkstreamQueue] = []
+    /// Materialise a queues block into queue ids (design A9 / D16). Accepts the
+    /// canonical [q-...] list (inline or block) and the legacy [{id, stage}]
+    /// mapping, from which the id is taken and the stage dropped. Old multi-entry
+    /// data is preserved (no id is lost) even though new writes cap at one.
+    static func parseQueues(_ block: YAMLBlock) -> [String] {
+        var out: [String] = []
         if let inline = block.scalar {
             for id in (parseInlineList(inline) ?? []) where !id.isEmpty {
-                out.append(WorkstreamQueue(id: id, stage: nil))
+                out.append(id)
             }
             return out
         }
         for item in block.items {
             if let id = item.scalar, !id.isEmpty {
-                out.append(WorkstreamQueue(id: id, stage: nil))
+                out.append(id)
                 continue
             }
-            guard let id = scalar(item, "id"), !id.isEmpty else { continue }
-            var stage: WorkstreamStage?
-            if let raw = scalar(item, "stage"), let parsed = WorkstreamStage.parse(raw) {
-                stage = parsed
-            }
-            out.append(WorkstreamQueue(id: id, stage: stage))
+            if let id = scalar(item, "id"), !id.isEmpty { out.append(id) }
         }
         return out
     }
@@ -428,7 +423,8 @@ enum WorkstreamsCore {
                 issues.append("covered is required at stage " + card.stage.rawValue)
             }
         }
-        for q in card.queues where q.id.isEmpty { issues.append("queue entry is missing id") }
+        for id in card.queues where id.isEmpty { issues.append("queue entry is missing id") }
+        if card.queues.count > 1 { issues.append("at most one queue is allowed") }
         return issues
     }
 
@@ -459,13 +455,9 @@ enum WorkstreamsCore {
         return out
     }
 
-    static func queueLines(_ queues: [WorkstreamQueue]) -> [String] {
-        var out = ["queues:"]
-        for q in queues {
-            out.append("  - id: " + q.id)
-            if let stage = q.stage { out.append("    stage: " + stage.rawValue) }
-        }
-        return out
+    static func queueLines(_ queues: [String]) -> [String] {
+        // Canonical form is an inline id list: queues: [q-...] (store design §3.2).
+        ["queues: [" + queues.joined(separator: ", ") + "]"]
     }
 
     static func deliveryLines(_ delivery: DeliveryInfo) -> [String] {
@@ -633,12 +625,13 @@ enum WorkstreamsCore {
 
     static func setQueues(workspace: String,
                           id: String,
-                          queues: [WorkstreamQueue],
+                          queues: [String],
                           today: String,
                           fileManager: FileManager = .default) throws -> WorkstreamCard {
-        for q in queues where q.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        for id in queues where id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw WorkstreamError.invalidQueue("id is required")
         }
+        if queues.count > 1 { throw WorkstreamError.invalidQueue("at most one queue is allowed") }
         var card = try loadCard(workspace: workspace, id: id, fileManager: fileManager)
         card.queues = queues
         card.updated = today

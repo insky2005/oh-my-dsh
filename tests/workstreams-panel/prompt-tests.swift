@@ -260,10 +260,10 @@ do {
         log: { _ in },
         perform: { block, done in block(); done() })
     let runner = WorkstreamsRunner(board: board, env: env)
-    let queue = runner.createQueue(name: "执行", workstreamID: card.id, stage: .task)
+    let queue = runner.createQueue(name: "执行", workstreamID: card.id)
     board = runner.board
     let task = WSTaskItem(id: WSTaskItem.newID(), title: draft.normalizedTitle,
-                          body: draft.effectiveBody)
+                          body: draft.effectiveBody, workstreamId: card.id, stage: .task)
     board.tasks.append(task)
     _ = board.enqueue(taskID: task.id, into: queue.id)
     runner.adopt(board)
@@ -293,9 +293,11 @@ do {
                                         titles: ["出规划四件套"])
     eq(built.created.count, 1, "one stage task created")
     eq(built.queue.state, .draft, "the stage queue stays draft (waiting, not started)")
-    eq(built.queue.stage, .planning, "the queue carries the stage")
+    eq(built.queue.stage == nil, true, "the queue no longer carries a stage")
     eq(built.queue.name, "规划", "the queue is named after the stage")
     eq(built.queue.workstreamId, card.id, "the queue carries the workstream id")
+    eq(built.created[0].stage, .planning, "the task carries the stage")
+    eq(built.created[0].workstreamId, card.id, "the task carries the workstream id")
     let body = built.created[0].body ?? ""
     check(WorkstreamHandoff.isHandoff(body), "the task body is the panel handoff prompt")
     contains(body, "本步动作：确认规划", "it uses the stage's default action")

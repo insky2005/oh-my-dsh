@@ -17,7 +17,7 @@
 | **需求（Requirement）** | 追踪单元的**来源**：一条尚未确定做法的诉求，住在需求池。 |
 | **需求池（Idea Pool）** | 需求的家：收集 / 评估 / 拆分 / 丢弃。 |
 | **拆解（Breakdown）** | 需求 → 1..N 个事项的入口；agent 出方案、**人确认**。 |
-| **事项（Workstream）** | **最小工作单元**；关联 0..1 需求、0..N 队列 / PR。 |
+| **事项（Workstream）** | **最小工作单元**；关联 0..1 需求、0..1 队列 / PR。 |
 | **阶段（Stage）** | 事项的状态：规划 / 设计 / 任务 / 验收 / 交付。 |
 | **终态（Terminal）** | **派生谓词**：`stage == 交付` 且交付结果终结（merged / closed / abandoned）。 |
 | **裁决（Verdict）** | 验收的**点记录**：判定人 + 证据 + 覆盖的变更；**永不失效**，只覆盖。 |
@@ -47,7 +47,7 @@
 **字段摘要**：
 
 - **REQ**：`id` / `title` / `source` / `created` / `updated`（必选）；`state`（**可选，仅人工判断**：candidate / evaluating / evaluated / suspended / discarded）；`workstreams`（派生缓存）；
-- **WS**：`id` / `title` / `stage` / `created` / `updated`（必选）；`requirement`（0..1）；`covered`（验收起必选，锚变更）；`regression`（0..1）；`queues`（0..N）；`delivery.pr` / `delivery.url`（交付阶段的事实）；
+- **WS**：`id` / `title` / `stage` / `created` / `updated`（必选）；`requirement`（0..1）；`covered`（验收起必选，锚变更）；`regression`（0..1）；`queues`（0..1，一事项一队列 `[q-...]`；阶段是任务的属性）；`delivery.pr` / `delivery.url`（交付阶段的事实）；
 - **REG**：`id` / `title` / `source` / `runs`（可执行检查）/ `created` / `updated`。
 
 **committed vs ignored**：定义与阶段随仓库提交；**运行时绑定只在本机**（如 `*.local.json`，忽略）。

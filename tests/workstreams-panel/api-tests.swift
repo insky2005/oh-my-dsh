@@ -235,15 +235,19 @@ let queuesBadEntry = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path
 eq(queuesBadEntry?.status, 400, "queue entry without id -> 400")
 eq(queuesBadEntry?.json?["error"] as? String, "invalid-queue", "invalid-queue code (negative path)")
 
-let queuesBadStage = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queues", json: ["id": "WS-000001", "queues": [["id": "q-1", "stage": "warp"]]]), delegate: fake)
-eq(queuesBadStage?.json?["error"] as? String, "invalid-stage", "queue invalid-stage code")
+// Legacy [{id, stage}] is still accepted for read-compat: the id is taken and the
+// stage dropped (design A9 / D16).
+let queuesLegacy = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queues", json: ["id": "WS-000001", "queues": [["id": " q-1 ", "stage": "planning"]]]), delegate: fake)
+eq(queuesLegacy?.status, 200, "legacy queue mapping accepted")
+eq(fake.lastQueues?.queues, ["q-1"], "legacy queue id taken, stage dropped, id trimmed")
 
-let queuesOK = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queues", json: ["id": "WS-000001", "queues": [["id": " q-1 ", "stage": "planning"], ["id": "q-2"]]]), delegate: fake)
-eq(queuesOK?.status, 200, "queues 200")
-eq(fake.lastQueues?.queues.count, 2, "two queue entries parsed")
-eq(fake.lastQueues?.queues[0].id, "q-1", "queue id trimmed")
-eq(fake.lastQueues?.queues[0].stage, .planning, "queue stage parsed")
-eq(fake.lastQueues?.queues[1].stage == nil, true, "missing queue stage stays nil")
+let queuesOK = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queues", json: ["id": "WS-000001", "queues": ["q-1"]]), delegate: fake)
+eq(queuesOK?.status, 200, "canonical [q-...] queues 200")
+eq(fake.lastQueues?.queues, ["q-1"], "canonical queue id parsed")
+
+let queuesTooMany = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queues", json: ["id": "WS-000001", "queues": ["q-1", "q-2"]]), delegate: fake)
+eq(queuesTooMany?.json?["error"] as? String, "invalid-queue", "more than one queue -> invalid-queue (0..1)")
+
 let queuesClear = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queues", json: ["id": "WS-000001", "queues": []]), delegate: fake)
 eq(queuesClear?.status, 200, "empty queues clears (200)")
 eq(fake.lastQueues?.queues.isEmpty, true, "empty queues passes through")
@@ -317,7 +321,7 @@ section("response shapes")
 let card = WorkstreamCard(id: "WS-000001", title: "事项", requirement: "REQ-000001", stage: .design,
                           covered: CoveredRecord(paths: ["a.swift"], base: "blob-a", head: "tree-b"),
                           regression: "REG-001",
-                          queues: [WorkstreamQueue(id: "q-1", stage: .design), WorkstreamQueue(id: "q-2", stage: nil)],
+                          queues: ["q-1"],
                           delivery: DeliveryInfo(pr: 42, url: "https://example/pull/42", outcome: "merged"),
                           created: "2026-10-06", updated: "2026-10-07", path: "/p/WS-000001.md", body: "# body")
 let cardJSON = WorkstreamsAPIResponse.card(card)
@@ -327,10 +331,7 @@ eq(cardJSON["requirement"] as? String, "REQ-000001", "card requirement in JSON")
 eq(cardJSON["regression"] as? String, "REG-001", "card regression in JSON")
 eq((cardJSON["covered"] as? [String: Any])?["base"] as? String, "blob-a", "covered base in JSON")
 eq((cardJSON["covered"] as? [String: Any])?["paths"] as? [String], ["a.swift"], "covered paths in JSON")
-let queuesJSON = cardJSON["queues"] as? [[String: Any]]
-eq(queuesJSON?.count, 2, "card queues in JSON")
-eq(queuesJSON?[0]["stage"] as? String, "design", "queue stage in JSON")
-eq(queuesJSON?[1]["stage"] == nil, true, "legacy queue without stage omits the key")
+eq(cardJSON["queues"] as? [String], ["q-1"], "card queues as an id list in JSON")
 eq((cardJSON["delivery"] as? [String: Any])?["pr"] as? Int, 42, "delivery pr in JSON")
 eq((cardJSON["delivery"] as? [String: Any])?["outcome"] as? String, "merged", "delivery outcome in JSON")
 eq(cardJSON["body"] as? String, "# body", "card body in JSON")

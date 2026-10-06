@@ -31,7 +31,7 @@ func card(id: String,
           stage: WorkstreamStage = .planning,
           covered: CoveredRecord? = nil,
           regression: String? = nil,
-          queues: [WorkstreamQueue] = [],
+          queues: [String] = [],
           delivery: DeliveryInfo? = nil,
           updated: String? = "2026-10-06",
           path: String? = nil,
@@ -61,9 +61,7 @@ eq(wsStageTone(.delivery), .positive, "delivery tone")
 section("primary card")
 let full = card(id: "WS-000042", title: "事项面板 UI", requirement: "REQ-000011",
                 stage: .task, regression: "REG-001",
-                queues: [WorkstreamQueue(id: "q-a", stage: .planning),
-                         WorkstreamQueue(id: "q-b", stage: .task),
-                         WorkstreamQueue(id: "q-c", stage: .task)])
+                queues: ["q-a"])
 let model = WSCardModel.build(from: full)
 eq(model.id, "WS-000042", "id")
 eq(model.title, "事项面板 UI", "title")
@@ -79,7 +77,7 @@ section("primary meta")
 eq(model.meta.map { $0.labelKey },
    ["workstreams.meta.requirement", "workstreams.meta.queues", "workstreams.meta.regression", "workstreams.meta.updated"],
    "meta line keys")
-eq(model.meta.map { $0.value }, ["REQ-000011", "3", "REG-001", "2026-10-06"], "meta line values")
+eq(model.meta.map { $0.value }, ["REQ-000011", "1", "REG-001", "2026-10-06"], "meta line values")
 let bare = WSCardModel.build(from: card(id: "WS-000043", queues: [], updated: nil))
 eq(bare.meta, [], "a bare card has no meta lines")
 
@@ -95,19 +93,17 @@ eq(model.stages.map { $0.labelKey },
 eq(model.stages.filter { $0.isCurrent }.map { $0.stage }, [.task], "exactly one current stage")
 eq(model.stages.first { $0.stage == .task }?.isCurrent, true, "current is the card stage")
 
-section("queues map to their stage card")
+section("the workstream queue lands on the current stage card")
 let byStage = Dictionary(uniqueKeysWithValues: model.stages.map { ($0.stage, $0) })
-eq(byStage[.planning]?.queueIDs, ["q-a"], "planning queue")
-eq(byStage[.task]?.queueIDs, ["q-b", "q-c"], "task queues keep card order")
-eq(byStage[.design]?.hasQueue, false, "design has no queue")
-eq(byStage[.design]?.queueIDs, [], "empty stage has empty queue ids")
+eq(byStage[.task]?.queueIDs, ["q-a"], "the queue is shown on the current stage")
+eq(byStage[.task]?.hasQueue, true, "the current stage has a queue")
+eq(byStage[.planning]?.queueIDs, [], "other stages carry no queue")
+eq(byStage[.design]?.hasQueue, false, "a non-current stage has no queue")
 
-section("legacy queue without stage falls back to the card stage")
-let legacy = WSCardModel.build(from: card(id: "WS-000044", stage: .design,
-                                          queues: [WorkstreamQueue(id: "q-legacy", stage: nil),
-                                                   WorkstreamQueue(id: "q-new", stage: .design)]))
-eq(legacy.stages.first { $0.stage == .design }?.queueIDs, ["q-legacy", "q-new"],
-   "nil-stage queue lands in the card's current stage")
+section("the queue follows the current stage")
+let legacy = WSCardModel.build(from: card(id: "WS-000044", stage: .design, queues: ["q-legacy"]))
+eq(legacy.stages.first { $0.stage == .design }?.queueIDs, ["q-legacy"],
+   "the queue lands in the card's current stage")
 
 section("stage evidence")
 let evidenceCard = card(id: "WS-000045", stage: .delivery,
@@ -216,11 +212,7 @@ stage: acceptance
 covered:
   - platforms/macos/src/WorkstreamsPanel.swift
   base: 46e83f791115699ed012498586a81ebd055646e6
-queues:
-  - id: q-111
-    stage: task
-  - id: q-222
-    stage: acceptance
+queues: [q-111]
 updated: 2026-10-06
 ---
 
@@ -229,8 +221,9 @@ updated: 2026-10-06
 let parsedModel = WSCardModel.build(from: parsed)
 eq(parsedModel.id, "WS-000060", "parsed id")
 eq(parsedModel.stage, .acceptance, "parsed stage")
-eq(parsedModel.stages.first { $0.stage == .task }?.queueIDs, ["q-111"], "parsed task queue")
-eq(parsedModel.stages.first { $0.stage == .acceptance }?.queueIDs, ["q-222"], "parsed acceptance queue")
+eq(parsedModel.stages.first { $0.stage == .acceptance }?.queueIDs, ["q-111"],
+   "parsed queue lands on the current (acceptance) stage")
+eq(parsedModel.stages.first { $0.stage == .task }?.queueIDs, [], "non-current stages carry no queue")
 eq(parsedModel.stages.first { $0.stage == .acceptance }?.evidence.first?.value,
    "platforms/macos/src/WorkstreamsPanel.swift", "parsed covered evidence")
 

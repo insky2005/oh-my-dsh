@@ -8,7 +8,7 @@ import Foundation
 //   - session lifecycle: create / TITLE prefix / prompt / poll / cancel / retry;
 //   - restart recovery: running -> failed(interrupted), active -> paused;
 //   - storage: queues + tasks + local overlay under .dsh/workstreams/ (never .dsh/tasks/);
-//   - 事项启动 = 启动当前阶段的队列.
+//   - 事项启动 = 启动该事项的队列；任务直连 workstreamId + stage.
 
 var checks = 0
 var failures = 0
@@ -165,10 +165,11 @@ func seededBoard(titles: [String], stage: WorkstreamStage = .task,
                  workstream: String = "WS-1",
                  queueState: WSQueueState = .active) -> (board: WSBoard, queueID: String, taskIDs: [String]) {
     var board = WSBoard()
-    let queue = board.createQueue(name: "Q-" + stage.rawValue, workstreamID: workstream, stage: stage)
+    let queue = board.createQueue(name: "Q-" + stage.rawValue, workstreamID: workstream)
     var ids: [String] = []
     for title in titles {
-        let task = WSTaskItem(id: WSTaskItem.newID(), title: title)
+        let task = WSTaskItem(id: WSTaskItem.newID(), title: title,
+                              workstreamId: workstream, stage: stage)
         board.tasks.append(task)
         _ = board.enqueue(taskID: task.id, into: queue.id)
         ids.append(task.id)
@@ -178,7 +179,7 @@ func seededBoard(titles: [String], stage: WorkstreamStage = .task,
     return (board, queue.id, ids)
 }
 
-func wsCard(id: String, stage: WorkstreamStage, queues: [WorkstreamQueue]) -> WorkstreamCard {
+func wsCard(id: String, stage: WorkstreamStage, queues: [String]) -> WorkstreamCard {
     WorkstreamCard(id: id, title: "T", requirement: nil, stage: stage, covered: nil,
                    regression: nil, queues: queues, delivery: nil, created: nil,
                    updated: nil, path: "/tmp/" + id + ".md", body: "")
@@ -365,37 +366,35 @@ do {
     eq(h.runner.board.task(seeded.taskIDs[0])?.error, "workstreams.errSessionGone", "session-gone key")
 }
 
-section("事项启动 = 启动当前阶段的队列")
+section("事项启动 = 启动该事项的一条队列")
 do {
+    // One execution queue per workstream (design A9); its tasks carry the stage.
     var board = WSBoard()
-    let planning = board.createQueue(name: "P", workstreamID: "WS-9", stage: .planning)
-    let design = board.createQueue(name: "D", workstreamID: "WS-9", stage: .design)
-    for (queue, title) in [(planning, "规划任务"), (design, "设计任务")] {
-        let task = WSTaskItem(id: WSTaskItem.newID(), title: title)
+    let queue = board.createQueue(name: "执行", workstreamID: "WS-9")
+    for (title, stage) in [("规划任务", WorkstreamStage.planning), ("设计任务", .design)] {
+        let task = WSTaskItem(id: WSTaskItem.newID(), title: title,
+                              workstreamId: "WS-9", stage: stage)
         board.tasks.append(task)
         _ = board.enqueue(taskID: task.id, into: queue.id)
     }
     let h = Harness(board: board)
-    // The committed card says the workstream is in DESIGN and maps both queues.
-    let card = wsCard(id: "WS-9", stage: .design,
-                      queues: [WorkstreamQueue(id: planning.id, stage: .planning),
-                               WorkstreamQueue(id: design.id, stage: .design)])
+    let card = wsCard(id: "WS-9", stage: .design, queues: [queue.id])
     _ = h.runner.startWorkstream(card)
-    eq(h.runner.board.queue(design.id)?.state, .active, "the design-stage queue was started")
-    eq(h.runner.board.queue(planning.id)?.state, .draft, "the planning-stage queue was left alone")
+    eq(h.runner.board.queue(queue.id)?.state, .active, "the workstream queue was started")
     eq(h.dsh.sessions.count, 1, "one session created")
-    check((h.dsh.prompts[h.dsh.sessions[0]] ?? "").contains("设计任务"), "the current stage's task was prompted")
+    check((h.dsh.prompts[h.dsh.sessions[0]] ?? "").contains("规划任务"), "the first queued task was prompted")
 }
 do {
-    // Fallback: no card mapping, the engine's own workstreamId + stage tag decides.
+    // Fallback: no card mapping, the engine's own workstreamId decides.
     var board = WSBoard()
-    let queue = board.createQueue(name: "D", workstreamID: "WS-7", stage: .task)
-    let task = WSTaskItem(id: WSTaskItem.newID(), title: "执行任务")
+    let queue = board.createQueue(name: "D", workstreamID: "WS-7")
+    let task = WSTaskItem(id: WSTaskItem.newID(), title: "执行任务",
+                          workstreamId: "WS-7", stage: .task)
     board.tasks.append(task)
     _ = board.enqueue(taskID: task.id, into: queue.id)
     let h = Harness(board: board)
-    _ = h.runner.startWorkstream("WS-7", stage: .task)
-    eq(h.runner.board.queue(queue.id)?.state, .active, "fallback start by workstreamId + stage")
+    _ = h.runner.startWorkstream("WS-7")
+    eq(h.runner.board.queue(queue.id)?.state, .active, "fallback start by workstreamId")
     eq(h.runner.board.task(task.id)?.state, .running, "its task is running")
 }
 
@@ -403,8 +402,9 @@ section("storage: queues + tasks + local under .dsh/workstreams, never .dsh/task
 do {
     let root = NSTemporaryDirectory() + "ws-runner-" + UUID().uuidString
     var board = WSBoard()
-    let queue = board.createQueue(name: "Q", workstreamID: "WS-1", stage: .task)
-    let task = WSTaskItem(id: WSTaskItem.newID(), title: "持久化")
+    let queue = board.createQueue(name: "Q", workstreamID: "WS-1")
+    let task = WSTaskItem(id: WSTaskItem.newID(), title: "持久化",
+                          workstreamId: "WS-1", stage: .task)
     board.tasks.append(task)
     _ = board.enqueue(taskID: task.id, into: queue.id)
     _ = board.resumeQueue(queue.id)
@@ -420,8 +420,10 @@ do {
     let loaded = WSStore.load(root)
     eq(loaded.queues.count, 1, "one queue round-trips")
     eq(loaded.tasks.count, 1, "one task round-trips")
-    eq(loaded.queue(queue.id)?.stage, .task, "stage round-trips")
-    eq(loaded.queue(queue.id)?.workstreamId, "WS-1", "workstreamId round-trips")
+    eq(loaded.queue(queue.id)?.stage == nil, true, "new queues carry no stage")
+    eq(loaded.queue(queue.id)?.workstreamId, "WS-1", "queue workstreamId round-trips")
+    eq(loaded.task(task.id)?.workstreamId, "WS-1", "task workstreamId round-trips")
+    eq(loaded.task(task.id)?.stage, .task, "task stage round-trips")
     eq(loaded.task(task.id)?.sessionId, "session-xyz", "session overlay reapplied")
     eq(loaded.task(task.id)?.state, .queued, "membership re-derived on load")
     try? fm.removeItem(atPath: root)
@@ -431,8 +433,9 @@ section("storage: a running board reloads and reconciles as interrupted")
 do {
     let root = NSTemporaryDirectory() + "ws-runner-" + UUID().uuidString
     var board = WSBoard()
-    let queue = board.createQueue(name: "Q", workstreamID: "WS-1", stage: .task)
-    let task = WSTaskItem(id: WSTaskItem.newID(), title: "跑着")
+    let queue = board.createQueue(name: "Q", workstreamID: "WS-1")
+    let task = WSTaskItem(id: WSTaskItem.newID(), title: "跑着",
+                          workstreamId: "WS-1", stage: .task)
     board.tasks.append(task)
     _ = board.enqueue(taskID: task.id, into: queue.id)
     _ = board.resumeQueue(queue.id)
@@ -447,6 +450,37 @@ do {
     try? FileManager.default.removeItem(atPath: root)
 }
 
+section("store compat: legacy entries without workstreamId / stage")
+do {
+    let root = NSTemporaryDirectory() + "ws-compat-" + UUID().uuidString
+    let dir = WSStore.workstreamsDir(root)
+    let legacy = """
+    {
+      "version": 1,
+      "queues": [
+        {"id": "wq-old", "name": "旧队列", "workstreamId": "WS-1", "stage": "design",
+         "taskIds": ["wt-old"], "state": "paused"}
+      ],
+      "tasks": [
+        {"id": "wt-old", "title": "老任务", "state": "queued"}
+      ]
+    }
+    """
+    try? legacy.write(toFile: dir + "/queues.json", atomically: true, encoding: .utf8)
+    let loaded = WSStore.load(root)
+    eq(loaded.queue("wq-old")?.stage, .design, "legacy queue stage still reads (optional)")
+    eq(loaded.queue("wq-old")?.workstreamId, "WS-1", "legacy queue workstream reads")
+    eq(loaded.task("wt-old")?.workstreamId == nil, true, "task without workstreamId parses as nil")
+    eq(loaded.task("wt-old")?.stage == nil, true, "task without stage parses as nil")
+    eq(loaded.task("wt-old")?.state, .queued, "legacy task still loads")
+    try? FileManager.default.removeItem(atPath: root)
+}
+do {
+    let dict = WSTaskItem(id: "wt-1", title: "x", workstreamId: "WS-1", stage: .task).dictionary()
+    eq(dict["workstreamId"] as? String, "WS-1", "task serialization carries workstreamId")
+    eq(dict["stage"] as? String, "task", "task serialization carries stage")
+}
+
 section("adopt / createQueueWithTasks: build a waiting queue, never auto-start")
 do {
     let h = Harness(board: WSBoard())
@@ -454,6 +488,9 @@ do {
                                               drafts: [WSTaskDraft(title: "T1", body: ""),
                                                        WSTaskDraft(title: "T2", body: "")])
     eq(built.created.count, 2, "two tasks created")
+    eq(built.created.map { $0.stage }, [.planning, .planning], "tasks carry the stage")
+    eq(built.created.map { $0.workstreamId }, ["WS-1", "WS-1"], "tasks carry the workstream id")
+    eq(built.queue.stage == nil, true, "the queue no longer carries a stage")
     eq(h.runner.board.queue(built.queue.id)?.state, .draft, "queue stays draft")
     eq(h.dsh.sessions.count, 0, "nothing started")
     _ = h.runner.startQueue(built.queue.id)

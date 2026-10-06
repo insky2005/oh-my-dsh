@@ -1,8 +1,9 @@
 #!/bin/bash
 # Headless tests for the Workstreams panel:
 #   1. the pure model (WorkstreamsCore.swift): frontmatter parsing, the five
-#      stages, queues [{id, stage}], covered / delivery blocks, validation, and
-#      create / update / stage / queues writes with atomic rename + six-digit ids.
+#      stages, queues [q-...] (0..1, legacy [{id, stage}] read-compat), covered /
+#      delivery blocks, validation, and create / update / stage / queues writes
+#      with atomic rename + six-digit ids.
 #   2. the localhost API router (WorkstreamsAPI.swift): routing, validation, error
 #      codes and response shapes (no AppKit, no disk).
 #   3. the pure view models (WorkstreamsUI.swift): the three-level card model,

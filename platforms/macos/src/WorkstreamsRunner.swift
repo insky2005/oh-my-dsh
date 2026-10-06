@@ -7,9 +7,9 @@ import Foundation
 //   - 保留「建会话 → 命名 → prompt → 轮询 → 取消 / 重试」这条会话生命周期；
 //   - 保留重启恢复（running → failed(中断)、active → paused，绝不自动起跑）。
 //
-// 改造点（design D1 / D8 / A3）：
-//   - 队列带 workstreamId + stage，事项启动 = 启动当前阶段的队列
-//     （startWorkstream(_:) / queue(forWorkstream:stage:mapping:)）；
+// 改造点（design A9 / A12 / D8 / A3）：
+//   - 一个事项至多一条队列，任务带 workstreamId + stage；
+//     事项启动 = 启动该事项的队列（startWorkstream(_:) / queue(forWorkstream:mapping:)）；
 //   - 存储只走 WSStore（.dsh/workstreams/），绝不读写 .dsh/tasks/、不依赖 /api/tasks/*；
 //   - 不 import / 不调用任务面板任何代码（A1 clean-room）。
 //
@@ -80,9 +80,12 @@ enum WSPrompts {
             return body
         }
         var lines: [String] = []
-        let stage = queue.map { stageLabel($0.stage) } ?? "执行"
-        if let queue = queue, !queue.workstreamId.isEmpty {
-            lines.append("你正在推进事项 " + queue.workstreamId + " 的「" + stage + "」阶段。")
+        // Stage is a task property (design A12); fall back to the legacy queue
+        // stage, then to the execution default.
+        let stage = (task.stage ?? queue?.stage).map(stageLabel) ?? "执行"
+        let workstreamID = task.workstreamId ?? queue?.workstreamId ?? ""
+        if !workstreamID.isEmpty {
+            lines.append("你正在推进事项 " + workstreamID + " 的「" + stage + "」阶段。")
         } else {
             lines.append("你正在推进一个事项的「" + stage + "」阶段。")
         }
@@ -488,25 +491,27 @@ final class WorkstreamsRunner {
 
     // MARK: - 面板动作
 
-    /// 建一条队列（draft，等待态）。附带事项 id 与阶段。
+    /// 建一条队列（draft，等待态）。附带事项 id；队列不再带阶段（阶段是任务的属性）。
     @discardableResult
-    func createQueue(name: String, workstreamID: String = "",
-                     stage: WorkstreamStage = .task) -> WSQueue {
-        let queue = board.createQueue(name: name, workstreamID: workstreamID, stage: stage)
+    func createQueue(name: String, workstreamID: String = "") -> WSQueue {
+        let queue = board.createQueue(name: name, workstreamID: workstreamID)
         persist()
         return queue
     }
 
     /// 在 draft 队列里批量建任务（建队列 + 入队，唯一入口）。什么都不启动。
+    /// 任务带 workstreamId + stage（design A12 / D17）。
     @discardableResult
     func createQueueWithTasks(name: String, workstreamID: String = "",
-                              stage: WorkstreamStage = .task,
+                              stage: WorkstreamStage? = nil,
                               drafts: [WSTaskDraft]) -> (queue: WSQueue, created: [WSTaskItem]) {
-        let queue = board.createQueue(name: name, workstreamID: workstreamID, stage: stage)
+        let queue = board.createQueue(name: name, workstreamID: workstreamID)
         var created: [WSTaskItem] = []
         for draft in drafts where draft.isValid {
             let task = WSTaskItem(id: WSTaskItem.newID(), title: draft.normalizedTitle,
-                                  body: draft.effectiveBody)
+                                  body: draft.effectiveBody,
+                                  workstreamId: workstreamID.isEmpty ? nil : workstreamID,
+                                  stage: stage)
             board.tasks.append(task)
             board.enqueue(taskID: task.id, into: queue.id)
             created.append(task)
@@ -534,14 +539,19 @@ final class WorkstreamsRunner {
                                     workstreamID: card.id, stage: stage, drafts: drafts)
     }
 
-    /// 往已有队列追加任务（对话里「再补几条」）。不自动启动。
+    /// 往已有队列追加任务（对话里「再补几条」）。不自动启动。任务继承队列的事项，
+    /// 阶段由调用方给出（队列不再带阶段；旧队列的 stage 作为兜底）。
     @discardableResult
-    func appendTasks(toQueueID queueID: String, drafts: [WSTaskDraft]) -> [WSTaskItem] {
+    func appendTasks(toQueueID queueID: String, stage: WorkstreamStage? = nil,
+                     drafts: [WSTaskDraft]) -> [WSTaskItem] {
         guard let queue = board.queue(queueID), queue.state != .closed else { return [] }
         var created: [WSTaskItem] = []
         for draft in drafts where draft.isValid {
+            // Inherit the workstream of the queue the task joins (A12).
             let task = WSTaskItem(id: WSTaskItem.newID(), title: draft.normalizedTitle,
-                                  body: draft.effectiveBody)
+                                  body: draft.effectiveBody,
+                                  workstreamId: queue.workstreamId.isEmpty ? nil : queue.workstreamId,
+                                  stage: stage ?? queue.stage)
             board.tasks.append(task)
             if board.enqueue(taskID: task.id, into: queueID) { created.append(task) }
         }
@@ -681,9 +691,9 @@ final class WorkstreamsRunner {
 
     // MARK: - 事项启动 = 当前阶段的队列
 
-    /// 某事项当前阶段对应的队列；没有就 nil。
-    func currentStageQueue(for card: WorkstreamCard) -> WSQueue? {
-        board.queue(forWorkstream: card.id, stage: card.stage, mapping: card.queues)
+    /// 某事项的执行队列（一个事项至多一条）；没有就 nil。
+    func workstreamQueue(for card: WorkstreamCard) -> WSQueue? {
+        board.queue(forWorkstream: card.id, mapping: card.queues)
     }
 
     /// 某事项下所有已知队列（引擎自有 + WS 卡映射到的）。
@@ -691,23 +701,21 @@ final class WorkstreamsRunner {
         board.queues.filter { $0.workstreamId == workstreamID }
     }
 
-    /// 事项启动 = 启动当前阶段的队列（design A3）。直接 resume + pump。
+    /// 事项启动 = 启动该事项的队列（design A3 / A9）。直接 resume + pump。
     @discardableResult
     func startWorkstream(_ card: WorkstreamCard) -> Bool {
-        guard let queue = currentStageQueue(for: card) else {
-            env.log("workstreams: " + card.id + " has no queue for stage " + card.stage.rawValue)
+        guard let queue = workstreamQueue(for: card) else {
+            env.log("workstreams: " + card.id + " has no queue")
             return false
         }
-        env.log("workstreams: starting " + card.id + " stage " + card.stage.rawValue
-                + " queue " + queue.id)
+        env.log("workstreams: starting " + card.id + " queue " + queue.id)
         return startQueue(queue.id)
     }
 
-    /// 便捷入口：直接给事项 id + 阶段（面板已知道的事项阶段）。
+    /// 便捷入口：直接给事项 id（+ 可选的 WS 卡队列映射 [q-...]）。
     @discardableResult
-    func startWorkstream(_ workstreamID: String, stage: WorkstreamStage,
-                         mapping: [WorkstreamQueue] = []) -> Bool {
-        guard let queue = board.queue(forWorkstream: workstreamID, stage: stage, mapping: mapping) else {
+    func startWorkstream(_ workstreamID: String, mapping: [String] = []) -> Bool {
+        guard let queue = board.queue(forWorkstream: workstreamID, mapping: mapping) else {
             return false
         }
         return startQueue(queue.id)

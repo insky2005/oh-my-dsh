@@ -151,7 +151,7 @@
 
 - 面板快捷键：采纳 **`⌥⌘K`**（经查全源码无占用），活动栏槽位紧邻「需求池」之后；
 - 各阶段提示词措辞：已落到 `WorkstreamsPrompts.swift`（`WorkstreamHandoff`）；
-- `WS.queues` 扩展后的读取兼容：`WorkstreamsCore` 兼容旧 `[q-...]` 形式；
+- `WS.queues` 回落后的读取兼容：`WorkstreamsCore` 兼容旧 `[{id, stage}]` 形式（取 id，阶段丢弃）；
 - 阶段「待确认」的 UI 表达与退回原因：阶段卡「待确认」徽标 + 「确认 / 退回」（退回弹必填原因抽屉，对齐需求池驳回）。
 
 ### 9.2 已关闭项
@@ -179,11 +179,10 @@ D10 之所以是伪问题，源于把两个正交的轴混为一谈：
 ## 10. 下一步
 
 1. 本文件已**定稿并落地**（2026-10-06）：上游文档已同步（见 §7），面板 / 模型 / API / 队列引擎 / 阶段门 / 交付 / 技能均已实现；
-2. **已落地**：`WorkstreamsCore` / `WorkstreamsUI` / `WorkstreamsPanel` / `WorkstreamsAPI` / `WorkstreamsQueues`+`WorkstreamsRunner` / `WorkstreamsStageGate` / `WorkstreamsPrompts` / `WorkstreamsDelivery` / `WSCardView`+`WSInlineForms`，内置技能 `workstream-panel`；用户说明见 `docs/usage/panels.md` 与 `CHANGELOG.md`；
+2. **已落地**：`WorkstreamsCore` / `WorkstreamsUI` / `WorkstreamsPanel` / `WorkstreamsAPI` / `WorkstreamsQueues`+`WorkstreamsRunner` / `WorkstreamsStageGate` / `WorkstreamsPrompts` / `WorkstreamsDelivery` / `WSCardView`+`WSInlineForms`，内置技能 `workstream-panel`；用户说明见 `docs/usage/panels.md` 与 `CHANGELOG.md`；**模型修订（A9 / A12）已落地**：`WS.queues` = `[q-...]`（0..1，兼容旧 `[{id, stage}]` 读入取 id），任务带 `workstreamId` + `stage`；
 3. **尚未接线（本轮范围）**：
    - 面板实例化并驱动 `WorkstreamsRunner`（含 `step()` 定时器）；
    - 按阶段建任务的 API / 技能入口 + 「事项级 / 阶段级启动」入口；
    - 任务运行态 → 阶段 / 事项运行态回写；
-   - 模型修订：`WS.queues` 回落 `[q-...]`（0..1），任务加 `workstreamId` + `stage`；
    - 阶段提示词去掉 `/task-todo`，改指事项面板自有 API；
    - `covered` / `delivery` 写路由与交付接线。

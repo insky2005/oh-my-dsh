@@ -96,7 +96,9 @@ struct WSTaskCardModel: Equatable {
 struct WSStageCardModel: Equatable {
     var stage: WorkstreamStage
     var isCurrent: Bool
-    /// Queue ids mapped to this stage (WS.queues [{id, stage}]).
+    /// The workstream's queue ids, shown on the current stage card. There is at
+    /// most one queue per workstream (design A9 / D16); stages group tasks, not
+    /// queues.
     var queueIDs: [String]
     var tasks: [WSTaskCardModel]
     var evidence: [WSLine]
@@ -134,14 +136,12 @@ struct WSCardModel: Equatable {
     var stageLabelKey: String { wsStageLabelKey(stage) }
 
     /// Build one workstream card. All five stage cards are always present (in
-    /// WorkstreamStage.allCases order). A queue lands in its own stage; a legacy
-    /// queue with no stage stays read-compatible by falling back to the card's
-    /// current stage (design §9.1).
+    /// WorkstreamStage.allCases order). The workstream's single queue is carried
+    /// by its current stage card; the other stages show tasks only (design A9 /
+    /// A12 / D16).
     static func build(from card: WorkstreamCard, gate: WSStageGate? = nil) -> WSCardModel {
         let stages = WorkstreamStage.allCases.map { stage -> WSStageCardModel in
-            let queueIDs = card.queues
-                .filter { effectiveStage($0, fallback: card.stage) == stage }
-                .map { $0.id }
+            let queueIDs = (stage == card.stage) ? card.queues : []
             let stageGate = (gate?.stage == stage) ? gate : nil
             return WSStageCardModel(stage: stage,
                                     isCurrent: stage == card.stage,
@@ -175,11 +175,6 @@ struct WSCardModel: Equatable {
                            stages: stages,
                            isExpanded: true,
                            path: card.path)
-    }
-
-    /// The stage whose card a queue belongs to (legacy nil falls back).
-    static func effectiveStage(_ queue: WorkstreamQueue, fallback: WorkstreamStage) -> WorkstreamStage {
-        queue.stage ?? fallback
     }
 
     /// The stage-level machine evidence (store design §3.2): covered at 验收,

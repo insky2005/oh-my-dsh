@@ -1066,14 +1066,16 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
         }, workspace: workspace)
     }
 
-    /// Flatten the queue board into the gate's runtime facts (design D3).
+    /// Flatten the queue board into the gate's runtime facts (design D3). The queue
+    /// is per-workstream; only the tasks tagged with this stage count (a legacy task
+    /// without a stage falls back to the current stage).
     func stageCarrier(for card: WorkstreamCard, board: WSBoard) -> WSStageCarrier {
-        let queue = board.queue(forWorkstream: card.id, stage: card.stage, mapping: card.queues)
+        let queue = board.queue(forWorkstream: card.id, mapping: card.queues)
         guard let queue = queue else {
             return WSStageCarrier(hasQueue: false, done: true, taskCount: 0,
                                   allTasksDone: true, allEvidenceVerified: true)
         }
-        let tasks = board.tasks(inQueue: queue.id)
+        let tasks = board.tasks(inQueue: queue.id).filter { ($0.stage ?? card.stage) == card.stage }
         return WSStageCarrier(hasQueue: true,
                               done: queue.state == .done,
                               taskCount: tasks.count,

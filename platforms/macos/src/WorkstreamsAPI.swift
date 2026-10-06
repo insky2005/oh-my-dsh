@@ -17,7 +17,7 @@
 //    POST /api/workstreams/update   {workspace?, id, title?|requirement?|body?, session?}
 //    POST /api/workstreams/stage    {workspace?, id, stage, session?}
 //    POST /api/workstreams/plan     {workspace?, id, heading?, text, session?}
-//    POST /api/workstreams/queues   {workspace?, id, queues:[{id, stage?}], session?}
+//    POST /api/workstreams/queues   {workspace?, id, queues:["q-1"], session?}
 //
 
 import Foundation
@@ -69,7 +69,8 @@ struct WorkstreamsPlanRequest: Equatable {
 struct WorkstreamsQueuesRequest: Equatable {
     var workspace: String?
     var id: String
-    var queues: [WorkstreamQueue]
+    /// The workstream's execution queue ids (0..1; design A9 / D16).
+    var queues: [String]
     var session: String?
 }
 
@@ -132,12 +133,6 @@ enum WorkstreamsAPIWorkspace {
 
 enum WorkstreamsAPIResponse {
 
-    static func queue(_ q: WorkstreamQueue) -> [String: Any] {
-        var out: [String: Any] = ["id": q.id]
-        if let stage = q.stage { out["stage"] = stage.rawValue }
-        return out
-    }
-
     static func covered(_ c: CoveredRecord) -> [String: Any] {
         var out: [String: Any] = ["paths": c.paths]
         if let base = c.base { out["base"] = base }
@@ -158,7 +153,7 @@ enum WorkstreamsAPIResponse {
         if let r = card.requirement { out["requirement"] = r }
         if let c = card.covered { out["covered"] = covered(c) }
         if let r = card.regression { out["regression"] = r }
-        if !card.queues.isEmpty { out["queues"] = card.queues.map(queue) }
+        if !card.queues.isEmpty { out["queues"] = card.queues }
         if let d = card.delivery { out["delivery"] = delivery(d) }
         if let c = card.created { out["created"] = c }
         if let u = card.updated { out["updated"] = u }
@@ -196,27 +191,30 @@ enum WorkstreamsAPIRouter {
         return trimmed.hasPrefix("#") ? trimmed : "## " + trimmed
     }
 
-    /// Parse [{id, stage?}] into the model type, validating ids and stages.
-    /// Returns nil (plus a reason) so the caller can shape the error.
-    static func parseQueues(_ raw: Any?) -> (queues: [WorkstreamQueue], error: (code: String, message: String)?) {
-        guard let array = raw as? [[String: Any]] else {
-            return ([], ("invalid-queue", "queues must be a list of {id, stage}"))
+    /// Parse the queues write body into queue ids. Canonical form is a list of
+    /// strings (["q-1"]); the legacy [{id, stage}] mapping is accepted by taking
+    /// each entry's id and dropping its stage (design A9 / D16 read-compat).
+    /// A workstream has at most one queue.
+    static func parseQueues(_ raw: Any?) -> (queues: [String], error: (code: String, message: String)?) {
+        guard let array = raw as? [Any] else {
+            return ([], ("invalid-queue", "queues must be a list of queue ids"))
         }
-        var out: [WorkstreamQueue] = []
+        var out: [String] = []
         for entry in array {
-            guard let id = wsNonEmpty(entry["id"] as? String) else {
+            let id: String?
+            if let text = entry as? String {
+                id = wsNonEmpty(text)
+            } else if let object = entry as? [String: Any] {
+                id = wsNonEmpty(object["id"] as? String)
+            } else {
+                id = nil
+            }
+            guard let value = id else {
                 return ([], ("invalid-queue", "queue entry is missing id"))
             }
-            var stage: WorkstreamStage?
-            if let rawStage = entry["stage"] as? String,
-               !(rawStage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
-                guard let parsed = WorkstreamStage.parse(rawStage) else {
-                    return ([], ("invalid-stage", "unknown workstream stage: " + rawStage.trimmingCharacters(in: .whitespacesAndNewlines)))
-                }
-                stage = parsed
-            }
-            out.append(WorkstreamQueue(id: id, stage: stage))
+            out.append(value)
         }
+        if out.count > 1 { return ([], ("invalid-queue", "at most one queue per workstream")) }
         return (out, nil)
     }
 
@@ -324,7 +322,7 @@ enum WorkstreamsAPIRouter {
             }
             guard body.keys.contains("queues") else {
                 return .json(400, ["ok": false, "error": "missing-queues",
-                                   "hint": "expected {\"id\": \"WS-000001\", \"queues\": [{\"id\": \"q-1\", \"stage\": \"planning\"}]}"])
+                                   "hint": "expected {\"id\": \"WS-000001\", \"queues\": [\"q-1\"]}"])
             }
             let parsed = parseQueues(body["queues"])
             if let error = parsed.error {

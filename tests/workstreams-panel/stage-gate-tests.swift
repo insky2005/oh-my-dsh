@@ -45,7 +45,7 @@ func tempWorkspace(_ tag: String) -> String {
 
 func card(stage: WorkstreamStage, body: String,
           covered: CoveredRecord? = nil, delivery: DeliveryInfo? = nil,
-          queues: [WorkstreamQueue] = []) -> WorkstreamCard {
+          queues: [String] = []) -> WorkstreamCard {
     WorkstreamCard(id: "WS-000001", title: "门", requirement: nil, stage: stage,
                    covered: covered, regression: nil, queues: queues, delivery: delivery,
                    created: "2026-10-06", updated: "2026-10-06",

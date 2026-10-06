@@ -13,7 +13,7 @@ manual: false
 ## 三级卡片与视图
 
 - 一级 **事项主卡**：`WS-*.md` 一张卡，展开是五张阶段卡；
-- 二级 **阶段卡**：规划 / 设计 / 执行 / 验收 / 交付**永远各一张、固定顺序**，`WS.queues [{id, stage}]` 按阶段归位（旧卡缺 `stage` 的队列回退主卡当前阶段），验收段显示 `covered`（paths / base / head）、交付段显示 `pr / outcome / url`；
+- 二级 **阶段卡**：规划 / 设计 / 执行 / 验收 / 交付**永远各一张、固定顺序**，`WS.queues [q-...]`（一事项一队列，0..1）挂在主卡当前阶段（旧卡 `[{id, stage}]` 只取 id，阶段丢弃），验收段显示 `covered`（paths / base / head）、交付段显示 `pr / outcome / url`；
 - 三级 **任务卡**：阶段队列内的条目（引擎尚未接线，暂为空）；
 - 顶部**扁平页签** `全部 / 规划 / 设计 / 执行 / 验收 / 交付`（`WSStageFilter`），空态三态（无工作区 / 池空 / 筛选无命中）。
 
@@ -28,7 +28,7 @@ manual: false
 ## 阶段队列引擎与阶段门
 
 - `WorkstreamsQueues.swift`：事项面板**自有**队列 / 三级任务模型 + 存储（`WSTaskItem` / `WSQueue` / `WSBoard` / `WSStore`），队列落 `.dsh/workstreams/queues.json`、会话 / 汇报落 `local.json`（**ignored**）；**绝不读写 `.dsh/tasks/*`**；
-- `WorkstreamsRunner.swift`：按 A10 复制任务面板的串行相位机（idle / starting / active / finishing），「建会话 → 命名 `WS: ` → prompt → 轮询 → 取消 / 重试」，重启恢复（running→interrupted、active→paused、不自动起跑）；`startWorkstream(_:)` = 启动当前阶段的队列（A3）；`WSPrompts` 委托 `WorkstreamsPrompts`；
+- `WorkstreamsRunner.swift`：按 A10 复制任务面板的串行相位机（idle / starting / active / finishing），「建会话 → 命名 `WS: ` → prompt → 轮询 → 取消 / 重试」，重启恢复（running→interrupted、active→paused、不自动起跑）；`startWorkstream(_:)` = 启动该事项的队列（A3 / A9，任务带 `workstreamId` + `stage`）；`WSPrompts` 委托 `WorkstreamsPrompts`；
 - `WorkstreamsPrompts.swift`：`WSStageAction`（五阶段六个动作）+ `WorkstreamHandoff` 提示词生成器（公共头 / 动作段 / 模型规则 / 回归门行）；`injectingCompletionMarker` 统一注入完成 marker；
 - `WorkstreamsStageGate.swift`：五阶段**机检证据谓词 + 人工确认门**（R10）——规划四件套、设计文档 + Q 关闭、执行队列 `.done` 且任务有证据、验收 `covered`、交付 PR + outcome；`.done` + 谓词通过 → `awaitingConfirmation`，缺证据 → `evidenceMissing`（confirm 被拒、不推进）；退回写 `## 阶段确认` 留痕（可带 `target` 回边）；
 - `WorkstreamsDelivery.swift`：交付 git 流水线 / GitHub PR / token 文件读取（`WSGitProbe` / `WSGitHubPR` / `WSTokenStore`，**只读文件、不读 Keychain**），准入卡 `stage == .delivery`，失败有稳定码 `WSDeliveryBlocker`，PR 状态派生 `delivery.outcome`。

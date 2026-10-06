@@ -116,9 +116,8 @@ eq(card.covered?.paths, ["docs/a.md", "docs/b.md"], "covered paths (mixed list b
 eq(card.covered?.base, "46e83f791115699ed012498586a81ebd055646e6", "covered base")
 eq(card.covered?.head, "5506c2441af5ed3e4ae9726e5191e78a48483be2", "covered head")
 eq(card.regression, "REG-001", "regression parsed")
-eq(card.queues.count, 2, "two queues")
-eq(card.queues[0], WorkstreamQueue(id: "q-111", stage: .planning), "queue 0 id+stage")
-eq(card.queues[1], WorkstreamQueue(id: "q-222", stage: .task), "queue 1 id+stage")
+eq(card.queues, ["q-111", "q-222"],
+   "legacy [{id, stage}] queues read as ids (stage dropped), no id lost")
 eq(card.delivery?.pr, 78, "delivery pr")
 eq(card.delivery?.url, "https://github.com/example/repo/pull/78", "delivery url")
 eq(card.delivery?.outcome, "merged", "delivery outcome derived cache")
@@ -140,17 +139,27 @@ eq(minimal.regression, nil, "missing regression is nil")
 eq(minimal.queues, [], "missing queues is empty")
 eq(minimal.delivery, nil, "missing delivery is nil")
 
-// Legacy bare queue list still reads (stage nil), design §9.1 compatibility.
-let legacy = try WorkstreamsCore.parseCard("""
+// Canonical [q-...] list reads as-is (design A9 / D16).
+let canonicalQueues = try WorkstreamsCore.parseCard("""
 ---
 id: WS-000004
+title: 新队列形式
+stage: planning
+queues: [q-aaa]
+---
+""", path: "/tmp/WS-000004.md")
+eq(canonicalQueues.queues, ["q-aaa"], "canonical [q-...] queue reads")
+
+// Legacy bare queue list also reads.
+let legacy = try WorkstreamsCore.parseCard("""
+---
+id: WS-000005
 title: 旧队列形式
 stage: planning
 queues: [q-aaa, q-bbb]
 ---
-""", path: "/tmp/WS-000004.md")
-eq(legacy.queues, [WorkstreamQueue(id: "q-aaa", stage: nil), WorkstreamQueue(id: "q-bbb", stage: nil)],
-   "legacy inline queues read (no stage)")
+""", path: "/tmp/WS-000005.md")
+eq(legacy.queues, ["q-aaa", "q-bbb"], "legacy inline queues read")
 
 // Real cards annotate the derived outcome with an inline comment; the parser
 // must strip it so the value compares equal to "merged".
@@ -239,8 +248,8 @@ check(serialized.hasPrefix("---\nid: WS-000002\ntitle: 事项 & 模型\nrequirem
       "canonical key order (id/title/requirement/stage)")
 check(serialized.contains("covered:\n  - docs/a.md\n  - docs/b.md\n  base: 46e83"),
       "covered block order (paths then base/head)")
-check(serialized.contains("queues:\n  - id: q-111\n    stage: planning\n"),
-      "queues list-of-maps serialized")
+check(serialized.contains("queues: [q-111, q-222]\n"),
+      "queues serialized as an inline id list")
 check(serialized.contains("delivery:\n  pr: 78\n  url: https://github.com/example/repo/pull/78\n  outcome: merged\n"),
       "delivery block serialized")
 let roundTrip = try WorkstreamsCore.parseCard(serialized, path: card.path)
@@ -264,6 +273,10 @@ var acceptanceWithCovered = acceptanceNoCovered
 acceptanceWithCovered.covered = CoveredRecord(paths: ["docs/a.md"], base: "b", head: "h")
 eq(WorkstreamsCore.validate(acceptanceWithCovered), [], "acceptance with covered is clean")
 eq(WorkstreamsCore.validate(minimal), [], "planning needs no covered")
+var twoQueues = minimal
+twoQueues.queues = ["q-1", "q-2"]
+eq(WorkstreamsCore.validate(twoQueues), ["at most one queue is allowed"],
+   "more than one queue is flagged (0..1)")
 
 // MARK: - Writes (atomic / six-digit ids)
 
@@ -294,10 +307,13 @@ eq(staged.updated, "2026-10-07", "updated stamp refreshed")
 
 let withQueues = try WorkstreamsCore.setQueues(
     workspace: ws, id: created.id,
-    queues: [WorkstreamQueue(id: "q-1", stage: .design), WorkstreamQueue(id: "q-2", stage: .task)],
+    queues: ["q-1"],
     today: "2026-10-07")
-eq(withQueues.queues, [WorkstreamQueue(id: "q-1", stage: .design), WorkstreamQueue(id: "q-2", stage: .task)],
-   "queues stage mapping persisted")
+eq(withQueues.queues, ["q-1"], "queue id persisted")
+expectError("second queue rejected (0..1)", .invalidQueue("at most one queue is allowed")) {
+    try WorkstreamsCore.setQueues(workspace: ws, id: created.id,
+                                  queues: ["q-1", "q-2"], today: "2026-10-07")
+}
 
 let withCovered = try WorkstreamsCore.setCovered(
     workspace: ws, id: created.id,
@@ -324,7 +340,7 @@ eq(cleared.requirement, nil, "empty requirement clears the pointer")
 // Reload sees exactly what was written.
 let reloaded = try WorkstreamsCore.loadCard(workspace: ws, id: created.id)
 eq(reloaded.title, "改名", "reload title")
-eq(reloaded.queues.count, 2, "reload queues")
+eq(reloaded.queues, ["q-1"], "reload queues")
 
 expectError("unknown card", .unknownWorkstream("WS-999999")) {
     try WorkstreamsCore.loadCard(workspace: ws, id: "WS-999999")
@@ -334,7 +350,7 @@ expectError("no workspace", .noWorkspace) {
 }
 expectError("empty queue id rejected", .invalidQueue("id is required")) {
     try WorkstreamsCore.setQueues(workspace: ws, id: created.id,
-                                  queues: [WorkstreamQueue(id: "  ", stage: .design)],
+                                  queues: ["  "],
                                   today: "2026-10-06")
 }
 
