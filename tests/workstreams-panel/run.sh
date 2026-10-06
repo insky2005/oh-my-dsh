@@ -355,6 +355,26 @@ for key in workstreams.task.state.pending workstreams.task.state.done workstream
 done
 echo "stage task create / queue start wiring guard ok"
 
+echo "--- 启动收口 guard (事项卡是唯一入口 + 阶段 canonical 顺序, UX) ---"
+# 阶段卡不再有「启动阶段」入口；移除按钮与 onStartStage / startStage 回调后，
+# 面板唯一的启动入口是事项卡「启动事项」。
+if grep -qE 'onStartStage|func startStage|workstreams\.stage\.start' "$PANEL"; then
+  echo "FAIL: the stage card must not keep a start entry (onStartStage / startStage / workstreams.stage.start)" >&2
+  exit 1
+fi
+if ! grep -qF 'card.onStartWorkstream' "$PANEL" \
+   || ! grep -qE 'func startWorkstream\(_ cardID: String\)' "$PANEL"; then
+  echo "FAIL: the workstream card must be the panel's single start entry" >&2
+  exit 1
+fi
+# 事项级启动按阶段 canonical 顺序取任务（同阶段内仍按入队序）。
+if ! grep -qF 'stageRank(of:' "$SRC2/WorkstreamsQueues.swift" \
+   || ! grep -qF 'WorkstreamStage.allCases.firstIndex(of: stage)' "$SRC2/WorkstreamsQueues.swift"; then
+  echo "FAIL: nextStartable/firstQueued must order candidates by canonical stage rank" >&2
+  exit 1
+fi
+echo "start-entry / stage-order guard ok"
+
 echo "--- workstreams run state guard (A13: derived, never moves the authoritative stage) ---"
 RUNSTATE="$SRC2/WorkstreamsRunState.swift"
 if [ ! -f "$RUNSTATE" ]; then

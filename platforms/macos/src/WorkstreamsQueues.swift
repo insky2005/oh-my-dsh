@@ -447,7 +447,11 @@ struct WSBoard {
     /// 就不启动别的；只有 active 队列贡献候选；失败 / 已完成 / 已取消的条目跳过。
     ///
     /// `stage`（design A3 / D18）是「阶段级启动」的过滤：只把该阶段的任务算作候选，
-    /// 其余任务保持 queued，由 runner 在该阶段跑完后暂停队列。nil = 事项级，不看阶段。
+    /// 其余任务保持 queued，由 runner 在该阶段跑完后暂停队列。
+    ///
+    /// nil（事项级启动）不再按队列插入序，而是按阶段 canonical 顺序
+    /// （规划 → 设计 → 执行 → 验收 → 交付，design §5.1 / UX）：跨阶段交错建的任务
+    /// 也先跑更早的阶段；同一阶段内仍按入队（`taskIds`）顺序。
     func nextStartable(stage: WorkstreamStage? = nil) -> String? {
         if local.runningTaskID != nil { return nil }
         if tasks.contains(where: { $0.state == .running }) { return nil }
@@ -458,14 +462,39 @@ struct WSBoard {
         return nil
     }
 
+    /// The next queued task in `queue`.
+    ///
+    /// `stage` non-nil = stage-level start: only that stage's tasks are candidates,
+    /// in enqueue order. `stage` nil = workstream-level start: candidates are
+    /// ordered by canonical stage rank first, then by enqueue order, so a queue
+    /// whose tasks were created stage-interleaved still runs early stages first.
     private func firstQueued(in queue: WSQueue, stage: WorkstreamStage? = nil) -> String? {
-        queue.taskIds.first { id in
-            guard let task = task(id), task.state == .queued else { return false }
-            guard let stage = stage else { return true }
-            // A task stage is a direct property (A12); a legacy task without one
-            // falls back to the queue own legacy stage, never to a real default.
-            return (task.stage ?? queue.stage) == stage
+        if let stage = stage {
+            return queue.taskIds.first { id in
+                guard let task = task(id), task.state == .queued else { return false }
+                // A task stage is a direct property (A12); a legacy task without one
+                // falls back to the queue own legacy stage, never to a real default.
+                return (task.stage ?? queue.stage) == stage
+            }
         }
+        return queue.taskIds
+            .filter { task($0)?.state == .queued }
+            .enumerated()
+            .min { lhs, rhs in
+                let left = stageRank(of: lhs.element, in: queue)
+                let right = stageRank(of: rhs.element, in: queue)
+                if left != right { return left < right }
+                return lhs.offset < rhs.offset   // stable: enqueue order within a stage
+            }?.element
+    }
+
+    /// Canonical execution rank (planning -> delivery); a task with no stage of its
+    /// own falls back to the queue's legacy stage, and anything still unknown sorts
+    /// after every real stage (keeping its enqueue order via the offset tie-break).
+    private func stageRank(of taskID: String, in queue: WSQueue) -> Int {
+        let unknown = WorkstreamStage.allCases.count
+        guard let stage = task(taskID)?.stage ?? queue.stage else { return unknown }
+        return WorkstreamStage.allCases.firstIndex(of: stage) ?? unknown
     }
 
     // MARK: transitions

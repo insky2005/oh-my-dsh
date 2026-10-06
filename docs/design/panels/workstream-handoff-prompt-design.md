@@ -52,7 +52,7 @@
 
 ### 4.1 拆分提示词的定位与措辞
 
-**拆分任务**是「推进一张事项卡」三件事之一（设计 `workstream-panel-design.md` §5.1：拆分 = 会话提示词 / 确认 = 阶段上的人工门 / 启动 = 阶段上的「启动阶段」或 `queue/start`）。它的提示词由 `WorkstreamHandoff.splitPrompt(card:stage:)` 生成，与其它动作**同形**（§3 公共头 + 动作段 + §4 规则段），只是 `stage` 由调用方**显式传入**。
+**拆分任务**是「推进一张事项卡」三件事之一（设计 `workstream-panel-design.md` §5.1：拆分 = 会话提示词 / 确认 = 阶段上的人工门 / 启动 = 事项卡「启动事项」（面板唯一入口，按阶段 canonical 顺序）或技能 `queue/start`）。它的提示词由 `WorkstreamHandoff.splitPrompt(card:stage:)` 生成，与其它动作**同形**（§3 公共头 + 动作段 + §4 规则段），只是 `stage` 由调用方**显式传入**。
 
 - **定位**：
   - **触发** = 事项主卡「**拆分任务**」按钮；

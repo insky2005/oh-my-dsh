@@ -165,7 +165,11 @@ if let text = wsSkill {
     check(text.contains("对话中发起拆分 / 启动"), "workstream-panel documents the in-conversation split/start entry")
     check(text.contains("首个未处理阶段"), "workstream-panel: split targets the FIRST unprocessed stage")
     check(text.contains("面板主卡「**拆分任务**」按钮 = 同一条拆分语义"), "workstream-panel: panel split button == same session-prompt semantics")
-    check(text.contains("面板阶段卡「**启动阶段**」按钮 = 阶段级 `queue/start`"), "workstream-panel: stage-card start == stage-level queue/start")
+    // 2026-10-07 (UX): the stage card's start button is gone; the workstream
+    // card is the panel's single start entry, and it runs in canonical stage order.
+    check(text.contains("面板阶段卡已去掉「**启动阶段**」按钮") && text.contains("唯一的启动入口"),
+          "workstream-panel: the stage card has no start button; the workstream card is the single start entry")
+    check(text.contains("阶段 canonical 顺序"), "workstream-panel: workstream start runs in canonical stage order")
 }
 
 if failures > 0 { print("\(failures) FAILURE(S)"); exit(1) }

@@ -263,11 +263,11 @@ final class WSPrimaryCardView: NSView {
     /// stage and send that stage's split prompt to the bound home session
     /// (reuse, or start and bind a new one).
     var onSplitTasks: (() -> Void)?
-    /// 事项级启动 (design A3).
+    /// 事项级启动 (design A3)：面板唯一的启动入口；启动后 runner 按阶段 canonical
+    /// 顺序推进该事项的整条队列。
     var onStartWorkstream: (() -> Void)?
-    /// 阶段二级卡的「＋创建任务」/「启动阶段」(design A3 / A14).
+    /// 阶段二级卡的「＋创建任务」(design A3 / A14).
     var onCreateStageTask: ((WorkstreamStage) -> Void)?
-    var onStartStage: ((WorkstreamStage) -> Void)?
     /// 阶段二级卡的「交付」(design A10): only offered on the delivery stage card.
     var onDeliverStage: (() -> Void)?
     private(set) var isExpanded: Bool
@@ -421,16 +421,13 @@ final class WSPrimaryCardView: NSView {
             headerViews.append(confirm)
             headerViews.append(reject)
         }
-        // 阶段级动作 (design A3 / A14): create waiting-state stage tasks, or run
-        // only this stage's tasks.
+        // 阶段级动作 (design A3 / A14): create waiting-state stage tasks. Starting is
+        // no longer a stage-card action — the workstream card's 「启动事项」 is the
+        // single entry and the runner walks the queue in canonical stage order.
         let createTask = CustomIconButton(glyph: .symbol("plus"),
                                           tooltip: L10n.tr("workstreams.stage.createTask"), size: 22)
         createTask.onAction = { [weak self] in self?.onCreateStageTask?(stage.stage) }
         headerViews.append(createTask)
-        let startStage = CustomIconButton(glyph: .play,
-                                          tooltip: L10n.tr("workstreams.stage.start"), size: 22)
-        startStage.onAction = { [weak self] in self?.onStartStage?(stage.stage) }
-        headerViews.append(startStage)
         // 交付阶段动作 (design A10): resolve the git / PR / token plan and start a
         // delivery session. Only the delivery stage card carries it.
         if stage.stage == .delivery {
@@ -876,7 +873,6 @@ final class WorkstreamsPanelController: NSObject {
             card.onSplitTasks = { [weak self] in self?.splitTasks(model.id) }
             card.onStartWorkstream = { [weak self] in self?.startWorkstream(model.id) }
             card.onCreateStageTask = { [weak self] stage in self?.createStageTask(model.id, stage: stage) }
-            card.onStartStage = { [weak self] stage in self?.startStage(model.id, stage: stage) }
             card.onDeliverStage = { [weak self] in self?.deliverWorkstream(model.id) }
             list.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -20).isActive = true
@@ -1060,29 +1056,17 @@ final class WorkstreamsPanelController: NSObject {
         return true
     }
 
-    /// 主卡「启动事项」：事项级启动 = 跑该事项队列（design A3）。
+    /// 主卡「启动事项」（面板唯一启动入口，design A3 / §5.1）：跑该事项的唯一队列。
+    /// runner 按阶段 canonical 顺序取任务（阶段级「启动阶段」按钮已移除）。
     func startWorkstream(_ cardID: String) {
-        startWorkstream(cardID, stage: nil)
-    }
-
-    /// 阶段二级卡「启动阶段」：只跑该阶段任务（design A3 / D18）。
-    func startStage(_ cardID: String, stage: WorkstreamStage) {
-        startWorkstream(cardID, stage: stage)
-    }
-
-    private func startWorkstream(_ cardID: String, stage: WorkstreamStage?) {
         guard let workspace = workspaceProvider?(), !workspace.isEmpty,
               let runner = ensureRunner(workspace),
               let card = snapshot.workstreams.first(where: { $0.id == cardID }) else { return }
-        guard runner.startWorkstream(card, stage: stage) else {
+        guard runner.startWorkstream(card) else {
             setStatus(L10n.tr("workstreams.start.noQueue"), isError: true)
             return
         }
-        if let stage = stage {
-            setStatus(L10n.tr("workstreams.stage.started", L10n.tr(wsStageLabelKey(stage))), isError: false)
-        } else {
-            setStatus(L10n.tr("workstreams.start.started"), isError: false)
-        }
+        setStatus(L10n.tr("workstreams.start.started"), isError: false)
         reload()
     }
 

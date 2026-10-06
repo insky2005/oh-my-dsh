@@ -75,7 +75,7 @@ tests/tasks-panel/run.sh                # 任务面板逻辑层（五段：模�
                                         #   本地 API 132 项（TasksAPI.swift）：/api/tasks/task 与 /api/tasks/queue 路由 · 请求解析 · 工作区解析
                                         #   + 源码守卫（会话走 DshWorkspaceOps / 端口按调用求值 / 提示词现场探测）
 tests/workstreams-panel/run.sh          # 事项面板逻辑层（七段：模型 / API / UI / 队列引擎 / 阶段提示词 / 交付 / 阶段门）：
-                                        #   模型 93 · API 266 · UI 174 · runner 122 · prompt 190 · delivery 127 · stage-gate 60 = 1032
+                                        #   模型 93 · API 266 · UI 174 · runner 132 · prompt 190 · delivery 127 · stage-gate 60 = 1042
                                         #   + 源码守卫（A6 视图命名空间 / 配色只用 PanelSurface·PanelControl / 引擎隔离 /
                                         #     main.swift 接线 / 人工确认门 / 写权反转提示词 / 运行态派生 / 交付接线与 covered·delivery 写路由 /
                                         #     事项主场会话绑定（A16）与拆分任务（首个未处理阶段）/ focus 通道（A15）/ 对话内阶段推进 /

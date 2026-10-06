@@ -8,7 +8,8 @@ import Foundation
 //   - session lifecycle: create / TITLE prefix / prompt / poll / cancel / retry;
 //   - restart recovery: running -> failed(interrupted), active -> paused;
 //   - storage: queues + tasks + local overlay under .dsh/workstreams/ (never .dsh/tasks/);
-//   - 事项启动 = 启动该事项的队列；任务直连 workstreamId + stage.
+//   - 事项启动 = 启动该事项的队列；任务直连 workstreamId + stage；启动按
+//     阶段 canonical 顺序（同阶段内按入队序）而非纯插入序.
 
 var checks = 0
 var failures = 0
@@ -575,6 +576,77 @@ do {
     eq(h.runner.stageFilter == nil, true, "the stage filter is cleared")
     _ = h.runner.step()
     eq(h.dsh.sessions.count, 1, "no other stage auto-starts")
+}
+
+section("nextStartable: canonical stage order across stages, enqueue order within a stage (UX)")
+do {
+    var board = WSBoard()
+    let queue = board.createQueue(name: "Q", workstreamID: "WS-4")
+    func add(_ stage: WorkstreamStage) -> String {
+        let task = WSTaskItem(id: WSTaskItem.newID(), title: stage.rawValue,
+                              workstreamId: "WS-4", stage: stage)
+        board.tasks.append(task)
+        _ = board.enqueue(taskID: task.id, into: queue.id)
+        return task.id
+    }
+    let design1 = add(.design)
+    let plan1 = add(.planning)
+    let design2 = add(.design)
+    let plan2 = add(.planning)
+    _ = board.resumeQueue(queue.id)
+    eq(board.nextStartable(), plan1, "workstream-level start picks the earliest stage, not the first inserted")
+    eq(board.nextStartable(stage: .planning), plan1, "stage-level planning keeps enqueue order")
+    eq(board.nextStartable(stage: .design), design1, "stage-level design keeps enqueue order")
+    // Advancing planning leaves the workstream-level pick on design.
+    board.markDone(plan1)
+    eq(board.nextStartable(), plan2, "the second planning task runs before design while planning is open")
+    board.markDone(plan2)
+    eq(board.nextStartable(), design1, "design starts only after planning is empty")
+    board.markDone(design1)
+    eq(board.nextStartable(), design2, "the second design task follows the first")
+}
+
+section("workstream start runs tasks in canonical stage order (UX)")
+do {
+    var board = WSBoard()
+    let queue = board.createQueue(name: "Q", workstreamID: "WS-3")
+    // Created stage-interleaved: execution, planning, delivery, design,
+    // planning#2, execution#2, acceptance. Insertion order must not decide the run
+    // order any more.
+    var ids: [String] = []
+    func add(_ title: String, _ stage: WorkstreamStage) {
+        let task = WSTaskItem(id: WSTaskItem.newID(), title: title,
+                              workstreamId: "WS-3", stage: stage)
+        board.tasks.append(task)
+        _ = board.enqueue(taskID: task.id, into: queue.id)
+        ids.append(task.id)
+    }
+    add("执行一", .task)        // ids[0]
+    add("规划一", .planning)    // ids[1]
+    add("交付一", .delivery)    // ids[2]
+    add("设计一", .design)      // ids[3]
+    add("规划二", .planning)    // ids[4]
+    add("执行二", .task)        // ids[5]
+    add("验收一", .acceptance)  // ids[6]
+
+    let h = Harness(board: board)
+    let card = wsCard(id: "WS-3", stage: .planning, queues: [queue.id])
+    _ = h.runner.startWorkstream(card)
+    // The first task is the earliest canonical stage's first enqueued task, NOT the
+    // first created (执行一 would have been first under raw insertion order).
+    eq(h.runner.runningTaskID, ids[1], "the first planning task runs first (canonical, not insertion)")
+
+    // Walk the queue out, recording the actual run order.
+    var order: [String] = []
+    while let running = h.runner.runningTaskID {
+        order.append(running)
+        if let session = h.runner.board.task(running)?.sessionId { h.dsh.finish(session) }
+        _ = h.runner.step()
+    }
+    eq(order, [ids[1], ids[4], ids[3], ids[0], ids[5], ids[6], ids[2]],
+       "planning -> design -> task -> acceptance -> delivery, enqueue order within a stage")
+    eq(h.runner.board.queue(queue.id)?.state, .done, "the whole queue finished")
+    eq(h.dsh.sessions.count, 7, "one session per task, no task started twice")
 }
 
 section("enqueueDelivery: a delivery-stage task carrying the delivery prompt (A10)")

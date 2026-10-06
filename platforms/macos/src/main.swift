@@ -1077,8 +1077,6 @@ enum L10n {
         "workstreams.start.started": ("已启动事项队列", "The workstream queue started"),
         "workstreams.start.noQueue": ("该事项还没有队列；请先创建阶段任务", "This workstream has no queue yet; create a stage task first"),
         "workstreams.stage.createTask": ("＋创建任务", "Create task"),
-        "workstreams.stage.start": ("启动阶段", "Start stage"),
-        "workstreams.stage.started": ("已启动「%@」阶段", "Started the \"%@\" stage"),
         "workstreams.task.create.title": ("新建阶段任务", "New stage task"),
         "workstreams.task.create.message": ("标题将按阶段默认动作生成交接提示词；任务进入等待态，不自动启动。", "The title becomes a handoff prompt (the stage default action); the task waits and does not auto-start."),
         "workstreams.task.create.placeholder": ("任务标题", "Task title"),

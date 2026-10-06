@@ -40,7 +40,7 @@ manual: false
 
 `main.swift` 接线：`RightPanel.workstreams`、活动栏槽位紧邻「需求池」之后、`⌥⌘K` 视图菜单、`DSH_WORKSTREAMS_TEST=1` 自测钩子、`workspaceChanged()`、`onOpenCard`、`serverPortProvider`（dsh RPC 端口）；面板实现 `WorkstreamsAPIDelegate`（含任务 / 队列路由）与阶段门确认 / 退回。
 
-**队列引擎已接线**（2026-10-06）：面板按工作区各持一个 `WorkstreamsRunner`，3s `step()` 定时器推进、工作区切换重建、首次加载对账（reconcile 一次）；主卡「启动事项」、阶段卡「＋创建任务」/「启动阶段」，三级任务卡显示状态 / 会话；阶段门读 runner 的实时板。
+**队列引擎已接线**（2026-10-06）：面板按工作区各持一个 `WorkstreamsRunner`，3s `step()` 定时器推进、工作区切换重建、首次加载对账（reconcile 一次）；主卡「启动事项」（面板唯一启动入口）、阶段卡「＋创建任务」，三级任务卡显示状态 / 会话；阶段门读 runner 的实时板。
 
 **交付接线与事实写路由**（2026-10-07）：交付模块 `WorkstreamsDelivery` 已接入面板——阶段卡「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给明确原因（`WSDeliveryBlocker`），成功则 `WorkstreamsRunner.enqueueDelivery` 建 delivery 阶段任务并只启动该阶段；新增 `POST /api/workstreams/covered`（`paths` + `base` / `head` 事实）与 `POST /api/workstreams/delivery`（`pr` / `url` 事实）；**`delivery.outcome` 是派生缓存**，API 拒绝手写（`outcome-derived`）；阶段提示词与技能均已改指事项面板自有 API。
 
@@ -50,10 +50,10 @@ manual: false
 
 **焦点 + 主场会话切换矩阵**（2026-10-07，A15 / A16，设计 §6.1）：面板 ↔ 对话由两条正交通道承载——`focus`（注意力单向往面板：任意路由带 `focus`，仅 200 触发置前 + 高亮 + 滚动，目标被阶段筛选隐藏时回落「全部」，默认 `false`；`bound?focus=true` 高亮反查到的第一张卡）与 `workstreamSessions`（每事项至多一条主场会话）。方向：对话→面板（技能 `bound + focus`）、需求池→面板（子事项 `↗`）、面板→对话（主卡「拆分任务」：首个未处理阶段的拆分提示词发进主场会话，复用/新建/回退）、阶段确认→对话（向主场会话发下一阶段提示词）、需求池确认→对话（继承需求绑定会话）。
 
-**三件事：拆分 / 确认 / 启动**（2026-10-07，设计 §5.1）：同一张卡上的「推进」是三件互不替代的事——**拆分任务 = 会话提示词**（主卡按钮按**首个未处理阶段**发 `WorkstreamHandoff.splitPrompt` 进主场会话；agent 据此 `task/create` 建**等待态**任务）、**确认 = 阶段上的人工门**（阶段卡「确认 / 退回」，只有人能点）、**启动 = 阶段上的「启动阶段」/ 技能 `queue/start`**（带 `stage` = 阶段级、只跑该阶段、跑完自动暂停）。拆分 ≠ 启动（先建等待态、人确认后才起跑）、确认 ≠ 启动（确认前移 `stage`、启动不改 `stage`）；设计 A3 / A14 / D19 与 §4 / §6 同步交叉明确。`workstream-handoff-prompt-design.md` §4.1 固化拆分提示词措辞；`workstream-panel` 技能补「对话中发起拆分 / 启动」入口。
+**三件事：拆分 / 确认 / 启动**（2026-10-07，设计 §5.1）：同一张卡上的「推进」是三件互不替代的事——**拆分任务 = 会话提示词**（主卡按钮按**首个未处理阶段**发 `WorkstreamHandoff.splitPrompt` 进主场会话；agent 据此 `task/create` 建**等待态**任务）、**确认 = 阶段上的人工门**（阶段卡「确认 / 退回」，只有人能点）、**启动 = 事项卡「启动事项」/ 技能 `queue/start`**（面板唯一入口；事项级按**阶段 canonical 顺序**取任务、同阶段内按入队序；带 `stage` = 阶段级、只跑该阶段、跑完自动暂停）。拆分 ≠ 启动（先建等待态、人确认后才起跑）、确认 ≠ 启动（确认前移 `stage`、启动不改 `stage`）；设计 A3 / A14 / D19 与 §4 / §6 同步交叉明确。`workstream-handoff-prompt-design.md` §4.1 固化拆分提示词措辞；`workstream-panel` 技能补「对话中发起拆分 / 启动」入口。
 
 **默认展开首个未处理事项卡**（2026-10-07，UX）：面板加载 / 重绘时只展开首个 `runState != 完成`（A13 派生态：未开始 / 进行中 / 待确认 / 阻塞）的事项卡，其余收起；全部完成时不展开任何卡。纯谓词 `wsDefaultExpandedID` / `wsApplyingDefaultExpansion`（`WorkstreamsUI.swift`）由 `WSBoardModel.build` 每次构建时应用（在阶段筛选后的可见列表内取首个未处理）。
 
 ## 测试
 
-`tests/workstreams-panel/run.sh`（**1032 项**）：model 93 + API 266 + ui 174 + runner 122 + prompt 190 + delivery 127 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **事项会话绑定与拆分任务（首个未处理阶段）** / **focus 通道（面板高亮滚动 + API focus + 需求池跳转）** / **对话内阶段推进（确认 → 向主场会话发下一阶段提示词）** / **默认展开（首个未处理卡）** 等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。
+`tests/workstreams-panel/run.sh`（**1042 项**）：model 93 + API 266 + ui 174 + runner 132 + prompt 190 + delivery 127 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **事项会话绑定与拆分任务（首个未处理阶段）** / **focus 通道（面板高亮滚动 + API focus + 需求池跳转）** / **对话内阶段推进（确认 → 向主场会话发下一阶段提示词）** / **默认展开（首个未处理卡）** / **启动收口（阶段卡无启动按钮 + 事项启动按阶段 canonical 顺序）** 等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。
