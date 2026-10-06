@@ -249,6 +249,14 @@ for needle in 规划 设计 执行 验收 交付 拆分任务 启动实施; do
     exit 1
   fi
 done
+# 写权反转（R10 / D5b）：阶段提示词改卡片只能经 /api/workstreams/*，
+# 必须显式要求「不直接改 .dsh 文件」，并点名 workstream-panel 技能。
+if ! grep -qF '/api/workstreams/' "$PROMPTS" \
+   || ! grep -qF '不直接改' "$PROMPTS" \
+   || ! grep -qF 'workstream-panel' "$PROMPTS"; then
+  echo "FAIL: the stage prompt must route card edits through /api/workstreams/*" >&2
+  exit 1
+fi
 # 执行阶段的完成协议仍由 runner 注入 marker；
 # 面板生成的提示词必须能被 runner 原样识别，而不是被包成任务模板。
 if ! grep -qE 'WorkstreamHandoff\.isHandoff' "$SRC2/WorkstreamsRunner.swift"; then

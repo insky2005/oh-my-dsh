@@ -166,7 +166,7 @@ enum WorkstreamHandoff {
         case .confirmPlanning:
             return section([
                 "本步做「确认规划」：",
-                "- 补齐本事项卡片「## 规划」的四件套——目标（WHAT）/ 边界 / 验收标准（AC<n>）/ 阶段裁剪声明。",
+                "- 用 `/api/workstreams/plan` 补齐本事项卡片「## 规划」的四件套——目标（WHAT）/ 边界 / 验收标准（AC<n>）/ 阶段裁剪声明；**不直接改 `.dsh` 文件**。",
                 "- 四件套齐后**停下请人确认规划**；人确认前不得进入设计。",
             ])
         case .produceDesign:
@@ -179,7 +179,7 @@ enum WorkstreamHandoff {
             return section([
                 "本步做「拆分任务」：",
                 "- 用 `/task-todo` 建**等待态队列 + 批量入队**（= 任务拆分本身，只建不启动）。",
-                "- 把阶段 ↔ 队列映射记进卡片 `queues`；**停下请人确认拆分合理**。",
+                "- 用 `/api/workstreams/queues` 把阶段 ↔ 队列映射记进卡片 `queues`；**停下请人确认拆分合理**。",
             ])
         case .startImplementation:
             return section([
@@ -196,7 +196,7 @@ enum WorkstreamHandoff {
         case .deliver:
             return section([
                 "本步做「交付」：",
-                "- push / 开 PR；把 `covered` 与交付 PR 写进卡片。",
+                "- push / 开 PR；交付事实（`covered` / PR）由面板记录，**不直接改 `.dsh` 文件**。",
                 "- `outcome` 是派生谓词缓存，**不手写**。",
             ])
         }
@@ -205,6 +205,7 @@ enum WorkstreamHandoff {
     /// 共用模型规则（design §4，强制）；回归门一条只在卡片登记了 REG-* 时出现。
     static func rulesSection(_ card: WorkstreamCard) -> String {
         var lines: [String] = ["规则（强制）："]
+        lines.append("- 改事项卡片一律走 `/api/workstreams/*`（`workstream-panel` 技能）；**不直接改 `.dsh` 文件**。")
         lines.append("- 回边合法但必须留痕；跳过 / 裁剪必须在「规划」声明。")
         lines.append("- 只拆不胀：范围外的新发现回需求池（R5），不就地吸收。")
         lines.append("- 裁决是点记录；覆盖锚变更；终态是派生谓词（不写 `closed` / `outcome`）。")

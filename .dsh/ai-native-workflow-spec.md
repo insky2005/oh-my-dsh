@@ -159,6 +159,7 @@ agent 需完成并自检：
 这是 **App 能力，不是本规范的一部分**——项目**配合 oh-my-dsh 使用**时才有：
 
 - **需求池面板 + `/requirement-pool` 技能**：想法收件箱 = 落 `REQ-*.md`（`state: candidate`）；需求池 = 按有效状态（`discarded > closed > split > state`）展示、人工改 `state`、丢弃；拆解器 = agent 经 API 提交 `1..N` **待确认提案**，**人在面板确认 / 驳回（可带原因）**后才生成 `WS-*.md`，留下需求 → 事项映射。`confirm` 只由面板（人）触发，agent 只 `propose`（R10）；需求从收件到确认拆解始终回到同一会话（运行时绑定只在本机，不进卡片）。面板只服务需求池，规划 / 设计 / 验收 / 交付仍走事项会话。
+- **事项面板 + `/workstream-panel` 技能**：事项（WS）以事项面板为**唯一写者**（`.dsh/workstreams/WS-*.md` 为权威）；agent 经 `/api/workstreams/*` 补规划（`plan`）、改标题 / 需求指针 / 正文（`update`）、登记阶段队列（`queues`），**不直接改 `.dsh` 文件**；阶段推进与退回是**人工确认门**（`stage/confirm` / `stage/reject`），agent 不自签（R10 / D5b）。
 - **任务面板 + `/task-todo` 技能**：任务拆分 = 建**等待态队列** + 批量入队（`.draft`，不启动）；实施 = 启动队列；交付 = 交付会话 push + PR；队列跑完回传会话。
 
 不用 App 时，任何等价机制（自有队列 / 脚本 / 其它工具）都可以。

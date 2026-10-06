@@ -124,5 +124,18 @@ if mode == "migrate" {
           "issue-resolve is no longer a built-in")
 }
 
+// 6. Write-permission reversal (2026-10): the workstream-panel skill tells the
+// agent to edit WS cards through /api/workstreams/* and never to touch .dsh
+// files directly. Guard both the presence and the wording.
+check(BuiltinSkill.workstreamPanel.dirName == "workstream-panel", "workstream-panel dirName")
+let wsSkill = read(repoFile(.workstreamPanel))
+check(wsSkill != nil, "workstream-panel repo copy exists")
+if let text = wsSkill {
+    check(text.contains("name: workstream-panel"), "workstream-panel frontmatter name")
+    check(text.contains("/api/workstreams/"), "workstream-panel points at the panel API")
+    check(text.contains("不直接改 .dsh 文件"), "workstream-panel forbids direct .dsh edits")
+    check(text.contains("stage/confirm"), "workstream-panel keeps the human confirmation gate")
+}
+
 if failures > 0 { print("\(failures) FAILURE(S)"); exit(1) }
 print("skills tests (\(mode)) passed")

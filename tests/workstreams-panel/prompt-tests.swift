@@ -114,6 +114,8 @@ section("planning: four-piece set then human confirmation")
 do {
     let p = WorkstreamHandoff.prompt(card: makeCard(), stage: .planning)
     contains(p, "确认规划", "action is 确认规划")
+    contains(p, "/api/workstreams/plan", "planning writes the section through the API")
+    contains(p, "不直接改", "planning never edits .dsh directly")
     contains(p, "四件套", "requires the four-piece set")
     contains(p, "目标（WHAT）", "names 目标（WHAT）")
     contains(p, "边界", "names 边界")
@@ -140,6 +142,7 @@ do {
     contains(p, "/task-todo", "uses the /task-todo skill")
     contains(p, "等待态队列", "creates a waiting queue")
     contains(p, "只建不启动", "does not start the queue")
+    contains(p, "/api/workstreams/queues", "the stage-queue mapping goes through the API")
     contains(p, "停下请人确认拆分合理", "stops for human confirmation")
 }
 
@@ -179,6 +182,7 @@ do {
     contains(p, "covered", "writes covered")
     contains(p, "outcome", "mentions outcome")
     contains(p, "不手写", "does not hand-write the derived outcome")
+    contains(p, "不直接改", "delivery never edits .dsh directly")
 }
 
 // MARK: - 模型规则（design §4）
@@ -188,6 +192,9 @@ do {
     for stage in WorkstreamStage.allCases {
         let p = WorkstreamHandoff.prompt(card: makeCard(), stage: stage)
         contains(p, "规则（强制）：", "rules header for " + stage.rawValue)
+        contains(p, "/api/workstreams/", "API write rule for " + stage.rawValue)
+        contains(p, "workstream-panel", "names the workstream-panel skill for " + stage.rawValue)
+        contains(p, "不直接改", "no direct .dsh edits for " + stage.rawValue)
         contains(p, "回边合法但必须留痕", "back-edge rule for " + stage.rawValue)
         contains(p, "只拆不胀", "只拆不胀 rule for " + stage.rawValue)
         contains(p, "派生谓词", "derived terminal state for " + stage.rawValue)
