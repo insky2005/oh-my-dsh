@@ -312,6 +312,45 @@ do {
     contains(body, "本步动作：确认规划", "it uses the stage's default action")
 }
 
+// MARK: - 对话内阶段推进：确认 → 下一阶段提示词（design §5 + §6）
+
+section("next-stage handoff after a human confirmation")
+do {
+    // 手动验收路径：确认「规划」后，主场会话应收到「设计」阶段提示词。
+    let planning = makeCard(stage: .planning)
+    let first = WorkstreamHandoff.nextStagePrompt(card: planning, workspace: "/tmp/ws")
+    eq(first?.stage, .design, "confirming 规划 hands off to 设计")
+    if let prompt = first?.prompt {
+        check(WorkstreamHandoff.isHandoff(prompt), "the next-stage prompt is a panel handoff")
+        contains(prompt, "当前 stage：设计", "the 设计 stage marker is in the prompt")
+        contains(prompt, "本步动作：出设计", "the 设计 default action is in the prompt")
+        eq(prompt, WorkstreamHandoff.prompt(card: planning, stage: .design, workspace: "/tmp/ws"),
+           "the next-stage prompt is the 设计 stage prompt verbatim")
+    } else {
+        check(false, "planning must hand off to 设计")
+    }
+    // 每个非终态阶段都前移一格，且用的是目标阶段的默认动作。
+    eq(WorkstreamHandoff.nextStagePrompt(card: makeCard(stage: .design))?.stage, .task,
+       "design hands off to 执行 (task)")
+    eq(WorkstreamHandoff.nextStagePrompt(card: makeCard(stage: .task))?.stage, .acceptance,
+       "task hands off to 验收")
+    eq(WorkstreamHandoff.nextStagePrompt(card: makeCard(stage: .acceptance))?.stage, .delivery,
+       "acceptance hands off to 交付")
+    // 交付是终态：确认它没有下一阶段，不发提示词。
+    eq(WorkstreamHandoff.nextStagePrompt(card: makeCard(stage: .delivery)) == nil, true,
+       "delivery is terminal: no next-stage prompt")
+    // 目标从卡片注入（同一张卡 → 同一段提示词）。
+    let design = WorkstreamHandoff.nextStagePrompt(card: makeCard(stage: .design,
+        planningGoal: "产出面板生成的各阶段提示词"))?.prompt ?? ""
+    contains(design, "目标：产出面板生成的各阶段提示词", "the goal is injected from the card")
+    // 需求指针 / 仓库名沿用公共头。
+    let named = WorkstreamHandoff.nextStagePrompt(card: makeCard(stage: .planning),
+                                                  workspace: "/tmp/my-repo")?.prompt ?? ""
+    contains(named, "你在 my-repo 处理一个事项", "the next-stage prompt names the repo")
+    check(named.contains("- 事项：.dsh/workstreams/" + planning.id + ".md"),
+          "the next-stage prompt still points at the workstream card")
+}
+
 print("")
 if failures == 0 {
     print("prompt tests passed (" + String(checks) + " checks)")

@@ -710,6 +710,11 @@ final class WorkstreamsPanelController: NSObject {
     /// session when it is alive, otherwise starts (and binds) a new one; the
     /// third argument is the bound session read from local.json (nil = none).
     var onHandleInSession: ((String, String, String?) -> Void)?
+    /// 对话内阶段推进（design §5 + §6）：人在面板确认某阶段、stage 真的前移后触发；
+    /// main.swift 复用 `WorkstreamHandoff` 把下一阶段交接提示词发给该事项绑定的主场
+    /// 会话（无绑定会话则不发）。形状对齐需求池的 `onBreakdownResolved`：面板只报
+    /// 事实，主程序负责会话选择与发送。
+    var onStageConfirmed: ((WorkstreamCard, WorkstreamStage) -> Void)?
     /// QA hook (--ui-debug): fires after each render.
     var onDidRender: (() -> Void)?
     /// dsh web port, supplied by main.swift (read at call time, never frozen).
@@ -1197,17 +1202,28 @@ final class WorkstreamsPanelController: NSObject {
         guard let workspace = workspaceProvider?(), !workspace.isEmpty,
               let card = snapshot.workstreams.first(where: { $0.id == cardID }) else { return }
         do {
-            _ = try WorkstreamsCore.confirmStage(workspace: workspace, id: cardID,
+            let updated = try WorkstreamsCore.confirmStage(workspace: workspace, id: cardID,
                                                  expectedStage: card.stage,
                                                  carrier: stageCarrier(for: card, board: loadBoard(workspace)),
                                                  note: nil, today: WorkstreamsCore.today())
             setStatus(L10n.tr("workstreams.gate.confirmed"), isError: false)
+            continueToNextStage(after: card, updated: updated)
         } catch let error as WorkstreamError {
             setStatus(L10n.tr("workstreams.gate.failed") + "：" + error.message, isError: true)
         } catch {
             setStatus(L10n.tr("workstreams.gate.failed"), isError: true)
         }
         reload()
+    }
+
+    /// 对话内阶段推进（design §5 + §6 / 队列第 24 项）：确认成功且 stage 真的前移时，
+    /// 把下一阶段交接提示词交给 main.swift。交付是终态、stage 不前移，或提示词生成
+    /// 返回 nil 时静默跳过——人工确认本身已经完成推进，续发只是「让对话跟到下一阶段」。
+    private func continueToNextStage(after old: WorkstreamCard, updated: WorkstreamCard) {
+        guard updated.stage != old.stage,
+              let handoff = WorkstreamHandoff.nextStagePrompt(card: updated,
+                                                              workspace: workspaceProvider?() ?? "") else { return }
+        onStageConfirmed?(updated, handoff.stage)
     }
 
     /// The panel's back-edge button: ask for a reason, then record it (R2 / R10).
@@ -1612,6 +1628,9 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                                            note: request.note,
                                                            today: WorkstreamsCore.today())
             bindSession(request.session, workspace: workspace, id: updated.id)
+            // 对话内阶段推进（第 24 项）：API 路径的人确认同样把下一阶段提示词交给
+            // 主场会话；此时 bindSession 已把请求里的 session 落盘，主程序读到新绑定。
+            continueToNextStage(after: card, updated: updated)
             if workspace == (workspaceProvider?() ?? "") { reload() }
             let gate = WorkstreamsStageGate.evaluate(updated,
                                                      carrier: stageCarrier(for: updated, board: loadBoard(workspace)),

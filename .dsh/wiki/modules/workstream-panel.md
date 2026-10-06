@@ -46,6 +46,8 @@ manual: false
 
 **事项 ↔ 会话绑定 / 在会话中处理**（2026-10-07）：`.dsh/workstreams/local.json` 的 `workstreamSessions`（WS-id → sessionId，ignored）由任何带 `session` 的写请求记忆（`WSStore.rememberWorkstreamSession`），`list` 的每张卡随带 `session`；反查路由 **`GET /api/workstreams/bound?session=$DSH_SESSION_ID`** 返回该会话绑定的 WS（未绑定返回空列表）。主卡 / 阶段卡「**在会话中处理**」动作对齐需求池「细化」：复用绑定会话 / 新建并绑定 / 回退当前会话，决策为纯函数 `WorkstreamsCore.sessionTarget`（`WorkstreamTarget.reuse / created / fallback`）。**需求拆解确认继承**（2026-10-07）：`RequirementsCore.confirm` 建 `WS-*.md` 时把该需求在 `.dsh/requirements/local.json` 的绑定会话合并写进 `workstreamSessions`（显式 `session` 优先，无绑定则不发明），新事项在面板可直接续同一条对话；`requirements.notify.confirmed` 同步改指事项面板并附 focus 提示。
 
+**对话内阶段推进**（2026-10-07）：人工确认门通过、`stage` 真的前移后，面板按钮与 `POST /api/workstreams/stage/confirm` 两条路径共用 `continueToNextStage`，经 `onStageConfirmed` 把更新后的卡片交给 `main.swift`；后者读该事项的**绑定主场会话**并复用 `WorkstreamHandoff.nextStagePrompt`（下一阶段 + 该阶段默认动作提示词）发送，对话自然续到下一阶段。**无绑定会话则不发**（不凭空起会话）、**交付是终态**不续发。
+
 ## 测试
 
-`tests/workstreams-panel/run.sh`（**975 项**）：model 93 + API 263 + ui 155 + runner 122 + prompt 155 + delivery 127 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **事项会话绑定与在会话中处理** / **focus 通道（面板高亮滚动 + API focus + 需求池跳转）**等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。
+`tests/workstreams-panel/run.sh`（**987 项**）：model 93 + API 263 + ui 155 + runner 122 + prompt 167 + delivery 127 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **事项会话绑定与在会话中处理** / **focus 通道（面板高亮滚动 + API focus + 需求池跳转）** / **对话内阶段推进** 等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。

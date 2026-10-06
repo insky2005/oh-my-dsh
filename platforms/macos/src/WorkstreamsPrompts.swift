@@ -144,6 +144,19 @@ enum WorkstreamHandoff {
         return copy
     }
 
+    // MARK: 对话内阶段推进（确认 → 下一阶段提示词）
+
+    /// 人在面板确认某阶段后交给事项「主场会话」继续的下一阶段提示词（design §5
+    /// 生命周期 / §6 会话绑定）。返回下一阶段 + 该阶段默认动作的完整交接提示词；
+    /// **交付是终态，没有下一阶段，返回 nil**——确认本身已完成 stage 推进，不再续发。
+    /// 纯函数：给定同一张卡输出同一段文本，便于 headless 单测。
+    static func nextStagePrompt(card: WorkstreamCard,
+                                workspace: String = "",
+                                repoName: String? = nil) -> (stage: WorkstreamStage, prompt: String)? {
+        guard let next = card.stage.next else { return nil }
+        return (next, prompt(card: card, stage: next, workspace: workspace, repoName: repoName))
+    }
+
     // MARK: 完成 marker（执行阶段沿用）
 
     /// 完成标记要求（P1 完成协议）：追加在提示词末尾，会话须在最后一行原样回显。

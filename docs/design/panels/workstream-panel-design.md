@@ -94,6 +94,7 @@
 
 - **启动粒度**：**事项级**（跑该事项队列，可按当前阶段）/ **阶段级**（只跑该阶段的任务）；两者都只是「启动」，**不替人确认**（R10）。
 - **运行态自动回写**：任务状态 → 阶段运行态（未开始 / 进行中 / 待确认 / 完成 / 阻塞）→ 事项运行态；**权威 `stage` 仍由人工确认门推进**（A13）。
+- **对话内阶段推进**：人确认某阶段、`stage` 真的前移后，面板把**下一阶段**交接提示词发给该事项绑定的**主场会话**（`.dsh/workstreams/local.json` 的 `workstreamSessions`）；**无绑定会话则不发**（不凭空起会话），**交付是终态**、确认不前移，不续发。
 - 回边合法且必须留痕（R2）；裁剪（跳过阶段）必须在**规划**声明（R3）。
 - 阶段证据谓词各阶段不同（§4），不能统一套用任务级 marker（见 §9 D3）。
 
@@ -187,4 +188,4 @@ D10 之所以是伪问题，源于把两个正交的轴混为一谈：
    - **已落地（2026-10-07）**：阶段提示词去掉 `/task-todo`、改指事项面板自有 API（`task/create` / `queue/start`），技能 `workstream-panel` 同步；
    - **已落地（2026-10-07）**：`covered` / `delivery` 写路由（`POST /api/workstreams/covered` / `delivery`；`delivery.outcome` 是派生缓存，API 拒绝手写，报 `outcome-derived`）；交付接线——面板「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给明确原因（`not-delivery-stage` / `not-git-repo` / `no-branch` / `no-remote` / `no-github-remote` / `no-token`），成功则 `runner.enqueueDelivery` 建 delivery 阶段任务并只启动该阶段；
    - **已落地（2026-10-07）**：事项 ↔ 会话绑定——`local.json` 新增 `workstreamSessions`（ignored），任何 `/api/workstreams/*` 写请求带 `session` 时记忆、`list` 随带；反查路由 `GET /api/workstreams/bound?session=...`；主卡 / 阶段卡「**在会话中处理**」对齐需求池「细化」（复用绑定会话 / 新建并绑定 / 回退当前会话），由 `WorkstreamsCore.sessionTarget` 纯决策 + `WorkstreamsQueues` 持久化承载；
-   - **已落地（2026-10-07）**：**focus 通道**——面板 `focus(onWorkstream:)` 给目标卡加强调色描边并滚动到可见，被阶段筛选隐藏时回落「全部」；`/api/workstreams/*` 统一支持 `focus`（写操作 body / 读操作 `?focus=`，仅 200 触发，默认 `false` 不抢面板），经 `WorkstreamsAPIDelegate.apiWorkstreamsFocus` → `BrowserAPIBridge.workstreamsFocus` 落到面板；需求池子事项主 `↗` 改走该通道（次级仍打开卡文件）。**至此 §10 无待办。**
+   - **已落地（2026-10-07）**：**focus 通道**——面板 `focus(onWorkstream:)` 给目标卡加强调色描边并滚动到可见，被阶段筛选隐藏时回落「全部」；`/api/workstreams/*` 统一支持 `focus`（写操作 body / 读操作 `?focus=`，仅 200 触发，默认 `false` 不抢面板），经 `WorkstreamsAPIDelegate.apiWorkstreamsFocus` → `BrowserAPIBridge.workstreamsFocus` 落到面板；需求池子事项主 `↗` 改走该通道（次级仍打开卡文件）。**对话内阶段推进（2026-10-07）**：人在面板确认某阶段、`stage` 前移后，面板按钮与 `POST /api/workstreams/stage/confirm` 两条确认路径共用 `continueToNextStage`，经 `onStageConfirmed` 把更新后的卡片交给 `main.swift`；后者读该事项的绑定主场会话，复用 `WorkstreamHandoff.nextStagePrompt` 发送下一阶段交接提示词（无绑定会话不发、交付终态不续发）。**至此 §10 无待办。**

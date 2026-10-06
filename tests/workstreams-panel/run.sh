@@ -65,26 +65,30 @@ rm -rf "$TMP"
 echo "--- workstreams runner (serial pump / session lifecycle / cancel / retry / restart) ---"
 TMP="$(mktemp -d)"
 cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
+cp ../../platforms/macos/src/WorkstreamsStageGate.swift "$TMP/WorkstreamsStageGate.swift"
 cp ../../platforms/macos/src/WorkstreamsQueues.swift "$TMP/WorkstreamsQueues.swift"
 cp ../../platforms/macos/src/WorkstreamsPrompts.swift "$TMP/WorkstreamsPrompts.swift"
 cp ../../platforms/macos/src/WorkstreamsRunner.swift "$TMP/WorkstreamsRunner.swift"
 cp runner-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
+# WorkstreamsPrompts now resolves the next stage (WorkstreamStage.next, StageGate).
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
-  -o "$TMP/runner-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsQueues.swift" \
-  "$TMP/WorkstreamsPrompts.swift" "$TMP/WorkstreamsRunner.swift" "$TMP/main.swift"
+  -o "$TMP/runner-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsStageGate.swift" \
+  "$TMP/WorkstreamsQueues.swift" "$TMP/WorkstreamsPrompts.swift" "$TMP/WorkstreamsRunner.swift" "$TMP/main.swift"
 "$TMP/runner-tests"
 rm -rf "$TMP"
 
 echo "--- workstreams stage handoff prompts (planning / design / task / acceptance / delivery) ---"
 TMP="$(mktemp -d)"
 cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
+cp ../../platforms/macos/src/WorkstreamsStageGate.swift "$TMP/WorkstreamsStageGate.swift"
 cp ../../platforms/macos/src/WorkstreamsQueues.swift "$TMP/WorkstreamsQueues.swift"
 cp ../../platforms/macos/src/WorkstreamsPrompts.swift "$TMP/WorkstreamsPrompts.swift"
 cp ../../platforms/macos/src/WorkstreamsRunner.swift "$TMP/WorkstreamsRunner.swift"
 cp prompt-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
+# nextStagePrompt uses WorkstreamStage.next (StageGate), so it compiles in too.
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
-  -o "$TMP/prompt-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsQueues.swift" \
-  "$TMP/WorkstreamsPrompts.swift" "$TMP/WorkstreamsRunner.swift" "$TMP/main.swift"
+  -o "$TMP/prompt-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsStageGate.swift" \
+  "$TMP/WorkstreamsQueues.swift" "$TMP/WorkstreamsPrompts.swift" "$TMP/WorkstreamsRunner.swift" "$TMP/main.swift"
 "$TMP/prompt-tests"
 rm -rf "$TMP"
 
@@ -538,5 +542,41 @@ if ! grep -qF 'requirements.openWorkstreamFocus' "$MAIN"; then
   exit 1
 fi
 echo "focus channel guard ok"
+
+echo "--- 对话内阶段推进 guard (第 24 项: confirm -> next-stage prompt to the bound session) ---"
+# 阶段确认（人工门）成功后，复用 WorkstreamHandoff 向该事项绑定的主场会话发送下一阶段
+# 提示词；无绑定会话则不发。纯函数 nextStagePrompt 承载「下一阶段 + 提示词」决策。
+if ! grep -qE 'func nextStagePrompt\(' "$PROMPTS"; then
+  echo "FAIL: WorkstreamsPrompts.swift is missing nextStagePrompt" >&2
+  exit 1
+fi
+if ! grep -qF 'var onStageConfirmed' "$PANEL" \
+   || ! grep -qF 'func continueToNextStage(' "$PANEL"; then
+  echo "FAIL: WorkstreamsPanel.swift is missing the stage-confirm callback / helper" >&2
+  exit 1
+fi
+# 两条确认路径（面板按钮 + API）都必须触发，只接一条不算完成。
+if [ "$(grep -c 'continueToNextStage(after:' "$PANEL")" -lt 2 ]; then
+  echo "FAIL: both confirm paths (panel button + API) must continue to the next stage" >&2
+  exit 1
+fi
+if ! grep -qF 'WorkstreamHandoff.nextStagePrompt' "$PANEL"; then
+  echo "FAIL: the panel must derive the next-stage handoff through WorkstreamHandoff" >&2
+  exit 1
+fi
+if ! grep -qF 'workstreamsPanel.onStageConfirmed' "$MAIN" \
+   || ! grep -qF 'func continueWorkstreamInSession(' "$MAIN" \
+   || ! grep -qF 'WorkstreamHandoff.prompt(card: card, stage: stage, workspace: workspace)' "$MAIN"; then
+  echo "FAIL: main.swift is missing the next-stage handoff wiring" >&2
+  exit 1
+fi
+# 无绑定会话不发（绝不凭空起会话）。
+if ! grep -qF 'WSStore.workstreamSessions(workspace)[card.id]' "$MAIN" \
+   || ! grep -qF 'guard let sessionId = bound, !sessionId.isEmpty else' "$MAIN" \
+   || ! grep -qF 'next-stage handoff skipped' "$MAIN"; then
+  echo "FAIL: the handoff must be skipped when the workstream has no bound session" >&2
+  exit 1
+fi
+echo "对话内阶段推进 guard ok"
 
 echo "workstreams-panel tests passed"

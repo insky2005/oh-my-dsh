@@ -3053,6 +3053,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         workstreamsPanel.onHandleInSession = { [weak self] id, title, session in
             self?.startWorkstreamSession(id, title: title, boundSession: session)
         }
+        // 对话内阶段推进（队列第 24 项 / design §5 + §6）：人在面板确认某阶段后，
+        // 若该事项有绑定的主场会话，就把**下一阶段**交接提示词发过去，让对话自然续到
+        // 下一阶段；无绑定会话则不发（不凭空起会话）。形状对齐需求池的
+        // notifyBreakdownResolved：面板只报事实，主程序负责会话选择与发送。
+        workstreamsPanel.onStageConfirmed = { [weak self] card, stage in
+            self?.continueWorkstreamInSession(card: card, stage: stage)
+        }
         // Clicking a card opens its WS-*.md in the file panel (same as the
         // requirements pool's child-workstream button).
         workstreamsPanel.onOpenCard = { [weak self] path in
@@ -5661,6 +5668,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 }
                 self.workstreamsPanel?.setStatus(message, isError: false)
                 if used != self.activeSessionId { self.openDSHSession(used) }
+            }
+        }
+    }
+
+    /// 对话内阶段推进（队列第 24 项 / design §5 + §6）：人在面板确认某阶段后，若该
+    /// 事项有绑定的主场会话（`local.json` 的 `workstreamSessions`），就把**下一阶段**
+    /// 的交接提示词发过去，让对话自然续到下一阶段；**无绑定会话则不发**（不凭空起
+    /// 会话——只有「在会话中处理」才允许新建）。形状与需求池的
+    /// `notifyBreakdownResolved` 一致：面板只报事实，主程序负责会话选择与发送。
+    private func continueWorkstreamInSession(card: WorkstreamCard, stage: WorkstreamStage) {
+        guard let workspace = activeWorkspacePath(), !workspace.isEmpty else { return }
+        let bound = WSStore.workstreamSessions(workspace)[card.id]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let sessionId = bound, !sessionId.isEmpty else {
+            AppLog.shared.log("workstreams: \(card.id) advanced to \(stage.rawValue) with no bound session; next-stage handoff skipped")
+            return
+        }
+        let port = server.port
+        guard port > 0 else { return }
+        let prompt = WorkstreamHandoff.prompt(card: card, stage: stage, workspace: workspace)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let sent = DshSessionOps.sendPrompt(port: port, sessionId: sessionId, text: prompt)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if sent {
+                    AppLog.shared.log("workstreams: next-stage handoff for \(card.id) -> \(stage.rawValue) written to session \(sessionId)")
+                    if sessionId != self.activeSessionId { self.openDSHSession(sessionId) }
+                } else {
+                    AppLog.shared.log("workstreams: next-stage handoff for \(card.id) failed to send (\(DshWebRPC.lastFailure ?? "?"))")
+                }
             }
         }
     }

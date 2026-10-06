@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **事项面板：对话内阶段推进（确认后向主场会话发下一阶段提示词）（2026-10-07）**：人工确认门通过、`stage` 真的前移后，面板经 `onStageConfirmed` 把更新后的卡片与目标阶段交给 `main.swift`；后者读该事项在 `.dsh/workstreams/local.json` 的**绑定会话**（`workstreamSessions[WS-id]`），复用 `WorkstreamHandoff` 生成**下一阶段**交接提示词并发送，对话自然续到下一阶段。**无绑定会话则不发**（不凭空起会话——只有「在会话中处理」才允许新建）；**交付是终态**、确认不前移，不续发。面板按钮与 `POST /api/workstreams/stage/confirm` 两条确认路径都触发；纯函数 `WorkstreamHandoff.nextStagePrompt` 承载「下一阶段 + 提示词」决策。测试 `tests/workstreams-panel`：prompt **155 → 167**，合计 **975 → 987**，新增「对话内阶段推进」源码守卫。
+
 - **事项面板：focus 通道（面板聚焦 + API + 需求池跳转）（2026-10-07）**：把「跳到某个事项」做成一条贯通面板 / API / 需求池的通道——① 面板 `focus(onWorkstream:)` 给目标卡加**强调色描边**并**滚动到可见**；目标被当前**阶段筛选**隐藏时筛选自动回落「全部」，切换工作区清空焦点。② `/api/workstreams/*` 全部支持 `focus`（写操作用 body 字段 / 读操作用 `?focus=`，接受 `true` / `1` / `yes` / `on`），仅在请求被处理（HTTP 200）时触发；`focus:true` 会亮起事项面板并按路由 `id`（`create` 取新建卡 id）高亮；**默认 `false`**，普通 agent 写卡不抢面板。③ 需求池「已拆解事项」的主 `↗` 由「打开卡文件」改为「**在事项面板打开并聚焦**」（次级 `doc.text` 仍打开卡文件，D6）。测试 `tests/workstreams-panel`：API **244 → 263**、UI **143 → 155**，合计 **944 → 975**，新增 focus 通道源码守卫。
 
 - **需求池 → 事项面板：拆解确认继承需求会话 + 回写改指事项面板（2026-10-07）**：`RequirementsCore.confirm` 建 `WS-*.md` 时，把该需求在 `.dsh/requirements/local.json` 的**绑定会话继承给每个新 WS**（合并写 `.dsh/workstreams/local.json` 的 `workstreamSessions`——与事项面板「在会话中处理」同一份运行态，任务会话 / 汇报 / marker 不被覆盖）；API 路径传入的 `session` 优先于已绑定会话，需求无绑定则不发明绑定。`requirements.notify.confirmed` 文案改为「已生成 WS-…，请到**事项面板**继续处理」并附 focus 提示（新增 `requirements.notify.confirmedFocus`），确认后右栏聚焦事项面板。模型测试 **176 → 185**。
