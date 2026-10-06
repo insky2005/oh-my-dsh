@@ -5,7 +5,9 @@ import Foundation
 //   - each stage's key requirements (planning / design / task / acceptance / delivery);
 //   - the public header (card pointer, requirement pointer, stage + action, goal);
 //   - the shared model rules, with the regression gate line only when REG-* is set;
-//   - injection into a stage queue task's body and the execution-stage completion marker.
+//   - injection into a stage queue task's body and the execution-stage completion marker;
+//   - the tasks panel's /task-todo skill is gone: task create / start point at the
+//     panel's own /api/workstreams/task/create and /api/workstreams/queue/start (D19).
 //
 // No AppKit, no disk, no dsh server. Usage: tests/workstreams-panel/run.sh
 
@@ -135,15 +137,16 @@ do {
     contains(p, "停下请人确认设计", "stops for human confirmation")
 }
 
-section("task split: a waiting queue via /task-todo, never auto-start")
+section("task split: waiting stage tasks via the panel API, never auto-start")
 do {
     let p = WorkstreamHandoff.prompt(card: makeCard(), stage: .task)
     contains(p, "拆分任务", "default task action is 拆分任务")
-    contains(p, "/task-todo", "uses the /task-todo skill")
-    contains(p, "等待态队列", "creates a waiting queue")
-    contains(p, "只建不启动", "does not start the queue")
-    contains(p, "/api/workstreams/queues", "the stage-queue mapping goes through the API")
+    contains(p, "/api/workstreams/task/create", "creates waiting tasks through the panel's own API")
+    contains(p, "等待态阶段任务", "creates waiting-state stage tasks")
+    contains(p, "本阶段 `stage`", "explains that each task carries the stage")
+    contains(p, "只建不启动", "does not start the tasks")
     contains(p, "停下请人确认拆分合理", "stops for human confirmation")
+    notContains(p, "/task-todo", "never points at the tasks panel's skill")
 }
 
 section("task start: execution after confirmation, marker protocol")
@@ -151,8 +154,10 @@ do {
     let card = makeCard()
     let p = WorkstreamHandoff.prompt(card: card, action: .startImplementation)
     contains(p, "启动实施", "action is 启动实施")
-    contains(p, "queue/start", "starts the queue by explicit action")
+    contains(p, "/api/workstreams/queue/start", "starts the queue through the panel's own API")
+    contains(p, "带 `stage`", "a stage-scoped start only runs that stage's tasks")
     contains(p, "conventional commits", "keeps conventional commits")
+    notContains(p, "/task-todo", "never points at the tasks panel's skill")
     // 执行阶段沿用 marker 完成协议：提示词 + marker instruction，marker 落在末尾。
     let marked = WorkstreamHandoff.injectingCompletionMarker(p, marker: "DSH-WS-DONE-ABCDEF01")
     contains(marked, "DSH-WS-DONE-ABCDEF01", "the execution marker is injected")
@@ -198,7 +203,10 @@ do {
         contains(p, "回边合法但必须留痕", "back-edge rule for " + stage.rawValue)
         contains(p, "只拆不胀", "只拆不胀 rule for " + stage.rawValue)
         contains(p, "派生谓词", "derived terminal state for " + stage.rawValue)
-        contains(p, "/task-todo", "task-todo rule for " + stage.rawValue)
+        contains(p, "/api/workstreams/task/create", "task-create rule for " + stage.rawValue)
+        contains(p, "/api/workstreams/queue/start", "queue-start rule for " + stage.rawValue)
+        contains(p, "任务带 `stage`", "stage-carrying tasks rule for " + stage.rawValue)
+        notContains(p, "/task-todo", "no tasks-panel skill for " + stage.rawValue)
         contains(p, "不改其它会话的在途文件", "in-flight-files rule for " + stage.rawValue)
     }
     let plain = WorkstreamHandoff.prompt(card: makeCard(regression: nil), stage: .planning)

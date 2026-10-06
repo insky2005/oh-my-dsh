@@ -263,6 +263,21 @@ if ! grep -qF '/api/workstreams/' "$PROMPTS" \
   echo "FAIL: the stage prompt must route card edits through /api/workstreams/*" >&2
   exit 1
 fi
+# D19：任务创建 / 启动走事项面板自有引擎；提示词不得再示例任务面板技能 /task-todo，
+# 且必须点名自有 API 并说明任务带 stage（执行阶段的完成协议仍是 runner 注入的 marker）。
+if grep -qF '/task-todo' "$PROMPTS"; then
+  echo "FAIL: the stage prompt still points at the tasks panel's /task-todo skill" >&2
+  exit 1
+fi
+if ! grep -qF '/api/workstreams/task/create' "$PROMPTS" \
+   || ! grep -qF '/api/workstreams/queue/start' "$PROMPTS"; then
+  echo "FAIL: the stage prompt must create / start tasks through the workstreams panel API" >&2
+  exit 1
+fi
+if ! grep -qF '任务带 `stage`' "$PROMPTS"; then
+  echo "FAIL: the stage prompt must explain that stage tasks carry a stage" >&2
+  exit 1
+fi
 # 执行阶段的完成协议仍由 runner 注入 marker；
 # 面板生成的提示词必须能被 runner 原样识别，而不是被包成任务模板。
 if ! grep -qE 'WorkstreamHandoff\.isHandoff' "$SRC2/WorkstreamsRunner.swift"; then

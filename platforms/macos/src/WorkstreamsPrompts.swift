@@ -178,13 +178,13 @@ enum WorkstreamHandoff {
         case .splitTasks:
             return section([
                 "本步做「拆分任务」：",
-                "- 用 `/task-todo` 建**等待态队列 + 批量入队**（= 任务拆分本身，只建不启动）。",
-                "- 用 `/api/workstreams/queues` 把阶段 ↔ 队列映射记进卡片 `queues`；**停下请人确认拆分合理**。",
+                "- 用 `POST /api/workstreams/task/create` 建**等待态阶段任务**（= 任务拆分本身）：每条任务带本阶段 `stage`，追加到该事项唯一的队列；**只建不启动**。",
+                "- 阶段 ↔ 队列映射由面板写回卡片 `queues`；**停下请人确认拆分合理**。",
             ])
         case .startImplementation:
             return section([
                 "本步做「启动实施」：",
-                "- 人确认拆分后，用 `/task-todo 启动队列`（`queue/start`）启动实施。",
+                "- 人确认拆分后，用 `POST /api/workstreams/queue/start`（带 `stage` = 只跑本阶段任务）启动实施。",
                 "- 在已确认的边界内改代码 / 跑测试 / commit：切分支、conventional commits。",
             ])
         case .verify:
@@ -212,7 +212,7 @@ enum WorkstreamHandoff {
         if let regression = nonEmpty(card.regression) {
             lines.append("- 回归门 " + regression + "：若改动其覆盖路径，交付前运行。")
         }
-        lines.append("- 任务阶段用 `/task-todo` 落地（拆分 = 建等待态队列、实施 = 启动、交付 = deliver）。")
+        lines.append("- 阶段任务走事项面板自有 API：`POST /api/workstreams/task/create` 建（任务带 `stage`）、`POST /api/workstreams/queue/start` 启动；不用任务面板技能。")
         lines.append("- 不改其它会话的在途文件。")
         return lines.joined(separator: "\n")
     }
