@@ -5,6 +5,8 @@
 #      create / update / stage / queues writes with atomic rename + six-digit ids.
 #   2. the localhost API router (WorkstreamsAPI.swift): routing, validation, error
 #      codes and response shapes (no AppKit, no disk).
+#   3. the pure view models (WorkstreamsUI.swift): the three-level card model,
+#      the top stage filter and the empty state.
 # No AppKit, no dsh server, no window. Usage: tests/workstreams-panel/run.sh
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -30,14 +32,24 @@ swiftc -swift-version 5 -module-cache-path "$CACHE" \
 "$TMP/api-tests"
 rm -rf "$TMP"
 
+echo "--- workstreams UI models (three-level card / stage filter / empty state) ---"
+TMP="$(mktemp -d)"
+cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
+cp ../../platforms/macos/src/WorkstreamsUI.swift "$TMP/WorkstreamsUI.swift"
+cp ui-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
+swiftc -swift-version 5 -module-cache-path "$CACHE" \
+  -o "$TMP/ui-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsUI.swift" "$TMP/main.swift"
+"$TMP/ui-tests"
+rm -rf "$TMP"
 
-echo "--- view base namespace guard (WSCardView / WSInlineForms, design A6) ---"
+
+echo "--- view base namespace guard (WSCardView / WSInlineForms / WorkstreamsPanel, design A6) ---"
 SRC2="../../platforms/macos/src"
 # The workstream panel must NOT reference the tasks panel's view widgets: its
 # copies live under the WS* names. The pattern is word-bounded so WSRepoPRButton /
 # WSQueueComposerView do not count as RepoPRButton / QueueComposerView.
 FORBIDDEN='TaskInk|taskRowGlyph|TaskBadgeView|TaskProgressBarView|TaskSectionHeaderView|TaskSummaryCardView|TaskCardView|RepoPRButton|RepoRetryButton|TaskQueueHeaderView|TaskQueueBlockView|TaskFormCardView|TaskFieldBox|TaskFormKit|TaskComposerView|QueueComposerView|TaskSettingsModel|TaskSettingsRepoModel|TaskSettingsView|TasksHelpTextView|TasksHelpView|TaskFormSheetView|TaskFormSheetHostView'
-if grep -nE "\b(${FORBIDDEN})\b" "$SRC2/WSCardView.swift" "$SRC2/WSInlineForms.swift"; then
+if grep -nE "\b(${FORBIDDEN})\b" "$SRC2/WSCardView.swift" "$SRC2/WSInlineForms.swift" "$SRC2/WorkstreamsPanel.swift"; then
   echo "FAIL: WS view files still reference tasks-panel view symbols" >&2
   exit 1
 fi
@@ -49,5 +61,19 @@ for sym in WSCardView WSBadgeView WSProgressBarView WSQueueHeaderView WSQueueBlo
   fi
 done
 echo "view base namespace guard: $(for s in WSCardView WSBadgeView WSComposerView WSFormSheetHostView; do printf "%s " "$s"; done)ok"
+
+echo "--- workstreams panel surface guard (PanelSurface / PanelControl, no new token) ---"
+SRC3="../../platforms/macos/src"
+if ! grep -q 'PanelSurface' "$SRC3/WorkstreamsPanel.swift" || ! grep -q 'PanelControl' "$SRC3/WorkstreamsPanel.swift"; then
+  echo "FAIL: WorkstreamsPanel.swift must paint with the shared PanelSurface / PanelControl tokens" >&2
+  exit 1
+fi
+# A new color token would be a 'static let ...: NSColor'; the panel may only use
+# the shared tokens (WSInk / PanelSurface / PanelControl / system colors).
+if grep -nE 'static let (dark|light)[A-Za-z]* *: *NSColor' "$SRC3/WorkstreamsPanel.swift"; then
+  echo "FAIL: WorkstreamsPanel.swift defines a new color token" >&2
+  exit 1
+fi
+echo "workstreams panel surface guard: PanelSurface + PanelControl ok"
 
 echo "workstreams-panel tests passed"
