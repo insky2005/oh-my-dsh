@@ -1,6 +1,6 @@
 ---
 name: workstream-panel
-description: 改事项（Workstream）卡片、按阶段建任务、启动事项/阶段队列、查看任务一律走事项面板 REST API /api/workstreams/*，不直接改 .dsh/workstreams/*.md。Edit workstream cards and stage tasks through the oh-my-dsh Workstreams panel API instead of writing .dsh files directly.
+description: 改事项（Workstream）卡片、按阶段建任务、启动事项/阶段队列、查看任务、按会话反查当前事项并把事项面板聚焦给用户，一律走事项面板 REST API /api/workstreams/*，不直接改 .dsh/workstreams/*.md。Edit workstream cards and stage tasks through the oh-my-dsh Workstreams panel API instead of writing .dsh files directly.
 user-invocable: false
 ---
 
@@ -43,6 +43,7 @@ PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/shell-api.port" 2>/dev/null || ca
 | 方法/路径 | 请求体 | 说明 |
 |---|---|---|
 | GET `/api/workstreams/list` | `?workspace=<路径>` | 现有事项卡 + 解析失败项；`workspace` 传 `$(pwd)` |
+| GET `/api/workstreams/bound` | `?session=$DSH_SESSION_ID` | **按会话反查**：本会话已绑定的事项（`workstreams[]`，`workstream` = 第一个）；未绑定返回空列表 |
 | GET `/api/workstreams/task/list` | `?workspace=<路径>` | **查看任务**：该工作区的队列 + 三级任务（状态 / 会话 / 失败原因）；`workspace` 传 `$(pwd)` |
 | POST `/api/workstreams/update` | `{"workspace":"…","id":"WS-000012","title":"…","requirement":"REQ-003","body":"…","session":"$DSH_SESSION_ID"}` | 改标题 / 需求指针 / 正文；缺省字段不改写，显式空串清除 |
 | POST `/api/workstreams/plan` | `{"workspace":"…","id":"WS-000012","heading":"## 规划","text":"…","session":"$DSH_SESSION_ID"}` | 整段替换某一级标题段（默认 `## 规划`；heading 不带 `## ` 会由服务端补上） |
@@ -58,6 +59,7 @@ PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/shell-api.port" 2>/dev/null || ca
 
 - `workspace` 传 `$(pwd)`；不传则用面板当前工作区。
 - 每个写操作都带上本会话的 `session`（`$DSH_SESSION_ID`），面板据此把该事项绑定回本会话。
+- **`focus`（对话 → 面板）**：任意路由可带 `focus: true`（写请求放 body，读请求放 `?focus=true`）；仅当请求成功（返回 200）时面板置前，并把目标卡高亮、滚动到可见。`create` 聚焦返回的新卡；其余写路由聚焦请求的 `id`；读请求只置前（无 id）。**默认 `false`**，普通写卡不会抢用户的右栏。
 - `stage` 取值：`planning` / `design` / `task` / `acceptance` / `delivery`。
 - `update` 的 `requirement` 传空串清除指针；`queues` 是队列 id 字符串列表（**0..1**）。
 - `task/create` 的 `titles` 与 `body` 至少给一个（只给 `body` 时取首行做标题）；`stage` 显式给空串是错误。
@@ -77,6 +79,24 @@ PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/shell-api.port" 2>/dev/null || ca
 ```bash
 curl -sG --data-urlencode "workspace=$(pwd)" "http://127.0.0.1:$PORT/api/workstreams/list"
 ```
+
+### 反查本会话的事项（对话 → 面板）
+
+不知道当前对话对应哪个事项时，用 `$DSH_SESSION_ID` 反查；要把用户的注意力带回事项面板时，
+给任意请求加 `focus: true`（读请求用 `?focus=true`，默认关闭）：
+
+```bash
+# 反查：本会话绑定的事项（未绑定则 workstreams 为空）
+curl -sG --data-urlencode "session=$DSH_SESSION_ID" \
+  "http://127.0.0.1:$PORT/api/workstreams/bound"
+
+# 反查并聚焦：面板置前、高亮该事项卡
+curl -sG --data-urlencode "session=$DSH_SESSION_ID" --data-urlencode "focus=true" \
+  "http://127.0.0.1:$PORT/api/workstreams/bound"
+```
+
+返回 `{ok, session, workstreams:[…], workstream?}`（`workstream` = 第一个，供单事项流程）。
+无绑定时 `workstreams` 为空；需要全量就 `list`，要给用户看卡就带 `focus: true`。
 
 ### 查看任务 / 队列
 
@@ -168,6 +188,7 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/update" -H 'Content-Type
 | curl 连不上（Connection refused） | App 没运行：请用户打开 oh-my-dsh，**不要**直接改盘上文件 |
 | `503 panel-unavailable` | 面板还没就绪：稍后重试一次；仍失败就请用户打开事项面板 |
 | `400 no-workspace` | 面板还没有工作区：让用户先选好项目 |
+| `400 missing-session` | `bound` 反查少了 `session`：带上 `$DSH_SESSION_ID` |
 | `400 missing-id` / `missing-title` | 请求缺 id / 标题：补全后再试 |
 | `400 no-fields` | `update` 一个可改字段都没给：至少给 `title` / `requirement` / `body` 之一 |
 | `400 missing-text` / `missing-queues` | `plan` / `queues` 少了必填字段：补齐后再试 |
@@ -191,4 +212,5 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/update" -H 'Content-Type
 - 不调 `stage/confirm` / `stage/reject`（人工确认门），也不调 `stage`（低层口子）；
 - **人未确认拆分前不 `queue/start`**：`task/create` 只建等待态任务，启动实施等人确认或用户明说；
 - 不手写派生字段（`closed` / `outcome` / `split`）；`covered` / `delivery` 只经写路由记事实，`outcome` 由服务端派生；
-- 不在用户没要求时新建事项 / 改阶段 / 建队列 / 启动队列。
+- 不在用户没要求时新建事项 / 改阶段 / 建队列 / 启动队列；
+- 不在用户没要求时用 `focus: true` 抢面板（默认已关闭；只有确实要把卡给用户看时才开）。

@@ -148,6 +148,12 @@ if let text = wsSkill {
     check(text.contains("/api/workstreams/covered"), "workstream-panel documents the covered write route")
     check(text.contains("/api/workstreams/delivery"), "workstream-panel documents the delivery write route")
     check(text.contains("outcome-derived") || text.contains("派生缓存"), "workstream-panel: outcome is a derived cache, not hand-written")
+    // 2026-10-07 (A11 / D6): session -> workstream reverse lookup + the focus channel.
+    check(text.contains("/api/workstreams/bound"), "workstream-panel documents the session reverse lookup route")
+    check(text.contains("$DSH_SESSION_ID"), "workstream-panel reverse lookup uses $DSH_SESSION_ID")
+    check(text.contains("反查"), "workstream-panel explains the reverse lookup")
+    check(text.contains("focus: true") && text.contains("focus=true"), "workstream-panel documents the focus flag (body + query)")
+    check(text.contains("聚焦") || text.contains("高亮"), "workstream-panel explains focusing / highlighting the panel")
 }
 
 if failures > 0 { print("\(failures) FAILURE(S)"); exit(1) }
