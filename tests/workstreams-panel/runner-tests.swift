@@ -542,6 +542,20 @@ do {
     eq(h.dsh.sessions.count, 1, "no other stage auto-starts")
 }
 
+section("enqueueDelivery: a delivery-stage task carrying the delivery prompt (A10)")
+do {
+    let h = Harness(board: WSBoard())
+    let card = wsCard(id: "WS-7", stage: .delivery, queues: [])
+    let built = h.runner.enqueueDelivery(card: card, prompt: "事项交付提示词 body")
+    eq(h.runner.board.queues.count, 1, "a delivery enqueue creates the workstream queue")
+    eq(built.created.count, 1, "one delivery task")
+    eq(h.runner.board.task(built.created[0].id)?.stage, .delivery, "the task carries the delivery stage")
+    eq(h.runner.board.task(built.created[0].id)?.body, "事项交付提示词 body", "the delivery prompt lands as the body")
+    eq(h.runner.board.task(built.created[0].id)?.workstreamId, "WS-7", "the task carries the workstream id")
+    eq(h.runner.board.queue(built.queue.id)?.state, .draft, "the queue stays waiting")
+    eq(h.dsh.sessions.count, 0, "nothing auto-starts")
+}
+
 print("")
 if failures == 0 {
     print("runner tests passed (" + String(checks) + " checks)")

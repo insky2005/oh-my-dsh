@@ -1085,6 +1085,18 @@ enum L10n {
         "workstreams.task.state.needsReview": ("待确认", "Needs review"),
         "workstreams.task.state.cancelled": ("已取消", "Cancelled"),
         "workstreams.recovered": ("已恢复：%d 条中断任务，%d 条队列暂停", "Recovered: %d interrupted task(s), %d paused queue(s)"),
+        // Delivery stage action (design A10): explicit refusal reasons + status.
+        "workstreams.stage.deliver": ("交付事项", "Deliver workstream"),
+        "workstreams.deliver.started": ("已启动交付会话（%@）", "Delivery session started (%@)"),
+        "workstreams.deliver.blocked": ("交付准入失败", "Delivery is blocked"),
+        "workstreams.deliver.no-queue": ("事项队列不可用，无法交付", "The workstream queue is unavailable; cannot deliver"),
+        "workstreams.deliver.start-failed": ("交付会话启动失败", "Could not start the delivery session"),
+        "workstreams.deliver.not-delivery-stage": ("事项尚未进入交付阶段", "The workstream is not in the delivery stage yet"),
+        "workstreams.deliver.not-git-repo": ("工作区不是 git 仓库", "The workspace is not a git repository"),
+        "workstreams.deliver.no-branch": ("没有可交付的分支", "There is no branch to deliver"),
+        "workstreams.deliver.no-remote": ("仓库没有远端，无法推送 / 开 PR", "The repository has no remote to push / open a PR"),
+        "workstreams.deliver.no-github-remote": ("远端不是 GitHub 仓库，无法开 PR", "The remote is not a GitHub repository; cannot open a PR"),
+        "workstreams.deliver.no-token": ("没有 GitHub token（$DSH_HOME/oh-my-dsh/tokens/<owner>-<repo> 或 $DSH_HOME/oh-my-dsh/gh-token）", "No GitHub token ($DSH_HOME/oh-my-dsh/tokens/<owner>-<repo> or $DSH_HOME/oh-my-dsh/gh-token)"),
     ]
 
     /// Localize a key, optionally filling %@ / %d placeholders.
@@ -7027,6 +7039,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         bridge.workstreamsQueuePause = { [weak self] request in
             self?.workstreamsPanel?.apiWorkstreamsQueuePause(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsCovered = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsCovered(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsDelivery = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsDelivery(request) ?? BrowserAPIBridge.workstreamsUnavailable
         }
         bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
         bridge.hidePanel = { [weak self] in

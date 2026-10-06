@@ -259,6 +259,8 @@ final class WSPrimaryCardView: NSView {
     /// 阶段二级卡的「＋创建任务」/「启动阶段」(design A3 / A14).
     var onCreateStageTask: ((WorkstreamStage) -> Void)?
     var onStartStage: ((WorkstreamStage) -> Void)?
+    /// 阶段二级卡的「交付」(design A10): only offered on the delivery stage card.
+    var onDeliverStage: (() -> Void)?
     private(set) var isExpanded: Bool
 
     init(model: WSCardModel) {
@@ -408,6 +410,14 @@ final class WSPrimaryCardView: NSView {
                                           tooltip: L10n.tr("workstreams.stage.start"), size: 22)
         startStage.onAction = { [weak self] in self?.onStartStage?(stage.stage) }
         headerViews.append(startStage)
+        // 交付阶段动作 (design A10): resolve the git / PR / token plan and start a
+        // delivery session. Only the delivery stage card carries it.
+        if stage.stage == .delivery {
+            let deliver = CustomIconButton(glyph: .symbol("paperplane"),
+                                           tooltip: L10n.tr("workstreams.stage.deliver"), size: 22)
+            deliver.onAction = { [weak self] in self?.onDeliverStage?() }
+            headerViews.append(deliver)
+        }
         let headerRow = NSStackView(views: headerViews)
         headerRow.orientation = .horizontal
         headerRow.alignment = .centerY
@@ -800,6 +810,7 @@ final class WorkstreamsPanelController: NSObject {
             card.onStartWorkstream = { [weak self] in self?.startWorkstream(model.id) }
             card.onCreateStageTask = { [weak self] stage in self?.createStageTask(model.id, stage: stage) }
             card.onStartStage = { [weak self] stage in self?.startStage(model.id, stage: stage) }
+            card.onDeliverStage = { [weak self] in self?.deliverWorkstream(model.id) }
             list.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -20).isActive = true
         }
@@ -971,6 +982,44 @@ final class WorkstreamsPanelController: NSObject {
         } else {
             setStatus(L10n.tr("workstreams.start.started"), isError: false)
         }
+        reload()
+    }
+
+    /// 阶段二级卡「交付」(design A10)：先按交付模块收集 git / GitHub / token 事实。
+    /// 准入失败给出明确原因（WSDeliveryBlocker）；成功则把交付提示词作为一条 delivery
+    /// 阶段任务追加并只启动该阶段。会话用 POST /api/workstreams/delivery 回填 PR 事实，
+    /// 面板派生 outcome 并写卡（store §5：事实可写、outcome 只作派生缓存）。
+    func deliverWorkstream(_ cardID: String) {
+        guard let workspace = workspaceProvider?(), !workspace.isEmpty,
+              let runner = ensureRunner(workspace),
+              let card = snapshot.workstreams.first(where: { $0.id == cardID }) else { return }
+        guard card.stage == .delivery else {
+            setStatus(L10n.tr("workstreams.deliver.not-delivery-stage"), isError: true)
+            return
+        }
+        let branch = WSGitProbe.live.currentBranch(workspace)
+        let resolution = WorkstreamsDelivery.resolve(card: card,
+                                                     branch: branch,
+                                                     repoRoot: workspace,
+                                                     git: .live,
+                                                     tokens: WSTokenStore(),
+                                                     findExistingPR: WSGitHubPR.liveFind)
+        guard let plan = resolution.plan else {
+            let key = resolution.blocker?.messageKey ?? "workstreams.deliver.blocked"
+            setStatus(L10n.tr(key), isError: true)
+            return
+        }
+        let built = runner.enqueueDelivery(card: card, prompt: WorkstreamsDelivery.prompt(plan: plan))
+        guard !built.created.isEmpty else {
+            setStatus(L10n.tr("workstreams.deliver.no-queue"), isError: true)
+            return
+        }
+        writeBackQueueMapping(card: card, queueID: built.queue.id, workspace: workspace)
+        guard runner.startWorkstream(card, stage: .delivery) else {
+            setStatus(L10n.tr("workstreams.deliver.start-failed"), isError: true)
+            return
+        }
+        setStatus(L10n.tr("workstreams.deliver.started", cardID), isError: false)
         reload()
     }
 
@@ -1360,6 +1409,39 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                           id: request.id,
                                           queues: request.queues,
                                           today: WorkstreamsCore.today())
+        }, workspace: workspace)
+    }
+
+    /// POST /api/workstreams/covered — record the acceptance point record (facts
+    /// only, store design 3.2). A nil covered clears it.
+    func apiWorkstreamsCovered(_ request: WorkstreamsCoveredRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        return writeResult({
+            try WorkstreamsCore.setCovered(workspace: workspace,
+                                           id: request.id,
+                                           covered: request.covered,
+                                           today: WorkstreamsCore.today())
+        }, workspace: workspace)
+    }
+
+    /// POST /api/workstreams/delivery — record the delivery facts. The outcome is a
+    /// DERIVED cache: it is computed from the PR observation here, never taken from
+    /// the caller (store design 5).
+    func apiWorkstreamsDelivery(_ request: WorkstreamsDeliveryRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        return writeResult({
+            try WorkstreamsDelivery.writeBack(workspace: workspace,
+                                              id: request.id,
+                                              pr: request.pr,
+                                              url: request.url,
+                                              state: request.state,
+                                              merged: request.merged,
+                                              abandoned: request.abandoned,
+                                              today: WorkstreamsCore.today())
         }, workspace: workspace)
     }
 

@@ -470,6 +470,8 @@ enum BuiltinSkill: CaseIterable {
     | POST `/api/workstreams/task/create` | `{"workspace":"…","id":"WS-000012","stage":"task","titles":["…","…"],"session":"$DSH_SESSION_ID"}` | **按阶段创建任务**：建**等待态**阶段任务（**只建不启动**）；`stage` 缺省 = 卡片当前阶段；`titles` 每条由面板生成阶段交接提示词、追加到事项唯一队列（没有才建）；也可只传整段 `body` |
     | POST `/api/workstreams/queue/start` | `{"workspace":"…","id":"WS-000012","stage":"task","session":"$DSH_SESSION_ID"}` | **启动事项 / 阶段队列**；带 `stage` = 只跑该阶段任务（跑完自动暂停队列）；不带 = 事项级（整条队列 FIFO）；仅在用户要求 / 人已确认拆分后 |
     | POST `/api/workstreams/queue/pause` | `{"workspace":"…","id":"WS-000012","session":"$DSH_SESSION_ID"}` | 暂停队列（不影响已在跑的会话） |
+    | POST `/api/workstreams/covered` | `{"workspace":"…","id":"WS-000012","covered":{"paths":["docs/x.md"],"base":"<blob/tree>","head":"<blob/tree>"},"session":"$DSH_SESSION_ID"}` | **记录验收点记录**（事实；验收 / 交付阶段必选）；`covered: null` 清除；缺 `paths` / 空 `paths` 报错 |
+    | POST `/api/workstreams/delivery` | `{"workspace":"…","id":"WS-000012","delivery":{"pr":42,"url":"https://github.com/o/r/pull/42","state":"open"},"session":"$DSH_SESSION_ID"}` | **记录交付事实**（`pr` / `url`）；`delivery.outcome` 是**派生缓存**，服务端按 PR 观察（`state` / `merged` / `abandoned`）现算，**禁止手写** |
     | POST `/api/workstreams/create` | `{"workspace":"…","title":"…","requirement":"REQ-003","stage":"planning","body":"…","session":"$DSH_SESSION_ID"}` | 新建事项卡（**仅当用户明确要求**；拆解确认由需求池面板建卡） |
     | POST `/api/workstreams/stage` | `{"workspace":"…","id":"…","stage":"design"}` | 低层显式改阶段口子；**agent 不调**，阶段推进走人工确认门 |
     | POST `/api/workstreams/stage/confirm` / `stage/reject` | `{"id":"…","note":"…"}` / `{"id":"…","reason":"…"}` | **人工确认 / 退回**，**agent 绝不调** |
@@ -483,8 +485,10 @@ enum BuiltinSkill: CaseIterable {
     - 写成功返回 `{ok: true, …}`：`update` / `create` / `stage` / `plan` / `queues` 回 `workstream`；
       `task/create` 回 `queue` + `tasks`；`task/list` 回 `workspace` + `tasks` + `queues`；
       `queue/start` / `queue/pause` 回 `queue`（`start` 另带 `stage`）。
-    - `covered` / `delivery` 事实字段当前**没有**写路由（由验收 / 交付流程在面板侧记录）；
-      **不要**为写它们绕过 API 改文件，也不要手写派生字段（`closed` / `outcome`）。
+    - `covered` / `delivery` 用上面的写路由记**事实**；`delivery.outcome` 是**派生缓存**（服务端按 PR 状态
+      现算），**禁止手写**；`closed` / `split` 等派生字段同样不写。
+    - 交付阶段动作由面板执行（「交付」按钮收集 git / GitHub / token 事实并起交付会话）；agent 不要
+      直接改盘上文件，也不要手写 `outcome`。
     
     ## 工作流
     
@@ -592,6 +596,9 @@ enum BuiltinSkill: CaseIterable {
     | `400 missing-stage` | `task/create` / `queue/start` 的 `stage` 键给了但为空：去掉该键（缺省）或给合法值 |
     | `400 invalid-stage` | `stage` 不是五个之一：改用 `planning` / `design` / `task` / `acceptance` / `delivery` |
     | `400 invalid-queue` | `queues` 不是字符串列表 / 超过一条：按 `["q-…"]`（0..1）修正 |
+    | `400 missing-covered` / `invalid-covered` / `missing-covered-paths` | `covered` 没给 / 不是对象 / `paths` 为空：按 `{"paths":["…"]}` 修正 |
+    | `400 missing-delivery` / `invalid-delivery` | `delivery` 没给 / 不是对象 / `pr` 非整数：按 `{"pr":42,"url":"…"}` 修正 |
+    | `400 outcome-derived` | 手写了 `outcome`：它是派生缓存；只传 `pr` / `url`（+ 可选 `state` / `merged` / `abandoned` 观察） |
     | `404 unknown-workstream` | 没有该 WS：先 `list` 确认 id |
     | `404 no-queue` | 该事项还没有队列（或队列已关闭无法再建 / 启动）：先 `task/create` 建队列，或 `task/list` 看状态 |
     | `409 evidence-missing` / `stage-changed` | 人工确认门未过 / 阶段已变：**不要**自行推进；请用户处理 |
@@ -603,7 +610,7 @@ enum BuiltinSkill: CaseIterable {
       也不碰 `.dsh/requirements/*.md`、`.dsh/regression/*.md`）；
     - 不调 `stage/confirm` / `stage/reject`（人工确认门），也不调 `stage`（低层口子）；
     - **人未确认拆分前不 `queue/start`**：`task/create` 只建等待态任务，启动实施等人确认或用户明说；
-    - 不手写派生字段（`closed` / `outcome`）或 `covered` / `delivery` 事实（当前无写路由）；
+    - 不手写派生字段（`closed` / `outcome` / `split`）；`covered` / `delivery` 只经写路由记事实，`outcome` 由服务端派生；
     - 不在用户没要求时新建事项 / 改阶段 / 建队列 / 启动队列。
     
     """

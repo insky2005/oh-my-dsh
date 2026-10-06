@@ -191,13 +191,14 @@ enum WorkstreamHandoff {
             return section([
                 "本步做「校验」：",
                 "- 跑回归门与机检证据（覆盖 / 测试 / 产物校验）。",
+                "- 用 `POST /api/workstreams/covered` 记录覆盖点（paths + base / head 锚变更）；**不直接改 `.dsh` 文件**。",
                 "- **必须由人 sign-off，agent 不自签**。",
             ])
         case .deliver:
             return section([
                 "本步做「交付」：",
-                "- push / 开 PR；交付事实（`covered` / PR）由面板记录，**不直接改 `.dsh` 文件**。",
-                "- `outcome` 是派生谓词缓存，**不手写**。",
+                "- push / 开 PR；用 `POST /api/workstreams/delivery` 记录 `pr` / `url` 事实，**不直接改 `.dsh` 文件**。",
+                "- `outcome` 是派生谓词缓存（服务端按 PR 状态现算），**不手写**。",
             ])
         }
     }

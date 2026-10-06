@@ -22,6 +22,13 @@
 //    GET  /api/workstreams/task/list    ?workspace=...
 //    POST /api/workstreams/queue/start  {workspace?, id, stage?, session?}
 //    POST /api/workstreams/queue/pause  {workspace?, id, session?}
+//    POST /api/workstreams/covered  {workspace?, id, covered:{paths,base,head}|null, session?}
+//    POST /api/workstreams/delivery {workspace?, id, delivery:{pr,url,state,merged,abandoned}|null, session?}
+//
+//  covered / delivery are the two FACT writes the store design reserves for the
+//  panel (store design §3.2 / §5): covered is the point record (paths + immutable
+//  base/head anchors); delivery holds the pr / url facts. delivery.outcome is a
+//  DERIVED cache (PR status -> outcome) and is explicitly refused here.
 //
 
 import Foundation
@@ -123,6 +130,29 @@ struct WorkstreamsQueuePauseRequest: Equatable {
     var session: String?
 }
 
+/// Record the acceptance point record (store design 3.2). Only facts: the changed
+/// paths anchored to immutable content ids (base/head). A nil covered clears it.
+struct WorkstreamsCoveredRequest: Equatable {
+    var workspace: String?
+    var id: String
+    var covered: CoveredRecord?
+    var session: String?
+}
+
+/// Record the delivery block (store design 5). Only pr / url are facts; the
+/// outcome is a derived cache and is refused by the router. state / merged /
+/// abandoned are the PR observations the delegate turns into that cache.
+struct WorkstreamsDeliveryRequest: Equatable {
+    var workspace: String?
+    var id: String
+    var pr: Int?
+    var url: String?
+    var state: String?
+    var merged: Bool
+    var abandoned: Bool
+    var session: String?
+}
+
 /// Read the optional session field from any write body (trimmed, nil when empty).
 func workstreamsSession(_ body: [String: Any]) -> String? {
     wsNonEmpty(body["session"] as? String)
@@ -149,6 +179,11 @@ protocol WorkstreamsAPIDelegate: AnyObject {
     func apiWorkstreamsQueueStart(_ request: WorkstreamsQueueStartRequest) -> [String: Any]
     /// Pause a workstream queue.
     func apiWorkstreamsQueuePause(_ request: WorkstreamsQueuePauseRequest) -> [String: Any]
+    /// Record the acceptance point record (facts only, store design 3.2).
+    func apiWorkstreamsCovered(_ request: WorkstreamsCoveredRequest) -> [String: Any]
+    /// Record the delivery facts; the derived outcome cache is computed here, not
+    /// accepted from the caller (store design 5).
+    func apiWorkstreamsDelivery(_ request: WorkstreamsDeliveryRequest) -> [String: Any]
 }
 
 // MARK: - Workspace normalization
@@ -297,6 +332,72 @@ enum WorkstreamsAPIRouter {
             if let trimmed = wsNonEmpty(text) { out.append(trimmed) }
         }
         return (out, nil)
+    }
+
+    /// A parsed delivery write. Only pr / url are facts; state / merged /
+    /// abandoned are the PR observations the delegate turns into the derived
+    /// outcome cache. outcome is never a field here (it is refused earlier).
+    struct WSDeliveryParse {
+        var pr: Int? = nil
+        var url: String? = nil
+        var state: String? = nil
+        var merged: Bool = false
+        var abandoned: Bool = false
+        var error: (code: String, message: String)? = nil
+    }
+
+    /// Parse the covered write value. Canonical form is an object with a non-empty
+    /// paths list plus optional immutable base / head anchors; an explicit null
+    /// clears the record. A present-but-wrong shape is a hard error.
+    static func parseCovered(_ raw: Any?) -> (covered: CoveredRecord?, error: (code: String, message: String)?) {
+        if raw == nil || raw is NSNull { return (nil, nil) }
+        guard let object = raw as? [String: Any] else {
+            return (nil, ("invalid-covered", "covered must be an object with a paths list"))
+        }
+        guard let pathsRaw = object["paths"] as? [Any] else {
+            return (nil, ("missing-covered-paths", "covered.paths must be a list of changed paths"))
+        }
+        var paths: [String] = []
+        for entry in pathsRaw {
+            guard let text = entry as? String, let trimmed = wsNonEmpty(text) else {
+                return (nil, ("invalid-covered", "covered.paths entries must be non-blank strings"))
+            }
+            paths.append(trimmed)
+        }
+        guard !paths.isEmpty else {
+            return (nil, ("missing-covered-paths", "covered.paths must not be empty"))
+        }
+        return (CoveredRecord(paths: paths,
+                              base: wsNonEmpty(object["base"] as? String),
+                              head: wsNonEmpty(object["head"] as? String)), nil)
+    }
+
+    /// Parse the delivery write value. An outcome inside the block is refused: it
+    /// is a derived cache (PR status -> outcome), not a caller-written field.
+    static func parseDelivery(_ raw: Any?) -> WSDeliveryParse {
+        if raw == nil || raw is NSNull { return WSDeliveryParse() }
+        guard let object = raw as? [String: Any] else {
+            return WSDeliveryParse(error: ("invalid-delivery", "delivery must be an object with pr / url facts"))
+        }
+        if object.keys.contains("outcome") {
+            return WSDeliveryParse(error: ("outcome-derived",
+                "outcome is a derived cache (PR status -> outcome); write only pr / url facts"))
+        }
+        var parsed = WSDeliveryParse()
+        if let prRaw = object["pr"], !(prRaw is NSNull) {
+            if let n = prRaw as? Int {
+                parsed.pr = n
+            } else if let s = prRaw as? String, let n = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                parsed.pr = n
+            } else {
+                return WSDeliveryParse(error: ("invalid-delivery", "delivery.pr must be an integer PR number"))
+            }
+        }
+        parsed.url = wsNonEmpty(object["url"] as? String)
+        parsed.state = wsNonEmpty(object["state"] as? String)
+        parsed.merged = (object["merged"] as? Bool) ?? false
+        parsed.abandoned = (object["abandoned"] as? Bool) ?? false
+        return parsed
     }
 
     /// Returns a response when the request belongs to this panel, nil otherwise
@@ -510,6 +611,49 @@ enum WorkstreamsAPIRouter {
                 id: id, session: workstreamsSession(body))
             let paused = delegate.apiWorkstreamsQueuePause(pause)
             return .json(status(for: paused), paused)
+
+        case ("POST", "/api/workstreams/covered"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            guard let id = wsNonEmpty(body["id"] as? String) else { return missingId() }
+            guard body.keys.contains("covered") else {
+                return .json(400, ["ok": false, "error": "missing-covered",
+                                   "hint": "expected {\"id\": \"WS-000001\", \"covered\": {\"paths\": [\"docs/x.md\"], \"base\": \"blob-a\", \"head\": \"tree-b\"}}"])
+            }
+            let parsed = parseCovered(body["covered"])
+            if let error = parsed.error {
+                return .json(400, ["ok": false, "error": error.code, "message": error.message])
+            }
+            guard let delegate = delegate else { return unavailable() }
+            let covered = WorkstreamsCoveredRequest(
+                workspace: WorkstreamsAPIWorkspace.normalize(body["workspace"] as? String),
+                id: id, covered: parsed.covered, session: workstreamsSession(body))
+            let coveredResult = delegate.apiWorkstreamsCovered(covered)
+            return .json(status(for: coveredResult), coveredResult)
+
+        case ("POST", "/api/workstreams/delivery"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            guard let id = wsNonEmpty(body["id"] as? String) else { return missingId() }
+            guard body.keys.contains("delivery") else {
+                return .json(400, ["ok": false, "error": "missing-delivery",
+                                   "hint": "expected {\"id\": \"WS-000001\", \"delivery\": {\"pr\": 42, \"url\": \"https://github.com/o/r/pull/42\"}}"])
+            }
+            // A top-level outcome is just as illegal as one inside the block.
+            if body.keys.contains("outcome") {
+                return .json(400, ["ok": false, "error": "outcome-derived",
+                                   "message": "outcome is a derived cache; write only pr / url facts"])
+            }
+            let facts = parseDelivery(body["delivery"])
+            if let error = facts.error {
+                return .json(400, ["ok": false, "error": error.code, "message": error.message])
+            }
+            guard let delegate = delegate else { return unavailable() }
+            let delivery = WorkstreamsDeliveryRequest(
+                workspace: WorkstreamsAPIWorkspace.normalize(body["workspace"] as? String),
+                id: id, pr: facts.pr, url: facts.url, state: facts.state,
+                merged: facts.merged, abandoned: facts.abandoned,
+                session: workstreamsSession(body))
+            let deliveryResult = delegate.apiWorkstreamsDelivery(delivery)
+            return .json(status(for: deliveryResult), deliveryResult)
 
         default:
             return .json(404, ["ok": false, "error": "not-found"])

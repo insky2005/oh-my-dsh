@@ -200,6 +200,44 @@ check(WSDeliveryOutcome.abandoned.isTerminal, "abandoned is terminal")
 check(!WSDeliveryOutcome.open.isTerminal, "open is not terminal")
 check(!WSDeliveryOutcome.unknown.isTerminal, "unknown is not terminal")
 
+section("outcome derivation and the delivery write-back")
+eq(WSDeliveryOutcome.parse("merged"), .merged, "parse merged")
+eq(WSDeliveryOutcome.parse(" MERGED "), .merged, "parse is trimmed + case-insensitive")
+eq(WSDeliveryOutcome.parse("open"), .open, "parse open")
+eq(WSDeliveryOutcome.parse("nonsense"), nil, "unknown outcome string -> nil")
+eq(WSDeliveryOutcome.parse(nil), nil, "nil outcome string -> nil")
+
+// record() is the ONLY place the derived cache is produced: facts in, cache out.
+let cached = WorkstreamsDelivery.record(pr: 42, url: " https://github.com/o/r/pull/42 ",
+                                        state: "open")
+eq(cached?.pr, 42, "record keeps the pr fact")
+eq(cached?.url, "https://github.com/o/r/pull/42", "record trims the url fact")
+eq(cached?.outcome, "open", "record derives the outcome cache from the observation")
+eq(WorkstreamsDelivery.record(pr: 42, url: nil, merged: true)?.outcome, "merged", "record derives merged")
+eq(WorkstreamsDelivery.record(pr: 42, url: nil, abandoned: true)?.outcome, "abandoned", "record derives abandoned")
+eq(WorkstreamsDelivery.record(pr: 42, url: nil)?.outcome, "unknown", "no observation -> unknown cache")
+eq(WorkstreamsDelivery.record(pr: nil, url: "   "), nil, "no facts -> nil (clears the block)")
+
+// writeBack lands the facts + derived cache on a real card.
+let writeWS = tempDir("write-ws")
+let created = try? WorkstreamsCore.create(workspace: writeWS, title: "交付写回",
+                                          stage: .delivery, today: "2026-10-07")
+if let created = created {
+    let written = try? WorkstreamsDelivery.writeBack(workspace: writeWS, id: created.id,
+                                                     pr: 78,
+                                                     url: "https://github.com/o/r/pull/78",
+                                                     state: "closed", merged: false,
+                                                     today: "2026-10-08")
+    eq(written?.delivery?.pr, 78, "writeBack lands the pr fact")
+    eq(written?.delivery?.outcome, "closed", "writeBack derives the outcome cache (no hand-writing)")
+    let reloaded = try? WorkstreamsCore.loadCard(workspace: writeWS, id: created.id)
+    eq(reloaded?.delivery?.outcome, "closed", "writeBack round-trips through disk")
+    let cleared = try? WorkstreamsDelivery.writeBack(workspace: writeWS, id: created.id,
+                                                     pr: nil, url: nil, today: "2026-10-09")
+    eq(cleared?.delivery == nil, true, "writeBack with no facts clears the delivery block")
+}
+try? FileManager.default.removeItem(atPath: writeWS)
+
 // MARK: - failure paths (clear reasons)
 
 section("failure paths")

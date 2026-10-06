@@ -56,6 +56,8 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     var taskListResult: [String: Any] = ["ok": true, "tasks": []]
     var queueStartResult: [String: Any] = ["ok": true]
     var queuePauseResult: [String: Any] = ["ok": true]
+    var coveredResult: [String: Any] = ["ok": true]
+    var deliveryResult: [String: Any] = ["ok": true]
 
     var lastListWorkspace: String?
     var lastCreate: WorkstreamsCreateRequest?
@@ -70,6 +72,8 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     var taskListCalls = 0
     var lastQueueStart: WorkstreamsQueueStartRequest?
     var lastQueuePause: WorkstreamsQueuePauseRequest?
+    var lastCovered: WorkstreamsCoveredRequest?
+    var lastDelivery: WorkstreamsDeliveryRequest?
 
     func apiWorkstreamsList(workspace: String?) -> [String: Any] {
         lastListWorkspace = workspace
@@ -119,6 +123,14 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     func apiWorkstreamsQueuePause(_ request: WorkstreamsQueuePauseRequest) -> [String: Any] {
         lastQueuePause = request
         return queuePauseResult
+    }
+    func apiWorkstreamsCovered(_ request: WorkstreamsCoveredRequest) -> [String: Any] {
+        lastCovered = request
+        return coveredResult
+    }
+    func apiWorkstreamsDelivery(_ request: WorkstreamsDeliveryRequest) -> [String: Any] {
+        lastDelivery = request
+        return deliveryResult
     }
 }
 
@@ -279,6 +291,65 @@ eq(queuesClear?.status, 200, "empty queues clears (200)")
 eq(fake.lastQueues?.queues.isEmpty, true, "empty queues passes through")
 let queuesNotList = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queues", json: ["id": "WS-000001", "queues": "q-1"]), delegate: fake)
 eq(queuesNotList?.json?["error"] as? String, "invalid-queue", "non-list queues -> invalid-queue")
+
+section("covered write route")
+let coveredNoId = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/covered", json: ["covered": ["paths": ["a"]]]), delegate: fake)
+eq(coveredNoId?.json?["error"] as? String, "missing-id", "covered missing-id code")
+let coveredMissing = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/covered", json: ["id": "WS-000001"]), delegate: fake)
+eq(coveredMissing?.status, 400, "covered without covered -> 400")
+eq(coveredMissing?.json?["error"] as? String, "missing-covered", "missing-covered code")
+let coveredNotObject = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/covered", json: ["id": "WS-000001", "covered": "docs/a.md"]), delegate: fake)
+eq(coveredNotObject?.json?["error"] as? String, "invalid-covered", "non-object covered -> invalid-covered")
+let coveredNoPaths = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/covered", json: ["id": "WS-000001", "covered": ["base": "blob-a"]]), delegate: fake)
+eq(coveredNoPaths?.json?["error"] as? String, "missing-covered-paths", "covered without paths -> missing-covered-paths")
+let coveredEmptyPaths = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/covered", json: ["id": "WS-000001", "covered": ["paths": []]]), delegate: fake)
+eq(coveredEmptyPaths?.json?["error"] as? String, "missing-covered-paths", "empty covered.paths -> missing-covered-paths (negative path)")
+let coveredBlankPath = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/covered", json: ["id": "WS-000001", "covered": ["paths": ["   "]]]), delegate: fake)
+eq(coveredBlankPath?.json?["error"] as? String, "invalid-covered", "blank covered path -> invalid-covered")
+let coveredOK = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/covered", json: ["id": "WS-000001", "covered": ["paths": [" docs/a.md ", " src/b.swift "], "base": " blob-a ", "head": "tree-b"], "workspace": "/tmp/ws", "session": "s-1"]), delegate: fake)
+eq(coveredOK?.status, 200, "covered 200")
+eq(fake.lastCovered?.id, "WS-000001", "covered id routed")
+eq(fake.lastCovered?.covered?.paths, ["docs/a.md", "src/b.swift"], "covered paths trimmed")
+eq(fake.lastCovered?.covered?.base, "blob-a", "covered base trimmed")
+eq(fake.lastCovered?.covered?.head, "tree-b", "covered head passed through")
+eq(fake.lastCovered?.workspace, "/tmp/ws", "covered workspace normalized")
+eq(fake.lastCovered?.session, "s-1", "covered carries session")
+let coveredClear = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/covered", json: ["id": "WS-000001", "covered": NSNull()]), delegate: fake)
+eq(coveredClear?.status, 200, "covered null clears (200)")
+eq(fake.lastCovered?.covered == nil, true, "explicit null covered -> nil (clears)")
+
+section("delivery write route (facts only, derived outcome)")
+let deliveryNoId = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/delivery", json: ["delivery": ["pr": 1]]), delegate: fake)
+eq(deliveryNoId?.json?["error"] as? String, "missing-id", "delivery missing-id code")
+let deliveryMissing = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/delivery", json: ["id": "WS-000001"]), delegate: fake)
+eq(deliveryMissing?.status, 400, "delivery without delivery -> 400")
+eq(deliveryMissing?.json?["error"] as? String, "missing-delivery", "missing-delivery code")
+let deliveryNotObject = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/delivery", json: ["id": "WS-000001", "delivery": "merged"]), delegate: fake)
+eq(deliveryNotObject?.json?["error"] as? String, "invalid-delivery", "non-object delivery -> invalid-delivery")
+let deliveryBadPr = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/delivery", json: ["id": "WS-000001", "delivery": ["pr": "not-a-number"]]), delegate: fake)
+eq(deliveryBadPr?.json?["error"] as? String, "invalid-delivery", "non-numeric pr -> invalid-delivery")
+// outcome is a derived cache: hand-writing it is refused both inside the block
+// and at the top level (store design 5).
+let deliveryHandwritten = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/delivery", json: ["id": "WS-000001", "delivery": ["pr": 42, "outcome": "merged"]]), delegate: fake)
+eq(deliveryHandwritten?.status, 400, "hand-written outcome inside delivery -> 400")
+eq(deliveryHandwritten?.json?["error"] as? String, "outcome-derived", "outcome-derived code (inside the block)")
+let deliveryTopOutcome = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/delivery", json: ["id": "WS-000001", "delivery": ["pr": 42], "outcome": "merged"]), delegate: fake)
+eq(deliveryTopOutcome?.json?["error"] as? String, "outcome-derived", "outcome-derived code (top level)")
+let deliveryOK = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/delivery", json: ["id": "WS-000001", "delivery": ["pr": " 42 ", "url": " https://github.com/o/r/pull/42 ", "state": "open"], "workspace": "/tmp/ws", "session": "s-2"]), delegate: fake)
+eq(deliveryOK?.status, 200, "delivery 200")
+eq(fake.lastDelivery?.id, "WS-000001", "delivery id routed")
+eq(fake.lastDelivery?.pr, 42, "delivery pr parsed from a numeric string")
+eq(fake.lastDelivery?.url, "https://github.com/o/r/pull/42", "delivery url trimmed")
+eq(fake.lastDelivery?.state, "open", "delivery PR observation passed through")
+eq(fake.lastDelivery?.merged, false, "delivery merged defaults to false")
+eq(fake.lastDelivery?.workspace, "/tmp/ws", "delivery workspace normalized")
+eq(fake.lastDelivery?.session, "s-2", "delivery carries session")
+let deliveryMerged = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/delivery", json: ["id": "WS-000001", "delivery": ["pr": 42, "merged": true]]), delegate: fake)
+eq(fake.lastDelivery?.merged, true, "delivery merged observation passed through")
+let deliveryClear = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/delivery", json: ["id": "WS-000001", "delivery": NSNull()]), delegate: fake)
+eq(deliveryClear?.status, 200, "delivery null clears (200)")
+eq(fake.lastDelivery?.pr == nil, true, "explicit null delivery -> nil facts")
+eq(WorkstreamsAPIRouter.status(for: ["ok": false, "error": "outcome-derived"]), 400, "outcome-derived -> 400")
 
 section("stage gate routes")
 let confirmNoId = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage/confirm", json: ["stage": "design"]), delegate: fake)

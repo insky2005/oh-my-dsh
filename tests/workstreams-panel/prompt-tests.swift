@@ -176,18 +176,19 @@ do {
     contains(p, "机检证据", "collects machine evidence")
     contains(p, "sign-off", "requires human sign-off")
     contains(p, "不自签", "the agent does not self-sign")
+    contains(p, "/api/workstreams/covered", "records covered through the write route")
 }
 
-section("delivery: push / PR, covered written, outcome derived")
+section("delivery: push / PR, facts recorded, outcome derived")
 do {
     let p = WorkstreamHandoff.prompt(card: makeCard(), stage: .delivery)
     contains(p, "交付", "action is 交付")
     contains(p, "push", "pushes")
     contains(p, "PR", "opens a PR")
-    contains(p, "covered", "writes covered")
     contains(p, "outcome", "mentions outcome")
     contains(p, "不手写", "does not hand-write the derived outcome")
     contains(p, "不直接改", "delivery never edits .dsh directly")
+    contains(p, "/api/workstreams/delivery", "records delivery facts through the write route")
 }
 
 // MARK: - 模型规则（design §4）

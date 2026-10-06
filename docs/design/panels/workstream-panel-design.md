@@ -11,7 +11,7 @@
 
 - **是什么**：从「任务面板升格」的复审出发，最终定形的**事项面板产品设计**——实体层级、阶段到队列的映射、生命周期与人工确认门、与既有面板/架构的关系，以及**决策清单**（§9）。
 - **不是什么**：不是实现方案（无字段级 API / 类图 / 文件清单），不含排期；待确认项裁决后才进入实现设计与拆解。
-- **怎么用**：先读 §2–§5 的定型模型；§9 记录 2026-10-06 的裁决结果与仍待细化的细项。本设计已落地（实现清单见 §10）：阶段队列引擎已接线面板并可事项级 / 阶段级启动；剩余「阶段提示词 / 技能改指自有 API」与 `covered` / `delivery` 写路由尚未完成。
+- **怎么用**：先读 §2–§5 的定型模型；§9 记录 2026-10-06 的裁决结果与仍待细化的细项。本设计已全部落地（实现清单见 §10）：阶段队列引擎已接线面板并可事项级 / 阶段级启动；阶段提示词与 `workstream-panel` 技能已改指自有 API；`covered` / `delivery` 写路由与交付接线已完成。
 
 ## 1. 背景：为什么不是「让任务面板覆盖各阶段」
 
@@ -184,5 +184,5 @@ D10 之所以是伪问题，源于把两个正交的轴混为一谈：
    - **已落地（2026-10-06）**：面板实例化并驱动 `WorkstreamsRunner`（3s `step()` 定时器、工作区切换重建、`serverPortProvider` 注入 dsh RPC）；`/api/workstreams/task/create` / `task/list` / `queue/start` / `queue/pause`；主卡「启动事项」+ 阶段卡「＋创建任务」「启动阶段」；三级任务卡展示状态 / 会话；
    - **已落地**：一事项一队列——`createStageQueue` 追加到该事项的队列、任务带 `stage`；`queue/start` 带 `stage` = 阶段级启动（只跑该阶段任务，跑完暂停队列）；
    - **已落地（2026-10-06）**：任务运行态 → 阶段运行态 → 事项运行态回写（A13 / D18）——纯模型 `WorkstreamsRunState.swift`（`WSRunState.stage` / `WSRunState.workstream`）从**队列状态 + 任务状态**（外加 `## 阶段确认` 审计痕迹判回边）派生**未开始 / 进行中 / 待确认 / 完成 / 阻塞**，主卡与阶段卡显示徽标；**权威 `stage` 一字不改**（仍只由 `confirmStage` 推进）。阶段门读 runner 的实时板，而非磁盘快照；
-   - **待办**：阶段提示词去掉 `/task-todo`，改指事项面板自有 API（技能 `workstream-panel` 同步）；
-   - **待办**：`covered` / `delivery` 写路由与交付接线。
+   - **已落地（2026-10-07）**：阶段提示词去掉 `/task-todo`、改指事项面板自有 API（`task/create` / `queue/start`），技能 `workstream-panel` 同步；
+   - **已落地（2026-10-07）**：`covered` / `delivery` 写路由（`POST /api/workstreams/covered` / `delivery`；`delivery.outcome` 是派生缓存，API 拒绝手写，报 `outcome-derived`）；交付接线——面板「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给明确原因（`not-delivery-stage` / `not-git-repo` / `no-branch` / `no-remote` / `no-github-remote` / `no-token`），成功则 `runner.enqueueDelivery` 建 delivery 阶段任务并只启动该阶段。**至此 §10 无待办。**

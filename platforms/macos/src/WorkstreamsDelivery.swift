@@ -378,6 +378,13 @@ enum WSDeliveryOutcome: String, Equatable {
         default: return .unknown
         }
     }
+
+    /// Parse a stored cache value (case-insensitive); unknown / empty -> nil.
+    /// The (lowercased) canonical spelling is what serialize writes back.
+    static func parse(_ raw: String?) -> WSDeliveryOutcome? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+        return WSDeliveryOutcome(rawValue: raw.lowercased())
+    }
 }
 
 // MARK: - 交付准入 / 失败原因
@@ -576,8 +583,42 @@ enum WorkstreamsDelivery {
         lines.append("6. 必须在最后一行给出 PR 的完整链接（https://github.com/<owner>/<repo>/pull/<编号>）；"
                      + "真开不出来就说清楚卡在哪一步（权限 / 网络 / token / 分支状态），不要沉默结束；")
         lines.append("7. 交付结果（delivery.outcome）由 PR 状态派生，不要手写 outcome；")
-        lines.append("8. 交付完成后把 delivery.pr / delivery.url 两个事实回填到事项卡，并说明 PR 状态。")
+        lines.append("8. 交付完成后用 POST /api/workstreams/delivery 记录 delivery.pr / delivery.url 两个事实"
+                     + "（带 PR 状态观察 state / merged），不要直接改 .dsh 文件；outcome 由面板派生。")
         return lines.joined(separator: "\n")
+    }
+
+    /// 把交付事实 + PR 观察合成 delivery 块。**outcome 是派生缓存**：这里由观察
+    /// （merged / state / abandoned）现算，调用方无从手写（store design §5）。没有任何
+    /// 事实（pr 与 url 都空）时返回 nil——清除整个块。
+    static func record(pr: Int?,
+                       url: String?,
+                       state: String? = nil,
+                       merged: Bool = false,
+                       abandoned: Bool = false) -> DeliveryInfo? {
+        let cleanURL = url?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if pr == nil, cleanURL?.isEmpty ?? true { return nil }
+        let outcome = WSDeliveryOutcome.derive(merged: merged, state: state, abandoned: abandoned)
+        return DeliveryInfo(pr: pr,
+                            url: (cleanURL?.isEmpty ?? true) ? nil : cleanURL,
+                            outcome: outcome.rawValue)
+    }
+
+    /// 面板侧唯一的交付事实写入口：合成 delivery 并落卡（outcome 只作派生缓存）。
+    @discardableResult
+    static func writeBack(workspace: String,
+                          id: String,
+                          pr: Int?,
+                          url: String?,
+                          state: String? = nil,
+                          merged: Bool = false,
+                          abandoned: Bool = false,
+                          today: String,
+                          fileManager: FileManager = .default) throws -> WorkstreamCard {
+        let delivery = record(pr: pr, url: url, state: state, merged: merged, abandoned: abandoned)
+        return try WorkstreamsCore.setDelivery(workspace: workspace, id: id,
+                                               delivery: delivery, today: today,
+                                               fileManager: fileManager)
     }
 
     /// 交付会话汇报里最能代表结果的短句（面板显示用）：PR 链接优先，否则第一行。

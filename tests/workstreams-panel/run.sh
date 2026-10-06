@@ -150,7 +150,8 @@ if [ ! -f "$DELIVERY" ]; then
   exit 1
 fi
 for sym in 'struct WSGitProbe' 'struct WSTokenStore' 'struct WSGitHubPR' 'enum WSDeliveryOutcome' \
-           'enum WSDeliveryBlocker' 'struct WSDeliveryPlan' 'static func resolve(' 'static func prompt(plan:'; do
+           'enum WSDeliveryBlocker' 'struct WSDeliveryPlan' 'static func resolve(' 'static func prompt(plan:' \
+           'static func record(' 'static func writeBack(' 'static func parse('; do
   if ! grep -qF "$sym" "$DELIVERY"; then
     echo "FAIL: WorkstreamsDelivery.swift is missing $sym" >&2
     exit 1
@@ -278,6 +279,12 @@ if ! grep -qF '任务带 `stage`' "$PROMPTS"; then
   echo "FAIL: the stage prompt must explain that stage tasks carry a stage" >&2
   exit 1
 fi
+# covered / delivery 事实也走写路由（验收 / 交付阶段的提示词必须点名）。
+if ! grep -qF '/api/workstreams/covered' "$PROMPTS" \
+   || ! grep -qF '/api/workstreams/delivery' "$PROMPTS"; then
+  echo "FAIL: the stage prompt must record covered / delivery through the panel API" >&2
+  exit 1
+fi
 # 执行阶段的完成协议仍由 runner 注入 marker；
 # 面板生成的提示词必须能被 runner 原样识别，而不是被包成任务模板。
 if ! grep -qE 'WorkstreamHandoff\.isHandoff' "$SRC2/WorkstreamsRunner.swift"; then
@@ -381,5 +388,55 @@ for key in workstreams.run.notStarted workstreams.run.inProgress \
   fi
 done
 echo "workstreams run state guard ok"
+
+echo "--- delivery wiring + covered / delivery write routes guard (A10 / store 3.2 / 5) ---"
+# The last "尚未接线" item: WorkstreamsDelivery is wired to the panel / runner as a
+# delivery-stage action, and covered / delivery get write routes. delivery.outcome
+# is a derived cache, refused at the API boundary.
+for needle in 'apiWorkstreamsCovered' 'apiWorkstreamsDelivery' 'deliverWorkstream('; do
+  if ! grep -qF "$needle" "$PANEL"; then
+    echo "FAIL: WorkstreamsPanel.swift is missing $needle" >&2
+    exit 1
+  fi
+done
+if ! grep -qF 'WorkstreamsDelivery.resolve(' "$PANEL" \
+   || ! grep -qF 'WorkstreamsDelivery.prompt(plan:' "$PANEL" \
+   || ! grep -qF 'runner.enqueueDelivery(' "$PANEL"; then
+  echo "FAIL: the panel must resolve a delivery plan, enqueue it and start it" >&2
+  exit 1
+fi
+if ! grep -qE 'func enqueueDelivery\(' "$SRC2/WorkstreamsRunner.swift"; then
+  echo "FAIL: the runner is missing the delivery enqueue entry point" >&2
+  exit 1
+fi
+for route in '/api/workstreams/covered' '/api/workstreams/delivery'; do
+  if ! grep -qF "$route" "$API"; then
+    echo "FAIL: WorkstreamsAPI.swift is missing the $route route" >&2
+    exit 1
+  fi
+done
+# outcome is a derived cache: the API refuses a hand-written outcome.
+if ! grep -qF 'outcome-derived' "$API" \
+   || ! grep -qE 'func parseCovered\(' "$API" \
+   || ! grep -qE 'func parseDelivery\(' "$API"; then
+  echo "FAIL: the covered / delivery routers must parse facts and refuse a hand-written outcome" >&2
+  exit 1
+fi
+if ! grep -qF 'workstreamsCovered' "$SRC2/BrowserAPI.swift" \
+   || ! grep -qF 'workstreamsDelivery' "$SRC2/BrowserAPI.swift" \
+   || ! grep -qF 'bridge.workstreamsCovered' "$MAIN" \
+   || ! grep -qF 'bridge.workstreamsDelivery' "$MAIN"; then
+  echo "FAIL: main.swift / BrowserAPI.swift are missing the covered / delivery bridge landings" >&2
+  exit 1
+fi
+for key in workstreams.stage.deliver workstreams.deliver.not-delivery-stage \
+           workstreams.deliver.no-branch workstreams.deliver.no-remote \
+           workstreams.deliver.no-token; do
+  if ! grep -qF "$key" "$MAIN"; then
+    echo "FAIL: main.swift is missing the $key L10n key" >&2
+    exit 1
+  fi
+done
+echo "delivery wiring + covered / delivery write routes guard ok"
 
 echo "workstreams-panel tests passed"

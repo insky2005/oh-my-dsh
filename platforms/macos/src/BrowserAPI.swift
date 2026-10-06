@@ -292,6 +292,8 @@ final class BrowserAPIBridge: BrowserAPIDelegate {
     var workstreamsTaskList: (String?) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     var workstreamsQueueStart: (WorkstreamsQueueStartRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     var workstreamsQueuePause: (WorkstreamsQueuePauseRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsCovered: (WorkstreamsCoveredRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsDelivery: (WorkstreamsDeliveryRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     static let workstreamsUnavailable: [String: Any] = [
         "ok": false,
         "error": "panel-unavailable",
@@ -740,6 +742,14 @@ extension BrowserAPIBridge: WorkstreamsAPIDelegate {
 
     func apiWorkstreamsQueuePause(_ request: WorkstreamsQueuePauseRequest) -> [String: Any] {
         onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsQueuePause(request) }
+    }
+
+    func apiWorkstreamsCovered(_ request: WorkstreamsCoveredRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsCovered(request) }
+    }
+
+    func apiWorkstreamsDelivery(_ request: WorkstreamsDeliveryRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsDelivery(request) }
     }
 }
 

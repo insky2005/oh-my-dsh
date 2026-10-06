@@ -41,8 +41,8 @@ manual: false
 
 **队列引擎已接线**（2026-10-06）：面板按工作区各持一个 `WorkstreamsRunner`，3s `step()` 定时器推进、工作区切换重建、首次加载对账（reconcile 一次）；主卡「启动事项」、阶段卡「＋创建任务」/「启动阶段」，三级任务卡显示状态 / 会话；阶段门读 runner 的实时板。
 
-**仍未接线**（与设计 §10 一致）：交付模块 `WorkstreamsDelivery` 尚未接入面板，`covered` / `delivery` 没有写路由；阶段提示词与技能仍示例 `/task-todo`，未改指事项面板自有 API。
+**交付接线与事实写路由**（2026-10-07）：交付模块 `WorkstreamsDelivery` 已接入面板——阶段卡「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给明确原因（`WSDeliveryBlocker`），成功则 `WorkstreamsRunner.enqueueDelivery` 建 delivery 阶段任务并只启动该阶段；新增 `POST /api/workstreams/covered`（`paths` + `base` / `head` 事实）与 `POST /api/workstreams/delivery`（`pr` / `url` 事实）；**`delivery.outcome` 是派生缓存**，API 拒绝手写（`outcome-derived`）；阶段提示词与技能均已改指事项面板自有 API。
 
 ## 测试
 
-`tests/workstreams-panel/run.sh`（**828 项**）：model 77 + API 196 + ui 143 + runner 105 + prompt 136 + delivery 111 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生**等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。
+`tests/workstreams-panel/run.sh`（**906 项**）：model 77 + API 232 + ui 143 + runner 112 + prompt 155 + delivery 127 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由**等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。

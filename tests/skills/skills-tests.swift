@@ -144,6 +144,10 @@ if let text = wsSkill {
     check(text.contains("stage/reject"), "workstream-panel keeps the reject gate")
     check(!text.contains("/task-todo"), "workstream-panel no longer points at /task-todo")
     check(text.contains("不自签"), "workstream-panel: the agent never self-signs a gate")
+    // 2026-10-07: covered / delivery now have write routes; outcome stays derived.
+    check(text.contains("/api/workstreams/covered"), "workstream-panel documents the covered write route")
+    check(text.contains("/api/workstreams/delivery"), "workstream-panel documents the delivery write route")
+    check(text.contains("outcome-derived") || text.contains("派生缓存"), "workstream-panel: outcome is a derived cache, not hand-written")
 }
 
 if failures > 0 { print("\(failures) FAILURE(S)"); exit(1) }
