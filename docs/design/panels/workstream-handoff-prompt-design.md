@@ -50,6 +50,22 @@
 - 任务阶段走**事项面板自有 API**（`task/create` 拆分、`queue/start` 启动、`delivery` 交付），**不用 `/task-todo`（任务面板）**；
 - 不改其它会话的在途文件。
 
+### 4.1 拆分提示词的定位与措辞
+
+**拆分任务**是「推进一张事项卡」三件事之一（设计 `workstream-panel-design.md` §5.1：拆分 = 会话提示词 / 确认 = 阶段上的人工门 / 启动 = 阶段上的「启动阶段」或 `queue/start`）。它的提示词由 `WorkstreamHandoff.splitPrompt(card:stage:)` 生成，与其它动作**同形**（§3 公共头 + 动作段 + §4 规则段），只是 `stage` 由调用方**显式传入**。
+
+- **定位**：
+  - **触发** = 事项主卡「**拆分任务**」按钮；
+  - **`stage` = 首个未处理阶段**（canonical 顺序里第一个运行态非「完成」的阶段，A13 派生态）——**不一定等于卡片当前 `stage`**：按钮问的是「下一件还没拆的事」，不是「卡停在哪」；
+  - **送达** = 该事项的**主场会话**（`workstreamSessions`）；无绑定 / 坏会话按 `sessionTarget` 新建并绑定 / 回退当前会话；
+  - 它是**指针不是状态副本**：提示词只点名事项与阶段，等待态任务的实际创建由会话里的 agent 调 `task/create` 完成。
+- **措辞要求**（`actionSection(.splitTasks)`）：
+  1. 用 `POST /api/workstreams/task/create` 建**等待态阶段任务**（= 任务拆分本身），**每条任务带本阶段 `stage`**，追加到该事项唯一队列；
+  2. **只建不启动**；阶段 ↔ 队列映射由面板写回卡片 `queues`；
+  3. **停下请人确认拆分合理**；
+  4. **不自签**：拆分是人工确认门，agent 只建等待态任务，人在面板确认后才 `queue/start`；
+  5. 本步动作是 `task/create`；`queue/start` 只作为「人确认后」的后续动作出现在规则段，不冒充本步动作。
+
 ## 5. 生成示例：WS-002
 
 ```text
@@ -79,3 +95,4 @@
 - 可靠生成的前提是**存储 schema 定稿**（WS-002 / `requirements-workstream-store-design.md`）；
 - `outcome` / `closed` 改为派生后，本模板不再出现「写 closed」这类动作；
 - **已落地（2026-10-06 / 07）**：生成器为 `WorkstreamsPrompts.swift`（`WorkstreamHandoff`），阶段提示词由面板生成、原样注入任务 body 并按执行阶段追加完成 marker；阶段拆分 / 启动已改指事项面板自有 API（`task/create` / `queue/start`），交付事实经 `covered` / `delivery` 写路由回填，不再走任务面板 `/task-todo`；与 §4 表格一致。
+- **拆分提示词（§4.1）已落地**：`WorkstreamHandoff.splitPrompt` 由主卡「拆分任务」按钮以**首个未处理阶段**调用，发进主场会话；措辞固定为「`task/create` 建等待态、带本阶段 `stage`、只建不启动、停下等人确认、不自签」。

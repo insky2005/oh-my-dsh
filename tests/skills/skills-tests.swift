@@ -161,6 +161,11 @@ if let text = wsSkill {
     check(text.contains("后写覆盖") || text.contains("last-writer-wins"), "workstream-panel: the binding is last-writer-wins")
     check(text.contains("临时会话"), "workstream-panel warns ephemeral sessions not to overwrite the home session")
     check(text.contains("bound") && (text.contains("高亮") || text.contains("聚焦")), "workstream-panel: bound?focus highlights the reverse lookup")
+    // 2026-10-07 (task 28): in-conversation split / start entry + routing context.
+    check(text.contains("对话中发起拆分 / 启动"), "workstream-panel documents the in-conversation split/start entry")
+    check(text.contains("首个未处理阶段"), "workstream-panel: split targets the FIRST unprocessed stage")
+    check(text.contains("面板主卡「**拆分任务**」按钮 = 同一条拆分语义"), "workstream-panel: panel split button == same session-prompt semantics")
+    check(text.contains("面板阶段卡「**启动阶段**」按钮 = 阶段级 `queue/start`"), "workstream-panel: stage-card start == stage-level queue/start")
 }
 
 if failures > 0 { print("\(failures) FAILURE(S)"); exit(1) }

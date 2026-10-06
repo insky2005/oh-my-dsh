@@ -1,7 +1,7 @@
 ---
 title: 模块：Workstreams*（事项面板）
 tags: [module, workstreams, panel, ai-native-workflow, stage-gate]
-updated: 2026-10-07T15:00:00Z
+updated: 2026-10-07T18:00:00Z
 sources: [platforms/macos/src/WorkstreamsCore.swift, platforms/macos/src/WorkstreamsUI.swift, platforms/macos/src/WorkstreamsRunState.swift, platforms/macos/src/WorkstreamsAPI.swift, platforms/macos/src/WorkstreamsPanel.swift, platforms/macos/src/WorkstreamsQueues.swift, platforms/macos/src/WorkstreamsRunner.swift, platforms/macos/src/WorkstreamsPrompts.swift, platforms/macos/src/WorkstreamsStageGate.swift, platforms/macos/src/WorkstreamsDelivery.swift, platforms/macos/src/WSCardView.swift, platforms/macos/src/WSInlineForms.swift, platforms/macos/src/main.swift, tests/workstreams-panel/, docs/design/panels/workstream-panel-design.md, docs/design/panels/requirements-workstream-store-design.md, docs/design/panels/workstream-handoff-prompt-design.md, docs/usage/panels.md, .dsh/skills/workstream-panel/SKILL.md]
 manual: false
 ---
@@ -49,6 +49,8 @@ manual: false
 **对话内阶段推进**（2026-10-07）：人工确认门通过、`stage` 真的前移后，面板按钮与 `POST /api/workstreams/stage/confirm` 两条路径共用 `continueToNextStage`，经 `onStageConfirmed` 把更新后的卡片交给 `main.swift`；后者读该事项的**绑定主场会话**并复用 `WorkstreamHandoff.nextStagePrompt`（下一阶段 + 该阶段默认动作提示词）发送，对话自然续到下一阶段。**无绑定会话则不发**（不凭空起会话）、**交付是终态**不续发。
 
 **焦点 + 主场会话切换矩阵**（2026-10-07，A15 / A16，设计 §6.1）：面板 ↔ 对话由两条正交通道承载——`focus`（注意力单向往面板：任意路由带 `focus`，仅 200 触发置前 + 高亮 + 滚动，目标被阶段筛选隐藏时回落「全部」，默认 `false`；`bound?focus=true` 高亮反查到的第一张卡）与 `workstreamSessions`（每事项至多一条主场会话）。方向：对话→面板（技能 `bound + focus`）、需求池→面板（子事项 `↗`）、面板→对话（主卡「拆分任务」：首个未处理阶段的拆分提示词发进主场会话，复用/新建/回退）、阶段确认→对话（向主场会话发下一阶段提示词）、需求池确认→对话（继承需求绑定会话）。
+
+**三件事：拆分 / 确认 / 启动**（2026-10-07，设计 §5.1）：同一张卡上的「推进」是三件互不替代的事——**拆分任务 = 会话提示词**（主卡按钮按**首个未处理阶段**发 `WorkstreamHandoff.splitPrompt` 进主场会话；agent 据此 `task/create` 建**等待态**任务）、**确认 = 阶段上的人工门**（阶段卡「确认 / 退回」，只有人能点）、**启动 = 阶段上的「启动阶段」/ 技能 `queue/start`**（带 `stage` = 阶段级、只跑该阶段、跑完自动暂停）。拆分 ≠ 启动（先建等待态、人确认后才起跑）、确认 ≠ 启动（确认前移 `stage`、启动不改 `stage`）；设计 A3 / A14 / D19 与 §4 / §6 同步交叉明确。`workstream-handoff-prompt-design.md` §4.1 固化拆分提示词措辞；`workstream-panel` 技能补「对话中发起拆分 / 启动」入口。
 
 **默认展开首个未处理事项卡**（2026-10-07，UX）：面板加载 / 重绘时只展开首个 `runState != 完成`（A13 派生态：未开始 / 进行中 / 待确认 / 阻塞）的事项卡，其余收起；全部完成时不展开任何卡。纯谓词 `wsDefaultExpandedID` / `wsApplyingDefaultExpansion`（`WorkstreamsUI.swift`）由 `WSBoardModel.build` 每次构建时应用（在阶段筛选后的可见列表内取首个未处理）。
 
