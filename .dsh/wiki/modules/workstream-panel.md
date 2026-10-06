@@ -1,7 +1,7 @@
 ---
 title: 模块：Workstreams*（事项面板）
 tags: [module, workstreams, panel, ai-native-workflow, stage-gate]
-updated: 2026-10-07T18:00:00Z
+updated: 2026-10-07T19:00:00Z
 sources: [platforms/macos/src/WorkstreamsCore.swift, platforms/macos/src/WorkstreamsUI.swift, platforms/macos/src/WorkstreamsRunState.swift, platforms/macos/src/WorkstreamsAPI.swift, platforms/macos/src/WorkstreamsPanel.swift, platforms/macos/src/WorkstreamsQueues.swift, platforms/macos/src/WorkstreamsRunner.swift, platforms/macos/src/WorkstreamsPrompts.swift, platforms/macos/src/WorkstreamsStageGate.swift, platforms/macos/src/WorkstreamsDelivery.swift, platforms/macos/src/WSCardView.swift, platforms/macos/src/WSInlineForms.swift, platforms/macos/src/main.swift, tests/workstreams-panel/, docs/design/panels/workstream-panel-design.md, docs/design/panels/requirements-workstream-store-design.md, docs/design/panels/workstream-handoff-prompt-design.md, docs/usage/panels.md, .dsh/skills/workstream-panel/SKILL.md]
 manual: false
 ---
@@ -55,6 +55,8 @@ manual: false
 **默认展开首个未处理事项卡**（2026-10-07，UX）：面板加载 / 重绘时只展开首个 `runState != 完成`（A13 派生态：未开始 / 进行中 / 待确认 / 阻塞）的事项卡，其余收起；全部完成时不展开任何卡。纯谓词 `wsDefaultExpandedID` / `wsApplyingDefaultExpansion`（`WorkstreamsUI.swift`）由 `WSBoardModel.build` 每次构建时应用（在阶段筛选后的可见列表内取首个未处理）。
 
 **创建任务抽屉**（2026-10-07，UX）：阶段卡的「＋创建任务」按钮与 `onCreateStageTask` / `workstreams.stage.createTask` 移除，创建入口收口到**主卡「创建任务」**——打开复用 `WSInlineForms` 的表单抽屉（`WSStageTaskComposerView` + `WSFormSheetHostView`）：**阶段选择器**（五阶段，默认 `wsFirstUnprocessedStage`）+ 一个输入框（**首行 = 标题、其余行 = 内容**，`WSStageTaskComposerModel`；⌘↩ 提交、Esc 取消、标题为空禁用）。提交走同一 `createStageQueue` 路径（`WorkstreamHandoff.stageTask` 注入该阶段交接提示词，输入内容附后），建**等待态**任务、追加到事项唯一队列、**不启动**。
+
+**入口唯一性 + 阶段卡按钮清单**（2026-10-07 固化，设计 A3 / A14 / D19 / §5.1）：**拆分任务**（主卡按钮，发**提示词**）、**创建任务**（主卡按钮，**抽屉选阶段** + 首行标题·其余内容 → `task/create`）、**启动**（主卡「启动事项」，按**阶段 canonical 顺序**）都只在**事项主卡**；**确认**在**各阶段卡**（人工门）。阶段卡只保留待确认时的「确认并推进 / 退回本阶段返工」与交付阶段的「交付」——**没有**「＋创建任务」「启动阶段」「拆分任务」。`workstream-handoff-prompt-design.md` §4.2 记录**创建任务抽屉 ↔ `task/create`**（同一条写入路径）；`workstream-panel` 技能入口表补「对话里创建任务」。
 
 ## 测试
 

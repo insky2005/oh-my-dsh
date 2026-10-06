@@ -66,6 +66,17 @@
   4. **不自签**：拆分是人工确认门，agent 只建等待态任务，人在面板确认后才 `queue/start`；
   5. 本步动作是 `task/create`；`queue/start` 只作为「人确认后」的后续动作出现在规则段，不冒充本步动作。
 
+### 4.2 创建任务抽屉与 `task/create`
+
+事项主卡的「**创建任务**」按钮是「按阶段建等待态任务」的**面板侧入口**，与技能 / 会话调用的 `POST /api/workstreams/task/create` 是**同一条写入路径**（`WorkstreamsRunner.createStageQueue`）：
+
+- **阶段选择器**：五阶段单选，默认该事项**首个未处理阶段**（`wsFirstUnprocessedStage`，A13 派生态）——与「拆分任务」同源；
+- **一个输入框**：**首行 = 标题，其余行 = 内容**（`WSStageTaskComposerModel` 拆分）；⌘↩ 提交、Esc 取消、标题为空禁用提交；
+- **提示词注入**：提交时用 `WorkstreamHandoff.stageTask(title:content:card:action:)` 生成该阶段的**交接提示词**（§3 公共头 + 动作段 + §4 规则段，与 `task/create` 完全同形），把用户输入的**内容附在提示词之后**；提示词仍在 body 开头，执行阶段的 `isHandoff` 判定与完成 marker 注入不受影响；
+- **落点**：任务带该 `stage` 追加到该事项**唯一队列**、`WS.queues` 由面板写回；**只建等待态、不启动**。
+
+与「拆分任务」的关系：**拆分**把 `splitPrompt` 发进主场会话，由会话里的 agent 调 `task/create`；**创建任务**是人在面板上直接走同一条 `task/create`（不经过会话）。两者产物相同（等待态、带 `stage` 的任务），都受「只建不启动 / 停下等人确认 / 不自签」约束。阶段卡**没有**创建任务入口。
+
 ## 5. 生成示例：WS-002
 
 ```text
