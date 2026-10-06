@@ -110,9 +110,11 @@ enum L10n {
         "menu.toggleFiles": ("显示/隐藏 文件面板", "Toggle Files Panel"),
         "menu.toggleProjects": ("显示/隐藏 项目面板", "Toggle Projects Panel"),
         "menu.toggleRequirements": ("显示/隐藏 需求池面板", "Toggle Requirements Panel"),
+        "menu.toggleWorkstreams": ("显示/隐藏 事项面板", "Toggle Workstreams Panel"),
         // activity bar
         "bar.projects": ("项目", "Projects"),
         "bar.requirements": ("需求池", "Requirements"),
+        "bar.workstreams": ("事项", "Workstreams"),
         "bar.preview": ("文件", "Files"),
         "bar.terminal": ("终端", "Terminal"),
         "edit.undo": ("撤销", "Undo"),
@@ -2348,10 +2350,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var reviewToggleMenuItem: NSMenuItem?
     private var projectsToggleMenuItem: NSMenuItem?
     private var requirementsToggleMenuItem: NSMenuItem?
+    private var workstreamsToggleMenuItem: NSMenuItem?
     private var skillsToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip). "项目" comes first (design D4).
     private var projectsBarButton: ActivityBarButton!
     private var requirementsBarButton: ActivityBarButton!
+    private var workstreamsBarButton: ActivityBarButton!
     private var previewBarButton: ActivityBarButton!
     private var closeTabMenuItem: NSMenuItem?
     private var terminalBarButton: ActivityBarButton!
@@ -2374,6 +2378,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var reviewPanel: ReviewPanelController!
     private var projectsPanel: ProjectsPanelController!
     private var requirementsPanel: RequirementsPanelController!
+    private var workstreamsPanel: WorkstreamsPanelController!
     private var skillsPanel: SkillsPanelController!
     /// Browser panel localhost REST API (Agent / user curl). Runs from launch.
     private var browserAPIServer: BrowserAPIServer!
@@ -2384,7 +2389,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
     /// terminal, wiki, tasks and browser panels share one slot; the activity
     /// bar toggles between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review, skills, projects, requirements }
+    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review, skills, projects, requirements, workstreams }
     private var rightPanel: RightPanel = .none
     /// Set by prepareSessionSnapshot() when session snapshots need the user's
     /// attention (unavailable runtime / an unfinished rollback). Surfaced by the
@@ -2433,7 +2438,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                                     max(ReviewPanelController.minWidth,
                                         max(SkillsPanelController.minWidth,
                                             max(ProjectsPanelController.minWidth,
-                                                RequirementsPanelController.minWidth))))))))))
+                                                max(RequirementsPanelController.minWidth,
+                                                    WorkstreamsPanelController.minWidth)))))))))))
     /// *Initial* panel width when the user has never chosen one. The user's
     /// saved/dragged width always wins (clamped to the minimum above); this is
     /// only the first-run width. Deliberately NOT window-relative: a "half the
@@ -2661,6 +2667,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.requirements)
             AppLog.shared.log("requirements self-test enabled")
         }
+        // Workstreams panel self-test hook (debugging / QA): DSH_WORKSTREAMS_TEST=1.
+        if ProcessInfo.processInfo.environment["DSH_WORKSTREAMS_TEST"] == "1" {
+            setRightPanel(.workstreams)
+            AppLog.shared.log("workstreams self-test enabled")
+        }
         // Tasks self-test hook (debugging / QA): opens the task panel. With
         // DSH_TASKS_TEST_PATH=<repo> it loads that repo's .dsh/tasks/ board
         // instead of waiting for the workspace to resolve (fixture QA).
@@ -2710,6 +2721,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "skills", "技能": return .skills
         case "projects", "项目": return .projects
         case "requirements", "需求池": return .requirements
+        case "workstreams", "事项": return .workstreams
         default: return nil
         }
     }
@@ -2944,6 +2956,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.dumpPanelDebugInfo(panelView: self.requirementsPanel.view, label: "requirements-loaded")
         }
 
+        workstreamsPanel = WorkstreamsPanelController()
+        AppLog.shared.log("launch: workstreamsPanel created")
+        workstreamsPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        workstreamsPanel.workspaceProvider = { [weak self] in self?.activeWorkspacePath() }
+        // Clicking a card opens its WS-*.md in the file panel (same as the
+        // requirements pool's child-workstream button).
+        workstreamsPanel.onOpenCard = { [weak self] path in
+            guard let self = self else { return }
+            self.previewPanel.open(path: path)
+            self.setRightPanel(.preview)
+        }
+        workstreamsPanel.onDidRender = { [weak self] in
+            guard let self = self, self.uiDebug else { return }
+            self.dumpPanelDebugInfo(panelView: self.workstreamsPanel.view, label: "workstreams-loaded")
+        }
+
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
@@ -2952,8 +2980,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityBar.translatesAutoresizingMaskIntoConstraints = false
 
         // 活动栏图标：tooltip 跟随系统语言（L10n 中英切换）；
-        // 顺序 = 项目、文件、终端、Wiki、需求池、任务、通道、审查、浏览器、技能
-        // （「项目」在首位，见设计 §5/D4；「浏览器」改到末位「技能」之前，2026-09-24）。
+        // 顺序 = 项目、文件、终端、Wiki、需求池、事项、任务、通道、审查、浏览器、技能
+        // （「项目」在首位，见设计 §5/D4；「事项」紧邻「需求池」之后，见 A11/D14；
+        // 「浏览器」改到末位「技能」之前，2026-09-24）。
         projectsBarButton = makeActivityButton(symbol: "folder",
                                                tooltip: L10n.tr("bar.projects"),
                                                action: #selector(projectsEntryTapped(_:)))
@@ -2984,7 +3013,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         requirementsBarButton = makeActivityButton(symbol: "tray.full",
                                                    tooltip: L10n.tr("bar.requirements"),
                                                    action: #selector(requirementsEntryTapped(_:)))
-        let barStack = NSStackView(views: [projectsBarButton, previewBarButton, terminalBarButton, wikiBarButton, requirementsBarButton, tasksBarButton, channelBarButton, reviewBarButton, browserBarButton, skillsBarButton])
+        // 「事项」紧邻「需求池」之后（设计 A11 / D14）。
+        workstreamsBarButton = makeActivityButton(symbol: "square.stack.3d.up",
+                                                   tooltip: L10n.tr("bar.workstreams"),
+                                                   action: #selector(workstreamsEntryTapped(_:)))
+        let barStack = NSStackView(views: [projectsBarButton, previewBarButton, terminalBarButton, wikiBarButton, requirementsBarButton, workstreamsBarButton, tasksBarButton, channelBarButton, reviewBarButton, browserBarButton, skillsBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -3047,6 +3080,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "skills": kind = .skills
         case "projects": kind = .projects
         case "requirements": kind = .requirements
+        case "workstreams": kind = .workstreams
         default: kind = .preview
         }
         setRightPanel(visible ? kind : .none)
@@ -3065,6 +3099,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .skills: return skillsPanel.view
         case .projects: return projectsPanel.view
         case .requirements: return requirementsPanel.view
+        case .workstreams: return workstreamsPanel.view
         case .none: return NSView()
         }
     }
@@ -3125,6 +3160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsToggleMenuItem?.state = (panel == .skills) ? .on : .off
         projectsToggleMenuItem?.state = (panel == .projects) ? .on : .off
         requirementsToggleMenuItem?.state = (panel == .requirements) ? .on : .off
+        workstreamsToggleMenuItem?.state = (panel == .workstreams) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
@@ -3135,6 +3171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsBarButton?.setActive(panel == .skills)
         projectsBarButton?.setActive(panel == .projects)
         requirementsBarButton?.setActive(panel == .requirements)
+        workstreamsBarButton?.setActive(panel == .workstreams)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
@@ -3225,6 +3262,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if uiDebug {
                     self.dumpPanelDebugInfo(panelView: requirementsPanel.view, label: "requirements")
                 }
+            case .workstreams:
+                workstreamsPanel.ensureLoaded()
+                if uiDebug {
+                    self.dumpPanelDebugInfo(panelView: workstreamsPanel.view, label: "workstreams")
+                }
             }
         } else {
             split.setPosition(split.bounds.width, ofDividerAt: 0)
@@ -3259,6 +3301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .skills: kind = "skills"
         case .projects: kind = "projects"
         case .requirements: kind = "requirements"
+        case .workstreams: kind = "workstreams"
         default: kind = "preview"
         }
         ShellConfig.shared.set(kind, forKey: "rightPanelKind")
@@ -5167,6 +5210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // The Projects panel only re-renders its highlight + badges here.
         projectsPanel?.workspaceChanged()
         requirementsPanel?.workspaceChanged()
+        workstreamsPanel?.workspaceChanged()
         AppLog.shared.log("project directory adopted: " + std)
         return true
     }
@@ -6084,7 +6128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // 「项目」在首位（与活动栏一一对应，设计 §5/D4）；⌥⌘P 由「文件面板」
         // 让出（PR #57 已把文件面板改为 ⌥⌘F）。
         // 其余各项顺序与活动栏保持一一对应：项目 / 文件 / 终端 / 知识库 / 需求池 /
-        // 任务 / 通道 / 审查 / 浏览器 / 技能（「浏览器」2026-09-24 移到末位「技能」之前）。
+        // 事项 / 任务 / 通道 / 审查 / 浏览器 / 技能（「浏览器」2026-09-24 移到末位「技能」之前）。
         let toggleProjects = viewMenu.addItem(withTitle: L10n.tr("menu.toggleProjects"), action: #selector(projectsEntryTapped(_:)), keyEquivalent: "p")
         toggleProjects.keyEquivalentModifierMask = [.command, .option]
         toggleProjects.target = self
@@ -6111,6 +6155,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleRequirements.target = self
         toggleRequirements.state = (rightPanel == .requirements) ? .on : .off
         requirementsToggleMenuItem = toggleRequirements
+        // 「事项」紧邻「需求池」之后（设计 A11 / D14）；⌥⌘K 经查无占用。
+        let toggleWorkstreams = viewMenu.addItem(withTitle: L10n.tr("menu.toggleWorkstreams"), action: #selector(workstreamsEntryTapped(_:)), keyEquivalent: "k")
+        toggleWorkstreams.keyEquivalentModifierMask = [.command, .option]
+        toggleWorkstreams.target = self
+        toggleWorkstreams.state = (rightPanel == .workstreams) ? .on : .off
+        workstreamsToggleMenuItem = toggleWorkstreams
         let toggleTasks = viewMenu.addItem(withTitle: L10n.tr("menu.toggleTasks"), action: #selector(tasksEntryTapped(_:)), keyEquivalent: "j")
         toggleTasks.keyEquivalentModifierMask = [.command, .option]
         toggleTasks.target = self
@@ -6290,6 +6340,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         wikiBarButton?.toolTip = L10n.tr("bar.wiki")
         tasksBarButton?.toolTip = L10n.tr("bar.tasks")
         requirementsBarButton?.toolTip = L10n.tr("bar.requirements")
+        workstreamsBarButton?.toolTip = L10n.tr("bar.workstreams")
         // 各面板头部操作按钮 tooltip 同样跟随语言
         previewPanel?.refreshTooltips()
         terminalPanel?.refreshTooltips()
@@ -6301,6 +6352,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsPanel?.refreshTooltips()
         projectsPanel?.refreshTooltips()
         requirementsPanel?.refreshTooltips()
+        workstreamsPanel?.refreshTooltips()
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url
@@ -6487,6 +6539,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Toggle the Requirements Pool panel (activity bar's last entry / ⌥⌘I).
     @objc private func requirementsEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .requirements ? .none : .requirements)
+    }
+    /// Toggle the Workstreams panel (activity bar entry right after 需求池 / ⌥⌘K).
+    @objc private func workstreamsEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .workstreams ? .none : .workstreams)
     }
     /// Toggle the Review (change audit) panel (activity bar entry / ⌥⌘R).
     @objc private func reviewEntryTapped(_ sender: Any?) {
@@ -6873,6 +6929,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         bridge.requirementsReject = { [weak self] request in
             self?.requirementsPanel?.apiRequirementsReject(request) ?? BrowserAPIBridge.requirementsUnavailable
         }
+        // 同一服务上的第四块路由面：/api/workstreams/*（事项面板；A5 面板是
+        // WS-*.md 的唯一写者，agent 经此写卡而非直改文件）。
+        bridge.workstreamsList = { [weak self] workspace in
+            self?.workstreamsPanel?.apiWorkstreamsList(workspace: workspace) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsCreate = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsCreate(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsUpdate = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsUpdate(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsStage = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsStage(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsPlan = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsPlan(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsQueues = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsQueues(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
         bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
         bridge.hidePanel = { [weak self] in
             if self?.rightPanel == .browser { self?.setRightPanel(.none) }
@@ -7159,6 +7235,7 @@ final class SettingsWindowController {
         ("menu.toggleTerminal", "⌥⌘T"),
         ("menu.toggleWiki", "⌥⌘W"),
         ("menu.toggleRequirements", "⌥⌘I"),
+        ("menu.toggleWorkstreams", "⌥⌘K"),
         ("menu.toggleBrowser", "⌥⌘B"),
         ("menu.toggleChannel", "⌥⌘H"),
         ("menu.toggleReview", "⌥⌘R"),

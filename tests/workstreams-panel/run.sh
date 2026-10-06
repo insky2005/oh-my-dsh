@@ -76,4 +76,29 @@ if grep -nE 'static let (dark|light)[A-Za-z]* *: *NSColor' "$SRC3/WorkstreamsPan
 fi
 echo "workstreams panel surface guard: PanelSurface + PanelControl ok"
 
+echo "--- main.swift wiring guard (entry points) ---"
+# The panel entry wiring is AppKit main.swift (no headless unit test), so freeze
+# it with a source guard: RightPanel.workstreams, the activity-bar slot right
+# after 需求池, the ⌥⌘K toggle (view menu + shortcut list), the L10n keys, the
+# panel instance, and the /api/workstreams/* bridge landing. See design A5 / A11.
+MAIN="$SRC3/main.swift"
+wiring_check() {
+  if ! grep -qE "$1" "$MAIN"; then
+    echo "FAIL: main.swift missing $2" >&2
+    exit 1
+  fi
+}
+wiring_check 'enum RightPanel \{[^}]*\bworkstreams\b' 'RightPanel.workstreams'
+wiring_check 'requirementsBarButton, workstreamsBarButton' 'activity-bar slot immediately after 需求池'
+wiring_check 'workstreamsEntryTapped' 'the workstreams toggle handler'
+wiring_check 'keyEquivalent: "k"' 'the ⌥⌘K view-menu shortcut'
+wiring_check 'menu\.toggleWorkstreams' 'the view-menu L10n key'
+wiring_check 'bar\.workstreams' 'the activity-bar L10n key'
+wiring_check '\("menu\.toggleWorkstreams", "⌥⌘K"\)' 'the Settings shortcut-list row'
+wiring_check 'workstreamsPanel = WorkstreamsPanelController\(\)' 'the panel instance'
+wiring_check 'workstreamsPanel\.workspaceProvider' 'the workspace provider wiring'
+wiring_check 'bridge\.workstreamsList' 'the /api/workstreams/list bridge landing'
+wiring_check 'bridge\.workstreamsQueues' 'the /api/workstreams/queues bridge landing'
+echo "main.swift wiring guard ok"
+
 echo "workstreams-panel tests passed"

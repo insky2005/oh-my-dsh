@@ -841,3 +841,131 @@ extension WorkstreamsPanelController {
         ])
     }
 }
+
+// MARK: - Localhost API landing (/api/workstreams/*)
+
+/// Same shape as the requirements pool panel: HTTP runs on its own queue and the
+/// bridge marshals every call onto the main thread (single writer), so these
+/// methods only touch the model and reload the visible board. The panel is the
+/// only writer of WS-*.md (design A5), so the agent writes through here instead
+/// of editing .dsh/workstreams/* directly.
+extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
+
+    /// Prefer the requested workspace when it sits inside the active one (an
+    /// agent may pass a subdirectory); otherwise fall back to the active
+    /// workspace, then to the requested path itself. Mirrors the requirements
+    /// panel's resolveWorkspace.
+    private func resolveWorkspace(_ requested: String?) -> String? {
+        let current = workspaceProvider?()
+        let trimmed = requested?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let requested = trimmed, !requested.isEmpty else {
+            if let current = current, !current.isEmpty { return current }
+            return nil
+        }
+        if let current = current, !current.isEmpty,
+           requested == current || requested.hasPrefix(current + "/") {
+            return current
+        }
+        return requested
+    }
+
+    private func listDictionary(_ workspace: String?) -> [String: Any] {
+        guard let workspace = workspace, !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        // Reuse the freshly rendered snapshot when it is the visible workspace;
+        // otherwise load the requested one (the list is read-only either way).
+        let loaded = workspace == (workspaceProvider?() ?? "") ? snapshot : WorkstreamsCore.load(workspace: workspace)
+        return WorkstreamsAPIResponse.snapshot(loaded)
+    }
+
+    /// One write result shape for every route: the re-parsed card on success,
+    /// the model error code / message on failure (the router maps the status).
+    private func writeResult(_ body: () throws -> WorkstreamCard, workspace: String) -> [String: Any] {
+        do {
+            let card = try body()
+            if workspace == (workspaceProvider?() ?? "") { reload() }
+            return ["ok": true, "workstream": WorkstreamsAPIResponse.card(card)]
+        } catch let error as WorkstreamError {
+            return error.apiResult
+        } catch {
+            return WorkstreamError.writeFailed(error.localizedDescription).apiResult
+        }
+    }
+
+    func apiWorkstreamsList(workspace: String?) -> [String: Any] {
+        let resolved = resolveWorkspace(workspace)
+        if let resolved = resolved, resolved == (workspaceProvider?() ?? "") {
+            reload()
+        }
+        return listDictionary(resolved)
+    }
+
+    func apiWorkstreamsCreate(_ request: WorkstreamsCreateRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        return writeResult({
+            try WorkstreamsCore.create(workspace: workspace,
+                                       title: request.title,
+                                       requirement: request.requirement,
+                                       stage: request.stage,
+                                       body: request.body,
+                                       today: WorkstreamsCore.today())
+        }, workspace: workspace)
+    }
+
+    func apiWorkstreamsUpdate(_ request: WorkstreamsUpdateRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        return writeResult({
+            try WorkstreamsCore.update(workspace: workspace,
+                                       id: request.id,
+                                       title: request.title,
+                                       requirement: request.requirement,
+                                       body: request.body,
+                                       today: WorkstreamsCore.today())
+        }, workspace: workspace)
+    }
+
+    func apiWorkstreamsStage(_ request: WorkstreamsStageRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        return writeResult({
+            try WorkstreamsCore.setStage(workspace: workspace,
+                                         id: request.id,
+                                         stage: request.stage,
+                                         today: WorkstreamsCore.today())
+        }, workspace: workspace)
+    }
+
+    /// Replace one level-2 section (planning / design prose). heading keeps its
+    /// "## " prefix so WorkstreamsCore.replaceSection can match it.
+    func apiWorkstreamsPlan(_ request: WorkstreamsPlanRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        return writeResult({
+            let card = try WorkstreamsCore.loadCard(workspace: workspace, id: request.id)
+            let text = request.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let section = request.heading + "\n\n" + text
+            let body = WorkstreamsCore.replaceSection(card.body, heading: request.heading, with: section)
+            return try WorkstreamsCore.update(workspace: workspace, id: request.id, body: body,
+                                              today: WorkstreamsCore.today())
+        }, workspace: workspace)
+    }
+
+    func apiWorkstreamsQueues(_ request: WorkstreamsQueuesRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        return writeResult({
+            try WorkstreamsCore.setQueues(workspace: workspace,
+                                          id: request.id,
+                                          queues: request.queues,
+                                          today: WorkstreamsCore.today())
+        }, workspace: workspace)
+    }
+}
