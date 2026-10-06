@@ -394,6 +394,16 @@ func wsApplyingDefaultExpansion(_ cards: [WSCardModel]) -> [WSCardModel] {
     }
 }
 
+/// The FIRST unprocessed stage of a workstream (UX: the「拆分任务」button target):
+/// the first stage in canonical order (`WorkstreamStage.allCases`) whose derived
+/// run state is not 完成. "Unprocessed" reuses the A13 derived run state, so the
+/// authoritative `stage` is never consulted and a stage the human already
+/// confirmed reads `.done`. Returns nil when every stage is done (nothing to
+/// split). Pure: asserted headlessly in ui-tests.swift.
+func wsFirstUnprocessedStage(_ card: WSCardModel) -> WorkstreamStage? {
+    card.stages.first { $0.runState != .done }?.stage
+}
+
 // MARK: - The filtered board
 
 /// The whole board the panel renders: the cards for the active filter, the

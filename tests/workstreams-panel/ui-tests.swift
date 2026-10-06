@@ -303,6 +303,32 @@ eq(filteredExpand.cards.map { $0.id }, ["WS-000111", "WS-000112"],
 eq(filteredExpand.cards.map { $0.isExpanded }, [true, false],
    "within the filtered board the first unprocessed card opens")
 
+// MARK: - First unprocessed stage (UX: the 拆分任务 button target)
+
+section("first unprocessed stage: canonical order, skips done")
+let splitCard = WSCardModel.build(from: card(id: "WS-000200", stage: .design))
+eq(splitCard.stages.map { $0.runState },
+   [.done, .notStarted, .notStarted, .notStarted, .notStarted],
+   "planning is done once the human moved to design")
+eq(wsFirstUnprocessedStage(splitCard), .design,
+   "the first unprocessed stage is the current one, not index 0")
+// A confirmed delivery is a done workstream: every stage reads done.
+let splitDone = WSCardModel.build(from: card(id: "WS-000201", stage: .delivery, body: doneBody))
+eq(splitDone.runState, .done, "a confirmed delivery workstream is done")
+eq(wsFirstUnprocessedStage(splitDone), nil, "a fully done workstream has no stage to split")
+// A blocked current stage is "unprocessed" and is the split target.
+var splitBoard = WSBoard()
+let splitQueue = splitBoard.createQueue(name: "Q-split", workstreamID: "WS-000202")
+splitBoard.tasks.append(WSTaskItem(id: "wt-s", title: "失败任务",
+                                   workstreamId: "WS-000202", stage: .task))
+_ = splitBoard.enqueue(taskID: "wt-s", into: splitQueue.id)
+_ = splitBoard.markFailed("wt-s", error: "workstreams.errPrompt")
+let splitBlocked = WSCardModel.build(from: card(id: "WS-000202", stage: .task,
+                                                queues: [splitQueue.id]),
+                                     board: splitBoard)
+eq(wsFirstUnprocessedStage(splitBlocked), .task,
+   "a blocked current stage is the first unprocessed")
+
 // MARK: - Parse round-trip
 
 section("parsed card feeds the card model")

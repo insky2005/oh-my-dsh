@@ -352,7 +352,7 @@ REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已确认�
 - 列出事项清单。
 ```
 
-> **会话继承**：`RequirementsCore.confirm` 建 `WS-*.md` 时，把该需求在 `.dsh/requirements/local.json` 的绑定会话继承给每个新 WS（写 `.dsh/workstreams/local.json` 的 `workstreamSessions`，与事项面板「在会话中处理」同一份运行态）。需求没绑定会话则不发明绑定；任何显式传入的 `session`（API 路径）优先于已绑定会话。
+> **会话继承**：`RequirementsCore.confirm` 建 `WS-*.md` 时，把该需求在 `.dsh/requirements/local.json` 的绑定会话继承给每个新 WS（写 `.dsh/workstreams/local.json` 的 `workstreamSessions`，与事项面板「拆分任务」同一份运行态）。需求没绑定会话则不发明绑定；任何显式传入的 `session`（API 路径）优先于已绑定会话。
 
 **④ 驳回拆解（带原因）**（`RequirementsCore.rejectPrompt(_:title:reason:)`；回写绑定会话）
 

@@ -160,7 +160,7 @@ updated: 2026-10-03
 - 照抄 `.dsh/tasks` 的既有分界（`REQ-002` 决策）：`.gitignore` 已忽略 `.dsh/workstreams/local.json`。
 - 需求级运行时绑定**已定另立** `.dsh/requirements/local.json`（与事项级 `.dsh/workstreams/local.json` 对称），须同步在 `.gitignore` 增加一行 `.dsh/requirements/local.json`；本设计只记录约定，`.gitignore` 的落地属任务阶段（§9）。
 - **阶段迁移本身写进卡片**（committed）：`stage` 变化是对共享真相的编辑，必须可追溯、随仓库走。
-- `workstreamSessions` 是**每事项至多一条**的「主场会话」绑定：任何 `/api/workstreams/*` 写请求带 `session` 时记成该会话，**后写覆盖先写**（last-writer-wins，运行时绑定、不是永久契约）；面板「在会话中处理」与「对话内阶段推进」（确认后向主场会话发下一阶段提示词）都读它，`GET /api/workstreams/bound?session=` 反向查「本会话绑定的事项」。模型设计见 `docs/design/panels/workstream-panel-design.md` §6.1（A16）。
+- `workstreamSessions` 是**每事项至多一条**的「主场会话」绑定：任何 `/api/workstreams/*` 写请求带 `session` 时记成该会话，**后写覆盖先写**（last-writer-wins，运行时绑定、不是永久契约）；面板「拆分任务」与「对话内阶段推进」（确认后向主场会话发下一阶段提示词）都读它，`GET /api/workstreams/bound?session=` 反向查「本会话绑定的事项」。模型设计见 `docs/design/panels/workstream-panel-design.md` §6.1（A16）。
 
 ## 5. 终态是派生谓词，禁止手写（AC4）
 

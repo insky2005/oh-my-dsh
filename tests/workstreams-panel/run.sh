@@ -458,8 +458,8 @@ for key in workstreams.stage.deliver workstreams.deliver.not-delivery-stage \
 done
 echo "delivery wiring + covered / delivery write routes guard ok"
 
-echo "--- workstream 会话绑定 / 在会话中处理 guard (design §6) ---"
-# 事项 ↔ 会话绑定：local.json 的 workstreamSessions + 反查 + 「在会话中处理」动作。
+echo "--- workstream 会话绑定 / 拆分任务 guard (design §6) ---"
+# 事项 ↔ 会话绑定：local.json 的 workstreamSessions + 反查 + 「拆分任务」动作。
 # 模型层：持久化 / 反查 / 目标会话决策。
 for sym in 'workstreamSessions' 'rememberWorkstreamSession' 'workstreamSessions(' \
            'workstreamId(boundTo' 'bindWorkstreamSession'; do
@@ -481,36 +481,64 @@ if ! grep -qF '/api/workstreams/bound' "$SRC2/WorkstreamsAPI.swift" \
   echo "FAIL: WorkstreamsAPI.swift is missing the reverse-lookup route / delegate / list binding" >&2
   exit 1
 fi
-# 面板：写请求 rememberSession + 「在会话中处理」按钮 / 动作落地。
-for needle in 'apiWorkstreamsBound' 'onHandleInSession' 'handleInSession(' 'bindSession(' \
-              'rememberWorkstreamSession'; do
+# 面板：写请求 rememberSession + 「拆分任务」按钮 / 动作落地。
+for needle in 'apiWorkstreamsBound' 'onSplitTasks' 'splitTasks(' 'bindSession(' \
+              'rememberWorkstreamSession' 'wsFirstUnprocessedStage('; do
   if ! grep -qF "$needle" "$SRC2/WorkstreamsPanel.swift"; then
     echo "FAIL: WorkstreamsPanel.swift is missing $needle" >&2
     exit 1
   fi
 done
-# 主卡 + 阶段卡都要有「在会话中处理」：两处共用同一个按钮构造器，保证都落在
-# 同一个 onHandleInSession 上（只挂主卡不算完成）。
-if ! grep -qF 'func handleInSessionButton()' "$SRC2/WorkstreamsPanel.swift" \
-   || [ "$(grep -c 'append(handleInSessionButton())' "$SRC2/WorkstreamsPanel.swift")" -lt 2 ]; then
-  echo "FAIL: the main card and the stage cards must both carry the handle-in-session button" >&2
+# 只有一个「拆分任务」按钮，且只在主卡（阶段卡不再重复挂这个入口）。
+if ! grep -qF 'func splitTasksButton()' "$SRC2/WorkstreamsPanel.swift" \
+   || [ "$(grep -c 'append(splitTasksButton())' "$SRC2/WorkstreamsPanel.swift")" -ne 1 ]; then
+  echo "FAIL: only the main card must carry the 拆分任务 button" >&2
   exit 1
 fi
 if ! grep -qF 'workstreamsBound' "$SRC2/BrowserAPI.swift" \
    || ! grep -qF 'bridge.workstreamsBound' "$MAIN" \
    || ! grep -qF 'startWorkstreamSession' "$MAIN" \
-   || ! grep -qF 'workstreamsPanel.onHandleInSession' "$MAIN"; then
-  echo "FAIL: BrowserAPI.swift / main.swift are missing the bound bridge / handle wiring" >&2
+   || ! grep -qF 'workstreamsPanel.onSplitTasks' "$MAIN"; then
+  echo "FAIL: BrowserAPI.swift / main.swift are missing the bound bridge / split wiring" >&2
   exit 1
 fi
-for key in workstreams.handleInSession workstreams.handle.started workstreams.handle.continued \
-           workstreams.handle.fallback workstreams.handle.failed; do
+for key in workstreams.split workstreams.split.started workstreams.split.continued \
+           workstreams.split.fallback workstreams.split.failed workstreams.split.allDone; do
   if ! grep -qF "$key" "$MAIN"; then
     echo "FAIL: main.swift is missing the $key L10n key" >&2
     exit 1
   fi
 done
-echo "workstream session binding / handle guard ok"
+echo "workstream session binding / split guard ok"
+
+echo "--- 拆分任务 guard (UX: main-card button targets the first unprocessed stage) ---"
+# 「拆分任务」按 canonical 顺序取首个 runState != 完成 的阶段，经主场会话发该阶段的
+# 拆分提示词（WorkstreamHandoff.splitPrompt）；不新建会话语义之外的旁路。
+if ! grep -qF 'func wsFirstUnprocessedStage(' "$SRC2/WorkstreamsUI.swift" \
+   || ! grep -qF 'card.stages.first { $0.runState != .done }?.stage' "$SRC2/WorkstreamsUI.swift"; then
+  echo "FAIL: WorkstreamsUI.swift is missing the first-unprocessed-stage predicate" >&2
+  exit 1
+fi
+if ! grep -qF 'wsFirstUnprocessedStage(model)' "$SRC2/WorkstreamsPanel.swift"; then
+  echo "FAIL: the panel must resolve the split target through wsFirstUnprocessedStage" >&2
+  exit 1
+fi
+if ! grep -qE 'func splitPrompt\(' "$PROMPTS"; then
+  echo "FAIL: WorkstreamsPrompts.swift is missing splitPrompt" >&2
+  exit 1
+fi
+if ! grep -qF 'WorkstreamHandoff.splitPrompt(card: card, stage: stage, workspace: workspace)' "$SRC2/main.swift"; then
+  echo "FAIL: main.swift must send the stage's splitPrompt to the home session" >&2
+  exit 1
+fi
+# 拆分的四件套要求：等待态 / 带 stage / 不自签 / 不启动 / 停下等人。
+for needle in '等待态阶段任务' '本阶段 `stage`' '不自签' '只建不启动' '停下请人确认拆分合理'; do
+  if ! grep -qF "$needle" "$PROMPTS"; then
+    echo "FAIL: the split prompt no longer requires: $needle" >&2
+    exit 1
+  fi
+done
+echo "split-task guard ok"
 
 echo "--- focus channel guard (A11 / D6: panel focus + API focus + requirements jump) ---"
 # 面板聚焦：高亮 + 滚动，且被阶段筛选隐藏时回落「全部」。

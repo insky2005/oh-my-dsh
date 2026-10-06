@@ -259,9 +259,10 @@ final class WSPrimaryCardView: NSView {
     /// Human gate actions for the current stage (R10).
     var onConfirmStage: (() -> Void)?
     var onRejectStage: (() -> Void)?
-    /// 「在会话中处理」(design §6): reuse the workstream's bound dsh session, or
-    /// start (and bind) a new one.
-    var onHandleInSession: (() -> Void)?
+    /// 「拆分任务」(design §6 / UX): resolve the workstream's first unprocessed
+    /// stage and send that stage's split prompt to the bound home session
+    /// (reuse, or start and bind a new one).
+    var onSplitTasks: (() -> Void)?
     /// 事项级启动 (design A3).
     var onStartWorkstream: (() -> Void)?
     /// 阶段二级卡的「＋创建任务」/「启动阶段」(design A3 / A14).
@@ -325,7 +326,7 @@ final class WSPrimaryCardView: NSView {
                                           filled: model.stage == .task))
         // Derived workstream run state (A13): the roll-up of the five stages.
         titleViews.append(WSTierBadgeView(text: L10n.tr(model.runStateKey), tone: model.runStateTone))
-        titleViews.append(handleInSessionButton())
+        titleViews.append(splitTasksButton())
         let start = CustomIconButton(glyph: .play,
                                      tooltip: L10n.tr("workstreams.start.item"), size: 22)
         start.onAction = { [weak self] in self?.onStartWorkstream?() }
@@ -379,15 +380,15 @@ final class WSPrimaryCardView: NSView {
         for row in rows { row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
     }
 
-    /// 「在会话中处理」(design §6): the main card and every stage card share this
-    /// ONE button — reuse the workstream's bound session, or start (and bind) a
-    /// new one. The action is per-workstream, so both levels call the same
-    /// controller handler.
-    private func handleInSessionButton() -> CustomIconButton {
-        let handle = CustomIconButton(glyph: .symbol("bubble.left.and.bubble.right"),
-                                      tooltip: L10n.tr("workstreams.handleInSession"), size: 22)
-        handle.onAction = { [weak self] in self?.onHandleInSession?() }
-        return handle
+    /// 「拆分任务」(design §6 / UX): resolve the workstream's FIRST unprocessed
+    /// stage and send that stage's split prompt to the bound home session (reuse,
+    /// or start and bind a new one). Only the main card carries it — the stage
+    /// cards keep their own stage-scoped actions.
+    private func splitTasksButton() -> CustomIconButton {
+        let split = CustomIconButton(glyph: .symbol("bubble.left.and.bubble.right"),
+                                     tooltip: L10n.tr("workstreams.split"), size: 22)
+        split.onAction = { [weak self] in self?.onSplitTasks?() }
+        return split
     }
 
     /// One 阶段二级卡 (recessed inside the primary card). Empty stages are a
@@ -420,10 +421,6 @@ final class WSPrimaryCardView: NSView {
             headerViews.append(confirm)
             headerViews.append(reject)
         }
-        // 「在会话中处理」(design §6): the same per-workstream action as the main
-        // card, offered on every stage card so the conversation is one click away
-        // from the stage the user is reading.
-        headerViews.append(handleInSessionButton())
         // 阶段级动作 (design A3 / A14): create waiting-state stage tasks, or run
         // only this stage's tasks.
         let createTask = CustomIconButton(glyph: .symbol("plus"),
@@ -706,10 +703,11 @@ final class WorkstreamsPanelController: NSObject {
     /// (setRightPanel) for a request carrying focus. The id highlight is applied
     /// by `focus(onWorkstream:)`; this closure only lights the panel.
     var onFocus: ((String) -> Void)?
-    /// 「在会话中处理」(design §6): main.swift reuses the workstream's bound
-    /// session when it is alive, otherwise starts (and binds) a new one; the
-    /// third argument is the bound session read from local.json (nil = none).
-    var onHandleInSession: ((String, String, String?) -> Void)?
+    /// 「拆分任务」(design §6 / UX): the panel resolves the workstream's first
+    /// unprocessed stage and hands main.swift (id, title, stage, boundSession).
+    /// main.swift reuses the bound session when it is alive, otherwise starts
+    /// (and binds) a new one, and sends that stage's split prompt.
+    var onSplitTasks: ((String, String, WorkstreamStage, String?) -> Void)?
     /// 对话内阶段推进（design §5 + §6）：人在面板确认某阶段、stage 真的前移后触发；
     /// main.swift 复用 `WorkstreamHandoff` 把下一阶段交接提示词发给该事项绑定的主场
     /// 会话（无绑定会话则不发）。形状对齐需求池的 `onBreakdownResolved`：面板只报
@@ -875,7 +873,7 @@ final class WorkstreamsPanelController: NSObject {
             card.onOpen = { [weak self] in self?.onOpenCard?(model.path) }
             card.onConfirmStage = { [weak self] in self?.confirmCurrentStage(model.id) }
             card.onRejectStage = { [weak self] in self?.rejectCurrentStage(model.id) }
-            card.onHandleInSession = { [weak self] in self?.handleInSession(model.id) }
+            card.onSplitTasks = { [weak self] in self?.splitTasks(model.id) }
             card.onStartWorkstream = { [weak self] in self?.startWorkstream(model.id) }
             card.onCreateStageTask = { [weak self] stage in self?.createStageTask(model.id, stage: stage) }
             card.onStartStage = { [weak self] stage in self?.startStage(model.id, stage: stage) }
@@ -1040,15 +1038,25 @@ final class WorkstreamsPanelController: NSObject {
 
     // MARK: Queue actions (panel buttons)
 
-    /// 主卡「在会话中处理」(design §6): hand the workstream + its bound session to
-    /// main.swift, which reuses that conversation or starts (and binds) a new one.
+    /// 主卡「拆分任务」(design §6 / UX): resolve the workstream's FIRST unprocessed
+    /// stage (derived run state != 完成) and hand (id, title, stage, boundSession)
+    /// to main.swift, which reuses the bound home session or starts (and binds) a
+    /// new one and sends that stage's split prompt.
     @discardableResult
-    func handleInSession(_ cardID: String) -> Bool {
-        guard let onHandleInSession = onHandleInSession else { return false }
+    func splitTasks(_ cardID: String) -> Bool {
+        guard let onSplitTasks = onSplitTasks else { return false }
         guard let workspace = workspaceProvider?(), !workspace.isEmpty,
               let card = snapshot.workstreams.first(where: { $0.id == cardID }) else { return false }
+        let model = board.cards.first { $0.id == cardID }
+            ?? WSCardModel.build(from: card,
+                                 gate: stageGates(for: snapshot, workspace: workspace)[card.id],
+                                 board: loadBoard(workspace))
+        guard let stage = wsFirstUnprocessedStage(model) else {
+            setStatus(L10n.tr("workstreams.split.allDone", card.title), isError: false)
+            return false
+        }
         let bound = WSStore.loadLocal(workspace).workstreamSessions[card.id]
-        onHandleInSession(card.id, card.title, bound)
+        onSplitTasks(card.id, card.title, stage, bound)
         return true
     }
 

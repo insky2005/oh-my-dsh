@@ -254,7 +254,7 @@ struct WSTaskDraft: Equatable {
 // MARK: - local.json（机器私有 overlay）
 
 /// 只属于本机的运行时绑定：任务 → dsh 会话、汇报、完成 marker、当前活跃队列、
-/// 事项 → 会话（「在会话中处理」的绑定，design §6）。
+/// 事项 → 会话（「拆分任务」的绑定，design §6）。
 struct WSLocalState: Equatable {
     /// task id -> dsh sessionId.
     var sessions: [String: String] = [:]

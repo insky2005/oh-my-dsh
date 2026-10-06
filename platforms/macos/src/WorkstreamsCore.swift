@@ -161,7 +161,7 @@ struct WorkstreamsSnapshot: Equatable {
 
 // MARK: - 事项 ↔ 会话绑定（design §6）
 
-/// 「在会话中处理」选中的目标会话（对齐需求池「细化」）：有绑定且可用就复用；
+/// 「拆分任务」选中的目标会话（对齐需求池「细化」）：有绑定且可用就复用；
 /// 没有 / 绑定已坏就新建；新建失败再回退当前会话。纯值，便于 headless 测试。
 enum WorkstreamSessionTarget: Equatable {
     case reuse(String)
@@ -701,7 +701,7 @@ enum WorkstreamsCore {
         return sessions.filter { $0.value == needle }.map { $0.key }.sorted().first
     }
 
-    /// 「在会话中处理」的目标会话决策（无绑定 / 坏会话回退当前会话）：
+    /// 「拆分任务」的目标会话决策（无绑定 / 坏会话回退当前会话）：
     ///   - bound 非空且 boundAlive -> 复用 bound（.reuse）
     ///   - 否则 created 非空 -> 用新建的会话（.created）
     ///   - 否则 current 非空 -> 回退当前会话（.fallback）

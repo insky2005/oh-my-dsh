@@ -1,7 +1,7 @@
 ---
 title: 模块：Workstreams*（事项面板）
 tags: [module, workstreams, panel, ai-native-workflow, stage-gate]
-updated: 2026-10-07T13:00:00Z
+updated: 2026-10-07T15:00:00Z
 sources: [platforms/macos/src/WorkstreamsCore.swift, platforms/macos/src/WorkstreamsUI.swift, platforms/macos/src/WorkstreamsRunState.swift, platforms/macos/src/WorkstreamsAPI.swift, platforms/macos/src/WorkstreamsPanel.swift, platforms/macos/src/WorkstreamsQueues.swift, platforms/macos/src/WorkstreamsRunner.swift, platforms/macos/src/WorkstreamsPrompts.swift, platforms/macos/src/WorkstreamsStageGate.swift, platforms/macos/src/WorkstreamsDelivery.swift, platforms/macos/src/WSCardView.swift, platforms/macos/src/WSInlineForms.swift, platforms/macos/src/main.swift, tests/workstreams-panel/, docs/design/panels/workstream-panel-design.md, docs/design/panels/requirements-workstream-store-design.md, docs/design/panels/workstream-handoff-prompt-design.md, docs/usage/panels.md, .dsh/skills/workstream-panel/SKILL.md]
 manual: false
 ---
@@ -44,14 +44,14 @@ manual: false
 
 **交付接线与事实写路由**（2026-10-07）：交付模块 `WorkstreamsDelivery` 已接入面板——阶段卡「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给明确原因（`WSDeliveryBlocker`），成功则 `WorkstreamsRunner.enqueueDelivery` 建 delivery 阶段任务并只启动该阶段；新增 `POST /api/workstreams/covered`（`paths` + `base` / `head` 事实）与 `POST /api/workstreams/delivery`（`pr` / `url` 事实）；**`delivery.outcome` 是派生缓存**，API 拒绝手写（`outcome-derived`）；阶段提示词与技能均已改指事项面板自有 API。
 
-**事项 ↔ 主场会话绑定 / 在会话中处理**（2026-10-07，A16）：`.dsh/workstreams/local.json` 的 `workstreamSessions`（WS-id → sessionId，ignored）保存每个事项**至多一条「主场会话」**，由任何带 `session` 的写请求记忆（`WSStore.rememberWorkstreamSession`），**后写覆盖先写**（last-writer-wins，运行时绑定、不是永久契约）；`list` 的每张卡随带 `session`；反查路由 **`GET /api/workstreams/bound?session=$DSH_SESSION_ID`** 返回该会话绑定的 WS（未绑定返回空列表）。**只有真正在推进该事项的对话才应带 `session`**；阶段 runner / 临时会话带上会覆盖主场会话（技能正文有显式警示）。主卡 / 阶段卡「**在会话中处理**」动作对齐需求池「细化」：复用绑定会话 / 新建并绑定 / 回退当前会话，决策为纯函数 `WorkstreamsCore.sessionTarget`（`WorkstreamTarget.reuse / created / fallback`）。**需求拆解确认继承**（2026-10-07）：`RequirementsCore.confirm` 建 `WS-*.md` 时把该需求在 `.dsh/requirements/local.json` 的绑定会话合并写进 `workstreamSessions`（显式 `session` 优先，无绑定则不发明），新事项在面板可直接续同一条对话；`requirements.notify.confirmed` 同步改指事项面板并附 focus 提示。
+**事项 ↔ 主场会话绑定 / 拆分任务**（2026-10-07，A16）：`.dsh/workstreams/local.json` 的 `workstreamSessions`（WS-id → sessionId，ignored）保存每个事项**至多一条「主场会话」**，由任何带 `session` 的写请求记忆（`WSStore.rememberWorkstreamSession`），**后写覆盖先写**（last-writer-wins，运行时绑定、不是永久契约）；`list` 的每张卡随带 `session`；反查路由 **`GET /api/workstreams/bound?session=$DSH_SESSION_ID`** 返回该会话绑定的 WS（未绑定返回空列表）。**只有真正在推进该事项的对话才应带 `session`**；阶段 runner / 临时会话带上会覆盖主场会话（技能正文有显式警示）。**主卡「拆分任务」**（2026-10-07，UX）解析该事项**首个未处理阶段**（canonical 顺序里第一个 `runState != 完成` 的阶段，A13 派生态；全部完成则无可拆分阶段），经 `WorkstreamHandoff.splitPrompt` 把该阶段的拆分提示词发进主场会话（点名事项 + 阶段、`task/create` 建等待态任务、不自签 / 不启动 / 停下等人）；阶段卡去掉重复入口。会话选择对齐需求池「细化」：复用绑定会话 / 新建并绑定 / 回退当前会话，决策为纯函数 `WorkstreamsCore.sessionTarget`（`WorkstreamTarget.reuse / created / fallback`）。**需求拆解确认继承**（2026-10-07）：`RequirementsCore.confirm` 建 `WS-*.md` 时把该需求在 `.dsh/requirements/local.json` 的绑定会话合并写进 `workstreamSessions`（显式 `session` 优先，无绑定则不发明），新事项在面板可直接续同一条对话；`requirements.notify.confirmed` 同步改指事项面板并附 focus 提示。
 
 **对话内阶段推进**（2026-10-07）：人工确认门通过、`stage` 真的前移后，面板按钮与 `POST /api/workstreams/stage/confirm` 两条路径共用 `continueToNextStage`，经 `onStageConfirmed` 把更新后的卡片交给 `main.swift`；后者读该事项的**绑定主场会话**并复用 `WorkstreamHandoff.nextStagePrompt`（下一阶段 + 该阶段默认动作提示词）发送，对话自然续到下一阶段。**无绑定会话则不发**（不凭空起会话）、**交付是终态**不续发。
 
-**焦点 + 主场会话切换矩阵**（2026-10-07，A15 / A16，设计 §6.1）：面板 ↔ 对话由两条正交通道承载——`focus`（注意力单向往面板：任意路由带 `focus`，仅 200 触发置前 + 高亮 + 滚动，目标被阶段筛选隐藏时回落「全部」，默认 `false`；`bound?focus=true` 高亮反查到的第一张卡）与 `workstreamSessions`（每事项至多一条主场会话）。方向：对话→面板（技能 `bound + focus`）、需求池→面板（子事项 `↗`）、面板→对话（主/阶段卡「在会话中处理」，复用/新建/回退）、阶段确认→对话（向主场会话发下一阶段提示词）、需求池确认→对话（继承需求绑定会话）。
+**焦点 + 主场会话切换矩阵**（2026-10-07，A15 / A16，设计 §6.1）：面板 ↔ 对话由两条正交通道承载——`focus`（注意力单向往面板：任意路由带 `focus`，仅 200 触发置前 + 高亮 + 滚动，目标被阶段筛选隐藏时回落「全部」，默认 `false`；`bound?focus=true` 高亮反查到的第一张卡）与 `workstreamSessions`（每事项至多一条主场会话）。方向：对话→面板（技能 `bound + focus`）、需求池→面板（子事项 `↗`）、面板→对话（主卡「拆分任务」：首个未处理阶段的拆分提示词发进主场会话，复用/新建/回退）、阶段确认→对话（向主场会话发下一阶段提示词）、需求池确认→对话（继承需求绑定会话）。
 
 **默认展开首个未处理事项卡**（2026-10-07，UX）：面板加载 / 重绘时只展开首个 `runState != 完成`（A13 派生态：未开始 / 进行中 / 待确认 / 阻塞）的事项卡，其余收起；全部完成时不展开任何卡。纯谓词 `wsDefaultExpandedID` / `wsApplyingDefaultExpansion`（`WorkstreamsUI.swift`）由 `WSBoardModel.build` 每次构建时应用（在阶段筛选后的可见列表内取首个未处理）。
 
 ## 测试
 
-`tests/workstreams-panel/run.sh`（**1004 项**）：model 93 + API 266 + ui 169 + runner 122 + prompt 167 + delivery 127 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **事项会话绑定与在会话中处理** / **focus 通道（面板高亮滚动 + API focus + 需求池跳转）** / **对话内阶段推进（确认 → 向主场会话发下一阶段提示词）** / **默认展开（首个未处理卡）** 等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。
+`tests/workstreams-panel/run.sh`（**1032 项**）：model 93 + API 266 + ui 174 + runner 122 + prompt 190 + delivery 127 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **事项会话绑定与拆分任务（首个未处理阶段）** / **focus 通道（面板高亮滚动 + API focus + 需求池跳转）** / **对话内阶段推进（确认 → 向主场会话发下一阶段提示词）** / **默认展开（首个未处理卡）** 等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。

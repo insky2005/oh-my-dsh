@@ -901,7 +901,7 @@ enum RequirementsCore {
     /// Confirm a breakdown: write one WS card per proposal item and link them
     /// back on the requirement. The requirement's captured dsh session is
     /// inherited by every fresh WS card so the panel can resume the same thread
-    /// ("在会话中处理" / design §6). `session` is the acting session when the
+    /// ("拆分任务" / design §6). `session` is the acting session when the
     /// caller knows it (API); otherwise the bound session from local.json wins.
     static func confirm(workspace: String,
                         id: String,
@@ -938,7 +938,7 @@ enum RequirementsCore {
         }
 
         // Inherit the requirement's captured dsh session to every fresh WS card, so
-        // the workstreams panel resumes the SAME conversation ("在会话中处理", design
+        // the workstreams panel resumes the SAME conversation ("拆分任务", design
         // §6) instead of starting a new one. Explicit acting session > bound session
         // (bound when the requirement was created / refined / last edited via API).
         if let inherited = session?.trimmed.nilIfEmpty ?? loadSessions(workspace: workspace)[id] {

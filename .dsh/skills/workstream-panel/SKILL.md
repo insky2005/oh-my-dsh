@@ -58,7 +58,7 @@ PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/shell-api.port" 2>/dev/null || ca
 | POST `/api/workstreams/stage/confirm` / `stage/reject` | `{"id":"…","note":"…"}` / `{"id":"…","reason":"…"}` | **人工确认 / 退回**，**agent 绝不调** |
 
 - `workspace` 传 `$(pwd)`；不传则用面板当前工作区。
-- **主场会话（`session` 绑定）**：写请求带 `session`（`$DSH_SESSION_ID`）时，面板把该事项的**主场会话**记成这次会话（`.dsh/workstreams/local.json` 的 `workstreamSessions`，ignored）。一个事项**只有一条**、**后写覆盖先写**（last-writer-wins）——这是运行时绑定，**不是「绑回来就永久有效」的契约**。面板「在会话中处理」会复用它；人在面板确认阶段后，面板把**下一阶段**交接提示词发回它（`bound` 反查的也是它）。因此**只有真正在推进该事项的对话才带 `session`**；阶段 runner / 子会话等**临时会话不要带**——它们写完就消失，带上会把主场会话覆盖成一条死会话（让人在面板「在会话中处理」重新绑定即可恢复）。
+- **主场会话（`session` 绑定）**：写请求带 `session`（`$DSH_SESSION_ID`）时，面板把该事项的**主场会话**记成这次会话（`.dsh/workstreams/local.json` 的 `workstreamSessions`，ignored）。一个事项**只有一条**、**后写覆盖先写**（last-writer-wins）——这是运行时绑定，**不是「绑回来就永久有效」的契约**。面板「拆分任务」会复用它；人在面板确认阶段后，面板把**下一阶段**交接提示词发回它（`bound` 反查的也是它）。因此**只有真正在推进该事项的对话才带 `session`**；阶段 runner / 子会话等**临时会话不要带**——它们写完就消失，带上会把主场会话覆盖成一条死会话（让人在面板「拆分任务」重新绑定即可恢复）。
 - **`focus`（对话 → 面板）**：任意路由可带 `focus: true`（写请求放 body，读请求放 `?focus=true`）；仅当请求成功（返回 200）时面板置前，并把目标卡高亮、滚动到可见。`create` 聚焦返回的新卡；`bound` 聚焦响应里**第一张**绑定卡；其余写路由聚焦请求的 `id`；其余读路由只置前（无 id）。**默认 `false`**，普通写卡不会抢用户的右栏。
 - `stage` 取值：`planning` / `design` / `task` / `acceptance` / `delivery`。
 - `update` 的 `requirement` 传空串清除指针；`queues` 是队列 id 字符串列表（**0..1**）。
@@ -214,4 +214,4 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/update" -H 'Content-Type
 - 不手写派生字段（`closed` / `outcome` / `split`）；`covered` / `delivery` 只经写路由记事实，`outcome` 由服务端派生；
 - 不在用户没要求时新建事项 / 改阶段 / 建队列 / 启动队列；
 - 不在用户没要求时用 `focus: true` 抢面板（默认已关闭；只有确实要把卡给用户看时才开）；
-- **阶段 runner / 临时会话不把本会话写进 `session`**：那会覆盖该事项的主场会话（后写覆盖先写），让「在会话中处理」和阶段推进找不到原来的对话。
+- **阶段 runner / 临时会话不把本会话写进 `session`**：那会覆盖该事项的主场会话（后写覆盖先写），让「拆分任务」和阶段推进找不到原来的对话。

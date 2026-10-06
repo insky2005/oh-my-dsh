@@ -351,6 +351,37 @@ do {
           "the next-stage prompt still points at the workstream card")
 }
 
+// MARK: - 拆分任务提示词（首个未处理阶段）
+
+section("split-task prompt names an explicit stage (first unprocessed)")
+do {
+    let card = makeCard(stage: .design)
+    let p = WorkstreamHandoff.splitPrompt(card: card, stage: .design, repoName: "oh-my-dsh")
+    contains(p, "你在 oh-my-dsh 处理一个事项。", "names the repo")
+    check(WorkstreamHandoff.isHandoff(p), "the split prompt is a panel handoff")
+    contains(p, "- 事项：.dsh/workstreams/WS-000007.md", "points at the WS card")
+    contains(p, WorkstreamHandoff.stageMarker + "设计", "names the requested stage (not .task)")
+    contains(p, "本步动作：拆分任务", "the action is 拆分任务")
+    contains(p, "/api/workstreams/task/create", "creates waiting tasks through the panel API")
+    contains(p, "等待态阶段任务", "creates waiting-state stage tasks")
+    contains(p, "本阶段 `stage`", "each task carries the stage")
+    contains(p, "只建不启动", "only creates, never starts")
+    contains(p, "不自签", "the agent never self-signs the split")
+    contains(p, "停下请人确认拆分合理", "stops for human confirmation")
+    notContains(p, "/task-todo", "never points at the tasks panel's skill")
+    // Every stage can be split; the header always names the requested stage.
+    for stage in WorkstreamStage.allCases {
+        let sp = WorkstreamHandoff.splitPrompt(card: makeCard(), stage: stage)
+        contains(sp, WorkstreamHandoff.stageMarker + WorkstreamHandoff.stageLabel(stage),
+                 "split prompt names " + stage.rawValue)
+        contains(sp, "本步动作：拆分任务", "split action for " + stage.rawValue)
+    }
+    // 执行阶段的拆分与 (stage, action) 通用构造逐字一致（同一个动作段）。
+    eq(WorkstreamHandoff.splitPrompt(card: card, stage: .task, workspace: "/tmp/ws"),
+       WorkstreamHandoff.prompt(card: card, stage: .task, workspace: "/tmp/ws"),
+       "splitting the task stage reuses the generic (stage, action) prompt")
+}
+
 print("")
 if failures == 0 {
     print("prompt tests passed (" + String(checks) + " checks)")

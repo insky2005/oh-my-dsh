@@ -1033,12 +1033,13 @@ enum L10n {
         "workstreams.glyph.stage": ("阶段", "Stage"),
         "workstreams.glyph.task": ("任务", "Task"),
         "workstreams.openCard": ("打开事项卡", "Open workstream card"),
-        // 事项 ↔ 会话绑定（design §6）：「在会话中处理」按钮 + 三种落点提示。
-        "workstreams.handleInSession": ("在会话中处理", "Handle in session"),
-        "workstreams.handle.started": ("已为 %@ 发起处理会话", "Started a session for %@"),
-        "workstreams.handle.continued": ("已在现有会话里继续处理 %@", "Continued %@ in its existing session"),
-        "workstreams.handle.fallback": ("已在当前会话里继续处理 %@", "Continued %@ in the current session"),
-        "workstreams.handle.failed": ("无法启动事项会话", "Could not start the workstream session"),
+        // 事项 ↔ 会话绑定（design §6）：「拆分任务」按钮（目标 = 首个未处理阶段）+ 三种落点提示。
+        "workstreams.split": ("拆分任务", "Split tasks"),
+        "workstreams.split.started": ("已为 %@ 发起拆分任务", "Started splitting %@ into tasks"),
+        "workstreams.split.continued": ("已在现有会话里继续拆分 %@", "Continued splitting %@ in its existing session"),
+        "workstreams.split.fallback": ("已在当前会话里继续拆分 %@", "Continued splitting %@ in the current session"),
+        "workstreams.split.failed": ("无法启动事项拆分会话", "Could not start the workstream split session"),
+        "workstreams.split.allDone": ("%@ 没有待拆分的阶段", "%@ has no unprocessed stage to split"),
         "workstreams.expand": ("展开", "Expand"),
         "workstreams.collapse": ("收起", "Collapse"),
         "workstreams.errInterrupted": ("任务因应用重启而中断，可重试", "Task interrupted by an app restart; retry it"),
@@ -3047,11 +3048,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         workstreamsPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
         // 聚焦通道（A11 / D6）：/api/workstreams/* 带 focus 时把右栏切到事项面板。
         workstreamsPanel.onFocus = { [weak self] _ in self?.setRightPanel(.workstreams) }
-        // 「在会话中处理」(design §6): reuse the workstream's bound session when it
-        // is alive, otherwise create one and bind it (falling back to the current
-        // session) — the workstream analogue of the requirements pool's「细化」.
-        workstreamsPanel.onHandleInSession = { [weak self] id, title, session in
-            self?.startWorkstreamSession(id, title: title, boundSession: session)
+        // 「拆分任务」(design §6 / UX): the panel resolves the first unprocessed
+        // stage and hands it here; reuse the workstream's bound session when it is
+        // alive, otherwise create one and bind it (falling back to the current
+        // session), then send that stage's split prompt.
+        workstreamsPanel.onSplitTasks = { [weak self] id, title, stage, session in
+            self?.startWorkstreamSession(id, title: title, stage: stage, boundSession: session)
         }
         // 对话内阶段推进（队列第 24 项 / design §5 + §6）：人在面板确认某阶段后，
         // 若该事项有绑定的主场会话，就把**下一阶段**交接提示词发过去，让对话自然续到
@@ -5605,23 +5607,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         workstreamsPanel?.focus(onWorkstream: workstreamId)
     }
 
-    /// 「在会话中处理」(design §6): the workstream analogue of the requirements
-    /// pool's「细化」. Reuse the bound session when it is alive; otherwise create a
-    /// session and bind it; otherwise fall back to the current session. The binding
-    /// is always recorded so the next action stays in the same conversation.
-    private func startWorkstreamSession(_ workstreamId: String, title: String, boundSession: String?) {
+    /// 「拆分任务」(design §6 / UX): the workstream analogue of the requirements
+    /// pool's「细化」. Send `stage`'s split prompt: reuse the bound session when it
+    /// is alive; otherwise create a session and bind it; otherwise fall back to the
+    /// current session. The binding is always recorded so the next action stays in
+    /// the same conversation.
+    private func startWorkstreamSession(_ workstreamId: String, title: String,
+                                        stage: WorkstreamStage, boundSession: String?) {
         guard let workspace = activeWorkspacePath(), !workspace.isEmpty else { return }
         let port = server.port
         guard port > 0 else {
-            workstreamsPanel?.setStatus(L10n.tr("workstreams.handle.failed"), isError: true)
+            workstreamsPanel?.setStatus(L10n.tr("workstreams.split.failed"), isError: true)
             return
         }
         guard let card = try? WorkstreamsCore.loadCard(workspace: workspace, id: workstreamId) else {
-            workstreamsPanel?.setStatus(L10n.tr("workstreams.handle.failed"), isError: true)
+            workstreamsPanel?.setStatus(L10n.tr("workstreams.split.failed"), isError: true)
             return
         }
         let current = activeSessionId
-        let prompt = WorkstreamHandoff.prompt(card: card, stage: card.stage, workspace: workspace)
+        let prompt = WorkstreamHandoff.splitPrompt(card: card, stage: stage, workspace: workspace)
         let bound = boundSession?.trimmingCharacters(in: .whitespacesAndNewlines)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             // 1) the bound session when it is alive; 2) a freshly created session;
@@ -5655,16 +5659,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 guard let self = self else { return }
                 guard let used = target?.session else {
                     AppLog.shared.log("workstreams: could not start a session for \(workstreamId)")
-                    self.workstreamsPanel?.setStatus(L10n.tr("workstreams.handle.failed"), isError: true)
+                    self.workstreamsPanel?.setStatus(L10n.tr("workstreams.split.failed"), isError: true)
                     return
                 }
                 WSStore.rememberWorkstreamSession(workspace, id: workstreamId, session: used)
-                AppLog.shared.log("workstreams: handle session \(used) for \(workstreamId)")
+                AppLog.shared.log("workstreams: split session \(used) for \(workstreamId)")
                 let message: String
                 switch target {
-                case .reuse?: message = L10n.tr("workstreams.handle.continued", workstreamId)
-                case .fallback?: message = L10n.tr("workstreams.handle.fallback", workstreamId)
-                default: message = L10n.tr("workstreams.handle.started", workstreamId)
+                case .reuse?: message = L10n.tr("workstreams.split.continued", workstreamId)
+                case .fallback?: message = L10n.tr("workstreams.split.fallback", workstreamId)
+                default: message = L10n.tr("workstreams.split.started", workstreamId)
                 }
                 self.workstreamsPanel?.setStatus(message, isError: false)
                 if used != self.activeSessionId { self.openDSHSession(used) }
@@ -5675,7 +5679,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// 对话内阶段推进（队列第 24 项 / design §5 + §6）：人在面板确认某阶段后，若该
     /// 事项有绑定的主场会话（`local.json` 的 `workstreamSessions`），就把**下一阶段**
     /// 的交接提示词发过去，让对话自然续到下一阶段；**无绑定会话则不发**（不凭空起
-    /// 会话——只有「在会话中处理」才允许新建）。形状与需求池的
+    /// 会话——只有「拆分任务」才允许新建）。形状与需求池的
     /// `notifyBreakdownResolved` 一致：面板只报事实，主程序负责会话选择与发送。
     private func continueWorkstreamInSession(card: WorkstreamCard, stage: WorkstreamStage) {
         guard let workspace = activeWorkspacePath(), !workspace.isEmpty else { return }

@@ -408,7 +408,7 @@ let multiBound = ["WS-000002": "s-1", "WS-000001": "s-1"]
 eq(WorkstreamsCore.boundWorkstream(in: multiBound, session: "s-1"), "WS-000001",
    "reverse lookup is deterministic (id order)")
 
-// 「在会话中处理」的目标选择: reuse > created > fallback current.
+// 「拆分任务」的目标选择: reuse > created > fallback current.
 eq(WorkstreamsCore.sessionTarget(bound: "s-9", boundAlive: true, created: "s-new", current: "s-cur"),
    .reuse("s-9"), "live bound session is reused")
 eq(WorkstreamsCore.sessionTarget(bound: "s-9", boundAlive: false, created: "s-new", current: "s-cur"),

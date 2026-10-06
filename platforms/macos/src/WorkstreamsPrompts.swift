@@ -95,12 +95,38 @@ enum WorkstreamHandoff {
                workspace: workspace, repoName: repoName)
     }
 
+    /// 「拆分任务」提示词（面板主卡按钮，目标 = **首个未处理阶段**）：点名事项 +
+    /// 该阶段，要求经 `POST /api/workstreams/task/create` 建**等待态**阶段任务
+    /// （带该 `stage`）、**建完停下等人确认，不自签、不启动**。
+    ///
+    /// 与按 (stage, action) 生成的交接提示词同形，但 `stage` 由调用方从派生运行态
+    /// 显式解析——「拆分」可作用于任意阶段，不是 `WSStageAction.splitTasks.stage`
+    /// （固定 .task）。纯函数：同一张卡 + 同一阶段 → 同一段文本。
+    static func splitPrompt(card: WorkstreamCard,
+                            stage: WorkstreamStage,
+                            workspace: String = "",
+                            repoName: String? = nil) -> String {
+        composedPrompt(card: card, stage: stage, action: .splitTasks,
+                       workspace: workspace, repoName: repoName)
+    }
+
     /// 生成 (stage, action) 的完整交接提示词：
     /// design §3 公共头 + §4 动作段 + §4 模型规则（强制）。
     static func prompt(card: WorkstreamCard,
                        action: WSStageAction,
                        workspace: String = "",
                        repoName: String? = nil) -> String {
+        composedPrompt(card: card, stage: action.stage, action: action,
+                       workspace: workspace, repoName: repoName)
+    }
+
+    /// 公共头 + 动作段 + 规则段的唯一实现。`stage` 显式传入，让「拆分任务」可以
+    /// 点名任意阶段，而不必是动作固定的阶段。
+    private static func composedPrompt(card: WorkstreamCard,
+                                       stage: WorkstreamStage,
+                                       action: WSStageAction,
+                                       workspace: String,
+                                       repoName: String?) -> String {
         var lines: [String] = []
         lines.append("你在 " + resolvedRepoName(repoName, workspace: workspace) + " 处理一个事项。")
         lines.append("")
@@ -111,7 +137,7 @@ enum WorkstreamHandoff {
         }
         lines.append("- 存储约定：.dsh/requirements/README.md（通用规则见工作区 AGENTS.md）")
         lines.append("")
-        lines.append(stageMarker + stageLabel(action.stage) + "      本步动作：" + action.label)
+        lines.append(stageMarker + stageLabel(stage) + "      本步动作：" + action.label)
         if let goal = planningGoal(card.body) {
             lines.append("目标：" + goal)
         }
@@ -193,6 +219,7 @@ enum WorkstreamHandoff {
                 "本步做「拆分任务」：",
                 "- 用 `POST /api/workstreams/task/create` 建**等待态阶段任务**（= 任务拆分本身）：每条任务带本阶段 `stage`，追加到该事项唯一的队列；**只建不启动**。",
                 "- 阶段 ↔ 队列映射由面板写回卡片 `queues`；**停下请人确认拆分合理**。",
+                "- **不自签**：拆分是人工确认门，agent 只建等待态任务，人在面板确认后才 `queue/start`。",
             ])
         case .startImplementation:
             return section([
