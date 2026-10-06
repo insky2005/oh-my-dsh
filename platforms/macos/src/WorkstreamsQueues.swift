@@ -419,18 +419,27 @@ struct WSBoard {
 
     /// 现在应该启动的任务，nil = 没有。串行由构造保证：只要有任一任务在跑，
     /// 就不启动别的；只有 active 队列贡献候选；失败 / 已完成 / 已取消的条目跳过。
-    func nextStartable() -> String? {
+    ///
+    /// `stage`（design A3 / D18）是「阶段级启动」的过滤：只把该阶段的任务算作候选，
+    /// 其余任务保持 queued，由 runner 在该阶段跑完后暂停队列。nil = 事项级，不看阶段。
+    func nextStartable(stage: WorkstreamStage? = nil) -> String? {
         if local.runningTaskID != nil { return nil }
         if tasks.contains(where: { $0.state == .running }) { return nil }
-        if let queue = activeQueue(), let id = firstQueued(in: queue) { return id }
+        if let queue = activeQueue(), let id = firstQueued(in: queue, stage: stage) { return id }
         for queue in queues where queue.state == .active {
-            if let id = firstQueued(in: queue) { return id }
+            if let id = firstQueued(in: queue, stage: stage) { return id }
         }
         return nil
     }
 
-    private func firstQueued(in queue: WSQueue) -> String? {
-        queue.taskIds.first { task($0)?.state == .queued }
+    private func firstQueued(in queue: WSQueue, stage: WorkstreamStage? = nil) -> String? {
+        queue.taskIds.first { id in
+            guard let task = task(id), task.state == .queued else { return false }
+            guard let stage = stage else { return true }
+            // A task stage is a direct property (A12); a legacy task without one
+            // falls back to the queue own legacy stage, never to a real default.
+            return (task.stage ?? queue.stage) == stage
+        }
     }
 
     // MARK: transitions

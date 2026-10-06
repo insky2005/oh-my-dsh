@@ -49,11 +49,14 @@ echo "--- workstreams UI models (three-level card / stage filter / empty state) 
 TMP="$(mktemp -d)"
 cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
 cp ../../platforms/macos/src/WorkstreamsStageGate.swift "$TMP/WorkstreamsStageGate.swift"
+# The card model now groups the queue engine's tasks, so the pure queue model is
+# compiled in too (Foundation only, no AppKit).
+cp ../../platforms/macos/src/WorkstreamsQueues.swift "$TMP/WorkstreamsQueues.swift"
 cp ../../platforms/macos/src/WorkstreamsUI.swift "$TMP/WorkstreamsUI.swift"
 cp ui-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
   -o "$TMP/ui-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsStageGate.swift" \
-  "$TMP/WorkstreamsUI.swift" "$TMP/main.swift"
+  "$TMP/WorkstreamsQueues.swift" "$TMP/WorkstreamsUI.swift" "$TMP/main.swift"
 "$TMP/ui-tests"
 rm -rf "$TMP"
 
@@ -273,5 +276,55 @@ if ! grep -qE 'func createStageQueue\(' "$SRC2/WorkstreamsRunner.swift"; then
   exit 1
 fi
 echo "workstreams stage prompt guard ok"
+
+echo "--- stage task create / queue start wiring guard (A3 / A14 / D16-D19) ---"
+API="$SRC2/WorkstreamsAPI.swift"
+for route in '/api/workstreams/task/create' '/api/workstreams/task/list' \
+             '/api/workstreams/queue/start' '/api/workstreams/queue/pause'; do
+  if ! grep -qF "$route" "$API"; then
+    echo "FAIL: WorkstreamsAPI.swift is missing the $route route" >&2
+    exit 1
+  fi
+done
+# One workstream queue: createStageQueue appends instead of creating per stage.
+if ! grep -qE 'func ensureWorkstreamQueue\(' "$SRC2/WorkstreamsRunner.swift" \
+   || ! grep -qE 'func appendStageTasks\(' "$SRC2/WorkstreamsRunner.swift" \
+   || ! grep -qE 'func createStageQueue\(' "$SRC2/WorkstreamsRunner.swift"; then
+  echo "FAIL: the runner must append stage tasks to the workstream's single queue" >&2
+  exit 1
+fi
+# Stage-level start (A3 / D18).
+if ! grep -qE 'private\(set\) var stageFilter' "$SRC2/WorkstreamsRunner.swift" \
+   || ! grep -qE 'func startQueue\(_ queueID: String, stage:' "$SRC2/WorkstreamsRunner.swift" \
+   || ! grep -qE 'func nextStartable\(stage:' "$SRC2/WorkstreamsQueues.swift"; then
+  echo "FAIL: the runner/board must support stage-level start" >&2
+  exit 1
+fi
+# The panel drives the runner (timer + workspace reload) and lands the routes.
+PANEL="$SRC2/WorkstreamsPanel.swift"
+for needle in 'WorkstreamsRunner(board:' 'stepTimer' 'serverPortProvider' \
+              'ensureRunner(' 'createStageQueue(' 'onStartWorkstream' \
+              'apiWorkstreamsTaskCreate' 'apiWorkstreamsQueueStart' \
+              'apiWorkstreamsQueuePause' 'apiWorkstreamsTaskList'; do
+  if ! grep -qF "$needle" "$PANEL"; then
+    echo "FAIL: WorkstreamsPanel.swift is missing $needle" >&2
+    exit 1
+  fi
+done
+if ! grep -qF 'bridge.workstreamsTaskCreate' "$MAIN" \
+   || ! grep -qF 'bridge.workstreamsQueueStart' "$MAIN" \
+   || ! grep -qF 'bridge.workstreamsTaskList' "$MAIN" \
+   || ! grep -qF 'bridge.workstreamsQueuePause' "$MAIN"; then
+  echo "FAIL: main.swift is missing the task/queue bridge landings" >&2
+  exit 1
+fi
+# Task state keys are switches so the L10n lint sees every key.
+for key in workstreams.task.state.pending workstreams.task.state.done workstreams.task.state.needsReview; do
+  if ! grep -qF "$key" "$SRC2/WorkstreamsUI.swift"; then
+    echo "FAIL: WorkstreamsUI.swift is missing the $key L10n key" >&2
+    exit 1
+  fi
+done
+echo "stage task create / queue start wiring guard ok"
 
 echo "workstreams-panel tests passed"

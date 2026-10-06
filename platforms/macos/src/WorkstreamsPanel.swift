@@ -254,6 +254,11 @@ final class WSPrimaryCardView: NSView {
     /// Human gate actions for the current stage (R10).
     var onConfirmStage: (() -> Void)?
     var onRejectStage: (() -> Void)?
+    /// 事项级启动 (design A3).
+    var onStartWorkstream: (() -> Void)?
+    /// 阶段二级卡的「＋创建任务」/「启动阶段」(design A3 / A14).
+    var onCreateStageTask: ((WorkstreamStage) -> Void)?
+    var onStartStage: ((WorkstreamStage) -> Void)?
     private(set) var isExpanded: Bool
 
     init(model: WSCardModel) {
@@ -308,6 +313,10 @@ final class WSPrimaryCardView: NSView {
         titleViews.append(spacer)
         titleViews.append(WSTierBadgeView(text: L10n.tr(model.stageLabelKey), tone: model.tone,
                                           filled: model.stage == .task))
+        let start = CustomIconButton(glyph: .play,
+                                     tooltip: L10n.tr("workstreams.start.item"), size: 22)
+        start.onAction = { [weak self] in self?.onStartWorkstream?() }
+        titleViews.append(start)
         let open = CustomIconButton(glyph: .symbol("arrow.up.forward.app"),
                                     tooltip: L10n.tr("workstreams.openCard"), size: 22)
         open.onAction = { [weak self] in self?.onOpen?() }
@@ -387,6 +396,16 @@ final class WSPrimaryCardView: NSView {
             headerViews.append(confirm)
             headerViews.append(reject)
         }
+        // 阶段级动作 (design A3 / A14): create waiting-state stage tasks, or run
+        // only this stage's tasks.
+        let createTask = CustomIconButton(glyph: .symbol("plus"),
+                                          tooltip: L10n.tr("workstreams.stage.createTask"), size: 22)
+        createTask.onAction = { [weak self] in self?.onCreateStageTask?(stage.stage) }
+        headerViews.append(createTask)
+        let startStage = CustomIconButton(glyph: .play,
+                                          tooltip: L10n.tr("workstreams.stage.start"), size: 22)
+        startStage.onAction = { [weak self] in self?.onStartStage?(stage.stage) }
+        headerViews.append(startStage)
         let headerRow = NSStackView(views: headerViews)
         headerRow.orientation = .horizontal
         headerRow.alignment = .centerY
@@ -442,12 +461,37 @@ final class WSPrimaryCardView: NSView {
         headerRow.alignment = .centerY
         headerRow.spacing = 6
 
-        var body: NSView? = nil
+        var bodyRows: [NSView] = []
+        if let errorKey = task.errorKey, !errorKey.isEmpty {
+            let error = NSTextField(labelWithString: L10n.tr(errorKey))
+            error.font = .systemFont(ofSize: 11)
+            error.textColor = wsTierColor(task.tone)
+            error.lineBreakMode = .byTruncatingTail
+            bodyRows.append(error)
+        }
+        if let session = task.sessionId, !session.isEmpty {
+            let sessionLabel = NSTextField(labelWithString: L10n.tr("workstreams.task.session") + "：" + session)
+            sessionLabel.font = .systemFont(ofSize: 10)
+            sessionLabel.textColor = .tertiaryLabelColor
+            sessionLabel.lineBreakMode = .byTruncatingMiddle
+            sessionLabel.toolTip = session
+            bodyRows.append(sessionLabel)
+        }
         if !task.detail.isEmpty {
             let detail = NSTextField(wrappingLabelWithString: task.detail)
             detail.font = .systemFont(ofSize: 11)
             detail.textColor = .secondaryLabelColor
-            body = detail
+            detail.maximumNumberOfLines = 0
+            bodyRows.append(detail)
+        }
+        var body: NSView? = nil
+        if !bodyRows.isEmpty {
+            let column = NSStackView(views: bodyRows)
+            column.orientation = .vertical
+            column.alignment = .leading
+            column.spacing = 3
+            for row in bodyRows { row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
+            body = column
         }
         return WSNestedTierView(header: headerRow, body: body, recessed: false,
                                 collapsible: body != nil, startsExpanded: task.isExpanded)
@@ -618,6 +662,10 @@ final class WorkstreamsPanelController: NSObject {
     var onOpenCard: ((String) -> Void)?
     /// QA hook (--ui-debug): fires after each render.
     var onDidRender: (() -> Void)?
+    /// dsh web port, supplied by main.swift (read at call time, never frozen).
+    var serverPortProvider: (() -> Int)?
+    /// Fires when the visible workspace runner goes busy / idle.
+    var onRunStateChanged: ((Bool) -> Void)?
 
     static let minWidth: CGFloat = 320
 
@@ -646,6 +694,18 @@ final class WorkstreamsPanelController: NSObject {
 
     private var statusClearTimer: Timer?
 
+    // MARK: Queue engine (WorkstreamsRunner, design A3 / A10 / A14)
+
+    /// One runner per workspace. The board the panel SHOWS is the current
+    /// workspace's; a workspace whose task is running keeps its runner so the
+    /// task still finishes after the user switches away.
+    private var runners: [String: WorkstreamsRunner] = [:]
+    /// Workspaces reconciled once in this app run: re-adopting must NOT reconcile
+    /// again (that would mark a live task interrupted).
+    private var reconciledWorkspaces: Set<String> = []
+    /// Drives every runner: start the next queued task, advance the running one.
+    private var stepTimer: Timer?
+
     override init() {
         super.init()
         buildUI()
@@ -659,6 +719,10 @@ final class WorkstreamsPanelController: NSObject {
             self.render()
         }
         updateLabels()
+    }
+
+    deinit {
+        stepTimer?.invalidate()
     }
 
     // MARK: Public entry points
@@ -708,6 +772,9 @@ final class WorkstreamsPanelController: NSObject {
 
     func reload() {
         let workspace = workspaceProvider?() ?? ""
+        // The queue engine is the authoritative in-memory board; load it before
+        // rendering so gates and task cards read live state, not a stale file.
+        _ = ensureRunner(workspace)
         if workspace.isEmpty {
             snapshot = WorkstreamsSnapshot(workspace: "", dshExists: false, workstreams: [], unparsed: [])
         } else {
@@ -718,14 +785,19 @@ final class WorkstreamsPanelController: NSObject {
 
     private func render() {
         let workspace = workspaceProvider?() ?? snapshot.workspace
+        let wsBoard = loadBoard(workspace)
         board = WSBoardModel.build(snapshot: snapshot, filter: selectedFilter,
-                                   gates: stageGates(for: snapshot, workspace: workspace))
+                                   gates: stageGates(for: snapshot, workspace: workspace),
+                                   board: wsBoard)
         for sub in list.arrangedSubviews { sub.removeFromSuperview() }
         for model in board.cards {
             let card = WSPrimaryCardView(model: model)
             card.onOpen = { [weak self] in self?.onOpenCard?(model.path) }
             card.onConfirmStage = { [weak self] in self?.confirmCurrentStage(model.id) }
             card.onRejectStage = { [weak self] in self?.rejectCurrentStage(model.id) }
+            card.onStartWorkstream = { [weak self] in self?.startWorkstream(model.id) }
+            card.onCreateStageTask = { [weak self] stage in self?.createStageTask(model.id, stage: stage) }
+            card.onStartStage = { [weak self] stage in self?.startStage(model.id, stage: stage) }
             list.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -20).isActive = true
         }
@@ -739,10 +811,233 @@ final class WorkstreamsPanelController: NSObject {
 
     // MARK: Stage gate
 
-    /// The queue board for a workspace; never creates .dsh/workstreams just to read.
+    /// The queue board for a workspace. The current workspace's live runner board
+    /// wins (task state changes there before it hits disk); otherwise read the file,
+    /// and never create .dsh/workstreams just to read.
     func loadBoard(_ workspace: String) -> WSBoard {
+        if let runner = runners[workspace] { return runner.board }
+        guard !workspace.isEmpty else { return WSBoard() }
         let queuesPath = (workspace as NSString).appendingPathComponent(".dsh/workstreams/queues.json")
         return FileManager.default.fileExists(atPath: queuesPath) ? WSStore.load(workspace) : WSBoard()
+    }
+
+    // MARK: Queue engine (WorkstreamsRunner wiring, design A3 / A10 / A14)
+
+    private var currentWorkspace: String { workspaceProvider?() ?? "" }
+    private var currentRunner: WorkstreamsRunner? { runners[currentWorkspace] }
+
+    /// The workspace runner, built on first use. The FIRST load of a workspace
+    /// reconciles its board (a task recorded running cannot still be running — its
+    /// session died with the app); re-adopting an already-seen workspace must not
+    /// reconcile again, or switching away and back would mark a live task failed.
+    @discardableResult
+    private func ensureRunner(_ workspace: String) -> WorkstreamsRunner? {
+        guard !workspace.isEmpty else { return nil }
+        if let existing = runners[workspace] { return existing }
+        var board = WSStore.load(workspace)
+        var recovered: (interrupted: [String], pausedQueues: [String]) = ([], [])
+        if !reconciledWorkspaces.contains(workspace) {
+            recovered = board.reconcileAfterRestart(interruptedError: WSFailure.interrupted.rawValue)
+            WSStore.save(workspace, board)
+            reconciledWorkspaces.insert(workspace)
+        }
+        let runner = WorkstreamsRunner(board: board, env: makeEnv(repoRoot: workspace))
+        runners[workspace] = runner
+        startStepTimer()
+        AppLog.shared.log("workstreams: board loaded at \(workspace) — "
+                          + "\(board.tasks.count) tasks, \(board.queues.count) queues")
+        if workspace == currentWorkspace,
+           !recovered.interrupted.isEmpty || !recovered.pausedQueues.isEmpty {
+            setStatus(L10n.tr("workstreams.recovered", recovered.interrupted.count,
+                              recovered.pausedQueues.count), isError: false)
+        }
+        return runner
+    }
+
+    /// Everything the engine needs from the outside world: dsh session RPC on this
+    /// port, the agent report, and .dsh/workstreams/ persistence. The port is read
+    /// at call time, never frozen here (dsh web comes up after the panel is built).
+    private func makeEnv(repoRoot: String) -> WSRunnerEnv {
+        let portOf: () -> Int = { [weak self] in self?.serverPortProvider?() ?? 3080 }
+        return WSRunnerEnv(
+            repoRoot: repoRoot,
+            createSession: { cwd in
+                let port = portOf()
+                let workspaceId = DshWorkspaceStore.workspaceId(forPath: repoRoot, port: port,
+                                                                log: { AppLog.shared.log($0) })
+                return DshWorkspaceOps.createSession(port: port, cwd: cwd, workspaceId: workspaceId)
+            },
+            renameSession: { id, title in DshSessionOps.rename(port: portOf(), sessionId: id, title: title) },
+            promptSession: { id, text in DshSessionOps.sendPrompt(port: portOf(), sessionId: id, text: text) },
+            sessionState: { id in Self.sessionState(port: portOf(), sessionId: id) },
+            cancelSession: { id in
+                DshWebRPC.call(DshWebRPC.sessionCancel, ["sessionId": id], port: portOf()) != nil
+            },
+            sessionReport: { id in Self.sessionReport(sessionId: id, workspace: repoRoot) },
+            requireCompletionMarker: true,
+            persist: { board in WSStore.save(repoRoot, board) },
+            log: { message in AppLog.shared.log(message) },
+            perform: { blocking, completion in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    blocking()
+                    DispatchQueue.main.async { completion() }
+                }
+            })
+    }
+
+    private func startStepTimer() {
+        stepTimer?.invalidate()
+        let timer = Timer(timeInterval: 3.0, repeats: true) { [weak self] _ in self?.stepRunner() }
+        RunLoop.main.add(timer, forMode: .common)
+        stepTimer = timer
+    }
+
+    /// One tick for every tracked workspace: advance the running task, start the
+    /// next queued one. The visible board is re-rendered only when it changed, so
+    /// the timer never fights scrolling or an open menu.
+    private func stepRunner() {
+        guard !runners.isEmpty else { return }
+        let visible = currentWorkspace
+        let currentWasBusy = currentRunner?.isBusy ?? false
+        let all = runners
+        for (path, runner) in all {
+            let before = boardSignature(runner.board)
+            _ = runner.step()
+            if path == visible && boardSignature(runner.board) != before {
+                reload()
+            }
+        }
+        let busy = currentRunner?.isBusy ?? false
+        if busy != currentWasBusy { onRunStateChanged?(busy) }
+    }
+
+    /// Cheap fingerprint of everything the cards render, so the 3s timer does not
+    /// rebuild the list while nothing is moving.
+    private func boardSignature(_ board: WSBoard) -> String {
+        let tasks = board.tasks.map { $0.id + ":" + $0.state.rawValue + ":" + ($0.sessionId ?? "") }
+        let queues = board.queues.map { $0.id + ":" + $0.state.rawValue + ":" + String($0.taskIds.count) }
+        return (tasks + queues).joined(separator: "|")
+    }
+
+    /// What dsh says about a session. "The RPC failed" and "not listed" are NOT
+    /// "it finished": the first is unknown, the second is only believed after the
+    /// runner counts consecutive misses.
+    private static func sessionState(port: Int, sessionId: String) -> WSSessionState {
+        guard let value = DshWebRPC.call(DshWebRPC.sessionList, [:], port: port),
+              let items = value["items"] as? [[String: Any]] else { return .unknown }
+        for item in items where (item["sessionId"] as? String) == sessionId {
+            return ((item["running"] as? Bool) ?? false) ? .running : .idle
+        }
+        return .missing
+    }
+
+    /// The agent's last text message in a session, for the task card / next task.
+    /// Blocking (a subprocess over the session log); the runner only asks inside its
+    /// background step.
+    private static func sessionReport(sessionId: String, workspace: String) -> String? {
+        var args = ["brief", "report", sessionId]
+        if !workspace.isEmpty { args.append(contentsOf: ["--workspace", workspace]) }
+        guard let json = CoreBridge.run(args, timeout: 30, preferBundledNode: true),
+              let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let text = object["text"] as? String
+        return (text?.isEmpty ?? true) ? nil : text
+    }
+
+    // MARK: Queue actions (panel buttons)
+
+    /// 主卡「启动事项」：事项级启动 = 跑该事项队列（design A3）。
+    func startWorkstream(_ cardID: String) {
+        startWorkstream(cardID, stage: nil)
+    }
+
+    /// 阶段二级卡「启动阶段」：只跑该阶段任务（design A3 / D18）。
+    func startStage(_ cardID: String, stage: WorkstreamStage) {
+        startWorkstream(cardID, stage: stage)
+    }
+
+    private func startWorkstream(_ cardID: String, stage: WorkstreamStage?) {
+        guard let workspace = workspaceProvider?(), !workspace.isEmpty,
+              let runner = ensureRunner(workspace),
+              let card = snapshot.workstreams.first(where: { $0.id == cardID }) else { return }
+        guard runner.startWorkstream(card, stage: stage) else {
+            setStatus(L10n.tr("workstreams.start.noQueue"), isError: true)
+            return
+        }
+        if let stage = stage {
+            setStatus(L10n.tr("workstreams.stage.started", L10n.tr(wsStageLabelKey(stage))), isError: false)
+        } else {
+            setStatus(L10n.tr("workstreams.start.started"), isError: false)
+        }
+        reload()
+    }
+
+    /// 阶段二级卡「＋创建任务」：按阶段默认动作生成交接提示词、建等待态任务（A14）。
+    func createStageTask(_ cardID: String, stage: WorkstreamStage) {
+        guard let workspace = workspaceProvider?(), !workspace.isEmpty,
+              let runner = ensureRunner(workspace),
+              let card = snapshot.workstreams.first(where: { $0.id == cardID }) else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("workstreams.task.create.title")
+        alert.informativeText = L10n.tr("workstreams.task.create.message")
+        alert.addButton(withTitle: L10n.tr("btn.save"))
+        alert.addButton(withTitle: L10n.tr("btn.cancel"))
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.placeholderString = L10n.tr("workstreams.task.create.placeholder")
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
+            setStatus(L10n.tr("workstreams.task.create.empty"), isError: true)
+            return
+        }
+        let built = runner.createStageQueue(card: card, stage: stage, workspace: workspace, titles: [title])
+        guard !built.created.isEmpty else {
+            setStatus(L10n.tr("workstreams.task.create.failed"), isError: true)
+            return
+        }
+        writeBackQueueMapping(card: card, queueID: built.queue.id, workspace: workspace)
+        setStatus(L10n.tr("workstreams.task.created", built.created.count), isError: false)
+        reload()
+    }
+
+    /// The panel is the only writer of WS-*.md (design A5): record the engine
+    /// queue id on the card mapping (0..1) when it is not there yet.
+    private func writeBackQueueMapping(card: WorkstreamCard, queueID: String, workspace: String) {
+        guard !card.queues.contains(queueID) else { return }
+        do {
+            _ = try WorkstreamsCore.setQueues(workspace: workspace, id: card.id,
+                                              queues: [queueID], today: WorkstreamsCore.today())
+        } catch let error as WorkstreamError {
+            setStatus(L10n.tr("workstreams.task.create.failed") + "：" + error.message, isError: true)
+        } catch {
+            setStatus(L10n.tr("workstreams.task.create.failed"), isError: true)
+        }
+    }
+
+    /// A task title from a body-only create request: its first non-blank line.
+    private func taskTitle(from body: String?) -> String {
+        var title = (body ?? "").components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty } ?? ""
+        while title.hasPrefix("#") || title.hasPrefix("-") || title.hasPrefix("*") {
+            title = String(title.dropFirst()).trimmingCharacters(in: .whitespaces)
+        }
+        if title.count > 60 { title = String(title.prefix(60)) }
+        return title.isEmpty ? "阶段任务" : title
+    }
+
+    // MARK: Task / queue JSON (shared by the API delegate)
+
+    private func taskJSON(_ task: WSTaskItem) -> [String: Any] {
+        WorkstreamsAPIResponse.task(task.id, title: task.title, state: task.state.rawValue,
+                                    workstreamId: task.workstreamId, stage: task.stage,
+                                    sessionId: task.sessionId, error: task.error, report: task.report)
+    }
+
+    private func queueJSON(_ queue: WSQueue) -> [String: Any] {
+        WorkstreamsAPIResponse.queue(queue.id, name: queue.name, workstreamId: queue.workstreamId,
+                                     state: queue.state.rawValue, taskIds: queue.taskIds)
     }
 
     /// Evaluate every card's stage gate (design A4 / D3) for the visible board.
@@ -1095,12 +1390,12 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
             let updated = try WorkstreamsCore.confirmStage(workspace: workspace,
                                                            id: request.id,
                                                            expectedStage: request.stage,
-                                                           carrier: stageCarrier(for: card, board: WSStore.load(workspace)),
+                                                           carrier: stageCarrier(for: card, board: loadBoard(workspace)),
                                                            note: request.note,
                                                            today: WorkstreamsCore.today())
             if workspace == (workspaceProvider?() ?? "") { reload() }
             let gate = WorkstreamsStageGate.evaluate(updated,
-                                                     carrier: stageCarrier(for: updated, board: WSStore.load(workspace)),
+                                                     carrier: stageCarrier(for: updated, board: loadBoard(workspace)),
                                                      workspace: workspace)
             return ["ok": true,
                     "workstream": WorkstreamsAPIResponse.card(updated),
@@ -1124,5 +1419,106 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                             target: request.target,
                                             today: WorkstreamsCore.today())
         }, workspace: workspace)
+    }
+
+    // MARK: Stage task create / start / pause (design A3 / A14)
+
+    /// POST /api/workstreams/task/create — build waiting-state stage tasks. The
+    /// panel injects the WorkstreamHandoff prompt (stage default action) into each
+    /// task body and appends them to the workstream's single queue.
+    func apiWorkstreamsTaskCreate(_ request: WorkstreamsTaskCreateRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        guard let runner = ensureRunner(workspace) else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        do {
+            let card = try WorkstreamsCore.loadCard(workspace: workspace, id: request.id)
+            let stage = request.stage ?? card.stage
+            let titles = request.titles.isEmpty ? [taskTitle(from: request.body)] : request.titles
+            let built = runner.createStageQueue(card: card, stage: stage, workspace: workspace, titles: titles)
+            guard !built.created.isEmpty else {
+                return ["ok": false, "error": "no-queue",
+                        "message": "the workstream queue is closed; no task was created"]
+            }
+            writeBackQueueMapping(card: card, queueID: built.queue.id, workspace: workspace)
+            if workspace == currentWorkspace { reload() }
+            return ["ok": true, "queue": queueJSON(built.queue),
+                    "tasks": built.created.map { taskJSON($0) }]
+        } catch let error as WorkstreamError {
+            return error.apiResult
+        } catch {
+            return WorkstreamError.writeFailed(error.localizedDescription).apiResult
+        }
+    }
+
+    /// GET /api/workstreams/task/list — the workspace queue board (tasks + queues).
+    /// Prefers the live runner board for the visible workspace.
+    func apiWorkstreamsTaskList(workspace: String?) -> [String: Any] {
+        guard let workspace = resolveWorkspace(workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        let board = loadBoard(workspace)
+        return ["ok": true, "workspace": workspace,
+                "tasks": board.tasks.map { taskJSON($0) },
+                "queues": board.queues.map { queueJSON($0) }]
+    }
+
+    /// POST /api/workstreams/queue/start — item-level (no stage) starts the whole
+    /// workstream queue; a stage runs only that stage's tasks (design A3 / D18).
+    func apiWorkstreamsQueueStart(_ request: WorkstreamsQueueStartRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        guard let runner = ensureRunner(workspace) else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        do {
+            let card = try WorkstreamsCore.loadCard(workspace: workspace, id: request.id)
+            guard let queue = runner.workstreamQueue(for: card) else {
+                return ["ok": false, "error": "no-queue",
+                        "message": "workstream has no queue yet"]
+            }
+            guard runner.startWorkstream(card, stage: request.stage) else {
+                return ["ok": false, "error": "no-queue",
+                        "message": "the workstream queue could not be started"]
+            }
+            if workspace == currentWorkspace { reload() }
+            var out: [String: Any] = ["ok": true, "queue": queueJSON(queue)]
+            if let stage = request.stage { out["stage"] = stage.rawValue }
+            return out
+        } catch let error as WorkstreamError {
+            return error.apiResult
+        } catch {
+            return WorkstreamError.writeFailed(error.localizedDescription).apiResult
+        }
+    }
+
+    /// POST /api/workstreams/queue/pause.
+    func apiWorkstreamsQueuePause(_ request: WorkstreamsQueuePauseRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        guard let runner = ensureRunner(workspace) else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        do {
+            let card = try WorkstreamsCore.loadCard(workspace: workspace, id: request.id)
+            guard let queue = runner.workstreamQueue(for: card) else {
+                return ["ok": false, "error": "no-queue",
+                        "message": "workstream has no queue yet"]
+            }
+            guard runner.pauseQueue(queue.id) else {
+                return ["ok": false, "error": "no-queue",
+                        "message": "the workstream queue could not be paused"]
+            }
+            if workspace == currentWorkspace { reload() }
+            return ["ok": true, "queue": queueJSON(queue)]
+        } catch let error as WorkstreamError {
+            return error.apiResult
+        } catch {
+            return WorkstreamError.writeFailed(error.localizedDescription).apiResult
+        }
     }
 }

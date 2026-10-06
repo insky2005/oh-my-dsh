@@ -497,6 +497,51 @@ do {
     eq(h.dsh.sessions.count, 1, "explicit start runs the first")
 }
 
+section("createStageQueue appends to the workstream's single queue (A9 / D16)")
+do {
+    let h = Harness(board: WSBoard())
+    let card = wsCard(id: "WS-5", stage: .planning, queues: [])
+    let first = h.runner.createStageQueue(card: card, stage: .planning, workspace: "/tmp/ws", titles: ["规划一"])
+    let second = h.runner.createStageQueue(card: card, stage: .design, workspace: "/tmp/ws", titles: ["设计一"])
+    eq(h.runner.board.queues.count, 1, "one queue for the workstream")
+    eq(second.queue.id, first.queue.id, "the second batch reuses the same queue")
+    eq(h.runner.board.task(first.created[0].id)?.stage, .planning, "first task carries planning")
+    eq(h.runner.board.task(second.created[0].id)?.stage, .design, "second task carries design")
+    eq(h.runner.board.queue(first.queue.id)?.taskIds.count, 2, "both tasks live in the one queue")
+    eq(h.runner.board.queue(first.queue.id)?.state, .draft, "the queue stays waiting")
+    eq(h.dsh.sessions.count, 0, "nothing auto-starts")
+    eq(h.runner.board.task(first.created[0].id)?.workstreamId, "WS-5", "tasks carry the workstream id")
+}
+
+section("stage-level start runs only that stage and pauses when it ends (A3 / D18)")
+do {
+    var board = WSBoard()
+    let queue = board.createQueue(name: "Q", workstreamID: "WS-9")
+    var ids: [WorkstreamStage: String] = [:]
+    for (title, stage) in [("规划", WorkstreamStage.planning), ("设计", .design), ("执行", .task)] {
+        let task = WSTaskItem(id: WSTaskItem.newID(), title: title, workstreamId: "WS-9", stage: stage)
+        board.tasks.append(task)
+        _ = board.enqueue(taskID: task.id, into: queue.id)
+        ids[stage] = task.id
+    }
+    let h = Harness(board: board)
+    let card = wsCard(id: "WS-9", stage: .design, queues: [queue.id])
+    _ = h.runner.startWorkstream(card, stage: .design)
+    eq(h.runner.board.task(ids[.design]!)?.state, .running, "only the design task runs")
+    eq(h.runner.board.task(ids[.planning]!)?.state, .queued, "planning stays queued")
+    eq(h.runner.board.task(ids[.task]!)?.state, .queued, "execution stays queued")
+    eq(h.dsh.sessions.count, 1, "exactly one session")
+    h.dsh.finish(h.dsh.sessions[0])
+    _ = h.runner.step()
+    eq(h.runner.board.task(ids[.design]!)?.state, .done, "the design task finished")
+    eq(h.runner.board.task(ids[.planning]!)?.state, .queued, "planning is still waiting after the stage run")
+    eq(h.runner.board.task(ids[.task]!)?.state, .queued, "execution is still waiting after the stage run")
+    eq(h.runner.board.queue(queue.id)?.state, .paused, "the queue pauses when the stage run ends")
+    eq(h.runner.stageFilter == nil, true, "the stage filter is cleared")
+    _ = h.runner.step()
+    eq(h.dsh.sessions.count, 1, "no other stage auto-starts")
+}
+
 print("")
 if failures == 0 {
     print("runner tests passed (" + String(checks) + " checks)")

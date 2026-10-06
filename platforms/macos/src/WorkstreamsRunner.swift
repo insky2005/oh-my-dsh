@@ -206,6 +206,10 @@ final class WorkstreamsRunner {
     /// 启动期间就要求取消：等 applyStart 一有会话就兑现；每次启动前清零。
     private var cancelRequested = false
 
+    /// 「阶段级启动」的过滤（design A3 / D18）：只跑该阶段的任务，跑完后暂停队列，
+    /// 不自动接着跑别的阶段。nil = 事项级（默认），不看阶段。
+    private(set) var stageFilter: WorkstreamStage? = nil
+
     /// task id -> 真正收到过提示词的会话（P5 重试续跑）。建了会话但 prompt 失败的
     /// 故意不记：续跑到它会继续一段空对话。只在内存里——重启后安全回退新会话。
     private var promptedSessions: [String: String] = [:]
@@ -331,7 +335,12 @@ final class WorkstreamsRunner {
     @discardableResult
     func pump(now: Date = Date()) -> String? {
         guard case .idle = phase else { return nil }
-        guard let taskID = board.nextStartable(), let task = board.task(taskID) else { return nil }
+        guard let taskID = board.nextStartable(stage: stageFilter), let task = board.task(taskID) else {
+            // A stage-level run ends when no task of that stage is left: pause the
+            // queue so the other stages do not start on their own (design A3 / D18).
+            endStageRunIfNeeded()
+            return nil
+        }
         let queue = task.queueId.flatMap { board.queue($0) }
         let title = task.title
         let createSession = env.createSession
@@ -402,6 +411,17 @@ final class WorkstreamsRunner {
             self.applyStart(taskID: taskID, result: startResult, now: now)
         })
         return taskID
+    }
+
+    /// 阶段级启动跑完后收尾：清掉过滤并暂停队列，避免自动接着跑别的阶段。
+    private func endStageRunIfNeeded() {
+        guard let stage = stageFilter else { return }
+        stageFilter = nil
+        if let queue = board.activeQueue() {
+            _ = board.pauseQueue(queue.id)
+            persist()
+            env.log("workstreams: " + stage.rawValue + " stage run finished; queue " + queue.id + " paused")
+        }
     }
 
     private func applyStart(taskID: String, result: StartResult, now: Date) {
@@ -522,9 +542,22 @@ final class WorkstreamsRunner {
         return (board.queue(queue.id) ?? queue, created)
     }
 
-    /// 面板建「阶段队列」：按阶段默认动作（或指定动作）生成交接提示词，注入每条任务的
-    /// body（design D15 / workstream-handoff-prompt-design §2）。只建等待态队列，不启动；
-    /// 卡片的 queues 映射由面板另行写回 WS 卡。queue.name 用阶段中文名。
+    /// 事项在该工作区里的唯一执行队列（design A9 / D16）：没有就建一条（draft）。
+    /// 只建队列，不建任务、不启动。已存在（WS 卡映射或引擎 workstreamId）则复用。
+    @discardableResult
+    func ensureWorkstreamQueue(for card: WorkstreamCard) -> WSQueue {
+        if let existing = workstreamQueue(for: card) { return existing }
+        let name = card.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let queue = board.createQueue(name: name.isEmpty ? card.id : name, workstreamID: card.id)
+        persist()
+        env.log("workstreams: created queue " + queue.id + " for " + card.id)
+        return queue
+    }
+
+    /// 面板建「阶段任务」：按阶段默认动作（或指定动作）生成交接提示词，注入每条任务的
+    /// body（design D15 / workstream-handoff-prompt-design §2），并把这批任务**追加到该
+    /// 事项唯一的队列**（一事项一队列，design A9 / D16）——不再为每个阶段新建队列。
+    /// 只建等待态任务，不启动；卡片的 queues 映射由面板另行写回 WS 卡。
     @discardableResult
     func createStageQueue(card: WorkstreamCard, stage: WorkstreamStage,
                           workspace: String = "",
@@ -535,8 +568,17 @@ final class WorkstreamsRunner {
             WorkstreamHandoff.stageTask(title: title, card: card, action: chosen,
                                         workspace: workspace)
         }
-        return createQueueWithTasks(name: WorkstreamHandoff.stageLabel(stage),
-                                    workstreamID: card.id, stage: stage, drafts: drafts)
+        return appendStageTasks(card: card, stage: stage, drafts: drafts)
+    }
+
+    /// 把一批阶段任务追加到该事项的队列（没有就建一条）。任务带 workstreamId + stage；
+    /// 不启动。队列 closed 时返回空 created，由调用方解释。
+    @discardableResult
+    func appendStageTasks(card: WorkstreamCard, stage: WorkstreamStage,
+                          drafts: [WSTaskDraft]) -> (queue: WSQueue, created: [WSTaskItem]) {
+        let queue = ensureWorkstreamQueue(for: card)
+        let created = appendTasks(toQueueID: queue.id, stage: stage, drafts: drafts)
+        return (board.queue(queue.id) ?? queue, created)
     }
 
     /// 往已有队列追加任务（对话里「再补几条」）。不自动启动。任务继承队列的事项，
@@ -585,10 +627,13 @@ final class WorkstreamsRunner {
     }
 
     /// 开始 / 继续一条队列。
+    /// 开始 / 继续一条队列。`stage` 非空 = 阶段级启动（design A3 / D18）：只跑该阶段
+    /// 的任务，跑完后自动暂停队列；nil = 事项级，按 FIFO 跑完整条队列。
     @discardableResult
-    func startQueue(_ queueID: String) -> Bool {
+    func startQueue(_ queueID: String, stage: WorkstreamStage? = nil) -> Bool {
         let ok = board.resumeQueue(queueID)
         if ok {
+            stageFilter = stage
             persist()
             _ = pump()
         }
@@ -702,23 +747,26 @@ final class WorkstreamsRunner {
     }
 
     /// 事项启动 = 启动该事项的队列（design A3 / A9）。直接 resume + pump。
+    /// `stage` 非空 = 阶段级启动：只跑该阶段的任务（design A3 / D18）。
     @discardableResult
-    func startWorkstream(_ card: WorkstreamCard) -> Bool {
+    func startWorkstream(_ card: WorkstreamCard, stage: WorkstreamStage? = nil) -> Bool {
         guard let queue = workstreamQueue(for: card) else {
             env.log("workstreams: " + card.id + " has no queue")
             return false
         }
-        env.log("workstreams: starting " + card.id + " queue " + queue.id)
-        return startQueue(queue.id)
+        env.log("workstreams: starting " + card.id + " queue " + queue.id
+                + (stage.map { " (stage " + $0.rawValue + ")" } ?? ""))
+        return startQueue(queue.id, stage: stage)
     }
 
     /// 便捷入口：直接给事项 id（+ 可选的 WS 卡队列映射 [q-...]）。
     @discardableResult
-    func startWorkstream(_ workstreamID: String, mapping: [String] = []) -> Bool {
+    func startWorkstream(_ workstreamID: String, mapping: [String] = [],
+                         stage: WorkstreamStage? = nil) -> Bool {
         guard let queue = board.queue(forWorkstream: workstreamID, mapping: mapping) else {
             return false
         }
-        return startQueue(queue.id)
+        return startQueue(queue.id, stage: stage)
     }
 
     // MARK: - marker helpers

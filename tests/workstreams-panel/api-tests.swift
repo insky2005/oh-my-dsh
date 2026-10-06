@@ -52,6 +52,10 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     var queuesResult: [String: Any] = ["ok": true]
     var stageConfirmResult: [String: Any] = ["ok": true]
     var stageRejectResult: [String: Any] = ["ok": true]
+    var taskCreateResult: [String: Any] = ["ok": true]
+    var taskListResult: [String: Any] = ["ok": true, "tasks": []]
+    var queueStartResult: [String: Any] = ["ok": true]
+    var queuePauseResult: [String: Any] = ["ok": true]
 
     var lastListWorkspace: String?
     var lastCreate: WorkstreamsCreateRequest?
@@ -61,6 +65,11 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     var lastQueues: WorkstreamsQueuesRequest?
     var lastStageConfirm: WorkstreamsStageConfirmRequest?
     var lastStageReject: WorkstreamsStageRejectRequest?
+    var lastTaskCreate: WorkstreamsTaskCreateRequest?
+    var lastTaskListWorkspace: String?
+    var taskListCalls = 0
+    var lastQueueStart: WorkstreamsQueueStartRequest?
+    var lastQueuePause: WorkstreamsQueuePauseRequest?
 
     func apiWorkstreamsList(workspace: String?) -> [String: Any] {
         lastListWorkspace = workspace
@@ -93,6 +102,23 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     func apiWorkstreamsStageReject(_ request: WorkstreamsStageRejectRequest) -> [String: Any] {
         lastStageReject = request
         return stageRejectResult
+    }
+    func apiWorkstreamsTaskCreate(_ request: WorkstreamsTaskCreateRequest) -> [String: Any] {
+        lastTaskCreate = request
+        return taskCreateResult
+    }
+    func apiWorkstreamsTaskList(workspace: String?) -> [String: Any] {
+        lastTaskListWorkspace = workspace
+        taskListCalls += 1
+        return taskListResult
+    }
+    func apiWorkstreamsQueueStart(_ request: WorkstreamsQueueStartRequest) -> [String: Any] {
+        lastQueueStart = request
+        return queueStartResult
+    }
+    func apiWorkstreamsQueuePause(_ request: WorkstreamsQueuePauseRequest) -> [String: Any] {
+        lastQueuePause = request
+        return queuePauseResult
     }
 }
 
@@ -288,6 +314,75 @@ let rejectOK = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/ap
 eq(rejectOK?.status, 200, "reject 200")
 eq(fake.lastStageReject?.reason, "边界未定", "reject reason trimmed")
 eq(fake.lastStageReject?.target, .planning, "reject target parsed")
+
+section("stage task create / list and queue start / pause")
+let taskCreateNoId = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/task/create", json: ["titles": ["x"]]), delegate: fake)
+eq(taskCreateNoId?.json?["error"] as? String, "missing-id", "task/create missing-id code")
+let taskCreateNoTitles = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/task/create", json: ["id": "WS-000001"]), delegate: fake)
+eq(taskCreateNoTitles?.status, 400, "task/create without titles/body -> 400")
+eq(taskCreateNoTitles?.json?["error"] as? String, "missing-titles", "missing-titles code (negative path)")
+let taskCreateBadTitles = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/task/create", json: ["id": "WS-000001", "titles": "x"]), delegate: fake)
+eq(taskCreateBadTitles?.json?["error"] as? String, "invalid-titles", "non-list titles -> invalid-titles")
+let taskCreateBadStage = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/task/create", json: ["id": "WS-000001", "stage": "warp", "titles": ["x"]]), delegate: fake)
+eq(taskCreateBadStage?.json?["error"] as? String, "invalid-stage", "task/create invalid stage -> invalid-stage")
+let taskCreateBlankStage = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/task/create", json: ["id": "WS-000001", "stage": "  ", "titles": ["x"]]), delegate: fake)
+eq(taskCreateBlankStage?.json?["error"] as? String, "missing-stage", "task/create blank explicit stage -> missing-stage")
+let taskCreateOK = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/task/create", json: ["id": "WS-000001", "stage": " planning ", "titles": [" 出规划 ", "", "  "], "workspace": "/tmp/ws", "session": "s-1"]), delegate: fake)
+eq(taskCreateOK?.status, 200, "task/create 200")
+eq(fake.lastTaskCreate?.id, "WS-000001", "task/create id routed")
+eq(fake.lastTaskCreate?.stage, .planning, "task/create stage parsed")
+eq(fake.lastTaskCreate?.titles, ["出规划"], "task/create titles trimmed and blanks dropped")
+eq(fake.lastTaskCreate?.workspace, "/tmp/ws", "task/create workspace normalized")
+eq(fake.lastTaskCreate?.session, "s-1", "task/create carries session")
+let taskCreateBody = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/task/create", json: ["id": "WS-000001", "body": "正文"]), delegate: fake)
+eq(taskCreateBody?.status, 200, "task/create body-only 200")
+eq(fake.lastTaskCreate?.body, "正文", "task/create body passed through")
+eq(fake.lastTaskCreate?.titles.isEmpty, true, "body-only leaves titles empty (delegate derives one)")
+eq(fake.lastTaskCreate?.stage == nil, true, "absent stage stays nil (delegate falls back to the card stage)")
+
+let taskList = WorkstreamsAPIRouter.route(HTTPRequest(method: "GET", path: "/api/workstreams/task/list", query: ["workspace": "~/repo/"]), delegate: fake)
+eq(taskList?.status, 200, "task/list 200")
+eq(fake.lastTaskListWorkspace?.hasSuffix("/repo"), true, "task/list workspace normalized")
+let taskListWrongMethod = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/task/list"), delegate: fake)
+eq(taskListWrongMethod?.status, 404, "task/list is GET-only")
+
+let queueStartNoId = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queue/start", json: ["stage": "design"]), delegate: fake)
+eq(queueStartNoId?.json?["error"] as? String, "missing-id", "queue/start missing-id code")
+let queueStartBadStage = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queue/start", json: ["id": "WS-000001", "stage": "warp"]), delegate: fake)
+eq(queueStartBadStage?.json?["error"] as? String, "invalid-stage", "queue/start invalid-stage code")
+let queueStartItem = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queue/start", json: ["id": "WS-000001", "workspace": "/tmp/ws", "session": "s-2"]), delegate: fake)
+eq(queueStartItem?.status, 200, "item-level queue/start 200")
+eq(fake.lastQueueStart?.stage == nil, true, "item-level start carries no stage")
+eq(fake.lastQueueStart?.workspace, "/tmp/ws", "queue/start workspace normalized")
+eq(fake.lastQueueStart?.session, "s-2", "queue/start carries session")
+let queueStartStage = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queue/start", json: ["id": "WS-000001", "stage": " design "]), delegate: fake)
+eq(queueStartStage?.status, 200, "stage-level queue/start 200")
+eq(fake.lastQueueStart?.stage, .design, "queue/start stage parsed")
+let queueStartBlankStage = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queue/start", json: ["id": "WS-000001", "stage": " "]), delegate: fake)
+eq(queueStartBlankStage?.json?["error"] as? String, "missing-stage", "queue/start blank stage -> missing-stage")
+
+let queuePauseNoId = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queue/pause", json: [:]), delegate: fake)
+eq(queuePauseNoId?.json?["error"] as? String, "missing-id", "queue/pause missing-id code")
+let queuePauseOK = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/queue/pause", json: ["id": "WS-000001", "workspace": "/tmp/ws"]), delegate: fake)
+eq(queuePauseOK?.status, 200, "queue/pause 200")
+eq(fake.lastQueuePause?.id, "WS-000001", "queue/pause id routed")
+eq(WorkstreamsAPIRouter.status(for: ["ok": false, "error": "no-queue"]), 404, "no-queue -> 404")
+
+let taskJSON = WorkstreamsAPIResponse.task("wt-1", title: "T", state: "running",
+                                           workstreamId: "WS-1", stage: .task,
+                                           sessionId: "session-1", error: nil, report: "汇报")
+eq(taskJSON["id"] as? String, "wt-1", "task json id")
+eq(taskJSON["state"] as? String, "running", "task json state")
+eq(taskJSON["stage"] as? String, "task", "task json stage")
+eq(taskJSON["session"] as? String, "session-1", "task json session")
+eq(taskJSON["report"] as? String, "汇报", "task json report")
+let bareTaskJSON = WorkstreamsAPIResponse.task("wt-2", title: "T2", state: "pending")
+eq(bareTaskJSON["workstreamId"] == nil, true, "task json omits empty workstreamId")
+eq(bareTaskJSON["session"] == nil, true, "task json omits empty session")
+let queueJSON = WorkstreamsAPIResponse.queue("wq-1", name: "Q", workstreamId: "WS-1",
+                                             state: "active", taskIds: ["wt-1"])
+eq(queueJSON["id"] as? String, "wq-1", "queue json id")
+eq(queueJSON["taskIds"] as? [String], ["wt-1"], "queue json taskIds")
 
 section("error mapping")
 fake.listResult = ["ok": false, "error": "no-workspace"]

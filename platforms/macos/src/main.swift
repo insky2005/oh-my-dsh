@@ -1057,6 +1057,27 @@ enum L10n {
         "workstreams.gate.rejectNeedsReason": ("退回必须填写原因", "A reason is required to send the stage back"),
         "workstreams.gate.evidenceMissing": ("证据不足，不能推进", "Evidence is missing; cannot advance"),
         "workstreams.gate.failed": ("阶段操作失败", "The stage action failed"),
+        "workstreams.start.item": ("启动事项", "Start workstream"),
+        "workstreams.start.started": ("已启动事项队列", "The workstream queue started"),
+        "workstreams.start.noQueue": ("该事项还没有队列；请先创建阶段任务", "This workstream has no queue yet; create a stage task first"),
+        "workstreams.stage.createTask": ("＋创建任务", "Create task"),
+        "workstreams.stage.start": ("启动阶段", "Start stage"),
+        "workstreams.stage.started": ("已启动「%@」阶段", "Started the \"%@\" stage"),
+        "workstreams.task.create.title": ("新建阶段任务", "New stage task"),
+        "workstreams.task.create.message": ("标题将按阶段默认动作生成交接提示词；任务进入等待态，不自动启动。", "The title becomes a handoff prompt (the stage default action); the task waits and does not auto-start."),
+        "workstreams.task.create.placeholder": ("任务标题", "Task title"),
+        "workstreams.task.create.empty": ("任务标题不能为空", "The task title must not be empty"),
+        "workstreams.task.create.failed": ("创建任务失败", "Could not create the task"),
+        "workstreams.task.created": ("已创建 %d 条任务", "Created %d task(s)"),
+        "workstreams.task.session": ("会话", "Session"),
+        "workstreams.task.state.pending": ("待排", "Pending"),
+        "workstreams.task.state.queued": ("排队中", "Queued"),
+        "workstreams.task.state.running": ("运行中", "Running"),
+        "workstreams.task.state.done": ("已完成", "Done"),
+        "workstreams.task.state.failed": ("失败", "Failed"),
+        "workstreams.task.state.needsReview": ("待确认", "Needs review"),
+        "workstreams.task.state.cancelled": ("已取消", "Cancelled"),
+        "workstreams.recovered": ("已恢复：%d 条中断任务，%d 条队列暂停", "Recovered: %d interrupted task(s), %d paused queue(s)"),
     ]
 
     /// Localize a key, optionally filling %@ / %d placeholders.
@@ -2992,6 +3013,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         AppLog.shared.log("launch: workstreamsPanel created")
         workstreamsPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
         workstreamsPanel.workspaceProvider = { [weak self] in self?.activeWorkspacePath() }
+        workstreamsPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
         // Clicking a card opens its WS-*.md in the file panel (same as the
         // requirements pool's child-workstream button).
         workstreamsPanel.onOpenCard = { [weak self] path in
@@ -6986,6 +7008,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         bridge.workstreamsStageReject = { [weak self] request in
             self?.workstreamsPanel?.apiWorkstreamsStageReject(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsTaskCreate = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsTaskCreate(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsTaskList = { [weak self] workspace in
+            self?.workstreamsPanel?.apiWorkstreamsTaskList(workspace: workspace) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsQueueStart = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsQueueStart(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsQueuePause = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsQueuePause(request) ?? BrowserAPIBridge.workstreamsUnavailable
         }
         bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
         bridge.hidePanel = { [weak self] in

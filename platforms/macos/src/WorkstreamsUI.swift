@@ -54,6 +54,32 @@ func wsStageTone(_ stage: WorkstreamStage) -> WSTone {
     }
 }
 
+// MARK: - Task state (tertiary card)
+
+/// L10n key + tone for one queue task state. A switch (not a string built from
+/// the raw value) so the L10n lint can see every key.
+func wsTaskStateKey(_ state: WSTaskState) -> String {
+    switch state {
+    case .pending: return "workstreams.task.state.pending"
+    case .queued: return "workstreams.task.state.queued"
+    case .running: return "workstreams.task.state.running"
+    case .done: return "workstreams.task.state.done"
+    case .failed: return "workstreams.task.state.failed"
+    case .needsReview: return "workstreams.task.state.needsReview"
+    case .cancelled: return "workstreams.task.state.cancelled"
+    }
+}
+
+func wsTaskTone(_ state: WSTaskState) -> WSTone {
+    switch state {
+    case .running: return .running
+    case .done: return .positive
+    case .failed: return .negative
+    case .needsReview, .cancelled: return .warning
+    case .pending, .queued: return .neutral
+    }
+}
+
 // MARK: - Card lines
 
 /// One label + value line on a card (meta / stage evidence). labelKey is an L10n
@@ -65,16 +91,20 @@ struct WSLine: Equatable {
 
 // MARK: - Tertiary card (task)
 
-/// One tertiary card: a task owned by a stage queue. Task storage is the queue
-/// runner's deliverable, so the panel renders whatever the local queue store
-/// hands it and stays empty until that lands.
+/// One tertiary card: a task of the workstream queue (design A2 / A12). The card
+/// shows the task state badge and its dsh session, so the stage view is the place
+/// the run is observed (design §5 / D18).
 struct WSTaskCardModel: Equatable {
     var id: String
     var title: String
-    /// Optional state badge (an L10n key); nil until the queue store exists.
+    /// State badge (an L10n key).
     var stateKey: String?
     var tone: WSTone
     var detail: String
+    /// The dsh session the task runs in (machine-private, shown read-only).
+    var sessionId: String?
+    /// A failure / review reason (an L10n key), rendered in its tone.
+    var errorKey: String?
     var isExpanded: Bool
 
     static func build(id: String,
@@ -82,9 +112,26 @@ struct WSTaskCardModel: Equatable {
                       stateKey: String? = nil,
                       tone: WSTone = .neutral,
                       detail: String = "",
+                      sessionId: String? = nil,
+                      errorKey: String? = nil,
                       isExpanded: Bool = false) -> WSTaskCardModel {
         WSTaskCardModel(id: id, title: title, stateKey: stateKey, tone: tone,
-                        detail: detail, isExpanded: isExpanded)
+                        detail: detail, sessionId: sessionId, errorKey: errorKey,
+                        isExpanded: isExpanded)
+    }
+
+    /// Build from the queue engine's task item (design A13): state -> badge tone,
+    /// report -> detail, error -> L10n key.
+    static func build(from task: WSTaskItem, isExpanded: Bool = false) -> WSTaskCardModel {
+        let report = task.report?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return WSTaskCardModel(id: task.id,
+                               title: task.title,
+                               stateKey: wsTaskStateKey(task.state),
+                               tone: wsTaskTone(task.state),
+                               detail: report,
+                               sessionId: task.sessionId,
+                               errorKey: task.error,
+                               isExpanded: isExpanded)
     }
 }
 
@@ -137,16 +184,25 @@ struct WSCardModel: Equatable {
 
     /// Build one workstream card. All five stage cards are always present (in
     /// WorkstreamStage.allCases order). The workstream's single queue is carried
-    /// by its current stage card; the other stages show tasks only (design A9 /
-    /// A12 / D16).
-    static func build(from card: WorkstreamCard, gate: WSStageGate? = nil) -> WSCardModel {
+    /// by its current stage card; each stage's tasks are grouped by the task's own
+    /// `stage` (design A9 / A12 / D16 / D17). `board` is the queue engine's board
+    /// (nil while there is no queue storage yet: every task list is then empty).
+    static func build(from card: WorkstreamCard, gate: WSStageGate? = nil,
+                      board: WSBoard? = nil) -> WSCardModel {
+        let queue = board?.queue(forWorkstream: card.id, mapping: card.queues)
+        let queueTasks = queue.flatMap { board?.tasks(inQueue: $0.id) } ?? []
         let stages = WorkstreamStage.allCases.map { stage -> WSStageCardModel in
             let queueIDs = (stage == card.stage) ? card.queues : []
             let stageGate = (gate?.stage == stage) ? gate : nil
+            // A task's stage is a direct property (A12); a legacy task without one
+            // belongs to the card's current stage.
+            let stageTasks = queueTasks
+                .filter { ($0.stage ?? card.stage) == stage }
+                .map { WSTaskCardModel.build(from: $0) }
             return WSStageCardModel(stage: stage,
                                     isCurrent: stage == card.stage,
                                     queueIDs: queueIDs,
-                                    tasks: [],
+                                    tasks: stageTasks,
                                     evidence: evidence(for: stage, card: card),
                                     isExpanded: false,
                                     gateState: stageGate?.state,
@@ -288,9 +344,10 @@ struct WSBoardModel: Equatable {
     }
 
     static func build(snapshot: WorkstreamsSnapshot, filter: WSStageFilter,
-                      gates: [String: WSStageGate] = [:]) -> WSBoardModel {
+                      gates: [String: WSStageGate] = [:],
+                      board: WSBoard? = nil) -> WSBoardModel {
         let selected = filter.filter(snapshot.workstreams)
-        return WSBoardModel(cards: selected.map { WSCardModel.build(from: $0, gate: gates[$0.id]) },
+        return WSBoardModel(cards: selected.map { WSCardModel.build(from: $0, gate: gates[$0.id], board: board) },
                             filter: filter,
                             hasWorkspace: !snapshot.workspace.isEmpty,
                             totalCount: snapshot.workstreams.count)

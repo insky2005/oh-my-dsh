@@ -132,6 +132,39 @@ eq(stageWithTask.taskCount, 1, "task count")
 eq(stageWithTask.hasQueue, true, "has queue")
 eq(stageWithTask.tasks.first?.stateKey, nil, "task state key defaults to nil")
 
+// MARK: - Tertiary cards from the queue engine
+
+section("task state keys / tones")
+eq(wsTaskStateKey(.pending), "workstreams.task.state.pending", "pending state key")
+eq(wsTaskStateKey(.running), "workstreams.task.state.running", "running state key")
+eq(wsTaskStateKey(.needsReview), "workstreams.task.state.needsReview", "needs-review state key")
+eq(wsTaskTone(.done), .positive, "done tone")
+eq(wsTaskTone(.failed), .negative, "failed tone")
+eq(wsTaskTone(.queued), .neutral, "queued tone")
+
+section("tasks group onto their own stage card")
+var queueBoard = WSBoard()
+let q = queueBoard.createQueue(name: "Q", workstreamID: "WS-000080")
+queueBoard.tasks.append(WSTaskItem(id: "wt-1", title: "规划任务", workstreamId: "WS-000080", stage: .planning))
+queueBoard.tasks.append(WSTaskItem(id: "wt-2", title: "执行任务", workstreamId: "WS-000080", stage: .task))
+_ = queueBoard.enqueue(taskID: "wt-1", into: q.id)
+_ = queueBoard.enqueue(taskID: "wt-2", into: q.id)
+queueBoard.markRunning("wt-2")
+if let i = queueBoard.index(ofTask: "wt-2") { queueBoard.tasks[i].sessionId = "session-2" }
+let grouped = WSCardModel.build(from: card(id: "WS-000080", stage: .task, queues: [q.id]), board: queueBoard)
+let wsPlanningStage = grouped.stages.first { $0.stage == .planning }
+let wsExecutionStage = grouped.stages.first { $0.stage == .task }
+eq(wsPlanningStage?.tasks.map { $0.id }, ["wt-1"], "the planning task lands on the planning stage card")
+eq(wsExecutionStage?.tasks.map { $0.id }, ["wt-2"], "the execution task lands on the execution stage card")
+eq(wsExecutionStage?.tasks.first?.stateKey, "workstreams.task.state.running", "task state key from the engine")
+eq(wsExecutionStage?.tasks.first?.tone, .running, "task tone from the engine state")
+eq(wsExecutionStage?.tasks.first?.sessionId, "session-2", "task session surfaces on the card")
+check((wsPlanningStage?.tasks.first?.sessionId ?? "").isEmpty, "a task without a session has none")
+let failedTask = WSTaskCardModel.build(from: WSTaskItem(id: "wt-3", title: "失败", state: .failed,
+                                                      error: "workstreams.errPrompt"))
+eq(failedTask.errorKey, "workstreams.errPrompt", "task error key surfaces")
+eq(failedTask.stateKey, "workstreams.task.state.failed", "failed task state key")
+
 // MARK: - Stage filter
 
 section("stage filter")

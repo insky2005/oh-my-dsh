@@ -294,7 +294,7 @@ do {
     eq(built.created.count, 1, "one stage task created")
     eq(built.queue.state, .draft, "the stage queue stays draft (waiting, not started)")
     eq(built.queue.stage == nil, true, "the queue no longer carries a stage")
-    eq(built.queue.name, "规划", "the queue is named after the stage")
+    eq(built.queue.name, card.title, "the queue is named after the workstream (one queue)")
     eq(built.queue.workstreamId, card.id, "the queue carries the workstream id")
     eq(built.created[0].stage, .planning, "the task carries the stage")
     eq(built.created[0].workstreamId, card.id, "the task carries the workstream id")

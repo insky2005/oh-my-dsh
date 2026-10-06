@@ -18,6 +18,10 @@
 //    POST /api/workstreams/stage    {workspace?, id, stage, session?}
 //    POST /api/workstreams/plan     {workspace?, id, heading?, text, session?}
 //    POST /api/workstreams/queues   {workspace?, id, queues:["q-1"], session?}
+//    POST /api/workstreams/task/create  {workspace?, id, stage?, titles?[]|body?, session?}
+//    GET  /api/workstreams/task/list    ?workspace=...
+//    POST /api/workstreams/queue/start  {workspace?, id, stage?, session?}
+//    POST /api/workstreams/queue/pause  {workspace?, id, session?}
 //
 
 import Foundation
@@ -90,6 +94,35 @@ struct WorkstreamsStageRejectRequest: Equatable {
     var session: String?
 }
 
+/// Create one or more waiting-state tasks for a workstream stage. The panel turns
+/// each title into a full WorkstreamHandoff prompt body (stage default action).
+/// `stage` nil = the card current stage (the delegate resolves it); either
+/// `titles` (non-empty) or `body` (non-blank) must be present.
+struct WorkstreamsTaskCreateRequest: Equatable {
+    var workspace: String?
+    var id: String
+    var stage: WorkstreamStage?
+    var titles: [String]
+    var body: String?
+    var session: String?
+}
+
+/// Start a workstream queue. `stage` nil = item-level (run the whole queue FIFO);
+/// a stage = stage-level (run only that stage tasks, design A3 / D18).
+struct WorkstreamsQueueStartRequest: Equatable {
+    var workspace: String?
+    var id: String
+    var stage: WorkstreamStage?
+    var session: String?
+}
+
+/// Pause a workstream queue.
+struct WorkstreamsQueuePauseRequest: Equatable {
+    var workspace: String?
+    var id: String
+    var session: String?
+}
+
 /// Read the optional session field from any write body (trimmed, nil when empty).
 func workstreamsSession(_ body: [String: Any]) -> String? {
     wsNonEmpty(body["session"] as? String)
@@ -108,6 +141,14 @@ protocol WorkstreamsAPIDelegate: AnyObject {
     func apiWorkstreamsQueues(_ request: WorkstreamsQueuesRequest) -> [String: Any]
     func apiWorkstreamsStageConfirm(_ request: WorkstreamsStageConfirmRequest) -> [String: Any]
     func apiWorkstreamsStageReject(_ request: WorkstreamsStageRejectRequest) -> [String: Any]
+    /// Create waiting-state stage tasks (design A14).
+    func apiWorkstreamsTaskCreate(_ request: WorkstreamsTaskCreateRequest) -> [String: Any]
+    /// List a workspace queue board tasks (design A14 / A13).
+    func apiWorkstreamsTaskList(workspace: String?) -> [String: Any]
+    /// Start a workstream queue, item-level or stage-level (design A3 / A14).
+    func apiWorkstreamsQueueStart(_ request: WorkstreamsQueueStartRequest) -> [String: Any]
+    /// Pause a workstream queue.
+    func apiWorkstreamsQueuePause(_ request: WorkstreamsQueuePauseRequest) -> [String: Any]
 }
 
 // MARK: - Workspace normalization
@@ -171,6 +212,28 @@ enum WorkstreamsAPIResponse {
         if !snap.unparsed.isEmpty { out["unparsed"] = snap.unparsed }
         return out
     }
+
+    /// One tertiary (task) card as JSON. Kept primitive so this file compiles
+    /// headlessly without the queue engine (the panel maps WSTaskItem here).
+    static func task(_ id: String, title: String, state: String,
+                     workstreamId: String? = nil, stage: WorkstreamStage? = nil,
+                     sessionId: String? = nil, error: String? = nil,
+                     report: String? = nil) -> [String: Any] {
+        var out: [String: Any] = ["id": id, "title": title, "state": state]
+        if let workstreamId = workstreamId, !workstreamId.isEmpty { out["workstreamId"] = workstreamId }
+        if let stage = stage { out["stage"] = stage.rawValue }
+        if let sessionId = sessionId, !sessionId.isEmpty { out["session"] = sessionId }
+        if let error = error, !error.isEmpty { out["error"] = error }
+        if let report = report, !report.isEmpty { out["report"] = report }
+        return out
+    }
+
+    /// One execution queue as JSON.
+    static func queue(_ id: String, name: String, workstreamId: String,
+                      state: String, taskIds: [String]) -> [String: Any] {
+        ["id": id, "name": name, "workstreamId": workstreamId,
+         "state": state, "taskIds": taskIds]
+    }
 }
 
 // MARK: - Router
@@ -215,6 +278,24 @@ enum WorkstreamsAPIRouter {
             out.append(value)
         }
         if out.count > 1 { return ([], ("invalid-queue", "at most one queue per workstream")) }
+        return (out, nil)
+    }
+
+    /// Parse the optional task-create titles into a list of non-blank strings.
+    /// A present-but-not-a-list value is a hard error; absent / blank entries are
+    /// simply dropped (the body fallback may still satisfy the request).
+    static func parseTaskTitles(_ raw: Any?) -> (titles: [String], error: (code: String, message: String)?) {
+        guard let raw = raw else { return ([], nil) }
+        guard let array = raw as? [Any] else {
+            return ([], ("invalid-titles", "titles must be a list of strings"))
+        }
+        var out: [String] = []
+        for entry in array {
+            guard let text = entry as? String else {
+                return ([], ("invalid-titles", "titles entries must be strings"))
+            }
+            if let trimmed = wsNonEmpty(text) { out.append(trimmed) }
+        }
         return (out, nil)
     }
 
@@ -370,6 +451,66 @@ enum WorkstreamsAPIRouter {
             let rejected = delegate.apiWorkstreamsStageReject(reject)
             return .json(status(for: rejected), rejected)
 
+        case ("POST", "/api/workstreams/task/create"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            guard let id = wsNonEmpty(body["id"] as? String) else { return missingId() }
+            var taskStage: WorkstreamStage? = nil
+            if let raw = wsNonEmpty(body["stage"] as? String) {
+                guard let parsed = WorkstreamStage.parse(raw) else { return invalidStage(raw) }
+                taskStage = parsed
+            } else if body.keys.contains("stage") {
+                return missingStage()
+            }
+            let parsedTitles = parseTaskTitles(body["titles"])
+            if let error = parsedTitles.error {
+                return .json(400, ["ok": false, "error": error.code, "message": error.message])
+            }
+            let taskBody = wsNonEmpty(body["body"] as? String)
+            guard !parsedTitles.titles.isEmpty || taskBody != nil else {
+                return .json(400, ["ok": false, "error": "missing-titles",
+                                   "hint": "expected {\"id\": \"WS-000001\", \"titles\": [\"...\"]} or {\"body\": \"...\"}"])
+            }
+            guard let delegate = delegate else { return unavailable() }
+            let createTask = WorkstreamsTaskCreateRequest(
+                workspace: WorkstreamsAPIWorkspace.normalize(body["workspace"] as? String),
+                id: id, stage: taskStage, titles: parsedTitles.titles, body: taskBody,
+                session: workstreamsSession(body))
+            let created = delegate.apiWorkstreamsTaskCreate(createTask)
+            return .json(status(for: created), created)
+
+        case ("GET", "/api/workstreams/task/list"):
+            guard let delegate = delegate else { return unavailable() }
+            let workspace = WorkstreamsAPIWorkspace.normalize(request.query["workspace"])
+            let listed = delegate.apiWorkstreamsTaskList(workspace: workspace)
+            return .json(status(for: listed), listed)
+
+        case ("POST", "/api/workstreams/queue/start"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            guard let id = wsNonEmpty(body["id"] as? String) else { return missingId() }
+            var startStage: WorkstreamStage? = nil
+            if let raw = wsNonEmpty(body["stage"] as? String) {
+                guard let parsed = WorkstreamStage.parse(raw) else { return invalidStage(raw) }
+                startStage = parsed
+            } else if body.keys.contains("stage") {
+                return missingStage()
+            }
+            guard let delegate = delegate else { return unavailable() }
+            let start = WorkstreamsQueueStartRequest(
+                workspace: WorkstreamsAPIWorkspace.normalize(body["workspace"] as? String),
+                id: id, stage: startStage, session: workstreamsSession(body))
+            let started = delegate.apiWorkstreamsQueueStart(start)
+            return .json(status(for: started), started)
+
+        case ("POST", "/api/workstreams/queue/pause"):
+            guard let body = request.jsonBody() else { return missingBody() }
+            guard let id = wsNonEmpty(body["id"] as? String) else { return missingId() }
+            guard let delegate = delegate else { return unavailable() }
+            let pause = WorkstreamsQueuePauseRequest(
+                workspace: WorkstreamsAPIWorkspace.normalize(body["workspace"] as? String),
+                id: id, session: workstreamsSession(body))
+            let paused = delegate.apiWorkstreamsQueuePause(pause)
+            return .json(status(for: paused), paused)
+
         default:
             return .json(404, ["ok": false, "error": "not-found"])
         }
@@ -381,6 +522,7 @@ enum WorkstreamsAPIRouter {
         if (result["ok"] as? Bool) == true { return 200 }
         switch result["error"] as? String {
         case "unknown-workstream": return 404
+        case "no-queue": return 404
         case "panel-unavailable": return 503
         case "write-failed": return 500
         case "evidence-missing": return 409

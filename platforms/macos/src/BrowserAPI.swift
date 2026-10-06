@@ -288,6 +288,10 @@ final class BrowserAPIBridge: BrowserAPIDelegate {
     var workstreamsQueues: (WorkstreamsQueuesRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     var workstreamsStageConfirm: (WorkstreamsStageConfirmRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     var workstreamsStageReject: (WorkstreamsStageRejectRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsTaskCreate: (WorkstreamsTaskCreateRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsTaskList: (String?) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsQueueStart: (WorkstreamsQueueStartRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsQueuePause: (WorkstreamsQueuePauseRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     static let workstreamsUnavailable: [String: Any] = [
         "ok": false,
         "error": "panel-unavailable",
@@ -720,6 +724,22 @@ extension BrowserAPIBridge: WorkstreamsAPIDelegate {
 
     func apiWorkstreamsStageReject(_ request: WorkstreamsStageRejectRequest) -> [String: Any] {
         onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsStageReject(request) }
+    }
+
+    func apiWorkstreamsTaskCreate(_ request: WorkstreamsTaskCreateRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsTaskCreate(request) }
+    }
+
+    func apiWorkstreamsTaskList(workspace: String?) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsTaskList(workspace) }
+    }
+
+    func apiWorkstreamsQueueStart(_ request: WorkstreamsQueueStartRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsQueueStart(request) }
+    }
+
+    func apiWorkstreamsQueuePause(_ request: WorkstreamsQueuePauseRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsQueuePause(request) }
     }
 }
 

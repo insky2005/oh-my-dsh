@@ -11,7 +11,7 @@
 
 - **是什么**：从「任务面板升格」的复审出发，最终定形的**事项面板产品设计**——实体层级、阶段到队列的映射、生命周期与人工确认门、与既有面板/架构的关系，以及**决策清单**（§9）。
 - **不是什么**：不是实现方案（无字段级 API / 类图 / 文件清单），不含排期；待确认项裁决后才进入实现设计与拆解。
-- **怎么用**：先读 §2–§5 的定型模型；§9 记录 2026-10-06 的裁决结果与仍待细化的细项。本设计已落地（实现清单见 §10），仅「阶段队列引擎 / 交付模块接线面板」与 `covered` / `delivery` 写路由尚未完成。
+- **怎么用**：先读 §2–§5 的定型模型；§9 记录 2026-10-06 的裁决结果与仍待细化的细项。本设计已落地（实现清单见 §10）：阶段队列引擎已接线面板并可事项级 / 阶段级启动；剩余「阶段提示词 / 技能改指自有 API」与 `covered` / `delivery` 写路由尚未完成。
 
 ## 1. 背景：为什么不是「让任务面板覆盖各阶段」
 
@@ -180,9 +180,9 @@ D10 之所以是伪问题，源于把两个正交的轴混为一谈：
 
 1. 本文件已**定稿并落地**（2026-10-06）：上游文档已同步（见 §7），面板 / 模型 / API / 队列引擎 / 阶段门 / 交付 / 技能均已实现；
 2. **已落地**：`WorkstreamsCore` / `WorkstreamsUI` / `WorkstreamsPanel` / `WorkstreamsAPI` / `WorkstreamsQueues`+`WorkstreamsRunner` / `WorkstreamsStageGate` / `WorkstreamsPrompts` / `WorkstreamsDelivery` / `WSCardView`+`WSInlineForms`，内置技能 `workstream-panel`；用户说明见 `docs/usage/panels.md` 与 `CHANGELOG.md`；**模型修订（A9 / A12）已落地**：`WS.queues` = `[q-...]`（0..1，兼容旧 `[{id, stage}]` 读入取 id），任务带 `workstreamId` + `stage`；
-3. **尚未接线（本轮范围）**：
-   - 面板实例化并驱动 `WorkstreamsRunner`（含 `step()` 定时器）；
-   - 按阶段建任务的 API / 技能入口 + 「事项级 / 阶段级启动」入口；
-   - 任务运行态 → 阶段 / 事项运行态回写；
-   - 阶段提示词去掉 `/task-todo`，改指事项面板自有 API；
-   - `covered` / `delivery` 写路由与交付接线。
+3. **接线进展**：
+   - **已落地（2026-10-06）**：面板实例化并驱动 `WorkstreamsRunner`（3s `step()` 定时器、工作区切换重建、`serverPortProvider` 注入 dsh RPC）；`/api/workstreams/task/create` / `task/list` / `queue/start` / `queue/pause`；主卡「启动事项」+ 阶段卡「＋创建任务」「启动阶段」；三级任务卡展示状态 / 会话；
+   - **已落地**：一事项一队列——`createStageQueue` 追加到该事项的队列、任务带 `stage`；`queue/start` 带 `stage` = 阶段级启动（只跑该阶段任务，跑完暂停队列）；
+   - **已落地**：任务运行态 → 阶段 / 事项运行态回写（阶段门读 runner 的实时板，而非磁盘快照）；
+   - **待办**：阶段提示词去掉 `/task-todo`，改指事项面板自有 API（技能 `workstream-panel` 同步）；
+   - **待办**：`covered` / `delivery` 写路由与交付接线。
