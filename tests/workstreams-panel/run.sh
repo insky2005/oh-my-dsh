@@ -30,4 +30,24 @@ swiftc -swift-version 5 -module-cache-path "$CACHE" \
 "$TMP/api-tests"
 rm -rf "$TMP"
 
+
+echo "--- view base namespace guard (WSCardView / WSInlineForms, design A6) ---"
+SRC2="../../platforms/macos/src"
+# The workstream panel must NOT reference the tasks panel's view widgets: its
+# copies live under the WS* names. The pattern is word-bounded so WSRepoPRButton /
+# WSQueueComposerView do not count as RepoPRButton / QueueComposerView.
+FORBIDDEN='TaskInk|taskRowGlyph|TaskBadgeView|TaskProgressBarView|TaskSectionHeaderView|TaskSummaryCardView|TaskCardView|RepoPRButton|RepoRetryButton|TaskQueueHeaderView|TaskQueueBlockView|TaskFormCardView|TaskFieldBox|TaskFormKit|TaskComposerView|QueueComposerView|TaskSettingsModel|TaskSettingsRepoModel|TaskSettingsView|TasksHelpTextView|TasksHelpView|TaskFormSheetView|TaskFormSheetHostView'
+if grep -nE "\b(${FORBIDDEN})\b" "$SRC2/WSCardView.swift" "$SRC2/WSInlineForms.swift"; then
+  echo "FAIL: WS view files still reference tasks-panel view symbols" >&2
+  exit 1
+fi
+# ...and it must actually define its own copies.
+for sym in WSCardView WSBadgeView WSProgressBarView WSQueueHeaderView WSQueueBlockView WSFormCardView WSFormKit WSComposerView WSQueueComposerView WSFormSheetHostView; do
+  if ! grep -qE "\b(class|struct|enum) $sym\b" "$SRC2/WSCardView.swift" "$SRC2/WSInlineForms.swift"; then
+    echo "FAIL: $sym is not defined in the WS view files" >&2
+    exit 1
+  fi
+done
+echo "view base namespace guard: $(for s in WSCardView WSBadgeView WSComposerView WSFormSheetHostView; do printf "%s " "$s"; done)ok"
+
 echo "workstreams-panel tests passed"
