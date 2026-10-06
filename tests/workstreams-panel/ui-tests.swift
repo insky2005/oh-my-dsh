@@ -232,6 +232,76 @@ eq(boardNoWorkspace.emptyState?.messageKey, "workstreams.needsWorkspace", "no wo
 
 let boardEmptyPool = WSBoardModel.build(snapshot: snapshot([]), filter: .all)
 eq(boardEmptyPool.emptyState?.messageKey, "workstreams.empty", "empty pool board")
+eq(wsDefaultExpandedID(boardEmptyPool.cards), nil, "an empty board has nothing to expand")
+
+// MARK: - Default expansion (UX: open the first unprocessed card)
+
+// A card whose delivery stage the human confirmed derives runState == .done for
+// the whole workstream (A13); its audit trail lives in "## 阶段确认".
+let doneBody = """
+## 阶段确认
+
+- 2026-10-10 · confirm · delivery → done
+"""
+
+section("default expansion: first unprocessed opens, the rest collapse")
+let openFirst = WSBoardModel.build(snapshot: snapshot([
+    card(id: "WS-000100", stage: .planning),
+    card(id: "WS-000101", stage: .planning),
+    card(id: "WS-000102", stage: .planning),
+]), filter: .all)
+eq(openFirst.cards.map { $0.runState }, [.notStarted, .notStarted, .notStarted],
+   "the fixture cards are all unprocessed")
+eq(openFirst.cards.map { $0.isExpanded }, [true, false, false],
+   "only the first unprocessed card opens; the rest collapse")
+eq(wsDefaultExpandedID(openFirst.cards), "WS-000100", "the default-expanded id is the first card")
+
+section("default expansion: a done leading card does not open")
+let skipDone = WSBoardModel.build(snapshot: snapshot([
+    card(id: "WS-000110", stage: .delivery, body: doneBody),
+    card(id: "WS-000111", stage: .planning),
+    card(id: "WS-000112", stage: .planning),
+]), filter: .all)
+eq(skipDone.cards.map { $0.runState }, [.done, .notStarted, .notStarted],
+   "the leading card is done, the rest unprocessed")
+eq(skipDone.cards.map { $0.isExpanded }, [false, true, false],
+   "a done leading card stays collapsed; the first unprocessed one opens")
+eq(wsDefaultExpandedID(skipDone.cards), "WS-000111",
+   "the default-expanded id skips done cards, not just index 0")
+
+section("default expansion: all done -> nothing opens")
+let allDone = WSBoardModel.build(snapshot: snapshot([
+    card(id: "WS-000120", stage: .delivery, body: doneBody),
+    card(id: "WS-000121", stage: .delivery, body: doneBody),
+]), filter: .all)
+eq(allDone.cards.map { $0.runState }, [.done, .done], "every card is done")
+eq(allDone.cards.map { $0.isExpanded }, [false, false], "all done: no card opens")
+eq(wsDefaultExpandedID(allDone.cards), nil, "no default-expanded id when all are done")
+
+section("default expansion: a blocked card counts as unprocessed")
+var expandBoard = WSBoard()
+let expandQueue = expandBoard.createQueue(name: "Q-expand", workstreamID: "WS-000130")
+expandBoard.tasks.append(WSTaskItem(id: "wt-x", title: "失败任务",
+                                    workstreamId: "WS-000130", stage: .task))
+_ = expandBoard.enqueue(taskID: "wt-x", into: expandQueue.id)
+_ = expandBoard.markFailed("wt-x", error: "workstreams.errPrompt")
+let blockedExpand = WSBoardModel.build(snapshot: snapshot([
+    card(id: "WS-000110", stage: .delivery, body: doneBody),
+    card(id: "WS-000130", stage: .task, queues: [expandQueue.id]),
+]), filter: .all, board: expandBoard)
+eq(blockedExpand.cards.map { $0.runState }, [.done, .blocked], "a blocked card is unprocessed")
+eq(blockedExpand.cards.map { $0.isExpanded }, [false, true], "the blocked card opens")
+
+section("default expansion follows the active stage filter")
+let filteredExpand = WSBoardModel.build(snapshot: snapshot([
+    card(id: "WS-000110", stage: .delivery, body: doneBody),
+    card(id: "WS-000111", stage: .planning),
+    card(id: "WS-000112", stage: .planning),
+]), filter: .stage(.planning))
+eq(filteredExpand.cards.map { $0.id }, ["WS-000111", "WS-000112"],
+   "the stage filter keeps only its stage")
+eq(filteredExpand.cards.map { $0.isExpanded }, [true, false],
+   "within the filtered board the first unprocessed card opens")
 
 // MARK: - Parse round-trip
 

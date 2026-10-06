@@ -393,6 +393,21 @@ for key in workstreams.run.notStarted workstreams.run.inProgress \
 done
 echo "workstreams run state guard ok"
 
+echo "--- workstreams default expansion guard (UX: only the first unprocessed card opens) ---"
+# 事项面板加载 / 重绘时默认只展开首个未处理（runState != done）的事项卡，其余收起；
+# 全完成时不展开任何卡。规则是 WorkstreamsUI.swift 的纯谓词，且必须由
+# WSBoardModel.build 在每次重绘时应用（只定义不调用 = 没生效）。
+if ! grep -qF 'func wsDefaultExpandedID(' "$SRC2/WorkstreamsUI.swift" \
+   || ! grep -qF 'runState != .done' "$SRC2/WorkstreamsUI.swift"; then
+  echo "FAIL: WorkstreamsUI.swift is missing the first-unprocessed default-expansion rule" >&2
+  exit 1
+fi
+if ! grep -qF 'wsApplyingDefaultExpansion(built)' "$SRC2/WorkstreamsUI.swift"; then
+  echo "FAIL: WSBoardModel.build must apply the default expansion on every redraw" >&2
+  exit 1
+fi
+echo "workstreams default expansion guard ok"
+
 echo "--- delivery wiring + covered / delivery write routes guard (A10 / store 3.2 / 5) ---"
 # The last "尚未接线" item: WorkstreamsDelivery is wired to the panel / runner as a
 # delivery-stage action, and covered / delivery get write routes. delivery.outcome

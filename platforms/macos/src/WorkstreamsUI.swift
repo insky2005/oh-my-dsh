@@ -371,6 +371,29 @@ struct WSEmptyStateModel: Equatable {
     }
 }
 
+// MARK: - Default expansion (UX)
+
+/// The default expansion of a rendered board (UX): only the FIRST workstream
+/// that is not 完成 (runState != .done) starts expanded; every other card is
+/// collapsed. When every workstream is done, nothing is expanded. "Unprocessed"
+/// is the derived run state (design A13: notStarted / inProgress /
+/// awaitingConfirmation / blocked); the authoritative `stage` is not consulted.
+func wsDefaultExpandedID(_ cards: [WSCardModel]) -> String? {
+    cards.first { $0.runState != .done }?.id
+}
+
+/// Apply the default expansion to freshly built cards: exactly the card named by
+/// `wsDefaultExpandedID` (if any) is expanded, the rest are collapsed. Called on
+/// every load / redraw so the board always opens on the first unprocessed item.
+func wsApplyingDefaultExpansion(_ cards: [WSCardModel]) -> [WSCardModel] {
+    let expandedID = wsDefaultExpandedID(cards)
+    return cards.map { card in
+        var card = card
+        card.isExpanded = (card.id == expandedID)
+        return card
+    }
+}
+
 // MARK: - The filtered board
 
 /// The whole board the panel renders: the cards for the active filter, the
@@ -394,7 +417,11 @@ struct WSBoardModel: Equatable {
                       gates: [String: WSStageGate] = [:],
                       board: WSBoard? = nil) -> WSBoardModel {
         let selected = filter.filter(snapshot.workstreams)
-        return WSBoardModel(cards: selected.map { WSCardModel.build(from: $0, gate: gates[$0.id], board: board) },
+        let built = selected.map { WSCardModel.build(from: $0, gate: gates[$0.id], board: board) }
+        // UX: on load / redraw only the first unprocessed card opens (see
+        // wsApplyingDefaultExpansion); every other card starts collapsed.
+        let cards = wsApplyingDefaultExpansion(built)
+        return WSBoardModel(cards: cards,
                             filter: filter,
                             hasWorkspace: !snapshot.workspace.isEmpty,
                             totalCount: snapshot.workstreams.count)

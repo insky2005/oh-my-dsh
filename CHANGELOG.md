@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Added
 
+- **事项面板：默认只展开首个未处理事项卡（UX）（2026-10-07）**：面板**加载 / 重绘**时只展开首个 `runState != 完成`（A13 派生态：未开始 / 进行中 / 待确认 / 阻塞）的事项卡，其余收起；**全部完成时不展开任何卡**。纯谓词 `wsDefaultExpandedID` / `wsApplyingDefaultExpansion`（`WorkstreamsUI.swift`）由 `WSBoardModel.build` 在每次构建时应用（阶段筛选后的可见列表内取首个未处理）。测试 `tests/workstreams-panel`：UI **155 → 169**，合计 **990 → 1004**，新增「默认展开」源码守卫。
+
 - **事项面板：焦点 + 主场会话模型与切换矩阵（A15 / A16）+ 技能会话绑定措辞修正（2026-10-07）**：把「面板 ↔ 对话」的互相定位收拢成两条正交通道写入设计 **§6.1**——**焦点（A15）**：任何 `/api/workstreams/*` 可带 `focus`（写 body / 读 `?focus=`），仅 HTTP 200 触发置前 + 高亮 + 滚动；目标被阶段筛选隐藏时回落「全部」；默认 `false` 不抢右栏；`bound?focus=true` 会高亮反查到的第一张绑定卡。**主场会话（A16）**：`.dsh/workstreams/local.json` 的 `workstreamSessions`（WS-id → sessionId，ignored）每事项**至多一条**，写请求带 `session` 时 **last-writer-wins**；面板「在会话中处理」、需求拆解继承、对话内阶段推进都读它，`GET /api/workstreams/bound?session=` 反查。**修正 `workstream-panel` 技能里会话绑定的空头承诺**：不再把「绑回来」说成永久契约，明确单槽位 / 后写覆盖，并警示阶段 runner / 临时会话不要带 `session` 覆盖主场会话。文档同步：`requirements-workstream-store-design.md`（§4 `workstreamSessions`）、`docs/usage/panels.md`（切换矩阵）、`README.md`、`.dsh/wiki`。测试：API **263 → 266**（新增 `bound?focus` 高亮断言），`tests/skills` 固化新措辞；`tests/workstreams-panel` 合计 **987 → 990**。
 
 - **事项面板：对话内阶段推进（确认后向主场会话发下一阶段提示词）（2026-10-07）**：人工确认门通过、`stage` 真的前移后，面板经 `onStageConfirmed` 把更新后的卡片与目标阶段交给 `main.swift`；后者读该事项在 `.dsh/workstreams/local.json` 的**绑定会话**（`workstreamSessions[WS-id]`），复用 `WorkstreamHandoff` 生成**下一阶段**交接提示词并发送，对话自然续到下一阶段。**无绑定会话则不发**（不凭空起会话——只有「在会话中处理」才允许新建）；**交付是终态**、确认不前移，不续发。面板按钮与 `POST /api/workstreams/stage/confirm` 两条确认路径都触发；纯函数 `WorkstreamHandoff.nextStagePrompt` 承载「下一阶段 + 提示词」决策。测试 `tests/workstreams-panel`：prompt **155 → 167**，合计 **975 → 987**，新增「对话内阶段推进」源码守卫。
