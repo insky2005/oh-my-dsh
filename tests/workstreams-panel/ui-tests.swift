@@ -287,6 +287,156 @@ let blockedStage = blockedModel.stages.first { $0.stage == .planning }
 eq(blockedStage?.evidenceMissing, true, "evidence-missing flag")
 check((blockedStage?.missingEvidenceKeys.isEmpty ?? true) == false, "missing evidence keys surface")
 
+// MARK: - Derived run state (design A13 / D18)
+
+func runTask(_ id: String, _ state: WSTaskState) -> WSTaskItem {
+    WSTaskItem(id: id, title: id, state: state)
+}
+
+section("run state keys / tones")
+eq(wsRunStateKey(.notStarted), "workstreams.run.notStarted", "notStarted key")
+eq(wsRunStateKey(.inProgress), "workstreams.run.inProgress", "inProgress key")
+eq(wsRunStateKey(.awaitingConfirmation), "workstreams.run.awaitingConfirmation", "awaiting key")
+eq(wsRunStateKey(.done), "workstreams.run.done", "done key")
+eq(wsRunStateKey(.blocked), "workstreams.run.blocked", "blocked key")
+eq(wsRunStateTone(.notStarted), .neutral, "notStarted tone")
+eq(wsRunStateTone(.inProgress), .running, "inProgress tone")
+eq(wsRunStateTone(.awaitingConfirmation), .warning, "awaiting tone")
+eq(wsRunStateTone(.done), .positive, "done tone")
+eq(wsRunStateTone(.blocked), .negative, "blocked tone")
+
+section("stage run state: position is authoritative")
+eq(WSRunState.stage(stage: .acceptance, current: .task, tasks: []), .notStarted,
+   "a future stage is not started")
+eq(WSRunState.stage(stage: .planning, current: .task, tasks: []), .done,
+   "a stage the human moved past is done")
+eq(WSRunState.stage(stage: .planning, current: .task,
+                    tasks: [runTask("x", .running)]), .done,
+   "a past stage ignores its own tasks: the confirmed position is authoritative")
+
+section("current stage from queue + task state")
+eq(WSRunState.stage(stage: .task, current: .task, tasks: [runTask("a", .queued)],
+                    queueState: .draft), .notStarted,
+   "queued in a draft queue: created but not started")
+eq(WSRunState.stage(stage: .task, current: .task, tasks: [runTask("a", .queued)],
+                    queueState: .active), .inProgress,
+   "queued in an active queue: in progress")
+eq(WSRunState.stage(stage: .task, current: .task, tasks: [runTask("a", .running)],
+                    queueState: .active), .inProgress,
+   "a running task: in progress")
+eq(WSRunState.stage(stage: .task, current: .task, tasks: [], queueState: .draft), .notStarted,
+   "a current stage with no tasks is not started")
+
+section("all done, not yet confirmed")
+eq(WSRunState.stage(stage: .task, current: .task,
+                    tasks: [runTask("a", .done), runTask("b", .done)], queueState: .done),
+   .awaitingConfirmation, "all tasks done -> awaiting confirmation (R10)")
+eq(WSRunState.stage(stage: .task, current: .task, tasks: [runTask("a", .done)],
+                    queueState: .done, gateState: .evidenceMissing), .blocked,
+   "all done but evidence missing -> blocked")
+eq(WSRunState.stage(stage: .task, current: .task,
+                    tasks: [runTask("a", .done), runTask("b", .running)], queueState: .active),
+   .inProgress, "some done with work still open -> in progress")
+
+section("blocked by a task")
+for state in [WSTaskState.failed, .needsReview, .cancelled] {
+    eq(WSRunState.stage(stage: .task, current: .task, tasks: [runTask("a", state)],
+                        queueState: .paused), .blocked,
+       "task " + state.rawValue + " -> blocked")
+}
+
+section("back edge: reject forces rework")
+let rejectEntry = WSStageHistoryEntry(date: "2026-10-07", action: .reject, stage: .task,
+                                      target: nil, reason: "没做完")
+eq(WSRunState.reworkStage([rejectEntry]), .task, "reject without a target reworks in place")
+eq(WSRunState.stage(stage: .task, current: .task, tasks: [runTask("a", .done)], queueState: .done,
+                    history: [rejectEntry]), .inProgress,
+   "a rejected all-done stage is rework, not awaiting")
+let confirmEntry = WSStageHistoryEntry(date: "2026-10-08", action: .confirm, stage: .task,
+                                       target: .acceptance, reason: nil)
+eq(WSRunState.stage(stage: .task, current: .task, tasks: [runTask("a", .done)], queueState: .done,
+                    history: [rejectEntry, confirmEntry]), .awaitingConfirmation,
+   "a later confirm clears the rework")
+let backEntry = WSStageHistoryEntry(date: "2026-10-09", action: .reject, stage: .acceptance,
+                                    target: .planning, reason: "回到规划")
+eq(WSRunState.reworkStage([backEntry]), .planning, "reject with a target reworks the target stage")
+eq(WSRunState.stage(stage: .planning, current: .planning, tasks: [], queueState: .done,
+                    history: [backEntry]), .notStarted, "planning sent back: rework not started")
+eq(WSRunState.stage(stage: .task, current: .planning, tasks: [runTask("a", .done)],
+                    queueState: .done, history: [backEntry]), .notStarted,
+   "a stage after the sent-back position is future again")
+let reworkBody = """
+## 执行
+
+## 阶段确认
+
+- 2026-10-07 · reject · task · 需要返工
+"""
+let parsedRework = WorkstreamsStageGate.parseHistory(reworkBody)
+eq(WSRunState.stage(stage: .task, current: .task, tasks: [runTask("a", .done)], queueState: .done,
+                    history: parsedRework), .inProgress,
+   "a reject parsed from the card body forces rework")
+
+section("workstream run state: roll-up")
+eq(WSRunState.workstream([.notStarted, .notStarted]), .notStarted, "all not started")
+eq(WSRunState.workstream([.done, .inProgress, .notStarted]), .inProgress,
+   "in progress outranks done / not started")
+eq(WSRunState.workstream([.inProgress, .awaitingConfirmation]), .awaitingConfirmation,
+   "awaiting confirmation outranks in progress")
+eq(WSRunState.workstream([.awaitingConfirmation, .blocked]), .blocked,
+   "blocked outranks awaiting confirmation")
+let deliveryConfirm = WSStageHistoryEntry(date: "2026-10-10", action: .confirm, stage: .delivery,
+                                          target: nil, reason: nil)
+eq(WSRunState.workstream([.inProgress, .blocked], history: [deliveryConfirm]), .done,
+   "a confirmed terminal delivery is done")
+eq(WSRunState.deliveryConfirmed([deliveryConfirm]), true, "delivery confirmed")
+eq(WSRunState.deliveryConfirmed([rejectEntry]), false, "a reject is not a delivery confirmation")
+
+section("run state on the card model")
+var runBoard = WSBoard()
+let runQueue = runBoard.createQueue(name: "Q", workstreamID: "WS-000090")
+runBoard.tasks.append(WSTaskItem(id: "wt-run", title: "执行任务",
+                                 workstreamId: "WS-000090", stage: .task))
+_ = runBoard.enqueue(taskID: "wt-run", into: runQueue.id)
+_ = runBoard.resumeQueue(runQueue.id)
+let runCard = WSCardModel.build(from: card(id: "WS-000090", stage: .task, queues: [runQueue.id]),
+                                board: runBoard)
+eq(runCard.stages.first { $0.stage == .task }?.runState, .inProgress,
+   "card model surfaces the stage run state")
+eq(runCard.stages.first { $0.stage == .task }?.runStateKey, "workstreams.run.inProgress",
+   "stage run state key")
+eq(runCard.stages.first { $0.stage == .task }?.runStateTone, .running, "stage run state tone")
+eq(runCard.stages.first { $0.stage == .planning }?.runState, .done,
+   "a confirmed earlier stage reads done")
+eq(runCard.stages.first { $0.stage == .delivery }?.runState, .notStarted,
+   "a future stage reads not started")
+eq(runCard.runState, .inProgress, "card model surfaces the workstream run state")
+eq(runCard.runStateKey, "workstreams.run.inProgress", "workstream run state key")
+
+var awaitingBoard = WSBoard()
+let awaitingQueue = awaitingBoard.createQueue(name: "Q2", workstreamID: "WS-000091")
+awaitingBoard.tasks.append(WSTaskItem(id: "wt-a", title: "验收任务",
+                                      workstreamId: "WS-000091", stage: .acceptance))
+_ = awaitingBoard.enqueue(taskID: "wt-a", into: awaitingQueue.id)
+awaitingBoard.markDone("wt-a")
+let awaitingCard = WSCardModel.build(from: card(id: "WS-000091", stage: .acceptance,
+                                                queues: [awaitingQueue.id]), board: awaitingBoard)
+eq(awaitingCard.stages.first { $0.stage == .acceptance }?.runState, .awaitingConfirmation,
+   "all done unconfirmed on the card model")
+eq(awaitingCard.runState, .awaitingConfirmation, "the workstream waits for the human")
+
+var blockedBoard = WSBoard()
+let blockedQueue = blockedBoard.createQueue(name: "Q3", workstreamID: "WS-000092")
+blockedBoard.tasks.append(WSTaskItem(id: "wt-f", title: "失败任务",
+                                     workstreamId: "WS-000092", stage: .task))
+_ = blockedBoard.enqueue(taskID: "wt-f", into: blockedQueue.id)
+_ = blockedBoard.markFailed("wt-f", error: "workstreams.errPrompt")
+let blockedRunCard = WSCardModel.build(from: card(id: "WS-000092", stage: .task,
+                                                  queues: [blockedQueue.id]), board: blockedBoard)
+eq(blockedRunCard.stages.first { $0.stage == .task }?.runState, .blocked,
+   "a failed task blocks the stage")
+eq(blockedRunCard.runState, .blocked, "a blocked stage blocks the workstream")
+
 // MARK: - Report
 
 print("")

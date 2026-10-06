@@ -80,6 +80,31 @@ func wsTaskTone(_ state: WSTaskState) -> WSTone {
     }
 }
 
+// MARK: - Derived run state (design A13)
+
+/// L10n key for a derived run state (a stage's, rolled up to the workstream's).
+/// A switch, not a string built from the raw value, so the L10n lint sees every
+/// key. The state itself is computed in WorkstreamsRunState.swift.
+func wsRunStateKey(_ state: WSRunState) -> String {
+    switch state {
+    case .notStarted: return "workstreams.run.notStarted"
+    case .inProgress: return "workstreams.run.inProgress"
+    case .awaitingConfirmation: return "workstreams.run.awaitingConfirmation"
+    case .done: return "workstreams.run.done"
+    case .blocked: return "workstreams.run.blocked"
+    }
+}
+
+func wsRunStateTone(_ state: WSRunState) -> WSTone {
+    switch state {
+    case .notStarted: return .neutral
+    case .inProgress: return .running
+    case .awaitingConfirmation: return .warning
+    case .done: return .positive
+    case .blocked: return .negative
+    }
+}
+
 // MARK: - Card lines
 
 /// One label + value line on a card (meta / stage evidence). labelKey is an L10n
@@ -154,9 +179,14 @@ struct WSStageCardModel: Equatable {
     var gateState: WSStageGateState? = nil
     /// L10n keys of the machine evidence still missing (a blocked gate).
     var missingEvidenceKeys: [String] = []
+    /// The DERIVED runtime state (design A13): task states -> stage run state.
+    /// It is not the authoritative stage, which only the human gate moves.
+    var runState: WSRunState = .notStarted
 
     var labelKey: String { wsStageLabelKey(stage) }
     var tone: WSTone { wsStageTone(stage) }
+    var runStateKey: String { wsRunStateKey(runState) }
+    var runStateTone: WSTone { wsRunStateTone(runState) }
     var hasQueue: Bool { !queueIDs.isEmpty }
     var taskCount: Int { tasks.count }
     /// The stage queue finished with evidence and waits for a person (R10).
@@ -179,8 +209,13 @@ struct WSCardModel: Equatable {
     var stages: [WSStageCardModel]
     var isExpanded: Bool
     var path: String
+    /// The DERIVED workstream runtime state (design A13): the roll-up of the
+    /// five stage run states. The authoritative `stage` above is untouched.
+    var runState: WSRunState = .notStarted
 
     var stageLabelKey: String { wsStageLabelKey(stage) }
+    var runStateKey: String { wsRunStateKey(runState) }
+    var runStateTone: WSTone { wsRunStateTone(runState) }
 
     /// Build one workstream card. All five stage cards are always present (in
     /// WorkstreamStage.allCases order). The workstream's single queue is carried
@@ -191,14 +226,23 @@ struct WSCardModel: Equatable {
                       board: WSBoard? = nil) -> WSCardModel {
         let queue = board?.queue(forWorkstream: card.id, mapping: card.queues)
         let queueTasks = queue.flatMap { board?.tasks(inQueue: $0.id) } ?? []
+        // The human-decision audit trail (confirm / reject, R2 / R10): the back
+        // edge is what tells a rejected stage apart from a freshly finished one.
+        let history = WorkstreamsStageGate.parseHistory(card.body)
         let stages = WorkstreamStage.allCases.map { stage -> WSStageCardModel in
             let queueIDs = (stage == card.stage) ? card.queues : []
             let stageGate = (gate?.stage == stage) ? gate : nil
             // A task's stage is a direct property (A12); a legacy task without one
             // belongs to the card's current stage.
-            let stageTasks = queueTasks
-                .filter { ($0.stage ?? card.stage) == stage }
-                .map { WSTaskCardModel.build(from: $0) }
+            let stageItems = queueTasks.filter { ($0.stage ?? card.stage) == stage }
+            let stageTasks = stageItems.map { WSTaskCardModel.build(from: $0) }
+            // Derived run state (A13): pure function of the task states plus the
+            // authoritative position. Never moves `card.stage`.
+            let runState = WSRunState.stage(stage: stage, current: card.stage,
+                                            tasks: stageItems,
+                                            queueState: queue?.state,
+                                            gateState: stageGate?.state,
+                                            history: history)
             return WSStageCardModel(stage: stage,
                                     isCurrent: stage == card.stage,
                                     queueIDs: queueIDs,
@@ -206,7 +250,8 @@ struct WSCardModel: Equatable {
                                     evidence: evidence(for: stage, card: card),
                                     isExpanded: false,
                                     gateState: stageGate?.state,
-                                    missingEvidenceKeys: stageGate?.evidence.missingKeys ?? [])
+                                    missingEvidenceKeys: stageGate?.evidence.missingKeys ?? [],
+                                    runState: runState)
         }
         var meta: [WSLine] = []
         if let requirement = card.requirement, !requirement.isEmpty {
@@ -230,7 +275,9 @@ struct WSCardModel: Equatable {
                            detail: card.body.trimmingCharacters(in: .whitespacesAndNewlines),
                            stages: stages,
                            isExpanded: true,
-                           path: card.path)
+                           path: card.path,
+                           runState: WSRunState.workstream(stages.map { $0.runState },
+                                                           history: history))
     }
 
     /// The stage-level machine evidence (store design §3.2): covered at 验收,

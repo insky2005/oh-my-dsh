@@ -50,13 +50,15 @@ TMP="$(mktemp -d)"
 cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
 cp ../../platforms/macos/src/WorkstreamsStageGate.swift "$TMP/WorkstreamsStageGate.swift"
 # The card model now groups the queue engine's tasks, so the pure queue model is
-# compiled in too (Foundation only, no AppKit).
+# compiled in too (Foundation only, no AppKit). The derived run state (A13) is
+# compiled in as well.
 cp ../../platforms/macos/src/WorkstreamsQueues.swift "$TMP/WorkstreamsQueues.swift"
+cp ../../platforms/macos/src/WorkstreamsRunState.swift "$TMP/WorkstreamsRunState.swift"
 cp ../../platforms/macos/src/WorkstreamsUI.swift "$TMP/WorkstreamsUI.swift"
 cp ui-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
   -o "$TMP/ui-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsStageGate.swift" \
-  "$TMP/WorkstreamsQueues.swift" "$TMP/WorkstreamsUI.swift" "$TMP/main.swift"
+  "$TMP/WorkstreamsQueues.swift" "$TMP/WorkstreamsRunState.swift" "$TMP/WorkstreamsUI.swift" "$TMP/main.swift"
 "$TMP/ui-tests"
 rm -rf "$TMP"
 
@@ -326,5 +328,43 @@ for key in workstreams.task.state.pending workstreams.task.state.done workstream
   fi
 done
 echo "stage task create / queue start wiring guard ok"
+
+echo "--- workstreams run state guard (A13: derived, never moves the authoritative stage) ---"
+RUNSTATE="$SRC2/WorkstreamsRunState.swift"
+if [ ! -f "$RUNSTATE" ]; then
+  echo "FAIL: WorkstreamsRunState.swift is missing" >&2
+  exit 1
+fi
+for sym in 'enum WSRunState' 'static func stage(' 'static func workstream(' \
+           'static func reworkStage(' 'static func deliveryConfirmed('; do
+  if ! grep -qF "$sym" "$RUNSTATE"; then
+    echo "FAIL: WorkstreamsRunState.swift is missing $sym" >&2
+    exit 1
+  fi
+done
+# 派生谓词只读：本模块不得写 stage / 调人工门（权威 stage 只由 confirmStage 推进）。
+if grep -nE 'confirmStage|rejectStage|setStage|WorkstreamsCore\.' "$RUNSTATE" \
+   | grep -vE ':[0-9]+:[[:space:]]*//'; then
+  echo "FAIL: the run state must be derived, not written" >&2
+  exit 1
+fi
+# UI 模型接入派生，面板展示徽标。
+if ! grep -qF 'WSRunState.stage' "$SRC2/WorkstreamsUI.swift" \
+   || ! grep -qF 'WSRunState.workstream' "$SRC2/WorkstreamsUI.swift"; then
+  echo "FAIL: WorkstreamsUI.swift does not derive the run state" >&2
+  exit 1
+fi
+if ! grep -qF 'runStateKey' "$SRC2/WorkstreamsPanel.swift"; then
+  echo "FAIL: WorkstreamsPanel.swift does not show the run state" >&2
+  exit 1
+fi
+for key in workstreams.run.notStarted workstreams.run.inProgress \
+           workstreams.run.awaitingConfirmation workstreams.run.done workstreams.run.blocked; do
+  if ! grep -qF "$key" "$SRC2/WorkstreamsUI.swift"; then
+    echo "FAIL: WorkstreamsUI.swift is missing the $key L10n key" >&2
+    exit 1
+  fi
+done
+echo "workstreams run state guard ok"
 
 echo "workstreams-panel tests passed"

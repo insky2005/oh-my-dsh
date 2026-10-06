@@ -1006,6 +1006,14 @@ enum L10n {
         "workstreams.stage.delivery": ("交付", "Delivery"),
         "workstreams.stage.current": ("当前", "Current"),
         "workstreams.stage.noQueue": ("暂无队列", "No queue yet"),
+        // Derived run state (design A13 / D18): task states -> stage run state ->
+        // workstream run state. The authoritative stage still only moves at the
+        // human confirmation gate (R10).
+        "workstreams.run.notStarted": ("未开始", "Not started"),
+        "workstreams.run.inProgress": ("进行中", "In progress"),
+        "workstreams.run.awaitingConfirmation": ("待确认", "Needs review"),
+        "workstreams.run.done": ("完成", "Done"),
+        "workstreams.run.blocked": ("阻塞", "Blocked"),
         "workstreams.meta.requirement": ("需求", "Requirement"),
         "workstreams.meta.queues": ("队列", "Queues"),
         "workstreams.meta.regression": ("回归门", "Regression"),
@@ -1046,7 +1054,6 @@ enum L10n {
         "workstreams.evidence.acceptance.covered": ("覆盖锚（covered）", "Covered anchor"),
         "workstreams.evidence.delivery.pr": ("PR 事实", "PR fact"),
         "workstreams.evidence.delivery.outcome": ("结果派生（outcome）", "Derived outcome"),
-        "workstreams.gate.awaiting": ("待确认", "Needs review"),
         "workstreams.gate.confirm": ("确认并推进到下一阶段", "Confirm and advance"),
         "workstreams.gate.reject": ("退回本阶段返工", "Send back for rework"),
         "workstreams.gate.rejectTitle": ("退回本阶段返工", "Send back for rework"),

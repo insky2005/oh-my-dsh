@@ -2,7 +2,7 @@
 title: 模块：Workstreams*（事项面板）
 tags: [module, workstreams, panel, ai-native-workflow, stage-gate]
 updated: 2026-10-06T00:00:00Z
-sources: [platforms/macos/src/WorkstreamsCore.swift, platforms/macos/src/WorkstreamsUI.swift, platforms/macos/src/WorkstreamsAPI.swift, platforms/macos/src/WorkstreamsPanel.swift, platforms/macos/src/WorkstreamsQueues.swift, platforms/macos/src/WorkstreamsRunner.swift, platforms/macos/src/WorkstreamsPrompts.swift, platforms/macos/src/WorkstreamsStageGate.swift, platforms/macos/src/WorkstreamsDelivery.swift, platforms/macos/src/WSCardView.swift, platforms/macos/src/WSInlineForms.swift, platforms/macos/src/main.swift, tests/workstreams-panel/, docs/design/panels/workstream-panel-design.md, docs/design/panels/requirements-workstream-store-design.md, docs/design/panels/workstream-handoff-prompt-design.md, docs/usage/panels.md, .dsh/skills/workstream-panel/SKILL.md]
+sources: [platforms/macos/src/WorkstreamsCore.swift, platforms/macos/src/WorkstreamsUI.swift, platforms/macos/src/WorkstreamsRunState.swift, platforms/macos/src/WorkstreamsAPI.swift, platforms/macos/src/WorkstreamsPanel.swift, platforms/macos/src/WorkstreamsQueues.swift, platforms/macos/src/WorkstreamsRunner.swift, platforms/macos/src/WorkstreamsPrompts.swift, platforms/macos/src/WorkstreamsStageGate.swift, platforms/macos/src/WorkstreamsDelivery.swift, platforms/macos/src/WSCardView.swift, platforms/macos/src/WSInlineForms.swift, platforms/macos/src/main.swift, tests/workstreams-panel/, docs/design/panels/workstream-panel-design.md, docs/design/panels/requirements-workstream-store-design.md, docs/design/panels/workstream-handoff-prompt-design.md, docs/usage/panels.md, .dsh/skills/workstream-panel/SKILL.md]
 manual: false
 ---
 
@@ -16,6 +16,8 @@ manual: false
 - 二级 **阶段卡**：规划 / 设计 / 执行 / 验收 / 交付**永远各一张、固定顺序**，`WS.queues [q-...]`（一事项一队列，0..1）挂在主卡当前阶段（旧卡 `[{id, stage}]` 只取 id，阶段丢弃），验收段显示 `covered`（paths / base / head）、交付段显示 `pr / outcome / url`；
 - 三级 **任务卡**：该事项队列内的条目，按任务自带 `stage` 归到对应阶段卡；显示状态徽标与 dsh **会话**（运行态随 3s 定时器自动刷新）；
 - 顶部**扁平页签** `全部 / 规划 / 设计 / 执行 / 验收 / 交付`（`WSStageFilter`），空态三态（无工作区 / 池空 / 筛选无命中）。
+
+**运行态徽标（A13 / D18）**：`WorkstreamsRunState.swift` 的 `WSRunState.stage` / `WSRunState.workstream` 从**队列与任务状态**派生**未开始 / 进行中 / 待确认 / 完成 / 阻塞**，显示在主卡与各阶段卡；**权威 `stage` 不变**（仍只由人工确认门推进；退回返工后按 `## 阶段确认` 末条 `reject` 判返工）。
 
 纯视图模型在 `WorkstreamsUI.swift`（Foundation-only），UI 在 `WorkstreamsPanel.swift`（`WorkstreamsPanelController` + `WSBoardRootView`）；从任务面板复制并重命名的自有基件 `WSCardView.swift`（`WSInk` / `WSBadgeView` / `WSCardView` …）与 `WSInlineForms.swift`。
 
@@ -43,4 +45,4 @@ manual: false
 
 ## 测试
 
-`tests/workstreams-panel/run.sh`（**780 项**）：model 77 + API 196 + ui 95 + runner 105 + prompt 136 + delivery 111 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。
+`tests/workstreams-panel/run.sh`（**828 项**）：model 77 + API 196 + ui 143 + runner 105 + prompt 136 + delivery 111 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生**等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。

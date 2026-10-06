@@ -183,6 +183,6 @@ D10 之所以是伪问题，源于把两个正交的轴混为一谈：
 3. **接线进展**：
    - **已落地（2026-10-06）**：面板实例化并驱动 `WorkstreamsRunner`（3s `step()` 定时器、工作区切换重建、`serverPortProvider` 注入 dsh RPC）；`/api/workstreams/task/create` / `task/list` / `queue/start` / `queue/pause`；主卡「启动事项」+ 阶段卡「＋创建任务」「启动阶段」；三级任务卡展示状态 / 会话；
    - **已落地**：一事项一队列——`createStageQueue` 追加到该事项的队列、任务带 `stage`；`queue/start` 带 `stage` = 阶段级启动（只跑该阶段任务，跑完暂停队列）；
-   - **已落地**：任务运行态 → 阶段 / 事项运行态回写（阶段门读 runner 的实时板，而非磁盘快照）；
+   - **已落地（2026-10-06）**：任务运行态 → 阶段运行态 → 事项运行态回写（A13 / D18）——纯模型 `WorkstreamsRunState.swift`（`WSRunState.stage` / `WSRunState.workstream`）从**队列状态 + 任务状态**（外加 `## 阶段确认` 审计痕迹判回边）派生**未开始 / 进行中 / 待确认 / 完成 / 阻塞**，主卡与阶段卡显示徽标；**权威 `stage` 一字不改**（仍只由 `confirmStage` 推进）。阶段门读 runner 的实时板，而非磁盘快照；
    - **待办**：阶段提示词去掉 `/task-todo`，改指事项面板自有 API（技能 `workstream-panel` 同步）；
    - **待办**：`covered` / `delivery` 写路由与交付接线。

@@ -313,6 +313,8 @@ final class WSPrimaryCardView: NSView {
         titleViews.append(spacer)
         titleViews.append(WSTierBadgeView(text: L10n.tr(model.stageLabelKey), tone: model.tone,
                                           filled: model.stage == .task))
+        // Derived workstream run state (A13): the roll-up of the five stages.
+        titleViews.append(WSTierBadgeView(text: L10n.tr(model.runStateKey), tone: model.runStateTone))
         let start = CustomIconButton(glyph: .play,
                                      tooltip: L10n.tr("workstreams.start.item"), size: 22)
         start.onAction = { [weak self] in self?.onStartWorkstream?() }
@@ -379,9 +381,9 @@ final class WSPrimaryCardView: NSView {
             headerViews.append(WSTierBadgeView(text: L10n.tr("workstreams.stage.current"), tone: stage.tone,
                                                filled: stage.stage == .task))
         }
-        if stage.awaitingConfirmation {
-            headerViews.append(WSTierBadgeView(text: L10n.tr("workstreams.gate.awaiting"), tone: .warning))
-        }
+        // Derived stage run state (A13): task states -> run state. It does not
+        // move the authoritative stage; the gate buttons below still do (R10).
+        headerViews.append(WSTierBadgeView(text: L10n.tr(stage.runStateKey), tone: stage.runStateTone))
         headerViews.append(spacer)
         if !stage.queueIDs.isEmpty {
             headerViews.append(WSTierBadgeView(text: stage.queueIDs.joined(separator: ", "), tone: .neutral))
