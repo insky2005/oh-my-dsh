@@ -40,6 +40,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 - [requirements-pool-panel-design.md](design/panels/requirements-pool-panel-design.md) — 需求池面板（含想法收件箱与拆解器）：REQ/WS 读写、拆解提案与人工确认、`/api/requirements/*`（已实现）
 - [requirements-breakdown-standard-design.md](design/panels/requirements-breakdown-standard-design.md) — 需求池「拆解确认清单」标准化：四列契约、REQ 内容 × WS 状态的合并展示（已实现）
 - [planning-template-design.md](design/panels/planning-template-design.md) — 规划模板（四件套）与「无证据不进设计」门禁判据（草案）
+- [workstream-panel-design.md](design/panels/workstream-panel-design.md) — 事项面板（Workstream Panel）：全新独立面板，事项/阶段/任务三级卡片，阶段队列与人工确认门（定稿）
 - [file-panel-composer-reference.md](design/panels/file-panel-composer-reference.md) — 文件面板「添加到对话」`@` 引用
 
 ## design/channels/ — 通道设计

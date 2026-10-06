@@ -2,6 +2,7 @@
 
 > 状态：草案（WS-002 已交付；WS-005 状态派生修订 2026-10-03）· 日期：2026-10-03 · 关联：`.dsh/workstreams/WS-002.md`、`.dsh/workstreams/WS-005.md`、`.dsh/requirements/REQ-002.md`、`.dsh/requirements/README.md`、`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/workstream-handoff-prompt-design.md`
 > 修订（WS-005，2026-10-03）：需求 `state` 只留人工判断，`split` / `closed` 为派生；见 §3.1 / §5 / §6 / §10。
+> 修订（2026-10-06）：`WS.queues` 扩展为 `[{id, stage}]`（阶段 ↔ 队列映射，随仓库提交）；见 §2 / §3.2 / §3.4 / §8，来源 `docs/design/panels/workstream-panel-design.md` §9 D1。
 
 ## 1. 目的与范围
 
@@ -30,7 +31,7 @@
 
 - **WS → REQ**：`WS.requirement` 是权威正向指针（0..1）。`REQ.workstreams` 是**派生缓存**（由所有 `requirement == 本需求` 的 WS 反向聚合），可缺省、可重算，不得当作第二权威。
 - **WS → REG**：`WS.regression` 指向它触及的回归门（0..1）。门定义在 REG 卡片内。
-- **WS → queue**：`WS.queues`（committed）为权威；队列 JSON 里的 `workstream` 是运行时镜像（ignored，可重建）。
+- **WS → queue**：`WS.queues`（committed）为权威，条目含 `stage`（`[{id, stage}]`，即阶段 ↔ 队列映射）；队列 JSON 里的 `workstream` 是运行时镜像（ignored，可重建）。
 - **需求关闭**：**派生谓词**，不落字段（§5 / §6）。
 
 ## 3. Schema
@@ -91,7 +92,9 @@ covered:                    # 验收 / 交付阶段必选（点记录，不可�
   base: <blob/tree id>      # 不可变内容标识（非分支、非裸 commit）
   head: <blob/tree id>
 regression: REG-001         # 可选（0..1）
-queues: [q-...]             # 可选，关联执行载体（权威边）
+queues:                     # 可选，关联执行载体（权威边）；阶段 ↔ 队列映射
+  - id: q-...               # 队列标识（本机运行时）
+    stage: planning         # 该队列承载的阶段
 delivery:                   # 交付阶段出现；只放事实，outcome 为派生缓存
   pr: 78
   url: https://github.com/...
@@ -134,7 +137,7 @@ updated: 2026-10-03
 | WS.requirement | 可选（0..1） | 权威正向指针 |
 | WS.covered.paths/base/head | 验收起必选 | 点记录，锚变更 |
 | WS.regression | 可选（0..1） | 回归门 |
-| WS.queues | 可选（0..N） | 关联队列（权威边） |
+| WS.queues | 可选（0..N） | 关联队列（权威边），条目 `{id, stage}`：阶段 ↔ 队列映射 |
 | WS.delivery.pr / url | 交付阶段 | 事实字段 |
 | WS.delivery.outcome | 派生缓存 | 交付追踪写入；禁止手写（§5） |
 | WS.closed | 禁止 | 终态派生谓词 |
@@ -250,7 +253,7 @@ done
 | 层级 | 追踪单元 | 执行载体 |
 | 宿主 | `.dsh/workstreams/WS-*.md`（committed） | `.dsh/tasks/queues.json`（ignored） |
 | 基数 | 1 事项 : 0..N 队列 | 1 队列 : 0..1 事项 |
-| 关联权威 | `WS.queues`（committed） | 队列内 `workstream` 为运行时镜像（可重建） |
+| 关联权威 | `WS.queues`（committed，条目 `{id, stage}`） | 队列内 `workstream` 为运行时镜像（可重建） |
 | 「完成」语义 | 终态由交付结果**派生** | `.done` 只表示队列跑完 |
 
 - 事项**可以没有队列**（纯调研 / 文档类），也可以关联多个队列（多阶段执行）；
