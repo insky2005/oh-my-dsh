@@ -1025,6 +1025,12 @@ enum L10n {
         "workstreams.openCard": ("打开事项卡", "Open workstream card"),
         "workstreams.expand": ("展开", "Expand"),
         "workstreams.collapse": ("收起", "Collapse"),
+        "workstreams.errInterrupted": ("任务因应用重启而中断，可重试", "Task interrupted by an app restart; retry it"),
+        "workstreams.errSessionGone": ("会话已从 dsh 消失，无法确认结果", "The session is gone from dsh; the outcome is unknown"),
+        "workstreams.errSession": ("无法创建会话", "Could not create a session"),
+        "workstreams.errPrompt": ("无法发送提示词", "Could not send the prompt"),
+        "workstreams.errTimeout": ("任务超时已被取消", "The task timed out and was cancelled"),
+        "workstreams.errUnverified": ("会话结束但未回显完成标记，待确认", "The session ended without the completion marker; needs review"),
     ]
 
     /// Localize a key, optionally filling %@ / %d placeholders.

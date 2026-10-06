@@ -7,6 +7,10 @@
 #      codes and response shapes (no AppKit, no disk).
 #   3. the pure view models (WorkstreamsUI.swift): the three-level card model,
 #      the top stage filter and the empty state.
+#   4. the queue engine (WorkstreamsQueues.swift + WorkstreamsRunner.swift): the
+#      serial step/pump phase machine, the session lifecycle (create -> name ->
+#      prompt -> poll -> cancel / retry), restart recovery and the
+#      queues-local persistence under .dsh/workstreams/.
 # No AppKit, no dsh server, no window. Usage: tests/workstreams-panel/run.sh
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -42,6 +46,18 @@ swiftc -swift-version 5 -module-cache-path "$CACHE" \
 "$TMP/ui-tests"
 rm -rf "$TMP"
 
+echo "--- workstreams runner (serial pump / session lifecycle / cancel / retry / restart) ---"
+TMP="$(mktemp -d)"
+cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
+cp ../../platforms/macos/src/WorkstreamsQueues.swift "$TMP/WorkstreamsQueues.swift"
+cp ../../platforms/macos/src/WorkstreamsRunner.swift "$TMP/WorkstreamsRunner.swift"
+cp runner-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
+swiftc -swift-version 5 -module-cache-path "$CACHE" \
+  -o "$TMP/runner-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsQueues.swift" \
+  "$TMP/WorkstreamsRunner.swift" "$TMP/main.swift"
+"$TMP/runner-tests"
+rm -rf "$TMP"
+
 
 echo "--- view base namespace guard (WSCardView / WSInlineForms / WorkstreamsPanel, design A6) ---"
 SRC2="../../platforms/macos/src"
@@ -61,6 +77,22 @@ for sym in WSCardView WSBadgeView WSProgressBarView WSQueueHeaderView WSQueueBlo
   fi
 done
 echo "view base namespace guard: $(for s in WSCardView WSBadgeView WSComposerView WSFormSheetHostView; do printf "%s " "$s"; done)ok"
+
+echo "--- workstreams queue engine isolation guard (A1 / A10 / D8) ---"
+# The engine is a copy, not a caller: it must not reference the tasks panel's model /
+# runner / store symbols in CODE (comment lines may cite them as provenance), and it
+# must never touch the tasks storage path.
+ENGINE="$SRC2/WorkstreamsQueues.swift $SRC2/WorkstreamsRunner.swift"
+if grep -nE '\b(TasksRunner|TasksCore|TasksStore|TaskBoard|TaskItem|TaskQueue|TaskState|TaskFailure|TaskPrompts|TaskLocalState|TaskDraft)\b' $ENGINE \
+   | grep -vE ':[0-9]+:[[:space:]]*//' ; then
+  echo "FAIL: the workstreams queue engine references tasks-panel symbols in code" >&2
+  exit 1
+fi
+if grep -n 'dsh/tasks' $ENGINE | grep -vE ':[0-9]+:[[:space:]]*//' ; then
+  echo "FAIL: the workstreams queue engine must not touch .dsh/tasks/" >&2
+  exit 1
+fi
+echo "workstreams queue engine isolation guard ok"
 
 echo "--- workstreams panel surface guard (PanelSurface / PanelControl, no new token) ---"
 SRC3="../../platforms/macos/src"
