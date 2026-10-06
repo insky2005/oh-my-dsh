@@ -1,9 +1,9 @@
 # 右栏面板详细说明
 
-本文是 oh-my-dsh 右栏**十个原生面板**的完整说明（特性、边界、已知限制与设计文档）。
-窗口最右侧是**活动栏**（图标入口，十个面板互斥切换，**首位是「项目」**），图标自上而下的顺序与下文一致：
+本文是 oh-my-dsh 右栏**十一个原生面板**的完整说明（特性、边界、已知限制与设计文档）。
+窗口最右侧是**活动栏**（图标入口，十一个面板互斥切换，**首位是「项目」**），图标自上而下的顺序与下文一致：
 
-**项目 → 文件 → 终端 → Repo Wiki 知识库 → 需求池 → 任务 → 通道 → 审查 → 浏览器 → 技能**
+**项目 → 文件 → 终端 → Repo Wiki 知识库 → 需求池 → 事项 → 任务 → 通道 → 审查 → 浏览器 → 技能**
 
 简要说明与截图见 [README 的「右栏面板」](../../README.md#右栏面板)；面板配色方案见 [`docs/design/shell/ui-color-scheme.md`](../design/shell/ui-color-scheme.md)。
 
@@ -77,6 +77,22 @@ AI 原生工作流的**前端三件**：想法收件箱、需求池、拆解器�
 - **使用说明**：右上角 `?` 始终可打开「需求池使用说明」抽屉（**创建需求 / 细化需求 / 拆解事项** 三节，每节分「在面板」「在对话」两条操作）；**池为空时同一份说明直接铺在内容区**，不用先点帮助；
 - **已知限制**：`closed` 只读卡片里 `delivery.outcome` 的派生缓存、不联网；PR 状态的网络派生仍由 `node .dsh/tools/derive-status.mjs` 完成（见 [AI 原生工作流使用说明](ai-native-workflow-manual.md)）；
 - 设计与 API 契约：`docs/design/panels/requirements-pool-panel-design.md`；存储 schema：`docs/design/panels/requirements-workstream-store-design.md`。
+
+## 事项面板（`⌥⌘K` / 活动栏第 6 位「事项」图标）
+
+当前工作区的**事项（Workstream）中心**：把 `WS-*.md` 卡按「事项 → 阶段 → 任务」三级卡片展示，并在阶段之间设**人工确认门**。AI 原生工作流的第三件——需求池拆出事项之后，由它推进 **规划 / 设计 / 执行 / 验收 / 交付**。
+
+- **全新独立面板（第 11 个，clean-room）**：按设计 A1/A6/A10 实现，**不复用任务面板代码**——阶段队列引擎、交付逻辑、卡片 / 表单视图基件都是事项面板**自有**的 `WS*` 文件（`Workstreams*.swift` / `WSCardView.swift` / `WSInlineForms.swift`），只共享壳层基件（`PanelSurface` / `PanelControl` / `PanelTabButton` 等）；配色不新增令牌，落在面板底色 + 控件两档之内（见 [配色方案](../design/shell/ui-color-scheme.md)）；
+- **三级卡片**：一级是**事项主卡**（`WS-id 标题 [需求][队列][回归门] … 状态`，展开后是五张阶段卡）；二级是**阶段卡**——规划 / 设计 / 执行 / 验收 / 交付**永远各一张、按固定顺序**，`WS.queues [{id, stage}]` 按阶段归位（旧卡里缺 `stage` 的队列回退到主卡当前阶段），验收段显示 `covered`（paths / base / head）证据、交付段显示 `pr / outcome / link`；三级是**阶段队列内的任务卡**；
+- **阶段筛选**：顶部工具条是**扁平页签** `全部 / 规划 / 设计 / 执行 / 验收 / 交付`（判据由纯模型 `WSStageFilter` 给出，只命中同阶段），右侧显示事项总数；空态分三态（**无工作区 / 池为空 / 筛选无命中**）；
+- **人工确认门（R10）**：**阶段队列 `.done` ≠ 阶段完成**——每个阶段 = **机检证据谓词 AND 人工确认**。机检：规划要「四件套」（目标 WHAT / 边界 / 验收标准 AC / 阶段裁剪声明）、设计要「设计段非空 + 引用的设计文档真实存在 + 待确认 Q 已关闭」、执行要「阶段队列 `.done` 且队内任务都有完成证据（marker / 人在卡片上确认）」、验收要「`## 验收` 记录 + `covered` 锚变更」、交付要「PR 事实 + outcome 派生」。**证据不足时**卡片进入**「待确认」**并列出缺条（`WorkstreamsStageGate`），此时「确认并推进」被拒（`evidence-missing`，不推进 `stage`）；
+- **确认 / 退回**：门通过后卡片出现**「确认并推进」**（写回 `stage`）与**「退回本阶段返工」**（弹**必填原因**，写 `## 阶段确认` 留痕、可带 `target` 回边）；**只有人**在面板确认才推进（agent 绝不调 `confirm`）；
+- **写权反转（Phase B）**：事项面板是 `WS-*.md` 的**唯一写者**，agent 不直接改 `.dsh` 文件，改事项一律走面板 localhost API **`/api/workstreams/*`**（`list` / `create` / `update` / `stage` / `plan` / `queues`，外加人工门 `stage/confirm`、`stage/reject`）；配套内置技能 **`workstream-panel`**（App 启动安装到全局 `$DSH_HOME/skills/workstream-panel/SKILL.md`）把「不直接改 .dsh、`confirm` 是人工门、不自签」写成硬规则；
+- **阶段提示词**：面板生成的阶段交接提示词（`WorkstreamHandoff`）给出公共头（事项 `.dsh/workstreams/<WS-ID>.md`、需求指针、当前 stage 与动作、规划目标）与动作规则（只讨论 / 只写设计 / 只拆不胀 / 回边留痕 / 交付事实由面板记录）；runner 把它原样写进任务 body，并按执行阶段统一追加完成 marker；
+- **存储隔离**：事项卡与 `WS.queues` 落 `.dsh/workstreams/`（committed，随仓库提交）；阶段队列与三级任务落 `.dsh/workstreams/queues.json`、运行时会话绑定落 `local.json`（**ignored**）；**绝不读写 `.dsh/tasks/*`**，也不依赖 `/api/tasks/*`（设计 A1 / D8，源码守卫固化）；
+- **入口**：活动栏槽位**紧邻「需求池」之后**，图标 `square.stack.3d.up`，快捷键 **`⌥⌘K`**（视图菜单同名项）；面板宽度下限 320pt；点事项卡名可在文件面板打开对应 `WS-*.md`；
+- **已知限制**：**阶段队列的执行引擎（`WorkstreamsRunner`）与交付模块（`WorkstreamsDelivery`）已独立实现并有完整无头测试，但本期尚未接线到面板**——面板能读 `.dsh/workstreams/queues.json` 做门判定，却还没有「新建 / 启动阶段队列」的入口，因此**执行阶段的「任务三级卡」暂为空**；`covered` / `delivery` 也还没有写路由。规划 / 设计阶段的证据读取、人工确认 / 退回、阶段筛选与空态均已可用；
+- 设计、存储与提示词文档：`docs/design/panels/workstream-panel-design.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/design/panels/workstream-handoff-prompt-design.md`；技能：`.dsh/skills/workstream-panel/SKILL.md`。
 
 ## 任务面板（`⌥⌘J` / 活动栏「任务」图标）
 

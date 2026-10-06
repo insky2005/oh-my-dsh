@@ -1,6 +1,6 @@
 # 事项面板设计（Workstream Panel · 全新独立面板）
 
-> 状态：**定稿**（2026-10-06 裁决完成；待落需求卡 / 拆解后进入实现）· 日期：2026-10-06
+> 状态：**已落地**（2026-10-06 实现落地；设计定稿于 2026-10-06）· 日期：2026-10-06
 > 关联（上游模型）：`docs/research/ai-native-workflow-architecture.md`（§2 / §3.1 / §4 / §7 原则 5 / §9 Q2·Q11）、`.dsh/ai-native-workflow-spec.md`（R1 / R5 / R6 / R10 / R12）
 > 关联（存储 / 面板体例）：`docs/design/panels/requirements-workstream-store-design.md`（REQ/WS/REG schema、Phase A/B 写权）、`docs/design/panels/requirements-pool-panel-design.md`、`docs/design/panels/workstream-handoff-prompt-design.md`、`docs/design/panels/planning-template-design.md`、`docs/design/panels/task-completion-verification-design.md`
 > 参考（交互样板，**不复用其代码**）：`docs/design/panels/issue-runner-design.md`、`docs/design/panels/tasks-queue-session-loop-design.md`
@@ -10,7 +10,7 @@
 
 - **是什么**：从「任务面板升格」的复审出发，最终定形的**事项面板产品设计**——实体层级、阶段到队列的映射、生命周期与人工确认门、与既有面板/架构的关系，以及**决策清单**（§9）。
 - **不是什么**：不是实现方案（无字段级 API / 类图 / 文件清单），不含排期；待确认项裁决后才进入实现设计与拆解。
-- **怎么用**：先读 §2–§5 的定型模型；§9 记录 2026-10-06 的裁决结果与仍待细化的细项；据此转为定稿并拆解事项。
+- **怎么用**：先读 §2–§5 的定型模型；§9 记录 2026-10-06 的裁决结果与仍待细化的细项。本设计已落地（实现清单见 §10），仅「阶段队列引擎 / 交付模块接线面板」与 `covered` / `delivery` 写路由尚未完成。
 
 ## 1. 背景：为什么不是「让任务面板覆盖各阶段」
 
@@ -129,18 +129,18 @@
 | D2 | 阶段完成 = 人工确认门 | 已定（A4） | — |
 | D3 | 各阶段完成证据谓词 | **同意**：每阶段 = 机检谓词 AND 人工确认门 | 规划复用 planning-template §4；执行对齐 completion-verification P1–P5；验收=证据 + `covered` 锚变更；交付=PR 事实 + outcome 派生 |
 | D4 | 验收是否建队列 | **A**：不建队列，纯人 sign-off（可选一个证据收集任务）；**必要时再迭代** | 贴合「验主人轻 agent」 |
-| D5b | 写权反转的落地时点 | **A**：本期就做，含 `/api/workstreams/*` + 技能改造 | 面板成为 `WS-*.md` 唯一写者；agent 不再直写 |
+| D5b | 写权反转的落地时点 | **A**：本期就做，含 `/api/workstreams/*` + 技能改造（**已落地**） | 面板成为 `WS-*.md` 唯一写者；agent 不再直写（技能 `workstream-panel`） |
 | D6 | 三列表面板分工 | **同意** | 需求池=REQ 中心（子事项只读、点击跳事项面板）；事项面板=当前工作区 WS 中心；项目面板=跨工作区总览（后续）。防重：REQ 列表只在需求池 |
 | D8 | 三级任务数据落点 | **A**：事项面板自有文件（如 `.dsh/workstreams/queues.json`，ignored） | **不得触碰 `.dsh/tasks/*`** |
 | D14 | 命名 / 槽位 / 快捷键 | 活动栏槽位**紧邻「需求池」之后**；名「事项」（Workstreams） | 快捷键等细节待定 |
-| D15 | 阶段提示词 | 以 `workstream-handoff-prompt-design.md` 为依据，后续再细化 | — |
+| D15 | 阶段提示词 | 以 `workstream-handoff-prompt-design.md` 为依据（**已落地**，`WorkstreamsPrompts.swift`） | 面板生成、注入任务 body；回归门行按卡片 `regression` 有无出现 |
 
-### 9.1 仍待细化（不阻塞定稿）
+### 9.1 细项（均已于 2026-10-06 落地）
 
-- 面板快捷键（建议 `⌥⌘K`，待查占用）；
-- 各阶段提示词的具体措辞（D15 细化）；
-- `WS.queues` 扩展后的读取兼容（旧 `[q-...]` 形式）；
-- 阶段「待确认」在 UI 上的表达与退回原因（对齐需求池驳回抽屉）。
+- 面板快捷键：采纳 **`⌥⌘K`**（经查全源码无占用），活动栏槽位紧邻「需求池」之后；
+- 各阶段提示词措辞：已落到 `WorkstreamsPrompts.swift`（`WorkstreamHandoff`）；
+- `WS.queues` 扩展后的读取兼容：`WorkstreamsCore` 兼容旧 `[q-...]` 形式；
+- 阶段「待确认」的 UI 表达与退回原因：阶段卡「待确认」徽标 + 「确认 / 退回」（退回弹必填原因抽屉，对齐需求池驳回）。
 
 ### 9.2 已关闭项
 
@@ -166,5 +166,6 @@ D10 之所以是伪问题，源于把两个正交的轴混为一谈：
 
 ## 10. 下一步
 
-1. 本文件已**定稿**；上游文档已同步（见 §7）；
-2. **剩余唯一入口**：按 `.dsh/ai-native-workflow-spec.md` **落需求卡 → 拆解事项 → 启动任务队列**，才进入实现（R12）。
+1. 本文件已**定稿并落地**（2026-10-06）：上游文档已同步（见 §7），面板 / 模型 / API / 队列引擎 / 阶段门 / 交付 / 技能均已实现；
+2. **已落地**：`WorkstreamsCore` / `WorkstreamsUI` / `WorkstreamsPanel` / `WorkstreamsAPI` / `WorkstreamsQueues`+`WorkstreamsRunner` / `WorkstreamsStageGate` / `WorkstreamsPrompts` / `WorkstreamsDelivery` / `WSCardView`+`WSInlineForms`，内置技能 `workstream-panel`；用户说明见 `docs/usage/panels.md` 与 `CHANGELOG.md`；
+3. **尚未接线**：阶段队列引擎与交付模块还没有被面板实例化（执行阶段的任务三级卡暂为空），`covered` / `delivery` 也还没有写路由——接线后本设计的完整闭环才生效。

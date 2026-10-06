@@ -1,6 +1,6 @@
 # 事项交接提示词（Workstream Handoff Prompt）设计
 
-> 状态：草案 · 日期：2026-10-03 · 关联：`docs/research/ai-native-workflow-architecture.md`、`.dsh/requirements/README.md`、`docs/design/panels/requirements-workstream-store-design.md`（待建）
+> 状态：已落地（`WorkstreamsPrompts.swift`；提示词由面板生成、注入任务 body）· 日期：2026-10-03（2026-10-06 落地）· 关联：`docs/research/ai-native-workflow-architecture.md`、`.dsh/requirements/README.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/design/panels/workstream-panel-design.md`
 
 ## 1. 目的
 

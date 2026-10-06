@@ -48,4 +48,4 @@ manual: false
 - 目录树根失败时提供手动选文件夹兜底（RPC 失败场景）；
 - **不透明自绘视图的绘制契约**：内容容器要放到**最底层/最先添加**，头部条最后添加；即使如此也不能依赖「脏矩形不会越界」——见上表 `DynamicFillView` 与 `docs/fixes/terminal-header-fix.md` 的合成陷阱（同源问题的另一面）；
 - 当前实际接入壳层的是 FilePanel（`previewPanel` 类型为 `FilePanelController`），本文件不再被实例化，仅保留作为回滚基线与共享 UI 组件来源；
-- **分叉提示**：FilePanel 已进一步演进——本文件的 `setProjectDirectory` 仍是「只重设树根、不动已开页签」，而 FilePanel 会在换根时按工作区**记忆并关闭 / 重开页签**；本文件的头部仍是纯图标按钮（功能靠 tooltip），「打开项目 ▾ / 打开文件 ▾」菜单按钮与 `OpenWithCatalog` 只接在 FilePanel 上（见 [file-panel](modules/file-panel.md)）；回滚到大基线时这些能力随之消失。
+- **分叉提示**：FilePanel 已进一步演进——本文件的 `setProjectDirectory` 仍是「只重设树根、不动已开页签」，而 FilePanel 会在换根时按工作区**记忆并关闭 / 重开页签**；本文件的头部仍是纯图标按钮（功能靠 tooltip），「打开项目 ▾ / 打开文件 ▾」菜单按钮与 `OpenWithCatalog` 只接在 FilePanel 上（见 [file-panel](file-panel.md)）；回滚到大基线时这些能力随之消失。

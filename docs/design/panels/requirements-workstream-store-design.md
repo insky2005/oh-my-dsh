@@ -1,6 +1,6 @@
 # 需求 / 事项存储（.dsh）设计
 
-> 状态：草案（WS-002 已交付；WS-005 状态派生修订 2026-10-03）· 日期：2026-10-03 · 关联：`.dsh/workstreams/WS-002.md`、`.dsh/workstreams/WS-005.md`、`.dsh/requirements/REQ-002.md`、`.dsh/requirements/README.md`、`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/workstream-handoff-prompt-design.md`
+> 状态：已落地（WS-002 已交付；WS-005 状态派生修订 2026-10-03；Phase B 写权反转随事项面板落地）· 日期：2026-10-03（2026-10-06 写权反转落地） · 关联：`.dsh/workstreams/WS-002.md`、`.dsh/workstreams/WS-005.md`、`.dsh/requirements/REQ-002.md`、`.dsh/requirements/README.md`、`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/workstream-handoff-prompt-design.md`
 > 修订（WS-005，2026-10-03）：需求 `state` 只留人工判断，`split` / `closed` 为派生；见 §3.1 / §5 / §6 / §10。
 > 修订（2026-10-06）：`WS.queues` 扩展为 `[{id, stage}]`（阶段 ↔ 队列映射，随仓库提交）；见 §2 / §3.2 / §3.4 / §8，来源 `docs/design/panels/workstream-panel-design.md` §9 D1。
 

@@ -1,7 +1,7 @@
 # 壳层 UI 配色方案（oh-my-dsh 原生面板）
 
 > 适用范围：`platforms/macos/src/` 下所有原生面板（文件 / 终端 / 浏览器 / Wiki /
-> 任务 / 通道 / 审查 / 技能）及其共享基件。
+> 需求池 / 事项 / 任务 / 通道 / 审查 / 技能）及其共享基件。
 > **单一事实来源**：`platforms/macos/src/PanelSurface.swift`——改色只改这一个文件。
 > 对应提交：`9cf1f1b`（面板底色）· `40a4377`（控件两档）· `5d659c5`（列表内容区修正）
 > 最后更新：2026-09-17
@@ -20,7 +20,7 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
 3. **显式分档，不用动态系统色做自绘填充**：自绘 `draw(_:)` 一律用
    `PanelSurface.color(dark:)` / `PanelControl.fill(dark:highlighted:)` 按
    `effectiveAppearance` 显式取色——动态色在 layer-backed 窗口里解析不稳
-   （见 [terminal-header-fix](../fixes/terminal-header-fix.md)）；只有 `NSTextView` /
+   （见 [terminal-header-fix](../../fixes/terminal-header-fix.md)）；只有 `NSTextView` /
    `NSScrollView` / `PDFView` 这类系统视图才用 `*.dynamic` 动态色。
 4. **CALayer 背景不吃动态色**：`layer.backgroundColor` 是 CGColor 快照，必须用
    `fill(dark:highlighted:)` 显式解析，并在 `viewDidChangeEffectiveAppearance` 里重设。
@@ -110,7 +110,7 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
 | 位置 | 实现 |
 |---|---|
 | 面板 header / toolbar / status bar | `DynamicFillView()`（`Kind` 默认 `.panel`），各面板 `buildUI()` |
-| 面板根视图 | `TerminalRootView` / `WikiRootView` / `ChannelRootView` / `SkillsRootView` / `IssueRunnerRootView` / `ReviewRootView` / `BrowserRootView` |
+| 面板根视图 | `TerminalRootView` / `WikiRootView` / `ChannelRootView` / `SkillsRootView` / `IssueRunnerRootView` / `ReviewRootView` / `BrowserRootView` / `WSBoardRootView`（事项面板） |
 | 面板内容容器 | `contentContainer`（终端 / 通道 / 技能 …），`DynamicFillView()` |
 | 活动栏（最左图标条） | `main.swift` `activityBar` |
 | 终端屏幕底 + 反色单元格默认色 | `TerminalView.draw` / `effectiveCell` |
@@ -133,6 +133,8 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
 | 卡片：通道 header 块、会话块 | 常态档 | 会话标题条 → 高亮档 | `RoundedBlockView`（`ChannelHeaderBlock` / `ChannelSessionRow`）/ `SessionTitleBar` |
 | 卡片：通道配置卡 | 常态档 | — | `ChannelCardView` |
 | 卡片：审查树 | session / turn 容器 → 常态档 | 最内层 block → 高亮档 | `ReviewInk.sessionFill` / `.turnFill` / `.blockFill` |
+| 卡片：事项主卡 / 阶段卡 / 任务卡（事项面板） | 常态档 | 嵌套下沉（recessed）→ 高亮档 | `WSInk.fill(dark:recessed:)`（只委托 `PanelControl.fill`） |
+| 阶段筛选页签（事项面板） | 常态档 | 选中或 hover → 高亮档 + accent 下划线 | `WSStageFilterStrip`（`PanelControl.fill(dark:highlighted:)` + `controlAccentColor`） |
 | 消息气泡（中性 / 出站） | — | 高亮档（落在卡片底色上仍有对比） | `MessageBubble` |
 
 ---
@@ -194,7 +196,7 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
    bounds 更大的 dirtyRect，直接 fill 会盖住 z 序更低的兄弟视图（技能面板 header
    消失过，见 `tests/skills-panel/render-tests.swift`）；
 7. opaque 且无独立 layer 的视图，绘制会溢出到父视图 layer（见
-   [terminal-header-fix](../fixes/terminal-header-fix.md)：contentContainer 需
+   [terminal-header-fix](../../fixes/terminal-header-fix.md)：contentContainer 需
    `wantsLayer + masksToBounds`）；
 8. 新增令牌一律加在 `PanelSurface.swift`，不要在面板里写死灰度。
 
@@ -205,7 +207,8 @@ dsh web 的 `neutral bluish` 设计令牌，深浅两套主题一一对应。
 - `tests/skills-panel/run.sh` 的离屏渲染回归（真实 `DynamicFillView` / `HoverButton`）：
   断言 6 个令牌的取值、按外观取档、以及 `.panel` / 按钮常态 / 按钮选中**实际渲染**出的
   像素颜色等于令牌值（深浅两种外观各一条）；
-- `scripts/local-ci.sh swift`：全部无头面板用例 + `swiftc` 全量编译检查。
+- `scripts/local-ci.sh swift`：全部无头面板用例 + `swiftc` 全量编译检查；
+- `tests/workstreams-panel/run.sh` 的**面板配色守卫**：断言事项面板源码只用 `PanelSurface` / `PanelControl`，禁止在面板里新写 `static let …: NSColor` 自建灰阶令牌。
 
 ---
 
