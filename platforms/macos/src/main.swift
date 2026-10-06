@@ -995,7 +995,8 @@ enum L10n {
         "requirements.error.unknownState": ("无效的状态", "Invalid state"),
         "requirements.error.generic": ("操作失败：%@", "Failed: %@"),
         "requirements.needsWorkspace": ("请先选择一个工作区", "Select a workspace first"),
-        "requirements.openWorkstream": ("打开事项卡", "Open workstream card"),
+        "requirements.openWorkstream": ("打开卡文件", "Open card file"),
+        "requirements.openWorkstreamFocus": ("在事项面板中打开", "Open in workstreams panel"),
         // workstreams panel (slot #11)
         "workstreams.title": ("事项", "Workstreams"),
         "workstreams.count": ("%d 个事项", "%d workstreams"),
@@ -3016,6 +3017,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         requirementsPanel.onFocus = { [weak self] _ in
             self?.setRightPanel(.requirements)
         }
+        // 子事项 ↗：跳到事项面板并聚焦该 WS（次级按钮仍打开卡文件，D6）。
+        requirementsPanel.onFocusWorkstream = { [weak self] id in
+            self?.focusWorkstream(id)
+        }
         // 拆解：把提示词直接发进对话——优先该卡片的**来源会话**（由 agent 落卡时
         // 带上 $DSH_SESSION_ID），否则当前会话；agent 随后调面板 API 提方案。
         requirementsPanel.onBreakdown = { [weak self] id, title, session in
@@ -3040,6 +3045,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         workstreamsPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
         workstreamsPanel.workspaceProvider = { [weak self] in self?.activeWorkspacePath() }
         workstreamsPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
+        // 聚焦通道（A11 / D6）：/api/workstreams/* 带 focus 时把右栏切到事项面板。
+        workstreamsPanel.onFocus = { [weak self] _ in self?.setRightPanel(.workstreams) }
         // 「在会话中处理」(design §6): reuse the workstream's bound session when it
         // is alive, otherwise create one and bind it (falling back to the current
         // session) — the workstream analogue of the requirements pool's「细化」.
@@ -5583,6 +5590,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    /// 需求池子事项 ↗（D6）：切到事项面板并高亮该 WS。setRightPanel 会按需
+    /// 加载面板，随后 focus 在面板内解析工作区并滚动 / 高亮；工作区不变，故
+    /// 无需 adopt。
+    private func focusWorkstream(_ workstreamId: String) {
+        setRightPanel(.workstreams)
+        workstreamsPanel?.focus(onWorkstream: workstreamId)
+    }
+
     /// 「在会话中处理」(design §6): the workstream analogue of the requirements
     /// pool's「细化」. Reuse the bound session when it is alive; otherwise create a
     /// session and bind it; otherwise fall back to the current session. The binding
@@ -7135,6 +7150,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         bridge.workstreamsDelivery = { [weak self] request in
             self?.workstreamsPanel?.apiWorkstreamsDelivery(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        // 聚焦通道（A11 / D6）：亮面板并按 id 高亮事项。任何带 focus 的
+        // /api/workstreams/* 请求（写操作 focus:true 也走这里）都会命中。
+        bridge.workstreamsFocus = { [weak self] workspace, id in
+            self?.workstreamsPanel?.apiWorkstreamsFocus(workspace: workspace, id: id)
         }
         bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
         bridge.hidePanel = { [weak self] in

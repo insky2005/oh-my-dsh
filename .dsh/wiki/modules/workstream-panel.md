@@ -25,6 +25,7 @@ manual: false
 
 - `WorkstreamsCore.swift`：`WS-*.md` frontmatter 解析（自写缩进式 YAML 子集，剥离行内注释）、固定键序序列化、**原子写**、`create/update/setStage/setQueues/setCovered/setDelivery`、**六位零填充 id** `WS-%06d`、`validate()`（含 `covered` 必填等），错误码 `evidence-missing` / `stage-changed` / `missing-reason`（前两者 409）；
 - `WorkstreamsAPI.swift`：纯路由 `/api/workstreams/*`——`list` / `create` / `update` / `stage` / `plan` / `queues` + 人工门 `stage/confirm`、`stage/reject`，外加 **`task/list` / `task/create` / `queue/start` / `queue/pause`**（A14；`task/create` 支持 `titles[]` 或仅 `body`，按阶段默认动作注入交接提示词；`queue/start` 带 `stage` = 阶段级启动）；错误码 / status 对齐 `/api/requirements/*`，由 `BrowserAPI` 前缀拦截并桥接到主线程（`WorkstreamsAPIDelegate`，面板是唯一写者）；
+- **focus 通道**：任何路由可带 `focus`（写操作 body 字段、读操作 `?focus=`，接受 `true` / `1` / `yes` / `on`，默认 `false`）；仅在请求被处理（HTTP 200）时触发，经 `WorkstreamsAPIDelegate.apiWorkstreamsFocus` → `BrowserAPIBridge.workstreamsFocus`（主线程）亮起面板并按 `id`（create 取新建卡 id）高亮。面板内 `focus(onWorkstream:)` 加**强调色描边**并滚动到可见，被阶段筛选隐藏时回落「全部」；需求池子事项主 `↗` 走该通道（次级 `doc.text` 打开卡文件，D6）；
 - 写权反转（Phase B，D5b）：面板是 `WS-*.md` 唯一写者，agent 经 API 改事项、不直接改 `.dsh`；配套内置技能 `workstream-panel`（见 [skill-installer](skill-installer.md)）。
 
 ## 阶段队列引擎与阶段门
@@ -47,4 +48,4 @@ manual: false
 
 ## 测试
 
-`tests/workstreams-panel/run.sh`（**944 项**）：model 93 + API 244 + ui 143 + runner 122 + prompt 155 + delivery 127 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **事项会话绑定与在会话中处理**等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。
+`tests/workstreams-panel/run.sh`（**975 项**）：model 93 + API 263 + ui 155 + runner 122 + prompt 155 + delivery 127 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **事项会话绑定与在会话中处理** / **focus 通道（面板高亮滚动 + API focus + 需求池跳转）**等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。

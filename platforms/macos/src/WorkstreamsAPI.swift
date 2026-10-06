@@ -11,6 +11,11 @@
 //  Error codes / status mapping deliberately mirror /api/requirements/* (and the
 //  WorkstreamError.status the model layer already defines).
 //
+//  Focus channel: any route may carry `focus` (a body field on writes, a query
+//  value on reads). On a handled request the panel lights up and, when the route
+//  names / creates a workstream, highlights that card. `focus` defaults false so
+//  an ordinary agent write never steals the panel.
+//
 //  Routes (see the queue task and docs/design/panels/workstream-panel-design.md):
 //    GET  /api/workstreams/list     ?workspace=...
 //    GET  /api/workstreams/bound    ?session=$DSH_SESSION_ID   (reverse lookup)
@@ -159,6 +164,22 @@ func workstreamsSession(_ body: [String: Any]) -> String? {
     wsNonEmpty(body["session"] as? String)
 }
 
+/// The focus channel flag, read from a write body (`focus`) or a read query
+/// (`?focus=`). A Bool, a number, or the strings true/1/yes/on count; anything
+/// else is false. Default false keeps an agent write from stealing the panel
+/// unless it explicitly asks (`focus:true`).
+func workstreamsFocusFlag(_ raw: Any?) -> Bool {
+    if let flag = raw as? Bool { return flag }
+    if let number = raw as? NSNumber { return number.boolValue }
+    if let text = raw as? String {
+        switch text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on": return true
+        default: return false
+        }
+    }
+    return false
+}
+
 // MARK: - Delegate
 
 /// Implemented by the Workstreams panel controller (wired through BrowserAPIBridge,
@@ -187,6 +208,14 @@ protocol WorkstreamsAPIDelegate: AnyObject {
     /// Record the delivery facts; the derived outcome cache is computed here, not
     /// accepted from the caller (store design 5).
     func apiWorkstreamsDelivery(_ request: WorkstreamsDeliveryRequest) -> [String: Any]
+    /// The focus channel: bring the workstreams panel forward and, when an id is
+    /// given, highlight + scroll to that card. The router calls it for any route
+    /// carrying focus. A default no-op keeps headless fakes simple.
+    func apiWorkstreamsFocus(workspace: String?, id: String?)
+}
+
+extension WorkstreamsAPIDelegate {
+    func apiWorkstreamsFocus(workspace: String?, id: String?) {}
 }
 
 // MARK: - Workspace normalization
@@ -412,7 +441,45 @@ enum WorkstreamsAPIRouter {
 
     /// Returns a response when the request belongs to this panel, nil otherwise
     /// (so BrowserAPIRouter can fall through to the other panels / 404).
+    ///
+    /// Wraps `dispatch` with the focus channel: a request carrying `focus` (a body
+    /// field on writes, a query value on reads) asks the panel to light up and,
+    /// when the route names a workstream, highlight it. `focus:true` on a write
+    /// therefore performs the write AND brings the card into view.
     static func route(_ request: HTTPRequest, delegate: WorkstreamsAPIDelegate?) -> HTTPResponse? {
+        guard request.path.hasPrefix(prefix) else { return nil }
+        let response = dispatch(request, delegate: delegate)
+        // Only a handled (200) request focuses: validation failures and unknown
+        // endpoints never yank the panel forward.
+        guard let response = response, response.status == 200 else { return response }
+        let body = request.jsonBody()
+        let focused = workstreamsFocusFlag(body?["focus"]) || workstreamsFocusFlag(request.query["focus"])
+        if focused, let delegate = delegate {
+            delegate.apiWorkstreamsFocus(workspace: focusWorkspace(request: request, body: body),
+                                         id: focusID(body: body, response: response))
+        }
+        return response
+    }
+
+    /// The workspace a focus request refers to (body first, then query).
+    static func focusWorkspace(request: HTTPRequest, body: [String: Any]?) -> String? {
+        WorkstreamsAPIWorkspace.normalize(body?["workspace"] as? String)
+            ?? WorkstreamsAPIWorkspace.normalize(request.query["workspace"])
+    }
+
+    /// The workstream a focus request should highlight: the route's id, or the
+    /// freshly created card's id (create has no request id).
+    static func focusID(body: [String: Any]?, response: HTTPResponse) -> String? {
+        if let id = wsNonEmpty(body?["id"] as? String) { return id }
+        // create has no request id: take the fresh card id from the JSON body.
+        guard let object = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any],
+              let created = object["workstream"] as? [String: Any] else { return nil }
+        return wsNonEmpty(created["id"] as? String)
+    }
+
+    /// The routing switch itself (see workstreams-panel-design.md for every
+    /// route). Kept separate so the focus channel wraps it in one place.
+    static func dispatch(_ request: HTTPRequest, delegate: WorkstreamsAPIDelegate?) -> HTTPResponse? {
         guard request.path.hasPrefix(prefix) else { return nil }
         switch (request.method, request.path) {
 

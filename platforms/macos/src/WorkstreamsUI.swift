@@ -400,3 +400,39 @@ struct WSBoardModel: Equatable {
                             totalCount: snapshot.workstreams.count)
     }
 }
+
+// MARK: - Focus channel
+
+/// Trim a focus id; nil when blank. Shared by the panel and the API hook so a
+/// whitespace-only id never counts as a focus request.
+func wsFocusedID(_ raw: String?) -> String? {
+    guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+    return trimmed
+}
+
+/// Where one focus request lands (the focus channel): which workstream to
+/// highlight, the filter that makes it visible, and its index in that filter's
+/// board. The panel turns it into an accent ring + a scroll. Pure, so the rule
+/// "a card hidden by the active stage filter falls back to 全部" is unit-tested
+/// without AppKit.
+struct WSFocusTarget: Equatable {
+    var workstreamID: String
+    var filter: WSStageFilter
+    var index: Int
+
+    /// nil when the id is blank or no card carries it. The index counts within
+    /// the RESOLVED filter's card list; the filter is the active one unless it
+    /// hides the card, in which case 全部 is used so the highlight is never
+    /// invisible.
+    static func resolve(_ id: String?, snapshot: WorkstreamsSnapshot,
+                        filter: WSStageFilter) -> WSFocusTarget? {
+        guard let id = wsFocusedID(id) else { return nil }
+        guard let card = snapshot.workstreams.first(where: { $0.id == id }) else { return nil }
+        if filter.matches(card) {
+            let index = filter.filter(snapshot.workstreams).firstIndex { $0.id == id } ?? 0
+            return WSFocusTarget(workstreamID: id, filter: filter, index: index)
+        }
+        let index = snapshot.workstreams.firstIndex { $0.id == id } ?? 0
+        return WSFocusTarget(workstreamID: id, filter: .all, index: index)
+    }
+}

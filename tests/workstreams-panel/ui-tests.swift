@@ -437,6 +437,32 @@ eq(blockedRunCard.stages.first { $0.stage == .task }?.runState, .blocked,
    "a failed task blocks the stage")
 eq(blockedRunCard.runState, .blocked, "a blocked stage blocks the workstream")
 
+// MARK: - Focus channel
+
+section("focus channel")
+eq(wsFocusedID("  WS-000001  "), "WS-000001", "focus id trimmed")
+eq(wsFocusedID("   "), nil, "blank focus id is nil")
+eq(wsFocusedID(nil), nil, "nil focus id is nil")
+
+let focusSnapshot = snapshot(all)
+let focusAll = WSFocusTarget.resolve("WS-000051", snapshot: focusSnapshot, filter: .all)
+eq(focusAll?.workstreamID, "WS-000051", "focus resolves the target id")
+eq(focusAll?.filter, .all, "an all filter is kept")
+eq(focusAll?.index, 1, "index within the all board")
+
+let focusMatching = WSFocusTarget.resolve(" WS-000051 ", snapshot: focusSnapshot, filter: .stage(.design))
+eq(focusMatching?.filter, .stage(.design), "a matching stage filter is kept")
+eq(focusMatching?.index, 0, "index within the stage-filtered board")
+
+let focusHidden = WSFocusTarget.resolve("WS-000050", snapshot: focusSnapshot, filter: .stage(.design))
+eq(focusHidden?.filter, .all, "a hidden target falls back to the all view")
+eq(focusHidden?.index, 0, "index within the all board after fallback")
+
+eq(WSFocusTarget.resolve("WS-000099", snapshot: focusSnapshot, filter: .all), nil,
+   "unknown workstream resolves to nil")
+eq(WSFocusTarget.resolve("  ", snapshot: focusSnapshot, filter: .all), nil,
+   "blank id resolves to nil")
+
 // MARK: - Report
 
 print("")

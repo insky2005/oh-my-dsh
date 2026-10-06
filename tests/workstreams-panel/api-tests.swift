@@ -138,6 +138,11 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
         lastDelivery = request
         return deliveryResult
     }
+
+    var focusCalls: [(workspace: String?, id: String?)] = []
+    func apiWorkstreamsFocus(workspace: String?, id: String?) {
+        focusCalls.append((workspace, id))
+    }
 }
 
 var checks = 0
@@ -550,6 +555,48 @@ eq(emptySnap["unparsed"] == nil, true, "no unparsed -> key absent")
 let snapBound = WorkstreamsAPIResponse.snapshot(snapshot, sessions: ["WS-000001": "s-9"])
 let boundCardJSON = (snapBound["workstreams"] as? [[String: Any]])?.first
 eq(boundCardJSON?["session"] as? String, "s-9", "snapshot attaches the session binding")
+
+section("focus channel")
+// A write can ask the panel to light up and highlight the card it just wrote
+// (focus:true). Default false: an ordinary agent write must not steal the panel.
+// Dedicated fake: earlier sections leave the shared fake in a failure state.
+let focusFake = FakeWorkstreamsAPI()
+focusFake.stageResult = ["ok": true]
+let focusOff = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage", json: ["id": "WS-000001", "stage": "design"]), delegate: focusFake)
+eq(focusOff?.status, 200, "write without focus still 200")
+eq(focusFake.focusCalls.count, 0, "focus absent -> no focus call")
+let focusFalse = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage", json: ["id": "WS-000001", "stage": "design", "focus": false]), delegate: focusFake)
+eq(focusFalse?.status, 200, "focus:false write 200")
+eq(focusFake.focusCalls.count, 0, "focus:false -> no focus call")
+let focusWrite = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage", json: ["id": " WS-000001 ", "stage": "design", "focus": true, "workspace": "~/repo/"]), delegate: focusFake)
+eq(focusWrite?.status, 200, "focus:true write 200")
+eq(focusFake.focusCalls.count, 1, "focus:true -> one focus call")
+eq(focusFake.focusCalls.last?.id, "WS-000001", "focus highlights the written workstream id")
+eq(focusFake.focusCalls.last?.workspace?.hasSuffix("/repo"), true, "focus carries the normalized workspace")
+// A string/number flag is accepted on the query side (reads light the panel only).
+focusFake.focusCalls.removeAll()
+let focusList = WorkstreamsAPIRouter.route(HTTPRequest(method: "GET", path: "/api/workstreams/list", query: ["workspace": "/tmp/ws", "focus": "1"]), delegate: focusFake)
+eq(focusList?.status, 200, "list?focus=1 200")
+eq(focusFake.focusCalls.count, 1, "query focus -> one focus call")
+eq(focusFake.focusCalls.last?.id == nil, true, "read focus carries no workstream id")
+eq(focusFake.focusCalls.last?.workspace, "/tmp/ws", "read focus carries the query workspace")
+// create has no request id: the fresh card id from the response is focused.
+focusFake.focusCalls.removeAll()
+focusFake.createResult = ["ok": true, "workstream": ["id": "WS-000042"]]
+let focusCreate = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/create", json: ["title": "x", "focus": "true"]), delegate: focusFake)
+eq(focusCreate?.status, 200, "create focus 200")
+eq(focusFake.focusCalls.last?.id, "WS-000042", "create focus uses the created card id")
+focusFake.focusCalls.removeAll()
+// Validation failures and unknown endpoints never reach the focus channel.
+let focusBad = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/create", json: ["title": " ", "focus": true]), delegate: focusFake)
+eq(focusBad?.status, 400, "invalid focus write -> 400")
+eq(focusFake.focusCalls.count, 0, "a rejected write does not focus")
+let focusUnknown = WorkstreamsAPIRouter.route(HTTPRequest(method: "GET", path: "/api/workstreams/nope", query: ["focus": "true"]), delegate: focusFake)
+eq(focusUnknown?.status, 404, "unknown endpoint with focus -> 404")
+eq(focusFake.focusCalls.count, 0, "unknown endpoint does not focus")
+// focus on an unavailable panel is harmless (no delegate).
+let focusNoDelegate = WorkstreamsAPIRouter.route(HTTPRequest(method: "GET", path: "/api/workstreams/list", query: ["focus": "true"]), delegate: nil)
+eq(focusNoDelegate?.status, 503, "focus without delegate -> 503")
 
 section("result")
 print("workstreams api: " + String(checks - failures) + "/" + String(checks) + " passed")

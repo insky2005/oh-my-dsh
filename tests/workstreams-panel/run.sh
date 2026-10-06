@@ -486,4 +486,50 @@ for key in workstreams.handleInSession workstreams.handle.started workstreams.ha
 done
 echo "workstream session binding / handle guard ok"
 
+echo "--- focus channel guard (A11 / D6: panel focus + API focus + requirements jump) ---"
+# 面板聚焦：高亮 + 滚动，且被阶段筛选隐藏时回落「全部」。
+for needle in 'func focus(onWorkstream' 'focusTarget' 'isFocused' 'scrollToFocused' 'onFocus';
+  do
+  if ! grep -qF "$needle" "$PANEL"; then
+    echo "FAIL: WorkstreamsPanel.swift is missing $needle" >&2
+    exit 1
+  fi
+done
+if ! grep -qF 'struct WSFocusTarget' "$SRC2/WorkstreamsUI.swift" \
+   || ! grep -qF 'static func resolve(' "$SRC2/WorkstreamsUI.swift" \
+   || ! grep -qF 'WSFocusTarget.resolve(' "$PANEL"; then
+  echo "FAIL: the pure focus target model is missing from WorkstreamsUI.swift" >&2
+  exit 1
+fi
+# API：任何 /api/workstreams/* 带 focus 都走 apiWorkstreamsFocus（写操作 focus:true 也亮面板）。
+if ! grep -qF 'func apiWorkstreamsFocus' "$API" \
+   || ! grep -qF 'workstreamsFocusFlag' "$API" \
+   || ! grep -qF 'focusWorkspace(request:' "$API"; then
+  echo "FAIL: WorkstreamsAPI.swift is missing the focus channel" >&2
+  exit 1
+fi
+if ! grep -qF 'workstreamsFocus' "$SRC2/BrowserAPI.swift" \
+   || ! grep -qF 'bridge.workstreamsFocus' "$MAIN"; then
+  echo "FAIL: main.swift / BrowserAPI.swift are missing the focus bridge landing" >&2
+  exit 1
+fi
+if ! grep -qF 'workstreamsPanel.onFocus' "$MAIN" \
+   || ! grep -qF 'private func focusWorkstream(' "$MAIN"; then
+  echo "FAIL: main.swift is missing the panel focus / requirements jump wiring" >&2
+  exit 1
+fi
+# 需求池子事项 ↗：主按钮聚焦事项面板，次级仍打开卡文件。
+REQ="$SRC2/RequirementsPanel.swift"
+if ! grep -qF 'onFocusWorkstream' "$REQ" \
+   || ! grep -qF 'requirements.openWorkstreamFocus' "$REQ" \
+   || ! grep -qF 'requirements.openWorkstream' "$REQ"; then
+  echo "FAIL: RequirementsPanel.swift is missing the focus / open-file child actions" >&2
+  exit 1
+fi
+if ! grep -qF 'requirements.openWorkstreamFocus' "$MAIN"; then
+  echo "FAIL: main.swift is missing the requirements.openWorkstreamFocus L10n key" >&2
+  exit 1
+fi
+echo "focus channel guard ok"
+
 echo "workstreams-panel tests passed"

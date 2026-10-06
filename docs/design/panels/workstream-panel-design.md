@@ -138,7 +138,7 @@
 | D3 | 各阶段完成证据谓词 | **同意**：每阶段 = 机检谓词 AND 人工确认门 | 规划复用 planning-template §4；执行对齐 completion-verification P1–P5；验收=证据 + `covered` 锚变更；交付=PR 事实 + outcome 派生 |
 | D4 | 验收是否建队列 | **A**：不建队列，纯人 sign-off（可选一个证据收集任务）；**必要时再迭代** | 贴合「验主人轻 agent」 |
 | D5b | 写权反转的落地时点 | **A**：本期就做，含 `/api/workstreams/*` + 技能改造（**已落地**） | 面板成为 `WS-*.md` 唯一写者；agent 不再直写（技能 `workstream-panel`） |
-| D6 | 三列表面板分工 | **同意** | 需求池=REQ 中心（子事项只读、点击跳事项面板）；事项面板=当前工作区 WS 中心；项目面板=跨工作区总览（后续）。防重：REQ 列表只在需求池 |
+| D6 | 三列表面板分工 | **同意（已落地 2026-10-07）** | 需求池=REQ 中心（子事项只读、`↗` 跳事项面板并聚焦该 WS）；事项面板=当前工作区 WS 中心；项目面板=跨工作区总览（后续）。防重：REQ 列表只在需求池 |
 | D8 | 三级任务数据落点 | **A**：事项面板自有文件（如 `.dsh/workstreams/queues.json`，ignored） | **不得触碰 `.dsh/tasks/*`** |
 | D14 | 命名 / 槽位 / 快捷键 | 活动栏槽位**紧邻「需求池」之后**；名「事项」（Workstreams） | 快捷键等细节待定 |
 | D15 | 阶段提示词 | 以 `workstream-handoff-prompt-design.md` 为依据（**已落地**，`WorkstreamsPrompts.swift`） | 面板生成、注入任务 body；回归门行按卡片 `regression` 有无出现 |
@@ -186,4 +186,5 @@ D10 之所以是伪问题，源于把两个正交的轴混为一谈：
    - **已落地（2026-10-06）**：任务运行态 → 阶段运行态 → 事项运行态回写（A13 / D18）——纯模型 `WorkstreamsRunState.swift`（`WSRunState.stage` / `WSRunState.workstream`）从**队列状态 + 任务状态**（外加 `## 阶段确认` 审计痕迹判回边）派生**未开始 / 进行中 / 待确认 / 完成 / 阻塞**，主卡与阶段卡显示徽标；**权威 `stage` 一字不改**（仍只由 `confirmStage` 推进）。阶段门读 runner 的实时板，而非磁盘快照；
    - **已落地（2026-10-07）**：阶段提示词去掉 `/task-todo`、改指事项面板自有 API（`task/create` / `queue/start`），技能 `workstream-panel` 同步；
    - **已落地（2026-10-07）**：`covered` / `delivery` 写路由（`POST /api/workstreams/covered` / `delivery`；`delivery.outcome` 是派生缓存，API 拒绝手写，报 `outcome-derived`）；交付接线——面板「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给明确原因（`not-delivery-stage` / `not-git-repo` / `no-branch` / `no-remote` / `no-github-remote` / `no-token`），成功则 `runner.enqueueDelivery` 建 delivery 阶段任务并只启动该阶段；
-   - **已落地（2026-10-07）**：事项 ↔ 会话绑定——`local.json` 新增 `workstreamSessions`（ignored），任何 `/api/workstreams/*` 写请求带 `session` 时记忆、`list` 随带；反查路由 `GET /api/workstreams/bound?session=...`；主卡「**在会话中处理**」对齐需求池「细化」（复用绑定会话 / 新建并绑定 / 回退当前会话），由 `WorkstreamsCore.sessionTarget` 纯决策 + `WorkstreamsQueues` 持久化承载。**至此 §10 无待办。**
+   - **已落地（2026-10-07）**：事项 ↔ 会话绑定——`local.json` 新增 `workstreamSessions`（ignored），任何 `/api/workstreams/*` 写请求带 `session` 时记忆、`list` 随带；反查路由 `GET /api/workstreams/bound?session=...`；主卡「**在会话中处理**」对齐需求池「细化」（复用绑定会话 / 新建并绑定 / 回退当前会话），由 `WorkstreamsCore.sessionTarget` 纯决策 + `WorkstreamsQueues` 持久化承载；
+   - **已落地（2026-10-07）**：**focus 通道**——面板 `focus(onWorkstream:)` 给目标卡加强调色描边并滚动到可见，被阶段筛选隐藏时回落「全部」；`/api/workstreams/*` 统一支持 `focus`（写操作 body / 读操作 `?focus=`，仅 200 触发，默认 `false` 不抢面板），经 `WorkstreamsAPIDelegate.apiWorkstreamsFocus` → `BrowserAPIBridge.workstreamsFocus` 落到面板；需求池子事项主 `↗` 改走该通道（次级仍打开卡文件）。**至此 §10 无待办。**

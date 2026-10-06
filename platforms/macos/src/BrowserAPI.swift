@@ -295,6 +295,10 @@ final class BrowserAPIBridge: BrowserAPIDelegate {
     var workstreamsQueuePause: (WorkstreamsQueuePauseRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     var workstreamsCovered: (WorkstreamsCoveredRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     var workstreamsDelivery: (WorkstreamsDeliveryRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    /// The focus channel: light the workstreams panel, optionally highlighting one
+    /// card. HTTP marshals it onto the main thread like every other workstreams
+    /// call (single writer / AppKit main thread).
+    var workstreamsFocus: (String?, String?) -> Void = { _, _ in }
     static let workstreamsUnavailable: [String: Any] = [
         "ok": false,
         "error": "panel-unavailable",
@@ -755,6 +759,17 @@ extension BrowserAPIBridge: WorkstreamsAPIDelegate {
 
     func apiWorkstreamsDelivery(_ request: WorkstreamsDeliveryRequest) -> [String: Any] {
         onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsDelivery(request) }
+    }
+
+    /// The focus channel (design A11 / D6): light the panel and highlight an id.
+    /// No result to return; it runs on the main thread so it never touches
+    /// AppKit off-main (same rule as the other workstreams bridge methods).
+    func apiWorkstreamsFocus(workspace: String?, id: String?) {
+        if Thread.isMainThread {
+            workstreamsFocus(workspace, id)
+            return
+        }
+        DispatchQueue.main.sync { self.workstreamsFocus(workspace, id) }
     }
 }
 

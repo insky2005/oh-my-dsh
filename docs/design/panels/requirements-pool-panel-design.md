@@ -281,7 +281,7 @@ updated: <today>
 - **meta**：来源 · 更新日期 · `待确认拆解 N 项`（10pt tertiary）。
 - **每张卡各自折叠**（层级：需求卡 → 事项卡 / 提案卡），每张卡的 `chevron` 都只是 `taskRowGlyph` **指示器（不是按钮）**，点击由它**自己的标题行**接管（`RequirementHeaderView`），不会误触发父卡：
   - **需求卡**：点它的标题行切换；收起 = 标题行 + 诉求预览 + meta（meta 里有 `待确认拆解 N 项`），正文（事项 / 提案）隐藏。
-  - **事项卡**（recessed，内容取自 REQ 确认表、状态取自 WS）：点它的标题行切换；收起 = 头部（`doc.text` + `标识` + 标题 + `[依赖：WS-…]`（有依赖时，直接列标识）+ `[阶段]` + 分歧徽标 + `↗`），展开 = 追加 **边界 / 依赖 / 阶段 / 结果 / 路径**（无 WS 卡时只有边界 / 依赖）。
+  - **事项卡**（recessed，内容取自 REQ 确认表、状态取自 WS）：点它的标题行切换；收起 = 头部（`doc.text` + `标识` + 标题 + `[依赖：WS-…]`（有依赖时，直接列标识）+ `[阶段]` + 分歧徽标 + **主 `↗`（在事项面板打开并聚焦该 WS，D6）+ 次级 `doc.text`（打开卡文件）**），展开 = 追加 **边界 / 依赖 / 阶段 / 结果 / 路径**（无 WS 卡时只有边界 / 依赖）。
   - **提案卡**（raised）：点它的标题行切换；收起 = `标题 + [依赖 N]`，展开 = 追加**内容（边界）**一行（11pt secondary、换行）。
 - **已拆解事项**（需求卡展开后）：`已拆解事项 (N)` 小标题 + 每个 `WS-*` 一张**事项卡**。
 - **待确认拆解**（需求卡展开后）：一个 **recessed 容器**，头是 `square.dashed 待确认拆解 [待确认 N 项] … [确认拆解] [驳回]`，下面是每条一张**提案卡**（各自可折叠）。点「驳回」打开**原因抽屉**（必填），原因随结果写回该需求的会话提示词。
@@ -495,7 +495,8 @@ REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已驳回�
 | `requirements.error.unknownState` | 无效的状态 | Invalid state |
 | `requirements.error.generic` | 操作失败：%@ | Failed: %@ |
 | `requirements.needsWorkspace` | 请先选择一个工作区 | Select a workspace first |
-| `requirements.openWorkstream` | 打开事项卡 | Open workstream card |
+| `requirements.openWorkstream` | 打开卡文件 | Open card file |
+| `requirements.openWorkstreamFocus` | 在事项面板中打开 | Open in workstreams panel |
 | `requirements.help.hint` | 使用说明 | Help |
 | `requirements.help.title` | 需求池使用说明 | Requirements Pool Help |
 | `requirements.help.intro` | 在面板或对话里都能完成下列操作。 | Both actions work from the panel or a conversation. |

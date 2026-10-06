@@ -250,6 +250,11 @@ final class WSNestedTierView: NSView {
 final class WSPrimaryCardView: NSView {
 
     let model: WSCardModel
+    /// The focus channel: the card the user jumped to is ringed with the accent
+    /// border (WSInk.accentBorder) so it is unmistakable in a long board.
+    var isFocused: Bool = false {
+        didSet { if isFocused != oldValue { needsDisplay = true } }
+    }
     var onOpen: (() -> Void)?
     /// Human gate actions for the current stage (R10).
     var onConfirmStage: (() -> Void)?
@@ -530,8 +535,14 @@ final class WSPrimaryCardView: NSView {
         WSInk.fill(dark: dark, recessed: false).setFill()
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
         path.fill()
-        WSInk.hairline(dark: dark).setStroke()
-        path.lineWidth = 1
+        // The focused card keeps the accent ring; everything else the hairline.
+        if isFocused {
+            WSInk.accentBorder(dark: dark).setStroke()
+            path.lineWidth = 2
+        } else {
+            WSInk.hairline(dark: dark).setStroke()
+            path.lineWidth = 1
+        }
         path.stroke()
     }
 }
@@ -679,6 +690,10 @@ final class WorkstreamsPanelController: NSObject {
     var workspaceProvider: (() -> String?)?
     /// Open a workstream card in the file panel.
     var onOpenCard: ((String) -> Void)?
+    /// The focus channel (design A11 / D6): bring the workstreams panel forward
+    /// (setRightPanel) for a request carrying focus. The id highlight is applied
+    /// by `focus(onWorkstream:)`; this closure only lights the panel.
+    var onFocus: ((String) -> Void)?
     /// 「在会话中处理」(design §6): main.swift reuses the workstream's bound
     /// session when it is alive, otherwise starts (and binds) a new one; the
     /// third argument is the bound session read from local.json (nil = none).
@@ -699,6 +714,9 @@ final class WorkstreamsPanelController: NSObject {
                                                     workstreams: [], unparsed: [])
     /// The active top stage view.
     private(set) var selectedFilter: WSStageFilter = .all
+    /// The focus channel current target: the workstream the panel highlights
+    /// and scrolls to (nil = no focus). Set by focus(onWorkstream:).
+    private(set) var focusTarget: String?
     /// The last rendered board (cards + filter + empty state).
     private(set) var board = WSBoardModel(cards: [], filter: .all, hasWorkspace: false, totalCount: 0)
 
@@ -758,12 +776,24 @@ final class WorkstreamsPanelController: NSObject {
     func ensureLoaded() { reload() }
 
     /// The active workspace changed (main.swift adoptProjectDirectory).
-    func workspaceChanged() { reload() }
+    func workspaceChanged() {
+        focusTarget = nil
+        reload()
+    }
 
     func selectFilter(_ filter: WSStageFilter) {
         selectedFilter = filter
         updateLabels()
         render()
+    }
+
+    /// The focus channel: highlight one workstream and scroll it into view. When
+    /// the active stage filter hides the card the filter falls back to the all
+    /// view so the highlight is never invisible. A blank / unknown id is a no-op.
+    func focus(onWorkstream id: String?) {
+        guard let id = wsFocusedID(id) else { return }
+        focusTarget = id
+        reload()
     }
 
     func updateLabels() {
@@ -808,13 +838,23 @@ final class WorkstreamsPanelController: NSObject {
 
     private func render() {
         let workspace = workspaceProvider?() ?? snapshot.workspace
+        // Focus channel: a target hidden by the active stage filter switches the
+        // filter back to 全部 so the ring is never off-screen (design A11 / D6).
+        if let target = WSFocusTarget.resolve(focusTarget, snapshot: snapshot, filter: selectedFilter),
+           target.filter != selectedFilter {
+            selectedFilter = target.filter
+            updateLabels()
+        }
         let wsBoard = loadBoard(workspace)
         board = WSBoardModel.build(snapshot: snapshot, filter: selectedFilter,
                                    gates: stageGates(for: snapshot, workspace: workspace),
                                    board: wsBoard)
         for sub in list.arrangedSubviews { sub.removeFromSuperview() }
+        var focusedCard: WSPrimaryCardView?
         for model in board.cards {
             let card = WSPrimaryCardView(model: model)
+            card.isFocused = (model.id == focusTarget)
+            if card.isFocused { focusedCard = card }
             card.onOpen = { [weak self] in self?.onOpenCard?(model.path) }
             card.onConfirmStage = { [weak self] in self?.confirmCurrentStage(model.id) }
             card.onRejectStage = { [weak self] in self?.rejectCurrentStage(model.id) }
@@ -831,7 +871,19 @@ final class WorkstreamsPanelController: NSObject {
         emptyLabel.stringValue = empty.map { L10n.tr($0.messageKey) } ?? ""
         emptyView.isHidden = empty == nil
         scroll.isHidden = board.cards.isEmpty
+        scrollToFocused(focusedCard)
         onDidRender?()
+    }
+
+    /// Scroll the focused card into view once the rebuilt list has laid out (the
+    /// same deferred pattern as the requirements pool pending-card scroll).
+    private func scrollToFocused(_ card: WSPrimaryCardView?) {
+        guard let card = card else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, card.superview != nil else { return }
+            self.view.layoutSubtreeIfNeeded()
+            card.scrollToVisible(card.bounds.insetBy(dx: 0, dy: -10))
+        }
     }
 
     // MARK: Stage gate
@@ -1380,6 +1432,15 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
             reload()
         }
         return listDictionary(resolved)
+    }
+
+    /// The focus channel (design A11 / D6): light the panel (onFocus, wired by
+    /// main.swift to setRightPanel) and, when the request names a workstream,
+    /// highlight + scroll to it. Called by the router for any route carrying
+    /// focus:true (the write itself has already landed).
+    func apiWorkstreamsFocus(workspace: String?, id: String?) {
+        onFocus?(resolveWorkspace(workspace) ?? workspace ?? "")
+        if let id = wsFocusedID(id) { focus(onWorkstream: id) }
     }
 
     /// GET /api/workstreams/bound?session=... — reverse lookup: the workstream(s)

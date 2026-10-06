@@ -81,6 +81,9 @@ final class RequirementCardView: NSView {
     var onConfirm: (() -> Void)?
     var onReject: (() -> Void)?
     var onOpenWorkstream: ((String) -> Void)?
+    /// The child ↗ opens the workstreams panel and focuses that WS (D6); the file
+    /// action above stays as the secondary "open card file".
+    var onFocusWorkstream: ((String) -> Void)?
     var onEdit: (() -> Void)?
 
     /// The rendered requirement (internal for symmetry with ProjectCardView).
@@ -324,8 +327,16 @@ final class RequirementCardView: NSView {
         if let stage = display.stage {
             titleViews.append(TaskBadgeView(text: workstreamStageLabel(stage), tone: .neutral))
         }
+        // The primary ↗ jumps to the workstreams panel and focuses this WS (D6);
+        // the secondary doc button still opens the card file in the file panel.
+        if let id = display.id {
+            let focus = CustomIconButton(glyph: .symbol("arrow.up.forward.app"),
+                                         tooltip: L10n.tr("requirements.openWorkstreamFocus"), size: 22)
+            focus.onAction = { [weak self] in self?.onFocusWorkstream?(id) }
+            titleViews.append(focus)
+        }
         if let path = display.path {
-            let open = CustomIconButton(glyph: .symbol("arrow.up.forward.app"),
+            let open = CustomIconButton(glyph: .symbol("doc.text"),
                                         tooltip: L10n.tr("requirements.openWorkstream"), size: 22)
             open.onAction = { [weak self] in self?.onOpenWorkstream?(path) }
             titleViews.append(open)
@@ -684,6 +695,8 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
     var workspaceProvider: (() -> String?)?
     /// Open a workstream card in the file panel.
     var onOpenWorkstream: ((String) -> Void)?
+    /// The child ↗: show the workstreams panel and focus that WS (D6).
+    var onFocusWorkstream: ((String) -> Void)?
     /// Send the breakdown prompt into a conversation (main.swift): the card's
     /// source session when it has one, else the current one; nil falls back to
     /// copying the prompt to the clipboard.
@@ -814,6 +827,7 @@ final class RequirementsPanelController: NSObject, RequirementsAPIDelegate {
             card.onConfirm = { [weak self] in self?.confirmBreakdown(id: id) }
             card.onReject = { [weak self] in self?.openRejectDrawer(id: id) }
             card.onOpenWorkstream = { [weak self] path in self?.onOpenWorkstream?(path) }
+            card.onFocusWorkstream = { [weak self] id in self?.onFocusWorkstream?(id) }
             list.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -20).isActive = true
         }
