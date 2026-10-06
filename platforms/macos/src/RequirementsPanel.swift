@@ -1258,7 +1258,9 @@ extension RequirementsPanelController {
             return PoolError.noWorkspace.apiResult
         }
         do {
-            let created = try RequirementsCore.confirm(workspace: workspace, id: request.id, today: RequirementsCore.today())
+            let created = try RequirementsCore.confirm(workspace: workspace, id: request.id,
+                                                       today: RequirementsCore.today(),
+                                                       session: request.session)
             bindSession(request.session, workspace: workspace, id: request.id)
             if workspace == (workspaceProvider?() ?? "") { reload() }
             return ["ok": true, "created": created.map(RequirementsAPIResponse.workstream)]

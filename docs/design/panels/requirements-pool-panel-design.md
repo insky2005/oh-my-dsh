@@ -340,16 +340,19 @@ REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求已确认。
 - 提交后，等待用户确认『待确认提案』。
 ```
 
-**③ 确认拆解**（`requirements.notify.confirmed`，参数 `id / title / id / created`；回写绑定会话）
+**③ 确认拆解**（`requirements.notify.confirmed` + `requirements.notify.confirmedFocus`，参数 `id / title / id / created / focus`（第 5 个 `%@` 是 focus 提示，可带、空则省略）；回写绑定会话，并把右栏聚焦到事项面板）
 
 ```text
 REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已确认。
-生成事项：WS-000009、WS-000010。
+已生成 WS-000009、WS-000010，请到事项面板继续处理。
+（可用 ⌥⌘K 打开事项面板）
 
 注意：
 - 回复『收到』。
 - 列出事项清单。
 ```
+
+> **会话继承**：`RequirementsCore.confirm` 建 `WS-*.md` 时，把该需求在 `.dsh/requirements/local.json` 的绑定会话继承给每个新 WS（写 `.dsh/workstreams/local.json` 的 `workstreamSessions`，与事项面板「在会话中处理」同一份运行态）。需求没绑定会话则不发明绑定；任何显式传入的 `session`（API 路径）优先于已绑定会话。
 
 **④ 驳回拆解（带原因）**（`RequirementsCore.rejectPrompt(_:title:reason:)`；回写绑定会话）
 
@@ -512,7 +515,7 @@ REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已驳回�
 
 `tests/requirements-panel/run.sh`（无头，swiftc）：
 
-1. **模型段**：`RequirementsCore.swift` + `model-tests.swift`（纯 Foundation）——frontmatter 解析（标量 / 行内列表 / 缩进列表 / `delivery` 块）、有效状态优先级、`closed` 谓词（子空守卫 / 部分终态）、`createRequirement` 的 id 分配与模板、`setState`、`propose` / `confirm` / `reject` 的正文往返、原子写（临时文件不残留）、错误码；
+1. **模型段**：`RequirementsCore.swift` + `model-tests.swift`（纯 Foundation）——frontmatter 解析（标量 / 行内列表 / 缩进列表 / `delivery` 块）、有效状态优先级、`closed` 谓词（子空守卫 / 部分终态）、`createRequirement` 的 id 分配与模板、`setState`、`propose` / `confirm` / `reject` 的正文往返、原子写（临时文件不残留）、错误码；**确认拆解继承需求会话**——`confirm` 把需求在 `.dsh/requirements/local.json` 的绑定会话写进新 WS 的 `.dsh/workstreams/local.json`（`workstreamSessions`，合并保留既有任务运行态）、显式 `session` 优先、无绑定不发明；
 2. **API 段**：`RequirementsCore.swift` + `RequirementsAPI.swift` + `api-tests.swift`（自带 HTTP stand-in + Fake delegate，无 AppKit）——路由命中 / 非本面板路径返回 nil / 参数校验 / 错误码映射 / 503。
 
 新增用例必须满足「门要能自证」：至少一条负例断言失败路径（缺 proposal 时 confirm → 409）。
@@ -526,7 +529,7 @@ REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已驳回�
 - [ ] 「＋」新建需求 → 盘上出现 `REQ-<n>.md`（`state: candidate`），面板出现卡片；
 - [ ] 对现有 REQ-001…007 的展示：有效状态与 `node .dsh/tools/derive-status.mjs` 一致（除未缓存 outcome 的差异）；
 - [ ] 对某需求运行 `/requirement-pool 拆解 REQ-xxx` → 面板出现「待确认拆解」；
-- [ ] 「确认拆解」→ 生成 `WS-*.md`（`requirement` 指向该 REQ、`stage: planning`），提案区变为映射表；
+- [ ] 「确认拆解」→ 生成 `WS-*.md`（`requirement` 指向该 REQ、`stage: planning`），提案区变为映射表；新 WS 在 `.dsh/workstreams/local.json` 的 `workstreamSessions` 里有该需求的会话绑定，右栏聚焦事项面板，回写文案指向事项面板；
 - [ ] 「驳回」→ 提案消失，未生成任何 WS；
 - [ ] 无 App 时 curl API → 连接失败（技能提示先打开 App），不写盘；
 - [ ] 语言切换后面板文案与 tooltip 全部刷新。

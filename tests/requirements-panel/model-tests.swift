@@ -458,6 +458,46 @@ check(files(in: RequirementsCore.requirementsDir(ws6)).contains("local.json"), "
 let plain = try! RequirementsCore.createRequirement(workspace: ws6, title: "面板来源", body: nil, source: nil, today: "2026-10-04")
 eq(plain.session, nil, "panel-created card has no source session")
 
+section("breakdown inherits the requirement session")
+let wsInherit = tempWorkspace("inherit")
+let reqInherit = try! RequirementsCore.createRequirement(workspace: wsInherit, title: "继承会话", body: "x", source: nil, today: "2026-10-04", session: "s-req")
+_ = try! RequirementsCore.propose(workspace: wsInherit, id: reqInherit.id, items: items, today: "2026-10-04")
+let inheritedWs = try! RequirementsCore.confirm(workspace: wsInherit, id: reqInherit.id, today: "2026-10-04")
+eq(inheritedWs.count, 2, "inherit: one WS per proposal item")
+let wsSessions = RequirementsCore.loadWorkstreamSessions(workspace: wsInherit)
+eq(wsSessions["WS-000001"], "s-req", "new WS inherits the requirement's bound session")
+eq(wsSessions["WS-000002"], "s-req", "every new WS inherits it")
+check(files(in: RequirementsCore.workstreamsDir(wsInherit)).contains("local.json"),
+      "the WS binding lives in .dsh/workstreams/local.json")
+
+// An explicit acting session (API path) wins over the stored binding.
+let wsExplicit = tempWorkspace("inherit-explicit")
+let reqExplicit = try! RequirementsCore.createRequirement(workspace: wsExplicit, title: "显式会话", body: "x", source: nil, today: "2026-10-04", session: "s-old")
+_ = try! RequirementsCore.propose(workspace: wsExplicit, id: reqExplicit.id, items: [BreakdownItem(title: "只做 A", boundary: "", dependsOn: [])], today: "2026-10-04")
+_ = try! RequirementsCore.confirm(workspace: wsExplicit, id: reqExplicit.id, today: "2026-10-04", session: "s-new")
+eq(RequirementsCore.loadWorkstreamSessions(workspace: wsExplicit)["WS-000001"], "s-new",
+   "acting session wins over the stored binding")
+
+// A requirement with no captured session invents no binding.
+let wsNoSession = tempWorkspace("inherit-none")
+let reqNoSession = try! RequirementsCore.createRequirement(workspace: wsNoSession, title: "无会话", body: "x", source: nil, today: "2026-10-04")
+_ = try! RequirementsCore.propose(workspace: wsNoSession, id: reqNoSession.id, items: [BreakdownItem(title: "只做 A", boundary: "", dependsOn: [])], today: "2026-10-04")
+_ = try! RequirementsCore.confirm(workspace: wsNoSession, id: reqNoSession.id, today: "2026-10-04")
+eq(RequirementsCore.loadWorkstreamSessions(workspace: wsNoSession).isEmpty, true, "no session -> no WS binding")
+
+// The merge must not clobber the workstreams panel's own runtime state.
+let wsMerge = tempWorkspace("inherit-merge")
+let reqMerge = try! RequirementsCore.createRequirement(workspace: wsMerge, title: "合并", body: "x", source: nil, today: "2026-10-04", session: "s-merge")
+write(RequirementsCore.workstreamSessionsPath(wsMerge),
+      "{\n  \"sessions\" : {\n    \"t-1\" : {\n      \"sessionId\" : \"s-task\"\n    }\n  },\n  \"workstreamSessions\" : {\n    \"WS-999999\" : \"s-keep\"\n  }\n}")
+_ = try! RequirementsCore.propose(workspace: wsMerge, id: reqMerge.id, items: [BreakdownItem(title: "只做 A", boundary: "", dependsOn: [])], today: "2026-10-04")
+_ = try! RequirementsCore.confirm(workspace: wsMerge, id: reqMerge.id, today: "2026-10-04")
+let mergedSessions = RequirementsCore.loadWorkstreamSessions(workspace: wsMerge)
+eq(mergedSessions["WS-999999"], "s-keep", "existing binding survives the merge")
+eq(mergedSessions["WS-000001"], "s-merge", "new binding is merged in")
+let mergedRaw = RequirementsCore.readText(RequirementsCore.workstreamSessionsPath(wsMerge)) ?? ""
+check(mergedRaw.contains("s-task"), "task session survives the merge")
+
 section("composer edit")
 let editModel = RequirementComposerModel.edit(edited2)
 eq(editModel.mode.isCreate, false, "edit model is not create")

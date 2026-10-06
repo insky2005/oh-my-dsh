@@ -218,6 +218,43 @@ enum RequirementsCore {
         try? atomicWrite(text, to: localSessionsPath(workspace))
     }
 
+    /// Machine-scoped workstream bindings (WS-id -> dsh session), kept in
+    /// .dsh/workstreams/local.json next to the queue runtime state. Mirrors
+    /// WorkstreamsQueues.WSLocalState.workstreamSessions; this file writes it so
+    /// the requirements model stays headless (no workstreams store dependency).
+    static func workstreamSessionsPath(_ workspace: String) -> String {
+        (workstreamsDir(workspace) as NSString).appendingPathComponent("local.json")
+    }
+
+    static func loadWorkstreamSessions(workspace: String) -> [String: String] {
+        guard let text = readText(workstreamSessionsPath(workspace)),
+              let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sessions = object["workstreamSessions"] as? [String: String] else { return [:] }
+        return sessions
+    }
+
+    /// Merge WS-id -> session bindings into local.json (best-effort). The existing
+    /// object is re-read and re-serialized, so task sessions / reports / markers
+    /// written by the workstreams panel survive untouched.
+    static func inheritWorkstreamSessions(workspace: String, ids: [String], session: String) {
+        let sid = session.trimmed
+        guard !sid.isEmpty, !ids.isEmpty else { return }
+        var object: [String: Any] = [:]
+        if let text = readText(workstreamSessionsPath(workspace)),
+           let data = text.data(using: .utf8),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            object = existing
+        }
+        var sessions = object["workstreamSessions"] as? [String: String] ?? [:]
+        for id in ids where !id.isEmpty { sessions[id] = sid }
+        object["workstreamSessions"] = sessions
+        guard let data = try? JSONSerialization.data(withJSONObject: object,
+                                                     options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return }
+        try? atomicWrite(text, to: workstreamSessionsPath(workspace))
+    }
+
     static func workstreamPath(_ workspace: String, id: String) -> String {
         (workstreamsDir(workspace) as NSString).appendingPathComponent(id + ".md")
     }
@@ -861,9 +898,15 @@ enum RequirementsCore {
         return card
     }
 
+    /// Confirm a breakdown: write one WS card per proposal item and link them
+    /// back on the requirement. The requirement's captured dsh session is
+    /// inherited by every fresh WS card so the panel can resume the same thread
+    /// ("在会话中处理" / design §6). `session` is the acting session when the
+    /// caller knows it (API); otherwise the bound session from local.json wins.
     static func confirm(workspace: String,
                         id: String,
                         today: String,
+                        session: String? = nil,
                         fileManager: FileManager = .default) throws -> [WorkstreamSummary] {
         let path = requirementPath(workspace, id: id)
         guard let text = readText(path) else { throw PoolError.unknownRequirement(id) }
@@ -892,6 +935,14 @@ enum RequirementsCore {
             try atomicWrite(wsText, to: wsPath)
             ids.append(wsId)
             if let summary = workstream(from: wsText, path: wsPath) { created.append(summary) }
+        }
+
+        // Inherit the requirement's captured dsh session to every fresh WS card, so
+        // the workstreams panel resumes the SAME conversation ("在会话中处理", design
+        // §6) instead of starting a new one. Explicit acting session > bound session
+        // (bound when the requirement was created / refined / last edited via API).
+        if let inherited = session?.trimmed.nilIfEmpty ?? loadSessions(workspace: workspace)[id] {
+            inheritWorkstreamSessions(workspace: workspace, ids: ids, session: inherited)
         }
 
         // Link the created workstreams back in the requirement's OWN frontmatter

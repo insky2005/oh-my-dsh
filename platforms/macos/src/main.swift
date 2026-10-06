@@ -983,7 +983,8 @@ enum L10n {
         "requirements.refineStartedExisting": ("已为 %@ 发起细化会话", "Started a refinement session for %@"),
         "requirements.refineContinued": ("已在现有会话里继续细化 %@", "Continued refining %@ in its existing session"),
         "requirements.refineFailed": ("已创建需求；细化会话未启动，可在会话里手动继续", "Requirement created; the refinement session could not start — continue in a chat"),
-        "requirements.notify.confirmed": ("%@「%@」@.dsh/requirements/%@.md，需求拆解已确认。\n生成事项：%@。\n\n注意：\n- 回复『收到』。\n- 列出事项清单。", "%@「%@」@.dsh/requirements/%@.md — breakdown confirmed.\nWorkstreams created: %@.\n\nNotes:\n- Reply \"received\".\n- List the workstreams."),
+        "requirements.notify.confirmed": ("%@「%@」@.dsh/requirements/%@.md，需求拆解已确认。\n已生成 %@，请到事项面板继续处理。%@\n\n注意：\n- 回复『收到』。\n- 列出事项清单。", "%@「%@」@.dsh/requirements/%@.md — breakdown confirmed.\nWorkstreams created: %@ — continue in the Workstreams panel.%@\n\nNotes:\n- Reply \"received\".\n- List the workstreams."),
+        "requirements.notify.confirmedFocus": ("（可用 ⌥⌘K 打开事项面板）", "(Press ⌥⌘K to open the Workstreams panel)"),
 
         "requirements.created": ("已创建 %@", "Created %@"),
         "requirements.stateChanged": ("%@ → %@", "%@ → %@"),
@@ -5483,6 +5484,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let requirement = RequirementsCore.load(workspace: workspace).requirements
             .first { $0.requirement.id == requirementId }?.requirement
         let title = requirement?.title ?? ""
+        // 拆解确认后「改指事项面板」：回写文案里带上 focus 提示
+        // （requirements.notify.confirmedFocus），右栏也真的聚焦过去，用户顺着
+        // 新生成的 WS 继续处理。即使此刻写不回会话（无端口 / 无会话）也要聚焦。
+        if confirmed && !created.isEmpty { setRightPanel(.workstreams) }
         let port = server.port
         guard port > 0,
               let sessionId = (requirement?.session?.isEmpty == false ? requirement?.session : activeSessionId),
@@ -5492,8 +5497,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         let text: String
         if confirmed {
+            // 第 5 个参数是 focus 提示（可带）：单独成行，指出事项面板入口。
             text = L10n.tr("requirements.notify.confirmed", requirementId, title, requirementId,
-                           created.joined(separator: "、"))
+                           created.joined(separator: "、"),
+                           "\n" + L10n.tr("requirements.notify.confirmedFocus"))
         } else {
             // 驳回：带上原因（若有）请 agent 改了再提案；reason 为空时省略原因行。
             text = RequirementsCore.rejectPrompt(requirementId, title: title, reason: reason)
