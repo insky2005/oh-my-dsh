@@ -130,6 +130,12 @@ enum BrowserAPIRouter {
             return requirements
         }
 
+        // /api/workstreams/* is the Workstreams panel's route face, on the same
+        // service and port. Same fall-through contract as /api/tasks/*.
+        if let workstreams = WorkstreamsAPIRouter.route(request, delegate: delegate as? WorkstreamsAPIDelegate) {
+            return workstreams
+        }
+
         switch (request.method, request.path) {
         case ("GET", "/api/browser/status"):
             return .json(200, delegate.apiStatus())
@@ -272,6 +278,18 @@ final class BrowserAPIBridge: BrowserAPIDelegate {
         "ok": false,
         "error": "panel-unavailable",
         "hint": "the requirements pool panel is not ready",
+    ]
+    /// /api/workstreams/* 的落地（闭包形状同 tasks / requirements，面板类型不进本文件）。
+    var workstreamsList: (String?) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsCreate: (WorkstreamsCreateRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsUpdate: (WorkstreamsUpdateRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsStage: (WorkstreamsStageRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsPlan: (WorkstreamsPlanRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsQueues: (WorkstreamsQueuesRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    static let workstreamsUnavailable: [String: Any] = [
+        "ok": false,
+        "error": "panel-unavailable",
+        "hint": "the workstreams panel is not ready",
     ]
     var showPanel: () -> Void = {}
     var hidePanel: () -> Void = {}
@@ -661,6 +679,37 @@ extension BrowserAPIBridge: RequirementsAPIDelegate {
 
     func apiRequirementsReject(_ request: RequirementsTargetRequest) -> [String: Any] {
         onMain(fallback: Self.requirementsUnavailable) { self.requirementsReject(request) }
+    }
+}
+
+// MARK: - 事项面板路由的落地（面板控制器 → WorkstreamsAPIDelegate）
+
+/// Same shape as the tasks / requirements bridge: HTTP runs on its own queue, the
+/// workstream reads and writes run on the main thread so there is a single writer.
+extension BrowserAPIBridge: WorkstreamsAPIDelegate {
+
+    func apiWorkstreamsList(workspace: String?) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsList(workspace) }
+    }
+
+    func apiWorkstreamsCreate(_ request: WorkstreamsCreateRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsCreate(request) }
+    }
+
+    func apiWorkstreamsUpdate(_ request: WorkstreamsUpdateRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsUpdate(request) }
+    }
+
+    func apiWorkstreamsStage(_ request: WorkstreamsStageRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsStage(request) }
+    }
+
+    func apiWorkstreamsPlan(_ request: WorkstreamsPlanRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsPlan(request) }
+    }
+
+    func apiWorkstreamsQueues(_ request: WorkstreamsQueuesRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsQueues(request) }
     }
 }
 
