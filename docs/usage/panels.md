@@ -95,8 +95,19 @@ AI 原生工作流的**前端三件**：想法收件箱、需求池、拆解器�
 - **存储隔离**：事项卡与 `WS.queues` 落 `.dsh/workstreams/`（committed，随仓库提交）；阶段队列与三级任务落 `.dsh/workstreams/queues.json`、运行时会话绑定落 `local.json`（**ignored**）；**绝不读写 `.dsh/tasks/*`**，也不依赖 `/api/tasks/*`（设计 A1 / D8，源码守卫固化）；
 - **入口**：活动栏槽位**紧邻「需求池」之后**，图标 `square.stack.3d.up`，快捷键 **`⌥⌘K`**（视图菜单同名项）；面板宽度下限 320pt；点事项卡名可在文件面板打开对应 `WS-*.md`；
 - **交付接线与事实写路由（2026-10-07）**：阶段队列引擎与交付模块（`WorkstreamsRunner` / `WorkstreamsDelivery`）均已接线面板——阶段卡「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给**明确原因**（`not-delivery-stage` / `not-git-repo` / `no-branch` / `no-remote` / `no-github-remote` / `no-token`），成功则 `enqueueDelivery` 建 delivery 阶段任务并只启动该阶段；新增 `POST /api/workstreams/covered`（验收点记录，事实）与 `POST /api/workstreams/delivery`（`pr` / `url` 事实）；**`delivery.outcome` 是派生缓存**，API 拒绝手写（`outcome-derived`）；阶段交接提示词与 `workstream-panel` 技能均已改指事项面板自有 API。规划 / 设计阶段的证据读取、人工确认 / 退回、阶段筛选与空态均已可用；
-- **事项 ↔ 会话绑定 / 在会话中处理（2026-10-07）**：`.dsh/workstreams/local.json` 新增 `workstreamSessions`（**WS-id → dsh 会话 id**，ignored）；任何 `/api/workstreams/*` 写请求带 `session` 时都会记住该绑定，`list` 的每张卡随带 `session`。反向可查 **`GET /api/workstreams/bound?session=$DSH_SESSION_ID`**（返回该会话绑定的 WS；未绑定返回空列表）。主卡 / 阶段卡的「**在会话中处理**」动作对齐需求池「细化」：**有绑定会话就复用，没有才新建并绑定**；绑定会话已坏或新建失败则**回退当前会话**；
-- **focus 通道（2026-10-07）**：把「跳到某个事项」做成一条贯通面板 / API / 需求池的通道——① 面板内 `focus(onWorkstream:)` 给目标卡加**强调色描边**并**滚动到可见**；目标卡若被当前**阶段筛选**隐藏，筛选自动回落「全部」，高亮绝不会看不见；切换工作区清空焦点。② `/api/workstreams/*` 全部支持 `focus`：写操作用 body 字段、读操作用 `?focus=`（接受 `true` / `1` / `yes` / `on`），仅 **200** 的请求触发；`focus:true` 时面板亮起（`setRightPanel(.workstreams)`）并按路由里的 `id`（create 则取新建卡的 id）高亮；**默认 `false`**，普通 agent 写卡不抢面板。③ 需求池「已拆解事项」的主 `↗` 改走该通道（次级按钮仍打开卡文件）。
+- **事项 ↔ 主场会话绑定 / 在会话中处理（2026-10-07，A16）**：`.dsh/workstreams/local.json` 的 `workstreamSessions`（**WS-id → dsh 会话 id**，ignored）保存每个事项**至多一条「主场会话」**——任何 `/api/workstreams/*` 写请求带 `session` 时把它记成该会话，**后写覆盖先写**（last-writer-wins，运行时绑定、不是永久契约），`list` 的每张卡随带 `session`。反向可查 **`GET /api/workstreams/bound?session=$DSH_SESSION_ID`**（返回该会话绑定的 WS；未绑定返回空列表）。主卡 / 阶段卡的「**在会话中处理**」动作对齐需求池「细化」：**有绑定会话就复用，没有才新建并绑定**；绑定会话已坏或新建失败则**回退当前会话**。绑定是运行时状态，只有真正在推进该事项的对话才应带 `session`；阶段 runner / 临时会话带上会把主场会话覆盖成一条会消失的死会话（技能正文有显式警示）；
+- **focus 通道（2026-10-07）**：把「跳到某个事项」做成一条贯通面板 / API / 需求池的通道——① 面板内 `focus(onWorkstream:)` 给目标卡加**强调色描边**并**滚动到可见**；目标卡若被当前**阶段筛选**隐藏，筛选自动回落「全部」，高亮绝不会看不见；切换工作区清空焦点。② `/api/workstreams/*` 全部支持 `focus`：写操作用 body 字段、读操作用 `?focus=`（接受 `true` / `1` / `yes` / `on`），仅 **200** 的请求触发；`focus:true` 时面板亮起（`setRightPanel(.workstreams)`）并按路由里的 `id` 高亮（`create` 取新建卡的 id；`bound` 取响应里第一张绑定卡；其余读路由只置前、无 id）；**默认 `false`**，普通 agent 写卡不抢面板。③ 需求池「已拆解事项」的主 `↗` 改走该通道（次级按钮仍打开卡文件）。
+- **焦点 + 主场会话切换矩阵（A15 / A16，2026-10-07）**：面板与对话靠两条正交通道互相找到——`focus` 把注意力**单向**带回面板，`workstreamSessions` 把事项绑到一条**主场会话**。完整模型见设计 §6.1，面向操作的简表：
+
+  | 方向 | 触发 | 目标 / 动作 | 回退 / 边界 |
+  |---|---|---|---|
+  | 对话 → 面板 | 技能 `GET /bound?session=…&focus=true` | 面板置前 + 高亮反查到的第一张卡 | 未绑定 / 无工作区 → 只返回空列表，不聚焦 |
+  | 需求池 → 面板 | 已拆解事项主 `↗` | 切到事项面板 + `focus(WS-id)` | WS 卡缺失 → 次级按钮打开卡文件 |
+  | 面板内聚焦 | `focus` 命中的卡被阶段筛选隐藏 | 筛选回落「全部」再高亮 + 滚动 | 目标 id 不存在 / 空白 → 不聚焦 |
+  | 面板 → 对话 | 主卡 / 阶段卡「在会话中处理」 | 复用绑定主场会话；没有才新建并绑定 | 坏会话 / 新建失败 → 回退当前会话 |
+  | 阶段确认 → 对话 | 人在面板确认或 `POST stage/confirm` | 向绑定主场会话发**下一阶段**交接提示词 | 无绑定 → 不发；交付终态 → 不续发 |
+  | 需求池确认 → 对话 | 确认拆解 | 新 WS 继承需求的绑定会话 | 需求无绑定 → 不发明；显式 `session` 优先 |
+
 - 设计、存储与提示词文档：`docs/design/panels/workstream-panel-design.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/design/panels/workstream-handoff-prompt-design.md`；技能：`.dsh/skills/workstream-panel/SKILL.md`。
 
 ## 任务面板（`⌥⌘J` / 活动栏「任务」图标）

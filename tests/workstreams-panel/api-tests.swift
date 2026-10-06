@@ -578,8 +578,19 @@ focusFake.focusCalls.removeAll()
 let focusList = WorkstreamsAPIRouter.route(HTTPRequest(method: "GET", path: "/api/workstreams/list", query: ["workspace": "/tmp/ws", "focus": "1"]), delegate: focusFake)
 eq(focusList?.status, 200, "list?focus=1 200")
 eq(focusFake.focusCalls.count, 1, "query focus -> one focus call")
-eq(focusFake.focusCalls.last?.id == nil, true, "read focus carries no workstream id")
+eq(focusFake.focusCalls.last?.id == nil, true, "plain list focus carries no workstream id")
 eq(focusFake.focusCalls.last?.workspace, "/tmp/ws", "read focus carries the query workspace")
+// Reverse lookup is the one read route that names a card: bound returns the first
+// bound workstream, so focus:true on it highlights that card (switch matrix 对话 → 面板).
+focusFake.focusCalls.removeAll()
+focusFake.boundResult = ["ok": true, "session": "s-1",
+                         "workstreams": [["id": "WS-000001"]],
+                         "workstream": ["id": "WS-000001"]]
+let focusBound = WorkstreamsAPIRouter.route(HTTPRequest(method: "GET", path: "/api/workstreams/bound",
+    query: ["session": "s-1", "focus": "true"]), delegate: focusFake)
+eq(focusBound?.status, 200, "bound?focus=true 200")
+eq(focusFake.focusCalls.count, 1, "bound focus -> one focus call")
+eq(focusFake.focusCalls.last?.id, "WS-000001", "bound focus highlights the reverse-looked-up workstream")
 // create has no request id: the fresh card id from the response is focused.
 focusFake.focusCalls.removeAll()
 focusFake.createResult = ["ok": true, "workstream": ["id": "WS-000042"]]

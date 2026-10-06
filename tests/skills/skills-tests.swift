@@ -154,6 +154,13 @@ if let text = wsSkill {
     check(text.contains("反查"), "workstream-panel explains the reverse lookup")
     check(text.contains("focus: true") && text.contains("focus=true"), "workstream-panel documents the focus flag (body + query)")
     check(text.contains("聚焦") || text.contains("高亮"), "workstream-panel explains focusing / highlighting the panel")
+    // 2026-10-07 (A15 / A16): focus + home session. The binding is a single
+    // last-writer-wins home session, NOT a permanent promise, and ephemeral
+    // sessions must not overwrite it. bound?focus highlights the reverse lookup.
+    check(text.contains("主场会话"), "workstream-panel explains the home session")
+    check(text.contains("后写覆盖") || text.contains("last-writer-wins"), "workstream-panel: the binding is last-writer-wins")
+    check(text.contains("临时会话"), "workstream-panel warns ephemeral sessions not to overwrite the home session")
+    check(text.contains("bound") && (text.contains("高亮") || text.contains("聚焦")), "workstream-panel: bound?focus highlights the reverse lookup")
 }
 
 if failures > 0 { print("\(failures) FAILURE(S)"); exit(1) }

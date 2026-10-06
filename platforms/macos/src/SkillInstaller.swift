@@ -423,17 +423,17 @@ enum BuiltinSkill: CaseIterable {
     description: 改事项（Workstream）卡片、按阶段建任务、启动事项/阶段队列、查看任务、按会话反查当前事项并把事项面板聚焦给用户，一律走事项面板 REST API /api/workstreams/*，不直接改 .dsh/workstreams/*.md。Edit workstream cards and stage tasks through the oh-my-dsh Workstreams panel API instead of writing .dsh files directly.
     user-invocable: false
     ---
-    
+
     # workstream-panel — 通过 API 改事项卡与阶段任务
-    
+
     oh-my-dsh 壳层的**事项面板**（Workstreams，⌥⌘K）通过 **localhost REST API** 驱动。
     事项卡片落在项目 `.dsh/workstreams/WS-*.md`（随仓库提交），执行队列与三级任务落在
     项目 `.dsh/workstreams/queues.json`（ignored）；**面板是唯一写者**，
     agent 改事项、建阶段任务、启动 / 暂停队列**一律走 `/api/workstreams/*`**，
     **不直接改 .dsh 文件**。
-    
+
     ## 何时执行（硬规则）
-    
+
     - **只在被要求时执行**：用户明确说「改 / 补 / 登记某个事项」「把这个事项拆成任务 /
       启动队列 / 看看任务」，或阶段交接提示词（`WorkstreamHandoff`）要求本步动作时，
       才调用本 API；其余情况不动。
@@ -449,17 +449,17 @@ enum BuiltinSkill: CaseIterable {
       由面板写；绕过 API 改盘会让面板内存覆盖你的改动，用户也看不到反馈。
       `.dsh/requirements/*.md`、`.dsh/regression/*.md` 也不归本技能改。
     - App 没运行时停下来告诉用户「请先打开 oh-my-dsh」，**不要**绕过 API 写文件。
-    
+
     ## 端口发现（必做）
-    
+
     ```bash
     PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/shell-api.port" 2>/dev/null || cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/browser-api.port" 2>/dev/null || echo 3081)"
     ```
-    
+
     （首个可用者为准；App 没运行时一个都连不上，停下来请用户打开 App。）
-    
+
     ## API 速查（http://127.0.0.1:$PORT）
-    
+
     | 方法/路径 | 请求体 | 说明 |
     |---|---|---|
     | GET `/api/workstreams/list` | `?workspace=<路径>` | 现有事项卡 + 解析失败项；`workspace` 传 `$(pwd)` |
@@ -476,10 +476,10 @@ enum BuiltinSkill: CaseIterable {
     | POST `/api/workstreams/create` | `{"workspace":"…","title":"…","requirement":"REQ-003","stage":"planning","body":"…","session":"$DSH_SESSION_ID"}` | 新建事项卡（**仅当用户明确要求**；拆解确认由需求池面板建卡） |
     | POST `/api/workstreams/stage` | `{"workspace":"…","id":"…","stage":"design"}` | 低层显式改阶段口子；**agent 不调**，阶段推进走人工确认门 |
     | POST `/api/workstreams/stage/confirm` / `stage/reject` | `{"id":"…","note":"…"}` / `{"id":"…","reason":"…"}` | **人工确认 / 退回**，**agent 绝不调** |
-    
+
     - `workspace` 传 `$(pwd)`；不传则用面板当前工作区。
-    - 每个写操作都带上本会话的 `session`（`$DSH_SESSION_ID`），面板据此把该事项绑定回本会话。
-    - **`focus`（对话 → 面板）**：任意路由可带 `focus: true`（写请求放 body，读请求放 `?focus=true`）；仅当请求成功（返回 200）时面板置前，并把目标卡高亮、滚动到可见。`create` 聚焦返回的新卡；其余写路由聚焦请求的 `id`；读请求只置前（无 id）。**默认 `false`**，普通写卡不会抢用户的右栏。
+    - **主场会话（`session` 绑定）**：写请求带 `session`（`$DSH_SESSION_ID`）时，面板把该事项的**主场会话**记成这次会话（`.dsh/workstreams/local.json` 的 `workstreamSessions`，ignored）。一个事项**只有一条**、**后写覆盖先写**（last-writer-wins）——这是运行时绑定，**不是「绑回来就永久有效」的契约**。面板「在会话中处理」会复用它；人在面板确认阶段后，面板把**下一阶段**交接提示词发回它（`bound` 反查的也是它）。因此**只有真正在推进该事项的对话才带 `session`**；阶段 runner / 子会话等**临时会话不要带**——它们写完就消失，带上会把主场会话覆盖成一条死会话（让人在面板「在会话中处理」重新绑定即可恢复）。
+    - **`focus`（对话 → 面板）**：任意路由可带 `focus: true`（写请求放 body，读请求放 `?focus=true`）；仅当请求成功（返回 200）时面板置前，并把目标卡高亮、滚动到可见。`create` 聚焦返回的新卡；`bound` 聚焦响应里**第一张**绑定卡；其余写路由聚焦请求的 `id`；其余读路由只置前（无 id）。**默认 `false`**，普通写卡不会抢用户的右栏。
     - `stage` 取值：`planning` / `design` / `task` / `acceptance` / `delivery`。
     - `update` 的 `requirement` 传空串清除指针；`queues` 是队列 id 字符串列表（**0..1**）。
     - `task/create` 的 `titles` 与 `body` 至少给一个（只给 `body` 时取首行做标题）；`stage` 显式给空串是错误。
@@ -491,11 +491,11 @@ enum BuiltinSkill: CaseIterable {
       现算），**禁止手写**；`closed` / `split` 等派生字段同样不写。
     - 交付阶段动作由面板执行（「交付」按钮收集 git / GitHub / token 事实并起交付会话）；agent 不要
       直接改盘上文件，也不要手写 `outcome`。
-    
+
     ## 工作流
-    
+
     ### 先看现状（避免重复建、确认 id）
-    
+
     ```bash
     curl -sG --data-urlencode "workspace=$(pwd)" "http://127.0.0.1:$PORT/api/workstreams/list"
     ```
@@ -519,21 +519,21 @@ enum BuiltinSkill: CaseIterable {
     无绑定时 `workstreams` 为空；需要全量就 `list`，要给用户看卡就带 `focus: true`。
 
     ### 查看任务 / 队列
-    
+
     ```bash
     curl -sG --data-urlencode "workspace=$(pwd)" "http://127.0.0.1:$PORT/api/workstreams/task/list"
     ```
-    
+
     返回 `tasks[]`（`id` / `title` / `state` / `stage` / `session` / `error` / `report`）与
     `queues[]`（`id` / `name` / `workstreamId` / `state` / `taskIds`）。
     `state` 取值：任务 `pending` / `queued` / `running` / `done` / `failed` / `needsReview` /
     `cancelled`，队列 `draft` / `active` / `paused` / `done` / `closed`。
     **只读**，用来确认事项已有的队列与任务，再决定建 / 启动。
-    
+
     ### 补规划（规划阶段本步动作）
-    
+
     把目标 / 边界 / 验收标准（AC<n>）/ 阶段裁剪声明整理成 `## 规划` 段，整段提交：
-    
+
     ```bash
     cat > /tmp/ws-plan.json <<'JSON'
     {"workspace": "<pwd 的输出>", "id": "WS-000012", "heading": "## 规划", "session": "<$DSH_SESSION_ID 的值>",
@@ -541,12 +541,12 @@ enum BuiltinSkill: CaseIterable {
     JSON
     curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/plan" -H 'Content-Type: application/json' --data-binary @/tmp/ws-plan.json
     ```
-    
+
     ### 按阶段创建任务（执行阶段「拆分任务」本步动作）
-    
+
     为事项建**等待态**阶段任务——**只建不启动**，追加到该事项的唯一队列（没有才建）。
     `stage` 缺省取卡片当前阶段；每条 `titles` 由面板生成阶段交接提示词：
-    
+
     ```bash
     cat > /tmp/ws-tasks.json <<'JSON'
     {"workspace": "<pwd 的输出>", "id": "WS-000012", "stage": "task", "session": "<$DSH_SESSION_ID 的值>",
@@ -554,32 +554,32 @@ enum BuiltinSkill: CaseIterable {
     JSON
     curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/task/create" -H 'Content-Type: application/json' --data-binary @/tmp/ws-tasks.json
     ```
-    
+
     建完**停下请人确认拆分合理**；不要立刻启动。阶段 ↔ 队列映射由面板写回卡片 `queues`。
-    
+
     ### 启动事项 / 阶段队列（人确认后）
-    
+
     - **启动阶段**（只跑该 `stage` 的任务，跑完自动暂停队列）：带 `stage`。
     - **启动事项**（整条队列 FIFO）：不带 `stage`。
-    
+
     ```bash
     cat > /tmp/ws-start.json <<'JSON'
     {"workspace": "<pwd 的输出>", "id": "WS-000012", "stage": "task", "session": "<$DSH_SESSION_ID 的值>"}
     JSON
     curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/queue/start" -H 'Content-Type: application/json' --data-binary @/tmp/ws-start.json
     ```
-    
+
     需要停下时暂停队列（不影响已在跑的会话）：
-    
+
     ```bash
     curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/queue/pause" -H 'Content-Type: application/json' \\
       -d '{"workspace":"'$(pwd)'","id":"WS-000012","session":"'"$DSH_SESSION_ID"'"}'
     ```
-    
+
     ### 登记事项队列
-    
+
     面板建队列后（或需要把已有队列绑到事项时），把队列 id 写回卡片：
-    
+
     ```bash
     cat > /tmp/ws-queues.json <<'JSON'
     {"workspace": "<pwd 的输出>", "id": "WS-000012", "session": "<$DSH_SESSION_ID 的值>",
@@ -587,22 +587,22 @@ enum BuiltinSkill: CaseIterable {
     JSON
     curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/queues" -H 'Content-Type: application/json' --data-binary @/tmp/ws-queues.json
     ```
-    
+
     ### 改标题 / 需求指针 / 正文
-    
+
     ```bash
     cat > /tmp/ws-update.json <<'JSON'
     {"workspace": "<pwd 的输出>", "id": "WS-000012", "session": "<$DSH_SESSION_ID 的值>", "title": "新标题"}
     JSON
     curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/update" -H 'Content-Type: application/json' --data-binary @/tmp/ws-update.json
     ```
-    
+
     ### 汇报
-    
+
     几行以内 —— 改了哪个 `WS-xxx`、建了哪几条任务 / 启动了哪个队列、面板在哪；不粘贴卡片全文。
-    
+
     ## 失败处理
-    
+
     | 现象 | 处理 |
     |---|---|
     | curl 连不上（Connection refused） | App 没运行：请用户打开 oh-my-dsh，**不要**直接改盘上文件 |
@@ -624,17 +624,18 @@ enum BuiltinSkill: CaseIterable {
     | `404 no-queue` | 该事项还没有队列（或队列已关闭无法再建 / 启动）：先 `task/create` 建队列，或 `task/list` 看状态 |
     | `409 evidence-missing` / `stage-changed` | 人工确认门未过 / 阶段已变：**不要**自行推进；请用户处理 |
     | `500 write-failed` | 面板写盘失败：如实转述，稍后重试 |
-    
+
     ## 不要做
-    
+
     - **不直接改 .dsh 文件**（`.dsh/workstreams/*.md` 与 `.dsh/workstreams/queues.json` 由面板写；
       也不碰 `.dsh/requirements/*.md`、`.dsh/regression/*.md`）；
     - 不调 `stage/confirm` / `stage/reject`（人工确认门），也不调 `stage`（低层口子）；
     - **人未确认拆分前不 `queue/start`**：`task/create` 只建等待态任务，启动实施等人确认或用户明说；
     - 不手写派生字段（`closed` / `outcome` / `split`）；`covered` / `delivery` 只经写路由记事实，`outcome` 由服务端派生；
     - 不在用户没要求时新建事项 / 改阶段 / 建队列 / 启动队列；
-    - 不在用户没要求时用 `focus: true` 抢面板（默认已关闭；只有确实要把卡给用户看时才开）。
-    
+    - 不在用户没要求时用 `focus: true` 抢面板（默认已关闭；只有确实要把卡给用户看时才开）；
+    - **阶段 runner / 临时会话不把本会话写进 `session`**：那会覆盖该事项的主场会话（后写覆盖先写），让「在会话中处理」和阶段推进找不到原来的对话。
+
     """
 }
 

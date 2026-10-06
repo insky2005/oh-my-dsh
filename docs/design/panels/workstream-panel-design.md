@@ -6,6 +6,7 @@
 > 参考（交互样板，**不复用其代码**）：`docs/design/panels/issue-runner-design.md`、`docs/design/panels/tasks-queue-session-loop-design.md`
 > 讨论来源：2026-10-06 会话（需求池面板完成后的方案复审：各阶段是否收敛到任务面板下）
 > 修订（2026-10-06 二次）：队列粒度定为**一事项一队列**；任务**直连事项 + 阶段**；启动分**事项级 / 阶段级**；任务运行态回写事项 / 阶段；执行阶段走**自有 runner**，`workstream-panel` 技能可发起各阶段任务。见 §2 A3·A9·A12–A14 / §3 / §4 / §5 / §6 / §9 D16–D19 / §10。
+> 修订（2026-10-07）：补**焦点（A15）+ 主场会话（A16）**模型与**切换矩阵**——面板 ↔ 对话的双向切换由 `focus`（注意力单向往面板）与 `workstreamSessions`（每事项至多一条绑定会话）两条通道承载。见 §2 A15·A16 / §5 / §6.1 / §10。
 
 ## 0. 这份文档是什么
 
@@ -41,6 +42,8 @@
 | A12 | **任务直连事项 + 阶段** | 任务除 `queueId` 外，直接带 `workstreamId` + `stage`；阶段是任务的属性，阶段视图按它对任务分组。见裁决 D17。 |
 | A13 | **运行态回写，权威 stage 仍人门** | 任务状态 → 阶段运行态 → 事项运行态（派生、自动）；权威 `stage` 推进仍由人工确认门（R10）。见裁决 D18。 |
 | A14 | **技能可发起各阶段任务** | `workstream-panel` 技能（+ 对应 API）可为一个事项按阶段创建任务、启动事项 / 阶段队列。见裁决 D19。 |
+| A15 | **焦点通道（注意力单向往面板）** | 任何 `/api/workstreams/*` 可带 `focus`（写请求 body / 读请求 `?focus=`），仅 HTTP 200 触发：面板置前 + 高亮 + 滚动到可见；目标被阶段筛选隐藏时回落「全部」；默认 `false` 不抢右栏。见 §6.1。 |
+| A16 | **主场会话（每事项至多一条绑定会话）** | `.dsh/workstreams/local.json` 的 `workstreamSessions`（WS-id → sessionId，ignored，last-writer-wins）；面板「在会话中处理」、需求拆解继承、对话内阶段推进都围绕它，`GET /api/workstreams/bound?session=` 反查。见 §6.1 / 裁决 D6。 |
 
 ## 3. 目标模型
 
@@ -109,6 +112,27 @@
 | 交付事实 / outcome 派生缓存 | WS 卡 `delivery` 块（沿用 schema） | committed（缓存）/ 派生 |
 
 **硬约束**：事项面板不得读写 `.dsh/tasks/*`；不得依赖 `/api/tasks/*`。
+
+### 6.1 焦点 + 主场会话模型（A15 / A16）与切换矩阵
+
+面板与对话之间的「互相找到」由两条**正交**的通道承载：
+
+- **焦点（A15，注意力单向往面板）**：任何 `/api/workstreams/*` 请求可带 `focus`（写请求放 body，读请求放 `?focus=`，接受 `true` / `1` / `yes` / `on`）；**仅当请求被处理（HTTP 200）时**，面板置前（`setRightPanel(.workstreams)`）+ 给目标卡**强调色描边** + 滚动到可见。**默认 `false`**——普通 agent 写卡不抢用户的右栏。高亮目标：写路由取请求里的 `id`；`create` 取响应里新卡的 id；`bound` 取响应里**第一张绑定卡**；其余读路由只置前（无 id）。目标被当前**阶段筛选**隐藏时，筛选自动回落「全部」，保证高亮可见；切换工作区清空焦点。
+- **主场会话（A16，对话 ↔ 面板的会话绑定）**：每个事项至多一条**绑定会话**（`.dsh/workstreams/local.json` 的 `workstreamSessions`，WS-id → sessionId，**ignored**）。写请求带 `session` 时把该事项的主场会话记成这次会话，**后写覆盖先写**（last-writer-wins，单一槽位，是运行时绑定不是永久契约）。`GET /api/workstreams/bound?session=` 反向查「本会话绑定的事项」。面板「在会话中处理」、需求拆解继承、对话内阶段推进都读它。
+  - 因此**只有真正在推进该事项的对话才应带 `session`**；阶段 runner / 临时会话写完就消失，带上会把主场会话覆盖成一条死会话（技能正文对此有显式警示）。
+
+**切换矩阵**（面向用户的简表见 [`docs/usage/panels.md`](../../usage/panels.md)）：
+
+| 方向 | 触发 | 目标 / 动作 | 回退 / 边界 |
+|---|---|---|---|
+| 对话 → 面板 | 技能 `GET /bound?session=…&focus=true` | 面板置前 + 高亮反查到的第一张卡 | 未绑定 / 无工作区 → 只返回空列表，不聚焦 |
+| 需求池 → 面板 | 已拆解事项主 `↗` | `setRightPanel(.workstreams)` + `focus(WS-id)` | WS 卡缺失 → 次级按钮打开卡文件 |
+| 面板内聚焦 | `focus` 命中的卡被阶段筛选隐藏 | 筛选回落「全部」再高亮 + 滚动 | 目标 id 不存在 / 空白 → 不聚焦 |
+| 面板 → 对话 | 主卡 / 阶段卡「在会话中处理」 | 复用绑定主场会话并 `sendPrompt` 后续跑 | 坏 / 无绑定 → 新建并绑定；再失败 → 回退当前会话 |
+| 阶段确认 → 对话 | 人在面板确认或 `POST stage/confirm` | 向绑定主场会话发**下一阶段**交接提示词 | 无绑定 → 不发（不凭空起会话）；delivery 终态 → 不续发 |
+| 需求池确认 → 对话 | `RequirementsCore.confirm` | 新 WS 继承需求的绑定会话（写 `workstreamSessions`） | 需求无绑定 → 不发明；显式 `session` 优先 |
+
+> 实现落点：焦点 `WorkstreamsUI.WSFocusTarget` + `WorkstreamsAPI.route` 的 `focusID` / `apiWorkstreamsFocus`；主场会话 `WorkstreamsCore.boundSession` / `boundWorkstream` / `sessionTarget` + `WorkstreamsQueues.WSStore`。两条通道都只读**权威卡片**（焦点目标、阶段）与运行时绑定（会话），不复述卡片状态。
 
 ## 7. 与既有架构的分歧及已修订点
 
@@ -189,3 +213,5 @@ D10 之所以是伪问题，源于把两个正交的轴混为一谈：
    - **已落地（2026-10-07）**：`covered` / `delivery` 写路由（`POST /api/workstreams/covered` / `delivery`；`delivery.outcome` 是派生缓存，API 拒绝手写，报 `outcome-derived`）；交付接线——面板「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给明确原因（`not-delivery-stage` / `not-git-repo` / `no-branch` / `no-remote` / `no-github-remote` / `no-token`），成功则 `runner.enqueueDelivery` 建 delivery 阶段任务并只启动该阶段；
    - **已落地（2026-10-07）**：事项 ↔ 会话绑定——`local.json` 新增 `workstreamSessions`（ignored），任何 `/api/workstreams/*` 写请求带 `session` 时记忆、`list` 随带；反查路由 `GET /api/workstreams/bound?session=...`；主卡 / 阶段卡「**在会话中处理**」对齐需求池「细化」（复用绑定会话 / 新建并绑定 / 回退当前会话），由 `WorkstreamsCore.sessionTarget` 纯决策 + `WorkstreamsQueues` 持久化承载；
    - **已落地（2026-10-07）**：**focus 通道**——面板 `focus(onWorkstream:)` 给目标卡加强调色描边并滚动到可见，被阶段筛选隐藏时回落「全部」；`/api/workstreams/*` 统一支持 `focus`（写操作 body / 读操作 `?focus=`，仅 200 触发，默认 `false` 不抢面板），经 `WorkstreamsAPIDelegate.apiWorkstreamsFocus` → `BrowserAPIBridge.workstreamsFocus` 落到面板；需求池子事项主 `↗` 改走该通道（次级仍打开卡文件）。**对话内阶段推进（2026-10-07）**：人在面板确认某阶段、`stage` 前移后，面板按钮与 `POST /api/workstreams/stage/confirm` 两条确认路径共用 `continueToNextStage`，经 `onStageConfirmed` 把更新后的卡片交给 `main.swift`；后者读该事项的绑定主场会话，复用 `WorkstreamHandoff.nextStagePrompt` 发送下一阶段交接提示词（无绑定会话不发、交付终态不续发）。**至此 §10 无待办。**
+
+   - **已落地（2026-10-07）**：**焦点 + 主场会话模型与切换矩阵**（A15 / A16，§6.1）——把散落在 A11/D6、§6 会话绑定与第 24 项「对话内阶段推进」里的行为收拢成两条正交通道：`focus` 单向把注意力带回面板，`workstreamSessions` 把事项绑到一条**主场会话**（last-writer-wins）；`workstream-panel` 技能同步**修正会话绑定的措辞**（不再承诺「绑回来就永久有效」，并警示临时会话不要覆盖主场会话）。测试：API 增加 `bound?focus` 高亮断言，skills 测试固化新措辞。

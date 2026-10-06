@@ -3,6 +3,7 @@
 > 状态：已落地（WS-002 已交付；WS-005 状态派生修订 2026-10-03；Phase B 写权反转随事项面板落地）· 日期：2026-10-03（2026-10-06 写权反转落地） · 关联：`.dsh/workstreams/WS-002.md`、`.dsh/workstreams/WS-005.md`、`.dsh/requirements/REQ-002.md`、`.dsh/requirements/README.md`、`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/workstream-handoff-prompt-design.md`
 > 修订（WS-005，2026-10-03）：需求 `state` 只留人工判断，`split` / `closed` 为派生；见 §3.1 / §5 / §6 / §10。
 > 修订（2026-10-06）：`WS.queues` = `[q-...]`（**一事项一队列，0..1**）；阶段不再挂在队列上，而是任务的 `stage` 属性。见 §2 / §3.2 / §3.4 / §8，来源 `docs/design/panels/workstream-panel-design.md` §9 D1 / D16 / D17。
+> 修订（2026-10-07）：`local.json` 明确 **`workstreamSessions`**（事项 → 主场会话，last-writer-wins，可反查）与面板 `focus` 通道；见 §4 与 `docs/design/panels/workstream-panel-design.md` §6.1（A15 / A16）。
 
 ## 1. 目的与范围
 
@@ -154,11 +155,12 @@ updated: 2026-10-03
 | `.dsh/regression/REG-*.md` + checker | 回归门定义 | ✅ committed |
 | `.dsh/tasks/index.json` | 任务关联索引（跨机有意义） | ✅ committed |
 | `.dsh/tasks/{manual,queues,local}.json` | 任务面板运行时 | ❌ ignored |
-| `.dsh/workstreams/local.json` | 事项运行时绑定（会话 id 等） | ❌ ignored |
+| `.dsh/workstreams/local.json` | 事项运行时绑定：三级任务 → 会话 `sessions`、**事项 → 会话 `workstreamSessions`（WS-id → sessionId，该事项的「主场会话」，可反查）**、汇报 / marker / 活跃队列等 | ❌ ignored |
 
 - 照抄 `.dsh/tasks` 的既有分界（`REQ-002` 决策）：`.gitignore` 已忽略 `.dsh/workstreams/local.json`。
 - 需求级运行时绑定**已定另立** `.dsh/requirements/local.json`（与事项级 `.dsh/workstreams/local.json` 对称），须同步在 `.gitignore` 增加一行 `.dsh/requirements/local.json`；本设计只记录约定，`.gitignore` 的落地属任务阶段（§9）。
 - **阶段迁移本身写进卡片**（committed）：`stage` 变化是对共享真相的编辑，必须可追溯、随仓库走。
+- `workstreamSessions` 是**每事项至多一条**的「主场会话」绑定：任何 `/api/workstreams/*` 写请求带 `session` 时记成该会话，**后写覆盖先写**（last-writer-wins，运行时绑定、不是永久契约）；面板「在会话中处理」与「对话内阶段推进」（确认后向主场会话发下一阶段提示词）都读它，`GET /api/workstreams/bound?session=` 反向查「本会话绑定的事项」。模型设计见 `docs/design/panels/workstream-panel-design.md` §6.1（A16）。
 
 ## 5. 终态是派生谓词，禁止手写（AC4）
 
