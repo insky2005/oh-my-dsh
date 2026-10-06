@@ -325,10 +325,7 @@ final class WSPrimaryCardView: NSView {
                                           filled: model.stage == .task))
         // Derived workstream run state (A13): the roll-up of the five stages.
         titleViews.append(WSTierBadgeView(text: L10n.tr(model.runStateKey), tone: model.runStateTone))
-        let handle = CustomIconButton(glyph: .symbol("bubble.left.and.bubble.right"),
-                                      tooltip: L10n.tr("workstreams.handleInSession"), size: 22)
-        handle.onAction = { [weak self] in self?.onHandleInSession?() }
-        titleViews.append(handle)
+        titleViews.append(handleInSessionButton())
         let start = CustomIconButton(glyph: .play,
                                      tooltip: L10n.tr("workstreams.start.item"), size: 22)
         start.onAction = { [weak self] in self?.onStartWorkstream?() }
@@ -382,6 +379,17 @@ final class WSPrimaryCardView: NSView {
         for row in rows { row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
     }
 
+    /// 「在会话中处理」(design §6): the main card and every stage card share this
+    /// ONE button — reuse the workstream's bound session, or start (and bind) a
+    /// new one. The action is per-workstream, so both levels call the same
+    /// controller handler.
+    private func handleInSessionButton() -> CustomIconButton {
+        let handle = CustomIconButton(glyph: .symbol("bubble.left.and.bubble.right"),
+                                      tooltip: L10n.tr("workstreams.handleInSession"), size: 22)
+        handle.onAction = { [weak self] in self?.onHandleInSession?() }
+        return handle
+    }
+
     /// One 阶段二级卡 (recessed inside the primary card). Empty stages are a
     /// header only (no disclosure; nothing to show yet).
     private func stageCard(_ stage: WSStageCardModel) -> NSView {
@@ -412,6 +420,10 @@ final class WSPrimaryCardView: NSView {
             headerViews.append(confirm)
             headerViews.append(reject)
         }
+        // 「在会话中处理」(design §6): the same per-workstream action as the main
+        // card, offered on every stage card so the conversation is one click away
+        // from the stage the user is reading.
+        headerViews.append(handleInSessionButton())
         // 阶段级动作 (design A3 / A14): create waiting-state stage tasks, or run
         // only this stage's tasks.
         let createTask = CustomIconButton(glyph: .symbol("plus"),

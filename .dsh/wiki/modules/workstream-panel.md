@@ -44,7 +44,7 @@ manual: false
 
 **交付接线与事实写路由**（2026-10-07）：交付模块 `WorkstreamsDelivery` 已接入面板——阶段卡「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给明确原因（`WSDeliveryBlocker`），成功则 `WorkstreamsRunner.enqueueDelivery` 建 delivery 阶段任务并只启动该阶段；新增 `POST /api/workstreams/covered`（`paths` + `base` / `head` 事实）与 `POST /api/workstreams/delivery`（`pr` / `url` 事实）；**`delivery.outcome` 是派生缓存**，API 拒绝手写（`outcome-derived`）；阶段提示词与技能均已改指事项面板自有 API。
 
-**事项 ↔ 会话绑定 / 在会话中处理**（2026-10-07）：`.dsh/workstreams/local.json` 的 `workstreamSessions`（WS-id → sessionId，ignored）由任何带 `session` 的写请求记忆（`WSStore.rememberWorkstreamSession`），`list` 的每张卡随带 `session`；反查路由 **`GET /api/workstreams/bound?session=$DSH_SESSION_ID`** 返回该会话绑定的 WS（未绑定返回空列表）。主卡「**在会话中处理**」动作对齐需求池「细化」：复用绑定会话 / 新建并绑定 / 回退当前会话，决策为纯函数 `WorkstreamsCore.sessionTarget`（`WorkstreamTarget.reuse / created / fallback`）。**需求拆解确认继承**（2026-10-07）：`RequirementsCore.confirm` 建 `WS-*.md` 时把该需求在 `.dsh/requirements/local.json` 的绑定会话合并写进 `workstreamSessions`（显式 `session` 优先，无绑定则不发明），新事项在面板可直接续同一条对话；`requirements.notify.confirmed` 同步改指事项面板并附 focus 提示。
+**事项 ↔ 会话绑定 / 在会话中处理**（2026-10-07）：`.dsh/workstreams/local.json` 的 `workstreamSessions`（WS-id → sessionId，ignored）由任何带 `session` 的写请求记忆（`WSStore.rememberWorkstreamSession`），`list` 的每张卡随带 `session`；反查路由 **`GET /api/workstreams/bound?session=$DSH_SESSION_ID`** 返回该会话绑定的 WS（未绑定返回空列表）。主卡 / 阶段卡「**在会话中处理**」动作对齐需求池「细化」：复用绑定会话 / 新建并绑定 / 回退当前会话，决策为纯函数 `WorkstreamsCore.sessionTarget`（`WorkstreamTarget.reuse / created / fallback`）。**需求拆解确认继承**（2026-10-07）：`RequirementsCore.confirm` 建 `WS-*.md` 时把该需求在 `.dsh/requirements/local.json` 的绑定会话合并写进 `workstreamSessions`（显式 `session` 优先，无绑定则不发明），新事项在面板可直接续同一条对话；`requirements.notify.confirmed` 同步改指事项面板并附 focus 提示。
 
 ## 测试
 

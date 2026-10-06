@@ -470,6 +470,13 @@ for needle in 'apiWorkstreamsBound' 'onHandleInSession' 'handleInSession(' 'bind
     exit 1
   fi
 done
+# 主卡 + 阶段卡都要有「在会话中处理」：两处共用同一个按钮构造器，保证都落在
+# 同一个 onHandleInSession 上（只挂主卡不算完成）。
+if ! grep -qF 'func handleInSessionButton()' "$SRC2/WorkstreamsPanel.swift" \
+   || [ "$(grep -c 'append(handleInSessionButton())' "$SRC2/WorkstreamsPanel.swift")" -lt 2 ]; then
+  echo "FAIL: the main card and the stage cards must both carry the handle-in-session button" >&2
+  exit 1
+fi
 if ! grep -qF 'workstreamsBound' "$SRC2/BrowserAPI.swift" \
    || ! grep -qF 'bridge.workstreamsBound' "$MAIN" \
    || ! grep -qF 'startWorkstreamSession' "$MAIN" \
