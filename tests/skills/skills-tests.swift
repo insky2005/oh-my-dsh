@@ -135,6 +135,15 @@ if let text = wsSkill {
     check(text.contains("/api/workstreams/"), "workstream-panel points at the panel API")
     check(text.contains("不直接改 .dsh 文件"), "workstream-panel forbids direct .dsh edits")
     check(text.contains("stage/confirm"), "workstream-panel keeps the human confirmation gate")
+    // 2026-10-06 (A14 / D19): the skill documents the panel's own engine, not /task-todo.
+    check(text.contains("/api/workstreams/task/create"), "workstream-panel documents stage task create")
+    check(text.contains("/api/workstreams/task/list"), "workstream-panel documents task list")
+    check(text.contains("/api/workstreams/queue/start"), "workstream-panel documents queue start")
+    check(text.contains("/api/workstreams/queue/pause"), "workstream-panel documents queue pause")
+    check(text.contains("等待态"), "workstream-panel creates waiting-state tasks (build, do not start)")
+    check(text.contains("stage/reject"), "workstream-panel keeps the reject gate")
+    check(!text.contains("/task-todo"), "workstream-panel no longer points at /task-todo")
+    check(text.contains("不自签"), "workstream-panel: the agent never self-signs a gate")
 }
 
 if failures > 0 { print("\(failures) FAILURE(S)"); exit(1) }
