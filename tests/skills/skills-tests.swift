@@ -170,6 +170,21 @@ if let text = wsSkill {
     check(text.contains("面板阶段卡已去掉「**启动阶段**」按钮") && text.contains("唯一的启动入口"),
           "workstream-panel: the stage card has no start button; the workstream card is the single start entry")
     check(text.contains("阶段 canonical 顺序"), "workstream-panel: workstream start runs in canonical stage order")
+    // 2026-10-07 (task 34): the human gate is no longer "never call". The skill is
+    // user-invocable, and stage/confirm + stage/reject may be called ONLY when the
+    // user explicitly authorizes it in this session, after restating evidence
+    // (confirm) / obtaining the human's reason (reject). The 409 gate stays hard.
+    check(!text.contains("user-invocable: false"), "workstream-panel is user-invocable (no user-invocable: false key)")
+    check(text.contains("可被用户直接调用"), "workstream-panel documents direct user invocation")
+    check(text.contains("/workstream-panel 确认规划"), "workstream-panel documents /workstream-panel confirm invocation")
+    check(text.contains("/api/workstreams/stage/confirm"), "workstream-panel documents the full confirm route")
+    check(text.contains("/api/workstreams/stage/reject"), "workstream-panel documents the full reject route")
+    check(text.contains("仅当用户在本会话明确发出确认"), "workstream-panel: gates open only on explicit per-session user intent")
+    check(text.contains("不得主动代签"), "workstream-panel: the agent never signs on the user's behalf")
+    check(text.contains("复述结论与证据"), "workstream-panel: confirm restates evidence and requests confirmation")
+    check(text.contains("必须拿到人的原因"), "workstream-panel: reject requires the human's reason")
+    check(text.contains("由人给"), "workstream-panel: the reject reason comes from the human, not the agent")
+    check(text.contains("不得重试硬推"), "workstream-panel: 409 evidence-missing / stage-changed are not force-retried")
 }
 
 if failures > 0 { print("\(failures) FAILURE(S)"); exit(1) }

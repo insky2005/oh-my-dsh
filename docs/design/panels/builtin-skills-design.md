@@ -157,7 +157,7 @@ dsh web 从多级根发现 Skill（`SKILL.md` 带 YAML frontmatter `name`/`descr
 
 与三个面板技能不同的是它的**调用方式**：那三个由面板在自己的流程里触发（`user-invocable: false` 表「仅 model 可调用」），`task-todo` 则是**用户在会话里明确要求**时才用，因此保留默认可用户调用。设计见 `docs/design/panels/task-todo-skill-design.md`。
 
-此后又新增两个内置技能：`requirement-pool`（想法收件 + 拆解提案，2026-10-05 需求池面板）与 `workstream-panel`（事项卡片改走 `/api/workstreams/*`、**不直接改 `.dsh` 文件**，2026-10-06 事项面板写权反转 D5b）。两者沿用同一机制：只加一个 `BuiltinSkill` case + 与仓库 `.dsh/skills/<名>/SKILL.md` 字节一致的内嵌 markdown，`tests/skills` 的 `allCases` 循环自动覆盖安装 / 更新 / 字节断言。
+此后又新增两个内置技能：`requirement-pool`（想法收件 + 拆解提案，2026-10-05 需求池面板）与 `workstream-panel`（事项卡片改走 `/api/workstreams/*`、**不直接改 `.dsh` 文件**，2026-10-06 事项面板写权反转 D5b）。两者沿用同一机制：只加一个 `BuiltinSkill` case + 与仓库 `.dsh/skills/<名>/SKILL.md` 字节一致的内嵌 markdown，`tests/skills` 的 `allCases` 循环自动覆盖安装 / 更新 / 字节断言。其中 `requirement-pool` 默认可用户调用；`workstream-panel` 初版带 `user-invocable: false`（仅 model 可调用），自 2026-10-07 起为支持会话内**用户明确授权下的阶段确认 / 退回**，去掉该键改为**默认可用户调用**（与 `requirement-pool` / `task-todo` 对齐）。
 
 ## 8. 退役的 Skill（2026-09-27：`issue-resolve`）
 
