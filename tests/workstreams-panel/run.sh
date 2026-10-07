@@ -428,6 +428,39 @@ if ! grep -qF 'wsApplyingDefaultExpansion(built)' "$SRC2/WorkstreamsUI.swift"; t
 fi
 echo "workstreams default expansion guard ok"
 
+echo "--- 队列 id 展示位置 guard (UX: 队列 id 只在事项主卡，任何阶段卡都不显示) ---"
+# 队列属于事项（一事项一队列，design A9 / D16）。修复前 queueIDs 挂在「当前阶段」
+# 卡上，拆分后队列 id 会显示到「规划」等二级卡；现在它只作为中性徽标出现在事项主卡
+# 标题行，阶段二级卡不再承载。
+UI="$SRC2/WorkstreamsUI.swift"
+# 恰好一个卡片模型（主卡）声明 queueIDs。
+if ! grep -qE 'var queueIDs: \[String\]' "$UI" \
+   || [ "$(grep -c 'var queueIDs: \[String\]' "$UI")" -ne 1 ]; then
+  echo "FAIL: exactly one card model (the main card) must declare queueIDs" >&2
+  exit 1
+fi
+# 从 WSStageCardModel 结构体抠出正文，断言它不含任何队列字段。
+STAGE_BODY="$(awk '/^struct WSStageCardModel/,/^}/' "$UI")"
+if printf '%s\n' "$STAGE_BODY" | grep -qE 'queueIDs|hasQueue'; then
+  echo "FAIL: WSStageCardModel must not carry queueIDs / hasQueue (a queue is not stage-scoped)" >&2
+  exit 1
+fi
+if ! grep -qF 'queueIDs: card.queues' "$UI"; then
+  echo "FAIL: the main card must be built with the workstream's queue ids" >&2
+  exit 1
+fi
+# 主卡标题行用中性徽标渲染；阶段卡不得渲染 stage.queueIDs。
+if ! grep -qE 'WSTierBadgeView\(text: model\.queueIDs\.joined' "$PANEL" \
+   || ! grep -qF 'tone: .neutral' "$PANEL"; then
+  echo "FAIL: the main card title row must render the queue ids as a neutral badge" >&2
+  exit 1
+fi
+if grep -qF 'stage.queueIDs' "$PANEL" || grep -qF 'stage.hasQueue' "$PANEL"; then
+  echo "FAIL: a stage card must not render queue ids" >&2
+  exit 1
+fi
+echo "queue id placement guard ok"
+
 echo "--- delivery wiring + covered / delivery write routes guard (A10 / store 3.2 / 5) ---"
 # The last "尚未接线" item: WorkstreamsDelivery is wired to the panel / runner as a
 # delivery-stage action, and covered / delivery get write routes. delivery.outcome

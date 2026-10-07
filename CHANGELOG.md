@@ -7,6 +7,10 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **事项面板：队列 id 从阶段卡移到事项主卡（2026-10-07）**：修复拆分后队列 id 显示在阶段二级卡（如「规划」）的问题。`WSStageCardModel` 去掉 `queueIDs` / `hasQueue`；`WSCardModel` 新增 `queueIDs`（= `WS.queues`，一事项一队列）；事项主卡标题行以中性徽标（`WSTierBadgeView`）渲染，任何阶段卡都不显示。`tests/workstreams-panel` UI 断言改到主卡（**195**），全套 **1103**（model 93 + API 276 + UI 195 + runner 139 + prompt 213 + delivery 127 + stage-gate 60）；新增「队列 id 展示位置」源码守卫。
+
 ### Added
 
 - **事项面板：设计 + 技能同步（启动唯一入口 / 创建任务抽屉）（2026-10-07）**：把本轮 UX 固化进设计——**启动**只在事项主卡（`queue/start` 不带 `stage`，按阶段 canonical 顺序）、**创建任务**只在事项主卡（**表单抽屉选阶段** + 首行标题·其余内容，提交即 `task/create`）、**拆分任务**只在事项主卡（发**提示词**）、**确认**在**各阶段卡**（人工门）。设计 A3 / A14 / D19 与 §5.1 交叉明确，§5.1 新增**入口唯一性**表与**阶段卡按钮清单**（阶段卡只保留待确认时的「确认并推进 / 退回本阶段返工」与交付阶段的「交付」）；`workstream-handoff-prompt-design.md` 新增 **§4.2「创建任务抽屉与 `task/create`」**；`workstream-panel` 技能入口表补「对话里创建任务 → `task/create`」（内嵌副本字节一致）。本任务为**文档 / 技能同步**，`tests/workstreams-panel` 计数不变（**1070**：model 93 + API 266 + UI 197 + runner 132 + prompt 195 + delivery 127 + stage-gate 60）。文档同步：设计 §5.1 / §10、`docs/usage/panels.md`、`.dsh/wiki`。

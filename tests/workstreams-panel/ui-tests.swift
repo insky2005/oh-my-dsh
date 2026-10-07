@@ -93,17 +93,18 @@ eq(model.stages.map { $0.labelKey },
 eq(model.stages.filter { $0.isCurrent }.map { $0.stage }, [.task], "exactly one current stage")
 eq(model.stages.first { $0.stage == .task }?.isCurrent, true, "current is the card stage")
 
-section("the workstream queue lands on the current stage card")
-let byStage = Dictionary(uniqueKeysWithValues: model.stages.map { ($0.stage, $0) })
-eq(byStage[.task]?.queueIDs, ["q-a"], "the queue is shown on the current stage")
-eq(byStage[.task]?.hasQueue, true, "the current stage has a queue")
-eq(byStage[.planning]?.queueIDs, [], "other stages carry no queue")
-eq(byStage[.design]?.hasQueue, false, "a non-current stage has no queue")
+section("the workstream queue lands on the MAIN card")
+eq(model.queueIDs, ["q-a"], "the queue id is shown on the main card")
+eq(bare.queueIDs, [], "a card without a queue carries no queue id")
+// The stage card model has NO queue field (design A9 / D16): a queue belongs to
+// the workstream, so no stage card can carry one — the fix is enforced by the type
+// itself and pinned by the "queue id placement" source guard in run.sh.
 
-section("the queue follows the current stage")
+section("the queue follows the workstream, not the current stage")
 let legacy = WSCardModel.build(from: card(id: "WS-000044", stage: .design, queues: ["q-legacy"]))
-eq(legacy.stages.first { $0.stage == .design }?.queueIDs, ["q-legacy"],
-   "the queue lands in the card's current stage")
+eq(legacy.queueIDs, ["q-legacy"],
+   "the queue id hangs off the main card whatever the current stage")
+eq(legacy.stages.count, 5, "all five stage cards still render")
 
 section("stage evidence")
 let evidenceCard = card(id: "WS-000045", stage: .delivery,
@@ -125,11 +126,10 @@ eq(WSCardModel.build(from: card(id: "WS-000046")).stages.first { $0.stage == .ac
    [], "no covered -> no acceptance evidence")
 
 section("task cards")
-let stageWithTask = WSStageCardModel(stage: .task, isCurrent: true, queueIDs: ["q-b"],
+let stageWithTask = WSStageCardModel(stage: .task, isCurrent: true,
                                      tasks: [WSTaskCardModel.build(id: "t-1", title: "改代码", tone: .running)],
                                      evidence: [], isExpanded: false)
 eq(stageWithTask.taskCount, 1, "task count")
-eq(stageWithTask.hasQueue, true, "has queue")
 eq(stageWithTask.tasks.first?.stateKey, nil, "task state key defaults to nil")
 
 // MARK: - Tertiary cards from the queue engine
@@ -391,9 +391,8 @@ updated: 2026-10-06
 let parsedModel = WSCardModel.build(from: parsed)
 eq(parsedModel.id, "WS-000060", "parsed id")
 eq(parsedModel.stage, .acceptance, "parsed stage")
-eq(parsedModel.stages.first { $0.stage == .acceptance }?.queueIDs, ["q-111"],
-   "parsed queue lands on the current (acceptance) stage")
-eq(parsedModel.stages.first { $0.stage == .task }?.queueIDs, [], "non-current stages carry no queue")
+eq(parsedModel.queueIDs, ["q-111"], "parsed queue lands on the main card, not a stage card")
+eq(parsedModel.stage, .acceptance, "the parsed card is still at its authoritative stage")
 eq(parsedModel.stages.first { $0.stage == .acceptance }?.evidence.first?.value,
    "platforms/macos/src/WorkstreamsPanel.swift", "parsed covered evidence")
 

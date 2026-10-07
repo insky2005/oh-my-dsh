@@ -323,6 +323,13 @@ final class WSPrimaryCardView: NSView {
         if let requirement = model.requirement, !requirement.isEmpty {
             titleViews.append(WSTierBadgeView(text: requirement, tone: .neutral))
         }
+        // The workstream's queue ids (design A9 / D16): they belong to the
+        // WORKSTREAM, so they live on the main card's title row as a neutral
+        // badge — never on a stage card (a queue is not stage-scoped).
+        if !model.queueIDs.isEmpty {
+            titleViews.append(WSTierBadgeView(text: model.queueIDs.joined(separator: ", "),
+                                              tone: .neutral))
+        }
         titleViews.append(spacer)
         titleViews.append(WSTierBadgeView(text: L10n.tr(model.stageLabelKey), tone: model.tone,
                                           filled: model.stage == .task))
@@ -421,9 +428,6 @@ final class WSPrimaryCardView: NSView {
         // move the authoritative stage; the gate buttons below still do (R10).
         headerViews.append(WSTierBadgeView(text: L10n.tr(stage.runStateKey), tone: stage.runStateTone))
         headerViews.append(spacer)
-        if !stage.queueIDs.isEmpty {
-            headerViews.append(WSTierBadgeView(text: stage.queueIDs.joined(separator: ", "), tone: .neutral))
-        }
         if stage.awaitingConfirmation {
             let confirm = CustomIconButton(glyph: .symbol("checkmark"),
                                            tooltip: L10n.tr("workstreams.gate.confirm"), size: 22)
@@ -462,7 +466,7 @@ final class WSPrimaryCardView: NSView {
             blocked.toolTip = missing
             bodyRows.append(blocked)
         }
-        if !stage.hasQueue && stage.tasks.isEmpty {
+        if stage.tasks.isEmpty {
             let none = NSTextField(labelWithString: L10n.tr("workstreams.stage.noQueue"))
             none.font = .systemFont(ofSize: 11)
             none.textColor = .tertiaryLabelColor

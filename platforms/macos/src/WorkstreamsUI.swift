@@ -168,10 +168,6 @@ struct WSTaskCardModel: Equatable {
 struct WSStageCardModel: Equatable {
     var stage: WorkstreamStage
     var isCurrent: Bool
-    /// The workstream's queue ids, shown on the current stage card. There is at
-    /// most one queue per workstream (design A9 / D16); stages group tasks, not
-    /// queues.
-    var queueIDs: [String]
     var tasks: [WSTaskCardModel]
     var evidence: [WSLine]
     var isExpanded: Bool
@@ -187,7 +183,6 @@ struct WSStageCardModel: Equatable {
     var tone: WSTone { wsStageTone(stage) }
     var runStateKey: String { wsRunStateKey(runState) }
     var runStateTone: WSTone { wsRunStateTone(runState) }
-    var hasQueue: Bool { !queueIDs.isEmpty }
     var taskCount: Int { tasks.count }
     /// The stage queue finished with evidence and waits for a person (R10).
     var awaitingConfirmation: Bool { isCurrent && gateState == .awaitingConfirmation }
@@ -203,6 +198,10 @@ struct WSCardModel: Equatable {
     var title: String
     var requirement: String?
     var stage: WorkstreamStage
+    /// The workstream's queue ids, shown as neutral badges on the MAIN card's
+    /// title row. There is at most one queue per workstream (design A9 / D16);
+    /// a queue belongs to the workstream, not to whichever stage is current.
+    var queueIDs: [String]
     var tone: WSTone
     var meta: [WSLine]
     var detail: String
@@ -218,10 +217,11 @@ struct WSCardModel: Equatable {
     var runStateTone: WSTone { wsRunStateTone(runState) }
 
     /// Build one workstream card. All five stage cards are always present (in
-    /// WorkstreamStage.allCases order). The workstream's single queue is carried
-    /// by its current stage card; each stage's tasks are grouped by the task's own
-    /// `stage` (design A9 / A12 / D16 / D17). `board` is the queue engine's board
-    /// (nil while there is no queue storage yet: every task list is then empty).
+    /// WorkstreamStage.allCases order). The workstream's queue ids hang off the
+    /// MAIN card (design A9 / D16) and are never repeated on a stage card; each
+    /// stage's tasks are grouped by the task's own `stage` (A12 / D17). `board`
+    /// is the queue engine's board (nil while there is no queue storage yet:
+    /// every task list is then empty).
     static func build(from card: WorkstreamCard, gate: WSStageGate? = nil,
                       board: WSBoard? = nil) -> WSCardModel {
         let queue = board?.queue(forWorkstream: card.id, mapping: card.queues)
@@ -230,7 +230,6 @@ struct WSCardModel: Equatable {
         // edge is what tells a rejected stage apart from a freshly finished one.
         let history = WorkstreamsStageGate.parseHistory(card.body)
         let stages = WorkstreamStage.allCases.map { stage -> WSStageCardModel in
-            let queueIDs = (stage == card.stage) ? card.queues : []
             let stageGate = (gate?.stage == stage) ? gate : nil
             // A task's stage is a direct property (A12); a legacy task without one
             // belongs to the card's current stage.
@@ -245,7 +244,6 @@ struct WSCardModel: Equatable {
                                             history: history)
             return WSStageCardModel(stage: stage,
                                     isCurrent: stage == card.stage,
-                                    queueIDs: queueIDs,
                                     tasks: stageTasks,
                                     evidence: evidence(for: stage, card: card),
                                     isExpanded: false,
@@ -270,6 +268,7 @@ struct WSCardModel: Equatable {
                            title: card.title,
                            requirement: card.requirement,
                            stage: card.stage,
+                           queueIDs: card.queues,
                            tone: wsStageTone(card.stage),
                            meta: meta,
                            detail: card.body.trimmingCharacters(in: .whitespacesAndNewlines),
