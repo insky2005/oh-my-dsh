@@ -1280,7 +1280,7 @@ final class WorkstreamsPanelController: NSObject {
             let updated = try WorkstreamsCore.confirmStage(workspace: workspace, id: cardID,
                                                  expectedStage: card.stage,
                                                  carrier: stageCarrier(for: card, board: loadBoard(workspace)),
-                                                 note: nil, today: WorkstreamsCore.today())
+                                                 note: nil, source: .panel, today: WorkstreamsCore.today())
             setStatus(L10n.tr("workstreams.gate.confirmed"), isError: false)
             continueToNextStage(after: card, updated: updated)
         } catch let error as WorkstreamError {
@@ -1320,7 +1320,7 @@ final class WorkstreamsPanelController: NSObject {
         }
         do {
             _ = try WorkstreamsCore.rejectStage(workspace: workspace, id: cardID, reason: reason,
-                                                target: nil, today: WorkstreamsCore.today())
+                                                target: nil, source: .panel, today: WorkstreamsCore.today())
             setStatus(L10n.tr("workstreams.gate.rejected"), isError: false)
         } catch let error as WorkstreamError {
             setStatus(L10n.tr("workstreams.gate.failed") + "：" + error.message, isError: true)
@@ -1726,6 +1726,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                                            expectedStage: request.stage,
                                                            carrier: stageCarrier(for: card, board: loadBoard(workspace)),
                                                            note: request.note,
+                                                           source: WSStageSource.from(session: request.session),
                                                            today: WorkstreamsCore.today())
             bindSession(request.session, workspace: workspace, id: updated.id)
             // 对话内阶段推进（第 24 项）：API 路径的人确认同样把下一阶段提示词交给
@@ -1755,6 +1756,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                             id: request.id,
                                             reason: request.reason,
                                             target: request.target,
+                                            source: WSStageSource.from(session: request.session),
                                             today: WorkstreamsCore.today())
         }, workspace: workspace, session: request.session)
     }

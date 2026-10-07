@@ -12,7 +12,7 @@
 2. **动作 = (stage, action) 的函数**：面板按钮不是「一个提示词」，而是「当前 stage → 本步 action」，各 stage 一份 action 段，共用公共头。
 3. **变量从卡片注入**：`<WS-ID>` / `<REQ-ID>` / `<stage>` / `<REG-ID>` / 目标，全部读卡片。
 4. **卡片必须自足**：薄提示词成立的前提，是卡片的「规划」有目标 / 边界 / 验收标准 / 裁剪声明。
-5. **人保留 Own**：规划确认与验收 sign-off 必须停下问，agent 不自签。
+5. **人保留 Own**：规划确认与验收 sign-off 必须停下问，agent 不自签。签字可由**面板点按**，或由**会话在用户明确授权后代发**（R10）；每次确认 / 退回在卡片 `## 阶段确认` 记来源（`source:panel` / `source:session <id>`）。
 
 ## 3. 公共头（所有 stage 共用）
 
@@ -43,7 +43,7 @@
 
 每个 action 段都附**模型规则**（强制）：
 
-- 回边合法但留痕；跳过 / 裁剪必须在「规划」声明；
+- 回边合法但留痕（连同来源标记 `source:panel` / `source:session <id>`）；跳过 / 裁剪必须在「规划」声明；
 - **只拆不胀**：范围外 → 新需求卡片（R5），不就地吸收；
 - 裁决是点记录；覆盖锚变更；终态是派生谓词（**不写** `closed` / `outcome`）；
 - 回归门 `<REG-ID>`：若改动其覆盖路径，交付前运行；
@@ -107,3 +107,4 @@
 - `outcome` / `closed` 改为派生后，本模板不再出现「写 closed」这类动作；
 - **已落地（2026-10-06 / 07）**：生成器为 `WorkstreamsPrompts.swift`（`WorkstreamHandoff`），阶段提示词由面板生成、原样注入任务 body 并按执行阶段追加完成 marker；阶段拆分 / 启动已改指事项面板自有 API（`task/create` / `queue/start`），交付事实经 `covered` / `delivery` 写路由回填，不再走任务面板 `/task-todo`；与 §4 表格一致。
 - **拆分提示词（§4.1）已落地**：`WorkstreamHandoff.splitPrompt` 由主卡「拆分任务」按钮以**首个未处理阶段**调用，发进主场会话；措辞固定为「`task/create` 建等待态、带本阶段 `stage`、只建不启动、停下等人确认、不自签」。
+- **签字来源标记已落地（2026-10-07）**：人工门的确认 / 退回在卡片 `## 阶段确认` 记录来源——面板按钮写 `.panel`，`stage/confirm` / `stage/reject` 的会话授权写 `.session(id)`（`WSStageSource` / `WSStageHistoryEntry.source`）；旧记录无标记仍可读。

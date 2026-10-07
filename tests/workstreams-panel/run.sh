@@ -240,6 +240,36 @@ if ! grep -q '/api/workstreams/stage/confirm' "$SRC2/WorkstreamsAPI.swift" \
 fi
 echo "workstreams stage gate guard ok"
 
+echo "--- stage decision source guard (R10: panel tap vs session authorization) ---"
+# R10 允许人经两条路签字：面板点按，或在会话里明确授权后由该会话代发。
+# 两种来源都写进 "## 阶段确认" 的 source 标记，审计痕迹能分辨是哪一种。
+for sym in 'enum WSStageSource' 'case panel' 'case session(String)' \
+           'static func from(session: String?)'; do
+  if ! grep -qF "$sym" "$GATE"; then
+    echo "FAIL: WorkstreamsStageGate.swift is missing $sym" >&2
+    exit 1
+  fi
+done
+# confirmStage / rejectStage 都必须带 source 参数。
+if [ "$(grep -c 'source: WSStageSource = .panel' "$GATE")" -lt 2 ]; then
+  echo "FAIL: confirmStage / rejectStage must record a source marker" >&2
+  exit 1
+fi
+# 标记必须写进行尾并能解析回来（旧记录没有 source 也要照常可读）。
+if ! grep -qF 'source:" + source.marker' "$GATE" \
+   || ! grep -qF 'WSStageSource.parse(' "$GATE" \
+   || ! grep -qF 'e["source"] = source.marker' "$GATE"; then
+  echo "FAIL: the source marker must be written, parsed and exposed" >&2
+  exit 1
+fi
+# 面板按钮记 .panel；API 调用按 session 派生（确认 / 退回两条路都要有）。
+if ! grep -qF 'source: .panel' "$SRC2/WorkstreamsPanel.swift" \
+   || [ "$(grep -c 'WSStageSource.from(session: request.session)' "$SRC2/WorkstreamsPanel.swift")" -lt 2 ]; then
+  echo "FAIL: the panel / API confirm-reject paths must record the R10 source" >&2
+  exit 1
+fi
+echo "stage decision source guard ok"
+
 echo "--- workstreams stage prompt guard (D15: panel-generated, injected into the task body) ---"
 PROMPTS="$SRC2/WorkstreamsPrompts.swift"
 if [ ! -f "$PROMPTS" ]; then

@@ -12,6 +12,7 @@
 > 修订（2026-10-07 六次）：**队列 id 展示位置修正**——WS.queues 的队列 id 由「挂在当前阶段卡」改为**只以中性徽标出现在事项主卡标题行**：WSStageCardModel 去掉 queueIDs（连带 hasQueue），WSCardModel 新增 queueIDs。修复拆分后队列 id 落到「规划」等阶段二级卡的 bug；阶段卡任何情况下都不显示队列 id。见 §2 A9 / §9 D16 / §5.1。
 > 修订（2026-10-07 五次）：**入口收口为「事项主卡唯一入口」**——**启动**只在事项主卡（`queue/start` 不带 `stage`，按阶段 canonical 顺序）、**创建任务**只在事项主卡（**表单抽屉选阶段** + 首行标题·其余内容，提交即 `task/create`）、**拆分任务**只在事项主卡（发**提示词**）、**确认**在**各阶段卡**（人工门）。阶段卡不再有「启动阶段」「＋创建任务」；A3 / A14 / D19 与 §5.1 交叉明确，§5.1 补**入口唯一性**与**阶段卡按钮清单**；`workstream-handoff-prompt-design.md` 补**创建任务抽屉 ↔ `task/create`** 关系；`workstream-panel` 技能入口表补「对话里创建任务」。
 > 修订（2026-10-07 七次）：**确认 / 退回开放为「用户明确授权下的会话调用」**——`workstream-panel` 技能由 `user-invocable: false` 改为**可被用户直接调用**（如 `/workstream-panel 确认规划 WS-xxx`）；`stage/confirm`（确认推进）/ `stage/reject`（退回）**仅当用户在本会话明确发出确认 / 退回意图**时可由 agent 调用，confirm 前必须**复述证据 / 结论并请求确认**，reject 必须拿到**人的原因**，agent **不得自行确认、不得主动代签**；409 `evidence-missing` / `stage-changed` 仍为硬门、**不得重试硬推**。见 A14 / §5.1 / §10。
+> 修订（2026-10-07 八次）：**阶段确认 / 退回留下来源标记**——R10 从「只能面板点」明确为「**面板点按 或 会话明确授权**；签字仍是人」。`WSStageGate` 新增 `WSStageSource`（`.panel` / `.session(id)`），确认 / 退回在卡片 `## 阶段确认` 写 `source:panel` / `source:session <id>`：面板按钮记 `panel`，API 调用按 `session` 派生（无 `session` 的直连 API 视为直接 / 面板来源）；旧记录无标记仍可读（`source` 为 nil）。见 §5 / §5.1 / §10。
 
 ## 0. 这份文档是什么
 
@@ -106,6 +107,7 @@
 - **运行态自动回写**：任务状态 → 阶段运行态（未开始 / 进行中 / 待确认 / 完成 / 阻塞）→ 事项运行态；**权威 `stage` 仍由人工确认门推进**（A13）。
 - **对话内阶段推进**：人确认某阶段、`stage` 真的前移后，面板把**下一阶段**交接提示词发给该事项绑定的**主场会话**（`.dsh/workstreams/local.json` 的 `workstreamSessions`）；**无绑定会话则不发**（不凭空起会话），**交付是终态**、确认不前移，不续发。
 - 回边合法且必须留痕（R2）；裁剪（跳过阶段）必须在**规划**声明（R3）。
+- **签字来源可追溯（R10）**：确认 / 退回在 `## 阶段确认` 记录本次来源——`source:panel`（面板点按）或 `source:session <id>`（会话在用户明确授权后代发）；**签字始终是人**，agent 只在授权下代发、绝不自签。
 - 阶段证据谓词各阶段不同（§4），不能统一套用任务级 marker（见 §9 D3）。
 
 ### 5.1 三件事：拆分任务 / 确认 / 启动（UX 语义）
@@ -115,7 +117,7 @@
 | 动作 | 是什么 | 入口（面板 / 技能） | 落到哪 | 谁做 |
 |---|---|---|---|---|
 | **拆分任务** | **会话提示词**（不是队列操作、不落盘）：按**首个未处理阶段**（`wsFirstUnprocessedStage` = canonical 顺序里第一个 `runState != 完成` 的阶段，A13 派生态）生成拆分提示词 | 主卡「**拆分任务**」按钮；技能 `POST /api/workstreams/task/create` | 提示词（`WorkstreamHandoff.splitPrompt`）发进该事项**主场会话**；agent 据此 `task/create` 建**等待态**、带该 `stage` 的任务 | 人点按钮 → 会话里的 agent 执行 |
-| **确认** | **阶段上的人工门**（R10）：机检证据 AND 人确认才前移 `stage` | 阶段卡「**确认并推进 / 退回本阶段返工**」；技能 `POST /api/workstreams/stage/confirm` / `stage/reject`（**用户明确授权时**） | 卡片 `stage` 前移 / 回边，`## 阶段确认` 留痕（committed） | **人**；用户明确授权时 agent 可代发（confirm 先复述证据、reject 拿人的原因），**不自签** |
+| **确认** | **阶段上的人工门**（R10）：机检证据 AND 人确认才前移 `stage` | 阶段卡「**确认并推进 / 退回本阶段返工**」；技能 `POST /api/workstreams/stage/confirm` / `stage/reject`（**用户明确授权时**） | 卡片 `stage` 前移 / 回边，`## 阶段确认` 留痕 + **来源标记**（`source:panel` / `source:session <id>`，committed） | **人**；用户明确授权时 agent 可代发（confirm 先复述证据、reject 拿人的原因），**不自签** |
 | **启动** | **事项卡「启动事项」**（面板唯一入口）；技能仍可带 `stage` 做阶段级 | 主卡「**启动事项**」；技能 `POST /api/workstreams/queue/start` | 不带 `stage` = 按**阶段 canonical 顺序**（同阶段内入队序）跑完整条队列；带 `stage` = 只跑该阶段、跑完自动暂停（`queues.json`，ignored） | 人 / 人确认后 agent |
 
 - **拆分 ≠ 启动**：`task/create` 只建**等待态**任务；**建完停下等人确认拆分**，人确认后才 `queue/start` 起跑。
@@ -260,3 +262,4 @@ D10 之所以是伪问题，源于把两个正交的轴混为一谈：
    - **已落地（2026-10-07）**：**设计 + 技能同步（启动唯一入口 / 创建任务抽屉）**——A3 / A14 / D19 与 §5.1 固化「**启动**只在事项主卡（按阶段 canonical 顺序）、**创建任务**只在事项主卡（抽屉选阶段）、**拆分任务**发提示词、**确认**在各阶段卡」，并给出**阶段卡按钮清单**（确认 / 退回 + 交付）；`workstream-handoff-prompt-design.md` 新增 §4.2「创建任务抽屉与 `task/create`」；`workstream-panel` 技能入口表补「对话里创建任务 → `task/create`」。本任务为**文档 / 技能同步**，`tests/workstreams-panel` 计数不变（**1070**）。
    - **已落地（2026-10-07）**：**队列 id 展示位置修正（UX）**——队列 id 从阶段二级卡移到事项主卡：`WSStageCardModel` 去掉 `queueIDs`（连带 `hasQueue`），`WSCardModel` 新增 `queueIDs`，主卡标题行以中性徽标（`WSTierBadgeView`，tone .neutral）渲染，阶段卡任何情况下都不显示（修复拆分后队列 id 落到「规划」二级卡）。UI 测试 + `run.sh`「队列 id 展示位置」源码守卫固化。
    - **已落地（2026-10-07）**：**阶段确认 / 退回开放为「用户明确授权下的会话调用」**——技能去掉 `user-invocable: false`（与 `requirement-pool` / `task-todo` 对齐，可 `/workstream-panel 确认规划 WS-xxx` 直接调用），并把「`stage/confirm` / `stage/reject` 绝不调用」改为**授权 + 证据**规则：仅当用户在本会话明确发出确认 / 退回意图时才能调；confirm 前先复述证据 / 结论并请求确认；reject 必须拿到人的原因；409 `evidence-missing` / `stage-changed` 不得重试硬推。技能新增「阶段确认 / 退回（人工门）」工作流与两条路由的请求体；内嵌副本字节一致；`tests/skills` 新增授权 / 路由断言。
+   - **已落地（2026-10-07）**：**阶段确认 / 退回留下来源标记（R10）**——`WorkstreamsStageGate` 新增 `WSStageSource`（`.panel` / `.session(id)`，`marker` / `from(session:)` / `parse`），`WSStageHistoryEntry.source` 写进卡片行尾（` · source:panel` / ` · source:session <id>`），`parseHistory` 剥离标记且**旧记录无标记照常可读**，门 JSON 暴露 `source`；`confirmStage` / `rejectStage` 带 `source` 参数，面板按钮记 `.panel`、API 两条路由按 `request.session` 派生来源。stage-gate 测试 60 → **80**，`run.sh` 新增「阶段决策来源」源码守卫。文档：`.dsh/ai-native-workflow-spec.md` R10 / §5 与本文档同步。

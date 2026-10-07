@@ -248,6 +248,66 @@ expectError("reject needs a reason", .missingReason) {
     try WorkstreamsCore.rejectStage(workspace: ws, id: rejCard.id, reason: "   ", today: "2026-10-08")
 }
 
+// MARK: - Source marker (R10: panel tap vs session authorization)
+
+section("gate source marker")
+eq(WSStageSource.panel.marker, "panel", "panel marker")
+eq(WSStageSource.session("s-42").marker, "session s-42", "session marker with id")
+eq(WSStageSource.session("  ").marker, "session", "blank session id collapses to session")
+eq(WSStageSource.from(session: " s-7 "), .session("s-7"), "session field maps to session source")
+eq(WSStageSource.from(session: "   "), .panel, "blank session field falls back to panel")
+eq(WSStageSource.from(session: nil), .panel, "missing session field falls back to panel")
+eq(WSStageSource.parse("panel"), .panel, "panel parses")
+eq(WSStageSource.parse("session s-9"), .session("s-9"), "session parses")
+eq(WSStageSource.parse("nonsense"), nil, "unknown marker rejected")
+
+let srcCard = try WorkstreamsCore.create(workspace: ws, title: "来源", stage: .planning, today: "2026-10-06")
+_ = try WorkstreamsCore.update(workspace: ws, id: srcCard.id, body: fullPlan, today: "2026-10-06")
+let panelConfirmed = try WorkstreamsCore.confirmStage(workspace: ws, id: srcCard.id,
+                                                      expectedStage: .planning, carrier: .none,
+                                                      today: "2026-10-07")
+eq(WorkstreamsStageGate.parseHistory(panelConfirmed.body).first?.source, .panel,
+   "a default confirmation records the panel source")
+check(panelConfirmed.body.contains("source:panel"), "panel source stays in the card body")
+
+let sessionCard = try WorkstreamsCore.create(workspace: ws, title: "会话授权", stage: .planning, today: "2026-10-06")
+_ = try WorkstreamsCore.update(workspace: ws, id: sessionCard.id, body: fullPlan, today: "2026-10-06")
+let sessionConfirmed = try WorkstreamsCore.confirmStage(workspace: ws, id: sessionCard.id,
+                                                        expectedStage: .planning, carrier: .none,
+                                                        source: WSStageSource.from(session: "s-42"),
+                                                        today: "2026-10-07")
+let sessionHistory = WorkstreamsStageGate.parseHistory(sessionConfirmed.body).first
+eq(sessionHistory?.source, .session("s-42"), "a session-authorized confirmation records the session id")
+check(sessionConfirmed.body.contains("source:session s-42"), "session source stays in the card body")
+
+let sessionRejectCard = try WorkstreamsCore.create(workspace: ws, title: "会话退回", stage: .design, today: "2026-10-06")
+_ = try WorkstreamsCore.update(workspace: ws, id: sessionRejectCard.id, body: "## 设计\n\nx\n", today: "2026-10-06")
+let sessionReject = try WorkstreamsCore.rejectStage(workspace: ws, id: sessionRejectCard.id,
+                                                    reason: "边界未定", source: WSStageSource.from(session: "s-9"),
+                                                    today: "2026-10-07")
+let sessionRejectHistory = WorkstreamsStageGate.parseHistory(sessionReject.body).first
+eq(sessionRejectHistory?.source, .session("s-9"), "a session-authorized reject records the session id")
+eq(sessionRejectHistory?.reason, "边界未定", "the reason is still parsed next to the source")
+
+let legacyBody = """
+## 阶段确认
+
+- 2026-10-07 · confirm · planning → design
+- 2026-10-07 · reject · task → planning · 旧记录
+"""
+let legacyHistory = WorkstreamsStageGate.parseHistory(legacyBody)
+eq(legacyHistory.count, 2, "legacy entries still parse")
+eq(legacyHistory[0].source, nil, "a legacy confirm has no source")
+eq(legacyHistory[1].source, nil, "a legacy reject has no source")
+eq(legacyHistory[1].reason, "旧记录", "a legacy reject reason is unchanged")
+
+let sourceGate = WSStageGate(stage: .planning, state: .awaitingConfirmation,
+                             evidence: WSStageEvidence(stage: .planning, items: []),
+                             queueDone: true, history: [sessionHistory!])
+let sourceJSON = WorkstreamsStageGate.json(sourceGate)
+eq((sourceJSON["history"] as? [[String: Any]])?.first?["source"] as? String, "session s-42",
+   "the source marker is exposed in the gate JSON")
+
 // MARK: - Report
 
 print("")

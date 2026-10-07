@@ -41,6 +41,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 - [requirements-breakdown-standard-design.md](design/panels/requirements-breakdown-standard-design.md) — 需求池「拆解确认清单」标准化：四列契约、REQ 内容 × WS 状态的合并展示（已实现）
 - [planning-template-design.md](design/panels/planning-template-design.md) — 规划模板（四件套）与「无证据不进设计」门禁判据（草案）
 - [workstream-panel-design.md](design/panels/workstream-panel-design.md) — 事项面板（Workstream Panel）：全新独立面板，事项/阶段/任务三级卡片，阶段队列与人工确认门（已落地）
+- [panel-prompt-inventory.md](design/panels/panel-prompt-inventory.md) — 面板提示词清单：需求池 / 事项 / 任务三套提示词的触发、目标会话与来源（草案）
 - [file-panel-composer-reference.md](design/panels/file-panel-composer-reference.md) — 文件面板「添加到对话」`@` 引用
 
 ## design/channels/ — 通道设计
@@ -91,6 +92,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 
 - [panels.md](usage/panels.md) — 右栏十一个面板的完整说明
 - [ai-native-workflow-manual.md](usage/ai-native-workflow-manual.md) — 面板使用说明：需求池面板（需求 → 拆解确认）+ 事项面板（规划 / 设计 / 执行 / 验收 / 交付）+ 任务面板（任务拆分 → 交付），含逐步提示词
+- [workstream-panel-workflow.md](usage/workstream-panel-workflow.md) — 事项面板工作流：进入方式、主卡/阶段卡操作、逐阶段「用户做什么 × Agent 做什么」（草案）
 
 ## raw/ — 素材
 

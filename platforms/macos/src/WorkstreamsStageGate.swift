@@ -5,12 +5,15 @@
 //  Each stage is complete only when BOTH hold (design A4 / R10 / D3):
 //
 //    1. a MACHINE predicate passes (this file), and
-//    2. a HUMAN confirms it (confirmStage / the panel button, never an agent).
+//    2. a HUMAN confirms it (confirmStage) — via a panel tap, or via a session
+//       the user explicitly authorized in that session (R10). An agent never
+//       self-signs; the signature is always the person's.
 //
 //  A stage queue reaching .done is therefore NOT stage completion: it parks the
 //  stage in "待确认" (awaitingConfirmation) until a person confirms or sends it
 //  back. Sending it back is an allowed back edge and always leaves a trace in
-//  the card body ("## 阶段确认").
+//  the card body ("## 阶段确认"), recording WHO triggered it (source marker:
+//  "panel" tap vs "session <id>" authorization).
 //
 //  Foundation only, so the whole gate is unit-testable headless.
 //
@@ -96,6 +99,49 @@ struct WSStageGate: Equatable {
     var isEvidenceMissing: Bool { state == .evidenceMissing }
 }
 
+// MARK: - Source (who triggered the human gate)
+
+/// R10 allows exactly two ways for a person's signature to reach the card: they
+/// tap the panel button (`.panel`), or they explicitly authorize a session and
+/// the agent in that session relays the call (`.session(id)`). The marker is
+/// written into "## 阶段确认", so the audit trail says which one it was. An
+/// agent still never self-signs.
+enum WSStageSource: Equatable {
+    case panel
+    case session(String)
+
+    /// The literal marker stored in the card body.
+    var marker: String {
+        switch self {
+        case .panel:
+            return "panel"
+        case .session(let id):
+            let trimmed = id.trimmingCharacters(in: .whitespaces)
+            return trimmed.isEmpty ? "session" : "session " + trimmed
+        }
+    }
+
+    /// Map an API `session` field to a source: a session-authorized call records
+    /// `session <id>`; a session-less call is a direct human action, recorded as
+    /// a panel tap (there is no session to attribute it to).
+    static func from(session: String?) -> WSStageSource {
+        guard let raw = session?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return .panel
+        }
+        return .session(raw)
+    }
+
+    static func parse(_ raw: String) -> WSStageSource? {
+        let text = raw.trimmingCharacters(in: .whitespaces)
+        if text == "panel" { return .panel }
+        if text == "session" { return .session("") }
+        if text.hasPrefix("session ") {
+            return .session(String(text.dropFirst("session ".count)))
+        }
+        return nil
+    }
+}
+
 // MARK: - History (back-edge trace)
 
 struct WSStageHistoryEntry: Equatable {
@@ -109,18 +155,22 @@ struct WSStageHistoryEntry: Equatable {
     var stage: WorkstreamStage
     var target: WorkstreamStage?
     var reason: String?
+    /// The R10 source marker; nil for entries written before the marker existed.
+    var source: WSStageSource? = nil
 
     var line: String {
+        var text: String
         switch action {
         case .confirm:
             let to = target.map { $0.rawValue } ?? "done"
-            return "- " + date + " \u{00B7} confirm \u{00B7} " + stage.rawValue + " \u{2192} " + to
+            text = "- " + date + " \u{00B7} confirm \u{00B7} " + stage.rawValue + " \u{2192} " + to
         case .reject:
-            var text = "- " + date + " \u{00B7} reject \u{00B7} " + stage.rawValue
+            text = "- " + date + " \u{00B7} reject \u{00B7} " + stage.rawValue
             if let target = target, target != stage { text += " \u{2192} " + target.rawValue }
             if let reason = reason, !reason.isEmpty { text += " \u{00B7} " + reason }
-            return text
         }
+        if let source = source { text += " \u{00B7} source:" + source.marker }
+        return text
     }
 }
 
@@ -299,9 +349,18 @@ enum WorkstreamsStageGate {
             let head = fields[2].components(separatedBy: "→").map { $0.trimmingCharacters(in: .whitespaces) }
             guard let stage = WorkstreamStage.parse(head[0]) else { continue }
             let target = head.count > 1 ? WorkstreamStage.parse(head[1]) : nil
-            let reason = fields.count > 3 ? fields[3...].joined(separator: " · ") : nil
+            var source: WSStageSource? = nil
+            var rest: [String] = []
+            for field in fields.dropFirst(3) {
+                if field.hasPrefix("source:") {
+                    source = WSStageSource.parse(String(field.dropFirst("source:".count)))
+                } else {
+                    rest.append(field)
+                }
+            }
+            let reason = rest.isEmpty ? nil : rest.joined(separator: " · ")
             out.append(WSStageHistoryEntry(date: date, action: action, stage: stage,
-                                           target: target, reason: reason))
+                                           target: target, reason: reason, source: source))
         }
         return out
     }
@@ -334,6 +393,7 @@ enum WorkstreamsStageGate {
                                         "stage": entry.stage.rawValue]
                 if let target = entry.target { e["target"] = target.rawValue }
                 if let reason = entry.reason { e["reason"] = reason }
+                if let source = entry.source { e["source"] = source.marker }
                 return e
             }
         }
@@ -365,6 +425,7 @@ extension WorkstreamsCore {
                              expectedStage: WorkstreamStage? = nil,
                              carrier: WSStageCarrier = .none,
                              note: String? = nil,
+                             source: WSStageSource = .panel,
                              today: String,
                              fileManager: FileManager = .default) throws -> WorkstreamCard {
         var card = try loadCard(workspace: workspace, id: id, fileManager: fileManager)
@@ -379,7 +440,8 @@ extension WorkstreamsCore {
         let clearNote = note?.trimmingCharacters(in: .whitespacesAndNewlines)
         let entry = WSStageHistoryEntry(date: today, action: .confirm, stage: card.stage,
                                         target: target,
-                                        reason: (clearNote?.isEmpty ?? true) ? nil : clearNote)
+                                        reason: (clearNote?.isEmpty ?? true) ? nil : clearNote,
+                                        source: source)
         card.body = WorkstreamsStageGate.appendingHistory(card.body, entry: entry)
         if let target = target { card.stage = target }
         card.updated = today
@@ -393,13 +455,14 @@ extension WorkstreamsCore {
                             id: String,
                             reason: String,
                             target: WorkstreamStage? = nil,
+                            source: WSStageSource = .panel,
                             today: String,
                             fileManager: FileManager = .default) throws -> WorkstreamCard {
         let reason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !reason.isEmpty else { throw WorkstreamError.missingReason }
         var card = try loadCard(workspace: workspace, id: id, fileManager: fileManager)
         let entry = WSStageHistoryEntry(date: today, action: .reject, stage: card.stage,
-                                        target: target, reason: reason)
+                                        target: target, reason: reason, source: source)
         card.body = WorkstreamsStageGate.appendingHistory(card.body, entry: entry)
         if let target = target { card.stage = target }
         card.updated = today
