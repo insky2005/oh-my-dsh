@@ -7193,6 +7193,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         bridge.workstreamsDelivery = { [weak self] request in
             self?.workstreamsPanel?.apiWorkstreamsDelivery(request) ?? BrowserAPIBridge.workstreamsUnavailable
         }
+        // 发起交付（等价面板「交付」按钮）：同一台 initiateDelivery，不再第二套。
+        bridge.workstreamsDeliver = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsDeliver(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
         // 聚焦通道（A11 / D6）：亮面板并按 id 高亮事项。任何带 focus 的
         // /api/workstreams/* 请求（写操作 focus:true 也走这里）都会命中。
         bridge.workstreamsFocus = { [weak self] workspace, id in

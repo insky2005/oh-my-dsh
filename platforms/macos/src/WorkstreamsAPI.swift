@@ -30,6 +30,7 @@
 //    POST /api/workstreams/queue/pause  {workspace?, id, session?}
 //    POST /api/workstreams/covered  {workspace?, id, covered:{paths,base,head}|null, session?}
 //    POST /api/workstreams/delivery {workspace?, id, delivery:{pr,url,state,merged,abandoned}|null, session?}
+//    POST /api/workstreams/deliver  {workspace?, id, session?}   (initiate delivery)
 //
 //  covered / delivery are the two FACT writes the store design reserves for the
 //  panel (store design §3.2 / §5): covered is the point record (paths + immutable
@@ -159,6 +160,16 @@ struct WorkstreamsDeliveryRequest: Equatable {
     var session: String?
 }
 
+/// 发起交付 (the panel「交付」button's equivalent, design A10): run the git /
+/// GitHub / token admission checks, enqueue the delivery prompt as a
+/// stage=delivery task and start only the delivery stage. A refusal carries a
+/// stable WSDeliveryBlocker code as `error` with its reason as `message`.
+struct WorkstreamsDeliverRequest: Equatable {
+    var workspace: String?
+    var id: String
+    var session: String?
+}
+
 /// Read the optional session field from any write body (trimmed, nil when empty).
 func workstreamsSession(_ body: [String: Any]) -> String? {
     wsNonEmpty(body["session"] as? String)
@@ -208,6 +219,10 @@ protocol WorkstreamsAPIDelegate: AnyObject {
     /// Record the delivery facts; the derived outcome cache is computed here, not
     /// accepted from the caller (store design 5).
     func apiWorkstreamsDelivery(_ request: WorkstreamsDeliveryRequest) -> [String: Any]
+    /// 发起交付: the panel button and this route go through one shared path
+    /// (WorkstreamsPanel.initiateDelivery) so the two can never drift. Failures
+    /// carry a WSDeliveryBlocker code (+ no-queue / start-failed) as `error`.
+    func apiWorkstreamsDeliver(_ request: WorkstreamsDeliverRequest) -> [String: Any]
     /// The focus channel: bring the workstreams panel forward and, when an id is
     /// given, highlight + scroll to that card. The router calls it for any route
     /// carrying focus. A default no-op keeps headless fakes simple.
@@ -740,6 +755,18 @@ enum WorkstreamsAPIRouter {
             let deliveryResult = delegate.apiWorkstreamsDelivery(delivery)
             return .json(status(for: deliveryResult), deliveryResult)
 
+        case ("POST", "/api/workstreams/deliver"):
+            // 发起交付: the git / GitHub / token admission checks plus the
+            // enqueue-and-start the panel「交付」button performs — same path.
+            guard let body = request.jsonBody() else { return missingBody() }
+            guard let id = wsNonEmpty(body["id"] as? String) else { return missingId() }
+            guard let delegate = delegate else { return unavailable() }
+            let deliver = WorkstreamsDeliverRequest(
+                workspace: WorkstreamsAPIWorkspace.normalize(body["workspace"] as? String),
+                id: id, session: workstreamsSession(body))
+            let delivered = delegate.apiWorkstreamsDeliver(deliver)
+            return .json(status(for: delivered), delivered)
+
         default:
             return .json(404, ["ok": false, "error": "not-found"])
         }
@@ -756,6 +783,11 @@ enum WorkstreamsAPIRouter {
         case "write-failed": return 500
         case "evidence-missing": return 409
         case "stage-changed": return 409
+        // 发起交付: a workstream that is not in the delivery stage is a state
+        // conflict; a failed start is a server-side failure. The other
+        // WSDeliveryBlocker reasons are bad-state 400s (default).
+        case "not-delivery-stage": return 409
+        case "start-failed": return 500
         default: return 400
         }
     }

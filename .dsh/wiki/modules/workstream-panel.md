@@ -1,7 +1,7 @@
 ---
 title: 模块：Workstreams*（事项面板）
 tags: [module, workstreams, panel, ai-native-workflow, stage-gate]
-updated: 2026-10-07T19:00:00Z
+updated: 2026-10-07T21:00:00Z
 sources: [platforms/macos/src/WorkstreamsCore.swift, platforms/macos/src/WorkstreamsUI.swift, platforms/macos/src/WorkstreamsRunState.swift, platforms/macos/src/WorkstreamsAPI.swift, platforms/macos/src/WorkstreamsPanel.swift, platforms/macos/src/WorkstreamsQueues.swift, platforms/macos/src/WorkstreamsRunner.swift, platforms/macos/src/WorkstreamsPrompts.swift, platforms/macos/src/WorkstreamsStageGate.swift, platforms/macos/src/WorkstreamsDelivery.swift, platforms/macos/src/WSCardView.swift, platforms/macos/src/WSInlineForms.swift, platforms/macos/src/main.swift, tests/workstreams-panel/, docs/design/panels/workstream-panel-design.md, docs/design/panels/requirements-workstream-store-design.md, docs/design/panels/workstream-handoff-prompt-design.md, docs/usage/panels.md, .dsh/skills/workstream-panel/SKILL.md]
 manual: false
 ---
@@ -13,7 +13,7 @@ manual: false
 ## 三级卡片与视图
 
 - 一级 **事项主卡**：`WS-*.md` 一张卡，展开是五张阶段卡；
-- 二级 **阶段卡**：规划 / 设计 / 执行 / 验收 / 交付**永远各一张、固定顺序**，`WS.queues [q-...]`（一事项一队列，0..1）挂在主卡当前阶段（旧卡 `[{id, stage}]` 只取 id，阶段丢弃），验收段显示 `covered`（paths / base / head）、交付段显示 `pr / outcome / url`；
+- 二级 **阶段卡**：规划 / 设计 / 执行 / 验收 / 交付**永远各一张、固定顺序**，`WS.queues [q-...]`（一事项一队列，0..1）以中性徽标挂在**事项主卡标题行**、任何阶段卡都不显示（旧卡 `[{id, stage}]` 只取 id，阶段丢弃），验收段显示 `covered`（paths / base / head）、交付段显示 `pr / outcome / url`；
 - 三级 **任务卡**：该事项队列内的条目，按任务自带 `stage` 归到对应阶段卡；显示状态徽标与 dsh **会话**（运行态随 3s 定时器自动刷新）；
 - 顶部**扁平页签** `全部 / 规划 / 设计 / 执行 / 验收 / 交付`（`WSStageFilter`），空态三态（无工作区 / 池空 / 筛选无命中）。
 
@@ -24,7 +24,7 @@ manual: false
 ## 模型与 API
 
 - `WorkstreamsCore.swift`：`WS-*.md` frontmatter 解析（自写缩进式 YAML 子集，剥离行内注释）、固定键序序列化、**原子写**、`create/update/setStage/setQueues/setCovered/setDelivery`、**六位零填充 id** `WS-%06d`、`validate()`（含 `covered` 必填等），错误码 `evidence-missing` / `stage-changed` / `missing-reason`（前两者 409）；
-- `WorkstreamsAPI.swift`：纯路由 `/api/workstreams/*`——`list` / `create` / `update` / `stage` / `plan` / `queues` + 人工门 `stage/confirm`、`stage/reject`，外加 **`task/list` / `task/create` / `queue/start` / `queue/pause`**（A14；`task/create` 支持 `titles[]` 或仅 `body`，按阶段默认动作注入交接提示词；`queue/start` 带 `stage` = 阶段级启动）；错误码 / status 对齐 `/api/requirements/*`，由 `BrowserAPI` 前缀拦截并桥接到主线程（`WorkstreamsAPIDelegate`，面板是唯一写者）；
+- `WorkstreamsAPI.swift`：纯路由 `/api/workstreams/*`——`list` / `create` / `update` / `stage` / `plan` / `queues` + 人工门 `stage/confirm`、`stage/reject`，外加 **`task/list` / `task/create` / `queue/start` / `queue/pause`**（A14；`task/create` 支持 `titles[]` 或仅 `body`，按阶段默认动作注入交接提示词；`queue/start` 带 `stage` = 阶段级启动）与事实写路由 **`covered` / `delivery`**，以及**发起交付 `POST /api/workstreams/deliver`**（= 面板「交付」按钮同一条 `initiateDelivery` 路径）；错误码 / status 对齐 `/api/requirements/*`，由 `BrowserAPI` 前缀拦截并桥接到主线程（`WorkstreamsAPIDelegate`，面板是唯一写者）；
 - **focus 通道**：任何路由可带 `focus`（写操作 body 字段、读操作 `?focus=`，接受 `true` / `1` / `yes` / `on`，默认 `false`）；仅在请求被处理（HTTP 200）时触发，经 `WorkstreamsAPIDelegate.apiWorkstreamsFocus` → `BrowserAPIBridge.workstreamsFocus`（主线程）亮起面板并按 `id`（create 取新建卡 id）高亮。面板内 `focus(onWorkstream:)` 加**强调色描边**并滚动到可见，被阶段筛选隐藏时回落「全部」；需求池子事项主 `↗` 走该通道（次级 `doc.text` 打开卡文件，D6）；
 - 写权反转（Phase B，D5b）：面板是 `WS-*.md` 唯一写者，agent 经 API 改事项、不直接改 `.dsh`；配套内置技能 `workstream-panel`（见 [skill-installer](skill-installer.md)）。
 
@@ -42,7 +42,7 @@ manual: false
 
 **队列引擎已接线**（2026-10-06）：面板按工作区各持一个 `WorkstreamsRunner`，3s `step()` 定时器推进、工作区切换重建、首次加载对账（reconcile 一次）；主卡「启动事项」（面板唯一启动入口）、主卡「创建任务」抽屉（原阶段卡「＋创建任务」，UX 收口），三级任务卡显示状态 / 会话；阶段门读 runner 的实时板。
 
-**交付接线与事实写路由**（2026-10-07）：交付模块 `WorkstreamsDelivery` 已接入面板——阶段卡「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给明确原因（`WSDeliveryBlocker`），成功则 `WorkstreamsRunner.enqueueDelivery` 建 delivery 阶段任务并只启动该阶段；新增 `POST /api/workstreams/covered`（`paths` + `base` / `head` 事实）与 `POST /api/workstreams/delivery`（`pr` / `url` 事实）；**`delivery.outcome` 是派生缓存**，API 拒绝手写（`outcome-derived`）；阶段提示词与技能均已改指事项面板自有 API。
+**交付接线与事实写路由**（2026-10-07）：交付模块 `WorkstreamsDelivery` 已接入面板——阶段卡「交付」按钮用 `WorkstreamsDelivery.resolve` 收集 git / GitHub / token 事实，准入失败给明确原因（`WSDeliveryBlocker`），成功则 `WorkstreamsRunner.enqueueDelivery` 建 delivery 阶段任务并只启动该阶段；新增 `POST /api/workstreams/covered`（`paths` + `base` / `head` 事实）与 `POST /api/workstreams/delivery`（`pr` / `url` 事实）；**`delivery.outcome` 是派生缓存**，API 拒绝手写（`outcome-derived`）；阶段提示词与技能均已改指事项面板自有 API。**发起交付开放到会话 API**（2026-10-07，第 36 项）：新增 `POST /api/workstreams/deliver`（`{workspace?, id, session?}`），与阶段卡「交付」按钮共用同一个 `WorkstreamsPanel.initiateDelivery`（先 `WorkstreamsDelivery.resolve` 准入，成功 `enqueueDelivery` + 只启动交付阶段；失败回 `WSDeliveryBlocker` 码或 `no-queue` / `start-failed`）；`workstream-panel` 技能补「发起交付」工作流与「说『交付 WS-x』→ 发起交付」入口。
 
 **事项 ↔ 主场会话绑定 / 拆分任务**（2026-10-07，A16）：`.dsh/workstreams/local.json` 的 `workstreamSessions`（WS-id → sessionId，ignored）保存每个事项**至多一条「主场会话」**，由任何带 `session` 的写请求记忆（`WSStore.rememberWorkstreamSession`），**后写覆盖先写**（last-writer-wins，运行时绑定、不是永久契约）；`list` 的每张卡随带 `session`；反查路由 **`GET /api/workstreams/bound?session=$DSH_SESSION_ID`** 返回该会话绑定的 WS（未绑定返回空列表）。**只有真正在推进该事项的对话才应带 `session`**；阶段 runner / 临时会话带上会覆盖主场会话（技能正文有显式警示）。**主卡「拆分任务」**（2026-10-07，UX）解析该事项**首个未处理阶段**（canonical 顺序里第一个 `runState != 完成` 的阶段，A13 派生态；全部完成则无可拆分阶段），经 `WorkstreamHandoff.splitPrompt` 把该阶段的拆分提示词发进主场会话（点名事项 + 阶段、`task/create` 建等待态任务、不自签 / 不启动 / 停下等人）；阶段卡去掉重复入口。会话选择对齐需求池「细化」：复用绑定会话 / 新建并绑定 / 回退当前会话，决策为纯函数 `WorkstreamsCore.sessionTarget`（`WorkstreamTarget.reuse / created / fallback`）。**需求拆解确认继承**（2026-10-07）：`RequirementsCore.confirm` 建 `WS-*.md` 时把该需求在 `.dsh/requirements/local.json` 的绑定会话合并写进 `workstreamSessions`（显式 `session` 优先，无绑定则不发明），新事项在面板可直接续同一条对话；`requirements.notify.confirmed` 同步改指事项面板并附 focus 提示。
 
@@ -60,4 +60,4 @@ manual: false
 
 ## 测试
 
-`tests/workstreams-panel/run.sh`（**1070 项**）：model 93 + API 266 + ui 197 + runner 132 + prompt 195 + delivery 127 + stage-gate 60，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **事项会话绑定与拆分任务（首个未处理阶段）** / **focus 通道（面板高亮滚动 + API focus + 需求池跳转）** / **对话内阶段推进（确认 → 向主场会话发下一阶段提示词）** / **默认展开（首个未处理卡）** / **启动收口（阶段卡无启动按钮 + 事项启动按阶段 canonical 顺序）** / **创建任务抽屉（主卡按钮 + 阶段选择 + 首行标题·其余内容）** 等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。
+`tests/workstreams-panel/run.sh`（**1148 项**）：model 93 + API 301 + ui 195 + runner 139 + prompt 213 + delivery 127 + stage-gate 80，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段决策来源 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **发起交付（面板按钮 == `deliver` 路由共用 `initiateDelivery`）** / **事项会话绑定与拆分任务（首个未处理阶段）** / **focus 通道（面板高亮滚动 + API focus + 需求池跳转）** / **对话内阶段推进（确认 → 向主场会话发下一阶段提示词）** / **默认展开（首个未处理卡）** / **启动收口（阶段卡无启动按钮 + 事项启动按阶段 canonical 顺序）** / **创建任务抽屉（主卡按钮 + 阶段选择 + 首行标题·其余内容）** 等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。

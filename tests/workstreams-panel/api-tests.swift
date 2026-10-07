@@ -59,6 +59,7 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     var queuePauseResult: [String: Any] = ["ok": true]
     var coveredResult: [String: Any] = ["ok": true]
     var deliveryResult: [String: Any] = ["ok": true]
+    var deliverResult: [String: Any] = ["ok": true]
 
     var lastListWorkspace: String?
     var lastBoundSession: String?
@@ -76,6 +77,7 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     var lastQueuePause: WorkstreamsQueuePauseRequest?
     var lastCovered: WorkstreamsCoveredRequest?
     var lastDelivery: WorkstreamsDeliveryRequest?
+    var lastDeliver: WorkstreamsDeliverRequest?
 
     func apiWorkstreamsList(workspace: String?) -> [String: Any] {
         lastListWorkspace = workspace
@@ -137,6 +139,10 @@ final class FakeWorkstreamsAPI: WorkstreamsAPIDelegate {
     func apiWorkstreamsDelivery(_ request: WorkstreamsDeliveryRequest) -> [String: Any] {
         lastDelivery = request
         return deliveryResult
+    }
+    func apiWorkstreamsDeliver(_ request: WorkstreamsDeliverRequest) -> [String: Any] {
+        lastDeliver = request
+        return deliverResult
     }
 
     var focusCalls: [(workspace: String?, id: String?)] = []
@@ -378,6 +384,37 @@ let deliveryClear = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path:
 eq(deliveryClear?.status, 200, "delivery null clears (200)")
 eq(fake.lastDelivery?.pr == nil, true, "explicit null delivery -> nil facts")
 eq(WorkstreamsAPIRouter.status(for: ["ok": false, "error": "outcome-derived"]), 400, "outcome-derived -> 400")
+
+section("deliver route (initiate delivery: git/GitHub/token admission + start)")
+// 发起交付 = 面板「交付」按钮的同一条路径。路由只做校验与透传；准入与入队/启动由
+// 面板的 initiateDelivery 落地（源码守卫固定两条入口共用它）。
+let deliverNoBody = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/deliver"), delegate: fake)
+eq(deliverNoBody?.status, 400, "deliver without body -> 400")
+eq(deliverNoBody?.json?["error"] as? String, "missing-body", "deliver missing-body code")
+let deliverNoId = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/deliver", json: ["workspace": "/tmp/ws"]), delegate: fake)
+eq(deliverNoId?.status, 400, "deliver without id -> 400")
+eq(deliverNoId?.json?["error"] as? String, "missing-id", "deliver missing-id code")
+let deliverUnavailable = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/deliver", json: ["id": "WS-000001"]), delegate: nil)
+eq(deliverUnavailable?.status, 503, "deliver without delegate -> 503")
+let deliverOK = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/deliver", json: ["id": " WS-000001 ", "workspace": "~/repo/", "session": " s-3 "]), delegate: fake)
+eq(deliverOK?.status, 200, "deliver 200")
+eq(fake.lastDeliver?.id, "WS-000001", "deliver id trimmed and routed")
+eq(fake.lastDeliver?.workspace?.hasSuffix("/repo"), true, "deliver workspace normalized")
+eq(fake.lastDeliver?.session, "s-3", "deliver carries session")
+// 每个失败原因码都原样回传；not-delivery-stage 是状态冲突（409），start-failed 是
+// 服务端失败（500），其余准入失败是 400，队列缺失沿用 404。
+let deliverFailures: [(String, Int)] = [
+    ("not-delivery-stage", 409), ("not-git-repo", 400), ("no-branch", 400),
+    ("no-remote", 400), ("no-github-remote", 400), ("no-token", 400),
+    ("no-queue", 404), ("start-failed", 500),
+]
+for (code, expected) in deliverFailures {
+    fake.deliverResult = ["ok": false, "error": code, "message": "reason: " + code]
+    let response = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/deliver", json: ["id": "WS-000001"]), delegate: fake)
+    eq(response?.status, expected, "deliver " + code + " -> " + String(expected))
+    eq(response?.json?["error"] as? String, code, "deliver carries the " + code + " reason")
+}
+fake.deliverResult = ["ok": true]
 
 section("stage gate routes")
 let confirmNoId = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage/confirm", json: ["stage": "design"]), delegate: fake)

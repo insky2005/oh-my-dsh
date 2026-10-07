@@ -295,6 +295,7 @@ final class BrowserAPIBridge: BrowserAPIDelegate {
     var workstreamsQueuePause: (WorkstreamsQueuePauseRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     var workstreamsCovered: (WorkstreamsCoveredRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     var workstreamsDelivery: (WorkstreamsDeliveryRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsDeliver: (WorkstreamsDeliverRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
     /// The focus channel: light the workstreams panel, optionally highlighting one
     /// card. HTTP marshals it onto the main thread like every other workstreams
     /// call (single writer / AppKit main thread).
@@ -759,6 +760,10 @@ extension BrowserAPIBridge: WorkstreamsAPIDelegate {
 
     func apiWorkstreamsDelivery(_ request: WorkstreamsDeliveryRequest) -> [String: Any] {
         onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsDelivery(request) }
+    }
+
+    func apiWorkstreamsDeliver(_ request: WorkstreamsDeliverRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsDeliver(request) }
     }
 
     /// The focus channel (design A11 / D6): light the panel and highlight an id.

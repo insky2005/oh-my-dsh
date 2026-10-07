@@ -42,7 +42,7 @@
 | **设计** | 同上 | 出设计任务：在 `docs/design/**` 写设计文档 + 待确认问题（Q 表）；**只写设计、不写实现** | 设计完成 → 「**确认**」 |
 | **执行** | 「拆分任务」→ **看任务清单确认拆分合理** → 「启动事项」 | 按任务实现：切分支 / 改码 / 跑测试 / conventional commit；范围外的新发现**回池**（不就地吸收） | 证据齐 → 「**确认**」 |
 | **验收** | 点「拆分任务」（可选，建证据收集任务）→「启动事项」→ **人 sign-off** | 跑回归门与机检证据、记录 `covered`（paths + base/head 锚变更）；**不自签** | **人 sign-off** → 「**确认**」 |
-| **交付** | 点交付阶段卡的「**交付**」→ 在 GitHub 合并 | 交付任务：push 分支 + 开/复用 PR，用 `/api/workstreams/delivery` 记录 `delivery.pr` / `url` 事实 | 人 merge；`closed` 由 `derive-status` **派生** |
+| **交付** | 点交付阶段卡的「**交付**」，或对话说「交付 WS-x」（`POST /api/workstreams/deliver`，与按钮共用同一条路径）→ 在 GitHub 合并 | 交付任务：push 分支 + 开/复用 PR，用 `/api/workstreams/delivery` 记录 `delivery.pr` / `url` 事实 | 人 merge；`closed` 由 `derive-status` **派生** |
 
 **回边**：任一阶段不满意 → 阶段卡「退回」+ 填原因 → `stage` 退回返工（必须留痕，R2）。
 

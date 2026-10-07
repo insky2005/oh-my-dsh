@@ -1091,17 +1091,24 @@ final class WorkstreamsPanelController: NSObject {
         reload()
     }
 
-    /// 阶段二级卡「交付」(design A10)：先按交付模块收集 git / GitHub / token 事实。
-    /// 准入失败给出明确原因（WSDeliveryBlocker）；成功则把交付提示词作为一条 delivery
-    /// 阶段任务追加并只启动该阶段。会话用 POST /api/workstreams/delivery 回填 PR 事实，
-    /// 面板派生 outcome 并写卡（store §5：事实可写、outcome 只作派生缓存）。
-    func deliverWorkstream(_ cardID: String) {
-        guard let workspace = workspaceProvider?(), !workspace.isEmpty,
-              let runner = ensureRunner(workspace),
-              let card = snapshot.workstreams.first(where: { $0.id == cardID }) else { return }
+    /// 发起交付 (design A10): the single admission + enqueue-and-start path. The
+    /// stage card「交付」button and POST /api/workstreams/deliver both come through
+    /// here, so the two entries can never drift.
+    ///
+    /// 准入顺序 = 失败优先级：阶段 → git 仓库 → 分支 → 远端 → GitHub → token
+    /// (WorkstreamsDelivery.resolve)。失败返回稳定 WSDeliveryBlocker 码（外加
+    /// no-queue / start-failed）与中文原因；成功把交付提示词作为一条 stage=delivery
+    /// 任务追加到事项唯一队列并只启动该阶段。会话用 POST /api/workstreams/delivery
+    /// 回填 PR 事实，面板派生 outcome 并写卡（store §5：事实可写、outcome 只作派生缓存）。
+    func initiateDelivery(_ cardID: String, workspace: String) -> [String: Any] {
+        guard !workspace.isEmpty else { return WorkstreamError.noWorkspace.apiResult }
+        guard let runner = ensureRunner(workspace) else { return WorkstreamError.noWorkspace.apiResult }
+        guard let card = try? WorkstreamsCore.loadCard(workspace: workspace, id: cardID) else {
+            return WorkstreamError.unknownWorkstream(cardID).apiResult
+        }
         guard card.stage == .delivery else {
-            setStatus(L10n.tr("workstreams.deliver.not-delivery-stage"), isError: true)
-            return
+            let blocker = WSDeliveryBlocker.notDeliveryStage(card.stage)
+            return ["ok": false, "error": blocker.code, "message": blocker.message]
         }
         let branch = WSGitProbe.live.currentBranch(workspace)
         let resolution = WorkstreamsDelivery.resolve(card: card,
@@ -1111,22 +1118,54 @@ final class WorkstreamsPanelController: NSObject {
                                                      tokens: WSTokenStore(),
                                                      findExistingPR: WSGitHubPR.liveFind)
         guard let plan = resolution.plan else {
-            let key = resolution.blocker?.messageKey ?? "workstreams.deliver.blocked"
-            setStatus(L10n.tr(key), isError: true)
-            return
+            let blocker = resolution.blocker ?? WSDeliveryBlocker.noToken
+            return ["ok": false, "error": blocker.code, "message": blocker.message]
         }
         let built = runner.enqueueDelivery(card: card, prompt: WorkstreamsDelivery.prompt(plan: plan))
         guard !built.created.isEmpty else {
-            setStatus(L10n.tr("workstreams.deliver.no-queue"), isError: true)
-            return
+            return ["ok": false, "error": "no-queue",
+                    "message": "the workstream queue is closed; no delivery task was created"]
         }
         writeBackQueueMapping(card: card, queueID: built.queue.id, workspace: workspace)
         guard runner.startWorkstream(card, stage: .delivery) else {
-            setStatus(L10n.tr("workstreams.deliver.start-failed"), isError: true)
+            return ["ok": false, "error": "start-failed",
+                    "message": "the delivery stage could not be started"]
+        }
+        return ["ok": true,
+                "queue": queueJSON(built.queue),
+                "tasks": built.created.map { taskJSON($0) },
+                "stage": WorkstreamStage.delivery.rawValue]
+    }
+
+    /// The stage card「交付」button (design A10): call the shared path and render the
+    /// outcome — started, or the stable reason (WSDeliveryBlocker + queue / start).
+    func deliverWorkstream(_ cardID: String) {
+        let workspace = workspaceProvider?() ?? ""
+        let result = initiateDelivery(cardID, workspace: workspace)
+        if (result["ok"] as? Bool) == true {
+            setStatus(L10n.tr("workstreams.deliver.started", cardID), isError: false)
+            reload()
             return
         }
-        setStatus(L10n.tr("workstreams.deliver.started", cardID), isError: false)
-        reload()
+        let code = (result["error"] as? String) ?? ""
+        setStatus(L10n.tr(deliveryMessageKey(code)), isError: true)
+    }
+
+    /// The L10n key for a delivery initiation failure: the six WSDeliveryBlocker
+    /// codes plus no-queue / start-failed all have a dedicated key; anything else
+    /// falls back to the generic blocked message.
+    func deliveryMessageKey(_ code: String) -> String {
+        switch code {
+        case "not-delivery-stage": return "workstreams.deliver.not-delivery-stage"
+        case "not-git-repo": return "workstreams.deliver.not-git-repo"
+        case "no-branch": return "workstreams.deliver.no-branch"
+        case "no-remote": return "workstreams.deliver.no-remote"
+        case "no-github-remote": return "workstreams.deliver.no-github-remote"
+        case "no-token": return "workstreams.deliver.no-token"
+        case "no-queue": return "workstreams.deliver.no-queue"
+        case "start-failed": return "workstreams.deliver.start-failed"
+        default: return "workstreams.deliver.blocked"
+        }
     }
 
     /// 主卡「创建任务」(UX)：打开 WSInlineForms 表单抽屉——阶段选择器（五阶段，默认
@@ -1693,6 +1732,22 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                               abandoned: request.abandoned,
                                               today: WorkstreamsCore.today())
         }, workspace: workspace, session: request.session)
+    }
+
+    /// POST /api/workstreams/deliver — 发起交付: the same shared path the stage
+    /// card「交付」button calls (initiateDelivery), so the two entries agree. The
+    /// response carries the queue / tasks on success and a WSDeliveryBlocker code
+    /// (or no-queue / start-failed) as `error` on refusal.
+    func apiWorkstreamsDeliver(_ request: WorkstreamsDeliverRequest) -> [String: Any] {
+        guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
+            return WorkstreamError.noWorkspace.apiResult
+        }
+        let result = initiateDelivery(request.id, workspace: workspace)
+        if (result["ok"] as? Bool) == true {
+            bindSession(request.session, workspace: workspace, id: request.id)
+            if workspace == currentWorkspace { reload() }
+        }
+        return result
     }
 
     /// Flatten the queue board into the gate's runtime facts (design D3). The queue

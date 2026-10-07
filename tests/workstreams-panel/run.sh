@@ -541,6 +541,49 @@ for key in workstreams.stage.deliver workstreams.deliver.not-delivery-stage \
 done
 echo "delivery wiring + covered / delivery write routes guard ok"
 
+echo "--- 发起交付 guard (面板按钮 == API 同一条路径, task 36) ---"
+# 面板「交付」按钮与 POST /api/workstreams/deliver 必须共用同一个 initiateDelivery，
+# 不允许两套实现；失败一律回稳定 WSDeliveryBlocker 码（+ no-queue / start-failed）。
+if ! grep -qF '/api/workstreams/deliver' "$API"; then
+  echo "FAIL: WorkstreamsAPI.swift is missing the /api/workstreams/deliver route" >&2
+  exit 1
+fi
+if ! grep -qE 'func apiWorkstreamsDeliver\(' "$API" \
+   || ! grep -qE 'struct WorkstreamsDeliverRequest' "$API"; then
+  echo "FAIL: WorkstreamsAPI.swift is missing the deliver DTO / delegate" >&2
+  exit 1
+fi
+for needle in 'func initiateDelivery(' 'func deliverWorkstream(' 'func apiWorkstreamsDeliver('; do
+  if ! grep -qF "$needle" "$PANEL"; then
+    echo "FAIL: WorkstreamsPanel.swift is missing $needle" >&2
+    exit 1
+  fi
+done
+# 两条入口都必须调 initiateDelivery（只接一条 = 两套）。
+if [ "$(grep -c 'initiateDelivery(' "$PANEL")" -lt 3 ]; then
+  echo "FAIL: the panel button and the API delegate must both call initiateDelivery" >&2
+  exit 1
+fi
+# 交付模块是准入的唯一来源（面板不重复手写 git 检查）。
+if ! grep -qF 'WorkstreamsDelivery.resolve(' "$PANEL" \
+   || ! grep -qF 'runner.enqueueDelivery(' "$PANEL"; then
+  echo "FAIL: initiateDelivery must resolve admission via WorkstreamsDelivery and enqueue via the runner" >&2
+  exit 1
+fi
+if ! grep -qF 'bridge.workstreamsDeliver' "$MAIN" \
+   || ! grep -qF 'workstreamsDeliver' "$SRC2/BrowserAPI.swift"; then
+  echo "FAIL: main.swift / BrowserAPI.swift are missing the deliver bridge landing" >&2
+  exit 1
+fi
+# 技能入口：说「交付 WS-x」→ 发起交付（与面板同一条路径）。
+SKILL="../../.dsh/skills/workstream-panel/SKILL.md"
+if ! grep -qF '/api/workstreams/deliver' "$SKILL" \
+   || ! grep -qF '交付 WS-x' "$SKILL"; then
+  echo "FAIL: the workstream-panel skill is missing the deliver entry" >&2
+  exit 1
+fi
+echo "发起交付 guard ok"
+
 echo "--- workstream 会话绑定 / 拆分任务 guard (design §6) ---"
 # 事项 ↔ 会话绑定：local.json 的 workstreamSessions + 反查 + 「拆分任务」动作。
 # 模型层：持久化 / 反查 / 目标会话决策。

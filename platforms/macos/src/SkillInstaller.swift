@@ -420,7 +420,7 @@ enum BuiltinSkill: CaseIterable {
     static let workstreamPanelMarkdown = """
     ---
     name: workstream-panel
-    description: 改事项（Workstream）卡片、按阶段建任务、启动事项/阶段队列、查看任务、按会话反查当前事项并把事项面板聚焦给用户，也可在用户明确授权下确认 / 退回阶段，一律走事项面板 REST API /api/workstreams/*，不直接改 .dsh/workstreams/*.md。Edit workstream cards and stage tasks through the oh-my-dsh Workstreams panel API instead of writing .dsh files directly.
+    description: 改事项（Workstream）卡片、按阶段建任务、启动事项/阶段队列、查看任务、发起交付（git/GitHub/token 准入并起交付会话）、按会话反查当前事项并把事项面板聚焦给用户，也可在用户明确授权下确认 / 退回阶段，一律走事项面板 REST API /api/workstreams/*，不直接改 .dsh/workstreams/*.md。Edit workstream cards and stage tasks, and start delivery, through the oh-my-dsh Workstreams panel API instead of writing .dsh files directly.
     ---
 
     # workstream-panel — 通过 API 改事项卡与阶段任务
@@ -439,8 +439,9 @@ enum BuiltinSkill: CaseIterable {
     - **可被用户直接调用**：用户可以直接 `/workstream-panel 确认规划 WS-000012`、
       `/workstream-panel 退回设计 WS-000012 原因…`；直接调用时同样遵守下面的授权与证据规则。
     - **对话入口按语义选路由**：用户说「拆」→ `task/create`（等待态，见「对话中发起拆分 /
-      启动」）；说「启动」→ `queue/start`；说「确认 / 退回」→ 人工门（见「阶段确认 / 退回
-      （人工门）」），**仅当用户在本会话明确授权**时才调 `stage/confirm` / `stage/reject`。
+      启动」）；说「启动」→ `queue/start`；说「交付 WS-x」→ `deliver`（见「发起交付」）；
+      说「确认 / 退回」→ 人工门（见「阶段确认 / 退回（人工门）」），**仅当用户在本会话明确授权**
+      时才调 `stage/confirm` / `stage/reject`。
     - **只写门内可写的字段**：标题 / 需求指针 / 正文、`## 规划` 段、事项唯一队列映射
       （`queues`），以及**等待态**阶段任务（`task/create`）。
     - **人工门只在用户明确授权时调用（不自签）**：`stage/confirm`（确认推进）与
@@ -485,6 +486,7 @@ enum BuiltinSkill: CaseIterable {
     | POST `/api/workstreams/queue/pause` | `{"workspace":"…","id":"WS-000012","session":"$DSH_SESSION_ID"}` | 暂停队列（不影响已在跑的会话） |
     | POST `/api/workstreams/covered` | `{"workspace":"…","id":"WS-000012","covered":{"paths":["docs/x.md"],"base":"<blob/tree>","head":"<blob/tree>"},"session":"$DSH_SESSION_ID"}` | **记录验收点记录**（事实；验收 / 交付阶段必选）；`covered: null` 清除；缺 `paths` / 空 `paths` 报错 |
     | POST `/api/workstreams/delivery` | `{"workspace":"…","id":"WS-000012","delivery":{"pr":42,"url":"https://github.com/o/r/pull/42","state":"open"},"session":"$DSH_SESSION_ID"}` | **记录交付事实**（`pr` / `url`）；`delivery.outcome` 是**派生缓存**，服务端按 PR 观察（`state` / `merged` / `abandoned`）现算，**禁止手写** |
+    | POST `/api/workstreams/deliver` | `{"workspace":"…","id":"WS-000012","session":"$DSH_SESSION_ID"}` | **发起交付**：先做 git / GitHub / token 准入，成功后把交付提示词入队并启动交付阶段（等价面板「交付」按钮，同一条路径）；失败回明确原因（见「发起交付」） |
     | POST `/api/workstreams/create` | `{"workspace":"…","title":"…","requirement":"REQ-003","stage":"planning","body":"…","session":"$DSH_SESSION_ID"}` | 新建事项卡（**仅当用户明确要求**；拆解确认由需求池面板建卡） |
     | POST `/api/workstreams/stage` | `{"workspace":"…","id":"…","stage":"design"}` | 低层显式改阶段口子；**agent 不调**，阶段推进走人工确认门 |
     | POST `/api/workstreams/stage/confirm` | `{"workspace":"…","id":"WS-000012","stage":"planning","note":"…","session":"$DSH_SESSION_ID"}` | **人工确认门**：确认并推进到下一阶段。**仅当用户明确授权**才调，调前先复述证据（见「阶段确认 / 退回（人工门）」）；可选 `stage` = 期望阶段（防串台，stale 报 `stage-changed`） |
@@ -502,8 +504,9 @@ enum BuiltinSkill: CaseIterable {
       `queue/start` / `queue/pause` 回 `queue`（`start` 另带 `stage`）。
     - `covered` / `delivery` 用上面的写路由记**事实**；`delivery.outcome` 是**派生缓存**（服务端按 PR 状态
       现算），**禁止手写**；`closed` / `split` 等派生字段同样不写。
-    - 交付阶段动作由面板执行（「交付」按钮收集 git / GitHub / token 事实并起交付会话）；agent 不要
-      直接改盘上文件，也不要手写 `outcome`。
+    - **发起交付**走 `POST /api/workstreams/deliver`（= 面板「交付」按钮同一条路径）：面板先做
+      git / GitHub / token 准入，成功后把交付提示词入队并启动交付阶段；agent 不要直接改盘上文件，
+      也不要手写 `outcome`（`outcome` 由面板按 PR 观察派生）。
 
     ## 工作流
 
@@ -517,6 +520,7 @@ enum BuiltinSkill: CaseIterable {
     | 「给这个事项建个任务 / 加一条任务」「在某个阶段建任务」 | **创建任务**（建等待态任务） | `POST /api/workstreams/task/create`（显式传 `stage`；面板主卡「创建任务」抽屉走同一条路径） | 同拆分：只建不启动；建完**停下请人确认** |
     | 「启动这个阶段」「把执行阶段跑起来」 | **启动**（只跑该阶段） | `POST /api/workstreams/queue/start` + `stage` | 仅在人已确认拆分 / 用户明说时 |
     | 「启动这个事项」「把队列跑起来」 | **启动**（整条队列，按阶段 canonical 顺序） | `POST /api/workstreams/queue/start`（不带 `stage`） | 同上 |
+    | 「交付 WS-000012」「发起交付」 | **发起交付** | `POST /api/workstreams/deliver` | = 面板「交付」按钮同一条路径：git / GitHub / token 准入 + 把交付提示词入队并启动交付阶段；失败按原因转述 |
     | 「确认这个阶段」「推进到下一阶段」 | **确认**（人工门） | `POST /api/workstreams/stage/confirm` | **仅当用户明确授权**；调前先复述证据并请求确认 |
     | 「退回这个阶段」「打回去返工」 | **退回**（人工门） | `POST /api/workstreams/stage/reject` | **仅当用户明确要求退回**；`reason` 必须由人给 |
 
@@ -646,6 +650,27 @@ enum BuiltinSkill: CaseIterable {
       -d '{"workspace":"'$(pwd)'","id":"WS-000012","session":"'"$DSH_SESSION_ID"'"}'
     ```
 
+    ### 发起交付（交付阶段本步动作）
+
+    用户说「交付 WS-000012」「发起交付」时（事项进入 `delivery` 阶段后），调交付路由。
+    面板先做准入（顺序即失败优先级）：阶段不是 `delivery` → 非 git 仓库 → 无分支 → 无远端 →
+    非 GitHub 远端 → 无 token；任一不成立就回对应原因，**不要猜后面的、也不要绕过**。准入通过后，
+    面板把交付提示词作为一条 `delivery` 阶段任务入队并启动交付阶段（与面板「交付」按钮**同一条
+    路径**）：
+
+    ```bash
+    cat > /tmp/ws-deliver.json <<'JSON'
+    {"workspace": "<pwd 的输出>", "id": "WS-000012", "session": "<$DSH_SESSION_ID 的值>"}
+    JSON
+    curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/deliver" -H 'Content-Type: application/json' --data-binary @/tmp/ws-deliver.json
+    ```
+
+    成功回 `{ok: true, queue, tasks, stage: "delivery"}`；失败回 `{ok: false, error, message}`，
+    `error` 是稳定原因码（`not-delivery-stage` / `not-git-repo` / `no-branch` / `no-remote` /
+    `no-github-remote` / `no-token` / `no-queue` / `start-failed`）。把原因如实转述给用户
+    （例如「仓库还没有远端 / 还没有 GitHub token」），请人补齐后再来；**不要**改盘上文件，也不要
+    手写 `outcome`。交付会话完成后用 `POST /api/workstreams/delivery` 回填 `pr` / `url`。
+
     ### 登记事项队列
 
     面板建队列后（或需要把已有队列绑到事项时），把队列 id 写回卡片：
@@ -690,6 +715,9 @@ enum BuiltinSkill: CaseIterable {
     | `400 missing-covered` / `invalid-covered` / `missing-covered-paths` | `covered` 没给 / 不是对象 / `paths` 为空：按 `{"paths":["…"]}` 修正 |
     | `400 missing-delivery` / `invalid-delivery` | `delivery` 没给 / 不是对象 / `pr` 非整数：按 `{"pr":42,"url":"…"}` 修正 |
     | `400 outcome-derived` | 手写了 `outcome`：它是派生缓存；只传 `pr` / `url`（+ 可选 `state` / `merged` / `abandoned` 观察） |
+    | `409 not-delivery-stage` | 发起交付但事项未到 `delivery` 阶段：先走完前面阶段，别提前交付 |
+    | `400 not-git-repo` / `no-branch` / `no-remote` / `no-github-remote` / `no-token` | 发起交付准入失败：按原因补齐（git 仓库 / 分支 / 远端 / GitHub / token）后再来；如实转述，**不要绕过** |
+    | `404 no-queue` / `500 start-failed` | 发起交付时队列不可用 / 交付阶段启动失败：先 `task/list` 看队列状态，或稍后重试 |
     | `404 unknown-workstream` | 没有该 WS：先 `list` 确认 id |
     | `404 no-queue` | 该事项还没有队列（或队列已关闭无法再建 / 启动）：先 `task/create` 建队列，或 `task/list` 看状态 |
     | `409 evidence-missing` / `stage-changed` | 人工门未过（证据不足）/ 阶段已变（stale）：**不得重试硬推**；如实告诉用户缺什么 / 阶段已变，请人处理后再说 |
@@ -704,7 +732,7 @@ enum BuiltinSkill: CaseIterable {
     - `409 evidence-missing` / `stage-changed` 不重试硬推；
     - **人未确认拆分前不 `queue/start`**：`task/create` 只建等待态任务，启动实施等人确认或用户明说；
     - 不手写派生字段（`closed` / `outcome` / `split`）；`covered` / `delivery` 只经写路由记事实，`outcome` 由服务端派生；
-    - 不在用户没要求时新建事项 / 改阶段 / 建队列 / 启动队列；
+    - 不在用户没要求时新建事项 / 改阶段 / 建队列 / 启动队列 / 发起交付；事项未到 `delivery` 阶段不发起交付；
     - 不在用户没要求时用 `focus: true` 抢面板（默认已关闭；只有确实要把卡给用户看时才开）；
     - **阶段 runner / 临时会话不把本会话写进 `session`**：那会覆盖该事项的主场会话（后写覆盖先写），让「拆分任务」和阶段推进找不到原来的对话。
 

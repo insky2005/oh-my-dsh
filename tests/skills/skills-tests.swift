@@ -185,6 +185,15 @@ if let text = wsSkill {
     check(text.contains("必须拿到人的原因"), "workstream-panel: reject requires the human's reason")
     check(text.contains("由人给"), "workstream-panel: the reject reason comes from the human, not the agent")
     check(text.contains("不得重试硬推"), "workstream-panel: 409 evidence-missing / stage-changed are not force-retried")
+    // 2026-10-07 (task 36): 发起交付 — the skill documents the deliver route (the
+    // panel「交付」button's equivalent) and the in-conversation「交付 WS-x」entry.
+    check(text.contains("/api/workstreams/deliver"), "workstream-panel documents the deliver (initiate delivery) route")
+    check(text.contains("发起交付"), "workstream-panel explains initiating delivery")
+    check(text.contains("交付 WS-") || text.contains("交付 WS-x"), "workstream-panel documents the 「交付 WS-x」 conversation entry")
+    check(text.contains("not-delivery-stage") && text.contains("no-token"),
+          "workstream-panel lists the delivery admission reasons")
+    check(text.contains("同一条") && text.contains("路径"),
+          "workstream-panel: the deliver route == the panel button (one path)")
 }
 
 if failures > 0 { print("\(failures) FAILURE(S)"); exit(1) }
