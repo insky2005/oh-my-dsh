@@ -143,7 +143,8 @@ do {
     contains(p, "拆分任务", "default task action is 拆分任务")
     contains(p, "/api/workstreams/task/create", "creates waiting tasks through the panel's own API")
     contains(p, "等待态阶段任务", "creates waiting-state stage tasks")
-    contains(p, "本阶段 `stage`", "explains that each task carries the stage")
+    contains(p, "`stage` 必须传", "explains that stage is the current stage's raw value")
+    contains(p, "\"stage\":\"task\"", "the call example uses the raw current-stage value")
     contains(p, "只建不启动", "does not start the tasks")
     contains(p, "停下请人确认拆分合理", "stops for human confirmation")
     notContains(p, "/task-todo", "never points at the tasks panel's skill")
@@ -377,16 +378,27 @@ do {
     contains(p, "本步动作：拆分任务", "the action is 拆分任务")
     contains(p, "/api/workstreams/task/create", "creates waiting tasks through the panel API")
     contains(p, "等待态阶段任务", "creates waiting-state stage tasks")
-    contains(p, "本阶段 `stage`", "each task carries the stage")
+    contains(p, "`stage` 必须传", "each task carries the current stage's raw value")
+    contains(p, "\"stage\":\"design\"", "the call example uses the raw requested stage")
+    contains(p, "不要传 `task`", "warns against passing task for a non-task stage")
+    notContains(p, "\"stage\":\"task\"", "a design split never suggests stage=task")
     contains(p, "只建不启动", "only creates, never starts")
     contains(p, "不自签", "the agent never self-signs the split")
     contains(p, "停下请人确认拆分合理", "stops for human confirmation")
     notContains(p, "/task-todo", "never points at the tasks panel's skill")
+    // 回归：规划阶段拆分必须点名原始值 planning，且不诱导 task（bug: 拆分任务传 stage=task）。
+    let planningSplit = WorkstreamHandoff.splitPrompt(card: makeCard(stage: .planning), stage: .planning)
+    contains(planningSplit, "当前 stage：规划（planning）", "the stage marker carries the raw value")
+    contains(planningSplit, "\"stage\":\"planning\"", "the call example passes the raw value")
+    contains(planningSplit, "不要传 `task`", "warns not to pass task")
+    notContains(planningSplit, "\"stage\":\"task\"", "a planning split never suggests stage=task")
     // Every stage can be split; the header always names the requested stage.
     for stage in WorkstreamStage.allCases {
         let sp = WorkstreamHandoff.splitPrompt(card: makeCard(), stage: stage)
         contains(sp, WorkstreamHandoff.stageMarker + WorkstreamHandoff.stageLabel(stage),
                  "split prompt names " + stage.rawValue)
+        contains(sp, "（" + stage.rawValue + "）", "split prompt carries the raw value " + stage.rawValue)
+        contains(sp, "\"stage\":\"" + stage.rawValue + "\"", "split example for " + stage.rawValue)
         contains(sp, "本步动作：拆分任务", "split action for " + stage.rawValue)
     }
     // 执行阶段的拆分与 (stage, action) 通用构造逐字一致（同一个动作段）。

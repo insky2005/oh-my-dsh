@@ -438,6 +438,18 @@ eq(taskCreateBody?.status, 200, "task/create body-only 200")
 eq(fake.lastTaskCreate?.body, "正文", "task/create body passed through")
 eq(fake.lastTaskCreate?.titles.isEmpty, true, "body-only leaves titles empty (delegate derives one)")
 eq(fake.lastTaskCreate?.stage == nil, true, "absent stage stays nil (delegate falls back to the card stage)")
+// 阶段原始枚举值是 task/create 的线上契约：五个原始值必须各自解析到对应阶段，
+// 而不是因为动作叫「拆分任务」就被改写成 task（bug: 规划拆分落到执行）。
+let stageRawValues: [(String, WorkstreamStage)] = [
+    ("planning", .planning), ("design", .design), ("task", .task),
+    ("acceptance", .acceptance), ("delivery", .delivery),
+]
+for (raw, expected) in stageRawValues {
+    let created = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/task/create",
+                                                          json: ["id": "WS-000001", "stage": raw, "titles": ["x"]]), delegate: fake)
+    eq(created?.status, 200, "task/create accepts raw stage " + raw)
+    eq(fake.lastTaskCreate?.stage, expected, "raw stage " + raw + " maps to " + expected.rawValue)
+}
 
 let taskList = WorkstreamsAPIRouter.route(HTTPRequest(method: "GET", path: "/api/workstreams/task/list", query: ["workspace": "~/repo/"]), delegate: fake)
 eq(taskList?.status, 200, "task/list 200")

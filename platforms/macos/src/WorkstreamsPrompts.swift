@@ -137,12 +137,12 @@ enum WorkstreamHandoff {
         }
         lines.append("- 存储约定：.dsh/requirements/README.md（通用规则见工作区 AGENTS.md）")
         lines.append("")
-        lines.append(stageMarker + stageLabel(stage) + "      本步动作：" + action.label)
+        lines.append(stageMarker + stageLabel(stage) + "（" + stage.rawValue + "）      本步动作：" + action.label)
         if let goal = planningGoal(card.body) {
             lines.append("目标：" + goal)
         }
         lines.append("")
-        lines.append(actionSection(action))
+        lines.append(actionSection(action, stage: stage, cardID: card.id))
         lines.append("")
         lines.append(rulesSection(card))
         return lines.joined(separator: "\n")
@@ -206,8 +206,12 @@ enum WorkstreamHandoff {
 
     // MARK: 动作段（design §4）
 
-    /// 每个动作的「做什么」+「何时停下」。
-    static func actionSection(_ action: WSStageAction) -> String {
+    /// 每个动作的「做什么」+「何时停下」。`stage` / `cardID` 仅用于「拆分任务」，
+    /// 让调用示例里出现**当前阶段的原始值**（如 `"stage":"planning"`），从提示词层面
+    /// 消除「拆分任务 → stage 传 task」的歧义。
+    static func actionSection(_ action: WSStageAction,
+                              stage: WorkstreamStage? = nil,
+                              cardID: String = "WS-…") -> String {
         switch action {
         case .confirmPlanning:
             return section([
@@ -222,9 +226,12 @@ enum WorkstreamHandoff {
                 "- **只写设计，不写实现**；写完**停下请人确认设计**。",
             ])
         case .splitTasks:
+            let raw = stage?.rawValue ?? "planning"
             return section([
                 "本步做「拆分任务」：",
-                "- 用 `POST /api/workstreams/task/create` 建**等待态阶段任务**（= 任务拆分本身）：每条任务带本阶段 `stage`，追加到该事项唯一的队列；**只建不启动**。",
+                "- 用 `POST /api/workstreams/task/create` 建**等待态阶段任务**（= 任务拆分本身）：`stage` 必须传上面「当前 stage」括号里的**原始值**（`planning` / `design` / `task` / `acceptance` / `delivery`），**不要传 `task`**（除非当前阶段就是「执行」，那时括号里才是 `task`）；动作叫「拆分任务」、路由叫 `task/create`，都不代表 `stage` 就是 `task`。",
+                "- 调用示例（本例当前 stage 是 `" + raw + "`）：`POST /api/workstreams/task/create`，body `{\"id\":\"" + cardID + "\",\"stage\":\"" + raw + "\",\"titles\":[\"…\"],\"session\":\"$DSH_SESSION_ID\"}`。",
+                "- 每条任务带上面的 `stage`，追加到该事项唯一的队列；**只建不启动**。",
                 "- 阶段 ↔ 队列映射由面板写回卡片 `queues`；**停下请人确认拆分合理**。",
                 "- **不自签**：拆分是人工确认门，agent 只建等待态任务，人在面板确认后才 `queue/start`。",
             ])

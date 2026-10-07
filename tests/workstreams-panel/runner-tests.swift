@@ -549,6 +549,20 @@ do {
     eq(h.runner.board.task(first.created[0].id)?.workstreamId, "WS-5", "tasks carry the workstream id")
 }
 
+section("a task created for a stage lands on that stage (bug: 规划拆分落到执行)")
+do {
+    let h = Harness(board: WSBoard())
+    let card = wsCard(id: "WS-6", stage: .planning, queues: [])
+    for stage in WorkstreamStage.allCases {
+        let built = h.runner.createStageQueue(card: card, stage: stage, workspace: "/tmp/ws",
+                                              titles: ["任务-" + stage.rawValue])
+        eq(h.runner.board.task(built.created[0].id)?.stage, stage,
+           "the " + stage.rawValue + " task carries " + stage.rawValue)
+    }
+    eq(h.runner.board.queues.count, 1, "all stage tasks share the single workstream queue")
+    eq(h.dsh.sessions.count, 0, "creating stage tasks never starts them")
+}
+
 section("stage-level start runs only that stage and pauses when it ends (A3 / D18)")
 do {
     var board = WSBoard()

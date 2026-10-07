@@ -552,12 +552,27 @@ if ! grep -qF 'WorkstreamHandoff.splitPrompt(card: card, stage: stage, workspace
   exit 1
 fi
 # 拆分的四件套要求：等待态 / 带 stage / 不自签 / 不启动 / 停下等人。
-for needle in '等待态阶段任务' '本阶段 `stage`' '不自签' '只建不启动' '停下请人确认拆分合理'; do
+for needle in '等待态阶段任务' '`stage` 必须传' '不要传 `task`' '不自签' '只建不启动' '停下请人确认拆分合理'; do
   if ! grep -qF "$needle" "$PROMPTS"; then
     echo "FAIL: the split prompt no longer requires: $needle" >&2
     exit 1
   fi
 done
+# 阶段歧义修复：stageMarker 行必须带原始枚举值（当前 stage：规划（planning））；拆分动作段
+# 必须点名原始值并给出带 "stage":"<raw>" 的调用示例；task/create 缺 stage 时回落卡片 stage。
+if ! grep -qF 'stageMarker + stageLabel(stage) + "（" + stage.rawValue + "）' "$PROMPTS"; then
+  echo "FAIL: the stage marker must carry the raw stage value (当前 stage：规划（planning）)" >&2
+  exit 1
+fi
+if ! grep -qF 'let raw = stage?.rawValue ?? "planning"' "$PROMPTS" \
+   || ! grep -qF '\"stage\":\"" + raw + "\"' "$PROMPTS"; then
+  echo "FAIL: the split action section must build a call example from the raw stage value" >&2
+  exit 1
+fi
+if ! grep -qF 'let stage = request.stage ?? card.stage' "$PANEL"; then
+  echo "FAIL: task/create must fall back to the card stage when stage is absent" >&2
+  exit 1
+fi
 echo "split-task guard ok"
 
 echo "--- focus channel guard (A11 / D6: panel focus + API focus + requirements jump) ---"
