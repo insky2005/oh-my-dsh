@@ -124,15 +124,15 @@
 本步做「拆分任务」：
 - 用 POST /api/workstreams/task/create 建等待态阶段任务（= 任务拆分本身）：每条任务带本阶段 stage，追加到该事项唯一的队列；只建不启动。
 - 阶段 ↔ 队列映射由面板写回卡片 queues；停下请人确认拆分合理。
-- 不自签：拆分是人工确认门，agent 只建等待态任务，人在面板确认后才 queue/start。
+- 不自签：拆分是人工确认门，agent 只建等待态任务；等人在面板点「启动事项」（或会话里明确要求启动）后才 queue/start。
 ```
 
 ### 2.2 写进任务 body、由 runner 发出的
 
 | 编号 | 触发 | body 来源 | 动作段 |
 |---|---|---|---|
-| WS-3 | 拆分任务（agent 调 `task/create`）/ 创建任务抽屉 / 交付按钮 | `WorkstreamHandoff.stageTask` / `prompt(card:action:)` | 见下（按阶段默认动作） |
-| WS-7 | 交付阶段「交付」按钮 | `WorkstreamsDelivery.prompt(plan:)` | 交付长模板（见代码） |
+| WS-3 | 拆分任务（agent 调 `task/create`）/ 创建任务抽屉 / 交付按钮或 `POST /api/workstreams/deliver` | `WorkstreamHandoff.stageTask` / `prompt(card:action:)` | 见下（按阶段默认动作） |
+| WS-7 | 交付阶段「交付」按钮 / 会话说「交付 WS-x」（`POST /api/workstreams/deliver`） | `WorkstreamsDelivery.prompt(plan:)` | 交付长模板（见代码） |
 
 创建任务抽屉会在提示词末尾追加用户输入：`任务内容：` + 内容（首行是标题、其余行是内容）。
 

@@ -16,6 +16,8 @@
 
 事项面板按事项卡片推进五个阶段（阶段队列 `.done` ≠ 阶段完成，须过机检证据 + 人工确认门 R10）；任务面板是独立的手动任务 / issue 作业台，与事项面板不共享存储；终态由 `derive-status` 派生。
 
+> 事项面板的操作分工（用户 × Agent）与「面板按钮 ↔ 会话触发」对照见 [`docs/usage/workstream-panel-workflow.md`](workstream-panel-workflow.md)；R10 人工门（确认 / 退回）可由**面板点按**，或由**会话在用户明确授权后**代发（来源记入卡片 `## 阶段确认`：`source:panel` / `source:session <id>`）——**签字仍是人，agent 不自签**。
+
 不用面板也可以：用 agent 直接读写 `.dsh` 卡片，按 §2 的提示词逐步推进——**手动路径与面板路径等价**，只是少了「确认拆解 / 启动队列」这类面板按钮。
 
 初始化：对 agent 说「**按 `.dsh/ai-native-workflow-spec.md` 初始化本项目的 AI 原生工作流**」（spec §7.1）。
@@ -129,6 +131,7 @@ conventional commits；改到共享路径前先跑回归门。
 ```
 
 > 队列跑完 ≠ 阶段完成：执行阶段仍要过「机检证据 + 人工确认」才推进；交付由事项面板「交付」动作发起（`WorkstreamsDelivery`），见 `docs/usage/panels.md` 事项面板。
+> 面板侧的**唯一启动入口**是事项主卡「启动事项」（不带 `stage`，按阶段 canonical 顺序跑整条队列）；**阶段级** `queue/start`（带 `stage`）只在对话 / 脚本里用。
 
 ### 2.7 验收
 
@@ -141,6 +144,7 @@ conventional commits；改到共享路径前先跑回归门。
 
 ```text
 push 分支并开 PR；交付事实（delivery.pr / url）经事项面板交付流程回填（POST /api/workstreams/delivery）。
+发起交付：面板「交付」按钮，或会话说「交付 WS-x」→ `POST /api/workstreams/deliver`（同一条路径）。
 `closed` / `outcome` 不要手写。
 ```
 
