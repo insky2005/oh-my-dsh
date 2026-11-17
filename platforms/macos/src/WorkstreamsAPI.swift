@@ -783,8 +783,8 @@ enum WorkstreamsAPIRouter {
         case "write-failed": return 500
         case "evidence-missing": return 409
         case "stage-changed": return 409
-        // 发起交付: a workstream that is not in the delivery stage is a state
-        // conflict; a failed start is a server-side failure. The other
+        // 发起交付: a workstream that has not reached acceptance (the last stage)
+        // is a state conflict; a failed start is a server-side failure. The other
         // WSDeliveryBlocker reasons are bad-state 400s (default).
         case "not-delivery-stage": return 409
         case "start-failed": return 500

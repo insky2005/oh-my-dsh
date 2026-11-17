@@ -323,21 +323,10 @@ enum WorkstreamsStageGate {
         ]
     }
 
-    // MARK: Delivery — PR fact + derived outcome
-    //
-    //  Delivery is an OPERATION now (design A17), so the stage gate no longer
-    //  evaluates it; the delivery module keeps these facts for its own
-    //  admission checks.
-
-    static func deliveryEvidence(_ card: WorkstreamCard) -> [WSStageEvidenceItem] {
-        let pr = card.delivery?.pr != nil
-        let outcome = !((card.delivery?.outcome ?? "").isEmpty)
-        return [
-            WSStageEvidenceItem(key: "workstreams.evidence.delivery.pr", passed: pr),
-            WSStageEvidenceItem(key: "workstreams.evidence.delivery.outcome", passed: outcome,
-                                detail: card.delivery?.outcome ?? ""),
-        ]
-    }
+    // No delivery evidence branch: acceptance is the LAST stage. Delivery is an
+    // OPERATION on the workstream (design A17), so the gate never evaluates it;
+    // the delivery module reads the card's delivery facts for its own admission
+    // checks (WorkstreamsDelivery), not through this gate.
 
     // MARK: History
 

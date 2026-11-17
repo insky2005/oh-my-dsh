@@ -1323,10 +1323,11 @@ final class WorkstreamsPanelController: NSObject {
     }
 
     /// 对话内阶段推进（design §5 + §6 / 队列第 24 项）：确认成功且 stage 真的前移时，
-    /// 把下一阶段交接提示词交给 main.swift。交付是终态、stage 不前移，或提示词生成
-    /// 返回 nil 时静默跳过——人工确认本身已经完成推进，续发只是「让对话跟到下一阶段」。
+    /// 把下一阶段交接提示词交给 main.swift。**验收是最后阶段**（交付是操作，design
+    /// A17）：确认它 stage 不前移、也没有下一阶段，因此不续发；提示词生成返回 nil 时
+    /// 同样静默跳过——人工确认本身已经完成推进，续发只是「让对话跟到下一阶段」。
     private func continueToNextStage(after old: WorkstreamCard, updated: WorkstreamCard) {
-        guard updated.stage != old.stage,
+        guard updated.stage != old.stage, updated.stage.next != nil,
               let handoff = WorkstreamHandoff.nextStagePrompt(card: updated,
                                                               workspace: workspaceProvider?() ?? "") else { return }
         onStageConfirmed?(updated, handoff.stage)

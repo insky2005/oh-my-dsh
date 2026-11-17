@@ -222,7 +222,7 @@ if [ ! -f "$GATE" ]; then
   echo "FAIL: WorkstreamsStageGate.swift is missing" >&2
   exit 1
 fi
-for sym in planningEvidence designEvidence executionEvidence acceptanceEvidence deliveryEvidence confirmStage rejectStage; do
+for sym in planningEvidence designEvidence executionEvidence acceptanceEvidence confirmStage rejectStage; do
   if ! grep -qE "func $sym\b" "$GATE"; then
     echo "FAIL: WorkstreamsStageGate.swift is missing $sym" >&2
     exit 1
@@ -230,6 +230,15 @@ for sym in planningEvidence designEvidence executionEvidence acceptanceEvidence 
 done
 if ! grep -q 'evidenceMissing' "$GATE"; then
   echo "FAIL: the gate must refuse confirmation when evidence is missing" >&2
+  exit 1
+fi
+# 验收是最后阶段（交付是操作，A17）：门里不得再有交付证据分支。
+if grep -qE 'func deliveryEvidence|\.delivery[^\n]*passed' "$GATE"; then
+  echo "FAIL: WorkstreamsStageGate.swift must not keep a delivery evidence branch" >&2
+  exit 1
+fi
+if grep -qF 'workstreams.evidence.delivery' "$GATE"; then
+  echo "FAIL: the stage gate must not gate on delivery facts (acceptance is last)" >&2
   exit 1
 fi
 # The agent-facing routes must reach the panel; the human gate is a separate route.
@@ -283,8 +292,8 @@ for sym in 'enum WSStageAction' 'enum WorkstreamHandoff' 'func prompt(card:' 'fu
     exit 1
   fi
 done
-# 五个阶段的中文名 + 执行阶段的两个动作，缺一不可（design §4）。
-for needle in 规划 设计 执行 验收 交付 拆分任务 启动实施; do
+# 四个阶段的中文名 + 执行阶段的两个动作，缺一不可（design §4；交付是操作，不是阶段）。
+for needle in 规划 设计 执行 验收 拆分任务 启动实施; do
   if ! grep -qF "$needle" "$PROMPTS"; then
     echo "FAIL: the stage prompt source no longer mentions $needle" >&2
     exit 1
@@ -746,6 +755,13 @@ if [ "$(grep -c 'continueToNextStage(after:' "$PANEL")" -lt 2 ]; then
 fi
 if ! grep -qF 'WorkstreamHandoff.nextStagePrompt' "$PANEL"; then
   echo "FAIL: the panel must derive the next-stage handoff through WorkstreamHandoff" >&2
+  exit 1
+fi
+# 验收是最后阶段：nextStagePrompt 只认 stage.next（验收返回 nil），面板续发前也必须有
+# next != nil 的守卫，所以确认验收后不会再发下一阶段提示词。
+if ! grep -qF 'guard let next = card.stage.next' "$PROMPTS" \
+   || ! grep -qF 'updated.stage.next != nil' "$PANEL"; then
+  echo "FAIL: acceptance is the last stage and must not continue to a next stage" >&2
   exit 1
 fi
 if ! grep -qF 'workstreamsPanel.onStageConfirmed' "$MAIN" \

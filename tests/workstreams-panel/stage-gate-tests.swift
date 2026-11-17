@@ -132,9 +132,9 @@ let unverified = WSStageCarrier(hasQueue: true, done: true, taskCount: 1,
 check(WorkstreamsStageGate.executionEvidence(unverified).first { $0.key == "workstreams.evidence.task.marker" }?.passed == false,
       "done task without marker/confirm fails")
 
-// MARK: - Acceptance / delivery
+// MARK: - Acceptance (the last stage)
 
-section("acceptance + delivery evidence")
+section("acceptance evidence (covered + sign-off)")
 let acceptanceCard = card(stage: .acceptance, body: acceptanceBody,
                           covered: CoveredRecord(paths: ["a.swift"], base: "b", head: "h"))
 check(WorkstreamsStageGate.acceptanceEvidence(acceptanceCard).allSatisfy { $0.passed }, "covered + record passes")
@@ -143,16 +143,17 @@ check(WorkstreamsStageGate.acceptanceEvidence(card(stage: .acceptance, body: evi
 check(WorkstreamsStageGate.acceptanceEvidence(card(stage: .acceptance, body: evidenceOnlyBody,
                                                    covered: CoveredRecord(paths: ["a.swift"], base: nil, head: nil))).contains { !$0.passed },
       "covered without base/head fails")
-// 交付是操作（design A17）：门不再把交付当一个阶段判；这些事实谓词仍由交付模块使用。
+// 交付是操作（design A17）：门没有交付证据分支，验收证据只有「验收记录 + covered」。
+let acceptanceItems = WorkstreamsStageGate.acceptanceEvidence(acceptanceCard)
+eq(acceptanceItems.count, 2, "acceptance gate = record + covered only")
+check(acceptanceItems.allSatisfy { !$0.key.contains("delivery") },
+      "no delivery evidence branch in the stage gate")
+// 交付事实仍是卡片的一部分（交付模块读它做准入），只是不参与阶段门。
 let deliveryCard = card(stage: .acceptance, body: "## 验收\n",
                         delivery: DeliveryInfo(pr: 42, url: "u", outcome: "merged"))
-check(WorkstreamsStageGate.deliveryEvidence(deliveryCard).allSatisfy { $0.passed }, "PR + outcome passes")
-check(WorkstreamsStageGate.deliveryEvidence(card(stage: .acceptance, body: "",
-                                                 delivery: DeliveryInfo(pr: 42, url: nil, outcome: nil))).contains { !$0.passed },
-      "missing outcome fails")
-check(WorkstreamsStageGate.deliveryEvidence(card(stage: .acceptance, body: "",
-                                                 delivery: DeliveryInfo(pr: nil, url: nil, outcome: "merged"))).contains { !$0.passed },
-      "missing PR fact fails")
+eq(deliveryCard.delivery?.pr, 42, "delivery facts still live on the card for the operation")
+eq(WorkstreamsStageGate.evaluate(deliveryCard, carrier: .none).evidence.items.count, 2,
+   "the gate evaluates acceptance only, never the delivery facts")
 
 // MARK: - Gate state
 
