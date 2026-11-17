@@ -155,6 +155,22 @@ eq(deliveryCard.delivery?.pr, 42, "delivery facts still live on the card for the
 eq(WorkstreamsStageGate.evaluate(deliveryCard, carrier: .none).evidence.items.count, 2,
    "the gate evaluates acceptance only, never the delivery facts")
 
+// MARK: - Accepted (the terminal-state prerequisite)
+
+section("accepted")
+let acceptedBody = "## 阶段确认\n\n- 2026-10-07 · confirm · acceptance → done · source:panel"
+check(WorkstreamsStageGate.accepted(card(stage: .acceptance, body: acceptedBody)),
+      "acceptance confirm -> accepted")
+check(WorkstreamsStageGate.accepted(body: acceptedBody), "body overload agrees")
+check(!WorkstreamsStageGate.accepted(card(stage: .acceptance, body: "## 阶段确认\n\n- 2026-10-07 · confirm · planning → design")),
+      "an earlier stage confirm is not accepted")
+check(!WorkstreamsStageGate.accepted(card(stage: .acceptance, body: "## 阶段确认\n\n- 2026-10-07 · reject · acceptance · 返工")),
+      "a reject is not accepted")
+check(!WorkstreamsStageGate.accepted(card(stage: .acceptance, body: "## 验收\n\n- 证据：测试绿。")),
+      "missing history section is not accepted")
+check(WorkstreamsStageGate.accepted(card(stage: .acceptance, body: "## 阶段确认\n\n- 2026-10-03 · confirm · delivery → done")),
+      "legacy delivery confirm still counts (read-compat)")
+
 // MARK: - Gate state
 
 section("gate state")

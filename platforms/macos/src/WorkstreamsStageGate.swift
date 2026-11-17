@@ -328,6 +328,31 @@ enum WorkstreamsStageGate {
     // the delivery module reads the card's delivery facts for its own admission
     // checks (WorkstreamsDelivery), not through this gate.
 
+    // MARK: Accepted (terminal-state prerequisite)
+
+    /// accepted(ws): the acceptance stage carries a confirmation record in
+    /// "## 阶段确认". Acceptance has no next stage, so its confirmation stays in
+    /// the audit trail instead of moving `stage`. Legacy cards whose 交付 confirm
+    /// was written when delivery was a stage parse to acceptance (read-compat) and
+    /// therefore still count as accepted.
+    ///
+    /// This is the ONLY "accepted" definition in the shell: the workstream run
+    /// state and the requirements close predicate both delegate here (or mirror
+    /// the same parse where the model must stay standalone).
+    static func accepted(history: [WSStageHistoryEntry]) -> Bool {
+        history.contains { $0.action == .confirm && $0.stage == .acceptance }
+    }
+
+    /// Convenience for a loaded card: parse its "## 阶段确认" and apply the rule.
+    static func accepted(_ card: WorkstreamCard) -> Bool {
+        accepted(history: parseHistory(card.body))
+    }
+
+    /// The accepted predicate straight from a card body.
+    static func accepted(body: String) -> Bool {
+        accepted(history: parseHistory(body))
+    }
+
     // MARK: History
 
     static func parseHistory(_ body: String) -> [WSStageHistoryEntry] {

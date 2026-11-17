@@ -62,13 +62,15 @@ extension WSRunState {
         return last.target ?? last.stage
     }
 
-    /// The terminal acceptance stage was confirmed. Acceptance has no next
-    /// stage, so a confirm of it leaves `stage` at acceptance and is only
-    /// visible in the audit trail. Legacy cards whose 交付 confirm was written
-    /// when delivery was a stage parse to acceptance too (read-compat), so they
-    /// still read as confirmed.
+    /// The terminal acceptance stage was confirmed (accepted(ws)). Acceptance
+    /// has no next stage, so a confirm of it leaves `stage` at acceptance and is
+    /// only visible in the audit trail. Legacy cards whose 交付 confirm was
+    /// written when delivery was a stage parse to acceptance too (read-compat),
+    /// so they still read as confirmed. The rule itself lives in
+    /// WorkstreamsStageGate.accepted so the run state and the close predicate
+    /// cannot drift.
     static func acceptanceConfirmed(_ history: [WSStageHistoryEntry]) -> Bool {
-        history.contains { $0.action == .confirm && $0.stage == .acceptance }
+        WorkstreamsStageGate.accepted(history: history)
     }
 
     /// The runtime state of one stage, derived from the queue engine's tasks and

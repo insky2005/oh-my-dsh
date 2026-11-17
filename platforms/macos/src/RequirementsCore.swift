@@ -120,6 +120,9 @@ struct WorkstreamSummary: Equatable {
     var stage: String
     /// delivery.outcome derived cache (read-only; nil = unknown / not delivered).
     var outcome: String?
+    /// accepted(ws): the acceptance stage has a confirmation record in the card
+    /// body ("## 阶段确认"). Defaults to false so older constructors stay valid.
+    var accepted: Bool = false
     var path: String
 }
 
@@ -382,18 +385,43 @@ enum RequirementsCore {
     }
 
     static func workstream(from text: String, path: String) -> WorkstreamSummary? {
-        let (fm, _) = parseCard(text)
+        let (fm, body) = parseCard(text)
         guard let id = string(fm, "id") else { return nil }
         return WorkstreamSummary(id: id,
                                  title: string(fm, "title") ?? id,
                                  requirement: string(fm, "requirement"),
                                  stage: string(fm, "stage") ?? "planning",
                                  outcome: nested(fm, "delivery", "outcome"),
+                                 accepted: accepted(body: body),
                                  path: path)
     }
 
+    /// accepted(ws) = the acceptance stage has a confirmation record in
+    /// "## 阶段确认". Legacy cards whose 交付 confirm was written when delivery was
+    /// a stage count too (read-compat), exactly like
+    /// WorkstreamsStageGate.accepted. Kept local so RequirementsCore stays a
+    /// standalone headless model (no workstreams-store dependency).
+    static func accepted(body: String) -> Bool {
+        guard let section = sectionText(body, heading: "## 阶段确认") else { return false }
+        for raw in section.components(separatedBy: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("- ") else { continue }
+            let fields = String(line.dropFirst(2)).components(separatedBy: " · ")
+            guard fields.count >= 3,
+                  fields[1].trimmingCharacters(in: .whitespaces) == "confirm" else { continue }
+            let stage = fields[2].components(separatedBy: "→")[0]
+                .trimmingCharacters(in: .whitespaces)
+            if stage == "acceptance" || stage == "delivery" { return true }
+        }
+        return false
+    }
+
+    /// terminal(ws) = accepted(ws) ∧ delivery.outcome ∈ {merged, closed, abandoned}.
+    /// Delivery is an OPERATION, not a stage (store design §5/§6): the stage field
+    /// does not participate; acceptance must be human-confirmed and the delivery
+    /// outcome must be terminal.
     static func isTerminal(_ ws: WorkstreamSummary) -> Bool {
-        ws.stage == "delivery" && terminalOutcomes.contains(ws.outcome ?? "")
+        ws.accepted && terminalOutcomes.contains(ws.outcome ?? "")
     }
 
     static func effectiveState(state: String?, children: [WorkstreamSummary]) -> ReqEffectiveState {

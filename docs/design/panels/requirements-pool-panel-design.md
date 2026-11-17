@@ -114,7 +114,8 @@ static func reject(workspace:id:today:) throws -> RequirementCard
 ```
 
 - **派生**：
-  - `terminal(ws) = stage == "delivery" && outcome ∈ {merged, closed, abandoned}`；
+  - `accepted(ws) = 验收阶段在「## 阶段确认」有确认记录`；
+  - `terminal(ws) = accepted(ws) && outcome ∈ {merged, closed, abandoned}`（交付是操作，`stage` 不参与）；
   - `split(req) = children ≠ ∅`；
   - `closed(req) = children ≠ ∅ 且 ∀ terminal(ws)`，或 `state == discarded`（显式放弃优先显示 discarded）；
   - `effective = discarded > closed > split > (state || candidate)`。
