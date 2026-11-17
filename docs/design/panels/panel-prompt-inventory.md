@@ -1,7 +1,7 @@
 # 面板提示词清单（需求池 / 事项 / 任务）
 
-> 状态：草案 · 日期：2026-10-07
-> 关联：`docs/design/panels/requirements-pool-panel-design.md`（§5.7 需求提示词）、`docs/design/panels/workstream-handoff-prompt-design.md`（§3 / §4 事项阶段提示词）、`docs/design/panels/workstream-panel-design.md`（§5.1 三件事）、`docs/design/panels/tasks-queue-session-loop-design.md`
+> 状态：已落地 · 日期：2026-11-17（事项四阶段 + 交付操作）
+> 关联：`docs/design/panels/requirements-pool-panel-design.md`（§5.7 需求提示词）、`docs/design/panels/workstream-handoff-prompt-design.md`（§3 / §4 事项阶段提示词）、`docs/design/panels/workstream-panel-design.md`（§5.1 四件事：拆分 / 确认 / 启动 / 交付）、`docs/design/panels/tasks-queue-session-loop-design.md`
 > **单一事实来源是代码**。本文件是索引与快照；改提示词必须同步本文件与对应设计文档，否则会漂移。
 
 ## 0. 说明
@@ -131,8 +131,8 @@
 
 | 编号 | 触发 | body 来源 | 动作段 |
 |---|---|---|---|
-| WS-3 | 拆分任务（agent 调 `task/create`）/ 创建任务抽屉 / 交付按钮或 `POST /api/workstreams/deliver` | `WorkstreamHandoff.stageTask` / `prompt(card:action:)` | 见下（按阶段默认动作） |
-| WS-7 | **事项主卡「交付」**（操作，不是阶段）/ 会话说「交付 WS-x」（`POST /api/workstreams/deliver`） | `WorkstreamsDelivery.prompt(plan:)` | 交付长模板（见代码） |
+| WS-3 | 阶段任务（agent 调 `task/create` / 创建任务抽屉 / 面板生成阶段队列） | `WorkstreamHandoff.stageTask` / `prompt(card:action:)` | 见下（按阶段默认动作） |
+| WS-7 | **事项主卡「交付」**（操作，不是阶段；前置 `accepted`，发进**主场会话**）/ 会话说「交付 WS-x」（`POST /api/workstreams/deliver`） | `WorkstreamsDelivery.prompt(plan:)` | 交付长模板（见代码）：不新建会话 / 任务、不改 `stage`，完成信号 = `POST /api/workstreams/delivery` |
 
 创建任务抽屉会在提示词末尾追加用户输入：`任务内容：` + 内容（首行是标题、其余行是内容）。
 
@@ -145,8 +145,11 @@
 执行   「拆分任务」：用 POST /api/workstreams/task/create 建等待态阶段任务（带本阶段 stage）；只建不启动；停下请人确认。
        「启动实施」：人确认拆分后，用 POST /api/workstreams/queue/start（带 stage）启动；在已确认边界内改码/跑测试/commit。
 验收   「校验」：    跑回归门与机检证据；用 POST /api/workstreams/covered 记录覆盖点（paths + base/head 锚变更）；必须人 sign-off，agent 不自签。
-交付   「交付」：    push / 开 PR；用 POST /api/workstreams/delivery 记 pr/url 事实；outcome 派生、不手写。
 ```
+
+> **交付不是阶段的动作段**：四阶段到此为止。验收确认（`accepted`）后，`WorkstreamsDelivery.prompt(plan:)`
+> 由事项主卡「交付」按钮发进**主场会话**执行 push / PR，用 `POST /api/workstreams/delivery` 记
+> `pr` / `url` 事实（`outcome` 派生、不手写）——不新建会话 / 任务，也不改变 `stage`。
 
 ### 2.3 运行时包装
 
@@ -181,7 +184,7 @@
 ## 4. 梳理结论
 
 1. **三套提示词各有单一来源，但此前没有统一清单**——本文件补上；三处来源分别落在 `RequirementsCore`、`WorkstreamsPrompts`（+ `WorkstreamsDelivery` / `WSPrompts`）、`TaskPrompts`。
-2. **阶段命名歧义（已修）**：事项阶段枚举是 `task`、中文叫「执行」，而路由叫 `task/create`、动作叫「拆分任务」——agent 极易把 `stage` 传成 `task`。提示词现给出阶段**原始值**（`当前 stage：规划（planning）`）并明确「不要传 `task`」，`splitPrompt` 生成带 `"stage":"<raw>"` 的调用示例；`api-tests` / `runner-tests` 固化五个原始值的映射。
+2. **阶段命名歧义（已修）**：事项阶段枚举是 `task`、中文叫「执行」，而路由叫 `task/create`、动作叫「拆分任务」——agent 极易把 `stage` 传成 `task`。提示词现给出阶段**原始值**（`当前 stage：规划（planning）`）并明确「不要传 `task`」，`splitPrompt` 生成带 `"stage":"<raw>"` 的调用示例；`api-tests` / `runner-tests` 固化四个原始值的映射（交付不是阶段，没有 `delivery`）。
 3. **提示词双重身份**：事项「阶段提示词」既是**聊天提示词**（WS-1/WS-2）又是**任务 body**（WS-3）。改一处会同时影响两侧，需一起验。
 4. **目标会话规则不统一**：需求池四级回退（绑定→来源→当前→复制）、事项面板两级（绑定→新建）、任务面板「每任务一条 + 回传来源会话」。长期建议收敛为「**实体 → 主场会话**」一种模型。
 5. **两处同名不同物**：需求池有「拆解」、事项面板有「拆分任务」；前者是 REQ→WS，后者是 WS 阶段→任务，别混。

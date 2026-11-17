@@ -190,8 +190,17 @@ if let text = wsSkill {
     check(text.contains("/api/workstreams/deliver"), "workstream-panel documents the deliver (initiate delivery) route")
     check(text.contains("发起交付"), "workstream-panel explains initiating delivery")
     check(text.contains("交付 WS-") || text.contains("交付 WS-x"), "workstream-panel documents the 「交付 WS-x」 conversation entry")
-    check(text.contains("not-delivery-stage") && text.contains("no-token"),
+    // 2026-11-17 (4 stages + delivery operation): delivery is an OPERATION whose
+    // prerequisite is accepted(ws); it runs in the home session and never creates a
+    // delivery task / session or moves the stage.
+    check(text.contains("not-accepted") && text.contains("no-token") && text.contains("no-home-session"),
           "workstream-panel lists the delivery admission reasons")
+    check(!text.contains("not-delivery-stage"), "workstream-panel no longer treats delivery as a stage")
+    check(text.contains("验收之后的操作"), "workstream-panel: delivery is an operation after acceptance")
+    check(text.contains("不新建会话") && text.contains("不改 `stage`"),
+          "workstream-panel: delivery runs in the home session and never moves the stage")
+    check(text.contains("report-failed") && text.contains("delivery-timeout"),
+          "workstream-panel documents the delivery run failures")
     check(text.contains("同一条") && text.contains("路径"),
           "workstream-panel: the deliver route == the panel button (one path)")
 }

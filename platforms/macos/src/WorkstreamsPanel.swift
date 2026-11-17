@@ -1325,7 +1325,7 @@ final class WorkstreamsPanelController: NSObject {
         }
     }
 
-    /// 主卡「创建任务」(UX)：打开 WSInlineForms 表单抽屉——阶段选择器（五阶段，默认
+    /// 主卡「创建任务」(UX)：打开 WSInlineForms 表单抽屉——阶段选择器（四阶段，默认
     /// 首个未处理阶段）+ 一个输入框（首行 = 标题，其余行 = 内容）。⌘↩ 提交、Esc 取消、
     /// 标题为空时禁用提交。提交走同一台 task/create 路径，建**等待态**任务、追加到事项
     /// 唯一队列，**不启动**。

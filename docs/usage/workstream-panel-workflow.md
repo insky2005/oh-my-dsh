@@ -1,7 +1,7 @@
 # 事项面板 · 工作流（用户做什么 × Agent 做什么）
 
-> 状态：草案 · 日期：2026-10-07
-> 关联：`docs/design/panels/workstream-panel-design.md`（§5.1 三件事）、`docs/design/panels/workstream-handoff-prompt-design.md`、`docs/design/panels/panel-prompt-inventory.md`、`docs/usage/ai-native-workflow-manual.md`、`docs/usage/panels.md`
+> 状态：已落地 · 日期：2026-11-17（四阶段 + 交付操作）
+> 关联：`docs/design/panels/workstream-panel-design.md`（§5.1 四件事：拆分 / 确认 / 启动 / 交付）、`docs/design/panels/workstream-handoff-prompt-design.md`、`docs/design/panels/panel-prompt-inventory.md`、`docs/usage/ai-native-workflow-manual.md`、`docs/usage/panels.md`
 > 这份文档只回答一件事：**进入事项面板之后，一步步是谁做什么。**
 
 ## 0. 一句话
@@ -26,13 +26,15 @@
 |---|---|---|---|
 | **事项主卡** | **拆分任务** | 人 | 向**主场会话**发「（首个未处理阶段）请拆分任务」的提示词；Agent 据此建**等待态**任务 |
 | **事项主卡** | **创建任务** | 人 | 打开抽屉：**选阶段 + 首行标题 / 其余内容** → 直接建等待态任务（不启动） |
-| **事项主卡** | **启动事项** | 人 | 按**阶段顺序**（规划→设计→执行→验收→交付）执行该事项队列里的任务 |
+| **事项主卡** | **启动事项** | 人 | 按**阶段顺序**（规划→设计→执行→验收）执行该事项队列里的任务 |
 | **事项主卡** | 打开卡 | 人 | 在文件面板打开 `WS-*.md` |
 | **阶段卡** | **确认** | 人（或人在会话中明确授权 Agent） | 机检谓词通过 + 人签字 → 推进 `stage`；卡片 `## 阶段确认` 记来源（面板点按 `source:panel` / 会话授权 `source:session <id>`）；随后主场会话自动收到**下一阶段**提示词 |
 | **阶段卡** | **退回** | 人（或人在会话中明确授权 Agent） | 填原因，把 `stage` 退回返工；卡片 `## 阶段确认` 记来源（`source:panel` / `source:session <id>`，回边留痕 R2） |
-| **事项主卡** | **交付** | 人 | 验收确认后，起交付操作：Agent push / 开 PR 并记录交付事实（**不新建交付阶段**） |
+| **事项主卡** | **交付** | 人 | 验收确认（`accepted`）后，把交付提示词发进**主场会话**：Agent push / 开 PR 并调 `/api/workstreams/delivery` 记录交付事实（**不新建会话 / 任务、不改 `stage`**） |
 
-> 阶段卡上**没有**「创建任务」「启动」——创建与启动都收口在**事项主卡**。阶段卡只负责「确认 / 退回（+ 交付）」。
+> 阶段卡上**没有**「创建任务」「启动」「交付」——创建 / 启动 / 交付都收口在**事项主卡**。阶段卡只负责「确认 / 退回」。
+>
+> **交付是操作、不是阶段**：阶段只有规划 / 设计 / 执行 / 验收四个；交付前置是**验收已确认**，不改变 `stage`。
 
 ### 2.1 同一动作在「会话中」的触发入口（skill `workstream-panel`）
 
@@ -46,7 +48,7 @@
 | 启动阶段（对话专属） | 「启动<阶段> WS-x」 | `queue/start` + `stage` | 只跑该阶段、跑完自动暂停 |
 | 确认 | 「确认<阶段> WS-x」 | `POST /api/workstreams/stage/confirm` | **仅用户明确授权**；先复述证据再确认 |
 | 退回 | 「退回<阶段>，原因…」 | `POST /api/workstreams/stage/reject` | **仅用户明确授权**；原因由人给 |
-| 交付 | 「交付 WS-x」 | `POST /api/workstreams/deliver` | 与面板「交付」按钮同一条路径 |
+| 交付 | 「交付 WS-x」 | `POST /api/workstreams/deliver` | 与面板「交付」按钮同一条路径；前置 `accepted`，发进主场会话 |
 | 聚焦 / 查看 | 「看看 WS-x / 把面板打开到 WS-x」 | `bound` + `focus` / `list` / `task/list` | `focus` 仅用户要求时 |
 
 ## 3. 逐阶段：用户 / Agent 分工
@@ -57,7 +59,7 @@
 | **设计** | 同上 | 出设计任务：在 `docs/design/**` 写设计文档 + 待确认问题（Q 表）；**只写设计、不写实现** | 设计完成 → 「**确认**」 |
 | **执行** | 「拆分任务」→ **看任务清单确认拆分合理** → 「启动事项」 | 按任务实现：切分支 / 改码 / 跑测试 / conventional commit；范围外的新发现**回池**（不就地吸收） | 证据齐 → 「**确认**」 |
 | **验收** | 点「拆分任务」（可选，建证据收集任务）→「启动事项」→ **人 sign-off** | 跑回归门与机检证据、记录 `covered`（paths + base/head 锚变更）；**不自签** | **人 sign-off** → 「**确认**」 |
-| **交付**（操作） | 验收确认后，点**事项主卡「交付」**，或对话说「交付 WS-x」（`POST /api/workstreams/deliver`）→ 在 GitHub 合并 | 交付操作：push 分支 + 开/复用 PR，用 `/api/workstreams/delivery` 记录 `delivery.pr` / `url` 事实；**不改变 `stage`** | 人 merge；`closed` 由 `derive-status` **派生** |
+| **交付**（操作，不是阶段） | 验收确认后，点**事项主卡「交付」**，或对话说「交付 WS-x」（`POST /api/workstreams/deliver`）→ 在 GitHub 合并 | 交付操作：在**主场会话**里 push 分支 + 开/复用 PR，用 `/api/workstreams/delivery` 记录 `delivery.pr` / `url` 事实；**不新建会话 / 任务、不改变 `stage`** | 人 merge；`closed` 由 `derive-status` **派生**（`accepted ∧ outcome 终结`） |
 
 **回边**：任一阶段不满意 → 阶段卡「退回」+ 填原因 → `stage` 退回返工（必须留痕，R2）。
 
@@ -101,6 +103,6 @@
 |---|---|
 | 以为阶段队列 `.done` 就是阶段完成 | `.done` 只是任务跑完；还要过**机检 + 人工确认门** |
 | 拆分完直接启动 | **拆分后先停**，人确认拆分合理才启动 |
-| Agent 把 `stage` 传成 `task` | 阶段枚举 `task` 的中文是「**执行**」；传值用原始枚举（`planning` / `design` / `task` / `acceptance` / `delivery`），按提示词括号里的原始值为准 |
+| Agent 把 `stage` 传成 `task` | 阶段枚举 `task` 的中文是「**执行**」；传值用原始枚举（`planning` / `design` / `task` / `acceptance`，**没有 `delivery`**——交付是操作），按提示词括号里的原始值为准 |
 | 让 Agent 自签验收 | 机检绿 ≠ 完成；**人 sign-off** 是 Own 点 |
 | 手写 `closed` / `outcome` | 派生；跑 `node .dsh/tools/derive-status.mjs` |

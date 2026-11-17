@@ -39,7 +39,8 @@
 | 任务 | 拆分任务 | **`POST /api/workstreams/task/create`** 建**等待态阶段任务**（追加到该事项唯一队列；= 任务拆分本身，只建不启动）；**停下请人确认拆分合理**；`WS.queues` 由面板写回 |
 | 任务 | 启动实施 | 确认后 **`POST /api/workstreams/queue/start`**（带 `stage` = 只跑该阶段）；切分支、边界内实施、conventional commits |
 | 验收 | 校验 | 跑回归门 `<REG-ID>` + 机检证据；**人 sign-off**，agent 不自签 |
-| 交付 | 交付 | push / PR；`covered` / `delivery` 经 `POST /api/workstreams/covered`、`/delivery` 回填（面板写卡，`outcome` 派生不手写） |
+
+**交付不是 stage 的 action 段**（阶段只有四个）：验收确认（`accepted`）之后，`WorkstreamsDelivery.prompt(plan:)` 由事项主卡「交付」按钮 / `POST /api/workstreams/deliver` 发进**主场会话**执行 push / PR，用 `POST /api/workstreams/delivery` 回填 `pr` / `url` 事实（面板写卡，`outcome` 派生不手写）——**不新建会话 / 任务、不改 `stage`**。
 
 每个 action 段都附**模型规则**（强制）：
 
@@ -52,7 +53,7 @@
 
 ### 4.1 拆分提示词的定位与措辞
 
-**拆分任务**是「推进一张事项卡」三件事之一（设计 `workstream-panel-design.md` §5.1：拆分 = 会话提示词 / 确认 = 阶段上的人工门 / 启动 = 事项卡「启动事项」（面板唯一入口，按阶段 canonical 顺序）或技能 `queue/start`）。它的提示词由 `WorkstreamHandoff.splitPrompt(card:stage:)` 生成，与其它动作**同形**（§3 公共头 + 动作段 + §4 规则段），只是 `stage` 由调用方**显式传入**。
+**拆分任务**是「推进一张事项卡」四件事之一（设计 `workstream-panel-design.md` §5.1：拆分 = 会话提示词 / 确认 = 阶段上的人工门 / 启动 = 事项卡「启动事项」（面板唯一入口，按阶段 canonical 顺序）或技能 `queue/start`）。它的提示词由 `WorkstreamHandoff.splitPrompt(card:stage:)` 生成，与其它动作**同形**（§3 公共头 + 动作段 + §4 规则段），只是 `stage` 由调用方**显式传入**。
 
 - **定位**：
   - **触发** = 事项主卡「**拆分任务**」按钮；
@@ -70,7 +71,7 @@
 
 事项主卡的「**创建任务**」按钮是「按阶段建等待态任务」的**面板侧入口**，与技能 / 会话调用的 `POST /api/workstreams/task/create` 是**同一条写入路径**（`WorkstreamsRunner.createStageQueue`）：
 
-- **阶段选择器**：五阶段单选，默认该事项**首个未处理阶段**（`wsFirstUnprocessedStage`，A13 派生态）——与「拆分任务」同源；
+- **阶段选择器**：四阶段单选（规划 / 设计 / 执行 / 验收；交付不是阶段），默认该事项**首个未处理阶段**（`wsFirstUnprocessedStage`，A13 派生态）——与「拆分任务」同源；
 - **一个输入框**：**首行 = 标题，其余行 = 内容**（`WSStageTaskComposerModel` 拆分）；⌘↩ 提交、Esc 取消、标题为空禁用提交；
 - **提示词注入**：提交时用 `WorkstreamHandoff.stageTask(title:content:card:action:)` 生成该阶段的**交接提示词**（§3 公共头 + 动作段 + §4 规则段，与 `task/create` 完全同形），把用户输入的**内容附在提示词之后**；提示词仍在 body 开头，执行阶段的 `isHandoff` 判定与完成 marker 注入不受影响；
 - **落点**：任务带该 `stage` 追加到该事项**唯一队列**、`WS.queues` 由面板写回；**只建等待态、不启动**。

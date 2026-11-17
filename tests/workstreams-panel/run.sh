@@ -937,4 +937,48 @@ for needle in 'home summary: stage batch once, exceptions immediate' \
 done
 echo "home summary guard ok"
 
+echo "--- 4 阶段 + 交付操作同步 guard (A17: four stages, delivery is an operation) ---"
+# 阶段只有规划 / 设计 / 执行 / 验收；旧卡的 stage: delivery 读出即 acceptance（写回也只写
+# acceptance），交付是验收确认后的操作，不是第五个阶段。
+if ! grep -qF 'if value == "delivery" { return .acceptance }' "$SRC2/WorkstreamsCore.swift"; then
+  echo "FAIL: WorkstreamsCore must read a legacy stage: delivery as acceptance" >&2
+  exit 1
+fi
+if grep -qE '^    case delivery$' "$SRC2/WorkstreamsCore.swift"; then
+  echo "FAIL: WorkstreamStage must only have the four stages (no delivery)" >&2
+  exit 1
+fi
+# 门：验收是最后阶段；交付准入只认 accepted(ws)，不按 stage == .delivery。
+if ! grep -qF 'static func accepted(' "$SRC2/WorkstreamsStageGate.swift" \
+   || ! grep -qF 'WorkstreamsStageGate.accepted(card)' "$SRC2/WorkstreamsDelivery.swift"; then
+  echo "FAIL: delivery admission must be accepted(ws), not a delivery stage" >&2
+  exit 1
+fi
+if grep -qE 'stage == \.delivery|notDeliveryStage' "$SRC2/WorkstreamsDelivery.swift"; then
+  echo "FAIL: WorkstreamsDelivery must not gate on a delivery stage" >&2
+  exit 1
+fi
+# L10n：四阶段口径（交付阶段的标签与交付证据键已删除，旧卡仍由读兼容映射）。
+for key in workstreams.stage.delivery workstreams.evidence.delivery.pr \
+           workstreams.evidence.delivery.outcome workstreams.evidence.pr \
+           workstreams.evidence.outcome workstreams.evidence.url; do
+  if grep -qF "$key" "$MAIN"; then
+    echo "FAIL: main.swift still carries the stale 5-stage key $key" >&2
+    exit 1
+  fi
+done
+# 技能：只列四个 stage，交付是 accepted 之后的操作，在主场会话执行。
+if grep -qF 'not-delivery-stage' "$SKILL"; then
+  echo "FAIL: the workstream-panel skill still treats delivery as a stage" >&2
+  exit 1
+fi
+for needle in 'planning` / `design` / `task` / `acceptance`' 'not-accepted' \
+              'no-home-session' '验收之后的操作' '不新建会话'; do
+  if ! grep -qF "$needle" "$SKILL"; then
+    echo "FAIL: the workstream-panel skill is missing $needle" >&2
+    exit 1
+  fi
+done
+echo "4-stage + delivery-operation guard ok"
+
 echo "workstreams-panel tests passed"

@@ -1,12 +1,12 @@
 # AI 原生工作流 · 使用说明（需求池面板 + 事项面板 + 任务面板）
 
-> 状态：草案 · 日期：2026-10-07 · 关联：`docs/design/panels/workstream-panel-design.md`、`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/requirements-pool-panel-design.md`、`docs/design/panels/requirements-breakdown-standard-design.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/design/panels/workstream-handoff-prompt-design.md`、`docs/usage/panels.md`、`.dsh/requirements/README.md`
+> 状态：已落地 · 日期：2026-11-17（事项四阶段 + 交付操作）· 关联：`docs/design/panels/workstream-panel-design.md`、`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/requirements-pool-panel-design.md`、`docs/design/panels/requirements-breakdown-standard-design.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/design/panels/workstream-handoff-prompt-design.md`、`docs/usage/panels.md`、`.dsh/requirements/README.md`
 
 ## 0. 适用范围
 
 本说明是 **oh-my-dsh 下的用法**；通用规范见 `.dsh/ai-native-workflow-spec.md`（概念 / `.dsh` 契约 / 规则 R1–R12 / 确认门）——**两者冲突以 spec 为准**。
 
-覆盖：**需求 → 拆解 → 事项（规划 → 设计 → 任务拆分 → 实施 → 验收 → 交付）→ 终态派生**。其中两段已是壳层面板能力（App 能力，见 spec §9）：
+覆盖：**需求 → 拆解 → 事项（规划 → 设计 → 任务拆分 → 实施 → 验收）→ 交付（操作）→ 终态派生**。其中两段已是壳层面板能力（App 能力，见 spec §9）：
 
 | 阶段 | 承接者 | 入口 |
 |---|---|---|
@@ -43,7 +43,7 @@
   ▼ 执行（事项面板建等待态阶段任务）     ◆ 人确认拆分合理 / 启动队列
   ▼ 启动实施
   ▼ 验收(回归门 + 机检证据)              ◆ 人 sign-off
-  ▼ 交付(PR) ◆ 人 merge ─► derive-status ─► closed(派生)
+  ▼ 交付(操作：验收后 push / PR) ◆ 人 merge ─► derive-status ─► closed(派生)
 
 ◆ = 人工确认门（agent 出方案 / 人 Own）；规范同 spec §5
 ```
@@ -140,12 +140,16 @@ conventional commits；改到共享路径前先跑回归门。
 停在我这里等 sign-off，不要自签。
 ```
 
-### 2.8 交付
+### 2.8 交付（验收确认后的操作）
+
+交付**不是阶段**：验收 sign-off（`accepted`）之后，面板「交付」按钮或会话说「交付 WS-x」
+（`POST /api/workstreams/deliver`）先做 accepted / git / GitHub / token / 主场会话准入，
+然后把交付提示词**发进该事项的主场会话**——不新建会话、不建交付任务、不改 `stage`。
 
 ```text
-push 分支并开 PR；交付事实（delivery.pr / url）经事项面板交付流程回填（POST /api/workstreams/delivery）。
-发起交付：面板「交付」按钮，或会话说「交付 WS-x」→ `POST /api/workstreams/deliver`（同一条路径）。
-`closed` / `outcome` 不要手写。
+push 分支并开 PR；交付事实（delivery.pr / url）经 POST /api/workstreams/delivery 回填
+（面板写卡；outcome 由面板按 PR 观察派生）。
+closed / outcome 不要手写。
 ```
 
 ### 2.9 终态派生
@@ -157,7 +161,7 @@ GH_TOKEN=$(cat "$HOME/.dsh/oh-my-dsh/tokens/<owner>-<repo>") \
 
 ## 3. 需求池面板：操作说明（收件 / 需求池 / 拆解）
 
-需求池面板是 **oh-my-dsh App 的能力**（不是规范；见 spec §9）。入口：**`⌥⌘I`** / 活动栏第 5 位「需求池」（知识库之后、任务之前）。面板只服务**需求池**：收件 / 评估 / 拆分 / 丢弃；规划 / 设计 / 验收 / 交付仍走事项会话。
+需求池面板是 **oh-my-dsh App 的能力**（不是规范；见 spec §9）。入口：**`⌥⌘I`** / 活动栏第 5 位「需求池」（知识库之后、任务之前）。面板只服务**需求池**：收件 / 评估 / 拆分 / 丢弃；规划 / 设计 / 验收（以及验收确认后的**交付操作**）仍走事项面板 / 会话。
 
 | 操作 | 位置 | 说明 |
 |---|---|---|

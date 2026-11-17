@@ -82,7 +82,7 @@
 
 ## 4. 门禁判据接口（「无证据不进设计」）
 
-- **适用对象**：`stage ∈ {design, task, acceptance, delivery}` 的事项卡。
+- **适用对象**：`stage ∈ {design, task, acceptance}` 的事项卡（四阶段；**交付是操作、不是阶段**）。旧卡 `stage: delivery` 读出即 `acceptance`，仍按验收卡检查。
 - **证据**：P3 验收标准 + P4 阶段裁剪声明（架构 §4.2：完成证据 = 验收标准 + 被裁剪阶段的声明）；
   P1 / P2 同列，用于模板完整性。
 - **判定**：四件套齐 → PASS；缺任一 → FAIL，并指明卡 + 缺失项。

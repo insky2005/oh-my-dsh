@@ -1,6 +1,6 @@
 ---
 name: workstream-panel
-description: 改事项（Workstream）卡片、按阶段建任务、启动事项/阶段队列、查看任务、发起交付（git/GitHub/token 准入并起交付会话）、按会话反查当前事项并把事项面板聚焦给用户，也可在用户明确授权下确认 / 退回阶段，一律走事项面板 REST API /api/workstreams/*，不直接改 .dsh/workstreams/*.md。Edit workstream cards and stage tasks, and start delivery, through the oh-my-dsh Workstreams panel API instead of writing .dsh files directly.
+description: 改事项（Workstream）卡片、按阶段建任务、启动事项/阶段队列、查看任务、发起交付（accepted 准入 + 主场会话执行）、按会话反查当前事项并把事项面板聚焦给用户，也可在用户明确授权下确认 / 退回阶段，一律走事项面板 REST API /api/workstreams/*，不直接改 .dsh/workstreams/*.md。Edit workstream cards and stage tasks, and start delivery, through the oh-my-dsh Workstreams panel API instead of writing .dsh files directly.
 ---
 
 # workstream-panel — 通过 API 改事项卡与阶段任务
@@ -64,9 +64,9 @@ PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/shell-api.port" 2>/dev/null || ca
 | POST `/api/workstreams/task/create` | `{"workspace":"…","id":"WS-000012","stage":"task","titles":["…","…"],"session":"$DSH_SESSION_ID"}` | **按阶段创建任务**：建**等待态**阶段任务（**只建不启动**）；`stage` 缺省 = 卡片当前阶段；`titles` 每条由面板生成阶段交接提示词、追加到事项唯一队列（没有才建）；也可只传整段 `body` |
 | POST `/api/workstreams/queue/start` | `{"workspace":"…","id":"WS-000012","stage":"task","session":"$DSH_SESSION_ID"}` | **启动事项 / 阶段队列**；带 `stage` = 只跑该阶段任务（跑完自动暂停队列）；不带 = 事项级（整条队列 FIFO）；仅在用户要求 / 人已确认拆分后 |
 | POST `/api/workstreams/queue/pause` | `{"workspace":"…","id":"WS-000012","session":"$DSH_SESSION_ID"}` | 暂停队列（不影响已在跑的会话） |
-| POST `/api/workstreams/covered` | `{"workspace":"…","id":"WS-000012","covered":{"paths":["docs/x.md"],"base":"<blob/tree>","head":"<blob/tree>"},"session":"$DSH_SESSION_ID"}` | **记录验收点记录**（事实；验收 / 交付阶段必选）；`covered: null` 清除；缺 `paths` / 空 `paths` 报错 |
+| POST `/api/workstreams/covered` | `{"workspace":"…","id":"WS-000012","covered":{"paths":["docs/x.md"],"base":"<blob/tree>","head":"<blob/tree>"},"session":"$DSH_SESSION_ID"}` | **记录验收点记录**（事实；验收阶段必选）；`covered: null` 清除；缺 `paths` / 空 `paths` 报错 |
 | POST `/api/workstreams/delivery` | `{"workspace":"…","id":"WS-000012","delivery":{"pr":42,"url":"https://github.com/o/r/pull/42","state":"open"},"session":"$DSH_SESSION_ID"}` | **记录交付事实**（`pr` / `url`）；`delivery.outcome` 是**派生缓存**，服务端按 PR 观察（`state` / `merged` / `abandoned`）现算，**禁止手写** |
-| POST `/api/workstreams/deliver` | `{"workspace":"…","id":"WS-000012","session":"$DSH_SESSION_ID"}` | **发起交付**：先做 git / GitHub / token 准入，成功后把交付提示词入队并启动交付阶段（等价面板「交付」按钮，同一条路径）；失败回明确原因（见「发起交付」） |
+| POST `/api/workstreams/deliver` | `{"workspace":"…","id":"WS-000012","session":"$DSH_SESSION_ID"}` | **发起交付**（验收之后的操作）：先做 accepted / git / GitHub / token / 主场会话准入，成功后把交付提示词发进**主场会话**（不新建会话、不建交付任务、不改 `stage`；等价面板「交付」按钮，同一条路径）；失败回明确原因（见「发起交付」） |
 | POST `/api/workstreams/create` | `{"workspace":"…","title":"…","requirement":"REQ-003","stage":"planning","body":"…","session":"$DSH_SESSION_ID"}` | 新建事项卡（**仅当用户明确要求**；拆解确认由需求池面板建卡） |
 | POST `/api/workstreams/stage` | `{"workspace":"…","id":"…","stage":"design"}` | 低层显式改阶段口子；**agent 不调**，阶段推进走人工确认门 |
 | POST `/api/workstreams/stage/confirm` | `{"workspace":"…","id":"WS-000012","stage":"planning","note":"…","session":"$DSH_SESSION_ID"}` | **人工确认门**：确认并推进到下一阶段。**仅当用户明确授权**才调，调前先复述证据（见「阶段确认 / 退回（人工门）」）；可选 `stage` = 期望阶段（防串台，stale 报 `stage-changed`） |
@@ -75,7 +75,7 @@ PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/shell-api.port" 2>/dev/null || ca
 - `workspace` 传 `$(pwd)`；不传则用面板当前工作区。
 - **主场会话（`session` 绑定）**：写请求带 `session`（`$DSH_SESSION_ID`）时，面板把该事项的**主场会话**记成这次会话（`.dsh/workstreams/local.json` 的 `workstreamSessions`，ignored）。一个事项**只有一条**、**后写覆盖先写**（last-writer-wins）——这是运行时绑定，**不是「绑回来就永久有效」的契约**。面板「拆分任务」会复用它；人在面板确认阶段后，面板把**下一阶段**交接提示词发回它（`bound` 反查的也是它）。因此**只有真正在推进该事项的对话才带 `session`**；阶段 runner / 子会话等**临时会话不要带**——它们写完就消失，带上会把主场会话覆盖成一条死会话（让人在面板「拆分任务」重新绑定即可恢复）。
 - **`focus`（对话 → 面板）**：任意路由可带 `focus: true`（写请求放 body，读请求放 `?focus=true`）；仅当请求成功（返回 200）时面板置前，并把目标卡高亮、滚动到可见。`create` 聚焦返回的新卡；`bound` 聚焦响应里**第一张**绑定卡；其余写路由聚焦请求的 `id`；其余读路由只置前（无 id）。**默认 `false`**，普通写卡不会抢用户的右栏。
-- `stage` 取值：`planning` / `design` / `task` / `acceptance` / `delivery`。
+- `stage` 取值：`planning` / `design` / `task` / `acceptance`（四阶段；**交付是操作，不是阶段**，旧卡 `stage: delivery` 读出即 `acceptance`）。
 - `update` 的 `requirement` 传空串清除指针；`queues` 是队列 id 字符串列表（**0..1**）。
 - `task/create` 的 `titles` 与 `body` 至少给一个（只给 `body` 时取首行做标题）；`stage` 显式给空串是错误。
 - `queue/start` 的 `stage` 缺省 = 事项级；给 `stage` = 阶段级（只跑该阶段任务）。
@@ -85,14 +85,15 @@ PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/shell-api.port" 2>/dev/null || ca
 - `covered` / `delivery` 用上面的写路由记**事实**；`delivery.outcome` 是**派生缓存**（服务端按 PR 状态
   现算），**禁止手写**；`closed` / `split` 等派生字段同样不写。
 - **发起交付**走 `POST /api/workstreams/deliver`（= 面板「交付」按钮同一条路径）：面板先做
-  git / GitHub / token 准入，成功后把交付提示词入队并启动交付阶段；agent 不要直接改盘上文件，
-  也不要手写 `outcome`（`outcome` 由面板按 PR 观察派生）。
+  accepted（验收已签字）/ git / GitHub / token / 主场会话准入，成功后把交付提示词发进该事项的
+  **主场会话**——**不新建会话、不建交付任务、不改 `stage`**；agent 不要直接改盘上文件，也不要
+  手写 `outcome`（`outcome` 由面板按 PR 观察派生）。
 
 ## 工作流
 
 ### 对话中发起拆分 / 启动（入口与路由语境）
 
-用户**在对话里**让你推进某个事项时，先按语义选动作——三件事互不替代：
+用户**在对话里**让你推进某个事项时，先按语义选动作——四件事互不替代（前三个推进阶段，交付是发布操作）：
 
 | 用户说 | 动作 | 路由 | 边界 |
 |---|---|---|---|
@@ -100,13 +101,13 @@ PORT="$(cat "${DSH_HOME:-$HOME/.dsh}/oh-my-dsh/shell-api.port" 2>/dev/null || ca
 | 「给这个事项建个任务 / 加一条任务」「在某个阶段建任务」 | **创建任务**（建等待态任务） | `POST /api/workstreams/task/create`（显式传 `stage`；面板主卡「创建任务」抽屉走同一条路径） | 同拆分：只建不启动；建完**停下请人确认** |
 | 「启动这个阶段」「把执行阶段跑起来」 | **启动**（只跑该阶段） | `POST /api/workstreams/queue/start` + `stage` | 仅在人已确认拆分 / 用户明说时 |
 | 「启动这个事项」「把队列跑起来」 | **启动**（整条队列，按阶段 canonical 顺序） | `POST /api/workstreams/queue/start`（不带 `stage`） | 同上 |
-| 「交付 WS-000012」「发起交付」 | **发起交付** | `POST /api/workstreams/deliver` | = 面板「交付」按钮同一条路径：git / GitHub / token 准入 + 把交付提示词入队并启动交付阶段；失败按原因转述 |
+| 「交付 WS-000012」「发起交付」 | **发起交付**（验收之后的操作） | `POST /api/workstreams/deliver` | = 面板「交付」按钮同一条路径：accepted + git / GitHub / token + 主场会话准入 → 把交付提示词发进主场会话；失败按原因转述 |
 | 「确认这个阶段」「推进到下一阶段」 | **确认**（人工门） | `POST /api/workstreams/stage/confirm` | **仅当用户明确授权**；调前先复述证据并请求确认 |
 | 「退回这个阶段」「打回去返工」 | **退回**（人工门） | `POST /api/workstreams/stage/reject` | **仅当用户明确要求退回**；`reason` 必须由人给 |
 
 - 面板主卡「**拆分任务**」按钮 = 同一条拆分语义：它把**首个未处理阶段**的拆分提示词发进主场会话；你收到这种提示词时，照它生成的就是 `task/create` 调用。
-- 面板阶段卡已去掉「**启动阶段**」按钮：面板**唯一的启动入口是事项卡「启动事项」**，它启动整条队列并按**阶段 canonical 顺序**（规划 → 设计 → 执行 → 验收 → 交付；同阶段内按入队序）推进。阶段级 `queue/start`（带 `stage`）现在只由对话 / 脚本发起。
-- 面板主卡「**创建任务**」抽屉 = 同一条 `task/create` 语义：**阶段选择器**默认首个未处理阶段 + 一个输入框（**首行 = 标题、其余行 = 内容**），提交即建等待态任务；阶段卡**没有**创建 / 启动按钮。
+- 面板阶段卡已去掉「**启动阶段**」按钮：面板**唯一的启动入口是事项卡「启动事项」**，它启动整条队列并按**阶段 canonical 顺序**（规划 → 设计 → 执行 → 验收；同阶段内按入队序）推进。阶段级 `queue/start`（带 `stage`）现在只由对话 / 脚本发起。
+- 面板主卡「**创建任务**」抽屉 = 同一条 `task/create` 语义：**阶段选择器**默认首个未处理阶段 + 一个输入框（**首行 = 标题、其余行 = 内容**），提交即建等待态任务；阶段卡**没有**创建 / 启动 / **交付**按钮——**交付只在事项主卡**（且前置 `accepted`）。
 - `task/create` 只建**等待态**任务，**建完停下等人确认拆分**；**只有人确认后**（或用户明确要求启动）才 `queue/start`。
 
 ### 阶段确认 / 退回（人工门）
@@ -214,7 +215,7 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/task/create" -H 'Content
 ### 启动事项 / 阶段队列（人确认后）
 
 - **启动阶段**（只跑该 `stage` 的任务，跑完自动暂停队列）：带 `stage`（对话 / 脚本入口；面板不再有阶段卡启动按钮）。
-- **启动事项**（整条队列，按阶段 canonical 顺序：规划 → 设计 → 执行 → 验收 → 交付；同阶段内按入队序）：不带 `stage`。
+- **启动事项**（整条队列，按阶段 canonical 顺序：规划 → 设计 → 执行 → 验收；同阶段内按入队序）：不带 `stage`。
 
 ```bash
 cat > /tmp/ws-start.json <<'JSON'
@@ -230,13 +231,15 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/queue/pause" -H 'Content
   -d '{"workspace":"'$(pwd)'","id":"WS-000012","session":"'"$DSH_SESSION_ID"'"}'
 ```
 
-### 发起交付（交付阶段本步动作）
+### 发起交付（验收之后的操作）
 
-用户说「交付 WS-000012」「发起交付」时（事项进入 `delivery` 阶段后），调交付路由。
-面板先做准入（顺序即失败优先级）：阶段不是 `delivery` → 非 git 仓库 → 无分支 → 无远端 →
-非 GitHub 远端 → 无 token；任一不成立就回对应原因，**不要猜后面的、也不要绕过**。准入通过后，
-面板把交付提示词作为一条 `delivery` 阶段任务入队并启动交付阶段（与面板「交付」按钮**同一条
-路径**）：
+交付是**操作、不是阶段**：事项**验收已确认**（`accepted`，卡片 `## 阶段确认` 里有
+`confirm · acceptance`）之后才能发起。用户说「交付 WS-000012」「发起交付」时，调交付路由。
+面板先做准入（顺序即失败优先级）：未验收确认（`not-accepted`）→ 非 git 仓库 → 无分支 →
+无远端 → 非 GitHub 远端 → 无 token → 无主场会话（`no-home-session`）；任一不成立就回对应
+原因，**不要猜后面的、也不要绕过**。准入通过后，面板把交付提示词**发进该事项的主场会话**
+（`.dsh/workstreams/local.json` 的 `workstreamSessions`）——**不新建会话、不建交付任务、
+不改 `stage`**（与面板主卡「交付」按钮**同一条路径**）：
 
 ```bash
 cat > /tmp/ws-deliver.json <<'JSON'
@@ -245,11 +248,17 @@ JSON
 curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/deliver" -H 'Content-Type: application/json' --data-binary @/tmp/ws-deliver.json
 ```
 
-成功回 `{ok: true, queue, tasks, stage: "delivery"}`；失败回 `{ok: false, error, message}`，
-`error` 是稳定原因码（`not-delivery-stage` / `not-git-repo` / `no-branch` / `no-remote` /
-`no-github-remote` / `no-token` / `no-queue` / `start-failed`）。把原因如实转述给用户
-（例如「仓库还没有远端 / 还没有 GitHub token」），请人补齐后再来；**不要**改盘上文件，也不要
-手写 `outcome`。交付会话完成后用 `POST /api/workstreams/delivery` 回填 `pr` / `url`。
+成功回 `{ok: true, workstream, session, prompt, stage: "<当前阶段>"}`（`stage` 是卡片当前
+阶段，永远是四阶段之一）；失败回 `{ok: false, error, message}`，`error` 是稳定原因码
+（`not-accepted` / `not-git-repo` / `no-branch` / `no-remote` / `no-github-remote` /
+`no-token` / `no-home-session`）。把原因如实转述给用户（例如「还没有通过验收确认 / 仓库还
+没有远端 / 还没有 GitHub token / 事项还没有主场会话」），请人补齐后再来；**不要**改盘上文件，
+也不要手写 `outcome`。
+
+**完成信号**：主场会话里的 agent 做完 push / PR 后调 `POST /api/workstreams/delivery` 回填
+`pr` / `url`（`outcome` 由面板按 PR 观察派生）。面板在会话停下后按汇报判失败
+（`report-failed`）、并以超时兜底（`delivery-timeout`）——这两个是**运行期**原因，不是发起
+准入失败。
 
 ### 登记事项队列
 
@@ -290,14 +299,15 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/update" -H 'Content-Type
 | `400 missing-titles` | `task/create` 既没给 `titles` 也没给 `body`：至少给一个 |
 | `400 invalid-titles` | `titles` 不是字符串列表：改成 `["…"]` |
 | `400 missing-stage` | `task/create` / `queue/start` 的 `stage` 键给了但为空：去掉该键（缺省）或给合法值 |
-| `400 invalid-stage` | `stage` 不是五个之一：改用 `planning` / `design` / `task` / `acceptance` / `delivery` |
+| `400 invalid-stage` | `stage` 不是四个之一：改用 `planning` / `design` / `task` / `acceptance`（交付不是阶段，没有 `delivery`） |
 | `400 invalid-queue` | `queues` 不是字符串列表 / 超过一条：按 `["q-…"]`（0..1）修正 |
 | `400 missing-covered` / `invalid-covered` / `missing-covered-paths` | `covered` 没给 / 不是对象 / `paths` 为空：按 `{"paths":["…"]}` 修正 |
 | `400 missing-delivery` / `invalid-delivery` | `delivery` 没给 / 不是对象 / `pr` 非整数：按 `{"pr":42,"url":"…"}` 修正 |
 | `400 outcome-derived` | 手写了 `outcome`：它是派生缓存；只传 `pr` / `url`（+ 可选 `state` / `merged` / `abandoned` 观察） |
-| `409 not-delivery-stage` | 发起交付但事项未到 `delivery` 阶段：先走完前面阶段，别提前交付 |
+| `409 not-accepted` | 发起交付但验收尚未确认：先请人确认**验收**阶段（accepted），别提前交付 |
+| `409 no-home-session` | 事项还没有主场会话：先在本会话处理该事项（拆分任务）建立绑定，再交付 |
 | `400 not-git-repo` / `no-branch` / `no-remote` / `no-github-remote` / `no-token` | 发起交付准入失败：按原因补齐（git 仓库 / 分支 / 远端 / GitHub / token）后再来；如实转述，**不要绕过** |
-| `404 no-queue` / `500 start-failed` | 发起交付时队列不可用 / 交付阶段启动失败：先 `task/list` 看队列状态，或稍后重试 |
+| 运行期 `report-failed` / `delivery-timeout` | 主场会话结束却没记录交付事实：让该会话用 `POST /api/workstreams/delivery` 回填 `pr` / `url`，或经用户同意后重试交付 |
 | `404 unknown-workstream` | 没有该 WS：先 `list` 确认 id |
 | `404 no-queue` | 该事项还没有队列（或队列已关闭无法再建 / 启动）：先 `task/create` 建队列，或 `task/list` 看状态 |
 | `409 evidence-missing` / `stage-changed` | 人工门未过（证据不足）/ 阶段已变（stale）：**不得重试硬推**；如实告诉用户缺什么 / 阶段已变，请人处理后再说 |
@@ -312,6 +322,6 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/workstreams/update" -H 'Content-Type
 - `409 evidence-missing` / `stage-changed` 不重试硬推；
 - **人未确认拆分前不 `queue/start`**：`task/create` 只建等待态任务，启动实施等人确认或用户明说；
 - 不手写派生字段（`closed` / `outcome` / `split`）；`covered` / `delivery` 只经写路由记事实，`outcome` 由服务端派生；
-- 不在用户没要求时新建事项 / 改阶段 / 建队列 / 启动队列 / 发起交付；事项未到 `delivery` 阶段不发起交付；
+- 不在用户没要求时新建事项 / 改阶段 / 建队列 / 启动队列 / 发起交付；**验收未确认（未 accepted）不发起交付**；
 - 不在用户没要求时用 `focus: true` 抢面板（默认已关闭；只有确实要把卡给用户看时才开）；
 - **阶段 runner / 临时会话不把本会话写进 `session`**：那会覆盖该事项的主场会话（后写覆盖先写），让「拆分任务」和阶段推进找不到原来的对话。
