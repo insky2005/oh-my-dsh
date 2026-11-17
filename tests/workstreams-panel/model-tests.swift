@@ -97,12 +97,16 @@ eq(WorkstreamsCore.parseInlineList("not a list"), nil, "non-list returns nil")
 // MARK: - Stages
 
 section("stages")
-eq(WorkstreamStage.allCases.map { $0.rawValue }, ["planning", "design", "task", "acceptance", "delivery"],
-   "five stages in order")
+eq(WorkstreamStage.allCases.map { $0.rawValue }, ["planning", "design", "task", "acceptance"],
+   "four stages in order (delivery is an operation, not a stage)")
 eq(WorkstreamStage.parse("design"), .design, "parse design")
 eq(WorkstreamStage.parse(" acceptance "), .acceptance, "parse trims whitespace")
 eq(WorkstreamStage.parse("shipping"), nil, "unknown stage -> nil")
 eq(WorkstreamStage(rawValue: "task"), .task, "task is a valid raw value")
+// Legacy read-compat: cards written with the old fifth stage still load.
+eq(WorkstreamStage.parse("delivery"), .acceptance, "legacy stage: delivery maps to acceptance")
+eq(WorkstreamStage.parse(" delivery "), .acceptance, "legacy delivery is trimmed before mapping")
+eq(WorkstreamStage(rawValue: "delivery"), nil, "delivery is no longer a raw stage value")
 
 // MARK: - Full card
 
@@ -177,6 +181,7 @@ delivery:
   outcome: merged   # 派生自 PR 状态，不手写
 ---
 """, path: "/tmp/WS-000020.md")
+eq(commented.stage, .acceptance, "a legacy stage: delivery card loads as acceptance")
 eq(commented.delivery?.outcome, "merged", "inline YAML comment stripped from outcome")
 
 // MARK: - Negative cases
@@ -260,6 +265,60 @@ let noQueues = WorkstreamCard(id: "WS-000012", title: "t", requirement: nil, sta
                               created: "2026-10-06", updated: "2026-10-06", path: "/tmp/x.md", body: "\n")
 check(!WorkstreamsCore.serialize(noQueues).contains("queues:"), "empty queues omitted")
 check(!WorkstreamsCore.serialize(noQueues).contains("requirement:"), "nil requirement omitted")
+
+// MARK: - Legacy delivery read-compat (design A17)
+
+section("legacy stage: delivery read-compat")
+let legacyDeliveryText = """
+---
+id: WS-000030
+title: 旧交付阶段卡
+stage: delivery
+covered:
+  - docs/a.md
+  base: b
+  head: h
+delivery:
+  pr: 78
+  url: https://github.com/example/repo/pull/78
+  outcome: merged
+---
+
+# WS-000030 旧卡
+"""
+let legacyDelivery = try WorkstreamsCore.parseCard(legacyDeliveryText, path: "/tmp/WS-000030.md")
+eq(legacyDelivery.stage, .acceptance, "stage: delivery is read as acceptance")
+eq(legacyDelivery.delivery,
+   DeliveryInfo(pr: 78, url: "https://github.com/example/repo/pull/78", outcome: "merged"),
+   "the delivery fact block is preserved")
+eq(WorkstreamsCore.validate(legacyDelivery), [], "a legacy delivery card with covered is valid")
+let legacySerialized = WorkstreamsCore.serialize(legacyDelivery)
+check(legacySerialized.contains("stage: acceptance\n"),
+      "the next write persists stage: acceptance")
+check(!legacySerialized.contains("stage: delivery"),
+      "the legacy stage value is never written back")
+check(legacySerialized.contains("delivery:\n  pr: 78\n  url: https://github.com/example/repo/pull/78\n  outcome: merged\n"),
+      "the delivery fact block still serializes")
+let legacyRoundTrip = try WorkstreamsCore.parseCard(legacySerialized, path: legacyDelivery.path)
+eq(legacyRoundTrip.stage, .acceptance, "the rewritten card still reads as acceptance")
+eq(legacyRoundTrip.delivery, legacyDelivery.delivery, "the delivery block survives the rewrite")
+
+// The write-back also lands on disk: load an old card, mutate it, read the file.
+let legacyWS = tempWorkspace("legacy-delivery")
+let legacyPath = WorkstreamsCore.workstreamPath(legacyWS, id: "WS-000030")
+writeFile(legacyPath, legacyDeliveryText)
+let loadedLegacy = try WorkstreamsCore.loadCard(workspace: legacyWS, id: "WS-000030")
+eq(loadedLegacy.stage, .acceptance, "loadCard maps the legacy stage")
+let rewrittenLegacy = try WorkstreamsCore.update(workspace: legacyWS, id: "WS-000030",
+                                                 title: "改名", today: "2026-10-08")
+eq(rewrittenLegacy.stage, .acceptance, "the rewritten card keeps the mapped stage")
+let rewrittenText = (try? String(contentsOfFile: legacyPath, encoding: .utf8)) ?? ""
+check(rewrittenText.contains("stage: acceptance\n"),
+      "the card on disk says stage: acceptance after a write")
+check(!rewrittenText.contains("stage: delivery"),
+      "the card on disk no longer says stage: delivery")
+check(rewrittenText.contains("delivery:\n  pr: 78"),
+      "the card on disk still carries the delivery facts")
 
 // MARK: - Validate
 

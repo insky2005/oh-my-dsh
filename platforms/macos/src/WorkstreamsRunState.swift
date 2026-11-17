@@ -27,7 +27,7 @@ import Foundation
 // MARK: - Run state
 
 /// The five derived run states. The same enum labels a stage and (rolled up) a
-/// whole workstream: the workstream state is the strongest of its five stages.
+/// whole workstream: the workstream state is the strongest of its four stages.
 enum WSRunState: String, Equatable, CaseIterable {
     case notStarted
     case inProgress
@@ -37,7 +37,7 @@ enum WSRunState: String, Equatable, CaseIterable {
 
     /// How strongly a state claims the workstream's headline. A completed
     /// (confirmed) stage does NOT make the workstream done — that is the whole
-    /// point of deliveryConfirmed; it only outranks "not started yet". The
+    /// point of acceptanceConfirmed; it only outranks "not started yet". The
     /// strongest live claim wins: blocked > awaiting > in progress.
     var severity: Int {
         switch self {
@@ -62,11 +62,13 @@ extension WSRunState {
         return last.target ?? last.stage
     }
 
-    /// The terminal delivery stage was confirmed. Delivery has no next stage, so
-    /// a confirm of it leaves `stage` at delivery and is only visible in the
-    /// audit trail.
-    static func deliveryConfirmed(_ history: [WSStageHistoryEntry]) -> Bool {
-        history.contains { $0.action == .confirm && $0.stage == .delivery }
+    /// The terminal acceptance stage was confirmed. Acceptance has no next
+    /// stage, so a confirm of it leaves `stage` at acceptance and is only
+    /// visible in the audit trail. Legacy cards whose 交付 confirm was written
+    /// when delivery was a stage parse to acceptance too (read-compat), so they
+    /// still read as confirmed.
+    static func acceptanceConfirmed(_ history: [WSStageHistoryEntry]) -> Bool {
+        history.contains { $0.action == .confirm && $0.stage == .acceptance }
     }
 
     /// The runtime state of one stage, derived from the queue engine's tasks and
@@ -90,8 +92,8 @@ extension WSRunState {
                       gateState: WSStageGateState? = nil,
                       history: [WSStageHistoryEntry] = []) -> WSRunState {
         // A confirmed terminal stage is the one stage the position rule cannot
-        // resolve (delivery never advances).
-        if stage == .delivery && deliveryConfirmed(history) { return .done }
+        // resolve (acceptance never advances).
+        if stage == .acceptance && acceptanceConfirmed(history) { return .done }
         // The authoritative stage advanced past this one — and it only advances
         // through a human confirmation, so this stage is done.
         if stage.orderIndex < current.orderIndex { return .done }
@@ -125,11 +127,11 @@ extension WSRunState {
         }
     }
 
-    /// The workstream run state: the roll-up of its five stage run states. A
+    /// The workstream run state: the roll-up of its four stage run states. A
     /// confirmed terminal wins; otherwise the strongest stage claim wins.
     static func workstream(_ stages: [WSRunState],
                            history: [WSStageHistoryEntry] = []) -> WSRunState {
-        if deliveryConfirmed(history) { return .done }
+        if acceptanceConfirmed(history) { return .done }
         return stages.max(by: { $0.severity < $1.severity }) ?? .notStarted
     }
 }

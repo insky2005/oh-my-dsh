@@ -15,7 +15,7 @@
 #      prompt -> poll -> cancel / retry), restart recovery and the
 #      queues-local persistence under .dsh/workstreams/.
 #   5. the stage handoff prompts (WorkstreamsPrompts.swift): the panel-generated
-#      (stage, action) prompt for planning / design / task / acceptance / delivery,
+#      (stage, action) prompt for planning / design / task / acceptance,
 #      injection into a stage queue task's body and the execution completion marker.
 #   6. the delivery pipeline (WorkstreamsDelivery.swift): git remote / github / base
 #      detection, PR lookup and the token file layout, plus every refusal reason
@@ -77,7 +77,7 @@ swiftc -swift-version 5 -module-cache-path "$CACHE" \
 "$TMP/runner-tests"
 rm -rf "$TMP"
 
-echo "--- workstreams stage handoff prompts (planning / design / task / acceptance / delivery) ---"
+echo "--- workstreams stage handoff prompts (planning / design / task / acceptance) ---"
 TMP="$(mktemp -d)"
 cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
 cp ../../platforms/macos/src/WorkstreamsStageGate.swift "$TMP/WorkstreamsStageGate.swift"
@@ -313,10 +313,10 @@ if ! grep -qF '任务带 `stage`' "$PROMPTS"; then
   echo "FAIL: the stage prompt must explain that stage tasks carry a stage" >&2
   exit 1
 fi
-# covered / delivery 事实也走写路由（验收 / 交付阶段的提示词必须点名）。
-if ! grep -qF '/api/workstreams/covered' "$PROMPTS" \
-   || ! grep -qF '/api/workstreams/delivery' "$PROMPTS"; then
-  echo "FAIL: the stage prompt must record covered / delivery through the panel API" >&2
+# covered 事实走写路由（验收阶段的提示词必须点名）。交付是操作（design A17），
+# 不再由（四阶段）交接提示词承载，故这里只校验 covered。
+if ! grep -qF '/api/workstreams/covered' "$PROMPTS"; then
+  echo "FAIL: the stage prompt must record covered through the panel API" >&2
   exit 1
 fi
 # 执行阶段的完成协议仍由 runner 注入 marker；
@@ -412,7 +412,7 @@ if [ ! -f "$RUNSTATE" ]; then
   exit 1
 fi
 for sym in 'enum WSRunState' 'static func stage(' 'static func workstream(' \
-           'static func reworkStage(' 'static func deliveryConfirmed('; do
+           'static func reworkStage(' 'static func acceptanceConfirmed('; do
   if ! grep -qF "$sym" "$RUNSTATE"; then
     echo "FAIL: WorkstreamsRunState.swift is missing $sym" >&2
     exit 1

@@ -574,15 +574,16 @@ final class WorkstreamsRunner {
         return appendStageTasks(card: card, stage: stage, drafts: drafts)
     }
 
-    /// 交付阶段动作（design A10）：把一条 stage = delivery 的任务（body = 交付提示词）
-    /// 追加到该事项唯一队列，不启动。提示词由 WorkstreamsDelivery 提供，面板负责调用本
-    /// 入口并写回队列映射。会话用 /api/workstreams/delivery 回填 PR 事实，面板写卡。
+    /// 交付动作（design A10 / A17）：交付是操作、没有自己的阶段，当前实现把交付
+    /// 提示词作为一条 acceptance 任务追加到该事项唯一队列，不启动。提示词由
+    /// WorkstreamsDelivery 提供，面板负责调用本入口并写回队列映射。会话用
+    /// /api/workstreams/delivery 回填 PR 事实，面板写卡。
     @discardableResult
     func enqueueDelivery(card: WorkstreamCard,
                          prompt: String,
                          title: String = "交付") -> (queue: WSQueue, created: [WSTaskItem]) {
         let draft = WSTaskDraft(title: title, body: prompt)
-        return appendStageTasks(card: card, stage: .delivery, drafts: [draft])
+        return appendStageTasks(card: card, stage: .acceptance, drafts: [draft])
     }
 
     /// 把一批阶段任务追加到该事项的队列（没有就建一条）。任务带 workstreamId + stage；

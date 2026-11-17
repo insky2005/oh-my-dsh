@@ -274,7 +274,7 @@ eq(stageInvalid?.json?["error"] as? String, "invalid-stage", "stage invalid-stag
 
 let stageOK = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/stage", json: ["id": "WS-000001", "stage": " delivery "]), delegate: fake)
 eq(stageOK?.status, 200, "stage 200")
-eq(fake.lastStage?.stage, .delivery, "stage parsed")
+eq(fake.lastStage?.stage, .acceptance, "legacy stage: delivery parses as acceptance")
 eq(fake.lastStage?.id, "WS-000001", "stage id routed")
 
 section("plan")
@@ -475,11 +475,12 @@ eq(taskCreateBody?.status, 200, "task/create body-only 200")
 eq(fake.lastTaskCreate?.body, "正文", "task/create body passed through")
 eq(fake.lastTaskCreate?.titles.isEmpty, true, "body-only leaves titles empty (delegate derives one)")
 eq(fake.lastTaskCreate?.stage == nil, true, "absent stage stays nil (delegate falls back to the card stage)")
-// 阶段原始枚举值是 task/create 的线上契约：五个原始值必须各自解析到对应阶段，
-// 而不是因为动作叫「拆分任务」就被改写成 task（bug: 规划拆分落到执行）。
+// 阶段原始枚举值是 task/create 的线上契约：四个原始值必须各自解析到对应阶段，
+// 而不是因为动作叫「拆分任务」就被改写成 task（bug: 规划拆分落到执行）。旧的
+// delivery 保留读兼容，映射到 acceptance（design A17）。
 let stageRawValues: [(String, WorkstreamStage)] = [
     ("planning", .planning), ("design", .design), ("task", .task),
-    ("acceptance", .acceptance), ("delivery", .delivery),
+    ("acceptance", .acceptance), ("delivery", .acceptance),
 ]
 for (raw, expected) in stageRawValues {
     let created = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/task/create",

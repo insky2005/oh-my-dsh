@@ -49,12 +49,10 @@ eq(wsStageLabelKey(.planning), "workstreams.stage.planning", "planning label key
 eq(wsStageLabelKey(.design), "workstreams.stage.design", "design label key")
 eq(wsStageLabelKey(.task), "workstreams.stage.task", "task label key")
 eq(wsStageLabelKey(.acceptance), "workstreams.stage.acceptance", "acceptance label key")
-eq(wsStageLabelKey(.delivery), "workstreams.stage.delivery", "delivery label key")
 eq(wsStageTone(.planning), .neutral, "planning tone")
 eq(wsStageTone(.design), .neutral, "design tone")
 eq(wsStageTone(.task), .running, "task tone")
-eq(wsStageTone(.acceptance), .warning, "acceptance tone")
-eq(wsStageTone(.delivery), .positive, "delivery tone")
+eq(wsStageTone(.acceptance), .warning, "acceptance tone (the last stage waits on a human)")
 
 // MARK: - Three-level card model
 
@@ -81,14 +79,14 @@ eq(model.meta.map { $0.value }, ["REQ-000011", "1", "REG-001", "2026-10-06"], "m
 let bare = WSCardModel.build(from: card(id: "WS-000043", queues: [], updated: nil))
 eq(bare.meta, [], "a bare card has no meta lines")
 
-section("five stage cards")
-eq(model.stages.count, 5, "exactly five stage cards")
+section("four stage cards")
+eq(model.stages.count, 4, "exactly four stage cards")
 eq(model.stages.map { $0.stage },
-   [.planning, .design, .task, .acceptance, .delivery],
+   [.planning, .design, .task, .acceptance],
    "stage cards in canonical order")
 eq(model.stages.map { $0.labelKey },
    ["workstreams.stage.planning", "workstreams.stage.design", "workstreams.stage.task",
-    "workstreams.stage.acceptance", "workstreams.stage.delivery"],
+    "workstreams.stage.acceptance"],
    "stage card label keys")
 eq(model.stages.filter { $0.isCurrent }.map { $0.stage }, [.task], "exactly one current stage")
 eq(model.stages.first { $0.stage == .task }?.isCurrent, true, "current is the card stage")
@@ -104,10 +102,10 @@ section("the queue follows the workstream, not the current stage")
 let legacy = WSCardModel.build(from: card(id: "WS-000044", stage: .design, queues: ["q-legacy"]))
 eq(legacy.queueIDs, ["q-legacy"],
    "the queue id hangs off the main card whatever the current stage")
-eq(legacy.stages.count, 5, "all five stage cards still render")
+eq(legacy.stages.count, 4, "all four stage cards still render")
 
 section("stage evidence")
-let evidenceCard = card(id: "WS-000045", stage: .delivery,
+let evidenceCard = card(id: "WS-000045", stage: .acceptance,
                         covered: CoveredRecord(paths: ["docs/a.md", "docs/b.md"], base: "base1", head: "head1"),
                         delivery: DeliveryInfo(pr: 78, url: "https://example.test/pull/78", outcome: "merged"))
 let evidenceModel = WSCardModel.build(from: evidenceCard)
@@ -116,12 +114,9 @@ eq(acceptance?.evidence.map { $0.labelKey },
    ["workstreams.evidence.covered", "workstreams.evidence.base", "workstreams.evidence.head"],
    "acceptance evidence keys")
 eq(acceptance?.evidence.first?.value, "docs/a.md, docs/b.md", "covered paths joined")
-let delivery = evidenceModel.stages.first { $0.stage == .delivery }
-eq(delivery?.evidence.map { $0.labelKey },
-   ["workstreams.evidence.pr", "workstreams.evidence.outcome", "workstreams.evidence.url"],
-   "delivery evidence keys")
-eq(delivery?.evidence.first?.value, "#78", "pr prefixed with #")
-eq(delivery?.evidence.last?.value, "https://example.test/pull/78", "delivery url")
+// 交付是操作（design A17）：卡片保留 delivery 事实块，但没有交付阶段卡。
+check(evidenceModel.stages.allSatisfy { $0.stage != .acceptance || $0.evidence.count == 3 },
+      "the acceptance card carries covered evidence (no delivery stage card)")
 eq(WSCardModel.build(from: card(id: "WS-000046")).stages.first { $0.stage == .acceptance }?.evidence,
    [], "no covered -> no acceptance evidence")
 
@@ -168,12 +163,12 @@ eq(failedTask.stateKey, "workstreams.task.state.failed", "failed task state key"
 // MARK: - Stage filter
 
 section("stage filter")
-eq(WSStageFilter.allCases.count, 6, "全部 + five stages")
+eq(WSStageFilter.allCases.count, 5, "全部 + four stages")
 eq(WSStageFilter.allCases.first, .all, "all is first")
 eq(WSStageFilter.allCases.dropFirst().compactMap { $0.stage },
-   [.planning, .design, .task, .acceptance, .delivery], "filter stages in order")
+   [.planning, .design, .task, .acceptance], "filter stages in order")
 eq(WSStageFilter.all.labelKey, "workstreams.filter.all", "all label key")
-eq(WSStageFilter.stage(.delivery).labelKey, "workstreams.stage.delivery", "stage filter label key")
+eq(WSStageFilter.stage(.acceptance).labelKey, "workstreams.stage.acceptance", "stage filter label key")
 check(WSStageFilter.all.isAll, "all isAll")
 check(!WSStageFilter.stage(.design).isAll, "a stage is not all")
 eq(WSStageFilter.all.stage, nil, "all has no stage")
@@ -200,7 +195,7 @@ eq(noWorkspace.isPoolEmpty, false, "no workspace is not an empty pool")
 let emptyPool = WSEmptyStateModel.build(hasWorkspace: true, totalCount: 0, filter: .all)
 eq(emptyPool.messageKey, "workstreams.empty", "empty pool message")
 eq(emptyPool.isPoolEmpty, true, "empty pool flag")
-let filtered = WSEmptyStateModel.build(hasWorkspace: true, totalCount: 3, filter: .stage(.delivery))
+let filtered = WSEmptyStateModel.build(hasWorkspace: true, totalCount: 3, filter: .stage(.acceptance))
 eq(filtered.messageKey, "workstreams.empty.filter", "filter miss message")
 eq(filtered.isPoolEmpty, false, "filter miss is not an empty pool")
 
@@ -236,8 +231,9 @@ eq(wsDefaultExpandedID(boardEmptyPool.cards), nil, "an empty board has nothing t
 
 // MARK: - Default expansion (UX: open the first unprocessed card)
 
-// A card whose delivery stage the human confirmed derives runState == .done for
-// the whole workstream (A13); its audit trail lives in "## 阶段确认".
+// A card whose last stage the human confirmed derives runState == .done for the
+// whole workstream (A13); its audit trail lives in "## 阶段确认". The body keeps
+// the legacy "delivery" spelling on purpose: read-compat maps it to acceptance.
 let doneBody = """
 ## 阶段确认
 
@@ -258,7 +254,7 @@ eq(wsDefaultExpandedID(openFirst.cards), "WS-000100", "the default-expanded id i
 
 section("default expansion: a done leading card does not open")
 let skipDone = WSBoardModel.build(snapshot: snapshot([
-    card(id: "WS-000110", stage: .delivery, body: doneBody),
+    card(id: "WS-000110", stage: .acceptance, body: doneBody),
     card(id: "WS-000111", stage: .planning),
     card(id: "WS-000112", stage: .planning),
 ]), filter: .all)
@@ -271,8 +267,8 @@ eq(wsDefaultExpandedID(skipDone.cards), "WS-000111",
 
 section("default expansion: all done -> nothing opens")
 let allDone = WSBoardModel.build(snapshot: snapshot([
-    card(id: "WS-000120", stage: .delivery, body: doneBody),
-    card(id: "WS-000121", stage: .delivery, body: doneBody),
+    card(id: "WS-000120", stage: .acceptance, body: doneBody),
+    card(id: "WS-000121", stage: .acceptance, body: doneBody),
 ]), filter: .all)
 eq(allDone.cards.map { $0.runState }, [.done, .done], "every card is done")
 eq(allDone.cards.map { $0.isExpanded }, [false, false], "all done: no card opens")
@@ -286,7 +282,7 @@ expandBoard.tasks.append(WSTaskItem(id: "wt-x", title: "失败任务",
 _ = expandBoard.enqueue(taskID: "wt-x", into: expandQueue.id)
 _ = expandBoard.markFailed("wt-x", error: "workstreams.errPrompt")
 let blockedExpand = WSBoardModel.build(snapshot: snapshot([
-    card(id: "WS-000110", stage: .delivery, body: doneBody),
+    card(id: "WS-000110", stage: .acceptance, body: doneBody),
     card(id: "WS-000130", stage: .task, queues: [expandQueue.id]),
 ]), filter: .all, board: expandBoard)
 eq(blockedExpand.cards.map { $0.runState }, [.done, .blocked], "a blocked card is unprocessed")
@@ -294,7 +290,7 @@ eq(blockedExpand.cards.map { $0.isExpanded }, [false, true], "the blocked card o
 
 section("default expansion follows the active stage filter")
 let filteredExpand = WSBoardModel.build(snapshot: snapshot([
-    card(id: "WS-000110", stage: .delivery, body: doneBody),
+    card(id: "WS-000110", stage: .acceptance, body: doneBody),
     card(id: "WS-000111", stage: .planning),
     card(id: "WS-000112", stage: .planning),
 ]), filter: .stage(.planning))
@@ -308,13 +304,15 @@ eq(filteredExpand.cards.map { $0.isExpanded }, [true, false],
 section("first unprocessed stage: canonical order, skips done")
 let splitCard = WSCardModel.build(from: card(id: "WS-000200", stage: .design))
 eq(splitCard.stages.map { $0.runState },
-   [.done, .notStarted, .notStarted, .notStarted, .notStarted],
+   [.done, .notStarted, .notStarted, .notStarted],
    "planning is done once the human moved to design")
 eq(wsFirstUnprocessedStage(splitCard), .design,
    "the first unprocessed stage is the current one, not index 0")
-// A confirmed delivery is a done workstream: every stage reads done.
-let splitDone = WSCardModel.build(from: card(id: "WS-000201", stage: .delivery, body: doneBody))
-eq(splitDone.runState, .done, "a confirmed delivery workstream is done")
+// A confirmed acceptance (including a legacy delivery confirm) is a done workstream.
+let splitDone = WSCardModel.build(from: card(id: "WS-000201", stage: .acceptance, body: doneBody))
+eq(WSRunState.acceptanceConfirmed(WorkstreamsStageGate.parseHistory(doneBody)), true,
+   "a legacy delivery confirm reads as an acceptance confirmation")
+eq(splitDone.runState, .done, "a confirmed acceptance workstream is done")
 eq(wsFirstUnprocessedStage(splitDone), nil, "a fully done workstream has no stage to split")
 // A blocked current stage is "unprocessed" and is the split target.
 var splitBoard = WSBoard()
@@ -358,16 +356,16 @@ eq(single.body, "", "a one-line draft has no extra content to append")
 
 let blankTitle = composer.typed(content: "   \n正文")
 eq(blankTitle.canSubmit, false, "a whitespace-only first line is not a title")
-eq(blankTitle.typed(stage: .delivery).stage, .delivery, "the stage may be changed on the draft")
+eq(blankTitle.typed(stage: .acceptance).stage, .acceptance, "the stage may be changed on the draft")
 
 section("stage task composer: default stage is the first unprocessed stage")
-eq(WSStageTaskComposerModel.stages.count, 5, "the selector offers five stages")
+eq(WSStageTaskComposerModel.stages.count, 4, "the selector offers four stages")
 eq(WSStageTaskComposerModel.stages,
-   [.planning, .design, .task, .acceptance, .delivery], "the selector is in canonical order")
+   [.planning, .design, .task, .acceptance], "the selector is in canonical order")
 let composerCard = WSCardModel.build(from: card(id: "WS-000210", stage: .design))
 eq(WSStageTaskComposerModel.forCard(composerCard).stage, .design,
    "the drawer defaults to the first unprocessed (current) stage, not index 0")
-eq(WSStageTaskComposerModel.forCard(splitDone).stage, .delivery,
+eq(WSStageTaskComposerModel.forCard(splitDone).stage, .acceptance,
    "a fully done workstream falls back to its authoritative stage")
 
 // MARK: - Parse round-trip
@@ -521,12 +519,12 @@ eq(WSRunState.workstream([.inProgress, .awaitingConfirmation]), .awaitingConfirm
    "awaiting confirmation outranks in progress")
 eq(WSRunState.workstream([.awaitingConfirmation, .blocked]), .blocked,
    "blocked outranks awaiting confirmation")
-let deliveryConfirm = WSStageHistoryEntry(date: "2026-10-10", action: .confirm, stage: .delivery,
-                                          target: nil, reason: nil)
-eq(WSRunState.workstream([.inProgress, .blocked], history: [deliveryConfirm]), .done,
-   "a confirmed terminal delivery is done")
-eq(WSRunState.deliveryConfirmed([deliveryConfirm]), true, "delivery confirmed")
-eq(WSRunState.deliveryConfirmed([rejectEntry]), false, "a reject is not a delivery confirmation")
+let acceptanceConfirm = WSStageHistoryEntry(date: "2026-10-10", action: .confirm, stage: .acceptance,
+                                            target: nil, reason: nil)
+eq(WSRunState.workstream([.inProgress, .blocked], history: [acceptanceConfirm]), .done,
+   "a confirmed terminal acceptance is done")
+eq(WSRunState.acceptanceConfirmed([acceptanceConfirm]), true, "acceptance confirmed")
+eq(WSRunState.acceptanceConfirmed([rejectEntry]), false, "a reject is not an acceptance confirmation")
 
 section("run state on the card model")
 var runBoard = WSBoard()
@@ -544,7 +542,7 @@ eq(runCard.stages.first { $0.stage == .task }?.runStateKey, "workstreams.run.inP
 eq(runCard.stages.first { $0.stage == .task }?.runStateTone, .running, "stage run state tone")
 eq(runCard.stages.first { $0.stage == .planning }?.runState, .done,
    "a confirmed earlier stage reads done")
-eq(runCard.stages.first { $0.stage == .delivery }?.runState, .notStarted,
+eq(runCard.stages.first { $0.stage == .acceptance }?.runState, .notStarted,
    "a future stage reads not started")
 eq(runCard.runState, .inProgress, "card model surfaces the workstream run state")
 eq(runCard.runStateKey, "workstreams.run.inProgress", "workstream run state key")

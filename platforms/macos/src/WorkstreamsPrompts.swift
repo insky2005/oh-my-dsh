@@ -14,14 +14,13 @@ import Foundation
 // MARK: - (stage, action)
 
 /// design §4「stage → action」表的动作。执行阶段有两个动作：先「拆分任务」，人确认
-/// 后再「启动实施」。
+/// 后再「启动实施」。交付是操作（design A17），不是阶段动作，故不在这里。
 enum WSStageAction: String, CaseIterable, Equatable {
     case confirmPlanning
     case produceDesign
     case splitTasks
     case startImplementation
     case verify
-    case deliver
 
     /// 该动作所属的阶段（执行阶段的两个动作都归 .task）。
     var stage: WorkstreamStage {
@@ -30,7 +29,6 @@ enum WSStageAction: String, CaseIterable, Equatable {
         case .produceDesign: return .design
         case .splitTasks, .startImplementation: return .task
         case .verify: return .acceptance
-        case .deliver: return .delivery
         }
     }
 
@@ -42,7 +40,6 @@ enum WSStageAction: String, CaseIterable, Equatable {
         case .splitTasks: return "拆分任务"
         case .startImplementation: return "启动实施"
         case .verify: return "校验"
-        case .deliver: return "交付"
         }
     }
 
@@ -53,7 +50,6 @@ enum WSStageAction: String, CaseIterable, Equatable {
         case .design: return .produceDesign
         case .task: return .splitTasks
         case .acceptance: return .verify
-        case .delivery: return .deliver
         }
     }
 }
@@ -75,7 +71,6 @@ enum WorkstreamHandoff {
         case .design: return "设计"
         case .task: return "执行"
         case .acceptance: return "验收"
-        case .delivery: return "交付"
         }
     }
 
@@ -181,7 +176,8 @@ enum WorkstreamHandoff {
 
     /// 人在面板确认某阶段后交给事项「主场会话」继续的下一阶段提示词（design §5
     /// 生命周期 / §6 会话绑定）。返回下一阶段 + 该阶段默认动作的完整交接提示词；
-    /// **交付是终态，没有下一阶段，返回 nil**——确认本身已完成 stage 推进，不再续发。
+    /// **验收是最后阶段，没有下一阶段，返回 nil**——确认本身已完成 stage 推进，
+    /// 不再续发（交付是操作，见 design A17）。
     /// 纯函数：给定同一张卡输出同一段文本，便于 headless 单测。
     static func nextStagePrompt(card: WorkstreamCard,
                                 workspace: String = "",
@@ -229,7 +225,7 @@ enum WorkstreamHandoff {
             let raw = stage?.rawValue ?? "planning"
             return section([
                 "本步做「拆分任务」：",
-                "- 用 `POST /api/workstreams/task/create` 建**等待态阶段任务**（= 任务拆分本身）：`stage` 必须传上面「当前 stage」括号里的**原始值**（`planning` / `design` / `task` / `acceptance` / `delivery`），**不要传 `task`**（除非当前阶段就是「执行」，那时括号里才是 `task`）；动作叫「拆分任务」、路由叫 `task/create`，都不代表 `stage` 就是 `task`。",
+                "- 用 `POST /api/workstreams/task/create` 建**等待态阶段任务**（= 任务拆分本身）：`stage` 必须传上面「当前 stage」括号里的**原始值**（`planning` / `design` / `task` / `acceptance`），**不要传 `task`**（除非当前阶段就是「执行」，那时括号里才是 `task`）；动作叫「拆分任务」、路由叫 `task/create`，都不代表 `stage` 就是 `task`。",
                 "- 调用示例（本例当前 stage 是 `" + raw + "`）：`POST /api/workstreams/task/create`，body `{\"id\":\"" + cardID + "\",\"stage\":\"" + raw + "\",\"titles\":[\"…\"],\"session\":\"$DSH_SESSION_ID\"}`。",
                 "- 每条任务带上面的 `stage`，追加到该事项唯一的队列；**只建不启动**。",
                 "- 阶段 ↔ 队列映射由面板写回卡片 `queues`；**停下请人确认拆分合理**。",
@@ -247,12 +243,6 @@ enum WorkstreamHandoff {
                 "- 跑回归门与机检证据（覆盖 / 测试 / 产物校验）。",
                 "- 用 `POST /api/workstreams/covered` 记录覆盖点（paths + base / head 锚变更）；**不直接改 `.dsh` 文件**。",
                 "- **必须由人 sign-off，agent 不自签**。",
-            ])
-        case .deliver:
-            return section([
-                "本步做「交付」：",
-                "- push / 开 PR；用 `POST /api/workstreams/delivery` 记录 `pr` / `url` 事实，**不直接改 `.dsh` 文件**。",
-                "- `outcome` 是派生谓词缓存（服务端按 PR 状态现算），**不手写**。",
             ])
         }
     }

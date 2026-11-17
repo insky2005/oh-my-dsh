@@ -2,9 +2,9 @@
 //  WorkstreamsPanel.swift — the Workstreams panel (right-side panel slot #11).
 //
 //  The panel is the current workspace's 事项中心: one primary card per
-//  .dsh/workstreams/WS-*.md card, five stage (secondary) cards inside it, and the
+//  .dsh/workstreams/WS-*.md card, four stage (secondary) cards inside it, and the
 //  stage queue's tasks (tertiary) below that. The top strip switches between the
-//  stage views (全部 / 规划 / 设计 / 执行 / 验收 / 交付).
+//  stage views (全部 / 规划 / 设计 / 执行 / 验收; 交付 is an operation, A17).
 //
 //  Everything that is not UI lives elsewhere on purpose:
 //    * parsing / writes            -> WorkstreamsCore.swift
@@ -246,7 +246,7 @@ final class WSNestedTierView: NSView {
 // MARK: - Primary card
 
 /// One workstream card: the raised container. Its header carries the identity
-/// (id / title / requirement / current stage), its body the five stage cards.
+/// (id / title / requirement / current stage), its body the four stage cards.
 final class WSPrimaryCardView: NSView {
 
     let model: WSCardModel
@@ -270,8 +270,6 @@ final class WSPrimaryCardView: NSView {
     /// whose first line is the title and the rest the content) and append a
     /// waiting-state task to the workstream's queue — never start it.
     var onCreateTask: (() -> Void)?
-    /// 阶段二级卡的「交付」(design A10): only offered on the delivery stage card.
-    var onDeliverStage: (() -> Void)?
     private(set) var isExpanded: Bool
 
     init(model: WSCardModel) {
@@ -333,7 +331,7 @@ final class WSPrimaryCardView: NSView {
         titleViews.append(spacer)
         titleViews.append(WSTierBadgeView(text: L10n.tr(model.stageLabelKey), tone: model.tone,
                                           filled: model.stage == .task))
-        // Derived workstream run state (A13): the roll-up of the five stages.
+        // Derived workstream run state (A13): the roll-up of the four stages.
         titleViews.append(WSTierBadgeView(text: L10n.tr(model.runStateKey), tone: model.runStateTone))
         titleViews.append(splitTasksButton())
         titleViews.append(createTaskButton())
@@ -441,15 +439,9 @@ final class WSPrimaryCardView: NSView {
         // Task creation is no longer a stage-card action (UX): the workstream card's
         // 「创建任务」 opens the stage-task drawer. Starting is likewise not a
         // stage-card action — the workstream card's 「启动事项」 is the single entry
-        // and the runner walks the queue in canonical stage order.
-        // 交付阶段动作 (design A10): resolve the git / PR / token plan and start a
-        // delivery session. Only the delivery stage card carries it.
-        if stage.stage == .delivery {
-            let deliver = CustomIconButton(glyph: .symbol("paperplane"),
-                                           tooltip: L10n.tr("workstreams.stage.deliver"), size: 22)
-            deliver.onAction = { [weak self] in self?.onDeliverStage?() }
-            headerViews.append(deliver)
-        }
+        // and the runner walks the queue in canonical stage order. 交付 is an
+        // OPERATION (design A17), not a stage card, so no stage keeps a delivery
+        // button here.
         let headerRow = NSStackView(views: headerViews)
         headerRow.orientation = .horizontal
         headerRow.alignment = .centerY
@@ -634,7 +626,7 @@ final class WSFilterTabItemView: NSView {
     }
 }
 
-/// The flat stage-filter strip (全部 / 规划 / 设计 / 执行 / 验收 / 交付). Replaces a
+/// The flat stage-filter strip (全部 / 规划 / 设计 / 执行 / 验收; 交付 is an operation). Replaces a
 /// dropdown so every stage view is visible at once.
 final class WSStageFilterStrip: NSView {
 
@@ -894,7 +886,6 @@ final class WorkstreamsPanelController: NSObject {
             card.onSplitTasks = { [weak self] in self?.splitTasks(model.id) }
             card.onStartWorkstream = { [weak self] in self?.startWorkstream(model.id) }
             card.onCreateTask = { [weak self] in self?.openCreateTask(model) }
-            card.onDeliverStage = { [weak self] in self?.deliverWorkstream(model.id) }
             list.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -20).isActive = true
         }
@@ -1091,22 +1082,23 @@ final class WorkstreamsPanelController: NSObject {
         reload()
     }
 
-    /// 发起交付 (design A10): the single admission + enqueue-and-start path. The
-    /// stage card「交付」button and POST /api/workstreams/deliver both come through
-    /// here, so the two entries can never drift.
+    /// 发起交付 (design A10 / A17): the single admission + enqueue-and-start path
+    /// shared by POST /api/workstreams/deliver (and, once the main-card entry lands,
+    /// the 交付 button).
     ///
     /// 准入顺序 = 失败优先级：阶段 → git 仓库 → 分支 → 远端 → GitHub → token
     /// (WorkstreamsDelivery.resolve)。失败返回稳定 WSDeliveryBlocker 码（外加
-    /// no-queue / start-failed）与中文原因；成功把交付提示词作为一条 stage=delivery
-    /// 任务追加到事项唯一队列并只启动该阶段。会话用 POST /api/workstreams/delivery
-    /// 回填 PR 事实，面板派生 outcome 并写卡（store §5：事实可写、outcome 只作派生缓存）。
+    /// no-queue / start-failed）与中文原因。交付是「操作」不是阶段：当前实现把交付
+    /// 提示词作为一条 acceptance 任务入队并启动该阶段（后续任务改为主场会话执行）。
+    /// 会话用 POST /api/workstreams/delivery 回填 PR 事实，面板派生 outcome 并写卡
+    /// （store §5：事实可写、outcome 只作派生缓存）。
     func initiateDelivery(_ cardID: String, workspace: String) -> [String: Any] {
         guard !workspace.isEmpty else { return WorkstreamError.noWorkspace.apiResult }
         guard let runner = ensureRunner(workspace) else { return WorkstreamError.noWorkspace.apiResult }
         guard let card = try? WorkstreamsCore.loadCard(workspace: workspace, id: cardID) else {
             return WorkstreamError.unknownWorkstream(cardID).apiResult
         }
-        guard card.stage == .delivery else {
+        guard card.stage == .acceptance else {
             let blocker = WSDeliveryBlocker.notDeliveryStage(card.stage)
             return ["ok": false, "error": blocker.code, "message": blocker.message]
         }
@@ -1127,17 +1119,17 @@ final class WorkstreamsPanelController: NSObject {
                     "message": "the workstream queue is closed; no delivery task was created"]
         }
         writeBackQueueMapping(card: card, queueID: built.queue.id, workspace: workspace)
-        guard runner.startWorkstream(card, stage: .delivery) else {
+        guard runner.startWorkstream(card, stage: .acceptance) else {
             return ["ok": false, "error": "start-failed",
-                    "message": "the delivery stage could not be started"]
+                    "message": "the acceptance stage could not be started"]
         }
         return ["ok": true,
                 "queue": queueJSON(built.queue),
                 "tasks": built.created.map { taskJSON($0) },
-                "stage": WorkstreamStage.delivery.rawValue]
+                "stage": WorkstreamStage.acceptance.rawValue]
     }
 
-    /// The stage card「交付」button (design A10): call the shared path and render the
+    /// The 交付 entry (design A10 / A17): call the shared path and render the
     /// outcome — started, or the stable reason (WSDeliveryBlocker + queue / start).
     func deliverWorkstream(_ cardID: String) {
         let workspace = workspaceProvider?() ?? ""
@@ -1734,10 +1726,10 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
         }, workspace: workspace, session: request.session)
     }
 
-    /// POST /api/workstreams/deliver — 发起交付: the same shared path the stage
-    /// card「交付」button calls (initiateDelivery), so the two entries agree. The
-    /// response carries the queue / tasks on success and a WSDeliveryBlocker code
-    /// (or no-queue / start-failed) as `error` on refusal.
+    /// POST /api/workstreams/deliver — 发起交付: the same shared path as the
+    /// 交付 entry (initiateDelivery). The response carries the queue / tasks on
+    /// success and a WSDeliveryBlocker code (or no-queue / start-failed) as
+    /// `error` on refusal.
     func apiWorkstreamsDeliver(_ request: WorkstreamsDeliverRequest) -> [String: Any] {
         guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
             return WorkstreamError.noWorkspace.apiResult

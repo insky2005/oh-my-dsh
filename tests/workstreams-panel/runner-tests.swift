@@ -624,9 +624,9 @@ section("workstream start runs tasks in canonical stage order (UX)")
 do {
     var board = WSBoard()
     let queue = board.createQueue(name: "Q", workstreamID: "WS-3")
-    // Created stage-interleaved: execution, planning, delivery, design,
-    // planning#2, execution#2, acceptance. Insertion order must not decide the run
-    // order any more.
+    // Created stage-interleaved: execution, planning, acceptance (legacy delivery),
+    // design, planning#2, execution#2, acceptance. Insertion order must not decide
+    // the run order any more.
     var ids: [String] = []
     func add(_ title: String, _ stage: WorkstreamStage) {
         let task = WSTaskItem(id: WSTaskItem.newID(), title: title,
@@ -637,7 +637,7 @@ do {
     }
     add("执行一", .task)        // ids[0]
     add("规划一", .planning)    // ids[1]
-    add("交付一", .delivery)    // ids[2]
+    add("验收二", .acceptance)  // ids[2] (was the legacy delivery stage)
     add("设计一", .design)      // ids[3]
     add("规划二", .planning)    // ids[4]
     add("执行二", .task)        // ids[5]
@@ -657,20 +657,20 @@ do {
         if let session = h.runner.board.task(running)?.sessionId { h.dsh.finish(session) }
         _ = h.runner.step()
     }
-    eq(order, [ids[1], ids[4], ids[3], ids[0], ids[5], ids[6], ids[2]],
-       "planning -> design -> task -> acceptance -> delivery, enqueue order within a stage")
+    eq(order, [ids[1], ids[4], ids[3], ids[0], ids[5], ids[2], ids[6]],
+       "planning -> design -> task -> acceptance, enqueue order within a stage")
     eq(h.runner.board.queue(queue.id)?.state, .done, "the whole queue finished")
     eq(h.dsh.sessions.count, 7, "one session per task, no task started twice")
 }
 
-section("enqueueDelivery: a delivery-stage task carrying the delivery prompt (A10)")
+section("enqueueDelivery: a delivery prompt task (delivery is an operation, A17)")
 do {
     let h = Harness(board: WSBoard())
-    let card = wsCard(id: "WS-7", stage: .delivery, queues: [])
+    let card = wsCard(id: "WS-7", stage: .acceptance, queues: [])
     let built = h.runner.enqueueDelivery(card: card, prompt: "事项交付提示词 body")
     eq(h.runner.board.queues.count, 1, "a delivery enqueue creates the workstream queue")
     eq(built.created.count, 1, "one delivery task")
-    eq(h.runner.board.task(built.created[0].id)?.stage, .delivery, "the task carries the delivery stage")
+    eq(h.runner.board.task(built.created[0].id)?.stage, .acceptance, "the delivery prompt task runs in the last stage")
     eq(h.runner.board.task(built.created[0].id)?.body, "事项交付提示词 body", "the delivery prompt lands as the body")
     eq(h.runner.board.task(built.created[0].id)?.workstreamId, "WS-7", "the task carries the workstream id")
     eq(h.runner.board.queue(built.queue.id)?.state, .draft, "the queue stays waiting")

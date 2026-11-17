@@ -488,7 +488,7 @@ struct WSBoard {
             }?.element
     }
 
-    /// Canonical execution rank (planning -> delivery); a task with no stage of its
+    /// Canonical execution rank (planning -> acceptance); a task with no stage of its
     /// own falls back to the queue's legacy stage, and anything still unknown sorts
     /// after every real stage (keeping its enqueue order via the offset tie-break).
     private func stageRank(of taskID: String, in queue: WSQueue) -> Int {

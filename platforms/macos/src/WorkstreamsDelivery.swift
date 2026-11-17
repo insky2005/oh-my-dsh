@@ -391,7 +391,7 @@ enum WSDeliveryOutcome: String, Equatable {
 
 /// 事项交付卡在哪一步——每个失败都有明确原因，绝不沉默。
 enum WSDeliveryBlocker: Equatable {
-    /// 阶段不对：交付只在「交付」阶段进行。
+    /// 阶段不对：交付是操作，前置是最后的验收阶段（后续任务改为 accepted）。
     case notDeliveryStage(WorkstreamStage)
     /// 工作区不是 git 仓库。
     case notGitRepo
@@ -423,7 +423,7 @@ enum WSDeliveryBlocker: Equatable {
     var message: String {
         switch self {
         case .notDeliveryStage(let stage):
-            return "事项尚未进入交付阶段（当前阶段：" + stage.rawValue + "）"
+            return "事项尚未到达验收阶段（当前阶段：" + stage.rawValue + "）"
         case .notGitRepo:
             return "工作区不是 git 仓库"
         case .noBranch:
@@ -499,7 +499,9 @@ enum WorkstreamsDelivery {
                         tokens: WSTokenStore = WSTokenStore(),
                         findExistingPR: (_ owner: String, _ repo: String, _ branch: String,
                                          _ token: String?) -> String? = WSGitHubPR.liveFind) -> WSDeliveryResolution {
-        guard card.stage == .delivery else {
+        // 交付是操作（design A17），不是阶段；准入先卡「最后一个阶段」验收。
+        // 后续任务会把前置收紧为 accepted（验收已确认）。
+        guard card.stage == .acceptance else {
             return .blocked(.notDeliveryStage(card.stage))
         }
         guard git.isGitRepo(repoRoot) else {
@@ -549,7 +551,7 @@ enum WorkstreamsDelivery {
     /// **读取位置**（绝非 token 本身）；PR 标题正文由会话按实际改动写。
     static func prompt(plan: WSDeliveryPlan) -> String {
         var lines: [String] = []
-        lines.append("事项「" + plan.workstreamID + " " + plan.title + "」已进入交付阶段，请推送分支 "
+        lines.append("事项「" + plan.workstreamID + " " + plan.title + "」已验收，请执行交付：推送分支 "
                      + plan.branch + " 并发起 pull request：")
         lines.append("")
         lines.append("## 事项信息")

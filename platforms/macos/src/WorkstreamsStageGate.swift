@@ -1,7 +1,9 @@
 //
 //  WorkstreamsStageGate.swift — per-stage completion evidence + the human gate.
 //
-//  A workstream moves planning -> design -> execution -> acceptance -> delivery.
+//  A workstream moves planning -> design -> execution -> acceptance. Acceptance
+//  is the last stage; delivery is an OPERATION on the workstream (design A17),
+//  so it has no stage gate of its own.
 //  Each stage is complete only when BOTH hold (design A4 / R10 / D3):
 //
 //    1. a MACHINE predicate passes (this file), and
@@ -23,14 +25,15 @@ import Foundation
 // MARK: - Stage order
 
 extension WorkstreamStage {
-    /// Canonical order (planning -> ... -> delivery).
+    /// Canonical order (planning -> ... -> acceptance).
     static var ordered: [WorkstreamStage] {
-        [.planning, .design, .task, .acceptance, .delivery]
+        [.planning, .design, .task, .acceptance]
     }
 
     var orderIndex: Int { WorkstreamStage.ordered.firstIndex(of: self) ?? 0 }
 
-    /// The stage this one advances to on confirmation; nil at delivery.
+    /// The stage this one advances to on confirmation; nil at acceptance, the
+    /// last stage (delivery is an operation, not a stage).
     var next: WorkstreamStage? {
         let all = WorkstreamStage.ordered
         let i = orderIndex
@@ -219,8 +222,6 @@ enum WorkstreamsStageGate {
             items = executionEvidence(carrier)
         case .acceptance:
             items = acceptanceEvidence(card)
-        case .delivery:
-            items = deliveryEvidence(card)
         }
         return WSStageEvidence(stage: card.stage, items: items)
     }
@@ -323,6 +324,10 @@ enum WorkstreamsStageGate {
     }
 
     // MARK: Delivery — PR fact + derived outcome
+    //
+    //  Delivery is an OPERATION now (design A17), so the stage gate no longer
+    //  evaluates it; the delivery module keeps these facts for its own
+    //  admission checks.
 
     static func deliveryEvidence(_ card: WorkstreamCard) -> [WSStageEvidenceItem] {
         let pr = card.delivery?.pr != nil

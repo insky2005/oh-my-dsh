@@ -74,12 +74,11 @@ let evidenceOnlyBody = "## 验收\n\n证据\n"
 // MARK: - Stage order
 
 section("stage order")
-eq(WorkstreamStage.ordered, [.planning, .design, .task, .acceptance, .delivery], "canonical order")
+eq(WorkstreamStage.ordered, [.planning, .design, .task, .acceptance], "canonical order (four stages)")
 eq(WorkstreamStage.planning.next, .design, "planning -> design")
 eq(WorkstreamStage.design.next, .task, "design -> execution")
 eq(WorkstreamStage.task.next, .acceptance, "execution -> acceptance")
-eq(WorkstreamStage.acceptance.next, .delivery, "acceptance -> delivery")
-eq(WorkstreamStage.delivery.next == nil, true, "delivery is terminal")
+eq(WorkstreamStage.acceptance.next == nil, true, "acceptance is the last stage")
 
 // MARK: - Planning (four-piece set)
 
@@ -144,13 +143,14 @@ check(WorkstreamsStageGate.acceptanceEvidence(card(stage: .acceptance, body: evi
 check(WorkstreamsStageGate.acceptanceEvidence(card(stage: .acceptance, body: evidenceOnlyBody,
                                                    covered: CoveredRecord(paths: ["a.swift"], base: nil, head: nil))).contains { !$0.passed },
       "covered without base/head fails")
-let deliveryCard = card(stage: .delivery, body: "## 交付\n",
+// 交付是操作（design A17）：门不再把交付当一个阶段判；这些事实谓词仍由交付模块使用。
+let deliveryCard = card(stage: .acceptance, body: "## 验收\n",
                         delivery: DeliveryInfo(pr: 42, url: "u", outcome: "merged"))
 check(WorkstreamsStageGate.deliveryEvidence(deliveryCard).allSatisfy { $0.passed }, "PR + outcome passes")
-check(WorkstreamsStageGate.deliveryEvidence(card(stage: .delivery, body: "",
+check(WorkstreamsStageGate.deliveryEvidence(card(stage: .acceptance, body: "",
                                                  delivery: DeliveryInfo(pr: 42, url: nil, outcome: nil))).contains { !$0.passed },
       "missing outcome fails")
-check(WorkstreamsStageGate.deliveryEvidence(card(stage: .delivery, body: "",
+check(WorkstreamsStageGate.deliveryEvidence(card(stage: .acceptance, body: "",
                                                  delivery: DeliveryInfo(pr: nil, url: nil, outcome: "merged"))).contains { !$0.passed },
       "missing PR fact fails")
 
@@ -213,15 +213,27 @@ expectError("stale confirmation is refused", .stageChanged("task", "design")) {
                                      carrier: .none, today: "2026-10-07")
 }
 
-let delivery = try WorkstreamsCore.create(workspace: ws, title: "交付", stage: .delivery, today: "2026-10-06")
-_ = try WorkstreamsCore.setDelivery(workspace: ws, id: delivery.id,
+let terminalCard = try WorkstreamsCore.create(workspace: ws, title: "验收终态", stage: .acceptance, today: "2026-10-06")
+_ = try WorkstreamsCore.update(workspace: ws, id: terminalCard.id, body: acceptanceBody, today: "2026-10-06")
+_ = try WorkstreamsCore.setCovered(workspace: ws, id: terminalCard.id,
+                                   covered: CoveredRecord(paths: ["a.swift"], base: "b", head: "h"),
+                                   today: "2026-10-06")
+_ = try WorkstreamsCore.setDelivery(workspace: ws, id: terminalCard.id,
                                     delivery: DeliveryInfo(pr: 9, url: "u", outcome: "merged"),
                                     today: "2026-10-06")
-let terminal = try WorkstreamsCore.confirmStage(workspace: ws, id: delivery.id, carrier: .none,
+let terminal = try WorkstreamsCore.confirmStage(workspace: ws, id: terminalCard.id, carrier: .none,
                                                 today: "2026-10-07")
-eq(terminal.stage, .delivery, "delivery stays terminal after confirmation")
+eq(terminal.stage, .acceptance, "acceptance stays terminal after confirmation")
 eq(WorkstreamsStageGate.parseHistory(terminal.body).first?.target == nil, true,
    "terminal confirmation has no target")
+// 旧卡把「交付」当阶段写进审计痕迹：读兼容后等同验收确认（target 为空）。
+let legacyTerminal = WorkstreamsStageGate.parseHistory("""
+## 阶段确认
+
+- 2026-10-07 · confirm · delivery → done
+""")
+eq(legacyTerminal.first?.stage, .acceptance, "a legacy delivery confirm reads as acceptance")
+eq(legacyTerminal.first?.target, nil, "the legacy terminal confirm keeps no target")
 
 // MARK: - Back edge
 

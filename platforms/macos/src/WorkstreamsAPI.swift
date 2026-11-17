@@ -162,7 +162,7 @@ struct WorkstreamsDeliveryRequest: Equatable {
 
 /// 发起交付 (the panel「交付」button's equivalent, design A10): run the git /
 /// GitHub / token admission checks, enqueue the delivery prompt as a
-/// stage=delivery task and start only the delivery stage. A refusal carries a
+/// last-stage task (delivery is an operation, A17). A refusal carries a
 /// stable WSDeliveryBlocker code as `error` with its reason as `message`.
 struct WorkstreamsDeliverRequest: Equatable {
     var workspace: String?

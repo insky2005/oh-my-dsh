@@ -4,7 +4,7 @@
 //  The panel renders a THREE-LEVEL card tree (design A2 / §3.1):
 //
 //      WS 主卡 (primary)     one workstream, its stage history and its queues
-//        └─ 阶段二级卡 (stage)  planning / design / task / acceptance / delivery
+//        └─ 阶段二级卡 (stage)  planning / design / task / acceptance
 //             └─ 任务三级卡 (task)  the stage queue's entries
 //
 //  Every rule that decides WHAT a card says — the card model, the top stage
@@ -38,19 +38,18 @@ func wsStageLabelKey(_ stage: WorkstreamStage) -> String {
     case .design: return "workstreams.stage.design"
     case .task: return "workstreams.stage.task"
     case .acceptance: return "workstreams.stage.acceptance"
-    case .delivery: return "workstreams.stage.delivery"
     }
 }
 
 /// The stage's tone in the badge ladder: 执行 is the panel's "current" (a running
-/// task), 验收 waits on a human (warning), 交付 is the positive terminal.
+/// task), 验收 waits on a human (warning) and is the last stage — delivery is an
+/// operation, not a stage (design A17).
 func wsStageTone(_ stage: WorkstreamStage) -> WSTone {
     switch stage {
     case .planning: return .neutral
     case .design: return .neutral
     case .task: return .running
     case .acceptance: return .warning
-    case .delivery: return .positive
     }
 }
 
@@ -163,7 +162,7 @@ struct WSTaskCardModel: Equatable {
 // MARK: - Secondary card (stage)
 
 /// One secondary card: a stage of one workstream. A stage is a STATE, not a
-/// site (design §3.2), so every workstream renders all five stage cards in the
+/// site (design §3.2), so every workstream renders all four stage cards in the
 /// canonical order; exactly one isCurrent, and history / future read the same.
 struct WSStageCardModel: Equatable {
     var stage: WorkstreamStage
@@ -171,7 +170,7 @@ struct WSStageCardModel: Equatable {
     var tasks: [WSTaskCardModel]
     var evidence: [WSLine]
     var isExpanded: Bool
-    /// Gate state for the current stage; nil on the other four stage cards.
+    /// Gate state for the current stage; nil on the other three stage cards.
     var gateState: WSStageGateState? = nil
     /// L10n keys of the machine evidence still missing (a blocked gate).
     var missingEvidenceKeys: [String] = []
@@ -192,7 +191,7 @@ struct WSStageCardModel: Equatable {
 
 // MARK: - Primary card (workstream)
 
-/// One primary card: a workstream plus its five stage cards.
+/// One primary card: a workstream plus its four stage cards.
 struct WSCardModel: Equatable {
     var id: String
     var title: String
@@ -209,14 +208,14 @@ struct WSCardModel: Equatable {
     var isExpanded: Bool
     var path: String
     /// The DERIVED workstream runtime state (design A13): the roll-up of the
-    /// five stage run states. The authoritative `stage` above is untouched.
+    /// four stage run states. The authoritative `stage` above is untouched.
     var runState: WSRunState = .notStarted
 
     var stageLabelKey: String { wsStageLabelKey(stage) }
     var runStateKey: String { wsRunStateKey(runState) }
     var runStateTone: WSTone { wsRunStateTone(runState) }
 
-    /// Build one workstream card. All five stage cards are always present (in
+    /// Build one workstream card. All four stage cards are always present (in
     /// WorkstreamStage.allCases order). The workstream's queue ids hang off the
     /// MAIN card (design A9 / D16) and are never repeated on a stage card; each
     /// stage's tasks are grouped by the task's own `stage` (A12 / D17). `board`
@@ -279,8 +278,8 @@ struct WSCardModel: Equatable {
                                                            history: history))
     }
 
-    /// The stage-level machine evidence (store design §3.2): covered at 验收,
-    /// the delivery facts at 交付.
+    /// The stage-level machine evidence (store design §3.2): covered at 验收.
+    /// Delivery is an operation (design A17), so it has no stage card of its own.
     static func evidence(for stage: WorkstreamStage, card: WorkstreamCard) -> [WSLine] {
         switch stage {
         case .acceptance:
@@ -294,19 +293,6 @@ struct WSCardModel: Equatable {
                 lines.append(WSLine(labelKey: "workstreams.evidence.head", value: head))
             }
             return lines
-        case .delivery:
-            guard let delivery = card.delivery else { return [] }
-            var lines: [WSLine] = []
-            if let pr = delivery.pr {
-                lines.append(WSLine(labelKey: "workstreams.evidence.pr", value: "#" + String(pr)))
-            }
-            if let outcome = delivery.outcome, !outcome.isEmpty {
-                lines.append(WSLine(labelKey: "workstreams.evidence.outcome", value: outcome))
-            }
-            if let url = delivery.url, !url.isEmpty {
-                lines.append(WSLine(labelKey: "workstreams.evidence.url", value: url))
-            }
-            return lines
         default:
             return []
         }
@@ -315,7 +301,7 @@ struct WSCardModel: Equatable {
 
 // MARK: - Stage filter
 
-/// The top stage view / filter: 全部 plus the five stage views.
+/// The top stage view / filter: 全部 plus the four stage views.
 enum WSStageFilter: Equatable, CaseIterable {
     case all
     case stage(WorkstreamStage)

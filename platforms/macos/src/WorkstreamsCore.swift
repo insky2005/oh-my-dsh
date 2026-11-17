@@ -94,18 +94,26 @@ enum WorkstreamError: Error, Equatable {
 
 // MARK: - Value types
 
-/// The five stages a workstream moves through. stage is a STATE, not a site:
+/// The four stages a workstream moves through. stage is a STATE, not a site:
 /// back edges / skips / parking are allowed (workstream-panel-design §3.2 / §4).
+/// Delivery is an OPERATION, not a stage (design A17): it does not move stage;
+/// its facts stay in the card's delivery block.
 enum WorkstreamStage: String, CaseIterable, Equatable {
     case planning
     case design
     case task
     case acceptance
-    case delivery
 
-    /// Parse a raw frontmatter value; nil when it is not one of the five stages.
+    /// Parse a raw frontmatter value; nil when it is not one of the four stages.
+    ///
+    /// Legacy read-compat (design A17): cards written when 交付 was the fifth
+    /// stage carry stage: delivery. It maps to acceptance (the last stage), so an
+    /// old card still loads; the next write persists stage: acceptance while the
+    /// delivery fact block is kept as-is.
     static func parse(_ raw: String) -> WorkstreamStage? {
-        WorkstreamStage(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value == "delivery" { return .acceptance }
+        return WorkstreamStage(rawValue: value)
     }
 }
 
@@ -434,11 +442,11 @@ enum WorkstreamsCore {
     }
 
     /// Field-level issues that do not stop a card from loading, but are reported
-    /// to the writer. covered is required once a card reaches acceptance /
-    /// delivery (store design §3.2).
+    /// to the writer. covered is required once a card reaches acceptance — the
+    /// last stage (store design §3.2).
     static func validate(_ card: WorkstreamCard) -> [String] {
         var issues: [String] = []
-        if card.stage == .acceptance || card.stage == .delivery {
+        if card.stage == .acceptance {
             if card.covered == nil || (card.covered?.paths.isEmpty ?? true) {
                 issues.append("covered is required at stage " + card.stage.rawValue)
             }

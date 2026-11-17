@@ -39,7 +39,7 @@ func tempDir(_ tag: String) -> String {
     return path
 }
 
-func deliveryCard(stage: WorkstreamStage = .delivery,
+func deliveryCard(stage: WorkstreamStage = .acceptance,
                   delivery: DeliveryInfo? = nil,
                   covered: CoveredRecord? = nil) -> WorkstreamCard {
     WorkstreamCard(id: "WS-000009", title: "事项面板交付", requirement: "REQ-000008",
@@ -221,7 +221,7 @@ eq(WorkstreamsDelivery.record(pr: nil, url: "   "), nil, "no facts -> nil (clear
 // writeBack lands the facts + derived cache on a real card.
 let writeWS = tempDir("write-ws")
 let created = try? WorkstreamsCore.create(workspace: writeWS, title: "交付写回",
-                                          stage: .delivery, today: "2026-10-07")
+                                          stage: .acceptance, today: "2026-10-07")
 if let created = created {
     let written = try? WorkstreamsDelivery.writeBack(workspace: writeWS, id: created.id,
                                                      pr: 78,
@@ -244,10 +244,10 @@ section("failure paths")
 var fake = FakeTokens()
 fake.files["/h/oh-my-dsh/tokens/example-example"] = "ghp_secret_value_123"
 
-// notDeliveryStage
-eq(WorkstreamsDelivery.resolve(card: deliveryCard(stage: .acceptance), branch: "b",
+// notDeliveryStage: 交付是操作（design A17），前置仍是最后的验收阶段。
+eq(WorkstreamsDelivery.resolve(card: deliveryCard(stage: .task), branch: "b",
                                repoRoot: "/repo", git: fakeProbe(), tokens: fake.store(home: "/h"))
-      .blocker, .notDeliveryStage(.acceptance), "a non-delivery stage is refused")
+      .blocker, .notDeliveryStage(.task), "a stage before acceptance is refused")
 // notGitRepo
 eq(WorkstreamsDelivery.resolve(card: deliveryCard(), branch: "b",
                                repoRoot: "/repo", git: fakeProbe(isGit: false), tokens: fake.store(home: "/h"))
@@ -299,7 +299,7 @@ let resolution = WorkstreamsDelivery.resolve(
 check(resolution.isReady, "a complete delivery is ready")
 if let plan = resolution.plan {
     eq(plan.workstreamID, "WS-000009", "plan carries the workstream id")
-    eq(plan.stage, .delivery, "plan carries the delivery stage")
+    eq(plan.stage, .acceptance, "plan carries the last stage (delivery is an operation)")
     eq(plan.slug, "example/example", "plan carries owner/repo")
     eq(plan.remote, "origin", "plan carries the push remote")
     eq(plan.branch, "feature/workstream-panel", "plan carries the branch")

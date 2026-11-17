@@ -2,7 +2,7 @@ import Foundation
 
 // Headless tests for the panel-generated stage handoff prompts
 // (WorkstreamsPrompts.swift, design D15 / workstream-handoff-prompt-design):
-//   - each stage's key requirements (planning / design / task / acceptance / delivery);
+//   - each stage's key requirements (planning / design / task / acceptance);
 //   - the public header (card pointer, requirement pointer, stage + action, goal);
 //   - the shared model rules, with the regression gate line only when REG-* is set;
 //   - injection into a stage queue task's body and the execution-stage completion marker;
@@ -64,15 +64,13 @@ do {
     eq(WSStageAction.defaultAction(for: .design), .produceDesign, "design defaults to 出设计")
     eq(WSStageAction.defaultAction(for: .task), .splitTasks, "task defaults to 拆分任务 (split before start)")
     eq(WSStageAction.defaultAction(for: .acceptance), .verify, "acceptance defaults to 校验")
-    eq(WSStageAction.defaultAction(for: .delivery), .deliver, "delivery defaults to 交付")
     eq(WSStageAction.startImplementation.stage, .task, "启动实施 belongs to the task stage")
     eq(WSStageAction.splitTasks.stage, .task, "拆分任务 belongs to the task stage")
     eq(WorkstreamHandoff.stageLabel(.planning), "规划", "planning label")
     eq(WorkstreamHandoff.stageLabel(.design), "设计", "design label")
     eq(WorkstreamHandoff.stageLabel(.task), "执行", "task stage is labelled 执行")
     eq(WorkstreamHandoff.stageLabel(.acceptance), "验收", "acceptance label")
-    eq(WorkstreamHandoff.stageLabel(.delivery), "交付", "delivery label")
-    eq(WSStageAction.allCases.count, 6, "six actions across five stages")
+    eq(WSStageAction.allCases.count, 5, "five actions across four stages (delivery is an operation)")
 }
 
 // MARK: - 公共头（design §3）
@@ -180,17 +178,6 @@ do {
     contains(p, "/api/workstreams/covered", "records covered through the write route")
 }
 
-section("delivery: push / PR, facts recorded, outcome derived")
-do {
-    let p = WorkstreamHandoff.prompt(card: makeCard(), stage: .delivery)
-    contains(p, "交付", "action is 交付")
-    contains(p, "push", "pushes")
-    contains(p, "PR", "opens a PR")
-    contains(p, "outcome", "mentions outcome")
-    contains(p, "不手写", "does not hand-write the derived outcome")
-    contains(p, "不直接改", "delivery never edits .dsh directly")
-    contains(p, "/api/workstreams/delivery", "records delivery facts through the write route")
-}
 
 // MARK: - 模型规则（design §4）
 
@@ -213,7 +200,7 @@ do {
     }
     let plain = WorkstreamHandoff.prompt(card: makeCard(regression: nil), stage: .planning)
     notContains(plain, "回归门", "no regression line without a REG-* card")
-    let gated = WorkstreamHandoff.prompt(card: makeCard(regression: "REG-002"), stage: .delivery)
+    let gated = WorkstreamHandoff.prompt(card: makeCard(regression: "REG-002"), stage: .acceptance)
     contains(gated, "回归门 REG-002", "the regression line names the card's REG-*")
 }
 
@@ -348,11 +335,9 @@ do {
        "design hands off to 执行 (task)")
     eq(WorkstreamHandoff.nextStagePrompt(card: makeCard(stage: .task))?.stage, .acceptance,
        "task hands off to 验收")
-    eq(WorkstreamHandoff.nextStagePrompt(card: makeCard(stage: .acceptance))?.stage, .delivery,
-       "acceptance hands off to 交付")
-    // 交付是终态：确认它没有下一阶段，不发提示词。
-    eq(WorkstreamHandoff.nextStagePrompt(card: makeCard(stage: .delivery)) == nil, true,
-       "delivery is terminal: no next-stage prompt")
+    // 验收是最后阶段（交付是操作）：确认它没有下一阶段，不发提示词。
+    eq(WorkstreamHandoff.nextStagePrompt(card: makeCard(stage: .acceptance)) == nil, true,
+       "acceptance is terminal: no next-stage prompt")
     // 目标从卡片注入（同一张卡 → 同一段提示词）。
     let design = WorkstreamHandoff.nextStagePrompt(card: makeCard(stage: .design,
         planningGoal: "产出面板生成的各阶段提示词"))?.prompt ?? ""
