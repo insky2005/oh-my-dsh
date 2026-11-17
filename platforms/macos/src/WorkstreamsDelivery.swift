@@ -8,13 +8,16 @@ import Foundation
 // `.dsh/tasks/*`（D8）；纯 Foundation，可在 headless 测试里驱动。
 //
 // 按「事项 / 阶段」语义改造的适配点：
-//   1. 交付是**事项的「交付」阶段动作**，不是队列动作：只有 `stage == .delivery`
-//      的卡才准入（`WSDeliveryBlocker.notDeliveryStage`）；
-//   2. 失败一律给出**明确原因**（`WSDeliveryBlocker`）：非 git 仓库 / 无分支 /
-//      无远端 / 远端不是 GitHub / 无 token——无一沉默；
-//   3. PR 状态 → `delivery.outcome` 派生缓存（store design §5：事实可写、outcome
+//   1. 交付是**操作**（design A17），不是阶段：前置是 accepted(ws)——验收已在
+//      「## 阶段确认」里签字确认；未确认一律拒绝（`WSDeliveryBlocker.notAccepted`）；
+//   2. 交付在事项的**主场会话**里执行：不新建交付任务 / 会话。准入通过后把交付
+//      提示词发进主场会话；完成信号是 agent 调 `POST /api/workstreams/delivery`
+//      写 pr / url 事实，失败由会话汇报 + 超时兜底（`WSDeliveryRun`）；
+//   3. 失败一律给出**明确原因**（`WSDeliveryBlocker`）：未验收 / 非 git 仓库 /
+//      无分支 / 无远端 / 远端不是 GitHub / 无 token——无一沉默；
+//   4. PR 状态 → `delivery.outcome` 派生缓存（store design §5：事实可写、outcome
 //      由交付追踪派生，禁止手写；取值与 `.dsh/tools/derive-status.mjs` 对齐）；
-//   4. `covered`（点记录）与事项标题进交付提示词，交付结果回填 WS 卡的 `delivery` 块。
+//   5. `covered`（点记录）与事项标题进交付提示词，交付结果回填 WS 卡的 `delivery` 块。
 //
 // token 文件布局（与 AGENTS.md / ShellPaths 同一套约定，默认目录 ~/.dsh）：
 //   1. $DSH_HOME/oh-my-dsh/tokens/<owner>-<repo>   逐仓库（面板写入）
@@ -391,8 +394,8 @@ enum WSDeliveryOutcome: String, Equatable {
 
 /// 事项交付卡在哪一步——每个失败都有明确原因，绝不沉默。
 enum WSDeliveryBlocker: Equatable {
-    /// 阶段不对：交付是操作，前置是最后的验收阶段（后续任务改为 accepted）。
-    case notDeliveryStage(WorkstreamStage)
+    /// 未验收：交付是操作，前置是 accepted(ws)（验收已确认），不是某个阶段。
+    case notAccepted(WorkstreamStage)
     /// 工作区不是 git 仓库。
     case notGitRepo
     /// 没有可交付的分支（交付需要一个实现分支）。
@@ -407,7 +410,7 @@ enum WSDeliveryBlocker: Equatable {
     /// 稳定的机读码（API / 日志 / 测试）。
     var code: String {
         switch self {
-        case .notDeliveryStage: return "not-delivery-stage"
+        case .notAccepted: return "not-accepted"
         case .notGitRepo: return "not-git-repo"
         case .noBranch: return "no-branch"
         case .noRemote: return "no-remote"
@@ -422,8 +425,8 @@ enum WSDeliveryBlocker: Equatable {
     /// 中文原因（日志 / 提示词 / 汇报）。
     var message: String {
         switch self {
-        case .notDeliveryStage(let stage):
-            return "事项尚未到达验收阶段（当前阶段：" + stage.rawValue + "）"
+        case .notAccepted(let stage):
+            return "事项尚未通过验收确认（accepted；当前阶段：" + stage.rawValue + "）——交付的前置是验收已签字"
         case .notGitRepo:
             return "工作区不是 git 仓库"
         case .noBranch:
@@ -488,7 +491,7 @@ enum WorkstreamsDelivery {
 
     /// 交付准入与事实收集（纯逻辑，全部外部访问走注入）。
     ///
-    /// 顺序即失败优先级：阶段 → git 仓库 → 分支 → 远端 → GitHub → token。
+    /// 顺序即失败优先级：accepted(ws) → git 仓库 → 分支 → 远端 → GitHub → token。
     /// 前一步不成立就直接给出该步的原因，不继续猜后面的。
     static func resolve(card: WorkstreamCard,
                         branch: String?,
@@ -499,10 +502,10 @@ enum WorkstreamsDelivery {
                         tokens: WSTokenStore = WSTokenStore(),
                         findExistingPR: (_ owner: String, _ repo: String, _ branch: String,
                                          _ token: String?) -> String? = WSGitHubPR.liveFind) -> WSDeliveryResolution {
-        // 交付是操作（design A17），不是阶段；准入先卡「最后一个阶段」验收。
-        // 后续任务会把前置收紧为 accepted（验收已确认）。
-        guard card.stage == .acceptance else {
-            return .blocked(.notDeliveryStage(card.stage))
+        // 交付是操作（design A17），不是阶段；准入先卡 accepted(ws)——验收已在
+        // 「## 阶段确认」里由人签字确认（WorkstreamsStageGate.accepted 是唯一判据）。
+        guard WorkstreamsStageGate.accepted(card) else {
+            return .blocked(.notAccepted(card.stage))
         }
         guard git.isGitRepo(repoRoot) else {
             return .blocked(.notGitRepo)
@@ -551,8 +554,8 @@ enum WorkstreamsDelivery {
     /// **读取位置**（绝非 token 本身）；PR 标题正文由会话按实际改动写。
     static func prompt(plan: WSDeliveryPlan) -> String {
         var lines: [String] = []
-        lines.append("事项「" + plan.workstreamID + " " + plan.title + "」已验收，请执行交付：推送分支 "
-                     + plan.branch + " 并发起 pull request：")
+        lines.append("事项「" + plan.workstreamID + " " + plan.title + "」已验收（accepted），请在本主场会话里执行交付："
+                     + "推送分支 " + plan.branch + " 并发起 pull request：")
         lines.append("")
         lines.append("## 事项信息")
         lines.append("事项：" + plan.workstreamID + "（" + plan.title + "）")
@@ -581,12 +584,13 @@ enum WorkstreamsDelivery {
                      + "base = " + plan.base + "，head = " + plan.branch + "；已有同一 head 的 PR 就复用；")
         lines.append("4. PR 标题与正文由你按实际改动写：标题一句话说清这次合并做了什么，正文分条列出改动要点、"
                      + "怎么验证的、需要注意的地方；不要只写事项名，也不要套模板；")
-        lines.append("5. 这个会话不要改任何代码：只做交付；")
+        lines.append("5. 就在当前这个主场会话里做交付：不要新建交付任务，也不要另起会话；这个会话不要改任何代码，只做交付；")
         lines.append("6. 必须在最后一行给出 PR 的完整链接（https://github.com/<owner>/<repo>/pull/<编号>）；"
                      + "真开不出来就说清楚卡在哪一步（权限 / 网络 / token / 分支状态），不要沉默结束；")
         lines.append("7. 交付结果（delivery.outcome）由 PR 状态派生，不要手写 outcome；")
-        lines.append("8. 交付完成后用 POST /api/workstreams/delivery 记录 delivery.pr / delivery.url 两个事实"
-                     + "（带 PR 状态观察 state / merged），不要直接改 .dsh 文件；outcome 由面板派生。")
+        lines.append("8. **完成信号**：交付完成后用 POST /api/workstreams/delivery 记录 delivery.pr / delivery.url 两个事实"
+                     + "（带 PR 状态观察 state / merged），不要直接改 .dsh 文件；outcome 由面板派生。"
+                     + "没写这条事实，面板会按会话汇报判失败，超时也会兜底取消这次交付。")
         return lines.joined(separator: "\n")
     }
 
@@ -628,5 +632,97 @@ enum WorkstreamsDelivery {
         if let url = WSPRText.url(in: report) { return url }
         guard let text = report?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         return text.split(separator: "\n").first.map(String.init)
+    }
+}
+
+// MARK: - 主场会话里的交付运行（完成信号 / 汇报 + 超时兜底）
+
+/// Why an in-flight delivery did not produce delivery facts.
+enum WSDeliveryFailure: Equatable {
+    /// The home session stopped without the agent writing pr / url. The report
+    /// (may be empty) is the session's own explanation.
+    case report(String?)
+    /// The fallback: the home session never recorded the facts in time.
+    case timeout
+
+    /// Stable machine code (API / logs / tests).
+    var code: String {
+        switch self {
+        case .report: return "report-failed"
+        case .timeout: return "delivery-timeout"
+        }
+    }
+
+    /// The L10n key the panel renders (the module itself has no L10n table).
+    var messageKey: String { "workstreams.deliver." + code }
+
+    /// Chinese reason (logs / the API message).
+    var message: String {
+        switch self {
+        case .report(let report):
+            if let summary = WorkstreamsDelivery.summary(fromReport: report) {
+                return "主场会话结束但没有记录交付事实（PR / URL）：" + summary
+            }
+            return "主场会话结束但没有记录交付事实（PR / URL），也没有汇报原因"
+        case .timeout:
+            return "交付超时：主场会话没有在规定时间内记录交付事实（PR / URL）"
+        }
+    }
+}
+
+/// The verdict for one delivery attempt.
+enum WSDeliveryVerdict: Equatable {
+    case pending
+    case delivered
+    case failed(WSDeliveryFailure)
+}
+
+/// One delivery attempt running in a workstream's HOME session (design A17).
+///
+/// 交付是操作：面板不建交付任务、也不另起会话。准入通过后把提示词发进主场会话，
+/// 完成信号是 agent 调 `POST /api/workstreams/delivery` 把 pr / url 写进卡片。
+/// 失败由两件事兜底：
+///   1. **汇报**：主场会话停下来（idle / missing）且没有交付事实——会话自己给出的
+///      汇报就是失败原因（report grace 让 API 写入先落地）；
+///   2. **超时**：会话一直不停 / 事实一直不落，到点判失败（绝不再起一个交付会话）。
+struct WSDeliveryRun: Equatable {
+    var workspace: String
+    var workstreamID: String
+    var sessionID: String
+    var startedAt: Date
+    /// The fallback deadline. A delivery is expected to finish well inside it.
+    var timeout: TimeInterval
+    /// How long after the start the report is allowed to decide (the agent may
+    /// still be writing the facts right after its last message).
+    var reportGrace: TimeInterval
+
+    init(workspace: String, workstreamID: String, sessionID: String,
+         startedAt: Date = Date(), timeout: TimeInterval = 15 * 60,
+         reportGrace: TimeInterval = 30) {
+        self.workspace = workspace
+        self.workstreamID = workstreamID
+        self.sessionID = sessionID
+        self.startedAt = startedAt
+        self.timeout = timeout
+        self.reportGrace = reportGrace
+    }
+
+    /// `delivered` = the card already carries delivery.pr / delivery.url (the
+    /// agent's API write landed); `sessionRunning` = the session is still busy
+    /// (unknown counts as running so a transient RPC failure never fails a run);
+    /// `report` = the session's last report once it is known (nil = not read yet).
+    func evaluate(now: Date = Date(), delivered: Bool, sessionRunning: Bool,
+                  report: String?) -> WSDeliveryVerdict {
+        // The completion signal wins over everything: facts are the truth.
+        if delivered { return .delivered }
+        let elapsed = now.timeIntervalSince(startedAt)
+        // Report first (the session explains itself), but only after the grace
+        // window so a just-sent prompt cannot be judged by the previous turn.
+        if !sessionRunning, elapsed >= reportGrace, let report = report {
+            return .failed(.report(report))
+        }
+        // Timeout is the backstop when neither the facts nor a verdict arrive.
+        if elapsed >= timeout { return .failed(.timeout) }
+        return .pending
     }
 }

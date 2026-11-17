@@ -574,17 +574,9 @@ final class WorkstreamsRunner {
         return appendStageTasks(card: card, stage: stage, drafts: drafts)
     }
 
-    /// 交付动作（design A10 / A17）：交付是操作、没有自己的阶段，当前实现把交付
-    /// 提示词作为一条 acceptance 任务追加到该事项唯一队列，不启动。提示词由
-    /// WorkstreamsDelivery 提供，面板负责调用本入口并写回队列映射。会话用
-    /// /api/workstreams/delivery 回填 PR 事实，面板写卡。
-    @discardableResult
-    func enqueueDelivery(card: WorkstreamCard,
-                         prompt: String,
-                         title: String = "交付") -> (queue: WSQueue, created: [WSTaskItem]) {
-        let draft = WSTaskDraft(title: title, body: prompt)
-        return appendStageTasks(card: card, stage: .acceptance, drafts: [draft])
-    }
+    // 交付不是队列任务（design A17）：它作为「操作」直接发进事项的主场会话，
+    // 既不建交付任务也不另起会话（WorkstreamsPanel.initiateDelivery），所以 runner
+    // 没有 enqueueDelivery 入口。完成信号由 agent 调 /api/workstreams/delivery 写卡。
 
     /// 把一批阶段任务追加到该事项的队列（没有就建一条）。任务带 workstreamId + stage；
     /// 不启动。队列 closed 时返回空 created，由调用方解释。

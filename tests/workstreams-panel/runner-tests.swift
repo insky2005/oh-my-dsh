@@ -663,19 +663,8 @@ do {
     eq(h.dsh.sessions.count, 7, "one session per task, no task started twice")
 }
 
-section("enqueueDelivery: a delivery prompt task (delivery is an operation, A17)")
-do {
-    let h = Harness(board: WSBoard())
-    let card = wsCard(id: "WS-7", stage: .acceptance, queues: [])
-    let built = h.runner.enqueueDelivery(card: card, prompt: "事项交付提示词 body")
-    eq(h.runner.board.queues.count, 1, "a delivery enqueue creates the workstream queue")
-    eq(built.created.count, 1, "one delivery task")
-    eq(h.runner.board.task(built.created[0].id)?.stage, .acceptance, "the delivery prompt task runs in the last stage")
-    eq(h.runner.board.task(built.created[0].id)?.body, "事项交付提示词 body", "the delivery prompt lands as the body")
-    eq(h.runner.board.task(built.created[0].id)?.workstreamId, "WS-7", "the task carries the workstream id")
-    eq(h.runner.board.queue(built.queue.id)?.state, .draft, "the queue stays waiting")
-    eq(h.dsh.sessions.count, 0, "nothing auto-starts")
-}
+// 交付不是队列任务（design A17）：runner 没有 enqueueDelivery 入口，交付提示词
+// 直接发进事项的主场会话（WorkstreamsPanel.initiateDelivery）。源码守卫见 run.sh。
 
 print("")
 if failures == 0 {

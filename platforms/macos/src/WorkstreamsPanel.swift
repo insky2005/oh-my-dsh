@@ -270,6 +270,10 @@ final class WSPrimaryCardView: NSView {
     /// whose first line is the title and the rest the content) and append a
     /// waiting-state task to the workstream's queue — never start it.
     var onCreateTask: (() -> Void)?
+    /// 主卡「交付」(design A10 / A17): delivery is an OPERATION on the workstream,
+    /// not a stage card action. It runs in the bound home session (no delivery
+    /// task, no extra session) once accepted(ws).
+    var onDeliver: (() -> Void)?
     private(set) var isExpanded: Bool
 
     init(model: WSCardModel) {
@@ -339,6 +343,7 @@ final class WSPrimaryCardView: NSView {
                                      tooltip: L10n.tr("workstreams.start.item"), size: 22)
         start.onAction = { [weak self] in self?.onStartWorkstream?() }
         titleViews.append(start)
+        titleViews.append(deliverButton())
         let open = CustomIconButton(glyph: .symbol("arrow.up.forward.app"),
                                     tooltip: L10n.tr("workstreams.openCard"), size: 22)
         open.onAction = { [weak self] in self?.onOpen?() }
@@ -397,6 +402,16 @@ final class WSPrimaryCardView: NSView {
                                      tooltip: L10n.tr("workstreams.split"), size: 22)
         split.onAction = { [weak self] in self?.onSplitTasks?() }
         return split
+    }
+
+    /// 「交付」(design A10 / A17): the single panel entry for the delivery
+    /// operation. The admission / home-session path lives in the controller
+    /// (initiateDelivery), the same one POST /api/workstreams/deliver calls.
+    private func deliverButton() -> CustomIconButton {
+        let deliver = CustomIconButton(glyph: .symbol("paperplane"),
+                                       tooltip: L10n.tr("workstreams.deliver.action"), size: 22)
+        deliver.onAction = { [weak self] in self?.onDeliver?() }
+        return deliver
     }
 
     /// 「创建任务」(UX): open the panel's stage-task drawer for this workstream.
@@ -886,6 +901,7 @@ final class WorkstreamsPanelController: NSObject {
             card.onSplitTasks = { [weak self] in self?.splitTasks(model.id) }
             card.onStartWorkstream = { [weak self] in self?.startWorkstream(model.id) }
             card.onCreateTask = { [weak self] in self?.openCreateTask(model) }
+            card.onDeliver = { [weak self] in self?.deliverWorkstream(model.id) }
             list.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -20).isActive = true
         }
@@ -996,6 +1012,7 @@ final class WorkstreamsPanelController: NSObject {
     /// next queued one. The visible board is re-rendered only when it changed, so
     /// the timer never fights scrolling or an open menu.
     private func stepRunner() {
+        stepDeliveryRuns()
         guard !runners.isEmpty else { return }
         let visible = currentWorkspace
         let currentWasBusy = currentRunner?.isBusy ?? false
@@ -1082,25 +1099,32 @@ final class WorkstreamsPanelController: NSObject {
         reload()
     }
 
-    /// 发起交付 (design A10 / A17): the single admission + enqueue-and-start path
-    /// shared by POST /api/workstreams/deliver (and, once the main-card entry lands,
-    /// the 交付 button).
+    // MARK: Delivery operation (home session, design A10 / A17)
+
+    /// In-flight delivery attempts, keyed by workspace + workstream. A delivery is
+    /// an OPERATION in the home session: the panel never opens a delivery task or
+    /// a delivery session — it sends the prompt and watches for the API write.
+    private var deliveryRuns: [String: WSDeliveryRun] = [:]
+    private var deliveryReports: [String: String] = [:]
+    private var deliveryReportFetches: Set<String> = []
+
+    private func deliveryRunKey(_ workspace: String, _ id: String) -> String {
+        workspace + "\u{1F}" + id
+    }
+
+    /// 发起交付 (design A10 / A17): the single admission + home-session path
+    /// shared by the main card's「交付」button and POST /api/workstreams/deliver.
     ///
-    /// 准入顺序 = 失败优先级：阶段 → git 仓库 → 分支 → 远端 → GitHub → token
-    /// (WorkstreamsDelivery.resolve)。失败返回稳定 WSDeliveryBlocker 码（外加
-    /// no-queue / start-failed）与中文原因。交付是「操作」不是阶段：当前实现把交付
-    /// 提示词作为一条 acceptance 任务入队并启动该阶段（后续任务改为主场会话执行）。
-    /// 会话用 POST /api/workstreams/delivery 回填 PR 事实，面板派生 outcome 并写卡
-    /// （store §5：事实可写、outcome 只作派生缓存）。
+    /// 准入顺序 = 失败优先级：accepted(ws) → git 仓库 → 分支 → 远端 → GitHub → token
+    /// (WorkstreamsDelivery.resolve)。失败返回稳定 WSDeliveryBlocker 码与中文原因。
+    /// 交付是「操作」不是阶段：**不建交付任务、不另起会话**，把交付提示词发进事项
+    /// 的主场会话（local.json 的 workstreamSessions）。完成信号是 agent 调
+    /// POST /api/workstreams/delivery 写 pr / url；失败由会话汇报 + 超时兜底
+    /// （WSDeliveryRun，见 stepDeliveryRuns）。
     func initiateDelivery(_ cardID: String, workspace: String) -> [String: Any] {
         guard !workspace.isEmpty else { return WorkstreamError.noWorkspace.apiResult }
-        guard let runner = ensureRunner(workspace) else { return WorkstreamError.noWorkspace.apiResult }
         guard let card = try? WorkstreamsCore.loadCard(workspace: workspace, id: cardID) else {
             return WorkstreamError.unknownWorkstream(cardID).apiResult
-        }
-        guard card.stage == .acceptance else {
-            let blocker = WSDeliveryBlocker.notDeliveryStage(card.stage)
-            return ["ok": false, "error": blocker.code, "message": blocker.message]
         }
         let branch = WSGitProbe.live.currentBranch(workspace)
         let resolution = WorkstreamsDelivery.resolve(card: card,
@@ -1113,49 +1137,146 @@ final class WorkstreamsPanelController: NSObject {
             let blocker = resolution.blocker ?? WSDeliveryBlocker.noToken
             return ["ok": false, "error": blocker.code, "message": blocker.message]
         }
-        let built = runner.enqueueDelivery(card: card, prompt: WorkstreamsDelivery.prompt(plan: plan))
-        guard !built.created.isEmpty else {
-            return ["ok": false, "error": "no-queue",
-                    "message": "the workstream queue is closed; no delivery task was created"]
+        let bound = WSStore.loadLocal(workspace).workstreamSessions[card.id]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let sessionID = bound, !sessionID.isEmpty else {
+            return ["ok": false, "error": "no-home-session",
+                    "message": "事项还没有主场会话：先在会话中处理（拆分任务）后再交付"]
         }
-        writeBackQueueMapping(card: card, queueID: built.queue.id, workspace: workspace)
-        guard runner.startWorkstream(card, stage: .acceptance) else {
-            return ["ok": false, "error": "start-failed",
-                    "message": "the acceptance stage could not be started"]
-        }
+        let prompt = WorkstreamsDelivery.prompt(plan: plan)
+        let key = deliveryRunKey(workspace, card.id)
+        deliveryRuns[key] = WSDeliveryRun(workspace: workspace, workstreamID: card.id,
+                                          sessionID: sessionID)
+        deliveryReports.removeValue(forKey: key)
+        startStepTimer()
+        sendDeliveryPrompt(prompt, sessionID: sessionID, workspace: workspace, cardID: card.id)
         return ["ok": true,
-                "queue": queueJSON(built.queue),
-                "tasks": built.created.map { taskJSON($0) },
-                "stage": WorkstreamStage.acceptance.rawValue]
+                "workstream": card.id,
+                "session": sessionID,
+                "prompt": prompt,
+                "stage": card.stage.rawValue]
+    }
+
+    /// Send the prompt into the home session. Background: the dsh RPC is blocking,
+    /// but the API route must answer right after admission.
+    private func sendDeliveryPrompt(_ prompt: String, sessionID: String,
+                                    workspace: String, cardID: String) {
+        guard let port = serverPortProvider?(), port > 0 else {
+            deliveryRuns.removeValue(forKey: deliveryRunKey(workspace, cardID))
+            setStatus(L10n.tr("workstreams.deliver.start-failed"), isError: true)
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let sent = DshSessionOps.sendPrompt(port: port, sessionId: sessionID, text: prompt)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                let key = self.deliveryRunKey(workspace, cardID)
+                guard self.deliveryRuns[key] != nil else { return }
+                if sent {
+                    AppLog.shared.log("workstreams: delivery prompt for \(cardID) sent to home session \(sessionID)")
+                    if workspace == self.currentWorkspace {
+                        self.setStatus(L10n.tr("workstreams.deliver.started", cardID), isError: false)
+                    }
+                } else {
+                    self.deliveryRuns.removeValue(forKey: key)
+                    if workspace == self.currentWorkspace {
+                        self.setStatus(L10n.tr("workstreams.deliver.start-failed"), isError: true)
+                    }
+                }
+            }
+        }
+    }
+
+    /// One tick for the in-flight deliveries. The completion signal is the card
+    /// carrying delivery facts; otherwise a stopped home session decides by its
+    /// report (after a grace window), and the timeout is the last resort.
+    private func stepDeliveryRuns() {
+        guard !deliveryRuns.isEmpty else { return }
+        let now = Date()
+        let port = serverPortProvider?() ?? 3080
+        for (key, run) in Array(deliveryRuns) {
+            let card = try? WorkstreamsCore.loadCard(workspace: run.workspace, id: run.workstreamID)
+            let delivered = Self.hasDeliveryFacts(card)
+            let state = Self.sessionState(port: port, sessionId: run.sessionID)
+            // unknown counts as still running: a transient RPC failure is not a verdict.
+            let stopped = state == .idle || state == .missing
+            let verdict = run.evaluate(now: now, delivered: delivered,
+                                       sessionRunning: !stopped,
+                                       report: deliveryReports[key])
+            switch verdict {
+            case .pending:
+                if stopped, deliveryReports[key] == nil, !deliveryReportFetches.contains(key) {
+                    fetchDeliveryReport(key: key, run: run)
+                }
+            case .delivered:
+                deliveryRuns.removeValue(forKey: key)
+                deliveryReports.removeValue(forKey: key)
+                if run.workspace == currentWorkspace {
+                    setStatus(L10n.tr("workstreams.deliver.done", run.workstreamID), isError: false)
+                    reload()
+                }
+            case .failed(let failure):
+                deliveryRuns.removeValue(forKey: key)
+                deliveryReports.removeValue(forKey: key)
+                AppLog.shared.log("workstreams: delivery \(failure.code) for \(run.workstreamID): \(failure.message)")
+                if run.workspace == currentWorkspace {
+                    setStatus(L10n.tr(failure.messageKey, run.workstreamID), isError: true)
+                }
+            }
+        }
+    }
+
+    private static func hasDeliveryFacts(_ card: WorkstreamCard?) -> Bool {
+        guard let delivery = card?.delivery else { return false }
+        return delivery.pr != nil
+            || !((delivery.url ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    /// The agent's own report is the failure explanation when the session stops
+    /// without the delivery facts. Read on a background thread (it is a subprocess).
+    private func fetchDeliveryReport(key: String, run: WSDeliveryRun) {
+        deliveryReportFetches.insert(key)
+        let sessionID = run.sessionID
+        let workspace = run.workspace
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let report = Self.sessionReport(sessionId: sessionID, workspace: workspace) ?? ""
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.deliveryReportFetches.remove(key)
+                guard self.deliveryRuns[key] != nil else { return }
+                self.deliveryReports[key] = report
+            }
+        }
     }
 
     /// The 交付 entry (design A10 / A17): call the shared path and render the
-    /// outcome — started, or the stable reason (WSDeliveryBlocker + queue / start).
+    /// outcome — prompt sent, or the stable reason. The async send / run verdict
+    /// updates the status line later (sendDeliveryPrompt / stepDeliveryRuns).
     func deliverWorkstream(_ cardID: String) {
         let workspace = workspaceProvider?() ?? ""
         let result = initiateDelivery(cardID, workspace: workspace)
-        if (result["ok"] as? Bool) == true {
-            setStatus(L10n.tr("workstreams.deliver.started", cardID), isError: false)
-            reload()
+        guard (result["ok"] as? Bool) == true else {
+            let code = (result["error"] as? String) ?? ""
+            setStatus(L10n.tr(deliveryMessageKey(code)), isError: true)
             return
         }
-        let code = (result["error"] as? String) ?? ""
-        setStatus(L10n.tr(deliveryMessageKey(code)), isError: true)
+        if workspace == currentWorkspace { reload() }
     }
 
-    /// The L10n key for a delivery initiation failure: the six WSDeliveryBlocker
-    /// codes plus no-queue / start-failed all have a dedicated key; anything else
-    /// falls back to the generic blocked message.
+    /// The L10n key for a delivery initiation failure: the WSDeliveryBlocker
+    /// codes plus no-home-session all have a dedicated key; anything else falls
+    /// back to the generic blocked message.
     func deliveryMessageKey(_ code: String) -> String {
         switch code {
-        case "not-delivery-stage": return "workstreams.deliver.not-delivery-stage"
+        case "not-accepted": return "workstreams.deliver.not-accepted"
         case "not-git-repo": return "workstreams.deliver.not-git-repo"
         case "no-branch": return "workstreams.deliver.no-branch"
         case "no-remote": return "workstreams.deliver.no-remote"
         case "no-github-remote": return "workstreams.deliver.no-github-remote"
         case "no-token": return "workstreams.deliver.no-token"
-        case "no-queue": return "workstreams.deliver.no-queue"
-        case "start-failed": return "workstreams.deliver.start-failed"
+        case "no-home-session": return "workstreams.deliver.no-home-session"
+        case "report-failed": return "workstreams.deliver.report-failed"
+        case "delivery-timeout": return "workstreams.deliver.delivery-timeout"
         default: return "workstreams.deliver.blocked"
         }
     }
@@ -1715,7 +1836,7 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
         guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
             return WorkstreamError.noWorkspace.apiResult
         }
-        return writeResult({
+        let result = writeResult({
             try WorkstreamsDelivery.writeBack(workspace: workspace,
                                               id: request.id,
                                               pr: request.pr,
@@ -1725,12 +1846,29 @@ extension WorkstreamsPanelController: WorkstreamsAPIDelegate {
                                               abandoned: request.abandoned,
                                               today: WorkstreamsCore.today())
         }, workspace: workspace, session: request.session)
+        // The completion signal for a home-session delivery run: the facts landed.
+        if (result["ok"] as? Bool) == true {
+            completeDeliveryRun(workspace: workspace, id: request.id)
+        }
+        return result
+    }
+
+    /// A delivery run ends when the agent writes the delivery facts through the
+    /// API (the completion signal). Manual writes simply find no run (no-op).
+    private func completeDeliveryRun(workspace: String, id: String) {
+        let key = deliveryRunKey(workspace, id)
+        guard deliveryRuns.removeValue(forKey: key) != nil else { return }
+        deliveryReports.removeValue(forKey: key)
+        if workspace == currentWorkspace {
+            setStatus(L10n.tr("workstreams.deliver.done", id), isError: false)
+        }
     }
 
     /// POST /api/workstreams/deliver — 发起交付: the same shared path as the
-    /// 交付 entry (initiateDelivery). The response carries the queue / tasks on
-    /// success and a WSDeliveryBlocker code (or no-queue / start-failed) as
-    /// `error` on refusal.
+    /// main card's「交付」entry (initiateDelivery). Delivery runs in the workstream's
+    /// home session (no delivery task / session): success carries the session and
+    /// prompt; refusal carries a WSDeliveryBlocker code (or no-home-session) as
+    /// `error`.
     func apiWorkstreamsDeliver(_ request: WorkstreamsDeliverRequest) -> [String: Any] {
         guard let workspace = resolveWorkspace(request.workspace), !workspace.isEmpty else {
             return WorkstreamError.noWorkspace.apiResult

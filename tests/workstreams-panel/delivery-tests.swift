@@ -4,10 +4,12 @@
 //  semantics. Built by tests/workstreams-panel/run.sh with WorkstreamsCore.swift.
 //
 //  Covered:
-//    - the delivery path: stage gate -> git repo -> branch -> remote -> GitHub ->
-//      token -> plan (owner/repo/base/commits/covered/existing PR) + prompt;
-//    - every failure path has a clear reason: notDeliveryStage / notGitRepo /
-//      noBranch / noRemote / noGitHubRemote / noToken;
+//    - the delivery path: accepted(ws) -> git repo -> branch -> remote -> GitHub ->
+//      token -> plan (owner/repo/base/commits/covered/existing PR) + home-session
+//      prompt (no delivery task / session; the API write is the completion signal);
+//    - every failure path has a clear reason: notAccepted / notGitRepo / noBranch /
+//      noRemote / noGitHubRemote / noToken;
+//    - the home-session run verdict: facts (delivered) / report failure / timeout;
 //    - the pure parsers copied from the tasks panel (remotes / github / base /
 //      PR URL) and the token file layout (per-repo -> generic -> legacy);
 //    - a real temp git repo driven through WSGitProbe.live.
@@ -41,11 +43,16 @@ func tempDir(_ tag: String) -> String {
 
 func deliveryCard(stage: WorkstreamStage = .acceptance,
                   delivery: DeliveryInfo? = nil,
-                  covered: CoveredRecord? = nil) -> WorkstreamCard {
-    WorkstreamCard(id: "WS-000009", title: "事项面板交付", requirement: "REQ-000008",
-                   stage: stage, covered: covered, regression: nil, queues: [],
-                   delivery: delivery, created: "2026-10-06", updated: "2026-10-06",
-                   path: "/tmp/WS-000009.md", body: "")
+                  covered: CoveredRecord? = nil,
+                  accepted: Bool = true) -> WorkstreamCard {
+    // accepted(ws) is read from the "## 阶段确认" audit trail, not from `stage`.
+    let body = accepted
+        ? "## 阶段确认\n\n- 2026-10-07 · confirm · acceptance · source:panel"
+        : ""
+    return WorkstreamCard(id: "WS-000009", title: "事项面板交付", requirement: "REQ-000008",
+                          stage: stage, covered: covered, regression: nil, queues: [],
+                          delivery: delivery, created: "2026-10-06", updated: "2026-10-06",
+                          path: "/tmp/WS-000009.md", body: body)
 }
 
 // MARK: - injected probes
@@ -244,10 +251,14 @@ section("failure paths")
 var fake = FakeTokens()
 fake.files["/h/oh-my-dsh/tokens/example-example"] = "ghp_secret_value_123"
 
-// notDeliveryStage: 交付是操作（design A17），前置仍是最后的验收阶段。
-eq(WorkstreamsDelivery.resolve(card: deliveryCard(stage: .task), branch: "b",
+// notAccepted: 交付是操作（design A17），前置是 accepted(ws)——验收已确认。
+eq(WorkstreamsDelivery.resolve(card: deliveryCard(stage: .task, accepted: false), branch: "b",
                                repoRoot: "/repo", git: fakeProbe(), tokens: fake.store(home: "/h"))
-      .blocker, .notDeliveryStage(.task), "a stage before acceptance is refused")
+      .blocker, .notAccepted(.task), "a stage before acceptance is refused")
+eq(WorkstreamsDelivery.resolve(card: deliveryCard(accepted: false), branch: "b",
+                               repoRoot: "/repo", git: fakeProbe(), tokens: fake.store(home: "/h"))
+      .blocker, .notAccepted(.acceptance),
+   "acceptance without a human sign-off is refused (accepted(ws), not stage)")
 // notGitRepo
 eq(WorkstreamsDelivery.resolve(card: deliveryCard(), branch: "b",
                                repoRoot: "/repo", git: fakeProbe(isGit: false), tokens: fake.store(home: "/h"))
@@ -274,15 +285,17 @@ eq(WorkstreamsDelivery.resolve(card: deliveryCard(), branch: "b", repoRoot: "/re
       .blocker, .noToken, "a missing token is refused")
 
 // Every blocker carries a stable code + a non-empty reason.
-let blockers: [WSDeliveryBlocker] = [.notDeliveryStage(.planning), .notGitRepo, .noBranch,
+let blockers: [WSDeliveryBlocker] = [.notAccepted(.planning), .notGitRepo, .noBranch,
                                      .noRemote, .noGitHubRemote, .noToken]
-let expectedCodes = ["not-delivery-stage", "not-git-repo", "no-branch", "no-remote",
+let expectedCodes = ["not-accepted", "not-git-repo", "no-branch", "no-remote",
                      "no-github-remote", "no-token"]
 for (i, blocker) in blockers.enumerated() {
     eq(blocker.code, expectedCodes[i], "blocker code " + expectedCodes[i])
     check(!blocker.message.isEmpty, "blocker message is not empty: " + blocker.code)
     eq(blocker.messageKey, "workstreams.deliver." + blocker.code, "blocker message key: " + blocker.code)
 }
+check(WSDeliveryBlocker.notAccepted(.planning).message.contains("验收"),
+      "notAccepted reason names the acceptance sign-off")
 check(WSDeliveryBlocker.noBranch.message.contains("分支"), "noBranch reason names the branch")
 check(WSDeliveryBlocker.noRemote.message.contains("远端"), "noRemote reason names the remote")
 check(WSDeliveryBlocker.noToken.message.contains("token"), "noToken reason names the token")
@@ -343,6 +356,52 @@ eq(WorkstreamsDelivery.summary(fromReport: "anything\nhttps://github.com/example
    "https://github.com/example/example/pull/7", "summary prefers the PR url")
 eq(WorkstreamsDelivery.summary(fromReport: "已合并到 main"), "已合并到 main", "summary falls back to the first line")
 eq(WorkstreamsDelivery.summary(fromReport: "   "), nil, "blank report -> no summary")
+
+// The prompt explicitly says it runs in the home session (no delivery task /
+// session) and names the API write as the completion signal.
+let homePrompt = WorkstreamsDelivery.prompt(plan: resolution.plan!)
+check(homePrompt.contains("主场会话"), "prompt runs in the home session")
+check(homePrompt.contains("不要新建交付任务"), "prompt forbids a delivery task")
+check(homePrompt.contains("完成信号"), "prompt names the completion signal")
+check(homePrompt.contains("/api/workstreams/delivery"), "prompt names the facts write route")
+
+// MARK: - the home-session delivery run (completion / report / timeout)
+
+section("home-session delivery run")
+let t0 = Date(timeIntervalSince1970: 1_000_000)
+let run = WSDeliveryRun(workspace: "/repo", workstreamID: "WS-000009", sessionID: "s-home",
+                        startedAt: t0, timeout: 120, reportGrace: 10)
+eq(run.evaluate(now: t0.addingTimeInterval(5), delivered: false,
+                sessionRunning: true, report: nil), .pending,
+   "a running session with no facts yet is pending")
+eq(run.evaluate(now: t0.addingTimeInterval(5), delivered: true,
+                sessionRunning: true, report: nil), .delivered,
+   "the API write (delivery facts on the card) is the completion signal")
+// The report only decides after the grace window: a just-sent prompt must not be
+// judged by the previous turn's report.
+eq(run.evaluate(now: t0.addingTimeInterval(5), delivered: false,
+                sessionRunning: false, report: "权限不足"), .pending,
+   "a stopped session inside the report grace is still pending")
+eq(run.evaluate(now: t0.addingTimeInterval(11), delivered: false,
+                sessionRunning: false, report: "没有权限推送"), .failed(.report("没有权限推送")),
+   "a stopped session without facts fails with its own report")
+eq(run.evaluate(now: t0.addingTimeInterval(11), delivered: true,
+                sessionRunning: false, report: "没有权限推送"), .delivered,
+   "facts win over the report")
+eq(run.evaluate(now: t0.addingTimeInterval(121), delivered: false,
+                sessionRunning: true, report: nil), .failed(.timeout),
+   "a session that never records the facts times out")
+eq(run.evaluate(now: t0.addingTimeInterval(121), delivered: true,
+                sessionRunning: true, report: nil), .delivered,
+   "facts win over the timeout")
+eq(WSDeliveryFailure.report("x").code, "report-failed", "report failure code")
+eq(WSDeliveryFailure.timeout.code, "delivery-timeout", "timeout failure code")
+eq(WSDeliveryFailure.report("x").messageKey, "workstreams.deliver.report-failed", "report failure key")
+eq(WSDeliveryFailure.timeout.messageKey, "workstreams.deliver.delivery-timeout", "timeout failure key")
+check(!WSDeliveryFailure.report("   ").message.isEmpty, "empty report still explains the failure")
+check(WSDeliveryFailure.report("没有权限推送").message.contains("没有权限推送"),
+      "report failure carries the session's own explanation")
+check(WSDeliveryFailure.timeout.message.contains("超时"), "timeout failure names the timeout")
 
 // MARK: - real git pipeline
 

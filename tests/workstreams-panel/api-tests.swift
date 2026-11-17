@@ -385,9 +385,10 @@ eq(deliveryClear?.status, 200, "delivery null clears (200)")
 eq(fake.lastDelivery?.pr == nil, true, "explicit null delivery -> nil facts")
 eq(WorkstreamsAPIRouter.status(for: ["ok": false, "error": "outcome-derived"]), 400, "outcome-derived -> 400")
 
-section("deliver route (initiate delivery: git/GitHub/token admission + start)")
-// 发起交付 = 面板「交付」按钮的同一条路径。路由只做校验与透传；准入与入队/启动由
-// 面板的 initiateDelivery 落地（源码守卫固定两条入口共用它）。
+section("deliver route (initiate delivery: accepted + git/GitHub/token admission, home session)")
+// 发起交付 = 面板主卡「交付」按钮的同一条路径。路由只做校验与透传；准入（accepted(ws)
+// → git / GitHub / token）与「发进主场会话」由面板的 initiateDelivery 落地
+// （源码守卫固定两条入口共用它）。
 let deliverNoBody = WorkstreamsAPIRouter.route(HTTPRequest(method: "POST", path: "/api/workstreams/deliver"), delegate: fake)
 eq(deliverNoBody?.status, 400, "deliver without body -> 400")
 eq(deliverNoBody?.json?["error"] as? String, "missing-body", "deliver missing-body code")
@@ -401,12 +402,11 @@ eq(deliverOK?.status, 200, "deliver 200")
 eq(fake.lastDeliver?.id, "WS-000001", "deliver id trimmed and routed")
 eq(fake.lastDeliver?.workspace?.hasSuffix("/repo"), true, "deliver workspace normalized")
 eq(fake.lastDeliver?.session, "s-3", "deliver carries session")
-// 每个失败原因码都原样回传；not-delivery-stage 是状态冲突（409），start-failed 是
-// 服务端失败（500），其余准入失败是 400，队列缺失沿用 404。
+// 每个失败原因码都原样回传；not-accepted（未验收）与 no-home-session（没有主场
+// 会话可执行交付）是状态冲突（409），其余准入失败是 400。
 let deliverFailures: [(String, Int)] = [
-    ("not-delivery-stage", 409), ("not-git-repo", 400), ("no-branch", 400),
-    ("no-remote", 400), ("no-github-remote", 400), ("no-token", 400),
-    ("no-queue", 404), ("start-failed", 500),
+    ("not-accepted", 409), ("no-home-session", 409), ("not-git-repo", 400),
+    ("no-branch", 400), ("no-remote", 400), ("no-github-remote", 400), ("no-token", 400),
 ]
 for (code, expected) in deliverFailures {
     fake.deliverResult = ["ok": false, "error": code, "message": "reason: " + code]

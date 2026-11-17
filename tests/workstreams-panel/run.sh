@@ -17,9 +17,10 @@
 #   5. the stage handoff prompts (WorkstreamsPrompts.swift): the panel-generated
 #      (stage, action) prompt for planning / design / task / acceptance,
 #      injection into a stage queue task's body and the execution completion marker.
-#   6. the delivery pipeline (WorkstreamsDelivery.swift): git remote / github / base
-#      detection, PR lookup and the token file layout, plus every refusal reason
-#      (notDeliveryStage / notGitRepo / noBranch / noRemote / noGitHubRemote / noToken).
+#   6. the delivery pipeline (WorkstreamsDelivery.swift): accepted(ws) admission,
+#      git remote / github / base detection, PR lookup, the token file layout, every
+#      refusal reason (notAccepted / notGitRepo / noBranch / noRemote / noGitHubRemote /
+#      noToken), and the home-session run verdict (facts / report / timeout).
 # No AppKit, no dsh server, no window. Usage: tests/workstreams-panel/run.sh
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -95,10 +96,13 @@ rm -rf "$TMP"
 echo "--- workstreams delivery (git pipeline / GitHub PR / token file reading, A10) ---"
 TMP="$(mktemp -d)"
 cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
+# 交付准入现在用 accepted(ws)（WorkstreamsStageGate 是唯一判据），编译器里带上门。
+cp ../../platforms/macos/src/WorkstreamsStageGate.swift "$TMP/WorkstreamsStageGate.swift"
 cp ../../platforms/macos/src/WorkstreamsDelivery.swift "$TMP/WorkstreamsDelivery.swift"
 cp delivery-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
-  -o "$TMP/delivery-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsDelivery.swift" "$TMP/main.swift"
+  -o "$TMP/delivery-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsStageGate.swift" \
+  "$TMP/WorkstreamsDelivery.swift" "$TMP/main.swift"
 "$TMP/delivery-tests"
 rm -rf "$TMP"
 
@@ -501,9 +505,9 @@ fi
 echo "queue id placement guard ok"
 
 echo "--- delivery wiring + covered / delivery write routes guard (A10 / store 3.2 / 5) ---"
-# The last "尚未接线" item: WorkstreamsDelivery is wired to the panel / runner as a
-# delivery-stage action, and covered / delivery get write routes. delivery.outcome
-# is a derived cache, refused at the API boundary.
+# Delivery is an OPERATION in the home session (design A17): it is not a queue task
+# and it does not create a session. covered / delivery keep their write routes, and
+# delivery.outcome stays a derived cache refused at the API boundary.
 for needle in 'apiWorkstreamsCovered' 'apiWorkstreamsDelivery' 'deliverWorkstream('; do
   if ! grep -qF "$needle" "$PANEL"; then
     echo "FAIL: WorkstreamsPanel.swift is missing $needle" >&2
@@ -512,12 +516,19 @@ for needle in 'apiWorkstreamsCovered' 'apiWorkstreamsDelivery' 'deliverWorkstrea
 done
 if ! grep -qF 'WorkstreamsDelivery.resolve(' "$PANEL" \
    || ! grep -qF 'WorkstreamsDelivery.prompt(plan:' "$PANEL" \
-   || ! grep -qF 'runner.enqueueDelivery(' "$PANEL"; then
-  echo "FAIL: the panel must resolve a delivery plan, enqueue it and start it" >&2
+   || ! grep -qF 'WSDeliveryRun(' "$PANEL"; then
+  echo "FAIL: the panel must resolve a delivery plan and run its prompt in the home session" >&2
   exit 1
 fi
-if ! grep -qE 'func enqueueDelivery\(' "$SRC2/WorkstreamsRunner.swift"; then
-  echo "FAIL: the runner is missing the delivery enqueue entry point" >&2
+# 交付不是队列任务：面板与 runner 都不得再建 delivery 任务。
+if grep -qE 'runner\.enqueueDelivery\(|func enqueueDelivery\(' "$PANEL" "$SRC2/WorkstreamsRunner.swift"; then
+  echo "FAIL: delivery must not enqueue a delivery task (it runs in the home session)" >&2
+  exit 1
+fi
+# 准入的唯一来源是 accepted(ws)（WorkstreamsStageGate 是唯一判据）。
+if ! grep -qF 'WorkstreamsStageGate.accepted(card)' "$SRC2/WorkstreamsDelivery.swift" \
+   || ! grep -qF '"not-accepted"' "$SRC2/WorkstreamsDelivery.swift"; then
+  echo "FAIL: WorkstreamsDelivery.resolve must gate on accepted(ws) with the not-accepted code" >&2
   exit 1
 fi
 for route in '/api/workstreams/covered' '/api/workstreams/delivery'; do
@@ -540,9 +551,9 @@ if ! grep -qF 'workstreamsCovered' "$SRC2/BrowserAPI.swift" \
   echo "FAIL: main.swift / BrowserAPI.swift are missing the covered / delivery bridge landings" >&2
   exit 1
 fi
-for key in workstreams.stage.deliver workstreams.deliver.not-delivery-stage \
-           workstreams.deliver.no-branch workstreams.deliver.no-remote \
-           workstreams.deliver.no-token; do
+for key in workstreams.deliver.action workstreams.deliver.not-accepted \
+           workstreams.deliver.no-home-session workstreams.deliver.no-branch \
+           workstreams.deliver.no-remote workstreams.deliver.no-token; do
   if ! grep -qF "$key" "$MAIN"; then
     echo "FAIL: main.swift is missing the $key L10n key" >&2
     exit 1
@@ -550,9 +561,10 @@ for key in workstreams.stage.deliver workstreams.deliver.not-delivery-stage \
 done
 echo "delivery wiring + covered / delivery write routes guard ok"
 
-echo "--- 发起交付 guard (面板按钮 == API 同一条路径, task 36) ---"
-# 面板「交付」按钮与 POST /api/workstreams/deliver 必须共用同一个 initiateDelivery，
-# 不允许两套实现；失败一律回稳定 WSDeliveryBlocker 码（+ no-queue / start-failed）。
+echo "--- 发起交付 guard (主卡按钮 == API 同一条路径 + 主场会话执行) ---"
+# 面板主卡「交付」按钮与 POST /api/workstreams/deliver 共用同一个 initiateDelivery；
+# 交付是操作：不建交付任务、不另起会话，提示词发进事项的主场会话，完成信号是
+# agent 调 POST /api/workstreams/delivery 写 pr / url；失败由汇报 + 超时兜底。
 if ! grep -qF '/api/workstreams/deliver' "$API"; then
   echo "FAIL: WorkstreamsAPI.swift is missing the /api/workstreams/deliver route" >&2
   exit 1
@@ -573,10 +585,32 @@ if [ "$(grep -c 'initiateDelivery(' "$PANEL")" -lt 3 ]; then
   echo "FAIL: the panel button and the API delegate must both call initiateDelivery" >&2
   exit 1
 fi
-# 交付模块是准入的唯一来源（面板不重复手写 git 检查）。
+# 准入走 WorkstreamsDelivery；执行走主场会话（绑定会话），不建任务 / 不起会话。
 if ! grep -qF 'WorkstreamsDelivery.resolve(' "$PANEL" \
-   || ! grep -qF 'runner.enqueueDelivery(' "$PANEL"; then
-  echo "FAIL: initiateDelivery must resolve admission via WorkstreamsDelivery and enqueue via the runner" >&2
+   || ! grep -qF 'WSDeliveryRun(' "$PANEL" \
+   || ! grep -qF 'WSStore.loadLocal(workspace).workstreamSessions[card.id]' "$PANEL" \
+   || ! grep -qF 'sendDeliveryPrompt(' "$PANEL"; then
+  echo "FAIL: initiateDelivery must resolve admission and send the prompt into the home session" >&2
+  exit 1
+fi
+if grep -qE 'enqueueDelivery|ensureRunner\(workspace\).*startWorkstream' "$PANEL"; then
+  echo "FAIL: delivery must not create a delivery task or start a stage queue" >&2
+  exit 1
+fi
+# 入口只挂在事项主卡；阶段卡没有交付按钮。
+if ! grep -qF 'func deliverButton()' "$PANEL" \
+   || [ "$(grep -c 'append(deliverButton())' "$PANEL")" -ne 1 ]; then
+  echo "FAIL: only the main card must carry the 交付 button" >&2
+  exit 1
+fi
+if grep -qE 'onDeliverStage|workstreams\.stage\.deliver' "$PANEL"; then
+  echo "FAIL: the stage card must not carry a delivery entry" >&2
+  exit 1
+fi
+# 完成信号 / 汇报 / 超时兜底接在面板 tick 上。
+if ! grep -qF 'stepDeliveryRuns()' "$PANEL" \
+   || ! grep -qF 'func completeDeliveryRun(' "$PANEL"; then
+  echo "FAIL: the panel must watch the home-session run (facts / report / timeout)" >&2
   exit 1
 fi
 if ! grep -qF 'bridge.workstreamsDeliver' "$MAIN" \

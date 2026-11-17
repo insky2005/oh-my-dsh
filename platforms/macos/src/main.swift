@@ -1095,13 +1095,17 @@ enum L10n {
         "workstreams.task.state.needsReview": ("待确认", "Needs review"),
         "workstreams.task.state.cancelled": ("已取消", "Cancelled"),
         "workstreams.recovered": ("已恢复：%d 条中断任务，%d 条队列暂停", "Recovered: %d interrupted task(s), %d paused queue(s)"),
-        // Delivery stage action (design A10): explicit refusal reasons + status.
-        "workstreams.stage.deliver": ("交付事项", "Deliver workstream"),
-        "workstreams.deliver.started": ("已启动交付会话（%@）", "Delivery session started (%@)"),
+        // Delivery operation (design A10 / A17): it runs in the home session and
+        // the agent writes the facts through the API; explicit refusal reasons.
+        "workstreams.deliver.action": ("交付", "Deliver"),
+        "workstreams.deliver.started": ("已把交付提示词发进主场会话（%@）", "Delivery prompt sent to the home session (%@)"),
+        "workstreams.deliver.done": ("交付完成：已记录 PR 事实（%@）", "Delivery complete: PR facts recorded (%@)"),
         "workstreams.deliver.blocked": ("交付准入失败", "Delivery is blocked"),
-        "workstreams.deliver.no-queue": ("事项队列不可用，无法交付", "The workstream queue is unavailable; cannot deliver"),
-        "workstreams.deliver.start-failed": ("交付会话启动失败", "Could not start the delivery session"),
-        "workstreams.deliver.not-delivery-stage": ("事项尚未进入交付阶段", "The workstream is not in the delivery stage yet"),
+        "workstreams.deliver.start-failed": ("交付提示词发送失败", "Could not send the delivery prompt"),
+        "workstreams.deliver.not-accepted": ("事项尚未通过验收确认，不能交付（先完成验收 sign-off）", "The workstream is not accepted yet; confirm acceptance before delivering"),
+        "workstreams.deliver.no-home-session": ("事项还没有主场会话，先拆分任务再交付", "The workstream has no home session yet; split tasks first"),
+        "workstreams.deliver.report-failed": ("事项 %@ 交付未完成：主场会话结束但没有记录交付事实（PR / URL）", "Delivery for %@ did not finish: the home session ended without recording the delivery facts (PR / URL)"),
+        "workstreams.deliver.delivery-timeout": ("事项 %@ 交付超时：主场会话没有记录交付事实（PR / URL）", "Delivery for %@ timed out: the home session recorded no delivery facts (PR / URL)"),
         "workstreams.deliver.not-git-repo": ("工作区不是 git 仓库", "The workspace is not a git repository"),
         "workstreams.deliver.no-branch": ("没有可交付的分支", "There is no branch to deliver"),
         "workstreams.deliver.no-remote": ("仓库没有远端，无法推送 / 开 PR", "The repository has no remote to push / open a PR"),

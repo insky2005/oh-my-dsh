@@ -220,8 +220,9 @@ protocol WorkstreamsAPIDelegate: AnyObject {
     /// accepted from the caller (store design 5).
     func apiWorkstreamsDelivery(_ request: WorkstreamsDeliveryRequest) -> [String: Any]
     /// 发起交付: the panel button and this route go through one shared path
-    /// (WorkstreamsPanel.initiateDelivery) so the two can never drift. Failures
-    /// carry a WSDeliveryBlocker code (+ no-queue / start-failed) as `error`.
+    /// (WorkstreamsPanel.initiateDelivery) so the two can never drift. Delivery
+    /// runs in the workstream's home session (no delivery task / session);
+    /// failures carry a WSDeliveryBlocker code (+ no-home-session) as `error`.
     func apiWorkstreamsDeliver(_ request: WorkstreamsDeliverRequest) -> [String: Any]
     /// The focus channel: bring the workstreams panel forward and, when an id is
     /// given, highlight + scroll to that card. The router calls it for any route
@@ -783,11 +784,11 @@ enum WorkstreamsAPIRouter {
         case "write-failed": return 500
         case "evidence-missing": return 409
         case "stage-changed": return 409
-        // 发起交付: a workstream that has not reached acceptance (the last stage)
-        // is a state conflict; a failed start is a server-side failure. The other
-        // WSDeliveryBlocker reasons are bad-state 400s (default).
-        case "not-delivery-stage": return 409
-        case "start-failed": return 500
+        // 发起交付: a workstream that is not accepted(ws) — or has no home session
+        // to run the delivery in — is a state conflict. The other WSDeliveryBlocker
+        // reasons are bad-state 400s (default).
+        case "not-accepted": return 409
+        case "no-home-session": return 409
         default: return 400
         }
     }
