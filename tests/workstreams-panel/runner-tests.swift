@@ -105,6 +105,11 @@ final class Recorder {
     func logged(_ needle: String) -> Bool { logs.contains { $0.contains(needle) } }
 }
 
+/// 汇总（任务会话 → 主场会话）的收集器。runner 只触发，发到哪条会话由调用方决定。
+final class SummaryRecorder {
+    var items: [WSSummary] = []
+}
+
 /// Blocking work the runner handed to an asynchronous perform but nobody ran yet.
 final class WorkQueue {
     var items: [() -> Void] = []
@@ -117,6 +122,9 @@ final class Harness {
     let rec = Recorder()
     let runner: WorkstreamsRunner
     var board: WSBoard { runner.board }
+    /// 汇总回调收到的全部摘要（按触发顺序）。
+    let summaryRecorder = SummaryRecorder()
+    var summaries: [WSSummary] { summaryRecorder.items }
 
     private let work = WorkQueue()
     private let asynchronous: Bool
@@ -124,12 +132,14 @@ final class Harness {
     init(board: WSBoard,
          timeout: TimeInterval = 30 * 60,
          asynchronous: Bool = false,
-         requireMarker: Bool = false) {
+         requireMarker: Bool = false,
+         facts: WSSummaryFacts = WSSummaryFacts()) {
         self.asynchronous = asynchronous
         let work = self.work
         let asynchronous = asynchronous
         let dsh = self.dsh
         let rec = self.rec
+        let summaryRecorder = self.summaryRecorder
         let env = WSRunnerEnv(
             repoRoot: "/tmp/ws",
             createSession: { _ in dsh.create() },
@@ -139,6 +149,8 @@ final class Harness {
             cancelSession: { id in dsh.cancel(id) },
             sessionReport: { id in dsh.report(id) },
             requireCompletionMarker: requireMarker,
+            summaryFacts: { _, _ in facts },
+            onSummary: { summary in summaryRecorder.items.append(summary) },
             persist: { _ in rec.persistCount += 1 },
             log: { message in rec.logs.append(message) },
             perform: { blocking, completion in
@@ -665,6 +677,151 @@ do {
 
 // 交付不是队列任务（design A17）：runner 没有 enqueueDelivery 入口，交付提示词
 // 直接发进事项的主场会话（WorkstreamsPanel.initiateDelivery）。源码守卫见 run.sh。
+
+
+// MARK: - 汇总回主场会话（阶段批量 + 例外即时）
+
+section("home summary: stage batch once, exceptions immediate")
+do {
+    let seeded = seededBoard(titles: ["A", "B"], stage: .task)
+    let h = Harness(board: seeded.board,
+                    facts: WSSummaryFacts(pr: "https://github.com/example/example/pull/7",
+                                          commit: "abc1234"))
+    _ = h.runner.step()
+    eq(h.summaries.count, 0, "no summary while the first task is still running")
+
+    h.dsh.reports[h.dsh.sessions[0]] = "built the thing"
+    h.dsh.finish(h.dsh.sessions[0])
+    _ = h.runner.step()
+    eq(h.summaries.count, 0, "one finished task does not summarize its stage early")
+
+    h.dsh.reports[h.dsh.sessions[1]] = "B done"
+    h.dsh.finish(h.dsh.sessions[1])
+    _ = h.runner.step()
+    eq(h.summaries.count, 1, "the stage summarizes exactly once when its last task ends")
+    guard let batch = h.summaries.first else {
+        check(false, "a stage batch summary was produced")
+        exit(1)
+    }
+    eq(batch.kind, .stageBatch, "kind is stage batch")
+    eq(batch.workstreamID, "WS-1", "the summary names the workstream")
+    eq(batch.stage, .task, "the summary names the stage")
+    eq(batch.tasks.count, 2, "the batch includes every task of the stage")
+    check(batch.text.contains("阶段完成"), "text marks a stage batch")
+    check(batch.text.contains("阶段：执行"), "text names the stage in Chinese")
+    check(batch.text.contains("2 完成"), "text counts the done tasks")
+    check(batch.text.contains("[完成] A") && batch.text.contains("[完成] B"),
+          "text lists every task with its state")
+    check(batch.text.contains("汇报：built the thing"), "text carries the task report")
+    check(batch.text.contains("PR：https://github.com/example/example/pull/7"),
+          "text carries the PR fact")
+    check(batch.text.contains("提交：abc1234"), "text carries the commit fact")
+    check(batch.text.contains("不代表人已确认"), "text says the human gate is still open")
+    check(batch.text.contains("不要自行调用 stage/confirm"), "text forbids self-signing the gate")
+}
+
+section("home summary: a failed task summarizes immediately (exception)")
+do {
+    let seeded = seededBoard(titles: ["A", "B"])
+    let h = Harness(board: seeded.board)
+    h.dsh.promptFails = true
+    _ = h.runner.step()
+    eq(h.summaries.count, 1, "a failed task summarizes immediately, before the stage ends")
+    guard let failure = h.summaries.first else {
+        check(false, "an exception summary was produced")
+        exit(1)
+    }
+    eq(failure.kind, .exception, "kind is exception")
+    eq(failure.tasks.count, 1, "an exception names the one task")
+    check(failure.text.contains("例外"), "text marks an exception")
+    check(failure.text.contains("1 失败"), "text counts the failure")
+    check(failure.text.contains("[失败] A"), "text names the failed task")
+    check(failure.text.contains("提示词发送失败"), "text translates the failure reason")
+    check(failure.text.contains("队列已暂停"), "text says the queue paused")
+    eq(h.runner.board.task(seeded.taskIDs[0])?.state, .failed, "the task is failed")
+    eq(h.runner.board.queue(seeded.queueID)?.state, .paused, "the queue paused on the failure")
+}
+
+section("home summary: needsReview summarizes immediately (exception)")
+do {
+    let seeded = seededBoard(titles: ["A"])
+    let h = Harness(board: seeded.board, requireMarker: true)
+    h.dsh.echoesTaskMarkers = false
+    _ = h.runner.step()
+    h.dsh.finish(h.dsh.sessions[0])
+    _ = h.runner.step()
+    eq(h.runner.board.task(seeded.taskIDs[0])?.state, .needsReview, "the task waits for review")
+    eq(h.summaries.count, 1, "needsReview summarizes immediately")
+    guard let review = h.summaries.first else {
+        check(false, "a needsReview exception summary was produced")
+        exit(1)
+    }
+    eq(review.kind, .exception, "kind is exception")
+    check(review.text.contains("待确认"), "text marks the review state")
+    check(review.text.contains("完成校验未通过"), "text explains the missing completion marker")
+}
+
+section("home summary: only workstream tasks are summarized; a rerun summarizes again")
+do {
+    // 没有 workstreamId 的任务没有「主场会话」可回：不汇总。
+    let seeded = seededBoard(titles: ["A"], workstream: "")
+    let h = Harness(board: seeded.board)
+    _ = h.runner.step()
+    h.dsh.finish(h.dsh.sessions[0])
+    _ = h.runner.step()
+    eq(h.summaries.count, 0, "a task without a workstream has no home session to summarize to")
+
+    // 同一阶段再跑一轮：pump 重置阶段标记，下一批结束还会汇总一次。
+    let seeded2 = seededBoard(titles: ["A"])
+    let h2 = Harness(board: seeded2.board)
+    _ = h2.runner.step()
+    h2.dsh.finish(h2.dsh.sessions[0])
+    _ = h2.runner.step()
+    eq(h2.summaries.count, 1, "the first run of the stage summarizes once")
+    // 同阶段追加一条任务再跑一轮：pump 重置阶段标记，第二批结束还会汇总一次。
+    let added = h2.runner.appendTasks(toQueueID: seeded2.queueID, stage: .task,
+                                       drafts: [WSTaskDraft(title: "C", body: "C")])
+    eq(added.count, 1, "a second task was appended to the same stage")
+    _ = h2.runner.startQueue(seeded2.queueID)
+    eq(h2.runner.runningTaskID, added.first?.id, "the appended task runs")
+    h2.dsh.finish(h2.dsh.sessions[1])
+    _ = h2.runner.step()
+    eq(h2.summaries.count, 2, "a rerun of the same stage summarizes again")
+    eq(h2.summaries.last?.kind, .stageBatch, "the rerun is a stage batch too")
+    eq(h2.summaries.last?.tasks.count, 2, "the rerun batch includes both finished tasks")
+}
+
+section("summary copy: PR fact falls back to the task report")
+do {
+    let reported = WSTaskItem(id: "t1", title: "A", state: .done,
+                              report: "done\nhttps://github.com/example/example/pull/12")
+    let fallback = WSSummary(kind: .stageBatch, workstreamID: "WS-1", stage: .task,
+                             tasks: [WSSummaryTask(reported)])
+    check(fallback.text.contains("PR：https://github.com/example/example/pull/12"),
+          "the PR link in the report is the fallback fact")
+    check(fallback.text.contains("汇报：done"), "only the first report line goes in")
+    let facts = WSSummary(kind: .stageBatch, workstreamID: "WS-1", stage: .task,
+                          tasks: [WSSummaryTask(reported)],
+                          facts: WSSummaryFacts(pr: "https://github.com/example/example/pull/7"))
+    check(facts.text.contains("PR：https://github.com/example/example/pull/7"),
+          "an injected PR fact wins over the report link")
+    check(!facts.text.contains("pull/12"), "the report link is not repeated when a fact exists")
+}
+
+section("home session lookup: no binding = do not send")
+do {
+    var local = WSLocalState()
+    local.workstreamSessions["WS-1"] = "  s-home  "
+    eq(WorkstreamsSummary.homeSession(for: "WS-1", in: local), "s-home",
+       "a bound home session is trimmed and returned")
+    eq(WorkstreamsSummary.homeSession(for: "WS-2", in: local), nil,
+       "an unbound workstream has no home session")
+    local.workstreamSessions["WS-1"] = "   "
+    eq(WorkstreamsSummary.homeSession(for: "WS-1", in: local), nil,
+       "a blank binding counts as no binding")
+    eq(WorkstreamsSummary.homeSession(for: "", in: local), nil,
+       "an empty workstream id has no home session")
+}
 
 print("")
 if failures == 0 {

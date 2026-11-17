@@ -991,6 +991,12 @@ final class WorkstreamsPanelController: NSObject {
             },
             sessionReport: { id in Self.sessionReport(sessionId: id, workspace: repoRoot) },
             requireCompletionMarker: true,
+            summaryFacts: { [weak self] workstream, _ in
+                self?.summaryFacts(workspace: repoRoot, workstream: workstream) ?? WSSummaryFacts()
+            },
+            onSummary: { [weak self] summary in
+                self?.sendSummary(summary, workspace: repoRoot)
+            },
             persist: { board in WSStore.save(repoRoot, board) },
             log: { message in AppLog.shared.log(message) },
             perform: { blocking, completion in
@@ -1059,6 +1065,44 @@ final class WorkstreamsPanelController: NSObject {
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         let text = object["text"] as? String
         return (text?.isEmpty ?? true) ? nil : text
+    }
+
+    // MARK: Stage summaries (task session -> home session, A16)
+
+    /// 汇总事实：PR / 提交都来自 WS 卡（runner 不碰 git 与卡片）。delivery.url /
+    /// delivery.pr 是交付事实，covered.head 是验收点记录里的提交。
+    private func summaryFacts(workspace: String, workstream: String) -> WSSummaryFacts {
+        guard let card = try? WorkstreamsCore.loadCard(workspace: workspace, id: workstream) else {
+            return WSSummaryFacts()
+        }
+        var pr = card.delivery?.url
+        if pr == nil, let number = card.delivery?.pr { pr = "PR #" + String(number) }
+        var commit = card.covered?.head
+        if let head = commit, head.count > 12 { commit = String(head.prefix(12)) }
+        // 没有验收点记录时用工作区最近一条提交补「提交」事实（git log -1，很快）。
+        if commit == nil { commit = WSGitProbe.live.lastCommit(workspace) }
+        return WSSummaryFacts(pr: pr, commit: commit)
+    }
+
+    /// 把汇总发进事项的主场会话。**无绑定会话 = 不发**（不凭空起会话，也不回退
+    /// 当前会话）；发送在后台线程（dsh RPC 阻塞），失败只记日志。
+    private func sendSummary(_ summary: WSSummary, workspace: String) {
+        guard let sessionID = WorkstreamsSummary.homeSession(
+            for: summary.workstreamID, in: WSStore.loadLocal(workspace)) else {
+            AppLog.shared.log("workstreams: summary for " + summary.workstreamID
+                              + " not sent — no home session")
+            return
+        }
+        let port = serverPortProvider?() ?? 3080
+        let text = summary.text
+        DispatchQueue.global(qos: .userInitiated).async {
+            let sent = DshSessionOps.sendPrompt(port: port, sessionId: sessionID, text: text)
+            DispatchQueue.main.async {
+                AppLog.shared.log("workstreams: summary for " + summary.workstreamID
+                                  + (sent ? " sent to home session " : " could not be sent to home session ")
+                                  + sessionID)
+            }
+        }
     }
 
     // MARK: Queue actions (panel buttons)

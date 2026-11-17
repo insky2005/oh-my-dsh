@@ -437,6 +437,8 @@ if let plan = live.plan {
     eq(plan.branch, "feature/workstream-panel", "live: branch as passed")
     eq(plan.existingPR, "https://github.com/example/example/pull/101", "live: existing PR from the lookup")
     check(plan.commits.contains { $0.contains("feat: deliver") }, "live: commits include the delivery commit")
+    check(WSGitProbe.live.lastCommit(repo)?.contains("feat: deliver") ?? false,
+          "live: lastCommit reads the newest commit (summary commit fact)")
     eq(plan.covered, nil, "live: card had no covered point")
     check(!WorkstreamsDelivery.prompt(plan: plan).contains("live-token"), "live: prompt hides the token")
 }

@@ -138,6 +138,13 @@ struct WSRunnerEnv {
     /// P1 完成校验：任务会话是否必须在最后一行回显 runner 注入的完成 marker。真实面板
     /// 开启；legacy / headless env 默认关闭。
     var requireCompletionMarker: Bool = false
+    /// 汇总事实（PR / 提交）。runner 不碰 git / 卡片，事实由调用方注入；缺省为空。
+    var summaryFacts: (_ workstreamID: String, _ stage: WorkstreamStage?) -> WSSummaryFacts = { _, _ in
+        WSSummaryFacts()
+    }
+    /// 任务结束后的汇总回调（阶段批量 + 例外即时）。发给哪条会话由调用方决定：
+    /// 面板读 .dsh/workstreams/local.json 的 workstreamSessions，**无绑定不发**。
+    var onSummary: ((WSSummary) -> Void)? = nil
     /// 落盘机器私有的一半（queues.json / local.json）。
     var persist: (WSBoard) -> Void
     var log: (String) -> Void
@@ -216,6 +223,10 @@ final class WorkstreamsRunner {
     /// 点了重试、尚未启动的任务（P5）。是显式标记，不是「看 sessionId」。
     private var pendingRetries: Set<String> = []
 
+    /// 已经汇总过的「事项 + 阶段」（会话模型的阶段批量去重）。同阶段下一批任务
+    /// 启动时清掉，于是「这个阶段又跑了一轮」还会再汇总一次。
+    private var summarizedStages: Set<String> = []
+
     /// 一条任务可运行的时长上限，超时取消其会话。
     static let defaultTimeout: TimeInterval = 60 * 60
 
@@ -290,10 +301,8 @@ final class WorkstreamsRunner {
                     env.log("workstreams: " + active.taskID + " timed out after "
                             + String(Int(timeout)) + "s")
                     _ = env.cancelSession(active.sessionId)
-                    phase = .idle
-                    board.markFailed(active.taskID, error: WSFailure.timeout.rawValue, at: now)
-                    persist()
-                    _ = pump(now: now)
+                    // 失败一律走 applyFinish：完成 / 失败 / 待确认的汇总回报只有一处。
+                    applyFinish(taskID: active.taskID, outcome: .failed(.timeout), now: now)
                 }
                 return isBusy
             case .idle:
@@ -316,10 +325,7 @@ final class WorkstreamsRunner {
                 if missingPolls >= WorkstreamsRunner.missingSessionPolls {
                     env.log("workstreams: " + active.taskID + " — its session is gone from dsh after "
                             + String(missingPolls) + " polls")
-                    phase = .idle
-                    board.markFailed(active.taskID, error: WSFailure.sessionGone.rawValue, at: now)
-                    persist()
-                    _ = pump(now: now)
+                    applyFinish(taskID: active.taskID, outcome: .failed(.sessionGone), now: now)
                 }
                 return isBusy
             }
@@ -361,6 +367,11 @@ final class WorkstreamsRunner {
         cancelRequested = false
         unknownPolls = 0
         missingPolls = 0
+        // 这个阶段又有任务跑了：清掉上一批的汇总标记，下一批结束后再汇总一次。
+        if let workstream = board.workstreamID(ofTask: taskID),
+           let stage = board.stage(ofTask: taskID) {
+            summarizedStages.remove(WSSummary.stageKey(workstream: workstream, stage: stage))
+        }
         board.markRunning(taskID, at: now)
         // 本次尝试的完成 marker（P1）：随提示词注入并记在任务 / local.json 上。
         let marker: String? = env.requireCompletionMarker ? WorkstreamsRunner.makeTaskMarker() : nil
@@ -454,9 +465,8 @@ final class WorkstreamsRunner {
                 if let i = board.index(ofTask: taskID) { board.tasks[i].sessionId = sessionId }
             }
             env.log("workstreams: " + taskID + " could not start (" + failure.rawValue + ")")
-            board.markFailed(taskID, error: failure.rawValue, at: now)
-            persist()
-            _ = pump(now: now)
+            // 启动失败也是「失败」：汇总（例外即时）与暂停队列都走 applyFinish。
+            applyFinish(taskID: taskID, outcome: .failed(failure), now: now)
         }
     }
 
@@ -506,7 +516,47 @@ final class WorkstreamsRunner {
             env.log("workstreams: " + taskID + " failed (" + failure.rawValue + ")")
         }
         persist()
+        emitSummary(taskID: taskID, outcome: outcome)
         _ = pump(now: now)
+    }
+
+    // MARK: - 汇总回主场会话（会话模型：事项 = 主场会话 + 任务会话）
+
+    /// applyFinish 之后回报事项的主场会话：
+    ///
+    ///   - **例外即时**：失败 / 待确认立刻汇总（不等阶段收尾——队列已暂停，阶段可能
+    ///     永远收不了尾）；
+    ///   - **阶段批量**：完成时若该阶段的任务都结束了，汇总整批一次；同阶段下一批
+    ///     任务启动时重置标记（pump），所以重跑一轮还会再汇总。
+    ///
+    /// 没有 workstreamId（旧任务 / 手工任务）不汇总；发到哪条会话由回调方决定，
+    /// 面板在无绑定会话时不发。文案是纯函数（WSSummary），这里是触发点。
+    private func emitSummary(taskID: String, outcome: FinishOutcome) {
+        guard env.onSummary != nil,
+              let workstream = board.workstreamID(ofTask: taskID), !workstream.isEmpty,
+              let task = board.task(taskID) else { return }
+        let stage = board.stage(ofTask: taskID)
+        let facts = env.summaryFacts(workstream, stage)
+        switch outcome {
+        case .failed, .needsReview:
+            let summary = WSSummary(kind: .exception, workstreamID: workstream, stage: stage,
+                                    tasks: [WSSummaryTask(task)], facts: facts)
+            env.onSummary?(summary)
+            env.log("workstreams: " + taskID + " — exception summary for " + workstream
+                    + " queued for its home session")
+        case .done:
+            guard let stage = stage else { return }
+            let key = WSSummary.stageKey(workstream: workstream, stage: stage)
+            guard !summarizedStages.contains(key),
+                  board.stageFinished(forWorkstream: workstream, stage: stage) else { return }
+            summarizedStages.insert(key)
+            let tasks = board.tasks(forWorkstream: workstream, stage: stage).map(WSSummaryTask.init)
+            let summary = WSSummary(kind: .stageBatch, workstreamID: workstream, stage: stage,
+                                    tasks: tasks, facts: facts)
+            env.onSummary?(summary)
+            env.log("workstreams: stage " + stage.rawValue + " of " + workstream
+                    + " finished (" + String(tasks.count) + " task(s)) — summary queued for its home session")
+        }
     }
 
     // MARK: - 面板动作

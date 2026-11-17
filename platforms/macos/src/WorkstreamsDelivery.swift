@@ -89,6 +89,16 @@ struct WSGitProbe {
         run(path, ["rev-parse", "--verify", "--quiet", branch]) != nil
     }
 
+    /// 最近一条提交（"abc123 subject"）；git 答不上来（非仓库 / 无提交）时 nil。
+    /// 阶段汇总用它补「提交」事实。
+    func lastCommit(_ path: String) -> String? {
+        guard let out = run(path, ["log", "-1", "--format=%h %s"]) else { return nil }
+        let line = out.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
+        return line
+    }
+
     /// 分支相对基线的提交（"abc123 subject"）；git 答不上来时 nil。
     func commits(_ path: String, base: String, branch: String) -> [String]? {
         guard let out = run(path, ["log", "--oneline", "--no-decorate", base + ".." + branch]) else { return nil }

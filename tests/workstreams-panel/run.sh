@@ -70,11 +70,14 @@ cp ../../platforms/macos/src/WorkstreamsStageGate.swift "$TMP/WorkstreamsStageGa
 cp ../../platforms/macos/src/WorkstreamsQueues.swift "$TMP/WorkstreamsQueues.swift"
 cp ../../platforms/macos/src/WorkstreamsPrompts.swift "$TMP/WorkstreamsPrompts.swift"
 cp ../../platforms/macos/src/WorkstreamsRunner.swift "$TMP/WorkstreamsRunner.swift"
+# 汇总（任务会话 → 主场会话）是 runner 在 applyFinish 后触发的纯文案模块。
+cp ../../platforms/macos/src/WorkstreamsSummary.swift "$TMP/WorkstreamsSummary.swift"
 cp runner-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 # WorkstreamsPrompts now resolves the next stage (WorkstreamStage.next, StageGate).
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
   -o "$TMP/runner-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsStageGate.swift" \
-  "$TMP/WorkstreamsQueues.swift" "$TMP/WorkstreamsPrompts.swift" "$TMP/WorkstreamsRunner.swift" "$TMP/main.swift"
+  "$TMP/WorkstreamsQueues.swift" "$TMP/WorkstreamsPrompts.swift" "$TMP/WorkstreamsSummary.swift" \
+  "$TMP/WorkstreamsRunner.swift" "$TMP/main.swift"
 "$TMP/runner-tests"
 rm -rf "$TMP"
 
@@ -85,11 +88,14 @@ cp ../../platforms/macos/src/WorkstreamsStageGate.swift "$TMP/WorkstreamsStageGa
 cp ../../platforms/macos/src/WorkstreamsQueues.swift "$TMP/WorkstreamsQueues.swift"
 cp ../../platforms/macos/src/WorkstreamsPrompts.swift "$TMP/WorkstreamsPrompts.swift"
 cp ../../platforms/macos/src/WorkstreamsRunner.swift "$TMP/WorkstreamsRunner.swift"
+# The runner now references the summary module (applyFinish callback types).
+cp ../../platforms/macos/src/WorkstreamsSummary.swift "$TMP/WorkstreamsSummary.swift"
 cp prompt-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 # nextStagePrompt uses WorkstreamStage.next (StageGate), so it compiles in too.
 swiftc -swift-version 5 -module-cache-path "$CACHE" \
   -o "$TMP/prompt-tests" "$TMP/WorkstreamsCore.swift" "$TMP/WorkstreamsStageGate.swift" \
-  "$TMP/WorkstreamsQueues.swift" "$TMP/WorkstreamsPrompts.swift" "$TMP/WorkstreamsRunner.swift" "$TMP/main.swift"
+  "$TMP/WorkstreamsQueues.swift" "$TMP/WorkstreamsPrompts.swift" "$TMP/WorkstreamsSummary.swift" \
+  "$TMP/WorkstreamsRunner.swift" "$TMP/main.swift"
 "$TMP/prompt-tests"
 rm -rf "$TMP"
 
@@ -139,7 +145,7 @@ echo "--- workstreams queue engine isolation guard (A1 / A10 / D8) ---"
 # The engine is a copy, not a caller: it must not reference the tasks panel's model /
 # runner / store symbols in CODE (comment lines may cite them as provenance), and it
 # must never touch the tasks storage path.
-ENGINE="$SRC2/WorkstreamsQueues.swift $SRC2/WorkstreamsRunner.swift $SRC2/WorkstreamsDelivery.swift"
+ENGINE="$SRC2/WorkstreamsQueues.swift $SRC2/WorkstreamsRunner.swift $SRC2/WorkstreamsDelivery.swift $SRC2/WorkstreamsSummary.swift"
 if grep -nE '\b(TasksRunner|TasksCore|TasksStore|TaskBoard|TaskItem|TaskQueue|TaskState|TaskFailure|TaskPrompts|TaskLocalState|TaskDraft)\b' $ENGINE \
    | grep -vE ':[0-9]+:[[:space:]]*//' ; then
   echo "FAIL: the workstreams engine/delivery references tasks-panel symbols in code" >&2
@@ -867,5 +873,68 @@ if ! grep -qF 'WSStageTaskComposerModel.forCard(' ui-tests.swift \
   exit 1
 fi
 echo "创建任务抽屉 guard ok"
+
+
+echo "--- home summary guard (任务会话 → 主场会话：阶段批量 + 例外即时) ---"
+SUMMARY="$SRC2/WorkstreamsSummary.swift"
+if [ ! -f "$SUMMARY" ]; then
+  echo "FAIL: WorkstreamsSummary.swift is missing" >&2
+  exit 1
+fi
+for sym in 'struct WSSummary' 'enum WSSummaryKind' 'struct WSSummaryFacts' \
+           'struct WSSummaryTask' 'func stageKey(' 'func homeSession(' 'func stageFinished('; do
+  if ! grep -qF "$sym" "$SUMMARY"; then
+    echo "FAIL: WorkstreamsSummary.swift is missing $sym" >&2
+    exit 1
+  fi
+done
+# 文案必须带状态 / 汇报 / PR / 提交，并明确「不是人工确认」。
+for needle in '状态：' '汇报：' 'PR：' '提交：' '不代表人已确认'; do
+  if ! grep -qF "$needle" "$SUMMARY"; then
+    echo "FAIL: the summary copy is missing $needle" >&2
+    exit 1
+  fi
+done
+# runner：applyFinish 之后触发；例外即时 + 阶段批量去重；失败路径一律走 applyFinish。
+RUNNER="$SRC2/WorkstreamsRunner.swift"
+for needle in 'summaryFacts:' 'onSummary:' 'summarizedStages' \
+              'emitSummary(taskID: taskID, outcome: outcome)' 'stageFinished(forWorkstream:'; do
+  if ! grep -qF "$needle" "$RUNNER"; then
+    echo "FAIL: WorkstreamsRunner.swift is missing $needle" >&2
+    exit 1
+  fi
+done
+if [ "$(grep -c 'applyFinish(taskID:' "$RUNNER")" -lt 4 ]; then
+  echo "FAIL: timeout / session-gone / start failures must route through applyFinish" >&2
+  exit 1
+fi
+if [ "$(grep -c 'board.markFailed(' "$RUNNER")" -ne 1 ]; then
+  echo "FAIL: board.markFailed must stay in applyFinish (one summary trigger point)" >&2
+  exit 1
+fi
+# panel：汇总事实来自 WS 卡；发进主场会话，无绑定不发。
+for needle in 'onSummary:' 'summaryFacts:' 'private func sendSummary(' \
+              'WorkstreamsSummary.homeSession(' 'no home session'; do
+  if ! grep -qF "$needle" "$PANEL"; then
+    echo "FAIL: WorkstreamsPanel.swift is missing $needle" >&2
+    exit 1
+  fi
+done
+if ! grep -A18 'private func sendSummary(' "$PANEL" | grep -qF 'WorkstreamsSummary.homeSession('; then
+  echo "FAIL: sendSummary must resolve the home session before sending (no binding = no send)" >&2
+  exit 1
+fi
+# 测试覆盖触发时机与文案（阶段批量 / 例外 / 无绑定）。
+for needle in 'home summary: stage batch once, exceptions immediate' \
+              'home summary: a failed task summarizes immediately (exception)' \
+              'home summary: needsReview summarizes immediately (exception)' \
+              'home session lookup: no binding = do not send' \
+              'text carries the PR fact' 'text carries the commit fact'; do
+  if ! grep -qF "$needle" runner-tests.swift; then
+    echo "FAIL: runner-tests.swift is missing the summary coverage: $needle" >&2
+    exit 1
+  fi
+done
+echo "home summary guard ok"
 
 echo "workstreams-panel tests passed"
