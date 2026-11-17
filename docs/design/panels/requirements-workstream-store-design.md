@@ -4,6 +4,7 @@
 > 修订（WS-005，2026-10-03）：需求 `state` 只留人工判断，`split` / `closed` 为派生；见 §3.1 / §5 / §6 / §10。
 > 修订（2026-10-06）：`WS.queues` = `[q-...]`（**一事项一队列，0..1**）；阶段不再挂在队列上，而是任务的 `stage` 属性。见 §2 / §3.2 / §3.4 / §8，来源 `docs/design/panels/workstream-panel-design.md` §9 D1 / D16 / D17。
 > 修订（2026-10-07）：`local.json` 明确 **`workstreamSessions`**（事项 → 主场会话，last-writer-wins，可反查）与面板 `focus` 通道；见 §4 与 `docs/design/panels/workstream-panel-design.md` §6.1（A15 / A16）。
+> 修订（2026-10-07 二次）：**交付由阶段改为操作**——`stage ∈ planning / design / task / acceptance`（无 `delivery`）；交付事实仍落 `delivery` 块；终态改为 `closed = accepted ∧ outcome 终结`，`accepted` = 验收阶段有确认记录。见 §3.2 / §3.4 / §5 / §6。
 
 ## 1. 目的与范围
 
@@ -87,14 +88,14 @@ workstreams: [WS-002]       # 确认拆解时由面板写入；另有 WS.require
 id: WS-002                  # 必选，WS-<n>，不可变
 title: ...                  # 必选
 requirement: REQ-002        # 可选（0..1）；不挂需求的顺手活可缺省
-stage: planning             # 必选，planning/design/task/acceptance/delivery
-covered:                    # 验收 / 交付阶段必选（点记录，不可变）
+stage: planning             # 必选，planning / design / task / acceptance（交付不是阶段）
+covered:                    # 验收起必选（点记录，不可变）
   - docs/...
   base: <blob/tree id>      # 不可变内容标识（非分支、非裸 commit）
   head: <blob/tree id>
 regression: REG-001         # 可选（0..1）
 queues: [q-...]             # 可选（0..1）；该事项的执行载体（本机运行时）
-delivery:                   # 交付阶段出现；只放事实，outcome 为派生缓存
+delivery:                   # 交付操作出现（不是阶段）；只放事实，outcome 为派生缓存
   pr: 78
   url: https://github.com/...
   outcome: merged           # 派生缓存：由交付追踪依 PR 状态写入，禁止手写
@@ -105,7 +106,7 @@ updated: 2026-10-03
 
 - `stage` 是**状态不是站点**（原则 5）：允许回边、跳过、停驻；裁剪必须在「规划」声明（R3）。
 - **阶段不分队列**：一个事项至多一条执行队列；阶段是**任务**的 `stage` 属性（见 `docs/design/panels/workstream-panel-design.md` A9 / A12）。
-- 正文段落与阶段对应：`## 规划`（目标 / 边界 / 阶段裁剪声明 / 验收标准，**进设计的前提**）、`## 设计`、`## 任务`、`## 验收`（点记录）、`## 交付`、`## 终态（派生）`、`## 复盘`。
+- 正文段落与阶段对应：`## 规划`（目标 / 边界 / 阶段裁剪声明 / 验收标准，**进设计的前提**）、`## 设计`、`## 任务`、`## 验收`（点记录）、`## 交付`（**交付操作**的事实，不是阶段）、`## 终态（派生）`、`## 复盘`。
 - `covered` 锚**变更**（不可变内容标识），不锚文件整体、不锚分支 / 裸 commit（原则 8，见 `REQ-005`）。摘要算法见 `REQ-005`「覆盖字段」。
 
 ### 3.3 回归门卡片 `.dsh/regression/REG-<id>.md`
@@ -138,7 +139,7 @@ updated: 2026-10-03
 | WS.covered.paths/base/head | 验收起必选 | 点记录，锚变更 |
 | WS.regression | 可选（0..1） | 回归门 |
 | WS.queues | 可选（0..1） | 该事项的执行队列（权威边）；阶段是任务的属性，不在队列上 |
-| WS.delivery.pr / url | 交付阶段 | 事实字段 |
+| WS.delivery.pr / url | 交付操作 | 事实字段（不构成阶段） |
 | WS.delivery.outcome | 派生缓存 | 交付追踪写入；禁止手写（§5） |
 | WS.closed | 禁止 | 终态派生谓词 |
 | REG.id / title / source / runs / created / updated | 必选 | 门定义 |
@@ -164,11 +165,11 @@ updated: 2026-10-03
 
 ## 5. 终态是派生谓词，禁止手写（AC4）
 
-按架构原则 15：`closed = stage == delivery 且交付结果终结（merged / closed / abandoned）`；是**观察**不是**迁移**。
+按架构原则 15：`closed(ws) = accepted(ws) ∧ delivery.outcome ∈ {merged, closed, abandoned}`，其中 **`accepted(ws)` = 验收阶段在 `## 阶段确认` 有确认记录**；**交付是操作、不是阶段**，`stage` 不进入终态公式。是**观察**不是**迁移**。
 
 - 卡片**不得出现** `closed` 字段（REQ / WS 皆然）；
 - `outcome` **只允许**作为 `delivery` 块内的**派生缓存**（由交付追踪依 PR 状态写入 / 重算），**禁止手写**；顶层 `outcome` 一律非法；
-- 交付阶段允许写入的是**事实**：`delivery.pr`、`delivery.url`；由这些事实观察出 `outcome`。
+- **交付操作**允许写入的是**事实**：`delivery.pr`、`delivery.url`；由这些事实观察出 `outcome`。
 - 同理，`split` 也不落字段（§3.1）：`split(req) = children(req) ≠ ∅`；派生器输出「有效状态」。
 
 **复核命令**（交付前跑；可作为将来 `REG-002` 的雏形，见 §9）：
@@ -199,7 +200,7 @@ grep -rnE '^[[:space:]]*split[[:space:]]*:' .dsh/requirements && bad=1
 **已确认**（规划确认 2026-10-03）：下列规则生效。在 `∀` 前保留「子事项非空」守卫，避免空子集被 ∀ 空真误判为关闭；`closed` 永为派生谓词、不落字段。
 
 - **派生谓词**：`closed(req) = children(req) ≠ ∅ 且 ∀ ws ∈ children(req): terminal(ws)`，其中
-  `terminal(ws) = stage == delivery 且 delivery.outcome ∈ {merged, closed, abandoned}`；
+  `terminal(ws) = accepted(ws) ∧ delivery.outcome ∈ {merged, closed, abandoned}`（`accepted` = 验收阶段有确认记录）；
   或需求被显式 `discarded`（人的决定，不是派生）。
 - **部分交付也算关闭**：只要「至少一个子事项」且「没有非终态子事项」即可（有的 merged、有的 abandoned / discarded 都满足）；`split` 只表示「已拆解」，**不等于关闭**。
 - **不回弹**：关闭后不因后续改动重开、不要求重验；重开**另起需求并回指**（原则 15）。
@@ -257,7 +258,7 @@ done
 | 关联权威 | `WS.queues`（committed，`[q-...]`，0..1） | 队列内 `workstream` 为运行时镜像（可重建） |
 | 「完成」语义 | 终态由交付结果**派生** | `.done` 只表示队列跑完 |
 
-- 事项**可以没有队列**（纯调研 / 文档类）；有执行需求时**至多一条**（一事项一队列，五个阶段共用）；
+- 事项**可以没有队列**（纯调研 / 文档类）；有执行需求时**至多一条**（一事项一队列，四个阶段共用）；
 - **队列 `.done` ≠ 事项终态**：队列跑完只说明执行载体结束，事项是否终结仍由交付结果派生；
 - 队列文件是运行时（ignored），事项卡片是共享真相（committed）——跨机可追溯的关联落在 `WS.queues`。
 

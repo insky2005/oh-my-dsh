@@ -132,7 +132,7 @@
 | 编号 | 触发 | body 来源 | 动作段 |
 |---|---|---|---|
 | WS-3 | 拆分任务（agent 调 `task/create`）/ 创建任务抽屉 / 交付按钮或 `POST /api/workstreams/deliver` | `WorkstreamHandoff.stageTask` / `prompt(card:action:)` | 见下（按阶段默认动作） |
-| WS-7 | 交付阶段「交付」按钮 / 会话说「交付 WS-x」（`POST /api/workstreams/deliver`） | `WorkstreamsDelivery.prompt(plan:)` | 交付长模板（见代码） |
+| WS-7 | **事项主卡「交付」**（操作，不是阶段）/ 会话说「交付 WS-x」（`POST /api/workstreams/deliver`） | `WorkstreamsDelivery.prompt(plan:)` | 交付长模板（见代码） |
 
 创建任务抽屉会在提示词末尾追加用户输入：`任务内容：` + 内容（首行是标题、其余行是内容）。
 

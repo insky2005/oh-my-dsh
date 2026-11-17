@@ -21,7 +21,7 @@
 
 ### 1.2 非目标
 
-- **不做**规划 / 设计 / 任务 / 验收 / 交付阶段的面板（那是后续事项；本设计只服务需求池）；
+- **不做**规划 / 设计 / 任务 / 验收阶段的面板（那是后续事项；本设计只服务需求池；**交付是事项操作**，也不是阶段面板）；
 - **不做**交付追踪与 `delivery.outcome` 的网络派生（仍由 `node .dsh/tools/derive-status.mjs` 承担，见 §3.4）；
 - **不做**编辑卡片正文 / 改事项阶段（面板只提供需求池动作：收件、状态、拆解；事项卡只读展示）；
 - **不改** dsh 源码、不改 `.dsh/ai-native-workflow-spec.md`。
@@ -75,7 +75,7 @@ struct WorkstreamSummary: Equatable {
     var id: String            // WS-<n>
     var title: String
     var requirement: String?  // 0..1
-    var stage: String         // planning/design/task/acceptance/delivery
+    var stage: String         // planning/design/task/acceptance（交付是操作，不是阶段）
     var outcome: String?      // delivery.outcome 派生缓存（只读）
     var path: String
 }
