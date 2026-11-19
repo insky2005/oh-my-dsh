@@ -32,7 +32,7 @@ jobs:
   # 并行各自冷启动下载/重编 CEF（CI 慢的根因）。
   prepare:
     name: prepare (CEF + node caches)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Cache CEF + node + built artifacts (.cache/)
@@ -48,8 +48,10 @@ jobs:
           ./platforms/macos/build-app.sh --prefetch
 
   # --- macOS shell: unit tests + swiftc compile check (fast, no build) ------
-  # macos-13 (x86_64) 退役中、runner 容量极低且排队严重；产品已不再出
-  # universal，x86_64 交叉编译正确性由 release.yml 打 tag 发布时校验，
+  # macos-13 (x86_64) 已退役；macos-14 于 2026-11-02 退役（job 直接以
+  # "The configuration 'macos-14-arm64-us-default' is not supported" 卡在取机器
+  # 阶段，见 docs/fixes/ci-macos-runner-retirement-fix.md），故统一用 macos-15。
+  # 产品已不再出 universal，x86_64 交叉编译正确性由 release.yml 打 tag 发布时校验，
   # 故 CI 只在 arm64 上跑单测与构建。
   swift:
     name: swift tests (${{ matrix.arch }})
@@ -60,7 +62,7 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: macos-14
+            runner: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Cache CEF tarball (.cache/)
@@ -145,7 +147,7 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: macos-14
+            runner: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Cache runtime + node tarballs (.cache/)

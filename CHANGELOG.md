@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **CI：runner 迁至 `macos-15`（macos-14 镜像 2026-11-02 已退役）（2026-11-19）**：GitHub 退役 macOS 14 runner 镜像后，所有 `runs-on: macos-14` 的 job 在取机器阶段即被拒（job annotation `The configuration 'macos-14-arm64-us-default' is not supported`，无 step、无 runner），run 结论显示为 `cancelled` 而非 `failure`，导致 CI / Nightly 自 2026-11-19 起全红、Release 打 tag 也会空跑。修复：`.github/workflows/` 下 `ci.yml`（prepare / swift matrix / build matrix）、`nightly.yml`（smoke）、`release.yml`（prepare / build matrix 的 arm64 + x86_64）统一改 `macos-15`（不用 `macos-latest`，避免已漂到 `macos-26` 的镜像被动升级）；构建脚本无需改动（`build-app.sh` / `build-cef.sh` 均以 `-target <arch>-apple-macos13` 显式交叉编译，x86_64 仍在 arm64 机器上交叉编译）。文档同步 `scripts/local-ci.sh`、`docs/research/productization.md`，并新增 `docs/fixes/ci-macos-runner-retirement-fix.md` 记录排查路径（先看 job annotation，`runner_name` 为空即「没取到机器」）。
+
 - **事项面板：队列 id 从阶段卡移到事项主卡（2026-10-07）**：修复拆分后队列 id 显示在阶段二级卡（如「规划」）的问题。`WSStageCardModel` 去掉 `queueIDs` / `hasQueue`；`WSCardModel` 新增 `queueIDs`（= `WS.queues`，一事项一队列）；事项主卡标题行以中性徽标（`WSTierBadgeView`）渲染，任何阶段卡都不显示。`tests/workstreams-panel` UI 断言改到主卡（**195**），全套 **1103**（model 93 + API 276 + UI 195 + runner 139 + prompt 213 + delivery 127 + stage-gate 60）；新增「队列 id 展示位置」源码守卫。
 
 ### Added

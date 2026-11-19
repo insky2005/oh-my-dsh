@@ -18,7 +18,7 @@
 #   scripts/local-ci.sh dev             # 同 full，但 build 用 DSH_DEV_BUILD=1 打开发版（独立 CEF profile，可与正式版并存测试）
 #
 # 与 GitHub CI 的差异（本地环境的合理简化）：
-#   - GitHub 在 ubuntu 上跑 core、在 macos-14 上跑其余；本地只有一台 macOS，顺序执行。
+#   - GitHub 在 ubuntu 上跑 core、在 macos-15 上跑其余；本地只有一台 macOS，顺序执行。
 #   - GitHub 每次是干净工作区靠 actions/cache 缓存；本地复用 .cache/（等价缓存命中）。
 #   - CI 只做 arm64 构建校验（x86_64 交叉编译由 release.yml 打 tag 时校验），
 #     不打包 pkg/dmg —— 打包属 release。

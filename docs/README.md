@@ -63,6 +63,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 - [devtools-drag-fix.md](fixes/devtools-drag-fix.md) — DevTools 拖动条导致 CEF 视图上移
 - [browser-blank-panel-fix.md](fixes/browser-blank-panel-fix.md) — 浏览器面板内容区空白 + 右键菜单错位
 - [channel-issues.md](fixes/channel-issues.md) — Channel 消息重复回复排查记录
+- [ci-macos-runner-retirement-fix.md](fixes/ci-macos-runner-retirement-fix.md) — macos-14 runner 退役导致 CI 全红（迁 macos-15）
 
 ## process/ — 流程 · 发布 · 升级
 

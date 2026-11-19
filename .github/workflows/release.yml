@@ -18,7 +18,8 @@ jobs:
   # 冷启动下载/重编 CEF。
   prepare:
     name: prepare (CEF + node caches)
-    runs-on: macos-14
+    # macos-14 已于 2026-11-02 退役（见 docs/fixes/ci-macos-runner-retirement-fix.md）。
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Cache CEF + node + built artifacts (.cache/)
@@ -42,13 +43,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # x86_64 在 macos-14 (arm64) 上交叉编译（build-app.sh 用 -target 交叉构建），
-          # 不再依赖退役中的 macos-13 runner（容量极低、排队严重）。
+          # x86_64 在 macos-15 (arm64) 上交叉编译（build-app.sh 用 -target 交叉构建），
+          # 不再依赖已退役的 macos-13 / macos-14 runner（macos-14 于 2026-11-02 退役）。
           # 产品只出 arm64 / x86_64，不再出 universal。
           - arch: arm64
-            runner: macos-14
+            runner: macos-15
           - arch: x86_64
-            runner: macos-14
+            runner: macos-15
     steps:
       - uses: actions/checkout@v4
         with:

@@ -15,7 +15,8 @@ jobs:
   # catch drift in Node LTS / dsh RC resolution, plus run the full test suite.
   smoke:
     name: nightly smoke (arm64)
-    runs-on: macos-14
+    # macos-14 已于 2026-11-02 退役（见 docs/fixes/ci-macos-runner-retirement-fix.md）。
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Node + core tests

@@ -376,7 +376,7 @@ oh-my-dsh/
 
 ### 5.3 关键设计
 
-- **构建矩阵**：macOS 用 `macos-14` runner（Sonoma 镜像 2024-01 起可用，含 arm64 原生 runner，见 [GitHub Changelog](https://github.blog/changelog/2024-01-30-github-actions-macos-14-sonoma-is-now-available/)）；x64 同理；Universal 用 `lipo -create` 合并两架构二进制（或直接双 target 编译）；Windows `windows-2022`（P2）；Linux `ubuntu-24.04`（P3）
+- **构建矩阵**：macOS 用 `macos-15` runner（`macos-14` 已于 2026-11-02 退役，见 [GitHub Changelog](https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/)，迁移记录见 `docs/fixes/ci-macos-runner-retirement-fix.md`）；x64 同理；Universal 用 `lipo -create` 合并两架构二进制（或直接双 target 编译）；Windows `windows-2022`（P2）；Linux `ubuntu-24.04`（P3）
 - **缓存**：`actions/cache` 复用 `.cache/`（node tarball + npm cache + 已构建运行时，按 node+dsh 版本做 key），与本地 `--prefetch` 语义一致
 - **版本单一来源**：VERSION 取自 git tag；BUILD 取 CI 运行号；Info.plist 由脚本注入（P1 改造 `build-app.sh`）
 - **密钥**：Windows Authenticode 证书存 GitHub Secrets；Apple Developer ID 证书（p12）与 notarytool API key 待 F 阶段接入；产物哈希写入 Release notes
@@ -663,7 +663,8 @@ WebKit（macOS/Linux）与 Chromium（WebView2）对 dsh web 的渲染差异、P
 
 - [Sparkle Integration Guide（sparkle-project/Sparkle）](https://deepwiki.com/sparkle-project/Sparkle/5-integration-guide)
 - [Apple：Notarizing macOS software before distribution](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)
-- [GitHub Changelog 2024-01：macOS 14 (Sonoma) runner 可用](https://github.blog/changelog/2024-01-30-github-actions-macos-14-sonoma-is-now-available/)
+- [GitHub Changelog 2024-01：macOS 14 (Sonoma) runner 可用](https://github.blog/changelog/2024-01-30-github-actions-macos-14-sonoma-is-now-available/)（该镜像已于 2026-11-02 退役）
+- [GitHub Changelog 2026-10：macOS 14 runner 镜像退役](https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/)
 - [Microsoft Learn：WebView2 in WinUI 3](https://learn.microsoft.com/en-us/windows/apps/develop/ui/controls/webview2)
 - [webview/webview（GTK4/WebView2 封装参考）](https://deepwiki.com/webview/webview/2.1-installation-guide)
 - [homebrew-cask：cask_language_reference（appcast stanza）](https://github.com/phatblat/homebrew-cask/blob/master/doc/cask_language_reference/stanzas/appcast.md)
