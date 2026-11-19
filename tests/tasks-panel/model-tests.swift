@@ -683,6 +683,51 @@ do {
     check(commitBoard.local.taskCommits[c1.id] == nil, "重试清掉上一轮的提交归属")
 }
 
+// MARK: - 逐任务通知标记：taskNotified
+
+section("逐任务通知标记：只落 local.json，重试清掉、标记完成不清")
+do {
+    var notifyBoard = TaskBoard()
+    let n1 = TaskItem.manual(title: "通知 A", body: nil, id: "manual-ee001111")
+    notifyBoard.tasks = [n1]
+    let nq = notifyBoard.createQueue(name: "Notify", autoPR: false)
+    _ = notifyBoard.enqueue(taskID: n1.id, into: nq.id)
+    _ = notifyBoard.resumeQueue(nq.id)
+    notifyBoard.markRunning(n1.id)
+    _ = notifyBoard.markFailed(n1.id, error: "tasks.errTimeout", report: "没做完。")
+    notifyBoard.local.taskNotified[n1.id] = "2026-10-03T10:00:00Z"
+    notifyBoard.local.queueNotified[nq.id] = "2026-10-03T10:00:00Z"
+
+    let json = notifyBoard.local.dictionary()
+    let round = TaskLocalState.from(json)
+    eq(round.taskNotified[n1.id], "2026-10-03T10:00:00Z", "taskNotified 原样往返")
+    check(notifyBoard.task(n1.id)?.manualDictionary()["taskNotified"] == nil,
+          "manual.json 不写通知标记")
+    check(notifyBoard.task(n1.id)?.indexDictionary()["taskNotified"] == nil,
+          "committed index 不写通知标记")
+
+    let notifyRepo = tempRepo("task-notified")
+    TasksStore.saveLocalHalf(notifyRepo, notifyBoard)
+    let loadedNotify = TasksStore.load(notifyRepo)
+    eq(loadedNotify.local.taskNotified[n1.id], "2026-10-03T10:00:00Z",
+       "写入磁盘再读回，通知标记还在")
+
+    // 标记完成不清：用户确认的是同一次终态，不该再发一条。
+    notifyBoard.markRunning(n1.id)
+    _ = notifyBoard.markNeedsReview(n1.id, report: "待确认。")
+    notifyBoard.local.taskNotified[n1.id] = "2026-10-03T10:05:00Z"
+    notifyBoard.confirmDone(n1.id)
+    eq(notifyBoard.local.taskNotified[n1.id], "2026-10-03T10:05:00Z",
+       "标记完成不清通知标记")
+
+    // 重试清掉：下一次终态要重新通知。
+    notifyBoard.markRunning(n1.id)
+    _ = notifyBoard.markFailed(n1.id, error: "tasks.errTimeout")
+    notifyBoard.local.taskNotified[n1.id] = "2026-10-03T10:10:00Z"
+    _ = notifyBoard.retryAndResume(n1.id)
+    check(notifyBoard.local.taskNotified[n1.id] == nil, "重试清掉通知标记")
+}
+
 // MARK: - 轮次：每次启动队列 = 一轮
 
 section("轮次：每次启动队列 = 一轮，只落 local.json")

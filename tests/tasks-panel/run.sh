@@ -218,16 +218,33 @@ if ! grep -q 'case needsReview' ../../platforms/macos/src/TasksCore.swift \
 fi
 echo "ok - P2 待确认：独立状态 + 重试 / 标记完成"
 
-# P3 完成通知诚实化：队列汇总必须把「完成 / 待确认」分开计数，不得再无条件输出
-# 「已全部完成」。状态机（P1/P2）已经给出判定，汇总只负责如实翻译成计数与文案。
+# P3 完成通知诚实化 + 逐任务通知：队列收尾必须把「完成 / 待确认」分开计数，
+# 每棒终态都有自己的一条，且发送标记（taskNotified）在发送前写入、重试清掉。
 if ! grep -q 'func completionCounts' ../../platforms/macos/src/TasksRunner.swift \
    || ! grep -qF 'counts.needsReview == 0' ../../platforms/macos/src/TasksRunner.swift \
-   || ! grep -qF '完成 \(counts.done) 条 / 待确认 \(counts.needsReview) 条（共 \(tasks.count) 条）' ../../platforms/macos/src/TasksRunner.swift \
-   || ! grep -qF 'case .needsReview: mark = "?"' ../../platforms/macos/src/TasksRunner.swift; then
-  echo "FAIL - P3 完成通知：汇总必须把待确认单独计数，不再无条件报「已全部完成」"
+   || ! grep -qF '完成 \(counts.done) 条 / 待确认 \(counts.needsReview) 条（共 \(tasks.count) 条；' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -qF 'case .needsReview: mark = "?"' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func taskNotification' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func queueWrapUpSummary' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func singleTaskQueueSummary' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'var taskNotified' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -q 'local.taskNotified\[taskID\] = nil' ../../platforms/macos/src/TasksCore.swift; then
+  echo "FAIL - P3 完成通知：收尾计数 / 逐任务通知 / taskNotified 幂等三者缺一不可"
   exit 1
 fi
-echo "ok - P3 完成通知：完成 / 待确认分开计数，待确认带 ? 与人工出口"
+echo "ok - P3 完成通知：逐任务一条 + 收尾计数，taskNotified 发送前写、重试清"
+
+# 通知延后与汇报全文：交付会话占用来源会话时不得插话（会污染 finalize marker），
+# 队列收尾要指向真正写出来的汇报全文文件。
+if ! grep -q 'func originBusyWithDelivery' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func deliveryInFlight' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'run.sessionId == origin' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func saveQueueReport' ../../platforms/macos/src/TasksStore.swift \
+   || ! grep -q '汇报全文' ../../platforms/macos/src/TasksRunner.swift; then
+  echo "FAIL - 通知延后 / 汇报全文路径缺失"
+  exit 1
+fi
+echo "ok - 通知延后到交付会话空闲 + 收尾带汇报全文路径"
 
 # P4 产物校验（可选）：真实面板必须开启它，runner 必须按「应产出提交」推断、并在会话
 # 结束后比对基线 HEAD / 工作区改动；没有产物时降级为待确认（带 errNoCommit 原因）。

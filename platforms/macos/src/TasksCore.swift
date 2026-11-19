@@ -1390,6 +1390,12 @@ struct TaskLocalState: Equatable {
     /// queue id -> ISO-8601 stamp of the completion report already sent. Keeps the
     /// report idempotent and lets a restart pick up one the app never got to send.
     var queueNotified: [String: String] = [:]
+    /// task id -> ISO-8601 stamp of the PER-TASK notification already sent. Written
+    /// BEFORE the send (a second tick must never queue the same message twice), kept
+    /// when the user 标记完成 (that is a confirmation, not a new run) and cleared by
+    /// 重试 (the task will end again, and the next ending deserves its own note).
+    /// Machine-private like queueNotified: local.json only.
+    var taskNotified: [String: String] = [:]
     /// task id -> 本次尝试的完成 marker（P1 完成校验）。机器私有，只进 local.json；
     /// 会话日志与卡片正文都不该出现它。
     var taskMarkers: [String: String] = [:]
@@ -1444,6 +1450,7 @@ struct TaskLocalState: Equatable {
         s.runningTaskID = d["runningTaskId"] as? String
         if let raw = d["queueSessions"] as? [String: String] { s.queueSessions = raw }
         if let raw = d["queueNotified"] as? [String: String] { s.queueNotified = raw }
+        if let raw = d["taskNotified"] as? [String: String] { s.taskNotified = raw }
         if let raw = d["taskMarkers"] as? [String: String] {
             for (key, text) in raw where !text.isEmpty { s.taskMarkers[taskID(fromStoredKey: key)] = text }
         }
@@ -1471,6 +1478,7 @@ struct TaskLocalState: Equatable {
         }
         if !queueSessions.isEmpty { d["queueSessions"] = queueSessions }
         if !queueNotified.isEmpty { d["queueNotified"] = queueNotified }
+        if !taskNotified.isEmpty { d["taskNotified"] = taskNotified }
         if !taskRounds.isEmpty { d["taskRounds"] = taskRounds }
         if !taskMarkers.isEmpty { d["taskMarkers"] = taskMarkers }
         if !taskMarkerVerified.isEmpty { d["taskMarkerVerified"] = taskMarkerVerified }
@@ -1791,6 +1799,10 @@ struct TaskBoard {
     /// 这条任务最后一棒的轮次；nil = 旧任务（简报按第 1 轮渲染，不丢历史）。
     func taskRound(_ taskID: String) -> Int? { local.taskRounds[taskID] }
 
+    /// 这条任务的逐任务通知是否已经发出（last run）。标记在发送**之前**写入，
+    /// 重试清掉，标记完成不动 —— 与队列级 queueNotified 同一套幂等语义。
+    func taskNotified(_ taskID: String) -> String? { local.taskNotified[taskID] }
+
     /// Fail a task. A queue containing it is PAUSED and its id returned: inside
     /// a queue every task shares one branch, so running the next one would build
     /// on half-finished work. The user then chooses 重试 or 跳过并继续.
@@ -1903,6 +1915,8 @@ struct TaskBoard {
         // 上一轮的产出描述的是被重试的那次运行；下一轮结束时按**最初**的基线重新推导，
         // 因此上一轮的提交仍会算进本棒，不会因为清掉记录而丢失。
         local.taskCommits[taskID] = nil
+        // 这次重试会再产生一个终态，必须再发一条通知；清掉旧标记，别让幂等把新消息吃掉。
+        local.taskNotified[taskID] = nil
         // The next attempt gets a fresh marker: the old one must never confirm it.
         tasks[i].completionMarker = nil
         tasks[i].markerVerified = false

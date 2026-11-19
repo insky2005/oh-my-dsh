@@ -35,6 +35,8 @@ pic/
 .dsh/tasks/local.json
 .dsh/tasks/manual.json
 .dsh/tasks/queues.json
+# per-queue 汇报全文 written for the wrap-up notification (machine-scoped)
+.dsh/tasks/reports/
 
 # requirement/workstream runtime bindings (machine-scoped)
 .dsh/workstreams/local.json

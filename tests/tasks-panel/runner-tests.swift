@@ -2358,7 +2358,35 @@ do {
           "新会话不需要完成标记（它是专用的）")
 }
 
-section("队列到达 .done：回传完成情况到来源会话（一次，幂等）")
+section("交付会话在来源会话里跑时，通知延后到空闲（不污染 marker）")
+do {
+    let (board, taskID, queueID) = singleTaskBoard()
+    var b = board
+    b.local.queueSessions[queueID] = "origin-session"
+    let h = Harness(board: b)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.runner.openingPRQueueID, queueID, "交付跑在来源会话上")
+    check(h.dsh.notifications.isEmpty, "交付进行中一条都不发（不插进 finalize turn）")
+
+    // 来源会话回显 finalize marker 后交付结束；通知这时才发。
+    let prompt = h.dsh.prompts["origin-session"] ?? ""
+    let marker = prompt.range(of: "DSH-FINALIZE-[0-9A-F]+", options: .regularExpression)
+        .map { String(prompt[$0]) } ?? "DSH-FINALIZE-NONE"
+    h.dsh.reports["origin-session"] = "已创建 PR：https://github.com/o/r/pull/42\n" + marker
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.dsh.notifications.count, 1, "空闲后补一条（单任务把收尾并进去）")
+    let text = h.dsh.notifications.first?.text ?? ""
+    check(text.contains("Polish README · 1/1 · 已完成 ✓"), "任务正文在")
+    check(text.contains("PR：https://github.com/o/r/pull/42"), "收尾带上 PR")
+    check(text.contains("汇报全文："), "收尾带上汇报全文路径")
+    _ = h.runner.step()
+    eq(h.dsh.notifications.count, 1, "延后发送同样幂等")
+}
+
+section("逐任务一条 + 队列收尾：条数、内容、幂等")
 do {
     let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
     let r = h.runner.createQueueWithTasks(name: "Dark Mode", branch: "", autoPR: false,
@@ -2369,28 +2397,36 @@ do {
     h.dsh.reports["session-1"] = "A 完成，改了 a.swift"
     h.dsh.finish("session-1")
     _ = h.runner.step()
-    check(h.dsh.notifications.isEmpty, "队列没跑完就不回传")
+    eq(h.dsh.notifications.count, 1, "第一条终态就发一条，不等整队")
+    let first = h.dsh.notifications.first?.text ?? ""
+    eq(h.dsh.notifications.first?.session, "session-origin", "发到来源会话")
+    check(first.contains("A · 1/2 · 已完成 ✓"), "标题 + 位次 + 结局")
+    check(first.contains("A 完成，改了 a.swift"), "只讲本任务的汇报")
+    check(!first.contains("队列「Dark Mode」"), "任务完成时还不发队列收尾")
+    check(h.board.local.taskNotified[r.created[0].id] != nil, "发送前记下 taskNotified")
     check(h.board.task(r.created[0].id)?.state == .done, "第一条完成")
 
     h.dsh.reports["session-2"] = "B 完成"
     h.dsh.finish("session-2")
     _ = h.runner.step()
-    eq(h.dsh.notifications.count, 1, "整队完成后回传一次")
-    eq(h.dsh.notifications.first?.session, "session-origin", "回传到来源会话")
-    let text = h.dsh.notifications.first?.text ?? ""
-    check(text.contains("队列「Dark Mode」"), "报告点名队列")
-    check(text.contains("1. ✓ A"), "第一条带标号与状态")
-    check(text.contains("A 完成，改了 a.swift"), "第一条的完整汇报保留")
-    check(text.contains("2. ✓ B"), "报告列出第二条")
-    check(text.contains("B 完成"), "第二条的汇报也在")
-    check(!text.contains("session-"), "不回传会话标识（用户不要）")
-    check(text.contains("确认收到"), "要求 agent 简短确认")
-    check(h.board.local.queueNotified[r.queue.id] != nil, "记下已回传")
+    eq(h.dsh.notifications.count, 3, "第二条一条 + 队列收尾一条")
+    let second = h.dsh.notifications[1].text
+    check(second.contains("B · 2/2 · 已完成 ✓"), "第二条自己的位次")
+    check(second.contains("B 完成") && !second.contains("A 完成"), "只讲本任务，不重列别人")
+    let wrap = h.dsh.notifications[2].text
+    check(wrap.contains("队列「Dark Mode」"), "收尾点名队列")
+    check(wrap.contains("计数：完成 2 条 / 待确认 0 条（共 2 条；失败 0 · 取消 0 · 剩余 0）"),
+          "收尾只给计数")
+    check(wrap.contains("汇报全文："), "收尾给出汇报全文路径")
+    check(!wrap.contains("A 完成") && !wrap.contains("B 完成"), "收尾不重列每棒汇报")
+    check(!wrap.contains("session-"), "不回传会话标识（用户不要）")
+    check(wrap.contains("确认收到"), "要求 agent 简短确认")
+    check(h.board.local.queueNotified[r.queue.id] != nil, "记下队列已收尾")
     _ = h.runner.step()
-    eq(h.dsh.notifications.count, 1, "幂等：不会重复回传")
+    eq(h.dsh.notifications.count, 3, "幂等：不会重复发任何一条")
 }
 
-section("手动取消 / 暂停：不回传")
+section("手动取消：发一条已取消的逐任务通知，不发队列收尾")
 do {
     let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
     let r = h.runner.createQueueWithTasks(name: "Lane", branch: "", autoPR: false,
@@ -2401,10 +2437,15 @@ do {
     _ = h.runner.cancelRunning()
     _ = h.runner.step()
     eq(h.board.queue(r.queue.id)?.state, QueueState.paused, "取消让队列暂停")
-    check(h.dsh.notifications.isEmpty, "取消不回传（只有 done 才回传）")
+    eq(h.dsh.notifications.count, 1, "取消也发一条终态通知")
+    let text = h.dsh.notifications.first?.text ?? ""
+    check(text.contains("A · 1/2 · 已取消 −"), "写清本任务已取消")
+    check(text.contains("队列进度：完成 0 / 待确认 0 / 失败 0 / 取消 1 / 剩余 1（共 2 条）"),
+          "队列进度如实")
+    check(h.board.local.queueNotified[r.queue.id] == nil, "队列没 done 就不发收尾")
 }
 
-section("重启补发：done 且未回传的队列在下一次 step 发出")
+section("重启补发：done 且未通知的单任务队列在下一次 step 补一条（含收尾）")
 do {
     var board = TaskBoard()
     let t = TaskItem.manual(title: "A", body: nil, id: "manual-zz000001")
@@ -2415,16 +2456,22 @@ do {
     board.markRunning(t.id)
     board.markDone(t.id)
     eq(board.queue(q.id)?.state, QueueState.done, "队列已完成")
-    // 关联在盘上，但 app 在回传前退出了。
+    // 关联在盘上，但 app 在通知前退出了。
     board.local.queueSessions[q.id] = "session-origin"
     let h = Harness(board: board, github: false, gitRepo: true)
     _ = h.runner.step()
     eq(h.dsh.notifications.count, 1, "空闲的 step 补发一次")
     eq(h.dsh.notifications.first?.session, "session-origin", "补发到来源会话")
-    check(h.board.local.queueNotified[q.id] != nil, "补发后记下标记")
+    let text = h.dsh.notifications.first?.text ?? ""
+    check(text.contains("A · 1/1 · 已完成 ✓"), "单任务队列把任务与收尾并成一条")
+    check(text.contains("汇报全文："), "收尾字段也在")
+    check(h.board.local.taskNotified[t.id] != nil, "补发后记下 taskNotified")
+    check(h.board.local.queueNotified[q.id] != nil, "补发后记下 queueNotified")
+    _ = h.runner.step()
+    eq(h.dsh.notifications.count, 1, "补发是幂等的")
 }
 
-section("queueFinishedSummary 文案：首行汇报 + 失败原因 + 简短确认")
+section("逐任务通知文案：标题 · 位次 · 结局 · 本任务提交 · 汇报 · 队列进度")
 do {
     var board = TaskBoard()
     let a = TaskItem.manual(title: "A", body: nil, id: "manual-zz000002")
@@ -2436,37 +2483,78 @@ do {
     board.markRunning(b.id)
     _ = board.markFailed(b.id, error: "tasks.errNotGit")
     let tasks = [board.task(a.id)!, board.task(b.id)!]
-    let text = TaskPrompts.queueFinishedSummary(queue: board.queue(q.id)!, tasks: tasks)
-    check(text.contains("队列「外观」"), "点名队列")
+    let progress = TaskPrompts.queueProgress(tasks)
+    eq(progress.done, 1, "进度：完成 1")
+    eq(progress.failed, 1, "进度：失败 1")
+    eq(progress.total, 2, "进度：共 2")
+
+    let doneText = TaskPrompts.taskNotification(queue: board.queue(q.id)!, task: tasks[0],
+                                                position: 1, total: 2, commits: nil,
+                                                progress: progress)
+    check(doneText.contains("【任务面板】A · 1/2 · 已完成 ✓"), "标题 + 位次 + 结局")
+    check(doneText.contains("本任务提交：未记录"), "没有基线如实写「未记录」")
+    check(doneText.contains("改完了") && doneText.contains("第二行"), "本任务汇报完整保留")
+    check(doneText.contains("队列进度：完成 1 / 待确认 0 / 失败 1 / 取消 0 / 剩余 0（共 2 条）"),
+          "队列进度收成一行")
+    check(!doneText.contains("队列已暂停"), "成功的那条不提暂停")
+
+    let failedText = TaskPrompts.taskNotification(queue: board.queue(q.id)!, task: tasks[1],
+                                                  position: 2, total: 2, commits: nil,
+                                                  progress: progress)
+    check(failedText.contains("B · 2/2 · 失败 ✗"), "失败项标题 / 位次 / 结局")
+    check(failedText.contains("原因：tasks.errNotGit"), "失败项列出原因")
+    check(failedText.contains("队列已暂停：后续 0 个任务不会启动，不开 PR。"), "写清暂停与不开 PR")
+    check(failedText.contains("出口：重试（重跑本任务） / 跳过并继续"), "给出两个出口")
+
+    // 本任务提交：只列本任务产出的提交，不跑 git。
+    let commits = TaskPrompts.taskNotification(queue: board.queue(q.id)!, task: tasks[0],
+                                               position: 1, total: 2,
+                                               commits: [RepoCommits(repoID: ".", commits: [
+                                                   "abc123 深色模式：主题令牌",
+                                                   "def456 跟随系统：监听外观"])],
+                                               progress: progress)
+    check(commits.contains("本任务提交：2 个"), "提交数")
+    check(commits.contains("abc123 深色模式：主题令牌"), "提交逐条列出")
+}
+
+section("队列收尾文案：计数 + PR + 汇报全文路径（不再重列每棒汇报）")
+do {
+    var board = TaskBoard()
+    let a = TaskItem.manual(title: "A", body: nil, id: "manual-zz000005")
+    let b = TaskItem.manual(title: "B", body: nil, id: "manual-zz000006")
+    board.tasks = [a, b]
+    let q = board.createQueue(name: "外观", branch: "feature/ui", autoPR: true)
+    board.markRunning(a.id)
+    board.markDone(a.id, report: "改完了\n第二行", at: Date())
+    board.markRunning(b.id)
+    board.markDone(b.id, report: "也改完了", at: Date())
+    let tasks = [board.task(a.id)!, board.task(b.id)!]
+    let text = TaskPrompts.queueWrapUpSummary(queue: board.queue(q.id)!, tasks: tasks,
+                                             reportPath: "/tmp/reports/q-test.md")
+    check(text.contains("队列「外观」已全部完成（2/2）"), "全完成首行")
+    check(text.contains("计数：完成 2 条 / 待确认 0 条（共 2 条；失败 0 · 取消 0 · 剩余 0）"),
+          "计数一行")
     check(text.contains("分支：feature/ui → main"), "有分支就点名分支")
-    check(text.contains("1. ✓ A"), "第一条带标号")
-    check(text.contains("改完了") && text.contains("第二行"), "完整汇报保留（不再只取首行）")
-    check(text.contains("2. ✗ B"), "失败项带标号")
-    check(text.contains("失败：tasks.errNotGit"), "失败项列出原因")
+    check(text.contains("PR：未开"), "还没开 PR 就如实写未开")
+    check(text.contains("汇报全文：/tmp/reports/q-test.md"), "给出汇报全文路径")
+    check(!text.contains("改完了"), "收尾不再重列每棒汇报")
     check(text.contains("确认收到"), "要求简短确认")
 
-    // 提交列表：有则列出，空则不出现；无分支的队列不出现。
-    let withCommits = TaskPrompts.queueFinishedSummary(queue: board.queue(q.id)!, tasks: tasks,
-                                                       commits: ["abc123 深色模式：主题令牌",
-                                                                 "def456 跟随系统：监听外观"])
-    check(withCommits.contains("分支上相对 main 的提交："), "提交段的抬头")
-    check(withCommits.contains("abc123 深色模式：主题令牌"), "提交逐条列出")
-    check(!text.contains("提交："), "没有提交就不出现提交段")
-
+    // 无分支队列不显示分支行。
     var branchless = TaskBoard()
-    let bt2 = TaskItem.manual(title: "X", body: nil, id: "manual-zz000004")
+    let bt2 = TaskItem.manual(title: "X", body: nil, id: "manual-zz000007")
     branchless.tasks = [bt2]
     let bq = branchless.createQueue(name: "NoBranch", branch: "", autoPR: false)
     branchless.markRunning(bt2.id)
     branchless.markDone(bt2.id, report: "done")
-    let branchlessText = TaskPrompts.queueFinishedSummary(queue: branchless.queue(bq.id)!,
-                                                          tasks: [branchless.task(bt2.id)!],
-                                                          commits: ["should-not-show"])
+    let branchlessText = TaskPrompts.queueWrapUpSummary(queue: branchless.queue(bq.id)!,
+                                                        tasks: [branchless.task(bt2.id)!],
+                                                        reportPath: nil)
     check(!branchlessText.contains("分支："), "无分支队列不显示分支行")
-    check(!branchlessText.contains("提交："), "无分支队列不显示提交段")
+    check(branchlessText.contains("汇报全文：未写入"), "写不出文件时也说清楚")
 }
 
-section("回传带上队列分支的提交（git 仓库；非 git 不显示）")
+section("收尾带上分支与汇报全文路径；不再列分支提交")
 do {
     let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
     h.repo.commits = ["abc123 深色模式：主题令牌"]
@@ -2478,8 +2566,9 @@ do {
     _ = h.runner.step()
     let text = h.dsh.notifications.first?.text ?? ""
     check(text.contains("分支：feature/x → main"), "分支行")
-    check(text.contains("分支上相对 main 的提交："), "提交段")
-    check(text.contains("abc123 深色模式：主题令牌"), "提交内容")
+    check(text.contains("汇报全文："), "汇报全文路径")
+    check(!text.contains("分支上相对 main 的提交："), "旧的分支提交段已下线")
+    check(!text.contains("abc123 深色模式：主题令牌"), "不再把整条分支的提交塞进通知")
 }
 
 section("交付成功后自动关闭队列（成功才关；失败/关时不关）")
@@ -2915,7 +3004,13 @@ do {
     eq(h.board.queue(queueID)?.state, .paused, "待确认暂停队列")
     eq(h.board.task(second)?.state, .queued, "后面的任务没有被启动")
     eq(h.board.queue(queueID)?.taskIds.count, 2, "任务没有丢")
-    check(h.dsh.notifications.isEmpty, "待确认不发完成通知")
+    eq(h.dsh.notifications.count, 1, "待确认也发一条（但不是完成通知 / 收尾）")
+    let reviewText = h.dsh.notifications.first?.text ?? ""
+    check(reviewText.contains("One · 1/2 · 待确认 ?"), "标题 + 位次 + 待确认")
+    check(reviewText.contains("队列已暂停：后续 1 个任务不会启动，不开 PR。"),
+          "写清后续不会启动、不开 PR")
+    check(reviewText.contains("出口：重试（重跑本任务） / 跳过并继续"), "给出两个出口")
+    check(h.board.local.queueNotified[queueID] == nil, "队列没 done，不发收尾")
     eq(h.dsh.sessions.count, 1, "待确认不起交付会话（不自动开 PR）")
     check(h.rec.logged("needs review"), "日志记下待确认")
 
@@ -2926,6 +3021,8 @@ do {
     eq(h.board.queue(queueID)?.state, .active, "重试恢复队列")
     check(h.board.task(first)?.completionMarker != staleMarker, "重试换一个全新的 marker")
     eq(h.board.task(first)?.error, nil, "重试清掉待确认说明")
+    check(h.board.local.taskNotified[first] == nil, "重试清掉 taskNotified，下一次终态会再发")
+    eq(h.dsh.notifications.count, 1, "重试本身不补发通知")
     eq(h.dsh.sessions.count, 1, "待确认重试复用上一轮的会话（P5），不新建")
     check((h.dsh.prompts["session-1"] ?? "").contains("从未完成处继续"),
           "发的是短续跑提示词")
@@ -2947,7 +3044,7 @@ do {
     eq(h.board.task(first)?.state, .done, "用户确认 → done")
     eq(h.board.task(first)?.error, nil, "待确认的说明被清掉")
     eq(h.board.queue(queueID)?.state, .done, "最后一条确认后队列完成")
-    eq(h.dsh.notifications.count, 1, "确认后照常回传完成通知")
+    eq(h.dsh.notifications.count, 1, "标记完成不清 taskNotified：不重复发通知")
     // 队列有来源会话：交付复用它，不再新建一个会话。
     eq(h.runner.openingPRQueueID, queueID, "队列完成照常起交付（autoPR 开着）")
     check(h.dsh.prompts["origin-session"] != nil, "来源会话收到交付提示词")
@@ -2990,9 +3087,11 @@ do {
     let allCounts = TaskPrompts.completionCounts(allTasks)
     eq(allCounts.done, 2, "全完成：完成计 2")
     eq(allCounts.needsReview, 0, "全完成：待确认计 0")
-    let allText = TaskPrompts.queueFinishedSummary(queue: allDone.queue(aq.id)!, tasks: allTasks)
+    let allText = TaskPrompts.queueWrapUpSummary(queue: allDone.queue(aq.id)!, tasks: allTasks,
+                                                 reportPath: nil)
     check(allText.contains("已全部完成（2/2）"), "全完成仍写「已全部完成（2/2）」")
-    check(!allText.contains("待确认"), "全完成不提「待确认」")
+    check(!allText.contains("待确认 1"), "全完成不把待确认报成 1")
+    check(!allText.contains("不是全部完成"), "全完成不提示欠账")
 
     // 混合：2 完成 + 1 待确认 —— 首行必须写清两个计数，不能再报「全部完成」。
     var mixed = TaskBoard()
@@ -3008,19 +3107,26 @@ do {
     let mixedCounts = TaskPrompts.completionCounts(mixedTasks)
     eq(mixedCounts.done, 2, "混合：完成计 2")
     eq(mixedCounts.needsReview, 1, "混合：待确认计 1")
-    let mixedText = TaskPrompts.queueFinishedSummary(queue: mixed.queue(mq.id)!, tasks: mixedTasks)
-    check(mixedText.contains("完成 2 条 / 待确认 1 条（共 3 条）"),
+    let mixedText = TaskPrompts.queueWrapUpSummary(queue: mixed.queue(mq.id)!, tasks: mixedTasks,
+                                                   reportPath: nil)
+    check(mixedText.contains("完成 2 条 / 待确认 1 条（共 3 条"),
           "首行如实写「完成 2 条 / 待确认 1 条」")
     check(!mixedText.contains("已全部完成"), "有欠账就不再报「已全部完成」")
-    check(mixedText.contains("3. ? Three"), "待确认任务带自己的记号 ?")
-    check(mixedText.contains("待确认："), "待确认任务列出原因与两条出口")
     check(mixedText.contains("不是全部完成"), "尾部再强调不是全部完成")
-    check(mixedText.contains("三做了一半"), "待确认任务的汇报照样带上，验收看得到它做到哪")
+    // 待确认自己的那条通知带原因、暂停与两条出口；汇报全文不挤进收尾。
+    let review = TaskPrompts.taskNotification(queue: mixed.queue(mq.id)!, task: mixed.task(m3.id)!,
+                                              position: 3, total: 3, commits: nil,
+                                              progress: TaskPrompts.queueProgress(mixedTasks))
+    check(review.contains("Three · 3/3 · 待确认 ?"), "待确认任务带自己的记号 ?")
+    check(review.contains("原因：tasks.errUnverified"), "待确认任务列出原因")
+    check(review.contains("队列已暂停"), "待确认任务写清队列已暂停")
+    check(review.contains("三做了一半"), "待确认任务的汇报照样带上，验收看得到它做到哪")
+    check(!mixedText.contains("三做了一半"), "收尾不重列每棒汇报（全文在文件里）")
 }
 
 section("P3 跳过待确认后队列完成：通知仍如实报「完成 1 / 待确认 1」")
 do {
-    var (board, first, second, queueID) = twoTaskBoard()
+    var (board, first, second, queueID) = twoTaskBoard(autoPR: false)
     board.local.queueSessions[queueID] = "origin-session"
     let h = Harness(board: board)
     h.dsh.echoesTaskMarkers = false
@@ -3041,12 +3147,12 @@ do {
 
     eq(h.board.task(second)?.state, .done, "第二条完成")
     eq(h.board.queue(queueID)?.state, .done, "队列到达 done")
-    eq(h.dsh.notifications.count, 1, "队列完成发一次通知")
-    let text = h.dsh.notifications.first?.text ?? ""
-    check(text.contains("完成 1 条 / 待确认 1 条（共 2 条）"), "通知如实写「完成 1 / 待确认 1」")
+    eq(h.dsh.notifications.count, 3, "待确认一条 + 第二条一条 + 队列收尾一条")
+    let text = h.dsh.notifications[2].text
+    check(text.contains("完成 1 条 / 待确认 1 条（共 2 条"), "收尾如实写「完成 1 / 待确认 1」")
     check(!text.contains("已全部完成"), "跳过待确认也不谎报「已全部完成」")
-    check(text.contains("1. ? One"), "第一条在列表里是待确认 ?")
-    check(text.contains("2. ✓ Two"), "第二条是完成 ✓")
+    check(h.dsh.notifications[0].text.contains("One · 1/2 · 待确认 ?"), "第一条是待确认 ?")
+    check(h.dsh.notifications[1].text.contains("Two · 2/2 · 已完成 ✓"), "第二条是完成 ✓")
 }
 
 // MARK: - P4 产物校验（expectsCommit）

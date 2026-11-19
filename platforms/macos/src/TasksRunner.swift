@@ -1292,79 +1292,178 @@ enum TaskPrompts {
         return (done, needsReview)
     }
 
-    /// The completion report handed back to the session that created a queue — sent
-    /// when the queue reaches .done (see TasksRunner.notifyFinishedQueues).
-    ///
-    /// It carries each task's FULL 汇报 (and a failed task's reason), the queue branch,
-    /// the commits it carries and the PR, so the user can actually 验收. It deliberately
-    /// asks the receiving agent to do NOTHING but acknowledge: the report lands in a
-    /// conversation as a user turn, and nobody asked for more work.
-    ///
-    /// `commits` is the queue branch's `git log --oneline base..HEAD`; empty, or a
-    /// branchless queue (a non-git workspace), drops the section entirely.
-    static func queueFinishedSummary(queue: TaskQueue, tasks: [TaskItem], commits: [String] = []) -> String {
+    /// The one-glyph mark a task's ending gets in a notification / report file.
+    /// Kept as a function (rather than inline) so the per-task notification and the
+    /// 汇报全文 Markdown always agree.
+    static func stateMark(_ state: TaskState) -> String {
+        let mark: String
+        switch state {
+        case .done: mark = "✓"
+        case .failed: mark = "✗"
+        case .needsReview: mark = "?"
+        case .cancelled: mark = "−"
+        default: mark = "·"
+        }
+        return mark
+    }
+
+    /// The plain-language ending shown next to the task's title.
+    static func stateLabel(_ state: TaskState) -> String {
+        switch state {
+        case .done: return "已完成"
+        case .failed: return "失败"
+        case .needsReview: return "待确认"
+        case .cancelled: return "已取消"
+        case .closed: return "已关闭"
+        default: return "进行中"
+        }
+    }
+
+    /// Queue progress in ONE line: the per-task notifications all carry it, so a
+    /// reader never has to guess how much of the lane is still ahead.
+    struct QueueProgress: Equatable {
+        var done = 0
+        var needsReview = 0
+        var failed = 0
+        var cancelled = 0
+        var remaining = 0
+        var total = 0
+
+        var line: String {
+            "队列进度：完成 \(done) / 待确认 \(needsReview) / 失败 \(failed) / 取消 \(cancelled) / 剩余 \(remaining)（共 \(total) 条）"
+        }
+    }
+
+    static func queueProgress(_ tasks: [TaskItem]) -> QueueProgress {
+        var p = QueueProgress()
+        p.total = tasks.count
+        for task in tasks {
+            switch task.state {
+            case .done: p.done += 1
+            case .failed: p.failed += 1
+            case .needsReview: p.needsReview += 1
+            case .cancelled: p.cancelled += 1
+            case .queued, .running, .pending: p.remaining += 1
+            case .closed: break
+            }
+        }
+        return p
+    }
+
+    /// The commits THIS task produced, grouped per repo (P4 baseline → HEAD).
+    /// nil means "not recorded" (a task from before taskCommits / no baseline) and
+    /// must never be rendered as a zero; a recorded zero is a faithful "0 个".
+    static func commitLines(_ groups: [RepoCommits]?) -> [String] {
+        guard let groups = groups else {
+            return ["本任务提交：未记录（这次没有产物基线）"]
+        }
+        let total = groups.reduce(0) { $0 + $1.commits.count }
+        var lines = ["本任务提交：\(total) 个"]
+        guard total > 0 else { return lines }
+        let multiRepo = groups.count > 1
+        var shown = 0
+        for group in groups {
+            for commit in group.commits {
+                if shown >= 10 {
+                    lines.append("  …（还有 \(total - shown) 条提交未列出）")
+                    return lines
+                }
+                lines.append("  - " + (multiRepo ? "[\(group.repoID)] " : "") + commit)
+                shown += 1
+            }
+        }
+        return lines
+    }
+
+    /// ONE task's terminal notification: 标题 · 位次 · 结局 · 本任务提交 · 汇报 ·
+    /// 队列进度. It deliberately says nothing about the other tasks' reports — that
+    /// is what the queue wrap-up / the 汇报全文 file is for.
+    static func taskNotification(queue: TaskQueue, task: TaskItem, position: Int, total: Int,
+                                 commits: [RepoCommits]?,
+                                 progress: QueueProgress) -> String {
+        var lines: [String] = []
+        lines.append("【任务面板】\(task.title) · \(position)/\(total) · "
+                     + Self.stateLabel(task.state) + " " + Self.stateMark(task.state))
+        if let error = task.error, task.state == .failed {
+            let detail = task.errorDetail.map { "：" + $0 } ?? ""
+            lines.append("原因：\(error)\(detail)")
+        } else if task.state == .needsReview {
+            let reason = task.error ?? TaskFailure.unverified.rawValue
+            lines.append("原因：\(reason)（会话结束了，但没有拿到本次完成证据）")
+        }
+        lines.append(contentsOf: Self.commitLines(commits))
+        if let report = task.report?.trimmingCharacters(in: .whitespacesAndNewlines), !report.isEmpty {
+            let text = report.count > 1500
+                ? String(report.prefix(1500)) + "\n…（汇报过长，已截断）"
+                : report
+            lines.append("汇报：")
+            for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+                lines.append("  " + String(line))
+            }
+        } else {
+            lines.append("汇报：（没有汇报）")
+        }
+        lines.append(progress.line)
+        // 失败 / 待确认：队列已经停了，必须说清后续不会发生什么，并给两个人工出口。
+        // 「后续 N 个」按位次算（串行队列里这一棒之后的都还没跑）。
+        if task.state == .failed || task.state == .needsReview {
+            let remainingAfter = max(0, total - position)
+            lines.append("队列已暂停：后续 \(remainingAfter) 个任务不会启动，不开 PR。")
+            lines.append("出口：重试（重跑本任务） / 跳过并继续（保留本次记录，继续下一棒）")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The queue wrap-up: counts + PR + the path to the 汇报全文 file. It is
+    /// deliberately NOT a per-task list — every task already got its own message
+    /// (and a single-task queue folds this block into that one message).
+    static func queueWrapUpSummary(queue: TaskQueue, tasks: [TaskItem],
+                                   reportPath: String?) -> String {
         // §4.4 完成通知诚实化：先分开数「确认完成」与「待确认」，不再一律报「全部完成」。
         let counts = Self.completionCounts(tasks)
-        var lines: [String]
-        if counts.needsReview == 0 {
+        let progress = Self.queueProgress(tasks)
+        var lines: [String] = []
+        if counts.needsReview == 0 && progress.failed == 0 && progress.cancelled == 0 {
             lines = ["【任务面板】队列「\(queue.name)」已全部完成（\(counts.done)/\(tasks.count)）"]
         } else {
-            lines = ["【任务面板】队列「\(queue.name)」完成 \(counts.done) 条 / 待确认 \(counts.needsReview) 条（共 \(tasks.count) 条）"]
+            lines = ["【任务面板】队列「\(queue.name)」已结束"]
         }
+        lines.append("计数：完成 \(counts.done) 条 / 待确认 \(counts.needsReview) 条（共 \(tasks.count) 条；失败 \(progress.failed) · 取消 \(progress.cancelled) · 剩余 \(progress.remaining)）")
         if let branch = queue.branch, !branch.isEmpty {
             lines.append("分支：\(branch) → \(queue.baseBranch)")
         }
         lines.append(contentsOf: Self.timingLine(tasks))
-        lines.append("")
-        for (index, task) in tasks.enumerated() {
-            let mark: String
-            switch task.state {
-            case .done: mark = "✓"
-            case .failed: mark = "✗"
-            case .needsReview: mark = "?"
-            case .cancelled: mark = "−"
-            default: mark = "·"
-            }
-            lines.append("\(index + 1). \(mark) \(task.title)")
-            if task.state == .failed {
-                let detail = task.errorDetail.map { "：" + $0 } ?? ""
-                lines.append("   失败：\(task.error ?? "失败")\(detail)")
-            } else if task.state == .needsReview {
-                // 没有完成证据的任务：如实写「待确认」，并给出两条人工出口。证据有两种
-                // （P1 的完成标记、P4 的产物），文案不偏向其中一种，免得另一种原因下误导。
-                lines.append("   待确认：会话结束了，但没有拿到完成证据（本次完成标记 / 应产出提交的改动）——请先「重试」或确认后「标记完成」")
-            } else if task.state == .cancelled {
-                lines.append("   已取消")
-            }
-            if let report = task.report?.trimmingCharacters(in: .whitespacesAndNewlines), !report.isEmpty {
-                let text = report.count > 1500
-                    ? String(report.prefix(1500)) + "\n…（汇报过长，已截断）"
-                    : report
-                lines.append("   汇报：")
-                for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-                    lines.append("     " + String(line))
-                }
-            }
-            if let prUrl = task.prUrl { lines.append("   PR：\(prUrl)") }
-        }
         if let prUrl = queue.prUrl {
-            lines.append("")
-            lines.append("队列 PR：\(prUrl)")
+            lines.append("PR：\(prUrl)")
         } else if let prError = queue.prError {
-            lines.append("")
-            lines.append("队列 PR：未开（\(prError)）")
+            lines.append("PR：未开（\(prError)）")
+        } else if queue.autoPR {
+            lines.append("PR：未开")
         }
-        if queue.branch != nil, !commits.isEmpty {
-            lines.append("")
-            lines.append("分支上相对 \(queue.baseBranch) 的提交：")
-            for commit in commits { lines.append("  " + commit) }
-        }
-        lines.append("")
+        lines.append("汇报全文：\(reportPath ?? "未写入（无法获取路径）")")
         if counts.needsReview > 0 {
             lines.append("注意：有任务待确认，**不是全部完成**——请先把待确认任务交给用户处理（重试 / 标记完成），再按验收结果判断。")
         }
         lines.append("这是任务面板的完成通知。请用一两句话确认收到并等待用户验收，不要主动改代码或新建任务。")
         return lines.joined(separator: "\n")
+    }
+
+    /// Single-task queue: the only message the creating session gets. It carries the
+    /// task body AND the wrap-up, so a 1-task lane never sends two notifications for
+    /// the same ending.
+    static func singleTaskQueueSummary(queue: TaskQueue, task: TaskItem,
+                                       commits: [RepoCommits]?, reportPath: String?) -> String {
+        let progress = Self.queueProgress([task])
+        let taskPart = Self.taskNotification(queue: queue, task: task, position: 1, total: 1,
+                                             commits: commits, progress: progress)
+        let wrapPart = Self.queueWrapUpSummary(queue: queue, tasks: [task],
+                                               reportPath: reportPath)
+        // Drop the wrap-up's own header: this is still the task's message, and two
+        // 【任务面板】 headers in one message read like two notifications.
+        let wrapLines = wrapPart.split(separator: "\n", omittingEmptySubsequences: false)
+            .dropFirst()
+            .map(String.init)
+        return ([taskPart] + wrapLines).joined(separator: "\n")
     }
 
     /// "耗时：14:03 → 14:25（22 分钟）", or nothing when the board has no timestamps.
@@ -1637,6 +1736,7 @@ final class TasksRunner {
                                       targets: active.targets)
                     board.markFailed(active.taskID, error: TaskFailure.timeout.rawValue, at: now)
                     persist()
+                    notifyFinishedQueues(now: now)
                     _ = pump(now: now)
                 }
                 return isBusy
@@ -1668,6 +1768,7 @@ final class TasksRunner {
                                       targets: active.targets)
                     board.markFailed(active.taskID, error: TaskFailure.sessionGone.rawValue, at: now)
                     persist()
+                    notifyFinishedQueues(now: now)
                     _ = pump(now: now)
                 }
                 return isBusy
@@ -1883,6 +1984,7 @@ final class TasksRunner {
                 if let task = board.task(taskID), task.source == .github { env.persistIssueTask(task) }
                 persist()
                 env.log("tasks: " + taskID + " cancelled as soon as its session existed")
+                notifyFinishedQueues(now: now)
                 _ = pump(now: now)
                 return
             }
@@ -1910,6 +2012,7 @@ final class TasksRunner {
             env.log("tasks: " + taskID + " could not start (" + failure.rawValue + ")")
             board.markFailed(taskID, error: failure.rawValue, errorDetail: errorDetail, at: now)
             persist()
+            notifyFinishedQueues(now: now)
             _ = pump(now: now)
         }
     }
@@ -1986,7 +2089,6 @@ final class TasksRunner {
 
     private func finish(active: Active, now: Date) {
         let queue = active.queueID.flatMap { board.queue($0) }
-        let branch = active.branch
         // The queue's PR is opened once, when its LAST task finishes: every task in a
         // queue shares one branch, and GitHub allows one open PR per head.
         let queueHasMore = queue?.taskIds.contains { id in
@@ -2094,13 +2196,12 @@ final class TasksRunner {
         }
         if isIssue, let task = board.task(taskID) { env.persistIssueTask(task) }
         persist()
-        // A queue that just reached .done reports back to the session that created it.
-        // This is deliberately BEFORE the PR run and does NOT wait for it (decision:
-        // 「任务全做完立刻回传，PR 会话不阻塞」).
-        notifyFinishedQueues(now: now)
         // Only a queue that ENDED WELL hands its branch over to a PR session: a failed
         // task pauses the queue, and half-finished work is not what anyone wants merged.
+        // Start it BEFORE notifying: the wrap-up wants the PR, so it must be able to see
+        // that a delivery run is in flight and wait for it.
         if case .done = outcome, let queueID = finalizeQueueID { startQueueIntegration(queueID) }
+        notifyFinishedQueues(now: now)
         _ = pump(now: now)
     }
 
@@ -2185,6 +2286,7 @@ final class TasksRunner {
                 self.phase = .idle
                 self.env.log("tasks: could not start a finalize session for queue " + queueID)
                 _ = self.board.setQueuePRError(queueID, "tasks.errPRSession")
+                self.notifyFinishedQueues()
                 self.persist()
                 return
             }
@@ -2318,6 +2420,7 @@ final class TasksRunner {
                 self.phase = .idle
                 self.env.log("tasks: could not start a finalize session for queue " + queueID)
                 _ = self.board.setQueuePRError(queueID, "tasks.errPRSession")
+                self.notifyFinishedQueues()
                 self.persist()
                 return
             }
@@ -2523,6 +2626,7 @@ final class TasksRunner {
                 self.phase = .idle
                 self.env.log("tasks: could not start a fallback finalize session for queue " + queueID)
                 _ = self.board.setQueuePRError(queueID, "tasks.errPRSession")
+                self.notifyFinishedQueues()
                 self.persist()
                 return
             }
@@ -2580,6 +2684,7 @@ final class TasksRunner {
             env.log("tasks: queue " + run.queueID + " finalized per repo — "
                     + runs.map { $0.repoID + ":" + $0.status.rawValue }.joined(separator: "、"))
             let published = failures.isEmpty && !successes.isEmpty
+            notifyFinishedQueues()
             if published { autoCloseAfterPublish(run.queueID) }
             persist()
             _ = pump()
@@ -2604,6 +2709,9 @@ final class TasksRunner {
                     + (note ?? "(no report)"))
             published = Self.finalizeSucceeded(mode: run.mode, report: full)
         }
+        // The delivery is over and the PR is known: this is the moment the queue's
+        // wrap-up stops deferring, so send it BEFORE auto-close can hide .done.
+        notifyFinishedQueues()
         // 交付成功后自动关闭队列 (the panel setting): close only after a delivery the shell
         // can actually see succeeded, and only while the queue is still .done.
         if published { autoCloseAfterPublish(run.queueID) }
@@ -2876,41 +2984,133 @@ final class TasksRunner {
         return created
     }
 
-    /// Send the completion report of every 已完成 queue that has an originating session
-    /// and has not reported yet, then mark it reported.
+    /// Send every notification a queue still owes its originating session, then mark
+    /// it sent. Two kinds, deliberately decoupled from the queue length:
     ///
-    /// Idempotent and cheap (a filter over queues), so it runs both right after a task
-    /// finishes (the transition into .done) and on an idle step (a restart between
-    /// 「已完成」 and the report). A delivery failure still marks the queue reported:
-    /// the report is information, and retrying forever is worse than losing it.
+    /// - ONE per task at its terminal state (done / failed / needsReview / cancelled),
+    ///   carrying only that task (title · position · ending · commits · report ·
+    ///   one-line queue progress). A failed / needsReview task also says the queue is
+    ///   paused, how many tasks will not start, and the two exits.
+    /// - ONE wrap-up when the queue reaches .done: counts + PR + the path of the
+    ///   汇报全文 file. A single-task queue folds the wrap-up into its task message,
+    ///   so it never sends two notifications for the same ending.
+    ///
+    /// Idempotent: `local.taskNotified` / `local.queueNotified` are written BEFORE
+    /// the RPC, so a second tick can never queue the same message twice. Cheap (a
+    /// filter over queues), so it runs after each task finish AND on an idle step —
+    /// the latter picks up a notification a crash never got to send.
+    ///
+    /// Deferral: while the queue's 交付 session runs in its ORIGINATING session, a
+    /// notification would land in the middle of that session's turn and could pollute
+    /// the finalize marker; it waits for idle instead. The wrap-up additionally waits
+    /// for ANY delivery session of the queue, because only then is the PR known.
     func notifyFinishedQueues(now: Date = Date()) {
-        let pending = board.queues.filter { queue in
-            queue.state == .done
-                && board.local.queueSessions[queue.id] != nil
-                && board.local.queueNotified[queue.id] == nil
-        }
-        guard !pending.isEmpty else { return }
-        for queue in pending {
-            guard let session = board.local.queueSessions[queue.id] else { continue }
+        let stamp = TaskItem.iso8601.string(from: now)
+        for queue in board.queues {
+            guard let origin = board.local.queueSessions[queue.id] else { continue }
+            // The origin conversation is busy running a delivery turn: sending a user
+            // message now could be mistaken for that turn's report / marker.
+            if originBusyWithDelivery(origin) { continue }
             let tasks = queue.taskIds.compactMap { board.task($0) }
-            // Mark BEFORE the RPC: a second step must never queue the same report twice.
-            board.local.queueNotified[queue.id] = TaskItem.iso8601.string(from: now)
-            let notify = env.notifySession
-            let log = env.log
-            let git = env.git
-            let branch = queue.branch
-            env.perform({
-                // The commit list is a blocking git call, so it lives in the background
-                // half. A branchless queue (non-git workspace / 不切分支) has none.
-                let commits = (branch?.isEmpty == false)
-                    ? (git.commits(base: queue.baseBranch) ?? []) : []
-                let text = TaskPrompts.queueFinishedSummary(queue: queue, tasks: tasks, commits: commits)
-                _ = notify(session, text)
-            }, {
-                log("tasks: queue " + queue.id + " finished — reported to " + session)
-            })
+            guard !tasks.isEmpty else { continue }
+            let isDone = queue.state == .done
+            let wrapDeferred = deliveryInFlight(queue.id)
+            let isSingle = tasks.count == 1
+
+            // Single-task queue: exactly ONE message, task body + wrap-up together.
+            // If that one message was already sent (e.g. 待确认 was reported and the
+            // user then 标记完成), do not send a second one — 标记完成 is a
+            // confirmation, not a new run.
+            if isDone && isSingle {
+                guard board.local.queueNotified[queue.id] == nil,
+                      board.local.taskNotified[tasks[0].id] == nil,
+                      !wrapDeferred else { continue }
+                let path = TasksStore.reportFile(env.repoRoot, queueID: queue.id)
+                let text = TaskPrompts.singleTaskQueueSummary(queue: queue, task: tasks[0],
+                                                              commits: board.taskCommits(tasks[0].id),
+                                                              reportPath: path)
+                board.local.taskNotified[tasks[0].id] = stamp
+                board.local.queueNotified[queue.id] = stamp
+                deliver(queue: queue, tasks: tasks, to: origin, texts: [text], writeReport: true)
+                continue
+            }
+
+            var texts: [String] = []
+            // A done queue that was already wrapped up before this feature is history:
+            // do not flood its creator with one message per old task on the next idle.
+            let alreadyWrapped = isDone && board.local.queueNotified[queue.id] != nil
+            if !alreadyWrapped {
+                let progress = TaskPrompts.queueProgress(tasks)
+                for (index, task) in tasks.enumerated() {
+                    guard task.state.isFinished, task.state != .closed,
+                          board.local.taskNotified[task.id] == nil else { continue }
+                    texts.append(TaskPrompts.taskNotification(queue: queue, task: task,
+                                                              position: index + 1,
+                                                              total: tasks.count,
+                                                              commits: board.taskCommits(task.id),
+                                                              progress: progress))
+                    // Mark BEFORE the RPC: a second step must never queue it twice.
+                    board.local.taskNotified[task.id] = stamp
+                }
+            }
+            var wrap: String?
+            if isDone && board.local.queueNotified[queue.id] == nil && !wrapDeferred {
+                let path = TasksStore.reportFile(env.repoRoot, queueID: queue.id)
+                wrap = TaskPrompts.queueWrapUpSummary(queue: queue, tasks: tasks, reportPath: path)
+                board.local.queueNotified[queue.id] = stamp
+            }
+            if let wrap = wrap { texts.append(wrap) }
+            guard !texts.isEmpty else { continue }
+            deliver(queue: queue, tasks: tasks, to: origin, texts: texts,
+                    writeReport: wrap != nil)
         }
         persist()
+    }
+
+    /// The origin conversation is running a delivery turn right now (or one is being
+    /// created, which may reuse it). Notifications wait for idle — see above.
+    private func originBusyWithDelivery(_ origin: String) -> Bool {
+        switch phase {
+        case .startingPR:
+            return true
+        case .openingPR(let run):
+            return run.sessionId == origin
+        default:
+            return false
+        }
+    }
+
+    /// A delivery session for THIS queue is in flight, so its PR is not known yet:
+    /// the wrap-up (and the single-task message that folds it in) waits.
+    private func deliveryInFlight(_ queueID: String) -> Bool {
+        switch phase {
+        case .startingPR(let id):
+            return id == queueID
+        case .openingPR(let run):
+            return run.queueID == queueID
+        default:
+            return false
+        }
+    }
+
+    /// Send a batch for one queue in ONE background step, so the per-task messages and
+    /// the wrap-up keep their order instead of racing on the global queue. The report
+    /// file is written first: the wrap-up points at it, so it must already exist.
+    private func deliver(queue: TaskQueue, tasks: [TaskItem], to origin: String,
+                         texts: [String], writeReport: Bool) {
+        let notify = env.notifySession
+        let log = env.log
+        let repoRoot = env.repoRoot
+        let queueID = queue.id
+        env.perform({
+            if writeReport {
+                _ = TasksStore.saveQueueReport(repoRoot, queue: queue, tasks: tasks)
+            }
+            for text in texts { _ = notify(origin, text) }
+        }, {
+            log("tasks: queue " + queueID + " — " + String(texts.count)
+                + " notification(s) sent to " + origin)
+        })
     }
 
     /// Edit a queue's settings. A double-optional branch distinguishes "leave it
@@ -3161,6 +3361,7 @@ final class TasksRunner {
             if let task = board.task(active.taskID), task.source == .github { env.persistIssueTask(task) }
             persist()
             env.log("tasks: " + active.taskID + " cancelled")
+            notifyFinishedQueues()
             _ = pump()
             return .cancelled
         case .starting(let taskID):
