@@ -1866,6 +1866,9 @@ do {
           "任务自己建了仓库就要 commit（用户第 4 条）")
     check(prompt.contains("文档 / 配置类做能做的校验"), "自查条照顾到文档类任务")
     check(prompt.contains("**必须**在结束时汇报"), "汇报是必须的")
+    check(prompt.contains("固定 4 个字段") && prompt.contains("做了什么 / 怎么验证 / 未完成 / 下一棒注意"),
+          "汇报要求是固定 4 字段（合规块可被模型解析）")
+    check(prompt.contains("单棒合计不超过 500 字"), "汇报有 500 字上限")
 }
 
 section("git 仓库 / GitHub 仓库：有分支条与 commit 条，token 只给 GitHub，push 一律不提")

@@ -534,6 +534,109 @@ do {
     eq(fresh.task(stored.id)?.report, "从 local.json 回来的汇报", "attachSessions 也带上汇报")
 }
 
+// MARK: - 交接块：固定 4 字段
+
+section("交接块：合规块解析成 4 个派生字段")
+let compliantHandoff = """
+### 做了什么
+把汇报解析成 4 个字段。
+补充：仍然保留原文。
+
+- **怎么验证**：swiftc 编译 + tests/tasks-panel/run.sh 全绿
+- **未完成**：无
+- **下一棒注意**：别改 index.json
+"""
+if let parsed = TaskHandoff.parse(compliantHandoff) {
+    eq(parsed.source, TaskHandoff.Source.block, "合规块按约定解析")
+    eq(parsed.did, "把汇报解析成 4 个字段。\n补充：仍然保留原文。", "做了什么：多行值完整保留")
+    eq(parsed.verified, "swiftc 编译 + tests/tasks-panel/run.sh 全绿", "怎么验证")
+    eq(parsed.unfinished, "无", "未完成")
+    eq(parsed.nextNote, "别改 index.json", "下一棒注意")
+    check(parsed.characterCount <= TaskHandoff.maxCharacters, "合规块本身在上限内")
+} else {
+    check(false, "合规块应能解析")
+}
+
+section("交接块：没有约定时按确定性规则兜底")
+let freeformHandoff = """
+完成了读取逻辑，顺手抽出了 helper。
+
+改动集中在 TasksCore.swift。
+下一步：把本地缓存接上。
+注意：不要改 index.json。
+
+收尾说明。
+"""
+if let fallback = TaskHandoff.parse(freeformHandoff) {
+    eq(fallback.source, TaskHandoff.Source.fallback, "无 4 字段 → fallback")
+    eq(fallback.did, "完成了读取逻辑，顺手抽出了 helper。", "首段 → 做了什么")
+    eq(fallback.unfinished, "下一步：把本地缓存接上。\n注意：不要改 index.json。", "含未完成/注意/下一步的行 → 未完成")
+    eq(fallback.nextNote, "收尾说明。", "末段 → 下一棒注意")
+    eq(fallback.verified, "", "自由文本里没有验证证据，不编造")
+} else {
+    check(false, "兜底应总能产出派生字段")
+}
+
+section("交接块：超长按 500 字截断")
+let longHandoffChunk = String(repeating: "这是一段很长的交接内容。", count: 40)
+let overlongHandoff = "做了什么：" + longHandoffChunk + "\n"
+    + "怎么验证：" + longHandoffChunk + "\n"
+    + "未完成：" + longHandoffChunk + "\n"
+    + "下一棒注意：" + longHandoffChunk
+if let capped = TaskHandoff.parse(overlongHandoff) {
+    eq(capped.source, TaskHandoff.Source.block, "超长但合规的块仍按约定解析")
+    check(capped.characterCount <= TaskHandoff.maxCharacters, "截断后合计不超过 500 字")
+    check(capped.did.count <= TaskHandoff.maxCharacters / 4, "每个非空字段分到均等预算")
+    check(capped.did.hasSuffix("…") && capped.nextNote.hasSuffix("…"), "截断处有省略号")
+    check(!capped.did.isEmpty && !capped.verified.isEmpty
+          && !capped.unfinished.isEmpty && !capped.nextNote.isEmpty, "截断不丢字段")
+} else {
+    check(false, "超长汇报也应产出派生字段")
+}
+
+section("交接块：只落 local.json，重试清掉")
+do {
+    var handoffBoard = TaskBoard()
+    let ht = TaskItem.manual(title: "交接", body: nil, id: "manual-hh001111")
+    handoffBoard.tasks = [ht]
+    handoffBoard.markRunning(ht.id)
+    handoffBoard.markDone(ht.id, report: compliantHandoff)
+    check(handoffBoard.task(ht.id)?.handoff != nil, "任务上带着派生字段")
+    eq(handoffBoard.local.handoffs[ht.id]?.source, TaskHandoff.Source.block, "local.json 状态里也有")
+    check(handoffBoard.task(ht.id)?.manualDictionary()["handoff"] == nil,
+          "manual.json 不写派生字段")
+    check(handoffBoard.task(ht.id)?.indexDictionary()["handoff"] == nil,
+          "committed index 不写派生字段")
+    eq(handoffBoard.local.reports[ht.id], compliantHandoff, "原始汇报仍完整保留")
+
+    let handoffRepo = tempRepo("handoffs")
+    TasksStore.saveLocalHalf(handoffRepo, handoffBoard)
+    let loadedHandoff = TasksStore.load(handoffRepo)
+    eq(loadedHandoff.task(ht.id)?.handoff?.did,
+       handoffBoard.task(ht.id)?.handoff?.did, "local.json 往返后派生字段还在")
+    let manualHandoffJSON = text(at: TasksStore.path(handoffRepo, file: "manual.json"))
+    check(!manualHandoffJSON.contains("下一棒注意"), "manual.json 文件里没有派生字段")
+
+    handoffBoard.markRunning(ht.id)
+    _ = handoffBoard.markFailed(ht.id, error: "tasks.errTimeout", report: freeformHandoff)
+    eq(handoffBoard.local.handoffs[ht.id]?.source, TaskHandoff.Source.fallback,
+       "失败任务的兜底交接也写回")
+    _ = handoffBoard.retryAndResume(ht.id)
+    eq(handoffBoard.task(ht.id)?.handoff, nil, "重试清掉上一轮的派生字段")
+    check(handoffBoard.local.handoffs[ht.id] == nil, "local 那份也清掉")
+
+    // attachSessions 把 local.json 里的派生字段挂回任务。
+    var freshHandoff = TaskBoard()
+    freshHandoff.tasks = [ht]
+    if let attached = TaskHandoff.parse(compliantHandoff) {
+        freshHandoff.attachSessions([:], handoffs: [ht.id: attached])
+        eq(freshHandoff.task(ht.id)?.handoff?.nextNote, "别改 index.json",
+           "attachSessions 也带上派生字段")
+    } else {
+        check(false, "合规块应能解析")
+    }
+}
+
 // MARK: - persistence
 
 section("persistence: four files")

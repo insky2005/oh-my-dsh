@@ -168,6 +168,9 @@ struct TaskItem: Equatable {
     /// exists only on this machine): it belongs to local.json, never to manual.json /
     /// index.json — the committed index keeps its v1 shape and stays shareable.
     var report: String?
+    /// 固定 4 字段的交接摘要（由 report 派生，见 TaskHandoff）。与 report 一样机器
+    /// 私有：只在 local.json / 内存里，绝不进 manual.json / index.json。
+    var handoff: TaskHandoff?
     /// 本次尝试的完成 marker（runner 生成、写进提示词，会话须在最后一行回显）。它只
     /// 进 local.json / 内存，绝不进 index.json / manual.json：机器私有，且重启恢复后
     /// 据此判断这次尝试是否已被校验过（见 markerVerified）。
@@ -196,6 +199,7 @@ struct TaskItem: Equatable {
          startedAt: Date? = nil,
          finishedAt: Date? = nil,
          report: String? = nil,
+         handoff: TaskHandoff? = nil,
          completionMarker: String? = nil,
          markerVerified: Bool = false,
          expectsCommit: Bool = false) {
@@ -215,6 +219,7 @@ struct TaskItem: Equatable {
         self.startedAt = startedAt
         self.finishedAt = finishedAt
         self.report = report
+        self.handoff = handoff
         self.completionMarker = completionMarker
         self.markerVerified = markerVerified
         self.expectsCommit = expectsCommit
@@ -332,6 +337,225 @@ struct TaskItem: Equatable {
                         errorDetail: d["errorDetail"] as? String,
                         startedAt: (d["startedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) },
                         finishedAt: (d["finishedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
+    }
+}
+
+// MARK: - Hand-off block (fixed 4 fields)
+
+/// The agent's 汇报, folded into the four fields the brief and the per-task
+/// notification consume. The prompt (TasksRunner.reportRequirement) asks for
+/// exactly this block; an agent that ignores the convention still gets a
+/// deterministic fallback instead of losing its report.
+///
+/// Derived, machine-private data: it is written to local.json only. The task's
+/// manual/index dictionaries stay the shareable v1 shape (no hand-off in them).
+struct TaskHandoff: Equatable {
+    enum Source: String {
+        /// The report had all four labelled fields.
+        case block
+        /// The report did not follow the convention — deterministic fallback:
+        /// first paragraph + lines mentioning 未完成 / 注意 / 下一步 + last paragraph.
+        case fallback
+    }
+
+    var did: String
+    var verified: String
+    var unfinished: String
+    var nextNote: String
+    var source: Source
+
+    /// One task run's hand-off is capped at 500 characters. The raw report is
+    /// left untouched (the card / brief still carry the agent's whole words);
+    /// only this derived digest is bounded.
+    static let maxCharacters = 500
+
+    static let fieldLabels = ["做了什么", "怎么验证", "未完成", "下一棒注意"]
+
+    var isEmpty: Bool {
+        did.isEmpty && verified.isEmpty && unfinished.isEmpty && nextNote.isEmpty
+    }
+
+    var characterCount: Int {
+        did.count + verified.count + unfinished.count + nextNote.count
+    }
+
+    /// Parse a finished task's report. Returns nil for an empty/whitespace report.
+    /// A report that does not carry all four labels falls back deterministically
+    /// (see Source.fallback), never to an empty digest.
+    static func parse(_ report: String?) -> TaskHandoff? {
+        guard let text = report?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else { return nil }
+        let normalised = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        if let block = parseBlock(normalised) {
+            return block.capped()
+        }
+        return fallback(normalised).capped()
+    }
+
+    /// Enforce the 500-character ceiling without dropping a field. When the
+    /// digest is over budget, every non-empty field gets the same quota; a
+    /// truncated field ends in an ellipsis that counts toward that quota.
+    func capped(limit: Int = TaskHandoff.maxCharacters) -> TaskHandoff {
+        guard characterCount > limit else { return self }
+        let values = [did, verified, unfinished, nextNote]
+        let nonEmpty = values.filter { !$0.isEmpty }.count
+        guard nonEmpty > 0 else { return self }
+        let quota = max(1, limit / nonEmpty)
+        var out = self
+        out.did = TaskHandoff.truncate(did, to: quota)
+        out.verified = TaskHandoff.truncate(verified, to: quota)
+        out.unfinished = TaskHandoff.truncate(unfinished, to: quota)
+        out.nextNote = TaskHandoff.truncate(nextNote, to: quota)
+        return out
+    }
+
+    private static func truncate(_ text: String, to limit: Int) -> String {
+        guard text.count > limit else { return text }
+        guard limit > 1 else { return String(text.prefix(limit)) }
+        return String(text.prefix(limit - 1)) + "…"
+    }
+
+    // MARK: the convention
+
+    private static func parseBlock(_ text: String) -> TaskHandoff? {
+        var values: [Int: [String]] = [:]
+        var current: Int?
+        for rawLine in text.components(separatedBy: "\n") {
+            if let hit = fieldLabel(in: rawLine) {
+                current = hit.index
+                values[hit.index, default: []].append(hit.value)
+            } else if let index = current {
+                values[index, default: []].append(rawLine)
+            }
+        }
+        // All four labels have to be present; a partial block is not the
+        // convention and goes through the fallback instead.
+        guard let did = values[0], let verified = values[1],
+              let unfinished = values[2], let nextNote = values[3] else { return nil }
+        return TaskHandoff(did: joined(did),
+                           verified: joined(verified),
+                           unfinished: joined(unfinished),
+                           nextNote: joined(nextNote),
+                           source: .block)
+    }
+
+    /// Recognise one labelled field line, tolerating the markdown an agent
+    /// naturally writes: headings, bullets, blockquotes, bold labels and either
+    /// colon. Returns nil when this line is not a field label.
+    private static func fieldLabel(in rawLine: String) -> (index: Int, value: String)? {
+        var line = rawLine.trimmingCharacters(in: .whitespaces)
+        guard !line.isEmpty else { return nil }
+        // blockquote
+        while line.hasPrefix(">") {
+            line.removeFirst()
+            line = line.trimmingCharacters(in: .whitespaces)
+        }
+        // heading hashes
+        while line.hasPrefix("#") {
+            line.removeFirst()
+            line = line.trimmingCharacters(in: .whitespaces)
+        }
+        // unordered bullet
+        for bullet in ["- ", "* ", "+ ", "• "] where line.hasPrefix(bullet) {
+            line = String(line.dropFirst(bullet.count)).trimmingCharacters(in: .whitespaces)
+            break
+        }
+        // ordered bullet ("1. ", "2) ")
+        if let dot = line.firstIndex(where: { $0 == "." || $0 == ")" }),
+           dot > line.startIndex,
+           line[line.startIndex..<dot].allSatisfy({ $0.isNumber }) {
+            line = String(line[line.index(after: dot)...]).trimmingCharacters(in: .whitespaces)
+        }
+        // another heading/bullet layer (e.g. "- ### 做了什么")
+        while line.hasPrefix("#") {
+            line.removeFirst()
+            line = line.trimmingCharacters(in: .whitespaces)
+        }
+        // leading emphasis / code span
+        line = strippingLeadingDecoration(line)
+
+        for (index, label) in fieldLabels.enumerated() where line.hasPrefix(label) {
+            var rest = String(line.dropFirst(label.count)).trimmingCharacters(in: .whitespaces)
+            rest = strippingLeadingDecoration(rest)
+            if rest.hasPrefix("：") || rest.hasPrefix(":") {
+                rest.removeFirst()
+                rest = rest.trimmingCharacters(in: .whitespaces)
+                rest = strippingLeadingDecoration(rest)
+            } else if !rest.isEmpty {
+                // "未完成情况说明" is prose, not the 未完成 field.
+                return nil
+            }
+            return (index, rest)
+        }
+        return nil
+    }
+
+    private static func strippingLeadingDecoration(_ text: String) -> String {
+        var out = text
+        var changed = true
+        while changed {
+            changed = false
+            for marker in ["**", "__", "\u{60}"] where out.hasPrefix(marker) {
+                out = String(out.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+                changed = true
+            }
+        }
+        return out
+    }
+
+    private static func joined(_ lines: [String]) -> String {
+        lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: the deterministic fallback
+
+    /// First paragraph → 做了什么; every line mentioning 未完成 / 注意 / 下一步 →
+    /// 未完成; last paragraph → 下一棒注意. 怎么验证 has no reliable signal in free
+    /// text, so it stays empty rather than inventing evidence.
+    private static func fallback(_ text: String) -> TaskHandoff {
+        let lines = text.components(separatedBy: "\n")
+        var paragraphs: [String] = []
+        var current: [String] = []
+        func flush() {
+            guard !current.isEmpty else { return }
+            paragraphs.append(current.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+            current = []
+        }
+        for line in lines {
+            if line.trimmingCharacters(in: .whitespaces).isEmpty { flush() }
+            else { current.append(line) }
+        }
+        flush()
+
+        let keywords = ["未完成", "注意", "下一步"]
+        let signals = lines
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { line in !line.isEmpty && keywords.contains { line.contains($0) } }
+        let first = paragraphs.first ?? ""
+        let last = paragraphs.count > 1 ? (paragraphs.last ?? "") : ""
+        return TaskHandoff(did: first,
+                           verified: "",
+                           unfinished: signals.joined(separator: "\n"),
+                           nextNote: last,
+                           source: .fallback)
+    }
+
+    // MARK: persistence (local.json only)
+
+    func dictionary() -> [String: Any] {
+        ["did": did, "verified": verified, "unfinished": unfinished,
+         "next": nextNote, "source": source.rawValue]
+    }
+
+    static func from(_ d: [String: Any]) -> TaskHandoff? {
+        guard let source = (d["source"] as? String).flatMap(Source.init(rawValue:)) else { return nil }
+        return TaskHandoff(did: (d["did"] as? String) ?? "",
+                           verified: (d["verified"] as? String) ?? "",
+                           unfinished: (d["unfinished"] as? String) ?? "",
+                           nextNote: (d["next"] as? String) ?? "",
+                           source: source)
     }
 }
 
@@ -1107,6 +1331,9 @@ struct TaskLocalState: Equatable {
     /// task id -> the agent's 汇报, written back when the task finished (see
     /// TaskItem.report). Machine-scoped: it is the last text of a local session.
     var reports: [String: String] = [:]
+    /// task id -> the derived fixed-4-field hand-off (TaskHandoff). Machine-private
+    /// like reports, and only written to local.json.
+    var handoffs: [String: TaskHandoff] = [:]
     var activeQueueID: String?
     var runningTaskID: String?
     /// queue id -> the dsh session that CREATED it (the task-todo skill passes its
@@ -1146,6 +1373,13 @@ struct TaskLocalState: Equatable {
         if let raw = d["reports"] as? [String: String] {
             for (key, text) in raw where !text.isEmpty { s.reports[taskID(fromStoredKey: key)] = text }
         }
+        if let raw = d["handoffs"] as? [String: Any] {
+            for (key, value) in raw {
+                guard let entry = value as? [String: Any],
+                      let handoff = TaskHandoff.from(entry) else { continue }
+                s.handoffs[taskID(fromStoredKey: key)] = handoff
+            }
+        }
         s.activeQueueID = d["activeQueueId"] as? String
         s.runningTaskID = d["runningTaskId"] as? String
         if let raw = d["queueSessions"] as? [String: String] { s.queueSessions = raw }
@@ -1171,6 +1405,7 @@ struct TaskLocalState: Equatable {
         }
         var d: [String: Any] = ["sessions": out]
         if !reports.isEmpty { d["reports"] = reports }
+        if !handoffs.isEmpty { d["handoffs"] = handoffs.mapValues { $0.dictionary() } }
         if !queueSessions.isEmpty { d["queueSessions"] = queueSessions }
         if !queueNotified.isEmpty { d["queueNotified"] = queueNotified }
         if !taskMarkers.isEmpty { d["taskMarkers"] = taskMarkers }
@@ -1439,6 +1674,11 @@ struct TaskBoard {
               let i = index(ofTask: taskID) else { return }
         tasks[i].report = text
         local.reports[taskID] = text
+        // 任务结束的同一刻把自由文本折成固定 4 字段的派生摘要。没按约定写的汇报
+        // 走确定性兜底（首段 + 含未完成/注意/下一步的行 + 末段），超长按 500 字截断。
+        let handoff = TaskHandoff.parse(text)
+        tasks[i].handoff = handoff
+        local.handoffs[taskID] = handoff
     }
 
     /// 记录本次尝试的完成 marker（runner 在任务启动时调用，随提示词注入）。重试会
@@ -1572,6 +1812,8 @@ struct TaskBoard {
         // next task in the queue as if it were this run's outcome.
         tasks[i].report = nil
         local.reports[taskID] = nil
+        tasks[i].handoff = nil
+        local.handoffs[taskID] = nil
         // The next attempt gets a fresh marker: the old one must never confirm it.
         tasks[i].completionMarker = nil
         tasks[i].markerVerified = false
@@ -1655,11 +1897,13 @@ struct TaskBoard {
     /// Attach the machine-scoped half of a loaded board: the dsh session each task
     /// ran in, and the 汇报 each one left behind.
     mutating func attachSessions(_ sessions: [String: String], reports: [String: String] = [:],
+                                 handoffs: [String: TaskHandoff] = [:],
                                  markers: [String: String] = [:],
                                  markerVerified: [String: Bool] = [:]) {
         for i in tasks.indices {
             if let sessionId = sessions[tasks[i].id] { tasks[i].sessionId = sessionId }
             if let report = reports[tasks[i].id] { tasks[i].report = report }
+            if let handoff = handoffs[tasks[i].id] { tasks[i].handoff = handoff }
             if let marker = markers[tasks[i].id] { tasks[i].completionMarker = marker }
             if let verified = markerVerified[tasks[i].id] { tasks[i].markerVerified = verified }
         }
