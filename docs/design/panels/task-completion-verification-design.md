@@ -115,11 +115,21 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
   但原因换成 `tasks.errNoCommit`，日志点名是产物校验拦下的。
 - `expectsCommit` 为 false 时不做这层门槛；git 答不上来（unborn / 非 git / 命令失败）时
   `hasProduct` **算有产物**（fail open）——不确定不降级，避免误伤。
+- **提交归属（P4 基线复用，2026-11）**：任务结束时用同一份基线做 `git log <基线
+  HEAD>..HEAD`，得到「本棒产出了哪些提交」，按目标仓库分组写入 `local.json` 的
+  `taskCommits`（`TaskLocalState.taskCommits`，机器私有，不改 manual.json / index.json）。
+  有分支的任务即使 `expectsCommit` 为 false（文档类）也抓基线，因此 0 个提交会如实记成
+  `[{ repoID: ".", commits: [] }]`——「记录了 0 个」不是失败，只有没有基线才不写这个键
+  （nil = 没记录）。简报与逐任务通知都从这里读，不重复跑 git；重试清掉上一轮记录，
+  下一轮仍按最初基线重算，上一轮的提交不会丢。取消 / 超时 / 会话消失的终态同样记录。
 - 与 P1 的关系：P4 只加证据，不减证据。marker 缺失仍按 P1 待确认；marker 通过但没有任何
   产物才由 P4 拦下。队列汇总（§4.4）本就不独立读 marker，故 `errNoCommit` 自动计入待确认。
 - 测试：`tests/tasks-panel/runner-tests.swift` 覆盖「marker 通过但无产物 → 待确认」
   「有新提交 → done」「只改工作区没 commit → done」「非 git 工作区不设期望 → 不降级」与
   推断规则；`run.sh` 有 P4 source guard。
+  提交归属另有三类用例：单仓库（基线..HEAD 的提交按仓库记录）、多仓库（按 targets 分组、
+  顺序一致）、无提交（文档类记录空分组且仍 done，不降级）；`model-tests.swift` 覆盖
+  `taskCommits` 的 local.json 往返、0 个提交也落盘、manual/index 不写、重试清空。
 
 ### 4.4 完成通知诚实化（低成本兜底）
 

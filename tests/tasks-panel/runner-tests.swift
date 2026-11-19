@@ -49,6 +49,9 @@ final class FakeRepo {
     /// What "git log --oneline base..HEAD" answers — the commits the queue's branch
     /// already carries (the structural half of a 交接简报).
     var commits: [String] = []
+    /// What "git log --oneline <range>" answers for one SPECIFIC range (the P4
+    /// baseline → HEAD attribution). A range not listed here falls back to `commits`.
+    var commitsByRange: [String: [String]] = [:]
 
     func git() -> TaskGit {
         TaskGit(run: { [unowned self] args in self.run(args) },
@@ -85,6 +88,9 @@ final class FakeRepo {
         case "pull":
             return "Already up to date."
         case "log":
+            if let range = args.last, let exact = commitsByRange[range] {
+                return exact.joined(separator: "\n")
+            }
             return commits.joined(separator: "\n")
         case "ls-remote":
             let branch = args.last ?? ""
@@ -325,6 +331,7 @@ final class MultiRepoHarness {
 
     init(board: TaskBoard, repos: [WorkspaceRepo], primaryRepoID: String? = nil,
          repoSetProvider: (() -> WorkspaceRepoSet)? = nil,
+         verifyExpectedCommit: Bool = false,
          defaultIntegrationFor: ((WorkspaceRepo) -> QueueIntegration)? = nil,
          findExistingPRFor: ((WorkspaceRepo, String) -> String?)? = nil) {
         self.repos = repos
@@ -349,6 +356,7 @@ final class MultiRepoHarness {
             promptText: { _, _, brief in brief ?? "" },
             sessionReport: { id in dsh.report(id) },
             requireCompletionMarker: true,
+            verifyExpectedCommit: verifyExpectedCommit,
             notifySession: { id, text in dsh.notify(id, text) },
             persist: { board in rec.persistCount += 1; _ = board },
             persistIssueTask: { task in rec.issueWrites.append(task.id) },
@@ -2965,6 +2973,84 @@ do {
     let plainRepo = WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/b", isGit: false, displayName: "b")
     eq(TasksRunner.infersCommitExpectation(task: issue, targets: [plainRepo], shape: nil), false,
        "目标仓库都不是 git → 不期望提交")
+}
+
+// MARK: - 提交归属（P4 基线推导 taskCommits）
+
+section("提交归属：单仓库本棒提交按基线 HEAD..HEAD 记进 local.taskCommits")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board, verifyExpectedCommit: true, workspaceShape: .github)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    // 任务开始后 HEAD 变了，git log 基线..HEAD 只报这两条。
+    h.repo.head = "bbbb2222"
+    h.repo.commitsByRange["0f0f0f0f..HEAD"] = ["bbbb222 feat: 本棒的第二个提交",
+                                               "aaaa111 fix: 本棒的第一个提交"]
+    h.dsh.reports["session-1"] = "做了两个提交。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.local.taskCommits[taskID],
+       [RepoCommits(repoID: ".", commits: ["bbbb222 feat: 本棒的第二个提交",
+                                           "aaaa111 fix: 本棒的第一个提交"])],
+       "本棒提交按仓库分组记录")
+    eq(h.board.taskCommitCount(taskID), 2, "总数可数")
+    eq(h.board.task(taskID)?.state, .done, "有提交 → done")
+    check(h.rec.logged("本棒产出 2 个提交"), "日志写明本棒产出了几个提交")
+}
+
+section("提交归属：多仓库按 targets 分别记，不混成一个列表")
+do {
+    let repos = [
+        WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                      defaultBase: "main", displayName: "repo-a"),
+        WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                      defaultBase: "main", displayName: "repo-b"),
+    ]
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "两个仓库都改", body: nil, id: "manual-cm000001")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Multi commits", autoPR: false,
+                                  repos: ["repo-a", "repo-b"])
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: repos, primaryRepoID: "repo-a",
+                             verifyExpectedCommit: true)
+    _ = h.runner.startQueue(queue.id)
+    eq(h.board.task(task.id)?.state, .running, "预检通过，任务开始")
+
+    h.git("repo-a").head = "aaa11111"
+    h.git("repo-a").commitsByRange["0f0f0f0f..HEAD"] = ["aaa1111 feat: repo-a 的改动"]
+    h.git("repo-b").head = "bbb22222"
+    h.git("repo-b").commitsByRange["0f0f0f0f..HEAD"] = ["bbb2222 fix: repo-b 的改动"]
+    h.dsh.reports["session-1"] = "两个仓库各一个提交。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.local.taskCommits[task.id],
+       [RepoCommits(repoID: "repo-a", commits: ["aaa1111 feat: repo-a 的改动"]),
+        RepoCommits(repoID: "repo-b", commits: ["bbb2222 fix: repo-b 的改动"])],
+       "每个仓库一组，顺序跟 targets 一致")
+    eq(h.board.taskCommitCount(task.id), 2, "跨仓库合计 2 个")
+    eq(h.board.task(task.id)?.state, .done, "多仓库都有提交 → done")
+}
+
+section("提交归属：文档类任务 0 个提交如实记录，不当失败")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board, verifyExpectedCommit: true, workspaceShape: .github)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    // 只改了文档、没有 commit：HEAD 不变，git log 为空，工作区有已跟踪改动。
+    h.repo.worktreeClean = false
+    h.dsh.reports["session-1"] = "改了两段文档，没提交。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.local.taskCommits[taskID], [RepoCommits(repoID: ".", commits: [])],
+       "记录了「0 个提交」，而不是没有记录")
+    eq(h.board.taskCommitCount(taskID), 0, "总数是 0")
+    eq(h.board.task(taskID)?.state, .done, "没提交但有工作区改动 → 仍然 done")
+    eq(h.board.task(taskID)?.error, nil, "不因为 0 个提交降级")
+    check(h.rec.logged("本棒产出 0 个提交"), "日志如实写 0")
 }
 
 // MARK: - P5 重试续跑（同一会话 + 短提示词）

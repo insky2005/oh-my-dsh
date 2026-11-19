@@ -242,6 +242,18 @@ if ! grep -q 'verifyExpectedCommit: true' ../../platforms/macos/src/IssueRunnerP
 fi
 echo "ok - P4 产物校验：expectsCommit 推断 + 基线比对，无产物降级待确认"
 
+# 提交归属：结束时必须用同一份 P4 基线做 <before>..HEAD，按仓库分组写进 local.json 的
+# taskCommits（简报 / 逐任务通知复用，不重复跑 git）。只记「有没有产物」而不记「产出了
+# 哪些提交」= 每一棒的产出又只能从汇报的自由文本里猜。
+if ! grep -q 'func commits(since' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'producedCommits = active.baseline.commits' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'var taskCommits' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -q 'd\["taskCommits"\]' ../../platforms/macos/src/TasksCore.swift; then
+  echo "FAIL - 提交归属：必须用 P4 基线推导本棒提交并按仓库记录到 local.json 的 taskCommits"
+  exit 1
+fi
+echo "ok - 提交归属：P4 基线推导本棒提交并按仓库写入 taskCommits"
+
 # 任务面板的每一项设置都必须按工作区存：一个全局键会把某个工作区的选择泄进所有工作区
 # （「交付成功后自动关闭队列」曾写全局 tasksAutoCloseOnPublish，于是每个工作区都显示勾上）。
 IP=../../platforms/macos/src/IssueRunnerPanel.swift

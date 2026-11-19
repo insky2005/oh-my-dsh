@@ -87,8 +87,23 @@ struct TaskGit {
     /// The commits the branch carries on top of `base` ("a1b2c3 subject"), or nil
     /// when git could not answer. This is the STRUCTURAL half of a 交接简报: what
     /// the earlier tasks in the queue actually changed.
-    func commits(base: String) -> [String]? {
-        guard let out = run(["log", "--oneline", "--no-decorate", base + "..HEAD"]) else { return nil }
+    func commits(base: String) -> [String]? { commits(since: base) }
+
+    /// The commits on top of `base` — the P4 baseline of ONE task. `base` nil is an
+    /// UNBORN repository at task start: every commit reachable now was made by the
+    /// task (there was nothing before), so the log starts at HEAD.
+    ///
+    /// nil means git could not answer; an empty array is a real "no commit".
+    func commits(since base: String?) -> [String]? {
+        let trimmed = base?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let spec: String
+        if let trimmed = trimmed, !trimmed.isEmpty {
+            spec = trimmed + "..HEAD"
+        } else {
+            // Unborn baseline: every commit reachable now is this task's.
+            spec = "HEAD"
+        }
+        guard let out = run(["log", "--oneline", "--no-decorate", spec]) else { return nil }
         return out.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
     }
@@ -172,6 +187,25 @@ struct TaskProductBaseline: Equatable {
             if handle.headCommit() != entry.head { return true }
         }
         return false
+    }
+
+    /// 本棒产出的提交：每个目标仓库 `git log <baseline HEAD>..HEAD`，按仓库分组
+    /// （design §5.3 与简报同一形状）。无提交的仓库保留一个空分组 —— 那是一句
+    /// 「0 个提交」的事实，不是失败，也不是「没记录」。
+    ///
+    /// 只在**有基线**时调用：没有基线（没开产物校验 / 无分支 / legacy env）时调用方
+    /// 不写这条记录，这样「没记录」和「记录了 0 个」不会混为一谈。
+    func commits(targets: [WorkspaceRepo], git: TaskGit,
+                 gitFor: ((WorkspaceRepo) -> TaskGit)?) -> [RepoCommits] {
+        repos.map { entry in
+            let handle: TaskGit
+            if let repo = targets.first(where: { $0.id == entry.repoID }) {
+                handle = gitFor?(repo) ?? git
+            } else {
+                handle = git
+            }
+            return RepoCommits(repoID: entry.repoID, commits: handle.commits(since: entry.head) ?? [])
+        }
     }
 }
 
@@ -479,14 +513,6 @@ struct TaskPromptTarget: Equatable {
     var shape: TaskRepoShape
     /// The repo's own default branch (the multi-repo branch line names it).
     var defaultBase: String = "main"
-}
-
-/// The commits ONE repository carries on top of its base — the per-repo group of a
-/// 交接简报 (design §5.3). One group keeps today's flat rendering; several groups
-/// are rendered under a per-repo heading.
-struct RepoCommits: Equatable {
-    var repoID: String
-    var commits: [String]
 }
 
 /// Texts handed to the agent. Both task sources share ONE requirement list
@@ -1390,6 +1416,8 @@ final class TasksRunner {
                     env.log("tasks: " + active.taskID + " timed out after " + String(Int(timeout)) + "s")
                     _ = env.cancelSession(active.sessionId)
                     phase = .idle
+                    recordTaskCommits(active.taskID, baseline: active.baseline,
+                                      targets: active.targets)
                     board.markFailed(active.taskID, error: TaskFailure.timeout.rawValue, at: now)
                     persist()
                     _ = pump(now: now)
@@ -1419,6 +1447,8 @@ final class TasksRunner {
                     env.log("tasks: " + active.taskID + " — its session is gone from dsh after "
                             + String(missingPolls) + " polls; nobody can say how the work ended")
                     phase = .idle
+                    recordTaskCommits(active.taskID, baseline: active.baseline,
+                                      targets: active.targets)
                     board.markFailed(active.taskID, error: TaskFailure.sessionGone.rawValue, at: now)
                     persist()
                     _ = pump(now: now)
@@ -1531,11 +1561,14 @@ final class TasksRunner {
             if verifyExpectedCommit {
                 expectsCommit = TasksRunner.infersCommitExpectation(task: task, targets: targets,
                                                                     shape: workspaceShape?())
-                if expectsCommit {
+                // 产出归属（taskCommits）也要基线：文档类任务不「应产出提交」，但它到底
+                // 产出了 0 个还是 N 个，仍要如实记录。无分支的队列刻意不碰 git。
+                let hasBranch = !(branch ?? "").isEmpty
+                if expectsCommit || hasBranch {
                     // P5：重试沿用**最初那次尝试**的基线。上一轮若已 commit，续跑时再抓
                     // 当前 HEAD 会把那些提交算成基线，于是「没有新提交」被误判成 noCommit
                     // ——那正是被重试的任务最常见的形状。
-                    if isRetry, let saved = attemptBaselinesNow[taskID] {
+                    if isRetry, let saved = attemptBaselinesNow[taskID], !saved.repos.isEmpty {
                         baseline = saved
                     } else {
                         baseline = TaskProductBaseline.capture(targets: targets, git: git, gitFor: gitFor)
@@ -1618,6 +1651,7 @@ final class TasksRunner {
                 _ = env.cancelSession(sessionId)
                 board.local.sessions[taskID] = sessionId
                 if let i = board.index(ofTask: taskID) { board.tasks[i].sessionId = sessionId }
+                recordTaskCommits(taskID, baseline: baseline, targets: targets)
                 board.markCancelled(taskID)
                 if let task = board.task(taskID), task.source == .github { env.persistIssueTask(task) }
                 persist()
@@ -1626,10 +1660,10 @@ final class TasksRunner {
                 return
             }
             // P5：记下「这个会话真的收到过提示词」，供下次重试判断能否续跑（.failed(.prompt)
-            // 的会话不会被记，因此不会被续跑到一个空转的会话）。P4 的基线只在应产出提交时
-            // 记，重试沿用最初那次。
+            // 的会话不会被记，因此不会被续跑到一个空转的会话）。产物基线在抓到时不丢：
+            // P4 的判定与「本棒产出」都用它，重试沿用最初那次。
             promptedSessions[taskID] = sessionId
-            if expectsCommit { attemptBaselines[taskID] = baseline }
+            if !baseline.repos.isEmpty { attemptBaselines[taskID] = baseline }
             let queueID = board.task(taskID)?.queueId
             board.recordExpectsCommit(taskID, expectsCommit)
             phase = .active(Active(taskID: taskID, queueID: queueID, branch: branch,
@@ -1753,6 +1787,9 @@ final class TasksRunner {
         let gitFor = env.gitFor
         phase = .finishing(taskID)
         var report: String? = nil
+        // 本棒产出的提交（P4 基线推导）：在后台步骤里读，随 applyFinish 写回 board。
+        // 没有基线时不记录（nil 与「0 个提交」是两件事）。
+        var producedCommits: [RepoCommits]? = nil
         // 没有 marker 的是 legacy / 旧路径：不设门槛。有 marker 就必须由本次 turn 的
         // 最后一行回显它，否则进入「待确认」——不允许再写死 done。
         var verified = (marker == nil)
@@ -1778,6 +1815,10 @@ final class TasksRunner {
                 product = active.baseline.hasProduct(targets: active.targets,
                                                      git: git, gitFor: gitFor)
             }
+            if !active.baseline.repos.isEmpty {
+                producedCommits = active.baseline.commits(targets: active.targets,
+                                                          git: git, gitFor: gitFor)
+            }
         }, {
             self.board.recordMarkerVerified(taskID, verified)
             let noMarker = !verified
@@ -1791,13 +1832,14 @@ final class TasksRunner {
             let outcome: FinishOutcome = (verified && product) ? .done : .needsReview
             let reason = noProduct ? TaskFailure.noCommit.rawValue : TaskFailure.unverified.rawValue
             self.applyFinish(taskID: taskID, outcome: outcome, now: now, report: report,
-                             reviewReason: reason,
+                             reviewReason: reason, commits: producedCommits,
                              finalizeQueueID: (wantsFinalize && verified && product) ? queue?.id : nil)
         })
     }
 
     private func applyFinish(taskID: String, outcome: FinishOutcome, now: Date,
                              report: String? = nil, reviewReason: String? = nil,
+                             commits: [RepoCommits]? = nil,
                              finalizeQueueID: String? = nil) {
         phase = .idle
         let isIssue = board.task(taskID)?.source == .github
@@ -1813,6 +1855,11 @@ final class TasksRunner {
             board.markFailed(taskID, error: failure.rawValue, report: report, at: now)
             env.log("tasks: " + taskID + " failed (" + failure.rawValue + ")")
         }
+        if let commits = commits {
+            board.recordTaskCommits(taskID, commits)
+            env.log("tasks: " + taskID + " 本棒产出 "
+                    + String(commits.reduce(0) { $0 + $1.commits.count }) + " 个提交")
+        }
         if isIssue, let task = board.task(taskID) { env.persistIssueTask(task) }
         persist()
         // A queue that just reached .done reports back to the session that created it.
@@ -1823,6 +1870,17 @@ final class TasksRunner {
         // task pauses the queue, and half-finished work is not what anyone wants merged.
         if case .done = outcome, let queueID = finalizeQueueID { startQueueIntegration(queueID) }
         _ = pump(now: now)
+    }
+
+    /// 把本棒产出的提交写回 board（local.json 的 taskCommits）。没有基线时什么都不写：
+    /// 「没有记录」与「记录到 0 个」是两件事，后者是文档类任务的忠实事实。
+    private func recordTaskCommits(_ taskID: String, baseline: TaskProductBaseline,
+                                   targets: [WorkspaceRepo]) {
+        guard !baseline.repos.isEmpty else { return }
+        let groups = baseline.commits(targets: targets, git: env.git, gitFor: env.gitFor)
+        board.recordTaskCommits(taskID, groups)
+        let count = groups.reduce(0) { $0 + $1.commits.count }
+        env.log("tasks: " + taskID + " 本棒产出 " + String(count) + " 个提交")
     }
 
     // MARK: - The queue PR session
@@ -2866,6 +2924,7 @@ final class TasksRunner {
         case .active(let active):
             _ = env.cancelSession(active.sessionId)
             phase = .idle
+            recordTaskCommits(active.taskID, baseline: active.baseline, targets: active.targets)
             board.markCancelled(active.taskID)
             if let task = board.task(active.taskID), task.source == .github { env.persistIssueTask(task) }
             persist()

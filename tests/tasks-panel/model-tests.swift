@@ -637,6 +637,52 @@ do {
     }
 }
 
+// MARK: - 提交归属：taskCommits
+
+section("提交归属：taskCommits 只落 local.json、按仓库往返、0 个也是记录")
+do {
+    var commitBoard = TaskBoard()
+    let c1 = TaskItem.manual(title: "单仓库改动", body: nil, id: "manual-cc001111")
+    let c2 = TaskItem.manual(title: "文档任务", body: nil, id: "manual-cc002222")
+    commitBoard.tasks = [c1, c2]
+    commitBoard.recordTaskCommits(c1.id,
+        [RepoCommits(repoID: "repo-a", commits: ["aaa1111 feat: a"]),
+         RepoCommits(repoID: "repo-b", commits: ["bbb2222 fix: b"])])
+    commitBoard.recordTaskCommits(c2.id, [RepoCommits(repoID: ".", commits: [])])
+    eq(commitBoard.taskCommitCount(c1.id), 2, "多仓库合计可数")
+    eq(commitBoard.taskCommitCount(c2.id), 0, "0 个提交也是已记录的事实")
+    check(commitBoard.taskCommits(c2.id) != nil, "不是「没有记录」")
+    eq(commitBoard.taskCommitCount("manual-cc009999"), nil, "没记录的任务是 nil")
+    check(commitBoard.task(c1.id)?.manualDictionary()["taskCommits"] == nil,
+          "manual.json 不写提交归属")
+    check(commitBoard.task(c1.id)?.indexDictionary()["taskCommits"] == nil,
+          "committed index 不写提交归属")
+
+    // local.json 往返：分组顺序、仓库 id、空分组都保留。
+    let json = commitBoard.local.dictionary()
+    let round = TaskLocalState.from(json)
+    eq(round.taskCommits[c1.id], commitBoard.local.taskCommits[c1.id], "多仓库分组原样往返")
+    eq(round.taskCommits[c2.id], [RepoCommits(repoID: ".", commits: [])],
+       "空分组往返后仍然是「记录了 0 个」")
+
+    let commitRepo = tempRepo("task-commits")
+    TasksStore.saveLocalHalf(commitRepo, commitBoard)
+    let loadedCommits = TasksStore.load(commitRepo)
+    eq(loadedCommits.local.taskCommits[c1.id], commitBoard.local.taskCommits[c1.id],
+       "写入磁盘再读回，提交归属还在")
+    eq(loadedCommits.local.taskCommits[c2.id], [RepoCommits(repoID: ".", commits: [])],
+       "0 个提交也落盘")
+    let localCommitsJSON = text(at: TasksStore.path(commitRepo, file: "local.json"))
+    check(localCommitsJSON.contains("taskCommits"), "local.json 里有 taskCommits")
+    check(!localCommitsJSON.contains("\"taskCommits\" : null"), "不是 null")
+
+    // 重试：上一轮的归属清掉，下一轮结束时按最初基线重新推导。
+    commitBoard.markRunning(c1.id)
+    _ = commitBoard.markFailed(c1.id, error: "tasks.errTimeout", report: "没做完。")
+    _ = commitBoard.retryAndResume(c1.id)
+    check(commitBoard.local.taskCommits[c1.id] == nil, "重试清掉上一轮的提交归属")
+}
+
 // MARK: - persistence
 
 section("persistence: four files")

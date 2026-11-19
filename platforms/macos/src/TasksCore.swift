@@ -1318,6 +1318,31 @@ struct TaskQueue: Equatable {
     }
 }
 
+// MARK: - Produced commits (P4 baseline → this task)
+
+/// The commits ONE repository carries on top of its base — the per-repo group of a
+/// 交接简报 (design §5.3). One group keeps today's flat rendering; several groups
+/// are rendered under a per-repo heading.
+///
+/// The SAME shape records what one task actually produced (local.json
+/// `taskCommits`): the group is what the brief and the per-task notification render,
+/// so neither has to run git again. A group with an empty `commits` list is a
+/// RECORDED ZERO (a docs-only task really made no commit) — it is not a failure and
+/// not "unknown"; an absent key is the unknown case.
+struct RepoCommits: Equatable {
+    var repoID: String
+    var commits: [String]
+
+    func dictionary() -> [String: Any] {
+        ["repoID": repoID, "commits": commits]
+    }
+
+    static func from(_ d: [String: Any]) -> RepoCommits? {
+        guard let repoID = d["repoID"] as? String else { return nil }
+        return RepoCommits(repoID: repoID, commits: (d["commits"] as? [String]) ?? [])
+    }
+}
+
 // MARK: - Machine-scoped overlay (local.json)
 
 /// The part of the board that belongs to THIS machine: the dsh session each
@@ -1334,6 +1359,13 @@ struct TaskLocalState: Equatable {
     /// task id -> the derived fixed-4-field hand-off (TaskHandoff). Machine-private
     /// like reports, and only written to local.json.
     var handoffs: [String: TaskHandoff] = [:]
+    /// task id -> what THIS task actually produced, grouped per target repository
+    /// (P4 baseline HEAD → HEAD when it ended, see TaskProductBaseline.commits).
+    /// Machine-private like reports, local.json only. The brief and the per-task
+    /// notification both render it, so neither runs git again; a group with no
+    /// commits is a faithful "0 commits", not a failure. An absent key = not
+    /// recorded (a task from before this field, or one started without a baseline).
+    var taskCommits: [String: [RepoCommits]] = [:]
     var activeQueueID: String?
     var runningTaskID: String?
     /// queue id -> the dsh session that CREATED it (the task-todo skill passes its
@@ -1380,6 +1412,14 @@ struct TaskLocalState: Equatable {
                 s.handoffs[taskID(fromStoredKey: key)] = handoff
             }
         }
+        if let raw = d["taskCommits"] as? [String: Any] {
+            for (key, value) in raw {
+                // An empty array is still a RECORD (nothing was produced); only a
+                // missing key means "not recorded".
+                guard let entries = value as? [[String: Any]] else { continue }
+                s.taskCommits[taskID(fromStoredKey: key)] = entries.compactMap { RepoCommits.from($0) }
+            }
+        }
         s.activeQueueID = d["activeQueueId"] as? String
         s.runningTaskID = d["runningTaskId"] as? String
         if let raw = d["queueSessions"] as? [String: String] { s.queueSessions = raw }
@@ -1406,6 +1446,9 @@ struct TaskLocalState: Equatable {
         var d: [String: Any] = ["sessions": out]
         if !reports.isEmpty { d["reports"] = reports }
         if !handoffs.isEmpty { d["handoffs"] = handoffs.mapValues { $0.dictionary() } }
+        if !taskCommits.isEmpty {
+            d["taskCommits"] = taskCommits.mapValues { groups in groups.map { $0.dictionary() } }
+        }
         if !queueSessions.isEmpty { d["queueSessions"] = queueSessions }
         if !queueNotified.isEmpty { d["queueNotified"] = queueNotified }
         if !taskMarkers.isEmpty { d["taskMarkers"] = taskMarkers }
@@ -1705,6 +1748,21 @@ struct TaskBoard {
         tasks[i].expectsCommit = expects
     }
 
+    /// 记下本棒**实际**产出的提交（按目标仓库分组，P4 基线推导）。空分组数组是
+    /// 一次真实记录（0 个提交）；只有根本没能推导（没有基线）时才不写这个键。
+    mutating func recordTaskCommits(_ taskID: String, _ groups: [RepoCommits]) {
+        guard index(ofTask: taskID) != nil else { return }
+        local.taskCommits[taskID] = groups
+    }
+
+    /// 本棒产出的提交（按仓库分组）；nil = 没有记录（旧任务 / 没有产物基线）。
+    func taskCommits(_ taskID: String) -> [RepoCommits]? { local.taskCommits[taskID] }
+
+    /// 本棒产出的提交总数；nil = 没有记录，0 = 如实记录的「0 个提交」。
+    func taskCommitCount(_ taskID: String) -> Int? {
+        local.taskCommits[taskID].map { groups in groups.reduce(0) { $0 + $1.commits.count } }
+    }
+
     /// Fail a task. A queue containing it is PAUSED and its id returned: inside
     /// a queue every task shares one branch, so running the next one would build
     /// on half-finished work. The user then chooses 重试 or 跳过并继续.
@@ -1814,6 +1872,9 @@ struct TaskBoard {
         local.reports[taskID] = nil
         tasks[i].handoff = nil
         local.handoffs[taskID] = nil
+        // 上一轮的产出描述的是被重试的那次运行；下一轮结束时按**最初**的基线重新推导，
+        // 因此上一轮的提交仍会算进本棒，不会因为清掉记录而丢失。
+        local.taskCommits[taskID] = nil
         // The next attempt gets a fresh marker: the old one must never confirm it.
         tasks[i].completionMarker = nil
         tasks[i].markerVerified = false
