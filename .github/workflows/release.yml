@@ -20,6 +20,9 @@ jobs:
     name: prepare (CEF + node caches)
     # macos-14 已于 2026-11-02 退役（见 docs/fixes/ci-macos-runner-retirement-fix.md）。
     runs-on: macos-15
+    # 冷缓存要真编双架构 CEF + npm ci；上限 1.5h 让卡死可暴露（见
+    # docs/fixes/ci-cold-build-cef-parallelism-fix.md）。
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Cache CEF + node + built artifacts (.cache/)
@@ -27,18 +30,31 @@ jobs:
         with:
           path: .cache
           key: release-${{ runner.os }}-prepare-${{ hashFiles('platforms/macos/build-app.sh', 'platforms/macos/build-cef.sh', 'scripts/version.sh') }}
-      - name: Pre-build CEF artifacts (arm64 + x86_64) + prefetch node/runtime
+      # 拆成独立 step：哪一段慢/挂，UI 上的 step 耗时就够定位。
+      - name: CEF artifacts (arm64)
+        timeout-minutes: 30
         run: |
           mkdir -p .build/module-cache
           platforms/macos/build-cef.sh arm64
+      - name: CEF artifacts (x86_64)
+        timeout-minutes: 30
+        run: |
+          mkdir -p .build/module-cache
           platforms/macos/build-cef.sh x86_64
-          ./platforms/macos/build-app.sh --prefetch
+      - name: Prefetch node + dsh runtime
+        timeout-minutes: 30
+        env:
+          # runner 在美国：显式走官方 npm registry / Node 镜像（漏掉会拿 npmmirror 装依赖树）。
+          DSH_NPM_REGISTRY: https://registry.npmjs.org
+          DSH_NODE_MIRROR: https://nodejs.org/dist
+        run: ./platforms/macos/build-app.sh --prefetch
 
   # Build both artifacts on macOS (arm64 / x86_64; no universal).
   build:
     name: build ${{ matrix.arch }}
     needs: prepare
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:

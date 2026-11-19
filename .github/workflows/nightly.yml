@@ -17,6 +17,8 @@ jobs:
     name: nightly smoke (arm64)
     # macos-14 已于 2026-11-02 退役（见 docs/fixes/ci-macos-runner-retirement-fix.md）。
     runs-on: macos-15
+    # 冷构建（无缓存）整轮 1-2h 属正常；上限压到 3h，卡死不会吃满平台 6h。
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - name: Node + core tests

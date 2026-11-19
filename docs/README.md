@@ -64,6 +64,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 - [browser-blank-panel-fix.md](fixes/browser-blank-panel-fix.md) — 浏览器面板内容区空白 + 右键菜单错位
 - [channel-issues.md](fixes/channel-issues.md) — Channel 消息重复回复排查记录
 - [ci-macos-runner-retirement-fix.md](fixes/ci-macos-runner-retirement-fix.md) — macos-14 runner 退役导致 CI 全红（迁 macos-15）
+- [ci-cold-build-cef-parallelism-fix.md](fixes/ci-cold-build-cef-parallelism-fix.md) — prepare 跑满 6h：CEF wrapper 编译无界并发（限流 + step 超时）
 
 ## process/ — 流程 · 发布 · 升级
 

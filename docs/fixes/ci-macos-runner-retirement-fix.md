@@ -57,4 +57,6 @@ The configuration 'macos-14-arm64-us-default' is not supported
 ## 教训 / 后续
 
 - 这类失败**不看 workflow 日志就能定位**：先看 job 的 annotation（`check-runs/{id}/annotations`），再看 `runner_name` 是否为空 —— 空即「没取到机器」，与代码无关；
+- 迁完 runner 之后 prepare 仍可能「跑满 6h」——那是另一个问题（CEF wrapper 编译的
+  无界并发 + prepare 漏传 registry 环境变量），见 `docs/fixes/ci-cold-build-cef-parallelism-fix.md`；
 - GitHub 的 runner 镜像有生命周期（约 2–3 年），建议后续把「workflow 里出现已退役 macOS 标签」做成 lint（参照 `tests/l10n/run.sh` 的轻量 lint 形态），在镜像退役前主动报警，而不是等全红。
