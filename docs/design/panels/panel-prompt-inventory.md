@@ -1,6 +1,6 @@
 # 面板提示词清单（需求池 / 事项 / 任务）
 
-> 状态：已落地 · 日期：2026-11-17（事项四阶段 + 交付操作）
+> 状态：已落地 · 日期：2026-11-17（事项四阶段 + 交付操作；2026-11-19 事项提示词统一为三段式，WS-1..WS-5 逐字快照同步）
 > 关联：`docs/design/panels/requirements-pool-panel-design.md`（§5.7 需求提示词）、`docs/design/panels/workstream-handoff-prompt-design.md`（§3 / §4 事项阶段提示词）、`docs/design/panels/workstream-panel-design.md`（§5.1 四件事：拆分 / 确认 / 启动 / 交付）、`docs/design/panels/tasks-queue-session-loop-design.md`
 > **单一事实来源是代码**。本文件是索引与快照；改提示词必须同步本文件与对应设计文档，否则会漂移。
 
@@ -106,17 +106,41 @@
 - <1..3 条：API 细节 / 门禁 / 技能指针>
 ```
 
-**WS-1 的动作段**（`.splitTasks`）：
+`isHandoff` 判据 = 文本含身份行里的事项卡指针 `@.dsh/workstreams/`；旧格式的 `本步事实：` / `当前 stage：` 不再算交接（runner 改用 WS-5 兜底）。
+
+**WS-1 逐字快照**（`splitPrompt(card:stage:)`，`stage = 规划`）：
 
 ```text
-阶段：<中文>（<raw>）· 本步：拆分任务
+WS-000007「阶段提示词」@.dsh/workstreams/WS-000007.md
+阶段：规划（planning）· 本步：拆分任务
+目标：产出面板生成的各阶段提示词
 
-把「<阶段>」阶段要做的事拆成等待态阶段任务，建完停下请人确认拆分合理。
+把「规划」阶段要做的事拆成等待态阶段任务，建完停下请人确认拆分合理。
 
 注意：
-- 用 POST /api/workstreams/task/create 建等待态阶段任务：stage 必须传上面括号里的原始值，不要传 task；每条任务带 stage，追加到该事项唯一队列；只建不启动。
-- 拆分是人工确认门、不自签，人在面板确认后才 queue/start。
+- 用 `POST /api/workstreams/task/create` 建**等待态阶段任务**：`stage` 必须传上面括号里的原始值 `planning`（`planning` / `design` / `task` / `acceptance`），**不要传 `task`**；调用示例 body `{"id":"WS-000007","stage":"planning","titles":["…"],"session":"$DSH_SESSION_ID"}`。
+- 阶段任务带 `stage`，追加到该事项唯一队列；**只建不启动**，拆分是人工确认门、**不自签**，人在面板确认后才 `queue/start`。
+- 改事项卡片一律走 `/api/workstreams/*`（`workstream-panel` 技能），**不直接改 `.dsh` 文件**；阶段任务走 `POST /api/workstreams/task/create`（任务带 `stage`）、`POST /api/workstreams/queue/start` 启动；回边合法但必须留痕，跳过 / 裁剪在「规划」声明；只拆不胀，范围外的新发现回需求池；终态是派生谓词（不写 `closed` / `outcome`）；不改其它会话的在途文件。
 ```
+
+> 执行阶段（`stage = task`）的拆分只把阶段行换成 `阶段：执行（task）`、示例换成 `"stage":"task"`，并把「不要传 `task`」改成「**不要传其它阶段的原始值**」（避免自相矛盾）；其余逐字相同。
+
+**WS-2 逐字快照**（`nextStagePrompt(card:)`，规划确认后 → 设计）：
+
+```text
+WS-000007「阶段提示词」@.dsh/workstreams/WS-000007.md
+阶段：设计（design）· 本步：出设计
+目标：产出面板生成的各阶段提示词
+
+在 `docs/design/**` 写本事项的设计文档，把待确认问题列成 Q 表；只写设计、不写实现，写完停下请人确认设计。
+
+注意：
+- 设计文档写在 `docs/design/**`，Q 表逐条列出待确认问题。
+- 只写设计，不写实现（实现属执行阶段）。
+- 改事项卡片一律走 `/api/workstreams/*`（`workstream-panel` 技能），**不直接改 `.dsh` 文件**；阶段任务走 `POST /api/workstreams/task/create`（任务带 `stage`）、`POST /api/workstreams/queue/start` 启动；回边合法但必须留痕，跳过 / 裁剪在「规划」声明；只拆不胀，范围外的新发现回需求池；终态是派生谓词（不写 `closed` / `outcome`）；不改其它会话的在途文件。
+```
+
+> WS-2 只在 `stage` 真的前移且存在下一阶段时发送；验收是最后阶段 → `nil`，不续发。
 
 ### 2.2 写进任务 body、由 runner 发出的
 
@@ -127,34 +151,101 @@
 
 创建任务抽屉会在提示词末尾追加用户输入：`任务内容：` + 内容（首行是标题、其余行是内容）。
 
-**各阶段默认动作段**（`actionSection`）：
+**WS-3 逐字快照**（`stageTask`，规划阶段默认动作；抽屉内容附在最后）：
 
 ```text
-规划   「确认规划」：用 /api/workstreams/plan 补齐四件套（目标/边界/验收标准 AC<n>/阶段裁剪声明）；不直接改 .dsh 文件。
-                     四件套齐后停下请人确认规划；人确认前不得进入设计。
-设计   「出设计」：  在 docs/design/** 写设计文档，把待确认问题列成 Q 表；只写设计不写实现；写完停下请人确认设计。
-执行   「拆分任务」：用 POST /api/workstreams/task/create 建等待态阶段任务（带本阶段 stage）；只建不启动；停下请人确认。
-       「启动实施」：人确认拆分后，用 POST /api/workstreams/queue/start（带 stage）启动；在已确认边界内改码/跑测试/commit。
-验收   「校验」：    跑回归门与机检证据；用 POST /api/workstreams/covered 记录覆盖点（paths + base/head 锚变更）；必须人 sign-off，agent 不自签。
+WS-000007「阶段提示词」@.dsh/workstreams/WS-000007.md
+阶段：规划（planning）· 任务：补规划四件套 · 本步：确认规划
+目标：产出面板生成的各阶段提示词
+
+补齐本事项「## 规划」的四件套（目标（WHAT）/ 边界 / 验收标准（AC<n>）/ 阶段裁剪声明），写完停下请人确认规划。
+
+注意：
+- 用 `POST /api/workstreams/plan` 写「## 规划」；不直接改 `.dsh` 文件。
+- 人确认前不得进入设计。
+- 改事项卡片一律走 `/api/workstreams/*`（`workstream-panel` 技能），**不直接改 `.dsh` 文件**；阶段任务走 `POST /api/workstreams/task/create`（任务带 `stage`）、`POST /api/workstreams/queue/start` 启动；回边合法但必须留痕，跳过 / 裁剪在「规划」声明；只拆不胀，范围外的新发现回需求池；终态是派生谓词（不写 `closed` / `outcome`）；不改其它会话的在途文件。
+
+任务内容：
+第一行说明
+第二行细节
+```
+
+> 第二行只在 `stageTask` 时多出 `· 任务：<标题> ·` 一段；`prompt(card:action:)` 生成的是 `阶段：<中文>（<raw>）· 本步：<动作>`。共用规则（WS-1 第三条）逐字附在每个提示词末尾。
+
+**WS-3 各动作的一句话 + 动作特有注意**（逐字；`<raw>` 用阶段原始值）：
+
+```text
+# 确认规划（planning）
+补齐本事项「## 规划」的四件套（目标（WHAT）/ 边界 / 验收标准（AC<n>）/ 阶段裁剪声明），写完停下请人确认规划。
+注意：
+- 用 `POST /api/workstreams/plan` 写「## 规划」；不直接改 `.dsh` 文件。
+- 人确认前不得进入设计。
+
+# 出设计（design）
+在 `docs/design/**` 写本事项的设计文档，把待确认问题列成 Q 表；只写设计、不写实现，写完停下请人确认设计。
+注意：
+- 设计文档写在 `docs/design/**`，Q 表逐条列出待确认问题。
+- 只写设计，不写实现（实现属执行阶段）。
+
+# 拆分任务（任意阶段，`<raw>` = 该阶段原始值）
+把「<阶段>」阶段要做的事拆成等待态阶段任务，建完停下请人确认拆分合理。
+注意：
+- 用 `POST /api/workstreams/task/create` 建**等待态阶段任务**：`stage` 必须传上面括号里的原始值 `<raw>`（`planning` / `design` / `task` / `acceptance`），非 task 阶段写「**不要传 `task`**」、task 阶段写「**不要传其它阶段的原始值**」；调用示例 body `{"id":"<WS-ID>","stage":"<raw>","titles":["…"],"session":"$DSH_SESSION_ID"}`。
+- 阶段任务带 `stage`，追加到该事项唯一队列；**只建不启动**，拆分是人工确认门、**不自签**，人在面板确认后才 `queue/start`。
+
+# 启动实施（task）
+在已确认的边界内启动本阶段实施：改代码、跑测试、commit，做完停下请人验收。
+注意：
+- 用 `POST /api/workstreams/queue/start`（带 `stage`）只跑本阶段任务；提交用 conventional commits。
+- 只在已确认的边界内改代码，不碰其它会话的在途文件。
+
+# 校验（acceptance）
+跑回归门与机检证据、记录覆盖点，然后停下请人 sign-off。
+注意：
+- 用 `POST /api/workstreams/covered` 记录覆盖点（paths + base / head 锚变更）；不直接改 `.dsh` 文件。
+- 必须由人 sign-off，agent 不自签。
 ```
 
 > **交付不是阶段的动作段**：四阶段到此为止。验收确认（`accepted`）后，`WorkstreamsDelivery.prompt(plan:)`
 > 由事项主卡「交付」按钮发进**主场会话**执行 push / PR，用 `POST /api/workstreams/delivery` 记
-> `pr` / `url` 事实（`outcome` 派生、不手写）——不新建会话 / 任务，也不改变 `stage`。
+> `pr` / `url` 事实（`outcome` 派生、不手写）——不新建会话 / 任务，也不改变 `stage`。交付提示词同样是三段式
+>（身份行 → `阶段：验收（acceptance）· 操作：交付` → 分支 / 仓库 / 覆盖 / 已有 PR / 提交 → 一句话 → 注意）。
 
 ### 2.3 运行时包装
 
 | 编号 | 场景 | 来源 | 说明 |
 |---|---|---|---|
 | WS-4 | 每个执行任务 | `WorkstreamHandoff.completionMarkerInstruction(marker)` | 追加在末尾，要求会话最后一行原样回显 marker（完成证据） |
-| WS-5 | 任务 body 不是面板交接提示词时的兜底 | `WSPrompts.task(task:queue:)` | 「你在推进事项 … 的『<阶段>』阶段」+ 任务 + 要求（只做这一条 / 不碰运行态文件 / 汇报） |
+| WS-5 | 任务 body 不是面板交接提示词时的兜底（`isHandoff == false`） | `WSPrompts.task(task:queue:)` | 「你在推进事项 … 的『<阶段>』阶段」+ 任务 + 要求（只做这一条 / 不碰运行态文件 / 汇报） |
 | WS-6 | 待确认任务重试 | `WSPrompts.retryContinuation(title:marker:)` | 「上一轮因中断或未拿到完成证据而停止，请从未完成处继续本任务：<标题>。」+ marker |
 
-**WS-4 措辞**：
+**WS-4 逐字快照**（marker 非空时追加在提示词末尾）：
 
 ```text
 完成前，请在最后一行原样输出以下标记（供面板识别本次任务已结束）：
 <marker>
+```
+
+**WS-5 逐字快照**（兜底模板；任务没有 `workstreamId` 时第一行改为「你正在推进一个事项的…」）：
+
+```text
+你正在推进事项 <WS-id> 的「<中文阶段>」阶段。
+
+任务：<标题>
+
+<任务说明正文>
+
+要求：
+- 只做这一条任务；完成后把改动留在仓库（需要时 commit）。
+- 不要直接改动事项面板的运行态文件（.dsh/workstreams/ 下的 queues.json / local.json）。
+- 结束时用一两句话汇报结果。
+```
+
+**WS-6 逐字快照**（`marker` 非空时再接一段 WS-4）：
+
+```text
+上一轮因中断或未拿到完成证据而停止，请从未完成处继续本任务：<标题>。
+（不要重做已经完成的部分。）
 ```
 
 ## 3. 任务面板（存量，参考）
@@ -175,7 +266,7 @@
 ## 4. 梳理结论
 
 1. **三套提示词各有单一来源，但此前没有统一清单**——本文件补上；三处来源分别落在 `RequirementsCore`、`WorkstreamsPrompts`（+ `WorkstreamsDelivery` / `WSPrompts`）、`TaskPrompts`。
-2. **阶段命名歧义（已修）**：事项阶段枚举是 `task`、中文叫「执行」，而路由叫 `task/create`、动作叫「拆分任务」——agent 极易把 `stage` 传成 `task`。提示词现给出阶段**原始值**（`当前 stage：规划（planning）`）并明确「不要传 `task`」，`splitPrompt` 生成带 `"stage":"<raw>"` 的调用示例；`api-tests` / `runner-tests` 固化四个原始值的映射（交付不是阶段，没有 `delivery`）。
+2. **阶段命名歧义（已修）**：事项阶段枚举是 `task`、中文叫「执行」，而路由叫 `task/create`、动作叫「拆分任务」——agent 极易把 `stage` 传成 `task`。提示词现在阶段行里直接给原始值（`阶段：规划（planning）· 本步：…`），非 task 阶段明说「不要传 `task`」（task 阶段改成「不要传其它阶段的原始值」避免自相矛盾），`splitPrompt` 生成带 `"stage":"<raw>"` 的调用示例；`api-tests` / `runner-tests` 固化四个原始值的映射（交付不是阶段，没有 `delivery`）。
 3. **提示词双重身份**：事项「阶段提示词」既是**聊天提示词**（WS-1/WS-2）又是**任务 body**（WS-3）。改一处会同时影响两侧，需一起验。
 4. **目标会话规则不统一**：需求池四级回退（绑定→来源→当前→复制）、事项面板两级（绑定→新建）、任务面板「每任务一条 + 回传来源会话」。长期建议收敛为「**实体 → 主场会话**」一种模型。
 5. **两处同名不同物**：需求池有「拆解」、事项面板有「拆分任务」；前者是 REQ→WS，后者是 WS 阶段→任务，别混。

@@ -1,7 +1,7 @@
 ---
 title: 模块：Workstreams*（事项面板）
 tags: [module, workstreams, panel, ai-native-workflow, stage-gate]
-updated: 2026-11-17T00:00:00Z
+updated: 2026-11-19T00:00:00Z
 sources: [platforms/macos/src/WorkstreamsCore.swift, platforms/macos/src/WorkstreamsUI.swift, platforms/macos/src/WorkstreamsRunState.swift, platforms/macos/src/WorkstreamsAPI.swift, platforms/macos/src/WorkstreamsPanel.swift, platforms/macos/src/WorkstreamsQueues.swift, platforms/macos/src/WorkstreamsRunner.swift, platforms/macos/src/WorkstreamsPrompts.swift, platforms/macos/src/WorkstreamsStageGate.swift, platforms/macos/src/WorkstreamsDelivery.swift, platforms/macos/src/WorkstreamsSummary.swift, platforms/macos/src/WSCardView.swift, platforms/macos/src/WSInlineForms.swift, platforms/macos/src/main.swift, tests/workstreams-panel/, docs/design/panels/workstream-panel-design.md, docs/design/panels/requirements-workstream-store-design.md, docs/design/panels/workstream-handoff-prompt-design.md, docs/usage/panels.md, .dsh/skills/workstream-panel/SKILL.md]
 manual: false
 ---
@@ -32,7 +32,7 @@ manual: false
 
 - `WorkstreamsQueues.swift`：事项面板**自有**队列 / 三级任务模型 + 存储（`WSTaskItem` / `WSQueue` / `WSBoard` / `WSStore`），队列落 `.dsh/workstreams/queues.json`、会话 / 汇报落 `local.json`（**ignored**）；**绝不读写 `.dsh/tasks/*`**；
 - `WorkstreamsRunner.swift`：按 A10 复制任务面板的串行相位机（idle / starting / active / finishing），「建会话 → 命名 `WS: ` → prompt → 轮询 → 取消 / 重试」，重启恢复（running→interrupted、active→paused、不自动起跑）；`createStageQueue` / `appendStageTasks` 追加到该事项**唯一**队列（没有才建）、任务带 `workstreamId` + `stage`；`startWorkstream(_:stage:)` = 事项级 / 阶段级启动（A3 / A9 / D18，阶段级用 `stageFilter` 只跑该阶段、跑完暂停队列）；`WSPrompts` 委托 `WorkstreamsPrompts`；
-- `WorkstreamsPrompts.swift`：`WSStageAction`（四阶段五个动作）+ `WorkstreamHandoff` 提示词生成器（公共头 / 动作段 / 模型规则 / 回归门行）；`injectingCompletionMarker` 统一注入完成 marker；
+- `WorkstreamsPrompts.swift`：`WSStageAction`（四阶段五个动作）+ `WorkstreamHandoff` 提示词生成器（**三段式：身份行（事项卡指针） / 阶段·本步 / 一句话 / 注意**；`isHandoff` 只看 `@.dsh/workstreams/`，旧「本步事实 / 当前 stage」不再算交接）；`injectingCompletionMarker` 统一注入完成 marker；
 - `WorkstreamsStageGate.swift`：四阶段**机检证据谓词 + 人工确认门**（R10）——规划四件套、设计文档 + Q 关闭、执行队列 `.done` 且任务有证据、验收 `covered`（**验收是最后阶段**，`acceptance.next == nil`；**交付没有证据分支**）；另有 `accepted(history:)` / `accepted(_ card:)` / `accepted(body:)` 派生终态前置；`.done` + 谓词通过 → `awaitingConfirmation`，缺证据 → `evidenceMissing`（confirm 被拒、不推进）；退回写 `## 阶段确认` 留痕（可带 `target` 回边）；
 - `WorkstreamsDelivery.swift`：交付 git 流水线 / GitHub PR / token 文件读取（`WSGitProbe` / `WSGitHubPR` / `WSTokenStore`，**只读文件、不读 Keychain**），准入卡 **`accepted(ws)`**（`not-accepted`），失败有稳定码 `WSDeliveryBlocker`（+ `no-home-session`），PR 状态派生 `delivery.outcome`；`WSDeliveryRun` 以卡片 PR / URL 事实为完成信号，会话停下汇报判 `report-failed`、超时 `delivery-timeout`。**交付是操作，不建任务 / 不快进 `stage`**：`WorkstreamsRunner.enqueueDelivery` 已删除；`WorkstreamsSummary.swift` 负责任务会话 → 主场会话的汇总文案。
 
@@ -62,4 +62,4 @@ manual: false
 
 ## 测试
 
-`tests/workstreams-panel/run.sh`（**1201 项**）：model 110 + API 299 + ui 192 + runner 177 + prompt 187 + delivery 148 + stage-gate 88，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段决策来源 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **发起交付（面板按钮 == `deliver` 路由共用 `initiateDelivery`）** / **事项会话绑定与拆分任务（首个未处理阶段）** / **focus 通道（面板高亮滚动 + API focus + 需求池跳转）** / **对话内阶段推进（确认 → 向主场会话发下一阶段提示词）** / **默认展开（首个未处理卡）** / **启动收口（阶段卡无启动按钮 + 事项启动按阶段 canonical 顺序）** / **创建任务抽屉（主卡按钮 + 阶段选择 + 首行标题·其余内容）** / **汇总回主场会话（阶段批量 + 例外即时）** / **4 阶段 + 交付操作同步（accepted 前置、主场会话执行、旧 delivery 读兼容、无第五阶段 L10n / 技能文案）** 等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。
+`tests/workstreams-panel/run.sh`（**1203 项**）：model 110 + API 299 + ui 192 + runner 181 + prompt 185 + delivery 148 + stage-gate 88，另含 A6 视图命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 阶段门 / 阶段决策来源 / 阶段提示词 / 写权反转 / **运行态派生** / **交付接线与 covered / delivery 写路由** / **发起交付（面板按钮 == `deliver` 路由共用 `initiateDelivery`）** / **事项会话绑定与拆分任务（首个未处理阶段）** / **focus 通道（面板高亮滚动 + API focus + 需求池跳转）** / **对话内阶段推进（确认 → 向主场会话发下一阶段提示词）** / **默认展开（首个未处理卡）** / **启动收口（阶段卡无启动按钮 + 事项启动按阶段 canonical 顺序）** / **创建任务抽屉（主卡按钮 + 阶段选择 + 首行标题·其余内容）** / **汇总回主场会话（阶段批量 + 例外即时）** / **4 阶段 + 交付操作同步（accepted 前置、主场会话执行、旧 delivery 读兼容、无第五阶段 L10n / 技能文案）** 等源码守卫；接入 `scripts/local-ci.sh` 与 `.github/workflows/ci.yml`。

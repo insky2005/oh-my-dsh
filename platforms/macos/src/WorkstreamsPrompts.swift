@@ -247,8 +247,11 @@ enum WorkstreamHandoff {
             ]
         case .splitTasks:
             let raw = stage.rawValue
+            // 执行阶段的原始值本身就是 task：此时再说「不要传 task」会自相矛盾，
+            // 改成「不要传其它阶段的值」。其余阶段保留原来的防歧义警告。
+            let warning = raw == "task" ? "**不要传其它阶段的原始值**" : "**不要传 `task`**"
             return [
-                "用 `POST /api/workstreams/task/create` 建**等待态阶段任务**：`stage` 必须传上面括号里的原始值 `" + raw + "`（`planning` / `design` / `task` / `acceptance`），**不要传 `task`**；调用示例 body `{\"id\":\"" + cardID + "\",\"stage\":\"" + raw + "\",\"titles\":[\"…\"],\"session\":\"$DSH_SESSION_ID\"}`。",
+                "用 `POST /api/workstreams/task/create` 建**等待态阶段任务**：`stage` 必须传上面括号里的原始值 `" + raw + "`（`planning` / `design` / `task` / `acceptance`），" + warning + "；调用示例 body `{\"id\":\"" + cardID + "\",\"stage\":\"" + raw + "\",\"titles\":[\"…\"],\"session\":\"$DSH_SESSION_ID\"}`。",
                 "阶段任务带 `stage`，追加到该事项唯一队列；**只建不启动**，拆分是人工确认门、**不自签**，人在面板确认后才 `queue/start`。",
             ]
         case .startImplementation:

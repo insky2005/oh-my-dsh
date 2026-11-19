@@ -1,6 +1,6 @@
 # 事项交接提示词（Workstream Handoff Prompt）设计
 
-> 状态：已落地（`WorkstreamsPrompts.swift`；提示词由面板生成、注入任务 body）· 日期：2026-10-03（2026-10-06 落地）· 关联：`docs/research/ai-native-workflow-architecture.md`、`.dsh/requirements/README.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/design/panels/workstream-panel-design.md`
+> 状态：已落地（`WorkstreamsPrompts.swift`；提示词由面板生成、注入任务 body）· 日期：2026-10-03（2026-10-06 落地；2026-11-19 统一为三段式：身份行 / 阶段·本步 / 一句话 / 注意）· 关联：`docs/research/ai-native-workflow-architecture.md`、`.dsh/requirements/README.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/design/panels/workstream-panel-design.md`
 
 ## 1. 目的
 
@@ -10,7 +10,7 @@
 
 1. **提示词是指针，不是状态副本**：状态（stage / 规划 / 覆盖）只活在 `.dsh` 卡片里，提示词不复述细节，避免漂移。
 2. **动作 = (stage, action) 的函数**：面板按钮不是「一个提示词」，而是「当前 stage → 本步 action」，各 stage 一份 action 段，共用公共头。
-3. **变量从卡片注入**：`<WS-ID>` / `<REQ-ID>` / `<stage>` / `<REG-ID>` / 目标，全部读卡片。
+3. **变量从卡片注入**：`<WS-ID>` / `<标题>` / `<raw-stage>` / `<REG-ID>` / 目标，全部读卡片；**需求指针不再进提示词**（`requirement` 仍留在卡片 frontmatter，卡片本身自足）。
 4. **卡片必须自足**：薄提示词成立的前提，是卡片的「规划」有目标 / 边界 / 验收标准 / 裁剪声明。
 5. **人保留 Own**：规划确认与验收 sign-off 必须停下问，agent 不自签。签字可由**面板点按**，或由**会话在用户明确授权后代发**（R10）；每次确认 / 退回在卡片 `## 阶段确认` 记来源（`source:panel` / `source:session <id>`）。
 
@@ -29,7 +29,9 @@
 - <1..3 条：API 细节 / 门禁 / 技能指针>
 ```
 
-面板建阶段任务（`stageTask`）时，任务标题写进第二行：`阶段：<中文>（<raw>）· 任务：<标题> · 本步：<动作>`；抽屉输入的额外内容以 `任务内容：` 追加在提示词之后。`isHandoff` 的判据是提示词里含事项卡指针 `@.dsh/workstreams/`。
+面板建阶段任务（`stageTask`）时，任务标题写进第二行：`阶段：<中文>（<raw>）· 任务：<标题> · 本步：<动作>`；抽屉输入的额外内容以 `任务内容：` 追加在提示词之后。
+
+`isHandoff` 的判据**只是身份行里的事项卡指针 `@.dsh/workstreams/`**（常量 `WorkstreamHandoff.cardPointer`），与阶段 / 动作的措辞解耦。旧格式的 `本步事实：` / `当前 stage：` 不再算交接提示词——runner 会把这种 body 当普通说明、改用 `WSPrompts.task` 兜底模板；两条判据都有 headless 负例（`prompt-tests` / `runner-tests`）。
 
 ## 4. stage → action 段
 
@@ -59,7 +61,7 @@
   - **送达** = 该事项的**主场会话**（`workstreamSessions`）；无绑定 / 坏会话按 `sessionTarget` 新建并绑定 / 回退当前会话；
   - 它是**指针不是状态副本**：提示词只点名事项与阶段，等待态任务的实际创建由会话里的 agent 调 `task/create` 完成。
 - **措辞要求**（`actionNotes(.splitTasks)` + `actionSentence(.splitTasks)`）：
-  1. 用 `POST /api/workstreams/task/create` 建**等待态阶段任务**（= 任务拆分本身），**每条任务带本阶段 `stage`**，追加到该事项唯一队列；
+  1. 用 `POST /api/workstreams/task/create` 建**等待态阶段任务**（= 任务拆分本身），**每条任务带本阶段 `stage`**，追加到该事项唯一队列；`stage` 必须传阶段行括号里的**原始值**（`planning` / `design` / `task` / `acceptance`），提示词里给出 `{"id":"<WS-ID>","stage":"<raw>","titles":["…"],"session":"$DSH_SESSION_ID"}` 的调用示例；
   2. **只建不启动**；阶段 ↔ 队列映射由面板写回卡片 `queues`；
   3. **停下请人确认拆分合理**；
   4. **不自签**：拆分是人工确认门，agent 只建等待态任务，人在面板确认后才 `queue/start`；
@@ -95,12 +97,13 @@ WS-002「需求 / 事项落盘 .dsh 落地」@.dsh/workstreams/WS-002.md
 
 | 变量 | 来源 |
 |---|---|
-| `<repo>` | 工作区根 |
-| `<WS-ID>` / `<REQ-ID>` | 面板选中的事项卡片 |
-| `<stage>` | 卡片的 `stage` |
-| `<action>` | 由 §4 按 `stage` 映射 |
+| `<WS-ID>` / `<标题>` | 面板选中的事项卡片（身份行） |
+| `<raw-stage>` | 卡片当前 `stage` 的**原始枚举值**（`planning` / `design` / `task` / `acceptance`）；`splitPrompt` 用调用方显式传入的阶段 |
+| `<action>` | 由 §4 按 `stage` 映射（`WSStageAction.label`） |
 | `<REG-ID>` | 卡片的 `regression`（无则省略该条） |
-| 目标 | 卡片的「规划.目标」 |
+| 目标 | 卡片的「规划.目标」（无则省略该行） |
+
+> `<repo>` 与 `<REQ-ID>` **已不再出现在提示词里**（工作区规则由 `AGENTS.md` 承载；需求指针留在卡片 frontmatter）。
 
 ## 7. 依赖与落地
 

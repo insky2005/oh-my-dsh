@@ -393,6 +393,10 @@ do {
     contains(planningSplit, "\"stage\":\"planning\"", "the call example passes the raw value")
     contains(planningSplit, "不要传 `task`", "warns not to pass task")
     notContains(planningSplit, "\"stage\":\"task\"", "a planning split never suggests stage=task")
+    // 执行阶段的原始值就是 task：警告不能自相矛盾（旧措辞会说「不要传 task」）。
+    let taskSplit = WorkstreamHandoff.splitPrompt(card: makeCard(stage: .task), stage: .task)
+    notContains(taskSplit, "不要传 `task`", "the task-stage split does not say 'do not pass task'")
+    contains(taskSplit, "不要传其它阶段的原始值", "the task-stage split warns against other stages instead")
     // Every stage can be split; the header always names the requested stage.
     for stage in WorkstreamStage.allCases {
         let sp = WorkstreamHandoff.splitPrompt(card: makeCard(), stage: stage)
