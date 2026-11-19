@@ -82,8 +82,10 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
   次级动作 → `TasksRunner.confirmDone` → `TaskBoard.confirmDone`（清掉 unverified 说明、
   `.done`，并走正常完成路径：最后一条会回传并（autoPR 允许时）起交付会话，还有排队
   任务则恢复队列）。
-- 队列头：`QueueHeaderModel.reviewCount` 计数 + `pauseReasonKey`（待确认导致暂停时
-  显示橙色原因行，折起也可见），`startHintKey` 把待确认算作可「继续」。
+- 队列头：`QueueHeaderModel.reviewCount` 计数 + `pauseReasonKey`（失败 / 待确认 /
+  取消三种暂停来源各有原因行，折起也可见），并带 `pausedTaskID` / `remainingAfterPause`
+  与「后面还有 N 个任务等待」+「重试」/「跳过并继续」两个出口；`startHintKey` 把三种
+  来源都算作可「继续」。
 - 交接简报：待确认那一棒进简报但标「待确认（未确认完成）」，不写「已完成」。
 
 **P5 实现状态（2026-10-02）**：重试不再「无条件新建会话 + 重发完整提示词」，而是尽量在**同一会话**里续跑，只发一条带新 marker 的短提示词（交付会话 `makeFinalizeRun` 早已有同一套先例）。

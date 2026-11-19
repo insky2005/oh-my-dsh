@@ -829,8 +829,13 @@ enum L10n {
         "tasks.queue.noBranch": ("不切分支", "No branch"),
         "tasks.queue.failedCount": ("%d 个失败", "%d failed"),
         "tasks.queue.needsReviewCount": ("%d 个待确认", "%d need review"),
-        // 待确认导致队列暂停：原因写在队列头上（橙，不是失败的红色）。
-        "tasks.queue.pausedNeedsReview": ("有任务待确认，队列已暂停：请「重试」，或确认做完了就「标记完成」后再继续", "A task needs review, so the queue is paused — retry it, or mark it done if you can confirm the work is complete"),
+        // 队列被某个任务挡下（失败 / 待确认 / 取消）：原因写在队列头上，三种来源
+        // 各有自己的说法；后面还有几个在等由 queue.pauseRemaining 单独报数。
+        "tasks.queue.pausedFailed": ("有任务失败，整队已停：后面的任务不会启动。可「重试」这条任务，或「跳过并继续」跑下一个", "A task failed, so the whole queue has stopped — later tasks will not start. Retry it, or skip and continue with the next one"),
+        "tasks.queue.pausedNeedsReview": ("有任务待确认，整队已停：请「重试」，或确认做完了就「标记完成」后再继续", "A task needs review, so the whole queue has stopped — retry it, or mark it done if you can confirm the work is complete"),
+        "tasks.queue.pausedCancelled": ("有任务被取消，整队已停：后面的任务不会启动。可「重试」这条任务，或「跳过并继续」跑下一个", "A task was cancelled, so the whole queue has stopped — later tasks will not start. Retry it, or skip and continue with the next one"),
+        "tasks.queue.pauseRemaining": ("后面还有 %d 个任务等待", "%d more task(s) waiting"),
+        "tasks.queue.pauseRemainingNone": ("后面没有排队的任务", "No more tasks waiting"),
         // PR 的标题与正文不再由壳层套模板：开 PR 的会话读完真实 diff 之后自己写
         // （§V2-6），所以这两条旧文案随 REST createPR 一起删掉。
         // 交付会话运行时的状态行，按工作流分（不再一律说「开 PR」）。

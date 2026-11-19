@@ -326,4 +326,19 @@ if ! grep -q 'private var pendingRetries: Set<String>' ../../platforms/macos/src
 fi
 echo "ok - P5 重试续跑：显式重试信号 + 短续跑提示词 + 原始产物基线"
 
+# 队列暂停可见性：失败 / 待确认 / 取消三种来源都要给出原因、剩余任务数与两个出口
+# （重试 / 跳过并继续）。只覆盖待确认 = 用户看到「已暂停」却不知道谁停的、还能做什么。
+if ! grep -q 'tasks.queue.pausedFailed' ../../platforms/macos/src/TasksUI.swift \
+   || ! grep -q 'tasks.queue.pausedNeedsReview' ../../platforms/macos/src/TasksUI.swift \
+   || ! grep -q 'tasks.queue.pausedCancelled' ../../platforms/macos/src/TasksUI.swift \
+   || ! grep -q 'func pauseBlocker' ../../platforms/macos/src/TasksUI.swift \
+   || ! grep -q 'var remainingAfterPause' ../../platforms/macos/src/TasksUI.swift \
+   || ! grep -q 'tasks.queue.pauseRemaining' ../../platforms/macos/src/TaskCardView.swift \
+   || ! grep -q 'onRetryPaused' ../../platforms/macos/src/TaskCardView.swift \
+   || ! grep -q 'onSkipPaused' ../../platforms/macos/src/TaskCardView.swift; then
+  echo "FAIL - 队列暂停可见性：三种来源 + 剩余数 + 两个出口缺一不可"
+  exit 1
+fi
+echo "ok - 队列暂停可见性：失败 / 待确认 / 取消都给出原因与剩余任务数，重试 / 跳过并继续都在卡上"
+
 echo "tasks-panel tests passed"

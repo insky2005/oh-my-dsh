@@ -2639,6 +2639,18 @@ final class IssueRunnerPanelController: NSObject {
         header.onRetryRepo = { [weak self] repoID in
             self?.retryFailedRepo(queueID: queueID, repoID: repoID)
         }
+        // 队列暂停的两个出口 —— 挡路的任务由视图模型点名（pauseBlocker），
+        // 面板只负责把动作交给 runner。
+        header.onRetryPaused = { [weak self] in
+            guard let taskID = model.pausedTaskID else { return }
+            _ = self?.runner?.retry(taskID: taskID)
+            self?.syncFromBoard()
+        }
+        header.onSkipPaused = { [weak self] in
+            guard let taskID = model.pausedTaskID else { return }
+            _ = self?.runner?.skip(taskID: taskID)
+            self?.syncFromBoard()
+        }
         header.onClose = { [weak self] in self?.confirmCloseQueue(queue) }
         // 重命名 / 改分支 / 基于分支 / PR 开关 are one inline form now.
         header.onSettings = { [weak self] in self?.openQueueComposer(.edit(queueID: queueID)) }

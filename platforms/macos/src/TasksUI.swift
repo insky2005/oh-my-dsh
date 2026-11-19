@@ -676,8 +676,20 @@ struct QueueHeaderModel: Equatable {
     var failedCount: Int
     /// 待确认任务数（needsReview），与 failedCount 并列。
     var reviewCount: Int = 0
-    /// 待确认导致队列暂停时的原因（L10n key）；nil = 不是待确认导致的暂停。
+    /// 队列因某个任务停下的原因（L10n key：失败 / 待确认 / 取消各一条）；
+    /// nil = 不是任务挡下的暂停（手动暂停 / 重启后没有终态任务）。
     var pauseReasonKey: String? = nil
+    /// 挡路的任务（「重试」重跑的就是它）；nil = 没有可重试的暂停来源。
+    var pausedTaskID: String? = nil
+    /// 挡路任务后面还有几个任务在排队（「跳过并继续」能带走几个）。
+    var remainingAfterPause: Int = 0
+    /// 暂停原因的色调：失败是红，待确认 / 取消是橙（需要人决定，不是报错）。
+    var pauseTone: TaskTone = .warning
+
+    /// 暂停时「重试」挡路的任务。
+    var canRetryPausedTask: Bool { pausedTaskID != nil }
+    /// 暂停时「跳过并继续」：只有后面真的还有任务才给这个出口。
+    var canSkipPausedTask: Bool { pausedTaskID != nil && remainingAfterPause > 0 }
     var queuedCount: Int
     var runningCount: Int
     var doneCount: Int
@@ -787,6 +799,29 @@ struct QueueHeaderModel: Equatable {
     /// …and it is only clickable where a PR is possible.
     var autoPREnabled: Bool { prAvailable }
 
+    /// 暂停队列的「挡路任务」：队里最后一个结束的失败 / 待确认 / 取消任务
+    /// （finishedAt 最大；时间缺失时按队内顺序靠后）。完成 / 关闭 / 运行中都不算。
+    /// 暂停是「整队已停」——说清是谁停的，才能给出重试 / 跳过并继续两个出口。
+    static func pauseBlocker(_ queue: TaskQueue, board: TaskBoard) -> (task: TaskItem, index: Int)? {
+        guard queue.state == .paused else { return nil }
+        var best: (task: TaskItem, index: Int)? = nil
+        for (index, id) in queue.taskIds.enumerated() {
+            guard let task = board.task(id) else { continue }
+            switch task.state {
+            case .failed, .needsReview, .cancelled: break
+            default: continue
+            }
+            if let current = best {
+                let lhs = task.finishedAt ?? Date.distantPast
+                let rhs = current.task.finishedAt ?? Date.distantPast
+                if lhs < rhs { continue }
+                if lhs == rhs && index < current.index { continue }
+            }
+            best = (task, index)
+        }
+        return best
+    }
+
     /// `isCurrent` = this is the queue the runner is working on right now. Several
     /// queues can be 活跃 at once (开始 on a second one just re-points the runner),
     /// and the others used to show 活跃 while nothing whatsoever happened in them.
@@ -800,8 +835,30 @@ struct QueueHeaderModel: Equatable {
         let doneCount = tasks.filter { $0.state == .done }.count
         let failedCount = tasks.filter { $0.state == .failed }.count
         let reviewCount = tasks.filter { $0.state == .needsReview }.count
+        let cancelledCount = tasks.filter { $0.state == .cancelled }.count
         let queuedCount = tasks.filter { $0.state == .queued }.count
         let runningCount = tasks.filter { $0.state == .running }.count
+
+        // 暂停原因 + 挡路任务 + 后面还有几个在等（三件一起算，避免各说各话）。
+        let blocker = Self.pauseBlocker(queue, board: board)
+        var pauseReasonKey: String? = nil
+        var pauseTone: TaskTone = .warning
+        switch blocker?.task.state {
+        case .some(.failed):
+            pauseReasonKey = "tasks.queue.pausedFailed"
+            pauseTone = .negative
+        case .some(.needsReview):
+            pauseReasonKey = "tasks.queue.pausedNeedsReview"
+        case .some(.cancelled):
+            pauseReasonKey = "tasks.queue.pausedCancelled"
+        case .some, .none:
+            break
+        }
+        let remainingAfterPause = blocker.map { blocker in
+            queue.taskIds.enumerated().filter { offset, id in
+                offset > blocker.index && board.task(id)?.state == .queued
+            }.count
+        } ?? 0
 
         let branchText = queue.branch.map { $0 + " → " + queue.baseBranch }
             ?? L10n.tr("tasks.queue.noBranch")
@@ -836,16 +893,19 @@ struct QueueHeaderModel: Equatable {
                                 tone: tone,
                                 failedCount: failedCount,
                                 reviewCount: reviewCount,
-                                pauseReasonKey: (queue.state == .paused && reviewCount > 0)
-                                    ? "tasks.queue.pausedNeedsReview" : nil,
+                                pauseReasonKey: pauseReasonKey,
+                                pausedTaskID: blocker?.task.id,
+                                remainingAfterPause: remainingAfterPause,
+                                pauseTone: pauseTone,
                                 queuedCount: queuedCount,
                                 runningCount: runningCount,
                                 doneCount: doneCount,
                                 totalCount: tasks.count,
                                 canStart: queuedCount > 0 && queue.state != .active && queue.state != .closed,
-                                // 待确认和失败一样，继续 = 跳过它跑下一个。
+                                // 失败 / 待确认 / 取消一样，继续 = 跳过挡路的那条跑下一个。
                                 startHintKey: (queue.state == .paused
-                                    && (failedCount > 0 || reviewCount > 0) && queuedCount > 0)
+                                    && (failedCount > 0 || reviewCount > 0 || cancelledCount > 0)
+                                    && queuedCount > 0)
                                     ? "tasks.queue.continue" : "tasks.queue.start",
                                 canPause: queue.state == .active,
                                 // .done 仍是「交付」：设置/删除不回到行上（避免把名字挤没），

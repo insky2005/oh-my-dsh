@@ -610,6 +610,9 @@ final class TaskQueueHeaderView: NSView {
     var onOpenRepoPR: ((String) -> Void)?
     /// 单独重试一个交付失败的仓库（P4）。
     var onRetryRepo: ((String) -> Void)?
+    /// 队列暂停的两个出口：重试挡路的任务 / 跳过它继续跑后面的任务。
+    var onRetryPaused: (() -> Void)?
+    var onSkipPaused: (() -> Void)?
 
     init(model: QueueHeaderModel) {
         self.model = model
@@ -773,11 +776,11 @@ final class TaskQueueHeaderView: NSView {
         } else {
             rows.append(metaRow)
         }
-        // 待确认导致队列暂停：原因写在队列头上，折起也可见 —— 否则用户只看到一个
-        // 「已暂停」却不知道是谁停的、下一步该点什么。
-        if let key = model.pauseReasonKey {
-            rows.append(errorRow(L10n.tr(key), color: .systemOrange,
-                                 symbol: "questionmark.circle.fill"))
+        // 队列被某个任务挡下（失败 / 待确认 / 取消）：说清「整队已停、后面还有
+        // 几个在等」，并把两个出口（重试 / 跳过并继续）直接放在这张卡上。
+        // 折起也可见 —— 否则用户只看到一个「已暂停」却不知道是谁停的、下一步点什么。
+        if let pauseRow = pauseRow() {
+            rows.append(pauseRow)
         }
         // The last delivery session's outcome (its report's first line, or the
         // failure reason) — on the card, not only in the log. A failure is worth the
@@ -931,10 +934,70 @@ final class TaskQueueHeaderView: NSView {
     }
 
     @objc private func toggleNoteTapped() { onToggleNote?() }
+    @objc private func retryPausedTapped() { onRetryPaused?() }
+    @objc private func skipPausedTapped() { onSkipPaused?() }
 
-    /// Why a publish could not start, or why a queue is paused (an L10n key on the
-    /// queue): a tinted line under the meta row, so the button keeps saying what it
-    /// does. Red for failures, orange for 待确认 (a decision is needed, not an error).
+    /// 队列暂停卡：原因 + 「后面还有 N 个任务等待」+ 两个出口（重试 / 跳过并继续）。
+    /// 折起也画：一个「已暂停」却不说明谁停的、还能做什么，就是死路。
+    private func pauseRow() -> NSView? {
+        guard let key = model.pauseReasonKey else { return nil }
+        let color: NSColor = model.pauseTone == .negative ? .systemRed : .systemOrange
+        let symbol = model.pauseTone == .negative
+            ? "exclamationmark.triangle.fill" : "questionmark.circle.fill"
+        let reason = errorRow(L10n.tr(key), color: color, symbol: symbol)
+
+        let remaining = NSTextField(labelWithString: model.remainingAfterPause > 0
+            ? L10n.tr("tasks.queue.pauseRemaining", model.remainingAfterPause)
+            : L10n.tr("tasks.queue.pauseRemainingNone"))
+        remaining.font = .systemFont(ofSize: 11)
+        remaining.textColor = .secondaryLabelColor
+        remaining.lineBreakMode = .byTruncatingTail
+        remaining.translatesAutoresizingMaskIntoConstraints = false
+        remaining.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+
+        var actions: [NSView] = [remaining, spacer]
+        if model.canRetryPausedTask {
+            actions.append(textButton("tasks.detailRetry", #selector(retryPausedTapped)))
+        }
+        if model.canSkipPausedTask {
+            actions.append(textButton("tasks.detailSkip", #selector(skipPausedTapped)))
+        }
+        let actionRow = NSStackView(views: actions)
+        actionRow.orientation = .horizontal
+        actionRow.alignment = .centerY
+        actionRow.spacing = 6
+        actionRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let column = NSStackView(views: [reason, actionRow])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 4
+        column.translatesAutoresizingMaskIntoConstraints = false
+        reason.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        actionRow.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        return column
+    }
+
+    /// A small text action (the pause row's two exits) — same metrics as the task
+    /// card's buttons so a narrow panel can truncate them instead of widening.
+    private func textButton(_ key: String, _ selector: Selector) -> NSButton {
+        let button = NSButton(title: L10n.tr(key), target: self, action: selector)
+        button.controlSize = .small
+        button.bezelStyle = .rounded
+        button.font = .systemFont(ofSize: 11)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return button
+    }
+
+    /// Why a publish could not start (an L10n key), or the reason line of the
+    /// queue's pause row: a tinted line under the meta row, so the button keeps
+    /// saying what it does. Red for failures, orange for 待确认 (a decision is
+    /// needed, not an error).
     private func errorRow(_ text: String,
                           color: NSColor = .systemRed,
                           symbol: String = "exclamationmark.triangle.fill") -> NSView {
