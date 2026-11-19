@@ -1677,6 +1677,8 @@ do {
     check(first.contains("a1b2c3 refactor: extract TokenStore"), "分支已有的提交仍然告诉第一个任务")
     check(first.contains("这些提交是这条分支上已有的改动"), "没有前一棒时不说「不要重做前面任务」")
     check(!first.contains("不要重做已完成的部分"), "收尾句跟着有没有前一棒走")
+    check(h.rec.logged("head=") && h.rec.logged("commits=") && h.rec.logged("degraded: reports="),
+          "简报把各段字数与降级条数写进日志（不再只有总字数）")
 
     h.dsh.finishAll()
     _ = h.runner.step()
@@ -1746,6 +1748,162 @@ do {
     let prompt = h.dsh.prompts["session-1"] ?? ""
     check(!prompt.contains("## 队列信息"), "单任务队列没有前一棒")
     _ = taskID
+}
+
+// MARK: - 交接简报：三档衰减 + 总预算
+
+section("交接简报：三档衰减（最近 2 棒全文 / 同轮一行 / 更早轮次一行）")
+do {
+    func older(_ title: String, _ state: TaskState, _ report: String?,
+               round: Int, commits: Int? = 0) -> TaskPrompts.QueueBrief.Earlier {
+        TaskPrompts.QueueBrief.Earlier(title: title, state: state,
+                                       errorKey: state == .failed ? "tasks.errTimeout" : nil,
+                                       report: report, commitCount: commits, round: round)
+    }
+    let brief = TaskPrompts.QueueBrief(
+        queueName: "Lane", position: 8, total: 8,
+        earlier: [older("轮一甲", .done, "轮一甲的完整汇报。还有第二句。", round: 1),
+                  older("轮一乙", .done, "轮一乙的完整汇报。还有第二句。", round: 1),
+                  older("同轮一", .done, "同轮一的第一句。第二句不该出现在一行里。", round: 3),
+                  older("同轮二", .done, "同轮二的完整汇报。", round: 3),
+                  older("失败棒", .failed, "失败棒的完整汇报：重试要看这一段。", round: 2),
+                  older("最近甲", .done, "最近甲的完整汇报。", round: 3),
+                  older("最近乙", .done, "最近乙的完整汇报。", round: 3)],
+        branch: "feature/x", base: "main", commits: [], groupedByRepo: false, round: 3)
+    let rendered = TaskPrompts.render(brief)
+    let text = rendered?.text ?? ""
+    check(text.contains("第 1 轮：2 个任务"), "更早轮次压成一行，带轮次与任务数")
+    check(text.contains("最后：轮一乙的完整汇报。"), "轮次行的摘要来自该轮最后一棒")
+    check(!text.contains("还有第二句"), "更早轮次不再给全文（每一棒都不给）")
+    check(text.contains("同轮一的第一句。") && !text.contains("第二句不该出现在一行里"),
+          "同轮更早的 done 棒只给一行摘要首句")
+    check(text.contains("本棒 0 个提交"), "一行档带本棒提交数")
+    check(text.contains("失败棒的完整汇报：重试要看这一段。"), "非 done 永远全文")
+    check(text.contains("最近甲的完整汇报。") && text.contains("最近乙的完整汇报。"), "最近 2 棒给全文")
+    check((rendered?.totalChars ?? 0) == text.count, "渲染结果自带总字数")
+}
+
+section("交接简报：剥掉围栏代码块与完成标记行")
+do {
+    let report = ["## 做了什么", "- 改了 A。", "", "```swift", "let secret = 1", "```",
+                  "DSH-TASK-DONE-ABCDEF12", "- 下一棒注意：别改 B。"].joined(separator: "\n")
+    let brief = TaskPrompts.QueueBrief(
+        queueName: "Lane", position: 2, total: 2,
+        earlier: [TaskPrompts.QueueBrief.Earlier(title: "上一棒", state: .done,
+                                                 errorKey: nil, report: report,
+                                                 commitCount: 1, round: 1)],
+        branch: "feature/x", base: "main", commits: [], groupedByRepo: false, round: 1)
+    let text = TaskPrompts.render(brief)?.text ?? ""
+    check(!text.contains("let secret = 1"), "围栏代码块被剥掉")
+    check(!text.contains("DSH-TASK-DONE-"), "完成标记行被剥掉")
+    check(text.contains("改了 A。"), "代码块之外的正文保留")
+    check(text.contains("别改 B。"), "标记行之后的正文保留")
+}
+
+section("交接简报：提交列表最近 20 条 + 省略计数")
+do {
+    let commits = (0..<25).map { String(format: "c%06d feat: change %d", $0, $0) }
+    let brief = TaskPrompts.QueueBrief(
+        queueName: "Lane", position: 2, total: 2,
+        earlier: [TaskPrompts.QueueBrief.Earlier(title: "上一棒", state: .done,
+                                                 errorKey: nil, report: "做完了。",
+                                                 commitCount: 1, round: 1)],
+        branch: "feature/x", base: "main",
+        commits: [RepoCommits(repoID: ".", commits: commits)],
+        groupedByRepo: false, round: 1)
+    let text = TaskPrompts.render(brief)?.text ?? ""
+    let listed = commits.filter { text.contains($0) }.count
+    check(listed == 20, "只列最近 20 条提交（实际 \(listed)）")
+    check(text.contains("还有 5 条提交未列出"), "省略的条数写在列表里")
+}
+
+section("交接简报：非 done 的全文永远不降级（宁可超预算）")
+do {
+    let longFailure = String(repeating: "失败原因很长。", count: 1200)   // 8400 字
+    let brief = TaskPrompts.QueueBrief(
+        queueName: "Lane", position: 3, total: 3,
+        earlier: [TaskPrompts.QueueBrief.Earlier(title: "旧的一棒", state: .done,
+                                                 errorKey: nil, report: String(repeating: "旧摘要。", count: 200),
+                                                 commitCount: 3, round: 1),
+                  TaskPrompts.QueueBrief.Earlier(title: "失败棒", state: .failed,
+                                                 errorKey: "tasks.errTimeout", report: longFailure,
+                                                 commitCount: nil, round: 2),
+                  TaskPrompts.QueueBrief.Earlier(title: "最近", state: .done,
+                                                 errorKey: nil, report: "最近一棒的汇报。",
+                                                 commitCount: 1, round: 2)],
+        branch: "feature/x", base: "main",
+        commits: [RepoCommits(repoID: ".", commits: (0..<30).map { "c\($0) feat: x" })],
+        groupedByRepo: false, round: 2)
+    let rendered = TaskPrompts.render(brief)
+    let text = rendered?.text ?? ""
+    check(text.contains(longFailure), "失败棒的汇报一个字都不截")
+    check((rendered?.totalChars ?? 0) > TaskPrompts.QueueBrief.budget,
+          "非 done 全文撑破预算时也不降级它")
+}
+
+section("交接简报：50 任务队列的最后一棒 ≤ 6000 字预算")
+do {
+    var budgetBoard = TaskBoard()
+    let budgetTasks = (0..<50).map { i in
+        TaskItem.manual(title: "第 \(i + 1) 棒：改一个模块", body: nil,
+                        id: String(format: "manual-ff%06d", i))
+    }
+    budgetBoard.tasks = budgetTasks
+    let budgetQueue = budgetBoard.createQueue(name: "长队列", autoPR: false)
+    for task in budgetTasks { _ = budgetBoard.enqueue(taskID: task.id, into: budgetQueue.id) }
+    _ = budgetBoard.resumeQueue(budgetQueue.id)
+    // 每棒 400+ 字、首句 80 字：一行档也不短，逼出降级路径。
+    let longReport = String(repeating: "甲", count: 80) + "。"
+        + String(repeating: "这一棒做了很多事。", count: 44)
+    for task in budgetTasks.dropLast() {
+        budgetBoard.markRunning(task.id)
+        budgetBoard.recordTaskCommits(task.id, [RepoCommits(repoID: ".", commits: [])])
+        budgetBoard.markDone(task.id, report: longReport)
+    }
+    let budgetRepo = FakeRepo()
+    budgetRepo.commits = (0..<30).map { String(format: "c%06d feat: change %d", $0, $0) }
+    let rendered = TasksRunner.brief(taskID: budgetTasks.last!.id,
+                                     queue: budgetBoard.queue(budgetQueue.id),
+                                     board: budgetBoard, git: budgetRepo.git(),
+                                     sessionReport: { _ in nil },
+                                     branch: budgetQueue.branch, base: "main", position: nil)
+    let text = rendered?.text ?? ""
+    check(!text.isEmpty, "50 棒之后仍有简报")
+    check(text.count <= TaskPrompts.QueueBrief.budget,
+          "最后一棒的简报 \(text.count) 字 ≤ 预算 \(TaskPrompts.QueueBrief.budget)")
+    let degraded = (rendered?.demotedReports ?? 0) + (rendered?.droppedCommits ?? 0)
+        + (rendered?.droppedRoundLines ?? 0)
+    check(degraded > 0, "超预算时确实发生了降级（reports/dropped/rows 计数非零）")
+}
+
+section("交接简报：轮次按「每次启动队列 = 一轮」分组")
+do {
+    var roundBoard = TaskBoard()
+    let roundTasks = (0..<4).map { i in
+        TaskItem.manual(title: "第 \(i + 1) 棒", body: nil,
+                        id: String(format: "manual-aa%06d", i))
+    }
+    roundBoard.tasks = roundTasks
+    let roundQueue = roundBoard.createQueue(name: "Lanes", autoPR: false)
+    for task in roundTasks { _ = roundBoard.enqueue(taskID: task.id, into: roundQueue.id) }
+    _ = roundBoard.resumeQueue(roundQueue.id)          // 第 1 轮
+    for task in roundTasks.prefix(3) {
+        roundBoard.markRunning(task.id)
+        roundBoard.markDone(task.id, report: "\(task.title) 做完了。")
+    }
+    _ = roundBoard.pauseQueue(roundQueue.id)
+    _ = roundBoard.resumeQueue(roundQueue.id)          // 第 2 轮
+    let roundRepo = FakeRepo()
+    let rendered = TasksRunner.brief(taskID: roundTasks[3].id,
+                                     queue: roundBoard.queue(roundQueue.id),
+                                     board: roundBoard, git: roundRepo.git(),
+                                     sessionReport: { _ in nil },
+                                     branch: roundQueue.branch, base: "main", position: nil)
+    let text = rendered?.text ?? ""
+    check(text.contains("第 1 轮：1 个任务"), "更早轮次压成一行（最近 2 棒之外）")
+    check(text.contains("「第 3 棒」 —— 已完成"), "最近 2 棒仍然给全文")
+    check(!text.contains("「第 1 棒」 —— 已完成"), "更早的棒不再单独占一段")
+    check(text.contains("不要重做已完成的部分"), "仍然有交接收尾")
 }
 
 section("issue 任务的自动队列用工作区自己的默认分支")

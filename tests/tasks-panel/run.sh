@@ -254,6 +254,22 @@ if ! grep -q 'func commits(since' ../../platforms/macos/src/TasksRunner.swift \
 fi
 echo "ok - 提交归属：P4 基线推导本棒提交并按仓库写入 taskCommits"
 
+# 交接简报三档衰减 + 总预算：最近 2 棒全文 / 同轮一行 / 更早轮次一行，非 done 永远
+# 全文；6000 字上限靠「最老 done 摘要 → 提交列表 → 轮次/同轮行」降级兜底，并把各段
+# 字数与降级条数写进 app.log。任何一处被删掉，简报都会悄悄退回 O(n²) 全文。
+if ! grep -q 'static let budget = 6000' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'static let fullTextCount = 2' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'static let commitLimit = 20' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func sanitizedReport' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'demotedReports' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'degraded: reports=' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'var taskRounds' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -q 'func taskRound' ../../platforms/macos/src/TasksCore.swift; then
+  echo "FAIL - 交接简报必须有 6000 字预算、三档衰减、代码块/标记剥离与降级日志"
+  exit 1
+fi
+echo "ok - 交接简报：三档衰减 + 6000 字预算 + 降级日志"
+
 # 任务面板的每一项设置都必须按工作区存：一个全局键会把某个工作区的选择泄进所有工作区
 # （「交付成功后自动关闭队列」曾写全局 tasksAutoCloseOnPublish，于是每个工作区都显示勾上）。
 IP=../../platforms/macos/src/IssueRunnerPanel.swift

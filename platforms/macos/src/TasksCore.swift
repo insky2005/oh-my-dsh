@@ -1147,6 +1147,11 @@ struct TaskQueue: Equatable {
     /// The last finalize session's result shown on the card: its report's first line
     /// on success, the failure reason otherwise. nil = never finalized.
     var integrationNote: String?
+    /// 轮次（简报三档衰减的「一轮」）。暂定「每次启动队列 = 一轮」：0 = 还没有
+    /// 启动过，第一次启动变成 1，暂停后再次启动（重试 / 跳过并继续 / 标记完成后继续）
+    /// 再加一。旧数据没有这个键 → 0，旧任务没有轮次记录 → 沿用第 1 轮（简报照常
+    /// 渲染，不会因为缺字段而丢历史）。
+    var round: Int = 0
     var createdAt: Date?
 
     init(id: String,
@@ -1163,6 +1168,7 @@ struct TaskQueue: Equatable {
          repoRuns: [QueueRepoRun] = [],
          integration: QueueIntegration? = nil,
          integrationNote: String? = nil,
+         round: Int = 0,
          createdAt: Date? = nil) {
         self.id = id
         self.name = name
@@ -1178,6 +1184,7 @@ struct TaskQueue: Equatable {
         self.repoRuns = repoRuns
         self.integration = integration
         self.integrationNote = integrationNote
+        self.round = round
         self.createdAt = createdAt
     }
 
@@ -1294,6 +1301,8 @@ struct TaskQueue: Equatable {
         if !repoRuns.isEmpty { d["repoRuns"] = repoRuns.map { $0.dictionary() } }
         if let integration = integration { d["integration"] = integration.rawValue }
         if let integrationNote = integrationNote { d["integrationNote"] = integrationNote }
+        // 0 = 还没有启动过：不写键，旧文件形状不变。
+        if round != 0 { d["round"] = round }
         if let createdAt = createdAt { d["createdAt"] = TaskItem.iso8601.string(from: createdAt) }
         return d
     }
@@ -1314,6 +1323,7 @@ struct TaskQueue: Equatable {
                          repoRuns: (d["repoRuns"] as? [[String: Any]])?.compactMap { QueueRepoRun.from($0) } ?? [],
                          integration: (d["integration"] as? String).flatMap { QueueIntegration(rawValue: $0) },
                          integrationNote: d["integrationNote"] as? String,
+                         round: (d["round"] as? Int) ?? 0,
                          createdAt: (d["createdAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
     }
 }
@@ -1366,6 +1376,11 @@ struct TaskLocalState: Equatable {
     /// commits is a faithful "0 commits", not a failure. An absent key = not
     /// recorded (a task from before this field, or one started without a baseline).
     var taskCommits: [String: [RepoCommits]] = [:]
+    /// task id -> the queue round it last ran in (1-based; 每次启动队列 = 一轮).
+    /// Machine-private like taskCommits, local.json only: the brief groups earlier
+    /// tasks by round. An absent key = a task from before this field (the brief
+    /// treats it as round 1, so old files keep rendering).
+    var taskRounds: [String: Int] = [:]
     var activeQueueID: String?
     var runningTaskID: String?
     /// queue id -> the dsh session that CREATED it (the task-todo skill passes its
@@ -1420,6 +1435,11 @@ struct TaskLocalState: Equatable {
                 s.taskCommits[taskID(fromStoredKey: key)] = entries.compactMap { RepoCommits.from($0) }
             }
         }
+        if let raw = d["taskRounds"] as? [String: Any] {
+            for (key, value) in raw {
+                if let round = value as? Int { s.taskRounds[taskID(fromStoredKey: key)] = round }
+            }
+        }
         s.activeQueueID = d["activeQueueId"] as? String
         s.runningTaskID = d["runningTaskId"] as? String
         if let raw = d["queueSessions"] as? [String: String] { s.queueSessions = raw }
@@ -1451,6 +1471,7 @@ struct TaskLocalState: Equatable {
         }
         if !queueSessions.isEmpty { d["queueSessions"] = queueSessions }
         if !queueNotified.isEmpty { d["queueNotified"] = queueNotified }
+        if !taskRounds.isEmpty { d["taskRounds"] = taskRounds }
         if !taskMarkers.isEmpty { d["taskMarkers"] = taskMarkers }
         if !taskMarkerVerified.isEmpty { d["taskMarkerVerified"] = taskMarkerVerified }
         if let activeQueueID = activeQueueID { d["activeQueueId"] = activeQueueID }
@@ -1693,6 +1714,10 @@ struct TaskBoard {
             queues[qi].integrationNote = nil
             queues[qi].prError = nil
             queues[qi].repoRuns = []
+            // 每次启动队列 = 一轮：round 由 resumeQueue / retryAndResume 推进；直接
+            // markRunning（测试 / 恢复）时至少落在第 1 轮，不留下 0 轮。
+            if queues[qi].round == 0 { queues[qi].round = 1 }
+            local.taskRounds[taskID] = queues[qi].round
             if let branch = queues[qi].branch { tasks[i].branch = branch }
         }
         local.runningTaskID = taskID
@@ -1762,6 +1787,9 @@ struct TaskBoard {
     func taskCommitCount(_ taskID: String) -> Int? {
         local.taskCommits[taskID].map { groups in groups.reduce(0) { $0 + $1.commits.count } }
     }
+
+    /// 这条任务最后一棒的轮次；nil = 旧任务（简报按第 1 轮渲染，不丢历史）。
+    func taskRound(_ taskID: String) -> Int? { local.taskRounds[taskID] }
 
     /// Fail a task. A queue containing it is PAUSED and its id returned: inside
     /// a queue every task shares one branch, so running the next one would build
@@ -1882,8 +1910,7 @@ struct TaskBoard {
         local.taskMarkerVerified[taskID] = nil
         if let queueID = tasks[i].queueId, let qi = index(ofQueue: queueID) {
             tasks[i].state = .queued
-            queues[qi].state = .active
-            local.activeQueueID = queueID
+            beginRound(qi)
         } else {
             tasks[i].state = .pending
         }
@@ -1895,9 +1922,19 @@ struct TaskBoard {
     @discardableResult
     mutating func resumeQueue(_ queueID: String) -> Bool {
         guard let qi = index(ofQueue: queueID), queues[qi].state != .closed else { return false }
-        queues[qi].state = .active
-        local.activeQueueID = queueID
+        beginRound(qi)
         return true
+    }
+
+    /// 进入新的一轮（每次启动队列 = 一轮）：只有队列本来不在运行时才 +1，队列
+    /// 运行中推进下一棒不算新的一轮（否则每条任务都成了「一轮」）。
+    private mutating func beginRound(_ qi: Int) {
+        if queues[qi].state != .active {
+            queues[qi].round += 1
+        }
+        if queues[qi].round == 0 { queues[qi].round = 1 }
+        queues[qi].state = .active
+        local.activeQueueID = queues[qi].id
     }
 
     @discardableResult

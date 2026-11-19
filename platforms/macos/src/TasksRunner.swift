@@ -527,8 +527,13 @@ enum TaskPrompts {
     /// per task), but then a task starts with no memory of the one before it. The
     /// brief is how continuity travels: what the earlier tasks were, how they
     /// ended, what the agent said at the end of each, and which commits the branch
-    /// already carries. Reports are NOT truncated — a shortened summary distorts
-    /// exactly what the next task needs.
+    /// already carries.
+    ///
+    /// 长度有上界（三档衰减 + 总预算）：把「每条历史都给全文」的 O(n²) 简报压成
+    /// 「最近 2 棒全文 + 同轮一行 + 更早轮次一行」，再用 6000 字总预算兜底。**非 done
+    /// 的棒永远给全文** —— 失败 / 取消 / 待确认正是下一棒最需要重试的上下文，降级它
+    /// 们等于把重试重新变成从零探索。只有 done 的棒可以一路降成一行，必要时连一行
+    /// 也丢掉；降级的段字数与条数写进 app.log，别让「简报变短了」成为无声的事。
     struct QueueBrief: Equatable {
         struct Earlier: Equatable {
             var title: String
@@ -537,6 +542,10 @@ enum TaskPrompts {
             var errorKey: String?
             /// The agent's last words in that task's session, or nil.
             var report: String?
+            /// 本棒记录的提交数；nil = 没有记录（旧任务 / 无基线），0 是真实的 0。
+            var commitCount: Int? = nil
+            /// 这一棒属于队列的第几轮（每次启动队列 = 一轮）。
+            var round: Int = 1
         }
         var queueName: String
         /// 1-based position of the task this brief is for.
@@ -551,67 +560,275 @@ enum TaskPrompts {
         /// 也要保留仓库抬头，否则接着干的人看不出这条提交属于哪个仓库。单目标
         /// （或 legacy env）保持今天的分行文本。
         var groupedByRepo: Bool = false
+        /// 当前棒所属轮次（TaskQueue.round），与 Earlier.round 一起决定「同轮」。
+        var round: Int = 1
+
+        /// 总预算（String.count，按字计数）。超预算后按「最老 done 摘要 → 提交列表 →
+        /// 轮次/同轮行」逐条降级。
+        static let budget = 6000
+        /// 最近几棒给全文。
+        static let fullTextCount = 2
+        /// 提交列表最多列最近几条，其余只报省略计数。
+        static let commitLimit = 20
+        /// 一行摘要的首句上限（防止一条超长首句把一行撑回全文大小）。
+        static let summaryLimit = 80
+
+        /// 渲染结果 + app.log 需要的分段字数与各档降级条数。
+        struct Render: Equatable {
+            var text: String
+            var headChars: Int
+            var commitsChars: Int
+            var earlierChars: Int
+            var footerChars: Int
+            var totalChars: Int
+            /// 被从全文降成一行 / 丢弃的 done 棒数（非 done 永不降级）。
+            var demotedReports: Int
+            /// 从提交列表里去掉的条数。
+            var droppedCommits: Int
+            /// 丢弃的轮次行 / 同轮一行数。
+            var droppedRoundLines: Int
+        }
+
+        /// 前面任务的一条渲染块。只有 .full 带全文；.round 是整整一轮压成一行。
+        fileprivate struct Block {
+            enum Kind: Equatable { case full, line, round }
+            var kind: Kind
+            var index: Int
+            var earlier: Earlier
+            var roundTasks: [Earlier] = []
+        }
     }
 
-    /// The brief as prompt text, or nil when there is nothing to hand over.
-    static func briefSection(_ brief: QueueBrief?) -> String? {
+    /// The brief as prompt text + the sizes the caller logs; nil = nothing to hand over.
+    /// 渲染简报：三档衰减 + 6000 字总预算。返回 nil = 没有可交接的东西。
+    ///
+    /// 档位（按队列顺序）：
+    /// 1. 最近 `fullTextCount` 棒 —— 全文；
+    /// 2. 同轮更早的 done 棒 —— 一行（标题 · 结局 · 本棒提交数 · 摘要首句）；
+    /// 3. 更早轮次的 done 棒 —— 每轮一行（轮次 · 任务数 · 提交数 · 最后一次摘要）；
+    /// 4. **非 done（失败 / 取消 / 待确认）永远全文**，不参与降级。
+    ///
+    /// 渲染前先剥掉围栏代码块与完成标记行（机械信号不是交接内容），提交列表只列
+    /// 最近 `commitLimit` 条并报省略计数。超预算时按「最老 done 摘要 → 提交列表 →
+    /// 轮次/同轮行」逐条降级，直到装进预算；只剩非 done 全文时宁可超预算也不截断。
+    static func render(_ brief: QueueBrief?) -> QueueBrief.Render? {
         guard let brief = brief else { return nil }
         guard !brief.earlier.isEmpty || !brief.commits.isEmpty else { return nil }
-        var lines: [String] = []
+        let totalCommits = brief.commits.reduce(0) { $0 + $1.commits.count }
+        var commitCap = min(QueueBrief.commitLimit, totalCommits)
+        var blocks = classify(brief)
+        var rendered = assemble(brief, blocks: blocks, commitCap: commitCap)
+        var demoted = 0
+        var droppedCommits = 0
+        var droppedLines = 0
+        // 预算循环：每一步只降一档，重新渲染后再判断；6000 字规模下开销可忽略。
+        while rendered.totalChars > QueueBrief.budget {
+            if let index = blocks.firstIndex(where: { $0.kind == .full && $0.earlier.state == .done }) {
+                // 最老的 done 全文 → 一行（同轮 / 轮次行的压缩形状）。
+                blocks[index].kind = .line
+                demoted += 1
+            } else if commitCap > 0 {
+                commitCap -= 1
+                droppedCommits += 1
+            } else if let index = blocks.firstIndex(where: { $0.kind == .line || $0.kind == .round }) {
+                blocks.remove(at: index)
+                droppedLines += 1
+            } else {
+                // 只剩非 done 的全文：规则 2 优先，宁可超预算也不截断重试上下文。
+                break
+            }
+            rendered = assemble(brief, blocks: blocks, commitCap: commitCap)
+        }
+        rendered.demotedReports = demoted
+        rendered.droppedCommits = droppedCommits
+        rendered.droppedRoundLines = droppedLines
+        return rendered
+    }
+
+    /// 分档：最近 N 棒与所有非 done 给全文；其余 done 按「同轮一行 / 更早轮次一行」。
+    private static func classify(_ brief: QueueBrief) -> [QueueBrief.Block] {
+        var blocks: [QueueBrief.Block] = []
+        let fullFrom = max(0, brief.earlier.count - QueueBrief.fullTextCount)
+        // 只有「被压成一行 / 轮次行」的 done 棒才参与轮次聚合：已经给了全文的棒
+        // 不再被数进轮次行，否则同一棒在简报里出现两次，任务数也会虚高。
+        let collapsed = brief.earlier.enumerated().filter {
+            $0.offset < fullFrom && $0.element.state == .done
+        }.map { $0.element }
+        var emittedRounds = Set<Int>()
+        for (index, earlier) in brief.earlier.enumerated() {
+            let isRecent = index >= fullFrom
+            if isRecent || earlier.state != .done {
+                blocks.append(QueueBrief.Block(kind: .full, index: index, earlier: earlier))
+            } else if earlier.round == brief.round {
+                blocks.append(QueueBrief.Block(kind: .line, index: index, earlier: earlier))
+            } else if emittedRounds.insert(earlier.round).inserted {
+                let tasks = collapsed.filter { $0.round == earlier.round }
+                blocks.append(QueueBrief.Block(kind: .round, index: index, earlier: earlier,
+                                               roundTasks: tasks))
+            }
+        }
+        return blocks
+    }
+
+    private static func assemble(_ brief: QueueBrief, blocks: [QueueBrief.Block],
+                                 commitCap: Int) -> QueueBrief.Render {
         // 与开 PR 会话的 `## 队列信息` 是同一套字段、同一个抬头（用户的要求：两处统一）：
         // 队列 → 分支/基线 → 分支上已有的提交 → 前面任务的汇报。谁在哪个队列里、在哪条
         // 分支上、前面干了什么，读到同一个段落就知道。
-        lines.append("## 队列信息")
-        lines.append("队列：\(brief.queueName)（本任务是第 \(brief.position)/\(brief.total) 个）")
+        var head: [String] = []
+        head.append("## 队列信息")
+        head.append("队列：\(brief.queueName)（本任务是第 \(brief.position)/\(brief.total) 个）")
         if let branch = brief.branch, !branch.isEmpty {
-            lines.append("分支：\(branch)（基于 \(brief.base)）")
+            head.append("分支：\(branch)（基于 \(brief.base)）")
         } else {
-            lines.append("基于：\(brief.base)")
+            head.append("基于：\(brief.base)")
         }
-        if !brief.commits.isEmpty {
-            lines.append("分支上已有的提交：")
+
+        var commitLines: [String] = []
+        var shown = 0
+        var shownGroups: [RepoCommits] = []
+        for group in brief.commits {
+            guard shown < commitCap else { break }
+            let take = Array(group.commits.prefix(commitCap - shown))
+            guard !take.isEmpty else { continue }
+            shown += take.count
+            shownGroups.append(RepoCommits(repoID: group.repoID, commits: take))
+        }
+        let totalCommits = brief.commits.reduce(0) { $0 + $1.commits.count }
+        if !brief.commits.isEmpty, commitCap > 0 {
+            commitLines.append("分支上已有的提交：")
             if !brief.groupedByRepo {
-                // 单目标（根或子仓库）：与今天逐字一致 —— 只有一组，不打仓库抬头。
-                for commit in brief.commits[0].commits { lines.append("  " + commit) }
+                // 单目标（根或子仓库）：只有一组，不打仓库抬头。
+                for commit in shownGroups.first?.commits ?? [] { commitLines.append("  " + commit) }
             } else {
                 // 多仓库：按仓库分组（design §5.3）。
-                for group in brief.commits {
+                for group in shownGroups {
                     let name = group.repoID == "." ? "（工作区根）" : group.repoID + "/"
-                    lines.append("  " + name + "：")
-                    for commit in group.commits { lines.append("    " + commit) }
+                    commitLines.append("  " + name + "：")
+                    for commit in group.commits { commitLines.append("    " + commit) }
+                }
+            }
+            let omitted = totalCommits - shown
+            if omitted > 0 { commitLines.append("  …（还有 \(omitted) 条提交未列出）") }
+        }
+
+        var earlierLines: [String] = []
+        if !blocks.isEmpty {
+            earlierLines.append("前面任务的汇报：")
+            for block in blocks {
+                switch block.kind {
+                case .full:
+                    earlierLines.append("\(block.index + 1). 「\(block.earlier.title)」 —— "
+                                        + outcomeText(block.earlier))
+                    let report = sanitizedReport(block.earlier.report)
+                    if !report.isEmpty {
+                        earlierLines.append("   它的汇报：")
+                        earlierLines.append(report.split(separator: "\n")
+                            .map { "   " + $0 }.joined(separator: "\n"))
+                    } else {
+                        earlierLines.append("   它没有留下汇报（会话里没有代理的最后文本）。")
+                    }
+                case .line:
+                    earlierLines.append("  - " + oneLineText(block.earlier))
+                case .round:
+                    earlierLines.append("  - " + roundLineText(block.roundTasks))
                 }
             }
         }
-        if !brief.earlier.isEmpty {
-            lines.append("前面任务的汇报：")
-            for (index, earlier) in brief.earlier.enumerated() {
-                var head = "\(index + 1). 「\(earlier.title)」"
-                switch earlier.state {
-                case .done: head += " —— 已完成"
-                case .failed: head += " —— 失败（\(L10n.tr(earlier.errorKey ?? "tasks.errUnknown"))）"
-                // 待确认不算「已完成」：它只是前一条任务的现状，后面的人必须知道。
-                case .needsReview: head += " —— 待确认（未确认完成）"
-                case .cancelled: head += " —— 被取消"
-                default: head += " —— \(earlier.state.rawValue)"
-                }
-                lines.append(head)
-                if let report = earlier.report, !report.isEmpty {
-                    lines.append("   它的汇报：")
-                    lines.append(report.split(separator: "\n").map { "   " + $0 }.joined(separator: "\n"))
-                } else {
-                    lines.append("   它没有留下汇报（会话里没有代理的最后文本）。")
-                }
-            }
-        }
+
         // 收尾这句只对「真有前一棒」成立：队列的第一个任务也可能拿到这一段（分支上已经
         // 有提交），那时说「不要重做前面任务」就是无的放矢。
+        var footer: [String] = []
         if brief.earlier.isEmpty {
-            lines.append("这些提交是这条分支上已有的改动（上一轮留下的）：不要重做它们，只做本任务。")
+            footer.append("这些提交是这条分支上已有的改动（上一轮留下的）：不要重做它们，只做本任务。")
         } else {
-            lines.append("不要重做已完成的部分，只做本任务；")
-            lines.append("如果发现前面留下的问题，先说明再决定是否顺手修。")
+            footer.append("不要重做已完成的部分，只做本任务；")
+            footer.append("如果发现前面留下的问题，先说明再决定是否顺手修。")
         }
-        return lines.joined(separator: "\n")
+
+        let sections = [head, commitLines, earlierLines, footer].filter { !$0.isEmpty }
+        let text = sections.map { $0.joined(separator: "\n") }.joined(separator: "\n")
+        return QueueBrief.Render(
+            text: text,
+            headChars: head.joined(separator: "\n").count,
+            commitsChars: commitLines.joined(separator: "\n").count,
+            earlierChars: earlierLines.joined(separator: "\n").count,
+            footerChars: footer.joined(separator: "\n").count,
+            totalChars: text.count,
+            demotedReports: 0, droppedCommits: 0, droppedRoundLines: 0)
+    }
+
+    /// 结局文案（全文头与一行档共用同一套措辞）。
+    static func outcomeText(_ earlier: QueueBrief.Earlier) -> String {
+        switch earlier.state {
+        case .done: return "已完成"
+        case .failed: return "失败（\(L10n.tr(earlier.errorKey ?? "tasks.errUnknown"))）"
+        // 待确认不算「已完成」：它只是前一条任务的现状，后面的人必须知道。
+        case .needsReview: return "待确认（未确认完成）"
+        case .cancelled: return "被取消"
+        default: return earlier.state.rawValue
+        }
+    }
+
+    /// 同轮 done 棒的一行：标题 · 结局 · 本棒提交数 · 摘要首句。
+    static func oneLineText(_ earlier: QueueBrief.Earlier) -> String {
+        let summary = summaryText(earlier.report) ?? "无摘要"
+        return "「\(earlier.title)」 · \(outcomeText(earlier)) · 本棒 \(commitCountText(earlier.commitCount)) · 摘要：\(summary)"
+    }
+
+    /// 更早轮次的一行：轮次 · 任务数 · 提交数 · 最后一次摘要。
+    static func roundLineText(_ tasks: [QueueBrief.Earlier]) -> String {
+        let round = tasks.first?.round ?? 1
+        let label = round > 0 ? "第 \(round) 轮" : "更早轮次"
+        let recorded = tasks.compactMap { $0.commitCount }
+        let commits = recorded.isEmpty ? "提交未记录" : "\(recorded.reduce(0, +)) 个提交"
+        let summary = tasks.last.flatMap { summaryText($0.report) } ?? "无摘要"
+        return "\(label)：\(tasks.count) 个任务 · \(commits) · 最后：\(summary)"
+    }
+
+    static func commitCountText(_ count: Int?) -> String {
+        guard let count = count else { return "提交未记录" }
+        return "\(count) 个提交"
+    }
+
+    /// 剥掉围栏代码块与完成标记行，其余正文原样保留（非 done 全文不能失真）。
+    static func sanitizedReport(_ report: String?) -> String {
+        guard let report = report else { return "" }
+        var kept: [String] = []
+        var inFence = false
+        for line in report.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+                inFence.toggle()
+                continue
+            }
+            if inFence { continue }
+            if trimmed.contains("DSH-TASK-DONE-") || trimmed.contains("DSH-FINALIZE-") { continue }
+            kept.append(line)
+        }
+        return kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 摘要首句：取正文第一行、去掉列表/标题记号，截到第一个句末标点，超长再截到
+    /// `summaryLimit` 字。一行档的正文长度因此有上界。
+    static func summaryText(_ report: String?) -> String? {
+        let text = sanitizedReport(report)
+        guard !text.isEmpty else { return nil }
+        let firstLine = text.components(separatedBy: "\n").first ?? text
+        var cleaned = firstLine.trimmingCharacters(in: .whitespaces)
+        while let first = cleaned.first, "#-*>` ".contains(first) {
+            cleaned.removeFirst()
+        }
+        cleaned = cleaned.trimmingCharacters(in: .whitespaces)
+        guard !cleaned.isEmpty else { return nil }
+        let sentence: String
+        if let end = cleaned.firstIndex(where: { "。！？.!?".contains($0) }) {
+            sentence = String(cleaned[...end])
+        } else {
+            sentence = cleaned
+        }
+        if sentence.count <= QueueBrief.summaryLimit { return sentence }
+        return String(sentence.prefix(QueueBrief.summaryLimit)) + "…"
     }
 
     /// 自查与汇报两条 rail，issue 任务与手动任务共用同一份措辞（用户的要求：
@@ -1611,12 +1828,22 @@ final class TasksRunner {
                                           git: git, sessionReport: sessionReport,
                                           branch: branch, base: base, position: nil,
                                           targets: targets, gitFor: gitFor)
-            if let brief = brief, !brief.isEmpty {
-                log("tasks: brief for " + taskID + " is " + String(brief.count) + " chars")
+            if let brief = brief, !brief.text.isEmpty {
+                // 各段字数 + 各档降级条数一起写进 app.log：简报变短是**做过的决定**，
+                // 不是悄悄发生的（只记总字数时，降级到底是哪一档生效的看不出来）。
+                log("tasks: brief for " + taskID + " is " + String(brief.totalChars)
+                    + " chars (head=" + String(brief.headChars)
+                    + ", commits=" + String(brief.commitsChars)
+                    + ", earlier=" + String(brief.earlierChars)
+                    + ", footer=" + String(brief.footerChars)
+                    + "; degraded: reports=" + String(brief.demotedReports)
+                    + ", commits=" + String(brief.droppedCommits)
+                    + ", rows=" + String(brief.droppedRoundLines) + ")")
             }
+            let briefText = brief?.text
             // 完整提示词：只在 fresh / 回退时使用（首次启动路径逐字节不变）。
             // 完成标记追加在提示词最后一行：任务会话的汇报必须回显它（P1）。
-            var prompt = promptText(task, queue, brief)
+            var prompt = promptText(task, queue, briefText)
             if let marker = marker {
                 prompt += "\n\n" + TaskPrompts.completionMarkerInstruction(marker)
             }
@@ -1697,7 +1924,7 @@ final class TasksRunner {
                       sessionReport: (String) -> String?, branch: String?, base: String,
                       position: Int?,
                       targets: [WorkspaceRepo] = [],
-                      gitFor: ((WorkspaceRepo) -> TaskGit)? = nil) -> String? {
+                      gitFor: ((WorkspaceRepo) -> TaskGit)? = nil) -> TaskPrompts.QueueBrief.Render? {
         guard let queue = queue else { return nil }
         let index = position ?? queue.taskIds.firstIndex(of: taskID).map { $0 + 1 } ?? 1
         let earlier = queue.taskIds.prefix(max(0, index - 1)).compactMap { id -> TaskPrompts.QueueBrief.Earlier? in
@@ -1710,9 +1937,13 @@ final class TasksRunner {
             // The stored 汇报 first: the runner writes it back when a task ends (so it
             // survives a deleted session), and only a task that ended before that
             // existed has to be read out of the session log again.
-            return TaskPrompts.QueueBrief.Earlier(title: task.title, state: task.state,
-                                                  errorKey: task.error,
-                                                  report: task.report ?? task.sessionId.flatMap { sessionReport($0) })
+            return TaskPrompts.QueueBrief.Earlier(
+                title: task.title, state: task.state, errorKey: task.error,
+                report: task.report ?? task.sessionId.flatMap { sessionReport($0) },
+                // 本棒提交数与轮次都来自 board 的记录（重试 / 旧任务为 nil，渲染时
+                // 分别是「提交未记录」与第 1 轮），简报不再为历史任务重跑 git。
+                commitCount: board.taskCommitCount(id),
+                round: board.taskRound(id) ?? 1)
         }
         // The commits the branch already carries, GROUPED per target repository
         // (design §5.3). A legacy env (no targets) keeps the single unlabeled group;
@@ -1736,8 +1967,9 @@ final class TasksRunner {
         let heading = TaskPrompts.QueueBrief(queueName: queue.name, position: index,
                                              total: queue.taskIds.count, earlier: earlier,
                                              branch: branch, base: base, commits: commits,
-                                             groupedByRepo: targets.count > 1)
-        return TaskPrompts.briefSection(heading)
+                                             groupedByRepo: targets.count > 1,
+                                             round: max(queue.round, 1))
+        return TaskPrompts.render(heading)
     }
 
     private static func failure(for entered: GitEnterResult) -> TaskFailure? {

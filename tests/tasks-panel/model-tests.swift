@@ -683,6 +683,57 @@ do {
     check(commitBoard.local.taskCommits[c1.id] == nil, "重试清掉上一轮的提交归属")
 }
 
+// MARK: - 轮次：每次启动队列 = 一轮
+
+section("轮次：每次启动队列 = 一轮，只落 local.json")
+do {
+    var roundBoard = TaskBoard()
+    let r1 = TaskItem.manual(title: "第一轮 A", body: nil, id: "manual-dd001111")
+    let r2 = TaskItem.manual(title: "第一轮 B", body: nil, id: "manual-dd002222")
+    let r3 = TaskItem.manual(title: "第二轮 C", body: nil, id: "manual-dd003333")
+    roundBoard.tasks = [r1, r2, r3]
+    let rq = roundBoard.createQueue(name: "Rounds", autoPR: false)
+    _ = roundBoard.enqueue(taskID: r1.id, into: rq.id)
+    _ = roundBoard.enqueue(taskID: r2.id, into: rq.id)
+    _ = roundBoard.enqueue(taskID: r3.id, into: rq.id)
+    eq(roundBoard.queue(rq.id)?.round, 0, "新队列还没启动：0 轮")
+    _ = roundBoard.resumeQueue(rq.id)
+    eq(roundBoard.queue(rq.id)?.round, 1, "第一次启动进入第 1 轮")
+    roundBoard.markRunning(r1.id)
+    eq(roundBoard.taskRound(r1.id), 1, "第一棒记在第 1 轮")
+    roundBoard.markDone(r1.id, report: "A 完成。")
+    roundBoard.markRunning(r2.id)
+    eq(roundBoard.taskRound(r2.id), 1, "同一轮里推进下一棒不新开一轮")
+    roundBoard.markDone(r2.id, report: "B 完成。")
+    _ = roundBoard.pauseQueue(rq.id)
+    _ = roundBoard.resumeQueue(rq.id)
+    eq(roundBoard.queue(rq.id)?.round, 2, "再次启动队列 = 第 2 轮")
+    roundBoard.markRunning(r3.id)
+    eq(roundBoard.taskRound(r3.id), 2, "新一棒记在第 2 轮")
+    eq(roundBoard.taskRound(r1.id), 1, "旧棒的轮次不被改写")
+    eq(roundBoard.taskRound("manual-dd009999"), nil, "没跑过的任务没有轮次")
+
+    // 队列轮次随队列文件往返；旧数据没有这个键就是 0（第一次启动后变 1）。
+    let roundQueue = TaskQueue.from(roundBoard.queue(rq.id)!.dictionary())
+    eq(roundQueue?.round, 2, "队列轮次往返")
+    let oldQueue = TaskQueue.from(["id": "q-old", "name": "Old"])
+    eq(oldQueue?.round, 0, "旧队列缺 round → 0")
+
+    // 任务轮次只落 local.json；manual / index 的结构不变。
+    let roundJSON = roundBoard.local.dictionary()
+    let roundLoaded = TaskLocalState.from(roundJSON)
+    eq(roundLoaded.taskRounds[r1.id], 1, "轮次往返")
+    eq(roundLoaded.taskRounds[r3.id], 2, "第二轮往返")
+    check(roundBoard.task(r1.id)?.manualDictionary()["taskRounds"] == nil, "manual.json 不写轮次")
+    check(roundBoard.task(r1.id)?.indexDictionary()["taskRounds"] == nil, "index.json 不写轮次")
+
+    let roundRepo = tempRepo("task-rounds")
+    TasksStore.saveLocalHalf(roundRepo, roundBoard)
+    let roundReloaded = TasksStore.load(roundRepo)
+    eq(roundReloaded.taskRound(r1.id), 1, "轮次写入磁盘再读回还在")
+    eq(roundReloaded.queue(rq.id)?.round, 2, "队列轮次也落盘")
+}
+
 // MARK: - persistence
 
 section("persistence: four files")
