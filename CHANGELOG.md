@@ -67,7 +67,15 @@ All notable changes to this project are documented in this file. Format follows
 
 - **工作流硬规则：对话/需求阶段只读，开工唯一入口 = 已启动的任务队列（2026-10-04）**：`AGENTS.md` 工作流段、`.dsh/ai-native-workflow-spec.md`（新增 **R12** + AGENTS 模板）、内置技能 `requirement-pool` 三处都加这条——需求未落卡 / 事项未确认 / 队列未启动之前，只讨论、只澄清、只落卡，**不得修改代码或文件**；这是「避免 agent 在想法阶段直接开工」的软闸（覆盖所有会话；硬闸走 dsh 的 plan mode / 权限预设，另议）。使用说明常见坑同步。
 
+### Changed
+
+- **任务队列的完成通知改为逐任务一条 + 队列收尾（2026-11-19）**：队列里每个任务到达终态（完成 / 失败 / 待确认 / 取消）时，创建队列的会话会立刻收到**只讲这一个任务**的通知——标题 · 位次 · 结局、本任务提交、汇报（单条上限 1500 字）、一行队列进度；失败 / 待确认 / 取消还会写明「后续 N 个任务不会启动，不开 PR」与「重试 / 跳过并继续」两个出口。队列进入 `.done` 时再补一条**收尾**（完成 / 待确认计数、分支、PR、汇报全文路径），不再重列各棒汇报；单任务队列把任务通知与收尾合并成一条。**长期用户会看到通知从「队列结束的一条大消息」变成「每一棒一条 + 最后一条收尾」**。幂等靠 `taskNotified` / `queueNotified`（只写 `local.json`，发送前写入，重试清掉任务标记）；交付会话占用来源会话时通知延后到空闲，重启后空闲 `step()` 补发。技能 `task-todo` 与面板 / 设计文档同步。
+
+- **队列交接简报改为「有预算的衰减」（2026-11-19）**：此前简报把前面每一棒的汇报原样全文带上，长度随队列线性增长。现在最近 2 棒给全文；同轮更早的 done 棒压成一行（标题 · 结局 · 本棒提交数 · 摘要首句），更早轮次每轮一行；**非 done（失败 / 取消 / 待确认）永远全文**，只剩它们时宁可超预算也不截断。总预算 6000 字，超预算按「最老 done 全文 → 一行 → 丢最老提交（列表只留最近 20 条）→ 丢最老轮次 / 同轮行」逐条降级；渲染前剥掉围栏代码块与完成标记行。`app.log` 记录 `head= / commits= / earlier= / footer=` 四段字数与 `degraded: reports= / commits= / rows=` 三档降级条数。回归：`tests/tasks-panel/run.sh` 全绿（model 384 / runner **811 → 831** / ui 503 / form 370 / api 132），新增简报上界、逐任务通知与旧「不截断」用例的调整；`tests/skills/run.sh` 校验技能内嵌副本与仓库副本仍字节一致。
+
 ### Fixed
+
+- **分支进入显式 pull `<remote> <base>`，失败带 git stderr（2026-11-19）**：`TaskGit.enter` 以前用裸 `git pull --ff-only`，依赖基线分支配置了 upstream——本仓库远端从 `origin` 换成 `github` 后 `main` 失去 upstream，队列第一棒直接 `tasks.errPull`，`app.log` 只有一句「could not start (tasks.errPull)」，看不到 git 的原始错误。现在 pull 显式点名远端（`github` > `origin` > 首个）与基线，无远端照旧跳过；`pull` / `checkout` / `status` 失败时把 **git 自己的 stderr** 写进 `app.log` 并作为卡片 `errorDetail`；「没有 upstream / 远端没有同名 ref」归为 `tasks.errPullNoUpstream`（可自愈的环境类，提示执行 fetch 并以 `<remote>/<base>` 作为比较基线），`git status` 自己失败单独记 `tasks.errGitStatus`（不再误报成「工作区有未提交改动」）。回归：`tests/tasks-panel/run.sh` 全绿（runner **831 → 850**、ui **503 → 504**），新增「无 upstream 也能起队列（假 git 断言收到显式 pull 参数）」与 pull / checkout / status 的 stderr 进日志和卡片用例。
 
 - **英文界面修复：Agent 追加任务后壳层崩溃（2026-10-02，v1.18.0）**：`tasks.apiQueueAppended` 的中英文案占位符顺序相反（中文 `%@`→`%d`、英文 `%d`→`%@`），而 `L10n.tr` 把同一份参数列表交给当前语言的格式串；英文下 `%@` 拿到整数 `created.count`（3）被当成对象指针，`String(format:)` 内部对 `0x3` 调 `objc_opt_respondsToSelector` 直接 SIGSEGV（`KERN_INVALID_ADDRESS at 0x3`）。改用位置参数 `%1$@` / `%2$d`，两种语言各自保留自然语序。回归：`tests/l10n` 新增「中英格式参数必须一致」检查——改前先复现失败（精确命中该 key），改后通过。
 

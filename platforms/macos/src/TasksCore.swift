@@ -25,6 +25,13 @@ enum TaskFailure: String {
     case repoBranch = "tasks.errRepoBranch"
     case checkout = "tasks.errBranch"
     case pull = "tasks.errPull"
+    /// 分支进入：git status 自己失败（索引损坏 / 权限 / …）。以前会被 fail-closed
+    /// 当成「工作区脏」，把 git 的错误算到用户头上。
+    case gitStatus = "tasks.errGitStatus"
+    /// 分支进入：基线分支没有可用的 upstream（或远端根本没有这个名字）。2026-11-19
+    /// 实测：远端从 origin 换成 github 后 main 失去 upstream，队列第一棒直接 errPull。
+    /// 它是**环境类、可自愈**的失败，卡片给出 fetch + `<remote>/<base>` 比较基线的提示。
+    case pullNoUpstream = "tasks.errPullNoUpstream"
     case session = "tasks.errSession"
     case prompt = "tasks.errPrompt"
     case timeout = "tasks.errTimeout"
@@ -168,6 +175,9 @@ struct TaskItem: Equatable {
     /// exists only on this machine): it belongs to local.json, never to manual.json /
     /// index.json — the committed index keeps its v1 shape and stays shareable.
     var report: String?
+    /// 固定 4 字段的交接摘要（由 report 派生，见 TaskHandoff）。与 report 一样机器
+    /// 私有：只在 local.json / 内存里，绝不进 manual.json / index.json。
+    var handoff: TaskHandoff?
     /// 本次尝试的完成 marker（runner 生成、写进提示词，会话须在最后一行回显）。它只
     /// 进 local.json / 内存，绝不进 index.json / manual.json：机器私有，且重启恢复后
     /// 据此判断这次尝试是否已被校验过（见 markerVerified）。
@@ -196,6 +206,7 @@ struct TaskItem: Equatable {
          startedAt: Date? = nil,
          finishedAt: Date? = nil,
          report: String? = nil,
+         handoff: TaskHandoff? = nil,
          completionMarker: String? = nil,
          markerVerified: Bool = false,
          expectsCommit: Bool = false) {
@@ -215,6 +226,7 @@ struct TaskItem: Equatable {
         self.startedAt = startedAt
         self.finishedAt = finishedAt
         self.report = report
+        self.handoff = handoff
         self.completionMarker = completionMarker
         self.markerVerified = markerVerified
         self.expectsCommit = expectsCommit
@@ -332,6 +344,225 @@ struct TaskItem: Equatable {
                         errorDetail: d["errorDetail"] as? String,
                         startedAt: (d["startedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) },
                         finishedAt: (d["finishedAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
+    }
+}
+
+// MARK: - Hand-off block (fixed 4 fields)
+
+/// The agent's 汇报, folded into the four fields the brief and the per-task
+/// notification consume. The prompt (TasksRunner.reportRequirement) asks for
+/// exactly this block; an agent that ignores the convention still gets a
+/// deterministic fallback instead of losing its report.
+///
+/// Derived, machine-private data: it is written to local.json only. The task's
+/// manual/index dictionaries stay the shareable v1 shape (no hand-off in them).
+struct TaskHandoff: Equatable {
+    enum Source: String {
+        /// The report had all four labelled fields.
+        case block
+        /// The report did not follow the convention — deterministic fallback:
+        /// first paragraph + lines mentioning 未完成 / 注意 / 下一步 + last paragraph.
+        case fallback
+    }
+
+    var did: String
+    var verified: String
+    var unfinished: String
+    var nextNote: String
+    var source: Source
+
+    /// One task run's hand-off is capped at 500 characters. The raw report is
+    /// left untouched (the card / brief still carry the agent's whole words);
+    /// only this derived digest is bounded.
+    static let maxCharacters = 500
+
+    static let fieldLabels = ["做了什么", "怎么验证", "未完成", "下一棒注意"]
+
+    var isEmpty: Bool {
+        did.isEmpty && verified.isEmpty && unfinished.isEmpty && nextNote.isEmpty
+    }
+
+    var characterCount: Int {
+        did.count + verified.count + unfinished.count + nextNote.count
+    }
+
+    /// Parse a finished task's report. Returns nil for an empty/whitespace report.
+    /// A report that does not carry all four labels falls back deterministically
+    /// (see Source.fallback), never to an empty digest.
+    static func parse(_ report: String?) -> TaskHandoff? {
+        guard let text = report?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else { return nil }
+        let normalised = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        if let block = parseBlock(normalised) {
+            return block.capped()
+        }
+        return fallback(normalised).capped()
+    }
+
+    /// Enforce the 500-character ceiling without dropping a field. When the
+    /// digest is over budget, every non-empty field gets the same quota; a
+    /// truncated field ends in an ellipsis that counts toward that quota.
+    func capped(limit: Int = TaskHandoff.maxCharacters) -> TaskHandoff {
+        guard characterCount > limit else { return self }
+        let values = [did, verified, unfinished, nextNote]
+        let nonEmpty = values.filter { !$0.isEmpty }.count
+        guard nonEmpty > 0 else { return self }
+        let quota = max(1, limit / nonEmpty)
+        var out = self
+        out.did = TaskHandoff.truncate(did, to: quota)
+        out.verified = TaskHandoff.truncate(verified, to: quota)
+        out.unfinished = TaskHandoff.truncate(unfinished, to: quota)
+        out.nextNote = TaskHandoff.truncate(nextNote, to: quota)
+        return out
+    }
+
+    private static func truncate(_ text: String, to limit: Int) -> String {
+        guard text.count > limit else { return text }
+        guard limit > 1 else { return String(text.prefix(limit)) }
+        return String(text.prefix(limit - 1)) + "…"
+    }
+
+    // MARK: the convention
+
+    private static func parseBlock(_ text: String) -> TaskHandoff? {
+        var values: [Int: [String]] = [:]
+        var current: Int?
+        for rawLine in text.components(separatedBy: "\n") {
+            if let hit = fieldLabel(in: rawLine) {
+                current = hit.index
+                values[hit.index, default: []].append(hit.value)
+            } else if let index = current {
+                values[index, default: []].append(rawLine)
+            }
+        }
+        // All four labels have to be present; a partial block is not the
+        // convention and goes through the fallback instead.
+        guard let did = values[0], let verified = values[1],
+              let unfinished = values[2], let nextNote = values[3] else { return nil }
+        return TaskHandoff(did: joined(did),
+                           verified: joined(verified),
+                           unfinished: joined(unfinished),
+                           nextNote: joined(nextNote),
+                           source: .block)
+    }
+
+    /// Recognise one labelled field line, tolerating the markdown an agent
+    /// naturally writes: headings, bullets, blockquotes, bold labels and either
+    /// colon. Returns nil when this line is not a field label.
+    private static func fieldLabel(in rawLine: String) -> (index: Int, value: String)? {
+        var line = rawLine.trimmingCharacters(in: .whitespaces)
+        guard !line.isEmpty else { return nil }
+        // blockquote
+        while line.hasPrefix(">") {
+            line.removeFirst()
+            line = line.trimmingCharacters(in: .whitespaces)
+        }
+        // heading hashes
+        while line.hasPrefix("#") {
+            line.removeFirst()
+            line = line.trimmingCharacters(in: .whitespaces)
+        }
+        // unordered bullet
+        for bullet in ["- ", "* ", "+ ", "• "] where line.hasPrefix(bullet) {
+            line = String(line.dropFirst(bullet.count)).trimmingCharacters(in: .whitespaces)
+            break
+        }
+        // ordered bullet ("1. ", "2) ")
+        if let dot = line.firstIndex(where: { $0 == "." || $0 == ")" }),
+           dot > line.startIndex,
+           line[line.startIndex..<dot].allSatisfy({ $0.isNumber }) {
+            line = String(line[line.index(after: dot)...]).trimmingCharacters(in: .whitespaces)
+        }
+        // another heading/bullet layer (e.g. "- ### 做了什么")
+        while line.hasPrefix("#") {
+            line.removeFirst()
+            line = line.trimmingCharacters(in: .whitespaces)
+        }
+        // leading emphasis / code span
+        line = strippingLeadingDecoration(line)
+
+        for (index, label) in fieldLabels.enumerated() where line.hasPrefix(label) {
+            var rest = String(line.dropFirst(label.count)).trimmingCharacters(in: .whitespaces)
+            rest = strippingLeadingDecoration(rest)
+            if rest.hasPrefix("：") || rest.hasPrefix(":") {
+                rest.removeFirst()
+                rest = rest.trimmingCharacters(in: .whitespaces)
+                rest = strippingLeadingDecoration(rest)
+            } else if !rest.isEmpty {
+                // "未完成情况说明" is prose, not the 未完成 field.
+                return nil
+            }
+            return (index, rest)
+        }
+        return nil
+    }
+
+    private static func strippingLeadingDecoration(_ text: String) -> String {
+        var out = text
+        var changed = true
+        while changed {
+            changed = false
+            for marker in ["**", "__", "\u{60}"] where out.hasPrefix(marker) {
+                out = String(out.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+                changed = true
+            }
+        }
+        return out
+    }
+
+    private static func joined(_ lines: [String]) -> String {
+        lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: the deterministic fallback
+
+    /// First paragraph → 做了什么; every line mentioning 未完成 / 注意 / 下一步 →
+    /// 未完成; last paragraph → 下一棒注意. 怎么验证 has no reliable signal in free
+    /// text, so it stays empty rather than inventing evidence.
+    private static func fallback(_ text: String) -> TaskHandoff {
+        let lines = text.components(separatedBy: "\n")
+        var paragraphs: [String] = []
+        var current: [String] = []
+        func flush() {
+            guard !current.isEmpty else { return }
+            paragraphs.append(current.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+            current = []
+        }
+        for line in lines {
+            if line.trimmingCharacters(in: .whitespaces).isEmpty { flush() }
+            else { current.append(line) }
+        }
+        flush()
+
+        let keywords = ["未完成", "注意", "下一步"]
+        let signals = lines
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { line in !line.isEmpty && keywords.contains { line.contains($0) } }
+        let first = paragraphs.first ?? ""
+        let last = paragraphs.count > 1 ? (paragraphs.last ?? "") : ""
+        return TaskHandoff(did: first,
+                           verified: "",
+                           unfinished: signals.joined(separator: "\n"),
+                           nextNote: last,
+                           source: .fallback)
+    }
+
+    // MARK: persistence (local.json only)
+
+    func dictionary() -> [String: Any] {
+        ["did": did, "verified": verified, "unfinished": unfinished,
+         "next": nextNote, "source": source.rawValue]
+    }
+
+    static func from(_ d: [String: Any]) -> TaskHandoff? {
+        guard let source = (d["source"] as? String).flatMap(Source.init(rawValue:)) else { return nil }
+        return TaskHandoff(did: (d["did"] as? String) ?? "",
+                           verified: (d["verified"] as? String) ?? "",
+                           unfinished: (d["unfinished"] as? String) ?? "",
+                           nextNote: (d["next"] as? String) ?? "",
+                           source: source)
     }
 }
 
@@ -923,6 +1154,11 @@ struct TaskQueue: Equatable {
     /// The last finalize session's result shown on the card: its report's first line
     /// on success, the failure reason otherwise. nil = never finalized.
     var integrationNote: String?
+    /// 轮次（简报三档衰减的「一轮」）。暂定「每次启动队列 = 一轮」：0 = 还没有
+    /// 启动过，第一次启动变成 1，暂停后再次启动（重试 / 跳过并继续 / 标记完成后继续）
+    /// 再加一。旧数据没有这个键 → 0，旧任务没有轮次记录 → 沿用第 1 轮（简报照常
+    /// 渲染，不会因为缺字段而丢历史）。
+    var round: Int = 0
     var createdAt: Date?
 
     init(id: String,
@@ -939,6 +1175,7 @@ struct TaskQueue: Equatable {
          repoRuns: [QueueRepoRun] = [],
          integration: QueueIntegration? = nil,
          integrationNote: String? = nil,
+         round: Int = 0,
          createdAt: Date? = nil) {
         self.id = id
         self.name = name
@@ -954,6 +1191,7 @@ struct TaskQueue: Equatable {
         self.repoRuns = repoRuns
         self.integration = integration
         self.integrationNote = integrationNote
+        self.round = round
         self.createdAt = createdAt
     }
 
@@ -1070,6 +1308,8 @@ struct TaskQueue: Equatable {
         if !repoRuns.isEmpty { d["repoRuns"] = repoRuns.map { $0.dictionary() } }
         if let integration = integration { d["integration"] = integration.rawValue }
         if let integrationNote = integrationNote { d["integrationNote"] = integrationNote }
+        // 0 = 还没有启动过：不写键，旧文件形状不变。
+        if round != 0 { d["round"] = round }
         if let createdAt = createdAt { d["createdAt"] = TaskItem.iso8601.string(from: createdAt) }
         return d
     }
@@ -1090,7 +1330,33 @@ struct TaskQueue: Equatable {
                          repoRuns: (d["repoRuns"] as? [[String: Any]])?.compactMap { QueueRepoRun.from($0) } ?? [],
                          integration: (d["integration"] as? String).flatMap { QueueIntegration(rawValue: $0) },
                          integrationNote: d["integrationNote"] as? String,
+                         round: (d["round"] as? Int) ?? 0,
                          createdAt: (d["createdAt"] as? String).flatMap { TaskItem.iso8601.date(from: $0) })
+    }
+}
+
+// MARK: - Produced commits (P4 baseline → this task)
+
+/// The commits ONE repository carries on top of its base — the per-repo group of a
+/// 交接简报 (design §5.3). One group keeps today's flat rendering; several groups
+/// are rendered under a per-repo heading.
+///
+/// The SAME shape records what one task actually produced (local.json
+/// `taskCommits`): the group is what the brief and the per-task notification render,
+/// so neither has to run git again. A group with an empty `commits` list is a
+/// RECORDED ZERO (a docs-only task really made no commit) — it is not a failure and
+/// not "unknown"; an absent key is the unknown case.
+struct RepoCommits: Equatable {
+    var repoID: String
+    var commits: [String]
+
+    func dictionary() -> [String: Any] {
+        ["repoID": repoID, "commits": commits]
+    }
+
+    static func from(_ d: [String: Any]) -> RepoCommits? {
+        guard let repoID = d["repoID"] as? String else { return nil }
+        return RepoCommits(repoID: repoID, commits: (d["commits"] as? [String]) ?? [])
     }
 }
 
@@ -1107,6 +1373,21 @@ struct TaskLocalState: Equatable {
     /// task id -> the agent's 汇报, written back when the task finished (see
     /// TaskItem.report). Machine-scoped: it is the last text of a local session.
     var reports: [String: String] = [:]
+    /// task id -> the derived fixed-4-field hand-off (TaskHandoff). Machine-private
+    /// like reports, and only written to local.json.
+    var handoffs: [String: TaskHandoff] = [:]
+    /// task id -> what THIS task actually produced, grouped per target repository
+    /// (P4 baseline HEAD → HEAD when it ended, see TaskProductBaseline.commits).
+    /// Machine-private like reports, local.json only. The brief and the per-task
+    /// notification both render it, so neither runs git again; a group with no
+    /// commits is a faithful "0 commits", not a failure. An absent key = not
+    /// recorded (a task from before this field, or one started without a baseline).
+    var taskCommits: [String: [RepoCommits]] = [:]
+    /// task id -> the queue round it last ran in (1-based; 每次启动队列 = 一轮).
+    /// Machine-private like taskCommits, local.json only: the brief groups earlier
+    /// tasks by round. An absent key = a task from before this field (the brief
+    /// treats it as round 1, so old files keep rendering).
+    var taskRounds: [String: Int] = [:]
     var activeQueueID: String?
     var runningTaskID: String?
     /// queue id -> the dsh session that CREATED it (the task-todo skill passes its
@@ -1116,6 +1397,12 @@ struct TaskLocalState: Equatable {
     /// queue id -> ISO-8601 stamp of the completion report already sent. Keeps the
     /// report idempotent and lets a restart pick up one the app never got to send.
     var queueNotified: [String: String] = [:]
+    /// task id -> ISO-8601 stamp of the PER-TASK notification already sent. Written
+    /// BEFORE the send (a second tick must never queue the same message twice), kept
+    /// when the user 标记完成 (that is a confirmation, not a new run) and cleared by
+    /// 重试 (the task will end again, and the next ending deserves its own note).
+    /// Machine-private like queueNotified: local.json only.
+    var taskNotified: [String: String] = [:]
     /// task id -> 本次尝试的完成 marker（P1 完成校验）。机器私有，只进 local.json；
     /// 会话日志与卡片正文都不该出现它。
     var taskMarkers: [String: String] = [:]
@@ -1146,10 +1433,31 @@ struct TaskLocalState: Equatable {
         if let raw = d["reports"] as? [String: String] {
             for (key, text) in raw where !text.isEmpty { s.reports[taskID(fromStoredKey: key)] = text }
         }
+        if let raw = d["handoffs"] as? [String: Any] {
+            for (key, value) in raw {
+                guard let entry = value as? [String: Any],
+                      let handoff = TaskHandoff.from(entry) else { continue }
+                s.handoffs[taskID(fromStoredKey: key)] = handoff
+            }
+        }
+        if let raw = d["taskCommits"] as? [String: Any] {
+            for (key, value) in raw {
+                // An empty array is still a RECORD (nothing was produced); only a
+                // missing key means "not recorded".
+                guard let entries = value as? [[String: Any]] else { continue }
+                s.taskCommits[taskID(fromStoredKey: key)] = entries.compactMap { RepoCommits.from($0) }
+            }
+        }
+        if let raw = d["taskRounds"] as? [String: Any] {
+            for (key, value) in raw {
+                if let round = value as? Int { s.taskRounds[taskID(fromStoredKey: key)] = round }
+            }
+        }
         s.activeQueueID = d["activeQueueId"] as? String
         s.runningTaskID = d["runningTaskId"] as? String
         if let raw = d["queueSessions"] as? [String: String] { s.queueSessions = raw }
         if let raw = d["queueNotified"] as? [String: String] { s.queueNotified = raw }
+        if let raw = d["taskNotified"] as? [String: String] { s.taskNotified = raw }
         if let raw = d["taskMarkers"] as? [String: String] {
             for (key, text) in raw where !text.isEmpty { s.taskMarkers[taskID(fromStoredKey: key)] = text }
         }
@@ -1171,8 +1479,14 @@ struct TaskLocalState: Equatable {
         }
         var d: [String: Any] = ["sessions": out]
         if !reports.isEmpty { d["reports"] = reports }
+        if !handoffs.isEmpty { d["handoffs"] = handoffs.mapValues { $0.dictionary() } }
+        if !taskCommits.isEmpty {
+            d["taskCommits"] = taskCommits.mapValues { groups in groups.map { $0.dictionary() } }
+        }
         if !queueSessions.isEmpty { d["queueSessions"] = queueSessions }
         if !queueNotified.isEmpty { d["queueNotified"] = queueNotified }
+        if !taskNotified.isEmpty { d["taskNotified"] = taskNotified }
+        if !taskRounds.isEmpty { d["taskRounds"] = taskRounds }
         if !taskMarkers.isEmpty { d["taskMarkers"] = taskMarkers }
         if !taskMarkerVerified.isEmpty { d["taskMarkerVerified"] = taskMarkerVerified }
         if let activeQueueID = activeQueueID { d["activeQueueId"] = activeQueueID }
@@ -1415,6 +1729,10 @@ struct TaskBoard {
             queues[qi].integrationNote = nil
             queues[qi].prError = nil
             queues[qi].repoRuns = []
+            // 每次启动队列 = 一轮：round 由 resumeQueue / retryAndResume 推进；直接
+            // markRunning（测试 / 恢复）时至少落在第 1 轮，不留下 0 轮。
+            if queues[qi].round == 0 { queues[qi].round = 1 }
+            local.taskRounds[taskID] = queues[qi].round
             if let branch = queues[qi].branch { tasks[i].branch = branch }
         }
         local.runningTaskID = taskID
@@ -1439,6 +1757,11 @@ struct TaskBoard {
               let i = index(ofTask: taskID) else { return }
         tasks[i].report = text
         local.reports[taskID] = text
+        // 任务结束的同一刻把自由文本折成固定 4 字段的派生摘要。没按约定写的汇报
+        // 走确定性兜底（首段 + 含未完成/注意/下一步的行 + 末段），超长按 500 字截断。
+        let handoff = TaskHandoff.parse(text)
+        tasks[i].handoff = handoff
+        local.handoffs[taskID] = handoff
     }
 
     /// 记录本次尝试的完成 marker（runner 在任务启动时调用，随提示词注入）。重试会
@@ -1464,6 +1787,28 @@ struct TaskBoard {
         guard let i = index(ofTask: taskID) else { return }
         tasks[i].expectsCommit = expects
     }
+
+    /// 记下本棒**实际**产出的提交（按目标仓库分组，P4 基线推导）。空分组数组是
+    /// 一次真实记录（0 个提交）；只有根本没能推导（没有基线）时才不写这个键。
+    mutating func recordTaskCommits(_ taskID: String, _ groups: [RepoCommits]) {
+        guard index(ofTask: taskID) != nil else { return }
+        local.taskCommits[taskID] = groups
+    }
+
+    /// 本棒产出的提交（按仓库分组）；nil = 没有记录（旧任务 / 没有产物基线）。
+    func taskCommits(_ taskID: String) -> [RepoCommits]? { local.taskCommits[taskID] }
+
+    /// 本棒产出的提交总数；nil = 没有记录，0 = 如实记录的「0 个提交」。
+    func taskCommitCount(_ taskID: String) -> Int? {
+        local.taskCommits[taskID].map { groups in groups.reduce(0) { $0 + $1.commits.count } }
+    }
+
+    /// 这条任务最后一棒的轮次；nil = 旧任务（简报按第 1 轮渲染，不丢历史）。
+    func taskRound(_ taskID: String) -> Int? { local.taskRounds[taskID] }
+
+    /// 这条任务的逐任务通知是否已经发出（last run）。标记在发送**之前**写入，
+    /// 重试清掉，标记完成不动 —— 与队列级 queueNotified 同一套幂等语义。
+    func taskNotified(_ taskID: String) -> String? { local.taskNotified[taskID] }
 
     /// Fail a task. A queue containing it is PAUSED and its id returned: inside
     /// a queue every task shares one branch, so running the next one would build
@@ -1572,6 +1917,13 @@ struct TaskBoard {
         // next task in the queue as if it were this run's outcome.
         tasks[i].report = nil
         local.reports[taskID] = nil
+        tasks[i].handoff = nil
+        local.handoffs[taskID] = nil
+        // 上一轮的产出描述的是被重试的那次运行；下一轮结束时按**最初**的基线重新推导，
+        // 因此上一轮的提交仍会算进本棒，不会因为清掉记录而丢失。
+        local.taskCommits[taskID] = nil
+        // 这次重试会再产生一个终态，必须再发一条通知；清掉旧标记，别让幂等把新消息吃掉。
+        local.taskNotified[taskID] = nil
         // The next attempt gets a fresh marker: the old one must never confirm it.
         tasks[i].completionMarker = nil
         tasks[i].markerVerified = false
@@ -1579,8 +1931,7 @@ struct TaskBoard {
         local.taskMarkerVerified[taskID] = nil
         if let queueID = tasks[i].queueId, let qi = index(ofQueue: queueID) {
             tasks[i].state = .queued
-            queues[qi].state = .active
-            local.activeQueueID = queueID
+            beginRound(qi)
         } else {
             tasks[i].state = .pending
         }
@@ -1592,9 +1943,19 @@ struct TaskBoard {
     @discardableResult
     mutating func resumeQueue(_ queueID: String) -> Bool {
         guard let qi = index(ofQueue: queueID), queues[qi].state != .closed else { return false }
-        queues[qi].state = .active
-        local.activeQueueID = queueID
+        beginRound(qi)
         return true
+    }
+
+    /// 进入新的一轮（每次启动队列 = 一轮）：只有队列本来不在运行时才 +1，队列
+    /// 运行中推进下一棒不算新的一轮（否则每条任务都成了「一轮」）。
+    private mutating func beginRound(_ qi: Int) {
+        if queues[qi].state != .active {
+            queues[qi].round += 1
+        }
+        if queues[qi].round == 0 { queues[qi].round = 1 }
+        queues[qi].state = .active
+        local.activeQueueID = queues[qi].id
     }
 
     @discardableResult
@@ -1655,11 +2016,13 @@ struct TaskBoard {
     /// Attach the machine-scoped half of a loaded board: the dsh session each task
     /// ran in, and the 汇报 each one left behind.
     mutating func attachSessions(_ sessions: [String: String], reports: [String: String] = [:],
+                                 handoffs: [String: TaskHandoff] = [:],
                                  markers: [String: String] = [:],
                                  markerVerified: [String: Bool] = [:]) {
         for i in tasks.indices {
             if let sessionId = sessions[tasks[i].id] { tasks[i].sessionId = sessionId }
             if let report = reports[tasks[i].id] { tasks[i].report = report }
+            if let handoff = handoffs[tasks[i].id] { tasks[i].handoff = handoff }
             if let marker = markers[tasks[i].id] { tasks[i].completionMarker = marker }
             if let verified = markerVerified[tasks[i].id] { tasks[i].markerVerified = verified }
         }

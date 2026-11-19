@@ -623,6 +623,8 @@ enum L10n {
         "tasks.errRepoNoBase": ("多仓库预检未通过：仓库 %@ 的基线分支解析不出来（本地与远端追踪都没有，请先 fetch 或确认分支名）", "Multi-repo pre-flight failed: repo %@ has no resolvable base branch (neither local nor remote-tracking — fetch, or check the branch name)"),
         "tasks.errRepoBranch": ("多仓库切分支失败：%@；已切换的仓库不会回滚", "Multi-repo branch entry failed: %@; repositories already switched are not rolled back"),
         "tasks.errPull": ("拉取基线分支失败（网络不通或分支已分叉？）", "Failed to pull the base branch (no network, or the branch diverged?)"),
+        "tasks.errPullNoUpstream": ("基线分支拉不下来（常见于本地分支没有 upstream，或远端没有同名分支）：%@。这是环境问题、可自愈：执行 git fetch，并以 <remote>/<base> 作为比较基线后重试即可", "Could not fast-forward the base branch (usually the local branch has no upstream, or the remote has no such branch): %@. This is environmental and self-healing: run git fetch, use <remote>/<base> as the comparison baseline, then retry"),
+        "tasks.errGitStatus": ("读取工作区状态失败（git status 出错）：%@。修好仓库后重试；此前这种失败会被误报成「工作区有未提交改动」", "Failed to read the worktree status (git status errored): %@. Fix the repository and retry; this used to be misreported as uncommitted changes"),
         "tasks.configTitle": ("GitHub Token", "GitHub Token"),
         "tasks.configInfo": ("GitHub token（只写文件：~/.dsh/oh-my-dsh/tokens/<owner>-<repo>；chmod 600，App 与外部工具共用）。没有 GitHub 远端的仓库不显示此配置，也不会写通用文件。解析顺序：文件专属 → 文件通用；不再读取 macOS 钥匙串。仅用于拉取 issues、创建 PR、评论关闭 issue；公开仓库可留空。", "GitHub token (written to a FILE only: ~/.dsh/oh-my-dsh/tokens/<owner>-<repo>; chmod 600, shared with external tools). Repositories without a GitHub remote do not show this setting and never write the generic file. Resolution: per-repo file → generic file; the macOS Keychain is no longer read. Used only to fetch issues, create PRs, comment & close issues; public repos may leave empty."),
         "tasks.tokenPlaceholder": ("ghp_xxx（可选）", "ghp_xxx (optional)"),
@@ -829,8 +831,13 @@ enum L10n {
         "tasks.queue.noBranch": ("不切分支", "No branch"),
         "tasks.queue.failedCount": ("%d 个失败", "%d failed"),
         "tasks.queue.needsReviewCount": ("%d 个待确认", "%d need review"),
-        // 待确认导致队列暂停：原因写在队列头上（橙，不是失败的红色）。
-        "tasks.queue.pausedNeedsReview": ("有任务待确认，队列已暂停：请「重试」，或确认做完了就「标记完成」后再继续", "A task needs review, so the queue is paused — retry it, or mark it done if you can confirm the work is complete"),
+        // 队列被某个任务挡下（失败 / 待确认 / 取消）：原因写在队列头上，三种来源
+        // 各有自己的说法；后面还有几个在等由 queue.pauseRemaining 单独报数。
+        "tasks.queue.pausedFailed": ("有任务失败，整队已停：后面的任务不会启动。可「重试」这条任务，或「跳过并继续」跑下一个", "A task failed, so the whole queue has stopped — later tasks will not start. Retry it, or skip and continue with the next one"),
+        "tasks.queue.pausedNeedsReview": ("有任务待确认，整队已停：请「重试」，或确认做完了就「标记完成」后再继续", "A task needs review, so the whole queue has stopped — retry it, or mark it done if you can confirm the work is complete"),
+        "tasks.queue.pausedCancelled": ("有任务被取消，整队已停：后面的任务不会启动。可「重试」这条任务，或「跳过并继续」跑下一个", "A task was cancelled, so the whole queue has stopped — later tasks will not start. Retry it, or skip and continue with the next one"),
+        "tasks.queue.pauseRemaining": ("后面还有 %d 个任务等待", "%d more task(s) waiting"),
+        "tasks.queue.pauseRemainingNone": ("后面没有排队的任务", "No more tasks waiting"),
         // PR 的标题与正文不再由壳层套模板：开 PR 的会话读完真实 diff 之后自己写
         // （§V2-6），所以这两条旧文案随 REST createPR 一起删掉。
         // 交付会话运行时的状态行，按工作流分（不再一律说「开 PR」）。

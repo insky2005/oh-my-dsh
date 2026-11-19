@@ -534,6 +534,251 @@ do {
     eq(fresh.task(stored.id)?.report, "从 local.json 回来的汇报", "attachSessions 也带上汇报")
 }
 
+// MARK: - 交接块：固定 4 字段
+
+section("交接块：合规块解析成 4 个派生字段")
+let compliantHandoff = """
+### 做了什么
+把汇报解析成 4 个字段。
+补充：仍然保留原文。
+
+- **怎么验证**：swiftc 编译 + tests/tasks-panel/run.sh 全绿
+- **未完成**：无
+- **下一棒注意**：别改 index.json
+"""
+if let parsed = TaskHandoff.parse(compliantHandoff) {
+    eq(parsed.source, TaskHandoff.Source.block, "合规块按约定解析")
+    eq(parsed.did, "把汇报解析成 4 个字段。\n补充：仍然保留原文。", "做了什么：多行值完整保留")
+    eq(parsed.verified, "swiftc 编译 + tests/tasks-panel/run.sh 全绿", "怎么验证")
+    eq(parsed.unfinished, "无", "未完成")
+    eq(parsed.nextNote, "别改 index.json", "下一棒注意")
+    check(parsed.characterCount <= TaskHandoff.maxCharacters, "合规块本身在上限内")
+} else {
+    check(false, "合规块应能解析")
+}
+
+section("交接块：没有约定时按确定性规则兜底")
+let freeformHandoff = """
+完成了读取逻辑，顺手抽出了 helper。
+
+改动集中在 TasksCore.swift。
+下一步：把本地缓存接上。
+注意：不要改 index.json。
+
+收尾说明。
+"""
+if let fallback = TaskHandoff.parse(freeformHandoff) {
+    eq(fallback.source, TaskHandoff.Source.fallback, "无 4 字段 → fallback")
+    eq(fallback.did, "完成了读取逻辑，顺手抽出了 helper。", "首段 → 做了什么")
+    eq(fallback.unfinished, "下一步：把本地缓存接上。\n注意：不要改 index.json。", "含未完成/注意/下一步的行 → 未完成")
+    eq(fallback.nextNote, "收尾说明。", "末段 → 下一棒注意")
+    eq(fallback.verified, "", "自由文本里没有验证证据，不编造")
+} else {
+    check(false, "兜底应总能产出派生字段")
+}
+
+section("交接块：超长按 500 字截断")
+let longHandoffChunk = String(repeating: "这是一段很长的交接内容。", count: 40)
+let overlongHandoff = "做了什么：" + longHandoffChunk + "\n"
+    + "怎么验证：" + longHandoffChunk + "\n"
+    + "未完成：" + longHandoffChunk + "\n"
+    + "下一棒注意：" + longHandoffChunk
+if let capped = TaskHandoff.parse(overlongHandoff) {
+    eq(capped.source, TaskHandoff.Source.block, "超长但合规的块仍按约定解析")
+    check(capped.characterCount <= TaskHandoff.maxCharacters, "截断后合计不超过 500 字")
+    check(capped.did.count <= TaskHandoff.maxCharacters / 4, "每个非空字段分到均等预算")
+    check(capped.did.hasSuffix("…") && capped.nextNote.hasSuffix("…"), "截断处有省略号")
+    check(!capped.did.isEmpty && !capped.verified.isEmpty
+          && !capped.unfinished.isEmpty && !capped.nextNote.isEmpty, "截断不丢字段")
+} else {
+    check(false, "超长汇报也应产出派生字段")
+}
+
+section("交接块：只落 local.json，重试清掉")
+do {
+    var handoffBoard = TaskBoard()
+    let ht = TaskItem.manual(title: "交接", body: nil, id: "manual-hh001111")
+    handoffBoard.tasks = [ht]
+    handoffBoard.markRunning(ht.id)
+    handoffBoard.markDone(ht.id, report: compliantHandoff)
+    check(handoffBoard.task(ht.id)?.handoff != nil, "任务上带着派生字段")
+    eq(handoffBoard.local.handoffs[ht.id]?.source, TaskHandoff.Source.block, "local.json 状态里也有")
+    check(handoffBoard.task(ht.id)?.manualDictionary()["handoff"] == nil,
+          "manual.json 不写派生字段")
+    check(handoffBoard.task(ht.id)?.indexDictionary()["handoff"] == nil,
+          "committed index 不写派生字段")
+    eq(handoffBoard.local.reports[ht.id], compliantHandoff, "原始汇报仍完整保留")
+
+    let handoffRepo = tempRepo("handoffs")
+    TasksStore.saveLocalHalf(handoffRepo, handoffBoard)
+    let loadedHandoff = TasksStore.load(handoffRepo)
+    eq(loadedHandoff.task(ht.id)?.handoff?.did,
+       handoffBoard.task(ht.id)?.handoff?.did, "local.json 往返后派生字段还在")
+    let manualHandoffJSON = text(at: TasksStore.path(handoffRepo, file: "manual.json"))
+    check(!manualHandoffJSON.contains("下一棒注意"), "manual.json 文件里没有派生字段")
+
+    handoffBoard.markRunning(ht.id)
+    _ = handoffBoard.markFailed(ht.id, error: "tasks.errTimeout", report: freeformHandoff)
+    eq(handoffBoard.local.handoffs[ht.id]?.source, TaskHandoff.Source.fallback,
+       "失败任务的兜底交接也写回")
+    _ = handoffBoard.retryAndResume(ht.id)
+    eq(handoffBoard.task(ht.id)?.handoff, nil, "重试清掉上一轮的派生字段")
+    check(handoffBoard.local.handoffs[ht.id] == nil, "local 那份也清掉")
+
+    // attachSessions 把 local.json 里的派生字段挂回任务。
+    var freshHandoff = TaskBoard()
+    freshHandoff.tasks = [ht]
+    if let attached = TaskHandoff.parse(compliantHandoff) {
+        freshHandoff.attachSessions([:], handoffs: [ht.id: attached])
+        eq(freshHandoff.task(ht.id)?.handoff?.nextNote, "别改 index.json",
+           "attachSessions 也带上派生字段")
+    } else {
+        check(false, "合规块应能解析")
+    }
+}
+
+// MARK: - 提交归属：taskCommits
+
+section("提交归属：taskCommits 只落 local.json、按仓库往返、0 个也是记录")
+do {
+    var commitBoard = TaskBoard()
+    let c1 = TaskItem.manual(title: "单仓库改动", body: nil, id: "manual-cc001111")
+    let c2 = TaskItem.manual(title: "文档任务", body: nil, id: "manual-cc002222")
+    commitBoard.tasks = [c1, c2]
+    commitBoard.recordTaskCommits(c1.id,
+        [RepoCommits(repoID: "repo-a", commits: ["aaa1111 feat: a"]),
+         RepoCommits(repoID: "repo-b", commits: ["bbb2222 fix: b"])])
+    commitBoard.recordTaskCommits(c2.id, [RepoCommits(repoID: ".", commits: [])])
+    eq(commitBoard.taskCommitCount(c1.id), 2, "多仓库合计可数")
+    eq(commitBoard.taskCommitCount(c2.id), 0, "0 个提交也是已记录的事实")
+    check(commitBoard.taskCommits(c2.id) != nil, "不是「没有记录」")
+    eq(commitBoard.taskCommitCount("manual-cc009999"), nil, "没记录的任务是 nil")
+    check(commitBoard.task(c1.id)?.manualDictionary()["taskCommits"] == nil,
+          "manual.json 不写提交归属")
+    check(commitBoard.task(c1.id)?.indexDictionary()["taskCommits"] == nil,
+          "committed index 不写提交归属")
+
+    // local.json 往返：分组顺序、仓库 id、空分组都保留。
+    let json = commitBoard.local.dictionary()
+    let round = TaskLocalState.from(json)
+    eq(round.taskCommits[c1.id], commitBoard.local.taskCommits[c1.id], "多仓库分组原样往返")
+    eq(round.taskCommits[c2.id], [RepoCommits(repoID: ".", commits: [])],
+       "空分组往返后仍然是「记录了 0 个」")
+
+    let commitRepo = tempRepo("task-commits")
+    TasksStore.saveLocalHalf(commitRepo, commitBoard)
+    let loadedCommits = TasksStore.load(commitRepo)
+    eq(loadedCommits.local.taskCommits[c1.id], commitBoard.local.taskCommits[c1.id],
+       "写入磁盘再读回，提交归属还在")
+    eq(loadedCommits.local.taskCommits[c2.id], [RepoCommits(repoID: ".", commits: [])],
+       "0 个提交也落盘")
+    let localCommitsJSON = text(at: TasksStore.path(commitRepo, file: "local.json"))
+    check(localCommitsJSON.contains("taskCommits"), "local.json 里有 taskCommits")
+    check(!localCommitsJSON.contains("\"taskCommits\" : null"), "不是 null")
+
+    // 重试：上一轮的归属清掉，下一轮结束时按最初基线重新推导。
+    commitBoard.markRunning(c1.id)
+    _ = commitBoard.markFailed(c1.id, error: "tasks.errTimeout", report: "没做完。")
+    _ = commitBoard.retryAndResume(c1.id)
+    check(commitBoard.local.taskCommits[c1.id] == nil, "重试清掉上一轮的提交归属")
+}
+
+// MARK: - 逐任务通知标记：taskNotified
+
+section("逐任务通知标记：只落 local.json，重试清掉、标记完成不清")
+do {
+    var notifyBoard = TaskBoard()
+    let n1 = TaskItem.manual(title: "通知 A", body: nil, id: "manual-ee001111")
+    notifyBoard.tasks = [n1]
+    let nq = notifyBoard.createQueue(name: "Notify", autoPR: false)
+    _ = notifyBoard.enqueue(taskID: n1.id, into: nq.id)
+    _ = notifyBoard.resumeQueue(nq.id)
+    notifyBoard.markRunning(n1.id)
+    _ = notifyBoard.markFailed(n1.id, error: "tasks.errTimeout", report: "没做完。")
+    notifyBoard.local.taskNotified[n1.id] = "2026-10-03T10:00:00Z"
+    notifyBoard.local.queueNotified[nq.id] = "2026-10-03T10:00:00Z"
+
+    let json = notifyBoard.local.dictionary()
+    let round = TaskLocalState.from(json)
+    eq(round.taskNotified[n1.id], "2026-10-03T10:00:00Z", "taskNotified 原样往返")
+    check(notifyBoard.task(n1.id)?.manualDictionary()["taskNotified"] == nil,
+          "manual.json 不写通知标记")
+    check(notifyBoard.task(n1.id)?.indexDictionary()["taskNotified"] == nil,
+          "committed index 不写通知标记")
+
+    let notifyRepo = tempRepo("task-notified")
+    TasksStore.saveLocalHalf(notifyRepo, notifyBoard)
+    let loadedNotify = TasksStore.load(notifyRepo)
+    eq(loadedNotify.local.taskNotified[n1.id], "2026-10-03T10:00:00Z",
+       "写入磁盘再读回，通知标记还在")
+
+    // 标记完成不清：用户确认的是同一次终态，不该再发一条。
+    notifyBoard.markRunning(n1.id)
+    _ = notifyBoard.markNeedsReview(n1.id, report: "待确认。")
+    notifyBoard.local.taskNotified[n1.id] = "2026-10-03T10:05:00Z"
+    notifyBoard.confirmDone(n1.id)
+    eq(notifyBoard.local.taskNotified[n1.id], "2026-10-03T10:05:00Z",
+       "标记完成不清通知标记")
+
+    // 重试清掉：下一次终态要重新通知。
+    notifyBoard.markRunning(n1.id)
+    _ = notifyBoard.markFailed(n1.id, error: "tasks.errTimeout")
+    notifyBoard.local.taskNotified[n1.id] = "2026-10-03T10:10:00Z"
+    _ = notifyBoard.retryAndResume(n1.id)
+    check(notifyBoard.local.taskNotified[n1.id] == nil, "重试清掉通知标记")
+}
+
+// MARK: - 轮次：每次启动队列 = 一轮
+
+section("轮次：每次启动队列 = 一轮，只落 local.json")
+do {
+    var roundBoard = TaskBoard()
+    let r1 = TaskItem.manual(title: "第一轮 A", body: nil, id: "manual-dd001111")
+    let r2 = TaskItem.manual(title: "第一轮 B", body: nil, id: "manual-dd002222")
+    let r3 = TaskItem.manual(title: "第二轮 C", body: nil, id: "manual-dd003333")
+    roundBoard.tasks = [r1, r2, r3]
+    let rq = roundBoard.createQueue(name: "Rounds", autoPR: false)
+    _ = roundBoard.enqueue(taskID: r1.id, into: rq.id)
+    _ = roundBoard.enqueue(taskID: r2.id, into: rq.id)
+    _ = roundBoard.enqueue(taskID: r3.id, into: rq.id)
+    eq(roundBoard.queue(rq.id)?.round, 0, "新队列还没启动：0 轮")
+    _ = roundBoard.resumeQueue(rq.id)
+    eq(roundBoard.queue(rq.id)?.round, 1, "第一次启动进入第 1 轮")
+    roundBoard.markRunning(r1.id)
+    eq(roundBoard.taskRound(r1.id), 1, "第一棒记在第 1 轮")
+    roundBoard.markDone(r1.id, report: "A 完成。")
+    roundBoard.markRunning(r2.id)
+    eq(roundBoard.taskRound(r2.id), 1, "同一轮里推进下一棒不新开一轮")
+    roundBoard.markDone(r2.id, report: "B 完成。")
+    _ = roundBoard.pauseQueue(rq.id)
+    _ = roundBoard.resumeQueue(rq.id)
+    eq(roundBoard.queue(rq.id)?.round, 2, "再次启动队列 = 第 2 轮")
+    roundBoard.markRunning(r3.id)
+    eq(roundBoard.taskRound(r3.id), 2, "新一棒记在第 2 轮")
+    eq(roundBoard.taskRound(r1.id), 1, "旧棒的轮次不被改写")
+    eq(roundBoard.taskRound("manual-dd009999"), nil, "没跑过的任务没有轮次")
+
+    // 队列轮次随队列文件往返；旧数据没有这个键就是 0（第一次启动后变 1）。
+    let roundQueue = TaskQueue.from(roundBoard.queue(rq.id)!.dictionary())
+    eq(roundQueue?.round, 2, "队列轮次往返")
+    let oldQueue = TaskQueue.from(["id": "q-old", "name": "Old"])
+    eq(oldQueue?.round, 0, "旧队列缺 round → 0")
+
+    // 任务轮次只落 local.json；manual / index 的结构不变。
+    let roundJSON = roundBoard.local.dictionary()
+    let roundLoaded = TaskLocalState.from(roundJSON)
+    eq(roundLoaded.taskRounds[r1.id], 1, "轮次往返")
+    eq(roundLoaded.taskRounds[r3.id], 2, "第二轮往返")
+    check(roundBoard.task(r1.id)?.manualDictionary()["taskRounds"] == nil, "manual.json 不写轮次")
+    check(roundBoard.task(r1.id)?.indexDictionary()["taskRounds"] == nil, "index.json 不写轮次")
+
+    let roundRepo = tempRepo("task-rounds")
+    TasksStore.saveLocalHalf(roundRepo, roundBoard)
+    let roundReloaded = TasksStore.load(roundRepo)
+    eq(roundReloaded.taskRound(r1.id), 1, "轮次写入磁盘再读回还在")
+    eq(roundReloaded.queue(rq.id)?.round, 2, "队列轮次也落盘")
+}
+
 // MARK: - persistence
 
 section("persistence: four files")

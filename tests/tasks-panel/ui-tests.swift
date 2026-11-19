@@ -277,6 +277,18 @@ do {
     check(card.detail.contains("tasks.detailSession"), "the session is listed in the details")
     check(card.detail.contains("tasks.errDirtyTree"), "the failure reason is translated through L10n")
     check(card.detail.contains("do the thing"), "the task body is in the details")
+
+    // git 的 stderr 必须上卡片：pull / checkout / 非 git 的错误键没有 %@ 占位符，
+    // 只把 detail 当格式化参数会把它静默丢掉（2026-11-19 只剩一个键的那次）。
+    let checkout = TaskItem.manual(title: "Branch", body: nil, id: "manual-0005eeee")
+    board.tasks.append(checkout)
+    board.markRunning(checkout.id)
+    board.markFailed(checkout.id, error: "tasks.errBranch",
+                     errorDetail: "fatal: a branch named 'feature/x' already exists")
+    let checkoutCard = TaskCardModel.build(board.task(checkout.id)!, board: board,
+                                           expanded: true, githubRepo: false)
+    check(checkoutCard.detail.contains("fatal: a branch named"),
+          "没有 %@ 的错误键也把 git 的 stderr 显示在卡片上")
 }
 
 section("详情里的汇报：任务结束后写回卡片（会话删了也还在）")
@@ -1561,7 +1573,7 @@ do {
     eq(header.startHintKey, "tasks.queue.continue", "继续 = 跳过待确认跑下一个")
     check(header.canStart, "还有排队任务 → 可以继续")
 
-    // 纯失败（没有待确认）不写「待确认」的原因。
+    // 纯失败（没有待确认）也给出自己的暂停原因与剩余数。
     var failedBoard = board
     if let i = failedBoard.index(ofTask: first.id) {
         failedBoard.tasks[i].state = .failed
@@ -1570,12 +1582,88 @@ do {
     let failedHeader = QueueHeaderModel.build(failedBoard.queue(queue.id)!, board: failedBoard,
                                               collapsed: false)
     eq(failedHeader.reviewCount, 0, "失败不计入待确认")
-    eq(failedHeader.pauseReasonKey, nil, "没有待确认就不写那条原因")
+    eq(failedHeader.pauseReasonKey, "tasks.queue.pausedFailed", "失败也有自己的暂停原因")
+    eq(failedHeader.remainingAfterPause, 1, "失败那条后面还有 1 条在等")
 
     // 用户确认做完了 → 直接 done，队列不再挂着。
     _ = board.confirmDone(first.id)
     eq(board.task(first.id)?.state, .done, "标记完成 → 直接 .done")
     eq(board.task(first.id)?.error, nil, "待确认说明被清掉")
+}
+
+section("队列暂停可见性：失败 / 待确认 / 取消都给出原因与剩余任务数")
+do {
+    // 三条任务的队列：第一条跑过、放进一个终态，后两条仍在排队。
+    func lane() -> (TaskBoard, String) {
+        var board = TaskBoard()
+        let a = TaskItem.manual(title: "One", id: "manual-0r30aaaa")
+        let b = TaskItem.manual(title: "Two", id: "manual-0r31bbbb")
+        let c = TaskItem.manual(title: "Three", id: "manual-0r32cccc")
+        board.tasks = [a, b, c]
+        let queue = board.createQueue(name: "Lane")
+        _ = board.enqueue(taskID: a.id, into: queue.id)
+        _ = board.enqueue(taskID: b.id, into: queue.id)
+        _ = board.enqueue(taskID: c.id, into: queue.id)
+        board.markRunning(a.id)
+        return (board, queue.id)
+    }
+
+    // 1) 待确认
+    var (reviewBoard, reviewQueue) = lane()
+    let reviewID = reviewBoard.queue(reviewQueue)!.taskIds[0]
+    _ = reviewBoard.markNeedsReview(reviewID)
+    let reviewHeader = QueueHeaderModel.build(reviewBoard.queue(reviewQueue)!,
+                                              board: reviewBoard, collapsed: false)
+    eq(reviewHeader.pauseReasonKey, "tasks.queue.pausedNeedsReview", "待确认 → 说清是它停的")
+    eq(reviewHeader.pausedTaskID, reviewID, "暂停点名挡路的任务（重试的目标）")
+    eq(reviewHeader.remainingAfterPause, 2, "后面还有 2 个任务在等")
+    eq(reviewHeader.pauseTone, TaskTone.warning, "待确认是橙（等人决定）")
+    check(reviewHeader.canRetryPausedTask, "暂停卡给「重试」")
+    check(reviewHeader.canSkipPausedTask, "后面还有任务 → 给「跳过并继续」")
+
+    // 2) 失败
+    var (failBoard, failQueue) = lane()
+    let failID = failBoard.queue(failQueue)!.taskIds[0]
+    _ = failBoard.markFailed(failID, error: TaskFailure.session.rawValue)
+    let failHeader = QueueHeaderModel.build(failBoard.queue(failQueue)!,
+                                            board: failBoard, collapsed: false)
+    eq(failHeader.pauseReasonKey, "tasks.queue.pausedFailed", "失败 → 说清是它停的")
+    eq(failHeader.pausedTaskID, failID, "失败也点名挡路任务")
+    eq(failHeader.remainingAfterPause, 2, "失败时后面还有 2 个在等")
+    eq(failHeader.pauseTone, TaskTone.negative, "失败是红")
+    check(failHeader.canRetryPausedTask && failHeader.canSkipPausedTask, "两个出口都在")
+
+    // 3) 取消
+    var (cancelBoard, cancelQueue) = lane()
+    let cancelID = cancelBoard.queue(cancelQueue)!.taskIds[0]
+    _ = cancelBoard.markCancelled(cancelID)
+    let cancelHeader = QueueHeaderModel.build(cancelBoard.queue(cancelQueue)!,
+                                              board: cancelBoard, collapsed: false)
+    eq(cancelHeader.pauseReasonKey, "tasks.queue.pausedCancelled", "取消 → 说清是它停的")
+    eq(cancelHeader.pausedTaskID, cancelID, "取消也点名挡路任务")
+    eq(cancelHeader.remainingAfterPause, 2, "取消时后面还有 2 个在等")
+    eq(cancelHeader.pauseTone, TaskTone.warning, "取消不是报错，用橙")
+    check(cancelHeader.canRetryPausedTask && cancelHeader.canSkipPausedTask, "取消后同样能重试 / 继续")
+
+    // 挡路的正好是最后一条：剩余数 0，且没有可跳过的地方。
+    var (tailBoard, tailQueue) = lane()
+    let tailIDs = tailBoard.queue(tailQueue)!.taskIds
+    tailBoard.markRunning(tailIDs[2])
+    _ = tailBoard.markFailed(tailIDs[2], error: TaskFailure.session.rawValue)
+    let tailHeader = QueueHeaderModel.build(tailBoard.queue(tailQueue)!,
+                                            board: tailBoard, collapsed: true)
+    eq(tailHeader.remainingAfterPause, 0, "挡路的是最后一条 → 后面 0 个在等")
+    check(tailHeader.canRetryPausedTask, "仍然可以重试")
+    check(!tailHeader.canSkipPausedTask, "后面没人 → 不给「跳过并继续」")
+
+    // 手动暂停且没有终态任务：不编造原因（原因只来自失败 / 待确认 / 取消）。
+    var (manualBoard, manualQueue) = lane()
+    _ = manualBoard.pauseQueue(manualQueue)
+    let manualHeader = QueueHeaderModel.build(manualBoard.queue(manualQueue)!,
+                                              board: manualBoard, collapsed: false)
+    eq(manualHeader.pauseReasonKey, nil, "手动暂停没有挡路任务就不编造原因")
+    eq(manualHeader.remainingAfterPause, 0, "没有来源时剩余数为 0")
+    check(!manualHeader.canRetryPausedTask && !manualHeader.canSkipPausedTask, "没有出口")
 }
 
 if failures == 0 {

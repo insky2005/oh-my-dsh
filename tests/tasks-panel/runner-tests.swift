@@ -44,20 +44,56 @@ final class FakeRepo {
     var pushed: Set<String> = []
     var knownBranches: Set<String> = ["main"]
     var failing: Set<String> = []
+    /// stderr for a FAILING command, keyed by the joined arguments — lets a test
+    /// prove git's own words reach app.log / the card's errorDetail.
+    var stderrMessages: [String: String] = [:]
+    /// A repository whose baseline branch LOST its upstream (remote renamed
+    /// origin → github, 2026-11-19): the bare `git pull --ff-only` fails like real
+    /// git, while the explicit `git pull --ff-only <remote> <base>` works.
+    var requiresExplicitPull = false
     private(set) var calls: [String] = []
     private(set) var checkouts: [String] = []
     /// What "git log --oneline base..HEAD" answers — the commits the queue's branch
     /// already carries (the structural half of a 交接简报).
     var commits: [String] = []
+    /// What "git log --oneline <range>" answers for one SPECIFIC range (the P4
+    /// baseline → HEAD attribution). A range not listed here falls back to `commits`.
+    var commitsByRange: [String: [String]] = [:]
 
     func git() -> TaskGit {
-        TaskGit(run: { [unowned self] args in self.run(args) },
-                remoteName: { [unowned self] in self.remote })
+        TaskGit(run: { [unowned self] args in
+                   let result = self.record(args)
+                   return result.succeeded ? result.stdout : nil
+               },
+               capture: { [unowned self] args in self.record(args) },
+               remoteName: { [unowned self] in self.remote })
+    }
+
+    /// Record the call and return what real git would answer, exit status and
+    /// stderr included (the runner reads stderr through TaskGit.capture).
+    private func record(_ args: [String]) -> GitCommandOutput {
+        let key = args.joined(separator: " ")
+        calls.append(key)
+        if !isRepo {
+            return GitCommandOutput(stdout: "",
+                                    stderr: "fatal: not a git repository (or any of the parent directories): .git",
+                                    status: 128)
+        }
+        if failing.contains(key) {
+            return GitCommandOutput(stdout: "",
+                                    stderr: stderrMessages[key] ?? "fatal: simulated failure: " + key,
+                                    status: 1)
+        }
+        guard let out = run(args) else {
+            return GitCommandOutput(stdout: "",
+                                    stderr: stderrMessages[key] ?? "fatal: unsupported command: " + key,
+                                    status: 1)
+        }
+        return GitCommandOutput(stdout: out, stderr: "", status: 0)
     }
 
     private func run(_ args: [String]) -> String? {
         let key = args.joined(separator: " ")
-        calls.append(key)
         if !isRepo { return nil }
         if failing.contains(key) { return nil }
         guard let first = args.first else { return nil }
@@ -83,8 +119,14 @@ final class FakeRepo {
             current = target
             return "Switched to " + target
         case "pull":
+            // A renamed remote leaves the base branch without an upstream: only the
+            // explicit `pull --ff-only <remote> <base>` that names both works.
+            if requiresExplicitPull, args.count == 2 { return nil }
             return "Already up to date."
         case "log":
+            if let range = args.last, let exact = commitsByRange[range] {
+                return exact.joined(separator: "\n")
+            }
             return commits.joined(separator: "\n")
         case "ls-remote":
             let branch = args.last ?? ""
@@ -325,6 +367,7 @@ final class MultiRepoHarness {
 
     init(board: TaskBoard, repos: [WorkspaceRepo], primaryRepoID: String? = nil,
          repoSetProvider: (() -> WorkspaceRepoSet)? = nil,
+         verifyExpectedCommit: Bool = false,
          defaultIntegrationFor: ((WorkspaceRepo) -> QueueIntegration)? = nil,
          findExistingPRFor: ((WorkspaceRepo, String) -> String?)? = nil) {
         self.repos = repos
@@ -349,6 +392,7 @@ final class MultiRepoHarness {
             promptText: { _, _, brief in brief ?? "" },
             sessionReport: { id in dsh.report(id) },
             requireCompletionMarker: true,
+            verifyExpectedCommit: verifyExpectedCommit,
             notifySession: { id, text in dsh.notify(id, text) },
             persist: { board in rec.persistCount += 1; _ = board },
             persistIssueTask: { task in rec.issueWrites.append(task.id) },
@@ -552,7 +596,8 @@ do {
 do {
     let (board, taskID, queueID) = singleTaskBoard()
     let h = Harness(board: board)
-    h.repo.failing.insert("pull --ff-only")
+    h.repo.failing.insert("pull --ff-only origin main")
+    h.repo.stderrMessages["pull --ff-only origin main"] = "fatal: unable to access remote"
     _ = h.runner.enqueue(taskID: taskID, into: queueID)
     check(h.board.task(taskID)?.error == "tasks.errPull", "a failed pull is reported")
 }
@@ -620,7 +665,7 @@ do {
     let h = Harness(board: board, github: true)
     h.repo.remote = nil
     _ = h.runner.enqueue(taskID: taskID, into: queueID)
-    check(h.repo.calls.contains("pull --ff-only") == false, "no pull without a remote")
+    check(h.repo.calls.contains { $0.hasPrefix("pull") } == false, "no pull without a remote")
     h.dsh.finishAll()
     _ = h.runner.step()
     check(h.board.task(taskID)?.state == .done, "a local-only repo still finishes")
@@ -1669,6 +1714,8 @@ do {
     check(first.contains("a1b2c3 refactor: extract TokenStore"), "分支已有的提交仍然告诉第一个任务")
     check(first.contains("这些提交是这条分支上已有的改动"), "没有前一棒时不说「不要重做前面任务」")
     check(!first.contains("不要重做已完成的部分"), "收尾句跟着有没有前一棒走")
+    check(h.rec.logged("head=") && h.rec.logged("commits=") && h.rec.logged("degraded: reports="),
+          "简报把各段字数与降级条数写进日志（不再只有总字数）")
 
     h.dsh.finishAll()
     _ = h.runner.step()
@@ -1691,7 +1738,7 @@ do {
     eq(h.dsh.reportCalls, ["session-1"], "只问了真有会话的那一棒")
 }
 
-section("交接简报：失败 / 取消过的一棒同样进简报，且汇报不截断")
+section("交接简报：失败 / 取消过的一棒同样进简报，非 done 全文不被衰减")
 do {
     var board = TaskBoard()
     let t1 = TaskItem.manual(title: "改配置", body: nil, id: "manual-cc003333")
@@ -1712,7 +1759,7 @@ do {
     // 这个 harness 里没有为第一棒建过会话，所以第二棒拿到的是 session-1。
     let prompt = h.dsh.prompts["session-1"] ?? ""
     check(prompt.contains("「改配置」 —— 失败（tasks.errTimeout）"), "失败的一棒写清结局与原因")
-    check(prompt.contains(long), "它的汇报一个字都不截（截断会失真）")
+    check(prompt.contains(long), "非 done 的汇报保持全文（预算不为它降级）")
     check(long.count > 1000, "测试用的汇报确实很长")
 }
 do {
@@ -1738,6 +1785,183 @@ do {
     let prompt = h.dsh.prompts["session-1"] ?? ""
     check(!prompt.contains("## 队列信息"), "单任务队列没有前一棒")
     _ = taskID
+}
+
+// MARK: - 交接简报：三档衰减 + 总预算
+
+section("交接简报：三档衰减（最近 2 棒全文 / 同轮一行 / 更早轮次一行）")
+do {
+    func older(_ title: String, _ state: TaskState, _ report: String?,
+               round: Int, commits: Int? = 0) -> TaskPrompts.QueueBrief.Earlier {
+        TaskPrompts.QueueBrief.Earlier(title: title, state: state,
+                                       errorKey: state == .failed ? "tasks.errTimeout" : nil,
+                                       report: report, commitCount: commits, round: round)
+    }
+    let brief = TaskPrompts.QueueBrief(
+        queueName: "Lane", position: 8, total: 8,
+        earlier: [older("轮一甲", .done, "轮一甲的完整汇报。还有第二句。", round: 1),
+                  older("轮一乙", .done, "轮一乙的完整汇报。还有第二句。", round: 1),
+                  older("同轮一", .done, "同轮一的第一句。第二句不该出现在一行里。", round: 3),
+                  older("同轮二", .done, "同轮二的完整汇报。", round: 3),
+                  older("失败棒", .failed, "失败棒的完整汇报：重试要看这一段。", round: 2),
+                  older("最近甲", .done, "最近甲的完整汇报。", round: 3),
+                  older("最近乙", .done, "最近乙的完整汇报。", round: 3)],
+        branch: "feature/x", base: "main", commits: [], groupedByRepo: false, round: 3)
+    let rendered = TaskPrompts.render(brief)
+    let text = rendered?.text ?? ""
+    check(text.contains("第 1 轮：2 个任务"), "更早轮次压成一行，带轮次与任务数")
+    check(text.contains("最后：轮一乙的完整汇报。"), "轮次行的摘要来自该轮最后一棒")
+    check(!text.contains("还有第二句"), "更早轮次不再给全文（每一棒都不给）")
+    check(text.contains("同轮一的第一句。") && !text.contains("第二句不该出现在一行里"),
+          "同轮更早的 done 棒只给一行摘要首句")
+    check(text.contains("本棒 0 个提交"), "一行档带本棒提交数")
+    check(text.contains("失败棒的完整汇报：重试要看这一段。"), "非 done 永远全文")
+    check(text.contains("最近甲的完整汇报。") && text.contains("最近乙的完整汇报。"), "最近 2 棒给全文")
+    check((rendered?.totalChars ?? 0) == text.count, "渲染结果自带总字数")
+}
+
+section("交接简报：剥掉围栏代码块与完成标记行")
+do {
+    let report = ["## 做了什么", "- 改了 A。", "", "```swift", "let secret = 1", "```",
+                  "DSH-TASK-DONE-ABCDEF12", "- 下一棒注意：别改 B。"].joined(separator: "\n")
+    let brief = TaskPrompts.QueueBrief(
+        queueName: "Lane", position: 2, total: 2,
+        earlier: [TaskPrompts.QueueBrief.Earlier(title: "上一棒", state: .done,
+                                                 errorKey: nil, report: report,
+                                                 commitCount: 1, round: 1)],
+        branch: "feature/x", base: "main", commits: [], groupedByRepo: false, round: 1)
+    let text = TaskPrompts.render(brief)?.text ?? ""
+    check(!text.contains("let secret = 1"), "围栏代码块被剥掉")
+    check(!text.contains("DSH-TASK-DONE-"), "完成标记行被剥掉")
+    check(text.contains("改了 A。"), "代码块之外的正文保留")
+    check(text.contains("别改 B。"), "标记行之后的正文保留")
+}
+
+section("交接简报：提交列表最近 20 条 + 省略计数")
+do {
+    let commits = (0..<25).map { String(format: "c%06d feat: change %d", $0, $0) }
+    let brief = TaskPrompts.QueueBrief(
+        queueName: "Lane", position: 2, total: 2,
+        earlier: [TaskPrompts.QueueBrief.Earlier(title: "上一棒", state: .done,
+                                                 errorKey: nil, report: "做完了。",
+                                                 commitCount: 1, round: 1)],
+        branch: "feature/x", base: "main",
+        commits: [RepoCommits(repoID: ".", commits: commits)],
+        groupedByRepo: false, round: 1)
+    let text = TaskPrompts.render(brief)?.text ?? ""
+    let listed = commits.filter { text.contains($0) }.count
+    check(listed == 20, "只列最近 20 条提交（实际 \(listed)）")
+    check(text.contains("还有 5 条提交未列出"), "省略的条数写在列表里")
+}
+
+section("交接简报：非 done 的全文永远不降级（宁可超预算）")
+do {
+    let longFailure = String(repeating: "失败原因很长。", count: 1200)   // 8400 字
+    let brief = TaskPrompts.QueueBrief(
+        queueName: "Lane", position: 3, total: 3,
+        earlier: [TaskPrompts.QueueBrief.Earlier(title: "旧的一棒", state: .done,
+                                                 errorKey: nil, report: String(repeating: "旧摘要。", count: 200),
+                                                 commitCount: 3, round: 1),
+                  TaskPrompts.QueueBrief.Earlier(title: "失败棒", state: .failed,
+                                                 errorKey: "tasks.errTimeout", report: longFailure,
+                                                 commitCount: nil, round: 2),
+                  TaskPrompts.QueueBrief.Earlier(title: "最近", state: .done,
+                                                 errorKey: nil, report: "最近一棒的汇报。",
+                                                 commitCount: 1, round: 2)],
+        branch: "feature/x", base: "main",
+        commits: [RepoCommits(repoID: ".", commits: (0..<30).map { "c\($0) feat: x" })],
+        groupedByRepo: false, round: 2)
+    let rendered = TaskPrompts.render(brief)
+    let text = rendered?.text ?? ""
+    check(text.contains(longFailure), "失败棒的汇报保持全文（非 done 不降级）")
+    check((rendered?.totalChars ?? 0) > TaskPrompts.QueueBrief.budget,
+          "非 done 全文撑破预算时也不降级它")
+}
+
+section("交接简报：50 任务队列的最后一棒 ≤ 6000 字预算")
+do {
+    var budgetBoard = TaskBoard()
+    let budgetTasks = (0..<50).map { i in
+        TaskItem.manual(title: "第 \(i + 1) 棒：改一个模块", body: nil,
+                        id: String(format: "manual-ff%06d", i))
+    }
+    budgetBoard.tasks = budgetTasks
+    let budgetQueue = budgetBoard.createQueue(name: "长队列", autoPR: false)
+    for task in budgetTasks { _ = budgetBoard.enqueue(taskID: task.id, into: budgetQueue.id) }
+    _ = budgetBoard.resumeQueue(budgetQueue.id)
+    // 每棒 400+ 字、首句 80 字：一行档也不短，逼出降级路径。
+    let longReport = String(repeating: "甲", count: 80) + "。"
+        + String(repeating: "这一棒做了很多事。", count: 44)
+    for task in budgetTasks.dropLast() {
+        budgetBoard.markRunning(task.id)
+        budgetBoard.recordTaskCommits(task.id, [RepoCommits(repoID: ".", commits: [])])
+        budgetBoard.markDone(task.id, report: longReport)
+    }
+    let budgetRepo = FakeRepo()
+    budgetRepo.commits = (0..<30).map { String(format: "c%06d feat: change %d", $0, $0) }
+    let rendered = TasksRunner.brief(taskID: budgetTasks.last!.id,
+                                     queue: budgetBoard.queue(budgetQueue.id),
+                                     board: budgetBoard, git: budgetRepo.git(),
+                                     sessionReport: { _ in nil },
+                                     branch: budgetQueue.branch, base: "main", position: nil)
+    let text = rendered?.text ?? ""
+    check(!text.isEmpty, "50 棒之后仍有简报")
+    check(text.count <= TaskPrompts.QueueBrief.budget,
+          "最后一棒的简报 \(text.count) 字 ≤ 预算 \(TaskPrompts.QueueBrief.budget)")
+    let degraded = (rendered?.demotedReports ?? 0) + (rendered?.droppedCommits ?? 0)
+        + (rendered?.droppedRoundLines ?? 0)
+    check(degraded > 0, "超预算时确实发生了降级（reports/dropped/rows 计数非零）")
+}
+
+section("交接简报：6000 字是硬上界（超预算时最近 2 棒的 done 全文也会降级）")
+do {
+    let long = String(repeating: "很长的一段汇报。", count: 900)     // ~6300 字 / 棒
+    func done(_ title: String) -> TaskPrompts.QueueBrief.Earlier {
+        TaskPrompts.QueueBrief.Earlier(title: title, state: .done, errorKey: nil,
+                                       report: long, commitCount: 1, round: 1)
+    }
+    let brief = TaskPrompts.QueueBrief(
+        queueName: "Lane", position: 5, total: 5,
+        earlier: [done("老一"), done("老二"), done("老三"), done("最近甲"), done("最近乙")],
+        branch: "feature/x", base: "main", commits: [], groupedByRepo: false, round: 1)
+    let rendered = TaskPrompts.render(brief)
+    let text = rendered?.text ?? ""
+    check(text.count <= TaskPrompts.QueueBrief.budget,
+          "五棒各 ~6300 字仍装进 \(TaskPrompts.QueueBrief.budget) 字预算（实际 \(text.count)）")
+    check((rendered?.demotedReports ?? 0) > 0, "超预算时确实降级了 done 汇报")
+    check(!text.contains(long),
+          "预算优先于「最近 2 棒全文」：超预算时它们也会降级（设计文档已写明取舍）")
+    check(text.contains("最近乙"), "标题仍在，只是汇报降成一行")
+}
+
+section("交接简报：轮次按「每次启动队列 = 一轮」分组")
+do {
+    var roundBoard = TaskBoard()
+    let roundTasks = (0..<4).map { i in
+        TaskItem.manual(title: "第 \(i + 1) 棒", body: nil,
+                        id: String(format: "manual-aa%06d", i))
+    }
+    roundBoard.tasks = roundTasks
+    let roundQueue = roundBoard.createQueue(name: "Lanes", autoPR: false)
+    for task in roundTasks { _ = roundBoard.enqueue(taskID: task.id, into: roundQueue.id) }
+    _ = roundBoard.resumeQueue(roundQueue.id)          // 第 1 轮
+    for task in roundTasks.prefix(3) {
+        roundBoard.markRunning(task.id)
+        roundBoard.markDone(task.id, report: "\(task.title) 做完了。")
+    }
+    _ = roundBoard.pauseQueue(roundQueue.id)
+    _ = roundBoard.resumeQueue(roundQueue.id)          // 第 2 轮
+    let roundRepo = FakeRepo()
+    let rendered = TasksRunner.brief(taskID: roundTasks[3].id,
+                                     queue: roundBoard.queue(roundQueue.id),
+                                     board: roundBoard, git: roundRepo.git(),
+                                     sessionReport: { _ in nil },
+                                     branch: roundQueue.branch, base: "main", position: nil)
+    let text = rendered?.text ?? ""
+    check(text.contains("第 1 轮：1 个任务"), "更早轮次压成一行（最近 2 棒之外）")
+    check(text.contains("「第 3 棒」 —— 已完成"), "最近 2 棒仍然给全文")
+    check(!text.contains("「第 1 棒」 —— 已完成"), "更早的棒不再单独占一段")
+    check(text.contains("不要重做已完成的部分"), "仍然有交接收尾")
 }
 
 section("issue 任务的自动队列用工作区自己的默认分支")
@@ -1866,6 +2090,9 @@ do {
           "任务自己建了仓库就要 commit（用户第 4 条）")
     check(prompt.contains("文档 / 配置类做能做的校验"), "自查条照顾到文档类任务")
     check(prompt.contains("**必须**在结束时汇报"), "汇报是必须的")
+    check(prompt.contains("固定 4 个字段") && prompt.contains("做了什么 / 怎么验证 / 未完成 / 下一棒注意"),
+          "汇报要求是固定 4 字段（合规块可被模型解析）")
+    check(prompt.contains("单棒合计不超过 500 字"), "汇报有 500 字上限")
 }
 
 section("git 仓库 / GitHub 仓库：有分支条与 commit 条，token 只给 GitHub，push 一律不提")
@@ -1926,7 +2153,7 @@ do {
     eq(empty.checkouts, ["feature/first"], "只做一次 checkout -b，没有去切不存在的 main")
     check(!empty.calls.contains { $0.hasPrefix("status") },
           "空仓库里「工作区脏」这条不适用：没有提交可以丢")
-    check(!empty.calls.contains("pull --ff-only"), "也没有远端可 pull")
+    check(!empty.calls.contains { $0.hasPrefix("pull") }, "也没有远端可 pull")
 
     // 有提交的普通仓库完全不变：先干净、先切基线、再 pull、再开分支。
     let normal = FakeRepo()
@@ -1934,13 +2161,92 @@ do {
     check(normal.calls.contains("status --porcelain --untracked-files=no"),
           "普通仓库仍然先查工作区（只看已跟踪改动）")
     check(normal.calls.contains("checkout main"), "先切基线")
-    check(normal.calls.contains("pull --ff-only"), "有远端就 pull")
+    check(normal.calls.contains("pull --ff-only origin main"), "有远端就显式 pull 远端与基线")
 
     // 脏工作区在普通仓库里依然拦住 —— 空仓库是唯一的例外。
     let dirty = FakeRepo()
     dirty.worktreeClean = false
     eq(dirty.git().enter(branch: "feature/x", base: "main"), .dirtyWorktree,
        "普通仓库脏了就停下，绝不覆盖用户的改动")
+}
+section("分支进入：显式 pull <remote> <base>，不再依赖基线分支的 upstream")
+do {
+    // 2026-11-19 实测：本仓库远端从 origin 换成 github 后 main 失去 upstream，
+    // 裸 `git pull --ff-only` 报 "There is no tracking information"，队列第一棒
+    // 直接 tasks.errPull。进入分支时自己点名远端与基线，就不依赖那条配置了。
+    let repo = FakeRepo()
+    repo.remote = "github"
+    repo.requiresExplicitPull = true
+    repo.stderrMessages["pull --ff-only"] = "There is no tracking information for the current branch."
+    eq(repo.git().enter(branch: "feature/x", base: "main"), .switched,
+       "基线分支没有 upstream 也能进队列分支")
+    check(repo.calls.contains("pull --ff-only github main"), "假 git 收到显式 pull <remote> <base>")
+    check(!repo.calls.contains("pull --ff-only"), "不再发裸 pull")
+
+    // 同一形状走完整 runner：队列第一棒真的跑起来，而不是 errPull。
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board)
+    h.repo.remote = "github"
+    h.repo.requiresExplicitPull = true
+    h.repo.stderrMessages["pull --ff-only"] = "There is no tracking information for the current branch."
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    check(h.board.task(taskID)?.state == .running, "无 upstream 的仓库里队列第一棒照常启动")
+    check(h.board.task(taskID)?.error == nil, "没有记 errPull")
+    check(h.repo.calls.contains("pull --ff-only github main"), "runner 发出的也是显式 pull 参数")
+}
+section("分支进入失败：git 的 stderr 进 app.log 与卡片 errorDetail")
+do {
+    // pull：网络类失败仍是 errPull，但卡片与日志要带上 git 的原话。
+    let message = "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com"
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board)
+    h.repo.failing.insert("pull --ff-only origin main")
+    h.repo.stderrMessages["pull --ff-only origin main"] = message
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.error, "tasks.errPull", "网络类 pull 失败仍是 errPull")
+    check(h.board.task(taskID)?.errorDetail?.contains("Could not resolve host") == true,
+          "git 的 stderr 作为 errorDetail 显示在卡片上")
+    check(h.rec.logged("Could not resolve host"), "同一句 stderr 写进 app.log")
+}
+do {
+    // 没有 upstream / 远端没有同名 ref：归为「可自愈的环境类」，给 fetch + 比较基线提示。
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board)
+    h.repo.failing.insert("pull --ff-only origin main")
+    h.repo.stderrMessages["pull --ff-only origin main"] = "fatal: couldn't find remote ref main"
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.error, "tasks.errPullNoUpstream",
+       "没有 upstream / 远端 ref 归为可自愈的环境类，而不是笼统 errPull")
+    let detail = h.board.task(taskID)?.errorDetail ?? ""
+    check(detail.contains("origin/main"), "错误点名远端/基线（origin/main）")
+    check(detail.contains("couldn't find remote ref"), "并带上 git 的原始 stderr")
+    check(h.rec.logged("tasks.errPullNoUpstream") && h.rec.logged("couldn't find remote ref"),
+          "日志同时写原因键与 stderr")
+}
+do {
+    // status 自己失败：独立原因，不再 fail-closed 成「工作区脏」。
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board)
+    h.repo.failing.insert("status --porcelain --untracked-files=no")
+    h.repo.stderrMessages["status --porcelain --untracked-files=no"] = "fatal: index file corrupt"
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.error, "tasks.errGitStatus",
+       "status 失败有独立原因，不再伪装成「工作区有未提交改动」")
+    check(h.board.task(taskID)?.errorDetail?.contains("index file corrupt") == true,
+          "status 的 stderr 也上卡片")
+    check(h.rec.logged("index file corrupt"), "status 的 stderr 也进 app.log")
+}
+do {
+    // checkout 失败同样带 stderr。
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board)
+    h.repo.failing.insert("checkout main")
+    h.repo.stderrMessages["checkout main"] = "error: Your local changes would be overwritten by checkout"
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.error, "tasks.errBranch", "checkout 失败仍是 errBranch")
+    check(h.board.task(taskID)?.errorDetail?.contains("local changes would be overwritten") == true,
+          "checkout 的 stderr 也上卡片")
+    check(h.rec.logged("local changes would be overwritten"), "checkout 的 stderr 也进 app.log")
 }
 section("未跟踪文件不算「工作区脏」：只挡已跟踪改动（git 自己判撞名）")
 do {
@@ -2189,7 +2495,35 @@ do {
           "新会话不需要完成标记（它是专用的）")
 }
 
-section("队列到达 .done：回传完成情况到来源会话（一次，幂等）")
+section("交付会话在来源会话里跑时，通知延后到空闲（不污染 marker）")
+do {
+    let (board, taskID, queueID) = singleTaskBoard()
+    var b = board
+    b.local.queueSessions[queueID] = "origin-session"
+    let h = Harness(board: b)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.runner.openingPRQueueID, queueID, "交付跑在来源会话上")
+    check(h.dsh.notifications.isEmpty, "交付进行中一条都不发（不插进 finalize turn）")
+
+    // 来源会话回显 finalize marker 后交付结束；通知这时才发。
+    let prompt = h.dsh.prompts["origin-session"] ?? ""
+    let marker = prompt.range(of: "DSH-FINALIZE-[0-9A-F]+", options: .regularExpression)
+        .map { String(prompt[$0]) } ?? "DSH-FINALIZE-NONE"
+    h.dsh.reports["origin-session"] = "已创建 PR：https://github.com/o/r/pull/42\n" + marker
+    h.dsh.finishAll()
+    _ = h.runner.step()
+    eq(h.dsh.notifications.count, 1, "空闲后补一条（单任务把收尾并进去）")
+    let text = h.dsh.notifications.first?.text ?? ""
+    check(text.contains("Polish README · 1/1 · 已完成 ✓"), "任务正文在")
+    check(text.contains("PR：https://github.com/o/r/pull/42"), "收尾带上 PR")
+    check(text.contains("汇报全文："), "收尾带上汇报全文路径")
+    _ = h.runner.step()
+    eq(h.dsh.notifications.count, 1, "延后发送同样幂等")
+}
+
+section("逐任务一条 + 队列收尾：条数、内容、幂等")
 do {
     let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
     let r = h.runner.createQueueWithTasks(name: "Dark Mode", branch: "", autoPR: false,
@@ -2200,28 +2534,67 @@ do {
     h.dsh.reports["session-1"] = "A 完成，改了 a.swift"
     h.dsh.finish("session-1")
     _ = h.runner.step()
-    check(h.dsh.notifications.isEmpty, "队列没跑完就不回传")
+    eq(h.dsh.notifications.count, 1, "第一条终态就发一条，不等整队")
+    let first = h.dsh.notifications.first?.text ?? ""
+    eq(h.dsh.notifications.first?.session, "session-origin", "发到来源会话")
+    check(first.contains("A · 1/2 · 已完成 ✓"), "标题 + 位次 + 结局")
+    check(first.contains("A 完成，改了 a.swift"), "只讲本任务的汇报")
+    check(!first.contains("队列「Dark Mode」"), "任务完成时还不发队列收尾")
+    check(h.board.local.taskNotified[r.created[0].id] != nil, "发送前记下 taskNotified")
     check(h.board.task(r.created[0].id)?.state == .done, "第一条完成")
 
     h.dsh.reports["session-2"] = "B 完成"
     h.dsh.finish("session-2")
     _ = h.runner.step()
-    eq(h.dsh.notifications.count, 1, "整队完成后回传一次")
-    eq(h.dsh.notifications.first?.session, "session-origin", "回传到来源会话")
-    let text = h.dsh.notifications.first?.text ?? ""
-    check(text.contains("队列「Dark Mode」"), "报告点名队列")
-    check(text.contains("1. ✓ A"), "第一条带标号与状态")
-    check(text.contains("A 完成，改了 a.swift"), "第一条的完整汇报保留")
-    check(text.contains("2. ✓ B"), "报告列出第二条")
-    check(text.contains("B 完成"), "第二条的汇报也在")
-    check(!text.contains("session-"), "不回传会话标识（用户不要）")
-    check(text.contains("确认收到"), "要求 agent 简短确认")
-    check(h.board.local.queueNotified[r.queue.id] != nil, "记下已回传")
+    eq(h.dsh.notifications.count, 3, "第二条一条 + 队列收尾一条")
+    let second = h.dsh.notifications[1].text
+    check(second.contains("B · 2/2 · 已完成 ✓"), "第二条自己的位次")
+    check(second.contains("B 完成") && !second.contains("A 完成"), "只讲本任务，不重列别人")
+    let wrap = h.dsh.notifications[2].text
+    check(wrap.contains("队列「Dark Mode」"), "收尾点名队列")
+    check(wrap.contains("计数：完成 2 条 / 待确认 0 条（共 2 条；失败 0 · 取消 0 · 剩余 0）"),
+          "收尾只给计数")
+    check(wrap.contains("汇报全文："), "收尾给出汇报全文路径")
+    check(!wrap.contains("A 完成") && !wrap.contains("B 完成"), "收尾不重列每棒汇报")
+    check(!wrap.contains("session-"), "不回传会话标识（用户不要）")
+    check(wrap.contains("确认收到"), "要求 agent 简短确认")
+    check(h.board.local.queueNotified[r.queue.id] != nil, "记下队列已收尾")
     _ = h.runner.step()
-    eq(h.dsh.notifications.count, 1, "幂等：不会重复回传")
+    eq(h.dsh.notifications.count, 3, "幂等：不会重复发任何一条")
 }
 
-section("手动取消 / 暂停：不回传")
+section("逐任务通知：3 棒 = 3 条任务消息 + 1 条队列收尾（每条只讲自己）")
+do {
+    let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
+    let r = h.runner.createQueueWithTasks(name: "Lane3", branch: "", autoPR: false,
+                                          originSession: "session-origin",
+                                          drafts: [TaskDraft(title: "甲", body: ""),
+                                                   TaskDraft(title: "乙", body: ""),
+                                                   TaskDraft(title: "丙", body: "")])
+    _ = h.runner.startQueue(r.queue.id)
+    for i in 1...3 {
+        h.dsh.reports["session-\(i)"] = "第 \(i) 棒自己的汇报"
+        h.dsh.finish("session-\(i)")
+        _ = h.runner.step()
+        eq(h.dsh.notifications.count, i == 3 ? 4 : i,
+           "第 \(i) 棒结束只多一条；最后一棒同时发队列收尾")
+    }
+    eq(h.dsh.notifications.count, 4, "3 条任务消息 + 1 条队列收尾")
+    let texts = h.dsh.notifications.map(\.text)
+    for i in 1...3 {
+        check(texts[i - 1].contains("第 \(i) 棒自己的汇报"), "第 \(i) 条带自己的汇报")
+        for j in 1...3 where j != i {
+            check(!texts[i - 1].contains("第 \(j) 棒自己的汇报"),
+                  "第 \(i) 条不带第 \(j) 棒的汇报")
+        }
+    }
+    let wrap = texts[3]
+    check(wrap.contains("队列「Lane3」已全部完成（3/3）"), "收尾说全完成")
+    check(!wrap.contains("自己的汇报"), "收尾不重列每棒汇报")
+    check(wrap.contains("汇报全文："), "收尾给汇报全文路径")
+}
+
+section("手动取消：发一条已取消的逐任务通知，不发队列收尾")
 do {
     let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
     let r = h.runner.createQueueWithTasks(name: "Lane", branch: "", autoPR: false,
@@ -2232,10 +2605,15 @@ do {
     _ = h.runner.cancelRunning()
     _ = h.runner.step()
     eq(h.board.queue(r.queue.id)?.state, QueueState.paused, "取消让队列暂停")
-    check(h.dsh.notifications.isEmpty, "取消不回传（只有 done 才回传）")
+    eq(h.dsh.notifications.count, 1, "取消也发一条终态通知")
+    let text = h.dsh.notifications.first?.text ?? ""
+    check(text.contains("A · 1/2 · 已取消 −"), "写清本任务已取消")
+    check(text.contains("队列进度：完成 0 / 待确认 0 / 失败 0 / 取消 1 / 剩余 1（共 2 条）"),
+          "队列进度如实")
+    check(h.board.local.queueNotified[r.queue.id] == nil, "队列没 done 就不发收尾")
 }
 
-section("重启补发：done 且未回传的队列在下一次 step 发出")
+section("重启补发：done 且未通知的单任务队列在下一次 step 补一条（含收尾）")
 do {
     var board = TaskBoard()
     let t = TaskItem.manual(title: "A", body: nil, id: "manual-zz000001")
@@ -2246,16 +2624,22 @@ do {
     board.markRunning(t.id)
     board.markDone(t.id)
     eq(board.queue(q.id)?.state, QueueState.done, "队列已完成")
-    // 关联在盘上，但 app 在回传前退出了。
+    // 关联在盘上，但 app 在通知前退出了。
     board.local.queueSessions[q.id] = "session-origin"
     let h = Harness(board: board, github: false, gitRepo: true)
     _ = h.runner.step()
     eq(h.dsh.notifications.count, 1, "空闲的 step 补发一次")
     eq(h.dsh.notifications.first?.session, "session-origin", "补发到来源会话")
-    check(h.board.local.queueNotified[q.id] != nil, "补发后记下标记")
+    let text = h.dsh.notifications.first?.text ?? ""
+    check(text.contains("A · 1/1 · 已完成 ✓"), "单任务队列把任务与收尾并成一条")
+    check(text.contains("汇报全文："), "收尾字段也在")
+    check(h.board.local.taskNotified[t.id] != nil, "补发后记下 taskNotified")
+    check(h.board.local.queueNotified[q.id] != nil, "补发后记下 queueNotified")
+    _ = h.runner.step()
+    eq(h.dsh.notifications.count, 1, "补发是幂等的")
 }
 
-section("queueFinishedSummary 文案：首行汇报 + 失败原因 + 简短确认")
+section("逐任务通知文案：标题 · 位次 · 结局 · 本任务提交 · 汇报 · 队列进度")
 do {
     var board = TaskBoard()
     let a = TaskItem.manual(title: "A", body: nil, id: "manual-zz000002")
@@ -2267,37 +2651,78 @@ do {
     board.markRunning(b.id)
     _ = board.markFailed(b.id, error: "tasks.errNotGit")
     let tasks = [board.task(a.id)!, board.task(b.id)!]
-    let text = TaskPrompts.queueFinishedSummary(queue: board.queue(q.id)!, tasks: tasks)
-    check(text.contains("队列「外观」"), "点名队列")
+    let progress = TaskPrompts.queueProgress(tasks)
+    eq(progress.done, 1, "进度：完成 1")
+    eq(progress.failed, 1, "进度：失败 1")
+    eq(progress.total, 2, "进度：共 2")
+
+    let doneText = TaskPrompts.taskNotification(queue: board.queue(q.id)!, task: tasks[0],
+                                                position: 1, total: 2, commits: nil,
+                                                progress: progress)
+    check(doneText.contains("【任务面板】A · 1/2 · 已完成 ✓"), "标题 + 位次 + 结局")
+    check(doneText.contains("本任务提交：未记录"), "没有基线如实写「未记录」")
+    check(doneText.contains("改完了") && doneText.contains("第二行"), "本任务汇报完整保留")
+    check(doneText.contains("队列进度：完成 1 / 待确认 0 / 失败 1 / 取消 0 / 剩余 0（共 2 条）"),
+          "队列进度收成一行")
+    check(!doneText.contains("队列已暂停"), "成功的那条不提暂停")
+
+    let failedText = TaskPrompts.taskNotification(queue: board.queue(q.id)!, task: tasks[1],
+                                                  position: 2, total: 2, commits: nil,
+                                                  progress: progress)
+    check(failedText.contains("B · 2/2 · 失败 ✗"), "失败项标题 / 位次 / 结局")
+    check(failedText.contains("原因：tasks.errNotGit"), "失败项列出原因")
+    check(failedText.contains("队列已暂停：后续 0 个任务不会启动，不开 PR。"), "写清暂停与不开 PR")
+    check(failedText.contains("出口：重试（重跑本任务） / 跳过并继续"), "给出两个出口")
+
+    // 本任务提交：只列本任务产出的提交，不跑 git。
+    let commits = TaskPrompts.taskNotification(queue: board.queue(q.id)!, task: tasks[0],
+                                               position: 1, total: 2,
+                                               commits: [RepoCommits(repoID: ".", commits: [
+                                                   "abc123 深色模式：主题令牌",
+                                                   "def456 跟随系统：监听外观"])],
+                                               progress: progress)
+    check(commits.contains("本任务提交：2 个"), "提交数")
+    check(commits.contains("abc123 深色模式：主题令牌"), "提交逐条列出")
+}
+
+section("队列收尾文案：计数 + PR + 汇报全文路径（不再重列每棒汇报）")
+do {
+    var board = TaskBoard()
+    let a = TaskItem.manual(title: "A", body: nil, id: "manual-zz000005")
+    let b = TaskItem.manual(title: "B", body: nil, id: "manual-zz000006")
+    board.tasks = [a, b]
+    let q = board.createQueue(name: "外观", branch: "feature/ui", autoPR: true)
+    board.markRunning(a.id)
+    board.markDone(a.id, report: "改完了\n第二行", at: Date())
+    board.markRunning(b.id)
+    board.markDone(b.id, report: "也改完了", at: Date())
+    let tasks = [board.task(a.id)!, board.task(b.id)!]
+    let text = TaskPrompts.queueWrapUpSummary(queue: board.queue(q.id)!, tasks: tasks,
+                                             reportPath: "/tmp/reports/q-test.md")
+    check(text.contains("队列「外观」已全部完成（2/2）"), "全完成首行")
+    check(text.contains("计数：完成 2 条 / 待确认 0 条（共 2 条；失败 0 · 取消 0 · 剩余 0）"),
+          "计数一行")
     check(text.contains("分支：feature/ui → main"), "有分支就点名分支")
-    check(text.contains("1. ✓ A"), "第一条带标号")
-    check(text.contains("改完了") && text.contains("第二行"), "完整汇报保留（不再只取首行）")
-    check(text.contains("2. ✗ B"), "失败项带标号")
-    check(text.contains("失败：tasks.errNotGit"), "失败项列出原因")
+    check(text.contains("PR：未开"), "还没开 PR 就如实写未开")
+    check(text.contains("汇报全文：/tmp/reports/q-test.md"), "给出汇报全文路径")
+    check(!text.contains("改完了"), "收尾不再重列每棒汇报")
     check(text.contains("确认收到"), "要求简短确认")
 
-    // 提交列表：有则列出，空则不出现；无分支的队列不出现。
-    let withCommits = TaskPrompts.queueFinishedSummary(queue: board.queue(q.id)!, tasks: tasks,
-                                                       commits: ["abc123 深色模式：主题令牌",
-                                                                 "def456 跟随系统：监听外观"])
-    check(withCommits.contains("分支上相对 main 的提交："), "提交段的抬头")
-    check(withCommits.contains("abc123 深色模式：主题令牌"), "提交逐条列出")
-    check(!text.contains("提交："), "没有提交就不出现提交段")
-
+    // 无分支队列不显示分支行。
     var branchless = TaskBoard()
-    let bt2 = TaskItem.manual(title: "X", body: nil, id: "manual-zz000004")
+    let bt2 = TaskItem.manual(title: "X", body: nil, id: "manual-zz000007")
     branchless.tasks = [bt2]
     let bq = branchless.createQueue(name: "NoBranch", branch: "", autoPR: false)
     branchless.markRunning(bt2.id)
     branchless.markDone(bt2.id, report: "done")
-    let branchlessText = TaskPrompts.queueFinishedSummary(queue: branchless.queue(bq.id)!,
-                                                          tasks: [branchless.task(bt2.id)!],
-                                                          commits: ["should-not-show"])
+    let branchlessText = TaskPrompts.queueWrapUpSummary(queue: branchless.queue(bq.id)!,
+                                                        tasks: [branchless.task(bt2.id)!],
+                                                        reportPath: nil)
     check(!branchlessText.contains("分支："), "无分支队列不显示分支行")
-    check(!branchlessText.contains("提交："), "无分支队列不显示提交段")
+    check(branchlessText.contains("汇报全文：未写入"), "写不出文件时也说清楚")
 }
 
-section("回传带上队列分支的提交（git 仓库；非 git 不显示）")
+section("收尾带上分支与汇报全文路径；不再列分支提交")
 do {
     let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
     h.repo.commits = ["abc123 深色模式：主题令牌"]
@@ -2309,8 +2734,9 @@ do {
     _ = h.runner.step()
     let text = h.dsh.notifications.first?.text ?? ""
     check(text.contains("分支：feature/x → main"), "分支行")
-    check(text.contains("分支上相对 main 的提交："), "提交段")
-    check(text.contains("abc123 深色模式：主题令牌"), "提交内容")
+    check(text.contains("汇报全文："), "汇报全文路径")
+    check(!text.contains("分支上相对 main 的提交："), "旧的分支提交段已下线")
+    check(!text.contains("abc123 深色模式：主题令牌"), "不再把整条分支的提交塞进通知")
 }
 
 section("交付成功后自动关闭队列（成功才关；失败/关时不关）")
@@ -2746,7 +3172,13 @@ do {
     eq(h.board.queue(queueID)?.state, .paused, "待确认暂停队列")
     eq(h.board.task(second)?.state, .queued, "后面的任务没有被启动")
     eq(h.board.queue(queueID)?.taskIds.count, 2, "任务没有丢")
-    check(h.dsh.notifications.isEmpty, "待确认不发完成通知")
+    eq(h.dsh.notifications.count, 1, "待确认也发一条（但不是完成通知 / 收尾）")
+    let reviewText = h.dsh.notifications.first?.text ?? ""
+    check(reviewText.contains("One · 1/2 · 待确认 ?"), "标题 + 位次 + 待确认")
+    check(reviewText.contains("队列已暂停：后续 1 个任务不会启动，不开 PR。"),
+          "写清后续不会启动、不开 PR")
+    check(reviewText.contains("出口：重试（重跑本任务） / 跳过并继续"), "给出两个出口")
+    check(h.board.local.queueNotified[queueID] == nil, "队列没 done，不发收尾")
     eq(h.dsh.sessions.count, 1, "待确认不起交付会话（不自动开 PR）")
     check(h.rec.logged("needs review"), "日志记下待确认")
 
@@ -2757,6 +3189,8 @@ do {
     eq(h.board.queue(queueID)?.state, .active, "重试恢复队列")
     check(h.board.task(first)?.completionMarker != staleMarker, "重试换一个全新的 marker")
     eq(h.board.task(first)?.error, nil, "重试清掉待确认说明")
+    check(h.board.local.taskNotified[first] == nil, "重试清掉 taskNotified，下一次终态会再发")
+    eq(h.dsh.notifications.count, 1, "重试本身不补发通知")
     eq(h.dsh.sessions.count, 1, "待确认重试复用上一轮的会话（P5），不新建")
     check((h.dsh.prompts["session-1"] ?? "").contains("从未完成处继续"),
           "发的是短续跑提示词")
@@ -2778,7 +3212,7 @@ do {
     eq(h.board.task(first)?.state, .done, "用户确认 → done")
     eq(h.board.task(first)?.error, nil, "待确认的说明被清掉")
     eq(h.board.queue(queueID)?.state, .done, "最后一条确认后队列完成")
-    eq(h.dsh.notifications.count, 1, "确认后照常回传完成通知")
+    eq(h.dsh.notifications.count, 1, "标记完成不清 taskNotified：不重复发通知")
     // 队列有来源会话：交付复用它，不再新建一个会话。
     eq(h.runner.openingPRQueueID, queueID, "队列完成照常起交付（autoPR 开着）")
     check(h.dsh.prompts["origin-session"] != nil, "来源会话收到交付提示词")
@@ -2821,9 +3255,11 @@ do {
     let allCounts = TaskPrompts.completionCounts(allTasks)
     eq(allCounts.done, 2, "全完成：完成计 2")
     eq(allCounts.needsReview, 0, "全完成：待确认计 0")
-    let allText = TaskPrompts.queueFinishedSummary(queue: allDone.queue(aq.id)!, tasks: allTasks)
+    let allText = TaskPrompts.queueWrapUpSummary(queue: allDone.queue(aq.id)!, tasks: allTasks,
+                                                 reportPath: nil)
     check(allText.contains("已全部完成（2/2）"), "全完成仍写「已全部完成（2/2）」")
-    check(!allText.contains("待确认"), "全完成不提「待确认」")
+    check(!allText.contains("待确认 1"), "全完成不把待确认报成 1")
+    check(!allText.contains("不是全部完成"), "全完成不提示欠账")
 
     // 混合：2 完成 + 1 待确认 —— 首行必须写清两个计数，不能再报「全部完成」。
     var mixed = TaskBoard()
@@ -2839,19 +3275,26 @@ do {
     let mixedCounts = TaskPrompts.completionCounts(mixedTasks)
     eq(mixedCounts.done, 2, "混合：完成计 2")
     eq(mixedCounts.needsReview, 1, "混合：待确认计 1")
-    let mixedText = TaskPrompts.queueFinishedSummary(queue: mixed.queue(mq.id)!, tasks: mixedTasks)
-    check(mixedText.contains("完成 2 条 / 待确认 1 条（共 3 条）"),
+    let mixedText = TaskPrompts.queueWrapUpSummary(queue: mixed.queue(mq.id)!, tasks: mixedTasks,
+                                                   reportPath: nil)
+    check(mixedText.contains("完成 2 条 / 待确认 1 条（共 3 条"),
           "首行如实写「完成 2 条 / 待确认 1 条」")
     check(!mixedText.contains("已全部完成"), "有欠账就不再报「已全部完成」")
-    check(mixedText.contains("3. ? Three"), "待确认任务带自己的记号 ?")
-    check(mixedText.contains("待确认："), "待确认任务列出原因与两条出口")
     check(mixedText.contains("不是全部完成"), "尾部再强调不是全部完成")
-    check(mixedText.contains("三做了一半"), "待确认任务的汇报照样带上，验收看得到它做到哪")
+    // 待确认自己的那条通知带原因、暂停与两条出口；汇报全文不挤进收尾。
+    let review = TaskPrompts.taskNotification(queue: mixed.queue(mq.id)!, task: mixed.task(m3.id)!,
+                                              position: 3, total: 3, commits: nil,
+                                              progress: TaskPrompts.queueProgress(mixedTasks))
+    check(review.contains("Three · 3/3 · 待确认 ?"), "待确认任务带自己的记号 ?")
+    check(review.contains("原因：tasks.errUnverified"), "待确认任务列出原因")
+    check(review.contains("队列已暂停"), "待确认任务写清队列已暂停")
+    check(review.contains("三做了一半"), "待确认任务的汇报照样带上，验收看得到它做到哪")
+    check(!mixedText.contains("三做了一半"), "收尾不重列每棒汇报（全文在文件里）")
 }
 
 section("P3 跳过待确认后队列完成：通知仍如实报「完成 1 / 待确认 1」")
 do {
-    var (board, first, second, queueID) = twoTaskBoard()
+    var (board, first, second, queueID) = twoTaskBoard(autoPR: false)
     board.local.queueSessions[queueID] = "origin-session"
     let h = Harness(board: board)
     h.dsh.echoesTaskMarkers = false
@@ -2872,12 +3315,12 @@ do {
 
     eq(h.board.task(second)?.state, .done, "第二条完成")
     eq(h.board.queue(queueID)?.state, .done, "队列到达 done")
-    eq(h.dsh.notifications.count, 1, "队列完成发一次通知")
-    let text = h.dsh.notifications.first?.text ?? ""
-    check(text.contains("完成 1 条 / 待确认 1 条（共 2 条）"), "通知如实写「完成 1 / 待确认 1」")
+    eq(h.dsh.notifications.count, 3, "待确认一条 + 第二条一条 + 队列收尾一条")
+    let text = h.dsh.notifications[2].text
+    check(text.contains("完成 1 条 / 待确认 1 条（共 2 条"), "收尾如实写「完成 1 / 待确认 1」")
     check(!text.contains("已全部完成"), "跳过待确认也不谎报「已全部完成」")
-    check(text.contains("1. ? One"), "第一条在列表里是待确认 ?")
-    check(text.contains("2. ✓ Two"), "第二条是完成 ✓")
+    check(h.dsh.notifications[0].text.contains("One · 1/2 · 待确认 ?"), "第一条是待确认 ?")
+    check(h.dsh.notifications[1].text.contains("Two · 2/2 · 已完成 ✓"), "第二条是完成 ✓")
 }
 
 // MARK: - P4 产物校验（expectsCommit）
@@ -2962,6 +3405,84 @@ do {
     let plainRepo = WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/b", isGit: false, displayName: "b")
     eq(TasksRunner.infersCommitExpectation(task: issue, targets: [plainRepo], shape: nil), false,
        "目标仓库都不是 git → 不期望提交")
+}
+
+// MARK: - 提交归属（P4 基线推导 taskCommits）
+
+section("提交归属：单仓库本棒提交按基线 HEAD..HEAD 记进 local.taskCommits")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board, verifyExpectedCommit: true, workspaceShape: .github)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    // 任务开始后 HEAD 变了，git log 基线..HEAD 只报这两条。
+    h.repo.head = "bbbb2222"
+    h.repo.commitsByRange["0f0f0f0f..HEAD"] = ["bbbb222 feat: 本棒的第二个提交",
+                                               "aaaa111 fix: 本棒的第一个提交"]
+    h.dsh.reports["session-1"] = "做了两个提交。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.local.taskCommits[taskID],
+       [RepoCommits(repoID: ".", commits: ["bbbb222 feat: 本棒的第二个提交",
+                                           "aaaa111 fix: 本棒的第一个提交"])],
+       "本棒提交按仓库分组记录")
+    eq(h.board.taskCommitCount(taskID), 2, "总数可数")
+    eq(h.board.task(taskID)?.state, .done, "有提交 → done")
+    check(h.rec.logged("本棒产出 2 个提交"), "日志写明本棒产出了几个提交")
+}
+
+section("提交归属：多仓库按 targets 分别记，不混成一个列表")
+do {
+    let repos = [
+        WorkspaceRepo(id: "repo-a", absolutePath: "/tmp/ws/repo-a", isGit: true,
+                      defaultBase: "main", displayName: "repo-a"),
+        WorkspaceRepo(id: "repo-b", absolutePath: "/tmp/ws/repo-b", isGit: true,
+                      defaultBase: "main", displayName: "repo-b"),
+    ]
+    var board = TaskBoard()
+    let task = TaskItem.manual(title: "两个仓库都改", body: nil, id: "manual-cm000001")
+    board.tasks = [task]
+    let queue = board.createQueue(name: "Multi commits", autoPR: false,
+                                  repos: ["repo-a", "repo-b"])
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    let h = MultiRepoHarness(board: board, repos: repos, primaryRepoID: "repo-a",
+                             verifyExpectedCommit: true)
+    _ = h.runner.startQueue(queue.id)
+    eq(h.board.task(task.id)?.state, .running, "预检通过，任务开始")
+
+    h.git("repo-a").head = "aaa11111"
+    h.git("repo-a").commitsByRange["0f0f0f0f..HEAD"] = ["aaa1111 feat: repo-a 的改动"]
+    h.git("repo-b").head = "bbb22222"
+    h.git("repo-b").commitsByRange["0f0f0f0f..HEAD"] = ["bbb2222 fix: repo-b 的改动"]
+    h.dsh.reports["session-1"] = "两个仓库各一个提交。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.local.taskCommits[task.id],
+       [RepoCommits(repoID: "repo-a", commits: ["aaa1111 feat: repo-a 的改动"]),
+        RepoCommits(repoID: "repo-b", commits: ["bbb2222 fix: repo-b 的改动"])],
+       "每个仓库一组，顺序跟 targets 一致")
+    eq(h.board.taskCommitCount(task.id), 2, "跨仓库合计 2 个")
+    eq(h.board.task(task.id)?.state, .done, "多仓库都有提交 → done")
+}
+
+section("提交归属：文档类任务 0 个提交如实记录，不当失败")
+do {
+    let (board, taskID, queueID) = singleTaskBoard(autoPR: false)
+    let h = Harness(board: board, verifyExpectedCommit: true, workspaceShape: .github)
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    // 只改了文档、没有 commit：HEAD 不变，git log 为空，工作区有已跟踪改动。
+    h.repo.worktreeClean = false
+    h.dsh.reports["session-1"] = "改了两段文档，没提交。"
+    h.dsh.finishAll()
+    _ = h.runner.step()
+
+    eq(h.board.local.taskCommits[taskID], [RepoCommits(repoID: ".", commits: [])],
+       "记录了「0 个提交」，而不是没有记录")
+    eq(h.board.taskCommitCount(taskID), 0, "总数是 0")
+    eq(h.board.task(taskID)?.state, .done, "没提交但有工作区改动 → 仍然 done")
+    eq(h.board.task(taskID)?.error, nil, "不因为 0 个提交降级")
+    check(h.rec.logged("本棒产出 0 个提交"), "日志如实写 0")
 }
 
 // MARK: - P5 重试续跑（同一会话 + 短提示词）

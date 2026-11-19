@@ -115,6 +115,7 @@ enum TasksStore {
         board.queues = loadQueues(repoRoot)
         board.local = loadLocal(repoRoot)
         board.attachSessions(board.local.sessions, reports: board.local.reports,
+                             handoffs: board.local.handoffs,
                              markers: board.local.taskMarkers,
                              markerVerified: board.local.taskMarkerVerified)
         board.reindexQueueMembership()
@@ -128,5 +129,67 @@ enum TasksStore {
         saveManual(repoRoot, board.tasks.filter { $0.source == .manual })
         saveQueues(repoRoot, board.queues)
         saveLocal(repoRoot, board.local)
+    }
+
+    // MARK: - 汇报全文（队列收尾的文件）
+
+    /// The per-queue file the wrap-up notification points at. The notification itself
+    /// stays short (counts + PR + path); the full reports — often several thousand
+    /// characters each — live here so they can still be read after the session logs
+    /// are gone. It is machine-private like local.json, hence under the same directory.
+    static func reportFile(_ repoRoot: String, queueID: String) -> String {
+        let safe = queueID.replacingOccurrences(of: "/", with: "-")
+        let dir = (tasksDir(repoRoot) as NSString).appendingPathComponent("reports")
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        return (dir as NSString).appendingPathComponent(safe + ".md")
+    }
+
+    /// Write (or overwrite) the queue report file. Returns its path, or nil when the
+    /// file could not be written. Best-effort: a failed write must never stop a
+    /// notification; the wrap-up then says the path is unavailable.
+    static func saveQueueReport(_ repoRoot: String, queue: TaskQueue, tasks: [TaskItem]) -> String? {
+        var lines: [String] = []
+        lines.append("# 队列「\(queue.name)」汇报全文")
+        lines.append("")
+        lines.append("- 生成时间：\(TaskItem.iso8601.string(from: Date()))")
+        if let branch = queue.branch, !branch.isEmpty {
+            lines.append("- 分支：\(branch) → \(queue.baseBranch)")
+        }
+        if let prUrl = queue.prUrl {
+            lines.append("- PR：\(prUrl)")
+        }
+        if let prError = queue.prError {
+            lines.append("- PR：未开（\(prError)）")
+        }
+        lines.append("")
+        for (index, task) in tasks.enumerated() {
+            lines.append("## \(index + 1). \(task.state.badge) \(task.title)")
+            lines.append("")
+            if task.state == .failed {
+                let detail = task.errorDetail.map { "：" + $0 } ?? ""
+                lines.append("失败：\(task.error ?? "失败")\(detail)")
+            } else if task.state == .needsReview {
+                lines.append("待确认：\(task.error ?? TaskFailure.unverified.rawValue)")
+            } else if task.state == .cancelled {
+                lines.append("已取消")
+            }
+            if let report = task.report?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !report.isEmpty {
+                lines.append("")
+                lines.append(report)
+            } else {
+                lines.append("")
+                lines.append("（没有汇报）")
+            }
+            lines.append("")
+        }
+        let path = reportFile(repoRoot, queueID: queue.id)
+        guard let data = lines.joined(separator: "\n").data(using: .utf8) else { return nil }
+        do {
+            try data.write(to: URL(fileURLWithPath: path))
+            return path
+        } catch {
+            return nil
+        }
     }
 }

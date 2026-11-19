@@ -218,16 +218,33 @@ if ! grep -q 'case needsReview' ../../platforms/macos/src/TasksCore.swift \
 fi
 echo "ok - P2 待确认：独立状态 + 重试 / 标记完成"
 
-# P3 完成通知诚实化：队列汇总必须把「完成 / 待确认」分开计数，不得再无条件输出
-# 「已全部完成」。状态机（P1/P2）已经给出判定，汇总只负责如实翻译成计数与文案。
+# P3 完成通知诚实化 + 逐任务通知：队列收尾必须把「完成 / 待确认」分开计数，
+# 每棒终态都有自己的一条，且发送标记（taskNotified）在发送前写入、重试清掉。
 if ! grep -q 'func completionCounts' ../../platforms/macos/src/TasksRunner.swift \
    || ! grep -qF 'counts.needsReview == 0' ../../platforms/macos/src/TasksRunner.swift \
-   || ! grep -qF '完成 \(counts.done) 条 / 待确认 \(counts.needsReview) 条（共 \(tasks.count) 条）' ../../platforms/macos/src/TasksRunner.swift \
-   || ! grep -qF 'case .needsReview: mark = "?"' ../../platforms/macos/src/TasksRunner.swift; then
-  echo "FAIL - P3 完成通知：汇总必须把待确认单独计数，不再无条件报「已全部完成」"
+   || ! grep -qF '完成 \(counts.done) 条 / 待确认 \(counts.needsReview) 条（共 \(tasks.count) 条；' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -qF 'case .needsReview: mark = "?"' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func taskNotification' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func queueWrapUpSummary' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func singleTaskQueueSummary' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'var taskNotified' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -q 'local.taskNotified\[taskID\] = nil' ../../platforms/macos/src/TasksCore.swift; then
+  echo "FAIL - P3 完成通知：收尾计数 / 逐任务通知 / taskNotified 幂等三者缺一不可"
   exit 1
 fi
-echo "ok - P3 完成通知：完成 / 待确认分开计数，待确认带 ? 与人工出口"
+echo "ok - P3 完成通知：逐任务一条 + 收尾计数，taskNotified 发送前写、重试清"
+
+# 通知延后与汇报全文：交付会话占用来源会话时不得插话（会污染 finalize marker），
+# 队列收尾要指向真正写出来的汇报全文文件。
+if ! grep -q 'func originBusyWithDelivery' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func deliveryInFlight' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'run.sessionId == origin' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func saveQueueReport' ../../platforms/macos/src/TasksStore.swift \
+   || ! grep -q '汇报全文' ../../platforms/macos/src/TasksRunner.swift; then
+  echo "FAIL - 通知延后 / 汇报全文路径缺失"
+  exit 1
+fi
+echo "ok - 通知延后到交付会话空闲 + 收尾带汇报全文路径"
 
 # P4 产物校验（可选）：真实面板必须开启它，runner 必须按「应产出提交」推断、并在会话
 # 结束后比对基线 HEAD / 工作区改动；没有产物时降级为待确认（带 errNoCommit 原因）。
@@ -241,6 +258,49 @@ if ! grep -q 'verifyExpectedCommit: true' ../../platforms/macos/src/IssueRunnerP
   exit 1
 fi
 echo "ok - P4 产物校验：expectsCommit 推断 + 基线比对，无产物降级待确认"
+
+# 提交归属：结束时必须用同一份 P4 基线做 <before>..HEAD，按仓库分组写进 local.json 的
+# taskCommits（简报 / 逐任务通知复用，不重复跑 git）。只记「有没有产物」而不记「产出了
+# 哪些提交」= 每一棒的产出又只能从汇报的自由文本里猜。
+if ! grep -q 'func commits(since' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'producedCommits = active.baseline.commits' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'var taskCommits' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -q 'd\["taskCommits"\]' ../../platforms/macos/src/TasksCore.swift; then
+  echo "FAIL - 提交归属：必须用 P4 基线推导本棒提交并按仓库记录到 local.json 的 taskCommits"
+  exit 1
+fi
+echo "ok - 提交归属：P4 基线推导本棒提交并按仓库写入 taskCommits"
+
+# 交接简报三档衰减 + 总预算：最近 2 棒全文 / 同轮一行 / 更早轮次一行，非 done 永远
+# 全文；6000 字上限靠「最老 done 摘要 → 提交列表 → 轮次/同轮行」降级兜底，并把各段
+# 字数与降级条数写进 app.log。任何一处被删掉，简报都会悄悄退回 O(n²) 全文。
+if ! grep -q 'static let budget = 6000' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'static let fullTextCount = 2' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'static let commitLimit = 20' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func sanitizedReport' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'demotedReports' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'degraded: reports=' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'var taskRounds' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -q 'func taskRound' ../../platforms/macos/src/TasksCore.swift; then
+  echo "FAIL - 交接简报必须有 6000 字预算、三档衰减、代码块/标记剥离与降级日志"
+  exit 1
+fi
+echo "ok - 交接简报：三档衰减 + 6000 字预算 + 降级日志"
+
+# 文档与实现同源：简报政策（有预算的衰减）与逐任务通知必须写进设计文档；
+# 旧的「汇报不截断 / 仅队列 done 回传」措辞不得复活，否则两处文案再次分叉。
+IR=../../docs/design/panels/issue-runner-design.md
+QL=../../docs/design/panels/tasks-queue-session-loop-design.md
+if ! grep -q '有预算的衰减' "$IR" \
+   || ! grep -q '6000' "$IR" \
+   || grep -q '汇报不截断' "$IR" \
+   || ! grep -q '逐任务' "$QL" \
+   || ! grep -q '队列收尾' "$QL" \
+   || grep -q '仅队列进入 `.done`' "$QL"; then
+  echo "FAIL - 文档必须写清「有预算的衰减」与逐任务通知（旧措辞不得复活）"
+  exit 1
+fi
+echo "ok - 文档与实现同源：有预算的衰减 + 逐任务通知"
 
 # 任务面板的每一项设置都必须按工作区存：一个全局键会把某个工作区的选择泄进所有工作区
 # （「交付成功后自动关闭队列」曾写全局 tasksAutoCloseOnPublish，于是每个工作区都显示勾上）。
@@ -280,5 +340,39 @@ if ! grep -q 'private var pendingRetries: Set<String>' ../../platforms/macos/src
   exit 1
 fi
 echo "ok - P5 重试续跑：显式重试信号 + 短续跑提示词 + 原始产物基线"
+
+# 队列暂停可见性：失败 / 待确认 / 取消三种来源都要给出原因、剩余任务数与两个出口
+# （重试 / 跳过并继续）。只覆盖待确认 = 用户看到「已暂停」却不知道谁停的、还能做什么。
+if ! grep -q 'tasks.queue.pausedFailed' ../../platforms/macos/src/TasksUI.swift \
+   || ! grep -q 'tasks.queue.pausedNeedsReview' ../../platforms/macos/src/TasksUI.swift \
+   || ! grep -q 'tasks.queue.pausedCancelled' ../../platforms/macos/src/TasksUI.swift \
+   || ! grep -q 'func pauseBlocker' ../../platforms/macos/src/TasksUI.swift \
+   || ! grep -q 'var remainingAfterPause' ../../platforms/macos/src/TasksUI.swift \
+   || ! grep -q 'tasks.queue.pauseRemaining' ../../platforms/macos/src/TaskCardView.swift \
+   || ! grep -q 'onRetryPaused' ../../platforms/macos/src/TaskCardView.swift \
+   || ! grep -q 'onSkipPaused' ../../platforms/macos/src/TaskCardView.swift; then
+  echo "FAIL - 队列暂停可见性：三种来源 + 剩余数 + 两个出口缺一不可"
+  exit 1
+fi
+echo "ok - 队列暂停可见性：失败 / 待确认 / 取消都给出原因与剩余任务数，重试 / 跳过并继续都在卡上"
+
+# 分支进入必须显式 pull <remote> <base>：2026-11-19 远端从 origin 换成 github 后
+# main 失去 upstream，裸 `git pull --ff-only` 让队列第一棒直接 errPull。并须保留
+# git 的 stderr（app.log + 卡片 errorDetail），以及「没有 upstream」的可自愈环境分类。
+if ! grep -qF '["pull", "--ff-only", remote, base]' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'case pullNoUpstream' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -qF 'case pullNoUpstream = "tasks.errPullNoUpstream"' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -qF 'case gitStatus = "tasks.errGitStatus"' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -q 'func isUpstreamFailure' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -qF 'var capture: (([String]) -> GitCommandOutput?)? = nil' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func startFailureLog' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func runProcessCapturing' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -q 'capture: { args in' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -qF 'tasks.errPullNoUpstream' ../../platforms/macos/src/main.swift \
+   || ! grep -qF 'if !message.contains(detail)' ../../platforms/macos/src/TasksUI.swift; then
+  echo "FAIL - 分支进入必须显式 pull <remote> <base>，并把 git stderr 写进 app.log / errorDetail"
+  exit 1
+fi
+echo "ok - 分支进入显式 pull <remote> <base>，git stderr 进日志与卡片，无 upstream 可自愈"
 
 echo "tasks-panel tests passed"

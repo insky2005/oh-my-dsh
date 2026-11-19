@@ -1,6 +1,6 @@
 # 任务队列 × 会话回传 设计（task-queue-session-loop）
 
-> 状态：已实现（P0/P1 2026-09-30；P2 活泳道 + 手动发布 2026-10-01；工作流 2026-10-01）
+> 状态：已实现（P0/P1 2026-09-30；P2 活泳道 + 手动发布 2026-10-01；工作流 2026-10-01；2026-11-19 通知改为逐任务一条 + 队列收尾）
 > 关联面板：任务（Tasks / IssueRunner）
 > 关联文档：docs/design/panels/task-todo-skill-design.md、docs/design/panels/issue-runner-design.md、docs/design/panels/builtin-skills-design.md、docs/process/git-workflow.md
 > 决策来源：2026-09-30 会话讨论定稿
@@ -16,7 +16,7 @@
 
 1. 在会话 X 里一次性创建「队列（等待态）+ 队内任务」；
 2. 在会话 X 里说「启动队列」即可开跑（面板手动点开始同样支持）；
-3. 队列**进入 `.done`** 时，把完成情况回传会话 X；
+3. 队列里**每个任务到达终态**（完成 / 失败 / 待确认 / 取消）时各回传一条，队列**进入 `.done`** 时再回传一条收尾；
 4. 用户在 X 里直接验收、要求调整。
 
 ## 2. 现状与可复用能力
@@ -82,12 +82,13 @@ enum QueueState: String { case draft, active, paused, done }
 
 ```
 queueSessions: { "q-xxxx": "session-..." }    // 队列 → 创建它的会话
-queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重启补发）
+queueNotified: { "q-xxxx": "2026-09-30T..." } // 队列收尾已发（幂等 / 重启补发）
+taskNotified: { "manual-...": "2026-11-19T..." } // 该任务的终态通知已发（每个终态一条）
 ```
 
 - 关联在**创建时**建立，与「谁启动」解耦：会话启动、面板启动都不改写它。
 - 面板手建队列没有 origin → 不回传（**不做**「回传会话」选择器，用户 2026-10-01 决定）。
-- 追加任务到 `.done` 队列会**重臂** `queueNotified`：下一轮完成照常回传。
+- 追加任务到 `.done` 队列会**重臂** `queueNotified`：下一轮完成照常发收尾；旧任务保留自己的 `taskNotified`（它们已经通知过，不重复发），新任务到达终态时各发一条。
 - 默认回传到创建会话；`queue/start` 不接受改写 origin（将来如需重绑再单独设计）。
 
 ## 6. API
@@ -163,44 +164,60 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 - 启动：复用 `startQueue(queueID:)`；按 `session` 消歧在 API 层做，runner 只收 queueId。
 - 任务会话的标题带前缀 **`TASK: `**（`TasksRunner.taskSessionTitlePrefix + task.title`），
   在 dsh web 侧栏一眼可辨；PR 会话保持自己的「开 PR：<队列>」前缀。
-- 回传触发：`QueueState` 进入 `.done` 的唯一路径是 `TaskBoard.markDone` → `refreshQueueCompletion()`。
-  在 `TasksRunner.applyFinish` 的 `.done` 分支后调用 `notifyFinishedQueues()`：
-  - 遍历 `state == .done`、`local.queueSessions[id] != nil`、`local.queueNotified[id] == nil` 的队列；
-  - 组装摘要，`env.perform` 后台调 `env.notifySession(sessionId, text)`（复用 `promptSession`）；
-  - 成功后写 `queueNotified[id]`；**失败也写**（记日志），避免死循环。
-- 重启补发：`step()` 的空闲分支扫一次上述条件（app 在 done 与回传之间退出时补发）。
+- 回传触发：任务进入终态（`done` / `failed` / `needsReview` / `cancelled`）时调用
+  `notifyFinishedQueues()`；队列进入 `.done` 时同一次调用再补一条收尾。它遍历有
+  `local.queueSessions[id]` 的队列：
+  - **逐任务**：`task.state.isFinished` 且 `local.taskNotified[taskID] == nil` → 组装本任务通知，
+    在同一个 `env.perform` 批次里按队列顺序调 `env.notifySession(sessionId, text)`
+    （复用 `promptSession`）；**发送前**写 `taskNotified[taskID]`。
+  - **队列收尾**：队列 `.done` 且 `local.queueNotified[id] == nil` → 组装收尾；**发送前**写
+    `queueNotified[id]`。单任务队列把任务通知与收尾合成一条（两个标记一起写）。
+  - **失败也写标记**（记日志），避免死循环。
+- 重启补发：`step()` 的空闲分支扫一次上述条件（app 在终态与回传之间退出时补发）。
+- 延后：交付会话正占用来源会话（`originBusyWithDelivery`）时整批延后，避免把通知插进
+  finalize turn、污染完成标记；有本队列的交付在跑（`deliveryInFlight`）时收尾延后，
+  等 PR 落定后再带上真实链接。
 
 ## 8. 回传内容
 
-- 触发：**仅队列进入 `.done`**。失败/取消会让队列停在 `.paused`，不触发；
-  若用户在面板重试/跳过后队列最终 done，则此时回传一次（摘要如实标出失败/取消项）。
-- 文案（给 X 的 agent，要求简短确认）：
+- 触发：**每个任务到达终态各回传一条**；队列进入 `.done` 再回传一条收尾。失败 / 待确认 /
+  取消会让队列停在 `.paused`，但**该任务的终态通知照发**（并写清后续不启动、给两个出口）；
+  若用户在面板重试/跳过后队列最终 done，收尾如实计数。
+- 逐任务通知（给 X 的 agent，要求简短确认）：
+
+```
+【任务面板】<标题> · <位次>/<总数> · <结局 ✓ / ✗ / ? / −>
+原因：<失败键>                                  ← 失败 / 待确认时
+本任务提交：<N 个>（或「未记录」）
+汇报：
+  <本任务汇报，单条上限 1500 字，超出标注「已截断」>
+队列进度：完成 N / 待确认 N / 失败 N / 取消 N / 剩余 N（共 N 条）
+队列已暂停：后续 N 个任务不会启动，不开 PR。      ← 失败 / 待确认时
+出口：重试（重跑本任务） / 跳过并继续（保留本次记录，继续下一棒） ← 失败 / 待确认时
+```
+
+- 队列收尾（仅在 `.done`）：
 
 ```
 【任务面板】队列「<name>」已全部完成（<done>/<total>）
-分支：<branch> → <base>　耗时：HH:mm → HH:mm（N 分钟）
-
-1. ✓ <标题>
-   汇报：
-     <完整汇报，单条上限 1500 字，超出标注「已截断」>
-   PR：<prUrl>
-2. ✗ <标题>
-   失败：<error>
-   汇报：
-     <失败前的最后一段话>
-
-队列 PR：<url> / 未开 PR（<prError>）
-分支上相对 <base> 的提交：
-  <oneline 列表>          ← 仅 git 仓库且有分支时
+计数：完成 <N> 条 / 待确认 <N> 条（共 <N> 条；失败 <N> · 取消 <N> · 剩余 <N>）
+分支：<branch> → <base>
+耗时：HH:mm → HH:mm（N 分钟）
+PR：<prUrl> / 未开（<prError>）
+汇报全文：<workspace>/.dsh/tasks/reports/<queueId>.md
 
 这是任务面板的完成通知。请用一两句话确认收到并等待用户验收，不要主动改代码或新建任务。
 ```
 
-- 报告取 `TaskItem.report` 的**完整文本**（runner 在任务结束时写回），不再只取首行；
-  失败项同时给错误键与失败前的汇报。**不回传会话标识**（用户 2026-09-30）。
-- 提交列表由 `git log --oneline <base>..HEAD` 得到，在 `env.perform` 后台执行；
-  **非 git 仓库 / 不切分支的队列不显示**。
-- PR 信息取 `queue.prUrl` / `prError`，**不等 PR 会话结束**。
+  失败 / 取消 / 待确认存在时首行改为「队列「<name>」已结束」，不再把没完成说成「全部完成」；
+  收尾**不重列每棒汇报**，只给计数、分支、PR 与汇报全文路径。
+- **单任务队列只发一条**：任务通知与收尾合并（去掉重复的队列抬头），不会为同一个结局发两条。
+- 报告取 `TaskItem.report` 的**完整文本**（runner 在任务结束时写回）；逐任务通知按**单条
+  1500 字**截断，超出标注「已截断」。**不回传会话标识**（用户 2026-09-30）。
+- 本任务提交读 `board.taskCommits(task.id)`，不重跑 git：`nil` 渲染「未记录」，`0` 渲染
+  「0 个」——两者不是一回事。提交逐条最多列 10 条，其余只报省略计数。
+- 分支行 / PR 归收尾；不再把整条分支的提交列表塞进通知。**非 git 仓库 / 不切分支的队列
+  不显示分支行**。PR 信息取 `queue.prUrl` / `prError`，收尾在交付结束后才发，以便带上真实链接。
 
 ## 9. 技能改造（task-todo）
 
@@ -237,24 +254,24 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 | `$DSH_SESSION_ID` 为空 | 照常建队列，但不回传（无 origin） |
 | 会话被删 / 归档 | `promptSession` 失败 → 记日志、标记已通知、不重试；完成情况仍在任务卡上 |
 | 会话正忙 | `session.prompt` 的 `queue` 模式天然排队，安全 |
-| 重复回传 | `queueNotified` 幂等；重启补发只针对未通知的 done 队列 |
+| 重复回传 | `taskNotified` / `queueNotified` 幂等；重启补发只针对未通知的任务与 done 队列 |
 | 一个会话建多个 draft 队列 | `queue/start` 无 queueId 时返回 409 + 候选，agent 消歧 |
-| 队列停在 paused | 不回传（按定稿） |
+| 队列停在 paused | 不发收尾；该终态任务已各发一条逐任务通知（失败 / 待确认 / 取消带出口） |
 
 ## 12. 测试
 
 - `tests/tasks-panel/model-tests.swift`：新队列 = `.draft`；draft 不自动起跑；draft → active；重启后 draft 保持。
 - `tests/tasks-panel/runner-tests.swift`：`createQueueWithTasks` 落成 draft + queued 且不启动；
-  done 触发一次回传且文案含各任务状态；paused（失败/取消）不触发；失败跳过并跑完后 done 触发；
-  重启补发；`queueNotified` 幂等。
+  N 个任务 = N 条逐任务通知 + 1 条队列收尾，每条只含本任务汇报；失败 / 取消 / 待确认各发一条；
+  单任务合并成一条；交付占用来源会话时延后；重启补发；`taskNotified` / `queueNotified` 幂等。
 - `tests/tasks-panel/api-tests.swift`：两个新路由的解析/响应；`session` 可选；start 消歧 409 / 404。
 - `tests/skills/run.sh`：内嵌与仓库副本字节一致。
 - `tests/l10n/run.sh`：新键成对。
 
 ## 13. 分期
 
-- **P0**：`.draft` 状态；`queue/create` + `queue/start`；`queueSessions` / `queueNotified`；
-  done 回传；技能改造。
+- **P0**：`.draft` 状态；`queue/create` + `queue/start`；`queueSessions` / `queueNotified`
+  （2026-11-19 起再加 `taskNotified`）；逐任务终态通知 + done 收尾；技能改造。
 - **P1**：面板「回传会话」标记；start 按队列名消歧；重启补发（可与 P0 同批）。
 - **P2（2026-10-01 实现）**：队列改为**可追加的活泳道**——`.done` 只是「当前一批任务都结束」，
   追加任务回到 `.draft` 并**重臂回传**（`.paused` 追加保持 paused）；PR/push 改为**手动发布**
@@ -268,11 +285,12 @@ queueNotified: { "q-xxxx": "2026-09-30T..." } // 已回传标记（幂等 / 重�
 ## 14. 已定决策
 
 1. 回传方式：`session.prompt`（mode=queue），文案要求 agent 仅简短确认。
-2. 回传触发：**仅队列进入 `.done`**；失败/取消（`.paused`）不回传。
-3. 手动取消：不回传。
+2. 回传触发（2026-11-19 起）：**逐任务终态各一条 + 队列 `.done` 收尾**；失败 / 取消 /
+   待确认也会发该任务的通知（队列保持 `.paused`，通知写清后续不启动）。
+3. 手动取消：发一条「已取消」的逐任务通知，不发收尾。
 4. 新建队列状态独立为 `.draft`，不复用 `.paused`。
 5. 启动入口：会话说「启动队列」或面板点开始；两者都不改变创建时建立的队列↔会话关联。
-6. PR：不等待 PR 会话；队列 done 即回传。
+6. PR：不等待 PR 会话；队列 done 即发收尾（若本队列的交付正在跑，收尾等它结束以带真实 PR）。
 7. 技能默认：落成任务默认建「等待态队列 + 入队」；task-only 仅在用户明确要求时。
 8. Git 工作流四选一：pr / merge / push / none（无 = 不收尾），**队列级覆盖 + 按工作区的默认**（设置抽屉里配）；
    autoPR 决定「完成后是否自动收尾」（队列配置、**默认关**），手动「发布」按钮同样按解析出的模式执行；

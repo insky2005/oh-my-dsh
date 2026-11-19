@@ -1,7 +1,7 @@
 # 任务面板设计（IssueRunner / Tasks）
 
 > 状态：**v1 已实现**（v1.8.0+，方案 E：branch-based 串行队列）；**v2 已实现**（2026-09-24：多队列泳道 + 手动任务 + 卡片式 UI + token 仅文件；决策记录见 §V2-13）。v1 章节保留为历史决策记录，实现现状以 §V2-* 与 `.dsh/wiki/modules/issue-runner-panel.md` 为准
-> 更新：2026-09-27（§V2-14：issue 任务与手动任务对齐；`issue-resolve` 技能退役）
+> 更新：2026-09-27（§V2-14：issue 任务与手动任务对齐；`issue-resolve` 技能退役）；2026-11-19（交接简报改为「有预算的衰减」：三档 + 6000 字总预算，非 done 全文不降级）
 > 关联：`docs/process/git-workflow.md`（分支规范）、`docs/design/shell/ui-color-scheme.md`（配色令牌）、`docs/design/panels/projects-panel-design.md`（卡片面板体例）、`docs/process/dsh-version-impact.md`（会话 RPC 耦合面）、`.dsh/wiki/modules/issue-runner-panel.md`
 
 ## 目标
@@ -27,7 +27,7 @@ IssueRunnerPanelController (macOS, Swift)
   ├── 任务列表（NSTableView）：issue 编号/标题/标签/状态徽标
   ├── 仓库识别：git remote → owner/repo（自动，工作区切换时）
   ├── GitHub REST：拉 issues（过滤 PR）/ 创建 PR（token 走文件，见 §V2-1）
-  ├── git 流水线（Process）：checkout main → pull → checkout -b fix/issue-N → 校验推送
+  ├── git 流水线（Process）：checkout <base> → pull --ff-only <remote> <base> → checkout -b fix/issue-N → 校验推送
   ├── dsh 会话：create(workspaceId) → rename("fix(#N): …") → prompt(issue-resolve) → 轮询 → cancel
   └── 串行队列：一次一个 running，完成自动启动下一个 pending
 
@@ -39,7 +39,7 @@ $DSH_HOME/skills/issue-resolve/SKILL.md —— 代理在任务会话中加载的
 ## 数据流（处理 issue #N）
 
 1. 用户点「处理」（或「全部处理」）
-2. `git checkout main` → `git pull --ff-only` → `git checkout -b fix/issue-N`
+2. `git checkout <base>` → `git pull --ff-only <remote> <base>` → `git checkout -b fix/issue-N`
 3. `session.create(workspaceId=主项目)` → `session.rename("fix(#N): 标题")`
 4. `session.prompt`（queue 模式）注入 issue-resolve skill + issue 内容
 5. 轮询 `session.list` 中该会话 `running` → 结束后
@@ -246,7 +246,7 @@ struct Queue {
 - 失败原因以 **L10n 键**存进 `error` 字段（`TaskFailure` 的 rawValue，如 `tasks.errDirtyTree`），面板显示时 `L10n.tr(error)`；
 - **面板接线（第 5 步）**：`setupRunner(repoRoot:)` 读四文件 → `reconcileAfterRestart`（上次 running 记为「已中断」、active 队列暂停）→ 建 `TasksRunner` 并起 3s 定时器（`step()`）；issue 拉取经 `runner.updateBoard` 合并进 board（新增 issue → pending，已存在的刷新 title/labels/body，不再 open 的标 closed，**不碰 running/queued**），索引写入仍逐条 `mergeIssueTask`；表格用**指纹比对**（任务状态 + PR + 队列状态）只在真正变化时重建，避免每 3s 刷新打断滚动。
 
-**修掉的既有缺陷**：v1 `gitCheckoutBranch` 里 `checkout main` 与 `pull --ff-only` 的失败被 `_ =` 吞掉，导致新分支可能从**上一个任务的分支**或陈旧提交切出（静默继承 / 静默偏离）。V2 改为显式三步（`checkout <base>` → `pull --ff-only` → `checkout -b <branch>` 或复用已存在分支），**任一步失败即判该任务 failed 并暂停队列**，绝不静默继续。
+**修掉的既有缺陷**：v1 `gitCheckoutBranch` 里 `checkout main` 与 `pull --ff-only` 的失败被 `_ =` 吞掉，导致新分支可能从**上一个任务的分支**或陈旧提交切出（静默继承 / 静默偏离）。V2 改为显式三步（`checkout <base>` → `pull --ff-only <remote> <base>` → `checkout -b <branch>` 或复用已存在分支），**任一步失败即判该任务 failed 并暂停队列**，绝不静默继续。pull 自己点名远端（`github` > `origin` > 首个，沿用 push 的偏好）与基线，**不再要求本地基线分支配置了 upstream** —— 2026-11-19 实测：远端从 `origin` 换成 `github` 后 `main` 失去 upstream，裸 `git pull --ff-only` 报 "There is no tracking information"，队列第一棒直接 `tasks.errPull`，而 `app.log` 只有一句「could not start (tasks.errPull)」。现在失败的 `pull` / `checkout` / `status` 会把 **git 自己的 stderr** 写进 `app.log`，并作为卡片的 `errorDetail`（失败原因不再只有一个键）；「没有 upstream / 远端没有同名 ref」单独归为 `tasks.errPullNoUpstream`（**环境类、可自愈**：提示执行 `git fetch` 并以 `<remote>/<base>` 作为比较基线后重试），`git status` 自己失败则是 `tasks.errGitStatus`，不再被误报成「工作区有未提交改动」；无远端时照旧跳过 pull。
 
 ### V2-6 分支与 PR 规则
 
@@ -300,7 +300,7 @@ struct Queue {
 
 | 步骤 | issue 任务（自动队列） | 手动任务（用户队列） |
 |---|---|---|
-| 切分支 | 每任务一次：`checkout main → pull → checkout -b feature/issue-N 或 fix/issue-N` | 队列首个任务：`checkout <baseBranch> → pull → checkout -b <queue.branch>`；队内后续任务：**不切分支** |
+| 切分支 | 每任务一次：`checkout <base> → pull --ff-only <remote> <base> → checkout -b feature/issue-N 或 fix/issue-N` | 队列首个任务：`checkout <baseBranch> → pull --ff-only <remote> <baseBranch> → checkout -b <queue.branch>`；队内后续任务：**不切分支** |
 | 建会话 | `session.create(workspaceId)` + `session.rename(fix(#N): …)` | 同左，会话名 = 任务标题 |
 | 提示词 | issue-resolve skill + issue 正文 | **通用提示词**：工作目录 / 分支 / 队列内位置、任务描述、要求（改代码 → 跑测试 → commit → push）、token 文件位置（需要 GitHub 写操作时）；**按工作区「现在的形状」写**（非 git / git 无 GitHub 远端 / GitHub 三态，见本节末两条修正），不复用 issue-resolve skill |
 | 收尾 | 校验分支已推送 → 开 PR → done(PR url) | 队列跑完才收尾（见 §V2-6）；单个任务完成只 push |
@@ -365,11 +365,11 @@ struct Queue {
 > **实现（2026-09-27 补充 · F4：一任务一会话 + 交接简报）**：队列里**每个任务各自一条 dsh 会话**是有意的 —— 上下文小、审查面板按会话审的改动正好对应一张卡片、取消/会话名/「打开会话」都是任务级的。代价是下一棒没有记忆（它只看得到分支上的 commit，看不到上一棒的对话），而把整条队列塞进一个会话会同时失掉上面那几样（审查跨任务、取消变整队、失败会话被下一棒继承）、并让上下文变成不可控变量。于是补的是**交接**，不是共享上下文：
 >
 > - **`TaskPrompts.QueueBrief`**（`TasksRunner.swift`）：队列名、位次（第 k/n）、前面每一棒的标题与结局（`.done` / `.failed`+失败原因 / `.cancelled`）、**它们在各自会话里的最后一段汇报**、分支上相对基线的提交列表；渲染成提示词里的 `## 队列信息` 段（2026-09-27 起：抬头与**开 PR 会话**的那一段统一，字段顺序也统一 —— 队列 → 分支/基线 → 分支上已有的提交 → 前面任务的汇报；按用户的要求整段放在**所有要求之后**），以「不要重做已完成的部分，只做本任务」收尾。
-> - **汇报不截断**：短摘要恰好会丢掉下一棒最需要的东西（决策理由、没做完的事、坑）。代价是简报长度随汇报线性增长 —— 因此 runner 把简报字符数写进 `app.log`（`tasks: brief for <task> is N chars`），长了看得见。
+> - **有预算的衰减**：交接简报不是「原样搬运」——短摘要会丢掉下一棒最需要的东西（决策理由、没做完的事、坑），而全文会随队列长度线性膨胀、把提示词撑爆。折中是**分档衰减 + 总预算**：最近 2 棒给全文；同轮更早的 done 棒压成一行（标题 · 结局 · 本棒提交数 · 摘要首句，首句上限 80 字）；更早轮次每轮一行（第 N 轮 · 任务数 · 提交数 · 最后一次摘要）。**非 done（失败 / 取消 / 待确认）永远给全文**——那是重试最需要的上下文，只剩它们时宁可超预算也不截断。总预算 6000 字，超预算按「最老 done 全文 → 一行 → 丢最老提交（列表只留最近 20 条）→ 丢最老轮次 / 同轮行」逐条降级；渲染前剥掉围栏代码块与完成标记行。取舍是 done 的历史会损失细节：非 done 的细节完整保留、最近两棒优先保留，预算仍是硬上界（极端长度下最近两棒也会降级）；`app.log` 记 `tasks: brief for <task> is N chars (head=…, commits=…, earlier=…, footer=…; degraded: reports=…, commits=…, rows=…)`，长了、降了多少都看得见。
 > - **失败 / 被取消的一棒同样进简报**：否则「重试」就是从零重新探索一遍。没有会话记录时写明「它没有留下汇报」，而不是假装无事发生。
 > - **数据来源**：core 新增 `sessionReport()`（`core/lib/review-log.js`，取 `assistant/message` 事件里最后一条有文本的消息）+ CLI `ohmy-core brief report <sessionId> [--workspace <dir>] [--dsh-home <dir>]`；壳层通过既有的 `CoreBridge` 调它（与审查面板同一套会话日志解码，含 .zstd）。**简报在后台步骤里构建**（读日志 + 问 git 都是阻塞操作），不进主线程。
 > - **第一个任务**：没有「前面已经做过的」；但分支上已有的提交照旧告诉它（队列复用同一分支重跑时，那就是上一轮留下的状态）。issue 任务的自动队列是单任务队列，天然没有简报。
-> - 回归：core `core/tests/session-report.test.js`（5 例：取最后一条 / 忽略流式分片 / 没有汇报 / 会话不存在 / 不截断）；运行器新增 5 节用例（第一个任务无前情、第二位带上队列名位次标题汇报提交与「不要重做」、失败的一棒写清原因、超长汇报原样带上、无会话时写明没有汇报）。
+> - 回归：core `core/tests/session-report.test.js`（5 例：取最后一条 / 忽略流式分片 / 没有汇报 / 会话不存在 / 不截断——core 取全文，衰减只发生在简报渲染层）；运行器用例（第一个任务无前情、第二位带上队列名位次标题汇报提交与「不要重做」、失败的一棒写清原因、最近 2 棒全文 / 更早轮次压行、非 done 全文不被降级、超长 done 汇报会被降级、50 棒之后简报仍 ≤ 6000 字、无会话时写明没有汇报）。
 
 > **实现（2026-09-27 补充 · F5 + 超时）**：
 >
@@ -393,7 +393,7 @@ struct Queue {
 > - **提示词**：非 git 目录里不再要求 commit / push（那是把代理往 `git init` 上引），改为「直接在当前目录修改、不要 git init、不要 commit / push」。
 >   ⚠️ **2026-09-27 再次修正**：那句「不要 git init」**管过了界** —— 用户派了一个任务叫「初始化 git 仓库」，提示词却让代理不要做这件事。这条 rail 的本意是**壳层那一半**（管线不切分支、不提交、不推送），不是禁止任务本身；措辞改成「壳层不会切分支、不会提交、不会推送。默认直接在当前目录修改文件即可；**任务本身要求初始化仓库或提交时，照任务做**」，第 4 条同理（「默认不要 commit、不要 push……任务要求建立仓库／提交时才做」）。
 > - **任务改了工作区形状之后要重新识别**：面板在 adopt 时定下「这个目录是不是 git 仓库 / 有没有 GitHub 远端」，并把同两个事实交给 runner 的 env；一个 `git init` 任务会让它们全部过期 —— 头部继续说「非 Git 仓库」、队列表单继续不给分支字段、`全部处理` 继续说「不切分支」。现在**任务结束（或该工作区转入空闲）时重新探测**：纯模型 `TaskWorkspaceShape.change(wasGit:hadRemote:isGitNow:hasRemoteNow:)` 判断「变成 git 仓库 / 多了 GitHub 远端」，面板据此 `workspaces.invalidate(path)` + `adoptWorkspace(path)` 重建 runner（**必须重建**：env 里的 `canSwitchBranches` 是建的时候抄下来的），并在状态行说一句。两条纪律：① `invalidate` **不动 `reconciled`** —— 板子还是这次运行的板子，重新对账会把在跑的任务判成「上次运行被中断」；② 只在**该工作区没有任务在跑**时重建，否则两个 runner 会各自 step 同一张板子。回归：视图模型 8 项（四种变化 + 两种不变 + 远端消失不重识别）、注册表 5 项（invalidate 后重建且 `reconcile` 仍为 false）。
-> - **空仓库（刚 `git init`）也要能进队列分支**：重新识别一旦生效，紧接着的那个任务就会走**正常**的分支进入序列 —— 而它在空仓库里**必然失败**：`git checkout main` 在 HEAD 未出生时报 `pathspec 'main' did not match`（`errCheckout`），而且 `git init` 之后留下的文件全是未跟踪的，「工作区脏」那条也会先拦住它。`TaskGit.enter` 现在先问一次 `hasCommits()`（`rev-parse --verify --quiet HEAD`）：**空仓库跳过「切基线 / pull / 干净检查」三步，直接用 `checkout -b` 从尚未出生的 HEAD 开分支** —— 空仓库里没有任何提交可以丢，任务的工作自然成为第一个提交。有提交的仓库**完全不变**（回归 6 项：空仓库只做一次 `checkout -b`、既不查 status 也不 pull；普通仓库照旧先查脏、先切基线、再 pull；脏仓库仍然被拦住）。
+> - **空仓库（刚 `git init`）也要能进队列分支**：重新识别一旦生效，紧接着的那个任务就会走**正常**的分支进入序列 —— 而它在空仓库里**必然失败**：`git checkout main` 在 HEAD 未出生时报 `pathspec 'main' did not match`（`errCheckout`），而且 `git init` 之后留下的文件全是未跟踪的，「工作区脏」那条也会先拦住它。`TaskGit.enter` 现在先问一次 `hasCommits()`（`rev-parse --verify --quiet HEAD`）：**空仓库跳过「切基线 / pull / 干净检查」三步，直接用 `checkout -b` 从尚未出生的 HEAD 开分支** —— 空仓库里没有任何提交可以丢，任务的工作自然成为第一个提交。有提交的仓库**完全不变**（回归 6 项：空仓库只做一次 `checkout -b`、既不查 status 也不 pull；普通仓库照旧先查脏、先切基线、再显式 `pull --ff-only <remote> <base>`；脏仓库仍然被拦住）。
 > - **确认框**：`TasksRunAllModel` 现在收 `gitAvailable`，三种情形分开说 —— git + GitHub「队列跑完开 PR」／git 无 GitHub「只切分支，不开 PR」／非 git 目录「不切分支也不开 PR」。
 > - 回归：模型（`switchesBranch: false` → 无分支）、运行器（非 git 目录里批量启动：**一条 git 命令都不跑**、任务照常跑起来；已存在的带分支自动队列在重试时被修好；提示词断言「不要 git init / commit」）、视图模型（非 git 的确认框文案）。
 
@@ -634,7 +634,7 @@ V2-8m 对齐的是**布局**，这一版把**样式**也对齐到同一套方块
 2. **模型与持久化**：TaskItem / Queue 编解码往返；`index.json` 旧格式兼容（无 `source` 视为 github、无 id 用 `issue-N`）；`manual.json` 增删改查；`queues.json` 读写；**`local.json` sessions 换键兼容**（数字键 ↔ `issue-N`）；坏文件不崩溃且不删除；
 3. **token 解析**：临时 `DSH_HOME` 下「专属文件 → 通用文件 → nil」三级；保存写文件且权限 `0600`；空值删文件；断言实现里不再有钥匙串路径；
 4. **卡片视图模型**：给定 TaskItem / Queue → 断言标题、来源徽标、状态徽标、队列头文案与进度、主操作标题与可用性（把 `primaryActionTitle` 一类纯函数抽出来覆盖 queued / interrupted / manual / 队列暂停等新分支）；
-5. **队列运行器**（已落地，`runner-tests.swift` 108 项）：假 git + 假 dsh 驱动全流水线 —— 分支进入（clean 检查 → checkout base → pull → checkout[-b]）、入队即激活队列、全局串行（第二个队列不许并发）、队内第二项不切分支、**队列级 PR 只在最后一项收尾且复用已有 PR**、失败各档（脏工作区 / checkout / pull / 建会话 / 提示词 / 未推送 / 超时）都暂停队列、取消 / 重试 / 跳过并继续、重启恢复不自动开跑、issue 任务自动单任务队列与重试复用。
+5. **队列运行器**（已落地，`runner-tests.swift` 108 项）：假 git + 假 dsh 驱动全流水线 —— 分支进入（clean 检查 → checkout base → 显式 `pull --ff-only <remote> <base>` → checkout[-b]，失败时把 git 的 stderr 带进日志与卡片、无 upstream 归为可自愈环境类）、入队即激活队列、全局串行（第二个队列不许并发）、队内第二项不切分支、**队列级 PR 只在最后一项收尾且复用已有 PR**、失败各档（脏工作区 / checkout / pull / 建会话 / 提示词 / 未推送 / 超时）都暂停队列、取消 / 重试 / 跳过并继续、重启恢复不自动开跑、issue 任务自动单任务队列与重试复用。
 
 同步：扩展 `core/tests/tasks.test.js`（manual / queue / sessions 换键）；把 `tests/tasks-panel/run.sh` **同时**登记进 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`（两处清单必须一致）。
 
