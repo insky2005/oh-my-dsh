@@ -44,6 +44,13 @@ final class FakeRepo {
     var pushed: Set<String> = []
     var knownBranches: Set<String> = ["main"]
     var failing: Set<String> = []
+    /// stderr for a FAILING command, keyed by the joined arguments — lets a test
+    /// prove git's own words reach app.log / the card's errorDetail.
+    var stderrMessages: [String: String] = [:]
+    /// A repository whose baseline branch LOST its upstream (remote renamed
+    /// origin → github, 2026-11-19): the bare `git pull --ff-only` fails like real
+    /// git, while the explicit `git pull --ff-only <remote> <base>` works.
+    var requiresExplicitPull = false
     private(set) var calls: [String] = []
     private(set) var checkouts: [String] = []
     /// What "git log --oneline base..HEAD" answers — the commits the queue's branch
@@ -54,13 +61,39 @@ final class FakeRepo {
     var commitsByRange: [String: [String]] = [:]
 
     func git() -> TaskGit {
-        TaskGit(run: { [unowned self] args in self.run(args) },
-                remoteName: { [unowned self] in self.remote })
+        TaskGit(run: { [unowned self] args in
+                   let result = self.record(args)
+                   return result.succeeded ? result.stdout : nil
+               },
+               capture: { [unowned self] args in self.record(args) },
+               remoteName: { [unowned self] in self.remote })
+    }
+
+    /// Record the call and return what real git would answer, exit status and
+    /// stderr included (the runner reads stderr through TaskGit.capture).
+    private func record(_ args: [String]) -> GitCommandOutput {
+        let key = args.joined(separator: " ")
+        calls.append(key)
+        if !isRepo {
+            return GitCommandOutput(stdout: "",
+                                    stderr: "fatal: not a git repository (or any of the parent directories): .git",
+                                    status: 128)
+        }
+        if failing.contains(key) {
+            return GitCommandOutput(stdout: "",
+                                    stderr: stderrMessages[key] ?? "fatal: simulated failure: " + key,
+                                    status: 1)
+        }
+        guard let out = run(args) else {
+            return GitCommandOutput(stdout: "",
+                                    stderr: stderrMessages[key] ?? "fatal: unsupported command: " + key,
+                                    status: 1)
+        }
+        return GitCommandOutput(stdout: out, stderr: "", status: 0)
     }
 
     private func run(_ args: [String]) -> String? {
         let key = args.joined(separator: " ")
-        calls.append(key)
         if !isRepo { return nil }
         if failing.contains(key) { return nil }
         guard let first = args.first else { return nil }
@@ -86,6 +119,9 @@ final class FakeRepo {
             current = target
             return "Switched to " + target
         case "pull":
+            // A renamed remote leaves the base branch without an upstream: only the
+            // explicit `pull --ff-only <remote> <base>` that names both works.
+            if requiresExplicitPull, args.count == 2 { return nil }
             return "Already up to date."
         case "log":
             if let range = args.last, let exact = commitsByRange[range] {
@@ -560,7 +596,8 @@ do {
 do {
     let (board, taskID, queueID) = singleTaskBoard()
     let h = Harness(board: board)
-    h.repo.failing.insert("pull --ff-only")
+    h.repo.failing.insert("pull --ff-only origin main")
+    h.repo.stderrMessages["pull --ff-only origin main"] = "fatal: unable to access remote"
     _ = h.runner.enqueue(taskID: taskID, into: queueID)
     check(h.board.task(taskID)?.error == "tasks.errPull", "a failed pull is reported")
 }
@@ -628,7 +665,7 @@ do {
     let h = Harness(board: board, github: true)
     h.repo.remote = nil
     _ = h.runner.enqueue(taskID: taskID, into: queueID)
-    check(h.repo.calls.contains("pull --ff-only") == false, "no pull without a remote")
+    check(h.repo.calls.contains { $0.hasPrefix("pull") } == false, "no pull without a remote")
     h.dsh.finishAll()
     _ = h.runner.step()
     check(h.board.task(taskID)?.state == .done, "a local-only repo still finishes")
@@ -2116,7 +2153,7 @@ do {
     eq(empty.checkouts, ["feature/first"], "只做一次 checkout -b，没有去切不存在的 main")
     check(!empty.calls.contains { $0.hasPrefix("status") },
           "空仓库里「工作区脏」这条不适用：没有提交可以丢")
-    check(!empty.calls.contains("pull --ff-only"), "也没有远端可 pull")
+    check(!empty.calls.contains { $0.hasPrefix("pull") }, "也没有远端可 pull")
 
     // 有提交的普通仓库完全不变：先干净、先切基线、再 pull、再开分支。
     let normal = FakeRepo()
@@ -2124,13 +2161,92 @@ do {
     check(normal.calls.contains("status --porcelain --untracked-files=no"),
           "普通仓库仍然先查工作区（只看已跟踪改动）")
     check(normal.calls.contains("checkout main"), "先切基线")
-    check(normal.calls.contains("pull --ff-only"), "有远端就 pull")
+    check(normal.calls.contains("pull --ff-only origin main"), "有远端就显式 pull 远端与基线")
 
     // 脏工作区在普通仓库里依然拦住 —— 空仓库是唯一的例外。
     let dirty = FakeRepo()
     dirty.worktreeClean = false
     eq(dirty.git().enter(branch: "feature/x", base: "main"), .dirtyWorktree,
        "普通仓库脏了就停下，绝不覆盖用户的改动")
+}
+section("分支进入：显式 pull <remote> <base>，不再依赖基线分支的 upstream")
+do {
+    // 2026-11-19 实测：本仓库远端从 origin 换成 github 后 main 失去 upstream，
+    // 裸 `git pull --ff-only` 报 "There is no tracking information"，队列第一棒
+    // 直接 tasks.errPull。进入分支时自己点名远端与基线，就不依赖那条配置了。
+    let repo = FakeRepo()
+    repo.remote = "github"
+    repo.requiresExplicitPull = true
+    repo.stderrMessages["pull --ff-only"] = "There is no tracking information for the current branch."
+    eq(repo.git().enter(branch: "feature/x", base: "main"), .switched,
+       "基线分支没有 upstream 也能进队列分支")
+    check(repo.calls.contains("pull --ff-only github main"), "假 git 收到显式 pull <remote> <base>")
+    check(!repo.calls.contains("pull --ff-only"), "不再发裸 pull")
+
+    // 同一形状走完整 runner：队列第一棒真的跑起来，而不是 errPull。
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board)
+    h.repo.remote = "github"
+    h.repo.requiresExplicitPull = true
+    h.repo.stderrMessages["pull --ff-only"] = "There is no tracking information for the current branch."
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    check(h.board.task(taskID)?.state == .running, "无 upstream 的仓库里队列第一棒照常启动")
+    check(h.board.task(taskID)?.error == nil, "没有记 errPull")
+    check(h.repo.calls.contains("pull --ff-only github main"), "runner 发出的也是显式 pull 参数")
+}
+section("分支进入失败：git 的 stderr 进 app.log 与卡片 errorDetail")
+do {
+    // pull：网络类失败仍是 errPull，但卡片与日志要带上 git 的原话。
+    let message = "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com"
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board)
+    h.repo.failing.insert("pull --ff-only origin main")
+    h.repo.stderrMessages["pull --ff-only origin main"] = message
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.error, "tasks.errPull", "网络类 pull 失败仍是 errPull")
+    check(h.board.task(taskID)?.errorDetail?.contains("Could not resolve host") == true,
+          "git 的 stderr 作为 errorDetail 显示在卡片上")
+    check(h.rec.logged("Could not resolve host"), "同一句 stderr 写进 app.log")
+}
+do {
+    // 没有 upstream / 远端没有同名 ref：归为「可自愈的环境类」，给 fetch + 比较基线提示。
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board)
+    h.repo.failing.insert("pull --ff-only origin main")
+    h.repo.stderrMessages["pull --ff-only origin main"] = "fatal: couldn't find remote ref main"
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.error, "tasks.errPullNoUpstream",
+       "没有 upstream / 远端 ref 归为可自愈的环境类，而不是笼统 errPull")
+    let detail = h.board.task(taskID)?.errorDetail ?? ""
+    check(detail.contains("origin/main"), "错误点名远端/基线（origin/main）")
+    check(detail.contains("couldn't find remote ref"), "并带上 git 的原始 stderr")
+    check(h.rec.logged("tasks.errPullNoUpstream") && h.rec.logged("couldn't find remote ref"),
+          "日志同时写原因键与 stderr")
+}
+do {
+    // status 自己失败：独立原因，不再 fail-closed 成「工作区脏」。
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board)
+    h.repo.failing.insert("status --porcelain --untracked-files=no")
+    h.repo.stderrMessages["status --porcelain --untracked-files=no"] = "fatal: index file corrupt"
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.error, "tasks.errGitStatus",
+       "status 失败有独立原因，不再伪装成「工作区有未提交改动」")
+    check(h.board.task(taskID)?.errorDetail?.contains("index file corrupt") == true,
+          "status 的 stderr 也上卡片")
+    check(h.rec.logged("index file corrupt"), "status 的 stderr 也进 app.log")
+}
+do {
+    // checkout 失败同样带 stderr。
+    let (board, taskID, queueID) = singleTaskBoard()
+    let h = Harness(board: board)
+    h.repo.failing.insert("checkout main")
+    h.repo.stderrMessages["checkout main"] = "error: Your local changes would be overwritten by checkout"
+    _ = h.runner.enqueue(taskID: taskID, into: queueID)
+    eq(h.board.task(taskID)?.error, "tasks.errBranch", "checkout 失败仍是 errBranch")
+    check(h.board.task(taskID)?.errorDetail?.contains("local changes would be overwritten") == true,
+          "checkout 的 stderr 也上卡片")
+    check(h.rec.logged("local changes would be overwritten"), "checkout 的 stderr 也进 app.log")
 }
 section("未跟踪文件不算「工作区脏」：只挡已跟踪改动（git 自己判撞名）")
 do {

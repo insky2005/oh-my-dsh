@@ -277,6 +277,18 @@ do {
     check(card.detail.contains("tasks.detailSession"), "the session is listed in the details")
     check(card.detail.contains("tasks.errDirtyTree"), "the failure reason is translated through L10n")
     check(card.detail.contains("do the thing"), "the task body is in the details")
+
+    // git 的 stderr 必须上卡片：pull / checkout / 非 git 的错误键没有 %@ 占位符，
+    // 只把 detail 当格式化参数会把它静默丢掉（2026-11-19 只剩一个键的那次）。
+    let checkout = TaskItem.manual(title: "Branch", body: nil, id: "manual-0005eeee")
+    board.tasks.append(checkout)
+    board.markRunning(checkout.id)
+    board.markFailed(checkout.id, error: "tasks.errBranch",
+                     errorDetail: "fatal: a branch named 'feature/x' already exists")
+    let checkoutCard = TaskCardModel.build(board.task(checkout.id)!, board: board,
+                                           expanded: true, githubRepo: false)
+    check(checkoutCard.detail.contains("fatal: a branch named"),
+          "没有 %@ 的错误键也把 git 的 stderr 显示在卡片上")
 }
 
 section("详情里的汇报：任务结束后写回卡片（会话删了也还在）")

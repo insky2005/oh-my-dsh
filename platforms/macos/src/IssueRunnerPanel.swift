@@ -943,6 +943,10 @@ final class IssueRunnerPanelController: NSObject {
             git: TaskGit(run: { args in
                               Self.runProcess("/usr/bin/git", ["-C", primaryPath] + args, cwd: primaryPath)
                           },
+                          capture: { args in
+                              Self.runProcessCapturing("/usr/bin/git", ["-C", primaryPath] + args,
+                                                       cwd: primaryPath)
+                          },
                           remoteName: { Self.pushRemoteName(path: primaryPath) }),
             repoRoot: repoRoot,
             createSession: { cwd in
@@ -1081,6 +1085,10 @@ final class IssueRunnerPanelController: NSObject {
                 TaskGit(run: { args in
                              Self.runProcess("/usr/bin/git", ["-C", repo.absolutePath] + args,
                                              cwd: repo.absolutePath)
+                         },
+                         capture: { args in
+                             Self.runProcessCapturing("/usr/bin/git", ["-C", repo.absolutePath] + args,
+                                                      cwd: repo.absolutePath)
                          },
                          remoteName: { Self.pushRemoteName(path: repo.absolutePath) })
             },
@@ -1962,6 +1970,21 @@ final class IssueRunnerPanelController: NSObject {
     // MARK: - git helpers (native Process)
 
     static func runProcess(_ launch: String, _ args: [String], cwd: String? = nil) -> String? {
+        guard let result = runProcessCapturing(launch, args, cwd: cwd), result.succeeded else {
+            return nil
+        }
+        return result.stdout
+    }
+
+    /// The same invocation, keeping the exit status AND the output when it FAILS.
+    ///
+    /// runProcess used to throw the pipe away on a non-zero exit, so a failed
+    /// `git pull` / `git checkout` / `git status` had nothing to show but its L10n
+    /// key ("could not start (tasks.errPull)"). stdout and stderr share one pipe
+    /// (as before, so neither can fill and block the child); on success the text is
+    /// stdout, on failure it is git's own error text.
+    static func runProcessCapturing(_ launch: String, _ args: [String],
+                                    cwd: String? = nil) -> GitCommandOutput? {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: launch)
         proc.arguments = args
@@ -1972,8 +1995,12 @@ final class IssueRunnerPanelController: NSObject {
         do { try proc.run() } catch { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         proc.waitUntilExit()
-        guard proc.terminationStatus == 0 else { return nil }
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if proc.terminationStatus == 0 {
+            return GitCommandOutput(stdout: text, stderr: "", status: 0)
+        }
+        return GitCommandOutput(stdout: "", stderr: text, status: proc.terminationStatus)
     }
 
     /// The remote name used to push branches / check for pushes. Prefers the

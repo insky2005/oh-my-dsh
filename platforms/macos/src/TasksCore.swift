@@ -25,6 +25,13 @@ enum TaskFailure: String {
     case repoBranch = "tasks.errRepoBranch"
     case checkout = "tasks.errBranch"
     case pull = "tasks.errPull"
+    /// 分支进入：git status 自己失败（索引损坏 / 权限 / …）。以前会被 fail-closed
+    /// 当成「工作区脏」，把 git 的错误算到用户头上。
+    case gitStatus = "tasks.errGitStatus"
+    /// 分支进入：基线分支没有可用的 upstream（或远端根本没有这个名字）。2026-11-19
+    /// 实测：远端从 origin 换成 github 后 main 失去 upstream，队列第一棒直接 errPull。
+    /// 它是**环境类、可自愈**的失败，卡片给出 fetch + `<remote>/<base>` 比较基线的提示。
+    case pullNoUpstream = "tasks.errPullNoUpstream"
     case session = "tasks.errSession"
     case prompt = "tasks.errPrompt"
     case timeout = "tasks.errTimeout"

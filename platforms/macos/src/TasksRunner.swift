@@ -3,17 +3,50 @@ import Foundation
 // MARK: - git
 
 /// Where entering a queue's branch ended up.
+///
+/// The failing cases carry git's OWN stderr: "could not start (tasks.errPull)" told
+/// nobody whether it was DNS, a divergence, or a missing upstream (2026-11-19 — the
+/// remote was renamed origin → github and `main` lost its upstream, so the first
+/// task of the queue failed with no usable detail).
 enum GitEnterResult: Equatable {
     /// The queue has no branch: git is left completely alone.
     case noBranch
     /// Queue tasks after the first: the branch is already checked out.
     case alreadyOnBranch
     case switched
-    case notGitRepo
+    case notGitRepo(String?)
     case dirtyWorktree
-    case checkoutFailed
-    case pullFailed
-    case createBranchFailed
+    /// git status itself failed (corrupt index, permission, …). A distinct reason:
+    /// treating it as "dirty worktree" silently blamed the user's changes.
+    case statusFailed(String?)
+    case checkoutFailed(String?)
+    case pullFailed(String?)
+    /// The pull failed because the baseline branch has no usable upstream (or the
+    /// remote/ref it names does not exist). An ENVIRONMENT problem that heals
+    /// itself once the user fetches — worth its own key + hint, not bare errPull.
+    case pullNoUpstream(String?)
+    case createBranchFailed(String?)
+}
+
+/// What one git invocation produced, exit status and stderr included.
+/// The injected `capture` closure returns this; tests that only script stdout
+/// keep using `run` (see TaskGit).
+struct GitCommandOutput: Equatable {
+    var stdout: String
+    var stderr: String
+    var status: Int32
+
+    var succeeded: Bool { status == 0 }
+}
+
+/// What `git status --porcelain --untracked-files=no` says. A separate case for
+/// "git could not answer": the old fail-closed bool made that indistinguishable
+/// from real tracked changes.
+enum GitWorktreeStatus: Equatable {
+    case clean
+    case dirty
+    /// git status failed; the detail is its stderr, when there was any.
+    case failed(String?)
 }
 
 
@@ -28,13 +61,34 @@ struct TaskGit {
     /// git with these arguments in the repo root; nil when the command failed or
     /// could not be launched at all.
     var run: ([String]) -> String?
+    /// The same invocation with its exit status and stderr. Optional so the many
+    /// tests that script only stdout keep working; the real panel supplies it
+    /// (IssueRunnerPanel.runProcessCapturing), which is what lets a failure carry
+    /// git's own words to app.log and the card.
+    var capture: (([String]) -> GitCommandOutput?)? = nil
     /// Preferred remote name (github > origin > first), or nil for a repo with
     /// no remote at all — local-only repos are legitimate: no pull, no push
     /// check, no PR.
     var remoteName: () -> String?
 
+    /// The full result of one git call (stderr included when the host provides
+    /// `capture`); nil when git could not be launched at all. A non-zero exit is
+    /// NOT nil — that is the whole point: the caller needs its stderr.
+    private func probe(_ args: [String]) -> GitCommandOutput? {
+        if let capture = capture { return capture(args) }
+        guard let out = run(args) else { return nil }
+        return GitCommandOutput(stdout: out, stderr: "", status: 0)
+    }
+
+    /// stdout of a SUCCESSFUL call, else nil (the historical "did it work" read).
+    private func output(_ args: [String]) -> String? {
+        guard let result = probe(args), result.succeeded else { return nil }
+        return result.stdout
+    }
+
     func currentBranch() -> String? {
-        run(["rev-parse", "--abbrev-ref", "HEAD"])
+        guard let out = output(["rev-parse", "--abbrev-ref", "HEAD"]) else { return nil }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Whether the worktree has TRACKED local changes (staged or unstaged).
@@ -46,12 +100,21 @@ struct TaskGit {
     /// a branch switch). Fails CLOSED: a status command that cannot run counts as
     /// having changes.
     func hasTrackedChanges() -> Bool {
-        guard let out = run(["status", "--porcelain", "--untracked-files=no"]) else { return true }
-        return !out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        worktreeStatus() != .clean
+    }
+
+    /// The worktree status, with "git could not answer" kept apart from "dirty".
+    func worktreeStatus() -> GitWorktreeStatus {
+        let status = probe(["status", "--porcelain", "--untracked-files=no"])
+        guard let status = status, status.succeeded else {
+            return .failed(TaskGit.errorDetail(status?.stderr))
+        }
+        let out = status.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        return out.isEmpty ? .clean : .dirty
     }
 
     func branchExists(_ name: String) -> Bool {
-        run(["rev-parse", "--verify", "--quiet", name]) != nil
+        output(["rev-parse", "--verify", "--quiet", name]) != nil
     }
 
     /// Whether `base` can be resolved for a checkout: the local branch, or — when
@@ -63,13 +126,13 @@ struct TaskGit {
         guard !base.isEmpty else { return false }
         if branchExists(base) { return true }
         guard let remote = remoteName(), !remote.isEmpty else { return false }
-        return run(["rev-parse", "--verify", "--quiet", remote + "/" + base]) != nil
+        return output(["rev-parse", "--verify", "--quiet", remote + "/" + base]) != nil
     }
 
     /// Whether this repository has any commit at all. False for a directory that was
     /// just `git init`ed — HEAD is unborn there (`git rev-parse --verify HEAD` fails).
     func hasCommits() -> Bool {
-        run(["rev-parse", "--verify", "--quiet", "HEAD"]) != nil
+        output(["rev-parse", "--verify", "--quiet", "HEAD"]) != nil
     }
 
     /// The current HEAD commit hash (P4 产物校验的起始基线), or nil when git cannot
@@ -78,7 +141,7 @@ struct TaskGit {
     /// product": `TaskProductBaseline` compares it as-is so "unborn → still unborn"
     /// counts as no new commit while "unborn → a hash" counts as one.
     func headCommit() -> String? {
-        guard let out = run(["rev-parse", "HEAD"])?.trimmingCharacters(in: .whitespacesAndNewlines),
+        guard let out = output(["rev-parse", "HEAD"])?.trimmingCharacters(in: .whitespacesAndNewlines),
               !out.isEmpty else { return nil }
         return out
     }
@@ -103,9 +166,43 @@ struct TaskGit {
             // Unborn baseline: every commit reachable now is this task's.
             spec = "HEAD"
         }
-        guard let out = run(["log", "--oneline", "--no-decorate", spec]) else { return nil }
+        guard let out = output(["log", "--oneline", "--no-decorate", spec]) else { return nil }
         return out.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+    }
+
+    // MARK: - git's own words
+
+    /// git's stderr collapsed into one bounded line for the card / app.log. nil
+    /// when git said nothing (the caller still has its reason key).
+    static func errorDetail(_ stderr: String?, limit: Int = 500) -> String? {
+        guard let stderr = stderr else { return nil }
+        let lines = stderr.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return nil }
+        var text = lines.joined(separator: " ")
+        if text.count > limit { text = String(text.prefix(limit)) + "…" }
+        return text
+    }
+
+    /// Whether a failed pull means "the baseline branch has no usable upstream /
+    /// the remote ref is missing" rather than a network or divergence problem.
+    ///
+    /// This is the 2026-11-19 incident: `git pull --ff-only` without arguments
+    /// needs `branch.<base>.merge`, and a repository whose remote was renamed
+    /// origin → github still tracks `origin/main`. The queue must not depend on
+    /// that config (it now pulls explicitly), but when even the explicit pull
+    /// cannot find the ref, the user gets a self-healing hint instead of errPull.
+    static func isUpstreamFailure(_ stderr: String) -> Bool {
+        let text = stderr.lowercased()
+        return text.contains("no tracking information")
+            || text.contains("no upstream")
+            || text.contains("has no upstream branch")
+            || text.contains("couldn't find remote ref")
+            || text.contains("could not find remote ref")
+            || text.contains("no such remote")
+            || text.contains("does not appear to be a git repository")
     }
 
     /// Put the worktree on the queue's branch:
@@ -119,7 +216,10 @@ struct TaskGit {
     /// normal sequence cannot work in it.
     func enter(branch: String?, base: String) -> GitEnterResult {
         guard let branch = branch, !branch.isEmpty else { return .noBranch }
-        guard let current = currentBranch() else { return .notGitRepo }
+        let head = probe(["rev-parse", "--abbrev-ref", "HEAD"])
+        guard let head = head else { return .notGitRepo(nil) }
+        guard head.succeeded else { return .notGitRepo(TaskGit.errorDetail(head.stderr)) }
+        let current = head.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         if current == branch { return .alreadyOnBranch }
         // An UNBORN repository (fresh `git init`, no commits): HEAD points at nothing,
         // so `git checkout <base>` fails with "pathspec … did not match" — the task
@@ -130,16 +230,80 @@ struct TaskGit {
         // hasTrackedChanges — but the missing base still needs this exception.)
         let empty = !hasCommits()
         if !empty {
-            guard !hasTrackedChanges() else { return .dirtyWorktree }
-            guard run(["checkout", base]) != nil else { return .checkoutFailed }
-            if remoteName() != nil, run(["pull", "--ff-only"]) == nil { return .pullFailed }
+            switch worktreeStatus() {
+            case .clean:
+                break
+            case .dirty:
+                return .dirtyWorktree
+            case .failed(let detail):
+                return .statusFailed(detail)
+            }
+            let checkoutBase = probe(["checkout", base])
+            guard let checkoutBase = checkoutBase, checkoutBase.succeeded else {
+                return .checkoutFailed(TaskGit.errorDetail(checkoutBase?.stderr))
+            }
+            // EXPLICIT remote + base. A bare `git pull --ff-only` needs the local
+            // branch's configured upstream; this repository's remote was renamed
+            // origin → github and `main` kept tracking `origin/main`, so the first
+            // task of the queue died with tasks.errPull and no further explanation.
+            // The queue must not depend on that config: name the remote it already
+            // prefers (github > origin > first) and the base it is entering.
+            if let remote = remoteName(), !remote.isEmpty {
+                let pull = probe(["pull", "--ff-only", remote, base])
+                guard let pull = pull else { return .pullFailed(nil) }
+                if !pull.succeeded {
+                    if TaskGit.isUpstreamFailure(pull.stderr) {
+                        let context = remote + "/" + base
+                        let stderr = TaskGit.errorDetail(pull.stderr) ?? "git pull failed"
+                        return .pullNoUpstream(context + "：" + stderr)
+                    }
+                    return .pullFailed(TaskGit.errorDetail(pull.stderr))
+                }
+            }
         }
         if branchExists(branch) {
-            guard run(["checkout", branch]) != nil else { return .checkoutFailed }
+            let checkout = probe(["checkout", branch])
+            guard let checkout = checkout, checkout.succeeded else {
+                return .checkoutFailed(TaskGit.errorDetail(checkout?.stderr))
+            }
         } else {
-            guard run(["checkout", "-b", branch]) != nil else { return .createBranchFailed }
+            let create = probe(["checkout", "-b", branch])
+            guard let create = create, create.succeeded else {
+                return .createBranchFailed(TaskGit.errorDetail(create?.stderr))
+            }
         }
         return .switched
+    }
+}
+
+extension GitEnterResult {
+    /// The failure reason this result maps to (nil = the branch was entered, or
+    /// there was nothing to do).
+    var failure: TaskFailure? {
+        switch self {
+        case .noBranch, .alreadyOnBranch, .switched: return nil
+        case .notGitRepo: return .notGitRepo
+        case .dirtyWorktree: return .dirtyWorktree
+        case .statusFailed: return .gitStatus
+        case .checkoutFailed, .createBranchFailed: return .checkout
+        case .pullFailed: return .pull
+        case .pullNoUpstream: return .pullNoUpstream
+        }
+    }
+
+    /// git's own stderr (or the self-healing hint), for app.log and errorDetail.
+    var detail: String? {
+        switch self {
+        case .notGitRepo(let detail),
+             .statusFailed(let detail),
+             .checkoutFailed(let detail),
+             .pullFailed(let detail),
+             .pullNoUpstream(let detail),
+             .createBranchFailed(let detail):
+            return detail
+        case .noBranch, .alreadyOnBranch, .switched, .dirtyWorktree:
+            return nil
+        }
     }
 }
 
@@ -415,8 +579,15 @@ extension TasksRunner {
             let git = gitFor(repo)
             guard let wanted = branch, !wanted.isEmpty, git.hasCommits(),
                   git.currentBranch() != wanted else { continue }
-            guard !git.hasTrackedChanges() else {
+            switch git.worktreeStatus() {
+            case .clean:
+                break
+            case .dirty:
                 return (single ? .dirtyWorktree : .repoDirty, single ? nil : repo.id)
+            case .failed(let detail):
+                // git status itself failed: report THAT (with its stderr) instead of
+                // silently claiming the user's worktree is dirty.
+                return (.gitStatus, Self.repoDetail(repoID: single ? nil : repo.id, detail: detail))
             }
             guard git.baseIsResolvable(repoBase(repo)) else {
                 return (single ? .checkout : .repoNoBase,
@@ -427,18 +598,32 @@ extension TasksRunner {
         var switched: [String] = []
         for repo in targets {
             let entered = gitFor(repo).enter(branch: branch, base: repoBase(repo))
-            if let failure = failure(for: entered) {
+            if let failure = entered.failure {
                 // First failure: the specific reason (checkout / branch / pull). A
                 // failure AFTER another repo switched: the explicitly non-rolling-back
                 // reason, whose detail names what already moved.
                 guard switched.isEmpty else {
                     return (.repoBranch, repo.id + "（已切换：" + switched.joined(separator: "、") + "）")
                 }
-                return (failure, single ? nil : repo.id)
+                // Single target keeps today's key, but git's stderr is NEW and belongs
+                // on the card either way (a bare "切换分支失败" hid DNS / upstream).
+                return (failure, Self.repoDetail(repoID: single ? nil : repo.id,
+                                                 detail: entered.detail))
             }
             if entered == .switched || entered == .alreadyOnBranch { switched.append(repo.id) }
         }
         return (nil, nil)
+    }
+
+    /// "repo-a：<stderr>" for a multi-repo failure, bare stderr for a single target
+    /// (whose key already speaks for the one repository). nil when there is neither.
+    static func repoDetail(repoID: String?, detail: String?) -> String? {
+        let parts = [repoID, detail].compactMap { part -> String? in
+            guard let part = part?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !part.isEmpty else { return nil }
+            return part
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "：")
     }
 
     /// 本队列每个目标仓库的交付计划（design §7.2）：intent = 队列覆盖 ?? 该仓库的
@@ -1857,8 +2042,11 @@ final class TasksRunner {
                                                      primaryRepoID: livePrimaryID)
             if targets.isEmpty {
                 let entered = git.enter(branch: branch, base: base)
-                if let failure = TasksRunner.failure(for: entered) {
-                    startResult = .failed(failure, nil, nil)
+                if let failure = entered.failure {
+                    // The detail (git's OWN words) travels to applyStart, which logs
+                    // it once: the 2026-11-19 queue died with "could not start
+                    // (tasks.errPull)" and no way to see why git refused.
+                    startResult = .failed(failure, nil, entered.detail)
                     return
                 }
             } else {
@@ -1866,8 +2054,6 @@ final class TasksRunner {
                 let entered = TasksRunner.enterTargets(targets, branch: branch, base: base,
                                                        gitFor: { gitFor?($0) ?? git })
                 if let failure = entered.failure {
-                    log("tasks: " + taskID + " 预检/切分支失败（" + failure.rawValue + "）"
-                        + (entered.detail.map { "：" + $0 } ?? ""))
                     startResult = .failed(failure, nil, entered.detail)
                     return
                 }
@@ -2009,7 +2195,8 @@ final class TasksRunner {
                 board.local.sessions[taskID] = sessionId
                 if let i = board.index(ofTask: taskID) { board.tasks[i].sessionId = sessionId }
             }
-            env.log("tasks: " + taskID + " could not start (" + failure.rawValue + ")")
+            env.log(TasksRunner.startFailureLog(taskID: taskID, failure: failure,
+                                               detail: errorDetail))
             board.markFailed(taskID, error: failure.rawValue, errorDetail: errorDetail, at: now)
             persist()
             notifyFinishedQueues(now: now)
@@ -2075,14 +2262,11 @@ final class TasksRunner {
         return TaskPrompts.render(heading)
     }
 
-    private static func failure(for entered: GitEnterResult) -> TaskFailure? {
-        switch entered {
-        case .noBranch, .alreadyOnBranch, .switched: return nil
-        case .notGitRepo: return .notGitRepo
-        case .dirtyWorktree: return .dirtyWorktree
-        case .checkoutFailed, .createBranchFailed: return .checkout
-        case .pullFailed: return .pull
-        }
+    /// The one log line a failed start writes. Keeps git's stderr next to the
+    /// reason key so app.log answers "which git error was it?" by itself.
+    static func startFailureLog(taskID: String, failure: TaskFailure, detail: String?) -> String {
+        "tasks: " + taskID + " could not start (" + failure.rawValue + ")"
+            + (detail.map { "：" + $0 } ?? "")
     }
 
     // MARK: - Finishing

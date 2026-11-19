@@ -356,4 +356,23 @@ if ! grep -q 'tasks.queue.pausedFailed' ../../platforms/macos/src/TasksUI.swift 
 fi
 echo "ok - 队列暂停可见性：失败 / 待确认 / 取消都给出原因与剩余任务数，重试 / 跳过并继续都在卡上"
 
+# 分支进入必须显式 pull <remote> <base>：2026-11-19 远端从 origin 换成 github 后
+# main 失去 upstream，裸 `git pull --ff-only` 让队列第一棒直接 errPull。并须保留
+# git 的 stderr（app.log + 卡片 errorDetail），以及「没有 upstream」的可自愈环境分类。
+if ! grep -qF '["pull", "--ff-only", remote, base]' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'case pullNoUpstream' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -qF 'case pullNoUpstream = "tasks.errPullNoUpstream"' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -qF 'case gitStatus = "tasks.errGitStatus"' ../../platforms/macos/src/TasksCore.swift \
+   || ! grep -q 'func isUpstreamFailure' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -qF 'var capture: (([String]) -> GitCommandOutput?)? = nil' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func startFailureLog' ../../platforms/macos/src/TasksRunner.swift \
+   || ! grep -q 'func runProcessCapturing' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -q 'capture: { args in' ../../platforms/macos/src/IssueRunnerPanel.swift \
+   || ! grep -qF 'tasks.errPullNoUpstream' ../../platforms/macos/src/main.swift \
+   || ! grep -qF 'if !message.contains(detail)' ../../platforms/macos/src/TasksUI.swift; then
+  echo "FAIL - 分支进入必须显式 pull <remote> <base>，并把 git stderr 写进 app.log / errorDetail"
+  exit 1
+fi
+echo "ok - 分支进入显式 pull <remote> <base>，git stderr 进日志与卡片，无 upstream 可自愈"
+
 echo "tasks-panel tests passed"

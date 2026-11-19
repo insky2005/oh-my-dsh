@@ -75,6 +75,8 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Fixed
 
+- **分支进入显式 pull `<remote> <base>`，失败带 git stderr（2026-11-19）**：`TaskGit.enter` 以前用裸 `git pull --ff-only`，依赖基线分支配置了 upstream——本仓库远端从 `origin` 换成 `github` 后 `main` 失去 upstream，队列第一棒直接 `tasks.errPull`，`app.log` 只有一句「could not start (tasks.errPull)」，看不到 git 的原始错误。现在 pull 显式点名远端（`github` > `origin` > 首个）与基线，无远端照旧跳过；`pull` / `checkout` / `status` 失败时把 **git 自己的 stderr** 写进 `app.log` 并作为卡片 `errorDetail`；「没有 upstream / 远端没有同名 ref」归为 `tasks.errPullNoUpstream`（可自愈的环境类，提示执行 fetch 并以 `<remote>/<base>` 作为比较基线），`git status` 自己失败单独记 `tasks.errGitStatus`（不再误报成「工作区有未提交改动」）。回归：`tests/tasks-panel/run.sh` 全绿（runner **831 → 850**、ui **503 → 504**），新增「无 upstream 也能起队列（假 git 断言收到显式 pull 参数）」与 pull / checkout / status 的 stderr 进日志和卡片用例。
+
 - **英文界面修复：Agent 追加任务后壳层崩溃（2026-10-02，v1.18.0）**：`tasks.apiQueueAppended` 的中英文案占位符顺序相反（中文 `%@`→`%d`、英文 `%d`→`%@`），而 `L10n.tr` 把同一份参数列表交给当前语言的格式串；英文下 `%@` 拿到整数 `created.count`（3）被当成对象指针，`String(format:)` 内部对 `0x3` 调 `objc_opt_respondsToSelector` 直接 SIGSEGV（`KERN_INVALID_ADDRESS at 0x3`）。改用位置参数 `%1$@` / `%2$d`，两种语言各自保留自然语序。回归：`tests/l10n` 新增「中英格式参数必须一致」检查——改前先复现失败（精确命中该 key），改后通过。
 
 ## [1.18.0] - 2026-10-02

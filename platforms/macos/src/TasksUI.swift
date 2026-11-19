@@ -163,7 +163,13 @@ struct TaskCardModel: Equatable {
         // 作为它的 %@ 参数；单值错误（detail 为 nil）保持今天逐字不变。
         if let error = task.error {
             if let detail = task.errorDetail, !detail.isEmpty {
-                detailLines.append(L10n.tr(error, detail))
+                let message = L10n.tr(error, detail)
+                detailLines.append(message)
+                // 只有带 %@ 的错误键会把 detail 嵌进句子里（多仓库 / 无 upstream /
+                // git status）；pull / checkout / 非 git 的旧键没有占位符，stderr 会
+                // 被 String(format:) 静默丢掉 —— 这些恰是 2026-11-19 看不到原因的
+                // 那几类，所以在这里补一行，保证 git 的原话一定上卡片。
+                if !message.contains(detail) { detailLines.append(detail) }
             } else {
                 detailLines.append(L10n.tr(error))
             }
