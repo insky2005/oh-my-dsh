@@ -1701,7 +1701,7 @@ do {
     eq(h.dsh.reportCalls, ["session-1"], "只问了真有会话的那一棒")
 }
 
-section("交接简报：失败 / 取消过的一棒同样进简报，且汇报不截断")
+section("交接简报：失败 / 取消过的一棒同样进简报，非 done 全文不被衰减")
 do {
     var board = TaskBoard()
     let t1 = TaskItem.manual(title: "改配置", body: nil, id: "manual-cc003333")
@@ -1722,7 +1722,7 @@ do {
     // 这个 harness 里没有为第一棒建过会话，所以第二棒拿到的是 session-1。
     let prompt = h.dsh.prompts["session-1"] ?? ""
     check(prompt.contains("「改配置」 —— 失败（tasks.errTimeout）"), "失败的一棒写清结局与原因")
-    check(prompt.contains(long), "它的汇报一个字都不截（截断会失真）")
+    check(prompt.contains(long), "非 done 的汇报保持全文（预算不为它降级）")
     check(long.count > 1000, "测试用的汇报确实很长")
 }
 do {
@@ -1836,7 +1836,7 @@ do {
         groupedByRepo: false, round: 2)
     let rendered = TaskPrompts.render(brief)
     let text = rendered?.text ?? ""
-    check(text.contains(longFailure), "失败棒的汇报一个字都不截")
+    check(text.contains(longFailure), "失败棒的汇报保持全文（非 done 不降级）")
     check((rendered?.totalChars ?? 0) > TaskPrompts.QueueBrief.budget,
           "非 done 全文撑破预算时也不降级它")
 }
@@ -1874,6 +1874,27 @@ do {
     let degraded = (rendered?.demotedReports ?? 0) + (rendered?.droppedCommits ?? 0)
         + (rendered?.droppedRoundLines ?? 0)
     check(degraded > 0, "超预算时确实发生了降级（reports/dropped/rows 计数非零）")
+}
+
+section("交接简报：6000 字是硬上界（超预算时最近 2 棒的 done 全文也会降级）")
+do {
+    let long = String(repeating: "很长的一段汇报。", count: 900)     // ~6300 字 / 棒
+    func done(_ title: String) -> TaskPrompts.QueueBrief.Earlier {
+        TaskPrompts.QueueBrief.Earlier(title: title, state: .done, errorKey: nil,
+                                       report: long, commitCount: 1, round: 1)
+    }
+    let brief = TaskPrompts.QueueBrief(
+        queueName: "Lane", position: 5, total: 5,
+        earlier: [done("老一"), done("老二"), done("老三"), done("最近甲"), done("最近乙")],
+        branch: "feature/x", base: "main", commits: [], groupedByRepo: false, round: 1)
+    let rendered = TaskPrompts.render(brief)
+    let text = rendered?.text ?? ""
+    check(text.count <= TaskPrompts.QueueBrief.budget,
+          "五棒各 ~6300 字仍装进 \(TaskPrompts.QueueBrief.budget) 字预算（实际 \(text.count)）")
+    check((rendered?.demotedReports ?? 0) > 0, "超预算时确实降级了 done 汇报")
+    check(!text.contains(long),
+          "预算优先于「最近 2 棒全文」：超预算时它们也会降级（设计文档已写明取舍）")
+    check(text.contains("最近乙"), "标题仍在，只是汇报降成一行")
 }
 
 section("交接简报：轮次按「每次启动队列 = 一轮」分组")
@@ -2424,6 +2445,37 @@ do {
     check(h.board.local.queueNotified[r.queue.id] != nil, "记下队列已收尾")
     _ = h.runner.step()
     eq(h.dsh.notifications.count, 3, "幂等：不会重复发任何一条")
+}
+
+section("逐任务通知：3 棒 = 3 条任务消息 + 1 条队列收尾（每条只讲自己）")
+do {
+    let h = Harness(board: TaskBoard(), github: false, gitRepo: true)
+    let r = h.runner.createQueueWithTasks(name: "Lane3", branch: "", autoPR: false,
+                                          originSession: "session-origin",
+                                          drafts: [TaskDraft(title: "甲", body: ""),
+                                                   TaskDraft(title: "乙", body: ""),
+                                                   TaskDraft(title: "丙", body: "")])
+    _ = h.runner.startQueue(r.queue.id)
+    for i in 1...3 {
+        h.dsh.reports["session-\(i)"] = "第 \(i) 棒自己的汇报"
+        h.dsh.finish("session-\(i)")
+        _ = h.runner.step()
+        eq(h.dsh.notifications.count, i == 3 ? 4 : i,
+           "第 \(i) 棒结束只多一条；最后一棒同时发队列收尾")
+    }
+    eq(h.dsh.notifications.count, 4, "3 条任务消息 + 1 条队列收尾")
+    let texts = h.dsh.notifications.map(\.text)
+    for i in 1...3 {
+        check(texts[i - 1].contains("第 \(i) 棒自己的汇报"), "第 \(i) 条带自己的汇报")
+        for j in 1...3 where j != i {
+            check(!texts[i - 1].contains("第 \(j) 棒自己的汇报"),
+                  "第 \(i) 条不带第 \(j) 棒的汇报")
+        }
+    }
+    let wrap = texts[3]
+    check(wrap.contains("队列「Lane3」已全部完成（3/3）"), "收尾说全完成")
+    check(!wrap.contains("自己的汇报"), "收尾不重列每棒汇报")
+    check(wrap.contains("汇报全文："), "收尾给汇报全文路径")
 }
 
 section("手动取消：发一条已取消的逐任务通知，不发队列收尾")

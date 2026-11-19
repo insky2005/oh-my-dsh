@@ -68,7 +68,7 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 
 建议先用 **A**（若想快速落地可先 B）。待确认的行为：
 
-- **队列暂停**（与失败一致）：后续任务不启动，队列停在 `.paused`，**不**发完成通知、**不**自动开 PR；
+- **队列暂停**（与失败一致）：后续任务不启动，队列停在 `.paused`，**不**发队列收尾通知（本任务的终态通知照发）、**不**自动开 PR；
 - 卡片状态徽标「待确认」，动作两个：**重试**（重新跑这条任务）与**标记完成**（用户确认其实做完了，直接转 `.done`）；
 - 待确认不写入队列交接简报的「已完成」段（它是未确认的）。
 
@@ -77,7 +77,7 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 - 走**方式 A**：`TaskState.needsReview`（`isFinished` / `isQueueable` / `isEditable` / `badge`
   均已同步）。`finish()` 无本次 marker 时进入 `FinishOutcome.needsReview`，
   `TaskBoard.markNeedsReview` 与失败一样暂停队列（`.paused`），`error` 仍带
-  `tasks.errUnverified` 作为卡片上的原因；不触发完成回传，也不起交付会话。
+  `tasks.errUnverified` 作为卡片上的原因；不发队列收尾通知（本任务的待确认通知照发），也不起交付会话。
 - 卡片：徽标「待确认」（橙色，与失败的红区分）；主操作「重试」；**新增**「标记完成」
   次级动作 → `TasksRunner.confirmDone` → `TaskBoard.confirmDone`（清掉 unverified 说明、
   `.done`，并走正常完成路径：最后一条会回传并（autoPR 允许时）起交付会话，还有排队
@@ -165,7 +165,7 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
 |---|---|
 | 任务卡状态徽标 | 新增「待确认」态（与 已完成 / 失败 并列） |
 | 任务卡动作 | 待确认时给「重试」+「标记完成」 |
-| 队列汇总 / 完成通知 | 文案区分「完成」与「待确认」，计数不再笼统 |
+| 逐任务通知 / 队列收尾 | 文案区分「完成」与「待确认」，计数不再笼统 |
 | 队列头 | 待确认导致队列暂停时，说明原因 |
 
 ## 7. 兼容与风险
@@ -197,7 +197,7 @@ runner 把「dsh 会话不再 running」直接当成「任务完成」，全程�
   「跳过待确认 → 队列 `.done`」的端到端用例（正是 P2 遗留的谎报点）。
 - **视图模型**：待确认徽标与「标记完成 / 重试」动作；队列暂停原因。
   - P2 已在 `tests/tasks-panel/ui-tests.swift` 覆盖徽标、`canConfirmDone`、暂停原因与状态语义。
-- **运行器**：待确认触发队列暂停（不启动后续任务、不回传、不起交付会话）；重试与「标记完成」是两条出口。P2 已在 `tests/tasks-panel/runner-tests.swift` 覆盖。
+- **运行器**：待确认触发队列暂停（不启动后续任务、不发收尾、不起交付会话；本任务的待确认通知照发）；重试与「标记完成」是两条出口。P2 已在 `tests/tasks-panel/runner-tests.swift` 覆盖。
 - **兼容**：既有「会话正常结束即 done」的用例需要显式补上 marker（或标记为 legacy 路径）。
 - **重试续跑（P5）**：idle 会话不新建、发短提示词 + 新 marker，回显 → done；missing / 建会话前失败 / prompt 失败 / unknown 回退新会话 + 完整提示词；running 先取消；续跑不回显 marker → 待确认；P4 上一轮已 commit、续跑无新提交不误判 noCommit；首次启动提示词逐字节不变。P5 已在 `tests/tasks-panel/runner-tests.swift` 覆盖，`run.sh` 有 source guard。
 - **产物校验（P4）**：应产出提交但会话结束后分支无新提交、工作区无改动 → 待确认

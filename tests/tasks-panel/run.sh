@@ -287,6 +287,21 @@ if ! grep -q 'static let budget = 6000' ../../platforms/macos/src/TasksRunner.sw
 fi
 echo "ok - 交接简报：三档衰减 + 6000 字预算 + 降级日志"
 
+# 文档与实现同源：简报政策（有预算的衰减）与逐任务通知必须写进设计文档；
+# 旧的「汇报不截断 / 仅队列 done 回传」措辞不得复活，否则两处文案再次分叉。
+IR=../../docs/design/panels/issue-runner-design.md
+QL=../../docs/design/panels/tasks-queue-session-loop-design.md
+if ! grep -q '有预算的衰减' "$IR" \
+   || ! grep -q '6000' "$IR" \
+   || grep -q '汇报不截断' "$IR" \
+   || ! grep -q '逐任务' "$QL" \
+   || ! grep -q '队列收尾' "$QL" \
+   || grep -q '仅队列进入 `.done`' "$QL"; then
+  echo "FAIL - 文档必须写清「有预算的衰减」与逐任务通知（旧措辞不得复活）"
+  exit 1
+fi
+echo "ok - 文档与实现同源：有预算的衰减 + 逐任务通知"
+
 # 任务面板的每一项设置都必须按工作区存：一个全局键会把某个工作区的选择泄进所有工作区
 # （「交付成功后自动关闭队列」曾写全局 tasksAutoCloseOnPublish，于是每个工作区都显示勾上）。
 IP=../../platforms/macos/src/IssueRunnerPanel.swift
