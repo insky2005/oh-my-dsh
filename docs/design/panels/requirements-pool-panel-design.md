@@ -21,7 +21,7 @@
 
 ### 1.2 非目标
 
-- **不做**规划 / 设计 / 任务 / 验收 / 交付阶段的面板（那是后续事项；本设计只服务需求池）；
+- **不做**规划 / 设计 / 任务 / 验收阶段的面板（那是后续事项；本设计只服务需求池；**交付是事项操作**，也不是阶段面板）；
 - **不做**交付追踪与 `delivery.outcome` 的网络派生（仍由 `node .dsh/tools/derive-status.mjs` 承担，见 §3.4）；
 - **不做**编辑卡片正文 / 改事项阶段（面板只提供需求池动作：收件、状态、拆解；事项卡只读展示）；
 - **不改** dsh 源码、不改 `.dsh/ai-native-workflow-spec.md`。
@@ -75,7 +75,7 @@ struct WorkstreamSummary: Equatable {
     var id: String            // WS-<n>
     var title: String
     var requirement: String?  // 0..1
-    var stage: String         // planning/design/task/acceptance/delivery
+    var stage: String         // planning/design/task/acceptance（交付是操作，不是阶段）
     var outcome: String?      // delivery.outcome 派生缓存（只读）
     var path: String
 }
@@ -114,7 +114,8 @@ static func reject(workspace:id:today:) throws -> RequirementCard
 ```
 
 - **派生**：
-  - `terminal(ws) = stage == "delivery" && outcome ∈ {merged, closed, abandoned}`；
+  - `accepted(ws) = 验收阶段在「## 阶段确认」有确认记录`；
+  - `terminal(ws) = accepted(ws) && outcome ∈ {merged, closed, abandoned}`（交付是操作，`stage` 不参与）；
   - `split(req) = children ≠ ∅`；
   - `closed(req) = children ≠ ∅ 且 ∀ terminal(ws)`，或 `state == discarded`（显式放弃优先显示 discarded）；
   - `effective = discarded > closed > split > (state || candidate)`。
@@ -281,7 +282,7 @@ updated: <today>
 - **meta**：来源 · 更新日期 · `待确认拆解 N 项`（10pt tertiary）。
 - **每张卡各自折叠**（层级：需求卡 → 事项卡 / 提案卡），每张卡的 `chevron` 都只是 `taskRowGlyph` **指示器（不是按钮）**，点击由它**自己的标题行**接管（`RequirementHeaderView`），不会误触发父卡：
   - **需求卡**：点它的标题行切换；收起 = 标题行 + 诉求预览 + meta（meta 里有 `待确认拆解 N 项`），正文（事项 / 提案）隐藏。
-  - **事项卡**（recessed，内容取自 REQ 确认表、状态取自 WS）：点它的标题行切换；收起 = 头部（`doc.text` + `标识` + 标题 + `[依赖：WS-…]`（有依赖时，直接列标识）+ `[阶段]` + 分歧徽标 + `↗`），展开 = 追加 **边界 / 依赖 / 阶段 / 结果 / 路径**（无 WS 卡时只有边界 / 依赖）。
+  - **事项卡**（recessed，内容取自 REQ 确认表、状态取自 WS）：点它的标题行切换；收起 = 头部（`doc.text` + `标识` + 标题 + `[依赖：WS-…]`（有依赖时，直接列标识）+ `[阶段]` + 分歧徽标 + **主 `↗`（在事项面板打开并聚焦该 WS，D6）+ 次级 `doc.text`（打开卡文件）**），展开 = 追加 **边界 / 依赖 / 阶段 / 结果 / 路径**（无 WS 卡时只有边界 / 依赖）。
   - **提案卡**（raised）：点它的标题行切换；收起 = `标题 + [依赖 N]`，展开 = 追加**内容（边界）**一行（11pt secondary、换行）。
 - **已拆解事项**（需求卡展开后）：`已拆解事项 (N)` 小标题 + 每个 `WS-*` 一张**事项卡**。
 - **待确认拆解**（需求卡展开后）：一个 **recessed 容器**，头是 `square.dashed 待确认拆解 [待确认 N 项] … [确认拆解] [驳回]`，下面是每条一张**提案卡**（各自可折叠）。点「驳回」打开**原因抽屉**（必填），原因随结果写回该需求的会话提示词。
@@ -340,16 +341,19 @@ REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求已确认。
 - 提交后，等待用户确认『待确认提案』。
 ```
 
-**③ 确认拆解**（`requirements.notify.confirmed`，参数 `id / title / id / created`；回写绑定会话）
+**③ 确认拆解**（`requirements.notify.confirmed` + `requirements.notify.confirmedFocus`，参数 `id / title / id / created / focus`（第 5 个 `%@` 是 focus 提示，可带、空则省略）；回写绑定会话，并把右栏聚焦到事项面板）
 
 ```text
 REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已确认。
-生成事项：WS-000009、WS-000010。
+已生成 WS-000009、WS-000010，请到事项面板继续处理。
+（可用 ⌥⌘K 打开事项面板）
 
 注意：
 - 回复『收到』。
 - 列出事项清单。
 ```
+
+> **会话继承**：`RequirementsCore.confirm` 建 `WS-*.md` 时，把该需求在 `.dsh/requirements/local.json` 的绑定会话继承给每个新 WS（写 `.dsh/workstreams/local.json` 的 `workstreamSessions`，与事项面板「拆分任务」同一份运行态）。需求没绑定会话则不发明绑定；任何显式传入的 `session`（API 路径）优先于已绑定会话。
 
 **④ 驳回拆解（带原因）**（`RequirementsCore.rejectPrompt(_:title:reason:)`；回写绑定会话）
 
@@ -492,7 +496,8 @@ REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已驳回�
 | `requirements.error.unknownState` | 无效的状态 | Invalid state |
 | `requirements.error.generic` | 操作失败：%@ | Failed: %@ |
 | `requirements.needsWorkspace` | 请先选择一个工作区 | Select a workspace first |
-| `requirements.openWorkstream` | 打开事项卡 | Open workstream card |
+| `requirements.openWorkstream` | 打开卡文件 | Open card file |
+| `requirements.openWorkstreamFocus` | 在事项面板中打开 | Open in workstreams panel |
 | `requirements.help.hint` | 使用说明 | Help |
 | `requirements.help.title` | 需求池使用说明 | Requirements Pool Help |
 | `requirements.help.intro` | 在面板或对话里都能完成下列操作。 | Both actions work from the panel or a conversation. |
@@ -512,7 +517,7 @@ REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已驳回�
 
 `tests/requirements-panel/run.sh`（无头，swiftc）：
 
-1. **模型段**：`RequirementsCore.swift` + `model-tests.swift`（纯 Foundation）——frontmatter 解析（标量 / 行内列表 / 缩进列表 / `delivery` 块）、有效状态优先级、`closed` 谓词（子空守卫 / 部分终态）、`createRequirement` 的 id 分配与模板、`setState`、`propose` / `confirm` / `reject` 的正文往返、原子写（临时文件不残留）、错误码；
+1. **模型段**：`RequirementsCore.swift` + `model-tests.swift`（纯 Foundation）——frontmatter 解析（标量 / 行内列表 / 缩进列表 / `delivery` 块）、有效状态优先级、`closed` 谓词（子空守卫 / 部分终态）、`createRequirement` 的 id 分配与模板、`setState`、`propose` / `confirm` / `reject` 的正文往返、原子写（临时文件不残留）、错误码；**确认拆解继承需求会话**——`confirm` 把需求在 `.dsh/requirements/local.json` 的绑定会话写进新 WS 的 `.dsh/workstreams/local.json`（`workstreamSessions`，合并保留既有任务运行态）、显式 `session` 优先、无绑定不发明；
 2. **API 段**：`RequirementsCore.swift` + `RequirementsAPI.swift` + `api-tests.swift`（自带 HTTP stand-in + Fake delegate，无 AppKit）——路由命中 / 非本面板路径返回 nil / 参数校验 / 错误码映射 / 503。
 
 新增用例必须满足「门要能自证」：至少一条负例断言失败路径（缺 proposal 时 confirm → 409）。
@@ -526,7 +531,7 @@ REQ-000008「标题」@.dsh/requirements/REQ-000008.md，需求拆解已驳回�
 - [ ] 「＋」新建需求 → 盘上出现 `REQ-<n>.md`（`state: candidate`），面板出现卡片；
 - [ ] 对现有 REQ-001…007 的展示：有效状态与 `node .dsh/tools/derive-status.mjs` 一致（除未缓存 outcome 的差异）；
 - [ ] 对某需求运行 `/requirement-pool 拆解 REQ-xxx` → 面板出现「待确认拆解」；
-- [ ] 「确认拆解」→ 生成 `WS-*.md`（`requirement` 指向该 REQ、`stage: planning`），提案区变为映射表；
+- [ ] 「确认拆解」→ 生成 `WS-*.md`（`requirement` 指向该 REQ、`stage: planning`），提案区变为映射表；新 WS 在 `.dsh/workstreams/local.json` 的 `workstreamSessions` 里有该需求的会话绑定，右栏聚焦事项面板，回写文案指向事项面板；
 - [ ] 「驳回」→ 提案消失，未生成任何 WS；
 - [ ] 无 App 时 curl API → 连接失败（技能提示先打开 App），不写盘；
 - [ ] 语言切换后面板文案与 tooltip 全部刷新。

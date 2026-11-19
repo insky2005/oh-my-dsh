@@ -124,5 +124,86 @@ if mode == "migrate" {
           "issue-resolve is no longer a built-in")
 }
 
+// 6. Write-permission reversal (2026-10): the workstream-panel skill tells the
+// agent to edit WS cards through /api/workstreams/* and never to touch .dsh
+// files directly. Guard both the presence and the wording.
+check(BuiltinSkill.workstreamPanel.dirName == "workstream-panel", "workstream-panel dirName")
+let wsSkill = read(repoFile(.workstreamPanel))
+check(wsSkill != nil, "workstream-panel repo copy exists")
+if let text = wsSkill {
+    check(text.contains("name: workstream-panel"), "workstream-panel frontmatter name")
+    check(text.contains("/api/workstreams/"), "workstream-panel points at the panel API")
+    check(text.contains("不直接改 .dsh 文件"), "workstream-panel forbids direct .dsh edits")
+    check(text.contains("stage/confirm"), "workstream-panel keeps the human confirmation gate")
+    // 2026-10-06 (A14 / D19): the skill documents the panel's own engine, not /task-todo.
+    check(text.contains("/api/workstreams/task/create"), "workstream-panel documents stage task create")
+    check(text.contains("/api/workstreams/task/list"), "workstream-panel documents task list")
+    check(text.contains("/api/workstreams/queue/start"), "workstream-panel documents queue start")
+    check(text.contains("/api/workstreams/queue/pause"), "workstream-panel documents queue pause")
+    check(text.contains("等待态"), "workstream-panel creates waiting-state tasks (build, do not start)")
+    check(text.contains("stage/reject"), "workstream-panel keeps the reject gate")
+    check(!text.contains("/task-todo"), "workstream-panel no longer points at /task-todo")
+    check(text.contains("不自签"), "workstream-panel: the agent never self-signs a gate")
+    // 2026-10-07: covered / delivery now have write routes; outcome stays derived.
+    check(text.contains("/api/workstreams/covered"), "workstream-panel documents the covered write route")
+    check(text.contains("/api/workstreams/delivery"), "workstream-panel documents the delivery write route")
+    check(text.contains("outcome-derived") || text.contains("派生缓存"), "workstream-panel: outcome is a derived cache, not hand-written")
+    // 2026-10-07 (A11 / D6): session -> workstream reverse lookup + the focus channel.
+    check(text.contains("/api/workstreams/bound"), "workstream-panel documents the session reverse lookup route")
+    check(text.contains("$DSH_SESSION_ID"), "workstream-panel reverse lookup uses $DSH_SESSION_ID")
+    check(text.contains("反查"), "workstream-panel explains the reverse lookup")
+    check(text.contains("focus: true") && text.contains("focus=true"), "workstream-panel documents the focus flag (body + query)")
+    check(text.contains("聚焦") || text.contains("高亮"), "workstream-panel explains focusing / highlighting the panel")
+    // 2026-10-07 (A15 / A16): focus + home session. The binding is a single
+    // last-writer-wins home session, NOT a permanent promise, and ephemeral
+    // sessions must not overwrite it. bound?focus highlights the reverse lookup.
+    check(text.contains("主场会话"), "workstream-panel explains the home session")
+    check(text.contains("后写覆盖") || text.contains("last-writer-wins"), "workstream-panel: the binding is last-writer-wins")
+    check(text.contains("临时会话"), "workstream-panel warns ephemeral sessions not to overwrite the home session")
+    check(text.contains("bound") && (text.contains("高亮") || text.contains("聚焦")), "workstream-panel: bound?focus highlights the reverse lookup")
+    // 2026-10-07 (task 28): in-conversation split / start entry + routing context.
+    check(text.contains("对话中发起拆分 / 启动"), "workstream-panel documents the in-conversation split/start entry")
+    check(text.contains("首个未处理阶段"), "workstream-panel: split targets the FIRST unprocessed stage")
+    check(text.contains("面板主卡「**拆分任务**」按钮 = 同一条拆分语义"), "workstream-panel: panel split button == same session-prompt semantics")
+    // 2026-10-07 (UX): the stage card's start button is gone; the workstream
+    // card is the panel's single start entry, and it runs in canonical stage order.
+    check(text.contains("面板阶段卡已去掉「**启动阶段**」按钮") && text.contains("唯一的启动入口"),
+          "workstream-panel: the stage card has no start button; the workstream card is the single start entry")
+    check(text.contains("阶段 canonical 顺序"), "workstream-panel: workstream start runs in canonical stage order")
+    // 2026-10-07 (task 34): the human gate is no longer "never call". The skill is
+    // user-invocable, and stage/confirm + stage/reject may be called ONLY when the
+    // user explicitly authorizes it in this session, after restating evidence
+    // (confirm) / obtaining the human's reason (reject). The 409 gate stays hard.
+    check(!text.contains("user-invocable: false"), "workstream-panel is user-invocable (no user-invocable: false key)")
+    check(text.contains("可被用户直接调用"), "workstream-panel documents direct user invocation")
+    check(text.contains("/workstream-panel 确认规划"), "workstream-panel documents /workstream-panel confirm invocation")
+    check(text.contains("/api/workstreams/stage/confirm"), "workstream-panel documents the full confirm route")
+    check(text.contains("/api/workstreams/stage/reject"), "workstream-panel documents the full reject route")
+    check(text.contains("仅当用户在本会话明确发出确认"), "workstream-panel: gates open only on explicit per-session user intent")
+    check(text.contains("不得主动代签"), "workstream-panel: the agent never signs on the user's behalf")
+    check(text.contains("复述结论与证据"), "workstream-panel: confirm restates evidence and requests confirmation")
+    check(text.contains("必须拿到人的原因"), "workstream-panel: reject requires the human's reason")
+    check(text.contains("由人给"), "workstream-panel: the reject reason comes from the human, not the agent")
+    check(text.contains("不得重试硬推"), "workstream-panel: 409 evidence-missing / stage-changed are not force-retried")
+    // 2026-10-07 (task 36): 发起交付 — the skill documents the deliver route (the
+    // panel「交付」button's equivalent) and the in-conversation「交付 WS-x」entry.
+    check(text.contains("/api/workstreams/deliver"), "workstream-panel documents the deliver (initiate delivery) route")
+    check(text.contains("发起交付"), "workstream-panel explains initiating delivery")
+    check(text.contains("交付 WS-") || text.contains("交付 WS-x"), "workstream-panel documents the 「交付 WS-x」 conversation entry")
+    // 2026-11-17 (4 stages + delivery operation): delivery is an OPERATION whose
+    // prerequisite is accepted(ws); it runs in the home session and never creates a
+    // delivery task / session or moves the stage.
+    check(text.contains("not-accepted") && text.contains("no-token") && text.contains("no-home-session"),
+          "workstream-panel lists the delivery admission reasons")
+    check(!text.contains("not-delivery-stage"), "workstream-panel no longer treats delivery as a stage")
+    check(text.contains("验收之后的操作"), "workstream-panel: delivery is an operation after acceptance")
+    check(text.contains("不新建会话") && text.contains("不改 `stage`"),
+          "workstream-panel: delivery runs in the home session and never moves the stage")
+    check(text.contains("report-failed") && text.contains("delivery-timeout"),
+          "workstream-panel documents the delivery run failures")
+    check(text.contains("同一条") && text.contains("路径"),
+          "workstream-panel: the deliver route == the panel button (one path)")
+}
+
 if failures > 0 { print("\(failures) FAILURE(S)"); exit(1) }
 print("skills tests (\(mode)) passed")

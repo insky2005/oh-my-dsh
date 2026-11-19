@@ -130,6 +130,12 @@ enum BrowserAPIRouter {
             return requirements
         }
 
+        // /api/workstreams/* is the Workstreams panel's route face, on the same
+        // service and port. Same fall-through contract as /api/tasks/*.
+        if let workstreams = WorkstreamsAPIRouter.route(request, delegate: delegate as? WorkstreamsAPIDelegate) {
+            return workstreams
+        }
+
         switch (request.method, request.path) {
         case ("GET", "/api/browser/status"):
             return .json(200, delegate.apiStatus())
@@ -272,6 +278,32 @@ final class BrowserAPIBridge: BrowserAPIDelegate {
         "ok": false,
         "error": "panel-unavailable",
         "hint": "the requirements pool panel is not ready",
+    ]
+    /// /api/workstreams/* 的落地（闭包形状同 tasks / requirements，面板类型不进本文件）。
+    var workstreamsList: (String?) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsBound: (String) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsCreate: (WorkstreamsCreateRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsUpdate: (WorkstreamsUpdateRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsStage: (WorkstreamsStageRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsPlan: (WorkstreamsPlanRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsQueues: (WorkstreamsQueuesRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsStageConfirm: (WorkstreamsStageConfirmRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsStageReject: (WorkstreamsStageRejectRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsTaskCreate: (WorkstreamsTaskCreateRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsTaskList: (String?) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsQueueStart: (WorkstreamsQueueStartRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsQueuePause: (WorkstreamsQueuePauseRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsCovered: (WorkstreamsCoveredRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsDelivery: (WorkstreamsDeliveryRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    var workstreamsDeliver: (WorkstreamsDeliverRequest) -> [String: Any] = { _ in BrowserAPIBridge.workstreamsUnavailable }
+    /// The focus channel: light the workstreams panel, optionally highlighting one
+    /// card. HTTP marshals it onto the main thread like every other workstreams
+    /// call (single writer / AppKit main thread).
+    var workstreamsFocus: (String?, String?) -> Void = { _, _ in }
+    static let workstreamsUnavailable: [String: Any] = [
+        "ok": false,
+        "error": "panel-unavailable",
+        "hint": "the workstreams panel is not ready",
     ]
     var showPanel: () -> Void = {}
     var hidePanel: () -> Void = {}
@@ -661,6 +693,88 @@ extension BrowserAPIBridge: RequirementsAPIDelegate {
 
     func apiRequirementsReject(_ request: RequirementsTargetRequest) -> [String: Any] {
         onMain(fallback: Self.requirementsUnavailable) { self.requirementsReject(request) }
+    }
+}
+
+// MARK: - 事项面板路由的落地（面板控制器 → WorkstreamsAPIDelegate）
+
+/// Same shape as the tasks / requirements bridge: HTTP runs on its own queue, the
+/// workstream reads and writes run on the main thread so there is a single writer.
+extension BrowserAPIBridge: WorkstreamsAPIDelegate {
+
+    func apiWorkstreamsList(workspace: String?) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsList(workspace) }
+    }
+
+    func apiWorkstreamsBound(session: String) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsBound(session) }
+    }
+
+    func apiWorkstreamsCreate(_ request: WorkstreamsCreateRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsCreate(request) }
+    }
+
+    func apiWorkstreamsUpdate(_ request: WorkstreamsUpdateRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsUpdate(request) }
+    }
+
+    func apiWorkstreamsStage(_ request: WorkstreamsStageRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsStage(request) }
+    }
+
+    func apiWorkstreamsPlan(_ request: WorkstreamsPlanRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsPlan(request) }
+    }
+
+    func apiWorkstreamsQueues(_ request: WorkstreamsQueuesRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsQueues(request) }
+    }
+
+    func apiWorkstreamsStageConfirm(_ request: WorkstreamsStageConfirmRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsStageConfirm(request) }
+    }
+
+    func apiWorkstreamsStageReject(_ request: WorkstreamsStageRejectRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsStageReject(request) }
+    }
+
+    func apiWorkstreamsTaskCreate(_ request: WorkstreamsTaskCreateRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsTaskCreate(request) }
+    }
+
+    func apiWorkstreamsTaskList(workspace: String?) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsTaskList(workspace) }
+    }
+
+    func apiWorkstreamsQueueStart(_ request: WorkstreamsQueueStartRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsQueueStart(request) }
+    }
+
+    func apiWorkstreamsQueuePause(_ request: WorkstreamsQueuePauseRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsQueuePause(request) }
+    }
+
+    func apiWorkstreamsCovered(_ request: WorkstreamsCoveredRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsCovered(request) }
+    }
+
+    func apiWorkstreamsDelivery(_ request: WorkstreamsDeliveryRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsDelivery(request) }
+    }
+
+    func apiWorkstreamsDeliver(_ request: WorkstreamsDeliverRequest) -> [String: Any] {
+        onMain(fallback: Self.workstreamsUnavailable) { self.workstreamsDeliver(request) }
+    }
+
+    /// The focus channel (design A11 / D6): light the panel and highlight an id.
+    /// No result to return; it runs on the main thread so it never touches
+    /// AppKit off-main (same rule as the other workstreams bridge methods).
+    func apiWorkstreamsFocus(workspace: String?, id: String?) {
+        if Thread.isMainThread {
+            workstreamsFocus(workspace, id)
+            return
+        }
+        DispatchQueue.main.sync { self.workstreamsFocus(workspace, id) }
     }
 }
 

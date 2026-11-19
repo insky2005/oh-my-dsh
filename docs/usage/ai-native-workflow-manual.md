@@ -1,19 +1,22 @@
-# AI 原生工作流 · 使用说明（需求池面板 + 任务面板）
+# AI 原生工作流 · 使用说明（需求池面板 + 事项面板 + 任务面板）
 
-> 状态：草案 · 日期：2026-10-05 · 关联：`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/requirements-pool-panel-design.md`、`docs/design/panels/requirements-breakdown-standard-design.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/design/panels/workstream-handoff-prompt-design.md`、`docs/usage/panels.md`、`.dsh/requirements/README.md`
+> 状态：已落地 · 日期：2026-11-17（事项四阶段 + 交付操作）· 关联：`docs/design/panels/workstream-panel-design.md`、`docs/research/ai-native-workflow-architecture.md`、`docs/design/panels/requirements-pool-panel-design.md`、`docs/design/panels/requirements-breakdown-standard-design.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/design/panels/workstream-handoff-prompt-design.md`、`docs/usage/panels.md`、`.dsh/requirements/README.md`
 
 ## 0. 适用范围
 
 本说明是 **oh-my-dsh 下的用法**；通用规范见 `.dsh/ai-native-workflow-spec.md`（概念 / `.dsh` 契约 / 规则 R1–R12 / 确认门）——**两者冲突以 spec 为准**。
 
-覆盖：**需求 → 拆解 → 事项（规划 → 设计 → 任务拆分 → 实施 → 验收 → 交付）→ 终态派生**。其中两段已是壳层面板能力（App 能力，见 spec §9）：
+覆盖：**需求 → 拆解 → 事项（规划 → 设计 → 任务拆分 → 实施 → 验收）→ 交付（操作）→ 终态派生**。其中两段已是壳层面板能力（App 能力，见 spec §9）：
 
 | 阶段 | 承接者 | 入口 |
 |---|---|---|
 | 需求 → 拆解 | **需求池面板** + 技能 `requirement-pool` | `⌥⌘I`（活动栏第 5 位「需求池」） |
-| 任务拆分 → 实施 → 交付 | **任务面板** + 技能 `task-todo` | `⌥⌘J`（活动栏「任务」） |
+| 规划 → 设计 → 执行 → 验收（交付是操作） | **事项面板** + 技能 `workstream-panel` | `⌥⌘K`（活动栏第 6 位「事项」） |
+| 任务拆分 → 实施 → 交付（任务面板自有流程） | **任务面板** + 技能 `task-todo` | `⌥⌘J`（活动栏「任务」） |
 
-规划 / 设计仍由**事项会话**承担（面板不服务这两个阶段）；终态由 `derive-status` 派生。
+事项面板按事项卡片推进**四个阶段**（规划 / 设计 / 执行 / 验收；**交付是操作，不是阶段**；阶段队列 `.done` ≠ 阶段完成，须过机检证据 + 人工确认门 R10）；任务面板是独立的手动任务 / issue 作业台，与事项面板不共享存储；终态由 `derive-status` 派生。
+
+> 事项面板的操作分工（用户 × Agent）与「面板按钮 ↔ 会话触发」对照见 [`docs/usage/workstream-panel-workflow.md`](workstream-panel-workflow.md)；R10 人工门（确认 / 退回）可由**面板点按**，或由**会话在用户明确授权后**代发（来源记入卡片 `## 阶段确认`：`source:panel` / `source:session <id>`）——**签字仍是人，agent 不自签**。
 
 不用面板也可以：用 agent 直接读写 `.dsh` 卡片，按 §2 的提示词逐步推进——**手动路径与面板路径等价**，只是少了「确认拆解 / 启动队列」这类面板按钮。
 
@@ -37,10 +40,10 @@
 事项卡 WS-*.md
   │ 规划(AC + 裁剪)                      ◆ 人确认规划
   ▼ 设计                                 ◆ 人确认设计
-  ▼ 任务拆分（/task-todo 建等待态队列）   ◆ 人确认拆分合理
+  ▼ 执行（事项面板建等待态阶段任务）     ◆ 人确认拆分合理 / 启动队列
   ▼ 启动实施
   ▼ 验收(回归门 + 机检证据)              ◆ 人 sign-off
-  ▼ 交付(PR) ◆ 人 merge ─► derive-status ─► closed(派生)
+  ▼ 交付(操作：验收后 push / PR) ◆ 人 merge ─► derive-status ─► closed(派生)
 
 ◆ = 人工确认门（agent 出方案 / 人 Own）；规范同 spec §5
 ```
@@ -109,25 +112,26 @@
 写完后停下，让我确认设计再往下。
 ```
 
-### 2.5 任务拆分（`task-todo` 落成等待态队列 → 人确认拆分合理）
+### 2.5 执行：阶段任务拆分（事项面板 API → 人确认拆分合理）
 
 ```text
-/task-todo 把 WS-<id> 的设计拆成任务：建等待态队列 + 批量入队（只建、不启动）。
-这一步**就是「任务拆分」本身**（每条任务 = 一个待入队的拆分单元）——只建、不启动。
-把队列 id 记到 WS-<id>.md 的 `queues`；建成后停下，让我在任务面板确认拆分是否合理。
+POST /api/workstreams/task/create 把 WS-<id> 的执行阶段拆成任务（titles[]，带 stage: task）。
+这一步**就是「任务拆分」本身**（每条任务 = 一个等待态拆分单元）——只建、不启动。
+任务追加到该事项唯一队列，`WS.queues` 由面板写回；建成后停下，让我在事项面板确认拆分是否合理。
 ```
 
-> 等待态队列（`.draft`）是**拆分结果的载体**：人在面板里看过任务清单、确认合理，才启动。见 §5。
+> 等待态任务（队列 `.draft`）是**拆分结果的载体**：人在事项面板里看过任务清单、确认合理，才启动。见 §5 与 `docs/usage/panels.md` 事项面板。
 
-### 2.6 实施（确认拆分 → 启动队列）
+### 2.6 实施（确认拆分 → 启动阶段队列）
 
 ```text
-/task-todo 启动队列。
+POST /api/workstreams/queue/start（带 stage: task，只跑执行阶段任务）。
 实施时：先切分支 feature/<slug>；只做边界内的事，范围外的新发现回池；
 conventional commits；改到共享路径前先跑回归门。
 ```
 
-> 队列跑完由 `task-todo` 交付（`queue/deliver`，交付会话 push + PR），见 §5。
+> 队列跑完 ≠ 阶段完成：执行阶段仍要过「机检证据 + 人工确认」才推进；交付由事项面板「交付」动作发起（`WorkstreamsDelivery`），见 `docs/usage/panels.md` 事项面板。
+> 面板侧的**唯一启动入口**是事项主卡「启动事项」（不带 `stage`，按阶段 canonical 顺序跑整条队列）；**阶段级** `queue/start`（带 `stage`）只在对话 / 脚本里用。
 
 ### 2.7 验收
 
@@ -136,11 +140,16 @@ conventional commits；改到共享路径前先跑回归门。
 停在我这里等 sign-off，不要自签。
 ```
 
-### 2.8 交付
+### 2.8 交付（验收确认后的操作）
+
+交付**不是阶段**：验收 sign-off（`accepted`）之后，面板「交付」按钮或会话说「交付 WS-x」
+（`POST /api/workstreams/deliver`）先做 accepted / git / GitHub / token / 主场会话准入，
+然后把交付提示词**发进该事项的主场会话**——不新建会话、不建交付任务、不改 `stage`。
 
 ```text
-记录 WS-<id> 的 delivery.pr，push 分支并开 PR。
-`closed` / `outcome` 不要手写。
+push 分支并开 PR；交付事实（delivery.pr / url）经 POST /api/workstreams/delivery 回填
+（面板写卡；outcome 由面板按 PR 观察派生）。
+closed / outcome 不要手写。
 ```
 
 ### 2.9 终态派生
@@ -152,7 +161,7 @@ GH_TOKEN=$(cat "$HOME/.dsh/oh-my-dsh/tokens/<owner>-<repo>") \
 
 ## 3. 需求池面板：操作说明（收件 / 需求池 / 拆解）
 
-需求池面板是 **oh-my-dsh App 的能力**（不是规范；见 spec §9）。入口：**`⌥⌘I`** / 活动栏第 5 位「需求池」（知识库之后、任务之前）。面板只服务**需求池**：收件 / 评估 / 拆分 / 丢弃；规划 / 设计 / 验收 / 交付仍走事项会话。
+需求池面板是 **oh-my-dsh App 的能力**（不是规范；见 spec §9）。入口：**`⌥⌘I`** / 活动栏第 5 位「需求池」（知识库之后、任务之前）。面板只服务**需求池**：收件 / 评估 / 拆分 / 丢弃；规划 / 设计 / 验收（以及验收确认后的**交付操作**）仍走事项面板 / 会话。
 
 | 操作 | 位置 | 说明 |
 |---|---|---|
@@ -191,7 +200,7 @@ GH_TOKEN=$(cat "$HOME/.dsh/oh-my-dsh/tokens/<owner>-<repo>") \
 |---|---|---|
 | 层级 | **追踪单元** | **执行载体** |
 | 宿主 | `.dsh/workstreams/WS-*.md`（committed） | `.dsh/tasks/queues.json`（本机） |
-| 基数 | 1 事项 : 0..N 队列 | 1 队列 : 0..1 事项 |
+| 基数 | 1 事项 : 0..1 队列 | 1 队列 : 0..1 事项 |
 | 关联权威 | `WS.queues`（committed） | 队列内 `workstream` 是运行时镜像（可重建） |
 
 ### 4.2 三种工作区形状（提示词按形状出条目）
@@ -210,7 +219,9 @@ GH_TOKEN=$(cat "$HOME/.dsh/oh-my-dsh/tokens/<owner>-<repo>") \
 
 ## 5. 任务面板：内置技能 `task-todo`（任务拆分 / 实施 / 交付）
 
-任务面板 / `task-todo` 是 **oh-my-dsh App 的能力**（spec §9），不是规范的一部分。**任务拆分、任务实施、交付这三步**由内置技能 `task-todo` 承接（App 启动时安装到 `$DSH_HOME/skills/task-todo/SKILL.md`）；不用技能时也可在面板里手点（§4）。
+任务面板 / `task-todo` 是 **oh-my-dsh App 的能力**（spec §9），不是规范的一部分。**任务面板自有的**任务拆分、任务实施、交付由内置技能 `task-todo` 承接（App 启动时安装到 `$DSH_HOME/skills/task-todo/SKILL.md`）；不用技能时也可在面板里手点（§4）。
+
+> **事项（Workstream）的执行阶段不用本技能**，走事项面板自有 API / `workstream-panel` 技能（见 §2.5–2.8）。
 
 > 用 **`/task-todo` 指令**调用（如 `/task-todo 把设计拆成任务`、`/task-todo 启动队列`）；技能只在明确要求时动手。
 
@@ -239,13 +250,17 @@ GH_TOKEN=$(cat "$HOME/.dsh/oh-my-dsh/tokens/<owner>-<repo>") \
 模板见 `docs/design/panels/workstream-handoff-prompt-design.md`。最小可用形状：
 
 ```text
-你在 oh-my-dsh 仓库工作。处理事项 WS-<id>「<标题>」。
-先读：.dsh/workstreams/WS-<id>.md、.dsh/requirements/<REQ-ID>.md（通用规则见工作区 AGENTS.md）。
-当前 stage：<stage>；本步动作：<action>。目标与边界以卡片「规划」为准。
-规则：只拆不胀；终态是派生谓词（不写 closed/outcome/split）；
-      回归门 <REG-ID>（若改动其覆盖路径，交付前跑）；不改其它会话的在途文件。
-结束前停下问：规划确认 / 设计确认 / 拆分确认 / 验收 sign-off。不要自签。
+WS-<id>「<标题>」@.dsh/workstreams/WS-<id>.md
+阶段：<中文>（<raw>）· 本步：<动作>
+目标：<卡片「## 规划」里的目标>          ← 有则出现
+
+<一句话：本步要做什么 + 停在哪儿>
+
+注意：
+- <1..3 条：API 细节 / 人工门 / 技能指针>
 ```
+
+执行 phase marker 仍由 runner 追加在提示词末尾；阶段 / 目标 / 覆盖等状态以卡片为准。
 
 ## 7. 命令速查
 

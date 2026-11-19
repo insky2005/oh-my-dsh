@@ -57,10 +57,14 @@ func requirementFixture(_ id: String, state: String?, children: Bool = false) ->
     return text
 }
 
-func workstreamFixture(_ id: String, requirement: String, stage: String, outcome: String?) -> String {
+func workstreamFixture(_ id: String, requirement: String, stage: String, outcome: String?,
+                         accepted: Bool = false) -> String {
     var text = "---\nid: " + id + "\ntitle: " + id + " 事项\nrequirement: " + requirement + "\nstage: " + stage + "\n"
     if let outcome = outcome { text += "delivery:\n  outcome: " + outcome + "\n" }
     text += "created: 2026-10-03\nupdated: 2026-10-03\n---\n\n# " + id + "\n"
+    if accepted {
+        text += "\n## 阶段确认\n\n- 2026-10-07 · confirm · acceptance → done · source:panel\n"
+    }
     return text
 }
 
@@ -104,13 +108,42 @@ eq(malformed.fm.isEmpty, true, "missing frontmatter yields empty map")
 
 section("derivation")
 let openChild = WorkstreamSummary(id: "WS-001", title: "a", requirement: "REQ-001", stage: "design", outcome: nil, path: "")
-let closedChild = WorkstreamSummary(id: "WS-002", title: "b", requirement: "REQ-001", stage: "delivery", outcome: "merged", path: "")
-let abandonedChild = WorkstreamSummary(id: "WS-003", title: "c", requirement: "REQ-001", stage: "delivery", outcome: "abandoned", path: "")
+let closedChild = WorkstreamSummary(id: "WS-002", title: "b", requirement: "REQ-001", stage: "acceptance", outcome: "merged", accepted: true, path: "")
+let abandonedChild = WorkstreamSummary(id: "WS-003", title: "c", requirement: "REQ-001", stage: "acceptance", outcome: "abandoned", accepted: true, path: "")
 
-check(RequirementsCore.isTerminal(closedChild), "delivery+merged is terminal")
-check(RequirementsCore.isTerminal(abandonedChild), "delivery+abandoned is terminal")
+check(RequirementsCore.isTerminal(closedChild), "accepted+merged is terminal")
+check(RequirementsCore.isTerminal(abandonedChild), "accepted+abandoned is terminal")
 check(!RequirementsCore.isTerminal(openChild), "design is not terminal")
-check(!RequirementsCore.isTerminal(WorkstreamSummary(id: "WS-004", title: "d", requirement: nil, stage: "delivery", outcome: "open", path: "")), "delivery+open is not terminal")
+check(!RequirementsCore.isTerminal(WorkstreamSummary(id: "WS-004", title: "d", requirement: nil, stage: "acceptance", outcome: "open", accepted: true, path: "")), "accepted+open is not terminal")
+// 终态公式：accepted ∧ outcome 终结；stage 不参与。
+check(!RequirementsCore.isTerminal(WorkstreamSummary(id: "WS-005", title: "e", requirement: nil, stage: "delivery", outcome: "merged", path: "")),
+      "merged WITHOUT acceptance confirmation is not terminal (legacy stage does not imply accepted)")
+check(!RequirementsCore.isTerminal(WorkstreamSummary(id: "WS-006", title: "f", requirement: nil, stage: "acceptance", outcome: "merged", path: "")),
+      "acceptance stage alone is not accepted without a confirmation record")
+check(RequirementsCore.isTerminal(WorkstreamSummary(id: "WS-007", title: "g", requirement: nil, stage: "design", outcome: "merged", accepted: true, path: "")),
+      "terminal ignores the stage field (accepted + merged wins)")
+
+// accepted(ws) is read from the card body's "## 阶段确认" record.
+let acceptedConfirm = RequirementsCore.accepted(body: """
+## 阶段确认
+
+- 2026-10-07 · confirm · acceptance → done · source:panel
+""")
+check(acceptedConfirm, "acceptance confirm record -> accepted")
+check(RequirementsCore.accepted(body: "## 阶段确认\n\n- 2026-10-07 · confirm · delivery → done"), "legacy delivery confirm -> accepted (read-compat)")
+check(!RequirementsCore.accepted(body: "## 阶段确认\n\n- 2026-10-07 · confirm · planning → design"), "planning confirm is not accepted")
+check(!RequirementsCore.accepted(body: "## 阶段确认\n\n- 2026-10-07 · reject · acceptance · 返工"), "reject is not accepted")
+check(!RequirementsCore.accepted(body: "## 验收\n\n- 证据：测试绿。"), "no history section is not accepted")
+
+let acceptedCardText = workstreamFixture("WS-008", requirement: "REQ-001", stage: "acceptance", outcome: "merged")
+    + "\n## 阶段确认\n\n- 2026-10-07 · confirm · acceptance → done · source:panel\n"
+let acceptedSummary = RequirementsCore.workstream(from: acceptedCardText, path: "/ws/8")
+check(acceptedSummary?.accepted == true, "workstream(from:) derives accepted from the card body")
+eq(RequirementsCore.isTerminal(acceptedSummary!), true, "parsed accepted+merged is terminal")
+let unconfirmedCardText = workstreamFixture("WS-009", requirement: "REQ-001", stage: "acceptance", outcome: "merged")
+let unconfirmedSummary = RequirementsCore.workstream(from: unconfirmedCardText, path: "/ws/9")
+check(unconfirmedSummary?.accepted == false, "no history -> not accepted")
+check(!RequirementsCore.isTerminal(unconfirmedSummary!), "parsed unconfirmed+merged is not terminal")
 
 eq(RequirementsCore.effectiveState(state: nil, children: []), .candidate, "no state, no children -> candidate")
 eq(RequirementsCore.effectiveState(state: "evaluating", children: []), .evaluating, "manual evaluating preserved")
@@ -285,7 +318,7 @@ let reqClosed = try! RequirementsCore.createRequirement(workspace: wsClosed, tit
 let reqClosedId = reqClosed.id
 _ = try! RequirementsCore.setState(workspace: wsClosed, id: reqClosedId, state: "evaluating", today: "2026-10-05")
 write(wsClosed + "/.dsh/workstreams/WS-000001.md",
-      workstreamFixture("WS-000001", requirement: reqClosedId, stage: "delivery", outcome: "merged"))
+      workstreamFixture("WS-000001", requirement: reqClosedId, stage: "delivery", outcome: "merged", accepted: true))
 expectError("closed is terminal", .invalidTransition("evaluating", "suspended")) {
     _ = try RequirementsCore.setState(workspace: wsClosed, id: reqClosedId, state: "suspended", today: "2026-10-05")
 }
@@ -457,6 +490,46 @@ eq(reloaded.requirements.first?.requirement.session, "s-abc", "load reads the se
 check(files(in: RequirementsCore.requirementsDir(ws6)).contains("local.json"), "the binding lives in local.json (runtime, ignored)")
 let plain = try! RequirementsCore.createRequirement(workspace: ws6, title: "面板来源", body: nil, source: nil, today: "2026-10-04")
 eq(plain.session, nil, "panel-created card has no source session")
+
+section("breakdown inherits the requirement session")
+let wsInherit = tempWorkspace("inherit")
+let reqInherit = try! RequirementsCore.createRequirement(workspace: wsInherit, title: "继承会话", body: "x", source: nil, today: "2026-10-04", session: "s-req")
+_ = try! RequirementsCore.propose(workspace: wsInherit, id: reqInherit.id, items: items, today: "2026-10-04")
+let inheritedWs = try! RequirementsCore.confirm(workspace: wsInherit, id: reqInherit.id, today: "2026-10-04")
+eq(inheritedWs.count, 2, "inherit: one WS per proposal item")
+let wsSessions = RequirementsCore.loadWorkstreamSessions(workspace: wsInherit)
+eq(wsSessions["WS-000001"], "s-req", "new WS inherits the requirement's bound session")
+eq(wsSessions["WS-000002"], "s-req", "every new WS inherits it")
+check(files(in: RequirementsCore.workstreamsDir(wsInherit)).contains("local.json"),
+      "the WS binding lives in .dsh/workstreams/local.json")
+
+// An explicit acting session (API path) wins over the stored binding.
+let wsExplicit = tempWorkspace("inherit-explicit")
+let reqExplicit = try! RequirementsCore.createRequirement(workspace: wsExplicit, title: "显式会话", body: "x", source: nil, today: "2026-10-04", session: "s-old")
+_ = try! RequirementsCore.propose(workspace: wsExplicit, id: reqExplicit.id, items: [BreakdownItem(title: "只做 A", boundary: "", dependsOn: [])], today: "2026-10-04")
+_ = try! RequirementsCore.confirm(workspace: wsExplicit, id: reqExplicit.id, today: "2026-10-04", session: "s-new")
+eq(RequirementsCore.loadWorkstreamSessions(workspace: wsExplicit)["WS-000001"], "s-new",
+   "acting session wins over the stored binding")
+
+// A requirement with no captured session invents no binding.
+let wsNoSession = tempWorkspace("inherit-none")
+let reqNoSession = try! RequirementsCore.createRequirement(workspace: wsNoSession, title: "无会话", body: "x", source: nil, today: "2026-10-04")
+_ = try! RequirementsCore.propose(workspace: wsNoSession, id: reqNoSession.id, items: [BreakdownItem(title: "只做 A", boundary: "", dependsOn: [])], today: "2026-10-04")
+_ = try! RequirementsCore.confirm(workspace: wsNoSession, id: reqNoSession.id, today: "2026-10-04")
+eq(RequirementsCore.loadWorkstreamSessions(workspace: wsNoSession).isEmpty, true, "no session -> no WS binding")
+
+// The merge must not clobber the workstreams panel's own runtime state.
+let wsMerge = tempWorkspace("inherit-merge")
+let reqMerge = try! RequirementsCore.createRequirement(workspace: wsMerge, title: "合并", body: "x", source: nil, today: "2026-10-04", session: "s-merge")
+write(RequirementsCore.workstreamSessionsPath(wsMerge),
+      "{\n  \"sessions\" : {\n    \"t-1\" : {\n      \"sessionId\" : \"s-task\"\n    }\n  },\n  \"workstreamSessions\" : {\n    \"WS-999999\" : \"s-keep\"\n  }\n}")
+_ = try! RequirementsCore.propose(workspace: wsMerge, id: reqMerge.id, items: [BreakdownItem(title: "只做 A", boundary: "", dependsOn: [])], today: "2026-10-04")
+_ = try! RequirementsCore.confirm(workspace: wsMerge, id: reqMerge.id, today: "2026-10-04")
+let mergedSessions = RequirementsCore.loadWorkstreamSessions(workspace: wsMerge)
+eq(mergedSessions["WS-999999"], "s-keep", "existing binding survives the merge")
+eq(mergedSessions["WS-000001"], "s-merge", "new binding is merged in")
+let mergedRaw = RequirementsCore.readText(RequirementsCore.workstreamSessionsPath(wsMerge)) ?? ""
+check(mergedRaw.contains("s-task"), "task session survives the merge")
 
 section("composer edit")
 let editModel = RequirementComposerModel.edit(edited2)

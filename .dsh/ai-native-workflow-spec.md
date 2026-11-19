@@ -3,6 +3,7 @@
 > 状态：草案 · 日期：2026-10-05 · 适用：任何采用「需求 → 拆解 → 事项」工作流的项目
 > 来源：从 oh-my-dsh 的实践中抽取的**通用部分**。本文件是**自包含规范**，不依赖任何具体项目的文档或文件；`oh-my-dsh` 是它的第一个 adopter。
 > 修订（2026-10-05）：配合 oh-my-dsh **需求池面板**落地，§9 增补该 App 能力，§3 人工判断状态补 `evaluated`。
+> 修订（2026-10-07）：**交付由「阶段」改为「操作」**——阶段收敛为 **规划 / 设计 / 任务 / 验收** 四阶段；**启动 / 交付是操作，不推进阶段**；终态改为「验收已确认 且 交付结果终结」。见 §1 / §3 / §4 R6 / §5 / §8 / §10。
 
 ## 0. 这份文档是什么
 
@@ -17,9 +18,9 @@
 | **需求（Requirement）** | 追踪单元的**来源**：一条尚未确定做法的诉求，住在需求池。 |
 | **需求池（Idea Pool）** | 需求的家：收集 / 评估 / 拆分 / 丢弃。 |
 | **拆解（Breakdown）** | 需求 → 1..N 个事项的入口；agent 出方案、**人确认**。 |
-| **事项（Workstream）** | **最小工作单元**；关联 0..1 需求、0..N 队列 / PR。 |
-| **阶段（Stage）** | 事项的状态：规划 / 设计 / 任务 / 验收 / 交付。 |
-| **终态（Terminal）** | **派生谓词**：`stage == 交付` 且交付结果终结（merged / closed / abandoned）。 |
+| **事项（Workstream）** | **最小工作单元**；关联 0..1 需求、0..1 队列 / PR。 |
+| **阶段（Stage）** | 事项的状态：**规划 / 设计 / 任务 / 验收**（**交付是操作，不是阶段**）。 |
+| **终态（Terminal）** | **派生谓词**：**验收已确认** 且交付结果终结（merged / closed / abandoned）；观察得到、不手写、不回弹。 |
 | **裁决（Verdict）** | 验收的**点记录**：判定人 + 证据 + 覆盖的变更；**永不失效**，只覆盖。 |
 | **覆盖（Coverage）** | 裁决只覆盖它裁定的那次**变更**（不可变内容标识）。 |
 | **回归门（Regression Gate）** | 长期不变量，**每次改动都跑**的可执行检查。 |
@@ -47,7 +48,7 @@
 **字段摘要**：
 
 - **REQ**：`id` / `title` / `source` / `created` / `updated`（必选）；`state`（**可选，仅人工判断**：candidate / evaluating / evaluated / suspended / discarded）；`workstreams`（派生缓存）；
-- **WS**：`id` / `title` / `stage` / `created` / `updated`（必选）；`requirement`（0..1）；`covered`（验收起必选，锚变更）；`regression`（0..1）；`queues`（0..N）；`delivery.pr` / `delivery.url`（交付阶段的事实）；
+- **WS**：`id` / `title` / `stage` / `created` / `updated`（必选；`stage ∈ planning / design / task / acceptance`）；`requirement`（0..1）；`covered`（验收起必选，锚变更）；`regression`（0..1）；`queues`（0..1，一事项一队列 `[q-...]`；阶段是任务的属性）；`delivery.pr` / `delivery.url`（**交付操作**的事实，不构成阶段）；
 - **REG**：`id` / `title` / `source` / `runs`（可执行检查）/ `created` / `updated`。
 
 **committed vs ignored**：定义与阶段随仓库提交；**运行时绑定只在本机**（如 `*.local.json`，忽略）。
@@ -63,11 +64,11 @@
 | R3 | **跳过 / 裁剪必须在规划声明** | 裁剪决策本身是规划产物 |
 | R4 | **停驻是一等状态** | 「待确认」可停留、可回退，不得被当作成功 |
 | R5 | **只拆不胀** | 范围外的新发现回池为新需求、另起事项，不就地吸收 |
-| R6 | **终态是派生谓词** | `closed = stage==交付 且交付结果终结`；是观察不是迁移 |
+| R6 | **终态是派生谓词** | `closed = 验收已确认 且交付结果终结`（merged / closed / abandoned）；是观察不是迁移 |
 | R7 | **裁决是点记录，覆盖锚变更** | 不锚文件当前内容 / 分支 / 裸 commit；无「失效」，只有「未覆盖」 |
 | R8 | **需求关闭派生** | 有子事项且全部终态（或显式 `discarded`）；空子集不自动关闭 |
 | R9 | **不手写派生事实** | `closed` / `outcome` / `split` 一律由派生器算出 |
-| R10 | **人工确认门** | 见 §5；规划确认 / 设计确认 / 拆分确认 / 验收 sign-off 不可由 agent 自签 |
+| R10 | **人工确认门** | 见 §5；规划确认 / 设计确认 / 拆分确认 / 验收 sign-off **可由面板点按，或由会话在用户明确授权下代发**；签字仍是人，agent 不可自签。每次确认 / 退回在卡片 `## 阶段确认` 留下来源标记（`panel` 点按 / `session <id>` 会话授权） |
 | R11 | **回归门** | 不变量每次改动都跑；后事项打破 → 后事项失败，不重开前事项 |
 | R12 | **对话 / 需求阶段只读** | 需求未落卡、事项未确认、任务队列未启动之前，只讨论、只澄清、只落卡，不得修改代码或文件；**实施的唯一入口 = 已启动的任务队列** |
 
@@ -89,9 +90,12 @@
                                       ▼
                      验收(回归门 + 机检证据) ◆ 人 sign-off
                                       ▼
+                    已验收、待交付（停驻）
+                                      │ 交付 = 操作（push / PR，不是阶段）
+                                      ▼
                      交付(PR) ◆ 人 merge ─► 派生终态
 
-◆ = 人工确认门（agent 出方案 / 人 Own）
+◆ = 人工确认门（agent 出方案 / 人 Own）：**面板点按，或由会话在用户明确授权下代发；签字仍是人，agent 不可自签**；`## 阶段确认` 记录本次来源
 ```
 
 ## 6. 派生与门（实现无关的接口）
@@ -145,7 +149,7 @@ agent 需完成并自检：
 **终态派生器**（只读）：
 
 - 输入：需求 / 事项卡片 + 交付结果（PR 状态）；
-- 输出：事项 `outcome`（merged / open / closed / abandoned）；`closed = stage==交付 且 outcome 终结`；需求有效状态（`discarded > closed > split > state`）；
+- 输出：事项 `outcome`（merged / open / closed / abandoned）；`closed = 验收已确认 且 outcome 终结`；需求有效状态（`discarded > closed > split > state`）；
 - 约束：**只读、不写卡片**；无令牌 / 无网络 → `unknown`，不假装成功。
 
 **回归门 checker**：
@@ -158,7 +162,8 @@ agent 需完成并自检：
 
 这是 **App 能力，不是本规范的一部分**——项目**配合 oh-my-dsh 使用**时才有：
 
-- **需求池面板 + `/requirement-pool` 技能**：想法收件箱 = 落 `REQ-*.md`（`state: candidate`）；需求池 = 按有效状态（`discarded > closed > split > state`）展示、人工改 `state`、丢弃；拆解器 = agent 经 API 提交 `1..N` **待确认提案**，**人在面板确认 / 驳回（可带原因）**后才生成 `WS-*.md`，留下需求 → 事项映射。`confirm` 只由面板（人）触发，agent 只 `propose`（R10）；需求从收件到确认拆解始终回到同一会话（运行时绑定只在本机，不进卡片）。面板只服务需求池，规划 / 设计 / 验收 / 交付仍走事项会话。
+- **需求池面板 + `/requirement-pool` 技能**：想法收件箱 = 落 `REQ-*.md`（`state: candidate`）；需求池 = 按有效状态（`discarded > closed > split > state`）展示、人工改 `state`、丢弃；拆解器 = agent 经 API 提交 `1..N` **待确认提案**，**人在面板确认 / 驳回（可带原因）**后才生成 `WS-*.md`，留下需求 → 事项映射。`confirm` 只由面板（人）触发，agent 只 `propose`（R10）；需求从收件到确认拆解始终回到同一会话（运行时绑定只在本机，不进卡片）。面板只服务需求池；规划 / 设计 / 验收仍走事项会话，**交付是事项的操作**。
+- **事项面板 + `/workstream-panel` 技能**：事项（WS）以事项面板为**唯一写者**（`.dsh/workstreams/WS-*.md` 为权威）；agent 经 `/api/workstreams/*` 补规划（`plan`）、改标题 / 需求指针 / 正文（`update`）、登记阶段队列（`queues`），**不直接改 `.dsh` 文件**；阶段推进与退回是**人工确认门**（`stage/confirm` / `stage/reject`；**仅当用户在本会话明确授权**时 agent 才可代发，且 confirm 前复述证据、reject 拿人的原因），agent 不自签（R10 / D5b）；`## 阶段确认` 留痕并记录来源（`panel` 点按 / `session <id>` 会话授权）。
 - **任务面板 + `/task-todo` 技能**：任务拆分 = 建**等待态队列** + 批量入队（`.draft`，不启动）；实施 = 启动队列；交付 = 交付会话 push + PR；队列跑完回传会话。
 
 不用 App 时，任何等价机制（自有队列 / 脚本 / 其它工具）都可以。
@@ -170,7 +175,8 @@ agent 需完成并自检：
 | 需求 / 需求池 | Requirement / Idea Pool |
 | 拆解 | Breakdown |
 | 事项 | Workstream |
-| 规划 / 设计 / 任务 / 验收 / 交付 | Planning / Design / Task / Acceptance / Delivery |
+| 规划 / 设计 / 任务 / 验收 | Planning / Design / Task / Acceptance |
+| 启动 / 交付（操作） | Start / Deliver (operations) |
 | 裁决 / 覆盖 | Verdict / Coverage |
 | 回归门 | Regression Gate |
 | 终态 | Terminal |

@@ -2,7 +2,7 @@
 
 把 DeepSeek Harness 的 Web 界面（`dsh web`）封装成一个可以在 macOS 上**直接双击运行**的原生 App。
 **不改动任何 DeepSeek Harness 源码**——它只是一个壳：内置运行时自拉起 `dsh web`，用原生 `WKWebView`
-呈现界面，并在窗口右侧提供十个原生面板（项目 / 文件 / 终端 / Repo Wiki 知识库 / 任务 / 通道 / 审查 / 浏览器 / 技能 / 需求池）。
+呈现界面，并在窗口右侧提供十一个原生面板（项目 / 文件 / 终端 / Repo Wiki 知识库 / 需求池 / 事项 / 任务 / 通道 / 审查 / 浏览器 / 技能）。
 
 ## 特性一览
 
@@ -27,6 +27,7 @@
 - **终端面板**：原生 PTY 真实 shell；多标签并按工作区隔离记忆、全功能渲染（真彩色 / 备用屏 / 宽字符）、输入法直输与自动中英切换、鼠标选中 + `⌘C`/`⌘V`、可选「选中文本即复制」；
 - **Repo Wiki 知识库面板**：一键让 dsh 代理生成 / 增量更新结构化 markdown 知识库（`.dsh/wiki/`，可随仓库提交）；页面树 + markdown 渲染 + 反向链接、陈旧检测与 `manual` 保护、可选自动 `git` 提交；
 - **需求池面板**：AI 原生工作流的前端三件——**想法收件箱**（把对话里的想法落成需求卡）、**需求池**（按有效状态展示需求与拆出的子事项）、**拆解器**（agent 出 1 需求 → 1..N 事项方案、**人在面板确认**）；配套 `requirement-pool` 技能与 `/api/requirements/*`。
+- **事项面板**：当前工作区的**事项中心**——事项 → 阶段 → 任务**三级卡片**、四个阶段扁平筛选；**阶段队列 `.done` 不等于阶段完成**，须过**机检证据 + 人工确认门**（R10）才推进 `stage`；面板是 `WS-*.md` 的**唯一写者**，agent 经 `/api/workstreams/*`（`workstream-panel` 技能）改事项、不直接改 `.dsh`；有 **focus 通道**——需求池子事项 `↗` 与任何带 `focus` 的 API 请求都能让事项面板亮起并高亮、滚动到该 WS；每个事项还有一条**主场会话**（`workstreamSessions`，last-writer-wins），「拆分任务」与「确认后向主场会话发下一阶段提示词」都围绕它（切换矩阵见 `docs/usage/panels.md`）；**交付是验收确认后的操作**（不是阶段）：面板「交付」按钮或会话 `POST /api/workstreams/deliver` 发起（同一条 `initiateDelivery`：`accepted` + git/GitHub/token + 主场会话准入 → 把交付提示词发进主场会话，完成信号是 `POST /api/workstreams/delivery` 写 `pr`/`url`）；
 - **任务面板**：手动任务 + GitHub issue 两种来源，按队列（泳道）串行执行；卡片列表 + 内联表单、跨工作区并行、任务只 commit 而由**交付会话**按队列的 **Git 工作流**（开 PR / 合并到基线 / 直接推送 / 无）落地；Agent 可经 `task-todo` 技能建任务、队列并发起交付；
 - **通道面板**：绑定微信个人号 / 钉钉机器人，在微信 / 钉钉里用消息与斜杠指令远程驱动 dsh；扫码向导、项目开关、会话列表，并与 dsh web 会话双向联动；
 - **审查面板**：只读审计 dsh 落盘的会话日志——按 会话 → 对话 → 文件 → 变更内容 列出代理改了什么，标出工具 hunk / 参数还原 / 全文写入，并单列 shell 直改与失败调用；随日志自动刷新；
@@ -35,11 +36,11 @@
 
 ## 右栏面板
 
-窗口**最右侧是活动栏**（图标入口，十个面板互斥切换，**首位是「项目」**），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
+窗口**最右侧是活动栏**（图标入口，十一个面板互斥切换，**首位是「项目」**），右侧面板顶部为统一背景条与布局，图标按钮在深浅色下均可见。
 所有原生面板**共用一套灰阶配色**（面板底色一档 + 控件常态/高亮两档，全部取自 dsh web 的 `neutral bluish` 设计令牌），深浅两套主题一一对应；**单一事实来源为 `PanelSurface.swift`——改色只改这一个文件**，方案见 [`docs/design/shell/ui-color-scheme.md`](./docs/design/shell/ui-color-scheme.md)。
-「视图」菜单提供十面板的显示/隐藏快捷键（首项即「项目」）。
+「视图」菜单提供十一面板的显示/隐藏快捷键（首项即「项目」）。
 
-活动栏图标自上而下依次为下列十个面板，**每个面板的完整说明（特性、边界、已知限制、设计文档）见 [`docs/usage/panels.md`](./docs/usage/panels.md)**。
+活动栏图标自上而下依次为下列十一个面板，**每个面板的完整说明（特性、边界、已知限制、设计文档）见 [`docs/usage/panels.md`](./docs/usage/panels.md)**。
 
 ### 项目面板（`⌥⌘P` / 活动栏首位「项目」图标）
 
@@ -64,6 +65,10 @@
 ### 需求池面板（`⌥⌘I` / 活动栏第 5 位「需求池」图标）
 
 AI 原生工作流的**前端三件**：想法收件箱、需求池、拆解器。需求与事项状态落在项目 `.dsh`（随仓库提交），面板是它的工作台：新建需求卡、看有效状态与子事项、把「拆解」提示词发进当前对话让 agent 出方案，再由**人**在面板确认（agent 不自签）。完整说明见 [`docs/usage/panels.md`](./docs/usage/panels.md)。
+
+### 事项面板（`⌥⌘K` / 活动栏第 6 位「事项」图标）
+
+当前工作区的**事项（Workstream）中心**：把 `.dsh/workstreams/WS-*.md` 按**事项 → 阶段 → 任务**三级卡片展开（阶段卡恒为规划 / 设计 / 执行 / 验收**四张**；**交付是操作、不是阶段**），顶部扁平页签按阶段筛选（加载 / 重绘默认只展开首个未处理的事项卡，其余收起，全完成不展开）；**阶段队列 `.done` 不等于阶段完成**——每个阶段要过**机检证据 + 人工确认**（R10）才推进 `stage`，证据不足时卡片标「待确认」且确认被拒，「退回本工作阶段」须填原因并留痕。面板是 `WS-*.md` 的**唯一写者**：agent 改事项走 `/api/workstreams/*`（内置技能 `workstream-panel`），不直接改 `.dsh` 文件。**focus 通道**：需求池子事项的 `↗` 与任何带 `focus`（写操作 `focus:true`，默认 `false` 不抢面板）的 API 请求都会把右栏切到事项面板、高亮并滚动到该 WS；被当前阶段筛选隐藏时自动回落「全部」，跑不通的阶段门 / 交付门不受影响。事项面板按设计 A1/A6/A10 clean-room 实现，不复用任务面板代码，配色只用 `PanelSurface` / `PanelControl`（无新令牌）。每个事项还绑定一条**主场会话**（`workstreamSessions`，last-writer-wins，A16）：面板「拆分任务」复用它（把首个未处理阶段的拆分提示词发进去），人确认阶段后向它续发下一阶段交接提示词；对话可经 `GET /api/workstreams/bound?session=` 反查自己绑定的事项。阶段交接提示词统一为**三段式**（身份行 `WS-id「标题」@.dsh/workstreams/<id>.md` / `阶段：<中文>（<raw>）· 本步：<动作>` / 一句话 / 注意；`isHandoff` 只认身份行的事项卡指针）。**交付是验收确认（`accepted`）后的操作**：面板「交付」按钮或会话说「交付 WS-x」（`POST /api/workstreams/deliver`）走同一条路径——`accepted` / git / GitHub / token / 主场会话准入通过后，把交付提示词发进该事项的主场会话（不新建会话、不建交付任务、不改 `stage`），完成信号是 agent 调 `POST /api/workstreams/delivery` 写 `pr` / `url` 事实（`outcome` 由面板派生）；旧卡 `stage: delivery` 读出即 `acceptance`。焦点 + 主场会话的完整**切换矩阵**见 [`docs/usage/panels.md`](./docs/usage/panels.md)（设计 §6.1 / A15·A16）。
 
 ### 任务面板（`⌥⌘J` / 活动栏「任务」图标）
 
@@ -183,7 +188,7 @@ open "dist/oh-my-dsh.app"
 
 - 界面用系统 WebKit 渲染，与 Safari 同引擎；窗口标题固定为 `oh-my-dsh (DeepSeek Harness)`；
 - 外部链接、`target=_blank` 会交给默认浏览器打开，不会在壳内跳走；文件下载走原生「另存为」对话框（`WKDownload`）；
-- **菜单**：App 菜单（关于/隐藏/退出）、编辑菜单（`⌘C/V/X/A/Z` 路由到 WebView 首响应者）、视图菜单（十面板切换 + **「重新加载页面」`⌘R`**）、设置菜单（`⌘,` 设置窗口 / `⌘U` 检查并升级 dsh / `⌘L` 打开日志文件夹 / **`⌘D` 打开数据文件夹** / dsh 设置 / registry / 自动升级 / 终端选中即复制 / wiki 设置组 / 语言子菜单 / 外观子菜单）；
+- **菜单**：App 菜单（关于/隐藏/退出）、编辑菜单（`⌘C/V/X/A/Z` 路由到 WebView 首响应者）、视图菜单（十一面板切换 + **「重新加载页面」`⌘R`**）、设置菜单（`⌘,` 设置窗口 / `⌘U` 检查并升级 dsh / `⌘L` 打开日志文件夹 / **`⌘D` 打开数据文件夹** / dsh 设置 / registry / 自动升级 / 终端选中即复制 / wiki 设置组 / 语言子菜单 / 外观子菜单）；
 - 首次启动若被 Gatekeeper 拦（"无法验证开发者"），右键 App →「打开」即可（本地构建，无公证）。
 
 ## dsh 升级
@@ -245,10 +250,11 @@ dsh 升级会**把会话日志换成新世代**（0.1.5 起新建会话写 `sess
 | `DSH_BROWSER_TEST=1` | 启动即打开浏览器面板（QA/调试钩子） |
 | `DSH_REVIEW_TEST=1` | 启动即打开审计面板（QA/调试钩子） |
 | `DSH_REVIEW_TEST_PATH` | 审计面板固定读取的工作区路径（QA/调试钩子，默认跟随当前工作区） |
+| `DSH_WORKSTREAMS_TEST=1` | 启动即打开事项面板（QA/调试钩子） |
 
 > 其他 QA/调试钩子（环境变量或 `--ui-debug`）：`DSH_UI_DEBUG=1` 统一开关（打开浏览器面板 + 面板层级 dump + 截图）、
 > `DSH_PREVIEW_TEST_PATH` / `DSH_TERMINAL_TEST` / `DSH_WIKI_TEST` / `DSH_REVIEW_TEST` / `DSH_SKILLS_TEST`（启动即开对应面板）、
-> `DSH_PANEL_TEST="files,terminal,wiki,tasks,browser,channel,review,skills"`（**按序开全部面板**，配 `DSH_UI_DEBUG=1` 每个面板各落一张 `panel-<name>-debug.png` ——dsh 升级后的面板全量核对就靠它）、
+> `DSH_PANEL_TEST="projects,files,terminal,wiki,requirements,workstreams,tasks,browser,channel,review,skills"`（**按序开全部面板**，配 `DSH_UI_DEBUG=1` 每个面板各落一张 `panel-<name>-debug.png` ——dsh 升级后的面板全量核对就靠它）、
 > `DSH_PREVIEW_DEBUG`（fetch 拦截探针，同时演练 `host.openPath` 与 `session/openWorkspacePath` 两种形状）、`DSH_SESSION_DEBUG`（会话跟踪 dump）。
 
 > **壳层设置存放位置**：语言 / 主题 / 面板宽度 / 浏览器 / 通道 / wiki 等**壳层自有设置**存为 UTF-8 JSON `$DSH_HOME/oh-my-dsh/shell/config.json`
@@ -273,7 +279,7 @@ dsh 升级会**把会话日志换成新世代**（0.1.5 起新建会话写 `sess
 壳二进制只做三件事：探测空闲端口 → 用内置 `node` 执行内置 `<dsh>/lib/bin.js web --port <n>` 拉起（并回收自己上次残留的实例）→ `WKWebView` 加载 `http://127.0.0.1:<n>/?token=…`。
 `dsh` 本体、`~/.dsh` 配置、会话数据全部原样，无任何补丁或注入。内置运行时装在 `Contents/Resources/runtime/`
 （`node` + `npm` + `dsh/` 依赖树），App 优先使用它，找不到时才回退到本机安装。
-右侧十个面板是壳层原生 UI，其中文件面板通过 WebView 注入拦截文件打开，知识库 / 任务 / 通道 / 审查 / 浏览器 / 技能通过 dsh 既有能力（RPC / 会话 / 独立浏览器内核 / 会话日志 / SKILL.md 发现）驱动。
+右侧十一个面板是壳层原生 UI，其中文件面板通过 WebView 注入拦截文件打开，知识库 / 需求池 / 事项 / 任务 / 通道 / 审查 / 浏览器 / 技能通过 dsh 既有能力（RPC / 会话 / 独立浏览器内核 / 会话日志 / SKILL.md 发现）驱动。
 
 ## 目录
 
@@ -296,6 +302,11 @@ platforms/macos/src/                  原生壳（Swift）
   TasksRunner.swift       队列运行器（git 三步显式检查、dsh 会话、队列级 PR、取消·重试·跳过）
   TasksUI.swift           任务卡片视图模型（徽标/元信息/主操作/队列头/摘要，无头可断言）
   TasksAPI.swift          任务面板的 localhost API（/api/tasks/* 路由 + 请求解析 + 工作区解析，纯模型可无头测试）
+  WorkstreamsCore.swift / WorkstreamsUI.swift / WorkstreamsAPI.swift  事项面板模型 / 视图模型 / localhost API（/api/workstreams/*，纯 Foundation 可无头测试）
+  WorkstreamsPanel.swift / WSCardView.swift / WSInlineForms.swift    事项面板（三级卡片 + 阶段筛选 + 人工确认门；自有视图基件，不复用任务面板）
+  WorkstreamsQueues.swift / WorkstreamsRunner.swift / WorkstreamsPrompts.swift  事项阶段队列与三级任务存储 / 串行相位机 runner / 阶段交接提示词
+  WorkstreamsRunState.swift / WorkstreamsSummary.swift  运行态派生（任务 → 阶段 → 事项）/ 任务会话完成 → 主场会话汇总文案
+  WorkstreamsStageGate.swift / WorkstreamsDelivery.swift  四阶段证据谓词 + 人工确认门 + accepted 派生 / 交付操作（accepted 准入 + 主场会话执行，git·PR·token，纯 Foundation）
   TaskCardView.swift      卡片与队列头视图（渲染 + 点击转发）
   ChannelPanel.swift     通道面板（微信/钉钉接入：引导卡片/扫码向导/项目视图 + 启动自动拉起 listener）
   SkillsPanel.swift      技能面板（已安装/可安装/registry/调用开关/移除）
@@ -317,7 +328,7 @@ core/                共享核心（Node 模块：ANSI 模拟器 / 服务管理 
 platforms/           各平台壳（macos/ 现有壳，windows/ linux/ 规划中）
 scripts/             跨平台工具（version.sh 版本单一来源 / changelog.sh / release-checksums.sh / github-publish.sh / local-release.sh / git-remote.sh）
 .github/             CI 工作流（core 单测、壳层单测/编译检查 + arm64 构建；release.yml 打 tag 时构建 x86_64 + 发布）
-.dsh/skills/         web-dev-tools / repo-knowledge / task-todo 等面板配套 skill（App 启动时同步安装到全局 $DSH_HOME/skills/；issue-resolve 已于 2026-09-27 退役）
+.dsh/skills/         web-dev-tools / repo-knowledge / task-todo / requirement-pool / workstream-panel 等面板配套 skill（App 启动时同步安装到全局 $DSH_HOME/skills/；issue-resolve 已于 2026-09-27 退役）
 .cache/              构建缓存（node tarball、npm 缓存、已构建运行时/CEF，按架构分目录）
 dist/                构建产物（.app / .pkg / .dmg）
 docs/                文档中心（索引见 docs/README.md）：research/ 调研、design/{shell,panels,channels} 方案设计、fixes/ 排查与修复、process/ 流程·发布·升级、feedback/ 使用反馈、plans/ 计划、milestones/ 里程碑、usage/ 使用说明、raw/、screenshots/
@@ -330,7 +341,7 @@ docs/                文档中心（索引见 docs/README.md）：research/ 调�
 
 - **Bug / 功能请求**：使用仓库的 Issue 模板（bug / feature）提交；
 - **本地测试**：`node --test --test-timeout=60000 core/tests/*.test.js`（共享核心单测：ANSI 模拟器 / 端口 / 升级 / 会话 RPC / issues / 队列 / 任务索引 / channel 指令·路由·会话·传输层 / review-log 变更审计；`--test-timeout` 保证任何泄漏定时器的用例快速失败而不是挂死）、
-  `tests/tasks-panel/run.sh`（任务面板 1417 项：**模型 203**（入队·移出·失败暂停·重启恢复 + `.dsh/tasks` 四文件持久化 + index.json v1 兼容）+ **运行器 454**（假 git + 假 dsh 驱动全流水线：分支进入 / 全局串行 / 失败暂停 / 队列级 PR 复用 / 取消·重试·跳过 / 手动任务增删改与队列选择 + **非 git 目录**：无分支的队列照常跑完、有分支的队列报 `errNotGit` 且不浪费会话）+ **视图模型 393**（卡片徽标与按钮可用性 / 队列头进度与状态 / 发布按钮随 Git 工作流（pr/merge/push/无）与收尾结果 / 摘要计数 / 内联表单校验与提交 / 空态 / 头部工作区行：非 git 与 非 GitHub 分开说 + GitHub 专属按钮可用性）+ **视图 254**（无窗口 AppKit：两张表单 + 使用说明抽屉/内联正文（队列表单的 Git 工作流也是单选组、发布排在关闭之前）+ 面板设置抽屉（默认工作流单选组、按工作区、工作流在 Token 之上）的字段宽度·按钮·提示状态与提交流程、输入框必须撑满表单、描述框与单行框同款且随输入长高、队列表单默认只问队列名、表单在 260pt 矮面板下必须把按钮留在可见区，卡片/队列容器/分区头与进度条的真实布局——卡片必须撑满列表宽度、窄面板下不得反向撑宽列表，队内卡片还必须缩进在泳道内）+ **本地 API 113**（`/api/tasks/*`：路由命中与不吞 404、请求解析（字符串简写/对象/空标题/上限 50/部分成功）、**queue/create + queue/start + queue/append**（等待态、`session` 来源、按 `name`/id 消歧、409/404、追加回 draft、`reportsToSession`）、工作区解析（cwd 在子目录 → 最近祖先）、响应形状））、`tests/projects-panel/run.sh`（项目面板：根目录/命名规则/列举/注册合并 + 控制器无头：建目录、注册请求、快捷入口回调、改根）、`tests/injected-scripts/run.sh`（注入 dsh web 的 JS：脚本可解析 + 桥名与壳层调用对得上）、`tests/wiki-panel/run.sh`（Wiki 面板）、`tests/terminal-emulator/run.sh`（模拟器）、`tests/terminal-panel/run.sh`（终端面板头部）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲 + 同一服务上的 `/api/tasks/*` 路由面一起编译）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/file-panel/run.sh`（文件面板：工作区页签记忆 / 未保存提示 / 切换语义）、`tests/preview-interceptor/run.sh`（注入的文件打开拦截脚本：dsh ≥0.1.5 点击捕获 + 旧版 RPC fetch 形状）、`tests/session-tracker/run.sh`（会话切换跟踪：dsh 0.1.6 / 0.1.7 两代传输——`fetch` 与 WebSocket 会话流）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/dsh-auth-cookies/run.sh`（dsh-auth cookie 清理与 NODE_OPTIONS）、`tests/shell-config/run.sh`（壳层设置与旧 UserDefaults 迁移）、`tests/l10n/run.sh`（L10n 键名 lint）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/skills-panel/run.sh`（技能面板：frontmatter 字节保真 / 四根级别与遮蔽 / 内置与共享级写操作拒绝 / 安装·移除 / registry 清单与搜索 + 面板控制器无头冒烟 + 离屏绘制回归）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠 + 控制器无头回归「日志变了必须重审、没变不许重审」）；`scripts/local-ci.sh` 一次跑全部；
+  `tests/tasks-panel/run.sh`（任务面板 1417 项：**模型 203**（入队·移出·失败暂停·重启恢复 + `.dsh/tasks` 四文件持久化 + index.json v1 兼容）+ **运行器 454**（假 git + 假 dsh 驱动全流水线：分支进入 / 全局串行 / 失败暂停 / 队列级 PR 复用 / 取消·重试·跳过 / 手动任务增删改与队列选择 + **非 git 目录**：无分支的队列照常跑完、有分支的队列报 `errNotGit` 且不浪费会话）+ **视图模型 393**（卡片徽标与按钮可用性 / 队列头进度与状态 / 发布按钮随 Git 工作流（pr/merge/push/无）与收尾结果 / 摘要计数 / 内联表单校验与提交 / 空态 / 头部工作区行：非 git 与 非 GitHub 分开说 + GitHub 专属按钮可用性）+ **视图 254**（无窗口 AppKit：两张表单 + 使用说明抽屉/内联正文（队列表单的 Git 工作流也是单选组、发布排在关闭之前）+ 面板设置抽屉（默认工作流单选组、按工作区、工作流在 Token 之上）的字段宽度·按钮·提示状态与提交流程、输入框必须撑满表单、描述框与单行框同款且随输入长高、队列表单默认只问队列名、表单在 260pt 矮面板下必须把按钮留在可见区，卡片/队列容器/分区头与进度条的真实布局——卡片必须撑满列表宽度、窄面板下不得反向撑宽列表，队内卡片还必须缩进在泳道内）+ **本地 API 113**（`/api/tasks/*`：路由命中与不吞 404、请求解析（字符串简写/对象/空标题/上限 50/部分成功）、**queue/create + queue/start + queue/append**（等待态、`session` 来源、按 `name`/id 消歧、409/404、追加回 draft、`reportsToSession`）、工作区解析（cwd 在子目录 → 最近祖先）、响应形状））、`tests/workstreams-panel/run.sh`（事项面板 **1203 项**：**模型 110**（frontmatter / 四阶段 + 旧 delivery 读兼容 / covered / 原子写 / 六位 id / 坏卡）+ **API 299**（`/api/workstreams/*` 路由命中与三条回退、反查 `bound` 与 `bound?focus` 高亮、错误码与 status 对齐、workspace 归一化、update 三态、plan heading、queues 校验、任务 / 队列路由、`covered` / `delivery` 写路由与 `outcome-derived` 拒绝）+ **UI 192**（三级卡片模型 / 阶段筛选 / 空态 / 门证据 / 运行态派生 / focus 目标解析 / 默认展开：首个未处理卡 / 拆分目标：首个未处理阶段 / 创建任务抽屉：首行标题-其余内容、默认首个未处理阶段）+ **runner 181**（串行相位机 / 会话生命周期 / 阶段级启动 / 阶段 canonical 顺序启动 / 重启恢复 / 存储隔离）+ **prompt 185**（三段式交接提示词：身份行 / 阶段·本步 / 一句话 / 注意，含 `isHandoff` 判据、下一阶段决策、拆分任务提示词与 marker 注入）+ **delivery 148**（git 流水线 / PR / token 文件 + 失败路径）+ **stage-gate 88**（四阶段证据谓词 + 人工确认 / 退回；验收是最后阶段），另有 A6 命名空间 / 配色 / 引擎隔离 / main.swift 接线 / 门 / 阶段提示词 / 写权反转 / 运行态派生 / 交付接线与 covered·delivery 写路由 / 发起交付（面板按钮 == `deliver` 路由共用 initiateDelivery） / 事项会话绑定与拆分任务（A16 主场会话、首个未处理阶段）/ focus 通道（面板高亮滚动 + API focus + 需求池跳转）/ 对话内阶段推进（确认 → 向主场会话发下一阶段提示词）/ 默认展开（首个未处理卡）/ 启动收口（阶段卡无启动按钮 + 事项启动按阶段 canonical 顺序）/ 创建任务抽屉（主卡按钮 + 阶段选择 + 首行标题·其余内容）/ 汇总回主场会话（阶段批量 + 例外即时）/ 4 阶段 + 交付操作同步（accepted 前置、主场会话执行、旧 delivery 读兼容、无第五阶段 L10n / 技能文案）等源码守卫）、`tests/projects-panel/run.sh`（项目面板：根目录/命名规则/列举/注册合并 + 控制器无头：建目录、注册请求、快捷入口回调、改根）、`tests/injected-scripts/run.sh`（注入 dsh web 的 JS：脚本可解析 + 桥名与壳层调用对得上）、`tests/wiki-panel/run.sh`（Wiki 面板）、`tests/terminal-emulator/run.sh`（模拟器）、`tests/terminal-panel/run.sh`（终端面板头部）、`tests/browser-panel/run.sh`（浏览器 REST 路由/日志缓冲 + 同一服务上的 `/api/tasks/*` 路由面一起编译）、`tests/channel-panel/run.sh`（通道项目视图数据模型）、`tests/file-panel/run.sh`（文件面板：工作区页签记忆 / 未保存提示 / 切换语义）、`tests/preview-interceptor/run.sh`（注入的文件打开拦截脚本：dsh ≥0.1.5 点击捕获 + 旧版 RPC fetch 形状）、`tests/session-tracker/run.sh`（会话切换跟踪：dsh 0.1.6 / 0.1.7 两代传输——`fetch` 与 WebSocket 会话流）、`tests/dsh-rpc/run.sh`（壳层原生 dsh RPC：信封形状 / 斜杠↔点号回退 / launch token 换 cookie）、`tests/dsh-auth-cookies/run.sh`（dsh-auth cookie 清理与 NODE_OPTIONS）、`tests/shell-config/run.sh`（壳层设置与旧 UserDefaults 迁移）、`tests/l10n/run.sh`（L10n 键名 lint）、`tests/skills/run.sh`（内置 skill 安装 / 迁移）、`tests/skills-panel/run.sh`（技能面板：frontmatter 字节保真 / 四根级别与遮蔽 / 内置与共享级写操作拒绝 / 安装·移除 / registry 清单与搜索 + 面板控制器无头冒烟 + 离屏绘制回归）、`tests/review-panel/run.sh`（审计面板：日志审计模型解码/分组/diff 折叠 + 控制器无头回归「日志变了必须重审、没变不许重审」）；`scripts/local-ci.sh` 一次跑全部；
 - **CI**：push/PR 自动跑 core 单测 + 壳层编译检查 + macOS arm64 构建（`.github/workflows/ci.yml`）；发布由 release 流程构建双架构。
 
 本项目遵循 [MIT License](LICENSE)，代码只封装、绝不修改 DeepSeek Harness 上游源码。

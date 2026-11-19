@@ -74,6 +74,14 @@ tests/tasks-panel/run.sh                # 任务面板逻辑层（五段：模�
                                         #     两张内联表单（新建任务 / 新建队列及其编辑态）
                                         #   本地 API 132 项（TasksAPI.swift）：/api/tasks/task 与 /api/tasks/queue 路由 · 请求解析 · 工作区解析
                                         #   + 源码守卫（会话走 DshWorkspaceOps / 端口按调用求值 / 提示词现场探测）
+tests/workstreams-panel/run.sh          # 事项面板逻辑层（七段：模型 / API / UI / 队列引擎 / 阶段提示词（三段式） / 交付 / 阶段门）：
+                                        #   模型 110 · API 299 · UI 192 · runner 181 · prompt 185 · delivery 148 · stage-gate 88 = 1203
+                                        #   + 源码守卫（A6 视图命名空间 / 配色只用 PanelSurface·PanelControl / 引擎隔离 /
+                                        #     main.swift 接线 / 人工确认门 / 写权反转提示词 / 运行态派生 / 交付接线与 covered·delivery 写路由 /
+                                        #     发起交付（面板按钮 == deliver 路由共用 initiateDelivery）/
+                                        #     事项主场会话绑定（A16）与拆分任务（首个未处理阶段）/ focus 通道（A15）/ 对话内阶段推进 /
+                                        #     默认展开首个未处理事项卡 / 启动收口（阶段卡无启动按钮 + 事项启动按阶段 canonical 顺序）/
+                                        #     创建任务抽屉（主卡按钮 + 阶段选择 + 首行标题·其余内容））
 tests/injected-scripts/run.sh           # 注入 dsh web 的 JS 守卫：脚本可解析（node --check）/ 每个 window.__dshX
                                         #   桥名都有脚本安装它 / 不含会被 Swift 吃掉的转义
 tests/l10n/run.sh                       # L10n 键名 lint（缺失键 / 重复键 / 中英缺一）

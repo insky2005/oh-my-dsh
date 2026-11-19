@@ -1,14 +1,14 @@
 ---
 title: 模块：SkillInstaller.swift（内置 Skill 全局安装器）
 tags: [module, skills, installer, provisioning, dsh-home]
-updated: 2026-09-27T13:05:00Z
-sources: [platforms/macos/src/SkillInstaller.swift, platforms/macos/src/main.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillsPanel.swift, docs/design/panels/skills-manager-design.md, tests/skills-panel/, docs/design/panels/builtin-skills-design.md, .dsh/skills/web-dev-tools/SKILL.md, .dsh/skills/repo-knowledge/SKILL.md, .dsh/skills/task-todo/SKILL.md, docs/design/panels/task-todo-skill-design.md, platforms/macos/src/TasksAPI.swift, tests/skills/run.sh, tests/skills/skills-tests.swift, tests/tasks-panel/api-tests.swift]
+updated: 2026-10-06T00:00:00Z
+sources: [platforms/macos/src/SkillInstaller.swift, platforms/macos/src/main.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/SkillsPanel.swift, docs/design/panels/skills-manager-design.md, tests/skills-panel/, docs/design/panels/builtin-skills-design.md, .dsh/skills/web-dev-tools/SKILL.md, .dsh/skills/repo-knowledge/SKILL.md, .dsh/skills/task-todo/SKILL.md, .dsh/skills/requirement-pool/SKILL.md, .dsh/skills/workstream-panel/SKILL.md, docs/design/panels/task-todo-skill-design.md, docs/design/panels/requirements-pool-panel-design.md, docs/design/panels/workstream-panel-design.md, platforms/macos/src/TasksAPI.swift, tests/skills/run.sh, tests/skills/skills-tests.swift, tests/tasks-panel/api-tests.swift]
 manual: false
 ---
 
 # 模块：SkillInstaller.swift（内置 Skill 全局安装器）
 
-v1.13.0 开发线（PR #27 feature/builtin-skills-global）新增，Foundation-only 的**内置 Skill 供给器**：App 启动时把内置 agent skill（当前三个：web-dev-tools / repo-knowledge / task-todo）安装到全局 dsh Home（`$DSH_HOME/skills/`），支持缺失安装、受管更新、旧名迁移、**已退役技能的受管副本清理**，用户定制不覆盖。无 UI，只经 `AppLog` 记日志。设计见 `docs/design/panels/builtin-skills-design.md`。
+v1.13.0 开发线（PR #27 feature/builtin-skills-global）新增，Foundation-only 的**内置 Skill 供给器**：App 启动时把内置 agent skill（当前五个：web-dev-tools / repo-knowledge / task-todo / requirement-pool / workstream-panel）安装到全局 dsh Home（`$DSH_HOME/skills/`），支持缺失安装、受管更新、旧名迁移、**已退役技能的受管副本清理**，用户定制不覆盖。无 UI，只经 `AppLog` 记日志。设计见 `docs/design/panels/builtin-skills-design.md`。
 
 ## 背景：为何全局化
 
@@ -22,6 +22,8 @@ v1.13.0 开发线（PR #27 feature/builtin-skills-global）新增，Foundation-o
 | Repo Wiki | `repo-wiki` | `repo-knowledge` | 生成/维护仓库知识库 `.dsh/wiki/` |
 | Tasks/IssueRunner | `issue-fix` | `issue-resolve` | ~~端到端解决 GitHub issue~~ —— **2026-09-27 退役**（issue 任务与手动任务共用同一份提示词，技能成了过期的第二事实来源；受管副本启动时删除） |
 | Tasks（**新增**，非重命名，2026-09-27） | — | `task-todo` | 把沟通结论批量写进任务面板（用户明确要求时调用；见 [issue-runner-panel](issue-runner-panel.md) 与 `docs/design/panels/task-todo-skill-design.md`） |
+| 需求池（**新增**，2026-10-04） | — | `requirement-pool` | 把想法落成需求卡、把需求拆成 1..N 事项提案（落卡走 `/api/requirements/*`，人确认才建 WS；见 `docs/design/panels/requirements-pool-panel-design.md`） |
+| 事项（**新增**，2026-10-06） | — | `workstream-panel` | 改事项卡一律走 `/api/workstreams/*`、**不直接改 `.dsh` 文件**；`stage/confirm` 是人工门、agent 不自签（见 [workstream-panel](workstream-panel.md) 与 `docs/design/panels/workstream-panel-design.md`） |
 
 命名统一「领域词-能力词」双段 kebab，符合 dsh 命名约束 `/^[a-z0-9]+(?:-[a-z0-9]+)*$/`。
 
@@ -29,7 +31,7 @@ v1.13.0 开发线（PR #27 feature/builtin-skills-global）新增，Foundation-o
 
 | 类型 | 职责 |
 |---|---|
-| `enum BuiltinSkill` | `CaseIterable`；**三个** case（`webDevTools`/`repoKnowledge`/`taskTodo`），`dirName`（新名）、`legacyName`（旧名，供迁移；`taskTodo` 为 `nil`——它不是重命名来的）、`markdown`（内嵌 SKILL.md，**与仓库 `.dsh/skills/<新名>/SKILL.md` 字节一致**，有同步测试断言） |
+| `enum BuiltinSkill` | `CaseIterable`；**五个** case（`webDevTools`/`repoKnowledge`/`taskTodo`/`requirementPool`/`workstreamPanel`），`dirName`（新名）、`legacyName`（旧名，供迁移；后三者为 `nil`——它们不是重命名来的）、`markdown`（内嵌 SKILL.md，**与仓库 `.dsh/skills/<新名>/SKILL.md` 字节一致**，有同步测试断言） |
 | `enum SkillInstaller` | `managedMarker = ".ohmy-dsh-managed"`；`dshHomeDir()`（`env["DSH_HOME"] ?? NSHomeDirectory()+"/.dsh"`，与 dsh web 同一解析）；`legacyRenameMap`；`retiredSkills = ["issue-resolve", "issue-fix"]`（退役清理，见下节）；`installBuiltinSkills() -> [InstallResult]`——先跑旧名迁移、再跑退役清理、最后跑安装状态机；`FileManager` 原子写，失败不抛、记 `AppLog` |
 
 ## 启动安装状态机（对每个内置 skill）
@@ -64,13 +66,17 @@ v1.13.0 开发线（PR #27 feature/builtin-skills-global）新增，Foundation-o
 
 唯一差别是**调用方式**：前三个由面板在流程里触发（frontmatter 带 `user-invocable: false`，表「仅 model 可调用」），`task-todo` 保留**默认用户可调用** —— 它的触发条件就是「用户明确要求」。
 
+## 第四、五个内置技能 `requirement-pool` / `workstream-panel`（2026-10-04 / 2026-10-06）
+
+随 AI 原生工作流的两层实体落地：`requirement-pool` 让代理把想法落成需求卡、把需求拆成 1..N 事项提案（走 `/api/requirements/*`，人确认才建 `WS-*.md`）；`workstream-panel` 让代理**改事项卡一律走 `/api/workstreams/*`、不直接改 `.dsh` 文件**（`stage/confirm` / `stage/reject` 是人工门，agent 不自签）。机制与前四者完全一致（同一 `BuiltinSkill` case + 内嵌常量 + 仓库副本字节一致 + 启动安装 + 受管更新），frontmatter 均为 `user-invocable: false`（面板 / 模型流程用）。见 [workstream-panel](workstream-panel.md)。
+
 ## 退役清理（2026-09-27：`issue-resolve`）
 
 `issue-resolve` 随「issue 任务与手动任务对齐」退役（设计 `docs/design/panels/issue-runner-design.md` §V2-14）：两种任务来源现在共用同一份提示词要求，issue 的正文/标签直接进提示词，技能成了**过期的第二事实来源**（它还让任务自己 `git push`、说「PR 由面板创建」）。`BuiltinSkill` 去掉该 case、仓库删 `.dsh/skills/issue-resolve/`；机器上由 App 装过的副本（带托管标记）在启动时删除，用户自己改过或自装的同名技能保留并记日志（`issue-fix` 这个更早的名字也不再迁移，同样走退役清理）。
 
 ## 测试（`tests/skills/`，Foundation-only 无头）
 
-`tests/skills/run.sh` + `skills-tests.swift` + 复用 `tests/terminal-emulator/stubs.swift`：把 `SkillInstaller.swift` 拷入临时目录、设 `DSH_HOME` 指向临时空目录，无头 swiftc 编译运行，断言：空 home 生成三新名 SKILL.md + 托管标记且与内嵌一致 / 已装同版本不重写（mtime 不变）/ 已装旧版本 + 受管标记 → 覆盖 / 无托管标记 → 不覆盖 / 旧名迁移 / 幂等。字节一致断言：全局安装 SKILL.md 与仓库 `.dsh/skills/<新名>/SKILL.md` 完全一致。CI（`ci.yml`）与 `scripts/local-ci.sh` swift 阶段均含 `tests/skills/run.sh`。
+`tests/skills/run.sh` + `skills-tests.swift` + 复用 `tests/terminal-emulator/stubs.swift`：把 `SkillInstaller.swift` 拷入临时目录、设 `DSH_HOME` 指向临时空目录，无头 swiftc 编译运行，断言：空 home 生成全部新名（现五个）SKILL.md + 托管标记且与内嵌一致 / 已装同版本不重写（mtime 不变）/ 已装旧版本 + 受管标记 → 覆盖 / 无托管标记 → 不覆盖 / 旧名迁移 / 幂等。字节一致断言：全局安装 SKILL.md 与仓库 `.dsh/skills/<新名>/SKILL.md` 完全一致。CI（`ci.yml`）与 `scripts/local-ci.sh` swift 阶段均含 `tests/skills/run.sh`。
 
 ## 边界与失败模式
 

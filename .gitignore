@@ -40,6 +40,7 @@ pic/
 
 # requirement/workstream runtime bindings (machine-scoped)
 .dsh/workstreams/local.json
+.dsh/workstreams/queues.json
 .dsh/requirements/local.json
 
 # Xcode / Swift

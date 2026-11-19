@@ -1,9 +1,9 @@
 # 右栏面板详细说明
 
-本文是 oh-my-dsh 右栏**十个原生面板**的完整说明（特性、边界、已知限制与设计文档）。
-窗口最右侧是**活动栏**（图标入口，十个面板互斥切换，**首位是「项目」**），图标自上而下的顺序与下文一致：
+本文是 oh-my-dsh 右栏**十一个原生面板**的完整说明（特性、边界、已知限制与设计文档）。
+窗口最右侧是**活动栏**（图标入口，十一个面板互斥切换，**首位是「项目」**），图标自上而下的顺序与下文一致：
 
-**项目 → 文件 → 终端 → Repo Wiki 知识库 → 需求池 → 任务 → 通道 → 审查 → 浏览器 → 技能**
+**项目 → 文件 → 终端 → Repo Wiki 知识库 → 需求池 → 事项 → 任务 → 通道 → 审查 → 浏览器 → 技能**
 
 简要说明与截图见 [README 的「右栏面板」](../../README.md#右栏面板)；面板配色方案见 [`docs/design/shell/ui-color-scheme.md`](../design/shell/ui-color-scheme.md)。
 
@@ -69,14 +69,48 @@
 AI 原生工作流的**前端三件**：想法收件箱、需求池、拆解器。需求与事项状态落在项目 `.dsh`（随仓库提交），面板只是它的工作台。
 
 - **想法收件箱**：两条路径——① **面板**：工具栏右侧「＋」打开**抽屉**，一个输入框里**首行写标题、其余行写诉求**（`⌘↩` 或「创建」），落成 `.dsh/requirements/REQ-*.md`（`state: candidate`）；点**「创建并细化」**还会起一条「细化 REQ-xxx」会话（失败回退当前会话）——之后拆解 / 确认都回到这条对话；② **agent 对话**：在会话里说「把这条想法落成需求」或运行 `/requirement-pool 记一条需求`，agent 经 `POST /api/requirements/create` 落卡（不手改文件）；
-- **需求池**：卡片照搬**任务面板的卡片语法**（raised 块 + recessed 嵌套、`TaskBadgeView` 徽标、`taskRowGlyph` 行标）——标题行是 `▸ 需求 REQ-id 标题 [需求][N 个事项] …[有效状态徽标] [细化][拆解][✎]`；下面常显**诉求预览**（收起 3 行 / 展开不限，tooltip 全文）与 meta（来源 · 更新 · 待确认拆解 N 项）；**每张卡各自折叠**：点**需求卡标题行**展开/收起（`chevron` 只是指示器）——展开后是 **recessed 的「已拆解事项」卡**（内容 `标识/事项/边界/依赖` 取自 REQ 确认表、状态 `阶段/结果` 取自 WS 卡，阶段徽标本地化；分歧标「WS 卡缺失 / REQ 表未记录」；`↗` 在文件面板打开）与 **recessed 的「待确认拆解」容器**（每条**提案卡自己折叠**：收起只列 `标题 + 依赖`，展开追加**内容（边界）**；右上「确认拆解 / 驳回」）；状态色走任务卡片的 tone（候选 neutral、评估中/已拆分 running、挂起 warning、已关闭 positive），「编辑」改标题与诉求（只改这两处，**已拆解事项后隐藏**）；
+- **需求池**：卡片照搬**任务面板的卡片语法**（raised 块 + recessed 嵌套、`TaskBadgeView` 徽标、`taskRowGlyph` 行标）——标题行是 `▸ 需求 REQ-id 标题 [需求][N 个事项] …[有效状态徽标] [细化][拆解][✎]`；下面常显**诉求预览**（收起 3 行 / 展开不限，tooltip 全文）与 meta（来源 · 更新 · 待确认拆解 N 项）；**每张卡各自折叠**：点**需求卡标题行**展开/收起（`chevron` 只是指示器）——展开后是 **recessed 的「已拆解事项」卡**（内容 `标识/事项/边界/依赖` 取自 REQ 确认表、状态 `阶段/结果` 取自 WS 卡，阶段徽标本地化；分歧标「WS 卡缺失 / REQ 表未记录」；主 `↗` **切到事项面板并聚焦该 WS**，次级 `doc.text` 仍在文件面板打开卡文件）与 **recessed 的「待确认拆解」容器**（每条**提案卡自己折叠**：收起只列 `标题 + 依赖`，展开追加**内容（边界）**；右上「确认拆解 / 驳回」）；状态色走任务卡片的 tone（候选 neutral、评估中/已拆分 running、挂起 warning、已关闭 positive），「编辑」改标题与诉求（只改这两处，**已拆解事项后隐藏**）；
 - **状态（人工 + 派生两个徽标）**：**点人工状态徽标**（尾部带 `▾`，整个徽标可点）写回人工生命周期（`candidate` → `evaluating` → `evaluated`，另有 `suspended` / `discarded`）；其中**拆解提案自动进 `evaluating`、确认拆解自动进 `evaluated`**。菜单**只列可达状态**（生命周期**单向前进**：评估中→已评估，不能回退；隐藏当前态；`discarded` 单向；`split` 隐藏 `candidate`、`closed` 无人工可切目标——派生状态是转换前置，见设计 §3.3.1）；`split` / `closed` 由子事项**派生**、作为**独立只读徽标**显示、不写字段；
 - **细化**：卡片「细化」按钮带 `wand.and.stars` 图标，且**未拆解且未丢弃时出现**（与「编辑」同一冻结规则）；点击后**已有绑定会话就复用它，没有才新建**一条「细化 REQ-xxx」——提示词与「创建并细化」同一份（只讨论 / 只澄清，改卡走 `/update`）。于是普通「创建」或 agent 经 `requirement-pool` 落下的卡也能随时补上细化；
 - **拆解器**：「拆解」按钮带 `square.split.2x2` 图标，且**仅在尚未拆解时出现**（已有子事项 / 有待确认提案 / 已丢弃则隐藏）；点击后把交接提示词（含 `POST /api/requirements/breakdown/propose` 的调用）**直接发进对话**——优先**创建该需求的会话**（agent 落卡时带的 `$DSH_SESSION_ID`，记在 ignored 的 `.dsh/requirements/local.json`），没有才用当前会话；两者都没有 / 发送失败时回退复制（人工粘贴）；发到别的会话时会把该会话切到前台。由 agent 出「1 需求 → 1..N 事项」方案，以**待确认提案**显示在卡片上；
-- **人工确认门**：只有面板上的「确认拆解」会真正建 `WS-*.md`（`requirement` 指回需求、`stage: planning`）并留下需求 → 事项映射表；「驳回」会先弹**原因抽屉**（必填），提交后清掉提案并把**原因**带进写回该需求会话的提示词（让 agent 按原因改，而不是作废）。**确认 / 驳回的结果会回写到该需求的会话**（同一会话闭环）。agent 绝不调 `confirm`（R10）；
+- **人工确认门**：只有面板上的「确认拆解」会真正建 `WS-*.md`（`requirement` 指回需求、`stage: planning`）并留下需求 → 事项映射表；「驳回」会先弹**原因抽屉**（必填），提交后清掉提案并把**原因**带进写回该需求会话的提示词（让 agent 按原因改，而不是作废）。**确认 / 驳回的结果会回写到该需求的会话**（同一会话闭环），且确认后**新 WS 继承该需求的绑定会话**（写 ignored 的 `.dsh/workstreams/local.json` 的 `workstreamSessions`——在事项面板「拆分任务」直接续同一条对话）、回写文案改指**事项面板**并聚焦右栏。agent 绝不调 `confirm`（R10）；
 - **使用说明**：右上角 `?` 始终可打开「需求池使用说明」抽屉（**创建需求 / 细化需求 / 拆解事项** 三节，每节分「在面板」「在对话」两条操作）；**池为空时同一份说明直接铺在内容区**，不用先点帮助；
 - **已知限制**：`closed` 只读卡片里 `delivery.outcome` 的派生缓存、不联网；PR 状态的网络派生仍由 `node .dsh/tools/derive-status.mjs` 完成（见 [AI 原生工作流使用说明](ai-native-workflow-manual.md)）；
 - 设计与 API 契约：`docs/design/panels/requirements-pool-panel-design.md`；存储 schema：`docs/design/panels/requirements-workstream-store-design.md`。
+
+## 事项面板（`⌥⌘K` / 活动栏第 6 位「事项」图标）
+
+当前工作区的**事项（Workstream）中心**：把 `WS-*.md` 卡按「事项 → 阶段 → 任务」三级卡片展示，并在阶段之间设**人工确认门**。AI 原生工作流的第三件——需求池拆出事项之后，由它推进 **规划 / 设计 / 执行 / 验收** 四个阶段；**交付是验收确认后的操作**（不是第五个阶段）。
+
+- **全新独立面板（第 11 个，clean-room）**：按设计 A1/A6/A10 实现，**不复用任务面板代码**——阶段队列引擎、交付逻辑、卡片 / 表单视图基件都是事项面板**自有**的 `WS*` 文件（`Workstreams*.swift` / `WSCardView.swift` / `WSInlineForms.swift`），只共享壳层基件（`PanelSurface` / `PanelControl` / `PanelTabButton` 等）；配色不新增令牌，落在面板底色 + 控件两档之内（见 [配色方案](../design/shell/ui-color-scheme.md)）；
+- **三级卡片**：一级是**事项主卡**（`WS-id 标题 [需求][队列][回归门] … 状态`，展开后是**四张**阶段卡）；二级是**阶段卡**——规划 / 设计 / 执行 / 验收**永远各一张、按固定顺序**，`WS.queues [q-...]`（一事项一队列，0..1）以中性徽标挂在事项主卡标题行、任何阶段卡都不显示（旧卡 `[{id, stage}]` 只取 id），验收段显示 `covered`（paths / base / head）证据；**交付不是阶段卡**（`delivery` 块是主卡「交付」操作读写的事实，旧卡 `stage: delivery` 读出即验收）；三级是**阶段队列内的任务卡**。面板**加载 / 重绘**时默认只展开**首个未处理的事项卡**（`runState != 完成`，A13 派生态），其余收起；**全部完成时不展开任何卡**；
+- **阶段筛选**：顶部工具条是**扁平页签** `全部 / 规划 / 设计 / 执行 / 验收`（判据由纯模型 `WSStageFilter` 给出，只命中同阶段），右侧显示事项总数；空态分三态（**无工作区 / 池为空 / 筛选无命中**）；
+- **四件事：拆分 / 确认 / 启动 / 交付（设计 §5.1）**：同一张卡上的「推进」是四件**互不替代**的事（前三个推进阶段，交付是发布操作）——① **拆分任务 = 会话提示词**（主卡「拆分任务」按钮按**首个未处理阶段**解析，把该阶段拆分提示词发进主场会话；agent 据此走 `POST /api/workstreams/task/create` 建**等待态**、带该 `stage` 的任务）；② **确认 = 阶段上的人工门**（阶段卡「确认并推进 / 退回本阶段返工」；技能在**用户明确授权**下可代发 `stage/confirm` / `stage/reject`——confirm 前复述证据、reject 拿人的原因，agent 不自签）；③ **启动 = 事项卡「启动事项」**（面板唯一的启动入口；`POST /api/workstreams/queue/start` 不带 `stage`，runner 按**阶段 canonical 顺序**规划 → 设计 → 执行 → 验收取任务，同阶段内按入队序）。阶段级 `queue/start`（带 `stage`，只跑该阶段、跑完自动暂停）现在只由对话 / 脚本发起。④ **交付 = 验收确认后的操作**（主卡「交付」按钮 / 技能 `deliver`：准入 `accepted` → 把交付提示词发进主场会话、不改 `stage`，见下条）。**拆分 ≠ 启动**（先建等待态、人确认后才起跑）、**确认 ≠ 启动**（确认前移 `stage`，启动不改 `stage`）。另有**面板直建任务**：主卡「创建任务」打开一张**表单抽屉**（**阶段选择器**：四阶段，默认该事项**首个未处理阶段**；一个输入框：**首行 = 标题、其余行 = 内容**，`⌘↩` 提交、Esc 取消、标题为空禁用），提交走与 agent 同一条 `task/create` 路径建**等待态**任务并追加到事项唯一队列、**不启动**；阶段卡原来的「＋创建任务」「启动阶段」按钮均已移除（阶段卡只保留确认 / 退回；**交付在事项主卡**——入口唯一性见设计 §5.1）；
+- **人工确认门（R10）**：**阶段队列 `.done` ≠ 阶段完成**——每个阶段 = **机检证据谓词 AND 人工确认**。机检：规划要「四件套」（目标 WHAT / 边界 / 验收标准 AC / 阶段裁剪声明）、设计要「设计段非空 + 引用的设计文档真实存在 + 待确认 Q 已关闭」、执行要「阶段队列 `.done` 且队内任务都有完成证据（marker / 人在卡片上确认）」、验收要「`## 验收` 记录 + `covered` 锚变更」——**验收是最后阶段**。**交付不是阶段、没有机检证据谓词**：它的准入看「验收已确认」（`accepted`），结果记 `delivery` 块、`outcome` 派生（见下条交付操作）。**证据不足时**卡片进入**「待确认」**并列出缺条（`WorkstreamsStageGate`），此时「确认并推进」被拒（`evidence-missing`，不推进 `stage`）；
+- **确认 / 退回（R10）**：门通过后卡片出现**「确认并推进」**（写回 `stage`）与**「退回本阶段返工」**（弹**必填原因**，写 `## 阶段确认` 留痕、可带 `target` 回边）；**签字始终是人**——面板点按是一条入口，**用户在本会话中明确授权**后由技能调 `stage/confirm` / `stage/reject` 是另一条；两种来源都写进卡片（`source:panel` / `source:session <id>`），agent 不得自行确认、不得主动代签（confirm 前复述证据、reject 拿人的原因）；
+- **对话内阶段推进（2026-10-07）**：确认成功、`stage` 真的前移后，面板经 `onStageConfirmed` 把更新后的卡片交给 `main.swift`，由它读该事项的**绑定主场会话**（`local.json` 的 `workstreamSessions`）并复用 `WorkstreamHandoff` 发送**下一阶段**交接提示词，对话自然续到下一阶段。**无绑定会话则不发**（不凭空起会话——只有「拆分任务」才允许新建）；**验收是最后阶段**、确认后不前移，不续发。面板按钮与 `POST /api/workstreams/stage/confirm` 两条确认路径都触发（纯函数 `WorkstreamHandoff.nextStagePrompt` 承载「下一阶段 + 提示词」决策）；
+- **任务会话完成 → 汇总回主场会话（2026-11-17）**：事项 = **主场会话 + 任务会话**。任务会话跑完就消失，因此 runner 在 `applyFinish` 之后把汇总发回主场会话：**阶段批量**（一个阶段的任务都结束汇总一次；同阶段下一批任务启动时重置，重跑还会再汇总）+ **例外即时**（失败 / 待确认立刻汇总，不等阶段收尾）。正文 = 状态（完成 / 失败 / 待确认计数）+ 每条任务的汇报（首行）+ PR / 提交事实，并标注「自动汇总、不代表人已确认」。**无绑定主场会话则不发**（不凭空起会话）。文案见 `WorkstreamsSummary`，触发见 `WorkstreamsRunner.emitSummary`。
+- **写权反转（Phase B）**：事项面板是 `WS-*.md` 的**唯一写者**，agent 不直接改 `.dsh` 文件，改事项一律走面板 localhost API **`/api/workstreams/*`**（`list` / `create` / `update` / `stage` / `plan` / `queues`，外加人工门 `stage/confirm`、`stage/reject`，以及任务 / 队列的 `task/list` / `task/create` / `queue/start` / `queue/pause`）；配套内置技能 **`workstream-panel`**（App 启动安装到全局 `$DSH_HOME/skills/workstream-panel/SKILL.md`）把「不直接改 .dsh、`confirm` / `reject` 是人工门（仅用户明确授权时可代发）、不自签」写成硬规则；
+- **阶段提示词（2026-11-19 统一为三段式）**：面板生成的阶段交接提示词（`WorkstreamHandoff`）与需求池同构——**身份行**（`WS-id「标题」@.dsh/workstreams/<WS-ID>.md`）→ **阶段·本步**（`阶段：规划（planning）· 本步：确认规划`，建任务时多一段 `· 任务：<标题> ·`）→ 一句话动作 → **注意**（1..3 条：动作特有 API / 门禁 + 最后一条共用规则）。“规划目标”有则插在阶段行后，**没有 repo 前言 / 本步事实 / 存储约定 / 需求指针**；`isHandoff` 只看身份行的 `@.dsh/workstreams/`。runner 把它原样写进任务 body（旧格式 body 回落到兜底模板），并按执行阶段统一追加完成 marker；
+- **阶段任务创建与启动（2026-10-06 接线）**：面板实例化并驱动**自有** `WorkstreamsRunner`（3s `step()` 定时器 + 工作区切换重建；`serverPortProvider` 注入 dsh 会话 RPC）。主卡「**启动事项**」= 面板唯一启动入口（跑该事项唯一队列，按**阶段 canonical 顺序**取任务、同阶段内按入队序）；主卡「**创建任务**」打开 `WSInlineForms` 表单抽屉（阶段选择器默认首个未处理阶段 + 首行标题·其余内容的输入框），按阶段默认动作生成 `WorkstreamHandoff` 交接提示词、把输入内容附在提示词之后，建**等待态**任务（不自动启动）；阶段卡的「＋创建任务」按钮已收口到主卡。阶段级 `queue/start`（带 `stage`，只跑该阶段、跑完自动暂停）仍可由对话 / 脚本发起。三级任务卡显示状态徽标与 dsh **会话**，并随运行态自动刷新；agent 经 `/api/workstreams/task/create` / `queue/start` / `queue/pause` / `task/list` 发起同一批动作（A3 / A14 / D16–D19）；
+- **运行态回写（A13 / D18）**：任务状态 → **阶段运行态**（未开始 / 进行中 / 待确认 / 完成 / 阻塞）→ **事项运行态**（四阶段的汇总，取最强档），由纯模型 `WorkstreamsRunState`（`WSRunState.stage` / `WSRunState.workstream`）从**队列与任务状态**派生，作为徽标显示在主卡与各阶段卡上；**权威 `stage` 一字不改**——仍只由人工确认门推进（R10），「完成」只表示人已确认过该阶段。边界语义：队内有进行中 / 已入队任务 → 进行中；阶段任务全部 `.done` 但未经人确认 → 待确认；**退回返工后**（`## 阶段确认` 末条为 `reject`）→ 进行中（原地返工）或未开始（`target` 回退到更早阶段），而不是待确认；失败 / 待确认 / 取消任务或证据不足 → 阻塞；
+- **存储隔离**：事项卡与 `WS.queues` 落 `.dsh/workstreams/`（committed，随仓库提交）；阶段队列与三级任务落 `.dsh/workstreams/queues.json`、运行时会话绑定落 `local.json`（**ignored**）；**绝不读写 `.dsh/tasks/*`**，也不依赖 `/api/tasks/*`（设计 A1 / D8，源码守卫固化）；
+- **入口**：活动栏槽位**紧邻「需求池」之后**，图标 `square.stack.3d.up`，快捷键 **`⌥⌘K`**（视图菜单同名项）；面板宽度下限 320pt；点事项卡名可在文件面板打开对应 `WS-*.md`；
+- **交付是操作（A17，2026-10-07）**：交付**不是阶段**、**不改 `stage`**——事项主卡「**交付**」按钮（技能 = `POST /api/workstreams/deliver`，两条入口共用 `WorkstreamsPanel.initiateDelivery`）先做准入：**验收已确认**（`accepted`，卡片 `## 阶段确认` 有 `confirm · acceptance`）→ git 仓库 → 分支 → 远端 → GitHub → token → **主场会话**（`workstreamSessions`）；失败给稳定原因码（`not-accepted` / `not-git-repo` / `no-branch` / `no-remote` / `no-github-remote` / `no-token` / `no-home-session`）。准入通过后把交付提示词**发进主场会话**（同一轮对话里执行 push / PR）——**不新建会话、不建交付任务、不启动队列**。**完成信号 = agent 调 `POST /api/workstreams/delivery` 写 `pr` / `url` 事实**（面板写卡、`outcome` 派生；API 拒绝手写 `outcome`，报 `outcome-derived`）；面板在会话停下后按汇报判失败（`report-failed`）、以超时兜底（`delivery-timeout`），完成时状态行提示。`POST /api/workstreams/covered` 记录验收点记录（`paths` + `base` / `head`）。**旧卡 `stage: delivery` 读出即 `acceptance`**（写回也只写 `acceptance`），`delivery` 事实块原样保留；规划 / 设计阶段的证据读取、人工确认 / 退回、阶段筛选与空态均已可用；
+- **事项 ↔ 主场会话绑定 / 拆分任务（2026-10-07，A16）**：`.dsh/workstreams/local.json` 的 `workstreamSessions`（**WS-id → dsh 会话 id**，ignored）保存每个事项**至多一条「主场会话」**——任何 `/api/workstreams/*` 写请求带 `session` 时把它记成该会话，**后写覆盖先写**（last-writer-wins，运行时绑定、不是永久契约），`list` 的每张卡随带 `session`。反向可查 **`GET /api/workstreams/bound?session=$DSH_SESSION_ID`**（返回该会话绑定的 WS；未绑定返回空列表）。**主卡「拆分任务」**（2026-10-07，UX）解析该事项**首个未处理阶段**（canonical 顺序里第一个 `runState != 完成` 的阶段，A13 派生态；全部完成则没有可拆分阶段），把该阶段的**拆分提示词**（`WorkstreamHandoff.splitPrompt`：点名事项 + 阶段，要求经 `POST /api/workstreams/task/create` 建**等待态**、带该 `stage` 的任务，**建完停下等人确认、不自签、不启动**）发给主场会话；会话选择对齐需求池「细化」——**有绑定会话就复用，没有才新建并绑定**；绑定会话已坏或新建失败则**回退当前会话**。阶段卡不再重复这个入口（只保留「确认 / 退回」；**交付已移到事项主卡**，是操作不是阶段）。绑定是运行时状态，只有真正在推进该事项的对话才应带 `session`；阶段 runner / 临时会话带上会把主场会话覆盖成一条会消失的死会话（技能正文有显式警示）；
+- **focus 通道（2026-10-07）**：把「跳到某个事项」做成一条贯通面板 / API / 需求池的通道——① 面板内 `focus(onWorkstream:)` 给目标卡加**强调色描边**并**滚动到可见**；目标卡若被当前**阶段筛选**隐藏，筛选自动回落「全部」，高亮绝不会看不见；切换工作区清空焦点。② `/api/workstreams/*` 全部支持 `focus`：写操作用 body 字段、读操作用 `?focus=`（接受 `true` / `1` / `yes` / `on`），仅 **200** 的请求触发；`focus:true` 时面板亮起（`setRightPanel(.workstreams)`）并按路由里的 `id` 高亮（`create` 取新建卡的 id；`bound` 取响应里第一张绑定卡；其余读路由只置前、无 id）；**默认 `false`**，普通 agent 写卡不抢面板。③ 需求池「已拆解事项」的主 `↗` 改走该通道（次级按钮仍打开卡文件）。
+- **焦点 + 主场会话切换矩阵（A15 / A16，2026-10-07）**：面板与对话靠两条正交通道互相找到——`focus` 把注意力**单向**带回面板，`workstreamSessions` 把事项绑到一条**主场会话**。完整模型见设计 §6.1，面向操作的简表：
+
+  | 方向 | 触发 | 目标 / 动作 | 回退 / 边界 |
+  |---|---|---|---|
+  | 对话 → 面板 | 技能 `GET /bound?session=…&focus=true` | 面板置前 + 高亮反查到的第一张卡 | 未绑定 / 无工作区 → 只返回空列表，不聚焦 |
+  | 需求池 → 面板 | 已拆解事项主 `↗` | 切到事项面板 + `focus(WS-id)` | WS 卡缺失 → 次级按钮打开卡文件 |
+  | 面板内聚焦 | `focus` 命中的卡被阶段筛选隐藏 | 筛选回落「全部」再高亮 + 滚动 | 目标 id 不存在 / 空白 → 不聚焦 |
+  | 面板 → 对话 | 主卡「拆分任务」 | 解析首个未处理阶段，把该阶段拆分提示词发进绑定主场会话；没有才新建并绑定 | 坏会话 / 新建失败 → 回退当前会话；全部完成 → 无可拆分阶段 |
+  | 阶段确认 → 对话 | 人在面板确认或 `POST stage/confirm` | 向绑定主场会话发**下一阶段**交接提示词 | 无绑定 → 不发；验收是最后阶段 → 不续发 |
+  | 需求池确认 → 对话 | 确认拆解 | 新 WS 继承需求的绑定会话 | 需求无绑定 → 不发明；显式 `session` 优先 |
+
+- 设计、存储与提示词文档：`docs/design/panels/workstream-panel-design.md`、`docs/design/panels/requirements-workstream-store-design.md`、`docs/design/panels/workstream-handoff-prompt-design.md`；技能：`.dsh/skills/workstream-panel/SKILL.md`。
 
 ## 任务面板（`⌥⌘J` / 活动栏「任务」图标）
 

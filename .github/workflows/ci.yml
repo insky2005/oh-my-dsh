@@ -101,8 +101,12 @@ jobs:
         run: tests/file-panel/run.sh
       - name: Projects panel tests (model + controller)
         run: tests/projects-panel/run.sh
+      - name: Terminal-state derivation (accepted / terminal / requirementClosed)
+        run: tests/derive-status/run.sh
       - name: Tasks panel tests (model + four-file store)
         run: tests/tasks-panel/run.sh
+      - name: Workstreams panel tests (model)
+        run: tests/workstreams-panel/run.sh
       - name: Injected-script guard (dsh web bridges)
         run: tests/injected-scripts/run.sh
       - name: Injected file-open interceptor tests

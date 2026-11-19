@@ -24,11 +24,15 @@ cp ../../platforms/macos/src/TasksAPI.swift "$TMP/TasksAPI.swift"
 cp ../../platforms/macos/src/TasksCore.swift "$TMP/TasksCore.swift"
 cp ../../platforms/macos/src/RequirementsAPI.swift "$TMP/RequirementsAPI.swift"
 cp ../../platforms/macos/src/RequirementsCore.swift "$TMP/RequirementsCore.swift"
+# …and the WORKSTREAMS panel's routes (/api/workstreams/*, WorkstreamsAPI.swift).
+cp ../../platforms/macos/src/WorkstreamsAPI.swift "$TMP/WorkstreamsAPI.swift"
+cp ../../platforms/macos/src/WorkstreamsCore.swift "$TMP/WorkstreamsCore.swift"
 cp browser-tests.swift "$TMP/main.swift"   # top-level code needs the main.swift name
 swiftc -swift-version 5 -module-cache-path "$CACHE" -framework AppKit \
   -o "$TMP/browser-tests" "$TMP/stubs.swift" "$TMP/PanelSurface.swift" "$TMP/BrowserPanel.swift" \
   "$TMP/BrowserAPI.swift" "$TMP/TasksAPI.swift" "$TMP/TasksCore.swift" \
   "$TMP/RequirementsAPI.swift" "$TMP/RequirementsCore.swift" \
+  "$TMP/WorkstreamsAPI.swift" "$TMP/WorkstreamsCore.swift" \
   "$TMP/BrowserCDP.swift" "$TMP/main.swift"
 "$TMP/browser-tests"
 rm -rf "$TMP"

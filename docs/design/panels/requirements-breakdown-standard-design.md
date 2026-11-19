@@ -86,7 +86,7 @@ struct WorkstreamDisplay: Equatable {
   - `missingCard` → 追加「WS 卡缺失」中性提示；`notInPlan` → 追加「REQ 表未记录」中性提示；
   - 候选行（无 ID、无状态）只展示内容。
 - 顶部 `[N 个事项]` 徽标仍按 `children`（WS 成员关系）；分区标题按实际渲染行数。
-- 阶段徽标本地化：`planning/design/task/acceptance/delivery` → 规划 / 设计 / 任务 / 验收 / 交付（未知值回退原文）。
+- 阶段徽标本地化：`planning/design/task/acceptance` → 规划 / 设计 / 任务 / 验收（**交付是操作、不是阶段**；旧卡的 `delivery` 回退原文）。
 
 ## 6. API
 

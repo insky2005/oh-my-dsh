@@ -5,7 +5,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 
 ## 常用入口
 
-- [右栏面板详细说明](usage/panels.md) — 十个原生面板的功能、边界与截图
+- [右栏面板详细说明](usage/panels.md) — 十一个原生面板的功能、边界与截图
 - [产品化总纲](research/productization.md) — 路线图 / 分发 / 升级 / 多平台 / 开源治理
 - [dsh 升级影响清单](process/dsh-version-impact.md) — 五个耦合面 + 每次升级的执行 SOP
 - [发布流程](process/release-process.md) · [分支与提交规范](process/git-workflow.md)
@@ -35,11 +35,13 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 - [task-todo-skill-design.md](design/panels/task-todo-skill-design.md) — `task-todo` 技能与 `/api/tasks/*` 契约
 - [multi-repo-workspace-design.md](design/panels/multi-repo-workspace-design.md) — 多仓库工作区：根目录非 git 时的仓库集合识别与 git 工作流（草案）
 - [task-completion-verification-design.md](design/panels/task-completion-verification-design.md) — 任务完成校验：会话结束≠任务完成，marker + 待确认（草案）
-- [workstream-handoff-prompt-design.md](design/panels/workstream-handoff-prompt-design.md) — 事项交接提示词：指针 + (stage, action) + 模型规则，供面板生成（草案）
-- [requirements-workstream-store-design.md](design/panels/requirements-workstream-store-design.md) — 需求 / 事项 / 回归门卡片 schema、committed/ignored 分界与写入所有权反转（草案）
+- [workstream-handoff-prompt-design.md](design/panels/workstream-handoff-prompt-design.md) — 事项交接提示词：指针 + (stage, action) + 模型规则，供面板生成（已落地）
+- [requirements-workstream-store-design.md](design/panels/requirements-workstream-store-design.md) — 需求 / 事项 / 回归门卡片 schema、committed/ignored 分界与写入所有权反转（已落地，含 Phase B 写权反转）
 - [requirements-pool-panel-design.md](design/panels/requirements-pool-panel-design.md) — 需求池面板（含想法收件箱与拆解器）：REQ/WS 读写、拆解提案与人工确认、`/api/requirements/*`（已实现）
 - [requirements-breakdown-standard-design.md](design/panels/requirements-breakdown-standard-design.md) — 需求池「拆解确认清单」标准化：四列契约、REQ 内容 × WS 状态的合并展示（已实现）
 - [planning-template-design.md](design/panels/planning-template-design.md) — 规划模板（四件套）与「无证据不进设计」门禁判据（草案）
+- [workstream-panel-design.md](design/panels/workstream-panel-design.md) — 事项面板（Workstream Panel）：全新独立面板，事项/阶段/任务三级卡片，阶段队列与人工确认门（已落地）
+- [panel-prompt-inventory.md](design/panels/panel-prompt-inventory.md) — 面板提示词清单：需求池 / 事项 / 任务三套提示词的触发、目标会话与来源（已落地；事项四阶段 + 交付操作）
 - [file-panel-composer-reference.md](design/panels/file-panel-composer-reference.md) — 文件面板「添加到对话」`@` 引用
 
 ## design/channels/ — 通道设计
@@ -88,8 +90,9 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 
 ## usage/ — 使用说明
 
-- [panels.md](usage/panels.md) — 右栏十个面板的完整说明
-- [ai-native-workflow-manual.md](usage/ai-native-workflow-manual.md) — 面板使用说明：需求池面板（需求 → 拆解确认）+ 任务面板（任务拆分 → 交付），含逐步提示词
+- [panels.md](usage/panels.md) — 右栏十一个面板的完整说明
+- [ai-native-workflow-manual.md](usage/ai-native-workflow-manual.md) — 面板使用说明：需求池面板（需求 → 拆解确认）+ 事项面板（规划 / 设计 / 执行 / 验收；交付是验收后的操作）+ 任务面板（任务拆分 → 交付），含逐步提示词
+- [workstream-panel-workflow.md](usage/workstream-panel-workflow.md) — 事项面板工作流：进入方式、主卡/阶段卡操作、逐阶段「用户做什么 × Agent 做什么」（已落地，四阶段 + 交付操作）
 
 ## raw/ — 素材
 

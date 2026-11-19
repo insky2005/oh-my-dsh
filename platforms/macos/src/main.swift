@@ -110,9 +110,11 @@ enum L10n {
         "menu.toggleFiles": ("显示/隐藏 文件面板", "Toggle Files Panel"),
         "menu.toggleProjects": ("显示/隐藏 项目面板", "Toggle Projects Panel"),
         "menu.toggleRequirements": ("显示/隐藏 需求池面板", "Toggle Requirements Panel"),
+        "menu.toggleWorkstreams": ("显示/隐藏 事项面板", "Toggle Workstreams Panel"),
         // activity bar
         "bar.projects": ("项目", "Projects"),
         "bar.requirements": ("需求池", "Requirements"),
+        "bar.workstreams": ("事项", "Workstreams"),
         "bar.preview": ("文件", "Files"),
         "bar.terminal": ("终端", "Terminal"),
         "edit.undo": ("撤销", "Undo"),
@@ -988,7 +990,8 @@ enum L10n {
         "requirements.refineStartedExisting": ("已为 %@ 发起细化会话", "Started a refinement session for %@"),
         "requirements.refineContinued": ("已在现有会话里继续细化 %@", "Continued refining %@ in its existing session"),
         "requirements.refineFailed": ("已创建需求；细化会话未启动，可在会话里手动继续", "Requirement created; the refinement session could not start — continue in a chat"),
-        "requirements.notify.confirmed": ("%@「%@」@.dsh/requirements/%@.md，需求拆解已确认。\n生成事项：%@。\n\n注意：\n- 回复『收到』。\n- 列出事项清单。", "%@「%@」@.dsh/requirements/%@.md — breakdown confirmed.\nWorkstreams created: %@.\n\nNotes:\n- Reply \"received\".\n- List the workstreams."),
+        "requirements.notify.confirmed": ("%@「%@」@.dsh/requirements/%@.md，需求拆解已确认。\n已生成 %@，请到事项面板继续处理。%@\n\n注意：\n- 回复『收到』。\n- 列出事项清单。", "%@「%@」@.dsh/requirements/%@.md — breakdown confirmed.\nWorkstreams created: %@ — continue in the Workstreams panel.%@\n\nNotes:\n- Reply \"received\".\n- List the workstreams."),
+        "requirements.notify.confirmedFocus": ("（可用 ⌥⌘K 打开事项面板）", "(Press ⌥⌘K to open the Workstreams panel)"),
 
         "requirements.created": ("已创建 %@", "Created %@"),
         "requirements.stateChanged": ("%@ → %@", "%@ → %@"),
@@ -999,7 +1002,116 @@ enum L10n {
         "requirements.error.unknownState": ("无效的状态", "Invalid state"),
         "requirements.error.generic": ("操作失败：%@", "Failed: %@"),
         "requirements.needsWorkspace": ("请先选择一个工作区", "Select a workspace first"),
-        "requirements.openWorkstream": ("打开事项卡", "Open workstream card"),
+        "requirements.openWorkstream": ("打开卡文件", "Open card file"),
+        "requirements.openWorkstreamFocus": ("在事项面板中打开", "Open in workstreams panel"),
+        // workstreams panel (slot #11)
+        "workstreams.title": ("事项", "Workstreams"),
+        "workstreams.count": ("%d 个事项", "%d workstreams"),
+        "workstreams.filter.all": ("全部", "All"),
+        "workstreams.stage.planning": ("规划", "Planning"),
+        "workstreams.stage.design": ("设计", "Design"),
+        "workstreams.stage.task": ("执行", "Execution"),
+        "workstreams.stage.acceptance": ("验收", "Acceptance"),
+        "workstreams.stage.current": ("当前", "Current"),
+        "workstreams.stage.noQueue": ("暂无队列", "No queue yet"),
+        // Derived run state (design A13 / D18): task states -> stage run state ->
+        // workstream run state. The authoritative stage still only moves at the
+        // human confirmation gate (R10).
+        "workstreams.run.notStarted": ("未开始", "Not started"),
+        "workstreams.run.inProgress": ("进行中", "In progress"),
+        "workstreams.run.awaitingConfirmation": ("待确认", "Needs review"),
+        "workstreams.run.done": ("完成", "Done"),
+        "workstreams.run.blocked": ("阻塞", "Blocked"),
+        "workstreams.meta.requirement": ("需求", "Requirement"),
+        "workstreams.meta.queues": ("队列", "Queues"),
+        "workstreams.meta.regression": ("回归门", "Regression"),
+        "workstreams.meta.updated": ("更新", "Updated"),
+        "workstreams.evidence.covered": ("覆盖路径", "Covered paths"),
+        "workstreams.evidence.base": ("基线", "Base"),
+        "workstreams.evidence.head": ("终点", "Head"),
+        "workstreams.empty": ("还没有事项。等需求拆解落地后，WS 卡会出现在这里。", "No workstreams yet. Once a requirement is broken down, its WS cards appear here."),
+        "workstreams.empty.filter": ("当前阶段没有事项。", "No workstreams in this stage."),
+        "workstreams.needsWorkspace": ("请先选择一个工作区", "Select a workspace first"),
+        "workstreams.glyph": ("事项", "Workstream"),
+        "workstreams.glyph.stage": ("阶段", "Stage"),
+        "workstreams.glyph.task": ("任务", "Task"),
+        "workstreams.openCard": ("打开事项卡", "Open workstream card"),
+        // 事项 ↔ 会话绑定（design §6）：「拆分任务」按钮（目标 = 首个未处理阶段）+ 三种落点提示。
+        "workstreams.split": ("拆分任务", "Split tasks"),
+        "workstreams.split.started": ("已为 %@ 发起拆分任务", "Started splitting %@ into tasks"),
+        "workstreams.split.continued": ("已在现有会话里继续拆分 %@", "Continued splitting %@ in its existing session"),
+        "workstreams.split.fallback": ("已在当前会话里继续拆分 %@", "Continued splitting %@ in the current session"),
+        "workstreams.split.failed": ("无法启动事项拆分会话", "Could not start the workstream split session"),
+        "workstreams.split.allDone": ("%@ 没有待拆分的阶段", "%@ has no unprocessed stage to split"),
+        "workstreams.expand": ("展开", "Expand"),
+        "workstreams.collapse": ("收起", "Collapse"),
+        "workstreams.errInterrupted": ("任务因应用重启而中断，可重试", "Task interrupted by an app restart; retry it"),
+        "workstreams.errSessionGone": ("会话已从 dsh 消失，无法确认结果", "The session is gone from dsh; the outcome is unknown"),
+        "workstreams.errSession": ("无法创建会话", "Could not create a session"),
+        "workstreams.errPrompt": ("无法发送提示词", "Could not send the prompt"),
+        "workstreams.errTimeout": ("任务超时已被取消", "The task timed out and was cancelled"),
+        "workstreams.errUnverified": ("会话结束但未回显完成标记，待确认", "The session ended without the completion marker; needs review"),
+        // Stage gate: per-stage machine evidence (the human gate is the button).
+        "workstreams.evidence.planning.target": ("规划目标（WHAT）", "Planning goal (WHAT)"),
+        "workstreams.evidence.planning.boundary": ("规划边界", "Planning boundaries"),
+        "workstreams.evidence.planning.acceptance": ("验收标准（AC）", "Acceptance criteria (AC)"),
+        "workstreams.evidence.planning.trim": ("阶段裁剪声明", "Stage-trim declaration"),
+        "workstreams.evidence.design.section": ("设计段", "Design section"),
+        "workstreams.evidence.design.doc": ("设计文档", "Design document"),
+        "workstreams.evidence.design.questions": ("Q 已关闭", "Q closed"),
+        "workstreams.evidence.task.queue": ("阶段队列", "Stage queue"),
+        "workstreams.evidence.task.done": ("队列已完成", "Queue finished"),
+        "workstreams.evidence.task.marker": ("任务完成证据（marker / 产物）", "Task evidence (marker / product)"),
+        "workstreams.evidence.acceptance.section": ("验收记录", "Acceptance record"),
+        "workstreams.evidence.acceptance.covered": ("覆盖锚（covered）", "Covered anchor"),
+        "workstreams.gate.confirm": ("确认并推进到下一阶段", "Confirm and advance"),
+        "workstreams.gate.reject": ("退回本阶段返工", "Send back for rework"),
+        "workstreams.gate.rejectTitle": ("退回本阶段返工", "Send back for rework"),
+        "workstreams.gate.rejectMessage": ("退回会留痕并回到本阶段；请写明原因。", "Sending back is recorded and returns to this stage; state a reason."),
+        "workstreams.gate.rejectPlaceholder": ("例如：规划缺少边界", "e.g. the plan lacks boundaries"),
+        "workstreams.gate.confirmed": ("已确认，推进到下一阶段", "Confirmed; advanced to the next stage"),
+        "workstreams.gate.rejected": ("已退回本阶段并留痕", "Sent back and recorded"),
+        "workstreams.gate.rejectNeedsReason": ("退回必须填写原因", "A reason is required to send the stage back"),
+        "workstreams.gate.evidenceMissing": ("证据不足，不能推进", "Evidence is missing; cannot advance"),
+        "workstreams.gate.failed": ("阶段操作失败", "The stage action failed"),
+        "workstreams.start.item": ("启动事项", "Start workstream"),
+        "workstreams.start.started": ("已启动事项队列", "The workstream queue started"),
+        "workstreams.start.noQueue": ("该事项还没有队列；请先创建阶段任务", "This workstream has no queue yet; create a stage task first"),
+        "workstreams.task.new": ("创建任务", "Create task"),
+        "workstreams.task.create.title": ("新建阶段任务", "New stage task"),
+        "workstreams.task.create.message": ("首行 = 标题，其余行 = 内容；内容附在阶段交接提示词之后。任务进入等待态，不自动启动。⌘↩ 提交，Esc 取消。", "First line = title, the rest = content (appended after the stage handoff prompt). The task waits and does not auto-start. ⌘↩ to submit, Esc to cancel."),
+        "workstreams.task.create.stage": ("阶段", "Stage"),
+        "workstreams.task.create.content": ("任务内容", "Task content"),
+        "workstreams.task.create.placeholder": ("首行标题，其余为内容", "First line title, the rest content"),
+        "workstreams.task.create.submit": ("创建任务", "Create task"),
+        "workstreams.task.create.empty": ("任务标题不能为空", "The task title must not be empty"),
+        "workstreams.task.create.failed": ("创建任务失败", "Could not create the task"),
+        "workstreams.task.created": ("已创建 %d 条任务", "Created %d task(s)"),
+        "workstreams.task.session": ("会话", "Session"),
+        "workstreams.task.state.pending": ("待排", "Pending"),
+        "workstreams.task.state.queued": ("排队中", "Queued"),
+        "workstreams.task.state.running": ("运行中", "Running"),
+        "workstreams.task.state.done": ("已完成", "Done"),
+        "workstreams.task.state.failed": ("失败", "Failed"),
+        "workstreams.task.state.needsReview": ("待确认", "Needs review"),
+        "workstreams.task.state.cancelled": ("已取消", "Cancelled"),
+        "workstreams.recovered": ("已恢复：%d 条中断任务，%d 条队列暂停", "Recovered: %d interrupted task(s), %d paused queue(s)"),
+        // Delivery operation (design A10 / A17): it runs in the home session and
+        // the agent writes the facts through the API; explicit refusal reasons.
+        "workstreams.deliver.action": ("交付", "Deliver"),
+        "workstreams.deliver.started": ("已把交付提示词发进主场会话（%@）", "Delivery prompt sent to the home session (%@)"),
+        "workstreams.deliver.done": ("交付完成：已记录 PR 事实（%@）", "Delivery complete: PR facts recorded (%@)"),
+        "workstreams.deliver.blocked": ("交付准入失败", "Delivery is blocked"),
+        "workstreams.deliver.start-failed": ("交付提示词发送失败", "Could not send the delivery prompt"),
+        "workstreams.deliver.not-accepted": ("事项尚未通过验收确认，不能交付（先完成验收 sign-off）", "The workstream is not accepted yet; confirm acceptance before delivering"),
+        "workstreams.deliver.no-home-session": ("事项还没有主场会话，先拆分任务再交付", "The workstream has no home session yet; split tasks first"),
+        "workstreams.deliver.report-failed": ("事项 %@ 交付未完成：主场会话结束但没有记录交付事实（PR / URL）", "Delivery for %@ did not finish: the home session ended without recording the delivery facts (PR / URL)"),
+        "workstreams.deliver.delivery-timeout": ("事项 %@ 交付超时：主场会话没有记录交付事实（PR / URL）", "Delivery for %@ timed out: the home session recorded no delivery facts (PR / URL)"),
+        "workstreams.deliver.not-git-repo": ("工作区不是 git 仓库", "The workspace is not a git repository"),
+        "workstreams.deliver.no-branch": ("没有可交付的分支", "There is no branch to deliver"),
+        "workstreams.deliver.no-remote": ("仓库没有远端，无法推送 / 开 PR", "The repository has no remote to push / open a PR"),
+        "workstreams.deliver.no-github-remote": ("远端不是 GitHub 仓库，无法开 PR", "The remote is not a GitHub repository; cannot open a PR"),
+        "workstreams.deliver.no-token": ("没有 GitHub token（$DSH_HOME/oh-my-dsh/tokens/<owner>-<repo> 或 $DSH_HOME/oh-my-dsh/gh-token）", "No GitHub token ($DSH_HOME/oh-my-dsh/tokens/<owner>-<repo> or $DSH_HOME/oh-my-dsh/gh-token)"),
     ]
 
     /// Localize a key, optionally filling %@ / %d placeholders.
@@ -2325,10 +2437,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var reviewToggleMenuItem: NSMenuItem?
     private var projectsToggleMenuItem: NSMenuItem?
     private var requirementsToggleMenuItem: NSMenuItem?
+    private var workstreamsToggleMenuItem: NSMenuItem?
     private var skillsToggleMenuItem: NSMenuItem?
     /// Activity-bar entries (leftmost icon strip). "项目" comes first (design D4).
     private var projectsBarButton: ActivityBarButton!
     private var requirementsBarButton: ActivityBarButton!
+    private var workstreamsBarButton: ActivityBarButton!
     private var previewBarButton: ActivityBarButton!
     private var closeTabMenuItem: NSMenuItem?
     private var terminalBarButton: ActivityBarButton!
@@ -2351,6 +2465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var reviewPanel: ReviewPanelController!
     private var projectsPanel: ProjectsPanelController!
     private var requirementsPanel: RequirementsPanelController!
+    private var workstreamsPanel: WorkstreamsPanelController!
     private var skillsPanel: SkillsPanelController!
     /// Browser panel localhost REST API (Agent / user curl). Runs from launch.
     private var browserAPIServer: BrowserAPIServer!
@@ -2361,7 +2476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Which panel occupies the right-side slot (none = hidden). The preview,
     /// terminal, wiki, tasks and browser panels share one slot; the activity
     /// bar toggles between them, and they are mutually exclusive.
-    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review, skills, projects, requirements }
+    enum RightPanel { case none, preview, terminal, wiki, tasks, browser, channel, review, skills, projects, requirements, workstreams }
     private var rightPanel: RightPanel = .none
     /// Set by prepareSessionSnapshot() when session snapshots need the user's
     /// attention (unavailable runtime / an unfinished rollback). Surfaced by the
@@ -2410,7 +2525,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                                     max(ReviewPanelController.minWidth,
                                         max(SkillsPanelController.minWidth,
                                             max(ProjectsPanelController.minWidth,
-                                                RequirementsPanelController.minWidth))))))))))
+                                                max(RequirementsPanelController.minWidth,
+                                                    WorkstreamsPanelController.minWidth)))))))))))
     /// *Initial* panel width when the user has never chosen one. The user's
     /// saved/dragged width always wins (clamped to the minimum above); this is
     /// only the first-run width. Deliberately NOT window-relative: a "half the
@@ -2638,6 +2754,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setRightPanel(.requirements)
             AppLog.shared.log("requirements self-test enabled")
         }
+        // Workstreams panel self-test hook (debugging / QA): DSH_WORKSTREAMS_TEST=1.
+        if ProcessInfo.processInfo.environment["DSH_WORKSTREAMS_TEST"] == "1" {
+            setRightPanel(.workstreams)
+            AppLog.shared.log("workstreams self-test enabled")
+        }
         // Tasks self-test hook (debugging / QA): opens the task panel. With
         // DSH_TASKS_TEST_PATH=<repo> it loads that repo's .dsh/tasks/ board
         // instead of waiting for the workspace to resolve (fixture QA).
@@ -2687,6 +2808,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "skills", "技能": return .skills
         case "projects", "项目": return .projects
         case "requirements", "需求池": return .requirements
+        case "workstreams", "事项": return .workstreams
         default: return nil
         }
     }
@@ -2902,6 +3024,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         requirementsPanel.onFocus = { [weak self] _ in
             self?.setRightPanel(.requirements)
         }
+        // 子事项 ↗：跳到事项面板并聚焦该 WS（次级按钮仍打开卡文件，D6）。
+        requirementsPanel.onFocusWorkstream = { [weak self] id in
+            self?.focusWorkstream(id)
+        }
         // 拆解：把提示词直接发进对话——优先该卡片的**来源会话**（由 agent 落卡时
         // 带上 $DSH_SESSION_ID），否则当前会话；agent 随后调面板 API 提方案。
         requirementsPanel.onBreakdown = { [weak self] id, title, session in
@@ -2921,6 +3047,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.dumpPanelDebugInfo(panelView: self.requirementsPanel.view, label: "requirements-loaded")
         }
 
+        workstreamsPanel = WorkstreamsPanelController()
+        AppLog.shared.log("launch: workstreamsPanel created")
+        workstreamsPanel.onRequestHide = { [weak self] in self?.setRightPanel(.none) }
+        workstreamsPanel.workspaceProvider = { [weak self] in self?.activeWorkspacePath() }
+        workstreamsPanel.serverPortProvider = { [weak self] in self?.server.port ?? 3080 }
+        // 聚焦通道（A11 / D6）：/api/workstreams/* 带 focus 时把右栏切到事项面板。
+        workstreamsPanel.onFocus = { [weak self] _ in self?.setRightPanel(.workstreams) }
+        // 「拆分任务」(design §6 / UX): the panel resolves the first unprocessed
+        // stage and hands it here; reuse the workstream's bound session when it is
+        // alive, otherwise create one and bind it (falling back to the current
+        // session), then send that stage's split prompt.
+        workstreamsPanel.onSplitTasks = { [weak self] id, title, stage, session in
+            self?.startWorkstreamSession(id, title: title, stage: stage, boundSession: session)
+        }
+        // 对话内阶段推进（队列第 24 项 / design §5 + §6）：人在面板确认某阶段后，
+        // 若该事项有绑定的主场会话，就把**下一阶段**交接提示词发过去，让对话自然续到
+        // 下一阶段；无绑定会话则不发（不凭空起会话）。形状对齐需求池的
+        // notifyBreakdownResolved：面板只报事实，主程序负责会话选择与发送。
+        workstreamsPanel.onStageConfirmed = { [weak self] card, stage in
+            self?.continueWorkstreamInSession(card: card, stage: stage)
+        }
+        // Clicking a card opens its WS-*.md in the file panel (same as the
+        // requirements pool's child-workstream button).
+        workstreamsPanel.onOpenCard = { [weak self] path in
+            guard let self = self else { return }
+            self.previewPanel.open(path: path)
+            self.setRightPanel(.preview)
+        }
+        workstreamsPanel.onDidRender = { [weak self] in
+            guard let self = self, self.uiDebug else { return }
+            self.dumpPanelDebugInfo(panelView: self.workstreamsPanel.view, label: "workstreams-loaded")
+        }
+
         // --- leftmost activity bar (icon entries; extensible) ---
         // DynamicFillView keeps the strip's background following light/dark
         // (a fixed CGColor layer background would not).
@@ -2929,8 +3088,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityBar.translatesAutoresizingMaskIntoConstraints = false
 
         // 活动栏图标：tooltip 跟随系统语言（L10n 中英切换）；
-        // 顺序 = 项目、文件、终端、Wiki、需求池、任务、通道、审查、浏览器、技能
-        // （「项目」在首位，见设计 §5/D4；「浏览器」改到末位「技能」之前，2026-09-24）。
+        // 顺序 = 项目、文件、终端、Wiki、需求池、事项、任务、通道、审查、浏览器、技能
+        // （「项目」在首位，见设计 §5/D4；「事项」紧邻「需求池」之后，见 A11/D14；
+        // 「浏览器」改到末位「技能」之前，2026-09-24）。
         projectsBarButton = makeActivityButton(symbol: "folder",
                                                tooltip: L10n.tr("bar.projects"),
                                                action: #selector(projectsEntryTapped(_:)))
@@ -2961,7 +3121,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         requirementsBarButton = makeActivityButton(symbol: "tray.full",
                                                    tooltip: L10n.tr("bar.requirements"),
                                                    action: #selector(requirementsEntryTapped(_:)))
-        let barStack = NSStackView(views: [projectsBarButton, previewBarButton, terminalBarButton, wikiBarButton, requirementsBarButton, tasksBarButton, channelBarButton, reviewBarButton, browserBarButton, skillsBarButton])
+        // 「事项」紧邻「需求池」之后（设计 A11 / D14）。
+        workstreamsBarButton = makeActivityButton(symbol: "square.stack.3d.up",
+                                                   tooltip: L10n.tr("bar.workstreams"),
+                                                   action: #selector(workstreamsEntryTapped(_:)))
+        let barStack = NSStackView(views: [projectsBarButton, previewBarButton, terminalBarButton, wikiBarButton, requirementsBarButton, workstreamsBarButton, tasksBarButton, channelBarButton, reviewBarButton, browserBarButton, skillsBarButton])
         barStack.orientation = .vertical
         barStack.alignment = .centerX
         barStack.spacing = 6
@@ -3024,6 +3188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "skills": kind = .skills
         case "projects": kind = .projects
         case "requirements": kind = .requirements
+        case "workstreams": kind = .workstreams
         default: kind = .preview
         }
         setRightPanel(visible ? kind : .none)
@@ -3042,6 +3207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .skills: return skillsPanel.view
         case .projects: return projectsPanel.view
         case .requirements: return requirementsPanel.view
+        case .workstreams: return workstreamsPanel.view
         case .none: return NSView()
         }
     }
@@ -3102,6 +3268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsToggleMenuItem?.state = (panel == .skills) ? .on : .off
         projectsToggleMenuItem?.state = (panel == .projects) ? .on : .off
         requirementsToggleMenuItem?.state = (panel == .requirements) ? .on : .off
+        workstreamsToggleMenuItem?.state = (panel == .workstreams) ? .on : .off
         previewBarButton?.setActive(panel == .preview)
         terminalBarButton?.setActive(panel == .terminal)
         wikiBarButton?.setActive(panel == .wiki)
@@ -3112,6 +3279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsBarButton?.setActive(panel == .skills)
         projectsBarButton?.setActive(panel == .projects)
         requirementsBarButton?.setActive(panel == .requirements)
+        workstreamsBarButton?.setActive(panel == .workstreams)
         // Mount the ACTIVE panel's view directly as the split view's right
         // pane (subviews[1]) — the arrangement that rendered reliably for the
         // original preview panel. Swapping replaces subviews[1]; hiding just
@@ -3202,6 +3370,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if uiDebug {
                     self.dumpPanelDebugInfo(panelView: requirementsPanel.view, label: "requirements")
                 }
+            case .workstreams:
+                workstreamsPanel.ensureLoaded()
+                if uiDebug {
+                    self.dumpPanelDebugInfo(panelView: workstreamsPanel.view, label: "workstreams")
+                }
             }
         } else {
             split.setPosition(split.bounds.width, ofDividerAt: 0)
@@ -3236,6 +3409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .skills: kind = "skills"
         case .projects: kind = "projects"
         case .requirements: kind = "requirements"
+        case .workstreams: kind = "workstreams"
         default: kind = "preview"
         }
         ShellConfig.shared.set(kind, forKey: "rightPanelKind")
@@ -5144,6 +5318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // The Projects panel only re-renders its highlight + badges here.
         projectsPanel?.workspaceChanged()
         requirementsPanel?.workspaceChanged()
+        workstreamsPanel?.workspaceChanged()
         AppLog.shared.log("project directory adopted: " + std)
         return true
     }
@@ -5331,6 +5506,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let requirement = RequirementsCore.load(workspace: workspace).requirements
             .first { $0.requirement.id == requirementId }?.requirement
         let title = requirement?.title ?? ""
+        // 拆解确认后「改指事项面板」：回写文案里带上 focus 提示
+        // （requirements.notify.confirmedFocus），右栏也真的聚焦过去，用户顺着
+        // 新生成的 WS 继续处理。即使此刻写不回会话（无端口 / 无会话）也要聚焦。
+        if confirmed && !created.isEmpty { setRightPanel(.workstreams) }
         let port = server.port
         guard port > 0,
               let sessionId = (requirement?.session?.isEmpty == false ? requirement?.session : activeSessionId),
@@ -5340,8 +5519,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         let text: String
         if confirmed {
+            // 第 5 个参数是 focus 提示（可带）：单独成行，指出事项面板入口。
             text = L10n.tr("requirements.notify.confirmed", requirementId, title, requirementId,
-                           created.joined(separator: "、"))
+                           created.joined(separator: "、"),
+                           "\n" + L10n.tr("requirements.notify.confirmedFocus"))
         } else {
             // 驳回：带上原因（若有）请 agent 改了再提案；reason 为空时省略原因行。
             text = RequirementsCore.rejectPrompt(requirementId, title: title, reason: reason)
@@ -5420,6 +5601,113 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 }
                 self.requirementsPanel?.setStatus(message, isError: false)
                 if used != self.activeSessionId { self.openDSHSession(used) }
+            }
+        }
+    }
+
+    /// 需求池子事项 ↗（D6）：切到事项面板并高亮该 WS。setRightPanel 会按需
+    /// 加载面板，随后 focus 在面板内解析工作区并滚动 / 高亮；工作区不变，故
+    /// 无需 adopt。
+    private func focusWorkstream(_ workstreamId: String) {
+        setRightPanel(.workstreams)
+        workstreamsPanel?.focus(onWorkstream: workstreamId)
+    }
+
+    /// 「拆分任务」(design §6 / UX): the workstream analogue of the requirements
+    /// pool's「细化」. Send `stage`'s split prompt: reuse the bound session when it
+    /// is alive; otherwise create a session and bind it; otherwise fall back to the
+    /// current session. The binding is always recorded so the next action stays in
+    /// the same conversation.
+    private func startWorkstreamSession(_ workstreamId: String, title: String,
+                                        stage: WorkstreamStage, boundSession: String?) {
+        guard let workspace = activeWorkspacePath(), !workspace.isEmpty else { return }
+        let port = server.port
+        guard port > 0 else {
+            workstreamsPanel?.setStatus(L10n.tr("workstreams.split.failed"), isError: true)
+            return
+        }
+        guard let card = try? WorkstreamsCore.loadCard(workspace: workspace, id: workstreamId) else {
+            workstreamsPanel?.setStatus(L10n.tr("workstreams.split.failed"), isError: true)
+            return
+        }
+        let current = activeSessionId
+        let prompt = WorkstreamHandoff.splitPrompt(card: card, stage: stage, workspace: workspace)
+        let bound = boundSession?.trimmingCharacters(in: .whitespacesAndNewlines)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // 1) the bound session when it is alive; 2) a freshly created session;
+            // 3) the current session (无绑定 / 坏会话回退当前会话).
+            var boundAlive = false
+            if let bound = bound, !bound.isEmpty,
+               DshSessionOps.sendPrompt(port: port, sessionId: bound, text: prompt) {
+                boundAlive = true
+            }
+            var created: String?
+            if !boundAlive {
+                let workspaceId = DshWorkspaceStore.workspaceId(forPath: workspace, port: port,
+                                                                log: { AppLog.shared.log($0) })
+                    ?? DshWorkspaceOps.register(port: port, path: workspace)
+                if let sid = DshWorkspaceOps.createSession(port: port, cwd: workspace, workspaceId: workspaceId) {
+                    _ = DshSessionOps.rename(port: port, sessionId: sid,
+                                             title: "事项 " + workstreamId + " " + title)
+                    if DshSessionOps.sendPrompt(port: port, sessionId: sid, text: prompt) {
+                        created = sid
+                    }
+                }
+            }
+            var fallback: String?
+            if !boundAlive, created == nil, let current = current, !current.isEmpty,
+               DshSessionOps.sendPrompt(port: port, sessionId: current, text: prompt) {
+                fallback = current
+            }
+            let target = WorkstreamsCore.sessionTarget(bound: bound, boundAlive: boundAlive,
+                                                       created: created, current: fallback)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let used = target?.session else {
+                    AppLog.shared.log("workstreams: could not start a session for \(workstreamId)")
+                    self.workstreamsPanel?.setStatus(L10n.tr("workstreams.split.failed"), isError: true)
+                    return
+                }
+                WSStore.rememberWorkstreamSession(workspace, id: workstreamId, session: used)
+                AppLog.shared.log("workstreams: split session \(used) for \(workstreamId)")
+                let message: String
+                switch target {
+                case .reuse?: message = L10n.tr("workstreams.split.continued", workstreamId)
+                case .fallback?: message = L10n.tr("workstreams.split.fallback", workstreamId)
+                default: message = L10n.tr("workstreams.split.started", workstreamId)
+                }
+                self.workstreamsPanel?.setStatus(message, isError: false)
+                if used != self.activeSessionId { self.openDSHSession(used) }
+            }
+        }
+    }
+
+    /// 对话内阶段推进（队列第 24 项 / design §5 + §6）：人在面板确认某阶段后，若该
+    /// 事项有绑定的主场会话（`local.json` 的 `workstreamSessions`），就把**下一阶段**
+    /// 的交接提示词发过去，让对话自然续到下一阶段；**无绑定会话则不发**（不凭空起
+    /// 会话——只有「拆分任务」才允许新建）。形状与需求池的
+    /// `notifyBreakdownResolved` 一致：面板只报事实，主程序负责会话选择与发送。
+    private func continueWorkstreamInSession(card: WorkstreamCard, stage: WorkstreamStage) {
+        guard let workspace = activeWorkspacePath(), !workspace.isEmpty else { return }
+        let bound = WSStore.workstreamSessions(workspace)[card.id]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let sessionId = bound, !sessionId.isEmpty else {
+            AppLog.shared.log("workstreams: \(card.id) advanced to \(stage.rawValue) with no bound session; next-stage handoff skipped")
+            return
+        }
+        let port = server.port
+        guard port > 0 else { return }
+        let prompt = WorkstreamHandoff.prompt(card: card, stage: stage, workspace: workspace)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let sent = DshSessionOps.sendPrompt(port: port, sessionId: sessionId, text: prompt)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if sent {
+                    AppLog.shared.log("workstreams: next-stage handoff for \(card.id) -> \(stage.rawValue) written to session \(sessionId)")
+                    if sessionId != self.activeSessionId { self.openDSHSession(sessionId) }
+                } else {
+                    AppLog.shared.log("workstreams: next-stage handoff for \(card.id) failed to send (\(DshWebRPC.lastFailure ?? "?"))")
+                }
             }
         }
     }
@@ -6061,7 +6349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // 「项目」在首位（与活动栏一一对应，设计 §5/D4）；⌥⌘P 由「文件面板」
         // 让出（PR #57 已把文件面板改为 ⌥⌘F）。
         // 其余各项顺序与活动栏保持一一对应：项目 / 文件 / 终端 / 知识库 / 需求池 /
-        // 任务 / 通道 / 审查 / 浏览器 / 技能（「浏览器」2026-09-24 移到末位「技能」之前）。
+        // 事项 / 任务 / 通道 / 审查 / 浏览器 / 技能（「浏览器」2026-09-24 移到末位「技能」之前）。
         let toggleProjects = viewMenu.addItem(withTitle: L10n.tr("menu.toggleProjects"), action: #selector(projectsEntryTapped(_:)), keyEquivalent: "p")
         toggleProjects.keyEquivalentModifierMask = [.command, .option]
         toggleProjects.target = self
@@ -6088,6 +6376,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         toggleRequirements.target = self
         toggleRequirements.state = (rightPanel == .requirements) ? .on : .off
         requirementsToggleMenuItem = toggleRequirements
+        // 「事项」紧邻「需求池」之后（设计 A11 / D14）；⌥⌘K 经查无占用。
+        let toggleWorkstreams = viewMenu.addItem(withTitle: L10n.tr("menu.toggleWorkstreams"), action: #selector(workstreamsEntryTapped(_:)), keyEquivalent: "k")
+        toggleWorkstreams.keyEquivalentModifierMask = [.command, .option]
+        toggleWorkstreams.target = self
+        toggleWorkstreams.state = (rightPanel == .workstreams) ? .on : .off
+        workstreamsToggleMenuItem = toggleWorkstreams
         let toggleTasks = viewMenu.addItem(withTitle: L10n.tr("menu.toggleTasks"), action: #selector(tasksEntryTapped(_:)), keyEquivalent: "j")
         toggleTasks.keyEquivalentModifierMask = [.command, .option]
         toggleTasks.target = self
@@ -6267,6 +6561,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         wikiBarButton?.toolTip = L10n.tr("bar.wiki")
         tasksBarButton?.toolTip = L10n.tr("bar.tasks")
         requirementsBarButton?.toolTip = L10n.tr("bar.requirements")
+        workstreamsBarButton?.toolTip = L10n.tr("bar.workstreams")
         // 各面板头部操作按钮 tooltip 同样跟随语言
         previewPanel?.refreshTooltips()
         terminalPanel?.refreshTooltips()
@@ -6278,6 +6573,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         skillsPanel?.refreshTooltips()
         projectsPanel?.refreshTooltips()
         requirementsPanel?.refreshTooltips()
+        workstreamsPanel?.refreshTooltips()
         // Reload the dsh web page: the rebuilt WebView injects a navigator.language
         // override, so the page language follows immediately (no restart needed).
         let currentURL = webView.url
@@ -6464,6 +6760,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// Toggle the Requirements Pool panel (activity bar's last entry / ⌥⌘I).
     @objc private func requirementsEntryTapped(_ sender: Any?) {
         setRightPanel(rightPanel == .requirements ? .none : .requirements)
+    }
+    /// Toggle the Workstreams panel (activity bar entry right after 需求池 / ⌥⌘K).
+    @objc private func workstreamsEntryTapped(_ sender: Any?) {
+        setRightPanel(rightPanel == .workstreams ? .none : .workstreams)
     }
     /// Toggle the Review (change audit) panel (activity bar entry / ⌥⌘R).
     @objc private func reviewEntryTapped(_ sender: Any?) {
@@ -6850,6 +7150,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         bridge.requirementsReject = { [weak self] request in
             self?.requirementsPanel?.apiRequirementsReject(request) ?? BrowserAPIBridge.requirementsUnavailable
         }
+        // 同一服务上的第四块路由面：/api/workstreams/*（事项面板；A5 面板是
+        // WS-*.md 的唯一写者，agent 经此写卡而非直改文件）。
+        bridge.workstreamsList = { [weak self] workspace in
+            self?.workstreamsPanel?.apiWorkstreamsList(workspace: workspace) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        // 反查：会话 -> 绑定的事项（agent 用 $DSH_SESSION_ID 查自己的事项）。
+        bridge.workstreamsBound = { [weak self] session in
+            self?.workstreamsPanel?.apiWorkstreamsBound(session: session) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsCreate = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsCreate(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsUpdate = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsUpdate(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsStage = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsStage(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsPlan = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsPlan(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsQueues = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsQueues(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsStageConfirm = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsStageConfirm(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsStageReject = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsStageReject(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsTaskCreate = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsTaskCreate(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsTaskList = { [weak self] workspace in
+            self?.workstreamsPanel?.apiWorkstreamsTaskList(workspace: workspace) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsQueueStart = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsQueueStart(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsQueuePause = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsQueuePause(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsCovered = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsCovered(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        bridge.workstreamsDelivery = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsDelivery(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        // 发起交付（等价面板「交付」按钮）：同一台 initiateDelivery，不再第二套。
+        bridge.workstreamsDeliver = { [weak self] request in
+            self?.workstreamsPanel?.apiWorkstreamsDeliver(request) ?? BrowserAPIBridge.workstreamsUnavailable
+        }
+        // 聚焦通道（A11 / D6）：亮面板并按 id 高亮事项。任何带 focus 的
+        // /api/workstreams/* 请求（写操作 focus:true 也走这里）都会命中。
+        bridge.workstreamsFocus = { [weak self] workspace, id in
+            self?.workstreamsPanel?.apiWorkstreamsFocus(workspace: workspace, id: id)
+        }
         bridge.showPanel = { [weak self] in self?.setRightPanel(.browser) }
         bridge.hidePanel = { [weak self] in
             if self?.rightPanel == .browser { self?.setRightPanel(.none) }
@@ -7136,6 +7493,7 @@ final class SettingsWindowController {
         ("menu.toggleTerminal", "⌥⌘T"),
         ("menu.toggleWiki", "⌥⌘W"),
         ("menu.toggleRequirements", "⌥⌘I"),
+        ("menu.toggleWorkstreams", "⌥⌘K"),
         ("menu.toggleBrowser", "⌥⌘B"),
         ("menu.toggleChannel", "⌥⌘H"),
         ("menu.toggleReview", "⌥⌘R"),
