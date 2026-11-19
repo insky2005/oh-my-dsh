@@ -75,26 +75,37 @@ do {
 
 // MARK: - 公共头（design §3）
 
-section("public header: pointer + stage + action + goal (design §3)")
+section("public header: identity -> stage / step -> one line -> 注意 (three-part format)")
 do {
     let card = makeCard()
     let prompt = WorkstreamHandoff.prompt(card: card, stage: .planning, repoName: "oh-my-dsh")
-    contains(prompt, "你在 oh-my-dsh 处理一个事项。", "names the repo")
-    contains(prompt, WorkstreamHandoff.factsMarker, "carries the 本步事实 block")
-    contains(prompt, "- 事项：.dsh/workstreams/WS-000007.md", "points at the WS card")
-    contains(prompt, "- 需求：.dsh/requirements/REQ-000007.md", "points at the requirement card")
-    contains(prompt, "- 存储约定：.dsh/requirements/README.md", "points at the storage convention")
-    contains(prompt, WorkstreamHandoff.stageMarker + "规划", "names the current stage")
-    contains(prompt, "本步动作：确认规划", "names this step's action")
+    check(prompt.hasPrefix("WS-000007「阶段提示词」@.dsh/workstreams/WS-000007.md"),
+          "starts with the workstream identity line")
+    contains(prompt, "阶段：规划（planning）· 本步：确认规划",
+             "second line carries the stage (label + raw) and this step's action")
     contains(prompt, "目标：产出面板生成的各阶段提示词", "injects the planning goal")
+    contains(prompt, "\n注意：\n- ", "has the 注意 list")
     check(WorkstreamHandoff.isHandoff(prompt), "a generated prompt is recognised as a handoff")
-    notContains(WorkstreamHandoff.prompt(card: makeCard(requirement: nil), stage: .planning),
-                "- 需求：", "a card without a requirement omits the requirement line")
+    check(prompt.contains(WorkstreamHandoff.cardPointer), "the handoff marker is the card pointer")
+    notContains(prompt, "本步事实：", "no legacy 本步事实 block")
+    notContains(prompt, "存储约定", "no storage-convention line")
+    notContains(prompt, "你在 ", "no repo preamble")
+    notContains(prompt, "- 需求：", "the header is the workstream card only")
     notContains(WorkstreamHandoff.prompt(card: makeCard(planningGoal: nil), stage: .planning),
                 "目标：", "a card without a planning goal omits the goal line")
-    // repo name falls back to the workspace basename when not given.
-    contains(WorkstreamHandoff.prompt(card: card, stage: .planning, workspace: "/tmp/repo-name"),
-             "你在 repo-name 处理一个事项。", "repo name comes from the workspace basename")
+    // workspace / repoName stay accepted for call-site compatibility, but the format no
+    // longer names the repo.
+    eq(WorkstreamHandoff.prompt(card: card, stage: .planning, workspace: "/tmp/repo-name"),
+       WorkstreamHandoff.prompt(card: card, stage: .planning), "workspace does not change the prompt")
+}
+
+section("isHandoff is keyed on the @.dsh/workstreams/ card pointer")
+do {
+    check(WorkstreamHandoff.isHandoff("WS-1「T」@.dsh/workstreams/WS-1.md\n阶段：规划（planning）· 本步：确认规划"),
+          "a card pointer marks a handoff")
+    check(!WorkstreamHandoff.isHandoff("本步事实：\n当前 stage：规划"),
+          "the legacy 本步事实 / 当前 stage markers alone are not a handoff")
+    check(!WorkstreamHandoff.isHandoff("普通任务正文"), "plain task text is not a handoff")
 }
 
 section("planning goal extraction")
@@ -185,7 +196,7 @@ section("shared model rules on every stage")
 do {
     for stage in WorkstreamStage.allCases {
         let p = WorkstreamHandoff.prompt(card: makeCard(), stage: stage)
-        contains(p, "规则（强制）：", "rules header for " + stage.rawValue)
+        contains(p, "注意：", "notes header for " + stage.rawValue)
         contains(p, "/api/workstreams/", "API write rule for " + stage.rawValue)
         contains(p, "workstream-panel", "names the workstream-panel skill for " + stage.rawValue)
         contains(p, "不直接改", "no direct .dsh edits for " + stage.rawValue)
@@ -213,7 +224,10 @@ do {
     check(draft.isValid, "the draft is valid")
     eq(draft.normalizedTitle, "规划", "the title is kept")
     let expected = WorkstreamHandoff.prompt(card: card, action: .confirmPlanning)
-    eq(draft.effectiveBody, expected, "the prompt is the task body")
+    contains(draft.effectiveBody, "阶段：规划（planning）· 任务：规划 · 本步：确认规划",
+             "the task title is written into the identity line")
+    check(draft.effectiveBody.hasPrefix("WS-000007「阶段提示词」@.dsh/workstreams/WS-000007.md"),
+          "the task body still starts with the workstream identity line")
     check(WorkstreamHandoff.isHandoff(draft.effectiveBody), "the body is a generated handoff")
     eq(draft.body, draft.normalizedBody, "the body carries no leading/trailing blank lines")
 
@@ -225,10 +239,14 @@ do {
     check(WorkstreamHandoff.isHandoff(withContent.body), "content keeps the handoff marker")
     contains(withContent.body, "任务内容：", "the drawer content is labelled in the body")
     contains(withContent.body, "做第一件事", "the drawer content is in the body")
-    check(withContent.body.hasPrefix(expected), "the handoff prompt still leads the body")
+    let withContentBase = WorkstreamHandoff.stageTask(title: "补充任务", card: card,
+                                                     action: .confirmPlanning).body
+    check(withContent.body.hasPrefix(withContentBase), "the handoff prompt still leads the body")
     let noContent = WorkstreamHandoff.stageTask(title: "只有标题", content: "   ",
                                                 card: card, action: .confirmPlanning)
-    eq(noContent.body, expected, "blank content does not change the prompt body")
+    eq(noContent.body,
+       WorkstreamHandoff.stageTask(title: "只有标题", card: card, action: .confirmPlanning).body,
+       "blank content does not change the prompt body")
 
     var task = WSTaskItem(id: "wt-1", title: "规划")
     task = WorkstreamHandoff.injectingStagePrompt(into: task, card: card, action: .confirmPlanning)
@@ -280,7 +298,7 @@ do {
     _ = runner.startQueue(queue.id)
     let sent = dsh.prompts[dsh.sessions[0]] ?? ""
     check(sent.hasPrefix(draft.effectiveBody), "the runner sends the panel prompt as-is")
-    contains(sent, "本步做「启动实施」", "the sent prompt carries the action section")
+    contains(sent, "本步：启动实施", "the sent prompt carries the action")
     contains(sent, "DSH-WS-DONE-", "the execution marker is appended")
     notContains(sent, "你正在推进事项", "the panel prompt is NOT wrapped in the generic template")
 }
@@ -310,7 +328,7 @@ do {
     eq(built.created[0].workstreamId, card.id, "the task carries the workstream id")
     let body = built.created[0].body ?? ""
     check(WorkstreamHandoff.isHandoff(body), "the task body is the panel handoff prompt")
-    contains(body, "本步动作：确认规划", "it uses the stage's default action")
+    contains(body, "本步：确认规划", "it uses the stage's default action")
 }
 
 // MARK: - 对话内阶段推进：确认 → 下一阶段提示词（design §5 + §6）
@@ -323,8 +341,7 @@ do {
     eq(first?.stage, .design, "confirming 规划 hands off to 设计")
     if let prompt = first?.prompt {
         check(WorkstreamHandoff.isHandoff(prompt), "the next-stage prompt is a panel handoff")
-        contains(prompt, "当前 stage：设计", "the 设计 stage marker is in the prompt")
-        contains(prompt, "本步动作：出设计", "the 设计 default action is in the prompt")
+        contains(prompt, "阶段：设计（design）· 本步：出设计", "the 设计 stage / step line is in the prompt")
         eq(prompt, WorkstreamHandoff.prompt(card: planning, stage: .design, workspace: "/tmp/ws"),
            "the next-stage prompt is the 设计 stage prompt verbatim")
     } else {
@@ -342,12 +359,11 @@ do {
     let design = WorkstreamHandoff.nextStagePrompt(card: makeCard(stage: .design,
         planningGoal: "产出面板生成的各阶段提示词"))?.prompt ?? ""
     contains(design, "目标：产出面板生成的各阶段提示词", "the goal is injected from the card")
-    // 需求指针 / 仓库名沿用公共头。
+    // 身份行沿用公共头：事项卡指针（不再有「你在 <repo>」套话）。
     let named = WorkstreamHandoff.nextStagePrompt(card: makeCard(stage: .planning),
                                                   workspace: "/tmp/my-repo")?.prompt ?? ""
-    contains(named, "你在 my-repo 处理一个事项", "the next-stage prompt names the repo")
-    check(named.contains("- 事项：.dsh/workstreams/" + planning.id + ".md"),
-          "the next-stage prompt still points at the workstream card")
+    check(named.hasPrefix(planning.id + "「" + planning.title + "」@.dsh/workstreams/" + planning.id + ".md"),
+          "the next-stage prompt still starts with the workstream identity line")
 }
 
 // MARK: - 拆分任务提示词（首个未处理阶段）
@@ -356,11 +372,11 @@ section("split-task prompt names an explicit stage (first unprocessed)")
 do {
     let card = makeCard(stage: .design)
     let p = WorkstreamHandoff.splitPrompt(card: card, stage: .design, repoName: "oh-my-dsh")
-    contains(p, "你在 oh-my-dsh 处理一个事项。", "names the repo")
     check(WorkstreamHandoff.isHandoff(p), "the split prompt is a panel handoff")
-    contains(p, "- 事项：.dsh/workstreams/WS-000007.md", "points at the WS card")
-    contains(p, WorkstreamHandoff.stageMarker + "设计", "names the requested stage (not .task)")
-    contains(p, "本步动作：拆分任务", "the action is 拆分任务")
+    check(p.hasPrefix("WS-000007「阶段提示词」@.dsh/workstreams/WS-000007.md"),
+          "starts with the workstream identity line")
+    contains(p, "阶段：设计（design）· 本步：拆分任务",
+             "names the requested stage (not .task) and the split action")
     contains(p, "/api/workstreams/task/create", "creates waiting tasks through the panel API")
     contains(p, "等待态阶段任务", "creates waiting-state stage tasks")
     contains(p, "`stage` 必须传", "each task carries the current stage's raw value")
@@ -373,18 +389,17 @@ do {
     notContains(p, "/task-todo", "never points at the tasks panel's skill")
     // 回归：规划阶段拆分必须点名原始值 planning，且不诱导 task（bug: 拆分任务传 stage=task）。
     let planningSplit = WorkstreamHandoff.splitPrompt(card: makeCard(stage: .planning), stage: .planning)
-    contains(planningSplit, "当前 stage：规划（planning）", "the stage marker carries the raw value")
+    contains(planningSplit, "阶段：规划（planning）", "the stage line carries the raw value")
     contains(planningSplit, "\"stage\":\"planning\"", "the call example passes the raw value")
     contains(planningSplit, "不要传 `task`", "warns not to pass task")
     notContains(planningSplit, "\"stage\":\"task\"", "a planning split never suggests stage=task")
     // Every stage can be split; the header always names the requested stage.
     for stage in WorkstreamStage.allCases {
         let sp = WorkstreamHandoff.splitPrompt(card: makeCard(), stage: stage)
-        contains(sp, WorkstreamHandoff.stageMarker + WorkstreamHandoff.stageLabel(stage),
+        contains(sp, "阶段：" + WorkstreamHandoff.stageLabel(stage) + "（" + stage.rawValue + "）",
                  "split prompt names " + stage.rawValue)
-        contains(sp, "（" + stage.rawValue + "）", "split prompt carries the raw value " + stage.rawValue)
         contains(sp, "\"stage\":\"" + stage.rawValue + "\"", "split example for " + stage.rawValue)
-        contains(sp, "本步动作：拆分任务", "split action for " + stage.rawValue)
+        contains(sp, "本步：拆分任务", "split action for " + stage.rawValue)
     }
     // 执行阶段的拆分与 (stage, action) 通用构造逐字一致（同一个动作段）。
     eq(WorkstreamHandoff.splitPrompt(card: card, stage: .task, workspace: "/tmp/ws"),

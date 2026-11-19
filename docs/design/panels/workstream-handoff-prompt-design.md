@@ -16,19 +16,20 @@
 
 ## 3. 公共头（所有 stage 共用）
 
-工作区通用规则（模型 / `.dsh` 约定 / 人工确认门 / 只拆不胀 / 事项面板 API `/api/workstreams/*`）应由**工作区 `AGENTS.md` 承载、对话开始自动加载**（见 `docs/usage/ai-native-workflow-manual.md` §2.0）。提示词只带**本步事实**：
+工作区通用规则（模型 / `.dsh` 约定 / 人工确认门 / 只拆不胀 / 事项面板 API `/api/workstreams/*`）应由**工作区 `AGENTS.md` 承载、对话开始自动加载**（见 `docs/usage/ai-native-workflow-manual.md` §2.0）。提示词与需求池同构，只带一个事项卡指针（**不再有 repo 前言 / 本步事实 / 存储约定**）：
 
 ```text
-你在 <repo> 处理一个事项。
+<WS-id>「<标题>」@.dsh/workstreams/<WS-id>.md
+阶段：<中文>（<raw>）· 本步：<动作>
+目标：<卡片的规划.目标>            ← 有则出现
 
-本步事实：
-- 事项：.dsh/workstreams/<WS-ID>.md
-- 需求：.dsh/requirements/<REQ-ID>.md
-- 存储约定：.dsh/requirements/README.md（通用规则见工作区 AGENTS.md）
+<一句话：本步要做什么 + 停在哪儿>
 
-当前 stage：<stage>      本步动作：<action>
-目标：<卡片的规划.目标>
+注意：
+- <1..3 条：API 细节 / 门禁 / 技能指针>
 ```
+
+面板建阶段任务（`stageTask`）时，任务标题写进第二行：`阶段：<中文>（<raw>）· 任务：<标题> · 本步：<动作>`；抽屉输入的额外内容以 `任务内容：` 追加在提示词之后。`isHandoff` 的判据是提示词里含事项卡指针 `@.dsh/workstreams/`。
 
 ## 4. stage → action 段
 
@@ -42,30 +43,27 @@
 
 **交付不是 stage 的 action 段**（阶段只有四个）：验收确认（`accepted`）之后，`WorkstreamsDelivery.prompt(plan:)` 由事项主卡「交付」按钮 / `POST /api/workstreams/deliver` 发进**主场会话**执行 push / PR，用 `POST /api/workstreams/delivery` 回填 `pr` / `url` 事实（面板写卡，`outcome` 派生不手写）——**不新建会话 / 任务、不改 `stage`**。
 
-每个 action 段都附**模型规则**（强制）：
+每个 action 段都是**一句话 + 注意**（最多 3 条；动作特有的 API 细节在前，共用规则压成最后一条）：
 
-- 回边合法但留痕（连同来源标记 `source:panel` / `source:session <id>`）；跳过 / 裁剪必须在「规划」声明；
-- **只拆不胀**：范围外 → 新需求卡片（R5），不就地吸收；
-- 裁决是点记录；覆盖锚变更；终态是派生谓词（**不写** `closed` / `outcome`）；
-- 回归门 `<REG-ID>`：若改动其覆盖路径，交付前运行；
-- 任务阶段走**事项面板自有 API**（`task/create` 拆分、`queue/start` 启动、`delivery` 交付），**不用 `/task-todo`（任务面板）**；
-- 不改其它会话的在途文件。
+- 动作一句话说明要做什么、停在哪儿（如「补齐四件套，写完停下请人确认规划」）；
+- 注意里写 API / 门禁细节；共用规则（去重后一条）：改卡片走 `/api/workstreams/*`（`workstream-panel` 技能）、阶段任务走 `task/create` / `queue/start`、回边留痕、只拆不胀、终态派生、不改在途文件；
+- 回归门 `<REG-ID>` 只在该卡片有 `regression` 时出现，追加在共用规则末尾。
 
 ### 4.1 拆分提示词的定位与措辞
 
-**拆分任务**是「推进一张事项卡」四件事之一（设计 `workstream-panel-design.md` §5.1：拆分 = 会话提示词 / 确认 = 阶段上的人工门 / 启动 = 事项卡「启动事项」（面板唯一入口，按阶段 canonical 顺序）或技能 `queue/start`）。它的提示词由 `WorkstreamHandoff.splitPrompt(card:stage:)` 生成，与其它动作**同形**（§3 公共头 + 动作段 + §4 规则段），只是 `stage` 由调用方**显式传入**。
+**拆分任务**是「推进一张事项卡」四件事之一（设计 `workstream-panel-design.md` §5.1：拆分 = 会话提示词 / 确认 = 阶段上的人工门 / 启动 = 事项卡「启动事项」（面板唯一入口，按阶段 canonical 顺序）或技能 `queue/start`）。它的提示词由 `WorkstreamHandoff.splitPrompt(card:stage:)` 生成，与其它动作**同形**（§3 公共头 + 一句话动作 + 注意），只是 `stage` 由调用方**显式传入**。
 
 - **定位**：
   - **触发** = 事项主卡「**拆分任务**」按钮；
   - **`stage` = 首个未处理阶段**（canonical 顺序里第一个运行态非「完成」的阶段，A13 派生态）——**不一定等于卡片当前 `stage`**：按钮问的是「下一件还没拆的事」，不是「卡停在哪」；
   - **送达** = 该事项的**主场会话**（`workstreamSessions`）；无绑定 / 坏会话按 `sessionTarget` 新建并绑定 / 回退当前会话；
   - 它是**指针不是状态副本**：提示词只点名事项与阶段，等待态任务的实际创建由会话里的 agent 调 `task/create` 完成。
-- **措辞要求**（`actionSection(.splitTasks)`）：
+- **措辞要求**（`actionNotes(.splitTasks)` + `actionSentence(.splitTasks)`）：
   1. 用 `POST /api/workstreams/task/create` 建**等待态阶段任务**（= 任务拆分本身），**每条任务带本阶段 `stage`**，追加到该事项唯一队列；
   2. **只建不启动**；阶段 ↔ 队列映射由面板写回卡片 `queues`；
   3. **停下请人确认拆分合理**；
   4. **不自签**：拆分是人工确认门，agent 只建等待态任务，人在面板确认后才 `queue/start`；
-  5. 本步动作是 `task/create`；`queue/start` 只作为「人确认后」的后续动作出现在规则段，不冒充本步动作。
+  5. 本步的写操作是 `task/create`；`queue/start` 只作为「人确认后」的后续动作出现在「注意」里，不冒充本步动作。
 
 ### 4.2 创建任务抽屉与 `task/create`
 
@@ -73,7 +71,7 @@
 
 - **阶段选择器**：四阶段单选（规划 / 设计 / 执行 / 验收；交付不是阶段），默认该事项**首个未处理阶段**（`wsFirstUnprocessedStage`，A13 派生态）——与「拆分任务」同源；
 - **一个输入框**：**首行 = 标题，其余行 = 内容**（`WSStageTaskComposerModel` 拆分）；⌘↩ 提交、Esc 取消、标题为空禁用提交；
-- **提示词注入**：提交时用 `WorkstreamHandoff.stageTask(title:content:card:action:)` 生成该阶段的**交接提示词**（§3 公共头 + 动作段 + §4 规则段，与 `task/create` 完全同形），把用户输入的**内容附在提示词之后**；提示词仍在 body 开头，执行阶段的 `isHandoff` 判定与完成 marker 注入不受影响；
+- **提示词注入**：提交时用 `WorkstreamHandoff.stageTask(title:content:card:action:)` 生成该阶段的**交接提示词**（§3 公共头 + 一句话动作 + 注意，与 `task/create` 完全同形），任务标题进第二行，用户输入的**内容附在提示词之后**；提示词仍在 body 开头，执行阶段的 `isHandoff`（判据 `@.dsh/workstreams/`）与完成 marker 注入不受影响；
 - **落点**：任务带该 `stage` 追加到该事项**唯一队列**、`WS.queues` 由面板写回；**只建等待态、不启动**。
 
 与「拆分任务」的关系：**拆分**把 `splitPrompt` 发进主场会话，由会话里的 agent 调 `task/create`；**创建任务**是人在面板上直接走同一条 `task/create`（不经过会话）。两者产物相同（等待态、带 `stage` 的任务），都受「只建不启动 / 停下等人确认 / 不自签」约束。阶段卡**没有**创建任务入口。
@@ -81,14 +79,16 @@
 ## 5. 生成示例：WS-002
 
 ```text
-你在 oh-my-dsh 仓库工作。处理事项 WS-002「需求 / 事项落盘 .dsh 落地」。
-
-先读：.dsh/workstreams/WS-002.md、.dsh/requirements/REQ-002.md（通用规则见工作区 AGENTS.md）。
-
-当前 stage：规划 → 确认规划后进设计。
+WS-002「需求 / 事项落盘 .dsh 落地」@.dsh/workstreams/WS-002.md
+阶段：规划（planning）· 本步：确认规划
 目标：产出 docs/design/panels/requirements-workstream-store-design.md。
-规则：……（同 §4）
-结束前停下问：规划确认 / 设计确认 / 拆分确认 / 验收 sign-off。不要自签。
+
+补齐本事项「## 规划」的四件套（目标（WHAT）/ 边界 / 验收标准（AC<n>）/ 阶段裁剪声明），写完停下请人确认规划。
+
+注意：
+- 用 `POST /api/workstreams/plan` 写「## 规划」；不直接改 `.dsh` 文件。
+- 人确认前不得进入设计。
+- 改事项卡片一律走 `/api/workstreams/*`（`workstream-panel` 技能）……（共用规则，同 §4）
 ```
 
 ## 6. 变量来源

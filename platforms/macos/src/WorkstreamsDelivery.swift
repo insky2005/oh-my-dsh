@@ -564,44 +564,51 @@ enum WorkstreamsDelivery {
     /// **读取位置**（绝非 token 本身）；PR 标题正文由会话按实际改动写。
     static func prompt(plan: WSDeliveryPlan) -> String {
         var lines: [String] = []
-        lines.append("事项「" + plan.workstreamID + " " + plan.title + "」已验收（accepted），请在本主场会话里执行交付："
-                     + "推送分支 " + plan.branch + " 并发起 pull request：")
-        lines.append("")
-        lines.append("## 事项信息")
-        lines.append("事项：" + plan.workstreamID + "（" + plan.title + "）")
-        lines.append("仓库：" + plan.slug + "（远端 " + plan.remote
+        // 身份行 + 阶段 / 操作：与阶段交接提示词同一套三段式（身份 → 阶段 → 一句话 → 注意）。
+        lines.append(plan.workstreamID + "「" + plan.title + "」@.dsh/workstreams/" + plan.workstreamID + ".md")
+        lines.append("阶段：" + stageLabel(plan.stage) + "（" + plan.stage.rawValue + "）· 操作：交付")
+        lines.append("分支：" + plan.branch + "（基于 " + plan.base + "）· 仓库：" + plan.slug
+                     + "（远端 " + plan.remote
                      + (plan.repoID == "." ? "，工作区根" : "，子目录 " + plan.repoID) + "）")
-        lines.append("分支：" + plan.branch + "（基于 " + plan.base + "）")
         if let covered = plan.covered, !covered.paths.isEmpty {
-            lines.append("本次覆盖路径（covered）：")
-            for path in covered.paths { lines.append("  - " + path) }
-            if let head = covered.head { lines.append("  变更锚点 head：" + head) }
+            var coveredLine = "覆盖：" + covered.paths.joined(separator: "、")
+            if let head = covered.head { coveredLine += " · head " + head }
+            lines.append(coveredLine)
         }
         if let existing = plan.existingPR, !existing.isEmpty {
-            lines.append("已存在的 PR（复用，不要重复创建）：" + existing)
+            lines.append("已有 PR（复用，不要重复创建）：" + existing)
         }
         if !plan.commits.isEmpty {
-            lines.append("分支上已有的提交：")
-            for commit in plan.commits { lines.append("  " + commit) }
+            lines.append("提交：" + plan.commits.joined(separator: "；"))
         }
         lines.append("")
-        lines.append("要求：")
-        lines.append("1. 先看清这个分支到底改了什么（git log " + plan.base + ".." + plan.branch
-                     + "、git diff " + plan.base + "..." + plan.branch + "），不要凭事项名字猜；")
-        lines.append("2. 把分支 push 到远端（远端名 " + plan.remote + "；分支还没推送过就 -u 推送）；")
-        lines.append("3. 用 GitHub token 开 PR：token 在 $DSH_HOME/oh-my-dsh/tokens/<owner>-<repo> 或 "
-                     + "$DSH_HOME/oh-my-dsh/gh-token（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；"
-                     + "base = " + plan.base + "，head = " + plan.branch + "；已有同一 head 的 PR 就复用；")
-        lines.append("4. PR 标题与正文由你按实际改动写：标题一句话说清这次合并做了什么，正文分条列出改动要点、"
-                     + "怎么验证的、需要注意的地方；不要只写事项名，也不要套模板；")
-        lines.append("5. 就在当前这个主场会话里做交付：不要新建交付任务，也不要另起会话；这个会话不要改任何代码，只做交付；")
-        lines.append("6. 必须在最后一行给出 PR 的完整链接（https://github.com/<owner>/<repo>/pull/<编号>）；"
-                     + "真开不出来就说清楚卡在哪一步（权限 / 网络 / token / 分支状态），不要沉默结束；")
-        lines.append("7. 交付结果（delivery.outcome）由 PR 状态派生，不要手写 outcome；")
-        lines.append("8. **完成信号**：交付完成后用 POST /api/workstreams/delivery 记录 delivery.pr / delivery.url 两个事实"
-                     + "（带 PR 状态观察 state / merged），不要直接改 .dsh 文件；outcome 由面板派生。"
-                     + "没写这条事实，面板会按会话汇报判失败，超时也会兜底取消这次交付。")
+        lines.append("推送分支并发起 pull request（已有同一 head 的 PR 就复用），完成后把 PR 链接作为最后一行给出。")
+        lines.append("")
+        lines.append("注意：")
+        lines.append("- 先看清这个分支到底改了什么（`git log " + plan.base + ".." + plan.branch
+                     + "`、`git diff " + plan.base + "..." + plan.branch + "`），不要凭事项名字猜。")
+        lines.append("- push 到远端 " + plan.remote + "（分支还没推送过就 -u 推送）；用 token 开 PR：token 在 "
+                     + "$DSH_HOME/oh-my-dsh/tokens/<owner>-<repo> 或 $DSH_HOME/oh-my-dsh/gh-token"
+                     + "（默认目录 ~/.dsh；cat 读取即可，绝不在对话/汇报中回显）；base = " + plan.base
+                     + "，head = " + plan.branch + "。")
+        lines.append("- 就在当前这个主场会话里做交付：不要新建交付任务，也不要另起会话，这个会话不要改任何代码；"
+                     + "PR 标题与正文由你按实际改动写（一句话说清这次合并做了什么，正文分条列出改动要点、怎么验证的、需要注意的地方，不要套模板）；"
+                     + "**完成信号**：交付完成后用 POST /api/workstreams/delivery 记录 delivery.pr / delivery.url 两个事实"
+                     + "（带 PR 状态观察 state / merged），不要直接改 .dsh 文件；delivery.outcome 由面板派生、不要手写；"
+                     + "没写这条事实，面板会按会话汇报判失败，超时也会兜底取消这次交付；"
+                     + "真开不出来就说清楚卡在哪一步（权限 / 网络 / token / 分支状态），不要沉默结束。")
         return lines.joined(separator: "\n")
+    }
+
+    /// 阶段中文名（与阶段交接提示词同一套叫法；交付模块保持独立编译，不反向依赖
+    /// WorkstreamsPrompts）。
+    private static func stageLabel(_ stage: WorkstreamStage) -> String {
+        switch stage {
+        case .planning: return "规划"
+        case .design: return "设计"
+        case .task: return "执行"
+        case .acceptance: return "验收"
+        }
     }
 
     /// 把交付事实 + PR 观察合成 delivery 块。**outcome 是派生缓存**：这里由观察

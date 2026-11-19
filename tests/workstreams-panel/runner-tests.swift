@@ -244,6 +244,38 @@ do {
     check(prompt.contains("WS-1"), "prompt names the workstream")
 }
 
+section("handoff body is keyed on the workstream card pointer")
+do {
+    // 旧提示词的判据（本步事实 + 当前 stage）不算交接：会被包进通用任务模板。
+    var legacy = WSBoard()
+    let legacyQueue = legacy.createQueue(name: "Q", workstreamID: "WS-1")
+    let legacyTask = WSTaskItem(id: WSTaskItem.newID(), title: "旧格式",
+                                body: "本步事实：\n当前 stage：设计", workstreamId: "WS-1", stage: .design)
+    legacy.tasks.append(legacyTask)
+    _ = legacy.enqueue(taskID: legacyTask.id, into: legacyQueue.id)
+    _ = legacy.resumeQueue(legacyQueue.id)
+    let legacyHarness = Harness(board: legacy)
+    _ = legacyHarness.runner.step()
+    let legacyPrompt = legacyHarness.dsh.prompts[legacyHarness.dsh.sessions[0]] ?? ""
+    check(legacyPrompt.contains("你正在推进事项"), "legacy markers alone are wrapped in the generic template")
+    check(!legacyPrompt.contains("@.dsh/workstreams/"), "the generic template does not fake a card pointer")
+
+    // 新的判据是身份行里的 @.dsh/workstreams/：body 原样发送，不包模板。
+    let body = "WS-1「T」@.dsh/workstreams/WS-1.md\n阶段：设计（design）· 本步：出设计"
+    var board = WSBoard()
+    let queue = board.createQueue(name: "Q", workstreamID: "WS-1")
+    let task = WSTaskItem(id: WSTaskItem.newID(), title: "新格式", body: body,
+                          workstreamId: "WS-1", stage: .design)
+    board.tasks.append(task)
+    _ = board.enqueue(taskID: task.id, into: queue.id)
+    _ = board.resumeQueue(queue.id)
+    let h = Harness(board: board)
+    _ = h.runner.step()
+    let sent = h.dsh.prompts[h.dsh.sessions[0]] ?? ""
+    check(sent.hasPrefix(body), "a body with the card pointer is sent as-is")
+    check(!sent.contains("你正在推进事项"), "no generic template around a handoff body")
+}
+
 section("failure pauses the queue; skip resumes and runs the next")
 do {
     let seeded = seededBoard(titles: ["A", "B"])

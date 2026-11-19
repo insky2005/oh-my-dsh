@@ -250,13 +250,17 @@ GH_TOKEN=$(cat "$HOME/.dsh/oh-my-dsh/tokens/<owner>-<repo>") \
 模板见 `docs/design/panels/workstream-handoff-prompt-design.md`。最小可用形状：
 
 ```text
-你在 oh-my-dsh 仓库工作。处理事项 WS-<id>「<标题>」。
-先读：.dsh/workstreams/WS-<id>.md、.dsh/requirements/<REQ-ID>.md（通用规则见工作区 AGENTS.md）。
-当前 stage：<stage>；本步动作：<action>。目标与边界以卡片「规划」为准。
-规则：只拆不胀；终态是派生谓词（不写 closed/outcome/split）；
-      回归门 <REG-ID>（若改动其覆盖路径，交付前跑）；不改其它会话的在途文件。
-结束前停下问：规划确认 / 设计确认 / 拆分确认 / 验收 sign-off。不要自签。
+WS-<id>「<标题>」@.dsh/workstreams/WS-<id>.md
+阶段：<中文>（<raw>）· 本步：<动作>
+目标：<卡片「## 规划」里的目标>          ← 有则出现
+
+<一句话：本步要做什么 + 停在哪儿>
+
+注意：
+- <1..3 条：API 细节 / 人工门 / 技能指针>
 ```
+
+执行 phase marker 仍由 runner 追加在提示词末尾；阶段 / 目标 / 覆盖等状态以卡片为准。
 
 ## 7. 命令速查
 

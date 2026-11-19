@@ -93,38 +93,29 @@
 
 > WS-2 的前置是**人工门**（R10）：阶段卡「确认 / 退回」由面板点按则卡片留痕记 `source:panel`；用户在会话里**明确授权**后由 agent 调 `POST /api/workstreams/stage/confirm` / `stage/reject` 则记 `source:session <id>`（都写进卡片 `## 阶段确认`，`stage` 前移 / 回边）。**签字仍是人，agent 不自签**。
 
-两条提示词同用**公共头**：
+两条提示词同用**公共头**（与需求池三段式同构：身份行 → 阶段 / 本步 → 一句话 → 注意）：
 
 ```text
-你在 <repo> 处理一个事项。
-
-本步事实：
-- 事项：.dsh/workstreams/<WS-id>.md
-- 需求：.dsh/requirements/<REQ-id>.md      ← 有需求时出现
-- 存储约定：.dsh/requirements/README.md（通用规则见工作区 AGENTS.md）
-
-当前 stage：<中文>      本步动作：<动作>
+<WS-id>「<标题>」@.dsh/workstreams/<WS-id>.md
+阶段：<中文>（<raw>）· 本步：<动作>
 目标：<卡片「## 规划」里的目标>          ← 有则出现
 
-<动作段>
+<一句话：本步要做什么 + 停在哪儿>
 
-规则（强制）：
-- 改事项卡片一律走 /api/workstreams/*（workstream-panel 技能）；不直接改 .dsh 文件。
-- 回边合法但必须留痕；跳过 / 裁剪必须在「规划」声明。
-- 只拆不胀：范围外的新发现回需求池（R5），不就地吸收。
-- 裁决是点记录；覆盖锚变更；终态是派生谓词（不写 closed / outcome）。
-- <回归门 REG-xxx：若改动其覆盖路径，交付前运行。>   ← 卡片有 regression 时才出现
-- 阶段任务走事项面板自有 API：POST /api/workstreams/task/create 建（任务带 stage）、POST /api/workstreams/queue/start 启动；不用任务面板技能。
-- 不改其它会话的在途文件。
+注意：
+- <1..3 条：API 细节 / 门禁 / 技能指针>
 ```
 
 **WS-1 的动作段**（`.splitTasks`）：
 
 ```text
-本步做「拆分任务」：
-- 用 POST /api/workstreams/task/create 建等待态阶段任务（= 任务拆分本身）：每条任务带本阶段 stage，追加到该事项唯一的队列；只建不启动。
-- 阶段 ↔ 队列映射由面板写回卡片 queues；停下请人确认拆分合理。
-- 不自签：拆分是人工确认门，agent 只建等待态任务；等人在面板点「启动事项」（或会话里明确要求启动）后才 queue/start。
+阶段：<中文>（<raw>）· 本步：拆分任务
+
+把「<阶段>」阶段要做的事拆成等待态阶段任务，建完停下请人确认拆分合理。
+
+注意：
+- 用 POST /api/workstreams/task/create 建等待态阶段任务：stage 必须传上面括号里的原始值，不要传 task；每条任务带 stage，追加到该事项唯一队列；只建不启动。
+- 拆分是人工确认门、不自签，人在面板确认后才 queue/start。
 ```
 
 ### 2.2 写进任务 body、由 runner 发出的

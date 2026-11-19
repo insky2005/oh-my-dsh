@@ -171,6 +171,19 @@ for sym in 'struct WSGitProbe' 'struct WSTokenStore' 'struct WSGitHubPR' 'enum W
     exit 1
   fi
 done
+# 交付提示词头部与阶段交接提示词同构（身份行 → 阶段 / 操作 → 分支/仓库/覆盖 →
+# 一句话 → 注意）；旧的「## 事项信息 / 要求：1. 2. 3.」清单不再出现。
+if ! grep -qF '@.dsh/workstreams/" + plan.workstreamID' "$DELIVERY" \
+   || ! grep -qF '"阶段：" + stageLabel(plan.stage)' "$DELIVERY" \
+   || ! grep -qF '· 操作：交付' "$DELIVERY" \
+   || ! grep -qF '"注意："' "$DELIVERY"; then
+  echo "FAIL: the delivery prompt must use the three-part header (identity / stage / notes)" >&2
+  exit 1
+fi
+if grep -qF '## 事项信息' "$DELIVERY" || grep -qF 'lines.append("要求：")' "$DELIVERY"; then
+  echo "FAIL: the delivery prompt still carries the legacy section list" >&2
+  exit 1
+fi
 # 失败路径必须有明确原因（无分支 / 无远端 / 无 token 的稳定码）。
 for code in '"no-branch"' '"no-remote"' '"no-token"'; do
   if ! grep -qF "$code" "$DELIVERY"; then
@@ -309,6 +322,25 @@ for needle in 规划 设计 执行 验收 拆分任务 启动实施; do
     exit 1
   fi
 done
+# 三段式（对齐需求池）：身份行 → 阶段 / 本步 → 一句话 → 注意。
+# 旧套话「你在 <repo> 处理一个事项」「本步事实：」「存储约定：.dsh/requirements/README.md」
+# 一律不得回归；isHandoff 的判据是身份行里的事项卡指针 @.dsh/workstreams/。
+for needle in 'cardPointer' '"阶段："' '· 本步：' '"注意："'; do
+  if ! grep -qF "$needle" "$PROMPTS"; then
+    echo "FAIL: the stage prompt is missing the three-part token $needle" >&2
+    exit 1
+  fi
+done
+if grep -qF '本步事实：' "$PROMPTS" \
+   || grep -qF '你在 ' "$PROMPTS" \
+   || grep -qF '存储约定：.dsh/requirements/README.md' "$PROMPTS"; then
+  echo "FAIL: the stage prompt still carries a legacy preamble / storage line" >&2
+  exit 1
+fi
+if ! grep -qF 'text.contains(cardPointer)' "$PROMPTS"; then
+  echo "FAIL: isHandoff must be keyed on the @.dsh/workstreams/ card pointer" >&2
+  exit 1
+fi
 # 写权反转（R10 / D5b）：阶段提示词改卡片只能经 /api/workstreams/*，
 # 必须显式要求「不直接改 .dsh 文件」，并点名 workstream-panel 技能。
 if ! grep -qF '/api/workstreams/' "$PROMPTS" \
@@ -713,15 +745,16 @@ for needle in '等待态阶段任务' '`stage` 必须传' '不要传 `task`' '�
     exit 1
   fi
 done
-# 阶段歧义修复：stageMarker 行必须带原始枚举值（当前 stage：规划（planning））；拆分动作段
+# 阶段歧义修复：阶段行必须带原始枚举值（阶段：规划（planning）· 本步：…）；拆分注意段
 # 必须点名原始值并给出带 "stage":"<raw>" 的调用示例；task/create 缺 stage 时回落卡片 stage。
-if ! grep -qF 'stageMarker + stageLabel(stage) + "（" + stage.rawValue + "）' "$PROMPTS"; then
-  echo "FAIL: the stage marker must carry the raw stage value (当前 stage：规划（planning）)" >&2
+if ! grep -qF 'var stageLine = "阶段：" + stageLabel(stage) + "（" + stage.rawValue + "）"' "$PROMPTS" \
+   || ! grep -qF 'stageLine += "· 本步：" + action.label' "$PROMPTS"; then
+  echo "FAIL: the stage line must carry the raw stage value and the step action" >&2
   exit 1
 fi
-if ! grep -qF 'let raw = stage?.rawValue ?? "planning"' "$PROMPTS" \
+if ! grep -qF 'let raw = stage.rawValue' "$PROMPTS" \
    || ! grep -qF '\"stage\":\"" + raw + "\"' "$PROMPTS"; then
-  echo "FAIL: the split action section must build a call example from the raw stage value" >&2
+  echo "FAIL: the split notes must build a call example from the raw stage value" >&2
   exit 1
 fi
 if ! grep -qF 'let stage = request.stage ?? card.stage' "$PANEL"; then

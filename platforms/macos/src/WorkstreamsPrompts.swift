@@ -7,6 +7,11 @@ import Foundation
 // 这里是纯函数：不 import AppKit、不读磁盘、不引用任务面板，输入一张 WorkstreamCard
 // 即可，因此可以 headless 单测。
 //
+// 提示词格式与需求池同构（三段式）：
+//   身份行 → 阶段 / 本步 → 一句话要做什么 → 注意。
+// 不再有「repo 前言」「本步事实」「存储约定」这些套话；具体 API
+// 细节收进「注意」，或指向 `workstream-panel` 技能。
+//
 // (stage, action) 映射见 design §4；执行阶段的完成协议仍是 runner 注入的完成 marker
 // （completionMarkerInstruction / injectingCompletionMarker），本文件只负责把要求写进
 // 提示词正文。
@@ -32,7 +37,7 @@ enum WSStageAction: String, CaseIterable, Equatable {
         }
     }
 
-    /// 写进提示词「本步动作」的中文名。
+    /// 写进提示词「本步」的中文名。
     var label: String {
         switch self {
         case .confirmPlanning: return "确认规划"
@@ -59,10 +64,9 @@ enum WSStageAction: String, CaseIterable, Equatable {
 /// 面板生成阶段提示词的唯一入口。所有输出都是确定性的纯文本（卡片同 -> 提示词同），
 /// 便于测试与「提示词是卡片的函数」这条原则。
 enum WorkstreamHandoff {
-    /// 面板生成的提示词一定包含这两句；runner 用它判断任务 body 是不是一段完整的
+    /// 面板生成的提示词一定包含事项卡指针；runner 用它判断任务 body 是不是一段完整的
     /// 阶段交接提示词（是则原样发送，不再包任务模板）。
-    static let factsMarker = "本步事实："
-    static let stageMarker = "当前 stage："
+    static let cardPointer = "@.dsh/workstreams/"
 
     /// 阶段的中文名（面板设计 §4：用「执行」而非「任务」）。
     static func stageLabel(_ stage: WorkstreamStage) -> String {
@@ -74,9 +78,10 @@ enum WorkstreamHandoff {
         }
     }
 
-    /// 一段提示词是不是面板生成的阶段交接提示词。
+    /// 一段提示词是不是面板生成的阶段交接提示词。判据只有身份行里的事项卡指针
+    /// （`@.dsh/workstreams/`），与阶段 / 动作的具体措辞解耦。
     static func isHandoff(_ text: String) -> Bool {
-        text.contains(factsMarker) && text.contains(stageMarker)
+        text.contains(cardPointer)
     }
 
     // MARK: 提示词
@@ -101,59 +106,66 @@ enum WorkstreamHandoff {
                             stage: WorkstreamStage,
                             workspace: String = "",
                             repoName: String? = nil) -> String {
-        composedPrompt(card: card, stage: stage, action: .splitTasks,
+        composedPrompt(card: card, stage: stage, action: .splitTasks, taskTitle: nil,
                        workspace: workspace, repoName: repoName)
     }
 
     /// 生成 (stage, action) 的完整交接提示词：
-    /// design §3 公共头 + §4 动作段 + §4 模型规则（强制）。
+    /// 身份行 + 阶段 / 本步 + 一句话动作 + 注意（design §3 / §4）。
     static func prompt(card: WorkstreamCard,
                        action: WSStageAction,
                        workspace: String = "",
                        repoName: String? = nil) -> String {
-        composedPrompt(card: card, stage: action.stage, action: action,
+        composedPrompt(card: card, stage: action.stage, action: action, taskTitle: nil,
                        workspace: workspace, repoName: repoName)
     }
 
-    /// 公共头 + 动作段 + 规则段的唯一实现。`stage` 显式传入，让「拆分任务」可以
-    /// 点名任意阶段，而不必是动作固定的阶段。
+    /// 身份行 + 阶段 / 本步（/ 任务）+ 一句话动作 + 注意的唯一实现。`stage` 显式传入，
+    /// 让「拆分任务」可以点名任意阶段，而不必是动作固定的阶段；`taskTitle` 只在
+    /// 面板建阶段任务（`stageTask`）时出现，让任务 body 的第一行也能认出是哪条任务。
     private static func composedPrompt(card: WorkstreamCard,
                                        stage: WorkstreamStage,
                                        action: WSStageAction,
+                                       taskTitle: String?,
                                        workspace: String,
                                        repoName: String?) -> String {
+        _ = workspace
+        _ = repoName
         var lines: [String] = []
-        lines.append("你在 " + resolvedRepoName(repoName, workspace: workspace) + " 处理一个事项。")
-        lines.append("")
-        lines.append(factsMarker)
-        lines.append("- 事项：.dsh/workstreams/" + card.id + ".md")
-        if let requirement = nonEmpty(card.requirement) {
-            lines.append("- 需求：.dsh/requirements/" + requirement + ".md")
+        lines.append(card.id + "「" + card.title + "」" + cardPointer + card.id + ".md")
+        var stageLine = "阶段：" + stageLabel(stage) + "（" + stage.rawValue + "）"
+        if let taskTitle = nonEmpty(taskTitle) {
+            stageLine += "· 任务：" + taskTitle + " · 本步：" + action.label
+        } else {
+            stageLine += "· 本步：" + action.label
         }
-        lines.append("- 存储约定：.dsh/requirements/README.md（通用规则见工作区 AGENTS.md）")
-        lines.append("")
-        lines.append(stageMarker + stageLabel(stage) + "（" + stage.rawValue + "）      本步动作：" + action.label)
+        lines.append(stageLine)
         if let goal = planningGoal(card.body) {
             lines.append("目标：" + goal)
         }
         lines.append("")
-        lines.append(actionSection(action, stage: stage, cardID: card.id))
+        lines.append(actionSentence(action, stage: stage))
         lines.append("")
-        lines.append(rulesSection(card))
+        lines.append("注意：")
+        for note in actionNotes(action, stage: stage, cardID: card.id) {
+            lines.append("- " + note)
+        }
+        lines.append("- " + sharedRule(card))
         return lines.joined(separator: "\n")
     }
 
     /// 面板建阶段队列任务：提示词由壳层生成、注入任务 body（design §2 原则 1/3）。
-    /// 面板「创建任务」抽屉允许额外输入一段内容（首行是标题、其余行是内容）：内容
-    /// 非空时附在提示词之后，提示词仍是 body 的开头（runner 靠它识别交接提示词）。
+    /// 任务标题同时写进身份行（`阶段：… · 任务：<标题>`），body 第一行就能认出是哪条
+    /// 任务。面板「创建任务」抽屉允许额外输入一段内容（首行是标题、其余行是内容）：
+    /// 内容非空时附在提示词之后，提示词仍是 body 的开头（runner 靠它识别交接提示词）。
     static func stageTask(title: String,
                           content: String = "",
                           card: WorkstreamCard,
                           action: WSStageAction,
                           workspace: String = "",
                           repoName: String? = nil) -> WSTaskDraft {
-        var body = prompt(card: card, action: action,
-                          workspace: workspace, repoName: repoName)
+        var body = composedPrompt(card: card, stage: action.stage, action: action,
+                                  taskTitle: title, workspace: workspace, repoName: repoName)
         let extra = content.trimmingCharacters(in: .whitespacesAndNewlines)
         if !extra.isEmpty {
             body += "\n\n任务内容：\n" + extra
@@ -200,66 +212,69 @@ enum WorkstreamHandoff {
         return prompt + "\n\n" + completionMarkerInstruction(marker)
     }
 
-    // MARK: 动作段（design §4）
+    // MARK: 动作段（design §4：一句话 + 注意）
 
-    /// 每个动作的「做什么」+「何时停下」。`stage` / `cardID` 仅用于「拆分任务」，
-    /// 让调用示例里出现**当前阶段的原始值**（如 `"stage":"planning"`），从提示词层面
-    /// 消除「拆分任务 → stage 传 task」的歧义。
-    static func actionSection(_ action: WSStageAction,
-                              stage: WorkstreamStage? = nil,
-                              cardID: String = "WS-…") -> String {
+    /// 一句话：本步要做什么 + 停在哪儿。
+    private static func actionSentence(_ action: WSStageAction, stage: WorkstreamStage) -> String {
         switch action {
         case .confirmPlanning:
-            return section([
-                "本步做「确认规划」：",
-                "- 用 `/api/workstreams/plan` 补齐本事项卡片「## 规划」的四件套——目标（WHAT）/ 边界 / 验收标准（AC<n>）/ 阶段裁剪声明；**不直接改 `.dsh` 文件**。",
-                "- 四件套齐后**停下请人确认规划**；人确认前不得进入设计。",
-            ])
+            return "补齐本事项「## 规划」的四件套（目标（WHAT）/ 边界 / 验收标准（AC<n>）/ 阶段裁剪声明），写完停下请人确认规划。"
         case .produceDesign:
-            return section([
-                "本步做「出设计」：",
-                "- 在 `docs/design/**` 写本事项的设计文档，把待确认问题列成 Q 表。",
-                "- **只写设计，不写实现**；写完**停下请人确认设计**。",
-            ])
+            return "在 `docs/design/**` 写本事项的设计文档，把待确认问题列成 Q 表；只写设计、不写实现，写完停下请人确认设计。"
         case .splitTasks:
-            let raw = stage?.rawValue ?? "planning"
-            return section([
-                "本步做「拆分任务」：",
-                "- 用 `POST /api/workstreams/task/create` 建**等待态阶段任务**（= 任务拆分本身）：`stage` 必须传上面「当前 stage」括号里的**原始值**（`planning` / `design` / `task` / `acceptance`），**不要传 `task`**（除非当前阶段就是「执行」，那时括号里才是 `task`）；动作叫「拆分任务」、路由叫 `task/create`，都不代表 `stage` 就是 `task`。",
-                "- 调用示例（本例当前 stage 是 `" + raw + "`）：`POST /api/workstreams/task/create`，body `{\"id\":\"" + cardID + "\",\"stage\":\"" + raw + "\",\"titles\":[\"…\"],\"session\":\"$DSH_SESSION_ID\"}`。",
-                "- 每条任务带上面的 `stage`，追加到该事项唯一的队列；**只建不启动**。",
-                "- 阶段 ↔ 队列映射由面板写回卡片 `queues`；**停下请人确认拆分合理**。",
-                "- **不自签**：拆分是人工确认门，agent 只建等待态任务，人在面板确认后才 `queue/start`。",
-            ])
+            return "把「" + stageLabel(stage) + "」阶段要做的事拆成等待态阶段任务，建完停下请人确认拆分合理。"
         case .startImplementation:
-            return section([
-                "本步做「启动实施」：",
-                "- 人确认拆分后，用 `POST /api/workstreams/queue/start`（带 `stage` = 只跑本阶段任务）启动实施。",
-                "- 在已确认的边界内改代码 / 跑测试 / commit：切分支、conventional commits。",
-            ])
+            return "在已确认的边界内启动本阶段实施：改代码、跑测试、commit，做完停下请人验收。"
         case .verify:
-            return section([
-                "本步做「校验」：",
-                "- 跑回归门与机检证据（覆盖 / 测试 / 产物校验）。",
-                "- 用 `POST /api/workstreams/covered` 记录覆盖点（paths + base / head 锚变更）；**不直接改 `.dsh` 文件**。",
-                "- **必须由人 sign-off，agent 不自签**。",
-            ])
+            return "跑回归门与机检证据、记录覆盖点，然后停下请人 sign-off。"
         }
     }
 
-    /// 共用模型规则（design §4，强制）；回归门一条只在卡片登记了 REG-* 时出现。
-    static func rulesSection(_ card: WorkstreamCard) -> String {
-        var lines: [String] = ["规则（强制）："]
-        lines.append("- 改事项卡片一律走 `/api/workstreams/*`（`workstream-panel` 技能）；**不直接改 `.dsh` 文件**。")
-        lines.append("- 回边合法但必须留痕；跳过 / 裁剪必须在「规划」声明。")
-        lines.append("- 只拆不胀：范围外的新发现回需求池（R5），不就地吸收。")
-        lines.append("- 裁决是点记录；覆盖锚变更；终态是派生谓词（不写 `closed` / `outcome`）。")
-        if let regression = nonEmpty(card.regression) {
-            lines.append("- 回归门 " + regression + "：若改动其覆盖路径，交付前运行。")
+    /// 注意：API 细节 / 门禁收在这里，最多两条（第三条由 sharedRule 统一补）。
+    private static func actionNotes(_ action: WSStageAction,
+                                    stage: WorkstreamStage,
+                                    cardID: String) -> [String] {
+        switch action {
+        case .confirmPlanning:
+            return [
+                "用 `POST /api/workstreams/plan` 写「## 规划」；不直接改 `.dsh` 文件。",
+                "人确认前不得进入设计。",
+            ]
+        case .produceDesign:
+            return [
+                "设计文档写在 `docs/design/**`，Q 表逐条列出待确认问题。",
+                "只写设计，不写实现（实现属执行阶段）。",
+            ]
+        case .splitTasks:
+            let raw = stage.rawValue
+            return [
+                "用 `POST /api/workstreams/task/create` 建**等待态阶段任务**：`stage` 必须传上面括号里的原始值 `" + raw + "`（`planning` / `design` / `task` / `acceptance`），**不要传 `task`**；调用示例 body `{\"id\":\"" + cardID + "\",\"stage\":\"" + raw + "\",\"titles\":[\"…\"],\"session\":\"$DSH_SESSION_ID\"}`。",
+                "阶段任务带 `stage`，追加到该事项唯一队列；**只建不启动**，拆分是人工确认门、**不自签**，人在面板确认后才 `queue/start`。",
+            ]
+        case .startImplementation:
+            return [
+                "用 `POST /api/workstreams/queue/start`（带 `stage`）只跑本阶段任务；提交用 conventional commits。",
+                "只在已确认的边界内改代码，不碰其它会话的在途文件。",
+            ]
+        case .verify:
+            return [
+                "用 `POST /api/workstreams/covered` 记录覆盖点（paths + base / head 锚变更）；不直接改 `.dsh` 文件。",
+                "必须由人 sign-off，agent 不自签。",
+            ]
         }
-        lines.append("- 阶段任务走事项面板自有 API：`POST /api/workstreams/task/create` 建（任务带 `stage`）、`POST /api/workstreams/queue/start` 启动；不用任务面板技能。")
-        lines.append("- 不改其它会话的在途文件。")
-        return lines.joined(separator: "\n")
+    }
+
+    /// 共用模型规则（design §4，强制），压成一条「注意」。回归门只在卡片登记了
+    /// REG-* 时出现。
+    private static func sharedRule(_ card: WorkstreamCard) -> String {
+        var text = "改事项卡片一律走 `/api/workstreams/*`（`workstream-panel` 技能），**不直接改 `.dsh` 文件**；"
+            + "阶段任务走 `POST /api/workstreams/task/create`（任务带 `stage`）、`POST /api/workstreams/queue/start` 启动；"
+            + "回边合法但必须留痕，跳过 / 裁剪在「规划」声明；只拆不胀，范围外的新发现回需求池；"
+            + "终态是派生谓词（不写 `closed` / `outcome`）；不改其它会话的在途文件。"
+        if let regression = nonEmpty(card.regression) {
+            text += " 回归门 " + regression + "：若改动其覆盖路径，交付前运行。"
+        }
+        return text
     }
 
     // MARK: 目标（design §6：卡片的「规划.目标」）
@@ -305,18 +320,8 @@ enum WorkstreamHandoff {
         line.prefix { $0 == " " || $0 == "\t" }.count
     }
 
-    private static func resolvedRepoName(_ explicit: String?, workspace: String) -> String {
-        if let explicit = nonEmpty(explicit) { return explicit }
-        let path = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty else { return "当前工作区" }
-        let name = (path as NSString).lastPathComponent
-        return name.isEmpty ? "当前工作区" : name
-    }
-
     private static func nonEmpty(_ raw: String?) -> String? {
         guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
         return raw
     }
-
-    private static func section(_ lines: [String]) -> String { lines.joined(separator: "\n") }
 }
