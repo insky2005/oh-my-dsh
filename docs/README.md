@@ -82,7 +82,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 - [PREVIEW_PLAN-file-panel.md](plans/PREVIEW_PLAN-file-panel.md) — 文件面板预览 / 编辑
 - [TERMINAL_PLAN-terminal-panel.md](plans/TERMINAL_PLAN-terminal-panel.md) — 终端面板
 - [APP_SLIM-app-size.md](plans/APP_SLIM-app-size.md) — App 体积精简
-- [dsh-012rc1-compat-audit.md](plans/dsh-012rc1-compat-audit.md) · [dsh-015rc2-compat-audit.md](plans/dsh-015rc2-compat-audit.md) · [dsh-017rc2-compat-audit.md](plans/dsh-017rc2-compat-audit.md) — dsh 兼容审计
+- [dsh-012rc1-compat-audit.md](plans/dsh-012rc1-compat-audit.md) · [dsh-015rc2-compat-audit.md](plans/dsh-015rc2-compat-audit.md) · [dsh-017rc2-compat-audit.md](plans/dsh-017rc2-compat-audit.md) · [dsh-020rc2-compat-audit.md](plans/dsh-020rc2-compat-audit.md) — dsh 兼容审计
 
 ## milestones/ — 里程碑
 
