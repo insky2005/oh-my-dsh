@@ -32,6 +32,14 @@ BUILD_DIR="${BUILD_DIR:-$ROOT/.build}"
 CEF_DIR="$BUILD_DIR/cef"
 MIN="13.0"
 CXX="${CXX:-clang++}"
+# 并发上限：wrapper 有 ~300 个 .cc/.mm，之前是「全部文件一次性 & 后台编译」。
+# 在本地多核机上很快，但在 CI 的 3 核 / 7GB runner 上会起 300 个 clang++，
+# 疯狂 swap —— 实测 GitHub macOS runner 上 prepare job 因此跑满 6 小时 job
+# 上限被取消（见 docs/fixes/ci-cold-build-cef-parallelism-fix.md）。
+# 默认按 CPU 数限流；DSH_CEF_JOBS 可覆盖（本地想跑满可设 DSH_CEF_JOBS=64）。
+JOBS="${DSH_CEF_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+case "$JOBS" in ''|*[!0-9]*) JOBS=4 ;; esac
+[ "$JOBS" -lt 1 ] && JOBS=1
 
 if [ "$ARCH" = "arm64" ]; then
   PLATFORM="macosarm64"
@@ -95,13 +103,20 @@ else
   OBJDIR="$CEF_DIR/wrapper-$ARCH"
   rm -rf "$OBJDIR"
   mkdir -p "$OBJDIR"
-  PIDS=()
+  # 限流并发（保持 FIFO 等待）：同时最多 $JOBS 个 clang++，任一失败立即中止。
+  PIDS=(); RUNNING=0
   for f in $(find "$LDL" \( -name "*.cc" -o -name "*.mm" \) | sort); do
     o="$OBJDIR/$(echo "$f" | sed "s|$LDL/||; s|/|_|g; s|\\.cc$|.o|; s|\\.mm$|.o|")"
     "$CXX" $CXXFLAGS -c "$f" -o "$o" &
     PIDS+=($!)
+    RUNNING=$((RUNNING + 1))
+    if [ "$RUNNING" -ge "$JOBS" ]; then
+      wait "${PIDS[0]}" || { echo "cef: compile failed: $f" >&2; kill "${PIDS[@]:1}" 2>/dev/null; exit 1; }
+      PIDS=("${PIDS[@]:1}")
+      RUNNING=$((RUNNING - 1))
+    fi
   done
-  for p in "${PIDS[@]}"; do wait "$p"; done
+  for p in "${PIDS[@]}"; do wait "$p" || { echo "cef: compile failed" >&2; exit 1; }; done
   ar rcs "$CEF_DIR/libcef_dll_wrapper-$ARCH.a" "$OBJDIR"/*.o
 
   echo "==> cef: building CEFShim ($ARCH)"
