@@ -1403,6 +1403,13 @@ struct TaskLocalState: Equatable {
     /// 重试 (the task will end again, and the next ending deserves its own note).
     /// Machine-private like queueNotified: local.json only.
     var taskNotified: [String: String] = [:]
+    /// Which notification scheme this local.json was written under: 2 = 逐任务通知
+    /// (1.19.0+) + 队列收尾. **ABSENT** = a file from before 1.19.1, where a finished
+    /// task was covered by the single queue-level report (or never reported) and has
+    /// no per-task mark. That absence is what makes notifyFinishedQueues flush the
+    /// whole history once the queue stops being .done (关闭 / 追加), so the loader
+    /// seeds the marks instead — see TaskBoard.seedLegacyNotificationMarks.
+    var notifyScheme: Int?
     /// task id -> 本次尝试的完成 marker（P1 完成校验）。机器私有，只进 local.json；
     /// 会话日志与卡片正文都不该出现它。
     var taskMarkers: [String: String] = [:]
@@ -1458,6 +1465,7 @@ struct TaskLocalState: Equatable {
         if let raw = d["queueSessions"] as? [String: String] { s.queueSessions = raw }
         if let raw = d["queueNotified"] as? [String: String] { s.queueNotified = raw }
         if let raw = d["taskNotified"] as? [String: String] { s.taskNotified = raw }
+        s.notifyScheme = d["notifyScheme"] as? Int
         if let raw = d["taskMarkers"] as? [String: String] {
             for (key, text) in raw where !text.isEmpty { s.taskMarkers[taskID(fromStoredKey: key)] = text }
         }
@@ -1486,6 +1494,7 @@ struct TaskLocalState: Equatable {
         if !queueSessions.isEmpty { d["queueSessions"] = queueSessions }
         if !queueNotified.isEmpty { d["queueNotified"] = queueNotified }
         if !taskNotified.isEmpty { d["taskNotified"] = taskNotified }
+        if let notifyScheme = notifyScheme { d["notifyScheme"] = notifyScheme }
         if !taskRounds.isEmpty { d["taskRounds"] = taskRounds }
         if !taskMarkers.isEmpty { d["taskMarkers"] = taskMarkers }
         if !taskMarkerVerified.isEmpty { d["taskMarkerVerified"] = taskMarkerVerified }
@@ -1640,6 +1649,39 @@ struct TaskBoard {
         queues[qi].state = .closed
         if local.activeQueueID == queueID { local.activeQueueID = nil }
         return true
+    }
+
+    /// One-time seed for the 逐任务通知 scheme (1.19.1 hotfix).
+    ///
+    /// A local.json written before that scheme has no `notifyScheme`, and every task
+    /// that finished back then carries NO `taskNotified` mark (only ONE queue-level
+    /// `queueNotified` was written). `notifyFinishedQueues` reads that absence as
+    /// "never reported", and the moment the queue stops being `.done` — 关闭队列, or
+    /// 追加任务 re-arming it to `.draft` — the whole history is flushed into the
+    /// originating session (1.19.0 shipped this: closing a 44-task queue sent 44
+    /// messages).
+    ///
+    /// Seeding marks instead of sending is the faithful choice: those reports were
+    /// already delivered under the old one-message-per-queue scheme, or deliberately
+    /// never sent (a queue with no origin). Tasks that end AFTER this migration get
+    /// their marks at send time, so 重启补发 still works.
+    ///
+    /// Idempotent: `notifyScheme` and the marks themselves both guard it. Called from
+    /// `TasksStore.load`; the next persist writes the flag.
+    mutating func seedLegacyNotificationMarks(now: Date = Date()) {
+        guard local.notifyScheme == nil else { return }
+        let stamp = TaskItem.iso8601.string(from: now)
+        for queue in queues {
+            // Only queues with an originating session ever report; leaving the others
+            // unmarked keeps local.json honest (and costs nothing — they never send).
+            guard local.queueSessions[queue.id] != nil else { continue }
+            for taskID in queue.taskIds {
+                guard let i = index(ofTask: taskID), tasks[i].state.isFinished,
+                      local.taskNotified[taskID] == nil else { continue }
+                local.taskNotified[taskID] = stamp
+            }
+        }
+        local.notifyScheme = 2
     }
 
     /// The integration mode a queue should use: its own override, else the workspace

@@ -3192,6 +3192,13 @@ final class TasksRunner {
         let stamp = TaskItem.iso8601.string(from: now)
         for queue in board.queues {
             guard let origin = board.local.queueSessions[queue.id] else { continue }
+            // 关闭队列 is the user's MANUAL terminal state: it has nothing to report.
+            // A closed queue never reaches .done, so the "already wrapped" suppression
+            // below does not apply to it — without this guard, closing a queue flushes
+            // every finished task that has no mark (the 1.19.0 backlog replay: a
+            // 44-task queue sent 44 messages the instant it was closed). Closing is
+            // silent by design.
+            if queue.state == .closed { continue }
             // The origin conversation is busy running a delivery turn: sending a user
             // message now could be mistaken for that turn's report / marker.
             if originBusyWithDelivery(origin) { continue }
