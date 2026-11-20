@@ -65,6 +65,7 @@ oh-my-dsh 的设计、调研、排查与流程文档，按 **开发环节** 分�
 - [channel-issues.md](fixes/channel-issues.md) — Channel 消息重复回复排查记录
 - [ci-macos-runner-retirement-fix.md](fixes/ci-macos-runner-retirement-fix.md) — macos-14 runner 退役导致 CI 全红（迁 macos-15）
 - [ci-cold-build-cef-parallelism-fix.md](fixes/ci-cold-build-cef-parallelism-fix.md) — prepare 跑满 6h：CEF wrapper 编译无界并发（限流 + step 超时）
+- [tasks-notify-legacy-replay-fix.md](fixes/tasks-notify-legacy-replay-fix.md) — 关闭队列触发历史汇报回灌（1.19.0 逐任务通知迁移，hotfix 1.19.1）
 
 ## process/ — 流程 · 发布 · 升级
 

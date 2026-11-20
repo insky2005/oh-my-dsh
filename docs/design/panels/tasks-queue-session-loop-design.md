@@ -1,6 +1,6 @@
 # 任务队列 × 会话回传 设计（task-queue-session-loop）
 
-> 状态：已实现（P0/P1 2026-09-30；P2 活泳道 + 手动发布 2026-10-01；工作流 2026-10-01；2026-11-19 通知改为逐任务一条 + 队列收尾）
+> 状态：已实现（P0/P1 2026-09-30；P2 活泳道 + 手动发布 2026-10-01；工作流 2026-10-01；2026-11-19 通知改为逐任务一条 + 队列收尾；2026-11-20 老任务标记迁移 + 关闭静默，hotfix 1.19.1）
 > 关联面板：任务（Tasks / IssueRunner）
 > 关联文档：docs/design/panels/task-todo-skill-design.md、docs/design/panels/issue-runner-design.md、docs/design/panels/builtin-skills-design.md、docs/process/git-workflow.md
 > 决策来源：2026-09-30 会话讨论定稿
@@ -84,12 +84,20 @@ enum QueueState: String { case draft, active, paused, done }
 queueSessions: { "q-xxxx": "session-..." }    // 队列 → 创建它的会话
 queueNotified: { "q-xxxx": "2026-09-30T..." } // 队列收尾已发（幂等 / 重启补发）
 taskNotified: { "manual-...": "2026-11-19T..." } // 该任务的终态通知已发（每个终态一条）
+notifyScheme: 2                                 // 通知方案版本；缺失 = 1.19.1 之前的盘，加载时补标记
 ```
 
 - 关联在**创建时**建立，与「谁启动」解耦：会话启动、面板启动都不改写它。
 - 面板手建队列没有 origin → 不回传（**不做**「回传会话」选择器，用户 2026-10-01 决定）。
 - 追加任务到 `.done` 队列会**重臂** `queueNotified`：下一轮完成照常发收尾；旧任务保留自己的 `taskNotified`（它们已经通知过，不重复发），新任务到达终态时各发一条。
 - 默认回传到创建会话；`queue/start` 不接受改写 origin（将来如需重绑再单独设计）。
+- **老盘的标记迁移（2026-11-20，hotfix 1.19.1）**：local.json 没有 `notifyScheme` 时，
+  `TasksStore.load` 调 `TaskBoard.seedLegacyNotificationMarks()`，为**有来源会话的队列**里
+  所有**已终态**任务补写 `taskNotified` 标记（补标记、**不发消息**），并置 `notifyScheme = 2`。
+  理由：1.19.0 之前一个队列只写一条 `queueNotified`，任务没有逐任务标记；而逐任务补发的
+  历史抑制 `alreadyWrapped = state == .done && queueNotified != nil` 在**关闭 / 追加重臂**
+  时会失效，于是整段历史被当成「从未通知」逐条重放（实测关闭 44 任务队列发 44 条）。
+  迁移只跑一次：之后结束的任务按原逻辑写标记，**重启补发**不受影响。
 
 ## 6. API
 
@@ -173,6 +181,8 @@ taskNotified: { "manual-...": "2026-11-19T..." } // 该任务的终态通知已�
   - **队列收尾**：队列 `.done` 且 `local.queueNotified[id] == nil` → 组装收尾；**发送前**写
     `queueNotified[id]`。单任务队列把任务通知与收尾合成一条（两个标记一起写）。
   - **失败也写标记**（记日志），避免死循环。
+- 关闭即静默：`queue.state == .closed` 的队列**直接跳过**（关闭是手动终态，不产生任何
+  会话消息；它永远到不了 `.done`，旧的「已收尾」抑制对它不成立——见 §5 的标记迁移）。
 - 重启补发：`step()` 的空闲分支扫一次上述条件（app 在终态与回传之间退出时补发）。
 - 延后：交付会话正占用来源会话（`originBusyWithDelivery`）时整批延后，避免把通知插进
   finalize turn、污染完成标记；有本队列的交付在跑（`deliveryInFlight`）时收尾延后，
@@ -257,6 +267,8 @@ PR：<prUrl> / 未开（<prError>）
 | 重复回传 | `taskNotified` / `queueNotified` 幂等；重启补发只针对未通知的任务与 done 队列 |
 | 一个会话建多个 draft 队列 | `queue/start` 无 queueId 时返回 409 + 候选，agent 消歧 |
 | 队列停在 paused | 不发收尾；该终态任务已各发一条逐任务通知（失败 / 待确认 / 取消带出口） |
+| 关闭队列 | **静默终态**：不发逐任务通知、也不发收尾。`notifyFinishedQueues` 直接跳过 `.closed`（它永远到不了 `.done`，旧的「已收尾」抑制不适用） |
+| 从 ≤1.19.0 升级 | 加载时一次性补 `taskNotified` 标记（见 §5）；历史汇报不重放，之后结束的任务照常补发 |
 
 ## 12. 测试
 

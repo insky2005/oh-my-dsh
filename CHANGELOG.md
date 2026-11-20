@@ -9,6 +9,11 @@ All notable changes to this project are documented in this file. Format follows
 
 - 暂无（v1.19.0 已发布；开发线已推进到 1.20.0）。
 
+## [1.19.1] - 2026-11-20
+
+### Fixed
+
+- **任务面板：关闭队列不再把历史任务的汇报逐条回灌（hotfix，2026-11-20）**：1.19.0 的「逐任务通知」（`taskNotified`）上线后，`notifyFinishedQueues` 的「已收尾队列不重发」抑制写成了 `state == .done && queueNotified != nil`——**关闭队列**（`→ .closed`）与**追加任务**（`→ .draft`，并清 `queueNotified`）都会让它失效；而 1.19.0 之前结束的任务没有逐任务标记，于是整段历史被当成「从未通知」逐条补发（用户实测：关闭一条 44 任务的队列，会话里瞬间收到 44 条；早已关闭的旧队列在启动后的第一个空闲 tick 也会回灌）。修复两处：① `TaskBoard.seedLegacyNotificationMarks()` 在 `TasksStore.load` 时按 local.json 的 `notifyScheme` **一次性**给「有来源会话的队列」里所有已终态任务补写标记（补标记、**不发消息**；之后结束的任务照常写标记，重启补发不受影响）；② `notifyFinishedQueues` 跳过 `.closed`——关闭是手动终态，静默、不产生任何会话消息。回归：`tests/tasks-panel` **2240 → 2255 项**（模型 393 + 运行器 856 + 视图模型 504 + 视图 370 + 本地 API 132），含「关闭零消息」「迁移后追加不重发」「方案已存在时补发仍有效」，并做过反证（去掉跳过即 2 条断言失败）。记录 `docs/fixes/tasks-notify-legacy-replay-fix.md`，设计文档 §5 / §7 / §11 同步。
 ## [1.19.0] - 2026-11-20
 
 ### Added

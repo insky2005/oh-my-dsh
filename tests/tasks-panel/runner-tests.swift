@@ -2639,6 +2639,67 @@ do {
     eq(h.dsh.notifications.count, 1, "补发是幂等的")
 }
 
+section("关闭队列不发任何汇报：1.19.0 的历史任务不会被回灌")
+do {
+    // 老 local.json：队列已收尾（queueNotified 有值），但两个终态任务都没有
+    // taskNotified —— 1.19.0 之前就是这样。关闭 / 追加一旦让队列离开 .done，
+    // 「已完成即历史」的抑制就失效，下一个 tick 会把整段历史各发一条（用户实测
+    // 关闭一条 44 任务的队列，收到 44 条）。
+    func legacyBoard() -> (TaskBoard, String) {
+        var board = TaskBoard()
+        let a = TaskItem.manual(title: "A", body: nil, id: "manual-zz000101")
+        let b = TaskItem.manual(title: "B", body: nil, id: "manual-zz000102")
+        board.tasks = [a, b]
+        let q = board.createQueue(name: "Legacy", branch: "", autoPR: false)
+        _ = board.enqueue(taskID: a.id, into: q.id)
+        _ = board.enqueue(taskID: b.id, into: q.id)
+        _ = board.resumeQueue(q.id)
+        board.markRunning(a.id); board.markDone(a.id)
+        board.markRunning(b.id); board.markDone(b.id)
+        board.local.queueSessions[q.id] = "session-origin"
+        board.local.queueNotified[q.id] = "2026-10-01T00:00:00Z"
+        return (board, q.id)
+    }
+
+    // 1) 用户点「关闭队列」：静默终态，一条都不发。
+    let (board1, q1) = legacyBoard()
+    let h1 = Harness(board: board1, github: false, gitRepo: true)
+    check(h1.runner.closeQueue(q1), "关闭队列")
+    _ = h1.runner.step()
+    eq(h1.dsh.notifications.count, 0, "关闭是手动终态：一条汇报都不补发")
+
+    // 2) 升级上来时队列已经是 .closed：空闲 tick 同样静默。
+    var (board2, q2) = legacyBoard()
+    _ = board2.closeQueue(q2)
+    let h2 = Harness(board: board2, github: false, gitRepo: true)
+    _ = h2.runner.step()
+    eq(h2.dsh.notifications.count, 0, "已关闭队列在空闲 tick 里也不补发")
+
+    // 3) 迁移（= TasksStore.load 做的那一步）之后追加：老任务有标记，不重发。
+    var (board3, q3) = legacyBoard()
+    board3.seedLegacyNotificationMarks()
+    let h3 = Harness(board: board3, github: false, gitRepo: true)
+    let extra = h3.runner.createManualTask(TaskDraft(title: "C", body: "do C"))!
+    _ = h3.runner.enqueue(taskID: extra.id, into: q3)
+    eq(h3.board.queue(q3)?.state, QueueState.draft, "追加把队列拉回 draft 并重臂收尾")
+    _ = h3.runner.step()
+    eq(h3.dsh.notifications.count, 0, "老任务已标记：追加不重发历史汇报")
+
+    // 4) 方案版本已存在的盘上出现未标记终态任务 = 崩溃后的补发，照旧要发。
+    var board4 = TaskBoard()
+    let t4 = TaskItem.manual(title: "D", body: nil, id: "manual-zz000103")
+    board4.tasks = [t4]
+    let q4 = board4.createQueue(name: "Fresh", branch: "", autoPR: false)
+    _ = board4.enqueue(taskID: t4.id, into: q4.id)
+    _ = board4.resumeQueue(q4.id)
+    board4.markRunning(t4.id); board4.markDone(t4.id)
+    board4.local.queueSessions[q4.id] = "session-origin"
+    board4.local.notifyScheme = 2
+    let h4 = Harness(board: board4, github: false, gitRepo: true)
+    _ = h4.runner.step()
+    eq(h4.dsh.notifications.count, 1, "已迁移的盘 + 未标记终态任务：照常补发一次")
+}
+
 section("逐任务通知文案：标题 · 位次 · 结局 · 本任务提交 · 汇报 · 队列进度")
 do {
     var board = TaskBoard()
