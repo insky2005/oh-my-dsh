@@ -1,8 +1,8 @@
 ---
 title: 模块：任务面板（Tasks / IssueRunner）
 tags: [module, tasks, github, issue, queue, index, manual-task]
-updated: 2026-10-03T03:20:00Z
-sources: [platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksWorkspaces.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/BrowserAPI.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/design/panels/issue-runner-design.md, docs/design/shell/ui-color-scheme.md, docs/process/git-workflow.md, docs/design/panels/task-todo-skill-design.md, .dsh/skills/task-todo/SKILL.md, docs/design/panels/issue-runner-design.md, CHANGELOG.md, README.md, docs/process/dsh-version-impact.md, docs/design/panels/multi-repo-workspace-design.md, docs/design/panels/task-completion-verification-design.md]
+updated: 2026-11-20T00:29:53Z
+sources: [docs/design/panels/tasks-queue-session-loop-design.md, platforms/macos/src/IssueRunnerPanel.swift, platforms/macos/src/TasksCore.swift, platforms/macos/src/TasksStore.swift, platforms/macos/src/TasksWorkspaces.swift, platforms/macos/src/TasksRunner.swift, platforms/macos/src/TasksUI.swift, platforms/macos/src/TasksAPI.swift, platforms/macos/src/TaskCardView.swift, platforms/macos/src/TaskInlineForms.swift, platforms/macos/src/PanelSurface.swift, platforms/macos/src/DshWebRPC.swift, platforms/macos/src/BrowserAPI.swift, core/lib/tasks.js, core/lib/issues.js, core/lib/jobqueue.js, core/tests/tasks.test.js, tests/tasks-panel/, docs/design/panels/issue-runner-design.md, docs/design/shell/ui-color-scheme.md, docs/process/git-workflow.md, docs/design/panels/task-todo-skill-design.md, .dsh/skills/task-todo/SKILL.md, docs/design/panels/issue-runner-design.md, CHANGELOG.md, README.md, docs/process/dsh-version-impact.md, docs/design/panels/multi-repo-workspace-design.md, docs/design/panels/task-completion-verification-design.md]
 manual: false
 ---
 
@@ -82,7 +82,7 @@ manual: false
 | `index.json` | **提交** | github 任务 ↔ issue / 分支 / PR / 状态（v1 形状，`version: 1`） |
 | `manual.json` | 本机 | 手动任务：标题 / 描述 / 状态 / 队列 / 分支 / 错误 / 时间戳 |
 | `queues.json` | 本机 | 队列：名 / 分支 / 基线 / `taskIds`（FIFO）/ 状态 / `autoCreated` / `autoPR` / `prUrl` / `repos`（目标仓库 id）/ `repoRuns`（逐仓库交付结果）/ `integration` / `integrationNote` |
-| `local.json` | 本机 | `sessions`（task id → sessionId）/ `reports` / `taskMarkers`（task id → 完成 marker）/ `queueSessions` / `queueNotified` / `activeQueueId` / `runningTaskId` |
+| `local.json` | 本机 | `sessions`（task id → sessionId）/ `reports` / `taskMarkers`（task id → 完成 marker）/ `queueSessions` / `queueNotified`（队列收尾已发）/ `taskNotified`（逐任务终态通知已发）/ `taskCommits`（task id → 按仓库记录的本棒提交）/ `activeQueueId` / `runningTaskId` |
 
 - **session 不入任务本体**：会话只在一台机器上有效，所以 github 与手动任务共用 `local.json` 这一份 overlay；
 - `local.json` 的 session 键读侧**兼容 v1 的纯数字键**（`"6"` 视为 `issue-6`），写侧一律 task id —— 历史文件零迁移、读取时也不重写；
@@ -132,11 +132,13 @@ manual: false
 ## 队列的会话闭环与收尾（2026-09-30 ~ 10-01）
 
 - **`.draft`（待启动）**：`task-todo` 默认把一次沟通落成「等待态队列 + 批量任务」——`.draft` 与「启动过但停了」的 `.paused` 分开，自己不开跑、App 重启也保持；端点 `POST /api/tasks/queue/create`（建 `.draft` + 批量入队 + 记 `session`）与 `POST /api/tasks/queue/start`（按 `queueId`；缺省启动本会话创建的那个，多个返回 `409 ambiguous-queue`）；
-- **完成回传**：队列进入 `.done` 才把各任务完整汇报（单条上限 1500 字）回传发起会话（`session.prompt`），失败 / 手动取消停在 `.paused` 不回传；回传失败也记标记避免死循环、重启后在空闲 step 补发；关联与标记存 `local.json` 的 `queueSessions` / `queueNotified`（机器私有）；
+- **逐任务通知 + 队列收尾（2026-11-19 起）**：每个任务到达终态（完成 / 失败 / 待确认 / 取消）时，向创建队列的会话投一条**只讲这一个任务**的通知（标题 · 位次 · 结局、本任务提交、汇报单条上限 1500 字、一行队列进度；失败 / 待确认 / 取消另写「后续 N 个任务不会启动，不开 PR」与「重试 / 跳过并继续」两个出口）；队列进入 `.done` 时再补一条**收尾**（完成 / 待确认计数、分支、PR、汇报全文路径，不重列各棒汇报）；单任务队列把两条合并成一条。幂等标记 `local.json` 的 `taskNotified` / `queueNotified`（**发送前**写入，失败也写避免死循环，重试清任务标记），交付会话占用来源会话 / 本队列交付在跑时整批或收尾延后，重启后在空闲 step 补发；
 - **收尾优先复用来源会话（2026-10-01）**：队列在哪条会话创建就在哪条会话收尾，手动队列没有来源才新建收尾会话；来源会话是真实对话，故提示词要求回**唯一完成标记**、壳层只采用带标记的汇报；来源不可用 / 忙到超时 / 已消失则**回退新建**，且**绝不取消**用户的会话；
+- **交接简报「有预算的衰减」（2026-11-19）**：最近 2 棒给汇报全文；同轮更早的 done 棒压成一行（标题 · 结局 · 本棒提交数 · 摘要首句，首句上限 80 字）；更早轮次每轮一行；**非 done（失败 / 取消 / 待确认）永远全文**，只剩它们时宁可超预算也不截断。总预算 6000 字，超预算按「最老 done 全文 → 一行 → 丢最老提交（只留最近 20 条）→ 丢最老轮次 / 同轮行」逐条降级；渲染前剥掉围栏代码块与完成标记行，`app.log` 记四段字数与三档降级条数；
+- **队列暂停可见（2026-11-19）**：失败 / 待确认 / 取消三种暂停来源都在队列头给原因行（折起也可见），并带「后面还有 N 个任务等待」以及「重试」/「跳过并继续」两个出口；
 - **「使用说明」抽屉（2026-10-01）**：右上角常驻问号按钮，内容由纯模型 `TasksHelpModel` 按 L10n 键生成（新建任务 / 队列 / Git 工作流 / 会话回传四节），无任务时也铺在空态内容区（仅在未筛选时）；
 - **Git 工作流可配置（2026-10-01）**：`QueueIntegration`（pr / merge / push / 无）作为「队列如何落地」的显式设置，默认按工作区（`tasksIntegrationByWorkspace`）、队列自身 `integration` 覆盖；动作全部交给收尾会话（壳层不直接 merge/push），merge 是本地操作、无远端也能用，失败原因显示在队列卡而非按钮 tooltip；
-- 回归：`tests/tasks-panel/run.sh` **2036 项**（模型 322 + 运行器 732 + 视图模型 480 + 视图 370 + 本地 API 132）。
+- 回归：`tests/tasks-panel/run.sh` **2240 项**（模型 384 + 运行器 850 + 视图模型 504 + 视图 370 + 本地 API 132；2026-11-20 本机实测）。
 
 ## 多仓库工作区（2026-10-02）
 
@@ -149,9 +151,9 @@ manual: false
 ## 任务完成校验（P1–P5，2026-10-02）
 
 - **P1 完成 marker**：runner 为每次尝试生成唯一 `DSH-TASK-DONE-XXXXXXXX`（`TasksRunner.makeTaskMarker`），提示词要求会话**最后一行**回显；`finish()` 只认本次尝试 marker 在最后一个非空行的回显才判 `done`（`completionMarker` / `markerVerified` 只进 `local.json`）；
-- **P2 待确认**：没拿到 marker / 汇报为空 → 独立 `TaskState.needsReview`（橙色徽标、原因 `tasks.errUnverified`），与失败一样**暂停队列**、不回传、不交付；卡片给 **「重试」** 与 **「标记完成」**（`confirmDone` 走正常完成路径）；
+- **P2 待确认**：没拿到 marker / 汇报为空 → 独立 `TaskState.needsReview`（橙色徽标、原因 `tasks.errUnverified`），与失败一样**暂停队列**、不发队列收尾（本任务的待确认通知照发）、不交付；卡片给 **「重试」** 与 **「标记完成」**（`confirmDone` 走正常完成路径）；
 - **P3 通知诚实化**：完成汇总分开数 `.done` 与 `.needsReview`，有待确认时首行改为「完成 N 条 / 待确认 M 条」并写明「不是全部完成」，不再一律报「已全部完成」；
-- **P4 产物校验**：启动时按目标仓库有无 git 推断 `expectsCommit` 并记各仓库起始 HEAD（`TaskProductBaseline`）；marker 通过但应产出提交却无新提交、工作区也无改动 → 同样 `needsReview`，原因 `tasks.errNoCommit`；git 答不上来按「有产物」放行（fail open）；
+- **P4 产物校验**：启动时按目标仓库有无 git 推断 `expectsCommit` 并记各仓库起始 HEAD（`TaskProductBaseline`）；marker 通过但应产出提交却无新提交、工作区也无改动 → 同样 `needsReview`，原因 `tasks.errNoCommit`；git 答不上来按「有产物」放行（fail open）；同时用同一份基线 `git log <基线 HEAD>..HEAD` 得出**本棒提交**并按目标仓库写入 `local.json` 的 `taskCommits`（简报与逐任务通知都读它、不重跑 git；`nil` = 没记录，`0` = 记录了 0 个；重试清上一轮）；
 - **P5 重试续跑同一会话**：显式重试信号 + 上一轮真 prompt 过该会话 + `idle` → 只发短续跑提示词（`TaskPrompts.retryContinuation`，新 marker）+ 沿用最初产物基线；建会话前失败 / prompt 失败 / missing / running 一律回退「新会话 + 完整提示词」；
 - 设计 `docs/design/panels/task-completion-verification-design.md`，`tests/tasks-panel/run.sh` 有 P1–P5 源码守卫。
 
@@ -169,7 +171,7 @@ manual: false
 | 工作区不是 GitHub 仓库 | issue 区显示空态（不替换为其他已注册工作区）；**手动任务与队列照常可用**，交付按仓库能力降级（无 GitHub 时 PR → push / merge / 无） |
 | 工作区不是 git 仓库 | **任务照常能跑**：自动队列不派生分支（`env.canSwitchBranches=false`），提示词按 `TaskRepoShape.plain` 只说「壳层不切分支 / 不提交 / 不推送，直接在当前目录改文件即可；任务要求建仓库或提交就照做」；旧队列带着切不了的分支时启动前先去掉（`dropUnswitchableBranch`），卡片也给「不切分支并重试」 |
 | 已跟踪改动 + 真要切队列 | 拒绝启动，任务 failed（`tasks.errDirtyTree`），队列暂停；只有未跟踪文件、或已在目标分支 / 不切分支时不算（只保护 checkout） |
-| checkout / 拉取失败 | failed（`tasks.errBranch` / `tasks.errPull`），队列暂停（v1 会静默忽略这两个失败） |
+| checkout / 拉取失败 | failed（`tasks.errBranch` / `tasks.errPull`），队列暂停（v1 会静默忽略这两个失败）；进入分支时显式 `pull --ff-only <remote> <base>`（远端优先 `github` > `origin` > 首个），不再要求基线分支配置 upstream；git 自己的 stderr 写进 `app.log` 与卡片 `errorDetail`；无 upstream / 远端无同名 ref 归 `tasks.errPullNoUpstream`（可自愈，提示 fetch 后以 `<remote>/<base>` 为比较基线），`git status` 自身失败记 `tasks.errGitStatus` |
 | 建会话 / 提示词失败 | failed（`tasks.errSession` / `tasks.errPrompt`）；会话已建时仍把 sessionId 记进 board，可追溯 |
 | 超时（**60 分钟**，`TaskRunnerEnv.defaultTimeout`，卡片元行里写明） | `session.cancel` + failed（`tasks.errTimeout`）+ 队列暂停 |
 | PR 开不出来 | **不算任务失败**：队列保持已完成，原因记在队列上（`tasks.errPR` 一族），队列头的「开 PR」可再试一次 |
@@ -179,7 +181,7 @@ manual: false
 
 ## 测试
 
-- `tests/tasks-panel/run.sh` **2036 项**（五段：模型 322 + 运行器 732 + 视图模型 480 + 视图 370 + **本地 API 132**，2026-10-03 本机实测全绿），运行器段用**假 git + 假 dsh** 驱动完整流水线（含非 git 目录两问：无分支队列照常跑完 / 有分支队列报 `errNotGit`）；`run.sh` 另有**源码守卫**：建会话必须走 `DshWorkspaceOps`、运行器环境不许冻结端口、提示词必须现场探测工作区形状与目标仓库集合、两种来源共用同一份要求清单、交付会话的参数写全，以及 P1–P5 完成校验的源码守卫；
+- `tests/tasks-panel/run.sh` **2240 项**（五段：模型 384 + 运行器 850 + 视图模型 504 + 视图 370 + **本地 API 132**，2026-11-20 本机实测全绿），运行器段用**假 git + 假 dsh** 驱动完整流水线（含非 git 目录两问：无分支队列照常跑完 / 有分支队列报 `errNotGit`）；`run.sh` 另有**源码守卫**：建会话必须走 `DshWorkspaceOps`、运行器环境不许冻结端口、提示词必须现场探测工作区形状与目标仓库集合、两种来源共用同一份要求清单、交付会话的参数写全，以及 P1–P5 完成校验的源码守卫；
 - `core/tests/tasks.test.js` **18 项**（四文件读写 + 会话键兼容 + 队列入队/移出）；
 - 已登记 `scripts/local-ci.sh` 的 `stage_swift` 与 `.github/workflows/ci.yml`（两处清单必须一致）。
 

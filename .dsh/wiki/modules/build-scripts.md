@@ -1,8 +1,8 @@
 ---
 title: 模块：构建与打包脚本
 tags: [module, build, packaging, icon, release, ci]
-updated: 2026-09-29T15:27:23Z
-sources: [tests/skills-panel/, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, tests/review-panel/, core/lib/review-log.js, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, platforms/macos/src/MakeIcon.swift, platforms/macos/build-cef.sh, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, Jenkinsfile, .github/workflows/release.yml, .github/workflows/ci.yml, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/vendor/Highlightr/, tests/file-panel/, platforms/macos/runtime-locks/, docs/process/dsh-version-impact.md, tests/projects-panel/, tests/injected-scripts/, tests/snapshot-panel/, tests/snapshot-rollback/, CHANGELOG.md, docs/process/release-process.md, docs/research/productization.md]
+updated: 2026-11-20T00:29:53Z
+sources: [tests/skills-panel/, platforms/macos/src/SkillsPanel.swift, platforms/macos/src/SkillsCore.swift, platforms/macos/src/SkillSources.swift, platforms/macos/src/DshWebCookieJanitor.swift, platforms/macos/src/ShellConfig.swift, tests/shell-config/, tests/dsh-auth-cookies/, tests/review-panel/, core/lib/review-log.js, platforms/macos/build-app.sh, platforms/macos/swift-sources.sh, platforms/macos/make-pkg.sh, platforms/macos/src/MakeIcon.swift, platforms/macos/build-cef.sh, scripts/version.sh, scripts/local-release.sh, scripts/release-checksums.sh, scripts/github-publish.sh, scripts/local-ci.sh, Jenkinsfile, .github/workflows/release.yml, .github/workflows/ci.yml, platforms/macos/src/FilePanel.swift, platforms/macos/src/CodeEditorView.swift, platforms/macos/src/ChannelPanel.swift, platforms/macos/src/SkillInstaller.swift, platforms/macos/src/vendor/Highlightr/, tests/file-panel/, platforms/macos/runtime-locks/, docs/process/dsh-version-impact.md, tests/projects-panel/, tests/injected-scripts/, tests/snapshot-panel/, tests/snapshot-rollback/, CHANGELOG.md, docs/process/release-process.md, docs/research/productization.md, .github/workflows/nightly.yml, docs/fixes/ci-macos-runner-retirement-fix.md, docs/fixes/ci-cold-build-cef-parallelism-fix.md]
 manual: false
 ---
 
@@ -58,12 +58,13 @@ manual: false
 ## platforms/macos/build-cef.sh（CEF 构建管线）
 
 - 版本固定 + sha1 校验（arm64/x86_64 从 cef-builds.spotifycdn.com/index.json 核对）+ `.cache` 缓存；wrapper/shim/helper 编译；五 helper（base/Alerts/GPU/Plugin/Renderer）组装与由内向外签名；`build-app.sh`/CI 接入；
+- **wrapper 编译限流并发（2026-11-19）**：并发上限 `${DSH_CEF_JOBS:-hw.ncpu}`（数字校验、最少 1，FIFO 等待，任一失败即 kill 其余）；此前对每个 `.cc/.mm` 直接 `clang++ &`（~300 个并发进程），在 GitHub 3 核 / 7GB runner 上内存打爆、prepare 跑满 6h03m 被平台取消（本地 10 核 4 并发 57s 编完）；
 - **编译产物缓存 `.cache/cef-built-<arch>/`**：按（CEF 版本 + 脚本/源码 hash）判定命中，命中则直接复用已编译二进制，双架构 release 不必各自重编（CEF 编译从数分钟降到约 18s）；
 - 缓存 key 用稳定绝对路径（修复 local-ci 重复编译 CEF 的问题）。
 
 ## scripts/version.sh（版本单一来源）
 
-- 输出两行 `VERSION`/`BUILD`：VERSION 仅当 HEAD 恰在 `vX.Y.Z` tag 上取该 tag，否则回退 `FALLBACK_VERSION`（当前 **1.18.0**，即 v1.17.0 发布后推进的开发线）；BUILD 取 CI 运行号（`GITHUB_RUN_NUMBER`/`CI_PIPELINE_IID`/`BUILD_NUMBER`），否则回退 **74**；
+- 输出两行 `VERSION`/`BUILD`：VERSION 仅当 HEAD 恰在 `vX.Y.Z` tag 上取该 tag，否则回退 `FALLBACK_VERSION`（当前 **1.19.0**，即 v1.18.0 发布后推进的开发线）；BUILD 取 CI 运行号（`GITHUB_RUN_NUMBER`/`CI_PIPELINE_IID`/`BUILD_NUMBER`），否则回退 **75**；
 - `build-app.sh`/`local-release.sh`/`github-publish.sh`/`release-checksums.sh` 统一读它，**版本不再由调用方传参**。
 
 ## scripts/local-release.sh（本机 Release，与 release.yml 对齐）
@@ -80,6 +81,8 @@ manual: false
 
 ## CI 与测试参数（ci.yml / nightly.yml / local-ci.sh）
 
+- **runner 统一 `macos-15`（2026-11-19）**：GitHub 于 2026-11-02 退役 `macos-14` 镜像后，`runs-on: macos-14` 的 job 在取机器阶段即被拒（annotation `The configuration 'macos-14-arm64-us-default' is not supported`，无 step、无 runner，结论显示 `cancelled`），CI / Nightly 全红；`ci.yml`（prepare / swift / build）、`nightly.yml`（smoke）、`release.yml`（prepare / build 的 arm64 + x86_64）统一改 `macos-15`，**不用 `macos-latest`**（避免漂到 `macos-26`）；构建脚本无需改动（`-target <arch>-apple-macos13` 显式交叉编译）；
+- **prepare 拆分 + 超时（2026-11-19）**：`ci.yml` / `release.yml` 的 prepare job `timeout-minutes: 90`，拆成 CEF arm64 / CEF x86_64 / prefetch 三个 step（各 30 分钟）便于按 step 定位；prefetch 显式传 `DSH_NPM_REGISTRY=https://registry.npmjs.org` / `DSH_NODE_MIRROR=https://nodejs.org/dist`（美国 runner 冷缓存此前会拿 npmmirror 装整棵依赖树）；swift / build 与 nightly smoke 也加 job 超时（120 分钟）；
 - **core 单测统一带超时**：`node --test --test-timeout=60000 core/tests/*.test.js`（ebac11a，2026-09-12）——`node --test` 无默认用例超时，某用例泄漏 runner/定时器会把整套**挂死**；四处同参数：`.github/workflows/ci.yml`、`.github/workflows/nightly.yml`、`scripts/local-ci.sh`、`core/package.json` 的 `test` 脚本；glob **不带引号**（bash 展开，兼容 Node 20）；
 - `ci.yml` 的 swift job 依次跑终端模拟器 / terminal-panel（头部） / wiki-panel / browser-panel / **shell-config（`ShellConfig` 旧 UserDefaults 迁移）** / skills / **skills-panel（技能面板：模型 + 控制器 + 绘制回归）** / channel-panel / **dsh-rpc** / **dsh-auth-cookies（dsh 认证 cookie 清理）** / **review-panel** / **file-panel** / **projects-panel** / **injected-scripts** / **snapshot-rollback** / **snapshot-panel** 单测 + **L10n 键名 lint**（`tests/l10n/`） + 全源码 `swiftc` 编译检查（源清单经 `swift-sources.sh`），再构建 arm64 CEF 产物与 App；新增套件必须同时接进 `scripts/local-ci.sh` 与 `ci.yml`（8374736 / 407ccb1 的落地方式）；
 - 平台无关逻辑的单测放 core（如审计折叠 `core/lib/review-log.js` → `core/tests/review-log.test.js`，24 用例，无 zstd 的 Node 上 4 项自动 skip），面板展示模型放 `tests/<panel>/run.sh`。
