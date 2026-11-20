@@ -119,6 +119,10 @@ enum TasksStore {
                              markers: board.local.taskMarkers,
                              markerVerified: board.local.taskMarkerVerified)
         board.reindexQueueMembership()
+        // 1.19.1 hotfix: a local.json written before 1.19.1 has no per-task marks.
+        // Seed them once — BEFORE the runner's first idle tick can read the absence
+        // as "never reported" and flush the backlog into the originating session.
+        board.seedLegacyNotificationMarks()
         return board
     }
 

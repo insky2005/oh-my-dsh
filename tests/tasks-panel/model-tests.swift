@@ -902,6 +902,53 @@ check(repaired.task("manual-ffff0001")?.queueId == "q-drift1", "the queue id is 
 check(repaired.task("manual-ffff0001")?.state == .queued, "a listed pending task becomes queued")
 check(repaired.task("manual-ffff0001")?.title == "Drifted", "the rest of the task is untouched")
 
+// MARK: - notification scheme migration (1.19.1 hotfix)
+
+section("1.19.1 迁移：老 local.json 的已终态任务补上逐任务标记（不重发历史汇报）")
+let repoNotify = tempRepo("notify-migrate")
+var boardNM = TaskBoard()
+let nmA = TaskItem.manual(title: "A", body: nil, id: "manual-nm000001")
+let nmB = TaskItem.manual(title: "B", body: nil, id: "manual-nm000002")
+let nmNoOrigin = TaskItem.manual(title: "N", body: nil, id: "manual-nm000003")
+boardNM.tasks = [nmA, nmB, nmNoOrigin]
+let qNM = boardNM.createQueue(name: "Legacy", branch: "", autoPR: false)
+_ = boardNM.enqueue(taskID: nmA.id, into: qNM.id)
+_ = boardNM.enqueue(taskID: nmB.id, into: qNM.id)
+_ = boardNM.resumeQueue(qNM.id)
+boardNM.markRunning(nmA.id); boardNM.markDone(nmA.id)
+boardNM.markRunning(nmB.id); boardNM.markDone(nmB.id)
+let qNoOrigin = boardNM.createQueue(name: "No Origin", branch: "", autoPR: false)
+_ = boardNM.enqueue(taskID: nmNoOrigin.id, into: qNoOrigin.id)
+_ = boardNM.resumeQueue(qNoOrigin.id)
+boardNM.markRunning(nmNoOrigin.id); boardNM.markDone(nmNoOrigin.id)
+boardNM.local.queueSessions[qNM.id] = "session-origin"
+boardNM.local.queueNotified[qNM.id] = "2026-10-01T00:00:00Z"
+TasksStore.saveLocalHalf(repoNotify, boardNM)
+let legacyLocal = TasksStore.readJSON(TasksStore.path(repoNotify, file: "local.json"))
+check(legacyLocal["notifyScheme"] == nil, "旧 local.json 没有方案版本")
+check(legacyLocal["taskNotified"] == nil, "旧 local.json 没有逐任务标记")
+
+let migrated = TasksStore.load(repoNotify)
+eq(migrated.local.notifyScheme, 2, "加载即补上方案版本")
+check(migrated.local.taskNotified[nmA.id] != nil, "有来源队列的已终态任务 A 补上标记")
+check(migrated.local.taskNotified[nmB.id] != nil, "有来源队列的已终态任务 B 补上标记")
+check(migrated.local.taskNotified[nmNoOrigin.id] == nil, "没有来源会话的队列不写标记（永不回传）")
+eq(migrated.queue(qNM.id)?.state, .done, "队列状态不受迁移影响")
+
+// 迁移只跑一次：之后完成的任务必须保持未标记，否则重启补发会被吞掉。
+var lateBoard = migrated
+let nmLate = TaskItem.manual(title: "C", body: nil, id: "manual-nm000004")
+lateBoard.tasks.append(nmLate)
+if let qi = lateBoard.index(ofQueue: qNM.id) { lateBoard.queues[qi].taskIds.append(nmLate.id) }
+lateBoard.markRunning(nmLate.id); lateBoard.markDone(nmLate.id)
+lateBoard.seedLegacyNotificationMarks()
+check(lateBoard.local.taskNotified[nmLate.id] == nil,
+      "方案版本已存在：迁移不再执行，新终态任务保持未标记（补发仍有效）")
+
+// 往返：落盘后重新加载仍是方案 2。
+TasksStore.saveLocalHalf(repoNotify, migrated)
+eq(TasksStore.load(repoNotify).local.notifyScheme, 2, "notifyScheme 往返 local.json")
+
 // MARK: - multi-repo workspace (detect / mode / primary)
 
 section("多仓库工作区：探测 / 兼容矩阵 / 主仓库")
