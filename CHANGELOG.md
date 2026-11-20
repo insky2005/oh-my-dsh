@@ -5,19 +5,7 @@ All notable changes to this project are documented in this file. Format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions below
 `v1.8.0` are summarized from the git history (conventional commits).
 
-## [Unreleased]
-
-### Changed
-
-- **内置 dsh 推进到 `@deepseek-ai/dsh@0.2.0-rc.2`（2026-11）**：0.1.7-rc.2 → 0.2.0-rc.2，随附闭包锁 `platforms/macos/runtime-locks/dsh-0.2.0-rc.2/`（611 包条目，`npm ci` + 启动冒烟通过；依赖树 360 MB → 504 MB，+40%）。**审计结论：五个耦合面零断裂**——RPC 端点 135 → 140（删 0 / 增 5：`productAnalytics/{enabled,report,watchPolicy}`、`userQuestions/answer`、`userQuestions/attachWait`），参数包裹字段 0 变化；`dsh-client-connection` / `dsh-web-app` / `dsh-workspace` / `dsh-session-format` / `dsh-skill-filesystem` 的 `lib` **逐字节相同**（鉴权、就绪行、CLI 参数、workspace v2、会话格式 v4、技能四根/规范键全部照旧）；注入脚本依赖的 DOM 锚点（`sessionRow` / `projectRow` 尾按钮 / `data-slot="sidebar.settings"` / `data-composer-input` / `reference-chip` / `fileMention` / `data-presented-files-row` / `data-changed-files` / `data-open-target`）全部仍在原位。实机验证：就绪行、裸 `GET /` 401、`?token=` 303 + `dsh-auth-*`、`__DSH_BOOT__`、`session/list`（`_request`）、`workspace/create`、`workspace.json` v2 均通过，`workspace/list` 仍 404（磁盘兜底继续必要）。上游新增的两行遥测（`desktop-product-telemetry` / `product-analytics`）带 `disabled: profileContext.name !== 'desktop'`，`dsh web` 下不挂载、不上报；`userQuestions` 投影与 `ask_user_question` 限时等待为新增能力，默认 preset 补丁未变。**注意**：`dist-tags.latest` 已是 `0.2.2-rc.5`，stepwise 升级助手会提示 `0.2.1-rc.1`（预期行为）。审计记录：`docs/plans/dsh-020rc2-compat-audit.md`；兼容清单复盘：`docs/process/dsh-version-impact.md` §4.7。
-
-### Fixed
-
-- **CI：CEF wrapper 编译限流并发 + prepare 拆分超时（2026-11-19）**：迁到 `macos-15` 后 `prepare` 仍挂——第 4 步 `Pre-build CEF artifacts + prefetch` 单步跑满 **6h03m** 被平台取消。根因是 `build-cef.sh` 编译 wrapper 时对每个 `.cc/.mm` 都 `clang++ &`（~300 个并发进程），在 GitHub 3 核 / 7GB runner 上内存打爆疯狂 swap（本地 10 核用 4 并发实测 57s 编完）。修复：`build-cef.sh` 改为按 `${DSH_CEF_JOBS:-hw.ncpu}` 限流（FIFO 等待、失败即 kill 其余），`ci.yml` / `release.yml` 的 prepare 拆成 CEF arm64 / CEF x86_64 / prefetch 三个 step（各 `timeout-minutes: 30`，job 90），并补上 prepare 漏传的 `DSH_NPM_REGISTRY` / `DSH_NODE_MIRROR`（此前美国 runner 冷缓存会用 npmmirror 装依赖树）；ci `swift`/`build`、nightly `smoke`、release `build` 一并加 job 超时。记录见 `docs/fixes/ci-cold-build-cef-parallelism-fix.md`。
-
-- **CI：runner 迁至 `macos-15`（macos-14 镜像 2026-11-02 已退役）（2026-11-19）**：GitHub 退役 macOS 14 runner 镜像后，所有 `runs-on: macos-14` 的 job 在取机器阶段即被拒（job annotation `The configuration 'macos-14-arm64-us-default' is not supported`，无 step、无 runner），run 结论显示为 `cancelled` 而非 `failure`，导致 CI / Nightly 自 2026-11-19 起全红、Release 打 tag 也会空跑。修复：`.github/workflows/` 下 `ci.yml`（prepare / swift matrix / build matrix）、`nightly.yml`（smoke）、`release.yml`（prepare / build matrix 的 arm64 + x86_64）统一改 `macos-15`（不用 `macos-latest`，避免已漂到 `macos-26` 的镜像被动升级）；构建脚本无需改动（`build-app.sh` / `build-cef.sh` 均以 `-target <arch>-apple-macos13` 显式交叉编译，x86_64 仍在 arm64 机器上交叉编译）。文档同步 `scripts/local-ci.sh`、`docs/research/productization.md`，并新增 `docs/fixes/ci-macos-runner-retirement-fix.md` 记录排查路径（先看 job annotation，`runner_name` 为空即「没取到机器」）。
-
-- **事项面板：队列 id 从阶段卡移到事项主卡（2026-10-07）**：修复拆分后队列 id 显示在阶段二级卡（如「规划」）的问题。`WSStageCardModel` 去掉 `queueIDs` / `hasQueue`；`WSCardModel` 新增 `queueIDs`（= `WS.queues`，一事项一队列）；事项主卡标题行以中性徽标（`WSTierBadgeView`）渲染，任何阶段卡都不显示。`tests/workstreams-panel` UI 断言改到主卡（**195**），全套 **1103**（model 93 + API 276 + UI 195 + runner 139 + prompt 213 + delivery 127 + stage-gate 60）；新增「队列 id 展示位置」源码守卫。
+## [1.19.0] - 2026-11-20
 
 ### Added
 
@@ -115,15 +103,29 @@ All notable changes to this project are documented in this file. Format follows
 
 ### Changed
 
+- **内置 dsh 推进到 `@deepseek-ai/dsh@0.2.0-rc.2`（2026-11）**：0.1.7-rc.2 → 0.2.0-rc.2，随附闭包锁 `platforms/macos/runtime-locks/dsh-0.2.0-rc.2/`（611 包条目，`npm ci` + 启动冒烟通过；依赖树 360 MB → 504 MB，+40%）。**审计结论：五个耦合面零断裂**——RPC 端点 135 → 140（删 0 / 增 5：`productAnalytics/{enabled,report,watchPolicy}`、`userQuestions/answer`、`userQuestions/attachWait`），参数包裹字段 0 变化；`dsh-client-connection` / `dsh-web-app` / `dsh-workspace` / `dsh-session-format` / `dsh-skill-filesystem` 的 `lib` **逐字节相同**（鉴权、就绪行、CLI 参数、workspace v2、会话格式 v4、技能四根/规范键全部照旧）；注入脚本依赖的 DOM 锚点（`sessionRow` / `projectRow` 尾按钮 / `data-slot="sidebar.settings"` / `data-composer-input` / `reference-chip` / `fileMention` / `data-presented-files-row` / `data-changed-files` / `data-open-target`）全部仍在原位。实机验证：就绪行、裸 `GET /` 401、`?token=` 303 + `dsh-auth-*`、`__DSH_BOOT__`、`session/list`（`_request`）、`workspace/create`、`workspace.json` v2 均通过，`workspace/list` 仍 404（磁盘兜底继续必要）。上游新增的两行遥测（`desktop-product-telemetry` / `product-analytics`）带 `disabled: profileContext.name !== 'desktop'`，`dsh web` 下不挂载、不上报；`userQuestions` 投影与 `ask_user_question` 限时等待为新增能力，默认 preset 补丁未变。**注意**：`dist-tags.latest` 已是 `0.2.2-rc.5`，stepwise 升级助手会提示 `0.2.1-rc.1`（预期行为）。审计记录：`docs/plans/dsh-020rc2-compat-audit.md`；兼容清单复盘：`docs/process/dsh-version-impact.md` §4.7。
+
 - **任务队列的完成通知改为逐任务一条 + 队列收尾（2026-11-19）**：队列里每个任务到达终态（完成 / 失败 / 待确认 / 取消）时，创建队列的会话会立刻收到**只讲这一个任务**的通知——标题 · 位次 · 结局、本任务提交、汇报（单条上限 1500 字）、一行队列进度；失败 / 待确认 / 取消还会写明「后续 N 个任务不会启动，不开 PR」与「重试 / 跳过并继续」两个出口。队列进入 `.done` 时再补一条**收尾**（完成 / 待确认计数、分支、PR、汇报全文路径），不再重列各棒汇报；单任务队列把任务通知与收尾合并成一条。**长期用户会看到通知从「队列结束的一条大消息」变成「每一棒一条 + 最后一条收尾」**。幂等靠 `taskNotified` / `queueNotified`（只写 `local.json`，发送前写入，重试清掉任务标记）；交付会话占用来源会话时通知延后到空闲，重启后空闲 `step()` 补发。技能 `task-todo` 与面板 / 设计文档同步。
 
 - **队列交接简报改为「有预算的衰减」（2026-11-19）**：此前简报把前面每一棒的汇报原样全文带上，长度随队列线性增长。现在最近 2 棒给全文；同轮更早的 done 棒压成一行（标题 · 结局 · 本棒提交数 · 摘要首句），更早轮次每轮一行；**非 done（失败 / 取消 / 待确认）永远全文**，只剩它们时宁可超预算也不截断。总预算 6000 字，超预算按「最老 done 全文 → 一行 → 丢最老提交（列表只留最近 20 条）→ 丢最老轮次 / 同轮行」逐条降级；渲染前剥掉围栏代码块与完成标记行。`app.log` 记录 `head= / commits= / earlier= / footer=` 四段字数与 `degraded: reports= / commits= / rows=` 三档降级条数。回归：`tests/tasks-panel/run.sh` 全绿（model 384 / runner **811 → 831** / ui 503 / form 370 / api 132），新增简报上界、逐任务通知与旧「不截断」用例的调整；`tests/skills/run.sh` 校验技能内嵌副本与仓库副本仍字节一致。
 
 ### Fixed
 
+- **CI：CEF wrapper 编译限流并发 + prepare 拆分超时（2026-11-19）**：迁到 `macos-15` 后 `prepare` 仍挂——第 4 步 `Pre-build CEF artifacts + prefetch` 单步跑满 **6h03m** 被平台取消。根因是 `build-cef.sh` 编译 wrapper 时对每个 `.cc/.mm` 都 `clang++ &`（~300 个并发进程），在 GitHub 3 核 / 7GB runner 上内存打爆疯狂 swap（本地 10 核用 4 并发实测 57s 编完）。修复：`build-cef.sh` 改为按 `${DSH_CEF_JOBS:-hw.ncpu}` 限流（FIFO 等待、失败即 kill 其余），`ci.yml` / `release.yml` 的 prepare 拆成 CEF arm64 / CEF x86_64 / prefetch 三个 step（各 `timeout-minutes: 30`，job 90），并补上 prepare 漏传的 `DSH_NPM_REGISTRY` / `DSH_NODE_MIRROR`（此前美国 runner 冷缓存会用 npmmirror 装依赖树）；ci `swift`/`build`、nightly `smoke`、release `build` 一并加 job 超时。记录见 `docs/fixes/ci-cold-build-cef-parallelism-fix.md`。
+
+- **CI：runner 迁至 `macos-15`（macos-14 镜像 2026-11-02 已退役）（2026-11-19）**：GitHub 退役 macOS 14 runner 镜像后，所有 `runs-on: macos-14` 的 job 在取机器阶段即被拒（job annotation `The configuration 'macos-14-arm64-us-default' is not supported`，无 step、无 runner），run 结论显示为 `cancelled` 而非 `failure`，导致 CI / Nightly 自 2026-11-19 起全红、Release 打 tag 也会空跑。修复：`.github/workflows/` 下 `ci.yml`（prepare / swift matrix / build matrix）、`nightly.yml`（smoke）、`release.yml`（prepare / build matrix 的 arm64 + x86_64）统一改 `macos-15`（不用 `macos-latest`，避免已漂到 `macos-26` 的镜像被动升级）；构建脚本无需改动（`build-app.sh` / `build-cef.sh` 均以 `-target <arch>-apple-macos13` 显式交叉编译，x86_64 仍在 arm64 机器上交叉编译）。文档同步 `scripts/local-ci.sh`、`docs/research/productization.md`，并新增 `docs/fixes/ci-macos-runner-retirement-fix.md` 记录排查路径（先看 job annotation，`runner_name` 为空即「没取到机器」）。
+
+- **事项面板：队列 id 从阶段卡移到事项主卡（2026-10-07）**：修复拆分后队列 id 显示在阶段二级卡（如「规划」）的问题。`WSStageCardModel` 去掉 `queueIDs` / `hasQueue`；`WSCardModel` 新增 `queueIDs`（= `WS.queues`，一事项一队列）；事项主卡标题行以中性徽标（`WSTierBadgeView`）渲染，任何阶段卡都不显示。`tests/workstreams-panel` UI 断言改到主卡（**195**），全套 **1103**（model 93 + API 276 + UI 195 + runner 139 + prompt 213 + delivery 127 + stage-gate 60）；新增「队列 id 展示位置」源码守卫。
+
 - **分支进入显式 pull `<remote> <base>`，失败带 git stderr（2026-11-19）**：`TaskGit.enter` 以前用裸 `git pull --ff-only`，依赖基线分支配置了 upstream——本仓库远端从 `origin` 换成 `github` 后 `main` 失去 upstream，队列第一棒直接 `tasks.errPull`，`app.log` 只有一句「could not start (tasks.errPull)」，看不到 git 的原始错误。现在 pull 显式点名远端（`github` > `origin` > 首个）与基线，无远端照旧跳过；`pull` / `checkout` / `status` 失败时把 **git 自己的 stderr** 写进 `app.log` 并作为卡片 `errorDetail`；「没有 upstream / 远端没有同名 ref」归为 `tasks.errPullNoUpstream`（可自愈的环境类，提示执行 fetch 并以 `<remote>/<base>` 作为比较基线），`git status` 自己失败单独记 `tasks.errGitStatus`（不再误报成「工作区有未提交改动」）。回归：`tests/tasks-panel/run.sh` 全绿（runner **831 → 850**、ui **503 → 504**），新增「无 upstream 也能起队列（假 git 断言收到显式 pull 参数）」与 pull / checkout / status 的 stderr 进日志和卡片用例。
 
 - **英文界面修复：Agent 追加任务后壳层崩溃（2026-10-02，v1.18.0）**：`tasks.apiQueueAppended` 的中英文案占位符顺序相反（中文 `%@`→`%d`、英文 `%d`→`%@`），而 `L10n.tr` 把同一份参数列表交给当前语言的格式串；英文下 `%@` 拿到整数 `created.count`（3）被当成对象指针，`String(format:)` 内部对 `0x3` 调 `objc_opt_respondsToSelector` 直接 SIGSEGV（`KERN_INVALID_ADDRESS at 0x3`）。改用位置参数 `%1$@` / `%2$d`，两种语言各自保留自然语序。回归：`tests/l10n` 新增「中英格式参数必须一致」检查——改前先复现失败（精确命中该 key），改后通过。
+
+### Docs
+
+- **dsh 0.2.0-rc.2 兼容审计与复盘（2026-11-19）**：新增 `docs/plans/dsh-020rc2-compat-audit.md`（RPC 端点 diff / 参数包裹字段 / 五个包的 `lib` 字节比对 / 注入脚本 DOM 锚点 / 实机冒烟五面证据），`docs/process/dsh-version-impact.md` 补 §4.7 复盘与升级 SOP；`.dsh/wiki` 同步 HEAD、dsh 版本与会话日志世代事实。
+
+- **面板 / 工作流文档随特性同步**：`docs/usage/panels.md`、`docs/usage/workstream-panel-workflow.md`、`docs/design/panels/*`（四阶段收敛、交付改操作、三段式提示词逐字快照）、`ai-native-workflow-spec.md` 与 README / CONTRIBUTING / `.dsh/wiki` 在需求池与事项面板的每轮改动中同批更新（面板说明、测试计数、提示词清单）；新增两份 CI 修复记录 `docs/fixes/ci-macos-runner-retirement-fix.md`、`docs/fixes/ci-cold-build-cef-parallelism-fix.md`。
 
 ## [1.18.0] - 2026-10-02
 
