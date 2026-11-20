@@ -52,7 +52,10 @@
 
 - 语义自测：限流循环在 bash 3.2（macOS 自带）下实测最大并发 ≤ 上限、失败能正确冒泡；
 - 本地冷编 `build-cef.sh x86_64`（`DSH_CEF_JOBS=4`）**57s** 完成，产物 `libcef_dll_wrapper` 4.1M、framework 318M；
-- PR 的 CI run 作为端到端验证：prepare 的三个 step 各自耗时应落在分钟级。
+- PR 的 CI run（[44641241264](https://github.com/insky2005/oh-my-dsh/actions/runs/44641241264)，commit `5a5dee1`）
+  **全绿，整轮 13.8 分钟**：`prepare` **6.1 min**（CEF arm64 **2.4 min** / CEF x86_64 **2.5 min** /
+  prefetch 0.5 min）、`swift tests` 6.2 min、`build (arm64)` 7.6 min。
+  同一步此前是 6h03m 被取消 —— 限流后是分钟级。
 
 ## 教训
 
