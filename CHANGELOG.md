@@ -7,6 +7,10 @@ All notable changes to this project are documented in this file. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **内置 dsh 推进到 `@deepseek-ai/dsh@0.2.0-rc.2`（2026-11）**：0.1.7-rc.2 → 0.2.0-rc.2，随附闭包锁 `platforms/macos/runtime-locks/dsh-0.2.0-rc.2/`（611 包条目，`npm ci` + 启动冒烟通过；依赖树 360 MB → 504 MB，+40%）。**审计结论：五个耦合面零断裂**——RPC 端点 135 → 140（删 0 / 增 5：`productAnalytics/{enabled,report,watchPolicy}`、`userQuestions/answer`、`userQuestions/attachWait`），参数包裹字段 0 变化；`dsh-client-connection` / `dsh-web-app` / `dsh-workspace` / `dsh-session-format` / `dsh-skill-filesystem` 的 `lib` **逐字节相同**（鉴权、就绪行、CLI 参数、workspace v2、会话格式 v4、技能四根/规范键全部照旧）；注入脚本依赖的 DOM 锚点（`sessionRow` / `projectRow` 尾按钮 / `data-slot="sidebar.settings"` / `data-composer-input` / `reference-chip` / `fileMention` / `data-presented-files-row` / `data-changed-files` / `data-open-target`）全部仍在原位。实机验证：就绪行、裸 `GET /` 401、`?token=` 303 + `dsh-auth-*`、`__DSH_BOOT__`、`session/list`（`_request`）、`workspace/create`、`workspace.json` v2 均通过，`workspace/list` 仍 404（磁盘兜底继续必要）。上游新增的两行遥测（`desktop-product-telemetry` / `product-analytics`）带 `disabled: profileContext.name !== 'desktop'`，`dsh web` 下不挂载、不上报；`userQuestions` 投影与 `ask_user_question` 限时等待为新增能力，默认 preset 补丁未变。**注意**：`dist-tags.latest` 已是 `0.2.2-rc.5`，stepwise 升级助手会提示 `0.2.1-rc.1`（预期行为）。审计记录：`docs/plans/dsh-020rc2-compat-audit.md`；兼容清单复盘：`docs/process/dsh-version-impact.md` §4.7。
+
 ### Fixed
 
 - **CI：CEF wrapper 编译限流并发 + prepare 拆分超时（2026-11-19）**：迁到 `macos-15` 后 `prepare` 仍挂——第 4 步 `Pre-build CEF artifacts + prefetch` 单步跑满 **6h03m** 被平台取消。根因是 `build-cef.sh` 编译 wrapper 时对每个 `.cc/.mm` 都 `clang++ &`（~300 个并发进程），在 GitHub 3 核 / 7GB runner 上内存打爆疯狂 swap（本地 10 核用 4 并发实测 57s 编完）。修复：`build-cef.sh` 改为按 `${DSH_CEF_JOBS:-hw.ncpu}` 限流（FIFO 等待、失败即 kill 其余），`ci.yml` / `release.yml` 的 prepare 拆成 CEF arm64 / CEF x86_64 / prefetch 三个 step（各 `timeout-minutes: 30`，job 90），并补上 prepare 漏传的 `DSH_NPM_REGISTRY` / `DSH_NODE_MIRROR`（此前美国 runner 冷缓存会用 npmmirror 装依赖树）；ci `swift`/`build`、nightly `smoke`、release `build` 一并加 job 超时。记录见 `docs/fixes/ci-cold-build-cef-parallelism-fix.md`。

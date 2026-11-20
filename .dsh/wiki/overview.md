@@ -78,7 +78,7 @@ platforms/macos/src/DshWebRPC.swift      壳层原生 dsh RPC（信封形状 / �
 platforms/macos/src/ComposerReference.swift 输入框 `@` 引用纯模型（引用语法 + 相对路径）90 行
 platforms/macos/src/SnapshotModel.swift  会话快照窗口数据模型 166 行
 platforms/macos/src/SnapshotWindow.swift 会话快照 / 回退窗口（预览 → 二次确认 → 回退并退出）245 行
-platforms/macos/runtime-locks/<spec>/   已提交的 dsh 依赖闭包锁（`package.json` + `package-lock.json`；0.1.7-rc.2 那份 611 包、0.1.5-rc.3 那份 584 包、0.1.2-rc.1 那份 583 包保留供快照回退），构建用 `npm ci` 复现，并随 App 嵌入 `Contents/Resources/runtime-locks`
+platforms/macos/runtime-locks/<spec>/   已提交的 dsh 依赖闭包锁（`package.json` + `package-lock.json`；0.2.0-rc.2 那份 611 包、0.1.7-rc.2 那份 611 包、0.1.5-rc.3 那份 584 包、0.1.2-rc.1 那份 583 包保留供快照回退），构建用 `npm ci` 复现，并随 App 嵌入 `Contents/Resources/runtime-locks`
 platforms/macos/build-app.sh         一键构建脚本（6 步：目录/图标/编译/运行时/Info.plist/签名）
 platforms/macos/build-cef.sh         CEF 构建脚本（版本 pin + sha1 校验 + 缓存；wrapper/shim/五 helper 编译）
 platforms/macos/cef/                 CEFShim.h/.mm（ObjC++ 桥，OSR 渲染/输入转发/DevTools）、process_helper_mac.cc、helper-Info.plist.in
@@ -102,7 +102,7 @@ pic/                 QA 调试截图 — git 忽略
 ```
 
 - 编译命令：`swiftc -O -swift-version 5 -framework AppKit -framework WebKit -framework PDFKit`，源文件清单单一事实来源 `swift-sources.sh`（glob 收录 `src/*.swift` + `vendor/Highlightr/*`，只排除独立工具 `MakeIcon.swift`，`build-app.sh` / `local-ci.sh` / `ci.yml` 共用，新增文件无需逐个登记）+ CEF 产物（`build-cef.sh` 产出 wrapper/shim/五 helper，由内向外签名）；
-- 内置运行时构建期现做：下载 Node tarball（默认国内镜像 `npmmirror.com/mirrors/node`，校验 SHA-256），用其自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.1.7-rc.2`（默认 `DSH_PACKAGE_SPEC`，国内源失败自动回退 npmjs.org）——**按 `platforms/macos/runtime-locks/<spec>/{package.json,package-lock.json}` 的已提交闭包锁 `npm ci` 复现**（只钉 `DSH_PACKAGE_SPEC` 不够：dsh 用 caret 声明 cordis 工具链，闭包会随上游发版漂移，实测导致新构建的 dsh web 打印入口 URL 后立刻退出；没有 lock 的 spec 走老路并**大声警告**），装完做**启动冒烟** `smoke_runtime`（起一次 `dsh web`，40 秒内必须打出入口 URL 且进程存活，否则**构建失败**；跨架构 stage 自动跳过，`DSH_SKIP_RUNTIME_SMOKE=1` 可临时跳过）；构建日志应出现 `using committed runtime lock: …` 与 `smoke: dsh web came up`；
+- 内置运行时构建期现做：下载 Node tarball（默认国内镜像 `npmmirror.com/mirrors/node`，校验 SHA-256），用其自带 npm 在 `runtime/dsh` 装 `@deepseek-ai/dsh@0.2.0-rc.2`（默认 `DSH_PACKAGE_SPEC`，国内源失败自动回退 npmjs.org）——**按 `platforms/macos/runtime-locks/<spec>/{package.json,package-lock.json}` 的已提交闭包锁 `npm ci` 复现**（只钉 `DSH_PACKAGE_SPEC` 不够：dsh 用 caret 声明 cordis 工具链，闭包会随上游发版漂移，实测导致新构建的 dsh web 打印入口 URL 后立刻退出；没有 lock 的 spec 走老路并**大声警告**），装完做**启动冒烟** `smoke_runtime`（起一次 `dsh web`，40 秒内必须打出入口 URL 且进程存活，否则**构建失败**；跨架构 stage 自动跳过，`DSH_SKIP_RUNTIME_SMOKE=1` 可临时跳过）；构建日志应出现 `using committed runtime lock: …` 与 `smoke: dsh web came up`；
 - 缓存：`node|spec|arch|lockHash` 相同则复用 `.cache/runtime`（**缓存键含 lock 指纹**，改锁即重建，避免复用漂移过的旧树），重建只需几十秒；网络不可用时用缓存 tarball 推导版本继续。
 
 构建变量（均可用环境变量覆盖）：`DSH_NODE_VERSION`、`DSH_PACKAGE_SPEC`、`DSH_NODE_MIRROR`、`DSH_NPM_REGISTRY`、`DSH_ARCH`、`DSH_DEV_BUILD`（=1 打开发版：Info.plist 写 `DSHDevBuild=1`、独立 CEF profile、跳过单实例退出，可与正式版并存测试，详见 [build-scripts](modules/build-scripts.md) 与 [main](modules/main.md)）。

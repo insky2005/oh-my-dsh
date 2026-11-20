@@ -92,7 +92,7 @@
 
 | # | 依赖的 dsh 契约 | 版本变化/风险 | 断裂表现 | 代码位置 | 验证方式 |
 |---|---|---|---|---|---|
-| E1 | npm 包 `@deepseek-ai/dsh` + 运行时整树嵌入 `Contents/Resources/runtime/dsh` | 包结构/lib 布局变化 | 找不到 `lib/bin.js` | `build-app.sh`（`DSH_PACKAGE_SPEC` 两处 + 打印行） | 构建产物 `runtime/dsh/node_modules/@deepseek-ai/dsh/package.json` |
+| E1 | npm 包 `@deepseek-ai/dsh` + 运行时整树嵌入 `Contents/Resources/runtime/dsh` | 包结构/lib 布局变化 | 找不到 `lib/bin.js` | `build-app.sh`（`DSH_PACKAGE_SPEC` 三处默认值 + 头注释 + 打印行） | 构建产物 `runtime/dsh/node_modules/@deepseek-ai/dsh/package.json` |
 | E2 | 本机/内置 Node ≥ **22.0.0**（dsh rc.6 起 zstd ESM 导出等） | 若提高到 24+ | 启动即崩/加载插件失败 | main.swift `resolveNode()`（跳过过老系统 node） | 日志 `skipping too-old system node` |
 | E3 | dsh 包内 npm 依赖需在安装后跑 lifecycle（`postinstall` 找 `node`） | PATH 精简时 exit 127 | 升级中断 | 升级子进程前置 PATH 注入 | 升级日志 |
 | E4 | 版本自描述：安装后读 `package.json version`；registry 版本列表选「下一个候选」 | 版本号/发布渠道变化 | 升级判定错 | core `upgrade.js`（`latestVersion/nextStepTarget/pinSpec/buildPrefetchArgs/buildApplyArgs`） | `ohmy-core upgrade …` |
@@ -248,6 +248,37 @@
 **产品注意**：npm `dist-tags.latest = 0.2.0-rc.2`，故站内升级助手按 stepwise 会提示下一档 `0.2.0-rc.1`
 （预期行为，见 `nextStepTarget`）。
 
+### 4.7 实例复盘：0.1.7-rc.2 → 0.2.0-rc.2（2026-11，审计见 `docs/plans/dsh-020rc2-compat-audit.md`）
+
+**结论：零断裂点，但闭包变大了。** 用户决定钉 `0.2.0-rc.2`（不追 latest `0.2.2-rc.5`）。
+
+- **静态比对**（0.1.7-rc.2 的 283 个 `@deepseek-ai` 包 vs 0.2.0-rc.2 的 289 个）：RPC 端点
+  **135 → 140，删 0 / 增 5**（`productAnalytics/{enabled,report,watchPolicy}`、`userQuestions/answer`、
+  `userQuestions/attachWait`），参数包裹字段（`_request` / `request` / `parentSessionId`）**0 变化**；
+  `session/list` / `session/page` / `session/create` / `session/prompt` 的请求 schema 段**逐字节相同**。
+- **逐字节相同的包**（胶水契约所在）：`dsh-client-connection`（鉴权 + fetch/WS 传输）、`dsh-web-app`
+  （CLI 参数 + 就绪行）、`dsh-workspace`（存储域）、`dsh-session-format`、`dsh-skill-filesystem`
+  → A / C / D 面照旧。存储域仍 `workspace v2` / `session_projcache v7`，会话格式仍 **v4**。
+- **DOM 锚点全部仍在原位**：`sessionRow` + `role=treeitem`、`projectRow`（行内最后一枚 button 仍是
+  「新建会话」）、`data-slot="sidebar.settings"`、`data-composer-input`/`__lexicalEditor`/`reference-chip`、
+  `fileMention`、`data-presented-files-row`、`data-changed-files`（`aria-describedby` 取路径）、
+  `data-open-target`。`ui-deliverables` 的 6 行改动全是 CSS。
+- **实机**：`npm ci`（542 包）后的树起得来；就绪行、裸 `GET /` 401、`?token=` 303 + `dsh-auth-*`、
+  `__DSH_BOOT__`、`session/list`（`_request`）、`workspace/create`、`workspace.json`（v2）全部实测通过；
+  `workspace/list` 仍 404（磁盘兜底继续必要）。
+- **上游新增、但对壳层关闭**：`desktop-product-telemetry` / `product-analytics` 两行默认
+  `enabled: true`，却都带 `disabled: profileContext.name !== 'desktop'` → `dsh web` 下不挂载、不上报。
+  `userQuestions` 投影 + `ask_user_question` 限时等待是新增能力；默认 preset 补丁与 0.1.7 逐字节相同，
+  工具可用性未变。
+- **口径（为什么不追 latest）**：`dist-tags.latest` 已是 `0.2.2-rc.5`。钉 `0.2.0-rc.2` 后 stepwise
+  会提示 `0.2.1-rc.1`（`nextStepTarget('0.2.0-rc.2') = '0.2.1-rc.1'`），这是预期行为；闭包本身自洽
+  （278 个子包全 0.2.0-rc.2，`@deepseek-ai/dsh-*` 476 处依赖 0 caret），不会再出现 0.1.5-rc.2 那种
+  「顶层 rc.2 / 子包 rc.3」的坑。
+- **体积**：`node_modules` **360 MB → 504 MB（+144 MB，+40%）**；新增顶层依赖
+  `dsh-experimental-schedule-bundle`。与 `docs/plans/APP_SLIM-app-size.md` 的体积预算冲突，需要在那份
+  计划里重估基线。
+
+
 ## 5. 每次 dsh 升级的执行清单（SOP）
 
 ### 升级前
@@ -279,7 +310,7 @@
 - [ ] `core/tests/` 全绿 + 面板测试套件（`scripts/local-ci.sh swift`）。
 - [ ] 更新 `docs/plans/` 下最新的那份审计（本次：`docs/plans/dsh-015rc2-compat-audit.md`）与本清单 §3/§4。
 - [ ] `CHANGELOG.md` 的 `[Unreleased]` 记录「适配点 + 修复点」，注明受影响面板。
-- [ ] 版本推进：`scripts/version.sh` 的 `FALLBACK_VERSION/BUILD`、`build-app.sh` 的 `DSH_PACKAGE_SPEC`（两处 + 打印行）、README/`docs/research/productization.md` 的版本矩阵。
+- [ ] 版本推进：`scripts/version.sh` 的 `FALLBACK_VERSION/BUILD`、`build-app.sh` 的 `DSH_PACKAGE_SPEC`（三处默认值 + 头注释 + 打印行）、README/`docs/research/productization.md` 的版本矩阵。
 
 
 ## 6. 遗留风险与再评估触发条件
